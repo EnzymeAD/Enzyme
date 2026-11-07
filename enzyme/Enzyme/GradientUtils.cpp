@@ -4610,6 +4610,10 @@ GradientUtils *GradientUtils::CreateFromClone(
   prefix += "_";
   prefix += todiff->getName().str();
 
+  if (oldFunc->empty() && hasFunctionLikeMathRule(oldFunc))
+    oldFunc = Logic.PPC.preprocessForClone(oldFunc,
+                                           DerivativeMode::ReverseModePrimal);
+
   auto newFunc = Logic.PPC.CloneFunctionWithReturns(
       DerivativeMode::ReverseModePrimal, width, oldFunc, invertedPointers,
       constant_args, constant_values, nonconstant_values, returnvals,

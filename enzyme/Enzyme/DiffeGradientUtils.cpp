@@ -144,11 +144,15 @@ DiffeGradientUtils *DiffeGradientUtils::CreateFromClone(
   if (width > 1)
     prefix += std::to_string(width);
 
+  std::string FunctionName = (prefix + oldFunc->getName()).str();
+  if (oldFunc->empty() && hasFunctionLikeMathRule(oldFunc))
+    oldFunc = Logic.PPC.preprocessForClone(oldFunc, mode);
+
   auto newFunc = Logic.PPC.CloneFunctionWithReturns(
       mode, width, oldFunc, invertedPointers, constant_args, constant_values,
       nonconstant_values, returnvals, returnTape, returnPrimal,
       (mode == DerivativeMode::ReverseModeGradient) ? false : shadowReturn,
-      prefix + oldFunc->getName(), &originalToNew,
+      FunctionName, &originalToNew,
       /*diffeReturnArg*/ diffeReturnArg, additionalArg);
 
   // Convert overwritten args from the input function to the preprocessed

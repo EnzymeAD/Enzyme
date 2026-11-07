@@ -1639,6 +1639,10 @@ template <typename T> static inline bool hasCustomRuleMetadata(const T *V) {
          hasMetadata(V, "enzyme_splitderivative");
 }
 
+/// Return true if the function redirects differentiation to a registered
+/// built-in math or library derivative rule through the enzyme_math attribute.
+bool hasFunctionLikeMathRule(const llvm::Function *TargetFunction);
+
 static inline bool shouldDisableNoWrite(const llvm::CallInst *CI) {
   auto F = getFunctionFromCall(CI);
   auto funcName = getFuncNameFromCall(CI);
