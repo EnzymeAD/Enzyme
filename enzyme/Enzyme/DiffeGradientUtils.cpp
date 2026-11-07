@@ -967,6 +967,39 @@ CallInst *DiffeGradientUtils::freeCache(BasicBlock *forwardPreheader,
   return ci;
 }
 
+/// Return the `i1` active-lane predicate for `ElementIndex` of `NumElements`
+/// from a scalar or fixed-vector mask, or `nullptr` when unmasked.
+static Value *extractMaskElement(IRBuilder<> &Builder, Value *Mask,
+                                 size_t ElementIndex, size_t NumElements) {
+  if (!Mask)
+    return nullptr;
+  auto *MaskVectorType = dyn_cast<VectorType>(Mask->getType());
+  if (!MaskVectorType) {
+    assert(Mask->getType()->isIntegerTy(1) &&
+           "Expected scalar mask to have i1 type");
+    return Mask;
+  }
+  assert(!MaskVectorType->getElementCount().isScalable() &&
+         "Scalable vector masks are not supported in atomic fadd");
+  size_t MaskElements = MaskVectorType->getElementCount().getKnownMinValue();
+  if (MaskElements == NumElements)
+    return Builder.CreateExtractElement(Mask, ElementIndex);
+  if (NumElements > MaskElements && NumElements % MaskElements == 0) {
+    size_t Ratio = NumElements / MaskElements;
+    return Builder.CreateExtractElement(Mask, ElementIndex / Ratio);
+  }
+  assert(MaskElements > NumElements && MaskElements % NumElements == 0 &&
+         "Incompatible mask and value element counts");
+  size_t Ratio = MaskElements / NumElements;
+  Value *Combined = Builder.CreateExtractElement(Mask, ElementIndex * Ratio);
+  for (size_t SubIndex = 1; SubIndex < Ratio; ++SubIndex) {
+    Value *LaneBit =
+        Builder.CreateExtractElement(Mask, ElementIndex * Ratio + SubIndex);
+    Combined = Builder.CreateAnd(Combined, LaneBit);
+  }
+  return Combined;
+}
+
 void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
                                                Value *origVal, Type *addingType,
                                                unsigned start, unsigned size,
@@ -1129,78 +1162,95 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
       ptr = applyChainRule(getPointerType(addingType, 1), BuilderM, rule, ptr);
     }
 
-    if (mask) {
-      std::string s;
-      llvm::raw_string_ostream ss(s);
-      ss << "Unimplemented masked atomic fadd for ptr:" << *ptr
-         << " dif:" << *dif << " mask: " << *mask << " orig: " << *orig << "\n";
-      if (CustomErrorHandler) {
-        LLVMBuilderRef BR = startCallbackBuilder(BuilderM);
-        CustomErrorHandler(ss.str().c_str(), wrap(orig),
-                           ErrorType::NoDerivative, this, nullptr, BR);
-        finishCallbackBuilder(BR, BuilderM);
-        return;
-      } else {
-        EmitFailure("NoDerivative", orig->getDebugLoc(), orig, ss.str());
+    AtomicRMWInst::BinOp AtomicOp = AtomicRMWInst::FAdd;
+    std::string BaseBlockName = BuilderM.GetInsertBlock()->getName().str();
+    auto EmitMaskedAtomic = [&](Value *MaskBit, auto &&EmitAtomics) {
+      if (!MaskBit) {
+        EmitAtomics();
         return;
       }
-    }
+      if (auto *ConstantMask = dyn_cast<ConstantInt>(MaskBit)) {
+        if (ConstantMask->isZero())
+          return;
+        assert(ConstantMask->isOne() && "Expected boolean constant mask");
+        EmitAtomics();
+        return;
+      }
+      // Inactive lanes of a masked load may point to unmapped or out-of-bounds
+      // memory, so only active lanes may execute the atomic update.
+      BasicBlock *CurrentBlock = BuilderM.GetInsertBlock();
+      BasicBlock *AtomicBlock =
+          addReverseBlock(CurrentBlock, BaseBlockName + "_atomic",
+                          /*forkCache*/ true, /*push*/ false);
+      BasicBlock *MergeBlock =
+          addReverseBlock(CurrentBlock, BaseBlockName + "_merge",
+                          /*forkCache*/ true, /*push*/ true);
+      MergeBlock->moveAfter(AtomicBlock);
+      BuilderM.CreateCondBr(MaskBit, AtomicBlock, MergeBlock);
+      BuilderM.SetInsertPoint(AtomicBlock);
+      EmitAtomics();
+      BuilderM.CreateBr(MergeBlock);
+      BuilderM.SetInsertPoint(MergeBlock);
+    };
 
-    /*
-     while (auto ASC = dyn_cast<AddrSpaceCastInst>(ptr)) {
-     ptr = ASC->getOperand(0);
-     }
-     while (auto ASC = dyn_cast<ConstantExpr>(ptr)) {
-     if (!ASC->isCast()) break;
-     if (ASC->getOpcode() != Instruction::AddrSpaceCast) break;
-     ptr = ASC->getOperand(0);
-     }
-     */
-    AtomicRMWInst::BinOp op = AtomicRMWInst::FAdd;
-    if (auto vt = dyn_cast<VectorType>(addingType)) {
-      assert(!vt->getElementCount().isScalable());
-      size_t numElems = vt->getElementCount().getKnownMinValue();
-      auto rule = [&](Value *dif, Value *ptr) {
-        for (size_t i = 0; i < numElems; ++i) {
-          auto vdif = BuilderM.CreateExtractElement(dif, i);
-          vdif = SanitizeDerivatives(orig, vdif, BuilderM);
-          Value *Idxs[] = {
-              ConstantInt::get(Type::getInt64Ty(vt->getContext()), 0),
-              ConstantInt::get(Type::getInt32Ty(vt->getContext()), i)};
-          auto vptr = BuilderM.CreateGEP(addingType, ptr, Idxs);
-          MaybeAlign alignv = align;
-          if (alignv) {
-            if (start != 0) {
-              // todo make better alignment calculation
-              assert((*alignv).value() != 0);
-              if (start % (*alignv).value() != 0) {
-                alignv = Align(1);
-              }
-            }
-          }
-          BuilderM.CreateAtomicRMW(op, vptr, vdif, alignv,
-                                   AtomicOrdering::Monotonic,
-                                   SyncScope::System);
+    if (auto *AddedVectorType = dyn_cast<VectorType>(addingType)) {
+      assert(!AddedVectorType->getElementCount().isScalable() &&
+             "Scalable vector types are not supported in atomic fadd");
+      size_t NumElements =
+          AddedVectorType->getElementCount().getKnownMinValue();
+      uint64_t ElementByteSize =
+          (DL.getTypeSizeInBits(AddedVectorType->getElementType()) + 7) / 8;
+      for (size_t ElementIndex = 0; ElementIndex < NumElements;
+           ++ElementIndex) {
+        Value *MaskBit =
+            extractMaskElement(BuilderM, mask, ElementIndex, NumElements);
+        MaybeAlign ElementAlign = align;
+        if (ElementAlign) {
+          assert(ElementAlign->value() != 0 && "Expected non-zero alignment");
+          ElementAlign = commonAlignment(
+              *ElementAlign, start + ElementIndex * ElementByteSize);
         }
-      };
-      applyChainRule(BuilderM, rule, dif, ptr);
+        EmitMaskedAtomic(MaskBit, [&]() {
+          auto AccumulateLane = [&](Value *DifferentialValue,
+                                    Value *PointerValue) {
+            Value *ElementDifferential =
+                BuilderM.CreateExtractElement(DifferentialValue, ElementIndex);
+            ElementDifferential =
+                SanitizeDerivatives(orig, ElementDifferential, BuilderM);
+            Value *Indices[] = {
+                ConstantInt::get(
+                    Type::getInt64Ty(AddedVectorType->getContext()), 0),
+                ConstantInt::get(
+                    Type::getInt32Ty(AddedVectorType->getContext()),
+                    ElementIndex)};
+            Value *ElementPointer =
+                BuilderM.CreateGEP(addingType, PointerValue, Indices);
+            BuilderM.CreateAtomicRMW(
+                AtomicOp, ElementPointer, ElementDifferential, ElementAlign,
+                AtomicOrdering::Monotonic, SyncScope::System);
+          };
+          applyChainRule(BuilderM, AccumulateLane, dif, ptr);
+        });
+      }
     } else {
-      auto rule = [&](Value *dif, Value *ptr) {
-        dif = SanitizeDerivatives(orig, dif, BuilderM);
-        MaybeAlign alignv = align;
-        if (alignv) {
-          if (start != 0) {
-            // todo make better alignment calculation
-            assert((*alignv).value() != 0);
-            if (start % (*alignv).value() != 0) {
-              alignv = Align(1);
-            }
-          }
-        }
-        BuilderM.CreateAtomicRMW(op, ptr, dif, alignv,
-                                 AtomicOrdering::Monotonic, SyncScope::System);
-      };
-      applyChainRule(BuilderM, rule, dif, ptr);
+      Value *MaskBit = extractMaskElement(BuilderM, mask, 0, 1);
+      MaybeAlign ElementAlign = align;
+      if (ElementAlign) {
+        assert(ElementAlign->value() != 0 && "Expected non-zero alignment");
+        if (start != 0)
+          ElementAlign = commonAlignment(*ElementAlign, start);
+      }
+      EmitMaskedAtomic(MaskBit, [&]() {
+        auto AccumulateScalar = [&](Value *DifferentialValue,
+                                    Value *PointerValue) {
+          DifferentialValue =
+              SanitizeDerivatives(orig, DifferentialValue, BuilderM);
+          BuilderM.CreateAtomicRMW(AtomicOp, PointerValue, DifferentialValue,
+                                   ElementAlign, AtomicOrdering::Monotonic,
+                                   SyncScope::System);
+        };
+        applyChainRule(BuilderM, AccumulateScalar, dif, ptr);
+      });
     }
     return;
   }
@@ -1380,12 +1430,14 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(
           }
           Value *shadow = Builder2.CreateICmpNE(primal_val, shadow_val);
 
-          BasicBlock *current = Builder2.GetInsertBlock();
-          BasicBlock *conditional =
-              addReverseBlock(current, current->getName() + "_active");
-          merge = addReverseBlock(conditional, current->getName() + "_amerge");
-          Builder2.CreateCondBr(shadow, conditional, merge);
-          Builder2.SetInsertPoint(conditional);
+          BasicBlock *CurrentBlock = Builder2.GetInsertBlock();
+          BasicBlock *ConditionalBlock = addReverseBlock(
+              CurrentBlock, CurrentBlock->getName() + "_active");
+          merge = addReverseBlock(ConditionalBlock,
+                                  CurrentBlock->getName() + "_amerge",
+                                  /*forkCache*/ true, /*push*/ false);
+          Builder2.CreateCondBr(shadow, ConditionalBlock, merge);
+          Builder2.SetInsertPoint(ConditionalBlock);
         }
         // Masked partial type is unhanled.
         if (premask)
@@ -1400,7 +1452,13 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(
     start = nextStart;
   }
   if (merge) {
+    BasicBlock *LastBlock = Builder2.GetInsertBlock();
     Builder2.CreateBr(merge);
+    merge->moveAfter(LastBlock);
+    auto Found = reverseBlockToPrimal.find(merge);
+    assert(Found != reverseBlockToPrimal.end() &&
+           "Expected reverse merge block to map to a primal block");
+    reverseBlocks[Found->second].push_back(merge);
     Builder2.SetInsertPoint(merge);
   }
 }
