@@ -6804,6 +6804,65 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       return shadow;
     }
 #endif
+    case Intrinsic::abs:
+    case Intrinsic::bitreverse:
+    case Intrinsic::bswap:
+    case Intrinsic::ctlz:
+    case Intrinsic::ctpop:
+    case Intrinsic::cttz: {
+      if ((mode == DerivativeMode::ReverseModePrimal ||
+           mode == DerivativeMode::ReverseModeCombined ||
+           mode == DerivativeMode::ReverseModeGradient) &&
+          TT.allFloat(II, DL)) {
+        return Constant::getNullValue(getShadowType(II->getType()));
+      }
+      Value *FirstShadow = invertPointerM(II->getArgOperand(0), bb, TT);
+      Value *Shadow = applyChainRule(
+          II->getType(), bb,
+          [&](Value *OperandShadow) -> Value * {
+            SmallVector<Value *, 2> CallArgs = {OperandShadow};
+            if (II->arg_size() == 2)
+              CallArgs.push_back(getNewFromOriginal(II->getArgOperand(1)));
+            CallInst *ShadowCall = bb.CreateCall(
+                II->getCalledFunction(), CallArgs, II->getName() + "'ipi");
+            ShadowCall->setDebugLoc(getNewFromOriginal(II->getDebugLoc()));
+            return ShadowCall;
+          },
+          FirstShadow);
+      invertedPointers.insert(
+          std::make_pair((const Value *)oval, InvertedPointerVH(this, Shadow)));
+      return Shadow;
+    }
+    case Intrinsic::sadd_sat:
+    case Intrinsic::smax:
+    case Intrinsic::smin:
+    case Intrinsic::ssub_sat:
+    case Intrinsic::uadd_sat:
+    case Intrinsic::umax:
+    case Intrinsic::umin:
+    case Intrinsic::usub_sat: {
+      if ((mode == DerivativeMode::ReverseModePrimal ||
+           mode == DerivativeMode::ReverseModeCombined ||
+           mode == DerivativeMode::ReverseModeGradient) &&
+          TT.allFloat(II, DL)) {
+        return Constant::getNullValue(getShadowType(II->getType()));
+      }
+      Value *FirstShadow = invertPointerM(II->getArgOperand(0), bb, TT);
+      Value *SecondShadow = invertPointerM(II->getArgOperand(1), bb, TT);
+      Value *Shadow = applyChainRule(
+          II->getType(), bb,
+          [&](Value *LeftShadow, Value *RightShadow) -> Value * {
+            Value *CallArgs[] = {LeftShadow, RightShadow};
+            CallInst *ShadowCall = bb.CreateCall(
+                II->getCalledFunction(), CallArgs, II->getName() + "'ipi");
+            ShadowCall->setDebugLoc(getNewFromOriginal(II->getDebugLoc()));
+            return ShadowCall;
+          },
+          FirstShadow, SecondShadow);
+      invertedPointers.insert(
+          std::make_pair((const Value *)oval, InvertedPointerVH(this, Shadow)));
+      return Shadow;
+    }
 #if LLVM_VERSION_MAJOR < 20
     case Intrinsic::nvvm_ldg_global_i:
     case Intrinsic::nvvm_ldg_global_p:
