@@ -35,6 +35,7 @@
 #endif
 
 #include "TypeAnalysis/TBAA.h"
+#include "llvm/Analysis/ConstantFolding.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Function.h"
@@ -57,6 +58,149 @@
 #include "LibraryFuncs.h"
 
 using namespace llvm;
+
+llvm::cl::opt<bool> EnzymeDevirtualize(
+    "enzyme-devirtualize", cl::init(true), cl::Hidden,
+    cl::desc("Resolve indirect calls whose target is loaded out of a constant "
+             "dispatch table (e.g. a flang type-bound procedure binding "
+             "table), so that interprocedural type analysis applies"));
+
+/// Fold an address computation and/or load into the constant it provably
+/// holds, or null. Loads go exclusively through ConstantFoldLoadFromConstPtr,
+/// which only succeeds on constant globals with a definitive initializer; that,
+/// plus traversing nothing but Load/GEP/Cast, is what makes a non-null result a
+/// guarantee rather than a guess.
+static Constant *foldConstantMemory(Value *V, const DataLayout &DL,
+                                    unsigned depth) {
+  if (auto C = dyn_cast<Constant>(V))
+    return C;
+  if (depth >= 8)
+    return nullptr;
+  auto I = dyn_cast<Instruction>(V);
+  if (!I)
+    return nullptr;
+  if (!isa<LoadInst>(I) && !isa<GetElementPtrInst>(I) && !isa<CastInst>(I))
+    return nullptr;
+  if (auto LI = dyn_cast<LoadInst>(I))
+    if (!LI->isSimple())
+      return nullptr;
+
+  SmallVector<Constant *, 4> Ops;
+  for (auto &Op : I->operands()) {
+    auto C = foldConstantMemory(Op, DL, depth + 1);
+    if (!C)
+      return nullptr;
+    Ops.push_back(C);
+  }
+
+  if (isa<LoadInst>(I))
+    return ConstantFoldLoadFromConstPtr(Ops[0], I->getType(), DL);
+  return ConstantFoldInstOperands(I, Ops, DL);
+}
+
+/// A dispatch table slot as a function: a raw pointer, or flang's
+/// `ptrtoint (ptr @f to i64)`.
+static Function *asFunctionSlot(Constant *C) {
+  if (!C)
+    return nullptr;
+  C = C->stripPointerCasts();
+  if (auto CE = dyn_cast<ConstantExpr>(C))
+    if (CE->isCast())
+      C = CE->getOperand(0)->stripPointerCasts();
+  return dyn_cast<Function>(C);
+}
+
+llvm::Function *getDevirtualizedCallee(llvm::CallBase *CB) {
+  if (!EnzymeDevirtualize)
+    return nullptr;
+  auto called = CB->getCalledOperand();
+  if (!called || isa<Constant>(called))
+    return nullptr;
+  auto &DL = CB->getModule()->getDataLayout();
+  auto C = foldConstantMemory(called, DL, 0);
+  auto F = asFunctionSlot(C);
+  if (!F)
+    return nullptr;
+  // Callers read the target through the call's prototype, so a mismatch would
+  // misattribute arguments.
+  if (F->getFunctionType() != CB->getFunctionType())
+    return nullptr;
+  return F;
+}
+
+/// A constant aggregate holding at least one function pointer.
+static bool isDispatchTable(GlobalVariable &GV) {
+  if (!GV.isConstant() || !GV.hasDefinitiveInitializer())
+    return false;
+  // An Enzyme shadow mirrors the layout of the table it shadows, so counting it
+  // as a table of its own would leave every slot with two candidates.
+  if (GV.getMetadata(EnzymeShadowGlobalMD))
+    return false;
+  SmallVector<Constant *, 16> todo = {GV.getInitializer()};
+  SmallPtrSet<Constant *, 16> seen;
+  unsigned budget = 4096;
+  while (!todo.empty()) {
+    auto C = todo.pop_back_val();
+    if (!seen.insert(C).second)
+      continue;
+    if (budget-- == 0)
+      return false;
+    if (asFunctionSlot(C))
+      return true;
+    if (isa<ConstantAggregate>(C))
+      for (unsigned i = 0, e = C->getNumOperands(); i != e; ++i)
+        todo.push_back(cast<Constant>(C->getOperand(i)));
+  }
+  return false;
+}
+
+bool getIndirectCallCandidates(llvm::CallBase &CB,
+                               llvm::SmallVectorImpl<llvm::Function *> &Out) {
+  if (!EnzymeDevirtualize)
+    return false;
+  auto called = CB.getCalledOperand();
+  if (!called || isa<Constant>(called))
+    return false;
+
+  auto M = CB.getModule();
+  auto &DL = M->getDataLayout();
+
+  // Peel casts off the callee to reach the load of the slot.
+  Value *V = called;
+  while (auto CI = dyn_cast<CastInst>(V)) {
+    if (CI->getOpcode() != Instruction::IntToPtr &&
+        CI->getOpcode() != Instruction::BitCast &&
+        CI->getOpcode() != Instruction::PtrToInt)
+      return false;
+    V = CI->getOperand(0);
+  }
+  auto LI = dyn_cast<LoadInst>(V);
+  if (!LI || !LI->isSimple())
+    return false;
+
+  auto PtrOp = LI->getPointerOperand();
+  APInt Off(DL.getIndexTypeSizeInBits(PtrOp->getType()), 0);
+  PtrOp->stripAndAccumulateConstantOffsets(DL, Off,
+                                           /*AllowNonInbounds*/ true);
+  if (Off.isNegative())
+    return false;
+
+  SmallPtrSet<Function *, 4> found;
+  for (auto &GV : M->globals()) {
+    if (!isDispatchTable(GV))
+      continue;
+    auto slot =
+        ConstantFoldLoadFromConst(GV.getInitializer(), LI->getType(), Off, DL);
+    auto F = asFunctionSlot(slot);
+    if (!F)
+      continue;
+    if (F->getFunctionType() != CB.getFunctionType())
+      continue;
+    if (found.insert(F).second)
+      Out.push_back(F);
+  }
+  return true;
+}
 
 extern "C" {
 LLVMValueRef (*CustomErrorHandler)(const char *, LLVMValueRef, ErrorType,
