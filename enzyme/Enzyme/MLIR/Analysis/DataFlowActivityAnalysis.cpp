@@ -159,10 +159,10 @@ void enzyme::SparseForwardActivityAnalysis::transfer(
   for (enzyme::ForwardValueActivity *result : results) {
     if (joinedResult.isActiveVal())
       propagateIfChanged(
-          result, result->join(
-                      isa<FloatType, ComplexType>(result->getAnchor().getType())
-                          ? joinedResult
-                          : enzyme::ValueActivity::getConstant()));
+          result, result->join(enzyme::containsValueActiveType(
+                                   result->getAnchor().getType())
+                                   ? joinedResult
+                                   : enzyme::ValueActivity::getConstant()));
     else
       propagateIfChanged(result, result->join(joinedResult));
   }
@@ -451,9 +451,7 @@ LogicalResult enzyme::DenseForwardActivityAnalysis::visitOperation(
         if (before.hasActiveData(alloc)) {
           for (OpResult opResult : op->getResults()) {
             // Mark the result as (forward) active
-            // TODO: We might need type analysis here
-            // Structs and tensors also have value semantics
-            if (isa<FloatType, ComplexType>(opResult.getType())) {
+            if (enzyme::containsValueActiveType(opResult.getType())) {
               auto *valueState =
                   getOrCreate<enzyme::ForwardValueActivity>(opResult);
               propagateIfChanged(
@@ -656,7 +654,7 @@ LogicalResult enzyme::DenseBackwardActivityAnalysis::visitOperation(
       std::optional<Value> copySource = getCopySource(op);
       forEachAliasedAlloc(ptrAliasClass, [&](DistinctAttr alloc) {
         if (stored.has_value() && after.activeDataFlowsOut(alloc)) {
-          if (isa<FloatType, ComplexType>(stored->getType())) {
+          if (enzyme::containsValueActiveType(stored->getType())) {
             auto *valueState =
                 getOrCreate<enzyme::BackwardValueActivity>(*stored);
             propagateIfChanged(
@@ -707,76 +705,76 @@ void printActivityAnalysisResults(DataFlowSolver &solver,
     return forwardActive && backwardActive;
   };
 
+  auto isConstantPointer = [&](Value value) {
+    assert(returnOps.size() == 1 && "expected a single return operation");
+    auto *fma = solver.lookupState<enzyme::ForwardMemoryActivity>(
+        solver.getProgramPointAfter(*returnOps.begin()));
+    auto *bma = solver.lookupState<enzyme::BackwardMemoryActivity>(
+        solver.getProgramPointBefore(
+            &callee.getFunctionBody().front().front()));
+
+    const enzyme::PointsToSets *pointsToSets =
+        solver.lookupState<enzyme::PointsToSets>(
+            solver.getProgramPointAfter(*returnOps.begin()));
+    auto *aliasClassLattice = solver.lookupState<AliasClassLattice>(value);
+    if (!aliasClassLattice || aliasClassLattice->isUndefined())
+      return true;
+
+    // Traverse the points-to sets in a simple BFS
+    std::deque<DistinctAttr> frontier;
+    DenseSet<DistinctAttr> visited;
+    auto scheduleVisit = [&](const enzyme::AliasClassSet &aliasClasses) {
+      (void)aliasClasses.foreachElement(
+          [&](DistinctAttr neighbor, enzyme::AliasClassSet::State state) {
+            assert(neighbor && "unhandled undefined/unknown case before visit");
+            if (!visited.contains(neighbor)) {
+              visited.insert(neighbor);
+              frontier.push_back(neighbor);
+            }
+            return ChangeResult::NoChange;
+          });
+    };
+
+    if (aliasClassLattice->isUnknown()) {
+      // Pointers of unknown class may point to active data.
+      // TODO: is this overly conservative? Should we rather check
+      // if listed classes may point to non-constants?
+      return false;
+    }
+    scheduleVisit(aliasClassLattice->getAliasClassesObject());
+    while (!frontier.empty()) {
+      DistinctAttr aliasClass = frontier.front();
+      frontier.pop_front();
+
+      // It's an active pointer if active data flows in from the forward
+      // direction and out from the backward direction.
+      if (fma->hasActiveData(aliasClass) && bma->activeDataFlowsOut(aliasClass))
+        return false;
+
+      const enzyme::AliasClassSet &pointsTo =
+          pointsToSets->getPointsTo(aliasClass);
+      if (pointsTo.isUndefined())
+        continue;
+
+      // Pointers to unknown classes may (transitively) point to active data.
+      if (pointsTo.isUnknown())
+        return false;
+
+      scheduleVisit(pointsTo);
+    }
+    // Otherwise, it's constant
+    return true;
+  };
+
   auto isConstantValue = [&](Value value) {
     // TODO: integers/vectors that might be pointers
-    if (isa<LLVM::LLVMPointerType, MemRefType>(value.getType())) {
-      assert(returnOps.size() == 1);
-      auto *fma = solver.lookupState<enzyme::ForwardMemoryActivity>(
-          solver.getProgramPointAfter(*returnOps.begin()));
-      auto *bma = solver.lookupState<enzyme::BackwardMemoryActivity>(
-          solver.getProgramPointBefore(
-              &callee.getFunctionBody().front().front()));
-
-      const enzyme::PointsToSets *pointsToSets =
-          solver.lookupState<enzyme::PointsToSets>(
-              solver.getProgramPointAfter(*returnOps.begin()));
-      auto *aliasClassLattice = solver.lookupState<AliasClassLattice>(value);
-      // Traverse the points-to sets in a simple BFS
-      std::deque<DistinctAttr> frontier;
-      DenseSet<DistinctAttr> visited;
-      auto scheduleVisit = [&](const enzyme::AliasClassSet &aliasClasses) {
-        (void)aliasClasses.foreachElement(
-            [&](DistinctAttr neighbor, enzyme::AliasClassSet::State state) {
-              assert(neighbor &&
-                     "unhandled undefined/unknown case before visit");
-              if (!visited.contains(neighbor)) {
-                visited.insert(neighbor);
-                frontier.push_back(neighbor);
-              }
-              return ChangeResult::NoChange;
-            });
-      };
-
-      // If this triggers, investigate why the alias classes weren't computed.
-      // If they weren't computed legitimately, treat the value as
-      // conservatively non-constant or change the return type to be tri-state.
-      assert(!aliasClassLattice->isUndefined() &&
-             "didn't compute alias classes");
-
-      if (aliasClassLattice->isUnknown()) {
-        // Pointers of unknown class may point to active data.
-        // TODO: is this overly conservative? Should we rather check
-        // if listed classes may point to non-constants?
-        return false;
-      } else {
-        scheduleVisit(aliasClassLattice->getAliasClassesObject());
-      }
-      while (!frontier.empty()) {
-        DistinctAttr aliasClass = frontier.front();
-        frontier.pop_front();
-
-        // It's an active pointer if active data flows in from the forward
-        // direction and out from the backward direction.
-        if (fma->hasActiveData(aliasClass) &&
-            bma->activeDataFlowsOut(aliasClass))
-          return false;
-
-        // If this triggers, investigate why points-to sets couldn't be
-        // computed. Treat conservatively as "unknown" if necessary.
-        assert(!pointsToSets->getPointsTo(aliasClass).isUndefined() &&
-               "couldn't compute points-to sets");
-
-        // Pointers to unknown classes may (transitively) point to active data.
-        if (pointsToSets->getPointsTo(aliasClass).isUnknown())
-          return false;
-
-        scheduleVisit(pointsToSets->getPointsTo(aliasClass));
-      }
-      // Otherwise, it's constant
-      return true;
-    }
-
-    return !isActiveData(value);
+    bool constantPtr = true;
+    if (enzyme::containsPointerLike(value.getType()))
+      constantPtr = isConstantPointer(value);
+    if (enzyme::containsValueActiveType(value.getType()) ||
+        !enzyme::containsPointerLike(value.getType()))
+      return constantPtr && !isActiveData(value);
+    return constantPtr;
   };
 
   std::function<bool(Operation *)> isConstantInstruction = [&](Operation *op) {
@@ -961,7 +959,7 @@ void enzyme::runDataFlowActivityAnalysis(
         auto *returnLattice =
             solver.getOrCreateState<enzyme::BackwardValueActivity>(operand);
         // Very basic type inference of the type
-        if (isa<FloatType, ComplexType>(operand.getType())) {
+        if (enzyme::containsValueActiveType(operand.getType())) {
           (void)returnLattice->meet(ValueActivity::getActiveVal());
         }
       }
