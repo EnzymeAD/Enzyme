@@ -25,8 +25,7 @@ declare double @llvm.fabs.f64(double)
 
 ; CHECK: define internal [2 x double] @fwddiffe2tester(double %x, [2 x double] %"x'")
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %[[i1:.+]] = fcmp fast olt double %x, 0.000000e+00
-; CHECK-NEXT:   %[[i2:.+]] = select {{(fast )?}}i1 %[[i1]], double -1.000000e+00, double 1.000000e+00
+; CHECK-NEXT:   %[[i2:.+]] = call fast double @llvm.copysign.f64(double 1.000000e+00, double %x)
 ; CHECK-NEXT:   %[[i0:.+]] = extractvalue [2 x double] %"x'", 0
 ; CHECK-NEXT:   %[[i3:.+]] = fmul fast double %[[i0]], %[[i2]]
 ; CHECK-NEXT:   %[[i5:.+]] = extractvalue [2 x double] %"x'", 1
