@@ -5613,9 +5613,84 @@ bool GradientUtils::isAtomic(Value *origptr) const {
   return ::isAtomic(origptr, AtomicAdd, newFunc);
 }
 
+/// Slice `typeTree` to `[offset, offset + elementSize)` while preserving
+/// multi-byte `Pointer` or `Float` entries that start before `offset` and
+/// extend across the slice boundary.
+static TypeTree sliceSubTypeTree(const TypeTree &typeTree,
+                                 const DataLayout &dataLayout, size_t offset,
+                                 size_t elementSize) {
+  TypeTree subTypeTree =
+      typeTree.ShiftIndices(dataLayout, offset, elementSize, 0);
+  for (const auto &entry : typeTree.getMapping()) {
+    if (entry.first.empty() || entry.first[0] < 0 ||
+        (size_t)entry.first[0] >= offset)
+      continue;
+    size_t entrySize = 0;
+    bool isPointer =
+        entry.second == BaseType::Pointer || entry.first.size() > 1;
+    if (isPointer)
+      entrySize = dataLayout.getPointerSize(0);
+    else if (Type *floatType = entry.second.isFloat())
+      entrySize = (dataLayout.getTypeSizeInBits(floatType) + 7) / 8;
+    size_t entryStart = (size_t)entry.first[0];
+    if (entryStart + entrySize <= offset)
+      continue;
+    if (isPointer) {
+      subTypeTree.insert({0}, BaseType::Pointer);
+      continue;
+    }
+    size_t coveredBytes =
+        std::min(elementSize, entryStart + entrySize - offset);
+    for (size_t byteIndex = 0; byteIndex < coveredBytes; ++byteIndex)
+      subTypeTree.insert({(int)byteIndex}, BaseType::Anything);
+  }
+  subTypeTree.CanonicalizeInPlace(elementSize, dataLayout);
+  return subTypeTree;
+}
+
+/// Clear bytes of `bits` whose `typeTree` classification could hold
+/// floating-point data (`Float`, `Anything`, or `Unknown`), preserving
+/// `Integer` and `Pointer` bytes.
+static void zeroNonIntegerBytes(APInt &bits, size_t byteSize,
+                                const TypeTree &typeTree,
+                                const DataLayout &dataLayout) {
+  unsigned bitWidth = bits.getBitWidth();
+  for (size_t byteIndex = 0; byteIndex < byteSize;) {
+    ConcreteType concreteType = typeTree[{(int)byteIndex}];
+    if (concreteType == BaseType::Pointer) {
+      byteIndex += dataLayout.getPointerSize(0);
+      continue;
+    }
+    if (concreteType == BaseType::Integer) {
+      ++byteIndex;
+      continue;
+    }
+    size_t clearBytes = 1;
+    if (Type *floatType = concreteType.isFloat())
+      clearBytes = (dataLayout.getTypeSizeInBits(floatType) + 7) / 8;
+    size_t endByte = std::min(byteSize, byteIndex + clearBytes);
+    for (size_t currentByte = byteIndex; currentByte < endByte; ++currentByte) {
+      unsigned lowBit = 0;
+      unsigned highBit = 0;
+      if (dataLayout.isLittleEndian()) {
+        lowBit = currentByte * 8;
+        highBit = std::min<unsigned>(bitWidth, (currentByte + 1) * 8);
+      } else {
+        int rawLow = (int)bitWidth - (int)((currentByte + 1) * 8);
+        int rawHigh = (int)bitWidth - (int)(currentByte * 8);
+        lowBit = std::max(0, rawLow);
+        highBit = std::max(0, std::min((int)bitWidth, rawHigh));
+      }
+      for (unsigned bit = lowBit; bit < highBit; ++bit)
+        bits.clearBit(bit);
+    }
+    byteIndex = endByte;
+  }
+}
+
 Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
                                      TypeTree TT) {
-  assert(oval);
+  assert(oval && "expected non-null value to invert");
 #ifndef NDEBUG
   if (auto inst = dyn_cast<Instruction>(oval)) {
     assert(inst->getParent()->getParent() == oldFunc);
@@ -5627,32 +5702,66 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
 
   auto &DL = oldFunc->getParent()->getDataLayout();
   if (isa<ConstantPointerNull>(oval) || isa<UndefValue>(oval) ||
-      isa<ConstantInt>(oval) || isa<ConstantAggregateZero>(oval) ||
-      isa<PoisonValue>(oval)) {
-    if (isa<ConstantPointerNull>(oval) || isa<UndefValue>(oval) ||
-        isa<PoisonValue>(oval) || isa<ConstantAggregateZero>(oval) ||
-        (isa<ConstantInt>(oval) && cast<ConstantInt>(oval)->isZero()) ||
-        TT.allFloat(oval, DL))
-      return Constant::getNullValue(getShadowType(oval->getType()));
-    else if (!TT.anyFloat(oval, DL))
-      return applyChainRule(oval->getType(), BuilderM, [&]() { return oval; });
+      isa<ConstantAggregateZero>(oval) || isa<PoisonValue>(oval)) {
+    return Constant::getNullValue(getShadowType(oval->getType()));
   }
-  if (auto CD = dyn_cast<ConstantDataArray>(oval)) {
-    SmallVector<Constant *, 1> Vals;
-    auto ElTy = CD->getType()->getElementType();
-    auto ObjSize = (DL.getTypeSizeInBits(ElTy) + 7) / 8;
-    for (size_t i = 0, len = CD->getNumElements(); i < len; i++) {
-      auto el = CD->getElementAsConstant(i);
-      auto Off = i * ObjSize;
-      TypeTree subTT = TT.ShiftIndices(DL, Off, ObjSize, 0);
-      subTT.CanonicalizeInPlace(ObjSize, DL);
-      Value *val = invertPointerM(el, BuilderM, subTT);
-      Vals.push_back(cast<Constant>(val));
+  if (auto *constantInt = dyn_cast<ConstantInt>(oval)) {
+    if (constantInt->isZero() ||
+        TT.allFloat(oval, DL, /*anythingIsFloat*/ true))
+      return Constant::getNullValue(getShadowType(oval->getType()));
+    if (!TT.anyFloat(oval, DL))
+      return applyChainRule(oval->getType(), BuilderM, [&]() { return oval; });
+    APInt maskedBits = constantInt->getValue();
+    size_t byteSize = (DL.getTypeSizeInBits(constantInt->getType()) + 7) / 8;
+    zeroNonIntegerBytes(maskedBits, byteSize, TT, DL);
+    if (maskedBits.isZero())
+      return Constant::getNullValue(getShadowType(oval->getType()));
+    Constant *maskedConstant =
+        ConstantInt::get(constantInt->getType(), maskedBits);
+    return applyChainRule(oval->getType(), BuilderM,
+                          [&]() { return maskedConstant; });
+  }
+  if (auto *constantFP = dyn_cast<ConstantFP>(oval)) {
+    if (TT.allFloat(oval, DL, /*anythingIsFloat*/ true))
+      return Constant::getNullValue(getShadowType(oval->getType()));
+    if (!TT.anyFloat(oval, DL))
+      return applyChainRule(oval->getType(), BuilderM, [&]() { return oval; });
+    APInt maskedBits = constantFP->getValueAPF().bitcastToAPInt();
+    size_t byteSize = (DL.getTypeSizeInBits(constantFP->getType()) + 7) / 8;
+    zeroNonIntegerBytes(maskedBits, byteSize, TT, DL);
+    if (maskedBits.isZero())
+      return Constant::getNullValue(getShadowType(oval->getType()));
+    Constant *maskedConstant = ConstantFP::get(
+        constantFP->getType(),
+        APFloat(constantFP->getValueAPF().getSemantics(), maskedBits));
+    return applyChainRule(oval->getType(), BuilderM,
+                          [&]() { return maskedConstant; });
+  }
+  if (auto *constantDataSequential = dyn_cast<ConstantDataSequential>(oval)) {
+    SmallVector<Constant *, 1> values;
+    Type *elementType = constantDataSequential->getElementType();
+    size_t elementSize = (DL.getTypeSizeInBits(elementType) + 7) / 8;
+    for (size_t index = 0, length = constantDataSequential->getNumElements();
+         index < length; index++) {
+      Constant *element = constantDataSequential->getElementAsConstant(index);
+      size_t offset = index * elementSize;
+      TypeTree subTypeTree = sliceSubTypeTree(TT, DL, offset, elementSize);
+      Value *invertedElement = invertPointerM(element, BuilderM, subTypeTree);
+      values.push_back(cast<Constant>(invertedElement));
     }
-    auto rule = [&CD](ArrayRef<Constant *> Vals) {
-      return ConstantArray::get(CD->getType(), Vals);
+    if (auto *constantDataArray =
+            dyn_cast<ConstantDataArray>(constantDataSequential)) {
+      auto rule = [constantDataArray](ArrayRef<Constant *> values) {
+        return ConstantArray::get(constantDataArray->getType(), values);
+      };
+      return applyChainRule(constantDataArray->getType(), values, BuilderM,
+                            rule);
+    }
+    auto rule = [](ArrayRef<Constant *> values) {
+      return ConstantVector::get(values);
     };
-    return applyChainRule(CD->getType(), Vals, BuilderM, rule);
+    return applyChainRule(constantDataSequential->getType(), values, BuilderM,
+                          rule);
   } else if (auto CD = dyn_cast<ConstantArray>(oval)) {
     SmallVector<Constant *, 1> Vals;
     auto ElTy = CD->getType()->getElementType();
@@ -5660,9 +5769,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     for (size_t i = 0, len = CD->getNumOperands(); i < len; i++) {
       auto el = CD->getOperand(i);
       auto Off = i * ObjSize;
-      TypeTree subTT = TT.ShiftIndices(DL, Off, ObjSize, 0);
-      subTT.CanonicalizeInPlace(ObjSize, DL);
-      Value *val = invertPointerM(el, BuilderM, subTT);
+      TypeTree subTypeTree = sliceSubTypeTree(TT, DL, Off, ObjSize);
+      Value *val = invertPointerM(el, BuilderM, subTypeTree);
       Vals.push_back(cast<Constant>(val));
     }
 
@@ -5679,9 +5787,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       auto el = CD->getOperand(i);
       auto Off = Layout->getElementOffset(i);
       auto ObjSize = (DL.getTypeSizeInBits(el->getType()) + 7) / 8;
-      TypeTree subTT = TT.ShiftIndices(DL, Off, ObjSize, 0);
-      subTT.CanonicalizeInPlace(ObjSize, DL);
-      Vals.push_back(cast<Constant>(invertPointerM(el, BuilderM, subTT)));
+      TypeTree subTypeTree = sliceSubTypeTree(TT, DL, Off, ObjSize);
+      Vals.push_back(cast<Constant>(invertPointerM(el, BuilderM, subTypeTree)));
     }
 
     auto rule = [&CD](ArrayRef<Constant *> Vals) {
@@ -5695,9 +5802,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     for (size_t i = 0, len = CD->getNumOperands(); i < len; i++) {
       auto el = CD->getOperand(i);
       auto Off = i * ObjSize;
-      TypeTree subTT = TT.ShiftIndices(DL, Off, ObjSize, 0);
-      subTT.CanonicalizeInPlace(ObjSize, DL);
-      Vals.push_back(cast<Constant>(invertPointerM(el, BuilderM, subTT)));
+      TypeTree subTypeTree = sliceSubTypeTree(TT, DL, Off, ObjSize);
+      Vals.push_back(cast<Constant>(invertPointerM(el, BuilderM, subTypeTree)));
     }
 
     auto rule = [](ArrayRef<Constant *> Vals) {
