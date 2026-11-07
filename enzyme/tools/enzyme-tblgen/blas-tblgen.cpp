@@ -1119,6 +1119,18 @@ void rev_call_arg(bool forward, const DagInit *ruleDag,
         os << ";\n";
       }
 
+      if (op == "FDivOrZero") {
+        if (Dag->getNumArgs() != 2)
+          PrintFatalError(pattern.getLoc(), "FDivOrZero takes two operands");
+        os << "  Value *quot = Builder2.CreateFDiv(subarg_0, subarg_1);\n";
+        os << "  vals.push_back(to_blas_callconv(Builder2, "
+              "CreateSelect(Builder2, Builder2.CreateFCmpOEQ(subarg_1, "
+              "ConstantFP::get(subarg_1->getType(), 0.0)), "
+              "ConstantFP::get(quot->getType(), 0.0), quot), byRef, cublas, "
+              "julia_decl_type, allocationBuilder, \"FDivOrZero\"));\n"
+              " }\n vals; })";
+        return;
+      }
       os << "  vals.push_back(";
       if (op != "Select")
         os << "to_blas_callconv(Builder2, ";
@@ -2036,9 +2048,9 @@ void emit_dag(bool forward, Twine resultVarName, const DagInit *ruleDag,
     return;
   }
   if (Def->isSubClassOf("BFDiv") || Def->getName() == "BFDiv" ||
-      Def->getName() == "FDivOrZero") {
+      Def->getName() == "BFDivOrZero") {
     assert(forward);
-    bool ZeroOnZeroDivisor = Def->getName() == "FDivOrZero";
+    bool ZeroOnZeroDivisor = Def->getName() == "BFDivOrZero";
     os << "        {\n";
     os << "      // BFDiv\n";
     auto subNum = ruleDag->getArg(0);

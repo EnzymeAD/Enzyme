@@ -69,9 +69,9 @@ def Add : Binop<"Add", ["intType", "intType"]>;
 def Mul : Binop<"Mul", ["intType", "intType"]>;
 def BFMul : Binop<"FMul", ["fpType", "fpType"]>;
 def BFDiv : Binop<"FDiv", ["fpType", "fpType"]>;
-def BFCmpOEQ : Binop<"FCmpOEQ", ["fpType", "fpType"]>;
-// Forward-mode result that is zero where the divisor is zero.
-def FDivOrZero : MagicInst;
+// Quotient that is zero where the divisor is zero; the divisor is evaluated
+// once.
+def BFDivOrZero : Binop<"FDivOrZero", ["fpType", "fpType"]>;
 def FSelect : Binop<"Select", ["Builder2.getInt1Ty()", "fpType", "fpType"]>;
 def ISelect : Binop<"Select", ["Builder2.getInt1Ty()", "intType", "intType"]>;
 
@@ -253,9 +253,9 @@ def dot : CallBlasPattern<(Op $n, $x, $incx, $y, $incy),
 def nrm2 : CallBlasPattern<(Op $n, $x, $incx),
                   [],[len, vinc<["n"]>],
                   [
-                  (BlasCall<"axpy"> $n, (FSelect (BFCmpOEQ (BlasCall<"nrm2"> $n, $x), Constant<"0.0">), Constant<"0.0">, (BFDiv DiffeRet, (BlasCall<"nrm2"> $n, $x))), $x, (Shadow $x))
+                  (BlasCall<"axpy"> $n, (BFDivOrZero DiffeRet, (BlasCall<"nrm2"> $n, $x)), $x, (Shadow $x))
                   ],
-                  (FDivOrZero (BlasCall<"dot"> $n, $x, (Shadow $x)), (BlasCall<"nrm2"> $n, $x))
+                  (BFDivOrZero (BlasCall<"dot"> $n, $x, (Shadow $x)), (BlasCall<"nrm2"> $n, $x))
                   >;
 
 
