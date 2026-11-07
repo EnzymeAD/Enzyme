@@ -2257,6 +2257,31 @@ void TypeAnalyzer::visitGEPOperator(GEPOperator &gep) {
         auto ind = I->get();
         updateAnalysis(ind, TypeTree(BaseType::Integer).Only(-1, inst), &gep);
       }
+    } else if (has_non_const_idx &&
+               !isa<ConstantPointerNull>(gep.getPointerOperand()) &&
+               pointerAnalysis.Inner0() == BaseType::Pointer &&
+               getAnalysis(&gep).Inner0() == BaseType::Pointer) {
+      // A non-inbounds byte GEP (stride 1) can subtract two pointers (`base +
+      // (p2 - base)`), so its index may carry Pointer type. However, an index
+      // scaled by a multi-byte element stride (`|stride| > 1`) in a GEP from a
+      // non-null Pointer to a Pointer cannot meaningfully be a pointer or
+      // floating-point bitpattern.
+      auto IdxBitWidth = DL.getIndexSizeInBits(gep.getPointerAddressSpace());
+      APInt TmpConstOffset(IdxBitWidth, 0);
+#if LLVM_VERSION_MAJOR >= 20
+      SmallMapVector<Value *, APInt, 4> TmpVarOffsets;
+#else
+      MapVector<Value *, APInt> TmpVarOffsets;
+#endif
+      if (collectOffset(&gep, DL, IdxBitWidth, TmpVarOffsets, TmpConstOffset)) {
+        for (auto &Pair : TmpVarOffsets) {
+          if (Pair.second.abs().ugt(1) && !isa<Constant>(Pair.first) &&
+              getAnalysis(Pair.first).Inner0() != BaseType::Anything) {
+            updateAnalysis(Pair.first,
+                           TypeTree(BaseType::Integer).Only(-1, inst), &gep);
+          }
+        }
+      }
     }
   }
 
