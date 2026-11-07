@@ -44,6 +44,7 @@
 #include "llvm/ADT/DenseMapInfo.h"
 #include "llvm/ADT/SetOperations.h"
 #include "llvm/ADT/SetVector.h"
+#include "llvm/ADT/SmallBitVector.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Analysis/AssumptionCache.h"
@@ -1140,21 +1141,371 @@ void simplifyExtractions(Function *NewF) {
   }
 }
 
+/// Return whether any operand bundle on the call references the given value.
+static bool hasOperandBundleUse(const CallBase *Call, const Value *Target) {
+  for (unsigned BundleIndex = 0, BundleEnd = Call->getNumOperandBundles();
+       BundleIndex != BundleEnd; ++BundleIndex) {
+    for (const Use &BundleInput : Call->getOperandBundleAt(BundleIndex).Inputs)
+      if (BundleInput.get() == Target)
+        return true;
+  }
+  return false;
+}
+
+/// Identify backstack address-space casts whose transitive pointer uses cannot
+/// be rewritten back to the default stack address space and must instead keep
+/// their original heap or garbage-collected allocation.
+static SmallBitVector
+collectRejectedBackstackCandidates(ArrayRef<Instruction *> Candidates,
+                                   ArrayRef<Instruction *> Fallbacks) {
+  struct BackstackWorkItem {
+    Value *PreviousValue;
+    Instruction *UserInstruction;
+    SmallBitVector Origins;
+  };
+
+  size_t CandidateCount = Candidates.size();
+  SmallBitVector RejectedCandidates(CandidateCount, false);
+  if (CandidateCount == 0)
+    return RejectedCandidates;
+
+  while (true) {
+    SmallBitVector NewlyRejected(CandidateCount, false);
+    auto RejectOrigins = [&](const SmallBitVector &Origins) {
+      for (unsigned CandidateIndex : Origins.set_bits()) {
+        if (!RejectedCandidates.test(CandidateIndex) &&
+            Fallbacks[CandidateIndex] != nullptr)
+          NewlyRejected.set(CandidateIndex);
+      }
+    };
+
+    SmallVector<BackstackWorkItem, 16> Worklist;
+    for (size_t CandidateIndex = 0; CandidateIndex < CandidateCount;
+         ++CandidateIndex) {
+      if (RejectedCandidates.test(CandidateIndex))
+        continue;
+      SmallBitVector Origin(CandidateCount, false);
+      Origin.set(CandidateIndex);
+      for (User *CandidateUser : Candidates[CandidateIndex]->users()) {
+        Worklist.push_back({Candidates[CandidateIndex],
+                            cast<Instruction>(CandidateUser), Origin});
+      }
+    }
+
+    DenseSet<Instruction *> ReplacedInstructions;
+    while (!Worklist.empty()) {
+      BackstackWorkItem CurrentItem = Worklist.pop_back_val();
+      Value *PreviousValue = CurrentItem.PreviousValue;
+      Instruction *CurrentInstruction = CurrentItem.UserInstruction;
+
+      if (auto *AddrCast = dyn_cast<AddrSpaceCastInst>(CurrentInstruction)) {
+        if (AddrCast->getDestAddressSpace() == 0)
+          continue;
+        if (EnzymeJuliaAddrLoad && AddrCast->getDestAddressSpace() == 11) {
+          if (ReplacedInstructions.insert(AddrCast).second) {
+            for (User *CastUser : AddrCast->users())
+              Worklist.push_back(
+                  {AddrCast, cast<Instruction>(CastUser), CurrentItem.Origins});
+          }
+          continue;
+        }
+        continue;
+      }
+
+      if (auto *CastOp = dyn_cast<CastInst>(CurrentInstruction)) {
+        if (!CastOp->getType()->isPointerTy())
+          continue;
+        if (ReplacedInstructions.insert(CastOp).second) {
+          for (User *CastUser : CastOp->users())
+            Worklist.push_back(
+                {CastOp, cast<Instruction>(CastUser), CurrentItem.Origins});
+        }
+        continue;
+      }
+
+      if (auto *ElementPointer =
+              dyn_cast<GetElementPtrInst>(CurrentInstruction)) {
+        if (ElementPointer->getPointerOperand() != PreviousValue) {
+          RejectOrigins(CurrentItem.Origins);
+          continue;
+        }
+        if (ReplacedInstructions.insert(ElementPointer).second) {
+          for (User *PointerUser : ElementPointer->users())
+            Worklist.push_back({ElementPointer, cast<Instruction>(PointerUser),
+                                CurrentItem.Origins});
+        }
+        continue;
+      }
+
+      if (auto *Phi = dyn_cast<PHINode>(CurrentInstruction)) {
+        unsigned IncomingCount = Phi->getNumIncomingValues();
+        SmallVector<bool, 4> ReplacedOperands(IncomingCount, false);
+        SmallBitVector CombinedOrigins = CurrentItem.Origins;
+        for (unsigned OperandIndex = 0; OperandIndex < IncomingCount;
+             ++OperandIndex) {
+          if (Phi->getIncomingValue(OperandIndex) == PreviousValue)
+            ReplacedOperands[OperandIndex] = true;
+        }
+        for (const BackstackWorkItem &PendingItem : Worklist) {
+          if (PendingItem.UserInstruction != Phi)
+            continue;
+          for (unsigned OperandIndex = 0; OperandIndex < IncomingCount;
+               ++OperandIndex) {
+            if (Phi->getIncomingValue(OperandIndex) ==
+                PendingItem.PreviousValue) {
+              ReplacedOperands[OperandIndex] = true;
+              CombinedOrigins |= PendingItem.Origins;
+            }
+          }
+        }
+        bool AllOperandsReplaced = llvm::all_of(
+            ReplacedOperands, [](bool IsReplaced) { return IsReplaced; });
+        if (!AllOperandsReplaced) {
+          bool RemainingArePhiNodes =
+              llvm::all_of(Worklist, [](const BackstackWorkItem &PendingItem) {
+                return isa<PHINode>(PendingItem.UserInstruction);
+              });
+          if (!RemainingArePhiNodes) {
+            Worklist.insert(Worklist.begin(), std::move(CurrentItem));
+            continue;
+          }
+          for (int WorklistIndex = static_cast<int>(Worklist.size()) - 1;
+               WorklistIndex >= 0; --WorklistIndex) {
+            if (Worklist[WorklistIndex].UserInstruction == Phi)
+              Worklist.erase(Worklist.begin() + WorklistIndex);
+          }
+          unsigned PhiAddressSpace =
+              cast<PointerType>(Phi->getType())->getAddressSpace();
+          if (PhiAddressSpace != 10 && PhiAddressSpace != 0)
+            continue;
+          RejectOrigins(CombinedOrigins);
+          continue;
+        }
+        for (int WorklistIndex = static_cast<int>(Worklist.size()) - 1;
+             WorklistIndex >= 0; --WorklistIndex) {
+          if (Worklist[WorklistIndex].UserInstruction == Phi)
+            Worklist.erase(Worklist.begin() + WorklistIndex);
+        }
+        if (ReplacedInstructions.insert(Phi).second) {
+          for (User *PhiUser : Phi->users())
+            Worklist.push_back(
+                {Phi, cast<Instruction>(PhiUser), CombinedOrigins});
+        }
+        continue;
+      }
+
+      if (auto *IntrinsicCall = dyn_cast<IntrinsicInst>(CurrentInstruction)) {
+        if (isIntelSubscriptIntrinsic(*IntrinsicCall) &&
+            IntrinsicCall->getArgOperand(3) == PreviousValue) {
+          if (ReplacedInstructions.insert(IntrinsicCall).second) {
+            for (User *IntrinsicUser : IntrinsicCall->users())
+              Worklist.push_back({IntrinsicCall,
+                                  cast<Instruction>(IntrinsicUser),
+                                  CurrentItem.Origins});
+          }
+          continue;
+        }
+      }
+
+      if (auto *Load = dyn_cast<LoadInst>(CurrentInstruction)) {
+        if (Load->getPointerOperand() == PreviousValue)
+          continue;
+      }
+
+      if (auto *Store = dyn_cast<StoreInst>(CurrentInstruction)) {
+        if (Store->getPointerOperand() == PreviousValue &&
+            Store->getValueOperand() != PreviousValue)
+          continue;
+      }
+
+      if (auto *MemSet = dyn_cast<MemSetInst>(CurrentInstruction)) {
+        if (MemSet->getArgOperand(0) == PreviousValue &&
+            !hasOperandBundleUse(MemSet, PreviousValue))
+          continue;
+      }
+
+      if (auto *MemTransfer = dyn_cast<MemTransferInst>(CurrentInstruction)) {
+        if ((MemTransfer->getArgOperand(0) == PreviousValue ||
+             MemTransfer->getArgOperand(1) == PreviousValue) &&
+            !hasOperandBundleUse(MemTransfer, PreviousValue))
+          continue;
+      }
+
+      if (!isa<MemSetInst>(CurrentInstruction) &&
+          !isa<MemTransferInst>(CurrentInstruction)) {
+        if (auto *Call = dyn_cast<CallInst>(CurrentInstruction)) {
+          if (Function *Callee = Call->getCalledFunction()) {
+            if (Callee->getName() == "julia.write_barrier" ||
+                Callee->getName() == "julia.write_barrier_binding")
+              continue;
+          }
+          if (Call->getCalledOperand() != PreviousValue &&
+              !hasOperandBundleUse(Call, PreviousValue))
+            continue;
+        }
+      }
+
+      if (auto *InsertVal = dyn_cast<InsertValueInst>(CurrentInstruction)) {
+        if (EnzymeJuliaAddrLoad &&
+            InsertVal->getInsertedValueOperand() == PreviousValue &&
+            cast<PointerType>(PreviousValue->getType())->getAddressSpace() ==
+                11)
+          continue;
+      }
+
+      if (auto *Select = dyn_cast<SelectInst>(CurrentInstruction)) {
+        bool ReplacedOperands[2] = {false, false};
+        SmallBitVector CombinedOrigins = CurrentItem.Origins;
+        for (unsigned OperandIndex = 0; OperandIndex < 2; ++OperandIndex) {
+          if (Select->getOperand(OperandIndex + 1) == PreviousValue)
+            ReplacedOperands[OperandIndex] = true;
+        }
+        for (const BackstackWorkItem &PendingItem : Worklist) {
+          if (PendingItem.UserInstruction != Select)
+            continue;
+          for (unsigned OperandIndex = 0; OperandIndex < 2; ++OperandIndex) {
+            if (Select->getOperand(OperandIndex + 1) ==
+                PendingItem.PreviousValue) {
+              ReplacedOperands[OperandIndex] = true;
+              CombinedOrigins |= PendingItem.Origins;
+            }
+          }
+        }
+        if (ReplacedOperands[0] && ReplacedOperands[1]) {
+          for (int WorklistIndex = static_cast<int>(Worklist.size()) - 1;
+               WorklistIndex >= 0; --WorklistIndex) {
+            if (Worklist[WorklistIndex].UserInstruction == Select)
+              Worklist.erase(Worklist.begin() + WorklistIndex);
+          }
+          if (ReplacedInstructions.insert(Select).second) {
+            for (User *SelectUser : Select->users())
+              Worklist.push_back(
+                  {Select, cast<Instruction>(SelectUser), CombinedOrigins});
+          }
+          continue;
+        }
+        bool RemainingAreMergeNodes =
+            llvm::all_of(Worklist, [](const BackstackWorkItem &PendingItem) {
+              return isa<PHINode>(PendingItem.UserInstruction) ||
+                     isa<SelectInst>(PendingItem.UserInstruction);
+            });
+        if (!RemainingAreMergeNodes) {
+          Worklist.insert(Worklist.begin(), std::move(CurrentItem));
+          continue;
+        }
+        for (int WorklistIndex = static_cast<int>(Worklist.size()) - 1;
+             WorklistIndex >= 0; --WorklistIndex) {
+          if (Worklist[WorklistIndex].UserInstruction == Select)
+            Worklist.erase(Worklist.begin() + WorklistIndex);
+        }
+        RejectOrigins(CombinedOrigins);
+        continue;
+      }
+
+      if (isa<CmpInst>(CurrentInstruction))
+        continue;
+
+      RejectOrigins(CurrentItem.Origins);
+    }
+
+    if (NewlyRejected.none())
+      break;
+    RejectedCandidates |= NewlyRejected;
+  }
+
+  return RejectedCandidates;
+}
+
 void PreProcessCache::LowerAllocAddr(Function *NewF) {
   simplifyExtractions(NewF);
+  DenseMap<const MDNode *, Instruction *> FallbackByIdentifier;
+  SmallVector<Instruction *, 4> AllFallbacks;
   SmallVector<Instruction *, 1> InitialTodo;
   for (auto &BB : *NewF) {
     for (auto &I : BB) {
-      if (hasMetadata(&I, "enzyme_backstack")) {
-        InitialTodo.push_back(&I);
-        // TODO
-        // I.eraseMetadata("enzyme_backstack");
+      if (auto *AllocMetadata = hasMetadata(&I, "enzyme_backstack_alloc")) {
+        AllFallbacks.push_back(&I);
+        if (AllocMetadata->getNumOperands() > 0) {
+          if (auto *Identifier =
+                  dyn_cast<MDNode>(AllocMetadata->getOperand(0).get()))
+            FallbackByIdentifier[Identifier] = &I;
+        }
       }
+      if (hasMetadata(&I, "enzyme_backstack"))
+        InitialTodo.push_back(&I);
     }
   }
+
+  SmallVector<Instruction *, 4> CandidateFallbacks(InitialTodo.size(), nullptr);
+  for (size_t CandidateIndex = 0; CandidateIndex < InitialTodo.size();
+       ++CandidateIndex) {
+    MDNode *BackstackMetadata =
+        hasMetadata(InitialTodo[CandidateIndex], "enzyme_backstack");
+    if (!BackstackMetadata || BackstackMetadata->getNumOperands() == 0)
+      continue;
+    if (auto *Identifier =
+            dyn_cast<MDNode>(BackstackMetadata->getOperand(0).get()))
+      CandidateFallbacks[CandidateIndex] =
+          FallbackByIdentifier.lookup(Identifier);
+  }
+
+  SmallBitVector RejectedCandidates =
+      collectRejectedBackstackCandidates(InitialTodo, CandidateFallbacks);
+
+  SmallPtrSet<Instruction *, 4> HandledFallbacks;
+  SmallVector<Instruction *, 1> AcceptedCandidates;
+  for (size_t CandidateIndex = 0; CandidateIndex < InitialTodo.size();
+       ++CandidateIndex) {
+    Instruction *Candidate = InitialTodo[CandidateIndex];
+    Instruction *FallbackAllocation = CandidateFallbacks[CandidateIndex];
+    if (!RejectedCandidates.test(CandidateIndex)) {
+      if (FallbackAllocation) {
+        HandledFallbacks.insert(FallbackAllocation);
+        FallbackAllocation->setMetadata("enzyme_backstack_alloc", nullptr);
+        if (FallbackAllocation->use_empty())
+          FallbackAllocation->eraseFromParent();
+      }
+      AcceptedCandidates.push_back(Candidate);
+      continue;
+    }
+
+    assert(FallbackAllocation &&
+           "rejected backstack candidate must have a fallback allocation");
+    HandledFallbacks.insert(FallbackAllocation);
+    Value *OperandValue = Candidate->getOperand(0);
+    auto *PointerCast = dyn_cast<BitCastInst>(OperandValue);
+    if (PointerCast)
+      OperandValue = PointerCast->getOperand(0);
+    auto *StackAllocation = cast<AllocaInst>(OperandValue);
+    Value *ArraySize = StackAllocation->getArraySize();
+
+    FallbackAllocation->setMetadata("enzyme_backstack_alloc", nullptr);
+    if (!FallbackAllocation->hasName() && StackAllocation->hasName())
+      FallbackAllocation->takeName(StackAllocation);
+    Candidate->replaceAllUsesWith(FallbackAllocation);
+    Candidate->eraseFromParent();
+    if (PointerCast && PointerCast->use_empty())
+      PointerCast->eraseFromParent();
+    if (StackAllocation->use_empty())
+      StackAllocation->eraseFromParent();
+    if (auto *SizeInstruction = dyn_cast<Instruction>(ArraySize)) {
+      if (SizeInstruction->use_empty() &&
+          isInstructionTriviallyDead(SizeInstruction))
+        SizeInstruction->eraseFromParent();
+    }
+  }
+
+  for (Instruction *FallbackAllocation : AllFallbacks) {
+    if (HandledFallbacks.contains(FallbackAllocation))
+      continue;
+    FallbackAllocation->setMetadata("enzyme_backstack_alloc", nullptr);
+    if (FallbackAllocation->use_empty())
+      FallbackAllocation->eraseFromParent();
+  }
+
   SmallVector<std::tuple<Value *, Value *, Instruction *>, 1> Todo;
   SmallVector<Instruction *, 1> toErase;
-  for (auto T : InitialTodo) {
+  for (auto T : AcceptedCandidates) {
     auto T0 = T->getOperand(0);
     if (auto CI = dyn_cast<BitCastInst>(T0))
       T0 = CI->getOperand(0);
