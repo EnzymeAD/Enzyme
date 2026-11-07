@@ -270,13 +270,17 @@ if(ENZYME_FLANG_VERSION)
   add_definitions(-DFLANG=1)
 endif()
 
-# A snapshot of LLVM 22, such as the LLVM of ROCm 7.2 (22.0.0git), can predate API changes of the LLVM 22 release that the code
-# uses (intrinsic names, SCEVExpander, PassPlugin.h): then ENZYME_LLVM22_PRERELEASE makes the code take the LLVM 21 branch there.
+# A snapshot of LLVM 22, such as the LLVM of ROCm 7.2 (22.0.0git), can predate
+# API changes of the LLVM 22 release that the code uses (intrinsic names,
+# SCEVExpander, PassPlugin.h): then ENZYME_LLVM22_PRERELEASE makes the code
+# take the LLVM 21 branch there.
 function(enzyme_check_llvm22_release_api)
   include(CheckCXXSourceCompiles)
   set(CMAKE_REQUIRED_INCLUDES ${LLVM_INCLUDE_DIRS})
-  set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY) # Compile only: no LLVM library to link.
-  check_cxx_source_compiles("
+  # Compile only: no LLVM library to link.
+  set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
+  check_cxx_source_compiles(
+    "
 #if !__has_include(\"llvm/Plugins/PassPlugin.h\")
 #error \"no llvm/Plugins/PassPlugin.h\"
 #endif
@@ -290,7 +294,8 @@ endfunction()
 if(LLVM_VERSION_MAJOR EQUAL 22)
   enzyme_check_llvm22_release_api()
   if(NOT ENZYME_LLVM22_RELEASE_API)
-    message("LLVM 22 snapshot without the API of the LLVM 22 release: ENZYME_LLVM22_PRERELEASE")
+    message(
+            "LLVM 22 snapshot without the API of the LLVM 22 release: ENZYME_LLVM22_PRERELEASE")
     add_definitions(-DENZYME_LLVM22_PRERELEASE=1)
   endif()
 endif()
