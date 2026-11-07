@@ -271,7 +271,9 @@ FunctionOpInterface MEnzymeLogic::CreateReverseDiff(
                           addedType,
                           type_args,
                           overwritten_args,
-                          omp};
+                          omp,
+                          strongZero,
+                          markReadonly};
 
   {
     auto cachedFn = ReverseCachedFunctions.find(tup);
