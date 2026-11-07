@@ -27,6 +27,7 @@
 
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallBitVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
 
 #include "llvm/Analysis/AliasAnalysis.h"
@@ -909,6 +910,17 @@ parseTrueType(const llvm::MDNode *, DerivativeMode, bool const_src);
 /// Returns nullptr if no type information covers the range.
 llvm::MDNode *sliceTrueType(const llvm::MDNode *md, size_t start,
                             size_t length);
+
+/// Return whether \p Pointer addresses memory private to a single GPU thread.
+bool isGPUThreadLocalPointer(
+    const llvm::Value *Pointer, const llvm::Triple &TargetTriple,
+    bool AllowByVal = true, const llvm::Function *ArgumentParent = nullptr,
+    const llvm::SmallBitVector *ThreadLocalShadows = nullptr);
+
+/// Return whether every lane of \p ShadowValue addresses GPU thread-private
+/// memory.
+bool allShadowLanesThreadLocal(llvm::Value *ShadowValue, unsigned Width,
+                               const llvm::Triple &TargetTriple);
 
 bool isAtomic(llvm::Value *origptr, bool AtomicAdd, llvm::Function *newFunc);
 
