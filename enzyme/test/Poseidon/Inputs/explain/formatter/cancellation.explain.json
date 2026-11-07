@@ -1,0 +1,293 @@
+{
+  "function": {
+    "ir": "preprocess__Z6kernelPKdPdi",
+    "loc": {
+      "col": 0,
+      "file": "explain_formatter.cpp",
+      "line": 13
+    },
+    "name": "kernel(double const*, double*, int)",
+    "site": {
+      "col": 3,
+      "file": "explain_formatter.cpp",
+      "line": 26
+    },
+    "symbol": "_Z6kernelPKdPdi"
+  },
+  "pareto": [
+    {
+      "applied": [
+        "R0_1"
+      ],
+      "budget": -3576832,
+      "cost": 0,
+      "modelled_rel_error": 1.1607706226323944e-16,
+      "selected": true
+    },
+    {
+      "applied": [
+        "R0_0"
+      ],
+      "budget": -3453952,
+      "cost": 122880,
+      "modelled_rel_error": 2.1273352908378104e-25
+    }
+  ],
+  "result": {
+    "applied": [
+      "R0_1"
+    ],
+    "cost_after": 0,
+    "cost_before": 3576832,
+    "modelled_rel_error": 1.1607706226323944e-16,
+    "modelled_rel_error_as_written": 2.770306794452491e-10
+  },
+  "schema": "poseidon-explain/1",
+  "subgraphs": [
+    {
+      "alternatives": [
+        {
+          "approx": true,
+          "approx_note": "series approximation of (1.0 - cos(x[i])) / (x[i] * x[i])",
+          "c": "fma(-0.041666666666666664, x[i] * x[i], 0.5)",
+          "cost_delta": -3453952,
+          "fpcore": "#s(approx (/ (- 1 (cos v0)) (* v0 v0)) (fma.f64 #s(literal -1/24 binary64) (*.f64 v0 v0) #s(literal 1/2 binary64)))",
+          "herbie_error_bits": {
+            "after": 0,
+            "before": 38.102
+          },
+          "id": "R0_0",
+          "kind": "algebraic",
+          "modelled_error": 2.1273352908378104e-25,
+          "outputs": [
+            0
+          ],
+          "precision": "binary64",
+          "reason": "on the Pareto frontier; -poseidon-apply-rewrites=R0_0 applies it",
+          "status": "pareto",
+          "summary": "Herbie rewrite searched at binary64, series approximation"
+        },
+        {
+          "approx": true,
+          "approx_note": "series approximation of (1.0 - cos(x[i])) / (x[i] * x[i])",
+          "c": "0.5",
+          "cost_delta": -3576832,
+          "fpcore": "#s(approx (/ (- 1 (cos v0)) (* v0 v0)) #s(literal 1/2 binary64))",
+          "herbie_error_bits": {
+            "after": 9.786000000000001,
+            "before": 38.102
+          },
+          "id": "R0_1",
+          "kind": "algebraic",
+          "modelled_error": 1.1607706226323944e-16,
+          "outputs": [
+            0
+          ],
+          "precision": "binary64",
+          "reason": "part of the cheapest solution that meets the target",
+          "status": "applied",
+          "summary": "Herbie rewrite searched at binary64, series approximation"
+        },
+        {
+          "approx": true,
+          "approx_note": "series approximation of (1.0 - cos(x[i])) / (x[i] * x[i])",
+          "c": "(double)0.5f",
+          "cost_delta": -3576832,
+          "fpcore": "#s(approx (/ (- 1 (cos v0)) (* v0 v0)) #s(literal 1/2 binary32))",
+          "herbie_error_bits": {
+            "after": 0,
+            "before": 29.977
+          },
+          "id": "R1_0",
+          "kind": "algebraic",
+          "modelled_error": 1.1607706226323944e-16,
+          "outputs": [
+            0
+          ],
+          "precision": "binary32",
+          "reason": "the selected R0_1 rewrites the same output",
+          "status": "rejected",
+          "summary": "Herbie rewrite searched at binary32, series approximation"
+        },
+        {
+          "c": "(double)((1.0f - cosf((float)x[i])) / ((float)x[i] * (float)x[i]))",
+          "changes": [
+            {
+              "from": "FP64",
+              "ops": [
+                1,
+                2,
+                3,
+                0
+              ],
+              "to": "FP32"
+            }
+          ],
+          "cost_delta": -2782208,
+          "id": "PT0_0",
+          "kind": "precision",
+          "modelled_error": 4.999999998839222e-07,
+          "outputs": [
+            0
+          ],
+          "reason": "dominated by R0_1, which costs no more and is at least as accurate",
+          "status": "rejected",
+          "summary": "All FP64(0%) + FP32(100%): '-' (15:19), '*' (15:45), '/' (15:37) and cos (15:21) in float (4 of 4 operations)"
+        },
+        {
+          "c": "(double)((1.0f - (float)cos(x[i])) / ((float)x[i] * (float)x[i]))",
+          "changes": [
+            {
+              "from": "FP64",
+              "ops": [
+                1,
+                2,
+                3
+              ],
+              "to": "FP32"
+            }
+          ],
+          "cost_delta": 171008,
+          "id": "PT0_1",
+          "kind": "precision",
+          "modelled_error": 4.999999998839222e-07,
+          "outputs": [
+            0
+          ],
+          "reason": "neither cheaper nor more accurate than as written",
+          "status": "rejected",
+          "summary": "All FP64(30%) + FP32(70%): '-' (15:19), '*' (15:45) and '/' (15:37) in float (3 of 4 operations)"
+        }
+      ],
+      "cost": 3576832,
+      "executions": 1024,
+      "herbie": [
+        {
+          "candidates": 2,
+          "error_bits": 38.102,
+          "id": "R0",
+          "precision": "binary64",
+          "status": "imp-start"
+        },
+        {
+          "candidates": 1,
+          "error_bits": 29.977,
+          "id": "R1",
+          "precision": "binary32",
+          "status": "imp-start"
+        }
+      ],
+      "id": "S0",
+      "inputs": [
+        {
+          "loc": {
+            "col": 30,
+            "file": "explain_formatter.cpp",
+            "line": 15
+          },
+          "max": 0.0001,
+          "min": 1e-08,
+          "name": "x[i]",
+          "type": "double",
+          "var": "v0"
+        }
+      ],
+      "kind": "subgraph",
+      "loc": {
+        "col": 37,
+        "file": "explain_formatter.cpp",
+        "line": 15
+      },
+      "ops": [
+        {
+          "executions": 1024,
+          "gradient": -5.603690685911234e+17,
+          "loc": {
+            "col": 21,
+            "file": "explain_formatter.cpp",
+            "line": 15
+          },
+          "max": 1,
+          "min": 0.999999995,
+          "opcode": "cos",
+          "sensitivity": 5.603690685911228e+17,
+          "type": "double"
+        },
+        {
+          "executions": 1024,
+          "gradient": 5.603690685911234e+17,
+          "loc": {
+            "col": 19,
+            "file": "explain_formatter.cpp",
+            "line": 15
+          },
+          "max": 4.999999969612645e-09,
+          "min": 0,
+          "opcode": "-",
+          "sensitivity": 516.7888834210416,
+          "type": "double"
+        },
+        {
+          "executions": 1024,
+          "gradient": -3.116510561052433e+17,
+          "loc": {
+            "col": 45,
+            "file": "explain_formatter.cpp",
+            "line": 15
+          },
+          "max": 1e-08,
+          "min": 1.0000000000000001e-16,
+          "opcode": "*",
+          "sensitivity": 516.7888834210416,
+          "type": "double"
+        },
+        {
+          "executions": 1024,
+          "gradient": 560369068591.1234,
+          "loc": {
+            "col": 37,
+            "file": "explain_formatter.cpp",
+            "line": 15
+          },
+          "max": 0.9965277771349845,
+          "min": 0,
+          "opcode": "/",
+          "sensitivity": 516.7888834210418,
+          "type": "double"
+        }
+      ],
+      "original": {
+        "c": "(1.0 - cos(x[i])) / (x[i] * x[i])",
+        "fpcore": "(/ (- 1 (cos v0)) (* v0 v0))"
+      },
+      "outputs": [
+        {
+          "c": "(1.0 - cos(x[i])) / (x[i] * x[i])",
+          "fpcore": "(/ (- 1 (cos v0)) (* v0 v0))",
+          "inputs": [
+            0
+          ],
+          "loc": {
+            "col": 37,
+            "file": "explain_formatter.cpp",
+            "line": 15
+          },
+          "name": "out[i]",
+          "ops": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "type": "double"
+        }
+      ]
+    }
+  ],
+  "target": {
+    "cost_model": "cm_x86-64_explorer.csv",
+    "selector": "dp",
+    "tau": 1e-06,
+    "tau_from": "flag"
+  }
+}
