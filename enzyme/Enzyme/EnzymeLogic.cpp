@@ -889,6 +889,385 @@ void calculateUnusedValuesInFunction(
     }
   }
 
+  // Keep inactive deallocations of pointers loaded from local stack slots in
+  // the forward pass when no in-function allocation flows into the slot (for
+  // instance, out-of-line C++ container/string constructors paired with an
+  // inlined destructor) and the buffer is not needed in the reverse pass.
+  if (!gutils->runtimeActivity &&
+      (mode == DerivativeMode::ReverseModePrimal ||
+       mode == DerivativeMode::ReverseModeCombined ||
+       mode == DerivativeMode::ReverseModeGradient)) {
+    const DataLayout &DL = func.getParent()->getDataLayout();
+    uint64_t PtrBytes = DL.getPointerSize(0);
+    auto StripLocalSlot =
+        [&](const Value *P,
+            int64_t ExtraOff) -> std::pair<const Instruction *, uint64_t> {
+      if (!P || !P->getType()->isPointerTy())
+        return {nullptr, 0};
+      APInt Off(DL.getIndexTypeSizeInBits(P->getType()), 0);
+      const Value *Base = P->stripAndAccumulateConstantOffsets(
+          DL, Off, /*AllowNonInbounds*/ true);
+      int64_t Total = Off.getSExtValue() + ExtraOff;
+      if (Total < 0)
+        return {nullptr, 0};
+      if (const auto *AI = dyn_cast<AllocaInst>(Base))
+        return {AI, static_cast<uint64_t>(Total)};
+      if (const auto *MCI = dyn_cast<CallInst>(Base))
+        if (hasMetadata(MCI, "enzyme_fromstack"))
+          return {MCI, static_cast<uint64_t>(Total)};
+      return {nullptr, 0};
+    };
+
+    for (BasicBlock &BB : func) {
+      if (oldUnreachable.count(&BB))
+        continue;
+      for (Instruction &I : BB) {
+        auto *CI = dyn_cast<CallInst>(&I);
+        if (!CI || !isDeallocationCall(CI, TLI) ||
+            gutils->forwardDeallocations.count(CI) ||
+            gutils->postDominatingFrees.count(CI) ||
+            CI->getMetadata("enzyme_cache_free"))
+          continue;
+        Value *FreedArg = CI->getArgOperand(0);
+        if (!gutils->isConstantInstruction(CI) ||
+            !gutils->isConstantValue(FreedArg))
+          continue;
+        auto *LI = dyn_cast<LoadInst>(getBaseObject(FreedArg));
+        if (!LI || DifferentialUseAnalysis::is_value_needed_in_reverse<
+                       QueryType::Primal>(gutils, LI, minCutMode, CacheResults,
+                                          oldUnreachable))
+          continue;
+        auto [RootSlot, RootOff] = StripLocalSlot(LI->getPointerOperand(), 0);
+        if (!RootSlot)
+          continue;
+
+        SmallVector<std::pair<const Instruction *, uint64_t>, 4> SlotWork = {
+            {RootSlot, RootOff}};
+        SmallSet<std::pair<const Instruction *, uint64_t>, 8> SeenSlots;
+        bool SafeForwardFree = true;
+
+        // Whether the pointer-sized slice at `Off` within local slot `S` is
+        // the heap-buffer field of a `std::basic_string` subobject (determined
+        // from the slot's static type, so composite wrappers holding a string
+        // at a non-zero offset are recognized too).
+        auto SlotSliceIsString = [&](const Instruction *S, uint64_t Off) {
+          Type *ATy = nullptr;
+          uint64_t Count = 1;
+          if (const auto *AI = dyn_cast<AllocaInst>(S)) {
+            if (!isa<ConstantInt>(AI->getArraySize()))
+              return false;
+            ATy = AI->getAllocatedType();
+            Count = cast<ConstantInt>(AI->getArraySize())->getLimitedValue();
+          } else {
+            ATy = extractEnzymeFromStackType(S, &DL, &Count);
+          }
+          if (!ATy)
+            return false;
+          uint64_t ESize = DL.getTypeAllocSize(ATy);
+          if (ESize == 0 || Off / ESize >= Count)
+            return false;
+          return isBasicStringSlice(ATy, Off % ESize, PtrBytes, DL);
+        };
+
+        auto CheckStoredPtrVal = [&](const Value *V, uint64_t CurSliceOff,
+                                     bool CurSlotIsString, int64_t StoreOff,
+                                     uint64_t StoreBytes) -> bool {
+          if (StoreBytes < PtrBytes)
+            return true;
+          SmallVector<const Value *, 4> ValWork = {V};
+          SmallPtrSet<const Value *, 8> SeenVals;
+          while (!ValWork.empty()) {
+            const Value *Cur = ValWork.pop_back_val();
+            if (!Cur || !SeenVals.insert(Cur).second)
+              continue;
+            while (isa<CastInst>(Cur) || isa<FreezeInst>(Cur))
+              Cur = cast<Instruction>(Cur)->getOperand(0);
+            if (isa<Constant>(Cur) ||
+                !gutils->TR.anyPointer(const_cast<Value *>(Cur)))
+              continue;
+            // The address of another local object is never a heap buffer.
+            if (isa<AllocaInst>(Cur))
+              continue;
+            if (const auto *FSC = dyn_cast<CallInst>(Cur))
+              if (hasMetadata(FSC, "enzyme_fromstack"))
+                continue;
+            if (const auto *PN = dyn_cast<PHINode>(Cur)) {
+              for (const Value *InV : PN->incoming_values())
+                ValWork.push_back(InV);
+              continue;
+            }
+            if (const auto *Sel = dyn_cast<SelectInst>(Cur)) {
+              ValWork.push_back(Sel->getTrueValue());
+              ValWork.push_back(Sel->getFalseValue());
+              continue;
+            }
+            if (const auto *GEP = dyn_cast<GEPOperator>(Cur)) {
+              ValWork.push_back(GEP->getPointerOperand());
+              continue;
+            }
+            if (const auto *SLI = dyn_cast<LoadInst>(Cur)) {
+              int64_t Rel =
+                  (StoreOff >= 0 &&
+                   DL.getTypeStoreSize(SLI->getType()) == StoreBytes &&
+                   static_cast<int64_t>(CurSliceOff) >= StoreOff &&
+                   static_cast<uint64_t>(static_cast<int64_t>(CurSliceOff) -
+                                         StoreOff) +
+                           PtrBytes <=
+                       StoreBytes)
+                      ? (static_cast<int64_t>(CurSliceOff) - StoreOff)
+                      : 0;
+              auto [SSlot, SOff] =
+                  StripLocalSlot(SLI->getPointerOperand(), Rel);
+              if (!SSlot) {
+                // A local string's buffer field copied from a non-local
+                // string (e.g. an inlined copy constructor from a `const
+                // std::string&` argument) cannot carry an in-function
+                // allocation.
+                if (CurSlotIsString)
+                  continue;
+                return false;
+              }
+              SlotWork.emplace_back(SSlot, SOff);
+              continue;
+            }
+            if (const auto *SCB = dyn_cast<CallBase>(Cur)) {
+              if (!isAllocationCall(SCB, TLI) &&
+                  gutils->isConstantInstruction(const_cast<CallBase *>(SCB)) &&
+                  !DifferentialUseAnalysis::is_value_needed_in_reverse<
+                      QueryType::Primal>(gutils, SCB, minCutMode, CacheResults,
+                                         oldUnreachable))
+                continue;
+              return false;
+            }
+            return false;
+          }
+          return true;
+        };
+
+        while (!SlotWork.empty() && SafeForwardFree) {
+          auto [Slot, SliceOff] = SlotWork.pop_back_val();
+          if (!SeenSlots.insert({Slot, SliceOff}).second)
+            continue;
+          const bool SlotIsString = SlotSliceIsString(Slot, SliceOff);
+          uint64_t SliceEnd = SliceOff + PtrBytes;
+          auto Overlaps = [&](uint64_t O, uint64_t L) {
+            return O < SliceEnd && SliceOff < O + L;
+          };
+          SmallVector<std::pair<const Value *, std::optional<int64_t>>, 8>
+              PtrWork = {{Slot, 0}};
+          SmallPtrSet<const Value *, 16> SeenPtrs;
+          // Local slots (and offsets) into which the address of a pointer
+          // into `Slot` was stored; pointers reloaded from them alias `Slot`
+          // and are tracked too.
+          SmallSet<std::pair<const Instruction *, uint64_t>, 4> AliasSlots;
+          while (!PtrWork.empty() && SafeForwardFree) {
+            auto [CurP, POff] = PtrWork.pop_back_val();
+            if (!SeenPtrs.insert(CurP).second)
+              continue;
+            for (const User *U : CurP->users()) {
+              const auto *UI = dyn_cast<Instruction>(U);
+              if (!UI) {
+                SafeForwardFree = false;
+                break;
+              }
+              if (isa<BitCastInst>(UI) || isa<AddrSpaceCastInst>(UI) ||
+                  isa<FreezeInst>(UI)) {
+                PtrWork.emplace_back(UI, POff);
+                continue;
+              }
+              if (isa<SelectInst>(UI) || isa<PHINode>(UI)) {
+                PtrWork.emplace_back(UI, std::nullopt);
+                continue;
+              }
+              if (const auto *GEP = dyn_cast<GetElementPtrInst>(UI)) {
+                APInt Step(DL.getIndexTypeSizeInBits(GEP->getType()), 0);
+                if (POff.has_value() && GEP->accumulateConstantOffset(DL, Step))
+                  PtrWork.emplace_back(GEP, *POff + Step.getSExtValue());
+                else
+                  PtrWork.emplace_back(GEP, std::nullopt);
+                continue;
+              }
+              if (isa<ICmpInst>(UI) || isa<PtrToIntInst>(UI))
+                continue;
+              if (const auto *ULI = dyn_cast<LoadInst>(UI)) {
+                uint64_t LBytes = DL.getTypeStoreSize(ULI->getType());
+                bool MayOverlap =
+                    !POff.has_value() ||
+                    (*POff >= 0 &&
+                     Overlaps(static_cast<uint64_t>(*POff), LBytes));
+                if (MayOverlap &&
+                    (ULI->getType()->isPointerTy() || LBytes >= PtrBytes) &&
+                    DifferentialUseAnalysis::is_value_needed_in_reverse<
+                        QueryType::Primal>(gutils, ULI, minCutMode,
+                                           CacheResults, oldUnreachable)) {
+                  SafeForwardFree = false;
+                  break;
+                }
+                if (ULI->getType()->isPointerTy() && !AliasSlots.empty()) {
+                  auto LSlot = StripLocalSlot(ULI->getPointerOperand(), 0);
+                  if (LSlot.first && AliasSlots.count(LSlot))
+                    PtrWork.emplace_back(ULI, std::nullopt);
+                }
+                continue;
+              }
+              if (const auto *USI = dyn_cast<StoreInst>(UI)) {
+                if (USI->getValueOperand() == CurP) {
+                  // The address escapes into another local object (e.g. a
+                  // `const std::string *` member); track that object and any
+                  // pointer reloaded from it as aliases of `Slot`.
+                  auto DSlot = StripLocalSlot(USI->getPointerOperand(), 0);
+                  if (!DSlot.first) {
+                    SafeForwardFree = false;
+                    break;
+                  }
+                  AliasSlots.insert(DSlot);
+                  PtrWork.emplace_back(DSlot.first, std::nullopt);
+                  continue;
+                }
+                uint64_t SBytes =
+                    DL.getTypeStoreSize(USI->getValueOperand()->getType());
+                bool MayOverlap =
+                    !POff.has_value() ||
+                    (*POff >= 0 &&
+                     Overlaps(static_cast<uint64_t>(*POff), SBytes));
+                if (MayOverlap &&
+                    !CheckStoredPtrVal(USI->getValueOperand(), SliceOff,
+                                       SlotIsString, POff.value_or(-1),
+                                       SBytes)) {
+                  SafeForwardFree = false;
+                  break;
+                }
+                continue;
+              }
+              if (const auto *II = dyn_cast<IntrinsicInst>(UI)) {
+                if (II->isLifetimeStartOrEnd() || II->isAssumeLikeIntrinsic() ||
+                    isa<DbgInfoIntrinsic>(II) || isa<MemSetInst>(II))
+                  continue;
+                // `enzyme_fromstack` allocations carry `llvm.enzyme.lifetime_*`
+                // markers, which LLVM also classifies as intrinsics.
+                StringRef IIN =
+                    getFuncNameFromCall(const_cast<IntrinsicInst *>(II));
+                if (IIN == "llvm.enzyme.lifetime_start" ||
+                    IIN == "llvm.enzyme.lifetime_end")
+                  continue;
+                if (const auto *MTI = dyn_cast<MemTransferInst>(II)) {
+                  const Value *Peer = (MTI->getRawDest() == CurP)
+                                          ? MTI->getRawSource()
+                                          : MTI->getRawDest();
+                  if (MTI->getRawDest() == CurP) {
+                    if (const auto *GV =
+                            dyn_cast<GlobalVariable>(getBaseObject(Peer)))
+                      if (GV->isConstant())
+                        continue;
+                    if (gutils->TR.query(const_cast<Value *>(Peer))[{-1, -1}] ==
+                        BaseType::Integer)
+                      continue;
+                    if (const auto *LenCI =
+                            dyn_cast<ConstantInt>(MTI->getLength()))
+                      if (LenCI->getZExtValue() < PtrBytes)
+                        continue;
+                  }
+                  const auto *LenCI = dyn_cast<ConstantInt>(MTI->getLength());
+                  if (!LenCI || !POff.has_value() || *POff < 0) {
+                    SafeForwardFree = false;
+                    break;
+                  }
+                  uint64_t Len = LenCI->getZExtValue();
+                  if (Overlaps(static_cast<uint64_t>(*POff), Len)) {
+                    int64_t Rel = static_cast<int64_t>(SliceOff) - *POff;
+                    if (Rel < 0 ||
+                        static_cast<uint64_t>(Rel) + PtrBytes > Len) {
+                      SafeForwardFree = false;
+                      break;
+                    }
+                    auto [PSlot, PSlotOff] = StripLocalSlot(Peer, Rel);
+                    if (!PSlot) {
+                      // Copying a string's buffer field in from a non-local
+                      // object cannot introduce an in-function allocation,
+                      // and a copy out to a non-local object (e.g. an `sret`
+                      // result) is a C++ copy/move whose long-mode buffer is
+                      // re-allocated or relinquished by the string itself.
+                      if (SlotIsString)
+                        continue;
+                      SafeForwardFree = false;
+                      break;
+                    }
+                    SlotWork.emplace_back(PSlot, PSlotOff);
+                  }
+                  continue;
+                }
+                SafeForwardFree = false;
+                break;
+              }
+              if (const auto *UCB = dyn_cast<CallBase>(UI)) {
+                StringRef UCN =
+                    getFuncNameFromCall(const_cast<CallBase *>(UCB));
+                if (UCB == CI || isDeallocationFunction(UCN, TLI) ||
+                    UCN == "llvm.enzyme.lifetime_start" ||
+                    UCN == "llvm.enzyme.lifetime_end")
+                  continue;
+                // A `std::basic_string` subobject owns its buffer field; the
+                // string's own methods never store a differentiable pointer
+                // into it, so the slice stays inactive even when passed to an
+                // active call.
+                bool SliceInactive =
+                    SlotIsString ||
+                    gutils->isConstantValue(const_cast<Value *>(CurP));
+                bool ConstOrFallback =
+                    gutils->isConstantInstruction(
+                        const_cast<CallBase *>(UCB)) ||
+                    DifferentialUseAnalysis::callShouldNotUseDerivative(
+                        gutils, *const_cast<CallBase *>(UCB), QueryType::Primal,
+                        nullptr);
+                if (ConstOrFallback) {
+                  if (!gutils->isConstantInstruction(
+                          const_cast<CallBase *>(UCB)) &&
+                      !SliceInactive) {
+                    SafeForwardFree = false;
+                    break;
+                  }
+                  // A fallback call whose value is needed in the reverse pass
+                  // is only re-executed there (re-reading the slot) when it
+                  // is side-effect free and legal to recompute; otherwise its
+                  // forward result is cached.
+                  if (!UCB->mayWriteToMemory() &&
+                      gutils->legalRecompute(UCB, ValueToValueMapTy(),
+                                             nullptr) &&
+                      DifferentialUseAnalysis::is_value_needed_in_reverse<
+                          QueryType::Primal>(gutils, UCB, minCutMode,
+                                             CacheResults, oldUnreachable)) {
+                    SafeForwardFree = false;
+                    break;
+                  }
+                  continue;
+                }
+                if (!SliceInactive) {
+                  SafeForwardFree = false;
+                  break;
+                }
+                bool ArgsSafe = UCB->getCalledOperand() != CurP;
+                for (unsigned idx = 0; ArgsSafe && idx < UCB->arg_size(); ++idx)
+                  if (UCB->getArgOperand(idx) == CurP &&
+                      !isReadOnly(const_cast<CallBase *>(UCB), idx) &&
+                      !SlotIsString)
+                    ArgsSafe = false;
+                if (!ArgsSafe) {
+                  SafeForwardFree = false;
+                  break;
+                }
+                continue;
+              }
+              SafeForwardFree = false;
+              break;
+            }
+          }
+        }
+        if (SafeForwardFree)
+          gutils->forwardDeallocations.insert(CI);
+      }
+    }
+  }
+
   std::function<bool(const llvm::Value *)> isNoNeed = [&](const llvm::Value
                                                               *v) {
     auto Obj = getBaseObject(v);
@@ -6864,7 +7243,8 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
   };
   // clang-format on
 
-  if (startsWith(F->getName(), "_ZNSolsE") || NoFrees.count(F->getName()))
+  if (startsWith(F->getName(), "_ZNSolsE") || NoFrees.count(F->getName()) ||
+      isStdCharStringOrAllocSymbol(F->getName()))
     return F;
 
   std::string demangledName = llvm::demangle(F->getName().str());

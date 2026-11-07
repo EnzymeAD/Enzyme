@@ -618,6 +618,8 @@ static const char *DemangledKnownInactiveFunctionsStartingWith[] = {
   }
 
   auto Name = getFuncNameFromCall(&CI);
+  if (isStdCharStringOrAllocSymbol(Name) || isIndirectBasicStringSRetGetter(CI))
+    return true;
 
   std::string demangledName = llvm::demangle(Name.str());
   auto dName = StringRef(demangledName);
@@ -1765,6 +1767,19 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
                      << " " << *Val << " " << TR.query(Val).str() << "\n";
       InsertConstantValue(TR, Val);
       return true;
+    }
+
+    if (const Module *M =
+            isa<Instruction>(Val)
+                ? cast<Instruction>(Val)->getModule()
+                : (isa<Argument>(Val)
+                       ? cast<Argument>(Val)->getParent()->getParent()
+                       : nullptr)) {
+      if (isPtrSliceBasicString(Val, 1, M->getDataLayout()) ||
+          isPtrToPurelyInactiveAggregate(Val, M->getDataLayout())) {
+        InsertConstantValue(TR, Val);
+        return true;
+      }
     }
 
     auto TmpOrig = getBaseObject(Val);
@@ -2970,7 +2985,8 @@ bool ActivityAnalyzer::isInstructionInactiveFromOrigin(TypeResults const &TR,
                    isDebugFunction(ci->getCalledFunction()) ||
                    isCertainPrint(funcName) ||
                    isAllocationFunction(funcName, TLI) ||
-                   isDeallocationFunction(funcName, TLI)) {
+                   isDeallocationFunction(funcName, TLI) ||
+                   isInactiveCallInst(*ci, TLI)) {
           legalUse = true;
         }
 
