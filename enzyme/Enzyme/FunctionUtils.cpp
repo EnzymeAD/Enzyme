@@ -2050,15 +2050,19 @@ public:
                           SmallPtrSetImpl<Function *> &calls_todo,
                           llvm::TargetLibraryInfo &TLI, bool &local)
       : F(F), calls_todo(calls_todo), TLI(TLI), local(local),
-        canHandBack(!cannotHandBackPointer(F)) {}
+        canHandBack(!cannotHandBackPointer(F)), fresh(TLI) {}
 
   // Returns if newly legal, subject to the pending calls.
   bool run();
 
 private:
-  using FreshFieldSet = SmallSet<std::pair<Value *, int64_t>, 4>;
-  // Objects with the offset of a field of theirs holding fresh data.
-  using FreshFields = SmallVectorImpl<std::pair<Value *, int64_t>>;
+  // Written data is fresh if it did not exist before F began: every
+  // allocation F makes counts.
+  struct FreshDataInFunction : FreshDataAnalysis {
+    using FreshDataAnalysis::FreshDataAnalysis;
+    bool isFreshAllocation(CallBase *) const override { return true; }
+  };
+
   using Fields = SmallVector<std::pair<Value *, int64_t>, 2>;
   // Values that may be a pointer to written memory (Holds false), or that point
   // to memory that may hold such a pointer (Holds true). With Deep, memory
@@ -2071,6 +2075,7 @@ private:
   llvm::TargetLibraryInfo &TLI;
   bool &local;
   const bool canHandBack;
+  FreshDataInFunction fresh;
 
   // The escape queries are cached per written object, as a function often
   // writes the same object many times.
@@ -2102,7 +2107,7 @@ private:
     if (found == freshCache.end()) {
       Fields bases;
       std::optional<Fields> entry;
-      if (isFreshData(Obj, bases))
+      if (fresh.isFreshData(Obj, bases))
         entry = std::move(bases);
       found = freshCache.emplace(Obj, std::move(entry)).first;
     }
@@ -2128,15 +2133,6 @@ private:
   }
 
   void addReadOnlyOrThrowAttributes();
-  static bool isJuliaMemoryAllocation(Value *V);
-  static bool isJuliaArrayAllocation(Value *V);
-  bool allocatorLeavesFieldsUninitialized(CallBase *CB);
-  bool fieldOnlyHoldsFreshData(Instruction *Obj, int64_t Field,
-                               FreshFieldSet &seen, FreshFields *bases);
-  bool isFreshField(Value *V, int64_t Field, FreshFieldSet &seen,
-                    FreshFields *bases);
-  bool isFreshData(Value *Obj, FreshFieldSet &seen, FreshFields *bases);
-  bool isFreshData(Value *Obj, FreshFields &bases);
   static bool typeTreeRulesOutPointer(const TypeTree &TT, Type *T,
                                       const DataLayout &DL);
   static bool enzymeTypeRulesOutPointer(Attribute attr, Type *T,
@@ -2213,7 +2209,7 @@ void ReadOnlyOrThrowDetector::addReadOnlyOrThrowAttributes() {
 // Whether V is allocated by Julia's allocator of Memory objects, or of arrays
 // on Julia 1.10. These are recognized by name, as Enzyme.jl may not have
 // registered them as allocation functions.
-bool ReadOnlyOrThrowDetector::isJuliaMemoryAllocation(Value *V) {
+bool isJuliaMemoryAllocation(Value *V) {
   auto CB = dyn_cast<CallBase>(V);
   if (!CB)
     return false;
@@ -2224,7 +2220,7 @@ bool ReadOnlyOrThrowDetector::isJuliaMemoryAllocation(Value *V) {
          name == "ijl_alloc_genericmemory_unchecked" ||
          name == "julia.gc_alloc_memory";
 }
-bool ReadOnlyOrThrowDetector::isJuliaArrayAllocation(Value *V) {
+bool isJuliaArrayAllocation(Value *V) {
   auto CB = dyn_cast<CallBase>(V);
   if (!CB)
     return false;
@@ -2241,7 +2237,7 @@ bool ReadOnlyOrThrowDetector::isJuliaArrayAllocation(Value *V) {
 // sets a metadata pointer, custom enzyme_allocator and registered allocation
 // handlers may do anything) do not qualify, as a field may then point to
 // memory that existed before the call.
-bool ReadOnlyOrThrowDetector::allocatorLeavesFieldsUninitialized(CallBase *CB) {
+bool FreshDataAnalysis::allocatorLeavesFieldsUninitialized(CallBase *CB) {
   auto name = getFuncNameFromCall(CB);
   if (name == "julia.gc_alloc_obj" || name == "jl_gc_alloc_typed" ||
       name == "ijl_gc_alloc_typed")
@@ -2262,10 +2258,9 @@ bool ReadOnlyOrThrowDetector::allocatorLeavesFieldsUninitialized(CallBase *CB) {
 // call that may capture or write through it, so that no other code can write
 // the field. Returning Obj is fine: the field may then change only after the
 // function returns.
-bool ReadOnlyOrThrowDetector::fieldOnlyHoldsFreshData(Instruction *Obj,
-                                                      int64_t Field,
-                                                      FreshFieldSet &seen,
-                                                      FreshFields *bases) {
+bool FreshDataAnalysis::fieldOnlyHoldsFreshData(Instruction *Obj, int64_t Field,
+                                                FreshFieldSet &seen,
+                                                FreshFields *bases) {
   auto &DL = Obj->getModule()->getDataLayout();
   int64_t fieldSize = DL.getPointerSize();
   // Pointers derived from Obj, with their offset from it if constant.
@@ -2357,22 +2352,21 @@ bool ReadOnlyOrThrowDetector::fieldOnlyHoldsFreshData(Instruction *Obj,
 }
 
 // Whether the field at offset Field of the base object V, which did not exist
-// before this function, only ever holds fresh data (see isFreshData) while the
-// function runs:
+// before the point of interest, only ever holds fresh data (see isFreshData)
+// from then on:
 //  * the data field, which follows the length, of a Julia Memory allocated
-//    here, or of the empty Memory singleton (a global Enzyme.jl marks
-//    enzymejl_empty_memory), which no in-bounds access writes. The field is
-//    set when the object is allocated and never changed.
-//  * the data field, at offset 0, of a Julia 1.10 array allocated here by
+//    fresh (see isFreshAllocation), or of the empty Memory singleton (a global
+//    Enzyme.jl marks enzymejl_empty_memory), which no in-bounds access writes.
+//    The field is set when the object is allocated and never changed.
+//  * the data field, at offset 0, of a Julia 1.10 array allocated fresh by
 //    jl_alloc_array_*, which sets it to data it allocates, or any field of an
-//    object allocated here by an allocator that leaves its fields
+//    object allocated fresh by an allocator that leaves its fields
 //    uninitialized (such as a Julia 1.11+ array; see
 //    allocatorLeavesFieldsUninitialized), provided that every write to the
 //    field in the function sets it to fresh data (see
 //    fieldOnlyHoldsFreshData).
-bool ReadOnlyOrThrowDetector::isFreshField(Value *V, int64_t Field,
-                                           FreshFieldSet &seen,
-                                           FreshFields *bases) {
+bool FreshDataAnalysis::isFreshField(Value *V, int64_t Field,
+                                     FreshFieldSet &seen, FreshFields *bases) {
   // A field we are already checking, reached again through a store to such a
   // field: it holds fresh data if everything else does.
   if (!seen.insert(std::make_pair(V, Field)).second)
@@ -2380,30 +2374,29 @@ bool ReadOnlyOrThrowDetector::isFreshField(Value *V, int64_t Field,
   if (auto GV = dyn_cast<GlobalVariable>(V))
     return GV->getMetadata("enzymejl_empty_memory") &&
            Field == GV->getParent()->getDataLayout().getPointerSize();
-  auto I = dyn_cast<Instruction>(V);
-  if (!I)
+  auto CB = dyn_cast<CallBase>(V);
+  if (!CB || !isFreshAllocation(CB))
     return false;
   // Julia's runtime allocators initialize the other fields of the objects they
   // allocate themselves, possibly to memory that existed before the call.
   if (isJuliaMemoryAllocation(V))
-    return Field == I->getModule()->getDataLayout().getPointerSize();
+    return Field == CB->getModule()->getDataLayout().getPointerSize();
   if (isJuliaArrayAllocation(V))
-    return Field == 0 && fieldOnlyHoldsFreshData(I, Field, seen, bases);
+    return Field == 0 && fieldOnlyHoldsFreshData(CB, Field, seen, bases);
   // Other allocators may leave the fields uninitialized.
-  if (isAllocationCall(V, TLI) &&
-      allocatorLeavesFieldsUninitialized(cast<CallBase>(V)))
-    return fieldOnlyHoldsFreshData(I, Field, seen, bases);
+  if (isAllocationCall(V, TLI) && allocatorLeavesFieldsUninitialized(CB))
+    return fieldOnlyHoldsFreshData(CB, Field, seen, bases);
   return false;
 }
 
 // Whether Obj, the base object of a written pointer, is data that did not
-// exist before this function: a pointer loaded from a field holding only
-// fresh data (see isFreshField) of an object, or of a phi or select of
+// exist before the point of interest: a pointer loaded from a field holding
+// only fresh data (see isFreshField) of an object, or of a phi or select of
 // objects. If so, appends those objects with the field's offset to bases,
 // along with the objects whose fields the fresh data stored into those fields
 // was itself loaded from.
-bool ReadOnlyOrThrowDetector::isFreshData(Value *Obj, FreshFieldSet &seen,
-                                          FreshFields *bases) {
+bool FreshDataAnalysis::isFreshData(Value *Obj, FreshFieldSet &seen,
+                                    FreshFields *bases) {
   if (!EnzymeJuliaAddrLoad)
     return false;
   auto LI = dyn_cast<LoadInst>(Obj);
@@ -2425,7 +2418,7 @@ bool ReadOnlyOrThrowDetector::isFreshData(Value *Obj, FreshFieldSet &seen,
   return true;
 }
 
-bool ReadOnlyOrThrowDetector::isFreshData(Value *Obj, FreshFields &bases) {
+bool FreshDataAnalysis::isFreshData(Value *Obj, FreshFields &bases) {
   FreshFieldSet seen;
   return isFreshData(Obj, seen, &bases);
 }
@@ -2636,7 +2629,7 @@ bool ReadOnlyOrThrowDetector::mayReachReturn(Value *Obj, bool Deep,
         // reached from an object whose fresh data it is, may be the pointer.
         todo.emplace_back(Dst, true, /*Deep*/ true);
         SmallVector<std::pair<Value *, int64_t>, 2> owners;
-        if (isFreshData(Dst, owners))
+        if (fresh.isFreshData(Dst, owners))
           for (auto owner : owners)
             if (!isa<GlobalVariable>(owner.first))
               todo.emplace_back(owner.first, true, /*Deep*/ true);
