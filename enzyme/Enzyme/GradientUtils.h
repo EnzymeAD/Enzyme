@@ -230,6 +230,8 @@ public:
 
   llvm::Value *hasUninverted(const llvm::Value *inverted) const;
 
+  bool isPlaceholderForNonPHI(const llvm::PHINode *PN) const override;
+
   llvm::BasicBlock *getOriginalFromNew(const llvm::BasicBlock *newinst) const;
 
   llvm::Value *isOriginal(const llvm::Value *newinst) const;

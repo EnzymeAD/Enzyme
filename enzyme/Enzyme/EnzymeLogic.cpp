@@ -1973,11 +1973,8 @@ void restoreCache(
             assert(gutils->fictiousPHIs[PN] == m.first.first);
             gutils->fictiousPHIs.erase(PN);
           }
-        IRBuilder<> BuilderZ(newi->getNextNode());
-        if (isa<PHINode>(m.first.first)) {
-          BuilderZ.SetInsertPoint(
-              getFirstNonPHI(cast<Instruction>(newi)->getParent()));
-        }
+        IRBuilder<> BuilderZ(
+            gutils->getFirstNonPHIOrPlaceholder(newi->getNextNode()));
         Value *nexti = gutils->cacheForReverse(BuilderZ, newi, m.second,
                                                /*replace*/ false);
         newIToNextI.emplace_back(newi, nexti);
@@ -2748,11 +2745,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
         if (found != gutils->knownRecomputeHeuristic.end()) {
           if (!found->second && !isa<CallInst>(&I)) {
             auto newi = gutils->getNewFromOriginal(&I);
-            IRBuilder<> BuilderZ(cast<Instruction>(newi)->getNextNode());
-            if (isa<PHINode>(newi)) {
-              BuilderZ.SetInsertPoint(
-                  getFirstNonPHI(cast<Instruction>(newi)->getParent()));
-            }
+            IRBuilder<> BuilderZ(gutils->getFirstNonPHIOrPlaceholder(
+                cast<Instruction>(newi)->getNextNode()));
             gutils->cacheForReverse(BuilderZ, newi,
                                     getIndex(&I, CacheType::Self, BuilderZ));
           }

@@ -690,6 +690,13 @@ Value *GradientUtils::hasUninverted(const Value *inverted) const {
   return nullptr;
 }
 
+bool GradientUtils::isPlaceholderForNonPHI(const PHINode *PN) const {
+  auto Found = fictiousPHIs.find(const_cast<PHINode *>(PN));
+  if (Found == fictiousPHIs.end())
+    return false;
+  return !isa_and_nonnull<PHINode>((Value *)Found->second);
+}
+
 BasicBlock *GradientUtils::getOriginalFromNew(const BasicBlock *newinst) const {
   assert(newinst->getParent() == newFunc);
   auto found = newToOriginalFn.find(newinst);
@@ -3252,9 +3259,8 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
             malloc->getType(), firstallocation, ArrayRef<Value *>(tid));
         if (auto inst = dyn_cast<Instruction>(malloc)) {
           // Store after all phis of the block when caching a phi.
-          entryBuilder.SetInsertPoint(isa<PHINode>(inst)
-                                          ? getFirstNonPHI(inst->getParent())
-                                          : inst->getNextNode());
+          entryBuilder.SetInsertPoint(
+              getFirstNonPHIOrPlaceholder(inst->getNextNode()));
         }
         entryBuilder.CreateStore(malloc, tPtr);
         toStoreInTape = firstallocation;
@@ -5732,20 +5738,10 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         IRBuilder<> bb(inversionAllocs);
         if (auto *OriginalInstruction = dyn_cast<Instruction>(oval)) {
           Instruction *NewInstruction = getNewFromOriginal(OriginalInstruction);
-          // Store after the instruction and past any block-header PHIs,
-          // including unpopulated shadow PHIs for original PHIs.
-          Instruction *InsertBefore = NewInstruction->getNextNode();
-          for (Instruction *Current = InsertBefore;
-               auto *Phi = dyn_cast_or_null<PHINode>(Current);
-               Current = Current->getNextNode()) {
-            auto FoundFictitious = fictiousPHIs.find(Phi);
-            if (Phi->getNumIncomingValues() != 0 ||
-                isa_and_nonnull<PHINode>(hasUninverted(Phi)) ||
-                (FoundFictitious != fictiousPHIs.end() &&
-                 isa_and_nonnull<PHINode>((Value *)FoundFictitious->second))) {
-              InsertBefore = Phi->getNextNode();
-            }
-          }
+          // The stores use the instruction, so follow it and any PHIs it
+          // sits among.
+          Instruction *InsertBefore =
+              getFirstNonPHIOrPlaceholder(NewInstruction->getNextNode());
           if (InsertBefore)
             bb.SetInsertPoint(InsertBefore);
           else
@@ -6792,7 +6788,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       }
 
       if (EnzymeVectorSplitPhi && width > 1) {
-        IRBuilder<> postPhi(getFirstNonPHI(NewV->getParent()));
+        IRBuilder<> postPhi(getFirstNonPHIOrPlaceholder(NewV->getParent()));
         Type *shadowTy = getShadowType(phi->getType());
         PHINode *tmp = bb.CreatePHI(shadowTy, phi->getNumIncomingValues());
 
