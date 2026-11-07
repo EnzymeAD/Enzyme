@@ -30,7 +30,7 @@
 #include "EnzymeLogic.h"
 #include "ActivityAnalysis.h"
 #include "AdjointGenerator.h"
-#include "EnzymeLogic.h"
+#include "KokkosUtils.h"
 #include "TypeAnalysis/TypeAnalysis.h"
 #include "llvm/IR/Constant.h"
 #include "llvm/IR/Constants.h"
@@ -761,6 +761,13 @@ struct CacheAnalysis {
       for (unsigned i = 3; i < args.size(); ++i) {
         overwritten_args.push_back(!args_safe[i]);
       }
+    } else if (enzyme_kokkos::mayBeKokkosRelevantSymbol(funcName) &&
+               enzyme_kokkos::isKokkosThreadsStart(
+                   funcName, ENZYME_KOKKOS_DEMANGLE(funcName)) &&
+               args.size() >= 2) {
+      // ThreadsInternal& is per-thread execution context; arg 1 is closure ptr
+      overwritten_args.push_back(false);
+      overwritten_args.push_back(!args_safe[1]);
     } else {
       for (unsigned i = 0; i < args.size(); ++i) {
         overwritten_args.push_back(!args_safe[i]);
@@ -6886,6 +6893,17 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
   if (isFlangRuntimeNoFree(F->getName()) ||
       isRustInactiveRuntimeFunction(F->getName()))
     return F;
+
+  if (enzyme_kokkos::mayBeKokkosRelevantSymbol(F->getName())) {
+    std::string NormDem = ENZYME_KOKKOS_DEMANGLE(F->getName());
+    if (enzyme_kokkos::isKokkosInactiveCall(F->getName(), NormDem) ||
+        enzyme_kokkos::isKokkosThreadsResizeScratch(F->getName(), NormDem) ||
+        enzyme_kokkos::isKokkosThreadsRootReduceScratch(F->getName(),
+                                                        NormDem) ||
+        enzyme_kokkos::isKokkosThreadsGetThread(F->getName(), NormDem) ||
+        enzyme_kokkos::isKokkosThreadsStart(F->getName(), NormDem))
+      return F;
+  }
 
   switch (F->getIntrinsicID()) {
   case Intrinsic::lifetime_start:

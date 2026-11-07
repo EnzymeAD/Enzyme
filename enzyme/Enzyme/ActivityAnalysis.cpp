@@ -63,6 +63,7 @@
 #include "llvm/Demangle/Demangle.h"
 
 #include "FunctionUtils.h"
+#include "KokkosUtils.h"
 #include "LibraryFuncs.h"
 #include "TypeAnalysis/TBAA.h"
 
@@ -618,6 +619,11 @@ static const char *DemangledKnownInactiveFunctionsStartingWith[] = {
   }
 
   auto Name = getFuncNameFromCall(&CI);
+  if (enzyme_kokkos::mayBeKokkosRelevantSymbol(Name)) {
+    std::string NormDem = ENZYME_KOKKOS_DEMANGLE(Name);
+    if (enzyme_kokkos::isKokkosInactiveCall(Name, NormDem))
+      return true;
+  }
 
   std::string demangledName = llvm::demangle(Name.str());
   auto dName = StringRef(demangledName);
@@ -730,6 +736,14 @@ static const StringSet<> KnownInactiveFunctionInsts = {
     return true;
   }
 
+  if (enzyme_kokkos::mayBeKokkosRelevantSymbol(funcName)) {
+    std::string NormDem = ENZYME_KOKKOS_DEMANGLE(funcName);
+    if (enzyme_kokkos::isKokkosThreadsResizeScratch(funcName, NormDem) ||
+        enzyme_kokkos::isKokkosThreadsRootReduceScratch(funcName, NormDem) ||
+        enzyme_kokkos::isKokkosThreadsGetThread(funcName, NormDem))
+      return true;
+  }
+
   return false;
 }
 
@@ -777,6 +791,13 @@ bool ActivityAnalyzer::isFunctionArgumentConstant(CallInst *CI, Value *val) {
   // of arguments
   if (isAllocationFunction(Name, TLI) || isDeallocationFunction(Name, TLI))
     return true;
+
+  if (enzyme_kokkos::mayBeKokkosRelevantSymbol(Name)) {
+    std::string NormDem = ENZYME_KOKKOS_DEMANGLE(Name);
+    if (enzyme_kokkos::isKokkosThreadsResizeScratch(Name, NormDem) ||
+        enzyme_kokkos::isKokkosThreadsGetThread(Name, NormDem))
+      return true;
+  }
 
   /// Only the first argument (magnitude) of copysign is active
   if (F->getIntrinsicID() == Intrinsic::copysign &&
@@ -891,6 +912,14 @@ static inline void propagateArgumentInformation(
       Name == "__cxa_guard_acquire" || Name == "__cxa_guard_release" ||
       Name == "__cxa_guard_abort")
     return;
+
+  if (enzyme_kokkos::mayBeKokkosRelevantSymbol(Name)) {
+    std::string NormDem = ENZYME_KOKKOS_DEMANGLE(Name);
+    if (enzyme_kokkos::isKokkosThreadsResizeScratch(Name, NormDem) ||
+        enzyme_kokkos::isKokkosThreadsRootReduceScratch(Name, NormDem) ||
+        enzyme_kokkos::isKokkosThreadsGetThread(Name, NormDem))
+      return;
+  }
 
   auto F = getFunctionFromCall(&CI);
 
@@ -1476,7 +1505,8 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
       }
 
       if (GI->getName().contains("enzyme_const") ||
-          InactiveGlobals.count(GI->getName())) {
+          InactiveGlobals.count(GI->getName()) ||
+          startsWith(GI->getName(), "__enzyme_kokkos_threads_active_inst")) {
         InsertConstantValue(TR, Val);
         return true;
       }

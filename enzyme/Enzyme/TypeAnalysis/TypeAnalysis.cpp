@@ -55,6 +55,7 @@
 
 #include "../EnzymeLogic.h"
 #include "../FlangRuntime.h"
+#include "../KokkosUtils.h"
 #include "../Utils.h"
 #include "TypeAnalysis.h"
 
@@ -5221,6 +5222,78 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
       for (int i : {5, 6, 8, 10, 11})
         updateAnalysis(call.getArgOperand(i), ptrdbl, &call);
       return;
+    }
+
+    if (enzyme_kokkos::mayBeKokkosRelevantSymbol(funcName)) {
+      std::string normDem = ENZYME_KOKKOS_DEMANGLE(funcName);
+      if (enzyme_kokkos::isKokkosInactiveCall(funcName, normDem)) {
+        for (unsigned idx = 0; idx < call.arg_size(); ++idx) {
+          if (call.getArgOperand(idx)->getType()->isIntOrIntVectorTy())
+            updateAnalysis(call.getArgOperand(idx),
+                           TypeTree(BaseType::Integer).Only(-1, &call), &call);
+        }
+        if (call.getType()->isIntOrIntVectorTy())
+          updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call),
+                         &call);
+        else if (call.getType()->isPointerTy())
+          updateAnalysis(&call, TypeTree(BaseType::Pointer).Only(-1, &call),
+                         &call);
+        return;
+      }
+      if (enzyme_kokkos::isKokkosThreadsResizeScratch(funcName, normDem) ||
+          enzyme_kokkos::isKokkosThreadsRootReduceScratch(funcName, normDem) ||
+          enzyme_kokkos::isKokkosThreadsGetThread(funcName, normDem)) {
+        if (call.getType()->isPointerTy()) {
+          TypeTree retTT;
+          retTT.insert({-1}, BaseType::Pointer);
+          if (enzyme_kokkos::isKokkosThreadsGetThread(funcName, normDem)) {
+            retTT.insert({-1, 0}, BaseType::Pointer);
+            retTT.insert({-1, 8}, BaseType::Pointer);
+          }
+          updateAnalysis(&call, retTT, &call);
+        }
+        for (unsigned idx = 0; idx < call.arg_size(); ++idx) {
+          if (call.getArgOperand(idx)->getType()->isIntOrIntVectorTy())
+            updateAnalysis(call.getArgOperand(idx),
+                           TypeTree(BaseType::Integer).Only(-1, &call), &call);
+        }
+        return;
+      }
+      if (enzyme_kokkos::isKokkosThreadsStart(funcName, normDem) &&
+          call.arg_size() >= 2) {
+        Value *fnVal = call.getArgOperand(0)->stripPointerCasts();
+        if (Function *fn = dyn_cast<Function>(fnVal)) {
+          if (!fn->empty() && fn->getFunctionType()->getNumParams() == 2 &&
+              (direction & UP)) {
+            FnTypeInfo typeInfo(fn);
+            TypeTree instTT;
+            instTT.insert({-1}, BaseType::Pointer);
+            instTT.insert({-1, 0}, BaseType::Pointer);
+            instTT.insert({-1, 8}, BaseType::Pointer);
+            for (int off = 16; off < 52; ++off)
+              instTT.insert({-1, off}, BaseType::Integer);
+
+            auto argIt = fn->arg_begin();
+            Argument *instArg = &*argIt++;
+            Argument *closureArg = &*argIt;
+            typeInfo.Arguments.insert({instArg, instTT});
+            typeInfo.KnownValues.insert({instArg, {}});
+            typeInfo.Arguments.insert(
+                {closureArg, getAnalysis(call.getArgOperand(1))});
+            std::set<int64_t> bounded;
+            for (auto v : fntypeinfo.knownIntegralValues(call.getArgOperand(1),
+                                                         DT, intseen, SE)) {
+              if (abs(v) <= MaxIntOffset)
+                bounded.insert(v);
+            }
+            typeInfo.KnownValues.insert({closureArg, bounded});
+            typeInfo = preventTypeAnalysisLoops(typeInfo, fntypeinfo.Function);
+            TypeResults STR = interprocedural.analyzeFunction(typeInfo);
+            updateAnalysis(call.getArgOperand(1), STR.query(closureArg), &call);
+          }
+        }
+        return;
+      }
     }
 
     if (funcName == "__kmpc_fork_call") {
