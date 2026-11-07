@@ -75,7 +75,6 @@
 #include "llvm/Transforms/Utils/Cloning.h"
 
 #include "llvm/Analysis/BasicAliasAnalysis.h"
-#include "llvm/Analysis/CFG.h"
 #include "llvm/Analysis/GlobalsModRef.h"
 
 #include "llvm/Support/AMDGPUMetadata.h"
@@ -190,19 +189,32 @@ writesOnlyUncapturedLocalOrNoaliasArgMemory(Instruction *I,
 /// Fresh data (see FreshDataAnalysis) relative to a call: data owned by an
 /// allocation the call cannot be reached from, so that every run of the
 /// allocation begins after the last run of the call. Such data does not exist
-/// while the call runs, in any execution of it.
+/// while the call runs, in any execution of it. (LLVM's isPotentiallyReachable
+/// gives up, as reachable, after 32 blocks; Julia functions are often larger.)
 struct FreshDataAfterCall : FreshDataAnalysis {
   Instruction *call;
-  DominatorTree &DT;
-  LoopInfo &LI;
+  // The blocks from which the call's block can be reached along at least one
+  // edge: an allocation in one of them may run before the call.
+  SmallPtrSet<BasicBlock *, 16> reachesCall;
   std::map<Value *, bool> cache;
 
-  FreshDataAfterCall(TargetLibraryInfo &TLI, Instruction *call,
-                     DominatorTree &DT, LoopInfo &LI)
-      : FreshDataAnalysis(TLI), call(call), DT(DT), LI(LI) {}
+  FreshDataAfterCall(TargetLibraryInfo &TLI, Instruction *call)
+      : FreshDataAnalysis(TLI), call(call) {
+    SmallVector<BasicBlock *, 8> todo(predecessors(call->getParent()));
+    while (!todo.empty()) {
+      auto BB = todo.pop_back_val();
+      if (!reachesCall.insert(BB).second)
+        continue;
+      todo.append(pred_begin(BB), pred_end(BB));
+    }
+  }
 
   bool isFreshAllocation(CallBase *CB) const override {
-    return !isPotentiallyReachable(CB, call, nullptr, &DT, &LI);
+    if (reachesCall.count(CB->getParent()))
+      return false;
+    // In the call's own block, the allocation runs after the call unless the
+    // block loops back to itself, which reachesCall then holds.
+    return CB->getParent() != call->getParent() || call->comesBefore(CB);
   }
 
   /// Whether obj, the base object of a written pointer, is memory allocated
@@ -728,7 +740,7 @@ struct CacheAnalysis {
     }
 
     bool next_subsequent_inst_may_write = subsequent_calls_may_write;
-    FreshDataAfterCall fresh(TLI, callsite_op, OrigDT, OrigLI);
+    FreshDataAfterCall fresh(TLI, callsite_op);
 
     // Second, we check for memory modifications that can occur in the
     // continuation of the
