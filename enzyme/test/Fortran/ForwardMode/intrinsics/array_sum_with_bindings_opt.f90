@@ -5,7 +5,7 @@
 ! RUN: %if flangenzyme %{ %fc -O2 %loadFortran %loadFlangEnzyme %s -o %t2 && %t2 | FileCheck %s %}
 
 program main
-  use enzyme, only: enzyme_const, enzyme_dup, enzyme_autodiff
+  use enzyme, only: enzyme_const, enzyme_dup, enzyme_fwddiff
   implicit none
   integer, parameter :: n = 1000000
   integer, parameter :: initial_value = 20
@@ -13,7 +13,9 @@ program main
   real :: y(n), dy(n), yp
 
   x(:) = initial_value
-  dy(:) = 1.0
+  ! Seed a single direction so the derivative is nonzero
+  dx(:) = 0.0
+  dx(n) = 1.0
 
   call norm(n, x, y)
 
@@ -21,24 +23,31 @@ program main
   yp = y(n) * 1.0e+06
   write(*,"(f6.4)") yp
 
-  dx(:) = 0.0
-  call enzyme_autodiff(norm, enzyme_const, n, &
-                       enzyme_dup, x, dx, enzyme_dup, y, dy)
-  write(*,"(f6.4)") dy(n)
+  dy(:) = 0.0
+  call enzyme_fwddiff(norm, enzyme_const, n, &
+                      enzyme_dup, x, dx, enzyme_dup, y, dy)
+  yp = dy(n) * 1.0e+06
+  write(*,"(f6.4)") yp
 
 contains
 
-  ! TODO: Switch to assumed shape implementation once
-  !       https://github.com/EnzymeAD/Enzyme/issues/2820
-  !       has been addressed
   subroutine norm(n, x, y)
     integer, intent(in) :: n
     real, dimension(n), intent(in) :: x
     real, dimension(n), intent(out) :: y
-    y(:) = x / sum(x)
+    real :: s
+    integer :: i
+    ! TODO: Use the `sum` intrinsic. Requires accounting for `_FortranASumReal4`
+    !       with forward mode for this to work at -O0
+    ! y(:) = x / sum(x)
+    s = 0.0
+    do i = 1, n
+      s = s + x(i)
+    end do
+    y(:) = x(:) / s
   end subroutine norm
 
 end program main
 
 ! CHECK: 1.0000
-! CHECK-NEXT: 0.0000
+! CHECK-NEXT: 0.0500
