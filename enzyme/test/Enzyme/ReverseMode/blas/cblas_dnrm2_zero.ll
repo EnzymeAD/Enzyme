@@ -86,8 +86,8 @@ define i32 @main() {
 ; CHECK-LABEL: define internal void @diffef(i32 %n, ptr nocapture readonly %x, ptr nocapture %"x'", double %differeturn)
 ; CHECK: %[[DRET:.+]] = load double, ptr %"r'de"
 ; CHECK-NEXT: %[[NRM:.+]] = call fast double @cblas_dnrm2(i32 %n, ptr %x, i32 1)
+; CHECK-NEXT: %[[DIV:.+]] = fdiv fast double %[[DRET]], %[[NRM]]
 ; CHECK-NEXT: %[[ISZERO:.+]] = fcmp fast oeq double %[[NRM]], 0.000000e+00
-; CHECK-NEXT: %[[NRM2:.+]] = call fast double @cblas_dnrm2(i32 %n, ptr %x, i32 1)
-; CHECK-NEXT: %[[DIV:.+]] = fdiv fast double %[[DRET]], %[[NRM2]]
 ; CHECK-NEXT: %[[ALPHA:.+]] = select fast i1 %[[ISZERO]], double 0.000000e+00, double %[[DIV]]
 ; CHECK-NEXT: call void @cblas_daxpy(i32 %n, double %[[ALPHA]], ptr %x, i32 1, ptr %"x'", i32 1)
+; CHECK-NOT: call fast double @cblas_dnrm2(
