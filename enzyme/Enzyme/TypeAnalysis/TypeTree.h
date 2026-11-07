@@ -33,6 +33,7 @@
 
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
+#include <climits>
 #include <map>
 #include <set>
 #include <string>
@@ -116,6 +117,93 @@ private:
   // mapping of known indices to type if one exists
   ConcreteTypeMapType mapping;
   std::vector<int> minIndices;
+
+  /// Return whether `FullKey` begins with all elements of `Prefix`.
+  static bool hasPrefix(const std::vector<int> &FullKey,
+                        const std::vector<int> &Prefix) {
+    if (FullKey.size() < Prefix.size())
+      return false;
+    for (size_t Index = 0, End = Prefix.size(); Index < End; ++Index) {
+      if (FullKey[Index] != Prefix[Index])
+        return false;
+    }
+    return true;
+  }
+
+  /// Invoke `Callback` in map order on every entry of the same depth as
+  /// `Sequence` whose indices match `Sequence` up to `-1` wildcards, stopping
+  /// early if `Callback` returns false.
+  template <typename CallbackTy>
+  void visitComparableEntries(const std::vector<int> &Sequence,
+                              CallbackTy &&Callback) {
+    size_t SequenceSize = Sequence.size();
+    if (SequenceSize == 0 || mapping.empty())
+      return;
+
+    std::vector<int> Prefix;
+    Prefix.reserve(SequenceSize + 1);
+
+    auto Traverse = [&](auto &Self, size_t Depth) -> bool {
+      if (Depth == SequenceSize) {
+        auto Found = mapping.find(Prefix);
+        if (Found != mapping.end())
+          return Callback(Found);
+        return true;
+      }
+
+      if (Sequence[Depth] != -1) {
+        int Candidates[2];
+        size_t NumCandidates = 0;
+        if (Sequence[Depth] < -1) {
+          Candidates[NumCandidates++] = Sequence[Depth];
+          Candidates[NumCandidates++] = -1;
+        } else {
+          Candidates[NumCandidates++] = -1;
+          Candidates[NumCandidates++] = Sequence[Depth];
+        }
+        for (size_t Index = 0; Index < NumCandidates; ++Index) {
+          Prefix.push_back(Candidates[Index]);
+          bool ContinueSearch = true;
+          if (Depth + 1 == SequenceSize) {
+            ContinueSearch = Self(Self, Depth + 1);
+          } else {
+            Prefix.push_back(INT_MIN);
+            auto NextEntry = mapping.lower_bound(Prefix);
+            Prefix.pop_back();
+            if (NextEntry != mapping.end() &&
+                hasPrefix(NextEntry->first, Prefix)) {
+              ContinueSearch = Self(Self, Depth + 1);
+            }
+          }
+          Prefix.pop_back();
+          if (!ContinueSearch)
+            return false;
+        }
+        return true;
+      }
+
+      Prefix.push_back(INT_MIN);
+      auto NextEntry = mapping.lower_bound(Prefix);
+      Prefix.pop_back();
+      while (NextEntry != mapping.end() &&
+             hasPrefix(NextEntry->first, Prefix)) {
+        int CurrentValue = NextEntry->first[Depth];
+        Prefix.push_back(CurrentValue);
+        bool ContinueSearch = Self(Self, Depth + 1);
+        Prefix.pop_back();
+        if (!ContinueSearch)
+          return false;
+        if (CurrentValue == INT_MAX)
+          break;
+        Prefix.push_back(CurrentValue + 1);
+        NextEntry = mapping.lower_bound(Prefix);
+        Prefix.pop_back();
+      }
+      return true;
+    };
+
+    Traverse(Traverse, 0);
+  }
 
 public:
   GenericTypeTree() {}
@@ -312,151 +400,150 @@ public:
     bool changed = false;
     // Check if there is an existing match, e.g. [-1, -1, -1] and inserting
     // [-1, 8, -1]
-    {
-      for (const auto &pair : llvm::make_early_inc_range(mapping)) {
-        if (pair.first.size() == SeqSize) {
-          // Whether the the inserted val (e.g. [-1, 0] or [0, 0]) is at least
-          // as general as the existing map val (e.g. [0, 0]).
-          bool newMoreGeneralThanOld = true;
-          // Whether the the existing val (e.g. [-1, 0] or [0, 0]) is at least
-          // as general as the inserted map val (e.g. [0, 0]).
-          bool oldMoreGeneralThanNew = true;
-          for (unsigned i = 0; i < SeqSize; i++) {
-            if (pair.first[i] == Seq[i])
-              continue;
-            if (Seq[i] == -1) {
-              oldMoreGeneralThanNew = false;
-            } else if (pair.first[i] == -1) {
-              newMoreGeneralThanOld = false;
-            } else {
-              oldMoreGeneralThanNew = false;
-              newMoreGeneralThanOld = false;
-              break;
-            }
-          }
-
-          if (oldMoreGeneralThanNew) {
-            // Inserting an existing or less general version
-            if (CT == pair.second)
-              return false;
-
-            // Inserting an existing or less general version (with pointer-int
-            // equivalence)
-            if (PointerIntSame)
-              if ((CT == BaseType::Pointer &&
-                   pair.second == BaseType::Integer) ||
-                  (CT == BaseType::Integer && pair.second == BaseType::Pointer))
-                return false;
-
-            // Inserting into an anything. Since from above we know this is not
-            // an anything, the inserted value contains no new information
-            if (pair.second == BaseType::Anything)
-              return false;
-
-            // Inserting say a [0]:anything into a [-1]:Float
-            if (CT == BaseType::Anything)
-              continue;
-
-            // Otherwise, inserting a non-equivalent pair into a more general
-            // slot. This is invalid.
-            llvm::errs() << "inserting into : " << str() << " with "
-                         << to_string(Seq) << " of " << CT.str() << "\n";
-            llvm_unreachable("illegal insertion");
-          } else if (newMoreGeneralThanOld) {
-            // This new is strictly more general than the old. If they were
-            // equivalent, the case above would have been hit.
-
-            if (CT == BaseType::Anything || CT == pair.second) {
-              // previous equivalent values or values overwritten by
-              // an anything are removed
-              changed = true;
-              mapping.erase(pair.first);
-              continue;
-            }
-
-            // Inserting an existing or less general version (with pointer-int
-            // equivalence)
-            if (PointerIntSame)
-              if ((CT == BaseType::Pointer &&
-                   pair.second == BaseType::Integer) ||
-                  (CT == BaseType::Integer &&
-                   pair.second == BaseType::Pointer)) {
-                changed = true;
-                mapping.erase(pair.first);
-                continue;
-              }
-
-            // Keep lingering anythings if not being overwritten, even if this
-            // (e.g. Float) applies to more locations. Therefore it is legal to
-            // have [-1]:Float, [8]:Anything
-            if (CT != BaseType::Anything && pair.second == BaseType::Anything)
-              continue;
-
-            // Otherwise, inserting a more general non-equivalent pair. This is
-            // invalid.
-            llvm::errs() << "inserting into : " << str() << " with "
-                         << to_string(Seq) << " of " << CT.str() << "\n";
-            llvm_unreachable("illegal insertion");
-          }
+    bool EarlyReturn = false;
+    visitComparableEntries(Seq, [&](typename ConcreteTypeMapType::iterator
+                                        Entry) {
+      bool NewMoreGeneralThanOld = true;
+      bool OldMoreGeneralThanNew = true;
+      for (unsigned Depth = 0; Depth < SeqSize; ++Depth) {
+        if (Entry->first[Depth] == Seq[Depth])
+          continue;
+        if (Seq[Depth] == -1) {
+          OldMoreGeneralThanNew = false;
+        } else {
+          assert(Entry->first[Depth] == -1 &&
+                 "comparable entry must match sequence or wildcard");
+          NewMoreGeneralThanOld = false;
         }
+      }
+
+      if (OldMoreGeneralThanNew) {
+        // Inserting an existing or less general version
+        if (CT == Entry->second) {
+          EarlyReturn = true;
+          return false;
+        }
+
+        // Inserting an existing or less general version (with pointer-int
+        // equivalence)
+        if (PointerIntSame &&
+            ((CT == BaseType::Pointer && Entry->second == BaseType::Integer) ||
+             (CT == BaseType::Integer && Entry->second == BaseType::Pointer))) {
+          EarlyReturn = true;
+          return false;
+        }
+
+        // Inserting into an anything. Since from above we know this is not
+        // an anything, the inserted value contains no new information
+        if (Entry->second == BaseType::Anything) {
+          EarlyReturn = true;
+          return false;
+        }
+
+        // Inserting say a [0]:anything into a [-1]:Float
+        if (CT == BaseType::Anything)
+          return true;
+
+        // Otherwise, inserting a non-equivalent pair into a more general
+        // slot. This is invalid.
+        llvm::errs() << "inserting into : " << str() << " with "
+                     << to_string(Seq) << " of " << CT.str() << '\n';
+        llvm_unreachable("illegal insertion");
+      }
+      if (NewMoreGeneralThanOld) {
+        // This new is strictly more general than the old. If they were
+        // equivalent, the case above would have been hit.
+        if (CT == BaseType::Anything || CT == Entry->second) {
+          // Previous equivalent values or values overwritten by an anything
+          // are removed.
+          changed = true;
+          mapping.erase(Entry);
+          return true;
+        }
+
+        // Inserting an existing or less general version (with pointer-int
+        // equivalence)
+        if (PointerIntSame &&
+            ((CT == BaseType::Pointer && Entry->second == BaseType::Integer) ||
+             (CT == BaseType::Integer && Entry->second == BaseType::Pointer))) {
+          changed = true;
+          mapping.erase(Entry);
+          return true;
+        }
+
+        // Keep lingering anythings if not being overwritten, even if this
+        // (e.g. Float) applies to more locations. Therefore it is legal to
+        // have [-1]:Float, [8]:Anything.
+        if (CT != BaseType::Anything && Entry->second == BaseType::Anything)
+          return true;
+
+        // Otherwise, inserting a more general non-equivalent pair. This is
+        // invalid.
+        llvm::errs() << "inserting into : " << str() << " with "
+                     << to_string(Seq) << " of " << CT.str() << '\n';
+        llvm_unreachable("illegal insertion");
+      }
+      return true;
+    });
+    if (EarlyReturn)
+      return false;
+
+    for (size_t Depth = 0; Depth < SeqSize; ++Depth) {
+      if (Seq[Depth] > Traits::maxOffset() && Depth < minIndices.size() &&
+          Seq[Depth] > minIndices[Depth]) {
+        return changed;
       }
     }
 
-    bool possibleDeletion = false;
-    size_t minLen =
+    bool PossibleDeletion = false;
+    size_t MinLength =
         (minIndices.size() <= SeqSize) ? minIndices.size() : SeqSize;
-    for (size_t i = 0; i < minLen; i++) {
-      if (minIndices[i] > Seq[i]) {
-        if (minIndices[i] > Traits::maxOffset())
-          possibleDeletion = true;
-        minIndices[i] = Seq[i];
+    for (size_t Depth = 0; Depth < MinLength; ++Depth) {
+      if (minIndices[Depth] > Seq[Depth]) {
+        if (minIndices[Depth] > Traits::maxOffset())
+          PossibleDeletion = true;
+        minIndices[Depth] = Seq[Depth];
       }
     }
 
     if (minIndices.size() < SeqSize) {
-      for (size_t i = minIndices.size(), end = SeqSize; i < end; ++i) {
-        minIndices.push_back(Seq[i]);
+      for (size_t Depth = minIndices.size(); Depth < SeqSize; ++Depth) {
+        minIndices.push_back(Seq[Depth]);
       }
     }
 
-    if (possibleDeletion) {
-      for (const auto &pair : llvm::make_early_inc_range(mapping)) {
-        size_t i = 0;
-        bool mustKeep = false;
-        bool considerErase = false;
-        for (int val : pair.first) {
-          if (val > Traits::maxOffset()) {
-            if (val == minIndices[i]) {
-              mustKeep = true;
-              break;
-            }
-            considerErase = true;
+    bool ErasedEntry = false;
+    if (PossibleDeletion) {
+      for (const auto &Pair : llvm::make_early_inc_range(mapping)) {
+        bool ExceedsLimit = false;
+        for (size_t Depth = 0, End = Pair.first.size(); Depth < End; ++Depth) {
+          int ValueAtDepth = Pair.first[Depth];
+          if (ValueAtDepth > Traits::maxOffset() &&
+              ValueAtDepth != minIndices[Depth]) {
+            ExceedsLimit = true;
+            break;
           }
-          ++i;
         }
-        if (!mustKeep && considerErase) {
-          mapping.erase(pair.first);
+        if (ExceedsLimit) {
+          mapping.erase(Pair.first);
           changed = true;
+          ErasedEntry = true;
         }
       }
     }
 
-    size_t i = 0;
-    bool keep = false;
-    bool considerErase = false;
-    for (auto val : Seq) {
-      if (val > Traits::maxOffset()) {
-        if (val == minIndices[i]) {
-          keep = true;
-          break;
-        }
-        considerErase = true;
-      }
-      i++;
-    }
-    if (considerErase && !keep)
-      return changed;
     mapping.insert(std::pair<const std::vector<int>, ConcreteType>(Seq, CT));
+    if (ErasedEntry) {
+      minIndices.clear();
+      for (const auto &Pair : mapping) {
+        for (size_t Depth = 0, End = Pair.first.size(); Depth < End; ++Depth) {
+          if (Depth == minIndices.size())
+            minIndices.push_back(Pair.first[Depth]);
+          else if (Pair.first[Depth] < minIndices[Depth])
+            minIndices[Depth] = Pair.first[Depth];
+        }
+      }
+    }
     return true;
   }
 
@@ -967,7 +1054,7 @@ public:
     // can still hava  typetree {[123456]:Int}, even if limit is 100).
     //
     // First compute the minimum 0th index to be kept.
-    Result.minIndices.resize(minIndices.size(), INT_MAX);
+    int MinNextZero = INT_MAX;
 
     for (const auto &pair : mapping) {
       if (pair.first.size() == 0) {
@@ -995,13 +1082,17 @@ public:
           }
 
         } else {
-          // We're going to insert addOffset + 0...maxSize so the new minIndex
-          // is addOffset
-          Result.minIndices[0] = addOffset;
-          for (size_t i = 1, sz = pair.first.size(); i < sz; i++)
-            if (pair.first[i] < Result.minIndices[i])
-              Result.minIndices[i] = pair.first[i];
-          continue;
+          size_t ChunkSize = 1;
+          auto ElementType = operator[]({-1});
+          if (auto FloatType = ElementType.isFloat()) {
+            ChunkSize = dl.getTypeSizeInBits(FloatType) / 8;
+          } else if (ElementType == BaseType::Pointer) {
+            ChunkSize = dl.getPointerSizeInBits() / 8;
+          }
+          int OffsetIncrement = (ChunkSize - offset % ChunkSize) % ChunkSize;
+          if (OffsetIncrement >= maxSize)
+            continue;
+          next0 = OffsetIncrement + addOffset;
         }
       } else {
         // Too small for range
@@ -1017,15 +1108,19 @@ public:
 
         next0 += addOffset;
       }
-      if (next0 < Result.minIndices[0])
-        Result.minIndices[0] = next0;
-      for (size_t i = 1, sz = pair.first.size(); i < sz; i++)
-        if (pair.first[i] < Result.minIndices[i])
-          Result.minIndices[i] = pair.first[i];
+      if (next0 < MinNextZero)
+        MinNextZero = next0;
     }
 
-    // Max depth of actual inserted values
-    size_t maxInsertedDepth = 0;
+    Result.minIndices.reserve(minIndices.size());
+    auto recordMinimumIndices = [&](const std::vector<int> &Indices) {
+      for (size_t Depth = 0, End = Indices.size(); Depth < End; ++Depth) {
+        if (Depth == Result.minIndices.size())
+          Result.minIndices.push_back(Indices[Depth]);
+        else if (Indices[Depth] < Result.minIndices[Depth])
+          Result.minIndices[Depth] = Indices[Depth];
+      }
+    };
 
     // Insert all
     for (const auto &pair : mapping) {
@@ -1064,26 +1159,15 @@ public:
         next0 += addOffset;
       }
 
-      // If after moving this would not merit being kept for being a min index
-      // or being within the max type offset, skip it.
-      if (next0 > Traits::maxOffset()) {
-        bool minIndex = next0 == Result.minIndices[0];
-        if (!minIndex)
-          for (size_t i = 1; i < pair.first.size(); i++) {
-            if (pair.first[i] == Result.minIndices[i]) {
-              minIndex = true;
-              break;
-            }
-          }
-        if (!minIndex)
-          continue;
-      }
+      // Enforce the offset cap independently at depth 0 so a nested index equal
+      // to its own depth's minimum cannot keep unbounded outer offsets alive.
+      if (next0 > Traits::maxOffset() && next0 != MinNextZero)
+        continue;
 
       std::vector<int> next(pair.first);
       next[0] = next0;
       Result.mapping.emplace(next, pair.second);
-      if (next.size() > maxInsertedDepth)
-        maxInsertedDepth = next.size();
+      recordMinimumIndices(next);
     }
 
     // Insert and expand the minus one, if needed
@@ -1103,9 +1187,10 @@ public:
           chunk = dl.getPointerSizeInBits() / 8;
         }
         auto offincr = (chunk - offset % chunk) % chunk;
-        bool inserted = false;
         for (int i = offincr; i < maxSize; i += chunk) {
           next[0] = i + addOffset;
+          if (next[0] > Traits::maxOffset() && next[0] != MinNextZero)
+            break;
           ConcreteType prev(pair.second);
           // We can use faster checks here, since we know there can be no
           // -1's that we would conflict with, only conflicts from previous
@@ -1119,15 +1204,10 @@ public:
           } else {
             Result.mapping.emplace(next, pair.second);
           }
-          inserted = true;
+          recordMinimumIndices(next);
         }
-        if (inserted && next.size() > maxInsertedDepth)
-          maxInsertedDepth = next.size();
       }
 
-    // Resize minIndices down if we dropped any higher-depth indices for being
-    // out of scope.
-    Result.minIndices.resize(maxInsertedDepth);
     return Result;
   }
 
@@ -1230,96 +1310,98 @@ public:
 
       // Check if there is an existing match, e.g. [-1, -1, -1] and inserting
       // [-1, 8, -1]
-      {
-        for (const auto &pair : llvm::make_early_inc_range(mapping)) {
-          if (pair.first.size() == SeqSize) {
-            // Whether the the inserted val (e.g. [-1, 0] or [0, 0]) is at least
-            // as general as the existing map val (e.g. [0, 0]).
-            bool newMoreGeneralThanOld = true;
-            // Whether the the existing val (e.g. [-1, 0] or [0, 0]) is at least
-            // as general as the inserted map val (e.g. [0, 0]).
-            bool oldMoreGeneralThanNew = true;
-            for (unsigned i = 0; i < SeqSize; i++) {
-              if (pair.first[i] == Seq[i])
+      bool EarlyReturn = false;
+      visitComparableEntries(
+          Seq, [&](typename ConcreteTypeMapType::iterator Entry) {
+            bool NewMoreGeneralThanOld = true;
+            bool OldMoreGeneralThanNew = true;
+            for (unsigned Depth = 0; Depth < SeqSize; ++Depth) {
+              if (Entry->first[Depth] == Seq[Depth])
                 continue;
-              if (Seq[i] == -1) {
-                oldMoreGeneralThanNew = false;
-              } else if (pair.first[i] == -1) {
-                newMoreGeneralThanOld = false;
+              if (Seq[Depth] == -1) {
+                OldMoreGeneralThanNew = false;
               } else {
-                oldMoreGeneralThanNew = false;
-                newMoreGeneralThanOld = false;
-                break;
+                assert(Entry->first[Depth] == -1 &&
+                       "comparable entry must match sequence or wildcard");
+                NewMoreGeneralThanOld = false;
               }
             }
 
-            if (oldMoreGeneralThanNew) {
+            if (OldMoreGeneralThanNew) {
               // Inserting an existing or less general version
-              if (CT == pair.second)
+              if (CT == Entry->second) {
+                EarlyReturn = true;
                 return false;
+              }
 
               // Inserting an existing or less general version (with pointer-int
               // equivalence)
-              if (PointerIntSame)
-                if ((CT == BaseType::Pointer &&
-                     pair.second == BaseType::Integer) ||
-                    (CT == BaseType::Integer &&
-                     pair.second == BaseType::Pointer))
-                  return false;
+              if (PointerIntSame && ((CT == BaseType::Pointer &&
+                                      Entry->second == BaseType::Integer) ||
+                                     (CT == BaseType::Integer &&
+                                      Entry->second == BaseType::Pointer))) {
+                EarlyReturn = true;
+                return false;
+              }
 
               // Inserting into an anything. Since from above we know this is
               // not an anything, the inserted value contains no new information
-              if (pair.second == BaseType::Anything)
+              if (Entry->second == BaseType::Anything) {
+                EarlyReturn = true;
                 return false;
+              }
 
               // Inserting say a [0]:anything into a [-1]:Float
               if (CT == BaseType::Anything) {
                 // If both at same index, remove old index
-                if (newMoreGeneralThanOld)
-                  mapping.erase(pair.first);
-                continue;
+                if (NewMoreGeneralThanOld)
+                  mapping.erase(Entry);
+                return true;
               }
 
               // Otherwise, inserting a non-equivalent pair into a more general
               // slot. This is invalid.
               LegalOr = false;
+              EarlyReturn = true;
               return false;
-            } else if (newMoreGeneralThanOld) {
+            }
+            if (NewMoreGeneralThanOld) {
               // This new is strictly more general than the old. If they were
               // equivalent, the case above would have been hit.
-
-              if (CT == BaseType::Anything || CT == pair.second) {
-                // previous equivalent values or values overwritten by
-                // an anything are removed
-                mapping.erase(pair.first);
-                continue;
+              if (CT == BaseType::Anything || CT == Entry->second) {
+                // Previous equivalent values or values overwritten by an
+                // anything are removed.
+                mapping.erase(Entry);
+                return true;
               }
 
               // Inserting an existing or less general version (with pointer-int
               // equivalence)
-              if (PointerIntSame)
-                if ((CT == BaseType::Pointer &&
-                     pair.second == BaseType::Integer) ||
-                    (CT == BaseType::Integer &&
-                     pair.second == BaseType::Pointer)) {
-                  mapping.erase(pair.first);
-                  continue;
-                }
+              if (PointerIntSame && ((CT == BaseType::Pointer &&
+                                      Entry->second == BaseType::Integer) ||
+                                     (CT == BaseType::Integer &&
+                                      Entry->second == BaseType::Pointer))) {
+                mapping.erase(Entry);
+                return true;
+              }
 
               // Keep lingering anythings if not being overwritten, even if this
               // (e.g. Float) applies to more locations. Therefore it is legal
-              // to have [-1]:Float, [8]:Anything
-              if (CT != BaseType::Anything && pair.second == BaseType::Anything)
-                continue;
+              // to have [-1]:Float, [8]:Anything.
+              if (CT != BaseType::Anything &&
+                  Entry->second == BaseType::Anything)
+                return true;
 
               // Otherwise, inserting a more general non-equivalent pair. This
               // is invalid.
               LegalOr = false;
+              EarlyReturn = true;
               return false;
             }
-          }
-        }
-      }
+            return true;
+          });
+      if (EarlyReturn)
+        return false;
     }
 
     return insert(Seq, CT);
