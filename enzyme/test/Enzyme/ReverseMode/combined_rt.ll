@@ -788,11 +788,11 @@ attributes #21 = { willreturn }
 ; CHECK-NEXT:  ret { double } %2
 
 ; CHECK:invertbb13:                                       ; preds = %invertbb60
-; CHECK-NEXT:  %"i58'ipc_unwrap" = bitcast [2 x [1 x double]]* %"arg'" to i8*
 ; CHECK-NEXT:  %i58_unwrap = bitcast [2 x [1 x double]]* %arg to i8*
-; CHECK-NEXT:  [[dst_inactive:%.*]] = icmp eq i8* %"i58'ipc_unwrap", %i58_unwrap
-; CHECK-NEXT:  %"i59'ipc_unwrap" = bitcast [2 x [1 x double]]* %"i4'ipa" to i8*
 ; CHECK-NEXT:  %i59_unwrap = bitcast [2 x [1 x double]]* %i4 to i8*
+; CHECK-NEXT:  %"i58'ipc_unwrap" = bitcast [2 x [1 x double]]* %"arg'" to i8*
+; CHECK-NEXT:  %"i59'ipc_unwrap" = bitcast [2 x [1 x double]]* %"i4'ipa" to i8*
+; CHECK-NEXT:  [[dst_inactive:%.*]] = icmp eq i8* %"i58'ipc_unwrap", %i58_unwrap
 ; CHECK-NEXT:  [[src_inactive:%.*]] = icmp eq i8* %"i59'ipc_unwrap", %i59_unwrap
 ; CHECK-NEXT:  [[cast_dst:%.*]] = bitcast i8* %"i58'ipc_unwrap" to double*
 ; CHECK-NEXT:  [[cast_src:%.*]] = bitcast i8* %"i59'ipc_unwrap" to double*
