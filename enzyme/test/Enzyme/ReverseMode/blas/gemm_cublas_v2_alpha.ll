@@ -23,8 +23,21 @@ entry:
 ; alpha: the inner product of the shadow of C with A*B, and beta: with the C that was
 ; overwritten, both through the cuBLAS dot with the handle of the call.
 ; CHECK: define internal void @diffef(ptr %handle,
+; The derivative passes alpha and beta in host memory: it checks the pointer mode first.
+; CHECK: invertentry:
+; CHECK-NEXT: call void @__enzyme_cublas_pointer_mode_check[[n:[0-9]+]](ptr %handle)
 ; CHECK: call void @cublasDdot_v2(ptr %handle, i32 16, ptr %"C'", i32 1, ptr %mat_AB, i32 1, ptr %[[res1:.+]])
 ; CHECK: call void @cublasDdot_v2(ptr %handle, i32 16, ptr %"C'", i32 1, ptr %cache.C, i32 1, ptr %[[res2:.+]])
+
+; CHECK: define internal void @__enzyme_cublas_pointer_mode_check[[n]](ptr %handle)
+; CHECK: store i32 -1, ptr %mode
+; CHECK-NEXT: call i32 @cublasGetPointerMode_v2(ptr %handle, ptr %mode)
+; CHECK-NEXT: %[[mode:.+]] = load i32, ptr %mode
+; CHECK-NEXT: %is.host = icmp eq i32 %[[mode]], 0
+; CHECK-NEXT: br i1 %is.host, label %good, label %bad
+; CHECK: bad:
+; CHECK-NEXT: call i32 @puts(ptr @[[msg:.+]])
+; CHECK-NEXT: call void @exit(i32 1)
 
 ; CHECK: define internal double @__enzyme_inner_prodcublasD_v2(ptr %handle, i32 %blasm, i32 %blasn, ptr noalias nocapture readonly %A, i32 %lda, ptr noalias readonly %B)
 ; CHECK: %dot.res = alloca double
