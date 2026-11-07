@@ -1,10 +1,11 @@
 name: Fortran
 
 on:
+  # Triggers the workflow on pushes to the "main" branch, i.e., PR merges
   push:
-    branches: 
-    - main
-    paths:
+    branches:
+      - main
+    paths: &paths
       - '.github/workflows/fortran.yml'
       - 'enzyme/Enzyme/**'
       - 'enzyme/Fortran/**'
@@ -15,25 +16,21 @@ on:
       - 'enzyme/cmake/**'
       - 'enzyme/CMakeLists.txt'
       - 'enzyme/CMakePresets.json'
+  # Triggers the workflow on pushes to open pull requests affecting '&paths' above
   pull_request:
-    paths:
-      - '.github/workflows/fortran.yml'
-      - 'enzyme/Enzyme/**'
-      - 'enzyme/Fortran/**'
-      - 'enzyme/includes/**'
-      - 'enzyme/test/**'
-      - 'enzyme/tools/**'
-      - 'enzyme/benchmarks/**'
-      - 'enzyme/cmake/**'
-      - 'enzyme/CMakeLists.txt'
-      - 'enzyme/CMakePresets.json'
+    paths: *paths
   merge_group:
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
 
 concurrency:
   # Skip intermediate builds: always.
   # Cancel intermediate builds: only if it is a pull request build.
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
+
+# Write permissions are not needed for all jobs in this workflow
+permissions: {}
 
 jobs:
   build-and-test-fortran-flang:
@@ -42,11 +39,19 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        build: [Release, Debug]
-        os: [ubuntu-26.04]
-        compiler: [flang]
-        llvm: [21, 22, 23]
-        mpi: [2021.7.1]
+        build:
+          - Release
+          - Debug
+        os:
+          - ubuntu-26.04
+        compiler:
+          - flang
+        llvm:
+          - 21
+          - 22
+          - 23
+        mpi:
+          - 2021.7.1
     timeout-minutes: 60
     steps:
     - name: add llvm with clang and flang
@@ -90,10 +95,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        build: [Release, Debug]
-        os: [ubuntu-22.04]
-        compiler: [ifx]
-        mpi: [2021.7.1]
+        build:
+          - Release
+          - Debug
+        os:
+          - ubuntu-22.04
+        compiler:
+          - ifx
+        mpi:
+          - 2021.7.1
         versions:
           - llvm: 15
             ifx: 2023.0.0
