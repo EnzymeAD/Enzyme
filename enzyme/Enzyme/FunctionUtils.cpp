@@ -90,6 +90,7 @@
 #include "llvm/Transforms/Scalar/SROA.h"
 #include "llvm/Transforms/Scalar/SimplifyCFG.h"
 #include "llvm/Transforms/Utils/Cloning.h"
+#include "llvm/Transforms/Utils/FixIrreducible.h"
 #include "llvm/Transforms/Utils/LCSSA.h"
 #include "llvm/Transforms/Utils/LowerInvoke.h"
 
@@ -4090,6 +4091,14 @@ Function *PreProcessCache::preprocessForClone(Function *F,
     SimplifyCFGOptions scfgo;
     {
       auto PA = SimplifyCFGPass(scfgo).run(*NewF, FAM);
+      FAM.invalidate(*NewF, PA);
+    }
+
+    // Convert irreducible cycles (such as reversed multi-exit loops in
+    // higher-order derivatives) into natural loops before splitting PHIs and
+    // canonicalizing loops.
+    {
+      PreservedAnalyses PA = FixIrreduciblePass().run(*NewF, FAM);
       FAM.invalidate(*NewF, PA);
     }
   }
