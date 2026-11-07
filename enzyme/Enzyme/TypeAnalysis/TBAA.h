@@ -30,6 +30,7 @@
 #include "BaseType.h"
 #include "ConcreteType.h"
 #include "TypeTree.h"
+#include <algorithm>
 
 /// isNewFormatTypeNode - Return true iff the given type node is in the new
 /// size-aware format.
@@ -381,56 +382,172 @@ extern "C" {
 extern llvm::cl::opt<bool> EnzymePrintType;
 }
 
+/// Return whether TypeName is a Clang _BitInt(N) scalar TBAA identifier.
+static inline bool isBitIntTBAATypeName(llvm::StringRef TypeName) {
+  if (!startsWith(TypeName, "_BitInt(") || !endsWith(TypeName, ")"))
+    return false;
+  llvm::StringRef Width =
+      TypeName.drop_front(strlen("_BitInt(")).drop_back(strlen(")"));
+  return !Width.empty() && llvm::all_of(Width, [](char Digit) {
+    return Digit >= '0' && Digit <= '9';
+  });
+}
+
+/// Return whether TypeName is a Clang pointer TBAA scalar identifier such as
+/// "p1 int" or "any p2 pointer".
+static inline bool isPointerTBAATypeName(llvm::StringRef TypeName) {
+  if (startsWith(TypeName, "any p") && endsWith(TypeName, " pointer")) {
+    llvm::StringRef Depth =
+        TypeName.drop_front(strlen("any p")).drop_back(strlen(" pointer"));
+    return !Depth.empty() && llvm::all_of(Depth, [](char Digit) {
+      return Digit >= '0' && Digit <= '9';
+    });
+  }
+  if (startsWith(TypeName, "p")) {
+    size_t SpaceIndex = TypeName.find(' ');
+    if (SpaceIndex != llvm::StringRef::npos && SpaceIndex > 1 &&
+        SpaceIndex + 1 < TypeName.size()) {
+      llvm::StringRef Depth = TypeName.slice(1, SpaceIndex);
+      return llvm::all_of(
+          Depth, [](char Digit) { return Digit >= '0' && Digit <= '9'; });
+    }
+  }
+  return false;
+}
+
 /// Derive the ConcreteType corresponding to the string TypeName
 /// The llvm::Instruction I denotes the context in which this was found
 static inline ConcreteType
 getTypeFromTBAAString(std::string TypeName, llvm::Instruction &I,
                       std::shared_ptr<llvm::ModuleSlotTracker> MST) {
+  ConcreteType Result(BaseType::Unknown);
   if (TypeName == "long long" || TypeName == "long" || TypeName == "int" ||
-      TypeName == "bool" || TypeName == "jtbaa_arraysize" ||
+      TypeName == "short" || TypeName == "bool" || TypeName == "wchar_t" ||
+      TypeName == "char8_t" || TypeName == "char16_t" ||
+      TypeName == "char32_t" || TypeName == "__int128" ||
+      isBitIntTBAATypeName(TypeName) || TypeName == "jtbaa_arraysize" ||
       TypeName == "jtbaa_arraylen") {
-    if (EnzymePrintType) {
-      llvm::errs() << "known tbaa ";
-      if (MST)
-        I.print(llvm::errs(), *MST);
-      else
-        llvm::errs() << I;
-      llvm::errs() << " " << TypeName << "\n";
-    }
-    return ConcreteType(BaseType::Integer);
+    Result = ConcreteType(BaseType::Integer);
   } else if (TypeName == "any pointer" || TypeName == "vtable pointer" ||
-             TypeName == "jtbaa_tag") {
-    if (EnzymePrintType) {
-      llvm::errs() << "known tbaa ";
-      if (MST)
-        I.print(llvm::errs(), *MST);
-      else
-        llvm::errs() << I;
-      llvm::errs() << " " << TypeName << "\n";
-    }
-    return ConcreteType(BaseType::Pointer);
+             TypeName == "jtbaa_tag" || isPointerTBAATypeName(TypeName)) {
+    Result = ConcreteType(BaseType::Pointer);
+  } else if (TypeName == "half" || TypeName == "_Float16") {
+    Result = llvm::Type::getHalfTy(I.getContext());
+  } else if (TypeName == "__bf16") {
+    Result = llvm::Type::getBFloatTy(I.getContext());
   } else if (TypeName == "float") {
-    if (EnzymePrintType) {
-      llvm::errs() << "known tbaa ";
-      if (MST)
-        I.print(llvm::errs(), *MST);
-      else
-        llvm::errs() << I;
-      llvm::errs() << " " << TypeName << "\n";
-    }
-    return llvm::Type::getFloatTy(I.getContext());
+    Result = llvm::Type::getFloatTy(I.getContext());
   } else if (TypeName == "double") {
-    if (EnzymePrintType) {
-      llvm::errs() << "known tbaa ";
-      if (MST)
-        I.print(llvm::errs(), *MST);
-      else
-        llvm::errs() << I;
-      llvm::errs() << " " << TypeName << "\n";
-    }
-    return llvm::Type::getDoubleTy(I.getContext());
+    Result = llvm::Type::getDoubleTy(I.getContext());
+  } else if (TypeName == "__float128") {
+    Result = llvm::Type::getFP128Ty(I.getContext());
   }
-  return ConcreteType(BaseType::Unknown);
+  if (Result.isKnown() && EnzymePrintType) {
+    llvm::errs() << "known tbaa ";
+    if (MST)
+      I.print(llvm::errs(), *MST);
+    else
+      llvm::errs() << I;
+    llvm::errs() << ' ' << TypeName << '\n';
+  }
+  return Result;
+}
+
+/// Combine TBAA field TypeTrees while dropping entries whose outer byte spans
+/// overlap with incompatible types, such as union alternatives or bitfields.
+static inline TypeTree
+mergeNonConflictingTBAATrees(llvm::ArrayRef<TypeTree> Trees,
+                             const llvm::DataLayout &DL) {
+  struct TBAASpanEntry {
+    std::vector<int> Offsets;
+    ConcreteType Type;
+    uint64_t ByteStart;
+    uint64_t ByteEnd;
+    uint64_t ElementBytes;
+    bool Conflicted = false;
+  };
+
+  uint64_t PointerBytes = (DL.getPointerSizeInBits() + 7) / 8;
+  if (PointerBytes == 0)
+    PointerBytes = 1;
+
+  llvm::SmallVector<TBAASpanEntry, 8> Entries;
+  for (const TypeTree &Tree : Trees) {
+    for (const auto &MappingPair : Tree.getMapping()) {
+      if (MappingPair.first.empty())
+        continue;
+      uint64_t ElementBytes = 1;
+      if (MappingPair.first.size() > 1 ||
+          MappingPair.second == BaseType::Pointer) {
+        ElementBytes = PointerBytes;
+      } else if (llvm::Type *FloatType = MappingPair.second.isFloat()) {
+        ElementBytes = (DL.getTypeSizeInBits(FloatType) + 7) / 8;
+      }
+      if (ElementBytes == 0)
+        ElementBytes = 1;
+
+      uint64_t ByteStart = 0;
+      uint64_t ByteEnd = UINT64_MAX;
+      if (MappingPair.first[0] != -1) {
+        ByteStart = static_cast<uint64_t>(MappingPair.first[0]);
+        ByteEnd = (UINT64_MAX - ByteStart < ElementBytes)
+                      ? UINT64_MAX
+                      : ByteStart + ElementBytes;
+      }
+      Entries.push_back({MappingPair.first, MappingPair.second, ByteStart,
+                         ByteEnd, ElementBytes, false});
+    }
+  }
+
+  std::stable_sort(Entries.begin(), Entries.end(),
+                   [](const TBAASpanEntry &Left, const TBAASpanEntry &Right) {
+                     return Left.ByteStart < Right.ByteStart;
+                   });
+
+  auto entriesConflict = [](const TBAASpanEntry &First,
+                            const TBAASpanEntry &Second) {
+    if (First.Offsets[0] != -1 && Second.Offsets[0] != -1) {
+      if (First.ByteStart != Second.ByteStart)
+        return true;
+    } else {
+      if (First.ElementBytes != Second.ElementBytes)
+        return true;
+      if (First.Offsets[0] != -1 && First.ByteStart % Second.ElementBytes != 0)
+        return true;
+      if (Second.Offsets[0] != -1 && Second.ByteStart % First.ElementBytes != 0)
+        return true;
+    }
+    const TBAASpanEntry &Shorter =
+        First.Offsets.size() <= Second.Offsets.size() ? First : Second;
+    const TBAASpanEntry &Longer =
+        First.Offsets.size() <= Second.Offsets.size() ? Second : First;
+    TypeTree Probe;
+    bool Legal = true;
+    Probe.checkedOrIn(Shorter.Offsets, Shorter.Type, /*PointerIntSame=*/false,
+                      Legal);
+    if (Legal)
+      Probe.checkedOrIn(Longer.Offsets, Longer.Type, /*PointerIntSame=*/false,
+                        Legal);
+    return !Legal;
+  };
+
+  for (size_t i = 0, End = Entries.size(); i < End; ++i) {
+    for (size_t j = i + 1; j < End; ++j) {
+      if (Entries[j].ByteStart >= Entries[i].ByteEnd)
+        break;
+      if (entriesConflict(Entries[i], Entries[j])) {
+        Entries[i].Conflicted = true;
+        Entries[j].Conflicted = true;
+      }
+    }
+  }
+
+  TypeTree Result(BaseType::Pointer);
+  for (const TBAASpanEntry &Entry : Entries) {
+    if (!Entry.Conflicted)
+      Result.orIn(Entry.Offsets, Entry.Type);
+  }
+  return Result;
 }
 
 /// Given a TBAA access node return the corresponding TypeTree
@@ -448,16 +565,17 @@ static inline TypeTree parseTBAA(TBAAStructTypeNode AccessType,
     }
   }
 
-  TypeTree Result(BaseType::Pointer);
+  llvm::SmallVector<TypeTree, 4> FieldTrees;
   for (unsigned i = 0, size = AccessType.getNumFields(); i < size; ++i) {
     auto SubAccess = AccessType.getFieldType(i);
     auto Offset = AccessType.getFieldOffset(i);
     auto SubResult = parseTBAA(SubAccess, I, DL, MST);
-    Result |= SubResult.ShiftIndices(DL, /*init offset*/ 0, /*max size*/ -1,
-                                     /*addOffset*/ Offset);
+    FieldTrees.push_back(SubResult.ShiftIndices(DL, /*init offset*/ 0,
+                                                /*max size*/ -1,
+                                                /*addOffset*/ Offset));
   }
 
-  return Result;
+  return mergeNonConflictingTBAATrees(FieldTrees, DL);
 }
 
 /// Given a TBAA metadata node return the corresponding TypeTree
@@ -478,6 +596,8 @@ static inline TypeTree parseTBAA(const llvm::MDNode *M, llvm::Instruction &I,
 
   // For struct-path aware TBAA, we use the access type of the tag.
   TBAAStructTagNode Tag(M);
+  if (!Tag.getAccessType())
+    return TypeTree();
   TBAAStructTypeNode AccessType(Tag.getAccessType());
   return parseTBAA(AccessType, I, DL, MST);
 }
@@ -487,7 +607,7 @@ static inline TypeTree parseTBAA(const llvm::MDNode *M, llvm::Instruction &I,
 static inline TypeTree parseTBAA(llvm::Instruction &I,
                                  const llvm::DataLayout &DL,
                                  std::shared_ptr<llvm::ModuleSlotTracker> MST) {
-  TypeTree Result;
+  llvm::SmallVector<TypeTree, 4> FieldTrees;
   if (const llvm::MDNode *M =
           I.getMetadata(llvm::LLVMContext::MD_tbaa_struct)) {
     for (unsigned i = 0, size = M->getNumOperands(); i < size; i += 3) {
@@ -503,17 +623,16 @@ static inline TypeTree parseTBAA(llvm::Instruction &I,
                 llvm::cast<llvm::ConstantAsMetadata>(M->getOperand(i + 1))
                     ->getValue())
                 ->getLimitedValue();
-        Result |=
-            SubResult.ShiftIndices(DL, /*init offset*/ 0, /*max size*/ Len,
-                                   /*add offset*/ Start);
+        FieldTrees.push_back(SubResult.ShiftIndices(DL, /*init offset*/ 0,
+                                                    /*max size*/ Len,
+                                                    /*add offset*/ Start));
       }
     }
   }
   if (const llvm::MDNode *M = I.getMetadata(llvm::LLVMContext::MD_tbaa)) {
-    Result |= parseTBAA(M, I, DL, MST);
+    FieldTrees.push_back(parseTBAA(M, I, DL, MST));
   }
-  Result |= TypeTree(BaseType::Pointer);
-  return Result;
+  return mergeNonConflictingTBAATrees(FieldTrees, DL);
 }
 
 #endif
