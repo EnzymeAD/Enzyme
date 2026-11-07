@@ -43,12 +43,17 @@ entry:
   ret double %res
 }
 
+; The scratch slot for the zeroed value is allocated once in the entry block,
+; and the stores into it follow the header's PHIs.
 ; CHECK-LABEL: define internal void @diffeloops(
+; CHECK-NEXT: entry:
+; CHECK: %[[ALLOC:[0-9]+]] = alloca i64, align 8
 ; CHECK: header:
 ; CHECK-NEXT:   %iv = phi i64
 ; CHECK-NEXT:   %[[P1:.+]] = phi i32
 ; CHECK-NEXT:   %[[P2:.+]] = phi i32
 ; CHECK-NEXT:   %[[P3:.+]] = phi i32
 ; CHECK-NEXT:   %[[P4:.+]] = phi i32
-; CHECK-NEXT:   %[[ALLOC:.+]] = alloca i64, align 8
 ; CHECK-NEXT:   store i64 %iv, ptr %[[ALLOC]]
+; CHECK-NOT: = alloca 
+; CHECK: ret void

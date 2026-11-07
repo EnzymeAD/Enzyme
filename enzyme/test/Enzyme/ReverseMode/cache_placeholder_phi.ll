@@ -54,8 +54,13 @@ entry:
 }
 
 ; CHECK-LABEL: define internal {{.*}}@augmented_eig_step(
-; CHECK-LABEL: loop:
-; CHECK-NEXT: phi i64
-; CHECK-NEXT: phi i32
-; CHECK-NEXT: phi i32
-; CHECK-NEXT: alloca i64
+; CHECK-NEXT: entry:
+; CHECK: %[[ALLOC:[0-9]+]] = alloca i64, align 8
+; CHECK: loop:
+; CHECK-NEXT:   %iv = phi i64
+; CHECK-NEXT:   phi i32
+; CHECK-NEXT:   %prev = phi i32
+; CHECK-NEXT:   store i64 %iv, ptr %[[ALLOC]]
+; CHECK: store i32 %prev, ptr
+; CHECK-NOT: = alloca 
+; CHECK: ret

@@ -5736,6 +5736,9 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         return Constant::getNullValue(getShadowType(oval->getType()));
       else {
         IRBuilder<> bb(inversionAllocs);
+        // The scratch slot lives with the other allocas, so a value defined in
+        // a loop does not grow the stack on every iteration.
+        auto alloc = bb.CreateAlloca(oval->getType());
         if (auto *OriginalInstruction = dyn_cast<Instruction>(oval)) {
           Instruction *NewInstruction = getNewFromOriginal(OriginalInstruction);
           // The stores use the instruction, so follow it and any PHIs it
@@ -5747,7 +5750,6 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
           else
             bb.SetInsertPoint(NewInstruction->getParent());
         }
-        auto alloc = bb.CreateAlloca(oval->getType());
         auto AT = ArrayType::get(bb.getInt8Ty(), size);
         bb.CreateStore(getNewFromOriginal(oval), alloc);
         Value *cur = bb.CreatePointerCast(alloc, getUnqual(AT));
