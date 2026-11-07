@@ -3,6 +3,7 @@ package(
     default_visibility = ["//visibility:public"],
 )
 
+load("@llvm-project//:vars.bzl", "LLVM_VERSION_MAJOR")
 load("@llvm-project//llvm:lit_test.bzl", "lit_expand_template")
 
 # Generates lit config input file by applying path placeholder substitutions
@@ -17,7 +18,7 @@ lit_expand_template(
         "@LLVM_LIBS_DIR@": "@llvm-project//llvm:FileCheck",
     },
     substitutions = {
-        "@LLVM_VERSION_MAJOR@": "18",
+        "@LLVM_VERSION_MAJOR@": LLVM_VERSION_MAJOR,
         "@ENZYME_SOURCE_DIR@": "",
         "@ENZYME_BINARY_DIR@": "",
         "@TARGET_TRIPLE@": "",
