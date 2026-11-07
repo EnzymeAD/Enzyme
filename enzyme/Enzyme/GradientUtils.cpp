@@ -5730,17 +5730,26 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         return Constant::getNullValue(getShadowType(oval->getType()));
       else {
         IRBuilder<> bb(inversionAllocs);
-        if (auto arg = dyn_cast<Instruction>(oval)) {
-          arg = getNewFromOriginal(arg);
-          // Go one after since otherwise we won't be able
-          // to use in the store.
-          arg = arg->getNextNode();
-          while (auto PN = dyn_cast<PHINode>(arg)) {
-            if (PN->getNumIncomingValues() == 0)
-              break;
-            arg = PN->getNextNode();
+        if (auto *OriginalInstruction = dyn_cast<Instruction>(oval)) {
+          Instruction *NewInstruction = getNewFromOriginal(OriginalInstruction);
+          // Store after the instruction and past any block-header PHIs,
+          // including unpopulated shadow PHIs for original PHIs.
+          Instruction *InsertBefore = NewInstruction->getNextNode();
+          for (Instruction *Current = InsertBefore;
+               auto *Phi = dyn_cast_or_null<PHINode>(Current);
+               Current = Current->getNextNode()) {
+            auto FoundFictitious = fictiousPHIs.find(Phi);
+            if (Phi->getNumIncomingValues() != 0 ||
+                isa_and_nonnull<PHINode>(hasUninverted(Phi)) ||
+                (FoundFictitious != fictiousPHIs.end() &&
+                 isa_and_nonnull<PHINode>((Value *)FoundFictitious->second))) {
+              InsertBefore = Phi->getNextNode();
+            }
           }
-          bb.SetInsertPoint(arg);
+          if (InsertBefore)
+            bb.SetInsertPoint(InsertBefore);
+          else
+            bb.SetInsertPoint(NewInstruction->getParent());
         }
         auto alloc = bb.CreateAlloca(oval->getType());
         auto AT = ArrayType::get(bb.getInt8Ty(), size);
