@@ -2125,6 +2125,37 @@ void TypeAnalyzer::visitStoreInst(StoreInst &I) {
   if (!checkHypothesisPointerOperand(I.getPointerOperand(), &I))
     return;
 
+  // Storing an object's address into a pointer field within that same object
+  // (such as initializing a circular intrusive list sentinel `head.next =
+  // &head`) links the base header into a list of derived payload nodes without
+  // making the header itself carry the derived node payload layout or vice
+  // versa.
+  if (I.getValueOperand()->getType()->isPointerTy() &&
+      I.getValueOperand()->getType()->getPointerAddressSpace() ==
+          I.getPointerOperand()->getType()->getPointerAddressSpace()) {
+    APInt ValOffset(DL.getIndexTypeSizeInBits(I.getValueOperand()->getType()),
+                    0);
+    APInt PtrOffset(DL.getIndexTypeSizeInBits(I.getPointerOperand()->getType()),
+                    0);
+    Value *ValBase = I.getValueOperand()->stripAndAccumulateConstantOffsets(
+        DL, ValOffset, /*AllowNonInbounds*/ true);
+    Value *PtrBase = I.getPointerOperand()->stripAndAccumulateConstantOffsets(
+        DL, PtrOffset, /*AllowNonInbounds*/ true);
+    if (ValBase == PtrBase && PtrOffset.sge(ValOffset)) {
+      if (direction & UP) {
+        TypeTree PtrSlot = TypeTree(BaseType::Pointer)
+                               .ShiftIndices(DL, /*start*/ 0, StoreSize,
+                                             /*addOffset*/ 0)
+                               .Only(-1, &I);
+        PtrSlot.insert({-1}, BaseType::Pointer);
+        updateAnalysis(I.getPointerOperand(), PtrSlot, &I);
+        updateAnalysis(I.getValueOperand(),
+                       TypeTree(BaseType::Pointer).Only(-1, &I), &I);
+      }
+      return;
+    }
+  }
+
   // Only propagate mappings in range that aren't "Anything" into the pointer
   auto ptr = TypeTree(BaseType::Pointer);
   auto purged = getAnalysis(I.getValueOperand())
@@ -5345,6 +5376,15 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
         startsWith(funcName, "_ZNSt3__u12basic_string") ||
         startsWith(funcName, "_ZNSt3__u12__hash_table") ||
         startsWith(funcName, "_ZNKSt3__u15basic_stringbuf")) {
+      return;
+    }
+
+    if (isStdListNodeBaseFunction(funcName)) {
+      for (Value *Arg : call.args()) {
+        if (Arg->getType()->isPointerTy())
+          updateAnalysis(Arg, TypeTree(BaseType::Pointer).Only(-1, &call),
+                         &call);
+      }
       return;
     }
 

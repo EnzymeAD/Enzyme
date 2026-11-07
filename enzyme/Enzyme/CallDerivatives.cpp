@@ -3265,6 +3265,48 @@ bool AdjointGenerator::handleKnownCallDerivatives(
       return true;
     }
 
+    if (isStdListNodeBaseCall(call, funcName)) {
+      FunctionType *FuncTy = called->getFunctionType();
+      if (Mode == DerivativeMode::ReverseModeGradient ||
+          Mode == DerivativeMode::ForwardModeSplit) {
+        eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+        return true;
+      }
+      // All operands link into the same circular doubly-linked list; skip
+      // shadow relinking if any operand is inactive so a shadow node is
+      // never spliced into a constant primal list.
+      if (llvm::any_of(call.args(), [&](Value *Arg) {
+            return gutils->isConstantValue(Arg);
+          }))
+        return true;
+      SmallVector<Value *, 3> ShadowArgs;
+      for (Value *Arg : call.args())
+        ShadowArgs.push_back(gutils->invertPointerM(Arg, BuilderZ));
+      SmallVector<ValueType, 3> BundleTypes(call.arg_size(), ValueType::Shadow);
+      auto Defs = gutils->getInvertedBundles(&call, BundleTypes, BuilderZ,
+                                             /*lookup*/ false);
+      for (unsigned Lane = 0, Width = gutils->getWidth(); Lane < Width;
+           ++Lane) {
+        SmallVector<Value *, 3> LaneArgs;
+        for (unsigned Index = 0; Index < ShadowArgs.size(); ++Index) {
+          Value *Shadow =
+              Width > 1 ? gutils->extractMeta(BuilderZ, ShadowArgs[Index], Lane)
+                        : ShadowArgs[Index];
+          Type *ParamTy = FuncTy->getParamType(Index);
+          if (Shadow->getType()->isIntegerTy())
+            Shadow = BuilderZ.CreateIntToPtr(Shadow, ParamTy);
+          else if (Shadow->getType() != ParamTy)
+            Shadow = BuilderZ.CreatePointerCast(Shadow, ParamTy);
+          LaneArgs.push_back(Shadow);
+        }
+        CallInst *ShadowCall =
+            BuilderZ.CreateCall(FuncTy, called, LaneArgs, Defs);
+        ShadowCall->setCallingConv(call.getCallingConv());
+        ShadowCall->setDebugLoc(gutils->getNewFromOriginal(call.getDebugLoc()));
+      }
+      return true;
+    }
+
     // Functions that initialize a shadow data structure (with no
     // other arguments) needs to be run on shadow in primal.
     if (funcName == "_ZNSt8ios_baseC2Ev" || funcName == "_ZNSt8ios_baseD2Ev" ||

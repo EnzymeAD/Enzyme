@@ -390,4 +390,45 @@ static inline bool isDeallocationCall(const llvm::Value *TmpOrig,
   return false;
 }
 
+/// Return whether \p Name is a libstdc++ `_List_node_base` pointer-relinking
+/// method (`_M_hook`, `_M_unhook`, `_M_transfer`, `_M_reverse`, or `swap`).
+static inline bool isStdListNodeBaseFunction(llvm::StringRef Name) {
+  if (!Name.contains("15_List_node_base"))
+    return false;
+  for (llvm::StringRef Prefix :
+       {"_ZNSt8__detail15_List_node_base", "_ZNSt9__cxx199815_List_node_base",
+        "_ZNSt6__norm15_List_node_base", "_ZN10__gnu_norm15_List_node_base"}) {
+    llvm::StringRef Rest = Name;
+    if (Rest.consume_front(Prefix)) {
+      return Rest == "7_M_hookEPS0_" || Rest == "4hookEPS0_" ||
+             Rest == "9_M_unhookEv" || Rest == "6unhookEv" ||
+             Rest == "11_M_transferEPS0_S1_" || Rest == "8transferEPS0_S1_" ||
+             Rest == "10_M_reverseEv" || Rest == "7reverseEv" ||
+             Rest == "4swapERS0_S1_";
+    }
+  }
+  if (Name.consume_front("_ZNSt15_List_node_base")) {
+    return Name == "7_M_hookEPS_" || Name == "4hookEPS_" ||
+           Name == "9_M_unhookEv" || Name == "6unhookEv" ||
+           Name == "11_M_transferEPS_S0_" || Name == "8transferEPS_S0_" ||
+           Name == "10_M_reverseEv" || Name == "7reverseEv" ||
+           Name == "4swapERS_S0_";
+  }
+  return false;
+}
+
+/// Return whether \p Call invokes a libstdc++ `_List_node_base`
+/// pointer-relinking method with its expected `void(ptr, ...)` signature.
+static inline bool isStdListNodeBaseCall(const llvm::CallBase &Call,
+                                         llvm::StringRef Name) {
+  if (!isStdListNodeBaseFunction(Name))
+    return false;
+  const llvm::FunctionType *FuncTy = Call.getFunctionType();
+  return FuncTy->getReturnType()->isVoidTy() && !FuncTy->isVarArg() &&
+         Call.arg_size() == FuncTy->getNumParams() &&
+         llvm::all_of(FuncTy->params(), [](const llvm::Type *ParamTy) {
+           return ParamTy->isPointerTy();
+         });
+}
+
 #endif
