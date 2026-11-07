@@ -571,6 +571,17 @@ bool attributeKnownFunctions(llvm::Function &F) {
       F.addParamAttr(2, Attribute::ReadOnly);
     }
   }
+  if (isStdListNodeBaseFunction(name)) {
+    changed = true;
+    F.addFnAttr(Attribute::NoUnwind);
+    F.addFnAttr(Attribute::NoRecurse);
+    F.addFnAttr(Attribute::WillReturn);
+    F.addFnAttr(Attribute::NoFree);
+    F.addFnAttr(Attribute::NoSync);
+    F.addAttribute(
+        AttributeList::FunctionIndex,
+        Attribute::get(F.getContext(), "enzyme_no_escaping_allocation"));
+  }
   changed |= attributeTablegen(F);
   return changed;
 }
