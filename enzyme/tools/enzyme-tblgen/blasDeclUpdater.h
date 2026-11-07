@@ -230,6 +230,32 @@ inline void emitBlasDeclUpdater(const RecordKeeper &RK, raw_ostream &os) {
   }
   emit_attributeBLASCaller(newBlasPatterns, os);
 
+  os << "bool hasBlasCallPattern(const BlasInfo &Blas) {\n";
+  for (const auto &BlasPattern : newBlasPatterns) {
+    os << "  if (Blas.function == \"" << BlasPattern.getName()
+       << "\")\n    return true;\n";
+  }
+  os << "  return false;\n";
+  os << "}\n";
+
+  os << "bool hasTablegenCallPattern(llvm::StringRef Name, unsigned "
+        "NumParameters) {\n";
+  for (const Record *Pattern : RK.getAllDerivedDefinitions("CallPattern")) {
+    const DagInit *PatternTree = Pattern->getValueAsDag("PatternToMatch");
+    os << "  if ((";
+    bool HasPreviousName = false;
+    for (const Init *NameInit : *Pattern->getValueAsListInit("names")) {
+      if (HasPreviousName)
+        os << " ||\n      ";
+      os << "Name == " << cast<StringInit>(NameInit)->getAsString();
+      HasPreviousName = true;
+    }
+    os << ") && NumParameters == " << PatternTree->getNumArgs()
+       << ")\n    return true;\n";
+  }
+  os << "  return false;\n";
+  os << "}\n";
+
   os << "bool attributeTablegen(llvm::Function &F) {\n";
   os << "  auto name = getFuncName(&F);\n";
   os << "  auto changed = false;\n";

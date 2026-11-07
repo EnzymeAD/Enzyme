@@ -512,7 +512,7 @@ def : CallPattern<(Op $x),
                   >;
 
 def : CallPattern<(Op $x),
-                  ["exp10"],
+                  ["exp10", "exp10f", "exp10l"],
                   [(FMul (FMul (DiffeRet), (Call<(SameFunc), [ReadNone,NoUnwind]> $x) ), (ConstantFP<"2.30258509299404568401799145468"> $x))],
                   (ForwardFromSummedReverse),
                   [ReadNone, NoUnwind]
