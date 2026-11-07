@@ -308,6 +308,74 @@ TypeAnalyzer::TypeAnalyzer(
          fntypeinfo.Function->getFunctionType()->getNumParams());
 }
 
+/// Return whether U only inspects lifetime or debug metadata for an alloca
+/// without mutating stored values or escaping its address.
+static bool isIgnorableAllocaUser(const llvm::User *U) {
+  const auto *I = dyn_cast<Instruction>(U);
+  if (!I)
+    return false;
+  if (!I->mayReadOrWriteMemory() && I->use_empty())
+    return true;
+  if (isa<BitCastInst>(I) || isa<AddrSpaceCastInst>(I))
+    return llvm::all_of(I->users(), isIgnorableAllocaUser);
+  if (const auto *GEP = dyn_cast<GetElementPtrInst>(I))
+    return GEP->hasAllZeroIndices() &&
+           llvm::all_of(GEP->users(), isIgnorableAllocaUser);
+  if (isa<DbgInfoIntrinsic>(I))
+    return true;
+  if (const auto *CB = dyn_cast<CallBase>(I)) {
+    Intrinsic::ID ID = Intrinsic::not_intrinsic;
+    if (const auto *II = dyn_cast<IntrinsicInst>(CB)) {
+      ID = II->getIntrinsicID();
+    } else {
+      StringRef FuncName = getFuncNameFromCall(CB);
+      isMemFreeLibMFunction(FuncName, &ID);
+    }
+    switch (ID) {
+    case Intrinsic::lifetime_start:
+    case Intrinsic::lifetime_end:
+    case Intrinsic::invariant_start:
+    case Intrinsic::invariant_end:
+    case Intrinsic::assume:
+      return llvm::all_of(CB->users(), isIgnorableAllocaUser);
+    default:
+      break;
+    }
+  }
+  return false;
+}
+
+/// Return the unique StoreInst initializing AI when it dominates LoadI and no
+/// other instruction mutates or escapes AI, permitting OpenMP static schedule
+/// initialization where thread 0 observes the initial lower bound.
+static StoreInst *findSingleDominatingAllocaStore(AllocaInst *AI,
+                                                  LoadInst *LoadI,
+                                                  const DominatorTree &DT) {
+  StoreInst *SingleStore = nullptr;
+  for (User *U : AI->users()) {
+    if (auto *SI = dyn_cast<StoreInst>(U)) {
+      if (SingleStore || SI->getValueOperand() == AI)
+        return nullptr;
+      SingleStore = SI;
+      continue;
+    }
+    if (isa<LoadInst>(U) || isIgnorableAllocaUser(U))
+      continue;
+    if (const auto *CB = dyn_cast<CallBase>(U)) {
+      StringRef FuncName = getFuncNameFromCall(CB);
+      if (FuncName == "__kmpc_for_static_init_4" ||
+          FuncName == "__kmpc_for_static_init_4u" ||
+          FuncName == "__kmpc_for_static_init_8" ||
+          FuncName == "__kmpc_for_static_init_8u")
+        continue;
+    }
+    return nullptr;
+  }
+  if (SingleStore && DT.dominates(SingleStore, LoadI))
+    return SingleStore;
+  return nullptr;
+}
+
 static SmallPtrSet<BasicBlock *, 1>
 findLoopIndices(llvm::Value *val, LoopInfo &LI, DominatorTree &DT,
                 SmallPtrSet<PHINode *, 1> &seen) {
@@ -325,35 +393,7 @@ findLoopIndices(llvm::Value *val, LoopInfo &LI, DominatorTree &DT,
   }
   if (auto LDI = dyn_cast<LoadInst>(val)) {
     if (auto AI = dyn_cast<AllocaInst>(LDI->getPointerOperand())) {
-      StoreInst *SI = nullptr;
-      bool failed = false;
-      for (auto u : AI->users()) {
-        if (auto SIu = dyn_cast<StoreInst>(u)) {
-          if (SI && SIu->getValueOperand() == AI) {
-            failed = true;
-            break;
-          }
-          SI = SIu;
-        } else if (!isa<LoadInst>(u)) {
-          if (!cast<Instruction>(u)->mayReadOrWriteMemory() &&
-              cast<Instruction>(u)->use_empty())
-            continue;
-          if (auto CI = dyn_cast<CallBase>(u)) {
-            if (auto F = CI->getCalledFunction()) {
-              auto funcName = F->getName();
-              if (funcName == "__kmpc_for_static_init_4" ||
-                  funcName == "__kmpc_for_static_init_4u" ||
-                  funcName == "__kmpc_for_static_init_8" ||
-                  funcName == "__kmpc_for_static_init_8u") {
-                continue;
-              }
-            }
-          }
-          failed = true;
-          break;
-        }
-      }
-      if (SI && !failed && DT.dominates(SI, LDI)) {
+      if (StoreInst *SI = findSingleDominatingAllocaStore(AI, LDI, DT)) {
         return findLoopIndices(SI->getValueOperand(), LI, DT, seen);
       }
     }
@@ -473,38 +513,10 @@ FnTypeInfo::knownIntegralValues(llvm::Value *val, const DominatorTree &DT,
   }
   if (auto LI = dyn_cast<LoadInst>(val)) {
     if (auto AI = dyn_cast<AllocaInst>(LI->getPointerOperand())) {
-      StoreInst *SI = nullptr;
-      bool failed = false;
-      for (auto u : AI->users()) {
-        if (auto SIu = dyn_cast<StoreInst>(u)) {
-          if (SI && SIu->getValueOperand() == AI) {
-            failed = true;
-            break;
-          }
-          SI = SIu;
-        } else if (!isa<LoadInst>(u)) {
-          if (!cast<Instruction>(u)->mayReadOrWriteMemory() &&
-              cast<Instruction>(u)->use_empty())
-            continue;
-          if (auto CI = dyn_cast<CallBase>(u)) {
-            if (auto F = CI->getCalledFunction()) {
-              auto funcName = F->getName();
-              if (funcName == "__kmpc_for_static_init_4" ||
-                  funcName == "__kmpc_for_static_init_4u" ||
-                  funcName == "__kmpc_for_static_init_8" ||
-                  funcName == "__kmpc_for_static_init_8u") {
-                continue;
-              }
-            }
-          }
-          failed = true;
-          break;
-        }
-      }
-      if (SI && !failed && DT.dominates(SI, LI)) {
-        for (auto val :
+      if (StoreInst *SI = findSingleDominatingAllocaStore(AI, LI, DT)) {
+        for (auto storedVal :
              knownIntegralValues(SI->getValueOperand(), DT, intseen, SE)) {
-          insert(val);
+          insert(storedVal);
         }
       }
     }
@@ -2410,7 +2422,10 @@ void TypeAnalyzer::visitGEPOperator(GEPOperator &gep) {
       continue;
 
     int maxSize = -1;
-    if (firstIsZero) {
+    // Only multi-index GEPs with a zero leading index narrow from an outer
+    // aggregate into a subelement; single-index GEPs perform pointer-offset
+    // arithmetic across an array or byte buffer without bounding slice size.
+    if (firstIsZero && gep.getNumIndices() > 1) {
       maxSize = DL.getTypeAllocSizeInBits(gep.getResultElementType()) / 8;
     }
 
