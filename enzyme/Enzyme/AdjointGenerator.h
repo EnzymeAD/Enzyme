@@ -585,12 +585,11 @@ public:
       auto ET = I.getType();
       if (looseTypeAnalysis || true) {
         vd = defaultTypeTreeForLLVM(ET, &I);
-        if (EmitWarningEnabled(I.getContext())) {
+        if (!constantval || !gutils->isConstantInstruction(&I)) {
           std::string str;
           raw_string_ostream ss(str);
-          ss << "Cannot deduce type of load " << I << ", assumed " << vd.str()
-             << "\n";
-          EmitWarning("CannotDeduceType", I, ss.str());
+          ss << "Cannot deduce type of load " << I << ", assumed " << vd.str();
+          EmitWarningAlways("CannotDeduceType", I, ss.str());
         }
         goto known;
       }
@@ -1319,13 +1318,10 @@ public:
     if (!vd.isKnown()) {
       if (looseTypeAnalysis || true) {
         vd = defaultTypeTreeForLLVM(valType, &I);
-        if (EmitWarningEnabled(I.getContext())) {
-          std::string str;
-          raw_string_ostream ss(str);
-          ss << "Cannot deduce type of store " << I << ", assumed " << vd.str()
-             << "\n";
-          EmitWarning("CannotDeduceType", I, ss.str());
-        }
+        std::string str;
+        raw_string_ostream ss(str);
+        ss << "Cannot deduce type of store " << I << ", assumed " << vd.str();
+        EmitWarningAlways("CannotDeduceType", I, ss.str());
         goto known;
       }
       {
