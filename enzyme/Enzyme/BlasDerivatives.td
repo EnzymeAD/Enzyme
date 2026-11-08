@@ -238,6 +238,20 @@ def axpy : CallBlasPattern<(Op $n, $alpha, $x, $incx, $y, $incy),
                   (Seq<[], [], 1> (BlasCall<"axpy"> $n, $alpha, (Shadow $x), (Shadow $y)), (BlasCall<"axpy"> $n, (Shadow $alpha), $x, (Shadow $y)))
                   >;
 
+// y = alpha * x + beta * y
+// FWD: dy = beta * dy + dbeta * y + alpha * dx + dalpha * x
+def axpby : CallBlasPattern<
+                (Op $n, $alpha, $x, $incx, $beta, $y, $incy), ["y"],
+                [len, fp, vinc<["n"]>, fp, vinc<["n"]>],
+                [(BlasCall<"dot"> $n, (Shadow $y), $x),
+                 (BlasCall<"axpy"> $n, $alpha, (Shadow $y), (Shadow $x)),
+                 (BlasCall<"dot"> $n, (Shadow $y), input<"y">),
+                 (BlasCall<"scal"> $n, $beta, (Shadow $y))],
+                (Seq<[], [], 1> (BlasCall<"scal"> $n, $beta, (Shadow $y)),
+                    (BlasCall<"axpy"> $n, (Shadow $beta), $y, (Shadow $y)),
+                    (BlasCall<"axpy"> $n, $alpha, (Shadow $x), (Shadow $y)),
+                    (BlasCall<"axpy"> $n, (Shadow $alpha), $x, (Shadow $y)))>;
+
 // x * y
 def dot : CallBlasPattern<(Op $n, $x, $incx, $y, $incy),
                   [],[len, vinc<["n"]>, vinc<["n"]>],
