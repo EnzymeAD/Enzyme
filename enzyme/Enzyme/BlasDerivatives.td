@@ -523,7 +523,22 @@ def symv: CallBlasPattern<(Op $layout, $uplo, $n, $alpha, $A, $lda, $x, $incx, $
                               (Shadow $y),
                               (Shadow $A)
                             ),
-                            (BlasCall<"copy"> $n, use<"tmp">, ConstantInt<1>, (First (Shadow $A)), (Add $lda, ConstantInt<1>))
+                            (BlasCall<"axpy">
+                              $n,
+                              Constant<"-1">,
+                              (First (Shadow $A)),
+                              (Add $lda, ConstantInt<1>),
+                              use<"tmp">,
+                              ConstantInt<1>
+                            ),
+                            (BlasCall<"axpy">
+                              $n,
+                              Constant<"0.5">,
+                              use<"tmp">,
+                              ConstantInt<1>,
+                              (First (Shadow $A)),
+                              (Add $lda, ConstantInt<1>)
+                            )
                         ),
                         /*x*/ (BlasCall<"symv"> $layout, $uplo, $n, $alpha, $A, (ld $A, Char<"N">, $lda, $n, $n), (Shadow $y), Constant<"1.0">, (Shadow $x)),
                         /*beta*/ (BlasCall<"dot"> $n, (Shadow $y), input<"y">),
