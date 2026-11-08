@@ -3927,7 +3927,7 @@ Function *PreProcessCache::preprocessForClone(Function *F,
                     F->getName() == "f90_pausea")) {
             continue;
           }
-          if (llvm::isModOrRefSet(AA2.getModRefInfo(CI, Loc))) {
+          if (llvm::isModOrRefSet(getModRefInfo(AA2, CI, Loc))) {
             llvm::errs() << " failed to inline global: " << g << " due to "
                          << *CI << "\n";
             activeCall = true;
@@ -3993,14 +3993,14 @@ Function *PreProcessCache::preprocessForClone(Function *F,
                   goto endCheck;
                 }
 
-                if (llvm::isModSet(AA2.getModRefInfo(CI, Loc))) {
+                if (llvm::isModSet(getModRefInfo(AA2, CI, Loc))) {
                   hasWrite = true;
                   goto endCheck;
                 }
               }
 
               else if (auto I = dyn_cast<Instruction>(u)) {
-                if (llvm::isModSet(AA2.getModRefInfo(I, Loc))) {
+                if (llvm::isModSet(getModRefInfo(AA2, I, Loc))) {
                   hasWrite = true;
                   goto endCheck;
                 }

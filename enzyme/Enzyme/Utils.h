@@ -1920,6 +1920,26 @@ getBaseObjects(llvm::Value *V, bool offsetAllowed = true) {
   return results;
 }
 
+static inline llvm::ModRefInfo getModRefInfo(llvm::AAResults &AA,
+                                             const llvm::Instruction *I,
+                                             const llvm::MemoryLocation &loc) {
+  auto res = AA.getModRefInfo(I, loc);
+  if (llvm::isNoModRef(res))
+    return res;
+  const llvm::Value *base = loc.Ptr ? getBaseObject(loc.Ptr) : nullptr;
+  if (base && base != loc.Ptr && base->getType()->isPointerTy()) {
+    res &= AA.getModRefInfo(I, llvm::MemoryLocation::getBeforeOrAfter(base));
+  }
+  return res;
+}
+
+static inline llvm::ModRefInfo getModRefInfo(llvm::AAResults &AA,
+                                             const llvm::Instruction *I,
+                                             const llvm::Value *P,
+                                             llvm::LocationSize Size) {
+  return getModRefInfo(AA, I, llvm::MemoryLocation(P, Size));
+}
+
 static inline bool isReadOnly(const llvm::Function *F, ssize_t arg = -1) {
   if (F->onlyReadsMemory())
     return true;
