@@ -987,7 +987,8 @@ public:
           IRBuilder<> Builder2(&I);
           getReverseBuilder(Builder2);
           dret = diffe(&I, Builder2);
-          setDiffe(&I, Constant::getNullValue(gutils->getShadowType(I.getType())),
+          setDiffe(&I,
+                   Constant::getNullValue(gutils->getShadowType(I.getType())),
                    Builder2);
         }
         if (!gutils->isConstantValue(I.getValOperand()) &&
