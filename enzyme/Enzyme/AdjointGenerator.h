@@ -892,15 +892,18 @@ public:
 
     // If a load of an omp init argument, don't cache for reverse
     // and don't do any adjoint propagation (assumed integral)
-    for (auto U : LI.getPointerOperand()->users()) {
-      if (auto CI = dyn_cast<CallInst>(U)) {
-        if (auto F = CI->getCalledFunction()) {
-          if (F->getName() == "__kmpc_for_static_init_4" ||
-              F->getName() == "__kmpc_for_static_init_4u" ||
-              F->getName() == "__kmpc_for_static_init_8" ||
-              F->getName() == "__kmpc_for_static_init_8u") {
-            eraseIfUnused(LI);
-            return;
+    if (!isa<ConstantPointerNull, UndefValue, PoisonValue>(
+            LI.getPointerOperand())) {
+      for (auto U : LI.getPointerOperand()->users()) {
+        if (auto CI = dyn_cast<CallInst>(U)) {
+          if (auto F = CI->getCalledFunction()) {
+            if (F->getName() == "__kmpc_for_static_init_4" ||
+                F->getName() == "__kmpc_for_static_init_4u" ||
+                F->getName() == "__kmpc_for_static_init_8" ||
+                F->getName() == "__kmpc_for_static_init_8u") {
+              eraseIfUnused(LI);
+              return;
+            }
           }
         }
       }
@@ -1250,14 +1253,17 @@ public:
 
     // If a store of an omp init argument, don't delete in reverse
     // and don't do any adjoint propagation (assumed integral)
-    for (auto U : SI.getPointerOperand()->users()) {
-      if (auto CI = dyn_cast<CallInst>(U)) {
-        if (auto F = CI->getCalledFunction()) {
-          if (F->getName() == "__kmpc_for_static_init_4" ||
-              F->getName() == "__kmpc_for_static_init_4u" ||
-              F->getName() == "__kmpc_for_static_init_8" ||
-              F->getName() == "__kmpc_for_static_init_8u") {
-            return;
+    if (!isa<ConstantPointerNull, UndefValue, PoisonValue>(
+            SI.getPointerOperand())) {
+      for (auto U : SI.getPointerOperand()->users()) {
+        if (auto CI = dyn_cast<CallInst>(U)) {
+          if (auto F = CI->getCalledFunction()) {
+            if (F->getName() == "__kmpc_for_static_init_4" ||
+                F->getName() == "__kmpc_for_static_init_4u" ||
+                F->getName() == "__kmpc_for_static_init_8" ||
+                F->getName() == "__kmpc_for_static_init_8u") {
+              return;
+            }
           }
         }
       }

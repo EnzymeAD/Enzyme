@@ -100,7 +100,9 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
 
       // We don't need any of the input operands to compute the adjoint of a
       // store instance The one exception to this is stores to the loop bounds.
-      if (SI->getValueOperand() == val) {
+      if (SI->getValueOperand() == val &&
+          !isa<ConstantPointerNull, UndefValue, PoisonValue>(
+              SI->getPointerOperand())) {
         for (auto U : SI->getPointerOperand()->users()) {
           if (auto CI = dyn_cast<CallInst>(U)) {
             if (auto F = CI->getCalledFunction()) {
