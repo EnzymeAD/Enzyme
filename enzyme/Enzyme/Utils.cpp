@@ -4034,9 +4034,10 @@ llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in)
 #endif
 {
   static const char *extractable[] = {
-      "dot",   "scal",  "axpy",  "gemv",  "gemm",  "spmv", "syrk",  "nrm2",
-      "trmm",  "trmv",  "symm",  "potrf", "potrs", "copy", "spmv",  "syr2k",
-      "potrs", "getrf", "getrs", "trtrs", "getri", "symv", "lacpy", "trsv",
+      "dot",   "scal", "axpy",  "axpby", "gemv",  "gemm",  "spmv",
+      "syrk",  "nrm2", "trmm",  "trmv",  "symm",  "potrf", "potrs",
+      "copy",  "spmv", "syr2k", "potrs", "getrf", "getrs", "trtrs",
+      "getri", "symv", "lacpy", "trsv",
   };
   static const char *floatType[] = {"s", "d", "c", "z"};
   static const char *prefixes[] = {"" /*Fortran*/, "cblas_"};
