@@ -975,15 +975,42 @@ public:
         eraseIfUnused(I);
         return;
       }
-      if ((Mode == DerivativeMode::ReverseModeCombined ||
-           Mode == DerivativeMode::ReverseModeGradient) &&
-          gutils->isConstantValue(&I)) {
-        if (!gutils->isConstantValue(I.getValOperand())) {
+      if (Mode == DerivativeMode::ReverseModeCombined ||
+          Mode == DerivativeMode::ReverseModeGradient) {
+        // old = *ptr; *ptr = old +/- val; returns old. Hence
+        //   d(val) += +/- d(*ptr after)   and   d(*ptr before) = d(*ptr after)
+        //   + d(old),
+        // so the shadow of *ptr is read for d(val) before d(old) is added to
+        // it.
+        Value *dret = nullptr;
+        if (!gutils->isConstantValue(&I)) {
+          IRBuilder<> Builder2(&I);
+          getReverseBuilder(Builder2);
+          dret = diffe(&I, Builder2);
+          setDiffe(&I, Constant::getNullValue(gutils->getShadowType(I.getType())),
+                   Builder2);
+        }
+        if (!gutils->isConstantValue(I.getValOperand()) &&
+            !gutils->isConstantValue(I.getPointerOperand())) {
           addAtomicRMWValueAdjoint(
               I, I.getPointerOperand(), I.getValOperand(), I.getType(),
               I.getType(), /*negate*/ I.getOperation() == AtomicRMWInst::FSub,
               I.getAlign(), I.getOrdering(), I.getSyncScopeID(),
               I.isVolatile());
+        }
+        if (dret && !gutils->isConstantValue(I.getPointerOperand())) {
+          IRBuilder<> Builder2(&I);
+          getReverseBuilder(Builder2);
+          Value *ip =
+              lookup(gutils->invertPointerM(I.getPointerOperand(), Builder2),
+                     Builder2);
+          auto rule = [&](Value *ip, Value *dret) {
+            auto *rmw = Builder2.CreateAtomicRMW(
+                AtomicRMWInst::FAdd, ip, dret, I.getAlign(),
+                AtomicOrdering::Monotonic, I.getSyncScopeID());
+            rmw->setVolatile(I.isVolatile());
+          };
+          applyChainRule(Builder2, rule, ip, dret);
         }
         if (Mode == DerivativeMode::ReverseModeGradient) {
           eraseIfUnused(I, /*erase*/ true, /*check*/ false);
