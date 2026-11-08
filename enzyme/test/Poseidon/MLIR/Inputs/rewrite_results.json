@@ -1,0 +1,207 @@
+{
+ "tests": [
+  {
+   "name": "log_one_plus/0",
+   "status": "imp-start",
+   "prec": "binary64",
+   "bits": 64,
+   "output": "(log1p.f64 x0)",
+   "cost-accuracy": [
+    [
+     1.0,
+     10.0
+    ],
+    [
+     0.8,
+     0.5
+    ],
+    []
+   ]
+  },
+  {
+   "name": "two_outputs/0",
+   "status": "imp-start",
+   "prec": "binary64",
+   "bits": 64,
+   "output": "(exp.f64 x0)",
+   "cost-accuracy": [
+    [
+     1.0,
+     10.0
+    ],
+    [
+     0.8,
+     0.5
+    ],
+    []
+   ]
+  },
+  {
+   "name": "two_outputs/1",
+   "status": "imp-start",
+   "prec": "binary64",
+   "bits": 64,
+   "output": "(sqrt.f64 (expm1.f64 x0))",
+   "cost-accuracy": [
+    [
+     1.0,
+     10.0
+    ],
+    [
+     0.8,
+     0.5
+    ],
+    []
+   ]
+  },
+  {
+   "name": "hypot/0",
+   "status": "imp-start",
+   "prec": "binary64",
+   "bits": 64,
+   "output": "(hypot.f64 x0 x1)",
+   "cost-accuracy": [
+    [
+     1.0,
+     10.0
+    ],
+    [
+     0.8,
+     0.5
+    ],
+    [
+     [
+      0.9,
+      1.0,
+      "(sqrt.f64 (fma.f64 x0 x0 (*.f64 x1 x1)))"
+     ]
+    ]
+   ]
+  },
+  {
+   "name": "precision/0",
+   "status": "imp-start",
+   "prec": "binary64",
+   "bits": 64,
+   "output": "(+.f64 (*.f64 x0 x0) x0)",
+   "cost-accuracy": [
+    [
+     1.0,
+     10.0
+    ],
+    [
+     0.8,
+     0.5
+    ],
+    []
+   ]
+  },
+  {
+   "name": "late_input/0",
+   "status": "imp-start",
+   "prec": "binary64",
+   "bits": 64,
+   "output": "(+.f64 (exp.f64 x0) (-.f64 x1 x1))",
+   "cost-accuracy": [
+    [
+     1.0,
+     10.0
+    ],
+    [
+     0.8,
+     0.5
+    ],
+    [
+     [
+      0.9,
+      1.0,
+      "(exp.f64 x0)"
+     ]
+    ]
+   ]
+  },
+  {
+   "name": "late_input/1",
+   "status": "imp-start",
+   "prec": "binary64",
+   "bits": 64,
+   "output": "(+.f64 (exp.f64 x0) x1)",
+   "cost-accuracy": [
+    [
+     1.0,
+     10.0
+    ],
+    [
+     0.8,
+     0.5
+    ],
+    []
+   ]
+  },
+  {
+   "name": "random/0",
+   "status": "imp-start",
+   "prec": "binary64",
+   "bits": 64,
+   "output": "(log1p.f64 (expm1.f64 x0))",
+   "cost-accuracy": [
+    [
+     1.0,
+     10.0
+    ],
+    [
+     0.8,
+     0.5
+    ],
+    [
+     [
+      0.9,
+      1.0,
+      "(-.f64 (exp.f64 x0) #s(literal 1 binary64))"
+     ],
+     [
+      0.9,
+      2.0,
+      "(expm1.f64 x0)"
+     ]
+    ]
+   ]
+  },
+  {
+   "name": "branch/0",
+   "status": "imp-start",
+   "prec": "binary64",
+   "bits": 64,
+   "output": "(if.f64 (<=.f64 x0 #s(literal -1/10 binary64)) (-.f64 (exp.f64 x0) #s(literal 1 binary64)) (expm1.f64 x0))",
+   "cost-accuracy": [
+    [
+     1.0,
+     20.0
+    ],
+    [
+     1.1,
+     0.3
+    ],
+    []
+   ]
+  },
+  {
+   "name": "third/0",
+   "status": "imp-start",
+   "prec": "binary64",
+   "bits": 64,
+   "output": "(*.f32 x0 #s(literal 1/3 binary32))",
+   "cost-accuracy": [
+    [
+     1.0,
+     20.0
+    ],
+    [
+     1.1,
+     0.3
+    ],
+    []
+   ]
+  }
+ ]
+}

@@ -7,8 +7,8 @@
 // RUN:   %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=MISSING
 
 // Herbie's answers are read from a results.json in the format a real run
-// writes, matched to each core by its :name, and parsed. Nothing is rewritten
-// yet.
+// writes, matched to each core by its :name, and parsed. What is built from
+// them is tested in rewrite.mlir.
 
 // MISSING: error: poseidon-rewrite: herbie-results {{.*}}no_such_file.json: cannot read
 
@@ -43,7 +43,7 @@ func.func @half_sum(%x: tensor<4xf64>, %y: tensor<4xf64>) -> tensor<4xf64> {
 // CHECK-NEXT:    herbie: imp-start, 3 candidate(s), original error 33 bits
 // CHECK-NEXT:      0: 0.2 bits, cost 0.9: (/ (expm1 x0) x0)
 // CHECK-NEXT:      1: 12 bits, cost 0.5: (+ 1 (* x0 1/2))
-// CHECK-NEXT:      2: 5 bits, cost 0.8: unparseable (expression ends early): (/.f64 (expm1.f64 x0) x0
+// CHECK-NEXT:      2: 5 bits, cost 0.8: unparseable: (/.f64 (expm1.f64 x0) x0 [cannot build: expression ends early]
 func.func @expm1_over(%x: tensor<4xf64>) -> tensor<4xf64> {
   %one = arith.constant dense<1.0> : tensor<4xf64>
   %0 = math.exp %x : tensor<4xf64>

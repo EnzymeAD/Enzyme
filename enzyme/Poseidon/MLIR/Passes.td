@@ -27,6 +27,8 @@ def PoseidonRewritePass : Pass<"poseidon-rewrite", "func::FuncOp"> {
            /*default=*/"\"\"",
            "A results.json from an earlier Herbie run, read instead of "
            "running Herbie">,
+    Option<"seed", "seed", "uint64_t", /*default=*/"0",
+           "Seed of the random choice among Herbie's candidates">,
   ];
 }
 
