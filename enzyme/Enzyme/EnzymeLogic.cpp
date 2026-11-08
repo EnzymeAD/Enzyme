@@ -149,7 +149,31 @@ static bool isUncapturedLocalOrNoaliasArgMemory(Value *obj,
 static bool
 writesOnlyUncapturedLocalOrNoaliasArgMemory(Instruction *I,
                                             TargetLibraryInfo &TLI) {
-  if (auto CB = dyn_cast<CallBase>(I)) {
+  Value *ptr = nullptr;
+  if (auto SI = dyn_cast<StoreInst>(I)) {
+    ptr = SI->getPointerOperand();
+  } else if (auto II = dyn_cast<IntrinsicInst>(I)) {
+    switch (II->getIntrinsicID()) {
+    case Intrinsic::lifetime_start:
+    case Intrinsic::lifetime_end:
+    case Intrinsic::assume:
+#if LLVM_VERSION_MAJOR >= 13
+    case Intrinsic::experimental_noalias_scope_decl:
+#endif
+      // Marks the memory's lifetime or assumptions without writing anything
+      // into it.
+      return true;
+    case Intrinsic::memset:
+    case Intrinsic::memcpy:
+    case Intrinsic::memmove:
+      ptr = II->getArgOperand(0);
+      break;
+    default:
+      break;
+    }
+  } else if (auto CB = dyn_cast<CallBase>(I)) {
+    if (isDebugFunction(CB->getCalledFunction()))
+      return true;
     if (!isLocalReadOnlyOrThrow(CB))
       return false;
     for (unsigned i = 0; i < CB->arg_size(); ++i) {
@@ -162,24 +186,6 @@ writesOnlyUncapturedLocalOrNoaliasArgMemory(Instruction *I,
         return false;
     }
     return true;
-  }
-  Value *ptr = nullptr;
-  if (auto SI = dyn_cast<StoreInst>(I)) {
-    ptr = SI->getPointerOperand();
-  } else if (auto II = dyn_cast<IntrinsicInst>(I)) {
-    switch (II->getIntrinsicID()) {
-    case Intrinsic::lifetime_start:
-    case Intrinsic::lifetime_end:
-      // Marks the memory's lifetime without writing anything into it.
-      return true;
-    case Intrinsic::memset:
-    case Intrinsic::memcpy:
-    case Intrinsic::memmove:
-      ptr = II->getArgOperand(0);
-      break;
-    default:
-      break;
-    }
   }
   if (!ptr)
     return false;
@@ -639,7 +645,7 @@ struct CacheAnalysis {
       bool init_safe = !is_origin_overwritten(obj);
       if (!init_safe) {
         auto CD = TR.query(obj)[{-1}];
-        if (CD == BaseType::Integer || CD.isFloat())
+        if (CD == BaseType::Integer || CD.isFloat() || !TR.anyPointer(obj))
           init_safe = true;
       }
       if (!init_safe && !isa<UndefValue>(obj) && !isa<ConstantInt>(obj) &&
@@ -658,6 +664,16 @@ struct CacheAnalysis {
     // continuation of the
     //   callee inside the parent function.
     allFollowersOf(callsite_op, [&](Instruction *inst2) {
+      if (auto II = dyn_cast<IntrinsicInst>(inst2)) {
+        if (II->getIntrinsicID() == Intrinsic::assume ||
+            II->getIntrinsicID() == Intrinsic::lifetime_start ||
+            II->getIntrinsicID() == Intrinsic::lifetime_end)
+          return false;
+#if LLVM_VERSION_MAJOR >= 13
+        if (II->getIntrinsicID() == Intrinsic::experimental_noalias_scope_decl)
+          return false;
+#endif
+      }
       // Don't consider modref from malloc/free as a need to cache
       if (auto obj_op = dyn_cast<CallInst>(inst2)) {
         StringRef sfuncName = getFuncNameFromCall(obj_op);
@@ -714,7 +730,7 @@ struct CacheAnalysis {
           continue;
 
         auto CD = TR.query(args[i])[{-1}];
-        if (CD == BaseType::Integer || CD.isFloat())
+        if (CD == BaseType::Integer || CD.isFloat() || !TR.anyPointer(args[i]))
           continue;
 
         if (!callsite_op->getArgOperand(i)->getType()->isPointerTy() ||
