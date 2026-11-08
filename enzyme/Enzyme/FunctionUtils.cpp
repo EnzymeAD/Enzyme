@@ -2380,7 +2380,8 @@ bool ReadOnlyOrThrowDetector::fieldOnlyHoldsFreshData(Instruction *Obj,
         auto name = getFuncNameFromCall(CB);
         if (name == "julia.write_barrier")
           continue;
-        if (CB->isLifetimeStartOrEnd())
+        if (CB->isLifetimeStartOrEnd() ||
+            isDebugFunction(CB->getCalledFunction()))
           continue;
         for (unsigned i = 0; i < CB->arg_size(); ++i) {
           if (CB->getArgOperand(i) != V)
@@ -2698,7 +2699,9 @@ bool ReadOnlyOrThrowDetector::mayReachReturn(Value *Obj, bool Deep,
       if (auto CB = dyn_cast<CallBase>(I)) {
         if (CB->getCalledOperand() == V)
           return true;
-        if (CB->isLifetimeStartOrEnd() || isDeallocationCall(CB, TLI))
+        if (CB->isLifetimeStartOrEnd() ||
+            isDebugFunction(CB->getCalledFunction()) ||
+            isDeallocationCall(CB, TLI))
           continue;
         if (getFuncNameFromCall(CB) == "julia.write_barrier")
           continue;
@@ -2799,7 +2802,9 @@ bool ReadOnlyOrThrowDetector::freshFieldMayReachReturn(Value *Base,
         continue;
       }
       if (auto CB = dyn_cast<CallBase>(I)) {
-        if (CB->isLifetimeStartOrEnd() || isDeallocationCall(CB, TLI))
+        if (CB->isLifetimeStartOrEnd() ||
+            isDebugFunction(CB->getCalledFunction()) ||
+            isDeallocationCall(CB, TLI))
           continue;
         auto name = getFuncNameFromCall(CB);
         if (name == "julia.write_barrier")
@@ -2836,6 +2841,18 @@ bool ReadOnlyOrThrowDetector::run() {
     for (auto &I : BB) {
       if (!I.mayWriteToMemory())
         continue;
+      if (auto CI = dyn_cast<CallBase>(&I)) {
+        if (isDebugFunction(CI->getCalledFunction()))
+          continue;
+      }
+      if (auto II = dyn_cast<IntrinsicInst>(&I)) {
+        if (II->getIntrinsicID() == Intrinsic::assume)
+          continue;
+#if LLVM_VERSION_MAJOR >= 13
+        if (II->getIntrinsicID() == Intrinsic::experimental_noalias_scope_decl)
+          continue;
+#endif
+      }
       if (hasMetadata(&I, "enzyme_ReadOnlyOrThrow"))
         continue;
       // A call marked local read-only-or-throw is handled like a call to a
@@ -3029,6 +3046,8 @@ bool ReadOnlyOrThrowDetector::run() {
         }
         if (auto F2 = CI->getCalledFunction()) {
           if (isDebugFunction(F2))
+            continue;
+          if (isMemFreeLibMFunction(getFuncNameFromCall(CI)))
             continue;
           if (F2->getName() == "julia.write_barrier" ||
               isRustNoAllocShimFunction(F2->getName()))
