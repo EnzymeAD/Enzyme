@@ -3306,10 +3306,9 @@ bool AdjointGenerator::handleKnownCallDerivatives(
         funcName == "_ZSt18_Rb_tree_incrementPSt18_Rb_tree_node_base" ||
         funcName == "jl_ptr_to_array" || funcName == "jl_ptr_to_array_1d" ||
         funcName == "ijl_ptr_to_array" || funcName == "ijl_ptr_to_array_1d") {
-      bool isPtrToArray = funcName == "jl_ptr_to_array" ||
-                          funcName == "jl_ptr_to_array_1d" ||
-                          funcName == "ijl_ptr_to_array" ||
-                          funcName == "ijl_ptr_to_array_1d";
+      bool isPtrToArray =
+          funcName == "jl_ptr_to_array" || funcName == "jl_ptr_to_array_1d" ||
+          funcName == "ijl_ptr_to_array" || funcName == "ijl_ptr_to_array_1d";
       bool shouldCache = false;
       if (gutils->knownRecomputeHeuristic.find(&call) !=
           gutils->knownRecomputeHeuristic.end()) {
