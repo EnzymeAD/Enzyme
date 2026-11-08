@@ -180,7 +180,7 @@ writesOnlyUncapturedLocalOrNoaliasArgMemory(Instruction *I,
       auto arg = CB->getArgOperand(i);
       if (!arg->getType()->isPointerTy())
         continue;
-      if (CB->onlyReadsMemory(i))
+      if (isReadOnly(CB, i))
         continue;
       if (!isUncapturedLocalOrNoaliasArgMemory(getBaseObject(arg), TLI))
         return false;
@@ -201,10 +201,10 @@ struct CacheAnalysis {
                         const MemoryLocation &loc) {
     auto CB = dyn_cast<CallBase>(I);
     if (!CB || !isLocalReadOnlyOrThrow(CB))
-      return isModSet(AA.getModRefInfo(I, loc));
+      return isModSet(getModRefInfo(AA, I, loc));
     for (unsigned i = 0; i < CB->arg_size(); ++i) {
       auto arg = CB->getArgOperand(i);
-      if (!arg->getType()->isPointerTy() || CB->onlyReadsMemory(i))
+      if (!arg->getType()->isPointerTy() || isReadOnly(CB, i))
         continue;
       if (!AA.isNoAlias(loc, MemoryLocation::getBeforeOrAfter(arg)))
         return true;

@@ -5276,6 +5276,12 @@ areBaseObjectsGuaranteedNoAlias(TargetLibraryInfo &TLI, llvm::AAResults &AA,
   if (!lhs->getType()->isPointerTy() && !rhs->getType()->isPointerTy())
     return {};
 
+  if (lhs->getType()->isPointerTy() && rhs->getType()->isPointerTy()) {
+    if (AA.isNoAlias(MemoryLocation::getBeforeOrAfter(lhs),
+                     MemoryLocation::getBeforeOrAfter(rhs)))
+      return true;
+  }
+
   bool noalias_lhs = isNoAlias(lhs);
   bool noalias_rhs = isNoAlias(rhs);
 
