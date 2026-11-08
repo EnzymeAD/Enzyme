@@ -1644,9 +1644,12 @@ CacheUtility::SubLimitType CacheUtility::getSubLimits(bool inForwardPass,
         if (found != map.end() && found->second != nullptr) {
           limits[i] = found->second;
         } else {
+          auto add = allocationBuilder.CreateNSWAdd(
+              limitMinus1, ConstantInt::get(limitMinus1->getType(), 1));
+          auto zero = ConstantInt::get(limitMinus1->getType(), 0);
           limits[i] = map[allocationPreheaders[i]] =
-              allocationBuilder.CreateNSWAdd(
-                  limitMinus1, ConstantInt::get(limitMinus1->getType(), 1));
+              allocationBuilder.CreateSelect(
+                  allocationBuilder.CreateICmpSLT(add, zero), zero, add);
         }
       } else {
         Value *lim = unwrapM(limitMinus1, *RB, reverseMap,
@@ -1657,7 +1660,9 @@ CacheUtility::SubLimitType CacheUtility::getSubLimits(bool inForwardPass,
           llvm::errs() << *limitMinus1 << "\n";
         }
         assert(lim);
-        limits[i] = RB->CreateNSWAdd(lim, ConstantInt::get(lim->getType(), 1));
+        auto add = RB->CreateNSWAdd(lim, ConstantInt::get(lim->getType(), 1));
+        auto zero = ConstantInt::get(lim->getType(), 0);
+        limits[i] = RB->CreateSelect(RB->CreateICmpSLT(add, zero), zero, add);
       }
     }
   }
