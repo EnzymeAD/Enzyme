@@ -5130,6 +5130,8 @@ bool isNVLoad(const llvm::Value *V) {
 bool notCapturedBefore(llvm::Value *V, Instruction *inst,
                        size_t checkLoadCaptures, Instruction *startinst,
                        llvm::TargetLibraryInfo *TLI) {
+  if (isa<ConstantPointerNull, UndefValue, PoisonValue>(V))
+    return true;
   // The point after which uses count; only needed to bound the search by inst.
   Instruction *VI = startinst;
   if (!VI)
