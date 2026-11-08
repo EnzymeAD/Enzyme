@@ -2410,7 +2410,7 @@ void TypeAnalyzer::visitGEPOperator(GEPOperator &gep) {
       continue;
 
     int maxSize = -1;
-    if (firstIsZero) {
+    if (firstIsZero && gep.getNumIndices() > 1) {
       maxSize = DL.getTypeAllocSizeInBits(gep.getResultElementType()) / 8;
     }
 
