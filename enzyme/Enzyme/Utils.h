@@ -2199,7 +2199,7 @@ static inline bool isNoAlias(const llvm::Value *val) {
   if (auto CB = llvm::dyn_cast<llvm::CallBase>(val))
     return isNoAlias(CB);
   if (auto arg = llvm::dyn_cast<llvm::Argument>(val)) {
-    arg->hasNoAliasAttr();
+    return arg->hasNoAliasAttr();
   }
   if (llvm::isa<llvm::AllocaInst>(val))
     return true;
