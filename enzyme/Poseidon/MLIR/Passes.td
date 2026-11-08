@@ -20,6 +20,10 @@ def PoseidonRewritePass : Pass<"poseidon-rewrite", "func::FuncOp"> {
     expression, and replaces the chain with the one Herbie returns.
   }];
   let dependentDialects = ["arith::ArithDialect", "math::MathDialect"];
+  let options = [
+    Option<"dumpFPCore", "dump-fpcore", "bool", /*default=*/"false",
+           "Print each chain's inputs and FPCore expressions to stderr">,
+  ];
 }
 
 #endif // POSEIDON_MLIR_PASSES
