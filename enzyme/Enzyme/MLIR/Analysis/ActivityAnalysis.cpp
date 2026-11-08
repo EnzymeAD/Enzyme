@@ -86,7 +86,9 @@ static const std::set<std::string> KnownInactiveFunctionInsts = {
     "_ZSt18_Rb_tree_decrementPSt18_Rb_tree_node_base",
     "_ZSt18_Rb_tree_incrementPSt18_Rb_tree_node_base",
     "jl_ptr_to_array",
-    "jl_ptr_to_array_1d"};
+    "jl_ptr_to_array_1d",
+    "ijl_ptr_to_array",
+    "ijl_ptr_to_array_1d"};
 
 static const std::set<std::string> KnownInactiveFunctions = {
     "abort",
