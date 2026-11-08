@@ -26,6 +26,7 @@
 
 #include "AdjointGenerator.h"
 #include "FlangRuntime.h"
+#include "Locks.h"
 
 using namespace llvm;
 
@@ -2734,6 +2735,139 @@ bool AdjointGenerator::handleKnownCallDerivatives(
             lookup(gutils->getNewFromOriginal(call.getOperand(1)), Builder2)};
         Builder2.CreateCall(call.getFunctionType(), callval, args);
       }
+      return true;
+    }
+    // Locked sections (std::mutex, pthread mutexes, Desul address locks): a
+    // region locked in the forward pass is locked again, in reverse order, in
+    // the reverse pass, in the manner of __kmpc_critical. The reverse of an
+    // unlock is a blocking lock; the reverse of a lock that acquired the lock
+    // is an unlock (an attempt that did not acquire it, e.g. an iteration of
+    // the primal's own spin loop around Desul's lock_address, has no
+    // reverse). Loops and branches needed for that go through module-level
+    // helpers so that the differentiated function's control flow is
+    // unchanged.
+    if (auto LC = locks::classifyLockCall(funcName)) {
+      Module &M = *gutils->newFunc->getParent();
+      LLVMContext &Ctx = M.getContext();
+      SmallVector<Type *, 2> tys;
+      for (auto &arg : call.args())
+        tys.push_back(arg->getType());
+      Type *CRetTy =
+          LC->CounterpartResult == locks::Result::Void ? Type::getVoidTy(Ctx)
+          : LC->CounterpartResult == locks::Result::I1 ? Type::getInt1Ty(Ctx)
+                                                       : Type::getInt32Ty(Ctx);
+      FunctionType *CFT = FunctionType::get(CRetTy, tys, false);
+
+      // The result of a lock is needed in the reverse pass when it reports
+      // whether the lock was acquired, and by the primal replayed in the
+      // split gradient when it is used; cache it like any other primal value
+      // needed in reverse (in the split consumer passes this replaces the
+      // primal call with the value read from the tape).
+      bool cached = false;
+      if (!call.getType()->isVoidTy() &&
+          (LC->Acq != locks::Acquires::Always || !call.use_empty()) &&
+          (Mode == DerivativeMode::ReverseModePrimal ||
+           Mode == DerivativeMode::ReverseModeGradient ||
+           Mode == DerivativeMode::ForwardModeSplit)) {
+        IRBuilder<> BuilderZ(newCall->getNextNode());
+        gutils->cacheForReverse(BuilderZ, newCall,
+                                getIndex(&call, CacheType::Self, BuilderZ));
+        cached = true;
+      }
+
+      if (Mode == DerivativeMode::ReverseModeGradient ||
+          Mode == DerivativeMode::ReverseModeCombined) {
+        IRBuilder<> Builder2(&call);
+        getReverseBuilder(Builder2);
+        SmallVector<Value *, 2> args;
+        for (auto &arg : call.args())
+          args.push_back(lookup(gutils->getNewFromOriginal(arg), Builder2));
+
+        auto getHelper = [&](StringRef Prefix, bool withFlag) -> Function * {
+          std::string Name = (Prefix + LC->Counterpart).str();
+          if (Function *F = M.getFunction(Name))
+            return F;
+          SmallVector<Type *, 3> htys(tys.begin(), tys.end());
+          if (withFlag)
+            htys.push_back(Type::getInt1Ty(Ctx));
+          Function *F = Function::Create(
+              FunctionType::get(Type::getVoidTy(Ctx), htys, false),
+              GlobalValue::InternalLinkage, Name, &M);
+          F->addFnAttr(Attribute::NoUnwind);
+          F->addFnAttr(Attribute::NoFree);
+          F->addFnAttr("enzyme_inactive");
+          F->addFnAttr("enzyme_no_escaping_allocation");
+          SmallVector<Value *, 2> fargs;
+          for (auto &A : F->args())
+            fargs.push_back(&A);
+          for (size_t i = 0; i < fargs.size(); ++i)
+            fargs[i]->setName(i == 0 ? "lock" : ("arg" + Twine(i)).str());
+          if (withFlag)
+            fargs.back()->setName("acquired");
+          BasicBlock *Entry = BasicBlock::Create(Ctx, "entry", F);
+          BasicBlock *Exit = BasicBlock::Create(Ctx, "exit", F);
+          IRBuilder<> B(Entry);
+          if (withFlag) {
+            // if (acquired) { [fence release;] unlock(lock, ...); }
+            BasicBlock *Do = BasicBlock::Create(Ctx, "unlock", F, Exit);
+            B.CreateCondBr(fargs.pop_back_val(), Do, Exit);
+            B.SetInsertPoint(Do);
+            if (LC->Fence)
+              B.CreateFence(AtomicOrdering::Release);
+            B.CreateCall(M.getOrInsertFunction(LC->Counterpart, CFT), fargs);
+            B.CreateBr(Exit);
+          } else {
+            // while (!lock(lock, ...)) {} [fence acquire;]
+            BasicBlock *Spin = BasicBlock::Create(Ctx, "spin", F, Exit);
+            B.CreateBr(Spin);
+            B.SetInsertPoint(Spin);
+            Value *Got = B.CreateCall(
+                M.getOrInsertFunction(LC->Counterpart, CFT), fargs);
+            B.CreateCondBr(Got, Exit, Spin);
+            B.SetInsertPoint(Exit);
+            if (LC->Fence)
+              B.CreateFence(AtomicOrdering::Acquire);
+          }
+          B.SetInsertPoint(Exit);
+          B.CreateRetVoid();
+          return F;
+        };
+
+        if (!LC->IsLock) {
+          // Reverse of unlock: lock, blocking.
+          if (LC->Spin) {
+            Builder2.CreateCall(getHelper("__enzyme_spinlock_", false), args);
+          } else {
+            Builder2.CreateCall(M.getOrInsertFunction(LC->Counterpart, CFT),
+                                args);
+            if (LC->Fence)
+              Builder2.CreateFence(AtomicOrdering::Acquire);
+          }
+        } else {
+          // Reverse of lock: unlock, if the lock was acquired.
+          Value *acquired = nullptr;
+          if (LC->Acq != locks::Acquires::Always) {
+            acquired = lookup(gutils->getNewFromOriginal(&call), Builder2);
+            if (LC->Acq == locks::Acquires::IfZero)
+              acquired = Builder2.CreateICmpEQ(
+                  acquired, Constant::getNullValue(acquired->getType()));
+          }
+          if (acquired) {
+            args.push_back(acquired);
+            Builder2.CreateCall(getHelper("__enzyme_unlock_if_", true), args);
+          } else {
+            if (LC->Fence)
+              Builder2.CreateFence(AtomicOrdering::Release);
+            Builder2.CreateCall(M.getOrInsertFunction(LC->Counterpart, CFT),
+                                args);
+          }
+        }
+      }
+      if (!cached && (Mode == DerivativeMode::ReverseModeGradient ||
+                      Mode == DerivativeMode::ForwardModeSplit))
+        eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+      else
+        eraseIfUnused(call);
       return true;
     }
     if (funcName == "__kmpc_critical") {
