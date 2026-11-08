@@ -1,7 +1,5 @@
-; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %OPloadEnzyme -print-activity-analysis -activity-analysis-func=alloc_zero -activity-analysis-duplicated-ret=1 -o /dev/null | FileCheck %s --check-prefix=ALLOC; fi
-; RUN: %opt < %s %OPnewLoadEnzyme -passes="print-activity-analysis" -activity-analysis-func=alloc_zero -activity-analysis-duplicated-ret=1 -S -o /dev/null | FileCheck %s --check-prefix=ALLOC
-; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %OPloadEnzyme -print-activity-analysis -activity-analysis-func=zero_indirect -o /dev/null | FileCheck %s --check-prefix=ZERO; fi
-; RUN: %opt < %s %OPnewLoadEnzyme -passes="print-activity-analysis" -activity-analysis-func=zero_indirect -S -o /dev/null | FileCheck %s --check-prefix=ZERO
+; RUN: if [ %llvmver -ge 16 ]; then %opt < %s %OPnewLoadEnzyme -passes="print-activity-analysis" -activity-analysis-func=alloc_zero -activity-analysis-duplicated-ret=1 -S -o /dev/null | FileCheck %s --check-prefix=ALLOC; fi
+; RUN: if [ %llvmver -ge 16 ]; then %opt < %s %OPnewLoadEnzyme -passes="print-activity-analysis" -activity-analysis-func=zero_indirect -S -o /dev/null | FileCheck %s --check-prefix=ZERO; fi
 
 declare noalias nonnull ptr addrspace(10) @julia.gc_alloc_obj(ptr, i64, ptr addrspace(10)) #0
 declare void @llvm.memset.p0.i64(ptr nocapture writeonly, i8, i64, i1 immarg) #1
