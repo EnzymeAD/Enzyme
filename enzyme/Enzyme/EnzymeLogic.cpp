@@ -664,9 +664,7 @@ struct CacheAnalysis {
     //   callee inside the parent function.
     allFollowersOf(callsite_op, [&](Instruction *inst2) {
       if (auto II = dyn_cast<IntrinsicInst>(inst2)) {
-        if (II->getIntrinsicID() == Intrinsic::assume ||
-            II->getIntrinsicID() == Intrinsic::lifetime_start ||
-            II->getIntrinsicID() == Intrinsic::lifetime_end)
+        if (II->getIntrinsicID() == Intrinsic::assume)
           return false;
 #if LLVM_VERSION_MAJOR >= 13
         if (II->getIntrinsicID() == Intrinsic::experimental_noalias_scope_decl)

@@ -2,6 +2,10 @@
 
 declare void @__enzyme_autodiff(ptr, ...)
 declare void @llvm.assume(i1)
+declare void @llvm.lifetime.start.p0(i64 immarg, ptr nocapture)
+declare void @llvm.lifetime.end.p0(i64 immarg, ptr nocapture)
+declare void @llvm.enzyme.lifetime_start(...)
+declare void @llvm.enzyme.lifetime_end(...)
 
 define internal void @scale_square(ptr noalias %out, ptr %inp, i64 %n) noinline {
 entry:
@@ -24,10 +28,15 @@ exit:
 
 define float @step(ptr noalias %out, ptr noalias readonly %inp, ptr noalias readonly %n_ptr) {
 entry:
+  %tmp = alloca float, align 4
+  call void @llvm.lifetime.start.p0(i64 4, ptr nonnull %tmp)
+  call void (...) @llvm.enzyme.lifetime_start(i64 4, ptr nonnull %tmp)
   %n = load i64, ptr %n_ptr, align 8
   call void @scale_square(ptr %out, ptr %inp, i64 %n)
   %cmp = icmp sgt i64 %n, 0
   call void @llvm.assume(i1 %cmp)
+  call void (...) @llvm.enzyme.lifetime_end(i64 4, ptr nonnull %tmp)
+  call void @llvm.lifetime.end.p0(i64 4, ptr nonnull %tmp)
   %res = load float, ptr %out, align 4
   ret float %res
 }
@@ -38,7 +47,7 @@ entry:
   ret void
 }
 
-; Verify that @llvm.assume after @scale_square does not mark %inp or %n as overwritten,
+; Verify that @llvm.assume and lifetime markers after @scale_square do not mark %inp or %n as overwritten,
 ; so @diffescale_square needs no @malloc cache and reloads %x directly from %inp.
 ; CHECK: define internal void @diffescale_square(ptr {{.*}}%out, ptr {{.*}}%"out'", ptr {{.*}}%inp, ptr {{.*}}%"inp'", i64 %n)
 ; CHECK-NOT: @malloc(
