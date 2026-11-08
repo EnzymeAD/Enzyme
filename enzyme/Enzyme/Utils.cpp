@@ -5242,21 +5242,19 @@ bool notCaptured(llvm::Value *V, llvm::TargetLibraryInfo *TLI) {
   return notCapturedBefore(V, nullptr, 0, nullptr, TLI);
 }
 
+// Compare two pointers whose (single) base objects are lhs and rhs.
 // Return true if guaranteed not to alias
 // Return false if guaranteed to alias [with possible offset depending on flag].
 // Return {} if no information is given.
 #if LLVM_VERSION_MAJOR >= 16
-std::optional<bool>
+static std::optional<bool>
 #else
-llvm::Optional<bool>
+static llvm::Optional<bool>
 #endif
-arePointersGuaranteedNoAlias(TargetLibraryInfo &TLI, llvm::AAResults &AA,
-                             llvm::DominatorTree &DT, llvm::LoopInfo &LI,
-                             llvm::Value *op0, llvm::Value *op1,
-                             bool offsetAllowed) {
-  auto lhs = getBaseObject(op0, offsetAllowed);
-  auto rhs = getBaseObject(op1, offsetAllowed);
-
+areBaseObjectsGuaranteedNoAlias(TargetLibraryInfo &TLI, llvm::AAResults &AA,
+                                llvm::DominatorTree &DT, llvm::LoopInfo &LI,
+                                llvm::Value *op0, llvm::Value *op1,
+                                llvm::Value *lhs, llvm::Value *rhs) {
   if (lhs == rhs) {
     return false;
   }
@@ -5417,6 +5415,47 @@ arePointersGuaranteedNoAlias(TargetLibraryInfo &TLI, llvm::AAResults &AA,
   }
 
   return {};
+}
+
+// Return true if guaranteed not to alias
+// Return false if guaranteed to alias [with possible offset depending on flag].
+// Return {} if no information is given.
+#if LLVM_VERSION_MAJOR >= 16
+std::optional<bool>
+#else
+llvm::Optional<bool>
+#endif
+arePointersGuaranteedNoAlias(TargetLibraryInfo &TLI, llvm::AAResults &AA,
+                             llvm::DominatorTree &DT, llvm::LoopInfo &LI,
+                             llvm::Value *op0, llvm::Value *op1,
+                             bool offsetAllowed) {
+  // Look through phis and selects: a pointer such as `xp = phi [x2, &s[i]]`
+  // may be based on any of several objects, and the per-object reasoning
+  // below (noalias, not captured, ...) is only valid for a single, known base.
+  auto lhsObjs = getBaseObjects(op0, offsetAllowed);
+  auto rhsObjs = getBaseObjects(op1, offsetAllowed);
+
+  if (lhsObjs.empty() || rhsObjs.empty())
+    return {};
+
+  if (lhsObjs.size() == 1 && rhsObjs.size() == 1)
+    return areBaseObjectsGuaranteedNoAlias(TLI, AA, DT, LI, op0, op1,
+                                           lhsObjs[0], rhsObjs[0]);
+
+  // With several candidate bases, the pointers are guaranteed not to alias
+  // only if every pair of candidates is. A shared candidate means they may
+  // alias (but, unlike the single-base case, not that they must).
+  for (auto lhs : lhsObjs) {
+    for (auto rhs : rhsObjs) {
+      if (lhs == rhs)
+        return {};
+      auto res =
+          areBaseObjectsGuaranteedNoAlias(TLI, AA, DT, LI, lhs, rhs, lhs, rhs);
+      if (!res || !*res)
+        return {};
+    }
+  }
+  return true;
 }
 
 static Value *constantInBoundsGEPHelper(llvm::IRBuilder<> &B, llvm::Type *type,
