@@ -208,6 +208,12 @@ add_custom_command(
     ${CMAKE_COMMAND} -E create_symlink poseidon-clang
     $<TARGET_FILE_DIR:poseidon-clang>/poseidon-clang++)
 
+option(POSEIDON_MLIR "Build poseidon-mlir-opt, Poseidon's MLIR rewriting tool"
+       OFF)
+if(POSEIDON_MLIR)
+  add_subdirectory(MLIR)
+endif()
+
 install(
   TARGETS ${POSEIDON_PLUGIN_TARGET} poseidon_profile poseidon_profile_host
   poseidon-clang poseidon-calibrate
