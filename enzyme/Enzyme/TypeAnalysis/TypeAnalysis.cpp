@@ -2403,6 +2403,25 @@ void TypeAnalyzer::visitGEPOperator(GEPOperator &gep) {
   }
 
   bool seenIdx = false;
+  int minDiff = -1;
+  if (EnzymeStrictAliasing && (direction & DOWN)) {
+    for (size_t i = 0; i < offsets.size(); ++i) {
+      if (offsets[i].second < 0)
+        continue;
+      for (size_t j = i + 1; j < offsets.size(); ++j) {
+        if (offsets[j].second < 0)
+          continue;
+        int diff = std::abs(offsets[i].second - offsets[j].second);
+        if (diff > 0 && (minDiff == -1 || diff < minDiff))
+          minDiff = diff;
+      }
+    }
+  }
+  TypeTree strictDownTree;
+  bool strictLegal = minDiff != -1;
+  TypeTree purgedPointerData0;
+  if (strictLegal)
+    purgedPointerData0 = pointerData0.PurgeAnything();
 
   for (auto [firstIsZero, off] : offsets) {
     // TODO also allow negative offsets
@@ -2410,7 +2429,7 @@ void TypeAnalyzer::visitGEPOperator(GEPOperator &gep) {
       continue;
 
     int maxSize = -1;
-    if (firstIsZero) {
+    if (firstIsZero && gep.getNumIndices() > 1) {
       maxSize = DL.getTypeAllocSizeInBits(gep.getResultElementType()) / 8;
     }
 
@@ -2422,6 +2441,15 @@ void TypeAnalyzer::visitGEPOperator(GEPOperator &gep) {
         downTree &= shft;
       else
         downTree = shft;
+      if (strictLegal) {
+        int strictMaxSize =
+            (maxSize == -1) ? minDiff : std::min(maxSize, minDiff);
+        auto strictShft = purgedPointerData0.ShiftIndices(
+            DL, /*init offset*/ off, /*max size*/ strictMaxSize,
+            /*newoffset*/ 0);
+        strictDownTree.checkedOrIn(strictShft, /*PointerIntSame*/ false,
+                                   strictLegal);
+      }
     }
 
     if (direction & UP) {
@@ -2434,8 +2462,12 @@ void TypeAnalyzer::visitGEPOperator(GEPOperator &gep) {
     }
     seenIdx = true;
   }
-  if (direction & DOWN)
+  if (direction & DOWN) {
+    if (strictLegal)
+      downTree.checkedOrIn(strictDownTree, /*PointerIntSame*/ false,
+                           strictLegal);
     updateAnalysis(&gep, downTree.Only(-1, inst), &gep);
+  }
   if (direction & UP)
     updateAnalysis(gep.getPointerOperand(), upTree.Only(-1, inst), &gep);
 }
