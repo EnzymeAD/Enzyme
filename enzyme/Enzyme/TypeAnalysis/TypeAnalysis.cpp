@@ -24,6 +24,7 @@
 //===----------------------------------------------------------------------===//
 #include <cstdint>
 #include <deque>
+#include <limits>
 
 #include <llvm/Config/llvm-config.h>
 
@@ -655,7 +656,9 @@ FnTypeInfo::knownIntegralValues(llvm::Value *val, const DominatorTree &DT,
       if (inset0.size() == 1 || inset1.size() == 1) {
         for (auto val0 : inset0) {
           for (auto val1 : inset1) {
-            insert(val0 / val1);
+            if (val1 != 0 &&
+                !(val0 == std::numeric_limits<int64_t>::min() && val1 == -1))
+              insert(val0 / val1);
           }
         }
       }
