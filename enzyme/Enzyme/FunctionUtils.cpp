@@ -1397,6 +1397,13 @@ Function *CreateMPIWrapper(Function *F) {
 /// as a compare-exchange loop (or, for types without a lock-free atomic, under
 /// an address lock), which Enzyme cannot differentiate as such; PreserveNVVM
 /// keeps the calls from being inlined before this point.
+///
+/// A call on a two-component floating-point aggregate (Kokkos::atomic_add /
+/// atomic_sub on complex<T>: the value passed as one <2 x T> vector or, for
+/// {double, double}, as two scalars) whose result is unused is lowered to one
+/// atomicrmw per component: the final contents of the destination are the
+/// same, only the old value returned by the call could differ (be torn
+/// between the components) under contention.
 static void LowerDesulAtomicFetchOper(Function &F) {
   SmallVector<CallInst *, 4> ToLower;
   for (auto &BB : F)
@@ -1411,9 +1418,36 @@ static void LowerDesulAtomicFetchOper(Function &F) {
   for (auto *CI : ToLower) {
     // T fetch_oper(const Op &, T *dest, T val, MemoryOrder, MemoryScope)
     Type *T = CI->getType();
-    if (!T->isFloatingPointTy() || CI->arg_size() < 3 ||
-        !CI->getArgOperand(1)->getType()->isPointerTy() ||
-        CI->getArgOperand(2)->getType() != T)
+    if (CI->arg_size() < 3 || !CI->getArgOperand(1)->getType()->isPointerTy())
+      continue;
+    // The scalar components of the value and the type of each.
+    SmallVector<Value *, 2> Vals;
+    Type *ElemTy = T;
+    if (T->isFloatingPointTy() && CI->getArgOperand(2)->getType() == T) {
+      Vals.push_back(CI->getArgOperand(2));
+    } else if (CI->use_empty()) {
+      if (auto *VT = dyn_cast<FixedVectorType>(T)) {
+        if (VT->getNumElements() == 2 &&
+            VT->getElementType()->isFloatingPointTy() &&
+            CI->getArgOperand(2)->getType() == T) {
+          ElemTy = VT->getElementType();
+          IRBuilder<> B(CI);
+          for (unsigned c = 0; c < 2; ++c)
+            Vals.push_back(B.CreateExtractElement(CI->getArgOperand(2), c));
+        }
+      } else if (auto *ST = dyn_cast<StructType>(T)) {
+        if (ST->getNumElements() == 2 &&
+            ST->getElementType(0)->isFloatingPointTy() &&
+            ST->getElementType(0) == ST->getElementType(1) &&
+            CI->arg_size() >= 4 &&
+            CI->getArgOperand(2)->getType() == ST->getElementType(0) &&
+            CI->getArgOperand(3)->getType() == ST->getElementType(0)) {
+          ElemTy = ST->getElementType(0);
+          Vals = {CI->getArgOperand(2), CI->getArgOperand(3)};
+        }
+      }
+    }
+    if (Vals.empty())
       continue;
     StringRef Name = CI->getCalledFunction()->getName();
     auto Op = desul_atomics::classifyLinearFetchOper(Name) ==
@@ -1421,12 +1455,19 @@ static void LowerDesulAtomicFetchOper(Function &F) {
                   ? AtomicRMWInst::FAdd
                   : AtomicRMWInst::FSub;
     IRBuilder<> B(CI);
-    auto *RMW = B.CreateAtomicRMW(
-        Op, CI->getArgOperand(1), CI->getArgOperand(2), DL.getABITypeAlign(T),
-        desul_atomics::memoryOrderOf(Name), SyncScope::System);
-    RMW->setDebugLoc(CI->getDebugLoc());
-    RMW->takeName(CI);
-    CI->replaceAllUsesWith(RMW);
+    for (unsigned c = 0; c < Vals.size(); ++c) {
+      Value *Dest = CI->getArgOperand(1);
+      if (c != 0)
+        Dest = B.CreateConstInBoundsGEP1_64(ElemTy, Dest, c);
+      auto *RMW = B.CreateAtomicRMW(
+          Op, Dest, Vals[c], DL.getABITypeAlign(ElemTy),
+          desul_atomics::memoryOrderOf(Name), SyncScope::System);
+      RMW->setDebugLoc(CI->getDebugLoc());
+      if (Vals.size() == 1) {
+        RMW->takeName(CI);
+        CI->replaceAllUsesWith(RMW);
+      }
+    }
     CI->eraseFromParent();
   }
 }
