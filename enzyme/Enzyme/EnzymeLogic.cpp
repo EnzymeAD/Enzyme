@@ -644,8 +644,7 @@ struct CacheAnalysis {
 
       bool init_safe = !is_origin_overwritten(obj);
       if (!init_safe) {
-        auto CD = TR.query(obj)[{-1}];
-        if (CD == BaseType::Integer || CD.isFloat() || !TR.anyPointer(obj))
+        if (!TR.anyPointer(obj))
           init_safe = true;
       }
       if (!init_safe && !isa<UndefValue>(obj) && !isa<ConstantInt>(obj) &&
@@ -729,8 +728,7 @@ struct CacheAnalysis {
         if (rematerializableAllocations.count(objs[i]))
           continue;
 
-        auto CD = TR.query(args[i])[{-1}];
-        if (CD == BaseType::Integer || CD.isFloat() || !TR.anyPointer(args[i]))
+        if (!TR.anyPointer(args[i]))
           continue;
 
         if (!callsite_op->getArgOperand(i)->getType()->isPointerTy() ||
