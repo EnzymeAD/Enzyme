@@ -32,10 +32,10 @@ define double @df(double %x, i64 %n) {
 
 ; CHECK-LABEL: define internal { double } @diffef(double %x, i64 %n, double %differeturn)
 ; CHECK: entry:
-; CHECK: %"next'mi_malloccache" = tail call noalias nonnull ptr @malloc(i64 %mallocsize)
-; CHECK: store ptr %"next'mi_malloccache", ptr %"next'mi_cache", align 8
-; CHECK: %next_malloccache = tail call noalias nonnull ptr @malloc(i64 %mallocsize{{.*}})
-; CHECK: store ptr %next_malloccache, ptr %next_cache, align 8
+; CHECK: %[[MC1:.+]] = tail call noalias nonnull ptr @malloc(i64 %mallocsize{{.*}})
+; CHECK: store ptr %[[MC1]], ptr %"next'mi_cache", align 8
+; CHECK: %[[MC2:.+]] = tail call noalias nonnull ptr @malloc(i64 %mallocsize{{.*}})
+; CHECK: store ptr %[[MC2]], ptr %next_cache, align 8
 ; CHECK: loop:
 ; CHECK: %[[IV:.+]] = phi i64
 ; CHECK: %[[NC:.+]] = load ptr, ptr %next_cache, align 8
