@@ -2360,19 +2360,12 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       foundcalled = NewF;
     }
 
+    std::map<AugmentedStruct, int> returnMapping;
     if (foundcalled->getReturnType() == todiff->getReturnType()) {
-      std::map<AugmentedStruct, int> returnMapping;
-      returnMapping[AugmentedStruct::Return] = -1;
-      return insert_or_assign<AugmentedCacheKey, AugmentedReturn>(
-                 AugmentedCachedFunctions, tup,
-                 AugmentedReturn(foundcalled, nullptr, {}, returnMapping, {},
-                                 {}, constant_args, shadowReturnUsed))
-          ->second;
-    }
-
-    if (auto ST = dyn_cast<StructType>(foundcalled->getReturnType())) {
+      if (!todiff->getReturnType()->isVoidTy())
+        returnMapping[AugmentedStruct::Return] = -1;
+    } else if (auto ST = dyn_cast<StructType>(foundcalled->getReturnType())) {
       if (ST->getNumElements() == 3) {
-        std::map<AugmentedStruct, int> returnMapping;
         returnMapping[AugmentedStruct::Tape] = 0;
         returnMapping[AugmentedStruct::Return] = 1;
         returnMapping[AugmentedStruct::DifferentialReturn] = 2;
@@ -2446,27 +2439,13 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
                                  {llvm::ValueAsMetadata::get(NewF)}));
           foundcalled = NewF;
         }
-        return insert_or_assign<AugmentedCacheKey, AugmentedReturn>(
-                   AugmentedCachedFunctions, tup,
-                   AugmentedReturn(foundcalled, nullptr, {}, returnMapping, {},
-                                   {}, constant_args, shadowReturnUsed))
-            ->second;
-      }
-      if (ST->getNumElements() == 2 &&
-          ST->getTypeAtIndex((unsigned)0) == todiff->getReturnType() &&
-          ST->getTypeAtIndex(1) ==
-              GradientUtils::getShadowType(todiff->getReturnType(), width)) {
-        std::map<AugmentedStruct, int> returnMapping;
+      } else if (ST->getNumElements() == 2 &&
+                 ST->getTypeAtIndex((unsigned)0) == todiff->getReturnType() &&
+                 ST->getTypeAtIndex(1) == GradientUtils::getShadowType(
+                                              todiff->getReturnType(), width)) {
         returnMapping[AugmentedStruct::Return] = 0;
         returnMapping[AugmentedStruct::DifferentialReturn] = 1;
-        return insert_or_assign<AugmentedCacheKey, AugmentedReturn>(
-                   AugmentedCachedFunctions, tup,
-                   AugmentedReturn(foundcalled, nullptr, {}, returnMapping, {},
-                                   {}, constant_args, shadowReturnUsed))
-            ->second;
-      }
-      if (ST->getNumElements() == 2) {
-        std::map<AugmentedStruct, int> returnMapping;
+      } else if (ST->getNumElements() == 2) {
         returnMapping[AugmentedStruct::Tape] = 0;
         returnMapping[AugmentedStruct::Return] = 1;
         if (ST->getTypeAtIndex(1) != todiff->getReturnType()) {
@@ -2523,29 +2502,101 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
                                  {llvm::ValueAsMetadata::get(NewF)}));
           foundcalled = NewF;
         }
-        return insert_or_assign<AugmentedCacheKey, AugmentedReturn>(
-                   AugmentedCachedFunctions, tup,
-                   AugmentedReturn(foundcalled, nullptr, {}, returnMapping, {},
-                                   {}, constant_args, shadowReturnUsed))
-            ->second;
+      } else {
+        returnMapping[AugmentedStruct::Tape] = -1;
       }
+    } else if (!foundcalled->getReturnType()->isVoidTy()) {
+      returnMapping[AugmentedStruct::Tape] = -1;
     }
 
-    std::map<AugmentedStruct, int> returnMapping;
-    if (!foundcalled->getReturnType()->isVoidTy()) {
-      llvm::errs() << " aug: todiff: " << *todiff << "\n\n"
-                   << "aug foundcalled: " << *foundcalled << "\n";
-      if (foundcalled->getReturnType() == todiff->getReturnType())
-        returnMapping[AugmentedStruct::Return] = -1;
-      else
-        returnMapping[AugmentedStruct::Tape] = -1;
+    bool missingReturn =
+        returnUsed &&
+        returnMapping.find(AugmentedStruct::Return) == returnMapping.end();
+    bool missingShadowReturn =
+        shadowReturnUsed &&
+        returnMapping.find(AugmentedStruct::DifferentialReturn) ==
+            returnMapping.end();
+    if (missingReturn || missingShadowReturn) {
+      std::string s;
+      llvm::raw_string_ostream ss(s);
+      ss << "Bad return type of custom augmented forward pass for function "
+         << todiff->getName() << " of type " << *todiff->getFunctionType()
+         << '\n';
+      if (missingReturn) {
+        ss << "  expected augmented forward function to return primal value of "
+              "type "
+           << *todiff->getReturnType() << '\n';
+      }
+      if (missingShadowReturn) {
+        ss << "  expected augmented forward function to return shadow value of "
+              "type "
+           << *GradientUtils::getShadowType(todiff->getReturnType(), width)
+           << '\n';
+      }
+      ss << "  Instead found " << foundcalled->getName() << " of type "
+         << *foundcalled->getFunctionType() << '\n';
+      if (context.req) {
+        ss << " at context: " << *context.req;
+      } else {
+        ss << *todiff << '\n';
+      }
+
+      SmallVector<Type *, 3> returnTypes;
+      std::map<AugmentedStruct, int> badMapping;
+      auto tapeFound = returnMapping.find(AugmentedStruct::Tape);
+      if (tapeFound != returnMapping.end()) {
+        int tapeIdx = tapeFound->second;
+        Type *tapeType = (tapeIdx < 0)
+                             ? foundcalled->getReturnType()
+                             : cast<StructType>(foundcalled->getReturnType())
+                                   ->getElementType(tapeIdx);
+        badMapping[AugmentedStruct::Tape] = returnTypes.size();
+        returnTypes.push_back(tapeType);
+      }
+      if (returnUsed ||
+          returnMapping.find(AugmentedStruct::Return) != returnMapping.end()) {
+        badMapping[AugmentedStruct::Return] = returnTypes.size();
+        returnTypes.push_back(todiff->getReturnType());
+      }
+      if (shadowReturnUsed ||
+          returnMapping.find(AugmentedStruct::DifferentialReturn) !=
+              returnMapping.end()) {
+        badMapping[AugmentedStruct::DifferentialReturn] = returnTypes.size();
+        returnTypes.push_back(
+            GradientUtils::getShadowType(todiff->getReturnType(), width));
+      }
+      Type *FRetTy = nullptr;
+      if (returnTypes.size() == 1) {
+        FRetTy = returnTypes[0];
+        badMapping.begin()->second = -1;
+      } else {
+        FRetTy = StructType::get(todiff->getContext(), returnTypes);
+      }
+      FunctionType *FTy =
+          FunctionType::get(FRetTy, foundcalled->getFunctionType()->params(),
+                            foundcalled->getFunctionType()->isVarArg());
+      Function *NewF = Function::Create(
+          FTy, Function::LinkageTypes::InternalLinkage,
+          "badaugment_" + todiff->getName(), todiff->getParent());
+
+      BasicBlock *BB = BasicBlock::Create(NewF->getContext(), "entry", NewF);
+      IRBuilder<> bb(BB);
+      auto context2 = context;
+      if (!context2.ip)
+        context2.ip = &bb;
+      if (!EmitNoDerivativeError(ss.str(), todiff, context2)) {
+        llvm_unreachable("bad return type for custom augmented forward pass");
+      }
+      bb.CreateRet(UndefValue::get(NewF->getReturnType()));
+      foundcalled = NewF;
+      returnMapping = std::move(badMapping);
     }
 
     return insert_or_assign<AugmentedCacheKey, AugmentedReturn>(
                AugmentedCachedFunctions, tup,
                AugmentedReturn(foundcalled, nullptr, {}, returnMapping, {}, {},
                                constant_args, shadowReturnUsed))
-        ->second; // dyn_cast<StructType>(st->getElementType(0)));
+        ->second;
   }
 
   std::map<AugmentedStruct, int> returnMapping;
@@ -3931,6 +3982,12 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
       auto res = getDefaultFunctionTypeForGradient(
           key.todiff->getFunctionType(),
           /*retType*/ key.retType, key.constant_args);
+      if (key.shadowReturnUsed)
+        res.second.insert(res.second.begin(),
+                          GradientUtils::getShadowType(
+                              key.todiff->getReturnType(), key.width));
+      if (key.returnUsed)
+        res.second.insert(res.second.begin(), key.todiff->getReturnType());
 
       Type *FRetTy =
           res.second.empty()
@@ -4041,10 +4098,32 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
         bb.CreateRet(UndefValue::get(NewF->getReturnType()));
       } else if (NewF->getReturnType()->isVoidTy()) {
         bb.CreateRetVoid();
+      } else if (key.returnUsed || key.shadowReturnUsed) {
+        Value *toReturn = UndefValue::get(NewF->getReturnType());
+        unsigned idx = 0;
+        if (key.returnUsed) {
+          auto retIdx = aug.returns.find(AugmentedStruct::Return)->second;
+          Value *primalRet =
+              (retIdx == -1) ? cal : bb.CreateExtractValue(cal, retIdx);
+          toReturn = bb.CreateInsertValue(toReturn, primalRet, {idx++});
+        }
+        if (key.shadowReturnUsed) {
+          auto dretIdx =
+              aug.returns.find(AugmentedStruct::DifferentialReturn)->second;
+          Value *shadowRet =
+              (dretIdx == -1) ? cal : bb.CreateExtractValue(cal, dretIdx);
+          toReturn = bb.CreateInsertValue(toReturn, shadowRet, {idx++});
+        }
+        if (auto *revStructTy = dyn_cast<StructType>(revcal->getType())) {
+          for (unsigned i = 0; i < revStructTy->getNumElements(); ++i) {
+            toReturn = bb.CreateInsertValue(
+                toReturn, bb.CreateExtractValue(revcal, {i}), {idx++});
+          }
+        }
+        bb.CreateRet(toReturn);
       } else {
         bb.CreateRet(revcal);
       }
-      assert(!key.returnUsed);
 
       return insert_or_assign2<ReverseCacheKey, Function *>(
                  ReverseCachedFunctions, key, NewF)
