@@ -2836,6 +2836,16 @@ bool ReadOnlyOrThrowDetector::run() {
     for (auto &I : BB) {
       if (!I.mayWriteToMemory())
         continue;
+      if (auto II = dyn_cast<IntrinsicInst>(&I)) {
+        if (II->getIntrinsicID() == Intrinsic::assume ||
+            II->getIntrinsicID() == Intrinsic::lifetime_start ||
+            II->getIntrinsicID() == Intrinsic::lifetime_end)
+          continue;
+#if LLVM_VERSION_MAJOR >= 13
+        if (II->getIntrinsicID() == Intrinsic::experimental_noalias_scope_decl)
+          continue;
+#endif
+      }
       if (hasMetadata(&I, "enzyme_ReadOnlyOrThrow"))
         continue;
       // A call marked local read-only-or-throw is handled like a call to a
@@ -3029,6 +3039,8 @@ bool ReadOnlyOrThrowDetector::run() {
         }
         if (auto F2 = CI->getCalledFunction()) {
           if (isDebugFunction(F2))
+            continue;
+          if (isMemFreeLibMFunction(getFuncNameFromCall(CI)))
             continue;
           if (F2->getName() == "julia.write_barrier" ||
               isRustNoAllocShimFunction(F2->getName()))
