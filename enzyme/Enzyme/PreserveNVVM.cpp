@@ -43,6 +43,8 @@
 
 #include "llvm/Pass.h"
 
+#include "DesulAtomics.h"
+
 #include "llvm/Transforms/Utils.h"
 #include "llvm/Transforms/Utils/ModuleUtils.h"
 
@@ -1190,6 +1192,13 @@ bool preserveNVVM(bool Begin, Module &M,
       if (Begin) {
         changed |= preserveLinkage(Begin, F);
       }
+    }
+    // Desul's linear atomic fetch_oper templates are lowered to atomicrmw by
+    // Enzyme (see LowerDesulAtomicFetchOper); keep them out of line until then.
+    if (Begin && !F.empty() &&
+        desul_atomics::classifyLinearFetchOper(F.getName()) !=
+            desul_atomics::LinearFetchOp::None) {
+      changed |= preserveLinkage(Begin, F);
     }
     if (!Begin && F.hasFnAttribute("prev_fixup")) {
       changed = true;

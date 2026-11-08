@@ -23,6 +23,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "FunctionUtils.h"
+#include "DesulAtomics.h"
 
 #include "DiffeGradientUtils.h"
 #include "EnzymeLogic.h"
@@ -1387,6 +1388,47 @@ Function *CreateMPIWrapper(Function *F) {
   B.CreateCall(F, args);
   B.CreateRet(B.CreateLoad(ReturnType, alloc));
   return W;
+}
+
+/// Lower calls to Desul's `host_atomic_fetch_oper` / `device_atomic_fetch_oper`
+/// with a linear `_add_fetch_operator` / `_sub_fetch_operator` on a scalar
+/// floating-point type to the equivalent `atomicrmw fadd` / `atomicrmw fsub`,
+/// whose derivative Enzyme already knows in every mode. Desul implements these
+/// as a compare-exchange loop (or, for types without a lock-free atomic, under
+/// an address lock), which Enzyme cannot differentiate as such; PreserveNVVM
+/// keeps the calls from being inlined before this point.
+static void LowerDesulAtomicFetchOper(Function &F) {
+  SmallVector<CallInst *, 4> ToLower;
+  for (auto &BB : F)
+    for (auto &I : BB)
+      if (auto *CI = dyn_cast<CallInst>(&I))
+        if (auto *Callee = CI->getCalledFunction())
+          if (desul_atomics::classifyLinearFetchOper(Callee->getName()) !=
+              desul_atomics::LinearFetchOp::None)
+            ToLower.push_back(CI);
+
+  const DataLayout &DL = F.getParent()->getDataLayout();
+  for (auto *CI : ToLower) {
+    // T fetch_oper(const Op &, T *dest, T val, MemoryOrder, MemoryScope)
+    Type *T = CI->getType();
+    if (!T->isFloatingPointTy() || CI->arg_size() < 3 ||
+        !CI->getArgOperand(1)->getType()->isPointerTy() ||
+        CI->getArgOperand(2)->getType() != T)
+      continue;
+    StringRef Name = CI->getCalledFunction()->getName();
+    auto Op = desul_atomics::classifyLinearFetchOper(Name) ==
+                      desul_atomics::LinearFetchOp::Add
+                  ? AtomicRMWInst::FAdd
+                  : AtomicRMWInst::FSub;
+    IRBuilder<> B(CI);
+    auto *RMW = B.CreateAtomicRMW(
+        Op, CI->getArgOperand(1), CI->getArgOperand(2), DL.getABITypeAlign(T),
+        desul_atomics::memoryOrderOf(Name), SyncScope::System);
+    RMW->setDebugLoc(CI->getDebugLoc());
+    RMW->takeName(CI);
+    CI->replaceAllUsesWith(RMW);
+    CI->eraseFromParent();
+  }
 }
 
 static void SimplifyMPIQueries(Function &NewF, FunctionAnalysisManager &FAM) {
@@ -3779,6 +3821,7 @@ Function *PreProcessCache::preprocessForClone(Function *F,
   }
 
   SimplifyMPIQueries(*NewF, FAM);
+  LowerDesulAtomicFetchOper(*NewF);
   {
     auto PA = PromotePass().run(*NewF, FAM);
     FAM.invalidate(*NewF, PA);
