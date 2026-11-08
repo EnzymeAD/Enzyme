@@ -71,6 +71,16 @@ if(ENZYME_ENABLE_PLUGINS)
       LINK_COMPONENTS
       LLVM)
     if(${Clang_FOUND})
+      if(CLANG_LINK_CLANG_DYLIB AND TARGET clang-cpp)
+        set(ENZYME_CLANG_LINK_LIBS LINK_LIBS clang-cpp)
+      elseif(TARGET clangFrontend)
+        set(ENZYME_CLANG_LINK_LIBS
+            LINK_LIBS clangFrontend clangSema clangAST clangLex clangBasic)
+      elseif(TARGET clang-cpp)
+        set(ENZYME_CLANG_LINK_LIBS LINK_LIBS clang-cpp)
+      else()
+        set(ENZYME_CLANG_LINK_LIBS "")
+      endif()
       add_llvm_library(
         ClangEnzyme-${LLVM_VERSION_MAJOR}
         ${ENZYME_SRC}
@@ -80,6 +90,7 @@ if(ENZYME_ENABLE_PLUGINS)
         MODULE
         DEPENDS
         intrinsics_gen
+        ${ENZYME_CLANG_LINK_LIBS}
         LINK_COMPONENTS
         LLVM)
       target_compile_definitions(
