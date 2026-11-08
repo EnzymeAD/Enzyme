@@ -1012,8 +1012,7 @@ void calculateUnusedValuesInFunction(
           }
         }
 
-        if ((mode == DerivativeMode::ReverseModeGradient ||
-             mode == DerivativeMode::ForwardModeSplit) &&
+        if (mode == DerivativeMode::ReverseModeGradient &&
             gutils->knownRecomputeHeuristic.find(inst) !=
                 gutils->knownRecomputeHeuristic.end()) {
           if (!gutils->knownRecomputeHeuristic[inst]) {

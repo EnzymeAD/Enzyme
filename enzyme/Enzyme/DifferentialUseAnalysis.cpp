@@ -956,7 +956,7 @@ void DifferentialUseAnalysis::minCut(const DataLayout &DL, LoopInfo &OrigLI,
       SmallVector<Node, 1> active_mp;
       if (mp.size() == 1) {
         active_mp.push_back(*mp.begin());
-      } else if (mp.size() > 1 && !Required.count(V)) {
+      } else if (mp.size() > 1 && isa<PHINode>(V) && !Required.count(V)) {
         for (auto cand : mp) {
           std::deque<Node> q = {cand};
           std::set<Node> seen = {cand, Node(V, false)};

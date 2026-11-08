@@ -75,13 +75,13 @@ declare double @__enzyme_autodiff(...)
 
 ; CHECK-LABEL: define internal { double } @differun_loop(
 ; CHECK: entry:
-; CHECK-DAG:   %s0_malloccache = tail call noalias nonnull dereferenceable(64) dereferenceable_or_null(64) ptr @malloc(i64 64)
-; CHECK-DAG:   %t14_malloccache = tail call noalias nonnull dereferenceable(64) dereferenceable_or_null(64) ptr @malloc(i64 64)
+; CHECK-DAG:   %[[s0cache:.+]] = tail call noalias nonnull dereferenceable(64) dereferenceable_or_null(64) ptr @malloc(i64 64)
+; CHECK-DAG:   %[[t14cache:.+]] = tail call noalias nonnull dereferenceable(64) dereferenceable_or_null(64) ptr @malloc(i64 64)
 ; CHECK: invertloop_phirc:
 ; CHECK-NEXT:   %[[idx:.+]] = sub nuw i64 %"iv1'ac.0", 1
-; CHECK-NEXT:   %[[s0gep:.+]] = getelementptr inbounds{{( nuw)?}} i64, ptr %s0_malloccache, i64 %[[idx]]
+; CHECK-NEXT:   %[[s0gep:.+]] = getelementptr inbounds{{( nuw)?}} i64, ptr %[[s0cache]], i64 %[[idx]]
 ; CHECK-NEXT:   %[[s0val:.+]] = load i64, ptr %[[s0gep]], align 8
-; CHECK-NEXT:   %[[t14gep:.+]] = getelementptr inbounds{{( nuw)?}} i64, ptr %t14_malloccache, i64 %[[idx]]
+; CHECK-NEXT:   %[[t14gep:.+]] = getelementptr inbounds{{( nuw)?}} i64, ptr %[[t14cache]], i64 %[[idx]]
 ; CHECK-NEXT:   %[[t14val:.+]] = load i64, ptr %[[t14gep]], align 8
 ; CHECK-NEXT:   %t16_unwrap = xor i64 %[[s0val]], %[[t14val]]
 ; CHECK-NEXT:   %[[t18val:.+]] = call i64 @llvm.fshl.i64(i64 %[[t14val]], i64 %[[t14val]], i64 45)
