@@ -2294,8 +2294,9 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
                           : (mayWrite ? ModRefInfo::Mod : ModRefInfo::NoModRef);
         }
       } else {
-        AARes = AA.getModRefInfo(
-            I, MemoryLocation(memval, LocationSize::beforeOrAfterPointer()));
+        AARes = getModRefInfo(
+            AA, I,
+            MemoryLocation(memval, LocationSize::beforeOrAfterPointer()));
       }
 
       if (auto CB = dyn_cast<CallInst>(I)) {

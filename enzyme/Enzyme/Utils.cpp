@@ -3473,11 +3473,11 @@ bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
 #endif
       size_t off = (funcName == "MPI_Wait" || funcName == "PMPI_Wait") ? 0 : 1;
       // No alias with status
-      if (!isRefSet(AA.getModRefInfo(maybeReader, call->getArgOperand(off + 1),
-                                     loc))) {
+      if (!isRefSet(getModRefInfo(AA, maybeReader, call->getArgOperand(off + 1),
+                                  loc))) {
         // No alias with request
-        if (!isRefSet(AA.getModRefInfo(maybeReader,
-                                       call->getArgOperand(off + 0), loc)))
+        if (!isRefSet(getModRefInfo(AA, maybeReader,
+                                    call->getArgOperand(off + 0), loc)))
           return false;
         auto R = parseTBAA(
             *maybeReader,
@@ -3502,12 +3502,12 @@ bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
           R != BaseType::Pointer)
         return false;
 #if LLVM_VERSION_MAJOR > 11
-      if (!isRefSet(AA.getModRefInfo(maybeReader, call->getArgOperand(6),
-                                     LocationSize::afterPointer())))
+      if (!isRefSet(getModRefInfo(AA, maybeReader, call->getArgOperand(6),
+                                  LocationSize::afterPointer())))
         return false;
 #else
-      if (!isRefSet(AA.getModRefInfo(maybeReader, call->getArgOperand(6),
-                                     MemoryLocation::UnknownSize)))
+      if (!isRefSet(getModRefInfo(AA, maybeReader, call->getArgOperand(6),
+                                  MemoryLocation::UnknownSize)))
         return false;
 #endif
       return false;
@@ -3539,12 +3539,12 @@ bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
               (R != BaseType::Anything && R != BaseType::Pointer))
             return false;
 #if LLVM_VERSION_MAJOR > 11
-          if (!isRefSet(AA.getModRefInfo(maybeReader, call->getArgOperand(6),
-                                         LocationSize::afterPointer())))
+          if (!isRefSet(getModRefInfo(AA, maybeReader, call->getArgOperand(6),
+                                      LocationSize::afterPointer())))
             return false;
 #else
-          if (!isRefSet(AA.getModRefInfo(maybeReader, call->getArgOperand(6),
-                                         MemoryLocation::UnknownSize)))
+          if (!isRefSet(getModRefInfo(AA, maybeReader, call->getArgOperand(6),
+                                      MemoryLocation::UnknownSize)))
             return false;
 #endif
         }
@@ -3556,6 +3556,8 @@ bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
       if (II->getIntrinsicID() == Intrinsic::stackrestore)
         return false;
       if (II->getIntrinsicID() == Intrinsic::trap)
+        return false;
+      if (II->getIntrinsicID() == Intrinsic::assume)
         return false;
 #if LLVM_VERSION_MAJOR >= 13
       if (II->getIntrinsicID() == Intrinsic::experimental_noalias_scope_decl)
@@ -3590,6 +3592,8 @@ bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
       if (II->getIntrinsicID() == Intrinsic::stackrestore)
         return false;
       if (II->getIntrinsicID() == Intrinsic::trap)
+        return false;
+      if (II->getIntrinsicID() == Intrinsic::assume)
         return false;
 #if LLVM_VERSION_MAJOR >= 13
       if (II->getIntrinsicID() == Intrinsic::experimental_noalias_scope_decl)
@@ -3667,31 +3671,31 @@ bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
         }
       }
     }
-    return isModSet(AA.getModRefInfo(maybeWriter, MemoryLocation::get(li)));
+    return isModSet(getModRefInfo(AA, maybeWriter, MemoryLocation::get(li)));
   }
   if (auto rmw = dyn_cast<AtomicRMWInst>(maybeReader)) {
-    return isModSet(AA.getModRefInfo(maybeWriter, MemoryLocation::get(rmw)));
+    return isModSet(getModRefInfo(AA, maybeWriter, MemoryLocation::get(rmw)));
   }
   if (auto xch = dyn_cast<AtomicCmpXchgInst>(maybeReader)) {
-    return isModSet(AA.getModRefInfo(maybeWriter, MemoryLocation::get(xch)));
+    return isModSet(getModRefInfo(AA, maybeWriter, MemoryLocation::get(xch)));
   }
   if (auto mti = dyn_cast<MemTransferInst>(maybeReader)) {
     return isModSet(
-        AA.getModRefInfo(maybeWriter, MemoryLocation::getForSource(mti)));
+        getModRefInfo(AA, maybeWriter, MemoryLocation::getForSource(mti)));
   }
 
   if (auto si = dyn_cast<StoreInst>(maybeWriter)) {
-    return isRefSet(AA.getModRefInfo(maybeReader, MemoryLocation::get(si)));
+    return isRefSet(getModRefInfo(AA, maybeReader, MemoryLocation::get(si)));
   }
   if (auto rmw = dyn_cast<AtomicRMWInst>(maybeWriter)) {
-    return isRefSet(AA.getModRefInfo(maybeReader, MemoryLocation::get(rmw)));
+    return isRefSet(getModRefInfo(AA, maybeReader, MemoryLocation::get(rmw)));
   }
   if (auto xch = dyn_cast<AtomicCmpXchgInst>(maybeWriter)) {
-    return isRefSet(AA.getModRefInfo(maybeReader, MemoryLocation::get(xch)));
+    return isRefSet(getModRefInfo(AA, maybeReader, MemoryLocation::get(xch)));
   }
   if (auto mti = dyn_cast<MemIntrinsic>(maybeWriter)) {
     return isRefSet(
-        AA.getModRefInfo(maybeReader, MemoryLocation::getForDest(mti)));
+        getModRefInfo(AA, maybeReader, MemoryLocation::getForDest(mti)));
   }
 
   if (auto cb = dyn_cast<CallInst>(maybeReader)) {

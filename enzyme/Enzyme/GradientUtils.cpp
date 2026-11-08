@@ -5985,7 +5985,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
               if (F && isMemFreeLibMFunction(F->getName())) {
                 continue;
               }
-              if (llvm::isModOrRefSet(OrigAA->getModRefInfo(CI, Loc))) {
+              if (llvm::isModOrRefSet(getModRefInfo(*OrigAA, CI, Loc))) {
                 seen = true;
                 llvm::errs() << " cannot shadow-inline global " << *oval
                              << " due to " << *CI << "\n";
