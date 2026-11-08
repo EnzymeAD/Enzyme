@@ -29,6 +29,7 @@
 #include <map>
 #include <set>
 
+#include "DesulAtomics.h"
 #include "DifferentialUseAnalysis.h"
 #include "Locks.h"
 #include "Utils.h"
@@ -636,7 +637,8 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
     // we still need even if instruction is inactive
     if (!shadow)
       if (funcName == "__kmpc_barrier" || funcName == "MPI_Barrier" ||
-          locks::classifyLockCall(funcName)) {
+          locks::classifyLockCall(funcName) ||
+          desul_atomics::isAtomicThreadFence(funcName)) {
         if (EnzymePrintDiffUse)
           llvm::errs() << " Need direct primal of " << *val
                        << " in reverse from barrier " << *user << "\n";

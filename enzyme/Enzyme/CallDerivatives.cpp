@@ -25,6 +25,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "AdjointGenerator.h"
+#include "DesulAtomics.h"
 #include "FlangRuntime.h"
 #include "Locks.h"
 
@@ -2734,6 +2735,26 @@ bool AdjointGenerator::handleKnownCallDerivatives(
             lookup(gutils->getNewFromOriginal(call.getOperand(0)), Builder2),
             lookup(gutils->getNewFromOriginal(call.getOperand(1)), Builder2)};
         Builder2.CreateCall(call.getFunctionType(), callval, args);
+      }
+      return true;
+    }
+    // Adjoint of a Desul (Kokkos atomics) thread fence call is a thread fence
+    // at the corresponding location in the reverse, with acquire and release
+    // exchanged (as for a FenceInst).
+    if (desul_atomics::isAtomicThreadFence(funcName)) {
+      if (Mode == DerivativeMode::ReverseModeGradient ||
+          Mode == DerivativeMode::ReverseModeCombined) {
+        IRBuilder<> Builder2(&call);
+        getReverseBuilder(Builder2);
+        SmallVector<Value *, 2> args;
+        for (auto &arg : call.args())
+          args.push_back(lookup(gutils->getNewFromOriginal(arg), Builder2));
+        Module &M = *gutils->newFunc->getParent();
+        Builder2.CreateCall(
+            M.getOrInsertFunction(
+                desul_atomics::reverseAtomicThreadFenceName(funcName),
+                call.getFunctionType()),
+            args);
       }
       return true;
     }

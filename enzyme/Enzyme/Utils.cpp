@@ -468,8 +468,28 @@ bool attributeKnownFunctions(llvm::Function &F) {
         AttributeList::FunctionIndex,
         Attribute::get(F.getContext(), "enzyme_no_escaping_allocation"));
   }
-  // Lock and unlock primitives neither free memory nor leak allocations.
-  if (locks::classifyLockCall(name)) {
+  // Synchronization primitives neither free memory nor leak allocations:
+  // lock and unlock entry points, Desul (Kokkos atomics) lock-array setup and
+  // thread fences, std::mutex / std::recursive_mutex and pthread mutexes.
+  const char *SyncPrefixes[] = {
+      "_ZN5desul4Impl16init_lock_arrays",
+      "_ZN5desul4Impl20finalize_lock_arrays",
+      "_ZN5desul4Impl7ensure_",
+      "_ZN5desul4Impl9HostLocks",
+      "_ZN5desul4Impl25host_atomic_thread_fenceI",
+      "_ZN5desul4Impl27device_atomic_thread_fenceI",
+      "_ZNSt5mutex",
+      "_ZNSt3__15mutex",
+      "_ZNSt3__u5mutex",
+      "_ZNSt15recursive_mutex",
+      "_ZNSt3__115recursive_mutex",
+      "_ZNSt3__u15recursive_mutex",
+      "pthread_mutex_",
+  };
+  bool isSync = locks::classifyLockCall(name).has_value();
+  for (auto Prefix : SyncPrefixes)
+    isSync |= startsWith(name, Prefix);
+  if (isSync) {
     changed = true;
     F.addFnAttr(Attribute::NoFree);
     F.addAttribute(
