@@ -1304,6 +1304,113 @@ bool isAtomic(Value *origptr, bool AtomicAdd, Function *newFunc) {
   return Atomic;
 }
 
+Function *getOrInsertAtomicFloatMinMax(Module &M, Type *T,
+                                       AtomicRMWInst::BinOp Op,
+                                       unsigned AddrSpace, MaybeAlign Alignment,
+                                       AtomicOrdering Order, SyncScope::ID SSID,
+                                       bool IsVolatile) {
+  assert(T->isFloatingPointTy() && "expected scalar floating-point type");
+  assert((Op == AtomicRMWInst::FMin || Op == AtomicRMWInst::FMax) &&
+         "expected FMin or FMax atomic operation");
+
+  LLVMContext &Ctx = M.getContext();
+  const DataLayout &DL = M.getDataLayout();
+  Align ResolvedAlign = Alignment ? *Alignment : DL.getABITypeAlign(T);
+  AtomicOrdering SuccessOrder =
+      Order == AtomicOrdering::Unordered ? AtomicOrdering::Monotonic : Order;
+  AtomicOrdering LoadOrder = SuccessOrder;
+  if (LoadOrder == AtomicOrdering::Release)
+    LoadOrder = AtomicOrdering::Monotonic;
+  else if (LoadOrder == AtomicOrdering::AcquireRelease)
+    LoadOrder = AtomicOrdering::Acquire;
+
+  std::string Name = std::string("__enzyme_atomic_") +
+                     (Op == AtomicRMWInst::FMax ? "fmax_" : "fmin_") +
+                     tofltstr(T) + "_a" +
+                     std::to_string(ResolvedAlign.value()) + "_o" +
+                     std::to_string(static_cast<unsigned>(SuccessOrder));
+  if (AddrSpace != 0)
+    Name += "_as" + std::to_string(AddrSpace);
+  if (SSID != SyncScope::System)
+    Name += "_ss" + std::to_string(static_cast<unsigned>(SSID));
+  if (IsVolatile)
+    Name += "_vol";
+
+  StructType *RetTy = StructType::get(Ctx, {T, Type::getInt1Ty(Ctx)});
+  Type *PtrTy = getPointerType(T, AddrSpace);
+  FunctionType *FT = FunctionType::get(RetTy, {PtrTy, T}, false);
+  Function *F = cast<Function>(M.getOrInsertFunction(Name, FT).getCallee());
+  if (!F->empty())
+    return F;
+
+  F->setLinkage(Function::LinkageTypes::InternalLinkage);
+#if LLVM_VERSION_MAJOR >= 16
+  F->setOnlyAccessesArgMemory();
+#else
+  F->addFnAttr(Attribute::ArgMemOnly);
+#endif
+  F->addFnAttr(Attribute::NoUnwind);
+  F->addFnAttr(Attribute::NoFree);
+  F->addFnAttr(Attribute::AlwaysInline);
+  addFunctionNoCapture(F, 0);
+
+  Argument *Ptr = F->getArg(0);
+  Ptr->setName("ptr");
+  Argument *Val = F->getArg(1);
+  Val->setName("val");
+
+  unsigned Bits = T->getPrimitiveSizeInBits();
+  IntegerType *IntTy = IntegerType::get(Ctx, Bits);
+
+  BasicBlock *EntryBB = BasicBlock::Create(Ctx, "entry", F);
+  BasicBlock *LoopBB = BasicBlock::Create(Ctx, "loop", F);
+  BasicBlock *CasBB = BasicBlock::Create(Ctx, "cas", F);
+  BasicBlock *ExitBB = BasicBlock::Create(Ctx, "exit", F);
+
+  IRBuilder<> EB(EntryBB);
+  Value *IntPtr = EB.CreatePointerCast(Ptr, getPointerType(IntTy, AddrSpace));
+  Value *ValInt = EB.CreateBitCast(Val, IntTy);
+  LoadInst *InitLoad =
+      EB.CreateAlignedLoad(IntTy, IntPtr, ResolvedAlign, IsVolatile);
+  InitLoad->setAtomic(LoadOrder, SSID);
+  EB.CreateBr(LoopBB);
+
+  IRBuilder<> LB(LoopBB);
+  PHINode *CurInt = LB.CreatePHI(IntTy, 2, "cur.int");
+  CurInt->addIncoming(InitLoad, EntryBB);
+  Value *Cur = LB.CreateBitCast(CurInt, T, "cur");
+  // Check whether `val` strictly improves on `cur` (or replaces a NaN `cur`
+  // with an ordered `val`, matching `atomicrmw fmin`/`fmax` / IEEE minNum &
+  // maxNum). Equal values return `{ cur, false }` without storing.
+  Value *StrictCmp = (Op == AtomicRMWInst::FMax) ? LB.CreateFCmpOGT(Val, Cur)
+                                                 : LB.CreateFCmpOLT(Val, Cur);
+  Value *CurIsNaN = LB.CreateFCmpUNO(Cur, Cur);
+  Value *ValIsOrd = LB.CreateFCmpORD(Val, Val);
+  Value *IsNew = LB.CreateOr(StrictCmp, LB.CreateAnd(CurIsNaN, ValIsOrd));
+  LB.CreateCondBr(IsNew, CasBB, ExitBB);
+
+  IRBuilder<> CB(CasBB);
+  AtomicCmpXchgInst *Cas = CB.CreateAtomicCmpXchg(
+      IntPtr, CurInt, ValInt, ResolvedAlign, SuccessOrder,
+      AtomicCmpXchgInst::getStrongestFailureOrdering(SuccessOrder), SSID);
+  Cas->setVolatile(IsVolatile);
+  Value *NextInt = CB.CreateExtractValue(Cas, {0}, "next.int");
+  Value *Ok = CB.CreateExtractValue(Cas, {1}, "ok");
+  CurInt->addIncoming(NextInt, CasBB);
+  CB.CreateCondBr(Ok, ExitBB, LoopBB);
+
+  IRBuilder<> XB(ExitBB);
+  PHINode *Changed = XB.CreatePHI(Type::getInt1Ty(Ctx), 2, "changed");
+  Changed->addIncoming(ConstantInt::getFalse(Ctx), LoopBB);
+  Changed->addIncoming(ConstantInt::getTrue(Ctx), CasBB);
+  Value *Res = UndefValue::get(RetTy);
+  Res = XB.CreateInsertValue(Res, Cur, {0});
+  Res = XB.CreateInsertValue(Res, Changed, {1});
+  XB.CreateRet(Res);
+
+  return F;
+}
+
 /// Create function for type that is equivalent to memcpy but adds to
 /// destination rather than a direct copy; dst, src, numelems
 Function *getOrInsertDifferentialFloatMemcpy(

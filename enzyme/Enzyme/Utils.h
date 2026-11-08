@@ -923,6 +923,17 @@ llvm::Function *getOrInsertDifferentialFloatMemcpy(
     unsigned dstaddr, unsigned srcaddr, unsigned bitwidth, bool runtimeActivity,
     bool atomic);
 
+/// Get or create an internal helper function implementing floating-point
+/// atomic min/max (`AtomicRMWInst::FMin` or `AtomicRMWInst::FMax`) via an
+/// atomic load and CAS retry loop, returning `{ old_val, changed }` where
+/// `changed` is true iff `val` replaced the value in memory.
+llvm::Function *getOrInsertAtomicFloatMinMax(
+    llvm::Module &M, llvm::Type *T, llvm::AtomicRMWInst::BinOp Op,
+    unsigned AddrSpace = 0, llvm::MaybeAlign Alignment = llvm::MaybeAlign(),
+    llvm::AtomicOrdering Order = llvm::AtomicOrdering::Monotonic,
+    llvm::SyncScope::ID SSID = llvm::SyncScope::System,
+    bool IsVolatile = false);
+
 /// Create function for type that performs memcpy with a stride using blas copy
 void callMemcpyStridedBlas(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
                            llvm::ArrayRef<llvm::Value *> args,

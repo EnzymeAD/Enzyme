@@ -191,6 +191,16 @@ public:
     return order;
   }
 
+  /// Legal ordering for an atomic store corresponding to an atomic RMW with
+  /// ordering `order`.
+  static llvm::AtomicOrdering forwardStoreOrdering(llvm::AtomicOrdering order) {
+    if (order == llvm::AtomicOrdering::Acquire)
+      return llvm::AtomicOrdering::Monotonic;
+    if (order == llvm::AtomicOrdering::AcquireRelease)
+      return llvm::AtomicOrdering::Release;
+    return order;
+  }
+
   /// Reverse-mode adjoint of the value operand val of an atomic modification
   /// new = old + val (negate == false) or new = old - val (negate == true) of
   /// the active location ptr by the instruction I, whose result is inactive:
@@ -978,6 +988,184 @@ public:
         if (Mode == DerivativeMode::ReverseModeGradient) {
           eraseIfUnused(I, /*erase*/ true, /*check*/ false);
         } else
+          eraseIfUnused(I);
+        return;
+      }
+      break;
+    }
+    case AtomicRMWInst::FMax:
+    case AtomicRMWInst::FMin: {
+      Type *ValTy = I.getType();
+      if (!ValTy->isFloatingPointTy())
+        break;
+
+      Value *Changed = nullptr;
+      if (Mode != DerivativeMode::ReverseModeGradient &&
+          Mode != DerivativeMode::ForwardModeSplit) {
+        Instruction *NewInst =
+            cast<Instruction>(gutils->getNewFromOriginal(&I));
+        Value *NewPtr = gutils->getNewFromOriginal(I.getPointerOperand());
+        Value *NewVal = gutils->getNewFromOriginal(I.getValOperand());
+        unsigned AddrSpace =
+            cast<PointerType>(NewPtr->getType())->getAddressSpace();
+        Function *Helper = getOrInsertAtomicFloatMinMax(
+            *gutils->newFunc->getParent(), ValTy, I.getOperation(), AddrSpace,
+            I.getAlign(), I.getOrdering(), I.getSyncScopeID(), I.isVolatile());
+        Value *CastPtr = BuilderZ.CreatePointerCast(
+            NewPtr, Helper->getFunctionType()->getParamType(0));
+        CallInst *HelperCall = BuilderZ.CreateCall(Helper, {CastPtr, NewVal});
+        HelperCall->setDebugLoc(gutils->getNewFromOriginal(I.getDebugLoc()));
+        Instruction *OldVal =
+            cast<Instruction>(BuilderZ.CreateExtractValue(HelperCall, {0}));
+        OldVal->takeName(NewInst);
+        Changed = BuilderZ.CreateExtractValue(HelperCall, {1}, "changed");
+
+        gutils->newToOriginalFn.erase(NewInst);
+        gutils->replaceAWithB(NewInst, OldVal);
+        if (BuilderZ.GetInsertPoint() != BuilderZ.GetInsertBlock()->end() &&
+            &*BuilderZ.GetInsertPoint() == NewInst)
+          BuilderZ.SetInsertPoint(NewInst->getNextNode());
+        gutils->erase(NewInst);
+        gutils->originalToNewFn[&I] = OldVal;
+        gutils->newToOriginalFn[OldVal] = &I;
+
+        if (Mode == DerivativeMode::ReverseModePrimal) {
+          Changed = gutils->cacheForReverse(
+              BuilderZ, Changed, getIndex(&I, CacheType::Tape, BuilderZ));
+        } else if (Mode == DerivativeMode::ReverseModeCombined) {
+          if (auto *ChangedInst = dyn_cast<Instruction>(Changed))
+            gutils->TapesToPreventRecomputation.insert(ChangedInst);
+        }
+      } else {
+#if LLVM_VERSION_MAJOR >= 18
+        auto It = BuilderZ.GetInsertPoint();
+        It.setHeadBit(true);
+        BuilderZ.SetInsertPoint(It);
+#endif
+        Changed =
+            BuilderZ.CreatePHI(Type::getInt1Ty(I.getContext()), 0, "changed");
+        Changed = gutils->cacheForReverse(
+            BuilderZ, Changed, getIndex(&I, CacheType::Tape, BuilderZ));
+        if (Mode == DerivativeMode::ReverseModeGradient) {
+          if (auto *ChangedInst = dyn_cast<Instruction>(Changed))
+            gutils->TapesToPreventRecomputation.insert(ChangedInst);
+        }
+      }
+
+      if (Mode == DerivativeMode::ForwardMode ||
+          Mode == DerivativeMode::ForwardModeError ||
+          Mode == DerivativeMode::ForwardModeSplit) {
+        Value *InvPtr =
+            gutils->isConstantValue(I.getPointerOperand())
+                ? nullptr
+                : gutils->invertPointerM(I.getPointerOperand(), BuilderZ);
+        Value *DiffeVal = gutils->isConstantValue(I.getValOperand())
+                              ? nullptr
+                              : gutils->invertPointerM(I.getValOperand(),
+                                                       BuilderZ, TR.query(&I));
+        AtomicOrdering LoadOrder = reverseLoadOrdering(I.getOrdering());
+        AtomicOrdering StoreOrder = forwardStoreOrdering(I.getOrdering());
+        auto Rule = [&](Value *Ptr, Value *DeltaVal) -> Value * {
+          Value *Zero = Constant::getNullValue(ValTy);
+          if (!DeltaVal)
+            DeltaVal = Zero;
+          Value *DiffeOld = Zero;
+          if (Ptr) {
+            unsigned AS = cast<PointerType>(Ptr->getType())->getAddressSpace();
+            Value *TypedPtr =
+                BuilderZ.CreatePointerCast(Ptr, getPointerType(ValTy, AS));
+            LoadInst *LoadOld =
+                BuilderZ.CreateLoad(ValTy, TypedPtr, I.isVolatile());
+            LoadOld->setAlignment(I.getAlign());
+            LoadOld->setOrdering(LoadOrder);
+            LoadOld->setSyncScopeID(I.getSyncScopeID());
+            DiffeOld = LoadOld;
+
+            Value *DiffeNew =
+                BuilderZ.CreateSelect(Changed, DeltaVal, DiffeOld);
+            StoreInst *StoreNew =
+                BuilderZ.CreateStore(DiffeNew, TypedPtr, I.isVolatile());
+            StoreNew->setAlignment(I.getAlign());
+            StoreNew->setOrdering(StoreOrder);
+            StoreNew->setSyncScopeID(I.getSyncScopeID());
+          }
+          return DiffeOld;
+        };
+        Value *Diff = applyChainRule(ValTy, BuilderZ, Rule, InvPtr, DiffeVal);
+        if (!gutils->isConstantValue(&I))
+          setDiffe(&I, Diff, BuilderZ);
+        if (Mode == DerivativeMode::ForwardModeSplit)
+          eraseIfUnused(I, /*erase*/ true, /*check*/ false);
+        else
+          eraseIfUnused(I);
+        return;
+      }
+
+      if (Mode == DerivativeMode::ReverseModePrimal) {
+        eraseIfUnused(I);
+        return;
+      }
+
+      if (Mode == DerivativeMode::ReverseModeCombined ||
+          Mode == DerivativeMode::ReverseModeGradient) {
+        IRBuilder<> Builder2(&I);
+        getReverseBuilder(Builder2);
+        Value *ChangedRev = lookup(Changed, Builder2);
+
+        Value *DiffeRet = nullptr;
+        if (!gutils->isConstantValue(&I)) {
+          DiffeRet = diffe(&I, Builder2);
+          setDiffe(&I, Constant::getNullValue(gutils->getShadowType(ValTy)),
+                   Builder2);
+        }
+
+        if (!gutils->isConstantValue(I.getPointerOperand())) {
+          Value *InvPtr =
+              lookup(gutils->invertPointerM(I.getPointerOperand(), Builder2),
+                     Builder2);
+
+          BasicBlock *CurrentBB = Builder2.GetInsertBlock();
+          BasicBlock *ChangedBB = gutils->addReverseBlock(
+              CurrentBB, CurrentBB->getName() + "_changed");
+          BasicBlock *MergeBB = gutils->addReverseBlock(
+              ChangedBB, CurrentBB->getName() + "_merge");
+          Builder2.CreateCondBr(ChangedRev, ChangedBB, MergeBB);
+
+          Builder2.SetInsertPoint(ChangedBB);
+          auto TakeRule = [&](Value *Ptr) -> Value * {
+            unsigned AS = cast<PointerType>(Ptr->getType())->getAddressSpace();
+            Value *TypedPtr =
+                Builder2.CreatePointerCast(Ptr, getPointerType(ValTy, AS));
+            auto *Xchg = Builder2.CreateAtomicRMW(
+                AtomicRMWInst::Xchg, TypedPtr, Constant::getNullValue(ValTy),
+                I.getAlign(), I.getOrdering(), I.getSyncScopeID());
+            Xchg->setVolatile(I.isVolatile());
+            return Xchg;
+          };
+          Value *Taken = applyChainRule(ValTy, Builder2, TakeRule, InvPtr);
+          if (!gutils->isConstantValue(I.getValOperand()))
+            addToDiffe(I.getValOperand(), Taken, Builder2, ValTy);
+          Builder2.CreateBr(MergeBB);
+
+          Builder2.SetInsertPoint(MergeBB);
+          if (DiffeRet) {
+            auto AddRetRule = [&](Value *Ptr, Value *DeltaRet) {
+              unsigned AS =
+                  cast<PointerType>(Ptr->getType())->getAddressSpace();
+              Value *TypedPtr =
+                  Builder2.CreatePointerCast(Ptr, getPointerType(ValTy, AS));
+              auto *Add = Builder2.CreateAtomicRMW(
+                  AtomicRMWInst::FAdd, TypedPtr, DeltaRet, I.getAlign(),
+                  I.getOrdering(), I.getSyncScopeID());
+              Add->setVolatile(I.isVolatile());
+            };
+            applyChainRule(Builder2, AddRetRule, InvPtr, DiffeRet);
+          }
+        }
+
+        if (Mode == DerivativeMode::ReverseModeGradient)
+          eraseIfUnused(I, /*erase*/ true, /*check*/ false);
+        else
           eraseIfUnused(I);
         return;
       }
