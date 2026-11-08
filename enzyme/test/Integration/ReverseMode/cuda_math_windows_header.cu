@@ -51,7 +51,7 @@ __attribute__((global)) void residual_grad(double *x, double *d_x, double *y,
   __enzyme_autodiff(residual, x, d_x, y, d_y);
 }
 
-// CHECK-LABEL: define dso_local void @_Z13residual_gradPdS_S_S_(
+// CHECK-LABEL: define dso_local {{(ptx_kernel )?}}void @_Z13residual_gradPdS_S_S_(
 // CHECK-NOT: @llvm.log.f64
 // CHECK-NOT: @llvm.cos.f64
 // CHECK-NOT: @cosh(
