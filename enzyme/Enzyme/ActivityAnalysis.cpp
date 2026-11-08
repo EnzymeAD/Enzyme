@@ -2157,7 +2157,8 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
         }
       }
       if (auto inst = dyn_cast<Instruction>(Val)) {
-        if (!inst->mayReadFromMemory() && !isa<AllocaInst>(Val)) {
+        if (!inst->mayReadFromMemory() && !isa<AllocaInst>(Val) &&
+            !isAllocationCall(Val, TLI)) {
           if (directions == UP && !isa<PHINode>(inst)) {
             if (isInstructionInactiveFromOrigin(TR, inst, true)) {
               InsertConstantValue(TR, Val);
@@ -2236,7 +2237,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
 
       // If this is a malloc or free, this doesn't impact the activity
       if (auto CI = dyn_cast<CallInst>(I)) {
-        if (isInactiveCallInst(*CI, TLI))
+        if (!isa<MemSetInst>(CI) && isInactiveCallInst(*CI, TLI))
           return false;
 
         StringRef funcName = getFuncNameFromCall(CI);
