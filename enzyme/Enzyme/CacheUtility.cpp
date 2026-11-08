@@ -1633,6 +1633,31 @@ CacheUtility::SubLimitType CacheUtility::getSubLimits(bool inForwardPass,
         }
       }
 
+      bool canSkipLoop = false;
+      if (allocationPreheaders[i] != contexts[i].preheader) {
+        for (int k = i; (unsigned)(k + 1) < contexts.size() &&
+                        allocationPreheaders[k] != contexts[k].preheader;
+             ++k) {
+          BasicBlock *cur = contexts[k].preheader;
+          while (cur != contexts[k + 1].header) {
+            if (cur->getTerminator()->getNumSuccessors() != 1) {
+              canSkipLoop = true;
+              break;
+            }
+            cur = cur->getSinglePredecessor();
+            if (!cur) {
+              canSkipLoop = true;
+              break;
+            }
+          }
+          if (cur && cur->getTerminator()->getNumSuccessors() != 1) {
+            canSkipLoop = true;
+          }
+          if (canSkipLoop)
+            break;
+        }
+      }
+
       // We now need to compute the actual limit as opposed to the limit
       // minus one.
       if (inForwardPass) {
@@ -1644,9 +1669,14 @@ CacheUtility::SubLimitType CacheUtility::getSubLimits(bool inForwardPass,
         if (found != map.end() && found->second != nullptr) {
           limits[i] = found->second;
         } else {
-          limits[i] = map[allocationPreheaders[i]] =
-              allocationBuilder.CreateNSWAdd(
-                  limitMinus1, ConstantInt::get(limitMinus1->getType(), 1));
+          Value *add = allocationBuilder.CreateNSWAdd(
+              limitMinus1, ConstantInt::get(limitMinus1->getType(), 1));
+          if (canSkipLoop) {
+            auto zero = ConstantInt::get(limitMinus1->getType(), 0);
+            add = allocationBuilder.CreateSelect(
+                allocationBuilder.CreateICmpSLT(add, zero), zero, add);
+          }
+          limits[i] = map[allocationPreheaders[i]] = add;
         }
       } else {
         Value *lim = unwrapM(limitMinus1, *RB, reverseMap,
@@ -1657,7 +1687,12 @@ CacheUtility::SubLimitType CacheUtility::getSubLimits(bool inForwardPass,
           llvm::errs() << *limitMinus1 << "\n";
         }
         assert(lim);
-        limits[i] = RB->CreateNSWAdd(lim, ConstantInt::get(lim->getType(), 1));
+        Value *add = RB->CreateNSWAdd(lim, ConstantInt::get(lim->getType(), 1));
+        if (canSkipLoop) {
+          auto zero = ConstantInt::get(lim->getType(), 0);
+          add = RB->CreateSelect(RB->CreateICmpSLT(add, zero), zero, add);
+        }
+        limits[i] = add;
       }
     }
   }
