@@ -1150,7 +1150,7 @@ public:
     }
     Operation *new_terminator_op = term_builder.create(state);
     gutils->erase(replTerminator);
-    gutils->originalToNewFnOps[origTerminator] = new_terminator_op;
+    gutils->originalToNewFn.map(origTerminator, new_terminator_op);
 
     return success();
   }

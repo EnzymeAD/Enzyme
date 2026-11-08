@@ -354,7 +354,7 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
     }
 
     for (auto [oldOp, newOp] : mapping.getOperationMap())
-      gutils->originalToNewFnOps[oldOp] = newOp;
+      gutils->originalToNewFn.map(oldOp, newOp);
   }
 
   // Splits the values `forOp` reads from above into the ones holding mutable
@@ -864,7 +864,7 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
                                             outerResults.slice(1, numIterArgs),
                                             gutils));
     gutils->erase(newForOp);
-    gutils->originalToNewFnOps[forOp] = outerFwd.op;
+    gutils->originalToNewFn.map(forOp.getOperation(), outerFwd.op);
 
     return caches;
   }
@@ -1631,7 +1631,7 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
                                       gutils));
     hoistPlaceholdersBefore(newForOp, newForOp);
     gutils->erase(newForOp);
-    gutils->originalToNewFnOps[op] = outerFwd;
+    gutils->originalToNewFn.map(op, outerFwd.getOperation());
 
     // caches is composed of:
     // [
