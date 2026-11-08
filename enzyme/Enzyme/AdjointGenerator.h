@@ -578,7 +578,163 @@ public:
     auto noscope = MDNode::get(I.getContext(), MDs);
     newi->setMetadata(LLVMContext::MD_noalias, noscope);
 
+    auto vd = TR.query(&I);
+
     IRBuilder<> BuilderZ(newi);
+    if (!vd.isKnown()) {
+      auto ET = I.getType();
+      if (looseTypeAnalysis || true) {
+        vd = defaultTypeTreeForLLVM(ET, &I);
+        if (!constantval) {
+          std::string str;
+          raw_string_ostream ss(str);
+          ss << "Cannot deduce type of load " << I << ", assumed " << vd.str();
+          EmitWarningAlways("CannotDeduceType", I, ss.str());
+        }
+        goto known;
+      }
+      {
+        std::string str;
+        raw_string_ostream ss(str);
+        ss << "Cannot deduce type of load " << I;
+        EmitNoTypeError(str, I, gutils, BuilderZ);
+      }
+    known:;
+    }
+
+    if (Mode == DerivativeMode::ForwardMode ||
+        Mode == DerivativeMode::ForwardModeError ||
+        Mode == DerivativeMode::ForwardModeSplit) {
+      if (!constantval) {
+        auto found = gutils->invertedPointers.find(&I);
+        assert(found != gutils->invertedPointers.end());
+        Instruction *placeholder = cast<Instruction>(&*found->second);
+        assert(placeholder->getType() == type);
+        gutils->invertedPointers.erase(found);
+
+        // only make shadow where caching needed
+        if (!DifferentialUseAnalysis::is_value_needed_in_reverse<
+                QueryType::Shadow>(gutils, &I, Mode, oldUnreachable)) {
+          gutils->erase(placeholder);
+          return;
+        }
+
+        if (can_modref) {
+          if (vd[{-1}].isPossiblePointer()) {
+            Value *newip = gutils->cacheForReverse(
+                BuilderZ, placeholder,
+                getIndex(&I, CacheType::Shadow, BuilderZ));
+            assert(newip->getType() == type);
+            gutils->invertedPointers.insert(std::make_pair(
+                (const Value *)&I, InvertedPointerVH(gutils, newip)));
+          } else {
+            gutils->erase(placeholder);
+          }
+        } else {
+          Value *newip = gutils->invertPointerM(&I, BuilderZ);
+          if (gutils->runtimeActivity && vd[{-1}].isFloat()) {
+            // TODO handle mask
+            assert(!mask);
+
+            auto rule = [&](Value *inop, Value *newip) -> Value * {
+              Value *shadow = BuilderZ.CreateICmpNE(
+                  gutils->getNewFromOriginal(I.getOperand(0)), inop);
+              newip = CreateSelect(BuilderZ, shadow, newip,
+                                   Constant::getNullValue(newip->getType()));
+              return newip;
+            };
+            newip = applyChainRule(
+                I.getType(), BuilderZ, rule,
+                gutils->invertPointerM(I.getOperand(0), BuilderZ), newip);
+          }
+          assert(newip->getType() == type);
+          placeholder->replaceAllUsesWith(newip);
+          gutils->erase(placeholder);
+          gutils->invertedPointers.erase(&I);
+          gutils->invertedPointers.insert(std::make_pair(
+              (const Value *)&I, InvertedPointerVH(gutils, newip)));
+        }
+      }
+      return;
+    }
+
+    //! Store inverted pointer loads that need to be cached for use in reverse
+    //! pass
+    if (vd[{-1}].isPossiblePointer()) {
+      auto found = gutils->invertedPointers.find(&I);
+      if (found != gutils->invertedPointers.end()) {
+        Instruction *placeholder = cast<Instruction>(&*found->second);
+        assert(placeholder->getType() == type);
+        gutils->invertedPointers.erase(found);
+
+        if (!constantval) {
+          Value *newip = nullptr;
+
+          // TODO: In the case of fwd mode this should be true if the loaded
+          // value itself is used as a pointer.
+          bool needShadow = DifferentialUseAnalysis::is_value_needed_in_reverse<
+              QueryType::Shadow>(gutils, &I, Mode, oldUnreachable);
+
+          switch (Mode) {
+
+          case DerivativeMode::ReverseModePrimal:
+          case DerivativeMode::ReverseModeCombined: {
+            if (!needShadow) {
+              gutils->erase(placeholder);
+            } else {
+              newip = gutils->invertPointerM(&I, BuilderZ);
+              assert(newip->getType() == type);
+              if (Mode == DerivativeMode::ReverseModePrimal && can_modref &&
+                  DifferentialUseAnalysis::is_value_needed_in_reverse<
+                      QueryType::Shadow>(gutils, &I,
+                                         DerivativeMode::ReverseModeGradient,
+                                         oldUnreachable)) {
+                gutils->cacheForReverse(
+                    BuilderZ, newip, getIndex(&I, CacheType::Shadow, BuilderZ));
+              }
+              placeholder->replaceAllUsesWith(newip);
+              gutils->erase(placeholder);
+              gutils->invertedPointers.insert(std::make_pair(
+                  (const Value *)&I, InvertedPointerVH(gutils, newip)));
+            }
+            break;
+          }
+          case DerivativeMode::ForwardModeSplit:
+          case DerivativeMode::ForwardMode:
+          case DerivativeMode::ForwardModeError: {
+            assert(0 && "impossible branch");
+            return;
+          }
+          case DerivativeMode::ReverseModeGradient: {
+            if (!needShadow) {
+              gutils->erase(placeholder);
+            } else {
+              // only make shadow where caching needed
+              if (can_modref) {
+                newip = gutils->cacheForReverse(
+                    BuilderZ, placeholder,
+                    getIndex(&I, CacheType::Shadow, BuilderZ));
+                assert(newip->getType() == type);
+                gutils->invertedPointers.insert(std::make_pair(
+                    (const Value *)&I, InvertedPointerVH(gutils, newip)));
+              } else {
+                newip = gutils->invertPointerM(&I, BuilderZ);
+                assert(newip->getType() == type);
+                placeholder->replaceAllUsesWith(newip);
+                gutils->erase(placeholder);
+                gutils->invertedPointers.insert(std::make_pair(
+                    (const Value *)&I, InvertedPointerVH(gutils, newip)));
+              }
+            }
+            break;
+          }
+          }
+
+        } else {
+          gutils->erase(placeholder);
+        }
+      }
+    }
 
     Value *inst = newi;
 
@@ -589,7 +745,6 @@ public:
     // the end of the function jointly.
     if (Mode != DerivativeMode::ForwardMode &&
         Mode != DerivativeMode::ForwardModeError &&
-        Mode != DerivativeMode::ForwardModeSplit &&
         !gutils->knownRecomputeHeuristic.count(&I) && can_modref &&
         !gutils->unnecessaryIntermediates.count(&I)) {
       // we can pre initialize all the knownRecomputeHeuristic values to false
@@ -627,170 +782,10 @@ public:
       }
     }
 
-    if (constantval) {
-      if (Mode != DerivativeMode::ForwardMode &&
-          Mode != DerivativeMode::ForwardModeError &&
-          Mode != DerivativeMode::ForwardModeSplit &&
-          TR.query(&I)[{-1}].isPossiblePointer()) {
-        auto found = gutils->invertedPointers.find(&I);
-        if (found != gutils->invertedPointers.end()) {
-          Instruction *placeholder = cast<Instruction>(&*found->second);
-          assert(placeholder->getType() == type);
-          gutils->invertedPointers.erase(found);
-          gutils->erase(placeholder);
-        }
-      }
-      return;
-    }
-
-    auto vd = TR.query(&I);
-    if (!vd.isKnown()) {
-      auto ET = I.getType();
-      if (looseTypeAnalysis || true) {
-        vd = defaultTypeTreeForLLVM(ET, &I);
-        std::string str;
-        raw_string_ostream ss(str);
-        ss << "Cannot deduce type of load " << I << ", assumed " << vd.str();
-        EmitWarningAlways("CannotDeduceType", I, ss.str());
-        goto known;
-      }
-      {
-        std::string str;
-        raw_string_ostream ss(str);
-        ss << "Cannot deduce type of load " << I;
-        EmitNoTypeError(str, I, gutils, BuilderZ);
-      }
-    known:;
-    }
-
-    if (Mode == DerivativeMode::ForwardMode ||
-        Mode == DerivativeMode::ForwardModeError ||
-        Mode == DerivativeMode::ForwardModeSplit) {
-      auto found = gutils->invertedPointers.find(&I);
-      assert(found != gutils->invertedPointers.end());
-      Instruction *placeholder = cast<Instruction>(&*found->second);
-      assert(placeholder->getType() == type);
-      gutils->invertedPointers.erase(found);
-
-      // only make shadow where caching needed
-      if (!DifferentialUseAnalysis::is_value_needed_in_reverse<
-              QueryType::Shadow>(gutils, &I, Mode, oldUnreachable)) {
-        gutils->erase(placeholder);
-        return;
-      }
-
-      if (can_modref) {
-        if (vd[{-1}].isPossiblePointer()) {
-          Value *newip = gutils->cacheForReverse(
-              BuilderZ, placeholder,
-              getIndex(&I, CacheType::Shadow, BuilderZ));
-          assert(newip->getType() == type);
-          gutils->invertedPointers.insert(std::make_pair(
-              (const Value *)&I, InvertedPointerVH(gutils, newip)));
-        } else {
-          gutils->erase(placeholder);
-        }
-      } else {
-        Value *newip = gutils->invertPointerM(&I, BuilderZ);
-        if (gutils->runtimeActivity && vd[{-1}].isFloat()) {
-          // TODO handle mask
-          assert(!mask);
-
-          auto rule = [&](Value *inop, Value *newip) -> Value * {
-            Value *shadow = BuilderZ.CreateICmpNE(
-                gutils->getNewFromOriginal(I.getOperand(0)), inop);
-            newip = CreateSelect(BuilderZ, shadow, newip,
-                                 Constant::getNullValue(newip->getType()));
-            return newip;
-          };
-          newip = applyChainRule(
-              I.getType(), BuilderZ, rule,
-              gutils->invertPointerM(I.getOperand(0), BuilderZ), newip);
-        }
-        assert(newip->getType() == type);
-        placeholder->replaceAllUsesWith(newip);
-        gutils->erase(placeholder);
-        gutils->invertedPointers.erase(&I);
-        gutils->invertedPointers.insert(std::make_pair(
-            (const Value *)&I, InvertedPointerVH(gutils, newip)));
-      }
-      return;
-    }
-
-    //! Store inverted pointer loads that need to be cached for use in reverse
-    //! pass
-    if (vd[{-1}].isPossiblePointer()) {
-      auto found = gutils->invertedPointers.find(&I);
-      if (found != gutils->invertedPointers.end()) {
-        Instruction *placeholder = cast<Instruction>(&*found->second);
-        assert(placeholder->getType() == type);
-        gutils->invertedPointers.erase(found);
-
-        Value *newip = nullptr;
-
-        // TODO: In the case of fwd mode this should be true if the loaded
-        // value itself is used as a pointer.
-        bool needShadow = DifferentialUseAnalysis::is_value_needed_in_reverse<
-            QueryType::Shadow>(gutils, &I, Mode, oldUnreachable);
-
-        switch (Mode) {
-
-        case DerivativeMode::ReverseModePrimal:
-        case DerivativeMode::ReverseModeCombined: {
-          if (!needShadow) {
-            gutils->erase(placeholder);
-          } else {
-            newip = gutils->invertPointerM(&I, BuilderZ);
-            assert(newip->getType() == type);
-            if (Mode == DerivativeMode::ReverseModePrimal && can_modref &&
-                DifferentialUseAnalysis::is_value_needed_in_reverse<
-                    QueryType::Shadow>(gutils, &I,
-                                       DerivativeMode::ReverseModeGradient,
-                                       oldUnreachable)) {
-              gutils->cacheForReverse(
-                  BuilderZ, newip, getIndex(&I, CacheType::Shadow, BuilderZ));
-            }
-            placeholder->replaceAllUsesWith(newip);
-            gutils->erase(placeholder);
-            gutils->invertedPointers.insert(std::make_pair(
-                (const Value *)&I, InvertedPointerVH(gutils, newip)));
-          }
-          break;
-        }
-        case DerivativeMode::ForwardModeSplit:
-        case DerivativeMode::ForwardMode:
-        case DerivativeMode::ForwardModeError: {
-          assert(0 && "impossible branch");
-          return;
-        }
-        case DerivativeMode::ReverseModeGradient: {
-          if (!needShadow) {
-            gutils->erase(placeholder);
-          } else {
-            // only make shadow where caching needed
-            if (can_modref) {
-              newip = gutils->cacheForReverse(
-                  BuilderZ, placeholder,
-                  getIndex(&I, CacheType::Shadow, BuilderZ));
-              assert(newip->getType() == type);
-              gutils->invertedPointers.insert(std::make_pair(
-                  (const Value *)&I, InvertedPointerVH(gutils, newip)));
-            } else {
-              newip = gutils->invertPointerM(&I, BuilderZ);
-              assert(newip->getType() == type);
-              placeholder->replaceAllUsesWith(newip);
-              gutils->erase(placeholder);
-              gutils->invertedPointers.insert(std::make_pair(
-                  (const Value *)&I, InvertedPointerVH(gutils, newip)));
-            }
-          }
-          break;
-        }
-        }
-      }
-    }
-
     if (Mode == DerivativeMode::ReverseModePrimal)
+      return;
+
+    if (constantval)
       return;
 
     if (nonmarkedglobals_inactiveloads) {
