@@ -22,12 +22,14 @@ add_public_tablegen_target(MLIRPoseidonPassIncGen)
 
 add_mlir_library(
   MLIRPoseidonTransforms
+  HerbieResults.cpp
   PoseidonRewrite.cpp
   PARTIAL_SOURCES_INTENDED
   DEPENDS
   MLIRPoseidonPassIncGen
   LINK_LIBS
   PUBLIC
+  LLVMSupport
   MLIRArithDialect
   MLIRFuncDialect
   MLIRIR

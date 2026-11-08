@@ -1,0 +1,106 @@
+{
+ "tests": [
+  {
+   "name": "log_one_plus/0",
+   "status": "imp-start",
+   "prec": "binary64",
+   "bits": 64,
+   "output": "(log1p.f64 x0)",
+   "cost-accuracy": [
+    [
+     1.0,
+     29.4
+    ],
+    [
+     0.6,
+     0.1
+    ],
+    [
+     [
+      1.0,
+      29.4,
+      "(log.f64 (+.f64 #s(literal 1 binary64) x0))"
+     ]
+    ]
+   ]
+  },
+  {
+   "name": "half_sum/0",
+   "status": "imp-start",
+   "prec": "binary64",
+   "bits": 64,
+   "output": "(*.f64 (+.f64 x0 x1) #s(literal 1/2 binary64))",
+   "cost-accuracy": [
+    [
+     1.0,
+     1.2
+    ],
+    [
+     0.7,
+     0.4
+    ],
+    []
+   ]
+  },
+  {
+   "name": "expm1_over/0",
+   "status": "imp-start",
+   "prec": "binary64",
+   "bits": 64,
+   "output": "(/.f64 #s(approx (- (exp x0) 1) (expm1.f64 x0)) x0)",
+   "cost-accuracy": [
+    [
+     1.0,
+     33.0
+    ],
+    [
+     0.9,
+     0.2
+    ],
+    [
+     [
+      0.5,
+      12.0,
+      "(+.f64 #s(literal 1 binary64) (*.f64 x0 #s(literal 1/2 binary64)))"
+     ],
+     [
+      0.8,
+      5.0,
+      "(/.f64 (expm1.f64 x0) x0"
+     ]
+    ]
+   ]
+  },
+  {
+   "name": "branch/0",
+   "status": "imp-start",
+   "prec": "binary64",
+   "bits": 64,
+   "output": "(if.f64 (<=.f64 x0 #s(literal -1/10 binary64)) (-.f64 (exp.f64 x0) #s(literal 1 binary64)) (expm1.f64 x0))",
+   "cost-accuracy": [
+    [
+     1.0,
+     20.0
+    ],
+    [
+     1.1,
+     0.3
+    ],
+    []
+   ]
+  },
+  {
+   "name": "nothing/0",
+   "status": "timeout",
+   "prec": "binary64",
+   "bits": 64,
+   "output": "#f",
+   "cost-accuracy": [
+    [
+     1.0,
+     15.0
+    ]
+   ]
+  }
+ ]
+}

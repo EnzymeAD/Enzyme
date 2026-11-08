@@ -23,6 +23,10 @@ def PoseidonRewritePass : Pass<"poseidon-rewrite", "func::FuncOp"> {
   let options = [
     Option<"dumpFPCore", "dump-fpcore", "bool", /*default=*/"false",
            "Print each chain's inputs and FPCore expressions to stderr">,
+    Option<"herbieResults", "herbie-results", "std::string",
+           /*default=*/"\"\"",
+           "A results.json from an earlier Herbie run, read instead of "
+           "running Herbie">,
   ];
 }
 

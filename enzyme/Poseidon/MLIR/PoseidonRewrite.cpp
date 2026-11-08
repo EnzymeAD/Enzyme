@@ -13,6 +13,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "HerbieResults.h"
 #include "Passes.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -27,6 +28,7 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <cmath>
+#include <memory>
 #include <string>
 
 namespace mlir::poseidon {
@@ -218,6 +220,55 @@ struct PoseidonRewrite
     : public poseidon::impl::PoseidonRewritePassBase<PoseidonRewrite> {
   using PoseidonRewritePassBase::PoseidonRewritePassBase;
 
+  // Herbie's answers by core name, shared by the copies of the pass that run
+  // on different functions at once. Null without herbie-results.
+  std::shared_ptr<const llvm::StringMap<poseidon::HerbieAnswer>> answers;
+
+  // Runs once, before the pass runs on any function.
+  LogicalResult initialize(MLIRContext *context) override {
+    if (herbieResults.empty())
+      return success();
+    std::string error;
+    std::optional<std::string> json =
+        poseidon::readHerbieResults(herbieResults, error);
+    std::optional<llvm::StringMap<poseidon::HerbieAnswer>> parsed;
+    if (json)
+      parsed = poseidon::parseHerbieResults(*json, error);
+    if (!parsed)
+      return emitError(UnknownLoc::get(context))
+             << "poseidon-rewrite: herbie-results " << herbieResults << ": "
+             << error;
+    answers = std::make_shared<const llvm::StringMap<poseidon::HerbieAnswer>>(
+        std::move(*parsed));
+    return success();
+  }
+
+  // Prints what Herbie answered for core `name`.
+  void dumpAnswer(StringRef name) const {
+    auto it = answers->find(name);
+    if (it == answers->end()) {
+      llvm::errs() << "    herbie: no result\n";
+      return;
+    }
+    const poseidon::HerbieAnswer &answer = it->second;
+    llvm::errs() << "    herbie: " << answer.status << ", "
+                 << answer.candidates.size()
+                 << " candidate(s), original error "
+                 << llvm::format("%g", answer.initialErrorBits) << " bits\n";
+    for (auto [i, candidate] : llvm::enumerate(answer.candidates)) {
+      llvm::errs() << "      " << i << ": "
+                   << llvm::format("%g", candidate.errorBits) << " bits, cost "
+                   << llvm::format("%g", candidate.cost) << ": ";
+      std::string error;
+      if (std::optional<poseidon::HerbieExpr> expr =
+              poseidon::parseHerbieExpr(candidate.expr, error))
+        expr->print(llvm::errs());
+      else
+        llvm::errs() << "unparseable (" << error << "): " << candidate.expr;
+      llvm::errs() << "\n";
+    }
+  }
+
   void runOnOperation() override {
     func::FuncOp func = getOperation();
     SmallVector<Chain, 4> chains;
@@ -244,8 +295,11 @@ struct PoseidonRewrite
         std::string name =
             (func.getSymName() + "/" + std::to_string(core++)).str();
         std::string fpcore = renderFPCore(output, chain, name);
-        if (dumpFPCore)
-          llvm::errs() << "  " << fpcore << "\n";
+        if (!dumpFPCore)
+          continue;
+        llvm::errs() << "  " << fpcore << "\n";
+        if (answers)
+          dumpAnswer(name);
       }
     }
   }
