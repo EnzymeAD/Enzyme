@@ -578,7 +578,7 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
               select->getCondition(), old,
               faddForNeg(old, select->getFalseValue(), false)));
           addedSelects.push_back(res);
-          return SanitizeDerivatives(val, res, BuilderM, mask);
+          return res;
         }
       }
       if (Constant *ci = dyn_cast<Constant>(select->getFalseValue())) {
@@ -587,7 +587,7 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
               select->getCondition(),
               faddForNeg(old, select->getTrueValue(), false), old));
           addedSelects.push_back(res);
-          return SanitizeDerivatives(val, res, BuilderM, mask);
+          return res;
         }
       }
     }
@@ -605,7 +605,7 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
                                                bc->getDestTy()),
                            false)));
             addedSelects.push_back(res);
-            return SanitizeDerivatives(val, res, BuilderM, mask);
+            return res;
           }
         }
         if (Constant *ci = dyn_cast<Constant>(select->getFalseValue())) {
@@ -619,7 +619,7 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
                            false),
                 old));
             addedSelects.push_back(res);
-            return SanitizeDerivatives(val, res, BuilderM, mask);
+            return res;
           }
         }
       }
@@ -769,6 +769,7 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
       }
       res = BuilderM.CreateSelect(select->getCondition(), tval, fval);
       assert(select->getNumUses() == 0);
+      SanitizeDerivatives(val, select, BuilderM, mask);
     } else {
       res = BuilderM.CreateBitCast(res, intTy);
       if (old->getType()->isPointerTy())
@@ -792,6 +793,8 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
   } else if (old->getType()->isFPOrFPVectorTy()) {
     // TODO consider adding type
     res = faddForSelect(old, dif);
+    if (isa<SelectInst>(res))
+      res = SanitizeDerivatives(val, res, BuilderM, mask);
 
     if (!mask) {
       BuilderM.CreateStore(res, ptr);
