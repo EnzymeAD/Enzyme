@@ -9774,7 +9774,10 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
     seen.insert(tup);
     if (notForAnalysis.count(cur->getParent()))
       continue;
-    if (isPointerArithmeticInst(cur)) {
+    bool allowPhi = !OrigLI->isLoopHeader(cur->getParent()) &&
+                    OrigLI->getLoopFor(cur->getParent()) ==
+                        OrigLI->getLoopFor(V->getParent());
+    if (isPointerArithmeticInst(cur, /*includephi*/ allowPhi)) {
       for (auto u : cur->users()) {
         if (auto I = dyn_cast<Instruction>(u))
           todo.push_back(std::make_pair(I, (Value *)cur));
@@ -9789,8 +9792,17 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
       }
       loads.push_back(load);
 
+      bool isJlMemAlloc = false;
+      if (auto CB = dyn_cast<CallBase>(V)) {
+        auto fnName = getFuncNameFromCall(CB);
+        isJlMemAlloc = fnName == "jl_alloc_genericmemory" ||
+                       fnName == "ijl_alloc_genericmemory" ||
+                       fnName == "jl_alloc_genericmemory_unchecked" ||
+                       fnName == "ijl_alloc_genericmemory_unchecked" ||
+                       fnName == "julia.gc_alloc_memory";
+      }
       if (EnzymeJuliaAddrLoad && load->getType()->isPointerTy() &&
-          load->getType()->getPointerAddressSpace() == 13)
+          (load->getType()->getPointerAddressSpace() == 13 || isJlMemAlloc))
         for (auto u : load->users())
           if (auto I = dyn_cast<Instruction>(u))
             todo.push_back(std::make_pair(I, (Value *)load));
@@ -9965,6 +9977,30 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
 
   for (auto S : stores) {
     outer = getAncestor(outer, OrigLI->getLoopFor(S->getParent()));
+  }
+  if (auto AllocationLoop = OrigLI->getLoopFor(V->getParent())) {
+    if (outer != AllocationLoop) {
+      promotable = false;
+      shadowpromotable = false;
+    }
+    for (auto S : storingOps) {
+      if (!AllocationLoop->contains(S->getParent())) {
+        promotable = false;
+        shadowpromotable = false;
+      }
+    }
+    for (auto L : loads) {
+      if (!AllocationLoop->contains(L->getParent())) {
+        promotable = false;
+        shadowpromotable = false;
+      }
+    }
+    for (auto &L : loadLikeCalls) {
+      if (!AllocationLoop->contains(L.loadCall->getParent())) {
+        promotable = false;
+        shadowpromotable = false;
+      }
+    }
   }
 
   // May now read pointers for storing into other pointers. Therefore we
