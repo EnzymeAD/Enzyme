@@ -1209,6 +1209,67 @@ public:
 };
 
 //===----------------------------------------------------------------------===//
+// WhileOpADDataFlow — activity propagation through scf.while
+//
+// Tells activity analysis how values flow through the three paths of
+// scf.while:
+//   (a) before-block args ← initial operands AND scf.yield operands (loop-back)
+//   (b) after-block args  ← scf.condition operands (offset +1 past the i1)
+//   (c) results           ← scf.condition operands (same offset)
+//
+// Without this, Enzyme cannot determine that a value transformed in the
+// before-block and passed to the after-block via scf.condition is active.
+// (Originally from PR #2374 by Pangoraw.)
+//===----------------------------------------------------------------------===//
+
+struct WhileOpADDataFlow
+    : public ADDataFlowOpInterface::ExternalModel<WhileOpADDataFlow,
+                                                  scf::WhileOp> {
+  SmallVector<Value> getPotentialIncomingValuesRes(Operation *op,
+                                                   OpResult res) const {
+    auto whileOp = cast<scf::WhileOp>(op);
+    return {whileOp.getBeforeBody()->getTerminator()->getOperand(
+        res.getResultNumber() + 1)};
+  }
+  SmallVector<Value> getPotentialIncomingValuesArg(Operation *op,
+                                                   BlockArgument arg) const {
+    auto whileOp = cast<scf::WhileOp>(op);
+    if (arg.getOwner() == whileOp.getBeforeBody()) {
+      return {whileOp->getOperand(arg.getArgNumber()),
+              whileOp.getAfterBody()->getTerminator()->getOperand(
+                  arg.getArgNumber())};
+    }
+    return {whileOp.getBeforeBody()->getTerminator()->getOperand(
+        arg.getArgNumber() + 1)};
+  }
+  SmallVector<Value> getPotentialTerminatorUsers(Operation *op, Operation *term,
+                                                 Value val) const {
+    auto whileOp = cast<scf::WhileOp>(op);
+    SmallVector<Value> sv;
+
+    if (term->getBlock() == whileOp.getBeforeBody()) {
+      for (auto &&[res, arg, barg] : llvm::zip_equal(
+               whileOp->getResults(), term->getOperands().drop_front(),
+               whileOp.getAfterBody()->getArguments())) {
+        if (arg == val) {
+          sv.push_back(res);
+          sv.push_back(barg);
+        }
+      }
+    } else if (term->getBlock() == whileOp.getAfterBody()) {
+      for (auto &&[arg, barg] : llvm::zip_equal(
+               term->getOperands(), whileOp.getBeforeBody()->getArguments())) {
+        if (arg == val) {
+          sv.push_back(barg);
+        }
+      }
+    }
+
+    return sv;
+  }
+};
+
+//===----------------------------------------------------------------------===//
 // WhileOpInterfaceReverse — online checkpointing for scf.while
 //
 // Unlike for-loops, scf.while has no a priori bound; the trip count is
@@ -1902,9 +1963,6 @@ struct WhileOpInterfaceReverse
       }
 
       // Visit after-block then before-block in reverse (adjoint rules).
-      // visitChild accumulates gradient into dffe(primalAfter->getArguments())
-      // (the after-block args, which map to the same popped values as the
-      // before-block args when scf.condition passes them through unchanged).
       {
         H::SegmentCacheCreatorGuard cacheGuard(gutils, revFor.op);
         auto visitBlock = [&](Block *b) {
@@ -1916,18 +1974,32 @@ struct WhileOpInterfaceReverse
           }
         };
         visitBlock(primalAfter);
+
+        // Transfer gradient across the scf.condition boundary: after-block
+        // args receive their values from scf.condition's operands, so
+        // d(condArg) += diffe(afterArg).  When the before-block is a
+        // pass-through this is a no-op (same SSA value), but when the
+        // before-block transforms a value (e.g. sq = s*s) this seeds the
+        // gradient on the before-block's result so visitBlock(primalBefore)
+        // can propagate it back through the transformation.
+        for (auto &&[afterArg, condVal] :
+             llvm::zip_equal(primalAfter->getArguments(), condOp.getArgs())) {
+          if (!gutils->isConstantValue(afterArg)) {
+            Value grad = gutils->diffe(afterArg, builder);
+            gutils->zeroDiffe(afterArg, builder);
+            gutils->addToDiffe(condVal, grad, builder);
+          }
+        }
+
         visitBlock(primalBefore);
       }
 
-      // Collect new adjoints from after-block args.
-      // visitChild accumulates into dffe(primalAfter->getArguments()), not
-      // dffe(primalBefore->getArguments()), because after-block args are where
-      // the body ops run.  In the typical scf.while pattern the condition
-      // passes the before-block args unchanged, so after-block args and
-      // before-block args map to the same popped values and share the gradient.
+      // Collect new adjoints from before-block args (the loop-carried values
+      // that come from scf.yield).  After visiting both blocks, the final
+      // accumulated adjoint lives on the before-block args.
       SmallVector<Value> newAdjoints;
       for (auto &&[active, arg] :
-           llvm::zip_equal(operandsActive, primalAfter->getArguments())) {
+           llvm::zip_equal(operandsActive, primalBefore->getArguments())) {
         if (active) {
           newAdjoints.push_back(gutils->diffe(arg, builder));
           if (!gutils->isConstantValue(arg))
@@ -2314,5 +2386,6 @@ void mlir::enzyme::registerSCFDialectAutoDiffInterface(
     scf::ForOp::attachInterface<ForOpEnzymeOpsRemover>(*context);
     scf::ForOp::attachInterface<ForOpADDataFlow>(*context);
     scf::WhileOp::attachInterface<WhileOpInterfaceReverse>(*context);
+    scf::WhileOp::attachInterface<WhileOpADDataFlow>(*context);
   });
 }
