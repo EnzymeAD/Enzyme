@@ -2425,6 +2425,8 @@ static inline bool containsOnlyAtMostTopBit(const llvm::Value *V,
                                             const llvm::DataLayout &dl,
                                             llvm::Type **vFT = nullptr) {
   using namespace llvm;
+  if (!V)
+    return false;
   if (auto CI = dyn_cast_or_null<ConstantInt>(V)) {
     if (CI->isZero()) {
       if (vFT)

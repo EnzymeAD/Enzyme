@@ -837,16 +837,21 @@ public:
 
   llvm::Type *allFloat(llvm::Value *val, const llvm::DataLayout &dl,
                        bool anythingIsFloat = false) const {
+    return allFloat(val ? val->getType() : nullptr, dl, anythingIsFloat);
+  }
+
+  llvm::Type *allFloat(llvm::Type *type, const llvm::DataLayout &dl,
+                       bool anythingIsFloat = false) const {
     auto dt = operator[]({-1});
     if (dt != BaseType::Anything && dt != BaseType::Unknown)
       return dt.isFloat();
     if (anythingIsFloat && dt == BaseType::Anything)
       return (llvm::Type *)0x123;
 
-    if (val->getType()->isTokenTy() || val->getType()->isVoidTy())
+    if (!type || type->isTokenTy() || type->isVoidTy())
       return nullptr;
 
-    size_t size = (dl.getTypeSizeInBits(val->getType()) + 7) / 8;
+    size_t size = (dl.getTypeSizeInBits(type) + 7) / 8;
 
     auto m0 = GenericTypeTree::operator[]({0});
 
