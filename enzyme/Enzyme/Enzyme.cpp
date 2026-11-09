@@ -1179,6 +1179,137 @@ public:
     }
   };
 
+  /// Infer pointee type trees from call-site arguments for pointer parameters
+  /// whose pointee layout could not be deduced from the callee body alone.
+  static void
+  refineTypeArgsFromCallSite(TypeAnalysis &TA, FnTypeInfo &TypeInfo,
+                             Instruction *CallSite, ArrayRef<Value *> CallArgs,
+                             const std::vector<DIFFE_TYPE> &ArgActivity,
+                             unsigned Width, DerivativeMode Mode) {
+    Function *TargetFunction = TypeInfo.Function;
+    if (!CallSite || CallArgs.empty() || TargetFunction->empty())
+      return;
+    Function *Caller = CallSite->getFunction();
+    if (!Caller || Caller == TargetFunction || Caller->empty())
+      return;
+
+    bool NeedsCallerTypes = false;
+    for (Argument &Param : TargetFunction->args()) {
+      if (!Param.getType()->isPointerTy())
+        continue;
+      if (TargetFunction->getAttributes().hasParamAttr(Param.getArgNo(),
+                                                       "enzyme_type"))
+        continue;
+      auto Found = TypeInfo.Arguments.find(&Param);
+      if (Found != TypeInfo.Arguments.end() &&
+          !Found->second.Data0().isKnownPastPointer()) {
+        NeedsCallerTypes = true;
+        break;
+      }
+    }
+    if (!NeedsCallerTypes)
+      return;
+
+    TypeResults CallerTypes =
+        TA.analyzeFunction(populate_type_args(TA, Caller, Mode));
+
+    auto inferPointerTree = [&](Value *PtrVal) -> TypeTree {
+      if (!PtrVal || !PtrVal->getType()->isPointerTy() ||
+          isa<ConstantPointerNull>(PtrVal) || isa<UndefValue>(PtrVal))
+        return {};
+
+      TypeTree Candidate = CallerTypes.query(PtrVal).PurgeAnything();
+      if (Candidate.Inner0() == BaseType::Pointer &&
+          Candidate.Data0().isKnownPastPointer())
+        return Candidate.Data0().Only(-1, nullptr);
+
+      Value *Stripped = PtrVal->stripPointerCasts();
+      Type *ElementType = nullptr;
+      if (auto *Alloca = dyn_cast<AllocaInst>(Stripped))
+        ElementType = Alloca->getAllocatedType();
+      else if (auto *Global = dyn_cast<GlobalVariable>(Stripped))
+        ElementType = Global->getValueType();
+
+      while (auto *ArrayTy = dyn_cast_or_null<ArrayType>(ElementType))
+        ElementType = ArrayTy->getElementType();
+
+      if (ElementType && ElementType->isFPOrFPVectorTy()) {
+        TypeTree Fallback = TypeTree(ConcreteType(ElementType->getScalarType()))
+                                .Only(-1, nullptr);
+        Fallback.insert({}, BaseType::Pointer);
+        return Fallback.Only(-1, nullptr);
+      }
+      return {};
+    };
+
+    bool Updated = false;
+    size_t CallArgIndex = 0;
+    for (Argument &Param : TargetFunction->args()) {
+      unsigned ParamIndex = Param.getArgNo();
+      if (ParamIndex >= ArgActivity.size() || CallArgIndex >= CallArgs.size())
+        break;
+
+      Value *PrimalArg = CallArgs[CallArgIndex++];
+      Value *ShadowArg = nullptr;
+      if (ArgActivity[ParamIndex] == DIFFE_TYPE::DUP_ARG ||
+          ArgActivity[ParamIndex] == DIFFE_TYPE::DUP_NONEED) {
+        if (CallArgIndex >= CallArgs.size())
+          break;
+        ShadowArg = CallArgs[CallArgIndex++];
+      }
+
+      if (!Param.getType()->isPointerTy())
+        continue;
+      if (TargetFunction->getAttributes().hasParamAttr(ParamIndex,
+                                                       "enzyme_type"))
+        continue;
+      auto Found = TypeInfo.Arguments.find(&Param);
+      if (Found == TypeInfo.Arguments.end() ||
+          Found->second.Data0().isKnownPastPointer())
+        continue;
+
+      SmallVector<Value *, 4> CandidatePointers = {PrimalArg};
+      if (ShadowArg) {
+        if (Width <= 1) {
+          CandidatePointers.push_back(ShadowArg);
+        } else {
+          SmallVector<Value *, 4> ShadowLanes;
+          Value *AggregateCursor = ShadowArg;
+          while (auto *InsertVal = dyn_cast<InsertValueInst>(AggregateCursor)) {
+            ShadowLanes.push_back(InsertVal->getInsertedValueOperand());
+            AggregateCursor = InsertVal->getAggregateOperand();
+          }
+          if (auto *ConstAgg = dyn_cast<ConstantAggregate>(AggregateCursor)) {
+            for (unsigned Lane = ConstAgg->getNumOperands(); Lane > 0; --Lane)
+              ShadowLanes.push_back(ConstAgg->getOperand(Lane - 1));
+          }
+          for (auto It = ShadowLanes.rbegin(); It != ShadowLanes.rend(); ++It)
+            CandidatePointers.push_back(*It);
+        }
+      }
+
+      TypeTree MergedTree = Found->second;
+      for (Value *PtrVal : CandidatePointers) {
+        TypeTree Normalized = inferPointerTree(PtrVal);
+        if (!Normalized.Data0().isKnownPastPointer())
+          continue;
+        bool Legal = true;
+        TypeTree TrialTree = MergedTree;
+        TrialTree.checkedOrIn(Normalized, /*PointerIntSame*/ false, Legal);
+        if (Legal)
+          MergedTree = std::move(TrialTree);
+      }
+
+      if (MergedTree.Data0().isKnownPastPointer()) {
+        Found->second = std::move(MergedTree);
+        Updated = true;
+      }
+    }
+
+    if (Updated)
+      TypeInfo = TA.analyzeFunction(TypeInfo).getAnalyzedTypeInfo();
+  }
+
   bool HandleTruncateFunc(CallInst *CI, TruncateMode mode) {
     IRBuilder<> Builder(CI);
     Function *F = parseFunctionParameter(CI);
@@ -1448,6 +1579,9 @@ public:
 
     TypeAnalysis TA(Logic);
     FnTypeInfo type_args = populate_type_args(TA, fn, mode);
+    if (!sizeOnly)
+      refineTypeArgsFromCallSite(TA, type_args, CI, args, constants, width,
+                                 mode);
 
     std::vector<bool> nowrite_shadows(fn->arg_size(), false);
 
