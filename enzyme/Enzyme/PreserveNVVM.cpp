@@ -176,24 +176,50 @@ bool copyForwardedCalleeAttrs(Function &F) {
   return changed;
 }
 
-//! Returns whether changed.
-bool preserveLinkage(bool Begin, Function &F, bool Inlining = true) {
-  if (Begin && !F.hasFnAttribute("prev_fixup")) {
-    F.addFnAttr("prev_fixup");
-    if (F.hasFnAttribute(Attribute::AlwaysInline))
-      F.addFnAttr("prev_always_inline");
-    if (F.hasFnAttribute(Attribute::NoInline))
-      F.addFnAttr("prev_no_inline");
-    if (Inlining) {
-      F.removeFnAttr(Attribute::AlwaysInline);
-      F.addFnAttr(Attribute::NoInline);
-      copyForwardedCalleeAttrs(F);
+/// Preserve a function until differentiation has run, returning whether it
+/// changed.
+bool preserveLinkage(bool Begin, Function &F, bool Inlining = true,
+                     bool CopyCalleeAttrs = true,
+                     Function::LinkageTypes ReplacementLinkage =
+                         Function::LinkageTypes::ExternalLinkage) {
+  if (!Begin)
+    return false;
+  if (F.hasFnAttribute("prev_fixup")) {
+    if (ReplacementLinkage == Function::LinkageTypes::WeakAnyLinkage &&
+        F.getLinkage() != ReplacementLinkage) {
+      F.setLinkage(ReplacementLinkage);
+      return true;
     }
-    F.addFnAttr("prev_linkage", std::to_string(F.getLinkage()));
-    F.setLinkage(Function::LinkageTypes::ExternalLinkage);
-    return true;
+    return false;
   }
-  return false;
+  F.addFnAttr("prev_fixup");
+  if (F.hasFnAttribute(Attribute::AlwaysInline))
+    F.addFnAttr("prev_always_inline");
+  if (F.hasFnAttribute(Attribute::NoInline))
+    F.addFnAttr("prev_no_inline");
+  if (Inlining) {
+    F.removeFnAttr(Attribute::AlwaysInline);
+    F.addFnAttr(Attribute::NoInline);
+    if (CopyCalleeAttrs)
+      copyForwardedCalleeAttrs(F);
+  }
+  F.addFnAttr("prev_linkage", std::to_string(F.getLinkage()));
+  F.setLinkage(ReplacementLinkage);
+  return true;
+}
+
+/// Preserve a function whose derivative comes from a custom rule rather than
+/// from its primal body. Unless enzyme_custom_full_attributes states that the
+/// primal body already reflects all memory effects of its rule, give a defined
+/// target interposable weak linkage until differentiation completes so
+/// interprocedural passes cannot infer body-only attributes or fold call sites
+/// against the primal body.
+static bool preserveCustomRuleTarget(bool Begin, Function &F) {
+  if (F.empty() || F.hasFnAttribute("enzyme_custom_full_attributes"))
+    return preserveLinkage(Begin, F);
+  return preserveLinkage(Begin, F, /*Inlining=*/true,
+                         /*CopyCalleeAttrs=*/false,
+                         Function::LinkageTypes::WeakAnyLinkage);
 }
 
 static void handleFunctionLike(bool Begin, Value *Target,
@@ -227,7 +253,10 @@ static void handleFunctionLike(bool Begin, Value *Target,
 
   F->addAttribute(AttributeList::FunctionIndex,
                   Attribute::get(F->getContext(), "enzyme_math", FunctionName));
-  preserveLinkage(Begin, *F);
+  if (FunctionName == "enzyme_custom")
+    preserveCustomRuleTarget(Begin, *F);
+  else
+    preserveLinkage(Begin, *F);
 }
 
 // Return true if the module has a triple indicating an nvptx target, false
@@ -696,7 +725,6 @@ bool preserveNVVM(bool Begin, Module &M,
     if (customRule || g.getName().contains("__enzyme_nofree") ||
         g.getName().contains("__enzyme_inactivefn") ||
         g.getName().contains("__enzyme_sparse_accumulate") ||
-        g.getName().contains("__enzyme_function_like") ||
         g.getName().contains("__enzyme_allocation_like")) {
       if (g.hasInitializer()) {
         Value *V = g.getInitializer();
@@ -712,7 +740,8 @@ bool preserveNVVM(bool Begin, Module &M,
           break;
         }
         if (auto F = dyn_cast<Function>(V))
-          changed |= preserveLinkage(Begin, *F);
+          changed |= customRule ? preserveCustomRuleTarget(Begin, *F)
+                                : preserveLinkage(Begin, *F);
       }
     }
   }
@@ -985,6 +1014,13 @@ bool preserveNVVM(bool Begin, Module &M,
         toErase.push_back(&g);
         changed = true;
       }
+    }
+  }
+
+  if (Begin && PreserveCustomRuleLinkage) {
+    for (Function &F : M) {
+      if (getFuncName(&F) == "enzyme_custom" || hasCustomRuleMetadata(&F))
+        changed |= preserveCustomRuleTarget(Begin, F);
     }
   }
 
