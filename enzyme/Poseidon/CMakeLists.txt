@@ -41,6 +41,7 @@ set(POSEIDON_SRC
     Explain.cpp
     Flags.cpp
     Herbie.cpp
+    HerbieRun.cpp
     HostDispatch.cpp
     InKernelRaise.cpp
     Instrument.cpp
