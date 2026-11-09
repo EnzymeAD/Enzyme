@@ -4607,16 +4607,7 @@ public:
 #if LLVM_VERSION_MAJOR < 22 || defined(ENZYME_LLVM22_PRERELEASE)
       case Intrinsic::nvvm_barrier0_popc:
       case Intrinsic::nvvm_barrier0_and:
-      case Intrinsic::nvvm_barrier0_or:
-#else
-      case Intrinsic::nvvm_barrier_cta_red_and_aligned_all:
-      case Intrinsic::nvvm_barrier_cta_red_and_aligned_count:
-      case Intrinsic::nvvm_barrier_cta_red_or_aligned_all:
-      case Intrinsic::nvvm_barrier_cta_red_or_aligned_count:
-      case Intrinsic::nvvm_barrier_cta_red_popc_aligned_all:
-      case Intrinsic::nvvm_barrier_cta_red_popc_aligned_count:
-#endif
-      {
+      case Intrinsic::nvvm_barrier0_or: {
         SmallVector<Value *, 1> args = {};
 #if LLVM_VERSION_MAJOR > 20
         args.push_back(ConstantInt::get(Type::getInt32Ty(M->getContext()), 0));
@@ -4636,6 +4627,33 @@ public:
         cal->setDebugLoc(gutils->getNewFromOriginal(I.getDebugLoc()));
         return false;
       }
+#else
+      case Intrinsic::nvvm_barrier_cta_red_and_aligned_all:
+      case Intrinsic::nvvm_barrier_cta_red_or_aligned_all:
+      case Intrinsic::nvvm_barrier_cta_red_popc_aligned_all: {
+        Value *args[] = {
+            lookup(gutils->getNewFromOriginal(orig_ops[0]), Builder2)};
+        Function *syncFn = getIntrinsicDeclaration(
+            M, Intrinsic::nvvm_barrier_cta_sync_aligned_all);
+        CallInst *cal = Builder2.CreateCall(syncFn, args);
+        cal->setCallingConv(syncFn->getCallingConv());
+        cal->setDebugLoc(gutils->getNewFromOriginal(I.getDebugLoc()));
+        return false;
+      }
+      case Intrinsic::nvvm_barrier_cta_red_and_aligned_count:
+      case Intrinsic::nvvm_barrier_cta_red_or_aligned_count:
+      case Intrinsic::nvvm_barrier_cta_red_popc_aligned_count: {
+        Value *args[] = {
+            lookup(gutils->getNewFromOriginal(orig_ops[0]), Builder2),
+            lookup(gutils->getNewFromOriginal(orig_ops[1]), Builder2)};
+        Function *syncFn = getIntrinsicDeclaration(
+            M, Intrinsic::nvvm_barrier_cta_sync_aligned_count);
+        CallInst *cal = Builder2.CreateCall(syncFn, args);
+        cal->setCallingConv(syncFn->getCallingConv());
+        cal->setDebugLoc(gutils->getNewFromOriginal(I.getDebugLoc()));
+        return false;
+      }
+#endif
 
 #if LLVM_VERSION_MAJOR <= 20
       case Intrinsic::nvvm_barrier0:
