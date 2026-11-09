@@ -24,9 +24,9 @@
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallPtrSet.h"
-#include "llvm/Support/xxhash.h"
 #include "llvm/Support/Format.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Support/xxhash.h"
 
 #include <cmath>
 #include <memory>
@@ -53,26 +53,26 @@ struct ChainOp {
   unsigned arity;
 };
 const ChainOp chainOps[] = {
-    {"arith.addf", "+", 2},         {"arith.subf", "-", 2},
-    {"arith.mulf", "*", 2},         {"arith.divf", "/", 2},
-    {"arith.negf", "neg", 1},       {"arith.remf", "fmod", 2},
-    {"arith.maxnumf", "fmax", 2},   {"arith.minnumf", "fmin", 2},
-    {"math.absf", "fabs", 1},       {"math.sqrt", "sqrt", 1},
-    {"math.cbrt", "cbrt", 1},       {"math.exp", "exp", 1},
-    {"math.exp2", "exp2", 1},       {"math.expm1", "expm1", 1},
-    {"math.log", "log", 1},         {"math.log2", "log2", 1},
-    {"math.log10", "log10", 1},     {"math.log1p", "log1p", 1},
-    {"math.powf", "pow", 2},        {"math.fma", "fma", 3},
-    {"math.sin", "sin", 1},         {"math.cos", "cos", 1},
-    {"math.tan", "tan", 1},         {"math.asin", "asin", 1},
-    {"math.acos", "acos", 1},       {"math.atan", "atan", 1},
-    {"math.atan2", "atan2", 2},     {"math.sinh", "sinh", 1},
-    {"math.cosh", "cosh", 1},       {"math.tanh", "tanh", 1},
-    {"math.asinh", "asinh", 1},     {"math.acosh", "acosh", 1},
-    {"math.atanh", "atanh", 1},     {"math.erf", "erf", 1},
-    {"math.erfc", "erfc", 1},       {"math.copysign", "copysign", 2},
-    {"math.floor", "floor", 1},     {"math.ceil", "ceil", 1},
-    {"math.round", "round", 1},     {"math.trunc", "trunc", 1},
+    {"arith.addf", "+", 2},       {"arith.subf", "-", 2},
+    {"arith.mulf", "*", 2},       {"arith.divf", "/", 2},
+    {"arith.negf", "neg", 1},     {"arith.remf", "fmod", 2},
+    {"arith.maxnumf", "fmax", 2}, {"arith.minnumf", "fmin", 2},
+    {"math.absf", "fabs", 1},     {"math.sqrt", "sqrt", 1},
+    {"math.cbrt", "cbrt", 1},     {"math.exp", "exp", 1},
+    {"math.exp2", "exp2", 1},     {"math.expm1", "expm1", 1},
+    {"math.log", "log", 1},       {"math.log2", "log2", 1},
+    {"math.log10", "log10", 1},   {"math.log1p", "log1p", 1},
+    {"math.powf", "pow", 2},      {"math.fma", "fma", 3},
+    {"math.sin", "sin", 1},       {"math.cos", "cos", 1},
+    {"math.tan", "tan", 1},       {"math.asin", "asin", 1},
+    {"math.acos", "acos", 1},     {"math.atan", "atan", 1},
+    {"math.atan2", "atan2", 2},   {"math.sinh", "sinh", 1},
+    {"math.cosh", "cosh", 1},     {"math.tanh", "tanh", 1},
+    {"math.asinh", "asinh", 1},   {"math.acosh", "acosh", 1},
+    {"math.atanh", "atanh", 1},   {"math.erf", "erf", 1},
+    {"math.erfc", "erfc", 1},     {"math.copysign", "copysign", 2},
+    {"math.floor", "floor", 1},   {"math.ceil", "ceil", 1},
+    {"math.round", "round", 1},   {"math.trunc", "trunc", 1},
 };
 
 const ChainOp *chainOpByMlirName(StringRef name) {
@@ -99,8 +99,8 @@ StringRef fpcoreOperator(Operation *op) {
 // A ranked tensor of f32 or f64: the precisions Herbie searches in.
 bool isFloatTensor(Type type) {
   auto tensor = dyn_cast<RankedTensorType>(type);
-  return tensor && (tensor.getElementType().isF32() ||
-                    tensor.getElementType().isF64());
+  return tensor &&
+         (tensor.getElementType().isF32() || tensor.getElementType().isF64());
 }
 
 bool isChainOp(Operation *op) {
@@ -299,7 +299,8 @@ public:
   // Why `e` cannot be built, or "" when it can. Checked before building so
   // that a candidate that cannot be built leaves no ops behind. `boolean` is
   // whether `e` is a condition (an `if`'s first argument).
-  std::string whyNot(const poseidon::HerbieExpr &e, bool boolean = false) const {
+  std::string whyNot(const poseidon::HerbieExpr &e,
+                     bool boolean = false) const {
     using Kind = poseidon::HerbieExpr::Kind;
     StringRef element = type.getElementType().isF64() ? "f64" : "f32";
     if (!e.precision.empty() && e.precision != element)
@@ -407,8 +408,8 @@ SmallVector<Value> usableInputs(const Chain &chain, Value output) {
   SmallVector<Value> usable;
   for (Value input : chain.inputs) {
     Operation *def = input.getDefiningOp();
-    bool before = !def || def->getBlock() != at->getBlock() ||
-                  def->isBeforeInBlock(at);
+    bool before =
+        !def || def->getBlock() != at->getBlock() || def->isBeforeInBlock(at);
     usable.push_back(before ? input : Value());
   }
   return usable;

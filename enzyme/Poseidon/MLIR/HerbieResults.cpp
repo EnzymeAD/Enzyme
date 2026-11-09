@@ -47,8 +47,7 @@ public:
     std::optional<HerbieExpr> e = parse();
     skipSpace();
     if (e && !text.empty())
-      return fail("unexpected text after the expression: '" + text.str() +
-                  "'");
+      return fail("unexpected text after the expression: '" + text.str() + "'");
     return e;
   }
 
@@ -136,7 +135,9 @@ private:
       return fail("unexpected '" + text.take_front(1).str() + "'");
     return HerbieExpr{isNumber(a) ? HerbieExpr::Kind::Number
                                   : HerbieExpr::Kind::Var,
-                      a.str(), "", {}};
+                      a.str(),
+                      "",
+                      {}};
   }
 };
 
@@ -184,7 +185,8 @@ std::optional<StringMap<HerbieAnswer>> parseHerbieResults(StringRef json,
   StringMap<HerbieAnswer> answers;
   for (const json::Value &t : *tests) {
     const json::Object *test = t.getAsObject();
-    std::optional<StringRef> name = test ? test->getString("name") : std::nullopt;
+    std::optional<StringRef> name =
+        test ? test->getString("name") : std::nullopt;
     if (!name) {
       error = "a test without a \"name\"";
       return std::nullopt;
