@@ -325,6 +325,26 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
     }
   }
 
+  if (auto *atomicRMW = dyn_cast<AtomicRMWInst>(user)) {
+    if (atomicRMW->getOperation() == AtomicRMWInst::FAdd ||
+        atomicRMW->getOperation() == AtomicRMWInst::FSub) {
+      if (!shadow) {
+        if (gutils->mode == DerivativeMode::ForwardModeError &&
+            !gutils->isConstantValue(const_cast<Value *>(val)))
+          return true;
+        if (gutils->isConstantValue(const_cast<AtomicRMWInst *>(atomicRMW)) &&
+            (!gutils->runtimeActivity || atomicRMW->getPointerOperand() != val))
+          return false;
+      }
+      if (shadow && atomicRMW->getValOperand() == val &&
+          mode != DerivativeMode::ForwardMode &&
+          mode != DerivativeMode::ForwardModeError &&
+          mode != DerivativeMode::ForwardModeSplit) {
+        return false;
+      }
+    }
+  }
+
   if (!shadow)
     if (isa<CmpInst>(user) || isAnyBranch(user) || isa<ReturnInst>(user) ||
         isa<FPExtInst>(user) || isa<FPTruncInst>(user)
@@ -579,6 +599,23 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
         if (val != CI->getArgOperand(0) || val != CI->getOperand(1))
           return false;
 
+      if (funcName == "__kmpc_fork_call" && CI->arg_size() >= 3 &&
+          mode != DerivativeMode::ForwardMode &&
+          mode != DerivativeMode::ForwardModeError &&
+          mode != DerivativeMode::ForwardModeSplit) {
+        for (size_t argIdx = 0; argIdx < CI->arg_size(); ++argIdx) {
+          if (argIdx == 1 || argIdx == 2)
+            continue;
+          if (val == CI->getArgOperand(argIdx)) {
+            if (EnzymePrintDiffUse)
+              llvm::errs() << " Need direct primal of " << *val
+                           << " in reverse from OpenMP fork call " << *user
+                           << '\n';
+            return true;
+          }
+        }
+        return false;
+      }
     } else {
       // Don't need shadow of anything (all via cache for reverse),
       // but need shadow of request for primal.
