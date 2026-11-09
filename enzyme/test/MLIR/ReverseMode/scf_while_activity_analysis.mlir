@@ -5,14 +5,14 @@
 
 // Activity-analysis propagation tests for scf.while.
 //
-// PR #2374 (Pangoraw) identifies that without WhileOpADDataFlow, Enzyme does
-// not know the three value-flow paths through scf.while:
+// WhileOpADDataFlow (originally from PR #2374, Pangoraw) tells Enzyme the
+// three value-flow paths through scf.while:
 //   (a) before-block args ← initial operands AND scf.yield operands (loop-back)
-//   (b) after-block args ← scf.condition operands (offset +1 past the i1)
-//   (c) results ← scf.condition operands (same offset)
+//   (b) after-block args  ← scf.condition operands (offset +1 past the i1)
+//   (c) results           ← scf.condition operands (same offset)
 //
-// These tests verify that our implementation correctly handles all three paths,
-// plus a fourth case discovered during Online_r2 development:
+// These tests verify that all three paths are handled correctly, plus a fourth
+// case discovered during Online_r2 development:
 //
 // 1. INACTIVE  — inactive index iter-arg alongside active f32: Enzyme must NOT
 //    create an index shadow or gradient; the f32 chain rule (×2 per step) must
@@ -85,21 +85,19 @@ module {
   //
   // The critical connection: after-block arg gradient (d_sq) must flow back to
   // the before-block result (sq = s*s) to pick up the ×2·s factor.
-  // Without WhileOpADDataFlow this connection is missing → gradient loses ×2·s.
+  // WhileOpADDataFlow provides this connection.
   func.func @f_before_transform(%arg0: f32, %n: index) -> f32 {
     %c0 = arith.constant 0 : index
     %c1 = arith.constant 1 : index
-    // iter_args: s (f32, ACTIVE), k (index, INACTIVE).
-    // before-block squares s and passes sq to after-block and results.
     %r:2 = scf.while (%s = %arg0, %k = %c0) : (f32, index) -> (f32, index) {
-      %sq   = arith.mulf %s, %s : f32      // transform in before-block
+      %sq   = arith.mulf %s, %s : f32
       %cond = arith.cmpi slt, %k, %n : index
-      scf.condition(%cond) %sq, %k : f32, index  // passes sq, not s
+      scf.condition(%cond) %sq, %k : f32, index
     } do {
     ^bb0(%sq_in: f32, %ki: index):
-      %cos = math.cos %sq_in : f32         // after-block receives sq
+      %cos = math.cos %sq_in : f32
       %k1  = arith.addi %ki, %c1 : index
-      scf.yield %cos, %k1 : f32, index    // new s = cos(sq)
+      scf.yield %cos, %k1 : f32, index
     }
     return %r#0 : f32
   }
@@ -207,10 +205,8 @@ module {
 // Full adjoint chain per step: grad × (-sin(s²)) × 2s
 //   = reverse of cos(sq) × reverse of sq=s*s
 //
-// XFAIL: *
-// (The ×2·s factor from reversing mulf(s,s) in the before-block is missing.
-//  Fix requires WhileOpADDataFlow to connect after-block arg gradient → before-block
-//  result gradient. See PR #2374 and CHECKPOINTING.md §"Known limitations".)
+// With WhileOpADDataFlow the ×2·s factor from reversing mulf(s,s) in the
+// before-block is now correctly computed.
 //
 // BEFORE-LABEL: func.func @f_before_transform(
 // BEFORE-SAME:    %{{.*}}: f32, %{{.*}}: index, %{{.*}}: f32
@@ -223,15 +219,13 @@ module {
 // BEFORE:         math.cos
 //
 // Reverse: pop s, apply FULL adjoint: grad × (-sin(s²)) × 2 × s.
-// Currently missing the ×2·s factor — only grad × (-sin(s²)) is produced.
 // BEFORE:         scf.for
 // BEFORE:         enzyme.pop
 // BEFORE:         arith.mulf
 // BEFORE:         math.sin
 // BEFORE:         arith.negf
 // BEFORE:         arith.mulf
-// The next two lines require WhileOpADDataFlow (currently failing):
-// BEFORE:         arith.mulf {{.*}} %{{.*}}    <- ×2·s from reversing mulf(s,s)
+// BEFORE:         arith.mulf {{.*}} %{{.*}}
 // BEFORE:         arith.addf
 //
 // BEFORE:         return
