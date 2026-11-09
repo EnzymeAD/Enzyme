@@ -2120,7 +2120,86 @@ static inline bool isReadOnlyOrThrow(const llvm::CallBase *call) {
   return false;
 }
 
+struct PointerSinCosInfo {
+  bool isPi = false;
+  bool sinReturned = false;
+  unsigned sinPtrArg = 0;
+  unsigned cosPtrArg = 0;
+};
+
+static inline bool classifyPointerSinCos(llvm::StringRef str,
+                                         const llvm::FunctionType *FT,
+                                         PointerSinCosInfo *Info = nullptr) {
+  if (!FT || FT->isVarArg())
+    return false;
+
+  if (startsWith(str, "__nv_"))
+    str = str.substr(5);
+  else if (startsWith(str, "__ocml_"))
+    str = str.substr(7);
+  else if (startsWith(str, "__fd_"))
+    str = str.substr(5);
+  else if (startsWith(str, "__"))
+    str = str.substr(2);
+  else if (startsWith(str, "c_"))
+    str = str.substr(2);
+  else if (startsWith(str, "air.")) {
+    str = str.substr(4);
+    if (startsWith(str, "fast_"))
+      str = str.substr(5);
+  }
+
+  if (endsWith(str, "_finite"))
+    str = str.substr(0, str.size() - 7);
+  else if (endsWith(str, "_1"))
+    str = str.substr(0, str.size() - 2);
+  else if (endsWith(str, "_f16") || endsWith(str, "_f32") ||
+           endsWith(str, "_f64") || endsWith(str, ".f16") ||
+           endsWith(str, ".f32") || endsWith(str, ".f64"))
+    str = str.substr(0, str.size() - 4);
+  else if (endsWith(str, "f") || endsWith(str, "l") || endsWith(str, "d"))
+    str = str.substr(0, str.size() - 1);
+
+  bool isPi = false;
+  if (str == "sincos")
+    isPi = false;
+  else if (str == "sincospi")
+    isPi = true;
+  else
+    return false;
+
+  if (FT->getNumParams() == 3 && FT->getReturnType()->isVoidTy() &&
+      FT->getParamType(0)->isFPOrFPVectorTy() &&
+      FT->getParamType(1)->isPointerTy() &&
+      FT->getParamType(2)->isPointerTy()) {
+    if (Info) {
+      Info->isPi = isPi;
+      Info->sinReturned = false;
+      Info->sinPtrArg = 1;
+      Info->cosPtrArg = 2;
+    }
+    return true;
+  }
+
+  if (FT->getNumParams() == 2 && FT->getReturnType()->isFPOrFPVectorTy() &&
+      FT->getParamType(0) == FT->getReturnType() &&
+      FT->getParamType(1)->isPointerTy()) {
+    if (Info) {
+      Info->isPi = isPi;
+      Info->sinReturned = true;
+      Info->sinPtrArg = 0;
+      Info->cosPtrArg = 1;
+    }
+    return true;
+  }
+
+  return false;
+}
+
 static inline bool isWriteOnly(const llvm::Function *F, ssize_t arg = -1) {
+  if (classifyPointerSinCos(getFuncName(const_cast<llvm::Function *>(F)),
+                            F->getFunctionType()))
+    return true;
 #if LLVM_VERSION_MAJOR >= 14
   if (F->onlyWritesMemory())
     return true;
@@ -2200,6 +2279,11 @@ static inline bool isNoCapture(const llvm::CallBase *call, size_t idx) {
   if (call->doesNotCapture(idx))
     return true;
 
+  if (idx > 0 && idx < call->arg_size() &&
+      call->getArgOperand(idx)->getType()->isPointerTy() &&
+      classifyPointerSinCos(getFuncNameFromCall(call), call->getFunctionType()))
+    return true;
+
   if (auto F = getFunctionFromCall(call)) {
     // Do not use function attrs for if different calling conv, such as a julia
     // call wrapping args into an array. This is because the wrapped array
@@ -2245,6 +2329,9 @@ bool isFlangRuntimeNoFree(llvm::StringRef name);
 
 static inline bool isNoEscapingAllocation(const llvm::Function *F) {
   if (F->hasFnAttribute("enzyme_no_escaping_allocation"))
+    return true;
+  if (classifyPointerSinCos(getFuncName(const_cast<llvm::Function *>(F)),
+                            F->getFunctionType()))
     return true;
   if (F->getName() == "llvm.enzyme.lifetime_start" ||
       F->getName() == "llvm.enzyme.lifetime_end") {

@@ -1089,11 +1089,11 @@ bool preserveNVVM(bool Begin, Module &M,
                              "remquo",       "rhypot",       "rint",
                              "rlen3",        "rlen4",        "round",
                              "rsqrt",        "scalb",        "scalbn",
-                             "signbit",      "sincos",       "sincospi",
-                             "sin",          "native_sin",   "sinh",
-                             "sinpi",        "sqrt",         "native_sqrt",
-                             "tan",          "tanh",         "tgamma",
-                             "trunc",        "y0",           "y1"}) {
+                             "signbit",      "sin",          "native_sin",
+                             "sinh",         "sinpi",        "sqrt",
+                             "native_sqrt",  "tan",          "tanh",
+                             "tgamma",       "trunc",        "y0",
+                             "y1"}) {
       std::string nvname = "__ocml_" + name + "_";
       std::string llname = "llvm." + name + ".";
       std::string mathname = name;
@@ -1166,7 +1166,10 @@ bool preserveNVVM(bool Begin, Module &M,
         F.addFnAttr("enzyme_math", found->second.first);
         changed |= preserveLinkage(Begin, F);
       }
-    } else if (F.getName() == "_ZL21__internal_float2halffRjS_" ||
+    } else if (F.getName() == "__nv_sincos" || F.getName() == "__nv_sincosf" ||
+               F.getName() == "__nv_sincospi" ||
+               F.getName() == "__nv_sincospif" ||
+               F.getName() == "_ZL21__internal_float2halffRjS_" ||
                F.getName() == "_ZL4hlog6__half" ||
                F.getName() == "_ZL6__hdiv6__halfS_" ||
                F.getName() == "_ZL12__half2float6__half" ||
