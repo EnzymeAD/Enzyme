@@ -3413,17 +3413,17 @@ bool overwritesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
   return true;
 }
 
-/// Return whether maybeReader can read from memory written to by maybeWriter
-bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
-                          llvm::TargetLibraryInfo &TLI,
-                          llvm::Instruction *maybeReader,
-                          llvm::Instruction *maybeWriter) {
-  assert(maybeReader->getParent()->getParent() ==
-         maybeWriter->getParent()->getParent());
+static bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
+                                 llvm::TargetLibraryInfo &TLI,
+                                 const llvm::MemoryLocation *maybeReaderLoc,
+                                 llvm::Instruction *maybeReader,
+                                 llvm::Instruction *maybeWriter) {
+  assert(!maybeReader || maybeReader->getParent()->getParent() ==
+                             maybeWriter->getParent()->getParent());
   using namespace llvm;
-  if (isa<StoreInst>(maybeReader))
+  if (isa_and_nonnull<StoreInst>(maybeReader))
     return false;
-  if (isa<FenceInst>(maybeReader)) {
+  if (isa_and_nonnull<FenceInst>(maybeReader)) {
     return false;
   }
   if (auto call = dyn_cast<CallInst>(maybeWriter)) {
@@ -3473,16 +3473,15 @@ bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
 #endif
       size_t off = (funcName == "MPI_Wait" || funcName == "PMPI_Wait") ? 0 : 1;
       // No alias with status
-      if (!isRefSet(getModRefInfo(AA, maybeReader, call->getArgOperand(off + 1),
-                                  loc))) {
+      if (!isRefSet(getModRefInfo(AA, maybeReader, maybeReaderLoc,
+                                  call->getArgOperand(off + 1), loc))) {
         // No alias with request
-        if (!isRefSet(getModRefInfo(AA, maybeReader,
+        if (!isRefSet(getModRefInfo(AA, maybeReader, maybeReaderLoc,
                                     call->getArgOperand(off + 0), loc)))
           return false;
         auto R = parseTBAA(
-            *maybeReader,
-            maybeReader->getParent()->getParent()->getParent()->getDataLayout(),
-            nullptr)[{-1}];
+            maybeReader ? maybeReader->getAAMetadata() : maybeReaderLoc->AATags,
+            *call, call->getModule()->getDataLayout(), nullptr)[{-1}];
         // Could still conflict with the mpi_request unless a non pointer
         // type.
         if (R != BaseType::Unknown && R != BaseType::Anything &&
@@ -3493,20 +3492,21 @@ bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
     // Isend only writes to inaccessible mem and request.
     if (funcName == "MPI_Isend" || funcName == "PMPI_Isend") {
       auto R = parseTBAA(
-          *maybeReader,
-          maybeReader->getParent()->getParent()->getParent()->getDataLayout(),
-          nullptr)[{-1}];
+          maybeReader ? maybeReader->getAAMetadata() : maybeReaderLoc->AATags,
+          *call, call->getModule()->getDataLayout(), nullptr)[{-1}];
       // Could still conflict with the mpi_request, unless either
       // synchronous, or a non pointer type.
       if (R != BaseType::Unknown && R != BaseType::Anything &&
           R != BaseType::Pointer)
         return false;
 #if LLVM_VERSION_MAJOR > 11
-      if (!isRefSet(getModRefInfo(AA, maybeReader, call->getArgOperand(6),
+      if (!isRefSet(getModRefInfo(AA, maybeReader, maybeReaderLoc,
+                                  call->getArgOperand(6),
                                   LocationSize::afterPointer())))
         return false;
 #else
-      if (!isRefSet(getModRefInfo(AA, maybeReader, call->getArgOperand(6),
+      if (!isRefSet(getModRefInfo(AA, maybeReader, maybeReaderLoc,
+                                  call->getArgOperand(6),
                                   MemoryLocation::UnknownSize)))
         return false;
 #endif
@@ -3529,9 +3529,8 @@ bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
       }
       if (type.isKnown()) {
         auto R = parseTBAA(
-            *maybeReader,
-            maybeReader->getParent()->getParent()->getParent()->getDataLayout(),
-            nullptr)[{-1}];
+            maybeReader ? maybeReader->getAAMetadata() : maybeReaderLoc->AATags,
+            *call, call->getModule()->getDataLayout(), nullptr)[{-1}];
         if (R.isKnown() && type != R) {
           // Could still conflict with the mpi_request, unless either
           // synchronous, or a non pointer type.
@@ -3539,11 +3538,13 @@ bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
               (R != BaseType::Anything && R != BaseType::Pointer))
             return false;
 #if LLVM_VERSION_MAJOR > 11
-          if (!isRefSet(getModRefInfo(AA, maybeReader, call->getArgOperand(6),
+          if (!isRefSet(getModRefInfo(AA, maybeReader, maybeReaderLoc,
+                                      call->getArgOperand(6),
                                       LocationSize::afterPointer())))
             return false;
 #else
-          if (!isRefSet(getModRefInfo(AA, maybeReader, call->getArgOperand(6),
+          if (!isRefSet(getModRefInfo(AA, maybeReader, maybeReaderLoc,
+                                      call->getArgOperand(6),
                                       MemoryLocation::UnknownSize)))
             return false;
 #endif
@@ -3570,7 +3571,7 @@ bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
         return false;
     }
   }
-  if (auto call = dyn_cast<CallInst>(maybeReader)) {
+  if (auto call = dyn_cast_or_null<CallInst>(maybeReader)) {
     StringRef funcName = getFuncNameFromCall(call);
 
     if (isDebugFunction(call->getCalledFunction()))
@@ -3631,7 +3632,7 @@ bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
         return false;
     }
   }
-  if (auto call = dyn_cast<InvokeInst>(maybeReader)) {
+  if (auto call = dyn_cast_or_null<InvokeInst>(maybeReader)) {
     StringRef funcName = getFuncNameFromCall(call);
 
     if (isDebugFunction(call->getCalledFunction()))
@@ -3648,6 +3649,8 @@ bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
     }
   }
   assert(maybeWriter->mayWriteToMemory());
+  if (maybeReaderLoc)
+    return isModSet(getModRefInfo(AA, maybeWriter, *maybeReaderLoc));
   assert(maybeReader->mayReadFromMemory());
 
   if (auto li = dyn_cast<LoadInst>(maybeReader)) {
@@ -3707,6 +3710,23 @@ bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
   llvm::errs() << " maybeReader: " << *maybeReader
                << " maybeWriter: " << *maybeWriter << "\n";
   llvm_unreachable("unknown inst2");
+}
+
+/// Return whether maybeWriter can write to memory at maybeReader
+bool writesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
+                          const llvm::MemoryLocation &maybeReader,
+                          llvm::Instruction *maybeWriter) {
+  return writesToMemoryReadBy(/*TR=*/nullptr, AA, TLI, &maybeReader,
+                              /*maybeReader=*/nullptr, maybeWriter);
+}
+
+/// Return whether maybeReader can read from memory written to by maybeWriter
+bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
+                          llvm::TargetLibraryInfo &TLI,
+                          llvm::Instruction *maybeReader,
+                          llvm::Instruction *maybeWriter) {
+  return writesToMemoryReadBy(TR, AA, TLI, /*maybeReaderLoc=*/nullptr,
+                              maybeReader, maybeWriter);
 }
 
 // Find the base pointer of ptr and the offset in bytes from the start of

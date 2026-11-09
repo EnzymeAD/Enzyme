@@ -1237,6 +1237,11 @@ void mayExecuteAfter(llvm::SmallVectorImpl<llvm::Instruction *> &results,
                      const llvm::SetVector<llvm::Instruction *> &stores,
                      const llvm::Loop *region);
 
+/// Return whether maybeWriter can write to memory at maybeReader
+bool writesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
+                          const llvm::MemoryLocation &maybeReader,
+                          llvm::Instruction *maybeWriter);
+
 /// Return whether maybeReader can read from memory written to by maybeWriter
 bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
                           llvm::TargetLibraryInfo &TLI,
@@ -1938,6 +1943,26 @@ static inline llvm::ModRefInfo getModRefInfo(llvm::AAResults &AA,
                                              const llvm::Value *P,
                                              llvm::LocationSize Size) {
   return getModRefInfo(AA, I, llvm::MemoryLocation(P, Size));
+}
+
+static inline llvm::ModRefInfo
+getModRefInfo(llvm::AAResults &AA, const llvm::Instruction *maybeReader,
+              const llvm::MemoryLocation *maybeReaderLoc, const llvm::Value *P,
+              llvm::LocationSize Size) {
+  if (maybeReader)
+    return getModRefInfo(AA, maybeReader, P, Size);
+  assert(maybeReaderLoc);
+  if (!maybeReaderLoc->Ptr || !P)
+    return llvm::ModRefInfo::Ref;
+  if (AA.isNoAlias(*maybeReaderLoc, llvm::MemoryLocation(P, Size)))
+    return llvm::ModRefInfo::NoModRef;
+  const llvm::Value *base = getBaseObject(P);
+  if (base && base != P && base->getType()->isPointerTy()) {
+    if (AA.isNoAlias(*maybeReaderLoc,
+                     llvm::MemoryLocation::getBeforeOrAfter(base)))
+      return llvm::ModRefInfo::NoModRef;
+  }
+  return llvm::ModRefInfo::Ref;
 }
 
 static inline bool isReadOnly(const llvm::Function *F, ssize_t arg = -1) {
