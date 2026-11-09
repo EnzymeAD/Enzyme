@@ -136,22 +136,49 @@ static Value unpackScalar(OpBuilder &b, Location loc, Value t) {
 }
 
 /// Copy ops from a stablehlo region block (except terminator).
+/// `gutils` may be null — if so, only `mapping` is used for operand resolution.
 static void copyStablehloBlock(OpBuilder &builder, Block *b,
                                 MGradientUtilsReverse *gutils,
                                 IRMapping &mapping) {
   for (auto &op : b->without_terminator()) {
     for (Value operand : op.getOperands()) {
-      if (!mapping.contains(operand)) {
+      if (!mapping.contains(operand) && gutils) {
         if (Value nv = gutils->originalToNewFn.lookupOrNull(operand))
-          mapping.map(operand, nv);
+          if (nv)
+            mapping.map(operand, nv);
       }
     }
+    if (builder.getInsertionBlock())
+      builder.clone(op, mapping);
+  }
+  if (gutils) {
+    for (auto [oldVal, newVal] : mapping.getValueMap())
+      if (newVal)
+        gutils->originalToNewFn.map(oldVal, newVal);
+    for (auto [oldOp, newOp] : mapping.getOperationMap())
+      if (newOp)
+        gutils->originalToNewFnOps[oldOp] = newOp;
+  }
+}
+
+/// Copy ops from a stablehlo region block WITHOUT touching gutils mappings.
+/// Used when cloning primal body steps inside the scaffold — avoids polluting
+/// originalToNewFn with mappings from the scaffold context.
+/// Clones in order so each op's operands are either:
+///   (a) in `mapping` (from block arg remapping or previous cloned ops), or
+///   (b) defined OUTSIDE the block (valid to use directly in the new context).
+/// Values defined INSIDE the block but NOT yet cloned should not appear as
+/// operands of earlier ops (SSA form guarantees this for well-formed blocks).
+static void copyStablehloBlockClean(OpBuilder &builder, Block *b,
+                                     IRMapping &mapping) {
+  for (auto &op : b->without_terminator()) {
+    if (!builder.getInsertionBlock()) break;
+    // For each operand: if it's defined inside this block, it must already
+    // be in `mapping` (from a previous clone in this loop). If it's defined
+    // outside the block, use it directly (it dominates the insertion point).
+    // OpBuilder::clone handles both cases correctly.
     builder.clone(op, mapping);
   }
-  for (auto [oldVal, newVal] : mapping.getValueMap())
-    gutils->originalToNewFn.map(oldVal, newVal);
-  for (auto [oldOp, newOp] : mapping.getOperationMap())
-    gutils->originalToNewFnOps[oldOp] = newOp;
 }
 
 /// Evaluate the primal cond region, return scalar i1.
@@ -164,11 +191,11 @@ static Value evalCondRegion(OpBuilder &builder, Location loc,
   for (auto &&[old, nw] :
        llvm::zip_equal(condBlock->getArguments(), iterArgs))
     outMapping.map(old, nw);
-  copyStablehloBlock(builder, condBlock, gutils, outMapping);
+  // Use clean copy (no gutils lookup) to avoid polluting originalToNewFn.
+  copyStablehloBlockClean(builder, condBlock, outMapping);
 
   auto retOp = cast<stablehlo::ReturnOp>(condBlock->getTerminator());
-  Value condTensor = outMapping.lookupOrDefault(retOp.getOperand(0));
-  return tensor::ExtractOp::create(builder, loc, condTensor, ValueRange{});
+  return outMapping.lookupOrDefault(retOp.getOperand(0)); // tensor<i1>
 }
 
 /// Run one body step, return new iter-args.
@@ -178,10 +205,36 @@ static SmallVector<Value> runBodyStep(OpBuilder &builder, Location loc,
                                        ValueRange iterArgs,
                                        IRMapping &outMapping) {
   Block *bodyBlock = &whileOp.getBody().front();
+  // Map body block arguments to the provided iter-args.
+  // iterArgs count must match bodyBlock argument count.
+  if (bodyBlock->getNumArguments() != iterArgs.size())
+    return {};
   for (auto &&[old, nw] :
        llvm::zip_equal(bodyBlock->getArguments(), iterArgs))
     outMapping.map(old, nw);
-  copyStablehloBlock(builder, bodyBlock, gutils, outMapping);
+  if (!builder.getInsertionBlock())
+    return {};
+  for (auto &op : bodyBlock->without_terminator()) {
+    for (Value operand : op.getOperands()) {
+      if (outMapping.contains(operand))
+        continue;
+      if (gutils) {
+        if (Value nv = gutils->originalToNewFn.lookupOrNull(operand))
+          if (nv) { outMapping.map(operand, nv); continue; }
+      }
+      if (Operation *defOp = operand.getDefiningOp()) {
+        if (defOp->getNumOperands() == 0 &&
+            defOp->getParentRegion() != builder.getInsertionBlock()->getParent()) {
+          auto *localClone = builder.clone(*defOp);
+          auto opRes = llvm::cast<mlir::OpResult>(operand);
+          outMapping.map(operand, localClone->getResult(opRes.getResultNumber()));
+        }
+      }
+    }
+    if (!builder.getInsertionBlock())
+      break;
+    builder.clone(op, outMapping);
+  }
 
   auto retOp = cast<stablehlo::ReturnOp>(bodyBlock->getTerminator());
   SmallVector<Value> newArgs;
@@ -350,15 +403,16 @@ static stablehlo::IfOp shIf(OpBuilder &b, Location loc,
     llvm::function_ref<SmallVector<Value>(OpBuilder &, Location)> thenFn,
     llvm::function_ref<SmallVector<Value>(OpBuilder &, Location)> elseFn) {
   auto ifOp = stablehlo::IfOp::create(b, loc, types, cond);
+  // IfOp::create produces two empty regions; create blocks explicitly.
   {
     OpBuilder::InsertionGuard g(b);
-    b.setInsertionPointToStart(&ifOp.getTrueBranch().front());
+    b.createBlock(&ifOp.getTrueBranch());
     SmallVector<Value> thenVals = thenFn(b, loc);
     stablehlo::ReturnOp::create(b, loc, thenVals);
   }
   {
     OpBuilder::InsertionGuard g(b);
-    b.setInsertionPointToStart(&ifOp.getFalseBranch().front());
+    b.createBlock(&ifOp.getFalseBranch());
     SmallVector<Value> elseVals = elseFn(b, loc);
     stablehlo::ReturnOp::create(b, loc, elseVals);
   }
@@ -842,30 +896,20 @@ cacheWhileOnlineStablehloV2(stablehlo::WhileOp whileOp, int64_t budget,
   // Create scaffold stablehlo.while ----------------------------------------
   auto scaffoldWhile = stablehlo::WhileOp::create(
       builder, loc, scaffoldTypes, initArgs);
+  // Mark as checkpoint segment so the AD pass does not try to differentiate
+  // the scaffold (it is gradient code, not primal code).
+  scaffoldWhile->setAttr("enzymexla.checkpoint_segment",
+                          mlir::UnitAttr::get(builder.getContext()));
 
-  // Cond region: !done
+  // Cond region: !done  (pure stablehlo — just XOR the done tensor<i1> with true)
   {
     OpBuilder::InsertionGuard g(builder);
     Block *condBlk = builder.createBlock(&scaffoldWhile.getCond());
     for (auto ty : scaffoldTypes) condBlk->addArgument(ty, loc);
     builder.setInsertionPointToEnd(condBlk);
     Value doneTensor = condBlk->getArgument(IDX_DONE);
-    Value doneScalar = shLoadTyped(builder, loc,
-        stablehlo::ReshapeOp::create(builder, loc,
-            RankedTensorType::get({1}, builder.getI1Type()), doneTensor),
-        shC(builder, loc, 0),
-        RankedTensorType::get({}, builder.getI1Type()));
-    // Extract from 0-d tensor<i1>
-    Value doneI1 = tensor::ExtractOp::create(builder, loc, doneTensor, ValueRange{});
-    Value notDoneI1 = builder.create<arith::XOrIOp>(loc, doneI1,
-        arith::ConstantIntOp::create(builder, loc, builder.getI1Type(), 1));
-    // Wrap back to tensor<i1>
-    Value notDoneTensor = stablehlo::ConstantOp::create(builder, loc, i1ty0,
-        DenseElementsAttr::get(i1ty0, builder.getIntegerAttr(builder.getI1Type(), 0)));
-    // Use stablehlo.select: if !done return true_tensor else false_tensor
-    // Simpler: build tensor<i1> from the scalar
-    Value notDoneT = tensor::FromElementsOp::create(builder, loc, i1ty0,
-        ValueRange{notDoneI1});
+    // !done = stablehlo.not done
+    Value notDoneT = shNot(builder, loc, doneTensor);
     stablehlo::ReturnOp::create(builder, loc, ValueRange{notDoneT});
   }
 
@@ -902,7 +946,6 @@ cacheWhileOnlineStablehloV2(stablehlo::WhileOp whileOp, int64_t budget,
         smCheck, smCapo, smOldcapoO, smT, smIncr, smIter,
         smOldind, smInd, smOldF, smOffset, snaps,
         smCh, smOrdCh, smNumRep, smSize);
-
     // Capacity check: if action==0 and numFwd > beta, we have a problem.
     // We express it as: done=true (terminate loop, reconstruction will fail).
     // (A proper assert is not expressible in stablehlo; we rely on the outer
@@ -915,16 +958,33 @@ cacheWhileOnlineStablehloV2(stablehlo::WhileOp whileOp, int64_t budget,
 
     // Evaluate primal condition
     IRMapping condMap;
-    Value primalCondI1 = evalCondRegion(builder, loc, newWhileOp, gutils,
-                                         primalCarried, condMap);
-    // Wrap to tensor<i1>
-    Value primalCondT = tensor::FromElementsOp::create(builder, loc, i1ty0,
-        ValueRange{primalCondI1});
+    // evalCondRegion returns tensor<i1> directly — no wrapping needed.
+    Value primalCondT = evalCondRegion(builder, loc, newWhileOp, gutils,
+                                       primalCarried, condMap);
+
+    // Pre-run the primal body step BEFORE any dispatchIf, in the main body scope.
+    // This avoids cloning primal ops inside a stablehlo.if branch lambda (which
+    // causes MLIR clone() to crash due to insertion-point inconsistency inside
+    // stablehlo.if regions). The stepped state is then selected via shSel.
+    IRMapping bodyMap;
+    SmallVector<Value> steppedState = runBodyStep(builder, loc, newWhileOp, gutils,
+                                                   primalCarried, bodyMap);
 
     // action == 1 → STORE
     Value isStore = shCmpEQ(builder, loc, sm.action, shC(builder, loc, 1));
     // action == 0 → TERMINATE
     Value isTerminate = shCmpEQ(builder, loc, sm.action, shC(builder, loc, 0));
+
+    // doStep = primalCond && !isTerminate
+    Value doStep = shAnd(builder, loc, primalCondT, shNot(builder, loc, isTerminate));
+
+    // Select stepped vs original state based on doStep.
+    SmallVector<Value> selectedState;
+    for (size_t i = 0; i < numCarried; ++i)
+      selectedState.push_back(shSel(builder, loc, doStep, steppedState[i], primalCarried[i]));
+
+    Value stepTaken = shSel(builder, loc, doStep, shC(builder, loc, 1), shC(builder, loc, 0));
+    Value newNumFwdFwd = shAdd(builder, loc, numFwd, stepTaken);
 
     // Build result types for the dispatch: (numFwd, primalState..., ckptBufs..., ckptIdxBuf)
     SmallVector<Type> dispTys = {i64ty0}; // numFwd
@@ -948,31 +1008,10 @@ cacheWhileOnlineStablehloV2(stablehlo::WhileOp whileOp, int64_t budget,
         res.push_back(newIdxBuf);
         return res;
       },
-      // FORWARD / TERMINATE branch
-      // Run the primal body unconditionally, then select between new/old state
-      // using shSel based on whether we should actually step.
-      // This avoids nested shIf (which can crash due to builder aliasing).
+      // FORWARD / TERMINATE branch: use pre-computed stepped state.
       [&](OpBuilder &b2, Location l2) -> SmallVector<Value> {
-        // Run one body step (always — we'll select the result below).
-        IRMapping bodyMap;
-        SmallVector<Value> steppedState = runBodyStep(b2, l2, newWhileOp, gutils,
-                                                      primalCarried, bodyMap);
-
-        // doStep = primalCond && !isTerminate
-        Value primalCondT2 = tensor::FromElementsOp::create(b2, l2, i1ty0,
-            ValueRange{primalCondI1});
-        Value doStep = shAnd(b2, l2, primalCondT2, shNot(b2, l2, isTerminate));
-
-        // Select: if doStep use steppedState, else keep primalCarried unchanged.
-        SmallVector<Value> newState;
-        for (size_t i = 0; i < numCarried; ++i)
-          newState.push_back(shSel(b2, l2, doStep, steppedState[i], primalCarried[i]));
-
-        Value stepTaken = shSel(b2, l2, doStep, shC(b2, l2, 1), shC(b2, l2, 0));
-        Value newNumFwd = shAdd(b2, l2, numFwd, stepTaken);
-
-        SmallVector<Value> res = {newNumFwd};
-        res.append(newState.begin(), newState.end());
+        SmallVector<Value> res = {newNumFwdFwd};
+        res.append(selectedState.begin(), selectedState.end());
         res.append(ckptBufs.begin(), ckptBufs.end()); // ckptBufs unchanged
         res.push_back(ckptIdxBuf);
         return res;
@@ -1687,15 +1726,25 @@ reverseWhileOnlineStablehloV2(stablehlo::WhileOp whileOp, int64_t budget,
     return arith::IndexCastOp::create(builder, loc, builder.getIndexType(), valI64);
   };
 
-  // Helper: load typed tensor element at index slot.
-  auto loadTypedAt = [&](Value arr, Value slotIdx) -> Value {
+  // Helper: load typed tensor element at index slot, reshaping to origTy.
+  // shLoadTyped always returns a 0-d tensor; we reshape to match the original
+  // primal carried type (e.g. tensor<1xf32> rather than tensor<f32>).
+  auto loadTypedAt = [&](Value arr, Value slotIdx, RankedTensorType origTy) -> Value {
     Value asI64 = arith::IndexCastOp::create(builder, loc, builder.getI64Type(), slotIdx);
     auto slotT = RankedTensorType::get({}, builder.getI64Type());
     Value slot64 = tensor::FromElementsOp::create(builder, loc, slotT, ValueRange{asI64});
     auto bufTy = cast<RankedTensorType>(arr.getType());
     auto elemTy0d = RankedTensorType::get({}, bufTy.getElementType());
-    return shLoadTyped(builder, loc, arr, slot64, elemTy0d);
+    Value loaded = shLoadTyped(builder, loc, arr, slot64, elemTy0d);
+    if (origTy == elemTy0d)
+      return loaded;
+    return stablehlo::ReshapeOp::create(builder, loc, origTy, loaded);
   };
+
+  // Collect original primal carried types for checkpoint reshape.
+  SmallVector<RankedTensorType> primalCarriedTys;
+  for (auto ty : whileOp.getOperandTypes())
+    primalCarriedTys.push_back(cast<RankedTensorType>(ty));
 
   // Outer reverse for loop over all numIters steps.
   SmallVector<Value> outerInit(incomingGradients.begin(), incomingGradients.end());
@@ -1747,7 +1796,7 @@ reverseWhileOnlineStablehloV2(stablehlo::WhileOp whileOp, int64_t budget,
     // Load checkpoint state at capo.
     SmallVector<Value> ckptState;
     for (size_t i = 0; i < numCarried; ++i)
-      ckptState.push_back(loadTypedAt(liveCkpt[i], capo));
+      ckptState.push_back(loadTypedAt(liveCkpt[i], capo, primalCarriedTys[i]));
 
     // Inner Revolve reconstruction while loop.
     // Carry: (pos: index, acapo: index, primalState..., ckptTensors..., ckptIdxBuf)
@@ -2089,3 +2138,4 @@ void mlir::enzyme::registerStablehloDialectAutoDiffInterface(
 }
 
 #endif // ENZYME_ENABLE_STABLEHLO
+// DIAGNOSTIC: check mapping before clone

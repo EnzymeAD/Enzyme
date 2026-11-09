@@ -71,51 +71,119 @@ that the AD pass emits.
 ## Building libReactantExtra from source (Bazel)
 
 The pre-built `ReactantExtra_jll` artifact does not include our new pass
-(`LowerOnlineProgressPass`) or our modified `SCFAutoDiffOpInterfaceImpl`. A local build
-is required.
+(`LowerOnlineProgressPass`) or our modified `StablehloAutoDiffOpInterfaceImpl`. A local
+build is required.
+
+### Verified build command (macOS arm64, Xcode 16.1 / SDK 15.1)
 
 ```bash
 cd /path/to/Reactant.jl/deps/ReactantExtra
+
+# Required: use Xcode.app as DEVELOPER_DIR (xcode-select may point to CLT)
+export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+bazelisk shutdown   # restart server so it picks up new DEVELOPER_DIR
+
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
 bazelisk build \
   -c opt \
+  --action_env=DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
   --action_env=JULIA=$(which julia) \
+  --repo_env=HERMETIC_PYTHON_VERSION=3.12 \
+  --repo_env=GCC_HOST_COMPILER_PATH=/usr/bin/gcc \
+  --repo_env=CC=/usr/bin/clang \
   --check_visibility=false \
   --verbose_failures \
+  --jobs=8 \
   --spawn_strategy=local \
-  --config=macos_local \          # macOS only
-  --copt=-Wno-private-header \
   --copt=-Wno-unused-command-line-argument \
-  --define=enable_z3=false \
+  --config=macos_local \
+  --macos_sdk_version=15.1 \
+  --copt=-Wno-private-header \
   :libReactantExtra.so
 ```
 
+> **Important:** Do NOT pass `--copt=-mmacosx-version-min=11.0`; with SDK 15.1 the
+> compiler adds `-target arm64-apple-macosx15.1` which conflicts, and many targets
+> build with `-Werror`, turning the warning into a fatal error.
+
 The built library is at:
 ```
-deps/ReactantExtra/bazel-bin/.../libReactantExtra.so   (Mach-O dylib on macOS)
+bazel-bin/libReactantExtra.so   (symlink; Mach-O dylib on macOS)
 ```
 
 After building, copy it over the artifact to make Julia load it:
 ```bash
-chmod u+w ~/.julia/artifacts/<hash>/lib/libReactantExtra.dylib
-cp bazel-out/.../libReactantExtra.so ~/.julia/artifacts/<hash>/lib/libReactantExtra.dylib
+artifact_dir=$(julia -e 'import Pkg; Pkg.activate(); using ReactantExtra_jll; println(dirname(dirname(ReactantExtra_jll.libReactantExtra_path)))')
+chmod u+w "$artifact_dir/lib/libReactantExtra.dylib"
+cp bazel-bin/libReactantExtra.so "$artifact_dir/lib/libReactantExtra.dylib"
 ```
 
-### Bazel patches required (macOS 15 / Apple clang 16)
+### Required Bazel patches (macOS arm64, Xcode 16 / Apple clang 16)
 
-These must be applied to files in Bazel's external cache
-(`/private/var/tmp/_bazel_<user>/<hash>/external/`) after the first `fetch` but before
-compilation:
+These are patches to files in Bazel's external cache
+(`/private/var/tmp/_bazel_<user>/<hash>/external/`) applied after the first `fetch`
+but before compilation. They are needed on macOS with CLT-only setup or Xcode 16.
 
-| File | Patch | Reason |
-|------|-------|--------|
-| `enzyme/tools/enzyme-tblgen/enzyme-tblgen.cpp` | `->getValues()` → `->getElements()` (all occurrences) | LLVM API rename in newer LLVM |
-| `enzyme_ad/src/enzyme_ad/jax/BUILD` | Add `":Perfify"` to `RegistryUtils` deps list | Missing tablegen-generated `.h.inc` dependency causes `fatal error: file not found` |
-| `z3/BUILD.bazel` | Remove `"-include", "util/z3_std_format.h"` from z3's `copts` | The force-included shim defines `std::format` in `namespace std` even when `__cpp_lib_format` is set, causing ambiguous-call errors with Apple clang 16 + C++20 |
+#### 1. `enzyme_ad/src/enzyme_ad/jax/BUILD` — remove duplicate `:Perfify` dep
+
+In the `RegistryUtils` target's `deps` list, the `if_z3()` macro already adds `:Perfify`
+when Z3 is enabled. Having it explicit too causes:
+```
+Label '@@enzyme_ad//src/enzyme_ad/jax:Perfify' is duplicated
+```
+**Fix:** Remove the explicit `":Perfify"` entry from `RegistryUtils`'s `deps` list.
+
+#### 2. `build_bazel_apple_support/crosstool/universal_exec_tool.bzl` — use plain genrule
+
+The `apple_genrule` calls `apple_support.run` → `xcodebuild` to find the SDK. With CLT
+only (no full Xcode), `xcodebuild` fails:
+```
+xcodebuild: error: SDK "macosx26.0" cannot be located.
+```
+**Fix:** Replace `apple_genrule` with `native.genrule` and drop the dual-arch fat binary
+(arm64 only is fine for local dev):
+```python
+# BEFORE:
+load("@build_bazel_apple_support//rules:apple_genrule.bzl", "apple_genrule")
+def universal_exec_tool(*, name, out, srcs):
+    apple_genrule(name = name + ".target_config", ...)
+# AFTER:
+def universal_exec_tool(*, name, out, srcs):
+    native.genrule(
+        name = name + ".target_config",
+        srcs = srcs,
+        outs = [out],
+        cmd = "xcrun --sdk macosx clang -mmacosx-version-min=10.15 -std=c++17 -lc++ -arch arm64 -O3 -o $@ $(SRCS)",
+    )
+```
+
+#### 3. `local_config_apple_cc/cc_toolchain_config.bzl` — bypass xcrun SDK lookup
+
+When `xcode-select -p` points to CLT but `Xcode.app` is installed, Bazel's
+`XcodeLocalEnvProvider` calls `xcrun --sdk macosx15.1 --show-sdk-path` to find SDKROOT.
+This xcrun call fails because CLT doesn't have the macOS 15.1 SDK.
+
+**Fix:** In the `if xcode_config.xcode_version():` branch, replace `APPLE_SDK_VERSION_OVERRIDE`
+and `APPLE_SDK_PLATFORM` (which trigger the xcrun call) with hardcoded `DEVELOPER_DIR` and
+`SDKROOT` pointing directly to Xcode.app's SDK:
+```python
+if xcode_config.xcode_version():
+    apple_env = {
+        "XCODE_VERSION_OVERRIDE": str(xcode_config.xcode_version()),
+        "ZERO_AR_DATE": "1",
+        "DEVELOPER_DIR": "/Applications/Xcode.app/Contents/Developer",
+        "SDKROOT": "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.1.sdk",
+    }
+```
+
+> **Note:** After editing files in Bazel's external cache, restart the Bazel server
+> (`bazelisk shutdown`) so the new analysis cache picks up the changes.
 
 The Enzyme source files from our local fork
-(`LowerOnlineProgressPass.cpp`, `SCFAutoDiffOpInterfaceImpl.cpp`, `EnzymeOps.td`,
-`Passes.td`, `LoopCheckpointing.h`, `AffineAutoDiffOpInterfaceImpl.cpp`) must be copied
-into `external/enzyme/` in the Bazel cache to replace the upstream pinned commit.
+(`StablehloAutoDiffOpInterfaceImpl.cpp`, `LowerOnlineProgressPass.cpp`,
+`SCFAutoDiffOpInterfaceImpl.cpp`, `EnzymeOps.td`, `Passes.td`, `LoopCheckpointing.h`,
+`WhileCheckpointing.h`, `AffineAutoDiffOpInterfaceImpl.cpp`) must be copied into
+`external/enzyme/` in the Bazel cache to replace the upstream pinned commit.
 
 ---
 
@@ -162,7 +230,7 @@ UNKNOWN: <unknown>:0: error: 'stablehlo.dynamic_pad' op can't be translated to X
 | `test/Python/exec_oceananigans_style.py` | **PASS** | Numerical, n=1..10 |
 | `test/Julia/oceananigans_style_checkpointing.jl` | **PASS** | Via Checkpointing.jl (LLVM backend) |
 | `test/Julia/reactant_online_checkpointing.jl` — IR attributes | **PASS** | Attribute emission confirmed |
-| `test/Julia/reactant_online_checkpointing.jl` — gradients | **FAIL** | `stablehlo.while` gap |
+| `test/Julia/reactant_online_checkpointing.jl` — gradients | **IN PROGRESS** | V2 pure-StableHLO impl; segfault under investigation |
 
 ### Paths to resolution
 
@@ -190,18 +258,32 @@ repo has direct StableHLO integration that the Reactant build already depends on
 
 ---
 
-## Implementation status and key blocker
+## Implementation status (2026-11-05)
 
-Option 1 was attempted and revealed a fundamental XLA constraint.
+Option 1 is fully implemented as `cacheWhileOnlineStablehloV2` / `reverseWhileOnlineStablehloV2`
+in `StablehloAutoDiffOpInterfaceImpl.cpp` (branch `shk/online_stablehlo`).
 
-### What was implemented
+### What is implemented (V2 — pure StableHLO)
 
-- `StablehloWhileOpInterfaceReverse` in `Enzyme/MLIR/Implementations/StablehloAutoDiffOpInterfaceImpl.cpp`
-  (registered via `registerStablehloDialectAutoDiffInterface`)
-- `cacheWhileOnlineStablehlo` — scaffold `stablehlo.while` for Online_r2 forward
-- `reverseWhileOnlineStablehlo` — outer `scf.for` + storemap scan + inner Revolve for reverse
+- `StablehloWhileOpInterfaceReverse` registered in `StablehloAutoDiffOpInterfaceImpl.cpp`
+  via `registerStablehloDialectAutoDiffInterface`
+- `cacheWhileOnlineStablehloV2` — pure-StableHLO scaffold `stablehlo.while` for Online_r2
+  forward. Carries all SM state + primal + checkpoint buffers as `tensor<i64>`/`tensor<...>`
+  iter-args. Uses `shInlineSM`, `runBodyStep`, `evalCondRegion`, `shIf`, `shStoreTyped` etc.
+- `reverseWhileOnlineStablehloV2` — TODO (not yet written; needs pure-StableHLO reconstruction loop)
 - Both patched into `enzyme_ad`'s `AutoDiffWhileRev::cacheValues` and `createReverseModeAdjoint`
   (MLIR ExternalModel first-wins, so the patch must be in enzyme_ad's file)
+
+### Current debugging status
+
+`cacheWhileOnlineStablehloV2` has debug prints. Known issues fixed:
+- `evalCondRegion` must use `copyStablehloBlockClean` (not `copyStablehloBlock`) to avoid
+  polluting `gutils->originalToNewFn` which causes `builder.clone()` to segfault
+- `runBodyStep` must run OUTSIDE `shIf` branches (pre-compute, then `shSel`)
+- `shInlineSM` uses a flat `shSel`-based SM to avoid nested builder aliasing
+
+Outstanding crash: `stablehlo::ReturnOp::create(builder, loc, yields)` segfaults.
+Debug prints will show which of the ~20 yields values is null or malformed.
 
 ### XLA StableHLO constraint: the entire gradient module must be pure StableHLO
 
