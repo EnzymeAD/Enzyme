@@ -40,14 +40,11 @@ mlir::enzyme::MGradientUtils::MGradientUtils(
     const SmallPtrSetImpl<mlir::Value> &constantvalues_,
     const SmallPtrSetImpl<mlir::Value> &activevals_,
     ArrayRef<DIFFE_TYPE> ReturnActivity, ArrayRef<DIFFE_TYPE> ArgDiffeTypes_,
-    IRMapping &originalToNewFn_,
-    std::map<Operation *, Operation *> &originalToNewFnOps_,
-    DerivativeMode mode, unsigned width, bool omp, llvm::StringRef postpasses,
-    bool verifyPostPasses, bool strongZero)
+    IRMapping &originalToNewFn_, DerivativeMode mode, unsigned width, bool omp,
+    llvm::StringRef postpasses, bool verifyPostPasses, bool strongZero)
     : newFunc(newFunc_), Logic(Logic), AtomicAdd(false), mode(mode),
       oldFunc(oldFunc_), invertedPointers(invertedPointers_),
-      originalToNewFn(originalToNewFn_),
-      originalToNewFnOps(originalToNewFnOps_), blocksNotForAnalysis(),
+      originalToNewFn(originalToNewFn_), blocksNotForAnalysis(),
       activityAnalyzer(std::make_unique<enzyme::ActivityAnalyzer>(
           blocksNotForAnalysis, readOnlyCache, constantvalues_, activevals_,
           ReturnActivity)),
@@ -97,19 +94,14 @@ mlir::enzyme::MGradientUtils::getNewFromOriginal(mlir::Block *originst) const {
 
 Operation *
 mlir::enzyme::MGradientUtils::getNewFromOriginal(Operation *originst) const {
-  assert(originst);
-  auto found = originalToNewFnOps.find(originst);
-  if (found == originalToNewFnOps.end()) {
-    llvm::errs() << oldFunc << "\n";
-    llvm::errs() << newFunc << "\n";
-    for (auto &pair : originalToNewFnOps) {
-      llvm::errs() << " map[" << pair.first << "] = " << pair.second << "\n";
-      llvm::errs() << " map[" << *pair.first << "] = " << *pair.second << "\n";
-    }
-    llvm::errs() << originst << " - " << *originst << "\n";
+  assert(originst && "expected non-null operation");
+  if (!originalToNewFn.contains(originst)) {
+    llvm::errs() << oldFunc << '\n';
+    llvm::errs() << newFunc << '\n';
+    llvm::errs() << originst << " - " << *originst << '\n';
     llvm_unreachable("Could not get new op from original");
   }
-  return found->second;
+  return originalToNewFn.lookupOrNull(originst);
 }
 
 Operation *mlir::enzyme::MGradientUtils::cloneWithNewOperands(OpBuilder &B,
