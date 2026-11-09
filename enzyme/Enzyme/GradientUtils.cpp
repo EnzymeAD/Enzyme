@@ -7427,6 +7427,8 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
 
       if (scopeMap.find(inst) == scopeMap.end()) {
         for (auto pair : scopeMap) {
+          if (speedCacheExtra.count(pair.second.first))
+            continue;
           if (auto li2 = dyn_cast<LoadInst>(const_cast<Value *>(pair.first))) {
 
             auto li2obj = getBaseObject(li2->getPointerOperand());
@@ -7868,234 +7870,405 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
               }
           }
 
+          bool isi1 = val->getType()->isIntegerTy() &&
+                      cast<IntegerType>(li->getType())->getBitWidth() == 1;
+
+          if (auto found = findInMap(scopeMap, (Value *)inst)) {
+            auto extraFound = speedCacheExtra.find(found->first);
+            if (extraFound != speedCacheExtra.end()) {
+              Value *lim = extraFound->second.first;
+              Value *loopVar = extraFound->second.second;
+              Value *offset = nullptr;
+              if (loopVar) {
+                offset = available.count(loopVar)
+                             ? (Value *)available[loopVar]
+                             : lookupM(loopVar, BuilderM, available,
+                                       tryLegalRecomputeCheck, scope);
+              }
+              assert(!isOriginalBlock(*BuilderM.GetInsertBlock()));
+              Value *result = lookupValueFromCache(
+                  inst->getType(),
+                  /*isForwardPass*/ false, BuilderM, found->second,
+                  found->first, isi1, available, /*extraSize*/ lim, offset);
+              assert(result->getType() == inst->getType());
+              lookup_cache[BuilderM.GetInsertBlock()][val] = result;
+              return result;
+            }
+            goto noSpeedCache;
+          }
+
+          auto mustExecuteAfter = [&](BasicBlock *Target,
+                                      BasicBlock *Start) -> bool {
+            if (notForAnalysis.count(Target) || notForAnalysis.count(Start))
+              return false;
+            if (Target == Start)
+              return true;
+            SmallPtrSet<BasicBlock *, 16> Visited;
+            SmallVector<BasicBlock *, 16> Worklist;
+            Visited.insert(Start);
+            Worklist.push_back(Start);
+            while (!Worklist.empty()) {
+              BasicBlock *BB = Worklist.pop_back_val();
+              if (BB == Target)
+                continue;
+              bool hasValidSucc = false;
+              for (BasicBlock *S : successors(BB)) {
+                if (notForAnalysis.count(S))
+                  continue;
+                hasValidSucc = true;
+                if (Visited.insert(S).second)
+                  Worklist.push_back(S);
+              }
+              if (!hasValidSucc)
+                return false;
+            }
+            if (!Visited.count(Target))
+              return false;
+            SmallPtrSet<BasicBlock *, 16> CanReach;
+            CanReach.insert(Target);
+            Worklist.push_back(Target);
+            while (!Worklist.empty()) {
+              BasicBlock *BB = Worklist.pop_back_val();
+              for (BasicBlock *P : predecessors(BB)) {
+                if (P != Target && Visited.count(P) &&
+                    CanReach.insert(P).second)
+                  Worklist.push_back(P);
+              }
+            }
+            return CanReach.size() == Visited.size();
+          };
+
+          auto mustExecuteEveryIter = [&](BasicBlock *Target,
+                                          const Loop *OrigL) -> bool {
+            if (!OrigL->contains(Target) || notForAnalysis.count(Target))
+              return false;
+            BasicBlock *Header = OrigL->getHeader();
+            if (notForAnalysis.count(Header))
+              return false;
+            if (Target == Header)
+              return true;
+            SmallPtrSet<BasicBlock *, 16> Visited;
+            SmallVector<BasicBlock *, 16> Worklist;
+            Visited.insert(Header);
+            Worklist.push_back(Header);
+            while (!Worklist.empty()) {
+              BasicBlock *BB = Worklist.pop_back_val();
+              if (BB == Target)
+                continue;
+              bool hasValidSucc = false;
+              for (BasicBlock *S : successors(BB)) {
+                if (notForAnalysis.count(S))
+                  continue;
+                hasValidSucc = true;
+                if (!OrigL->contains(S) || S == Header)
+                  return false;
+                if (Visited.insert(S).second)
+                  Worklist.push_back(S);
+              }
+              if (!hasValidSucc)
+                return false;
+            }
+            return Visited.count(Target);
+          };
+
+          auto noAliasWriteBetween = [&](Instruction *FromTerm) -> bool {
+            bool failed = false;
+            allInstructionsBetween(
+                *OrigLI, FromTerm, origInst, [&](Instruction *I) -> bool {
+                  if (I->mayWriteToMemory() &&
+                      writesToMemoryReadBy(&TR, *OrigAA, TLI,
+                                           /*maybeReader*/ origInst,
+                                           /*maybeWriter*/ I)) {
+                    failed = true;
+                    return /*earlyBreak*/ true;
+                  }
+                  return /*earlyBreak*/ false;
+                });
+            return !failed;
+          };
+
+          auto expandSCEVsAt = [&](Instruction *origInsertPt, IRBuilder<> &v,
+                                   const SCEV *S1, Type *T1, Value *&Out1,
+                                   const SCEV *S2, Type *T2,
+                                   Value *&Out2) -> bool {
+            Out1 = nullptr;
+            Out2 = nullptr;
+#if LLVM_VERSION_MAJOR >= 12
+            Value *exp1 = nullptr;
+            Value *exp2 = nullptr;
+            SmallVector<Instruction *, 32> InsertedInstructions;
+            {
+#if LLVM_VERSION_MAJOR >= 22 && !defined(ENZYME_LLVM22_PRERELEASE)
+              SCEVExpander OrigExp(*OrigSE, "enzyme",
+                                   /*PreserveLCSSA = */ false);
+#else
+              SCEVExpander OrigExp(
+                  *OrigSE,
+                  v.GetInsertBlock()->getParent()->getParent()->getDataLayout(),
+                  "enzyme", /*PreserveLCSSA = */ false);
+#endif
+              exp1 = OrigExp.expandCodeFor(S1, T1, origInsertPt);
+              if (S2)
+                exp2 = OrigExp.expandCodeFor(S2, T2, origInsertPt);
+              InsertedInstructions = OrigExp.getAllInsertedInstructions();
+            }
+
+            ValueToValueMapTy availMap;
+            for (const auto &pair : originalToNewFn) {
+              if (pair.first->getType() == pair.second->getType())
+                availMap[pair.first] = pair.second;
+            }
+
+            llvm::stable_sort(InsertedInstructions,
+                              [this](Instruction *A, Instruction *B) {
+                                return OrigDT->dominates(A, B);
+                              });
+            bool unwrapFailed = false;
+            for (auto a : InsertedInstructions) {
+              if (isa<PHINode>(a)) {
+                unwrapFailed = true;
+                break;
+              }
+              auto uwV =
+                  unwrapM(a, v, availMap, UnwrapMode::AttemptSingleUnwrap,
+                          /*scope*/ nullptr, /*cache*/ false);
+              if (!uwV) {
+                unwrapFailed = true;
+                break;
+              }
+              auto uw = dyn_cast<Instruction>(uwV);
+              assert(uwV->getType() == a->getType());
+              availMap[a] = uwV;
+              if (uw)
+                unwrappedLoads.erase(uw);
+            }
+
+            auto mapExpanded = [&](Value *expV) -> Value * {
+              if (!expV)
+                return nullptr;
+              Value *mapped =
+                  isa<Constant>(expV) ? expV : (Value *)availMap[expV];
+              if (!mapped)
+                return nullptr;
+              if (auto *I = dyn_cast<Instruction>(mapped)) {
+                if (!DT.dominates(I, &*v.GetInsertPoint())) {
+                  mapped = unwrapM(mapped, v, ValueToValueMapTy(),
+                                   UnwrapMode::AttemptFullUnwrapWithLookup);
+                }
+              }
+              return mapped;
+            };
+
+            if (!unwrapFailed) {
+              Out1 = mapExpanded(exp1);
+              if (S2)
+                Out2 = mapExpanded(exp2);
+            }
+
+            availMap.clear();
+            for (auto I : llvm::reverse(InsertedInstructions)) {
+              assert(I->getNumUses() == 0);
+              OrigSE->forgetValue(I);
+              I->eraseFromParent();
+            }
+            return !unwrapFailed && Out1 && (!S2 || Out2);
+#else
+            return false;
+#endif
+          };
+
           auto scev1 = OrigSE->getSCEV(origInst->getPointerOperand());
-          // Store in memcpy opt
           Value *lim = nullptr;
           BasicBlock *ctx = nullptr;
           Value *start = nullptr;
+          Value *stepVal = nullptr;
           Value *offset = nullptr;
+          Value *loopVar = nullptr;
+          bool isUnitStride = false;
+          bool isZeroStride = false;
+
           if (auto ar1 = dyn_cast<SCEVAddRecExpr>(scev1)) {
-            if (auto step =
-                    dyn_cast<SCEVConstant>(ar1->getStepRecurrence(*OrigSE))) {
-              if (step->getAPInt() != loadSize)
-                goto noSpeedCache;
-
+            if (ar1->isAffine() && ar1->getLoop()->contains(origInst) &&
+                !(isi1 && EfficientBoolCache)) {
               LoopContext l1;
-              getContext(getNewFromOriginal(ar1->getLoop()->getHeader()), l1);
-
-              if (l1.dynamic)
-                goto noSpeedCache;
-
-              offset = available[l1.var];
-              ctx = l1.preheader;
-
-              IRBuilder<> v(ctx->getTerminator());
-
-              auto origPH = cast_or_null<BasicBlock>(isOriginal(ctx));
-              assert(origPH);
-              if (OrigPDT->dominates(origPH, origInst->getParent())) {
-                goto noSpeedCache;
-              }
-
-              lim = unwrapM(l1.trueLimit, v,
-                            /*available*/ ValueToValueMapTy(),
-                            UnwrapMode::AttemptFullUnwrapWithLookup);
-              if (!lim) {
-                goto noSpeedCache;
-              }
-              lim = v.CreateAdd(lim, ConstantInt::get(lim->getType(), 1), "",
-                                true, true);
-
-              {
-#if LLVM_VERSION_MAJOR >= 12
-                Value *start0;
-                SmallVector<Instruction *, 32> InsertedInstructions;
-                {
-#if LLVM_VERSION_MAJOR >= 22 && !defined(ENZYME_LLVM22_PRERELEASE)
-                  SCEVExpander OrigExp(*OrigSE, "enzyme",
-                                       /*PreserveLCSSA = */ false);
-#else
-                  SCEVExpander OrigExp(
-                      *OrigSE, ctx->getParent()->getParent()->getDataLayout(),
-                      "enzyme", /*PreserveLCSSA = */ false);
-#endif
-
-                  OrigExp.setInsertPoint(
-                      isOriginal(l1.header)->getTerminator());
-
-                  start0 = OrigExp.expandCodeFor(
-                      ar1->getStart(), li->getPointerOperand()->getType());
-                  InsertedInstructions = OrigExp.getAllInsertedInstructions();
-                }
-
-                ValueToValueMapTy available;
-                for (const auto &pair : originalToNewFn) {
-                  if (pair.first->getType() == pair.second->getType())
-                    available[pair.first] = pair.second;
-                }
-
-                // Sort so that later instructions do not dominate earlier
-                // instructions.
-                llvm::stable_sort(InsertedInstructions,
-                                  [this](Instruction *A, Instruction *B) {
-                                    return OrigDT->dominates(A, B);
-                                  });
-                for (auto a : InsertedInstructions) {
-                  if (isa<PHINode>(a)) {
-                    std::string str;
-                    raw_string_ostream ss(str);
-                    ss << "oldFunc: " << *oldFunc << "\n";
-                    ss << "newFunc: " << *newFunc << "\n";
-                    ss << "li: " << *li << "\n";
-                    ss << "start0: " << *start0 << "\n";
-                    ss << "Inserted a phi node (" << *a
-                       << ") during unwrap of SCEV: " << *ar1->getStart()
-                       << "\n";
-                    if (CustomErrorHandler) {
-                      CustomErrorHandler(str.c_str(), wrap(li),
-                                         ErrorType::InternalError, nullptr,
-                                         nullptr, nullptr);
+              if (getContext(getNewFromOriginal(ar1->getLoop()->getHeader()),
+                             l1) &&
+                  !l1.dynamic && !l1.offset) {
+                auto origPH =
+                    cast_or_null<BasicBlock>(isOriginal(l1.preheader));
+                assert(origPH);
+                if (mustExecuteAfter(origInst->getParent(), origPH) &&
+                    mustExecuteEveryIter(origInst->getParent(),
+                                         ar1->getLoop()) &&
+                    noAliasWriteBetween(origPH->getTerminator())) {
+                  IRBuilder<> v(l1.preheader->getTerminator());
+                  Value *candLim =
+                      unwrapM(l1.trueLimit, v,
+                              /*available*/ ValueToValueMapTy(),
+                              UnwrapMode::AttemptFullUnwrapWithLookup);
+                  if (candLim) {
+                    const SCEV *stepSCEV = ar1->getStepRecurrence(*OrigSE);
+                    const SCEV *extraExpandSCEV = nullptr;
+                    Type *extraExpandTy = nullptr;
+                    if (auto stepConst = dyn_cast<SCEVConstant>(stepSCEV)) {
+                      isUnitStride = (stepConst->getAPInt() == loadSize);
+                      stepVal = stepConst->getValue();
                     } else {
-                      EmitFailure("InsertedPHISCEV", li->getDebugLoc(), li,
-                                  ss.str());
+                      isUnitStride = false;
+                      extraExpandSCEV = stepSCEV;
+                      extraExpandTy = stepSCEV->getType();
+                    }
+                    Value *candStart = nullptr;
+                    Value *candStep = stepVal;
+                    if (expandSCEVsAt(
+                            origPH->getTerminator(), v, ar1->getStart(),
+                            li->getPointerOperand()->getType(), candStart,
+                            extraExpandSCEV, extraExpandTy, candStep)) {
+                      if (extraExpandSCEV)
+                        stepVal = candStep;
+                      Value *candOffset =
+                          available.count(l1.var)
+                              ? (Value *)available[l1.var]
+                              : lookupM(l1.var, BuilderM, available,
+                                        tryLegalRecomputeCheck, scope);
+                      if (candOffset) {
+                        lim = v.CreateAdd(
+                            candLim, ConstantInt::get(candLim->getType(), 1),
+                            "", true, true);
+                        start = candStart;
+                        offset = candOffset;
+                        loopVar = l1.var;
+                        ctx = l1.preheader;
+                      }
                     }
                   }
-                  auto uwV =
-                      unwrapM(a, v, available, UnwrapMode::AttemptSingleUnwrap,
-                              /*scope*/ nullptr, /*cache*/ false);
-                  auto uw = dyn_cast<Instruction>(uwV);
-                  assert(uwV->getType() == a->getType());
-#ifndef NDEBUG
-                  if (uw) {
-                    for (size_t i = 0; i < uw->getNumOperands(); i++) {
-                      auto op = uw->getOperand(i);
-                      if (auto arg = dyn_cast<Argument>(op))
-                        assert(arg->getParent() == newFunc);
-                      else if (auto inst = dyn_cast<Instruction>(op))
-                        assert(inst->getParent()->getParent() == newFunc);
-                    }
-                    assert(uw->getParent()->getParent() == newFunc);
-                  }
-#endif
-                  available[a] = uwV;
-                  if (uw)
-                    unwrappedLoads.erase(uw);
                 }
-
-                start =
-                    isa<Constant>(start0) ? start0 : (Value *)available[start0];
-                if (!start) {
-                  llvm::errs() << "old: " << *oldFunc << "\n";
-                  llvm::errs() << "new: " << *newFunc << "\n";
-                  llvm::errs() << "start0: " << *start0 << "\n";
-                }
-                assert(start);
-
-                available.clear();
-                for (auto I : llvm::reverse(InsertedInstructions)) {
-                  assert(I->getNumUses() == 0);
-                  OrigSE->forgetValue(I);
-                  I->eraseFromParent();
-                }
-#endif
               }
-
-              if (!start)
-                goto noSpeedCache;
-
-              Instruction *origTerm = origPH->getTerminator();
-
-              bool failed = false;
-              allInstructionsBetween(
-                  *OrigLI, &*origTerm, origInst, [&](Instruction *I) -> bool {
-                    if (I->mayWriteToMemory() &&
-                        writesToMemoryReadBy(&TR, *OrigAA, TLI,
-                                             /*maybeReader*/ origInst,
-                                             /*maybeWriter*/ I)) {
-                      failed = true;
-                      return /*earlyBreak*/ true;
-                    }
-                    return /*earlyBreak*/ false;
-                  });
-              if (failed)
-                goto noSpeedCache;
             }
           }
 
-          if (ctx && lim && start && offset) {
+          if (!ctx && scev1 != OrigSE->getCouldNotCompute()) {
+            if (Loop *OrigInnerL = OrigLI->getLoopFor(origInst->getParent())) {
+              if (OrigSE->isLoopInvariant(scev1, OrigInnerL)) {
+                LoopContext l1;
+                if (getContext(getNewFromOriginal(OrigInnerL->getHeader()),
+                               l1)) {
+                  auto origPH =
+                      cast_or_null<BasicBlock>(isOriginal(l1.preheader));
+                  assert(origPH);
+                  if (mustExecuteAfter(origInst->getParent(), origPH) &&
+                      noAliasWriteBetween(origPH->getTerminator())) {
+                    IRBuilder<> v(l1.preheader->getTerminator());
+                    Value *candStart =
+                        unwrapM(li->getPointerOperand(), v,
+                                /*available*/ ValueToValueMapTy(),
+                                UnwrapMode::AttemptFullUnwrapWithLookup);
+                    if (!candStart) {
+                      Value *unused = nullptr;
+                      expandSCEVsAt(origPH->getTerminator(), v, scev1,
+                                    li->getPointerOperand()->getType(),
+                                    candStart, nullptr, nullptr, unused);
+                    }
+                    if (candStart) {
+                      start = candStart;
+                      ctx = l1.preheader;
+                      isZeroStride = true;
+                    }
+                  }
+                }
+              }
+            }
+          }
+
+          if (ctx && start && (isZeroStride || (lim && stepVal && offset))) {
             Value *firstLim = lim;
             Value *firstStart = start;
+            Value *firstStep = stepVal;
             while (Loop *L = LI.getLoopFor(ctx)) {
               BasicBlock *nctx = L->getLoopPreheader();
               assert(nctx);
-              bool failed = false;
               auto origPH = cast_or_null<BasicBlock>(isOriginal(nctx));
               assert(origPH);
-              if (OrigPDT->dominates(origPH, origInst->getParent())) {
-                break;
+              if (isZeroStride) {
+                Loop *OrigOuterL =
+                    OrigLI->getLoopFor(cast<BasicBlock>(isOriginal(ctx)));
+                if (!OrigOuterL || !OrigSE->isLoopInvariant(scev1, OrigOuterL))
+                  break;
               }
-              Instruction *origTerm = origPH->getTerminator();
-              allInstructionsBetween(
-                  *OrigLI, &*origTerm, origInst, [&](Instruction *I) -> bool {
-                    if (I->mayWriteToMemory() &&
-                        writesToMemoryReadBy(&TR, *OrigAA, TLI,
-                                             /*maybeReader*/ origInst,
-                                             /*maybeWriter*/ I)) {
-                      failed = true;
-                      return /*earlyBreak*/ true;
-                    }
-                    return /*earlyBreak*/ false;
-                  });
-              if (failed)
+              if (!mustExecuteAfter(origInst->getParent(), origPH))
+                break;
+              if (!noAliasWriteBetween(origPH->getTerminator()))
                 break;
               IRBuilder<> nv(nctx->getTerminator());
-              Value *nlim = unwrapM(firstLim, nv,
-                                    /*available*/ ValueToValueMapTy(),
-                                    UnwrapMode::AttemptFullUnwrapWithLookup);
-              if (!nlim)
-                break;
-              Value *nstart = unwrapM(firstStart, nv,
-                                      /*available*/ ValueToValueMapTy(),
-                                      UnwrapMode::AttemptFullUnwrapWithLookup);
+              Value *nlim = nullptr;
+              if (!isZeroStride) {
+                nlim = isa<Constant>(firstLim)
+                           ? firstLim
+                           : unwrapM(firstLim, nv,
+                                     /*available*/ ValueToValueMapTy(),
+                                     UnwrapMode::AttemptFullUnwrapWithLookup);
+                if (!nlim)
+                  break;
+              }
+              Value *nstart =
+                  isa<Constant>(firstStart)
+                      ? firstStart
+                      : unwrapM(firstStart, nv,
+                                /*available*/ ValueToValueMapTy(),
+                                UnwrapMode::AttemptFullUnwrapWithLookup);
               if (!nstart)
                 break;
+              Value *nstep = firstStep;
+              if (!isZeroStride && !isUnitStride && !isa<Constant>(firstStep)) {
+                nstep = unwrapM(firstStep, nv,
+                                /*available*/ ValueToValueMapTy(),
+                                UnwrapMode::AttemptFullUnwrapWithLookup);
+                if (!nstep)
+                  break;
+              }
               lim = nlim;
               start = nstart;
+              stepVal = nstep;
               ctx = nctx;
             }
             IRBuilder<> v(ctx->getTerminator());
-            bool isi1 = val->getType()->isIntegerTy() &&
-                        cast<IntegerType>(li->getType())->getBitWidth() == 1;
-
-            AllocaInst *cache = nullptr;
 
             LoopContext tmp;
             bool forceSingleIter = false;
-            if (!getContext(ctx, tmp)) {
-              forceSingleIter = true;
-            } else if (auto inst = dyn_cast<Instruction>(lim)) {
-              if (inst->getParent() == ctx ||
-                  !DT.dominates(inst->getParent(), ctx)) {
+            if (!isZeroStride) {
+              if (!getContext(ctx, tmp)) {
                 forceSingleIter = true;
+              } else if (auto limInst = dyn_cast<Instruction>(lim)) {
+                if (limInst->getParent() == ctx ||
+                    !DT.dominates(limInst->getParent(), ctx)) {
+                  forceSingleIter = true;
+                }
               }
             }
             LimitContext lctx(/*ReverseLimit*/ reverseBlocks.size() > 0, ctx,
                               forceSingleIter);
 
-            if (auto found = findInMap(scopeMap, (Value *)inst)) {
-              cache = found->first;
-            } else {
-              // if freeing reverseblocks must exist
-              assert(reverseBlocks.size());
-              cache = createCacheForScope(lctx, li->getType(), li->getName(),
-                                          /*shouldFree*/ true,
-                                          /*allocate*/ true, /*extraSize*/ lim);
-              assert(cache);
-              scopeMap.insert(
-                  std::make_pair(inst, std::make_pair(cache, lctx)));
+            assert(reverseBlocks.size());
+            AllocaInst *cache = createCacheForScope(
+                lctx, li->getType(), li->getName(),
+                /*shouldFree*/ true, /*allocate*/ true, /*extraSize*/ lim);
+            assert(cache);
+            scopeMap.insert(std::make_pair(inst, std::make_pair(cache, lctx)));
+            speedCacheExtra[cache] =
+                std::make_pair(WeakTrackingVH(lim), WeakTrackingVH(loopVar));
 
-              v.setFastMathFlags(getFast());
-              assert(isOriginalBlock(*v.GetInsertBlock()));
+            v.setFastMathFlags(getFast());
+            assert(isOriginalBlock(*v.GetInsertBlock()));
+
+            if (isZeroStride) {
+              auto *ld = v.CreateLoad(li->getType(), start);
+              ld->setAlignment(li->getAlign());
+              if (auto *tbaa = inst->getMetadata(LLVMContext::MD_tbaa))
+                ld->setMetadata(LLVMContext::MD_tbaa, tbaa);
+              scopeInstructions[cache].push_back(ld);
+              storeInstructionInCache(lctx, v, ld, cache,
+                                      inst->getMetadata(LLVMContext::MD_tbaa));
+            } else if (isUnitStride) {
               Value *outer =
                   getCachePointer(li->getType(),
                                   /*inForwardPass*/ true, v, lctx, cache,
@@ -8108,7 +8281,8 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                   getInt8PtrTy(
                       inst->getContext(),
                       cast<PointerType>(outer->getType())->getAddressSpace()));
-              scopeInstructions[cache].push_back(cast<Instruction>(dst_arg));
+              if (auto *I = dyn_cast<Instruction>(dst_arg))
+                scopeInstructions[cache].push_back(I);
               auto src_arg = v.CreateBitCast(
                   start,
                   getInt8PtrTy(
@@ -8145,6 +8319,37 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
               mem->addParamAttr(1, Attribute::getWithAlignment(
                                        memcpyF->getContext(), li->getAlign()));
               scopeInstructions[cache].push_back(mem);
+            } else {
+              Value *outer =
+                  getCachePointer(li->getType(),
+                                  /*inForwardPass*/ true, v, lctx, cache,
+                                  /*storeinstorecache*/ true,
+                                  /*available*/ ValueToValueMapTy(),
+                                  /*extraSize*/ lim);
+              const DataLayout &DL = newFunc->getParent()->getDataLayout();
+              unsigned srcAS =
+                  cast<PointerType>(start->getType())->getAddressSpace();
+              Value *srcI8 = v.CreateBitCast(
+                  start, getInt8PtrTy(inst->getContext(), srcAS));
+              if (auto *I = dyn_cast<Instruction>(srcI8))
+                scopeInstructions[cache].push_back(I);
+              Type *idxTy = DL.getIndexType(start->getType());
+              Value *limIdx = v.CreateZExtOrTrunc(lim, idxTy);
+              if (auto *I = dyn_cast<Instruction>(limIdx))
+                scopeInstructions[cache].push_back(I);
+              Value *stepIdx = v.CreateSExtOrTrunc(stepVal, idxTy);
+              if (auto *I = dyn_cast<Instruction>(stepIdx))
+                scopeInstructions[cache].push_back(I);
+              auto *zeroIdx = ConstantInt::get(idxTy, 0);
+              auto *marker = v.Insert(
+                  BinaryOperator::Create(Instruction::Add, zeroIdx, zeroIdx),
+                  "strided.cache.marker");
+              pendingStridedCopies.push_back(
+                  {WeakTrackingVH(marker), WeakTrackingVH(cache), li->getType(),
+                   WeakTrackingVH(outer), WeakTrackingVH(srcI8),
+                   WeakTrackingVH(stepIdx), WeakTrackingVH(limIdx),
+                   li->getAlign(), inst->getMetadata(LLVMContext::MD_tbaa),
+                   srcAS});
             }
 
             assert(!isOriginalBlock(*BuilderM.GetInsertBlock()));
@@ -9269,6 +9474,90 @@ void GradientUtils::eraseFictiousPHIs() {
     }
     erase(pp);
   }
+
+  for (auto &psc : pendingStridedCopies) {
+    Instruction *M = dyn_cast_or_null<Instruction>(&*psc.marker);
+    if (!M || !M->getParent())
+      continue;
+    AllocaInst *cache = dyn_cast_or_null<AllocaInst>(&*psc.cache);
+    Value *dst = psc.dst;
+    Value *srcI8 = psc.srcI8;
+    Value *stepBytes = psc.stepBytes;
+    Value *lim = psc.lim;
+    if (!cache || !dst || !srcI8 || !stepBytes || !lim) {
+      M->eraseFromParent();
+      continue;
+    }
+
+    BasicBlock *BB = M->getParent();
+    BasicBlock *afterBB = BB->splitBasicBlock(M, "strided.cache.after");
+    BB->getTerminator()->eraseFromParent();
+    M->eraseFromParent();
+
+    Type *idxTy = lim->getType();
+    auto *zero = ConstantInt::get(idxTy, 0);
+    auto *one = ConstantInt::get(idxTy, 1);
+
+    if (auto *CI = dyn_cast<ConstantInt>(lim)) {
+      if (CI->getValue().sle(0)) {
+        IRBuilder<>(BB).CreateBr(afterBB);
+        continue;
+      }
+    }
+
+    BasicBlock *copyBB = BasicBlock::Create(
+        BB->getContext(), "strided.cache.loop", newFunc, afterBB);
+    {
+      IRBuilder<> preB(BB);
+      if (isa<ConstantInt>(lim)) {
+        preB.CreateBr(copyBB);
+      } else {
+        Value *skip = preB.CreateICmpSLE(lim, zero);
+        preB.CreateCondBr(skip, afterBB, copyBB);
+      }
+    }
+
+    IRBuilder<> loopB(copyBB);
+    loopB.setFastMathFlags(getFast());
+    PHINode *iv = loopB.CreatePHI(idxTy, 2, "strided.iv");
+    iv->addIncoming(zero, BB);
+
+    Value *byteOff = loopB.CreateMul(iv, stepBytes, "strided.byte.off");
+    Value *srcBytePtr = loopB.CreateGEP(Type::getInt8Ty(BB->getContext()),
+                                        srcI8, byteOff, "strided.src.i8");
+    Value *srcElemPtr = loopB.CreateBitCast(
+        srcBytePtr, getPointerType(psc.elemTy, psc.srcAddrSpace));
+    LoadInst *ld = loopB.CreateLoad(psc.elemTy, srcElemPtr, "strided.ld");
+    ld->setAlignment(psc.srcAlign);
+    if (psc.TBAA)
+      ld->setMetadata(LLVMContext::MD_tbaa, psc.TBAA);
+
+    Value *dstElemPtr =
+        loopB.CreateInBoundsGEP(psc.elemTy, dst, iv, "strided.dst");
+    StoreInst *st = loopB.CreateStore(ld, dstElemPtr);
+    if (ValueInvariantGroups.find(cache) == ValueInvariantGroups.end()) {
+      MDNode *invgroup = MDNode::getDistinct(cache->getContext(), {});
+      ValueInvariantGroups[cache] = invgroup;
+    }
+    st->setMetadata(LLVMContext::MD_invariant_group,
+                    ValueInvariantGroups[cache]);
+    uint64_t bsize =
+        newFunc->getParent()->getDataLayout().getTypeAllocSizeInBits(
+            psc.elemTy) /
+        8;
+    unsigned dstAlign = getCacheAlignment((unsigned)bsize);
+    st->setAlignment(Align(dstAlign));
+    if (psc.TBAA)
+      st->setMetadata(LLVMContext::MD_tbaa, psc.TBAA);
+    PostCacheStore(st, loopB);
+
+    Value *ivNext = loopB.CreateAdd(iv, one, "strided.iv.next",
+                                    /*HasNUW*/ true, /*HasNSW*/ true);
+    iv->addIncoming(ivNext, copyBB);
+    Value *done = loopB.CreateICmpEQ(ivNext, lim, "strided.done");
+    loopB.CreateCondBr(done, afterBB, copyBB);
+  }
+  pendingStridedCopies.clear();
 }
 
 void GradientUtils::forceActiveDetection() {
