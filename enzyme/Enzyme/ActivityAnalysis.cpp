@@ -116,6 +116,14 @@ cl::list<std::string> EnzymeLoadInactiveFiles(
 
 // clang-format off
 static const StringSet<> InactiveGlobals = {
+    // Desul (Kokkos atomics) address-lock arrays
+    "_ZZN5desul4Impl9HostLocks15get_host_locks_IvEEPivE30HOST_SPACE_ATOMIC_LOCKS_DEVICE",
+    "_ZN5desul4Impl30HOST_SPACE_ATOMIC_LOCKS_DEVICEE",
+    "_ZN5desul4Impl28HOST_SPACE_ATOMIC_LOCKS_NODEE",
+    "_ZN5desul4Impl30CUDA_SPACE_ATOMIC_LOCKS_DEVICEE",
+    "_ZN5desul4Impl28CUDA_SPACE_ATOMIC_LOCKS_NODEE",
+    "_ZN5desul4Impl29HIP_SPACE_ATOMIC_LOCKS_DEVICEE",
+    "_ZN5desul4Impl27HIP_SPACE_ATOMIC_LOCKS_NODEE",
     "small_typeof",
     "jl_small_typeof",
     "jl_world_counter",
@@ -239,6 +247,29 @@ static const char *KnownInactiveFunctionsStartingWith[] = {
     "_ZNSt16allocator_traitsISaIdEE10deallocate",
     "_ZNSaIcED1Ev",
     "_ZNSaIcEC1Ev",
+    // Desul (Kokkos atomics): lock-array setup and thread fences (the latter
+    // are mirrored in the reverse pass, see CallDerivatives)
+    "_ZN5desul4Impl16init_lock_arrays",
+    "_ZN5desul4Impl20finalize_lock_arrays",
+    "_ZN5desul4Impl7ensure_",
+    "_ZN5desul4Impl9HostLocks",
+    "_ZN5desul4Impl25host_atomic_thread_fenceI",
+    "_ZN5desul4Impl27device_atomic_thread_fenceI",
+    // std::mutex / std::recursive_mutex constructors and destructors
+    // (libstdc++, libc++ and its std::__u ABI); lock / unlock / try_lock are
+    // handled as locked sections (Locks.h)
+    "_ZNSt5mutexC",
+    "_ZNSt5mutexD",
+    "_ZNSt3__15mutexC",
+    "_ZNSt3__15mutexD",
+    "_ZNSt3__u5mutexC",
+    "_ZNSt3__u5mutexD",
+    "_ZNSt15recursive_mutexC",
+    "_ZNSt15recursive_mutexD",
+    "_ZNSt3__115recursive_mutexC",
+    "_ZNSt3__115recursive_mutexD",
+    "_ZNSt3__u15recursive_mutexC",
+    "_ZNSt3__u15recursive_mutexD",
 };
 
 static const char *KnownInactiveFunctionsContains[] = {
@@ -272,6 +303,8 @@ static const StringSet<> KnownInactiveFunctions = {
     "_FortranAAbort",
     "_FortranAFlush",
     "mpfr_greater_p",
+    "pthread_mutex_init",
+    "pthread_mutex_destroy",
     "__nv_isnand",
     "__nv_isnanf",
     "__nv_isinfd",

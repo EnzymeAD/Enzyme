@@ -21,6 +21,8 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/AtomicOrdering.h"
 
+#include <string>
+
 #include "Utils.h"
 
 namespace desul_atomics {
@@ -57,6 +59,27 @@ inline llvm::AtomicOrdering memoryOrderOf(llvm::StringRef Name) {
   if (Name.contains("17MemoryOrderSeqCstE"))
     return llvm::AtomicOrdering::SequentiallyConsistent;
   return llvm::AtomicOrdering::Monotonic;
+}
+
+/// `desul::Impl::host_atomic_thread_fence<MemoryOrder, MemoryScope>` or its
+/// `device_atomic_thread_fence` counterpart.
+inline bool isAtomicThreadFence(llvm::StringRef Name) {
+  return startsWith(Name, "_ZN5desul4Impl25host_atomic_thread_fenceI") ||
+         startsWith(Name, "_ZN5desul4Impl27device_atomic_thread_fenceI");
+}
+
+/// The thread fence to emit in the reverse pass for a fence call `Name` in
+/// the forward pass: the same fence with acquire and release exchanged (as
+/// for a FenceInst), since the reverse pass traverses the synchronized
+/// accesses in the opposite order.
+inline std::string reverseAtomicThreadFenceName(llvm::StringRef Name) {
+  std::string Res = Name.str();
+  size_t P;
+  if ((P = Res.find("18MemoryOrderAcquireE")) != std::string::npos)
+    Res.replace(P, 21, "18MemoryOrderReleaseE");
+  else if ((P = Res.find("18MemoryOrderReleaseE")) != std::string::npos)
+    Res.replace(P, 21, "18MemoryOrderAcquireE");
+  return Res;
 }
 
 } // namespace desul_atomics
