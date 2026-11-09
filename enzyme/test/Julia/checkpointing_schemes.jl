@@ -16,6 +16,11 @@
 # Pkg; Pkg.add(["Checkpointing","Enzyme","Test"])'`).
 
 using Test
+
+import Pkg
+Pkg.activate(; temp=true)
+Pkg.add(["Checkpointing", "Enzyme"])
+
 using Checkpointing
 using Enzyme
 

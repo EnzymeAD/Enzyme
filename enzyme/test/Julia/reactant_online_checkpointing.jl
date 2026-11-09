@@ -72,7 +72,8 @@ end
     n_ra = Reactant.ConcreteRNumber(n)
 
     @testset "Online(budget=$budget) gradient matches reference" for budget in [3, 5, 10]
-        dx_online = @jit online_ckpt_grad(x_ra, n_ra, Online(budget))
+        x_fresh = Reactant.to_rarray(x)
+        dx_online = @jit online_ckpt_grad(x_fresh, n_ra, Online(budget))
         @test Array(dx_online) ≈ dx_ref
     end
 
