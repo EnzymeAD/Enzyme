@@ -3369,10 +3369,11 @@ void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
         std::string str;
         raw_string_ostream ss(str);
         ss << "Illegal updateAnalysis prev:" << LHS.str()
-           << " new: " << Data.str() << "\n";
-        ss << "val: " << *Args[0];
+           << " new: " << Data.str() << '\n';
+        if (Args[0])
+          ss << "val: " << *Args[0];
         ss << "origin: " << *origin;
-        CustomErrorHandler(str.c_str(), wrap(Args[0]),
+        CustomErrorHandler(str.c_str(), wrap(Args[0] ? Args[0] : origin),
                            ErrorType::IllegalTypeAnalysis, (void *)this,
                            wrap(origin), nullptr);
       }
@@ -3512,10 +3513,17 @@ void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
         } else if (auto CV = dyn_cast_or_null<ConstantVector>(Args[i])) {
           validXor = true;
           if (dl.getTypeSizeInBits(FT) !=
-              dl.getTypeSizeInBits(CV->getOperand(i)->getType()))
+              dl.getTypeSizeInBits(CV->getType()->getElementType()))
             continue;
-          for (size_t i = 0, end = CV->getNumOperands(); i < end; ++i) {
-            auto CI = dyn_cast<ConstantInt>(CV->getOperand(i))->getValue();
+          for (size_t laneIndex = 0, end = CV->getNumOperands();
+               laneIndex < end; ++laneIndex) {
+            auto *laneConstant =
+                dyn_cast<ConstantInt>(CV->getOperand(laneIndex));
+            if (!laneConstant) {
+              validXor = false;
+              break;
+            }
+            auto CI = laneConstant->getValue();
 
 #if LLVM_VERSION_MAJOR > 16
             if (CI.isZero())
@@ -3691,7 +3699,7 @@ void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
       } else if (Opcode == BinaryOperator::Xor) {
         for (int i = 0; i < 2; ++i) {
           Type *FT;
-          if (!(FT = (i == 0 ? RHS : LHS).allFloat(Args[1 - i], dl)))
+          if (!(FT = (i == 0 ? RHS : LHS).allFloat(T, dl)))
             continue;
           // If ^ against 0b10000000000, the result is a float
           bool validXor = containsOnlyAtMostTopBit(Args[i], FT, dl);
@@ -3702,7 +3710,7 @@ void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
       } else if (Opcode == BinaryOperator::Or) {
         for (int i = 0; i < 2; ++i) {
           Type *FT;
-          if (!(FT = (i == 0 ? RHS : LHS).allFloat(Args[1 - i], dl)))
+          if (!(FT = (i == 0 ? RHS : LHS).allFloat(T, dl)))
             continue;
           // If & against 0b10000000000, the result is a float
           bool validXor = false;
@@ -3745,10 +3753,17 @@ void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
           } else if (auto CV = dyn_cast_or_null<ConstantVector>(Args[i])) {
             validXor = true;
             if (dl.getTypeSizeInBits(FT) !=
-                dl.getTypeSizeInBits(CV->getOperand(i)->getType()))
+                dl.getTypeSizeInBits(CV->getType()->getElementType()))
               continue;
-            for (size_t i = 0, end = CV->getNumOperands(); i < end; ++i) {
-              auto CI = dyn_cast<ConstantInt>(CV->getOperand(i))->getValue();
+            for (size_t laneIndex = 0, end = CV->getNumOperands();
+                 laneIndex < end; ++laneIndex) {
+              auto *laneConstant =
+                  dyn_cast<ConstantInt>(CV->getOperand(laneIndex));
+              if (!laneConstant) {
+                validXor = false;
+                break;
+              }
+              auto CI = laneConstant->getValue();
 #if LLVM_VERSION_MAJOR > 16
               if (CI.isZero())
 #else
