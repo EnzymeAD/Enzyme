@@ -2115,6 +2115,72 @@ static inline bool isReadOnlyOrThrow(const llvm::CallBase *call) {
   return false;
 }
 
+// Whether the function only writes to memory allocated within the call to F
+// or to its non-readonly pointer arguments in all cases that it doesn't
+// error. In other words, the legal operations here are:
+//  1) Throw [in which case any operation guaranteed to throw is valid]
+//  2) Read from any memory
+//  3) Write to memory allocated within the call to F (including a local
+//     alloca, or a malloc call, even if returned), or to a non-readonly
+//     pointer parameter of F.
+static inline bool isArgMemOnlyOrThrow(const llvm::Function *F) {
+  if (isLocalReadOnlyOrThrow(F))
+    return true;
+
+#if LLVM_VERSION_MAJOR >= 16
+  llvm::MemoryEffects allowed =
+      llvm::MemoryEffects::readOnly() |
+      llvm::MemoryEffects::inaccessibleMemOnly(llvm::ModRefInfo::ModRef) |
+      llvm::MemoryEffects::argMemOnly(llvm::ModRefInfo::ModRef);
+  if ((F->getMemoryEffects() & allowed) == F->getMemoryEffects())
+    return true;
+#else
+  if (F->onlyAccessesArgMemory() || F->onlyAccessesInaccessibleMemory() ||
+      F->onlyAccessesInaccessibleMemOrArgMem())
+    return true;
+#endif
+
+  if (F->hasFnAttribute("enzyme_ArgMemOnlyOrThrow"))
+    return true;
+
+  return false;
+}
+
+static inline bool isArgMemOnlyOrThrow(const llvm::CallBase *call) {
+  if (isLocalReadOnlyOrThrow(call))
+    return true;
+
+  if (call->hasOperandBundles())
+    return false;
+
+  auto F2 = getFunctionFromCall(call);
+  if (!F2 || F2->getCallingConv() == call->getCallingConv()) {
+#if LLVM_VERSION_MAJOR >= 16
+    llvm::MemoryEffects allowed =
+        llvm::MemoryEffects::readOnly() |
+        llvm::MemoryEffects::inaccessibleMemOnly(llvm::ModRefInfo::ModRef) |
+        llvm::MemoryEffects::argMemOnly(llvm::ModRefInfo::ModRef);
+    if ((call->getMemoryEffects() & allowed) == call->getMemoryEffects())
+      return true;
+#else
+    if (call->onlyAccessesArgMemory() ||
+        call->onlyAccessesInaccessibleMemory() ||
+        call->onlyAccessesInaccessibleMemOrArgMem())
+      return true;
+#endif
+  }
+
+  if (call->hasFnAttr("enzyme_ArgMemOnlyOrThrow"))
+    return true;
+
+  if (auto F = getFunctionFromCall(call)) {
+    if (F->getCallingConv() == call->getCallingConv())
+      if (isArgMemOnlyOrThrow(F))
+        return true;
+  }
+  return false;
+}
+
 static inline bool isWriteOnly(const llvm::Function *F, ssize_t arg = -1) {
 #if LLVM_VERSION_MAJOR >= 14
   if (F->onlyWritesMemory())

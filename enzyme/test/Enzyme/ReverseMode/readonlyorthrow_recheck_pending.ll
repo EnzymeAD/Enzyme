@@ -6,10 +6,17 @@
 ; must be checked again with that knowledge rather than marked from its first
 ; check, which could not see what @fill writes.
 
-; Passes its own (non-sret) argument as @fill's sret, so @fill writes memory
-; the caller can see: not read only or throw at all.
+; Passes its own (non-sret) argument as @fill's sret: argmem-only-or-throw.
 define void @through_arg(ptr %out, ptr %x) {
 entry:
+  call void @fill(ptr sret(double) %out, ptr %x)
+  ret void
+}
+
+; Passes a loaded pointer as @fill's sret: not read only or throw at all.
+define void @through_loaded(ptr %box, ptr %x) {
+entry:
+  %out = load ptr, ptr %box, align 8
   call void @fill(ptr sret(double) %out, ptr %x)
   ret void
 }
@@ -38,10 +45,12 @@ entry:
   ret void
 }
 
-; CHECK: define void @through_arg(ptr {{.*}}writeonly %out, ptr {{.*}}%x) #[[ARG:[0-9]+]]
+; CHECK: define void @through_arg(ptr {{.*}}writeonly{{.*}} %out, ptr {{.*}}readonly{{.*}} %x) #[[ARG:[0-9]+]]
+; CHECK: define void @through_loaded(ptr {{.*}}%box, ptr {{.*}}%x) #[[NONE:[0-9]+]]
 ; CHECK: define void @through_sret(ptr {{.*}}sret(double) {{.*}}%out, ptr {{.*}}%x) #[[SRET:[0-9]+]]
 ; CHECK: define double @into_alloca(ptr {{.*}}%x) #[[FULL:[0-9]+]]
 ; CHECK: define void @fill(ptr {{.*}}sret(double) {{.*}}%out, ptr {{.*}}%x) #[[SRET]]
-; CHECK: attributes #[[ARG]] = { nounwind }
+; CHECK: attributes #[[ARG]] = { {{.*}}memory(read, argmem: readwrite, inaccessiblemem: readwrite) "enzyme_ArgMemOnlyOrThrow" }
+; CHECK: attributes #[[NONE]] = { nounwind }
 ; CHECK: attributes #[[SRET]] = { {{.*}}memory(read, argmem: readwrite, inaccessiblemem: readwrite) "enzyme_LocalReadOnlyOrThrow" }
 ; CHECK: attributes #[[FULL]] = { {{.*}}memory(read, inaccessiblemem: readwrite) "enzyme_ReadOnlyOrThrow" }

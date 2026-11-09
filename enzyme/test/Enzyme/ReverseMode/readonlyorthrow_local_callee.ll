@@ -4,10 +4,10 @@
 ; sret. The caller must account for where that sret points: its own sret
 ; (passed straight through, as call-slot optimization leaves it) makes the
 ; caller local too, an alloca keeps it fully read-only unless what the callee
-; wrote there may reach the caller's return value (which makes it local), and
-; an ordinary pointer argument disqualifies it. Marking `passthrough` fully
-; read-only would let LLVM turn its `writeonly` sret into `readnone` and drop
-; the result.
+; wrote there may reach the caller's return value (which makes it local), an
+; ordinary pointer argument makes it argmem-only-or-throw, and a loaded pointer
+; disqualifies it. Marking `passthrough` fully read-only would let LLVM turn
+; its `writeonly` sret into `readnone` and drop the result.
 
 declare void @julia.safepoint(ptr) #1
 
@@ -46,14 +46,23 @@ top:
   ret void
 }
 
+define void @intoloaded(ptr nocapture %box, ptr addrspace(11) nocapture %r) {
+top:
+  %dst = load ptr, ptr %box, align 8
+  call void @callee(ptr sret({ i64, i64 }) %dst, ptr addrspace(11) %r)
+  ret void
+}
+
 attributes #1 = { "enzyme_ReadOnlyOrThrow" }
 
 ; `callee` and `passthrough` end up in the same attribute group.
-; CHECK: define void @callee(ptr noalias {{.*}}sret({ i64, i64 }) %out, ptr addrspace(11) {{.*}}readonly{{.*}} %r) #[[LOCAL:[0-9]+]]
-; CHECK: define void @passthrough(ptr noalias {{.*}}sret({ i64, i64 }) %out, ptr addrspace(11) {{.*}}readonly{{.*}} %r) #[[LOCAL]]
+; CHECK: define void @callee(ptr noalias {{.*}}sret({ i64, i64 }) {{.*}}%out, ptr addrspace(11) {{.*}}readonly{{.*}} %r) #[[LOCAL:[0-9]+]]
+; CHECK: define void @passthrough(ptr noalias {{.*}}sret({ i64, i64 }) {{.*}}%out, ptr addrspace(11) {{.*}}readonly{{.*}} %r) #[[LOCAL]]
 ; CHECK: define i64 @viaalloca(ptr addrspace(11) {{.*}}readonly{{.*}} %r) #[[LOCAL]]
 ; CHECK: define void @viaalloca_void(ptr addrspace(11) {{.*}}readonly{{.*}} %r) #[[RO:[0-9]+]]
-; CHECK: define void @intoarg(ptr {{.*}} %dst, ptr addrspace(11) {{.*}} %r) #[[NONE:[0-9]+]]
+; CHECK: define void @intoarg(ptr {{.*}}writeonly{{.*}} %dst, ptr addrspace(11) {{.*}}readonly{{.*}} %r) #[[ARGMEM:[0-9]+]]
+; CHECK: define void @intoloaded(ptr {{.*}} %box, ptr addrspace(11) {{.*}} %r) #[[NONE:[0-9]+]]
 ; CHECK: attributes #[[LOCAL]] = { {{.*}}memory(read, argmem: readwrite, inaccessiblemem: readwrite) "enzyme_LocalReadOnlyOrThrow" }
 ; CHECK: attributes #[[RO]] = { {{.*}}memory(read, inaccessiblemem: readwrite) "enzyme_ReadOnlyOrThrow" }
+; CHECK: attributes #[[ARGMEM]] = { {{.*}}memory(read, argmem: readwrite, inaccessiblemem: readwrite) "enzyme_ArgMemOnlyOrThrow" }
 ; CHECK: attributes #[[NONE]] = { nounwind }

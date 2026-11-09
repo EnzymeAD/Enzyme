@@ -4,8 +4,9 @@
 ; but each caller comes before its callee, so the callee is not yet known to be
 ; read-only-or-throw when the caller is first checked. Once the callee turns out
 ; to be only local, the caller must be checked again: @wrap returns memory the
-; callee wrote and is only local, and @intoarg has the callee write through its
-; ordinary pointer argument and must not be marked at all. @use_only, which
+; callee wrote and is only local, @intoarg has the callee write through its
+; ordinary pointer argument and is argmem-only-or-throw, and @intoloaded writes
+; through a loaded pointer and must not be marked at all. @use_only, which
 ; only reads the memory, stays fully read-only-or-throw.
 
 declare noalias nonnull ptr addrspace(10) @julia.gc_alloc_obj(ptr, i64, ptr addrspace(10))
@@ -30,6 +31,13 @@ top:
   ret void
 }
 
+define void @intoloaded(ptr %box, ptr addrspace(11) nocapture %x) {
+top:
+  %dst = load ptr, ptr %box, align 8
+  call void @fresh_sret(ptr sret({ i64, i64 }) %dst, ptr addrspace(11) %x)
+  ret void
+}
+
 define ptr addrspace(10) @fresh(ptr %task, ptr addrspace(11) nocapture %x) {
 top:
   %v = load double, ptr addrspace(11) %x, align 8
@@ -48,10 +56,12 @@ top:
 
 ; CHECK: define ptr addrspace(10) @wrap({{.*}}) #[[LOCAL:[0-9]+]]
 ; CHECK: define void @use_only({{.*}}) #[[RO:[0-9]+]]
-; CHECK: define void @intoarg({{.*}}) #[[NONE:[0-9]+]]
+; CHECK: define void @intoarg({{.*}}) #[[ARGMEM:[0-9]+]]
+; CHECK: define void @intoloaded({{.*}}) #[[NONE:[0-9]+]]
 ; CHECK: define ptr addrspace(10) @fresh({{.*}}) #[[LOCAL]]
 ; CHECK: define void @fresh_sret({{.*}}) #[[LOCALSRET:[0-9]+]]
 ; CHECK-DAG: attributes #[[LOCAL]] = { {{.*}}"enzyme_LocalReadOnlyOrThrow" }
 ; CHECK-DAG: attributes #[[LOCALSRET]] = { {{.*}}"enzyme_LocalReadOnlyOrThrow" }
 ; CHECK-DAG: attributes #[[RO]] = { {{.*}}"enzyme_ReadOnlyOrThrow" }
+; CHECK-DAG: attributes #[[ARGMEM]] = { {{.*}}"enzyme_ArgMemOnlyOrThrow" }
 ; CHECK-DAG: attributes #[[NONE]] = { nounwind }

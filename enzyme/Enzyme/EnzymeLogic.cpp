@@ -144,8 +144,8 @@ static bool isUncapturedLocalOrNoaliasArgMemory(Value *obj,
 /// marker).
 ///
 /// A call that, unless it throws, writes only memory it allocated and its
-/// sret-like arguments (LocalReadOnlyOrThrow) qualifies, provided each such
-/// argument is uncaptured local or noalias argument memory.
+/// non-readonly pointer arguments (ArgMemOnlyOrThrow) qualifies, provided each
+/// such argument is uncaptured local or noalias argument memory.
 static bool
 writesOnlyUncapturedLocalOrNoaliasArgMemory(Instruction *I,
                                             TargetLibraryInfo &TLI) {
@@ -174,7 +174,7 @@ writesOnlyUncapturedLocalOrNoaliasArgMemory(Instruction *I,
   } else if (auto CB = dyn_cast<CallBase>(I)) {
     if (isDebugFunction(CB->getCalledFunction()))
       return true;
-    if (!isLocalReadOnlyOrThrow(CB))
+    if (!isArgMemOnlyOrThrow(CB))
       return false;
     for (unsigned i = 0; i < CB->arg_size(); ++i) {
       auto arg = CB->getArgOperand(i);
@@ -1885,6 +1885,7 @@ void clearFunctionAttributes(Function *f) {
       "enzyme_ta_norecur",
       "enzyme_ReadOnlyOrThrow",
       "enzyme_LocalReadOnlyOrThrow",
+      "enzyme_ArgMemOnlyOrThrow",
   };
 
   for (auto attr : strfnattrs) {

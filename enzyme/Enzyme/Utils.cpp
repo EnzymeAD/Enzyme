@@ -3440,24 +3440,7 @@ static bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
     if (isReadOnlyOrThrow(call))
       return false;
 
-    bool onlyArgOrLocalWrites = isLocalReadOnlyOrThrow(call);
-    if (!onlyArgOrLocalWrites && !call->hasOperandBundles()) {
-      auto F2 = getFunctionFromCall(call);
-      if (!F2 || F2->getCallingConv() == call->getCallingConv()) {
-#if LLVM_VERSION_MAJOR >= 16
-        auto allowed = MemoryEffects::readOnly() |
-                       MemoryEffects::argMemOnly(ModRefInfo::ModRef) |
-                       MemoryEffects::inaccessibleMemOnly(ModRefInfo::ModRef);
-        onlyArgOrLocalWrites =
-            (call->getMemoryEffects() & allowed) == call->getMemoryEffects();
-#else
-        onlyArgOrLocalWrites = call->onlyAccessesArgMemory() ||
-                               call->onlyAccessesInaccessibleMemory() ||
-                               call->onlyAccessesInaccessibleMemOrArgMem();
-#endif
-      }
-    }
-    if (onlyArgOrLocalWrites) {
+    if (isArgMemOnlyOrThrow(call)) {
       bool mayWrite = false;
       for (unsigned i = 0; i < call->arg_size(); ++i) {
         auto arg = call->getArgOperand(i);
