@@ -5363,7 +5363,23 @@ areBaseObjectsGuaranteedNoAlias(TargetLibraryInfo &TLI, llvm::AAResults &AA,
     return {};
 
   if (lhs->getType()->isPointerTy() && rhs->getType()->isPointerTy()) {
-    if (AA.isNoAlias(MemoryLocation::getBeforeOrAfter(lhs),
+    bool hasNullOrUndef = false;
+    for (auto obj : getBaseObjects(lhs, /*offsetAllowed=*/true)) {
+      if (isa<ConstantPointerNull, UndefValue>(obj)) {
+        hasNullOrUndef = true;
+        break;
+      }
+    }
+    if (!hasNullOrUndef) {
+      for (auto obj : getBaseObjects(rhs, /*offsetAllowed=*/true)) {
+        if (isa<ConstantPointerNull, UndefValue>(obj)) {
+          hasNullOrUndef = true;
+          break;
+        }
+      }
+    }
+    if (!hasNullOrUndef &&
+        AA.isNoAlias(MemoryLocation::getBeforeOrAfter(lhs),
                      MemoryLocation::getBeforeOrAfter(rhs)))
       return true;
   }

@@ -1933,7 +1933,12 @@ static inline llvm::ModRefInfo getModRefInfo(llvm::AAResults &AA,
     return res;
   const llvm::Value *base = loc.Ptr ? getBaseObject(loc.Ptr) : nullptr;
   if (base && base != loc.Ptr && base->getType()->isPointerTy()) {
+#if LLVM_VERSION_MAJOR >= 16
     res &= AA.getModRefInfo(I, llvm::MemoryLocation::getBeforeOrAfter(base));
+#else
+    res = llvm::intersectModRef(
+        res, AA.getModRefInfo(I, llvm::MemoryLocation::getBeforeOrAfter(base)));
+#endif
   }
   return res;
 }
