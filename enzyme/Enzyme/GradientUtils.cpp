@@ -383,63 +383,53 @@ Value *GradientUtils::getNewIfOriginal(Value *originst) const {
   return f->second;
 }
 
-Value *GradientUtils::ompThreadId() {
-  if (tid)
-    return tid;
-  IRBuilder<> B(inversionAllocs);
-
-  auto FT = FunctionType::get(Type::getInt64Ty(B.getContext()),
-                              ArrayRef<Type *>(), false);
-  auto FN = newFunc->getParent()->getOrInsertFunction("omp_get_thread_num", FT);
-  auto CI = B.CreateCall(FN);
-  if (auto F = getFunctionFromCall(CI)) {
+/// Emit an inaccessible-memory readonly call to an OpenMP zero-argument query
+/// function, preserving any existing integer return width in `module` and
+/// normalizing the result to `i64`.
+static Value *callOMPZeroArgInt64Query(Module *module, BasicBlock *insertBlock,
+                                       StringRef funcName) {
+  IRBuilder<> B(insertBlock);
+  Type *int64Type = Type::getInt64Ty(B.getContext());
+  FunctionType *funcType =
+      FunctionType::get(int64Type, ArrayRef<Type *>(), /*isVarArg=*/false);
+  if (Function *existing = module->getFunction(funcName)) {
+    if (existing->arg_empty() && existing->getReturnType()->isIntegerTy())
+      funcType = existing->getFunctionType();
+  }
+  FunctionCallee callee = module->getOrInsertFunction(funcName, funcType);
+  CallInst *call = B.CreateCall(callee);
+  if (Function *calledFunc = getFunctionFromCall(call)) {
 #if LLVM_VERSION_MAJOR >= 16
-    F->setOnlyAccessesInaccessibleMemory();
-    F->setOnlyReadsMemory();
+    calledFunc->setOnlyAccessesInaccessibleMemory();
+    calledFunc->setOnlyReadsMemory();
 #else
-    F->addFnAttr(Attribute::InaccessibleMemOnly);
-    F->addFnAttr(Attribute::ReadOnly);
+    calledFunc->addFnAttr(Attribute::InaccessibleMemOnly);
+    calledFunc->addFnAttr(Attribute::ReadOnly);
 #endif
   }
 #if LLVM_VERSION_MAJOR >= 16
-  CI->setOnlyAccessesInaccessibleMemory();
-  CI->setOnlyReadsMemory();
+  call->setOnlyAccessesInaccessibleMemory();
+  call->setOnlyReadsMemory();
 #else
-  CI->addAttribute(AttributeList::FunctionIndex,
-                   Attribute::InaccessibleMemOnly);
-  CI->addAttribute(AttributeList::FunctionIndex, Attribute::ReadOnly);
+  call->addAttribute(AttributeList::FunctionIndex,
+                     Attribute::InaccessibleMemOnly);
+  call->addAttribute(AttributeList::FunctionIndex, Attribute::ReadOnly);
 #endif
-  return tid = CI;
+  return B.CreateZExtOrTrunc(call, int64Type);
+}
+
+Value *GradientUtils::ompThreadId() {
+  if (tid)
+    return tid;
+  return tid = callOMPZeroArgInt64Query(newFunc->getParent(), inversionAllocs,
+                                        "omp_get_thread_num");
 }
 
 Value *GradientUtils::ompNumThreads() {
   if (numThreads)
     return numThreads;
-  IRBuilder<> B(inversionAllocs);
-
-  auto FT = FunctionType::get(Type::getInt64Ty(B.getContext()),
-                              ArrayRef<Type *>(), false);
-  auto FN =
-      newFunc->getParent()->getOrInsertFunction("omp_get_max_threads", FT);
-  auto CI = B.CreateCall(FN);
-  if (auto F = getFunctionFromCall(CI)) {
-#if LLVM_VERSION_MAJOR >= 16
-    F->setOnlyAccessesInaccessibleMemory();
-    F->setOnlyReadsMemory();
-#else
-    F->addFnAttr(Attribute::InaccessibleMemOnly);
-    F->addFnAttr(Attribute::ReadOnly);
-#endif
-  }
-#if LLVM_VERSION_MAJOR >= 16
-  CI->setOnlyAccessesInaccessibleMemory();
-  CI->setOnlyReadsMemory();
-#else
-  CI->addAttribute(AttributeList::FunctionIndex,
-                   Attribute::InaccessibleMemOnly);
-  CI->addAttribute(AttributeList::FunctionIndex, Attribute::ReadOnly);
-#endif
-  return numThreads = CI;
+  return numThreads = callOMPZeroArgInt64Query(
+             newFunc->getParent(), inversionAllocs, "omp_get_max_threads");
 }
 
 Value *GradientUtils::getOrInsertTotalMultiplicativeProduct(Value *val,
