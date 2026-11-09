@@ -14,6 +14,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "HerbieResults.h"
+#include "HerbieRun.h"
 #include "Passes.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -30,8 +31,10 @@
 
 #include <cmath>
 #include <memory>
+#include <mutex>
 #include <random>
 #include <string>
+#include <vector>
 
 namespace mlir::poseidon {
 #define GEN_PASS_DEF_POSEIDONREWRITEPASS
@@ -41,6 +44,11 @@ namespace mlir::poseidon {
 using namespace mlir;
 
 namespace {
+
+// Both this pass's namespace, mlir::poseidon, and the Herbie runner's,
+// ::poseidon, would answer to `poseidon` here.
+namespace poseidon = mlir::poseidon;
+namespace herbie = ::poseidon;
 
 // The elementwise ops a chain is made of, and the FPCore operator each one
 // computes. Every op here applies a scalar operation to each element of its
@@ -415,31 +423,115 @@ SmallVector<Value> usableInputs(const Chain &chain, Value output) {
   return usable;
 }
 
+// The Herbie executable configured at build time.
+#ifndef HERBIE_BINARY
+#define HERBIE_BINARY ""
+#endif
+
 struct PoseidonRewrite
     : public poseidon::impl::PoseidonRewritePassBase<PoseidonRewrite> {
   using PoseidonRewritePassBase::PoseidonRewritePassBase;
 
-  // Herbie's answers by core name, shared by the copies of the pass that run
-  // on different functions at once. Null without herbie-results.
-  std::shared_ptr<const llvm::StringMap<poseidon::HerbieAnswer>> answers;
+  using Answers = llvm::StringMap<poseidon::HerbieAnswer>;
+
+  // Herbie's answers by core name, read from herbie-results and shared by the
+  // copies of the pass that run on different functions at once. Null without
+  // herbie-results.
+  std::shared_ptr<const Answers> answers;
+  // How to run Herbie, when run-herbie asks for it and herbie-results does
+  // not answer instead. Null otherwise.
+  std::shared_ptr<const herbie::HerbieRunOptions> herbieRun;
 
   // Runs once, before the pass runs on any function.
   LogicalResult initialize(MLIRContext *context) override {
-    if (herbieResults.empty())
+    if (!herbieResults.empty()) {
+      std::string error;
+      std::optional<std::string> json =
+          poseidon::readHerbieResults(herbieResults, error);
+      std::optional<Answers> parsed;
+      if (json)
+        parsed = poseidon::parseHerbieResults(*json, error);
+      if (!parsed)
+        return emitError(UnknownLoc::get(context))
+               << "poseidon-rewrite: herbie-results " << herbieResults << ": "
+               << error;
+      answers = std::make_shared<const Answers>(std::move(*parsed));
       return success();
-    std::string error;
-    std::optional<std::string> json =
-        poseidon::readHerbieResults(herbieResults, error);
-    std::optional<llvm::StringMap<poseidon::HerbieAnswer>> parsed;
-    if (json)
-      parsed = poseidon::parseHerbieResults(*json, error);
-    if (!parsed)
+    }
+    if (!runHerbie)
+      return success();
+
+    herbie::HerbieRunOptions opts;
+    opts.Program = herbieBinary.empty() ? std::string(HERBIE_BINARY)
+                                        : herbieBinary.getValue();
+    if (opts.Program.empty())
       return emitError(UnknownLoc::get(context))
-             << "poseidon-rewrite: herbie-results " << herbieResults << ": "
-             << error;
-    answers = std::make_shared<const llvm::StringMap<poseidon::HerbieAnswer>>(
-        std::move(*parsed));
+             << "poseidon-rewrite: run-herbie without herbie-binary, and no "
+                "Herbie was configured at build time";
+    // A platform given as a file is passed as its path, and its contents are
+    // part of the cache key; otherwise it is a name Herbie knows.
+    opts.Platform.Name = "default";
+    StringRef platform = herbiePlatform.getValue();
+    if (platform.contains('/') || platform.ends_with(".rkt")) {
+      opts.Platform.Path = platform.str();
+      opts.Platform.Digest = herbie::readFileDigest(platform);
+      if (opts.Platform.Digest.empty())
+        return emitError(UnknownLoc::get(context))
+               << "poseidon-rewrite: herbie-platform " << platform
+               << ": cannot read";
+    } else if (!platform.empty()) {
+      opts.Platform.Name = platform.str();
+    }
+    opts.Seed = herbieSeed;
+    // The search the LLVM plugin runs by default.
+    opts.NumPoints = 1024;
+    opts.NumIters = 6;
+    opts.NumEnodes = 8000;
+    // One budget for the function, which each core's own timeout is also
+    // held to.
+    opts.SubgraphTimeout = herbieTimeout;
+    opts.CoreTimeout = herbieTimeout ? herbieTimeout : 9999;
+    opts.NumThreads = herbieThreads;
+    opts.Processes = 0;
+    opts.CacheDir = herbieCache;
+    herbieRun = std::make_shared<const herbie::HerbieRunOptions>(opts);
     return success();
+  }
+
+  // Runs Herbie on one function's cores. Its answers by core name; none when
+  // it ran out of time; failure when it could not run.
+  FailureOr<Answers> askHerbie(func::FuncOp func,
+                               const std::vector<std::string> &cores) const {
+    herbie::HerbieRunResult run;
+    {
+      // One function at a time: Herbie already spreads one function's cores
+      // over herbie-threads processes, and the runner's record of binary
+      // digests is not safe to fill from two threads at once.
+      static std::mutex herbieLock;
+      std::lock_guard<std::mutex> guard(herbieLock);
+      run =
+          herbie::runHerbie(cores, *herbieRun, ("@" + func.getSymName()).str());
+    }
+    switch (run.Result) {
+    case herbie::HerbieRunResult::Outcome::Ok:
+      break;
+    case herbie::HerbieRunResult::Outcome::Timeout:
+      func.emitWarning() << "poseidon-rewrite: Herbie ran out of time ("
+                         << herbieTimeout << " s); left as is";
+      return Answers();
+    case herbie::HerbieRunResult::Outcome::Failed:
+      func.emitError() << "poseidon-rewrite: could not run Herbie ("
+                       << herbieRun->Program << ")";
+      return failure();
+    }
+    std::string error;
+    std::optional<Answers> parsed =
+        poseidon::parseHerbieResults(run.ResultsJson, error);
+    if (!parsed) {
+      func.emitError() << "poseidon-rewrite: Herbie's results: " << error;
+      return failure();
+    }
+    return std::move(*parsed);
   }
 
   // One output and the rewrite chosen for it.
@@ -451,10 +543,10 @@ struct PoseidonRewrite
 
   // Prints Herbie's answer for core `name` (when dumping), and chooses one of
   // its candidates that can be built, at random.
-  std::optional<Rewrite> choose(StringRef name, const Chain &chain,
-                                Value output) const {
-    auto it = answers->find(name);
-    if (it == answers->end()) {
+  std::optional<Rewrite> choose(const Answers &known, StringRef name,
+                                const Chain &chain, Value output) const {
+    auto it = known.find(name);
+    if (it == known.end()) {
       if (dumpFPCore)
         llvm::errs() << "    herbie: no result\n";
       return std::nullopt;
@@ -522,6 +614,27 @@ struct PoseidonRewrite
           chains.push_back(std::move(chain));
     });
 
+    // One core per chain output, named after the function and the output's
+    // position in it.
+    std::vector<std::string> names, cores;
+    for (Chain &chain : chains)
+      for (Value output : chain.outputs) {
+        names.push_back(
+            (func.getSymName() + "/" + std::to_string(names.size())).str());
+        cores.push_back(renderFPCore(output, chain, names.back()));
+      }
+
+    // Herbie's answers: read from herbie-results, or Herbie run now.
+    const Answers *found = answers.get();
+    std::optional<Answers> ran;
+    if (!found && herbieRun && !cores.empty()) {
+      FailureOr<Answers> asked = askHerbie(func, cores);
+      if (failed(asked))
+        return signalPassFailure();
+      ran = std::move(*asked);
+      found = &*ran;
+    }
+
     // First decide every rewrite, then change the IR, so that what is
     // printed and decided is about the function as it came in.
     SmallVector<Rewrite> rewrites;
@@ -538,13 +651,13 @@ struct PoseidonRewrite
         }
       }
       for (Value output : chain.outputs) {
-        std::string name =
-            (func.getSymName() + "/" + std::to_string(core++)).str();
-        std::string fpcore = renderFPCore(output, chain, name);
+        const std::string &name = names[core];
         if (dumpFPCore)
-          llvm::errs() << "  " << fpcore << "\n";
-        if (answers)
-          if (std::optional<Rewrite> rewrite = choose(name, chain, output))
+          llvm::errs() << "  " << cores[core] << "\n";
+        ++core;
+        if (found)
+          if (std::optional<Rewrite> rewrite =
+                  choose(*found, name, chain, output))
             rewrites.push_back(std::move(*rewrite));
       }
     }

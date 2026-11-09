@@ -18,6 +18,10 @@ def PoseidonRewritePass : Pass<"poseidon-rewrite", "func::FuncOp"> {
     Finds chains of elementwise arith and math ops on floating-point tensors,
     writes each chain as an FPCore expression, asks Herbie for a more accurate
     expression, and replaces the chain with the one Herbie returns.
+
+    Herbie's answers come from a results.json of an earlier run
+    (herbie-results), or from running Herbie on each function (run-herbie).
+    Without either, the chains are only found.
   }];
   let dependentDialects = ["arith::ArithDialect", "math::MathDialect"];
   let options = [
@@ -29,6 +33,25 @@ def PoseidonRewritePass : Pass<"poseidon-rewrite", "func::FuncOp"> {
            "running Herbie">,
     Option<"seed", "seed", "uint64_t", /*default=*/"0",
            "Seed of the random choice among Herbie's candidates">,
+    Option<"runHerbie", "run-herbie", "bool", /*default=*/"false",
+           "Run Herbie on each function's chains (ignored with "
+           "herbie-results)">,
+    Option<"herbieBinary", "herbie-binary", "std::string",
+           /*default=*/"\"\"",
+           "The Herbie executable (empty: the one configured at build time)">,
+    Option<"herbiePlatform", "herbie-platform", "std::string",
+           /*default=*/"\"\"",
+           "A Herbie platform: a .rkt file, or a name compiled into Herbie "
+           "(empty: Herbie's default)">,
+    Option<"herbieTimeout", "herbie-timeout", "unsigned", /*default=*/"1800",
+           "Seconds Herbie may spend on one function (0: no limit)">,
+    Option<"herbieThreads", "herbie-threads", "int", /*default=*/"8",
+           "Herbie worker threads, one process each">,
+    Option<"herbieSeed", "herbie-seed", "unsigned", /*default=*/"239778888",
+           "Herbie's own random seed">,
+    Option<"herbieCache", "herbie-cache", "std::string",
+           /*default=*/"\"./.poseidon\"",
+           "Directory of cached Herbie results (empty: no cache)">,
   ];
 }
 

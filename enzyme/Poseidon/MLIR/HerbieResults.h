@@ -8,8 +8,7 @@
 //===----------------------------------------------------------------------===//
 //
 // What poseidon-rewrite reads back from Herbie: its results.json, and the
-// expressions in it. Herbie is not run here yet; the results come from a file
-// in the format a real run writes.
+// expressions in it. Herbie itself is run by ../HerbieRun.h.
 //
 //===----------------------------------------------------------------------===//
 
@@ -73,8 +72,7 @@ struct HerbieAnswer {
 std::optional<llvm::StringMap<HerbieAnswer>>
 parseHerbieResults(llvm::StringRef json, std::string &error);
 
-// Stands in for running Herbie: the results.json text of an earlier run, read
-// from `path`.
+// The results.json text of an earlier Herbie run, read from `path`.
 std::optional<std::string> readHerbieResults(llvm::StringRef path,
                                              std::string &error);
 

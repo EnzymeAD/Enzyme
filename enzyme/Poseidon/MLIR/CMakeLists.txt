@@ -13,17 +13,21 @@ include(TableGen)
 include(AddMLIR)
 
 include_directories(${MLIR_INCLUDE_DIRS} ${CMAKE_CURRENT_SOURCE_DIR}
-                    ${CMAKE_CURRENT_BINARY_DIR})
+                    ${CMAKE_CURRENT_SOURCE_DIR}/.. ${CMAKE_CURRENT_BINARY_DIR})
 add_definitions(${MLIR_DEFINITIONS})
 
 set(LLVM_TARGET_DEFINITIONS Passes.td)
 mlir_tablegen(Passes.h.inc -gen-pass-decls -name Poseidon)
 add_public_tablegen_target(MLIRPoseidonPassIncGen)
 
+# The Herbie runner and its cache keys read no LLVM IR, so they are compiled
+# in here too rather than linked from the pass plugin, which cannot be.
 add_mlir_library(
   MLIRPoseidonTransforms
   HerbieResults.cpp
   PoseidonRewrite.cpp
+  ../CacheKey.cpp
+  ../HerbieRun.cpp
   PARTIAL_SOURCES_INTENDED
   DEPENDS
   MLIRPoseidonPassIncGen
@@ -36,6 +40,10 @@ add_mlir_library(
   MLIRMathDialect
   MLIRPass
   MLIRTensorDialect)
+
+set_source_files_properties(
+  PoseidonRewrite.cpp
+  PROPERTIES COMPILE_DEFINITIONS HERBIE_BINARY="${POSEIDON_HERBIE_BINARY_PATH}")
 
 add_llvm_executable(poseidon-mlir-opt poseidon-mlir-opt.cpp
                     PARTIAL_SOURCES_INTENDED)
