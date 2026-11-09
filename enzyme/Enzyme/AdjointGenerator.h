@@ -4845,6 +4845,24 @@ public:
 
     Function *kmpc = call.getCalledFunction();
 
+    // `__kmpc_push_num_threads` applies only to the next `__kmpc_fork_call` and
+    // is cleared by the runtime during the fork without updating
+    // `omp_get_max_threads()`.
+    CallInst *pushThreadsCall = nullptr;
+    for (Instruction *previous = call.getPrevNode(); previous;
+         previous = previous->getPrevNode()) {
+      auto *previousCall = dyn_cast<CallInst>(previous);
+      if (!previousCall)
+        continue;
+      StringRef previousName = getFuncNameFromCall(previousCall);
+      if (previousName == "__kmpc_fork_call")
+        break;
+      if (previousName == "__kmpc_push_num_threads") {
+        pushThreadsCall = previousCall;
+        break;
+      }
+    }
+
     if (overwritten_args_map.find(&call) == overwritten_args_map.end()) {
       llvm::errs() << " call: " << call << "\n";
       for (auto &pair : overwritten_args_map) {
@@ -5092,6 +5110,31 @@ public:
           for (size_t i = 3; i < pre_args.size(); ++i) {
             available[&*subarg] = pre_args[i];
             subarg++;
+          }
+          if (pushThreadsCall) {
+            Value *pushedThreads =
+                gutils->getNewFromOriginal(pushThreadsCall->getArgOperand(2));
+            Value *zeroPushed = ConstantInt::get(pushedThreads->getType(), 0);
+            Value *positivePushed = BuilderZ.CreateSelect(
+                BuilderZ.CreateICmpSGT(pushedThreads, zeroPushed),
+                pushedThreads, zeroPushed);
+            for (BasicBlock &block : *newcalled) {
+              for (Instruction &inst : block) {
+                auto *maxThreadsCall = dyn_cast<CallInst>(&inst);
+                if (!maxThreadsCall || getFuncNameFromCall(maxThreadsCall) !=
+                                           "omp_get_max_threads")
+                  continue;
+                Function *maxThreadsFn = getFunctionFromCall(maxThreadsCall);
+                Value *maxThreadsValue = BuilderZ.CreateCall(
+                    maxThreadsFn->getFunctionType(), maxThreadsFn);
+                maxThreadsValue = BuilderZ.CreateZExtOrTrunc(
+                    maxThreadsValue, maxThreadsCall->getType());
+                Value *pushedExtended = BuilderZ.CreateZExtOrTrunc(
+                    positivePushed, maxThreadsCall->getType());
+                available[maxThreadsCall] = BuilderZ.CreateBinaryIntrinsic(
+                    Intrinsic::umax, maxThreadsValue, pushedExtended);
+              }
+            }
           }
           for (auto pair : geps) {
             Value *op = pair.second;
@@ -5413,6 +5456,24 @@ public:
         args[1] = numargs;
         args[2] = Builder2.CreatePointerCast(
             newcalled, kmpc->getFunctionType()->getParamType(2));
+
+        if (pushThreadsCall) {
+          Value *pushArgs[] = {lookup(gutils->getNewFromOriginal(
+                                          pushThreadsCall->getArgOperand(0)),
+                                      Builder2),
+                               lookup(gutils->getNewFromOriginal(
+                                          pushThreadsCall->getArgOperand(1)),
+                                      Builder2),
+                               lookup(gutils->getNewFromOriginal(
+                                          pushThreadsCall->getArgOperand(2)),
+                                      Builder2)};
+          Function *pushFn = getFunctionFromCall(pushThreadsCall);
+          CallInst *reversePush =
+              Builder2.CreateCall(pushFn->getFunctionType(), pushFn, pushArgs);
+          reversePush->setCallingConv(pushFn->getCallingConv());
+          reversePush->setDebugLoc(
+              gutils->getNewFromOriginal(pushThreadsCall->getDebugLoc()));
+        }
 
         CallInst *diffes =
             Builder2.CreateCall(kmpc->getFunctionType(), kmpc, args);

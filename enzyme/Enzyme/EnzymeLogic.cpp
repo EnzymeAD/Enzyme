@@ -675,6 +675,10 @@ struct CacheAnalysis {
       if (auto obj_op = dyn_cast<CallInst>(inst2)) {
         StringRef sfuncName = getFuncNameFromCall(obj_op);
 
+        if (sfuncName == "__kmpc_push_num_threads" ||
+            sfuncName == "omp_set_num_threads")
+          return false;
+
         if (isMemFreeLibMFunction(sfuncName)) {
           return false;
         }
@@ -6838,6 +6842,8 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
 
   static const StringSet<> NoFrees = {"mpfr_greater_p",
                         "vprintf",
+                        "__kmpc_push_num_threads",
+                        "omp_set_num_threads",
                         "fprintf",
                         "fputc",
                          "memchr",

@@ -5326,6 +5326,20 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
       updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
       return;
     }
+    if (funcName == "__kmpc_push_num_threads") {
+      updateAnalysis(call.getArgOperand(0),
+                     TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      updateAnalysis(call.getArgOperand(1),
+                     TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      updateAnalysis(call.getArgOperand(2),
+                     TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      return;
+    }
+    if (funcName == "omp_set_num_threads") {
+      updateAnalysis(call.getArgOperand(0),
+                     TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      return;
+    }
     if (funcName == "_ZNSt6localeC1Ev") {
       TypeTree ptrint;
       ptrint.insert({-1}, BaseType::Pointer);
