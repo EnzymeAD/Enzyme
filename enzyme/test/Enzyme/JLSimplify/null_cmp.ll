@@ -1,4 +1,4 @@
-; RUN: if [ %llvmver -ge 15 ]; then %opt < %s %newLoadEnzyme -passes="jl-inst-simplify" -S | FileCheck %s; fi
+; RUN: if [ %llvmver -ge 15 ]; then %opt < %s %OPnewLoadEnzyme -passes="jl-inst-simplify" -S | FileCheck %s; fi
 
 declare ptr @memchr(ptr, i32, i64)
 

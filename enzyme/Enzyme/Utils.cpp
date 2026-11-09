@@ -5378,9 +5378,8 @@ areBaseObjectsGuaranteedNoAlias(TargetLibraryInfo &TLI, llvm::AAResults &AA,
         }
       }
     }
-    if (!hasNullOrUndef &&
-        AA.isNoAlias(MemoryLocation::getBeforeOrAfter(lhs),
-                     MemoryLocation::getBeforeOrAfter(rhs)))
+    if (!hasNullOrUndef && AA.isNoAlias(MemoryLocation::getBeforeOrAfter(lhs),
+                                        MemoryLocation::getBeforeOrAfter(rhs)))
       return true;
   }
 

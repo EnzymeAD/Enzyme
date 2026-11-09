@@ -57,13 +57,13 @@ define void @df(ptr %w, ptr %dw, ptr %q, ptr %s, ptr %ds, ptr %out, ptr %dout) {
 ; CHECK: define internal void @diffef(
 ; CHECK: loop:
 ; CHECK:   %v = load double, ptr %p, align 8
-; CHECK:   %[[CACHE:.+]] = getelementptr inbounds double, ptr %v_malloccache, i64 %iv
+; CHECK:   %[[CACHE:.+]] = getelementptr inbounds double, ptr %[[MC:(v_malloccache|malloccall)]], i64 %iv
 ; CHECK:   store double %v, ptr %[[CACHE]], align 8, !invariant.group
 ; CHECK: exit:
 ; CHECK:   store double %r, ptr %x, align 8
 ; CHECK: invertloop:
 ; CHECK-NOT: %v_unwrap
-; CHECK:   %[[RC:.+]] = getelementptr inbounds double, ptr %v_malloccache, i64 %"iv'ac.0"
+; CHECK:   %[[RC:.+]] = getelementptr inbounds double, ptr %[[MC]], i64 %"iv'ac.0"
 ; CHECK:   load double, ptr %[[RC]], align 8, !invariant.group
 ; CHECK-NOT: %v_unwrap
 ; CHECK: incinvertloop:
