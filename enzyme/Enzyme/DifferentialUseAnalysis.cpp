@@ -30,8 +30,10 @@
 #include <set>
 
 #include "DifferentialUseAnalysis.h"
+#include "KokkosUtils.h"
 #include "Utils.h"
 
+#include "llvm/Demangle/Demangle.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Instruction.h"
 #include "llvm/IR/IntrinsicsX86.h"
@@ -650,6 +652,41 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
                        << " in reverse from gc " << *CI << "\n";
         return true;
       }
+
+    if (enzyme_kokkos::mayBeKokkosRelevantSymbol(funcName)) {
+      std::string NormDem = ENZYME_KOKKOS_DEMANGLE(funcName);
+      auto AllocKind =
+          enzyme_kokkos::classifyKokkosAllocCall(funcName, NormDem);
+      if (!shadow) {
+        if ((AllocKind ==
+                 enzyme_kokkos::KokkosAllocKind::SharedAllocRecordCommonCtor ||
+             AllocKind ==
+                 enzyme_kokkos::KokkosAllocKind::SharedAllocRecordBaseCtor) &&
+            CI->arg_size() >= 1 && val == CI->getArgOperand(0)) {
+          if (EnzymePrintDiffUse)
+            llvm::errs() << " Need direct primal of " << *val
+                         << " in reverse from Kokkos op " << *CI << "\n";
+          return true;
+        }
+      } else if (mode != DerivativeMode::ReverseModeGradient &&
+                 mode != DerivativeMode::ForwardModeSplit &&
+                 !gutils->isConstantValue(const_cast<Value *>(val))) {
+        if ((AllocKind ==
+                 enzyme_kokkos::KokkosAllocKind::SharedAllocRecordIncrement ||
+             AllocKind ==
+                 enzyme_kokkos::KokkosAllocKind::SharedAllocRecordDecrement ||
+             AllocKind ==
+                 enzyme_kokkos::KokkosAllocKind::SharedAllocRecordCommonCtor ||
+             AllocKind ==
+                 enzyme_kokkos::KokkosAllocKind::SharedAllocRecordBaseCtor) &&
+            CI->arg_size() >= 1 && val == CI->getArgOperand(0)) {
+          if (EnzymePrintDiffUse)
+            llvm::errs() << " Need shadow of " << *val
+                         << " in forward from Kokkos op " << *CI << "\n";
+          return true;
+        }
+      }
+    }
 
     if (funcName == "julia.write_barrier" ||
         funcName == "julia.write_barrier_binding") {

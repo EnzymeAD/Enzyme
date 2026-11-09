@@ -24,6 +24,7 @@
 //===----------------------------------------------------------------------===//
 #include "Utils.h"
 #include "GradientUtils.h"
+#include "KokkosUtils.h"
 #include "TypeAnalysis/TypeAnalysis.h"
 
 #if LLVM_VERSION_MAJOR >= 16
@@ -35,6 +36,7 @@
 #endif
 
 #include "TypeAnalysis/TBAA.h"
+#include "llvm/Demangle/Demangle.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Function.h"
@@ -374,6 +376,18 @@ bool attributeKnownFunctions(llvm::Function &F) {
     F.addFnAttr(Attribute::InaccessibleMemOnly);
     F.addFnAttr(Attribute::ReadOnly);
 #endif
+  }
+  if (enzyme_kokkos::mayBeKokkosRelevantSymbol(F.getName())) {
+    std::string NormDem = ENZYME_KOKKOS_DEMANGLE(F.getName());
+    auto AllocKind =
+        enzyme_kokkos::classifyKokkosAllocCall(F.getName(), NormDem);
+    if (enzyme_kokkos::isKokkosInactiveCall(F.getName(), NormDem) &&
+        AllocKind !=
+            enzyme_kokkos::KokkosAllocKind::SharedAllocRecordDecrement) {
+      changed = true;
+      F.addFnAttr(Attribute::NoFree);
+      F.addFnAttr("enzyme_no_escaping_allocation");
+    }
   }
   if (F.getName() == "frexp" || F.getName() == "frexpf" ||
       F.getName() == "frexpl") {
