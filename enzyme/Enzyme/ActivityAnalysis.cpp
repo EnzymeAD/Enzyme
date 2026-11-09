@@ -1929,6 +1929,34 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
           return true;
         }
 
+        // jl_eqtable_get(table, key, default) is semantically a load from the
+        // table (returning default if the key is absent). Like a LoadInst
+        // whose pointer operand is inactive, its result is inactive if both
+        // the table and the default are inactive.
+        if ((funcName == "jl_eqtable_get" || funcName == "ijl_eqtable_get") &&
+            op->arg_size() == 3) {
+          Value *active = nullptr;
+          for (Value *dep : {op->getArgOperand(0), op->getArgOperand(2)}) {
+            bool depConst = (directions == UP)
+                                ? isConstantValue(TR, dep)
+                                : UpHypothesis->isConstantValue(TR, dep);
+            if (!depConst) {
+              active = dep;
+              break;
+            }
+          }
+          if (!active) {
+            InsertConstantValue(TR, Val);
+            if (directions != UP)
+              insertConstantsFrom(TR, *UpHypothesis);
+            return true;
+          } else if (EnzymeEnableRecursiveHypotheses) {
+            ReEvaluateValueIfInactiveValue[active].insert(Val);
+            if (TmpOrig != Val)
+              ReEvaluateValueIfInactiveValue[active].insert(TmpOrig);
+          }
+        }
+
         // If requesting empty unknown functions to be considered inactive,
         // abide by those rules
         if (called && EnzymeEmptyFnInactive && called->empty() &&
