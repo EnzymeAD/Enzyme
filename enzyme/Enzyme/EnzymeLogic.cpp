@@ -688,7 +688,13 @@ struct CacheAnalysis {
           return false;
         }
 
-        if (sfuncName == "__kmpc_for_static_fini") {
+        if (sfuncName == "__kmpc_for_static_fini" ||
+            sfuncName == "__kmpc_reduce" ||
+            sfuncName == "__kmpc_reduce_nowait" ||
+            sfuncName == "__kmpc_end_reduce" ||
+            sfuncName == "__kmpc_end_reduce_nowait" ||
+            sfuncName == "__kmpc_barrier" || sfuncName == "__kmpc_critical" ||
+            sfuncName == "__kmpc_end_critical") {
           return false;
         }
 
@@ -6854,6 +6860,10 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
                          "lgamma_r",
                          "__assertfail",
                          "__kmpc_global_thread_num",
+                         "__kmpc_reduce",
+                         "__kmpc_reduce_nowait",
+                         "__kmpc_end_reduce",
+                         "__kmpc_end_reduce_nowait",
                          "nlopt_force_stop",
                          "cudaRuntimeGetVersion",                         
                         "llvm.enzyme.lifetime_start",

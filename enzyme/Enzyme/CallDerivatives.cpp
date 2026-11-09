@@ -47,6 +47,207 @@ static bool hasSingleGCPreserveEnd(CallInst *Begin, GradientUtils *gutils) {
   return Ends == 1;
 }
 
+/// Underlying storage object of a pointer used in an OpenMP reduction combiner,
+/// looking through `-O0` pointer-argument stack slots.
+static const Value *getOMPReductionBaseObject(const Value *pointer) {
+  const Value *base = getBaseObject(const_cast<Value *>(pointer));
+  if (const auto *loadedPointer = dyn_cast<LoadInst>(base)) {
+    const Value *slot =
+        getBaseObject(const_cast<Value *>(loadedPointer->getPointerOperand()));
+    if (isa<AllocaInst>(slot))
+      return slot;
+  }
+  return base;
+}
+
+/// Collect the basic blocks forming the critical-section (`case 1`) combiner
+/// region of an OpenMP `__kmpc_reduce` or `__kmpc_reduce_nowait` switch.
+static bool
+collectOMPReduceCriticalBlocks(CallInst &reduceCall,
+                               SmallVectorImpl<BasicBlock *> &criticalBlocks) {
+  SwitchInst *switchInst = nullptr;
+  for (User *user : reduceCall.users()) {
+    if (auto *candidate = dyn_cast<SwitchInst>(user)) {
+      if (switchInst)
+        return false;
+      switchInst = candidate;
+    }
+  }
+  if (!switchInst)
+    return false;
+
+  auto *conditionType =
+      dyn_cast<IntegerType>(switchInst->getCondition()->getType());
+  if (!conditionType)
+    return false;
+  auto caseIter = switchInst->findCaseValue(ConstantInt::get(conditionType, 1));
+  if (caseIter == switchInst->case_default())
+    return false;
+
+  BasicBlock *criticalEntry = caseIter->getCaseSuccessor();
+  BasicBlock *defaultDest = switchInst->getDefaultDest();
+  BasicBlock *switchBlock = switchInst->getParent();
+  if (criticalEntry == defaultDest || criticalEntry == switchBlock)
+    return false;
+
+  SmallPtrSet<BasicBlock *, 8> visited;
+  SmallVector<BasicBlock *, 8> worklist = {criticalEntry};
+  visited.insert(criticalEntry);
+  while (!worklist.empty()) {
+    BasicBlock *current = worklist.pop_back_val();
+    criticalBlocks.push_back(current);
+    for (BasicBlock *successor : successors(current)) {
+      if (successor == defaultDest || successor == switchBlock)
+        continue;
+      if (visited.insert(successor).second)
+        worklist.push_back(successor);
+    }
+  }
+  return true;
+}
+
+/// Whether the critical-section (`case 1`) combiner of \p reduceCall contains
+/// any active instructions, and whether all active operations are order-free
+/// additive updates (`fadd` / `fsub` with unit Jacobian on the shared target).
+static bool classifyOMPReduction(CallInst &reduceCall, GradientUtils *gutils,
+                                 bool &hasActiveCriticalRegion) {
+  hasActiveCriticalRegion = false;
+  SmallVector<BasicBlock *, 8> criticalBlocks;
+  if (!collectOMPReduceCriticalBlocks(reduceCall, criticalBlocks))
+    return gutils->isConstantValue(reduceCall.getArgOperand(4));
+
+  for (BasicBlock *block : criticalBlocks) {
+    for (Instruction &inst : *block) {
+      if (isAnyBranch(&inst))
+        continue;
+      if (auto *callInst = dyn_cast<CallInst>(&inst)) {
+        StringRef calleeName = getFuncNameFromCall(callInst);
+        if (calleeName == "__kmpc_end_reduce" ||
+            calleeName == "__kmpc_end_reduce_nowait")
+          continue;
+      }
+      if (gutils->isConstantInstruction(&inst) &&
+          gutils->isConstantValue(&inst))
+        continue;
+
+      hasActiveCriticalRegion = true;
+      if (isa<LoadInst>(&inst) || isa<GetElementPtrInst>(&inst) ||
+          isa<CastInst>(&inst) || isa<PHINode>(&inst) ||
+          isa<ExtractValueInst>(&inst) || isa<InsertValueInst>(&inst) ||
+          isa<ExtractElementInst>(&inst) || isa<InsertElementInst>(&inst) ||
+          isa<ShuffleVectorInst>(&inst))
+        continue;
+
+      if (const auto *unary = dyn_cast<UnaryOperator>(&inst)) {
+        if (unary->getOpcode() == Instruction::FNeg)
+          continue;
+        return false;
+      }
+
+      if (const auto *binary = dyn_cast<BinaryOperator>(&inst)) {
+        if (binary->getOpcode() != Instruction::FAdd &&
+            binary->getOpcode() != Instruction::FSub)
+          return false;
+        const auto *lhsLoad = dyn_cast<LoadInst>(binary->getOperand(0));
+        const auto *rhsLoad = dyn_cast<LoadInst>(binary->getOperand(1));
+        if (lhsLoad && rhsLoad &&
+            getOMPReductionBaseObject(lhsLoad->getPointerOperand()) ==
+                getOMPReductionBaseObject(rhsLoad->getPointerOperand()))
+          return false;
+        continue;
+      }
+
+      if (auto *store = dyn_cast<StoreInst>(&inst)) {
+        if (gutils->isConstantValue(store->getPointerOperand()))
+          continue;
+        const Value *stored = store->getValueOperand();
+        const auto *binary = dyn_cast<BinaryOperator>(stored);
+        if (!binary || (binary->getOpcode() != Instruction::FAdd &&
+                        binary->getOpcode() != Instruction::FSub))
+          return false;
+        if (binary->getOpcode() == Instruction::FSub) {
+          if (const auto *rhsLoad = dyn_cast<LoadInst>(binary->getOperand(1))) {
+            if (getOMPReductionBaseObject(rhsLoad->getPointerOperand()) ==
+                getOMPReductionBaseObject(store->getPointerOperand()))
+              return false;
+          }
+        }
+        continue;
+      }
+
+      return false;
+    }
+  }
+  return true;
+}
+
+/// Locate the enclosing `__kmpc_reduce` or `__kmpc_reduce_nowait` call for an
+/// `__kmpc_end_reduce` or `__kmpc_end_reduce_nowait` call and determine whether
+/// \p endCall is reachable from the `case 1` critical combiner region and/or
+/// any other arm of the reduction switch.
+static CallInst *findEnclosingOMPReduce(CallInst &endCall, bool &inCriticalCase,
+                                        bool &inNonCriticalCase) {
+  inCriticalCase = false;
+  inNonCriticalCase = false;
+  SmallPtrSet<BasicBlock *, 8> visited;
+  SmallVector<BasicBlock *, 8> worklist = {endCall.getParent()};
+  visited.insert(endCall.getParent());
+
+  CallInst *reduceCall = nullptr;
+  while (!worklist.empty()) {
+    BasicBlock *current = worklist.pop_back_val();
+    for (BasicBlock *pred : predecessors(current)) {
+      if (auto *switchInst = dyn_cast<SwitchInst>(pred->getTerminator())) {
+        if (auto *candidate = dyn_cast<CallInst>(switchInst->getCondition())) {
+          StringRef candidateName = getFuncNameFromCall(candidate);
+          if (candidateName == "__kmpc_reduce" ||
+              candidateName == "__kmpc_reduce_nowait") {
+            reduceCall = candidate;
+            for (const auto &caseHandle : switchInst->cases()) {
+              if (caseHandle.getCaseSuccessor() != current)
+                continue;
+              if (caseHandle.getCaseValue()->isOne())
+                inCriticalCase = true;
+              else
+                inNonCriticalCase = true;
+            }
+            if (switchInst->getDefaultDest() == current)
+              inNonCriticalCase = true;
+            continue;
+          }
+        }
+      }
+      if (visited.insert(pred).second)
+        worklist.push_back(pred);
+    }
+  }
+  return reduceCall;
+}
+
+/// Dedicated module-internal critical-section lock variable for serializing the
+/// reverse pass of an OpenMP `case 1` reduction without reusing the runtime
+/// reduction lock (which `libomp` initializes outside its normal lock table).
+static GlobalVariable *getOrCreateOMPReductionReverseLock(Module &module,
+                                                          Value *primalLock) {
+  std::string lockName = ".enzyme_omp_reduction_lock";
+  if (primalLock) {
+    StringRef baseName = primalLock->stripPointerCasts()->getName();
+    if (!baseName.empty()) {
+      lockName += '.';
+      lockName += baseName.str();
+    }
+  }
+  if (GlobalVariable *existing = module.getNamedGlobal(lockName))
+    return existing;
+  ArrayType *lockType =
+      ArrayType::get(Type::getInt32Ty(module.getContext()), 8);
+  auto *lockGlobal = new GlobalVariable(
+      module, lockType, /*isConstant=*/false, GlobalValue::InternalLinkage,
+      ConstantAggregateZero::get(lockType), lockName);
+  lockGlobal->setAlignment(Align(8));
+  return lockGlobal;
+}
+
 /// Forward mode of an MPI call whose derivative is the same call with the
 /// buffers \p ShadowArgs replaced by their shadows (for the reductions, of a
 /// sum). At vector width > 1 the call is replayed once per lane. All other
@@ -2765,6 +2966,176 @@ bool AdjointGenerator::handleKnownCallDerivatives(
                    Builder2)};
         auto fcall = Builder2.CreateCall(crit2->getFunctionType(), crit2, args);
         fcall->setCallingConv(crit2->getCallingConv());
+      }
+      return true;
+    }
+    if (funcName == "__kmpc_reduce" || funcName == "__kmpc_reduce_nowait") {
+      bool hasActiveCriticalRegion = false;
+      if (!classifyOMPReduction(call, gutils, hasActiveCriticalRegion)) {
+        std::string message;
+        raw_string_ostream stream(message);
+        stream << "unsupported nonlinear active OpenMP reduction: " << call
+               << '\n';
+        EmitNoDerivativeError(stream.str(), call, gutils, BuilderZ);
+        return true;
+      }
+
+      // Disable the tree-reduction fast path (`reduce_data` and `reduce_func`
+      // set to null) so every participating thread executes either the atomic
+      // (`case 2`) or critical-section (`case 1`) combiner inside the outlined
+      // function where Enzyme differentiates it.
+      if (Mode != DerivativeMode::ReverseModeGradient &&
+          Mode != DerivativeMode::ForwardModeSplit) {
+        newCall->setArgOperand(4, ConstantPointerNull::get(cast<PointerType>(
+                                      call.getArgOperand(4)->getType())));
+        newCall->setArgOperand(5, ConstantPointerNull::get(cast<PointerType>(
+                                      call.getArgOperand(5)->getType())));
+      }
+
+      Value *cachedReduceResult = newCall;
+      if (Mode == DerivativeMode::ReverseModePrimal ||
+          Mode == DerivativeMode::ReverseModeGradient) {
+        cachedReduceResult = gutils->cacheForReverse(
+            BuilderZ, newCall, getIndex(&call, CacheType::Self, BuilderZ));
+        eraseIfUnused(call);
+      } else if (Mode == DerivativeMode::ForwardModeSplit) {
+        eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+      }
+
+      if (Mode == DerivativeMode::ReverseModeGradient ||
+          Mode == DerivativeMode::ReverseModeCombined) {
+        IRBuilder<> Builder2(&call);
+        getReverseBuilder(Builder2);
+        Module &module = *gutils->newFunc->getParent();
+        Value *location =
+            lookup(gutils->getNewFromOriginal(call.getArgOperand(0)), Builder2);
+        Value *globalThreadId =
+            lookup(gutils->getNewFromOriginal(call.getArgOperand(1)), Builder2);
+
+        if (hasActiveCriticalRegion) {
+          Value *reduceResult = lookup(cachedReduceResult, Builder2);
+          GlobalVariable *lockGlobal =
+              getOrCreateOMPReductionReverseLock(module, call.getArgOperand(6));
+          Value *lockArg = lockGlobal;
+          Type *expectedLockType = call.getArgOperand(6)->getType();
+          if (lockArg->getType() != expectedLockType)
+            lockArg = Builder2.CreatePointerCast(lockArg, expectedLockType);
+
+          BasicBlock *currentBlock = Builder2.GetInsertBlock();
+          BasicBlock *unlockBlock = gutils->addReverseBlock(
+              currentBlock, currentBlock->getName() + "_end_crit",
+              gutils->newFunc);
+          BasicBlock *mergeBlock = gutils->addReverseBlock(
+              unlockBlock, currentBlock->getName() + "_post_reduce",
+              gutils->newFunc);
+
+          Value *isCriticalCase = Builder2.CreateICmpEQ(
+              reduceResult, ConstantInt::get(reduceResult->getType(), 1));
+          Builder2.CreateCondBr(isCriticalCase, unlockBlock, mergeBlock);
+
+          Builder2.SetInsertPoint(unlockBlock);
+          FunctionType *criticalType =
+              FunctionType::get(Type::getVoidTy(module.getContext()),
+                                {location->getType(), globalThreadId->getType(),
+                                 lockArg->getType()},
+                                /*isVarArg=*/false);
+          FunctionCallee endCriticalFn =
+              module.getOrInsertFunction("__kmpc_end_critical", criticalType);
+          Builder2.CreateCall(endCriticalFn,
+                              {location, globalThreadId, lockArg});
+          Builder2.CreateBr(mergeBlock);
+
+          Builder2.SetInsertPoint(mergeBlock);
+        }
+
+        if (funcName == "__kmpc_reduce") {
+          FunctionType *barrierType = FunctionType::get(
+              Type::getVoidTy(module.getContext()),
+              {location->getType(), globalThreadId->getType()},
+              /*isVarArg=*/false);
+          FunctionCallee barrierFn =
+              module.getOrInsertFunction("__kmpc_barrier", barrierType);
+          Builder2.CreateCall(barrierFn, {location, globalThreadId});
+        }
+      }
+      return true;
+    }
+    if (funcName == "__kmpc_end_reduce" ||
+        funcName == "__kmpc_end_reduce_nowait") {
+      if (Mode == DerivativeMode::ReverseModeGradient ||
+          Mode == DerivativeMode::ReverseModeCombined) {
+        bool inCriticalCase = false;
+        bool inNonCriticalCase = false;
+        CallInst *reduceCall =
+            findEnclosingOMPReduce(call, inCriticalCase, inNonCriticalCase);
+        bool hasActiveCriticalRegion = false;
+        if (reduceCall)
+          classifyOMPReduction(*reduceCall, gutils, hasActiveCriticalRegion);
+
+        IRBuilder<> Builder2(&call);
+        getReverseBuilder(Builder2);
+        Module &module = *gutils->newFunc->getParent();
+        Value *location =
+            lookup(gutils->getNewFromOriginal(call.getArgOperand(0)), Builder2);
+        Value *globalThreadId =
+            lookup(gutils->getNewFromOriginal(call.getArgOperand(1)), Builder2);
+
+        if (funcName == "__kmpc_end_reduce") {
+          FunctionType *barrierType = FunctionType::get(
+              Type::getVoidTy(module.getContext()),
+              {location->getType(), globalThreadId->getType()},
+              /*isVarArg=*/false);
+          FunctionCallee barrierFn =
+              module.getOrInsertFunction("__kmpc_barrier", barrierType);
+          Builder2.CreateCall(barrierFn, {location, globalThreadId});
+        }
+
+        if (inCriticalCase && hasActiveCriticalRegion) {
+          GlobalVariable *lockGlobal =
+              getOrCreateOMPReductionReverseLock(module, call.getArgOperand(2));
+          Value *lockArg = lockGlobal;
+          Type *expectedLockType = call.getArgOperand(2)->getType();
+          if (lockArg->getType() != expectedLockType)
+            lockArg = Builder2.CreatePointerCast(lockArg, expectedLockType);
+
+          FunctionType *criticalType =
+              FunctionType::get(Type::getVoidTy(module.getContext()),
+                                {location->getType(), globalThreadId->getType(),
+                                 lockArg->getType()},
+                                /*isVarArg=*/false);
+          FunctionCallee criticalFn =
+              module.getOrInsertFunction("__kmpc_critical", criticalType);
+
+          if (inNonCriticalCase && reduceCall) {
+            Value *reduceResult =
+                lookup(gutils->getNewFromOriginal(reduceCall), Builder2);
+            BasicBlock *currentBlock = Builder2.GetInsertBlock();
+            BasicBlock *lockBlock = gutils->addReverseBlock(
+                currentBlock, currentBlock->getName() + "_begin_crit",
+                gutils->newFunc);
+            BasicBlock *mergeBlock = gutils->addReverseBlock(
+                lockBlock, currentBlock->getName() + "_post_end_reduce",
+                gutils->newFunc);
+
+            Value *isCriticalCase = Builder2.CreateICmpEQ(
+                reduceResult, ConstantInt::get(reduceResult->getType(), 1));
+            Builder2.CreateCondBr(isCriticalCase, lockBlock, mergeBlock);
+
+            Builder2.SetInsertPoint(lockBlock);
+            Builder2.CreateCall(criticalFn,
+                                {location, globalThreadId, lockArg});
+            Builder2.CreateBr(mergeBlock);
+
+            Builder2.SetInsertPoint(mergeBlock);
+          } else {
+            Builder2.CreateCall(criticalFn,
+                                {location, globalThreadId, lockArg});
+          }
+        }
+      }
+      if (Mode == DerivativeMode::ReverseModeGradient ||
+          Mode == DerivativeMode::ForwardModeSplit) {
+        eraseIfUnused(call, /*erase*/ true, /*check*/ false);
       }
       return true;
     }
