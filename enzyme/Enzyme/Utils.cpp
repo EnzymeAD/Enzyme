@@ -3440,6 +3440,40 @@ static bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
     if (isReadOnlyOrThrow(call))
       return false;
 
+    bool onlyArgOrLocalWrites = isLocalReadOnlyOrThrow(call);
+    if (!onlyArgOrLocalWrites && !call->hasOperandBundles()) {
+      auto F2 = getFunctionFromCall(call);
+      if (!F2 || F2->getCallingConv() == call->getCallingConv()) {
+#if LLVM_VERSION_MAJOR >= 16
+        auto allowed = MemoryEffects::readOnly() |
+                       MemoryEffects::argMemOnly(ModRefInfo::ModRef) |
+                       MemoryEffects::inaccessibleMemOnly(ModRefInfo::ModRef);
+        onlyArgOrLocalWrites =
+            (call->getMemoryEffects() & allowed) == call->getMemoryEffects();
+#else
+        onlyArgOrLocalWrites = call->onlyAccessesArgMemory() ||
+                               call->onlyAccessesInaccessibleMemory() ||
+                               call->onlyAccessesInaccessibleMemOrArgMem();
+#endif
+      }
+    }
+    if (onlyArgOrLocalWrites) {
+      bool mayWrite = false;
+      for (unsigned i = 0; i < call->arg_size(); ++i) {
+        auto arg = call->getArgOperand(i);
+        if (!arg->getType()->isPointerTy() || isReadOnly(call, i))
+          continue;
+        auto loc = MemoryLocation::getForArgument(call, i, TLI);
+        if (isRefSet(getModRefInfo(AA, maybeReader, maybeReaderLoc, loc.Ptr,
+                                   loc.Size))) {
+          mayWrite = true;
+          break;
+        }
+      }
+      if (!mayWrite)
+        return false;
+    }
+
     if (isMemFreeLibMFunction(funcName)) {
       return false;
     }
@@ -3649,11 +3683,14 @@ static bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
     }
   }
   assert(maybeWriter->mayWriteToMemory());
-  if (maybeReaderLoc)
-    return isModSet(getModRefInfo(AA, maybeWriter, *maybeReaderLoc));
-  assert(maybeReader->mayReadFromMemory());
+  if (maybeReaderLoc) {
+    if (!isModSet(getModRefInfo(AA, maybeWriter, *maybeReaderLoc)))
+      return false;
+  } else {
+    assert(maybeReader->mayReadFromMemory());
+  }
 
-  if (auto li = dyn_cast<LoadInst>(maybeReader)) {
+  if (auto li = dyn_cast_or_null<LoadInst>(maybeReader)) {
     if (TR) {
       auto TT = TR->query(li)[{-1}];
       if (TT != BaseType::Unknown && TT != BaseType::Anything) {
@@ -3674,32 +3711,48 @@ static bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
         }
       }
     }
-    return isModSet(getModRefInfo(AA, maybeWriter, MemoryLocation::get(li)));
+    if (!isModSet(getModRefInfo(AA, maybeWriter, MemoryLocation::get(li))))
+      return false;
   }
-  if (auto rmw = dyn_cast<AtomicRMWInst>(maybeReader)) {
-    return isModSet(getModRefInfo(AA, maybeWriter, MemoryLocation::get(rmw)));
+  if (auto rmw = dyn_cast_or_null<AtomicRMWInst>(maybeReader)) {
+    if (!isModSet(getModRefInfo(AA, maybeWriter, MemoryLocation::get(rmw))))
+      return false;
   }
-  if (auto xch = dyn_cast<AtomicCmpXchgInst>(maybeReader)) {
-    return isModSet(getModRefInfo(AA, maybeWriter, MemoryLocation::get(xch)));
+  if (auto xch = dyn_cast_or_null<AtomicCmpXchgInst>(maybeReader)) {
+    if (!isModSet(getModRefInfo(AA, maybeWriter, MemoryLocation::get(xch))))
+      return false;
   }
-  if (auto mti = dyn_cast<MemTransferInst>(maybeReader)) {
-    return isModSet(
-        getModRefInfo(AA, maybeWriter, MemoryLocation::getForSource(mti)));
+  if (auto mti = dyn_cast_or_null<MemTransferInst>(maybeReader)) {
+    if (!isModSet(
+            getModRefInfo(AA, maybeWriter, MemoryLocation::getForSource(mti))))
+      return false;
   }
 
   if (auto si = dyn_cast<StoreInst>(maybeWriter)) {
-    return isRefSet(getModRefInfo(AA, maybeReader, MemoryLocation::get(si)));
+    auto loc = MemoryLocation::get(si);
+    return isRefSet(
+        getModRefInfo(AA, maybeReader, maybeReaderLoc, loc.Ptr, loc.Size));
   }
   if (auto rmw = dyn_cast<AtomicRMWInst>(maybeWriter)) {
-    return isRefSet(getModRefInfo(AA, maybeReader, MemoryLocation::get(rmw)));
+    auto loc = MemoryLocation::get(rmw);
+    return isRefSet(
+        getModRefInfo(AA, maybeReader, maybeReaderLoc, loc.Ptr, loc.Size));
   }
   if (auto xch = dyn_cast<AtomicCmpXchgInst>(maybeWriter)) {
-    return isRefSet(getModRefInfo(AA, maybeReader, MemoryLocation::get(xch)));
+    auto loc = MemoryLocation::get(xch);
+    return isRefSet(
+        getModRefInfo(AA, maybeReader, maybeReaderLoc, loc.Ptr, loc.Size));
   }
   if (auto mti = dyn_cast<MemIntrinsic>(maybeWriter)) {
+    auto loc = MemoryLocation::getForDest(mti);
     return isRefSet(
-        getModRefInfo(AA, maybeReader, MemoryLocation::getForDest(mti)));
+        getModRefInfo(AA, maybeReader, maybeReaderLoc, loc.Ptr, loc.Size));
   }
+
+  if (!maybeReader ||
+      isa<LoadInst, AtomicRMWInst, AtomicCmpXchgInst, MemTransferInst>(
+          maybeReader))
+    return true;
 
   if (auto cb = dyn_cast<CallInst>(maybeReader)) {
     return isModOrRefSet(AA.getModRefInfo(maybeWriter, cb));
@@ -3716,8 +3769,19 @@ static bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
 bool writesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
                           const llvm::MemoryLocation &maybeReader,
                           llvm::Instruction *maybeWriter) {
-  return writesToMemoryReadBy(/*TR=*/nullptr, AA, TLI, &maybeReader,
-                              /*maybeReader=*/nullptr, maybeWriter);
+  if (!writesToMemoryReadBy(/*TR=*/nullptr, AA, TLI, &maybeReader,
+                            /*maybeReader=*/nullptr, maybeWriter))
+    return false;
+  const llvm::Value *base =
+      maybeReader.Ptr ? getBaseObject(maybeReader.Ptr) : nullptr;
+  if (base && base != maybeReader.Ptr && base->getType()->isPointerTy()) {
+    auto baseLoc =
+        llvm::MemoryLocation::getBeforeOrAfter(base, maybeReader.AATags);
+    if (!writesToMemoryReadBy(/*TR=*/nullptr, AA, TLI, &baseLoc,
+                              /*maybeReader=*/nullptr, maybeWriter))
+      return false;
+  }
+  return true;
 }
 
 /// Return whether maybeReader can read from memory written to by maybeWriter

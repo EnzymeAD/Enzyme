@@ -194,24 +194,6 @@ writesOnlyUncapturedLocalOrNoaliasArgMemory(Instruction *I,
 
 struct CacheAnalysis {
 
-  /// Whether I may modify the memory at loc. Unless it throws, a
-  /// LocalReadOnlyOrThrow call writes only memory it allocated, which cannot
-  /// be loc, and its sret-like arguments.
-  static bool mayModify(AAResults &AA, Instruction *I,
-                        const MemoryLocation &loc) {
-    auto CB = dyn_cast<CallBase>(I);
-    if (!CB || !isLocalReadOnlyOrThrow(CB))
-      return isModSet(getModRefInfo(AA, I, loc));
-    for (unsigned i = 0; i < CB->arg_size(); ++i) {
-      auto arg = CB->getArgOperand(i);
-      if (!arg->getType()->isPointerTy() || isReadOnly(CB, i))
-        continue;
-      if (!AA.isNoAlias(loc, MemoryLocation::getBeforeOrAfter(arg)))
-        return true;
-    }
-    return false;
-  }
-
   const ValueMap<const CallInst *, SmallPtrSet<const CallInst *, 1>>
       &allocationsWithGuaranteedFree;
   const ValueMap<Value *, GradientUtils::Rematerializer>
@@ -730,8 +712,9 @@ struct CacheAnalysis {
           continue;
 
         if (!callsite_op->getArgOperand(i)->getType()->isPointerTy() ||
-            mayModify(AA, inst2,
-                      MemoryLocation::getForArgument(callsite_op, i, TLI))) {
+            writesToMemoryReadBy(
+                AA, TLI, MemoryLocation::getForArgument(callsite_op, i, TLI),
+                inst2)) {
           if (!isa<ConstantInt>(callsite_op->getArgOperand(i)) &&
               !isa<UndefValue>(callsite_op->getArgOperand(i)))
             EmitWarning("UncacheableArg", *callsite_op, "Callsite ",
