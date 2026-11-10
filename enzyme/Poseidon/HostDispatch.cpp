@@ -6,6 +6,7 @@
 #include "HostDispatch.h"
 #include "Evaluators.h"
 #include "Flags.h"
+#include "Instrument.h"
 #include "LaunchDescriptors.h"
 #include "Matmul.h"
 #include "Optimize.h"
@@ -1511,6 +1512,18 @@ bool rewriteProfileStubBodies(Module &M) {
   return changed;
 }
 
+// The header of every kernel the device half profiled, registered with the
+// host profiler as a host site's is: the device profiler writes a kernel's
+// profile only once the kernel has run, and the host profiler writes one with
+// no records for a registered site that nothing wrote.
+static bool registerProfiledKernels(Module &M) {
+  bool changed = false;
+  readProfileHeaders(M, [&](StringRef profileName, StringRef header) {
+    changed |= registerProfileStatic(M, profileName, header);
+  });
+  return changed;
+}
+
 llvm::PreservedAnalyses HostStubPass::run(llvm::Module &M,
                                           llvm::ModuleAnalysisManager &) {
   if (isDeviceModule(M) || !handsOverLaunches())
@@ -1519,8 +1532,13 @@ llvm::PreservedAnalyses HostStubPass::run(llvm::Module &M,
   // runtime helper that supplies its shadow buffers. Host dispatch
   // materializes only in the optimize phase: profile-gen builds instrument the
   // original kernel and do not link the runtime.
-  bool changed = flags::ProfileGenerate ? rewriteProfileStubBodies(M)
-                                        : rewriteGemmStubBodies(M);
+  bool changed = false;
+  if (flags::ProfileGenerate) {
+    changed |= rewriteProfileStubBodies(M);
+    changed |= registerProfiledKernels(M);
+  } else {
+    changed = rewriteGemmStubBodies(M);
+  }
   return changed ? llvm::PreservedAnalyses::none()
                  : llvm::PreservedAnalyses::all();
 }

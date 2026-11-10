@@ -8,7 +8,7 @@
 ; RUN: FileCheck --check-prefix=HERBIE %s < %t/herbie.ll
 ; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/pow_term/profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-comp-cost-budget=-100 -poseidon-print -poseidon-cache=%t/po -poseidon-output-profiles=%S/Inputs/pow_term/out0,%S/Inputs/pow_term/out1 -S -o /dev/null 2> %t/po.err
 ; RUN: FileCheck --check-prefix=PO %s < %t/po.err
-; RUN: not --crash %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/pow_term/profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-comp-cost-budget=-100 -poseidon-print -poseidon-cache=%t/pomissing -poseidon-output-profiles=%S/Inputs/pow_term/out0,%t/none -S -o /dev/null 2>&1 | FileCheck --check-prefix=PO-MISSING %s
+; RUN: not %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/pow_term/profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-comp-cost-budget=-100 -poseidon-print -poseidon-cache=%t/pomissing -poseidon-output-profiles=%S/Inputs/pow_term/out0,%t/none -S -o /dev/null 2>&1 | FileCheck --check-prefix=PO-MISSING %s
 ; REQUIRES: poseidon
 
 ; A rate term as generated reacting-flow code writes it (Exasim's reacting-air
@@ -108,4 +108,4 @@ attributes #0 = { "target-cpu"="x86-64" }
 ; PO-NOT: sensitivity floor raised
 ; PO: Initial AccuracyCost: 2.600950e-17
 
-; PO-MISSING: LLVM ERROR: Poseidon: output profile {{.*}}none/preprocess_tester.fpprofile of preprocess_tester is missing or carries no sensitivity
+; PO-MISSING: LLVM ERROR: Poseidon: the profile directory {{.*}}none (-poseidon-output-profiles) does not exist; no profiling run wrote into it

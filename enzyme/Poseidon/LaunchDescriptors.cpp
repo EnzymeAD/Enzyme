@@ -44,6 +44,19 @@ std::map<std::string, Recorded> &recorded(LaunchKind kind) {
 constexpr LaunchKind kKinds[] = {LaunchKind::HostDispatch,
                                  LaunchKind::Profiling};
 
+struct ProfileHeader {
+  std::string profileName;
+  std::string header;
+};
+
+// By kernel name, as the descriptors.
+std::map<std::string, ProfileHeader> &profileHeaders() {
+  static std::map<std::string, ProfileHeader> headers;
+  return headers;
+}
+
+constexpr StringLiteral kProfileHeaders = "profile headers";
+
 StringRef kindName(LaunchKind kind) {
   return kind == LaunchKind::HostDispatch ? "host dispatch"
                                           : "profile generation";
@@ -105,6 +118,11 @@ void recordDescriptor(LaunchKind kind, StringRef wrapperName,
   recorded(kind)[wrapperName.str()] = std::move(r);
 }
 
+void recordProfileHeader(StringRef wrapperName, StringRef profileName,
+                         StringRef header) {
+  profileHeaders()[wrapperName.str()] = {profileName.str(), header.str()};
+}
+
 void writeLaunchManifest(const Module &M) {
   Manifest m = manifestOf(M);
   // The device code is already compiled for the rewritten stubs (a dispatched
@@ -130,6 +148,15 @@ void writeLaunchManifest(const Module &M) {
       lines.push_back(r.line);
     value[kindName(kind)] = std::move(lines);
   }
+  // Only a profile-generate compile has any, and every other manifest stays
+  // as it was.
+  if (!profileHeaders().empty()) {
+    json::Object headers;
+    for (const auto &[kernel, h] : profileHeaders())
+      headers[kernel] =
+          json::Object{{"profile", h.profileName}, {"header", h.header}};
+    value[kProfileHeaders] = std::move(headers);
+  }
   if (std::error_code EC = sys::fs::create_directories(flags::Cache))
     fail("write", EC.message());
   if (Error E = writeCacheEntry(m.path, m.key, std::move(value)))
@@ -139,6 +166,7 @@ void writeLaunchManifest(const Module &M) {
       errs() << r.message;
     recorded(kind).clear();
   }
+  profileHeaders().clear();
 }
 
 void readDescriptors(const Module &M, LaunchKind kind,
@@ -165,6 +193,27 @@ void readDescriptors(const Module &M, LaunchKind kind,
     SmallVector<StringRef, 8> toks;
     line->trim().split(toks, ' ');
     parse(toks);
+  }
+}
+
+void readProfileHeaders(const Module &M,
+                        function_ref<void(StringRef, StringRef)> use) {
+  Manifest m = manifestOf(M);
+  CacheEntryRead read = readCacheEntry(m.path, m.key);
+  const json::Object *value = read.value ? read.value->getAsObject() : nullptr;
+  const json::Object *headers =
+      value ? value->getObject(kProfileHeaders) : nullptr;
+  if (!headers)
+    return;
+  // In kernel order: a JSON object's own order is its hash table's.
+  std::map<std::string, const json::Object *> byKernel;
+  for (const auto &[kernel, entry] : *headers)
+    byKernel[kernel.str()] = entry.getAsObject();
+  for (const auto &[kernel, h] : byKernel) {
+    std::optional<StringRef> name = h ? h->getString("profile") : std::nullopt;
+    std::optional<StringRef> header = h ? h->getString("header") : std::nullopt;
+    if (name && header)
+      use(*name, *header);
   }
 }
 

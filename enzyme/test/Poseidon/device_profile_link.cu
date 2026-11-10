@@ -49,7 +49,7 @@ __global__ void scale(double *x, double a) { x[0] = a * x[0] + 1.0; }
 // NOSITE-NOT: poseidonLogValueCUDA
 
 // HOST: @__poseidon_profile_table = internal global [[[N:[0-9]+]] x i8] zeroinitializer, align 8
-// HOST: @llvm.global_ctors = appending global [2 x { i32, ptr, ptr }] [{ i32, ptr, ptr } { i32 65535, ptr @__cuda_module_ctor, ptr null }, { i32, ptr, ptr } { i32 65535, ptr @__poseidon_profile_register_module_table, ptr null }]
+// HOST: @llvm.global_ctors = appending global [3 x { i32, ptr, ptr }] [{ i32, ptr, ptr } { i32 65535, ptr @__cuda_module_ctor, ptr null }, { i32, ptr, ptr } { i32 65535, ptr @__poseidon_profile_register_module_table, ptr null }, { i32, ptr, ptr } { i32 0, ptr @poseidon_register_static_preprocess__Z5scalePdd_poseidon_body, ptr null }]
 // HOST: define internal {{.*}}void @__cuda_register_globals(ptr %[[H:[0-9]+]])
 // HOST: call void @__cudaRegisterVar(ptr %[[H]], ptr @__poseidon_profile_table, ptr @[[NAME:[^,]+]], ptr @[[NAME]], i32 0, i64 [[N]], i32 1, i32 0)
 // HOST-NEXT: ret void

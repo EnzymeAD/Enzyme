@@ -75,6 +75,12 @@ void recordDescriptor(LaunchKind kind, llvm::StringRef wrapperName,
                       llvm::function_ref<void(llvm::raw_ostream &)> emitPayload,
                       std::string message);
 
+// Records, beside the profile generation descriptor of `wrapperName`, the name
+// its site's profile is written under and the header the device compile
+// computed for it, which the device profiler writes only once the kernel runs.
+void recordProfileHeader(llvm::StringRef wrapperName,
+                         llvm::StringRef profileName, llvm::StringRef header);
+
 // Replaces the manifest of device module M by the descriptors recorded since
 // the last write and prints their messages, all in order of kernel name; with
 // none recorded, removes it, since no manifest means nothing to rewrite. A
@@ -87,6 +93,15 @@ void writeLaunchManifest(const llvm::Module &M);
 void readDescriptors(
     const llvm::Module &M, LaunchKind kind,
     llvm::function_ref<void(llvm::ArrayRef<llvm::StringRef>)> parse);
+
+// Hands `use` the profile name and header of every profiled kernel in the
+// manifest of host module M. A unit without a manifest has none; one that
+// cannot be read is reported by readDescriptors.
+void readProfileHeaders(
+    const llvm::Module &M,
+    llvm::function_ref<void(llvm::StringRef profileName,
+                            llvm::StringRef header)>
+        use);
 
 // The part of a kernel's mangled name shared with its launch stub: kernel
 // `_Z<L><id><params>` and stub `_Z<L+15>__device_stub__<id><params>`.

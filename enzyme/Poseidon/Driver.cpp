@@ -552,6 +552,86 @@ bool emitSiteCall(CallBase *CI, Function *F,
   return true;
 }
 
+// A profile-use compile pointed at a directory no profiling run wrote into
+// would otherwise leave every site as written and succeed.
+void requireProfileDirectory(StringRef dir, StringRef flag) {
+  const bool isDir = sys::fs::is_directory(dir);
+  std::error_code EC;
+  if (isDir)
+    for (sys::fs::directory_iterator it(dir, EC), end; !EC && it != end;
+         it.increment(EC))
+      if (sys::path::extension(it->path()) == ".fpprofile")
+        return;
+  report_fatal_error(Twine("Poseidon: the profile directory ") + dir + " (" +
+                         flag + ") " +
+                         (isDir ? "holds no .fpprofile file"
+                                : "does not exist") +
+                         "; no profiling run wrote into it",
+                     /*gen_crash_diag=*/false);
+}
+
+// Why a site has no records to solve from, read from every directory that
+// holds a profile of it.
+struct Unprofiled {
+  bool neverExecuted;
+  std::string path;
+};
+
+std::optional<Unprofiled> unprofiledSite(Function &clone) {
+  const std::string file = siteProfileStem(clone) + ".fpprofile";
+  std::optional<Unprofiled> absent, neverExecuted;
+  auto read = [&](StringRef dir, StringRef flag) {
+    SmallString<128> path(dir);
+    sys::path::append(path, file);
+    if (!sys::fs::exists(path)) {
+      requireProfileDirectory(dir, flag);
+      if (!absent)
+        absent = Unprofiled{false, path.str().str()};
+    } else if (isNeverExecutedProfile(path.str().str())) {
+      std::unordered_map<size_t, ProfileInfo> records;
+      FunctionProfileHeader header;
+      parseProfileFile(path.str().str(), records, &header);
+      requireCanonicalHash(header, canonicalFormHash(clone), path,
+                           clone.getName());
+      if (!neverExecuted)
+        neverExecuted = Unprofiled{true, path.str().str()};
+    }
+  };
+  read(flags::ProfileUse, "-poseidon-profile-use");
+  for (const std::string &dir : flags::OutputProfiles)
+    read(dir, "-poseidon-output-profiles");
+  return absent ? absent : neverExecuted;
+}
+
+void reportUnprofiled(CallBase *CI, const Function &body, Function &clone,
+                      const Unprofiled &site) {
+  if (site.neverExecuted) {
+    const char *cause =
+        "the profiling run instrumented this site and never executed it";
+    llvm::errs() << "[poseidon] " << body.getName() << ": " << cause << " ("
+                 << site.path << "); left unchanged\n";
+    explainUnprofiled(clone, cause);
+    return;
+  }
+  const char *cause =
+      "the profiled program did not contain this site (it was annotated "
+      "after the profiling run, is in a translation unit the profiled "
+      "program did not link, or was renamed)";
+  if (flags::StrictMode)
+    report_fatal_error(Twine("Poseidon: no profile of ") + body.getName() +
+                           " at " + site.path + ": " + cause +
+                           ", and -poseidon-strict-mode does not leave a "
+                           "site unchanged",
+                       /*gen_crash_diag=*/false);
+  warn(CI, Twine("no profile at ") + site.path + ": " + cause +
+               "; leaving the site unchanged");
+  llvm::errs() << "[poseidon] " << body.getName()
+               << ": the profiled program did not contain this site (no "
+                  "profile at "
+               << site.path << "); left unchanged\n";
+  explainUnprofiled(clone, cause);
+}
+
 // Profile use, shared by both annotation forms: `CI` is the call the site's
 // body is reached through (the marker call, or the wrapper kernel's call of its
 // own outlined body), `F` the body and `primalArgs` the caller values its
@@ -595,17 +675,10 @@ bool optimizeSiteBody(CallBase *CI, Function *F,
     noteSiteArgs(F, primalArgs);
     noteSiteCall(F, CI->getDebugLoc());
 
-    SmallString<128> profilePath(flags::ProfileUse);
-    llvm::sys::path::append(profilePath, siteProfileStem(*F) + ".fpprofile");
-    // A site the profiling run never reached still has to build and run, so it
-    // keeps the ORIGINAL body rather than failing the compile.
-    if (!llvm::sys::fs::exists(profilePath.str())) {
-      warn(CI, Twine("no profile found at ") + profilePath.str() +
-                   " (-poseidon-profile-use=" + StringRef(flags::ProfileUse) +
-                   "); leaving the site unchanged");
-      llvm::errs() << "[poseidon] " << sourceBody->getName()
-                   << ": no profile at " << profilePath.str()
-                   << "; left unchanged\n";
+    // A site with nothing to solve from still has to build and run, so it keeps
+    // the ORIGINAL body rather than failing the compile.
+    if (std::optional<Unprofiled> site = unprofiledSite(*F)) {
+      reportUnprofiled(CI, *sourceBody, *F, *site);
       markOutlineTransparent(sourceBody);
       return emitSiteCall(CI, sourceBody, primalArgs, calls);
     }
@@ -1296,7 +1369,9 @@ CallInst *outlineKernelBody(Function &K, Function *&bodyOut) {
 // Canonicalize, slot-number and instrument one site body exactly as profile
 // use canonicalizes and slot-numbers it, so the profile is recorded against
 // the form the solve will later see. Null if the body holds nothing profilable.
-Function *instrumentedClone(Function &F, unsigned siteId) {
+// `staticOut`, if given, receives the header the profile will carry.
+Function *instrumentedClone(Function &F, unsigned siteId,
+                            std::string *staticOut = nullptr) {
   Function *clone = canonicalize(F);
   siteClones().push_back(clone);
   setSlotMetadata(*clone);
@@ -1317,6 +1392,8 @@ Function *instrumentedClone(Function &F, unsigned siteId) {
     os << "CanonicalHash = " << canonicalFormHash(*clone) << "\n";
   }
   emitProfileStaticData(*clone, staticData);
+  if (staticOut)
+    *staticOut = staticData;
   return clone;
 }
 
@@ -1569,7 +1646,8 @@ bool profileAnnotatedKernel(Function &K, unsigned &nextSiteId) {
     return false;
   const unsigned nOrigArgs = K.arg_size();
 
-  Function *clone = instrumentedClone(*body, nextSiteId);
+  std::string header;
+  Function *clone = instrumentedClone(*body, nextSiteId, &header);
   if (!clone) {
     InlineFunctionInfo IFI;
     (void)InlineFunction(*call, IFI);
@@ -1577,6 +1655,7 @@ bool profileAnnotatedKernel(Function &K, unsigned &nextSiteId) {
     return false;
   }
   unsigned siteId = nextSiteId++;
+  const std::string profileName = clone->getName().str();
 
   SmallVector<unsigned, 8> seedWidth;
   collectOutputParams(*clone, seedWidth);
@@ -1745,6 +1824,9 @@ bool profileAnnotatedKernel(Function &K, unsigned &nextSiteId) {
         }
       },
       std::move(message));
+  // The host half registers it with the profiling runtime, so that a kernel
+  // that never launches still gets a profile, one saying so.
+  recordProfileHeader(kernelName, profileName, header);
   return true;
 }
 
@@ -2685,7 +2767,7 @@ bool lowerMarkers(ArrayRef<CallInst *> markers,
 
 // What the profiled run spent inside this site: over the slots the profile
 // records, the execution count times the CSV price of the operation the slot
-// names. A site the run never reached has no profile and costs nothing, which
+// names. A site the run never reached has no records and costs nothing, which
 // is what -poseidon-kernels=all over a whole library produces for most kernels.
 double profiledSiteCost(Function &body) {
   SmallString<128> profilePath(flags::ProfileUse);

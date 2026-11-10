@@ -837,21 +837,8 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
     // candidate pricing, the precision-tuning per-output costs and the
     // scalar-reduction matmul gradD cells all see one consistent weight.
     applySensitivityFloor(profileMap, F.getName());
-    if (profileHeader.canonicalHash.empty()) {
-      report_fatal_error(
-          Twine("Poseidon: ") + profilePath +
-          " has no CanonicalHash field, so its slot indices cannot be checked "
-          "against the canonical form of " +
-          F.getName() + "; re-run profile generation.");
-    } else if (profileHeader.canonicalHash != canonicalHash) {
-      report_fatal_error(
-          Twine("Poseidon: the profile of ") + F.getName() +
-          " was recorded against a different canonical form (profile "
-          "CanonicalHash " +
-          profileHeader.canonicalHash + ", this compile " + canonicalHash +
-          "). Its slot indices do not name the same instructions; re-run "
-          "profile generation.");
-    }
+    requireCanonicalHash(profileHeader, canonicalHash, profilePath,
+                         F.getName());
     if (flags::Print && profileHeader.launchCount > 0) {
       llvm::errs() << "[poseidon] profile header for " << F.getName()
                    << ": MaxBlockDims=(" << profileHeader.maxBlockDim[0] << ","
