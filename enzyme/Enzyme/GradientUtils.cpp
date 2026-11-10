@@ -7832,9 +7832,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                                      ->getDataLayout()
                                      .getTypeAllocSizeInBits(AT) /
                                  8;
-                    if ((bsize & (bsize - 1)) == 0) {
-                      st->setAlignment(Align(bsize));
-                    }
+                    st->setAlignment(Align(getCacheAlignment((unsigned)bsize)));
                     scopeInstructions[cache].push_back(st);
                     for (auto post : PostCacheStore(st, v)) {
                       scopeInstructions[cache].push_back(post);
@@ -8137,10 +8135,10 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                   newFunc->getParent()->getDataLayout().getTypeAllocSizeInBits(
                       li->getType()) /
                   8;
-              if ((bsize & (bsize - 1)) == 0) {
-                mem->addParamAttr(0, Attribute::getWithAlignment(
-                                         memcpyF->getContext(), Align(bsize)));
-              }
+              mem->addParamAttr(
+                  0, Attribute::getWithAlignment(
+                         memcpyF->getContext(),
+                         Align(getCacheAlignment((unsigned)bsize))));
 
               mem->addParamAttr(1, Attribute::getWithAlignment(
                                        memcpyF->getContext(), li->getAlign()));
