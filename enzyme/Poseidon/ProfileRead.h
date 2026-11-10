@@ -88,10 +88,21 @@ void parseProfileFile(const std::string &profilePath,
                       std::unordered_map<size_t, ProfileInfo> &profileMap,
                       FunctionProfileHeader *header = nullptr);
 
+// The static header of every instrumented site names the profile format in a
+// line `ProfileFormat = <n>`. Profiles without it are format 1, written before
+// the profiling runtime left a profile for a site it never executed; from
+// format 2 it does.
+inline constexpr llvm::StringLiteral kProfileFormatKey = "ProfileFormat";
+inline constexpr unsigned kProfileFormat = 2;
+
 // Whether `profilePath` is the profile the profiling runtime writes for a site
 // it instrumented and never executed: the site's header, an `Executed = 0`
 // line, and no records. Reads no further than the header.
 bool isNeverExecutedProfile(const std::string &profilePath);
+
+// Whether a profile in `dir` names its format, so that a site the profiled run
+// never executed would have left a file there. Reads headers only.
+bool profileDirNamesFormat(llvm::StringRef dir);
 
 // Fatal unless the profile's slot indices were numbered against the canonical
 // form `canonicalHash` names.

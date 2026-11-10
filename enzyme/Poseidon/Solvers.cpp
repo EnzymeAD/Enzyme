@@ -23,6 +23,9 @@
 #include "llvm/Support/Path.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/xxhash.h"
+#if __has_include("llvm/Support/VCSRevision.h")
+#include "llvm/Support/VCSRevision.h"
+#endif
 
 #include "BuildIdentity.h"
 #include "CostModel.h"
@@ -661,8 +664,14 @@ static CacheKey solveKey(const FunctionFPState &st,
                          ArrayRef<CandidateMatmul> CMs, StringRef profilePath) {
   const Function &F = *st.F;
   CacheKey key;
-  key.add("compiler",
-          std::string(kPassIdentity) + " LLVM " + LLVM_VERSION_STRING);
+  // Two LLVM snapshots report one version string; the revision, which an LLVM
+  // built without it does not define, tells them apart.
+  std::string compiler =
+      std::string(kPassIdentity) + " LLVM " + LLVM_VERSION_STRING;
+#ifdef LLVM_REVISION
+  compiler += " " LLVM_REVISION;
+#endif
+  key.add("compiler", compiler);
   std::string body;
   raw_string_ostream bodyOS(body);
   bodyOS << StructuralHash(F, /*DetailedHash=*/true);

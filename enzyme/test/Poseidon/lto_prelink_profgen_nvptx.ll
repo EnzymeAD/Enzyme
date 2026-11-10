@@ -1,9 +1,9 @@
 ; RUN: rm -rf %t && mkdir -p %t
-; RUN: not %clang --target=nvptx64-nvidia-cuda -march=sm_120 -O2 -flto -fno-crash-diagnostics -x ir %s %clangLoadPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/full -S -emit-llvm -o /dev/null 2>&1 | FileCheck --check-prefix=DEFERRED %s
-; RUN: not %clang --target=nvptx64-nvidia-cuda -march=sm_120 -O2 -flto=thin -fno-crash-diagnostics -x ir %s %clangLoadPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/thin -S -emit-llvm -o /dev/null 2>&1 | FileCheck --check-prefix=DEFERRED %s
+; RUN: (env TMPDIR=%t %clang --target=nvptx64-nvidia-cuda -march=sm_120 -O2 -flto -x ir %s %clangLoadPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/full -S -emit-llvm -o /dev/null 2>&1; echo "exit status $?") | FileCheck --check-prefix=DEFERRED --implicit-check-not=REPRODUCER --implicit-check-not="exit code" %s
+; RUN: (env TMPDIR=%t %clang --target=nvptx64-nvidia-cuda -march=sm_120 -O2 -flto=thin -x ir %s %clangLoadPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/thin -S -emit-llvm -o /dev/null 2>&1; echo "exit status $?") | FileCheck --check-prefix=DEFERRED --implicit-check-not=REPRODUCER --implicit-check-not="exit code" %s
 ; RUN: %clang --target=nvptx64-nvidia-cuda -march=sm_120 -O2 -flto -x ir %s %clangLoadPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/prelink -mllvm -enzyme-lto-prelink=1 -S -emit-llvm -o - 2>/dev/null | FileCheck --check-prefix=LOWERED --implicit-check-not=__enzyme_autodiff %s
 ; RUN: %clang --target=nvptx64-nvidia-cuda -march=sm_120 -O0 -flto=thin -x ir %s %clangLoadPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/thin0 -S -emit-llvm -o - 2>/dev/null | FileCheck --check-prefix=LOWERED --implicit-check-not=__enzyme_autodiff %s
-; RUN: not --crash %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-generate -poseidon-cache=%t/byname -S -o /dev/null 2>&1 | FileCheck --check-prefix=BYNAME %s
+; RUN: not %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-generate -poseidon-cache=%t/byname -S -o /dev/null 2>&1 | FileCheck --check-prefix=BYNAME %s
 ; REQUIRES: poseidon, enzyme
 ; Profile generation of a device module in an LTO pre-link pipeline, the phase
 ; every HIP device compile is in. Enzyme leaves derivative requests to the
@@ -11,10 +11,13 @@
 ; -enzyme-lto-prelink is given, and a HIP device link loads no plugin, so the
 ; probes' request has to be lowered in this compile: with the flag it is, and
 ; without it the pass says why it was not. Run by pipeline name the pass is not
-; told its phase and names the deferral only as a possibility. The kernel is
-; the one of annotated_kernel_nvptx.ll.
+; told its phase and names the deferral only as a possibility. Either way this
+; is a configuration error, not a crash: the frontend exits with status 1, not
+; clang's crash status, and no reproducer is written. The kernel is the one of
+; annotated_kernel_nvptx.ll.
 
 ; DEFERRED: Poseidon: profile generation emitted a derivative request that nothing lowered. This is an LTO pre-link compile, where Enzyme leaves derivative requests to the post-link run unless -enzyme-lto-prelink is given; pass -mllvm -enzyme-lto-prelink=1
+; DEFERRED: exit status 1
 
 ; LOWERED: define {{.*}}@diffepreprocess_fms_kernel_poseidon_body(
 

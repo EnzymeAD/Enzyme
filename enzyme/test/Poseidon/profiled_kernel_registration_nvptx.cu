@@ -48,7 +48,7 @@ POSEIDON_OPTIMIZE __global__ void norm2(const double *a, double *y) {
 // MANIFEST-DAG: "profile": "preprocess__Z5norm2PKdPd_poseidon_body"
 // MANIFEST-DAG: "_Z5scalePdd": {
 // MANIFEST-DAG: "profile": "preprocess__Z5scalePdd_poseidon_body"
-// MANIFEST-DAG: "header": "SiteId = {{[0-9]+}}\nCanonicalHash = {{[0-9a-f]+}}\n"
+// MANIFEST-DAG: "header": "SiteId = {{[0-9]+}}\nCanonicalHash = {{[0-9a-f]+}}\nProfileFormat = 2\n"
 
 // HOST: @llvm.global_ctors = {{.*}}{ i32 0, ptr @poseidon_register_static_preprocess__Z5norm2PKdPd_poseidon_body, ptr null }, { i32, ptr, ptr } { i32 0, ptr @poseidon_register_static_preprocess__Z5scalePdd_poseidon_body, ptr null }]
 // HOST-LABEL: define internal void @poseidon_register_static_preprocess__Z5norm2PKdPd_poseidon_body()

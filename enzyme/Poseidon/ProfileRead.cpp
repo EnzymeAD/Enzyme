@@ -22,6 +22,7 @@
 
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallString.h"
+#include "llvm/ADT/StringMap.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/InstIterator.h"
@@ -30,6 +31,7 @@
 #include "llvm/IR/Metadata.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/VersionTuple.h"
 #include "llvm/TargetParser/Triple.h"
@@ -374,6 +376,31 @@ bool isNeverExecutedProfile(const std::string &profilePath) {
     marked |= line == "Executed = 0";
   }
   return marked;
+}
+
+bool profileDirNamesFormat(StringRef dir) {
+  static StringMap<bool> known;
+  auto [it, inserted] = known.try_emplace(dir, false);
+  if (!inserted)
+    return it->second;
+  std::error_code EC;
+  for (sys::fs::directory_iterator entry(dir, EC), end; !EC && entry != end;
+       entry.increment(EC)) {
+    if (sys::path::extension(entry->path()) != ".fpprofile")
+      continue;
+    std::ifstream file(entry->path());
+    std::string line;
+    while (std::getline(file, line)) {
+      StringRef rest = StringRef(line).trim();
+      if (!rest.empty() &&
+          rest.find_first_not_of("0123456789") == StringRef::npos)
+        break;
+      if (rest.consume_front(kProfileFormatKey) &&
+          rest.ltrim().starts_with("="))
+        return it->second = true;
+    }
+  }
+  return false;
 }
 
 void requireCanonicalHash(const FunctionProfileHeader &header,

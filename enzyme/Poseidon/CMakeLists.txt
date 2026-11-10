@@ -86,21 +86,31 @@ target_link_libraries(${POSEIDON_PLUGIN_TARGET} PRIVATE MPFR::MPFR)
 # that decides what the matrix accuracy model returns. Hashed when they change,
 # not when the build is configured.
 set(POSEIDON_ACCURACY_MODEL_FILES MatmulAccuracy.cpp FPKind.h FPKind.cpp)
-file(GLOB POSEIDON_PASS_FILES CONFIGURE_DEPENDS
-     ${CMAKE_CURRENT_SOURCE_DIR}/*.cpp ${CMAKE_CURRENT_SOURCE_DIR}/*.h)
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/PassSources.cmake)
+poseidon_pass_sources(POSEIDON_PASS_FILES ${CMAKE_CURRENT_SOURCE_DIR}
+                      ${CMAKE_CURRENT_BINARY_DIR} CONFIGURE_DEPENDS)
+list(TRANSFORM POSEIDON_PASS_FILES PREPEND ${CMAKE_CURRENT_SOURCE_DIR}/)
+# A source removed or moved leaves no newer time stamp behind, so the list is a
+# dependency too; GENERATE rewrites it only when it changes.
+string(REPLACE ";" "\n" _poseidon_pass_list "${POSEIDON_PASS_FILES}")
+file(GENERATE OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/identity/PassSources.txt
+     CONTENT "${_poseidon_pass_list}\n")
 set(POSEIDON_BUILD_IDENTITY ${CMAKE_CURRENT_BINARY_DIR}/identity/BuildIdentity.h)
 string(REPLACE ";" "," _poseidon_accuracy_arg "${POSEIDON_ACCURACY_MODEL_FILES}")
 add_custom_command(
   OUTPUT ${POSEIDON_BUILD_IDENTITY}
   COMMAND
     ${CMAKE_COMMAND} -DPASS_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+    -DBINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}
     -DACCURACY_FILES=${_poseidon_accuracy_arg}
     -DEQUIVALENTS=${CMAKE_CURRENT_SOURCE_DIR}/MatmulAccuracyEquivalents.txt
     -DOUT=${POSEIDON_BUILD_IDENTITY} -P
     ${CMAKE_CURRENT_SOURCE_DIR}/cmake/BuildIdentity.cmake
   DEPENDS ${POSEIDON_PASS_FILES}
+          ${CMAKE_CURRENT_BINARY_DIR}/identity/PassSources.txt
           ${CMAKE_CURRENT_SOURCE_DIR}/MatmulAccuracyEquivalents.txt
           ${CMAKE_CURRENT_SOURCE_DIR}/cmake/BuildIdentity.cmake
+          ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PassSources.cmake
   VERBATIM)
 add_custom_target(poseidon_build_identity DEPENDS ${POSEIDON_BUILD_IDENTITY})
 add_dependencies(${POSEIDON_PLUGIN_TARGET} poseidon_build_identity)
@@ -410,9 +420,9 @@ endif()
 
 # Every HIP device compile is an LTO pre-link compile, in which Enzyme leaves a
 # derivative request to the post-link run unless told otherwise, and the device
-# link loads no plugin. poseidon-clang and the package's
-# Poseidon::ProfileGenerate give this option to the HIP compiles that load
-# Enzyme.
+# link loads no plugin. poseidon-clang gives this option to the HIP compiles
+# that load Enzyme; the package exports it as POSEIDON_ENZYME_OPTIONS and
+# Poseidon::EnzymeOptions, and Poseidon::ProfileGenerate carries it.
 set(POSEIDON_ENZYME_HIP_OPTION "-enzyme-lto-prelink=1")
 
 # The Enzyme plugin of this build tree differentiates the profiling probes.
