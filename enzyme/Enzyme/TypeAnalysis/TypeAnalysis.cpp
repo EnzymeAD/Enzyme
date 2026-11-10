@@ -1169,6 +1169,227 @@ const TypeTree &TypeAnalyzer::getAnalysis(Value *Val) {
   // return TypeTree();
 }
 
+/// Populate `AllocationSize` with the exact non-zero byte size of stack or
+/// standard heap allocations whose size is a compile-time constant.
+static bool getKnownAllocationSize(const Value *Val, const DataLayout &DL,
+                                   const TargetLibraryInfo &TLI,
+                                   size_t &AllocationSize) {
+  if (const auto *Alloca = dyn_cast<AllocaInst>(Val)) {
+    if (!Alloca->getAllocatedType()->isSized())
+      return false;
+    const auto *ArrayCount = dyn_cast<ConstantInt>(Alloca->getArraySize());
+    if (!ArrayCount || ArrayCount->getBitWidth() > 64)
+      return false;
+    uint64_t Count = ArrayCount->getZExtValue();
+    uint64_t ElementBytes = DL.getTypeAllocSize(Alloca->getAllocatedType());
+    if (Count == 0 || ElementBytes == 0 ||
+        Count > std::numeric_limits<size_t>::max() / ElementBytes)
+      return false;
+    AllocationSize = static_cast<size_t>(Count * ElementBytes);
+    return true;
+  }
+
+  const auto *Call = dyn_cast<CallBase>(Val);
+  if (!Call || !Call->getType()->isPointerTy())
+    return false;
+
+  CallBase *MutableCall = const_cast<CallBase *>(Call);
+  if (!getFunctionFromCall(MutableCall))
+    return false;
+
+  StringRef FuncName = getFuncNameFromCall(MutableCall);
+  if (!isAllocationFunction(FuncName, TLI))
+    return false;
+
+  if (shadowHandlers.find(FuncName) != shadowHandlers.end() ||
+      FuncName == "swift_allocObject" || FuncName == "enzyme_allocator" ||
+      FuncName == "_mlir_memref_to_llvm_alloc" ||
+      FuncName == "__size_returning_new_experiment" ||
+      FuncName == "julia.gc_alloc_obj" || FuncName == "jl_gc_alloc_typed" ||
+      FuncName == "ijl_gc_alloc_typed")
+    return false;
+
+  if (FuncName == "calloc") {
+    if (Call->arg_size() < 2)
+      return false;
+    const auto *CountArg = dyn_cast<ConstantInt>(Call->getArgOperand(0));
+    const auto *SizeArg = dyn_cast<ConstantInt>(Call->getArgOperand(1));
+    if (!CountArg || !SizeArg || CountArg->getBitWidth() > 64 ||
+        SizeArg->getBitWidth() > 64)
+      return false;
+    uint64_t Count = CountArg->getZExtValue();
+    uint64_t ElementBytes = SizeArg->getZExtValue();
+    if (Count == 0 || ElementBytes == 0 ||
+        Count > std::numeric_limits<size_t>::max() / ElementBytes)
+      return false;
+    AllocationSize = static_cast<size_t>(Count * ElementBytes);
+    return true;
+  }
+
+  unsigned SizeArgIndex = FuncName == "aligned_alloc" ? 1 : 0;
+  if (Call->arg_size() <= SizeArgIndex)
+    return false;
+  const auto *SizeArg =
+      dyn_cast<ConstantInt>(Call->getArgOperand(SizeArgIndex));
+  if (!SizeArg || SizeArg->getBitWidth() > 64)
+    return false;
+  uint64_t Bytes = SizeArg->getZExtValue();
+  if (Bytes == 0 || Bytes > std::numeric_limits<size_t>::max())
+    return false;
+  AllocationSize = static_cast<size_t>(Bytes);
+  return true;
+}
+
+/// Drop dereferenced byte offsets at or beyond `AllocationSize` from `Tree`.
+static void clipOutOfBoundsAllocationOffsets(TypeTree &Tree,
+                                             size_t AllocationSize) {
+  bool HasOutOfBounds = false;
+  for (const auto &Entry : Tree.getMapping()) {
+    if (Entry.first.size() >= 2 &&
+        (Entry.first[0] == -1 || Entry.first[0] == 0) && Entry.first[1] >= 0 &&
+        static_cast<size_t>(Entry.first[1]) >= AllocationSize) {
+      HasOutOfBounds = true;
+      break;
+    }
+  }
+  if (!HasOutOfBounds)
+    return;
+
+  TypeTree Clipped;
+  for (const auto &Entry : Tree.getMapping()) {
+    if (Entry.first.size() >= 2 &&
+        (Entry.first[0] == -1 || Entry.first[0] == 0) && Entry.first[1] >= 0 &&
+        static_cast<size_t>(Entry.first[1]) >= AllocationSize)
+      continue;
+    Clipped.insert(Entry.first, Entry.second);
+  }
+  Tree = std::move(Clipped);
+}
+
+/// Check whether `Tree` only carries pointer-compatible root entries so
+/// `KeepMinusOne` will not mask a root type conflict.
+static bool hasOnlyPointerCompatibleRoots(const TypeTree &Tree) {
+  for (const auto &Entry : Tree.getMapping()) {
+    assert(!Entry.first.empty() && "Expected non-empty TypeTree index path");
+    if (Entry.first.size() == 1 && Entry.second != BaseType::Pointer &&
+        Entry.second != BaseType::Anything)
+      return false;
+    if (Entry.first[0] != -1 && Entry.first[0] != 0)
+      return false;
+  }
+  return true;
+}
+
+/// Detect pointer updates stored into `Store`'s destination slot where the
+/// stored pointer advances a value loaded from or previously stored into that
+/// same slot across a loop recurrence, which would otherwise pump fixed pointee
+/// offsets upward around the slot on every worklist iteration.
+static bool isShiftedPointerFromSameSlot(const StoreInst &Store,
+                                         const DataLayout &DL,
+                                         const LoopInfo &LI) {
+  const Value *StoredVal = Store.getValueOperand();
+  if (!StoredVal->getType()->isPointerTy())
+    return false;
+
+  const Value *StorePtr = Store.getPointerOperand();
+  unsigned StoreIndexBits = DL.getIndexTypeSizeInBits(StorePtr->getType());
+  APInt StoreOffset(StoreIndexBits, 0);
+  const Value *StoreConstBase = StorePtr->stripAndAccumulateConstantOffsets(
+      DL, StoreOffset, /*AllowNonInbounds=*/true);
+  const Value *StoreRoot = getBaseObject(const_cast<Value *>(StorePtr));
+
+  auto RefersToSameSlot = [&](const Value *CandidatePtr) {
+    unsigned CandidateBits = DL.getIndexTypeSizeInBits(CandidatePtr->getType());
+    APInt CandidateOffset(CandidateBits, 0);
+    const Value *CandidateBase =
+        CandidatePtr->stripAndAccumulateConstantOffsets(
+            DL, CandidateOffset, /*AllowNonInbounds=*/true);
+    if (CandidateBase == StoreConstBase)
+      return CandidateBits == StoreIndexBits && CandidateOffset == StoreOffset;
+    return !isa<GEPOperator>(CandidateBase) &&
+           !isa<GEPOperator>(StoreConstBase) &&
+           getBaseObject(const_cast<Value *>(CandidatePtr)) == StoreRoot;
+  };
+
+  SmallPtrSet<const Value *, 4> OtherValuesStoredInSlot;
+  auto CollectSlotStores = [&](const Value *PtrUserSource) {
+    for (const User *Usr : PtrUserSource->users()) {
+      if (const auto *OtherStore = dyn_cast<StoreInst>(Usr)) {
+        if (OtherStore != &Store &&
+            OtherStore->getValueOperand() != StoredVal &&
+            RefersToSameSlot(OtherStore->getPointerOperand()))
+          OtherValuesStoredInSlot.insert(OtherStore->getValueOperand());
+      }
+    }
+  };
+  CollectSlotStores(StorePtr);
+  if (StoreConstBase != StorePtr) {
+    CollectSlotStores(StoreConstBase);
+    for (const User *Usr : StoreConstBase->users()) {
+      if (isa<GEPOperator>(Usr) && Usr != StorePtr)
+        CollectSlotStores(Usr);
+    }
+  }
+
+  struct WalkState {
+    const Value *Current;
+    bool SawNonZeroShift;
+    bool SawLoopPhi;
+  };
+
+  SmallVector<WalkState, 8> Worklist;
+  SmallPtrSet<const Value *, 8> VisitedStates[4];
+  Worklist.push_back({StoredVal, false, false});
+
+  while (!Worklist.empty()) {
+    WalkState State = Worklist.pop_back_val();
+    unsigned StateMask =
+        (State.SawNonZeroShift ? 1U : 0U) | (State.SawLoopPhi ? 2U : 0U);
+    if (!VisitedStates[StateMask].insert(State.Current).second)
+      continue;
+
+    if (State.SawNonZeroShift && State.SawLoopPhi &&
+        OtherValuesStoredInSlot.contains(State.Current))
+      return true;
+
+    if (const auto *GEP = dyn_cast<GEPOperator>(State.Current)) {
+      bool Shifted = State.SawNonZeroShift || !GEP->hasAllZeroIndices();
+      Worklist.push_back({GEP->getPointerOperand(), Shifted, State.SawLoopPhi});
+      continue;
+    }
+
+    if (const auto *Cast = dyn_cast<CastInst>(State.Current)) {
+      if (Cast->getOperand(0)->getType()->isPointerTy())
+        Worklist.push_back(
+            {Cast->getOperand(0), State.SawNonZeroShift, State.SawLoopPhi});
+      continue;
+    }
+
+    if (const auto *Phi = dyn_cast<PHINode>(State.Current)) {
+      bool InLoop =
+          State.SawLoopPhi || LI.getLoopFor(Phi->getParent()) != nullptr;
+      for (const Value *Incoming : Phi->incoming_values())
+        Worklist.push_back({Incoming, State.SawNonZeroShift, InLoop});
+      continue;
+    }
+
+    if (const auto *Select = dyn_cast<SelectInst>(State.Current)) {
+      Worklist.push_back(
+          {Select->getTrueValue(), State.SawNonZeroShift, State.SawLoopPhi});
+      Worklist.push_back(
+          {Select->getFalseValue(), State.SawNonZeroShift, State.SawLoopPhi});
+      continue;
+    }
+
+    if (const auto *Load = dyn_cast<LoadInst>(State.Current)) {
+      if (State.SawNonZeroShift && RefersToSameSlot(Load->getPointerOperand()))
+        return true;
+    }
+  }
+
+  return false;
+}
+
 void TypeAnalyzer::updateAnalysis(Value *Val, ConcreteType Data,
                                   Value *Origin) {
   updateAnalysis(Val, TypeTree(Data), Origin);
@@ -1306,6 +1527,7 @@ void TypeAnalyzer::updateAnalysis(Value *Val, TypeTree Data, Value *Origin) {
   auto RegSize = (DL.getTypeSizeInBits(Val->getType()) + 7) / 8;
   Data.CanonicalizeInPlace(RegSize, DL);
 
+  size_t KnownAllocationSize = 0;
   if (auto GV = dyn_cast<GlobalVariable>(Val)) {
     if (!isa<StructType>(GV->getValueType()) ||
         !cast<StructType>(GV->getValueType())->isOpaque()) {
@@ -1321,6 +1543,8 @@ void TypeAnalyzer::updateAnalysis(Value *Val, TypeTree Data, Value *Origin) {
                      << " for global of size " << allocSize << "\n";
       }
     }
+  } else if (getKnownAllocationSize(Val, DL, TLI, KnownAllocationSize)) {
+    clipOutOfBoundsAllocationOffsets(Data, KnownAllocationSize);
   }
 
   bool Changed =
@@ -2143,11 +2367,17 @@ void TypeAnalyzer::visitStoreInst(StoreInst &I) {
     // to a nullptr which has type [-1, -1]: Anything. While storing to a
     // nullptr is obviously bad, this doesn't mean the value we're storing is an
     // Anything
-    updateAnalysis(I.getValueOperand(),
-                   getAnalysis(I.getPointerOperand())
-                       .PurgeAnything()
-                       .Lookup(StoreSize, DL),
-                   &I);
+    TypeTree ValueFromPointer = getAnalysis(I.getPointerOperand())
+                                    .PurgeAnything()
+                                    .Lookup(StoreSize, DL);
+    if (isShiftedPointerFromSameSlot(I, DL, LI) &&
+        hasOnlyPointerCompatibleRoots(ValueFromPointer)) {
+      bool LegalKeep = true;
+      TypeTree RepeatedOnly = ValueFromPointer.KeepMinusOne(LegalKeep);
+      if (LegalKeep)
+        ValueFromPointer = std::move(RepeatedOnly);
+    }
+    updateAnalysis(I.getValueOperand(), ValueFromPointer, &I);
   }
 }
 
@@ -6233,18 +6463,10 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
       }
       assert(ci->getReturnType()->isPointerTy());
       auto ptr = TypeTree(BaseType::Pointer);
-      if (shadowHandlers.find(funcName) == shadowHandlers.end() &&
-          funcName != "swift_allocObject") {
-        // aligned_alloc(alignment, size) takes the size second.
-        if (auto CI = dyn_cast<ConstantInt>(
-                call.getOperand(funcName == "aligned_alloc" ? 1 : 0))) {
-          auto &DL =
-              call.getParent()->getParent()->getParent()->getDataLayout();
-          auto LoadSize = CI->getZExtValue();
-          // Only propagate mappings in range that aren't "Anything" into the
-          // pointer
-          ptr |= getAnalysis(&call).Lookup(LoadSize, DL);
-        }
+      auto &DL = call.getParent()->getParent()->getParent()->getDataLayout();
+      size_t LoadSize = 0;
+      if (getKnownAllocationSize(&call, DL, TLI, LoadSize)) {
+        ptr |= getAnalysis(&call).Lookup(LoadSize, DL);
       }
       updateAnalysis(&call, ptr.Only(-1, &call), &call);
       return;
