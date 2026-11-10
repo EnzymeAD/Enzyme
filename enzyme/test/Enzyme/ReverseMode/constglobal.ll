@@ -98,41 +98,14 @@ attributes #6 = { mustprogress noinline norecurse optnone uwtable "frame-pointer
 !4 = !{i32 7, !"frame-pointer", i32 2}
 !5 = !{!"clang version 16.0.6 (https://github.com/llvm/llvm-project.git 7cbf1a2591520c2491aa35339f227775f4d3adf6)"}
 
+; The constructor only stores the (constant) vtable pointer into `this`, which
+; is now deduced writeonly, so `sys` is inactive and the constructor is
+; replayed as is (no shadow object or shadow vtable is needed).
 ; CHECK: define internal void @diffe_Z8simulatev(double %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %"sys'ipa" = alloca %class.Test, align 8
-; CHECK-NEXT:   store %class.Test zeroinitializer, ptr %"sys'ipa", align 8
 ; CHECK-NEXT:   %sys = alloca %class.Test, align 8
-; CHECK-NEXT:   br label %invertentry
-
-; CHECK: invertentry:                                      ; preds = %entry
-; CHECK-NEXT:   call void @diffe_ZN4TestC2Ev(ptr align 8 %sys, ptr align 8 %"sys'ipa")
-; CHECK-NEXT:   ret void
-; CHECK-NEXT: }
-
-; CHECK: define internal void @diffe_ZN4TestC2Ev(ptr noundef nonnull align 8 dereferenceable(8) %this, ptr align 8 %"this'")
-; CHECK-NEXT: entry:
-; CHECK-NEXT:   store ptr getelementptr inbounds ({ [3 x ptr] }, ptr @_ZTV4Test_shadow, i32 0, inrange i32 0, i32 2), ptr %"this'", align 8, !alias.scope ![[ASC:[0-9]+]], !noalias ![[NA:[0-9]+]]
-; CHECK-NEXT:   store ptr getelementptr inbounds ({ [3 x ptr] }, ptr @_ZTV4Test, i32 0, inrange i32 0, i32 2), ptr %this, align 8, !alias.scope ![[NA]], !noalias ![[ASC]]
+; CHECK-NEXT:   call void @nofree__ZN4TestC2Ev(ptr noundef nonnull align 8 dereferenceable(8) %sys)
 ; CHECK-NEXT:   br label %invertentry
 
 ; CHECK: invertentry:                                      ; preds = %entry
 ; CHECK-NEXT:   ret void
-; CHECK-NEXT: }
-
-; CHECK: define internal ptr @augmented__ZN4Test12test_virtualEv(ptr noundef nonnull align 8 dereferenceable(8) %this, ptr align 8 %"this'")
-; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = alloca ptr, align 8
-; CHECK-NEXT:   store ptr null, ptr %0, align 8
-; CHECK-NEXT:   %1 = load ptr, ptr %0, align 8
-; CHECK-NEXT:   ret ptr %1
-; CHECK-NEXT: }
-
-; CHECK: define internal void @diffe_ZN4Test12test_virtualEv(ptr align 8 %this, ptr align 8 %"this'", ptr %tapeArg)
-; CHECK-NEXT: entry:
-; CHECK-NEXT:   tail call void @free(ptr nonnull %tapeArg)
-; CHECK-NEXT:   br label %invertentry
-
-; CHECK: invertentry:                                      ; preds = %entry
-; CHECK-NEXT:   ret void
-; CHECK-NEXT: }

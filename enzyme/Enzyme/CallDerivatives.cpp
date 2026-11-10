@@ -3914,8 +3914,9 @@ bool AdjointGenerator::handleKnownCallDerivatives(
                   gutils->getWidth() == 1
                       ? anti
                       : GradientUtils::extractMeta(Builder2, anti, i);
-              cast<Instruction>(anti_i)->setMetadata(
-                  "enzyme_cache_alloc", MDNode::get(CI->getContext(), {ident}));
+              if (auto *antiInst = dyn_cast<Instruction>(anti_i))
+                antiInst->setMetadata("enzyme_cache_alloc",
+                                      MDNode::get(CI->getContext(), {ident}));
               CI->setMetadata("enzyme_cache_free",
                               MDNode::get(CI->getContext(), {ident}));
             }
