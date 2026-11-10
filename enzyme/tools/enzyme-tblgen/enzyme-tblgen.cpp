@@ -2690,15 +2690,18 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
     if (intrinsic != MLIRDerivatives) {
       os << "      case DerivativeMode::ReverseModeGradient:\n";
       os << "      case DerivativeMode::ReverseModeCombined:{\n";
-      os << "        IRBuilder<> Builder2(&" << origName << ");\n";
-      os << "        getReverseBuilder(Builder2);\n";
-      os << "        Value *dif = nullptr;\n";
+      os << "        if (!gutils->isConstantInstruction(&" << origName
+         << ")) {\n";
+      os << "          IRBuilder<> Builder2(&" << origName << ");\n";
+      os << "          getReverseBuilder(Builder2);\n";
+      os << "          Value *dif = nullptr;\n";
+      emitReverseCommon(os, pattern, tree, intrinsic, origName, argOps);
+      os << "        }\n";
     } else {
       os << "};\n";
       emitMLIRReverse(os, pattern, tree, intrinsic, origName, argOps);
+      emitReverseCommon(os, pattern, tree, intrinsic, origName, argOps);
     }
-
-    emitReverseCommon(os, pattern, tree, intrinsic, origName, argOps);
 
     if (intrinsic != MLIRDerivatives) {
       os << "        auto found = gutils->invertedPointers.find(&(" << origName

@@ -1866,6 +1866,129 @@ public:
     }
   }
 
+  void visitFreezeInst(llvm::FreezeInst &inst) {
+    using namespace llvm;
+
+    eraseIfUnused(inst);
+
+    switch (Mode) {
+    case DerivativeMode::ReverseModePrimal:
+      return;
+    case DerivativeMode::ReverseModeCombined:
+    case DerivativeMode::ReverseModeGradient: {
+      if (gutils->isConstantInstruction(&inst) ||
+          gutils->isConstantValue(&inst))
+        return;
+      if (inst.getType()->isPointerTy())
+        return;
+
+      Value *orig_op0 = inst.getOperand(0);
+      IRBuilder<> Builder2(&inst);
+      getReverseBuilder(Builder2);
+
+      if (!gutils->isConstantValue(orig_op0)) {
+        auto rule = [&](Value *idiff) { return Builder2.CreateFreeze(idiff); };
+
+        if (orig_op0->getType()->isFPOrFPVectorTy()) {
+          Value *idiff = diffe(&inst, Builder2);
+          Value *dif1 =
+              applyChainRule(orig_op0->getType(), Builder2, rule, idiff);
+          setDiffe(
+              &inst,
+              Constant::getNullValue(gutils->getShadowType(inst.getType())),
+              Builder2);
+          addToDiffe(orig_op0, dif1, Builder2,
+                     orig_op0->getType()->getScalarType());
+          return;
+        }
+
+        auto &dl = gutils->newFunc->getParent()->getDataLayout();
+        size_t size = 1;
+        if (orig_op0->getType()->isSized())
+          size = (dl.getTypeSizeInBits(orig_op0->getType()) + 7) / 8;
+
+        if (TR.query(orig_op0)[{-1}] == BaseType::Integer &&
+            TR.query(&inst)[{-1}] == BaseType::Integer)
+          return;
+
+        const auto &TT = TR.query(orig_op0);
+        unsigned start = 0;
+        Value *dif1 = nullptr;
+        while (1) {
+          unsigned nextStart = size;
+          auto dt = TT[{-1}];
+          for (size_t i = start; i < size;) {
+            auto nex = TT[{(int)i}];
+            if ((nex == BaseType::Anything && dt.isFloat()) ||
+                (dt == BaseType::Anything && nex.isFloat())) {
+              nextStart = i;
+              break;
+            }
+            bool Legal = true;
+            dt.checkedOrIn(nex, /*PointerIntSame*/ true, Legal);
+            if (!Legal) {
+              nextStart = i;
+              break;
+            }
+            if (auto fltType = dt.isFloat()) {
+              i += dl.getTypeSizeInBits(fltType) / 8;
+            } else if (dt == BaseType::Pointer) {
+              i += dl.getPointerSizeInBits() / 8;
+            } else {
+              i++;
+            }
+          }
+          Type *flt = dt.isFloat();
+          if (!dt.isKnown()) {
+            bool found = false;
+            if (looseTypeAnalysis) {
+              if (orig_op0->getType()->isIntOrIntVectorTy() ||
+                  orig_op0->getType()->isPointerTy()) {
+                EmitWarning("CannotDeduceType", inst,
+                            "failed to deduce adding type of freeze ", inst,
+                            " assumed integral");
+                flt = nullptr;
+                found = true;
+              }
+            }
+            if (!found) {
+              std::string str;
+              raw_string_ostream ss(str);
+              ss << "Cannot deduce adding type (freeze) of " << inst
+                 << " size: " << size << " TT: " << TT.str();
+              EmitNoTypeError(str, inst, gutils, Builder2);
+            }
+          }
+          if (flt) {
+            if (!dif1) {
+              Value *idiff = diffe(&inst, Builder2);
+              dif1 = applyChainRule(orig_op0->getType(), Builder2, rule, idiff);
+            }
+            ((DiffeGradientUtils *)gutils)
+                ->addToDiffe(orig_op0, dif1, Builder2, flt, start,
+                             nextStart - start);
+          }
+          if (nextStart == size)
+            break;
+          start = nextStart;
+        }
+      }
+
+      if (((DiffeGradientUtils *)gutils)->differentials.count(&inst))
+        setDiffe(&inst,
+                 Constant::getNullValue(gutils->getShadowType(inst.getType())),
+                 Builder2);
+      return;
+    }
+    case DerivativeMode::ForwardModeSplit:
+    case DerivativeMode::ForwardMode:
+    case DerivativeMode::ForwardModeError: {
+      forwardModeInvertedPointerFallback(inst);
+      return;
+    }
+    }
+  }
+
   void visitSelectInst(llvm::SelectInst &SI) {
     eraseIfUnused(SI);
 

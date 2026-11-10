@@ -429,7 +429,7 @@ inline bool is_value_needed_in_reverse(
     // If a primal value is needed to compute a shadow pointer (e.g. int offset
     // in gep), it needs preserving.
     bool primalUsedInShadowPointer = true;
-    if (isa<CastInst>(user) || isa<LoadInst>(user))
+    if (isa<CastInst>(user) || isa<FreezeInst>(user) || isa<LoadInst>(user))
       primalUsedInShadowPointer = false;
     if (auto CI = dyn_cast<CallInst>(user)) {
       auto funcName = getFuncNameFromCall(CI);

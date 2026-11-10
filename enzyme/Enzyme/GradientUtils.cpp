@@ -6210,18 +6210,19 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         std::make_pair((const Value *)oval, InvertedPointerVH(this, shadow)));
     return shadow;
   } else if (auto arg = dyn_cast<FreezeInst>(oval)) {
-    IRBuilder<> bb(getNewFromOriginal(arg));
+    IRBuilder<> bb(arg);
+    getForwardBuilder(bb);
     Value *invertOp = invertPointerM(arg->getOperand(0), bb, TT);
     Type *shadowTy = arg->getType();
 
     if (mode == DerivativeMode::ReverseModeCombined ||
         mode == DerivativeMode::ReverseModePrimal ||
         mode == DerivativeMode::ReverseModeGradient) {
-      if (TT.allFloat(oval, DL)) {
+      if (arg->getType()->isFPOrFPVectorTy() || TT.allFloat(oval, DL)) {
         return Constant::getNullValue(getShadowType(oval->getType()));
       }
+      assert(!arg->getType()->isFPOrFPVectorTy());
     }
-    assert(!arg->getType()->isDoubleTy());
 
     auto rule = [&](Value *invertOp) {
       return bb.CreateFreeze(invertOp, arg->getName() + "'ipf");

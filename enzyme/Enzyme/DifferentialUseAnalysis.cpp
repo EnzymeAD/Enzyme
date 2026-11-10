@@ -327,7 +327,7 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
 
   if (!shadow)
     if (isa<CmpInst>(user) || isAnyBranch(user) || isa<ReturnInst>(user) ||
-        isa<FPExtInst>(user) || isa<FPTruncInst>(user)
+        isa<FPExtInst>(user) || isa<FPTruncInst>(user) || isa<FreezeInst>(user)
         // isa<ExtractElement>(use) ||
         // isa<InsertElementInst>(use) || isa<ShuffleVectorInst>(use) ||
         // isa<ExtractValueInst>(use) || isa<AllocaInst>(use)
@@ -770,6 +770,7 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
         mode == DerivativeMode::ForwardModeError ||
         (!isa<ExtractValueInst>(user) && !isa<ExtractElementInst>(user) &&
          !isa<InsertValueInst>(user) && !isa<InsertElementInst>(user) &&
+         !isa<FreezeInst>(user) &&
          !isPointerArithmeticInst(user, /*includephi*/ false,
                                   /*includebin*/ false))) {
 
