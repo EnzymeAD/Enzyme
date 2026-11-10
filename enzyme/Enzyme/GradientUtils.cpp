@@ -156,6 +156,52 @@ static bool isPotentialLastLoopValue(llvm::Value *val,
   return false;
 }
 
+/// Return whether an expression can be evaluated at `ContextBlock` without
+/// introducing undefined behavior or poison on paths that bypassed it.
+static bool canSpeculativelyEvaluate(const GradientUtils &GUtils,
+                                     const LoopInfo &Loops, Value *RootValue,
+                                     const BasicBlock *ContextBlock) {
+  SmallPtrSet<const Value *, 8> Visited;
+  SmallVector<Value *, 8> Worklist = {RootValue};
+  while (!Worklist.empty()) {
+    Value *Current = Worklist.pop_back_val();
+    if (!Visited.insert(Current).second)
+      continue;
+    if (isa<UndefValue>(Current))
+      return false;
+    auto *Inst = dyn_cast<Instruction>(Current);
+    if (!Inst)
+      continue;
+    if (Inst->getParent() == GUtils.inversionAllocs)
+      continue;
+    if (GUtils.DT.getNode(Inst->getParent()) &&
+        GUtils.DT.getNode(ContextBlock) &&
+        GUtils.DT.dominates(Inst, ContextBlock) &&
+        !isPotentialLastLoopValue(Inst, ContextBlock, Loops))
+      continue;
+    if (const Value *Orig = GUtils.isOriginal(Inst)) {
+      auto Found = GUtils.knownRecomputeHeuristic.find(Orig);
+      if (Found != GUtils.knownRecomputeHeuristic.end() && !Found->second)
+        return false;
+    }
+    if (!(isa<FreezeInst>(Inst) || isa<CastInst>(Inst) ||
+          isa<ExtractValueInst>(Inst) || isa<InsertValueInst>(Inst) ||
+          isa<ExtractElementInst>(Inst) || isa<InsertElementInst>(Inst) ||
+          isa<ShuffleVectorInst>(Inst) || isa<BinaryOperator>(Inst) ||
+          isa<CmpInst>(Inst) || isa<SelectInst>(Inst) ||
+          isa<GetElementPtrInst>(Inst) ||
+          (isa<UnaryOperator>(Inst) &&
+           cast<UnaryOperator>(Inst)->getOpcode() == Instruction::FNeg)))
+      return false;
+    if (!isSafeToSpeculativelyExecute(Inst) ||
+        canCreateUndefOrPoison(cast<Operator>(Inst)))
+      return false;
+    for (Value *Operand : Inst->operands())
+      Worklist.push_back(Operand);
+  }
+  return true;
+}
+
 GradientUtils::GradientUtils(
     EnzymeLogic &Logic, Function *newFunc_, Function *oldFunc_,
     TargetLibraryInfo &TLI_, TypeAnalysis &TA_, TypeResults TR_,
@@ -1928,17 +1974,60 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
             if (!bi1) {
               goto endCheck;
             }
+            auto bi2 = (isAnyBranch(subblock->getTerminator())
+                            ? cast<Instruction>(subblock->getTerminator())
+                            : nullptr);
+            if (!bi2) {
+              goto endCheck;
+            }
 
             auto cond1 = getOp(getBranchCondition(bi1));
             if (cond1 == nullptr) {
-              assert(unwrapMode != UnwrapMode::LegalFullUnwrap);
+              assert(unwrapMode != UnwrapMode::LegalFullUnwrap &&
+                     "failed to unwrap dominating split condition");
               goto endCheck;
             }
-            auto bi2 = cast<Instruction>(subblock->getTerminator());
-            auto cond2 = getOp(getBranchCondition(bi2));
-            if (cond2 == nullptr) {
-              assert(unwrapMode != UnwrapMode::LegalFullUnwrap);
-              goto endCheck;
+
+            BasicBlock *bret = BasicBlock::Create(
+                val->getContext(), oldB->getName() + "_phimerge", newFunc);
+            BasicBlock *bsplit = nullptr;
+            BasicBlock *SplitEnd = nullptr;
+            Value *cond2 = nullptr;
+            if (canSpeculativelyEvaluate(*this, LI, getBranchCondition(bi2),
+                                         phi->getParent())) {
+              cond2 = getOp(getBranchCondition(bi2));
+              if (cond2 == nullptr) {
+                bret->eraseFromParent();
+                assert(unwrapMode != UnwrapMode::LegalFullUnwrap &&
+                       "failed to unwrap secondary split condition");
+                goto endCheck;
+              }
+            } else {
+              bsplit = BasicBlock::Create(
+                  val->getContext(), oldB->getName() + "_phisplt", newFunc);
+              bsplit->moveAfter(oldB);
+              if (reverseBlocks.size() > 0) {
+                if (inReverseBlocks)
+                  reverseBlocks[fwd].push_back(bsplit);
+                reverseBlockToPrimal[bsplit] = fwd;
+              }
+              for (const auto &Entry : unwrap_cache[oldB])
+                unwrap_cache[bsplit].insert(Entry);
+              for (const auto &Entry : lookup_cache[oldB])
+                lookup_cache[bsplit].insert(Entry);
+              IRBuilder<> SplitBuilder(bsplit);
+              SplitBuilder.setFastMathFlags(getFast());
+              BasicBlock *CondScope = scope ? scope : phi->getParent();
+              cond2 =
+                  getOpFull(SplitBuilder, getBranchCondition(bi2), CondScope);
+              if (cond2 == nullptr) {
+                SmallVector<BasicBlock *, 1> SplitBlocks = {bsplit};
+                eraseBlocks(SplitBlocks, bret);
+                assert(unwrapMode != UnwrapMode::LegalFullUnwrap &&
+                       "failed to unwrap guarded secondary split condition");
+                goto endCheck;
+              }
+              SplitEnd = SplitBuilder.GetInsertBlock();
             }
 
             SmallVector<BasicBlock *, 3> predBlocks = {bi2->getSuccessor(0),
@@ -1955,24 +2044,25 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
             SmallVector<BasicBlock *, 2> blocks;
             SmallVector<BasicBlock *, 2> endingBlocks;
 
-            BasicBlock *last = oldB;
-
-            BasicBlock *bret = BasicBlock::Create(
-                val->getContext(), oldB->getName() + "_phimerge", newFunc);
+            BasicBlock *last = SplitEnd ? SplitEnd : oldB;
 
             for (size_t i = 0; i < predBlocks.size(); i++) {
               BasicBlock *valparent = (i < 2) ? subblock : block;
               assert(done.find(std::make_pair(valparent, predBlocks[i])) !=
-                     done.end());
+                         done.end() &&
+                     "missing predecessor edge for split block");
               assert(done[std::make_pair(valparent, predBlocks[i])].size() ==
-                     1);
+                         1 &&
+                     "expected unique predecessor for split edge");
               blocks.push_back(BasicBlock::Create(
                   val->getContext(), oldB->getName() + "_phirc", newFunc));
               blocks[i]->moveAfter(last);
               last = blocks[i];
-              if (inReverseBlocks)
-                reverseBlocks[fwd].push_back(blocks[i]);
-              reverseBlockToPrimal[blocks[i]] = fwd;
+              if (reverseBlocks.size() > 0) {
+                if (inReverseBlocks)
+                  reverseBlocks[fwd].push_back(blocks[i]);
+                reverseBlockToPrimal[blocks[i]] = fwd;
+              }
               IRBuilder<> B(blocks[i]);
 
               for (auto pair : unwrap_cache[oldB])
@@ -2008,23 +2098,32 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
                     getOpFull(BuilderM, phi->getIncomingValueForBlock(PB), PB));
 
               if (!vals[i]) {
+                if (bsplit)
+                  blocks.push_back(bsplit);
                 eraseBlocks(blocks, bret);
-                assert(unwrapMode != UnwrapMode::LegalFullUnwrap);
+                assert(unwrapMode != UnwrapMode::LegalFullUnwrap &&
+                       "failed to unwrap incoming value for three-way phi");
                 goto endCheck;
               }
-              assert(val->getType() == vals[i]->getType());
+              assert(val->getType() == vals[i]->getType() &&
+                     "unwrapped phi operand type mismatch");
               B.CreateBr(bret);
               endingBlocks.push_back(B.GetInsertBlock());
             }
 
             bret->moveAfter(last);
 
-            BasicBlock *bsplit = BasicBlock::Create(
-                val->getContext(), oldB->getName() + "_phisplt", newFunc);
-            bsplit->moveAfter(oldB);
-            if (inReverseBlocks)
-              reverseBlocks[fwd].push_back(bsplit);
-            reverseBlockToPrimal[bsplit] = fwd;
+            if (!bsplit) {
+              bsplit = BasicBlock::Create(
+                  val->getContext(), oldB->getName() + "_phisplt", newFunc);
+              bsplit->moveAfter(oldB);
+              if (reverseBlocks.size() > 0) {
+                if (inReverseBlocks)
+                  reverseBlocks[fwd].push_back(bsplit);
+                reverseBlockToPrimal[bsplit] = fwd;
+              }
+              SplitEnd = bsplit;
+            }
             BuilderM.CreateCondBr(
                 cond1,
                 (done[std::make_pair(block, bi1->getSuccessor(0))].size() == 1)
@@ -2034,13 +2133,15 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
                     ? blocks[2]
                     : bsplit);
 
-            BuilderM.SetInsertPoint(bsplit);
+            BuilderM.SetInsertPoint(SplitEnd);
             BuilderM.CreateCondBr(cond2, blocks[0], blocks[1]);
 
             BuilderM.SetInsertPoint(bret);
-            if (inReverseBlocks)
-              reverseBlocks[fwd].push_back(bret);
-            reverseBlockToPrimal[bret] = fwd;
+            if (reverseBlocks.size() > 0) {
+              if (inReverseBlocks)
+                reverseBlocks[fwd].push_back(bret);
+              reverseBlockToPrimal[bret] = fwd;
+            }
             auto toret = BuilderM.CreatePHI(val->getType(), vals.size());
             for (size_t i = 0; i < vals.size(); i++)
               toret->addIncoming(vals[i], endingBlocks[i]);
@@ -8521,34 +8622,50 @@ void GradientUtils::branchToCorrespondingTarget(
           if (!bi2)
             goto rnextpair;
 
-          // Condition cond1 splits off uniqueTargets[0] from
-          // the remainder of foundTargets.
-          auto cond1 = lookupM(getBranchCondition(bi1), BuilderM);
-
-          // Condition cond2 splits off the two blocks in
-          // (foundTargets-uniqueTargets) from each other.
-          auto cond2 = lookupM(getBranchCondition(bi2), BuilderM);
-
           if (replacePHIs == nullptr) {
+            // Evaluate `bi1` in the current block (it dominates `ctx`), and
+            // defer evaluating `bi2` until inside `staging` so paths that
+            // bypassed `subblock` never execute `bi2`'s condition.
+            auto cond1 = lookupM(getBranchCondition(bi1), BuilderM);
+            BasicBlock *CurrentBlock = BuilderM.GetInsertBlock();
+            BasicBlock *ForwardBlock = CurrentBlock;
+            if (!isOriginalBlock(*ForwardBlock))
+              ForwardBlock = originalForReverseBlock(*ForwardBlock);
+
             BasicBlock *staging =
                 BasicBlock::Create(oldFunc->getContext(), "staging", newFunc);
+            if (reverseBlocks.size() > 0)
+              reverseBlockToPrimal[staging] = ForwardBlock;
+            for (const auto &Entry : unwrap_cache[CurrentBlock])
+              unwrap_cache[staging].insert(Entry);
+            for (const auto &Entry : lookup_cache[CurrentBlock])
+              lookup_cache[staging].insert(Entry);
+
             auto stagingIfNeeded = [&](BasicBlock *B) {
               auto edge = std::make_pair(block, B);
               if (done[edge].size() == 1) {
                 return *done[edge].begin();
               } else {
-                assert(done[edge].size() == 2);
+                assert(done[edge].size() == 2 &&
+                       "expected staging edge to reach both merged targets");
                 return staging;
               }
             };
             BuilderM.CreateCondBr(cond1, stagingIfNeeded(bi1->getSuccessor(0)),
                                   stagingIfNeeded(bi1->getSuccessor(1)));
             BuilderM.SetInsertPoint(staging);
+            auto cond2 = lookupM(getBranchCondition(bi2), BuilderM);
             BuilderM.CreateCondBr(
                 cond2,
                 *done[std::make_pair(subblock, bi2->getSuccessor(0))].begin(),
                 *done[std::make_pair(subblock, bi2->getSuccessor(1))].begin());
           } else {
+            if (!canSpeculativelyEvaluate(*this, LI, getBranchCondition(bi2),
+                                          ctx))
+              goto rnextpair;
+
+            auto cond1 = lookupM(getBranchCondition(bi1), BuilderM);
+            auto cond2 = lookupM(getBranchCondition(bi2), BuilderM);
             Value *otherBranch = nullptr;
             for (unsigned i = 0; i < 2; ++i) {
               Value *val = cond1;
