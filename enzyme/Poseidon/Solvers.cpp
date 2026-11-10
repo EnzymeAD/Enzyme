@@ -29,14 +29,14 @@
 
 #include "BuildIdentity.h"
 #include "CostModel.h"
-#include "Flags.h"
 #include "Optimize.h"
+#include "Pass/Flags.h"
 #include "Solvers.h"
 #include "Types.h"
 
 #include "Herbie.h"
-#include "Matmul.h"
-#include "Precision.h"
+#include "Techniques/Matmul/Matmul.h"
+#include "Techniques/Precision.h"
 #include "Utils.h"
 
 #include "llvm/IR/DebugInfoMetadata.h"

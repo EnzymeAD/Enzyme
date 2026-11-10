@@ -1,5 +1,5 @@
 // RUN: rm -rf %t && mkdir -p %t
-// RUN: %clangxx $(llvm-config --cxxflags) -I%S/../../Poseidon %S/../../Poseidon/CacheKey.cpp %s $(llvm-config --ldflags --libs support --system-libs) -o %t/cache_key
+// RUN: %clangxx $(llvm-config --cxxflags) -I%S/../../Poseidon %S/../../Poseidon/Core/CacheKey.cpp %s $(llvm-config --ldflags --libs support --system-libs) -o %t/cache_key
 // RUN: %t/cache_key %t | FileCheck %s
 // RUN: FileCheck --check-prefix=ENTRY %s < %t/model.json
 // REQUIRES: poseidon
@@ -8,7 +8,7 @@
 // part, except that a part may hold one of the earlier values declared
 // equivalent for that part, and only for that part.
 
-#include "CacheKey.h"
+#include "Core/CacheKey.h"
 
 #include "llvm/Support/raw_ostream.h"
 

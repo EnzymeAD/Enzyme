@@ -22,8 +22,8 @@
 #ifndef POSEIDON_MATMULACCURACYMEMO_H
 #define POSEIDON_MATMULACCURACYMEMO_H
 
-#include "CacheKey.h"
-#include "FPKind.h"
+#include "Core/CacheKey.h"
+#include "Core/FPKind.h"
 
 #include <string>
 

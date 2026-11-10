@@ -8,10 +8,10 @@
 //===----------------------------------------------------------------------===//
 
 #include "RaiseWMMA.h"
-#include "Flags.h"
+#include "Pass/Flags.h"
 
 #include "Optimize.h"
-#include "Precision.h"
+#include "Techniques/Precision.h"
 #include "WmmaUtils.h"
 
 #include "llvm/Support/raw_ostream.h"

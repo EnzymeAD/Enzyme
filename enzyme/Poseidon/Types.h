@@ -39,7 +39,7 @@
 
 #include "Utils.h"
 
-#include "Precision.h"
+#include "Techniques/Precision.h"
 
 namespace poseidon {
 

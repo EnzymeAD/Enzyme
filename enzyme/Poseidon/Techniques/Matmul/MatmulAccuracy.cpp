@@ -2,10 +2,10 @@
 // model. The model's identity is a digest of this file and FPKind.{h,cpp}, so
 // they hold only what decides the numbers it returns; storing and finding those
 // numbers is MatmulAccuracyMemo's.
-#include "Flags.h"
 #include "MatmulAccuracyMemo.h"
 #include "MatmulInternal.h"
 #include "Optimize.h"
+#include "Pass/Flags.h"
 #include "Utils.h"
 
 #include "llvm/Support/ErrorHandling.h"

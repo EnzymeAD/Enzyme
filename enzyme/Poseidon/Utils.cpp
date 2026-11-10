@@ -60,8 +60,8 @@
 
 #include "llvm/Support/Debug.h"
 
-#include "Flags.h"
 #include "Herbie.h"
+#include "Pass/Flags.h"
 #include "Types.h"
 #include "Utils.h"
 

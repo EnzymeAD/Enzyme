@@ -14,8 +14,8 @@
 #include "llvm/Support/CommandLine.h"
 
 #include "Matmul.h"
-#include "OzakiII.h"
 #include "Utils.h"
+#include "runtime/ozaki/OzakiII.h"
 
 namespace llvm {
 class Function;

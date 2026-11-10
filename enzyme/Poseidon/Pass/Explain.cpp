@@ -33,10 +33,10 @@
 #include "CostModel.h"
 #include "Flags.h"
 #include "Herbie.h"
-#include "Matmul.h"
 #include "Optimize.h"
-#include "Precision.h"
 #include "Solvers.h"
+#include "Techniques/Matmul/Matmul.h"
+#include "Techniques/Precision.h"
 #include "Types.h"
 #include "Utils.h"
 

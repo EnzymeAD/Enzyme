@@ -2,10 +2,10 @@
 // in-kernel rows, the WMMA target table and shared-memory capacity.
 #include "CostModel.h"
 #include "Evaluators.h"
-#include "Flags.h"
 #include "InKernelRaise.h"
 #include "MatmulInternal.h"
 #include "Optimize.h"
+#include "Pass/Flags.h"
 #include "Solvers.h"
 #include "Utils.h"
 #include "WmmaUtils.h"
