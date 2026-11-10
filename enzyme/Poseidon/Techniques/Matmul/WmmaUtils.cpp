@@ -152,9 +152,11 @@ void emitCooperativeScratchFill(IRBuilder<> &B, Value *scratchBase, Type *dstTy,
     Value *c32 = bodyB.CreateURem(counter, numColsV, "wmma_cfill.c");
     Value *r64 = bodyB.CreateZExt(r32, i64Ty);
     Value *c64 = bodyB.CreateZExt(c32, i64Ty);
-    Value *srcOff = bodyB.CreateAdd(
-        bodyB.CreateMul(r64, ConstantInt::get(i64Ty, srcRowStrideByte)),
-        bodyB.CreateMul(c64, ConstantInt::get(i64Ty, srcColStrideByte)));
+    Value *srcRowOff =
+        bodyB.CreateMul(r64, ConstantInt::get(i64Ty, srcRowStrideByte));
+    Value *srcColOff =
+        bodyB.CreateMul(c64, ConstantInt::get(i64Ty, srcColStrideByte));
+    Value *srcOff = bodyB.CreateAdd(srcRowOff, srcColOff);
     Value *srcPtr = bodyB.CreateGEP(i8Ty, srcBlockBase, srcOff);
     Value *srcVal = bodyB.CreateLoad(srcTy, srcPtr);
     Value *cvt = emitFPCast(bodyB, srcVal, dstTy);
@@ -165,9 +167,11 @@ void emitCooperativeScratchFill(IRBuilder<> &B, Value *scratchBase, Type *dstTy,
       // before the store, as the Ozaki slice path does.
       cvt = nvptx::emitRoundToTF32(bodyB, F->getParent(), cvt);
     }
-    Value *dstOff = bodyB.CreateAdd(
-        bodyB.CreateMul(r64, ConstantInt::get(i64Ty, dstRowStrideByte)),
-        bodyB.CreateMul(c64, ConstantInt::get(i64Ty, dstColStrideByte)));
+    Value *dstRowOff =
+        bodyB.CreateMul(r64, ConstantInt::get(i64Ty, dstRowStrideByte));
+    Value *dstColOff =
+        bodyB.CreateMul(c64, ConstantInt::get(i64Ty, dstColStrideByte));
+    Value *dstOff = bodyB.CreateAdd(dstRowOff, dstColOff);
     Value *dstPtr = bodyB.CreateGEP(i8Ty, scratchBase, dstOff);
     bodyB.CreateStore(cvt, dstPtr);
   };
@@ -261,11 +265,11 @@ void emitCooperativeScratchFillPadded(
     bodyB.CreateCondBr(inRange, loadBB, mergeBB);
 
     IRBuilder<> lB(loadBB);
-    Value *srcOff =
-        lB.CreateAdd(lB.CreateMul(lB.CreateZExt(r32, i64Ty),
-                                  ConstantInt::get(i64Ty, srcRowStrideByte)),
-                     lB.CreateMul(lB.CreateZExt(c32, i64Ty),
-                                  ConstantInt::get(i64Ty, srcColStrideByte)));
+    Value *srcRowOff = lB.CreateMul(lB.CreateZExt(r32, i64Ty),
+                                    ConstantInt::get(i64Ty, srcRowStrideByte));
+    Value *srcColOff = lB.CreateMul(lB.CreateZExt(c32, i64Ty),
+                                    ConstantInt::get(i64Ty, srcColStrideByte));
+    Value *srcOff = lB.CreateAdd(srcRowOff, srcColOff);
     Value *srcPtr = lB.CreateGEP(i8Ty, srcBlockBase, srcOff);
     Value *srcVal = lB.CreateLoad(srcTy, srcPtr);
     Value *cvt = emitFPCast(lB, srcVal, dstTy);
@@ -282,9 +286,11 @@ void emitCooperativeScratchFillPadded(
     out->addIncoming(dstZero, predBB);
     Value *r64 = mB.CreateZExt(r32, i64Ty);
     Value *c64 = mB.CreateZExt(c32, i64Ty);
-    Value *dstOff = mB.CreateAdd(
-        mB.CreateMul(r64, ConstantInt::get(i64Ty, dstRowStrideByte)),
-        mB.CreateMul(c64, ConstantInt::get(i64Ty, dstColStrideByte)));
+    Value *dstRowOff =
+        mB.CreateMul(r64, ConstantInt::get(i64Ty, dstRowStrideByte));
+    Value *dstColOff =
+        mB.CreateMul(c64, ConstantInt::get(i64Ty, dstColStrideByte));
+    Value *dstOff = mB.CreateAdd(dstRowOff, dstColOff);
     Value *dstPtr = mB.CreateGEP(i8Ty, scratchBase, dstOff);
     mB.CreateStore(out, dstPtr);
     bodyB.SetInsertPoint(mergeBB);

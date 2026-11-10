@@ -912,9 +912,11 @@ bool narrowSharedStagingParamDS(Session &S, llvm::Function &F,
       }
       // A remaining reader (a tolerated fcmp guard) gets the exact
       // reconstruction hi+lo.
-      if (!L->use_empty())
-        L->replaceAllUsesWith(B.CreateFAdd(B.CreateFPExt(nhi, DoubleTy),
-                                           B.CreateFPExt(nlo, DoubleTy)));
+      if (!L->use_empty()) {
+        Value *hi64 = B.CreateFPExt(nhi, DoubleTy);
+        Value *lo64 = B.CreateFPExt(nlo, DoubleTy);
+        L->replaceAllUsesWith(B.CreateFAdd(hi64, lo64));
+      }
       L->eraseFromParent();
     }
     for (auto *S : acc.stores) {

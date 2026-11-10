@@ -16,6 +16,7 @@
 #include "Targets/Target.h"
 #include "Utils.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/Config/llvm-config.h"
 #include "llvm/IR/Constants.h"
@@ -309,9 +310,11 @@ struct DeferredDSPhiIn {
 };
 } // namespace
 using DeferredDSPhiIns = SmallVector<DeferredDSPhiIn, 16>;
+// In insertion order: the restores of the replaced values are emitted by
+// iterating it, and several can share one insertion point.
+using DSMap = MapVector<Value *, DSValue>;
 
-static DSValue getOrSplitOperand(IRBuilder<> &B, Value *op,
-                                 DenseMap<Value *, DSValue> &dsMap,
+static DSValue getOrSplitOperand(IRBuilder<> &B, Value *op, DSMap &dsMap,
                                  DeferredDSPhiIns &deferred);
 
 // Any scalar f32/f64 value has a DS representation (materialized op, split
@@ -321,8 +324,7 @@ static bool hasDSRepresentation(Value *op) {
   return T->isFloatTy() || T->isDoubleTy();
 }
 
-static DSValue getOrSplitOperand(IRBuilder<> &B, Value *op,
-                                 DenseMap<Value *, DSValue> &dsMap,
+static DSValue getOrSplitOperand(IRBuilder<> &B, Value *op, DSMap &dsMap,
                                  DeferredDSPhiIns &deferred) {
   if (auto it = dsMap.find(op); it != dsMap.end())
     return it->second;
@@ -369,8 +371,7 @@ static DSValue getOrSplitOperand(IRBuilder<> &B, Value *op,
 }
 
 static DSValue emitDSForInstruction(IRBuilder<> &B, Instruction *I,
-                                    DenseMap<Value *, DSValue> &dsMap,
-                                    DeferredDSPhiIns &deferred) {
+                                    DSMap &dsMap, DeferredDSPhiIns &deferred) {
   unsigned opcode = I->getOpcode();
 
   if (auto *BO = dyn_cast<BinaryOperator>(I)) {
@@ -449,7 +450,7 @@ void takeLastExpansionLimbs(Session &S, SmallVectorImpl<Value *> &out) {
 void applyExpansion(Session &S, ArrayRef<Instruction *> instsToChange,
                     const SmallPtrSetImpl<Instruction *> &allChanged,
                     DenseMap<Value *, Value *> *restoredValues) {
-  DenseMap<Value *, DSValue> dsMap;
+  DSMap dsMap;
   DeferredDSPhiIns deferred;
   S.LastExpansionLimbs.clear();
   // Captured before the erase loop below invalidates instsToChange.
@@ -1224,6 +1225,8 @@ struct DeferredExpansionPhiIn {
 };
 } // namespace
 using DeferredExpansionPhiIns = SmallVector<DeferredExpansionPhiIn, 16>;
+// In insertion order, as DSMap.
+using ExpansionMap = MapVector<Value *, ExpansionValue>;
 
 static ExpansionValue splitConstantFPExpansion(IRBuilder<> &B, ConstantFP *CFP,
                                                unsigned n) {
@@ -1240,7 +1243,7 @@ static ExpansionValue splitConstantFPExpansion(IRBuilder<> &B, ConstantFP *CFP,
 
 static ExpansionValue
 getOrSplitOperandExpansion(IRBuilder<> &B, Value *op, unsigned n,
-                           DenseMap<Value *, ExpansionValue> &expansionMap,
+                           ExpansionMap &expansionMap,
                            DeferredExpansionPhiIns &deferred) {
   if (auto it = expansionMap.find(op); it != expansionMap.end())
     return it->second;
@@ -1292,7 +1295,7 @@ getOrSplitOperandExpansion(IRBuilder<> &B, Value *op, unsigned n,
 
 static ExpansionValue
 emitExpansionForInstruction(IRBuilder<> &B, Instruction *I, unsigned n,
-                            DenseMap<Value *, ExpansionValue> &expansionMap,
+                            ExpansionMap &expansionMap,
                             DeferredExpansionPhiIns &deferred) {
   unsigned opcode = I->getOpcode();
 
@@ -1390,7 +1393,7 @@ void applyExpansion(Session &S, unsigned n,
                     const SmallPtrSetImpl<Instruction *> &allChanged,
                     DenseMap<Value *, Value *> *restoredValues) {
   expansionCheckN(n);
-  DenseMap<Value *, ExpansionValue> expansionMap;
+  ExpansionMap expansionMap;
   DeferredExpansionPhiIns deferred;
 
   // No fast-math flags on the emitted operations, as in the two-component arm.

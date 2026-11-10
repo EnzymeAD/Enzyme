@@ -459,20 +459,20 @@ void OzakiIRaiseMaterializer::runTcec() {
       Value *fillColsV = ConstantInt::get(i32Ty, (int32_t)fillCols);
       Value *r32 = eb.CreateUDiv(counter, fillColsV, "ozaki_pfill.r");
       Value *c32 = eb.CreateURem(counter, fillColsV, "ozaki_pfill.c");
-      Value *inRange =
-          eb.CreateAnd(eb.CreateICmpULT(r32, validRows),
-                       eb.CreateICmpULT(c32, validCols), "ozaki_pfill.in");
+      Value *rowIn = eb.CreateICmpULT(r32, validRows);
+      Value *colIn = eb.CreateICmpULT(c32, validCols);
+      Value *inRange = eb.CreateAnd(rowIn, colIn, "ozaki_pfill.in");
       BasicBlock *predBB = eb.GetInsertBlock();
       BasicBlock *loadBB = BasicBlock::Create(ctx, "ozaki_pfill.load", F);
       BasicBlock *mergeBB = BasicBlock::Create(ctx, "ozaki_pfill.merge", F);
       eb.CreateCondBr(inRange, loadBB, mergeBB);
 
       IRBuilder<> lB(loadBB);
-      Value *srcOff =
-          lB.CreateAdd(lB.CreateMul(lB.CreateZExt(r32, i64Ty),
-                                    ConstantInt::get(i64Ty, srcRowStride)),
-                       lB.CreateMul(lB.CreateZExt(c32, i64Ty),
-                                    ConstantInt::get(i64Ty, srcColStride)));
+      Value *srcRowOff = lB.CreateMul(lB.CreateZExt(r32, i64Ty),
+                                      ConstantInt::get(i64Ty, srcRowStride));
+      Value *srcColOff = lB.CreateMul(lB.CreateZExt(c32, i64Ty),
+                                      ConstantInt::get(i64Ty, srcColStride));
+      Value *srcOff = lB.CreateAdd(srcRowOff, srcColOff);
       Value *srcPtr = lB.CreateGEP(i8Ty, srcBase, srcOff);
       Value *srcVal = lB.CreateLoad(srcInputTy, srcPtr);
       Value *valF32 =
@@ -493,9 +493,10 @@ void OzakiIRaiseMaterializer::runTcec() {
       }
       Value *r64 = mB.CreateZExt(r32, i64Ty);
       Value *c64 = mB.CreateZExt(c32, i64Ty);
-      Value *dstOff =
-          mB.CreateAdd(mB.CreateMul(r64, ConstantInt::get(i64Ty, dstRowStride)),
-                       mB.CreateMul(c64, ConstantInt::get(i64Ty, sliceByte)));
+      Value *dstRowOff =
+          mB.CreateMul(r64, ConstantInt::get(i64Ty, dstRowStride));
+      Value *dstColOff = mB.CreateMul(c64, ConstantInt::get(i64Ty, sliceByte));
+      Value *dstOff = mB.CreateAdd(dstRowOff, dstColOff);
       for (unsigned k = 0; k < N; ++k)
         mB.CreateStore(merged[k], mB.CreateGEP(i8Ty, dstSlices[k], dstOff));
       eb.SetInsertPoint(mergeBB);
