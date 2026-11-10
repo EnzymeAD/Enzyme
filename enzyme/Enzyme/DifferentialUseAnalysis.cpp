@@ -989,22 +989,52 @@ void DifferentialUseAnalysis::minCut(const DataLayout &DL, LoopInfo &OrigLI,
     auto found = Orig.find(Node(V, true));
     if (found != Orig.end()) {
       const auto &mp = found->second;
+      SmallVector<Node, 1> active_mp;
+      if (mp.size() == 1) {
+        active_mp.push_back(*mp.begin());
+      } else if (mp.size() > 1 && isa<PHINode>(V) && !Required.count(V)) {
+        for (auto cand : mp) {
+          std::deque<Node> q = {cand};
+          std::set<Node> seen = {cand, Node(V, false)};
+          bool reachesReq = false;
+          while (!q.empty()) {
+            auto cur = q.front();
+            q.pop_front();
+            if (cur.outgoing && Required.count(cur.V)) {
+              reachesReq = true;
+              break;
+            }
+            auto it = Orig.find(cur);
+            if (it == Orig.end())
+              continue;
+            for (auto nxt : it->second) {
+              if (seen.insert(nxt).second)
+                q.push_back(nxt);
+            }
+          }
+          if (reachesReq) {
+            active_mp.push_back(cand);
+            if (active_mp.size() > 1)
+              break;
+          }
+        }
+      }
 
       // When ambiguous, push to cache the last value in a computation chain
       // This should be considered in a cost for the max flow
-      if (mp.size() == 1 && !Required.count(V)) {
+      if (active_mp.size() == 1 && !Required.count(V)) {
+        Node nextNode = active_mp[0];
         bool potentiallyRecursive =
-            isa<PHINode>((*mp.begin()).V) &&
-            OrigLI.isLoopHeader(cast<PHINode>((*mp.begin()).V)->getParent());
-        int moreOuterLoop =
-            cmpLoopNest(OrigLI.getLoopFor(cast<Instruction>(V)->getParent()),
-                        OrigLI.getLoopFor(
-                            cast<Instruction>(((*mp.begin()).V))->getParent()));
+            isa<PHINode>(nextNode.V) &&
+            OrigLI.isLoopHeader(cast<PHINode>(nextNode.V)->getParent());
+        int moreOuterLoop = cmpLoopNest(
+            OrigLI.getLoopFor(cast<Instruction>(V)->getParent()),
+            OrigLI.getLoopFor(cast<Instruction>(nextNode.V)->getParent()));
         if (potentiallyRecursive)
           continue;
         if (moreOuterLoop == -1)
           continue;
-        if (auto ASC = dyn_cast<AddrSpaceCastInst>((*mp.begin()).V)) {
+        if (auto ASC = dyn_cast<AddrSpaceCastInst>(nextNode.V)) {
           if (ASC->getDestAddressSpace() == 11 ||
               ASC->getDestAddressSpace() == 13)
             continue;
@@ -1012,21 +1042,21 @@ void DifferentialUseAnalysis::minCut(const DataLayout &DL, LoopInfo &OrigLI,
               ASC->getDestAddressSpace() == 0)
             continue;
         }
-        if (auto CI = dyn_cast<CastInst>((*mp.begin()).V)) {
+        if (auto CI = dyn_cast<CastInst>(nextNode.V)) {
           if (CI->getType()->isPointerTy() &&
               CI->getType()->getPointerAddressSpace() == 13)
             continue;
         }
-        if (auto G = dyn_cast<GetElementPtrInst>((*mp.begin()).V)) {
+        if (auto G = dyn_cast<GetElementPtrInst>(nextNode.V)) {
           if (G->getType()->getPointerAddressSpace() == 13)
             continue;
         }
-        if (hasNoCache((*mp.begin()).V)) {
+        if (hasNoCache(nextNode.V)) {
           continue;
         }
         // If an allocation call, we cannot cache any "capturing" users
         if (isAllocationCall(V, TLI) || isa<AllocaInst>(V)) {
-          auto next = (*mp.begin()).V;
+          auto next = nextNode.V;
           bool noncapture = false;
           if (isa<LoadInst>(next) || isNVLoad(next)) {
             noncapture = true;
@@ -1048,9 +1078,9 @@ void DifferentialUseAnalysis::minCut(const DataLayout &DL, LoopInfo &OrigLI,
         if (moreOuterLoop == 1 ||
             (moreOuterLoop == 0 &&
              DL.getTypeSizeInBits(V->getType()) >=
-                 DL.getTypeSizeInBits((*mp.begin()).V->getType()))) {
+                 DL.getTypeSizeInBits(nextNode.V->getType()))) {
           MinReq.remove(V);
-          auto nnode = (*mp.begin()).V;
+          auto nnode = nextNode.V;
           MinReq.insert(nnode);
           if (Orig.find(Node(nnode, true)) != Orig.end())
             todo.insert(nnode);

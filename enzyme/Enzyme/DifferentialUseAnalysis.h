@@ -92,8 +92,13 @@ template <QueryType VT, bool OneLevel = false>
 inline bool is_value_needed_in_reverse(
     const GradientUtils *gutils, const llvm::Value *inst, DerivativeMode mode,
     std::map<UsageKey, bool> &seen,
-    const llvm::SmallPtrSetImpl<llvm::BasicBlock *> &oldUnreachable) {
+    const llvm::SmallPtrSetImpl<llvm::BasicBlock *> &oldUnreachable,
+    llvm::SmallVectorImpl<UsageKey> *falseStack = nullptr) {
   using namespace llvm;
+
+  SmallVector<UsageKey, 16> localFalseStack;
+  if (!falseStack)
+    falseStack = &localFalseStack;
 
   TypeResults const &TR = gutils->TR;
   static_assert(VT == QueryType::Primal || VT == QueryType::Shadow ||
@@ -106,7 +111,14 @@ inline bool is_value_needed_in_reverse(
   }
 
   // Inductively claim we aren't needed (and try to find contradiction)
+  size_t falseStackMark = falseStack->size();
   seen[idx] = false;
+  auto markNeeded = [&]() {
+    while (falseStack->size() > falseStackMark) {
+      seen.erase(falseStack->pop_back_val());
+    }
+    return seen[idx] = true;
+  };
 
   if (VT == QueryType::Primal) {
     if (auto op = dyn_cast<BinaryOperator>(inst)) {
@@ -116,7 +128,7 @@ inline bool is_value_needed_in_reverse(
           if (EnzymePrintDiffUse)
             llvm::errs() << " Need: " << to_string(VT) << " of " << *inst
                          << " in reverse as is active div\n";
-          return seen[idx] = true;
+          return markNeeded();
         }
       }
     }
@@ -126,14 +138,14 @@ inline bool is_value_needed_in_reverse(
         llvm::errs()
             << " Need: " << to_string(VT) << " of " << *inst
             << " in reverse as forward mode error always needs result\n";
-      return seen[idx] = true;
+      return markNeeded();
     }
   }
 
   if (auto CI = dyn_cast<CallInst>(inst)) {
     StringRef funcName = getFuncNameFromCall(const_cast<CallInst *>(CI));
     if (funcName == "julia.get_pgcstack" || funcName == "julia.ptls_states")
-      return seen[idx] = true;
+      return markNeeded();
   }
 
   bool inst_cv = gutils->isConstantValue(const_cast<Value *>(inst));
@@ -157,22 +169,22 @@ inline bool is_value_needed_in_reverse(
               (VT == QueryType::Shadow) ? QueryType::Shadow
                                         : QueryType::ShadowByConstPrimal,
               &recursiveUse)) {
-        return seen[idx] = true;
+        return markNeeded();
       }
 
       if (recursiveUse && !OneLevel) {
         bool val;
         if (VT == QueryType::Shadow)
           val = is_value_needed_in_reverse<QueryType::Shadow>(
-              gutils, user, mode, seen, oldUnreachable);
+              gutils, user, mode, seen, oldUnreachable, falseStack);
         else
           val = is_value_needed_in_reverse<QueryType::ShadowByConstPrimal>(
-              gutils, user, mode, seen, oldUnreachable);
+              gutils, user, mode, seen, oldUnreachable, falseStack);
         if (val) {
           if (EnzymePrintDiffUse)
             llvm::errs() << " Need: " << to_string(VT) << " of " << *inst
                          << " in reverse as shadow sub-need " << *user << "\n";
-          return seen[idx] = true;
+          return markNeeded();
         }
       }
 
@@ -222,7 +234,7 @@ inline bool is_value_needed_in_reverse(
                       partial = true;
                     } else if (recursiveUse && !OneLevel) {
                       partial = is_value_needed_in_reverse<QueryType::Shadow>(
-                          gutils, UI, mode, seen, oldUnreachable);
+                          gutils, UI, mode, seen, oldUnreachable, falseStack);
                     }
                   } else if (VT == QueryType::Shadow) {
                     bool recursiveUse = false;
@@ -232,8 +244,8 @@ inline bool is_value_needed_in_reverse(
                       partial = true;
                     } else if (recursiveUse && !OneLevel) {
                       partial = is_value_needed_in_reverse<
-                          QueryType::ShadowByConstPrimal>(gutils, UI, mode,
-                                                          seen, oldUnreachable);
+                          QueryType::ShadowByConstPrimal>(
+                          gutils, UI, mode, seen, oldUnreachable, falseStack);
                     }
                   }
                 }
@@ -245,7 +257,7 @@ inline bool is_value_needed_in_reverse(
                         << " Need (partial) direct " << to_string(VT) << " of "
                         << *inst << " in reverse from insertelem " << *user
                         << " via " << *cur << " in " << *u << "\n";
-                  return seen[idx] = true;
+                  return markNeeded();
                 }
               }
             }
@@ -265,7 +277,7 @@ inline bool is_value_needed_in_reverse(
                        << *inst
                        << " in reverse as loopy reduction preheader of "
                        << *user << "\n";
-        return seen[idx] = true;
+        return markNeeded();
       }
       if (P0->getNumIncomingValues() == 1) {
         for (auto u2 : P0->users()) {
@@ -278,7 +290,7 @@ inline bool is_value_needed_in_reverse(
                     << *inst
                     << " in reverse via LCSSA loopy reduction preheader of "
                     << *P1 << "\n";
-              return seen[idx] = true;
+              return markNeeded();
             }
           }
         }
@@ -286,12 +298,13 @@ inline bool is_value_needed_in_reverse(
     }
 
     // If a sub user needs, we need
-    if (!OneLevel && is_value_needed_in_reverse<VT>(gutils, user, mode, seen,
-                                                    oldUnreachable)) {
+    if (!OneLevel &&
+        is_value_needed_in_reverse<VT>(gutils, user, mode, seen, oldUnreachable,
+                                       falseStack)) {
       if (EnzymePrintDiffUse)
         llvm::errs() << " Need: " << to_string(VT) << "(" << mode << ") of "
                      << *inst << " in reverse as sub-need " << *user << "\n";
-      return seen[idx] = true;
+      return markNeeded();
     }
 
     // Anything we may try to rematerialize requires its store operands for
@@ -343,36 +356,37 @@ inline bool is_value_needed_in_reverse(
                 llvm::errs() << " Need: " << to_string(VT) << " of " << *inst
                              << " in reverse from rematerialized alloc "
                              << *pair.first << "\n";
-              return seen[idx] = true;
+              return markNeeded();
             }
             for (LoadInst *L : pair.second.loads)
               if (is_value_needed_in_reverse<VT>(gutils, L, mode, seen,
-                                                 oldUnreachable)) {
+                                                 oldUnreachable, falseStack)) {
                 if (EnzymePrintDiffUse)
                   llvm::errs() << " Need: " << to_string(VT) << " of " << *inst
                                << " in reverse as rematload " << *L << "\n";
-                return seen[idx] = true;
+                return markNeeded();
               }
             for (auto &pair : pair.second.loadLikeCalls)
               if (is_use_directly_needed_in_reverse(
                       gutils, pair.operand, mode, pair.loadCall, oldUnreachable,
                       QueryType::Primal) ||
                   is_value_needed_in_reverse<VT>(gutils, pair.loadCall, mode,
-                                                 seen, oldUnreachable)) {
+                                                 seen, oldUnreachable,
+                                                 falseStack)) {
                 if (EnzymePrintDiffUse)
                   llvm::errs() << " Need: " << to_string(VT) << " of " << *inst
                                << " in reverse as rematloadcall "
                                << *pair.loadCall << "\n";
-                return seen[idx] = true;
+                return markNeeded();
               }
 
             if (is_value_needed_in_reverse<VT>(gutils, pair.first, mode, seen,
-                                               oldUnreachable)) {
+                                               oldUnreachable, falseStack)) {
               if (EnzymePrintDiffUse)
                 llvm::errs()
                     << " Need: " << to_string(VT) << " of " << *inst
                     << " in reverse as rematalloc " << *pair.first << "\n";
-              return seen[idx] = true;
+              return markNeeded();
             }
           }
         }
@@ -406,7 +420,7 @@ inline bool is_value_needed_in_reverse(
         if (EnzymePrintDiffUse)
           llvm::errs() << " Need: " << to_string(VT) << " of " << *inst
                        << " in reverse as control-flow " << *user << "\n";
-        return seen[idx] = true;
+        return markNeeded();
       }
 
       if (auto CI = dyn_cast<CallInst>(use)) {
@@ -418,7 +432,7 @@ inline bool is_value_needed_in_reverse(
             if (EnzymePrintDiffUse)
               llvm::errs() << " Need: " << to_string(VT) << " of " << *inst
                            << " in reverse as omp init " << *user << "\n";
-            return seen[idx] = true;
+            return markNeeded();
           }
         }
       }
@@ -476,12 +490,12 @@ inline bool is_value_needed_in_reverse(
       if (!user->getType()->isVoidTy() &&
           TR.anyPointer(const_cast<Instruction *>(user))) {
         if (is_value_needed_in_reverse<QueryType::Shadow>(
-                gutils, user, mode, seen, oldUnreachable)) {
+                gutils, user, mode, seen, oldUnreachable, falseStack)) {
           if (EnzymePrintDiffUse)
             llvm::errs() << " Need: " << to_string(VT) << " of " << *inst
                          << " in reverse as used to compute shadow ptr "
                          << *user << "\n";
-          return seen[idx] = true;
+          return markNeeded();
         }
       }
 
@@ -495,8 +509,9 @@ inline bool is_value_needed_in_reverse(
     }
     assert(!inst->getType()->isTokenTy());
 
-    return seen[idx] = true;
+    return markNeeded();
   }
+  falseStack->push_back(idx);
   return false;
 }
 
