@@ -5,7 +5,7 @@
 #include "HostDispatch.h"
 #include "MatmulInternal.h"
 #include "Optimize.h"
-#include "Pass/Flags.h"
+#include "Pass/Session.h"
 #include "Utils.h"
 #include "runtime/ozaki/OzakiII.h"
 
@@ -26,6 +26,7 @@ namespace poseidon {
 
 namespace {
 struct Product {
+  Session &S;
   const AbstractMatmul &m;
   const MatmulProfile &prof;
   double confidence;
@@ -47,13 +48,13 @@ static double schemeAccuracyCost(const Product &P, const SchemeVariant &v,
     // (orderTileK) instead; otherwise the candidate prices as exactly zero
     // error and can enter the budget-0 no-op solution.
     bool identityPrec = (v.operand == m.aType && v.accumulator == m.accType);
-    return getMatmulAccuracyCost(m, P.prof, P.confidence, P.sampleLogBits,
+    return getMatmulAccuracyCost(P.S, m, P.prof, P.confidence, P.sampleLogBits,
                                  v.operand, v.accumulator, domainError,
                                  /*exponentPrec=*/FPKind::Invalid,
                                  /*orderTileK=*/identityPrec ? tileK : 0);
   }
   case Scheme::Split:
-    return getMatmulAccuracyCost(m, P.prof, P.confidence, P.sampleLogBits,
+    return getMatmulAccuracyCost(P.S, m, P.prof, P.confidence, P.sampleLogBits,
                                  FPKind::F32, FPKind::F32, domainError,
                                  /*exponentPrec=*/v.operand, /*orderTileK=*/0,
                                  /*inputMantBits=*/splitCapturedBits(v));
@@ -62,13 +63,13 @@ static double schemeAccuracyCost(const Product &P, const SchemeVariant &v,
     for (unsigned kk = 1; kk < m.K; kk <<= 1)
       ++log2K;
     long capturedBits = ozakiIICapturedBits(modulusCount(v), log2K);
-    return getOzakiIIAccuracyCost(m, P.prof, P.confidence, P.sampleLogBits,
+    return getOzakiIIAccuracyCost(P.S, m, P.prof, P.confidence, P.sampleLogBits,
                                   (unsigned)capturedBits, domainError);
   }
   case Scheme::Native:
     // Full FP64 but not the scalar chain's accumulation order, so the reorder
     // is priced through orderTileK instead of claiming exact zero.
-    return getMatmulAccuracyCost(m, P.prof, P.confidence, P.sampleLogBits,
+    return getMatmulAccuracyCost(P.S, m, P.prof, P.confidence, P.sampleLogBits,
                                  v.operand, v.accumulator, domainError,
                                  /*exponentPrec=*/FPKind::Invalid,
                                  /*orderTileK=*/tileK);
@@ -76,9 +77,9 @@ static double schemeAccuracyCost(const Product &P, const SchemeVariant &v,
   llvm_unreachable("unknown Scheme");
 }
 
-static bool wmmaTileAvailable(unsigned M, unsigned N, unsigned K,
+static bool wmmaTileAvailable(Session &S, unsigned M, unsigned N, unsigned K,
                               FPKind operand, FPKind accumulator) {
-  for (const WmmaTarget &wt : getAvailableWmmaTargets())
+  for (const WmmaTarget &wt : getAvailableWmmaTargets(S))
     if (wt.M == M && wt.N == N && wt.K == K && wt.inputPrec == operand &&
         wt.accPrec == accumulator)
       return true;
@@ -145,11 +146,11 @@ static void proposeInKernel(const Product &P, const InKernelSite &K,
 
   // Buildability before price: a shape whose tiles do not fit the static
   // shared cap is rejected by ptxas for the whole module.
-  if (!inKernelRaiseFits(K.raiseF, m, opt, K.existingShmem, what))
+  if (!inKernelRaiseFits(P.S.Opts, K.raiseF, m, opt, K.existingShmem, what))
     return;
   // An uncalibrated class is refused, not estimated.
-  if (!priceInKernelRaiseFromMeasuredRow(m, inKernelCostClass(v), tileM, tileN,
-                                         tileK, P.baselinePerMac, what,
+  if (!priceInKernelRaiseFromMeasuredRow(P.S, m, inKernelCostClass(v), tileM,
+                                         tileN, tileK, P.baselinePerMac, what,
                                          opt.compCost))
     return;
   opt.accuracyCost = schemeAccuracyCost(P, v, tileK, &opt.domainError);
@@ -160,7 +161,7 @@ static void proposeInKernelDirect(const Product &P, const InKernelSite *K,
                                   CandidateMatmul &cm) {
   if (!K)
     return;
-  for (const WmmaTarget &t : getAvailableWmmaTargets()) {
+  for (const WmmaTarget &t : getAvailableWmmaTargets(P.S)) {
     // Integer kinds (S8/S32) have no FP accuracy model; they only appear in
     // the modular library calls, never as Direct replacements.
     if (t.inputPrec == FPKind::S8 || t.inputPrec == FPKind::S32)
@@ -197,7 +198,7 @@ static void proposeInKernelSplit(const Product &P, const InKernelSite *K,
   if (!K)
     return;
   for (const InKernelSplitVariant &s : kInKernelSplitVariants) {
-    if (!wmmaTileAvailable(s.tileM, s.tileN, s.tileK, s.variant.operand,
+    if (!wmmaTileAvailable(P.S, s.tileM, s.tileN, s.tileK, s.variant.operand,
                            s.variant.accumulator))
       continue;
     // No size gate: the padded fill zero-fills boundary tiles and every slice
@@ -262,17 +263,17 @@ static double squarePaddingRatio(const AbstractMatmul &m) {
   llvm_unreachable("unexpected Origin::Invalid");
 }
 
-static LibrarySite librarySite(const AbstractMatmul &m) {
+static LibrarySite librarySite(Session &S, const AbstractMatmul &m) {
   LibrarySite L;
   L.padWaste = squarePaddingRatio(m);
   switch (m.origin) {
   case AbstractMatmul::Origin::ScalarLoopReduction: {
     bool s8TileAvailable = wmmaTileAvailable(
-        kModularTile, kModularTile, kModularTile, FPKind::S8, FPKind::S32);
+        S, kModularTile, kModularTile, kModularTile, FPKind::S8, FPKind::S32);
     Function *F = m.scalarLoop.fma ? m.scalarLoop.fma->getFunction() : nullptr;
     GemmBodyNote probe;
-    L.dispatchable = F && computeGemmBodyNote(*F, m, probe);
-    if (flags::Print && s8TileAvailable && !L.dispatchable)
+    L.dispatchable = F && computeGemmBodyNote(S.Opts, *F, m, probe);
+    if (S.Opts.Diagnostics.Print && s8TileAvailable && !L.dispatchable)
       llvm::errs() << "  Matmul[" << m.id << "] " << m.M << "x" << m.N << "x"
                    << m.K
                    << ": host-dispatched Ozaki-II NOT PROPOSED -- body is "
@@ -340,13 +341,14 @@ static void proposeLibraryModular(const Product &P, const LibrarySite &L,
     const std::string rectKey = "nm" + std::to_string(nm) + "_m" +
                                 std::to_string(L.rectM) + "k" +
                                 std::to_string(L.rectK);
-    double relRect = queryCostModelOr("ozaki_dispatch_rect_rel", rectKey, -1.0);
+    double relRect = queryCostModelOr(P.S.CostModel, "ozaki_dispatch_rect_rel",
+                                      rectKey, -1.0);
     double rel = relRect > 0.0
                      ? relRect
-                     : queryCostModelOr("ozaki_dispatch_rel",
+                     : queryCostModelOr(P.S.CostModel, "ozaki_dispatch_rel",
                                         "nm" + std::to_string(nm), -1.0);
     if (rel <= 0.0) {
-      if (flags::Print)
+      if (P.S.Opts.Diagnostics.Print)
         llvm::errs()
             << "  Matmul[" << m.id << "] " << schemeTag(v) << " "
             << schemeParameter(v)
@@ -360,8 +362,7 @@ static void proposeLibraryModular(const Product &P, const LibrarySite &L,
     if (relRect > 0.0) {
       shapeRatio = 1.0; // the measurement already is this shape
     } else if (L.padWaste >= 1.05) {
-      static std::set<const void *> warned;
-      if (warned.insert((const void *)&m).second)
+      if (P.S.WarnedRectangularRows.insert((const void *)&m).second)
         llvm::errs()
             << "[poseidon] WARNING: matmul[" << m.id << "] " << m.M << "x"
             << m.N << "x" << m.K << ": padWaste=" << L.padWaste
@@ -394,7 +395,8 @@ static void proposeLibrarySplit(const Product &P, const LibrarySite &L,
                                 CandidateMatmul &cm) {
   if (!L.dispatchable)
     return;
-  double rel = queryCostModelOr("tcec_dispatch_rel", "fp16tcec", -1.0);
+  double rel =
+      queryCostModelOr(P.S.CostModel, "tcec_dispatch_rel", "fp16tcec", -1.0);
   if (rel <= 0.0)
     return;
   CandidateMatmul::Option opt = libraryOption(
@@ -433,10 +435,10 @@ static void proposeLibraryDirect(const Product &P, const LibrarySite &L,
   const AbstractMatmul &m = P.m;
   for (const LibraryDirectVariant &d : kLibraryDirectVariants) {
     const std::string cls = schemeFormats(d.variant, '_');
-    double rel = queryCostModelOr("direct_dispatch_rel", cls, -1.0);
+    double rel =
+        queryCostModelOr(P.S.CostModel, "direct_dispatch_rel", cls, -1.0);
     if (rel <= 0.0) {
-      static std::set<std::string> reported;
-      if (reported.insert(cls).second)
+      if (P.S.ReportedDirectRows.insert(cls).second)
         llvm::errs()
             << "[poseidon] WARNING: matmul[" << m.id << "] " << m.M << "x"
             << m.N << "x" << m.K << ": " << schemeTag(d.variant) << " " << cls
@@ -445,11 +447,11 @@ static void proposeLibraryDirect(const Product &P, const LibrarySite &L,
             << cls
             << "' row. Run poseidon-calibrate on this device; "
                "refusing to price a library dispatch on an unmeasured model.\n";
-      if (flags::StrictMode)
+      if (P.S.Opts.Model.StrictMode)
         report_fatal_error(
             "Poseidon strict mode: direct host-dispatch class '" + Twine(cls) +
             "' has no measured direct_dispatch_rel row in " +
-            Twine(costModelPath()));
+            Twine(costModelPath(P.S.CostModel)));
       continue;
     }
     CandidateMatmul::Option opt =
@@ -471,7 +473,8 @@ static void proposeLibraryNative(const Product &P, const LibrarySite &L,
                                  CandidateMatmul &cm) {
   if (!L.dispatchable)
     return;
-  double rel = queryCostModelOr("ozaki_dispatch_rel", "dgemm", -1.0);
+  double rel =
+      queryCostModelOr(P.S.CostModel, "ozaki_dispatch_rel", "dgemm", -1.0);
   if (rel <= 0.0)
     report_fatal_error("Poseidon: the cost model has no "
                        "'ozaki_dispatch_rel,dgemm' row for the native DGEMM "
@@ -483,7 +486,7 @@ static void proposeLibraryNative(const Product &P, const LibrarySite &L,
 }
 
 void generateMatmulCandidates(
-    ArrayRef<AbstractMatmul> matmuls,
+    Session &S, ArrayRef<AbstractMatmul> matmuls,
     const std::unordered_map<size_t, ProfileInfo> &scalarProfile,
     double confidence, unsigned sampleLogBits,
     SmallVectorImpl<CandidateMatmul> &out) {
@@ -517,7 +520,7 @@ void generateMatmulCandidates(
       llvm_unreachable("handled above");
     }
     if (!profiled) {
-      if (!flags::LooseCoverage)
+      if (!S.Opts.Profiling.LooseCoverage)
         report_fatal_error("matmul site has no profile coverage; set "
                            "-poseidon-loose-coverage to suppress");
       const Function *F = m.scalarLoop.fma ? m.scalarLoop.fma->getFunction()
@@ -546,7 +549,7 @@ void generateMatmulCandidates(
       // reciprocal throughput per op, so this sum is the baseline's cost per
       // MAC (executions = profiled total MACs).
       for (Instruction *I : m.footprint)
-        baselinePerMac += getInstructionCompCost(I);
+        baselinePerMac += getInstructionCompCost(S.CostModel, I);
       break;
     case AbstractMatmul::Origin::HostGemmLoopNest: {
       const RuntimeGemmHandle &g = *m.hostGemm;
@@ -556,7 +559,7 @@ void generateMatmulCandidates(
       // epilogue's fadd amortized over the K-long reduction it closes.
       double bodySum = 0.0, epi = 0.0;
       for (Instruction *I : m.footprint) {
-        double c = getInstructionCompCost(I);
+        double c = getInstructionCompCost(S.CostModel, I);
         if (I == g.epilogue)
           epi += c;
         else
@@ -570,21 +573,22 @@ void generateMatmulCandidates(
     }
     cm.initialCompCost = baselinePerMac;
     cm.initialAccCost = 0.0;
-    const Product P{m, prof, confidence, sampleLogBits, baselinePerMac};
+    const Product P{S, m, prof, confidence, sampleLogBits, baselinePerMac};
 
     // The candidate index is the position in this sequence.
     const InKernelSite *K = kernel ? &*kernel : nullptr;
     proposeInKernelDirect(P, K, cm);
     proposeInKernelSplit(P, K, cm);
-    if (flags::OzakiHostDispatch) {
-      const LibrarySite L = librarySite(m);
+    if (S.Opts.Matmul.OzakiHostDispatch) {
+      const LibrarySite L = librarySite(S, m);
       proposeLibraryModular(P, L, cm);
       proposeLibrarySplit(P, L, cm);
       proposeLibraryDirect(P, L, cm);
       proposeLibraryNative(P, L, cm);
     }
 
-    if (m.origin == AbstractMatmul::Origin::HostGemmLoopNest && flags::Print)
+    if (m.origin == AbstractMatmul::Origin::HostGemmLoopNest &&
+        S.Opts.Diagnostics.Print)
       llvm::errs() << "[hostgemm] matmul[" << m.id
                    << "] NOTE: the square-padded dispatch price scales with "
                       "the COLUMN COUNT, which is a runtime value here, so "
@@ -600,7 +604,7 @@ void generateMatmulCandidates(
 
     // compCost is per-MAC reciprocal throughput; rel is it divided by the naive
     // per-MAC baseline, the unit the measured *_dispatch_rel rows use.
-    if (flags::Print) {
+    if (S.Opts.Diagnostics.Print) {
       llvm::errs() << "[poseidon] matmul[" << cm.matmul->id
                    << "] pricing: baseline/MAC=" << cm.initialCompCost
                    << " executions=" << cm.executions << "\n";

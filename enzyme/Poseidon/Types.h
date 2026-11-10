@@ -78,7 +78,7 @@ public:
                    const llvm::SetVector<llvm::Value *> &subgraphInputs,
                    unsigned depth = 0);
   unsigned getMPFRPrec() const;
-  virtual void updateBounds(double lower, double upper);
+  virtual void updateBounds(double lower, double upper, bool print);
   virtual double getLowerBound() const;
   virtual double getUpperBound() const;
   virtual llvm::Value *
@@ -118,7 +118,7 @@ public:
                        &valueToNodeMap,
                    const llvm::SetVector<llvm::Value *> &subgraphInputs,
                    unsigned depth = 0) override;
-  void updateBounds(double lower, double upper) override;
+  void updateBounds(double lower, double upper, bool print) override;
   double getLowerBound() const override;
   double getUpperBound() const override;
   llvm::Value *
@@ -142,7 +142,7 @@ public:
                    const llvm::SetVector<llvm::Value *> &subgraphInputs,
                    unsigned depth = 0) override;
   bool hasSymbol() const override;
-  void updateBounds(double lower, double upper) override;
+  void updateBounds(double lower, double upper, bool print) override;
   double getLowerBound() const override;
   double getUpperBound() const override;
   llvm::Value *
@@ -198,6 +198,7 @@ struct Subgraph {
 
 struct SolutionStep;
 class CandidateMatmul;
+class Session;
 
 struct RewriteCandidate {
   // Double, not InstructionCost: cost-model rows are reciprocal throughputs
@@ -241,15 +242,16 @@ public:
   std::string unpricedReason;
   llvm::SmallVector<std::pair<std::string, std::string>, 1> dropped;
 
-  explicit CandidateOutput(Subgraph &subgraph, llvm::Value *oldOutput,
-                           std::string expr, double grad, unsigned executions)
+  explicit CandidateOutput(CostModelState &CM, Subgraph &subgraph,
+                           llvm::Value *oldOutput, std::string expr,
+                           double grad, unsigned executions)
       : subgraph(&subgraph), oldOutput(oldOutput), expr(expr), grad(grad),
         executions(executions), roots({oldOutput}), rootGrads({grad}) {
-    initialCompCost = getCompCost({oldOutput}, subgraph.inputs);
+    initialCompCost = getCompCost(CM, {oldOutput}, subgraph.inputs);
     findErasableInstructions();
   }
 
-  explicit CandidateOutput(Subgraph &subgraph,
+  explicit CandidateOutput(CostModelState &CM, Subgraph &subgraph,
                            llvm::ArrayRef<llvm::Value *> outputs,
                            llvm::ArrayRef<double> grads, std::string expr,
                            unsigned executions)
@@ -260,7 +262,7 @@ public:
     for (double g : grads)
       grad += std::fabs(g);
     initialCompCost = getCompCost(
-        llvm::SmallVector<llvm::Value *>(outputs.begin(), outputs.end()),
+        CM, llvm::SmallVector<llvm::Value *>(outputs.begin(), outputs.end()),
         subgraph.inputs);
     findErasableInstructions();
   }
@@ -271,8 +273,10 @@ public:
   void apply(size_t candidateIndex,
              std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>>
                  &valueToNodeMap,
-             std::unordered_map<std::string, llvm::Value *> &symbolToValueMap);
-  llvm::InstructionCost getCompCostDelta(size_t candidateIndex);
+             std::unordered_map<std::string, llvm::Value *> &symbolToValueMap,
+             bool print);
+  llvm::InstructionCost getCompCostDelta(CostModelState &CM,
+                                         size_t candidateIndex);
   double getAccCostDelta(size_t candidateIndex);
 
 private:
@@ -304,17 +308,18 @@ public:
       compCostDeltaCache;
   std::unordered_map<CacheKey, double, CacheKeyHash> accCostDeltaCache;
 
-  explicit CandidateSubgraph(Subgraph &subgraph) : subgraph(&subgraph) {
+  explicit CandidateSubgraph(CostModelState &CM, Subgraph &subgraph)
+      : subgraph(&subgraph) {
     initialCompCost =
-        getCompCost({subgraph.outputs.begin(), subgraph.outputs.end()},
+        getCompCost(CM, {subgraph.outputs.begin(), subgraph.outputs.end()},
                     subgraph.inputs, &subgraph.opExec, subgraph.execNormalizer);
   }
 
-  void apply(size_t candidateIndex);
+  void apply(Session &S, size_t candidateIndex);
   llvm::InstructionCost getCompCostDelta(size_t candidateIndex);
   double getAccCostDelta(size_t candidateIndex);
   llvm::InstructionCost
-  getAdjustedCompCostDelta(size_t candidateIndex,
+  getAdjustedCompCostDelta(Session &S, size_t candidateIndex,
                            const llvm::SmallVectorImpl<SolutionStep> &steps);
   double getAdjustedAccCostDelta(
       size_t candidateIndex, const llvm::SmallVectorImpl<SolutionStep> &steps,

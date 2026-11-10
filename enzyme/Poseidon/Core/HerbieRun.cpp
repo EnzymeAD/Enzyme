@@ -41,8 +41,8 @@ std::string readFileDigest(StringRef Path) {
 // A Herbie cache entry is stamped with the digest of the binary that produced
 // it: version strings do not change between upstream commits, and one
 // binary's rewrites must not be replayed as another's.
-std::string herbieBinaryDigest(StringRef Program) {
-  static std::map<std::string, std::string> Digests;
+std::string herbieBinaryDigest(StringRef Program,
+                               HerbieBinaryDigests &Digests) {
   auto It = Digests.find(Program.str());
   if (It == Digests.end())
     It = Digests.emplace(Program.str(), readFileDigest(Program)).first;
@@ -60,13 +60,15 @@ SmallVector<std::string> herbieSearchArgs(const HerbieRunOptions &Opts) {
           "--enable",     "reduce:dag-cost"};
 }
 
-void addHerbieKeyParts(CacheKey &Key, const HerbieRunOptions &Opts) {
-  Key.add("Herbie binary", herbieBinaryDigest(Opts.Program));
+void addHerbieKeyParts(CacheKey &Key, const HerbieRunOptions &Opts,
+                       HerbieBinaryDigests &Digests) {
+  Key.add("Herbie binary", herbieBinaryDigest(Opts.Program, Digests));
   Key.add("Herbie platform", Opts.Platform.Name + " " + Opts.Platform.Digest);
 }
 
 HerbieRunResult runHerbie(const std::vector<std::string> &inputExprs,
-                          const HerbieRunOptions &Opts, StringRef Label) {
+                          const HerbieRunOptions &Opts, StringRef Label,
+                          HerbieBinaryDigests &Digests) {
   using Outcome = HerbieRunResult::Outcome;
   const std::string &Program = Opts.Program;
   const HerbiePlatform &Platform = Opts.Platform;
@@ -133,7 +135,7 @@ HerbieRunResult runHerbie(const std::vector<std::string> &inputExprs,
     joinedCores += '\n';
   }
   CacheKey key;
-  addHerbieKeyParts(key, Opts);
+  addHerbieKeyParts(key, Opts, Digests);
   key.add("Herbie arguments", join(herbieSearchArgs(Opts), " "));
   key.addContent("cores", joinedCores);
   const std::string keyDigest = key.digest();

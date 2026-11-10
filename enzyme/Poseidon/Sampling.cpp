@@ -8,8 +8,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "Sampling.h"
+#include "Core/Options.h"
 #include "Evaluators.h"
-#include "Pass/Flags.h"
 #include "Types.h"
 #include "Utils.h"
 
@@ -42,7 +42,7 @@ double sampleError(double goldVal, double result) {
 // The gate is workload-driven: only a profiled sqrt argument or denominator
 // within kCancellationThreshold of zero activates the plan.
 CancellationPlan
-buildCancellationPlan(const Subgraph &subgraph,
+buildCancellationPlan(const Options &O, const Subgraph &subgraph,
                       const std::unordered_map<Value *, std::shared_ptr<FPNode>>
                           &valueToNodeMap) {
   CancellationPlan plan;
@@ -95,7 +95,7 @@ buildCancellationPlan(const Subgraph &subgraph,
   }
 
   plan.active = nearSingular && !plan.pairs.empty();
-  if (flags::Print && plan.active)
+  if (O.Diagnostics.Print && plan.active)
     llvm::errs() << "[poseidon] cancellation-aware sampling active: "
                  << plan.pairs.size() << " leaf-subtraction pair(s), "
                  << "near-singular denominator/radicand profiled\n";
@@ -124,14 +124,14 @@ static void collectLeaves(const FPNode *node,
 // program does, and is kept if every input lies in its own profiled range, the
 // box Herbie searched.
 void getSampledPoints(
-    ArrayRef<Value *> inputs,
+    const Options &O, ArrayRef<Value *> inputs,
     const std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     const std::unordered_map<std::string, Value *> &symbolToValueMap,
     SmallVector<MapVector<Value *, double>, 4> &sampledPoints,
     const CancellationPlan *plan, size_t count, unsigned seedOffset) {
-  const size_t numSamples = count ? count : flags::NumSamples.getValue();
+  const size_t numSamples = count ? count : O.Model.NumSamples;
   std::default_random_engine gen;
-  gen.seed(flags::RandomSeed + seedOffset);
+  gen.seed(O.Model.RandomSeed + seedOffset);
   std::uniform_real_distribution<> dis;
   sampledPoints.clear();
 
@@ -258,7 +258,7 @@ void getSampledPoints(
       sampledPoints.push_back(std::move(point));
   }
 
-  if (flags::Print)
+  if (O.Diagnostics.Print)
     llvm::errs() << "[poseidon] joint sampling: " << leaves.size()
                  << " leaves, " << sampledPoints.size() << " of " << drawn
                  << " draws inside the profiled input box\n";
@@ -272,7 +272,7 @@ void getSampledPoints(
 }
 
 void getSampledPoints(
-    const std::string &expr,
+    const Options &O, const std::string &expr,
     const std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     const std::unordered_map<std::string, Value *> &symbolToValueMap,
     SmallVector<MapVector<Value *, double>, 4> &sampledPoints) {
@@ -284,7 +284,7 @@ void getSampledPoints(
     inputs.push_back(symbolToValueMap.at(argStr));
   }
 
-  getSampledPoints(inputs, valueToNodeMap, symbolToValueMap, sampledPoints);
+  getSampledPoints(O, inputs, valueToNodeMap, symbolToValueMap, sampledPoints);
 }
 
 } // namespace poseidon

@@ -31,6 +31,12 @@ class ScalarEvolution;
 
 namespace poseidon {
 
+struct Options;
+class Session;
+
+// The percentile of the sampled relative errors a matrix product is scored at.
+constexpr double kDefaultConfidence = 0.95;
+
 struct CellStat {
   double min = 0.0;
   double max = 0.0;
@@ -268,8 +274,8 @@ loadProfile(const AbstractMatmul &m,
 // appends only matmuls whose whole descriptor (extents, leading dimensions,
 // layouts, alpha/beta and the profile-scale shape) could be reconstructed.
 // Everything else is skipped with a printed reason; no dimension is guessed.
-void findHostGemmLoopNests(llvm::Function &F, llvm::ScalarEvolution &SE,
-                           llvm::LoopInfo &LI,
+void findHostGemmLoopNests(const Options &O, llvm::Function &F,
+                           llvm::ScalarEvolution &SE, llvm::LoopInfo &LI,
                            const FunctionProfileHeader &profileHeader,
                            const std::unordered_map<size_t, ProfileInfo> &prof,
                            llvm::SmallVectorImpl<AbstractMatmul> &out);
@@ -312,7 +318,7 @@ public:
     return candidates[idx].accuracyCost - initialAccCost;
   }
 
-  void apply(size_t candidateIndex);
+  void apply(Session &S, size_t candidateIndex);
 };
 
 std::string matmulOptionLabel(const CandidateMatmul::Option &opt);
@@ -340,7 +346,7 @@ uint64_t inKernelRaiseSharedBytes(llvm::Module &M,
 // `sampleLogBits`: 0 samples operands uniformly over the profiled [min, max];
 // B > 0 log-uniformly in magnitude over [maxMag * 2^-B, maxMag].
 void generateMatmulCandidates(
-    llvm::ArrayRef<AbstractMatmul> matmuls,
+    Session &S, llvm::ArrayRef<AbstractMatmul> matmuls,
     const std::unordered_map<size_t, ProfileInfo> &scalarProfile,
     double confidence, unsigned sampleLogBits,
     llvm::SmallVectorImpl<CandidateMatmul> &out);

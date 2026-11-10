@@ -3,6 +3,7 @@
 // function named ex<n>_*, as an n-component FP32 expansion, with no candidate
 // selection in between. Loaded after the Poseidon plugin, whose applyExpansion
 // it calls.
+#include "Pass/Session.h"
 #include "Techniques/Expansion.h"
 #include "Utils.h"
 
@@ -22,7 +23,8 @@ using namespace llvm;
 
 namespace {
 struct ApplyExpansionPass : poseidon::PassParent<ApplyExpansionPass> {
-  PreservedAnalyses run(Module &M, ModuleAnalysisManager &) {
+  PreservedAnalyses run(Module &M, ModuleAnalysisManager &MAM) {
+    poseidon::Session &S = poseidon::sessionOf(M, MAM);
     for (Function &F : M) {
       StringRef name = F.getName();
       if (F.isDeclaration() || !name.starts_with("ex") || name.size() < 4 ||
@@ -38,9 +40,9 @@ struct ApplyExpansionPass : poseidon::PassParent<ApplyExpansionPass> {
         }
       DenseMap<Value *, Value *> restored;
       if (n == 2)
-        poseidon::applyExpansion(insts, all, &restored);
+        poseidon::applyExpansion(S, insts, all, &restored);
       else
-        poseidon::applyExpansion(n, insts, all, &restored);
+        poseidon::applyExpansion(S, n, insts, all, &restored);
     }
     return PreservedAnalyses::none();
   }

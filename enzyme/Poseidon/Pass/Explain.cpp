@@ -31,9 +31,9 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include "CostModel.h"
-#include "Flags.h"
 #include "Herbie.h"
 #include "Optimize.h"
+#include "Session.h"
 #include "Solvers.h"
 #include "Techniques/Matmul/Matmul.h"
 #include "Techniques/Precision.h"
@@ -61,11 +61,6 @@ constexpr const char *kPass = "poseidon";
 constexpr size_t kMaxRejectedRemarks = 3;
 constexpr size_t kRemarkExprChars = 160;
 constexpr size_t kMaxListedOps = 6;
-
-std::map<const Function *, DebugLoc> &siteCalls() {
-  static std::map<const Function *, DebugLoc> calls;
-  return calls;
-}
 
 struct SourceLoc {
   std::string file;
@@ -488,6 +483,7 @@ std::string exprWords(const Unit &U) {
 }
 
 class Explainer {
+  Session &Sess;
   Function &F;
   FunctionFPState &st;
   ArrayRef<SolutionStep> steps;
@@ -591,9 +587,9 @@ class Explainer {
   std::optional<int64_t> appliedDelta() const;
 
 public:
-  Explainer(Function &F, FunctionFPState &st, ArrayRef<SolutionStep> steps,
-            const SolveRecord &rec)
-      : F(F), st(st), steps(steps), rec(rec), namer(F),
+  Explainer(Session &Sess, Function &F, FunctionFPState &st,
+            ArrayRef<SolutionStep> steps, const SolveRecord &rec)
+      : Sess(Sess), F(F), st(st), steps(steps), rec(rec), namer(F),
         nodes(st.valueToNodeMap), symbols(st.symbolToValueMap),
         A0(rec.baseline), S(rec.accScale), tau(rec.tau) {}
 
@@ -720,7 +716,7 @@ void Explainer::addCOAlternatives(Unit &U, const Subgraph &sg) {
       A.index = j;
       fill(A, cand.expr);
       if (cand.CompCost != std::numeric_limits<double>::max())
-        A.costDelta = GET_COST(CO.getCompCostDelta(j));
+        A.costDelta = GET_COST(CO.getCompCostDelta(Sess.CostModel, j));
       double acc = CO.getAccCostDelta(j);
       if (std::isfinite(acc)) {
         A.accDelta = acc;
@@ -985,9 +981,11 @@ void Explainer::judge(Unit &U) {
       A.rank = 3;
       continue;
     }
-    if (tau == 0.0 && A.costDelta && *A.costDelta > flags::CompCostBudget) {
+    if (tau == 0.0 && A.costDelta &&
+        *A.costDelta > Sess.Opts.Solver.CompCostBudget) {
       A.reason = "its cost change " + costStr(*A.costDelta) +
-                 " is above the budget " + costStr(flags::CompCostBudget);
+                 " is above the budget " +
+                 costStr(Sess.Opts.Solver.CompCostBudget);
       A.rank = 2;
       continue;
     }
@@ -1015,7 +1013,7 @@ std::string Explainer::leftReason(const Unit &U, const Subgraph *sg) {
                           ")");
         }
       if (!hadCO) {
-        if (!flags::EnableHerbie)
+        if (!Sess.Opts.Candidates.EnableHerbie)
           why.push_back("the algebraic search is disabled");
         else
           for (Instruction *O : sg->outputs) {
@@ -1057,7 +1055,7 @@ std::string Explainer::leftReason(const Unit &U, const Subgraph *sg) {
            "selected rewrites";
   }
   return "no alternative lowers the modelled error within the cost budget " +
-         costStr(flags::CompCostBudget);
+         costStr(Sess.Opts.Solver.CompCostBudget);
 }
 
 void Explainer::buildSubgraph(size_t s) {
@@ -1180,7 +1178,7 @@ void Explainer::buildSubgraph(size_t s) {
 
   if (!sg.outputs.empty()) {
     SmallVector<Value *> outs(sg.outputs.begin(), sg.outputs.end());
-    double base = getCompCost(outs, sg.inputs);
+    double base = getCompCost(Sess.CostModel, outs, sg.inputs);
     if (FPNode *N = nodeOf(sg.outputs[0]))
       U.baseCost = (int64_t)std::llround(base * (double)N->executions);
   }
@@ -1272,15 +1270,15 @@ json::Object Explainer::toJSON() {
   root["schema"] = "poseidon-explain/1";
 
   json::Object fn;
-  const Function *origin = siteOriginOf(F);
+  const Function *origin = siteOriginOf(Sess, F);
   StringRef symbol = origin ? origin->getName() : F.getName();
   symbol.consume_back("_poseidon_body");
   symbol = symbol.split(".poseidon.").first;
   fn["name"] = llvm::demangle(symbol.str());
   fn["symbol"] = symbol.str();
   fn["ir"] = F.getName().str();
-  auto site = siteCalls().find(&F);
-  if (site != siteCalls().end())
+  auto site = Sess.SiteCalls.find(&F);
+  if (site != Sess.SiteCalls.end())
     putLoc(fn, "site", locOf(site->second));
   const DISubprogram *SP = origin ? origin->getSubprogram() : F.getSubprogram();
   if (SP)
@@ -1292,9 +1290,9 @@ json::Object Explainer::toJSON() {
     target["tau"] = tau;
     target["tau_from"] = rec.siteTarget ? "site" : "flag";
   } else {
-    target["budget"] = (int64_t)flags::CompCostBudget;
+    target["budget"] = (int64_t)Sess.Opts.Solver.CompCostBudget;
   }
-  target["cost_model"] = costModelPath();
+  target["cost_model"] = costModelPath(Sess.CostModel);
   target["selector"] = rec.selector;
   if (rec.fromCache)
     target["from_cache"] = true;
@@ -1467,11 +1465,11 @@ json::Object Explainer::toJSON() {
 
 void Explainer::emitRemarks() {
   OptimizationRemarkEmitter ORE(&F);
-  auto siteIt = siteCalls().find(&F);
-  DiagnosticLocation siteLoc = siteIt != siteCalls().end() && siteIt->second
+  auto siteIt = Sess.SiteCalls.find(&F);
+  DiagnosticLocation siteLoc = siteIt != Sess.SiteCalls.end() && siteIt->second
                                    ? DiagnosticLocation(siteIt->second)
                                    : DiagnosticLocation(F.getSubprogram());
-  const Function *origin = siteOriginOf(F);
+  const Function *origin = siteOriginOf(Sess, F);
   StringRef symbol = origin ? origin->getName() : F.getName();
   symbol.consume_back("_poseidon_body");
   symbol = symbol.split(".poseidon.").first;
@@ -1499,7 +1497,8 @@ void Explainer::emitRemarks() {
     if (tau > 0.0)
       R << "target " << ore::NV("Tau", num(tau));
     else
-      R << "cost budget " << ore::NV("Budget", costStr(flags::CompCostBudget));
+      R << "cost budget "
+        << ore::NV("Budget", costStr(Sess.Opts.Solver.CompCostBudget));
     double asWritten = relErr(0.0);
     if (std::isfinite(asWritten))
       R << "; modelled error as written "
@@ -1680,20 +1679,20 @@ void Explainer::emitRemarks() {
 
 } // namespace
 
-bool explainWanted(const Function &F) {
-  return !flags::Explain.empty() || !flags::ReportPath.empty() ||
+bool explainWanted(const Options &O, const Function &F) {
+  return !O.Diagnostics.Explain.empty() || !O.Diagnostics.ReportPath.empty() ||
          OptimizationRemarkEmitter::allowExtraAnalysis(F, kPass);
 }
 
-void noteSiteCall(const Function *body, const DebugLoc &loc) {
-  siteCalls()[body] = loc;
+void noteSiteCall(Session &S, const Function *body, const DebugLoc &loc) {
+  S.SiteCalls[body] = loc;
 }
 
-void explainNothingToOptimize(Function &F) {
+void explainNothingToOptimize(Session &S, Function &F) {
   OptimizationRemarkEmitter ORE(&F);
   ORE.emit([&]() {
-    auto site = siteCalls().find(&F);
-    DiagnosticLocation loc = site != siteCalls().end() && site->second
+    auto site = S.SiteCalls.find(&F);
+    DiagnosticLocation loc = site != S.SiteCalls.end() && site->second
                                  ? DiagnosticLocation(site->second)
                                  : DiagnosticLocation(F.getSubprogram());
     OptimizationRemarkMissed R(kPass, "NothingToOptimize", loc,
@@ -1704,11 +1703,11 @@ void explainNothingToOptimize(Function &F) {
   });
 }
 
-void explainUnprofiled(Function &F, StringRef cause) {
+void explainUnprofiled(Session &S, Function &F, StringRef cause) {
   OptimizationRemarkEmitter ORE(&F);
   ORE.emit([&]() {
-    auto site = siteCalls().find(&F);
-    DiagnosticLocation loc = site != siteCalls().end() && site->second
+    auto site = S.SiteCalls.find(&F);
+    DiagnosticLocation loc = site != S.SiteCalls.end() && site->second
                                  ? DiagnosticLocation(site->second)
                                  : DiagnosticLocation(F.getSubprogram());
     OptimizationRemarkMissed R(kPass, "Unprofiled", loc, &F.getEntryBlock());
@@ -1717,14 +1716,14 @@ void explainUnprofiled(Function &F, StringRef cause) {
   });
 }
 
-void explainSolve(Function &F, FunctionFPState &st,
+void explainSolve(Session &S, Function &F, FunctionFPState &st,
                   ArrayRef<SolutionStep> steps, const SolveRecord &rec) {
+  const DiagnosticOptions &D = S.Opts.Diagnostics;
   const bool remarks = OptimizationRemarkEmitter::allowExtraAnalysis(F, kPass);
-  const std::string dir =
-      !flags::Explain.empty() ? flags::Explain.getValue() : flags::ReportPath;
+  const std::string dir = !D.Explain.empty() ? D.Explain : D.ReportPath;
   if (!remarks && dir.empty())
     return;
-  Explainer E(F, st, steps, rec);
+  Explainer E(S, F, st, steps, rec);
   E.build();
   if (remarks)
     E.emitRemarks();

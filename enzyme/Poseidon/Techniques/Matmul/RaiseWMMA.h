@@ -11,7 +11,6 @@
 #define POSEIDON_RAISE_WMMA_H
 
 #include "llvm/ADT/SmallVector.h"
-#include "llvm/Support/CommandLine.h"
 
 #include "Matmul.h"
 #include "Profile/ProfileRead.h"
@@ -25,8 +24,10 @@ class ScalarEvolution;
 
 namespace poseidon {
 
-void findScalarLoopMatmuls(llvm::Function &F, llvm::ScalarEvolution &SE,
-                           llvm::LoopInfo &LI,
+struct Options;
+
+void findScalarLoopMatmuls(const Options &O, llvm::Function &F,
+                           llvm::ScalarEvolution &SE, llvm::LoopInfo &LI,
                            const FunctionProfileHeader &profileHeader,
                            llvm::SmallVectorImpl<AbstractMatmul> &out);
 
@@ -35,7 +36,8 @@ void findScalarLoopMatmuls(llvm::Function &F, llvm::ScalarEvolution &SE,
 // price the Ozaki-II padding waste at one scale even under surrogate profiling.
 // Must run on the clean clone: the profiling probes break the reduction shape.
 void collectScalarLoopReductionTrips(
-    llvm::Function &F, llvm::SmallVectorImpl<std::pair<size_t, unsigned>> &out);
+    const Options &O, llvm::Function &F,
+    llvm::SmallVectorImpl<std::pair<size_t, unsigned>> &out);
 
 void materializeScalarLoopRaise(const AbstractMatmul &m,
                                 const CandidateMatmul::Option &opt);

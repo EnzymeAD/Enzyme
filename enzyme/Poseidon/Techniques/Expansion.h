@@ -12,9 +12,10 @@
 
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Value.h"
-#include "llvm/Support/CommandLine.h"
 
 namespace poseidon {
+
+class Session;
 
 struct DSValue {
   llvm::Value *hi;
@@ -42,7 +43,7 @@ DSValue emitToDS(llvm::IRBuilder<> &B, llvm::Value *fpval);
 llvm::Value *emitDSToFP(llvm::IRBuilder<> &B, DSValue ds, llvm::Type *targetTy);
 
 void applyExpansion(
-    llvm::ArrayRef<llvm::Instruction *> instsToChange,
+    Session &S, llvm::ArrayRef<llvm::Instruction *> instsToChange,
     const llvm::SmallPtrSetImpl<llvm::Instruction *> &allChanged,
     llvm::DenseMap<llvm::Value *, llvm::Value *> *restoredValues = nullptr);
 
@@ -84,25 +85,27 @@ llvm::Value *emitExpansionToFP(llvm::IRBuilder<> &B, const ExpansionValue &v,
 // Materialize as an n-component expansion (n >= 3); mirrors applyExpansion
 // but never touches the two-component df64 staging machinery.
 void applyExpansion(
-    unsigned n, llvm::ArrayRef<llvm::Instruction *> instsToChange,
+    Session &S, unsigned n, llvm::ArrayRef<llvm::Instruction *> instsToChange,
     const llvm::SmallPtrSetImpl<llvm::Instruction *> &allChanged,
     llvm::DenseMap<llvm::Value *, llvm::Value *> *restoredValues = nullptr);
 
 // Cancel the join/split roundtrip a df64 conversion leaves on an expansion
 // restore; `foldedLimbs` collects the limbs the fold exposed.
 bool foldDSPairRoundtrip(llvm::Function &F,
-                         llvm::SmallVectorImpl<llvm::Value *> *foldedLimbs);
+                         llvm::SmallVectorImpl<llvm::Value *> *foldedLimbs,
+                         bool print);
 
 // Drain the limbs the last applyExpansion produced, so getCompCost can re-root
 // its cost walk on them.
-void takeLastExpansionLimbs(llvm::SmallVectorImpl<llvm::Value *> &out);
+void takeLastExpansionLimbs(Session &S,
+                            llvm::SmallVectorImpl<llvm::Value *> &out);
 
 // Drain the limbs the last applyExpansion produced, so getCompCost can re-root
 // its cost walk on them; separate from takeLastExpansionLimbs because one
 // candidate can apply both kinds of change.
-void takeLastExpLimbs(llvm::SmallVectorImpl<llvm::Value *> &out);
+void takeLastExpLimbs(Session &S, llvm::SmallVectorImpl<llvm::Value *> &out);
 // Start a fresh limb record; one candidate may apply several expansion changes.
-void resetExpLimbs();
+void resetExpLimbs(Session &S);
 
 } // namespace poseidon
 #endif // POSEIDON_EXPANSION_H

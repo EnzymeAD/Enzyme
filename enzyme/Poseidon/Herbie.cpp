@@ -22,7 +22,6 @@
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Support/Casting.h"
-#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Format.h"
@@ -38,7 +37,7 @@
 #include "Evaluators.h"
 #include "Herbie.h"
 #include "Optimize.h"
-#include "Pass/Flags.h"
+#include "Pass/Session.h"
 #include "Sampling.h"
 #include "Types.h"
 #include "Utils.h"
@@ -57,14 +56,13 @@ namespace poseidon {
 // The Herbie platform this compile searches against. It is the device's, so it
 // is derived from the resolved cost model.
 namespace {
-const HerbiePlatform &getHerbiePlatform() {
-  static HerbiePlatform P;
-  static bool Resolved = false;
-  if (Resolved)
+const HerbiePlatform &getHerbiePlatform(Session &S) {
+  HerbiePlatform &P = S.Platform;
+  if (S.PlatformResolved)
     return P;
-  Resolved = true;
+  S.PlatformResolved = true;
 
-  const std::string &NativeArch = getCostModelNativeArch();
+  const std::string &NativeArch = getCostModelNativeArch(S.CostModel);
   bool IsCUDA = StringRef(NativeArch).starts_with("sm_");
   bool IsHIP = StringRef(NativeArch).starts_with("gfx");
   if (IsCUDA) {
@@ -79,11 +77,11 @@ const HerbiePlatform &getHerbiePlatform() {
     P.Name = "default";
   }
 
-  if (!flags::HerbiePlatform.empty()) {
+  if (!S.Opts.Herbie.HerbiePlatform.empty()) {
     // A value that looks like a file is the platform itself; anything else is
     // a platform name compiled into the Herbie binary. The name keeps naming
     // the device family either way, and the digest below distinguishes files.
-    StringRef V(flags::HerbiePlatform);
+    StringRef V(S.Opts.Herbie.HerbiePlatform);
     if (V.contains('/') || V.ends_with(".rkt"))
       P.Path = V.str();
     else
@@ -91,7 +89,7 @@ const HerbiePlatform &getHerbiePlatform() {
   } else if (IsCUDA || IsHIP) {
     // Generated next to the CSV it was priced from, by
     // `poseidon-calibrate --only herbie-platform`.
-    StringRef Csv(costModelPath());
+    StringRef Csv(costModelPath(S.CostModel));
     P.Path =
         (Csv.ends_with(".csv") ? Csv.drop_back(4) : Csv).str() + ".herbie.rkt";
     if (!sys::fs::exists(P.Path))
@@ -101,7 +99,7 @@ const HerbiePlatform &getHerbiePlatform() {
           P.Path +
           " does not exist. Generate it with 'poseidon-calibrate --only "
           "herbie-platform --out " +
-          costModelPath() +
+          costModelPath(S.CostModel) +
           "'. Another architecture's platform is that architecture's prices "
           "and is never substituted.");
   }
@@ -663,45 +661,47 @@ fpcoreToC(const std::string &expr,
 }
 
 // How this compile runs Herbie: its -poseidon-herbie-* flags.
-static HerbieRunOptions herbieRunOptions() {
+static HerbieRunOptions herbieRunOptions(Session &S) {
+  const Options &O = S.Opts;
   HerbieRunOptions Opts;
-  Opts.Program = flags::HerbieBinary.empty() ? std::string(HERBIE_BINARY)
-                                             : flags::HerbieBinary;
-  Opts.Platform = getHerbiePlatform();
-  Opts.Seed = flags::RandomSeed;
-  Opts.NumPoints = flags::HerbieNumPts;
-  Opts.NumIters = flags::HerbieNumIters;
-  Opts.NumEnodes = flags::HerbieNumEnodes;
-  Opts.CoreTimeout = flags::HerbieTimeout;
-  Opts.NumThreads = flags::HerbieNumThreads;
-  Opts.Processes = flags::HerbieProcesses;
-  Opts.SubgraphTimeout = flags::HerbieSubgraphTimeout;
-  Opts.CacheDir = flags::Cache;
-  Opts.Print = flags::Print;
+  Opts.Program = O.Herbie.HerbieBinary.empty() ? std::string(HERBIE_BINARY)
+                                               : O.Herbie.HerbieBinary;
+  Opts.Platform = getHerbiePlatform(S);
+  Opts.Seed = O.Model.RandomSeed;
+  Opts.NumPoints = O.Herbie.HerbieNumPts;
+  Opts.NumIters = O.Herbie.HerbieNumIters;
+  Opts.NumEnodes = O.Herbie.HerbieNumEnodes;
+  Opts.CoreTimeout = O.Herbie.HerbieTimeout;
+  Opts.NumThreads = O.Herbie.HerbieNumThreads;
+  Opts.Processes = O.Herbie.HerbieProcesses;
+  Opts.SubgraphTimeout = O.Herbie.HerbieSubgraphTimeout;
+  Opts.CacheDir = O.Herbie.Cache;
+  Opts.Print = O.Diagnostics.Print;
   return Opts;
 }
 
-void addHerbieKeyParts(CacheKey &key) {
-  addHerbieKeyParts(key, herbieRunOptions());
+void addHerbieKeyParts(Session &S, CacheKey &key) {
+  addHerbieKeyParts(key, herbieRunOptions(S), S.HerbieDigests);
 }
 
-bool improveViaHerbie(const std::vector<std::string> &inputExprs,
+bool improveViaHerbie(Session &S, const std::vector<std::string> &inputExprs,
                       std::vector<CandidateOutput> &COs, int subgraphIdx,
                       StringRef funcTag) {
-  if (!flags::HerbieBinary.empty() && flags::Print)
-    llvm::errs() << "Poseidon: using Herbie binary '" << flags::HerbieBinary
+  const Options &O = S.Opts;
+  if (!O.Herbie.HerbieBinary.empty() && O.Diagnostics.Print)
+    llvm::errs() << "Poseidon: using Herbie binary '" << O.Herbie.HerbieBinary
                  << "'\n";
-  llvm::errs() << "random seed: " << std::to_string(flags::RandomSeed) << "\n";
-  HerbieRunOptions Opts = herbieRunOptions();
+  llvm::errs() << "random seed: " << std::to_string(O.Model.RandomSeed) << "\n";
+  HerbieRunOptions Opts = herbieRunOptions(S);
 
   const std::string Label =
       "subgraph " + std::to_string(subgraphIdx) + " of " + funcTag.str();
-  HerbieRunResult Run = runHerbie(inputExprs, Opts, Label);
+  HerbieRunResult Run = runHerbie(inputExprs, Opts, Label, S.HerbieDigests);
   if (Run.Result == HerbieRunResult::Outcome::Timeout)
     for (CandidateOutput &CO : COs)
       CO.herbieStatus = "timeout";
   if (Run.Result == HerbieRunResult::Outcome::Crashed) {
-    if (flags::StrictMode)
+    if (O.Model.StrictMode)
       report_fatal_error(Twine("Poseidon strict mode: Herbie crashed (") +
                          Run.Crash + ") on " + Label);
     for (CandidateOutput &CO : COs)
@@ -865,7 +865,7 @@ std::string getHerbieOperator(const Instruction &I) {
 }
 
 std::string getPrecondition(
-    const SmallSet<std::string, 8> &args,
+    const Options &O, const SmallSet<std::string, 8> &args,
     const std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     const std::unordered_map<std::string, Value *> &symbolToValueMap) {
   std::string preconditions;
@@ -888,10 +888,10 @@ std::string getPrecondition(
     upperStr << std::setprecision(std::numeric_limits<double>::max_digits10)
              << std::scientific << upper;
 
-    if (flags::HerbiePreFloorBits > 0 && lower < 0 && upper > 0 &&
+    if (O.Herbie.HerbiePreFloorBits > 0 && lower < 0 && upper > 0 &&
         std::isfinite(lower) && std::isfinite(upper)) {
-      double floorMag =
-          std::ldexp(std::max(-lower, upper), -(int)flags::HerbiePreFloorBits);
+      double floorMag = std::ldexp(std::max(-lower, upper),
+                                   -(int)O.Herbie.HerbiePreFloorBits);
       std::ostringstream floorStr;
       floorStr << std::setprecision(std::numeric_limits<double>::max_digits10)
                << std::scientific << floorMag;
@@ -985,11 +985,12 @@ struct RootSamples {
 };
 
 bool sampleRoot(
-    RootSamples &R, ArrayRef<MapVector<Value *, double>> sampledPoints,
+    const Options &O, RootSamples &R,
+    ArrayRef<MapVector<Value *, double>> sampledPoints,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap) {
-  R.goldVals.resize(flags::NumSamples);
-  R.origErrors.resize(flags::NumSamples);
-  R.origVals.resize(flags::NumSamples);
+  R.goldVals.resize(O.Model.NumSamples);
+  R.origErrors.resize(O.Model.NumSamples);
+  R.origVals.resize(O.Model.NumSamples);
   double sum = 0.0;
   unsigned count = 0;
   for (const auto &pair : enumerate(sampledPoints)) {
@@ -1016,8 +1017,9 @@ bool sampleRoot(
 }
 
 std::optional<double>
-priceRoot(const RootSamples &R, std::shared_ptr<FPNode> parsedNode,
-          const std::string &exprForLog, const Subgraph &subgraph,
+priceRoot(const Options &O, const RootSamples &R,
+          std::shared_ptr<FPNode> parsedNode, const std::string &exprForLog,
+          const Subgraph &subgraph,
           ArrayRef<MapVector<Value *, double>> sampledPoints,
           std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
           std::unordered_map<std::string, Value *> &symbolToValueMap,
@@ -1026,7 +1028,7 @@ priceRoot(const RootSamples &R, std::shared_ptr<FPNode> parsedNode,
   double candCost = 0.0;
 
   SmallVector<const FPNode *, 2> ifNodes;
-  if (flags::MinArmSamples > 0) {
+  if (O.Model.MinArmSamples > 0) {
     SmallPtrSet<const FPNode *, 32> seen;
     collectIfNodes(parsedNode.get(), seen, ifNodes);
   }
@@ -1081,9 +1083,9 @@ priceRoot(const RootSamples &R, std::shared_ptr<FPNode> parsedNode,
       candCost = sum / count;
     }
   }
-  if (!discardCandidate && flags::MaxBrokenShare >= 0.0 &&
-      broken > flags::MaxBrokenShare * sampledPoints.size()) {
-    if (flags::Print)
+  if (!discardCandidate && O.Model.MaxBrokenShare >= 0.0 &&
+      broken > O.Model.MaxBrokenShare * sampledPoints.size()) {
+    if (O.Diagnostics.Print)
       llvm::errs() << "[poseidon] dropping candidate: relative error >= 1 on "
                    << broken << " of " << sampledPoints.size()
                    << " samples: " << exprForLog.substr(0, 120) << "\n";
@@ -1101,21 +1103,21 @@ priceRoot(const RootSamples &R, std::shared_ptr<FPNode> parsedNode,
   if (!discardCandidate && !ifNodes.empty()) {
     auto starved = [&] {
       for (const auto &kv : armStats)
-        if (kv.second.count < flags::MinArmSamples)
+        if (kv.second.count < O.Model.MinArmSamples)
           return true;
       return false;
     };
-    size_t budget = static_cast<size_t>(flags::ArmSearchFactor) *
-                    flags::NumSamples.getValue();
+    size_t budget =
+        static_cast<size_t>(O.Model.ArmSearchFactor) * O.Model.NumSamples;
     size_t drawn = 0;
     unsigned round = 0;
     std::shared_ptr<FPNode> origNode = valueToNodeMap[R.root];
     while (starved() && drawn < budget) {
       if (R.armRounds.size() <= round) {
         ArmRound fresh;
-        getSampledPoints(subgraph.inputs.getArrayRef(), valueToNodeMap,
+        getSampledPoints(O, subgraph.inputs.getArrayRef(), valueToNodeMap,
                          symbolToValueMap, fresh.points, nullptr,
-                         flags::NumSamples.getValue(), round + 1);
+                         O.Model.NumSamples, round + 1);
         fresh.gold.resize(fresh.points.size());
         fresh.origError.resize(fresh.points.size());
         fresh.priced.resize(fresh.points.size(), false);
@@ -1130,7 +1132,7 @@ priceRoot(const RootSamples &R, std::shared_ptr<FPNode> parsedNode,
         SmallVector<RegimeArm, 4> arms = takenArms(parsedNode.get(), point);
         bool wanted = false;
         for (const RegimeArm &arm : arms)
-          if (armStats[arm].count < flags::MinArmSamples)
+          if (armStats[arm].count < O.Model.MinArmSamples)
             wanted = true;
         if (!wanted)
           continue;
@@ -1150,7 +1152,7 @@ priceRoot(const RootSamples &R, std::shared_ptr<FPNode> parsedNode,
           continue;
         for (const RegimeArm &arm : arms) {
           ArmStats &st = armStats[arm];
-          if (st.count >= flags::MinArmSamples)
+          if (st.count >= O.Model.MinArmSamples)
             continue;
           st.candSum += error;
           st.origSum += origError;
@@ -1169,18 +1171,18 @@ priceRoot(const RootSamples &R, std::shared_ptr<FPNode> parsedNode,
         if (st.count)
           os << ":" << format("%.3e", st.candSum / st.count) << "/"
              << format("%.3e", st.origSum / st.count);
-        if (st.count < flags::MinArmSamples) {
+        if (st.count < O.Model.MinArmSamples) {
           discardCandidate = true;
           why = formatv("a regime-split arm is reached by fewer than {0} "
                         "samples",
-                        (unsigned)flags::MinArmSamples)
+                        (unsigned)O.Model.MinArmSamples)
                     .str();
           continue;
         }
         worst =
             std::max(worst, R.origCost + (st.candSum - st.origSum) / st.count);
       }
-    if (flags::Print)
+    if (O.Diagnostics.Print)
       llvm::errs() << "[poseidon] regime-split candidate: arms (samples:cand/"
                       "orig mean error)"
                    << os.str() << "; " << drawn << " extra draws; box cost "
@@ -1213,15 +1215,15 @@ void collectInputs(const FPNode *node, const SetVector<Value *> &inputs,
 } // namespace
 
 void setUnifiedAccuracyCost(
-    CandidateOutput &CO,
+    const Options &O, CandidateOutput &CO,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, Value *> &symbolToValueMap) {
 
   CancellationPlan cancelPlan =
-      buildCancellationPlan(*CO.subgraph, valueToNodeMap);
+      buildCancellationPlan(O, *CO.subgraph, valueToNodeMap);
   SmallVector<MapVector<Value *, double>, 4> sampledPoints;
 
-  getSampledPoints(CO.subgraph->inputs.getArrayRef(), valueToNodeMap,
+  getSampledPoints(O, CO.subgraph->inputs.getArrayRef(), valueToNodeMap,
                    symbolToValueMap, sampledPoints, &cancelPlan);
 
   // No usable sample means the output cannot be priced: drop its candidates and
@@ -1246,7 +1248,7 @@ void setUnifiedAccuracyCost(
   for (auto [R, root, grad] : llvm::zip(rootSamples, CO.roots, CO.rootGrads)) {
     R.root = root;
     R.grad = grad;
-    if (!sampleRoot(R, sampledPoints, valueToNodeMap)) {
+    if (!sampleRoot(O, R, sampledPoints, valueToNodeMap)) {
       unpriceable("every sample of the original expression scored NaN");
       return;
     }
@@ -1306,7 +1308,7 @@ void setUnifiedAccuracyCost(
       collectInputs(element.get(), CO.subgraph->inputs, seen, used);
       if (!llvm::all_of(used,
                         [&](Value *V) { return rootInputs[k].contains(V); })) {
-        if (flags::Print)
+        if (O.Diagnostics.Print)
           llvm::errs() << "[poseidon] dropping candidate: element " << k
                        << " reads a value its output does not\n";
         discardCandidate = true;
@@ -1319,7 +1321,7 @@ void setUnifiedAccuracyCost(
       }
       std::string why;
       std::optional<double> cost =
-          priceRoot(rootSamples[k], element, candidate.expr, *CO.subgraph,
+          priceRoot(O, rootSamples[k], element, candidate.expr, *CO.subgraph,
                     sampledPoints, valueToNodeMap, symbolToValueMap, why);
       if (!cost) {
         discardCandidate = true;
@@ -1327,13 +1329,13 @@ void setUnifiedAccuracyCost(
         break;
       }
       total += *cost * std::fabs(rootSamples[k].grad);
-      if (CO.isArray() && flags::Print)
+      if (CO.isArray() && O.Diagnostics.Print)
         perElement +=
             formatv(" {0:e}/{1:e}", *cost * std::fabs(rootSamples[k].grad),
                     rootSamples[k].origCost * std::fabs(rootSamples[k].grad))
                 .str();
     }
-    if (CO.isArray() && flags::Print && !discardCandidate)
+    if (CO.isArray() && O.Diagnostics.Print && !discardCandidate)
       llvm::errs() << "[poseidon] array candidate per element (cand/orig):"
                    << perElement << "\n";
 
@@ -1347,7 +1349,7 @@ void setUnifiedAccuracyCost(
 }
 
 double getCompCost(
-    const std::string &expr, Module *M,
+    CostModelState &CM, const std::string &expr, Module *M,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, Value *> &symbolToValueMap,
     const FastMathFlags &FMF, const SetVector<Value *> *subgraphInputs) {
@@ -1462,7 +1464,7 @@ double getCompCost(
 
   simplifyFunction(*tempFunction, OptimizationLevel::O3);
 
-  double cost = getCompCost(tempFunction);
+  double cost = getCompCost(CM, tempFunction);
 
   tempFunction->eraseFromParent();
   return cost;

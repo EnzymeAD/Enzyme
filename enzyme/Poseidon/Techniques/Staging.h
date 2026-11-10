@@ -23,25 +23,28 @@
 
 namespace poseidon {
 
+struct Options;
+class Session;
+
 // Narrow addrspace(3) staging buffers whose FP64 values are only ever consumed
 // at FP32: stride K -> K/2, `load float` + fpext, fptrunc at the stores. Fires
 // only when every consumer of a staged load rounds to FP32 (fptrunc or fcmp),
 // which keeps the transform value-preserving.
-bool narrowSharedStaging(llvm::Function &F);
+bool narrowSharedStaging(const Options &O, llvm::Function &F);
 
 // df64 analog: when every staged load is consumed by an emitF64ToDS Dekker
 // split, store the {hi,lo} pair once at the staging store (hi@+0, lo@+4 in the
 // same 8-byte slot) and turn each split into a pair load.
-bool narrowSharedStagingDS(llvm::Function &F);
+bool narrowSharedStagingDS(const Options &O, llvm::Function &F);
 
 // The same two transforms for a buffer that reaches F as a POINTER PARAMETER:
 // the arms above root at the global's addrspacecast and see no GEP of a
 // `double *` the kernel hands to an annotated `noinline` body. `Proxy` is the
 // function the site arguments were recorded against (F at materialization, the
 // site function when pricing a clone).
-bool narrowSharedStagingParam(llvm::Function &F,
+bool narrowSharedStagingParam(Session &S, llvm::Function &F,
                               llvm::Function *Proxy = nullptr);
-bool narrowSharedStagingParamDS(llvm::Function &F,
+bool narrowSharedStagingParamDS(Session &S, llvm::Function &F,
                                 llvm::Function *Proxy = nullptr);
 
 // Which parameter arm applyStagingNarrowing runs. Both self-gate on the reader
@@ -53,7 +56,7 @@ enum class ParamArm { None, Both, FP32, DS };
 // The arms in the order every site must apply them: the FP32 narrowing, the
 // parameter arms `param` selects, then the df64 narrowing. `announce` prints
 // the per-arm line the solve log carries. True if any arm changed F.
-bool applyStagingNarrowing(llvm::Function &F, bool announce,
+bool applyStagingNarrowing(Session &S, llvm::Function &F, bool announce,
                            ParamArm param = ParamArm::None,
                            llvm::Function *paramProxy = nullptr);
 

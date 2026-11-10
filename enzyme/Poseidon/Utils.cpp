@@ -32,7 +32,6 @@
 #include "llvm/Passes/PassBuilder.h"
 
 #include "llvm/Support/Casting.h"
-#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/InstructionCost.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -60,8 +59,8 @@
 
 #include "llvm/Support/Debug.h"
 
+#include "Core/Options.h"
 #include "Herbie.h"
-#include "Pass/Flags.h"
 #include "Types.h"
 #include "Utils.h"
 
@@ -303,12 +302,13 @@ void collectExprInsts(Value *V, const SetVector<Value *> &inputs,
   }
 }
 
-bool isExpansionBottleneck(Instruction *I, const Subgraph &subgraph) {
+bool isExpansionBottleneck(const Options &O, Instruction *I,
+                           const Subgraph &subgraph) {
   if (subgraph.outputs.contains(I) && subgraph.outputs.size() <= 1) {
     return false;
   }
-  const bool forced = isa<CallInst>(I) &&
-                      is_contained(flags::SplitCalls, getHerbieOperator(*I));
+  const bool forced = isa<CallInst>(I) && is_contained(O.Candidates.SplitCalls,
+                                                       getHerbieOperator(*I));
 
   unsigned internalUses = 0;
   for (auto *U : I->users()) {
@@ -319,7 +319,7 @@ bool isExpansionBottleneck(Instruction *I, const Subgraph &subgraph) {
     }
   }
 
-  if (!forced && internalUses < flags::MinUsesSplit) {
+  if (!forced && internalUses < O.Candidates.MinUsesSplit) {
     return false;
   }
 
@@ -396,13 +396,13 @@ bool isExpansionBottleneck(Instruction *I, const Subgraph &subgraph) {
     }
   }
 
-  bool isBottleneck = forced || movedOps.size() >= flags::MinOpsSplit;
-  if (flags::Print && isBottleneck) {
+  bool isBottleneck = forced || movedOps.size() >= O.Candidates.MinOpsSplit;
+  if (O.Diagnostics.Print && isBottleneck) {
     llvm::errs() << "Bottleneck: " << *I << "\n";
     llvm::errs() << "Num of operations that would be moved: " << movedOps.size()
-                 << " (>=" << flags::MinOpsSplit << ")\n";
+                 << " (>=" << O.Candidates.MinOpsSplit << ")\n";
     llvm::errs() << "Num of internal uses: " << internalUses
-                 << " (>=" << flags::MinUsesSplit << ")\n";
+                 << " (>=" << O.Candidates.MinUsesSplit << ")\n";
     llvm::errs() << "Operations that would be moved:\n";
     for (auto *op : movedOps) {
       llvm::errs() << "\t" << *op << "\n";
@@ -543,7 +543,8 @@ static const Value *stagingObjectOf(const Value *Ptr) {
   return nullptr;
 }
 
-void mergeSharedStagingSubgraphs(SmallVectorImpl<Subgraph> &subgraphs,
+void mergeSharedStagingSubgraphs(const Options &O,
+                                 SmallVectorImpl<Subgraph> &subgraphs,
                                  Function &F) {
   if (subgraphs.size() < 2)
     return;
@@ -620,7 +621,7 @@ void mergeSharedStagingSubgraphs(SmallVectorImpl<Subgraph> &subgraphs,
           continue;
         M.inputs.insert(In);
       }
-    if (flags::Print) {
+    if (O.Diagnostics.Print) {
       SmallPtrSet<const Value *, 4> objs;
       for (unsigned idx : kv.second)
         for (const Value *O : touched[idx])
@@ -640,7 +641,7 @@ void mergeSharedStagingSubgraphs(SmallVectorImpl<Subgraph> &subgraphs,
     subgraphs.push_back(std::move(M));
 }
 
-void splitSubgraphs(SmallVectorImpl<Subgraph> &subgraphs) {
+void splitSubgraphs(const Options &O, SmallVectorImpl<Subgraph> &subgraphs) {
 
   SmallVector<Subgraph, 8> resultSubgraphs;
   SmallVector<Subgraph, 8> workQueue;
@@ -664,8 +665,8 @@ void splitSubgraphs(SmallVectorImpl<Subgraph> &subgraphs) {
     for (auto *I : sortedOps) {
       assert(currentSubgraph.operations.contains(I));
 
-      if (isExpansionBottleneck(I, currentSubgraph)) {
-        if (flags::Print) {
+      if (isExpansionBottleneck(O, I, currentSubgraph)) {
+        if (O.Diagnostics.Print) {
           llvm::errs() << "Bottleneck: " << *I << "\n";
           llvm::errs() << "currentSubgraph.inputs ("
                        << currentSubgraph.inputs.size() << "): ";
@@ -691,7 +692,7 @@ void splitSubgraphs(SmallVectorImpl<Subgraph> &subgraphs) {
         splitSubgraphAtBottleneck(currentSubgraph, I, newSubgraph,
                                   remainingSubgraph);
 
-        if (flags::Print) {
+        if (O.Diagnostics.Print) {
           llvm::errs() << "=== Splitting subgraph at bottleneck: " << *I
                        << " ===\n";
 
@@ -743,7 +744,7 @@ void splitSubgraphs(SmallVectorImpl<Subgraph> &subgraphs) {
     }
   }
 
-  if (flags::Print) {
+  if (O.Diagnostics.Print) {
     llvm::errs() << "=== Subgraph splitting complete ===\n";
     llvm::errs() << "  Original subgraphs: " << subgraphs.size() << "\n";
     llvm::errs() << "  Final subgraphs after splitting: "

@@ -13,7 +13,6 @@
 //===----------------------------------------------------------------------===//
 
 #include "Optimize.h"
-#include "Pass/Flags.h"
 
 #include "InKernelRaise.h"
 #include "MatmulInternal.h"

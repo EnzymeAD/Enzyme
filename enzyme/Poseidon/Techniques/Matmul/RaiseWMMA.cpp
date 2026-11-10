@@ -8,7 +8,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "RaiseWMMA.h"
-#include "Pass/Flags.h"
+#include "Core/Options.h"
 
 #include "Optimize.h"
 #include "Techniques/Precision.h"
@@ -412,9 +412,9 @@ static unsigned dimForAxis(const uint32_t (&dims)[3], TidAxis axis) {
 // extent of the fast axis, otherwise the index is not a dense numbering of the
 // block's threads; return 0 (unknown) in that case so the caller skips the
 // site.
-static unsigned extentForIndex(const uint32_t (&dims)[3], TidAxis fast,
-                               TidAxis slow, unsigned mult, StringRef what,
-                               StringRef fname) {
+static unsigned extentForIndex(const Options &O, const uint32_t (&dims)[3],
+                               TidAxis fast, TidAxis slow, unsigned mult,
+                               StringRef what, StringRef fname) {
   unsigned fastDim = dimForAxis(dims, fast);
   if (slow == TidAxis::Unknown)
     return fastDim;
@@ -422,7 +422,7 @@ static unsigned extentForIndex(const uint32_t (&dims)[3], TidAxis fast,
   if (fastDim == 0 || slowDim == 0)
     return 0;
   if (mult != fastDim) {
-    if (flags::Print)
+    if (O.Diagnostics.Print)
       llvm::errs() << "[raise-wmma] " << fname << ": fused " << what
                    << " index multiplier " << mult
                    << " does not match the profiled block extent " << fastDim
@@ -438,7 +438,7 @@ static unsigned extentForIndex(const uint32_t (&dims)[3], TidAxis fast,
 // reduction phi. The profile header is deliberately not consulted, so this
 // also runs at profgen.
 static void forEachScalarLoopReduction(
-    Function &F, ScalarEvolution &SE, LoopInfo &LI,
+    const Options &O, Function &F, ScalarEvolution &SE, LoopInfo &LI,
     function_ref<void(Loop *, ScalarLoopHandle &, FPKind, unsigned)> cb) {
   const DataLayout &DL = F.getParent()->getDataLayout();
   SmallVector<Loop *, 8> worklist;
@@ -456,7 +456,7 @@ static void forEachScalarLoopReduction(
     BasicBlock *header = L->getHeader();
     BasicBlock *latch = L->getLoopLatch();
     if (!latch) {
-      if (flags::Print)
+      if (O.Diagnostics.Print)
         llvm::errs() << "[raise-wmma] reject loop @ "
                      << header->getParent()->getName()
                      << ": no unique latch (multi-latch / irreducible)\n";
@@ -464,7 +464,7 @@ static void forEachScalarLoopReduction(
     }
     unsigned trip = SE.getSmallConstantMaxTripCount(L);
     if (trip == 0) {
-      if (flags::Print)
+      if (O.Diagnostics.Print)
         llvm::errs() << "[raise-wmma] reject loop in "
                      << header->getParent()->getName()
                      << ": trip count is not a known constant\n";
@@ -484,9 +484,10 @@ static void forEachScalarLoopReduction(
 // Profile-scale reduction-length handoff (profgen -> profuse), keyed by (clone
 // name, fma probe idx) and carried in the site's own profile header.
 void collectScalarLoopReductionTrips(
-    Function &F, SmallVectorImpl<std::pair<size_t, unsigned>> &trips) {
+    const Options &O, Function &F,
+    SmallVectorImpl<std::pair<size_t, unsigned>> &trips) {
   Module &M = *F.getParent();
-  if (!flags::RaiseWMMA || !Triple(M.getTargetTriple()).isNVPTX())
+  if (!O.Candidates.RaiseWMMA || !Triple(M.getTargetTriple()).isNVPTX())
     return;
   if (F.isDeclaration())
     return;
@@ -498,20 +499,21 @@ void collectScalarLoopReductionTrips(
   ScalarEvolution SE(F, TLI, AC, DT, LI);
 
   forEachScalarLoopReduction(
-      F, SE, LI, [&](Loop *, ScalarLoopHandle &h, FPKind, unsigned trip) {
+      O, F, SE, LI, [&](Loop *, ScalarLoopHandle &h, FPKind, unsigned trip) {
         size_t idx;
         if (tryReadProfIdxMetadata(h.fma, idx))
           trips.emplace_back(idx, trip);
       });
-  if (flags::Print && !trips.empty())
+  if (O.Diagnostics.Print && !trips.empty())
     llvm::errs() << "[raise-wmma] recorded " << trips.size()
                  << " reduction trip(s) for " << F.getName() << "\n";
 }
 
-void findScalarLoopMatmuls(Function &F, ScalarEvolution &SE, LoopInfo &LI,
+void findScalarLoopMatmuls(const Options &O, Function &F, ScalarEvolution &SE,
+                           LoopInfo &LI,
                            const FunctionProfileHeader &profileHeader,
                            SmallVectorImpl<AbstractMatmul> &out) {
-  assert(flags::RaiseWMMA && "flags::RaiseWMMA must be enabled");
+  assert(O.Candidates.RaiseWMMA && "-poseidon-raise-wmma must be enabled");
   Module *M = F.getParent();
   assert(Triple(M->getTargetTriple()).isNVPTX() &&
          "findScalarLoopMatmuls expects GPU (NVPTX) target");
@@ -520,7 +522,7 @@ void findScalarLoopMatmuls(Function &F, ScalarEvolution &SE, LoopInfo &LI,
   // launchCount == 0 means the function was never exercised, so refuse to
   // guess.
   if (profileHeader.launchCount == 0) {
-    if (flags::Print)
+    if (O.Diagnostics.Print)
       llvm::errs() << "[raise-wmma] " << F.getName()
                    << ": no profile header (launchCount=0); skipping all "
                       "scalar-loop matmul candidates\n";
@@ -534,15 +536,16 @@ void findScalarLoopMatmuls(Function &F, ScalarEvolution &SE, LoopInfo &LI,
   const std::map<size_t, unsigned> &redTrip = profileHeader.redTrip;
 
   forEachScalarLoopReduction(
-      F, SE, LI, [&](Loop *L, ScalarLoopHandle &h, FPKind eltKind, unsigned) {
-        unsigned profM = extentForIndex(profileHeader.maxBlockDim, h.aRowAxis,
-                                        h.aRowSlowAxis, h.aRowFuseMult, "A-row",
-                                        F.getName());
-        unsigned profN = extentForIndex(profileHeader.maxBlockDim, h.bColAxis,
-                                        h.bColSlowAxis, h.bColFuseMult, "B-col",
-                                        F.getName());
+      O, F, SE, LI,
+      [&](Loop *L, ScalarLoopHandle &h, FPKind eltKind, unsigned) {
+        unsigned profM = extentForIndex(O, profileHeader.maxBlockDim,
+                                        h.aRowAxis, h.aRowSlowAxis,
+                                        h.aRowFuseMult, "A-row", F.getName());
+        unsigned profN = extentForIndex(O, profileHeader.maxBlockDim,
+                                        h.bColAxis, h.bColSlowAxis,
+                                        h.bColFuseMult, "B-col", F.getName());
         if (profM == 0 || profN == 0) {
-          if (flags::Print)
+          if (O.Diagnostics.Print)
             llvm::errs() << "[raise-wmma] " << F.getName()
                          << ": profile header reports zero extent for matmul's "
                             "row/col tid axis; skipping\n";

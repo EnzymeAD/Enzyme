@@ -5,7 +5,7 @@
 #include "InKernelRaise.h"
 #include "MatmulInternal.h"
 #include "Optimize.h"
-#include "Pass/Flags.h"
+#include "Pass/Session.h"
 #include "Solvers.h"
 #include "Utils.h"
 #include "WmmaUtils.h"
@@ -15,7 +15,6 @@
 #include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Module.h"
-#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -72,14 +71,14 @@ std::string matmulOptionLabel(const CandidateMatmul::Option &opt) {
 // TODO: include more wmma_load_{a,b,c} and wmma_store_d costs
 // Today only m16n16k16 has them.
 // Returns the per-tile-MMA reciprocal-throughput cost (cycles per tile op).
-double getMatmulCompCost(unsigned M, unsigned N, unsigned K, FPKind inputPrec,
-                         FPKind accPrec) {
+double getMatmulCompCost(CostModelState &CM, unsigned M, unsigned N, unsigned K,
+                         FPKind inputPrec, FPKind accPrec) {
   if (inputPrec == FPKind::Invalid || accPrec == FPKind::Invalid)
     report_fatal_error("getMatmulCompCost: unexpected FPKind::Invalid");
   std::string opcode = "wmma_mma_" + mmaShapeSuffix(M, N, K);
   std::string prec =
       std::string(fpKindName(inputPrec)) + "_" + fpKindName(accPrec);
-  const auto &model = getCostModel();
+  const auto &model = getCostModel(CM);
   auto it = model.find({opcode, prec});
   if (it == model.end())
     report_fatal_error("cost model missing row for " + Twine(opcode) + " " +
@@ -112,14 +111,15 @@ std::string inKernelCostClass(const SchemeVariant &v) {
 //     wmma_inkernel_rel,<class>_m<M>n<N>k<K>,<rel>
 // is preferred and the unqualified wmma_inkernel_rel,<class>,<rel> is the
 // fallback.
-static double lookupInKernelRel(const std::string &cls, unsigned tileM,
-                                unsigned tileN, unsigned tileK) {
+static double lookupInKernelRel(CostModelState &CM, const std::string &cls,
+                                unsigned tileM, unsigned tileN,
+                                unsigned tileK) {
   double q =
-      queryCostModelOr("wmma_inkernel_rel",
+      queryCostModelOr(CM, "wmma_inkernel_rel",
                        cls + "_" + mmaShapeSuffix(tileM, tileN, tileK), -1.0);
   if (q > 0.0)
     return q;
-  return queryCostModelOr("wmma_inkernel_rel", cls, -1.0);
+  return queryCostModelOr(CM, "wmma_inkernel_rel", cls, -1.0);
 }
 
 // Price one in-kernel raise from its measured wmma_inkernel_rel row, or refuse
@@ -127,21 +127,22 @@ static double lookupInKernelRel(const std::string &cls, unsigned tileM,
 // only the mma chain and measure 3.5-64x optimistic against the realized rate,
 // and Poseidon does not substitute a model for a missing measurement anywhere
 // else.
-bool priceInKernelRaiseFromMeasuredRow(const AbstractMatmul &m,
+bool priceInKernelRaiseFromMeasuredRow(Session &S, const AbstractMatmul &m,
                                        const std::string &cls, unsigned tileM,
                                        unsigned tileN, unsigned tileK,
                                        double baselinePerMac,
                                        const std::string &what,
                                        double &costOut) {
-  double rel = lookupInKernelRel(cls, tileM, tileN, tileK);
+  const Options &O = S.Opts;
+  double rel = lookupInKernelRel(S.CostModel, cls, tileM, tileN, tileK);
   if (rel > 0.0) {
     costOut = baselinePerMac * rel;
     return true;
   }
 
   const std::string key = cls + "_" + mmaShapeSuffix(tileM, tileN, tileK);
-  if (flags::InKernelCalibration) {
-    if (flags::ApplyRewrites.empty())
+  if (O.Matmul.InKernelCalibration) {
+    if (O.Solver.ApplyRewrites.empty())
       report_fatal_error(
           "Poseidon: -poseidon-inkernel-calibration requires "
           "-poseidon-apply-rewrites. Uncalibrated in-kernel classes are "
@@ -157,8 +158,7 @@ bool priceInKernelRaiseFromMeasuredRow(const AbstractMatmul &m,
     return true;
   }
 
-  static std::set<std::string> reported;
-  if (reported.insert(key).second) {
+  if (S.ReportedInKernelRows.insert(key).second) {
     llvm::errs()
         << "[poseidon] WARNING: matmul[" << m.id << "] " << m.M << "x" << m.N
         << "x" << m.K << ": " << what
@@ -172,10 +172,11 @@ bool priceInKernelRaiseFromMeasuredRow(const AbstractMatmul &m,
            "refused rather than priced on an unmeasured model. Run "
            "poseidon-calibrate on this device.\n";
   }
-  if (flags::StrictMode)
-    report_fatal_error(
-        "Poseidon strict mode: in-kernel raise class '" + Twine(key) +
-        "' has no measured wmma_inkernel_rel row in " + Twine(costModelPath()));
+  if (O.Model.StrictMode)
+    report_fatal_error("Poseidon strict mode: in-kernel raise class '" +
+                       Twine(key) +
+                       "' has no measured wmma_inkernel_rel row in " +
+                       Twine(costModelPath(S.CostModel)));
   return false;
 }
 
@@ -195,10 +196,10 @@ static constexpr WmmaTarget kExpectedWmmaTargets[] = {
     {16, 16, 16, FPKind::S8, FPKind::S32},
 };
 
-const SmallVector<WmmaTarget, 16> &getAvailableWmmaTargets() {
-  static const SmallVector<WmmaTarget, 16> available = []() {
+const SmallVector<WmmaTarget, 16> &getAvailableWmmaTargets(Session &S) {
+  if (!S.AvailableWmmaTargets) {
     SmallVector<WmmaTarget, 16> result;
-    const auto &model = getCostModel();
+    const auto &model = getCostModel(S.CostModel);
     for (const WmmaTarget &t : kExpectedWmmaTargets) {
       std::string opcode = "wmma_mma_" + mmaShapeSuffix(t.M, t.N, t.K);
       std::string prec =
@@ -212,9 +213,9 @@ const SmallVector<WmmaTarget, 16> &getAvailableWmmaTargets() {
                      << " — this target will not be considered.\n";
       }
     }
-    return result;
-  }();
-  return available;
+    S.AvailableWmmaTargets = std::move(result);
+  }
+  return *S.AvailableWmmaTargets;
 }
 
 // Static shared-memory preconditions at proposal time (see
@@ -336,7 +337,7 @@ uint64_t inKernelRaiseSharedBytes(Module &M, const CandidateMatmul::Option &opt,
 }
 
 // Shared refusal for every in-kernel class. Returns true when the raise fits.
-bool inKernelRaiseFits(Function *F, const AbstractMatmul &m,
+bool inKernelRaiseFits(const Options &O, Function *F, const AbstractMatmul &m,
                        const CandidateMatmul::Option &opt,
                        uint64_t existingBytes, StringRef className) {
   if (!F)
@@ -349,7 +350,7 @@ bool inKernelRaiseFits(Function *F, const AbstractMatmul &m,
   uint64_t total = existingBytes + raiseBytes;
   if (total <= kStaticShmemCap)
     return true;
-  if (flags::Print)
+  if (O.Diagnostics.Print)
     llvm::errs()
         << "  Matmul[" << m.id << "] " << m.M << "x" << m.N << "x" << m.K
         << ": " << className << " NOT PROPOSED -- it needs " << total

@@ -8,7 +8,6 @@
 //===----------------------------------------------------------------------===//
 
 #include "CostModel.h"
-#include "Pass/Flags.h"
 #include "Types.h"
 #include "Utils.h"
 
@@ -39,37 +38,27 @@ using namespace llvm;
 
 namespace poseidon {
 
-static struct {
-  std::unordered_set<std::string> scalar;
-  std::unordered_set<std::string> matrix;
-} SupportedTypes;
-
-static std::string CostModelNativeArch;
-
 // The CSV this compilation prices from, resolved once: the flag, the
 // environment, this user's cache, then what the installation ships. Everything
 // below reads it through costModelPath(), never the flag.
-static std::string ResolvedCostModel;
-static bool CostModelResolved = false;
-
-static bool resolveFromRequest() {
-  if (CostModelResolved)
+static bool resolveFromRequest(CostModelState &CM) {
+  if (CM.IsResolved)
     return true;
-  if (!flags::CostModel.empty()) {
-    ResolvedCostModel = flags::CostModel;
-    CostModelResolved = true;
+  if (!CM.Requested.empty()) {
+    CM.Resolved = CM.Requested;
+    CM.IsResolved = true;
   } else if (const char *Env = std::getenv("POSEIDON_COST_MODEL")) {
     if (*Env) {
-      ResolvedCostModel = Env;
-      CostModelResolved = true;
+      CM.Resolved = Env;
+      CM.IsResolved = true;
     }
   }
-  return CostModelResolved;
+  return CM.IsResolved;
 }
 
-const std::string &costModelPath() {
-  resolveFromRequest();
-  return ResolvedCostModel;
+const std::string &costModelPath(CostModelState &CM) {
+  resolveFromRequest(CM);
+  return CM.Resolved;
 }
 
 static std::string userCacheDir() {
@@ -84,8 +73,9 @@ static std::string userCacheDir() {
 
 // One measured model per device: the file name carries the architecture it was
 // measured on, so the module's target-cpu names it.
-static void resolveForTarget(StringRef TargetCpu, const Function &F) {
-  if (resolveFromRequest())
+static void resolveForTarget(CostModelState &CM, StringRef TargetCpu,
+                             const Function &F) {
+  if (resolveFromRequest(CM))
     return;
   if (TargetCpu.empty())
     report_fatal_error("Poseidon: optimizing " + Twine(F.getName()) +
@@ -126,30 +116,30 @@ static void resolveForTarget(StringRef TargetCpu, const Function &F) {
                        "; name the one to price from with "
                        "-poseidon-cost-model=<csv>");
   }
-  ResolvedCostModel = Found.front();
-  CostModelResolved = true;
+  CM.Resolved = Found.front();
+  CM.IsResolved = true;
 }
 
 static const std::unordered_set<std::string> DefaultScalarTypes = {
     "half", "bf16", "float", "double"};
 
-const std::unordered_set<std::string> &getScalarTypes() {
-  if (!costModelPath().empty()) {
-    getCostModel();
-    if (!SupportedTypes.scalar.empty())
-      return SupportedTypes.scalar;
+const std::unordered_set<std::string> &getScalarTypes(CostModelState &CM) {
+  if (!costModelPath(CM).empty()) {
+    getCostModel(CM);
+    if (!CM.SupportedTypes.scalar.empty())
+      return CM.SupportedTypes.scalar;
   }
   return DefaultScalarTypes;
 }
 
-const std::map<std::pair<std::string, std::string>, double> &getCostModel() {
-  static std::map<std::pair<std::string, std::string>, double> CostModel;
-  static bool Loaded = false;
-  if (!Loaded) {
-    std::ifstream CostFile(costModelPath());
+const std::map<std::pair<std::string, std::string>, double> &
+getCostModel(CostModelState &CM) {
+  std::map<std::pair<std::string, std::string>, double> &CostModel = CM.Model;
+  if (!CM.Loaded) {
+    std::ifstream CostFile(costModelPath(CM));
     if (!CostFile.is_open()) {
       std::string msg =
-          "Cost model file could not be opened: " + costModelPath();
+          "Cost model file could not be opened: " + costModelPath(CM);
       llvm_unreachable(msg.c_str());
     }
     std::string Line;
@@ -164,14 +154,14 @@ const std::map<std::pair<std::string, std::string>, double> &getCostModel() {
         key = key.trim();
         vals = vals.trim();
         if (key == "native_arch") {
-          CostModelNativeArch = vals.str();
+          CM.NativeArch = vals.str();
           continue;
         }
         std::unordered_set<std::string> *target = nullptr;
         if (key == "scalar_types")
-          target = &SupportedTypes.scalar;
+          target = &CM.SupportedTypes.scalar;
         else if (key == "matrix_types")
-          target = &SupportedTypes.matrix;
+          target = &CM.SupportedTypes.matrix;
         if (target && !vals.empty()) {
           SmallVector<StringRef, 8> tokens;
           vals.split(tokens, ',', -1, false);
@@ -196,22 +186,21 @@ const std::map<std::pair<std::string, std::string>, double> &getCostModel() {
       }
       CostModel[{OpcodeStr, PrecisionStr}] = std::stod(CostStr);
     }
-    Loaded = true;
+    CM.Loaded = true;
   }
   return CostModel;
 }
 
 // Hashes the parsed map rather than the file bytes so comments and row order
 // stay out of the DP-cache key; a changed price invalidates the cached table.
-uint64_t getCostModelFingerprint() {
-  static uint64_t FP = 0;
-  static bool Computed = false;
-  if (Computed)
+uint64_t getCostModelFingerprint(CostModelState &CM) {
+  uint64_t &FP = CM.Fingerprint;
+  if (CM.FingerprintComputed)
     return FP;
-  Computed = true;
-  if (costModelPath().empty())
+  CM.FingerprintComputed = true;
+  if (costModelPath(CM).empty())
     return FP;
-  const auto &Model = getCostModel();
+  const auto &Model = getCostModel(CM);
   uint64_t h = 1469598103934665603ULL;
   auto mix = [&](uint64_t v) {
     h ^= v + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
@@ -229,7 +218,7 @@ uint64_t getCostModelFingerprint() {
     std::memcpy(&bits, &d, sizeof(bits));
     mix(bits);
   }
-  mixStr(CostModelNativeArch);
+  mixStr(CM.NativeArch);
   FP = h;
   return FP;
 }
@@ -246,33 +235,33 @@ StringRef targetCpuOf(const Function &F) {
   return cpu;
 }
 
-void requireCostModel(const Function &F) {
+void requireCostModel(CostModelState &CM, const Function &F) {
   StringRef targetCpu = targetCpuOf(F);
-  resolveForTarget(targetCpu, F);
-  getCostModel();
-  if (CostModelNativeArch.empty())
-    report_fatal_error("Poseidon: cost model " + Twine(costModelPath()) +
+  resolveForTarget(CM, targetCpu, F);
+  getCostModel(CM);
+  if (CM.NativeArch.empty())
+    report_fatal_error("Poseidon: cost model " + Twine(costModelPath(CM)) +
                        " carries no '# native_arch=' header, so it cannot be "
                        "matched against the compile target");
-  if (targetCpu != CostModelNativeArch) {
+  if (targetCpu != CM.NativeArch) {
     std::string msg =
-        "Poseidon: cost model " + costModelPath() +
-        " was measured on native_arch '" + CostModelNativeArch + "' but " +
+        "Poseidon: cost model " + costModelPath(CM) +
+        " was measured on native_arch '" + CM.NativeArch + "' but " +
         F.getName().str() + " compiles for target-cpu '" +
         (targetCpu.empty() ? std::string("<unset>") : targetCpu.str()) + "'";
     report_fatal_error(Twine(msg));
   }
 }
 
-const std::string &getCostModelNativeArch() {
-  if (!costModelPath().empty())
-    getCostModel();
-  return CostModelNativeArch;
+const std::string &getCostModelNativeArch(CostModelState &CM) {
+  if (!costModelPath(CM).empty())
+    getCostModel(CM);
+  return CM.NativeArch;
 }
 
-double queryCostModel(const std::string &OpcodeName,
+double queryCostModel(CostModelState &CM, const std::string &OpcodeName,
                       const std::string &PrecisionName) {
-  const auto &CostModel = getCostModel();
+  const auto &CostModel = getCostModel(CM);
   auto Key = std::make_pair(OpcodeName, PrecisionName);
   auto It = CostModel.find(Key);
   if (It != CostModel.end())
@@ -284,14 +273,14 @@ double queryCostModel(const std::string &OpcodeName,
   llvm_unreachable(msg.c_str());
 }
 
-double queryCostModelOr(const std::string &OpcodeName,
+double queryCostModelOr(CostModelState &CM, const std::string &OpcodeName,
                         const std::string &PrecisionName, double fallback) {
-  const auto &CostModel = getCostModel();
+  const auto &CostModel = getCostModel(CM);
   auto It = CostModel.find(std::make_pair(OpcodeName, PrecisionName));
   return (It != CostModel.end()) ? It->second : fallback;
 }
 
-double getInstructionCompCost(const Instruction *I) {
+double getInstructionCompCost(CostModelState &CM, const Instruction *I) {
 #if LLVM_VERSION_MAJOR >= 20
   // O3 fuses sin(x) and cos(x) into llvm.sincos, whose struct result would
   // otherwise be priced as free.
@@ -304,7 +293,7 @@ double getInstructionCompCost(const Instruction *I) {
                                           : "";
       if (P.empty())
         llvm_unreachable("Custom cost model: unsupported llvm.sincos type");
-      return queryCostModel("sin", P) + queryCostModel("cos", P);
+      return queryCostModel(CM, "sin", P) + queryCostModel(CM, "cos", P);
     }
 #endif
   // A regime split's condition is an fcmp, whose i1 result is not an FP type
@@ -528,27 +517,28 @@ double getInstructionCompCost(const Instruction *I) {
     PrecisionName = SrcPrecisionName;
   }
 
-  return queryCostModel(OpcodeName, PrecisionName);
+  return queryCostModel(CM, OpcodeName, PrecisionName);
 }
 
-const std::unordered_set<std::string> &getPTFuncs() {
-  static const std::unordered_set<std::string> PTFuncs = []() {
+const std::unordered_set<std::string> &getPTFuncs(CostModelState &CM) {
+  if (!CM.PTFuncs) {
     std::unordered_set<std::string> funcs;
     for (const auto &func : libmFuncs()) {
-      double costFP32 = queryCostModel(func, "float");
-      double costFP64 = queryCostModel(func, "double");
-      double costFPTrunc = queryCostModel("fptrunc_double_to_float", "double");
-      double costFPExt = queryCostModel("fpext_float_to_double", "float");
+      double costFP32 = queryCostModel(CM, func, "float");
+      double costFP64 = queryCostModel(CM, func, "double");
+      double costFPTrunc =
+          queryCostModel(CM, "fptrunc_double_to_float", "double");
+      double costFPExt = queryCostModel(CM, "fpext_float_to_double", "float");
       double costFPCast = costFPTrunc + costFPExt;
       if (costFP32 + costFPCast < costFP64)
         funcs.insert(func);
     }
-    return funcs;
-  }();
-  return PTFuncs;
+    CM.PTFuncs = std::move(funcs);
+  }
+  return *CM.PTFuncs;
 }
 
-double computeMaxCost(BasicBlock *BB,
+double computeMaxCost(CostModelState &CM, BasicBlock *BB,
                       std::unordered_map<BasicBlock *, double> &MaxCost,
                       std::unordered_set<BasicBlock *> &Visited) {
   if (MaxCost.find(BB) != MaxCost.end())
@@ -562,7 +552,7 @@ double computeMaxCost(BasicBlock *BB,
     if (I.isTerminator())
       continue;
 
-    auto instCost = getInstructionCompCost(&I);
+    auto instCost = getInstructionCompCost(CM, &I);
 
     BBCost += instCost;
   }
@@ -572,7 +562,7 @@ double computeMaxCost(BasicBlock *BB,
   if (!succ_empty(BB)) {
     double maxSuccCost = 0;
     for (BasicBlock *Succ : successors(BB)) {
-      double succBBCost = computeMaxCost(Succ, MaxCost, Visited);
+      double succBBCost = computeMaxCost(CM, Succ, MaxCost, Visited);
       if (succBBCost > maxSuccCost)
         maxSuccCost = succBBCost;
     }
@@ -585,16 +575,16 @@ double computeMaxCost(BasicBlock *BB,
   return totalCost;
 }
 
-double getCompCost(Function *F) {
+double getCompCost(CostModelState &CM, Function *F) {
   std::unordered_map<BasicBlock *, double> MaxCost;
   std::unordered_set<BasicBlock *> Visited;
 
   BasicBlock *EntryBB = &F->getEntryBlock();
-  double TotalCost = computeMaxCost(EntryBB, MaxCost, Visited);
+  double TotalCost = computeMaxCost(CM, EntryBB, MaxCost, Visited);
   return TotalCost;
 }
 
-double getCompCost(const SmallVector<Value *> &outputs,
+double getCompCost(CostModelState &CM, const SmallVector<Value *> &outputs,
                    const SetVector<Value *> &inputs,
                    const DenseMap<const Instruction *, uint64_t> *opExec,
                    uint64_t normalizer) {
@@ -614,7 +604,7 @@ double getCompCost(const SmallVector<Value *> &outputs,
 
     if (auto *I = dyn_cast<Instruction>(cur)) {
       // TODO: unfair to ignore branches when calculating cost
-      auto instCost = getInstructionCompCost(I);
+      auto instCost = getInstructionCompCost(CM, I);
       if (opExec && normalizer) {
         auto it = opExec->find(I);
         if (it != opExec->end())
