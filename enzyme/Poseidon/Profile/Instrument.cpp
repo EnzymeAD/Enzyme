@@ -2,7 +2,7 @@
 
 #include "Optimize.h"
 #include "ProfileRead.h"
-#include "Utils.h"
+#include "Targets/Target.h"
 
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/IR/BasicBlock.h"
@@ -17,7 +17,6 @@
 #include "llvm/IR/Module.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/ModRef.h"
-#include "llvm/TargetParser/Triple.h"
 #include "llvm/Transforms/Utils/ModuleUtils.h"
 
 using namespace llvm;
@@ -26,16 +25,16 @@ namespace poseidon {
 
 namespace {
 
-Constant *getStringPointer(Module &M, StringRef gvName, StringRef contents,
-                           bool isGPU) {
+Constant *getStringPointer(Module &M, StringRef gvName, StringRef contents) {
   LLVMContext &Ctx = M.getContext();
   Type *PtrTy = PointerType::getUnqual(Ctx);
   GlobalVariable *gv = M.getNamedGlobal(gvName);
   if (!gv) {
     auto *strConst = ConstantDataArray::getString(Ctx, contents, true);
-    gv = new GlobalVariable(
-        M, strConst->getType(), true, GlobalValue::PrivateLinkage, strConst,
-        gvName, nullptr, GlobalVariable::NotThreadLocal, isGPU ? 1 : 0);
+    gv = new GlobalVariable(M, strConst->getType(), true,
+                            GlobalValue::PrivateLinkage, strConst, gvName,
+                            nullptr, GlobalVariable::NotThreadLocal,
+                            Target::of(M).globalAddressSpace());
     gv->setUnnamedAddr(GlobalValue::UnnamedAddr::Global);
     gv->setAlignment(Align(1));
   }
@@ -50,9 +49,8 @@ Constant *getStringPointer(Module &M, StringRef gvName, StringRef contents,
 
 // The profile record is keyed by this string, which both FP profiler runtimes
 // use as the registry key and as the .fpprofile stem.
-Constant *getProfileNamePointer(Module &M, StringRef cloneName, bool isGPU) {
-  return getStringPointer(M, ("poseidon_site_" + cloneName).str(), cloneName,
-                          isGPU);
+Constant *getProfileNamePointer(Module &M, StringRef cloneName) {
+  return getStringPointer(M, ("poseidon_site_" + cloneName).str(), cloneName);
 }
 
 FunctionCallee getProfilerHook(Module &M, StringRef name, FunctionType *FT) {
@@ -68,7 +66,7 @@ FunctionCallee getProfilerHook(Module &M, StringRef name, FunctionType *FT) {
 struct ProbeBuilder {
   Module &M;
   LLVMContext &Ctx;
-  bool isGPU;
+  const ProbeABI &P;
   unsigned siteId;
   StringRef cloneName;
   Constant *namePtr;
@@ -95,11 +93,10 @@ struct ProbeBuilder {
     {
       IRBuilder<> B(BasicBlock::Create(Ctx, "entry", aug));
       Value *v = aug->getArg(0);
-      if (isGPU) {
-        FunctionCallee pert = getProfilerHook(
-            M,
-            isFloat ? "poseidonProbePerturbCUDAf" : "poseidonProbePerturbCUDA",
-            FunctionType::get(FpTy, {i32Ty(), FpTy}, false));
+      if (!P.PerturbF64.empty()) {
+        FunctionCallee pert =
+            getProfilerHook(M, isFloat ? P.PerturbF32 : P.PerturbF64,
+                            FunctionType::get(FpTy, {i32Ty(), FpTy}, false));
         v = B.CreateCall(pert, {ConstantInt::get(i32Ty(), siteId), v});
         cast<CallInst>(v)->setDoesNotThrow();
       }
@@ -115,7 +112,7 @@ struct ProbeBuilder {
       Value *v = B.CreateFPExt(rev->getArg(0), doubleTy());
       Value *d = B.CreateFPExt(rev->getArg(1), doubleTy());
       FunctionCallee logGrad = getProfilerHook(
-          M, isGPU ? "poseidonLogGradCUDA" : "poseidonLogGrad",
+          M, P.LogGradient,
           FunctionType::get(Type::getVoidTy(Ctx),
                             {ptrTy(), i64Ty(), doubleTy(), doubleTy()}, false));
       B.CreateCall(logGrad, {namePtr, ConstantInt::get(i64Ty(), idx), v, d})
@@ -154,11 +151,12 @@ struct ProbeBuilder {
 size_t instrumentForProfiling(Function &clone, unsigned siteId) {
   Module &M = *clone.getParent();
   LLVMContext &Ctx = M.getContext();
-  bool isGPU = isDeviceModule(M);
+  const ProbeABI &P = Target::of(M).probes();
   Type *DoubleTy = Type::getDoubleTy(Ctx);
   Type *PtrTy = PointerType::getUnqual(Ctx);
   Type *SizeTy = Type::getInt64Ty(Ctx);
   Type *Int32Ty = Type::getInt32Ty(Ctx);
+  Type *CountTy = IntegerType::get(Ctx, P.OperandCountBits);
 
   SmallVector<std::pair<Instruction *, size_t>, 32> targets;
   for (Instruction &I : instructions(clone)) {
@@ -169,24 +167,23 @@ size_t instrumentForProfiling(Function &clone, unsigned siteId) {
   if (targets.empty())
     return 0;
 
-  if (!isGPU) {
-    // Reference the profiler runtime's registration variable so a host build
-    // links the archive member that writes the dumps out at exit.
-    M.getOrInsertGlobal("POSEIDON_PROFILE_RUNTIME_VAR", Int32Ty);
+  if (!P.RuntimeAnchor.empty()) {
+    // Referenced so that the build links the archive member that writes the
+    // dumps out at exit.
+    M.getOrInsertGlobal(P.RuntimeAnchor, Int32Ty);
   }
 
   ProbeBuilder PB{M,
                   Ctx,
-                  isGPU,
+                  P,
                   siteId,
                   clone.getName(),
-                  getProfileNamePointer(M, clone.getName(), isGPU)};
+                  getProfileNamePointer(M, clone.getName())};
 
   FunctionCallee logValue = getProfilerHook(
-      M, isGPU ? "poseidonLogValueCUDA" : "poseidonLogValue",
-      FunctionType::get(
-          Type::getVoidTy(Ctx),
-          {PtrTy, SizeTy, DoubleTy, isGPU ? SizeTy : Int32Ty, PtrTy}, false));
+      M, P.LogValue,
+      FunctionType::get(Type::getVoidTy(Ctx),
+                        {PtrTy, SizeTy, DoubleTy, CountTy, PtrTy}, false));
 
   IRBuilder<> allocaB(&*clone.getEntryBlock().getFirstInsertionPt());
   for (auto &[I, idx] : targets) {
@@ -224,8 +221,7 @@ size_t instrumentForProfiling(Function &clone, unsigned siteId) {
     if (operandPtr->getType() != PtrTy)
       operandPtr = B.CreateAddrSpaceCast(operandPtr, PtrTy);
 
-    Value *nops = isGPU ? ConstantInt::get(SizeTy, numOperands)
-                        : ConstantInt::get(Int32Ty, numOperands);
+    Value *nops = ConstantInt::get(CountTy, numOperands);
     CallInst *logCall =
         B.CreateCall(logValue, {PB.namePtr, ConstantInt::get(SizeTy, idx),
                                 loggedValue, nops, operandPtr});
@@ -239,26 +235,27 @@ void emitProfileStaticData(Function &clone, StringRef text) {
   if (text.empty())
     return;
   Module &M = *clone.getParent();
-  if (!isDeviceModule(M)) {
+  const ProbeABI &P = Target::of(M).probes();
+  if (P.PublishStatic.empty()) {
     registerProfileStatic(M, clone.getName(), text);
     return;
   }
   LLVMContext &Ctx = M.getContext();
   Type *PtrTy = PointerType::getUnqual(Ctx);
 
-  Constant *namePtr = getProfileNamePointer(M, clone.getName(), true);
-  Constant *textPtr = getStringPointer(
-      M, ("fpprofile_static_" + clone.getName()).str(), text, true);
+  Constant *namePtr = getProfileNamePointer(M, clone.getName());
+  Constant *textPtr =
+      getStringPointer(M, ("fpprofile_static_" + clone.getName()).str(), text);
   FunctionType *FT =
       FunctionType::get(Type::getVoidTy(Ctx), {PtrTy, PtrTy}, false);
 
   // Device: published by the site's own kernel through the pointer-keyed
   // registry, the only path from a device constant to the host writer.
-  FunctionCallee probe = getProfilerHook(M, "poseidonProfileStaticCUDA", FT);
+  FunctionCallee probe = getProfilerHook(M, P.PublishStatic, FT);
   for (Instruction &I : instructions(clone))
     if (auto *CI = dyn_cast<CallInst>(&I))
       if (auto *CF = CI->getCalledFunction())
-        if (CF->getName() == "poseidonProfileStaticCUDA")
+        if (CF->getName() == P.PublishStatic)
           return;
   IRBuilder<> B(&*clone.getEntryBlock().getFirstInsertionPt());
   B.CreateCall(probe, {namePtr, textPtr})->setDoesNotThrow();
@@ -271,12 +268,13 @@ bool registerProfileStatic(Module &M, StringRef name, StringRef text) {
   Type *VoidTy = Type::getVoidTy(Ctx);
   Type *PtrTy = PointerType::getUnqual(Ctx);
 
-  Constant *namePtr = getProfileNamePointer(M, name, false);
+  Constant *namePtr = getProfileNamePointer(M, name);
   Constant *textPtr =
-      getStringPointer(M, ("fpprofile_static_" + name).str(), text, false);
+      getStringPointer(M, ("fpprofile_static_" + name).str(), text);
   FunctionType *FT = FunctionType::get(VoidTy, {PtrTy, PtrTy}, false);
 
-  FunctionCallee reg = getProfilerHook(M, "poseidonRegisterProfileStatic", FT);
+  FunctionCallee reg =
+      getProfilerHook(M, Target::of(M).probes().RegisterStatic, FT);
   std::string ctorName = ("poseidon_register_static_" + name).str();
   if (M.getFunction(ctorName))
     return false;

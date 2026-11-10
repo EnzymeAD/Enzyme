@@ -1,4 +1,5 @@
 #include "DeviceMath.h"
+#include "Peers.h"
 
 #include "Utils.h"
 
@@ -12,7 +13,6 @@
 #include "llvm/IR/Module.h"
 #include "llvm/IR/ValueHandle.h"
 #include "llvm/Support/ErrorHandling.h"
-#include "llvm/TargetParser/Triple.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 #include "llvm/Transforms/Utils/ModuleUtils.h"
 
@@ -31,45 +31,12 @@ constexpr StringLiteral kKeptAlwaysInline = "poseidon-kept-always-inline";
 
 constexpr StringLiteral kUndefinedCallee = "poseidon.undefined.callee";
 
-StringRef mathLibrary(const Triple &T) {
-  return T.isAMDGPU() ? "ocml" : "libdevice";
-}
-
-std::string includeAdvice(const Triple &T) {
-  return (" poseidon/poseidon.h links the " + mathLibrary(T) +
+std::string includeAdvice(const Target &T) {
+  return (" poseidon/poseidon.h links the " + T.mathLibrary() +
           " functions a rewrite or a site's derivative may call: include it in "
           "this translation unit (with -poseidon-kernels, pass -include "
           "poseidon/poseidon.h).")
       .str();
-}
-
-// The math intrinsics the target selects at `Ty` only as a call of its math
-// library's function.
-bool needsMathLibrary(const Triple &T, Intrinsic::ID ID, Type *Ty) {
-  switch (ID) {
-  case Intrinsic::exp:
-  case Intrinsic::exp2:
-  case Intrinsic::exp10:
-    return T.isNVPTX() && Ty->isDoubleTy();
-  case Intrinsic::tan:
-  case Intrinsic::asin:
-  case Intrinsic::acos:
-  case Intrinsic::atan:
-  case Intrinsic::atan2:
-  case Intrinsic::sinh:
-  case Intrinsic::cosh:
-  case Intrinsic::tanh:
-    return Ty->isDoubleTy() || (T.isAMDGPU() && Ty->isFloatTy());
-  case Intrinsic::sin:
-  case Intrinsic::cos:
-  case Intrinsic::log:
-  case Intrinsic::log2:
-  case Intrinsic::log10:
-  case Intrinsic::pow:
-    return Ty->isDoubleTy();
-  default:
-    return false;
-  }
 }
 
 void collectGlobals(Value *V, SmallVectorImpl<WeakVH> &out) {
@@ -83,6 +50,54 @@ void collectGlobals(Value *V, SmallVectorImpl<WeakVH> &out) {
 }
 
 } // namespace
+
+const std::unordered_set<std::string> &mathBases() {
+  static const std::unordered_set<std::string> Bases = [] {
+    std::unordered_set<std::string> bases = libmFuncs();
+    bases.insert("fmin");
+    bases.insert("fmax");
+    return bases;
+  }();
+  return Bases;
+}
+
+std::string retypeLibmFunction(StringRef name, Type *newType) {
+  std::string baseName = name.str();
+  if (!baseName.empty() && (baseName.back() == 'f' || baseName.back() == 'l'))
+    baseName.pop_back();
+  if (libmFuncs().count(baseName)) {
+    if (newType->isHalfTy() || newType->isBFloatTy() || newType->isFloatTy())
+      return baseName + "f";
+    if (newType->isDoubleTy())
+      return baseName;
+    if (newType->isFP128Ty() || newType->isX86_FP80Ty())
+      return baseName + "l";
+  }
+  return "";
+}
+
+bool deviceCallsMathLibrary(StringRef op, Type *Ty) {
+  static const std::unordered_set<std::string> ops = {
+      "sin",  "cos",  "tan",   "asin",  "acos",  "atan", "atan2", "sinh",
+      "cosh", "tanh", "asinh", "acosh", "atanh", "exp",  "exp2",  "expm1",
+      "log",  "log2", "log10", "log1p", "pow",   "cbrt"};
+  return ops.count(op.str()) && (Ty->isFloatTy() || Ty->isDoubleTy());
+}
+
+StringRef deviceMathName(StringRef fnName) {
+  for (const Target *T : {&amdgpuTarget(), &nvptxTarget()})
+    if (std::optional<StringRef> base = T->mathBase(fnName))
+      return *base;
+  return "";
+}
+
+std::string getLibmFunctionForPrecision(StringRef funcName, Type *newType) {
+  for (const Target *T : {&amdgpuTarget(), &nvptxTarget(), &hostTarget()})
+    if (std::optional<std::string> name =
+            T->retypeMathFunction(funcName, newType))
+      return *name;
+  llvm_unreachable("the host retypes every name");
+}
 
 bool keepDeviceMath(Module &M) {
   bool changed = false;
@@ -146,9 +161,7 @@ bool releaseDeviceMath(Module &M) {
 }
 
 void inlineDeviceMath(Function &F) {
-  // ocml's functions are not always-inline, and a build without the plugin
-  // inlines them all the same.
-  const bool amdgpu = Triple(F.getParent()->getTargetTriple()).isAMDGPU();
+  const Target &T = Target::of(F);
   for (bool inlined = true; inlined;) {
     inlined = false;
     SmallVector<CallBase *, 8> calls;
@@ -157,7 +170,7 @@ void inlineDeviceMath(Function &F) {
         if (Function *callee = CB->getCalledFunction();
             callee && !callee->isDeclaration() &&
             !deviceMathName(callee->getName()).empty() &&
-            (amdgpu || callee->hasFnAttribute(Attribute::AlwaysInline)))
+            T.inlinesMathCall(*callee))
           calls.push_back(CB);
     for (CallBase *CB : calls) {
       InlineFunctionInfo IFI;
@@ -172,16 +185,16 @@ CallInst *createMathCall(IRBuilderBase &B, FunctionCallee F,
   if (auto *Fn = dyn_cast<Function>(F.getCallee())) {
     CI->setCallingConv(Fn->getCallingConv());
     if (Fn->isDeclaration() && !Fn->isIntrinsic() &&
-        isDeviceModule(*Fn->getParent()))
+        Target::of(*Fn->getParent()).isDevice())
       CI->setMetadata(kUndefinedCallee, MDNode::get(CI->getContext(), {}));
   }
   return CI;
 }
 
 void requireDeviceCallees(Module &M, bool profileGenerate) {
-  if (!isDeviceModule(M))
+  const Target &T = Target::of(M);
+  if (!T.isDevice())
     return;
-  const Triple T(M.getTargetTriple());
   for (Function &F : M)
     for (Instruction &I : instructions(F)) {
       auto *CI = dyn_cast<CallInst>(&I);
@@ -195,13 +208,12 @@ void requireDeviceCallees(Module &M, bool profileGenerate) {
                ", which this device module does not define." + includeAdvice(T))
                   .str();
       } else if (profileGenerate &&
-                 needsMathLibrary(T, callee->getIntrinsicID(), CI->getType())) {
+                 T.needsMathLibrary(callee->getIntrinsicID(), CI->getType())) {
         msg = (Twine("Poseidon: the derivative profile generation takes in ") +
                demangle(F.getName()) + " calls " + callee->getName() +
-               ", which " + (T.isAMDGPU() ? "AMDGPU" : "NVPTX") +
-               " lowers only through " + mathLibrary(T) +
-               ", and this module does not define " + mathLibrary(T) +
-               "'s function for it." + includeAdvice(T))
+               ", which " + T.name() + " lowers only through " +
+               T.mathLibrary() + ", and this module does not define " +
+               T.mathLibrary() + "'s function for it." + includeAdvice(T))
                   .str();
       }
       if (!msg.empty())

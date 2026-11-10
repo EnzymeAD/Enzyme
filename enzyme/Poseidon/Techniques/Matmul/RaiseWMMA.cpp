@@ -11,6 +11,8 @@
 #include "Core/Options.h"
 
 #include "Optimize.h"
+#include "Targets/NVPTXTensorCore.h"
+#include "Targets/Target.h"
 #include "Techniques/Precision.h"
 #include "WmmaUtils.h"
 
@@ -36,7 +38,6 @@
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Intrinsics.h"
-#include "llvm/IR/IntrinsicsNVPTX.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Operator.h"
 #include "llvm/IR/Type.h"
@@ -149,24 +150,10 @@ static void extractTidCoefficients(const SCEV *S, int64_t mult,
   auto *unk = dyn_cast<SCEVUnknown>(S);
   if (!unk)
     return;
-  auto *II = dyn_cast<IntrinsicInst>(unk->getValue());
-  if (!II)
+  LaunchGeometry g = launchGeometryOf(unk->getValue());
+  if (g.Kind != LaunchValue::ThreadIndex)
     return;
-  int axis;
-  switch (II->getIntrinsicID()) {
-  case Intrinsic::nvvm_read_ptx_sreg_tid_x:
-    axis = 0;
-    break;
-  case Intrinsic::nvvm_read_ptx_sreg_tid_y:
-    axis = 1;
-    break;
-  case Intrinsic::nvvm_read_ptx_sreg_tid_z:
-    axis = 2;
-    break;
-  default:
-    return;
-  }
-  out.coef[axis] += mult;
+  out.coef[g.Axis] += mult;
 }
 
 static TidAxis classifyTidAxis(const SCEV *S) {
@@ -487,7 +474,7 @@ void collectScalarLoopReductionTrips(
     const Options &O, Function &F,
     SmallVectorImpl<std::pair<size_t, unsigned>> &trips) {
   Module &M = *F.getParent();
-  if (!O.Candidates.RaiseWMMA || !Triple(M.getTargetTriple()).isNVPTX())
+  if (!O.Candidates.RaiseWMMA || !Target::of(M).hasInKernelMatrixRaise())
     return;
   if (F.isDeclaration())
     return;
@@ -514,8 +501,7 @@ void findScalarLoopMatmuls(const Options &O, Function &F, ScalarEvolution &SE,
                            const FunctionProfileHeader &profileHeader,
                            SmallVectorImpl<AbstractMatmul> &out) {
   assert(O.Candidates.RaiseWMMA && "-poseidon-raise-wmma must be enabled");
-  Module *M = F.getParent();
-  assert(Triple(M->getTargetTriple()).isNVPTX() &&
+  assert(Target::of(F).hasInKernelMatrixRaise() &&
          "findScalarLoopMatmuls expects GPU (NVPTX) target");
 
   // Without a profile header the launch geometry (and thus M, N) is unknown;
@@ -688,44 +674,25 @@ void ScalarLoopRaiseMaterializer::run() {
   // wmma's B-load layout follows the source.
   const bool wmmaBRowMajor = useScratchB ? true : bRowMajor;
 
-  const std::string shape =
-      ("m" + Twine(t.tileM) + "n" + Twine(t.tileN) + "k" + Twine(t.tileK))
-          .str();
   const std::string inputPrecStr = fpKindName(t.variant.operand);
   const std::string accPrecStr = fpKindName(t.variant.accumulator);
-  std::string mmaSuffix;
   switch (t.variant.operand) {
   case FPKind::F16:
-    mmaSuffix = accPrecStr + "." + accPrecStr;
-    break;
   case FPKind::BF16:
   case FPKind::TF32:
   case FPKind::F64:
-    mmaSuffix = inputPrecStr;
     break;
   default:
     report_fatal_error(
         "ScalarLoopRaiseMaterializer: unsupported input precision");
   }
-  const std::string layoutB = wmmaBRowMajor ? "row" : "col";
 
-  Intrinsic::ID loadAId = resolveWmmaIntrinsic(
-      "llvm.nvvm.wmma." + shape + ".load.a.row.stride." + inputPrecStr);
-  Intrinsic::ID loadBId =
-      resolveWmmaIntrinsic("llvm.nvvm.wmma." + shape + ".load.b." + layoutB +
-                           ".stride." + inputPrecStr);
-  Intrinsic::ID mmaId = resolveWmmaIntrinsic(
-      "llvm.nvvm.wmma." + shape + ".mma.row." + layoutB + "." + mmaSuffix);
-  Intrinsic::ID storeDId = resolveWmmaIntrinsic(
-      "llvm.nvvm.wmma." + shape + ".store.d.row.stride." + accPrecStr);
-
-  Function *loadAFn =
-      Intrinsic::getOrInsertDeclaration(mod, loadAId, {genPtrTy});
-  Function *loadBFn =
-      Intrinsic::getOrInsertDeclaration(mod, loadBId, {genPtrTy});
-  Function *mmaFn = Intrinsic::getOrInsertDeclaration(mod, mmaId);
-  Function *storeDFn =
-      Intrinsic::getOrInsertDeclaration(mod, storeDId, {genPtrTy});
+  const nvptx::Wmma wmma = nvptx::declareWmma(
+      mod, t.tileM, t.tileN, t.tileK, inputPrecStr, accPrecStr, wmmaBRowMajor);
+  Function *loadAFn = wmma.LoadA;
+  Function *loadBFn = wmma.LoadB;
+  Function *mmaFn = wmma.Mma;
+  Function *storeDFn = wmma.StoreD;
 
   Type *aFragRetTy = loadAFn->getFunctionType()->getReturnType();
   Type *bFragRetTy = loadBFn->getFunctionType()->getReturnType();
@@ -780,15 +747,7 @@ void ScalarLoopRaiseMaterializer::run() {
 
   IRBuilder<> B(preheader->getTerminator());
 
-#if LLVM_VERSION_MAJOR > 20
-  Function *barFn = Intrinsic::getOrInsertDeclaration(
-      mod, Intrinsic::nvvm_barrier_cta_sync_aligned_all);
-  SmallVector<Value *, 1> barArgs = {ConstantInt::get(i32Ty, 0)};
-#else
-  Function *barFn =
-      Intrinsic::getOrInsertDeclaration(mod, Intrinsic::nvvm_barrier0);
-  SmallVector<Value *, 1> barArgs;
-#endif
+  const nvptx::Barrier barrier = nvptx::declareBarrier(mod);
 
   Value *aPtrGen = h.aBase->getType() == genPtrTy
                        ? h.aBase
@@ -1002,7 +961,7 @@ void ScalarLoopRaiseMaterializer::run() {
             /*dstColStrideByte=*/tgtInputByte, tlin, bsz,
             /*assumeBlockCoversAll=*/bFillSingleShot);
     }
-    bodyB.CreateCall(barFn, barArgs);
+    bodyB.CreateCall(barrier.Fn, barrier.Args);
   }
 
   // Warp-gate the WMMA chain when a single warp covers the per-block work
@@ -1010,7 +969,7 @@ void ScalarLoopRaiseMaterializer::run() {
   // block's thread count is not a multiple of 32: warp-collective wmma ops in a
   // partially populated warp are undefined.
   const bool partialWarpBlock =
-      (h.blockThreads != 0) && (h.blockThreads % 32 != 0);
+      (h.blockThreads != 0) && (h.blockThreads % nvptx::kWarpSize != 0);
   const bool useWarpGate = (t.mChain * t.nChain == 1) || partialWarpBlock;
   BasicBlock *wmmaMergeBB = nullptr;
   BasicBlock *bodyPreGateBB = nullptr;
@@ -1018,8 +977,8 @@ void ScalarLoopRaiseMaterializer::run() {
     auto [bodyTlin, bodyBsz] =
         emitThreadLinAndBlockSize(bodyB, mod, h.is2DBlock);
     (void)bodyBsz;
-    Value *warpId =
-        bodyB.CreateLShr(bodyTlin, ConstantInt::get(i32Ty, 5), "warp_id");
+    Value *warpId = bodyB.CreateLShr(
+        bodyTlin, ConstantInt::get(i32Ty, nvptx::kLog2WarpSize), "warp_id");
     Value *isWarp0 =
         bodyB.CreateICmpEQ(warpId, ConstantInt::get(i32Ty, 0), "is_warp0");
 
@@ -1106,7 +1065,7 @@ void ScalarLoopRaiseMaterializer::run() {
 
   // Barrier after the wmma reads so the next iter's fill doesn't race them.
   if (useScratchA || useScratchB)
-    bodyB.CreateCall(barFn, barArgs);
+    bodyB.CreateCall(barrier.Fn, barrier.Args);
 
   // Latch: k_next = k_outer + tileK. The placeholder branch is already the BB's
   // terminator; the latch is whatever BB it migrated into.
@@ -1127,8 +1086,8 @@ void ScalarLoopRaiseMaterializer::run() {
     auto [afterTlin, afterBsz] =
         emitThreadLinAndBlockSize(afterB, mod, h.is2DBlock);
     (void)afterBsz;
-    Value *afterWarpId =
-        afterB.CreateLShr(afterTlin, ConstantInt::get(i32Ty, 5), "warp_id");
+    Value *afterWarpId = afterB.CreateLShr(
+        afterTlin, ConstantInt::get(i32Ty, nvptx::kLog2WarpSize), "warp_id");
     Value *afterIsWarp0 = afterB.CreateICmpEQ(
         afterWarpId, ConstantInt::get(i32Ty, 0), "is_warp0");
     Instruction *splitPt = &*afterB.GetInsertPoint();
@@ -1166,7 +1125,7 @@ void ScalarLoopRaiseMaterializer::run() {
     afterB.SetInsertPoint(afterStoreMergeBB,
                           afterStoreMergeBB->getFirstInsertionPt());
   }
-  afterB.CreateCall(barFn, barArgs);
+  afterB.CreateCall(barrier.Fn, barrier.Args);
 
   B.SetInsertPoint(&*afterLoopBB->getFirstInsertionPt());
 

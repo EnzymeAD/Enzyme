@@ -10,6 +10,8 @@
 #include "Pass/Session.h"
 #include "Profile/Instrument.h"
 #include "Sites/LaunchDescriptors.h"
+#include "Targets/OffloadRuntime.h"
+#include "Targets/Target.h"
 
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
@@ -21,16 +23,12 @@
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Instructions.h"
-#include "llvm/IR/IntrinsicInst.h"
-#include "llvm/IR/Intrinsics.h"
-#include "llvm/IR/IntrinsicsNVPTX.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/PassManager.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/raw_ostream.h"
-#include "llvm/TargetParser/Triple.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 
 #include <map>
@@ -219,47 +217,6 @@ static int axisIndexOf(TidAxis a) {
   }
 }
 
-namespace {
-enum class SregKind { None, Tid, Ctaid, Ntid };
-} // namespace
-
-static SregKind sregKindOf(const Value *v, int &axis) {
-  const auto *II = dyn_cast<IntrinsicInst>(v);
-  if (!II)
-    return SregKind::None;
-  switch (II->getIntrinsicID()) {
-  case Intrinsic::nvvm_read_ptx_sreg_tid_x:
-    axis = 0;
-    return SregKind::Tid;
-  case Intrinsic::nvvm_read_ptx_sreg_tid_y:
-    axis = 1;
-    return SregKind::Tid;
-  case Intrinsic::nvvm_read_ptx_sreg_tid_z:
-    axis = 2;
-    return SregKind::Tid;
-  case Intrinsic::nvvm_read_ptx_sreg_ctaid_x:
-    axis = 0;
-    return SregKind::Ctaid;
-  case Intrinsic::nvvm_read_ptx_sreg_ctaid_y:
-    axis = 1;
-    return SregKind::Ctaid;
-  case Intrinsic::nvvm_read_ptx_sreg_ctaid_z:
-    axis = 2;
-    return SregKind::Ctaid;
-  case Intrinsic::nvvm_read_ptx_sreg_ntid_x:
-    axis = 0;
-    return SregKind::Ntid;
-  case Intrinsic::nvvm_read_ptx_sreg_ntid_y:
-    axis = 1;
-    return SregKind::Ntid;
-  case Intrinsic::nvvm_read_ptx_sreg_ntid_z:
-    axis = 2;
-    return SregKind::Ntid;
-  default:
-    return SregKind::None;
-  }
-}
-
 // `blockIdx.a * blockDim.a + threadIdx.a` on one axis, modulo casts and operand
 // order; an intra-block index would bound the tile, not the matrix.
 static bool isGlobalThreadIndex(const Value *v, int &axis) {
@@ -269,18 +226,19 @@ static bool isGlobalThreadIndex(const Value *v, int &axis) {
   if (!add || add->getOpcode() != Instruction::Add)
     return false;
   for (unsigned i = 0; i < 2; ++i) {
-    int ta = -1;
-    if (sregKindOf(add->getOperand(i), ta) != SregKind::Tid)
+    LaunchGeometry t = launchGeometryOf(add->getOperand(i));
+    if (t.Kind != LaunchValue::ThreadIndex)
       continue;
     const auto *mul = dyn_cast<BinaryOperator>(add->getOperand(1 - i));
     if (!mul || mul->getOpcode() != Instruction::Mul)
       continue;
     for (unsigned j = 0; j < 2; ++j) {
-      int ca = -1, na = -1;
-      if (sregKindOf(mul->getOperand(j), ca) == SregKind::Ctaid &&
-          sregKindOf(mul->getOperand(1 - j), na) == SregKind::Ntid &&
-          ca == ta && na == ta) {
-        axis = ta;
+      LaunchGeometry c = launchGeometryOf(mul->getOperand(j));
+      LaunchGeometry n = launchGeometryOf(mul->getOperand(1 - j));
+      if (c.Kind == LaunchValue::BlockIndex &&
+          n.Kind == LaunchValue::BlockDim && c.Axis == t.Axis &&
+          n.Axis == t.Axis) {
+        axis = t.Axis;
         return true;
       }
     }
@@ -945,34 +903,11 @@ readOzDispatchDescriptors(const Options &O, Module &M,
   return !descs.empty();
 }
 
-// A HIP stub is a CUDA stub with hip for cuda in the runtime's names: the
-// same pop, and a launch with the same operands whose first one is the
-// kernel's handle rather than the stub.
-static bool isPopCallConfig(StringRef name) {
-  return name == "__cudaPopCallConfiguration" ||
-         name == "__hipPopCallConfiguration";
-}
-
-static bool isLaunchKernel(StringRef name) {
-  return name == "cudaLaunchKernel" || name == "cudaLaunchKernel_ptsz" ||
-         name == "hipLaunchKernel" || name == "hipLaunchKernel_spt";
-}
-
 // Launch geometry, host side: the configuration a <<<grid, block>>> site pushes
 // is popped inside the stub, so the stub is where a launch-derived extent can
 // be taken; at the call site the dim3 temporaries are not constants at
 // PipelineStart.
-static FunctionCallee getPopCallConfig(Module &M) {
-  LLVMContext &C = M.getContext();
-  Type *ptr = PointerType::get(C, 0);
-  FunctionType *FT =
-      FunctionType::get(Type::getInt32Ty(C), {ptr, ptr, ptr, ptr}, false);
-  return M.getOrInsertFunction(M.getFunction("__hipPopCallConfiguration")
-                                   ? "__hipPopCallConfiguration"
-                                   : "__cudaPopCallConfiguration",
-                               FT);
-}
-
+//
 // Fresh pop for the standalone rewrite, whose body (pop included) is replaced;
 // it also keeps the runtime's configuration stack balanced.
 static void emitPopConfig(IRBuilder<> &B, Module &M, Value *&gridOut,
@@ -988,7 +923,7 @@ static void emitPopConfig(IRBuilder<> &B, Module &M, Value *&gridOut,
   block->setAlignment(Align(8));
   auto *shmem = B.CreateAlloca(i64, nullptr, "ozdisp.shmem");
   auto *stream = B.CreateAlloca(ptr, nullptr, "ozdisp.stream");
-  B.CreateCall(getPopCallConfig(M), {grid, block, shmem, stream});
+  B.CreateCall(popCallConfiguration(M), {grid, block, shmem, stream});
   gridOut = grid;
   blockOut = block;
 }
@@ -999,7 +934,7 @@ static CallInst *findPopConfig(Function &F) {
   for (Instruction &I : instructions(F))
     if (auto *CI = dyn_cast<CallInst>(&I))
       if (const Function *cal = CI->getCalledFunction())
-        if (isPopCallConfig(cal->getName()) && CI->arg_size() >= 2)
+        if (isPopCallConfiguration(cal->getName()) && CI->arg_size() >= 2)
           return CI;
   return nullptr;
 }
@@ -1013,9 +948,7 @@ static bool takesSquareEntry(const LaunchDesc &d) {
           !d.bColMajor && !d.cColMajor);
 }
 
-// The launch a CUDA or HIP stub ends in. Whatever the host ABI made of the two
-// dim3 operands, its last three operands are the argument array, the dynamic
-// shared memory size and the stream.
+// The launch a CUDA or HIP stub ends in.
 static CallInst *findLaunchCall(Function &F) {
   for (Instruction &I : instructions(F))
     if (auto *CI = dyn_cast<CallInst>(&I))
@@ -1069,7 +1002,7 @@ static bool dispatchFromLaunchArgs(Module &M, Function &F, const LaunchDesc &d,
   Type *i32 = Type::getInt32Ty(C);
   Type *dbl = Type::getDoubleTy(C);
   auto I32 = [&](int64_t v) { return ConstantInt::get(i32, (uint64_t)v); };
-  Value *argArray = launch->getArgOperand(launch->arg_size() - 3);
+  Value *argArray = launchArguments(*launch);
 
   IRBuilder<> B(launch);
   auto value = [&](const LaunchRef &r, Type *T) {
@@ -1093,9 +1026,9 @@ static bool dispatchFromLaunchArgs(Module &M, Function &F, const LaunchDesc &d,
   };
   auto cropDim = [&](int axis, unsigned cropConst) -> Value * {
     Value *g = B.CreateLoad(
-        i32, B.CreateConstInBoundsGEP1_32(i32, pop->getArgOperand(0), axis));
+        i32, B.CreateConstInBoundsGEP1_32(i32, poppedGrid(*pop), axis));
     Value *b = B.CreateLoad(
-        i32, B.CreateConstInBoundsGEP1_32(i32, pop->getArgOperand(1), axis));
+        i32, B.CreateConstInBoundsGEP1_32(i32, poppedBlock(*pop), axis));
     Value *ext = B.CreateMul(g, b);
     return B.CreateSelect(B.CreateICmpULT(ext, I32(cropConst)), ext,
                           I32(cropConst));
@@ -1338,8 +1271,8 @@ bool rewriteGemmStubBodies(const Options &O, Module &M) {
               "stub performs no __cudaPopCallConfiguration; the kernel was "
               "already fissioned device-side, so there is no correct code to "
               "emit here.");
-        gridCfg = pop->getArgOperand(0);
-        blockCfg = pop->getArgOperand(1);
+        gridCfg = poppedGrid(*pop);
+        blockCfg = poppedBlock(*pop);
         ip = pop->getNextNode();
       }
       IRBuilder<> B(ip);
@@ -1481,15 +1414,14 @@ bool rewriteProfileStubBodies(const Options &O, Module &M) {
     Constant *seedGV =
         profIntArray(M, "poseidon.seed." + d.kernel, d.seedWidth);
 
-    unsigned n = launch->arg_size();
     IRBuilder<> B(launch);
     B.CreateCall(
         helper,
-        {launch->getArgOperand(0), ConstantInt::get(i32, (unsigned)d.siteId),
-         pop->getArgOperand(0), pop->getArgOperand(1),
-         launch->getArgOperand(n - 2), launch->getArgOperand(n - 1),
-         ConstantInt::get(i32, d.nargs), launch->getArgOperand(n - 3),
-         ConstantInt::get(i32, d.ptrIdx.size()), idxGV, offGV, seedGV});
+        {launchedKernel(*launch), ConstantInt::get(i32, (unsigned)d.siteId),
+         poppedGrid(*pop), poppedBlock(*pop), launchSharedBytes(*launch),
+         launchStream(*launch), ConstantInt::get(i32, d.nargs),
+         launchArguments(*launch), ConstantInt::get(i32, d.ptrIdx.size()),
+         idxGV, offGV, seedGV});
     launch->replaceAllUsesWith(Constant::getNullValue(launch->getType()));
     launch->eraseFromParent();
     errs() << "[poseidon-profgen] launch of " << d.kernel
@@ -1515,7 +1447,7 @@ static bool registerProfiledKernels(const Options &O, Module &M) {
 llvm::PreservedAnalyses HostStubPass::run(llvm::Module &M,
                                           llvm::ModuleAnalysisManager &MAM) {
   const Options &O = sessionOf(M, MAM).Opts;
-  if (isDeviceModule(M) || !handsOverLaunches(O))
+  if (Target::of(M).isDevice() || !handsOverLaunches(O))
     return llvm::PreservedAnalyses::all();
   // Profile generation: every launch of an annotated kernel goes through the
   // runtime helper that supplies its shadow buffers. Host dispatch

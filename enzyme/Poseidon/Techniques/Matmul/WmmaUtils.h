@@ -20,7 +20,6 @@
 
 #include "llvm/ADT/Twine.h"
 #include "llvm/IR/IRBuilder.h"
-#include "llvm/IR/Intrinsics.h"
 
 #include <cstdint>
 #include <utility>
@@ -36,8 +35,6 @@ class Value;
 namespace poseidon {
 
 llvm::Type *llvmTypeForFPKind(llvm::LLVMContext &ctx, FPKind k);
-
-llvm::Intrinsic::ID resolveWmmaIntrinsic(const llvm::Twine &name);
 
 // fptrunc/fpext between FP types (no-op when they match); a bitcast when the
 // bit widths agree but the LLVM types differ (F32 vs TF32-as-F32).

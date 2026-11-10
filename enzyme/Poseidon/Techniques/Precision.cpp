@@ -19,7 +19,6 @@
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Intrinsics.h"
-#include "llvm/IR/IntrinsicsNVPTX.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/ValueHandle.h"
 #include "llvm/Passes/PassBuilder.h"
@@ -41,6 +40,7 @@
 #include "Sampling.h"
 #include "Staging.h"
 #include "Targets/DeviceMath.h"
+#include "Targets/Target.h"
 #include "Types.h"
 #include "Utils.h"
 
@@ -220,20 +220,23 @@ void changePrecision(Instruction *I, PrecisionChange &change,
     } else {
       StringRef funcName = calledFunc->getName();
 
-      // Lower F32-downcast sqrt on NVPTX to nvvm.sqrt.approx.f (MUFU,
-      // inlined) instead of a correctly-rounded __nv_sqrtf call: the lossy
-      // F32 tier tolerates the ~2^-22 approx error, and a per-evaluation
+      // An F32-downcast sqrt becomes the target's approximate square root
+      // where it has one, instead of a correctly-rounded library call: the
+      // lossy F32 tier tolerates the approximation, and a per-evaluation
       // function call would dominate sqrt-heavy kernels.
       {
+        const Target &T = Target::of(*CI->getModule());
         std::string base = funcName.str();
         if (!base.empty() && (base.back() == 'f' || base.back() == 'l'))
           base.pop_back();
-        bool isSqrt = (base == "sqrt" || base == "__nv_sqrt");
+        const std::string librarySqrt =
+            T.mathFunction("sqrt", Type::getDoubleTy(CI->getContext()));
+        bool isSqrt = (base == "sqrt" || base == librarySqrt);
+        Intrinsic::ID approxSqrt = T.approxSqrtF32();
         if (isSqrt && newType->isFloatTy() &&
-            llvm::Triple(CI->getModule()->getTargetTriple()).isNVPTX() &&
-            newArgs.size() == 1) {
+            approxSqrt != Intrinsic::not_intrinsic && newArgs.size() == 1) {
           Function *fastSqrt = Intrinsic::getOrInsertDeclaration(
-              CI->getModule(), Intrinsic::nvvm_sqrt_approx_f, {});
+              CI->getModule(), approxSqrt, {});
           newI = Builder.CreateCall(fastSqrt, {newArgs[0]});
           oldToNew[I] = newI;
           return;

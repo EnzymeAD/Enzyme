@@ -36,6 +36,12 @@ set(POSEIDON_SRC
     Sites/Canonicalize.cpp
     CostModel.cpp
     Targets/DeviceMath.cpp
+    Targets/Target.cpp
+    Targets/Host.cpp
+    Targets/NVPTX.cpp
+    Targets/AMDGPU.cpp
+    Targets/NVPTXTensorCore.cpp
+    Targets/OffloadRuntime.cpp
     Profile/DeviceProfile.cpp
     Driver.cpp
     Evaluators.cpp
@@ -176,7 +182,7 @@ if(CMAKE_CUDA_COMPILER)
   target_include_directories(${POSEIDON_PLUGIN_TARGET}
                              PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
   set_source_files_properties(
-    Profile/DeviceProfile.cpp
+    Targets/NVPTX.cpp
     PROPERTIES COMPILE_DEFINITIONS POSEIDON_DEVICE_PROFILER OBJECT_DEPENDS
                ${POSEIDON_DEVICE_PROFILER_INC})
 endif()
@@ -228,11 +234,11 @@ if(POSEIDON_ROCM_PATH AND "AMDGPU" IN_LIST LLVM_TARGETS_TO_BUILD)
   target_include_directories(${POSEIDON_PLUGIN_TARGET}
                              PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
   set_property(
-    SOURCE Profile/DeviceProfile.cpp APPEND
+    SOURCE Targets/AMDGPU.cpp APPEND
     PROPERTY COMPILE_DEFINITIONS POSEIDON_DEVICE_PROFILER_AMDGPU
              POSEIDON_DEVICE_PROFILER_AMDGPU_ARCH="${POSEIDON_AMDGPU_ARCH}")
   set_property(
-    SOURCE Profile/DeviceProfile.cpp APPEND
+    SOURCE Targets/AMDGPU.cpp APPEND
     PROPERTY OBJECT_DEPENDS ${POSEIDON_DEVICE_PROFILER_AMDGPU_INC})
 endif()
 

@@ -11,6 +11,7 @@
 #include "Expansion.h"
 #include "Optimize.h"
 #include "Pass/Session.h"
+#include "Targets/Target.h"
 
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallVector.h"
@@ -43,8 +44,9 @@ bool narrowSharedStaging(const Options &O, llvm::Function &F) {
   Type *I8Ty = Type::getInt8Ty(Ctx);
   bool anyChange = false;
 
+  const Target &target = Target::of(*M);
   for (GlobalVariable &G : M->globals()) {
-    if (G.getAddressSpace() != 3)
+    if (!target.isShared(G))
       continue;
 
     SmallVector<Value *, 4> casts;
@@ -276,8 +278,9 @@ bool narrowSharedStagingDS(const Options &O, llvm::Function &F) {
   };
 
   bool anyChange = false;
+  const Target &target = Target::of(*M);
   for (GlobalVariable &G : M->globals()) {
-    if (G.getAddressSpace() != 3)
+    if (!target.isShared(G))
       continue;
     SmallVector<Value *, 4> casts;
     for (User *U : G.users()) {
@@ -762,8 +765,9 @@ bool narrowSharedStagingParam(Session &S, llvm::Function &F,
   Type *I8Ty = Type::getInt8Ty(Ctx);
   bool anyChange = false;
 
+  const Target &target = Target::of(*M);
   for (GlobalVariable &G : M->globals()) {
-    if (G.getAddressSpace() != 3)
+    if (!target.isShared(G))
       continue;
     ParamStagedAccess acc;
     if (!collectParamStaged(S, F, Proxy, G, /*dsMode=*/false, acc)) {
@@ -848,8 +852,9 @@ bool narrowSharedStagingParamDS(Session &S, llvm::Function &F,
   Type *I8Ty = Type::getInt8Ty(Ctx);
   bool anyChange = false;
 
+  const Target &target = Target::of(*M);
   for (GlobalVariable &G : M->globals()) {
-    if (G.getAddressSpace() != 3)
+    if (!target.isShared(G))
       continue;
     ParamStagedAccess acc;
     if (!collectParamStaged(S, F, Proxy, G, /*dsMode=*/true, acc)) {

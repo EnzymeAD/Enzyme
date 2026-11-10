@@ -16,6 +16,7 @@
 
 #include "InKernelRaise.h"
 #include "MatmulInternal.h"
+#include "Targets/NVPTXTensorCore.h"
 #include "WmmaUtils.h"
 #include <functional>
 
@@ -24,7 +25,6 @@
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Intrinsics.h"
-#include "llvm/IR/IntrinsicsNVPTX.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Transforms/Utils/ScalarEvolutionExpander.h"
@@ -119,16 +119,10 @@ OzakiVariant deriveOzakiVariant(const CandidateMatmul::Option &opt) {
 Value *emitSliceQuantize(IRBuilder<> &B, Module *mod, Value *vs_f32,
                          OzakiSliceKind slice) {
   LLVMContext &ctx = B.getContext();
-  Type *f32Ty = Type::getFloatTy(ctx);
   Type *sliceTy = sliceScratchTy(ctx, slice);
   if (slice == OzakiSliceKind::F16 || slice == OzakiSliceKind::BF16)
     return B.CreateFPTrunc(vs_f32, sliceTy);
-  // nvvm.f2tf32.rna gives an i32 bit pattern; bitcast to float for the shmem
-  // store, which wmma load.a.tf32 reads as i32 again.
-  Function *f2tf32 =
-      Intrinsic::getOrInsertDeclaration(mod, Intrinsic::nvvm_f2tf32_rna);
-  Value *q_i32 = B.CreateCall(f2tf32, {vs_f32});
-  return B.CreateBitCast(q_i32, f32Ty);
+  return nvptx::emitRoundToTF32(B, mod, vs_f32);
 }
 
 // Slice value back to F32 for the next residual; TF32 is already F32 storage.
@@ -162,48 +156,6 @@ SmallVector<Value *, 8> emitNwayVeltkampSplit(IRBuilder<> &B, Module *mod,
     }
   }
   return slices;
-}
-
-struct OzakiWmmaFns {
-  Function *loadA;
-  Function *loadB;
-  Function *mma;
-  Function *storeD;
-};
-
-OzakiWmmaFns resolveOzakiWmmaFns(Module *mod, const OzakiVariant &v,
-                                 PointerType *genPtrTy) {
-  std::string shape =
-      ("m" + Twine(v.tileM) + "n" + Twine(v.tileN) + "k" + Twine(v.tileK))
-          .str();
-  const char *tag = sliceIntrinTag(v.slice);
-  Intrinsic::ID loadAId = resolveWmmaIntrinsic("llvm.nvvm.wmma." + shape +
-                                               ".load.a.row.stride." + tag);
-  Intrinsic::ID loadBId = resolveWmmaIntrinsic("llvm.nvvm.wmma." + shape +
-                                               ".load.b.row.stride." + tag);
-  // NVPTX mma suffix encoding: F16 inputs name a C/D precision pair ("f32.f32"
-  // for the F32 accumulator chain); BF16 and TF32 imply F32 and use one suffix.
-  std::string mmaName;
-  switch (v.slice) {
-  case OzakiSliceKind::F16:
-    mmaName = "llvm.nvvm.wmma." + shape + ".mma.row.row.f32.f32";
-    break;
-  case OzakiSliceKind::BF16:
-    mmaName = "llvm.nvvm.wmma." + shape + ".mma.row.row.bf16";
-    break;
-  case OzakiSliceKind::TF32:
-    mmaName = "llvm.nvvm.wmma." + shape + ".mma.row.row.tf32";
-    break;
-  }
-  Intrinsic::ID mmaId = resolveWmmaIntrinsic(mmaName);
-  Intrinsic::ID storeDId = resolveWmmaIntrinsic("llvm.nvvm.wmma." + shape +
-                                                ".store.d.row.stride.f32");
-  return {
-      Intrinsic::getOrInsertDeclaration(mod, loadAId, {genPtrTy}),
-      Intrinsic::getOrInsertDeclaration(mod, loadBId, {genPtrTy}),
-      Intrinsic::getOrInsertDeclaration(mod, mmaId),
-      Intrinsic::getOrInsertDeclaration(mod, storeDId, {genPtrTy}),
-  };
 }
 
 class OzakiIRaiseMaterializer {
@@ -307,10 +259,13 @@ void OzakiIRaiseMaterializer::runTcec() {
   const unsigned mPad = t.mChain * t.tileM;
   const unsigned nPad = t.nChain * t.tileN;
 
-  OzakiWmmaFns fns = resolveOzakiWmmaFns(mod, variant, genPtrTy);
-  Type *aFragRetTy = fns.loadA->getFunctionType()->getReturnType();
-  Type *bFragRetTy = fns.loadB->getFunctionType()->getReturnType();
-  FunctionType *mmaFTy = fns.mma->getFunctionType();
+  const nvptx::Wmma fns =
+      nvptx::declareWmma(mod, variant.tileM, variant.tileN, variant.tileK,
+                         sliceIntrinTag(variant.slice), "f32",
+                         /*bRowMajor=*/true);
+  Type *aFragRetTy = fns.LoadA->getFunctionType()->getReturnType();
+  Type *bFragRetTy = fns.LoadB->getFunctionType()->getReturnType();
+  FunctionType *mmaFTy = fns.Mma->getFunctionType();
   Type *dFragRetTy = mmaFTy->getReturnType();
 
   auto fragSize = [](Type *T) -> unsigned {
@@ -358,15 +313,7 @@ void OzakiIRaiseMaterializer::runTcec() {
   }
   IRBuilder<> B(preheader->getTerminator());
 
-#if LLVM_VERSION_MAJOR > 20
-  Function *barFn = Intrinsic::getOrInsertDeclaration(
-      mod, Intrinsic::nvvm_barrier_cta_sync_aligned_all);
-  SmallVector<Value *, 1> barArgs = {ConstantInt::get(i32Ty, 0)};
-#else
-  Function *barFn =
-      Intrinsic::getOrInsertDeclaration(mod, Intrinsic::nvvm_barrier0);
-  SmallVector<Value *, 1> barArgs;
-#endif
+  const nvptx::Barrier barrier = nvptx::declareBarrier(mod);
   Type *i8Ty = Type::getInt8Ty(ctx);
 
   if (!h.aStartSCEV || !h.bStartSCEV || !h.SE)
@@ -613,7 +560,7 @@ void OzakiIRaiseMaterializer::runTcec() {
                          bScratchKStepByte, (uint64_t)t.tileK, (uint64_t)nPad,
                          validK, validN);
 
-  bodyB.CreateCall(barFn, barArgs);
+  bodyB.CreateCall(barrier.Fn, barrier.Args);
   (void)bsz;
 
   // Warp-gate the mma chain when there is a single output tile per block, and
@@ -621,13 +568,13 @@ void OzakiIRaiseMaterializer::runTcec() {
   // warp is partially populated, and warp-collective wmma ops in a partial
   // warp are undefined (the ungated chain corrupts the shared output tile).
   const bool partialWarpBlock =
-      (h.blockThreads != 0) && (h.blockThreads % 32 != 0);
+      (h.blockThreads != 0) && (h.blockThreads % nvptx::kWarpSize != 0);
   const bool useWarpGate = (t.mChain * t.nChain == 1) || partialWarpBlock;
   BasicBlock *gatePreBB = nullptr;
   BasicBlock *gateMergeBB = nullptr;
   if (useWarpGate) {
-    Value *warpId =
-        bodyB.CreateLShr(tlin, ConstantInt::get(i32Ty, 5), "warp_id");
+    Value *warpId = bodyB.CreateLShr(
+        tlin, ConstantInt::get(i32Ty, nvptx::kLog2WarpSize), "warp_id");
     Value *isWarp0 =
         bodyB.CreateICmpEQ(warpId, ConstantInt::get(i32Ty, 0), "is_warp0");
     gatePreBB = bodyB.GetInsertBlock();
@@ -648,8 +595,8 @@ void OzakiIRaiseMaterializer::runTcec() {
 
   auto callMma = [&](Value *aTile, Value *bTile,
                      ArrayRef<Value *> cIn) -> Value * {
-    Value *aFragV = bodyB.CreateCall(fns.loadA, {aTile, ldaV});
-    Value *bFragV = bodyB.CreateCall(fns.loadB, {bTile, ldbV});
+    Value *aFragV = bodyB.CreateCall(fns.LoadA, {aTile, ldaV});
+    Value *bFragV = bodyB.CreateCall(fns.LoadB, {bTile, ldbV});
     SmallVector<Value *, 32> args;
     args.reserve(aFragSize + bFragSize + cFragSize);
     for (unsigned i = 0; i < aFragSize; ++i)
@@ -660,7 +607,7 @@ void OzakiIRaiseMaterializer::runTcec() {
                                     : bodyB.CreateExtractValue(bFragV, i));
     for (unsigned i = 0; i < cFragSize; ++i)
       args.push_back(cIn[i]);
-    return bodyB.CreateCall(fns.mma, args);
+    return bodyB.CreateCall(fns.Mma, args);
   };
 
   for (unsigned mt = 0; mt < t.mChain; ++mt) {
@@ -730,7 +677,7 @@ void OzakiIRaiseMaterializer::runTcec() {
     bodyB.SetInsertPoint(gateMergeBB, gateMergeBB->getFirstInsertionPt());
   }
 
-  bodyB.CreateCall(barFn, barArgs);
+  bodyB.CreateCall(barrier.Fn, barrier.Args);
 
   Value *kNext =
       bodyB.CreateAdd(kOuterPhi, ConstantInt::get(i32Ty, (int32_t)t.tileK));
@@ -745,7 +692,8 @@ void OzakiIRaiseMaterializer::runTcec() {
   if (useWarpGate) {
     auto [aTlin, aBsz] = emitThreadLinAndBlockSize(afterB, mod, h.is2DBlock);
     (void)aBsz;
-    Value *aWarpId = afterB.CreateLShr(aTlin, ConstantInt::get(i32Ty, 5));
+    Value *aWarpId =
+        afterB.CreateLShr(aTlin, ConstantInt::get(i32Ty, nvptx::kLog2WarpSize));
     Value *aIsWarp0 = afterB.CreateICmpEQ(aWarpId, ConstantInt::get(i32Ty, 0));
     Instruction *splitPt = &*afterB.GetInsertPoint();
     BasicBlock *curr = afterB.GetInsertBlock();
@@ -773,7 +721,7 @@ void OzakiIRaiseMaterializer::runTcec() {
         for (unsigned i = 0; i < cFragSize; ++i)
           args.push_back(cAccPhis[k][phiBase + i]);
         args.push_back(ldcV);
-        afterB.CreateCall(fns.storeD, args);
+        afterB.CreateCall(fns.StoreD, args);
       }
     }
   }
@@ -781,7 +729,7 @@ void OzakiIRaiseMaterializer::runTcec() {
     afterB.CreateBr(storeMergeBB);
     afterB.SetInsertPoint(storeMergeBB, storeMergeBB->getFirstInsertionPt());
   }
-  afterB.CreateCall(barFn, barArgs);
+  afterB.CreateCall(barrier.Fn, barrier.Args);
 
   // Readback: Σ_k d[k] / SCALE^k, in F32 (F32-class).
   auto insertIt = exitBB->getFirstNonPHIIt();

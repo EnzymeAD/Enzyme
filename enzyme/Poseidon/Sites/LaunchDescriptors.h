@@ -119,13 +119,6 @@ void readProfileHeaders(const Options &O, const llvm::Module &M,
 // `_Z<L><id><params>` and stub `_Z<L+15>__device_stub__<id><params>`.
 llvm::StringRef mangledSuffix(llvm::StringRef mangled);
 
-// `name` without the postfix clang appends under -fgpu-rdc to the device-side
-// name of a kernel with internal linkage ("__intern__<hash>", in HIP
-// ".intern.<hash>"). The host stub's name has none, and the hash follows the
-// compile's macros, so neither the stub nor a later compile without -fgpu-rdc
-// can be matched on it.
-llvm::StringRef withoutExternalizedPostfix(llvm::StringRef name);
-
 // Whether F is the kernel named `kernelName` or that kernel's launch stub.
 bool isLaunchStubFor(const llvm::Function &F, llvm::StringRef kernelName);
 

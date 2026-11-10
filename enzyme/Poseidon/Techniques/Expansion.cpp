@@ -12,6 +12,7 @@
 #include "Optimize.h"
 #include "Pass/Session.h"
 #include "Staging.h"
+#include "Targets/DeviceMath.h"
 #include "Utils.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallPtrSet.h"

@@ -25,6 +25,7 @@
 #include "HostDispatch.h"
 #include "MatmulInternal.h"
 #include "Profile/ProfileRead.h"
+#include "Targets/Target.h"
 #include "Utils.h"
 
 #include "llvm/ADT/STLExtras.h"
@@ -40,8 +41,6 @@
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Intrinsics.h"
-#include "llvm/IR/IntrinsicsAMDGPU.h"
-#include "llvm/IR/IntrinsicsNVPTX.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Operator.h"
 #include "llvm/Support/raw_ostream.h"
@@ -434,73 +433,19 @@ static bool rgMatchFMA(Value *V, Instruction *&fma, Instruction *&fmul,
 }
 
 static int rgTidAxis(const Value *v) {
-  auto *II = dyn_cast<IntrinsicInst>(v);
-  if (!II)
-    return -1;
-  switch (II->getIntrinsicID()) {
-  case Intrinsic::nvvm_read_ptx_sreg_tid_x:
-  case Intrinsic::amdgcn_workitem_id_x:
-    return 0;
-  case Intrinsic::nvvm_read_ptx_sreg_tid_y:
-  case Intrinsic::amdgcn_workitem_id_y:
-    return 1;
-  case Intrinsic::nvvm_read_ptx_sreg_tid_z:
-  case Intrinsic::amdgcn_workitem_id_z:
-    return 2;
-  default:
-    return -1;
-  }
+  LaunchGeometry g = launchGeometryOf(v);
+  return g.Kind == LaunchValue::ThreadIndex ? g.Axis : -1;
 }
-// AMDGPU has no block-size register: HIP's blockDim reads the work-group size
-// out of the implicit kernel arguments, three i16 from byte 12 (code object
-// v5 and later), zero-extended where the index arithmetic uses it.
+// A block dimension, zero-extended where the index arithmetic uses it.
 static int rgNtidAxis(const Value *v) {
   if (auto *Z = dyn_cast<ZExtInst>(v))
     v = Z->getOperand(0);
-  if (auto *L = dyn_cast<LoadInst>(v)) {
-    if (!L->getType()->isIntegerTy(16))
-      return -1;
-    const DataLayout &DL = L->getModule()->getDataLayout();
-    APInt off(DL.getIndexTypeSizeInBits(L->getPointerOperandType()), 0);
-    auto *base = dyn_cast<IntrinsicInst>(
-        L->getPointerOperand()->stripAndAccumulateConstantOffsets(
-            DL, off, /*AllowNonInbounds=*/false));
-    if (!base || base->getIntrinsicID() != Intrinsic::amdgcn_implicitarg_ptr)
-      return -1;
-    int64_t o = off.getSExtValue();
-    return o == 12 || o == 14 || o == 16 ? (int)(o - 12) / 2 : -1;
-  }
-  auto *II = dyn_cast<IntrinsicInst>(v);
-  if (!II)
-    return -1;
-  switch (II->getIntrinsicID()) {
-  case Intrinsic::nvvm_read_ptx_sreg_ntid_x:
-    return 0;
-  case Intrinsic::nvvm_read_ptx_sreg_ntid_y:
-    return 1;
-  case Intrinsic::nvvm_read_ptx_sreg_ntid_z:
-    return 2;
-  default:
-    return -1;
-  }
+  LaunchGeometry g = launchGeometryOf(v);
+  return g.Kind == LaunchValue::BlockDim ? g.Axis : -1;
 }
 static int rgCtaidAxis(const Value *v) {
-  auto *II = dyn_cast<IntrinsicInst>(v);
-  if (!II)
-    return -1;
-  switch (II->getIntrinsicID()) {
-  case Intrinsic::nvvm_read_ptx_sreg_ctaid_x:
-  case Intrinsic::amdgcn_workgroup_id_x:
-    return 0;
-  case Intrinsic::nvvm_read_ptx_sreg_ctaid_y:
-  case Intrinsic::amdgcn_workgroup_id_y:
-    return 1;
-  case Intrinsic::nvvm_read_ptx_sreg_ctaid_z:
-  case Intrinsic::amdgcn_workgroup_id_z:
-    return 2;
-  default:
-    return -1;
-  }
+  LaunchGeometry g = launchGeometryOf(v);
+  return g.Kind == LaunchValue::BlockIndex ? g.Axis : -1;
 }
 static bool rgMentionsLaunchReg(const SCEV *S) {
   return SCEVExprContains(S, [](const SCEV *X) {
@@ -1452,8 +1397,7 @@ void findHostGemmLoopNests(const Options &O, Function &F, ScalarEvolution &SE,
                            const FunctionProfileHeader &profileHeader,
                            const std::unordered_map<size_t, ProfileInfo> &prof,
                            SmallVectorImpl<AbstractMatmul> &out) {
-  Module *M = F.getParent();
-  if (!isDeviceModule(*M))
+  if (!Target::of(F).isDevice())
     return;
   if (profileHeader.launchCount == 0) {
     if (O.Diagnostics.Print)

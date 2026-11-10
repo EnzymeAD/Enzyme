@@ -18,6 +18,8 @@
 #include <regex>
 
 #include "ProfileRead.h"
+#include "Targets/OffloadRuntime.h"
+#include "Targets/Target.h"
 #include "Utils.h"
 
 #include "llvm/ADT/SmallPtrSet.h"
@@ -33,8 +35,6 @@
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Path.h"
-#include "llvm/Support/VersionTuple.h"
-#include "llvm/TargetParser/Triple.h"
 
 using namespace llvm;
 
@@ -431,8 +431,10 @@ void requireCanonicalHash(const FunctionProfileHeader &header,
 // away.
 void predeclareInactiveProfilerProbes(llvm::Module &M) {
   using namespace llvm;
-  if (!isDeviceModule(M))
+  const Target &T = Target::of(M);
+  if (!T.isDevice())
     return;
+  const ProbeABI &P = T.probes();
   LLVMContext &Ctx = M.getContext();
   Type *VoidTy = Type::getVoidTy(Ctx);
   Type *PtrTy = PointerType::getUnqual(Ctx);
@@ -446,11 +448,13 @@ void predeclareInactiveProfilerProbes(llvm::Module &M) {
       fn->addFnAttr(Attribute::NoFree);
     }
   };
-  declare("poseidonLogValueCUDA",
-          FunctionType::get(VoidTy, {PtrTy, SizeTy, DoubleTy, SizeTy, PtrTy},
+  declare(P.LogValue,
+          FunctionType::get(VoidTy,
+                            {PtrTy, SizeTy, DoubleTy,
+                             IntegerType::get(Ctx, P.OperandCountBits), PtrTy},
                             false));
   declare(
-      "poseidonLogGradCUDA",
+      P.LogGradient,
       FunctionType::get(VoidTy, {PtrTy, SizeTy, DoubleTy, DoubleTy}, false));
   // The perturbation hooks are inactive too: nothing reads a derivative of the
   // perturbation (the probe reads the declared metric back from the run), and a
@@ -458,10 +462,9 @@ void predeclareInactiveProfilerProbes(llvm::Module &M) {
   // run injected.
   Type *FloatTy = Type::getFloatTy(Ctx);
   Type *Int32Ty = Type::getInt32Ty(Ctx);
-  declare("poseidonProbePerturbCUDA",
+  declare(P.PerturbF64,
           FunctionType::get(DoubleTy, {Int32Ty, DoubleTy}, false));
-  declare("poseidonProbePerturbCUDAf",
-          FunctionType::get(FloatTy, {Int32Ty, FloatTy}, false));
+  declare(P.PerturbF32, FunctionType::get(FloatTy, {Int32Ty, FloatTy}, false));
 }
 
 // Profile-gen only, host module only: call the profiler's CUDA registration
@@ -472,34 +475,25 @@ void predeclareInactiveProfilerProbes(llvm::Module &M) {
 // sticky error on someone else's kernel). main runs after every static
 // constructor.
 //
-// The host side of a .cu and a plain .cpp share the x86 triple, so the CUDA SDK
-// version clang records on the module and __cudaRegisterFatBinary are the
-// module facts that separate them; a HIP unit, kernels or not, carries the
-// __hip_cuid_ global that pairs it with its device half. Erring towards
-// injection is deliberate: a wrongly skipped injection loses the profile
-// silently, a wrongly kept one fails loudly at link.
-static bool isCUDAHostModule(const llvm::Module &M) {
-  return !M.getSDKVersion().empty() ||
-         M.getFunction("__cudaRegisterFatBinary") ||
-         llvm::any_of(M.globals(), [](const llvm::GlobalVariable &G) {
-           return G.getName().starts_with("__hip_cuid_");
-         });
-}
-
+// Only the host half of an offload unit, kernels or not, links the device
+// profiler. Erring towards injection is deliberate: a wrongly skipped
+// injection loses the profile silently, a wrongly kept one fails loudly at
+// link.
 void injectHostProfilerInit(llvm::Module &M) {
   using namespace llvm;
-  if (isDeviceModule(M))
+  if (Target::of(M).isDevice())
     return;
   // A host-only build links no CUDA profiler runtime, so the call injected
   // below would be an undefined reference to __poseidon_profile_init_cuda.
-  if (!isCUDAHostModule(M))
+  OffloadRuntime R = offloadRuntimeOf(M);
+  if (R == OffloadRuntime::None)
     return;
   Function *mainF = M.getFunction("main");
   if (!mainF || mainF->isDeclaration())
     return;
   LLVMContext &Ctx = M.getContext();
   FunctionCallee initFn =
-      M.getOrInsertFunction("__poseidon_profile_init_cuda",
+      M.getOrInsertFunction(deviceProfilerInit(R),
                             FunctionType::get(Type::getVoidTy(Ctx), {}, false));
   if (auto *Fn = dyn_cast<Function>(initFn.getCallee())) {
     if (!Fn->hasFnAttribute("enzyme_inactive"))
@@ -510,7 +504,7 @@ void injectHostProfilerInit(llvm::Module &M) {
   for (Instruction &I : instructions(*mainF))
     if (auto *CI = dyn_cast<CallInst>(&I))
       if (auto *CF = CI->getCalledFunction())
-        if (CF->getName() == "__poseidon_profile_init_cuda")
+        if (CF->getName() == deviceProfilerInit(R))
           return;
   IRBuilder<> B(&*mainF->getEntryBlock().getFirstInsertionPt());
   B.CreateCall(initFn, {})->setDoesNotThrow();
@@ -522,16 +516,17 @@ void injectHostProfilerInit(llvm::Module &M) {
 // and sits at the entry of the function owning those probes.
 void injectBlockDimProbes(llvm::Module &M) {
   using namespace llvm;
-  if (!isDeviceModule(M))
+  const Target &T = Target::of(M);
+  if (!T.isDevice())
     return;
-  Function *logFn = M.getFunction("poseidonLogValueCUDA");
+  const ProbeABI &P = T.probes();
+  Function *logFn = M.getFunction(P.LogValue);
   if (!logFn)
     return;
   LLVMContext &Ctx = M.getContext();
   Type *PtrTy = PointerType::getUnqual(Ctx);
   FunctionCallee probeFn = M.getOrInsertFunction(
-      "poseidonProfileBlockDimsCUDA",
-      FunctionType::get(Type::getVoidTy(Ctx), {PtrTy}, false));
+      P.BlockDims, FunctionType::get(Type::getVoidTy(Ctx), {PtrTy}, false));
   if (auto *Fn = dyn_cast<Function>(probeFn.getCallee())) {
     if (!Fn->hasFnAttribute("enzyme_inactive"))
       Fn->addFnAttr("enzyme_inactive");
@@ -554,7 +549,7 @@ void injectBlockDimProbes(llvm::Module &M) {
         continue;
       }
       if (auto *CF = CI->getCalledFunction())
-        if (CF->getName() == "poseidonProfileBlockDimsCUDA")
+        if (CF->getName() == P.BlockDims)
           already = true; // idempotence
     }
     if (!nameArg || already)

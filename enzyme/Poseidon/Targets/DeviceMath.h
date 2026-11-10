@@ -11,18 +11,34 @@
 #define POSEIDON_DEVICE_MATH_H
 
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/IR/DerivedTypes.h"
+
+#include <string>
 
 namespace llvm {
 class CallInst;
 class Function;
 class IRBuilderBase;
 class Module;
+class Type;
 class Value;
 } // namespace llvm
 
 namespace poseidon {
+
+// The libm name behind a CUDA libdevice or ROCm ocml entry point Poseidon
+// handles, for both the f64 and the f32 form ("__nv_sqrt", "__nv_sqrtf" and
+// "__ocml_sqrt_f64" all give "sqrt"), or the empty string. Poseidon recognizes
+// these itself instead of reading the attribute an AD pass would have put on
+// them.
+llvm::StringRef deviceMathName(llvm::StringRef fnName);
+
+// `funcName`, a libm, libdevice or ocml function, at `newType`; empty if it is
+// none Poseidon can retype.
+std::string getLibmFunctionForPrecision(llvm::StringRef funcName,
+                                        llvm::Type *newType);
 
 // Before the inliner, in a device module with a site under profile generation
 // or use.

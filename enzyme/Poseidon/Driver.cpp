@@ -12,6 +12,8 @@
 #include "Sites/LaunchDescriptors.h"
 #include "Solvers.h"
 #include "Targets/DeviceMath.h"
+#include "Targets/OffloadRuntime.h"
+#include "Targets/Target.h"
 #include "Techniques/Matmul/HostDispatch.h"
 #include "Techniques/Matmul/Matmul.h"
 #include "Techniques/Matmul/RaiseWMMA.h"
@@ -55,7 +57,6 @@
 #include "llvm/Support/Path.h"
 #include "llvm/Support/Regex.h"
 #include "llvm/Support/raw_ostream.h"
-#include "llvm/TargetParser/Triple.h"
 #include "llvm/Transforms/IPO/AlwaysInliner.h"
 #include "llvm/Transforms/Scalar/Float2Int.h"
 #include "llvm/Transforms/Scalar/GVN.h"
@@ -768,10 +769,6 @@ constexpr StringLiteral kNotASite = "poseidon-not-a-site";
 // annotated kernel), until finalizeModule has given it its debug info back.
 constexpr StringLiteral kHostWrapper = "poseidon-site-wrapper";
 
-bool isLaunchStub(const Function &F) {
-  return F.getName().contains("__device_stub__");
-}
-
 std::string displayName(const Function &F) {
   return llvm::demangle(F.getName().str());
 }
@@ -890,7 +887,7 @@ void collectAnnotatedSites(const Options &O, Module &M,
                            SmallVectorImpl<Function *> &out,
                            SmallPtrSetImpl<Function *> *byRegex = nullptr,
                            DenseMap<Function *, double> *tauOut = nullptr) {
-  const bool device = isDeviceModule(M);
+  const Target &T = Target::of(M);
   SmallPtrSet<Function *, 8> found;
 
   for (auto &[fn, tau] : annotatedFunctions(M)) {
@@ -901,8 +898,8 @@ void collectAnnotatedSites(const Options &O, Module &M,
     // A host function is a site of its own (outlineHostSites); a device
     // function makes the kernels that call it sites (propagateDeviceSites),
     // and what is left here no kernel of this translation unit calls.
-    if (!isKernel(*fn)) {
-      if (device)
+    if (!T.isKernel(*fn)) {
+      if (T.isDevice())
         diagnoseSite(*fn,
                      displayName(*fn) +
                          " is a device function no kernel of this translation "
@@ -926,7 +923,7 @@ void collectAnnotatedSites(const Options &O, Module &M,
                          " is not a valid regular expression: " + err);
     for (Function &F : M)
       if (!F.isDeclaration() && !F.hasFnAttribute(kSiteLowered) &&
-          isKernel(F) && (all || re.match(F.getName())))
+          T.isKernel(F) && (all || re.match(F.getName())))
         if (found.insert(&F).second && byRegex)
           byRegex->insert(&F);
   }
@@ -947,13 +944,14 @@ void collectAnnotatedSites(const Options &O, Module &M,
 void kernelCallees(
     Function &K, const MapVector<Function *, std::optional<double>> &annotated,
     SetVector<Function *> &wrappers, SetVector<Function *> &reached) {
+  const Target &T = Target::of(K);
   wrappers.insert(&K);
   for (size_t w = 0; w < wrappers.size(); ++w)
     for (Instruction &I : instructions(*wrappers[w]))
       if (auto *CB = dyn_cast<CallBase>(&I))
         if (Function *callee = CB->getCalledFunction();
             callee && !callee->isDeclaration()) {
-          if (annotated.count(callee) && !isKernel(*callee))
+          if (annotated.count(callee) && !T.isKernel(*callee))
             reached.insert(callee);
           else
             wrappers.insert(callee);
@@ -1031,16 +1029,18 @@ constexpr StringLiteral kSiteCallee = "poseidon-site-callee";
 // the site is left as written with a warning; an annotated kernel keeps its own
 // annotation.
 bool propagateDeviceSites(Module &M) {
-  if (!isDeviceModule(M))
+  const Target &T = Target::of(M);
+  if (!T.isDevice())
     return false;
   auto annotated = annotatedFunctions(M);
-  if (llvm::none_of(annotated, [](auto &kv) { return !isKernel(*kv.first); }))
+  if (llvm::none_of(annotated,
+                    [&](auto &kv) { return !T.isKernel(*kv.first); }))
     return false;
 
   SmallPtrSet<Function *, 4> called;
   SmallVector<std::pair<Function *, Function *>, 4> sites;
   for (Function &K : M) {
-    if (K.isDeclaration() || !isKernel(K) || K.hasFnAttribute(kSiteLowered))
+    if (K.isDeclaration() || !T.isKernel(K) || K.hasFnAttribute(kSiteLowered))
       continue;
     SetVector<Function *> wrappers, reached;
     kernelCallees(K, annotated, wrappers, reached);
@@ -1103,11 +1103,12 @@ bool propagateDeviceSites(Module &M) {
 // earlier: a site the solve leaves alone has to compile exactly as the kernel
 // would without the annotation.
 bool foldDeviceSiteCallees(Module &M) {
-  if (!isDeviceModule(M))
+  const Target &T = Target::of(M);
+  if (!T.isDevice())
     return false;
   bool changed = false;
   for (auto &[K, tau] : annotatedFunctions(M)) {
-    if (!isKernel(*K) || K->hasFnAttribute(kSiteLowered))
+    if (!T.isKernel(*K) || K->hasFnAttribute(kSiteLowered))
       continue;
     for (unsigned round = 0; round < 8; ++round) {
       SmallVector<CallBase *, 4> calls;
@@ -1228,14 +1229,6 @@ bool isLambdaCallOperator(const Function &F) {
   std::free(base);
   std::free(context);
   return lambda;
-}
-
-// The host half of a CUDA or HIP compilation: it launches kernels through
-// stubs.
-bool isCUDAHostModule(const Module &M) {
-  return M.getFunction("__cuda_module_ctor") ||
-         M.getFunction("__hip_module_ctor") ||
-         llvm::any_of(M, [](const Function &F) { return isLaunchStub(F); });
 }
 
 // Whether every use of `P`, a pointer to an aggregate, is one reroot can
@@ -1583,6 +1576,7 @@ bool holdsFP(Type *T) {
 // The static shared memory of `K` once profiled: the derivative it runs keeps
 // a shadow next to every shared buffer that holds floating-point data.
 uint64_t profiledSharedBytes(Function &K) {
+  const Target &T = Target::of(K);
   const DataLayout &DL = K.getParent()->getDataLayout();
   SetVector<Function *> funcs;
   SetVector<GlobalVariable *> shared;
@@ -1597,7 +1591,7 @@ uint64_t profiledSharedBytes(Function &K) {
       while (!ops.empty()) {
         Value *V = ops.pop_back_val();
         if (auto *GV = dyn_cast<GlobalVariable>(V)) {
-          if (GV->getAddressSpace() == 3)
+          if (T.isShared(*GV))
             shared.insert(GV);
         } else if (auto *CE = dyn_cast<ConstantExpr>(V)) {
           ops.append(CE->op_begin(), CE->op_end());
@@ -1612,13 +1606,6 @@ uint64_t profiledSharedBytes(Function &K) {
   return bytes;
 }
 
-// The most static shared memory a kernel can declare: 48 KiB in CUDA, the
-// local data share an AMDGPU workgroup addresses (64 KiB on gfx942, AMDGPU.td
-// FeatureISAVersion9_4_2).
-uint64_t maxStaticShared(const Module &M) {
-  return Triple(M.getTargetTriple()).isAMDGPU() ? 64 * 1024 : 48 * 1024;
-}
-
 // Profile generation for an attribute site. The kernel keeps its name, its
 // launch handle and its original parameters and gains one shadow parameter per
 // pointer the launch passes: a pointer parameter, or a pointer field of an
@@ -1631,12 +1618,13 @@ bool profileAnnotatedKernel(Session &S, Function &K, unsigned &nextSiteId) {
   LLVMContext &C = M.getContext();
   const DataLayout &DL = M.getDataLayout();
 
-  if (uint64_t bytes = profiledSharedBytes(K); bytes > maxStaticShared(M)) {
+  const uint64_t maxShared = Target::of(M).maxStaticSharedBytes();
+  if (uint64_t bytes = profiledSharedBytes(K); bytes > maxShared) {
     diagnoseSite(K,
                  displayName(K) + " would declare " + std::to_string(bytes) +
                      " bytes of static shared memory once profiled (a shadow "
                      "next to each floating-point shared buffer), above the " +
-                     std::to_string(maxStaticShared(M)) +
+                     std::to_string(maxShared) +
                      " a kernel can declare. The kernel is not profiled and "
                      "stays as written.",
                  DS_Warning);
@@ -1722,16 +1710,10 @@ bool profileAnnotatedKernel(Session &S, Function &K, unsigned &nextSiteId) {
         P->addParamAttr(i, Attribute::getWithAlignment(C, *align));
     }
   P->setMemoryEffects(MemoryEffects::unknown());
-  // The profiled kernel is launched with the original's block shape, which
-  // nothing at compile time bounds below the device's limit. Unbounded, ptxas
-  // sizes the reverse pass's registers for small blocks, and a launch the
-  // original makes (MFEM's 375-thread elasticity reduce at p = 4) runs out of
-  // registers. The probes it calls are linked into this module and compiled
-  // under the same bound. An AMDGPU kernel has its bound as the
-  // amdgpu-flat-work-group-size it shares with the original.
-  if (Triple(M.getTargetTriple()).isNVPTX() &&
-      !P->hasFnAttribute("nvvm.maxntid"))
-    P->addFnAttr("nvvm.maxntid", "1024");
+  // The profiled kernel is launched with the original's block shape. The
+  // probes it calls are linked into this module and compiled under the same
+  // bound.
+  Target::of(M).boundProfiledLaunch(*P);
 
   auto activity = [&](StringRef name) {
     return MetadataAsValue::get(C, MDString::get(C, name));
@@ -2066,7 +2048,7 @@ bool lowerPerCallSites(const Options &O, Module &M) {
 }
 
 bool outlineHostSites(const Options &O, Module &M) {
-  if (isDeviceModule(M))
+  if (Target::of(M).isDevice())
     return false;
   auto annotated = annotatedFunctions(M);
   if (annotated.empty())
@@ -2089,7 +2071,7 @@ bool outlineHostSites(const Options &O, Module &M) {
     // device half of a CUDA compilation owns. A lambda's closure is no
     // pointer the profiler can shadow, so a host-only build leaves it alone.
     if (isLambdaCallOperator(*F)) {
-      if (isCUDAHostModule(M))
+      if (launchesKernels(M))
         F->addFnAttr(kNotASite);
       else
         diagnoseSite(*F,
@@ -2690,7 +2672,7 @@ CallInst *withShadows(CallInst *CI, Function &clone, const MarkerArgs &marker) {
 // profileSite, which can only make shadows of local objects of the caller;
 // inlining has put the objects a call passes there by now.
 bool lowerDeviceCallSites(Module &M) {
-  if (!isDeviceModule(M))
+  if (!Target::of(M).isDevice())
     return false;
   SmallVector<Function *, 4> bodies = hostSiteBodies(M);
   if (bodies.empty())
@@ -3358,7 +3340,7 @@ struct HostSitePass : PassParent<HostSitePass> {
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &MAM) {
     const Options &O = sessionOf(M, MAM).Opts;
     bool changed = false;
-    if (isDeviceModule(M))
+    if (Target::of(M).isDevice())
       changed = profileAction(O) && hasSite(O, M) ? keepDeviceMath(M)
                                                   : releaseDeviceMath(M);
     changed |= lowerPerCallSites(O, M);
@@ -3384,7 +3366,7 @@ struct TwinSnapshotPass : PassParent<TwinSnapshotPass> {
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &MAM) {
     Session &S = sessionOf(M, MAM);
     const Options &O = S.Opts;
-    if (S.IsTwin || !isDeviceModule(M) || !hasSite(O, M))
+    if (S.IsTwin || !Target::of(M).isDevice() || !hasSite(O, M))
       return PreservedAnalyses::all();
     if (O.Profiling.usesProfile() && !O.Profiling.ProfileGenerate &&
         !O.Solver.JointDP)
@@ -3451,8 +3433,9 @@ struct RewrittenReferences final : ValueMaterializer {
     }
     const bool copied =
         !G->isDeclaration() &&
-        (F || (G->hasLocalLinkage() &&
-               (var->isConstant() || var->getAddressSpace() == 3)));
+        (F ||
+         (G->hasLocalLinkage() &&
+          (var->isConstant() || Target::of(*var->getParent()).isShared(*var))));
     GlobalValue *own = T.getNamedValue(G->getName());
     if (own && !copied) {
       if (own->getValueID() != G->getValueID() ||
@@ -3648,13 +3631,13 @@ struct FinalizePass : PassParent<FinalizePass> {
     // Every site of the module has been processed by now, in the early run or
     // the late one. A module without a descriptor removes the unit's manifest,
     // so that what an earlier compile of the unit recorded is not applied.
-    if (isDeviceModule(M) && !S.IsTwin && handsOverLaunches(O))
+    const Target &T = Target::of(M);
+    if (T.isDevice() && !S.IsTwin && handsOverLaunches(O))
       writeLaunchManifest(S, M);
     finalizeModule(S, M);
-    // An annotation takes the address of the function it names, and AMDGPU
-    // allocates the shared memory of every address-taken function in each
-    // kernel that may make an unknown call, as a profiled kernel does.
-    if (O.Profiling.ProfileGenerate && Triple(M.getTargetTriple()).isAMDGPU())
+    // An annotation takes the address of the function it names, and a profiled
+    // kernel may make an unknown call.
+    if (O.Profiling.ProfileGenerate && T.allocatesAddressTakenShared())
       dropSiteAnnotations(M);
     linkDeviceProfiler(M, O.Profiling.ProfileGenerate);
     requireDeviceCallees(M, O.Profiling.ProfileGenerate);

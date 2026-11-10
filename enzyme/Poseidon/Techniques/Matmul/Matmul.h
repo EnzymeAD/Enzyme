@@ -323,16 +323,15 @@ public:
 
 std::string matmulOptionLabel(const CandidateMatmul::Option &opt);
 
-// Static shared-memory preconditions for the in-kernel raises: ptxas caps a
-// kernel's static shared allocation at 48 KB on sm_120 and rejects the whole
-// module otherwise, so the proposer refuses a candidate whose scratch does not
-// fit. The two entry points mirror, allocation for allocation, what the
-// in-kernel Direct and Split materializers create.
-constexpr uint64_t kStaticShmemCap = 48u * 1024u;
-
-// Bytes of addrspace(3) globals already live alongside a raise placed in `F`:
-// the max over the PTX kernels that call F, falling back to the module-wide
-// sum (the conservative direction) when no enclosing kernel is found.
+// Static shared-memory preconditions for the in-kernel raises: a kernel's
+// static shared allocation is capped (Target::maxStaticSharedBytes) and the
+// whole module is rejected above the cap, so the proposer refuses a candidate
+// whose scratch does not fit. The two entry points mirror, allocation for
+// allocation, what the in-kernel Direct and Split materializers create.
+//
+// Bytes of shared globals already live alongside a raise placed in `F`: the
+// max over the kernels that call F, falling back to the module-wide sum (the
+// conservative direction) when no enclosing kernel is found.
 uint64_t enclosingKernelSharedBytes(llvm::Function &F);
 
 // Bytes of new static shared scratch an in-kernel raise of `opt` allocates

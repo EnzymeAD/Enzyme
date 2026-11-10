@@ -39,6 +39,8 @@
 #include "Optimize.h"
 #include "Pass/Session.h"
 #include "Sampling.h"
+#include "Targets/DeviceMath.h"
+#include "Targets/Target.h"
 #include "Types.h"
 #include "Utils.h"
 
@@ -63,19 +65,8 @@ const HerbiePlatform &getHerbiePlatform(Session &S) {
   S.PlatformResolved = true;
 
   const std::string &NativeArch = getCostModelNativeArch(S.CostModel);
-  bool IsCUDA = StringRef(NativeArch).starts_with("sm_");
-  bool IsHIP = StringRef(NativeArch).starts_with("gfx");
-  if (IsCUDA) {
-    std::string Stripped = NativeArch;
-    size_t Pos;
-    while ((Pos = Stripped.find('_')) != std::string::npos)
-      Stripped.erase(Pos, 1);
-    P.Name = "cuda-" + Stripped;
-  } else if (IsHIP) {
-    P.Name = "hip-" + NativeArch;
-  } else {
-    P.Name = "default";
-  }
+  const Target &T = Target::measuredOn(NativeArch);
+  P.Name = T.herbiePlatform(NativeArch);
 
   if (!S.Opts.Herbie.HerbiePlatform.empty()) {
     // A value that looks like a file is the platform itself; anything else is
@@ -86,7 +77,7 @@ const HerbiePlatform &getHerbiePlatform(Session &S) {
       P.Path = V.str();
     else
       P.Name = V.str();
-  } else if (IsCUDA || IsHIP) {
+  } else if (T.isDevice()) {
     // Generated next to the CSV it was priced from, by
     // `poseidon-calibrate --only herbie-platform`.
     StringRef Csv(costModelPath(S.CostModel));
