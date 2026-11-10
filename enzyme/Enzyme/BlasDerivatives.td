@@ -69,6 +69,9 @@ def Add : Binop<"Add", ["intType", "intType"]>;
 def Mul : Binop<"Mul", ["intType", "intType"]>;
 def BFMul : Binop<"FMul", ["fpType", "fpType"]>;
 def BFDiv : Binop<"FDiv", ["fpType", "fpType"]>;
+// Quotient that is zero where the divisor is zero; the divisor is evaluated
+// once.
+def BFDivOrZero : Binop<"FDivOrZero", ["fpType", "fpType"]>;
 def FSelect : Binop<"Select", ["Builder2.getInt1Ty()", "fpType", "fpType"]>;
 def ISelect : Binop<"Select", ["Builder2.getInt1Ty()", "intType", "intType"]>;
 
@@ -235,6 +238,20 @@ def axpy : CallBlasPattern<(Op $n, $alpha, $x, $incx, $y, $incy),
                   (Seq<[], [], 1> (BlasCall<"axpy"> $n, $alpha, (Shadow $x), (Shadow $y)), (BlasCall<"axpy"> $n, (Shadow $alpha), $x, (Shadow $y)))
                   >;
 
+// y = alpha * x + beta * y
+// FWD: dy = beta * dy + dbeta * y + alpha * dx + dalpha * x
+def axpby : CallBlasPattern<
+                (Op $n, $alpha, $x, $incx, $beta, $y, $incy), ["y"],
+                [len, fp, vinc<["n"]>, fp, vinc<["n"]>],
+                [(BlasCall<"dot"> $n, (Shadow $y), $x),
+                 (BlasCall<"axpy"> $n, $alpha, (Shadow $y), (Shadow $x)),
+                 (BlasCall<"dot"> $n, (Shadow $y), input<"y">),
+                 (BlasCall<"scal"> $n, $beta, (Shadow $y))],
+                (Seq<[], [], 1> (BlasCall<"scal"> $n, $beta, (Shadow $y)),
+                    (BlasCall<"axpy"> $n, (Shadow $beta), $y, (Shadow $y)),
+                    (BlasCall<"axpy"> $n, $alpha, (Shadow $x), (Shadow $y)),
+                    (BlasCall<"axpy"> $n, (Shadow $alpha), $x, (Shadow $y)))>;
+
 // x * y
 def dot : CallBlasPattern<(Op $n, $x, $incx, $y, $incy),
                   [],[len, vinc<["n"]>, vinc<["n"]>],
@@ -245,12 +262,14 @@ def dot : CallBlasPattern<(Op $n, $x, $incx, $y, $incy),
                   (FAdd<""> (BlasCall<"dot"> $n, (Shadow $x), $y), (BlasCall<"dot"> $n, $x, (Shadow $y)))
                   >;
 
+// The norm is not differentiable at zero; follow ChainRules and take the
+// derivative there to be zero rather than dividing zero by zero.
 def nrm2 : CallBlasPattern<(Op $n, $x, $incx),
                   [],[len, vinc<["n"]>],
                   [
-                  (BlasCall<"axpy"> $n, (BFDiv DiffeRet, (BlasCall<"nrm2"> $n, $x)), $x, (Shadow $x))
+                  (BlasCall<"axpy"> $n, (BFDivOrZero DiffeRet, (BlasCall<"nrm2"> $n, $x)), $x, (Shadow $x))
                   ],
-		              (BFDiv (BlasCall<"dot"> $n, $x, (Shadow $x)), (BlasCall<"nrm2"> $n, $x))
+                  (BFDivOrZero (BlasCall<"dot"> $n, $x, (Shadow $x)), (BlasCall<"nrm2"> $n, $x))
                   >;
 
 

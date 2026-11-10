@@ -135,6 +135,8 @@ static const StringSet<> InactiveGlobals = {
     "_ZSt5wcout",
     "_ZSt4cerr",
     "_ZNSt3__14cerrE",
+    "_ZNSt3__u4cerrE",
+    "_ZNSt3__u13basic_ostreamIcNS_11char_traitsIcEEE6sentryC1ERS3_",
     "_ZTVNSt7__cxx1115basic_stringbufIcSt11char_traitsIcESaIcEEE",
     "_ZTVSt15basic_streambufIcSt11char_traitsIcEE",
     "_ZTVSt9basic_iosIcSt11char_traitsIcEE",
@@ -308,6 +310,17 @@ static const StringSet<> KnownInactiveFunctions = {
     "__cxa_guard_abort",
     "getenv",
     "strtol",
+    "strtoul",
+    "strtoll",
+    "strtoull",
+    "__isoc23_strtol",
+    "__isoc23_strtoul",
+    "__isoc23_strtoll",
+    "__isoc23_strtoull",
+    "open",
+    "open64",
+    "close",
+    "sched_getaffinity",
     "fwrite",
     "snprintf",
     "sprintf",
@@ -440,7 +453,7 @@ static const std::set<Intrinsic::ID> KnownInactiveIntrinsics = {
     Intrinsic::nvvm_barrier_cta_sync_aligned_all,
     Intrinsic::nvvm_barrier_cta_sync_aligned_count,
 #endif 
-#if LLVM_VERSION_MAJOR < 22
+#if LLVM_VERSION_MAJOR < 22 || defined(ENZYME_LLVM22_PRERELEASE)
     Intrinsic::nvvm_barrier0_popc,
     Intrinsic::nvvm_barrier0_and,
     Intrinsic::nvvm_barrier0_or,
@@ -480,6 +493,8 @@ static const std::set<Intrinsic::ID> KnownInactiveIntrinsics = {
     Intrinsic::prefetch,
     Intrinsic::trap,
     Intrinsic::is_constant,
+    Intrinsic::smul_with_overflow,
+    Intrinsic::umul_with_overflow,
     Intrinsic::memset};
 
 static const char *DemangledKnownInactiveFunctionsStartingWith[] = {
@@ -612,6 +627,9 @@ static const char *DemangledKnownInactiveFunctionsStartingWith[] = {
     }
   }
 
+  if (isRustInactiveRuntimeFunction(Name))
+    return true;
+
   if (!EnzymeLoadInactiveFiles.empty()) {
     for (llvm::StringRef FuncName :
          InactiveFileCache.CreateOrUse(EnzymeLoadInactiveFiles)) {
@@ -686,7 +704,9 @@ static const StringSet<> KnownInactiveFunctionInsts = {
     "_ZSt18_Rb_tree_decrementPSt18_Rb_tree_node_base",
     "_ZSt18_Rb_tree_incrementPSt18_Rb_tree_node_base",
     "jl_ptr_to_array",
-    "jl_ptr_to_array_1d"};
+    "jl_ptr_to_array_1d",
+    "ijl_ptr_to_array",
+    "ijl_ptr_to_array_1d"};
   // clang-format on
   if (isInactiveCall(CB)) {
     return true;
@@ -910,6 +930,30 @@ static inline void propagateArgumentInformation(
   }
 }
 
+/// Whether the first sizeof(AccessType) bytes behind Pointer are known to
+/// hold only integer data, so a write of that size cannot move an active
+/// floating point value.
+static bool isAllIntegralMemory(TypeResults const &TR, Value *Pointer,
+                                Type *AccessType) {
+  const DataLayout &Layout = TR.getFunction()->getParent()->getDataLayout();
+  auto AccessSize = (Layout.getTypeSizeInBits(AccessType) + 7) / 8;
+
+  bool SeenInteger = false;
+  auto PointeeTree = TR.query(Pointer).Data0();
+  for (int Index = -1; Index < (int)AccessSize; ++Index) {
+    auto DataType = PointeeTree[{Index}];
+    if (DataType.isIntegral() || DataType == BaseType::Anything) {
+      SeenInteger = true;
+      if (Index == -1)
+        break;
+      continue;
+    }
+    if (DataType.isKnown())
+      return false;
+  }
+  return SeenInteger;
+}
+
 /// Return whether this instruction is known not to propagate adjoints
 /// Note that instructions could return an active pointer, but
 /// do not propagate adjoints themselves
@@ -1007,60 +1051,26 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
     return false;
 
   /// A store into all integral memory is inactive
-  if (auto SI = dyn_cast<StoreInst>(I)) {
-    auto StoreSize = SI->getParent()
-                         ->getParent()
-                         ->getParent()
-                         ->getDataLayout()
-                         .getTypeSizeInBits(SI->getValueOperand()->getType()) /
-                     8;
-
-    bool AllIntegral = true;
-    bool SeenInteger = false;
-    auto q = TR.query(SI->getPointerOperand()).Data0();
-    for (int i = -1; i < (int)StoreSize; ++i) {
-      auto dt = q[{i}];
-      if (dt.isIntegral() || dt == BaseType::Anything) {
-        SeenInteger = true;
-        if (i == -1)
-          break;
-      } else if (dt.isKnown()) {
-        AllIntegral = false;
-        break;
-      }
-    }
-
-    if (AllIntegral && SeenInteger) {
+  if (auto *SI = dyn_cast<StoreInst>(I)) {
+    if (isAllIntegralMemory(TR, SI->getPointerOperand(),
+                            SI->getValueOperand()->getType())) {
       if (EnzymePrintActivity)
         llvm::errs() << " constant instruction from TA " << *I << "\n";
       InsertConstantInstruction(TR, I);
       return true;
     }
   }
-  if (auto SI = dyn_cast<AtomicRMWInst>(I)) {
-    auto StoreSize = SI->getParent()
-                         ->getParent()
-                         ->getParent()
-                         ->getDataLayout()
-                         .getTypeSizeInBits(I->getType()) /
-                     8;
-
-    bool AllIntegral = true;
-    bool SeenInteger = false;
-    auto q = TR.query(SI->getOperand(0)).Data0();
-    for (int i = -1; i < (int)StoreSize; ++i) {
-      auto dt = q[{i}];
-      if (dt.isIntegral() || dt == BaseType::Anything) {
-        SeenInteger = true;
-        if (i == -1)
-          break;
-      } else if (dt.isKnown()) {
-        AllIntegral = false;
-        break;
-      }
+  if (auto *RMW = dyn_cast<AtomicRMWInst>(I)) {
+    if (isAllIntegralMemory(TR, RMW->getPointerOperand(), I->getType())) {
+      if (EnzymePrintActivity)
+        llvm::errs() << " constant instruction from TA " << *I << '\n';
+      InsertConstantInstruction(TR, I);
+      return true;
     }
-
-    if (AllIntegral && SeenInteger) {
+  }
+  if (auto *CompareExchange = dyn_cast<AtomicCmpXchgInst>(I)) {
+    if (isAllIntegralMemory(TR, CompareExchange->getPointerOperand(),
+                            CompareExchange->getNewValOperand()->getType())) {
       if (EnzymePrintActivity)
         llvm::errs() << " constant instruction from TA " << *I << "\n";
       InsertConstantInstruction(TR, I);
@@ -1289,6 +1299,11 @@ bool isValuePotentiallyUsedAsPointer(llvm::Value *val) {
       if (!cast<Instruction>(u)->mayReadOrWriteMemory()) {
         todo.push_back(u);
         continue;
+      }
+      if (auto *CompareExchange = dyn_cast<AtomicCmpXchgInst>(u)) {
+        if (CompareExchange->getPointerOperand() != cur &&
+            CompareExchange->getNewValOperand() != cur)
+          continue;
       }
       if (EnzymePrintActivity)
         llvm::errs() << " VALUE potentially used as pointer " << *val << " by "
@@ -1868,6 +1883,25 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
                 TmpOrig);
           }
         }
+      } else if (auto *CompareExchange = dyn_cast<AtomicCmpXchgInst>(TmpOrig)) {
+        Value *PointerOperand = CompareExchange->getPointerOperand();
+        if (directions == UP) {
+          if (isConstantValue(TR, PointerOperand)) {
+            InsertConstantValue(TR, Val);
+            return true;
+          }
+        } else {
+          if (UpHypothesis->isConstantValue(TR, PointerOperand)) {
+            InsertConstantValue(TR, Val);
+            insertConstantsFrom(TR, *UpHypothesis);
+            return true;
+          }
+        }
+        if (EnzymeEnableRecursiveHypotheses) {
+          ReEvaluateValueIfInactiveValue[PointerOperand].insert(Val);
+          if (TmpOrig != Val)
+            ReEvaluateValueIfInactiveValue[PointerOperand].insert(TmpOrig);
+        }
       } else if (auto op = dyn_cast<CallInst>(TmpOrig)) {
         if (isInactiveCall(*op) || op->hasFnAttr("enzyme_inactive_val") ||
             op->getAttributes().hasAttribute(llvm::AttributeList::ReturnIndex,
@@ -1893,6 +1927,34 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
           InsertConstantValue(TR, Val);
           insertConstantsFrom(TR, *UpHypothesis);
           return true;
+        }
+
+        // jl_eqtable_get(table, key, default) is semantically a load from the
+        // table (returning default if the key is absent). Like a LoadInst
+        // whose pointer operand is inactive, its result is inactive if both
+        // the table and the default are inactive.
+        if ((funcName == "jl_eqtable_get" || funcName == "ijl_eqtable_get") &&
+            op->arg_size() == 3) {
+          Value *active = nullptr;
+          for (Value *dep : {op->getArgOperand(0), op->getArgOperand(2)}) {
+            bool depConst = (directions == UP)
+                                ? isConstantValue(TR, dep)
+                                : UpHypothesis->isConstantValue(TR, dep);
+            if (!depConst) {
+              active = dep;
+              break;
+            }
+          }
+          if (!active) {
+            InsertConstantValue(TR, Val);
+            if (directions != UP)
+              insertConstantsFrom(TR, *UpHypothesis);
+            return true;
+          } else if (EnzymeEnableRecursiveHypotheses) {
+            ReEvaluateValueIfInactiveValue[active].insert(Val);
+            if (TmpOrig != Val)
+              ReEvaluateValueIfInactiveValue[active].insert(TmpOrig);
+          }
         }
 
         // If requesting empty unknown functions to be considered inactive,
@@ -1963,7 +2025,8 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
                funcName == "_Znwm" || funcName == "julia.gc_alloc_obj" ||
                funcName == "??2@YAPAXI@Z" || funcName == "??2@YAPEAX_K@Z" ||
                funcName == "jl_gc_alloc_typed" ||
-               funcName == "ijl_gc_alloc_typed")) {
+               funcName == "ijl_gc_alloc_typed" ||
+               isRustAllocationFunction(funcName))) {
             std::shared_ptr<ActivityAnalyzer> Hypothesis =
                 std::shared_ptr<ActivityAnalyzer>(
                     new ActivityAnalyzer(*this, directions));
@@ -2259,8 +2322,9 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
                           : (mayWrite ? ModRefInfo::Mod : ModRefInfo::NoModRef);
         }
       } else {
-        AARes = AA.getModRefInfo(
-            I, MemoryLocation(memval, LocationSize::beforeOrAfterPointer()));
+        AARes = getModRefInfo(
+            AA, I,
+            MemoryLocation(memval, LocationSize::beforeOrAfterPointer()));
       }
 
       if (auto CB = dyn_cast<CallInst>(I)) {
@@ -2271,27 +2335,10 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
         if (ReadOnly) {
           auto BaseVal = getBaseObject(Val);
           for (size_t i = 0; i < CB->arg_size(); i++) {
-            if (i == 0 && CB->hasStructRetAttr()) {
-              if (getBaseObject(CB->getArgOperand(i)) == BaseVal) {
-                ReadOnly = false;
-                break;
-              }
-            }
-            if (CB->getAttributeAtIndex(llvm::AttributeList::FirstArgIndex + i,
-                                        "enzymejl_sret_union_bytes")
-                    .isValid()) {
-              if (getBaseObject(CB->getArgOperand(i)) == BaseVal) {
-                ReadOnly = false;
-                break;
-              }
-            }
-            if (CB->getAttributeAtIndex(llvm::AttributeList::FirstArgIndex + i,
-                                        "enzymejl_returnRoots")
-                    .isValid()) {
-              if (getBaseObject(CB->getArgOperand(i)) == BaseVal) {
-                ReadOnly = false;
-                break;
-              }
+            if (isReturnLikeParam(*CB, i) &&
+                getBaseObject(CB->getArgOperand(i)) == BaseVal) {
+              ReadOnly = false;
+              break;
             }
           }
         }
@@ -2321,7 +2368,8 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
           isRefSet(AARes)) {
         if (EnzymePrintActivity)
           llvm::errs() << "potential active load: " << *I << "\n";
-        if (isa<LoadInst>(I) || isNVLoad(I) || isa<AtomicRMWInst>(I)) {
+        if (isa<LoadInst>(I) || isNVLoad(I) || isa<AtomicRMWInst>(I) ||
+            isa<AtomicCmpXchgInst>(I)) {
           // If the ref'ing value is a load check if the loaded value is
           // active
           if (!Hypothesis->isConstantValue(TR, I)) {
@@ -2766,6 +2814,16 @@ bool ActivityAnalyzer::isInstructionInactiveFromOrigin(TypeResults const &TR,
       if (EnzymePrintActivity)
         llvm::errs() << " constant instruction as store operand is inactive "
                      << *inst << "\n";
+      return true;
+    }
+  }
+
+  if (auto *CompareExchange = dyn_cast<AtomicCmpXchgInst>(inst)) {
+    if (isConstantValue(TR, CompareExchange->getPointerOperand())) {
+      if (EnzymePrintActivity)
+        llvm::errs() << " constant instruction as compare-and-exchange pointer "
+                        "operand is inactive "
+                     << *inst << '\n';
       return true;
     }
   }
@@ -3368,35 +3426,32 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
       if (isDebugFunction(F))
         continue;
 
-      size_t idx = 0;
-      for (auto &arg : call->args()) {
-        if (arg != parent) {
-          idx++;
+      for (size_t Idx = 0; Idx < call->arg_size(); ++Idx) {
+        if (call->getArgOperand(Idx) != parent)
           continue;
-        }
 
-        bool NoCapture = isNoCapture(call, idx);
+        bool NoCapture = isNoCapture(call, Idx);
 
         mayCapture |= !NoCapture;
 
-        bool ReadOnly = isReadOnly(call, idx);
+        bool ReadOnly = isReadOnly(call, Idx);
 
         if (!ReadOnly && isLocalReadOnlyOrThrow(call) &&
             !(call->getAttributeAtIndex(llvm::AttributeList::FirstArgIndex +
-                                            idx,
+                                            Idx,
                                         "enzymejl_sret_union_bytes")
                   .isValid()) &&
             !(call->getAttributeAtIndex(llvm::AttributeList::FirstArgIndex +
-                                            idx,
+                                            Idx,
                                         "enzymejl_returnRoots")
                   .isValid()) &&
-            !(idx == 0 && call->hasStructRetAttr())) {
+            !(Idx == 0 && call->hasStructRetAttr())) {
           ReadOnly = true;
         }
 
         mayWrite |= !ReadOnly;
 
-        bool WriteOnly = isWriteOnly(call, idx);
+        bool WriteOnly = isWriteOnly(call, Idx);
 
         mayRead |= !WriteOnly;
       }
@@ -3752,6 +3807,26 @@ bool ActivityAnalyzer::isValueActivelyStoredOrReturned(TypeResults const &TR,
       bool ConstantArg = isFunctionArgumentConstant(call, val);
       if (ConstantArg) {
         continue;
+      }
+      // Unless it throws, such a call writes only memory it allocated and its
+      // result parameters, so storing the pointer into an active result
+      // parameter is the one way it can hand the pointer back to the caller.
+      if (isLocalReadOnlyOrThrow(call) && !AA.onlyReadsMemory(call)) {
+        for (unsigned Index = 0; Index < call->arg_size(); ++Index) {
+          Value *ResultArg = call->getArgOperand(Index);
+          if (ResultArg == val || !ResultArg->getType()->isPointerTy() ||
+              !isReturnLikeParam(*call, Index))
+            continue;
+          if (isConstantValue(TR, ResultArg))
+            continue;
+          StoredOrReturnedCache[key] = true;
+          if (EnzymePrintActivity)
+            llvm::errs() << " </ASOR" << (int)directions
+                         << " ignoreStoresInto=" << ignoreStoresInto
+                         << " active from-result-param>" << *val
+                         << " call=" << *call << "\n";
+          return true;
+        }
       }
     }
 

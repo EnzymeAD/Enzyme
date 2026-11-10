@@ -149,20 +149,6 @@ static bool isUncapturedLocalOrNoaliasArgMemory(Value *obj,
 static bool
 writesOnlyUncapturedLocalOrNoaliasArgMemory(Instruction *I,
                                             TargetLibraryInfo &TLI) {
-  if (auto CB = dyn_cast<CallBase>(I)) {
-    if (!isLocalReadOnlyOrThrow(CB))
-      return false;
-    for (unsigned i = 0; i < CB->arg_size(); ++i) {
-      auto arg = CB->getArgOperand(i);
-      if (!arg->getType()->isPointerTy())
-        continue;
-      if (CB->onlyReadsMemory(i))
-        continue;
-      if (!isUncapturedLocalOrNoaliasArgMemory(getBaseObject(arg), TLI))
-        return false;
-    }
-    return true;
-  }
   Value *ptr = nullptr;
   if (auto SI = dyn_cast<StoreInst>(I)) {
     ptr = SI->getPointerOperand();
@@ -170,7 +156,12 @@ writesOnlyUncapturedLocalOrNoaliasArgMemory(Instruction *I,
     switch (II->getIntrinsicID()) {
     case Intrinsic::lifetime_start:
     case Intrinsic::lifetime_end:
-      // Marks the memory's lifetime without writing anything into it.
+    case Intrinsic::assume:
+#if LLVM_VERSION_MAJOR >= 13
+    case Intrinsic::experimental_noalias_scope_decl:
+#endif
+      // Marks the memory's lifetime or assumptions without writing anything
+      // into it.
       return true;
     case Intrinsic::memset:
     case Intrinsic::memcpy:
@@ -180,6 +171,21 @@ writesOnlyUncapturedLocalOrNoaliasArgMemory(Instruction *I,
     default:
       break;
     }
+  } else if (auto CB = dyn_cast<CallBase>(I)) {
+    if (isDebugFunction(CB->getCalledFunction()))
+      return true;
+    if (!isLocalReadOnlyOrThrow(CB))
+      return false;
+    for (unsigned i = 0; i < CB->arg_size(); ++i) {
+      auto arg = CB->getArgOperand(i);
+      if (!arg->getType()->isPointerTy())
+        continue;
+      if (isReadOnly(CB, i))
+        continue;
+      if (!isUncapturedLocalOrNoaliasArgMemory(getBaseObject(arg), TLI))
+        return false;
+    }
+    return true;
   }
   if (!ptr)
     return false;
@@ -187,24 +193,6 @@ writesOnlyUncapturedLocalOrNoaliasArgMemory(Instruction *I,
 }
 
 struct CacheAnalysis {
-
-  /// Whether I may modify the memory at loc. Unless it throws, a
-  /// LocalReadOnlyOrThrow call writes only memory it allocated, which cannot
-  /// be loc, and its sret-like arguments.
-  static bool mayModify(AAResults &AA, Instruction *I,
-                        const MemoryLocation &loc) {
-    auto CB = dyn_cast<CallBase>(I);
-    if (!CB || !isLocalReadOnlyOrThrow(CB))
-      return isModSet(AA.getModRefInfo(I, loc));
-    for (unsigned i = 0; i < CB->arg_size(); ++i) {
-      auto arg = CB->getArgOperand(i);
-      if (!arg->getType()->isPointerTy() || CB->onlyReadsMemory(i))
-        continue;
-      if (!AA.isNoAlias(loc, MemoryLocation::getBeforeOrAfter(arg)))
-        return true;
-    }
-    return false;
-  }
 
   const ValueMap<const CallInst *, SmallPtrSet<const CallInst *, 1>>
       &allocationsWithGuaranteedFree;
@@ -590,7 +578,7 @@ struct CacheAnalysis {
     if (funcName == "julia.write_barrier_binding")
       return {};
 
-    if (funcName == "julia.safepoint")
+    if (funcName == "julia.safepoint" || isRustNoAllocShimFunction(funcName))
       return {};
 
     if (funcName == "enzyme_zerotype")
@@ -638,8 +626,7 @@ struct CacheAnalysis {
 
       bool init_safe = !is_origin_overwritten(obj);
       if (!init_safe) {
-        auto CD = TR.query(obj)[{-1}];
-        if (CD == BaseType::Integer || CD.isFloat())
+        if (!TR.anyPointer(obj))
           init_safe = true;
       }
       if (!init_safe && !isa<UndefValue>(obj) && !isa<ConstantInt>(obj) &&
@@ -658,6 +645,14 @@ struct CacheAnalysis {
     // continuation of the
     //   callee inside the parent function.
     allFollowersOf(callsite_op, [&](Instruction *inst2) {
+      if (auto II = dyn_cast<IntrinsicInst>(inst2)) {
+        if (II->getIntrinsicID() == Intrinsic::assume)
+          return false;
+#if LLVM_VERSION_MAJOR >= 13
+        if (II->getIntrinsicID() == Intrinsic::experimental_noalias_scope_decl)
+          return false;
+#endif
+      }
       // Don't consider modref from malloc/free as a need to cache
       if (auto obj_op = dyn_cast<CallInst>(inst2)) {
         StringRef sfuncName = getFuncNameFromCall(obj_op);
@@ -670,7 +665,8 @@ struct CacheAnalysis {
           return false;
 
         if (isCertainPrint(sfuncName) || isAllocationFunction(sfuncName, TLI) ||
-            isDeallocationFunction(sfuncName, TLI)) {
+            isDeallocationFunction(sfuncName, TLI) ||
+            isRustNoAllocShimFunction(sfuncName)) {
           return false;
         }
 
@@ -712,13 +708,13 @@ struct CacheAnalysis {
         if (rematerializableAllocations.count(objs[i]))
           continue;
 
-        auto CD = TR.query(args[i])[{-1}];
-        if (CD == BaseType::Integer || CD.isFloat())
+        if (!TR.anyPointer(args[i]))
           continue;
 
         if (!callsite_op->getArgOperand(i)->getType()->isPointerTy() ||
-            mayModify(AA, inst2,
-                      MemoryLocation::getForArgument(callsite_op, i, TLI))) {
+            writesToMemoryReadBy(
+                AA, TLI, MemoryLocation::getForArgument(callsite_op, i, TLI),
+                inst2)) {
           if (!isa<ConstantInt>(callsite_op->getArgOperand(i)) &&
               !isa<UndefValue>(callsite_op->getArgOperand(i)))
             EmitWarning("UncacheableArg", *callsite_op, "Callsite ",
@@ -820,13 +816,17 @@ void calculateUnusedValuesInFunction(
     PrimalSeen = CacheResults;
   }
 
+  auto minCutMode = (mode == DerivativeMode::ReverseModePrimal)
+                        ? DerivativeMode::ReverseModeGradient
+                        : mode;
+
   for (const auto &pair : gutils->allocationsWithGuaranteedFree) {
     if (pair.second.size() == 0)
       continue;
 
     bool primalNeededInReverse =
         DifferentialUseAnalysis::is_value_needed_in_reverse<QueryType::Primal>(
-            gutils, pair.first, mode, CacheResults, oldUnreachable);
+            gutils, pair.first, minCutMode, CacheResults, oldUnreachable);
 
     // If rematerializing a split or loop-level allocation, the primal
     // allocation is not needed in the reverse.
@@ -864,7 +864,7 @@ void calculateUnusedValuesInFunction(
 
     bool primalNeededInReverse =
         DifferentialUseAnalysis::is_value_needed_in_reverse<QueryType::Primal>(
-            gutils, rmat.first, mode, CacheResults, oldUnreachable);
+            gutils, rmat.first, minCutMode, CacheResults, oldUnreachable);
     // If rematerializing a split or loop-level allocation, the primal
     // allocation is not needed in the reverse.
     if (gutils->needsCacheWholeAllocation(rmat.first)) {
@@ -1968,11 +1968,8 @@ void restoreCache(
             assert(gutils->fictiousPHIs[PN] == m.first.first);
             gutils->fictiousPHIs.erase(PN);
           }
-        IRBuilder<> BuilderZ(newi->getNextNode());
-        if (isa<PHINode>(m.first.first)) {
-          BuilderZ.SetInsertPoint(
-              getFirstNonPHI(cast<Instruction>(newi)->getParent()));
-        }
+        IRBuilder<> BuilderZ(
+            gutils->getFirstNonPHIOrPlaceholder(newi->getNextNode()));
         Value *nexti = gutils->cacheForReverse(BuilderZ, newi, m.second,
                                                /*replace*/ false);
         newIToNextI.emplace_back(newi, nexti);
@@ -2743,11 +2740,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
         if (found != gutils->knownRecomputeHeuristic.end()) {
           if (!found->second && !isa<CallInst>(&I)) {
             auto newi = gutils->getNewFromOriginal(&I);
-            IRBuilder<> BuilderZ(cast<Instruction>(newi)->getNextNode());
-            if (isa<PHINode>(newi)) {
-              BuilderZ.SetInsertPoint(
-                  getFirstNonPHI(cast<Instruction>(newi)->getParent()));
-            }
+            IRBuilder<> BuilderZ(gutils->getFirstNonPHIOrPlaceholder(
+                cast<Instruction>(newi)->getNextNode()));
             gutils->cacheForReverse(BuilderZ, newi,
                                     getIndex(&I, CacheType::Self, BuilderZ));
           }
@@ -2886,8 +2880,11 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
   if (removeTapeStruct) {
     tapeType = MallocTypes[0];
 
-    for (auto &a : AugmentedCachedFunctions.find(tup)->second.tapeIndices) {
-      a.second = -1;
+    for (auto &entry : AugmentedCachedFunctions.find(tup)->second.tapeIndices) {
+      // Negative entries <= -2 encode uncached arguments rather than physical
+      // tape slots, so only rewrite physical slot index 0 to -1.
+      if (entry.second >= 0)
+        entry.second = -1;
     }
   }
 
@@ -3595,13 +3592,25 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
     if (activeUses.size() == 1 && inLoop &&
         gutils->getNewFromOriginal(orig->getParent()) == loopContext.header &&
         loopContext.exitBlocks.size() == 1) {
+      auto L = gutils->OrigLI->getLoopFor(orig->getParent());
       SmallVector<BasicBlock *, 1> Latches;
-      gutils->OrigLI->getLoopFor(orig->getParent())->getLoopLatches(Latches);
+      L->getLoopLatches(Latches);
       bool allIncoming = true;
       for (auto Latch : Latches) {
         if (activeUses[0] != orig->getIncomingValueForBlock(Latch)) {
           allIncoming = false;
           break;
+        }
+      }
+      if (allIncoming) {
+        for (auto u : activeUses[0]->users()) {
+          auto UI = cast<Instruction>(u);
+          if (UI != orig && L->contains(UI) &&
+              (!gutils->isConstantInstruction(UI) ||
+               (retType == DIFFE_TYPE::OUT_DIFF && isa<ReturnInst>(UI)))) {
+            allIncoming = false;
+            break;
+          }
         }
       }
       if (allIncoming) {
@@ -6834,6 +6843,19 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
                         "llvm.enzyme.lifetime_end",
 			"__cudaPushCallConfiguration",
 			"__cudaPopCallConfiguration",
+                        "strtol",
+                        "strtoul",
+                        "strtoll",
+                        "strtoull",
+                        "__isoc23_strtol",
+                        "__isoc23_strtoul",
+                        "__isoc23_strtoll",
+                        "__isoc23_strtoull",
+                        "open",
+                        "open64",
+                        "read",
+                        "close",
+                        "sched_getaffinity",
   };
   // clang-format on
 
@@ -6856,7 +6878,8 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
   // These LLVM flang runtime functions do not free memory of the program.
   // They are not marked nofree, since the I/O runtime frees its own I/O
   // statement state.
-  if (isFlangRuntimeNoFree(F->getName()))
+  if (isFlangRuntimeNoFree(F->getName()) ||
+      isRustInactiveRuntimeFunction(F->getName()))
     return F;
 
   switch (F->getIntrinsicID()) {

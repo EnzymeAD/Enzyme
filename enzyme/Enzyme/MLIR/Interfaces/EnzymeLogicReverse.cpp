@@ -35,7 +35,7 @@ void handleReturns(Block *oBB, Block *newBB, Block *reverseBB,
     Operation *newBranchOp = cf::BranchOp::create(
         forwardToBackwardBuilder, oBB->getTerminator()->getLoc(), reverseBB);
 
-    gutils->originalToNewFnOps[oBB->getTerminator()] = newBranchOp;
+    gutils->originalToNewFn.map(oBB->getTerminator(), newBranchOp);
   }
 }
 
@@ -271,7 +271,9 @@ FunctionOpInterface MEnzymeLogic::CreateReverseDiff(
                           addedType,
                           type_args,
                           overwritten_args,
-                          omp};
+                          omp,
+                          strongZero,
+                          markReadonly};
 
   {
     auto cachedFn = ReverseCachedFunctions.find(tup);

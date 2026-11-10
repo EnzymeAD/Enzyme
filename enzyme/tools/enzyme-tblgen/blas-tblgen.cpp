@@ -1119,6 +1119,18 @@ void rev_call_arg(bool forward, const DagInit *ruleDag,
         os << ";\n";
       }
 
+      if (op == "FDivOrZero") {
+        if (Dag->getNumArgs() != 2)
+          PrintFatalError(pattern.getLoc(), "FDivOrZero takes two operands");
+        os << "  Value *quot = Builder2.CreateFDiv(subarg_0, subarg_1);\n";
+        os << "  vals.push_back(to_blas_callconv(Builder2, "
+              "CreateSelect(Builder2, Builder2.CreateFCmpOEQ(subarg_1, "
+              "ConstantFP::get(subarg_1->getType(), 0.0)), "
+              "ConstantFP::get(quot->getType(), 0.0), quot), byRef, cublas, "
+              "julia_decl_type, allocationBuilder, \"FDivOrZero\"));\n"
+              " }\n vals; })";
+        return;
+      }
       os << "  vals.push_back(";
       if (op != "Select")
         os << "to_blas_callconv(Builder2, ";
@@ -1540,7 +1552,7 @@ void emit_tmp_free(const Record *Def, raw_ostream &os, StringRef builder) {
   if (args.size() == 0)
     return;
   const auto matName = args[0];
-  const auto allocName = "mat_" + matName;
+  const std::string allocName = ("mat_" + matName).str();
   os << "    {\n"
      << "      CallInst *freecall = CreateDealloc(" << builder << ", true_"
      << allocName << ");\n"
@@ -1566,8 +1578,8 @@ void emit_tmp_creation(const Record *Def, raw_ostream &os, StringRef builder) {
          action == "zerotriangular" || action == "is_left");
   if (action == "product") {
     const auto matName = args[0];
-    const auto dim1 = "arg_" + args[2];
-    const auto dim2 = "arg_" + args[3];
+    const std::string dim1 = ("arg_" + args[2]).str();
+    const std::string dim2 = ("arg_" + args[3]).str();
     os << "    Value *len1 = load_if_ref(" << builder << ", intType," << dim1
        << ", byRef);\n"
        << "    Value *len2 = load_if_ref(" << builder << ", intType," << dim2
@@ -1577,9 +1589,9 @@ void emit_tmp_creation(const Record *Def, raw_ostream &os, StringRef builder) {
   } else if (action == "is_normal") {
     assert(args.size() == 5);
     const auto vecName = args[0];
-    const auto trans = "arg_" + args[2];
-    const auto dim1 = "arg_" + args[3];
-    const auto dim2 = "arg_" + args[4];
+    const std::string trans = ("arg_" + args[2]).str();
+    const std::string dim1 = ("arg_" + args[3]).str();
+    const std::string dim2 = ("arg_" + args[4]).str();
     os << "    Value *len1 = load_if_ref(" << builder << ", intType," << dim1
        << ", byRef);\n"
        << "    Value *len2 = load_if_ref(" << builder << ", intType," << dim2
@@ -1590,9 +1602,9 @@ void emit_tmp_creation(const Record *Def, raw_ostream &os, StringRef builder) {
   } else if (action == "is_left") {
     assert(args.size() == 5);
     const auto vecName = args[0];
-    const auto trans = "arg_" + args[2];
-    const auto dim1 = "arg_" + args[3];
-    const auto dim2 = "arg_" + args[4];
+    const std::string trans = ("arg_" + args[2]).str();
+    const std::string dim1 = ("arg_" + args[3]).str();
+    const std::string dim2 = ("arg_" + args[4]).str();
     os << "    Value *len1 = load_if_ref(" << builder << ", intType," << dim1
        << ", byRef);\n"
        << "    Value *len2 = load_if_ref(" << builder << ", intType," << dim2
@@ -1603,14 +1615,14 @@ void emit_tmp_creation(const Record *Def, raw_ostream &os, StringRef builder) {
   } else if (action == "vector") {
     assert(args.size() == 3);
     const auto vecName = args[0];
-    const auto dim1 = "arg_" + args[2];
+    const std::string dim1 = ("arg_" + args[2]).str();
     os << "    Value *len1 = load_if_ref(" << builder << ", intType," << dim1
        << ", byRef);\n";
     os << "    Value *size_" << vecName << " = len1;\n";
   } else if (action == "triangular" || action == "zerotriangular") {
     assert(args.size() == 3);
     const auto vecName = args[0];
-    const auto dim1 = "arg_" + args[2];
+    const std::string dim1 = ("arg_" + args[2]).str();
     os << "    Value *len = load_if_ref(" << builder << ", intType," << dim1
        << ", byRef);\n";
     //  Size has to be (at least)
@@ -1619,7 +1631,7 @@ void emit_tmp_creation(const Record *Def, raw_ostream &os, StringRef builder) {
        << ".CreateMul(len, len);\n";
   }
   const auto matName = args[0];
-  const auto allocName = "mat_" + matName;
+  const std::string allocName = ("mat_" + matName).str();
   os << "    CallInst * malloccall_" << allocName << " = nullptr;\n";
   os << "    Value * true_" << allocName << " = CreateAllocation(" << builder
      << ", fpType, size_" << matName << ", \"" << allocName
@@ -2035,8 +2047,10 @@ void emit_dag(bool forward, Twine resultVarName, const DagInit *ruleDag,
     os << "        }\n";
     return;
   }
-  if (Def->isSubClassOf("BFDiv") || Def->getName() == "BFDiv") {
+  if (Def->isSubClassOf("BFDiv") || Def->getName() == "BFDiv" ||
+      Def->getName() == "BFDivOrZero") {
     assert(forward);
+    bool ZeroOnZeroDivisor = Def->getName() == "BFDivOrZero";
     os << "        {\n";
     os << "      // BFDiv\n";
     auto subNum = ruleDag->getArg(0);
@@ -2058,6 +2072,10 @@ void emit_dag(bool forward, Twine resultVarName, const DagInit *ruleDag,
     os << "           assert(subnum);\n";
     os << "           assert(subdenom);\n";
     os << resultVarName << " = Builder2.CreateFDiv(subnum, subdenom);\n";
+    if (ZeroOnZeroDivisor)
+      os << resultVarName << " = CreateSelect(Builder2, "
+         << "Builder2.CreateFCmpOEQ(subdenom, ConstantFP::get(fpType, 0.0)), "
+         << "ConstantFP::get(fpType, 0.0), " << resultVarName << ");\n";
     os << "         } else " << resultVarName
        << " = ConstantFP::get(fpType, 0.0);\n";
     os << "        }\n";
@@ -2423,7 +2441,7 @@ void emit_rev_rewrite_rules(const StringMap<TGPattern> &patternMap,
          << ", toadd, (isa<Instruction>(toadd) && "
             "cast<Instruction>(toadd)->getNextNode()) ? Builder3 : Builder2);\n"
          << "          } else {\n"
-         << "            addToDiffe(arg_" << name
+         << "            addToDiffe(orig_" << name
          << ", toadd, (isa<Instruction>(toadd) && "
             "cast<Instruction>(toadd)->getNextNode()) ? Builder3 : Builder2, "
             "type_"

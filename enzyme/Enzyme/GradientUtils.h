@@ -230,6 +230,8 @@ public:
 
   llvm::Value *hasUninverted(const llvm::Value *inverted) const;
 
+  bool isPlaceholderForNonPHI(const llvm::PHINode *PN) const override;
+
   llvm::BasicBlock *getOriginalFromNew(const llvm::BasicBlock *newinst) const;
 
   llvm::Value *isOriginal(const llvm::Value *newinst) const;
@@ -321,6 +323,10 @@ public:
 private:
   llvm::SmallVector<llvm::WeakTrackingVH, 4> addedTapeVals;
   unsigned tapeidx;
+  /// Most recently inserted `tapeIndices` slot during the augmented primal
+  /// pass, allowing `cacheForReverse` to rewrite the slot in place when no
+  /// physical tape storage is needed.
+  int *lastTapeIndex = nullptr;
   llvm::Value *tape;
 
   std::map<llvm::BasicBlock *,

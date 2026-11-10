@@ -195,6 +195,7 @@ public:
     const std::vector<bool> volatileArgs;
     bool omp;
     bool strongZero;
+    bool MarkReadonly;
 
     inline bool operator<(const MReverseCacheKey &rhs) const {
       if (todiff < rhs.todiff)
@@ -222,12 +223,12 @@ public:
 
       if (returnPrimals < rhs.returnPrimals)
         return true;
-      if (rhs.returnPrimals < rhs.returnPrimals)
+      if (rhs.returnPrimals < returnPrimals)
         return false;
 
       if (returnShadows < rhs.returnShadows)
         return true;
-      if (rhs.returnShadows < rhs.returnShadows)
+      if (rhs.returnShadows < returnShadows)
         return false;
 
       if (mode < rhs.mode)
@@ -238,6 +239,11 @@ public:
       if (freeMemory < rhs.freeMemory)
         return true;
       if (rhs.freeMemory < freeMemory)
+        return false;
+
+      if (atomicAdd < rhs.atomicAdd)
+        return true;
+      if (rhs.atomicAdd < atomicAdd)
         return false;
 
       if (width < rhs.width)
@@ -268,6 +274,11 @@ public:
       if (strongZero < rhs.strongZero)
         return true;
       if (rhs.strongZero < strongZero)
+        return false;
+
+      if (MarkReadonly < rhs.MarkReadonly)
+        return true;
+      if (rhs.MarkReadonly < MarkReadonly)
         return false;
 
       // equal

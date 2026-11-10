@@ -191,6 +191,16 @@ public:
     return order;
   }
 
+  /// Legal ordering for an atomic store corresponding to an atomic RMW with
+  /// ordering `order`.
+  static llvm::AtomicOrdering forwardStoreOrdering(llvm::AtomicOrdering order) {
+    if (order == llvm::AtomicOrdering::Acquire)
+      return llvm::AtomicOrdering::Monotonic;
+    if (order == llvm::AtomicOrdering::AcquireRelease)
+      return llvm::AtomicOrdering::Release;
+    return order;
+  }
+
   /// Reverse-mode adjoint of the value operand val of an atomic modification
   /// new = old + val (negate == false) or new = old - val (negate == true) of
   /// the active location ptr by the instruction I, whose result is inactive:
@@ -575,12 +585,11 @@ public:
       auto ET = I.getType();
       if (looseTypeAnalysis || true) {
         vd = defaultTypeTreeForLLVM(ET, &I);
-        if (EmitWarningEnabled(I.getContext())) {
+        if (!constantval) {
           std::string str;
           raw_string_ostream ss(str);
-          ss << "Cannot deduce type of load " << I << ", assumed " << vd.str()
-             << "\n";
-          EmitWarning("CannotDeduceType", I, ss.str());
+          ss << "Cannot deduce type of load " << I << ", assumed " << vd.str();
+          EmitWarningAlways("CannotDeduceType", I, ss.str());
         }
         goto known;
       }
@@ -883,15 +892,18 @@ public:
 
     // If a load of an omp init argument, don't cache for reverse
     // and don't do any adjoint propagation (assumed integral)
-    for (auto U : LI.getPointerOperand()->users()) {
-      if (auto CI = dyn_cast<CallInst>(U)) {
-        if (auto F = CI->getCalledFunction()) {
-          if (F->getName() == "__kmpc_for_static_init_4" ||
-              F->getName() == "__kmpc_for_static_init_4u" ||
-              F->getName() == "__kmpc_for_static_init_8" ||
-              F->getName() == "__kmpc_for_static_init_8u") {
-            eraseIfUnused(LI);
-            return;
+    if (!isa<ConstantPointerNull, UndefValue, PoisonValue>(
+            LI.getPointerOperand())) {
+      for (auto U : LI.getPointerOperand()->users()) {
+        if (auto CI = dyn_cast<CallInst>(U)) {
+          if (auto F = CI->getCalledFunction()) {
+            if (F->getName() == "__kmpc_for_static_init_4" ||
+                F->getName() == "__kmpc_for_static_init_4u" ||
+                F->getName() == "__kmpc_for_static_init_8" ||
+                F->getName() == "__kmpc_for_static_init_8u") {
+              eraseIfUnused(LI);
+              return;
+            }
           }
         }
       }
@@ -906,6 +918,18 @@ public:
   }
 
   void visitAtomicRMWInst(llvm::AtomicRMWInst &I) {
+    visitAtomicRMWLike(I, I.getOperation(), I.getPointerOperand(),
+                       I.getValOperand(), I.getAlign(), I.getOrdering(),
+                       I.getSyncScopeID(), I.isVolatile());
+  }
+
+  /// Derivative rules of an atomic read-modify-write `Op` of `orig_val` into
+  /// `orig_ptr` whose result `I` is the old value: an AtomicRMWInst, or a
+  /// call that performs such an operation atomically.
+  void visitAtomicRMWLike(llvm::Instruction &I, llvm::AtomicRMWInst::BinOp Op,
+                          llvm::Value *orig_ptr, llvm::Value *orig_val,
+                          llvm::Align align, llvm::AtomicOrdering ordering,
+                          llvm::SyncScope::ID ssid, bool isVolatile) {
     using namespace llvm;
 
     if (gutils->isConstantInstruction(&I) && gutils->isConstantValue(&I)) {
@@ -921,7 +945,7 @@ public:
     IRBuilder<> BuilderZ(&I);
     getForwardBuilder(BuilderZ);
 
-    switch (I.getOperation()) {
+    switch (Op) {
     case AtomicRMWInst::FAdd:
     case AtomicRMWInst::FSub: {
 
@@ -934,10 +958,8 @@ public:
           if (!gutils->isConstantInstruction(&I)) {
             assert(ptr);
             AtomicRMWInst *rmw = nullptr;
-            rmw = BuilderZ.CreateAtomicRMW(I.getOperation(), ptr, dif,
-                                           I.getAlign(), I.getOrdering(),
-                                           I.getSyncScopeID());
-            rmw->setVolatile(I.isVolatile());
+            rmw = BuilderZ.CreateAtomicRMW(Op, ptr, dif, align, ordering, ssid);
+            rmw->setVolatile(isVolatile);
             if (gutils->isConstantValue(&I))
               return Constant::getNullValue(dif->getType());
             else
@@ -950,13 +972,12 @@ public:
 
         Value *diff = applyChainRule(
             I.getType(), BuilderZ, rule,
-            gutils->isConstantValue(I.getPointerOperand())
+            gutils->isConstantValue(orig_ptr)
                 ? nullptr
-                : gutils->invertPointerM(I.getPointerOperand(), BuilderZ),
-            gutils->isConstantValue(I.getValOperand())
+                : gutils->invertPointerM(orig_ptr, BuilderZ),
+            gutils->isConstantValue(orig_val)
                 ? nullptr
-                : gutils->invertPointerM(I.getValOperand(), BuilderZ,
-                                         TR.query(&I)));
+                : gutils->invertPointerM(orig_val, BuilderZ, TR.query(&I)));
         if (!gutils->isConstantValue(&I))
           setDiffe(&I, diff, BuilderZ);
         return;
@@ -965,19 +986,221 @@ public:
         eraseIfUnused(I);
         return;
       }
-      if ((Mode == DerivativeMode::ReverseModeCombined ||
-           Mode == DerivativeMode::ReverseModeGradient) &&
-          gutils->isConstantValue(&I)) {
-        if (!gutils->isConstantValue(I.getValOperand())) {
-          addAtomicRMWValueAdjoint(
-              I, I.getPointerOperand(), I.getValOperand(), I.getType(),
-              I.getType(), /*negate*/ I.getOperation() == AtomicRMWInst::FSub,
-              I.getAlign(), I.getOrdering(), I.getSyncScopeID(),
-              I.isVolatile());
+      if (Mode == DerivativeMode::ReverseModeCombined ||
+          Mode == DerivativeMode::ReverseModeGradient) {
+        // old = *ptr; *ptr = old +/- val; returns old. Hence
+        //   d(val) += +/- d(*ptr after)   and   d(*ptr before) = d(*ptr after)
+        //   + d(old),
+        // so the shadow of *ptr is read for d(val) before d(old) is added to
+        // it.
+        Value *dret = nullptr;
+        if (!gutils->isConstantValue(&I)) {
+          IRBuilder<> Builder2(&I);
+          getReverseBuilder(Builder2);
+          dret = diffe(&I, Builder2);
+          setDiffe(&I,
+                   Constant::getNullValue(gutils->getShadowType(I.getType())),
+                   Builder2);
+        }
+        if (!gutils->isConstantValue(orig_val) &&
+            !gutils->isConstantValue(orig_ptr)) {
+          addAtomicRMWValueAdjoint(I, orig_ptr, orig_val, I.getType(),
+                                   I.getType(),
+                                   /*negate*/ Op == AtomicRMWInst::FSub, align,
+                                   ordering, ssid, isVolatile);
+        }
+        if (dret && !gutils->isConstantValue(orig_ptr)) {
+          IRBuilder<> Builder2(&I);
+          getReverseBuilder(Builder2);
+          Value *ip =
+              lookup(gutils->invertPointerM(orig_ptr, Builder2), Builder2);
+          auto rule = [&](Value *ip, Value *dret) {
+            auto *rmw =
+                Builder2.CreateAtomicRMW(AtomicRMWInst::FAdd, ip, dret, align,
+                                         AtomicOrdering::Monotonic, ssid);
+            rmw->setVolatile(isVolatile);
+          };
+          applyChainRule(Builder2, rule, ip, dret);
         }
         if (Mode == DerivativeMode::ReverseModeGradient) {
           eraseIfUnused(I, /*erase*/ true, /*check*/ false);
         } else
+          eraseIfUnused(I);
+        return;
+      }
+      break;
+    }
+    case AtomicRMWInst::FMax:
+    case AtomicRMWInst::FMin: {
+      Type *ValTy = I.getType();
+      if (!ValTy->isFloatingPointTy())
+        break;
+
+      Value *Changed = nullptr;
+      if (Mode != DerivativeMode::ReverseModeGradient &&
+          Mode != DerivativeMode::ForwardModeSplit) {
+        Instruction *NewInst =
+            cast<Instruction>(gutils->getNewFromOriginal(&I));
+        Value *NewPtr = gutils->getNewFromOriginal(orig_ptr);
+        Value *NewVal = gutils->getNewFromOriginal(orig_val);
+        unsigned AddrSpace =
+            cast<PointerType>(NewPtr->getType())->getAddressSpace();
+        Function *Helper = getOrInsertAtomicFloatMinMax(
+            *gutils->newFunc->getParent(), ValTy, Op, AddrSpace, align,
+            ordering, ssid, isVolatile);
+        Value *CastPtr = BuilderZ.CreatePointerCast(
+            NewPtr, Helper->getFunctionType()->getParamType(0));
+        CallInst *HelperCall = BuilderZ.CreateCall(Helper, {CastPtr, NewVal});
+        HelperCall->setDebugLoc(gutils->getNewFromOriginal(I.getDebugLoc()));
+        Instruction *OldVal =
+            cast<Instruction>(BuilderZ.CreateExtractValue(HelperCall, {0}));
+        OldVal->takeName(NewInst);
+        Changed = BuilderZ.CreateExtractValue(HelperCall, {1}, "changed");
+
+        gutils->newToOriginalFn.erase(NewInst);
+        gutils->replaceAWithB(NewInst, OldVal);
+        if (BuilderZ.GetInsertPoint() != BuilderZ.GetInsertBlock()->end() &&
+            &*BuilderZ.GetInsertPoint() == NewInst)
+          BuilderZ.SetInsertPoint(NewInst->getNextNode());
+        gutils->erase(NewInst);
+        gutils->originalToNewFn[&I] = OldVal;
+        gutils->newToOriginalFn[OldVal] = &I;
+
+        if (Mode == DerivativeMode::ReverseModePrimal) {
+          Changed = gutils->cacheForReverse(
+              BuilderZ, Changed, getIndex(&I, CacheType::Tape, BuilderZ));
+        } else if (Mode == DerivativeMode::ReverseModeCombined) {
+          if (auto *ChangedInst = dyn_cast<Instruction>(Changed))
+            gutils->TapesToPreventRecomputation.insert(ChangedInst);
+        }
+      } else {
+#if LLVM_VERSION_MAJOR >= 18
+        auto It = BuilderZ.GetInsertPoint();
+        It.setHeadBit(true);
+        BuilderZ.SetInsertPoint(It);
+#endif
+        Changed =
+            BuilderZ.CreatePHI(Type::getInt1Ty(I.getContext()), 0, "changed");
+        Changed = gutils->cacheForReverse(
+            BuilderZ, Changed, getIndex(&I, CacheType::Tape, BuilderZ));
+        if (Mode == DerivativeMode::ReverseModeGradient) {
+          if (auto *ChangedInst = dyn_cast<Instruction>(Changed))
+            gutils->TapesToPreventRecomputation.insert(ChangedInst);
+        }
+      }
+
+      if (Mode == DerivativeMode::ForwardMode ||
+          Mode == DerivativeMode::ForwardModeError ||
+          Mode == DerivativeMode::ForwardModeSplit) {
+        Value *InvPtr = gutils->isConstantValue(orig_ptr)
+                            ? nullptr
+                            : gutils->invertPointerM(orig_ptr, BuilderZ);
+        Value *DiffeVal =
+            gutils->isConstantValue(orig_val)
+                ? nullptr
+                : gutils->invertPointerM(orig_val, BuilderZ, TR.query(&I));
+        AtomicOrdering LoadOrder = reverseLoadOrdering(ordering);
+        AtomicOrdering StoreOrder = forwardStoreOrdering(ordering);
+        auto Rule = [&](Value *Ptr, Value *DeltaVal) -> Value * {
+          Value *Zero = Constant::getNullValue(ValTy);
+          if (!DeltaVal)
+            DeltaVal = Zero;
+          Value *DiffeOld = Zero;
+          if (Ptr) {
+            unsigned AS = cast<PointerType>(Ptr->getType())->getAddressSpace();
+            Value *TypedPtr =
+                BuilderZ.CreatePointerCast(Ptr, getPointerType(ValTy, AS));
+            LoadInst *LoadOld =
+                BuilderZ.CreateLoad(ValTy, TypedPtr, isVolatile);
+            LoadOld->setAlignment(align);
+            LoadOld->setOrdering(LoadOrder);
+            LoadOld->setSyncScopeID(ssid);
+            DiffeOld = LoadOld;
+
+            Value *DiffeNew =
+                BuilderZ.CreateSelect(Changed, DeltaVal, DiffeOld);
+            StoreInst *StoreNew =
+                BuilderZ.CreateStore(DiffeNew, TypedPtr, isVolatile);
+            StoreNew->setAlignment(align);
+            StoreNew->setOrdering(StoreOrder);
+            StoreNew->setSyncScopeID(ssid);
+          }
+          return DiffeOld;
+        };
+        Value *Diff = applyChainRule(ValTy, BuilderZ, Rule, InvPtr, DiffeVal);
+        if (!gutils->isConstantValue(&I))
+          setDiffe(&I, Diff, BuilderZ);
+        if (Mode == DerivativeMode::ForwardModeSplit)
+          eraseIfUnused(I, /*erase*/ true, /*check*/ false);
+        else
+          eraseIfUnused(I);
+        return;
+      }
+
+      if (Mode == DerivativeMode::ReverseModePrimal) {
+        eraseIfUnused(I);
+        return;
+      }
+
+      if (Mode == DerivativeMode::ReverseModeCombined ||
+          Mode == DerivativeMode::ReverseModeGradient) {
+        IRBuilder<> Builder2(&I);
+        getReverseBuilder(Builder2);
+        Value *ChangedRev = lookup(Changed, Builder2);
+
+        Value *DiffeRet = nullptr;
+        if (!gutils->isConstantValue(&I)) {
+          DiffeRet = diffe(&I, Builder2);
+          setDiffe(&I, Constant::getNullValue(gutils->getShadowType(ValTy)),
+                   Builder2);
+        }
+
+        if (!gutils->isConstantValue(orig_ptr)) {
+          Value *InvPtr =
+              lookup(gutils->invertPointerM(orig_ptr, Builder2), Builder2);
+
+          BasicBlock *CurrentBB = Builder2.GetInsertBlock();
+          BasicBlock *ChangedBB = gutils->addReverseBlock(
+              CurrentBB, CurrentBB->getName() + "_changed");
+          BasicBlock *MergeBB = gutils->addReverseBlock(
+              ChangedBB, CurrentBB->getName() + "_merge");
+          Builder2.CreateCondBr(ChangedRev, ChangedBB, MergeBB);
+
+          Builder2.SetInsertPoint(ChangedBB);
+          auto TakeRule = [&](Value *Ptr) -> Value * {
+            unsigned AS = cast<PointerType>(Ptr->getType())->getAddressSpace();
+            Value *TypedPtr =
+                Builder2.CreatePointerCast(Ptr, getPointerType(ValTy, AS));
+            auto *Xchg = Builder2.CreateAtomicRMW(AtomicRMWInst::Xchg, TypedPtr,
+                                                  Constant::getNullValue(ValTy),
+                                                  align, ordering, ssid);
+            Xchg->setVolatile(isVolatile);
+            return Xchg;
+          };
+          Value *Taken = applyChainRule(ValTy, Builder2, TakeRule, InvPtr);
+          if (!gutils->isConstantValue(orig_val))
+            addToDiffe(orig_val, Taken, Builder2, ValTy);
+          Builder2.CreateBr(MergeBB);
+
+          Builder2.SetInsertPoint(MergeBB);
+          if (DiffeRet) {
+            auto AddRetRule = [&](Value *Ptr, Value *DeltaRet) {
+              unsigned AS =
+                  cast<PointerType>(Ptr->getType())->getAddressSpace();
+              Value *TypedPtr =
+                  Builder2.CreatePointerCast(Ptr, getPointerType(ValTy, AS));
+              auto *Add =
+                  Builder2.CreateAtomicRMW(AtomicRMWInst::FAdd, TypedPtr,
+                                           DeltaRet, align, ordering, ssid);
+              Add->setVolatile(isVolatile);
+            };
+            applyChainRule(Builder2, AddRetRule, InvPtr, DiffeRet);
+          }
+        }
+
+        if (Mode == DerivativeMode::ReverseModeGradient)
+          eraseIfUnused(I, /*erase*/ true, /*check*/ false);
+        else
           eraseIfUnused(I);
         return;
       }
@@ -989,9 +1212,9 @@ public:
 
     if (looseTypeAnalysis) {
       auto &DL = gutils->newFunc->getParent()->getDataLayout();
-      auto valType = I.getValOperand()->getType();
+      auto valType = orig_val->getType();
       auto storeSize = DL.getTypeSizeInBits(valType) / 8;
-      auto fp = TR.firstPointer(storeSize, I.getPointerOperand(), &I, gutils,
+      auto fp = TR.firstPointer(storeSize, orig_ptr, &I, gutils,
                                 /*errifnotfound*/ nullptr,
                                 /*pointerIntSame*/ true);
       if (!fp.isKnown() && valType->isIntOrIntVectorTy()) {
@@ -1030,14 +1253,17 @@ public:
 
     // If a store of an omp init argument, don't delete in reverse
     // and don't do any adjoint propagation (assumed integral)
-    for (auto U : SI.getPointerOperand()->users()) {
-      if (auto CI = dyn_cast<CallInst>(U)) {
-        if (auto F = CI->getCalledFunction()) {
-          if (F->getName() == "__kmpc_for_static_init_4" ||
-              F->getName() == "__kmpc_for_static_init_4u" ||
-              F->getName() == "__kmpc_for_static_init_8" ||
-              F->getName() == "__kmpc_for_static_init_8u") {
-            return;
+    if (!isa<ConstantPointerNull, UndefValue, PoisonValue>(
+            SI.getPointerOperand())) {
+      for (auto U : SI.getPointerOperand()->users()) {
+        if (auto CI = dyn_cast<CallInst>(U)) {
+          if (auto F = CI->getCalledFunction()) {
+            if (F->getName() == "__kmpc_for_static_init_4" ||
+                F->getName() == "__kmpc_for_static_init_4u" ||
+                F->getName() == "__kmpc_for_static_init_8" ||
+                F->getName() == "__kmpc_for_static_init_8u") {
+              return;
+            }
           }
         }
       }
@@ -1131,13 +1357,10 @@ public:
     if (!vd.isKnown()) {
       if (looseTypeAnalysis || true) {
         vd = defaultTypeTreeForLLVM(valType, &I);
-        if (EmitWarningEnabled(I.getContext())) {
-          std::string str;
-          raw_string_ostream ss(str);
-          ss << "Cannot deduce type of store " << I << ", assumed " << vd.str()
-             << "\n";
-          EmitWarning("CannotDeduceType", I, ss.str());
-        }
+        std::string str;
+        raw_string_ostream ss(str);
+        ss << "Cannot deduce type of store " << I << ", assumed " << vd.str();
+        EmitWarningAlways("CannotDeduceType", I, ss.str());
         goto known;
       }
       {
@@ -1608,6 +1831,10 @@ public:
             } else if (I.getOpcode() == CastInst::CastOps::Trunc) {
               // TODO CHECK THIS
               return Builder2.CreateZExt(dif, op0->getType());
+            } else if (I.getOpcode() == CastInst::CastOps::ZExt) {
+              // The extended bits are zero and carry no derivative (e.g. a
+              // float widened to be packed into a larger integer)
+              return Builder2.CreateTrunc(dif, op0->getType());
             } else {
               std::string s;
               llvm::raw_string_ostream ss(s);
@@ -1705,13 +1932,25 @@ public:
             gutils->getContext(gutils->getNewFromOriginal(P0->getParent()),
                                lc) &&
             gutils->getNewFromOriginal(P0->getParent()) == lc.header) {
+          auto L = gutils->OrigLI->getLoopFor(P0->getParent());
           SmallVector<BasicBlock *, 1> Latches;
-          gutils->OrigLI->getLoopFor(P0->getParent())->getLoopLatches(Latches);
+          L->getLoopLatches(Latches);
           bool allIncoming = true;
           for (auto Latch : Latches) {
             if (&SI != P0->getIncomingValueForBlock(Latch)) {
               allIncoming = false;
               break;
+            }
+          }
+          if (allIncoming) {
+            for (auto u : SI.users()) {
+              auto UI = cast<Instruction>(u);
+              if (UI != P0 && L->contains(UI) &&
+                  (!gutils->isConstantInstruction(UI) ||
+                   (retType == DIFFE_TYPE::OUT_DIFF && isa<ReturnInst>(UI)))) {
+                allIncoming = false;
+                break;
+              }
             }
           }
           if (allIncoming && lc.exitBlocks.size() == 1) {
@@ -2479,13 +2718,25 @@ public:
             gutils->getContext(gutils->getNewFromOriginal(P0->getParent()),
                                lc) &&
             gutils->getNewFromOriginal(P0->getParent()) == lc.header) {
+          auto L = gutils->OrigLI->getLoopFor(P0->getParent());
           SmallVector<BasicBlock *, 1> Latches;
-          gutils->OrigLI->getLoopFor(P0->getParent())->getLoopLatches(Latches);
+          L->getLoopLatches(Latches);
           bool allIncoming = true;
           for (auto Latch : Latches) {
             if (&BO != P0->getIncomingValueForBlock(Latch)) {
               allIncoming = false;
               break;
+            }
+          }
+          if (allIncoming) {
+            for (auto u : BO.users()) {
+              auto UI = cast<Instruction>(u);
+              if (UI != P0 && L->contains(UI) &&
+                  (!gutils->isConstantInstruction(UI) ||
+                   (retType == DIFFE_TYPE::OUT_DIFF && isa<ReturnInst>(UI)))) {
+                allIncoming = false;
+                break;
+              }
             }
           }
           if (allIncoming && lc.exitBlocks.size() == 1) {
@@ -2717,6 +2968,36 @@ public:
     case Instruction::Or: {
       auto &dl = gutils->oldFunc->getParent()->getDataLayout();
 
+      // Packing of bit fields, e.g. two floats into one integer
+      // (zext + shl + or): each operand receives its own bit field.
+      if (isStructurallyDisjointOr(orig_op0, orig_op1)) {
+        size_t size = (dl.getTypeSizeInBits(BO.getType()) + 7) / 8;
+        Type *flt = TR.addingType(size, &BO);
+        if (!flt) {
+          flt = TR.addingType(size, orig_op0);
+          if (!flt)
+            flt = TR.addingType(size, orig_op1);
+        }
+        if (flt) {
+          for (int i = 0; i < 2; ++i) {
+            if (gutils->isConstantValue(BO.getOperand(i)))
+              continue;
+            auto keep = ConstantInt::get(
+                BO.getType(), ~structurallyZeroBits(BO.getOperand(i)));
+            auto rule = [&](Value *idiff) {
+              return Builder2.CreateAnd(idiff, keep);
+            };
+            Value *d = applyChainRule(BO.getType(), Builder2, rule, idiff);
+            if (i == 0)
+              dif0 = d;
+            else
+              dif1 = d;
+          }
+          addingType = flt;
+          goto done;
+        }
+      }
+
       auto FT = TR.query(&BO).allFloat(&BO, dl);
       auto eFT = FT;
       // If & against 0b10000000000 and a float the result is a float
@@ -2812,11 +3093,45 @@ public:
       }
       goto def;
     }
+    case Instruction::Shl: {
+      if (!gutils->isConstantValue(orig_op0)) {
+        if (auto ci = dyn_cast<ConstantInt>(orig_op1)) {
+          size_t size = 1;
+          if (orig_op0->getType()->isSized())
+            size = (gutils->newFunc->getParent()
+                        ->getDataLayout()
+                        .getTypeSizeInBits(orig_op0->getType()) +
+                    7) /
+                   8;
+
+          if (Type *flt = TR.addingType(size, orig_op0)) {
+            auto bits = gutils->newFunc->getParent()
+                            ->getDataLayout()
+                            .getTypeAllocSizeInBits(flt);
+            if (ci->getSExtValue() >= (int64_t)bits &&
+                ci->getSExtValue() % bits == 0) {
+              auto rule = [&](Value *idiff) {
+                return Builder2.CreateLShr(idiff, ci);
+              };
+              dif0 = applyChainRule(orig_op0->getType(), Builder2, rule, idiff);
+              addingType = flt;
+              goto done;
+            }
+          }
+        }
+      }
+      if (looseTypeAnalysis) {
+        llvm::errs() << "warning: binary operator is integer and constant: "
+                     << BO << "\n";
+        // if loose type analysis, assume this integer is constant
+        return;
+      }
+      goto def;
+    }
     case Instruction::UDiv:
     case Instruction::URem:
     case Instruction::SRem:
     case Instruction::SDiv:
-    case Instruction::Shl:
     case Instruction::Mul:
     case Instruction::Sub:
     case Instruction::Add: {
@@ -2952,6 +3267,22 @@ public:
       Value *dif[2] = {constantval0 ? nullptr : diffe(orig_op0, Builder2),
                        constantval1 ? nullptr : diffe(orig_op1, Builder2)};
 
+      // Packing of bit fields, e.g. two floats into one integer
+      // (zext + shl + or): the shadows are packed the same way.
+      if (isStructurallyDisjointOr(orig_op0, orig_op1)) {
+        Value *res;
+        if (dif[0] && dif[1]) {
+          auto rule = [&](Value *d0, Value *d1) {
+            return Builder2.CreateOr(d0, d1);
+          };
+          res = applyChainRule(BO.getType(), Builder2, rule, dif[0], dif[1]);
+        } else {
+          res = dif[0] ? dif[0] : dif[1];
+        }
+        setDiffe(&BO, res, Builder2);
+        return;
+      }
+
       auto FT = TR.query(&BO).allFloat(&BO, dl);
       auto eFT = FT;
       // If & against 0b10000000000 and a float the result is a float
@@ -3079,12 +3410,50 @@ public:
       }
       goto def;
     }
+    case Instruction::Shl: {
+      // Shift of a value holding floats by a multiple of the float size
+      // (e.g. to pack two floats into one integer): shift the shadow as well.
+      if (!gutils->isConstantValue(orig_op0)) {
+        if (auto ci = dyn_cast<ConstantInt>(orig_op1)) {
+          size_t size = 1;
+          if (orig_op0->getType()->isSized())
+            size = (gutils->newFunc->getParent()
+                        ->getDataLayout()
+                        .getTypeSizeInBits(orig_op0->getType()) +
+                    7) /
+                   8;
+
+          if (Type *flt = TR.addingType(size, orig_op0)) {
+            auto bits = gutils->newFunc->getParent()
+                            ->getDataLayout()
+                            .getTypeAllocSizeInBits(flt);
+            if (ci->getSExtValue() >= (int64_t)bits &&
+                ci->getSExtValue() % bits == 0) {
+              auto rule = [&](Value *idiff) {
+                return Builder2.CreateShl(idiff, ci);
+              };
+              auto dif = applyChainRule(orig_op0->getType(), Builder2, rule,
+                                        diffe(orig_op0, Builder2));
+              setDiffe(&BO, dif, Builder2);
+              return;
+            }
+          }
+        }
+      }
+      if (looseTypeAnalysis) {
+        forwardModeInvertedPointerFallback(BO);
+        llvm::errs() << "warning: binary operator is integer and constant: "
+                     << BO << "\n";
+        // if loose type analysis, assume this integer is constant
+        return;
+      }
+      goto def;
+    }
     case Instruction::AShr:
     case Instruction::SDiv:
     case Instruction::UDiv:
     case Instruction::SRem:
     case Instruction::URem:
-    case Instruction::Shl:
     case Instruction::Mul:
     case Instruction::Sub:
     case Instruction::Add: {
@@ -4075,7 +4444,13 @@ public:
     // not fully understood by LLVM. One of the results of this is that the ID
     // of the intrinsic is set to Intrinsic::not_intrinsic - hence we are
     // handling the intrinsic here.
-    if (isIntelSubscriptIntrinsic(II)) {
+    bool pointerIdentity = isIntelSubscriptIntrinsic(II);
+#if LLVM_VERSION_MAJOR >= 16
+    // The address of a thread-local global is a pointer whose shadow is the
+    // address of the shadow global; it carries no derivative of its own.
+    pointerIdentity |= II.getIntrinsicID() == Intrinsic::threadlocal_address;
+#endif
+    if (pointerIdentity) {
       if (Mode == DerivativeMode::ForwardModeSplit ||
           Mode == DerivativeMode::ForwardModeError ||
           Mode == DerivativeMode::ForwardMode) {
@@ -4169,7 +4544,7 @@ public:
       case Intrinsic::nvvm_barrier_cta_sync_aligned_all:
       case Intrinsic::nvvm_barrier_cta_sync_aligned_count:
 #endif
-#if LLVM_VERSION_MAJOR < 22
+#if LLVM_VERSION_MAJOR < 22 || defined(ENZYME_LLVM22_PRERELEASE)
       case Intrinsic::nvvm_barrier0_popc:
       case Intrinsic::nvvm_barrier0_and:
       case Intrinsic::nvvm_barrier0_or:
@@ -4229,19 +4604,10 @@ public:
       (void)vdiff;
 
       switch (ID) {
-#if LLVM_VERSION_MAJOR < 22
+#if LLVM_VERSION_MAJOR < 22 || defined(ENZYME_LLVM22_PRERELEASE)
       case Intrinsic::nvvm_barrier0_popc:
       case Intrinsic::nvvm_barrier0_and:
-      case Intrinsic::nvvm_barrier0_or:
-#else
-      case Intrinsic::nvvm_barrier_cta_red_and_aligned_all:
-      case Intrinsic::nvvm_barrier_cta_red_and_aligned_count:
-      case Intrinsic::nvvm_barrier_cta_red_or_aligned_all:
-      case Intrinsic::nvvm_barrier_cta_red_or_aligned_count:
-      case Intrinsic::nvvm_barrier_cta_red_popc_aligned_all:
-      case Intrinsic::nvvm_barrier_cta_red_popc_aligned_count:
-#endif
-      {
+      case Intrinsic::nvvm_barrier0_or: {
         SmallVector<Value *, 1> args = {};
 #if LLVM_VERSION_MAJOR > 20
         args.push_back(ConstantInt::get(Type::getInt32Ty(M->getContext()), 0));
@@ -4261,6 +4627,33 @@ public:
         cal->setDebugLoc(gutils->getNewFromOriginal(I.getDebugLoc()));
         return false;
       }
+#else
+      case Intrinsic::nvvm_barrier_cta_red_and_aligned_all:
+      case Intrinsic::nvvm_barrier_cta_red_or_aligned_all:
+      case Intrinsic::nvvm_barrier_cta_red_popc_aligned_all: {
+        Value *args[] = {
+            lookup(gutils->getNewFromOriginal(orig_ops[0]), Builder2)};
+        Function *syncFn = getIntrinsicDeclaration(
+            M, Intrinsic::nvvm_barrier_cta_sync_aligned_all);
+        CallInst *cal = Builder2.CreateCall(syncFn, args);
+        cal->setCallingConv(syncFn->getCallingConv());
+        cal->setDebugLoc(gutils->getNewFromOriginal(I.getDebugLoc()));
+        return false;
+      }
+      case Intrinsic::nvvm_barrier_cta_red_and_aligned_count:
+      case Intrinsic::nvvm_barrier_cta_red_or_aligned_count:
+      case Intrinsic::nvvm_barrier_cta_red_popc_aligned_count: {
+        Value *args[] = {
+            lookup(gutils->getNewFromOriginal(orig_ops[0]), Builder2),
+            lookup(gutils->getNewFromOriginal(orig_ops[1]), Builder2)};
+        Function *syncFn = getIntrinsicDeclaration(
+            M, Intrinsic::nvvm_barrier_cta_sync_aligned_count);
+        CallInst *cal = Builder2.CreateCall(syncFn, args);
+        cal->setCallingConv(syncFn->getCallingConv());
+        cal->setDebugLoc(gutils->getNewFromOriginal(I.getDebugLoc()));
+        return false;
+      }
+#endif
 
 #if LLVM_VERSION_MAJOR <= 20
       case Intrinsic::nvvm_barrier0:
@@ -4902,8 +5295,14 @@ public:
           }
           assert(tape);
           SmallVector<Value *, 4> extracts;
-          if (subdata->tapeIndices.size() == 1) {
-            assert(subdata->tapeIndices.begin()->second == -1);
+          // Entry value -1 marks a single-element non-struct tape
+          // (removeTapeStruct), whereas entries <= -2 encode uncached
+          // arguments.
+          bool hasSingleElementTape =
+              llvm::any_of(subdata->tapeIndices, [](const auto &entry) {
+                return entry.second == -1;
+              });
+          if (hasSingleElementTape) {
             extracts.push_back(tape);
           } else {
             for (auto a : tape->users()) {
@@ -6861,6 +7260,8 @@ public:
         if (subretused && primalNeededInReverse) {
           if (normalReturn != newCall) {
             assert(normalReturn->getType() == newCall->getType());
+            if (gutils->newToOriginalFn.count(normalReturn))
+              gutils->newToOriginalFn.erase(newCall);
             gutils->replaceAWithB(newCall, normalReturn);
             BuilderZ.SetInsertPoint(newCall->getNextNode());
             gutils->erase(newCall);
@@ -6872,6 +7273,8 @@ public:
           if (normalReturn && normalReturn != newCall) {
             assert(normalReturn->getType() == newCall->getType());
             assert(Mode != DerivativeMode::ReverseModeGradient);
+            if (gutils->newToOriginalFn.count(normalReturn))
+              gutils->newToOriginalFn.erase(newCall);
             gutils->replaceAWithB(newCall, normalReturn);
             BuilderZ.SetInsertPoint(newCall->getNextNode());
             gutils->erase(newCall);

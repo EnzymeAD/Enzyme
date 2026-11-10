@@ -154,3 +154,23 @@ LogicalResult InferOp::verify() {
 
   return success();
 }
+
+//===----------------------------------------------------------------------===//
+// IfOp
+//===----------------------------------------------------------------------===//
+
+static LogicalResult verifyBranchYield(IfOp op, Region &branch,
+                                       StringRef name) {
+  TypeRange yielded = branch.front().getTerminator()->getOperandTypes();
+  if (yielded != op.getResultTypes())
+    return op.emitOpError()
+           << name << " branch yields (" << yielded << ") but results are ("
+           << op.getResultTypes() << ")";
+  return success();
+}
+
+LogicalResult IfOp::verifyRegions() {
+  if (failed(verifyBranchYield(*this, getTrueBranch(), "true")))
+    return failure();
+  return verifyBranchYield(*this, getFalseBranch(), "false");
+}

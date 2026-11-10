@@ -34,6 +34,15 @@
 
 using namespace llvm;
 
+// LLVM version against which the version ranges of intrinsic names are checked.
+#ifdef ENZYME_LLVM22_PRERELEASE
+// A snapshot of LLVM 22 that predates the LLVM 22 release has the intrinsic
+// names of LLVM 21.
+static constexpr int intrVersion = 21;
+#else
+static constexpr int intrVersion = LLVM_VERSION_MAJOR;
+#endif
+
 static inline bool startsWith(llvm::StringRef string, llvm::StringRef prefix) {
 #if LLVM_VERSION_MAJOR >= 18
   return string.starts_with(prefix);
@@ -94,7 +103,8 @@ void getFunction(const Twine &curIndent, raw_ostream &os, StringRef callval,
       os << Def->getValueInit("name")->getAsString();
       os << ", " << FT
          << ", called->getAttributes().removeFnAttribute(called->getContext(), "
-            "\"enzymejl_needs_restoration\")).getCallee();\n";
+            "\"enzymejl_needs_restoration\").removeFnAttribute("
+            "called->getContext(), \"enzyme_math\")).getCallee();\n";
       os << curIndent << "auto " << cconv << " = cast<CallInst>(&" << origName
          << ")->getCallingConv();\n";
       return;
@@ -122,7 +132,8 @@ void getFunction(const Twine &curIndent, raw_ostream &os, StringRef callval,
       os << Def->getValueInit("name")->getAsString();
       os << ", " << FT
          << ", called->getAttributes().removeFnAttribute(called->getContext(), "
-            "\"enzymejl_needs_restoration\")).getCallee();\n";
+            "\"enzymejl_needs_restoration\").removeFnAttribute("
+            "called->getContext(), \"enzyme_math\")).getCallee();\n";
       os << curIndent << "auto " << cconv << " = cast<CallInst>(&" << origName
          << ")->getCallingConv();\n";
       return;
@@ -139,7 +150,8 @@ void getFunction(const Twine &curIndent, raw_ostream &os, StringRef callval,
       os << Def->getValueInit("name")->getAsString();
       os << ", " << FT
          << ", called->getAttributes().removeFnAttribute(called->getContext(), "
-            "\"enzymejl_needs_restoration\")).getCallee();\n";
+            "\"enzymejl_needs_restoration\").removeFnAttribute("
+            "called->getContext(), \"enzyme_math\")).getCallee();\n";
       os << curIndent << "auto " << cconv << " = cast<CallInst>(&" << origName
          << ")->getCallingConv();\n";
       return;
@@ -1447,6 +1459,24 @@ void handleUse(
   }
 }
 
+static bool dagReferencesShadow(const DagInit *dag, StringRef argName) {
+  auto opName = dag->getOperator()->getAsString();
+  const auto *defInit = dyn_cast<DefInit>(dag->getOperator());
+  if ((opName == "Shadow" ||
+       (defInit && defInit->getDef()->isSubClassOf("Shadow"))) &&
+      dag->getNumArgs() == 1 && dag->getArgName(0) &&
+      dag->getArgName(0)->getAsUnquotedString() == argName) {
+    return true;
+  }
+  for (const Init *arg : dag->getArgs()) {
+    if (const auto *subDag = dyn_cast<DagInit>(arg)) {
+      if (dagReferencesShadow(subDag, argName))
+        return true;
+    }
+  }
+  return false;
+}
+
 static VariableSetting parseVariables(const DagInit *tree, ActionType intrinsic,
                                       StringRef origName) {
   VariableSetting nameToOrdinal;
@@ -1770,8 +1800,15 @@ static void emitReverseCommon(raw_ostream &os, const Record *pattern,
             os << "  return failure();\n";
             os << "  }\n";
           } else {
-            os << " assert(gutils->isConstantValue(" << origName
-               << ".getOperand(" << argIdx << ")));\n";
+            os << formatv(
+                " if (!gutils->isConstantValue({0}.getOperand({1}))) {{\n"
+                "   std::string s;\n"
+                "   llvm::raw_string_ostream ss(s);\n"
+                "   ss << \"Unimplemented derivative for argument {1} in "
+                "reverse mode for \" << {0};\n"
+                "   EmitNoDerivativeError(ss.str(), {0}, gutils, Builder2);\n"
+                " }\n",
+                origName, argIdx);
           }
         }
         continue;
@@ -2041,13 +2078,13 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
           auto min = cast<StringInit>(lst->getElement(1))->getValue();
           int min_int = 100000;
           min.getAsInteger(10, min_int);
-          if (min.size() != 0 && LLVM_VERSION_MAJOR < min_int)
+          if (min.size() != 0 && intrVersion < min_int)
             continue;
           if (lst->size() >= 3) {
             auto max = cast<StringInit>(lst->getElement(2))->getValue();
             int max_int = 0;
             max.getAsInteger(10, max_int);
-            if (max.size() != 0 && LLVM_VERSION_MAJOR > max_int)
+            if (max.size() != 0 && intrVersion > max_int)
               continue;
           }
         }
@@ -2183,6 +2220,45 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
       os << "        IRBuilder<> Builder2(&" << origName << ");\n";
       os << "        getForwardBuilder(Builder2);\n";
     }
+    for (auto argOpEn : enumerate(*argOps)) {
+      size_t argIdx = argOpEn.index();
+      StringRef argName =
+          argIdx < tree->getNumArgs() ? tree->getArgNameStr(argIdx) : "";
+      if (!argName.empty() && dagReferencesShadow(duals, argName))
+        continue;
+      if (auto resultRoot = dyn_cast<DagInit>(argOpEn.value())) {
+        auto opName = resultRoot->getOperator()->getAsString();
+        auto Def = cast<DefInit>(resultRoot->getOperator())->getDef();
+        if ((opName == "InactiveArgSpec" ||
+             Def->isSubClassOf("InactiveArgSpec")) &&
+            Def->getValueAsBit("asserting")) {
+          if (intrinsic == MLIRDerivatives) {
+            os << formatv(
+                "        if (!gutils->isConstantValue({0}->getOperand({1}))) "
+                "{{\n"
+                "          {0}->emitError() << \"Unimplemented derivative for "
+                "argument {1} in forward mode for op \" << *{0} << \"\\n\";\n"
+                "          return failure();\n"
+                "        }\n",
+                origName, argIdx);
+          } else {
+            os << formatv(
+                "        if (!gutils->isConstantValue({0}.getOperand({1}))) "
+                "{{\n"
+                "          std::string s;\n"
+                "          llvm::raw_string_ostream ss(s);\n"
+                "          ss << \"Unimplemented derivative for argument {1} "
+                "in "
+                "forward mode for \" << {0};\n"
+                "          EmitNoDerivativeError(ss.str(), {0}, gutils, "
+                "Builder2);\n"
+                "        }\n",
+                origName, argIdx);
+          }
+        }
+      }
+    }
+
     // TODO
     bool multiResult = false;
     if (duals->getOperator()->getAsString() ==
@@ -2218,12 +2294,8 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
         const char *curIndent = "        ";
 
         if (auto resultRoot = dyn_cast<DagInit>(argOpEn.value())) {
-          auto opName = resultRoot->getOperator()->getAsString();
           auto Def = cast<DefInit>(resultRoot->getOperator())->getDef();
           if (Def->isSubClassOf("InactiveArgSpec")) {
-            if (Def->getValueAsBit("asserting"))
-              os << " assert(gutils->isConstantValue(" << origName
-                 << ".getOperand(" << argIdx << ")));\n";
             continue;
           }
         }
@@ -2397,12 +2469,19 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
         const char *curIndent = "        ";
 
         if (auto resultRoot = dyn_cast<DagInit>(argOpEn.value())) {
-          auto opName = resultRoot->getOperator()->getAsString();
           auto Def = cast<DefInit>(resultRoot->getOperator())->getDef();
           if (Def->isSubClassOf("InactiveArgSpec")) {
-            if (Def->getValueAsBit("asserting"))
-              os << " assert(gutils->isConstantValue(" << origName
-                 << ".getOperand(" << argIdx << ")));\n";
+            if (Def->getValueAsBit("asserting")) {
+              os << formatv(
+                  " if (!gutils->isConstantValue({0}.getOperand({1}))) {{\n"
+                  "   std::string s;\n"
+                  "   llvm::raw_string_ostream ss(s);\n"
+                  "   ss << \"Unimplemented derivative for argument {1} in "
+                  "forward mode for \" << {0};\n"
+                  "   EmitNoDerivativeError(ss.str(), {0}, gutils, Builder2);\n"
+                  " }\n",
+                  origName, argIdx);
+            }
             continue;
           }
         }
@@ -2986,7 +3065,7 @@ void emitDiffUse(const RecordKeeper &recordKeeper, raw_ostream &os,
             PrintFatalError(pattern->getLoc(),
                             "Could not parse min llvm version as int");
           }
-          if (min.size() != 0 && LLVM_VERSION_MAJOR < min_int)
+          if (min.size() != 0 && intrVersion < min_int)
             continue;
           if (lst->size() >= 3) {
             auto max = cast<StringInit>(lst->getElement(2))->getValue();
@@ -2995,7 +3074,7 @@ void emitDiffUse(const RecordKeeper &recordKeeper, raw_ostream &os,
               PrintFatalError(pattern->getLoc(),
                               "Could not parse max llvm version as int");
             }
-            if (max.size() != 0 && LLVM_VERSION_MAJOR > max_int)
+            if (max.size() != 0 && intrVersion > max_int)
               continue;
           }
         }

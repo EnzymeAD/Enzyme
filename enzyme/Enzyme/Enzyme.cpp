@@ -929,6 +929,25 @@ public:
                  : ((interleaved == -1) ? whatType(PTy, mode) : last_ty);
       last_ty = ty;
 
+      // enzyme_out asks for the derivative of a value to be returned, which
+      // only makes sense for an argument passed by value. A pointer (or C++
+      // reference) parameter holds memory that must be shadowed with
+      // enzyme_dup instead; a byval pointer is a struct passed by value and
+      // is fine. Reject the misuse here, rather than failing later with an
+      // unrelated error from inside the derivative.
+      if (ty == DIFFE_TYPE::OUT_DIFF && PTy->isPointerTy() &&
+          !fn->hasParamAttribute(truei, Attribute::ByVal)) {
+        StringRef fnName = fn->getName();
+        EmitFailure(
+            "IllegalOutDiffPointer", CI->getDebugLoc(), CI,
+            "enzyme_out applied to argument ", truei, " of ", fnName,
+            ", which is a pointer (or reference) rather than a value passed by "
+            "value. Pass the pointer with enzyme_dup followed by a shadow "
+            "pointer that receives the derivative, or with enzyme_const if "
+            "it is inactive");
+        return {};
+      }
+
       constants.push_back(ty);
 
       assert(truei < FT->getNumParams());
@@ -1382,8 +1401,12 @@ public:
     if (!newFunc)
       return false;
 
-    Value *batch =
+    CallInst *batchCall =
         Builder.CreateCall(newFunc->getFunctionType(), newFunc, args);
+    batchCall->setDebugLoc(CI->getDebugLoc());
+    if (CI->hasFnAttr(Attribute::NoInline))
+      batchCall->addFnAttr(Attribute::NoInline);
+    Value *batch = batchCall;
 
     batch = adaptReturnedVector(CI, batch, Builder, width);
 
@@ -1696,6 +1719,11 @@ public:
     CallInst *diffretc = cast<CallInst>(Builder.CreateCall(newFunc, args));
     diffretc->setCallingConv(CallingConv);
     diffretc->setDebugLoc(CI->getDebugLoc());
+    // A call-site noinline is the only thing that keeps a call without a
+    // !dbg location legal inside a function that has debug info.
+    if (auto *originalCall = dyn_cast<CallBase>(CI))
+      if (originalCall->hasFnAttr(Attribute::NoInline))
+        diffretc->addFnAttr(Attribute::NoInline);
 
     for (auto &&[attr, ty] : byVal) {
       diffretc->addParamAttr(
@@ -2075,11 +2103,15 @@ public:
     MapVector<CallInst *, DerivativeMode> toLower;
     MapVector<CallInst *, DerivativeMode> toVirtual;
     MapVector<CallInst *, DerivativeMode> toSize;
-    SmallVector<CallInst *, 4> toBatch;
-    SmallVector<CallInst *, 4> toTruncateFuncMem;
-    SmallVector<CallInst *, 4> toTruncateFuncOp;
-    SmallVector<CallInst *, 4> toTruncateValue;
-    SmallVector<CallInst *, 4> toExpandValue;
+    // Splitting a select-based call target below restarts the scan from
+    // `retry`, which revisits every call already recorded; sets keep each
+    // request lowered exactly once rather than touching a call that an
+    // earlier lowering of the same entry has erased.
+    SetVector<CallInst *> toBatch;
+    SetVector<CallInst *> toTruncateFuncMem;
+    SetVector<CallInst *> toTruncateFuncOp;
+    SetVector<CallInst *> toTruncateValue;
+    SetVector<CallInst *> toExpandValue;
     MapVector<CallInst *, ProbProgMode> toProbProg;
     SetVector<CallInst *> InactiveCalls;
     SetVector<CallInst *> IterCalls;
@@ -2461,15 +2493,15 @@ public:
           else if (sizeOnly)
             toSize[CI] = derivativeMode;
           else if (batch)
-            toBatch.push_back(CI);
+            toBatch.insert(CI);
           else if (truncateFuncOp)
-            toTruncateFuncOp.push_back(CI);
+            toTruncateFuncOp.insert(CI);
           else if (truncateFuncMem)
-            toTruncateFuncMem.push_back(CI);
+            toTruncateFuncMem.insert(CI);
           else if (truncateValue)
-            toTruncateValue.push_back(CI);
+            toTruncateValue.insert(CI);
           else if (expandValue)
-            toExpandValue.push_back(CI);
+            toExpandValue.insert(CI);
           else if (probProg) {
             toProbProg[CI] = probProgMode;
           } else
@@ -2655,7 +2687,7 @@ public:
       // dead internal functions, which invalidates Enzyme's cache
       // code left here to re-enable upon Attributor patch
 
-#if !defined(FLANG) && !defined(ROCM)
+#if !defined(FLANG)
 
       AnalysisGetter AG(Logic.PPC.FAM);
       SetVector<Function *> Functions;
@@ -3020,7 +3052,7 @@ extern "C" void AddEnzymePass(LLVMPassManagerRef PM) {
   unwrap(PM)->add(createEnzymePass(/*PostOpt*/ false));
 }
 
-#if LLVM_VERSION_MAJOR >= 22
+#if LLVM_VERSION_MAJOR >= 22 && !defined(ENZYME_LLVM22_PRERELEASE)
 #include "llvm/Plugins/PassPlugin.h"
 #else
 #include "llvm/Passes/PassPlugin.h"
@@ -3101,16 +3133,8 @@ static InlineParams getInlineParamsFromOptLevel(OptimizationLevel Level) {
 #include "llvm/Transforms/Scalar/LowerConstantIntrinsics.h"
 #include "llvm/Transforms/Scalar/LowerMatrixIntrinsics.h"
 namespace llvm {
-#if LLVM_VERSION_MAJOR >= 24
-// LLVM 24 replaced the exported -licm-mssa-* cl::opt globals with accessors;
-// a null LibraryOptionsContext returns the global (command-line) value.
-static unsigned EnzymeLicmMssaOptCap() {
-  return getLicmMssaOptCap(/*LibraryOptions=*/nullptr);
-}
-static unsigned EnzymeLicmMssaNoAccForPromotionCap() {
-  return getLicmMssaNoAccForPromotionCap(/*LibraryOptions=*/nullptr);
-}
-#else
+#if LLVM_VERSION_MAJOR < 24
+// Before LLVM 24, the -licm-mssa-* options were exported cl::opt globals.
 extern cl::opt<unsigned> SetLicmMssaNoAccForPromotionCap;
 extern cl::opt<unsigned> SetLicmMssaOptCap;
 static unsigned EnzymeLicmMssaOptCap() { return SetLicmMssaOptCap; }
@@ -3464,7 +3488,12 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
         createModuleToFunctionPassAdaptor(InvalidateAnalysisPass<AAManager>()));
 
     FunctionPassManager MainFPM;
-#if LLVM_VERSION_MAJOR >= 22
+#if LLVM_VERSION_MAJOR >= 24
+    // Unset LICMOptions caps take the -licm-mssa-* values of the loop's
+    // LLVMContext; AllowSpeculation defaults to true.
+    MainFPM.addPass(createFunctionToLoopPassAdaptor(LICMPass(LICMOptions()),
+                                                    /*USeMemorySSA=*/true));
+#elif LLVM_VERSION_MAJOR >= 22
     MainFPM.addPass(createFunctionToLoopPassAdaptor(
         LICMPass(EnzymeLicmMssaOptCap(), EnzymeLicmMssaNoAccForPromotionCap(),
                  /*AllowSpeculation=*/true),

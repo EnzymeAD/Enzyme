@@ -42,12 +42,42 @@ if(ENZYME_FORTRAN)
   endif()
 endif()
 
+if(ENZYME_ENABLE_PLUGINS AND NOT WIN32 AND NOT CYGWIN)
+  set(ENZYME_TEST_PLUGIN_ENABLED 1)
+else()
+  set(ENZYME_TEST_PLUGIN_ENABLED 0)
+endif()
+
 configure_lit_site_cfg(
   ${CMAKE_CURRENT_SOURCE_DIR}/lit.site.cfg.py.in
   ${CMAKE_CURRENT_BINARY_DIR}/lit.site.cfg.py MAIN_CONFIG
   ${CMAKE_CURRENT_SOURCE_DIR}/lit.cfg.py)
 
 set(ENZYME_TEST_DEPS LLVMEnzyme-${LLVM_VERSION_MAJOR})
+
+if(ENZYME_TEST_PLUGIN_ENABLED)
+  add_llvm_library(
+    EnzymeTestCallHandler-${LLVM_VERSION_MAJOR}
+    Inputs/EnzymeTestCallHandler.cpp
+    MODULE
+    DEPENDS
+    intrinsics_gen
+    PLUGIN_TOOL
+    opt
+    BUILDTREE_ONLY)
+  target_include_directories(
+    EnzymeTestCallHandler-${LLVM_VERSION_MAJOR}
+    PRIVATE ${ENZYME_SOURCE_DIR}/Enzyme)
+  if(APPLE)
+    set_target_properties(
+      EnzymeTestCallHandler-${LLVM_VERSION_MAJOR}
+      PROPERTIES LINK_FLAGS "-Wl,-flat_namespace -Wl,-undefined -Wl,suppress")
+  endif()
+  set_target_properties(
+    EnzymeTestCallHandler-${LLVM_VERSION_MAJOR}
+    PROPERTIES EXCLUDE_FROM_ALL TRUE)
+  list(APPEND ENZYME_TEST_DEPS EnzymeTestCallHandler-${LLVM_VERSION_MAJOR})
+endif()
 
 add_subdirectory(ActivityAnalysis)
 add_subdirectory(TypeAnalysis)

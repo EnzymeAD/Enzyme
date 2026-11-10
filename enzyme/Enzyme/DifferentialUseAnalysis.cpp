@@ -100,7 +100,9 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
 
       // We don't need any of the input operands to compute the adjoint of a
       // store instance The one exception to this is stores to the loop bounds.
-      if (SI->getValueOperand() == val) {
+      if (SI->getValueOperand() == val &&
+          !isa<ConstantPointerNull, UndefValue, PoisonValue>(
+              SI->getPointerOperand())) {
         for (auto U : SI->getPointerOperand()->users()) {
           if (auto CI = dyn_cast<CallInst>(U)) {
             if (auto F = CI->getCalledFunction()) {
@@ -453,6 +455,40 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
         ID == Intrinsic::stacksave || ID == Intrinsic::stackrestore) {
       return false;
     }
+#if LLVM_VERSION_MAJOR > 20
+    // Adjoint barriers replay the original barrier ID and thread count in the
+    // reverse pass even though the barrier instruction itself is inactive.
+    if (!shadow) {
+      const auto *CB = cast<CallBase>(user);
+      bool needed = false;
+      switch (ID) {
+      case Intrinsic::nvvm_barrier_cta_sync_aligned_all:
+#if LLVM_VERSION_MAJOR >= 22 && !defined(ENZYME_LLVM22_PRERELEASE)
+      case Intrinsic::nvvm_barrier_cta_red_and_aligned_all:
+      case Intrinsic::nvvm_barrier_cta_red_or_aligned_all:
+      case Intrinsic::nvvm_barrier_cta_red_popc_aligned_all:
+#endif
+        needed = (val == CB->getArgOperand(0));
+        break;
+      case Intrinsic::nvvm_barrier_cta_sync_aligned_count:
+#if LLVM_VERSION_MAJOR >= 22 && !defined(ENZYME_LLVM22_PRERELEASE)
+      case Intrinsic::nvvm_barrier_cta_red_and_aligned_count:
+      case Intrinsic::nvvm_barrier_cta_red_or_aligned_count:
+      case Intrinsic::nvvm_barrier_cta_red_popc_aligned_count:
+#endif
+        needed = (val == CB->getArgOperand(0) || val == CB->getArgOperand(1));
+        break;
+      default:
+        break;
+      }
+      if (needed) {
+        if (EnzymePrintDiffUse)
+          llvm::errs() << " Need direct primal of " << *val
+                       << " in reverse from barrier " << *user << '\n';
+        return true;
+      }
+    }
+#endif
   }
 
   if (!shadow)

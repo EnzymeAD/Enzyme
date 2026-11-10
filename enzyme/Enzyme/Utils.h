@@ -290,6 +290,10 @@ public:
                 const llvm::Function *CodeRegion);
 };
 
+void diagnoseEnzymeUnsupported(
+    llvm::LLVMContext &Context,
+    const llvm::DiagnosticInfoUnsupported &Diagnostic);
+
 /// Emit a diagnostic which is always shown, unlike EmitWarning which requires
 /// the user to opt in with -Rpass=enzyme. Use this for messages which describe
 /// a potential correctness problem (e.g. mismatched activity) as opposed to a
@@ -299,11 +303,11 @@ void EmitWarningAlways(llvm::StringRef RemarkName,
                        const llvm::DiagnosticLocation &Loc,
                        const llvm::Function &F, const Args &...args) {
   // DiagnosticInfoUnsupported does not copy its message, so keep the backing
-  // storage alive until diagnose() returns.
+  // storage alive until diagnoseEnzymeUnsupported() returns.
   std::string str = "Enzyme: ";
   llvm::raw_string_ostream ss(str);
   (ss << ... << args);
-  F.getContext().diagnose(EnzymeWarning(str, Loc, &F));
+  diagnoseEnzymeUnsupported(F.getContext(), EnzymeWarning(str, Loc, &F));
 }
 
 template <typename... Args>
@@ -356,22 +360,22 @@ template <typename... Args>
 void EmitFailure(llvm::StringRef RemarkName,
                  const llvm::DiagnosticLocation &Loc,
                  const llvm::Instruction *CodeRegion, Args &...args) {
-  std::string *str = new std::string();
-  llvm::raw_string_ostream ss(*str);
-  (ss << ... << args);
-  CodeRegion->getContext().diagnose(
-      (EnzymeFailure("Enzyme: " + ss.str(), Loc, CodeRegion)));
+  std::string Message = "Enzyme: ";
+  llvm::raw_string_ostream Stream(Message);
+  (Stream << ... << args);
+  diagnoseEnzymeUnsupported(CodeRegion->getContext(),
+                            EnzymeFailure(Message, Loc, CodeRegion));
 }
 
 template <typename... Args>
 void EmitFailure(llvm::StringRef RemarkName,
                  const llvm::DiagnosticLocation &Loc,
                  const llvm::Function *CodeRegion, Args &...args) {
-  std::string *str = new std::string();
-  llvm::raw_string_ostream ss(*str);
-  (ss << ... << args);
-  CodeRegion->getContext().diagnose(
-      (EnzymeFailure("Enzyme: " + ss.str(), Loc, CodeRegion)));
+  std::string Message = "Enzyme: ";
+  llvm::raw_string_ostream Stream(Message);
+  (Stream << ... << args);
+  diagnoseEnzymeUnsupported(CodeRegion->getContext(),
+                            EnzymeFailure(Message, Loc, CodeRegion));
 }
 
 template <typename... Args>
@@ -919,6 +923,17 @@ llvm::Function *getOrInsertDifferentialFloatMemcpy(
     unsigned dstaddr, unsigned srcaddr, unsigned bitwidth, bool runtimeActivity,
     bool atomic);
 
+/// Get or create an internal helper function implementing floating-point
+/// atomic min/max (`AtomicRMWInst::FMin` or `AtomicRMWInst::FMax`) via an
+/// atomic load and CAS retry loop, returning `{ old_val, changed }` where
+/// `changed` is true iff `val` replaced the value in memory.
+llvm::Function *getOrInsertAtomicFloatMinMax(
+    llvm::Module &M, llvm::Type *T, llvm::AtomicRMWInst::BinOp Op,
+    unsigned AddrSpace = 0, llvm::MaybeAlign Alignment = llvm::MaybeAlign(),
+    llvm::AtomicOrdering Order = llvm::AtomicOrdering::Monotonic,
+    llvm::SyncScope::ID SSID = llvm::SyncScope::System,
+    bool IsVolatile = false);
+
 /// Create function for type that performs memcpy with a stride using blas copy
 void callMemcpyStridedBlas(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
                            llvm::ArrayRef<llvm::Value *> args,
@@ -1221,6 +1236,11 @@ void mayExecuteAfter(llvm::SmallVectorImpl<llvm::Instruction *> &results,
                      llvm::Instruction *inst,
                      const llvm::SetVector<llvm::Instruction *> &stores,
                      const llvm::Loop *region);
+
+/// Return whether maybeWriter can write to memory at maybeReader
+bool writesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
+                          const llvm::MemoryLocation &maybeReader,
+                          llvm::Instruction *maybeWriter);
 
 /// Return whether maybeReader can read from memory written to by maybeWriter
 bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
@@ -1706,6 +1726,13 @@ static inline bool isPointerArithmeticInst(const llvm::Value *V,
     if (funcName == "julia.gc_loaded") {
       return true;
     }
+#if LLVM_VERSION_MAJOR >= 16
+    if (auto *Intrinsic = llvm::dyn_cast<llvm::IntrinsicInst>(Call)) {
+      if (Intrinsic->getIntrinsicID() == llvm::Intrinsic::threadlocal_address) {
+        return true;
+      }
+    }
+#endif
     if (funcName.contains("__enzyme_todense")) {
       return true;
     }
@@ -1771,6 +1798,15 @@ static inline llvm::Value *getBaseObject(llvm::Value *V,
         V = Call->getArgOperand(1);
         continue;
       }
+#if LLVM_VERSION_MAJOR >= 16
+      if (auto *Intrinsic = llvm::dyn_cast<llvm::IntrinsicInst>(Call)) {
+        if (Intrinsic->getIntrinsicID() ==
+            llvm::Intrinsic::threadlocal_address) {
+          V = Call->getArgOperand(0);
+          continue;
+        }
+      }
+#endif
       if (funcName == "jl_reshape_array" || funcName == "ijl_reshape_array") {
         V = Call->getArgOperand(1);
         continue;
@@ -1887,6 +1923,51 @@ getBaseObjects(llvm::Value *V, bool offsetAllowed = true) {
     results.insert(obj);
   }
   return results;
+}
+
+static inline llvm::ModRefInfo getModRefInfo(llvm::AAResults &AA,
+                                             const llvm::Instruction *I,
+                                             const llvm::MemoryLocation &loc) {
+  auto res = AA.getModRefInfo(I, loc);
+  if (llvm::isNoModRef(res))
+    return res;
+  const llvm::Value *base = loc.Ptr ? getBaseObject(loc.Ptr) : nullptr;
+  if (base && base != loc.Ptr && base->getType()->isPointerTy()) {
+#if LLVM_VERSION_MAJOR >= 16
+    res &= AA.getModRefInfo(I, llvm::MemoryLocation::getBeforeOrAfter(base));
+#else
+    res = llvm::intersectModRef(
+        res, AA.getModRefInfo(I, llvm::MemoryLocation::getBeforeOrAfter(base)));
+#endif
+  }
+  return res;
+}
+
+static inline llvm::ModRefInfo getModRefInfo(llvm::AAResults &AA,
+                                             const llvm::Instruction *I,
+                                             const llvm::Value *P,
+                                             llvm::LocationSize Size) {
+  return getModRefInfo(AA, I, llvm::MemoryLocation(P, Size));
+}
+
+static inline llvm::ModRefInfo
+getModRefInfo(llvm::AAResults &AA, const llvm::Instruction *maybeReader,
+              const llvm::MemoryLocation *maybeReaderLoc, const llvm::Value *P,
+              llvm::LocationSize Size) {
+  if (maybeReader)
+    return getModRefInfo(AA, maybeReader, P, Size);
+  assert(maybeReaderLoc);
+  if (!maybeReaderLoc->Ptr || !P)
+    return llvm::ModRefInfo::Ref;
+  if (AA.isNoAlias(*maybeReaderLoc, llvm::MemoryLocation(P, Size)))
+    return llvm::ModRefInfo::NoModRef;
+  const llvm::Value *base = getBaseObject(P);
+  if (base && base != P && base->getType()->isPointerTy()) {
+    if (AA.isNoAlias(*maybeReaderLoc,
+                     llvm::MemoryLocation::getBeforeOrAfter(base)))
+      return llvm::ModRefInfo::NoModRef;
+  }
+  return llvm::ModRefInfo::Ref;
 }
 
 static inline bool isReadOnly(const llvm::Function *F, ssize_t arg = -1) {
@@ -2148,7 +2229,7 @@ static inline bool isNoAlias(const llvm::Value *val) {
   if (auto CB = llvm::dyn_cast<llvm::CallBase>(val))
     return isNoAlias(CB);
   if (auto arg = llvm::dyn_cast<llvm::Argument>(val)) {
-    arg->hasNoAliasAttr();
+    return arg->hasNoAliasAttr();
   }
   if (llvm::isa<llvm::AllocaInst>(val))
     return true;
@@ -2195,7 +2276,7 @@ static inline bool isNoEscapingAllocation(const llvm::Function *F) {
   case Intrinsic::nvvm_barrier_cta_sync_aligned_all:
   case Intrinsic::nvvm_barrier_cta_sync_aligned_count:
 #endif
-#if LLVM_VERSION_MAJOR < 22
+#if LLVM_VERSION_MAJOR < 22 || defined(ENZYME_LLVM22_PRERELEASE)
   case Intrinsic::nvvm_barrier0_popc:
   case Intrinsic::nvvm_barrier0_and:
   case Intrinsic::nvvm_barrier0_or:
@@ -2242,7 +2323,11 @@ static inline bool isNoEscapingAllocation(const llvm::Function *F) {
   case Intrinsic::ctlz:
   case Intrinsic::cttz:
   case Intrinsic::sadd_with_overflow:
+  case Intrinsic::uadd_with_overflow:
   case Intrinsic::ssub_with_overflow:
+  case Intrinsic::usub_with_overflow:
+  case Intrinsic::smul_with_overflow:
+  case Intrinsic::umul_with_overflow:
 #if LLVM_VERSION_MAJOR >= 12
   case Intrinsic::abs:
 #endif
@@ -2331,11 +2416,47 @@ static inline llvm::Value *checkedDiv(bool strongZero,
   return res;
 }
 
+/// Bits of the integer value V that are zero by construction, whatever the
+/// values of its operands: the high bits of a zext and the low bits of a shl by
+/// a constant. The shadow of V is computed by the same zext or shl of the
+/// shadow of the operand, so these bits are zero in the shadow as well. Returns
+/// an empty mask otherwise.
+static inline llvm::APInt structurallyZeroBits(const llvm::Value *V) {
+  auto IT = llvm::dyn_cast<llvm::IntegerType>(V->getType());
+  if (!IT)
+    return llvm::APInt();
+  unsigned bits = IT->getBitWidth();
+  if (auto ZE = llvm::dyn_cast<llvm::ZExtInst>(V)) {
+    unsigned from = ZE->getOperand(0)->getType()->getScalarSizeInBits();
+    return llvm::APInt::getHighBitsSet(bits, bits - from);
+  }
+  if (auto BO = llvm::dyn_cast<llvm::BinaryOperator>(V))
+    if (BO->getOpcode() == llvm::Instruction::Shl)
+      if (auto CI = llvm::dyn_cast<llvm::ConstantInt>(BO->getOperand(1)))
+        if (CI->getValue().ult(bits))
+          return llvm::APInt::getLowBitsSet(bits, CI->getZExtValue());
+  return llvm::APInt(bits, 0);
+}
+
+/// Whether `or` of V0 and V1 only combines disjoint bit fields that are zero by
+/// construction (e.g. two floats packed into one integer by zext, shl and or).
+/// The shadows of such an `or` are then combined by `or` as well.
+static inline bool isStructurallyDisjointOr(const llvm::Value *V0,
+                                            const llvm::Value *V1) {
+  auto m0 = structurallyZeroBits(V0);
+  auto m1 = structurallyZeroBits(V1);
+  if (m0.getBitWidth() == 0 || m0.getBitWidth() != m1.getBitWidth())
+    return false;
+  return (m0 | m1).isAllOnes();
+}
+
 static inline bool containsOnlyAtMostTopBit(const llvm::Value *V,
                                             llvm::Type *FT,
                                             const llvm::DataLayout &dl,
                                             llvm::Type **vFT = nullptr) {
   using namespace llvm;
+  if (!V)
+    return false;
   if (auto CI = dyn_cast_or_null<ConstantInt>(V)) {
     if (CI->isZero()) {
       if (vFT)

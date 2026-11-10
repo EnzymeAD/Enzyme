@@ -52,6 +52,7 @@
 #endif
 
 #include "llvm-c/Core.h"
+#include "llvm/IR/DiagnosticPrinter.h"
 
 #include "BlasAttributor.inc"
 #include "LibraryFuncs.h"
@@ -501,6 +502,76 @@ bool attributeKnownFunctions(llvm::Function &F) {
         AttributeList::FunctionIndex,
         Attribute::get(F.getContext(), "enzyme_no_escaping_allocation"));
   }
+  const char *SystemAndStringCalls[] = {
+      "strtol",
+      "strtoul",
+      "strtoll",
+      "strtoull",
+      "__isoc23_strtol",
+      "__isoc23_strtoul",
+      "__isoc23_strtoll",
+      "__isoc23_strtoull",
+      "open",
+      "open64",
+      "close",
+      "sched_getaffinity",
+  };
+  if (llvm::is_contained(SystemAndStringCalls, name)) {
+    changed = true;
+    F.addFnAttr(Attribute::NoFree);
+    F.addAttribute(
+        AttributeList::FunctionIndex,
+        Attribute::get(F.getContext(), "enzyme_no_escaping_allocation"));
+  }
+  if (startsWith(name, "__atomic_load") || startsWith(name, "__atomic_store") ||
+      startsWith(name, "__atomic_exchange") ||
+      startsWith(name, "__atomic_compare_exchange")) {
+    changed = true;
+    F.addFnAttr(Attribute::NoUnwind);
+    F.addFnAttr(Attribute::NoRecurse);
+    F.addFnAttr(Attribute::WillReturn);
+    F.addFnAttr(Attribute::NoFree);
+    F.addAttribute(
+        AttributeList::FunctionIndex,
+        Attribute::get(F.getContext(), "enzyme_no_escaping_allocation"));
+#if LLVM_VERSION_MAJOR >= 16
+    F.setOnlyAccessesInaccessibleMemOrArgMem();
+#else
+    F.addFnAttr(Attribute::InaccessibleMemOrArgMemOnly);
+#endif
+    auto *FT = F.getFunctionType();
+    for (unsigned i = 0; i < FT->getNumParams(); ++i) {
+      if (FT->getParamType(i)->isPointerTy())
+        addFunctionNoCapture(&F, i);
+    }
+    if (startsWith(name, "__atomic_load_") && FT->getNumParams() == 2 &&
+        FT->getParamType(0)->isPointerTy()) {
+#if LLVM_VERSION_MAJOR >= 16
+      F.setOnlyReadsMemory();
+#else
+      F.addFnAttr(Attribute::ReadOnly);
+#endif
+      F.addParamAttr(0, Attribute::ReadOnly);
+    } else if (startsWith(name, "__atomic_store_") && FT->getNumParams() == 3 &&
+               FT->getParamType(0)->isPointerTy()) {
+#if LLVM_VERSION_MAJOR >= 16
+      F.setOnlyWritesMemory();
+#else
+      F.addFnAttr(Attribute::WriteOnly);
+#endif
+      F.addParamAttr(0, Attribute::WriteOnly);
+    } else if (name == "__atomic_load" && FT->getNumParams() == 4 &&
+               FT->getParamType(1)->isPointerTy() &&
+               FT->getParamType(2)->isPointerTy()) {
+      F.addParamAttr(1, Attribute::ReadOnly);
+      F.addParamAttr(2, Attribute::WriteOnly);
+    } else if (name == "__atomic_store" && FT->getNumParams() == 4 &&
+               FT->getParamType(1)->isPointerTy() &&
+               FT->getParamType(2)->isPointerTy()) {
+      F.addParamAttr(1, Attribute::WriteOnly);
+      F.addParamAttr(2, Attribute::ReadOnly);
+    }
+  }
   changed |= attributeTablegen(F);
   return changed;
 }
@@ -688,6 +759,20 @@ Function *getOrInsertExponentialAllocator(Module &M, Function *newFunc,
       SubZero->setOperand(0, tmp);
       SubZero->setOperand(2, zeroSize);
     }
+    // Unlike realloc, allocating a replacement buffer and copying into it does
+    // not release the superseded buffer; skip the initial growth where ptr has
+    // no prior allocation.
+    if (!custom || CustomDeallocator) {
+      BasicBlock *freePrevious =
+          BasicBlock::Create(M.getContext(), "freeprev", F);
+      BasicBlock *afterFree =
+          BasicBlock::Create(M.getContext(), "afterfree", F);
+      B.CreateCondBr(isFirstSize, afterFree, freePrevious);
+      B.SetInsertPoint(freePrevious);
+      CreateDealloc(B, ptr);
+      B.CreateBr(afterFree);
+      B.SetInsertPoint(afterFree);
+    }
   }
 
   if (ZeroInit) {
@@ -701,10 +786,11 @@ Function *getOrInsertExponentialAllocator(Module &M, Function *newFunc,
   }
   gVal = B.CreatePointerCast(gVal, ptr->getType());
 
+  BasicBlock *growthEnd = B.GetInsertBlock();
   B.CreateBr(ok);
   B.SetInsertPoint(ok);
   auto phi = B.CreatePHI(ptr->getType(), 2);
-  phi->addIncoming(gVal, grow);
+  phi->addIncoming(gVal, growthEnd);
   phi->addIncoming(ptr, entry);
   B.CreateRet(phi);
   return F;
@@ -831,7 +917,7 @@ Value *CreateAllocation(IRBuilder<> &Builder, llvm::Type *T, Value *Count,
     if (auto ci = dyn_cast<ConstantInt>(Count)) {
 #if LLVM_VERSION_MAJOR >= 14
       malloccall->addDereferenceableRetAttr(ci->getLimitedValue() * AlignI);
-#if !defined(FLANG) && !defined(ROCM)
+#if !defined(FLANG)
       AttrBuilder B(ci->getContext());
 #else
       AttrBuilder B;
@@ -951,6 +1037,36 @@ EnzymeFailure::EnzymeFailure(const llvm::Twine &RemarkName,
                              const llvm::DiagnosticLocation &Loc,
                              const llvm::Function *CodeRegion)
     : DiagnosticInfoUnsupported(*CodeRegion, RemarkName, Loc) {}
+
+#if defined(ENZYME_FLANG_PLUGIN) && LLVM_VERSION_MAJOR < 22
+static constexpr bool DefaultUnsupportedDiagnosticFallback = true;
+#else
+static constexpr bool DefaultUnsupportedDiagnosticFallback = false;
+#endif
+
+static cl::opt<bool> EnzymeUnsupportedDiagnosticFallback(
+    "enzyme-unsupported-diag-fallback",
+    cl::init(DefaultUnsupportedDiagnosticFallback), cl::Hidden,
+    cl::desc("Print unsupported diagnostics directly when the host diagnostic "
+             "handler drops non-remark diagnostics"));
+
+/// Report an unsupported diagnostic, printing directly to stderr and exiting
+/// on errors when the host diagnostic handler drops non-remark diagnostics.
+void diagnoseEnzymeUnsupported(LLVMContext &Context,
+                               const DiagnosticInfoUnsupported &Diagnostic) {
+  if (!EnzymeUnsupportedDiagnosticFallback) {
+    Context.diagnose(Diagnostic);
+    return;
+  }
+  DiagnosticPrinterRawOStream Printer(errs());
+  errs() << LLVMContext::getDiagnosticMessagePrefix(Diagnostic.getSeverity())
+         << ": ";
+  Diagnostic.print(Printer);
+  errs() << '\n';
+  errs().flush();
+  if (Diagnostic.getSeverity() == DS_Error)
+    exit(1);
+}
 
 /// Convert a floating type to a string
 static inline std::string tofltstr(Type *T) {
@@ -1186,6 +1302,113 @@ bool isAtomic(Value *origptr, bool AtomicAdd, Function *newFunc) {
     Atomic = false;
   }
   return Atomic;
+}
+
+Function *getOrInsertAtomicFloatMinMax(Module &M, Type *T,
+                                       AtomicRMWInst::BinOp Op,
+                                       unsigned AddrSpace, MaybeAlign Alignment,
+                                       AtomicOrdering Order, SyncScope::ID SSID,
+                                       bool IsVolatile) {
+  assert(T->isFloatingPointTy() && "expected scalar floating-point type");
+  assert((Op == AtomicRMWInst::FMin || Op == AtomicRMWInst::FMax) &&
+         "expected FMin or FMax atomic operation");
+
+  LLVMContext &Ctx = M.getContext();
+  const DataLayout &DL = M.getDataLayout();
+  Align ResolvedAlign = Alignment ? *Alignment : DL.getABITypeAlign(T);
+  AtomicOrdering SuccessOrder =
+      Order == AtomicOrdering::Unordered ? AtomicOrdering::Monotonic : Order;
+  AtomicOrdering LoadOrder = SuccessOrder;
+  if (LoadOrder == AtomicOrdering::Release)
+    LoadOrder = AtomicOrdering::Monotonic;
+  else if (LoadOrder == AtomicOrdering::AcquireRelease)
+    LoadOrder = AtomicOrdering::Acquire;
+
+  std::string Name = std::string("__enzyme_atomic_") +
+                     (Op == AtomicRMWInst::FMax ? "fmax_" : "fmin_") +
+                     tofltstr(T) + "_a" +
+                     std::to_string(ResolvedAlign.value()) + "_o" +
+                     std::to_string(static_cast<unsigned>(SuccessOrder));
+  if (AddrSpace != 0)
+    Name += "_as" + std::to_string(AddrSpace);
+  if (SSID != SyncScope::System)
+    Name += "_ss" + std::to_string(static_cast<unsigned>(SSID));
+  if (IsVolatile)
+    Name += "_vol";
+
+  StructType *RetTy = StructType::get(Ctx, {T, Type::getInt1Ty(Ctx)});
+  Type *PtrTy = getPointerType(T, AddrSpace);
+  FunctionType *FT = FunctionType::get(RetTy, {PtrTy, T}, false);
+  Function *F = cast<Function>(M.getOrInsertFunction(Name, FT).getCallee());
+  if (!F->empty())
+    return F;
+
+  F->setLinkage(Function::LinkageTypes::InternalLinkage);
+#if LLVM_VERSION_MAJOR >= 16
+  F->setOnlyAccessesArgMemory();
+#else
+  F->addFnAttr(Attribute::ArgMemOnly);
+#endif
+  F->addFnAttr(Attribute::NoUnwind);
+  F->addFnAttr(Attribute::NoFree);
+  F->addFnAttr(Attribute::AlwaysInline);
+  addFunctionNoCapture(F, 0);
+
+  Argument *Ptr = F->getArg(0);
+  Ptr->setName("ptr");
+  Argument *Val = F->getArg(1);
+  Val->setName("val");
+
+  unsigned Bits = T->getPrimitiveSizeInBits();
+  IntegerType *IntTy = IntegerType::get(Ctx, Bits);
+
+  BasicBlock *EntryBB = BasicBlock::Create(Ctx, "entry", F);
+  BasicBlock *LoopBB = BasicBlock::Create(Ctx, "loop", F);
+  BasicBlock *CasBB = BasicBlock::Create(Ctx, "cas", F);
+  BasicBlock *ExitBB = BasicBlock::Create(Ctx, "exit", F);
+
+  IRBuilder<> EB(EntryBB);
+  Value *IntPtr = EB.CreatePointerCast(Ptr, getPointerType(IntTy, AddrSpace));
+  Value *ValInt = EB.CreateBitCast(Val, IntTy);
+  LoadInst *InitLoad =
+      EB.CreateAlignedLoad(IntTy, IntPtr, ResolvedAlign, IsVolatile);
+  InitLoad->setAtomic(LoadOrder, SSID);
+  EB.CreateBr(LoopBB);
+
+  IRBuilder<> LB(LoopBB);
+  PHINode *CurInt = LB.CreatePHI(IntTy, 2, "cur.int");
+  CurInt->addIncoming(InitLoad, EntryBB);
+  Value *Cur = LB.CreateBitCast(CurInt, T, "cur");
+  // Check whether `val` strictly improves on `cur` (or replaces a NaN `cur`
+  // with an ordered `val`, matching `atomicrmw fmin`/`fmax` / IEEE minNum &
+  // maxNum). Equal values return `{ cur, false }` without storing.
+  Value *StrictCmp = (Op == AtomicRMWInst::FMax) ? LB.CreateFCmpOGT(Val, Cur)
+                                                 : LB.CreateFCmpOLT(Val, Cur);
+  Value *CurIsNaN = LB.CreateFCmpUNO(Cur, Cur);
+  Value *ValIsOrd = LB.CreateFCmpORD(Val, Val);
+  Value *IsNew = LB.CreateOr(StrictCmp, LB.CreateAnd(CurIsNaN, ValIsOrd));
+  LB.CreateCondBr(IsNew, CasBB, ExitBB);
+
+  IRBuilder<> CB(CasBB);
+  AtomicCmpXchgInst *Cas = CB.CreateAtomicCmpXchg(
+      IntPtr, CurInt, ValInt, ResolvedAlign, SuccessOrder,
+      AtomicCmpXchgInst::getStrongestFailureOrdering(SuccessOrder), SSID);
+  Cas->setVolatile(IsVolatile);
+  Value *NextInt = CB.CreateExtractValue(Cas, {0}, "next.int");
+  Value *Ok = CB.CreateExtractValue(Cas, {1}, "ok");
+  CurInt->addIncoming(NextInt, CasBB);
+  CB.CreateCondBr(Ok, ExitBB, LoopBB);
+
+  IRBuilder<> XB(ExitBB);
+  PHINode *Changed = XB.CreatePHI(Type::getInt1Ty(Ctx), 2, "changed");
+  Changed->addIncoming(ConstantInt::getFalse(Ctx), LoopBB);
+  Changed->addIncoming(ConstantInt::getTrue(Ctx), CasBB);
+  Value *Res = UndefValue::get(RetTy);
+  Res = XB.CreateInsertValue(Res, Cur, {0});
+  Res = XB.CreateInsertValue(Res, Changed, {1});
+  XB.CreateRet(Res);
+
+  return F;
 }
 
 /// Create function for type that is equivalent to memcpy but adds to
@@ -2980,16 +3203,22 @@ bool overwritesToMemoryReadByLoop(
             // they must be in the same loop, or one loop must dominate
             // the other.
             if (!eskip) {
-
-              if (auto endL = dyn_cast<SCEVAddRecExpr>(elim)) {
-                auto EH = endL->getLoop()->getHeader();
-                if (auto startL = dyn_cast<SCEVAddRecExpr>(slim)) {
-                  auto SH = startL->getLoop()->getHeader();
-                  if (EH != SH && !DT.dominates(EH, SH) &&
-                      !DT.dominates(SH, EH))
-                    eskip = true;
-                }
-              }
+              eskip = SCEVExprContains(elim, [&](const SCEV *endExpr) {
+                const auto *endRec = dyn_cast<SCEVAddRecExpr>(endExpr);
+                if (!endRec)
+                  return false;
+                const BasicBlock *endHeader = endRec->getLoop()->getHeader();
+                return SCEVExprContains(slim, [&](const SCEV *startExpr) {
+                  const auto *startRec = dyn_cast<SCEVAddRecExpr>(startExpr);
+                  if (!startRec)
+                    return false;
+                  const BasicBlock *startHeader =
+                      startRec->getLoop()->getHeader();
+                  return endHeader != startHeader &&
+                         !DT.dominates(endHeader, startHeader) &&
+                         !DT.dominates(startHeader, endHeader);
+                });
+              });
             }
             if (!eskip) {
               auto sub = SE.getMinusSCEV(slim, elim);
@@ -3184,17 +3413,17 @@ bool overwritesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
   return true;
 }
 
-/// Return whether maybeReader can read from memory written to by maybeWriter
-bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
-                          llvm::TargetLibraryInfo &TLI,
-                          llvm::Instruction *maybeReader,
-                          llvm::Instruction *maybeWriter) {
-  assert(maybeReader->getParent()->getParent() ==
-         maybeWriter->getParent()->getParent());
+static bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
+                                 llvm::TargetLibraryInfo &TLI,
+                                 const llvm::MemoryLocation *maybeReaderLoc,
+                                 llvm::Instruction *maybeReader,
+                                 llvm::Instruction *maybeWriter) {
+  assert(!maybeReader || maybeReader->getParent()->getParent() ==
+                             maybeWriter->getParent()->getParent());
   using namespace llvm;
-  if (isa<StoreInst>(maybeReader))
+  if (isa_and_nonnull<StoreInst>(maybeReader))
     return false;
-  if (isa<FenceInst>(maybeReader)) {
+  if (isa_and_nonnull<FenceInst>(maybeReader)) {
     return false;
   }
   if (auto call = dyn_cast<CallInst>(maybeWriter)) {
@@ -3211,6 +3440,40 @@ bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
     if (isReadOnlyOrThrow(call))
       return false;
 
+    bool onlyArgOrLocalWrites = isLocalReadOnlyOrThrow(call);
+    if (!onlyArgOrLocalWrites && !call->hasOperandBundles()) {
+      auto F2 = getFunctionFromCall(call);
+      if (!F2 || F2->getCallingConv() == call->getCallingConv()) {
+#if LLVM_VERSION_MAJOR >= 16
+        auto allowed = MemoryEffects::readOnly() |
+                       MemoryEffects::argMemOnly(ModRefInfo::ModRef) |
+                       MemoryEffects::inaccessibleMemOnly(ModRefInfo::ModRef);
+        onlyArgOrLocalWrites =
+            (call->getMemoryEffects() & allowed) == call->getMemoryEffects();
+#else
+        onlyArgOrLocalWrites = call->onlyAccessesArgMemory() ||
+                               call->onlyAccessesInaccessibleMemory() ||
+                               call->onlyAccessesInaccessibleMemOrArgMem();
+#endif
+      }
+    }
+    if (onlyArgOrLocalWrites) {
+      bool mayWrite = false;
+      for (unsigned i = 0; i < call->arg_size(); ++i) {
+        auto arg = call->getArgOperand(i);
+        if (!arg->getType()->isPointerTy() || isReadOnly(call, i))
+          continue;
+        auto loc = MemoryLocation::getForArgument(call, i, TLI);
+        if (isRefSet(getModRefInfo(AA, maybeReader, maybeReaderLoc, loc.Ptr,
+                                   loc.Size))) {
+          mayWrite = true;
+          break;
+        }
+      }
+      if (!mayWrite)
+        return false;
+    }
+
     if (isMemFreeLibMFunction(funcName)) {
       return false;
     }
@@ -3224,7 +3487,7 @@ bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
     if (funcName == "jl_new_array" || funcName == "ijl_new_array")
       return false;
 
-    if (funcName == "julia.safepoint")
+    if (funcName == "julia.safepoint" || isRustNoAllocShimFunction(funcName))
       return false;
 
     if (funcName == "jl_idtable_rehash" || funcName == "ijl_idtable_rehash")
@@ -3244,16 +3507,15 @@ bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
 #endif
       size_t off = (funcName == "MPI_Wait" || funcName == "PMPI_Wait") ? 0 : 1;
       // No alias with status
-      if (!isRefSet(AA.getModRefInfo(maybeReader, call->getArgOperand(off + 1),
-                                     loc))) {
+      if (!isRefSet(getModRefInfo(AA, maybeReader, maybeReaderLoc,
+                                  call->getArgOperand(off + 1), loc))) {
         // No alias with request
-        if (!isRefSet(AA.getModRefInfo(maybeReader,
-                                       call->getArgOperand(off + 0), loc)))
+        if (!isRefSet(getModRefInfo(AA, maybeReader, maybeReaderLoc,
+                                    call->getArgOperand(off + 0), loc)))
           return false;
         auto R = parseTBAA(
-            *maybeReader,
-            maybeReader->getParent()->getParent()->getParent()->getDataLayout(),
-            nullptr)[{-1}];
+            maybeReader ? maybeReader->getAAMetadata() : maybeReaderLoc->AATags,
+            *call, call->getModule()->getDataLayout(), nullptr)[{-1}];
         // Could still conflict with the mpi_request unless a non pointer
         // type.
         if (R != BaseType::Unknown && R != BaseType::Anything &&
@@ -3264,21 +3526,22 @@ bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
     // Isend only writes to inaccessible mem and request.
     if (funcName == "MPI_Isend" || funcName == "PMPI_Isend") {
       auto R = parseTBAA(
-          *maybeReader,
-          maybeReader->getParent()->getParent()->getParent()->getDataLayout(),
-          nullptr)[{-1}];
+          maybeReader ? maybeReader->getAAMetadata() : maybeReaderLoc->AATags,
+          *call, call->getModule()->getDataLayout(), nullptr)[{-1}];
       // Could still conflict with the mpi_request, unless either
       // synchronous, or a non pointer type.
       if (R != BaseType::Unknown && R != BaseType::Anything &&
           R != BaseType::Pointer)
         return false;
 #if LLVM_VERSION_MAJOR > 11
-      if (!isRefSet(AA.getModRefInfo(maybeReader, call->getArgOperand(6),
-                                     LocationSize::afterPointer())))
+      if (!isRefSet(getModRefInfo(AA, maybeReader, maybeReaderLoc,
+                                  call->getArgOperand(6),
+                                  LocationSize::afterPointer())))
         return false;
 #else
-      if (!isRefSet(AA.getModRefInfo(maybeReader, call->getArgOperand(6),
-                                     MemoryLocation::UnknownSize)))
+      if (!isRefSet(getModRefInfo(AA, maybeReader, maybeReaderLoc,
+                                  call->getArgOperand(6),
+                                  MemoryLocation::UnknownSize)))
         return false;
 #endif
       return false;
@@ -3300,9 +3563,8 @@ bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
       }
       if (type.isKnown()) {
         auto R = parseTBAA(
-            *maybeReader,
-            maybeReader->getParent()->getParent()->getParent()->getDataLayout(),
-            nullptr)[{-1}];
+            maybeReader ? maybeReader->getAAMetadata() : maybeReaderLoc->AATags,
+            *call, call->getModule()->getDataLayout(), nullptr)[{-1}];
         if (R.isKnown() && type != R) {
           // Could still conflict with the mpi_request, unless either
           // synchronous, or a non pointer type.
@@ -3310,12 +3572,14 @@ bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
               (R != BaseType::Anything && R != BaseType::Pointer))
             return false;
 #if LLVM_VERSION_MAJOR > 11
-          if (!isRefSet(AA.getModRefInfo(maybeReader, call->getArgOperand(6),
-                                         LocationSize::afterPointer())))
+          if (!isRefSet(getModRefInfo(AA, maybeReader, maybeReaderLoc,
+                                      call->getArgOperand(6),
+                                      LocationSize::afterPointer())))
             return false;
 #else
-          if (!isRefSet(AA.getModRefInfo(maybeReader, call->getArgOperand(6),
-                                         MemoryLocation::UnknownSize)))
+          if (!isRefSet(getModRefInfo(AA, maybeReader, maybeReaderLoc,
+                                      call->getArgOperand(6),
+                                      MemoryLocation::UnknownSize)))
             return false;
 #endif
         }
@@ -3328,6 +3592,8 @@ bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
         return false;
       if (II->getIntrinsicID() == Intrinsic::trap)
         return false;
+      if (II->getIntrinsicID() == Intrinsic::assume)
+        return false;
 #if LLVM_VERSION_MAJOR >= 13
       if (II->getIntrinsicID() == Intrinsic::experimental_noalias_scope_decl)
         return false;
@@ -3339,14 +3605,15 @@ bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
         return false;
     }
   }
-  if (auto call = dyn_cast<CallInst>(maybeReader)) {
+  if (auto call = dyn_cast_or_null<CallInst>(maybeReader)) {
     StringRef funcName = getFuncNameFromCall(call);
 
     if (isDebugFunction(call->getCalledFunction()))
       return false;
 
     if (isAllocationFunction(funcName, TLI) ||
-        isDeallocationFunction(funcName, TLI)) {
+        isDeallocationFunction(funcName, TLI) ||
+        isRustNoAllocShimFunction(funcName)) {
       return false;
     }
 
@@ -3361,6 +3628,8 @@ bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
         return false;
       if (II->getIntrinsicID() == Intrinsic::trap)
         return false;
+      if (II->getIntrinsicID() == Intrinsic::assume)
+        return false;
 #if LLVM_VERSION_MAJOR >= 13
       if (II->getIntrinsicID() == Intrinsic::experimental_noalias_scope_decl)
         return false;
@@ -3374,7 +3643,8 @@ bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
       return false;
 
     if (isAllocationFunction(funcName, TLI) ||
-        isDeallocationFunction(funcName, TLI)) {
+        isDeallocationFunction(funcName, TLI) ||
+        isRustNoAllocShimFunction(funcName)) {
       return false;
     }
 
@@ -3396,14 +3666,15 @@ bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
         return false;
     }
   }
-  if (auto call = dyn_cast<InvokeInst>(maybeReader)) {
+  if (auto call = dyn_cast_or_null<InvokeInst>(maybeReader)) {
     StringRef funcName = getFuncNameFromCall(call);
 
     if (isDebugFunction(call->getCalledFunction()))
       return false;
 
     if (isAllocationFunction(funcName, TLI) ||
-        isDeallocationFunction(funcName, TLI)) {
+        isDeallocationFunction(funcName, TLI) ||
+        isRustNoAllocShimFunction(funcName)) {
       return false;
     }
 
@@ -3412,9 +3683,14 @@ bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
     }
   }
   assert(maybeWriter->mayWriteToMemory());
-  assert(maybeReader->mayReadFromMemory());
+  if (maybeReaderLoc) {
+    if (!isModSet(getModRefInfo(AA, maybeWriter, *maybeReaderLoc)))
+      return false;
+  } else {
+    assert(maybeReader->mayReadFromMemory());
+  }
 
-  if (auto li = dyn_cast<LoadInst>(maybeReader)) {
+  if (auto li = dyn_cast_or_null<LoadInst>(maybeReader)) {
     if (TR) {
       auto TT = TR->query(li)[{-1}];
       if (TT != BaseType::Unknown && TT != BaseType::Anything) {
@@ -3435,32 +3711,48 @@ bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
         }
       }
     }
-    return isModSet(AA.getModRefInfo(maybeWriter, MemoryLocation::get(li)));
+    if (!isModSet(getModRefInfo(AA, maybeWriter, MemoryLocation::get(li))))
+      return false;
   }
-  if (auto rmw = dyn_cast<AtomicRMWInst>(maybeReader)) {
-    return isModSet(AA.getModRefInfo(maybeWriter, MemoryLocation::get(rmw)));
+  if (auto rmw = dyn_cast_or_null<AtomicRMWInst>(maybeReader)) {
+    if (!isModSet(getModRefInfo(AA, maybeWriter, MemoryLocation::get(rmw))))
+      return false;
   }
-  if (auto xch = dyn_cast<AtomicCmpXchgInst>(maybeReader)) {
-    return isModSet(AA.getModRefInfo(maybeWriter, MemoryLocation::get(xch)));
+  if (auto xch = dyn_cast_or_null<AtomicCmpXchgInst>(maybeReader)) {
+    if (!isModSet(getModRefInfo(AA, maybeWriter, MemoryLocation::get(xch))))
+      return false;
   }
-  if (auto mti = dyn_cast<MemTransferInst>(maybeReader)) {
-    return isModSet(
-        AA.getModRefInfo(maybeWriter, MemoryLocation::getForSource(mti)));
+  if (auto mti = dyn_cast_or_null<MemTransferInst>(maybeReader)) {
+    if (!isModSet(
+            getModRefInfo(AA, maybeWriter, MemoryLocation::getForSource(mti))))
+      return false;
   }
 
   if (auto si = dyn_cast<StoreInst>(maybeWriter)) {
-    return isRefSet(AA.getModRefInfo(maybeReader, MemoryLocation::get(si)));
+    auto loc = MemoryLocation::get(si);
+    return isRefSet(
+        getModRefInfo(AA, maybeReader, maybeReaderLoc, loc.Ptr, loc.Size));
   }
   if (auto rmw = dyn_cast<AtomicRMWInst>(maybeWriter)) {
-    return isRefSet(AA.getModRefInfo(maybeReader, MemoryLocation::get(rmw)));
+    auto loc = MemoryLocation::get(rmw);
+    return isRefSet(
+        getModRefInfo(AA, maybeReader, maybeReaderLoc, loc.Ptr, loc.Size));
   }
   if (auto xch = dyn_cast<AtomicCmpXchgInst>(maybeWriter)) {
-    return isRefSet(AA.getModRefInfo(maybeReader, MemoryLocation::get(xch)));
+    auto loc = MemoryLocation::get(xch);
+    return isRefSet(
+        getModRefInfo(AA, maybeReader, maybeReaderLoc, loc.Ptr, loc.Size));
   }
   if (auto mti = dyn_cast<MemIntrinsic>(maybeWriter)) {
+    auto loc = MemoryLocation::getForDest(mti);
     return isRefSet(
-        AA.getModRefInfo(maybeReader, MemoryLocation::getForDest(mti)));
+        getModRefInfo(AA, maybeReader, maybeReaderLoc, loc.Ptr, loc.Size));
   }
+
+  if (!maybeReader ||
+      isa<LoadInst, AtomicRMWInst, AtomicCmpXchgInst, MemTransferInst>(
+          maybeReader))
+    return true;
 
   if (auto cb = dyn_cast<CallInst>(maybeReader)) {
     return isModOrRefSet(AA.getModRefInfo(maybeWriter, cb));
@@ -3471,6 +3763,34 @@ bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
   llvm::errs() << " maybeReader: " << *maybeReader
                << " maybeWriter: " << *maybeWriter << "\n";
   llvm_unreachable("unknown inst2");
+}
+
+/// Return whether maybeWriter can write to memory at maybeReader
+bool writesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
+                          const llvm::MemoryLocation &maybeReader,
+                          llvm::Instruction *maybeWriter) {
+  if (!writesToMemoryReadBy(/*TR=*/nullptr, AA, TLI, &maybeReader,
+                            /*maybeReader=*/nullptr, maybeWriter))
+    return false;
+  const llvm::Value *base =
+      maybeReader.Ptr ? getBaseObject(maybeReader.Ptr) : nullptr;
+  if (base && base != maybeReader.Ptr && base->getType()->isPointerTy()) {
+    auto baseLoc =
+        llvm::MemoryLocation::getBeforeOrAfter(base, maybeReader.AATags);
+    if (!writesToMemoryReadBy(/*TR=*/nullptr, AA, TLI, &baseLoc,
+                              /*maybeReader=*/nullptr, maybeWriter))
+      return false;
+  }
+  return true;
+}
+
+/// Return whether maybeReader can read from memory written to by maybeWriter
+bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
+                          llvm::TargetLibraryInfo &TLI,
+                          llvm::Instruction *maybeReader,
+                          llvm::Instruction *maybeWriter) {
+  return writesToMemoryReadBy(TR, AA, TLI, /*maybeReaderLoc=*/nullptr,
+                              maybeReader, maybeWriter);
 }
 
 // Find the base pointer of ptr and the offset in bytes from the start of
@@ -3607,8 +3927,7 @@ getAllLoadedValuesFrom(AllocaInst *ptr0, size_t offset, size_t valSz,
         if (offset + valSz <= suboff)
           continue;
 
-        if (valSz <= storeSz) {
-          assert(offset >= suboff);
+        if (offset >= suboff && offset + valSz <= suboff + storeSz) {
           options.emplace_back(SI->getValueOperand(), offset - suboff);
           continue;
         }
@@ -3719,13 +4038,18 @@ Value *simplifyLoad(Value *V, size_t valSz, size_t preOffset) {
     if (!legal) {
       return nullptr;
     }
+    const DataLayout &DL = LI->getModule()->getDataLayout();
     std::set<Value *> res;
     for (auto &&[opt, startOff] : opts) {
       Value *v2 = simplifyLoad(opt, valSz, startOff);
-      if (v2)
+      if (v2) {
         res.insert(v2);
-      else
-        res.insert(opt);
+        continue;
+      }
+      size_t optSizeInBytes = (DL.getTypeSizeInBits(opt->getType()) + 7) / 8;
+      if (startOff != 0 || optSizeInBytes != valSz)
+        return nullptr;
+      res.insert(opt);
     }
     if (res.size() != 1) {
       return nullptr;
@@ -3905,9 +4229,10 @@ llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in)
 #endif
 {
   static const char *extractable[] = {
-      "dot",   "scal",  "axpy",  "gemv",  "gemm",  "spmv", "syrk",  "nrm2",
-      "trmm",  "trmv",  "symm",  "potrf", "potrs", "copy", "spmv",  "syr2k",
-      "potrs", "getrf", "getrs", "trtrs", "getri", "symv", "lacpy", "trsv",
+      "dot",   "scal", "axpy",  "axpby", "gemv",  "gemm",  "spmv",
+      "syrk",  "nrm2", "trmm",  "trmv",  "symm",  "potrf", "potrs",
+      "copy",  "spmv", "syr2k", "potrs", "getrf", "getrs", "trtrs",
+      "getri", "symv", "lacpy", "trsv",
   };
   static const char *floatType[] = {"s", "d", "c", "z"};
   static const char *prefixes[] = {"" /*Fortran*/, "cblas_"};
@@ -4889,6 +5214,8 @@ bool isNVLoad(const llvm::Value *V) {
 bool notCapturedBefore(llvm::Value *V, Instruction *inst,
                        size_t checkLoadCaptures, Instruction *startinst,
                        llvm::TargetLibraryInfo *TLI) {
+  if (isa<ConstantPointerNull, UndefValue, PoisonValue>(V))
+    return true;
   // The point after which uses count; only needed to bound the search by inst.
   Instruction *VI = startinst;
   if (!VI)
@@ -5005,21 +5332,19 @@ bool notCaptured(llvm::Value *V, llvm::TargetLibraryInfo *TLI) {
   return notCapturedBefore(V, nullptr, 0, nullptr, TLI);
 }
 
+// Compare two pointers whose (single) base objects are lhs and rhs.
 // Return true if guaranteed not to alias
 // Return false if guaranteed to alias [with possible offset depending on flag].
 // Return {} if no information is given.
 #if LLVM_VERSION_MAJOR >= 16
-std::optional<bool>
+static std::optional<bool>
 #else
-llvm::Optional<bool>
+static llvm::Optional<bool>
 #endif
-arePointersGuaranteedNoAlias(TargetLibraryInfo &TLI, llvm::AAResults &AA,
-                             llvm::DominatorTree &DT, llvm::LoopInfo &LI,
-                             llvm::Value *op0, llvm::Value *op1,
-                             bool offsetAllowed) {
-  auto lhs = getBaseObject(op0, offsetAllowed);
-  auto rhs = getBaseObject(op1, offsetAllowed);
-
+areBaseObjectsGuaranteedNoAlias(TargetLibraryInfo &TLI, llvm::AAResults &AA,
+                                llvm::DominatorTree &DT, llvm::LoopInfo &LI,
+                                llvm::Value *op0, llvm::Value *op1,
+                                llvm::Value *lhs, llvm::Value *rhs) {
   if (lhs == rhs) {
     return false;
   }
@@ -5036,6 +5361,27 @@ arePointersGuaranteedNoAlias(TargetLibraryInfo &TLI, llvm::AAResults &AA,
 
   if (!lhs->getType()->isPointerTy() && !rhs->getType()->isPointerTy())
     return {};
+
+  if (lhs->getType()->isPointerTy() && rhs->getType()->isPointerTy()) {
+    bool hasNullOrUndef = false;
+    for (auto obj : getBaseObjects(lhs, /*offsetAllowed=*/true)) {
+      if (isa<ConstantPointerNull, UndefValue>(obj)) {
+        hasNullOrUndef = true;
+        break;
+      }
+    }
+    if (!hasNullOrUndef) {
+      for (auto obj : getBaseObjects(rhs, /*offsetAllowed=*/true)) {
+        if (isa<ConstantPointerNull, UndefValue>(obj)) {
+          hasNullOrUndef = true;
+          break;
+        }
+      }
+    }
+    if (!hasNullOrUndef && AA.isNoAlias(MemoryLocation::getBeforeOrAfter(lhs),
+                                        MemoryLocation::getBeforeOrAfter(rhs)))
+      return true;
+  }
 
   bool noalias_lhs = isNoAlias(lhs);
   bool noalias_rhs = isNoAlias(rhs);
@@ -5180,6 +5526,47 @@ arePointersGuaranteedNoAlias(TargetLibraryInfo &TLI, llvm::AAResults &AA,
   }
 
   return {};
+}
+
+// Return true if guaranteed not to alias
+// Return false if guaranteed to alias [with possible offset depending on flag].
+// Return {} if no information is given.
+#if LLVM_VERSION_MAJOR >= 16
+std::optional<bool>
+#else
+llvm::Optional<bool>
+#endif
+arePointersGuaranteedNoAlias(TargetLibraryInfo &TLI, llvm::AAResults &AA,
+                             llvm::DominatorTree &DT, llvm::LoopInfo &LI,
+                             llvm::Value *op0, llvm::Value *op1,
+                             bool offsetAllowed) {
+  // Look through phis and selects: a pointer such as `xp = phi [x2, &s[i]]`
+  // may be based on any of several objects, and the per-object reasoning
+  // below (noalias, not captured, ...) is only valid for a single, known base.
+  auto lhsObjs = getBaseObjects(op0, offsetAllowed);
+  auto rhsObjs = getBaseObjects(op1, offsetAllowed);
+
+  if (lhsObjs.empty() || rhsObjs.empty())
+    return {};
+
+  if (lhsObjs.size() == 1 && rhsObjs.size() == 1)
+    return areBaseObjectsGuaranteedNoAlias(TLI, AA, DT, LI, op0, op1,
+                                           lhsObjs[0], rhsObjs[0]);
+
+  // With several candidate bases, the pointers are guaranteed not to alias
+  // only if every pair of candidates is. A shared candidate means they may
+  // alias (but, unlike the single-base case, not that they must).
+  for (auto lhs : lhsObjs) {
+    for (auto rhs : rhsObjs) {
+      if (lhs == rhs)
+        return {};
+      auto res =
+          areBaseObjectsGuaranteedNoAlias(TLI, AA, DT, LI, lhs, rhs, lhs, rhs);
+      if (!res || !*res)
+        return {};
+    }
+  }
+  return true;
 }
 
 static Value *constantInBoundsGEPHelper(llvm::IRBuilder<> &B, llvm::Type *type,

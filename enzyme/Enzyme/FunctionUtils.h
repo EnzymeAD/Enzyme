@@ -418,6 +418,15 @@ void ReplaceFunctionImplementation(llvm::Module &M);
 /// Is the use of value val as an argument of call CI potentially captured
 bool couldFunctionArgumentCapture(llvm::CallInst *CI, llvm::Value *val);
 
+/// Whether parameter argno carries the function's result: an sret (also one
+/// still marked for Enzyme.jl's calling-convention fixup), a Julia sret union,
+/// or the roots of a returned value.
+bool isReturnLikeParam(const llvm::Function &F, unsigned argno);
+
+/// The same for a call site, consulting the callee when the call matches its
+/// signature.
+bool isReturnLikeParam(const llvm::CallBase &CB, unsigned argno);
+
 llvm::FunctionType *getFunctionTypeForClone(
     llvm::FunctionType *FTy, DerivativeMode mode, unsigned width,
     llvm::Type *additionalArg, llvm::ArrayRef<DIFFE_TYPE> constant_args,

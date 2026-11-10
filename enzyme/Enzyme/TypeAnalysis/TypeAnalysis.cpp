@@ -24,6 +24,7 @@
 //===----------------------------------------------------------------------===//
 #include <cstdint>
 #include <deque>
+#include <limits>
 
 #include <llvm/Config/llvm-config.h>
 
@@ -266,7 +267,7 @@ TypeAnalyzer::TypeAnalyzer(const FnTypeInfo &fn, TypeAnalysis &TA,
                           : nullptr),
       notForAnalysis(getGuaranteedUnreachable(fn.Function)), intseen(),
       fntypeinfo(fn), interprocedural(TA), direction(direction), Invalid(false),
-      PHIRecur(false),
+      PHIRecur(nullptr),
       TLI(TA.Logic.PPC.FAM.getResult<TargetLibraryAnalysis>(*fn.Function)),
       DT(TA.Logic.PPC.FAM.getResult<DominatorTreeAnalysis>(*fn.Function)),
       PDT(TA.Logic.PPC.FAM.getResult<PostDominatorTreeAnalysis>(*fn.Function)),
@@ -298,7 +299,7 @@ TypeAnalyzer::TypeAnalyzer(const FnTypeInfo &fn, TypeAnalysis &TA,
 TypeAnalyzer::TypeAnalyzer(
     const FnTypeInfo &fn, TypeAnalysis &TA,
     const llvm::SmallPtrSetImpl<llvm::BasicBlock *> &notForAnalysis,
-    const TypeAnalyzer &Prev, uint8_t direction, bool PHIRecur)
+    const TypeAnalyzer &Prev, uint8_t direction, llvm::PHINode *PHIRecur)
     : MST(Prev.MST),
       notForAnalysis(notForAnalysis.begin(), notForAnalysis.end()), intseen(),
       fntypeinfo(fn), interprocedural(TA), direction(direction), Invalid(false),
@@ -655,7 +656,42 @@ FnTypeInfo::knownIntegralValues(llvm::Value *val, const DominatorTree &DT,
       if (inset0.size() == 1 || inset1.size() == 1) {
         for (auto val0 : inset0) {
           for (auto val1 : inset1) {
-            insert(val0 / val1);
+            if (val1 != 0 &&
+                !(val0 == std::numeric_limits<int64_t>::min() && val1 == -1))
+              insert(val0 / val1);
+          }
+        }
+      }
+    }
+
+    // Strength reduction rewrites `4 * i + 2` as `(i << 2) | 2`, so index
+    // arithmetic feeding a getelementptr frequently arrives as a bitwise
+    // or/and/xor of known constants.
+    if (bo->getOpcode() == BinaryOperator::Or) {
+      if (inset0.size() == 1 || inset1.size() == 1) {
+        for (auto val0 : inset0) {
+          for (auto val1 : inset1) {
+            insert(val0 | val1);
+          }
+        }
+      }
+    }
+
+    if (bo->getOpcode() == BinaryOperator::And) {
+      if (inset0.size() == 1 || inset1.size() == 1) {
+        for (auto val0 : inset0) {
+          for (auto val1 : inset1) {
+            insert(val0 & val1);
+          }
+        }
+      }
+    }
+
+    if (bo->getOpcode() == BinaryOperator::Xor) {
+      if (inset0.size() == 1 || inset1.size() == 1) {
+        for (auto val0 : inset0) {
+          for (auto val1 : inset1) {
+            insert(val0 ^ val1);
           }
         }
       }
@@ -899,6 +935,15 @@ void getConstantAnalysis(Constant *Val, TypeAnalyzer &TA,
     }
 
     if (startsWith(GV->getName(), getInstrProfCountersVarPrefix())) {
+      TypeTree T;
+      T.insert({-1}, BaseType::Pointer);
+      T.insert({-1, -1}, BaseType::Integer);
+      analysis[Val] = T;
+      return;
+    }
+
+    // Flang character literals (@_QQcl...) hold character data.
+    if (startsWith(GV->getName(), "_QQcl")) {
       TypeTree T;
       T.insert({-1}, BaseType::Pointer);
       T.insert({-1, -1}, BaseType::Integer);
@@ -1589,6 +1634,7 @@ void TypeAnalyzer::considerTBAA() {
               "ijl_alloc_genericmemory",
               "jl_alloc_genericmemory_unchecked",
               "ijl_alloc_genericmemory_unchecked",
+              "julia.gc_alloc_memory",
               "jl_new_array",
               "ijl_new_array"};
           if (JuliaKnownTypes.count(F->getName())) {
@@ -1684,6 +1730,10 @@ void TypeAnalyzer::considerTBAA() {
                    call->getCalledFunction()->getIntrinsicID() ==
                        Intrinsic::masked_store) {
           // TODO use mask to propagate up to relevant pointer
+        } else if (isMemFreeLibMFunction(getFuncNameFromCall(call))) {
+          // Clang 20 and later tag libm calls with the TBAA of errno, the only
+          // memory such a call may touch; it describes neither an operand nor
+          // the returned value, so there is nothing to record.
         } else if (call->getType()->isPointerTy()) {
           updateAnalysis(call, vdptr.Only(-1, call), call);
         } else {
@@ -1705,7 +1755,7 @@ void TypeAnalyzer::considerTBAA() {
                        SI);
         TypeTree req = vdptr.Only(-1, SI);
         updateAnalysis(SI->getValueOperand(), req.Lookup(StoreSize, DL), SI);
-      } else if (auto LI = dyn_cast<LoadInst>(&I)) {
+      } else if (auto *LI = dyn_cast<LoadInst>(&I)) {
         auto LoadSize = (DL.getTypeSizeInBits(LI->getType()) + 7) / 8;
         updateAnalysis(LI->getPointerOperand(),
                        vdptr
@@ -1719,6 +1769,49 @@ void TypeAnalyzer::considerTBAA() {
                        LI);
         TypeTree req = vdptr.Only(-1, LI);
         updateAnalysis(LI, req.Lookup(LoadSize, DL), LI);
+      } else if (auto *atomicModify = dyn_cast<AtomicRMWInst>(&I)) {
+        auto accessSize =
+            (DL.getTypeSizeInBits(atomicModify->getValOperand()->getType()) +
+             7) /
+            8;
+        updateAnalysis(atomicModify->getPointerOperand(),
+                       vdptr.PurgeAnything()
+                           .ShiftIndices(DL, /*init offset*/ 0,
+                                         /*max size*/ accessSize,
+                                         /*new offset*/ 0)
+                           .Only(-1, atomicModify),
+                       atomicModify);
+        TypeTree valueType =
+            vdptr.Only(-1, atomicModify).Lookup(accessSize, DL);
+        if (atomicModify->getOperation() == AtomicRMWInst::Xchg)
+          updateAnalysis(atomicModify->getValOperand(), valueType,
+                         atomicModify);
+        updateAnalysis(atomicModify, valueType, atomicModify);
+      } else if (auto *compareExchange = dyn_cast<AtomicCmpXchgInst>(&I)) {
+        auto accessSize = (DL.getTypeSizeInBits(
+                               compareExchange->getNewValOperand()->getType()) +
+                           7) /
+                          8;
+        updateAnalysis(compareExchange->getPointerOperand(),
+                       vdptr.PurgeAnything()
+                           .ShiftIndices(DL, /*init offset*/ 0,
+                                         /*max size*/ accessSize,
+                                         /*new offset*/ 0)
+                           .Only(-1, compareExchange),
+                       compareExchange);
+        TypeTree valueType =
+            vdptr.Only(-1, compareExchange).Lookup(accessSize, DL);
+        updateAnalysis(compareExchange->getCompareOperand(), valueType,
+                       compareExchange);
+        updateAnalysis(compareExchange->getNewValOperand(), valueType,
+                       compareExchange);
+        TypeTree resultType = valueType.ShiftIndices(
+            DL, /*init offset*/ 0, /*max size*/ accessSize, /*new offset*/ 0);
+        int flagOffset =
+            (int)getAggregateElementOffset(DL, compareExchange->getType(), {1});
+        resultType |=
+            TypeTree(BaseType::Integer).Only(flagOffset, compareExchange);
+        updateAnalysis(compareExchange, resultType, compareExchange);
       } else {
         llvm::errs() << " inst: " << I << " vdptr: " << vdptr.str() << "\n";
         assert(0 && "unknown tbaa instruction user");
@@ -1743,8 +1836,7 @@ void TypeAnalyzer::runPHIHypotheses() {
             // the incoming operands are integral
 
             TypeAnalyzer tmpAnalysis(fntypeinfo, interprocedural,
-                                     notForAnalysis, *this, DOWN,
-                                     /*PHIRecur*/ true);
+                                     notForAnalysis, *this, DOWN, phi);
             tmpAnalysis.intseen = intseen;
             tmpAnalysis.analysis = analysis;
             tmpAnalysis.analysis[phi] =
@@ -1776,8 +1868,7 @@ void TypeAnalyzer::runPHIHypotheses() {
             // Assume that this is an integer, does that mean we can prove that
             // the incoming operands are integral
             TypeAnalyzer tmpAnalysis(fntypeinfo, interprocedural,
-                                     notForAnalysis, *this, DOWN,
-                                     /*PHIRecur*/ true);
+                                     notForAnalysis, *this, DOWN, phi);
             tmpAnalysis.intseen = intseen;
             tmpAnalysis.analysis = analysis;
             tmpAnalysis.analysis[phi] =
@@ -1969,7 +2060,40 @@ void TypeAnalyzer::visitAllocaInst(AllocaInst &I) {
   updateAnalysis(&I, ptr.Only(-1, &I), &I);
 }
 
+bool TypeAnalyzer::checkHypothesisPointerOperand(Value *Ptr, Instruction *I) {
+  if (!PHIRecur)
+    return true;
+
+  TypeTree PtrTree = getAnalysis(Ptr);
+  auto CT = PtrTree.Inner0();
+  if (!CT.isKnown() || CT == BaseType::Pointer || CT == BaseType::Anything)
+    return true;
+
+  if (getBaseObject(Ptr) != PHIRecur)
+    return true;
+
+  // During runPHIHypotheses, the address operand of a memory operation rooted
+  // at PHIRecur became a concrete non-pointer (e.g. speculating that
+  //   %p = phi i64 [ %ptrtoint, %bb0 ], [ 8, %bb1 ]  ; Rust NonNull::dangling
+  // is an Integer and forwarding Integer through inttoptr/gep to a
+  // dereference). Memory operations only constrain their address in the UP
+  // direction, so the DOWN-only hypothesis analyzer refutes the guess here.
+  if (EnzymePrintType) {
+    llvm::errs() << " illegal non-pointer address " << PtrTree.str()
+                 << " in PHI hypothesis ";
+    PHIRecur->print(llvm::errs(), *MST);
+    llvm::errs() << " for ";
+    I->print(llvm::errs(), *MST);
+    llvm::errs() << "\n";
+  }
+  Invalid = true;
+  return false;
+}
+
 void TypeAnalyzer::visitLoadInst(LoadInst &I) {
+  if (!checkHypothesisPointerOperand(I.getPointerOperand(), &I))
+    return;
+
   auto &DL = I.getParent()->getParent()->getParent()->getDataLayout();
   auto LoadSize = (DL.getTypeSizeInBits(I.getType()) + 7) / 8;
 
@@ -2000,6 +2124,9 @@ void TypeAnalyzer::visitStoreInst(StoreInst &I) {
         return;
       }
     }
+
+  if (!checkHypothesisPointerOperand(I.getPointerOperand(), &I))
+    return;
 
   // Only propagate mappings in range that aren't "Anything" into the pointer
   auto ptr = TypeTree(BaseType::Pointer);
@@ -2286,7 +2413,7 @@ void TypeAnalyzer::visitGEPOperator(GEPOperator &gep) {
       continue;
 
     int maxSize = -1;
-    if (firstIsZero) {
+    if (firstIsZero && gep.getNumIndices() > 1) {
       maxSize = DL.getTypeAllocSizeInBits(gep.getResultElementType()) / 8;
     }
 
@@ -2978,6 +3105,80 @@ void TypeAnalyzer::visitExtractValueInst(ExtractValueInst &I) {
                    getAnalysis(&I).ShiftIndices(dl, 0, size, off), &I);
 }
 
+void TypeAnalyzer::visitAtomicCmpXchgInst(llvm::AtomicCmpXchgInst &I) {
+  if (!checkHypothesisPointerOperand(I.getPointerOperand(), &I))
+    return;
+
+  const DataLayout &Layout =
+      I.getParent()->getParent()->getParent()->getDataLayout();
+  Value *PointerOperand = I.getPointerOperand();
+  Value *CompareOperand = I.getCompareOperand();
+  Value *NewValueOperand = I.getNewValOperand();
+  auto ValueSize =
+      (Layout.getTypeSizeInBits(CompareOperand->getType()) + 7) / 8;
+
+  if (direction & UP) {
+    TypeTree ResultPointer =
+        getAnalysis(&I)
+            .ShiftIndices(Layout, /*start*/ 0, ValueSize, /*addOffset*/ 0)
+            .PurgeAnything();
+    ResultPointer |= TypeTree(BaseType::Pointer);
+    updateAnalysis(PointerOperand, ResultPointer.Only(-1, &I), &I);
+
+    bool SkipCompareConstant =
+        RustTypeRules && isa<ConstantInt>(CompareOperand) &&
+        cast<ConstantInt>(CompareOperand)->getLimitedValue() ==
+            I.getAlign().value();
+    if (!SkipCompareConstant) {
+      TypeTree ComparePointer =
+          getAnalysis(CompareOperand)
+              .PurgeAnything()
+              .ShiftIndices(Layout, /*start*/ 0, ValueSize, /*addOffset*/ 0)
+              .ReplaceMinus();
+      ComparePointer |= TypeTree(BaseType::Pointer);
+      updateAnalysis(PointerOperand, ComparePointer.Only(-1, &I), &I);
+    }
+
+    bool SkipNewValueConstant =
+        RustTypeRules && isa<ConstantInt>(NewValueOperand) &&
+        cast<ConstantInt>(NewValueOperand)->getLimitedValue() ==
+            I.getAlign().value();
+    if (!SkipNewValueConstant) {
+      TypeTree NewValuePointer =
+          getAnalysis(NewValueOperand)
+              .PurgeAnything()
+              .ShiftIndices(Layout, /*start*/ 0, ValueSize, /*addOffset*/ 0)
+              .ReplaceMinus();
+      NewValuePointer |= TypeTree(BaseType::Pointer);
+      updateAnalysis(PointerOperand, NewValuePointer.Only(-1, &I), &I);
+    }
+
+    TypeTree PointeeType =
+        getAnalysis(PointerOperand).PurgeAnything().Lookup(ValueSize, Layout);
+    updateAnalysis(CompareOperand, PointeeType, &I);
+    updateAnalysis(NewValueOperand, PointeeType, &I);
+    if (!SkipNewValueConstant)
+      updateAnalysis(CompareOperand,
+                     getAnalysis(NewValueOperand).PurgeAnything(), &I);
+    if (!SkipCompareConstant)
+      updateAnalysis(NewValueOperand,
+                     getAnalysis(CompareOperand).PurgeAnything(), &I);
+  }
+
+  if (direction & DOWN) {
+    TypeTree LoadedType = getAnalysis(PointerOperand).Lookup(ValueSize, Layout);
+    if (CompareOperand->getType()->isIntOrIntVectorTy() &&
+        LoadedType[{-1}] == BaseType::Anything && mustRemainInteger(&I)) {
+      LoadedType = TypeTree(BaseType::Integer).Only(-1, &I);
+    }
+    TypeTree ResultType = LoadedType.ShiftIndices(Layout, /*start*/ 0,
+                                                  ValueSize, /*addOffset*/ 0);
+    int FlagOffset = (int)getAggregateElementOffset(Layout, I.getType(), {1});
+    ResultType |= TypeTree(BaseType::Integer).Only(FlagOffset, &I);
+    updateAnalysis(&I, ResultType, &I);
+  }
+}
+
 void TypeAnalyzer::visitInsertValueInst(InsertValueInst &I) {
   auto &dl = fntypeinfo.Function->getParent()->getDataLayout();
   auto AggTy = I.getOperand(0)->getType();
@@ -3045,6 +3246,9 @@ void TypeAnalyzer::dump(llvm::raw_ostream &ss) {
 }
 
 void TypeAnalyzer::visitAtomicRMWInst(llvm::AtomicRMWInst &I) {
+  if (!checkHypothesisPointerOperand(I.getPointerOperand(), &I))
+    return;
+
   Value *Args[2] = {nullptr, I.getOperand(1)};
   TypeTree Ret = getAnalysis(&I);
   auto &DL = I.getParent()->getParent()->getParent()->getDataLayout();
@@ -3102,6 +3306,20 @@ void TypeAnalyzer::visitAtomicRMWInst(llvm::AtomicRMWInst &I) {
     visitBinaryOperation(DL, I.getType(), BinaryOperator::FSub, Args, Ret, LHS,
                          RHS, &I);
     break;
+  case AtomicRMWInst::FMax:
+  case AtomicRMWInst::FMin: {
+    // fmax/fmin only operate on floating-point values, so the memory
+    // operand, the value operand, and the result all carry the scalar
+    // floating-point type.
+    Type *ScalarTy = I.getType()->getScalarType();
+    if (ScalarTy->isFloatingPointTy()) {
+      TypeTree FltTT = TypeTree(ConcreteType(ScalarTy)).Only(-1, &I);
+      LHS = FltTT;
+      RHS = FltTT;
+      Ret = FltTT;
+    }
+    break;
+  }
   case AtomicRMWInst::Max:
   case AtomicRMWInst::Min:
   case AtomicRMWInst::UMax:
@@ -3151,10 +3369,11 @@ void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
         std::string str;
         raw_string_ostream ss(str);
         ss << "Illegal updateAnalysis prev:" << LHS.str()
-           << " new: " << Data.str() << "\n";
-        ss << "val: " << *Args[0];
+           << " new: " << Data.str() << '\n';
+        if (Args[0])
+          ss << "val: " << *Args[0];
         ss << "origin: " << *origin;
-        CustomErrorHandler(str.c_str(), wrap(Args[0]),
+        CustomErrorHandler(str.c_str(), wrap(Args[0] ? Args[0] : origin),
                            ErrorType::IllegalTypeAnalysis, (void *)this,
                            wrap(origin), nullptr);
       }
@@ -3294,10 +3513,17 @@ void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
         } else if (auto CV = dyn_cast_or_null<ConstantVector>(Args[i])) {
           validXor = true;
           if (dl.getTypeSizeInBits(FT) !=
-              dl.getTypeSizeInBits(CV->getOperand(i)->getType()))
+              dl.getTypeSizeInBits(CV->getType()->getElementType()))
             continue;
-          for (size_t i = 0, end = CV->getNumOperands(); i < end; ++i) {
-            auto CI = dyn_cast<ConstantInt>(CV->getOperand(i))->getValue();
+          for (size_t laneIndex = 0, end = CV->getNumOperands();
+               laneIndex < end; ++laneIndex) {
+            auto *laneConstant =
+                dyn_cast<ConstantInt>(CV->getOperand(laneIndex));
+            if (!laneConstant) {
+              validXor = false;
+              break;
+            }
+            auto CI = laneConstant->getValue();
 
 #if LLVM_VERSION_MAJOR > 16
             if (CI.isZero())
@@ -3473,7 +3699,7 @@ void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
       } else if (Opcode == BinaryOperator::Xor) {
         for (int i = 0; i < 2; ++i) {
           Type *FT;
-          if (!(FT = (i == 0 ? RHS : LHS).allFloat(Args[1 - i], dl)))
+          if (!(FT = (i == 0 ? RHS : LHS).allFloat(T, dl)))
             continue;
           // If ^ against 0b10000000000, the result is a float
           bool validXor = containsOnlyAtMostTopBit(Args[i], FT, dl);
@@ -3484,7 +3710,7 @@ void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
       } else if (Opcode == BinaryOperator::Or) {
         for (int i = 0; i < 2; ++i) {
           Type *FT;
-          if (!(FT = (i == 0 ? RHS : LHS).allFloat(Args[1 - i], dl)))
+          if (!(FT = (i == 0 ? RHS : LHS).allFloat(T, dl)))
             continue;
           // If & against 0b10000000000, the result is a float
           bool validXor = false;
@@ -3527,10 +3753,17 @@ void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
           } else if (auto CV = dyn_cast_or_null<ConstantVector>(Args[i])) {
             validXor = true;
             if (dl.getTypeSizeInBits(FT) !=
-                dl.getTypeSizeInBits(CV->getOperand(i)->getType()))
+                dl.getTypeSizeInBits(CV->getType()->getElementType()))
               continue;
-            for (size_t i = 0, end = CV->getNumOperands(); i < end; ++i) {
-              auto CI = dyn_cast<ConstantInt>(CV->getOperand(i))->getValue();
+            for (size_t laneIndex = 0, end = CV->getNumOperands();
+                 laneIndex < end; ++laneIndex) {
+              auto *laneConstant =
+                  dyn_cast<ConstantInt>(CV->getOperand(laneIndex));
+              if (!laneConstant) {
+                validXor = false;
+                break;
+              }
+              auto CI = laneConstant->getValue();
 #if LLVM_VERSION_MAJOR > 16
               if (CI.isZero())
 #else
@@ -3645,6 +3878,10 @@ void TypeAnalyzer::visitMemTransferCommon(llvm::CallBase &MTI) {
     updateAnalysis(&MTI, TypeTree(BaseType::Integer).Only(-1, &MTI), &MTI);
   }
 
+  if (!checkHypothesisPointerOperand(MTI.getArgOperand(0), &MTI) ||
+      !checkHypothesisPointerOperand(MTI.getArgOperand(1), &MTI))
+    return;
+
   if (!(direction & UP))
     return;
 
@@ -3710,6 +3947,16 @@ void TypeAnalyzer::visitMemTransferCommon(llvm::CallBase &MTI) {
 
 void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
   switch (I.getIntrinsicID()) {
+#if LLVM_VERSION_MAJOR >= 16
+  // The address of a thread-local global points at the same object as the
+  // global itself.
+  case Intrinsic::threadlocal_address:
+    if (direction & UP)
+      updateAnalysis(I.getOperand(0), getAnalysis(&I), &I);
+    if (direction & DOWN)
+      updateAnalysis(&I, getAnalysis(I.getOperand(0)), &I);
+    return;
+#endif
   case Intrinsic::ctpop:
   case Intrinsic::ctlz:
   case Intrinsic::cttz:
@@ -3733,7 +3980,7 @@ void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
     updateAnalysis(&I, TypeTree(BaseType::Integer).Only(-1, &I), &I);
     return;
 
-#if LLVM_VERSION_MAJOR < 22
+#if LLVM_VERSION_MAJOR < 22 || defined(ENZYME_LLVM22_PRERELEASE)
   case Intrinsic::nvvm_barrier0_popc:
   case Intrinsic::nvvm_barrier0_and:
   case Intrinsic::nvvm_barrier0_or:
@@ -4317,8 +4564,8 @@ void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
     case Intrinsic::smul_with_overflow:
     case Intrinsic::umul_with_overflow: {
       opcode = BinaryOperator::Mul;
-      // if a + b or a * b == int, then a and b must be ints
-      analysis = analysis.JustInt();
+      // Integer overflow multiplication only operates on integers
+      analysis = TypeTree(BaseType::Integer);
       break;
     }
     case Intrinsic::sadd_with_overflow:
@@ -4362,6 +4609,9 @@ void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
     }
     auto &dl = I.getParent()->getParent()->getParent()->getDataLayout();
     int sz = (dl.getTypeSizeInBits(I.getOperand(0)->getType()) + 7) / 8;
+    if (opcode == BinaryOperator::Mul && vd[{}] == BaseType::Unknown) {
+      vd = TypeTree(BaseType::Integer);
+    }
     TypeTree overall = vd.Only(-1, &I).ShiftIndices(dl, 0, sz, 0);
 
     int sz2 = (dl.getTypeSizeInBits(I.getType()) + 7) / 8;
@@ -4374,6 +4624,15 @@ void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
       updateAnalysis(&I, overall, &I);
     return;
   }
+  case Intrinsic::memset:
+    checkHypothesisPointerOperand(I.getOperand(0), &I);
+    return;
+  case Intrinsic::masked_load:
+    checkHypothesisPointerOperand(I.getOperand(0), &I);
+    return;
+  case Intrinsic::masked_store:
+    checkHypothesisPointerOperand(I.getOperand(1), &I);
+    return;
   default:
     return;
   }
@@ -5090,7 +5349,8 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
       return;
     }
 
-    if (startsWith(funcName, "_ZNKSt3__14hash")) {
+    if (startsWith(funcName, "_ZNKSt3__14hash") ||
+        startsWith(funcName, "_ZNKSt3__u4hash")) {
       updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
       return;
     }
@@ -5098,7 +5358,11 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
     if (startsWith(funcName, "_ZNKSt3__112basic_string") ||
         startsWith(funcName, "_ZNSt3__112basic_string") ||
         startsWith(funcName, "_ZNSt3__112__hash_table") ||
-        startsWith(funcName, "_ZNKSt3__115basic_stringbuf")) {
+        startsWith(funcName, "_ZNKSt3__115basic_stringbuf") ||
+        startsWith(funcName, "_ZNKSt3__u12basic_string") ||
+        startsWith(funcName, "_ZNSt3__u12basic_string") ||
+        startsWith(funcName, "_ZNSt3__u12__hash_table") ||
+        startsWith(funcName, "_ZNKSt3__u15basic_stringbuf")) {
       return;
     }
 
@@ -5665,6 +5929,203 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
       visitMemTransferCommon(call);
       return;
     }
+    if (startsWith(funcName, "__atomic_load_") && call.arg_size() == 2 &&
+        call.getArgOperand(0)->getType()->isPointerTy()) {
+      if (!checkHypothesisPointerOperand(call.getArgOperand(0), &call))
+        return;
+      auto &DL = call.getParent()->getParent()->getParent()->getDataLayout();
+      auto LoadSize = (DL.getTypeSizeInBits(call.getType()) + 7) / 8;
+      updateAnalysis(call.getArgOperand(1),
+                     TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      if (direction & UP) {
+        auto ptr = getAnalysis(&call).PurgeAnything().ShiftIndices(
+            DL, /*start*/ 0, LoadSize, /*addOffset*/ 0);
+        ptr |= TypeTree(BaseType::Pointer);
+        updateAnalysis(call.getArgOperand(0), ptr.Only(-1, &call), &call);
+      } else {
+        updateAnalysis(call.getArgOperand(0),
+                       TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      }
+      if (direction & DOWN)
+        updateAnalysis(&call,
+                       getAnalysis(call.getArgOperand(0)).Lookup(LoadSize, DL),
+                       &call);
+      return;
+    }
+    if (startsWith(funcName, "__atomic_store_") && call.arg_size() == 3 &&
+        call.getArgOperand(0)->getType()->isPointerTy()) {
+      if (!checkHypothesisPointerOperand(call.getArgOperand(0), &call))
+        return;
+      auto &DL = call.getParent()->getParent()->getParent()->getDataLayout();
+      Value *PtrOp = call.getArgOperand(0);
+      Value *ValOp = call.getArgOperand(1);
+      auto StoreSize = (DL.getTypeSizeInBits(ValOp->getType()) + 7) / 8;
+      updateAnalysis(call.getArgOperand(2),
+                     TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      if (direction & UP) {
+        auto ptr = TypeTree(BaseType::Pointer);
+        auto purged = getAnalysis(ValOp)
+                          .PurgeAnything()
+                          .ShiftIndices(DL, /*start*/ 0, StoreSize,
+                                        /*addOffset*/ 0)
+                          .ReplaceMinus();
+        ptr |= purged;
+        updateAnalysis(PtrOp, ptr.Only(-1, &call), &call);
+        updateAnalysis(ValOp,
+                       getAnalysis(PtrOp).PurgeAnything().Lookup(StoreSize, DL),
+                       &call);
+      } else {
+        updateAnalysis(PtrOp, TypeTree(BaseType::Pointer).Only(-1, &call),
+                       &call);
+      }
+      return;
+    }
+    if (startsWith(funcName, "__atomic_exchange_") && call.arg_size() == 3 &&
+        call.getArgOperand(0)->getType()->isPointerTy()) {
+      if (!checkHypothesisPointerOperand(call.getArgOperand(0), &call))
+        return;
+      auto &DL = call.getParent()->getParent()->getParent()->getDataLayout();
+      Value *PtrOp = call.getArgOperand(0);
+      Value *ValOp = call.getArgOperand(1);
+      auto ValSize = (DL.getTypeSizeInBits(ValOp->getType()) + 7) / 8;
+      updateAnalysis(call.getArgOperand(2),
+                     TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      if (direction & UP) {
+        TypeTree ValTT = getAnalysis(ValOp).PurgeAnything();
+        bool Legal = true;
+        ValTT.checkedOrIn(
+            getAnalysis(PtrOp).Lookup(ValSize, DL).PurgeAnything(),
+            /*PointerIntSame*/ false, Legal);
+        if (Legal)
+          ValTT.checkedOrIn(getAnalysis(&call).PurgeAnything(),
+                            /*PointerIntSame*/ false, Legal);
+        if (ValOp->getType()->isIntOrIntVectorTy() &&
+            (ValTT[{-1}] == BaseType::Anything ||
+             ValTT[{-1}] == BaseType::Unknown) &&
+            mustRemainInteger(ValOp)) {
+          ValTT = TypeTree(BaseType::Integer).Only(-1, &call);
+        }
+        TypeTree PtrTT = ValTT.ShiftIndices(DL, 0, ValSize, 0).Only(-1, &call);
+        PtrTT.insert({-1}, BaseType::Pointer);
+        updateAnalysis(PtrOp, PtrTT, &call);
+        updateAnalysis(ValOp, ValTT, &call);
+      } else {
+        updateAnalysis(PtrOp, TypeTree(BaseType::Pointer).Only(-1, &call),
+                       &call);
+      }
+      if (direction & DOWN) {
+        TypeTree RetTT = getAnalysis(PtrOp).Lookup(ValSize, DL).PurgeAnything();
+        bool Legal = true;
+        RetTT.checkedOrIn(getAnalysis(ValOp).PurgeAnything(),
+                          /*PointerIntSame*/ false, Legal);
+        updateAnalysis(&call, RetTT, &call);
+      }
+      return;
+    }
+    if (startsWith(funcName, "__atomic_compare_exchange_") &&
+        call.arg_size() >= 5 &&
+        call.getArgOperand(0)->getType()->isPointerTy() &&
+        call.getArgOperand(1)->getType()->isPointerTy()) {
+      if (!checkHypothesisPointerOperand(call.getArgOperand(0), &call) ||
+          !checkHypothesisPointerOperand(call.getArgOperand(1), &call))
+        return;
+      auto &DL = call.getParent()->getParent()->getParent()->getDataLayout();
+      Value *PtrOp = call.getArgOperand(0);
+      Value *ExpOp = call.getArgOperand(1);
+      Value *DesOp = call.getArgOperand(2);
+      auto ValSize = (DL.getTypeSizeInBits(DesOp->getType()) + 7) / 8;
+      updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      for (unsigned i = 3; i < call.arg_size(); ++i)
+        updateAnalysis(call.getArgOperand(i),
+                       TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      if (direction & UP) {
+        TypeTree ValTT = getAnalysis(DesOp).PurgeAnything();
+        bool Legal = true;
+        ValTT.checkedOrIn(
+            getAnalysis(PtrOp).Lookup(ValSize, DL).PurgeAnything(),
+            /*PointerIntSame*/ false, Legal);
+        if (Legal)
+          ValTT.checkedOrIn(
+              getAnalysis(ExpOp).Lookup(ValSize, DL).PurgeAnything(),
+              /*PointerIntSame*/ false, Legal);
+        if (DesOp->getType()->isIntOrIntVectorTy() &&
+            (ValTT[{-1}] == BaseType::Anything ||
+             ValTT[{-1}] == BaseType::Unknown) &&
+            mustRemainInteger(DesOp)) {
+          ValTT = TypeTree(BaseType::Integer).Only(-1, &call);
+        }
+        TypeTree PtrTT = ValTT.ShiftIndices(DL, 0, ValSize, 0).Only(-1, &call);
+        PtrTT.insert({-1}, BaseType::Pointer);
+        updateAnalysis(PtrOp, PtrTT, &call);
+        updateAnalysis(ExpOp, PtrTT, &call);
+        updateAnalysis(DesOp, ValTT, &call);
+      } else {
+        updateAnalysis(PtrOp, TypeTree(BaseType::Pointer).Only(-1, &call),
+                       &call);
+        updateAnalysis(ExpOp, TypeTree(BaseType::Pointer).Only(-1, &call),
+                       &call);
+      }
+      return;
+    }
+    if ((funcName == "__atomic_load" || funcName == "__atomic_store" ||
+         funcName == "__atomic_exchange" ||
+         funcName == "__atomic_compare_exchange") &&
+        call.arg_size() >= 4 &&
+        call.getArgOperand(0)->getType()->isIntegerTy()) {
+      if (call.getType()->isIntegerTy())
+        updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call),
+                       &call);
+      updateAnalysis(call.getArgOperand(0),
+                     TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      unsigned ptrCount =
+          (funcName == "__atomic_load" || funcName == "__atomic_store") ? 2 : 3;
+      for (unsigned i = 1; i <= ptrCount && i < call.arg_size(); ++i) {
+        if (call.getArgOperand(i)->getType()->isPointerTy() &&
+            !checkHypothesisPointerOperand(call.getArgOperand(i), &call))
+          return;
+      }
+      for (unsigned i = 1 + ptrCount; i < call.arg_size(); ++i) {
+        if (call.getArgOperand(i)->getType()->isIntegerTy())
+          updateAnalysis(call.getArgOperand(i),
+                         TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      }
+      if (direction & UP) {
+        size_t sz = 1;
+        for (auto val : fntypeinfo.knownIntegralValues(call.getArgOperand(0),
+                                                       DT, intseen, SE)) {
+          if (val >= 0)
+            sz = max(sz, (size_t)val);
+        }
+        auto &dl = call.getParent()->getParent()->getParent()->getDataLayout();
+        TypeTree merged;
+        bool Legal = true;
+        for (unsigned i = 1; i <= ptrCount && i < call.arg_size(); ++i) {
+          Value *p = call.getArgOperand(i);
+          if (!p->getType()->isPointerTy())
+            continue;
+          TypeTree sub =
+              getAnalysis(p).PurgeAnything().Data0().ShiftIndices(dl, 0, sz, 0);
+          merged.checkedOrIn(sub, /*PointerIntSame*/ false, Legal);
+        }
+        if (Legal) {
+          merged.insert({}, BaseType::Pointer);
+          merged = merged.Only(-1, &call);
+          for (unsigned i = 1; i <= ptrCount && i < call.arg_size(); ++i) {
+            Value *p = call.getArgOperand(i);
+            if (p->getType()->isPointerTy())
+              updateAnalysis(p, merged, &call);
+          }
+        }
+      } else {
+        for (unsigned i = 1; i <= ptrCount && i < call.arg_size(); ++i) {
+          Value *p = call.getArgOperand(i);
+          if (p->getType()->isPointerTy())
+            updateAnalysis(p, TypeTree(BaseType::Pointer).Only(-1, &call),
+                           &call);
+        }
+      }
+      return;
+    }
     if (funcName == "posix_memalign") {
       TypeTree ptrptr;
       ptrptr.insert({-1}, BaseType::Pointer);
@@ -5876,6 +6337,8 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
         // The allocation freed by the CUDA driver API is a CUdeviceptr, an
         // integer at the LLVM level, but still a pointer.
         if (Idx == 0 && cudaFree) {
+          if (!checkHypothesisPointerOperand(call.getOperand(Idx), &call))
+            return;
           updateAnalysis(call.getOperand(Idx),
                          TypeTree(BaseType::Pointer).Only(-1, &call), &call);
           Idx++;
@@ -5886,6 +6349,11 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
                          TypeTree(BaseType::Integer).Only(-1, &call), &call);
         }
         if (Arg.getType()->isPointerTy()) {
+          // Without strict aliasing the update below may be skipped (the
+          // free need not post-dominate the pointer), so check explicitly
+          // during a PHI hypothesis whether the freed value is a non-pointer.
+          if (!checkHypothesisPointerOperand(call.getOperand(Idx), &call))
+            return;
           updateAnalysis(call.getOperand(Idx),
                          TypeTree(BaseType::Pointer).Only(-1, &call), &call);
         }
@@ -6016,6 +6484,52 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
                      TypeTree(BaseType::Pointer).Only(-1, &call), &call);
       updateAnalysis(call.getOperand(2),
                      TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      return;
+    }
+    if (funcName == "strtol" || funcName == "strtoul" ||
+        funcName == "strtoll" || funcName == "strtoull" ||
+        funcName == "__isoc23_strtol" || funcName == "__isoc23_strtoul" ||
+        funcName == "__isoc23_strtoll" || funcName == "__isoc23_strtoull") {
+      updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      if (call.arg_size() >= 1)
+        updateAnalysis(call.getArgOperand(0),
+                       TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      if (call.arg_size() >= 2)
+        updateAnalysis(call.getArgOperand(1),
+                       TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      if (call.arg_size() >= 3)
+        updateAnalysis(call.getArgOperand(2),
+                       TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      return;
+    }
+    if (funcName == "open" || funcName == "open64") {
+      updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      if (call.arg_size() >= 1)
+        updateAnalysis(call.getArgOperand(0),
+                       TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      if (call.arg_size() >= 2)
+        updateAnalysis(call.getArgOperand(1),
+                       TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      return;
+    }
+    if (funcName == "close") {
+      updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      if (call.arg_size() >= 1)
+        updateAnalysis(call.getArgOperand(0),
+                       TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      return;
+    }
+    if (funcName == "sched_getaffinity") {
+      updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      if (call.arg_size() >= 1)
+        updateAnalysis(call.getArgOperand(0),
+                       TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      if (call.arg_size() >= 2)
+        updateAnalysis(call.getArgOperand(1),
+                       TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      if (call.arg_size() >= 3)
+        updateAnalysis(call.getArgOperand(2),
+                       TypeTree(BaseType::Pointer).Only(-1, &call), &call);
       return;
     }
     if (funcName == "gsl_sf_legendre_array_e") {

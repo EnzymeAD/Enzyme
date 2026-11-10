@@ -577,7 +577,7 @@ void RemoveRedundantIVs(
 
     // This scope is necessary to ensure scevexpander cleans up before we erase
     // things
-#if LLVM_VERSION_MAJOR >= 22
+#if LLVM_VERSION_MAJOR >= 22 && !defined(ENZYME_LLVM22_PRERELEASE)
     SCEVExpander Exp(SE, "enzyme");
 #else
     SCEVExpander Exp(SE, Header->getParent()->getParent()->getDataLayout(),
@@ -875,14 +875,24 @@ std::pair<const SCEV *, const SCEV *> CacheUtility::computeLoopLimit(Loop *L) {
       }
     }
     if (seenHeaders) {
+      // An exit whose exact count is unknown, such as a convergence check
+      // combined with an iteration bound, may still bound the loop through
+      // the constant maximum of the exit limit.
+      const SCEV *ExitBound = EL.ExactNotTaken;
+      if (ExitBound == SE.getCouldNotCompute())
+#if LLVM_VERSION_MAJOR >= 16
+        ExitBound = EL.ConstantMaxNotTaken;
+#else
+        ExitBound = EL.MaxNotTaken;
+#endif
       if (MaxIterations == nullptr ||
           MaxIterations == SE.getCouldNotCompute()) {
-        MaxIterations = EL.ExactNotTaken;
+        MaxIterations = ExitBound;
       }
       if (MaxIterations != SE.getCouldNotCompute()) {
-        if (EL.ExactNotTaken != SE.getCouldNotCompute()) {
+        if (ExitBound != SE.getCouldNotCompute()) {
           MaxIterations =
-              SE.getUMaxFromMismatchedTypes(MaxIterations, EL.ExactNotTaken);
+              SE.getUMaxFromMismatchedTypes(MaxIterations, ExitBound);
         }
       }
 
@@ -1074,7 +1084,7 @@ bool CacheUtility::getContext(BasicBlock *BB, LoopContext &loopContext,
       }
     }
 
-#if LLVM_VERSION_MAJOR >= 22
+#if LLVM_VERSION_MAJOR >= 22 && !defined(ENZYME_LLVM22_PRERELEASE)
     SCEVExpander Exp(SE, "enzyme");
 #else
     SCEVExpander Exp(SE, BB->getParent()->getParent()->getDataLayout(),
@@ -1115,7 +1125,7 @@ bool CacheUtility::getContext(BasicBlock *BB, LoopContext &loopContext,
       MaxIterations =
           SE.getZeroExtendExpr(MaxIterations, CanonicalIV->getType());
 
-#if LLVM_VERSION_MAJOR >= 22
+#if LLVM_VERSION_MAJOR >= 22 && !defined(ENZYME_LLVM22_PRERELEASE)
     SCEVExpander Exp(SE, "enzyme");
 #else
     SCEVExpander Exp(SE, BB->getParent()->getParent()->getDataLayout(),
@@ -1623,6 +1633,31 @@ CacheUtility::SubLimitType CacheUtility::getSubLimits(bool inForwardPass,
         }
       }
 
+      bool canSkipLoop = false;
+      if (allocationPreheaders[i] != contexts[i].preheader) {
+        for (int k = i; (unsigned)(k + 1) < contexts.size() &&
+                        allocationPreheaders[k] != contexts[k].preheader;
+             ++k) {
+          BasicBlock *cur = contexts[k].preheader;
+          while (cur != contexts[k + 1].header) {
+            if (cur->getTerminator()->getNumSuccessors() != 1) {
+              canSkipLoop = true;
+              break;
+            }
+            cur = cur->getSinglePredecessor();
+            if (!cur) {
+              canSkipLoop = true;
+              break;
+            }
+          }
+          if (cur && cur->getTerminator()->getNumSuccessors() != 1) {
+            canSkipLoop = true;
+          }
+          if (canSkipLoop)
+            break;
+        }
+      }
+
       // We now need to compute the actual limit as opposed to the limit
       // minus one.
       if (inForwardPass) {
@@ -1634,9 +1669,14 @@ CacheUtility::SubLimitType CacheUtility::getSubLimits(bool inForwardPass,
         if (found != map.end() && found->second != nullptr) {
           limits[i] = found->second;
         } else {
-          limits[i] = map[allocationPreheaders[i]] =
-              allocationBuilder.CreateNSWAdd(
-                  limitMinus1, ConstantInt::get(limitMinus1->getType(), 1));
+          Value *add = allocationBuilder.CreateNSWAdd(
+              limitMinus1, ConstantInt::get(limitMinus1->getType(), 1));
+          if (canSkipLoop) {
+            auto zero = ConstantInt::get(limitMinus1->getType(), 0);
+            add = allocationBuilder.CreateSelect(
+                allocationBuilder.CreateICmpSLT(add, zero), zero, add);
+          }
+          limits[i] = map[allocationPreheaders[i]] = add;
         }
       } else {
         Value *lim = unwrapM(limitMinus1, *RB, reverseMap,
@@ -1647,7 +1687,12 @@ CacheUtility::SubLimitType CacheUtility::getSubLimits(bool inForwardPass,
           llvm::errs() << *limitMinus1 << "\n";
         }
         assert(lim);
-        limits[i] = RB->CreateNSWAdd(lim, ConstantInt::get(lim->getType(), 1));
+        Value *add = RB->CreateNSWAdd(lim, ConstantInt::get(lim->getType(), 1));
+        if (canSkipLoop) {
+          auto zero = ConstantInt::get(lim->getType(), 0);
+          add = RB->CreateSelect(RB->CreateICmpSLT(add, zero), zero, add);
+        }
+        limits[i] = add;
       }
     }
   }
@@ -1830,11 +1875,9 @@ void CacheUtility::storeInstructionInCache(LimitContext ctx,
   // If this is a PHINode, we need to store after all phinodes,
   // otherwise just after inst sufficies
   if (&*inst->getParent()->rbegin() != inst) {
-    auto pn = dyn_cast<PHINode>(inst);
-    Instruction *putafter = (pn && pn->getNumIncomingValues() > 0)
-                                ? (getFirstNonPHI(inst->getParent()))
-                                : getNextNonDebugInstruction(inst);
-    assert(putafter);
+    Instruction *putafter =
+        getFirstNonPHIOrPlaceholder(getNextNonDebugInstruction(inst));
+    assert(putafter && "expected an instruction after the cached value");
     v.SetInsertPoint(putafter);
   }
   v.setFastMathFlags(getFast());

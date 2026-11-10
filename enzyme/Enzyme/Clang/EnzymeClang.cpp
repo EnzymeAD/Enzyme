@@ -36,6 +36,8 @@
 #include "clang/Sema/Sema.h"
 #include "clang/Sema/SemaDiagnostic.h"
 
+#include "llvm/Support/Path.h"
+
 #include "../Utils.h"
 
 #include "bundled_includes.h"
@@ -178,6 +180,23 @@ void registerEnzymeDeclIfNotDefinedHere(Sema &S, Decl *D) {
 
 } // namespace
 
+/// Whether Loc lies in one of clang's device math wrapper headers, whose
+/// functions forward to libdevice (__nv_*) or ocml (__ocml_*). Keeping every
+/// wrapper alive keeps the implementation of each math function in the module,
+/// so a derivative that needs one the program never called (for example log
+/// for pow, or cosh for tanh) still lowers to a device call instead of an
+/// unavailable libcall. The header is reached through a backslash path on
+/// Windows, so only its file name is compared.
+static bool isGPUMathWrapperHeader(const SourceManager &SM,
+                                   SourceLocation Loc) {
+  PresumedLoc Presumed = SM.getPresumedLoc(Loc);
+  if (Presumed.isInvalid())
+    return false;
+  StringRef FileName = llvm::sys::path::filename(
+      Presumed.getFilename(), llvm::sys::path::Style::windows_backslash);
+  return FileName == "__clang_cuda_math.h" || FileName == "__clang_hip_math.h";
+}
+
 class EnzymePlugin final : public clang::ASTConsumer {
   clang::CompilerInstance &CI;
 
@@ -279,10 +298,7 @@ public:
 
         if (!FD->getIdentifier())
           continue;
-        if (!StringRef(FD->getLocation().printToString(CI.getSourceManager()))
-                 .contains("/__clang_cuda_math.h") &&
-            !StringRef(FD->getLocation().printToString(CI.getSourceManager()))
-                 .contains("/__clang_hip_math.h"))
+        if (!isGPUMathWrapperHeader(CI.getSourceManager(), FD->getLocation()))
           continue;
 
         FD->addAttr(UsedAttr::CreateImplicit(CI.getASTContext()));
