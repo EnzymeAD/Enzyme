@@ -60,6 +60,7 @@ set(POSEIDON_SRC
     Utils.cpp
     WmmaUtils.cpp
     MatmulAccuracy.cpp
+    MatmulAccuracyMemo.cpp
     MatmulApply.cpp
     MatmulCandidates.cpp
     MatmulPricing.cpp
