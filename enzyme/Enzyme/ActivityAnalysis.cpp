@@ -837,6 +837,18 @@ bool ActivityAnalyzer::isFunctionArgumentConstant(CallInst *CI, Value *val) {
       return true;
   }
 
+  if (Name == "__kmpc_fork_call" && CI->arg_size() >= 3) {
+    bool usedAsCapturedArg = false;
+    for (size_t i = 2; i < CI->arg_size(); ++i) {
+      if (CI->getArgOperand(i) == val) {
+        usedAsCapturedArg = true;
+        break;
+      }
+    }
+    if (!usedAsCapturedArg)
+      return true;
+  }
+
   // TODO interprocedural detection
   // Before potential introprocedural detection, any function without definition
   // may to be assumed to have an active use
@@ -910,6 +922,17 @@ static inline void propagateArgumentInformation(
       propagateFromOperand(CI.getOperand(1));
       return;
     }
+  }
+
+  if (Name == "__kmpc_fork_call" && CI.arg_size() >= 3 &&
+      isa<Function>(CI.getArgOperand(2)->stripPointerCasts())) {
+    for (size_t i = 3; i < CI.arg_size(); ++i) {
+      if (CI.getAttributes().hasParamAttr(i, "enzyme_inactive"))
+        continue;
+      if (propagateFromOperand(CI.getArgOperand(i)))
+        break;
+    }
+    return;
   }
 
   // For other calls, check all operands of the instruction
@@ -1296,9 +1319,51 @@ bool isValuePotentiallyUsedAsPointer(llvm::Value *val) {
     for (auto u : cur->users()) {
       if (isa<ReturnInst>(u))
         return true;
+      if (isa<CmpInst>(u) || isa<SIToFPInst>(u) || isa<UIToFPInst>(u) ||
+          isa<FPToSIInst>(u) || isa<FPToUIInst>(u) || isa<FPExtInst>(u) ||
+          isa<FPTruncInst>(u))
+        continue;
+      if ((isa<UnaryOperator>(u) || isa<BinaryOperator>(u) ||
+           isa<IntrinsicInst>(u)) &&
+          u->getType()->isFPOrFPVectorTy())
+        continue;
       if (!cast<Instruction>(u)->mayReadOrWriteMemory()) {
         todo.push_back(u);
         continue;
+      }
+      if (auto *store = dyn_cast<StoreInst>(u)) {
+        if (!store->isVolatile() && store->getValueOperand() == cur) {
+          if (auto *spillSlot =
+                  dyn_cast<AllocaInst>(store->getPointerOperand())) {
+            bool validSpill = true;
+            for (User *spillUser : spillSlot->users()) {
+              if (auto *spillStore = dyn_cast<StoreInst>(spillUser)) {
+                if (!spillStore->isVolatile() &&
+                    spillStore->getPointerOperand() == spillSlot &&
+                    spillStore->getValueOperand() != spillSlot)
+                  continue;
+              }
+              if (auto *spillLoad = dyn_cast<LoadInst>(spillUser)) {
+                if (!spillLoad->isVolatile())
+                  continue;
+              }
+              if (auto *spillIntrinsic = dyn_cast<IntrinsicInst>(spillUser)) {
+                if (spillIntrinsic->isLifetimeStartOrEnd() ||
+                    isDebugFunction(spillIntrinsic->getCalledFunction()))
+                  continue;
+              }
+              validSpill = false;
+              break;
+            }
+            if (validSpill) {
+              for (User *spillUser : spillSlot->users()) {
+                if (auto *spillLoad = dyn_cast<LoadInst>(spillUser))
+                  todo.push_back(spillLoad);
+              }
+              continue;
+            }
+          }
+        }
       }
       if (auto *CompareExchange = dyn_cast<AtomicCmpXchgInst>(u)) {
         if (CompareExchange->getPointerOperand() != cur &&
@@ -3064,6 +3129,281 @@ bool ActivityAnalyzer::isInstructionInactiveFromOrigin(TypeResults const &TR,
   }
 }
 
+/// Return the outlined OpenMP microtask invoked by `__kmpc_fork_call`, or
+/// nullptr if \p call is not a matching fork call.
+static Function *getOMPMicrotask(const CallBase &call) {
+  if (call.arg_size() < 3 || getFuncNameFromCall(&call) != "__kmpc_fork_call")
+    return nullptr;
+  auto *task = dyn_cast<Function>(call.getArgOperand(2)->stripPointerCasts());
+  if (!task)
+    return nullptr;
+  if (call.arg_size() - 3 != task->getFunctionType()->getNumParams() - 2)
+    return nullptr;
+  return task;
+}
+
+/// Return true if \p value is an integer expression built exclusively from
+/// constants, comparisons, integer casts/arithmetic, and non-escaping stack
+/// slots storing only such values.
+static bool isGuaranteedInactiveScalarValue(Value *value,
+                                            SmallPtrSetImpl<Value *> &visited) {
+  if (!value->getType()->isIntOrIntVectorTy())
+    return false;
+  if (!visited.insert(value).second)
+    return true;
+  if (isa<ConstantInt>(value) || isa<UndefValue>(value) || isa<CmpInst>(value))
+    return true;
+  if (isa<ZExtInst>(value) || isa<SExtInst>(value) || isa<TruncInst>(value)) {
+    Value *operand = cast<CastInst>(value)->getOperand(0);
+    if (!operand->getType()->isIntOrIntVectorTy())
+      return false;
+    return operand->getType()->getScalarSizeInBits() == 1 ||
+           isGuaranteedInactiveScalarValue(operand, visited);
+  }
+  if (auto *binaryOp = dyn_cast<BinaryOperator>(value)) {
+    return isGuaranteedInactiveScalarValue(binaryOp->getOperand(0), visited) &&
+           isGuaranteedInactiveScalarValue(binaryOp->getOperand(1), visited);
+  }
+  if (auto *selectInst = dyn_cast<SelectInst>(value)) {
+    return isGuaranteedInactiveScalarValue(selectInst->getTrueValue(),
+                                           visited) &&
+           isGuaranteedInactiveScalarValue(selectInst->getFalseValue(),
+                                           visited);
+  }
+  if (auto *phi = dyn_cast<PHINode>(value)) {
+    if (phi->getNumIncomingValues() == 0)
+      return false;
+    for (Value *incoming : phi->incoming_values()) {
+      if (!isGuaranteedInactiveScalarValue(incoming, visited))
+        return false;
+    }
+    return true;
+  }
+  if (auto *load = dyn_cast<LoadInst>(value)) {
+    if (load->isVolatile())
+      return false;
+    auto *allocaInst = dyn_cast<AllocaInst>(load->getPointerOperand());
+    if (!allocaInst || allocaInst->use_empty())
+      return false;
+    for (User *user : allocaInst->users()) {
+      if (auto *userLoad = dyn_cast<LoadInst>(user)) {
+        if (userLoad->isVolatile())
+          return false;
+        continue;
+      }
+      if (auto *intrinsic = dyn_cast<IntrinsicInst>(user)) {
+        if (intrinsic->isLifetimeStartOrEnd() ||
+            isDebugFunction(intrinsic->getCalledFunction()))
+          continue;
+        return false;
+      }
+      if (auto *store = dyn_cast<StoreInst>(user)) {
+        if (store->isVolatile() || store->getPointerOperand() != allocaInst ||
+            store->getValueOperand() == allocaInst ||
+            !isGuaranteedInactiveScalarValue(store->getValueOperand(), visited))
+          return false;
+        continue;
+      }
+      return false;
+    }
+    return true;
+  }
+  return false;
+}
+
+/// Summarize how \p task uses pointer parameter \p paramIdx: whether the
+/// pointer itself never escapes (\p noCapture), whether neither the parameter
+/// nor any pointer loaded from it is modified (\p noDeepWrite), and whether
+/// any modification writes only guaranteed-inactive integer scalars directly
+/// into the parameter (\p noActiveWrite).
+static void analyzeOMPMicrotaskArg(Function *task, unsigned paramIdx,
+                                   bool &noCapture, bool &noDeepWrite,
+                                   bool &noActiveWrite) {
+  noCapture = false;
+  noDeepWrite = false;
+  noActiveWrite = false;
+  if (!task || paramIdx >= task->arg_size())
+    return;
+
+  Argument *param = task->getArg(paramIdx);
+  if (task->empty()) {
+    noCapture = param->hasNoCaptureAttr();
+    noDeepWrite = isReadOnly(task, paramIdx);
+    noActiveWrite = noDeepWrite;
+    return;
+  }
+
+  noCapture = true;
+  noDeepWrite = true;
+  noActiveWrite = true;
+
+  SmallVector<std::pair<Value *, unsigned>, 8> worklist = {{param, 0}};
+  SmallSet<std::pair<Value *, unsigned>, 8> seen;
+
+  while (!worklist.empty()) {
+    auto [ptrVal, depth] = worklist.pop_back_val();
+    if (!seen.insert({ptrVal, depth}).second)
+      continue;
+
+    for (User *user : ptrVal->users()) {
+      auto *inst = dyn_cast<Instruction>(user);
+      if (!inst) {
+        if (depth == 0)
+          noCapture = false;
+        noDeepWrite = false;
+        noActiveWrite = false;
+        continue;
+      }
+      if (isa<GetElementPtrInst>(inst) || isa<BitCastInst>(inst) ||
+          isa<AddrSpaceCastInst>(inst)) {
+        worklist.push_back({inst, depth});
+        continue;
+      }
+      if (auto *intrinsic = dyn_cast<IntrinsicInst>(inst)) {
+        if (intrinsic->isLifetimeStartOrEnd())
+          continue;
+      }
+      if (auto *store = dyn_cast<StoreInst>(inst)) {
+        if (!store->isVolatile() && store->getValueOperand() == ptrVal) {
+          if (auto *spillSlot =
+                  dyn_cast<AllocaInst>(store->getPointerOperand())) {
+            bool validSpill = true;
+            for (User *spillUser : spillSlot->users()) {
+              if (spillUser == store)
+                continue;
+              if (auto *spillLoad = dyn_cast<LoadInst>(spillUser)) {
+                if (!spillLoad->isVolatile())
+                  continue;
+              }
+              if (auto *spillIntrinsic = dyn_cast<IntrinsicInst>(spillUser)) {
+                if (spillIntrinsic->isLifetimeStartOrEnd() ||
+                    isDebugFunction(spillIntrinsic->getCalledFunction()))
+                  continue;
+              }
+              validSpill = false;
+              break;
+            }
+            if (validSpill) {
+              for (User *spillUser : spillSlot->users()) {
+                if (auto *spillLoad = dyn_cast<LoadInst>(spillUser))
+                  worklist.push_back({spillLoad, depth});
+              }
+              continue;
+            }
+          }
+          if (depth == 0)
+            noCapture = false;
+          noDeepWrite = false;
+          noActiveWrite = false;
+          continue;
+        }
+        noDeepWrite = false;
+        SmallPtrSet<Value *, 8> scalarVisited;
+        if (store->isVolatile() || depth > 0 ||
+            !isGuaranteedInactiveScalarValue(store->getValueOperand(),
+                                             scalarVisited)) {
+          noActiveWrite = false;
+        }
+        continue;
+      }
+      if (auto *load = dyn_cast<LoadInst>(inst)) {
+        if (load->getType()->isPointerTy()) {
+          if (depth < 4) {
+            worklist.push_back({load, depth + 1});
+          } else {
+            noDeepWrite = false;
+            noActiveWrite = false;
+          }
+        } else if (isValuePotentiallyUsedAsPointer(load)) {
+          noDeepWrite = false;
+          noActiveWrite = false;
+        }
+        continue;
+      }
+      if (auto *cmpXchg = dyn_cast<AtomicCmpXchgInst>(inst)) {
+        if (cmpXchg->getCompareOperand() == ptrVal ||
+            cmpXchg->getNewValOperand() == ptrVal) {
+          if (depth == 0)
+            noCapture = false;
+          noDeepWrite = false;
+          noActiveWrite = false;
+          continue;
+        }
+        noDeepWrite = false;
+        SmallPtrSet<Value *, 8> scalarVisited;
+        if (cmpXchg->isVolatile() || depth > 0 ||
+            !isGuaranteedInactiveScalarValue(cmpXchg->getNewValOperand(),
+                                             scalarVisited) ||
+            isValuePotentiallyUsedAsPointer(cmpXchg)) {
+          noActiveWrite = false;
+        }
+        continue;
+      }
+      if (auto *rmw = dyn_cast<AtomicRMWInst>(inst)) {
+        if (rmw->getValOperand() == ptrVal) {
+          if (depth == 0)
+            noCapture = false;
+          noDeepWrite = false;
+          noActiveWrite = false;
+          continue;
+        }
+        noDeepWrite = false;
+        SmallPtrSet<Value *, 8> scalarVisited;
+        if (rmw->isVolatile() || depth > 0 || rmw->isFloatingPointOperation() ||
+            !isGuaranteedInactiveScalarValue(rmw->getValOperand(),
+                                             scalarVisited) ||
+            isValuePotentiallyUsedAsPointer(rmw)) {
+          noActiveWrite = false;
+        }
+        continue;
+      }
+      if (auto *subCall = dyn_cast<CallBase>(inst)) {
+        Function *subFn = getFunctionFromCall(subCall);
+        if (isDebugFunction(subFn))
+          continue;
+        if (subCall->getCalledOperand() == ptrVal) {
+          if (depth == 0)
+            noCapture = false;
+          noDeepWrite = false;
+          noActiveWrite = false;
+          continue;
+        }
+        for (unsigned subIdx = 0; subIdx < subCall->arg_size(); ++subIdx) {
+          if (subCall->getArgOperand(subIdx) != ptrVal)
+            continue;
+          if (subFn && !subFn->empty() && subIdx < subFn->arg_size() &&
+              seen.size() < 256) {
+            worklist.push_back({subFn->getArg(subIdx), depth});
+            continue;
+          }
+          if (!isNoCapture(subCall, subIdx)) {
+            if (depth == 0)
+              noCapture = false;
+            noDeepWrite = false;
+            noActiveWrite = false;
+          }
+          if (!isReadOnly(subCall, subIdx)) {
+            noDeepWrite = false;
+            noActiveWrite = false;
+          }
+        }
+        continue;
+      }
+      if (depth == 0)
+        noCapture = false;
+      noDeepWrite = false;
+      noActiveWrite = false;
+    }
+  }
+
+  if (param->hasNoCaptureAttr())
+    noCapture = true;
+  if (isReadOnly(task, paramIdx)) {
+    noDeepWrite = true;
+    noActiveWrite = true;
+  }
+}
+
 /// Is the value free of any active uses
 bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
                                                 llvm::Value *const val,
@@ -3418,6 +3758,7 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
 
     if (auto call = dyn_cast<CallInst>(a)) {
       bool mayWrite = false;
+      bool mayActiveWrite = false;
       bool mayRead = false;
       bool mayCapture = false;
 
@@ -3426,15 +3767,36 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
       if (isDebugFunction(F))
         continue;
 
+      Function *ompMicrotask = getOMPMicrotask(*call);
+
       for (size_t Idx = 0; Idx < call->arg_size(); ++Idx) {
         if (call->getArgOperand(Idx) != parent)
           continue;
 
         bool NoCapture = isNoCapture(call, Idx);
+        bool ReadOnly = isReadOnly(call, Idx);
+        bool NoActiveWrite = ReadOnly;
+        bool WriteOnly = isWriteOnly(call, Idx);
+
+        if (ompMicrotask) {
+          if (Idx == 0 || Idx == 2) {
+            NoCapture = true;
+            ReadOnly = true;
+            NoActiveWrite = true;
+          } else if (Idx >= 3) {
+            bool taskNoCapture = false;
+            bool taskNoDeepWrite = false;
+            bool taskNoActiveWrite = false;
+            analyzeOMPMicrotaskArg(ompMicrotask, Idx - 1, taskNoCapture,
+                                   taskNoDeepWrite, taskNoActiveWrite);
+            NoCapture |= taskNoCapture;
+            ReadOnly |= taskNoDeepWrite;
+            NoActiveWrite |= taskNoActiveWrite;
+            WriteOnly |= isWriteOnly(ompMicrotask, Idx - 1);
+          }
+        }
 
         mayCapture |= !NoCapture;
-
-        bool ReadOnly = isReadOnly(call, Idx);
 
         if (!ReadOnly && isLocalReadOnlyOrThrow(call) &&
             !(call->getAttributeAtIndex(llvm::AttributeList::FirstArgIndex +
@@ -3447,11 +3809,11 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
                   .isValid()) &&
             !(Idx == 0 && call->hasStructRetAttr())) {
           ReadOnly = true;
+          NoActiveWrite = true;
         }
 
         mayWrite |= !ReadOnly;
-
-        bool WriteOnly = isWriteOnly(call, Idx);
+        mayActiveWrite |= !NoActiveWrite;
 
         mayRead |= !WriteOnly;
       }
@@ -3473,7 +3835,7 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
           }
           continue;
         }
-        if (!mayWrite && UA == UseActivity::OnlyStores) {
+        if (!mayActiveWrite && UA == UseActivity::OnlyStores) {
           if (EnzymePrintActivity) {
             llvm::errs() << "Value found non-writing use:" << *val << " user "
                          << *call << "\n";
