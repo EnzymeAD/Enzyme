@@ -53,6 +53,35 @@
 // Helper instruction visitor that generates adjoints
 class AdjointGenerator : public llvm::InstVisitor<AdjointGenerator> {
 private:
+  /// Return whether an untyped integer intrinsic can be treated as carrying no
+  /// derivative under loose type analysis.
+  static bool isLooseTypeIntegerIntrinsic(llvm::Intrinsic::ID IntrinsicID) {
+    switch (IntrinsicID) {
+    case llvm::Intrinsic::abs:
+    case llvm::Intrinsic::bitreverse:
+    case llvm::Intrinsic::bswap:
+    case llvm::Intrinsic::ctlz:
+    case llvm::Intrinsic::ctpop:
+    case llvm::Intrinsic::cttz:
+    case llvm::Intrinsic::sadd_sat:
+    case llvm::Intrinsic::sadd_with_overflow:
+    case llvm::Intrinsic::smax:
+    case llvm::Intrinsic::smin:
+    case llvm::Intrinsic::smul_with_overflow:
+    case llvm::Intrinsic::ssub_sat:
+    case llvm::Intrinsic::ssub_with_overflow:
+    case llvm::Intrinsic::uadd_sat:
+    case llvm::Intrinsic::uadd_with_overflow:
+    case llvm::Intrinsic::umax:
+    case llvm::Intrinsic::umin:
+    case llvm::Intrinsic::umul_with_overflow:
+    case llvm::Intrinsic::usub_sat:
+    case llvm::Intrinsic::usub_with_overflow:
+      return true;
+    default:
+      return false;
+    }
+  }
   // Type of code being generated (forward, reverse, or both)
   const DerivativeMode Mode;
 
@@ -4564,13 +4593,7 @@ public:
       default:
         if (gutils->isConstantInstruction(&I))
           return false;
-        if (ID == Intrinsic::umax || ID == Intrinsic::smax ||
-            ID == Intrinsic::abs || ID == Intrinsic::sadd_with_overflow ||
-            ID == Intrinsic::uadd_with_overflow ||
-            ID == Intrinsic::smul_with_overflow ||
-            ID == Intrinsic::umul_with_overflow ||
-            ID == Intrinsic::ssub_with_overflow ||
-            ID == Intrinsic::usub_with_overflow)
+        if (isLooseTypeIntegerIntrinsic(ID))
           if (looseTypeAnalysis) {
             EmitWarning("CannotDeduceType", I,
                         "failed to deduce type of intrinsic ", I);
@@ -4736,13 +4759,7 @@ public:
       default:
         if (gutils->isConstantInstruction(&I))
           return false;
-        if (ID == Intrinsic::umax || ID == Intrinsic::smax ||
-            ID == Intrinsic::abs || ID == Intrinsic::sadd_with_overflow ||
-            ID == Intrinsic::uadd_with_overflow ||
-            ID == Intrinsic::smul_with_overflow ||
-            ID == Intrinsic::umul_with_overflow ||
-            ID == Intrinsic::ssub_with_overflow ||
-            ID == Intrinsic::usub_with_overflow)
+        if (isLooseTypeIntegerIntrinsic(ID))
           if (looseTypeAnalysis) {
             EmitWarning("CannotDeduceType", I,
                         "failed to deduce type of intrinsic ", I);
@@ -4820,13 +4837,7 @@ public:
         }
         if (gutils->isConstantInstruction(&I))
           return false;
-        if (ID == Intrinsic::umax || ID == Intrinsic::smax ||
-            ID == Intrinsic::abs || ID == Intrinsic::sadd_with_overflow ||
-            ID == Intrinsic::uadd_with_overflow ||
-            ID == Intrinsic::smul_with_overflow ||
-            ID == Intrinsic::umul_with_overflow ||
-            ID == Intrinsic::ssub_with_overflow ||
-            ID == Intrinsic::usub_with_overflow)
+        if (isLooseTypeIntegerIntrinsic(ID))
           if (looseTypeAnalysis) {
             EmitWarning("CannotDeduceType", I,
                         "failed to deduce type of intrinsic ", I);
