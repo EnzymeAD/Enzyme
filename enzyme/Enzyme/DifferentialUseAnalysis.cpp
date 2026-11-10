@@ -688,6 +688,26 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
       }
     }
 
+    if (!shadow) {
+      if ((funcName == "__kmpc_reduce" || funcName == "__kmpc_reduce_nowait" ||
+           funcName == "__kmpc_end_reduce" ||
+           funcName == "__kmpc_end_reduce_nowait") &&
+          CI->arg_size() >= 2 &&
+          (val == CI->getArgOperand(0) || val == CI->getArgOperand(1))) {
+        if (EnzymePrintDiffUse)
+          llvm::errs() << " Need direct primal of " << *val
+                       << " in reverse from OpenMP reduction " << *user << '\n';
+        return true;
+      }
+      if (funcName == "__kmpc_critical" || funcName == "__kmpc_end_critical") {
+        if (EnzymePrintDiffUse)
+          llvm::errs() << " Need direct primal of " << *val
+                       << " in reverse from OpenMP runtime call " << *user
+                       << '\n';
+        return true;
+      }
+    }
+
     bool writeOnlyNoCapture = true;
 
     if (shouldDisableNoWrite(CI)) {

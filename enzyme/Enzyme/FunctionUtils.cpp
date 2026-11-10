@@ -1472,14 +1472,133 @@ static void LowerDesulAtomicFetchOper(Function &F) {
   }
 }
 
+/// Erase \p allocaInst when it is only written to (never read or escaped), so
+/// private pointers stored into a dead OpenMP reduction pointer list become
+/// promotable by `PromotePass`.
+static void eraseWriteOnlyAlloca(AllocaInst *allocaInst) {
+  SmallVector<Value *, 8> worklist = {allocaInst};
+  SmallPtrSet<Value *, 8> visited = {allocaInst};
+  SmallVector<Instruction *, 8> leafUsers;
+  SmallVector<Instruction *, 8> derivedPtrs;
+
+  while (!worklist.empty()) {
+    Value *current = worklist.pop_back_val();
+    for (User *user : current->users()) {
+      auto *inst = dyn_cast<Instruction>(user);
+      if (!inst)
+        return;
+      if (auto *store = dyn_cast<StoreInst>(inst)) {
+        if (store->isVolatile() || store->getPointerOperand() != current ||
+            store->getValueOperand() == current)
+          return;
+        leafUsers.push_back(store);
+        continue;
+      }
+      if (auto *intrinsic = dyn_cast<IntrinsicInst>(inst)) {
+        if (!intrinsic->isLifetimeStartOrEnd() &&
+            !isDebugFunction(intrinsic->getCalledFunction()))
+          return;
+        leafUsers.push_back(intrinsic);
+        continue;
+      }
+      if (isa<GetElementPtrInst>(inst) || isa<BitCastInst>(inst) ||
+          isa<AddrSpaceCastInst>(inst)) {
+        if (visited.insert(inst).second) {
+          derivedPtrs.push_back(inst);
+          worklist.push_back(inst);
+        }
+        continue;
+      }
+      return;
+    }
+  }
+
+  SmallPtrSet<Instruction *, 8> erasedLeaves;
+  for (Instruction *leaf : leafUsers) {
+    if (erasedLeaves.insert(leaf).second)
+      leaf->eraseFromParent();
+  }
+  for (auto it = derivedPtrs.rbegin(); it != derivedPtrs.rend(); ++it)
+    (*it)->eraseFromParent();
+  allocaInst->eraseFromParent();
+}
+
+/// Duplicate a tail-merged `__kmpc_end_reduce` or `__kmpc_end_reduce_nowait`
+/// block into one block per predecessor so the `case 1` critical combiner and
+/// the `case 2` atomic combiner do not share a single reverse block.
+static bool unmergeOMPEndReduceBlock(CallBase *endCall) {
+  BasicBlock *endBlock = endCall->getParent();
+  if (!endBlock->hasNPredecessorsOrMore(2))
+    return false;
+  if (endBlock->phis().empty() && endCall == getFirstNonPHI(endBlock) &&
+      endCall->getNextNode() != nullptr &&
+      (!endBlock->getSingleSuccessor() ||
+       endCall->getNextNode() != endBlock->getTerminator())) {
+    endBlock->splitBasicBlock(endCall->getNextNode(),
+                              endBlock->getName() + ".tail");
+  }
+  BasicBlock *succBlock = endBlock->getSingleSuccessor();
+  if (!succBlock || succBlock == endBlock)
+    return false;
+  for (Instruction &inst : *endBlock) {
+    for (User *user : inst.users()) {
+      auto *userInst = dyn_cast<Instruction>(user);
+      if (!userInst || userInst->getParent() != endBlock)
+        return false;
+    }
+  }
+
+  SmallVector<BasicBlock *, 4> preds(predecessors(endBlock));
+  Function *parentFn = endBlock->getParent();
+  for (size_t i = 1; i < preds.size(); ++i) {
+    BasicBlock *pred = preds[i];
+    BasicBlock *clonedBlock = BasicBlock::Create(
+        endBlock->getContext(), endBlock->getName() + ".omp_end_reduce",
+        parentFn, endBlock->getNextNode());
+    IRBuilder<> builder(clonedBlock);
+    ValueToValueMapTy valueMap;
+    for (Instruction &inst : *endBlock) {
+      if (auto *phi = dyn_cast<PHINode>(&inst)) {
+        valueMap[phi] = phi->getIncomingValueForBlock(pred);
+        continue;
+      }
+      Instruction *clonedInst = inst.clone();
+      RemapInstruction(clonedInst, valueMap,
+                       RF_NoModuleLevelChanges | RF_IgnoreMissingLocals);
+      builder.Insert(clonedInst);
+      valueMap[&inst] = clonedInst;
+    }
+    for (PHINode &phi : endBlock->phis())
+      phi.removeIncomingValue(pred, /*DeletePHIIfEmpty=*/false);
+    for (PHINode &succPhi : succBlock->phis())
+      succPhi.addIncoming(succPhi.getIncomingValueForBlock(endBlock),
+                          clonedBlock);
+    Instruction *predTerm = pred->getTerminator();
+    for (unsigned succIdx = 0, numSuccs = predTerm->getNumSuccessors();
+         succIdx < numSuccs; ++succIdx) {
+      if (predTerm->getSuccessor(succIdx) == endBlock)
+        predTerm->setSuccessor(succIdx, clonedBlock);
+    }
+  }
+  for (PHINode &phi : make_early_inc_range(endBlock->phis())) {
+    if (phi.getNumIncomingValues() == 1) {
+      phi.replaceAllUsesWith(phi.getIncomingValue(0));
+      phi.eraseFromParent();
+    }
+  }
+  return true;
+}
+
 static void SimplifyMPIQueries(Function &NewF, FunctionAnalysisManager &FAM) {
   DominatorTree &DT = FAM.getResult<DominatorTreeAnalysis>(NewF);
   SmallVector<CallBase *, 4> Todo;
   SmallVector<CallBase *, 4> OMPBounds;
+  SmallVector<CallBase *, 4> OMPReduces;
+  SmallVector<CallBase *, 4> OMPEndReduces;
   for (auto &BB : NewF) {
     for (auto &I : BB) {
       if (auto CI = dyn_cast<CallBase>(&I)) {
-        Function *Fn = CI->getCalledFunction();
+        Function *Fn = getFunctionFromCall(CI);
         if (Fn == nullptr)
           continue;
         auto name = getFuncName(Fn);
@@ -1493,10 +1612,18 @@ static void SimplifyMPIQueries(Function &NewF, FunctionAnalysisManager &FAM) {
             name == "__kmpc_for_static_init_8u") {
           OMPBounds.push_back(CI);
         }
+        if ((name == "__kmpc_reduce" || name == "__kmpc_reduce_nowait") &&
+            CI->arg_size() >= 7) {
+          OMPReduces.push_back(CI);
+        }
+        if (name == "__kmpc_end_reduce" || name == "__kmpc_end_reduce_nowait") {
+          OMPEndReduces.push_back(CI);
+        }
       }
     }
   }
-  if (Todo.size() == 0 && OMPBounds.size() == 0)
+  if (Todo.size() == 0 && OMPBounds.size() == 0 && OMPReduces.size() == 0 &&
+      OMPEndReduces.size() == 0)
     return;
   for (auto CI : Todo) {
     IRBuilder<> B(CI);
@@ -1582,12 +1709,47 @@ static void SimplifyMPIQueries(Function &NewF, FunctionAnalysisManager &FAM) {
       addCallSiteNoCapture(Bound, i);
     }
   }
+  for (CallBase *reduceCall : OMPReduces) {
+    bool hasCriticalSwitch = false;
+    auto *condType = dyn_cast<IntegerType>(reduceCall->getType());
+    if (condType) {
+      for (User *user : reduceCall->users()) {
+        if (auto *switchInst = dyn_cast<SwitchInst>(user)) {
+          if (switchInst->getCondition() == reduceCall &&
+              switchInst->findCaseValue(ConstantInt::get(condType, 1)) !=
+                  switchInst->case_default()) {
+            hasCriticalSwitch = true;
+            break;
+          }
+        }
+      }
+    }
+    if (!hasCriticalSwitch)
+      continue;
+    Value *oldReduceData = reduceCall->getArgOperand(4);
+    Value *oldReduceFunc = reduceCall->getArgOperand(5);
+    if (auto *dataPtrTy = dyn_cast<PointerType>(oldReduceData->getType()))
+      reduceCall->setArgOperand(4, ConstantPointerNull::get(dataPtrTy));
+    if (auto *funcPtrTy = dyn_cast<PointerType>(oldReduceFunc->getType()))
+      reduceCall->setArgOperand(5, ConstantPointerNull::get(funcPtrTy));
+    if (auto *redListAlloca =
+            dyn_cast<AllocaInst>(getBaseObject(oldReduceData))) {
+      eraseWriteOnlyAlloca(redListAlloca);
+    }
+  }
+  bool cfgModified = false;
+  for (CallBase *endCall : OMPEndReduces) {
+    if (unmergeOMPEndReduceBlock(endCall))
+      cfgModified = true;
+  }
   PreservedAnalyses PA;
   PA.preserve<AssumptionAnalysis>();
   PA.preserve<TargetLibraryAnalysis>();
-  PA.preserve<LoopAnalysis>();
-  PA.preserve<DominatorTreeAnalysis>();
-  PA.preserve<PostDominatorTreeAnalysis>();
+  if (!cfgModified) {
+    PA.preserve<LoopAnalysis>();
+    PA.preserve<DominatorTreeAnalysis>();
+    PA.preserve<PostDominatorTreeAnalysis>();
+  }
   FAM.invalidate(NewF, PA);
 }
 
@@ -4403,8 +4565,30 @@ Function *PreProcessCache::preprocessForClone(Function *F,
   // Only the reverse pass mirrors preserve regions, so only it needs the
   // one-end invariant.  The augmented primal and split forward mode share
   // their preprocessing with it, so everything but plain forward mode runs it.
-  if (mode != DerivativeMode::ForwardMode)
+  if (mode != DerivativeMode::ForwardMode) {
     CanonicalizeGCPreserveEnds(*NewF, FAM);
+    SmallVector<CallBase *, 4> ompEndReduces;
+    for (BasicBlock &BB : *NewF) {
+      for (Instruction &I : BB) {
+        if (auto *CI = dyn_cast<CallBase>(&I)) {
+          StringRef name = getFuncNameFromCall(CI);
+          if (name == "__kmpc_end_reduce" || name == "__kmpc_end_reduce_nowait")
+            ompEndReduces.push_back(CI);
+        }
+      }
+    }
+    bool ompCfgModified = false;
+    for (CallBase *endCall : ompEndReduces) {
+      if (unmergeOMPEndReduceBlock(endCall))
+        ompCfgModified = true;
+    }
+    if (ompCfgModified) {
+      PreservedAnalyses PA;
+      PA.preserve<AssumptionAnalysis>();
+      PA.preserve<TargetLibraryAnalysis>();
+      FAM.invalidate(*NewF, PA);
+    }
+  }
 
   {
     SmallPtrSet<Function *, 1> calls_todo;

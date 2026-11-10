@@ -5313,6 +5313,42 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
       }
       return;
     }
+    if (funcName == "__kmpc_reduce" || funcName == "__kmpc_reduce_nowait") {
+      updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      updateAnalysis(call.getArgOperand(0),
+                     TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      updateAnalysis(call.getArgOperand(1),
+                     TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      updateAnalysis(call.getArgOperand(2),
+                     TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      updateAnalysis(call.getArgOperand(3),
+                     TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      updateAnalysis(call.getArgOperand(4),
+                     TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      updateAnalysis(call.getArgOperand(5),
+                     TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      updateAnalysis(call.getArgOperand(6),
+                     TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      return;
+    }
+    if (funcName == "__kmpc_end_reduce" ||
+        funcName == "__kmpc_end_reduce_nowait" ||
+        funcName == "__kmpc_critical" || funcName == "__kmpc_end_critical") {
+      updateAnalysis(call.getArgOperand(0),
+                     TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      updateAnalysis(call.getArgOperand(1),
+                     TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      updateAnalysis(call.getArgOperand(2),
+                     TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      return;
+    }
+    if (funcName == "__kmpc_barrier" || funcName == "__kmpc_for_static_fini") {
+      updateAnalysis(call.getArgOperand(0),
+                     TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      updateAnalysis(call.getArgOperand(1),
+                     TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      return;
+    }
     if (funcName == "__kmpc_for_static_init_4" ||
         funcName == "__kmpc_for_static_init_4u" ||
         funcName == "__kmpc_for_static_init_8" ||
