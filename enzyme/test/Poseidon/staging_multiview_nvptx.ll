@@ -30,14 +30,14 @@
 ; IR-NEXT: getelementptr i8, ptr {{%[0-9]+}}, i64 4
 ; IR-NEXT: load float
 
-; ModuleID = '/mnt4/sbrantq/numerics/docs/mfem-poseidon-2026-10/lanes/N/wt-poseidon/enzyme/test/Poseidon/Inputs/staging_multiview/multiview_kernel.cu'
-source_filename = "/mnt4/sbrantq/numerics/docs/mfem-poseidon-2026-10/lanes/N/wt-poseidon/enzyme/test/Poseidon/Inputs/staging_multiview/multiview_kernel.cu"
+; ModuleID = 'Inputs/staging_multiview/multiview_kernel.cu'
+source_filename = "Inputs/staging_multiview/multiview_kernel.cu"
 target datalayout = "e-p6:32:32-i64:64-i128:128-i256:256-v16:16-v32:32-n16:32:64"
 target triple = "nvptx64-nvidia-cuda"
 
 @_ZZ9multiviewPKdS0_PdE2sm = internal unnamed_addr addrspace(3) global [2 x [64 x double]] undef, align 8
 @.str = private unnamed_addr constant [9 x i8] c"poseidon\00", section "llvm.metadata"
-@.str1 = private unnamed_addr constant [136 x i8] c"/mnt4/sbrantq/numerics/docs/mfem-poseidon-2026-10/lanes/N/wt-poseidon/enzyme/test/Poseidon/Inputs/staging_multiview/multiview_kernel.cu\00", section "llvm.metadata"
+@.str1 = private unnamed_addr constant [45 x i8] c"Inputs/staging_multiview/multiview_kernel.cu\00", section "llvm.metadata"
 @llvm.global.annotations = appending global [1 x { ptr, ptr, ptr, i32, ptr }] [{ ptr, ptr, ptr, i32, ptr } { ptr @_Z9multiviewPKdS0_Pd, ptr @.str, ptr @.str1, i32 10, ptr null }], section "llvm.metadata"
 
 ; Function Attrs: convergent mustprogress noinline norecurse nounwind

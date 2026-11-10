@@ -19,13 +19,12 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-permissions:
-  contents: write
-
 jobs:
   publish:
     name: Poseidon Explorer LLVM 21
     runs-on: ubuntu-22.04
+    permissions:
+      contents: write
     timeout-minutes: 60
     env:
       LLVM: 21
@@ -44,9 +43,12 @@ jobs:
         version: '8.15'
         variant: 'CS'
 
-    - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+    - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
 
-    - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+    - name: Checkout Enzyme repository
+      uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      with:
+        persist-credentials: false
 
     - name: Configure
       run: |
@@ -79,7 +81,9 @@ jobs:
           $P/poseidon-ce.sh -g -O2 -o smoke $EX 2>&1 | tee smoke.log
           grep -q 'Applying solution' smoke.log
           ./smoke
-          ! env -u POSEIDON_CE_COST_MODEL $P/poseidon-ce.sh -O2 -o none $EX 2>none.log
+          if env -u POSEIDON_CE_COST_MODEL $P/poseidon-ce.sh -O2 -o none $EX 2>none.log; then
+            exit 1
+          fi
           grep -q 'no cost model at' none.log
 
     - name: Publish
