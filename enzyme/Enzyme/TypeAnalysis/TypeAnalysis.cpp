@@ -2143,11 +2143,61 @@ void TypeAnalyzer::visitStoreInst(StoreInst &I) {
     // to a nullptr which has type [-1, -1]: Anything. While storing to a
     // nullptr is obviously bad, this doesn't mean the value we're storing is an
     // Anything
-    updateAnalysis(I.getValueOperand(),
-                   getAnalysis(I.getPointerOperand())
-                       .PurgeAnything()
-                       .Lookup(StoreSize, DL),
-                   &I);
+    auto upVal = getAnalysis(I.getPointerOperand())
+                     .PurgeAnything()
+                     .Lookup(StoreSize, DL);
+    APInt storeOffset(
+        DL.getIndexTypeSizeInBits(I.getPointerOperand()->getType()), 0);
+    Value *storeBase = I.getPointerOperand()->stripAndAccumulateConstantOffsets(
+        DL, storeOffset, /*AllowNonInbounds*/ true);
+    SmallVector<std::pair<Value *, bool>, 4> todo = {
+        {I.getValueOperand(), false}};
+    SmallPtrSet<Value *, 4> seen;
+    bool selfReferentialGEP = false;
+    while (!todo.empty()) {
+      auto [cur, sawGEP] = todo.pop_back_val();
+      if (!seen.insert(cur).second)
+        continue;
+      if (auto GEP = dyn_cast<GEPOperator>(cur)) {
+        if (!GEP->hasAllZeroIndices())
+          sawGEP = true;
+        todo.emplace_back(GEP->getPointerOperand(), sawGEP);
+        continue;
+      }
+      if (auto CI = dyn_cast<CastInst>(cur)) {
+        todo.emplace_back(CI->getOperand(0), sawGEP);
+        continue;
+      }
+      if (auto PN = dyn_cast<PHINode>(cur)) {
+        for (Value *inc : PN->incoming_values())
+          todo.emplace_back(inc, sawGEP);
+        continue;
+      }
+      if (auto SI = dyn_cast<SelectInst>(cur)) {
+        todo.emplace_back(SI->getTrueValue(), sawGEP);
+        todo.emplace_back(SI->getFalseValue(), sawGEP);
+        continue;
+      }
+      if (auto LI = dyn_cast<LoadInst>(cur)) {
+        if (sawGEP && LI->getPointerOperand()->getType() ==
+                          I.getPointerOperand()->getType()) {
+          APInt loadOffset(
+              DL.getIndexTypeSizeInBits(LI->getPointerOperand()->getType()), 0);
+          Value *loadBase =
+              LI->getPointerOperand()->stripAndAccumulateConstantOffsets(
+                  DL, loadOffset, /*AllowNonInbounds*/ true);
+          if (loadBase == storeBase && loadOffset == storeOffset) {
+            selfReferentialGEP = true;
+            break;
+          }
+        }
+      }
+    }
+    if (selfReferentialGEP) {
+      bool legal = true;
+      upVal = upVal.KeepMinusOne(legal);
+    }
+    updateAnalysis(I.getValueOperand(), upVal, &I);
   }
 }
 
