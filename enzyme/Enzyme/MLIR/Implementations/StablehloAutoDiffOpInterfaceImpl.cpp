@@ -366,6 +366,71 @@ static Value shStoreTyped(OpBuilder &b, Location loc, Value arr, Value slot, Val
       arr, reshaped, ValueRange{slot});
 }
 
+// Build stacked checkpoint buffer type: prepend nSlots to the original shape.
+// E.g. tensor<4x8xf64> with nSlots=3 → tensor<3x4x8xf64>.
+static RankedTensorType stackedCkptType(int64_t nSlots, RankedTensorType origTy) {
+  SmallVector<int64_t> shape;
+  shape.push_back(nSlots);
+  shape.append(origTy.getShape().begin(), origTy.getShape().end());
+  return RankedTensorType::get(shape, origTy.getElementType());
+}
+
+// Load one tensor from a stacked checkpoint buffer at the given slot.
+// arr has type tensor<nSlots × d1 × ... × dk × elemTy>, slot is tensor<i64>.
+// Returns tensor<d1 × ... × dk × elemTy>.
+static Value stackedLoad(OpBuilder &b, Location loc, Value arr, Value slot,
+                          RankedTensorType origTy) {
+  auto arrTy = cast<RankedTensorType>(arr.getType());
+  int64_t rank = arrTy.getRank();
+  // start_indices: [slot, 0, 0, ..., 0]
+  SmallVector<Value> startIndices;
+  startIndices.push_back(slot);
+  Value zero64 = stablehlo::ConstantOp::create(b, loc,
+      RankedTensorType::get({}, b.getI64Type()),
+      DenseElementsAttr::get(RankedTensorType::get({}, b.getI64Type()),
+                             b.getI64IntegerAttr(0)));
+  for (int64_t i = 1; i < rank; ++i)
+    startIndices.push_back(zero64);
+  // slice_sizes: [1, d1, d2, ..., dk]
+  SmallVector<int64_t> sliceSizes;
+  sliceSizes.push_back(1);
+  sliceSizes.append(origTy.getShape().begin(), origTy.getShape().end());
+  // Result of dynamic_slice is tensor<1 × d1 × ... × dk>
+  SmallVector<int64_t> sliceShape(sliceSizes);
+  auto sliceTy = RankedTensorType::get(sliceShape, arrTy.getElementType());
+  Value slice = stablehlo::DynamicSliceOp::create(b, loc, sliceTy, arr,
+      startIndices, b.getDenseI64ArrayAttr(sliceSizes));
+  return stablehlo::ReshapeOp::create(b, loc, origTy, slice);
+}
+
+// Store one tensor into a stacked checkpoint buffer at the given slot.
+// arr has type tensor<nSlots × d1 × ... × dk × elemTy>, slot is tensor<i64>.
+// val has type tensor<d1 × ... × dk × elemTy>.
+// Returns the updated buffer.
+static Value stackedStore(OpBuilder &b, Location loc, Value arr, Value slot,
+                           Value val) {
+  auto arrTy = cast<RankedTensorType>(arr.getType());
+  int64_t rank = arrTy.getRank();
+  auto valTy = cast<RankedTensorType>(val.getType());
+  // Reshape val: tensor<d1×...×dk> → tensor<1×d1×...×dk>
+  SmallVector<int64_t> expandedShape;
+  expandedShape.push_back(1);
+  expandedShape.append(valTy.getShape().begin(), valTy.getShape().end());
+  auto expandedTy = RankedTensorType::get(expandedShape, valTy.getElementType());
+  Value reshaped = stablehlo::ReshapeOp::create(b, loc, expandedTy, val);
+  // start_indices: [slot, 0, 0, ..., 0]
+  SmallVector<Value> startIndices;
+  startIndices.push_back(slot);
+  Value zero64 = stablehlo::ConstantOp::create(b, loc,
+      RankedTensorType::get({}, b.getI64Type()),
+      DenseElementsAttr::get(RankedTensorType::get({}, b.getI64Type()),
+                             b.getI64IntegerAttr(0)));
+  for (int64_t i = 1; i < rank; ++i)
+    startIndices.push_back(zero64);
+  return stablehlo::DynamicUpdateSliceOp::create(b, loc, arr.getType(),
+      arr, reshaped, startIndices);
+}
+
 // Build a stablehlo.while loop from [lb, ub) carrying `initArgs`.
 // condFn receives (builder, loc, args) and returns tensor<i1>.
 // bodyFn receives (builder, loc, args) and returns new args via stablehlo.return.
@@ -827,7 +892,8 @@ static SMResult shInlineSM(OpBuilder &b, Location loc,
 //   [14..14+N-1]  primalState : original tensor types
 //   [14+N..14+N+N]  ckptBuf_i : tensor<budget+1 × elemTy_i>
 //   [14+N+N+1]  ckptIdxBuf  : tensor<budget+1 × i64>
-//   [14+N+N+2]  done        : tensor<i1>
+//   [14+N+N+2]  done          : tensor<i1>
+//   [14+N+N+3]  stepsRemaining : tensor<i64>  (multi-step FORWARD counter)
 
 static SmallVector<Value>
 cacheWhileOnlineStablehloV2(stablehlo::WhileOp whileOp, int64_t budget,
@@ -844,10 +910,9 @@ cacheWhileOnlineStablehloV2(stablehlo::WhileOp whileOp, int64_t budget,
   ValueRange primalInits = newWhileOp.getOperands();
   size_t numCarried = primalInits.size();
 
-  // Helper: 1-d tensor<n×elemTy> for checkpoint buffer of a primal init.
+  // Stacked checkpoint buffer: tensor<(budget+1) × original_shape...>
   auto ckptTy = [&](Value init) -> RankedTensorType {
-    auto elemTy = cast<RankedTensorType>(init.getType()).getElementType();
-    return RankedTensorType::get({budget + 1}, elemTy);
+    return stackedCkptType(budget + 1, cast<RankedTensorType>(init.getType()));
   };
   auto ckptIdxTy = RankedTensorType::get({budget + 1}, builder.getI64Type());
 
@@ -878,6 +943,8 @@ cacheWhileOnlineStablehloV2(stablehlo::WhileOp whileOp, int64_t budget,
       DenseElementsAttr::get(ckptIdxTy, builder.getI64IntegerAttr(-1))));
   // [14+N+N+2] done = false
   initArgs.push_back(shBool(builder, loc, false));
+  // [14+N+N+3] stepsRemaining = 0 (multi-step FORWARD counter)
+  initArgs.push_back(shC(builder, loc, 0));
 
   SmallVector<Type> scaffoldTypes;
   for (auto v : initArgs) scaffoldTypes.push_back(v.getType());
@@ -892,6 +959,7 @@ cacheWhileOnlineStablehloV2(stablehlo::WhileOp whileOp, int64_t budget,
   const size_t IDX_CKPT      = 14 + numCarried;
   const size_t IDX_CKPT_IDX  = 14 + numCarried + numCarried;
   const size_t IDX_DONE      = 14 + numCarried + numCarried + 1;
+  const size_t IDX_STEPS_REM = 14 + numCarried + numCarried + 2;
 
   // Create scaffold stablehlo.while ----------------------------------------
   auto scaffoldWhile = stablehlo::WhileOp::create(
@@ -939,6 +1007,10 @@ cacheWhileOnlineStablehloV2(stablehlo::WhileOp whileOp, int64_t budget,
     auto ckptBufs      = ba.slice(IDX_CKPT, numCarried);
     Value ckptIdxBuf   = ba[IDX_CKPT_IDX];
 
+    // Multi-step FORWARD support: read remaining step count from prior iteration.
+    Value stepsRem = ba[IDX_STEPS_REM];
+    Value hasRemaining = shCmpLT(builder, loc, shC(builder, loc, 0), stepsRem);
+
     Value snaps = shC(builder, loc, budget);
 
     // Run SM
@@ -975,6 +1047,13 @@ cacheWhileOnlineStablehloV2(stablehlo::WhileOp whileOp, int64_t budget,
     // action == 0 → TERMINATE
     Value isTerminate = shCmpEQ(builder, loc, sm.action, shC(builder, loc, 0));
 
+    // When hasRemaining (continuing a multi-step FORWARD from a prior SM call),
+    // force FORWARD behavior: suppress STORE, TERMINATE, and capacityExceeded.
+    Value notHasRem = shNot(builder, loc, hasRemaining);
+    isStore = shAnd(builder, loc, isStore, notHasRem);
+    isTerminate = shAnd(builder, loc, isTerminate, notHasRem);
+    capacityExceeded = shAnd(builder, loc, capacityExceeded, notHasRem);
+
     // doStep = primalCond && !isTerminate
     Value doStep = shAnd(builder, loc, primalCondT, shNot(builder, loc, isTerminate));
 
@@ -1001,7 +1080,7 @@ cacheWhileOnlineStablehloV2(stablehlo::WhileOp whileOp, int64_t budget,
         // Update each ckptBuf[slot] = primalCarried[i]
         SmallVector<Value> newCkpt(ckptBufs.begin(), ckptBufs.end());
         for (size_t i = 0; i < numCarried; ++i)
-          newCkpt[i] = shStoreTyped(b2, l2, newCkpt[i], slot, primalCarried[i]);
+          newCkpt[i] = stackedStore(b2, l2, newCkpt[i], slot, primalCarried[i]);
         for (auto v : newCkpt) res.push_back(v);
         // Update ckptIdxBuf[slot] = numFwd
         Value newIdxBuf = shStore(b2, l2, ckptIdxBuf, slot, numFwd);
@@ -1022,31 +1101,47 @@ cacheWhileOnlineStablehloV2(stablehlo::WhileOp whileOp, int64_t budget,
     auto newCkpts   = dispatchIf.getResults().slice(1 + numCarried, numCarried);
     Value newIdxBuf = dispatchIf.getResult(1 + numCarried + numCarried);
 
+    // Multi-step FORWARD: compute new stepsRemaining.
+    // stepsNeeded = sm.capo - numFwd (numFwd is the pre-step primal position;
+    // sm.capo is where the SM wants the primal to reach).
+    Value isFwd = shCmpEQ(builder, loc, sm.action, shC(builder, loc, 2));
+    Value stepsNeeded = shSub(builder, loc, sm.capo, numFwd);
+    Value stepsMinusOne = shSub(builder, loc, stepsNeeded, shC(builder, loc, 1));
+    Value stepsPositive = shCmpLT(builder, loc, shC(builder, loc, 0), stepsMinusOne);
+    Value newStepsFromSM = shSel(builder, loc, stepsPositive, stepsMinusOne,
+                                  shC(builder, loc, 0));
+    Value stepsFromDecr = shSub(builder, loc, stepsRem, shC(builder, loc, 1));
+    Value smBasedSteps = shSel(builder, loc, isFwd, newStepsFromSM,
+                                shC(builder, loc, 0));
+    Value newStepsRem = shSel(builder, loc, hasRemaining, stepsFromDecr,
+                               smBasedSteps);
+
     // done = !primalCond || isTerminate || capacityExceeded
     Value notPrimalCond = shNot(builder, loc, primalCondT);
     Value newDone = shOr(builder, loc, notPrimalCond,
                      shOr(builder, loc, isTerminate, capacityExceeded));
 
-    // Build yield
+    // Build yield — when hasRemaining, preserve old SM state (don't advance SM).
     SmallVector<Value> yields;
     yields.push_back(newNumFwd);
-    yields.push_back(sm.check);
-    yields.push_back(sm.capo);
-    yields.push_back(sm.oldcapoO);
-    yields.push_back(sm.t);
-    yields.push_back(sm.incr);
-    yields.push_back(sm.iter);
-    yields.push_back(sm.oldind);
-    yields.push_back(sm.ind);
-    yields.push_back(sm.old_f);
-    yields.push_back(sm.offset);
-    yields.push_back(sm.ch);
-    yields.push_back(sm.ord_ch);
-    yields.push_back(sm.num_rep);
+    yields.push_back(shSel(builder, loc, hasRemaining, smCheck,    sm.check));
+    yields.push_back(shSel(builder, loc, hasRemaining, smCapo,     sm.capo));
+    yields.push_back(shSel(builder, loc, hasRemaining, smOldcapoO, sm.oldcapoO));
+    yields.push_back(shSel(builder, loc, hasRemaining, smT,        sm.t));
+    yields.push_back(shSel(builder, loc, hasRemaining, smIncr,     sm.incr));
+    yields.push_back(shSel(builder, loc, hasRemaining, smIter,     sm.iter));
+    yields.push_back(shSel(builder, loc, hasRemaining, smOldind,   sm.oldind));
+    yields.push_back(shSel(builder, loc, hasRemaining, smInd,      sm.ind));
+    yields.push_back(shSel(builder, loc, hasRemaining, smOldF,     sm.old_f));
+    yields.push_back(shSel(builder, loc, hasRemaining, smOffset,   sm.offset));
+    yields.push_back(shSel(builder, loc, hasRemaining, smCh,       sm.ch));
+    yields.push_back(shSel(builder, loc, hasRemaining, smOrdCh,    sm.ord_ch));
+    yields.push_back(shSel(builder, loc, hasRemaining, smNumRep,   sm.num_rep));
     yields.append(newPrimal.begin(), newPrimal.end());
     yields.append(newCkpts.begin(), newCkpts.end());
     yields.push_back(newIdxBuf);
     yields.push_back(newDone);
+    yields.push_back(newStepsRem);
     stablehlo::ReturnOp::create(builder, loc, yields);
   }
 
@@ -1726,19 +1821,12 @@ reverseWhileOnlineStablehloV2(stablehlo::WhileOp whileOp, int64_t budget,
     return arith::IndexCastOp::create(builder, loc, builder.getIndexType(), valI64);
   };
 
-  // Helper: load typed tensor element at index slot, reshaping to origTy.
-  // shLoadTyped always returns a 0-d tensor; we reshape to match the original
-  // primal carried type (e.g. tensor<1xf32> rather than tensor<f32>).
+  // Helper: load a full tensor from a stacked checkpoint buffer at index slot.
   auto loadTypedAt = [&](Value arr, Value slotIdx, RankedTensorType origTy) -> Value {
     Value asI64 = arith::IndexCastOp::create(builder, loc, builder.getI64Type(), slotIdx);
     auto slotT = RankedTensorType::get({}, builder.getI64Type());
     Value slot64 = tensor::FromElementsOp::create(builder, loc, slotT, ValueRange{asI64});
-    auto bufTy = cast<RankedTensorType>(arr.getType());
-    auto elemTy0d = RankedTensorType::get({}, bufTy.getElementType());
-    Value loaded = shLoadTyped(builder, loc, arr, slot64, elemTy0d);
-    if (origTy == elemTy0d)
-      return loaded;
-    return stablehlo::ReshapeOp::create(builder, loc, origTy, loaded);
+    return stackedLoad(builder, loc, arr, slot64, origTy);
   };
 
   // Collect original primal carried types for checkpoint reshape.
@@ -1839,7 +1927,7 @@ reverseWhileOnlineStablehloV2(stablehlo::WhileOp whileOp, int64_t budget,
         auto slotT = RankedTensorType::get({}, builder.getI64Type());
         Value slot64 = tensor::FromElementsOp::create(builder, loc, slotT,
             ValueRange{asI64});
-        updCkpt[i] = shStoreTyped(builder, loc, updCkpt[i], slot64, astate[i]);
+        updCkpt[i] = stackedStore(builder, loc, updCkpt[i], slot64, astate[i]);
       }
       // Store pos as step index.
       {

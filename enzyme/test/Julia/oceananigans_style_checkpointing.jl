@@ -119,19 +119,27 @@ end
     rtol      = 1e-5         # relative tolerance for gradient comparison
 
     # Test multiple stop_times (= different unknown trip counts)
-    for stop_time in [1.0, 3.0, 5.0, 8.0, 10.0]
+    # Include large trip counts with small budgets so Online_r2 must overwrite
+    # old checkpoints and replay segments — not just store everything.
+    # Online_r2 with s checkpoints supports at most (s+2)(s+1)/2 iterations.
+    online_r2_max(s) = (s + 2) * (s + 1) ÷ 2
+    for stop_time in [1.0, 3.0, 5.0, 8.0, 10.0, 20.0, 50.0, 100.0]
         n_steps = Int(stop_time / dt)   # actual number of steps (known analytically)
 
         gfd  = grad_finitediff(s0, dt, stop_time)
         gft  = grad_fulltape(s0, dt, stop_time)
+
+        # Only test budgets that are (a) strictly less than the trip count and
+        # (b) large enough to support the trip count under Online_r2.
+        budgets = filter(b -> b < n_steps && n_steps <= online_r2_max(b), [2, 3, 5, 10, 15])
 
         @testset "stop_time=$stop_time (n=$n_steps steps)" begin
 
             # Full-tape Enzyme matches finite differences
             @test isapprox(gft, gfd; rtol=rtol)
 
-            # Online_r2 with several checkpoint budgets matches full-tape
-            for snaps in [2, 3, 5, 10]
+            # Online_r2 with budget < trip_count matches full-tape
+            for snaps in budgets
                 g = grad_online(s0, dt, stop_time, snaps)
                 @test isapprox(g, gft; rtol=rtol)
             end

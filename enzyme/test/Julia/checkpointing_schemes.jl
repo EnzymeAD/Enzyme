@@ -180,3 +180,22 @@ end
         @test isapprox(dx_online, dx_plain, rtol=1e-12)
     end
 end
+
+# ── Stress tests: budget << trip count ───────────────────────────────────────
+# The tests above use n=5, snaps=3 — the budget is barely below the trip count,
+# so Online_r2 hardly has to make adaptive placement decisions.  These cases
+# force the algorithm to overwrite old checkpoints and replay segments.
+
+# Online_r2 with s checkpoints supports at most (s+2)(s+1)/2 iterations.
+# Each (n, snaps) pair below satisfies n < (snaps+2)(snaps+1)/2.
+@testset "Online_r2 stress: budget << trip count (n=$n, snaps=$snaps)" for
+        (n, snaps) in [(8, 3), (10, 3), (20, 5), (60, 10), (130, 15)]
+
+    dx_plain_n  = grad_plain(x₀, n)
+    dx_online_n = grad_while_online(x₀, n, snaps)
+
+    # Online must match full-tape Enzyme exactly (both are exact AD).
+    # FD accuracy is already validated in the first testset at n=5;
+    # here we only check that the checkpointing scheme is lossless.
+    @test isapprox(dx_online_n, dx_plain_n, rtol=1e-12)
+end

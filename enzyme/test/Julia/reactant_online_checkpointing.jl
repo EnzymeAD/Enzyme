@@ -59,25 +59,40 @@ end
 @testset "Reactant Online_r2 checkpointing (MLIR backend)" begin
 
     x  = Float32[1.2]
-    n  = 5     # number of loop iterations
 
-    # Reference gradient: plain Enzyme (LLVM backend, no checkpointing)
-    dx_ref = Enzyme.gradient(
-        Reverse,
-        x -> sum(foldl((v, _) -> cos.(v .* v), 1:n; init=x)),
-        copy(x)
-    )[1]
+    # ── Small trip count (sanity check) ──────────────────────────────────────
+    @testset "Small loop: n=5, budget=$budget" for budget in [2, 3]
+        n = 5
+        dx_ref = Enzyme.gradient(
+            Reverse,
+            x -> sum(foldl((v, _) -> cos.(v .* v), 1:n; init=x)),
+            copy(x)
+        )[1]
+        n_ra = Reactant.ConcreteRNumber(n)
+        x_fresh = Reactant.to_rarray(x)
+        dx_online = @jit online_ckpt_grad(x_fresh, n_ra, Online(budget))
+        @test Array(dx_online) ≈ dx_ref
+    end
 
-    x_ra = Reactant.to_rarray(x)
-    n_ra = Reactant.ConcreteRNumber(n)
-
-    @testset "Online(budget=$budget) gradient matches reference" for budget in [3, 5, 10]
+    # ── Stress tests: budget << trip count ────────────────────────────────────
+    # These force Online_r2 to overwrite old checkpoints and replay segments.
+    # Online_r2 with s checkpoints supports at most (s+2)(s+1)/2 iterations.
+    @testset "Stress: n=$n, budget=$budget" for (n, budget) in
+            [(8, 3), (10, 3), (20, 5), (60, 10), (130, 15)]
+        dx_ref = Enzyme.gradient(
+            Reverse,
+            x -> sum(foldl((v, _) -> cos.(v .* v), 1:n; init=x)),
+            copy(x)
+        )[1]
+        n_ra = Reactant.ConcreteRNumber(n)
         x_fresh = Reactant.to_rarray(x)
         dx_online = @jit online_ckpt_grad(x_fresh, n_ra, Online(budget))
         @test Array(dx_online) ≈ dx_ref
     end
 
     @testset "Online IR attributes present" begin
+        x_ra = Reactant.to_rarray(x)
+        n_ra = Reactant.ConcreteRNumber(5)
         ir = sprint(show, @code_hlo optimize="enzyme-batch" online_ckpt_body(x_ra, n_ra, Online(5)))
         @test occursin("enzyme.enable_checkpointing", ir)
         @test occursin("enzyme.online_checkpointing", ir)

@@ -82,18 +82,27 @@ end
 
     s0 = 1.2f0    # initial state (e.g. sea-surface temperature)
 
+    # Include large trip counts with small budgets so Online_r2 must overwrite
+    # old checkpoints and replay segments — not just store everything.
+    # Online_r2 with s checkpoints supports at most (s+2)(s+1)/2 iterations.
+    online_r2_max(s) = (s + 2) * (s + 1) ÷ 2
+
     @testset "stop_time=$stop_time" for stop_time in
-            Float32[1.0, 3.0, 5.0, 8.0, 10.0]
+            Float32[3.0, 5.0, 8.0, 10.0, 20.0, 50.0, 100.0]
 
         n_steps = Int(stop_time)
         gfd = grad_finitediff(Float64(s0), n_steps)
         gft = grad_fulltape(s0, n_steps)
 
+        # Only test budgets that are (a) strictly less than the trip count and
+        # (b) large enough to support the trip count under Online_r2.
+        budgets = filter(b -> b < n_steps && n_steps <= online_r2_max(b), [2, 3, 5, 10, 15])
+
         @testset "Full-tape Enzyme matches finite differences" begin
             @test isapprox(gft[1], Float32(gfd); rtol=1e-3)
         end
 
-        @testset "Online(budget=$budget) matches full-tape" for budget in [2, 3, 5, 10]
+        @testset "Online(budget=$budget) matches full-tape" for budget in budgets
             stop_ra  = Reactant.ConcreteRNumber(stop_time)
             state_ra = Reactant.to_rarray(Float32[s0])
             dx = @jit ocean_grad(state_ra, stop_ra, budget)
