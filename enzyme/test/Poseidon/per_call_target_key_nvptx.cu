@@ -1,6 +1,6 @@
 // RUN: rm -rf %t && mkdir -p %t
-// RUN: %clang -x cuda -std=c++20 --cuda-device-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O1 -S -emit-llvm -I%FPProfileInc %clangLoadPoseidon -mllvm -poseidon-profile-use=%t/none -DA=1e-6 -DB=1e-9 %s -o /dev/null 2>&1 | FileCheck %s
-// RUN: %clang -x cuda -std=c++20 --cuda-device-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O1 -S -emit-llvm -I%FPProfileInc %clangLoadPoseidon -mllvm -poseidon-profile-use=%t/none -DA=1e-12 -DB=1e-3 %s -o /dev/null 2>&1 | FileCheck %s
+// RUN: %clang -x cuda -std=c++20 --cuda-device-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O1 -S -emit-llvm -I%FPProfileInc %clangLoadPoseidon -mllvm -poseidon-profile-use=%S/Inputs/other_sites -DA=1e-6 -DB=1e-9 %s -o /dev/null 2>&1 | FileCheck %s
+// RUN: %clang -x cuda -std=c++20 --cuda-device-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O1 -S -emit-llvm -I%FPProfileInc %clangLoadPoseidon -mllvm -poseidon-profile-use=%S/Inputs/other_sites -DA=1e-12 -DB=1e-3 %s -o /dev/null 2>&1 | FileCheck %s
 // REQUIRES: poseidon
 
 // The profile of a call site does not depend on its accuracy target, also when
@@ -33,8 +33,8 @@ __attribute__((global)) void k(double *x) {
   x[4] = scaled<(float)A, 3>(x[4]);
 }
 
-// CHECK-DAG: [poseidon] _Z2sqd.poseidon._Z6scaledITnDaL_Z3tauELi1EEdd.0: no profile at {{.*}}/preprocess__Z2sqd.poseidon._Z6scaledITnDaL_Z3tauELi1EEdd.0.fpprofile; left unchanged
-// CHECK-DAG: [poseidon] _Z2sqd.poseidon._Z6scaledITnDaL_Z3tauELi2EEdd.0: no profile
-// CHECK-DAG: [poseidon] _Z2sqd.poseidon._Z6scaledITnDaL_Z3tauELi2EEdd.1: no profile
-// CHECK-DAG: [poseidon] _Z2sqd.poseidon._Z6taggedI9ToleranceIL_Z3tauEEEdd.0: no profile
-// CHECK-DAG: [poseidon] _Z2sqd.poseidon._Z6scaledITnDaL_Z3tauELi3EEdd.0: no profile
+// CHECK-DAG: [poseidon] _Z2sqd.poseidon._Z6scaledITnDaL_Z3tauELi1EEdd.0: the profiled program did not contain this site (no profile at {{.*}}/preprocess__Z2sqd.poseidon._Z6scaledITnDaL_Z3tauELi1EEdd.0.fpprofile); left unchanged
+// CHECK-DAG: [poseidon] _Z2sqd.poseidon._Z6scaledITnDaL_Z3tauELi2EEdd.0: the profiled program did not contain this site
+// CHECK-DAG: [poseidon] _Z2sqd.poseidon._Z6scaledITnDaL_Z3tauELi2EEdd.1: the profiled program did not contain this site
+// CHECK-DAG: [poseidon] _Z2sqd.poseidon._Z6taggedI9ToleranceIL_Z3tauEEEdd.0: the profiled program did not contain this site
+// CHECK-DAG: [poseidon] _Z2sqd.poseidon._Z6scaledITnDaL_Z3tauELi3EEdd.0: the profiled program did not contain this site

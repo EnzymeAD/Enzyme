@@ -20,11 +20,11 @@
 // RUN:   | FileCheck --check-prefix=PRIMAL %s
 // RUN: cat %t.profile/*.fpprofile | FileCheck --check-prefix=PROF %s
 //
-// RUN: rm -rf %t.cache %t.none %t.src && mkdir %t.cache %t.none %t.src
+// RUN: rm -rf %t.cache %t.src && mkdir %t.cache %t.src
 // RUN: cp %S/../Inputs/host_gemm_hip/launches_*.json %t.cache/
 // RUN: cp %s %t.src/annotated_lambda_host_gemm.hip
 // RUN: cd %t.src && %poseidon_clangxx -x hip --offload-arch=%amdgpu_arch \
-// RUN:     --rocm-path=%rocm_path -O2 -poseidon-profile-use=%t.none \
+// RUN:     --rocm-path=%rocm_path -O2 -poseidon-profile-use=%S/../Inputs/other_sites \
 // RUN:     -poseidon-cache=%t.cache -Xarch_host -mllvm=-poseidon-unit=seeded \
 // RUN:     -poseidon-enable-herbie=0 annotated_lambda_host_gemm.hip \
 // RUN:     -o %t.opt.exe 2>&1 | FileCheck %s

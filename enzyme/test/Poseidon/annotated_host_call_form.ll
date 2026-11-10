@@ -1,5 +1,5 @@
 ; RUN: rm -rf %t
-; RUN: not %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%t/none -poseidon-cache=%t -S -o /dev/null 2>&1 | FileCheck %s
+; RUN: not %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/other_sites -poseidon-cache=%t -S -o /dev/null 2>&1 | FileCheck %s
 ; REQUIRES: poseidon
 
 ; A function that carries POSEIDON_OPTIMIZE is a site at every call, so naming

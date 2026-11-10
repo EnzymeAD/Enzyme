@@ -2,7 +2,7 @@
 ; RUN: %opt %s %loadPoseidonEnzyme -passes="poseidon,enzyme,poseidon-finalize,globaldce" -enzyme-preopt=false -poseidon-profile-generate -poseidon-cache=%t/gen -S -o %t/gen.ll 2> %t/gen.err
 ; RUN: FileCheck --check-prefix=GEN %s < %t/gen.ll
 ; RUN: FileCheck --check-prefix=GEN-ERR %s < %t/gen.err
-; RUN: %opt %s %loadPoseidon -passes="poseidon,always-inline,poseidon-finalize" -poseidon-profile-use=%t/none -poseidon-cache=%t/use -S -o %t/use.ll 2> %t/use.err
+; RUN: %opt %s %loadPoseidon -passes="poseidon,always-inline,poseidon-finalize" -poseidon-profile-use=%S/Inputs/other_sites -poseidon-cache=%t/use -S -o %t/use.ll 2> %t/use.err
 ; RUN: FileCheck --check-prefix=USE %s < %t/use.ll
 ; RUN: FileCheck --check-prefix=USE-ERR %s < %t/use.err
 ; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -S -o %t/off.ll 2> %t/off.err
@@ -132,8 +132,8 @@ define double @caller(ptr %out) {
 ; USE-NEXT: entry:
 ; USE-NEXT: load double, ptr %x
 ; USE-NOT: _poseidon_body
-; USE-ERR: scale_poseidon_body: no profile at {{.*}}; left unchanged
-; USE-ERR: dot_poseidon_body: no profile at {{.*}}; left unchanged
+; USE-ERR: scale_poseidon_body: the profiled program did not contain this site (no profile at {{.*}}); left unchanged
+; USE-ERR: dot_poseidon_body: the profiled program did not contain this site (no profile at {{.*}}); left unchanged
 
 ; OFF: define void @scale(ptr %x, ptr %out)
 ; OFF-NEXT: %v = load double, ptr %x

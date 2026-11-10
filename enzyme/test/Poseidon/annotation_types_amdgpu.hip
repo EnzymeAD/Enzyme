@@ -1,5 +1,5 @@
-// RUN: rm -rf %t && mkdir -p %t/none
-// RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-device-only -foffload-lto -cuid=0 -O2 -c -emit-llvm -I%FPProfileInc %clangLoadPoseidonEnzyme -Xclang -mllvm -Xclang -poseidon-profile-use=%t/none -Xclang -mllvm -Xclang -poseidon-cache=%t/c %s -o %t/dev.bc
+// RUN: rm -rf %t && mkdir -p %t
+// RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-device-only -foffload-lto -cuid=0 -O2 -c -emit-llvm -I%FPProfileInc %clangLoadPoseidonEnzyme -Xclang -mllvm -Xclang -poseidon-profile-use=%S/Inputs/other_sites -Xclang -mllvm -Xclang -poseidon-cache=%t/c %s -o %t/dev.bc
 // RUN: llvm-dis %t/dev.bc -o - | FileCheck %s
 // REQUIRES: poseidon, enzyme, amdgpu-registered-target, rocm
 

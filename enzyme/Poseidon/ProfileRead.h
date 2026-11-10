@@ -88,6 +88,18 @@ void parseProfileFile(const std::string &profilePath,
                       std::unordered_map<size_t, ProfileInfo> &profileMap,
                       FunctionProfileHeader *header = nullptr);
 
+// Whether `profilePath` is the profile the profiling runtime writes for a site
+// it instrumented and never executed: the site's header, an `Executed = 0`
+// line, and no records. Reads no further than the header.
+bool isNeverExecutedProfile(const std::string &profilePath);
+
+// Fatal unless the profile's slot indices were numbered against the canonical
+// form `canonicalHash` names.
+void requireCanonicalHash(const FunctionProfileHeader &header,
+                          llvm::StringRef canonicalHash,
+                          llvm::StringRef profilePath,
+                          llvm::StringRef functionName);
+
 // Degenerate-adjoint guard. A candidate is priced as (local error) * |sum of
 // gradients|, so a value whose profiled gradient is ~0 is priced free; that
 // happens both when the value genuinely has no influence and when the adjoint

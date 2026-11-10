@@ -1,12 +1,12 @@
 // RUN: rm -rf %t && mkdir -p %t
 // RUN: %clang -x c++ -std=c++17 -O1 -S -emit-llvm -I%FPProfileInc %s -o %t/plain.ll
 // RUN: FileCheck --check-prefix=PLAIN %s < %t/plain.ll
-// RUN: %clang -x c++ -std=c++17 -O1 -S -emit-llvm -I%FPProfileInc %clangLoadPoseidon -mllvm -poseidon-profile-use=%t/none -mllvm -poseidon-print %s -o /dev/null 2>&1 | FileCheck %s
-// RUN: not %clang -x c++ -std=c++17 -O1 -S -emit-llvm -I%FPProfileInc %clangLoadPoseidon -mllvm -poseidon-profile-use=%t/none -DBAD=0 %s -o /dev/null 2>&1 | FileCheck --check-prefix=ZERO %s
-// RUN: not %clang -x c++ -std=c++17 -O1 -S -emit-llvm -I%FPProfileInc %clangLoadPoseidon -mllvm -poseidon-profile-use=%t/none "-DBAD=-1e-7" %s -o /dev/null 2>&1 | FileCheck --check-prefix=NEG %s
-// RUN: not %clang -x c++ -std=c++17 -O1 -S -emit-llvm -I%FPProfileInc %clangLoadPoseidon -mllvm -poseidon-profile-use=%t/none "-DBAD=__builtin_inf()" %s -o /dev/null 2>&1 | FileCheck --check-prefix=INF %s
-// RUN: not %clang -x c++ -std=c++17 -O1 -S -emit-llvm -I%FPProfileInc %clangLoadPoseidon -mllvm -poseidon-profile-use=%t/none -DTWO %s -o /dev/null 2>&1 | FileCheck --check-prefix=TWO %s
-// RUN: not %clang -x c++ -std=c++17 -O1 -S -emit-llvm -I%FPProfileInc %clangLoadPoseidon -mllvm -poseidon-profile-use=%t/none -DSTRING %s -o /dev/null 2>&1 | FileCheck --check-prefix=STRING %s
+// RUN: %clang -x c++ -std=c++17 -O1 -S -emit-llvm -I%FPProfileInc %clangLoadPoseidon -mllvm -poseidon-profile-use=%S/Inputs/other_sites -mllvm -poseidon-print %s -o /dev/null 2>&1 | FileCheck %s
+// RUN: not %clang -x c++ -std=c++17 -O1 -S -emit-llvm -I%FPProfileInc %clangLoadPoseidon -mllvm -poseidon-profile-use=%S/Inputs/other_sites -DBAD=0 %s -o /dev/null 2>&1 | FileCheck --check-prefix=ZERO %s
+// RUN: not %clang -x c++ -std=c++17 -O1 -S -emit-llvm -I%FPProfileInc %clangLoadPoseidon -mllvm -poseidon-profile-use=%S/Inputs/other_sites "-DBAD=-1e-7" %s -o /dev/null 2>&1 | FileCheck --check-prefix=NEG %s
+// RUN: not %clang -x c++ -std=c++17 -O1 -S -emit-llvm -I%FPProfileInc %clangLoadPoseidon -mllvm -poseidon-profile-use=%S/Inputs/other_sites "-DBAD=__builtin_inf()" %s -o /dev/null 2>&1 | FileCheck --check-prefix=INF %s
+// RUN: not %clang -x c++ -std=c++17 -O1 -S -emit-llvm -I%FPProfileInc %clangLoadPoseidon -mllvm -poseidon-profile-use=%S/Inputs/other_sites -DTWO %s -o /dev/null 2>&1 | FileCheck --check-prefix=TWO %s
+// RUN: not %clang -x c++ -std=c++17 -O1 -S -emit-llvm -I%FPProfileInc %clangLoadPoseidon -mllvm -poseidon-profile-use=%S/Inputs/other_sites -DSTRING %s -o /dev/null 2>&1 | FileCheck --check-prefix=STRING %s
 // REQUIRES: poseidon
 
 // POSEIDON_OPTIMIZE_TAU(t) takes a literal, a macro or a constant expression:

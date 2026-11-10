@@ -1704,6 +1704,19 @@ void explainNothingToOptimize(Function &F) {
   });
 }
 
+void explainUnprofiled(Function &F, StringRef cause) {
+  OptimizationRemarkEmitter ORE(&F);
+  ORE.emit([&]() {
+    auto site = siteCalls().find(&F);
+    DiagnosticLocation loc = site != siteCalls().end() && site->second
+                                 ? DiagnosticLocation(site->second)
+                                 : DiagnosticLocation(F.getSubprogram());
+    OptimizationRemarkMissed R(kPass, "Unprofiled", loc, &F.getEntryBlock());
+    R << "Poseidon left the site unchanged: " << ore::NV("Cause", cause);
+    return R;
+  });
+}
+
 void explainSolve(Function &F, FunctionFPState &st,
                   ArrayRef<SolutionStep> steps, const SolveRecord &rec) {
   const bool remarks = OptimizationRemarkEmitter::allowExtraAnalysis(F, kPass);

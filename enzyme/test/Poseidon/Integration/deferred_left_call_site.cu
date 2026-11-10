@@ -2,7 +2,7 @@
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch --cuda-device-only -O2 -S -emit-llvm %s -o %t/plain.ll
 //
 // Every site left alone (no profile): the module is the one as written.
-// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch --cuda-device-only -O2 -S -emit-llvm -poseidon-profile-use=%t/none %s -o %t/none.ll
+// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch --cuda-device-only -O2 -S -emit-llvm -poseidon-profile-use=%S/../Inputs/other_sites %s -o %t/none.ll
 // RUN: diff %t/plain.ll %t/none.ll
 //
 // One site rewritten and one refused: the refused one's kernel and tangent are

@@ -146,7 +146,7 @@ attributes #5 = { convergent nounwind "uniform-work-group-size" }
 ; ERR: Applying solution for CS: All FP64(0%) + FP32(100%)
 ; ERR: [poseidon] preprocess_fms_tight_poseidon_body: tau=1.000000e-12 {{.*}} rel=5.925412e-16
 ; ERR: Applying solution for CS: All FP64(0%) + Expansion2(100%)
-; ERR: fms_bare_poseidon_body: no profile at {{.*}}preprocess_fms_bare_poseidon_body.fpprofile; left unchanged
+; ERR: fms_bare_poseidon_body: the profiled program did not contain this site (no profile at {{.*}}preprocess_fms_bare_poseidon_body.fpprofile); left unchanged
 
 ; IR-LABEL: define {{.*}} @fms_loose(
 ; IR: fptrunc double

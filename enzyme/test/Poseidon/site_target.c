@@ -1,5 +1,5 @@
 // RUN: rm -rf %t && mkdir -p %t
-// RUN: %clang -x c -O1 -S -emit-llvm -I%FPProfileInc %clangLoadPoseidon -mllvm -poseidon-profile-use=%t/none -mllvm -poseidon-print %s -o /dev/null 2>&1 | FileCheck %s
+// RUN: %clang -x c -O1 -S -emit-llvm -I%FPProfileInc %clangLoadPoseidon -mllvm -poseidon-profile-use=%S/Inputs/other_sites -mllvm -poseidon-print %s -o /dev/null 2>&1 | FileCheck %s
 // REQUIRES: poseidon
 
 // The accuracy target in C: a literal or a macro.

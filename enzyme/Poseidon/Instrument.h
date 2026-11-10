@@ -7,6 +7,7 @@
 
 namespace llvm {
 class Function;
+class Module;
 } // namespace llvm
 
 namespace poseidon {
@@ -25,6 +26,12 @@ size_t instrumentForProfiling(llvm::Function &clone, unsigned siteId);
 // profiler runtime, which copies it verbatim into the site's .fpprofile header.
 // `text` is a sequence of newline-terminated "Key = value" lines.
 void emitProfileStaticData(llvm::Function &clone, llvm::StringRef text);
+
+// Register `text` before main with the host profiler runtime as the header of
+// the site whose profile is written under `name`. False if host module M
+// already does.
+bool registerProfileStatic(llvm::Module &M, llvm::StringRef name,
+                           llvm::StringRef text);
 
 } // namespace poseidon
 
