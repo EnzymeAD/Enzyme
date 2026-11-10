@@ -8135,10 +8135,10 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                   newFunc->getParent()->getDataLayout().getTypeAllocSizeInBits(
                       li->getType()) /
                   8;
-              mem->addParamAttr(
-                  0, Attribute::getWithAlignment(
-                         memcpyF->getContext(),
-                         Align(getCacheAlignment((unsigned)bsize))));
+              mem->addParamAttr(0,
+                                Attribute::getWithAlignment(
+                                    memcpyF->getContext(),
+                                    Align(getCacheAlignment((unsigned)bsize))));
 
               mem->addParamAttr(1, Attribute::getWithAlignment(
                                        memcpyF->getContext(), li->getAlign()));
