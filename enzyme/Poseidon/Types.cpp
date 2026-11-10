@@ -992,8 +992,8 @@ bool RewriteUnit::sharesRoot(const RewriteUnit &other) const {
 }
 
 // Lower is better
-InstructionCost RewriteUnit::getCompCostDelta(CostModelState &CM,
-                                              size_t candidateIndex) {
+DPCost RewriteUnit::getCompCostDelta(CostModelState &CM,
+                                     size_t candidateIndex) {
   double erasableCost = 0.0;
 
   for (auto *I : erasableInsts) {
@@ -1001,10 +1001,10 @@ InstructionCost RewriteUnit::getCompCostDelta(CostModelState &CM,
   }
 
   // Scale by the execution count BEFORE rounding to the integral
-  // InstructionCost the DP compares (see RewriteCandidate::CompCost).
+  // cost the DP compares (see RewriteCandidate::CompCost).
   double delta =
       (candidates[candidateIndex].CompCost - erasableCost) * (double)executions;
-  return InstructionCost((int64_t)std::llround(delta));
+  return toDPCost(delta);
 }
 
 void RewriteUnit::findErasableInstructions() {
@@ -1074,11 +1074,11 @@ void PrecisionUnit::apply(Session &S, size_t candidateIndex) {
 }
 
 // Lower is better
-InstructionCost PrecisionUnit::getCompCostDelta(size_t candidateIndex) {
+DPCost PrecisionUnit::getCompCostDelta(size_t candidateIndex) {
   // TODO: adjust this based on erasured instructions
   double delta = (candidates[candidateIndex].CompCost - initialCompCost) *
                  (double)executions;
-  return InstructionCost((int64_t)std::llround(delta));
+  return toDPCost(delta);
 }
 
 // Lower is better
@@ -1091,9 +1091,9 @@ double RewriteUnit::getAccCostDelta(size_t candidateIndex) {
   return candidates[candidateIndex].accuracyCost - initialAccCost;
 }
 
-InstructionCost
-PrecisionUnit::getAdjustedCompCostDelta(Session &S, size_t candidateIndex,
-                                        ArrayRef<SolutionStep> steps) {
+DPCost PrecisionUnit::getAdjustedCompCostDelta(Session &S,
+                                               size_t candidateIndex,
+                                               ArrayRef<SolutionStep> steps) {
   RewriteUnitSet RewriteUnits;
   for (const auto &step : steps) {
     if (auto *co = dyn_cast<RewriteUnit>(step.unit)) {
@@ -1136,8 +1136,8 @@ PrecisionUnit::getAdjustedCompCostDelta(Session &S, size_t candidateIndex,
   double candidateCompCost =
       getCompCost(S, newSubgraph, candidates[candidateIndex]);
 
-  InstructionCost adjustedCostDelta = InstructionCost((int64_t)std::llround(
-      (candidateCompCost - initialCompCost) * (double)executions));
+  DPCost adjustedCostDelta =
+      toDPCost((candidateCompCost - initialCompCost) * (double)executions);
   // Per-candidate pricing audit: with a one-point Pareto table these are the
   // ONLY record of why each candidate lost (all-dominated frontiers must be
   // auditable, not silent).
@@ -1207,7 +1207,7 @@ double PrecisionUnit::getAdjustedAccCostDelta(
   return adjustedAccCostDelta;
 }
 
-InstructionCost RewriteUnit::costDelta(size_t i, ArrayRef<SolutionStep>) {
+DPCost RewriteUnit::costDelta(size_t i, ArrayRef<SolutionStep>) {
   return getCompCostDelta(session().CostModel, i);
 }
 
@@ -1227,8 +1227,7 @@ const SetVector<Instruction *> *RewriteUnit::footprint() const {
   return subgraph ? &subgraph->operations : nullptr;
 }
 
-InstructionCost PrecisionUnit::costDelta(size_t i,
-                                         ArrayRef<SolutionStep> prior) {
+DPCost PrecisionUnit::costDelta(size_t i, ArrayRef<SolutionStep> prior) {
   return getAdjustedCompCostDelta(session(), i, prior);
 }
 
@@ -1261,8 +1260,7 @@ json::Object RewriteUnit::stepJSON(size_t i) {
   stepObj["herbie_accuracy"] = jsonFloat(cand.herbieAccuracy);
   stepObj["initial_herbie_cost"] = jsonFloat(initialHerbieCost);
   stepObj["initial_herbie_accuracy"] = jsonFloat(initialHerbieAccuracy);
-  stepObj["computation_cost_delta"] =
-      GET_INSTRUCTION_COST(getCompCostDelta(session().CostModel, i));
+  stepObj["computation_cost_delta"] = getCompCostDelta(session().CostModel, i);
   stepObj["accuracy_cost_delta"] = jsonFloat(getAccCostDelta(i));
   stepObj["gradient"] = jsonFloat(grad);
   stepObj["executions"] = static_cast<int64_t>(executions);
@@ -1424,10 +1422,14 @@ void RewriteUnit::printPriced(raw_ostream &OS) {
   OS << "--------------------------------\n";
   for (size_t i = 0; i < candidates.size(); ++i) {
     auto &candidate = candidates[i];
-    OS << getAccCostDelta(i) << "\t\t"
-       << getCompCostDelta(session().CostModel, i) << "\t\t"
-       << candidate.herbieCost << "\t\t" << candidate.herbieAccuracy << "\t\t"
-       << candidate.expr << "\n";
+    OS << getAccCostDelta(i) << "\t\t";
+    // A compile that reads its DP table from the cache prices no candidate.
+    if (candidate.CompCost == std::numeric_limits<double>::max())
+      OS << "unpriced";
+    else
+      OS << getCompCostDelta(session().CostModel, i);
+    OS << "\t\t" << candidate.herbieCost << "\t\t" << candidate.herbieAccuracy
+       << "\t\t" << candidate.expr << "\n";
   }
   OS << "################################\n\n";
 }
@@ -1471,7 +1473,7 @@ void RewriteUnit::addCuratedRewrites(json::Array &rewrites) {
     auto &cand = candidates[ci];
     double accDelta = getAccCostDelta(ci);
     auto compDelta = getCompCostDelta(session().CostModel, ci);
-    int64_t compDeltaVal = GET_INSTRUCTION_COST(compDelta);
+    int64_t compDeltaVal = compDelta;
 
     if (std::isnan(accDelta))
       continue;
@@ -1530,8 +1532,7 @@ static SmallVector<size_t, 40> byCostDelta(PrecisionUnit &CS) {
   for (size_t ci = 0; ci < order.size(); ++ci)
     order[ci] = ci;
   llvm::stable_sort(order, [&](size_t a, size_t b) {
-    return GET_INSTRUCTION_COST(CS.getCompCostDelta(a)) <
-           GET_INSTRUCTION_COST(CS.getCompCostDelta(b));
+    return CS.getCompCostDelta(a) < CS.getCompCostDelta(b);
   });
   return order;
 }
@@ -1548,7 +1549,7 @@ void PrecisionUnit::addReportSummary(json::Array &summary) {
     json::Object c;
     c["id"] = candidateId(ci);
     c["description"] = candidates[ci].desc;
-    c["computation_cost_delta"] = GET_INSTRUCTION_COST(getCompCostDelta(ci));
+    c["computation_cost_delta"] = getCompCostDelta(ci);
     c["accuracy_cost_delta"] = jsonFloat(getAccCostDelta(ci));
     cands.push_back(std::move(c));
   }
@@ -1563,7 +1564,7 @@ void PrecisionUnit::writeReportSummary(raw_ostream &textOut) {
   for (size_t k = 0; k < order.size() && k < kMaxCandRows; ++k) {
     size_t ci = order[k];
     textOut << "  [" << candidateId(ci) << "] " << candidates[ci].desc
-            << ": Δcost=" << GET_INSTRUCTION_COST(getCompCostDelta(ci))
+            << ": Δcost=" << getCompCostDelta(ci)
             << " Δacc=" << format("%.6e", getAccCostDelta(ci)) << "\n";
   }
 }
@@ -1573,7 +1574,7 @@ void PrecisionUnit::addCuratedRewrites(json::Array &rewrites) {
     auto &pt = candidates[ci];
     double accDelta = getAccCostDelta(ci);
     auto compDelta = getCompCostDelta(ci);
-    int64_t compDeltaVal = GET_INSTRUCTION_COST(compDelta);
+    int64_t compDeltaVal = compDelta;
 
     if (std::isnan(accDelta))
       continue;
@@ -1635,8 +1636,12 @@ void PrecisionUnit::printPriced(raw_ostream &OS) {
      << "---------------------------\n";
   for (size_t i = 0; i < candidates.size(); ++i) {
     auto &candidate = candidates[i];
-    OS << getAccCostDelta(i) << "\t\t" << getCompCostDelta(i) << "\t\t"
-       << candidate.desc << "\n";
+    OS << getAccCostDelta(i) << "\t\t";
+    if (candidate.CompCost == std::numeric_limits<double>::max())
+      OS << "unpriced";
+    else
+      OS << getCompCostDelta(i);
+    OS << "\t\t" << candidate.desc << "\n";
   }
   OS << "################################\n\n";
 }

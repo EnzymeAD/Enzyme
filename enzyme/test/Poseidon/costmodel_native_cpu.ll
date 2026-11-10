@@ -3,7 +3,11 @@
 ; RUN: (%opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/joint_profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-print -S -poseidon-cost-model=%S/Inputs/cm_cpu_foreign.csv -poseidon-cache=%t/foreign 2>&1 || true) | FileCheck --check-prefix=FOREIGN %s
 ; RUN: (%opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/joint_profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-print -S -poseidon-cost-model=%S/Inputs/cm_cpu_noarch.csv -poseidon-cache=%t/noarch 2>&1 || true) | FileCheck --check-prefix=NOARCH %s
 ; RUN: (%opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/joint_profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-print -S -poseidon-cache=%t/none 2>&1 || true) | FileCheck --check-prefix=NOMODEL %s
-; The measured CSV is the only price source. A model whose native_arch matches the function's target-cpu is consumed as is (2 FP64 ops at 4 = 8); a model missing a required row, a model measured on another device, a model with no native_arch header and no model at all each abort instead of substituting a price.
+; RUN: (cat %S/Inputs/cm_cpu_native.csv; echo 'fadd,float,1') > %t/twice.csv
+; RUN: (%opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/joint_profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -S -poseidon-cost-model=%t/twice.csv -poseidon-cache=%t/twice 2>&1 || true) | FileCheck --check-prefix=TWICE %s
+; RUN: (cat %S/Inputs/cm_cpu_native.csv; echo 'fadd,float') > %t/short.csv
+; RUN: (%opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/joint_profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -S -poseidon-cost-model=%t/short.csv -poseidon-cache=%t/short 2>&1 || true) | FileCheck --check-prefix=SHORT %s
+; The measured CSV is the only price source. A model whose native_arch matches the function's target-cpu is consumed as is (2 FP64 ops at 4 = 8); a model missing a required row, a model measured on another device, a model with no native_arch header, a model with a row twice or a line that is not a row, and no model at all each abort instead of substituting a price.
 
 define double @tester_a(double %x, double %y) #0 {
 entry:
@@ -26,7 +30,7 @@ attributes #0 = { "target-cpu"="x86-64" }
 ; NATIVE: {{^[-+.0-9e]+}} -192 All FP64(0%) + FP32(100%)
 ; NATIVE: [poseidon] Finished Optimization
 
-; MISSING: Custom cost model: entry not found for fmul @ double
+; MISSING: LLVM ERROR: Poseidon: cost model {{.*}}cm_cpu_missing.csv has no row 'fmul,double'
 ; MISSING-NOT: Initial ComputationCost
 ; MISSING-NOT: [poseidon] Finished Optimization
 
@@ -41,3 +45,9 @@ attributes #0 = { "target-cpu"="x86-64" }
 ; NOMODEL: no cost model for target-cpu 'x86-64' in {{.*}}; measure this device with poseidon-calibrate, or pass -poseidon-cost-model=<csv>
 ; NOMODEL-NOT: Initial ComputationCost
 ; NOMODEL-NOT: [poseidon] Finished Optimization
+
+; TWICE: LLVM ERROR: Poseidon: cost model {{.*}}twice.csv has the row 'fadd,float' twice
+; TWICE-NOT: [poseidon] Finished Optimization
+
+; SHORT: LLVM ERROR: Poseidon: cost model {{.*}}short.csv line {{[0-9]+}} is not '<opcode>,<type>,<cost>': fadd,float
+; SHORT-NOT: [poseidon] Finished Optimization

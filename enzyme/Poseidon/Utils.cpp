@@ -30,7 +30,6 @@
 #include "llvm/Passes/PassBuilder.h"
 
 #include "llvm/Support/Casting.h"
-#include "llvm/Support/InstructionCost.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include "llvm/Pass.h"

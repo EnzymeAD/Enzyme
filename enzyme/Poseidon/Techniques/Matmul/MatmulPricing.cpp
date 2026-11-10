@@ -1,5 +1,5 @@
-// Matmul candidate pricing: option labels, per-tile MMA cost, measured
-// in-kernel rows, the WMMA target table and shared-memory capacity.
+// Matmul candidate pricing: option labels, measured in-kernel rows, the
+// WMMA target table and shared-memory capacity.
 #include "CostModel.h"
 #include "Evaluators.h"
 #include "InKernelRaise.h"
@@ -67,24 +67,6 @@ std::string matmulOptionLabel(const MatmulUnit::Option &opt) {
   }
   llvm_unreachable("a matrix-product candidate whose scheme has no such "
                    "realization");
-}
-
-// TODO: include more wmma_load_{a,b,c} and wmma_store_d costs
-// Today only m16n16k16 has them.
-// Returns the per-tile-MMA reciprocal-throughput cost (cycles per tile op).
-double getMatmulCompCost(CostModelState &CM, unsigned M, unsigned N, unsigned K,
-                         FPKind inputPrec, FPKind accPrec) {
-  if (inputPrec == FPKind::Invalid || accPrec == FPKind::Invalid)
-    report_fatal_error("getMatmulCompCost: unexpected FPKind::Invalid");
-  std::string opcode = "wmma_mma_" + mmaShapeSuffix(M, N, K);
-  std::string prec =
-      std::string(fpKindName(inputPrec)) + "_" + fpKindName(accPrec);
-  const auto &model = getCostModel(CM);
-  auto it = model.find({opcode, prec});
-  if (it == model.end())
-    report_fatal_error("cost model missing row for " + Twine(opcode) + " " +
-                       Twine(prec));
-  return it->second;
 }
 
 // Optional measured pricing for in-kernel candidates: one row per class, in the

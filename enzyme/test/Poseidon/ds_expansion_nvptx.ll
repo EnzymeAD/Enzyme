@@ -1,6 +1,8 @@
 ; RUN: rm -rf %t && %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/ds_expansion -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-enable-multifloat=true -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_x1e6.csv -poseidon-cache=%t -poseidon-comp-cost-budget=-1 -poseidon-print -S > %t.out 2>&1
 ; RUN: FileCheck %s < %t.out
 ; RUN: FileCheck --check-prefix=CLEAN %s < %t.out
+; RUN: rm -rf %t.noscalar && mkdir -p %t.noscalar && grep -v '^# scalar_types=' %S/Inputs/cm_gpu_fixture_x1e6.csv > %t.noscalar/cm.csv
+; RUN: (%opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/ds_expansion -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%t.noscalar/cm.csv -poseidon-cache=%t.noscalar -S 2>&1 || true) | FileCheck --check-prefix=NOSCALAR %s
 ; Double-single (two-component FP32 expansion) materialization of an fmuladd chain on NVPTX; IR and profile from Inputs/ds_expansion/ds_fms.cu (clang -O2 -ffp-contract=on --cuda-gpu-arch=sm_120, profiled on an RTX 5090).
 
 ; ModuleID = 'ds_fms.cu'
@@ -123,3 +125,7 @@ attributes #5 = { convergent nounwind "uniform-work-group-size" }
 ; CLEAN-NOT: fmul double
 ; CLEAN-NOT: fneg double
 ; CLEAN: ret void
+
+; A device model that does not name the formats it has hardware for stops the
+; compile.
+; NOSCALAR: LLVM ERROR: Poseidon: cost model {{.*}}cm.csv carries no '# scalar_types=' header

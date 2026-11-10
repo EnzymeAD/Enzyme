@@ -25,7 +25,6 @@
 #include "llvm/IR/PassManager.h"
 #include "llvm/IR/Type.h"
 #include "llvm/Passes/OptimizationLevel.h"
-#include "llvm/Support/InstructionCost.h"
 
 #include <cstdint>
 #include <map>

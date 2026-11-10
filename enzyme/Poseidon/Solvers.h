@@ -70,8 +70,8 @@ struct PinState {
 struct SolveRecord {
   std::string selector;
   bool fromCache = false;
-  std::map<llvm::InstructionCost, double> table;
-  std::map<llvm::InstructionCost, llvm::SmallVector<SolutionStep>> solutions;
+  CostMap table;
+  SolutionMap solutions;
   double baseline = std::numeric_limits<double>::quiet_NaN();
   double accScale = 0.0;
   double tau = 0.0;
@@ -85,9 +85,8 @@ struct SolveRecord {
 struct SiteTable {
   CacheKey key;
   bool hit = false;
-  std::map<llvm::InstructionCost, double> costToAccuracyMap;
-  std::map<llvm::InstructionCost, llvm::SmallVector<SolutionStep>>
-      costToSolutionMap;
+  CostMap costToAccuracyMap;
+  SolutionMap costToSolutionMap;
   std::optional<double> baseline;
 };
 

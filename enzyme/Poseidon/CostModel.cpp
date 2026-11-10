@@ -29,7 +29,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
-#include <sstream>
 
 using namespace llvm;
 
@@ -117,16 +116,19 @@ static void resolveForTarget(CostModelState &CM, StringRef TargetCpu,
   CM.IsResolved = true;
 }
 
-static const std::unordered_set<std::string> DefaultScalarTypes = {
-    "half", "bf16", "float", "double"};
+// A price comes from the model or not at all: a part of the model that is
+// missing or unreadable stops the compile, naming the model.
+[[noreturn]] static void modelError(CostModelState &CM, const Twine &What) {
+  report_fatal_error("Poseidon: cost model " + Twine(costModelPath(CM)) + " " +
+                     What);
+}
 
 const std::unordered_set<std::string> &getScalarTypes(CostModelState &CM) {
-  if (!costModelPath(CM).empty()) {
-    getCostModel(CM);
-    if (!CM.SupportedTypes.scalar.empty())
-      return CM.SupportedTypes.scalar;
-  }
-  return DefaultScalarTypes;
+  getCostModel(CM);
+  if (CM.ScalarTypes.empty())
+    modelError(CM, "carries no '# scalar_types=' header, so the formats the "
+                   "device has hardware for are unknown");
+  return CM.ScalarTypes;
 }
 
 const std::map<std::pair<std::string, std::string>, double> &
@@ -134,17 +136,15 @@ getCostModel(CostModelState &CM) {
   std::map<std::pair<std::string, std::string>, double> &CostModel = CM.Model;
   if (!CM.Loaded) {
     std::ifstream CostFile(costModelPath(CM));
-    if (!CostFile.is_open()) {
-      std::string msg =
-          "Cost model file could not be opened: " + costModelPath(CM);
-      llvm_unreachable(msg.c_str());
-    }
+    if (!CostFile.is_open())
+      modelError(CM, "cannot be opened");
     std::string Line;
+    unsigned LineNo = 0;
     while (std::getline(CostFile, Line)) {
+      ++LineNo;
       if (Line.empty())
         continue;
       if (Line[0] == '#') {
-        // Parse "# scalar_types=...", "# matrix_types=...", "# native_arch=..."
         auto content = StringRef(Line).drop_front(1).trim();
         StringRef key, vals;
         std::tie(key, vals) = content.split('=');
@@ -154,34 +154,24 @@ getCostModel(CostModelState &CM) {
           CM.NativeArch = vals.str();
           continue;
         }
-        std::unordered_set<std::string> *target = nullptr;
-        if (key == "scalar_types")
-          target = &CM.SupportedTypes.scalar;
-        else if (key == "matrix_types")
-          target = &CM.SupportedTypes.matrix;
-        if (target && !vals.empty()) {
+        if (key == "scalar_types") {
           SmallVector<StringRef, 8> tokens;
           vals.split(tokens, ',', -1, false);
           for (auto t : tokens)
-            target->insert(t.str());
+            CM.ScalarTypes.insert(t.str());
         }
         continue;
       }
-      std::istringstream SS(Line);
-      std::string OpcodeStr, PrecisionStr, CostStr;
-      if (!std::getline(SS, OpcodeStr, ',')) {
-        llvm_unreachable(
-            ("Unexpected line in custom cost model: " + Line).c_str());
-      }
-      if (!std::getline(SS, PrecisionStr, ',')) {
-        llvm_unreachable(
-            ("Unexpected line in custom cost model: " + Line).c_str());
-      }
-      if (!std::getline(SS, CostStr)) {
-        llvm_unreachable(
-            ("Unexpected line in custom cost model: " + Line).c_str());
-      }
-      CostModel[{OpcodeStr, PrecisionStr}] = std::stod(CostStr);
+      SmallVector<StringRef, 3> Fields;
+      StringRef(Line).split(Fields, ',');
+      double Cost;
+      if (Fields.size() != 3 || Fields[2].trim().getAsDouble(Cost))
+        modelError(CM, "line " + Twine(LineNo) +
+                           " is not '<opcode>,<type>,<cost>': " + Line);
+      if (!CostModel.try_emplace({Fields[0].str(), Fields[1].str()}, Cost)
+               .second)
+        modelError(CM,
+                   "has the row '" + Fields[0] + "," + Fields[1] + "' twice");
     }
     CM.Loaded = true;
   }
@@ -247,15 +237,10 @@ const std::string &getCostModelNativeArch(CostModelState &CM) {
 double queryCostModel(CostModelState &CM, const std::string &OpcodeName,
                       const std::string &PrecisionName) {
   const auto &CostModel = getCostModel(CM);
-  auto Key = std::make_pair(OpcodeName, PrecisionName);
-  auto It = CostModel.find(Key);
-  if (It != CostModel.end())
-    return It->second;
-
-  std::string msg = "Custom cost model: entry not found for " + OpcodeName +
-                    " @ " + PrecisionName;
-  llvm::errs() << msg << "\n";
-  llvm_unreachable(msg.c_str());
+  auto It = CostModel.find(std::make_pair(OpcodeName, PrecisionName));
+  if (It == CostModel.end())
+    modelError(CM, "has no row '" + OpcodeName + "," + PrecisionName + "'");
+  return It->second;
 }
 
 double queryCostModelOr(CostModelState &CM, const std::string &OpcodeName,
@@ -263,6 +248,14 @@ double queryCostModelOr(CostModelState &CM, const std::string &OpcodeName,
   const auto &CostModel = getCostModel(CM);
   auto It = CostModel.find(std::make_pair(OpcodeName, PrecisionName));
   return (It != CostModel.end()) ? It->second : fallback;
+}
+
+// An instruction no row family prices.
+[[noreturn]] static void unpriced(const Instruction *I) {
+  std::string Text;
+  raw_string_ostream(Text) << *I;
+  report_fatal_error("Poseidon: no cost-model row prices the instruction" +
+                     Twine(Text));
 }
 
 double getInstructionCompCost(CostModelState &CM, const Instruction *I) {
@@ -277,7 +270,7 @@ double getInstructionCompCost(CostModelState &CM, const Instruction *I) {
                       : ETy->isHalfTy()   ? "half"
                                           : "";
       if (P.empty())
-        llvm_unreachable("Custom cost model: unsupported llvm.sincos type");
+        unpriced(I);
       return queryCostModel(CM, "sin", P) + queryCostModel(CM, "cos", P);
     }
 #endif
@@ -417,9 +410,7 @@ double getInstructionCompCost(CostModelState &CM, const Instruction *I) {
             OpcodeName = "sqrt";
             break;
           }
-          std::string msg = "Custom cost model: unsupported intrinsic " +
-                            CalledFunc->getName().str();
-          llvm_unreachable(msg.c_str());
+          unpriced(I);
         }
         }
       } else if (StringRef deviceMath = deviceMathName(CalledFunc->getName());
@@ -438,25 +429,17 @@ double getInstructionCompCost(CostModelState &CM, const Instruction *I) {
             (FuncName.back() == 'f' || FuncName.back() == 'l'))
           FuncName.pop_back();
 
-        if (libmFuncs().count(FuncName))
-          OpcodeName = FuncName;
-        else {
-          std::string msg =
-              "Custom cost model: unknown function call " + FuncName;
-          llvm_unreachable(msg.c_str());
-        }
+        if (!libmFuncs().count(FuncName))
+          unpriced(I);
+        OpcodeName = FuncName;
       }
     } else {
-      llvm_unreachable("Custom cost model: unknown function call");
+      unpriced(I);
     }
     break;
   }
-  default: {
-    llvm::errs() << "Problematic instruction: " << *I << "\n";
-    std::string msg = "Custom cost model: unexpected opcode " +
-                      std::string(I->getOpcodeName());
-    llvm_unreachable(msg.c_str());
-  }
+  default:
+    unpriced(I);
   }
 
   std::string PrecisionName;
@@ -476,10 +459,8 @@ double getInstructionCompCost(CostModelState &CM, const Instruction *I) {
     PrecisionName = "fp80";
   else if (Ty->isFP128Ty())
     PrecisionName = "fp128";
-  else {
-    std::string msg = "Custom cost model: unsupported precision type!";
-    llvm_unreachable(msg.c_str());
-  }
+  else
+    unpriced(I);
 
   if (I->getOpcode() == Instruction::FPExt ||
       I->getOpcode() == Instruction::FPTrunc) {
@@ -497,10 +478,8 @@ double getInstructionCompCost(CostModelState &CM, const Instruction *I) {
       SrcPrecisionName = "fp80";
     else if (SrcTy->isFP128Ty())
       SrcPrecisionName = "fp128";
-    else {
-      std::string msg = "Custom cost model: unsupported precision type!";
-      llvm_unreachable(msg.c_str());
-    }
+    else
+      unpriced(I);
 
     OpcodeName += "_" + SrcPrecisionName + "_to_" + PrecisionName;
     PrecisionName = SrcPrecisionName;

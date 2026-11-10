@@ -275,11 +275,11 @@ static bool readSiteTable(const Options &O, StringRef fnName, SiteTable &table,
   if (!accVal || !solVal || !fromJSON(*accVal, accMap, parsed) ||
       !fromJSON(*solVal, solMap, parsed))
     return unreadable("its table does not parse");
-  auto cost = [](StringRef text) -> std::optional<InstructionCost> {
+  auto cost = [](StringRef text) -> std::optional<DPCost> {
     int64_t c;
     if (text.getAsInteger(10, c))
       return std::nullopt;
-    return InstructionCost(c);
+    return c;
   };
   // Steps name their candidates by key: pricing drops candidates and a hit
   // prices nothing, so a solved table's positions are not the replay's.
@@ -299,13 +299,13 @@ static bool readSiteTable(const Options &O, StringRef fnName, SiteTable &table,
     return std::nullopt;
   };
   for (const auto &[text, acc] : accMap) {
-    std::optional<InstructionCost> c = cost(text);
+    std::optional<DPCost> c = cost(text);
     if (!c)
       return unreadable("its table does not parse");
     table.costToAccuracyMap[*c] = acc;
   }
   for (const auto &[text, steps] : solMap) {
-    std::optional<InstructionCost> c = cost(text);
+    std::optional<DPCost> c = cost(text);
     if (!c)
       return unreadable("its table does not parse");
     SmallVector<SolutionStep> &bound = table.costToSolutionMap[*c];
@@ -321,12 +321,11 @@ static bool readSiteTable(const Options &O, StringRef fnName, SiteTable &table,
   return true;
 }
 
-static void
-writeSiteTable(const Options &O, StringRef fnName, const CacheKey &key,
-               const std::map<InstructionCost, double> &costToAccuracyMap,
-               const std::map<InstructionCost, SmallVector<SolutionStep>>
-                   &costToSolutionMap,
-               double baseline) {
+static void writeSiteTable(const Options &O, StringRef fnName,
+                           const CacheKey &key,
+                           const CostMap &costToAccuracyMap,
+                           const SolutionMap &costToSolutionMap,
+                           double baseline) {
   // llvm::json renders nan/inf as a bare `nan` token, which is not JSON. Refuse
   // to cache this function rather than drop entries: the loader treats a table
   // as a complete frontier, so a pruned one would change a later solve's
@@ -351,7 +350,7 @@ writeSiteTable(const Options &O, StringRef fnName, const CacheKey &key,
 
   json::Object costAccMap;
   for (const auto &pair : costToAccuracyMap) {
-    costAccMap[std::to_string(GET_INSTRUCTION_COST(pair.first))] = pair.second;
+    costAccMap[std::to_string(pair.first)] = pair.second;
   }
   entryObj["costToAccuracyMap"] = std::move(costAccMap);
 
@@ -369,8 +368,7 @@ writeSiteTable(const Options &O, StringRef fnName, const CacheKey &key,
             candidateKey(unit.candidateName(step.candidateIndex));
       stepsArray.push_back(std::move(stepObj));
     }
-    costSolMap[std::to_string(GET_INSTRUCTION_COST(pair.first))] =
-        std::move(stepsArray);
+    costSolMap[std::to_string(pair.first)] = std::move(stepsArray);
   }
   entryObj["costToSolutionMap"] = std::move(costSolMap);
   if (std::isfinite(baseline))
@@ -451,10 +449,8 @@ void priceUnlessCached(Session &S, FunctionFPState &st, StringRef profilePath) {
   priceCandidates(st);
 }
 
-static void
-printDPTable(const std::map<InstructionCost, double> &costToAccuracyMap,
-             const std::map<InstructionCost, SmallVector<SolutionStep>>
-                 &costToSolutionMap) {
+static void printDPTable(const CostMap &costToAccuracyMap,
+                         const SolutionMap &costToSolutionMap) {
   llvm::errs() << "\n*** DP Table ***\n";
   for (const auto &pair : costToAccuracyMap) {
 
@@ -471,12 +467,10 @@ printDPTable(const std::map<InstructionCost, double> &costToAccuracyMap,
   llvm::errs() << "*** End of DP Table ***\n\n";
 }
 
-static void
-emitReport(Session &S, StringRef funcName,
-           const std::map<InstructionCost, double> &costToAccuracyMap,
-           const std::map<InstructionCost, SmallVector<SolutionStep>>
-               &costToSolutionMap,
-           ArrayRef<SiteUnit *> units) {
+static void emitReport(Session &S, StringRef funcName,
+                       const CostMap &costToAccuracyMap,
+                       const SolutionMap &costToSolutionMap,
+                       ArrayRef<SiteUnit *> units) {
   const Options &O = S.Opts;
   if (O.Diagnostics.ReportPath.empty())
     return;
@@ -496,10 +490,8 @@ emitReport(Session &S, StringRef funcName,
   report["num_pareto_points"] = static_cast<int64_t>(costToAccuracyMap.size());
 
   if (!costToAccuracyMap.empty()) {
-    report["cost_range_min"] =
-        GET_INSTRUCTION_COST(costToAccuracyMap.begin()->first);
-    report["cost_range_max"] =
-        GET_INSTRUCTION_COST(costToAccuracyMap.rbegin()->first);
+    report["cost_range_min"] = costToAccuracyMap.begin()->first;
+    report["cost_range_max"] = costToAccuracyMap.rbegin()->first;
   }
 
   for (const UnitKindInfo &kind : unitKinds()) {
@@ -515,7 +507,7 @@ emitReport(Session &S, StringRef funcName,
   json::Array paretoPoints;
   for (const auto &pair : costToAccuracyMap) {
     json::Object point;
-    point["computation_cost"] = GET_INSTRUCTION_COST(pair.first);
+    point["computation_cost"] = pair.first;
     point["accuracy_cost"] = pair.second;
 
     auto it = costToSolutionMap.find(pair.first);
@@ -551,9 +543,8 @@ emitReport(Session &S, StringRef funcName,
   textOut << "=== Poseidon Report: " << funcName << " ===\n";
   textOut << "Pareto table: " << costToAccuracyMap.size() << " points";
   if (!costToAccuracyMap.empty()) {
-    textOut << ", cost range ["
-            << GET_INSTRUCTION_COST(costToAccuracyMap.begin()->first) << ", "
-            << GET_INSTRUCTION_COST(costToAccuracyMap.rbegin()->first) << "]";
+    textOut << ", cost range [" << costToAccuracyMap.begin()->first << ", "
+            << costToAccuracyMap.rbegin()->first << "]";
   }
   textOut << "\n";
   bool first = true;
@@ -578,8 +569,7 @@ emitReport(Session &S, StringRef funcName,
 
   unsigned pointIdx = 0;
   for (const auto &pair : costToAccuracyMap) {
-    textOut << "--- Pareto Point #" << pointIdx++
-            << ": Cost=" << GET_INSTRUCTION_COST(pair.first)
+    textOut << "--- Pareto Point #" << pointIdx++ << ": Cost=" << pair.first
             << ", Accuracy=" << pair.second << " ---\n";
     auto it = costToSolutionMap.find(pair.first);
     if (it != costToSolutionMap.end() && !it->second.empty()) {
@@ -604,7 +594,7 @@ emitReport(Session &S, StringRef funcName,
       cfg["cache_path"] = O.Herbie.Cache;
       json::Array budgetArr;
       for (const auto &pair : costToAccuracyMap)
-        budgetArr.push_back(GET_INSTRUCTION_COST(pair.first));
+        budgetArr.push_back(pair.first);
       cfg["budgets"] = std::move(budgetArr);
       json::Array accArr;
       for (const auto &pair : costToAccuracyMap)
@@ -739,15 +729,14 @@ SmallVector<SolutionStep> errorBudgetSelector(const Options &O,
 // variant workflow, on every solve and replay. Parallel variant builds reusing
 // a cached table write the same breakpoints, and the replace is atomic, so
 // none of them reads a partial file.
-static void
-writeBudgetsFile(const Options &O,
-                 const std::map<InstructionCost, double> &costToAccuracyMap) {
+static void writeBudgetsFile(const Options &O,
+                             const CostMap &costToAccuracyMap) {
   if (O.Herbie.Cache.empty())
     return;
   std::string budgetsFile = O.Herbie.Cache + "/budgets.txt";
   std::string budgetsStr;
   for (const auto &pair : costToAccuracyMap)
-    budgetsStr += std::to_string(GET_INSTRUCTION_COST(pair.first)) + ",";
+    budgetsStr += std::to_string(pair.first) + ",";
   if (!budgetsStr.empty())
     budgetsStr.pop_back();
   if (Error E = writeFileAtomically(budgetsFile, budgetsStr))
@@ -768,9 +757,6 @@ accuracyDPSolver(Session &S, Function &F, FunctionFPState &st,
     llvm::errs() << "Per-operation relative error tolerance: " << errorTol
                  << "\n";
   }
-
-  using CostMap = std::map<InstructionCost, double>;
-  using SolutionMap = std::map<InstructionCost, SmallVector<SolutionStep>>;
 
   CostMap costToAccuracyMap;
   SolutionMap costToSolutionMap;
@@ -862,7 +848,7 @@ accuracyDPSolver(Session &S, Function &F, FunctionFPState &st,
   }
 
   double minAccCost = std::numeric_limits<double>::infinity();
-  InstructionCost bestCompCost = 0;
+  DPCost bestCompCost = 0;
 
   if (errorTol > 0.0) {
     unsigned unpriced = 0;
@@ -881,7 +867,7 @@ accuracyDPSolver(Session &S, Function &F, FunctionFPState &st,
     double bestRel = 0.0;
 
     for (const auto &pair : costToAccuracyMap) {
-      InstructionCost compCost = pair.first;
+      DPCost compCost = pair.first;
       double accCost = pair.second;
       double rel = (baseline + accCost) / accScale;
 
@@ -918,7 +904,7 @@ accuracyDPSolver(Session &S, Function &F, FunctionFPState &st,
                  << " accCost=" << minAccCost << " rel=" << bestRel << "\n";
   } else {
     for (const auto &pair : costToAccuracyMap) {
-      InstructionCost compCost = pair.first;
+      DPCost compCost = pair.first;
       double accCost = pair.second;
 
       if (compCost <= O.Solver.CompCostBudget && std::isfinite(accCost) &&
@@ -946,7 +932,7 @@ accuracyDPSolver(Session &S, Function &F, FunctionFPState &st,
          "[poseidon] DP solver: expected a solution!");
 
   if (record)
-    record->selected = GET_INSTRUCTION_COST(bestCompCost);
+    record->selected = bestCompCost;
   return SmallVector<SolutionStep>(costToSolutionMap[bestCompCost].begin(),
                                    costToSolutionMap[bestCompCost].end());
 }
@@ -959,8 +945,6 @@ jointAccuracyDPSolver(Session &S, ArrayRef<FunctionFPState *> states,
                << " function(s) with shared computation budget: "
                << O.Solver.CompCostBudget << "\n";
 
-  using CostMap = std::map<InstructionCost, double>;
-  using SolutionMap = std::map<InstructionCost, SmallVector<SolutionStep>>;
   CostMap costToAccuracyMap;
   SolutionMap costToSolutionMap;
   costToAccuracyMap[0] = 0;
@@ -1016,7 +1000,7 @@ jointAccuracyDPSolver(Session &S, ArrayRef<FunctionFPState *> states,
   }
 
   double minAccCost = std::numeric_limits<double>::infinity();
-  InstructionCost bestCompCost = 0;
+  DPCost bestCompCost = 0;
   if (errorTol > 0.0) {
     // The joint table is never cached, so both the baseline and the scale are
     // summed fresh over the sites it spans.
@@ -1082,7 +1066,7 @@ jointAccuracyDPSolver(Session &S, ArrayRef<FunctionFPState *> states,
   assert(costToSolutionMap.find(bestCompCost) != costToSolutionMap.end() &&
          "joint DP solver: expected a solution!");
   if (record)
-    record->selected = GET_INSTRUCTION_COST(bestCompCost);
+    record->selected = bestCompCost;
   return SmallVector<SolutionStep>(costToSolutionMap[bestCompCost].begin(),
                                    costToSolutionMap[bestCompCost].end());
 }
