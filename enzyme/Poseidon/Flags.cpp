@@ -198,6 +198,13 @@ cl::opt<std::string>
     Cache("poseidon-cache", cl::init(kDefaultCacheDir), cl::Hidden,
           cl::desc("Directory Poseidon keeps its Herbie results, DP tables and "
                    "device-to-host launch descriptors in"));
+cl::opt<std::string> ImportAccuracyMemo(
+    "poseidon-import-accuracy-memo", cl::init(""), cl::Hidden,
+    cl::value_desc("directory"),
+    cl::desc("Directory of matmulacc_<hash>.txt matrix accuracy results "
+             "written before the memo stored its key; a result missing from "
+             "the cache is taken from there when the file of the same inputs "
+             "exists, and stored in the cache under its key"));
 cl::opt<int> HerbieNumThreads("poseidon-herbie-num-threads", cl::init(8),
                               cl::Hidden,
                               cl::desc("Number of threads Herbie uses"));
@@ -347,17 +354,18 @@ SmallVector<const cl::Option *> optionsOf(const Opts &...opts) {
 
 // What a solved table does not depend on: what is profiled or which sites are
 // solved, what is chosen from a solved table, a path whose contents the key
-// holds instead (profiles, cost model, Herbie binary and platform), a solve
-// that never reads a table (joint, manual), how long Herbie may run and on how
-// many workers, and output.
+// holds instead (profiles, cost model, Herbie binary and platform), where
+// results computed earlier are kept or imported from, a solve that never reads
+// a table (joint, manual), how long Herbie may run and on how many workers,
+// and output.
 SmallVector<const cl::Option *> notSolveInputs() {
   using namespace flags;
   return optionsOf(ProfileGenerate, ProfileUse, OutputProfiles, Kernels,
                    MinCostShare, CompCostBudget, Tau, TauCheapest, JointDP,
-                   ApplyRewrites, CostModel, Cache, HerbieNumThreads,
-                   HerbieTimeout, HerbieSubgraphTimeout, HerbieProcesses,
-                   HerbieBinary, HerbiePlatform, Print, ShowTable, ReportPath,
-                   Explain);
+                   ApplyRewrites, CostModel, Cache, ImportAccuracyMemo,
+                   HerbieNumThreads, HerbieTimeout, HerbieSubgraphTimeout,
+                   HerbieProcesses, HerbieBinary, HerbiePlatform, Print,
+                   ShowTable, ReportPath, Explain);
 }
 
 } // namespace

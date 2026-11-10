@@ -810,9 +810,11 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
     // scalar-reduction matmul gradD cells all see one consistent weight.
     applySensitivityFloor(profileMap, F.getName());
     if (profileHeader.canonicalHash.empty()) {
-      llvm::errs() << "Warning: " << profilePath
-                   << " has no CanonicalHash field; the canonical form of "
-                   << F.getName() << " is not verified against the profile\n";
+      report_fatal_error(
+          Twine("Poseidon: ") + profilePath +
+          " has no CanonicalHash field, so its slot indices cannot be checked "
+          "against the canonical form of " +
+          F.getName() + "; re-run profile generation.");
     } else if (profileHeader.canonicalHash != canonicalHash) {
       report_fatal_error(
           Twine("Poseidon: the profile of ") + F.getName() +
@@ -1634,6 +1636,7 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
             if (changes.empty())
               return;
             PTCandidate cand{std::move(changes), std::move(desc)};
+            cand.ordinal = CS.candidates.size();
             CS.candidates.push_back(std::move(cand));
           };
 

@@ -23,6 +23,8 @@
 #include "llvm/Support/InstructionCost.h"
 #include "llvm/Transforms/Utils/ValueMapper.h"
 
+#include "FPKind.h"
+
 #include <limits>
 #include <string>
 #include <unordered_map>
@@ -65,23 +67,7 @@ llvm::Type *getLLVMFPType(PrecisionChangeType type, llvm::LLVMContext &context);
 PrecisionChangeType getPrecisionChangeType(llvm::Type *type);
 llvm::StringRef getPrecisionChangeTypeString(PrecisionChangeType type);
 
-enum class FPKind {
-  Invalid = 0,
-  F16 = 1,
-  BF16 = 2,
-  TF32 = 3,
-  F32 = 4,
-  F64 = 5,
-  S8 = 6,  // 8-bit signed integer (INT8 tensor-core operand)
-  S32 = 7, // 32-bit signed integer (INT8 tensor-core accumulator)
-};
-const char *fpKindName(FPKind k);
 FPKind fpKindFromType(llvm::Type *T);
-
-double roundToPrec(double x, FPKind k);
-// Smallest positive (subnormal) magnitude representable in `k`, as a double.
-// Returns 0 for F64/Invalid/integer kinds (no underflow constraint).
-double minSubnormalForKind(FPKind k);
 
 struct PrecisionChange {
   llvm::SetVector<FPLLValue *> nodes;
@@ -101,6 +87,9 @@ struct PTCandidate {
   // cost-model rows are below 1.0 and would round to zero here.
   double CompCost = std::numeric_limits<double>::max();
   std::string desc;
+  // Its position when enumerated, the j of its PT<i>_<j> id; see
+  // RewriteCandidate::ordinal.
+  size_t ordinal = 0;
   llvm::MapVector<FPNode *, double> perOutputAccCost;
   std::unordered_map<FPNode *, llvm::SmallVector<double, 4>> errors;
 

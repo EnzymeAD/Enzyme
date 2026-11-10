@@ -42,6 +42,7 @@ set(POSEIDON_SRC
     Expansion.cpp
     Explain.cpp
     Flags.cpp
+    FPKind.cpp
     Herbie.cpp
     HerbieRun.cpp
     HostDispatch.cpp
@@ -79,6 +80,32 @@ target_include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR} ${ENZYME_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/runtime/fpprofiler)
 target_link_libraries(${POSEIDON_PLUGIN_TARGET} PRIVATE MPFR::MPFR)
+
+# What a cached result was computed by: the pass's own sources, and the subset
+# that decides what the matrix accuracy model returns. Hashed when they change,
+# not when the build is configured.
+set(POSEIDON_ACCURACY_MODEL_FILES MatmulAccuracy.cpp FPKind.h FPKind.cpp)
+file(GLOB POSEIDON_PASS_FILES CONFIGURE_DEPENDS
+     ${CMAKE_CURRENT_SOURCE_DIR}/*.cpp ${CMAKE_CURRENT_SOURCE_DIR}/*.h)
+set(POSEIDON_BUILD_IDENTITY ${CMAKE_CURRENT_BINARY_DIR}/identity/BuildIdentity.h)
+string(REPLACE ";" "," _poseidon_accuracy_arg "${POSEIDON_ACCURACY_MODEL_FILES}")
+add_custom_command(
+  OUTPUT ${POSEIDON_BUILD_IDENTITY}
+  COMMAND
+    ${CMAKE_COMMAND} -DPASS_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+    -DACCURACY_FILES=${_poseidon_accuracy_arg}
+    -DEQUIVALENTS=${CMAKE_CURRENT_SOURCE_DIR}/MatmulAccuracyEquivalents.txt
+    -DOUT=${POSEIDON_BUILD_IDENTITY} -P
+    ${CMAKE_CURRENT_SOURCE_DIR}/cmake/BuildIdentity.cmake
+  DEPENDS ${POSEIDON_PASS_FILES}
+          ${CMAKE_CURRENT_SOURCE_DIR}/MatmulAccuracyEquivalents.txt
+          ${CMAKE_CURRENT_SOURCE_DIR}/cmake/BuildIdentity.cmake
+  VERBATIM)
+add_custom_target(poseidon_build_identity DEPENDS ${POSEIDON_BUILD_IDENTITY})
+add_dependencies(${POSEIDON_PLUGIN_TARGET} poseidon_build_identity)
+target_include_directories(${POSEIDON_PLUGIN_TARGET}
+                           PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/identity)
+
 set_source_files_properties(
   Herbie.cpp
   PROPERTIES COMPILE_DEFINITIONS HERBIE_BINARY="${POSEIDON_HERBIE_BINARY_PATH}")

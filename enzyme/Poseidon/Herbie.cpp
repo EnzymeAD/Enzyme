@@ -700,6 +700,13 @@ bool improveViaHerbie(const std::vector<std::string> &inputExprs,
   if (Run.Result == HerbieRunResult::Outcome::Timeout)
     for (CandidateOutput &CO : COs)
       CO.herbieStatus = "timeout";
+  if (Run.Result == HerbieRunResult::Outcome::Crashed) {
+    if (flags::StrictMode)
+      report_fatal_error(Twine("Poseidon strict mode: Herbie crashed (") +
+                         Run.Crash + ") on " + Label);
+    for (CandidateOutput &CO : COs)
+      CO.herbieStatus = "crashed";
+  }
   if (Run.Result != HerbieRunResult::Outcome::Ok)
     return false;
 
@@ -774,6 +781,7 @@ bool improveViaHerbie(const std::vector<std::string> &inputExprs,
         double bestAccuracy = 1.0 - best[1].getAsNumber().value() / bits;
 
         RewriteCandidate bestCandidate(bestCost, bestAccuracy, bestExpr.str());
+        bestCandidate.ordinal = CO.candidates.size();
         CO.candidates.push_back(bestCandidate);
       }
 
@@ -794,6 +802,7 @@ bool improveViaHerbie(const std::vector<std::string> &inputExprs,
         double accuracy = 1.0 - entry[1].getAsNumber().value() / bits;
 
         RewriteCandidate candidate(cost, accuracy, expr.str());
+        candidate.ordinal = CO.candidates.size();
         CO.candidates.push_back(candidate);
       }
     }

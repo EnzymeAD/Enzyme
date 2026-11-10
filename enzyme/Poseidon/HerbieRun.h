@@ -90,11 +90,15 @@ struct HerbieRunResult {
     // Herbie ran out of the wall-clock budget, now or on an earlier run of
     // this exact input with the same budget.
     Timeout,
+    // Herbie ended by a signal the runner did not send; `Crash` names it.
+    // Nothing is cached.
+    Crashed,
     // Herbie could not be started, or its input files could not be written.
     Failed,
   };
   Outcome Result = Outcome::Failed;
   std::string ResultsJson;
+  std::string Crash;
 };
 
 // Runs Herbie on `Cores`, each a complete (FPCore ...), through the cache.

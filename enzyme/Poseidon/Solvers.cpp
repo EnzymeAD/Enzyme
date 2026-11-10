@@ -14,6 +14,7 @@
 
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/Config/llvm-config.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/JSON.h"
@@ -22,6 +23,7 @@
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/xxhash.h"
 
+#include "BuildIdentity.h"
 #include "CostModel.h"
 #include "Flags.h"
 #include "Optimize.h"
@@ -399,14 +401,17 @@ bool fromJSON(const json::Value &V, StoredStep &S, json::Path P) {
 }
 } // namespace
 
-// Everything a site's DP table is computed from. The candidates are part of it
-// although the inputs before them decide them: a Herbie search can end
-// differently under the same inputs (a timeout), and under an accuracy target
-// the matrix products are left out of the table.
+// Everything a site's DP table is computed from, the code that prices and
+// solves it included. The candidates are part of it although the inputs before
+// them decide them: a Herbie search can end differently under the same inputs
+// (a timeout), and under an accuracy target the matrix products are left out
+// of the table.
 static CacheKey solveKey(const FunctionFPState &st,
                          ArrayRef<CandidateMatmul> CMs, StringRef profilePath) {
   const Function &F = *st.F;
   CacheKey key;
+  key.add("compiler",
+          std::string(kPassIdentity) + " LLVM " + LLVM_VERSION_STRING);
   std::string body;
   raw_string_ostream bodyOS(body);
   bodyOS << StructuralHash(F, /*DetailedHash=*/true);
@@ -657,14 +662,13 @@ writeSiteTable(StringRef fnName, const CacheKey &key,
   json::Object jsonObj;
   jsonObj["functions"] = std::move(functions);
 
-  std::error_code EC;
-  raw_fd_ostream cacheFile(path, EC, sys::fs::OF_Text);
-  if (EC) {
-    llvm::errs() << "Error writing cache file: " << EC.message() << "\n";
+  if (Error E = writeFileAtomically(
+          path,
+          formatv("{0:2}", json::Value(std::move(jsonObj))).str() + "\n")) {
+    llvm::errs() << "Error writing cache file: " << toString(std::move(E))
+                 << "\n";
     return;
   }
-  cacheFile << formatv("{0:2}", json::Value(std::move(jsonObj))) << "\n";
-  cacheFile.close();
   llvm::errs() << "DP table for " << fnName << " cached to file.\n";
 }
 
@@ -722,13 +726,18 @@ printDPTable(const std::map<InstructionCost, double> &costToAccuracyMap,
           [&](auto *item) {
             using T = std::decay_t<decltype(*item)>;
             if constexpr (std::is_same_v<T, CandidateOutput>) {
-              llvm::errs() << "\t\t" << item->expr << " --("
-                           << step.candidateIndex << ")-> "
-                           << item->candidates[step.candidateIndex].expr
-                           << "\n";
+              const RewriteCandidate &cand =
+                  item->candidates[step.candidateIndex];
+              llvm::errs() << "\t\t" << item->expr << " --(" << cand.ordinal
+                           << ")-> " << cand.expr << "\n";
             } else if constexpr (std::is_same_v<T, CandidateSubgraph>) {
-              llvm::errs() << "\t\tCS: "
-                           << item->candidates[step.candidateIndex].desc
+              const PTCandidate &cand = item->candidates[step.candidateIndex];
+              llvm::errs() << "\t\tCS: " << cand.desc << " (#" << cand.ordinal
+                           << ")\n";
+            } else if constexpr (std::is_same_v<T, CandidateMatmul>) {
+              llvm::errs() << "\t\tmatmul[" << item->matmul->id << "] -> "
+                           << matmulOptionLabel(
+                                  item->candidates[step.candidateIndex])
                            << " (#" << step.candidateIndex << ")\n";
             } else {
               llvm_unreachable(
@@ -784,8 +793,7 @@ buildStepJSON(const SolutionStep &step,
           auto &cand = item->candidates[step.candidateIndex];
           stepObj["type"] = "precision_change";
           stepObj["description"] = cand.desc;
-          stepObj["candidate_index"] =
-              static_cast<int64_t>(step.candidateIndex);
+          stepObj["candidate_index"] = static_cast<int64_t>(cand.ordinal);
 
           json::Array changes;
           for (const auto &change : cand.changes) {
@@ -863,8 +871,8 @@ static void writeTextReportStep(raw_ostream &OS, const SolutionStep &step,
           }
         } else if constexpr (std::is_same_v<T, CandidateSubgraph>) {
           auto &cand = item->candidates[step.candidateIndex];
-          OS << pad << "[Precision] " << cand.desc << " (#"
-             << step.candidateIndex << ")\n";
+          OS << pad << "[Precision] " << cand.desc << " (#" << cand.ordinal
+             << ")\n";
           for (const auto &change : cand.changes) {
             OS << pad << "  " << getPrecisionChangeTypeString(change.oldType)
                << " -> " << getPrecisionChangeTypeString(change.newType)
@@ -957,7 +965,8 @@ emitReport(StringRef funcName,
     for (size_t k = 0; k < order.size() && k < kMaxCandRows; ++k) {
       size_t ci = order[k];
       json::Object c;
-      c["id"] = "PT" + std::to_string(csIdx) + "_" + std::to_string(ci);
+      c["id"] = "PT" + std::to_string(csIdx) + "_" +
+                std::to_string(CS.candidates[ci].ordinal);
       c["description"] = CS.candidates[ci].desc;
       c["computation_cost_delta"] =
           GET_INSTRUCTION_COST(CS.getCompCostDelta(ci));
@@ -1028,7 +1037,7 @@ emitReport(StringRef funcName,
     textOut << "  Candidates: " << COs[i].candidates.size() << "\n";
     for (size_t j = 0; j < COs[i].candidates.size(); ++j) {
       auto &cand = COs[i].candidates[j];
-      textOut << "    [" << j << "] " << cand.expr;
+      textOut << "    [" << cand.ordinal << "] " << cand.expr;
       if (!std::isnan(cand.herbieAccuracy))
         textOut << "  (accuracy: " << cand.herbieAccuracy << " bits)";
       textOut << "\n";
@@ -1050,7 +1059,8 @@ emitReport(StringRef funcName,
     });
     for (size_t k = 0; k < order.size() && k < kMaxCandRows; ++k) {
       size_t ci = order[k];
-      textOut << "  [PT" << csIdx << "_" << ci << "] " << CS.candidates[ci].desc
+      textOut << "  [PT" << csIdx << "_" << CS.candidates[ci].ordinal << "] "
+              << CS.candidates[ci].desc
               << ": Δcost=" << GET_INSTRUCTION_COST(CS.getCompCostDelta(ci))
               << " Δacc=" << format("%.6e", CS.getAccCostDelta(ci)) << "\n";
     }
@@ -1136,7 +1146,8 @@ emitReport(StringRef funcName,
         }
 
         json::Object rw;
-        std::string id = "R" + std::to_string(coIdx) + "_" + std::to_string(ci);
+        std::string id =
+            "R" + std::to_string(coIdx) + "_" + std::to_string(cand.ordinal);
         rw["id"] = id;
         rw["original_expr"] = CO.expr;
         rw["rewritten_expr"] = cand.expr;
@@ -1194,7 +1205,7 @@ emitReport(StringRef funcName,
 
         json::Object rw;
         std::string id =
-            "PT" + std::to_string(csIdx) + "_" + std::to_string(ci);
+            "PT" + std::to_string(csIdx) + "_" + std::to_string(pt.ordinal);
         rw["id"] = id;
         rw["type"] = "precision_change";
         rw["description"] = pt.desc;
@@ -1340,27 +1351,22 @@ errorBudgetSelector(SmallVector<CandidateMatmul, 4> &CMs, double budget,
 }
 
 // Write the DP table's cost breakpoints to <cache>/budgets.txt for the Pareto-
-// variant workflow. Written only if absent so parallel variant builds reusing a
-// cached table don't clobber it.
-static void writeBudgetsFileOnce(
-    const std::map<InstructionCost, double> &costToAccuracyMap) {
+// variant workflow, on every solve and replay. Parallel variant builds reusing
+// a cached table write the same breakpoints, and the replace is atomic, so
+// none of them reads a partial file.
+static void
+writeBudgetsFile(const std::map<InstructionCost, double> &costToAccuracyMap) {
   if (flags::Cache.empty())
     return;
   std::string budgetsFile = flags::Cache + "/budgets.txt";
-  if (llvm::sys::fs::exists(budgetsFile))
-    return;
   std::string budgetsStr;
   for (const auto &pair : costToAccuracyMap)
     budgetsStr += std::to_string(GET_INSTRUCTION_COST(pair.first)) + ",";
   if (!budgetsStr.empty())
     budgetsStr.pop_back();
-  std::error_code EC;
-  llvm::raw_fd_ostream Out(budgetsFile, EC, llvm::sys::fs::OF_Text);
-  if (EC)
-    llvm::errs() << "Error opening " << budgetsFile << ": " << EC.message()
-                 << "\n";
-  else
-    Out << budgetsStr;
+  if (Error E = writeFileAtomically(budgetsFile, budgetsStr))
+    llvm::errs() << "Error writing " << budgetsFile << ": "
+                 << toString(std::move(E)) << "\n";
 }
 
 SmallVector<SolutionStep> accuracyDPSolver(
@@ -1455,7 +1461,7 @@ SmallVector<SolutionStep> accuracyDPSolver(
   if (flags::Print && flags::ShowTable)
     printDPTable(costToAccuracyMap, costToSolutionMap);
 
-  writeBudgetsFileOnce(costToAccuracyMap);
+  writeBudgetsFile(costToAccuracyMap);
 
   if (!loadedFromCache)
     emitReport(F.getName(), costToAccuracyMap, costToSolutionMap, COs, CSs);
@@ -1659,7 +1665,7 @@ jointAccuracyDPSolver(ArrayRef<FunctionFPState *> states, double errorTol,
                << " entries; cost range [" << costToAccuracyMap.begin()->first
                << ", " << costToAccuracyMap.rbegin()->first << "]\n";
 
-  writeBudgetsFileOnce(costToAccuracyMap);
+  writeBudgetsFile(costToAccuracyMap);
 
   if (record) {
     record->selector = "joint";
@@ -1767,6 +1773,17 @@ jointAccuracyDPSolver(ArrayRef<FunctionFPState *> states, double errorTol,
                                    costToSolutionMap[bestCompCost].end());
 }
 
+// The position in `cands` of the candidate an id's ordinal names; pricing may
+// have dropped it.
+template <typename CandT>
+static std::optional<size_t> findOrdinal(ArrayRef<CandT> cands,
+                                         size_t ordinal) {
+  for (size_t i = 0; i < cands.size(); ++i)
+    if (cands[i].ordinal == ordinal)
+      return i;
+  return std::nullopt;
+}
+
 SmallVector<SolutionStep>
 parseManualRewrites(StringRef spec, SmallVector<CandidateOutput, 4> &COs,
                     SmallVector<CandidateSubgraph, 4> &CSs,
@@ -1787,18 +1804,19 @@ parseManualRewrites(StringRef spec, SmallVector<CandidateOutput, 4> &COs,
       if (coIdx >= COs.size())
         report_fatal_error("[poseidon] CO index " + Twine(coIdx) +
                            " out of range (" + Twine(COs.size()) + " COs)");
-      if (candIdx >= COs[coIdx].candidates.size())
-        report_fatal_error("[poseidon] candidate index " + Twine(candIdx) +
-                           " out of range for CO " + Twine(coIdx) + " (" +
-                           Twine(COs[coIdx].candidates.size()) +
-                           " candidates)");
+      std::optional<size_t> pos =
+          findOrdinal(ArrayRef(COs[coIdx].candidates), candIdx);
+      if (!pos)
+        report_fatal_error("[poseidon] CO " + Twine(coIdx) +
+                           " has no candidate " + Twine(candIdx) +
+                           " that pricing kept ('" + Twine(id) + "')");
       if (!appliedCOs.insert(coIdx).second)
         report_fatal_error("[poseidon] CO " + Twine(coIdx) +
                            " already has a rewrite applied (duplicate ID '" +
                            Twine(id) + "')");
       llvm::errs() << "[poseidon] Selecting " << id << ": " << COs[coIdx].expr
-                   << " -> " << COs[coIdx].candidates[candIdx].expr << "\n";
-      steps.emplace_back(&COs[coIdx], candIdx);
+                   << " -> " << COs[coIdx].candidates[*pos].expr << "\n";
+      steps.emplace_back(&COs[coIdx], *pos);
     } else if (id.starts_with("PT")) {
       auto rest = id.drop_front(2);
       auto [csStr, candStr] = rest.split('_');
@@ -1808,18 +1826,19 @@ parseManualRewrites(StringRef spec, SmallVector<CandidateOutput, 4> &COs,
       if (csIdx >= CSs.size())
         report_fatal_error("[poseidon] CS index " + Twine(csIdx) +
                            " out of range (" + Twine(CSs.size()) + " CSs)");
-      if (candIdx >= CSs[csIdx].candidates.size())
-        report_fatal_error("[poseidon] candidate index " + Twine(candIdx) +
-                           " out of range for CS " + Twine(csIdx) + " (" +
-                           Twine(CSs[csIdx].candidates.size()) +
-                           " candidates)");
+      std::optional<size_t> pos =
+          findOrdinal(ArrayRef(CSs[csIdx].candidates), candIdx);
+      if (!pos)
+        report_fatal_error("[poseidon] CS " + Twine(csIdx) +
+                           " has no candidate " + Twine(candIdx) +
+                           " that pricing kept ('" + Twine(id) + "')");
       if (!appliedCSs.insert(csIdx).second)
         report_fatal_error("[poseidon] CS " + Twine(csIdx) +
                            " already has a PT applied (duplicate ID '" +
                            Twine(id) + "')");
       llvm::errs() << "[poseidon] Selecting " << id << ": "
-                   << CSs[csIdx].candidates[candIdx].desc << "\n";
-      steps.emplace_back(&CSs[csIdx], candIdx);
+                   << CSs[csIdx].candidates[*pos].desc << "\n";
+      steps.emplace_back(&CSs[csIdx], *pos);
     } else if (id.starts_with("M")) {
       auto rest = id.drop_front(1);
       auto [cmStr, candStr] = rest.split('_');
@@ -1867,9 +1886,10 @@ bool applySolution(
         [&](auto *item) {
           using T = std::decay_t<decltype(*item)>;
           if constexpr (std::is_same_v<T, CandidateOutput>) {
+            const RewriteCandidate &cand =
+                item->candidates[step.candidateIndex];
             llvm::errs() << "Applying solution for " << item->expr << " --("
-                         << step.candidateIndex << ")-> "
-                         << item->candidates[step.candidateIndex].expr << "\n";
+                         << cand.ordinal << ")-> " << cand.expr << "\n";
             if (llvm::any_of(item->roots, [&](Value *root) {
                   return rewrittenOutputs.contains(root);
                 })) {
@@ -1880,9 +1900,9 @@ bool applySolution(
             rewrittenOutputs.insert(item->roots.begin(), item->roots.end());
             item->apply(step.candidateIndex, valueToNodeMap, symbolToValueMap);
           } else if constexpr (std::is_same_v<T, CandidateSubgraph>) {
-            llvm::errs() << "Applying solution for CS: "
-                         << item->candidates[step.candidateIndex].desc << " (#"
-                         << step.candidateIndex << ")\n";
+            const PTCandidate &cand = item->candidates[step.candidateIndex];
+            llvm::errs() << "Applying solution for CS: " << cand.desc << " (#"
+                         << cand.ordinal << ")\n";
             item->apply(step.candidateIndex);
           } else if constexpr (std::is_same_v<T, CandidateMatmul>) {
             llvm::errs() << "Applying solution for matmul[" << item->matmul->id

@@ -5,8 +5,6 @@
 ; RUN: for f in %t/first/matmulacc_*; do echo '0 0' > %t/seeded/$(basename $f); done
 ; RUN: %opt %S/Inputs/stale_cache/matmul_device.ll %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%t/prof -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_dispatch_x1e6.csv -poseidon-tau=1e-12 -poseidon-print -poseidon-cache=%t/seeded -S -o /dev/null 2>&1 | FileCheck --check-prefix=PRICED %s
 ; REQUIRES: poseidon, scev-trunc-iv-nowrap
-; XFAIL: *
-; A matmulacc_<hash>.txt memo is trusted by file name alone.
 
 ; Every accuracy memo the first compile wrote is planted in an empty cache
 ; under the same name with the numbers 0 0 (an FP16 product accurate to every

@@ -36,8 +36,6 @@ constexpr const char *kDefaultProfileDir = POSEIDON_DEFAULT_PROFILE_DIR;
 constexpr const char *kDefaultCacheDir = "./.poseidon";
 
 // The percentile of the sampled relative errors a matrix product is scored at.
-// The accuracy cache key carries a level only when it differs from this, so
-// every banked entry stays valid.
 constexpr double kDefaultConfidence = 0.95;
 
 // Resolve the flag spellings that carry a default only when written without a
@@ -102,6 +100,7 @@ extern llvm::cl::opt<bool> FreqWeightedPricing;
 
 // Herbie and the result cache.
 extern llvm::cl::opt<std::string> Cache;
+extern llvm::cl::opt<std::string> ImportAccuracyMemo;
 extern llvm::cl::opt<int> HerbieNumThreads;
 extern llvm::cl::opt<int> HerbieTimeout;
 extern llvm::cl::opt<int> HerbieNumPts;

@@ -4,6 +4,7 @@ LaunchCount = 12
 SiteId = 1
 Kappa = 0.001
 KappaMark = ok
+CanonicalHash = dcc7d44285bdf010
 0
 	MinRes = 3.75000000000000000e-01
 	MaxRes = 1.49218750000000000e+00

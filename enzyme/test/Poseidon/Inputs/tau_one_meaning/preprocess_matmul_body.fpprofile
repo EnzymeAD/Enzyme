@@ -1,6 +1,7 @@
 MaxBlockDims = 16 16 1
 MaxGridDims = 1 1 1
 LaunchCount = 2
+CanonicalHash = 1681d69d16cb1897
 0
 	MinRes = 5.00000000000000000e-01
 	MaxRes = 1.29820910000000023e+01

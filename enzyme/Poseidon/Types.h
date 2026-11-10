@@ -208,6 +208,10 @@ struct RewriteCandidate {
   double herbieAccuracy = std::numeric_limits<double>::quiet_NaN();
   double accuracyCost = std::numeric_limits<double>::quiet_NaN();
   std::string expr;
+  // Its position among the alternatives Herbie returned for its core, the j of
+  // its R<i>_<j> id. Pricing drops candidates and a table hit prices none, so
+  // the position in `candidates` differs between the two.
+  size_t ordinal = 0;
 
   RewriteCandidate(double cost, double accuracy, std::string expression)
       : herbieCost(cost), herbieAccuracy(accuracy), expr(expression) {}

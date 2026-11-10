@@ -514,11 +514,15 @@ class Explainer {
           if constexpr (std::is_same_v<T, CandidateOutput>) {
             for (size_t i = 0; i < st.COs.size(); ++i)
               if (&st.COs[i] == item)
-                id = formatv("R{0}_{1}", i, step.candidateIndex).str();
+                id = formatv("R{0}_{1}", i,
+                             item->candidates[step.candidateIndex].ordinal)
+                         .str();
           } else if constexpr (std::is_same_v<T, CandidateSubgraph>) {
             for (size_t i = 0; i < st.CSs.size(); ++i)
               if (&st.CSs[i] == item)
-                id = formatv("PT{0}_{1}", i, step.candidateIndex).str();
+                id = formatv("PT{0}_{1}", i,
+                             item->candidates[step.candidateIndex].ordinal)
+                         .str();
           } else {
             for (size_t i = 0; i < st.CMs.size(); ++i)
               if (&st.CMs[i] == item)
@@ -711,7 +715,7 @@ void Explainer::addCOAlternatives(Unit &U, const Subgraph &sg) {
     for (size_t j = 0; j < CO.candidates.size(); ++j) {
       const RewriteCandidate &cand = CO.candidates[j];
       Alt A;
-      A.id = formatv("R{0}_{1}", i, j).str();
+      A.id = formatv("R{0}_{1}", i, cand.ordinal).str();
       A.item = &CO;
       A.index = j;
       fill(A, cand.expr);
@@ -826,7 +830,7 @@ void Explainer::addCSAlternatives(Unit &U, const Subgraph &sg) {
     for (size_t j = 0; j < CS.candidates.size(); ++j) {
       PTCandidate &cand = CS.candidates[j];
       Alt A;
-      A.id = formatv("PT{0}_{1}", i, j).str();
+      A.id = formatv("PT{0}_{1}", i, cand.ordinal).str();
       A.item = &CS;
       A.index = j;
       describe(A, cand);
