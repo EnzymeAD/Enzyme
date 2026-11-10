@@ -1065,55 +1065,79 @@ static bool AnyJuliaTypes(Type *T) {
   return false;
 }
 
-static void AugmentWithJuliaObjectType(TypeTree &TT, Type *T,
-                                       const DataLayout &DL) {
+const TypeAnalysis::JuliaTypeOffsets &
+TypeAnalysis::getJuliaTypeOffsets(Type *T, const DataLayout &DL) {
+  auto found = juliaTypeCache.find(T);
+  if (found != juliaTypeCache.end())
+    return found->second;
+
+  JuliaTypeOffsets info;
   if (AllJuliaTypes(T)) {
-    TT.remove({-1});
-    TT.remove({0});
-    TT.insert({-1}, BaseType::Pointer);
-    return;
+    info.allJulia = true;
+    return juliaTypeCache.try_emplace(T, std::move(info)).first->second;
   }
   if (!AnyJuliaTypes(T))
-    return;
-  auto outAll = TT[{-1}];
-  if (outAll != BaseType::Unknown)
-    return;
+    return juliaTypeCache.try_emplace(T, std::move(info)).first->second;
 
-  std::vector<std::pair<Type *, size_t>> todo;
+  SmallVector<std::pair<Type *, size_t>, 8> todo;
   todo.emplace_back(T, 0);
   while (!todo.empty()) {
-    auto cur = todo.back();
-    todo.pop_back();
-    T = cur.first;
-    auto offset = cur.second;
-    if (!AnyJuliaTypes(T))
+    auto cur = todo.pop_back_val();
+    Type *curT = cur.first;
+    size_t offset = cur.second;
+    if (!AnyJuliaTypes(curT))
       continue;
-    if (isa<PointerType>(T)) {
-      TT.remove(std::vector<int>{(int)offset});
-      TT.insert(std::vector<int>{(int)offset}, BaseType::Pointer);
+    if (isa<PointerType>(curT)) {
+      info.ptrOffsets.push_back(static_cast<int>(offset));
       continue;
     }
-    if (auto AT = dyn_cast<ArrayType>(T)) {
+    if (auto *AT = dyn_cast<ArrayType>(curT)) {
       // Array elements are laid out at successive multiples of the element's
       // alloc size, which is what a gep [0, 1] into the array would compute.
       size_t stride = DL.getTypeAllocSize(AT->getElementType());
       for (size_t i = 0; i < AT->getNumElements(); i++) {
         todo.emplace_back(AT->getElementType(), offset + i * stride);
       }
-
       continue;
     }
-    if (auto ST = dyn_cast<StructType>(T)) {
+    if (auto *ST = dyn_cast<StructType>(curT)) {
       // The struct layout already records each field's offset, which is what a
       // gep [0, i] into the struct would compute.
-      auto SL = DL.getStructLayout(ST);
+      const auto *SL = DL.getStructLayout(ST);
       for (size_t i = 0; i < ST->getNumElements(); i++) {
         todo.emplace_back(ST->getElementType(i),
-                          offset + (size_t)SL->getElementOffset(i));
+                          offset +
+                              static_cast<size_t>(SL->getElementOffset(i)));
       }
-
       continue;
     }
+  }
+  llvm::sort(info.ptrOffsets);
+  return juliaTypeCache.try_emplace(T, std::move(info)).first->second;
+}
+
+static void AugmentWithJuliaObjectType(TypeTree &TT, Type *T,
+                                       const DataLayout &DL, TypeAnalysis &TA) {
+  const auto &info = TA.getJuliaTypeOffsets(T, DL);
+  if (info.allJulia) {
+    TT.remove({-1});
+    TT.remove({0});
+    TT.insert({-1}, BaseType::Pointer);
+    return;
+  }
+  if (info.ptrOffsets.empty())
+    return;
+  auto outAll = TT[{-1}];
+  if (outAll != BaseType::Unknown)
+    return;
+
+  std::vector<int> idx(1);
+  for (int offset : info.ptrOffsets) {
+    idx[0] = offset;
+    if (TT[idx] == BaseType::Pointer)
+      continue;
+    TT.remove(idx);
+    TT.insert(idx, BaseType::Pointer);
   }
 }
 
@@ -1128,10 +1152,10 @@ const TypeTree &TypeAnalyzer::getAnalysis(Value *Val) {
   }
   if (auto C = dyn_cast<Constant>(Val)) {
     getConstantAnalysis(C, *this, analysis);
-    if (EnzymeJuliaAddrLoad)
+    if (EnzymeJuliaAddrLoad && juliaAugmented.insert(Val).second)
       AugmentWithJuliaObjectType(
           analysis[Val], Val->getType(),
-          fntypeinfo.Function->getParent()->getDataLayout());
+          fntypeinfo.Function->getParent()->getDataLayout(), interprocedural);
     return analysis[Val];
   }
 
@@ -1153,10 +1177,10 @@ const TypeTree &TypeAnalyzer::getAnalysis(Value *Val) {
     assert(Arg->getParent() == fntypeinfo.Function);
   }
 
-  if (EnzymeJuliaAddrLoad)
+  if (EnzymeJuliaAddrLoad && juliaAugmented.insert(Val).second)
     AugmentWithJuliaObjectType(
         analysis[Val], Val->getType(),
-        fntypeinfo.Function->getParent()->getDataLayout());
+        fntypeinfo.Function->getParent()->getDataLayout(), interprocedural);
 
   // Return current results
   if (isa<Argument>(Val) || isa<Instruction>(Val))
@@ -1374,6 +1398,7 @@ void TypeAnalyzer::updateAnalysis(Value *Val, TypeTree Data, Value *Origin) {
   }
 
   if (Changed) {
+    juliaAugmented.erase(Val);
 
     if (auto GV = dyn_cast<GlobalVariable>(Val)) {
       if (GV->getValueType()->isSized()) {
@@ -2020,6 +2045,7 @@ void TypeAnalyzer::visitConstantExpr(ConstantExpr &CE) {
   visit(*I);
   updateAnalysis(&CE, analysis[I], &CE);
   analysis.erase(I);
+  juliaAugmented.erase(I);
   if (workList.remove(I)) {
     workList.insert(&CE);
   }
@@ -7395,7 +7421,10 @@ std::set<int64_t> TypeAnalyzer::knownIntegralValues(Value *val) {
   return fntypeinfo.knownIntegralValues(val, DT, intseen, SE);
 }
 
-void TypeAnalysis::clear() { analyzedFunctions.clear(); }
+void TypeAnalysis::clear() {
+  analyzedFunctions.clear();
+  juliaTypeCache.clear();
+}
 
 FnTypeInfo preventTypeAnalysisLoops(const FnTypeInfo &oldTypeInfo_,
                                     llvm::Function *todiff) {
