@@ -1762,8 +1762,8 @@ static inline llvm::Value *getBaseObject(llvm::Value *V,
         continue;
       }
     } else if (auto CI = llvm::dyn_cast<llvm::PHINode>(V)) {
-      if (CI->getNumIncomingValues() == 1) {
-        V = CI->getOperand(0);
+      if (auto CV = CI->hasConstantValue()) {
+        V = CV;
         continue;
       }
     } else if (auto *GA = llvm::dyn_cast<llvm::GlobalAlias>(V)) {
