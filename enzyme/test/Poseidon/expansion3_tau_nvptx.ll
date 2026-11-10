@@ -3,7 +3,7 @@
 ; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/expansion3 -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-enable-multifloat=true -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_x1e6.csv -poseidon-print -S -poseidon-expansion-components=3 -poseidon-tau=1e-16 -poseidon-cache=%t/three 2>&1 | FileCheck --check-prefix=THREE %s
 ; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/expansion3 -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-enable-multifloat=true -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_x1e6.csv -poseidon-print -S -poseidon-expansion-components=3 -poseidon-tau=1e-15 -poseidon-cache=%t/loose 2>&1 | FileCheck --check-prefix=LOOSE %s
 ; REQUIRES: poseidon
-; Three-component FP32 expansion (-poseidon-expansion-components=3, the N-limb arm of Expansion.cpp). A
+; Three-component FP32 expansion (-poseidon-expansion-components=3, the N-limb arm of Techniques/Expansion.cpp). A
 ; 24-step logistic map (72 FP64 operations on one input) under the site tolerance 1e-16: the two-component
 ; expansion models 4.2e-16 and misses it, so with two components the cheapest point that clears it is the
 ; FP64 body itself and nothing is rewritten; admitting three components adds an Expansion3 candidate that

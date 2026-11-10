@@ -33,11 +33,11 @@
 #include <optional>
 
 #include "CostModel.h"
-#include "DeviceMath.h"
-#include "Flags.h"
 #include "Herbie.h"
 #include "Optimize.h"
-#include "Precision.h"
+#include "Pass/Flags.h"
+#include "Targets/DeviceMath.h"
+#include "Techniques/Precision.h"
 #include "Types.h"
 #include "Utils.h"
 

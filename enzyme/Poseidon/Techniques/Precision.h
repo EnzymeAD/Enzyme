@@ -23,7 +23,7 @@
 #include "llvm/Support/InstructionCost.h"
 #include "llvm/Transforms/Utils/ValueMapper.h"
 
-#include "FPKind.h"
+#include "Core/FPKind.h"
 
 #include <limits>
 #include <string>

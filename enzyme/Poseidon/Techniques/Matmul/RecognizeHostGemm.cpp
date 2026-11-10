@@ -21,10 +21,10 @@
 // getMinusSCEV of those two never folds. Integer polynomials over SCEV atoms
 // (RgPoly below) make the comparison exact and total, and every dimension is
 // either derived or the whole site is refused.
-#include "Flags.h"
 #include "HostDispatch.h"
 #include "MatmulInternal.h"
-#include "ProfileRead.h"
+#include "Pass/Flags.h"
+#include "Profile/ProfileRead.h"
 #include "Utils.h"
 
 #include "llvm/ADT/STLExtras.h"

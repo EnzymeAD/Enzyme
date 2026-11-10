@@ -8,7 +8,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "CostModel.h"
-#include "Flags.h"
+#include "Pass/Flags.h"
 #include "Types.h"
 #include "Utils.h"
 

@@ -9,7 +9,7 @@
 
 #include "Sampling.h"
 #include "Evaluators.h"
-#include "Flags.h"
+#include "Pass/Flags.h"
 #include "Types.h"
 #include "Utils.h"
 

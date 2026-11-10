@@ -1,5 +1,5 @@
 // RUN: rm -rf %t && mkdir -p %t/pass
-// RUN: cp %S/../../Poseidon/MatmulAccuracy.cpp %S/../../Poseidon/FPKind.h %S/../../Poseidon/FPKind.cpp %S/../../Poseidon/MatmulAccuracyMemo.cpp %S/../../Poseidon/Solvers.cpp %t/pass/
+// RUN: cp %S/../../Poseidon/Techniques/Matmul/MatmulAccuracy.cpp %S/../../Poseidon/Core/FPKind.h %S/../../Poseidon/Core/FPKind.cpp %S/../../Poseidon/Techniques/Matmul/MatmulAccuracyMemo.cpp %S/../../Poseidon/Solvers.cpp %t/pass/
 // RUN: printf '# earlier identities\n0123456789ABCDEF\n\nFEDCBA9876543210\n' > %t/equivalents.txt
 // RUN: %cmake -DPASS_DIR=%t/pass -DACCURACY_FILES=MatmulAccuracy.cpp,FPKind.h,FPKind.cpp -DEQUIVALENTS=%t/equivalents.txt -DOUT=%t/before.h -P %S/../../Poseidon/cmake/BuildIdentity.cmake
 // RUN: mkdir -p %t/moved && cp %t/pass/MatmulAccuracy.cpp %t/moved/Model.cpp && cp %t/pass/FPKind.h %t/moved/Kinds.h && cp %t/pass/FPKind.cpp %t/moved/Kinds.cpp
@@ -27,8 +27,8 @@
 // RUN: diff %t/before.model %t/moved.model
 // RUN: not diff %t/moved.model %t/moved_changed.model
 // RUN: mkdir -p %t/tree/matmul
-// RUN: cp %S/../../Poseidon/MatmulAccuracy.cpp %S/../../Poseidon/FPKind.h %S/../../Poseidon/FPKind.cpp %t/tree/
-// RUN: cp %S/../../Poseidon/MatmulAccuracyMemo.cpp %t/tree/matmul/
+// RUN: cp %S/../../Poseidon/Techniques/Matmul/MatmulAccuracy.cpp %S/../../Poseidon/Core/FPKind.h %S/../../Poseidon/Core/FPKind.cpp %t/tree/
+// RUN: cp %S/../../Poseidon/Techniques/Matmul/MatmulAccuracyMemo.cpp %t/tree/matmul/
 // RUN: %cmake -DPASS_DIR=%t/tree -DACCURACY_FILES=MatmulAccuracy.cpp,FPKind.h,FPKind.cpp -DEQUIVALENTS=%t/equivalents.txt -DOUT=%t/tree.h -P %S/../../Poseidon/cmake/BuildIdentity.cmake
 // RUN: echo '// changed' >> %t/tree/matmul/MatmulAccuracyMemo.cpp
 // RUN: %cmake -DPASS_DIR=%t/tree -DACCURACY_FILES=MatmulAccuracy.cpp,FPKind.h,FPKind.cpp -DEQUIVALENTS=%t/equivalents.txt -DOUT=%t/tree_sub_changed.h -P %S/../../Poseidon/cmake/BuildIdentity.cmake
@@ -44,6 +44,10 @@
 // RUN: echo '// changed' >> %t/tree/runtime/fpprofiler/Solvers.cpp
 // RUN: %cmake -DPASS_DIR=%t/tree -DBINARY_DIR=%t/tree/out -DACCURACY_FILES=MatmulAccuracy.cpp,FPKind.h,FPKind.cpp -DEQUIVALENTS=%t/equivalents.txt -DOUT=%t/tree_runtime_changed.h -P %S/../../Poseidon/cmake/BuildIdentity.cmake
 // RUN: diff %t/tree_sub_changed.h %t/tree_runtime_changed.h
+// RUN: mkdir -p %t/tree/runtime/ozaki && cp %S/../../Poseidon/runtime/ozaki/OzakiII.h %t/tree/runtime/ozaki/
+// RUN: %cmake -DPASS_DIR=%t/tree -DBINARY_DIR=%t/tree/out -DACCURACY_FILES=MatmulAccuracy.cpp,FPKind.h,FPKind.cpp -DEQUIVALENTS=%t/equivalents.txt -DOUT=%t/tree_ozaki.h -P %S/../../Poseidon/cmake/BuildIdentity.cmake
+// RUN: grep kPassIdentity %t/tree_runtime_changed.h > %t/tree_runtime_changed.pass && grep kPassIdentity %t/tree_ozaki.h > %t/tree_ozaki.pass
+// RUN: not diff %t/tree_runtime_changed.pass %t/tree_ozaki.pass
 // REQUIRES: poseidon
 
 // The pass identity is a digest of every source of the pass, the accuracy-model
@@ -56,7 +60,8 @@
 // from their list, comments and blank lines skipped. A source of the pass in a
 // subdirectory is one of its sources; a file under the runtimes, the tools, the
 // cost models, the CMake scripts, a test or a build directory is not, nor one
-// under the build directory the build names.
+// under the build directory the build names, but the Ozaki-II header the pass
+// shares with its runtime is one.
 
 // ONEBYTE: {{^ *1 +57 +43$}}
 // ONEBYTE-NOT: {{.}}

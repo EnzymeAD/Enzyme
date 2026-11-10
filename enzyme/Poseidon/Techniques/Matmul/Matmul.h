@@ -2,8 +2,8 @@
 #define POSEIDON_MATMUL_H
 
 #include "MatmulScheme.h"
-#include "Precision.h"
-#include "ProfileRead.h"
+#include "Profile/ProfileRead.h"
+#include "Techniques/Precision.h"
 
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallPtrSet.h"

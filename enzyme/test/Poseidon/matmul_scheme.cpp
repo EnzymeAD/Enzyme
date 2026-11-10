@@ -1,5 +1,5 @@
 // RUN: rm -rf %t && mkdir -p %t
-// RUN: %clangxx $(llvm-config --cxxflags) -I%S/../../Poseidon %S/../../Poseidon/FPKind.cpp %s $(llvm-config --ldflags --libs support --system-libs) -o %t/matmul_scheme
+// RUN: %clangxx $(llvm-config --cxxflags) -I%S/../../Poseidon %S/../../Poseidon/Core/FPKind.cpp %s $(llvm-config --ldflags --libs support --system-libs) -o %t/matmul_scheme
 // RUN: %t/matmul_scheme | FileCheck %s
 // REQUIRES: poseidon
 
@@ -8,8 +8,8 @@
 // candidate generation proposes, the significand bits the accuracy model is
 // given for a split in either realization, and the label fragments.
 
-#include "MatmulScheme.h"
-#include "OzakiII.h"
+#include "Techniques/Matmul/MatmulScheme.h"
+#include "runtime/ozaki/OzakiII.h"
 
 #include "llvm/Support/raw_ostream.h"
 

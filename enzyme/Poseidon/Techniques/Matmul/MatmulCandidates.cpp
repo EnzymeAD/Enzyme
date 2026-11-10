@@ -2,12 +2,12 @@
 // fixed order by generateMatmulCandidates.
 #include "CostModel.h"
 #include "Evaluators.h"
-#include "Flags.h"
 #include "HostDispatch.h"
 #include "MatmulInternal.h"
 #include "Optimize.h"
-#include "OzakiII.h"
+#include "Pass/Flags.h"
 #include "Utils.h"
+#include "runtime/ozaki/OzakiII.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/ErrorHandling.h"

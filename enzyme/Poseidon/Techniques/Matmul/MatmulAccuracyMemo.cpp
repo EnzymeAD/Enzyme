@@ -10,8 +10,8 @@
 #include "MatmulAccuracyMemo.h"
 
 #include "BuildIdentity.h"
-#include "Flags.h"
 #include "Matmul.h"
+#include "Pass/Flags.h"
 
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringExtras.h"

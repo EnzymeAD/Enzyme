@@ -16,11 +16,11 @@
 // raw.bin (the raw-component cases and the model's results for them),
 // app.bin (the points and the model's results for each function) and
 // fns.inc (the functions, for the harness).
+#include "Core/ExpansionModel.h"
 #include "Evaluators.h"
-#include "Expansion.h"
-#include "ExpansionModel.h"
 #include "Herbie.h"
-#include "Precision.h"
+#include "Techniques/Expansion.h"
+#include "Techniques/Precision.h"
 #include "Types.h"
 #include "Utils.h"
 

@@ -8,9 +8,9 @@
 //===----------------------------------------------------------------------===//
 
 #include "LaunchDescriptors.h"
-#include "CacheKey.h"
+#include "Core/CacheKey.h"
 #include "FPProfileName.h"
-#include "Flags.h"
+#include "Pass/Flags.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallString.h"

@@ -9,8 +9,8 @@
 
 #include "Expansion.h"
 #include "CostModel.h"
-#include "Flags.h"
 #include "Optimize.h"
+#include "Pass/Flags.h"
 #include "Staging.h"
 #include "Utils.h"
 #include "llvm/ADT/DenseMap.h"

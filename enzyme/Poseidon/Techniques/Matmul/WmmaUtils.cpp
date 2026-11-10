@@ -8,7 +8,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "WmmaUtils.h"
-#include "Flags.h"
+#include "Pass/Flags.h"
 
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Constants.h"

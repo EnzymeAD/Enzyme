@@ -21,8 +21,8 @@
 #include <mpfr.h>
 #include <unordered_map>
 
-#include "ExpansionModel.h"
-#include "Precision.h"
+#include "Core/ExpansionModel.h"
+#include "Techniques/Precision.h"
 #include "Types.h"
 
 namespace poseidon {

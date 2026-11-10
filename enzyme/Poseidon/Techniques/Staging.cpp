@@ -9,8 +9,8 @@
 
 #include "Staging.h"
 #include "Expansion.h"
-#include "Flags.h"
 #include "Optimize.h"
+#include "Pass/Flags.h"
 
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallVector.h"

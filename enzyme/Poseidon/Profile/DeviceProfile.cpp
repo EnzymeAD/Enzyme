@@ -2,7 +2,7 @@
 
 #include "CostModel.h"
 #include "FPProfilerCUDA.h"
-#include "Flags.h"
+#include "Pass/Flags.h"
 #include "Utils.h"
 
 #include "llvm/ADT/StringSet.h"

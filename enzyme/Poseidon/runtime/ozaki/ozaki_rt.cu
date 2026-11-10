@@ -73,7 +73,7 @@
 #include <cuda_runtime.h>
 #endif
 
-#include "../../OzakiII.h"
+#include "OzakiII.h"
 
 #define POZ_CK(x)                                                              \
   do {                                                                         \

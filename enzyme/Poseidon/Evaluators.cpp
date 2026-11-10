@@ -22,9 +22,9 @@
 #include <vector>
 
 #include "Evaluators.h"
-#include "Flags.h"
-#include "Precision.h"
+#include "Pass/Flags.h"
 #include "Sampling.h"
+#include "Techniques/Precision.h"
 #include "Types.h"
 
 using namespace llvm;

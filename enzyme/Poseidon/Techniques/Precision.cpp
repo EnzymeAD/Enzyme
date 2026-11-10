@@ -33,14 +33,14 @@
 #include <unordered_map>
 
 #include "CostModel.h"
-#include "DeviceMath.h"
 #include "Evaluators.h"
 #include "Expansion.h"
-#include "Flags.h"
 #include "Optimize.h"
+#include "Pass/Flags.h"
 #include "Precision.h"
 #include "Sampling.h"
 #include "Staging.h"
+#include "Targets/DeviceMath.h"
 #include "Types.h"
 #include "Utils.h"
 

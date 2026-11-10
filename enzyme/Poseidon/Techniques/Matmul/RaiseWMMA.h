@@ -14,7 +14,7 @@
 #include "llvm/Support/CommandLine.h"
 
 #include "Matmul.h"
-#include "ProfileRead.h"
+#include "Profile/ProfileRead.h"
 
 namespace llvm {
 class Function;

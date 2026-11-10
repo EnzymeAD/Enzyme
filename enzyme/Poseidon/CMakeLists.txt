@@ -31,42 +31,42 @@ find_package(CUDAToolkit QUIET)
 include(Herbie)
 
 set(POSEIDON_SRC
-    Plugin.cpp
-    CacheKey.cpp
-    Canonicalize.cpp
+    Pass/Plugin.cpp
+    Core/CacheKey.cpp
+    Sites/Canonicalize.cpp
     CostModel.cpp
-    DeviceMath.cpp
-    DeviceProfile.cpp
+    Targets/DeviceMath.cpp
+    Profile/DeviceProfile.cpp
     Driver.cpp
     Evaluators.cpp
-    Expansion.cpp
-    ExpansionModel.cpp
-    Explain.cpp
-    Flags.cpp
-    FPKind.cpp
+    Techniques/Expansion.cpp
+    Core/ExpansionModel.cpp
+    Pass/Explain.cpp
+    Pass/Flags.cpp
+    Core/FPKind.cpp
     Herbie.cpp
-    HerbieRun.cpp
-    HostDispatch.cpp
-    InKernelRaise.cpp
-    Instrument.cpp
-    LaunchDescriptors.cpp
+    Core/HerbieRun.cpp
+    Techniques/Matmul/HostDispatch.cpp
+    Techniques/Matmul/InKernelRaise.cpp
+    Profile/Instrument.cpp
+    Sites/LaunchDescriptors.cpp
     Optimize.cpp
-    Precision.cpp
-    ProfileRead.cpp
-    RaiseWMMA.cpp
+    Techniques/Precision.cpp
+    Profile/ProfileRead.cpp
+    Techniques/Matmul/RaiseWMMA.cpp
     Sampling.cpp
     Solvers.cpp
-    Staging.cpp
+    Techniques/Staging.cpp
     Types.cpp
     Utils.cpp
-    WmmaUtils.cpp
-    MatmulAccuracy.cpp
-    MatmulAccuracyMemo.cpp
-    MatmulApply.cpp
-    MatmulCandidates.cpp
-    MatmulPricing.cpp
-    MatmulProfile.cpp
-    RecognizeHostGemm.cpp)
+    Techniques/Matmul/WmmaUtils.cpp
+    Techniques/Matmul/MatmulAccuracy.cpp
+    Techniques/Matmul/MatmulAccuracyMemo.cpp
+    Techniques/Matmul/MatmulApply.cpp
+    Techniques/Matmul/MatmulCandidates.cpp
+    Techniques/Matmul/MatmulPricing.cpp
+    Techniques/Matmul/MatmulProfile.cpp
+    Techniques/Matmul/RecognizeHostGemm.cpp)
 
 set(POSEIDON_PLUGIN_TARGET Poseidon-${LLVM_VERSION_MAJOR})
 if(Clang_FOUND)
@@ -86,7 +86,8 @@ target_link_libraries(${POSEIDON_PLUGIN_TARGET} PRIVATE MPFR::MPFR)
 # What a cached result was computed by: the pass's own sources, and the subset
 # that decides what the matrix accuracy model returns. Hashed when they change,
 # not when the build is configured.
-set(POSEIDON_ACCURACY_MODEL_FILES MatmulAccuracy.cpp FPKind.h FPKind.cpp)
+set(POSEIDON_ACCURACY_MODEL_FILES
+    Techniques/Matmul/MatmulAccuracy.cpp Core/FPKind.h Core/FPKind.cpp)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/PassSources.cmake)
 poseidon_pass_sources(POSEIDON_PASS_FILES ${CMAKE_CURRENT_SOURCE_DIR}
                       ${CMAKE_CURRENT_BINARY_DIR} CONFIGURE_DEPENDS)
@@ -104,12 +105,12 @@ add_custom_command(
     ${CMAKE_COMMAND} -DPASS_DIR=${CMAKE_CURRENT_SOURCE_DIR}
     -DBINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}
     -DACCURACY_FILES=${_poseidon_accuracy_arg}
-    -DEQUIVALENTS=${CMAKE_CURRENT_SOURCE_DIR}/MatmulAccuracyEquivalents.txt
+    -DEQUIVALENTS=${CMAKE_CURRENT_SOURCE_DIR}/Techniques/Matmul/MatmulAccuracyEquivalents.txt
     -DOUT=${POSEIDON_BUILD_IDENTITY} -P
     ${CMAKE_CURRENT_SOURCE_DIR}/cmake/BuildIdentity.cmake
   DEPENDS ${POSEIDON_PASS_FILES}
           ${CMAKE_CURRENT_BINARY_DIR}/identity/PassSources.txt
-          ${CMAKE_CURRENT_SOURCE_DIR}/MatmulAccuracyEquivalents.txt
+          ${CMAKE_CURRENT_SOURCE_DIR}/Techniques/Matmul/MatmulAccuracyEquivalents.txt
           ${CMAKE_CURRENT_SOURCE_DIR}/cmake/BuildIdentity.cmake
           ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PassSources.cmake
   VERBATIM)
@@ -125,8 +126,8 @@ set_source_files_properties(
 # holds only if each of its operations is rounded as written.
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
   set_source_files_properties(
-    ExpansionModel.cpp PROPERTIES COMPILE_OPTIONS
-                                  "-fno-fast-math;-ffp-contract=off")
+    Core/ExpansionModel.cpp PROPERTIES COMPILE_OPTIONS
+                                       "-fno-fast-math;-ffp-contract=off")
 endif()
 include(GNUInstallDirs)
 # Where a compile looks for the cost model of its target device when neither
@@ -173,7 +174,7 @@ if(CMAKE_CUDA_COMPILER)
   target_include_directories(${POSEIDON_PLUGIN_TARGET}
                              PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
   set_source_files_properties(
-    DeviceProfile.cpp
+    Profile/DeviceProfile.cpp
     PROPERTIES COMPILE_DEFINITIONS POSEIDON_DEVICE_PROFILER OBJECT_DEPENDS
                ${POSEIDON_DEVICE_PROFILER_INC})
 endif()
@@ -225,11 +226,11 @@ if(POSEIDON_ROCM_PATH AND "AMDGPU" IN_LIST LLVM_TARGETS_TO_BUILD)
   target_include_directories(${POSEIDON_PLUGIN_TARGET}
                              PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
   set_property(
-    SOURCE DeviceProfile.cpp APPEND
+    SOURCE Profile/DeviceProfile.cpp APPEND
     PROPERTY COMPILE_DEFINITIONS POSEIDON_DEVICE_PROFILER_AMDGPU
              POSEIDON_DEVICE_PROFILER_AMDGPU_ARCH="${POSEIDON_AMDGPU_ARCH}")
   set_property(
-    SOURCE DeviceProfile.cpp APPEND
+    SOURCE Profile/DeviceProfile.cpp APPEND
     PROPERTY OBJECT_DEPENDS ${POSEIDON_DEVICE_PROFILER_AMDGPU_INC})
 endif()
 
@@ -322,7 +323,7 @@ if(POSEIDON_ROCM_PATH AND "AMDGPU" IN_LIST LLVM_TARGETS_TO_BUILD)
       ${CMAKE_CURRENT_SOURCE_DIR}/runtime/hip_as_cuda.h
       ${CMAKE_CURRENT_SOURCE_DIR}/runtime/fpprofiler/FPProfilerCUDA.h
       ${CMAKE_CURRENT_SOURCE_DIR}/runtime/fpprofiler/FPProfileName.h
-      ${CMAKE_CURRENT_SOURCE_DIR}/OzakiII.h
+      ${CMAKE_CURRENT_SOURCE_DIR}/runtime/ozaki/OzakiII.h
       ${ENZYME_SOURCE_DIR}/include/poseidon/poseidon.h)
   function(poseidon_add_hip_library name)
     set(_objs)

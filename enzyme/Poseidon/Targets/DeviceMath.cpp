@@ -2,7 +2,7 @@
 
 #include "Utils.h"
 
-#include "Flags.h"
+#include "Pass/Flags.h"
 
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Demangle/Demangle.h"

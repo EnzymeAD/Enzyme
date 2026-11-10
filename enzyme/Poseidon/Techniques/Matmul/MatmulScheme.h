@@ -18,7 +18,7 @@
 #ifndef POSEIDON_MATMUL_SCHEME_H
 #define POSEIDON_MATMUL_SCHEME_H
 
-#include "FPKind.h"
+#include "Core/FPKind.h"
 
 #include "llvm/Support/ErrorHandling.h"
 

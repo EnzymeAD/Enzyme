@@ -12,8 +12,8 @@
 // K-tile, and a readback combining sum_k d[k] / SCALE^k.
 //===----------------------------------------------------------------------===//
 
-#include "Flags.h"
 #include "Optimize.h"
+#include "Pass/Flags.h"
 
 #include "InKernelRaise.h"
 #include "MatmulInternal.h"

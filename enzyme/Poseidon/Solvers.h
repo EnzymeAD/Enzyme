@@ -32,9 +32,9 @@
 #include <optional>
 #include <unordered_map>
 
-#include "CacheKey.h"
-#include "Flags.h"
-#include "Matmul.h"
+#include "Core/CacheKey.h"
+#include "Pass/Flags.h"
+#include "Techniques/Matmul/Matmul.h"
 #include "Types.h"
 
 namespace poseidon {

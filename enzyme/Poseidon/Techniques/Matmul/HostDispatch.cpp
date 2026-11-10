@@ -5,11 +5,11 @@
 //===---------------------------------------------------------------------===//
 #include "HostDispatch.h"
 #include "Evaluators.h"
-#include "Flags.h"
-#include "Instrument.h"
-#include "LaunchDescriptors.h"
 #include "Matmul.h"
 #include "Optimize.h"
+#include "Pass/Flags.h"
+#include "Profile/Instrument.h"
+#include "Sites/LaunchDescriptors.h"
 
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
