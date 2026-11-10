@@ -192,6 +192,93 @@ writesOnlyUncapturedLocalOrNoaliasArgMemory(Instruction *I,
   return isUncapturedLocalOrNoaliasArgMemory(getBaseObject(ptr), TLI);
 }
 
+/// Fresh data (see FreshDataAnalysis) relative to a call: data owned by an
+/// allocation the call cannot be reached from, so that every run of the
+/// allocation begins after the last run of the call. Such data does not exist
+/// while the call runs, in any execution of it. (LLVM's isPotentiallyReachable
+/// gives up, as reachable, after 32 blocks; Julia functions are often larger.)
+struct FreshDataAfterCall : FreshDataAnalysis {
+  Instruction *call;
+  // The blocks from which the call's block can be reached along at least one
+  // edge: an allocation in one of them may run before the call.
+  SmallPtrSet<BasicBlock *, 16> reachesCall;
+  std::map<Value *, bool> cache;
+
+  FreshDataAfterCall(TargetLibraryInfo &TLI, Instruction *call)
+      : FreshDataAnalysis(TLI), call(call) {
+    SmallVector<BasicBlock *, 8> todo(predecessors(call->getParent()));
+    while (!todo.empty()) {
+      auto BB = todo.pop_back_val();
+      if (!reachesCall.insert(BB).second)
+        continue;
+      todo.append(pred_begin(BB), pred_end(BB));
+    }
+  }
+
+  bool isFreshAllocation(CallBase *CB) const override {
+    if (reachesCall.count(CB->getParent()))
+      return false;
+    // In the call's own block, the allocation runs after the call unless the
+    // block loops back to itself, which reachesCall then holds.
+    return CB->getParent() != call->getParent() || call->comesBefore(CB);
+  }
+
+  /// Whether obj, the base object of a written pointer, is memory allocated
+  /// after the call: an allocation the call cannot be reached from, or (for
+  /// Julia) data such an allocation owns.
+  bool allocatedAfter(Value *obj) {
+    auto found = cache.find(obj);
+    if (found != cache.end())
+      return found->second;
+    bool res = false;
+    if (auto CB = dyn_cast<CallBase>(obj)) {
+      if (isAllocationCall(CB, TLI) || isJuliaMemoryAllocation(CB) ||
+          isJuliaArrayAllocation(CB))
+        res = isFreshAllocation(CB);
+    } else if (isa<LoadInst>(obj)) {
+      FreshFieldSet seen;
+      res = isFreshData(obj, seen, nullptr);
+    }
+    return cache[obj] = res;
+  }
+
+  /// Whether I writes only memory allocated after the call (see
+  /// allocatedAfter), or does not write at all (a lifetime marker). Such a
+  /// write cannot overwrite anything the callee read: the memory did not
+  /// exist while the callee ran. It need neither mark the call's arguments
+  /// overwritten nor count as an unknown write for the callee.
+  ///
+  /// A call that, unless it throws, writes only memory it allocated and its
+  /// sret-like arguments (LocalReadOnlyOrThrow) qualifies, provided each such
+  /// argument is memory allocated after the call.
+  bool writesOnlyMemoryAllocatedAfter(Instruction *I) {
+    SmallVector<Value *, 2> ptrs;
+    if (auto SI = dyn_cast<StoreInst>(I)) {
+      ptrs.push_back(SI->getPointerOperand());
+    } else if (auto MI = dyn_cast<MemIntrinsic>(I)) {
+      ptrs.push_back(MI->getRawDest());
+    } else if (auto CB = dyn_cast<CallBase>(I)) {
+      if (CB->isLifetimeStartOrEnd())
+        return true;
+      if (!isLocalReadOnlyOrThrow(CB))
+        return false;
+      for (unsigned i = 0; i < CB->arg_size(); ++i) {
+        auto arg = CB->getArgOperand(i);
+        if (!arg->getType()->isPointerTy() || CB->onlyReadsMemory(i))
+          continue;
+        ptrs.push_back(arg);
+      }
+    } else {
+      return false;
+    }
+    for (auto ptr : ptrs)
+      for (auto obj : getBaseObjects(ptr))
+        if (!allocatedAfter(obj))
+          return false;
+    return true;
+  }
+};
+
 struct CacheAnalysis {
 
   const ValueMap<const CallInst *, SmallPtrSet<const CallInst *, 1>>
@@ -640,6 +727,7 @@ struct CacheAnalysis {
     }
 
     bool next_subsequent_inst_may_write = subsequent_calls_may_write;
+    FreshDataAfterCall fresh(TLI, callsite_op);
 
     // Second, we check for memory modifications that can occur in the
     // continuation of the
@@ -692,6 +780,13 @@ struct CacheAnalysis {
       if (auto CB = dyn_cast<CallBase>(inst2))
         if (isReadOnlyOrThrow(CB))
           return false;
+
+      // A write to memory allocated after the callsite cannot overwrite
+      // anything the callee read, as the memory did not exist while it ran.
+      // Julia code often fills a fresh array after a call, as a broadcast
+      // over the call's result does.
+      if (fresh.writesOnlyMemoryAllocatedAfter(inst2))
+        return false;
 
       // A write to uncaptured local or noalias argument memory is not an
       // unknown write: the callee can only reach that memory through an
