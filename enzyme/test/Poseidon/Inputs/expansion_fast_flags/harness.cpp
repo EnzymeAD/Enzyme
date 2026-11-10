@@ -1,7 +1,9 @@
 // Runs the expanded ex2_add and ex2_mul of expansion_fast_flags.cpp and
 // expansion_fast_math_attributes.cpp on the host against MultiFloats.jl's
-// two-limb addition and multiplication (mfadd and mfmul at Val{2}, transcribed
-// here; compile without contraction).
+// two-limb addition and multiplication (mfadd and mfmul at Val{2},
+// ../expansion_match/multifloats_subset.h); compile without contraction.
+#include "../expansion_match/multifloats_subset.h"
+
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -13,35 +15,26 @@ extern "C" double ex2_mul(double, double);
 namespace {
 
 struct Pair {
-  float hi, lo;
+  float x[2];
 };
 
 Pair split(double x) {
   float hi = (float)x;
-  return {hi, (float)(x - (double)hi)};
+  return {{hi, (float)(x - (double)hi)}};
 }
 
-double join(Pair p) { return (double)p.hi + (double)p.lo; }
-
-Pair twoSum(float a, float b) {
-  float s = a + b, ap = s - b, bp = s - ap;
-  return {s, (a - ap) + (b - bp)};
-}
-
-Pair fastTwoSum(float a, float b) {
-  float s = a + b;
-  return {s, b - (s - a)};
-}
+double join(Pair p) { return (double)p.x[0] + (double)p.x[1]; }
 
 Pair mfadd(Pair x, Pair y) {
-  Pair ab = twoSum(x.hi, y.hi), cd = twoSum(x.lo, y.lo);
-  Pair ac = fastTwoSum(ab.hi, cd.hi);
-  return fastTwoSum(ac.hi, (ab.lo + cd.lo) + ac.lo);
+  Pair r;
+  mfref::mfadd(x.x, y.x, r.x);
+  return r;
 }
 
 Pair mfmul(Pair x, Pair y) {
-  float p = x.hi * y.hi, e = std::fma(x.hi, y.hi, -p);
-  return fastTwoSum(p, e + (x.hi * y.lo + x.lo * y.hi));
+  Pair r;
+  mfref::mfmul(x.x, y.x, r.x);
+  return r;
 }
 
 uint64_t bits(double d) {

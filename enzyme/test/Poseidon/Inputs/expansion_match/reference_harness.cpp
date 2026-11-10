@@ -1,14 +1,14 @@
 // Runs the raw-component functions emit.cpp writes (expansion-match-raw) on
 // the host against the external routines they reproduce, bit for bit (NaN
 // payload and sign excepted): n = 3, 4 against mX_real (mx_real_subset.h),
-// n = 2 add, sub and mul against MultiFloats.jl's two-limb mfadd and mfmul
-// (below). Prints, per routine, the cases that differ, and the two-component
-// results at the special operands where mX_real and MultiFloats.jl agree.
-// Compile without contraction.
+// n = 2 add, sub, mul and sqrt against MultiFloats.jl
+// (multifloats_subset.h). Prints, per routine, the cases that differ, and the
+// two-component results at the special operands where mX_real and
+// MultiFloats.jl agree. Compile without contraction.
 #include "gen.h"
+#include "multifloats_subset.h"
 #include "mx_real_subset.h"
 
-#include <cmath>
 #include <cstdio>
 
 using namespace expansion_match;
@@ -30,37 +30,6 @@ DECL(4)
 }
 
 namespace {
-
-// MultiFloats.jl 3.2.6+8 (commit 28041a3, MIT License), Val{2}: two_sum and
-// fast_two_sum (src/MultiFloats.jl 313-321, 1047-1052), two_prod (1070-1074),
-// mfadd (src/mfadd.jl 10-24) and mfmul (src/mfmul.jl 10-23), transcribed.
-void twoSum(float a, float b, float &s, float &e) {
-  s = a + b;
-  float ap = s - b, bp = s - ap;
-  e = (a - ap) + (b - bp);
-}
-void fastTwoSum(float a, float b, float &s, float &e) {
-  s = a + b;
-  e = b - (s - a);
-}
-void mfadd(const float *x, const float *y, float *o) {
-  float a, b, c, d;
-  twoSum(x[0], y[0], a, b);
-  twoSum(x[1], y[1], c, d);
-  fastTwoSum(a, c, a, c);
-  b += d;
-  b += c;
-  fastTwoSum(a, b, o[0], o[1]);
-}
-void mfmul(const float *x, const float *y, float *o) {
-  float p00 = x[0] * y[0];
-  float e00 = std::fma(x[0], y[0], -p00);
-  float p01 = x[0] * y[1];
-  float p10 = x[1] * y[0];
-  p01 += p10;
-  e00 += p01;
-  fastTwoSum(p00, e00, o[0], o[1]);
-}
 
 int failures = 0;
 
@@ -140,12 +109,14 @@ int main() {
   againstMXReal<3>();
   againstMXReal<4>();
   using E = Emitted<2>;
-  check(2, "add", E::add, [](const Case &k, float *o) { mfadd(k.a, k.b, o); });
-  check(2, "sub", E::sub, [](const Case &k, float *o) {
-    float nb[2] = {-k.b[0], -k.b[1]};
-    mfadd(k.a, nb, o);
-  });
-  check(2, "mul", E::mul, [](const Case &k, float *o) { mfmul(k.a, k.b, o); });
+  check(2, "add", E::add,
+        [](const Case &k, float *o) { mfref::mfadd(k.a, k.b, o); });
+  check(2, "sub", E::sub,
+        [](const Case &k, float *o) { mfref::mfsub(k.a, k.b, o); });
+  check(2, "mul", E::mul,
+        [](const Case &k, float *o) { mfref::mfmul(k.a, k.b, o); });
+  check(2, "sqrt", E::sqrt,
+        [](const Case &k, float *o) { mfref::sqrt_r(k.a, o); });
 
   float r[2];
   const float zeros[4][2] = {

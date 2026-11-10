@@ -92,10 +92,9 @@ F2 dsDiv(F2 x, F2 y) {
 F2 dsSqrt(F2 x) {
   if (x.hi == 0.0f && x.lo == 0.0f)
     return x;
-  float zhi = std::sqrt(x.hi);
-  F2 pe = expansionTwoProd(zhi, zhi);
-  float twoZ = 2.0f * zhi;
-  return dsFastTwoSum(zhi, (((x.hi - pe.hi) - pe.lo) + x.lo) / twoZ);
+  float y = std::sqrt(x.hi);
+  float r = std::fma(-y, y, x.hi) + x.lo;
+  return dsFastTwoSum(y, r / (y + y));
 }
 
 // Three and four components.
