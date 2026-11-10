@@ -59,6 +59,7 @@
 #include "Profile/ProfileRead.h"
 #include "Sites/Canonicalize.h"
 #include "Solvers.h"
+#include "Subgraphs.h"
 #include "Targets/DeviceMath.h"
 #include "Targets/Target.h"
 #include "Techniques/Expansion.h"
@@ -70,10 +71,6 @@
 #include "Types.h"
 #include "Utils.h"
 
-// The one filename rule, shared verbatim with both FP profiler runtimes that
-// write what this file reads.
-#include "FPProfileName.h"
-
 using namespace llvm;
 #ifdef DEBUG_TYPE
 #undef DEBUG_TYPE
@@ -81,94 +78,6 @@ using namespace llvm;
 #define DEBUG_TYPE "poseidon"
 
 namespace poseidon {
-
-static constexpr int kThreeTierStep = 20;
-
-void noteSiteOrigin(Session &S, Function *clone, Function *orig) {
-  S.SiteOrigins[clone] = orig;
-}
-const Function *siteOriginOf(const Session &S, const Function &clone) {
-  auto it = S.SiteOrigins.find(&clone);
-  return it == S.SiteOrigins.end() ? nullptr : it->second;
-}
-
-// Keyed on the SOURCE body, not on the per-call clone: profileSite shares one
-// instrumented clone between a body's markers, so the run writes one record
-// per body, while here a body reached from several marker calls is cloned once
-// per call and LLVM uniques the second and later clone names. dFEM inlines one
-// integrator's marker into every registered Q1D specialization, so a body with
-// many marker calls is the normal case.
-std::string siteProfileStem(const Session &S, const Function &clone) {
-  auto it = S.SiteOrigins.find(&clone);
-  if (it != S.SiteOrigins.end() && it->second)
-    return profileNameStem(("preprocess_" + it->second->getName()).str());
-  return profileNameStem(clone.getName().str());
-}
-
-std::string siteKeyOfBody(const Function &body) {
-  StringRef symbol = body.getName();
-  symbol.consume_back("_poseidon_body");
-  return symbol.str();
-}
-
-std::string siteKey(const Session &S, const Function &clone) {
-  const Function *origin = siteOriginOf(S, clone);
-  return siteKeyOfBody(origin ? *origin : clone);
-}
-
-SmallVector<std::string, 2> siteAliases(StringRef key) {
-  SmallVector<std::string, 2> aliases;
-  StringRef fn = key.split(".poseidon.").first;
-  if (fn != key)
-    aliases.push_back(fn.str());
-  // The demangler's nodes point into the name it was given.
-  std::string mangled = fn.str();
-  ItaniumPartialDemangler D;
-  if (!D.partialDemangle(mangled.c_str()) && D.isFunction())
-    if (char *base = D.getFunctionBaseName(nullptr, nullptr)) {
-      if (key != base && !is_contained(aliases, base))
-        aliases.push_back(base);
-      std::free(base);
-    }
-  return aliases;
-}
-
-void noteSiteArgs(Session &S, Function *clone, ArrayRef<Value *> primalArgs) {
-  auto &v = S.SiteArgs[clone];
-  v.clear();
-  for (Value *A : primalArgs)
-    v.emplace_back(A);
-}
-bool isSiteClone(const Session &S, const Function *F) {
-  return S.SiteArgs.count(F);
-}
-Value *siteArg(const Session &S, const Function *clone, unsigned i) {
-  auto it = S.SiteArgs.find(clone);
-  if (it == S.SiteArgs.end() || i >= it->second.size())
-    return nullptr;
-  return it->second[i].pointsToAliveValue() ? (Value *)it->second[i] : nullptr;
-}
-
-bool redirectNoopSite(Session &S, Function *clone) {
-  auto it = S.SiteOrigins.find(clone);
-  if (it == S.SiteOrigins.end() || !it->second)
-    return false;
-  Function *orig = it->second;
-  if (orig == clone)
-    return false;
-  SmallVector<CallBase *, 4> callers;
-  for (User *U : clone->users())
-    if (auto *CB = dyn_cast<CallBase>(U))
-      if (CB->getCalledFunction() == clone)
-        callers.push_back(CB);
-  for (CallBase *CB : callers)
-    CB->setCalledFunction(orig);
-  if (!callers.empty())
-    llvm::errs() << "[poseidon] no rewrite applied for " << clone->getName()
-                 << "; wrapper call restored to original body "
-                 << orig->getName() << " (bit-transparent no-op)\n";
-  return !callers.empty();
-}
 
 bool isOptimizable(const llvm::Value &V) {
   const Instruction *I = dyn_cast<Instruction>(&V);
@@ -428,198 +337,6 @@ void preprocess(Function *F) {
   }
 }
 
-namespace {
-
-struct TierPair {
-  PrecisionChangeType hi;
-  PrecisionChangeType lo;
-};
-
-struct TierTriple {
-  PrecisionChangeType hi;
-  PrecisionChangeType mid;
-  PrecisionChangeType lo;
-};
-
-static const TierPair kCanonicalPairs[] = {
-    {PrecisionChangeType::FP64, PrecisionChangeType::FP32},
-    {PrecisionChangeType::FP64, PrecisionChangeType::Expansion2},
-    {PrecisionChangeType::FP64, PrecisionChangeType::FP16},
-    {PrecisionChangeType::FP64, PrecisionChangeType::BF16},
-    {PrecisionChangeType::Expansion2, PrecisionChangeType::FP32},
-    {PrecisionChangeType::Expansion2, PrecisionChangeType::FP16},
-    {PrecisionChangeType::Expansion2, PrecisionChangeType::BF16},
-    {PrecisionChangeType::FP32, PrecisionChangeType::FP16},
-    {PrecisionChangeType::FP32, PrecisionChangeType::BF16},
-    {PrecisionChangeType::FP64, PrecisionChangeType::Expansion3},
-    {PrecisionChangeType::Expansion3, PrecisionChangeType::Expansion2},
-    {PrecisionChangeType::Expansion3, PrecisionChangeType::FP32},
-    {PrecisionChangeType::FP64, PrecisionChangeType::Expansion4},
-    {PrecisionChangeType::Expansion4, PrecisionChangeType::Expansion3},
-    {PrecisionChangeType::Expansion4, PrecisionChangeType::Expansion2},
-    {PrecisionChangeType::Expansion4, PrecisionChangeType::FP32},
-};
-
-static const TierTriple kCanonicalTriples[] = {
-    {PrecisionChangeType::FP64, PrecisionChangeType::Expansion2,
-     PrecisionChangeType::FP32},
-    {PrecisionChangeType::FP64, PrecisionChangeType::Expansion2,
-     PrecisionChangeType::FP16},
-    {PrecisionChangeType::FP64, PrecisionChangeType::Expansion2,
-     PrecisionChangeType::BF16},
-    {PrecisionChangeType::FP64, PrecisionChangeType::FP32,
-     PrecisionChangeType::FP16},
-    {PrecisionChangeType::FP64, PrecisionChangeType::FP32,
-     PrecisionChangeType::BF16},
-    {PrecisionChangeType::Expansion2, PrecisionChangeType::FP32,
-     PrecisionChangeType::FP16},
-    {PrecisionChangeType::Expansion2, PrecisionChangeType::FP32,
-     PrecisionChangeType::BF16},
-};
-
-static bool precAllowed(const Options &O, PrecisionChangeType t, bool gpuMode,
-                        bool expansionSafe,
-                        const std::unordered_set<std::string> &hwScalar) {
-  if (unsigned nComp = expansionComponents(t)) {
-    if (!gpuMode || !expansionSafe)
-      return false;
-    if (!O.Candidates.EnableMultifloat)
-      return false;
-    if (nComp > O.Candidates.ExpansionComponents)
-      return false;
-  }
-  if (t == PrecisionChangeType::FP16 && (!gpuMode || !hwScalar.count("half")))
-    return false;
-  if (t == PrecisionChangeType::BF16 && (!gpuMode || !hwScalar.count("bf16")))
-    return false;
-  return true;
-}
-
-static bool tierPairAllowed(const Options &O, TierPair tp, bool gpuMode,
-                            bool expansionSafe,
-                            const std::unordered_set<std::string> &hwScalar) {
-  return precAllowed(O, tp.hi, gpuMode, expansionSafe, hwScalar) &&
-         precAllowed(O, tp.lo, gpuMode, expansionSafe, hwScalar);
-}
-
-static bool tierTripleAllowed(const Options &O, TierTriple tr, bool gpuMode,
-                              bool expansionSafe,
-                              const std::unordered_set<std::string> &hwScalar) {
-  return precAllowed(O, tr.hi, gpuMode, expansionSafe, hwScalar) &&
-         precAllowed(O, tr.mid, gpuMode, expansionSafe, hwScalar) &&
-         precAllowed(O, tr.lo, gpuMode, expansionSafe, hwScalar);
-}
-
-#if LLVM_VERSION_MAJOR < 24
-// Before LLVM 24 fast contraction and fast-math attributes also reach
-// operations without flags, so expansion code is not rounded as written there.
-// Returns why for F, or "".
-static std::string fastFPReason(const Function &F) {
-  SmallVector<StringRef, 4> attrs;
-#if LLVM_VERSION_MAJOR < 22
-  attrs.append({"unsafe-fp-math", "approx-func-fp-math"}); // read up to LLVM 21
-#endif
-#if LLVM_VERSION_MAJOR < 23
-  attrs.append({"no-nans-fp-math", "no-infs-fp-math"}); // read up to LLVM 22
-#endif
-  for (StringRef attr : attrs)
-    if (F.getFnAttribute(attr).getValueAsString() == "true")
-      return ("the function carries \"" + attr +
-              "\"=\"true\", which this LLVM applies to every floating-point "
-              "operation of the function, with fast-math flags or without")
-          .str();
-  for (const Instruction &I : instructions(F))
-    if (isa<FPMathOperator>(I) && I.getFastMathFlags().allowContract()) {
-      const auto *CI = dyn_cast<CallInst>(&I);
-      const Function *callee = CI ? CI->getCalledFunction() : nullptr;
-      return ("its floating-point operations carry 'contract' (the first " +
-              (callee ? callee->getName() : StringRef(I.getOpcodeName())) +
-              "), as under -ffp-contract=fast or -ffast-math, with which this "
-              "LLVM's code generator also fuses multiply-add pairs that carry "
-              "no flag")
-          .str();
-    }
-  return "";
-}
-#endif
-
-// The outputs' expressions with every subterm used more than once bound by
-// let*, so Herbie reads the subgraph as the DAG it is rather than one tree per
-// output.
-static std::string arrayCoreBody(
-    ArrayRef<Instruction *> outputs,
-    std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-    const SetVector<Value *> &inputs) {
-  auto isLeaf = [&](FPNode *N) {
-    if (isa<FPConst>(N))
-      return true;
-    auto *LL = cast<FPLLValue>(N);
-    return inputs.contains(LL->value);
-  };
-  DenseMap<FPNode *, unsigned> uses;
-  SmallVector<FPNode *, 32> order;
-  SmallPtrSet<FPNode *, 32> visited;
-  std::function<void(FPNode *)> walk = [&](FPNode *N) {
-    if (!visited.insert(N).second || isLeaf(N))
-      return;
-    for (auto &operand : N->operands) {
-      if (!isLeaf(operand.get()))
-        ++uses[operand.get()];
-      walk(operand.get());
-    }
-    order.push_back(N);
-  };
-  for (Instruction *output : outputs) {
-    FPNode *N = valueToNodeMap[output].get();
-    ++uses[N];
-    walk(N);
-  }
-
-  DenseMap<FPNode *, std::string> names;
-  std::function<std::string(FPNode *)> ref;
-  auto define = [&](FPNode *N) {
-    std::string expr = "(" + (N->op == "neg" ? std::string("-") : N->op);
-    for (auto &operand : N->operands)
-      expr += " " + ref(operand.get());
-    return expr + ")";
-  };
-  ref = [&](FPNode *N) -> std::string {
-    if (isLeaf(N))
-      return N->toFullExpression(valueToNodeMap, inputs);
-    auto It = names.find(N);
-    if (It != names.end())
-      return It->second;
-    return define(N);
-  };
-
-  std::string bindings;
-  for (FPNode *N : order) {
-    if (uses[N] < 2)
-      continue;
-    std::string def = define(N);
-    std::string name = "t" + std::to_string(names.size() + 1);
-    if (!bindings.empty())
-      bindings += " ";
-    bindings += "(" + name + " " + def + ")";
-    names[N] = name;
-  }
-  std::string body = "(array";
-  for (Instruction *output : outputs)
-    body += " " + ref(valueToNodeMap[output].get());
-  body += ")";
-  return bindings.empty() ? body : "(let* (" + bindings + ") " + body + ")";
-}
-
-static std::string fmtPrecPct(PrecisionChangeType t, int pct) {
-  std::string s = getPrecisionChangeTypeString(t).str();
-  s += "(";
-  s += std::to_string(pct);
-  s += "%)";
-  return s;
-}
-
-} // namespace
-
 // Demote FP64 PHIs whose every incoming is fpext-from-float or a
 // float-representable constant. InstCombine folds fptrunc(fpext(x)) -> x but
 // stops at a loop-carried PHI, so an FP32 accumulator the solver chose would
@@ -731,102 +448,27 @@ bool demoteFPCastPHIs(llvm::Function &F) {
   return true;
 }
 
-// An op without a profile record (-poseidon-loose-coverage) counts as zero.
-static void
-aggressiveDCE(const Options &O, Function &F,
-              SmallVectorImpl<Subgraph> &subgraphs,
-              std::unordered_map<Value *, std::shared_ptr<FPNode>> &nodes,
-              const std::unordered_map<size_t, ProfileInfo> &profileMap,
-              const std::unordered_set<size_t> &zeroGradIdx,
-              const SmallVectorImpl<AbstractMatmul> &abstractMatmuls) {
-  SmallPtrSet<Value *, 32> critical;
-  SmallVector<Value *, 16> worklist;
-  auto mark = [&](Value *V) {
-    if (V->getType()->isFloatingPointTy() && critical.insert(V).second)
-      worklist.push_back(V);
-  };
-  for (Instruction &I : instructions(F))
-    if (auto *fcmp = dyn_cast<FCmpInst>(&I)) {
-      mark(fcmp->getOperand(0));
-      mark(fcmp->getOperand(1));
-    }
-  for (const auto &am : abstractMatmuls) {
-    if (am.scalarLoop.fma)
-      critical.insert(am.scalarLoop.fma);
-    if (am.scalarLoop.fmul)
-      critical.insert(am.scalarLoop.fmul);
-  }
-  while (!worklist.empty()) {
-    auto *inst = dyn_cast<Instruction>(worklist.pop_back_val());
-    if (!inst)
-      continue;
-    auto operands =
-        isa<CallInst>(inst) ? cast<CallInst>(inst)->args() : inst->operands();
-    for (auto &op : operands)
-      mark(op);
-    if (auto *load = dyn_cast<LoadInst>(inst))
-      for (User *U : load->getPointerOperand()->users())
-        if (auto *store = dyn_cast<StoreInst>(U))
-          mark(store->getValueOperand());
-  }
+namespace {
 
-  if (O.Diagnostics.Print) {
-    llvm::errs() << "Critical values:\n";
-    for (Value *V : critical)
-      llvm::errs() << "\t" << *V << "\n";
-  }
+// What collectFPCandidates reads from the site's profile.
+struct SiteProfileData {
+  std::string path;
+  std::unordered_map<size_t, ProfileInfo> map;
+  FunctionProfileHeader header;
+  std::unordered_set<size_t> zeroGradIdx;
+};
 
-  auto zeroGrad = [&](Instruction *op) {
-    size_t idx;
-    if (!tryReadProfIdxMetadata(op, idx))
-      return false;
-    return zeroGradIdx.count(idx) || !profileMap.count(idx);
-  };
+} // namespace
 
-  for (auto it = subgraphs.begin(); it != subgraphs.end();) {
-    SmallVector<Instruction *, 32> toRemove;
-    for (Instruction *op : it->operations)
-      if (!critical.count(op) && zeroGrad(op))
-        toRemove.push_back(op);
-    for (Instruction *op : toRemove) {
-      if (O.Diagnostics.Print)
-        llvm::errs() << "Aggressive DCE: eliminating zero-gradient "
-                     << "non-critical instruction: " << *op << "\n";
-      op->replaceAllUsesWith(UndefValue::get(op->getType()));
-      nodes.erase(op);
-      it->operations.remove(op);
-      it->outputs.remove(op);
-      op->eraseFromParent();
-    }
-    if (it->outputs.empty()) {
-      if (O.Diagnostics.Print)
-        llvm::errs() << "Removing empty subgraph\n";
-      it = subgraphs.erase(it);
-    } else {
-      ++it;
-    }
-  }
-
-  if (O.Diagnostics.Print)
-    llvm::errs() << "[poseidon] After aggressive DCE, have " << subgraphs.size()
-                 << " subgraphs in " << F.getName() << "\n";
-}
-
-bool collectFPCandidates(Session &S, Function &F, double errorTol,
-                         unsigned sampleLogBits, FunctionFPState &st) {
+// Reads the site's profile, checked against the canonical form its slots were
+// numbered against.
+static void readSiteProfile(Session &S, Function &F, SiteProfileData &P) {
   const Options &O = S.Opts;
-  st.F = &F;
-  st.errTol = errorTol;
-  st.sampleLogBits = sampleLogBits;
-
-  const Target &T = Target::of(F);
-  if (T.isDevice())
-    llvm::errs() << "[poseidon] GPU mode active for " << F.getName() << "\n";
-
   assert(!O.Profiling.ProfileUse.empty());
   SmallString<128> profilePathBuf(O.Profiling.ProfileUse);
   llvm::sys::path::append(profilePathBuf, siteProfileStem(S, F) + ".fpprofile");
-  const std::string profilePath = profilePathBuf.str().str();
+  P.path = profilePathBuf.str().str();
+  const std::string &profilePath = P.path;
 
   if (!O.Herbie.Cache.empty()) {
     if (auto EC = llvm::sys::fs::create_directories(O.Herbie.Cache, true))
@@ -842,9 +484,9 @@ bool collectFPCandidates(Session &S, Function &F, double errorTol,
     llvm::errs() << "[poseidon] canonical form hash of " << F.getName()
                  << " is " << canonicalHash << "\n";
 
-  std::unordered_map<size_t, ProfileInfo> profileMap;
-  FunctionProfileHeader profileHeader;
-  std::unordered_set<size_t> zeroGradIdx;
+  auto &profileMap = P.map;
+  auto &profileHeader = P.header;
+  auto &zeroGradIdx = P.zeroGradIdx;
   if (!profilePath.empty()) {
     parseProfileFile(profilePath, profileMap, &profileHeader);
     if (profileMap.empty()) {
@@ -877,7 +519,16 @@ bool collectFPCandidates(Session &S, Function &F, double errorTol,
                    << ") LaunchCount=" << profileHeader.launchCount << "\n";
     }
   }
+}
 
+// The site's matrix products, with the analyses their raise keeps in `st`.
+static void recognizeMatrixProducts(Session &S, Function &F,
+                                    const SiteProfileData &P,
+                                    FunctionFPState &st) {
+  const Options &O = S.Opts;
+  const Target &T = Target::of(F);
+  const auto &profileMap = P.map;
+  const auto &profileHeader = P.header;
   auto &abstractMatmuls = st.abstractMatmuls;
 
   // These stash a ScalarEvolution* (and const SCEV* pointers it owns) into each
@@ -908,13 +559,6 @@ bool collectFPCandidates(Session &S, Function &F, double errorTol,
                           abstractMatmuls);
   }
 
-  SmallPtrSet<Instruction *, 32> reductionFMAs;
-  if (O.Candidates.ReductionSubgraphs)
-    for (const auto &am : abstractMatmuls)
-      if (am.origin == AbstractMatmul::Origin::ScalarLoopReduction &&
-          am.scalarLoop.fma)
-        reductionFMAs.insert(am.scalarLoop.fma);
-
   if (O.Diagnostics.Print && !abstractMatmuls.empty()) {
     llvm::errs() << "[poseidon] Found " << abstractMatmuls.size()
                  << " AbstractMatmul(s) for " << F.getName() << "\n";
@@ -939,972 +583,119 @@ bool collectFPCandidates(Session &S, Function &F, double errorTol,
         llvm::errs() << "    (profile dump skipped for ScalarLoopReduction)\n";
     }
   }
+}
 
-  // Nothing above prices: a compile for a device no model has been measured
-  // on yet still reports what it recognized before it refuses.
-  requireCostModel(S.CostModel, F);
-
-  int symbolCounter = 0;
-  auto getNextSymbol = [&symbolCounter]() -> std::string {
-    return "v" + std::to_string(symbolCounter++);
-  };
-
-  auto &valueToNodeMap = st.valueToNodeMap;
-  auto &symbolToValueMap = st.symbolToValueMap;
-
-  llvm::errs() << "[poseidon] Starting Floodfill for " << F.getName() << "\n";
-
-  for (auto &BB : F) {
-    for (auto &I : BB) {
-      if (!isOptimizable(I)) {
-        valueToNodeMap[&I] = std::make_shared<FPLLValue>(&I, "__nh", "__nh");
-        if (O.Diagnostics.Print)
-          llvm::errs()
-              << "Registered FPLLValue for non-isOptimizable instruction: " << I
-              << "\n";
-        continue;
-      }
-
-      std::string dtype;
-      if (I.getType()->isFloatTy()) {
-        dtype = "f32";
-      } else if (I.getType()->isDoubleTy()) {
-        dtype = "f64";
-      } else {
-        llvm_unreachable("Unexpected floating point type for instruction");
-      }
-      valueToNodeMap[&I] =
-          std::make_shared<FPLLValue>(&I, getHerbieOperator(I), dtype);
-    }
-  }
-
-  for (auto &BB : F) {
-    for (auto &I : BB) {
-      if (!isOptimizable(I))
-        continue;
-      auto node = valueToNodeMap[&I];
-      auto operands =
-          isa<CallInst>(I) ? cast<CallInst>(I).args() : I.operands();
-      for (auto &operand : operands) {
-        if (!valueToNodeMap.count(operand)) {
-          if (auto Arg = dyn_cast<Argument>(operand)) {
-            std::string dtype;
-            if (Arg->getType()->isFloatTy()) {
-              dtype = "f32";
-            } else if (Arg->getType()->isDoubleTy()) {
-              dtype = "f64";
-            } else {
-              llvm_unreachable("Unexpected floating point type for argument");
-            }
-            valueToNodeMap[operand] =
-                std::make_shared<FPLLValue>(Arg, "__arg", dtype);
-            if (O.Diagnostics.Print)
-              llvm::errs() << "Registered FPNode for argument: " << *Arg
-                           << "\n";
-          } else if (auto C = dyn_cast<ConstantFP>(operand)) {
-            SmallString<10> value;
-            C->getValueAPF().toString(value);
-            std::string dtype;
-            if (C->getType()->isFloatTy()) {
-              dtype = "f32";
-            } else if (C->getType()->isDoubleTy()) {
-              dtype = "f64";
-            } else {
-              llvm_unreachable("Unexpected floating point type for constant");
-            }
-            valueToNodeMap[operand] =
-                std::make_shared<FPConst>(value.c_str(), dtype);
-            if (O.Diagnostics.Print)
-              llvm::errs() << "Registered FPNode for " << dtype
-                           << " constant: " << value << "\n";
-          } else if (auto CI = dyn_cast<ConstantInt>(operand)) {
-            // e.g., powi intrinsic has a constant int as its exponent
-            double exponent = static_cast<double>(CI->getSExtValue());
-            std::string dtype = "f64";
-            std::string doubleStr = std::to_string(exponent);
-            valueToNodeMap[operand] =
-                std::make_shared<FPConst>(doubleStr.c_str(), dtype);
-            if (O.Diagnostics.Print)
-              llvm::errs() << "Registered FPNode for " << dtype
-                           << " constant (casted from integer): " << doubleStr
-                           << "\n";
-          } else if (auto GV = dyn_cast<GlobalVariable>(operand)) {
-            Type *elemType = GV->getValueType();
-
-            assert(elemType->isFloatingPointTy() &&
-                   "Global variable is not floating point type");
-            std::string dtype;
-            if (elemType->isFloatTy()) {
-              dtype = "f32";
-            } else if (elemType->isDoubleTy()) {
-              dtype = "f64";
-            } else {
-              llvm_unreachable(
-                  "Unexpected floating point type for global variable");
-            }
-            valueToNodeMap[operand] =
-                std::make_shared<FPLLValue>(GV, "__gv", dtype);
-            if (O.Diagnostics.Print)
-              llvm::errs() << "Registered FPNode for global variable: " << *GV
-                           << "\n";
-          } else {
-            assert(0 && "Unknown operand");
-          }
-        }
-        node->addOperand(valueToNodeMap[operand]);
-      }
-    }
-  }
-
-  SmallSet<Value *, 8> processed;
+// Each technique's candidates for every FP subgraph, one subgraph at a time:
+// Herbie's rewrites into st.COs, precision assignments into st.CSs.
+static void
+proposeSubgraphCandidates(Session &S, Function &F,
+                          const FunctionProfileHeader &profileHeader,
+                          bool expansionSafe, FunctionFPState &st) {
+  const Options &O = S.Opts;
   auto &subgraphs = st.subgraphs;
-  for (auto &BB : F) {
-    for (auto &I : BB) {
-      if (!isOptimizable(I)) {
-        if (O.Diagnostics.Print)
-          llvm::errs() << "Skipping non-isOptimizable instruction: " << I
-                       << "\n";
-        continue;
-      }
-
-      if (processed.contains(&I)) {
-        if (O.Diagnostics.Print)
-          llvm::errs() << "Skipping already seen instruction: " << I << "\n";
-        continue;
-      }
-
-      if (O.Diagnostics.Print)
-        llvm::errs() << "Starting floodfill from: " << I << "\n";
-
-      SmallVector<Value *, 8> todo;
-      SetVector<Value *> input_seen;
-      SetVector<Instruction *> output_seen;
-      SetVector<Instruction *> operation_seen;
-      todo.push_back(&I);
-      while (!todo.empty()) {
-        auto cur = todo.pop_back_val();
-        assert(valueToNodeMap.count(cur) && "Node not found in valueToNodeMap");
-
-        assert(isa<Instruction>(cur));
-        auto I2 = cast<Instruction>(cur);
-
-        if (operation_seen.contains(I2)) {
-          if (O.Diagnostics.Print)
-            llvm::errs() << "Skipping already seen instruction: " << *I2
-                         << "\n";
-          continue;
-        }
-
-        assert(!processed.contains(cur));
-
-        if (O.Diagnostics.Print)
-          llvm::errs() << "Insert to operation_seen and processed: " << *I2
-                       << "\n";
-        operation_seen.insert(I2);
-        processed.insert(cur);
-
-        auto operands =
-            isa<CallInst>(I2) ? cast<CallInst>(I2)->args() : I2->operands();
-
-        for (const auto &operand : operands) {
-          if (!isOptimizable(*operand)) {
-            if (O.Diagnostics.Print)
-              llvm::errs() << "Non-isOptimizable input found: " << *operand
-                           << "\n";
-
-            if (!isa<ConstantFP>(operand))
-              input_seen.insert(operand);
-          } else {
-            if (O.Diagnostics.Print)
-              llvm::errs() << "Adding operand to todo list: " << *operand
-                           << "\n";
-            todo.push_back(operand);
-          }
-        }
-
-        for (auto U : I2->users()) {
-          if (auto I3 = dyn_cast<Instruction>(U)) {
-            if (!isOptimizable(*I3)) {
-              if (O.Diagnostics.Print)
-                llvm::errs() << "Output instruction found: " << *I2 << "\n";
-              output_seen.insert(I2);
-            } else {
-              if (O.Diagnostics.Print)
-                llvm::errs() << "Adding user to todo list: " << *I3 << "\n";
-              todo.push_back(I3);
-            }
-          }
-        }
-      }
-
-      if (!operation_seen.empty()) {
-        if (O.Diagnostics.Print) {
-          llvm::errs() << "Found a subgraph with " << operation_seen.size()
-                       << " operations and " << input_seen.size()
-                       << " inputs and " << output_seen.size() << " outputs\n";
-
-          llvm::errs() << "Inputs:\n";
-
-          for (auto &input : input_seen) {
-            llvm::errs() << *input << "\n";
-          }
-
-          llvm::errs() << "Outputs:\n";
-          for (auto &output : output_seen) {
-            llvm::errs() << *output << "\n";
-          }
-
-          llvm::errs() << "Operations:\n";
-          for (auto &operation : operation_seen) {
-            llvm::errs() << *operation << "\n";
-          }
-        }
-
-        if (operation_seen.size() == 1 &&
-            !reductionFMAs.contains(*operation_seen.begin())) {
-          if (O.Diagnostics.Print)
-            llvm::errs() << "Skipping trivial subgraph\n";
-          continue;
-        }
-        if (operation_seen.size() == 1 && O.Diagnostics.Print)
-          llvm::errs() << "Keeping 1-op reduction subgraph: "
-                       << **operation_seen.begin() << "\n";
-
-        subgraphs.emplace_back(input_seen, output_seen, operation_seen);
-      }
-    }
-  }
-
-  if (O.Diagnostics.Print) {
-    llvm::errs() << "[poseidon] Found " << subgraphs.size()
-                 << " initial subgraphs in " << F.getName() << "\n";
-  }
-
-  // Profile read must happen before aggressive DCE as it requires gradients
-  for (auto &subgraph : subgraphs) {
-    for (auto op : subgraph.operations) {
-      if (auto MD = op->getMetadata("poseidon.prof.idx")) {
-        if (auto C = dyn_cast<ConstantAsMetadata>(MD->getOperand(0))) {
-          size_t idx = cast<ConstantInt>(C->getValue())->getZExtValue();
-          auto it = profileMap.find(idx);
-
-          if (it != profileMap.end()) {
-            const auto &profileInfo = it->second;
-
-            auto node = valueToNodeMap[op];
-            node->sens = profileInfo.sumSens;
-            node->grad = profileInfo.sumGrad;
-            node->executions = profileInfo.exec;
-            node->updateBounds(profileInfo.minRes, profileInfo.maxRes,
-                               O.Diagnostics.Print);
-
-            if (O.Diagnostics.Print) {
-              llvm::errs() << "Range of " << *op << " is ["
-                           << node->getLowerBound() << ", "
-                           << node->getUpperBound() << "]\n";
-              llvm::errs() << "Sensitivity score of " << *op
-                           << " is: " << node->sens << "\n"
-                           << "Gradient sum of " << *op << " is: " << node->grad
-                           << "\n"
-                           << "Execution count of " << *op
-                           << " is: " << node->executions << "\n";
-            }
-
-            auto operands =
-                isa<CallInst>(op) ? cast<CallInst>(op)->args() : op->operands();
-
-            for (const auto &operand_ : enumerate(operands)) {
-              auto &operand = operand_.value();
-              auto i = operand_.index();
-
-              if (i < profileInfo.minOperands.size()) {
-                auto operandNode = valueToNodeMap[operand];
-                operandNode->updateBounds(profileInfo.minOperands[i],
-                                          profileInfo.maxOperands[i],
-                                          O.Diagnostics.Print);
-                if (O.Diagnostics.Print) {
-                  llvm::errs() << "Range of " << *operand << " is ["
-                               << operandNode->getLowerBound() << ", "
-                               << operandNode->getUpperBound() << "]\n";
-                }
-              }
-            }
-          } else {
-            if (!O.Profiling.LooseCoverage) {
-              llvm::errs() << "FP Instruction " << *op
-                           << " has no execution logged (idx=" << idx << ")!\n";
-              llvm_unreachable("Unexecuted instruction found; set "
-                               "-poseidon-loose-coverage "
-                               "to suppress this error\n");
-            }
-            auto node = valueToNodeMap[op];
-            node->sens = 0;
-            node->grad = 0;
-            node->executions = 0;
-            if (O.Diagnostics.Print)
-              llvm::errs() << "Sensitivity/gradient/executions of " << *op
-                           << " not found in the log; using 0 for all\n";
-          }
-        }
-      }
-    }
-  }
-
-  if (O.Solver.AggressiveDCE)
-    aggressiveDCE(O, F, subgraphs, valueToNodeMap, profileMap, zeroGradIdx,
-                  abstractMatmuls);
-
-  splitSubgraphs(O, subgraphs);
-
-  if (O.Diagnostics.Print) {
-    llvm::errs() << "[poseidon] After splitting, have " << subgraphs.size()
-                 << " subgraphs in " << F.getName() << "\n";
-  }
-
-  // After splitting so a merged unit is never re-split, and before the
-  // frequency map below is built from the merged unit's instructions.
-  if (O.Candidates.MergeSharedStaging) {
-    mergeSharedStagingSubgraphs(O, subgraphs, F);
-    if (O.Diagnostics.Print)
-      llvm::errs() << "[poseidon] After staging-tier merge, have "
-                   << subgraphs.size() << " subgraphs in " << F.getName()
-                   << "\n";
-  }
-
-  if (O.Diagnostics.Print) {
-    llvm::errs() << "\n=== Function IR after Subgraph Splitting ===\n";
-
-    std::unordered_map<Instruction *, int> instToSubgraphIdx;
-    for (size_t idx = 0; idx < subgraphs.size(); ++idx) {
-      for (auto *inst : subgraphs[idx].operations) {
-        instToSubgraphIdx[inst] = idx;
-      }
-      for (auto *inst : subgraphs[idx].outputs) {
-        if (instToSubgraphIdx.find(inst) == instToSubgraphIdx.end()) {
-          instToSubgraphIdx[inst] = idx;
-        }
-      }
-    }
-
-    for (auto &BB : F) {
-      BB.printAsOperand(llvm::errs(), false);
-      llvm::errs() << ":\n";
-      for (auto &I : BB) {
-        llvm::errs() << "  ";
-        I.print(llvm::errs());
-
-        auto it = instToSubgraphIdx.find(&I);
-        if (it != instToSubgraphIdx.end()) {
-          llvm::errs() << " ; [SG" << it->second << "]";
-        }
-        llvm::errs() << "\n";
-      }
-    }
-    llvm::errs() << "=== End of Function IR ===\n\n";
-  }
-
-  if (subgraphs.empty() && abstractMatmuls.empty()) {
-    if (O.Diagnostics.Print)
-      llvm::errs() << "No subgraphs or matmuls found\n";
-    return false;
-  }
-
-  auto &COs = st.COs;
-  auto &CSs = st.CSs;
-
-  bool expansionSafe = true;
-#if LLVM_VERSION_MAJOR < 24
-  if (O.Candidates.EnablePT && O.Candidates.EnableMultifloat &&
-      Target::of(F).isDevice() && !subgraphs.empty()) {
-    const std::string reason = fastFPReason(F);
-    expansionSafe = reason.empty();
-    if (!expansionSafe) {
-      llvm::errs() << "[poseidon] WARNING: " << F.getName()
-                   << ": floating-point expansion candidates NOT PROPOSED -- "
-                   << reason
-                   << ". An expansion is exact only if each of its operations "
-                      "is rounded as written; it needs -ffp-contract=on or "
-                      "-ffp-contract=off, without -ffast-math.\n";
-      if (O.Model.StrictMode)
-        report_fatal_error("Poseidon strict mode: site '" + F.getName() +
-                           "': " + reason +
-                           "; floating-point expansions need -ffp-contract=on "
-                           "or -ffp-contract=off");
-    }
-  }
-#endif
-
+  int symbolCounter = 0;
   int subgraphCounter = 0;
 
   for (auto &subgraph : subgraphs) {
     assert(subgraph.inputs.size() > 0 && "No inputs found for subgraph");
 
-    if (O.Candidates.EnableHerbie) {
-      for (const auto &input : subgraph.inputs) {
-        auto node = valueToNodeMap[input];
-        if (node->op == "__const") {
-          continue;
-        }
+    if (O.Candidates.EnableHerbie)
+      proposeHerbieCandidates(S, F, subgraph, subgraphCounter, symbolCounter,
+                              st.valueToNodeMap, st.symbolToValueMap, st.COs);
 
-        if (!node->hasSymbol()) {
-          node->symbol = getNextSymbol();
-        }
-        symbolToValueMap[node->symbol] = input;
-        if (O.Diagnostics.Print)
-          llvm::errs() << "assigning symbol: " << node->symbol << " to "
-                       << *input << "\n";
-      }
-
-      std::vector<std::string> herbieInputs;
-      std::vector<CandidateOutput> newCOs;
-
-      struct Eligible {
-        Instruction *output;
-        std::string expr;
-        double grad;
-        unsigned executions;
-      };
-      SmallVector<Eligible, 8> eligible;
-
-      auto emitPerOutput = [&](const Eligible &E, ArrayRef<const char *> precs,
-                               std::vector<std::string> &inputs,
-                               std::vector<CandidateOutput> &cos) {
-        SmallSet<std::string, 8> args;
-        getUniqueArgs(E.expr, args);
-
-        std::string precondition =
-            getPrecondition(O, args, valueToNodeMap, symbolToValueMap);
-
-        std::string argStr;
-        for (const auto &arg : args) {
-          if (!argStr.empty())
-            argStr += " ";
-          argStr += arg;
-        }
-
-        for (const char *prec : precs) {
-          std::string properties = ":herbie-conversions ([binary64 binary32])";
-          properties += std::string(" :precision ") + prec;
-          properties += " :pre " + precondition;
-
-          CandidateOutput CO(S.CostModel, subgraph, E.output, E.expr, E.grad,
-                             E.executions);
-          CO.herbiePrecision = prec;
-          properties += " :name \"" + std::to_string(cos.size()) + "\"";
-
-          std::string herbieInput =
-              "(FPCore (" + argStr + ") " + properties + " " + E.expr + ")";
-          if (O.Diagnostics.Print)
-            llvm::errs() << "Herbie input:\n" << herbieInput << "\n";
-
-          inputs.push_back(herbieInput);
-          cos.push_back(CO);
-        }
-      };
-
-      assert(subgraph.outputs.size() > 0 && "No outputs found for subgraph");
-      for (auto &output : subgraph.outputs) {
-        double grad = valueToNodeMap[output]->grad;
-        unsigned executions = valueToNodeMap[output]->executions;
-
-        if (grad == 0.) {
-          llvm::errs() << "Skipping zero gradient instruction: " << *output
-                       << "\n";
-          continue;
-        }
-
-        std::string expr = valueToNodeMap[output]->toFullExpression(
-            valueToNodeMap, subgraph.inputs);
-
-        if (expr.length() > O.Candidates.MaxExprLength) {
-          llvm::errs() << "WARNING: Skipping Herbie optimization for "
-                       << *output << " since expression length "
-                       << expr.length() << " exceeds limit of "
-                       << O.Candidates.MaxExprLength << "\n";
-          continue;
-        }
-
-        auto parenCount = std::count(expr.begin(), expr.end(), '(');
-        assert(parenCount > 0);
-        if (parenCount == 1) {
-          if (O.Diagnostics.Print)
-            llvm::errs() << "Skipping Herbie for simple expression: " << expr
-                         << "\n";
-          continue;
-        }
-
-        Eligible E{output, expr, grad, executions};
-        if (O.Herbie.HerbieArrays)
-          eligible.push_back(std::move(E));
-        else
-          emitPerOutput(E, {"binary64", "binary32"}, herbieInputs, newCOs);
-      }
-
-      if (O.Herbie.HerbieArrays && (!StringRef(O.Herbie.HerbieArrayGrouping)
-                                         .equals_insensitive("inputs") &&
-                                    !StringRef(O.Herbie.HerbieArrayGrouping)
-                                         .equals_insensitive("executions")))
-        report_fatal_error("Poseidon: -poseidon-herbie-array-grouping must be "
-                           "'inputs' or 'executions'");
-      if (O.Herbie.HerbieArrays &&
-          O.Herbie.HerbieArrayWeights != "sensitivity" &&
-          O.Herbie.HerbieArrayWeights != "gradient" &&
-          O.Herbie.HerbieArrayWeights != "none")
-        report_fatal_error("Poseidon: -poseidon-herbie-array-weights must be "
-                           "'sensitivity', 'gradient' or 'none'");
-
-      // Outputs that read the same inputs (hence the same precondition) and
-      // execute equally often form one array core; the joint rewrite is priced
-      // at that count.
-      auto groupKey = [&](const Eligible &E) {
-        std::string key = std::to_string(E.executions);
-        if (O.Herbie.HerbieArrayGrouping == "inputs") {
-          SmallSet<std::string, 8> args;
-          getUniqueArgs(E.expr, args);
-          std::vector<std::string> sorted(args.begin(), args.end());
-          llvm::sort(sorted);
-          for (const auto &arg : sorted)
-            key += " " + arg;
-        }
-        return key;
-      };
-      SmallVector<std::pair<std::string, SmallVector<const Eligible *, 8>>, 2>
-          groups;
-      for (const Eligible &E : eligible) {
-        std::string key = groupKey(E);
-        auto It = llvm::find_if(groups,
-                                [&](const auto &G) { return G.first == key; });
-        if (It == groups.end())
-          groups.emplace_back(key, SmallVector<const Eligible *, 8>{&E});
-        else
-          It->second.push_back(&E);
-      }
-
-      std::vector<std::string> arrayInputs;
-      std::vector<CandidateOutput> arrayCOs;
-      SmallVector<const SmallVector<const Eligible *, 8> *, 4> arrayGroups;
-      const char *precs[] = {"binary64", "binary32"};
-      for (const auto &[key, G] : groups) {
-        if (G.size() < 2)
-          continue;
-        SmallVector<Instruction *, 8> outputs;
-        SmallVector<Value *, 8> roots;
-        SmallVector<double, 8> grads;
-        for (const Eligible *E : G) {
-          outputs.push_back(E->output);
-          roots.push_back(E->output);
-          grads.push_back(E->grad);
-        }
-        std::string body =
-            arrayCoreBody(outputs, valueToNodeMap, subgraph.inputs);
-        SmallSet<std::string, 8> args;
-        getUniqueArgs(body, args);
-        std::string precondition =
-            getPrecondition(O, args, valueToNodeMap, symbolToValueMap);
-        std::string argStr;
-        for (const auto &arg : args) {
-          if (!argStr.empty())
-            argStr += " ";
-          argStr += arg;
-        }
-        std::string weights;
-        if (O.Herbie.HerbieArrayWeights != "none") {
-          SmallVector<double, 8> sens;
-          for (Instruction *output : outputs) {
-            FPNode *N = valueToNodeMap[output].get();
-            if (O.Herbie.HerbieArrayWeights == "gradient") {
-              double lo = N->getLowerBound(), hi = N->getUpperBound();
-              double meanMag = lo >= 0 || hi <= 0
-                                   ? (std::fabs(lo) + std::fabs(hi)) / 2
-                                   : (lo * lo + hi * hi) / (2 * (hi - lo));
-              sens.push_back(std::fabs(N->grad) * meanMag);
-            } else {
-              sens.push_back(N->sens);
-            }
-          }
-          double total = 0.0;
-          for (double v : sens)
-            total += v;
-          if (total > 0.0 && std::isfinite(total) &&
-              llvm::all_of(sens, [](double v) { return v >= 0.0; })) {
-            weights = " :herbie-weights (";
-            for (auto [k, v] : llvm::enumerate(sens)) {
-              char buf[32];
-              snprintf(buf, sizeof(buf), "%.6e", v * sens.size() / total);
-              weights += (k ? " " : "") + std::string(buf);
-            }
-            weights += ")";
-          } else {
-            llvm::errs() << "[poseidon] an array core of subgraph "
-                         << subgraphCounter
-                         << " is sent unweighted: its outputs' profiled "
-                            "sensitivities do not sum to a positive value\n";
-          }
-        }
-        for (const char *prec : precs) {
-          std::string herbieInput =
-              "(FPCore (" + argStr +
-              ") :herbie-conversions ([binary64 binary32]) :precision " + prec +
-              " :pre " + precondition + weights + " :name \"" +
-              std::to_string(arrayCOs.size()) + "\" " + body + ")";
-          if (O.Diagnostics.Print)
-            llvm::errs() << "Herbie array input:\n" << herbieInput << "\n";
-          arrayInputs.push_back(herbieInput);
-          arrayCOs.emplace_back(S.CostModel, subgraph, ArrayRef<Value *>(roots),
-                                grads, body, G.front()->executions);
-          arrayCOs.back().herbiePrecision = prec;
-          arrayGroups.push_back(&G);
-        }
-      }
-
-      // The outputs no array covers are searched in the same invocation as the
-      // arrays; per-output cores stand in for an array core that returned
-      // nothing, in a second one.
-      auto inArray = [&](const Eligible &E) {
-        return llvm::any_of(arrayGroups, [&](const auto *G) {
-          return llvm::is_contained(*G, &E);
-        });
-      };
-      const size_t numArrayCores = arrayCOs.size();
-      for (const Eligible &E : eligible)
-        if (!inArray(E))
-          emitPerOutput(E, precs, numArrayCores ? arrayInputs : herbieInputs,
-                        numArrayCores ? arrayCOs : newCOs);
-      if (numArrayCores && !improveViaHerbie(S, arrayInputs, arrayCOs,
-                                             subgraphCounter, F.getName())) {
-        if (O.Diagnostics.Print)
-          llvm::errs() << "Failed to optimize expressions using Herbie!\n";
-      }
-      for (const Eligible &E : eligible) {
-        SmallVector<const char *, 2> sendAt;
-        for (size_t k = 0; k < numArrayCores; ++k)
-          if (llvm::is_contained(*arrayGroups[k], &E) &&
-              !arrayCOs[k].herbieAnswered)
-            sendAt.push_back(precs[k % 2]);
-        if (sendAt.empty())
-          continue;
-        llvm::errs() << "[poseidon] Herbie subgraph " << subgraphCounter
-                     << ": array core returned nothing for " << *E.output
-                     << "; sending it separately\n";
-        emitPerOutput(E, sendAt, herbieInputs, newCOs);
-      }
-      COs.insert(COs.end(), arrayCOs.begin(), arrayCOs.end());
-
-      if (!herbieInputs.empty()) {
-        if (!improveViaHerbie(S, herbieInputs, newCOs, subgraphCounter,
-                              F.getName())) {
-          if (O.Diagnostics.Print)
-            llvm::errs() << "Failed to optimize expressions using Herbie!\n";
-        }
-
-        COs.insert(COs.end(), newCOs.begin(), newCOs.end());
-      }
-    }
-
-    if (O.Candidates.EnablePT) {
-      auto *o0 = subgraph.outputs[0];
-      const unsigned o0Exec = valueToNodeMap[o0]->executions;
-
-      // Filled before CS is built, so its baseline walk and every candidate's
-      // weight each instruction by its own measured frequency.
-      subgraph.opExec.clear();
-      subgraph.depthExec.clear();
-      subgraph.execNormalizer = o0Exec;
-      if (O.Model.FreqWeightedPricing) {
-        DominatorTree freqDT(F);
-        LoopInfo freqLI(freqDT);
-        auto note = [&](Instruction *I) {
-          auto it = valueToNodeMap.find(I);
-          if (it == valueToNodeMap.end() || !it->second ||
-              it->second->executions == 0)
-            return;
-          uint64_t e = it->second->executions;
-          subgraph.opExec[I] = e;
-          unsigned d = freqLI.getLoopDepth(I->getParent());
-          auto dit = subgraph.depthExec.find(d);
-          if (dit == subgraph.depthExec.end())
-            subgraph.depthExec[d] = e;
-          else
-            dit->second = std::max(dit->second, e);
-        };
-        for (auto *op : subgraph.operations)
-          note(op);
-        for (auto *o : subgraph.outputs)
-          note(o);
-        // A materialized instruction keeps only its loop depth, so the baseline
-        // is snapped onto the same depth classes as the candidate walk.
-        for (auto &kv : subgraph.opExec)
-          if (auto *I = dyn_cast<Instruction>(kv.first)) {
-            auto dit =
-                subgraph.depthExec.find(freqLI.getLoopDepth(I->getParent()));
-            if (dit != subgraph.depthExec.end())
-              kv.second = dit->second;
-          }
-        if (O.Diagnostics.Print && subgraph.depthExec.size() > 1) {
-          llvm::errs() << "[poseidon] frequency-heterogeneous subgraph "
-                          "(normalizer "
-                       << o0Exec << ", measured depth:exec";
-          for (auto &kv : subgraph.depthExec)
-            llvm::errs() << " " << kv.first << ":" << kv.second;
-          llvm::errs() << "); pricing each instruction at its own measured "
-                          "frequency\n";
-        }
-      }
-
-      CandidateSubgraph CS(S.CostModel, subgraph);
-      CS.executions = o0Exec;
-
-      // Synthetic output-boundary casts execute at most once per thread per
-      // launch, while the body executes CS.executions times; derive the scale
-      // from the profile header (1 for elementwise subgraphs).
-      if (CS.executions > 0 && profileHeader.launchCount > 0) {
-        double thr = 1.0;
-        for (int d = 0; d < 3; ++d)
-          thr *= std::max<uint32_t>(1, profileHeader.maxBlockDim[d]);
-        for (int d = 0; d < 3; ++d)
-          thr *= std::max<uint32_t>(1, profileHeader.maxGridDim[d]);
-        subgraph.outBoundaryFreqScale =
-            std::min(1.0, thr * (double)profileHeader.launchCount /
-                              (double)CS.executions);
-      }
-
-      const auto &PTFuncs = getPTFuncs(S.CostModel);
-      SetVector<FPLLValue *> funcsSet, allSet;
-      for (auto *I : subgraph.operations) {
-        assert(isa<FPLLValue>(valueToNodeMap[I].get()) &&
-               "Corrupted FPNode for original instructions");
-        auto node = cast<FPLLValue>(valueToNodeMap[I].get());
-        allSet.insert(node);
-        if (PTFuncs.count(node->op) != 0) {
-          funcsSet.insert(node);
-          llvm::errs() << "[poseidon] PT Function identified: " << *I << "\n";
-        }
-      }
-      SmallVector<FPLLValue *> sortedFuncs(funcsSet.begin(), funcsSet.end());
-      SmallVector<FPLLValue *> sortedAllOps(allSet.begin(), allSet.end());
-      auto bySens = [](const auto &a, const auto &b) {
-        return a->sens < b->sens;
-      };
-      llvm::sort(sortedFuncs, bySens);
-      llvm::sort(sortedAllOps, bySens);
-
-      const bool gpuMode = Target::of(F).isDevice();
-      static const std::unordered_set<std::string> kEmptyScalars;
-      const std::unordered_set<std::string> &hwScalar =
-          gpuMode ? getScalarTypes(S.CostModel) : kEmptyScalars;
-      PrecisionChangeType curr =
-          getPrecisionChangeType(subgraph.outputs[0]->getType());
-
-      auto emitCandidate =
-          [&](SmallVectorImpl<std::pair<PrecisionChangeType,
-                                        SetVector<FPLLValue *>>> &assignment,
-              std::string desc) {
-            SmallVector<PrecisionChange, 3> changes;
-            for (auto &kv : assignment) {
-              if (kv.first != curr && !kv.second.empty())
-                changes.emplace_back(kv.second, curr, kv.first);
-            }
-            if (changes.empty())
-              return;
-            PTCandidate cand{std::move(changes), std::move(desc)};
-            cand.ordinal = CS.candidates.size();
-            CS.candidates.push_back(std::move(cand));
-          };
-
-      auto sweepTwoTier = [&](TierPair tp, ArrayRef<FPLLValue *> sortedAsc,
-                              StringRef label) {
-        const size_t N = sortedAsc.size();
-        const int step = std::max(5, O.Candidates.TwoTierStep);
-        size_t prev = N + 1;
-        for (int pct = 0; pct <= 100 - step; pct += step) {
-          size_t k = N * pct / 100;
-          if (k == prev)
-            continue;
-          prev = k;
-
-          SetVector<FPLLValue *> hiOps(sortedAsc.end() - k, sortedAsc.end());
-          SetVector<FPLLValue *> loOps(sortedAsc.begin(), sortedAsc.end() - k);
-
-          if (O.Diagnostics.Print) {
-            llvm::errs() << "Created " << label
-                         << " two-tier PT candidate: " << fmtPrecPct(tp.hi, pct)
-                         << " + " << fmtPrecPct(tp.lo, 100 - pct) << " (N=" << N
-                         << ")\n";
-          }
-          std::string desc = label.str();
-          if (!desc.empty())
-            desc += " ";
-          desc += fmtPrecPct(tp.hi, pct);
-          desc += " + ";
-          desc += fmtPrecPct(tp.lo, 100 - pct);
-
-          SmallVector<std::pair<PrecisionChangeType, SetVector<FPLLValue *>>, 2>
-              assignment;
-          assignment.emplace_back(tp.hi, std::move(hiOps));
-          assignment.emplace_back(tp.lo, std::move(loOps));
-          emitCandidate(assignment, std::move(desc));
-        }
-      };
-
-      auto sweepThreeTier = [&](TierTriple tr, ArrayRef<FPLLValue *> sortedAsc,
-                                StringRef label) {
-        const size_t N = sortedAsc.size();
-        const int step = kThreeTierStep;
-        for (int pctHi = step; pctHi <= 100 - 2 * step; pctHi += step) {
-          for (int pctHiMid = pctHi + step; pctHiMid <= 100 - step;
-               pctHiMid += step) {
-            size_t k0 = N * pctHi / 100;
-            size_t k1 = N * pctHiMid / 100;
-            if (k0 == 0 || k0 >= k1 || k1 >= N)
-              continue;
-
-            SetVector<FPLLValue *> hiOps(sortedAsc.end() - k0, sortedAsc.end());
-            SetVector<FPLLValue *> midOps(sortedAsc.end() - k1,
-                                          sortedAsc.end() - k0);
-            SetVector<FPLLValue *> loOps(sortedAsc.begin(),
-                                         sortedAsc.end() - k1);
-
-            if (O.Diagnostics.Print) {
-              llvm::errs() << "Created " << label
-                           << " three-tier PT candidate: "
-                           << fmtPrecPct(tr.hi, pctHi) << " + "
-                           << fmtPrecPct(tr.mid, pctHiMid - pctHi) << " + "
-                           << fmtPrecPct(tr.lo, 100 - pctHiMid) << " (N=" << N
-                           << ")\n";
-            }
-            std::string desc = label.str();
-            if (!desc.empty())
-              desc += " ";
-            desc += fmtPrecPct(tr.hi, pctHi);
-            desc += " + ";
-            desc += fmtPrecPct(tr.mid, pctHiMid - pctHi);
-            desc += " + ";
-            desc += fmtPrecPct(tr.lo, 100 - pctHiMid);
-
-            SmallVector<std::pair<PrecisionChangeType, SetVector<FPLLValue *>>,
-                        3>
-                assignment;
-            assignment.emplace_back(tr.hi, std::move(hiOps));
-            assignment.emplace_back(tr.mid, std::move(midOps));
-            assignment.emplace_back(tr.lo, std::move(loOps));
-            emitCandidate(assignment, std::move(desc));
-          }
-        }
-      };
-
-      for (TierPair tp : kCanonicalPairs) {
-        if (!tierPairAllowed(O, tp, gpuMode, expansionSafe, hwScalar))
-          continue;
-        sweepTwoTier(tp, sortedAllOps, "All");
-        if (!sortedFuncs.empty())
-          sweepTwoTier(tp, sortedFuncs, "Funcs");
-      }
-
-      if (O.Candidates.EnableThreeTier) {
-        for (TierTriple tr : kCanonicalTriples) {
-          if (!tierTripleAllowed(O, tr, gpuMode, expansionSafe, hwScalar))
-            continue;
-          sweepThreeTier(tr, sortedAllOps, "All");
-        }
-      }
-
-      // Zero candidates for a nonempty subgraph means every tier was filtered
-      // out (a configuration problem), which must not pass as a no-op frontier.
-      if (CS.candidates.empty() && !subgraph.operations.empty()) {
-        llvm::errs() << "[poseidon] WARNING: subgraph with "
-                     << subgraph.operations.size() << " FP operations in "
-                     << F.getName()
-                     << " synthesized ZERO precision-tuning candidates (all "
-                        "tier combinations filtered); the solve cannot "
-                        "propose any rewrite here. Check the cost model's "
-                        "scalar_types header.\n";
-        if (O.Model.StrictMode)
-          report_fatal_error(
-              "Poseidon strict mode: nonempty FP subgraph synthesized zero "
-              "candidates with precision tuning enabled");
-      }
-
-      CSs.push_back(std::move(CS));
-    }
+    if (O.Candidates.EnablePT)
+      proposePrecisionCandidates(S, F, subgraph, st.valueToNodeMap,
+                                 profileHeader, expansionSafe, st.CSs);
     llvm::errs() << "##### Finished synthesizing candidates for "
                  << ++subgraphCounter << " of " << subgraphs.size()
                  << " subgraphs! #####\n";
   }
+}
 
+// Put this site's error on the application's scale. kappa is the measured
+// response of the declared quantity of interest to computing this site with a
+// relative error eps on every operation, and the profile's own first-order
+// prediction for the same noise is eps times the site's total sensitivity, in
+// the units the accuracy costs are already in; dividing the two cancels the
+// within-site propagation that both carry and leaves the downstream condition
+// per unit of accuracy cost. A site whose probe run diverged gets a large
+// finite factor instead, so no candidate of it is ever traded against
+// precision.
+static void putOnApplicationScale(Session &S, Function &F,
+                                  const SiteProfileData &P,
+                                  FunctionFPState &st) {
+  const Options &O = S.Opts;
+  const auto &profileMap = P.map;
+  const auto &profileHeader = P.header;
+  auto &COs = st.COs;
+  auto &CSs = st.CSs;
   auto &CMs = st.CMs;
-  generateMatmulCandidates(S, abstractMatmuls, profileMap, kDefaultConfidence,
-                           st.sampleLogBits, CMs);
 
-  priceUnlessCached(S, st, profilePath);
+  double siteSumSens = 0.0;
+  for (const auto &kv : profileMap)
+    siteSumSens += kv.second.sumSens;
+  // Per-output weights are already divided by each output's own total.
+  if (!O.Profiling.OutputProfiles.empty()) {
+    if (profileHeader.hasKappa)
+      report_fatal_error(
+          Twine("Poseidon: the profile of ") + F.getName() +
+          " carries a measured condition number, which scales one site-wide "
+          "error; it cannot be combined with -poseidon-output-profiles.");
+    siteSumSens = 1.0;
+  }
 
-  // Put this site's error on the application's scale. kappa is the measured
-  // response of the declared quantity of interest to computing this site with a
-  // relative error eps on every operation, and the profile's own first-order
-  // prediction for the same noise is eps times the site's total sensitivity, in
-  // the units the accuracy costs are already in; dividing the two cancels the
-  // within-site propagation that both carry and leaves the downstream condition
-  // per unit of accuracy cost. A site whose probe run diverged gets a large
-  // finite factor instead, so no candidate of it is ever traded against
-  // precision.
-  {
-    double siteSumSens = 0.0;
-    for (const auto &kv : profileMap)
-      siteSumSens += kv.second.sumSens;
-    // Per-output weights are already divided by each output's own total.
-    if (!O.Profiling.OutputProfiles.empty()) {
-      if (profileHeader.hasKappa)
-        report_fatal_error(
-            Twine("Poseidon: the profile of ") + F.getName() +
-            " carries a measured condition number, which scales one site-wide "
-            "error; it cannot be combined with -poseidon-output-profiles.");
-      siteSumSens = 1.0;
+  double factor = 1.0;
+  if (profileHeader.hasKappa) {
+    double sumSens = siteSumSens;
+    if (sumSens == 0.0)
+      report_fatal_error(
+          Twine("Poseidon: the profile of ") + F.getName() +
+          " carries a measured condition number but a zero total "
+          "sensitivity, "
+          "so the accuracy costs cannot be put on the scale the condition "
+          "number was measured against; re-run profile generation.");
+    factor = profileHeader.kappaMark == "diverged"
+                 ? 1e30
+                 : profileHeader.kappa / sumSens;
+    llvm::errs() << "[poseidon] site " << F.getName()
+                 << ": kappa=" << profileHeader.kappa << " ("
+                 << profileHeader.kappaMark << ") sumsens=" << sumSens
+                 << " factor=" << factor << "\n";
+  }
+  // The accuracy costs below are scaled by `factor`, so the level a tolerance
+  // is compared against has to be scaled the same way; with a kappa this
+  // reduces to kappa itself, without one to the site's total sensitivity.
+  st.accScale = factor * siteSumSens;
+  if (factor != 1.0) {
+    for (auto &co : COs) {
+      co.initialAccCost *= factor;
+      for (auto &cand : co.candidates)
+        cand.accuracyCost *= factor;
     }
-
-    double factor = 1.0;
-    if (profileHeader.hasKappa) {
-      double sumSens = siteSumSens;
-      if (sumSens == 0.0)
-        report_fatal_error(
-            Twine("Poseidon: the profile of ") + F.getName() +
-            " carries a measured condition number but a zero total "
-            "sensitivity, "
-            "so the accuracy costs cannot be put on the scale the condition "
-            "number was measured against; re-run profile generation.");
-      factor = profileHeader.kappaMark == "diverged"
-                   ? 1e30
-                   : profileHeader.kappa / sumSens;
-      llvm::errs() << "[poseidon] site " << F.getName()
-                   << ": kappa=" << profileHeader.kappa << " ("
-                   << profileHeader.kappaMark << ") sumsens=" << sumSens
-                   << " factor=" << factor << "\n";
-    }
-    // The accuracy costs below are scaled by `factor`, so the level a tolerance
-    // is compared against has to be scaled the same way; with a kappa this
-    // reduces to kappa itself, without one to the site's total sensitivity.
-    st.accScale = factor * siteSumSens;
-    if (factor != 1.0) {
-      for (auto &co : COs) {
-        co.initialAccCost *= factor;
-        for (auto &cand : co.candidates)
-          cand.accuracyCost *= factor;
-      }
-      for (auto &cs : CSs) {
-        cs.initialAccCost *= factor;
-        for (auto &[node, cost] : cs.perOutputInitialAccCost)
+    for (auto &cs : CSs) {
+      cs.initialAccCost *= factor;
+      for (auto &[node, cost] : cs.perOutputInitialAccCost)
+        cost *= factor;
+      for (auto &cand : cs.candidates) {
+        cand.accuracyCost *= factor;
+        for (auto &[node, cost] : cand.perOutputAccCost)
           cost *= factor;
-        for (auto &cand : cs.candidates) {
-          cand.accuracyCost *= factor;
-          for (auto &[node, cost] : cand.perOutputAccCost)
-            cost *= factor;
-        }
       }
-      for (auto &cm : CMs) {
-        cm.initialAccCost *= factor;
-        for (auto &cand : cm.candidates)
-          cand.accuracyCost *= factor;
-      }
+    }
+    for (auto &cm : CMs) {
+      cm.initialAccCost *= factor;
+      for (auto &cand : cm.candidates)
+        cand.accuracyCost *= factor;
     }
   }
+}
+
+// Prints every collected candidate with its priced deltas.
+static void printCandidates(Session &S, FunctionFPState &st) {
+  const Options &O = S.Opts;
+  auto &COs = st.COs;
+  auto &CSs = st.CSs;
+  auto &CMs = st.CMs;
 
   if (O.Diagnostics.Print) {
     if (O.Candidates.EnableHerbie) {
@@ -1975,6 +766,51 @@ bool collectFPCandidates(Session &S, Function &F, double errorTol,
       }
     }
   }
+}
+
+bool collectFPCandidates(Session &S, Function &F, double errorTol,
+                         unsigned sampleLogBits, FunctionFPState &st) {
+  const Options &O = S.Opts;
+  st.F = &F;
+  st.errTol = errorTol;
+  st.sampleLogBits = sampleLogBits;
+
+  const Target &T = Target::of(F);
+  if (T.isDevice())
+    llvm::errs() << "[poseidon] GPU mode active for " << F.getName() << "\n";
+
+  SiteProfileData profile;
+  readSiteProfile(S, F, profile);
+  recognizeMatrixProducts(S, F, profile, st);
+
+  // Nothing above prices: a compile for a device no model has been measured
+  // on yet still reports what it recognized before it refuses.
+  requireCostModel(S.CostModel, F);
+
+  buildSubgraphs(O, F, st.abstractMatmuls, st.valueToNodeMap, st.subgraphs);
+
+  // Profile read must happen before aggressive DCE as it requires gradients
+  attachProfile(O, profile.map, st.valueToNodeMap, st.subgraphs);
+  shapeSubgraphs(O, F, profile.map, profile.zeroGradIdx, st.abstractMatmuls,
+                 st.valueToNodeMap, st.subgraphs);
+
+  if (st.subgraphs.empty() && st.abstractMatmuls.empty()) {
+    if (O.Diagnostics.Print)
+      llvm::errs() << "No subgraphs or matmuls found\n";
+    return false;
+  }
+
+  const bool expansionSafe =
+      expansionsRoundedAsWritten(O, F, !st.subgraphs.empty());
+  proposeSubgraphCandidates(S, F, profile.header, expansionSafe, st);
+
+  generateMatmulCandidates(S, st.abstractMatmuls, profile.map,
+                           kDefaultConfidence, st.sampleLogBits, st.CMs);
+
+  priceUnlessCached(S, st, profile.path);
+
+  putOnApplicationScale(S, F, profile, st);
+  printCandidates(S, st);
 
   return true;
 }

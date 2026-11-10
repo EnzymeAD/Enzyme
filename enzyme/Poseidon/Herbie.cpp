@@ -1461,4 +1461,343 @@ double getCompCost(
   return cost;
 }
 
+namespace {
+
+// The outputs' expressions with every subterm used more than once bound by
+// let*, so Herbie reads the subgraph as the DAG it is rather than one tree per
+// output.
+static std::string arrayCoreBody(
+    ArrayRef<Instruction *> outputs,
+    std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
+    const SetVector<Value *> &inputs) {
+  auto isLeaf = [&](FPNode *N) {
+    if (isa<FPConst>(N))
+      return true;
+    auto *LL = cast<FPLLValue>(N);
+    return inputs.contains(LL->value);
+  };
+  DenseMap<FPNode *, unsigned> uses;
+  SmallVector<FPNode *, 32> order;
+  SmallPtrSet<FPNode *, 32> visited;
+  std::function<void(FPNode *)> walk = [&](FPNode *N) {
+    if (!visited.insert(N).second || isLeaf(N))
+      return;
+    for (auto &operand : N->operands) {
+      if (!isLeaf(operand.get()))
+        ++uses[operand.get()];
+      walk(operand.get());
+    }
+    order.push_back(N);
+  };
+  for (Instruction *output : outputs) {
+    FPNode *N = valueToNodeMap[output].get();
+    ++uses[N];
+    walk(N);
+  }
+
+  DenseMap<FPNode *, std::string> names;
+  std::function<std::string(FPNode *)> ref;
+  auto define = [&](FPNode *N) {
+    std::string expr = "(" + (N->op == "neg" ? std::string("-") : N->op);
+    for (auto &operand : N->operands)
+      expr += " " + ref(operand.get());
+    return expr + ")";
+  };
+  ref = [&](FPNode *N) -> std::string {
+    if (isLeaf(N))
+      return N->toFullExpression(valueToNodeMap, inputs);
+    auto It = names.find(N);
+    if (It != names.end())
+      return It->second;
+    return define(N);
+  };
+
+  std::string bindings;
+  for (FPNode *N : order) {
+    if (uses[N] < 2)
+      continue;
+    std::string def = define(N);
+    std::string name = "t" + std::to_string(names.size() + 1);
+    if (!bindings.empty())
+      bindings += " ";
+    bindings += "(" + name + " " + def + ")";
+    names[N] = name;
+  }
+  std::string body = "(array";
+  for (Instruction *output : outputs)
+    body += " " + ref(valueToNodeMap[output].get());
+  body += ")";
+  return bindings.empty() ? body : "(let* (" + bindings + ") " + body + ")";
+}
+
+} // namespace
+
+void proposeHerbieCandidates(
+    Session &S, Function &F, Subgraph &subgraph, int subgraphCounter,
+    int &symbolCounter,
+    std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
+    std::unordered_map<std::string, Value *> &symbolToValueMap,
+    SmallVectorImpl<CandidateOutput> &COs) {
+  const Options &O = S.Opts;
+  auto getNextSymbol = [&symbolCounter]() -> std::string {
+    return "v" + std::to_string(symbolCounter++);
+  };
+
+  for (const auto &input : subgraph.inputs) {
+    auto node = valueToNodeMap[input];
+    if (node->op == "__const") {
+      continue;
+    }
+
+    if (!node->hasSymbol()) {
+      node->symbol = getNextSymbol();
+    }
+    symbolToValueMap[node->symbol] = input;
+    if (O.Diagnostics.Print)
+      llvm::errs() << "assigning symbol: " << node->symbol << " to " << *input
+                   << "\n";
+  }
+
+  std::vector<std::string> herbieInputs;
+  std::vector<CandidateOutput> newCOs;
+
+  struct Eligible {
+    Instruction *output;
+    std::string expr;
+    double grad;
+    unsigned executions;
+  };
+  SmallVector<Eligible, 8> eligible;
+
+  auto emitPerOutput = [&](const Eligible &E, ArrayRef<const char *> precs,
+                           std::vector<std::string> &inputs,
+                           std::vector<CandidateOutput> &cos) {
+    SmallSet<std::string, 8> args;
+    getUniqueArgs(E.expr, args);
+
+    std::string precondition =
+        getPrecondition(O, args, valueToNodeMap, symbolToValueMap);
+
+    std::string argStr;
+    for (const auto &arg : args) {
+      if (!argStr.empty())
+        argStr += " ";
+      argStr += arg;
+    }
+
+    for (const char *prec : precs) {
+      std::string properties = ":herbie-conversions ([binary64 binary32])";
+      properties += std::string(" :precision ") + prec;
+      properties += " :pre " + precondition;
+
+      CandidateOutput CO(S.CostModel, subgraph, E.output, E.expr, E.grad,
+                         E.executions);
+      CO.herbiePrecision = prec;
+      properties += " :name \"" + std::to_string(cos.size()) + "\"";
+
+      std::string herbieInput =
+          "(FPCore (" + argStr + ") " + properties + " " + E.expr + ")";
+      if (O.Diagnostics.Print)
+        llvm::errs() << "Herbie input:\n" << herbieInput << "\n";
+
+      inputs.push_back(herbieInput);
+      cos.push_back(CO);
+    }
+  };
+
+  assert(subgraph.outputs.size() > 0 && "No outputs found for subgraph");
+  for (auto &output : subgraph.outputs) {
+    double grad = valueToNodeMap[output]->grad;
+    unsigned executions = valueToNodeMap[output]->executions;
+
+    if (grad == 0.) {
+      llvm::errs() << "Skipping zero gradient instruction: " << *output << "\n";
+      continue;
+    }
+
+    std::string expr = valueToNodeMap[output]->toFullExpression(
+        valueToNodeMap, subgraph.inputs);
+
+    if (expr.length() > O.Candidates.MaxExprLength) {
+      llvm::errs() << "WARNING: Skipping Herbie optimization for " << *output
+                   << " since expression length " << expr.length()
+                   << " exceeds limit of " << O.Candidates.MaxExprLength
+                   << "\n";
+      continue;
+    }
+
+    auto parenCount = std::count(expr.begin(), expr.end(), '(');
+    assert(parenCount > 0);
+    if (parenCount == 1) {
+      if (O.Diagnostics.Print)
+        llvm::errs() << "Skipping Herbie for simple expression: " << expr
+                     << "\n";
+      continue;
+    }
+
+    Eligible E{output, expr, grad, executions};
+    if (O.Herbie.HerbieArrays)
+      eligible.push_back(std::move(E));
+    else
+      emitPerOutput(E, {"binary64", "binary32"}, herbieInputs, newCOs);
+  }
+
+  if (O.Herbie.HerbieArrays &&
+      (!StringRef(O.Herbie.HerbieArrayGrouping).equals_insensitive("inputs") &&
+       !StringRef(O.Herbie.HerbieArrayGrouping)
+            .equals_insensitive("executions")))
+    report_fatal_error("Poseidon: -poseidon-herbie-array-grouping must be "
+                       "'inputs' or 'executions'");
+  if (O.Herbie.HerbieArrays && O.Herbie.HerbieArrayWeights != "sensitivity" &&
+      O.Herbie.HerbieArrayWeights != "gradient" &&
+      O.Herbie.HerbieArrayWeights != "none")
+    report_fatal_error("Poseidon: -poseidon-herbie-array-weights must be "
+                       "'sensitivity', 'gradient' or 'none'");
+
+  // Outputs that read the same inputs (hence the same precondition) and
+  // execute equally often form one array core; the joint rewrite is priced
+  // at that count.
+  auto groupKey = [&](const Eligible &E) {
+    std::string key = std::to_string(E.executions);
+    if (O.Herbie.HerbieArrayGrouping == "inputs") {
+      SmallSet<std::string, 8> args;
+      getUniqueArgs(E.expr, args);
+      std::vector<std::string> sorted(args.begin(), args.end());
+      llvm::sort(sorted);
+      for (const auto &arg : sorted)
+        key += " " + arg;
+    }
+    return key;
+  };
+  SmallVector<std::pair<std::string, SmallVector<const Eligible *, 8>>, 2>
+      groups;
+  for (const Eligible &E : eligible) {
+    std::string key = groupKey(E);
+    auto It =
+        llvm::find_if(groups, [&](const auto &G) { return G.first == key; });
+    if (It == groups.end())
+      groups.emplace_back(key, SmallVector<const Eligible *, 8>{&E});
+    else
+      It->second.push_back(&E);
+  }
+
+  std::vector<std::string> arrayInputs;
+  std::vector<CandidateOutput> arrayCOs;
+  SmallVector<const SmallVector<const Eligible *, 8> *, 4> arrayGroups;
+  const char *precs[] = {"binary64", "binary32"};
+  for (const auto &[key, G] : groups) {
+    if (G.size() < 2)
+      continue;
+    SmallVector<Instruction *, 8> outputs;
+    SmallVector<Value *, 8> roots;
+    SmallVector<double, 8> grads;
+    for (const Eligible *E : G) {
+      outputs.push_back(E->output);
+      roots.push_back(E->output);
+      grads.push_back(E->grad);
+    }
+    std::string body = arrayCoreBody(outputs, valueToNodeMap, subgraph.inputs);
+    SmallSet<std::string, 8> args;
+    getUniqueArgs(body, args);
+    std::string precondition =
+        getPrecondition(O, args, valueToNodeMap, symbolToValueMap);
+    std::string argStr;
+    for (const auto &arg : args) {
+      if (!argStr.empty())
+        argStr += " ";
+      argStr += arg;
+    }
+    std::string weights;
+    if (O.Herbie.HerbieArrayWeights != "none") {
+      SmallVector<double, 8> sens;
+      for (Instruction *output : outputs) {
+        FPNode *N = valueToNodeMap[output].get();
+        if (O.Herbie.HerbieArrayWeights == "gradient") {
+          double lo = N->getLowerBound(), hi = N->getUpperBound();
+          double meanMag = lo >= 0 || hi <= 0
+                               ? (std::fabs(lo) + std::fabs(hi)) / 2
+                               : (lo * lo + hi * hi) / (2 * (hi - lo));
+          sens.push_back(std::fabs(N->grad) * meanMag);
+        } else {
+          sens.push_back(N->sens);
+        }
+      }
+      double total = 0.0;
+      for (double v : sens)
+        total += v;
+      if (total > 0.0 && std::isfinite(total) &&
+          llvm::all_of(sens, [](double v) { return v >= 0.0; })) {
+        weights = " :herbie-weights (";
+        for (auto [k, v] : llvm::enumerate(sens)) {
+          char buf[32];
+          snprintf(buf, sizeof(buf), "%.6e", v * sens.size() / total);
+          weights += (k ? " " : "") + std::string(buf);
+        }
+        weights += ")";
+      } else {
+        llvm::errs() << "[poseidon] an array core of subgraph "
+                     << subgraphCounter
+                     << " is sent unweighted: its outputs' profiled "
+                        "sensitivities do not sum to a positive value\n";
+      }
+    }
+    for (const char *prec : precs) {
+      std::string herbieInput =
+          "(FPCore (" + argStr +
+          ") :herbie-conversions ([binary64 binary32]) :precision " + prec +
+          " :pre " + precondition + weights + " :name \"" +
+          std::to_string(arrayCOs.size()) + "\" " + body + ")";
+      if (O.Diagnostics.Print)
+        llvm::errs() << "Herbie array input:\n" << herbieInput << "\n";
+      arrayInputs.push_back(herbieInput);
+      arrayCOs.emplace_back(S.CostModel, subgraph, ArrayRef<Value *>(roots),
+                            grads, body, G.front()->executions);
+      arrayCOs.back().herbiePrecision = prec;
+      arrayGroups.push_back(&G);
+    }
+  }
+
+  // The outputs no array covers are searched in the same invocation as the
+  // arrays; per-output cores stand in for an array core that returned
+  // nothing, in a second one.
+  auto inArray = [&](const Eligible &E) {
+    return llvm::any_of(
+        arrayGroups, [&](const auto *G) { return llvm::is_contained(*G, &E); });
+  };
+  const size_t numArrayCores = arrayCOs.size();
+  for (const Eligible &E : eligible)
+    if (!inArray(E))
+      emitPerOutput(E, precs, numArrayCores ? arrayInputs : herbieInputs,
+                    numArrayCores ? arrayCOs : newCOs);
+  if (numArrayCores && !improveViaHerbie(S, arrayInputs, arrayCOs,
+                                         subgraphCounter, F.getName())) {
+    if (O.Diagnostics.Print)
+      llvm::errs() << "Failed to optimize expressions using Herbie!\n";
+  }
+  for (const Eligible &E : eligible) {
+    SmallVector<const char *, 2> sendAt;
+    for (size_t k = 0; k < numArrayCores; ++k)
+      if (llvm::is_contained(*arrayGroups[k], &E) &&
+          !arrayCOs[k].herbieAnswered)
+        sendAt.push_back(precs[k % 2]);
+    if (sendAt.empty())
+      continue;
+    llvm::errs() << "[poseidon] Herbie subgraph " << subgraphCounter
+                 << ": array core returned nothing for " << *E.output
+                 << "; sending it separately\n";
+    emitPerOutput(E, sendAt, herbieInputs, newCOs);
+  }
+  COs.insert(COs.end(), arrayCOs.begin(), arrayCOs.end());
+
+  if (!herbieInputs.empty()) {
+    if (!improveViaHerbie(S, herbieInputs, newCOs, subgraphCounter,
+                          F.getName())) {
+      if (O.Diagnostics.Print)
+        llvm::errs() << "Failed to optimize expressions using Herbie!\n";
+    }
+
+    COs.insert(COs.end(), newCOs.begin(), newCOs.end());
+  }
+}
+
 } // namespace poseidon

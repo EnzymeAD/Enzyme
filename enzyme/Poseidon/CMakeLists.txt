@@ -66,11 +66,13 @@ set(POSEIDON_SRC
     Profile/Instrument.cpp
     Sites/LaunchDescriptors.cpp
     Optimize.cpp
+    Sites/SiteIdentity.cpp
     Techniques/Precision.cpp
     Profile/ProfileRead.cpp
     Techniques/Matmul/RaiseWMMA.cpp
     Sampling.cpp
     Solvers.cpp
+    Subgraphs.cpp
     Techniques/Staging.cpp
     Types.cpp
     Utils.cpp

@@ -60,8 +60,6 @@ inline llvm::Value *branchCondition(llvm::Value *V) {
 #endif
 }
 
-struct Options;
-struct Subgraph;
 class FPNode;
 
 // The libm calls Poseidon prices and can retype.
@@ -80,16 +78,6 @@ void collectExprInsts(llvm::Value *V,
                       const llvm::SetVector<llvm::Value *> &inputs,
                       llvm::SmallPtrSetImpl<llvm::Instruction *> &exprInsts,
                       llvm::SmallPtrSetImpl<llvm::Value *> &visited);
-
-void splitSubgraphs(const Options &O,
-                    llvm::SmallVectorImpl<Subgraph> &subgraphs);
-
-// Merge every group of subgraphs that touch a common staging buffer (a pointer
-// argument or an addrspace(3) global reached by a load feeding the subgraph or
-// a store consuming it) into one unit, so the per-unit tier is the buffer's.
-void mergeSharedStagingSubgraphs(const Options &O,
-                                 llvm::SmallVectorImpl<Subgraph> &subgraphs,
-                                 llvm::Function &F);
 
 void simplifyFunction(llvm::Function &F, llvm::OptimizationLevel Level);
 

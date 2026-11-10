@@ -52,8 +52,8 @@ public:
   // build without a profile: it is not snapshotted and hands no launch over.
   const bool IsTwin;
 
-  // Driver.cpp. The canonical clones of the module's site bodies, which
-  // finalizeModule drops once nothing calls them.
+  // Driver.cpp and the stages it drives. The canonical clones of the module's
+  // site bodies, which finalizeModule drops once nothing calls them.
   llvm::SmallVector<llvm::WeakVH, 4> SiteClones;
   // The functions a solve rewrote a site in, with every function that calls
   // them: what the module as written does not have.
@@ -66,7 +66,7 @@ public:
   // written.
   std::unique_ptr<llvm::Module> AsWrittenTwin;
 
-  // Optimize.cpp. The body each site clone was cut from.
+  // Sites/SiteIdentity.cpp. The body each site clone was cut from.
   std::map<const llvm::Function *, llvm::Function *> SiteOrigins;
   // The site clone has no callers while it is optimized, so the caller values
   // of its parameters are kept here for the parameter-staging arm to resolve a
