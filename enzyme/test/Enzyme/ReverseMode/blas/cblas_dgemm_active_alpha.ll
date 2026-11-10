@@ -21,6 +21,7 @@ entry:
   ret double %r
 }
 
+; CHECK-NOT: @cblas_dlascl
 ; CHECK-LABEL: define internal { double } @diffef(double %alpha, ptr nocapture readonly %A, ptr nocapture readonly %B, ptr nocapture %C, ptr nocapture %"C'")
 ; CHECK: %[[ALPHA_DIFFE:.+]] = alloca double
 ; CHECK: store double 0.000000e+00, ptr %[[ALPHA_DIFFE]]
@@ -29,5 +30,10 @@ entry:
 ; CHECK: %[[OLD:.+]] = load double, ptr %[[ALPHA_DIFFE]]
 ; CHECK-NEXT: %[[NEW:.+]] = fadd fast double %[[OLD]], %[[DOT]]
 ; CHECK-NEXT: store double %[[NEW]], ptr %[[ALPHA_DIFFE]]
+; CHECK: Gfor.body.i:
+; CHECK: %[[GEP:.+]] = getelementptr double, ptr %"C'", i32
+; CHECK-NEXT: store double 0.000000e+00, ptr %[[GEP]]
+; CHECK: __enzyme_cblas_lascl_double_32.exit:
 ; CHECK: %[[RESULT:.+]] = load double, ptr %[[ALPHA_DIFFE]]
 ; CHECK: insertvalue { double } {{(undef|poison)}}, double %[[RESULT]], 0
+; CHECK-LABEL: define internal void @__enzyme_cblas_lascl_double_32(i32 %layout, i32 %type, double %cfrom, double %cto, i32 %M, i32 %N, ptr noalias nocapture %A, i32 %lda)

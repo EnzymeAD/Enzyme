@@ -945,6 +945,11 @@ void callMemcpyStridedLapack(llvm::IRBuilder<> &B, llvm::Module &M,
                              BlasInfo blas, llvm::ArrayRef<llvm::Value *> args,
                              llvm::ArrayRef<llvm::OperandBundleDef> bundles);
 
+/// Emit an inline helper scaling a general or triangular CBLAS matrix.
+void callLasclHelper(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
+                     llvm::ArrayRef<llvm::Value *> args,
+                     llvm::ArrayRef<llvm::OperandBundleDef> bundles);
+
 void callSPMVDiagUpdate(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
                         llvm::IntegerType *IT, llvm::Type *BlasCT,
                         llvm::Type *BlasFPT, llvm::Type *BlasPT,

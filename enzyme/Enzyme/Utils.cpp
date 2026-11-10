@@ -1817,6 +1817,205 @@ void callMemcpyStridedLapack(llvm::IRBuilder<> &B, llvm::Module &M,
     attributeKnownFunctions(*F);
 }
 
+void callLasclHelper(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
+                     llvm::ArrayRef<llvm::Value *> args,
+                     llvm::ArrayRef<llvm::OperandBundleDef> bundles) {
+  assert(args.size() >= 10 && "lascl expects at least 10 arguments");
+  Type *elementType = args[4]->getType();
+  assert(elementType->isFPOrFPVectorTy() &&
+         "lascl element type must be floating-point");
+  IntegerType *IT = cast<IntegerType>(args[6]->getType());
+  Value *layout = B.CreateZExtOrTrunc(args[0], IT);
+  Value *type = B.CreateZExtOrTrunc(args[1], IT);
+  Value *cfrom = args[4];
+  Value *cto = args[5];
+  Value *m = args[6];
+  Value *n = args[7];
+  Value *A = args[8];
+  Value *lda = args[9];
+  unsigned addrSpace = 0;
+  if (auto *PT = dyn_cast<PointerType>(A->getType()))
+    addrSpace = PT->getAddressSpace();
+  PointerType *PT = getPointerType(elementType, addrSpace);
+  if (A->getType()->isIntegerTy())
+    A = B.CreateIntToPtr(A, PT);
+  else if (A->getType() != PT)
+    A = B.CreatePointerCast(A, PT);
+
+  std::string name = "__enzyme_cblas_lascl_" + tofltstr(elementType) + "_" +
+                     std::to_string(IT->getBitWidth());
+  if (addrSpace != 0)
+    name += "_as" + std::to_string(addrSpace);
+
+  FunctionType *FT = FunctionType::get(
+      Type::getVoidTy(M.getContext()),
+      {IT, IT, elementType, elementType, IT, IT, PT, IT}, false);
+
+  Function *F = cast<Function>(M.getOrInsertFunction(name, FT).getCallee());
+  if (F->empty()) {
+    F->setLinkage(Function::LinkageTypes::InternalLinkage);
+#if LLVM_VERSION_MAJOR >= 16
+    F->setOnlyAccessesArgMemory();
+#else
+    F->addFnAttr(Attribute::ArgMemOnly);
+#endif
+    F->addFnAttr(Attribute::NoUnwind);
+    F->addFnAttr(Attribute::NoRecurse);
+    F->addFnAttr(Attribute::WillReturn);
+    F->addFnAttr(Attribute::NoFree);
+    F->addFnAttr(Attribute::NoSync);
+    F->addFnAttr(Attribute::AlwaysInline);
+    addFunctionNoCapture(F, 6);
+    F->addParamAttr(6, Attribute::NoAlias);
+
+    BasicBlock *entry = BasicBlock::Create(F->getContext(), "entry", F);
+    BasicBlock *swtch = BasicBlock::Create(F->getContext(), "swtch", F);
+    BasicBlock *Ginit = BasicBlock::Create(F->getContext(), "Ginit.idx", F);
+    BasicBlock *Uinit = BasicBlock::Create(F->getContext(), "Uinit.idx", F);
+    BasicBlock *Linit = BasicBlock::Create(F->getContext(), "Linit.idx", F);
+    BasicBlock *end = BasicBlock::Create(F->getContext(), "for.end", F);
+
+    auto argLayout = F->arg_begin();
+    argLayout->setName("layout");
+    auto argType = argLayout + 1;
+    argType->setName("type");
+    auto argCfrom = argType + 1;
+    argCfrom->setName("cfrom");
+    auto argCto = argCfrom + 1;
+    argCto->setName("cto");
+    auto argM = argCto + 1;
+    argM->setName("M");
+    auto argN = argM + 1;
+    argN->setName("N");
+    auto argA = argN + 1;
+    argA->setName("A");
+    auto argLda = argA + 1;
+    argLda->setName("lda");
+
+    {
+      IRBuilder<> EB(entry);
+      Value *m0 = EB.CreateICmpSLE(argM, ConstantInt::get(IT, 0));
+      Value *n0 = EB.CreateICmpSLE(argN, ConstantInt::get(IT, 0));
+      Value *empty = EB.CreateOr(m0, n0);
+      Value *same = EB.CreateFCmpOEQ(argCto, argCfrom);
+      EB.CreateCondBr(EB.CreateOr(empty, same), end, swtch);
+    }
+
+    Value *scale = nullptr;
+    Value *isZero = nullptr;
+    {
+      IRBuilder<> SB(swtch);
+      SB.setFastMathFlags(getFast());
+      scale = SB.CreateFDiv(argCto, argCfrom, "scale");
+      isZero = SB.CreateFCmpOEQ(argCto, ConstantFP::get(elementType, 0.0),
+                                "is.zero");
+      auto swtchT = SB.CreateSwitch(argType, Ginit);
+      swtchT->addCase(ConstantInt::get(IT, 'U'), Uinit);
+      swtchT->addCase(ConstantInt::get(IT, 'u'), Uinit);
+      swtchT->addCase(ConstantInt::get(IT, 121), Uinit);
+      swtchT->addCase(ConstantInt::get(IT, 'L'), Linit);
+      swtchT->addCase(ConstantInt::get(IT, 'l'), Linit);
+      swtchT->addCase(ConstantInt::get(IT, 122), Linit);
+    }
+
+    std::pair<char, BasicBlock *> todo[] = {
+        {'G', Ginit}, {'U', Uinit}, {'L', Linit}};
+    for (auto &&[direction, init] : todo) {
+      std::string dir(1, direction);
+      BasicBlock *body =
+          BasicBlock::Create(F->getContext(), dir + "for.body", F);
+      BasicBlock *bodyZero =
+          BasicBlock::Create(F->getContext(), dir + "for.zero", F);
+      BasicBlock *bodyScale =
+          BasicBlock::Create(F->getContext(), dir + "for.scale", F);
+      BasicBlock *bodyLatch =
+          BasicBlock::Create(F->getContext(), dir + "for.latch", F);
+      BasicBlock *initend =
+          BasicBlock::Create(F->getContext(), dir + "init.end", F);
+
+      Value *istart = ConstantInt::get(IT, 0);
+      Value *iend = argM;
+      Value *jend = argN;
+
+      PHINode *j;
+      {
+        IRBuilder<> IB(init);
+        j = IB.CreatePHI(IT, direction == 'G' ? 2 : 4, dir + "j");
+        j->addIncoming(ConstantInt::get(IT, 0), swtch);
+        if (direction != 'G') {
+          j->addIncoming(ConstantInt::get(IT, 0), swtch);
+          j->addIncoming(ConstantInt::get(IT, 0), swtch);
+        }
+
+        if (direction == 'L') {
+          istart = j;
+          jend = IB.CreateSelect(IB.CreateICmpSLT(argM, argN), argM, argN);
+        } else if (direction == 'U') {
+          auto jp1 = IB.CreateAdd(j, ConstantInt::get(IT, 1), "", true, true);
+          iend = IB.CreateSelect(IB.CreateICmpULT(jp1, argM), jp1, argM);
+        }
+
+        IB.CreateBr(body);
+      }
+
+      PHINode *i;
+      Value *elemPtr;
+      {
+        IRBuilder<> BB(body);
+        i = BB.CreatePHI(IT, 2, dir + "i");
+        i->addIncoming(istart, init);
+        elemPtr =
+            lookup_with_layout(BB, elementType, argLayout, argA, argLda, i, j);
+        BB.CreateCondBr(isZero, bodyZero, bodyScale);
+      }
+
+      {
+        IRBuilder<> ZB(bodyZero);
+        ZB.CreateStore(Constant::getNullValue(elementType), elemPtr);
+        ZB.CreateBr(bodyLatch);
+      }
+
+      {
+        IRBuilder<> SCB(bodyScale);
+        SCB.setFastMathFlags(getFast());
+        Value *val = SCB.CreateLoad(elementType, elemPtr, dir + "val");
+        Value *res = SCB.CreateFMul(val, scale, dir + "scaled");
+        SCB.CreateStore(res, elemPtr);
+        SCB.CreateBr(bodyLatch);
+      }
+
+      {
+        IRBuilder<> LB(bodyLatch);
+        Value *nexti = LB.CreateAdd(i, ConstantInt::get(IT, 1), dir + "i.next",
+                                    true, true);
+        i->addIncoming(nexti, bodyLatch);
+        LB.CreateCondBr(LB.CreateICmpEQ(nexti, iend), initend, body);
+      }
+
+      {
+        IRBuilder<> IEB(initend);
+        Value *nextj = IEB.CreateAdd(j, ConstantInt::get(IT, 1), dir + "j.next",
+                                     true, true);
+        j->addIncoming(nextj, initend);
+        IEB.CreateCondBr(IEB.CreateICmpEQ(nextj, jend), end, init);
+      }
+    }
+
+    {
+      IRBuilder<> EndB(end);
+      EndB.CreateRetVoid();
+    }
+  }
+
+  B.CreateCall(F, {layout, type, cfrom, cto, m, n, A, lda}, bundles);
+  if (args.size() > 10) {
+    if (auto *AI = dyn_cast<AllocaInst>(args[10])) {
+      if (AI->use_empty())
+        AI->eraseFromParent();
+    }
+  }
+}
+
 void callSPMVDiagUpdate(IRBuilder<> &B, Module &M, BlasInfo blas,
                         IntegerType *IT, Type *BlasCT, Type *BlasFPT,
                         Type *BlasPT, Type *BlasIT, Type *fpTy,
