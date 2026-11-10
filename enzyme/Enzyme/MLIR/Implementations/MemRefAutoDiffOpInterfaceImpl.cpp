@@ -719,7 +719,7 @@ struct AllocaScopeOpInterfaceReverse
 
     gutils->replaceOrigOpWith(scopeOp, repResults);
     gutils->erase(newScope);
-    gutils->originalToNewFn.map(scopeOp, repScope);
+    gutils->originalToNewFn.map(op, repScope.getOperation());
 
     Block &origBlock = scopeOp.getBodyRegion().front();
     Block &repBlock = repScope.getBodyRegion().front();
