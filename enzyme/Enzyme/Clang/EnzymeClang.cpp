@@ -24,6 +24,7 @@
 
 #include "clang/AST/Attr.h"
 #include "clang/AST/DeclGroup.h"
+#include "clang/AST/Mangle.h"
 #include "clang/AST/RecursiveASTVisitor.h"
 #include "clang/Basic/FileManager.h"
 #include "clang/Basic/MacroBuilder.h"
@@ -197,6 +198,38 @@ static bool isGPUMathWrapperHeader(const SourceManager &SM,
   return FileName == "__clang_cuda_math.h" || FileName == "__clang_hip_math.h";
 }
 
+/// Synthesize the global that registers FD, a function of a device math wrapper
+/// header kept alive for a derivative, so that the pass pipeline can give FD up
+/// again in a module that asks nothing of Enzyme. Unlike the registration
+/// globals of the marker attributes, it is a device variable with internal
+/// linkage, as it may outlive a compile that runs no passes, and it is named
+/// after FD's mangled name, as the header may overload a function name.
+static void registerDeviceMath(Sema &S, FunctionDecl *FD) {
+  auto &AST = S.getASTContext();
+  std::string Name = "__enzyme_device_math_autoreg_";
+  llvm::raw_string_ostream OS(Name);
+  std::unique_ptr<MangleContext> Mangler(AST.createMangleContext());
+  Mangler->mangleName(FD, OS);
+
+  auto Loc = FD->getLocation();
+  auto FT = AST.getPointerType(FD->getType());
+  auto DR = DeclRefExpr::Create(AST, NestedNameSpecifierLoc(), Loc, FD, false,
+                                Loc, FD->getType(), ExprValueKind::VK_LValue,
+                                FD, /*TemplateArgs*/ nullptr);
+  auto Addr = ImplicitCastExpr::Create(
+      AST, FT, CastKind::CK_FunctionToPointerDecay, DR, nullptr,
+      ExprValueKind::VK_PRValue, FPOptionsOverride());
+  auto V = VarDecl::Create(AST, FD->getDeclContext(), Loc, Loc,
+                           &AST.Idents.get(OS.str()), FT, nullptr, SC_Static);
+  V->addAttr(UsedAttr::CreateImplicit(AST));
+  V->addAttr(CUDADeviceAttr::CreateImplicit(AST));
+  // No debug info: its entry would outlive the global in the compile unit.
+  V->addAttr(NoDebugAttr::CreateImplicit(AST));
+  V->setInit(Addr);
+  S.MarkVariableReferenced(Loc, V);
+  S.getASTConsumer().HandleTopLevelDecl(DeclGroupRef(V));
+}
+
 class EnzymePlugin final : public clang::ASTConsumer {
   clang::CompilerInstance &CI;
 
@@ -302,6 +335,8 @@ public:
           continue;
 
         FD->addAttr(UsedAttr::CreateImplicit(CI.getASTContext()));
+        if (CI.getLangOpts().CUDAIsDevice)
+          registerDeviceMath(CI.getSema(), FD);
       }
       if (auto FD = dyn_cast<VarDecl>(*it)) {
         HandleCXXStaticMemberVarInstantiation(FD);
