@@ -1,7 +1,8 @@
 // A module that asks nothing of Enzyme compiles as it does without the plugin:
 // on the host, and in CUDA device code, where the plugin keeps every function
-// of clang's CUDA math header alive in case a derivative calls it. The header
-// is stood in for, so no CUDA installation is needed.
+// of clang's CUDA math header alive in case a derivative calls it. Without a
+// pass pipeline the globals that register those functions stay in the module,
+// well-formed. The header is stood in for, so no CUDA installation is needed.
 
 // REQUIRES: nvptx-registered-target
 // RUN: rm -rf %t && split-file %s %t
@@ -11,6 +12,11 @@
 // RUN: %clang -x cuda --cuda-device-only -nocudainc -nocudalib --cuda-gpu-arch=sm_70 -O2 -S -include %t/__clang_cuda_math.h %t/device.cu -o %t/device.ptx
 // RUN: %clang -x cuda --cuda-device-only -nocudainc -nocudalib --cuda-gpu-arch=sm_70 -O2 -S -include %t/__clang_cuda_math.h %t/device.cu -o %t/device.enzyme.ptx %loadClangEnzyme
 // RUN: diff %t/device.ptx %t/device.enzyme.ptx
+// RUN: %clang -x cuda --cuda-device-only -nocudainc -nocudalib --cuda-gpu-arch=sm_70 -O1 -Xclang -disable-llvm-passes -c -emit-llvm -include %t/__clang_cuda_math.h %t/device.cu -o %t/device.enzyme.bc %loadClangEnzyme
+// RUN: llvm-dis %t/device.enzyme.bc -o - | FileCheck %s
+
+// CHECK: @{{.*}}__enzyme_device_math_autoreg__ZL4sqrtd = internal addrspace(1) global ptr @_ZL4sqrtd
+// CHECK: @{{.*}}__enzyme_device_math_autoreg__ZL3cosd = internal addrspace(1) global ptr @_ZL3cosd
 
 //--- host.c
 #include <string.h>
