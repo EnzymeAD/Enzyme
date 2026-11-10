@@ -13,10 +13,13 @@
 #include "Pass/Session.h"
 #include "Staging.h"
 #include "Targets/DeviceMath.h"
+#include "Targets/Target.h"
 #include "Utils.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/Config/llvm-config.h"
 #include "llvm/IR/Constants.h"
+#include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
@@ -1470,6 +1473,65 @@ void applyExpansion(Session &S, unsigned n,
   }
   for (PHINode *phi : carriedPhis)
     phi->eraseFromParent();
+}
+
+#if LLVM_VERSION_MAJOR < 24
+// Before LLVM 24 fast contraction and fast-math attributes also reach
+// operations without flags, so expansion code is not rounded as written there.
+// Returns why for F, or "".
+static std::string fastFPReason(const Function &F) {
+  SmallVector<StringRef, 4> attrs;
+#if LLVM_VERSION_MAJOR < 22
+  attrs.append({"unsafe-fp-math", "approx-func-fp-math"}); // read up to LLVM 21
+#endif
+#if LLVM_VERSION_MAJOR < 23
+  attrs.append({"no-nans-fp-math", "no-infs-fp-math"}); // read up to LLVM 22
+#endif
+  for (StringRef attr : attrs)
+    if (F.getFnAttribute(attr).getValueAsString() == "true")
+      return ("the function carries \"" + attr +
+              "\"=\"true\", which this LLVM applies to every floating-point "
+              "operation of the function, with fast-math flags or without")
+          .str();
+  for (const Instruction &I : instructions(F))
+    if (isa<FPMathOperator>(I) && I.getFastMathFlags().allowContract()) {
+      const auto *CI = dyn_cast<CallInst>(&I);
+      const Function *callee = CI ? CI->getCalledFunction() : nullptr;
+      return ("its floating-point operations carry 'contract' (the first " +
+              (callee ? callee->getName() : StringRef(I.getOpcodeName())) +
+              "), as under -ffp-contract=fast or -ffast-math, with which this "
+              "LLVM's code generator also fuses multiply-add pairs that carry "
+              "no flag")
+          .str();
+    }
+  return "";
+}
+#endif
+
+bool expansionsRoundedAsWritten(const Options &O, Function &F,
+                                bool hasSubgraphs) {
+  bool expansionSafe = true;
+#if LLVM_VERSION_MAJOR < 24
+  if (O.Candidates.EnablePT && O.Candidates.EnableMultifloat &&
+      Target::of(F).isDevice() && hasSubgraphs) {
+    const std::string reason = fastFPReason(F);
+    expansionSafe = reason.empty();
+    if (!expansionSafe) {
+      llvm::errs() << "[poseidon] WARNING: " << F.getName()
+                   << ": floating-point expansion candidates NOT PROPOSED -- "
+                   << reason
+                   << ". An expansion is exact only if each of its operations "
+                      "is rounded as written; it needs -ffp-contract=on or "
+                      "-ffp-contract=off, without -ffast-math.\n";
+      if (O.Model.StrictMode)
+        report_fatal_error("Poseidon strict mode: site '" + F.getName() +
+                           "': " + reason +
+                           "; floating-point expansions need -ffp-contract=on "
+                           "or -ffp-contract=off");
+    }
+  }
+#endif
+  return expansionSafe;
 }
 
 } // namespace poseidon

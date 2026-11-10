@@ -36,6 +36,7 @@ struct Subgraph;
 class CandidateSubgraph;
 struct Options;
 class Session;
+struct FunctionProfileHeader;
 
 enum class PrecisionChangeType {
   BF16,
@@ -111,6 +112,15 @@ void setUnifiedAccuracyCost(
     const Options &O, CandidateSubgraph &CS,
     std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, llvm::Value *> &symbolToValueMap);
+
+// The precision candidates of `subgraph`, appended to `CSs` unpriced: two- and
+// three-tier assignments of its operations by profiled sensitivity, over the
+// formats and expansions the target, the cost model and the options allow.
+void proposePrecisionCandidates(
+    Session &S, llvm::Function &F, Subgraph &subgraph,
+    std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
+    const FunctionProfileHeader &profileHeader, bool expansionSafe,
+    llvm::SmallVectorImpl<CandidateSubgraph> &CSs);
 
 } // namespace poseidon
 #endif // POSEIDON_PRECISION_H

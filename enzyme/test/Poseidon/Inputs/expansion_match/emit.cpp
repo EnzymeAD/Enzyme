@@ -334,7 +334,7 @@ std::vector<AppFn> emitApplied(Module &M) {
   return fns;
 }
 
-// The accuracy model's graph of F, built as Optimize.cpp builds it.
+// The accuracy model's graph of F, built as buildSubgraphs builds it.
 std::shared_ptr<FPNode>
 nodeOf(Value *V, std::unordered_map<Value *, std::shared_ptr<FPNode>> &m) {
   if (auto it = m.find(V); it != m.end())

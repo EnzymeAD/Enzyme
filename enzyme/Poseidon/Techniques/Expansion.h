@@ -16,6 +16,7 @@
 namespace poseidon {
 
 class Session;
+struct Options;
 
 struct DSValue {
   llvm::Value *hi;
@@ -106,6 +107,11 @@ void takeLastExpansionLimbs(Session &S,
 void takeLastExpLimbs(Session &S, llvm::SmallVectorImpl<llvm::Value *> &out);
 // Start a fresh limb record; one candidate may apply several expansion changes.
 void resetExpLimbs(Session &S);
+
+// Whether expansion candidates may be proposed for F: false when this LLVM
+// does not round F's floating-point operations as written.
+bool expansionsRoundedAsWritten(const Options &O, llvm::Function &F,
+                                bool hasSubgraphs);
 
 } // namespace poseidon
 #endif // POSEIDON_EXPANSION_H

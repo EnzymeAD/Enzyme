@@ -37,6 +37,7 @@
 #include "Optimize.h"
 #include "Pass/Session.h"
 #include "Precision.h"
+#include "Profile/ProfileRead.h"
 #include "Sampling.h"
 #include "Staging.h"
 #include "Targets/DeviceMath.h"
@@ -754,6 +755,324 @@ double getCompCost(Session &S, Subgraph &subgraph, PTCandidate &pt) {
   FClone->eraseFromParent();
 
   return cost;
+}
+
+static constexpr int kThreeTierStep = 20;
+
+namespace {
+
+struct TierPair {
+  PrecisionChangeType hi;
+  PrecisionChangeType lo;
+};
+
+struct TierTriple {
+  PrecisionChangeType hi;
+  PrecisionChangeType mid;
+  PrecisionChangeType lo;
+};
+
+static const TierPair kCanonicalPairs[] = {
+    {PrecisionChangeType::FP64, PrecisionChangeType::FP32},
+    {PrecisionChangeType::FP64, PrecisionChangeType::Expansion2},
+    {PrecisionChangeType::FP64, PrecisionChangeType::FP16},
+    {PrecisionChangeType::FP64, PrecisionChangeType::BF16},
+    {PrecisionChangeType::Expansion2, PrecisionChangeType::FP32},
+    {PrecisionChangeType::Expansion2, PrecisionChangeType::FP16},
+    {PrecisionChangeType::Expansion2, PrecisionChangeType::BF16},
+    {PrecisionChangeType::FP32, PrecisionChangeType::FP16},
+    {PrecisionChangeType::FP32, PrecisionChangeType::BF16},
+    {PrecisionChangeType::FP64, PrecisionChangeType::Expansion3},
+    {PrecisionChangeType::Expansion3, PrecisionChangeType::Expansion2},
+    {PrecisionChangeType::Expansion3, PrecisionChangeType::FP32},
+    {PrecisionChangeType::FP64, PrecisionChangeType::Expansion4},
+    {PrecisionChangeType::Expansion4, PrecisionChangeType::Expansion3},
+    {PrecisionChangeType::Expansion4, PrecisionChangeType::Expansion2},
+    {PrecisionChangeType::Expansion4, PrecisionChangeType::FP32},
+};
+
+static const TierTriple kCanonicalTriples[] = {
+    {PrecisionChangeType::FP64, PrecisionChangeType::Expansion2,
+     PrecisionChangeType::FP32},
+    {PrecisionChangeType::FP64, PrecisionChangeType::Expansion2,
+     PrecisionChangeType::FP16},
+    {PrecisionChangeType::FP64, PrecisionChangeType::Expansion2,
+     PrecisionChangeType::BF16},
+    {PrecisionChangeType::FP64, PrecisionChangeType::FP32,
+     PrecisionChangeType::FP16},
+    {PrecisionChangeType::FP64, PrecisionChangeType::FP32,
+     PrecisionChangeType::BF16},
+    {PrecisionChangeType::Expansion2, PrecisionChangeType::FP32,
+     PrecisionChangeType::FP16},
+    {PrecisionChangeType::Expansion2, PrecisionChangeType::FP32,
+     PrecisionChangeType::BF16},
+};
+
+static bool precAllowed(const Options &O, PrecisionChangeType t, bool gpuMode,
+                        bool expansionSafe,
+                        const std::unordered_set<std::string> &hwScalar) {
+  if (unsigned nComp = expansionComponents(t)) {
+    if (!gpuMode || !expansionSafe)
+      return false;
+    if (!O.Candidates.EnableMultifloat)
+      return false;
+    if (nComp > O.Candidates.ExpansionComponents)
+      return false;
+  }
+  if (t == PrecisionChangeType::FP16 && (!gpuMode || !hwScalar.count("half")))
+    return false;
+  if (t == PrecisionChangeType::BF16 && (!gpuMode || !hwScalar.count("bf16")))
+    return false;
+  return true;
+}
+
+static bool tierPairAllowed(const Options &O, TierPair tp, bool gpuMode,
+                            bool expansionSafe,
+                            const std::unordered_set<std::string> &hwScalar) {
+  return precAllowed(O, tp.hi, gpuMode, expansionSafe, hwScalar) &&
+         precAllowed(O, tp.lo, gpuMode, expansionSafe, hwScalar);
+}
+
+static bool tierTripleAllowed(const Options &O, TierTriple tr, bool gpuMode,
+                              bool expansionSafe,
+                              const std::unordered_set<std::string> &hwScalar) {
+  return precAllowed(O, tr.hi, gpuMode, expansionSafe, hwScalar) &&
+         precAllowed(O, tr.mid, gpuMode, expansionSafe, hwScalar) &&
+         precAllowed(O, tr.lo, gpuMode, expansionSafe, hwScalar);
+}
+
+static std::string fmtPrecPct(PrecisionChangeType t, int pct) {
+  std::string s = getPrecisionChangeTypeString(t).str();
+  s += "(";
+  s += std::to_string(pct);
+  s += "%)";
+  return s;
+}
+
+} // namespace
+
+void proposePrecisionCandidates(
+    Session &S, Function &F, Subgraph &subgraph,
+    std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
+    const FunctionProfileHeader &profileHeader, bool expansionSafe,
+    SmallVectorImpl<CandidateSubgraph> &CSs) {
+  const Options &O = S.Opts;
+  auto *o0 = subgraph.outputs[0];
+  const unsigned o0Exec = valueToNodeMap[o0]->executions;
+
+  // Filled before CS is built, so its baseline walk and every candidate's
+  // weight each instruction by its own measured frequency.
+  subgraph.opExec.clear();
+  subgraph.depthExec.clear();
+  subgraph.execNormalizer = o0Exec;
+  if (O.Model.FreqWeightedPricing) {
+    DominatorTree freqDT(F);
+    LoopInfo freqLI(freqDT);
+    auto note = [&](Instruction *I) {
+      auto it = valueToNodeMap.find(I);
+      if (it == valueToNodeMap.end() || !it->second ||
+          it->second->executions == 0)
+        return;
+      uint64_t e = it->second->executions;
+      subgraph.opExec[I] = e;
+      unsigned d = freqLI.getLoopDepth(I->getParent());
+      auto dit = subgraph.depthExec.find(d);
+      if (dit == subgraph.depthExec.end())
+        subgraph.depthExec[d] = e;
+      else
+        dit->second = std::max(dit->second, e);
+    };
+    for (auto *op : subgraph.operations)
+      note(op);
+    for (auto *o : subgraph.outputs)
+      note(o);
+    // A materialized instruction keeps only its loop depth, so the baseline
+    // is snapped onto the same depth classes as the candidate walk.
+    for (auto &kv : subgraph.opExec)
+      if (auto *I = dyn_cast<Instruction>(kv.first)) {
+        auto dit = subgraph.depthExec.find(freqLI.getLoopDepth(I->getParent()));
+        if (dit != subgraph.depthExec.end())
+          kv.second = dit->second;
+      }
+    if (O.Diagnostics.Print && subgraph.depthExec.size() > 1) {
+      llvm::errs() << "[poseidon] frequency-heterogeneous subgraph "
+                      "(normalizer "
+                   << o0Exec << ", measured depth:exec";
+      for (auto &kv : subgraph.depthExec)
+        llvm::errs() << " " << kv.first << ":" << kv.second;
+      llvm::errs() << "); pricing each instruction at its own measured "
+                      "frequency\n";
+    }
+  }
+
+  CandidateSubgraph CS(S.CostModel, subgraph);
+  CS.executions = o0Exec;
+
+  // Synthetic output-boundary casts execute at most once per thread per
+  // launch, while the body executes CS.executions times; derive the scale
+  // from the profile header (1 for elementwise subgraphs).
+  if (CS.executions > 0 && profileHeader.launchCount > 0) {
+    double thr = 1.0;
+    for (int d = 0; d < 3; ++d)
+      thr *= std::max<uint32_t>(1, profileHeader.maxBlockDim[d]);
+    for (int d = 0; d < 3; ++d)
+      thr *= std::max<uint32_t>(1, profileHeader.maxGridDim[d]);
+    subgraph.outBoundaryFreqScale = std::min(
+        1.0, thr * (double)profileHeader.launchCount / (double)CS.executions);
+  }
+
+  const auto &PTFuncs = getPTFuncs(S.CostModel);
+  SetVector<FPLLValue *> funcsSet, allSet;
+  for (auto *I : subgraph.operations) {
+    assert(isa<FPLLValue>(valueToNodeMap[I].get()) &&
+           "Corrupted FPNode for original instructions");
+    auto node = cast<FPLLValue>(valueToNodeMap[I].get());
+    allSet.insert(node);
+    if (PTFuncs.count(node->op) != 0) {
+      funcsSet.insert(node);
+      llvm::errs() << "[poseidon] PT Function identified: " << *I << "\n";
+    }
+  }
+  SmallVector<FPLLValue *> sortedFuncs(funcsSet.begin(), funcsSet.end());
+  SmallVector<FPLLValue *> sortedAllOps(allSet.begin(), allSet.end());
+  auto bySens = [](const auto &a, const auto &b) { return a->sens < b->sens; };
+  llvm::sort(sortedFuncs, bySens);
+  llvm::sort(sortedAllOps, bySens);
+
+  const bool gpuMode = Target::of(F).isDevice();
+  static const std::unordered_set<std::string> kEmptyScalars;
+  const std::unordered_set<std::string> &hwScalar =
+      gpuMode ? getScalarTypes(S.CostModel) : kEmptyScalars;
+  PrecisionChangeType curr =
+      getPrecisionChangeType(subgraph.outputs[0]->getType());
+
+  auto emitCandidate =
+      [&](SmallVectorImpl<std::pair<PrecisionChangeType,
+                                    SetVector<FPLLValue *>>> &assignment,
+          std::string desc) {
+        SmallVector<PrecisionChange, 3> changes;
+        for (auto &kv : assignment) {
+          if (kv.first != curr && !kv.second.empty())
+            changes.emplace_back(kv.second, curr, kv.first);
+        }
+        if (changes.empty())
+          return;
+        PTCandidate cand{std::move(changes), std::move(desc)};
+        cand.ordinal = CS.candidates.size();
+        CS.candidates.push_back(std::move(cand));
+      };
+
+  auto sweepTwoTier = [&](TierPair tp, ArrayRef<FPLLValue *> sortedAsc,
+                          StringRef label) {
+    const size_t N = sortedAsc.size();
+    const int step = std::max(5, O.Candidates.TwoTierStep);
+    size_t prev = N + 1;
+    for (int pct = 0; pct <= 100 - step; pct += step) {
+      size_t k = N * pct / 100;
+      if (k == prev)
+        continue;
+      prev = k;
+
+      SetVector<FPLLValue *> hiOps(sortedAsc.end() - k, sortedAsc.end());
+      SetVector<FPLLValue *> loOps(sortedAsc.begin(), sortedAsc.end() - k);
+
+      if (O.Diagnostics.Print) {
+        llvm::errs() << "Created " << label
+                     << " two-tier PT candidate: " << fmtPrecPct(tp.hi, pct)
+                     << " + " << fmtPrecPct(tp.lo, 100 - pct) << " (N=" << N
+                     << ")\n";
+      }
+      std::string desc = label.str();
+      if (!desc.empty())
+        desc += " ";
+      desc += fmtPrecPct(tp.hi, pct);
+      desc += " + ";
+      desc += fmtPrecPct(tp.lo, 100 - pct);
+
+      SmallVector<std::pair<PrecisionChangeType, SetVector<FPLLValue *>>, 2>
+          assignment;
+      assignment.emplace_back(tp.hi, std::move(hiOps));
+      assignment.emplace_back(tp.lo, std::move(loOps));
+      emitCandidate(assignment, std::move(desc));
+    }
+  };
+
+  auto sweepThreeTier = [&](TierTriple tr, ArrayRef<FPLLValue *> sortedAsc,
+                            StringRef label) {
+    const size_t N = sortedAsc.size();
+    const int step = kThreeTierStep;
+    for (int pctHi = step; pctHi <= 100 - 2 * step; pctHi += step) {
+      for (int pctHiMid = pctHi + step; pctHiMid <= 100 - step;
+           pctHiMid += step) {
+        size_t k0 = N * pctHi / 100;
+        size_t k1 = N * pctHiMid / 100;
+        if (k0 == 0 || k0 >= k1 || k1 >= N)
+          continue;
+
+        SetVector<FPLLValue *> hiOps(sortedAsc.end() - k0, sortedAsc.end());
+        SetVector<FPLLValue *> midOps(sortedAsc.end() - k1,
+                                      sortedAsc.end() - k0);
+        SetVector<FPLLValue *> loOps(sortedAsc.begin(), sortedAsc.end() - k1);
+
+        if (O.Diagnostics.Print) {
+          llvm::errs() << "Created " << label << " three-tier PT candidate: "
+                       << fmtPrecPct(tr.hi, pctHi) << " + "
+                       << fmtPrecPct(tr.mid, pctHiMid - pctHi) << " + "
+                       << fmtPrecPct(tr.lo, 100 - pctHiMid) << " (N=" << N
+                       << ")\n";
+        }
+        std::string desc = label.str();
+        if (!desc.empty())
+          desc += " ";
+        desc += fmtPrecPct(tr.hi, pctHi);
+        desc += " + ";
+        desc += fmtPrecPct(tr.mid, pctHiMid - pctHi);
+        desc += " + ";
+        desc += fmtPrecPct(tr.lo, 100 - pctHiMid);
+
+        SmallVector<std::pair<PrecisionChangeType, SetVector<FPLLValue *>>, 3>
+            assignment;
+        assignment.emplace_back(tr.hi, std::move(hiOps));
+        assignment.emplace_back(tr.mid, std::move(midOps));
+        assignment.emplace_back(tr.lo, std::move(loOps));
+        emitCandidate(assignment, std::move(desc));
+      }
+    }
+  };
+
+  for (TierPair tp : kCanonicalPairs) {
+    if (!tierPairAllowed(O, tp, gpuMode, expansionSafe, hwScalar))
+      continue;
+    sweepTwoTier(tp, sortedAllOps, "All");
+    if (!sortedFuncs.empty())
+      sweepTwoTier(tp, sortedFuncs, "Funcs");
+  }
+
+  if (O.Candidates.EnableThreeTier) {
+    for (TierTriple tr : kCanonicalTriples) {
+      if (!tierTripleAllowed(O, tr, gpuMode, expansionSafe, hwScalar))
+        continue;
+      sweepThreeTier(tr, sortedAllOps, "All");
+    }
+  }
+
+  // Zero candidates for a nonempty subgraph means every tier was filtered
+  // out (a configuration problem), which must not pass as a no-op frontier.
+  if (CS.candidates.empty() && !subgraph.operations.empty()) {
+    llvm::errs() << "[poseidon] WARNING: subgraph with "
+                 << subgraph.operations.size() << " FP operations in "
+                 << F.getName()
+                 << " synthesized ZERO precision-tuning candidates (all "
+                    "tier combinations filtered); the solve cannot "
+                    "propose any rewrite here. Check the cost model's "
+                    "scalar_types header.\n";
+    if (O.Model.StrictMode)
+      report_fatal_error(
+          "Poseidon strict mode: nonempty FP subgraph synthesized zero "
+          "candidates with precision tuning enabled");
+  }
+
+  CSs.push_back(std::move(CS));
 }
 
 } // namespace poseidon

@@ -93,5 +93,15 @@ double getCompCost(
     const llvm::FastMathFlags &FMF,
     const llvm::SetVector<llvm::Value *> *subgraphInputs = nullptr);
 
+// Herbie's rewrites of the outputs of `subgraph`, the site's subgraph number
+// `subgraphCounter`, appended to `COs` unpriced. Its inputs are named from
+// `symbolCounter`, which the site's subgraphs share.
+void proposeHerbieCandidates(
+    Session &S, llvm::Function &F, Subgraph &subgraph, int subgraphCounter,
+    int &symbolCounter,
+    std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
+    std::unordered_map<std::string, llvm::Value *> &symbolToValueMap,
+    llvm::SmallVectorImpl<CandidateOutput> &COs);
+
 } // namespace poseidon
 #endif // POSEIDON_HERBIE_H
