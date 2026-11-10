@@ -127,6 +127,18 @@ static bool hasMinCut(Operation *op) {
   return true;
 }
 
+static bool hasLoopInvariantCache(Operation *op) {
+  for (; op; op = op->getParentOp()) {
+    if (auto attr = op->getAttr("enzyme.disable_loop_invariant_cache")) {
+      if (auto boolAttr = dyn_cast<BoolAttr>(attr))
+        return !boolAttr.getValue();
+      return false;
+    }
+  }
+
+  return true;
+}
+
 static bool hasLICM(Operation *op) {
   return !op->hasAttr("enzyme.disable_licm");
 }
@@ -498,7 +510,8 @@ public:
       mincut = true;
       mlir::enzyme::minCutCache(forOp.getBody(), otherForOp.getBody(), caches,
                                 rewriter, fwdrevmap, lastFwd);
-      mlir::enzyme::loopInvariantCache(caches, forOp, otherForOp, fwdrevmap);
+      if (hasLoopInvariantCache(forOp))
+        mlir::enzyme::loopInvariantCache(caches, forOp, otherForOp, fwdrevmap);
     }
     for (auto v : inductionVariable) {
       if (auto op = v.getDefiningOp()) {
