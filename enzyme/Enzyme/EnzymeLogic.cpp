@@ -2552,7 +2552,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       returnMapping, omp);
   gutils->nowrite_shadows = nowrite_shadows;
 
-  if (todiff->empty()) {
+  if (gutils->oldFunc->empty()) {
     std::string s;
     llvm::raw_string_ostream ss(s);
     ss << "No augmented forward pass found for " + todiff->getName();
@@ -4406,7 +4406,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
   insert_or_assign2<ReverseCacheKey, Function *>(ReverseCachedFunctions, key,
                                                  gutils->newFunc);
 
-  if (key.todiff->empty()) {
+  if (gutils->oldFunc->empty()) {
     std::string s;
     llvm::raw_string_ostream ss(s);
     ss << "No reverse pass found for " + key.todiff->getName() << "\n";
@@ -5078,7 +5078,7 @@ Function *EnzymeLogic::CreateForwardDiff(
   insert_or_assign2<ForwardCacheKey, Function *>(ForwardCachedFunctions, tup,
                                                  gutils->newFunc);
 
-  if (todiff->empty()) {
+  if (gutils->oldFunc->empty()) {
 
     std::string demangledCall = todiff->getName().str();
 

@@ -576,6 +576,45 @@ bool attributeKnownFunctions(llvm::Function &F) {
   return changed;
 }
 
+/// Return the parameter count expected by a mem-free libm intrinsic rule.
+static unsigned expectedLibMIntrinsicParameters(Intrinsic::ID IntrinsicId) {
+  switch (IntrinsicId) {
+  case Intrinsic::pow:
+  case Intrinsic::powi:
+  case Intrinsic::copysign:
+  case Intrinsic::maxnum:
+  case Intrinsic::minnum:
+    return 2;
+  case Intrinsic::fma:
+    return 3;
+  default:
+    return 1;
+  }
+}
+
+bool hasFunctionLikeMathRule(const llvm::Function *TargetFunction) {
+  if (!TargetFunction->hasFnAttribute("enzyme_math") ||
+      hasCustomRuleMetadata(TargetFunction))
+    return false;
+  StringRef MathName =
+      TargetFunction->getFnAttribute("enzyme_math").getValueAsString();
+  if (MathName.empty() || MathName == "enzyme_custom")
+    return false;
+  unsigned NumParameters = TargetFunction->getFunctionType()->getNumParams();
+  if (hasTablegenCallPattern(MathName, NumParameters))
+    return true;
+  Intrinsic::ID IntrinsicId = Intrinsic::not_intrinsic;
+  if (isMemFreeLibMFunction(MathName, &IntrinsicId) &&
+      IntrinsicId != Intrinsic::not_intrinsic &&
+      NumParameters == expectedLibMIntrinsicParameters(IntrinsicId))
+    return true;
+  if (TargetFunction->empty()) {
+    if (auto BlasMetadata = extractBLAS(MathName))
+      return hasBlasCallPattern(*BlasMetadata);
+  }
+  return false;
+}
+
 LLVMBuilderRef startCallbackBuilder(IRBuilder<> &B) {
 #if LLVM_VERSION_MAJOR >= 24
   BasicBlock *BB = B.GetInsertBlock();

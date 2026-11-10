@@ -1612,7 +1612,8 @@ static void ForceRecursiveInlining(Function *NewF, size_t Limit) {
             continue;
           if (CI->getCalledFunction()->hasFnAttribute(
                   Attribute::ReturnsTwice) ||
-              CI->getCalledFunction()->hasFnAttribute(Attribute::NoInline))
+              CI->getCalledFunction()->hasFnAttribute(Attribute::NoInline) ||
+              hasFunctionLikeMathRule(CI->getCalledFunction()))
             continue;
           if (IsFunctionRecursive(CI->getCalledFunction(), RecurResults)) {
             LLVM_DEBUG(llvm::dbgs()
@@ -3764,7 +3765,37 @@ Function *PreProcessCache::preprocessForClone(Function *F,
 
   SmallVector<ReturnInst *, 4> Returns;
 
-  if (!F->empty()) {
+  bool WrapFunctionLike = hasFunctionLikeMathRule(F);
+  if (WrapFunctionLike) {
+    // Redirect top-level differentiation of enzyme_math functions through a
+    // call wrapper so CallDerivatives dispatches to the registered rule rather
+    // than differentiating the fallback body.
+    BasicBlock *Entry = BasicBlock::Create(NewF->getContext(), "entry", NewF);
+    IRBuilder<> Builder(Entry);
+    SmallVector<Value *, 4> CallArguments;
+    for (Argument &Parameter : NewF->args())
+      CallArguments.push_back(&Parameter);
+    CallInst *Call = Builder.CreateCall(F, CallArguments);
+    Call->setCallingConv(F->getCallingConv());
+    AttributeList CallAttributes;
+    for (unsigned ParameterIndex = 0; ParameterIndex < F->arg_size();
+         ++ParameterIndex) {
+      for (const Attribute &ParameterAttribute :
+           F->getAttributes().getParamAttrs(ParameterIndex))
+        CallAttributes = CallAttributes.addParamAttribute(
+            F->getContext(), ParameterIndex, ParameterAttribute);
+    }
+    for (const Attribute &ReturnAttribute : F->getAttributes().getRetAttrs())
+      CallAttributes =
+          CallAttributes.addRetAttribute(F->getContext(), ReturnAttribute);
+    CallAttributes =
+        CallAttributes.addFnAttribute(F->getContext(), Attribute::NoInline);
+    Call->setAttributes(CallAttributes);
+    ReturnInst *ReturnInstruction = F->getReturnType()->isVoidTy()
+                                        ? Builder.CreateRetVoid()
+                                        : Builder.CreateRet(Call);
+    Returns.push_back(ReturnInstruction);
+  } else if (!F->empty()) {
     CloneFunctionInto(
         NewF, F, VMap,
         /*ModuleLevelChanges*/ CloneFunctionChangeType::LocalChangesOnly,
@@ -3773,6 +3804,11 @@ Function *PreProcessCache::preprocessForClone(Function *F,
   }
   CloneOrigin[NewF] = F;
   NewF->setAttributes(F->getAttributes());
+  if (WrapFunctionLike) {
+    NewF->removeFnAttr("enzyme_math");
+    NewF->removeFnAttr("implements");
+    NewF->removeFnAttr("implements2");
+  }
   if (EnzymeNoAlias)
     for (auto j = NewF->arg_begin(); j != NewF->arg_end(); j++) {
       if (j->getType()->isPointerTy()) {
@@ -4141,13 +4177,15 @@ Function *PreProcessCache::preprocessForClone(Function *F,
       }
     }
 
-    auto Level = OptimizationLevel::O2;
+    if (!F->empty()) {
+      auto Level = OptimizationLevel::O2;
 
-    PassBuilder PB = makePassBuilder(F->getContext());
-    FunctionPassManager FPM =
-        PB.buildFunctionSimplificationPipeline(Level, ThinOrFullLTOPhase::None);
-    auto PA = FPM.run(*F, FAM);
-    FAM.invalidate(*F, PA);
+      PassBuilder PB = makePassBuilder(F->getContext());
+      FunctionPassManager FPM = PB.buildFunctionSimplificationPipeline(
+          Level, ThinOrFullLTOPhase::None);
+      auto PA = FPM.run(*F, FAM);
+      FAM.invalidate(*F, PA);
+    }
   }
 
   if (EnzymePreopt) {
