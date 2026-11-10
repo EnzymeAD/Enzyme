@@ -632,7 +632,53 @@ public:
           }
         } else {
           Value *newip = gutils->invertPointerM(&I, BuilderZ);
-          if (gutils->runtimeActivity && vd[{-1}].isFloat()) {
+          bool hasConstantBase = false;
+          if (!gutils->runtimeActivity && vd[{-1}].isFloat()) {
+            Value *curptr = I.getOperand(0);
+            while (auto SI = dyn_cast<SelectInst>(curptr)) {
+              if (SI->getCondition()->getType()->isIntegerTy(1)) {
+                bool tConst = gutils->isConstantValue(SI->getTrueValue());
+                bool fConst = gutils->isConstantValue(SI->getFalseValue());
+                if (tConst && !fConst) {
+                  Value *cond = gutils->getNewFromOriginal(SI->getCondition());
+                  newip = applyChainRule(
+                      I.getType(), BuilderZ,
+                      [&](Value *newip) -> Value * {
+                        return CreateSelect(
+                            BuilderZ, cond,
+                            Constant::getNullValue(newip->getType()), newip);
+                      },
+                      newip);
+                  curptr = SI->getFalseValue();
+                  continue;
+                }
+                if (!tConst && fConst) {
+                  Value *cond = gutils->getNewFromOriginal(SI->getCondition());
+                  newip = applyChainRule(
+                      I.getType(), BuilderZ,
+                      [&](Value *newip) -> Value * {
+                        return CreateSelect(
+                            BuilderZ, cond, newip,
+                            Constant::getNullValue(newip->getType()));
+                      },
+                      newip);
+                  curptr = SI->getTrueValue();
+                  continue;
+                }
+              }
+              break;
+            }
+            if (!gutils->isConstantValue(curptr)) {
+              for (auto v : getBaseObjects(curptr)) {
+                if (gutils->isConstantValue(v)) {
+                  hasConstantBase = true;
+                  break;
+                }
+              }
+            }
+          }
+          if ((gutils->runtimeActivity || hasConstantBase) &&
+              vd[{-1}].isFloat()) {
             // TODO handle mask
             assert(!mask);
 
