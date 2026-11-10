@@ -13,16 +13,30 @@
 // CHECK-SAME: enzyme_runtime_activity
 
 extern void __enzyme_autodiff(void *, ...);
-extern int enzyme_const, enzyme_dup;
+extern int enzyme_const, enzyme_dup, enzyme_out;
 
 struct Container {
   double *data;
+  double val;
+  struct Container *next;
 };
 
+// clang-format off
 void f(struct Container *c, double *q) {
   c->data = q; // expected-warning-re {{Enzyme: Mismatched activity for:{{.*}}enzyme_runtime_activity{{.*}}}}
 }
 
-void run(struct Container *c, struct Container *dc, double *q) {
+double g(struct Container *c, double x) {
+  c->val = x; // expected-warning-re {{Enzyme: Mismatched activity for:{{.*}}enzyme_runtime_activity{{.*}}}}
+  double sum = 0.0;
+  for (struct Container *cur = c; cur; cur = cur->next) {
+    sum += cur->val;
+  }
+  return sum;
+}
+// clang-format on
+
+void run(struct Container *c, struct Container *dc, double *q, double x) {
   __enzyme_autodiff((void *)f, enzyme_dup, c, dc, enzyme_const, q);
+  __enzyme_autodiff((void *)g, enzyme_const, c, enzyme_out, x);
 }
