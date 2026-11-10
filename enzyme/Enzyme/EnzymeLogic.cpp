@@ -3546,31 +3546,71 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
       continue;
 
     Type *PNfloatType = PNtype.isFloat();
+    bool allowNullFloatType = false;
     if (!PNfloatType) {
-      // Try to use the 0-th elem for all elems
-      PNtype = PNtypeT[{0}];
+      ConcreteType floatType(BaseType::Unknown);
       bool legal = true;
-      for (size_t i = 1; i < size; i++) {
+      for (size_t i = 0; i < size; i++) {
         if (!PNtypeT[{(int)i}].isFloat())
           continue;
-        PNtype.checkedOrIn(PNtypeT[{(int)i}], /*pointerIntSame*/ true, legal);
+        floatType.checkedOrIn(PNtypeT[{(int)i}], /*pointerIntSame*/ true,
+                              legal);
         if (!legal) {
           break;
         }
       }
-      if (legal) {
-        PNfloatType = PNtype.isFloat();
-        if (!PNfloatType) {
-          if (looseTypeAnalysis) {
-            if (orig->getType()->isFPOrFPVectorTy())
-              PNfloatType = orig->getType()->getScalarType();
-            if (orig->getType()->isIntOrIntVectorTy())
-              continue;
+      if (legal)
+        PNfloatType = floatType.isFloat();
+
+      if (!PNfloatType) {
+        // Aggregate leaves with explicit floating-point IR types already know
+        // their per-element accumulation type without needing a uniform
+        // TypeTree entry across padding or inactive lanes.
+        Type *commonLeafFloatType = nullptr;
+        bool hasFloatingPointLeaf = false;
+        bool hasMixedLeafFloatTypes = false;
+        bool hasAmbiguousIntegerLeaf = false;
+        SmallVector<Type *, 4> worklist = {orig->getType()};
+        while (!worklist.empty()) {
+          Type *currentType = worklist.pop_back_val();
+          if (auto *structType = dyn_cast<StructType>(currentType)) {
+            for (Type *elementType : structType->elements())
+              worklist.push_back(elementType);
+          } else if (auto *arrayType = dyn_cast<ArrayType>(currentType)) {
+            if (arrayType->getNumElements() > 0)
+              worklist.push_back(arrayType->getElementType());
+          } else if (currentType->isFPOrFPVectorTy()) {
+            hasFloatingPointLeaf = true;
+            Type *scalarType = currentType->getScalarType();
+            if (!commonLeafFloatType)
+              commonLeafFloatType = scalarType;
+            else if (commonLeafFloatType != scalarType)
+              hasMixedLeafFloatTypes = true;
+          } else if (currentType->isIntOrIntVectorTy()) {
+            if (currentType->getScalarSizeInBits() >= 16)
+              hasAmbiguousIntegerLeaf = true;
           }
+        }
+
+        if (isa<StructType>(orig->getType()) ||
+            isa<ArrayType>(orig->getType())) {
+          if (!hasAmbiguousIntegerLeaf || looseTypeAnalysis) {
+            if (!hasFloatingPointLeaf)
+              continue;
+            if (!hasMixedLeafFloatTypes)
+              PNfloatType = commonLeafFloatType;
+            else
+              allowNullFloatType = true;
+          }
+        } else if (looseTypeAnalysis) {
+          if (orig->getType()->isFPOrFPVectorTy())
+            PNfloatType = orig->getType()->getScalarType();
+          if (orig->getType()->isIntOrIntVectorTy())
+            continue;
         }
       }
     }
-    if (!PNfloatType) {
+    if (!PNfloatType && !allowNullFloatType) {
       std::string str;
       raw_string_ostream ss(str);
       ss << "Cannot deduce type of phi " << *orig << PNtypeT.str()
