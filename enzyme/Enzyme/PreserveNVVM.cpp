@@ -196,6 +196,12 @@ bool preserveLinkage(bool Begin, Function &F, bool Inlining = true) {
   return false;
 }
 
+static bool isEnzymeCallMarkerGlobal(StringRef Name) {
+  return bool(enzyme_markers::lookupEnzymeMarker(Name)) ||
+         Name == "enzyme_scalar" || Name == "enzyme_vector" ||
+         Name == "enzyme_buffer";
+}
+
 static void handleFunctionLike(bool Begin, Value *Target,
                                StringRef FunctionName) {
   while (auto *CE = dyn_cast<ConstantExpr>(Target))
@@ -715,6 +721,21 @@ bool preserveNVVM(bool Begin, Module &M,
           changed |= preserveLinkage(Begin, *F);
       }
     }
+    if (Begin && isEnzymeCallMarkerGlobal(g.getName()) &&
+        (g.hasLocalLinkage() || g.isConstant()) &&
+        !g.hasAttribute("prev_fixup")) {
+#pragma push_macro("addAttribute")
+#undef addAttribute
+      g.addAttribute("prev_fixup");
+      g.addAttribute("prev_linkage", std::to_string(g.getLinkage()));
+      if (g.isConstant()) {
+        g.addAttribute("prev_constant");
+        g.setConstant(false);
+      }
+#pragma pop_macro("addAttribute")
+      g.setLinkage(GlobalValue::ExternalLinkage);
+      changed = true;
+    }
   }
   SmallVector<GlobalVariable *, 1> toErase;
   for (GlobalVariable &g : M.globals()) {
@@ -1221,6 +1242,26 @@ bool preserveNVVM(bool Begin, Module &M,
       F.setLinkage((Function::LinkageTypes)val);
     }
   }
+  if (!Begin) {
+    for (GlobalVariable &g : M.globals()) {
+      if (!g.hasAttribute("prev_fixup"))
+        continue;
+      changed = true;
+      if (g.hasAttribute("prev_compiler_used"))
+        compilerUsed.insert(&g);
+      int64_t val = 0;
+      g.getAttribute("prev_linkage").getValueAsString().getAsInteger(10, val);
+      g.setLinkage((GlobalValue::LinkageTypes)val);
+      if (g.hasAttribute("prev_constant"))
+        g.setConstant(true);
+      AttributeSet AS = g.getAttributes();
+      AS = AS.removeAttribute(g.getContext(), "prev_fixup");
+      AS = AS.removeAttribute(g.getContext(), "prev_linkage");
+      AS = AS.removeAttribute(g.getContext(), "prev_constant");
+      AS = AS.removeAttribute(g.getContext(), "prev_compiler_used");
+      g.setAttributes(AS);
+    }
+  }
 #if LLVM_VERSION_MAJOR >= 20
   // Only the LTO pre-link end pass, used from LLVM 20, adds these entries.
   if (!compilerUsed.empty())
@@ -1252,6 +1293,23 @@ static bool preserveNVVMLTOPreLinkEnd(Module &M) {
         !GlobalValue::isAvailableExternallyLinkage(L)) {
       F.addFnAttr("prev_compiler_used");
       keep.push_back(&F);
+    }
+  }
+  for (GlobalVariable &g : M.globals()) {
+    if (!g.hasAttribute("prev_fixup") || g.hasAttribute("prev_compiler_used"))
+      continue;
+    int64_t val = 0;
+    g.getAttribute("prev_linkage").getValueAsString().getAsInteger(10, val);
+    auto L = (GlobalValue::LinkageTypes)val;
+    changed |= g.getLinkage() != L;
+    g.setLinkage(L);
+    if (GlobalValue::isDiscardableIfUnused(L) &&
+        !GlobalValue::isAvailableExternallyLinkage(L)) {
+#pragma push_macro("addAttribute")
+#undef addAttribute
+      g.addAttribute("prev_compiler_used");
+#pragma pop_macro("addAttribute")
+      keep.push_back(&g);
     }
   }
   if (!keep.empty()) {
