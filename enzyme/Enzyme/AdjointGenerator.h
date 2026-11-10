@@ -789,14 +789,12 @@ public:
       return;
 
     if (nonmarkedglobals_inactiveloads) {
-      // Assume that non enzyme_shadow globals are inactive
-      //  If we ever store to a global variable, we will error if it doesn't
-      //  have a shadow This allows functions who only read global memory to
-      //  have their derivative computed Note that this is too aggressive for
-      //  general programs as if the global aliases with an argument something
-      //  that is written to, then we will have a logical error
-      if (auto arg = dyn_cast<GlobalVariable>(I.getOperand(0))) {
-        if (!hasMetadata(arg, "enzyme_shadow")) {
+      // Assume that non enzyme_shadow globals are inactive unless a shadow
+      // global can be synthesized and the global may be modified.
+      if (auto *Global = dyn_cast<GlobalVariable>(I.getOperand(0))) {
+        if (!hasMetadata(Global, "enzyme_shadow") &&
+            (!GradientUtils::canCreateShadowGlobal(Global) ||
+             !GradientUtils::mayGlobalBeModified(Global))) {
           return;
         }
       }

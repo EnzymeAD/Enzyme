@@ -695,6 +695,14 @@ public:
   }
 
   bool needsCacheWholeAllocation(const llvm::Value *V) const;
+
+  /// Return whether a module-local or ODR-deduplicated shadow definition can
+  /// be synthesized for a global variable.
+  static bool canCreateShadowGlobal(const llvm::GlobalVariable *Global);
+
+  /// Return whether any user in the module may write to or capture a global
+  /// variable.
+  static bool mayGlobalBeModified(const llvm::GlobalVariable *Global);
 };
 
 void SubTransferHelper(GradientUtils *gutils, DerivativeMode Mode,

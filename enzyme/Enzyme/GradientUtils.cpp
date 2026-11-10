@@ -4759,6 +4759,99 @@ DIFFE_TYPE GradientUtils::getDiffeType(Value *v, bool foreignFunction) const {
   }
 }
 
+bool GradientUtils::canCreateShadowGlobal(const GlobalVariable *Global) {
+  return Global->isConstant() || Global->hasInternalLinkage() ||
+         Global->hasPrivateLinkage() ||
+         ((Global->hasExternalLinkage() || Global->hasLinkOnceODRLinkage() ||
+           Global->hasWeakODRLinkage()) &&
+          Global->hasInitializer());
+}
+
+bool GradientUtils::mayGlobalBeModified(const GlobalVariable *Global) {
+  if (Global->isConstant())
+    return false;
+  SmallVector<const Value *, 8> Worklist = {Global};
+  SmallPtrSet<const Value *, 8> Visited;
+  while (!Worklist.empty()) {
+    const Value *Current = Worklist.pop_back_val();
+    if (!Visited.insert(Current).second)
+      continue;
+    for (const Use &UseEdge : Current->uses()) {
+      const User *CurrentUser = UseEdge.getUser();
+      if (isa<ConstantExpr>(CurrentUser) || isa<GlobalAlias>(CurrentUser) ||
+          isa<GetElementPtrInst>(CurrentUser) ||
+          isa<BitCastInst>(CurrentUser) ||
+          isa<AddrSpaceCastInst>(CurrentUser)) {
+        Worklist.push_back(CurrentUser);
+        continue;
+      }
+      if (isa<LoadInst>(CurrentUser) || isa<ICmpInst>(CurrentUser))
+        continue;
+      if (auto *Call = dyn_cast<CallBase>(CurrentUser)) {
+        if (Call->onlyReadsMemory())
+          continue;
+        if (!Call->isCallee(&UseEdge) &&
+            Call->onlyReadsMemory(Call->getArgOperandNo(&UseEdge)))
+          continue;
+      }
+      return true;
+    }
+  }
+  return false;
+}
+
+/// Return whether the given function is only referenced as a target argument of
+/// top-level `__enzyme_*` differentiation calls and never called or captured
+/// elsewhere in its module.
+static bool isOnlyTopLevelEnzymeTarget(const Function *TargetFunction) {
+  SmallVector<const Use *, 8> Worklist;
+  SmallPtrSet<const Value *, 8> Visited;
+  Visited.insert(TargetFunction);
+  for (const Use &UseEdge : TargetFunction->uses())
+    Worklist.push_back(&UseEdge);
+
+  while (!Worklist.empty()) {
+    const Use *CurrentUse = Worklist.pop_back_val();
+    const User *CurrentUser = CurrentUse->getUser();
+    if (const auto *ConstExpr = dyn_cast<ConstantExpr>(CurrentUser)) {
+      if (ConstExpr->isCast()) {
+        if (Visited.insert(ConstExpr).second) {
+          for (const Use &NextUse : ConstExpr->uses())
+            Worklist.push_back(&NextUse);
+        }
+        continue;
+      }
+      return false;
+    }
+    const auto *Call = dyn_cast<CallBase>(CurrentUser);
+    if (!Call || Call->isCallee(CurrentUse))
+      return false;
+    const Function *Callee = getFunctionFromCall(const_cast<CallBase *>(Call));
+    if (!Callee || !Callee->getName().contains("__enzyme_"))
+      return false;
+  }
+  return true;
+}
+
+/// Allocate a zero-initialized shadow global matching the linkage, alignment,
+/// visibility, dso_local, and comdat attributes of an original global.
+static GlobalVariable *createShadowGlobalVariable(GlobalVariable *Global,
+                                                  Type *ValueType) {
+  auto *Shadow = new GlobalVariable(
+      *Global->getParent(), ValueType, Global->isConstant(),
+      Global->getLinkage(), Constant::getNullValue(ValueType),
+      Global->getName() + "_shadow", Global, Global->getThreadLocalMode(),
+      Global->getType()->getAddressSpace(), Global->isExternallyInitialized());
+  Shadow->setAlignment(Global->getAlign());
+  Shadow->setUnnamedAddr(Global->getUnnamedAddr());
+  Shadow->setVisibility(Global->getVisibility());
+  Shadow->setDSOLocal(Global->isDSOLocal());
+  if (Global->hasComdat())
+    Shadow->setComdat(
+        Global->getParent()->getOrInsertComdat(Shadow->getName()));
+  return Shadow;
+}
+
 Constant *GradientUtils::GetOrCreateShadowConstant(
     RequestContext context, EnzymeLogic &Logic, TargetLibraryInfo &TLI,
     TypeAnalysis &TA, Constant *oval, DerivativeMode mode, bool runtimeActivity,
@@ -4851,26 +4944,18 @@ Constant *GradientUtils::GetOrCreateShadowConstant(
       assert(0 && "shared memory not handled in meta global");
     }
 
-    // Create global variable locally if not externally visible
-    if (arg->isConstant() || arg->hasInternalLinkage() ||
-        arg->hasPrivateLinkage() ||
-        (arg->hasExternalLinkage() && arg->hasInitializer())) {
-      Type *type = arg->getValueType();
-      auto shadow = new GlobalVariable(
-          *arg->getParent(), type, arg->isConstant(), arg->getLinkage(),
-          Constant::getNullValue(type), arg->getName() + "_shadow", arg,
-          arg->getThreadLocalMode(), arg->getType()->getAddressSpace(),
-          arg->isExternallyInitialized());
+    // Create global variable locally if not externally visible or ODR-defined.
+    if (canCreateShadowGlobal(arg)) {
+      GlobalVariable *Shadow =
+          createShadowGlobalVariable(arg, arg->getValueType());
       arg->setMetadata("enzyme_shadow",
-                       MDTuple::get(shadow->getContext(),
-                                    {ConstantAsMetadata::get(shadow)}));
-      shadow->setAlignment(arg->getAlign());
-      shadow->setUnnamedAddr(arg->getUnnamedAddr());
+                       MDTuple::get(Shadow->getContext(),
+                                    {ConstantAsMetadata::get(Shadow)}));
       if (arg->hasInitializer())
-        shadow->setInitializer(GetOrCreateShadowConstant(
+        Shadow->setInitializer(GetOrCreateShadowConstant(
             context, Logic, TLI, TA, cast<Constant>(arg->getOperand(0)), mode,
             runtimeActivity, strongZero, width, AtomicAdd));
-      return shadow;
+      return Shadow;
     }
   }
   llvm::errs() << " unknown constant to create shadow of: " << *oval << "\n";
@@ -5950,7 +6035,19 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
   } else if (auto arg = dyn_cast<GlobalVariable>(oval)) {
     if (!hasMetadata(arg, "enzyme_shadow")) {
 
-      if ((mode == DerivativeMode::ReverseModeCombined ||
+      Function *OriginFunction = oldFunc;
+      while (true) {
+        auto FoundOrigin = Logic.PPC.CloneOrigin.find(OriginFunction);
+        if (FoundOrigin == Logic.PPC.CloneOrigin.end() ||
+            FoundOrigin->second == OriginFunction)
+          break;
+        OriginFunction = FoundOrigin->second;
+      }
+      bool AllowShadowInline =
+          !canCreateShadowGlobal(arg) ||
+          (!omp && isOnlyTopLevelEnzymeTarget(OriginFunction));
+      if (AllowShadowInline &&
+          (mode == DerivativeMode::ReverseModeCombined ||
            mode == DerivativeMode::ForwardMode ||
            mode == DerivativeMode::ForwardModeError) &&
           arg->getType()->getPointerAddressSpace() == 0) {
@@ -6066,23 +6163,11 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       //  read means even if two globals for floats, that's fine.
       //  As long as the pointers point to equivalent places (which
       //  they should from the same initialization), it is also ok.
-      if (arg->hasInternalLinkage() || arg->hasPrivateLinkage() ||
-          (arg->hasExternalLinkage() && arg->hasInitializer()) ||
-          arg->isConstant()) {
+      if (canCreateShadowGlobal(arg)) {
         Type *elemTy = arg->getValueType();
         IRBuilder<> B(inversionAllocs);
 
-        auto rule = [&]() {
-          auto shadow = new GlobalVariable(
-              *arg->getParent(), elemTy, arg->isConstant(), arg->getLinkage(),
-              Constant::getNullValue(elemTy), arg->getName() + "_shadow", arg,
-              arg->getThreadLocalMode(), arg->getType()->getAddressSpace(),
-              arg->isExternallyInitialized());
-          shadow->setAlignment(arg->getAlign());
-          shadow->setUnnamedAddr(arg->getUnnamedAddr());
-
-          return shadow;
-        };
+        auto rule = [&]() { return createShadowGlobalVariable(arg, elemTy); };
 
         Value *shadow = applyChainRule(oval->getType(), BuilderM, rule);
         arg->setMetadata(
