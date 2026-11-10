@@ -1,3 +1,4 @@
+// REQUIRES: enzyme
 // RUN: rm -rf %t && mkdir -p %t
 // RUN: %poseidon_clangxx -O2 -poseidon-profile-generate -poseidon-cache=%t/c %s -o %t/gen 2>/dev/null
 // RUN: env POSEIDON_PROFILE_DIR=%t/prof %t/gen > /dev/null 2> %t/gen.err
@@ -9,7 +10,6 @@
 // RUN: FileCheck --check-prefix=RAN %s < %t/flush/preprocess__Z3ranPKdPdi_poseidon_body.fpprofile
 // RUN: %poseidon_clangxx -O2 -poseidon-profile-use=%t/prof -poseidon-tau=1e-6 -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-enable-herbie=0 -poseidon-cache=%t/c -c %s -o %t/use.o 2> %t/use.err
 // RUN: FileCheck --check-prefix=USE --implicit-check-not=warning %s < %t/use.err
-// REQUIRES: poseidon, enzyme
 
 // The profiling runtime writes a profile for every site it instrumented, run or
 // not: one the run never executed gets its header and a line saying so, at

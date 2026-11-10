@@ -1,13 +1,12 @@
 // RUN: rm -rf %t && mkdir -p %t
-// RUN: %clang -x c++ -std=c++17 -O1 -S -emit-llvm -I%FPProfileInc %s -o %t/plain.ll
+// RUN: %clang -x c++ -std=c++17 -O1 -S -emit-llvm -I%poseidon_profile_inc %s -o %t/plain.ll
 // RUN: FileCheck --check-prefix=PLAIN %s < %t/plain.ll
-// RUN: %clang -x c++ -std=c++17 -O1 -S -emit-llvm -I%FPProfileInc %clangLoadPoseidon -mllvm -poseidon-profile-use=%S/Inputs/other_sites -mllvm -poseidon-print %s -o /dev/null 2>&1 | FileCheck %s
-// RUN: not %clang -x c++ -std=c++17 -O1 -S -emit-llvm -I%FPProfileInc %clangLoadPoseidon -mllvm -poseidon-profile-use=%S/Inputs/other_sites -DBAD=0 %s -o /dev/null 2>&1 | FileCheck --check-prefix=ZERO %s
-// RUN: not %clang -x c++ -std=c++17 -O1 -S -emit-llvm -I%FPProfileInc %clangLoadPoseidon -mllvm -poseidon-profile-use=%S/Inputs/other_sites "-DBAD=-1e-7" %s -o /dev/null 2>&1 | FileCheck --check-prefix=NEG %s
-// RUN: not %clang -x c++ -std=c++17 -O1 -S -emit-llvm -I%FPProfileInc %clangLoadPoseidon -mllvm -poseidon-profile-use=%S/Inputs/other_sites "-DBAD=__builtin_inf()" %s -o /dev/null 2>&1 | FileCheck --check-prefix=INF %s
-// RUN: not %clang -x c++ -std=c++17 -O1 -S -emit-llvm -I%FPProfileInc %clangLoadPoseidon -mllvm -poseidon-profile-use=%S/Inputs/other_sites -DTWO %s -o /dev/null 2>&1 | FileCheck --check-prefix=TWO %s
-// RUN: not %clang -x c++ -std=c++17 -O1 -S -emit-llvm -I%FPProfileInc %clangLoadPoseidon -mllvm -poseidon-profile-use=%S/Inputs/other_sites -DSTRING %s -o /dev/null 2>&1 | FileCheck --check-prefix=STRING %s
-// REQUIRES: poseidon
+// RUN: %clang -x c++ -std=c++17 -O1 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%S/Inputs/other_sites -mllvm -poseidon-print %s -o /dev/null 2>&1 | FileCheck %s
+// RUN: not %clang -x c++ -std=c++17 -O1 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%S/Inputs/other_sites -DBAD=0 %s -o /dev/null 2>&1 | FileCheck --check-prefix=ZERO %s
+// RUN: not %clang -x c++ -std=c++17 -O1 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%S/Inputs/other_sites "-DBAD=-1e-7" %s -o /dev/null 2>&1 | FileCheck --check-prefix=NEG %s
+// RUN: not %clang -x c++ -std=c++17 -O1 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%S/Inputs/other_sites "-DBAD=__builtin_inf()" %s -o /dev/null 2>&1 | FileCheck --check-prefix=INF %s
+// RUN: not %clang -x c++ -std=c++17 -O1 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%S/Inputs/other_sites -DTWO %s -o /dev/null 2>&1 | FileCheck --check-prefix=TWO %s
+// RUN: not %clang -x c++ -std=c++17 -O1 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%S/Inputs/other_sites -DSTRING %s -o /dev/null 2>&1 | FileCheck --check-prefix=STRING %s
 
 // POSEIDON_OPTIMIZE_TAU(t) takes a literal, a macro or a constant expression:
 // the annotation carries the value itself, so whatever names it reaches the

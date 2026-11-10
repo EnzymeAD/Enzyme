@@ -1,7 +1,7 @@
+// REQUIRES: enzyme
 // RUN: rm -rf %t && mkdir -p %t
-// RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O1 -S -emit-llvm -I%FPProfileInc %clangLoadPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c %s -o %t/gen.ll 2>&1 | FileCheck %s
+// RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O1 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c %s -o %t/gen.ll 2>&1 | FileCheck %s
 // RUN: FileCheck --check-prefix=IR %s < %t/gen.ll
-// REQUIRES: poseidon, enzyme
 
 // The outputs of a call site are what the program reads after the call: the
 // pass seeds the shadow of an object the call writes only when an instruction

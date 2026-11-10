@@ -1,9 +1,8 @@
 // RUN: rm -rf %t && mkdir -p %t
-// RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O2 -S -emit-llvm -I%FPProfileInc %clangLoadPoseidon %s -o %t/plain.ll
-// RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O2 -S -emit-llvm -I%FPProfileInc %clangLoadPoseidon -mllvm -poseidon-profile-use=%S/Inputs/other_sites -mllvm -poseidon-print %s -o %t/left.ll 2>&1 | FileCheck --check-prefix=LEFT %s
+// RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidon %s -o %t/plain.ll
+// RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%S/Inputs/other_sites -mllvm -poseidon-print %s -o %t/left.ll 2>&1 | FileCheck --check-prefix=LEFT %s
 // RUN: diff %t/plain.ll %t/left.ll
 // RUN: FileCheck %s < %t/left.ll
-// REQUIRES: poseidon
 
 // A module whose call sites the solve all leaves alone is the code as written:
 // the sites' copies were kept out of line until the sites were lowered, so the

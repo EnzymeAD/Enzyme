@@ -22,10 +22,10 @@ def clang_load(plugin):
     if int(config.llvm_ver) < 22:
         return '-fpass-plugin=' + plugin + ' -Xclang -load -Xclang ' + plugin
     return '-fpass-plugin=' + plugin
-config.substitutions.append(('%clangLoadPoseidonEnzyme',
+config.substitutions.append(('%loadClangPoseidonEnzyme',
                              clang_load(poseidon_plugin) + ' ' +
                              clang_load(enzyme_clang_plugin)))
-config.substitutions.append(('%clangLoadPoseidon', clang_load(poseidon_plugin)))
+config.substitutions.append(('%loadClangPoseidon', clang_load(poseidon_plugin)))
 # From LLVM 24 opt loads -load-pass-plugin only after parsing its command line,
 # so a plugin's options exist only if it is also loaded with -load.
 def opt_load(plugin):
@@ -34,8 +34,6 @@ config.substitutions.append(('%loadPoseidonEnzyme',
                              opt_load(poseidon_plugin) + ' ' +
                              opt_load(enzyme_opt_plugin)))
 config.substitutions.append(('%loadPoseidon', opt_load(poseidon_plugin)))
-config.substitutions.append(('%poseidon_plugin', poseidon_plugin))
-config.substitutions.append(('%enzyme_plugin', enzyme_opt_plugin))
 
 config.substitutions.append(('%poseidon_clangxx',
                              '@POSEIDON_BINARY_DIR@/bin/poseidon-clang++'))
@@ -53,16 +51,14 @@ config.substitutions.append(('%poseidon_rt_lib',
                              '@POSEIDON_BINARY_DIR@/lib/libposeidon_rt.a'))
 
 config.substitutions.append(('%shlibext', config.llvm_shlib_ext))
-config.substitutions.append(('%llvmver', config.llvm_ver))
-config.substitutions.append(('%FileCheck', config.llvm_tools_dir + "/FileCheck"))
 config.substitutions.append(('%opt', config.llvm_tools_dir + "/opt"))
-config.substitutions.append(('%clangxx', config.llvm_tools_dir + "/clang++"))
+# %clang++ is %clang followed by ++, as in Enzyme's suites.
 config.substitutions.append(('%clang', config.llvm_tools_dir + "/clang"))
 config.substitutions.append(('%simplifycfg', 'simplifycfg'))
 
-config.substitutions.append(('%FPProfileCUDALib', '@POSEIDON_BINARY_DIR@/lib/libposeidon_profile_cuda.a'))
-config.substitutions.append(('%FPProfileLib', '@POSEIDON_BINARY_DIR@/lib/libposeidon_profile.a'))
-config.substitutions.append(('%FPProfileInc',
+config.substitutions.append(('%poseidon_profile_cuda_lib', '@POSEIDON_BINARY_DIR@/lib/libposeidon_profile_cuda.a'))
+config.substitutions.append(('%poseidon_profile_lib', '@POSEIDON_BINARY_DIR@/lib/libposeidon_profile.a'))
+config.substitutions.append(('%poseidon_profile_inc',
                              '@POSEIDON_SOURCE_DIR@/runtime/fpprofiler -I@ENZYME_SOURCE_DIR@/include'))
 # The CMake package of this build tree, and what installing it takes.
 config.substitutions.append(('%cmake_generator',
@@ -81,6 +77,7 @@ if os.path.isfile(enzyme_clang_plugin):
     config.available_features.add('enzyme')
 if @POSEIDON_TEST_HAS_CUDA@:
     config.available_features.add('cuda-runtime')
+config.substitutions.append(('%cuda_lib_dir', '@CUDAToolkit_LIBRARY_DIR@'))
 # HIP device compiles against the ROCm installation the build names; a compile
 # that links the device profiler or the HIP runtimes targets their processor.
 if @POSEIDON_TEST_HAS_AMDGPU@:

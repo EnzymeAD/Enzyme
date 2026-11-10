@@ -1,7 +1,8 @@
+// REQUIRES: enzyme, cuda-runtime
 // RUN: %clang -x cuda --cuda-gpu-arch=%gpu_arch -fcuda-rdc -O2 \
-// RUN:     %clangLoadPoseidonEnzyme -mllvm --poseidon-profile-generate \
-// RUN:     -I%FPProfileInc %s -x none %FPProfileCUDALib %FPProfileLib \
-// RUN:     -L/usr/local/cuda/lib64 -lcudart -lstdc++ -lm -o %t.exe
+// RUN:     %loadClangPoseidonEnzyme -mllvm --poseidon-profile-generate \
+// RUN:     -I%poseidon_profile_inc %s -x none %poseidon_profile_cuda_lib %poseidon_profile_lib \
+// RUN:     -L%cuda_lib_dir -lcudart -lstdc++ -lm -o %t.exe
 // RUN: rm -rf %t.profiles && POSEIDON_PROFILE_DIR=%t.profiles %t.exe
 //
 // RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -O2 \
@@ -13,8 +14,6 @@
 // RUN:     -poseidon-cache= -poseidon-raise-wmma -poseidon-print \
 // RUN:     -poseidon-cost-model=%gpu_cost_model \
 // RUN:     -S 2>&1 | FileCheck %s
-//
-// REQUIRES: poseidon, enzyme, cuda-runtime
 
 #include <cmath>
 #include <cstdio>

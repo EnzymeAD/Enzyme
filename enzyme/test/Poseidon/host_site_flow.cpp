@@ -1,3 +1,4 @@
+// REQUIRES: enzyme
 // RUN: rm -rf %t && mkdir -p %t/inc/poseidon && cp %S/../../include/poseidon/poseidon.h %t/inc/poseidon/
 // RUN: %clang -x c++ -O2 -c -DOTHER_TU %s -o %t/other.o
 // RUN: %clang -x c++ -O2 -ffp-contract=on -I%t/inc %s -x none %t/other.o -lstdc++ -lm -o %t/stock
@@ -25,7 +26,6 @@
 // RUN: %poseidon_clangxx -O3 -poseidon-profile-generate -poseidon-cache=%t/c3 %s %t/other.o -o %t/gen3 2>/dev/null
 // RUN: env POSEIDON_PROFILE_DIR=%t/prof3 %t/gen3 > %t/gen3.out
 // RUN: %poseidon_clangxx -O3 -poseidon-profile-use=%t/prof3 -poseidon-tau=1e-6 -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-enable-herbie=0 -poseidon-cache=%t/c3 %s %t/other.o -o %t/use3 2>&1 | FileCheck --check-prefix=LEVEL %s
-// REQUIRES: poseidon, enzyme
 
 // POSEIDON_OPTIMIZE on host functions: a free function called directly,
 // through a pointer and from another translation unit, a member function, a

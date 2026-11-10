@@ -1,10 +1,9 @@
 // RUN: rm -rf %t && mkdir -p %t
-// RUN: %clangxx $(llvm-config --cxxflags) -fPIC -shared -I%S/../../Poseidon %S/Inputs/expansion_fast_flags/apply_expansion.cpp -o %t/apply_expansion%shlibext
+// RUN: %clang++ $(llvm-config --cxxflags) -fPIC -shared -I%S/../../Poseidon %S/Inputs/expansion_fast_flags/apply_expansion.cpp -o %t/apply_expansion%shlibext
 // RUN: %opt %S/Inputs/expansion_fast_flags/fast_attributes.ll %loadPoseidon -load-pass-plugin=%t/apply_expansion%shlibext -passes=apply-expansion -S -o %t/expanded.ll
-// RUN: %clangxx -O2 -c %t/expanded.ll -o %t/expanded.o
-// RUN: %clangxx -std=c++17 -O2 -ffp-contract=off %S/Inputs/expansion_fast_flags/harness.cpp %t/expanded.o -o %t/run
+// RUN: %clang++ -O2 -c %t/expanded.ll -o %t/expanded.o
+// RUN: %clang++ -std=c++17 -O2 -ffp-contract=off %S/Inputs/expansion_fast_flags/harness.cpp %t/expanded.o -o %t/run
 // RUN: %t/run | FileCheck %s
-// REQUIRES: poseidon
 // UNSUPPORTED: global-fp-contract
 
 // expansion_fast_flags.cpp in functions that carry every fast-math function

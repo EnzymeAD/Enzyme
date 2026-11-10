@@ -4,6 +4,7 @@
 // the CUDA path and dropping its headers and libdevice keeps clang's exit
 // status, and -lcudart, independent of the host's CUDA.
 //
+// REQUIRES: enzyme
 // RUN: env POSEIDON_ECHO=1 %poseidon_clangxx -poseidon-profile-use \
 // RUN:     -poseidon-tau=1e-7 -poseidon-cache=%t.cache \
 // RUN:     -x cuda --cuda-gpu-arch=%gpu_arch \
@@ -35,8 +36,6 @@
 // RUN:     -x hip --offload-arch=gfx942 \
 // RUN:     --rocm-path=%t.rocm -nogpuinc -nogpulib -### %s -o %t.o 2>&1 \
 // RUN:   | FileCheck --check-prefix=HIPGEN %s
-//
-// REQUIRES: poseidon, enzyme
 
 int main(void) { return 0; }
 

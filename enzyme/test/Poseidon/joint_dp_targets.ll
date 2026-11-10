@@ -11,7 +11,6 @@
 ; RUN: sed -e 's/, metadata !"poseidon_tau", double 1.000000e-02//' -e '/^; ModuleID/d' -e '/^source_filename/d' %t/flag.out.ll > %t/flag.cmp.ll
 ; RUN: sed -e 's/, metadata !"poseidon_tau", double 1.000000e-02//g' -e '/^; ModuleID/d' -e '/^source_filename/d' %t/site.out.ll > %t/site.cmp.ll
 ; RUN: diff %t/flag.cmp.ll %t/site.cmp.ll
-; REQUIRES: poseidon
 
 ; One shared budget is spent against one accuracy target, so the sites of a
 ; -poseidon-joint-dp solve must mean the same one: a site's own target, else

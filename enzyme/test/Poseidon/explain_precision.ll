@@ -2,7 +2,6 @@
 ; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/explain/precision -poseidon-enable-herbie=false -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-cache=%t/a -poseidon-tau=1e-6 -pass-remarks=poseidon -pass-remarks-missed=poseidon -pass-remarks-analysis=poseidon -poseidon-explain=%t/a -disable-output 2>&1 | FileCheck --check-prefix=FLOAT %s
 ; RUN: FileCheck --check-prefix=JSON %s < %t/a/preprocess_tester.explain.json
 ; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/explain/precision -poseidon-enable-herbie=false -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-cache=%t/b -poseidon-tau=1e-12 -pass-remarks-missed=poseidon -disable-output 2>&1 | FileCheck --check-prefix=KEPT %s
-; REQUIRES: poseidon
 
 ; exp(-0.5 x^2) cos(4 x) on x in [-2, 2]. At tau 1e-6 single precision is
 ; accurate enough for both library calls; at 1e-12 nothing is.

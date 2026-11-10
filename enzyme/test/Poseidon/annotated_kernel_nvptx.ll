@@ -6,7 +6,6 @@
 ; RUN: FileCheck --check-prefix=NOPROFILE-WARN %s < %t3.err
 ; RUN: rm -rf %t4 && %opt %s %loadPoseidon -passes="poseidon,always-inline,poseidon-finalize" -poseidon-profile-use=%S/Inputs/annotated_kernel -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-enable-multifloat=true -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_x1e6.csv -poseidon-cache=%t4 -poseidon-comp-cost-budget=0 -S | FileCheck --check-prefix=NOOP %s
 ; RUN: rm -rf %t5 && %opt %s %loadPoseidon -passes="poseidon,always-inline,poseidon-finalize" -poseidon-profile-use=%S/Inputs/annotated_kernel -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-enable-multifloat=true -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_x1e6.csv -poseidon-cache=%t5 -poseidon-comp-cost-budget=-1 -S | FileCheck --check-prefix=INLINED %s
-; REQUIRES: poseidon
 ; A kernel carrying POSEIDON_OPTIMIZE is a site whose annotated computation is
 ; its whole body: same code and same profile as ds_expansion_nvptx.ll, with no
 ; marker call and no shadow arguments. The second run reaches the same site by

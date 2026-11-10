@@ -1,9 +1,8 @@
 ; RUN: rm -rf %t && mkdir -p %t
-; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/explain/cancellation -poseidon-herbie-binary=%S/Inputs/explain/fake-herbie.sh -poseidon-herbie-num-threads=1 -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-cache=%t/cache -poseidon-tau=1e-6 -pass-remarks=poseidon -pass-remarks-missed=poseidon -pass-remarks-analysis=poseidon -poseidon-explain=%t/explain -disable-output 2>&1 | FileCheck --check-prefix=REMARK %s
+; RUN: env FAKE_HERBIE_DIR=%S/Inputs/explain %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/explain/cancellation -poseidon-herbie-binary=%S/Inputs/fake-herbie.sh -poseidon-herbie-num-threads=1 -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-cache=%t/cache -poseidon-tau=1e-6 -pass-remarks=poseidon -pass-remarks-missed=poseidon -pass-remarks-analysis=poseidon -poseidon-explain=%t/explain -disable-output 2>&1 | FileCheck --check-prefix=REMARK %s
 ; RUN: FileCheck --check-prefix=JSON %s < %t/explain/preprocess_tester.explain.json
 ; RUN: rm -rf %t/cache
-; RUN: %clang -O0 -x ir -c %s -o /dev/null %clangLoadPoseidon -mllvm -poseidon-profile-use=%S/Inputs/explain/cancellation -mllvm -poseidon-herbie-binary=%S/Inputs/explain/fake-herbie.sh -mllvm -poseidon-herbie-num-threads=1 -mllvm -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -mllvm -poseidon-cache=%t/cache -mllvm -poseidon-tau=1e-6 -Rpass=poseidon 2>&1 | FileCheck --check-prefix=RPASS %s
-; REQUIRES: poseidon
+; RUN: env FAKE_HERBIE_DIR=%S/Inputs/explain %clang -O0 -x ir -c %s -o /dev/null %loadClangPoseidon -mllvm -poseidon-profile-use=%S/Inputs/explain/cancellation -mllvm -poseidon-herbie-binary=%S/Inputs/fake-herbie.sh -mllvm -poseidon-herbie-num-threads=1 -mllvm -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -mllvm -poseidon-cache=%t/cache -mllvm -poseidon-tau=1e-6 -Rpass=poseidon 2>&1 | FileCheck --check-prefix=RPASS %s
 
 ; (1 - cos x) / x^2 cancels for small x; the profiled range is [1e-8, 1e-4]
 ; and Herbie (replayed by fake-herbie.sh) answers with its series.

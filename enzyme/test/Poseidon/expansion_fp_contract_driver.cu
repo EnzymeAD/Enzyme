@@ -5,7 +5,6 @@
 // RUN: sed -n '/\.entry .*fms_kernel/,/^}/p' %t/on.ptx | grep fma.rn.f32 | count 15
 // RUN: sed -n '/\.entry .*fms_kernel/,/^}/p' %t/fast.ptx | grep fma.rn.f32 | count 15
 // RUN: sed -n '/\.entry .*fms_kernel/,/^}/p' %t/fastmath.ptx | grep fma.rn.f32 | count 15
-// REQUIRES: poseidon
 // UNSUPPORTED: global-fp-contract
 
 // What clang emits under each contraction mode, through the driver. Under the

@@ -36,7 +36,6 @@
 ; RUN: grep -E '^Applying solution for|^\[poseidon\] pin: ' %t/joint.err > %t/joint.picks
 ; RUN: grep -E '^Applying solution for|^\[poseidon\] pin: ' %t/joint.pinned.err > %t/joint.pinned.picks
 ; RUN: diff %t/joint.picks %t/joint.pinned.picks
-; REQUIRES: poseidon
 
 ; -poseidon-apply-rewrites names precision candidates by their description and
 ; sites by the function the marker optimizes; an item without a site applies

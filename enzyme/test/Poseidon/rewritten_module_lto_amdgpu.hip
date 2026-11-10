@@ -1,9 +1,10 @@
+// REQUIRES: amdgpu-registered-target, rocm
 // RUN: rm -rf %t && mkdir -p %t/fpc %t/use %t/refused %t/fpc.thin %t/use.thin
 // RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path -cuid=0 -O2 -ffp-contract=on -c -DNO_SITE %s -o %t/fpc/k.o
-// RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path -cuid=0 -O2 -ffp-contract=on -c -I%FPProfileInc %clangLoadPoseidon -Xclang -mllvm -Xclang -poseidon-profile-use=%S/Inputs/rewritten_lto_hip -Xclang -mllvm -Xclang -poseidon-cost-model=%S/Inputs/cm_gfx942_synthetic.csv -Xclang -mllvm -Xclang -poseidon-enable-herbie=0 -Xclang -mllvm -Xclang -poseidon-cache=%t/c -Xclang -mllvm -Xclang -poseidon-print %s -o %t/use/k.o 2> %t/use.err
+// RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path -cuid=0 -O2 -ffp-contract=on -c -I%poseidon_profile_inc %loadClangPoseidon -Xclang -mllvm -Xclang -poseidon-profile-use=%S/Inputs/rewritten_lto_hip -Xclang -mllvm -Xclang -poseidon-cost-model=%S/Inputs/cm_gfx942_synthetic.csv -Xclang -mllvm -Xclang -poseidon-enable-herbie=0 -Xclang -mllvm -Xclang -poseidon-cache=%t/c -Xclang -mllvm -Xclang -poseidon-print %s -o %t/use/k.o 2> %t/use.err
 // RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path -cuid=0 -O2 -ffp-contract=on -foffload-lto=thin -c -DNO_SITE %s -o %t/fpc.thin/k.o
-// RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path -cuid=0 -O2 -ffp-contract=on -foffload-lto=thin -c -I%FPProfileInc %clangLoadPoseidon -Xclang -mllvm -Xclang -poseidon-profile-use=%S/Inputs/rewritten_lto_hip -Xclang -mllvm -Xclang -poseidon-cost-model=%S/Inputs/cm_gfx942_synthetic.csv -Xclang -mllvm -Xclang -poseidon-enable-herbie=0 -Xclang -mllvm -Xclang -poseidon-cache=%t/c.thin -Xclang -mllvm -Xclang -poseidon-print %s -o %t/use.thin/k.o 2> %t/use.thin.err
-// RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path -cuid=0 -O2 -ffp-contract=on -c -DSITE_TAU=1e-18 -I%FPProfileInc %clangLoadPoseidon -Xclang -mllvm -Xclang -poseidon-profile-use=%S/Inputs/rewritten_lto_hip -Xclang -mllvm -Xclang -poseidon-cost-model=%S/Inputs/cm_gfx942_synthetic.csv -Xclang -mllvm -Xclang -poseidon-enable-herbie=0 -Xclang -mllvm -Xclang -poseidon-cache=%t/c.refused -Xclang -mllvm -Xclang -poseidon-print %s -o %t/refused/k.o 2> %t/refused.err
+// RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path -cuid=0 -O2 -ffp-contract=on -foffload-lto=thin -c -I%poseidon_profile_inc %loadClangPoseidon -Xclang -mllvm -Xclang -poseidon-profile-use=%S/Inputs/rewritten_lto_hip -Xclang -mllvm -Xclang -poseidon-cost-model=%S/Inputs/cm_gfx942_synthetic.csv -Xclang -mllvm -Xclang -poseidon-enable-herbie=0 -Xclang -mllvm -Xclang -poseidon-cache=%t/c.thin -Xclang -mllvm -Xclang -poseidon-print %s -o %t/use.thin/k.o 2> %t/use.thin.err
+// RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path -cuid=0 -O2 -ffp-contract=on -c -DSITE_TAU=1e-18 -I%poseidon_profile_inc %loadClangPoseidon -Xclang -mllvm -Xclang -poseidon-profile-use=%S/Inputs/rewritten_lto_hip -Xclang -mllvm -Xclang -poseidon-cost-model=%S/Inputs/cm_gfx942_synthetic.csv -Xclang -mllvm -Xclang -poseidon-enable-herbie=0 -Xclang -mllvm -Xclang -poseidon-cache=%t/c.refused -Xclang -mllvm -Xclang -poseidon-print %s -o %t/refused/k.o 2> %t/refused.err
 // RUN: FileCheck --check-prefix=SOLVE %s < %t/use.err
 // RUN: FileCheck --check-prefix=REFUSED %s < %t/refused.err
 // RUN: FileCheck --check-prefix=SOLVE %s < %t/use.thin.err
@@ -23,7 +24,6 @@
 // RUN: awk '/^<.*>:$/{p = $0 ~ /^<_Z4sitePKdPdi>:$/} p' %t/fpc.isa | FileCheck --check-prefix=FPC-SITE %s
 // RUN: awk '/^<.*>:$/{p = $0 ~ /^<_Z4sitePKdPdi>:$/} p' %t/use.isa | FileCheck --check-prefix=USE-SITE --implicit-check-not=v_fma_f64 %s
 // RUN: awk '/^<.*>:$/{p = $0 ~ /^<_Z4sitePKdPdi>:$/} p' %t/use.thin.isa | FileCheck --check-prefix=USE-SITE --implicit-check-not=v_fma_f64 %s
-// REQUIRES: poseidon, amdgpu-registered-target, rocm
 
 // HIP compiles device code through LTO: each -c writes device bitcode, from
 // which the device link generates the code object. There too every function

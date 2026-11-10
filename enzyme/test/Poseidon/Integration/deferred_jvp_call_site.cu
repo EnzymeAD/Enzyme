@@ -1,3 +1,4 @@
+// REQUIRES: enzyme, cuda-runtime
 // RUN: rm -rf %t && mkdir -p %t
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 -poseidon-profile-generate -poseidon-cache=%t/cg -poseidon-print %s -o %t/gen 2>&1 \
 // RUN:   | FileCheck --check-prefix=DEFER %s
@@ -19,8 +20,6 @@
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 -poseidon-profile-use=%t/prof -poseidon-cost-model=%gpu_cost_model -poseidon-enable-herbie=0 -poseidon-print -poseidon-cache=%t/c %s -o %t/opt 2>&1 \
 // RUN:   | FileCheck --check-prefix=SOLVE %s
 // RUN: %t/opt | FileCheck --check-prefix=OPT %s
-//
-// REQUIRES: poseidon, enzyme, cuda-runtime
 
 // deferred_jvp_site.cu with the site written as a call: the body is one
 // __enzyme_fwddiff request, so the call is a deferred site, profiled and solved

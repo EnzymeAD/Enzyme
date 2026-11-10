@@ -1,5 +1,6 @@
+// REQUIRES: enzyme
 // RUN: rm -rf %t && mkdir -p %t
-// RUN: %clang -x c++ -O2 -ffp-contract=on -I%FPProfileInc %s -lstdc++ -lm -o %t/stock
+// RUN: %clang -x c++ -O2 -ffp-contract=on -I%poseidon_profile_inc %s -lstdc++ -lm -o %t/stock
 // RUN: %t/stock > %t/stock.out
 //
 // RUN: %poseidon_clangxx -O2 -poseidon-profile-generate -poseidon-cache=%t/cg %s -o %t/gen 2> %t/gen.err
@@ -24,9 +25,8 @@
 // RUN: %t/use0 > %t/use0.out
 // RUN: diff %t/use.out %t/use0.out
 //
-// RUN: not %clang -x c++ -O1 -S -I%FPProfileInc %clangLoadPoseidon -mllvm -poseidon-profile-use=%S/Inputs/other_sites -DNONCONST %s -o /dev/null 2>&1 | FileCheck --check-prefix=NONCONST %s
-// RUN: not %clang -x c++ -O1 -S -I%FPProfileInc %clangLoadPoseidon -mllvm -poseidon-profile-use=%S/Inputs/other_sites -DMARKED %s -o /dev/null 2>&1 | FileCheck --check-prefix=MARKED %s
-// REQUIRES: poseidon, enzyme
+// RUN: not %clang -x c++ -O1 -S -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%S/Inputs/other_sites -DNONCONST %s -o /dev/null 2>&1 | FileCheck --check-prefix=NONCONST %s
+// RUN: not %clang -x c++ -O1 -S -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%S/Inputs/other_sites -DMARKED %s -o /dev/null 2>&1 | FileCheck --check-prefix=MARKED %s
 
 // __poseidon_optimize makes one call the site: it has its own profile, its own
 // target and its own rewritten copy, and other calls of the function run it as

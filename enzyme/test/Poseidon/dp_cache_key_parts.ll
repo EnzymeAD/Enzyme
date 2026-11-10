@@ -20,7 +20,6 @@
 ; RUN: %opt %t/const.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/pow_term/profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-comp-cost-budget=-200 -poseidon-cache=%t/const -S -o /dev/null 2>&1 | FileCheck --check-prefixes=BODY,SOLVED %s
 ; RUN: cp -r %t/base %t/callee
 ; RUN: %opt %t/callee.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/pow_term/profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-comp-cost-budget=-200 -poseidon-cache=%t/callee -S -o /dev/null 2>&1 | FileCheck --check-prefixes=BODY,SOLVED %s
-; REQUIRES: poseidon
 
 ; Each compile starts from the first one's cache and changes one input of the
 ; DP table (a profile byte, a cost-model row, a solve flag, a constant of the

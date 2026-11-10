@@ -15,12 +15,11 @@
 //             runtime's from before its scales were carried as exponents; the
 //             'record' argument prints them for the runtime linked in.
 //
+// REQUIRES: cuda-runtime
 // RUN: %clang -x cuda --cuda-gpu-arch=%gpu_arch -O2 %s -x none \
-// RUN:     %poseidon_rt_lib -L/usr/local/cuda/lib64 -lcublas -lcudart \
+// RUN:     %poseidon_rt_lib -L%cuda_lib_dir -lcublas -lcudart \
 // RUN:     -lstdc++ -lm -o %t.exe
 // RUN: %t.exe | FileCheck %s
-//
-// REQUIRES: poseidon, cuda-runtime
 
 #include <algorithm>
 #include <cmath>

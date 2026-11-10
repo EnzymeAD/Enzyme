@@ -6,8 +6,9 @@
 // the binary128 result than FP64 does; at 1e-15 the two-component rewrite
 // is selected and is the least accurate of the three.
 //
+// REQUIRES: enzyme, cuda-runtime
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 \
-// RUN:     -poseidon-profile-generate %s -o %t.exe
+// RUN:     -poseidon-profile-generate -poseidon-cache=%t.pcache %s -o %t.exe
 // RUN: rm -rf %t.profile && POSEIDON_PROFILE_DIR=%t.profile %t.exe 1e-11 1e-8 \
 // RUN:   | FileCheck --check-prefix=EXEC %s
 //
@@ -28,8 +29,6 @@
 // RUN:     -poseidon-expansion-components=3 -poseidon-tau=1e-15 \
 // RUN:     %s -o %t.loose.exe 2>&1 | FileCheck --check-prefix=LOOSE %s
 // RUN: %t.loose.exe 1e-9 1e-6 | FileCheck --check-prefix=EXEC %s
-//
-// REQUIRES: poseidon, enzyme, cuda-runtime
 
 #include <cmath>
 #include <cstdio>

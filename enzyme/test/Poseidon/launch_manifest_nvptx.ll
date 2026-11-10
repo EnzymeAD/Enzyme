@@ -1,3 +1,4 @@
+; REQUIRES: scev-trunc-iv-nowrap
 ; RUN: rm -rf %t && mkdir -p %t
 ; RUN: sed 's/ozaki_stub\.cu/tcec_matmul.cu/g' %S/Inputs/ozaki_dispatch/ozaki_stub_host.ll > %t/host.ll
 ; RUN: %opt %S/Inputs/stale_cache/matmul_device.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/raise_tcec -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_dispatch_x1e6.csv -poseidon-tau=1e-12 -poseidon-cache=%t/c -poseidon-unit=u -S -o /dev/null 2>&1 | FileCheck --check-prefix=WROTE %s
@@ -13,14 +14,13 @@
 ; RUN: not ls %t/fresh
 ; RUN: %opt %t/siteless.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-generate -poseidon-cache=%t/freshgen -S -o /dev/null
 ; RUN: not ls %t/freshgen
-; RUN: %clang -O0 -x ir %t/host.ll %clangLoadPoseidon -mllvm -poseidon-profile-use=%S/Inputs/raise_tcec -mllvm -poseidon-cache=%t/none -mllvm -poseidon-unit=u -S -emit-llvm -o %t/use.ll 2> %t/use.err
+; RUN: %clang -O0 -x ir %t/host.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/Inputs/raise_tcec -mllvm -poseidon-cache=%t/none -mllvm -poseidon-unit=u -S -emit-llvm -o %t/use.ll 2> %t/use.err
 ; RUN: count 0 < %t/use.err
 ; RUN: FileCheck --check-prefix=LAUNCH --implicit-check-not=__poseidon %s < %t/use.ll
-; RUN: %clang -O0 -x ir %t/host.ll %clangLoadPoseidon -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/none -mllvm -poseidon-unit=u -S -emit-llvm -o %t/gen.ll 2> %t/gen.err
+; RUN: %clang -O0 -x ir %t/host.ll %loadClangPoseidon -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/none -mllvm -poseidon-unit=u -S -emit-llvm -o %t/gen.ll 2> %t/gen.err
 ; RUN: count 0 < %t/gen.err
 ; RUN: FileCheck --check-prefix=LAUNCH --implicit-check-not=__poseidon %s < %t/gen.ll
 ; RUN: not ls %t/none
-; REQUIRES: poseidon, scev-trunc-iv-nowrap
 
 ; The device compile of tcec_matmul.cu as unit u writes the manifest of the
 ; unit, named after the source, with the descriptor of the dispatched product.

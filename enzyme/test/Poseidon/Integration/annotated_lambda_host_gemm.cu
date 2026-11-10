@@ -8,6 +8,7 @@
 // bound captured next to it, which the stub checks at the launch: a padded
 // tensor runs the kernel as written.
 //
+// REQUIRES: enzyme, cuda-runtime
 // RUN: rm -rf %t.pcache && %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 \
 // RUN:     -poseidon-profile-generate -poseidon-cache=%t.pcache %s -o %t.exe
 // RUN: cat %t.pcache/launches_*.json | FileCheck --check-prefix=DESC %s
@@ -20,8 +21,6 @@
 // RUN:     -poseidon-enable-herbie=0 -poseidon-enable-pt=0 -poseidon-raise-wmma \
 // RUN:     %s -o %t.opt.exe 2>&1 | FileCheck %s
 // RUN: %t.opt.exe run | FileCheck --check-prefix=OPT %s
-//
-// REQUIRES: poseidon, enzyme, cuda-runtime
 
 #include <cmath>
 #include <cstdio>

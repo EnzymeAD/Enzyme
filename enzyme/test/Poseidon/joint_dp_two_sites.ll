@@ -1,7 +1,6 @@
 ; RUN: rm -rf %t && %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/joint_profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-joint-dp -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -S -poseidon-cache=%t/both -poseidon-comp-cost-budget=-400 2>&1 | FileCheck --check-prefix=BOTH %s
 ; RUN: FileCheck --check-prefix=BUDGETS %s < %t/both/budgets.txt
 ; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/joint_profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-joint-dp -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -S -poseidon-cache=%t/one -poseidon-comp-cost-budget=-300 2>&1 | FileCheck --check-prefix=ONE %s
-; REQUIRES: poseidon
 ; Two annotated sites solved under one shared budget (-poseidon-joint-dp): one budgets.txt lists the joint table's breakpoints, a budget of -400 rewrites both sites to FP32, a budget of -300 is spent on tester_b alone and site_a is restored to its original body. Profiles from running this module through the host profiler with Inputs/joint_profiles/joint_driver.c.
 
 define double @tester_a(double %x, double %y) #0 {

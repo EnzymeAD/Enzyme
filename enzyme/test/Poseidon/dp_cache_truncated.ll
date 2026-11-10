@@ -3,7 +3,6 @@
 ; RUN: head -c $(( $(wc -c < %t/c/table.json) / 2 )) %t/c/table.json > %t/half.json && mv %t/half.json %t/c/table.json
 ; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/pow_term/out0 -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-comp-cost-budget=-200 -poseidon-cache=%t/c -S -o /dev/null 2>&1 | FileCheck --check-prefixes=TRUNC,SOLVE,PICK %s
 ; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/pow_term/out0 -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-comp-cost-budget=-200 -poseidon-cache=%t/c -S -o /dev/null 2>&1 | FileCheck --check-prefixes=HIT,PICK %s
-; REQUIRES: poseidon
 
 ; A table.json cut off in the middle (an interrupted write) is reported,
 ; solved again and overwritten; the compile after that reads it back.

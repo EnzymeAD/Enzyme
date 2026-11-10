@@ -1,10 +1,10 @@
+; REQUIRES: scev-trunc-iv-nowrap
 ; RUN: rm -rf %t && mkdir -p %t/prof %t/seeded
 ; RUN: sed '1i CanonicalHash = fea337c617ef94c9' %S/Inputs/raise_tcec/preprocess_matmul_body.fpprofile > %t/prof/preprocess_matmul_body.fpprofile
 ; RUN: %opt %S/Inputs/stale_cache/matmul_device.ll %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%t/prof -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_dispatch_x1e6.csv -poseidon-tau=1e-12 -poseidon-print -poseidon-cache=%t/first -S -o /dev/null 2>&1 | FileCheck --check-prefixes=FIRST,PRICED %s
 ; RUN: ls %t/first | FileCheck --check-prefix=MEMO %s
 ; RUN: for f in %t/first/matmulacc_*; do echo '0 0' > %t/seeded/$(basename $f); done
 ; RUN: %opt %S/Inputs/stale_cache/matmul_device.ll %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%t/prof -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_dispatch_x1e6.csv -poseidon-tau=1e-12 -poseidon-print -poseidon-cache=%t/seeded -S -o /dev/null 2>&1 | FileCheck --check-prefix=PRICED %s
-; REQUIRES: poseidon, scev-trunc-iv-nowrap
 
 ; Every accuracy memo the first compile wrote is planted in an empty cache
 ; under the same name with the numbers 0 0 (an FP16 product accurate to every

@@ -1,12 +1,11 @@
 ; RUN: rm -rf %t && mkdir -p %t/prof
 ; RUN: sed '1i CanonicalHash = 1fa032681b79bf6d' %S/Inputs/regime_split/profiles/preprocess_tester.fpprofile > %t/prof/preprocess_tester.fpprofile
-; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%t/prof -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/Inputs/dp_cache_keys/fake-herbie.sh -poseidon-enable-pt=false -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-comp-cost-budget=100000000 -poseidon-cache=%t/c -poseidon-report-path=%t/solve -S -o /dev/null 2>&1 | FileCheck --check-prefix=SOLVE %s
-; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%t/prof -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/Inputs/dp_cache_keys/fake-herbie.sh -poseidon-enable-pt=false -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-comp-cost-budget=100000000 -poseidon-cache=%t/c -poseidon-report-path=%t/hit -S -o /dev/null 2>&1 | FileCheck --check-prefix=HIT %s
+; RUN: env FAKE_HERBIE_DIR=%S/Inputs/dp_cache_keys %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%t/prof -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/Inputs/fake-herbie.sh -poseidon-enable-pt=false -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-comp-cost-budget=100000000 -poseidon-cache=%t/c -poseidon-report-path=%t/solve -S -o /dev/null 2>&1 | FileCheck --check-prefix=SOLVE %s
+; RUN: env FAKE_HERBIE_DIR=%S/Inputs/dp_cache_keys %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%t/prof -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/Inputs/fake-herbie.sh -poseidon-enable-pt=false -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-comp-cost-budget=100000000 -poseidon-cache=%t/c -poseidon-report-path=%t/hit -S -o /dev/null 2>&1 | FileCheck --check-prefix=HIT %s
 ; RUN: FileCheck --check-prefix=REWRITES %s < %t/solve/preprocess_tester_rewrites.json
 ; RUN: sed -n 's/^ *"id": "\(R[0-9]*_[0-9]*\)",$/\1/p' %t/solve/preprocess_tester_rewrites.json > %t/solve.id
 ; RUN: FileCheck --check-prefix=EXPLAIN -DID=$(cat %t/solve.id) %s < %t/solve/preprocess_tester.explain.json
 ; RUN: FileCheck --check-prefix=EXPLAIN -DID=$(cat %t/solve.id) %s < %t/hit/preprocess_tester.explain.json
-; REQUIRES: poseidon
 
 ; Pricing drops the regime split Herbie lists first and a compile that reads
 ; the table back prices nothing. The rewrite id the solve's _rewrites.json

@@ -4,8 +4,9 @@
 // included; a call in the C convention would be undefined, and InstCombine
 // would delete it and the rewritten site with it.
 //
+// REQUIRES: enzyme, cuda-runtime
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 \
-// RUN:     -poseidon-kernels=waved -poseidon-profile-generate %s -o %t.exe
+// RUN:     -poseidon-kernels=waved -poseidon-profile-generate -poseidon-cache=%t.pcache %s -o %t.exe
 // RUN: rm -rf %t.profile && POSEIDON_PROFILE_DIR=%t.profile %t.exe \
 // RUN:   | FileCheck --check-prefix=PRIMAL %s
 // RUN: rm -rf %t.cache && %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 \
@@ -14,8 +15,6 @@
 // RUN:     -poseidon-print -poseidon-enable-herbie=0 -poseidon-tau=1e-3 \
 // RUN:     %s -o %t.opt.exe 2>&1 | FileCheck --check-prefix=SOLVE %s
 // RUN: %t.opt.exe | FileCheck --check-prefix=PRIMAL %s
-//
-// REQUIRES: poseidon, enzyme, cuda-runtime
 
 #include <cmath>
 #include <cstdio>

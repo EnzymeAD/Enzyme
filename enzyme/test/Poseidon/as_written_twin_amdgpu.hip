@@ -1,15 +1,15 @@
+// REQUIRES: amdgpu-registered-target, rocm
 // RUN: rm -rf %t && mkdir -p %t
-// RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -ffp-contract=on -S -I%FPProfileInc %clangLoadPoseidon %s -o %t/plain.s
-// RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -ffp-contract=on -S -I%FPProfileInc %clangLoadPoseidon -mllvm -poseidon-profile-use=%S/Inputs/other_sites -mllvm -poseidon-print %s -o %t/use.s 2> %t/use.err
+// RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -ffp-contract=on -S -I%poseidon_profile_inc %loadClangPoseidon %s -o %t/plain.s
+// RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -ffp-contract=on -S -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%S/Inputs/other_sites -mllvm -poseidon-print %s -o %t/use.s 2> %t/use.err
 // RUN: FileCheck --check-prefix=SOLVE %s < %t/use.err
 // RUN: diff %t/plain.s %t/use.s
 // RUN: FileCheck %s < %t/use.s
-// RUN: %clang -x hip --offload-arch=gfx90a --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -ffp-contract=on -S -I%FPProfileInc %clangLoadPoseidon %s -o %t/plain.90a.s
-// RUN: %clang -x hip --offload-arch=gfx90a --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -ffp-contract=on -S -I%FPProfileInc %clangLoadPoseidon -mllvm -poseidon-profile-use=%S/Inputs/other_sites -mllvm -poseidon-print %s -o %t/use.90a.s 2> %t/use.90a.err
+// RUN: %clang -x hip --offload-arch=gfx90a --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -ffp-contract=on -S -I%poseidon_profile_inc %loadClangPoseidon %s -o %t/plain.90a.s
+// RUN: %clang -x hip --offload-arch=gfx90a --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -ffp-contract=on -S -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%S/Inputs/other_sites -mllvm -poseidon-print %s -o %t/use.90a.s 2> %t/use.90a.err
 // RUN: FileCheck --check-prefix=SOLVE %s < %t/use.90a.err
 // RUN: diff %t/plain.90a.s %t/use.90a.s
 // RUN: FileCheck %s < %t/use.90a.s
-// REQUIRES: poseidon, amdgpu-registered-target, rocm
 
 // An AMDGPU device module with a site is compiled once more as written, and
 // every function no rewrite reached is emitted from that compile: here no site

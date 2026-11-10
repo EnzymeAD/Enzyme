@@ -1,3 +1,4 @@
+; REQUIRES: scev-trunc-iv-nowrap
 ; RUN: rm -rf %t && mkdir -p %t/nokappa %t/diverged && cp %S/Inputs/site_kappa/*.fpprofile %t/nokappa/ && cp %S/Inputs/site_kappa/*.fpprofile %t/diverged/
 ; RUN: sed -i "/^Kappa/d" %t/nokappa/preprocess_matmul_body.fpprofile %t/nokappa/preprocess_fms_body.fpprofile
 ; RUN: sed -i "s/^KappaMark = ok/KappaMark = diverged/" %t/diverged/preprocess_matmul_body.fpprofile
@@ -7,7 +8,6 @@
 ; RUN: FileCheck --check-prefix=KAPPA %s < %t.kappa.out
 ; RUN: FileCheck --check-prefix=PLAIN %s < %t.plain.out
 ; RUN: FileCheck --check-prefix=DIVERGED %s < %t.div.out
-; REQUIRES: poseidon, scev-trunc-iv-nowrap
 ; Two annotated sites in one module, each carrying its own condition number in
 ; its profile header: the accuracy cost of EVERY candidate class of a site is
 ; multiplied by that site's Kappa divided by the total sensitivity its profile
@@ -143,36 +143,37 @@ attributes #5 = { convergent nounwind "uniform-work-group-size" }
 !12 = !{!"llvm.loop.mustprogress"}
 !13 = !{!"llvm.loop.unroll.disable"}
 
+; {{[^ -~]+}} stands for the Greek capital delta the log prints.
 ; KAPPA: [poseidon] site preprocess_fms_body: kappa=1.000000e-03 (ok) sumsens=1.187943e+04 factor=8.417909e-08
 ; KAPPA: Initial AccuracyCost: 2.164332e-20
-; KAPPA: Δ AccCost
+; KAPPA: {{[^ -~]+}} AccCost
 ; KAPPA-NEXT: ---
 ; KAPPA-NEXT: 1.428768e-11{{.*}}All FP64(0%) + FP32(100%)
 ; KAPPA: 6.795448e-19{{.*}}All FP64(0%) + Expansion2(100%)
 ; KAPPA: [poseidon] site preprocess_matmul_body: kappa=1.000000e+03 (ok) sumsens=4.903078e+04 factor=2.039535e-02
 ; KAPPA: Matmul[0] candidates (initial cost=4.988291e+04
-; KAPPA-NEXT: wmma m16n16k16 f16/f32: Δcost=-380908769 ΔaccCost=3.332236e+01
-; KAPPA-NEXT: tcec n=2 wmma m16n16k16 f16/f32: Δcost=-374564621 ΔaccCost=2.978463e-02
-; KAPPA-NEXT: tcec n=3 wmma m16n16k16 f16/f32: Δcost=-368505296 ΔaccCost=2.540700e-02
+; KAPPA-NEXT: wmma m16n16k16 f16/f32: {{[^ -~]+}}cost=-380908769 {{[^ -~]+}}accCost=3.332236e+01
+; KAPPA-NEXT: tcec n=2 wmma m16n16k16 f16/f32: {{[^ -~]+}}cost=-374564621 {{[^ -~]+}}accCost=2.978463e-02
+; KAPPA-NEXT: tcec n=3 wmma m16n16k16 f16/f32: {{[^ -~]+}}cost=-368505296 {{[^ -~]+}}accCost=2.540700e-02
 
 ; The same solve with the two header lines gone: every accuracy cost is the
 ; unscaled one, and the computation costs are untouched in both runs.
 ; PLAIN-NOT: kappa=
 ; PLAIN: Initial AccuracyCost: 2.571104e-13
-; PLAIN: Δ AccCost
+; PLAIN: {{[^ -~]+}} AccCost
 ; PLAIN-NEXT: ---
 ; PLAIN-NEXT: 1.697296e-04{{.*}}All FP64(0%) + FP32(100%)
 ; PLAIN: 8.072609e-12{{.*}}All FP64(0%) + Expansion2(100%)
 ; PLAIN: Matmul[0] candidates (initial cost=4.988291e+04
-; PLAIN-NEXT: wmma m16n16k16 f16/f32: Δcost=-380908769 ΔaccCost=1.633821e+03
-; PLAIN-NEXT: tcec n=2 wmma m16n16k16 f16/f32: Δcost=-374564621 ΔaccCost=1.460363e+00
-; PLAIN-NEXT: tcec n=3 wmma m16n16k16 f16/f32: Δcost=-368505296 ΔaccCost=1.245725e+00
+; PLAIN-NEXT: wmma m16n16k16 f16/f32: {{[^ -~]+}}cost=-380908769 {{[^ -~]+}}accCost=1.633821e+03
+; PLAIN-NEXT: tcec n=2 wmma m16n16k16 f16/f32: {{[^ -~]+}}cost=-374564621 {{[^ -~]+}}accCost=1.460363e+00
+; PLAIN-NEXT: tcec n=3 wmma m16n16k16 f16/f32: {{[^ -~]+}}cost=-368505296 {{[^ -~]+}}accCost=1.245725e+00
 
 ; A site whose probe run diverged carries no measured kappa; its candidates are
 ; priced at 1e30, the order of the exponent penalty, so a joint budget is spent
 ; on any other site before this one's precision is traded away.
 ; DIVERGED: [poseidon] site preprocess_matmul_body: kappa=1.000000e+03 (diverged) sumsens=4.903078e+04 factor=1.000000e+30
 ; DIVERGED: Matmul[0] candidates (initial cost=4.988291e+04
-; DIVERGED-NEXT: wmma m16n16k16 f16/f32: Δcost=-380908769 ΔaccCost=1.633821e+33
-; DIVERGED-NEXT: tcec n=2 wmma m16n16k16 f16/f32: Δcost=-374564621 ΔaccCost=1.460363e+30
-; DIVERGED-NEXT: tcec n=3 wmma m16n16k16 f16/f32: Δcost=-368505296 ΔaccCost=1.245725e+30
+; DIVERGED-NEXT: wmma m16n16k16 f16/f32: {{[^ -~]+}}cost=-380908769 {{[^ -~]+}}accCost=1.633821e+33
+; DIVERGED-NEXT: tcec n=2 wmma m16n16k16 f16/f32: {{[^ -~]+}}cost=-374564621 {{[^ -~]+}}accCost=1.460363e+30
+; DIVERGED-NEXT: tcec n=3 wmma m16n16k16 f16/f32: {{[^ -~]+}}cost=-368505296 {{[^ -~]+}}accCost=1.245725e+30

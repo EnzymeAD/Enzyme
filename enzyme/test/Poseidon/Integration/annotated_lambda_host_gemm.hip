@@ -12,6 +12,7 @@
 // writes is another file; the source is compiled from a copy under a fixed
 // name, which the manifest's file name follows.
 //
+// REQUIRES: enzyme, hip-runtime
 // RUN: rm -rf %t.pcache && %poseidon_clangxx -x hip --offload-arch=%amdgpu_arch \
 // RUN:     --rocm-path=%rocm_path -O2 -poseidon-profile-generate \
 // RUN:     -poseidon-cache=%t.pcache %s -o %t.exe
@@ -29,8 +30,6 @@
 // RUN:     -poseidon-enable-herbie=0 annotated_lambda_host_gemm.hip \
 // RUN:     -o %t.opt.exe 2>&1 | FileCheck %s
 // RUN: %t.opt.exe run | FileCheck --check-prefix=OPT %s
-//
-// REQUIRES: poseidon, enzyme, hip-runtime
 
 #include <cmath>
 #include <cstdio>

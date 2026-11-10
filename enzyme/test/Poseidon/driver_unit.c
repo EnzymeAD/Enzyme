@@ -64,8 +64,6 @@
 // RUN:     --cuda-gpu-arch=%gpu_arch --cuda-path=%t.cuda -nocudainc -nocudalib \
 // RUN:     -### %s -o %t.o 2>&1 \
 // RUN:   | FileCheck --check-prefix=CUDALTO --implicit-check-not=enzyme-lto-prelink %s
-//
-// REQUIRES: poseidon
 
 int main(void) { return 0; }
 

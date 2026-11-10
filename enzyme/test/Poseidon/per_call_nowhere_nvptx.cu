@@ -1,7 +1,7 @@
+// REQUIRES: enzyme
 // RUN: rm -rf %t && mkdir -p %t
-// RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O1 -S -emit-llvm -I%FPProfileInc %clangLoadPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c %s -o %t/gen.ll 2>&1 | FileCheck %s
+// RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O1 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c %s -o %t/gen.ll 2>&1 | FileCheck %s
 // RUN: FileCheck --check-prefix=IR %s < %t/gen.ll
-// REQUIRES: poseidon, enzyme
 
 // The address of an empty functor is a pointer the call's copy never reads, so
 // the optimizer passes poison in its place by the time the site is lowered. It

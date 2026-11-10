@@ -1,9 +1,8 @@
+// REQUIRES: enzyme, cuda-runtime
 // RUN: %clang -x cuda --cuda-gpu-arch=%gpu_arch -fcuda-rdc -O2 \
-// RUN:     %clangLoadPoseidonEnzyme %s \
-// RUN:     -L/usr/local/cuda/lib64 -lcudart -lstdc++ -lm -o %t.exe
+// RUN:     %loadClangPoseidonEnzyme %s \
+// RUN:     -L%cuda_lib_dir -lcudart -lstdc++ -lm -o %t.exe
 // RUN: %t.exe | FileCheck %s
-//
-// REQUIRES: poseidon, enzyme, cuda-runtime
 
 // An identity probe carrying an Enzyme custom derivative, differentiated
 // inside an NVPTX kernel. Poseidon's profile generation places such probes on

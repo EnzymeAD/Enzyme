@@ -3,7 +3,6 @@
 ; RUN: rm %t/cachedHerbieOutput_*
 ; RUN: env FAKE_HERBIE_ARRAY=timeout %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/array_cores/profiles -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/Inputs/array_cores/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-pt=false -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-comp-cost-budget=100000000 -poseidon-cache=%t -S -o /dev/null 2>&1 | FileCheck --check-prefix=DRIFT %s
 ; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/array_cores/profiles -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/Inputs/array_cores/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-pt=false -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-comp-cost-budget=100000000 -poseidon-cache=%t -S -o /dev/null 2>&1 | FileCheck --check-prefix=HIT %s
-; REQUIRES: poseidon
 
 ; A DP table is keyed on the candidates it was solved over as well as on the
 ; inputs that decide them, because Herbie can answer the same cores

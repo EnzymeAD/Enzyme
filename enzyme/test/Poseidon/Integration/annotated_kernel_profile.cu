@@ -1,12 +1,11 @@
+// REQUIRES: enzyme, cuda-runtime
 // RUN: rm -rf %t.cache && %clang -x cuda --cuda-gpu-arch=%gpu_arch -fcuda-rdc -O2 -ffp-contract=on \
-// RUN:     %clangLoadPoseidonEnzyme -mllvm --poseidon-profile-generate -mllvm --poseidon-cache=%t.cache \
-// RUN:     -I%FPProfileInc %s -x none %FPProfileCUDALib %FPProfileLib \
-// RUN:     -L/usr/local/cuda/lib64 -lcudart -lstdc++ -lm -o %t.exe
+// RUN:     %loadClangPoseidonEnzyme -mllvm --poseidon-profile-generate -mllvm --poseidon-cache=%t.cache \
+// RUN:     -I%poseidon_profile_inc %s -x none %poseidon_profile_cuda_lib %poseidon_profile_lib \
+// RUN:     -L%cuda_lib_dir -lcudart -lstdc++ -lm -o %t.exe
 // RUN: cat %t.cache/launches_*.json | FileCheck --check-prefix=DESC %s
 // RUN: rm -rf %t.profiles && POSEIDON_PROFILE_DIR=%t.profiles %t.exe | FileCheck --check-prefix=PRIMAL %s
 // RUN: cat %t.profiles/*.fpprofile | FileCheck %s
-//
-// REQUIRES: poseidon, enzyme, cuda-runtime
 
 // A kernel annotated with POSEIDON_OPTIMIZE and nothing else: no marker call,
 // no shadow buffers, no profiling mode. The compiler makes the kernel its own

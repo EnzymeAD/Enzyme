@@ -9,7 +9,6 @@
 ; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/chain_split -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-comp-cost-budget=-100 -poseidon-print -S -poseidon-cache=%t/ops5 -poseidon-min-uses-split=3 -poseidon-min-ops-split=5 -o %t/ops5.ll 2> %t/ops5.err
 ; RUN: FileCheck --check-prefix=NOSPLIT %s < %t/ops5.err
 ; RUN: diff %t/default.ll %t/ops5.ll
-; REQUIRES: poseidon
 ; Chain splitting (-poseidon-min-uses-split / -poseidon-min-ops-split, isExpansionBottleneck in Utils.cpp):
 ; %t has three users inside the FP subgraph and four operations (%a %b %c %t) upstream of it used by nothing
 ; else, so the one 9-operation subgraph splits at %t into a 4-operation unit and a 5-operation unit exactly

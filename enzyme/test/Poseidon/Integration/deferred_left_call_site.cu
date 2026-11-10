@@ -1,3 +1,4 @@
+// REQUIRES: enzyme, cuda-runtime
 // RUN: rm -rf %t && mkdir -p %t
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch --cuda-device-only -O2 -S -emit-llvm %s -o %t/plain.ll
 //
@@ -14,7 +15,6 @@
 // RUN: awk '/^define .*@(_Z5jvp_bPKdS0_PdS1_|fwddiffe_Z2qfPKdPd)\(/{p=1} p{print} /^}/{p=0}' %t/left.ll | sed -E 's/#[0-9]+/#/g; s/![0-9]+/!/g' > %t/left.fns
 // RUN: diff %t/plain.fns %t/left.fns
 // RUN: FileCheck --check-prefix=FNS %s < %t/left.fns
-// REQUIRES: poseidon, enzyme, cuda-runtime
 
 // A deferred site the solve leaves alone, in a module where another site is
 // rewritten, emits its body and the code Enzyme generated for it as the

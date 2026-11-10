@@ -1,5 +1,4 @@
 ; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -S | FileCheck %s -dump-input=always
-; REQUIRES: poseidon
 
 ; Function Attrs: noinline nounwind readnone uwtable
 define double @tester(double %x, double %y) {

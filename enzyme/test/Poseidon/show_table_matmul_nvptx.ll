@@ -1,6 +1,6 @@
+; REQUIRES: scev-trunc-iv-nowrap
 ; RUN: rm -rf %t
 ; RUN: %opt %S/Inputs/stale_cache/matmul_device.ll %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/raise_tcec -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_dispatch_x1e6.csv -poseidon-comp-cost-budget=0 -poseidon-print -poseidon-show-table -poseidon-cache=%t -S -o /dev/null 2>&1 | FileCheck %s
-; REQUIRES: poseidon, scev-trunc-iv-nowrap
 
 ; Under a cost budget the matrix product's candidates are in the DP table, and
 ; -poseidon-show-table prints each frontier point's matrix step as the solution

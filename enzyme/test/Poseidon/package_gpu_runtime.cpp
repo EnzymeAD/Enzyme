@@ -5,7 +5,6 @@
 // RUN: FileCheck --check-prefix=HIP %s < %t/hip.log
 // RUN: %cmake %cmake_generator -S %S/Inputs/package_options -B %t/cuda.build -DPoseidon_DIR=%poseidon_package_dir -DPOSEIDON_GPU_RUNTIME=CUDA > %t/cuda.log
 // RUN: FileCheck --check-prefix=CUDA --implicit-check-not=enzyme-lto-prelink %s < %t/cuda.log
-// REQUIRES: poseidon
 
 // The action targets of this build tree's package for either GPU runtime,
 // without the runtime's toolchain: the HIP arm reads the package as a build

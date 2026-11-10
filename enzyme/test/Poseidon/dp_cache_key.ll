@@ -10,7 +10,6 @@
 ; RUN: echo '{"functions": {"preprocess_tester": nan}}' > %t/bad/table.json
 ; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/pow_term/out0 -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-comp-cost-budget=-200 -poseidon-cache=%t/bad -S -o /dev/null 2>&1 | FileCheck --check-prefixes=BAD,PICK-B %s
 ; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/pow_term/out0 -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-comp-cost-budget=-200 -poseidon-cache=%t/bad -S -o /dev/null 2>&1 | FileCheck --check-prefixes=HIT,PICK-B %s
-; REQUIRES: poseidon
 
 ; A DP table is cached per site together with the key of everything it was
 ; solved from. The site below is solved under profile A and then, against the

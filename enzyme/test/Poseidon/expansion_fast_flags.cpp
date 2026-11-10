@@ -1,11 +1,10 @@
 // RUN: rm -rf %t && mkdir -p %t
-// RUN: %clangxx $(llvm-config --cxxflags) -fPIC -shared -I%S/../../Poseidon %S/Inputs/expansion_fast_flags/apply_expansion.cpp -o %t/apply_expansion%shlibext
+// RUN: %clang++ $(llvm-config --cxxflags) -fPIC -shared -I%S/../../Poseidon %S/Inputs/expansion_fast_flags/apply_expansion.cpp -o %t/apply_expansion%shlibext
 // RUN: %opt %S/Inputs/expansion_fast_flags/fast.ll %loadPoseidon -load-pass-plugin=%t/apply_expansion%shlibext -passes=apply-expansion -S -o %t/expanded.ll
 // RUN: FileCheck --check-prefix=IR --implicit-check-not='{{ (fast|contract|reassoc|nnan|ninf|nsz|arcp|afn) }}' %s < %t/expanded.ll
-// RUN: %clangxx -O2 -c %t/expanded.ll -o %t/expanded.o
-// RUN: %clangxx -std=c++17 -O2 -ffp-contract=off %S/Inputs/expansion_fast_flags/harness.cpp %t/expanded.o -o %t/run
+// RUN: %clang++ -O2 -c %t/expanded.ll -o %t/expanded.o
+// RUN: %clang++ -std=c++17 -O2 -ffp-contract=off %S/Inputs/expansion_fast_flags/harness.cpp %t/expanded.o -o %t/run
 // RUN: %t/run | FileCheck --check-prefix=OUT %s
-// REQUIRES: poseidon
 
 // The expansion materializer applied to FP64 operations that carry every
 // fast-math flag (Inputs/expansion_fast_flags/fast.ll): the code it emits

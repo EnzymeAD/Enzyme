@@ -1,7 +1,6 @@
 // RUN: rm -rf %t && mkdir -p %t
-// RUN: %clang -x cuda -std=c++20 --cuda-device-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O1 -S -emit-llvm -I%FPProfileInc %clangLoadPoseidon -mllvm -poseidon-profile-use=%S/Inputs/other_sites -DA=1e-6 -DB=1e-9 %s -o /dev/null 2>&1 | FileCheck %s
-// RUN: %clang -x cuda -std=c++20 --cuda-device-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O1 -S -emit-llvm -I%FPProfileInc %clangLoadPoseidon -mllvm -poseidon-profile-use=%S/Inputs/other_sites -DA=1e-12 -DB=1e-3 %s -o /dev/null 2>&1 | FileCheck %s
-// REQUIRES: poseidon
+// RUN: %clang -x cuda -std=c++20 --cuda-device-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O1 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%S/Inputs/other_sites -DA=1e-6 -DB=1e-9 %s -o /dev/null 2>&1 | FileCheck %s
+// RUN: %clang -x cuda -std=c++20 --cuda-device-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O1 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%S/Inputs/other_sites -DA=1e-12 -DB=1e-3 %s -o /dev/null 2>&1 | FileCheck %s
 
 // The profile of a call site does not depend on its accuracy target, also when
 // the caller takes the target as a template argument, as a value or inside a

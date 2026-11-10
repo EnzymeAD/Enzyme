@@ -1,7 +1,6 @@
 // RUN: rm -rf %t && mkdir -p %t
-// RUN: %clangxx -std=c++17 -O2 -ffp-contract=off -I%poseidon_runtime_inc %s -o %t/tcec_scale
+// RUN: %clang++ -std=c++17 -O2 -ffp-contract=off -I%poseidon_runtime_inc %s -o %t/tcec_scale
 // RUN: %t/tcec_scale | FileCheck %s
-// REQUIRES: poseidon
 
 // The TCEC runtime's power-of-two operand scaling (runtime/tcec/tcec_scale.h),
 // run on the host over the whole exponent range.

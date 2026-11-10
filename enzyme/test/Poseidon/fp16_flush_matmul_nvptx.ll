@@ -1,7 +1,7 @@
+; REQUIRES: scev-trunc-iv-nowrap
 ; RUN: rm -rf %t && mkdir -p %t
 ; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_x1e6.csv -poseidon-tau=1e-3 -poseidon-print -S -o /dev/null -poseidon-profile-use=%S/Inputs/raise_tcec -poseidon-cache=%t/normal 2>&1 | FileCheck --check-prefix=NORMAL %s
 ; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_x1e6.csv -poseidon-tau=1e-3 -poseidon-print -S -o /dev/null -poseidon-profile-use=%S/Inputs/fp16_range/matmul_tiny -poseidon-cache=%t/tiny 2>&1 | FileCheck --check-prefix=TINY %s
-; REQUIRES: poseidon, scev-trunc-iv-nowrap
 ; FP16 flush pricing of a matrix-product raise. The product of raise_scalar_tcec_nvptx.ll (same IR) under
 ; two profiles: Inputs/raise_tcec (A in [1, 1.255]) and Inputs/fp16_range/matmul_tiny (A scaled by 1e-9,
 ; below FP16's smallest subnormal 5.96e-8). Rounding A to FP16 flushes it to zero, so the direct FP16 raise
@@ -12,7 +12,6 @@
 ; the RUN lines of Integration/raise_scalar_matmul_f64.cu (Poseidon + Enzyme plugins,
 ; -poseidon-profile-generate, FPProfilerCUDA.cu, libposeidon_profile.a) and run on an RTX 5090.
 
-; REQUIRES: poseidon, scev-trunc-iv-nowrap
 ; Scalar FMA reduction loop raised in-kernel: direct and TCEC classes priced from the wmma_inkernel_rel fixture rows, the most accurate cost-reducing one (TCEC n=3) materialized; IR and profile from Inputs/raise_tcec/tcec_matmul.cu (clang -O2 -ffp-contract=on --cuda-gpu-arch=sm_120, profiled on an RTX 5090).
 
 ; ModuleID = 'tcec_matmul.cu'
@@ -102,19 +101,20 @@ attributes #5 = { convergent nounwind "uniform-work-group-size" }
 !12 = !{!"llvm.loop.mustprogress"}
 !13 = !{!"llvm.loop.unroll.disable"}
 
+; {{[^ -~]+}} stands for the Greek capital delta the log prints.
 ; NORMAL: DOMERR matmul in=f16 acc=f32 p95_relErr=3.137966e-04
-; NORMAL: wmma m16n16k16 f16/f32: Δcost=-380908769 ΔaccCost=9.867296e+00
-; NORMAL-NEXT: tcec n=2 wmma m16n16k16 f16/f32: Δcost=-374564621 ΔaccCost=5.093297e-03
-; NORMAL-NEXT: tcec n=3 wmma m16n16k16 f16/f32: Δcost=-368505296 ΔaccCost=1.896120e-03
+; NORMAL: wmma m16n16k16 f16/f32: {{[^ -~]+}}cost=-380908769 {{[^ -~]+}}accCost=9.867296e+00
+; NORMAL-NEXT: tcec n=2 wmma m16n16k16 f16/f32: {{[^ -~]+}}cost=-374564621 {{[^ -~]+}}accCost=5.093297e-03
+; NORMAL-NEXT: tcec n=3 wmma m16n16k16 f16/f32: {{[^ -~]+}}cost=-368505296 {{[^ -~]+}}accCost=1.896120e-03
 ; NORMAL: Poseidon error-budget: matmul -> wmma m16n16k16 f16/f32 (domain err 3.137966e-04 <= 1.000000e-03 at confidence 9.500000e-01)
 ; NORMAL: Applying solution for matmul[0] -> wmma m16n16k16 f16/f32 (#0)
 
 ; TINY: DOMERR matmul in=f16 acc=f32 p95_relErr=1.000000e+00
 ; TINY: #0 wmma m16n16k16 f16/f32  compCost/MAC=3.385254e+03  rel=6.786400e-02  domainError=INF
 ; TINY: #1 tcec n=2 wmma m16n16k16 f16/f32  compCost/MAC=4.159686e+03  rel=8.338900e-02  domainError=INF
-; TINY: wmma m16n16k16 f16/f32: Δcost=-380908769 ΔaccCost=1.000000e+30
-; TINY-NEXT: tcec n=2 wmma m16n16k16 f16/f32: Δcost=-374564621 ΔaccCost=1.000000e+30
-; TINY-NEXT: tcec n=3 wmma m16n16k16 f16/f32: Δcost=-368505296 ΔaccCost=1.000000e+30
+; TINY: wmma m16n16k16 f16/f32: {{[^ -~]+}}cost=-380908769 {{[^ -~]+}}accCost=1.000000e+30
+; TINY-NEXT: tcec n=2 wmma m16n16k16 f16/f32: {{[^ -~]+}}cost=-374564621 {{[^ -~]+}}accCost=1.000000e+30
+; TINY-NEXT: tcec n=3 wmma m16n16k16 f16/f32: {{[^ -~]+}}cost=-368505296 {{[^ -~]+}}accCost=1.000000e+30
 ; TINY-NOT: error-budget: matmul -> wmma m16n16k16 f16/f32
 ; TINY-NOT: Applying solution for matmul[0]
 ; TINY: error-budget: matmul -> baseline F64 (no rewrite clears 1.000000e-03

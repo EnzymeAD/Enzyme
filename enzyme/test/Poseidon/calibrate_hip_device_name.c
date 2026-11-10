@@ -9,8 +9,6 @@
 // RUN: chmod +x %t/bin/poseidon-microbm-hip
 // RUN: sed 's/^# native_arch=sm_120$/# native_arch=gfx90a/' %S/Inputs/cm_gpu_fixture_x1e6.csv > %t/cm/cm_gfx90a_MI250X.csv
 // RUN: (env PATH=%t/bin XDG_CACHE_HOME=%t/xdg %t/bin/poseidon-calibrate --gpu 0 --check --out %t/cm/ || true) | FileCheck %s
-//
-// REQUIRES: poseidon
 
 // CHECK: cost model  {{.*}}/cm/cm_gfx90a_MI250X.csv
 // CHECK-NEXT: device      MI250X (gfx90a, id 0)

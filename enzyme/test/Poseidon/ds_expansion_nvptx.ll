@@ -1,7 +1,6 @@
 ; RUN: rm -rf %t && %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/ds_expansion -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-enable-multifloat=true -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_x1e6.csv -poseidon-cache=%t -poseidon-comp-cost-budget=-1 -poseidon-print -S > %t.out 2>&1
 ; RUN: FileCheck %s < %t.out
 ; RUN: FileCheck --check-prefix=CLEAN %s < %t.out
-; REQUIRES: poseidon
 ; Double-single (two-component FP32 expansion) materialization of an fmuladd chain on NVPTX; IR and profile from Inputs/ds_expansion/ds_fms.cu (clang -O2 -ffp-contract=on --cuda-gpu-arch=sm_120, profiled on an RTX 5090).
 
 ; ModuleID = 'ds_fms.cu'

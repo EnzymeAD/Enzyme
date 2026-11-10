@@ -1,3 +1,4 @@
+; REQUIRES: scev-trunc-iv-nowrap
 ; RUN: rm -rf %t && mkdir -p %t
 ; RUN: sed 's/ptr noundef %dd) #5/ptr noundef %dd, metadata !"poseidon_tau", double 1.000000e-04) #5/' %s > %t/site.ll
 ; RUN: %opt %t/site.ll %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/tau_one_meaning -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_x1e6.csv -poseidon-cache=%t/c1 -poseidon-explain=%t/x1 -S -o %t/site.out.ll 2> %t/site.err
@@ -13,7 +14,6 @@
 ; RUN: cat %t/x2/*.explain.json | FileCheck --check-prefix=FROMFLAG %s
 ; RUN: sed 's/ptr noundef %dd) #5/ptr noundef %dd, metadata !"poseidon_confidence", double 5.000000e-01) #5/' %s > %t/key.ll
 ; RUN: not %opt %t/key.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/tau_one_meaning -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_x1e6.csv -poseidon-cache=%t/c4 -S -o /dev/null 2>&1 | FileCheck --check-prefix=KEY %s
-; REQUIRES: poseidon, scev-trunc-iv-nowrap
 
 ; One site with a matrix product and elementwise work. The accuracy target is
 ; the same number wherever it is written: given at the site (poseidon_tau) or
@@ -126,9 +126,9 @@ attributes #5 = { convergent nounwind "uniform-work-group-size" }
 ; CHECK: [poseidon] Found 1 AbstractMatmul(s) for preprocess_matmul_body
 ; CHECK-NEXT: Matmul[0]: 16x16x16 a=f64 b=f64 acc=f64 d=f64 origin=ScalarLoopReduction
 ; CHECK: matmul[0] pricing: baseline/MAC=4.988291e+04 executions=8192
-; CHECK-NEXT: #0 wmma m16n16k16 f16/f32 compCost/MAC=3.385254e+03 rel=6.786400e-02
-; CHECK-NEXT: #1 tcec n=2 wmma m16n16k16 f16/f32 compCost/MAC=4.159686e+03 rel=8.338900e-02
-; CHECK-NEXT: #2 tcec n=3 wmma m16n16k16 f16/f32 compCost/MAC=4.899349e+03 rel=9.821700e-02
+; CHECK-NEXT: {{#}}0 wmma m16n16k16 f16/f32 compCost/MAC=3.385254e+03 rel=6.786400e-02
+; CHECK-NEXT: {{#}}1 tcec n=2 wmma m16n16k16 f16/f32 compCost/MAC=4.159686e+03 rel=8.338900e-02
+; CHECK-NEXT: {{#}}2 tcec n=3 wmma m16n16k16 f16/f32 compCost/MAC=4.899349e+03 rel=9.821700e-02
 ; CHECK: Matmul[0] candidates (initial cost=4.988291e+04, executions=8192,
 ; CHECK-NEXT: wmma m16n16k16 f16/f32: {{.*}}cost=-380908769
 ; CHECK-NEXT: tcec n=2 wmma m16n16k16 f16/f32: {{.*}}cost=-374564621

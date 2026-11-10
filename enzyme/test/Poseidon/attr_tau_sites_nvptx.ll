@@ -4,7 +4,6 @@
 ; RUN: %opt %s %loadPoseidon -passes="poseidon,always-inline,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%t/prof -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-enable-multifloat=true -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_x1e6.csv -poseidon-cache=%t/cache -S > %t/out.ll 2> %t/err.txt
 ; RUN: FileCheck --check-prefix=ERR %s < %t/err.txt
 ; RUN: FileCheck --check-prefix=IR %s < %t/out.ll
-; REQUIRES: poseidon
 
 ; Three sites in one module, same body and same profile, differing only in what
 ; the annotation asks for: POSEIDON_OPTIMIZE_TAU(1e-7) takes FP32,

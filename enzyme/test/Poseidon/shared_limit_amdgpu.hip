@@ -1,7 +1,7 @@
+// REQUIRES: enzyme, amdgpu-registered-target, rocm
 // RUN: rm -rf %t && mkdir -p %t
-// RUN: %clang -x hip --offload-arch=%amdgpu_arch --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -S -emit-llvm -I%FPProfileInc %clangLoadPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/cache %s -o %t/gen.ll 2>&1 | FileCheck --check-prefix=GEN %s
+// RUN: %clang -x hip --offload-arch=%amdgpu_arch --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/cache %s -o %t/gen.ll 2>&1 | FileCheck --check-prefix=GEN %s
 // RUN: cat %t/cache/launches_*.json | FileCheck --check-prefix=DESC %s
-// REQUIRES: poseidon, enzyme, amdgpu-registered-target, rocm
 
 // shared_limit_nvptx.cu for HIP: a kernel whose shared buffers, with the
 // shadow profiling keeps next to each, exceed the local data share a gfx942

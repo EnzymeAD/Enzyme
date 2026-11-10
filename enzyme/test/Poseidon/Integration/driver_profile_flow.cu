@@ -2,6 +2,7 @@
 // raise_scalar_matmul_f64.cu profiles and raises: no plugin paths, no runtime
 // sources, no -mllvm.
 //
+// REQUIRES: enzyme, cuda-runtime
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 \
 // RUN:     -poseidon-profile-generate %S/raise_scalar_matmul_f64.cu -o %t.exe
 // RUN: rm -rf %t.profile && POSEIDON_PROFILE_DIR=%t.profile %t.exe \
@@ -15,8 +16,6 @@
 // RUN:     -poseidon-enable-herbie=0 -poseidon-enable-pt=0 -poseidon-raise-wmma \
 // RUN:     %S/raise_scalar_matmul_f64.cu -o %t.opt.exe 2>&1 | FileCheck %s
 // RUN: %t.opt.exe | FileCheck --check-prefix=PRIMAL %s
-//
-// REQUIRES: poseidon, enzyme, cuda-runtime
 
 // PRIMAL: MATMUL-PASS
 

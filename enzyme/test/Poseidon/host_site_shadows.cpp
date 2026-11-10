@@ -1,3 +1,4 @@
+// REQUIRES: enzyme
 // RUN: rm -rf %t && mkdir -p %t
 // RUN: %poseidon_clangxx -O2 -g -poseidon-profile-generate -poseidon-cache=%t/c %s -o %t/gen 2> %t/gen.err
 // RUN: FileCheck --check-prefix=GEN %s < %t/gen.err
@@ -6,7 +7,6 @@
 // RUN: FileCheck --check-prefix=PROF %s < %t/prof/preprocess__Z5scalePKdPdi_poseidon_body.fpprofile
 // RUN: %poseidon_clangxx -O2 -g -poseidon-profile-generate -poseidon-cache=%t/c2 -DUNKNOWN %s -o %t/unknown 2>/dev/null
 // RUN: env POSEIDON_PROFILE_DIR=%t/prof2 not --crash %t/unknown 2>&1 | FileCheck --check-prefix=UNKNOWN %s
-// REQUIRES: poseidon, enzyme
 
 // The shadows of a POSEIDON_OPTIMIZE function on the host, sized from the
 // allocation each pointer argument points into: every heap allocator, a

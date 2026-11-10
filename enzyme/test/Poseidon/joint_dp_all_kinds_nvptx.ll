@@ -1,3 +1,4 @@
+; REQUIRES: scev-trunc-iv-nowrap
 ; RUN: rm -rf %t && mkdir -p %t/prof
 ; RUN: cp %S/Inputs/exact_dp/reprice/preprocess_matmul_body.fpprofile %t/prof/
 ; RUN: cp %S/Inputs/exact_dp/reprice/preprocess_matmul_body.fpprofile %t/prof/preprocess_matmul_body_b.fpprofile
@@ -11,7 +12,6 @@
 ; RUN: cat %t/ex_exact/preprocess_matmul_body_b.explain.json | FileCheck --check-prefix=EXACT-EXPLAIN %s
 ; RUN: env FAKE_HERBIE_DIR=%S/Inputs/exact_dp/reprice_herbie %opt %s %loadPoseidon -passes=poseidon -poseidon-profile-use=%t/prof -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/Inputs/exact_dp/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-pt=true -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_x1e6.csv -poseidon-joint-dp -poseidon-cache=%t/pins -poseidon-explain=%t/ex_pins -poseidon-apply-rewrites='matmul_body:R0_1,matmul_body_b:PT1_0,matmul_body_b:M0_2,matmul_body:M0_0,matmul_body_b:PT0_3' -S -o %t/pins.ll > %t/pins.log 2>&1
 ; RUN: FileCheck --check-prefix=PINS %s < %t/pins.log
-; REQUIRES: poseidon, scev-trunc-iv-nowrap
 
 ; A joint solve over two sites that each hold algebraic, precision and product
 ; units: the body of exact_dp_reprice_nvptx.ll twice, each with its profile.

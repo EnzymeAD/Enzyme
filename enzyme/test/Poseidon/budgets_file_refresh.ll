@@ -6,7 +6,6 @@
 ; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%t/p2 -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-cache=%t/fresh -S -o /dev/null 2>&1 | FileCheck --check-prefix=FIRST %s
 ; RUN: not diff %t/first_budgets.txt %t/fresh/budgets.txt
 ; RUN: diff %t/fresh/budgets.txt %t/c/budgets.txt
-; REQUIRES: poseidon
 
 ; budgets.txt lists the breakpoints of the last DP table solved into the cache.
 ; The second solve, under a profile with twice the executions, has other
