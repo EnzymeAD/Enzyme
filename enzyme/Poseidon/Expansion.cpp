@@ -299,7 +299,6 @@ struct DeferredDSPhiIn {
   PHINode *hiPhi, *loPhi;
   Value *incoming;
   BasicBlock *block;
-  FastMathFlags fmf;
 };
 } // namespace
 static SmallVector<DeferredDSPhiIn, 16> &deferredDSPhiIns() {
@@ -350,8 +349,7 @@ static DSValue getOrSplitOperand(IRBuilder<> &B, Value *op,
         } else {
           // Not materialized yet (a loop back edge); defer to applyExpansion's
           // drain.
-          deferredDSPhiIns().push_back(
-              {hiPhi, loPhi, in, inBB, B.getFastMathFlags()});
+          deferredDSPhiIns().push_back({hiPhi, loPhi, in, inBB});
         }
       }
       return result;
@@ -449,13 +447,11 @@ void applyExpansion(ArrayRef<Instruction *> instsToChange,
   Function *parentF =
       instsToChange.empty() ? nullptr : instsToChange[0]->getFunction();
 
+  // The emitted operations carry no fast-math flags, whatever the replaced
+  // instruction had: an error-free transformation is exact only when every
+  // operation is rounded as written.
   for (Instruction *I : instsToChange) {
     IRBuilder<> B(I);
-    FastMathFlags FMF = I->getFastMathFlags();
-    FMF.setAllowReassoc(false);
-    FMF.setNoSignedZeros(false);
-    B.setFastMathFlags(FMF);
-
     DSValue ds = emitDSForInstruction(B, I, dsMap);
     if (!ds.hi) {
       errs() << "[poseidon] expansion: unsupported instruction, skipping: "
@@ -475,7 +471,6 @@ void applyExpansion(ArrayRef<Instruction *> instsToChange,
   while (!deferredDSPhiIns().empty()) {
     DeferredDSPhiIn d = deferredDSPhiIns().pop_back_val();
     IRBuilder<> predB(d.block->getTerminator());
-    predB.setFastMathFlags(d.fmf);
     DSValue inDS = getOrSplitOperand(predB, d.incoming, dsMap);
     d.hiPhi->addIncoming(inDS.hi, d.block);
     d.loPhi->addIncoming(inDS.lo, d.block);
@@ -1118,7 +1113,6 @@ struct DeferredExpansionPhiIn {
   SmallVector<PHINode *, 4> phis;
   Value *incoming;
   BasicBlock *block;
-  FastMathFlags fmf;
 };
 } // namespace
 
@@ -1181,8 +1175,7 @@ getOrSplitOperandExpansion(IRBuilder<> &B, Value *op, unsigned n,
           for (unsigned c = 0; c < n; ++c)
             phis[c]->addIncoming(inExpansion.x[c], inBB);
         } else {
-          deferredExpansionPhiIns().push_back(
-              {phis, in, inBB, B.getFastMathFlags()});
+          deferredExpansionPhiIns().push_back({phis, in, inBB});
         }
       }
       return result;
@@ -1284,13 +1277,9 @@ void applyExpansion(unsigned n, ArrayRef<Instruction *> instsToChange,
   DenseMap<Value *, ExpansionValue> expansionMap;
   deferredExpansionPhiIns().clear();
 
+  // No fast-math flags on the emitted operations, as in the two-component arm.
   for (Instruction *I : instsToChange) {
     IRBuilder<> B(I);
-    FastMathFlags FMF = I->getFastMathFlags();
-    FMF.setAllowReassoc(false);
-    FMF.setNoSignedZeros(false);
-    B.setFastMathFlags(FMF);
-
     ExpansionValue mf = emitExpansionForInstruction(B, I, n, expansionMap);
     if (mf.x.empty()) {
       errs() << "Expansion(" << n
@@ -1305,7 +1294,6 @@ void applyExpansion(unsigned n, ArrayRef<Instruction *> instsToChange,
   while (!deferredExpansionPhiIns().empty()) {
     DeferredExpansionPhiIn d = deferredExpansionPhiIns().pop_back_val();
     IRBuilder<> predB(d.block->getTerminator());
-    predB.setFastMathFlags(d.fmf);
     ExpansionValue inExpansion =
         getOrSplitOperandExpansion(predB, d.incoming, n, expansionMap);
     for (unsigned c = 0; c < n; ++c)

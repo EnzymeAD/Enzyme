@@ -154,7 +154,9 @@ __global__ void pdr_narrow_flat(T *__restrict__ dst,
 // ACC is a template parameter rather than a runtime `beta == 0` test: written
 // as a ternary the accumulate arm's `C[d]` read is emitted as an unconditional
 // load, so the beta = 0 case pays a full extra read of the FP64 output buffer
-// (measured 1.82x the non-accumulating kernel on ozp at N = 2048).
+// (measured 1.82x the non-accumulating kernel on ozp at N = 2048). The
+// accumulate arm's fused multiply-add is written out so that its rounding does
+// not depend on the compiler's contraction.
 template <bool ACC>
 __global__ void pdr_widen(double *__restrict__ C, const float *__restrict__ src,
                           int rows, int cols, int ldc, int cColMajor,
@@ -173,11 +175,11 @@ __global__ void pdr_widen(double *__restrict__ C, const float *__restrict__ src,
     o = (size_t)j * cols + i;
     d = (size_t)j * ldc + i;
   }
-  double v = alpha * (double)src[o];
+  const double c = (double)src[o];
   if (ACC)
-    C[d] = v + beta * C[d];
+    C[d] = fma(alpha, c, beta * C[d]);
   else
-    C[d] = v;
+    C[d] = alpha * c;
 }
 
 // Packed fast path for the widen: when C's leading dimension equals its packed
@@ -189,11 +191,11 @@ __global__ void pdr_widen_flat(double *__restrict__ C,
   size_t i = blockIdx.x * (size_t)blockDim.x + threadIdx.x;
   if (i >= n)
     return;
-  double v = alpha * (double)src[i];
+  const double c = (double)src[i];
   if (ACC)
-    C[i] = v + beta * C[i];
+    C[i] = fma(alpha, c, beta * C[i]);
   else
-    C[i] = v;
+    C[i] = alpha * c;
 }
 
 struct PdrFormat {

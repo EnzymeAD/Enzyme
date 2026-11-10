@@ -486,10 +486,10 @@ static const TierTriple kCanonicalTriples[] = {
      PrecisionChangeType::BF16},
 };
 
-static bool precAllowed(PrecisionChangeType t, bool gpuMode,
+static bool precAllowed(PrecisionChangeType t, bool gpuMode, bool expansionSafe,
                         const std::unordered_set<std::string> &hwScalar) {
   if (unsigned nComp = expansionComponents(t)) {
-    if (!gpuMode)
+    if (!gpuMode || !expansionSafe)
       return false;
     if (!flags::EnableMultifloat)
       return false;
@@ -503,18 +503,51 @@ static bool precAllowed(PrecisionChangeType t, bool gpuMode,
   return true;
 }
 
-static bool tierPairAllowed(TierPair tp, bool gpuMode,
+static bool tierPairAllowed(TierPair tp, bool gpuMode, bool expansionSafe,
                             const std::unordered_set<std::string> &hwScalar) {
-  return precAllowed(tp.hi, gpuMode, hwScalar) &&
-         precAllowed(tp.lo, gpuMode, hwScalar);
+  return precAllowed(tp.hi, gpuMode, expansionSafe, hwScalar) &&
+         precAllowed(tp.lo, gpuMode, expansionSafe, hwScalar);
 }
 
-static bool tierTripleAllowed(TierTriple tr, bool gpuMode,
+static bool tierTripleAllowed(TierTriple tr, bool gpuMode, bool expansionSafe,
                               const std::unordered_set<std::string> &hwScalar) {
-  return precAllowed(tr.hi, gpuMode, hwScalar) &&
-         precAllowed(tr.mid, gpuMode, hwScalar) &&
-         precAllowed(tr.lo, gpuMode, hwScalar);
+  return precAllowed(tr.hi, gpuMode, expansionSafe, hwScalar) &&
+         precAllowed(tr.mid, gpuMode, expansionSafe, hwScalar) &&
+         precAllowed(tr.lo, gpuMode, expansionSafe, hwScalar);
 }
+
+#if LLVM_VERSION_MAJOR < 24
+// Before LLVM 24 fast contraction and fast-math attributes also reach
+// operations without flags, so expansion code is not rounded as written there.
+// Returns why for F, or "".
+static std::string fastFPReason(const Function &F) {
+  SmallVector<StringRef, 4> attrs;
+#if LLVM_VERSION_MAJOR < 22
+  attrs.append({"unsafe-fp-math", "approx-func-fp-math"}); // read up to LLVM 21
+#endif
+#if LLVM_VERSION_MAJOR < 23
+  attrs.append({"no-nans-fp-math", "no-infs-fp-math"}); // read up to LLVM 22
+#endif
+  for (StringRef attr : attrs)
+    if (F.getFnAttribute(attr).getValueAsString() == "true")
+      return ("the function carries \"" + attr +
+              "\"=\"true\", which this LLVM applies to every floating-point "
+              "operation of the function, with fast-math flags or without")
+          .str();
+  for (const Instruction &I : instructions(F))
+    if (isa<FPMathOperator>(I) && I.getFastMathFlags().allowContract()) {
+      const auto *CI = dyn_cast<CallInst>(&I);
+      const Function *callee = CI ? CI->getCalledFunction() : nullptr;
+      return ("its floating-point operations carry 'contract' (the first " +
+              (callee ? callee->getName() : StringRef(I.getOpcodeName())) +
+              "), as under -ffp-contract=fast or -ffast-math, with which this "
+              "LLVM's code generator also fuses multiply-add pairs that carry "
+              "no flag")
+          .str();
+    }
+  return "";
+}
+#endif
 
 // The outputs' expressions with every subterm used more than once bound by
 // let*, so Herbie reads the subgraph as the DAG it is rather than one tree per
@@ -1280,6 +1313,28 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
   auto &COs = st.COs;
   auto &CSs = st.CSs;
 
+  bool expansionSafe = true;
+#if LLVM_VERSION_MAJOR < 24
+  if (flags::EnablePT && flags::EnableMultifloat && isGPUMode(F) &&
+      !subgraphs.empty()) {
+    const std::string reason = fastFPReason(F);
+    expansionSafe = reason.empty();
+    if (!expansionSafe) {
+      llvm::errs() << "[poseidon] WARNING: " << F.getName()
+                   << ": floating-point expansion candidates NOT PROPOSED -- "
+                   << reason
+                   << ". An expansion is exact only if each of its operations "
+                      "is rounded as written; it needs -ffp-contract=on or "
+                      "-ffp-contract=off, without -ffast-math.\n";
+      if (flags::StrictMode)
+        report_fatal_error("Poseidon strict mode: site '" + F.getName() +
+                           "': " + reason +
+                           "; floating-point expansions need -ffp-contract=on "
+                           "or -ffp-contract=off");
+    }
+  }
+#endif
+
   int subgraphCounter = 0;
 
   for (auto &subgraph : subgraphs) {
@@ -1737,7 +1792,7 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
       };
 
       for (TierPair tp : kCanonicalPairs) {
-        if (!tierPairAllowed(tp, gpuMode, hwScalar))
+        if (!tierPairAllowed(tp, gpuMode, expansionSafe, hwScalar))
           continue;
         sweepTwoTier(tp, sortedAllOps, "All");
         if (!sortedFuncs.empty())
@@ -1746,7 +1801,7 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
 
       if (flags::EnableThreeTier) {
         for (TierTriple tr : kCanonicalTriples) {
-          if (!tierTripleAllowed(tr, gpuMode, hwScalar))
+          if (!tierTripleAllowed(tr, gpuMode, expansionSafe, hwScalar))
             continue;
           sweepThreeTier(tr, sortedAllOps, "All");
         }

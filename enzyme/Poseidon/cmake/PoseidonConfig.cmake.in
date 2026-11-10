@@ -85,6 +85,12 @@ if(NOT TARGET Poseidon::Plain)
   target_link_libraries(Poseidon::ProfileGenerate
                         INTERFACE Poseidon::poseidon_profile_host)
   if(POSEIDON_GPU_RUNTIME STREQUAL "HIP")
+    # Every HIP device compile is an LTO pre-link compile, in which Enzyme
+    # leaves a derivative request to the post-link run unless told otherwise,
+    # and the device link loads no plugin; poseidon-clang passes the same.
+    target_compile_options(
+      Poseidon::ProfileGenerate
+      INTERFACE "SHELL:${POSEIDON_MLLVM} @POSEIDON_ENZYME_HIP_OPTION@")
     target_link_libraries(Poseidon::ProfileGenerate
                           INTERFACE Poseidon::poseidon_profile_hip)
     # Ozaki-II and the direct products; TCEC has no HIP build.

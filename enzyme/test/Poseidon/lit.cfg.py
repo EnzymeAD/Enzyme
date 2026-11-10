@@ -34,3 +34,7 @@ config.available_features.add('poseidon')
 # and the scalar-loop matmul recognizer finds nothing.
 if int(config.llvm_ver) >= 21:
     config.available_features.add('scev-trunc-iv-nowrap')
+# Up to LLVM 23 the code generator of a -ffp-contract=fast unit fuses
+# floating-point operations that carry no 'contract' flag as well.
+if int(config.llvm_ver) < 24:
+    config.available_features.add('global-fp-contract')
