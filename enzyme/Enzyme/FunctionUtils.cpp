@@ -4176,6 +4176,162 @@ Function *PreProcessCache::preprocessForClone(Function *F,
       FAM.invalidate(*NewF, PA);
     }
 
+    // If local struct allocas aggregate multiple pointers (e.g. C++ expression
+    // templates, evaluators, or closures) and only escape into inlineable
+    // helper calls, SROA cannot split their pointer fields unless those wrapper
+    // calls are inlined. Leaving mixed-activity pointers in a single alloca
+    // forces them to share one shadow struct under static activity analysis.
+    {
+      std::map<const Function *, RecurType> RecurResults;
+      auto canInlineWrapperCall = [&](CallBase *CB) -> bool {
+        Function *Callee = CB->getCalledFunction();
+        if (!Callee || Callee->empty() || Callee->isIntrinsic())
+          return false;
+        if (CB->isNoInline() || Callee->hasFnAttribute(Attribute::NoInline) ||
+            Callee->hasFnAttribute(Attribute::ReturnsTwice) ||
+            Callee->hasFnAttribute("enzyme_inactive") ||
+            Callee->hasFnAttribute("enzyme_math") ||
+            hasCustomRuleMetadata(Callee) || hasCustomRuleMetadata(CB))
+          return false;
+        StringRef Name = Callee->getName();
+        if (Name.contains("__enzyme") || startsWith(Name, "enzyme_") ||
+            startsWith(Name, "_ZN3std2io5stdio6_print") ||
+            startsWith(Name, "_ZN4core3fmt") || startsWith(Name, "julia.") ||
+            startsWith(Name, "ijl_") || startsWith(Name, "jl_"))
+          return false;
+        if (IsFunctionRecursive(Callee, RecurResults))
+          return false;
+        return true;
+      };
+
+      for (size_t iter = 0; iter < 8; ++iter) {
+        SmallPtrSet<CallBase *, 4> CallsToInlineSet;
+        SmallVector<CallBase *, 4> CallsToInline;
+        for (BasicBlock &BB : *NewF) {
+          for (Instruction &I : BB) {
+            auto *AI = dyn_cast<AllocaInst>(&I);
+            if (!AI)
+              continue;
+            SmallPtrSet<Value *, 8> Visited;
+            SmallVector<Value *, 8> Worklist;
+            Visited.insert(AI);
+            Worklist.push_back(AI);
+            SmallPtrSet<Value *, 4> StoredPtrBases;
+            bool EscapesElsewhere = false;
+            SmallVector<CallBase *, 2> AICalls;
+
+            while (!Worklist.empty() && !EscapesElsewhere) {
+              Value *V = Worklist.pop_back_val();
+              for (Use &U : V->uses()) {
+                auto *Usr = dyn_cast<Instruction>(U.getUser());
+                if (!Usr) {
+                  EscapesElsewhere = true;
+                  break;
+                }
+                if (isa<GetElementPtrInst>(Usr) || isa<BitCastInst>(Usr) ||
+                    isa<AddrSpaceCastInst>(Usr)) {
+                  if (Visited.insert(Usr).second)
+                    Worklist.push_back(Usr);
+                  continue;
+                }
+                if (auto *LI = dyn_cast<LoadInst>(Usr)) {
+                  if (LI->isVolatile()) {
+                    EscapesElsewhere = true;
+                    break;
+                  }
+                  continue;
+                }
+                if (auto *SI = dyn_cast<StoreInst>(Usr)) {
+                  if (SI->isVolatile()) {
+                    EscapesElsewhere = true;
+                    break;
+                  }
+                  if (U.getOperandNo() == StoreInst::getPointerOperandIndex()) {
+                    Value *Val = SI->getValueOperand();
+                    if (Val->getType()->isPointerTy()) {
+                      Value *Base = getBaseObject(Val);
+                      if (!isa<AllocaInst>(Base) && !isa<Constant>(Base))
+                        StoredPtrBases.insert(Base);
+                    }
+                  }
+                  if (U.getOperandNo() == 0) {
+                    if (auto *DestAI = dyn_cast<AllocaInst>(
+                            getBaseObject(SI->getPointerOperand()))) {
+                      if (Visited.insert(DestAI).second)
+                        Worklist.push_back(DestAI);
+                    } else {
+                      EscapesElsewhere = true;
+                      break;
+                    }
+                  }
+                  continue;
+                }
+                if (auto *II = dyn_cast<IntrinsicInst>(Usr)) {
+                  if (II->isLifetimeStartOrEnd() || isa<DbgInfoIntrinsic>(II) ||
+                      isa<MemSetInst>(II))
+                    continue;
+                  EscapesElsewhere = true;
+                  break;
+                }
+                if (auto *CB = dyn_cast<CallBase>(Usr)) {
+                  if (CB->isCallee(&U) || U.getOperandNo() >= CB->arg_size() ||
+                      !canInlineWrapperCall(CB)) {
+                    EscapesElsewhere = true;
+                    break;
+                  }
+                  AICalls.push_back(CB);
+                  continue;
+                }
+                EscapesElsewhere = true;
+                break;
+              }
+            }
+
+            if (!EscapesElsewhere && StoredPtrBases.size() >= 2 &&
+                !AICalls.empty()) {
+              for (CallBase *CB : AICalls) {
+                if (CallsToInlineSet.insert(CB).second)
+                  CallsToInline.push_back(CB);
+              }
+            }
+          }
+        }
+
+        if (CallsToInline.empty())
+          break;
+
+        bool InlinedAny = false;
+        for (CallBase *CB : CallsToInline) {
+          InlineFunctionInfo IFI;
+          if (InlineFunction(*CB, IFI).isSuccess())
+            InlinedAny = true;
+        }
+        if (!InlinedAny)
+          break;
+
+        setFullWillReturn(NewF);
+        FAM.invalidate(*NewF, PreservedAnalyses::none());
+        {
+          auto PA = LowerInvokePass().run(*NewF, FAM);
+          FAM.invalidate(*NewF, PA);
+        }
+        {
+          auto PA = UnreachableBlockElimPass().run(*NewF, FAM);
+          FAM.invalidate(*NewF, PA);
+        }
+        {
+#if LLVM_VERSION_MAJOR >= 16 && !defined(FLANG)
+          auto PA = SROAPass(llvm::SROAOptions::ModifyCFG).run(*NewF, FAM);
+#elif !defined(FLANG)
+          auto PA = SROAPass().run(*NewF, FAM);
+#else
+          auto PA = SROA().run(*NewF, FAM);
+#endif
+          FAM.invalidate(*NewF, PA);
+        }
+      }
+    }
+
     if (mode != DerivativeMode::ForwardMode)
       ReplaceReallocs(NewF);
 
