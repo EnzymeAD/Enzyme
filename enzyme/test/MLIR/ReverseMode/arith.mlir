@@ -229,21 +229,21 @@ func.func @dmaximumf(%a: f64, %b: f64, %dr: tensor<2xf64>) -> (tensor<2xf64>, te
 // CHECK-NEXT:    %3 = math.copysign %cst_0, %arg1 fastmath<fast> : f64
 // CHECK-NEXT:    %4 = arith.cmpf oeq, %3, %cst_0 fastmath<fast> : f64
 // CHECK-NEXT:    %5 = arith.andi %2, %4 : i1
-// CHECK-NEXT:    %6 = "enzyme.broadcast"(%cst_1) <{shape = array<i64: 2>}> : (f64) -> tensor<2xf64>
-// CHECK-NEXT:    %7 = "enzyme.broadcast"(%5) <{shape = array<i64: 2>}> : (i1) -> tensor<2xi1>
-// CHECK-NEXT:    %8 = arith.select %7, %6, %arg2 : tensor<2xi1>, tensor<2xf64>
-// CHECK-NEXT:    %9 = "enzyme.broadcast"(%cst_1) <{shape = array<i64: 2>}> : (f64) -> tensor<2xf64>
-// CHECK-NEXT:    %10 = "enzyme.broadcast"(%0) <{shape = array<i64: 2>}> : (i1) -> tensor<2xi1>
-// CHECK-NEXT:    %11 = arith.select %10, %9, %8 : tensor<2xi1>, tensor<2xf64>
+// CHECK-NEXT:    %6 = "enzyme.broadcast"(%5) <{shape = array<i64: 2>}> : (i1) -> tensor<2xi1>
+// CHECK-NEXT:    %7 = "enzyme.broadcast"(%cst_1) <{shape = array<i64: 2>}> : (f64) -> tensor<2xf64>
+// CHECK-NEXT:    %8 = arith.select %6, %7, %arg2 : tensor<2xi1>, tensor<2xf64>
+// CHECK-NEXT:    %9 = "enzyme.broadcast"(%0) <{shape = array<i64: 2>}> : (i1) -> tensor<2xi1>
+// CHECK-NEXT:    %10 = "enzyme.broadcast"(%cst_1) <{shape = array<i64: 2>}> : (f64) -> tensor<2xf64>
+// CHECK-NEXT:    %11 = arith.select %9, %10, %8 : tensor<2xi1>, tensor<2xf64>
 // CHECK-NEXT:    %12 = arith.cmpf olt, %arg0, %arg1 fastmath<fast> : f64
 // CHECK-NEXT:    %13 = math.copysign %cst_0, %arg0 fastmath<fast> : f64
 // CHECK-NEXT:    %14 = arith.cmpf oeq, %13, %cst fastmath<fast> : f64
 // CHECK-NEXT:    %15 = math.copysign %cst_0, %arg1 fastmath<fast> : f64
 // CHECK-NEXT:    %16 = arith.cmpf oeq, %15, %cst_0 fastmath<fast> : f64
 // CHECK-NEXT:    %17 = arith.andi %14, %16 : i1
-// CHECK-NEXT:    %18 = "enzyme.broadcast"(%cst_1) <{shape = array<i64: 2>}> : (f64) -> tensor<2xf64>
-// CHECK-NEXT:    %19 = "enzyme.broadcast"(%17) <{shape = array<i64: 2>}> : (i1) -> tensor<2xi1>
-// CHECK-NEXT:    %20 = arith.select %19, %arg2, %18 : tensor<2xi1>, tensor<2xf64>
+// CHECK-NEXT:    %18 = "enzyme.broadcast"(%17) <{shape = array<i64: 2>}> : (i1) -> tensor<2xi1>
+// CHECK-NEXT:    %19 = "enzyme.broadcast"(%cst_1) <{shape = array<i64: 2>}> : (f64) -> tensor<2xf64>
+// CHECK-NEXT:    %20 = arith.select %18, %arg2, %19 : tensor<2xi1>, tensor<2xf64>
 // CHECK-NEXT:    %21 = "enzyme.broadcast"(%12) <{shape = array<i64: 2>}> : (i1) -> tensor<2xi1>
 // CHECK-NEXT:    %22 = arith.select %21, %arg2, %20 : tensor<2xi1>, tensor<2xf64>
 // CHECK-NEXT:    return %11, %22 : tensor<2xf64>, tensor<2xf64>
@@ -276,9 +276,9 @@ func.func @dminimumf(%a: f64, %b: f64, %dr: tensor<2xf64>) -> (tensor<2xf64>, te
 // CHECK-NEXT:    %3 = math.copysign %cst_1, %arg1 fastmath<fast> : f64
 // CHECK-NEXT:    %4 = arith.cmpf oeq, %3, %cst_1 fastmath<fast> : f64
 // CHECK-NEXT:    %5 = arith.andi %2, %4 : i1
-// CHECK-NEXT:    %6 = "enzyme.broadcast"(%cst) <{shape = array<i64: 2>}> : (f64) -> tensor<2xf64>
-// CHECK-NEXT:    %7 = "enzyme.broadcast"(%5) <{shape = array<i64: 2>}> : (i1) -> tensor<2xi1>
-// CHECK-NEXT:    %8 = arith.select %7, %arg2, %6 : tensor<2xi1>, tensor<2xf64>
+// CHECK-NEXT:    %6 = "enzyme.broadcast"(%5) <{shape = array<i64: 2>}> : (i1) -> tensor<2xi1>
+// CHECK-NEXT:    %7 = "enzyme.broadcast"(%cst) <{shape = array<i64: 2>}> : (f64) -> tensor<2xf64>
+// CHECK-NEXT:    %8 = arith.select %6, %arg2, %7 : tensor<2xi1>, tensor<2xf64>
 // CHECK-NEXT:    %9 = "enzyme.broadcast"(%0) <{shape = array<i64: 2>}> : (i1) -> tensor<2xi1>
 // CHECK-NEXT:    %10 = arith.select %9, %arg2, %8 : tensor<2xi1>, tensor<2xf64>
 // CHECK-NEXT:    %11 = arith.cmpf olt, %arg0, %arg1 fastmath<fast> : f64
@@ -287,12 +287,12 @@ func.func @dminimumf(%a: f64, %b: f64, %dr: tensor<2xf64>) -> (tensor<2xf64>, te
 // CHECK-NEXT:    %14 = math.copysign %cst_1, %arg1 fastmath<fast> : f64
 // CHECK-NEXT:    %15 = arith.cmpf oeq, %14, %cst_1 fastmath<fast> : f64
 // CHECK-NEXT:    %16 = arith.andi %13, %15 : i1
-// CHECK-NEXT:    %17 = "enzyme.broadcast"(%cst) <{shape = array<i64: 2>}> : (f64) -> tensor<2xf64>
-// CHECK-NEXT:    %18 = "enzyme.broadcast"(%16) <{shape = array<i64: 2>}> : (i1) -> tensor<2xi1>
-// CHECK-NEXT:    %19 = arith.select %18, %17, %arg2 : tensor<2xi1>, tensor<2xf64>
-// CHECK-NEXT:    %20 = "enzyme.broadcast"(%cst) <{shape = array<i64: 2>}> : (f64) -> tensor<2xf64>
-// CHECK-NEXT:    %21 = "enzyme.broadcast"(%11) <{shape = array<i64: 2>}> : (i1) -> tensor<2xi1>
-// CHECK-NEXT:    %22 = arith.select %21, %20, %19 : tensor<2xi1>, tensor<2xf64>
+// CHECK-NEXT:    %17 = "enzyme.broadcast"(%16) <{shape = array<i64: 2>}> : (i1) -> tensor<2xi1>
+// CHECK-NEXT:    %18 = "enzyme.broadcast"(%cst) <{shape = array<i64: 2>}> : (f64) -> tensor<2xf64>
+// CHECK-NEXT:    %19 = arith.select %17, %18, %arg2 : tensor<2xi1>, tensor<2xf64>
+// CHECK-NEXT:    %20 = "enzyme.broadcast"(%11) <{shape = array<i64: 2>}> : (i1) -> tensor<2xi1>
+// CHECK-NEXT:    %21 = "enzyme.broadcast"(%cst) <{shape = array<i64: 2>}> : (f64) -> tensor<2xf64>
+// CHECK-NEXT:    %22 = arith.select %20, %21, %19 : tensor<2xi1>, tensor<2xf64>
 // CHECK-NEXT:    return %10, %22 : tensor<2xf64>, tensor<2xf64>
 // CHECK-NEXT:  }
 
@@ -316,12 +316,12 @@ func.func @dmaxnumf(%a: f64, %b: f64, %dr: tensor<2xf64>) -> (tensor<2xf64>, ten
 // CHECK:  func.func private @diffe2maxnumf(%arg0: f64, %arg1: f64, %arg2: tensor<2xf64>) -> (tensor<2xf64>, tensor<2xf64>) {
 // CHECK-NEXT:    %cst = arith.constant 0.000000e+00 : f64
 // CHECK-NEXT:    %0 = arith.cmpf olt, %arg0, %arg1 fastmath<fast> : f64
-// CHECK-NEXT:    %1 = "enzyme.broadcast"(%cst) <{shape = array<i64: 2>}> : (f64) -> tensor<2xf64>
-// CHECK-NEXT:    %2 = "enzyme.broadcast"(%0) <{shape = array<i64: 2>}> : (i1) -> tensor<2xi1>
-// CHECK-NEXT:    %3 = arith.select %2, %1, %arg2 : tensor<2xi1>, tensor<2xf64>
+// CHECK-NEXT:    %1 = "enzyme.broadcast"(%0) <{shape = array<i64: 2>}> : (i1) -> tensor<2xi1>
+// CHECK-NEXT:    %2 = "enzyme.broadcast"(%cst) <{shape = array<i64: 2>}> : (f64) -> tensor<2xf64>
+// CHECK-NEXT:    %3 = arith.select %1, %2, %arg2 : tensor<2xi1>, tensor<2xf64>
 // CHECK-NEXT:    %4 = arith.cmpf olt, %arg0, %arg1 fastmath<fast> : f64
-// CHECK-NEXT:    %5 = "enzyme.broadcast"(%cst) <{shape = array<i64: 2>}> : (f64) -> tensor<2xf64>
-// CHECK-NEXT:    %6 = "enzyme.broadcast"(%4) <{shape = array<i64: 2>}> : (i1) -> tensor<2xi1>
-// CHECK-NEXT:    %7 = arith.select %6, %arg2, %5 : tensor<2xi1>, tensor<2xf64>
+// CHECK-NEXT:    %5 = "enzyme.broadcast"(%4) <{shape = array<i64: 2>}> : (i1) -> tensor<2xi1>
+// CHECK-NEXT:    %6 = "enzyme.broadcast"(%cst) <{shape = array<i64: 2>}> : (f64) -> tensor<2xf64>
+// CHECK-NEXT:    %7 = arith.select %5, %arg2, %6 : tensor<2xi1>, tensor<2xf64>
 // CHECK-NEXT:    return %3, %7 : tensor<2xf64>, tensor<2xf64>
 // CHECK-NEXT:  }

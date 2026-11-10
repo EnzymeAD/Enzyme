@@ -1102,6 +1102,23 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
            << "for(unsigned int idx=0, W=gutils->getWidth(); idx<W; idx++) {\n";
       }
 
+      if (anyVector && intrinsic == MLIRDerivatives) {
+        // The op mixes batched and primal-shaped operands: bring the
+        // primal-shaped ones up to the vector width. Non-value operands
+        // (attributes, types, enums) pass through this helper unchanged.
+        // Each broadcast is emitted as its own statement, rather than inline
+        // in the argument list of the op being created, as the evaluation
+        // order of function arguments is unspecified in C++ and would
+        // otherwise make the order of the created ops compiler dependent.
+        for (size_t i = 0; i < vectorValued.size(); i++) {
+          if (vectorValued[i])
+            continue;
+          os << curIndent << INDENT << "auto " << argPattern << "_" << i
+             << "_bc = gutils->broadcastToWidth(" << builder
+             << ", op.getLoc(), " << argPattern << "_" << i << ");\n";
+        }
+      }
+
       os << curIndent << INDENT;
       if (anyVector && intrinsic != MLIRDerivatives)
         os << INDENT;
@@ -1142,11 +1159,7 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
              << " : gutils->extractMeta(" << builder << ", " << argPattern
              << "_" << i << ", idx)";
         else if (!vectorValued[i] && anyVector && intrinsic == MLIRDerivatives)
-          // The op mixes batched and primal-shaped operands: bring the
-          // primal-shaped ones up to the vector width. Non-value operands
-          // (attributes, types, enums) pass through this helper unchanged.
-          os << "gutils->broadcastToWidth(" << builder << ", op.getLoc(), "
-             << argPattern << "_" << i << ")";
+          os << argPattern << "_" << i << "_bc";
         else
           os << argPattern << "_" << i << "";
       }
