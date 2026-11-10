@@ -238,6 +238,8 @@ static void registerDeviceMath(Sema &S, FunctionDecl *FD) {
                            &AST.Idents.get(OS.str()), FT, nullptr, SC_Static);
   V->addAttr(UsedAttr::CreateImplicit(AST));
   V->addAttr(CUDADeviceAttr::CreateImplicit(AST));
+  // No debug info: its entry would outlive the global in the compile unit.
+  V->addAttr(NoDebugAttr::CreateImplicit(AST));
   V->setInit(Addr);
   S.MarkVariableReferenced(Loc, V);
   S.getASTConsumer().HandleTopLevelDecl(DeclGroupRef(V));
