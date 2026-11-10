@@ -38,9 +38,9 @@ contains
     real :: s
     integer :: i
     ! TODO: Use the `sum` intrinsic. Requires accounting for `_FortranASumReal4`
-    !       for this to work at -O0
+    !       in reverse mode for this to work at -O0
     ! TODO: Use an array assignment. Requires accounting for `_FortranAAssign`
-    !       for this to work at -O0
+    !       in reverse mode for this to work at -O0
     ! y(:) = x / sum(x)
     s = 0.0
     do i = 1, n
