@@ -569,7 +569,7 @@ void RemoveRedundantIVs(
     }
 
     IRBuilder<> B(PN);
-    auto Tmp = B.CreatePHI(PN->getType(), 0);
+    auto Tmp = createPlaceholderPHI(B, PN->getType(), 0);
     for (auto Pred : predecessors(Header))
       Tmp->addIncoming(UndefValue::get(Tmp->getType()), Pred);
     replacer(PN, Tmp);
