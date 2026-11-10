@@ -125,7 +125,12 @@ cl::opt<bool> TauCheapest(
              "accuracy cost clears tau instead of the most accurate one"));
 cl::opt<bool> EarlyPrune(
     "poseidon-early-prune", cl::init(true), cl::Hidden,
-    cl::desc("Prune dominated candidates in expression transformation phases"));
+    cl::desc("Drop dominated partial solutions after every solver unit. Off: "
+             "solve exactly, dropping a partial solution only for one that is "
+             "cheaper and no less accurate and that every later unit treats "
+             "alike, so the frontier is that of all footprint-compatible "
+             "strategies, at the price of pricing each precision change "
+             "against every set of rewritten outputs on its subgraph"));
 cl::opt<bool> JointDP(
     "poseidon-joint-dp", cl::init(false), cl::Hidden,
     cl::desc("Solve all annotated sites in the module under one shared cost "
