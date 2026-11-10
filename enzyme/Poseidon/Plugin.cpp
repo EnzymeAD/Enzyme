@@ -10,7 +10,7 @@
 #include "Driver.h"
 
 #include "llvm/Passes/PassBuilder.h"
-#if LLVM_VERSION_MAJOR >= 22
+#if LLVM_VERSION_MAJOR >= 22 && !defined(ENZYME_LLVM22_PRERELEASE)
 #include "llvm/Plugins/PassPlugin.h"
 #else
 #include "llvm/Passes/PassPlugin.h"
