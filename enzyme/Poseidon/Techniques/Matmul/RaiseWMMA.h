@@ -40,7 +40,7 @@ void collectScalarLoopReductionTrips(
     llvm::SmallVectorImpl<std::pair<size_t, unsigned>> &out);
 
 void materializeScalarLoopRaise(const AbstractMatmul &m,
-                                const CandidateMatmul::Option &opt);
+                                const MatmulUnit::Option &opt);
 
 } // namespace poseidon
 #endif // POSEIDON_RAISE_WMMA_H

@@ -281,7 +281,7 @@ void findHostGemmLoopNests(const Options &O, llvm::Function &F,
                            const std::unordered_map<size_t, ProfileInfo> &prof,
                            llvm::SmallVectorImpl<AbstractMatmul> &out);
 
-class CandidateMatmul : public SiteUnit {
+class MatmulUnit : public SiteUnit {
 public:
   struct Option {
     unsigned tileM = ~0u, tileN = ~0u, tileK = ~0u;
@@ -303,7 +303,7 @@ public:
     double domainError = 0.0;
   };
 
-  CandidateMatmul() : SiteUnit(UnitKind::M) {}
+  MatmulUnit() : SiteUnit(UnitKind::M) {}
 
   AbstractMatmul *matmul = nullptr;
   double initialCompCost = -1.0; // per-MAC cost of the baseline (naive) matmul
@@ -353,7 +353,7 @@ public:
   std::string selectionText(size_t i) const override;
 };
 
-std::string matmulOptionLabel(const CandidateMatmul::Option &opt);
+std::string matmulOptionLabel(const MatmulUnit::Option &opt);
 
 // Static shared-memory preconditions for the in-kernel raises: a kernel's
 // static shared allocation is capped (Target::maxStaticSharedBytes) and the
@@ -369,7 +369,7 @@ uint64_t enclosingKernelSharedBytes(llvm::Function &F);
 // Bytes of new static shared scratch an in-kernel raise of `opt` allocates
 // (0 for a library call); `breakdown` receives the term list for the refusal.
 uint64_t inKernelRaiseSharedBytes(llvm::Module &M,
-                                  const CandidateMatmul::Option &opt,
+                                  const MatmulUnit::Option &opt,
                                   std::string *breakdown);
 
 // `confidence`: the fraction of the sampled inputs each candidate's
@@ -380,7 +380,7 @@ void generateMatmulCandidates(
     Session &S, llvm::ArrayRef<AbstractMatmul> matmuls,
     const std::unordered_map<size_t, ProfileInfo> &scalarProfile,
     double confidence, unsigned sampleLogBits,
-    llvm::SmallVectorImpl<CandidateMatmul> &out);
+    llvm::SmallVectorImpl<MatmulUnit> &out);
 
 } // namespace poseidon
 #endif // POSEIDON_MATMUL_H

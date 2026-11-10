@@ -902,22 +902,22 @@ emitSharedElements(ArrayRef<std::shared_ptr<FPNode>> elements,
   return out;
 }
 
-void CandidateOutput::apply(
+void RewriteUnit::apply(
     size_t candidateIndex,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, Value *> &symbolToValueMap, bool print) {
   if (candidateIndex >= candidates.size()) {
     if (print)
-      llvm::errs() << "CandidateOutput::apply: candidateIndex "
-                   << candidateIndex << " out of range (size "
-                   << candidates.size() << "), skipping\n";
+      llvm::errs() << "RewriteUnit::apply: candidateIndex " << candidateIndex
+                   << " out of range (size " << candidates.size()
+                   << "), skipping\n";
     return;
   }
   for (Value *root : roots) {
     auto *oldInst = dyn_cast<Instruction>(root);
     if (!oldInst || !oldInst->getParent()) {
       if (print)
-        llvm::errs() << "CandidateOutput::apply: oldOutput "
+        llvm::errs() << "RewriteUnit::apply: oldOutput "
                      << "is not in a basic block (already erased?), skipping\n";
       return;
     }
@@ -984,7 +984,7 @@ void CandidateOutput::apply(
   subgraph->outputs_rewritten += roots.size();
 }
 
-bool CandidateOutput::sharesRoot(const CandidateOutput &other) const {
+bool RewriteUnit::sharesRoot(const RewriteUnit &other) const {
   for (Value *root : roots)
     if (llvm::is_contained(other.roots, root))
       return true;
@@ -992,8 +992,8 @@ bool CandidateOutput::sharesRoot(const CandidateOutput &other) const {
 }
 
 // Lower is better
-InstructionCost CandidateOutput::getCompCostDelta(CostModelState &CM,
-                                                  size_t candidateIndex) {
+InstructionCost RewriteUnit::getCompCostDelta(CostModelState &CM,
+                                              size_t candidateIndex) {
   double erasableCost = 0.0;
 
   for (auto *I : erasableInsts) {
@@ -1007,7 +1007,7 @@ InstructionCost CandidateOutput::getCompCostDelta(CostModelState &CM,
   return InstructionCost((int64_t)std::llround(delta));
 }
 
-void CandidateOutput::findErasableInstructions() {
+void RewriteUnit::findErasableInstructions() {
   SmallPtrSet<Value *, 8> visited;
   SmallPtrSet<Instruction *, 8> exprInsts;
   for (Value *root : roots)
@@ -1051,22 +1051,21 @@ void CandidateOutput::findErasableInstructions() {
   }
 }
 
-bool CandidateSubgraph::CacheKey::operator==(const CacheKey &other) const {
+bool PrecisionUnit::CacheKey::operator==(const CacheKey &other) const {
   return candidateIndex == other.candidateIndex &&
-         CandidateOutputs == other.CandidateOutputs;
+         RewriteUnits == other.RewriteUnits;
 }
 
-std::size_t
-CandidateSubgraph::CacheKeyHash::operator()(const CacheKey &key) const {
+std::size_t PrecisionUnit::CacheKeyHash::operator()(const CacheKey &key) const {
   std::size_t seed = std::hash<size_t>{}(key.candidateIndex);
-  for (const auto *ao : key.CandidateOutputs) {
-    seed ^= std::hash<const CandidateOutput *>{}(ao) + 0x9e3779b9 +
-            (seed << 6) + (seed >> 2);
+  for (const auto *ao : key.RewriteUnits) {
+    seed ^= std::hash<const RewriteUnit *>{}(ao) + 0x9e3779b9 + (seed << 6) +
+            (seed >> 2);
   }
   return seed;
 }
 
-void CandidateSubgraph::apply(Session &S, size_t candidateIndex) {
+void PrecisionUnit::apply(Session &S, size_t candidateIndex) {
   if (candidateIndex >= candidates.size()) {
     llvm_unreachable("Invalid candidate index");
   }
@@ -1075,7 +1074,7 @@ void CandidateSubgraph::apply(Session &S, size_t candidateIndex) {
 }
 
 // Lower is better
-InstructionCost CandidateSubgraph::getCompCostDelta(size_t candidateIndex) {
+InstructionCost PrecisionUnit::getCompCostDelta(size_t candidateIndex) {
   // TODO: adjust this based on erasured instructions
   double delta = (candidates[candidateIndex].CompCost - initialCompCost) *
                  (double)executions;
@@ -1083,28 +1082,28 @@ InstructionCost CandidateSubgraph::getCompCostDelta(size_t candidateIndex) {
 }
 
 // Lower is better
-double CandidateSubgraph::getAccCostDelta(size_t candidateIndex) {
+double PrecisionUnit::getAccCostDelta(size_t candidateIndex) {
   return candidates[candidateIndex].accuracyCost - initialAccCost;
 }
 
 // Lower is better
-double CandidateOutput::getAccCostDelta(size_t candidateIndex) {
+double RewriteUnit::getAccCostDelta(size_t candidateIndex) {
   return candidates[candidateIndex].accuracyCost - initialAccCost;
 }
 
 InstructionCost
-CandidateSubgraph::getAdjustedCompCostDelta(Session &S, size_t candidateIndex,
-                                            ArrayRef<SolutionStep> steps) {
-  CandidateOutputSet CandidateOutputs;
+PrecisionUnit::getAdjustedCompCostDelta(Session &S, size_t candidateIndex,
+                                        ArrayRef<SolutionStep> steps) {
+  RewriteUnitSet RewriteUnits;
   for (const auto &step : steps) {
-    if (auto *co = dyn_cast<CandidateOutput>(step.unit)) {
+    if (auto *co = dyn_cast<RewriteUnit>(step.unit)) {
       if (co->subgraph == subgraph) {
-        CandidateOutputs.insert(co);
+        RewriteUnits.insert(co);
       }
     }
   }
 
-  CacheKey key{candidateIndex, CandidateOutputs};
+  CacheKey key{candidateIndex, RewriteUnits};
 
   auto cacheIt = compCostDeltaCache.find(key);
   if (cacheIt != compCostDeltaCache.end()) {
@@ -1114,7 +1113,7 @@ CandidateSubgraph::getAdjustedCompCostDelta(Session &S, size_t candidateIndex,
   Subgraph newSubgraph = *this->subgraph;
 
   for (auto &step : steps) {
-    if (auto *co = dyn_cast<CandidateOutput>(step.unit)) {
+    if (auto *co = dyn_cast<RewriteUnit>(step.unit)) {
       const auto &CO = *co;
       if (CO.subgraph == subgraph) {
         newSubgraph.operations.remove_if(
@@ -1153,20 +1152,20 @@ CandidateSubgraph::getAdjustedCompCostDelta(Session &S, size_t candidateIndex,
   return adjustedCostDelta;
 }
 
-double CandidateSubgraph::getAdjustedAccCostDelta(
+double PrecisionUnit::getAdjustedAccCostDelta(
     size_t candidateIndex, ArrayRef<SolutionStep> steps,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, Value *> &symbolToValueMap) {
-  CandidateOutputSet CandidateOutputs;
+  RewriteUnitSet RewriteUnits;
   for (const auto &step : steps) {
-    if (auto *co = dyn_cast<CandidateOutput>(step.unit)) {
+    if (auto *co = dyn_cast<RewriteUnit>(step.unit)) {
       if (co->subgraph == subgraph) {
-        CandidateOutputs.insert(co);
+        RewriteUnits.insert(co);
       }
     }
   }
 
-  CacheKey key{candidateIndex, CandidateOutputs};
+  CacheKey key{candidateIndex, RewriteUnits};
 
   auto cacheIt = accCostDeltaCache.find(key);
   if (cacheIt != accCostDeltaCache.end()) {
@@ -1178,7 +1177,7 @@ double CandidateSubgraph::getAdjustedAccCostDelta(
 
   SmallPtrSet<FPNode *, 8> stepNodes;
   for (const auto &step : steps) {
-    if (auto *co = dyn_cast<CandidateOutput>(step.unit)) {
+    if (auto *co = dyn_cast<RewriteUnit>(step.unit)) {
       const auto &CO = *co;
       if (CO.subgraph == subgraph) {
         for (Value *root : CO.roots) {
@@ -1208,52 +1207,51 @@ double CandidateSubgraph::getAdjustedAccCostDelta(
   return adjustedAccCostDelta;
 }
 
-InstructionCost CandidateOutput::costDelta(size_t i, ArrayRef<SolutionStep>) {
+InstructionCost RewriteUnit::costDelta(size_t i, ArrayRef<SolutionStep>) {
   return getCompCostDelta(session().CostModel, i);
 }
 
-double CandidateOutput::errorDelta(size_t i, ArrayRef<SolutionStep>) {
+double RewriteUnit::errorDelta(size_t i, ArrayRef<SolutionStep>) {
   return getAccCostDelta(i);
 }
 
-bool CandidateOutput::sameRewriteTargetAs(
-    const OptimizationUnit &earlier) const {
-  const auto *other = dyn_cast<CandidateOutput>(&earlier);
+bool RewriteUnit::sameRewriteTargetAs(const OptimizationUnit &earlier) const {
+  const auto *other = dyn_cast<RewriteUnit>(&earlier);
   return other && other->subgraph == subgraph &&
          other->roots.size() == roots.size() &&
          llvm::all_of(other->roots,
                       [&](Value *r) { return llvm::is_contained(roots, r); });
 }
 
-const SetVector<Instruction *> *CandidateOutput::footprint() const {
+const SetVector<Instruction *> *RewriteUnit::footprint() const {
   return subgraph ? &subgraph->operations : nullptr;
 }
 
-InstructionCost CandidateSubgraph::costDelta(size_t i,
-                                             ArrayRef<SolutionStep> prior) {
+InstructionCost PrecisionUnit::costDelta(size_t i,
+                                         ArrayRef<SolutionStep> prior) {
   return getAdjustedCompCostDelta(session(), i, prior);
 }
 
-double CandidateSubgraph::errorDelta(size_t i, ArrayRef<SolutionStep> prior) {
+double PrecisionUnit::errorDelta(size_t i, ArrayRef<SolutionStep> prior) {
   return getAdjustedAccCostDelta(i, prior, site().valueToNodeMap,
                                  site().symbolToValueMap);
 }
 
-bool CandidateSubgraph::pricedAgainst(const OptimizationUnit &earlier) const {
-  const auto *co = dyn_cast<CandidateOutput>(&earlier);
+bool PrecisionUnit::pricedAgainst(const OptimizationUnit &earlier) const {
+  const auto *co = dyn_cast<RewriteUnit>(&earlier);
   return co && co->subgraph == subgraph;
 }
 
-const SetVector<Instruction *> *CandidateSubgraph::footprint() const {
+const SetVector<Instruction *> *PrecisionUnit::footprint() const {
   return subgraph ? &subgraph->operations : nullptr;
 }
 
-std::string CandidateOutput::choiceText(size_t i) const {
+std::string RewriteUnit::choiceText(size_t i) const {
   const RewriteCandidate &cand = candidates[i];
   return expr + " --(" + std::to_string(cand.ordinal) + ")-> " + cand.expr;
 }
 
-json::Object CandidateOutput::stepJSON(size_t i) {
+json::Object RewriteUnit::stepJSON(size_t i) {
   json::Object stepObj;
   stepObj["type"] = "rewrite";
   stepObj["original_expr"] = expr;
@@ -1287,8 +1285,7 @@ json::Object CandidateOutput::stepJSON(size_t i) {
   return stepObj;
 }
 
-void CandidateOutput::writeReportStep(raw_ostream &OS, size_t i,
-                                      StringRef pad) {
+void RewriteUnit::writeReportStep(raw_ostream &OS, size_t i, StringRef pad) {
   auto &cand = candidates[i];
   OS << pad << "[Rewrite] " << expr << "  -->  " << cand.expr << "\n";
   if (!std::isnan(initialHerbieAccuracy) && !std::isnan(cand.herbieAccuracy))
@@ -1316,17 +1313,17 @@ void CandidateOutput::writeReportStep(raw_ostream &OS, size_t i,
   }
 }
 
-void CandidateOutput::materialize(size_t i) {
+void RewriteUnit::materialize(size_t i) {
   apply(i, site().valueToNodeMap, site().symbolToValueMap,
         session().Opts.Diagnostics.Print);
 }
 
-std::string CandidateSubgraph::choiceText(size_t i) const {
+std::string PrecisionUnit::choiceText(size_t i) const {
   const PTCandidate &cand = candidates[i];
   return "CS: " + cand.desc + " (#" + std::to_string(cand.ordinal) + ")";
 }
 
-json::Object CandidateSubgraph::stepJSON(size_t i) {
+json::Object PrecisionUnit::stepJSON(size_t i) {
   auto &cand = candidates[i];
   json::Object stepObj;
   stepObj["type"] = "precision_change";
@@ -1356,8 +1353,7 @@ json::Object CandidateSubgraph::stepJSON(size_t i) {
   return stepObj;
 }
 
-void CandidateSubgraph::writeReportStep(raw_ostream &OS, size_t i,
-                                        StringRef pad) {
+void PrecisionUnit::writeReportStep(raw_ostream &OS, size_t i, StringRef pad) {
   auto &cand = candidates[i];
   OS << pad << "[Precision] " << cand.desc << " (#" << cand.ordinal << ")\n";
   for (const auto &change : cand.changes) {
@@ -1375,9 +1371,9 @@ void CandidateSubgraph::writeReportStep(raw_ostream &OS, size_t i,
   }
 }
 
-void CandidateSubgraph::materialize(size_t i) { apply(session(), i); }
+void PrecisionUnit::materialize(size_t i) { apply(session(), i); }
 
-void CandidateOutput::price() {
+void RewriteUnit::price() {
   if (!herbieAnswered)
     return;
   FunctionFPState &st = site();
@@ -1390,20 +1386,20 @@ void CandidateOutput::price() {
                          st.symbolToValueMap);
 }
 
-void CandidateSubgraph::price() {
+void PrecisionUnit::price() {
   for (PTCandidate &c : candidates)
     c.CompCost = getCompCost(session(), *subgraph, c);
   setUnifiedAccuracyCost(session().Opts, *this, site().valueToNodeMap,
                          site().symbolToValueMap);
 }
 
-void CandidateOutput::scaleErrors(double factor) {
+void RewriteUnit::scaleErrors(double factor) {
   initialAccCost *= factor;
   for (auto &cand : candidates)
     cand.accuracyCost *= factor;
 }
 
-void CandidateSubgraph::scaleErrors(double factor) {
+void PrecisionUnit::scaleErrors(double factor) {
   initialAccCost *= factor;
   for (auto &[node, cost] : perOutputInitialAccCost)
     cost *= factor;
@@ -1414,7 +1410,7 @@ void CandidateSubgraph::scaleErrors(double factor) {
   }
 }
 
-void CandidateOutput::printPriced(raw_ostream &OS) {
+void RewriteUnit::printPriced(raw_ostream &OS) {
   OS << "\n################################\n";
   OS << "Initial AccuracyCost: " << initialAccCost << "\n";
   OS << "Initial ComputationCost: " << initialCompCost << "\n";
@@ -1436,7 +1432,7 @@ void CandidateOutput::printPriced(raw_ostream &OS) {
   OS << "################################\n\n";
 }
 
-void CandidateOutput::addReportSummary(json::Array &summary) {
+void RewriteUnit::addReportSummary(json::Array &summary) {
   json::Object co;
   co["original_expr"] = expr;
   co["num_candidates"] = static_cast<int64_t>(candidates.size());
@@ -1452,7 +1448,7 @@ void CandidateOutput::addReportSummary(json::Array &summary) {
   summary.push_back(std::move(co));
 }
 
-void CandidateOutput::writeReportSummary(raw_ostream &textOut) {
+void RewriteUnit::writeReportSummary(raw_ostream &textOut) {
   textOut << "Expression #" << indexInKind() << ": " << expr << "\n";
   textOut << "  Gradient: " << grad << ", Executions: " << executions << "\n";
   if (auto *I = dyn_cast<Instruction>(oldOutput)) {
@@ -1470,7 +1466,7 @@ void CandidateOutput::writeReportSummary(raw_ostream &textOut) {
   }
 }
 
-void CandidateOutput::addCuratedRewrites(json::Array &rewrites) {
+void RewriteUnit::addCuratedRewrites(json::Array &rewrites) {
   for (size_t ci = 0; ci < candidates.size(); ++ci) {
     auto &cand = candidates[ci];
     double accDelta = getAccCostDelta(ci);
@@ -1528,7 +1524,7 @@ void CandidateOutput::addCuratedRewrites(json::Array &rewrites) {
 static constexpr size_t kMaxCandRows = 40;
 
 // The candidates' positions by cost change, cheapest first.
-static SmallVector<size_t, 40> byCostDelta(CandidateSubgraph &CS) {
+static SmallVector<size_t, 40> byCostDelta(PrecisionUnit &CS) {
   SmallVector<size_t, 40> order(CS.candidates.size());
   for (size_t ci = 0; ci < order.size(); ++ci)
     order[ci] = ci;
@@ -1539,7 +1535,7 @@ static SmallVector<size_t, 40> byCostDelta(CandidateSubgraph &CS) {
   return order;
 }
 
-void CandidateSubgraph::addReportSummary(json::Array &summary) {
+void PrecisionUnit::addReportSummary(json::Array &summary) {
   json::Object cs;
   cs["num_candidates"] = static_cast<int64_t>(candidates.size());
   cs["initial_accuracy_cost"] = jsonFloat(initialAccCost);
@@ -1559,7 +1555,7 @@ void CandidateSubgraph::addReportSummary(json::Array &summary) {
   summary.push_back(std::move(cs));
 }
 
-void CandidateSubgraph::writeReportSummary(raw_ostream &textOut) {
+void PrecisionUnit::writeReportSummary(raw_ostream &textOut) {
   textOut << "Subgraph #" << indexInKind() << ": " << candidates.size()
           << " candidates (Δcost, Δacc; sorted by Δcost)\n";
   SmallVector<size_t, 40> order = byCostDelta(*this);
@@ -1571,7 +1567,7 @@ void CandidateSubgraph::writeReportSummary(raw_ostream &textOut) {
   }
 }
 
-void CandidateSubgraph::addCuratedRewrites(json::Array &rewrites) {
+void PrecisionUnit::addCuratedRewrites(json::Array &rewrites) {
   for (size_t ci = 0; ci < candidates.size(); ++ci) {
     auto &pt = candidates[ci];
     double accDelta = getAccCostDelta(ci);
@@ -1629,7 +1625,7 @@ void CandidateSubgraph::addCuratedRewrites(json::Array &rewrites) {
   }
 }
 
-void CandidateSubgraph::printPriced(raw_ostream &OS) {
+void PrecisionUnit::printPriced(raw_ostream &OS) {
   OS << "\n################################\n";
   OS << "Initial AccuracyCost: " << initialAccCost << "\n";
   OS << "Initial ComputationCost: " << initialCompCost << "\n";

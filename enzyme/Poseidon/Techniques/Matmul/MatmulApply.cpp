@@ -1,4 +1,4 @@
-// Matmul candidate materialization: CandidateMatmul::apply.
+// Matmul candidate materialization: MatmulUnit::apply.
 #include "HostDispatch.h"
 #include "InKernelRaise.h"
 #include "MatmulInternal.h"
@@ -144,9 +144,9 @@ static void applyLibraryCall(Session &S, const AbstractMatmul &m,
     fissionGemmForDispatch(*F, m);
 }
 
-void CandidateMatmul::apply(Session &S, size_t candidateIndex) {
+void MatmulUnit::apply(Session &S, size_t candidateIndex) {
   if (candidateIndex >= candidates.size())
-    report_fatal_error("CandidateMatmul index out of range");
+    report_fatal_error("MatmulUnit index out of range");
   const Option &opt = candidates[candidateIndex];
 
   if (opt.realization == Realization::LibraryCall) {

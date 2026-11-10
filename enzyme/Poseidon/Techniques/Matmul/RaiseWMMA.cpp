@@ -601,13 +601,13 @@ namespace {
 class ScalarLoopRaiseMaterializer {
 public:
   ScalarLoopRaiseMaterializer(const AbstractMatmul &m,
-                              const CandidateMatmul::Option &t)
+                              const MatmulUnit::Option &t)
       : m(m), t(t) {}
   void run();
 
 private:
   const AbstractMatmul &m;
-  const CandidateMatmul::Option &t;
+  const MatmulUnit::Option &t;
 };
 } // namespace
 
@@ -1177,7 +1177,7 @@ void ScalarLoopRaiseMaterializer::run() {
 }
 
 void materializeScalarLoopRaise(const AbstractMatmul &m,
-                                const CandidateMatmul::Option &opt) {
+                                const MatmulUnit::Option &opt) {
   ScalarLoopRaiseMaterializer(m, opt).run();
 }
 

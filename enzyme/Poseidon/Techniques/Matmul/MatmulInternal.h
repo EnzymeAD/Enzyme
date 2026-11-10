@@ -36,8 +36,7 @@ struct WmmaTarget {
 };
 const llvm::SmallVector<WmmaTarget, 16> &getAvailableWmmaTargets(Session &S);
 bool inKernelRaiseFits(const Options &O, llvm::Function *F,
-                       const AbstractMatmul &m,
-                       const CandidateMatmul::Option &opt,
+                       const AbstractMatmul &m, const MatmulUnit::Option &opt,
                        uint64_t existingBytes, llvm::StringRef className);
 
 // `confidence` is the fraction of the sampled inputs the returned domain error

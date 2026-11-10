@@ -604,7 +604,7 @@ void Explainer::markSteps() {
 void Explainer::addCOAlternatives(Unit &U, const Subgraph &sg) {
   CRendering how = rendering(sg);
   for (size_t i = 0; i < st.COs.size(); ++i) {
-    CandidateOutput &CO = st.COs[i];
+    RewriteUnit &CO = st.COs[i];
     if (CO.subgraph != &sg)
       continue;
     json::Object core;
@@ -732,7 +732,7 @@ void Explainer::addCSAlternatives(Unit &U, const Subgraph &sg) {
     }
 
   for (size_t i = 0; i < st.CSs.size(); ++i) {
-    CandidateSubgraph &CS = st.CSs[i];
+    PrecisionUnit &CS = st.CSs[i];
     if (CS.subgraph != &sg)
       continue;
     auto describe = [&](Alt &A, PTCandidate &cand) {
@@ -813,13 +813,13 @@ void Explainer::addCSAlternatives(Unit &U, const Subgraph &sg) {
       if (cand.CompCost != std::numeric_limits<double>::max())
         cost = GET_COST(CS.getCompCostDelta(j));
       double acc = CS.getAccCostDelta(j);
-      CandidateSubgraph::CandidateOutputSet cos;
+      PrecisionUnit::RewriteUnitSet cos;
       for (const auto &[item, idx] : applied)
-        for (CandidateOutput &CO : st.COs)
+        for (RewriteUnit &CO : st.COs)
           if (&CO == item && CO.subgraph == &sg)
             cos.insert(&CO);
       if (applied.count({&CS, j}) && !cos.empty()) {
-        CandidateSubgraph::CacheKey key{j, cos};
+        PrecisionUnit::CacheKey key{j, cos};
         auto c = CS.compCostDeltaCache.find(key);
         cost = c == CS.compCostDeltaCache.end()
                    ? std::nullopt
@@ -884,8 +884,8 @@ void Explainer::judge(Unit &U) {
       continue;
     }
     if (A.kind == "matmul" && rec.selector == "error-budget") {
-      const auto *CM = cast<CandidateMatmul>(A.item);
-      const CandidateMatmul::Option &o = CM->candidates[A.index];
+      const auto *CM = cast<MatmulUnit>(A.item);
+      const MatmulUnit::Option &o = CM->candidates[A.index];
       if (tau > 0.0 && o.domainError > tau) {
         A.reason = "modelled domain error " + num(o.domainError) +
                    " is above the target " + num(tau);
@@ -979,7 +979,7 @@ std::string Explainer::leftReason(const Unit &U, const Subgraph *sg) {
     SmallVector<std::string, 2> why;
     if (sg) {
       bool hadCO = false;
-      for (const CandidateOutput &CO : st.COs)
+      for (const RewriteUnit &CO : st.COs)
         if (CO.subgraph == sg) {
           hadCO = true;
           if (!CO.unpricedReason.empty())
@@ -1102,7 +1102,7 @@ void Explainer::buildSubgraph(size_t s) {
       out["name"] = name;
     putLoc(out, "loc", locOf(O));
     out["type"] = typeName(O->getType());
-    for (const CandidateOutput &CO : st.COs)
+    for (const RewriteUnit &CO : st.COs)
       if (CO.subgraph == &sg && !CO.isArray() && CO.oldOutput == O) {
         out["fpcore"] = CO.expr;
         break;
@@ -1168,7 +1168,7 @@ void Explainer::buildSubgraph(size_t s) {
 }
 
 void Explainer::buildMatmul(size_t m) {
-  CandidateMatmul &CM = st.CMs[m];
+  MatmulUnit &CM = st.CMs[m];
   Unit U;
   U.id = formatv("M{0}", m).str();
   U.kind = "matmul";
@@ -1191,7 +1191,7 @@ void Explainer::buildMatmul(size_t m) {
     U.baseCost =
         (int64_t)std::llround(CM.initialCompCost * (double)CM.executions);
   for (size_t j = 0; j < CM.candidates.size(); ++j) {
-    const CandidateMatmul::Option &o = CM.candidates[j];
+    const MatmulUnit::Option &o = CM.candidates[j];
     Alt A;
     A.id = formatv("M{0}_{1}", m, j).str();
     A.kind = "matmul";

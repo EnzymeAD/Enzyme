@@ -110,9 +110,8 @@ accuracyDPSolver(Session &S, llvm::Function &F, FunctionFPState &st,
 // baseline in this mode. `confidence` is the level those errors were computed
 // at; the selector only reports it, since it is already in the numbers.
 llvm::SmallVector<SolutionStep>
-errorBudgetSelector(const Options &O,
-                    llvm::SmallVector<CandidateMatmul, 4> &CMs, double budget,
-                    double confidence);
+errorBudgetSelector(const Options &O, llvm::SmallVector<MatmulUnit, 4> &CMs,
+                    double budget, double confidence);
 
 struct FunctionFPState {
   llvm::Function *F = nullptr;
@@ -125,12 +124,12 @@ struct FunctionFPState {
   std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>> valueToNodeMap;
   std::unordered_map<std::string, llvm::Value *> symbolToValueMap;
   llvm::SmallVector<Subgraph, 1> subgraphs;
-  // Backing storage for the matmuls; CandidateMatmul::matmul points into this,
+  // Backing storage for the matmuls; MatmulUnit::matmul points into this,
   // so it must outlive materialization (it does NOT live in a collect-local).
   llvm::SmallVector<AbstractMatmul, 4> abstractMatmuls;
-  llvm::SmallVector<CandidateOutput, 4> COs;
-  llvm::SmallVector<CandidateSubgraph, 4> CSs;
-  llvm::SmallVector<CandidateMatmul, 4> CMs;
+  llvm::SmallVector<RewriteUnit, 4> COs;
+  llvm::SmallVector<PrecisionUnit, 4> CSs;
+  llvm::SmallVector<MatmulUnit, 4> CMs;
   // The site's units in site order (COs, CSs, CMs), each bound to this site.
   llvm::SmallVector<SiteUnit *, 8> units;
   bool unitsSealed = false;

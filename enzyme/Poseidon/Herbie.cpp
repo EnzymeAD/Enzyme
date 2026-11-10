@@ -676,7 +676,7 @@ void addHerbieKeyParts(Session &S, CacheKey &key) {
 }
 
 bool improveViaHerbie(Session &S, const std::vector<std::string> &inputExprs,
-                      std::vector<CandidateOutput> &COs, int subgraphIdx,
+                      std::vector<RewriteUnit> &COs, int subgraphIdx,
                       StringRef funcTag) {
   const Options &O = S.Opts;
   if (!O.Herbie.HerbieBinary.empty() && O.Diagnostics.Print)
@@ -689,13 +689,13 @@ bool improveViaHerbie(Session &S, const std::vector<std::string> &inputExprs,
       "subgraph " + std::to_string(subgraphIdx) + " of " + funcTag.str();
   HerbieRunResult Run = runHerbie(inputExprs, Opts, Label, S.HerbieDigests);
   if (Run.Result == HerbieRunResult::Outcome::Timeout)
-    for (CandidateOutput &CO : COs)
+    for (RewriteUnit &CO : COs)
       CO.herbieStatus = "timeout";
   if (Run.Result == HerbieRunResult::Outcome::Crashed) {
     if (O.Model.StrictMode)
       report_fatal_error(Twine("Poseidon strict mode: Herbie crashed (") +
                          Run.Crash + ") on " + Label);
-    for (CandidateOutput &CO : COs)
+    for (RewriteUnit &CO : COs)
       CO.herbieStatus = "crashed";
   }
   if (Run.Result != HerbieRunResult::Outcome::Ok)
@@ -747,7 +747,7 @@ bool improveViaHerbie(Session &S, const std::vector<std::string> &inputExprs,
         continue;
       }
 
-      CandidateOutput &CO = COs[index];
+      RewriteUnit &CO = COs[index];
       CO.herbieAnswered = true;
       CO.herbieStatus = status.str();
       auto &seenExprSet = seenExprs[index];
@@ -1206,7 +1206,7 @@ void collectInputs(const FPNode *node, const SetVector<Value *> &inputs,
 } // namespace
 
 void setUnifiedAccuracyCost(
-    const Options &O, CandidateOutput &CO,
+    const Options &O, RewriteUnit &CO,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, Value *> &symbolToValueMap) {
 
@@ -1537,7 +1537,7 @@ void proposeHerbieCandidates(
     int &symbolCounter,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, Value *> &symbolToValueMap,
-    SmallVectorImpl<CandidateOutput> &COs) {
+    SmallVectorImpl<RewriteUnit> &COs) {
   const Options &O = S.Opts;
   auto getNextSymbol = [&symbolCounter]() -> std::string {
     return "v" + std::to_string(symbolCounter++);
@@ -1559,7 +1559,7 @@ void proposeHerbieCandidates(
   }
 
   std::vector<std::string> herbieInputs;
-  std::vector<CandidateOutput> newCOs;
+  std::vector<RewriteUnit> newCOs;
 
   struct Eligible {
     Instruction *output;
@@ -1571,7 +1571,7 @@ void proposeHerbieCandidates(
 
   auto emitPerOutput = [&](const Eligible &E, ArrayRef<const char *> precs,
                            std::vector<std::string> &inputs,
-                           std::vector<CandidateOutput> &cos) {
+                           std::vector<RewriteUnit> &cos) {
     SmallSet<std::string, 8> args;
     getUniqueArgs(E.expr, args);
 
@@ -1590,8 +1590,8 @@ void proposeHerbieCandidates(
       properties += std::string(" :precision ") + prec;
       properties += " :pre " + precondition;
 
-      CandidateOutput CO(S.CostModel, subgraph, E.output, E.expr, E.grad,
-                         E.executions);
+      RewriteUnit CO(S.CostModel, subgraph, E.output, E.expr, E.grad,
+                     E.executions);
       CO.herbiePrecision = prec;
       properties += " :name \"" + std::to_string(cos.size()) + "\"";
 
@@ -1682,7 +1682,7 @@ void proposeHerbieCandidates(
   }
 
   std::vector<std::string> arrayInputs;
-  std::vector<CandidateOutput> arrayCOs;
+  std::vector<RewriteUnit> arrayCOs;
   SmallVector<const SmallVector<const Eligible *, 8> *, 4> arrayGroups;
   const char *precs[] = {"binary64", "binary32"};
   for (const auto &[key, G] : groups) {

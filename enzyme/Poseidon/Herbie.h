@@ -70,7 +70,7 @@ void addHerbieKeyParts(Session &S, CacheKey &key);
 
 // Collects Herbie's rewrites of `inputExprs` into `COs`, unpriced.
 bool improveViaHerbie(Session &S, const std::vector<std::string> &inputExprs,
-                      std::vector<CandidateOutput> &COs, int subgraphIdx,
+                      std::vector<RewriteUnit> &COs, int subgraphIdx,
                       llvm::StringRef funcTag);
 
 std::string getHerbieOperator(const llvm::Instruction &I);
@@ -82,7 +82,7 @@ std::string getPrecondition(
     const std::unordered_map<std::string, llvm::Value *> &symbolToValueMap);
 
 void setUnifiedAccuracyCost(
-    const Options &O, CandidateOutput &CO,
+    const Options &O, RewriteUnit &CO,
     std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, llvm::Value *> &symbolToValueMap);
 
@@ -101,7 +101,7 @@ void proposeHerbieCandidates(
     int &symbolCounter,
     std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, llvm::Value *> &symbolToValueMap,
-    llvm::SmallVectorImpl<CandidateOutput> &COs);
+    llvm::SmallVectorImpl<RewriteUnit> &COs);
 
 } // namespace poseidon
 #endif // POSEIDON_HERBIE_H

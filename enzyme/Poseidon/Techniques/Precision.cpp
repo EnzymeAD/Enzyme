@@ -460,7 +460,7 @@ void PTCandidate::apply(Session &S, Subgraph &subgraph,
 }
 
 void setUnifiedAccuracyCost(
-    const Options &O, CandidateSubgraph &CS,
+    const Options &O, PrecisionUnit &CS,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, Value *> &symbolToValueMap) {
 
@@ -855,7 +855,7 @@ void proposePrecisionCandidates(
     Session &S, Function &F, Subgraph &subgraph,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     const FunctionProfileHeader &profileHeader, bool expansionSafe,
-    SmallVectorImpl<CandidateSubgraph> &CSs) {
+    SmallVectorImpl<PrecisionUnit> &CSs) {
   const Options &O = S.Opts;
   auto *o0 = subgraph.outputs[0];
   const unsigned o0Exec = valueToNodeMap[o0]->executions;
@@ -905,7 +905,7 @@ void proposePrecisionCandidates(
     }
   }
 
-  CandidateSubgraph CS(S.CostModel, subgraph);
+  PrecisionUnit CS(S.CostModel, subgraph);
   CS.executions = o0Exec;
 
   // Synthetic output-boundary casts execute at most once per thread per

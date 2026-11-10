@@ -114,7 +114,7 @@ applySensitivityFloor(std::unordered_map<size_t, ProfileInfo> &profileMap,
     const double floorW = kSensFloorRatio * ref / mag * (double)p.exec;
     if (weightOf(p) < floorW) {
       // Write the floor back through sumGrad, which is what every consumer
-      // reads (FPNode::grad, CandidateOutput::grad, MatmulProfile::gradD).
+      // reads (FPNode::grad, RewriteUnit::grad, MatmulProfile::gradD).
       p.sumGrad = std::copysign(floorW, p.sumGrad == 0.0 ? 1.0 : p.sumGrad);
       if (p.sumAbsGrad >= 0.0)
         p.sumAbsGrad = floorW;

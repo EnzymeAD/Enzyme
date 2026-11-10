@@ -103,7 +103,7 @@ struct OzakiVariant {
   unsigned tileM, tileN, tileK;
 };
 
-OzakiVariant deriveOzakiVariant(const CandidateMatmul::Option &opt) {
+OzakiVariant deriveOzakiVariant(const MatmulUnit::Option &opt) {
   OzakiVariant v;
   v.N = sliceCount(opt.variant);
   v.slice = sliceFromFPKind(opt.variant.operand);
@@ -160,8 +160,7 @@ SmallVector<Value *, 8> emitNwayVeltkampSplit(IRBuilder<> &B, Module *mod,
 
 class OzakiIRaiseMaterializer {
 public:
-  OzakiIRaiseMaterializer(const AbstractMatmul &m,
-                          const CandidateMatmul::Option &t)
+  OzakiIRaiseMaterializer(const AbstractMatmul &m, const MatmulUnit::Option &t)
       : m(m), t(t) {}
   void run();
 
@@ -170,7 +169,7 @@ private:
   void runTcec();
 
   const AbstractMatmul &m;
-  const CandidateMatmul::Option &t;
+  const MatmulUnit::Option &t;
 };
 
 } // namespace
@@ -779,11 +778,11 @@ void OzakiIRaiseMaterializer::runTcec() {
 }
 
 void materializeOzakiIRaise(const AbstractMatmul &m,
-                            const CandidateMatmul::Option &opt) {
+                            const MatmulUnit::Option &opt) {
   OzakiIRaiseMaterializer(m, opt).run();
 }
 
-std::string ozakiIOptionLabel(const CandidateMatmul::Option &opt) {
+std::string ozakiIOptionLabel(const MatmulUnit::Option &opt) {
   const SchemeVariant &v = opt.variant;
   return std::string(schemeTag(v)) + " " + schemeParameter(v) + " wmma " +
          mmaShapeSuffix(opt.tileM, opt.tileN, opt.tileK) + " " +
