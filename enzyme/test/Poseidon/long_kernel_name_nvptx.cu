@@ -1,14 +1,14 @@
 // RUN: rm -rf %t && mkdir -p %t
 // RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O2 -S -emit-llvm -I%FPProfileInc %clangLoadPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/cache %s -o %t/gen.ll 2>&1 | FileCheck --check-prefix=GEN %s
 // RUN: ls %t/cache | FileCheck --check-prefix=FILE %s
-// RUN: cat %t/cache/*.profgen | FileCheck --check-prefix=DESC %s
+// RUN: cat %t/cache/launches_*.json | FileCheck --check-prefix=DESC %s
 // REQUIRES: poseidon, enzyme
 
-// The launch descriptor the device compile leaves for the host compile is
-// one file per kernel. The mangled name of a kernel instantiated with a
-// lambda (an MFEM forall body) can be longer than a file name may be; the
-// file then takes the profile's stem of the name and keeps the full name
-// inside, where the host compile reads it.
+// The launch descriptor the device compile leaves for the host compile is a
+// line of the manifest of the unit, a file named after the source. The mangled
+// name of a kernel instantiated with a lambda (an MFEM forall body) can be
+// longer than a file name may be; the manifest keeps the full name, where the
+// host compile reads it.
 
 #include "poseidon/poseidon.h"
 
@@ -50,6 +50,6 @@ void reduce_quadrature_values_to_element_degrees_of_freedom_with_a_name_as_long_
 // GEN: [poseidon-profgen] _ZL10CuKernel2DIZ220reduce_quadrature_values_to_element_degrees_of_freedom_with_a_name_as_long_as_the_template_instantiations_of_a_finite_element_library_produce_for_their_forall_lambdas_so_that_the_kernel_name_no_longer_fits_in_a_file_nameiiiPdS0_S0_EUliE_EviT_: site 0, 3 shadow buffer(s), output(s) 1[+64]
 // GEN-NOT: cannot write
 
-// FILE: {{^}}_ZL10CuKernel2DIZ220reduce_quadrature_values_to_element_degrees_of_freedom_with_a_name_as_long_as_the_template_instantiations_of_a_finite_element_library_produc~{{[0-9a-f]+}}.profgen{{$}}
+// FILE: {{^}}launches_long_kernel_name_nvptx.cu_{{[0-9A-F]+}}.json{{$}}
 
-// DESC: {{^}}_ZL10CuKernel2DIZ220reduce_quadrature_values_to_element_degrees_of_freedom_with_a_name_as_long_as_the_template_instantiations_of_a_finite_element_library_produce_for_their_forall_lambdas_so_that_the_kernel_name_no_longer_fits_in_a_file_nameiiiPdS0_S0_EUliE_EviT_ 0 2 3 1 1 1 0 0 8 off 16 40 64{{$}}
+// DESC: {{^ *}}"_ZL10CuKernel2DIZ220reduce_quadrature_values_to_element_degrees_of_freedom_with_a_name_as_long_as_the_template_instantiations_of_a_finite_element_library_produce_for_their_forall_lambdas_so_that_the_kernel_name_no_longer_fits_in_a_file_nameiiiPdS0_S0_EUliE_EviT_ 0 2 3 1 1 1 0 0 8 off 16 40 64"{{$}}

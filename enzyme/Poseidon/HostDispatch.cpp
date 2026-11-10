@@ -10,6 +10,7 @@
 #include "Matmul.h"
 #include "Optimize.h"
 
+#include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/IR/Argument.h"
 #include "llvm/IR/Constants.h"
@@ -606,79 +607,79 @@ static std::string launchArgString(int arg, int64_t offset) {
   return s;
 }
 
-static void emitDescriptorFile(StringRef cacheDir, StringRef wrapperName,
-                               int cArg, int aArg, int bArg,
-                               const GemmBodyNote &n) {
+static void emitDescriptor(StringRef wrapperName, int cArg, int aArg, int bArg,
+                           const GemmBodyNote &n) {
   const GemmBodyNote::RtDim *dims[6] = {&n.rM,   &n.rNcols, &n.rK,
                                         &n.rlda, &n.rldb,   &n.rldc};
   bool plainDims = llvm::all_of(
       dims, [](const GemmBodyNote::RtDim *x) { return x->isPlain(); });
+  std::string message;
+  raw_string_ostream msg(message);
+  msg << "[ozaki-host-dispatch] wrote descriptor for " << wrapperName
+      << ": C=" << launchArgString(cArg, n.cOffset)
+      << " A=" << launchArgString(aArg, n.aOffset)
+      << " B=" << launchArgString(bArg, n.bOffset) << " " << n.gM << "x"
+      << n.gNcols << "x" << n.gK << " nm=" << n.numModuli
+      << (n.standalone ? " (standalone)" : " (fused)");
+  for (const auto &[x, y] : n.assumedEqual)
+    msg << ", if " << launchArgString(x.param, x.offset)
+        << " == " << launchArgString(y.param, y.offset);
+  msg << "\n";
   // cArg aArg bArg N standalone numModuli gM gNcols gK lda ldb ldc aCol bCol
   // cCol scheme, then the keyword-tagged blocks.
-  if (!writeDescriptor(
-          cacheDir, wrapperName, kOzDispatchScheme, "[ozaki-host-dispatch]",
-          [&](raw_ostream &os) {
-            os << ' ' << cArg << ' ' << aArg << ' ' << bArg << ' ' << n.N << ' '
-               << (n.standalone ? 1 : 0) << ' ' << n.numModuli << ' ' << n.gM
-               << ' ' << n.gNcols << ' ' << n.gK << ' ' << n.lda << ' ' << n.ldb
-               << ' ' << n.ldc << ' ' << (n.aColMajor ? 1 : 0) << ' '
-               << (n.bColMajor ? 1 : 0) << ' ' << (n.cColMajor ? 1 : 0) << ' '
-               << (n.scheme == DispatchScheme::Tcec     ? 1
-                   : n.scheme == DispatchScheme::Direct ? 2
-                                                        : 0);
-            // Optional trailing runtime-geometry block (tokens 17..36).
-            if (n.runtimeDims && plainDims) {
-              os << " 1";
-              for (const GemmBodyNote::RtDim *x : dims)
-                os << ' ' << (x->isConst() ? -1 : x->factors[0].param) << ' '
-                   << x->mul << ' ' << x->add;
-              os << ' ' << n.beta;
-            }
-            // The same geometry when a dimension is a field of an aggregate
-            // argument or a product of launch values: per dimension the
-            // factor count, each factor's argument and offset, mul and add.
-            if (n.runtimeDims && !plainDims) {
-              os << " rd";
-              for (const GemmBodyNote::RtDim *x : dims) {
-                os << ' ' << x->factors.size();
-                for (const LaunchRef &f : x->factors)
-                  os << ' ' << f.param << ' ' << f.offset;
-                os << ' ' << x->mul << ' ' << x->add;
-              }
-              os << ' ' << n.beta;
-            }
-            // Keyword-tagged rather than positional: the extents
-            // the kernel's index guard gates its store with,
-            // intersected at the dispatch with the launch
-            // geometry.
-            if (n.launchCrop)
-              os << " lc " << n.cropMAxis << ' ' << n.cropNAxis;
-            if (n.cOffset >= 0 || n.aOffset >= 0 || n.bOffset >= 0)
-              os << " pf " << n.cOffset << ' ' << n.aOffset << ' ' << n.bOffset;
-            if (!n.assumedEqual.empty()) {
-              os << " eq " << n.assumedEqual.size();
-              for (const auto &[x, y] : n.assumedEqual)
-                os << ' ' << x.param << ' ' << x.offset << ' ' << y.param << ' '
-                   << y.offset;
-            }
-          }))
-    return;
-  errs() << "[ozaki-host-dispatch] wrote descriptor for " << wrapperName
-         << ": C=" << launchArgString(cArg, n.cOffset)
-         << " A=" << launchArgString(aArg, n.aOffset)
-         << " B=" << launchArgString(bArg, n.bOffset) << " " << n.gM << "x"
-         << n.gNcols << "x" << n.gK << " nm=" << n.numModuli
-         << (n.standalone ? " (standalone)" : " (fused)");
-  for (const auto &[x, y] : n.assumedEqual)
-    errs() << ", if " << launchArgString(x.param, x.offset)
-           << " == " << launchArgString(y.param, y.offset);
-  errs() << "\n";
+  recordDescriptor(
+      LaunchKind::HostDispatch, wrapperName,
+      [&](raw_ostream &os) {
+        os << ' ' << cArg << ' ' << aArg << ' ' << bArg << ' ' << n.N << ' '
+           << (n.standalone ? 1 : 0) << ' ' << n.numModuli << ' ' << n.gM << ' '
+           << n.gNcols << ' ' << n.gK << ' ' << n.lda << ' ' << n.ldb << ' '
+           << n.ldc << ' ' << (n.aColMajor ? 1 : 0) << ' '
+           << (n.bColMajor ? 1 : 0) << ' ' << (n.cColMajor ? 1 : 0) << ' '
+           << (n.scheme == DispatchScheme::Tcec     ? 1
+               : n.scheme == DispatchScheme::Direct ? 2
+                                                    : 0);
+        // Optional trailing runtime-geometry block (tokens 17..36).
+        if (n.runtimeDims && plainDims) {
+          os << " 1";
+          for (const GemmBodyNote::RtDim *x : dims)
+            os << ' ' << (x->isConst() ? -1 : x->factors[0].param) << ' '
+               << x->mul << ' ' << x->add;
+          os << ' ' << n.beta;
+        }
+        // The same geometry when a dimension is a field of an aggregate
+        // argument or a product of launch values: per dimension the
+        // factor count, each factor's argument and offset, mul and add.
+        if (n.runtimeDims && !plainDims) {
+          os << " rd";
+          for (const GemmBodyNote::RtDim *x : dims) {
+            os << ' ' << x->factors.size();
+            for (const LaunchRef &f : x->factors)
+              os << ' ' << f.param << ' ' << f.offset;
+            os << ' ' << x->mul << ' ' << x->add;
+          }
+          os << ' ' << n.beta;
+        }
+        // Keyword-tagged rather than positional: the extents
+        // the kernel's index guard gates its store with,
+        // intersected at the dispatch with the launch
+        // geometry.
+        if (n.launchCrop)
+          os << " lc " << n.cropMAxis << ' ' << n.cropNAxis;
+        if (n.cOffset >= 0 || n.aOffset >= 0 || n.bOffset >= 0)
+          os << " pf " << n.cOffset << ' ' << n.aOffset << ' ' << n.bOffset;
+        if (!n.assumedEqual.empty()) {
+          os << " eq " << n.assumedEqual.size();
+          for (const auto &[x, y] : n.assumedEqual)
+            os << ' ' << x.param << ' ' << x.offset << ' ' << y.param << ' '
+               << y.offset;
+        }
+      },
+      std::move(message));
 }
 
 // Shared descriptor emit for the per-site path and the deferred joint-dp
 // flush: map C/A/B via `mapParam`, skipping (with a message) if any fails.
-static void emitMappedDescriptor(StringRef cacheDir, StringRef wrapperName,
-                                 const GemmBodyNote &n,
+static void emitMappedDescriptor(StringRef wrapperName, const GemmBodyNote &n,
                                  function_ref<int(int)> mapParam) {
   int cArg = mapParam(n.cParam);
   int aArg = mapParam(n.aParam);
@@ -714,14 +715,14 @@ static void emitMappedDescriptor(StringRef cacheDir, StringRef wrapperName,
     }
     f->param = a;
   }
-  emitDescriptorFile(cacheDir, wrapperName, cArg, aArg, bArg, mapped);
+  emitDescriptor(wrapperName, cArg, aArg, bArg, mapped);
 }
 
 void writeGemmDescriptor(Function &wrapper, ArrayRef<Value *> primalArgs,
-                         const GemmBodyNote &n, StringRef cacheDir) {
+                         const GemmBodyNote &n) {
   if (!n.valid)
     return;
-  emitMappedDescriptor(cacheDir, wrapper.getName(), n, [&](int bp) -> int {
+  emitMappedDescriptor(wrapper.getName(), n, [&](int bp) -> int {
     if (bp < 0 || (size_t)bp >= primalArgs.size())
       return -1;
     return traceToArgIndex(primalArgs[bp]);
@@ -732,19 +733,19 @@ namespace {
 struct PendingGemm {
   std::string wrapperName;
   std::vector<int> paramToArg; // body-param index -> wrapper launch-arg index
-  std::string cacheDir;
 };
-static std::map<const Function *, PendingGemm> &pendingMap() {
-  static std::map<const Function *, PendingGemm> m;
+// In the order the sites were split, so that of two sites of one wrapper the
+// same one is recorded last in every compile.
+static MapVector<const Function *, PendingGemm> &pendingMap() {
+  static MapVector<const Function *, PendingGemm> m;
   return m;
 }
 } // namespace
 
 void addPendingGemmDispatch(const Function *body, Function &wrapper,
-                            ArrayRef<Value *> primalArgs, StringRef cacheDir) {
+                            ArrayRef<Value *> primalArgs) {
   PendingGemm pg;
   pg.wrapperName = wrapper.getName().str();
-  pg.cacheDir = cacheDir.str();
   pg.paramToArg.resize(primalArgs.size());
   for (size_t i = 0; i < primalArgs.size(); ++i)
     pg.paramToArg[i] = traceToArgIndex(primalArgs[i]);
@@ -757,7 +758,7 @@ void flushPendingGemmDispatches() {
     if (!getGemmBody(kv.first, n))
       continue; // this site was not materialized as a host dispatch
     const PendingGemm &pg = kv.second;
-    emitMappedDescriptor(pg.cacheDir, pg.wrapperName, n, [&](int bp) -> int {
+    emitMappedDescriptor(pg.wrapperName, n, [&](int bp) -> int {
       if (bp < 0 || (size_t)bp >= pg.paramToArg.size())
         return -1;
       return pg.paramToArg[bp];
@@ -837,9 +838,8 @@ static FunctionCallee getOzakiDgemmEx(Module &M, DispatchScheme scheme) {
 }
 
 static bool
-readOzDispatchDescriptors(StringRef cacheDir,
-                          std::map<std::string, LaunchDesc> &descs) {
-  readDescriptors(cacheDir, kOzDispatchScheme, [&](ArrayRef<StringRef> toks) {
+readOzDispatchDescriptors(Module &M, std::map<std::string, LaunchDesc> &descs) {
+  readDescriptors(M, LaunchKind::HostDispatch, [&](ArrayRef<StringRef> toks) {
     if (toks.size() < 17)
       return;
     LaunchDesc d;
@@ -894,7 +894,7 @@ readOzDispatchDescriptors(StringRef cacheDir,
           (void)toks[36].getAsDouble(d.beta);
       }
     }
-    // Keyword blocks of fields and products (see emitDescriptorFile). A
+    // Keyword blocks of fields and products (see emitDescriptor). A
     // malformed block drops the descriptor: the kernel then runs as written.
     for (unsigned i = 17; i < toks.size(); ++i) {
       size_t at = i + 1;
@@ -1186,9 +1186,9 @@ static bool dispatchFromLaunchArgs(Module &M, Function &F, const LaunchDesc &d,
 // standalone function whose parameters are the kernel's launch args. Standalone
 // descriptors replace the whole body with the dispatch call; fused bodies get
 // the dispatch prepended and keep the (device-side fissioned) launch.
-bool rewriteGemmStubBodies(Module &M, StringRef cacheDir) {
+bool rewriteGemmStubBodies(Module &M) {
   std::map<std::string, LaunchDesc> descs;
-  if (!readOzDispatchDescriptors(cacheDir, descs))
+  if (!readOzDispatchDescriptors(M, descs))
     return false;
 
   LLVMContext &C = M.getContext();
@@ -1379,9 +1379,9 @@ struct ProfDesc {
 };
 } // namespace
 
-static bool readProfDescriptors(StringRef cacheDir,
+static bool readProfDescriptors(Module &M,
                                 std::map<std::string, ProfDesc> &out) {
-  readDescriptors(cacheDir, kProfGenScheme, [&](ArrayRef<StringRef> toks) {
+  readDescriptors(M, LaunchKind::Profiling, [&](ArrayRef<StringRef> toks) {
     if (toks.size() < 4)
       return;
     ProfDesc d;
@@ -1437,9 +1437,9 @@ static Constant *profIntArray(Module &M, const Twine &nameT,
   return GV;
 }
 
-bool rewriteProfileStubBodies(Module &M, StringRef cacheDir) {
+bool rewriteProfileStubBodies(Module &M) {
   std::map<std::string, ProfDesc> descs;
-  if (!readProfDescriptors(cacheDir, descs))
+  if (!readProfDescriptors(M, descs))
     return false;
 
   LLVMContext &C = M.getContext();
@@ -1513,22 +1513,16 @@ bool rewriteProfileStubBodies(Module &M, StringRef cacheDir) {
 
 llvm::PreservedAnalyses HostStubPass::run(llvm::Module &M,
                                           llvm::ModuleAnalysisManager &) {
-  applyFlagDefaults();
-  // Profile generation: every launch of an annotated kernel goes through the
-  // runtime helper that supplies its shadow buffers.
-  if (flags::ProfileGenerate && !isDeviceModule(M))
-    return rewriteProfileStubBodies(M, flags::Cache)
-               ? llvm::PreservedAnalyses::none()
-               : llvm::PreservedAnalyses::all();
-  // Host dispatch materializes only in the optimize phase: profile-gen builds
-  // instrument the original kernel and do not link the runtime, and with no
-  // profile any cache/*.ozdispatch is a stale leftover.
-  if (!flags::OzakiHostDispatch || isDeviceModule(M) ||
-      flags::ProfileGenerate || flags::ProfileUse.empty())
+  if (isDeviceModule(M) || !handsOverLaunches())
     return llvm::PreservedAnalyses::all();
-  return rewriteGemmStubBodies(M, flags::Cache)
-             ? llvm::PreservedAnalyses::none()
-             : llvm::PreservedAnalyses::all();
+  // Profile generation: every launch of an annotated kernel goes through the
+  // runtime helper that supplies its shadow buffers. Host dispatch
+  // materializes only in the optimize phase: profile-gen builds instrument the
+  // original kernel and do not link the runtime.
+  bool changed = flags::ProfileGenerate ? rewriteProfileStubBodies(M)
+                                        : rewriteGemmStubBodies(M);
+  return changed ? llvm::PreservedAnalyses::none()
+                 : llvm::PreservedAnalyses::all();
 }
 
 } // namespace poseidon
