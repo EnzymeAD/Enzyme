@@ -13,6 +13,7 @@
 #include "Optimize.h"
 #include "ProfileRead.h"
 #include "RaiseWMMA.h"
+#include "Solvers.h"
 // The one profile-filename rule, shared verbatim with both FP profiler
 // runtimes; the existence check below must look where they wrote.
 #include "FPProfileName.h"
@@ -565,6 +566,7 @@ bool optimizeSiteBody(CallBase *CI, Function *F,
              "or -poseidon-profile-use=<dir>. Emitting the original "
              "computation.");
   } else {
+    noteSiteForPins(*F);
     auto key = std::make_pair((const Function *)F, errTol);
     auto prior = solvedSites().find(key);
     if (!flags::JointDP && prior != solvedSites().end())
@@ -2909,6 +2911,7 @@ static void restoreHostWrapperDebugInfo(Module &M) {
 }
 
 void finalizeModule(Module &M) {
+  checkPinnedSites();
   // A site whose solve applied nothing calls the original body again, and an
   // applied site's wrapper call may have been inlined away, in both cases
   // leaving a canonicalized clone nothing calls.

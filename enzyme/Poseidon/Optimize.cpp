@@ -108,6 +108,34 @@ std::string siteProfileStem(const Function &clone) {
   return profileNameStem(clone.getName().str());
 }
 
+std::string siteKeyOfBody(const Function &body) {
+  StringRef symbol = body.getName();
+  symbol.consume_back("_poseidon_body");
+  return symbol.str();
+}
+
+std::string siteKey(const Function &clone) {
+  const Function *origin = siteOriginOf(clone);
+  return siteKeyOfBody(origin ? *origin : clone);
+}
+
+SmallVector<std::string, 2> siteAliases(StringRef key) {
+  SmallVector<std::string, 2> aliases;
+  StringRef fn = key.split(".poseidon.").first;
+  if (fn != key)
+    aliases.push_back(fn.str());
+  // The demangler's nodes point into the name it was given.
+  std::string mangled = fn.str();
+  ItaniumPartialDemangler D;
+  if (!D.partialDemangle(mangled.c_str()) && D.isFunction())
+    if (char *base = D.getFunctionBaseName(nullptr, nullptr)) {
+      if (key != base && !is_contained(aliases, base))
+        aliases.push_back(base);
+      std::free(base);
+    }
+  return aliases;
+}
+
 // The site clone has no callers while it is optimized, so the caller values of
 // its parameters are kept here for the parameter-staging arm to resolve a
 // pointer parameter to its addrspace(3) global.
@@ -1915,7 +1943,10 @@ bool materializeFPSolution(Function &F, FunctionFPState &st,
   auto &valueToNodeMap = st.valueToNodeMap;
   auto &symbolToValueMap = st.symbolToValueMap;
   auto &subgraphs = st.subgraphs;
-  bool changed = applySolution(steps, valueToNodeMap, symbolToValueMap);
+  SmallVector<SolutionStep> applied;
+  bool changed =
+      applySolution(steps, valueToNodeMap, symbolToValueMap, applied);
+  printPin(st, applied);
 
   llvm::errs() << "[poseidon] Finished optimizing " << F.getName() << "\n";
 
@@ -2011,7 +2042,7 @@ bool fpOptimize(Function &F, double errorTol) {
   record.siteTarget = errorTol > 0.0;
   SmallVector<SolutionStep> steps;
   if (!flags::ApplyRewrites.empty()) {
-    steps = parseManualRewrites(flags::ApplyRewrites, st.COs, st.CSs, st.CMs);
+    steps = parseManualRewrites(st);
     record.selector = "manual";
   } else if (target > 0.0 && !st.CMs.empty()) {
     // The target is a RELATIVE error, and for a matrix product that is what
@@ -2127,8 +2158,7 @@ bool solveJointly(Module &M, FunctionAnalysisManager &FAM) {
   SmallVector<SolutionStep> steps;
   if (!flags::ApplyRewrites.empty()) {
     for (auto *st : raw) {
-      auto s =
-          parseManualRewrites(flags::ApplyRewrites, st->COs, st->CSs, st->CMs);
+      auto s = parseManualRewrites(*st);
       steps.append(s.begin(), s.end());
     }
     record.selector = "manual";

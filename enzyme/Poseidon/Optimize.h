@@ -3,6 +3,8 @@
 
 #include <string>
 
+#include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringRef.h"
 #include "llvm/IR/PassManager.h"
 #include "llvm/IR/Value.h"
 #include "llvm/Support/CommandLine.h"
@@ -29,6 +31,15 @@ const llvm::Function *siteOriginOf(const llvm::Function &clone);
 // The ".fpprofile" stem of a site clone. The profiling run writes one record
 // per marked BODY, so every clone of one body reads the same file.
 std::string siteProfileStem(const llvm::Function &clone);
+// The name -poseidon-apply-rewrites gives a site by: the symbol its body was
+// cut from (an annotated kernel or host function, a marker's target, the copy
+// made for one __poseidon_optimize call), the one its profile is named after.
+std::string siteKeyOfBody(const llvm::Function &body);
+std::string siteKey(const llvm::Function &clone);
+// The other names a site answers to when no other site of the module does:
+// the function a per-call copy was made of, and the unqualified name the
+// symbol demangles to.
+llvm::SmallVector<std::string, 2> siteAliases(llvm::StringRef key);
 // Caller value of parameter i of a site clone, as recorded by
 // noteSiteArgs; null when unknown.
 llvm::Value *siteArg(const llvm::Function *clone, unsigned i);

@@ -136,10 +136,16 @@ cl::opt<bool> AggressiveDCE(
              "before the solve"));
 cl::opt<std::string> ApplyRewrites(
     "poseidon-apply-rewrites", cl::init(""), cl::Hidden,
-    cl::desc("Comma-separated rewrite IDs to apply (e.g.\n"
-             "R0_1,R3_0,PT1_2). IDs are from the _rewrites.json\n"
-             "report. Bypasses the DP solver. At most one candidate\n"
-             "per expression (R) or subgraph (PT)."));
+    cl::desc("Comma-separated candidates to apply instead of a solve, each\n"
+             "[<site>:]<unit>_<ordinal> (R0_1, PT1_2, M0_3) or\n"
+             "[<site>:]<unit>=<name> (M0=native-dgemm cublas f64/f64),\n"
+             "<name> being the candidate's expression, precision\n"
+             "description or matrix-product label. <site> is the site's\n"
+             "symbol as the pin line gives it, or its unqualified name\n"
+             "when no other site of the module has it; an item without\n"
+             "one applies to every site. At most one candidate per unit.\n"
+             "Every solve prints the value that applies its choice\n"
+             "again as '[poseidon] pin: <value>'."));
 
 // Cost and accuracy model.
 cl::opt<std::string> CostModel(
