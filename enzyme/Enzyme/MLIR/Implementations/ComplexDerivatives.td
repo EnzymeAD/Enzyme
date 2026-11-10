@@ -156,3 +156,48 @@ def : MLIRDerivative<"complex", "SqrtOp", (Op $x),
                       )
                     ]
                   >;
+
+def : MLIRDerivative<"complex", "PowOp", (Op $x, $y),
+                    [
+                      (CheckedComplexMul
+                        (DiffeRet),
+                        (ComplexMul
+                          $y,
+                          (ComplexPow $x, (ComplexSub $y, (ComplexConstant<"1.0"> $y)))
+                        )
+                      ),
+                      (CheckedComplexMul
+                        (DiffeRet),
+                        (Arith_Select
+                          (ComplexEq $x, (ComplexConstant<"0"> $x):$pzero),
+                          $pzero,
+                          (ComplexMul (ComplexPow $x, $y), (ComplexLog $x))
+                        )
+                      )
+                    ]
+                  >;
+
+def : MLIRDerivative<"complex", "PowiOp", (Op $x, $y),
+                    [
+                      (Arith_Select
+                        (CmpI (Arith_EQ), $y, (ConstantInt<"0", "arith", "ConstantOp"> $y)),
+                        (ComplexConstant<"0"> $x),
+                        (CheckedComplexMul
+                          (DiffeRet),
+                          (ComplexMul
+                            (ComplexCreate
+                              (TypeOf $x),
+                              (SItoF (ComplexElementType), $y):$n,
+                              (ConstantFP<"0", "arith", "ConstantOp"> $n)
+                            ),
+                            (ComplexPowi
+                              $x,
+                              (SubI $y, (ConstantInt<"1", "arith", "ConstantOp"> $y)),
+                              (NoFastMathAttr)
+                            )
+                          )
+                        )
+                      ),
+                      (InactiveArg)
+                    ]
+                  >;
