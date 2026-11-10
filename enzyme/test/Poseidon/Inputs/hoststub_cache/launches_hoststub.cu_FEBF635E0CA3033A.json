@@ -1,0 +1,14 @@
+{
+  "key": {
+    "format": "1",
+    "source file": "hoststub.cu",
+    "unit": "fixture"
+  },
+  "value": {
+    "host dispatch": [
+      "_Z11gemm_kernelPKdS0_Pd 2 0 1 512 1 1 512 512 512 512 512 512 0 0 0 2",
+      "_Z16gemm_tall_kernelPKdS0_Pdi 2 0 1 0 1 3 128 512 256 256 256 512 0 0 0 1"
+    ],
+    "profile generation": []
+  }
+}

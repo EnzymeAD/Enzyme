@@ -7,22 +7,27 @@
 // Inputs/host_gemm_hip, the one the CUDA twin's solve writes, under this
 // kernel's name: the stub dispatches the dense product to the HIP Ozaki-II
 // runtime from the launch's arguments, and a padded tensor still runs the
-// kernel as written.
+// kernel as written. The descriptor is in the manifest of this source under
+// the unit name the host half alone is given, so the manifest the device half
+// writes is another file; the source is compiled from a copy under a fixed
+// name, which the manifest's file name follows.
 //
 // RUN: rm -rf %t.pcache && %poseidon_clangxx -x hip --offload-arch=%amdgpu_arch \
 // RUN:     --rocm-path=%rocm_path -O2 -poseidon-profile-generate \
 // RUN:     -poseidon-cache=%t.pcache %s -o %t.exe
-// RUN: cat %t.pcache/*.profgen | FileCheck --check-prefix=DESC %s
+// RUN: cat %t.pcache/launches_*.json | FileCheck --check-prefix=DESC %s
 // RUN: rm -rf %t.profile && POSEIDON_PROFILE_DIR=%t.profile %t.exe profile \
 // RUN:   | FileCheck --check-prefix=PRIMAL %s
 // RUN: cat %t.profile/*.fpprofile | FileCheck --check-prefix=PROF %s
 //
-// RUN: rm -rf %t.cache %t.none && mkdir %t.cache %t.none
-// RUN: cp %S/../Inputs/host_gemm_hip/*.ozdispatch %t.cache/
-// RUN: %poseidon_clangxx -x hip --offload-arch=%amdgpu_arch \
+// RUN: rm -rf %t.cache %t.none %t.src && mkdir %t.cache %t.none %t.src
+// RUN: cp %S/../Inputs/host_gemm_hip/launches_*.json %t.cache/
+// RUN: cp %s %t.src/annotated_lambda_host_gemm.hip
+// RUN: cd %t.src && %poseidon_clangxx -x hip --offload-arch=%amdgpu_arch \
 // RUN:     --rocm-path=%rocm_path -O2 -poseidon-profile-use=%t.none \
-// RUN:     -poseidon-cache=%t.cache \
-// RUN:     -poseidon-enable-herbie=0 %s -o %t.opt.exe 2>&1 | FileCheck %s
+// RUN:     -poseidon-cache=%t.cache -Xarch_host -mllvm=-poseidon-unit=seeded \
+// RUN:     -poseidon-enable-herbie=0 annotated_lambda_host_gemm.hip \
+// RUN:     -o %t.opt.exe 2>&1 | FileCheck %s
 // RUN: %t.opt.exe run | FileCheck --check-prefix=OPT %s
 //
 // REQUIRES: poseidon, enzyme, hip-runtime

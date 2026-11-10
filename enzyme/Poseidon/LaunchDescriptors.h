@@ -8,11 +8,13 @@
 //===----------------------------------------------------------------------===//
 //
 // Device and host code are separate compilations, so a device-side solve that
-// changes how a kernel must be launched reaches the host through a file: one
-// single-line descriptor per wrapper kernel, named "<wrapper><scheme>" in the
-// cache directory (the wrapper name through profileNameStem). Every feature
-// that rewrites a launch stub shares the note map, the file format and the
-// stub locator here and keeps only its own payload and rewrite body.
+// changes how a kernel must be launched reaches the host through a file: the
+// manifest of the translation unit in the cache directory, which holds one
+// single-line descriptor per wrapper kernel. The device compile writes it
+// whole once its sites are processed, and the host compile of the same source
+// and unit reads it and no other. Every feature that rewrites a launch stub
+// shares the note map, the manifest and the stub locator here and keeps only
+// its own payload and rewrite body.
 //
 //===----------------------------------------------------------------------===//
 
@@ -23,9 +25,11 @@
 #include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/IR/Function.h"
+#include "llvm/IR/Module.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <map>
+#include <string>
 
 namespace poseidon {
 
@@ -47,22 +51,41 @@ private:
   std::map<const llvm::Function *, Note> notes;
 };
 
-// Write "<wrapperName><payload>\n" to <cacheDir>/<stem(wrapperName)><scheme>;
-// `emitPayload` appends everything after the name. False if the file could not
-// be opened (reported on stderr under `tag`).
-bool writeDescriptor(llvm::StringRef cacheDir, llvm::StringRef wrapperName,
-                     llvm::StringRef scheme, llvm::StringRef tag,
-                     llvm::function_ref<void(llvm::raw_ostream &)> emitPayload);
+enum class LaunchKind {
+  // A raised GEMM the host stub dispatches to a library (the payload is
+  // written by HostDispatch.cpp).
+  HostDispatch,
+  // An annotated kernel the host stub launches through the profiling helper:
+  //   <kernel> <site id> <original arg count> <pointer arg count>
+  //     <pointer arg index>...
+  //     <seed width in bytes of that pointer, 0 if it is not an output>...
+  //     [off <byte offset of that pointer in its argument>...]
+  // The offsets are written when a pointer is a field of an aggregate argument.
+  Profiling,
+};
 
-// Drop a descriptor an earlier solve left behind, so a stale one can never be
-// replayed against a kernel this solve did not rewrite.
-void removeDescriptor(llvm::StringRef cacheDir, llvm::StringRef wrapperName,
-                      llvm::StringRef scheme);
+// Whether the host half of this compile rewrites launch stubs from a manifest:
+// under profile generation, and under profile use with host dispatch.
+bool handsOverLaunches();
 
-// Hand `parse` the space-separated tokens of every "<*><scheme>" descriptor in
-// cacheDir; token 0 is always the wrapper kernel name.
+// Records "<wrapperName><payload>" as the `kind` descriptor of that kernel in
+// place of one recorded before; `emitPayload` appends everything after the
+// name. `message` is printed when the manifest is written.
+void recordDescriptor(LaunchKind kind, llvm::StringRef wrapperName,
+                      llvm::function_ref<void(llvm::raw_ostream &)> emitPayload,
+                      std::string message);
+
+// Replaces the manifest of device module M by the descriptors recorded since
+// the last write and prints their messages, all in order of kernel name; with
+// none recorded, removes it, since no manifest means nothing to rewrite. A
+// manifest that cannot be written or removed stops the compile.
+void writeLaunchManifest(const llvm::Module &M);
+
+// Hands `parse` the space-separated tokens of every `kind` descriptor in the
+// manifest of host module M; token 0 is always the wrapper kernel name. A unit
+// without a manifest has none.
 void readDescriptors(
-    llvm::StringRef cacheDir, llvm::StringRef scheme,
+    const llvm::Module &M, LaunchKind kind,
     llvm::function_ref<void(llvm::ArrayRef<llvm::StringRef>)> parse);
 
 // The part of a kernel's mangled name shared with its launch stub: kernel

@@ -1,5 +1,5 @@
-; RUN: %clang -O0 -x ir %s %clangLoadPoseidon -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%S/Inputs/lambda_stub -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=GEN %s
-; RUN: %clang -O0 -x ir %s %clangLoadPoseidon -mllvm -poseidon-profile-use=%S/Inputs/lambda_stub -mllvm -poseidon-cache=%S/Inputs/lambda_stub -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=USE %s
+; RUN: %clang -O0 -x ir %s %clangLoadPoseidon -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%S/Inputs/lambda_stub -mllvm -poseidon-unit=fixture -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=GEN %s
+; RUN: %clang -O0 -x ir %s %clangLoadPoseidon -mllvm -poseidon-profile-use=%S/Inputs/lambda_stub -mllvm -poseidon-cache=%S/Inputs/lambda_stub -mllvm -poseidon-unit=fixture -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=USE %s
 ; REQUIRES: poseidon
 ; The launch stub of a kernel that takes a lambda by value
 ; (Inputs/lambda_stub/lambda_stub.cu, clang --cuda-host-only -O0): the

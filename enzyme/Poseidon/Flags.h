@@ -48,6 +48,8 @@ void applyFlagDefaults();
 // compile when a flag is in neither list or in both.
 using FlagValues = llvm::SmallVector<std::pair<llvm::StringRef, std::string>>;
 FlagValues solveFlagValues();
+// The name and value of every -poseidon-* flag.
+FlagValues allFlagValues();
 
 // One flag per line, in --help order. A flag's name is its variable name in
 // kebab case: `Tau` is -poseidon-tau, `HerbieNumPts` is
@@ -100,6 +102,7 @@ extern llvm::cl::opt<bool> FreqWeightedPricing;
 
 // Herbie and the result cache.
 extern llvm::cl::opt<std::string> Cache;
+extern llvm::cl::opt<std::string> Unit;
 extern llvm::cl::opt<std::string> ImportAccuracyMemo;
 extern llvm::cl::opt<int> HerbieNumThreads;
 extern llvm::cl::opt<int> HerbieTimeout;

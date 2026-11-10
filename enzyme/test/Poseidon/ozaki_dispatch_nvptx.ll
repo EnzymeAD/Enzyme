@@ -1,21 +1,23 @@
 ; RUN: rm -rf %t && mkdir -p %t
-; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/raise_tcec -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_dispatch_x1e6.csv -poseidon-print -S -poseidon-cache=%t/tau12 -poseidon-tau=1e-12 -o %t/tau12.ll 2> %t/tau12.err
+; RUN: sed 's/ozaki_stub\.cu/tcec_matmul.cu/g' %S/Inputs/ozaki_dispatch/ozaki_stub_host.ll > %t/host.ll
+; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/raise_tcec -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_dispatch_x1e6.csv -poseidon-print -S -poseidon-cache=%t/tau12 -poseidon-unit=tcec -poseidon-tau=1e-12 -o %t/tau12.ll 2> %t/tau12.err
 ; RUN: FileCheck --check-prefix=TAU12 %s < %t/tau12.err
-; RUN: FileCheck --check-prefix=DESC12 %s < %t/tau12/_Z13matmul_kernelPKdS0_PdS1_.ozdispatch
-; RUN: %clang -O0 -x ir %S/Inputs/ozaki_dispatch/ozaki_stub_host.ll %clangLoadPoseidon -mllvm -poseidon-profile-use=%S/Inputs/raise_tcec -mllvm -poseidon-cache=%t/tau12 -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=HOST12 %s
+; RUN: cat %t/tau12/launches_*.json | FileCheck --check-prefix=DESC12 %s
+; RUN: %clang -O0 -x ir %t/host.ll %clangLoadPoseidon -mllvm -poseidon-profile-use=%S/Inputs/raise_tcec -mllvm -poseidon-cache=%t/tau12 -mllvm -poseidon-unit=tcec -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=HOST12 %s
 ; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/raise_tcec -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_dispatch_x1e6.csv -poseidon-print -S -poseidon-cache=%t/tau7 -poseidon-tau=1e-7 -o /dev/null 2>&1 | FileCheck --check-prefix=TAU7 %s
 ; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/raise_tcec -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_dispatch_x1e6.csv -poseidon-print -S -poseidon-cache=%t/tau10 -poseidon-tau=1e-10 -o /dev/null 2>&1 | FileCheck --check-prefix=TAU10 %s
-; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/raise_tcec -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_dispatch_x1e6.csv -poseidon-print -S -poseidon-cache=%t/tau15 -poseidon-tau=1e-15 -o /dev/null 2>&1 | FileCheck --check-prefix=TAU15 %s
-; RUN: %clang -O0 -x ir %S/Inputs/ozaki_dispatch/ozaki_stub_host.ll %clangLoadPoseidon -mllvm -poseidon-profile-use=%S/Inputs/raise_tcec -mllvm -poseidon-cache=%t/tau15 -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=HOST15 %s
+; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/raise_tcec -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_dispatch_x1e6.csv -poseidon-print -S -poseidon-cache=%t/tau15 -poseidon-unit=tcec -poseidon-tau=1e-15 -o /dev/null 2>&1 | FileCheck --check-prefix=TAU15 %s
+; RUN: %clang -O0 -x ir %t/host.ll %clangLoadPoseidon -mllvm -poseidon-profile-use=%S/Inputs/raise_tcec -mllvm -poseidon-cache=%t/tau15 -mllvm -poseidon-unit=tcec -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=HOST15 %s
 ; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/raise_tcec -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_dispatch_x1e6.csv -poseidon-print -S -poseidon-cache=%t/off -poseidon-tau=1e-12 -poseidon-ozaki-host-dispatch=false -o /dev/null 2>&1 | FileCheck --check-prefix=OFF %s
 ; REQUIRES: poseidon, scev-trunc-iv-nowrap
 ; Ozaki-II host dispatch selected by a tolerance: the scalar FP64 product of raise_scalar_tcec_nvptx.ll
 ; (same IR, same profile Inputs/raise_tcec) priced against the in-kernel raises and the host-dispatch
 ; families of Inputs/cm_gpu_fixture_dispatch_x1e6.csv. errorBudgetSelector takes the cheapest candidate
 ; whose modelled domain error clears tau, so the Ozaki-II moduli count rises with the tolerance; the
-; device compile writes the .ozdispatch descriptor (last field 0 = Ozaki-II scheme, seventh field = nm)
-; and the host compile of the same kernel's launch stub (Inputs/ozaki_dispatch/ozaki_stub_host.ll, from
-; ozaki_stub.cu via clang -x cuda --cuda-host-only -O0 -S -emit-llvm) is rewritten to
+; device compile writes the dispatch descriptor into the unit's manifest (last field 0 = Ozaki-II
+; scheme, seventh field = nm) and the host compile of the same kernel's launch stub
+; (Inputs/ozaki_dispatch/ozaki_stub_host.ll, from ozaki_stub.cu via clang -x cuda --cuda-host-only -O0
+; -S -emit-llvm, renamed to this module's source and compiled as the same unit) is rewritten to
 ; __poseidon_ozaki_dgemm with that nm. nm = 0 is the native cuBLAS DGEMM arm of the same entry.
 
 ; REQUIRES: poseidon, scev-trunc-iv-nowrap

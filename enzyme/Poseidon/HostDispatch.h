@@ -1,9 +1,9 @@
 //===- HostDispatch.h - host-side GEMM library dispatch ------------------===//
 //
 // A raised GEMM materialized as a host library call: the device sub-compilation
-// records a descriptor to a side-car file in the Poseidon cache dir, and the
-// host sub-compilation (a separate cc1 process) reads it and rewrites the
-// kernel launch into a call to the runtime helper.
+// records a descriptor in the manifest of its translation unit in the Poseidon
+// cache dir, and the host sub-compilation (a separate cc1 process) reads it and
+// rewrites the kernel launch into a call to the runtime helper.
 //===---------------------------------------------------------------------===//
 #ifndef POSEIDON_HOST_DISPATCH_H
 #define POSEIDON_HOST_DISPATCH_H
@@ -36,19 +36,6 @@ namespace poseidon {
 //   Direct  -> __poseidon_direct_dgemm(_ex): one rounding of each operand to
 //              FP16/BF16/TF32/FP32 (numModuli = 1/2/3/4), FP32 accumulator.
 enum class DispatchScheme { OzakiII, Tcec, Direct };
-
-// Descriptor file suffix for host GEMM dispatch.
-constexpr llvm::StringLiteral kOzDispatchScheme = ".ozdispatch";
-
-// Descriptor file suffix for profile generation. The device compilation writes
-// one per annotated kernel; the host compilation of the same clang invocation
-// reads it to rewrite that kernel's launch stub.
-//   <kernel> <site id> <original arg count> <pointer arg count>
-//            <pointer arg index>...
-//            <seed width in bytes of that pointer, 0 if it is not an output>...
-//            [off <byte offset of that pointer in its argument>...]
-// The offsets are written when a pointer is a field of an aggregate argument.
-constexpr llvm::StringLiteral kProfGenScheme = ".profgen";
 
 // Marks a parameter of an outlined kernel body that carries the kernel's
 // by-value aggregate argument: the body reads the kernel's own copy, so the
@@ -136,30 +123,29 @@ bool getGemmBody(const llvm::Function *body, GemmBodyNote &out);
 // prepend.
 bool fissionGemmForDispatch(llvm::Function &F, const AbstractMatmul &m);
 
-// Map body params to wrapper launch-arg indices via primalArgs and append a
-// descriptor line to <cacheDir>/<wrapper>.ozdispatch.
+// Map body params to wrapper launch-arg indices via primalArgs and record the
+// wrapper's host dispatch descriptor.
 void writeGemmDescriptor(llvm::Function &wrapper,
                          llvm::ArrayRef<llvm::Value *> primalArgs,
-                         const GemmBodyNote &n, llvm::StringRef cacheDir);
+                         const GemmBodyNote &n);
 
 // Joint-DP path: the note is produced only in the post-Enzyme joint
 // materialize, so addPendingGemmDispatch captures the body-param to wrapper-arg
-// mapping at split time and flushPendingGemmDispatches emits the descriptors
+// mapping at split time and flushPendingGemmDispatches records the descriptors
 // afterwards.
 void addPendingGemmDispatch(const llvm::Function *body, llvm::Function &wrapper,
-                            llvm::ArrayRef<llvm::Value *> primalArgs,
-                            llvm::StringRef cacheDir);
+                            llvm::ArrayRef<llvm::Value *> primalArgs);
 void flushPendingGemmDispatches();
 
-// Read *.ozdispatch in cacheDir and rewrite each matching __device_stub__
-// launch stub; must run on the host module before inlining.
-bool rewriteGemmStubBodies(llvm::Module &M, llvm::StringRef cacheDir);
+// Rewrite each __device_stub__ launch stub that a host dispatch descriptor in
+// M's manifest matches; must run on the host module before inlining.
+bool rewriteGemmStubBodies(llvm::Module &M);
 
-// Read *.profgen in cacheDir and rewrite the launch in each matching launch
-// stub into a call of __poseidon_launch_profiled, which allocates, zeroes and
-// seeds the shadow buffers the profiling kernel takes and launches it. Host
-// module only.
-bool rewriteProfileStubBodies(llvm::Module &M, llvm::StringRef cacheDir);
+// Rewrite the launch in each launch stub that a profile generation descriptor
+// in M's manifest matches into a call of __poseidon_launch_profiled, which
+// allocates, zeroes and seeds the shadow buffers the profiling kernel takes and
+// launches it. Host module only.
+bool rewriteProfileStubBodies(llvm::Module &M);
 
 // PipelineStart pass wrapper for rewriteGemmStubBodies (host module only).
 class HostStubPass : public PassParent<HostStubPass> {

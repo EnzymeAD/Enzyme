@@ -10,7 +10,7 @@
 //
 // RUN: rm -rf %t.pcache && %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 \
 // RUN:     -poseidon-profile-generate -poseidon-cache=%t.pcache %s -o %t.exe
-// RUN: cat %t.pcache/*.profgen | FileCheck --check-prefix=DESC %s
+// RUN: cat %t.pcache/launches_*.json | FileCheck --check-prefix=DESC %s
 // RUN: rm -rf %t.profile && POSEIDON_PROFILE_DIR=%t.profile %t.exe profile \
 // RUN:   | FileCheck --check-prefix=PRIMAL %s
 //
@@ -157,7 +157,7 @@ int main(int argc, char **argv) {
 
 // The kernel, its two launch arguments, and its three pointers, all fields of
 // the lambda (argument 1); only the output's is seeded.
-// DESC: CuKernel2D{{.*}} 0 2 3 1 1 1 0 0 8 off {{[0-9]+ [0-9]+ [0-9]+$}}
+// DESC: CuKernel2D{{.*}} 0 2 3 1 1 1 0 0 8 off {{[0-9]+ [0-9]+ [0-9]+}}"
 
 // PRIMAL: DENSE: rel err ok
 

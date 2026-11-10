@@ -2,7 +2,7 @@
 // RUN:     %clangLoadPoseidonEnzyme -mllvm --poseidon-profile-generate -mllvm --poseidon-cache=%t.cache \
 // RUN:     -I%FPProfileInc %s -x none %FPProfileCUDALib %FPProfileLib \
 // RUN:     -L/usr/local/cuda/lib64 -lcudart -lstdc++ -lm -o %t.exe
-// RUN: cat %t.cache/_Z4axpbPdPKdS1_i.profgen | FileCheck --check-prefix=DESC %s
+// RUN: cat %t.cache/launches_*.json | FileCheck --check-prefix=DESC %s
 // RUN: rm -rf %t.profiles && POSEIDON_PROFILE_DIR=%t.profiles %t.exe | FileCheck --check-prefix=PRIMAL %s
 // RUN: cat %t.profiles/*.fpprofile | FileCheck %s
 //

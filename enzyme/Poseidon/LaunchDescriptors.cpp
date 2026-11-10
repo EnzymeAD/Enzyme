@@ -8,67 +8,162 @@
 //===----------------------------------------------------------------------===//
 
 #include "LaunchDescriptors.h"
+#include "CacheKey.h"
 #include "FPProfileName.h"
+#include "Flags.h"
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Demangle/Demangle.h"
+#include "llvm/IR/GlobalVariable.h"
+#include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/FileSystem.h"
-#include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/JSON.h"
 #include "llvm/Support/Path.h"
 
 using namespace llvm;
 
 namespace poseidon {
 
-// A mangled kernel name can be longer than a file name may be (an MFEM forall
-// lambda's runs past 300 characters), so the file is named by the profile
-// name rule; the reader takes the full name from the file's first token.
-static SmallString<256> descriptorPath(StringRef cacheDir,
-                                       StringRef wrapperName,
-                                       StringRef scheme) {
-  SmallString<256> path(cacheDir);
-  sys::path::append(path, profileNameStem(wrapperName.str()) + scheme.str());
-  return path;
+namespace {
+
+struct Recorded {
+  std::string line;
+  std::string message;
+};
+
+// By kernel name, so that the manifest and its messages come out in one order
+// whatever order the sites were solved in.
+std::map<std::string, Recorded> &recorded(LaunchKind kind) {
+  static std::map<std::string, Recorded> byKind[2];
+  return byKind[kind == LaunchKind::HostDispatch ? 0 : 1];
 }
 
-bool writeDescriptor(StringRef cacheDir, StringRef wrapperName,
-                     StringRef scheme, StringRef tag,
-                     function_ref<void(raw_ostream &)> emitPayload) {
-  (void)sys::fs::create_directories(cacheDir, true);
-  SmallString<256> path = descriptorPath(cacheDir, wrapperName, scheme);
-  std::error_code EC;
-  raw_fd_ostream os(path, EC, sys::fs::OF_Text);
-  if (EC) {
-    errs() << tag << " cannot write " << path << ": " << EC.message() << "\n";
-    return false;
-  }
+constexpr LaunchKind kKinds[] = {LaunchKind::HostDispatch,
+                                 LaunchKind::Profiling};
+
+StringRef kindName(LaunchKind kind) {
+  return kind == LaunchKind::HostDispatch ? "host dispatch"
+                                          : "profile generation";
+}
+
+// The name both halves of one compile know their translation unit by: the one
+// -poseidon-unit gives, the id clang gives both halves of a HIP compile, or
+// else the values of every Poseidon flag, which a compile hands both halves
+// alike.
+std::string unitName(const Module &M) {
+  if (!flags::Unit.empty())
+    return flags::Unit;
+  constexpr StringLiteral cuidPrefix = "__hip_cuid_";
+  for (const GlobalVariable &G : M.globals())
+    if (G.getName().starts_with(cuidPrefix))
+      return G.getName().drop_front(cuidPrefix.size()).str();
+  CacheKey options;
+  for (const auto &[name, value] : allFlagValues())
+    options.add(name, value);
+  return options.digest();
+}
+
+struct Manifest {
+  SmallString<256> path;
+  CacheKey key;
+};
+
+// The source file tells apart the units one compile writes into a cache, the
+// unit name the compiles of one source into it.
+Manifest manifestOf(const Module &M) {
+  applyFlagDefaults();
+  Manifest m;
+  StringRef source = M.getSourceFileName();
+  m.key.add("source file", source);
+  m.key.add("unit", unitName(M));
+  m.path = flags::Cache;
+  sys::path::append(
+      m.path, "launches_" + profileNameStem(sys::path::filename(source).str()) +
+                  "_" + m.key.digest() + ".json");
+  return m;
+}
+
+} // namespace
+
+bool handsOverLaunches() {
+  applyFlagDefaults();
+  return flags::ProfileGenerate ||
+         (flags::OzakiHostDispatch && !flags::ProfileUse.empty());
+}
+
+void recordDescriptor(LaunchKind kind, StringRef wrapperName,
+                      function_ref<void(raw_ostream &)> emitPayload,
+                      std::string message) {
+  Recorded r;
+  raw_string_ostream os(r.line);
   os << wrapperName;
   emitPayload(os);
-  os << '\n';
-  return true;
+  r.message = std::move(message);
+  recorded(kind)[wrapperName.str()] = std::move(r);
 }
 
-void removeDescriptor(StringRef cacheDir, StringRef wrapperName,
-                      StringRef scheme) {
-  (void)sys::fs::remove(descriptorPath(cacheDir, wrapperName, scheme).str());
+void writeLaunchManifest(const Module &M) {
+  Manifest m = manifestOf(M);
+  // The device code is already compiled for the rewritten stubs (a dispatched
+  // product fissioned out of its kernel, a profiled kernel taking shadow
+  // buffers), so a host half reading no manifest or an earlier one would build
+  // a wrong program.
+  auto fail = [&](StringRef action, const Twine &why) {
+    report_fatal_error("Poseidon: cannot " + action + " the launch manifest " +
+                           m.path + ": " + why,
+                       /*gen_crash_diag=*/false);
+  };
+  if (llvm::all_of(kKinds,
+                   [](LaunchKind kind) { return recorded(kind).empty(); })) {
+    if (sys::fs::exists(m.path))
+      if (std::error_code EC = sys::fs::remove(m.path))
+        fail("remove", EC.message());
+    return;
+  }
+  json::Object value;
+  for (LaunchKind kind : kKinds) {
+    json::Array lines;
+    for (const auto &[kernel, r] : recorded(kind))
+      lines.push_back(r.line);
+    value[kindName(kind)] = std::move(lines);
+  }
+  if (std::error_code EC = sys::fs::create_directories(flags::Cache))
+    fail("write", EC.message());
+  if (Error E = writeCacheEntry(m.path, m.key, std::move(value)))
+    fail("write", toString(std::move(E)));
+  for (LaunchKind kind : kKinds) {
+    for (const auto &[kernel, r] : recorded(kind))
+      errs() << r.message;
+    recorded(kind).clear();
+  }
 }
 
-void readDescriptors(StringRef cacheDir, StringRef scheme,
+void readDescriptors(const Module &M, LaunchKind kind,
                      function_ref<void(ArrayRef<StringRef>)> parse) {
-  std::error_code EC;
-  for (sys::fs::directory_iterator it(cacheDir, EC), end; it != end && !EC;
-       it.increment(EC)) {
-    StringRef p = it->path();
-    if (!p.ends_with(scheme))
+  Manifest m = manifestOf(M);
+  CacheEntryRead read = readCacheEntry(m.path, m.key);
+  const json::Object *value = read.value ? read.value->getAsObject() : nullptr;
+  const json::Array *lines = value ? value->getArray(kindName(kind)) : nullptr;
+  if (read.value && !lines)
+    read.unreadable = ("it holds no " + kindName(kind) + " list").str();
+  if (!read.unreadable.empty())
+    errs() << "[poseidon] launch manifest " << m.path << " is unreadable ("
+           << read.unreadable << "); no launch stub is rewritten from it\n";
+  else if (!read.differs.empty())
+    errs() << "[poseidon] launch manifest " << m.path
+           << " was written for a different " << read.differs
+           << "; no launch stub is rewritten from it\n";
+  if (!lines)
+    return;
+  for (const json::Value &entry : *lines) {
+    std::optional<StringRef> line = entry.getAsString();
+    if (!line)
       continue;
-    auto buf = MemoryBuffer::getFile(p);
-    if (!buf)
-      continue;
-    StringRef line = (*buf)->getBuffer().trim();
     SmallVector<StringRef, 8> toks;
-    line.split(toks, ' ');
+    line->trim().split(toks, ' ');
     parse(toks);
   }
 }

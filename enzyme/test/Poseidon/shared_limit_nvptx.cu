@@ -1,6 +1,6 @@
 // RUN: rm -rf %t && mkdir -p %t
 // RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O2 -S -emit-llvm -I%FPProfileInc %clangLoadPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/cache %s -o %t/gen.ll 2>&1 | FileCheck --check-prefix=GEN %s
-// RUN: cat %t/cache/*.profgen | FileCheck --check-prefix=DESC %s
+// RUN: cat %t/cache/launches_*.json | FileCheck --check-prefix=DESC %s
 // REQUIRES: poseidon, enzyme
 
 // The derivative a profiled kernel runs keeps a shadow next to each of its
@@ -26,9 +26,10 @@ __attribute__((global)) POSEIDON_OPTIMIZE void stage(const double *x,
 template __attribute__((global)) void stage<256>(const double *, double *);
 template __attribute__((global)) void stage<4096>(const double *, double *);
 
-// GEN: [poseidon-profgen] _Z5stageILi256EEvPKdPd: site 0, 2 shadow buffer(s)
 // GEN-NOT: [poseidon-profgen] _Z5stageILi4096EEvPKdPd
 // GEN: warning: {{.*}}Poseidon: void stage<4096>(double const*, double*) would declare 65536 bytes of static shared memory once profiled (a shadow next to each floating-point shared buffer), above the 49152 a kernel can declare. The kernel is not profiled and stays as written.
+// GEN-NOT: [poseidon-profgen] _Z5stageILi4096EEvPKdPd
+// GEN: [poseidon-profgen] _Z5stageILi256EEvPKdPd: site 0, 2 shadow buffer(s)
 // GEN-NOT: [poseidon-profgen] _Z5stageILi4096EEvPKdPd
 
 // DESC: _Z5stageILi256EEvPKdPd 0

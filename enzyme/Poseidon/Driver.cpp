@@ -573,8 +573,7 @@ bool optimizeSiteBody(CallBase *CI, Function *F,
           noteRewritten(*CI->getFunction());
         GemmBodyNote ozNote;
         if (flags::OzakiHostDispatch && getGemmBody(done, ozNote))
-          writeGemmDescriptor(*CI->getFunction(), primalArgs, ozNote,
-                              flags::Cache);
+          writeGemmDescriptor(*CI->getFunction(), primalArgs, ozNote);
         llvm::errs() << "[poseidon] " << F->getName()
                      << ": same body and target as an earlier site; reusing "
                         "its solve ("
@@ -623,7 +622,7 @@ bool optimizeSiteBody(CallBase *CI, Function *F,
       // capture the body-param -> wrapper-arg mapping now (primalArgs valid
       // here).
       if (flags::OzakiHostDispatch)
-        addPendingGemmDispatch(F, *CI->getFunction(), primalArgs, flags::Cache);
+        addPendingGemmDispatch(F, *CI->getFunction(), primalArgs);
     } else {
       bool optimized = fpOptimize(*F, errTol);
       if (optimized)
@@ -634,14 +633,13 @@ bool optimizeSiteBody(CallBase *CI, Function *F,
              Twine("Poseidon returned false (no change) for ") + F->getName());
 
       // Host-side GEMM dispatch: if fpOptimize recorded this body as a raised
-      // GEMM to be dispatched host-side (-poseidon-ozaki-host-dispatch), write
+      // GEMM to be dispatched host-side (-poseidon-ozaki-host-dispatch), record
       // the launch descriptor (wrapper kernel + C/A/B launch-arg indices +
       // geometry) for the host sub-compilation to consume.
       {
         GemmBodyNote ozNote;
         if (flags::OzakiHostDispatch && getGemmBody(F, ozNote))
-          writeGemmDescriptor(*CI->getFunction(), primalArgs, ozNote,
-                              flags::Cache);
+          writeGemmDescriptor(*CI->getFunction(), primalArgs, ozNote);
       }
 
       // No rewrite was applied: call the ORIGINAL body so the wrapped site is
@@ -1544,7 +1542,7 @@ uint64_t maxStaticShared(const Module &M) {
 // pointer the launch passes: a pointer parameter, or a pointer field of an
 // aggregate it takes by value (the captures of a lambda). Its body becomes the
 // derivative request over the instrumented clone. The host half of the same
-// compilation reads the descriptor written here and fills those shadows in at
+// compilation reads the descriptor recorded here and fills those shadows in at
 // every launch.
 bool profileAnnotatedKernel(Function &K, unsigned &nextSiteId) {
   Module &M = *K.getParent();
@@ -1719,29 +1717,32 @@ bool profileAnnotatedKernel(Function &K, unsigned &nextSiteId) {
 
   bool anyField =
       llvm::any_of(shadowed, [](const Shadowed &s) { return s.offset >= 0; });
-  writeDescriptor(flags::Cache, kernelName, kProfGenScheme,
-                  "[poseidon-profgen]", [&](raw_ostream &os) {
-                    os << ' ' << siteId << ' ' << nOrigArgs << ' '
-                       << shadowed.size();
-                    for (const Shadowed &s : shadowed)
-                      os << ' ' << s.param;
-                    for (const Shadowed &s : shadowed)
-                      os << ' ' << s.seed;
-                    if (anyField) {
-                      os << " off";
-                      for (const Shadowed &s : shadowed)
-                        os << ' ' << std::max<int64_t>(s.offset, 0);
-                    }
-                  });
-  errs() << "[poseidon-profgen] " << kernelName << ": site " << siteId << ", "
-         << shadowed.size() << " shadow buffer(s), output(s)";
+  std::string message;
+  raw_string_ostream msg(message);
+  msg << "[poseidon-profgen] " << kernelName << ": site " << siteId << ", "
+      << shadowed.size() << " shadow buffer(s), output(s)";
   for (const Shadowed &s : shadowed)
     if (s.seed) {
-      errs() << ' ' << s.param;
+      msg << ' ' << s.param;
       if (s.offset >= 0)
-        errs() << "[+" << s.offset << "]";
+        msg << "[+" << s.offset << "]";
     }
-  errs() << "\n";
+  msg << "\n";
+  recordDescriptor(
+      LaunchKind::Profiling, kernelName,
+      [&](raw_ostream &os) {
+        os << ' ' << siteId << ' ' << nOrigArgs << ' ' << shadowed.size();
+        for (const Shadowed &s : shadowed)
+          os << ' ' << s.param;
+        for (const Shadowed &s : shadowed)
+          os << ' ' << s.seed;
+        if (anyField) {
+          os << " off";
+          for (const Shadowed &s : shadowed)
+            os << ' ' << std::max<int64_t>(s.offset, 0);
+        }
+      },
+      std::move(message));
   return true;
 }
 
@@ -3516,6 +3517,11 @@ struct FinalizePass : PassParent<FinalizePass> {
             "Poseidon: profile generation emitted a derivative request that "
             "nothing lowered. Add -fpass-plugin=<ClangEnzyme>.so after the "
             "Poseidon plugin.");
+    // Every site of the module has been processed by now, in the early run or
+    // the late one. A module without a descriptor removes the unit's manifest,
+    // so that what an earlier compile of the unit recorded is not applied.
+    if (isDeviceModule(M) && !compilingTwin && handsOverLaunches())
+      writeLaunchManifest(M);
     finalizeModule(M);
     // An annotation takes the address of the function it names, and AMDGPU
     // allocates the shared memory of every address-taken function in each

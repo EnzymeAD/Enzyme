@@ -6,13 +6,12 @@
 ; RUN: %opt %t/plain.ll %loadPoseidonEnzyme -passes="poseidon,enzyme,poseidon-finalize,globaldce" -enzyme-preopt=false -poseidon-profile-generate -poseidon-cache=%t/c -S -o /dev/null 2>&1 | FileCheck --allow-empty --check-prefix=DEV2 %s
 ; RUN: %clang -O0 -x ir %t/host.ll %clangLoadPoseidon -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=HOST2 --implicit-check-not=__poseidon_launch_profiled %s
 ; REQUIRES: poseidon, enzyme
-; XFAIL: *
-; The profile-generate host compile applies a .profgen descriptor the last device compile of the kernel did not write.
 
-; A profile-generate device compile of an annotated kernel writes
-; <kernel>.profgen; after the annotation is removed, a device compile into the
-; same cache writes none, and the host compile must launch the kernel as
-; written instead of with shadow buffers it no longer takes.
+; A profile-generate device compile of an annotated kernel writes its
+; descriptor into the manifest of the unit; after the annotation is removed, a
+; device compile into the same cache writes a manifest without it, and the host
+; compile must launch the kernel as written instead of with shadow buffers it
+; no longer takes.
 
 ; DEV1: [poseidon-profgen] _Z13matmul_kernelPKdS0_PdS1_: site 0, 4 shadow buffer(s), output(s) 2
 

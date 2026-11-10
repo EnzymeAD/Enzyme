@@ -15,7 +15,6 @@
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/FormatVariadic.h"
 
-#include <memory>
 #include <string>
 
 using namespace llvm;
@@ -198,6 +197,12 @@ cl::opt<std::string>
     Cache("poseidon-cache", cl::init(kDefaultCacheDir), cl::Hidden,
           cl::desc("Directory Poseidon keeps its Herbie results, DP tables and "
                    "device-to-host launch descriptors in"));
+cl::opt<std::string> Unit(
+    "poseidon-unit", cl::init(""), cl::Hidden, cl::value_desc("name"),
+    cl::desc("Name of the translation unit whose device and host halves are "
+             "compiled; the host half takes the launch descriptors the device "
+             "half of the same source and unit wrote (poseidon-clang passes "
+             "one to both halves of each compile)"));
 cl::opt<std::string> ImportAccuracyMemo(
     "poseidon-import-accuracy-memo", cl::init(""), cl::Hidden,
     cl::value_desc("directory"),
@@ -347,28 +352,29 @@ template <typename... Opts> FlagValues valuesOf(const Opts &...opts) {
   return out;
 }
 
-template <typename... Opts>
-SmallVector<const cl::Option *> optionsOf(const Opts &...opts) {
-  return {std::addressof(opts)...};
-}
-
 // What a solved table does not depend on: what is profiled or which sites are
 // solved, what is chosen from a solved table, a path whose contents the key
 // holds instead (profiles, cost model, Herbie binary and platform), where
-// results computed earlier are kept or imported from, a solve that never reads
-// a table (joint, manual), how long Herbie may run and on how many workers,
-// and output.
-SmallVector<const cl::Option *> notSolveInputs() {
+// results computed earlier are kept or imported from or handed to the host
+// half, a solve that never reads a table (joint, manual), how long Herbie may
+// run and on how many workers, and output.
+FlagValues notSolveInputs() {
   using namespace flags;
-  return optionsOf(ProfileGenerate, ProfileUse, OutputProfiles, Kernels,
-                   MinCostShare, CompCostBudget, Tau, TauCheapest, JointDP,
-                   ApplyRewrites, CostModel, Cache, ImportAccuracyMemo,
-                   HerbieNumThreads, HerbieTimeout, HerbieSubgraphTimeout,
-                   HerbieProcesses, HerbieBinary, HerbiePlatform, Print,
-                   ShowTable, ReportPath, Explain);
+  return valuesOf(ProfileGenerate, ProfileUse, OutputProfiles, Kernels,
+                  MinCostShare, CompCostBudget, Tau, TauCheapest, JointDP,
+                  ApplyRewrites, CostModel, Cache, Unit, ImportAccuracyMemo,
+                  HerbieNumThreads, HerbieTimeout, HerbieSubgraphTimeout,
+                  HerbieProcesses, HerbieBinary, HerbiePlatform, Print,
+                  ShowTable, ReportPath, Explain);
 }
 
 } // namespace
+
+FlagValues allFlagValues() {
+  FlagValues all = solveFlagValues();
+  all.append(notSolveInputs());
+  return all;
+}
 
 FlagValues solveFlagValues() {
   using namespace flags;
@@ -389,8 +395,8 @@ static void checkFlagClassification() {
   StringMap<unsigned> listed;
   for (const auto &kv : solveFlagValues())
     ++listed[kv.first];
-  for (const cl::Option *O : notSolveInputs())
-    ++listed[O->ArgStr];
+  for (const auto &kv : notSolveInputs())
+    ++listed[kv.first];
   for (const auto &kv : cl::getRegisteredOptions()) {
     StringRef name = kv.first;
     if (name.starts_with("poseidon-") && listed.lookup(name) != 1)

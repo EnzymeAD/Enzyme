@@ -22,13 +22,18 @@
 
 #include "poseidon/poseidon.h"
 
+#include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Config/llvm-config.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/Program.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Support/xxhash.h"
 
 #include <cstring>
 #include <string>
@@ -123,6 +128,16 @@ bool takesSeparateValue(StringRef A) {
   return false;
 }
 
+// Whether the argument names the translation unit itself, written as a
+// Poseidon flag or as the value of an option that forwards it.
+bool namesUnit(StringRef A) {
+  A.consume_front("-mllvm=");
+  return A.consume_front("-") &&
+         (A.consume_front("-poseidon-unit") ||
+          A.consume_front("poseidon-unit")) &&
+         (A.empty() || A.starts_with("="));
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -191,6 +206,27 @@ int main(int argc, char **argv) {
     if (takesSeparateValue(A) && I + 1 < argc) {
       User.push_back(argv[++I]);
     }
+  }
+
+  // The host half of a compile takes the launch descriptors of the device half
+  // that compiled the same source under the same unit name, so every compile
+  // job of this invocation gets one, and no other invocation gets it. An
+  // invocation that only links has no job to take it, which clang would warn
+  // about.
+  if (llvm::none_of(ArrayRef<char *>(argv + 1, argc - 1), namesUnit)) {
+    SmallString<256> Cwd;
+    (void)sys::fs::current_path(Cwd);
+    std::string Invocation(Cwd);
+    for (int I = 0; I < argc; ++I) {
+      Invocation += '\0';
+      Invocation += argv[I];
+    }
+    User.insert(User.begin(),
+                {"--start-no-unused-arguments", "-mllvm",
+                 "-poseidon-unit=" + utohexstr(xxh3_64bits(Invocation),
+                                               /*LowerCase=*/false,
+                                               /*Width=*/16),
+                 "--end-no-unused-arguments"});
   }
 
   // -fgpu-rdc is HIP's spelling too.
