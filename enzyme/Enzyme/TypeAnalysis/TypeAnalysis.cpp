@@ -1209,6 +1209,271 @@ void TypeAnalyzer::addToWorkList(Value *Val) {
   workList.insert(Val);
 }
 
+/// Check whether two boolean values are negations via `xor ..., true`.
+static bool isNegatedBooleanCondition(const Value *First, const Value *Second) {
+  auto MatchesXorTrue = [](const Value *Candidate,
+                           const Value *ExpectedOperand) {
+    auto *BinaryOp = dyn_cast<BinaryOperator>(Candidate);
+    if (!BinaryOp || BinaryOp->getOpcode() != Instruction::Xor)
+      return false;
+    if (auto *ConstRight = dyn_cast<ConstantInt>(BinaryOp->getOperand(1)))
+      if (ConstRight->isOne() && BinaryOp->getOperand(0) == ExpectedOperand)
+        return true;
+    if (auto *ConstLeft = dyn_cast<ConstantInt>(BinaryOp->getOperand(0)))
+      if (ConstLeft->isOne() && BinaryOp->getOperand(1) == ExpectedOperand)
+        return true;
+    return false;
+  };
+  return MatchesXorTrue(First, Second) || MatchesXorTrue(Second, First);
+}
+
+/// Simplify a pointer select chain when a boolean condition has a known value.
+static const Value *simplifyPointerUnderCondition(const Value *Pointer,
+                                                  const Value *AssumedCondition,
+                                                  bool AssumedConditionValue) {
+  if (!AssumedCondition)
+    return Pointer;
+  while (auto *Select = dyn_cast<SelectInst>(Pointer)) {
+    if (Select->getCondition() == AssumedCondition) {
+      Pointer = AssumedConditionValue ? Select->getTrueValue()
+                                      : Select->getFalseValue();
+      continue;
+    }
+    if (isNegatedBooleanCondition(Select->getCondition(), AssumedCondition)) {
+      Pointer = AssumedConditionValue ? Select->getFalseValue()
+                                      : Select->getTrueValue();
+      continue;
+    }
+    break;
+  }
+  return Pointer;
+}
+
+/// Return the minimum pointee byte offset in Data, or -1 if Data has no pointee
+/// mappings or includes a wildcard (-1) pointee mapping.
+static int64_t getMinPositiveCapablePointeeOffset(const TypeTree &Data) {
+  int64_t MinOffset = INT64_MAX;
+  for (const auto &Entry : Data.getMapping()) {
+    if (Entry.first.size() <= 1)
+      continue;
+    if (Entry.first[1] < 0)
+      return -1;
+    if (Entry.first[1] < MinOffset)
+      MinOffset = Entry.first[1];
+  }
+  return MinOffset == INT64_MAX ? -1 : MinOffset;
+}
+
+/// Collect pointer SSA values along a constant-offset GEP and cast chain whose
+/// definition blocks are not post-dominated by the guarded use point and on
+/// which all propagated pointee offsets lie past byte offset 0.
+static void collectNonPostDominatedPointerTargets(
+    const Value *ValueToUpdate, int64_t MinPointeeOffset,
+    const DataLayout &Layout, const BasicBlock *UseBlock,
+    const PostDominatorTree &PostDomTree, const Function &ParentFunction,
+    const BasicBlock *EdgeTargetBlock, const Value *AssumedCondition,
+    SmallPtrSetImpl<const Value *> &Targets) {
+  if (MinPointeeOffset < 0)
+    return;
+  const Value *Current = ValueToUpdate;
+  int64_t AccumulatedOffset = MinPointeeOffset;
+  while (Current && Current->getType()->isPointerTy()) {
+    const BasicBlock *DefBlock = nullptr;
+    if (auto *Inst = dyn_cast<Instruction>(Current))
+      DefBlock = Inst->getParent();
+    else if (isa<Argument>(Current))
+      DefBlock = &ParentFunction.getEntryBlock();
+    bool PostDominatesDef =
+        DefBlock && !AssumedCondition &&
+        (DefBlock == UseBlock || PostDomTree.dominates(UseBlock, DefBlock)) &&
+        (!EdgeTargetBlock || UseBlock->getSingleSuccessor() == EdgeTargetBlock);
+    if (!DefBlock || PostDominatesDef)
+      break;
+    if (AccumulatedOffset > 0)
+      Targets.insert(Current);
+    const Value *Stripped = Current->stripPointerCasts();
+    if (Stripped != Current) {
+      Current = Stripped;
+      continue;
+    }
+    if (auto *Gep = dyn_cast<GEPOperator>(Current)) {
+      APInt GepOffset(Layout.getIndexTypeSizeInBits(Gep->getType()), 0);
+      if (Gep->accumulateConstantOffset(Layout, GepOffset) &&
+          GepOffset.isNonNegative()) {
+        AccumulatedOffset += GepOffset.getZExtValue();
+        Current = Gep->getPointerOperand();
+        continue;
+      }
+    }
+    break;
+  }
+}
+
+/// Return true if Condition evaluating to ConditionValue implies that any
+/// value in Targets is unequal to a non-null pointer.
+static bool
+conditionProvesPointerInequality(const Value *Condition, bool ConditionValue,
+                                 const SmallPtrSetImpl<const Value *> &Targets,
+                                 const Value *AssumedCondition,
+                                 bool AssumedConditionValue,
+                                 unsigned Depth = 0) {
+  if (Depth > 6)
+    return false;
+
+  if (auto *BinaryOp = dyn_cast<BinaryOperator>(Condition)) {
+    if (BinaryOp->getOpcode() == Instruction::Xor) {
+      if (auto *ConstRight = dyn_cast<ConstantInt>(BinaryOp->getOperand(1)))
+        if (ConstRight->isOne())
+          return conditionProvesPointerInequality(
+              BinaryOp->getOperand(0), !ConditionValue, Targets,
+              AssumedCondition, AssumedConditionValue, Depth + 1);
+      if (auto *ConstLeft = dyn_cast<ConstantInt>(BinaryOp->getOperand(0)))
+        if (ConstLeft->isOne())
+          return conditionProvesPointerInequality(
+              BinaryOp->getOperand(1), !ConditionValue, Targets,
+              AssumedCondition, AssumedConditionValue, Depth + 1);
+    }
+    if (BinaryOp->getOpcode() == Instruction::And && ConditionValue)
+      return conditionProvesPointerInequality(
+                 BinaryOp->getOperand(0), true, Targets, AssumedCondition,
+                 AssumedConditionValue, Depth + 1) ||
+             conditionProvesPointerInequality(BinaryOp->getOperand(1), true,
+                                              Targets, AssumedCondition,
+                                              AssumedConditionValue, Depth + 1);
+    if (BinaryOp->getOpcode() == Instruction::Or && !ConditionValue)
+      return conditionProvesPointerInequality(
+                 BinaryOp->getOperand(0), false, Targets, AssumedCondition,
+                 AssumedConditionValue, Depth + 1) ||
+             conditionProvesPointerInequality(BinaryOp->getOperand(1), false,
+                                              Targets, AssumedCondition,
+                                              AssumedConditionValue, Depth + 1);
+    return false;
+  }
+
+  if (auto *Select = dyn_cast<SelectInst>(Condition)) {
+    if (!Select->getType()->isIntegerTy(1))
+      return false;
+    if (auto *TrueConst = dyn_cast<ConstantInt>(Select->getTrueValue())) {
+      if (TrueConst->isOne() && !ConditionValue)
+        return conditionProvesPointerInequality(
+                   Select->getCondition(), false, Targets, AssumedCondition,
+                   AssumedConditionValue, Depth + 1) ||
+               conditionProvesPointerInequality(
+                   Select->getFalseValue(), false, Targets, AssumedCondition,
+                   AssumedConditionValue, Depth + 1);
+      if (TrueConst->isZero() && ConditionValue)
+        return conditionProvesPointerInequality(
+                   Select->getCondition(), false, Targets, AssumedCondition,
+                   AssumedConditionValue, Depth + 1) ||
+               conditionProvesPointerInequality(
+                   Select->getFalseValue(), true, Targets, AssumedCondition,
+                   AssumedConditionValue, Depth + 1);
+    }
+    if (auto *FalseConst = dyn_cast<ConstantInt>(Select->getFalseValue())) {
+      if (FalseConst->isZero() && ConditionValue)
+        return conditionProvesPointerInequality(
+                   Select->getCondition(), true, Targets, AssumedCondition,
+                   AssumedConditionValue, Depth + 1) ||
+               conditionProvesPointerInequality(
+                   Select->getTrueValue(), true, Targets, AssumedCondition,
+                   AssumedConditionValue, Depth + 1);
+      if (FalseConst->isOne() && !ConditionValue)
+        return conditionProvesPointerInequality(
+                   Select->getCondition(), true, Targets, AssumedCondition,
+                   AssumedConditionValue, Depth + 1) ||
+               conditionProvesPointerInequality(
+                   Select->getTrueValue(), false, Targets, AssumedCondition,
+                   AssumedConditionValue, Depth + 1);
+    }
+    return false;
+  }
+
+  auto *Compare = dyn_cast<ICmpInst>(Condition);
+  if (!Compare || !Compare->isEquality() ||
+      !Compare->getOperand(0)->getType()->isPointerTy())
+    return false;
+
+  bool IsNotEqual = (Compare->getPredicate() == CmpInst::ICMP_NE)
+                        ? ConditionValue
+                        : !ConditionValue;
+  if (!IsNotEqual)
+    return false;
+
+  const Value *LeftOperand = simplifyPointerUnderCondition(
+      Compare->getOperand(0), AssumedCondition, AssumedConditionValue);
+  const Value *RightOperand = simplifyPointerUnderCondition(
+      Compare->getOperand(1), AssumedCondition, AssumedConditionValue);
+
+  auto MatchesTarget = [&](const Value *Candidate, const Value *OtherPointer) {
+    const Value *StrippedOther = OtherPointer->stripPointerCasts();
+    if (isa<ConstantPointerNull>(StrippedOther) ||
+        isa<UndefValue>(StrippedOther))
+      return false;
+    return Targets.count(Candidate) ||
+           Targets.count(Candidate->stripPointerCasts());
+  };
+  return MatchesTarget(LeftOperand, RightOperand) ||
+         MatchesTarget(RightOperand, LeftOperand);
+}
+
+/// Return true if reaching UseBlock (or traversing UseBlock -> EdgeTargetBlock)
+/// requires ValueToUpdate to be unequal to a non-null sentinel pointer.
+static bool isGuardedByNonNullPointerInequality(
+    const Value *ValueToUpdate, int64_t MinPointeeOffset,
+    const DataLayout &Layout, const BasicBlock *UseBlock,
+    const DominatorTree &DomTree, const PostDominatorTree &PostDomTree,
+    const Function &ParentFunction, const BasicBlock *EdgeTargetBlock = nullptr,
+    const Value *AssumedCondition = nullptr,
+    bool AssumedConditionValue = false) {
+  SmallPtrSet<const Value *, 4> Targets;
+  collectNonPostDominatedPointerTargets(
+      ValueToUpdate, MinPointeeOffset, Layout, UseBlock, PostDomTree,
+      ParentFunction, EdgeTargetBlock, AssumedCondition, Targets);
+  if (Targets.empty())
+    return false;
+
+  if (EdgeTargetBlock && hasTerminator(const_cast<BasicBlock *>(UseBlock))) {
+    const Instruction *Terminator = UseBlock->getTerminator();
+    if (isConditionalBranch(Terminator) &&
+        Terminator->getSuccessor(0) != Terminator->getSuccessor(1)) {
+      const Value *Condition =
+          getBranchCondition(const_cast<Instruction *>(Terminator));
+      for (unsigned SuccIndex = 0; SuccIndex < 2; ++SuccIndex) {
+        if (Terminator->getSuccessor(SuccIndex) == EdgeTargetBlock &&
+            conditionProvesPointerInequality(Condition, SuccIndex == 0, Targets,
+                                             AssumedCondition,
+                                             AssumedConditionValue))
+          return true;
+      }
+    }
+  }
+
+  const DomTreeNode *Node = DomTree.getNode(UseBlock);
+  if (!Node)
+    return false;
+  for (const DomTreeNode *DomNode = Node->getIDom(); DomNode;
+       DomNode = DomNode->getIDom()) {
+    const BasicBlock *DomBlock = DomNode->getBlock();
+    if (!hasTerminator(const_cast<BasicBlock *>(DomBlock)))
+      continue;
+    const Instruction *Terminator = DomBlock->getTerminator();
+    if (!isConditionalBranch(Terminator) ||
+        Terminator->getSuccessor(0) == Terminator->getSuccessor(1))
+      continue;
+    const Value *Condition =
+        getBranchCondition(const_cast<Instruction *>(Terminator));
+    for (unsigned SuccIndex = 0; SuccIndex < 2; ++SuccIndex) {
+      BasicBlockEdge Edge(DomBlock, Terminator->getSuccessor(SuccIndex));
+      if (DomTree.dominates(Edge, UseBlock) &&
+          conditionProvesPointerInequality(Condition, SuccIndex == 0, Targets,
+                                           AssumedCondition,
+                                           AssumedConditionValue))
+        return true;
+    }
+  }
+  return false;
+}
+
 void TypeAnalyzer::updateAnalysis(Value *Val, TypeTree Data, Value *Origin) {
   if (Val->getType()->isVoidTy())
     return;
@@ -1290,6 +1555,47 @@ void TypeAnalyzer::updateAnalysis(Value *Val, TypeTree Data, Value *Origin) {
           return;
         }
       }
+  }
+
+  // Do not push derived-node field offsets backward across a branch that only
+  // dereferences the pointer after proving it is not equal to a non-null
+  // sentinel (such as an intrusive container's embedded end header).
+  if (EnzymeStrictAliasing && Val->getType()->isPointerTy() &&
+      (isa<Instruction>(Val) || isa<Argument>(Val))) {
+    if (auto *OriginInst = dyn_cast_or_null<Instruction>(Origin)) {
+      bool UnconditionalSelect = false;
+      const Value *AssumedCondition = nullptr;
+      bool AssumedConditionValue = false;
+      if (auto *Select = dyn_cast<SelectInst>(OriginInst)) {
+        if (Select != Val) {
+          if (Select->getTrueValue() == Select->getFalseValue()) {
+            UnconditionalSelect = true;
+          } else if (Val == Select->getTrueValue()) {
+            AssumedCondition = Select->getCondition();
+            AssumedConditionValue = true;
+          } else if (Val == Select->getFalseValue()) {
+            AssumedCondition = Select->getCondition();
+            AssumedConditionValue = false;
+          }
+        }
+      }
+      if (OriginInst != Val && !isa<PHINode>(OriginInst) &&
+          !UnconditionalSelect) {
+        int64_t MinPointeeOffset = getMinPositiveCapablePointeeOffset(Data);
+        const DataLayout &Layout =
+            fntypeinfo.Function->getParent()->getDataLayout();
+        if (MinPointeeOffset >= 0 &&
+            isGuardedByNonNullPointerInequality(
+                Val, MinPointeeOffset, Layout, OriginInst->getParent(), DT, PDT,
+                *fntypeinfo.Function, /*EdgeTargetBlock=*/nullptr,
+                AssumedCondition, AssumedConditionValue)) {
+          ConcreteType OuterType = Data.Inner0();
+          if (!OuterType.isKnown())
+            return;
+          Data = TypeTree(OuterType).Only(-1, OriginInst);
+        }
+      }
+    }
   }
 
   // Attempt to update the underlying analysis
@@ -2113,6 +2419,41 @@ void TypeAnalyzer::visitStoreInst(StoreInst &I) {
   auto StoreSize =
       (DL.getTypeSizeInBits(I.getValueOperand()->getType()) + 7) / 8;
 
+  // Storing an interior or base address of an object into a pointer field of
+  // that same object (such as initializing an intrusive container sentinel to
+  // point to its own header) records pointer-ness without copying sibling
+  // container fields into the pointee layout or derived-node fields onto the
+  // container.
+  if (I.getValueOperand()->getType()->isPointerTy() &&
+      I.getValueOperand()->getType()->getPointerAddressSpace() ==
+          I.getPointerOperand()->getType()->getPointerAddressSpace()) {
+    APInt ValueOffset(DL.getIndexTypeSizeInBits(I.getValueOperand()->getType()),
+                      0);
+    APInt PointerOffset(
+        DL.getIndexTypeSizeInBits(I.getPointerOperand()->getType()), 0);
+    Value *ValueBase = I.getValueOperand()->stripAndAccumulateConstantOffsets(
+        DL, ValueOffset, /*AllowNonInbounds=*/true);
+    Value *PointerBase =
+        I.getPointerOperand()->stripAndAccumulateConstantOffsets(
+            DL, PointerOffset, /*AllowNonInbounds=*/true);
+    if (ValueBase == PointerBase && !isa<ConstantPointerNull>(ValueBase) &&
+        !isa<UndefValue>(ValueBase)) {
+      if (!checkHypothesisPointerOperand(I.getPointerOperand(), &I))
+        return;
+      if (direction & UP) {
+        TypeTree PointerSlot =
+            TypeTree(BaseType::Pointer)
+                .Only(-1, &I)
+                .ShiftIndices(DL, /*start*/ 0, StoreSize, /*addOffset*/ 0);
+        PointerSlot |= TypeTree(BaseType::Pointer);
+        updateAnalysis(I.getPointerOperand(), PointerSlot.Only(-1, &I), &I);
+        updateAnalysis(I.getValueOperand(),
+                       TypeTree(BaseType::Pointer).Only(-1, &I), &I);
+      }
+      return;
+    }
+  }
+
   // Rust specific rule, if storing an integer equal to the alignment
   // of a store, assuming nothing (or assume it is a pointer)
   // https://doc.rust-lang.org/src/core/ptr/non_null.rs.html#70-78
@@ -2315,8 +2656,22 @@ void TypeAnalyzer::visitGEPOperator(GEPOperator &gep) {
   TypeTree pointerData0;
   if (direction & UP)
     gepData0 = getAnalysis(&gep).Data0();
-  if (direction & DOWN)
+  if (direction & DOWN) {
     pointerData0 = pointerAnalysis.Data0();
+    if (inst && !pointerData0[{-1}].isKnown()) {
+      APInt GepConstOffset(DL.getIndexTypeSizeInBits(gep.getType()), 0);
+      int64_t MinOffset = gep.accumulateConstantOffset(DL, GepConstOffset) &&
+                                  GepConstOffset.isStrictlyPositive()
+                              ? (int64_t)GepConstOffset.getLimitedValue()
+                              : -1;
+      if (MinOffset > 0 &&
+          isGuardedByNonNullPointerInequality(gep.getPointerOperand(),
+                                              MinOffset, DL, inst->getParent(),
+                                              DT, PDT, *fntypeinfo.Function)) {
+        pointerData0 = TypeTree();
+      }
+    }
+  }
 
   auto BitWidth = DL.getIndexSizeInBits(gep.getPointerAddressSpace());
 
@@ -2463,9 +2818,26 @@ void TypeAnalyzer::visitPHINode(PHINode &phi) {
     if (EnzymeStrictAliasing || seen) {
       auto L = LI.getLoopFor(phi.getParent());
       bool isHeader = L && L->getHeader() == phi.getParent();
+      int64_t MinPointeeOffset =
+          seen ? -1 : getMinPositiveCapablePointeeOffset(upVal);
+      const DataLayout &Layout =
+          fntypeinfo.Function->getParent()->getDataLayout();
       for (size_t i = 0, end = phi.getNumIncomingValues(); i < end; ++i) {
-        if (!isHeader || !L->contains(phi.getIncomingBlock(i))) {
-          updateAnalysis(phi.getIncomingValue(i), upVal, &phi);
+        BasicBlock *IncomingBlock = phi.getIncomingBlock(i);
+        if (!isHeader || !L->contains(IncomingBlock)) {
+          Value *IncomingValue = phi.getIncomingValue(i);
+          if (MinPointeeOffset >= 0 &&
+              IncomingValue->getType()->isPointerTy() &&
+              isGuardedByNonNullPointerInequality(
+                  IncomingValue, MinPointeeOffset, Layout, IncomingBlock, DT,
+                  PDT, *fntypeinfo.Function, phi.getParent())) {
+            ConcreteType OuterType = upVal.Inner0();
+            if (OuterType.isKnown())
+              updateAnalysis(IncomingValue, TypeTree(OuterType).Only(-1, &phi),
+                             &phi);
+            continue;
+          }
+          updateAnalysis(IncomingValue, upVal, &phi);
         }
       }
     } else {
