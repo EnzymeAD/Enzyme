@@ -8,7 +8,7 @@
 
 ; FLOAT: wave.c:4:3: Poseidon site tester: target 1e-06
 ; FLOAT: wave.c:4:41: Poseidon profile of exp(x[i] * (x[i] * -0.5)) * cos(x[i] * 4.0): x[i] in [-2, 2]; 1024 executions
-; FLOAT: remark: wave.c:{{[0-9]+}}:{{[0-9]+}}: Poseidon runs {{.*}} in float: {{.*}}; modelled error {{.*}} -> {{.*}}, cost {{[0-9]+}} -> {{[0-9]+}} {{.*}}[PT0_{{[0-9]+}}]
+; FLOAT: remark: wave.c:{{[0-9]+}}:{{[0-9]+}}: Poseidon runs {{.*}} in float: {{.*}}; modelled error {{.*}} -> {{.*}}, cost {{[0-9.e+-]+}} -> {{[0-9.e+-]+}} {{.*}}[PT0_{{[0-9]+}}]
 
 ; JSON: "kind": "precision",
 ; JSON: "status": "applied",

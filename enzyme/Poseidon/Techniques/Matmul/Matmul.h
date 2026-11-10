@@ -288,9 +288,8 @@ public:
     unsigned mChain = ~0u, nChain = ~0u, kChain = ~0u;
     unsigned padM = 0, padN = 0, padK = 0;
 
-    // Per-MAC reciprocal-throughput cost, kept in double through candidate
-    // generation and rounded once in getCompCostDelta after the MAC-count
-    // scale.
+    // Per-MAC reciprocal-throughput cost in cost-model units; the solver puts
+    // the change over the profiled MACs on its axis.
     double compCost = -1.0;
     double accuracyCost = 0.0;
     // Relative DOMAIN error (sensitivity-weighted, normalized) at the
@@ -309,10 +308,8 @@ public:
   uint64_t executions = 0;
   llvm::SmallVector<Option, 8> candidates;
 
-  DPCost getCompCostDelta(size_t idx) const {
-    double delta =
-        (candidates[idx].compCost - initialCompCost) * (double)executions;
-    return toDPCost(delta);
+  double getCompCostDelta(size_t idx) const {
+    return (candidates[idx].compCost - initialCompCost) * (double)executions;
   }
   double getAccCostDelta(size_t idx) const {
     return candidates[idx].accuracyCost - initialAccCost;
@@ -324,7 +321,7 @@ public:
     return U->kind() == unsigned(UnitKind::M);
   }
   size_t numCandidates() const override { return candidates.size(); }
-  DPCost costDelta(size_t i, llvm::ArrayRef<SolutionStep>) override {
+  double costDelta(size_t i, llvm::ArrayRef<SolutionStep>) override {
     return getCompCostDelta(i);
   }
   double errorDelta(size_t i, llvm::ArrayRef<SolutionStep>) override {

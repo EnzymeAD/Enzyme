@@ -75,7 +75,9 @@ struct CandidateOptions {
 };
 
 struct SolverOptions {
-  int64_t CompCostBudget = 0;
+  // The share of the solve's profiled cost a solution may add; a negative
+  // share is one it has to save.
+  double CostBudget = 0.0;
   double Tau = 0.0;
   bool TauCheapest = true;
   bool EarlyPrune = true;

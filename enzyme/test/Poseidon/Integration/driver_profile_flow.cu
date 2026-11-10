@@ -14,6 +14,7 @@
 // RUN:     -poseidon-profile-use=%t.profile -poseidon-cache=%t.cache \
 // RUN:     -poseidon-cost-model=%gpu_cost_model -poseidon-print \
 // RUN:     -poseidon-enable-herbie=0 -poseidon-enable-pt=0 -poseidon-raise-wmma \
+// RUN:     -poseidon-ozaki-host-dispatch=0 \
 // RUN:     %S/raise_scalar_matmul_f64.cu -o %t.opt.exe 2>&1 | FileCheck %s
 // RUN: %t.opt.exe | FileCheck --check-prefix=PRIMAL %s
 

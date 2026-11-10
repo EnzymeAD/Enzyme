@@ -12,6 +12,7 @@
 // RUN:     -poseidon-profile-use=%t.profiles \
 // RUN:     -poseidon-enable-herbie=false -poseidon-enable-pt=false \
 // RUN:     -poseidon-cache= -poseidon-raise-wmma -poseidon-print \
+// RUN:     -poseidon-ozaki-host-dispatch=false \
 // RUN:     -poseidon-cost-model=%gpu_cost_model \
 // RUN:     -S 2>&1 | FileCheck %s
 

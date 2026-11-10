@@ -1,6 +1,6 @@
 ; REQUIRES: scev-trunc-iv-nowrap
 ; RUN: rm -rf %t && mkdir -p %t
-; RUN: env FAKE_HERBIE_DIR=%S/Inputs/exact_dp/reprice_herbie %opt %S/exact_dp_reprice_nvptx.ll %loadPoseidon -passes=poseidon -poseidon-profile-use=%S/Inputs/exact_dp/reprice -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/Inputs/exact_dp/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-pt=true -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_x1e6.csv -poseidon-early-prune=false -poseidon-comp-cost-budget=-1328475425 -poseidon-print -poseidon-show-table -poseidon-report-path=%t/rep -poseidon-explain=%t/ex -poseidon-cache=%t/exact -S -o %t/exact.ll > %t/exact.log 2>&1
+; RUN: env FAKE_HERBIE_DIR=%S/Inputs/exact_dp/reprice_herbie %opt %S/exact_dp_reprice_nvptx.ll %loadPoseidon -passes=poseidon -poseidon-profile-use=%S/Inputs/exact_dp/reprice -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/Inputs/exact_dp/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-pt=true -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_x1e6.csv -poseidon-early-prune=false -poseidon-cost-budget=-0.9 -poseidon-print -poseidon-show-table -poseidon-report-path=%t/rep -poseidon-explain=%t/ex -poseidon-cache=%t/exact -S -o %t/exact.ll > %t/exact.log 2>&1
 ; RUN: FileCheck --check-prefix=TABLE %s < %t/exact.log
 ; RUN: FileCheck --check-prefix=TEXT %s < %t/rep/preprocess_matmul_body.txt
 ; RUN: FileCheck --check-prefix=JSON %s < %t/rep/preprocess_matmul_body.json
@@ -18,24 +18,24 @@
 ; runs alone, as in dp_cache_replay_all_kinds_nvptx.ll.
 
 ; TABLE: *** DP Table ***
-; TABLE-NEXT: Computation cost: -1340878898, Accuracy cost: 5.593938e+09
+; TABLE-NEXT: Computation cost: -9.501830e-01, Accuracy cost: 5.593938e+09
 ; TABLE-NEXT: Solution steps:
 ; TABLE-NEXT: CS: All FP64(0%) + FP32(100%) (#0)
 ; TABLE-NEXT: matmul[0] -> wmma m16n16k16 f16/f32 (#0)
-; TABLE: Computation cost: -537702278, Accuracy cost: 7.434626e+03
+; TABLE: Computation cost: -3.810303e-01, Accuracy cost: 7.434626e+03
 ; TABLE-NEXT: Solution steps:
 ; TABLE-NEXT: (+ (- (sqrt (+ v0 1)) (sqrt v0)) (+ (+ (+ (sinh v1) (asinh v1)) (tan v1)) (asin v1))) --(1)->
 ; TABLE: *** End of DP Table ***
 ; TABLE: Applying solution for CS: All FP64(0%) + FP32(100%) (#0)
 ; TABLE-NEXT: Applying solution for matmul[0] -> tcec n=3 wmma m16n16k16 f16/f32 (#2)
 
-; TEXT: Pareto table: 21 points, cost range [-1340878898, 186944845]
+; TEXT: Pareto table: 21 points, cost range [-9.501830e-01, 1.324742e-01]
 ; TEXT-NEXT: Candidate outputs: 4, Candidate subgraphs: 2
 ; TEXT: Expression #0: (+ (- (sqrt (+ v0 1)) (sqrt v0)) (+ (+ (+ (sinh v1) (asinh v1)) (tan v1)) (asin v1)))
 ; {{[^ -~]+}} stands for the Greek capital delta the log prints.
 ; TEXT: Subgraph #0: 54 candidates ({{[^ -~]+}}cost, {{[^ -~]+}}acc; sorted by {{[^ -~]+}}cost)
 ; TEXT: Subgraph #1: 9 candidates ({{[^ -~]+}}cost, {{[^ -~]+}}acc; sorted by {{[^ -~]+}}cost)
-; TEXT: --- Pareto Point #0: Cost=-1340878898, Accuracy=5.593938e+09 ---
+; TEXT: --- Pareto Point #0: Cost=-9.501830e-01, Accuracy=5.593938e+09 ---
 ; TEXT-NEXT: [Precision] All FP64(0%) + FP32(100%) (#0)
 ; TEXT-NEXT: FP64 -> FP32 for 12 operations
 ; TEXT-NEXT: [Matmul] matmul[0] -> wmma m16n16k16 f16/f32 (#0)

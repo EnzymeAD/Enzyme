@@ -51,11 +51,34 @@ struct SolutionStep {
 // in either order, or with a step displaced and charged back, has one key.
 using DPCost = int64_t;
 
-// A cost change in cost-model units, rounded onto the DP's axis; aborts when
-// the axis cannot hold it.
-DPCost toDPCost(double delta);
 // a + b on the DP's axis; aborts when the sum leaves it.
 DPCost addDPCost(DPCost a, DPCost b);
+
+// The DP's axis of one solve: cost-model units over the profiled run, scaled
+// by the power of two that puts what the profiled run spent in the solve's
+// sites between 2^32 and 2^33 units of the axis. Relative to the solve, so
+// that neither the unit the cost model is measured in nor how often the
+// profiled run executed a site decides which changes it can tell apart; a
+// power of two, so that changes that tie in cost-model units tie on the axis.
+class CostScale {
+public:
+  // `profiledCost`: what the profiled run spent in the solve's sites, in
+  // cost-model units.
+  explicit CostScale(double profiledCost);
+
+  // A cost change in cost-model units over the profiled run, on the axis;
+  // aborts when the axis cannot hold it.
+  DPCost toDPCost(double delta) const;
+  // The share of the profiled cost `cost` stands for, and the cost a share
+  // stands for: fromShare(share(c)) == c.
+  double share(DPCost cost) const;
+  DPCost fromShare(double share) const;
+  double profiledCost() const { return ProfiledCost; }
+
+private:
+  double ProfiledCost;
+  int Exponent = 0;
+};
 
 // The frontier: per cost, the least error of a strategy of that cost.
 using CostMap = std::map<DPCost, double>;
@@ -74,9 +97,9 @@ public:
   // How many candidates the unit offers.
   virtual size_t numCandidates() const = 0;
 
-  // Candidate i's cost change against the code as written, given the steps
-  // already in the strategy.
-  virtual DPCost costDelta(size_t i, llvm::ArrayRef<SolutionStep> prior) = 0;
+  // Candidate i's cost change against the code as written, in cost-model units
+  // over the profiled run, given the steps already in the strategy.
+  virtual double costDelta(size_t i, llvm::ArrayRef<SolutionStep> prior) = 0;
   // Candidate i's error change, on the application's scale, given the steps
   // already in the strategy.
   virtual double errorDelta(size_t i, llvm::ArrayRef<SolutionStep> prior) = 0;
@@ -138,8 +161,8 @@ bool overlapsConsumed(const SolutionStep &step,
 // deltas taken off `cost` and `error`. `kept` receives the prior steps that
 // stay.
 bool admit(llvm::ArrayRef<SolutionStep> prior, const OptimizationUnit &unit,
-           llvm::SmallVectorImpl<SolutionStep> &kept, DPCost &cost,
-           double &error);
+           const CostScale &scale, llvm::SmallVectorImpl<SolutionStep> &kept,
+           DPCost &cost, double &error);
 
 // ---- The order units enter the DP -----------------------------------------
 //
@@ -166,13 +189,14 @@ prunedOrder(llvm::ArrayRef<llvm::ArrayRef<OptimizationUnit *>> sites);
 
 // The frontier of every footprint-compatible strategy over `units`, taken in
 // that order.
-void solveExact(llvm::ArrayRef<OptimizationUnit *> units, CostMap &cost,
-                SolutionMap &sol);
+void solveExact(llvm::ArrayRef<OptimizationUnit *> units,
+                const CostScale &scale, CostMap &cost, SolutionMap &sol);
 
 // The frontier pruned after each unit of `units`, taken in that order. With
 // `progress`, a line after each unit counts the units of its kind done.
-void solvePruned(llvm::ArrayRef<OptimizationUnit *> units, CostMap &cost,
-                 SolutionMap &sol, bool progress);
+void solvePruned(llvm::ArrayRef<OptimizationUnit *> units,
+                 const CostScale &scale, CostMap &cost, SolutionMap &sol,
+                 bool progress);
 
 } // namespace poseidon
 #endif // POSEIDON_CORE_SOLVER_H

@@ -992,7 +992,7 @@ bool RewriteUnit::sharesRoot(const RewriteUnit &other) const {
 }
 
 // Lower is better
-DPCost RewriteUnit::getCompCostDelta(CostModelState &CM,
+double RewriteUnit::getCompCostDelta(CostModelState &CM,
                                      size_t candidateIndex) {
   double erasableCost = 0.0;
 
@@ -1000,11 +1000,8 @@ DPCost RewriteUnit::getCompCostDelta(CostModelState &CM,
     erasableCost += getInstructionCompCost(CM, I);
   }
 
-  // Scale by the execution count BEFORE rounding to the integral
-  // cost the DP compares (see RewriteCandidate::CompCost).
-  double delta =
-      (candidates[candidateIndex].CompCost - erasableCost) * (double)executions;
-  return toDPCost(delta);
+  return (candidates[candidateIndex].CompCost - erasableCost) *
+         (double)executions;
 }
 
 void RewriteUnit::findErasableInstructions() {
@@ -1074,11 +1071,10 @@ void PrecisionUnit::apply(Session &S, size_t candidateIndex) {
 }
 
 // Lower is better
-DPCost PrecisionUnit::getCompCostDelta(size_t candidateIndex) {
+double PrecisionUnit::getCompCostDelta(size_t candidateIndex) {
   // TODO: adjust this based on erasured instructions
-  double delta = (candidates[candidateIndex].CompCost - initialCompCost) *
-                 (double)executions;
-  return toDPCost(delta);
+  return (candidates[candidateIndex].CompCost - initialCompCost) *
+         (double)executions;
 }
 
 // Lower is better
@@ -1091,7 +1087,7 @@ double RewriteUnit::getAccCostDelta(size_t candidateIndex) {
   return candidates[candidateIndex].accuracyCost - initialAccCost;
 }
 
-DPCost PrecisionUnit::getAdjustedCompCostDelta(Session &S,
+double PrecisionUnit::getAdjustedCompCostDelta(Session &S,
                                                size_t candidateIndex,
                                                ArrayRef<SolutionStep> steps) {
   RewriteUnitSet RewriteUnits;
@@ -1136,8 +1132,8 @@ DPCost PrecisionUnit::getAdjustedCompCostDelta(Session &S,
   double candidateCompCost =
       getCompCost(S, newSubgraph, candidates[candidateIndex]);
 
-  DPCost adjustedCostDelta =
-      toDPCost((candidateCompCost - initialCompCost) * (double)executions);
+  double adjustedCostDelta =
+      (candidateCompCost - initialCompCost) * (double)executions;
   // Per-candidate pricing audit: with a one-point Pareto table these are the
   // ONLY record of why each candidate lost (all-dominated frontiers must be
   // auditable, not silent).
@@ -1207,7 +1203,7 @@ double PrecisionUnit::getAdjustedAccCostDelta(
   return adjustedAccCostDelta;
 }
 
-DPCost RewriteUnit::costDelta(size_t i, ArrayRef<SolutionStep>) {
+double RewriteUnit::costDelta(size_t i, ArrayRef<SolutionStep>) {
   return getCompCostDelta(session().CostModel, i);
 }
 
@@ -1227,7 +1223,7 @@ const SetVector<Instruction *> *RewriteUnit::footprint() const {
   return subgraph ? &subgraph->operations : nullptr;
 }
 
-DPCost PrecisionUnit::costDelta(size_t i, ArrayRef<SolutionStep> prior) {
+double PrecisionUnit::costDelta(size_t i, ArrayRef<SolutionStep> prior) {
   return getAdjustedCompCostDelta(session(), i, prior);
 }
 
@@ -1473,7 +1469,7 @@ void RewriteUnit::addCuratedRewrites(json::Array &rewrites) {
     auto &cand = candidates[ci];
     double accDelta = getAccCostDelta(ci);
     auto compDelta = getCompCostDelta(session().CostModel, ci);
-    int64_t compDeltaVal = compDelta;
+    double compDeltaVal = compDelta;
 
     if (std::isnan(accDelta))
       continue;
@@ -1483,17 +1479,15 @@ void RewriteUnit::addCuratedRewrites(json::Array &rewrites) {
     double efficiency = 0.0;
     if (compDeltaVal <= 0 && accDelta <= 0) {
       category = "free_win";
-      efficiency = std::abs(accDelta) + std::abs((double)compDeltaVal);
+      efficiency = std::abs(accDelta) + std::abs(compDeltaVal);
     } else if (compDeltaVal <= 0 && accDelta > 0) {
       category = "speed_for_accuracy";
-      efficiency = (accDelta > 1e-30)
-                       ? std::abs((double)compDeltaVal) / accDelta
-                       : std::abs((double)compDeltaVal);
+      efficiency = (accDelta > 1e-30) ? std::abs(compDeltaVal) / accDelta
+                                      : std::abs(compDeltaVal);
     } else if (compDeltaVal > 0 && accDelta <= 0) {
       category = "accuracy_for_speed";
-      efficiency = (compDeltaVal > 0)
-                       ? std::abs(accDelta) / (double)compDeltaVal
-                       : std::abs(accDelta);
+      efficiency = (compDeltaVal > 0) ? std::abs(accDelta) / compDeltaVal
+                                      : std::abs(accDelta);
     } else {
       continue;
     }
@@ -1574,7 +1568,7 @@ void PrecisionUnit::addCuratedRewrites(json::Array &rewrites) {
     auto &pt = candidates[ci];
     double accDelta = getAccCostDelta(ci);
     auto compDelta = getCompCostDelta(ci);
-    int64_t compDeltaVal = compDelta;
+    double compDeltaVal = compDelta;
 
     if (std::isnan(accDelta))
       continue;
@@ -1583,17 +1577,15 @@ void PrecisionUnit::addCuratedRewrites(json::Array &rewrites) {
     double efficiency = 0.0;
     if (compDeltaVal <= 0 && accDelta <= 0) {
       category = "free_win";
-      efficiency = std::abs(accDelta) + std::abs((double)compDeltaVal);
+      efficiency = std::abs(accDelta) + std::abs(compDeltaVal);
     } else if (compDeltaVal <= 0 && accDelta > 0) {
       category = "speed_for_accuracy";
-      efficiency = (accDelta > 1e-30)
-                       ? std::abs((double)compDeltaVal) / accDelta
-                       : std::abs((double)compDeltaVal);
+      efficiency = (accDelta > 1e-30) ? std::abs(compDeltaVal) / accDelta
+                                      : std::abs(compDeltaVal);
     } else if (compDeltaVal > 0 && accDelta <= 0) {
       category = "accuracy_for_speed";
-      efficiency = (compDeltaVal > 0)
-                       ? std::abs(accDelta) / (double)compDeltaVal
-                       : std::abs(accDelta);
+      efficiency = (compDeltaVal > 0) ? std::abs(accDelta) / compDeltaVal
+                                      : std::abs(accDelta);
     } else {
       // Emitted even though dominated: an all-dominated frontier must
       // leave a record of why each candidate lost.

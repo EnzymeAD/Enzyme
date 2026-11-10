@@ -44,10 +44,10 @@ int main() {
 // SOURCE-NEXT: {{^}}    q[4 * i] = (double)cosf((float)(0.5 * angle));  // Poseidon: cos in float [PT0_10]{{$}}
 // SOURCE-NEXT: {{^}}    q[4 * i + 1] = s * x;{{$}}
 
-// REMARKS: explain_formatter_rotation.cpp:32:3: note: Poseidon site rotation: accuracy target tau = 1e-06; modelled error as written 1e-17, after 1.3e-08; applied PT0_10; cost 7156000 -> 1831000
+// REMARKS: explain_formatter_rotation.cpp:32:3: note: Poseidon site rotation: accuracy target tau = 1e-06; modelled error as written 1e-17, after 1.3e-08; applied PT0_10; cost 1 -> 0.255869
 // REMARKS-NEXT: explain_formatter_rotation.cpp:13:16: note: Poseidon: Funcs FP64(0%) + FP32(100%): sin (13:16) and cos (14:16) in float (2 of 11 operations); modelled error 1.3e-08 [PT0_10]
 
 // REPORT: explain_formatter_rotation.cpp:15:22  S0: x * (sin(sqrt(z * z + (x * x + y * y)) * 0.5) / sqrt(z * z + (x * x + y * y)))
 // REPORT-NEXT: output 1 (explain_formatter_rotation.cpp:16:22): y * (sin(sqrt(z * z + (x * x + y * y)) * 0.5) / sqrt(z * z + (x * x + y * y)))
-// REPORT: profile: y in [-0.5, -0.05], x in [0.001, 1], z in [0.02, 0.06]; 1000 executions; 11 operations; cost 7156000
+// REPORT: profile: y in [-0.5, -0.05], x in [0.001, 1], z in [0.02, 0.06]; 1000 executions; 11 operations; cost 1
 // REPORT-NEXT: applied PT0_10 (precision): Funcs FP64(0%) + FP32(100%): sin (13:16) and cos (14:16) in float (2 of 11 operations)

@@ -1,5 +1,5 @@
 ; REQUIRES: scev-trunc-iv-nowrap
-; RUN: rm -rf %t && %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/raise_tcec -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_x1e6.csv -poseidon-cache=%t -poseidon-comp-cost-budget=-1 -poseidon-print -S > %t.out 2>&1
+; RUN: rm -rf %t && %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/raise_tcec -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_x1e6.csv -poseidon-cache=%t -poseidon-cost-budget=-1e-9 -poseidon-print -S > %t.out 2>&1
 ; RUN: FileCheck %s < %t.out
 ; RUN: FileCheck --check-prefix=CLEAN %s < %t.out
 ;
@@ -114,9 +114,9 @@ attributes #5 = { convergent nounwind "uniform-work-group-size" }
 ; CHECK-NEXT: {{#}}1 tcec n=2 wmma m16n16k16 f16/f32 compCost/MAC=4.159686e+03 rel=8.338900e-02
 ; CHECK-NEXT: {{#}}2 tcec n=3 wmma m16n16k16 f16/f32 compCost/MAC=4.899349e+03 rel=9.821700e-02
 ; CHECK: Matmul[0] candidates (initial cost=4.988291e+04, executions=8192,
-; CHECK-NEXT: wmma m16n16k16 f16/f32: {{.*}}cost=-380908769
-; CHECK-NEXT: tcec n=2 wmma m16n16k16 f16/f32: {{.*}}cost=-374564621
-; CHECK-NEXT: tcec n=3 wmma m16n16k16 f16/f32: {{.*}}cost=-368505296
+; CHECK-NEXT: wmma m16n16k16 f16/f32: {{.*}}cost=-3.809088e+08
+; CHECK-NEXT: tcec n=2 wmma m16n16k16 f16/f32: {{.*}}cost=-3.745646e+08
+; CHECK-NEXT: tcec n=3 wmma m16n16k16 f16/f32: {{.*}}cost=-3.685053e+08
 ; CHECK: Applying solution for matmul[0] -> tcec n=3 wmma m16n16k16 f16/f32
 ; CHECK-LABEL: define {{.*}} @preprocess_matmul_body(
 ; CHECK: fptrunc double %{{.+}} to float

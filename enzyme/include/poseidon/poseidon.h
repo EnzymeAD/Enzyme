@@ -46,9 +46,9 @@
 //   its own (POSEIDON_OPTIMIZE_TAU, __poseidon_optimize_tau, or poseidon_tau
 //   in the call) > -poseidon-tau > none
 // The target is the same number wherever it is written. A site with none is
-// solved against -poseidon-comp-cost-budget instead; at its default of 0 that
-// is the most accurate rewrite costing no more than the code as written, which
-// may be the code as written.
+// solved against -poseidon-cost-budget instead, a share of the site's profiled
+// cost; at its default of 0 that is the most accurate rewrite costing no more
+// than the code as written, which may be the code as written.
 //
 //===----------------------------------------------------------------------===//
 

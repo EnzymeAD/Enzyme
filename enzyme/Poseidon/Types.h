@@ -198,9 +198,8 @@ struct Subgraph {
 class Session;
 
 struct RewriteCandidate {
-  // Double, not a DP cost: cost-model rows are reciprocal throughputs
-  // below 1.0, and rounding them to an integral cost per op would make every
-  // elementwise candidate cost exactly 0.
+  // Per execution, in cost-model units; the solver puts the change over the
+  // profiled run on its axis.
   double CompCost = std::numeric_limits<double>::max();
   double herbieCost = std::numeric_limits<double>::quiet_NaN();
   double herbieAccuracy = std::numeric_limits<double>::quiet_NaN();
@@ -274,14 +273,14 @@ public:
                  &valueToNodeMap,
              std::unordered_map<std::string, llvm::Value *> &symbolToValueMap,
              bool print);
-  DPCost getCompCostDelta(CostModelState &CM, size_t candidateIndex);
+  double getCompCostDelta(CostModelState &CM, size_t candidateIndex);
   double getAccCostDelta(size_t candidateIndex);
 
   static bool classof(const OptimizationUnit *U) {
     return U->kind() == unsigned(UnitKind::R);
   }
   size_t numCandidates() const override { return candidates.size(); }
-  DPCost costDelta(size_t i, llvm::ArrayRef<SolutionStep> prior) override;
+  double costDelta(size_t i, llvm::ArrayRef<SolutionStep> prior) override;
   double errorDelta(size_t i, llvm::ArrayRef<SolutionStep> prior) override;
   bool consumesFootprint() const override { return false; }
   // The searches of one output, and any two cores with the same outputs, are
@@ -342,7 +341,7 @@ public:
     std::size_t operator()(const CacheKey &key) const;
   };
 
-  std::unordered_map<CacheKey, DPCost, CacheKeyHash> compCostDeltaCache;
+  std::unordered_map<CacheKey, double, CacheKeyHash> compCostDeltaCache;
   std::unordered_map<CacheKey, double, CacheKeyHash> accCostDeltaCache;
 
   explicit PrecisionUnit(CostModelState &CM, Subgraph &subgraph)
@@ -353,9 +352,9 @@ public:
   }
 
   void apply(Session &S, size_t candidateIndex);
-  DPCost getCompCostDelta(size_t candidateIndex);
+  double getCompCostDelta(size_t candidateIndex);
   double getAccCostDelta(size_t candidateIndex);
-  DPCost getAdjustedCompCostDelta(Session &S, size_t candidateIndex,
+  double getAdjustedCompCostDelta(Session &S, size_t candidateIndex,
                                   llvm::ArrayRef<SolutionStep> steps);
   double getAdjustedAccCostDelta(
       size_t candidateIndex, llvm::ArrayRef<SolutionStep> steps,
@@ -367,7 +366,7 @@ public:
     return U->kind() == unsigned(UnitKind::PT);
   }
   size_t numCandidates() const override { return candidates.size(); }
-  DPCost costDelta(size_t i, llvm::ArrayRef<SolutionStep> prior) override;
+  double costDelta(size_t i, llvm::ArrayRef<SolutionStep> prior) override;
   double errorDelta(size_t i, llvm::ArrayRef<SolutionStep> prior) override;
   // Priced over the outputs the algebraic units of its subgraph leave.
   bool pricedAlone() const override { return false; }

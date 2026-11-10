@@ -1,8 +1,8 @@
 ; RUN: rm -rf %t && mkdir -p %t
-; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/pow_term/profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-comp-cost-budget=-200 -poseidon-cache=%t/c -S -o /dev/null 2>&1 | FileCheck --check-prefix=SOLVED %s
+; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/pow_term/profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-cost-budget=-0.09 -poseidon-cache=%t/c -S -o /dev/null 2>&1 | FileCheck --check-prefix=SOLVED %s
 ; RUN: sed 's/"key": {/"key": {"zz extra": "1", "aa extra": "1", "mm extra": "1",/' %t/c/table.json > %t/table.json
 ; RUN: mv %t/table.json %t/c/table.json
-; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/pow_term/profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-comp-cost-budget=-200 -poseidon-cache=%t/c -S -o /dev/null 2>&1 | FileCheck --check-prefixes=EXTRA,SOLVED %s
+; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/pow_term/profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-cost-budget=-0.09 -poseidon-cache=%t/c -S -o /dev/null 2>&1 | FileCheck --check-prefixes=EXTRA,SOLVED %s
 
 ; A cached table whose key has parts this compile does not names the first of
 ; them by name, whatever order the stored key object holds them in.

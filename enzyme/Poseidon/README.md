@@ -139,10 +139,16 @@ none. The target is the same number wherever
 it is written: moving it from the flag into the source never changes what a
 site emits, and changing it needs no new profile, also when a template argument
 carries it to the call. A site with no target is solved against
-`-poseidon-comp-cost-budget` instead; at its default of 0 that is the most
+`-poseidon-cost-budget` instead, the share of what the profiled run spent in
+the site that a solution may add (a negative share, down to -1, is one it has
+to save: -0.25 requires saving a quarter); at its default of 0 that is the most
 accurate rewrite costing no more than the code as written, which may be the
-code as written. `poseidon-clang++ -poseidon-help` lists the user flags, and
-any other `-poseidon-<flag>` reaches the pass.
+code as written. A share below -1 or one that is not finite stops the compile:
+the integer budgets of `-poseidon-comp-cost-budget` are no longer accepted, and
+a solve writes the shares of its frontier points to `budgets.txt` in its
+`-poseidon-cache` directory.
+`poseidon-clang++ -poseidon-help` lists the user flags, and any other
+`-poseidon-<flag>` reaches the pass.
 
 A marked host function, or one called through `__poseidon_optimize`, returns
 nothing, a floating-point scalar or an integer, and takes pointers,
@@ -262,10 +268,11 @@ error when the DP table came from the cache) is omitted.
 | `result` | `cost_before`, `cost_after`, `modelled_rel_error_as_written`, `modelled_rel_error`, `applied` (ids) |
 | `subgraphs[]` | `id`, `kind` (`subgraph` or `matmul`), `loc`, `cost`, `executions`, `ops[]` (`opcode`, `type`, `loc`, `executions`, `sensitivity`, `gradient`, `min`, `max`), `inputs[]` (`var`, `name`, `loc`, `type`, `min`, `max`), `outputs[]` (`name`, `loc`, `fpcore`, `c`, the `ops` and `inputs` it depends on), `original` (`fpcore`, `c`), `herbie[]` (per core: precision, status), `left_as_written` |
 | `subgraphs[].alternatives[]` | `id` (what `-poseidon-apply-rewrites` takes), `kind` (`algebraic`, `precision`, `expansion`, `matmul`), `summary`, `fpcore`, `c`, `approx`, `approx_note`, `changes`, `cost_delta`, `modelled_error`, `herbie_error_bits` (`before`, `after`), `status` (`applied`, `pareto`, `rejected`), `reason` |
-| `pareto[]` | `budget` (what `-poseidon-comp-cost-budget` takes), `cost`, `modelled_rel_error`, `applied`, `selected` |
+| `pareto[]` | `budget` (what `-poseidon-cost-budget` takes), `cost`, `modelled_rel_error`, `applied`, `selected` |
 
 Locations are `{file, line, col}`; modelled errors are relative and in the
-unit `-poseidon-tau` is given in. An applied algebraic alternative reads
+unit `-poseidon-tau` is given in; costs and budgets are shares of what the
+profiled run spent in the solved sites. An applied algebraic alternative reads
 
 ```json
 {"id": "R0_1", "kind": "algebraic", "precision": "binary64", "status": "applied",

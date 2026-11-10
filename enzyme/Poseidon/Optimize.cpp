@@ -666,6 +666,22 @@ static void putOnApplicationScale(Session &S, Function &F,
       unit->scaleErrors(factor);
 }
 
+// What the profiled run spent in `F`: every operation the profile records, its
+// execution count times its price.
+static double profiledCost(CostModelState &CM, const Function &F,
+                           const ProfileMap &profile) {
+  double cost = 0.0;
+  for (const Instruction &I : instructions(F)) {
+    size_t slot;
+    if (!tryReadProfIdxMetadata(&I, slot))
+      continue;
+    auto it = profile.find(slot);
+    if (it != profile.end())
+      cost += (double)it->second.exec * getInstructionCompCost(CM, &I);
+  }
+  return cost;
+}
+
 // Prints every collected candidate with its priced deltas.
 static void printCandidates(Session &S, FunctionFPState &st) {
   if (S.Opts.Diagnostics.Print)
@@ -691,6 +707,7 @@ bool collectFPCandidates(Session &S, Function &F, double errorTol,
   // Nothing above prices: a compile for a device no model has been measured
   // on yet still reports what it recognized before it refuses.
   requireCostModel(S.CostModel, F);
+  st.profiledCost = profiledCost(S.CostModel, F, profile.map);
 
   buildSubgraphs(O, F, st.abstractMatmuls, st.valueToNodeMap, st.subgraphs);
 
@@ -823,6 +840,7 @@ bool fpOptimize(Session &S, Function &F, double errorTol) {
   SolveRecord record;
   SolveRecord *rec = explainWanted(O, F) ? &record : nullptr;
   record.accScale = st.accScale;
+  record.profiledCost = st.profiledCost;
   record.tau = target;
   record.siteTarget = errorTol > 0.0;
   SmallVector<SolutionStep> steps;
@@ -939,6 +957,8 @@ bool solveJointly(Session &S, Module &M, FunctionAnalysisManager &FAM) {
       raw, [&](FunctionFPState *st) { return explainWanted(O, *st->F); });
   record.tau = jointErrTol;
   record.siteTarget = allFromSite;
+  for (FunctionFPState *st : raw)
+    record.profiledCost += st->profiledCost;
   SmallVector<SolutionStep> steps;
   if (!O.Solver.ApplyRewrites.empty()) {
     for (auto *st : raw) {

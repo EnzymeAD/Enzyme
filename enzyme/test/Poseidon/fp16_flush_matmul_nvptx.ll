@@ -103,18 +103,18 @@ attributes #5 = { convergent nounwind "uniform-work-group-size" }
 
 ; {{[^ -~]+}} stands for the Greek capital delta the log prints.
 ; NORMAL: DOMERR matmul in=f16 acc=f32 p95_relErr=3.137966e-04
-; NORMAL: wmma m16n16k16 f16/f32: {{[^ -~]+}}cost=-380908769 {{[^ -~]+}}accCost=9.867296e+00
-; NORMAL-NEXT: tcec n=2 wmma m16n16k16 f16/f32: {{[^ -~]+}}cost=-374564621 {{[^ -~]+}}accCost=5.093297e-03
-; NORMAL-NEXT: tcec n=3 wmma m16n16k16 f16/f32: {{[^ -~]+}}cost=-368505296 {{[^ -~]+}}accCost=1.896120e-03
+; NORMAL: wmma m16n16k16 f16/f32: {{[^ -~]+}}cost=-3.809088e+08 {{[^ -~]+}}accCost=9.867296e+00
+; NORMAL-NEXT: tcec n=2 wmma m16n16k16 f16/f32: {{[^ -~]+}}cost=-3.745646e+08 {{[^ -~]+}}accCost=5.093297e-03
+; NORMAL-NEXT: tcec n=3 wmma m16n16k16 f16/f32: {{[^ -~]+}}cost=-3.685053e+08 {{[^ -~]+}}accCost=1.896120e-03
 ; NORMAL: Poseidon error-budget: matmul -> wmma m16n16k16 f16/f32 (domain err 3.137966e-04 <= 1.000000e-03 at confidence 9.500000e-01)
 ; NORMAL: Applying solution for matmul[0] -> wmma m16n16k16 f16/f32 (#0)
 
 ; TINY: DOMERR matmul in=f16 acc=f32 p95_relErr=1.000000e+00
 ; TINY: #0 wmma m16n16k16 f16/f32  compCost/MAC=3.385254e+03  rel=6.786400e-02  domainError=INF
 ; TINY: #1 tcec n=2 wmma m16n16k16 f16/f32  compCost/MAC=4.159686e+03  rel=8.338900e-02  domainError=INF
-; TINY: wmma m16n16k16 f16/f32: {{[^ -~]+}}cost=-380908769 {{[^ -~]+}}accCost=1.000000e+30
-; TINY-NEXT: tcec n=2 wmma m16n16k16 f16/f32: {{[^ -~]+}}cost=-374564621 {{[^ -~]+}}accCost=1.000000e+30
-; TINY-NEXT: tcec n=3 wmma m16n16k16 f16/f32: {{[^ -~]+}}cost=-368505296 {{[^ -~]+}}accCost=1.000000e+30
+; TINY: wmma m16n16k16 f16/f32: {{[^ -~]+}}cost=-3.809088e+08 {{[^ -~]+}}accCost=1.000000e+30
+; TINY-NEXT: tcec n=2 wmma m16n16k16 f16/f32: {{[^ -~]+}}cost=-3.745646e+08 {{[^ -~]+}}accCost=1.000000e+30
+; TINY-NEXT: tcec n=3 wmma m16n16k16 f16/f32: {{[^ -~]+}}cost=-3.685053e+08 {{[^ -~]+}}accCost=1.000000e+30
 ; TINY-NOT: error-budget: matmul -> wmma m16n16k16 f16/f32
 ; TINY-NOT: Applying solution for matmul[0]
 ; TINY: error-budget: matmul -> baseline F64 (no rewrite clears 1.000000e-03

@@ -84,8 +84,7 @@ struct PrecisionChange {
 struct PTCandidate {
   llvm::SmallVector<PrecisionChange, 1> changes;
   double accuracyCost = std::numeric_limits<double>::quiet_NaN();
-  // Double, not a DP cost: see RewriteCandidate::CompCost. Native
-  // cost-model rows are below 1.0 and would round to zero here.
+  // Per execution, in cost-model units: see RewriteCandidate::CompCost.
   double CompCost = std::numeric_limits<double>::max();
   std::string desc;
   // Its position when enumerated, the j of its PT<i>_<j> id; see

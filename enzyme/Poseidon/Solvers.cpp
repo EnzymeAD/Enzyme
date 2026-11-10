@@ -198,6 +198,7 @@ static CacheKey solveKey(Session &S, const FunctionFPState &st,
   key.addContent("function body", body);
   key.add("device", getCostModelNativeArch(S.CostModel));
   key.add("cost model", utohexstr(getCostModelFingerprint(S.CostModel)));
+  key.add("cost axis", "cost-model units times 2^(32 - log2 profiled cost)");
 
   SmallVector<std::string, 4> profilePaths = {profilePath.str()};
   for (const std::string &dir : O.Profiling.OutputProfiles) {
@@ -325,7 +326,7 @@ static void writeSiteTable(const Options &O, StringRef fnName,
                            const CacheKey &key,
                            const CostMap &costToAccuracyMap,
                            const SolutionMap &costToSolutionMap,
-                           double baseline) {
+                           double baseline, double profiledCost) {
   // llvm::json renders nan/inf as a bare `nan` token, which is not JSON. Refuse
   // to cache this function rather than drop entries: the loader treats a table
   // as a complete frontier, so a pruned one would change a later solve's
@@ -373,6 +374,7 @@ static void writeSiteTable(const Options &O, StringRef fnName,
   entryObj["costToSolutionMap"] = std::move(costSolMap);
   if (std::isfinite(baseline))
     entryObj["baselineAccCost"] = baseline;
+  entryObj["profiledCost"] = profiledCost;
 
   // Read-modify-write: the file holds one table per function, so a later site
   // in the same compilation unit must extend it rather than clobber the
@@ -449,12 +451,13 @@ void priceUnlessCached(Session &S, FunctionFPState &st, StringRef profilePath) {
   priceCandidates(st);
 }
 
-static void printDPTable(const CostMap &costToAccuracyMap,
+static void printDPTable(const CostScale &scale,
+                         const CostMap &costToAccuracyMap,
                          const SolutionMap &costToSolutionMap) {
   llvm::errs() << "\n*** DP Table ***\n";
   for (const auto &pair : costToAccuracyMap) {
 
-    llvm::errs() << "Computation cost: " << pair.first
+    llvm::errs() << "Computation cost: " << scale.share(pair.first)
                  << ", Accuracy cost: " << pair.second << "\n";
     llvm::errs() << "\tSolution steps: \n";
     auto it = costToSolutionMap.find(pair.first);
@@ -467,7 +470,7 @@ static void printDPTable(const CostMap &costToAccuracyMap,
   llvm::errs() << "*** End of DP Table ***\n\n";
 }
 
-static void emitReport(Session &S, StringRef funcName,
+static void emitReport(Session &S, StringRef funcName, const CostScale &scale,
                        const CostMap &costToAccuracyMap,
                        const SolutionMap &costToSolutionMap,
                        ArrayRef<SiteUnit *> units) {
@@ -490,8 +493,8 @@ static void emitReport(Session &S, StringRef funcName,
   report["num_pareto_points"] = static_cast<int64_t>(costToAccuracyMap.size());
 
   if (!costToAccuracyMap.empty()) {
-    report["cost_range_min"] = costToAccuracyMap.begin()->first;
-    report["cost_range_max"] = costToAccuracyMap.rbegin()->first;
+    report["cost_range_min"] = scale.share(costToAccuracyMap.begin()->first);
+    report["cost_range_max"] = scale.share(costToAccuracyMap.rbegin()->first);
   }
 
   for (const UnitKindInfo &kind : unitKinds()) {
@@ -507,7 +510,7 @@ static void emitReport(Session &S, StringRef funcName,
   json::Array paretoPoints;
   for (const auto &pair : costToAccuracyMap) {
     json::Object point;
-    point["computation_cost"] = pair.first;
+    point["computation_cost"] = scale.share(pair.first);
     point["accuracy_cost"] = pair.second;
 
     auto it = costToSolutionMap.find(pair.first);
@@ -543,8 +546,8 @@ static void emitReport(Session &S, StringRef funcName,
   textOut << "=== Poseidon Report: " << funcName << " ===\n";
   textOut << "Pareto table: " << costToAccuracyMap.size() << " points";
   if (!costToAccuracyMap.empty()) {
-    textOut << ", cost range [" << costToAccuracyMap.begin()->first << ", "
-            << costToAccuracyMap.rbegin()->first << "]";
+    textOut << ", cost range [" << scale.share(costToAccuracyMap.begin()->first)
+            << ", " << scale.share(costToAccuracyMap.rbegin()->first) << "]";
   }
   textOut << "\n";
   bool first = true;
@@ -569,7 +572,8 @@ static void emitReport(Session &S, StringRef funcName,
 
   unsigned pointIdx = 0;
   for (const auto &pair : costToAccuracyMap) {
-    textOut << "--- Pareto Point #" << pointIdx++ << ": Cost=" << pair.first
+    textOut << "--- Pareto Point #" << pointIdx++
+            << ": Cost=" << scale.share(pair.first)
             << ", Accuracy=" << pair.second << " ---\n";
     auto it = costToSolutionMap.find(pair.first);
     if (it != costToSolutionMap.end() && !it->second.empty()) {
@@ -594,7 +598,7 @@ static void emitReport(Session &S, StringRef funcName,
       cfg["cache_path"] = O.Herbie.Cache;
       json::Array budgetArr;
       for (const auto &pair : costToAccuracyMap)
-        budgetArr.push_back(pair.first);
+        budgetArr.push_back(scale.share(pair.first));
       cfg["budgets"] = std::move(budgetArr);
       json::Array accArr;
       for (const auto &pair : costToAccuracyMap)
@@ -729,14 +733,14 @@ SmallVector<SolutionStep> errorBudgetSelector(const Options &O,
 // variant workflow, on every solve and replay. Parallel variant builds reusing
 // a cached table write the same breakpoints, and the replace is atomic, so
 // none of them reads a partial file.
-static void writeBudgetsFile(const Options &O,
+static void writeBudgetsFile(const Options &O, const CostScale &scale,
                              const CostMap &costToAccuracyMap) {
   if (O.Herbie.Cache.empty())
     return;
   std::string budgetsFile = O.Herbie.Cache + "/budgets.txt";
   std::string budgetsStr;
   for (const auto &pair : costToAccuracyMap)
-    budgetsStr += std::to_string(pair.first) + ",";
+    budgetsStr += formatv("{0},", format("%.17g", scale.share(pair.first)));
   if (!budgetsStr.empty())
     budgetsStr.pop_back();
   if (Error E = writeFileAtomically(budgetsFile, budgetsStr))
@@ -751,13 +755,14 @@ accuracyDPSolver(Session &S, Function &F, FunctionFPState &st,
   const Options &O = S.Opts;
   auto &COs = st.COs;
   auto &CSs = st.CSs;
-  llvm::errs() << "Starting accuracy DP solver with computation budget: "
-               << O.Solver.CompCostBudget << "\n";
+  llvm::errs() << "Starting accuracy DP solver with cost budget: "
+               << O.Solver.CostBudget << " of the site's profiled cost\n";
   if (errorTol > 0.0) {
     llvm::errs() << "Per-operation relative error tolerance: " << errorTol
                  << "\n";
   }
 
+  const CostScale scale(st.profiledCost);
   CostMap costToAccuracyMap;
   SolutionMap costToSolutionMap;
 
@@ -778,27 +783,31 @@ accuracyDPSolver(Session &S, Function &F, FunctionFPState &st,
 
     SmallVector<OptimizationUnit *> site(units.begin(), units.end());
     if (!O.Solver.EarlyPrune) {
-      solveExact(exactOrder({site}), costToAccuracyMap, costToSolutionMap);
+      solveExact(exactOrder({site}), scale, costToAccuracyMap,
+                 costToSolutionMap);
     } else {
       // Each prune also compares partial solutions a later unit treats
       // differently (a CS is priced against the COs chosen on its subgraph),
       // so the frontier can miss points the exact solve finds.
-      solvePruned(prunedOrder({site}), costToAccuracyMap, costToSolutionMap,
+      solvePruned(prunedOrder({site}), scale, costToAccuracyMap,
+                  costToSolutionMap,
                   /*progress=*/true);
     }
 
     if (table)
       writeSiteTable(O, F.getName(), table->key, costToAccuracyMap,
-                     costToSolutionMap, baselineAccCost(COs, CSs));
+                     costToSolutionMap, baselineAccCost(COs, CSs),
+                     st.profiledCost);
   }
 
   if (O.Diagnostics.Print && O.Diagnostics.ShowTable)
-    printDPTable(costToAccuracyMap, costToSolutionMap);
+    printDPTable(scale, costToAccuracyMap, costToSolutionMap);
 
-  writeBudgetsFile(O, costToAccuracyMap);
+  writeBudgetsFile(O, scale, costToAccuracyMap);
 
   if (!loadedFromCache)
-    emitReport(S, F.getName(), costToAccuracyMap, costToSolutionMap, units);
+    emitReport(S, F.getName(), scale, costToAccuracyMap, costToSolutionMap,
+               units);
 
   if (record) {
     record->selector = "dp";
@@ -806,6 +815,7 @@ accuracyDPSolver(Session &S, Function &F, FunctionFPState &st,
     record->table = costToAccuracyMap;
     record->solutions = costToSolutionMap;
     record->accScale = accScale;
+    record->profiledCost = st.profiledCost;
     record->tau = errorTol;
     record->baseline =
         loadedFromCache
@@ -814,8 +824,8 @@ accuracyDPSolver(Session &S, Function &F, FunctionFPState &st,
   }
 
   llvm::errs() << "Critical computation cost range: ["
-               << costToAccuracyMap.begin()->first << ", "
-               << costToAccuracyMap.rbegin()->first << "]\n";
+               << scale.share(costToAccuracyMap.begin()->first) << ", "
+               << scale.share(costToAccuracyMap.rbegin()->first) << "]\n";
 
   llvm::errs() << "DP table contains " << costToAccuracyMap.size()
                << " entries.\n";
@@ -900,14 +910,15 @@ accuracyDPSolver(Session &S, Function &F, FunctionFPState &st,
 
     llvm::errs() << "[poseidon] " << F.getName() << ": tau=" << errorTol
                  << " S=" << accScale << " A0=" << baseline
-                 << " selected cost=" << bestCompCost
+                 << " selected cost=" << scale.share(bestCompCost)
                  << " accCost=" << minAccCost << " rel=" << bestRel << "\n";
   } else {
+    const DPCost budget = scale.fromShare(O.Solver.CostBudget);
     for (const auto &pair : costToAccuracyMap) {
       DPCost compCost = pair.first;
       double accCost = pair.second;
 
-      if (compCost <= O.Solver.CompCostBudget && std::isfinite(accCost) &&
+      if (compCost <= budget && std::isfinite(accCost) &&
           accCost < O.Model.ExponentPenalty && accCost < minAccCost) {
         minAccCost = accCost;
         bestCompCost = compCost;
@@ -925,7 +936,8 @@ accuracyDPSolver(Session &S, Function &F, FunctionFPState &st,
 
     llvm::errs() << "Minimum accuracy cost within budget: " << minAccCost
                  << "\n";
-    llvm::errs() << "Computation cost budget used: " << bestCompCost << "\n";
+    llvm::errs() << "Computation cost budget used: "
+                 << scale.share(bestCompCost) << "\n";
   }
 
   assert(costToSolutionMap.find(bestCompCost) != costToSolutionMap.end() &&
@@ -942,8 +954,12 @@ jointAccuracyDPSolver(Session &S, ArrayRef<FunctionFPState *> states,
                       double errorTol, SolveRecord *record) {
   const Options &O = S.Opts;
   llvm::errs() << "Starting JOINT accuracy DP solver over " << states.size()
-               << " function(s) with shared computation budget: "
-               << O.Solver.CompCostBudget << "\n";
+               << " function(s) with shared cost budget: "
+               << O.Solver.CostBudget << " of their profiled cost\n";
+  double profiledCost = 0.0;
+  for (auto *st : states)
+    profiledCost += st->profiledCost;
+  const CostScale scale(profiledCost);
 
   CostMap costToAccuracyMap;
   SolutionMap costToSolutionMap;
@@ -958,23 +974,25 @@ jointAccuracyDPSolver(Session &S, ArrayRef<FunctionFPState *> states,
   SmallVector<ArrayRef<OptimizationUnit *>, 4> sites(siteUnits.begin(),
                                                      siteUnits.end());
   if (!O.Solver.EarlyPrune) {
-    solveExact(exactOrder(sites), costToAccuracyMap, costToSolutionMap);
+    solveExact(exactOrder(sites), scale, costToAccuracyMap, costToSolutionMap);
   } else {
-    solvePruned(prunedOrder(sites), costToAccuracyMap, costToSolutionMap,
+    solvePruned(prunedOrder(sites), scale, costToAccuracyMap, costToSolutionMap,
                 /*progress=*/false);
   }
 
   llvm::errs() << "JOINT DP table contains " << costToAccuracyMap.size()
-               << " entries; cost range [" << costToAccuracyMap.begin()->first
-               << ", " << costToAccuracyMap.rbegin()->first << "]\n";
+               << " entries; cost range ["
+               << scale.share(costToAccuracyMap.begin()->first) << ", "
+               << scale.share(costToAccuracyMap.rbegin()->first) << "]\n";
 
-  writeBudgetsFile(O, costToAccuracyMap);
+  writeBudgetsFile(O, scale, costToAccuracyMap);
 
   if (record) {
     record->selector = "joint";
     record->table = costToAccuracyMap;
     record->solutions = costToSolutionMap;
     record->tau = errorTol;
+    record->profiledCost = profiledCost;
     record->baseline = 0.0;
     record->accScale = 0.0;
     for (auto *st : states) {
@@ -1046,11 +1064,12 @@ jointAccuracyDPSolver(Session &S, ArrayRef<FunctionFPState *> states,
     }
     llvm::errs() << "[poseidon] " << names << ": tau=" << errorTol
                  << " S=" << accScale << " A0=" << baseline
-                 << " selected cost=" << bestCompCost
+                 << " selected cost=" << scale.share(bestCompCost)
                  << " accCost=" << minAccCost << " rel=" << bestRel << "\n";
   } else {
+    const DPCost budget = scale.fromShare(O.Solver.CostBudget);
     for (const auto &pair : costToAccuracyMap)
-      if (pair.first <= O.Solver.CompCostBudget && pair.second < minAccCost) {
+      if (pair.first <= budget && pair.second < minAccCost) {
         minAccCost = pair.second;
         bestCompCost = pair.first;
       }
@@ -1061,7 +1080,8 @@ jointAccuracyDPSolver(Session &S, ArrayRef<FunctionFPState *> states,
     }
   }
   llvm::errs() << "JOINT: minimum accuracy cost within budget: " << minAccCost
-               << "; computation cost used: " << bestCompCost << "\n";
+               << "; computation cost used: " << scale.share(bestCompCost)
+               << "\n";
 
   assert(costToSolutionMap.find(bestCompCost) != costToSolutionMap.end() &&
          "joint DP solver: expected a solution!");

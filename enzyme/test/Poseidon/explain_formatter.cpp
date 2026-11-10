@@ -37,21 +37,21 @@ int main() {
 // REPORT: Poseidon site kernel(double const*, double*, int)  [_Z6kernelPKdPdi]
 // REPORT-NEXT: called at explain_formatter.cpp:26:3
 // REPORT-NEXT: accuracy target tau = 1e-06; cost model cm_x86-64_explorer.csv; selector dp
-// REPORT-NEXT: as written:   modelled error 2.8e-10, cost 3576832
+// REPORT-NEXT: as written:   modelled error 2.8e-10, cost 1
 // REPORT-NEXT: with Poseidon: modelled error 1.2e-16, cost 0 (-100%); applied R0_1
 // REPORT: explain_formatter.cpp:15:37  S0: (1.0 - cos(x[i])) / (x[i] * x[i])
-// REPORT-NEXT: profile: x[i] in [1e-08, 0.0001]; 1024 executions; 4 operations; cost 3576832
+// REPORT-NEXT: profile: x[i] in [1e-08, 0.0001]; 1024 executions; 4 operations; cost 1
 // REPORT-NEXT: applied R0_1 (algebraic, binary64): 0.5
-// REPORT-NEXT: series approximation of (1.0 - cos(x[i])) / (x[i] * x[i]), valid on the profiled range x[i] in [1e-08, 0.0001]; modelled error 1.2e-16; cost change -3576832
-// REPORT: R0_0 pareto algebraic 2.1e-25 -3453952 fma(-0.041666666666666664, x[i] * x[i], 0.5)
+// REPORT-NEXT: series approximation of (1.0 - cos(x[i])) / (x[i] * x[i]), valid on the profiled range x[i] in [1e-08, 0.0001]; modelled error 1.2e-16; cost change -1
+// REPORT: R0_0 pareto algebraic 2.1e-25 -0.965646 fma(-0.041666666666666664, x[i] * x[i], 0.5)
 // REPORT-NEXT: on the Pareto frontier; -poseidon-apply-rewrites=R0_0 applies it
-// REPORT: R1_0 rejected algebraic 1.2e-16 -3576832 (double)0.5f
+// REPORT: R1_0 rejected algebraic 1.2e-16 -1 (double)0.5f
 // REPORT-NEXT: the selected R0_1 rewrites the same output
 // REPORT: Pareto frontier (cost, modelled error; * = selected):
-// REPORT: * 0 1.2e-16 R0_1 -poseidon-tau=0 -poseidon-comp-cost-budget=-3576832
-// REPORT-NEXT: 122880 2.1e-25 R0_0 -poseidon-tau=0 -poseidon-comp-cost-budget=-3453952
+// REPORT: * 0 1.2e-16 R0_1 -poseidon-tau=0 -poseidon-cost-budget=-1
+// REPORT-NEXT: 0.0343544 2.1e-25 R0_0 -poseidon-tau=0 -poseidon-cost-budget=-0.9656455768680218
 
-// REMARKS: <source>:26:3: note: Poseidon site kernel: accuracy target tau = 1e-06; modelled error as written 2.8e-10, after 1.2e-16; applied R0_1; cost 3576832 -> 0
+// REMARKS: <source>:26:3: note: Poseidon site kernel: accuracy target tau = 1e-06; modelled error as written 2.8e-10, after 1.2e-16; applied R0_1; cost 1 -> 0
 // REMARKS-NEXT: <source>:15:37: note: Poseidon rewrote (1.0 - cos(x[i])) / (x[i] * x[i]) as 0.5 (series approximation of (1.0 - cos(x[i])) / (x[i] * x[i]), valid on the profiled range x[i] in [1e-08, 0.0001]); modelled error 1.2e-16 [R0_1]
 // REMARKS-NEXT: <source>:15:37: note: Poseidon did not select R0_0 fma(-0.041666666666666664, x[i] * x[i], 0.5): on the Pareto frontier
 // REMARKS-NEXT: <source>:15:37: note: Poseidon rejected R1_0 (double)0.5f: the selected R0_1 rewrites the same output

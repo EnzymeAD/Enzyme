@@ -8,7 +8,7 @@
 ; under it: same kernel, profile and answer as the MID arm of
 ; tau_ladder_nvptx.ll, which writes the tolerance at the site.
 
-; CHECK: [poseidon] preprocess_fms_kernel_poseidon_body: tau=1.000000e-12 S=1.187943e+04 A0=2.571104e-13 selected cost={{-[0-9]+}} accCost={{.*}} rel=7.011882e-16
+; CHECK: [poseidon] preprocess_fms_kernel_poseidon_body: tau=1.000000e-12 S=1.187943e+04 A0=2.571104e-13 selected cost={{-[0-9.e+-]+}} accCost={{.*}} rel=7.011882e-16
 ; CHECK: Applying solution for CS: All FP64(0%) + Expansion2(100%)
 ; CHECK-LABEL: define {{.*}} @preprocess_fms_kernel_poseidon_body(
 ; CHECK: !poseidon.ds.join
