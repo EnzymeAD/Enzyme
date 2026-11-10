@@ -356,6 +356,45 @@ void parseProfileFile(const std::string &profilePath,
   }
 }
 
+bool isNeverExecutedProfile(const std::string &profilePath) {
+  std::ifstream file(profilePath);
+  std::string line;
+  bool marked = false;
+  while (std::getline(file, line)) {
+    if (!line.empty() && line.back() == '\r')
+      line.pop_back();
+    if (!line.empty() &&
+        line.find_first_not_of("0123456789") == std::string::npos) {
+      if (marked)
+        report_fatal_error(Twine("Poseidon: ") + profilePath +
+                           " says its site was never executed and records "
+                           "executions of it; re-run profile generation.");
+      return false;
+    }
+    marked |= line == "Executed = 0";
+  }
+  return marked;
+}
+
+void requireCanonicalHash(const FunctionProfileHeader &header,
+                          StringRef canonicalHash, StringRef profilePath,
+                          StringRef functionName) {
+  if (header.canonicalHash.empty())
+    report_fatal_error(
+        Twine("Poseidon: ") + profilePath +
+        " has no CanonicalHash field, so its slot indices cannot be checked "
+        "against the canonical form of " +
+        functionName + "; re-run profile generation.");
+  if (header.canonicalHash != canonicalHash)
+    report_fatal_error(
+        Twine("Poseidon: the profile of ") + functionName +
+        " was recorded against a different canonical form (profile "
+        "CanonicalHash " +
+        header.canonicalHash + ", this compile " + canonicalHash +
+        "). Its slot indices do not name the same instructions; re-run "
+        "profile generation.");
+}
+
 // Profile-gen only, device module only: pre-declare the probes with
 // enzyme_inactive before any AD runs. The tblgen-generated logging code creates
 // them on first use without the attribute, and with only a declaration in the

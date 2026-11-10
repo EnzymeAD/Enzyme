@@ -1,11 +1,11 @@
 // RUN: rm -rf %t && mkdir -p %t
 // RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -ffp-contract=on -S -I%FPProfileInc %clangLoadPoseidon %s -o %t/plain.s
-// RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -ffp-contract=on -S -I%FPProfileInc %clangLoadPoseidon -mllvm -poseidon-profile-use=%t/none -mllvm -poseidon-print %s -o %t/use.s 2> %t/use.err
+// RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -ffp-contract=on -S -I%FPProfileInc %clangLoadPoseidon -mllvm -poseidon-profile-use=%S/Inputs/other_sites -mllvm -poseidon-print %s -o %t/use.s 2> %t/use.err
 // RUN: FileCheck --check-prefix=SOLVE %s < %t/use.err
 // RUN: diff %t/plain.s %t/use.s
 // RUN: FileCheck %s < %t/use.s
 // RUN: %clang -x hip --offload-arch=gfx90a --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -ffp-contract=on -S -I%FPProfileInc %clangLoadPoseidon %s -o %t/plain.90a.s
-// RUN: %clang -x hip --offload-arch=gfx90a --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -ffp-contract=on -S -I%FPProfileInc %clangLoadPoseidon -mllvm -poseidon-profile-use=%t/none -mllvm -poseidon-print %s -o %t/use.90a.s 2> %t/use.90a.err
+// RUN: %clang -x hip --offload-arch=gfx90a --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -ffp-contract=on -S -I%FPProfileInc %clangLoadPoseidon -mllvm -poseidon-profile-use=%S/Inputs/other_sites -mllvm -poseidon-print %s -o %t/use.90a.s 2> %t/use.90a.err
 // RUN: FileCheck --check-prefix=SOLVE %s < %t/use.90a.err
 // RUN: diff %t/plain.90a.s %t/use.90a.s
 // RUN: FileCheck %s < %t/use.90a.s
@@ -35,7 +35,7 @@ __global__ void other(const double *x, double *y, int n) {
     y[i] = sin(x[i]) + y[i];
 }
 
-// SOLVE: [poseidon] _Z4sitePKdPdi_poseidon_body: no profile at {{.*}}; left unchanged
+// SOLVE: [poseidon] _Z4sitePKdPdi_poseidon_body: the profiled program did not contain this site (no profile at {{.*}}); left unchanged
 // SOLVE: [poseidon] every site of {{.*}} was left alone; emitting the module as written
 
 // CHECK-LABEL: _Z4sitePKdPdi:

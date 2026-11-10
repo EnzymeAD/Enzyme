@@ -13,6 +13,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <string>
 #include <sys/stat.h>
 #include <sys/wait.h>
@@ -167,6 +168,10 @@ public:
     auto hdr = staticHeaders().find(functionName);
     if (hdr != staticHeaders().end())
       out << hdr->second;
+    // Lets profile use tell a site this run never executed from one the
+    // profiled program did not contain, which leaves no file at all.
+    if (profileInfo.empty())
+      out << "Executed = 0\n";
 
     for (const auto &pair : profileInfo) {
       const auto i = pair.first;
@@ -195,6 +200,16 @@ std::string FPProfiler::dir = POSEIDON_DEFAULT_PROFILE_DIR;
 static std::unordered_map<std::string, std::unique_ptr<FPProfiler>>
     profilerRegistry;
 static std::mutex registryMutex;
+
+// The registered sites whose profile the device profiler of this process wrote
+// (poseidonProfileWritten): a kernel's header is registered here too, and its
+// records are that writer's. Never destroyed: that writer first uses it during
+// exit, and a destructor registered then would run before this file's exit
+// handler reads it.
+static std::set<std::string> &writtenElsewhere() {
+  static auto *s = new std::set<std::string>();
+  return *s;
+}
 
 static void writeMetric() {
   if (!g_metricSet)
@@ -437,15 +452,21 @@ static void poseidonProbeDriver() {
     for (const std::string &n : names) {
       if (n.size() < 10 || n.compare(n.size() - 10, 10, ".fpprofile"))
         continue;
+      // A site this run never executed cannot move the metric, and perturbing
+      // it would cost a run of the workload per ladder step.
       std::ifstream in(pdir + "/" + n);
       std::string line;
+      int id = -1;
+      bool executed = true;
       while (std::getline(in, line)) {
-        int id = 0;
-        if (std::sscanf(line.c_str(), " SiteId = %d", &id) == 1) {
-          sites.emplace(id, pdir + "/" + n);
+        if (!line.empty() &&
+            line.find_first_not_of("0123456789") == std::string::npos)
           break;
-        }
+        executed &= line != "Executed = 0";
+        std::sscanf(line.c_str(), " SiteId = %d", &id);
       }
+      if (id >= 0 && executed)
+        sites.emplace(id, pdir + "/" + n);
     }
   }
   if (sites.size() < 2)
@@ -557,13 +578,24 @@ static void poseidonProbeDriver() {
   rmdir(tmp);
 }
 
+// A site that logged nothing has no profiler; it is written from its
+// registered header alone. The device profiler's exit handler may run before
+// or after this one: before, the kernels it wrote are skipped here; after, it
+// replaces what was written here for them.
+static void writeAllProfiles() {
+  for (auto &pair : profilerRegistry)
+    pair.second->write();
+  for (const auto &pair : staticHeaders())
+    if (!profilerRegistry.count(pair.first) &&
+        !writtenElsewhere().count(pair.first))
+      FPProfiler(pair.first).write();
+  writeMetric();
+}
+
 static void writeAllProfilesAtExit() {
   std::lock_guard<std::mutex> lock(registryMutex);
-  for (auto &pair : profilerRegistry) {
-    pair.second->write();
-  }
+  writeAllProfiles();
   profilerRegistry.clear();
-  writeMetric();
   poseidonProbeDriver();
 }
 
@@ -585,10 +617,7 @@ extern "C" {
 
 void ProfilerWrite() {
   std::lock_guard<std::mutex> lock(registryMutex);
-  for (auto &pair : profilerRegistry) {
-    pair.second->write();
-  }
-  writeMetric();
+  writeAllProfiles();
 }
 
 void poseidon_metric(const char *name, double value) {
@@ -605,6 +634,13 @@ void poseidonRegisterProfileStatic(const char *funcName, const char *text) {
     return;
   std::lock_guard<std::mutex> lock(registryMutex);
   staticHeaders()[funcName] = text;
+}
+
+void poseidonProfileWritten(const char *funcName) {
+  if (!funcName)
+    return;
+  std::lock_guard<std::mutex> lock(registryMutex);
+  writtenElsewhere().insert(funcName);
 }
 
 void poseidonLogGrad(const char *funcName, size_t idx, double value,

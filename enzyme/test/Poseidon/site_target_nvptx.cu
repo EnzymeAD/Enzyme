@@ -1,5 +1,5 @@
 // RUN: rm -rf %t && mkdir -p %t
-// RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O1 -S -emit-llvm -I%FPProfileInc %clangLoadPoseidon -mllvm -poseidon-profile-use=%t/none -mllvm -poseidon-print %s -o %t/k.ll 2>&1 | FileCheck %s
+// RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O1 -S -emit-llvm -I%FPProfileInc %clangLoadPoseidon -mllvm -poseidon-profile-use=%S/Inputs/other_sites -mllvm -poseidon-print %s -o %t/k.ll 2>&1 | FileCheck %s
 // REQUIRES: poseidon
 
 // The accuracy target on a kernel, in the device compilation of a CUDA source.

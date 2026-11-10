@@ -1,5 +1,5 @@
 // RUN: rm -rf %t && mkdir -p %t
-// RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O1 -S -emit-llvm -I%FPProfileInc %clangLoadPoseidon -mllvm -poseidon-profile-use=%t/none %s -o %t/k.ll 2>&1 | FileCheck %s
+// RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O1 -S -emit-llvm -I%FPProfileInc %clangLoadPoseidon -mllvm -poseidon-profile-use=%S/Inputs/other_sites %s -o %t/k.ll 2>&1 | FileCheck %s
 // RUN: FileCheck --check-prefix=IR %s < %t/k.ll
 // RUN: %clang -x hip --offload-arch=%amdgpu_arch --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O1 -S -emit-llvm -I%FPProfileInc %clangLoadPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c %s -o %t/gen.ll 2>&1 | FileCheck --check-prefix=GEN %s
 // RUN: FileCheck --check-prefix=GENIR %s < %t/gen.ll
@@ -40,9 +40,9 @@ __global__ void k(double *x) {
   x[11] = c;
 }
 
-// CHECK-DAG: [poseidon] _Z2sqd.poseidon._Z1kPd.0: no profile at {{.*}}; left unchanged
-// CHECK-DAG: [poseidon] _Z5scalePKdPd.poseidon._Z1kPd.1: no profile at {{.*}}; left unchanged
-// CHECK-DAG: [poseidon] _Z5weighRK6holderPKdPd.poseidon._Z1kPd.3: no profile at {{.*}}; left unchanged
+// CHECK-DAG: [poseidon] _Z2sqd.poseidon._Z1kPd.0: the profiled program did not contain this site (no profile at {{.*}}); left unchanged
+// CHECK-DAG: [poseidon] _Z5scalePKdPd.poseidon._Z1kPd.1: the profiled program did not contain this site (no profile at {{.*}}); left unchanged
+// CHECK-DAG: [poseidon] _Z5weighRK6holderPKdPd.poseidon._Z1kPd.3: the profiled program did not contain this site (no profile at {{.*}}); left unchanged
 // CHECK-DAG: warning: {{.*}}Poseidon: scale(double const*, double*) at call 2 in k(double*) takes argument 1 as a pointer into memory that is not a local object of k(double*), so this call is not a Poseidon site: the pass makes shadows of local objects only, and __poseidon_fp_optimize takes the caller's own. The call runs as written.
 // IR-LABEL: define {{.*}}amdgpu_kernel void @_Z1kPd(
 // IR-NOT: call

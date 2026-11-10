@@ -4,16 +4,16 @@
 // RUN: diff %t/as_written.s %t/plain.s
 // RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -ffp-contract=on -S -I%FPProfileInc %clangLoadPoseidonEnzyme %s -o %t/plain.enzyme.s
 // RUN: diff %t/as_written.s %t/plain.enzyme.s
-// RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -ffp-contract=on -S -DNO_SITE -I%FPProfileInc %clangLoadPoseidon -mllvm -poseidon-profile-use=%t/none %s -o %t/use.nosite.s
+// RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -ffp-contract=on -S -DNO_SITE -I%FPProfileInc %clangLoadPoseidon -mllvm -poseidon-profile-use=%S/Inputs/other_sites %s -o %t/use.nosite.s
 // RUN: diff %t/as_written.s %t/use.nosite.s
 // RUN: %clang -x hip --offload-arch=%amdgpu_arch --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -ffp-contract=on -S -emit-llvm -I%FPProfileInc %clangLoadPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/cache %s -o %t/gen.ll
 // RUN: FileCheck --check-prefix=CALLS %s < %t/gen.ll
-// RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -ffp-contract=on -S -I%FPProfileInc %clangLoadPoseidon -mllvm -poseidon-profile-use=%t/none %s -o %t/use.s
+// RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -ffp-contract=on -S -I%FPProfileInc %clangLoadPoseidon -mllvm -poseidon-profile-use=%S/Inputs/other_sites %s -o %t/use.s
 // RUN: diff %t/as_written.s %t/use.s
 // RUN: %clang -x hip --offload-arch=gfx90a --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -ffp-contract=on -S -DAS_WRITTEN -DNO_SITE %s -o %t/as_written.90a.s
 // RUN: %clang -x hip --offload-arch=gfx90a --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -ffp-contract=on -S -I%FPProfileInc %clangLoadPoseidon %s -o %t/plain.90a.s
 // RUN: diff %t/as_written.90a.s %t/plain.90a.s
-// RUN: %clang -x hip --offload-arch=gfx90a --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -ffp-contract=on -S -I%FPProfileInc %clangLoadPoseidon -mllvm -poseidon-profile-use=%t/none %s -o %t/use.90a.s
+// RUN: %clang -x hip --offload-arch=gfx90a --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -ffp-contract=on -S -I%FPProfileInc %clangLoadPoseidon -mllvm -poseidon-profile-use=%S/Inputs/other_sites %s -o %t/use.90a.s
 // RUN: diff %t/as_written.90a.s %t/use.90a.s
 // REQUIRES: poseidon, enzyme, amdgpu-registered-target, rocm
 

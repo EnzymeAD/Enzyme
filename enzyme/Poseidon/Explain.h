@@ -32,6 +32,8 @@ void noteSiteCall(const llvm::Function *body, const llvm::DebugLoc &loc);
 
 void explainNothingToOptimize(llvm::Function &F);
 
+void explainUnprofiled(llvm::Function &F, llvm::StringRef cause);
+
 void explainSolve(llvm::Function &F, FunctionFPState &st,
                   llvm::ArrayRef<SolutionStep> steps, const SolveRecord &rec);
 

@@ -239,36 +239,47 @@ void emitProfileStaticData(Function &clone, StringRef text) {
   if (text.empty())
     return;
   Module &M = *clone.getParent();
+  if (!isDeviceModule(M)) {
+    registerProfileStatic(M, clone.getName(), text);
+    return;
+  }
   LLVMContext &Ctx = M.getContext();
-  bool isGPU = isDeviceModule(M);
+  Type *PtrTy = PointerType::getUnqual(Ctx);
+
+  Constant *namePtr = getProfileNamePointer(M, clone.getName(), true);
+  Constant *textPtr = getStringPointer(
+      M, ("fpprofile_static_" + clone.getName()).str(), text, true);
+  FunctionType *FT =
+      FunctionType::get(Type::getVoidTy(Ctx), {PtrTy, PtrTy}, false);
+
+  // Device: published by the site's own kernel through the pointer-keyed
+  // registry, the only path from a device constant to the host writer.
+  FunctionCallee probe = getProfilerHook(M, "poseidonProfileStaticCUDA", FT);
+  for (Instruction &I : instructions(clone))
+    if (auto *CI = dyn_cast<CallInst>(&I))
+      if (auto *CF = CI->getCalledFunction())
+        if (CF->getName() == "poseidonProfileStaticCUDA")
+          return;
+  IRBuilder<> B(&*clone.getEntryBlock().getFirstInsertionPt());
+  B.CreateCall(probe, {namePtr, textPtr})->setDoesNotThrow();
+}
+
+// Registered before main, so a site whose body never runs still carries its
+// static data into the dump.
+bool registerProfileStatic(Module &M, StringRef name, StringRef text) {
+  LLVMContext &Ctx = M.getContext();
   Type *VoidTy = Type::getVoidTy(Ctx);
   Type *PtrTy = PointerType::getUnqual(Ctx);
 
-  Constant *namePtr = getProfileNamePointer(M, clone.getName(), isGPU);
-  Constant *textPtr = getStringPointer(
-      M, ("fpprofile_static_" + clone.getName()).str(), text, isGPU);
+  Constant *namePtr = getProfileNamePointer(M, name, false);
+  Constant *textPtr =
+      getStringPointer(M, ("fpprofile_static_" + name).str(), text, false);
   FunctionType *FT = FunctionType::get(VoidTy, {PtrTy, PtrTy}, false);
 
-  if (isGPU) {
-    // Device: published by the site's own kernel through the pointer-keyed
-    // registry, the only path from a device constant to the host writer.
-    FunctionCallee probe = getProfilerHook(M, "poseidonProfileStaticCUDA", FT);
-    for (Instruction &I : instructions(clone))
-      if (auto *CI = dyn_cast<CallInst>(&I))
-        if (auto *CF = CI->getCalledFunction())
-          if (CF->getName() == "poseidonProfileStaticCUDA")
-            return;
-    IRBuilder<> B(&*clone.getEntryBlock().getFirstInsertionPt());
-    B.CreateCall(probe, {namePtr, textPtr})->setDoesNotThrow();
-    return;
-  }
-
-  // Host: registered before main, so a site whose body never runs still
-  // carries its static data into the dump.
   FunctionCallee reg = getProfilerHook(M, "poseidonRegisterProfileStatic", FT);
-  std::string ctorName = ("poseidon_register_static_" + clone.getName()).str();
+  std::string ctorName = ("poseidon_register_static_" + name).str();
   if (M.getFunction(ctorName))
-    return;
+    return false;
   Function *ctor = Function::Create(FunctionType::get(VoidTy, {}, false),
                                     GlobalValue::InternalLinkage, ctorName, &M);
   ctor->addFnAttr(Attribute::NoUnwind);
@@ -276,6 +287,7 @@ void emitProfileStaticData(Function &clone, StringRef text) {
   B.CreateCall(reg, {namePtr, textPtr})->setDoesNotThrow();
   B.CreateRetVoid();
   appendToGlobalCtors(M, ctor, 0);
+  return true;
 }
 
 } // namespace poseidon

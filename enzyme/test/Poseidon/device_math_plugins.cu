@@ -4,11 +4,11 @@
 // RUN: diff %t/as_written.ptx %t/plain.ptx
 // RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -O2 -ffp-contract=on -S -I%FPProfileInc %clangLoadPoseidonEnzyme %s -o %t/plain.enzyme.ptx
 // RUN: diff %t/as_written.ptx %t/plain.enzyme.ptx
-// RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -O2 -ffp-contract=on -S -DNO_SITE -I%FPProfileInc %clangLoadPoseidon -mllvm -poseidon-profile-use=%t/none %s -o %t/use.nosite.ptx
+// RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -O2 -ffp-contract=on -S -DNO_SITE -I%FPProfileInc %clangLoadPoseidon -mllvm -poseidon-profile-use=%S/Inputs/other_sites %s -o %t/use.nosite.ptx
 // RUN: diff %t/as_written.ptx %t/use.nosite.ptx
 // RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -O2 -ffp-contract=on -S -emit-llvm -I%FPProfileInc %clangLoadPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/cache %s -o %t/gen.ll
 // RUN: FileCheck --check-prefix=CALLS %s < %t/gen.ll
-// RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -O2 -ffp-contract=on -S -I%FPProfileInc %clangLoadPoseidon -mllvm -poseidon-profile-use=%t/none %s -o %t/use.ptx
+// RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -O2 -ffp-contract=on -S -I%FPProfileInc %clangLoadPoseidon -mllvm -poseidon-profile-use=%S/Inputs/other_sites %s -o %t/use.ptx
 // RUN: diff %t/as_written.ptx %t/use.ptx
 // REQUIRES: poseidon, enzyme, cuda-runtime
 

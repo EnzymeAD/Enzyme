@@ -24,8 +24,8 @@
 // RUN: %t/use0 > %t/use0.out
 // RUN: diff %t/use.out %t/use0.out
 //
-// RUN: not %clang -x c++ -O1 -S -I%FPProfileInc %clangLoadPoseidon -mllvm -poseidon-profile-use=%t/none -DNONCONST %s -o /dev/null 2>&1 | FileCheck --check-prefix=NONCONST %s
-// RUN: not %clang -x c++ -O1 -S -I%FPProfileInc %clangLoadPoseidon -mllvm -poseidon-profile-use=%t/none -DMARKED %s -o /dev/null 2>&1 | FileCheck --check-prefix=MARKED %s
+// RUN: not %clang -x c++ -O1 -S -I%FPProfileInc %clangLoadPoseidon -mllvm -poseidon-profile-use=%S/Inputs/other_sites -DNONCONST %s -o /dev/null 2>&1 | FileCheck --check-prefix=NONCONST %s
+// RUN: not %clang -x c++ -O1 -S -I%FPProfileInc %clangLoadPoseidon -mllvm -poseidon-profile-use=%S/Inputs/other_sites -DMARKED %s -o /dev/null 2>&1 | FileCheck --check-prefix=MARKED %s
 // REQUIRES: poseidon, enzyme
 
 // __poseidon_optimize makes one call the site: it has its own profile, its own

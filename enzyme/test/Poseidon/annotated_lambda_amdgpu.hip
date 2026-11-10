@@ -2,7 +2,7 @@
 // RUN: %clang -x hip --offload-arch=%amdgpu_arch --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -S -emit-llvm -I%FPProfileInc %clangLoadPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/cache %s -o %t/gen.ll 2>&1 | FileCheck --check-prefix=GEN %s
 // RUN: cat %t/cache/launches_*.json | FileCheck --check-prefix=DESC %s
 // RUN: FileCheck --check-prefix=GENIR %s < %t/gen.ll
-// RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -S -emit-llvm -I%FPProfileInc %clangLoadPoseidon -mllvm -poseidon-profile-use=%t/none -mllvm -poseidon-print %s -o %t/use.ll 2>&1 | FileCheck --check-prefix=USE %s
+// RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -S -emit-llvm -I%FPProfileInc %clangLoadPoseidon -mllvm -poseidon-profile-use=%S/Inputs/other_sites -mllvm -poseidon-print %s -o %t/use.ll 2>&1 | FileCheck --check-prefix=USE %s
 // REQUIRES: poseidon, enzyme, amdgpu-registered-target, rocm
 
 // annotated_lambda_nvptx.cu for HIP: POSEIDON_OPTIMIZE on the lambda an
@@ -76,4 +76,4 @@ POSEIDON_OPTIMIZE __device__ double unused(double x) { return x * x; }
 // GENIR: define {{.*}}amdgpu_kernel void @_ZL11HipKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_(i32 {{.*}}, ptr addrspace(4) {{.*}}, ptr {{.*}}, ptr {{.*}}, ptr {{.*}})
 
 // USE: [poseidon] site void HipKernel2D<reduce({{.*}})::'lambda'(int)>(int, reduce({{.*}})::'lambda'(int)): accuracy target 1e-09
-// USE: no profile found at {{.*}}none/preprocess__ZL11HipKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT__poseidon_body.fpprofile
+// USE: no profile at {{.*}}other_sites/preprocess__ZL11HipKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT__poseidon_body.fpprofile: the profiled program did not contain this site

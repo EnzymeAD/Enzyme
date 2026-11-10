@@ -138,6 +138,12 @@ static void poseidonProfileOpenFatal(const std::string &path,
   _exit(1);
 }
 
+// The host profiler (FPProfiler.cpp) writes a profile with no records for every
+// site registered with it that nothing wrote, kernels included; told here which
+// ones this writer wrote. Weak: a program without it registers no kernel.
+extern "C" void poseidonProfileWritten(const char *funcName)
+    __attribute__((weak));
+
 // The canonical form a record was taken against, from its static header lines.
 static std::string poseidonCanonicalHash(const char *text) {
   const char *p = strstr(text, "CanonicalHash = ");
@@ -302,6 +308,8 @@ static void writeAllCUDAProfiles() {
       }
     }
     out.close();
+    if (poseidonProfileWritten)
+      poseidonProfileWritten(h_funcName);
   }
   delete[] h_slots;
   delete[] h_names;
