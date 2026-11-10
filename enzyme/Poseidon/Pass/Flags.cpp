@@ -11,6 +11,8 @@
 
 #include "poseidon/poseidon.h"
 
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/Support/CommandLine.h"
@@ -407,15 +409,20 @@ static void checkFlagClassification(const Options &O) {
     ++listed[kv.first];
   for (const auto &kv : notSolveInputs(O))
     ++listed[kv.first];
-  for (const auto &[name, opt] : cl::getRegisteredOptions()) {
+  SmallVector<StringRef> misplaced;
+  for (const auto &[name, opt] : cl::getRegisteredOptions())
     if (name.starts_with("poseidon-") && listed.lookup(name) != 1)
-      report_fatal_error(
-          Twine("Poseidon: -") + name + " is in " +
-          (listed.lookup(name) ? "both" : "neither") +
-          " of solveFlagValues() and notSolveInputs() in "
-          "Core/Options.cpp; a flag the DP table depends on goes "
-          "in the first, any other in the second.");
-  }
+      misplaced.push_back(name);
+  if (misplaced.empty())
+    return;
+  // The first by name: the option table holds its names in hash order.
+  llvm::sort(misplaced);
+  StringRef name = misplaced.front();
+  report_fatal_error(Twine("Poseidon: -") + name + " is in " +
+                     (listed.lookup(name) ? "both" : "neither") +
+                     " of solveFlagValues() and notSolveInputs() in "
+                     "Core/Options.cpp; a flag the DP table depends on goes "
+                     "in the first, any other in the second.");
 }
 
 Options readOptions() {

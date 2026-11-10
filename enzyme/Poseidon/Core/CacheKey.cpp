@@ -67,11 +67,12 @@ CacheKey::firstDifference(const json::Object *stored,
       continue;
     return name;
   }
+  // By name: the object holds its keys in hash order.
   if (stored->size() != parts.size())
-    for (const auto &kv : *stored)
+    for (const json::Object::value_type *kv : json::sortedElements(*stored))
       if (llvm::none_of(parts,
-                        [&](const auto &p) { return p.first == kv.first; }))
-        return kv.first.str();
+                        [&](const auto &p) { return p.first == kv->first; }))
+        return kv->first.str();
   return std::nullopt;
 }
 
