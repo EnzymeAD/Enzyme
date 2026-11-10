@@ -34,6 +34,8 @@
 #include <cumpsgemm/cumpsgemm.hpp>
 #endif
 
+#include "tcec_scale.h"
+
 #define PTC_CK(x)                                                              \
   do {                                                                         \
     cudaError_t e_ = (x);                                                      \
@@ -81,9 +83,10 @@ struct PtcScratch {
   size_t capAh = 0, capBh = 0, capCc = 0;
   __half *Ah = nullptr, *Al = nullptr, *Bh = nullptr, *Bl = nullptr;
   float *Ccorr = nullptr;
-  // [0]=scaleA [1]=scaleB [2]=1/(scaleA*scaleB); all exact powers of two.
-  float *scale = nullptr;
-  unsigned *absmax = nullptr; // [0]=max|A| bits, [1]=max|B| bits
+  // Exponents of the power-of-two scales: [0] of A, [1] of B, [2] of the
+  // result, which undoes both.
+  int *scaleExp = nullptr;
+  unsigned long long *absmax = nullptr; // [0]=max|A| bits, [1]=max|B| bits
 };
 PtcScratch g;
 
@@ -124,41 +127,38 @@ __global__ void ptc_split(const float *__restrict__ src, __half *__restrict__ hi
 // FP16 spans only ~4 decades, so an FP32 operand outside that window splits
 // into Inf/NaN limbs. One power-of-two scale per operand suffices (exact in
 // both directions) because the correction is applied to the whole product.
-__device__ __forceinline__ unsigned ptc_absBits(double v) {
-  float f = (float)fabs(v);
-  return __float_as_uint(f); // monotone over non-negative floats
+__device__ __forceinline__ unsigned long long ptc_absBits(double v) {
+  // monotone over non-negative doubles
+  return (unsigned long long)__double_as_longlong(fabs(v));
 }
 
 // Layout-aware, so a caller passing a strided sub-matrix view (ld larger than
 // the packed extent) is measured over exactly the elements the GEMM will read,
 // not over whatever happens to lie in the gaps.
-__global__ void ptc_absmax(const double *__restrict__ X, unsigned *out, int slot,
-                           int rows, int cols, int ld, int colMajor) {
+__global__ void ptc_absmax(const double *__restrict__ X,
+                           unsigned long long *out, int slot, int rows,
+                           int cols, int ld, int colMajor) {
   int r = blockIdx.y * blockDim.y + threadIdx.y;
   int c = blockIdx.x * blockDim.x + threadIdx.x;
-  unsigned m = 0;
+  unsigned long long m = 0;
   if (r < rows && c < cols) {
     size_t s = colMajor ? (size_t)c * ld + r : (size_t)r * ld + c;
     m = ptc_absBits(X[s]);
   }
   for (int off = 16; off; off >>= 1) {
-    unsigned o = __shfl_xor_sync(0xffffffffu, m, off);
+    unsigned long long o = __shfl_xor_sync(0xffffffffu, m, off);
     m = o > m ? o : m;
   }
   if ((threadIdx.x & 31) == 0)
     atomicMax(&out[slot], m);
 }
 
-// Target magnitude 2^10: comfortably inside FP16's 65504 with headroom for the
-// high limb of the split, and far above the subnormal floor.
-__global__ void ptc_scales(const unsigned *absmax, float *scale) {
-  float ma = __uint_as_float(absmax[0]);
-  float mb = __uint_as_float(absmax[1]);
-  float sa = (ma > 0.f && isfinite(ma)) ? exp2f((float)(10 - ilogbf(ma))) : 1.f;
-  float sb = (mb > 0.f && isfinite(mb)) ? exp2f((float)(10 - ilogbf(mb))) : 1.f;
-  scale[0] = sa;
-  scale[1] = sb;
-  scale[2] = 1.f / (sa * sb); // exact: both are powers of two
+__global__ void ptc_scales(const unsigned long long *absmax, int *scaleExp) {
+  int ea = ptc_scaleExponent(__longlong_as_double((long long)absmax[0]));
+  int eb = ptc_scaleExponent(__longlong_as_double((long long)absmax[1]));
+  scaleExp[0] = ea;
+  scaleExp[1] = eb;
+  scaleExp[2] = -(ea + eb);
 }
 
 // Narrow a layout-aware FP64 source into a contiguous column-major FP32 buffer
@@ -168,23 +168,24 @@ __global__ void ptc_scales(const unsigned *absmax, float *scale) {
 //   dst is rows x cols column-major with leading dimension rows.
 __global__ void ptc_narrow(float *__restrict__ dst, const double *__restrict__ src,
                            int rows, int cols, int ld, int colMajor,
-                           const float *__restrict__ scale, int which) {
+                           const int *__restrict__ scaleExp, int which) {
   int r = blockIdx.y * blockDim.y + threadIdx.y;
   int c = blockIdx.x * blockDim.x + threadIdx.x;
   if (r >= rows || c >= cols)
     return;
   size_t s = colMajor ? (size_t)c * ld + r : (size_t)r * ld + c;
-  dst[(size_t)c * rows + r] = (float)(src[s] * (double)scale[which]);
+  dst[(size_t)c * rows + r] = (float)ptc_ldexp(src[s], scaleExp[which]);
 }
 
 // Widen the column-major FP32 result back into the layout-aware FP64
 // destination, applying the FP64 alpha/beta the library never saw. `corr` is
 // the separate correction accumulator (null when the backend already folded
-// the correction in).
+// the correction in). The epilogue's one fused multiply-add is written out so
+// that its rounding does not depend on the compiler's contraction.
 __global__ void ptc_widen(double *__restrict__ C, const float *__restrict__ src,
                           const float *__restrict__ corr, int rows, int cols,
                           int ldc, int cColMajor, double alpha, double beta,
-                          const float *__restrict__ scale) {
+                          const int *__restrict__ scaleExp) {
   int r = blockIdx.y * blockDim.y + threadIdx.y;
   int c = blockIdx.x * blockDim.x + threadIdx.x;
   if (r >= rows || c >= cols)
@@ -194,8 +195,8 @@ __global__ void ptc_widen(double *__restrict__ C, const float *__restrict__ src,
   double v = (double)src[o];
   if (corr)
     v += (double)corr[o] / (double)PTC_SPLIT_S;
-  v *= (double)scale[2];
-  C[d] = (beta == 0.0) ? alpha * v : alpha * v + beta * C[d];
+  v = ptc_ldexp(v, scaleExp[2]);
+  C[d] = (beta == 0.0) ? alpha * v : fma(alpha, v, beta * C[d]);
 }
 
 #ifdef POSEIDON_TCEC_USE_CUMPSGEMM
@@ -243,25 +244,25 @@ void ptc_run(double *C, const double *A, const double *B, int M, int Ncols,
   ptc_reserve(&g.A, &g.capA, (size_t)M * K);
   ptc_reserve(&g.B, &g.capB, (size_t)K * Ncols);
   ptc_reserve(&g.C, &g.capC, (size_t)M * Ncols);
-  if (!g.scale) {
-    PTC_CK(cudaMalloc(&g.scale, 3 * sizeof(float)));
-    PTC_CK(cudaMalloc(&g.absmax, 2 * sizeof(unsigned)));
+  if (!g.scaleExp) {
+    PTC_CK(cudaMalloc(&g.scaleExp, 3 * sizeof(int)));
+    PTC_CK(cudaMalloc(&g.absmax, 2 * sizeof(unsigned long long)));
   }
 
   // Range normalization must see the operands as laid out, but only their
   // magnitudes, so it can stream them flat regardless of layout.
-  PTC_CK(cudaMemsetAsync(g.absmax, 0, 2 * sizeof(unsigned), stream));
+  PTC_CK(cudaMemsetAsync(g.absmax, 0, 2 * sizeof(unsigned long long), stream));
   dim3 b(16, 16);
   ptc_absmax<<<dim3((K + 15) / 16, (M + 15) / 16), b, 0, stream>>>(
       A, g.absmax, 0, M, K, lda, aColMajor);
   ptc_absmax<<<dim3((Ncols + 15) / 16, (K + 15) / 16), b, 0, stream>>>(
       B, g.absmax, 1, K, Ncols, ldb, bColMajor);
-  ptc_scales<<<1, 1, 0, stream>>>(g.absmax, g.scale);
+  ptc_scales<<<1, 1, 0, stream>>>(g.absmax, g.scaleExp);
 
   ptc_narrow<<<dim3((K + 15) / 16, (M + 15) / 16), b, 0, stream>>>(
-      g.A, A, M, K, lda, aColMajor, g.scale, 0);
+      g.A, A, M, K, lda, aColMajor, g.scaleExp, 0);
   ptc_narrow<<<dim3((Ncols + 15) / 16, (K + 15) / 16), b, 0, stream>>>(
-      g.B, B, K, Ncols, ldb, bColMajor, g.scale, 1);
+      g.B, B, K, Ncols, ldb, bColMajor, g.scaleExp, 1);
 
   const float one = 1.0f, zero = 0.0f;
   const float *corr = nullptr;
@@ -311,7 +312,7 @@ void ptc_run(double *C, const double *A, const double *B, int M, int Ncols,
 #endif
 
   ptc_widen<<<dim3((Ncols + 15) / 16, (M + 15) / 16), b, 0, stream>>>(
-      C, g.C, corr, M, Ncols, ldc, cColMajor, alpha, beta, g.scale);
+      C, g.C, corr, M, Ncols, ldc, cColMajor, alpha, beta, g.scaleExp);
 }
 
 } // namespace

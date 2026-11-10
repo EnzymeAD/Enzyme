@@ -408,6 +408,13 @@ if(POSEIDON_HIP_RUNTIMES)
   add_dependencies(poseidon-calibrate ${POSEIDON_HIP_TOOL_TARGETS})
 endif()
 
+# Every HIP device compile is an LTO pre-link compile, in which Enzyme leaves a
+# derivative request to the post-link run unless told otherwise, and the device
+# link loads no plugin. poseidon-clang and the package's
+# Poseidon::ProfileGenerate give this option to the HIP compiles that load
+# Enzyme.
+set(POSEIDON_ENZYME_HIP_OPTION "-enzyme-lto-prelink=1")
+
 # The Enzyme plugin of this build tree differentiates the profiling probes.
 set(POSEIDON_ENZYME_PLUGIN "")
 if(TARGET ClangEnzyme-${LLVM_VERSION_MAJOR})
@@ -425,6 +432,7 @@ target_compile_definitions(
     POSEIDON_DRIVER_PLUGIN_NAME="${POSEIDON_PLUGIN_TARGET}${CMAKE_SHARED_MODULE_SUFFIX}"
     POSEIDON_DRIVER_PLUGIN="$<TARGET_FILE:${POSEIDON_PLUGIN_TARGET}>"
     POSEIDON_DRIVER_ENZYME="${POSEIDON_ENZYME_PLUGIN}"
+    POSEIDON_DRIVER_ENZYME_HIP_OPTION="${POSEIDON_ENZYME_HIP_OPTION}"
     POSEIDON_DRIVER_INCLUDE="${ENZYME_SOURCE_DIR}/include"
     POSEIDON_DRIVER_LIBDIR="${CMAKE_CURRENT_BINARY_DIR}/lib"
     POSEIDON_DRIVER_PROFILER_CUDA=$<BOOL:${CMAKE_CUDA_COMPILER}>

@@ -21,7 +21,7 @@
 // RUN: %cmake %cmake_generator -S %S/Inputs/package -B %t/igen -DCMAKE_CXX_COMPILER=%clangxx -DCMAKE_PREFIX_PATH=%t/inst -DPOSEIDON_MODE=instrument > %t/igen.log
 // RUN: FileCheck --check-prefix=INST -DPREFIX=%t/inst %s < %t/igen.log
 // RUN: %cmake --build %t/igen -v > %t/igen.build.log
-// RUN: FileCheck --check-prefix=INSTCMD -DPREFIX=%t/inst %s < %t/igen.build.log
+// RUN: FileCheck --check-prefix=INSTCMD -DPREFIX=%t/inst --implicit-check-not=enzyme-lto-prelink %s < %t/igen.build.log
 // RUN: env POSEIDON_PROFILE_DIR=%t/iprof %t/igen/host | FileCheck --check-prefix=OUT %s
 // RUN: ls %t/iprof | FileCheck --check-prefix=PROF %s
 // RUN: test -x %t/inst/bin/poseidon-clang++

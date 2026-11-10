@@ -874,24 +874,6 @@ static int poz_rectChunk(int Mp, int Kp, int Ncols) {
   return (int)c;
 }
 
-// Cross-dispatch reuse of the quantized A planes, for a caller that knows its
-// A operand is loop invariant. Opt-in and explicit: the runtime cannot verify
-// the promise, and inferring it from the pointer alone would be wrong for B
-// (same buffer, new contents, every call). The reuse is dropped whenever
-// anything the residues depend on changes: the operand descriptor, the modulus
-// count, or a scratch reallocation.
-struct PozPinA {
-  const double *ptr = nullptr;
-  int M = 0, K = 0, lda = 0, colMajor = 0;
-  bool pinned = false;
-  // state of the planes currently sitting in g_rect.Ar
-  bool filled = false;
-  int nm = 0;
-  unsigned long long gen = 0;
-};
-PozPinA g_pinA;
-unsigned long long g_rectGen = 0; // bumped on every scratch (re)allocation
-
 struct PozRectScratch {
   int Mp = 0, Kp = 0, Ncp = 0;
   int8_t *Ar = nullptr, *Br = nullptr;
@@ -922,7 +904,6 @@ static void poz_ensureRect(int Mp, int Kp, int Ncp) {
   POZ_CK(cudaMalloc(&g_rect.part,
                     (size_t)std::max(Mp, Ncp) * pozChunks(Kp) * sizeof(double)));
   g_rect.Mp = Mp; g_rect.Kp = Kp; g_rect.Ncp = Ncp;
-  ++g_rectGen; // any cached A planes lived in the buffer that was just freed
 }
 
 // Rectangular Ozaki-II: C(M x Ncols) = alpha*(A@B) + beta*C, A(M x K),
@@ -948,27 +929,13 @@ static void poz_run_rect(double *C, const double *A, const double *B, int M,
   poz_ensureRect(Mp, Kp, pozPad(chunk));
   const dim3 tile(32, 8);
 
-  // A, once for the whole dispatch (and, if the caller pinned it, once for the
-  // whole run of dispatches).
-  const bool reuseA = g_pinA.pinned && g_pinA.filled && g_pinA.ptr == A &&
-                      g_pinA.M == M && g_pinA.K == K && g_pinA.lda == lda &&
-                      g_pinA.colMajor == aColMajor && g_pinA.nm == num_moduli &&
-                      g_pinA.gen == g_rectGen;
-  if (!reuseA) {
-    const int tr = aColMajor ? 1 : 0; // col-major A is contiguous in m, not k
-    poz_shifts(A, lda, M, K, /*contiguous=*/!tr, g_rect.sA, g_rect.part,
-               stream);
-    const dim3 g = tr ? dim3((Mp + 31) / 32, (Kp + 31) / 32)
-                      : dim3((Kp + 31) / 32, (Mp + 31) / 32);
-    poz_fillRect<<<g, tile, 0, stream>>>(A, g_rect.sA, g_rect.Ar, M, K, lda, tr,
-                                         Mp, Kp);
-    if (g_pinA.pinned && g_pinA.ptr == A && g_pinA.M == M && g_pinA.K == K &&
-        g_pinA.lda == lda && g_pinA.colMajor == aColMajor) {
-      g_pinA.filled = true;
-      g_pinA.nm = num_moduli;
-      g_pinA.gen = g_rectGen;
-    }
-  }
+  // A, once for the whole dispatch.
+  const int tr = aColMajor ? 1 : 0; // col-major A is contiguous in m, not k
+  poz_shifts(A, lda, M, K, /*contiguous=*/!tr, g_rect.sA, g_rect.part, stream);
+  const dim3 g = tr ? dim3((Mp + 31) / 32, (Kp + 31) / 32)
+                    : dim3((Kp + 31) / 32, (Mp + 31) / 32);
+  poz_fillRect<<<g, tile, 0, stream>>>(A, g_rect.sA, g_rect.Ar, M, K, lda, tr,
+                                       Mp, Kp);
 
   cublasHandle_t h = poz_cublasHandle();
   POZ_CB(cublasSetStream(h, stream));
@@ -1059,29 +1026,6 @@ extern "C" void __poseidon_ozaki_set_path(int mode) {
   }
   g_pathMode = mode;
 }
-
-// Promise that the A operand described here does not change until unpinned,
-// letting the rectangular arm reuse its quantized residue planes across
-// dispatches. The runtime cannot verify the promise, so it is opt-in and never
-// inferred; pinning a different descriptor or changing num_moduli invalidates
-// the cached planes. Rectangular arm only.
-extern "C" void __poseidon_ozaki_pin_a(const double *A, int M, int K, int lda,
-                                       int aColMajor) {
-  if (!A || M <= 0 || K <= 0) {
-    printf("poseidon_ozaki_rt: FATAL __poseidon_ozaki_pin_a(%p, M=%d, K=%d): "
-           "expected a non-null operand with positive extents\n",
-           (const void *)A, M, K);
-    abort();
-  }
-  g_pinA = PozPinA();
-  g_pinA.ptr = A;
-  g_pinA.M = M;
-  g_pinA.K = K;
-  g_pinA.lda = lda;
-  g_pinA.colMajor = aColMajor;
-  g_pinA.pinned = true;
-}
-extern "C" void __poseidon_ozaki_unpin_a(void) { g_pinA = PozPinA(); }
 
 // Override the rectangular arm's internal column chunk (0 = size it from the
 // scratch budget, which is what a real dispatch does). Harness entry.

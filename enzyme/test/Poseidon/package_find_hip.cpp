@@ -10,11 +10,13 @@
 
 // package_find.cpp with the HIP runtimes chosen (POSEIDON_GPU_RUNTIME=HIP):
 // every Poseidon flag reaches the compiler through -Xclang, since HIP's driver
-// hands -mllvm to the device linker as well, and the actions link the HIP
+// hands -mllvm to the device linker as well, profile generation tells Enzyme
+// that a HIP compile is an LTO pre-link compile, and the actions link the HIP
 // builds of the profiler and of the GEMM dispatch (the optimized build's
 // commands only: it links the ROCm installation's hipBLAS).
 
 // GEN: -Xclang -mllvm -Xclang -poseidon-profile-generate
+// GEN-SAME: -Xclang -mllvm -Xclang -enzyme-lto-prelink=1
 // GEN: libposeidon_profile_host.a {{.*}}libposeidon_profile_hip.a
 
 // OUT: wave 348.384

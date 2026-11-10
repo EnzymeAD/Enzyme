@@ -301,7 +301,8 @@ int main(int argc, char **argv) {
   // user's own request in a site, have to be lowered in the compile itself.
   // Ahead of the user's arguments, so that a later -enzyme-lto-prelink wins.
   if (IsHIP && !Enzyme.empty())
-    Cmd.append({"-Xclang", "-mllvm", "-Xclang", "-enzyme-lto-prelink=1"});
+    Cmd.append(
+        {"-Xclang", "-mllvm", "-Xclang", POSEIDON_DRIVER_ENZYME_HIP_OPTION});
   Cmd.push_back("-I" + Include);
   // Error-free transformations survive only if the compiler contracts within a
   // statement and never across one.
