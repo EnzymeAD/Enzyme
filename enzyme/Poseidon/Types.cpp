@@ -1523,12 +1523,13 @@ void RewriteUnit::addCuratedRewrites(json::Array &rewrites) {
 // table then collapses to the no-op point).
 static constexpr size_t kMaxCandRows = 40;
 
-// The candidates' positions by cost change, cheapest first.
+// The candidates' positions by cost change, cheapest first; equal changes keep
+// their positions' order.
 static SmallVector<size_t, 40> byCostDelta(PrecisionUnit &CS) {
   SmallVector<size_t, 40> order(CS.candidates.size());
   for (size_t ci = 0; ci < order.size(); ++ci)
     order[ci] = ci;
-  llvm::sort(order, [&](size_t a, size_t b) {
+  llvm::stable_sort(order, [&](size_t a, size_t b) {
     return GET_INSTRUCTION_COST(CS.getCompCostDelta(a)) <
            GET_INSTRUCTION_COST(CS.getCompCostDelta(b));
   });

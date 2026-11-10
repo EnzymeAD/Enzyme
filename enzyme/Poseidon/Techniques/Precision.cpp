@@ -686,7 +686,9 @@ double getCompCost(Session &S, Subgraph &subgraph, PTCandidate &pt) {
       clonedInputs.insert(V);
   }
 
-  SmallPtrSet<Value *, 8> clonedOutputs;
+  // In output order: the walk below sums the cost in the order it reaches the
+  // instructions.
+  SmallSetVector<Value *, 8> clonedOutputs;
   for (size_t i = 0; i < trackedOutputs.size(); ++i) {
     Value *V = nullptr;
     if (trackedOutputs[i].pointsToAliveValue())
@@ -935,9 +937,11 @@ void proposePrecisionCandidates(
   }
   SmallVector<FPLLValue *> sortedFuncs(funcsSet.begin(), funcsSet.end());
   SmallVector<FPLLValue *> sortedAllOps(allSet.begin(), allSet.end());
+  // Stable: which tier an operation of a tied sensitivity lands in follows the
+  // subgraph's order, not the sort algorithm's.
   auto bySens = [](const auto &a, const auto &b) { return a->sens < b->sens; };
-  llvm::sort(sortedFuncs, bySens);
-  llvm::sort(sortedAllOps, bySens);
+  llvm::stable_sort(sortedFuncs, bySens);
+  llvm::stable_sort(sortedAllOps, bySens);
 
   const bool gpuMode = Target::of(F).isDevice();
   static const std::unordered_set<std::string> kEmptyScalars;
