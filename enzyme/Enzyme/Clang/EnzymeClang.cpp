@@ -26,11 +26,11 @@
 #include "clang/AST/DeclGroup.h"
 #include "clang/AST/RecursiveASTVisitor.h"
 #include "clang/Basic/FileManager.h"
-#include "clang/Basic/MacroBuilder.h"
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Frontend/FrontendAction.h"
 #include "clang/Frontend/FrontendPluginRegistry.h"
 #include "clang/Lex/HeaderSearch.h"
+#include "clang/Lex/MacroInfo.h"
 #include "clang/Lex/Preprocessor.h"
 #include "clang/Lex/PreprocessorOptions.h"
 #include "clang/Sema/Sema.h"
@@ -178,6 +178,21 @@ void registerEnzymeDeclIfNotDefinedHere(Sema &S, Decl *D) {
   }
 }
 
+/// Define Name as an object-like macro expanding to Value. The plugin is
+/// created after the preprocessor is initialized, so this cannot extend the
+/// predefines buffer: with C++20 modules enabled, clang keeps the -include
+/// inputs out of that buffer and drops them once it is set again, as it would
+/// for an implicit PCH.
+void defineMacro(Preprocessor &PP, StringRef Name, unsigned Value) {
+  Token Tok;
+  Tok.startToken();
+  Tok.setKind(tok::numeric_constant);
+  PP.CreateString(std::to_string(Value), Tok);
+  MacroInfo *MI = PP.AllocateMacroInfo(Tok.getLocation());
+  MI->setTokens(Tok, PP.getPreprocessorAllocator());
+  PP.appendDefMacroDirective(PP.getIdentifierInfo(Name), MI);
+}
+
 } // namespace
 
 /// Whether Loc lies in one of clang's device math wrapper headers, whose
@@ -232,18 +247,10 @@ public:
     }
     CI.getPreprocessorOpts().Includes.push_back("/enzyme/enzyme/version");
 
-    std::string PredefineBuffer;
-    PredefineBuffer.reserve(4080);
-    llvm::raw_string_ostream Predefines(PredefineBuffer);
-    Predefines << CI.getPreprocessor().getPredefines();
-    MacroBuilder Builder(Predefines);
-    Builder.defineMacro("ENZYME_VERSION_MAJOR",
-                        std::to_string(ENZYME_VERSION_MAJOR));
-    Builder.defineMacro("ENZYME_VERSION_MINOR",
-                        std::to_string(ENZYME_VERSION_MINOR));
-    Builder.defineMacro("ENZYME_VERSION_PATCH",
-                        std::to_string(ENZYME_VERSION_PATCH));
-    CI.getPreprocessor().setPredefines(Predefines.str());
+    Preprocessor &PP = CI.getPreprocessor();
+    defineMacro(PP, "ENZYME_VERSION_MAJOR", ENZYME_VERSION_MAJOR);
+    defineMacro(PP, "ENZYME_VERSION_MINOR", ENZYME_VERSION_MINOR);
+    defineMacro(PP, "ENZYME_VERSION_PATCH", ENZYME_VERSION_PATCH);
 
     auto baseFS = &CI.getFileManager().getVirtualFileSystem();
     llvm::vfs::OverlayFileSystem *fuseFS(
