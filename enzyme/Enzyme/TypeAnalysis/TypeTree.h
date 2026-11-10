@@ -259,6 +259,21 @@ public:
     return BaseType::Unknown;
   }
 
+  /// Return the ConcreteType at depth-1 `Offset`, treating deeper mappings
+  /// rooted at `-1` or `Offset` as an implicit `BaseType::Pointer`.
+  ConcreteType firstLevelType(int Offset) const {
+    ConcreteType FoundType = operator[]({Offset});
+    if (FoundType.isKnown())
+      return FoundType;
+    for (const auto &Pair : mapping) {
+      if (Pair.first.size() > 1 &&
+          (Pair.first[0] == -1 || (Offset != -1 && Pair.first[0] == Offset))) {
+        return BaseType::Pointer;
+      }
+    }
+    return FoundType;
+  }
+
   // Return true if this type tree is fully known (i.e. there
   // is no more information which could be added).
   bool IsFullyDetermined() const {
@@ -682,9 +697,19 @@ public:
           next.push_back(v);
 
         if (legalCombine) {
+          if (pnext.size() > 0) {
+            bool LegalPointer = true;
+            Result.checkedOrIn({-1}, BaseType::Pointer,
+                               /*PointerIntSame*/ false, LegalPointer);
+          }
           Result.insert(next, dt, /*intsAreLegalPointerSub*/ true);
         } else {
           for (auto e : set) {
+            if (pnext.size() > 0) {
+              bool LegalPointer = true;
+              Result.checkedOrIn({e}, BaseType::Pointer,
+                                 /*PointerIntSame*/ false, LegalPointer);
+            }
             next[0] = e;
             Result.insert(next, dt);
           }
@@ -887,7 +912,7 @@ public:
     return flt;
   }
   bool anyFloat(llvm::Value *val, const llvm::DataLayout &dl) const {
-    auto dt = operator[]({-1});
+    auto dt = firstLevelType(-1);
     if (dt != BaseType::Anything && dt != BaseType::Unknown)
       return dt.isFloat();
 
@@ -896,7 +921,7 @@ public:
 
     size_t ObjSize = (dl.getTypeSizeInBits(val->getType()) + 7) / 8;
     for (size_t i = 0; i < ObjSize;) {
-      dt = operator[]({(int)i});
+      dt = firstLevelType((int)i);
       if (dt == BaseType::Integer) {
         i++;
         continue;
@@ -910,7 +935,7 @@ public:
     return false;
   }
   bool anyPointer(llvm::Value *val, const llvm::DataLayout &dl) const {
-    auto dt = operator[]({-1});
+    auto dt = firstLevelType(-1);
     if (dt != BaseType::Anything && dt != BaseType::Unknown)
       return dt == BaseType::Pointer;
 
@@ -919,7 +944,7 @@ public:
 
     size_t ObjSize = (dl.getTypeSizeInBits(val->getType()) + 7) / 8;
     for (size_t i = 0; i < ObjSize;) {
-      dt = operator[]({(int)i});
+      dt = firstLevelType((int)i);
       if (dt == BaseType::Integer) {
         i++;
         continue;
@@ -1101,11 +1126,15 @@ public:
 
         size_t chunk = 1;
         std::vector<int> next(pair.first);
-        auto op = operator[]({next[0]});
-        if (auto flt = op.isFloat()) {
-          chunk = dl.getTypeSizeInBits(flt) / 8;
-        } else if (op == BaseType::Pointer) {
+        if (pair.first.size() > 1) {
           chunk = dl.getPointerSizeInBits() / 8;
+        } else {
+          auto op = operator[]({next[0]});
+          if (auto flt = op.isFloat()) {
+            chunk = dl.getTypeSizeInBits(flt) / 8;
+          } else if (op == BaseType::Pointer) {
+            chunk = dl.getPointerSizeInBits() / 8;
+          }
         }
         auto offincr = (chunk - offset % chunk) % chunk;
         bool inserted = false;
@@ -1164,6 +1193,12 @@ public:
       for (auto &v : nex)
         if (v == -1)
           v = 0;
+      for (size_t PrefixLength = 1; PrefixLength < nex.size(); ++PrefixLength) {
+        std::vector<int> Prefix(nex.begin(), nex.begin() + PrefixLength);
+        bool LegalPrefix = true;
+        dat.checkedOrIn(Prefix, BaseType::Pointer, /*PointerIntSame*/ false,
+                        LegalPrefix);
+      }
       dat.insert(nex, pair.second);
     }
     return dat;
@@ -1402,7 +1437,7 @@ public:
       if (fd != RHS.mapping.end()) {
         other = fd->second;
       }
-      changed = (pair.second &= other);
+      changed |= (pair.second &= other);
       if (pair.second == BaseType::Unknown) {
         mapping.erase(pair.first);
       }

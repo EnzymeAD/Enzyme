@@ -1319,10 +1319,10 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(
   while (1) {
     unsigned nextStart = size;
 
-    auto dt = vd[{-1}];
+    auto dt = vd.firstLevelType(-1);
     for (size_t i = start; i < size; ++i) {
       bool Legal = true;
-      dt.checkedOrIn(vd[{(int)i}], /*PointerIntSame*/ true, Legal);
+      dt.checkedOrIn(vd.firstLevelType((int)i), /*PointerIntSame*/ true, Legal);
       if (!Legal) {
         nextStart = i;
         break;

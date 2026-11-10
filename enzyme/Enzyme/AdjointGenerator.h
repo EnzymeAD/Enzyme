@@ -620,7 +620,7 @@ public:
         }
 
         if (can_modref) {
-          if (vd[{-1}].isPossiblePointer()) {
+          if (vd.firstLevelType(-1).isPossiblePointer()) {
             Value *newip = gutils->cacheForReverse(
                 BuilderZ, placeholder,
                 getIndex(&I, CacheType::Shadow, BuilderZ));
@@ -660,7 +660,7 @@ public:
 
     //! Store inverted pointer loads that need to be cached for use in reverse
     //! pass
-    if (vd[{-1}].isPossiblePointer()) {
+    if (vd.firstLevelType(-1).isPossiblePointer()) {
       auto found = gutils->invertedPointers.find(&I);
       if (found != gutils->invertedPointers.end()) {
         Instruction *placeholder = cast<Instruction>(&*found->second);
@@ -822,7 +822,7 @@ public:
         Value *prediff = nullptr;
 
         for (ssize_t i = -1; i < (ssize_t)LoadSize; ++i) {
-          if (vd[{(int)i}].isFloat()) {
+          if (vd.firstLevelType((int)i).isFloat()) {
             prediff = diffe(&I, Builder2);
             break;
           }
@@ -845,10 +845,11 @@ public:
         while (1) {
           unsigned nextStart = size;
 
-          auto dt = vd[{-1}];
+          auto dt = vd.firstLevelType(-1);
           for (size_t i = start; i < size; ++i) {
             bool Legal = true;
-            dt.checkedOrIn(vd[{(int)i}], /*PointerIntSame*/ true, Legal);
+            dt.checkedOrIn(vd.firstLevelType((int)i), /*PointerIntSame*/ true,
+                           Legal);
             if (!Legal) {
               nextStart = i;
               break;
@@ -859,9 +860,9 @@ public:
             raw_string_ostream ss(str);
             ss << "Cannot deduce type of load " << I;
             ss << " vd:" << vd.str() << " start:" << start << " size: " << size
-               << " dt:" << dt.str() << "\n";
+               << " dt:" << dt.str() << '\n';
             EmitNoTypeError(str, I, gutils, BuilderZ);
-            continue;
+            break;
           }
           assert(dt.isKnown());
 
@@ -1385,9 +1386,9 @@ public:
         // and does not propagate to memory) take the stored value's own type.
         TypeTree valTT = TR.query(orig_val);
         for (size_t i = 0; i < storeSize;) {
-          ConcreteType ct = vd[{(int)i}];
+          ConcreteType ct = vd.firstLevelType((int)i);
           if (!ct.isKnown())
-            ct = valTT[{(int)i}];
+            ct = valTT.firstLevelType((int)i);
           if (auto flt = ct.isFloat()) {
             i += DL.getTypeSizeInBits(flt) / 8;
             continue;
@@ -1465,9 +1466,9 @@ public:
     while (1) {
       unsigned nextStart = storeSize;
 
-      auto dt = vd[{-1}];
+      auto dt = vd.firstLevelType(-1);
       for (size_t i = start; i < storeSize; ++i) {
-        auto nex = vd[{(int)i}];
+        auto nex = vd.firstLevelType((int)i);
         if ((nex == BaseType::Anything && dt.isFloat()) ||
             (dt == BaseType::Anything && nex.isFloat())) {
           nextStart = i;
