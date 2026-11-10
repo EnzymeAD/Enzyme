@@ -34,6 +34,7 @@
 #include "llvm/IR/Attributes.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Operator.h"
@@ -2350,7 +2351,106 @@ static inline bool isNoEscapingAllocation(const llvm::Function *F) {
   //  llvm::errs() << "  may escape:" << F->getName() << "\n";
   return false;
 }
+enum class NoOpInlineAsmKind {
+  None,
+  BarrierOnly,
+  DirectPassthrough,
+  IndirectMemoryBarrier,
+  IndirectTiedStore,
+};
+
+/// Return the optimization-barrier form of an `InlineAsm` call whose assembly
+/// template emits no machine instructions, or `NoOpInlineAsmKind::None` when
+/// the assembly executes real instructions or uses unrecognized constraints.
+static inline NoOpInlineAsmKind
+classifyNoOpInlineAsm(const llvm::CallBase *Call) {
+  using namespace llvm;
+  if (!Call)
+    return NoOpInlineAsmKind::None;
+  const auto *Assembly = dyn_cast<InlineAsm>(Call->getCalledOperand());
+  if (!Assembly)
+    return NoOpInlineAsmKind::None;
+
+  StringRef AsmText = Assembly->getAsmString();
+  bool IsWhitespaceOnly = AsmText.trim().empty();
+  if (!IsWhitespaceOnly) {
+    SmallVector<StringRef> Lines;
+    AsmText.split(Lines, '\n');
+    for (StringRef Line : Lines) {
+      StringRef Trimmed = Line.trim();
+      if (!Trimmed.empty() && Trimmed.front() != '#')
+        return NoOpInlineAsmKind::None;
+    }
+    if (!Call->getType()->isVoidTy() || Call->arg_size() != 0)
+      return NoOpInlineAsmKind::None;
+  }
+
+  InlineAsm::ConstraintInfoVector Constraints = Assembly->ParseConstraints();
+  if (Constraints.empty() && !Assembly->getConstraintString().empty())
+    return NoOpInlineAsmKind::None;
+
+  SmallVector<unsigned> OutputIndices;
+  SmallVector<unsigned> InputIndices;
+  for (unsigned Index = 0; Index < Constraints.size(); ++Index) {
+    switch (Constraints[Index].Type) {
+    case InlineAsm::isOutput:
+      OutputIndices.push_back(Index);
+      break;
+    case InlineAsm::isInput:
+      InputIndices.push_back(Index);
+      break;
+    case InlineAsm::isClobber:
+      break;
+    default:
+      return NoOpInlineAsmKind::None;
+    }
+  }
+
+  if (OutputIndices.empty()) {
+    if (Call->getType()->isVoidTy() &&
+        (IsWhitespaceOnly || Call->arg_size() == 0))
+      return NoOpInlineAsmKind::BarrierOnly;
+    return NoOpInlineAsmKind::None;
+  }
+
+  if (!IsWhitespaceOnly)
+    return NoOpInlineAsmKind::None;
+
+  if (OutputIndices.size() == 1 && InputIndices.size() == 1) {
+    const InlineAsm::ConstraintInfo &Output = Constraints[OutputIndices[0]];
+    const InlineAsm::ConstraintInfo &Input = Constraints[InputIndices[0]];
+
+    if (!Output.isIndirect && !Input.isIndirect &&
+        Output.MatchingInput == static_cast<int>(InputIndices[0]) &&
+        !Call->getType()->isVoidTy() && Call->arg_size() == 1 &&
+        Call->getArgOperand(0)->getType() == Call->getType()) {
+      return NoOpInlineAsmKind::DirectPassthrough;
+    }
+
+    if (Output.isIndirect && Call->getType()->isVoidTy() &&
+        Call->arg_size() == 2 &&
+        Call->getArgOperand(0)->getType()->isPointerTy()) {
+      Type *PointeeType = Call->getParamElementType(0);
+      if (Input.isIndirect) {
+        if (Call->getArgOperand(0)->stripPointerCasts() ==
+            Call->getArgOperand(1)->stripPointerCasts()) {
+          return NoOpInlineAsmKind::IndirectMemoryBarrier;
+        }
+      } else if (Output.MatchingInput == static_cast<int>(InputIndices[0]) &&
+                 (PointeeType
+                      ? PointeeType == Call->getArgOperand(1)->getType()
+                      : !Call->getArgOperand(1)->getType()->isPointerTy())) {
+        return NoOpInlineAsmKind::IndirectTiedStore;
+      }
+    }
+  }
+
+  return NoOpInlineAsmKind::None;
+}
+
 static inline bool isNoEscapingAllocation(const llvm::CallBase *call) {
+  if (classifyNoOpInlineAsm(call) != NoOpInlineAsmKind::None)
+    return true;
   auto AttrList =
       call->getAttributes().getAttributes(llvm::AttributeList::FunctionIndex);
   if (AttrList.hasAttribute("enzyme_no_escaping_allocation"))

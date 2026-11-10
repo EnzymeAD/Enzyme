@@ -3549,6 +3549,95 @@ bool AdjointGenerator::handleKnownCallDerivatives(
       eraseIfUnused(call);
       return true;
     }
+
+    auto eraseNoOpAsmCall = [&]() {
+      if (Mode == DerivativeMode::ReverseModeGradient && newCall->use_empty())
+        eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+      else
+        eraseIfUnused(call);
+    };
+
+    switch (classifyNoOpInlineAsm(&call)) {
+    case NoOpInlineAsmKind::BarrierOnly:
+    case NoOpInlineAsmKind::IndirectMemoryBarrier:
+      eraseNoOpAsmCall();
+      return true;
+    case NoOpInlineAsmKind::IndirectTiedStore:
+      visitCommonStore(call, call.getArgOperand(0), call.getArgOperand(1),
+                       call.getParamAlign(0), /*isVolatile=*/false,
+                       AtomicOrdering::NotAtomic, SyncScope::System,
+                       /*mask=*/nullptr);
+      eraseNoOpAsmCall();
+      return true;
+    case NoOpInlineAsmKind::DirectPassthrough: {
+      if (Mode == DerivativeMode::ReverseModePrimal ||
+          Mode == DerivativeMode::ReverseModeGradient) {
+        auto HeuristicFound = gutils->knownRecomputeHeuristic.find(&call);
+        if (HeuristicFound != gutils->knownRecomputeHeuristic.end() &&
+            !HeuristicFound->second) {
+          gutils->cacheForReverse(BuilderZ, newCall,
+                                  getIndex(&call, CacheType::Self, BuilderZ));
+        }
+      }
+      if (gutils->isConstantValue(&call)) {
+        eraseNoOpAsmCall();
+        return true;
+      }
+      auto InvertedFound = gutils->invertedPointers.find(&call);
+      if (InvertedFound != gutils->invertedPointers.end()) {
+        auto *Placeholder = cast<PHINode>(&*InvertedFound->second);
+        bool NeedShadow = DifferentialUseAnalysis::is_value_needed_in_reverse<
+            QueryType::Shadow>(gutils, &call, Mode, oldUnreachable);
+        if (!NeedShadow) {
+          gutils->invertedPointers.erase(InvertedFound);
+          gutils->erase(Placeholder);
+          eraseNoOpAsmCall();
+          return true;
+        }
+        Value *InputShadow =
+            gutils->invertPointerM(call.getArgOperand(0), BuilderZ);
+        gutils->replaceAWithB(Placeholder, InputShadow);
+        gutils->erase(Placeholder);
+        eraseNoOpAsmCall();
+        return true;
+      }
+      if (Mode == DerivativeMode::ForwardMode ||
+          Mode == DerivativeMode::ForwardModeError) {
+        IRBuilder<> ForwardBuilder(&call);
+        getForwardBuilder(ForwardBuilder);
+        Value *InputDiff =
+            gutils->isConstantValue(call.getArgOperand(0))
+                ? Constant::getNullValue(gutils->getShadowType(call.getType()))
+                : diffe(call.getArgOperand(0), ForwardBuilder);
+        setDiffe(&call, InputDiff, ForwardBuilder);
+      } else if (Mode == DerivativeMode::ReverseModeGradient ||
+                 Mode == DerivativeMode::ReverseModeCombined) {
+        IRBuilder<> ReverseBuilder(&call);
+        getReverseBuilder(ReverseBuilder);
+        Value *OutputDiff = diffe(&call, ReverseBuilder);
+        setDiffe(&call,
+                 Constant::getNullValue(gutils->getShadowType(call.getType())),
+                 ReverseBuilder);
+        if (!gutils->isConstantValue(call.getArgOperand(0))) {
+          auto &Layout = gutils->oldFunc->getParent()->getDataLayout();
+          Type *AddingType = call.getType()->isFPOrFPVectorTy()
+                                 ? call.getType()
+                                 : TR.query(&call).allFloat(&call, Layout);
+          if (AddingType && !AddingType->isVectorTy()) {
+            if (auto *VectorReturnType = dyn_cast<VectorType>(call.getType()))
+              AddingType = VectorType::get(AddingType,
+                                           VectorReturnType->getElementCount());
+          }
+          addToDiffe(call.getArgOperand(0), OutputDiff, ReverseBuilder,
+                     AddingType);
+        }
+      }
+      eraseNoOpAsmCall();
+      return true;
+    }
+    case NoOpInlineAsmKind::None:
+      break;
+    }
   }
 
   if (funcName == "realloc") {

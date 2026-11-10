@@ -445,6 +445,9 @@ inline bool is_value_needed_in_reverse(
       if (funcName.contains("__enzyme_ignore_derivatives")) {
         primalUsedInShadowPointer = false;
       }
+      if (classifyNoOpInlineAsm(CI) != NoOpInlineAsmKind::None) {
+        primalUsedInShadowPointer = false;
+      }
     }
     if (auto GEP = dyn_cast<GetElementPtrInst>(user)) {
       bool idxUsed = false;
