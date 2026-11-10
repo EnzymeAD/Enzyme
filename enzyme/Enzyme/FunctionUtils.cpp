@@ -7946,7 +7946,7 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
           push(U);
         }
         auto point = getFirstNonPHI(PN->getParent());
-        auto tmp = cast<PHINode>(pushcse(B.CreatePHI(cur->getType(), 1)));
+        auto *tmp = new FreezeInst(UndefValue::get(cur->getType()), "", point);
         cur->replaceAllUsesWith(tmp);
         cur->eraseFromParent();
 
@@ -10072,7 +10072,10 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
     assert(induct_idx != -1);
     assert(off_idx != -1);
 
-    auto L2 = LI.getLoopFor(F2->getEntryBlock().getSingleSuccessor());
+    DominatorTree DT2(*F2);
+    LoopInfo LI2(DT2);
+    auto *L2 = LI2.getLoopFor(F2->getEntryBlock().getSingleSuccessor());
+    assert(L2 && "Expected extracted loop in F2");
     auto new_idx = F2->getArg(induct_idx);
     auto L2Header = L2->getHeader();
     auto new_lidx = L2->getCanonicalInductionVariable();
