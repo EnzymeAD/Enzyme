@@ -8,9 +8,9 @@
 //===----------------------------------------------------------------------===//
 //
 // The operand and accumulator formats of a matrix product, and rounding a
-// double to them. The matrix accuracy model is computed from these and from
-// MatmulAccuracy.cpp alone, and its identity is a digest of those files, so
-// nothing else belongs here.
+// double to them. The matrix accuracy model is computed from these, from
+// MatmulAccuracy.cpp and from Core/UniformReal.cpp alone, and its identity is a
+// digest of those files, so nothing else belongs here.
 //
 //===----------------------------------------------------------------------===//
 

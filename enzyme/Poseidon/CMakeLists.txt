@@ -62,6 +62,7 @@ set(POSEIDON_SRC
     Core/HerbieRun.cpp
     Core/Options.cpp
     Core/Solver.cpp
+    Core/UniformReal.cpp
     Techniques/Matmul/HostDispatch.cpp
     Techniques/Matmul/InKernelRaise.cpp
     Profile/Instrument.cpp
@@ -106,7 +107,8 @@ target_link_libraries(${POSEIDON_PLUGIN_TARGET} PRIVATE MPFR::MPFR)
 # that decides what the matrix accuracy model returns. Hashed when they change,
 # not when the build is configured.
 set(POSEIDON_ACCURACY_MODEL_FILES
-    Techniques/Matmul/MatmulAccuracy.cpp Core/FPKind.h Core/FPKind.cpp)
+    Techniques/Matmul/MatmulAccuracy.cpp Core/FPKind.h Core/FPKind.cpp
+    Core/UniformReal.h Core/UniformReal.cpp)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/PassSources.cmake)
 poseidon_pass_sources(POSEIDON_PASS_FILES ${CMAKE_CURRENT_SOURCE_DIR}
                       ${CMAKE_CURRENT_BINARY_DIR} CONFIGURE_DEPENDS)
@@ -141,12 +143,13 @@ target_include_directories(${POSEIDON_PLUGIN_TARGET}
 set_source_files_properties(
   Herbie.cpp
   PROPERTIES COMPILE_DEFINITIONS HERBIE_BINARY="${POSEIDON_HERBIE_BINARY_PATH}")
-# The accuracy model emulates the emitted FP32 expansions bit for bit, which
-# holds only if each of its operations is rounded as written.
+# The accuracy model emulates the emitted FP32 expansions bit for bit, and the
+# sampler reproduces the standard library's uniform reals bit for bit; each
+# holds only if every operation is rounded as written.
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
   set_source_files_properties(
-    Core/ExpansionModel.cpp PROPERTIES COMPILE_OPTIONS
-                                       "-fno-fast-math;-ffp-contract=off")
+    Core/ExpansionModel.cpp Core/UniformReal.cpp
+    PROPERTIES COMPILE_OPTIONS "-fno-fast-math;-ffp-contract=off")
 endif()
 include(GNUInstallDirs)
 # Where a compile looks for the cost model of its target device when neither

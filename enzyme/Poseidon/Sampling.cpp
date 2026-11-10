@@ -9,6 +9,7 @@
 
 #include "Sampling.h"
 #include "Core/Options.h"
+#include "Core/UniformReal.h"
 #include "Evaluators.h"
 #include "Types.h"
 #include "Utils.h"
@@ -130,9 +131,7 @@ void getSampledPoints(
     SmallVector<MapVector<Value *, double>, 4> &sampledPoints,
     const CancellationPlan *plan, size_t count, unsigned seedOffset) {
   const size_t numSamples = count ? count : O.Model.NumSamples;
-  std::default_random_engine gen;
-  gen.seed(O.Model.RandomSeed + seedOffset);
-  std::uniform_real_distribution<> dis;
+  std::minstd_rand0 gen(O.Model.RandomSeed + seedOffset);
   sampledPoints.clear();
 
   MapVector<Value *, SmallVector<double, 2>> box;
@@ -212,19 +211,16 @@ void getSampledPoints(
     MapVector<Value *, double> leafPoint;
     for (const auto &entry : leafBox)
       leafPoint.insert(
-          {entry.first, dis(gen, decltype(dis)::param_type{entry.second[0],
-                                                           entry.second[1]})});
+          {entry.first, uniformReal(gen, entry.second[0], entry.second[1])});
 
     if (sampledPoints.size() < numCoincidence) {
       const double scaleLo = 1e-18;
-      double logScale = dis(gen, decltype(dis)::param_type{std::log(scaleLo),
-                                                           std::log(maxRange)});
+      double logScale = uniformReal(gen, std::log(scaleLo), std::log(maxRange));
       double scale = std::exp(logScale);
       for (const auto &pr : pairs) {
         double anchor = leafPoint[pr.first];
-        double jitter = dis(gen, decltype(dis)::param_type{0.5, 1.5});
-        double sign =
-            (dis(gen, decltype(dis)::param_type{0.0, 1.0}) < 0.5) ? -1.0 : 1.0;
+        double jitter = uniformReal(gen, 0.5, 1.5);
+        double sign = uniformReal(gen, 0.0, 1.0) < 0.5 ? -1.0 : 1.0;
         // Clamped into the leaf's own profiled range so no out-of-distribution
         // value is fabricated.
         const auto &range = leafBox.find(pr.second)->second;
