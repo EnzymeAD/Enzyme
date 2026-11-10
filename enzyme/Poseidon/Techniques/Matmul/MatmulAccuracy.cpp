@@ -1,7 +1,8 @@
 // Matmul accuracy model: profile-driven sampling and the Ozaki-II quantization
-// model. The model's identity is a digest of this file and FPKind.{h,cpp}, so
-// they hold only what decides the numbers it returns; storing and finding those
-// numbers is MatmulAccuracyMemo's.
+// model. The model's identity is a digest of this file, FPKind.{h,cpp} and
+// UniformReal.{h,cpp}, so they hold only what decides the numbers it returns;
+// storing and finding those numbers is MatmulAccuracyMemo's.
+#include "Core/UniformReal.h"
 #include "MatmulAccuracyMemo.h"
 #include "MatmulInternal.h"
 #include "Optimize.h"
@@ -31,10 +32,8 @@ static double sampleCell(const CellStat &c, std::mt19937_64 &rng,
   assert(c.min <= c.max && "sampleCell: corrupted profile (min > max)");
   if (c.min == c.max)
     return c.min;
-  if (sampleLogBits == 0) {
-    std::uniform_real_distribution<double> dist(c.min, c.max);
-    return dist(rng);
-  }
+  if (sampleLogBits == 0)
+    return uniformReal(rng, c.min, c.max);
   // Log-uniform magnitude over [maxMag*2^-B, maxMag] plus sign: uniform
   // [min,max] sampling under-represents the many small elements of real
   // matrices, to which fixed-point (Ozaki) error is acutely sensitive.
@@ -42,12 +41,10 @@ static double sampleCell(const CellStat &c, std::mt19937_64 &rng,
   if (maxMag == 0.0)
     return 0.0;
   double loMag = maxMag * std::ldexp(1.0, -(int)sampleLogBits);
-  double lu = std::uniform_real_distribution<double>(std::log(loMag),
-                                                     std::log(maxMag))(rng);
+  double lu = uniformReal(rng, std::log(loMag), std::log(maxMag));
   double mag = std::exp(lu);
-  bool neg = (c.min < 0.0) &&
-             ((c.max <= 0.0) ||
-              (std::uniform_real_distribution<double>(0.0, 1.0)(rng) < 0.5));
+  bool neg =
+      (c.min < 0.0) && ((c.max <= 0.0) || (uniformReal(rng, 0.0, 1.0) < 0.5));
   return neg ? -mag : mag;
 }
 
