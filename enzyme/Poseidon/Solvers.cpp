@@ -15,6 +15,7 @@
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Config/llvm-config.h"
+#include "llvm/Demangle/Demangle.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/JSON.h"
@@ -42,6 +43,7 @@
 #include "llvm/Transforms/Utils/Cloning.h"
 
 #include <random>
+#include <set>
 
 using namespace llvm;
 
@@ -1784,95 +1786,338 @@ static std::optional<size_t> findOrdinal(ArrayRef<CandT> cands,
   return std::nullopt;
 }
 
-SmallVector<SolutionStep>
-parseManualRewrites(StringRef spec, SmallVector<CandidateOutput, 4> &COs,
-                    SmallVector<CandidateSubgraph, 4> &CSs,
-                    SmallVector<CandidateMatmul, 4> &CMs) {
-  SmallVector<SolutionStep> steps;
-  SmallVector<StringRef> ids;
-  spec.split(ids, ',', /*MaxSplit=*/-1, /*KeepEmpty=*/false);
+namespace {
+enum class UnitKind { R, PT, M };
 
+// One item of -poseidon-apply-rewrites: [<site>:]<unit>_<ordinal> or
+// [<site>:]<unit>=<name>.
+struct ApplyItem {
+  std::string text;
+  std::string site;
+  UnitKind kind = UnitKind::R;
+  size_t unit = 0;
+  std::optional<size_t> ordinal;
+  std::string name;
+  // The keys of the module's sites `site` named. Sites are solved as the pass
+  // reaches them, so that it named none is only known at the end of the
+  // module.
+  std::set<std::string> named;
+};
+
+struct PinState {
+  std::string spec;
+  std::vector<ApplyItem> items;
+  std::vector<std::string> sites;
+  // Two sites cut from one body share a key; printing their pin twice would
+  // give a value that applies each item twice.
+  std::set<std::string> printed;
+};
+} // namespace
+
+static std::optional<ApplyItem> parseUnitRef(StringRef s) {
+  ApplyItem item;
+  if (s.consume_front("PT"))
+    item.kind = UnitKind::PT;
+  else if (s.consume_front("R"))
+    item.kind = UnitKind::R;
+  else if (s.consume_front("M"))
+    item.kind = UnitKind::M;
+  else
+    return std::nullopt;
+  size_t digits = s.find_first_not_of("0123456789");
+  if (digits == 0 || digits == StringRef::npos ||
+      s.take_front(digits).getAsInteger(10, item.unit))
+    return std::nullopt;
+  s = s.drop_front(digits);
+  if (s.consume_front("=")) {
+    if (s.empty())
+      return std::nullopt;
+    item.name = s.str();
+    return item;
+  }
+  size_t ordinal;
+  if (!s.consume_front("_") || s.getAsInteger(10, ordinal))
+    return std::nullopt;
+  item.ordinal = ordinal;
+  return item;
+}
+
+// A name may itself hold ':' (a Herbie precision annotation), so the unit is
+// read first and a site prefix only when the item does not start with one.
+static ApplyItem parseApplyItem(StringRef text) {
+  std::optional<ApplyItem> item = parseUnitRef(text);
+  if (!item) {
+    auto [site, rest] = text.split(':');
+    if (!site.empty() && (item = parseUnitRef(rest)))
+      item->site = site.str();
+  }
+  if (!item)
+    report_fatal_error("[poseidon] -poseidon-apply-rewrites: cannot read '" +
+                       Twine(text) +
+                       "'; an item is [<site>:]<unit>_<ordinal> or "
+                       "[<site>:]<unit>=<name>, <unit> being R<i>, PT<i> or "
+                       "M<i>");
+  item->text = text.str();
+  return *item;
+}
+
+static PinState &pinState() {
+  static PinState state;
+  return state;
+}
+
+static std::vector<ApplyItem> &applyItems() {
+  PinState &P = pinState();
+  if (P.spec != flags::ApplyRewrites) {
+    P.spec = flags::ApplyRewrites;
+    P.items.clear();
+    SmallVector<StringRef> texts;
+    StringRef(P.spec).split(texts, ',', /*MaxSplit=*/-1, /*KeepEmpty=*/false);
+    for (StringRef text : texts)
+      P.items.push_back(parseApplyItem(text.trim()));
+  }
+  return P.items;
+}
+
+static bool namesSite(const ApplyItem &item, StringRef key,
+                      ArrayRef<std::string> aliases) {
+  return item.site.empty() || item.site == key ||
+         is_contained(aliases, item.site);
+}
+
+static std::string listSites(const std::set<std::string> &keys) {
+  std::string out;
+  for (const std::string &key : keys) {
+    out += "\n  " + key;
+    std::string shown = llvm::demangle(key);
+    if (shown != key)
+      out += " (" + shown + ")";
+  }
+  return out;
+}
+
+// Sites are noted before they are solved, so a name two sites answer to is
+// refused before the second one applies it.
+void noteSiteForPins(const Function &body) {
+  if (flags::ApplyRewrites.empty())
+    return;
+  PinState &P = pinState();
+  std::string key = siteKeyOfBody(body);
+  if (is_contained(P.sites, key))
+    return;
+  P.sites.push_back(key);
+  SmallVector<std::string, 2> aliases = siteAliases(key);
+  for (ApplyItem &item : applyItems()) {
+    if (item.site.empty() || !namesSite(item, key, aliases))
+      continue;
+    item.named.insert(key);
+    if (item.named.size() > 1)
+      report_fatal_error("[poseidon] -poseidon-apply-rewrites item '" +
+                             Twine(item.text) + "' names the site '" +
+                             item.site +
+                             "', which more than one site of this module "
+                             "answers to; give one of them by its symbol:" +
+                             listSites(item.named),
+                         /*gen_crash_diag=*/false);
+  }
+}
+
+void checkPinnedSites() {
+  PinState &P = pinState();
+  // The host half of a CUDA or HIP unit is given the items too, and the sites
+  // they name are the device half's.
+  if (!P.sites.empty())
+    for (const ApplyItem &item : applyItems())
+      if (!item.site.empty() && item.named.empty())
+        report_fatal_error(
+            "[poseidon] -poseidon-apply-rewrites item '" + Twine(item.text) +
+                "' names the site '" + item.site +
+                "', which is no site of this module. Its sites are:" +
+                listSites(
+                    std::set<std::string>(P.sites.begin(), P.sites.end())),
+            /*gen_crash_diag=*/false);
+  P.sites.clear();
+  P.printed.clear();
+  for (ApplyItem &item : P.items)
+    item.named.clear();
+}
+
+// The position of the candidate an item names in a unit's list. A candidate
+// pricing dropped is not in the list, and is told apart from a name the unit
+// never had.
+template <typename CandT, typename NameFn>
+static size_t findNamed(const ApplyItem &item, StringRef site, StringRef unit,
+                        ArrayRef<CandT> cands,
+                        ArrayRef<std::pair<std::string, std::string>> dropped,
+                        NameFn nameOf) {
+  std::optional<size_t> found;
+  for (size_t i = 0; i < cands.size(); ++i) {
+    if (nameOf(cands[i]) != item.name)
+      continue;
+    if (found)
+      report_fatal_error("[poseidon] " + Twine(site) + ": " + unit +
+                             " has more than one candidate named '" +
+                             item.name + "'; give it as " + unit + "_<ordinal>",
+                         /*gen_crash_diag=*/false);
+    found = i;
+  }
+  if (found)
+    return *found;
+  for (const auto &[name, why] : dropped)
+    if (name == item.name)
+      report_fatal_error("[poseidon] " + Twine(site) + ": " + unit +
+                             " has no candidate named '" + item.name +
+                             "': pricing dropped it, because " + why,
+                         /*gen_crash_diag=*/false);
+  std::string names;
+  for (const CandT &c : cands)
+    names += "\n  " + nameOf(c);
+  if (names.empty())
+    names = " none";
+  report_fatal_error("[poseidon] " + Twine(site) + ": " + unit +
+                         " has no candidate named '" + item.name +
+                         "'. Its candidates are:" + names,
+                     /*gen_crash_diag=*/false);
+}
+
+SmallVector<SolutionStep> parseManualRewrites(FunctionFPState &st) {
+  auto &COs = st.COs;
+  auto &CSs = st.CSs;
+  auto &CMs = st.CMs;
+  const std::string key = siteKey(*st.F);
+  const SmallVector<std::string, 2> aliases = siteAliases(key);
+  SmallVector<SolutionStep> steps;
   SmallDenseSet<size_t> appliedCOs, appliedCSs, appliedCMs;
-  for (auto id : ids) {
-    id = id.trim();
-    if (id.starts_with("R")) {
-      auto rest = id.drop_front(1);
-      auto [coStr, candStr] = rest.split('_');
-      size_t coIdx, candIdx;
-      if (coStr.getAsInteger(10, coIdx) || candStr.getAsInteger(10, candIdx))
-        report_fatal_error("[poseidon] invalid rewrite ID '" + Twine(id) + "'");
+  for (const ApplyItem &item : applyItems()) {
+    if (!namesSite(item, key, aliases))
+      continue;
+    const std::string &id = item.text;
+    switch (item.kind) {
+    case UnitKind::R: {
+      const size_t coIdx = item.unit;
       if (coIdx >= COs.size())
         report_fatal_error("[poseidon] CO index " + Twine(coIdx) +
                            " out of range (" + Twine(COs.size()) + " COs)");
-      std::optional<size_t> pos =
-          findOrdinal(ArrayRef(COs[coIdx].candidates), candIdx);
-      if (!pos)
-        report_fatal_error("[poseidon] CO " + Twine(coIdx) +
-                           " has no candidate " + Twine(candIdx) +
-                           " that pricing kept ('" + Twine(id) + "')");
+      CandidateOutput &CO = COs[coIdx];
+      size_t pos;
+      if (item.ordinal) {
+        std::optional<size_t> found =
+            findOrdinal(ArrayRef(CO.candidates), *item.ordinal);
+        if (!found)
+          report_fatal_error("[poseidon] CO " + Twine(coIdx) +
+                             " has no candidate " + Twine(*item.ordinal) +
+                             " that pricing kept ('" + Twine(id) + "')");
+        pos = *found;
+      } else {
+        pos = findNamed(item, key, "R" + std::to_string(coIdx),
+                        ArrayRef(CO.candidates), CO.dropped,
+                        [](const RewriteCandidate &c) { return c.expr; });
+      }
       if (!appliedCOs.insert(coIdx).second)
         report_fatal_error("[poseidon] CO " + Twine(coIdx) +
                            " already has a rewrite applied (duplicate ID '" +
                            Twine(id) + "')");
-      llvm::errs() << "[poseidon] Selecting " << id << ": " << COs[coIdx].expr
-                   << " -> " << COs[coIdx].candidates[*pos].expr << "\n";
-      steps.emplace_back(&COs[coIdx], *pos);
-    } else if (id.starts_with("PT")) {
-      auto rest = id.drop_front(2);
-      auto [csStr, candStr] = rest.split('_');
-      size_t csIdx, candIdx;
-      if (csStr.getAsInteger(10, csIdx) || candStr.getAsInteger(10, candIdx))
-        report_fatal_error("[poseidon] invalid PT ID '" + Twine(id) + "'");
+      llvm::errs() << "[poseidon] Selecting " << id << ": " << CO.expr << " -> "
+                   << CO.candidates[pos].expr << "\n";
+      steps.emplace_back(&CO, pos);
+      break;
+    }
+    case UnitKind::PT: {
+      const size_t csIdx = item.unit;
       if (csIdx >= CSs.size())
         report_fatal_error("[poseidon] CS index " + Twine(csIdx) +
                            " out of range (" + Twine(CSs.size()) + " CSs)");
-      std::optional<size_t> pos =
-          findOrdinal(ArrayRef(CSs[csIdx].candidates), candIdx);
-      if (!pos)
-        report_fatal_error("[poseidon] CS " + Twine(csIdx) +
-                           " has no candidate " + Twine(candIdx) +
-                           " that pricing kept ('" + Twine(id) + "')");
+      CandidateSubgraph &CS = CSs[csIdx];
+      size_t pos;
+      if (item.ordinal) {
+        std::optional<size_t> found =
+            findOrdinal(ArrayRef(CS.candidates), *item.ordinal);
+        if (!found)
+          report_fatal_error("[poseidon] CS " + Twine(csIdx) +
+                             " has no candidate " + Twine(*item.ordinal) +
+                             " that pricing kept ('" + Twine(id) + "')");
+        pos = *found;
+      } else {
+        pos = findNamed(item, key, "PT" + std::to_string(csIdx),
+                        ArrayRef(CS.candidates), CS.dropped,
+                        [](const PTCandidate &c) { return c.desc; });
+      }
       if (!appliedCSs.insert(csIdx).second)
         report_fatal_error("[poseidon] CS " + Twine(csIdx) +
                            " already has a PT applied (duplicate ID '" +
                            Twine(id) + "')");
       llvm::errs() << "[poseidon] Selecting " << id << ": "
-                   << CSs[csIdx].candidates[*pos].desc << "\n";
-      steps.emplace_back(&CSs[csIdx], *pos);
-    } else if (id.starts_with("M")) {
-      auto rest = id.drop_front(1);
-      auto [cmStr, candStr] = rest.split('_');
-      size_t cmIdx, candIdx;
-      if (cmStr.getAsInteger(10, cmIdx) || candStr.getAsInteger(10, candIdx))
-        report_fatal_error("[poseidon] invalid matmul ID '" + Twine(id) + "'");
+                   << CS.candidates[pos].desc << "\n";
+      steps.emplace_back(&CS, pos);
+      break;
+    }
+    case UnitKind::M: {
+      const size_t cmIdx = item.unit;
       if (cmIdx >= CMs.size())
         report_fatal_error("[poseidon] CM index " + Twine(cmIdx) +
                            " out of range (" + Twine(CMs.size()) + " CMs)");
-      if (candIdx >= CMs[cmIdx].candidates.size())
-        report_fatal_error("[poseidon] candidate index " + Twine(candIdx) +
-                           " out of range for CM " + Twine(cmIdx) + " (" +
-                           Twine(CMs[cmIdx].candidates.size()) +
-                           " candidates)");
+      CandidateMatmul &CM = CMs[cmIdx];
+      size_t pos;
+      if (item.ordinal) {
+        pos = *item.ordinal;
+        if (pos >= CM.candidates.size())
+          report_fatal_error("[poseidon] candidate index " + Twine(pos) +
+                             " out of range for CM " + Twine(cmIdx) + " (" +
+                             Twine(CM.candidates.size()) + " candidates)");
+      } else {
+        pos = findNamed(item, key, "M" + std::to_string(cmIdx),
+                        ArrayRef(CM.candidates), {},
+                        [](const CandidateMatmul::Option &o) {
+                          return matmulOptionLabel(o);
+                        });
+      }
       if (!appliedCMs.insert(cmIdx).second)
         report_fatal_error("[poseidon] CM " + Twine(cmIdx) +
                            " already has a rewrite applied (duplicate ID '" +
                            Twine(id) + "')");
       llvm::errs() << "[poseidon] Selecting " << id << ": matmul["
-                   << CMs[cmIdx].matmul->id << "] -> "
-                   << matmulOptionLabel(CMs[cmIdx].candidates[candIdx]) << "\n";
-      steps.emplace_back(&CMs[cmIdx], candIdx);
-    } else {
-      report_fatal_error("[poseidon] unknown ID prefix in '" + Twine(id) +
-                         "' (expected R, PT, or M)");
+                   << CM.matmul->id << "] -> "
+                   << matmulOptionLabel(CM.candidates[pos]) << "\n";
+      steps.emplace_back(&CM, pos);
+      break;
+    }
     }
   }
   return steps;
 }
 
+void printPin(const FunctionFPState &st, ArrayRef<SolutionStep> applied) {
+  const std::string key = siteKey(*st.F);
+  std::string value;
+  for (const SolutionStep &step : applied) {
+    std::string item = std::visit(
+        [&](auto *unit) -> std::string {
+          using T = std::decay_t<decltype(*unit)>;
+          if constexpr (std::is_same_v<T, CandidateOutput>)
+            return "R" + std::to_string(unit - st.COs.data()) + "=" +
+                   unit->candidates[step.candidateIndex].expr;
+          else if constexpr (std::is_same_v<T, CandidateSubgraph>)
+            return "PT" + std::to_string(unit - st.CSs.data()) + "=" +
+                   unit->candidates[step.candidateIndex].desc;
+          else
+            return "M" + std::to_string(unit - st.CMs.data()) + "=" +
+                   matmulOptionLabel(unit->candidates[step.candidateIndex]);
+        },
+        step.item);
+    if (!value.empty())
+      value += ",";
+    value += key + ":" + item;
+  }
+  if (!value.empty() && !pinState().printed.insert(value).second)
+    return;
+  llvm::errs() << "[poseidon] pin: " << value << "\n";
+}
+
 bool applySolution(
     ArrayRef<SolutionStep> steps,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-    std::unordered_map<std::string, Value *> &symbolToValueMap) {
+    std::unordered_map<std::string, Value *> &symbolToValueMap,
+    SmallVectorImpl<SolutionStep> &applied) {
   if (steps.empty())
     return false;
   llvm::errs() << "\n!!! Applying solution (" << steps.size()
@@ -1914,6 +2159,7 @@ bool applySolution(
           } else {
             llvm_unreachable("applySolution: unexpected SolutionStep variant");
           }
+          applied.push_back(step);
         },
         step.item);
   }

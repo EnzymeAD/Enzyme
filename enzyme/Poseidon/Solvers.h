@@ -139,16 +139,28 @@ llvm::SmallVector<SolutionStep>
 jointAccuracyDPSolver(llvm::ArrayRef<FunctionFPState *> states, double errorTol,
                       SolveRecord *record = nullptr);
 
-llvm::SmallVector<SolutionStep>
-parseManualRewrites(llvm::StringRef spec,
-                    llvm::SmallVector<CandidateOutput, 4> &COs,
-                    llvm::SmallVector<CandidateSubgraph, 4> &CSs,
-                    llvm::SmallVector<CandidateMatmul, 4> &CMs);
+// The steps the items of -poseidon-apply-rewrites name at the site of `st`.
+llvm::SmallVector<SolutionStep> parseManualRewrites(FunctionFPState &st);
 
+// A site of the module, for the items of -poseidon-apply-rewrites that name
+// one; `body` is what the site's clone is made from. An item whose site two
+// sites answer to is an error.
+void noteSiteForPins(const llvm::Function &body);
+
+// Prints the value of -poseidon-apply-rewrites that applies `applied` at the
+// site of `st` again.
+void printPin(const FunctionFPState &st, llvm::ArrayRef<SolutionStep> applied);
+
+// At the end of a module: an item that names a site has to have named a site
+// of the module, if the module has any.
+void checkPinnedSites();
+
+// `applied` receives the steps materialized, in order.
 bool applySolution(
     llvm::ArrayRef<SolutionStep> steps,
     std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-    std::unordered_map<std::string, llvm::Value *> &symbolToValueMap);
+    std::unordered_map<std::string, llvm::Value *> &symbolToValueMap,
+    llvm::SmallVectorImpl<SolutionStep> &applied);
 
 } // namespace poseidon
 #endif // POSEIDON_SOLVERS_H
