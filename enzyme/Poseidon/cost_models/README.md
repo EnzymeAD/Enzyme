@@ -73,11 +73,13 @@ contains.
 
 ## Format
 
-One row per line, `key,name,value`, plus `#`-prefixed headers. `native_arch` is
-the architecture the file was measured on; `scalar_types` and `matrix_types`
-list the precisions the solver may propose, and override the built-in defaults.
-The DP cache is keyed on a hash of the parsed rows, so changing a price
-invalidates a cached table while reordering rows or editing comments does not.
+One row per line, `opcode,type,cost`, plus `#`-prefixed headers. `native_arch`
+is the architecture the file was measured on; `scalar_types` lists the
+precisions the solver may propose on a GPU. A row the compile needs, a header it
+reads, a line that is not a row and a row given twice each stop the compile,
+naming the model: nothing is substituted for a part of it. The DP cache is keyed
+on a hash of the parsed rows, so changing a price invalidates a cached table
+while reordering rows or editing comments does not.
 
 Scalar costs are the precise, IEEE lowering of each operation (`div.rn.f32`,
 libdevice `__nv_*` for the transcendentals; on AMD the IEEE `fdiv` lowering and

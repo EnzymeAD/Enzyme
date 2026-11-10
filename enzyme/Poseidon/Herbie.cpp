@@ -26,7 +26,6 @@
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Format.h"
 #include "llvm/Support/FormatVariadic.h"
-#include "llvm/Support/InstructionCost.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Scalar/EarlyCSE.h"
@@ -1565,7 +1564,7 @@ void proposeHerbieCandidates(
     Instruction *output;
     std::string expr;
     double grad;
-    unsigned executions;
+    uint64_t executions;
   };
   SmallVector<Eligible, 8> eligible;
 
@@ -1608,7 +1607,7 @@ void proposeHerbieCandidates(
   assert(subgraph.outputs.size() > 0 && "No outputs found for subgraph");
   for (auto &output : subgraph.outputs) {
     double grad = valueToNodeMap[output]->grad;
-    unsigned executions = valueToNodeMap[output]->executions;
+    uint64_t executions = valueToNodeMap[output]->executions;
 
     if (grad == 0.) {
       llvm::errs() << "Skipping zero gradient instruction: " << *output << "\n";

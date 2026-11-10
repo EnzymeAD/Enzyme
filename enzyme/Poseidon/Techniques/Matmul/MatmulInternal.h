@@ -19,8 +19,6 @@ struct Options;
 class Session;
 
 std::string mmaShapeSuffix(unsigned M, unsigned N, unsigned K);
-double getMatmulCompCost(CostModelState &CM, unsigned M, unsigned N, unsigned K,
-                         FPKind inputPrec, FPKind accPrec);
 std::string inKernelCostClass(const SchemeVariant &v);
 bool priceInKernelRaiseFromMeasuredRow(Session &S, const AbstractMatmul &m,
                                        const std::string &cls, unsigned tileM,

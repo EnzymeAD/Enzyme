@@ -638,7 +638,7 @@ json::Object MatmulUnit::stepJSON(size_t i) {
   stepObj["candidate_index"] = static_cast<int64_t>(i);
   stepObj["matmul_id"] = static_cast<int64_t>(matmul->id);
   stepObj["target"] = matmulOptionLabel(candidates[i]);
-  stepObj["computation_cost_delta"] = GET_INSTRUCTION_COST(getCompCostDelta(i));
+  stepObj["computation_cost_delta"] = getCompCostDelta(i);
   stepObj["accuracy_cost_delta"] = jsonFloat(getAccCostDelta(i));
   stepObj["executions"] = static_cast<int64_t>(executions);
   return stepObj;

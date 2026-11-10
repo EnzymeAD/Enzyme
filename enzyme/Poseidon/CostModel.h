@@ -47,10 +47,7 @@ struct CostModelState {
   std::string Resolved;
   bool IsResolved = false;
 
-  struct {
-    std::unordered_set<std::string> scalar;
-    std::unordered_set<std::string> matrix;
-  } SupportedTypes;
+  std::unordered_set<std::string> ScalarTypes;
   std::string NativeArch;
   std::map<std::pair<std::string, std::string>, double> Model;
   bool Loaded = false;
@@ -82,16 +79,19 @@ const std::string &costModelPath(CostModelState &CM);
 // previous model's picks.
 uint64_t getCostModelFingerprint(CostModelState &CM);
 
-// The scalar formats the target has hardware for, from the CSV header.
+// The scalar formats the target has hardware for, from the CSV header; aborts
+// when the model has no "# scalar_types=" header.
 const std::unordered_set<std::string> &getScalarTypes(CostModelState &CM);
 
+// The (opcode,type) row; aborts naming the model when it is absent.
 double queryCostModel(CostModelState &CM, const std::string &OpcodeName,
                       const std::string &TypeName);
-// Non-aborting variant: returns `fallback` when the (opcode,type) row is absent
-// (optional calibration rows such as "ozaki_dispatch_rel").
+// The (opcode,type) row, or `fallback` when the model has none: for the rows a
+// candidate is proposed only with (such as "ozaki_dispatch_rel").
 double queryCostModelOr(CostModelState &CM, const std::string &OpcodeName,
                         const std::string &TypeName, double fallback);
 
+// The row that prices `I`; aborts when no row family prices its kind.
 double getInstructionCompCost(CostModelState &CM, const llvm::Instruction *I);
 
 // The libm calls that are cheaper computed at FP32 and converted back than at

@@ -860,7 +860,7 @@ void proposePrecisionCandidates(
     SmallVectorImpl<PrecisionUnit> &CSs) {
   const Options &O = S.Opts;
   auto *o0 = subgraph.outputs[0];
-  const unsigned o0Exec = valueToNodeMap[o0]->executions;
+  const uint64_t o0Exec = valueToNodeMap[o0]->executions;
 
   // Filled before CS is built, so its baseline walk and every candidate's
   // weight each instruction by its own measured frequency.

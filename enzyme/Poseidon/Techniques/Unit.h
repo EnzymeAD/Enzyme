@@ -22,7 +22,6 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/StringRef.h"
-#include "llvm/Config/llvm-config.h"
 #include "llvm/Support/JSON.h"
 
 #include <cassert>
@@ -36,12 +35,6 @@ class Instruction;
 class Value;
 class raw_ostream;
 } // namespace llvm
-
-#if LLVM_VERSION_MAJOR >= 21
-#define GET_INSTRUCTION_COST(cost) (cost.getValue())
-#else
-#define GET_INSTRUCTION_COST(cost) (cost.getValue().value())
-#endif
 
 namespace poseidon {
 

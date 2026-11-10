@@ -12,7 +12,6 @@
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Value.h"
-#include "llvm/Support/InstructionCost.h"
 
 #include <cmath>
 #include <cstddef>
@@ -310,10 +309,10 @@ public:
   uint64_t executions = 0;
   llvm::SmallVector<Option, 8> candidates;
 
-  llvm::InstructionCost getCompCostDelta(size_t idx) const {
+  DPCost getCompCostDelta(size_t idx) const {
     double delta =
         (candidates[idx].compCost - initialCompCost) * (double)executions;
-    return llvm::InstructionCost((int64_t)std::llround(delta));
+    return toDPCost(delta);
   }
   double getAccCostDelta(size_t idx) const {
     return candidates[idx].accuracyCost - initialAccCost;
@@ -325,8 +324,7 @@ public:
     return U->kind() == unsigned(UnitKind::M);
   }
   size_t numCandidates() const override { return candidates.size(); }
-  llvm::InstructionCost costDelta(size_t i,
-                                  llvm::ArrayRef<SolutionStep>) override {
+  DPCost costDelta(size_t i, llvm::ArrayRef<SolutionStep>) override {
     return getCompCostDelta(i);
   }
   double errorDelta(size_t i, llvm::ArrayRef<SolutionStep>) override {

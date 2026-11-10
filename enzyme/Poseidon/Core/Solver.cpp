@@ -13,6 +13,9 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringMap.h"
+#include "llvm/ADT/Twine.h"
+#include "llvm/Support/CheckedArithmetic.h"
+#include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
@@ -20,6 +23,7 @@
 #include <chrono>
 #include <cmath>
 #include <optional>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -28,6 +32,25 @@ using namespace llvm;
 namespace poseidon {
 
 OptimizationUnit::~OptimizationUnit() = default;
+
+DPCost toDPCost(double delta) {
+  // 2^63 is the first double past the axis; every smaller magnitude rounds
+  // into it.
+  if (!(std::fabs(delta) < 0x1p63)) {
+    std::string Text;
+    raw_string_ostream(Text) << delta;
+    report_fatal_error("Poseidon: a cost change of " + Twine(Text) +
+                       " does not fit the DP's integer cost axis");
+  }
+  return std::llround(delta);
+}
+
+DPCost addDPCost(DPCost a, DPCost b) {
+  if (std::optional<DPCost> sum = checkedAdd(a, b))
+    return *sum;
+  report_fatal_error("Poseidon: the cost " + Twine(a) + " + " + Twine(b) +
+                     " leaves the DP's integer cost axis");
+}
 
 // Whether `a` and `b` cannot be in one strategy: they rewrite one output, or
 // their footprints overlap and one of them consumes its footprint. Units that
@@ -61,8 +84,7 @@ bool overlapsConsumed(const SolutionStep &step, ArrayRef<SolutionStep> chosen) {
 // priced against the steps before it. Without displacement the frontier keyed
 // by cost evicts equal-cost prefixes that later units would have extended.
 bool admit(ArrayRef<SolutionStep> prior, const OptimizationUnit &unit,
-           SmallVectorImpl<SolutionStep> &kept, InstructionCost &cost,
-           double &error) {
+           SmallVectorImpl<SolutionStep> &kept, DPCost &cost, double &error) {
   // The binary64 and binary32 searches of one output are separate units, but
   // only one rewrite of that output can be materialized.
   for (const SolutionStep &p : prior)
@@ -79,7 +101,7 @@ bool admit(ArrayRef<SolutionStep> prior, const OptimizationUnit &unit,
   for (const SolutionStep &p : prior) {
     if (p.unit->consumesFootprint() && p.unit->footprintOverlaps(unit)) {
       assert(p.unit->pricedAlone() && "a displaced step is charged back alone");
-      cost -= p.unit->costDelta(p.candidateIndex, {});
+      cost = addDPCost(cost, -p.unit->costDelta(p.candidateIndex, {}));
       error -= p.unit->errorDelta(p.candidateIndex, {});
       continue;
     }
@@ -93,7 +115,7 @@ static void paretoIntegrate(CostMap &cost, SolutionMap &sol,
   CostMap newCost = cost;
   SolutionMap newSol = sol;
   for (const auto &p : cost) {
-    InstructionCost curr = p.first;
+    DPCost curr = p.first;
     double currAcc = p.second;
     const SmallVector<SolutionStep> &chosen = sol[p.first];
     SmallVector<SolutionStep> priorSteps;
@@ -104,9 +126,9 @@ static void paretoIntegrate(CostMap &cost, SolutionMap &sol,
       auto ad = unit.errorDelta(i, priorSteps);
       // Compared against the post-displacement point, so a displacement that
       // gives back more than the candidate saves is dropped.
-      if (curr + cd >= p.first && currAcc + ad >= p.second)
+      DPCost nc = addDPCost(curr, cd);
+      if (nc >= p.first && currAcc + ad >= p.second)
         continue;
-      InstructionCost nc = curr + cd;
       double na = currAcc + ad;
       auto it = newCost.find(nc);
       if (it == newCost.end() || it->second > na) {
@@ -120,17 +142,15 @@ static void paretoIntegrate(CostMap &cost, SolutionMap &sol,
   sol = std::move(newSol);
 }
 
-static void
-paretoPrune(std::map<InstructionCost, double> &cost,
-            std::map<InstructionCost, SmallVector<SolutionStep>> &sol) {
-  std::map<InstructionCost, double> pruned;
-  std::map<InstructionCost, SmallVector<SolutionStep>> prunedSol;
+static void paretoPrune(CostMap &cost, SolutionMap &sol) {
+  CostMap pruned;
+  SolutionMap prunedSol;
   for (const auto &l : cost) {
-    InstructionCost lc = l.first;
+    DPCost lc = l.first;
     double la = l.second;
     bool dominated = false;
     for (const auto &r : cost) {
-      InstructionCost rc = r.first;
+      DPCost rc = r.first;
       double ra = r.second;
       if (lc > rc && la >= ra) {
         dominated = true;
@@ -220,8 +240,8 @@ void solveExact(ArrayRef<OptimizationUnit *> units, CostMap &cost,
     double acc;
     SmallVector<SolutionStep> steps;
   };
-  using Bucket = std::map<InstructionCost, Entry>;
-  auto insert = [](Bucket &b, InstructionCost c, double a,
+  using Bucket = std::map<DPCost, Entry>;
+  auto insert = [](Bucket &b, DPCost c, double a,
                    const SmallVectorImpl<SolutionStep> &steps) {
     auto [it, fresh] = b.try_emplace(c);
     if (!fresh && !(it->second.acc > a))
@@ -282,7 +302,7 @@ void solveExact(ArrayRef<OptimizationUnit *> units, CostMap &cost,
         int u = canon[unitIndex.find(s.unit)->second];
         priced.push_back(SolutionStep(units[u], s.candidateIndex));
       }
-      SmallVector<InstructionCost> dc;
+      SmallVector<DPCost> dc;
       SmallVector<double> da;
       for (size_t i = 0; i < unit.numCandidates(); ++i) {
         dc.push_back(unit.costDelta(i, priced));
@@ -300,7 +320,7 @@ void solveExact(ArrayRef<OptimizationUnit *> units, CostMap &cost,
         steps.push_back(step);
         for (size_t i = 0; i < unit.numCandidates(); ++i) {
           steps.back().candidateIndex = i;
-          insert(into, c + dc[i], e.acc + da[i], steps);
+          insert(into, addDPCost(c, dc[i]), e.acc + da[i], steps);
         }
       }
     }

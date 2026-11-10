@@ -29,9 +29,9 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
-#include "llvm/Support/InstructionCost.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <map>
 
 namespace poseidon {
@@ -47,11 +47,20 @@ struct SolutionStep {
       : unit(unit), candidateIndex(candidateIndex) {}
 };
 
+// A cost on the DP's axis. The axis is integral so that a strategy reached
+// in either order, or with a step displaced and charged back, has one key.
+using DPCost = int64_t;
+
+// A cost change in cost-model units, rounded onto the DP's axis; aborts when
+// the axis cannot hold it.
+DPCost toDPCost(double delta);
+// a + b on the DP's axis; aborts when the sum leaves it.
+DPCost addDPCost(DPCost a, DPCost b);
+
 // The frontier: per cost, the least error of a strategy of that cost.
-using CostMap = std::map<llvm::InstructionCost, double>;
+using CostMap = std::map<DPCost, double>;
 // Per cost, that strategy.
-using SolutionMap =
-    std::map<llvm::InstructionCost, llvm::SmallVector<SolutionStep>>;
+using SolutionMap = std::map<DPCost, llvm::SmallVector<SolutionStep>>;
 
 class OptimizationUnit {
 public:
@@ -67,8 +76,7 @@ public:
 
   // Candidate i's cost change against the code as written, given the steps
   // already in the strategy.
-  virtual llvm::InstructionCost
-  costDelta(size_t i, llvm::ArrayRef<SolutionStep> prior) = 0;
+  virtual DPCost costDelta(size_t i, llvm::ArrayRef<SolutionStep> prior) = 0;
   // Candidate i's error change, on the application's scale, given the steps
   // already in the strategy.
   virtual double errorDelta(size_t i, llvm::ArrayRef<SolutionStep> prior) = 0;
@@ -130,8 +138,8 @@ bool overlapsConsumed(const SolutionStep &step,
 // deltas taken off `cost` and `error`. `kept` receives the prior steps that
 // stay.
 bool admit(llvm::ArrayRef<SolutionStep> prior, const OptimizationUnit &unit,
-           llvm::SmallVectorImpl<SolutionStep> &kept,
-           llvm::InstructionCost &cost, double &error);
+           llvm::SmallVectorImpl<SolutionStep> &kept, DPCost &cost,
+           double &error);
 
 // ---- The order units enter the DP -----------------------------------------
 //

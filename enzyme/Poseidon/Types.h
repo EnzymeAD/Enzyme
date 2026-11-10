@@ -24,7 +24,6 @@
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Value.h"
-#include "llvm/Support/InstructionCost.h"
 #include "llvm/Transforms/Utils/ValueMapper.h"
 
 #include <cmath>
@@ -60,7 +59,7 @@ public:
                                                 // |grad * value|
   double grad =
       std::numeric_limits<double>::quiet_NaN(); // Sum of gradients (not abs)
-  unsigned executions = 0;
+  uint64_t executions = 0;
 
   explicit FPNode(const std::string &op, const std::string &dtype)
       : ntype(NodeType::Node), op(op), dtype(dtype) {}
@@ -199,7 +198,7 @@ struct Subgraph {
 class Session;
 
 struct RewriteCandidate {
-  // Double, not InstructionCost: cost-model rows are reciprocal throughputs
+  // Double, not a DP cost: cost-model rows are reciprocal throughputs
   // below 1.0, and rounding them to an integral cost per op would make every
   // elementwise candidate cost exactly 0.
   double CompCost = std::numeric_limits<double>::max();
@@ -222,7 +221,7 @@ public:
   llvm::Value *oldOutput;
   std::string expr;
   double grad = std::numeric_limits<double>::quiet_NaN();
-  unsigned executions = 0;
+  uint64_t executions = 0;
   double initialAccCost = std::numeric_limits<double>::quiet_NaN();
   double initialCompCost = std::numeric_limits<double>::quiet_NaN();
   double initialHerbieCost = std::numeric_limits<double>::quiet_NaN();
@@ -242,7 +241,7 @@ public:
 
   explicit RewriteUnit(CostModelState &CM, Subgraph &subgraph,
                        llvm::Value *oldOutput, std::string expr, double grad,
-                       unsigned executions)
+                       uint64_t executions)
       : SiteUnit(UnitKind::R), subgraph(&subgraph), oldOutput(oldOutput),
         expr(expr), grad(grad), executions(executions), roots({oldOutput}),
         rootGrads({grad}) {
@@ -253,7 +252,7 @@ public:
   explicit RewriteUnit(CostModelState &CM, Subgraph &subgraph,
                        llvm::ArrayRef<llvm::Value *> outputs,
                        llvm::ArrayRef<double> grads, std::string expr,
-                       unsigned executions)
+                       uint64_t executions)
       : SiteUnit(UnitKind::R), subgraph(&subgraph), oldOutput(outputs.front()),
         expr(expr), executions(executions),
         roots(outputs.begin(), outputs.end()),
@@ -275,16 +274,14 @@ public:
                  &valueToNodeMap,
              std::unordered_map<std::string, llvm::Value *> &symbolToValueMap,
              bool print);
-  llvm::InstructionCost getCompCostDelta(CostModelState &CM,
-                                         size_t candidateIndex);
+  DPCost getCompCostDelta(CostModelState &CM, size_t candidateIndex);
   double getAccCostDelta(size_t candidateIndex);
 
   static bool classof(const OptimizationUnit *U) {
     return U->kind() == unsigned(UnitKind::R);
   }
   size_t numCandidates() const override { return candidates.size(); }
-  llvm::InstructionCost costDelta(size_t i,
-                                  llvm::ArrayRef<SolutionStep> prior) override;
+  DPCost costDelta(size_t i, llvm::ArrayRef<SolutionStep> prior) override;
   double errorDelta(size_t i, llvm::ArrayRef<SolutionStep> prior) override;
   bool consumesFootprint() const override { return false; }
   // The searches of one output, and any two cores with the same outputs, are
@@ -329,7 +326,7 @@ public:
   Subgraph *subgraph;
   double initialAccCost = std::numeric_limits<double>::quiet_NaN();
   double initialCompCost = std::numeric_limits<double>::quiet_NaN();
-  unsigned executions = 0;
+  uint64_t executions = 0;
   llvm::MapVector<FPNode *, double> perOutputInitialAccCost;
   llvm::SmallVector<PTCandidate, 8> candidates;
   llvm::SmallVector<std::pair<std::string, std::string>, 1> dropped;
@@ -345,8 +342,7 @@ public:
     std::size_t operator()(const CacheKey &key) const;
   };
 
-  std::unordered_map<CacheKey, llvm::InstructionCost, CacheKeyHash>
-      compCostDeltaCache;
+  std::unordered_map<CacheKey, DPCost, CacheKeyHash> compCostDeltaCache;
   std::unordered_map<CacheKey, double, CacheKeyHash> accCostDeltaCache;
 
   explicit PrecisionUnit(CostModelState &CM, Subgraph &subgraph)
@@ -357,11 +353,10 @@ public:
   }
 
   void apply(Session &S, size_t candidateIndex);
-  llvm::InstructionCost getCompCostDelta(size_t candidateIndex);
+  DPCost getCompCostDelta(size_t candidateIndex);
   double getAccCostDelta(size_t candidateIndex);
-  llvm::InstructionCost
-  getAdjustedCompCostDelta(Session &S, size_t candidateIndex,
-                           llvm::ArrayRef<SolutionStep> steps);
+  DPCost getAdjustedCompCostDelta(Session &S, size_t candidateIndex,
+                                  llvm::ArrayRef<SolutionStep> steps);
   double getAdjustedAccCostDelta(
       size_t candidateIndex, llvm::ArrayRef<SolutionStep> steps,
       std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>>
@@ -372,8 +367,7 @@ public:
     return U->kind() == unsigned(UnitKind::PT);
   }
   size_t numCandidates() const override { return candidates.size(); }
-  llvm::InstructionCost costDelta(size_t i,
-                                  llvm::ArrayRef<SolutionStep> prior) override;
+  DPCost costDelta(size_t i, llvm::ArrayRef<SolutionStep> prior) override;
   double errorDelta(size_t i, llvm::ArrayRef<SolutionStep> prior) override;
   // Priced over the outputs the algebraic units of its subgraph leave.
   bool pricedAlone() const override { return false; }

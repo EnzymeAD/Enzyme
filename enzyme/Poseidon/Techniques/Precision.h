@@ -19,7 +19,6 @@
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/IR/Type.h"
-#include "llvm/Support/InstructionCost.h"
 #include "llvm/Transforms/Utils/ValueMapper.h"
 
 #include "Core/FPKind.h"
@@ -85,7 +84,7 @@ struct PrecisionChange {
 struct PTCandidate {
   llvm::SmallVector<PrecisionChange, 1> changes;
   double accuracyCost = std::numeric_limits<double>::quiet_NaN();
-  // Double, not InstructionCost: see RewriteCandidate::CompCost. Native
+  // Double, not a DP cost: see RewriteCandidate::CompCost. Native
   // cost-model rows are below 1.0 and would round to zero here.
   double CompCost = std::numeric_limits<double>::max();
   std::string desc;

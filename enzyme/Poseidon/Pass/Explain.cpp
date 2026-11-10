@@ -47,12 +47,6 @@
 
 using namespace llvm;
 
-#if LLVM_VERSION_MAJOR >= 21
-#define GET_COST(cost) ((int64_t)(cost).getValue())
-#else
-#define GET_COST(cost) ((int64_t)(cost).getValue().value())
-#endif
-
 namespace poseidon {
 
 namespace {
@@ -468,7 +462,7 @@ struct Unit {
   SmallVector<std::string, 2> inputRanges;
   std::vector<Alt> alts;
   std::optional<int64_t> baseCost;
-  unsigned executions = 0;
+  uint64_t executions = 0;
   double sensitivity = std::numeric_limits<double>::quiet_NaN();
   std::string left, shape;
   bool applied = false;
@@ -591,10 +585,10 @@ void Explainer::markSteps() {
   for (const auto &[cost, sol] : rec.solutions)
     for (const SolutionStep &step : sol) {
       onPareto.insert(keyOf(step));
-      firstBudget.try_emplace(keyOf(step), GET_COST(cost));
+      firstBudget.try_emplace(keyOf(step), cost);
     }
   if (rec.selected) {
-    auto it = rec.solutions.find(InstructionCost(*rec.selected));
+    auto it = rec.solutions.find(*rec.selected);
     if (it != rec.solutions.end())
       for (const SolutionStep &step : it->second)
         inSelected.insert(keyOf(step));
@@ -628,7 +622,7 @@ void Explainer::addCOAlternatives(Unit &U, const Subgraph &sg) {
     std::string rdt = dtypeOfType(CO.oldOutput->getType());
     std::optional<int64_t> base;
     if (std::isfinite(CO.initialCompCost))
-      base = (int64_t)std::llround(CO.initialCompCost * (double)CO.executions);
+      base = toDPCost(CO.initialCompCost * (double)CO.executions);
 
     auto fill = [&](Alt &A, const std::string &expr) {
       A.kind = "algebraic";
@@ -693,7 +687,7 @@ void Explainer::addCOAlternatives(Unit &U, const Subgraph &sg) {
       A.index = j;
       fill(A, cand.expr);
       if (cand.CompCost != std::numeric_limits<double>::max())
-        A.costDelta = GET_COST(CO.getCompCostDelta(Sess.CostModel, j));
+        A.costDelta = CO.getCompCostDelta(Sess.CostModel, j);
       double acc = CO.getAccCostDelta(j);
       if (std::isfinite(acc)) {
         A.accDelta = acc;
@@ -811,7 +805,7 @@ void Explainer::addCSAlternatives(Unit &U, const Subgraph &sg) {
         A.outputs.push_back(o);
       std::optional<int64_t> cost;
       if (cand.CompCost != std::numeric_limits<double>::max())
-        cost = GET_COST(CS.getCompCostDelta(j));
+        cost = CS.getCompCostDelta(j);
       double acc = CS.getAccCostDelta(j);
       PrecisionUnit::RewriteUnitSet cos;
       for (const auto &[item, idx] : applied)
@@ -823,7 +817,7 @@ void Explainer::addCSAlternatives(Unit &U, const Subgraph &sg) {
         auto c = CS.compCostDeltaCache.find(key);
         cost = c == CS.compCostDeltaCache.end()
                    ? std::nullopt
-                   : std::optional<int64_t>(GET_COST(c->second));
+                   : std::optional<int64_t>(c->second);
         auto a = CS.accCostDeltaCache.find(key);
         acc = a == CS.accCostDeltaCache.end()
                   ? std::numeric_limits<double>::quiet_NaN()
@@ -914,9 +908,8 @@ void Explainer::judge(Unit &U) {
       A.status = "pareto";
       A.reason = "on the Pareto frontier";
       auto b = firstBudget.find(key);
-      auto sol = b == firstBudget.end()
-                     ? rec.solutions.end()
-                     : rec.solutions.find(InstructionCost(b->second));
+      auto sol = b == firstBudget.end() ? rec.solutions.end()
+                                        : rec.solutions.find(b->second);
       if (sol != rec.solutions.end()) {
         std::string ids;
         for (const SolutionStep &step : sol->second)
@@ -1157,7 +1150,7 @@ void Explainer::buildSubgraph(size_t s) {
     SmallVector<Value *> outs(sg.outputs.begin(), sg.outputs.end());
     double base = getCompCost(Sess.CostModel, outs, sg.inputs);
     if (FPNode *N = nodeOf(sg.outputs[0]))
-      U.baseCost = (int64_t)std::llround(base * (double)N->executions);
+      U.baseCost = toDPCost(base * (double)N->executions);
   }
 
   addCOAlternatives(U, sg);
@@ -1186,10 +1179,9 @@ void Explainer::buildMatmul(size_t m) {
     U.shape = dim(M) + "x" + dim(N) + "x" + dim(K);
   }
   U.loc = locOf(U.root);
-  U.executions = (unsigned)std::min<uint64_t>(CM.executions, ~0u);
+  U.executions = CM.executions;
   if (CM.initialCompCost >= 0.0)
-    U.baseCost =
-        (int64_t)std::llround(CM.initialCompCost * (double)CM.executions);
+    U.baseCost = toDPCost(CM.initialCompCost * (double)CM.executions);
   for (size_t j = 0; j < CM.candidates.size(); ++j) {
     const MatmulUnit::Option &o = CM.candidates[j];
     Alt A;
@@ -1199,7 +1191,7 @@ void Explainer::buildMatmul(size_t m) {
     A.item = &CM;
     A.index = j;
     A.at = U.root;
-    A.costDelta = GET_COST(CM.getCompCostDelta(j));
+    A.costDelta = CM.getCompCostDelta(j);
     double acc = CM.getAccCostDelta(j);
     if (std::isfinite(acc)) {
       A.accDelta = acc;
@@ -1300,7 +1292,7 @@ json::Object Explainer::toJSON() {
   if (!matmulApplied || rec.selector != "error-budget") {
     double acc = steps.empty() ? 0.0 : std::numeric_limits<double>::quiet_NaN();
     if (rec.selected) {
-      auto it = rec.table.find(InstructionCost(*rec.selected));
+      auto it = rec.table.find(*rec.selected);
       if (it != rec.table.end())
         acc = it->second;
     }
@@ -1417,7 +1409,7 @@ json::Object Explainer::toJSON() {
     json::Array pareto;
     for (const auto &[cost, acc] : rec.table) {
       json::Object p;
-      int64_t b = GET_COST(cost);
+      int64_t b = cost;
       p["budget"] = b;
       if (before)
         p["cost"] = *before + b;
@@ -1485,7 +1477,7 @@ void Explainer::emitRemarks() {
     } else {
       double acc = std::numeric_limits<double>::quiet_NaN();
       if (rec.selected) {
-        auto it = rec.table.find(InstructionCost(*rec.selected));
+        auto it = rec.table.find(*rec.selected);
         if (it != rec.table.end())
           acc = it->second;
       }
