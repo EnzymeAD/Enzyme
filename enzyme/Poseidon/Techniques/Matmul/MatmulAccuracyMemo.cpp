@@ -11,7 +11,7 @@
 
 #include "BuildIdentity.h"
 #include "Matmul.h"
-#include "Pass/Flags.h"
+#include "Pass/Session.h"
 
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringExtras.h"
@@ -41,9 +41,10 @@ template <typename T> static void appendBytes(std::string &bytes, T v) {
   bytes.append(reinterpret_cast<const char *>(&v), sizeof(v));
 }
 
-static void addModelInputs(CacheKey &key, const AbstractMatmul &m,
-                           const MatmulProfile &prof, double confidence,
-                           unsigned sampleLogBits, unsigned numSamples) {
+static void addModelInputs(const Options &O, CacheKey &key,
+                           const AbstractMatmul &m, const MatmulProfile &prof,
+                           double confidence, unsigned sampleLogBits,
+                           unsigned numSamples) {
   key.add("M", std::to_string(m.M));
   key.add("N", std::to_string(m.N));
   key.add("K", std::to_string(m.K));
@@ -64,14 +65,14 @@ static void addModelInputs(CacheKey &key, const AbstractMatmul &m,
     appendBytes(gradients, g.sumGrad);
   key.addContent("gradient statistics", gradients);
   key.add("samples", std::to_string(numSamples));
-  key.add("seed", std::to_string(flags::RandomSeed));
+  key.add("seed", std::to_string(O.Model.RandomSeed));
   key.add("sampling log bits", std::to_string(sampleLogBits));
-  key.add("exponent penalty", accNumber(flags::ExponentPenalty));
+  key.add("exponent penalty", accNumber(O.Model.ExponentPenalty));
   key.add("confidence", accNumber(confidence));
 }
 
-static std::string entryPath(const CacheKey &key) {
-  SmallString<256> p(flags::Cache);
+static std::string entryPath(const Options &O, const CacheKey &key) {
+  SmallString<256> p(O.Herbie.Cache);
   sys::path::append(p, "matmulacc_" + key.digest() + ".json");
   return p.str().str();
 }
@@ -87,8 +88,8 @@ struct LegacyAccHash {
     std::memcpy(&b, &d, sizeof(b));
     mix(b);
   }
-  LegacyAccHash(const AbstractMatmul &m, const MatmulProfile &prof,
-                unsigned sampleLogBits) {
+  LegacyAccHash(const Options &O, const AbstractMatmul &m,
+                const MatmulProfile &prof, unsigned sampleLogBits) {
     mix(m.M);
     mix(m.N);
     mix(m.K);
@@ -107,8 +108,8 @@ struct LegacyAccHash {
       mixD(g.sumGrad);
       mix(g.count);
     }
-    mix(flags::NumSamples);
-    mix((uint64_t)flags::RandomSeed);
+    mix(O.Model.NumSamples);
+    mix((uint64_t)O.Model.RandomSeed);
     mix((uint64_t)sampleLogBits);
     mix(1); // the model generation every legacy entry was written under
   }
@@ -116,12 +117,11 @@ struct LegacyAccHash {
 };
 } // namespace
 
-MatmulAccuracyMemo
-MatmulAccuracyMemo::matmul(const AbstractMatmul &m, const MatmulProfile &prof,
-                           double confidence, unsigned sampleLogBits,
-                           unsigned numSamples, FPKind inputPrec,
-                           FPKind accPrec, FPKind exponentPrec,
-                           unsigned orderTileK, unsigned inputMantBits) {
+MatmulAccuracyMemo MatmulAccuracyMemo::matmul(
+    const Options &O, const AbstractMatmul &m, const MatmulProfile &prof,
+    double confidence, unsigned sampleLogBits, unsigned numSamples,
+    FPKind inputPrec, FPKind accPrec, FPKind exponentPrec, unsigned orderTileK,
+    unsigned inputMantBits) {
   MatmulAccuracyMemo memo;
   memo.key.add("model", "getMatmulAccuracyCost");
   memo.key.add("input format", fpKindName(inputPrec));
@@ -129,16 +129,16 @@ MatmulAccuracyMemo::matmul(const AbstractMatmul &m, const MatmulProfile &prof,
   memo.key.add("exponent format", fpKindName(exponentPrec));
   memo.key.add("orderTileK", std::to_string(orderTileK));
   memo.key.add("inputMantBits", std::to_string(inputMantBits));
-  addModelInputs(memo.key, m, prof, confidence, sampleLogBits, numSamples);
-  memo.path = entryPath(memo.key);
+  addModelInputs(O, memo.key, m, prof, confidence, sampleLogBits, numSamples);
+  memo.path = entryPath(O, memo.key);
   memo.key.add("accuracy model", kAccuracyModelIdentity);
-  if (!flags::ImportAccuracyMemo.empty()) {
-    LegacyAccHash legacy(m, prof, sampleLogBits);
+  if (!O.Herbie.ImportAccuracyMemo.empty()) {
+    LegacyAccHash legacy(O, m, prof, sampleLogBits);
     legacy.mix(0x6d6dULL);
     legacy.mix((uint64_t)inputPrec);
     legacy.mix((uint64_t)accPrec);
     legacy.mix((uint64_t)exponentPrec);
-    legacy.mixD(flags::ExponentPenalty.getValue());
+    legacy.mixD(O.Model.ExponentPenalty);
     if (confidence != kDefaultConfidence)
       legacy.mixD(confidence);
     if (orderTileK)
@@ -151,17 +151,18 @@ MatmulAccuracyMemo::matmul(const AbstractMatmul &m, const MatmulProfile &prof,
 }
 
 MatmulAccuracyMemo
-MatmulAccuracyMemo::ozakiII(const AbstractMatmul &m, const MatmulProfile &prof,
-                            double confidence, unsigned sampleLogBits,
-                            unsigned numSamples, unsigned capturedBits) {
+MatmulAccuracyMemo::ozakiII(const Options &O, const AbstractMatmul &m,
+                            const MatmulProfile &prof, double confidence,
+                            unsigned sampleLogBits, unsigned numSamples,
+                            unsigned capturedBits) {
   MatmulAccuracyMemo memo;
   memo.key.add("model", "getOzakiIIAccuracyCost");
   memo.key.add("capturedBits", std::to_string(capturedBits));
-  addModelInputs(memo.key, m, prof, confidence, sampleLogBits, numSamples);
-  memo.path = entryPath(memo.key);
+  addModelInputs(O, memo.key, m, prof, confidence, sampleLogBits, numSamples);
+  memo.path = entryPath(O, memo.key);
   memo.key.add("accuracy model", kAccuracyModelIdentity);
-  if (!flags::ImportAccuracyMemo.empty()) {
-    LegacyAccHash legacy(m, prof, sampleLogBits);
+  if (!O.Herbie.ImportAccuracyMemo.empty()) {
+    LegacyAccHash legacy(O, m, prof, sampleLogBits);
     legacy.mix(0x6f7aULL);
     legacy.mix(capturedBits);
     if (confidence != kDefaultConfidence)
@@ -171,10 +172,11 @@ MatmulAccuracyMemo::ozakiII(const AbstractMatmul &m, const MatmulProfile &prof,
   return memo;
 }
 
-void MatmulAccuracyMemo::store(double accuracyCost, double domainError) const {
-  if (flags::Cache.empty())
+void MatmulAccuracyMemo::store(const Options &O, double accuracyCost,
+                               double domainError) const {
+  if (O.Herbie.Cache.empty())
     return;
-  (void)sys::fs::create_directories(flags::Cache, true);
+  (void)sys::fs::create_directories(O.Herbie.Cache, true);
   // As text: a domain error can be infinite, which JSON cannot hold.
   json::Object value;
   value["accuracy cost"] = accNumber(accuracyCost);
@@ -193,29 +195,30 @@ static bool parseAccNumber(const json::Object &value, StringRef name,
 // Results stored before entries carried their key are read only when
 // imported; a cache full of them is otherwise recomputed without a word, at
 // the cost they were kept to save.
-static void noteLegacyEntries() {
-  static bool noted = false;
-  if (noted)
+static void noteLegacyEntries(Session &S) {
+  const Options &O = S.Opts;
+  if (S.LegacyMemoEntriesNoted)
     return;
-  noted = true;
+  S.LegacyMemoEntriesNoted = true;
   std::error_code EC;
-  for (sys::fs::directory_iterator it(flags::Cache, EC), end; it != end && !EC;
-       it.increment(EC)) {
+  for (sys::fs::directory_iterator it(O.Herbie.Cache, EC), end;
+       it != end && !EC; it.increment(EC)) {
     StringRef name = sys::path::filename(it->path());
     if (name.starts_with("matmulacc_") && name.ends_with(".txt")) {
-      llvm::errs() << "[poseidon] " << flags::Cache
+      llvm::errs() << "[poseidon] " << O.Herbie.Cache
                    << " holds matrix accuracy results stored before the memo "
                       "kept their keys (matmulacc_*.txt), which are not read; "
                       "computing them again. -poseidon-import-accuracy-memo="
-                   << flags::Cache << " takes them over instead.\n";
+                   << O.Herbie.Cache << " takes them over instead.\n";
       return;
     }
   }
 }
 
-bool MatmulAccuracyMemo::lookup(double &accuracyCost,
+bool MatmulAccuracyMemo::lookup(Session &S, double &accuracyCost,
                                 double &domainError) const {
-  if (flags::Cache.empty())
+  const Options &O = S.Opts;
+  if (O.Herbie.Cache.empty())
     return false;
   CacheEntryRead read =
       readCacheEntry(path, key, {"accuracy model", kAccuracyModelEquivalents});
@@ -236,11 +239,11 @@ bool MatmulAccuracyMemo::lookup(double &accuracyCost,
                          : " was computed for a different " + read.differs)
                  << "; recomputing it.\n";
 
-  if (flags::ImportAccuracyMemo.empty()) {
-    noteLegacyEntries();
+  if (O.Herbie.ImportAccuracyMemo.empty()) {
+    noteLegacyEntries(S);
     return false;
   }
-  SmallString<256> legacy(flags::ImportAccuracyMemo);
+  SmallString<256> legacy(O.Herbie.ImportAccuracyMemo);
   sys::path::append(legacy, legacyName);
   auto buf = MemoryBuffer::getFile(legacy);
   if (!buf)
@@ -251,7 +254,7 @@ bool MatmulAccuracyMemo::lookup(double &accuracyCost,
     return false;
   accuracyCost = a;
   domainError = d;
-  store(accuracyCost, domainError);
+  store(O, accuracyCost, domainError);
   llvm::errs() << "[poseidon] imported accuracy memo " << legacy << " as "
                << path << "\n";
   return true;

@@ -2,8 +2,6 @@
 
 #include "Utils.h"
 
-#include "Pass/Flags.h"
-
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Demangle/Demangle.h"
 #include "llvm/IR/Constants.h"
@@ -180,7 +178,7 @@ CallInst *createMathCall(IRBuilderBase &B, FunctionCallee F,
   return CI;
 }
 
-void requireDeviceCallees(Module &M) {
+void requireDeviceCallees(Module &M, bool profileGenerate) {
   if (!isDeviceModule(M))
     return;
   const Triple T(M.getTargetTriple());
@@ -196,7 +194,7 @@ void requireDeviceCallees(Module &M) {
                " calls " + callee->getName() +
                ", which this device module does not define." + includeAdvice(T))
                   .str();
-      } else if (flags::ProfileGenerate &&
+      } else if (profileGenerate &&
                  needsMathLibrary(T, callee->getIntrinsicID(), CI->getType())) {
         msg = (Twine("Poseidon: the derivative profile generation takes in ") +
                demangle(F.getName()) + " calls " + callee->getName() +

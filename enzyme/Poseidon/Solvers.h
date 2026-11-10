@@ -24,20 +24,50 @@
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Value.h"
-#include "llvm/Support/CommandLine.h"
 
 #include <limits>
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
+#include <string>
 #include <unordered_map>
+#include <vector>
 
 #include "Core/CacheKey.h"
-#include "Pass/Flags.h"
 #include "Techniques/Matmul/Matmul.h"
 #include "Types.h"
 
 namespace poseidon {
+
+struct Options;
+class Session;
+
+enum class UnitKind { R, PT, M };
+
+// One item of -poseidon-apply-rewrites: [<site>:]<unit>_<ordinal> or
+// [<site>:]<unit>=<name>.
+struct ApplyItem {
+  std::string text;
+  std::string site;
+  UnitKind kind = UnitKind::R;
+  size_t unit = 0;
+  std::optional<size_t> ordinal;
+  std::string name;
+  // The keys of the module's sites `site` named. Sites are solved as the pass
+  // reaches them, so that it named none is only known at the end of the
+  // module.
+  std::set<std::string> named;
+};
+
+struct PinState {
+  std::string spec;
+  std::vector<ApplyItem> items;
+  std::vector<std::string> sites;
+  // Two sites cut from one body share a key; printing their pin twice would
+  // give a value that applies each item twice.
+  std::set<std::string> printed;
+};
 
 struct SolveRecord {
   std::string selector;
@@ -69,7 +99,7 @@ struct SiteTable {
 // gives the per-operation relative rounding level that would produce the same
 // effect on the site's outputs, which is the unit `errorTol` is in.
 llvm::SmallVector<SolutionStep> accuracyDPSolver(
-    llvm::Function &F, llvm::SmallVector<CandidateOutput, 4> &COs,
+    Session &S, llvm::Function &F, llvm::SmallVector<CandidateOutput, 4> &COs,
     llvm::SmallVector<CandidateSubgraph, 4> &CSs,
     llvm::SmallVector<CandidateMatmul, 4> &CMs,
     std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
@@ -82,7 +112,8 @@ llvm::SmallVector<SolutionStep> accuracyDPSolver(
 // baseline in this mode. `confidence` is the level those errors were computed
 // at; the selector only reports it, since it is already in the numbers.
 llvm::SmallVector<SolutionStep>
-errorBudgetSelector(llvm::SmallVector<CandidateMatmul, 4> &CMs, double budget,
+errorBudgetSelector(const Options &O,
+                    llvm::SmallVector<CandidateMatmul, 4> &CMs, double budget,
                     double confidence);
 
 // True when an elementwise step edits instructions a chosen matmul step raises.
@@ -125,39 +156,42 @@ struct FunctionFPState {
   std::optional<llvm::ScalarEvolution> raiseSE;
 };
 
-bool collectFPCandidates(llvm::Function &F, double errorTol,
+bool collectFPCandidates(Session &S, llvm::Function &F, double errorTol,
                          unsigned sampleLogBits, FunctionFPState &st);
 
 // Prices the collected candidates, unless the site's DP table is read back
 // from the cache: the table already holds every price its solve used.
-void priceUnlessCached(FunctionFPState &st, llvm::StringRef profilePath);
+void priceUnlessCached(Session &S, FunctionFPState &st,
+                       llvm::StringRef profilePath);
 
-bool materializeFPSolution(llvm::Function &F, FunctionFPState &st,
+bool materializeFPSolution(Session &S, llvm::Function &F, FunctionFPState &st,
                            llvm::ArrayRef<SolutionStep> steps);
 
 llvm::SmallVector<SolutionStep>
-jointAccuracyDPSolver(llvm::ArrayRef<FunctionFPState *> states, double errorTol,
-                      SolveRecord *record = nullptr);
+jointAccuracyDPSolver(Session &S, llvm::ArrayRef<FunctionFPState *> states,
+                      double errorTol, SolveRecord *record = nullptr);
 
 // The steps the items of -poseidon-apply-rewrites name at the site of `st`.
-llvm::SmallVector<SolutionStep> parseManualRewrites(FunctionFPState &st);
+llvm::SmallVector<SolutionStep> parseManualRewrites(Session &S,
+                                                    FunctionFPState &st);
 
 // A site of the module, for the items of -poseidon-apply-rewrites that name
 // one; `body` is what the site's clone is made from. An item whose site two
 // sites answer to is an error.
-void noteSiteForPins(const llvm::Function &body);
+void noteSiteForPins(Session &S, const llvm::Function &body);
 
 // Prints the value of -poseidon-apply-rewrites that applies `applied` at the
 // site of `st` again.
-void printPin(const FunctionFPState &st, llvm::ArrayRef<SolutionStep> applied);
+void printPin(Session &S, const FunctionFPState &st,
+              llvm::ArrayRef<SolutionStep> applied);
 
 // At the end of a module: an item that names a site has to have named a site
 // of the module, if the module has any.
-void checkPinnedSites();
+void checkPinnedSites(Session &S);
 
 // `applied` receives the steps materialized, in order.
 bool applySolution(
-    llvm::ArrayRef<SolutionStep> steps,
+    Session &S, llvm::ArrayRef<SolutionStep> steps,
     std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, llvm::Value *> &symbolToValueMap,
     llvm::SmallVectorImpl<SolutionStep> &applied);

@@ -30,7 +30,7 @@
 #include "BuildIdentity.h"
 #include "CostModel.h"
 #include "Optimize.h"
-#include "Pass/Flags.h"
+#include "Pass/Session.h"
 #include "Solvers.h"
 #include "Types.h"
 
@@ -538,14 +538,17 @@ static void appendMatmulUnits(SmallVectorImpl<DPUnit> &units,
 // so they leave the signature there. The CMs come after every elementwise
 // unit, so a footprint conflict is always a CM's refusal.
 static void appendElementwiseUnits(
-    SmallVectorImpl<DPUnit> &units, MutableArrayRef<CandidateOutput> COs,
+    Session &S, SmallVectorImpl<DPUnit> &units,
+    MutableArrayRef<CandidateOutput> COs,
     MutableArrayRef<CandidateSubgraph> CSs,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, Value *> &symbolToValueMap) {
   auto appendCO = [&](CandidateOutput &CO) {
     units.push_back(
         {&CO, CO.candidates.size(),
-         [&CO](size_t i, const auto &) { return CO.getCompCostDelta(i); },
+         [&S, &CO](size_t i, const auto &) {
+           return CO.getCompCostDelta(S.CostModel, i);
+         },
          [&CO](size_t i, const auto &) { return CO.getAccCostDelta(i); }});
   };
   SmallPtrSet<const Subgraph *, 8> placed;
@@ -555,8 +558,8 @@ static void appendElementwiseUnits(
         if (CO.subgraph == CS.subgraph)
           appendCO(CO);
     units.push_back({&CS, CS.candidates.size(),
-                     [&CS](size_t i, const auto &prior) {
-                       return CS.getAdjustedCompCostDelta(i, prior);
+                     [&S, &CS](size_t i, const auto &prior) {
+                       return CS.getAdjustedCompCostDelta(S, i, prior);
                      },
                      [&CS, &valueToNodeMap,
                       &symbolToValueMap](size_t i, const auto &prior) {
@@ -639,7 +642,9 @@ static double baselineAccCost(ArrayRef<CandidateOutput> COs,
   return baseline;
 }
 
-static std::string tablePath() { return flags::Cache + "/table.json"; }
+static std::string tablePath(const Options &O) {
+  return O.Herbie.Cache + "/table.json";
+}
 
 namespace {
 struct StoredStep {
@@ -660,8 +665,9 @@ bool fromJSON(const json::Value &V, StoredStep &S, json::Path P) {
 // them decide them: a Herbie search can end differently under the same inputs
 // (a timeout), and under an accuracy target the matrix products are left out
 // of the table.
-static CacheKey solveKey(const FunctionFPState &st,
+static CacheKey solveKey(Session &S, const FunctionFPState &st,
                          ArrayRef<CandidateMatmul> CMs, StringRef profilePath) {
+  const Options &O = S.Opts;
   const Function &F = *st.F;
   CacheKey key;
   // Two LLVM snapshots report one version string; the revision, which an LLVM
@@ -683,13 +689,13 @@ static CacheKey solveKey(const FunctionFPState &st,
       I.getFastMathFlags().print(bodyOS);
     }
   key.addContent("function body", body);
-  key.add("device", getCostModelNativeArch());
-  key.add("cost model", utohexstr(getCostModelFingerprint()));
+  key.add("device", getCostModelNativeArch(S.CostModel));
+  key.add("cost model", utohexstr(getCostModelFingerprint(S.CostModel)));
 
   SmallVector<std::string, 4> profilePaths = {profilePath.str()};
-  for (const std::string &dir : flags::OutputProfiles) {
+  for (const std::string &dir : O.Profiling.OutputProfiles) {
     SmallString<128> path(dir);
-    sys::path::append(path, siteProfileStem(F) + ".fpprofile");
+    sys::path::append(path, siteProfileStem(S, F) + ".fpprofile");
     profilePaths.push_back(path.str().str());
   }
   std::string profiles;
@@ -702,11 +708,11 @@ static CacheKey solveKey(const FunctionFPState &st,
   }
   key.addContent("profile", profiles);
 
-  for (const auto &[name, value] : solveFlagValues())
+  for (const auto &[name, value] : solveFlagValues(O))
     key.add(("-" + name).str(), value);
   // Only a site that sent Herbie cores depends on which Herbie answered them.
   if (!st.COs.empty())
-    addHerbieKeyParts(key);
+    addHerbieKeyParts(S, key);
 
   std::string candidates;
   raw_string_ostream os(candidates);
@@ -731,11 +737,11 @@ static CacheKey solveKey(const FunctionFPState &st,
 
 // Fills `table` from the cache when it holds a table for `fnName` under
 // table.key, and otherwise says why not unless there is none at all.
-static bool readSiteTable(StringRef fnName, SiteTable &table,
+static bool readSiteTable(const Options &O, StringRef fnName, SiteTable &table,
                           MutableArrayRef<CandidateOutput> COs,
                           MutableArrayRef<CandidateSubgraph> CSs,
                           MutableArrayRef<CandidateMatmul> CMs) {
-  const std::string path = tablePath();
+  const std::string path = tablePath(O);
   if (!sys::fs::exists(path))
     return false;
   auto miss = [&](const std::string &why) {
@@ -824,7 +830,7 @@ static bool readSiteTable(StringRef fnName, SiteTable &table,
 }
 
 static void
-writeSiteTable(StringRef fnName, const CacheKey &key,
+writeSiteTable(const Options &O, StringRef fnName, const CacheKey &key,
                const std::map<InstructionCost, double> &costToAccuracyMap,
                const std::map<InstructionCost, SmallVector<SolutionStep>>
                    &costToSolutionMap,
@@ -906,7 +912,7 @@ writeSiteTable(StringRef fnName, const CacheKey &key,
   // Read-modify-write: the file holds one table per function, so a later site
   // in the same compilation unit must extend it rather than clobber the
   // earlier sites' tables. A file that does not parse is replaced.
-  const std::string path = tablePath();
+  const std::string path = tablePath(O);
   json::Object functions;
   if (auto fileOrErr = MemoryBuffer::getFile(path)) {
     if (auto prior = json::parse(fileOrErr.get()->getBuffer())) {
@@ -932,7 +938,7 @@ writeSiteTable(StringRef fnName, const CacheKey &key,
   llvm::errs() << "DP table for " << fnName << " cached to file.\n";
 }
 
-static void priceCandidates(FunctionFPState &st) {
+static void priceCandidates(Session &S, FunctionFPState &st) {
   Module *M = st.F->getParent();
   for (CandidateOutput &CO : st.COs) {
     if (!CO.herbieAnswered)
@@ -940,32 +946,33 @@ static void priceCandidates(FunctionFPState &st) {
     const FastMathFlags FMF =
         cast<Instruction>(CO.oldOutput)->getFastMathFlags();
     for (RewriteCandidate &c : CO.candidates)
-      c.CompCost = getCompCost(c.expr, M, st.valueToNodeMap,
+      c.CompCost = getCompCost(S.CostModel, c.expr, M, st.valueToNodeMap,
                                st.symbolToValueMap, FMF, &CO.subgraph->inputs);
-    setUnifiedAccuracyCost(CO, st.valueToNodeMap, st.symbolToValueMap);
+    setUnifiedAccuracyCost(S.Opts, CO, st.valueToNodeMap, st.symbolToValueMap);
   }
   for (CandidateSubgraph &CS : st.CSs) {
     for (PTCandidate &c : CS.candidates)
-      c.CompCost = getCompCost(*CS.subgraph, c);
-    setUnifiedAccuracyCost(CS, st.valueToNodeMap, st.symbolToValueMap);
+      c.CompCost = getCompCost(S, *CS.subgraph, c);
+    setUnifiedAccuracyCost(S.Opts, CS, st.valueToNodeMap, st.symbolToValueMap);
   }
 }
 
-void priceUnlessCached(FunctionFPState &st, StringRef profilePath) {
+void priceUnlessCached(Session &S, FunctionFPState &st, StringRef profilePath) {
+  const Options &O = S.Opts;
   // A joint or a manual solve reads no table, and an accuracy target leaves
   // the matrix products to errorBudgetSelector (fpOptimize).
-  if (!flags::Cache.empty() && !flags::JointDP &&
-      flags::ApplyRewrites.empty()) {
-    const bool target = st.errTol > 0.0 || flags::Tau > 0.0;
+  if (!O.Herbie.Cache.empty() && !O.Solver.JointDP &&
+      O.Solver.ApplyRewrites.empty()) {
+    const bool target = st.errTol > 0.0 || O.Solver.Tau > 0.0;
     MutableArrayRef<CandidateMatmul> CMs;
     if (!target)
       CMs = st.CMs;
     st.table = std::make_unique<SiteTable>();
-    st.table->key = solveKey(st, CMs, profilePath);
-    if (readSiteTable(st.F->getName(), *st.table, st.COs, st.CSs, CMs))
+    st.table->key = solveKey(S, st, CMs, profilePath);
+    if (readSiteTable(O, st.F->getName(), *st.table, st.COs, st.CSs, CMs))
       return;
   }
-  priceCandidates(st);
+  priceCandidates(S, st);
 }
 
 static void
@@ -1011,7 +1018,7 @@ printDPTable(const std::map<InstructionCost, double> &costToAccuracyMap,
 }
 
 static json::Object
-buildStepJSON(const SolutionStep &step,
+buildStepJSON(CostModelState &CM, const SolutionStep &step,
               const std::map<InstructionCost, double> &costToAccuracyMap) {
   json::Object stepObj;
   std::visit(
@@ -1027,8 +1034,8 @@ buildStepJSON(const SolutionStep &step,
           stepObj["initial_herbie_cost"] = jsonFloat(item->initialHerbieCost);
           stepObj["initial_herbie_accuracy"] =
               jsonFloat(item->initialHerbieAccuracy);
-          stepObj["computation_cost_delta"] =
-              GET_INSTRUCTION_COST(item->getCompCostDelta(step.candidateIndex));
+          stepObj["computation_cost_delta"] = GET_INSTRUCTION_COST(
+              item->getCompCostDelta(CM, step.candidateIndex));
           stepObj["accuracy_cost_delta"] =
               jsonFloat(item->getAccCostDelta(step.candidateIndex));
           stepObj["gradient"] = jsonFloat(item->grad);
@@ -1156,18 +1163,19 @@ static void writeTextReportStep(raw_ostream &OS, const SolutionStep &step,
 }
 
 static void
-emitReport(StringRef funcName,
+emitReport(Session &S, StringRef funcName,
            const std::map<InstructionCost, double> &costToAccuracyMap,
            const std::map<InstructionCost, SmallVector<SolutionStep>>
                &costToSolutionMap,
            SmallVector<CandidateOutput, 4> &COs,
            SmallVector<CandidateSubgraph, 4> &CSs) {
-  if (flags::ReportPath.empty())
+  const Options &O = S.Opts;
+  if (O.Diagnostics.ReportPath.empty())
     return;
 
   std::error_code EC;
-  if (!llvm::sys::fs::exists(flags::ReportPath)) {
-    EC = llvm::sys::fs::create_directories(flags::ReportPath);
+  if (!llvm::sys::fs::exists(O.Diagnostics.ReportPath)) {
+    EC = llvm::sys::fs::create_directories(O.Diagnostics.ReportPath);
     if (EC) {
       llvm::errs() << "Error creating report directory: " << EC.message()
                    << "\n";
@@ -1248,7 +1256,7 @@ emitReport(StringRef funcName,
     if (it != costToSolutionMap.end()) {
       json::Array steps;
       for (const auto &step : it->second) {
-        steps.push_back(buildStepJSON(step, costToAccuracyMap));
+        steps.push_back(buildStepJSON(S.CostModel, step, costToAccuracyMap));
       }
       point["steps"] = std::move(steps);
     }
@@ -1257,7 +1265,7 @@ emitReport(StringRef funcName,
   report["pareto_points"] = std::move(paretoPoints);
 
   std::string jsonFile =
-      (Twine(flags::ReportPath) + "/" + funcName + ".json").str();
+      (Twine(O.Diagnostics.ReportPath) + "/" + funcName + ".json").str();
   raw_fd_ostream jsonOut(jsonFile, EC, sys::fs::OF_Text);
   if (EC) {
     llvm::errs() << "Error writing JSON report: " << EC.message() << "\n";
@@ -1267,7 +1275,7 @@ emitReport(StringRef funcName,
   }
 
   std::string textFile =
-      (Twine(flags::ReportPath) + "/" + funcName + ".txt").str();
+      (Twine(O.Diagnostics.ReportPath) + "/" + funcName + ".txt").str();
   raw_fd_ostream textOut(textFile, EC, sys::fs::OF_Text);
   if (EC) {
     llvm::errs() << "Error writing text report: " << EC.message() << "\n";
@@ -1347,12 +1355,12 @@ emitReport(StringRef funcName,
 
   {
     std::string configFile =
-        (Twine(flags::ReportPath) + "/validate_config.json").str();
+        (Twine(O.Diagnostics.ReportPath) + "/validate_config.json").str();
     {
       json::Object cfg;
       cfg["function"] = funcName.str();
-      cfg["profile_path"] = flags::ProfileUse.getValue();
-      cfg["cache_path"] = flags::Cache.getValue();
+      cfg["profile_path"] = O.Profiling.ProfileUse;
+      cfg["cache_path"] = O.Herbie.Cache;
       json::Array budgetArr;
       for (const auto &pair : costToAccuracyMap)
         budgetArr.push_back(GET_INSTRUCTION_COST(pair.first));
@@ -1379,7 +1387,7 @@ emitReport(StringRef funcName,
       for (size_t ci = 0; ci < CO.candidates.size(); ++ci) {
         auto &cand = CO.candidates[ci];
         double accDelta = CO.getAccCostDelta(ci);
-        auto compDelta = CO.getCompCostDelta(ci);
+        auto compDelta = CO.getCompCostDelta(S.CostModel, ci);
         int64_t compDeltaVal = GET_INSTRUCTION_COST(compDelta);
 
         if (std::isnan(accDelta))
@@ -1520,7 +1528,8 @@ emitReport(StringRef funcName,
       sortedRewrites.push_back(std::move(v));
 
     std::string rewritesFile =
-        (Twine(flags::ReportPath) + "/" + funcName + "_rewrites.json").str();
+        (Twine(O.Diagnostics.ReportPath) + "/" + funcName + "_rewrites.json")
+            .str();
     raw_fd_ostream rwOut(rewritesFile, EC, sys::fs::OF_Text);
     if (EC) {
       llvm::errs() << "Error writing rewrites report: " << EC.message() << "\n";
@@ -1549,8 +1558,8 @@ bool stepConflictsWithMatmulSteps(const SolutionStep &elem,
 }
 
 SmallVector<SolutionStep>
-errorBudgetSelector(SmallVector<CandidateMatmul, 4> &CMs, double budget,
-                    double confidence) {
+errorBudgetSelector(const Options &O, SmallVector<CandidateMatmul, 4> &CMs,
+                    double budget, double confidence) {
   SmallVector<SolutionStep> steps;
   for (auto &cm : CMs) {
     long best = -1;
@@ -1580,7 +1589,7 @@ errorBudgetSelector(SmallVector<CandidateMatmul, 4> &CMs, double budget,
             (c.domainError == b.domainError && c.compCost < b.compCost))
           tieBest = (long)i;
       }
-      if (tieBest != best && flags::Print)
+      if (tieBest != best && O.Diagnostics.Print)
         llvm::errs() << "Poseidon error-budget: cost tie inside "
                      << (kCostTieBandRel * 100.0) << "% calibration band ("
                      << matmulOptionLabel(cm.candidates[best]) << " cost "
@@ -1593,14 +1602,14 @@ errorBudgetSelector(SmallVector<CandidateMatmul, 4> &CMs, double budget,
       best = tieBest;
     }
     if (best < 0) {
-      if (flags::Print)
+      if (O.Diagnostics.Print)
         llvm::errs() << "Poseidon error-budget: matmul -> baseline F64 (no "
                         "rewrite clears "
                      << budget << " at confidence " << confidence
                      << " faster than F64)\n";
       continue;
     }
-    if (flags::Print)
+    if (O.Diagnostics.Print)
       llvm::errs() << "Poseidon error-budget: matmul -> "
                    << matmulOptionLabel(cm.candidates[best]) << " (domain err "
                    << cm.candidates[best].domainError << " <= " << budget
@@ -1615,10 +1624,11 @@ errorBudgetSelector(SmallVector<CandidateMatmul, 4> &CMs, double budget,
 // a cached table write the same breakpoints, and the replace is atomic, so
 // none of them reads a partial file.
 static void
-writeBudgetsFile(const std::map<InstructionCost, double> &costToAccuracyMap) {
-  if (flags::Cache.empty())
+writeBudgetsFile(const Options &O,
+                 const std::map<InstructionCost, double> &costToAccuracyMap) {
+  if (O.Herbie.Cache.empty())
     return;
-  std::string budgetsFile = flags::Cache + "/budgets.txt";
+  std::string budgetsFile = O.Herbie.Cache + "/budgets.txt";
   std::string budgetsStr;
   for (const auto &pair : costToAccuracyMap)
     budgetsStr += std::to_string(GET_INSTRUCTION_COST(pair.first)) + ",";
@@ -1630,14 +1640,15 @@ writeBudgetsFile(const std::map<InstructionCost, double> &costToAccuracyMap) {
 }
 
 SmallVector<SolutionStep> accuracyDPSolver(
-    Function &F, SmallVector<CandidateOutput, 4> &COs,
+    Session &S, Function &F, SmallVector<CandidateOutput, 4> &COs,
     SmallVector<CandidateSubgraph, 4> &CSs,
     SmallVector<CandidateMatmul, 4> &CMs,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, Value *> &symbolToValueMap, double errorTol,
     double accScale, SolveRecord *record, SiteTable *table) {
+  const Options &O = S.Opts;
   llvm::errs() << "Starting accuracy DP solver with computation budget: "
-               << flags::CompCostBudget << "\n";
+               << O.Solver.CompCostBudget << "\n";
   if (errorTol > 0.0) {
     llvm::errs() << "Per-operation relative error tolerance: " << errorTol
                  << "\n";
@@ -1664,9 +1675,10 @@ SmallVector<SolutionStep> accuracyDPSolver(
     costToAccuracyMap[0] = 0;
     costToSolutionMap[0] = {};
 
-    if (!flags::EarlyPrune) {
+    if (!O.Solver.EarlyPrune) {
       SmallVector<DPUnit> units;
-      appendElementwiseUnits(units, COs, CSs, valueToNodeMap, symbolToValueMap);
+      appendElementwiseUnits(S, units, COs, CSs, valueToNodeMap,
+                             symbolToValueMap);
       appendMatmulUnits(units, CMs);
       exactParetoSolve(units, costToAccuracyMap, costToSolutionMap);
     } else {
@@ -1677,7 +1689,9 @@ SmallVector<SolutionStep> accuracyDPSolver(
       for (auto &CO : COs) {
         paretoIntegrate(
             costToAccuracyMap, costToSolutionMap, &CO, CO.candidates.size(),
-            [&](size_t i, const auto &) { return CO.getCompCostDelta(i); },
+            [&](size_t i, const auto &) {
+              return CO.getCompCostDelta(S.CostModel, i);
+            },
             [&](size_t i, const auto &) { return CO.getAccCostDelta(i); });
         paretoPrune(costToAccuracyMap, costToSolutionMap);
         llvm::errs() << "##### Finished processing " << ++COCounter << " of "
@@ -1704,7 +1718,7 @@ SmallVector<SolutionStep> accuracyDPSolver(
         paretoIntegrate(
             costToAccuracyMap, costToSolutionMap, &CS, CS.candidates.size(),
             [&](size_t i, const auto &prior) {
-              return CS.getAdjustedCompCostDelta(i, prior);
+              return CS.getAdjustedCompCostDelta(S, i, prior);
             },
             [&](size_t i, const auto &prior) {
               return CS.getAdjustedAccCostDelta(i, prior, valueToNodeMap,
@@ -1719,18 +1733,18 @@ SmallVector<SolutionStep> accuracyDPSolver(
     }
 
     if (table)
-      writeSiteTable(F.getName(), table->key, costToAccuracyMap,
+      writeSiteTable(O, F.getName(), table->key, costToAccuracyMap,
                      costToSolutionMap, COs, CSs, CMs,
                      baselineAccCost(COs, CSs));
   }
 
-  if (flags::Print && flags::ShowTable)
+  if (O.Diagnostics.Print && O.Diagnostics.ShowTable)
     printDPTable(costToAccuracyMap, costToSolutionMap);
 
-  writeBudgetsFile(costToAccuracyMap);
+  writeBudgetsFile(O, costToAccuracyMap);
 
   if (!loadedFromCache)
-    emitReport(F.getName(), costToAccuracyMap, costToSolutionMap, COs, CSs);
+    emitReport(S, F.getName(), costToAccuracyMap, costToSolutionMap, COs, CSs);
 
   if (record) {
     record->selector = "dp";
@@ -1810,10 +1824,10 @@ SmallVector<SolutionStep> accuracyDPSolver(
       double accCost = pair.second;
       double rel = (baseline + accCost) / accScale;
 
-      if (std::isfinite(accCost) && accCost < flags::ExponentPenalty &&
+      if (std::isfinite(accCost) && accCost < O.Model.ExponentPenalty &&
           rel <= errorTol) {
         const bool better =
-            flags::TauCheapest
+            O.Solver.TauCheapest
                 ? (compCost < bestCompCost ||
                    (compCost == bestCompCost && accCost < minAccCost))
                 : (accCost < minAccCost);
@@ -1846,8 +1860,8 @@ SmallVector<SolutionStep> accuracyDPSolver(
       InstructionCost compCost = pair.first;
       double accCost = pair.second;
 
-      if (compCost <= flags::CompCostBudget && std::isfinite(accCost) &&
-          accCost < flags::ExponentPenalty && accCost < minAccCost) {
+      if (compCost <= O.Solver.CompCostBudget && std::isfinite(accCost) &&
+          accCost < O.Model.ExponentPenalty && accCost < minAccCost) {
         minAccCost = accCost;
         bestCompCost = compCost;
       }
@@ -1877,11 +1891,12 @@ SmallVector<SolutionStep> accuracyDPSolver(
 }
 
 SmallVector<SolutionStep>
-jointAccuracyDPSolver(ArrayRef<FunctionFPState *> states, double errorTol,
-                      SolveRecord *record) {
+jointAccuracyDPSolver(Session &S, ArrayRef<FunctionFPState *> states,
+                      double errorTol, SolveRecord *record) {
+  const Options &O = S.Opts;
   llvm::errs() << "Starting JOINT accuracy DP solver over " << states.size()
                << " function(s) with shared computation budget: "
-               << flags::CompCostBudget << "\n";
+               << O.Solver.CompCostBudget << "\n";
 
   using CostMap = std::map<InstructionCost, double>;
   using SolutionMap = std::map<InstructionCost, SmallVector<SolutionStep>>;
@@ -1892,10 +1907,10 @@ jointAccuracyDPSolver(ArrayRef<FunctionFPState *> states, double errorTol,
 
   // Same integration order as accuracyDPSolver. The joint table is not cached
   // (table.json is per candidate set); budgets.txt is still written.
-  if (!flags::EarlyPrune) {
+  if (!O.Solver.EarlyPrune) {
     SmallVector<DPUnit> units;
     for (auto *st : states)
-      appendElementwiseUnits(units, st->COs, st->CSs, st->valueToNodeMap,
+      appendElementwiseUnits(S, units, st->COs, st->CSs, st->valueToNodeMap,
                              st->symbolToValueMap);
     for (auto *st : states)
       appendMatmulUnits(units, st->CMs);
@@ -1905,7 +1920,9 @@ jointAccuracyDPSolver(ArrayRef<FunctionFPState *> states, double errorTol,
       for (auto &CO : st->COs) {
         paretoIntegrate(
             costToAccuracyMap, costToSolutionMap, &CO, CO.candidates.size(),
-            [&](size_t i, const auto &) { return CO.getCompCostDelta(i); },
+            [&](size_t i, const auto &) {
+              return CO.getCompCostDelta(S.CostModel, i);
+            },
             [&](size_t i, const auto &) { return CO.getAccCostDelta(i); });
         paretoPrune(costToAccuracyMap, costToSolutionMap);
       }
@@ -1924,7 +1941,7 @@ jointAccuracyDPSolver(ArrayRef<FunctionFPState *> states, double errorTol,
         paretoIntegrate(
             costToAccuracyMap, costToSolutionMap, &CS, CS.candidates.size(),
             [&](size_t i, const auto &prior) {
-              return CS.getAdjustedCompCostDelta(i, prior);
+              return CS.getAdjustedCompCostDelta(S, i, prior);
             },
             [&](size_t i, const auto &prior) {
               return CS.getAdjustedAccCostDelta(i, prior, valueToNodeMap,
@@ -1939,7 +1956,7 @@ jointAccuracyDPSolver(ArrayRef<FunctionFPState *> states, double errorTol,
                << " entries; cost range [" << costToAccuracyMap.begin()->first
                << ", " << costToAccuracyMap.rbegin()->first << "]\n";
 
-  writeBudgetsFile(costToAccuracyMap);
+  writeBudgetsFile(O, costToAccuracyMap);
 
   if (record) {
     record->selector = "joint";
@@ -1997,10 +2014,10 @@ jointAccuracyDPSolver(ArrayRef<FunctionFPState *> states, double errorTol,
     for (const auto &pair : costToAccuracyMap) {
       double rel = (baseline + pair.second) / accScale;
       if (!std::isfinite(pair.second) ||
-          pair.second >= flags::ExponentPenalty || rel > errorTol)
+          pair.second >= O.Model.ExponentPenalty || rel > errorTol)
         continue;
       const bool better =
-          flags::TauCheapest
+          O.Solver.TauCheapest
               ? (pair.first < bestCompCost ||
                  (pair.first == bestCompCost && pair.second < minAccCost))
               : (pair.second < minAccCost);
@@ -2026,7 +2043,7 @@ jointAccuracyDPSolver(ArrayRef<FunctionFPState *> states, double errorTol,
                  << " accCost=" << minAccCost << " rel=" << bestRel << "\n";
   } else {
     for (const auto &pair : costToAccuracyMap)
-      if (pair.first <= flags::CompCostBudget && pair.second < minAccCost) {
+      if (pair.first <= O.Solver.CompCostBudget && pair.second < minAccCost) {
         minAccCost = pair.second;
         bestCompCost = pair.first;
       }
@@ -2057,34 +2074,6 @@ static std::optional<size_t> findOrdinal(ArrayRef<CandT> cands,
       return i;
   return std::nullopt;
 }
-
-namespace {
-enum class UnitKind { R, PT, M };
-
-// One item of -poseidon-apply-rewrites: [<site>:]<unit>_<ordinal> or
-// [<site>:]<unit>=<name>.
-struct ApplyItem {
-  std::string text;
-  std::string site;
-  UnitKind kind = UnitKind::R;
-  size_t unit = 0;
-  std::optional<size_t> ordinal;
-  std::string name;
-  // The keys of the module's sites `site` named. Sites are solved as the pass
-  // reaches them, so that it named none is only known at the end of the
-  // module.
-  std::set<std::string> named;
-};
-
-struct PinState {
-  std::string spec;
-  std::vector<ApplyItem> items;
-  std::vector<std::string> sites;
-  // Two sites cut from one body share a key; printing their pin twice would
-  // give a value that applies each item twice.
-  std::set<std::string> printed;
-};
-} // namespace
 
 static std::optional<ApplyItem> parseUnitRef(StringRef s) {
   ApplyItem item;
@@ -2133,15 +2122,10 @@ static ApplyItem parseApplyItem(StringRef text) {
   return *item;
 }
 
-static PinState &pinState() {
-  static PinState state;
-  return state;
-}
-
-static std::vector<ApplyItem> &applyItems() {
-  PinState &P = pinState();
-  if (P.spec != flags::ApplyRewrites) {
-    P.spec = flags::ApplyRewrites;
+static std::vector<ApplyItem> &applyItems(Session &S) {
+  PinState &P = S.Pins;
+  if (P.spec != S.Opts.Solver.ApplyRewrites) {
+    P.spec = S.Opts.Solver.ApplyRewrites;
     P.items.clear();
     SmallVector<StringRef> texts;
     StringRef(P.spec).split(texts, ',', /*MaxSplit=*/-1, /*KeepEmpty=*/false);
@@ -2170,16 +2154,16 @@ static std::string listSites(const std::set<std::string> &keys) {
 
 // Sites are noted before they are solved, so a name two sites answer to is
 // refused before the second one applies it.
-void noteSiteForPins(const Function &body) {
-  if (flags::ApplyRewrites.empty())
+void noteSiteForPins(Session &S, const Function &body) {
+  if (S.Opts.Solver.ApplyRewrites.empty())
     return;
-  PinState &P = pinState();
+  PinState &P = S.Pins;
   std::string key = siteKeyOfBody(body);
   if (is_contained(P.sites, key))
     return;
   P.sites.push_back(key);
   SmallVector<std::string, 2> aliases = siteAliases(key);
-  for (ApplyItem &item : applyItems()) {
+  for (ApplyItem &item : applyItems(S)) {
     if (item.site.empty() || !namesSite(item, key, aliases))
       continue;
     item.named.insert(key);
@@ -2194,12 +2178,12 @@ void noteSiteForPins(const Function &body) {
   }
 }
 
-void checkPinnedSites() {
-  PinState &P = pinState();
+void checkPinnedSites(Session &S) {
+  PinState &P = S.Pins;
   // The host half of a CUDA or HIP unit is given the items too, and the sites
   // they name are the device half's.
   if (!P.sites.empty())
-    for (const ApplyItem &item : applyItems())
+    for (const ApplyItem &item : applyItems(S))
       if (!item.site.empty() && item.named.empty())
         report_fatal_error(
             "[poseidon] -poseidon-apply-rewrites item '" + Twine(item.text) +
@@ -2252,15 +2236,15 @@ static size_t findNamed(const ApplyItem &item, StringRef site, StringRef unit,
                      /*gen_crash_diag=*/false);
 }
 
-SmallVector<SolutionStep> parseManualRewrites(FunctionFPState &st) {
+SmallVector<SolutionStep> parseManualRewrites(Session &S, FunctionFPState &st) {
   auto &COs = st.COs;
   auto &CSs = st.CSs;
   auto &CMs = st.CMs;
-  const std::string key = siteKey(*st.F);
+  const std::string key = siteKey(S, *st.F);
   const SmallVector<std::string, 2> aliases = siteAliases(key);
   SmallVector<SolutionStep> steps;
   SmallDenseSet<size_t> appliedCOs, appliedCSs, appliedCMs;
-  for (const ApplyItem &item : applyItems()) {
+  for (const ApplyItem &item : applyItems(S)) {
     if (!namesSite(item, key, aliases))
       continue;
     const std::string &id = item.text;
@@ -2358,8 +2342,9 @@ SmallVector<SolutionStep> parseManualRewrites(FunctionFPState &st) {
   return steps;
 }
 
-void printPin(const FunctionFPState &st, ArrayRef<SolutionStep> applied) {
-  const std::string key = siteKey(*st.F);
+void printPin(Session &S, const FunctionFPState &st,
+              ArrayRef<SolutionStep> applied) {
+  const std::string key = siteKey(S, *st.F);
   std::string value;
   for (const SolutionStep &step : applied) {
     std::string item = std::visit(
@@ -2380,13 +2365,13 @@ void printPin(const FunctionFPState &st, ArrayRef<SolutionStep> applied) {
       value += ",";
     value += key + ":" + item;
   }
-  if (!value.empty() && !pinState().printed.insert(value).second)
+  if (!value.empty() && !S.Pins.printed.insert(value).second)
     return;
   llvm::errs() << "[poseidon] pin: " << value << "\n";
 }
 
 bool applySolution(
-    ArrayRef<SolutionStep> steps,
+    Session &S, ArrayRef<SolutionStep> steps,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, Value *> &symbolToValueMap,
     SmallVectorImpl<SolutionStep> &applied) {
@@ -2415,19 +2400,20 @@ bool applySolution(
               return;
             }
             rewrittenOutputs.insert(item->roots.begin(), item->roots.end());
-            item->apply(step.candidateIndex, valueToNodeMap, symbolToValueMap);
+            item->apply(step.candidateIndex, valueToNodeMap, symbolToValueMap,
+                        S.Opts.Diagnostics.Print);
           } else if constexpr (std::is_same_v<T, CandidateSubgraph>) {
             const PTCandidate &cand = item->candidates[step.candidateIndex];
             llvm::errs() << "Applying solution for CS: " << cand.desc << " (#"
                          << cand.ordinal << ")\n";
-            item->apply(step.candidateIndex);
+            item->apply(S, step.candidateIndex);
           } else if constexpr (std::is_same_v<T, CandidateMatmul>) {
             llvm::errs() << "Applying solution for matmul[" << item->matmul->id
                          << "] -> "
                          << matmulOptionLabel(
                                 item->candidates[step.candidateIndex])
                          << " (#" << step.candidateIndex << ")\n";
-            item->apply(step.candidateIndex);
+            item->apply(S, step.candidateIndex);
           } else {
             llvm_unreachable("applySolution: unexpected SolutionStep variant");
           }

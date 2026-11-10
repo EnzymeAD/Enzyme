@@ -10,7 +10,7 @@
 #include "Expansion.h"
 #include "CostModel.h"
 #include "Optimize.h"
-#include "Pass/Flags.h"
+#include "Pass/Session.h"
 #include "Staging.h"
 #include "Utils.h"
 #include "llvm/ADT/DenseMap.h"
@@ -19,7 +19,6 @@
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
-#include "llvm/Support/CommandLine.h"
 
 using namespace llvm;
 
@@ -178,7 +177,8 @@ Value *emitDSToF64(IRBuilder<> &B, DSValue ds) {
 // reads the join twice. `foldedLimbs` collects the limbs that replace each
 // folded join, which the cost walk must re-root on (the old F64 output is
 // dead).
-bool foldDSPairRoundtrip(Function &F, SmallVectorImpl<Value *> *foldedLimbs) {
+bool foldDSPairRoundtrip(Function &F, SmallVectorImpl<Value *> *foldedLimbs,
+                         bool print) {
   SmallVector<Instruction *, 32> joins;
   for (BasicBlock &BB : F)
     for (Instruction &I : BB)
@@ -248,7 +248,7 @@ bool foldDSPairRoundtrip(Function &F, SmallVectorImpl<Value *> *foldedLimbs) {
     }
     changed = true;
   }
-  if (changed && flags::Print)
+  if (changed && print)
     llvm::errs()
         << "[poseidon] folded df64 join/split roundtrips at the staging "
            "boundary in "
@@ -294,9 +294,6 @@ static DSValue splitConstantFP(IRBuilder<> &B, ConstantFP *CFP) {
   return ds;
 }
 
-static DSValue getOrSplitOperand(IRBuilder<> &B, Value *op,
-                                 DenseMap<Value *, DSValue> &dsMap);
-
 // Loop-carried phi incomings are deferred: the accumulator phi and the
 // accumulation feeding it are mutually dependent, and resolving the back edge
 // eagerly would collapse the phi to a single double.
@@ -307,10 +304,11 @@ struct DeferredDSPhiIn {
   BasicBlock *block;
 };
 } // namespace
-static SmallVector<DeferredDSPhiIn, 16> &deferredDSPhiIns() {
-  static SmallVector<DeferredDSPhiIn, 16> v;
-  return v;
-}
+using DeferredDSPhiIns = SmallVector<DeferredDSPhiIn, 16>;
+
+static DSValue getOrSplitOperand(IRBuilder<> &B, Value *op,
+                                 DenseMap<Value *, DSValue> &dsMap,
+                                 DeferredDSPhiIns &deferred);
 
 // Any scalar f32/f64 value has a DS representation (materialized op, split
 // constant, carried phi, or boundary emitToDS).
@@ -320,7 +318,8 @@ static bool hasDSRepresentation(Value *op) {
 }
 
 static DSValue getOrSplitOperand(IRBuilder<> &B, Value *op,
-                                 DenseMap<Value *, DSValue> &dsMap) {
+                                 DenseMap<Value *, DSValue> &dsMap,
+                                 DeferredDSPhiIns &deferred) {
   if (auto it = dsMap.find(op); it != dsMap.end())
     return it->second;
 
@@ -355,7 +354,7 @@ static DSValue getOrSplitOperand(IRBuilder<> &B, Value *op,
         } else {
           // Not materialized yet (a loop back edge); defer to applyExpansion's
           // drain.
-          deferredDSPhiIns().push_back({hiPhi, loPhi, in, inBB});
+          deferred.push_back({hiPhi, loPhi, in, inBB});
         }
       }
       return result;
@@ -366,12 +365,13 @@ static DSValue getOrSplitOperand(IRBuilder<> &B, Value *op,
 }
 
 static DSValue emitDSForInstruction(IRBuilder<> &B, Instruction *I,
-                                    DenseMap<Value *, DSValue> &dsMap) {
+                                    DenseMap<Value *, DSValue> &dsMap,
+                                    DeferredDSPhiIns &deferred) {
   unsigned opcode = I->getOpcode();
 
   if (auto *BO = dyn_cast<BinaryOperator>(I)) {
-    DSValue lhs = getOrSplitOperand(B, BO->getOperand(0), dsMap);
-    DSValue rhs = getOrSplitOperand(B, BO->getOperand(1), dsMap);
+    DSValue lhs = getOrSplitOperand(B, BO->getOperand(0), dsMap, deferred);
+    DSValue rhs = getOrSplitOperand(B, BO->getOperand(1), dsMap, deferred);
 
     switch (opcode) {
     case Instruction::FAdd:
@@ -389,7 +389,7 @@ static DSValue emitDSForInstruction(IRBuilder<> &B, Instruction *I,
 
   if (auto *UO = dyn_cast<UnaryOperator>(I)) {
     if (opcode == Instruction::FNeg) {
-      DSValue x = getOrSplitOperand(B, UO->getOperand(0), dsMap);
+      DSValue x = getOrSplitOperand(B, UO->getOperand(0), dsMap, deferred);
       return emitDSNeg(B, x);
     }
   }
@@ -421,13 +421,13 @@ static DSValue emitDSForInstruction(IRBuilder<> &B, Instruction *I,
     }
 
     if (mathName == "sqrt") {
-      DSValue x = getOrSplitOperand(B, CI->getArgOperand(0), dsMap);
+      DSValue x = getOrSplitOperand(B, CI->getArgOperand(0), dsMap, deferred);
       return emitDSSqrt(B, x);
     }
     if (mathName == "fmuladd" || mathName == "fma") {
-      DSValue a = getOrSplitOperand(B, CI->getArgOperand(0), dsMap);
-      DSValue b = getOrSplitOperand(B, CI->getArgOperand(1), dsMap);
-      DSValue c = getOrSplitOperand(B, CI->getArgOperand(2), dsMap);
+      DSValue a = getOrSplitOperand(B, CI->getArgOperand(0), dsMap, deferred);
+      DSValue b = getOrSplitOperand(B, CI->getArgOperand(1), dsMap, deferred);
+      DSValue c = getOrSplitOperand(B, CI->getArgOperand(2), dsMap, deferred);
       return emitDSFMA(B, a, b, c);
     }
   }
@@ -437,18 +437,17 @@ static DSValue emitDSForInstruction(IRBuilder<> &B, Instruction *I,
 
 // df64 limbs produced for the rewritten instructions; getCompCost re-roots its
 // cost walk on them because the original F64 roots are RAUW'd and DCE'd.
-static SmallVector<Value *, 32> g_lastExpansionLimbs;
-void takeLastExpansionLimbs(SmallVectorImpl<Value *> &out) {
-  out.append(g_lastExpansionLimbs.begin(), g_lastExpansionLimbs.end());
-  g_lastExpansionLimbs.clear();
+void takeLastExpansionLimbs(Session &S, SmallVectorImpl<Value *> &out) {
+  out.append(S.LastExpansionLimbs.begin(), S.LastExpansionLimbs.end());
+  S.LastExpansionLimbs.clear();
 }
 
-void applyExpansion(ArrayRef<Instruction *> instsToChange,
+void applyExpansion(Session &S, ArrayRef<Instruction *> instsToChange,
                     const SmallPtrSetImpl<Instruction *> &allChanged,
                     DenseMap<Value *, Value *> *restoredValues) {
   DenseMap<Value *, DSValue> dsMap;
-  deferredDSPhiIns().clear();
-  g_lastExpansionLimbs.clear();
+  DeferredDSPhiIns deferred;
+  S.LastExpansionLimbs.clear();
   // Captured before the erase loop below invalidates instsToChange.
   Function *parentF =
       instsToChange.empty() ? nullptr : instsToChange[0]->getFunction();
@@ -458,7 +457,7 @@ void applyExpansion(ArrayRef<Instruction *> instsToChange,
   // operation is rounded as written.
   for (Instruction *I : instsToChange) {
     IRBuilder<> B(I);
-    DSValue ds = emitDSForInstruction(B, I, dsMap);
+    DSValue ds = emitDSForInstruction(B, I, dsMap, deferred);
     if (!ds.hi) {
       errs() << "[poseidon] expansion: unsupported instruction, skipping: "
              << *I << "\n";
@@ -467,17 +466,17 @@ void applyExpansion(ArrayRef<Instruction *> instsToChange,
 
     dsMap[I] = ds;
     if (ds.hi)
-      g_lastExpansionLimbs.push_back(ds.hi);
+      S.LastExpansionLimbs.push_back(ds.hi);
     if (ds.lo)
-      g_lastExpansionLimbs.push_back(ds.lo);
+      S.LastExpansionLimbs.push_back(ds.lo);
   }
 
   // Resolve deferred back-edge phi incomings now the subgraph is in dsMap;
   // iterative, since resolving one incoming may carry a nested phi.
-  while (!deferredDSPhiIns().empty()) {
-    DeferredDSPhiIn d = deferredDSPhiIns().pop_back_val();
+  while (!deferred.empty()) {
+    DeferredDSPhiIn d = deferred.pop_back_val();
     IRBuilder<> predB(d.block->getTerminator());
-    DSValue inDS = getOrSplitOperand(predB, d.incoming, dsMap);
+    DSValue inDS = getOrSplitOperand(predB, d.incoming, dsMap, deferred);
     d.hiPhi->addIncoming(inDS.hi, d.block);
     d.loPhi->addIncoming(inDS.lo, d.block);
   }
@@ -548,9 +547,10 @@ void applyExpansion(ArrayRef<Instruction *> instsToChange,
   // tried after each unit and self-gates until then. Here, not in the
   // post-pass, so foldDSPairRoundtrip sees the join/split pair it cancels. A
   // pricing clone is not a registered site, so the lookup fails and it bails.
-  if (flags::NarrowParamStaging && parentF &&
-      narrowSharedStagingParamDS(*parentF, parentF))
-    foldDSPairRoundtrip(*parentF, /*foldedLimbs=*/nullptr);
+  if (S.Opts.Materialization.NarrowParamStaging && parentF &&
+      narrowSharedStagingParamDS(S, *parentF, parentF))
+    foldDSPairRoundtrip(*parentF, /*foldedLimbs=*/nullptr,
+                        S.Opts.Diagnostics.Print);
 }
 
 // Wider FP32 expansions (n = 3, 4), a parallel arm sharing TwoSum and the FMA
@@ -1219,11 +1219,7 @@ struct DeferredExpansionPhiIn {
   BasicBlock *block;
 };
 } // namespace
-
-static SmallVector<DeferredExpansionPhiIn, 16> &deferredExpansionPhiIns() {
-  static SmallVector<DeferredExpansionPhiIn, 16> v;
-  return v;
-}
+using DeferredExpansionPhiIns = SmallVector<DeferredExpansionPhiIn, 16>;
 
 static ExpansionValue splitConstantFPExpansion(IRBuilder<> &B, ConstantFP *CFP,
                                                unsigned n) {
@@ -1240,7 +1236,8 @@ static ExpansionValue splitConstantFPExpansion(IRBuilder<> &B, ConstantFP *CFP,
 
 static ExpansionValue
 getOrSplitOperandExpansion(IRBuilder<> &B, Value *op, unsigned n,
-                           DenseMap<Value *, ExpansionValue> &expansionMap) {
+                           DenseMap<Value *, ExpansionValue> &expansionMap,
+                           DeferredExpansionPhiIns &deferred) {
   if (auto it = expansionMap.find(op); it != expansionMap.end())
     return it->second;
 
@@ -1279,7 +1276,7 @@ getOrSplitOperandExpansion(IRBuilder<> &B, Value *op, unsigned n,
           for (unsigned c = 0; c < n; ++c)
             phis[c]->addIncoming(inExpansion.x[c], inBB);
         } else {
-          deferredExpansionPhiIns().push_back({phis, in, inBB});
+          deferred.push_back({phis, in, inBB});
         }
       }
       return result;
@@ -1291,17 +1288,18 @@ getOrSplitOperandExpansion(IRBuilder<> &B, Value *op, unsigned n,
 
 static ExpansionValue
 emitExpansionForInstruction(IRBuilder<> &B, Instruction *I, unsigned n,
-                            DenseMap<Value *, ExpansionValue> &expansionMap) {
+                            DenseMap<Value *, ExpansionValue> &expansionMap,
+                            DeferredExpansionPhiIns &deferred) {
   unsigned opcode = I->getOpcode();
 
   if (auto *BO = dyn_cast<BinaryOperator>(I)) {
     const bool sameOperand = BO->getOperand(0) == BO->getOperand(1);
-    ExpansionValue lhs =
-        getOrSplitOperandExpansion(B, BO->getOperand(0), n, expansionMap);
+    ExpansionValue lhs = getOrSplitOperandExpansion(B, BO->getOperand(0), n,
+                                                    expansionMap, deferred);
     ExpansionValue rhs =
-        sameOperand
-            ? lhs
-            : getOrSplitOperandExpansion(B, BO->getOperand(1), n, expansionMap);
+        sameOperand ? lhs
+                    : getOrSplitOperandExpansion(B, BO->getOperand(1), n,
+                                                 expansionMap, deferred);
     switch (opcode) {
     case Instruction::FAdd:
       return emitExpansionAdd(B, lhs, rhs);
@@ -1320,7 +1318,8 @@ emitExpansionForInstruction(IRBuilder<> &B, Instruction *I, unsigned n,
   if (auto *UO = dyn_cast<UnaryOperator>(I))
     if (opcode == Instruction::FNeg)
       return emitExpansionNeg(
-          B, getOrSplitOperandExpansion(B, UO->getOperand(0), n, expansionMap));
+          B, getOrSplitOperandExpansion(B, UO->getOperand(0), n, expansionMap,
+                                        deferred));
 
   if (auto *CI = dyn_cast<CallInst>(I)) {
     Function *callee = CI->getCalledFunction();
@@ -1350,18 +1349,18 @@ emitExpansionForInstruction(IRBuilder<> &B, Instruction *I, unsigned n,
 
     if (mathName == "sqrt")
       return emitExpansionSqrt(
-          B,
-          getOrSplitOperandExpansion(B, CI->getArgOperand(0), n, expansionMap));
+          B, getOrSplitOperandExpansion(B, CI->getArgOperand(0), n,
+                                        expansionMap, deferred));
     if (mathName == "fmuladd" || mathName == "fma") {
       const bool sameFactor = CI->getArgOperand(0) == CI->getArgOperand(1);
-      ExpansionValue a =
-          getOrSplitOperandExpansion(B, CI->getArgOperand(0), n, expansionMap);
+      ExpansionValue a = getOrSplitOperandExpansion(B, CI->getArgOperand(0), n,
+                                                    expansionMap, deferred);
       ExpansionValue b =
           sameFactor ? a
                      : getOrSplitOperandExpansion(B, CI->getArgOperand(1), n,
-                                                  expansionMap);
-      ExpansionValue c =
-          getOrSplitOperandExpansion(B, CI->getArgOperand(2), n, expansionMap);
+                                                  expansionMap, deferred);
+      ExpansionValue c = getOrSplitOperandExpansion(B, CI->getArgOperand(2), n,
+                                                    expansionMap, deferred);
       return emitExpansionAdd(
           B, sameFactor ? emitExpansionSqr(B, a) : emitExpansionMul(B, a, b),
           c);
@@ -1371,29 +1370,30 @@ emitExpansionForInstruction(IRBuilder<> &B, Instruction *I, unsigned n,
   return ExpansionValue{};
 }
 
-// Separate from g_lastExpansionLimbs: one candidate can apply both an expansion
+// Separate from LastExpansionLimbs: one candidate can apply both an expansion
 // change and a double-single change, and applyExpansion clears its list on
 // entry.
-static SmallVector<Value *, 32> g_lastExpLimbs;
-void takeLastExpLimbs(SmallVectorImpl<Value *> &out) {
-  out.append(g_lastExpLimbs.begin(), g_lastExpLimbs.end());
-  g_lastExpLimbs.clear();
+void takeLastExpLimbs(Session &S, SmallVectorImpl<Value *> &out) {
+  out.append(S.LastExpLimbs.begin(), S.LastExpLimbs.end());
+  S.LastExpLimbs.clear();
 }
 // Cleared once per candidate, not per change: a tier pair calls applyExpansion
 // twice.
-void resetExpLimbs() { g_lastExpLimbs.clear(); }
+void resetExpLimbs(Session &S) { S.LastExpLimbs.clear(); }
 
-void applyExpansion(unsigned n, ArrayRef<Instruction *> instsToChange,
+void applyExpansion(Session &S, unsigned n,
+                    ArrayRef<Instruction *> instsToChange,
                     const SmallPtrSetImpl<Instruction *> &allChanged,
                     DenseMap<Value *, Value *> *restoredValues) {
   expansionCheckN(n);
   DenseMap<Value *, ExpansionValue> expansionMap;
-  deferredExpansionPhiIns().clear();
+  DeferredExpansionPhiIns deferred;
 
   // No fast-math flags on the emitted operations, as in the two-component arm.
   for (Instruction *I : instsToChange) {
     IRBuilder<> B(I);
-    ExpansionValue mf = emitExpansionForInstruction(B, I, n, expansionMap);
+    ExpansionValue mf =
+        emitExpansionForInstruction(B, I, n, expansionMap, deferred);
     if (mf.x.empty()) {
       errs() << "Expansion(" << n
              << "): unsupported instruction, skipping: " << *I << "\n";
@@ -1401,14 +1401,14 @@ void applyExpansion(unsigned n, ArrayRef<Instruction *> instsToChange,
     }
     expansionMap[I] = mf;
     for (Value *v : mf.x)
-      g_lastExpLimbs.push_back(v);
+      S.LastExpLimbs.push_back(v);
   }
 
-  while (!deferredExpansionPhiIns().empty()) {
-    DeferredExpansionPhiIn d = deferredExpansionPhiIns().pop_back_val();
+  while (!deferred.empty()) {
+    DeferredExpansionPhiIn d = deferred.pop_back_val();
     IRBuilder<> predB(d.block->getTerminator());
-    ExpansionValue inExpansion =
-        getOrSplitOperandExpansion(predB, d.incoming, n, expansionMap);
+    ExpansionValue inExpansion = getOrSplitOperandExpansion(
+        predB, d.incoming, n, expansionMap, deferred);
     for (unsigned c = 0; c < n; ++c)
       d.phis[c]->addIncoming(inExpansion.x[c], d.block);
   }

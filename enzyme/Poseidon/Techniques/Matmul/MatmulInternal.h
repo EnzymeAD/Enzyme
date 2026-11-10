@@ -14,11 +14,15 @@
 
 namespace poseidon {
 
+struct CostModelState;
+struct Options;
+class Session;
+
 std::string mmaShapeSuffix(unsigned M, unsigned N, unsigned K);
-double getMatmulCompCost(unsigned M, unsigned N, unsigned K, FPKind inputPrec,
-                         FPKind accPrec);
+double getMatmulCompCost(CostModelState &CM, unsigned M, unsigned N, unsigned K,
+                         FPKind inputPrec, FPKind accPrec);
 std::string inKernelCostClass(const SchemeVariant &v);
-bool priceInKernelRaiseFromMeasuredRow(const AbstractMatmul &m,
+bool priceInKernelRaiseFromMeasuredRow(Session &S, const AbstractMatmul &m,
                                        const std::string &cls, unsigned tileM,
                                        unsigned tileN, unsigned tileK,
                                        double baselinePerMac,
@@ -30,21 +34,22 @@ struct WmmaTarget {
   FPKind inputPrec;
   FPKind accPrec;
 };
-const llvm::SmallVector<WmmaTarget, 16> &getAvailableWmmaTargets();
-bool inKernelRaiseFits(llvm::Function *F, const AbstractMatmul &m,
+const llvm::SmallVector<WmmaTarget, 16> &getAvailableWmmaTargets(Session &S);
+bool inKernelRaiseFits(const Options &O, llvm::Function *F,
+                       const AbstractMatmul &m,
                        const CandidateMatmul::Option &opt,
                        uint64_t existingBytes, llvm::StringRef className);
 
 // `confidence` is the fraction of the sampled inputs the returned domain error
 // bounds (the percentile it is read off).
-double getMatmulAccuracyCost(const AbstractMatmul &m, const MatmulProfile &prof,
-                             double confidence, unsigned sampleLogBits,
-                             FPKind inputPrec, FPKind accPrec,
-                             double *domainErrOut = nullptr,
+double getMatmulAccuracyCost(Session &S, const AbstractMatmul &m,
+                             const MatmulProfile &prof, double confidence,
+                             unsigned sampleLogBits, FPKind inputPrec,
+                             FPKind accPrec, double *domainErrOut = nullptr,
                              FPKind exponentPrec = FPKind::Invalid,
                              unsigned orderTileK = 0,
                              unsigned inputMantBits = 0);
-double getOzakiIIAccuracyCost(const AbstractMatmul &m,
+double getOzakiIIAccuracyCost(Session &S, const AbstractMatmul &m,
                               const MatmulProfile &prof, double confidence,
                               unsigned sampleLogBits, unsigned capturedBits,
                               double *domainErrOut = nullptr);

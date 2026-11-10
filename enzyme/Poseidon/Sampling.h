@@ -29,6 +29,7 @@
 
 namespace poseidon {
 
+struct Options;
 struct Subgraph;
 class FPNode;
 
@@ -45,12 +46,12 @@ struct CancellationPlan {
 };
 
 CancellationPlan buildCancellationPlan(
-    const Subgraph &subgraph,
+    const Options &O, const Subgraph &subgraph,
     const std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>>
         &valueToNodeMap);
 
 void getSampledPoints(
-    llvm::ArrayRef<llvm::Value *> inputs,
+    const Options &O, llvm::ArrayRef<llvm::Value *> inputs,
     const std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>>
         &valueToNodeMap,
     const std::unordered_map<std::string, llvm::Value *> &symbolToValueMap,
@@ -59,7 +60,7 @@ void getSampledPoints(
     unsigned seedOffset = 0);
 
 void getSampledPoints(
-    const std::string &expr,
+    const Options &O, const std::string &expr,
     const std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>>
         &valueToNodeMap,
     const std::unordered_map<std::string, llvm::Value *> &symbolToValueMap,

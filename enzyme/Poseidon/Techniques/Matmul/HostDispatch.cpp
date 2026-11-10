@@ -7,7 +7,7 @@
 #include "Evaluators.h"
 #include "Matmul.h"
 #include "Optimize.h"
-#include "Pass/Flags.h"
+#include "Pass/Session.h"
 #include "Profile/Instrument.h"
 #include "Sites/LaunchDescriptors.h"
 
@@ -343,7 +343,8 @@ static bool collectIndexBounds(const Value *cond, bool holds, uint64_t bound[3],
 // True deploy extents of the product this body writes, from the constants that
 // gate its C store: every condition dominating the store (outside the reduction
 // loop) must bound a global thread index, and both matrix axes must be bounded.
-static bool recoverGuardExtents(Function &F, const AbstractMatmul &m,
+static bool recoverGuardExtents(const Options &O, Function &F,
+                                const AbstractMatmul &m,
                                 const StoreInst *cStore, unsigned &cropM,
                                 unsigned &cropN, int &axM, int &axN) {
   const ScalarLoopHandle &h = m.scalarLoop;
@@ -369,7 +370,7 @@ static bool recoverGuardExtents(Function &F, const AbstractMatmul &m,
       if (!DT.dominates(BasicBlockEdge(&BB, BI->getSuccessor(i)), SB))
         continue;
       if (!collectIndexBounds(branchCondition(BI), /*holds=*/i == 0, bound)) {
-        if (flags::Print)
+        if (O.Diagnostics.Print)
           llvm::errs() << "[ozaki-host-dispatch] " << F.getName()
                        << ": a condition gating the GEMM store is not a thread-"
                           "index bound, so the written extent is not a "
@@ -385,7 +386,7 @@ static bool recoverGuardExtents(Function &F, const AbstractMatmul &m,
   return true;
 }
 
-bool computeGemmBodyNote(Function &F, const AbstractMatmul &m,
+bool computeGemmBodyNote(const Options &O, Function &F, const AbstractMatmul &m,
                          GemmBodyNote &note) {
   note = GemmBodyNote{};
   if (m.origin != AbstractMatmul::Origin::ScalarLoopReduction)
@@ -483,7 +484,7 @@ bool computeGemmBodyNote(Function &F, const AbstractMatmul &m,
       // intersected with the launch geometry by the host stub.
       unsigned cropM = 0, cropN = 0;
       int axM = -1, axN = -1;
-      if (recoverGuardExtents(F, m, cStore, cropM, cropN, axM, axN)) {
+      if (recoverGuardExtents(O, F, m, cStore, cropM, cropN, axM, axN)) {
         note.gM = cropM;
         note.gNcols = cropN;
         note.launchCrop = true;
@@ -519,7 +520,7 @@ bool computeGemmBodyNote(Function &F, const AbstractMatmul &m,
              "will choose among the remaining in-kernel candidates, which may "
              "be MATERIALLY LESS ACCURATE than the withdrawn one. Re-check the "
              "selected scheme for this site before trusting the result.\n";
-      if (flags::StrictMode)
+      if (O.Model.StrictMode)
         llvm::report_fatal_error(
             "host-dispatch geometry is unrecoverable for a non-square GEMM at "
             "a "
@@ -590,15 +591,11 @@ bool fissionGemmForDispatch(Function &F, const AbstractMatmul &m) {
   return true;
 }
 
-static NoteMap<GemmBodyNote> &noteMap() {
-  static NoteMap<GemmBodyNote> m;
-  return m;
+void noteGemmBody(Session &S, const Function *body, const GemmBodyNote &n) {
+  S.GemmBodies.note(body, n);
 }
-void noteGemmBody(const Function *body, const GemmBodyNote &n) {
-  noteMap().note(body, n);
-}
-bool getGemmBody(const Function *body, GemmBodyNote &out) {
-  return noteMap().get(body, out);
+bool getGemmBody(const Session &S, const Function *body, GemmBodyNote &out) {
+  return S.GemmBodies.get(body, out);
 }
 
 static std::string launchArgString(int arg, int64_t offset) {
@@ -608,8 +605,8 @@ static std::string launchArgString(int arg, int64_t offset) {
   return s;
 }
 
-static void emitDescriptor(StringRef wrapperName, int cArg, int aArg, int bArg,
-                           const GemmBodyNote &n) {
+static void emitDescriptor(Session &S, StringRef wrapperName, int cArg,
+                           int aArg, int bArg, const GemmBodyNote &n) {
   const GemmBodyNote::RtDim *dims[6] = {&n.rM,   &n.rNcols, &n.rK,
                                         &n.rlda, &n.rldb,   &n.rldc};
   bool plainDims = llvm::all_of(
@@ -629,7 +626,7 @@ static void emitDescriptor(StringRef wrapperName, int cArg, int aArg, int bArg,
   // cArg aArg bArg N standalone numModuli gM gNcols gK lda ldb ldc aCol bCol
   // cCol scheme, then the keyword-tagged blocks.
   recordDescriptor(
-      LaunchKind::HostDispatch, wrapperName,
+      S, LaunchKind::HostDispatch, wrapperName,
       [&](raw_ostream &os) {
         os << ' ' << cArg << ' ' << aArg << ' ' << bArg << ' ' << n.N << ' '
            << (n.standalone ? 1 : 0) << ' ' << n.numModuli << ' ' << n.gM << ' '
@@ -680,7 +677,8 @@ static void emitDescriptor(StringRef wrapperName, int cArg, int aArg, int bArg,
 
 // Shared descriptor emit for the per-site path and the deferred joint-dp
 // flush: map C/A/B via `mapParam`, skipping (with a message) if any fails.
-static void emitMappedDescriptor(StringRef wrapperName, const GemmBodyNote &n,
+static void emitMappedDescriptor(Session &S, StringRef wrapperName,
+                                 const GemmBodyNote &n,
                                  function_ref<int(int)> mapParam) {
   int cArg = mapParam(n.cParam);
   int aArg = mapParam(n.aParam);
@@ -716,56 +714,43 @@ static void emitMappedDescriptor(StringRef wrapperName, const GemmBodyNote &n,
     }
     f->param = a;
   }
-  emitDescriptor(wrapperName, cArg, aArg, bArg, mapped);
+  emitDescriptor(S, wrapperName, cArg, aArg, bArg, mapped);
 }
 
-void writeGemmDescriptor(Function &wrapper, ArrayRef<Value *> primalArgs,
-                         const GemmBodyNote &n) {
+void writeGemmDescriptor(Session &S, Function &wrapper,
+                         ArrayRef<Value *> primalArgs, const GemmBodyNote &n) {
   if (!n.valid)
     return;
-  emitMappedDescriptor(wrapper.getName(), n, [&](int bp) -> int {
+  emitMappedDescriptor(S, wrapper.getName(), n, [&](int bp) -> int {
     if (bp < 0 || (size_t)bp >= primalArgs.size())
       return -1;
     return traceToArgIndex(primalArgs[bp]);
   });
 }
 
-namespace {
-struct PendingGemm {
-  std::string wrapperName;
-  std::vector<int> paramToArg; // body-param index -> wrapper launch-arg index
-};
-// In the order the sites were split, so that of two sites of one wrapper the
-// same one is recorded last in every compile.
-static MapVector<const Function *, PendingGemm> &pendingMap() {
-  static MapVector<const Function *, PendingGemm> m;
-  return m;
-}
-} // namespace
-
-void addPendingGemmDispatch(const Function *body, Function &wrapper,
+void addPendingGemmDispatch(Session &S, const Function *body, Function &wrapper,
                             ArrayRef<Value *> primalArgs) {
   PendingGemm pg;
   pg.wrapperName = wrapper.getName().str();
   pg.paramToArg.resize(primalArgs.size());
   for (size_t i = 0; i < primalArgs.size(); ++i)
     pg.paramToArg[i] = traceToArgIndex(primalArgs[i]);
-  pendingMap()[body] = std::move(pg);
+  S.PendingGemms[body] = std::move(pg);
 }
 
-void flushPendingGemmDispatches() {
-  for (auto &kv : pendingMap()) {
+void flushPendingGemmDispatches(Session &S) {
+  for (auto &kv : S.PendingGemms) {
     GemmBodyNote n;
-    if (!getGemmBody(kv.first, n))
+    if (!getGemmBody(S, kv.first, n))
       continue; // this site was not materialized as a host dispatch
     const PendingGemm &pg = kv.second;
-    emitMappedDescriptor(pg.wrapperName, n, [&](int bp) -> int {
+    emitMappedDescriptor(S, pg.wrapperName, n, [&](int bp) -> int {
       if (bp < 0 || (size_t)bp >= pg.paramToArg.size())
         return -1;
       return pg.paramToArg[bp];
     });
   }
-  pendingMap().clear();
+  S.PendingGemms.clear();
 }
 
 namespace {
@@ -839,121 +824,124 @@ static FunctionCallee getOzakiDgemmEx(Module &M, DispatchScheme scheme) {
 }
 
 static bool
-readOzDispatchDescriptors(Module &M, std::map<std::string, LaunchDesc> &descs) {
-  readDescriptors(M, LaunchKind::HostDispatch, [&](ArrayRef<StringRef> toks) {
-    if (toks.size() < 17)
-      return;
-    LaunchDesc d;
-    d.kernel = toks[0].str();
-    (void)toks[1].getAsInteger(10, d.cArg);
-    (void)toks[2].getAsInteger(10, d.aArg);
-    (void)toks[3].getAsInteger(10, d.bArg);
-    (void)toks[4].getAsInteger(10, d.N);
-    int sa = 0;
-    (void)toks[5].getAsInteger(10, sa);
-    d.standalone = sa != 0;
-    d.numModuli = kOzakiIIMaxModuli;
-    int nm = (int)kOzakiIIMaxModuli;
-    (void)toks[6].getAsInteger(10, nm);
-    if (nm >= 0 && nm <= (int)kOzakiIIMaxModuli)
-      d.numModuli = (unsigned)nm;
-    int sc = 0;
-    (void)toks[16].getAsInteger(10, sc);
-    d.scheme = sc == 1   ? DispatchScheme::Tcec
-               : sc == 2 ? DispatchScheme::Direct
-                         : DispatchScheme::OzakiII;
-    (void)toks[7].getAsInteger(10, d.gM);
-    (void)toks[8].getAsInteger(10, d.gNcols);
-    (void)toks[9].getAsInteger(10, d.gK);
-    (void)toks[10].getAsInteger(10, d.lda);
-    (void)toks[11].getAsInteger(10, d.ldb);
-    (void)toks[12].getAsInteger(10, d.ldc);
-    int ac = 0, bc = 0, cc = 0;
-    (void)toks[13].getAsInteger(10, ac);
-    (void)toks[14].getAsInteger(10, bc);
-    (void)toks[15].getAsInteger(10, cc);
-    d.aColMajor = ac != 0;
-    d.bColMajor = bc != 0;
-    d.cColMajor = cc != 0;
-    // Trailing runtime-geometry block: flag + 6 x (param mul add) + beta.
-    if (toks.size() >= 36) {
-      int rt = 0;
-      (void)toks[17].getAsInteger(10, rt);
-      if (rt == 1) {
-        GemmBodyNote::RtDim *dd[6] = {&d.rM,   &d.rNcols, &d.rK,
-                                      &d.rlda, &d.rldb,   &d.rldc};
-        for (unsigned i = 0; i < 6; ++i) {
-          int param = -1;
-          (void)toks[18 + 3 * i + 0].getAsInteger(10, param);
-          if (param >= 0)
-            dd[i]->factors.push_back({param, -1});
-          (void)toks[18 + 3 * i + 1].getAsInteger(10, dd[i]->mul);
-          (void)toks[18 + 3 * i + 2].getAsInteger(10, dd[i]->add);
-        }
-        d.runtimeDims = true;
-        if (toks.size() >= 37)
-          (void)toks[36].getAsDouble(d.beta);
-      }
-    }
-    // Keyword blocks of fields and products (see emitDescriptor). A
-    // malformed block drops the descriptor: the kernel then runs as written.
-    for (unsigned i = 17; i < toks.size(); ++i) {
-      size_t at = i + 1;
-      auto next = [&](auto &v) {
-        return at < toks.size() && !toks[at++].getAsInteger(10, v);
-      };
-      if (toks[i] == "rd") {
-        GemmBodyNote::RtDim *dd[6] = {&d.rM,   &d.rNcols, &d.rK,
-                                      &d.rlda, &d.rldb,   &d.rldc};
-        for (GemmBodyNote::RtDim *x : dd) {
-          unsigned nf = 0;
-          if (!next(nf) || nf > 8)
-            return;
-          for (unsigned f = 0; f < nf; ++f) {
-            LaunchRef r;
-            if (!next(r.param) || !next(r.offset))
-              return;
-            x->factors.push_back(r);
+readOzDispatchDescriptors(const Options &O, Module &M,
+                          std::map<std::string, LaunchDesc> &descs) {
+  readDescriptors(
+      O, M, LaunchKind::HostDispatch, [&](ArrayRef<StringRef> toks) {
+        if (toks.size() < 17)
+          return;
+        LaunchDesc d;
+        d.kernel = toks[0].str();
+        (void)toks[1].getAsInteger(10, d.cArg);
+        (void)toks[2].getAsInteger(10, d.aArg);
+        (void)toks[3].getAsInteger(10, d.bArg);
+        (void)toks[4].getAsInteger(10, d.N);
+        int sa = 0;
+        (void)toks[5].getAsInteger(10, sa);
+        d.standalone = sa != 0;
+        d.numModuli = kOzakiIIMaxModuli;
+        int nm = (int)kOzakiIIMaxModuli;
+        (void)toks[6].getAsInteger(10, nm);
+        if (nm >= 0 && nm <= (int)kOzakiIIMaxModuli)
+          d.numModuli = (unsigned)nm;
+        int sc = 0;
+        (void)toks[16].getAsInteger(10, sc);
+        d.scheme = sc == 1   ? DispatchScheme::Tcec
+                   : sc == 2 ? DispatchScheme::Direct
+                             : DispatchScheme::OzakiII;
+        (void)toks[7].getAsInteger(10, d.gM);
+        (void)toks[8].getAsInteger(10, d.gNcols);
+        (void)toks[9].getAsInteger(10, d.gK);
+        (void)toks[10].getAsInteger(10, d.lda);
+        (void)toks[11].getAsInteger(10, d.ldb);
+        (void)toks[12].getAsInteger(10, d.ldc);
+        int ac = 0, bc = 0, cc = 0;
+        (void)toks[13].getAsInteger(10, ac);
+        (void)toks[14].getAsInteger(10, bc);
+        (void)toks[15].getAsInteger(10, cc);
+        d.aColMajor = ac != 0;
+        d.bColMajor = bc != 0;
+        d.cColMajor = cc != 0;
+        // Trailing runtime-geometry block: flag + 6 x (param mul add) + beta.
+        if (toks.size() >= 36) {
+          int rt = 0;
+          (void)toks[17].getAsInteger(10, rt);
+          if (rt == 1) {
+            GemmBodyNote::RtDim *dd[6] = {&d.rM,   &d.rNcols, &d.rK,
+                                          &d.rlda, &d.rldb,   &d.rldc};
+            for (unsigned i = 0; i < 6; ++i) {
+              int param = -1;
+              (void)toks[18 + 3 * i + 0].getAsInteger(10, param);
+              if (param >= 0)
+                dd[i]->factors.push_back({param, -1});
+              (void)toks[18 + 3 * i + 1].getAsInteger(10, dd[i]->mul);
+              (void)toks[18 + 3 * i + 2].getAsInteger(10, dd[i]->add);
+            }
+            d.runtimeDims = true;
+            if (toks.size() >= 37)
+              (void)toks[36].getAsDouble(d.beta);
           }
-          if (!next(x->mul) || !next(x->add))
-            return;
         }
-        if (at >= toks.size() || toks[at].getAsDouble(d.beta))
-          return;
-        d.runtimeDims = true;
-      } else if (toks[i] == "pf") {
-        if (!next(d.cOffset) || !next(d.aOffset) || !next(d.bOffset))
-          return;
-      } else if (toks[i] == "eq") {
-        unsigned ne = 0;
-        if (!next(ne) || ne > 16)
-          return;
-        for (unsigned e = 0; e < ne; ++e) {
-          LaunchRef x, y;
-          if (!next(x.param) || !next(x.offset) || !next(y.param) ||
-              !next(y.offset))
-            return;
-          d.assumedEqual.push_back({x, y});
+        // Keyword blocks of fields and products (see emitDescriptor). A
+        // malformed block drops the descriptor: the kernel then runs as
+        // written.
+        for (unsigned i = 17; i < toks.size(); ++i) {
+          size_t at = i + 1;
+          auto next = [&](auto &v) {
+            return at < toks.size() && !toks[at++].getAsInteger(10, v);
+          };
+          if (toks[i] == "rd") {
+            GemmBodyNote::RtDim *dd[6] = {&d.rM,   &d.rNcols, &d.rK,
+                                          &d.rlda, &d.rldb,   &d.rldc};
+            for (GemmBodyNote::RtDim *x : dd) {
+              unsigned nf = 0;
+              if (!next(nf) || nf > 8)
+                return;
+              for (unsigned f = 0; f < nf; ++f) {
+                LaunchRef r;
+                if (!next(r.param) || !next(r.offset))
+                  return;
+                x->factors.push_back(r);
+              }
+              if (!next(x->mul) || !next(x->add))
+                return;
+            }
+            if (at >= toks.size() || toks[at].getAsDouble(d.beta))
+              return;
+            d.runtimeDims = true;
+          } else if (toks[i] == "pf") {
+            if (!next(d.cOffset) || !next(d.aOffset) || !next(d.bOffset))
+              return;
+          } else if (toks[i] == "eq") {
+            unsigned ne = 0;
+            if (!next(ne) || ne > 16)
+              return;
+            for (unsigned e = 0; e < ne; ++e) {
+              LaunchRef x, y;
+              if (!next(x.param) || !next(x.offset) || !next(y.param) ||
+                  !next(y.offset))
+                return;
+              d.assumedEqual.push_back({x, y});
+            }
+          }
         }
-      }
-    }
-    // Keyword-tagged launch-geometry block (every other token is an integer, so
-    // the keyword cannot collide with one).
-    for (unsigned i = 0; i + 2 < toks.size(); ++i) {
-      if (toks[i] != "lc")
-        continue;
-      int am = -1, an = -1;
-      if (!toks[i + 1].getAsInteger(10, am) &&
-          !toks[i + 2].getAsInteger(10, an) && am >= 0 && am < 3 && an >= 0 &&
-          an < 3 && am != an) {
-        d.launchCrop = true;
-        d.cropMAxis = am;
-        d.cropNAxis = an;
-      }
-      break;
-    }
-    descs[d.kernel] = d;
-  });
+        // Keyword-tagged launch-geometry block (every other token is an
+        // integer, so the keyword cannot collide with one).
+        for (unsigned i = 0; i + 2 < toks.size(); ++i) {
+          if (toks[i] != "lc")
+            continue;
+          int am = -1, an = -1;
+          if (!toks[i + 1].getAsInteger(10, am) &&
+              !toks[i + 2].getAsInteger(10, an) && am >= 0 && am < 3 &&
+              an >= 0 && an < 3 && am != an) {
+            d.launchCrop = true;
+            d.cropMAxis = am;
+            d.cropNAxis = an;
+          }
+          break;
+        }
+        descs[d.kernel] = d;
+      });
   return !descs.empty();
 }
 
@@ -1187,9 +1175,9 @@ static bool dispatchFromLaunchArgs(Module &M, Function &F, const LaunchDesc &d,
 // standalone function whose parameters are the kernel's launch args. Standalone
 // descriptors replace the whole body with the dispatch call; fused bodies get
 // the dispatch prepended and keep the (device-side fissioned) launch.
-bool rewriteGemmStubBodies(Module &M) {
+bool rewriteGemmStubBodies(const Options &O, Module &M) {
   std::map<std::string, LaunchDesc> descs;
-  if (!readOzDispatchDescriptors(M, descs))
+  if (!readOzDispatchDescriptors(O, M, descs))
     return false;
 
   LLVMContext &C = M.getContext();
@@ -1380,9 +1368,9 @@ struct ProfDesc {
 };
 } // namespace
 
-static bool readProfDescriptors(Module &M,
+static bool readProfDescriptors(const Options &O, Module &M,
                                 std::map<std::string, ProfDesc> &out) {
-  readDescriptors(M, LaunchKind::Profiling, [&](ArrayRef<StringRef> toks) {
+  readDescriptors(O, M, LaunchKind::Profiling, [&](ArrayRef<StringRef> toks) {
     if (toks.size() < 4)
       return;
     ProfDesc d;
@@ -1438,9 +1426,9 @@ static Constant *profIntArray(Module &M, const Twine &nameT,
   return GV;
 }
 
-bool rewriteProfileStubBodies(Module &M) {
+bool rewriteProfileStubBodies(const Options &O, Module &M) {
   std::map<std::string, ProfDesc> descs;
-  if (!readProfDescriptors(M, descs))
+  if (!readProfDescriptors(O, M, descs))
     return false;
 
   LLVMContext &C = M.getContext();
@@ -1516,28 +1504,29 @@ bool rewriteProfileStubBodies(Module &M) {
 // host profiler as a host site's is: the device profiler writes a kernel's
 // profile only once the kernel has run, and the host profiler writes one with
 // no records for a registered site that nothing wrote.
-static bool registerProfiledKernels(Module &M) {
+static bool registerProfiledKernels(const Options &O, Module &M) {
   bool changed = false;
-  readProfileHeaders(M, [&](StringRef profileName, StringRef header) {
+  readProfileHeaders(O, M, [&](StringRef profileName, StringRef header) {
     changed |= registerProfileStatic(M, profileName, header);
   });
   return changed;
 }
 
 llvm::PreservedAnalyses HostStubPass::run(llvm::Module &M,
-                                          llvm::ModuleAnalysisManager &) {
-  if (isDeviceModule(M) || !handsOverLaunches())
+                                          llvm::ModuleAnalysisManager &MAM) {
+  const Options &O = sessionOf(M, MAM).Opts;
+  if (isDeviceModule(M) || !handsOverLaunches(O))
     return llvm::PreservedAnalyses::all();
   // Profile generation: every launch of an annotated kernel goes through the
   // runtime helper that supplies its shadow buffers. Host dispatch
   // materializes only in the optimize phase: profile-gen builds instrument the
   // original kernel and do not link the runtime.
   bool changed = false;
-  if (flags::ProfileGenerate) {
-    changed |= rewriteProfileStubBodies(M);
-    changed |= registerProfiledKernels(M);
+  if (O.Profiling.ProfileGenerate) {
+    changed |= rewriteProfileStubBodies(O, M);
+    changed |= registerProfiledKernels(O, M);
   } else {
-    changed = rewriteGemmStubBodies(M);
+    changed = rewriteGemmStubBodies(O, M);
   }
   return changed ? llvm::PreservedAnalyses::none()
                  : llvm::PreservedAnalyses::all();

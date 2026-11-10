@@ -19,7 +19,6 @@
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/IR/Type.h"
-#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/InstructionCost.h"
 #include "llvm/Transforms/Utils/ValueMapper.h"
 
@@ -35,6 +34,8 @@ class FPNode;
 class FPLLValue;
 struct Subgraph;
 class CandidateSubgraph;
+struct Options;
+class Session;
 
 enum class PrecisionChangeType {
   BF16,
@@ -97,16 +98,17 @@ struct PTCandidate {
                        const std::string &desc)
       : changes(std::move(changes)), desc(desc) {}
 
-  void apply(Subgraph &subgraph, llvm::ValueToValueMapTy *VMap = nullptr);
+  void apply(Session &S, Subgraph &subgraph,
+             llvm::ValueToValueMapTy *VMap = nullptr);
 };
 
 void changePrecision(llvm::Instruction *I, PrecisionChange &change,
                      llvm::MapVector<llvm::Value *, llvm::Value *> &oldToNew);
 
-double getCompCost(Subgraph &subgraph, PTCandidate &pt);
+double getCompCost(Session &S, Subgraph &subgraph, PTCandidate &pt);
 
 void setUnifiedAccuracyCost(
-    CandidateSubgraph &CS,
+    const Options &O, CandidateSubgraph &CS,
     std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, llvm::Value *> &symbolToValueMap);
 

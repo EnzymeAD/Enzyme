@@ -19,7 +19,6 @@
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/IR/Value.h"
-#include "llvm/Support/CommandLine.h"
 
 #include <functional>
 #include <memory>
@@ -30,6 +29,9 @@
 #include "Types.h"
 
 namespace poseidon {
+
+struct Options;
+class Session;
 
 std::shared_ptr<FPNode> parseHerbieExpr(
     const std::string &expr,
@@ -64,28 +66,28 @@ llvm::SmallVector<std::string, 1> fpcoreToC(
 
 // The parts of a cache key that say which Herbie searched: its binary and the
 // platform it ranks candidates by.
-void addHerbieKeyParts(CacheKey &key);
+void addHerbieKeyParts(Session &S, CacheKey &key);
 
 // Collects Herbie's rewrites of `inputExprs` into `COs`, unpriced.
-bool improveViaHerbie(const std::vector<std::string> &inputExprs,
+bool improveViaHerbie(Session &S, const std::vector<std::string> &inputExprs,
                       std::vector<CandidateOutput> &COs, int subgraphIdx,
                       llvm::StringRef funcTag);
 
 std::string getHerbieOperator(const llvm::Instruction &I);
 
 std::string getPrecondition(
-    const llvm::SmallSet<std::string, 8> &args,
+    const Options &O, const llvm::SmallSet<std::string, 8> &args,
     const std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>>
         &valueToNodeMap,
     const std::unordered_map<std::string, llvm::Value *> &symbolToValueMap);
 
 void setUnifiedAccuracyCost(
-    CandidateOutput &CO,
+    const Options &O, CandidateOutput &CO,
     std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, llvm::Value *> &symbolToValueMap);
 
 double getCompCost(
-    const std::string &expr, llvm::Module *M,
+    CostModelState &CM, const std::string &expr, llvm::Module *M,
     std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, llvm::Value *> &symbolToValueMap,
     const llvm::FastMathFlags &FMF,

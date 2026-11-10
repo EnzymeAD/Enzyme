@@ -11,7 +11,6 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/IR/PassManager.h"
-#include "llvm/Support/CommandLine.h"
 
 #include "Matmul.h"
 #include "Utils.h"
@@ -24,6 +23,9 @@ class Value;
 } // namespace llvm
 
 namespace poseidon {
+
+struct Options;
+class Session;
 
 // Marks a parameter of an outlined kernel body that carries the kernel's
 // by-value aggregate argument: the body reads the kernel's own copy, so the
@@ -100,13 +102,15 @@ int traceToArgIndex(const llvm::Value *v);
 
 // Compute the GemmBodyNote for matmul m inside optimized body F; false
 // (note.valid = false) if anything is unsupported.
-bool computeGemmBodyNote(llvm::Function &F, const AbstractMatmul &m,
-                         GemmBodyNote &note);
+bool computeGemmBodyNote(const Options &O, llvm::Function &F,
+                         const AbstractMatmul &m, GemmBodyNote &note);
 
-// Process-local (device cc1) stash: fpOptimize records the note keyed by the
+// The session's stash: fpOptimize records the note keyed by the
 // optimized body clone; optimizeSiteBody retrieves it after fpOptimize returns.
-void noteGemmBody(const llvm::Function *body, const GemmBodyNote &n);
-bool getGemmBody(const llvm::Function *body, GemmBodyNote &out);
+void noteGemmBody(Session &S, const llvm::Function *body,
+                  const GemmBodyNote &n);
+bool getGemmBody(const Session &S, const llvm::Function *body,
+                 GemmBodyNote &out);
 
 // Fused-case device transform: replace the GEMM result where the epilogue
 // consumes it with a load from the output buffer filled by the prepended host
@@ -116,27 +120,33 @@ bool fissionGemmForDispatch(llvm::Function &F, const AbstractMatmul &m);
 
 // Map body params to wrapper launch-arg indices via primalArgs and record the
 // wrapper's host dispatch descriptor.
-void writeGemmDescriptor(llvm::Function &wrapper,
+void writeGemmDescriptor(Session &S, llvm::Function &wrapper,
                          llvm::ArrayRef<llvm::Value *> primalArgs,
                          const GemmBodyNote &n);
+
+struct PendingGemm {
+  std::string wrapperName;
+  std::vector<int> paramToArg; // body-param index -> wrapper launch-arg index
+};
 
 // Joint-DP path: the note is produced only in the post-Enzyme joint
 // materialize, so addPendingGemmDispatch captures the body-param to wrapper-arg
 // mapping at split time and flushPendingGemmDispatches records the descriptors
 // afterwards.
-void addPendingGemmDispatch(const llvm::Function *body, llvm::Function &wrapper,
+void addPendingGemmDispatch(Session &S, const llvm::Function *body,
+                            llvm::Function &wrapper,
                             llvm::ArrayRef<llvm::Value *> primalArgs);
-void flushPendingGemmDispatches();
+void flushPendingGemmDispatches(Session &S);
 
 // Rewrite each __device_stub__ launch stub that a host dispatch descriptor in
 // M's manifest matches; must run on the host module before inlining.
-bool rewriteGemmStubBodies(llvm::Module &M);
+bool rewriteGemmStubBodies(const Options &O, llvm::Module &M);
 
 // Rewrite the launch in each launch stub that a profile generation descriptor
 // in M's manifest matches into a call of __poseidon_launch_profiled, which
 // allocates, zeroes and seeds the shadow buffers the profiling kernel takes and
 // launches it. Host module only.
-bool rewriteProfileStubBodies(llvm::Module &M);
+bool rewriteProfileStubBodies(const Options &O, llvm::Module &M);
 
 // PipelineStart pass wrapper for rewriteGemmStubBodies (host module only).
 class HostStubPass : public PassParent<HostStubPass> {

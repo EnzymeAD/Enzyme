@@ -19,6 +19,7 @@
 #include "Core/ExpansionModel.h"
 #include "Evaluators.h"
 #include "Herbie.h"
+#include "Pass/Session.h"
 #include "Techniques/Expansion.h"
 #include "Techniques/Precision.h"
 #include "Types.h"
@@ -445,15 +446,15 @@ void modelApplied(std::vector<AppFn> &fns) {
   fclose(inc);
 }
 
-void materialize(std::vector<AppFn> &fns) {
+void materialize(Session &S, std::vector<AppFn> &fns) {
   for (AppFn &a : fns)
     for (auto &ch : a.changes) {
       SmallPtrSet<Instruction *, 16> all(ch.begin(), ch.end());
       DenseMap<Value *, Value *> restored;
       if (a.n == 2)
-        applyExpansion(ch, all, &restored);
+        applyExpansion(S, ch, all, &restored);
       else
-        applyExpansion(a.n, ch, all, &restored);
+        applyExpansion(S, a.n, ch, all, &restored);
     }
 }
 
@@ -465,12 +466,12 @@ struct EmitRaw : PassParent<EmitRaw> {
 };
 
 struct EmitModel : PassParent<EmitModel> {
-  PreservedAnalyses run(Module &M, ModuleAnalysisManager &) {
+  PreservedAnalyses run(Module &M, ModuleAnalysisManager &MAM) {
     emitAllRaw(M);
     modelRaw();
     std::vector<AppFn> fns = emitApplied(M);
     modelApplied(fns);
-    materialize(fns);
+    materialize(sessionOf(M, MAM), fns);
     return PreservedAnalyses::none();
   }
 };

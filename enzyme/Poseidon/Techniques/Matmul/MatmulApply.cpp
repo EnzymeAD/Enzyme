@@ -2,7 +2,7 @@
 #include "HostDispatch.h"
 #include "InKernelRaise.h"
 #include "MatmulInternal.h"
-#include "Pass/Flags.h"
+#include "Pass/Session.h"
 #include "RaiseWMMA.h"
 
 #include "llvm/ADT/Twine.h"
@@ -96,14 +96,15 @@ static GemmBodyNote runtimeShapeNote(const AbstractMatmul &m) {
 // from, fissioning a fused constant-trip body. The solver picked this
 // candidate, so failing to record it is a hard error rather than a silent FP64
 // fallback.
-static void applyLibraryCall(const AbstractMatmul &m, const SchemeVariant &v) {
+static void applyLibraryCall(Session &S, const AbstractMatmul &m,
+                             const SchemeVariant &v) {
   Function *F = nullptr;
   GemmBodyNote note;
   switch (m.origin) {
   case AbstractMatmul::Origin::Invalid:
     report_fatal_error("Unexpected invalid AbstractMatmul origin");
   case AbstractMatmul::Origin::HostGemmLoopNest: {
-    if (!flags::OzakiHostDispatch)
+    if (!S.Opts.Matmul.OzakiHostDispatch)
       report_fatal_error(
           "a runtime-shape host GEMM candidate was selected but "
           "-poseidon-ozaki-host-dispatch is not set; it has no other "
@@ -129,27 +130,27 @@ static void applyLibraryCall(const AbstractMatmul &m, const SchemeVariant &v) {
     break;
   }
   case AbstractMatmul::Origin::ScalarLoopReduction:
-    if (!flags::OzakiHostDispatch)
+    if (!S.Opts.Matmul.OzakiHostDispatch)
       report_fatal_error(libraryCallFlagError(v.scheme));
     F = m.scalarLoop.fma ? m.scalarLoop.fma->getFunction() : nullptr;
-    if (!F || !computeGemmBodyNote(*F, m, note) || !note.valid)
+    if (!F || !computeGemmBodyNote(S.Opts, *F, m, note) || !note.valid)
       report_fatal_error(libraryCallDescriptorError(v.scheme));
     break;
   }
   note.scheme = descriptorScheme(v);
   note.numModuli = descriptorModulusField(v);
-  noteGemmBody(F, note);
+  noteGemmBody(S, F, note);
   if (!note.standalone)
     fissionGemmForDispatch(*F, m);
 }
 
-void CandidateMatmul::apply(size_t candidateIndex) {
+void CandidateMatmul::apply(Session &S, size_t candidateIndex) {
   if (candidateIndex >= candidates.size())
     report_fatal_error("CandidateMatmul index out of range");
   const Option &opt = candidates[candidateIndex];
 
   if (opt.realization == Realization::LibraryCall) {
-    applyLibraryCall(*matmul, opt.variant);
+    applyLibraryCall(S, *matmul, opt.variant);
     return;
   }
   switch (matmul->origin) {

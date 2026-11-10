@@ -8,7 +8,7 @@
 //===----------------------------------------------------------------------===//
 //
 // A matrix accuracy model's result is a deterministic function of its inputs,
-// so it is kept in flags::Cache, one entry file per key. The key holds the
+// so it is kept in -poseidon-cache, one entry file per key. The key holds the
 // model's inputs and the model's identity, never its results: hosts differ in
 // the last digits of a result for equal inputs. An entry is filed under every
 // part but the identity, so one computed by another model is found and
@@ -31,27 +31,29 @@ namespace poseidon {
 
 struct AbstractMatmul;
 struct MatmulProfile;
+struct Options;
+class Session;
 
 // The memo entry of one evaluation of a matrix accuracy model.
 class MatmulAccuracyMemo {
 public:
   // For getMatmulAccuracyCost on these inputs.
-  static MatmulAccuracyMemo matmul(const AbstractMatmul &m,
+  static MatmulAccuracyMemo matmul(const Options &O, const AbstractMatmul &m,
                                    const MatmulProfile &prof, double confidence,
                                    unsigned sampleLogBits, unsigned numSamples,
                                    FPKind inputPrec, FPKind accPrec,
                                    FPKind exponentPrec, unsigned orderTileK,
                                    unsigned inputMantBits);
   // For getOzakiIIAccuracyCost on these inputs.
-  static MatmulAccuracyMemo ozakiII(const AbstractMatmul &m,
+  static MatmulAccuracyMemo ozakiII(const Options &O, const AbstractMatmul &m,
                                     const MatmulProfile &prof,
                                     double confidence, unsigned sampleLogBits,
                                     unsigned numSamples, unsigned capturedBits);
 
   // The stored result, or one imported by -poseidon-import-accuracy-memo;
   // false when the model has to compute it.
-  bool lookup(double &accuracyCost, double &domainError) const;
-  void store(double accuracyCost, double domainError) const;
+  bool lookup(Session &S, double &accuracyCost, double &domainError) const;
+  void store(const Options &O, double accuracyCost, double domainError) const;
 
 private:
   CacheKey key;

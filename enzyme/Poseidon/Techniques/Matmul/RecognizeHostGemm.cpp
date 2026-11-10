@@ -21,9 +21,9 @@
 // getMinusSCEV of those two never folds. Integer polynomials over SCEV atoms
 // (RgPoly below) make the comparison exact and total, and every dimension is
 // either derived or the whole site is refused.
+#include "Core/Options.h"
 #include "HostDispatch.h"
 #include "MatmulInternal.h"
-#include "Pass/Flags.h"
 #include "Profile/ProfileRead.h"
 #include "Utils.h"
 
@@ -1390,14 +1390,15 @@ namespace {
 // point of this arm.
 #define RG_REJECT(msg)                                                         \
   do {                                                                         \
-    if (flags::Print && phi.getType()->isFloatingPointTy())                    \
+    if (O.Diagnostics.Print && phi.getType()->isFloatingPointTy())             \
       llvm::errs() << "[hostgemm]   reject phi in "                            \
                    << L->getHeader()->getName() << ": " << (msg) << "\n";      \
     return false;                                                              \
   } while (0)
 
-static bool rgMatchReductionPhi(Loop *L, PHINode &phi, ScalarEvolution &SE,
-                                BasicBlock *latch, RgMember &out) {
+static bool rgMatchReductionPhi(const Options &O, Loop *L, PHINode &phi,
+                                ScalarEvolution &SE, BasicBlock *latch,
+                                RgMember &out) {
   if (!phi.getType()->isFloatingPointTy())
     return false;
   Value *be = phi.getIncomingValueForBlock(latch);
@@ -1446,7 +1447,8 @@ static bool rgMatchReductionPhi(Loop *L, PHINode &phi, ScalarEvolution &SE,
 #undef RG_REJECT
 } // namespace
 
-void findHostGemmLoopNests(Function &F, ScalarEvolution &SE, LoopInfo &LI,
+void findHostGemmLoopNests(const Options &O, Function &F, ScalarEvolution &SE,
+                           LoopInfo &LI,
                            const FunctionProfileHeader &profileHeader,
                            const std::unordered_map<size_t, ProfileInfo> &prof,
                            SmallVectorImpl<AbstractMatmul> &out) {
@@ -1454,7 +1456,7 @@ void findHostGemmLoopNests(Function &F, ScalarEvolution &SE, LoopInfo &LI,
   if (!isDeviceModule(*M))
     return;
   if (profileHeader.launchCount == 0) {
-    if (flags::Print)
+    if (O.Diagnostics.Print)
       llvm::errs() << "[hostgemm] " << F.getName()
                    << ": no profile header (launchCount=0); a runtime-shape "
                       "GEMM cannot be priced without one. Skipping.\n";
@@ -1485,12 +1487,12 @@ void findHostGemmLoopNests(Function &F, ScalarEvolution &SE, LoopInfo &LI,
         continue;
       for (PHINode &phi : L->getHeader()->phis()) {
         RgMember m;
-        if (rgMatchReductionPhi(L, phi, SE, latch, m))
+        if (rgMatchReductionPhi(O, L, phi, SE, latch, m))
           members.push_back(m);
       }
     }
   }
-  if (flags::Print)
+  if (O.Diagnostics.Print)
     llvm::errs() << "[hostgemm] " << F.getName() << ": " << members.size()
                  << " candidate reduction loop(s)\n";
   if (members.empty())
@@ -1537,14 +1539,14 @@ void findHostGemmLoopNests(Function &F, ScalarEvolution &SE, LoopInfo &LI,
   unsigned nextId = static_cast<unsigned>(out.size());
   for (unsigned h = 0; h < n; ++h) {
     if (prevOf[h] >= 0 || ambiguous[h]) {
-      if (flags::Print && prevOf[h] < 0)
+      if (O.Diagnostics.Print && prevOf[h] < 0)
         llvm::errs() << "[hostgemm]   loop " << h
                      << " is not a chain head: ambiguous accumulator "
                         "dataflow\n";
       continue;
     }
     if (!rgIsZeroSeed(members[h].init)) {
-      if (flags::Print)
+      if (O.Diagnostics.Print)
         llvm::errs() << "[hostgemm]   loop " << h
                      << " is a chain head whose accumulator does not start at "
                         "+0.0; not a fresh contraction\n";
@@ -1575,7 +1577,7 @@ void findHostGemmLoopNests(Function &F, ScalarEvolution &SE, LoopInfo &LI,
     RuntimeGemmHandle H;
     std::string why;
     if (!rgAnalyzeChain(F, SE, LI, DT, profileHeader, prof, chain, H, why)) {
-      if (flags::Print)
+      if (O.Diagnostics.Print)
         llvm::errs() << "[hostgemm] " << F.getName() << ": reduction chain of "
                      << chain.size()
                      << " loop(s) is not a dispatchable runtime-shape GEMM: "
@@ -1612,7 +1614,7 @@ void findHostGemmLoopNests(Function &F, ScalarEvolution &SE, LoopInfo &LI,
     if (am.hostGemm->epilogue)
       am.footprint.insert(am.hostGemm->epilogue);
 
-    if (flags::Print) {
+    if (O.Diagnostics.Print) {
       const RuntimeGemmHandle &g = *am.hostGemm;
       llvm::errs() << "[hostgemm] " << F.getName() << ": recognized GEMM from "
                    << chain.size() << " reduction loop(s)\n"

@@ -50,7 +50,7 @@ llvm::CallInst *createMathCall(llvm::IRBuilderBase &B, llvm::FunctionCallee F,
 // or under profile generation a transcendental intrinsic the target cannot
 // select (what Enzyme writes a derivative with when the library's function is
 // missing), stops the compile with an error saying what to include.
-void requireDeviceCallees(llvm::Module &M);
+void requireDeviceCallees(llvm::Module &M, bool profileGenerate);
 
 } // namespace poseidon
 

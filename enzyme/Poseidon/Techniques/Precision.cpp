@@ -36,7 +36,7 @@
 #include "Evaluators.h"
 #include "Expansion.h"
 #include "Optimize.h"
-#include "Pass/Flags.h"
+#include "Pass/Session.h"
 #include "Precision.h"
 #include "Sampling.h"
 #include "Staging.h"
@@ -317,7 +317,8 @@ void changePrecision(Instruction *I, PrecisionChange &change,
 
 // If `VMap` is passed, map `llvm::Value`s in `subgraph` to their cloned
 // values and change outputs in VMap to new casted outputs.
-void PTCandidate::apply(Subgraph &subgraph, ValueToValueMapTy *VMap) {
+void PTCandidate::apply(Session &S, Subgraph &subgraph,
+                        ValueToValueMapTy *VMap) {
   SetVector<Instruction *> operations;
   DenseMap<Value *, Value *>
       clonedToOriginal; // Maps cloned outputs to old outputs
@@ -338,7 +339,7 @@ void PTCandidate::apply(Subgraph &subgraph, ValueToValueMapTy *VMap) {
   // One limb record per candidate: the loop below may apply several expansion
   // changes (e.g. a Expansion4 tier over a Expansion3 one) and getCompCost
   // must see every root they produce.
-  resetExpLimbs();
+  resetExpLimbs(S);
 
   for (auto &change : changes) {
     SmallPtrSet<Instruction *, 8> seen;
@@ -379,9 +380,9 @@ void PTCandidate::apply(Subgraph &subgraph, ValueToValueMapTy *VMap) {
                                                   instsToChange.end());
       DenseMap<Value *, Value *> restoredValues;
       if (nComp == 2)
-        applyExpansion(instsToChangeSorted, allChangedSet, &restoredValues);
+        applyExpansion(S, instsToChangeSorted, allChangedSet, &restoredValues);
       else
-        applyExpansion(nComp, instsToChangeSorted, allChangedSet,
+        applyExpansion(S, nComp, instsToChangeSorted, allChangedSet,
                        &restoredValues);
       if (VMap) {
         for (auto &[oldClonedI, restoredV] : restoredValues) {
@@ -455,20 +456,20 @@ void PTCandidate::apply(Subgraph &subgraph, ValueToValueMapTy *VMap) {
 }
 
 void setUnifiedAccuracyCost(
-    CandidateSubgraph &CS,
+    const Options &O, CandidateSubgraph &CS,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, Value *> &symbolToValueMap) {
 
   CancellationPlan cancelPlan =
-      buildCancellationPlan(*CS.subgraph, valueToNodeMap);
+      buildCancellationPlan(O, *CS.subgraph, valueToNodeMap);
   SmallVector<MapVector<Value *, double>, 4> sampledPoints;
-  getSampledPoints(CS.subgraph->inputs.getArrayRef(), valueToNodeMap,
+  getSampledPoints(O, CS.subgraph->inputs.getArrayRef(), valueToNodeMap,
                    symbolToValueMap, sampledPoints, &cancelPlan);
 
   MapVector<FPNode *, SmallVector<double, 4>> goldVals;
   for (auto *output : CS.subgraph->outputs) {
     auto *node = valueToNodeMap[output].get();
-    goldVals[node].resize(flags::NumSamples);
+    goldVals[node].resize(O.Model.NumSamples);
     CS.perOutputInitialAccCost[node] = 0.;
   }
 
@@ -559,7 +560,8 @@ void setUnifiedAccuracyCost(
   CS.candidates = std::move(newCandidates);
 }
 
-double getCompCost(Subgraph &subgraph, PTCandidate &pt) {
+double getCompCost(Session &S, Subgraph &subgraph, PTCandidate &pt) {
+  const Options &O = S.Opts;
   assert(!subgraph.outputs.empty());
 
   double cost = 0.0;
@@ -580,12 +582,12 @@ double getCompCost(Subgraph &subgraph, PTCandidate &pt) {
   for (auto &ch : pt.changes)
     if (expansionComponents(ch.newType))
       ptHasExpansion = true;
-  pt.apply(subgraph, &VMap);
+  pt.apply(S, subgraph, &VMap);
   if (ptHasExpansion) {
     // A tier pair can apply an expansion change and a double-single change,
     // each recording its own roots.
-    takeLastExpansionLimbs(expansionLimbs);
-    takeLastExpLimbs(expansionLimbs);
+    takeLastExpansionLimbs(S, expansionLimbs);
+    takeLastExpLimbs(S, expansionLimbs);
   }
   // An Expansion2 change that converts nothing (unsupported instructions)
   // leaves no limbs, and the untouched FP64 outputs are still the right roots.
@@ -603,14 +605,15 @@ double getCompCost(Subgraph &subgraph, PTCandidate &pt) {
         return true;
     return false;
   }();
-  const ParamArm paramArm = !flags::NarrowParamStaging ? ParamArm::None
-                            : wantsDS                  ? ParamArm::DS
-                                                       : ParamArm::FP32;
+  const ParamArm paramArm = !O.Materialization.NarrowParamStaging
+                                ? ParamArm::None
+                            : wantsDS ? ParamArm::DS
+                                      : ParamArm::FP32;
   // The df64 narrowing turns a staged load's split, some of whose halves are
   // limbs, into a pair load: the limbs follow it through handles.
   SmallVector<WeakTrackingVH, 32> limbHandles(expansionLimbs.begin(),
                                               expansionLimbs.end());
-  applyStagingNarrowing(*FClone, /*announce=*/false, paramArm, F);
+  applyStagingNarrowing(S, *FClone, /*announce=*/false, paramArm, F);
   expansionLimbs.clear();
   for (Value *L : limbHandles)
     if (L)
@@ -619,7 +622,7 @@ double getCompCost(Subgraph &subgraph, PTCandidate &pt) {
   // restore, as applyExpansion does in the emitted code; no-op without the
   // poseidon.ds.join tag.
   SmallVector<Value *, 8> dsFoldRoots;
-  foldDSPairRoundtrip(*FClone, &dsFoldRoots);
+  foldDSPairRoundtrip(*FClone, &dsFoldRoots, O.Diagnostics.Print);
 
   SmallVector<WeakTrackingVH, 8> trackedInputs;
   for (auto &input : subgraph.inputs) {
@@ -650,7 +653,7 @@ double getCompCost(Subgraph &subgraph, PTCandidate &pt) {
         "getCompCost: expansion candidate materialized df64 values but left "
         "no live root for the cost walk, which would price it as free. "
         "Refusing to fabricate a cost.");
-  if (flags::Print && ptHasExpansion && !expansionMaterialized)
+  if (O.Diagnostics.Print && ptHasExpansion && !expansionMaterialized)
     llvm::errs() << "  (expansion change converted no instruction; pricing "
                     "the unchanged cone)\n";
 
@@ -729,9 +732,9 @@ double getCompCost(Subgraph &subgraph, PTCandidate &pt) {
       bodyDepth = std::max(bodyDepth, cloneLI.getLoopDepth(I->getParent()));
 
   const bool freqWeighted =
-      flags::FreqWeightedPricing && subgraph.depthExec.size() > 1;
+      O.Model.FreqWeightedPricing && subgraph.depthExec.size() > 1;
   for (Instruction *I : coneInsts) {
-    double c = getInstructionCompCost(I);
+    double c = getInstructionCompCost(S.CostModel, I);
     unsigned d = cloneLI.getLoopDepth(I->getParent());
     if (freqWeighted) {
       // The measured frequency of this depth subsumes the boundary-cast scale

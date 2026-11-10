@@ -2,7 +2,6 @@
 
 #include "CostModel.h"
 #include "FPProfilerCUDA.h"
-#include "Pass/Flags.h"
 #include "Utils.h"
 
 #include "llvm/ADT/StringSet.h"
@@ -39,8 +38,8 @@ namespace {
 #endif
 } // namespace
 
-bool registerDeviceProfileTable(Module &M) {
-  if (!flags::ProfileGenerate || isDeviceModule(M) ||
+bool registerDeviceProfileTable(Module &M, bool profileGenerate) {
+  if (!profileGenerate || isDeviceModule(M) ||
       M.getNamedGlobal(POSEIDON_CUDA_PROFILE_TABLE))
     return false;
   // Without relocatable device code the unit registers its kernels and device
@@ -122,8 +121,8 @@ bool registerDeviceProfileTable(Module &M) {
   return true;
 }
 
-bool linkDeviceProfiler(Module &M) {
-  if (!flags::ProfileGenerate || !isDeviceModule(M))
+bool linkDeviceProfiler(Module &M, bool profileGenerate) {
+  if (!profileGenerate || !isDeviceModule(M))
     return false;
   if (GlobalVariable *T = M.getNamedGlobal(POSEIDON_CUDA_PROFILE_TABLE))
     if (!T->isDeclaration())

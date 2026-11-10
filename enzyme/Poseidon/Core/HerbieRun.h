@@ -20,6 +20,7 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 
+#include <map>
 #include <string>
 #include <vector>
 
@@ -72,8 +73,12 @@ struct HerbieRunOptions {
 // The digest of a file's contents, or "" when it cannot be read.
 std::string readFileDigest(llvm::StringRef Path);
 
-// The digest of the Herbie binary at `Program`, read once per run.
-std::string herbieBinaryDigest(llvm::StringRef Program);
+// The digests of the Herbie binaries a compile ran, by path.
+using HerbieBinaryDigests = std::map<std::string, std::string>;
+
+// The digest of the Herbie binary at `Program`, read once per compile.
+std::string herbieBinaryDigest(llvm::StringRef Program,
+                               HerbieBinaryDigests &Digests);
 
 // The arguments that decide what Herbie returns for a core. Its timeouts and
 // worker count decide only whether and how soon it returns.
@@ -81,7 +86,8 @@ llvm::SmallVector<std::string> herbieSearchArgs(const HerbieRunOptions &Opts);
 
 // The parts of a cache key that say which Herbie searched: its binary and the
 // platform it ranks candidates by.
-void addHerbieKeyParts(CacheKey &Key, const HerbieRunOptions &Opts);
+void addHerbieKeyParts(CacheKey &Key, const HerbieRunOptions &Opts,
+                       HerbieBinaryDigests &Digests);
 
 struct HerbieRunResult {
   enum class Outcome {
@@ -105,7 +111,8 @@ struct HerbieRunResult {
 // `Label` names the cores in diagnostics, e.g. "subgraph 0 of foo". Herbie
 // exiting without a usable results.json is a fatal error.
 HerbieRunResult runHerbie(const std::vector<std::string> &Cores,
-                          const HerbieRunOptions &Opts, llvm::StringRef Label);
+                          const HerbieRunOptions &Opts, llvm::StringRef Label,
+                          HerbieBinaryDigests &Digests);
 
 } // namespace poseidon
 #endif // POSEIDON_HERBIERUN_H

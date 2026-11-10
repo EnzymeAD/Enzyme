@@ -10,7 +10,7 @@
 #include "Staging.h"
 #include "Expansion.h"
 #include "Optimize.h"
-#include "Pass/Flags.h"
+#include "Pass/Session.h"
 
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallVector.h"
@@ -34,7 +34,7 @@ namespace poseidon {
 // at FP32: stride K -> K/2, `load float` + fpext, fptrunc at the stores. Fires
 // only when every consumer of a staged load rounds to FP32 (fptrunc or fcmp),
 // which keeps the transform value-preserving.
-bool narrowSharedStaging(llvm::Function &F) {
+bool narrowSharedStaging(const Options &O, llvm::Function &F) {
   using namespace llvm;
   Module *M = F.getParent();
   LLVMContext &Ctx = M->getContext();
@@ -90,7 +90,7 @@ bool narrowSharedStaging(llvm::Function &F) {
         elemGEPs.push_back(GEP);
       }
     }
-    if (flags::Print)
+    if (O.Diagnostics.Print)
       llvm::errs() << "[narrow] G=@" << G.getName() << " casts=" << casts.size()
                    << " elemGEPs=" << elemGEPs.size() << " strideK=" << strideK
                    << " bail=" << bail << "\n";
@@ -104,7 +104,7 @@ bool narrowSharedStaging(llvm::Function &F) {
       for (User *U : P->users()) {
         if (auto *L = dyn_cast<LoadInst>(U)) {
           if (L->getType() != DoubleTy || L->getPointerOperand() != P) {
-            if (flags::Print)
+            if (O.Diagnostics.Print)
               llvm::errs() << "[narrow] bail: load " << *L << "\n";
             bail = true;
             break;
@@ -118,7 +118,7 @@ bool narrowSharedStaging(llvm::Function &F) {
                 continue;
             if (isa<FCmpInst>(LU))
               continue;
-            if (flags::Print)
+            if (O.Diagnostics.Print)
               llvm::errs() << "[narrow] bail: FP64 consumer of staged load: "
                            << *LU << "\n";
             bail = true;
@@ -138,7 +138,7 @@ bool narrowSharedStaging(llvm::Function &F) {
           if (!CG->getSourceElementType()->isIntegerTy(8) ||
               CG->getNumIndices() != 1 ||
               !isa<ConstantInt>(CG->getOperand(1))) {
-            if (flags::Print)
+            if (O.Diagnostics.Print)
               llvm::errs() << "[narrow] bail: comp GEP " << *CG << "\n";
             bail = true;
             break;
@@ -152,14 +152,14 @@ bool narrowSharedStaging(llvm::Function &F) {
           auto *Len = dyn_cast<ConstantInt>(MC->getLength());
           if (MC->getArgOperand(0) != P || !Len ||
               Len->getZExtValue() != (uint64_t)strideK || (strideK % 8) != 0) {
-            if (flags::Print)
+            if (O.Diagnostics.Print)
               llvm::errs() << "[narrow] bail: memcpy " << *MC << "\n";
             bail = true;
             break;
           }
           memcpyStores.push_back(MC);
         } else {
-          if (flags::Print)
+          if (O.Diagnostics.Print)
             llvm::errs() << "[narrow] bail: unexpected user of staging ptr: "
                          << *U << "\n";
           bail = true;
@@ -167,7 +167,7 @@ bool narrowSharedStaging(llvm::Function &F) {
         }
       }
     }
-    if (flags::Print)
+    if (O.Diagnostics.Print)
       llvm::errs() << "[narrow]   loads=" << loads.size()
                    << " stores=" << stores.size()
                    << " compGEPs=" << compGEPs.size() << " bail=" << bail
@@ -239,7 +239,7 @@ bool narrowSharedStaging(llvm::Function &F) {
 // df64 analog of narrowSharedStaging: when every staged load is consumed by an
 // emitF64ToDS Dekker split, store the {hi,lo} pair once at the staging store
 // (hi@+0, lo@+4 in the same 8-byte slot) and turn each split into a pair load.
-bool narrowSharedStagingDS(llvm::Function &F) {
+bool narrowSharedStagingDS(const Options &O, llvm::Function &F) {
   using namespace llvm;
   Module *M = F.getParent();
   LLVMContext &Ctx = M->getContext();
@@ -417,7 +417,7 @@ bool narrowSharedStagingDS(llvm::Function &F) {
       MC->eraseFromParent();
     }
     anyChange = true;
-    if (flags::Print)
+    if (O.Diagnostics.Print)
       llvm::errs() << "[poseidon] narrowed shared staging (df64) @"
                    << G.getName() << " (" << loads.size() << " loads, "
                    << stores.size() << " stores, " << memcpys.size()
@@ -519,13 +519,14 @@ static bool matchDekkerSplits(LoadInst *L, SmallVectorImpl<DekkerSplit> &out) {
   return true;
 }
 
-static bool walkStaged(Function &F, ArrayRef<Value *> roots, bool dsMode,
-                       ParamStagedAccess &out);
+static bool walkStaged(const Options &O, Function &F, ArrayRef<Value *> roots,
+                       bool dsMode, ParamStagedAccess &out);
 
 // Resolve G to parameters of F and walk the pointer graph. False if any access
 // is outside the modelled shapes (the buffer is then left alone).
-static bool collectParamStaged(Function &F, Function *Proxy, GlobalVariable &G,
-                               bool dsMode, ParamStagedAccess &out) {
+static bool collectParamStaged(const Session &S, Function &F, Function *Proxy,
+                               GlobalVariable &G, bool dsMode,
+                               ParamStagedAccess &out) {
   SmallVector<Value *, 4> casts;
   for (User *U : G.users()) {
     if (auto *CE = dyn_cast<ConstantExpr>(U)) {
@@ -557,7 +558,7 @@ static bool collectParamStaged(Function &F, Function *Proxy, GlobalVariable &G,
   for (unsigned i = 0; i < F.arg_size(); ++i) {
     if (!F.getArg(i)->getType()->isPointerTy())
       continue;
-    if (Value *SA = siteArg(Proxy, i))
+    if (Value *SA = siteArg(S, Proxy, i))
       if (llvm::is_contained(casts, SA))
         out.argIdx.push_back(i);
   }
@@ -579,7 +580,7 @@ static bool collectParamStaged(Function &F, Function *Proxy, GlobalVariable &G,
   SmallVector<Value *, 4> roots;
   for (unsigned i : out.argIdx)
     roots.push_back(F.getArg(i));
-  return walkStaged(F, roots, dsMode, out);
+  return walkStaged(S.Opts, F, roots, dsMode, out);
 }
 
 // The buffer F accesses directly: each addrspacecast of G in F is a root once
@@ -587,7 +588,8 @@ static bool collectParamStaged(Function &F, Function *Proxy, GlobalVariable &G,
 // `sm0 + 2`) are instructions. Shared memory lives for one launch, so only an
 // access in a function F calls could meet F's; one of those, or an access of
 // G that is not through a generic pointer, leaves the buffer alone.
-static bool collectGlobalStaged(Function &F, GlobalVariable &G, bool dsMode,
+static bool collectGlobalStaged(const Options &O, Function &F,
+                                GlobalVariable &G, bool dsMode,
                                 ParamStagedAccess &out) {
   convertUsersOfConstantsToInstructions({&G}, &F,
                                         /*RemoveDeadConstants=*/false);
@@ -618,11 +620,11 @@ static bool collectGlobalStaged(Function &F, GlobalVariable &G, bool dsMode,
       users.append(U->user_begin(), U->user_end());
     }
   }
-  return !roots.empty() && walkStaged(F, roots, dsMode, out);
+  return !roots.empty() && walkStaged(O, F, roots, dsMode, out);
 }
 
-static bool walkStaged(Function &F, ArrayRef<Value *> roots, bool dsMode,
-                       ParamStagedAccess &out) {
+static bool walkStaged(const Options &O, Function &F, ArrayRef<Value *> roots,
+                       bool dsMode, ParamStagedAccess &out) {
   Module *M = F.getParent();
   const DataLayout &DL = M->getDataLayout();
   Type *DoubleTy = Type::getDoubleTy(M->getContext());
@@ -645,7 +647,7 @@ static bool walkStaged(Function &F, ArrayRef<Value *> roots, bool dsMode,
         if (auto *AT = dyn_cast<ArrayType>(SET)) {
           if (!AT->getElementType()->isIntegerTy(8) ||
               (AT->getNumElements() % 2) != 0 || GEP->getNumIndices() != 1) {
-            if (flags::Print)
+            if (O.Diagnostics.Print)
               llvm::errs() << "[narrow-param] bail: array GEP " << *GEP << "\n";
             return false;
           }
@@ -664,7 +666,7 @@ static bool walkStaged(Function &F, ArrayRef<Value *> roots, bool dsMode,
                        .countMinTrailingZeros() >= 3;
           }
           if (!ok) {
-            if (flags::Print)
+            if (O.Diagnostics.Print)
               llvm::errs() << "[narrow-param] bail: byte GEP " << *GEP << "\n";
             return false;
           }
@@ -674,7 +676,7 @@ static bool walkStaged(Function &F, ArrayRef<Value *> roots, bool dsMode,
             return false;
           out.dblSet.insert(GEP);
         } else {
-          if (flags::Print)
+          if (O.Diagnostics.Print)
             llvm::errs() << "[narrow-param] bail: GEP " << *GEP << "\n";
           return false;
         }
@@ -684,7 +686,7 @@ static bool walkStaged(Function &F, ArrayRef<Value *> roots, bool dsMode,
         }
       } else if (auto *L = dyn_cast<LoadInst>(U)) {
         if (L->getType() != DoubleTy || L->getPointerOperand() != P) {
-          if (flags::Print)
+          if (O.Diagnostics.Print)
             llvm::errs() << "[narrow-param] bail: load " << *L << "\n";
           return false;
         }
@@ -695,9 +697,9 @@ static bool walkStaged(Function &F, ArrayRef<Value *> roots, bool dsMode,
         SmallVector<DekkerSplit, 2> splits;
         if (dsMode) {
           // DS wants Dekker splits; anything else is a foreign reader.
-          if (!isSplit && !(flags::NarrowMultiviewStaging &&
+          if (!isSplit && !(O.Materialization.NarrowMultiviewStaging &&
                             matchDekkerSplits(L, splits))) {
-            if (flags::Print)
+            if (O.Diagnostics.Print)
               llvm::errs() << "[narrow-param] bail: non-split reader of "
                               "staged load: "
                            << *L << "\n";
@@ -708,7 +710,7 @@ static bool walkStaged(Function &F, ArrayRef<Value *> roots, bool dsMode,
           // float makes `lo` identically zero and the expansion candidate would
           // price as free. That buffer belongs to the DS arm.
           if (isSplit) {
-            if (flags::Print)
+            if (O.Diagnostics.Print)
               llvm::errs() << "[narrow-param] bail: Dekker-split reader (DS "
                               "arm's buffer): "
                            << *L << "\n";
@@ -720,7 +722,7 @@ static bool walkStaged(Function &F, ArrayRef<Value *> roots, bool dsMode,
                 continue;
             if (isa<FCmpInst>(LU))
               continue;
-            if (flags::Print)
+            if (O.Diagnostics.Print)
               llvm::errs()
                   << "[narrow-param] bail: FP64 consumer of staged load: "
                   << *LU << "\n";
@@ -731,13 +733,13 @@ static bool walkStaged(Function &F, ArrayRef<Value *> roots, bool dsMode,
       } else if (auto *S = dyn_cast<StoreInst>(U)) {
         if (S->getValueOperand()->getType() != DoubleTy ||
             S->getPointerOperand() != P) {
-          if (flags::Print)
+          if (O.Diagnostics.Print)
             llvm::errs() << "[narrow-param] bail: store " << *S << "\n";
           return false;
         }
         out.stores.push_back(S);
       } else {
-        if (flags::Print)
+        if (O.Diagnostics.Print)
           llvm::errs() << "[narrow-param] bail: unexpected user " << *U << "\n";
         return false;
       }
@@ -748,7 +750,9 @@ static bool walkStaged(Function &F, ArrayRef<Value *> roots, bool dsMode,
 
 } // namespace
 
-bool narrowSharedStagingParam(llvm::Function &F, llvm::Function *Proxy) {
+bool narrowSharedStagingParam(Session &S, llvm::Function &F,
+                              llvm::Function *Proxy) {
+  const Options &O = S.Opts;
   if (!Proxy)
     Proxy = &F;
   Module *M = F.getParent();
@@ -762,13 +766,13 @@ bool narrowSharedStagingParam(llvm::Function &F, llvm::Function *Proxy) {
     if (G.getAddressSpace() != 3)
       continue;
     ParamStagedAccess acc;
-    if (!collectParamStaged(F, Proxy, G, /*dsMode=*/false, acc)) {
+    if (!collectParamStaged(S, F, Proxy, G, /*dsMode=*/false, acc)) {
       acc = ParamStagedAccess();
-      if (!flags::NarrowMultiviewStaging || !isSiteClone(Proxy) ||
-          !collectGlobalStaged(F, G, /*dsMode=*/false, acc))
+      if (!O.Materialization.NarrowMultiviewStaging || !isSiteClone(S, Proxy) ||
+          !collectGlobalStaged(O, F, G, /*dsMode=*/false, acc))
         continue;
     }
-    if (flags::Print) {
+    if (O.Diagnostics.Print) {
       llvm::errs() << "[narrow-param fp32] G=@" << G.getName() << " args=";
       for (unsigned i : acc.argIdx)
         llvm::errs() << i << " ";
@@ -832,7 +836,9 @@ bool narrowSharedStagingParam(llvm::Function &F, llvm::Function *Proxy) {
   return anyChange;
 }
 
-bool narrowSharedStagingParamDS(llvm::Function &F, llvm::Function *Proxy) {
+bool narrowSharedStagingParamDS(Session &S, llvm::Function &F,
+                                llvm::Function *Proxy) {
+  const Options &O = S.Opts;
   if (!Proxy)
     Proxy = &F;
   Module *M = F.getParent();
@@ -846,13 +852,13 @@ bool narrowSharedStagingParamDS(llvm::Function &F, llvm::Function *Proxy) {
     if (G.getAddressSpace() != 3)
       continue;
     ParamStagedAccess acc;
-    if (!collectParamStaged(F, Proxy, G, /*dsMode=*/true, acc)) {
+    if (!collectParamStaged(S, F, Proxy, G, /*dsMode=*/true, acc)) {
       acc = ParamStagedAccess();
-      if (!flags::NarrowMultiviewStaging || !isSiteClone(Proxy) ||
-          !collectGlobalStaged(F, G, /*dsMode=*/true, acc))
+      if (!O.Materialization.NarrowMultiviewStaging || !isSiteClone(S, Proxy) ||
+          !collectGlobalStaged(O, F, G, /*dsMode=*/true, acc))
         continue;
     }
-    if (flags::Print) {
+    if (O.Diagnostics.Print) {
       llvm::errs() << "[narrow-param df64] G=@" << G.getName() << " args=";
       for (unsigned i : acc.argIdx)
         llvm::errs() << i << " ";
@@ -888,7 +894,7 @@ bool narrowSharedStagingParamDS(llvm::Function &F, llvm::Function *Proxy) {
         los->eraseFromParent();
         hib->eraseFromParent();
         hiT->eraseFromParent();
-      } else if (flags::NarrowMultiviewStaging &&
+      } else if (O.Materialization.NarrowMultiviewStaging &&
                  matchDekkerSplits(L, splits)) {
         for (DekkerSplit &d : splits) {
           d.hiT->replaceAllUsesWith(nhi);
@@ -922,30 +928,31 @@ bool narrowSharedStagingParamDS(llvm::Function &F, llvm::Function *Proxy) {
   return anyChange;
 }
 
-bool applyStagingNarrowing(Function &F, bool announce, ParamArm param,
-                           Function *paramProxy) {
-  bool changed = narrowSharedStaging(F);
-  if (changed && announce && flags::Print)
+bool applyStagingNarrowing(Session &S, Function &F, bool announce,
+                           ParamArm param, Function *paramProxy) {
+  const Options &O = S.Opts;
+  bool changed = narrowSharedStaging(O, F);
+  if (changed && announce && O.Diagnostics.Print)
     llvm::errs() << "[poseidon] applied shared-staging narrowing in "
                  << F.getName() << "\n";
   Function *proxy = paramProxy ? paramProxy : &F;
   if (param == ParamArm::Both || param == ParamArm::FP32)
-    if (narrowSharedStagingParam(F, proxy)) {
+    if (narrowSharedStagingParam(S, F, proxy)) {
       changed = true;
-      if (announce && flags::Print)
+      if (announce && O.Diagnostics.Print)
         llvm::errs() << "[poseidon] applied param-staged shared narrowing in "
                      << F.getName() << "\n";
     }
   if (param == ParamArm::Both || param == ParamArm::DS)
-    if (narrowSharedStagingParamDS(F, proxy)) {
+    if (narrowSharedStagingParamDS(S, F, proxy)) {
       changed = true;
-      if (announce && flags::Print)
+      if (announce && O.Diagnostics.Print)
         llvm::errs() << "[poseidon] applied param-staged df64 narrowing in "
                      << F.getName() << "\n";
     }
-  if (narrowSharedStagingDS(F)) {
+  if (narrowSharedStagingDS(O, F)) {
     changed = true;
-    if (announce && flags::Print)
+    if (announce && O.Diagnostics.Print)
       llvm::errs() << "[poseidon] applied shared-staging df64 narrowing in "
                    << F.getName() << "\n";
   }

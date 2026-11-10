@@ -17,8 +17,8 @@
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringRef.h"
-#include "llvm/Support/CommandLine.h"
 
 #include <limits>
 #include <map>
@@ -101,8 +101,9 @@ inline constexpr unsigned kProfileFormat = 2;
 bool isNeverExecutedProfile(const std::string &profilePath);
 
 // Whether a profile in `dir` names its format, so that a site the profiled run
-// never executed would have left a file there. Reads headers only.
-bool profileDirNamesFormat(llvm::StringRef dir);
+// never executed would have left a file there. Reads headers only, once per
+// directory: `known` holds the answers given.
+bool profileDirNamesFormat(llvm::StringMap<bool> &known, llvm::StringRef dir);
 
 // Fatal unless the profile's slot indices were numbered against the canonical
 // form `canonicalHash` names.

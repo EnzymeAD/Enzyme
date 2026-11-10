@@ -23,18 +23,21 @@
 namespace poseidon {
 
 struct FunctionFPState;
+struct Options;
+class Session;
 struct SolutionStep;
 struct SolveRecord;
 
-bool explainWanted(const llvm::Function &F);
+bool explainWanted(const Options &O, const llvm::Function &F);
 
-void noteSiteCall(const llvm::Function *body, const llvm::DebugLoc &loc);
+void noteSiteCall(Session &S, const llvm::Function *body,
+                  const llvm::DebugLoc &loc);
 
-void explainNothingToOptimize(llvm::Function &F);
+void explainNothingToOptimize(Session &S, llvm::Function &F);
 
-void explainUnprofiled(llvm::Function &F, llvm::StringRef cause);
+void explainUnprofiled(Session &S, llvm::Function &F, llvm::StringRef cause);
 
-void explainSolve(llvm::Function &F, FunctionFPState &st,
+void explainSolve(Session &S, llvm::Function &F, FunctionFPState &st,
                   llvm::ArrayRef<SolutionStep> steps, const SolveRecord &rec);
 
 } // namespace poseidon

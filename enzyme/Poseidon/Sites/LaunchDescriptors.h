@@ -33,7 +33,10 @@
 
 namespace poseidon {
 
-// Process-local (device cc1) stash: the solve records a payload keyed by the
+struct Options;
+class Session;
+
+// A module compile's stash: the solve records a payload keyed by the
 // optimized body clone, and the marker handler retrieves it after the solve
 // returns. `Note` must have a `valid` member.
 template <class Note> class NoteMap {
@@ -51,6 +54,16 @@ private:
   std::map<const llvm::Function *, Note> notes;
 };
 
+struct Recorded {
+  std::string line;
+  std::string message;
+};
+
+struct ProfileHeader {
+  std::string profileName;
+  std::string header;
+};
+
 enum class LaunchKind {
   // A raised GEMM the host stub dispatches to a library (the payload is
   // written by HostDispatch.cpp).
@@ -66,42 +79,41 @@ enum class LaunchKind {
 
 // Whether the host half of this compile rewrites launch stubs from a manifest:
 // under profile generation, and under profile use with host dispatch.
-bool handsOverLaunches();
+bool handsOverLaunches(const Options &O);
 
 // Records "<wrapperName><payload>" as the `kind` descriptor of that kernel in
 // place of one recorded before; `emitPayload` appends everything after the
 // name. `message` is printed when the manifest is written.
-void recordDescriptor(LaunchKind kind, llvm::StringRef wrapperName,
+void recordDescriptor(Session &S, LaunchKind kind, llvm::StringRef wrapperName,
                       llvm::function_ref<void(llvm::raw_ostream &)> emitPayload,
                       std::string message);
 
 // Records, beside the profile generation descriptor of `wrapperName`, the name
 // its site's profile is written under and the header the device compile
 // computed for it, which the device profiler writes only once the kernel runs.
-void recordProfileHeader(llvm::StringRef wrapperName,
+void recordProfileHeader(Session &S, llvm::StringRef wrapperName,
                          llvm::StringRef profileName, llvm::StringRef header);
 
 // Replaces the manifest of device module M by the descriptors recorded since
 // the last write and prints their messages, all in order of kernel name; with
 // none recorded, removes it, since no manifest means nothing to rewrite. A
 // manifest that cannot be written or removed stops the compile.
-void writeLaunchManifest(const llvm::Module &M);
+void writeLaunchManifest(Session &S, const llvm::Module &M);
 
 // Hands `parse` the space-separated tokens of every `kind` descriptor in the
 // manifest of host module M; token 0 is always the wrapper kernel name. A unit
 // without a manifest has none.
 void readDescriptors(
-    const llvm::Module &M, LaunchKind kind,
+    const Options &O, const llvm::Module &M, LaunchKind kind,
     llvm::function_ref<void(llvm::ArrayRef<llvm::StringRef>)> parse);
 
 // Hands `use` the profile name and header of every profiled kernel in the
 // manifest of host module M. A unit without a manifest has none; one that
 // cannot be read is reported by readDescriptors.
-void readProfileHeaders(
-    const llvm::Module &M,
-    llvm::function_ref<void(llvm::StringRef profileName,
-                            llvm::StringRef header)>
-        use);
+void readProfileHeaders(const Options &O, const llvm::Module &M,
+                        llvm::function_ref<void(llvm::StringRef profileName,
+                                                llvm::StringRef header)>
+                            use);
 
 // The part of a kernel's mangled name shared with its launch stub: kernel
 // `_Z<L><id><params>` and stub `_Z<L+15>__device_stub__<id><params>`.

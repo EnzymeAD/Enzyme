@@ -5,7 +5,7 @@
 #include "MatmulAccuracyMemo.h"
 #include "MatmulInternal.h"
 #include "Optimize.h"
-#include "Pass/Flags.h"
+#include "Pass/Session.h"
 #include "Utils.h"
 
 #include "llvm/Support/ErrorHandling.h"
@@ -95,13 +95,15 @@ static double roundToMantBits(double x, unsigned bits) {
 // order is unspecified; modeling it keeps a zero-cost zero-error candidate out
 // of the budget-0 solution. inputMantBits (0 = off): round the operands to that
 // many significand bits instead of `inputPrec` (see roundToMantBits).
-double getMatmulAccuracyCost(const AbstractMatmul &m, const MatmulProfile &prof,
-                             double confidence, unsigned sampleLogBits,
-                             FPKind inputPrec, FPKind accPrec,
-                             double *domainErrOut, FPKind exponentPrec,
-                             unsigned orderTileK, unsigned inputMantBits) {
+double getMatmulAccuracyCost(Session &S, const AbstractMatmul &m,
+                             const MatmulProfile &prof, double confidence,
+                             unsigned sampleLogBits, FPKind inputPrec,
+                             FPKind accPrec, double *domainErrOut,
+                             FPKind exponentPrec, unsigned orderTileK,
+                             unsigned inputMantBits) {
+  const Options &O = S.Opts;
   const unsigned numSamples =
-      std::max<unsigned>(8u, std::min<unsigned>(flags::NumSamples, 256u));
+      std::max<unsigned>(8u, std::min<unsigned>(O.Model.NumSamples, 256u));
   const size_t mk = (size_t)m.M * m.K;
   const size_t kn = (size_t)m.K * m.N;
   const size_t mn = (size_t)m.M * m.N;
@@ -110,18 +112,18 @@ double getMatmulAccuracyCost(const AbstractMatmul &m, const MatmulProfile &prof,
         "getMatmulAccuracyCost: unexpected profile cell-vector shape");
 
   const MatmulAccuracyMemo memo = MatmulAccuracyMemo::matmul(
-      m, prof, confidence, sampleLogBits, numSamples, inputPrec, accPrec,
+      O, m, prof, confidence, sampleLogBits, numSamples, inputPrec, accPrec,
       exponentPrec, orderTileK, inputMantBits);
   {
     double cAcc, cDom;
-    if (memo.lookup(cAcc, cDom)) {
+    if (memo.lookup(S, cAcc, cDom)) {
       if (domainErrOut)
         *domainErrOut = cDom;
       return cAcc;
     }
   }
 
-  std::mt19937_64 rng(flags::RandomSeed);
+  std::mt19937_64 rng(O.Model.RandomSeed);
   unsigned overflowed = 0;
   std::vector<double> Ad(mk), Bd(kn);
   std::vector<double> Ar(mk), Br(kn);
@@ -190,7 +192,7 @@ double getMatmulAccuracyCost(const AbstractMatmul &m, const MatmulProfile &prof,
         "getMatmulAccuracyCost: unexpected all-non-finite samples");
   double acc = sumSampleErr / sampleCount;
   double dom = percentile(relSamples, confidence);
-  if (flags::Print) {
+  if (O.Diagnostics.Print) {
     llvm::errs() << "DOMERR matmul in=" << fpKindName(inputPrec);
     if (inputMantBits)
       llvm::errs() << "(" << inputMantBits << "b)";
@@ -202,7 +204,7 @@ double getMatmulAccuracyCost(const AbstractMatmul &m, const MatmulProfile &prof,
   // Exponent-range adequacy: the absolute error above is blind to a format that
   // flushes the smallest operands to zero, so if the exponent format cannot
   // represent the smallest nonzero operand magnitude the profiler observed,
-  // charge flags::ExponentPenalty. Emulation schemes store values in a
+  // charge -poseidon-exponent-penalty. Emulation schemes store values in a
   // narrow-exponent base type, so the check uses `exponentPrec` (Invalid =
   // inputPrec).
   FPKind expK = (exponentPrec == FPKind::Invalid) ? inputPrec : exponentPrec;
@@ -221,12 +223,12 @@ double getMatmulAccuracyCost(const AbstractMatmul &m, const MatmulProfile &prof,
   // A format that overflowed or flushed a profiled operand is refused on the
   // tolerance path as well, not only priced out of the budget path.
   if (overflowed) {
-    acc += flags::ExponentPenalty.getValue();
+    acc += O.Model.ExponentPenalty;
     dom = std::numeric_limits<double>::infinity();
   }
   if (domainErrOut)
     *domainErrOut = dom;
-  memo.store(acc, dom);
+  memo.store(O, acc, dom);
   return acc;
 }
 
@@ -234,12 +236,13 @@ double getMatmulAccuracyCost(const AbstractMatmul &m, const MatmulProfile &prof,
 // error is the input quantization, which is per row of A and per column of B to
 // `capturedBits` bits, matching the computeSft+fillRes kernel; num_moduli sets
 // the captured bits.
-double getOzakiIIAccuracyCost(const AbstractMatmul &m,
+double getOzakiIIAccuracyCost(Session &S, const AbstractMatmul &m,
                               const MatmulProfile &prof, double confidence,
                               unsigned sampleLogBits, unsigned capturedBits,
                               double *domainErrOut) {
+  const Options &O = S.Opts;
   const unsigned numSamples =
-      std::max<unsigned>(8u, std::min<unsigned>(flags::NumSamples, 256u));
+      std::max<unsigned>(8u, std::min<unsigned>(O.Model.NumSamples, 256u));
   const size_t mk = (size_t)m.M * m.K;
   const size_t kn = (size_t)m.K * m.N;
   const size_t mn = (size_t)m.M * m.N;
@@ -248,17 +251,17 @@ double getOzakiIIAccuracyCost(const AbstractMatmul &m,
         "getOzakiIIAccuracyCost: unexpected profile cell-vector shape");
 
   const MatmulAccuracyMemo memo = MatmulAccuracyMemo::ozakiII(
-      m, prof, confidence, sampleLogBits, numSamples, capturedBits);
+      O, m, prof, confidence, sampleLogBits, numSamples, capturedBits);
   {
     double cAcc, cDom;
-    if (memo.lookup(cAcc, cDom)) {
+    if (memo.lookup(S, cAcc, cDom)) {
       if (domainErrOut)
         *domainErrOut = cDom;
       return cAcc;
     }
   }
 
-  std::mt19937_64 rng(flags::RandomSeed);
+  std::mt19937_64 rng(O.Model.RandomSeed);
   unsigned overflowed = 0;
   std::vector<double> Ad(mk), Bd(kn), Ar(mk), Br(kn), gold(mn), cand(mn);
   double sumSampleErr = 0.0;
@@ -326,16 +329,16 @@ double getOzakiIIAccuracyCost(const AbstractMatmul &m,
   double acc = sumSampleErr / sampleCount;
   double dom = percentile(relSamples, confidence);
   if (overflowed) {
-    acc += flags::ExponentPenalty.getValue();
+    acc += O.Model.ExponentPenalty;
     dom = std::numeric_limits<double>::infinity();
   }
   if (domainErrOut)
     *domainErrOut = dom;
-  if (flags::Print)
+  if (O.Diagnostics.Print)
     llvm::errs() << "DOMERR ozakiII capturedBits=" << capturedBits << " "
                  << percentileLabel(confidence) << "_relErr=" << dom
                  << " (sumcost=" << acc << ")\n";
-  memo.store(acc, dom);
+  memo.store(O, acc, dom);
   return acc;
 }
 

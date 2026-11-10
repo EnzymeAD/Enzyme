@@ -378,8 +378,7 @@ bool isNeverExecutedProfile(const std::string &profilePath) {
   return marked;
 }
 
-bool profileDirNamesFormat(StringRef dir) {
-  static StringMap<bool> known;
+bool profileDirNamesFormat(StringMap<bool> &known, StringRef dir) {
   auto [it, inserted] = known.try_emplace(dir, false);
   if (!inserted)
     return it->second;

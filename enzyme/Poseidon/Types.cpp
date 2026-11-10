@@ -35,7 +35,7 @@
 #include "CostModel.h"
 #include "Herbie.h"
 #include "Optimize.h"
-#include "Pass/Flags.h"
+#include "Pass/Session.h"
 #include "Targets/DeviceMath.h"
 #include "Techniques/Precision.h"
 #include "Types.h"
@@ -108,7 +108,7 @@ unsigned FPNode::getMPFRPrec() const {
   llvm_unreachable(msg.c_str());
 }
 
-void FPNode::updateBounds(double lower, double upper) {
+void FPNode::updateBounds(double lower, double upper, bool print) {
   std::string msg = "Unexpected invocation of `updateBounds` on an "
                     "unmaterialized " +
                     op + " FPNode";
@@ -767,10 +767,10 @@ std::string FPLLValue::toFullExpression(
   }
 }
 
-void FPLLValue::updateBounds(double lower, double upper) {
+void FPLLValue::updateBounds(double lower, double upper, bool print) {
   lb = std::min(lb, lower);
   ub = std::max(ub, upper);
-  if (flags::Print)
+  if (print)
     llvm::errs() << "Updated bounds for " << *value << ": [" << lb << ", " << ub
                  << "]\n";
 }
@@ -802,7 +802,7 @@ bool FPConst::hasSymbol() const {
   llvm_unreachable(msg.c_str());
 }
 
-void FPConst::updateBounds(double lower, double upper) { return; }
+void FPConst::updateBounds(double lower, double upper, bool print) { return; }
 
 double FPConst::getLowerBound() const {
   if (strValue == "+inf.0") {
@@ -917,9 +917,9 @@ emitSharedElements(ArrayRef<std::shared_ptr<FPNode>> elements,
 void CandidateOutput::apply(
     size_t candidateIndex,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-    std::unordered_map<std::string, Value *> &symbolToValueMap) {
+    std::unordered_map<std::string, Value *> &symbolToValueMap, bool print) {
   if (candidateIndex >= candidates.size()) {
-    if (flags::Print)
+    if (print)
       llvm::errs() << "CandidateOutput::apply: candidateIndex "
                    << candidateIndex << " out of range (size "
                    << candidates.size() << "), skipping\n";
@@ -928,7 +928,7 @@ void CandidateOutput::apply(
   for (Value *root : roots) {
     auto *oldInst = dyn_cast<Instruction>(root);
     if (!oldInst || !oldInst->getParent()) {
-      if (flags::Print)
+      if (print)
         llvm::errs() << "CandidateOutput::apply: oldOutput "
                      << "is not in a basic block (already erased?), skipping\n";
       return;
@@ -1004,11 +1004,12 @@ bool CandidateOutput::sharesRoot(const CandidateOutput &other) const {
 }
 
 // Lower is better
-InstructionCost CandidateOutput::getCompCostDelta(size_t candidateIndex) {
+InstructionCost CandidateOutput::getCompCostDelta(CostModelState &CM,
+                                                  size_t candidateIndex) {
   double erasableCost = 0.0;
 
   for (auto *I : erasableInsts) {
-    erasableCost += getInstructionCompCost(I);
+    erasableCost += getInstructionCompCost(CM, I);
   }
 
   // Scale by the execution count BEFORE rounding to the integral
@@ -1077,12 +1078,12 @@ CandidateSubgraph::CacheKeyHash::operator()(const CacheKey &key) const {
   return seed;
 }
 
-void CandidateSubgraph::apply(size_t candidateIndex) {
+void CandidateSubgraph::apply(Session &S, size_t candidateIndex) {
   if (candidateIndex >= candidates.size()) {
     llvm_unreachable("Invalid candidate index");
   }
 
-  candidates[candidateIndex].apply(*subgraph);
+  candidates[candidateIndex].apply(S, *subgraph);
 }
 
 // Lower is better
@@ -1104,7 +1105,8 @@ double CandidateOutput::getAccCostDelta(size_t candidateIndex) {
 }
 
 InstructionCost CandidateSubgraph::getAdjustedCompCostDelta(
-    size_t candidateIndex, const SmallVectorImpl<SolutionStep> &steps) {
+    Session &S, size_t candidateIndex,
+    const SmallVectorImpl<SolutionStep> &steps) {
   CandidateOutputSet CandidateOutputs;
   for (const auto &step : steps) {
     if (auto *ptr = std::get_if<CandidateOutput *>(&step.item)) {
@@ -1141,18 +1143,18 @@ InstructionCost CandidateSubgraph::getAdjustedCompCostDelta(
   }
 
   double initialCompCost = getCompCost(
-      {newSubgraph.outputs.begin(), newSubgraph.outputs.end()},
+      S.CostModel, {newSubgraph.outputs.begin(), newSubgraph.outputs.end()},
       newSubgraph.inputs, &newSubgraph.opExec, newSubgraph.execNormalizer);
 
   double candidateCompCost =
-      getCompCost(newSubgraph, candidates[candidateIndex]);
+      getCompCost(S, newSubgraph, candidates[candidateIndex]);
 
   InstructionCost adjustedCostDelta = InstructionCost((int64_t)std::llround(
       (candidateCompCost - initialCompCost) * (double)executions));
   // Per-candidate pricing audit: with a one-point Pareto table these are the
   // ONLY record of why each candidate lost (all-dominated frontiers must be
   // auditable, not silent).
-  if (flags::Print)
+  if (S.Opts.Diagnostics.Print)
     llvm::errs() << "CS candidate '" << candidates[candidateIndex].desc
                  << "': initial=" << initialCompCost
                  << " cand=" << candidateCompCost << " exec=" << executions

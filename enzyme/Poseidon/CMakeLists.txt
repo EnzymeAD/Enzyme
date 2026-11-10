@@ -43,9 +43,11 @@ set(POSEIDON_SRC
     Core/ExpansionModel.cpp
     Pass/Explain.cpp
     Pass/Flags.cpp
+    Pass/Session.cpp
     Core/FPKind.cpp
     Herbie.cpp
     Core/HerbieRun.cpp
+    Core/Options.cpp
     Techniques/Matmul/HostDispatch.cpp
     Techniques/Matmul/InKernelRaise.cpp
     Profile/Instrument.cpp

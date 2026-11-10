@@ -27,7 +27,6 @@
 #include "llvm/Passes/PassBuilder.h"
 
 #include "llvm/Support/Casting.h"
-#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/InstructionCost.h"
 #include "llvm/Support/Path.h"
@@ -56,7 +55,7 @@
 #include "Herbie.h"
 #include "Optimize.h"
 #include "Pass/Explain.h"
-#include "Pass/Flags.h"
+#include "Pass/Session.h"
 #include "Profile/ProfileRead.h"
 #include "Sites/Canonicalize.h"
 #include "Solvers.h"
@@ -83,16 +82,12 @@ namespace poseidon {
 
 static constexpr int kThreeTierStep = 20;
 
-static std::map<const Function *, Function *> &siteOriginMap() {
-  static std::map<const Function *, Function *> m;
-  return m;
+void noteSiteOrigin(Session &S, Function *clone, Function *orig) {
+  S.SiteOrigins[clone] = orig;
 }
-void noteSiteOrigin(Function *clone, Function *orig) {
-  siteOriginMap()[clone] = orig;
-}
-const Function *siteOriginOf(const Function &clone) {
-  auto it = siteOriginMap().find(&clone);
-  return it == siteOriginMap().end() ? nullptr : it->second;
+const Function *siteOriginOf(const Session &S, const Function &clone) {
+  auto it = S.SiteOrigins.find(&clone);
+  return it == S.SiteOrigins.end() ? nullptr : it->second;
 }
 
 // Keyed on the SOURCE body, not on the per-call clone: profileSite shares one
@@ -101,9 +96,9 @@ const Function *siteOriginOf(const Function &clone) {
 // per call and LLVM uniques the second and later clone names. dFEM inlines one
 // integrator's marker into every registered Q1D specialization, so a body with
 // many marker calls is the normal case.
-std::string siteProfileStem(const Function &clone) {
-  auto it = siteOriginMap().find(&clone);
-  if (it != siteOriginMap().end() && it->second)
+std::string siteProfileStem(const Session &S, const Function &clone) {
+  auto it = S.SiteOrigins.find(&clone);
+  if (it != S.SiteOrigins.end() && it->second)
     return profileNameStem(("preprocess_" + it->second->getName()).str());
   return profileNameStem(clone.getName().str());
 }
@@ -114,8 +109,8 @@ std::string siteKeyOfBody(const Function &body) {
   return symbol.str();
 }
 
-std::string siteKey(const Function &clone) {
-  const Function *origin = siteOriginOf(clone);
+std::string siteKey(const Session &S, const Function &clone) {
+  const Function *origin = siteOriginOf(S, clone);
   return siteKeyOfBody(origin ? *origin : clone);
 }
 
@@ -136,31 +131,25 @@ SmallVector<std::string, 2> siteAliases(StringRef key) {
   return aliases;
 }
 
-// The site clone has no callers while it is optimized, so the caller values of
-// its parameters are kept here for the parameter-staging arm to resolve a
-// pointer parameter to its addrspace(3) global.
-static std::map<const Function *, SmallVector<WeakTrackingVH, 12>> &
-siteArgsMap() {
-  static std::map<const Function *, SmallVector<WeakTrackingVH, 12>> m;
-  return m;
-}
-void noteSiteArgs(Function *clone, ArrayRef<Value *> primalArgs) {
-  auto &v = siteArgsMap()[clone];
+void noteSiteArgs(Session &S, Function *clone, ArrayRef<Value *> primalArgs) {
+  auto &v = S.SiteArgs[clone];
   v.clear();
   for (Value *A : primalArgs)
     v.emplace_back(A);
 }
-bool isSiteClone(const Function *F) { return siteArgsMap().count(F); }
-Value *siteArg(const Function *clone, unsigned i) {
-  auto it = siteArgsMap().find(clone);
-  if (it == siteArgsMap().end() || i >= it->second.size())
+bool isSiteClone(const Session &S, const Function *F) {
+  return S.SiteArgs.count(F);
+}
+Value *siteArg(const Session &S, const Function *clone, unsigned i) {
+  auto it = S.SiteArgs.find(clone);
+  if (it == S.SiteArgs.end() || i >= it->second.size())
     return nullptr;
   return it->second[i].pointsToAliveValue() ? (Value *)it->second[i] : nullptr;
 }
 
-bool redirectNoopSite(Function *clone) {
-  auto it = siteOriginMap().find(clone);
-  if (it == siteOriginMap().end() || !it->second)
+bool redirectNoopSite(Session &S, Function *clone) {
+  auto it = S.SiteOrigins.find(clone);
+  if (it == S.SiteOrigins.end() || !it->second)
     return false;
   Function *orig = it->second;
   if (orig == clone)
@@ -486,14 +475,15 @@ static const TierTriple kCanonicalTriples[] = {
      PrecisionChangeType::BF16},
 };
 
-static bool precAllowed(PrecisionChangeType t, bool gpuMode, bool expansionSafe,
+static bool precAllowed(const Options &O, PrecisionChangeType t, bool gpuMode,
+                        bool expansionSafe,
                         const std::unordered_set<std::string> &hwScalar) {
   if (unsigned nComp = expansionComponents(t)) {
     if (!gpuMode || !expansionSafe)
       return false;
-    if (!flags::EnableMultifloat)
+    if (!O.Candidates.EnableMultifloat)
       return false;
-    if (nComp > flags::ExpansionComponents)
+    if (nComp > O.Candidates.ExpansionComponents)
       return false;
   }
   if (t == PrecisionChangeType::FP16 && (!gpuMode || !hwScalar.count("half")))
@@ -503,17 +493,19 @@ static bool precAllowed(PrecisionChangeType t, bool gpuMode, bool expansionSafe,
   return true;
 }
 
-static bool tierPairAllowed(TierPair tp, bool gpuMode, bool expansionSafe,
+static bool tierPairAllowed(const Options &O, TierPair tp, bool gpuMode,
+                            bool expansionSafe,
                             const std::unordered_set<std::string> &hwScalar) {
-  return precAllowed(tp.hi, gpuMode, expansionSafe, hwScalar) &&
-         precAllowed(tp.lo, gpuMode, expansionSafe, hwScalar);
+  return precAllowed(O, tp.hi, gpuMode, expansionSafe, hwScalar) &&
+         precAllowed(O, tp.lo, gpuMode, expansionSafe, hwScalar);
 }
 
-static bool tierTripleAllowed(TierTriple tr, bool gpuMode, bool expansionSafe,
+static bool tierTripleAllowed(const Options &O, TierTriple tr, bool gpuMode,
+                              bool expansionSafe,
                               const std::unordered_set<std::string> &hwScalar) {
-  return precAllowed(tr.hi, gpuMode, expansionSafe, hwScalar) &&
-         precAllowed(tr.mid, gpuMode, expansionSafe, hwScalar) &&
-         precAllowed(tr.lo, gpuMode, expansionSafe, hwScalar);
+  return precAllowed(O, tr.hi, gpuMode, expansionSafe, hwScalar) &&
+         precAllowed(O, tr.mid, gpuMode, expansionSafe, hwScalar) &&
+         precAllowed(O, tr.lo, gpuMode, expansionSafe, hwScalar);
 }
 
 #if LLVM_VERSION_MAJOR < 24
@@ -739,7 +731,8 @@ bool demoteFPCastPHIs(llvm::Function &F) {
 
 // An op without a profile record (-poseidon-loose-coverage) counts as zero.
 static void
-aggressiveDCE(Function &F, SmallVectorImpl<Subgraph> &subgraphs,
+aggressiveDCE(const Options &O, Function &F,
+              SmallVectorImpl<Subgraph> &subgraphs,
               std::unordered_map<Value *, std::shared_ptr<FPNode>> &nodes,
               const std::unordered_map<size_t, ProfileInfo> &profileMap,
               const std::unordered_set<size_t> &zeroGradIdx,
@@ -775,7 +768,7 @@ aggressiveDCE(Function &F, SmallVectorImpl<Subgraph> &subgraphs,
           mark(store->getValueOperand());
   }
 
-  if (flags::Print) {
+  if (O.Diagnostics.Print) {
     llvm::errs() << "Critical values:\n";
     for (Value *V : critical)
       llvm::errs() << "\t" << *V << "\n";
@@ -794,7 +787,7 @@ aggressiveDCE(Function &F, SmallVectorImpl<Subgraph> &subgraphs,
       if (!critical.count(op) && zeroGrad(op))
         toRemove.push_back(op);
     for (Instruction *op : toRemove) {
-      if (flags::Print)
+      if (O.Diagnostics.Print)
         llvm::errs() << "Aggressive DCE: eliminating zero-gradient "
                      << "non-critical instruction: " << *op << "\n";
       op->replaceAllUsesWith(UndefValue::get(op->getType()));
@@ -804,7 +797,7 @@ aggressiveDCE(Function &F, SmallVectorImpl<Subgraph> &subgraphs,
       op->eraseFromParent();
     }
     if (it->outputs.empty()) {
-      if (flags::Print)
+      if (O.Diagnostics.Print)
         llvm::errs() << "Removing empty subgraph\n";
       it = subgraphs.erase(it);
     } else {
@@ -812,13 +805,14 @@ aggressiveDCE(Function &F, SmallVectorImpl<Subgraph> &subgraphs,
     }
   }
 
-  if (flags::Print)
+  if (O.Diagnostics.Print)
     llvm::errs() << "[poseidon] After aggressive DCE, have " << subgraphs.size()
                  << " subgraphs in " << F.getName() << "\n";
 }
 
-bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
-                         FunctionFPState &st) {
+bool collectFPCandidates(Session &S, Function &F, double errorTol,
+                         unsigned sampleLogBits, FunctionFPState &st) {
+  const Options &O = S.Opts;
   st.F = &F;
   st.errTol = errorTol;
   st.sampleLogBits = sampleLogBits;
@@ -826,13 +820,13 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
   if (isGPUMode(F))
     llvm::errs() << "[poseidon] GPU mode active for " << F.getName() << "\n";
 
-  assert(!flags::ProfileUse.empty());
-  SmallString<128> profilePathBuf(flags::ProfileUse);
-  llvm::sys::path::append(profilePathBuf, siteProfileStem(F) + ".fpprofile");
+  assert(!O.Profiling.ProfileUse.empty());
+  SmallString<128> profilePathBuf(O.Profiling.ProfileUse);
+  llvm::sys::path::append(profilePathBuf, siteProfileStem(S, F) + ".fpprofile");
   const std::string profilePath = profilePathBuf.str().str();
 
-  if (!flags::Cache.empty()) {
-    if (auto EC = llvm::sys::fs::create_directories(flags::Cache, true))
+  if (!O.Herbie.Cache.empty()) {
+    if (auto EC = llvm::sys::fs::create_directories(O.Herbie.Cache, true))
       llvm::errs() << "Warning: Could not create cache directory: "
                    << EC.message() << "\n";
   }
@@ -841,7 +835,7 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
   // profile is only readable against the canonical form it was numbered
   // against.
   const std::string canonicalHash = poseidon::canonicalFormHash(F);
-  if (flags::Print)
+  if (O.Diagnostics.Print)
     llvm::errs() << "[poseidon] canonical form hash of " << F.getName()
                  << " is " << canonicalHash << "\n";
 
@@ -854,12 +848,12 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
       llvm::errs() << "Warning: No profile data found in " << profilePath
                    << "\n";
     }
-    if (!flags::OutputProfiles.empty())
-      mergeOutputProfiles(profileMap, flags::OutputProfiles,
-                          siteProfileStem(F) + ".fpprofile", canonicalHash,
+    if (!O.Profiling.OutputProfiles.empty())
+      mergeOutputProfiles(profileMap, O.Profiling.OutputProfiles,
+                          siteProfileStem(S, F) + ".fpprofile", canonicalHash,
                           F.getName());
     // Before the floor below, which would hide the exact zeros.
-    if (flags::AggressiveDCE)
+    if (O.Solver.AggressiveDCE)
       for (const auto &kv : profileMap) {
         const ProfileInfo &p = kv.second;
         if ((p.sumAbsGrad >= 0.0 ? p.sumAbsGrad : p.sumGrad) == 0.0)
@@ -872,7 +866,7 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
     applySensitivityFloor(profileMap, F.getName());
     requireCanonicalHash(profileHeader, canonicalHash, profilePath,
                          F.getName());
-    if (flags::Print && profileHeader.launchCount > 0) {
+    if (O.Diagnostics.Print && profileHeader.launchCount > 0) {
       llvm::errs() << "[poseidon] profile header for " << F.getName()
                    << ": MaxBlockDims=(" << profileHeader.maxBlockDim[0] << ","
                    << profileHeader.maxBlockDim[1] << ","
@@ -893,7 +887,7 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
   auto &raiseTLII = st.raiseTLII;
   auto &raiseTLI = st.raiseTLI;
   auto &raiseSE = st.raiseSE;
-  if (isGPUMode(F) && flags::RaiseWMMA) {
+  if (isGPUMode(F) && O.Candidates.RaiseWMMA) {
     raiseDT.emplace(F);
     raiseLI.emplace(*raiseDT);
     raiseAC.emplace(F);
@@ -902,23 +896,23 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
     raiseSE.emplace(F, *raiseTLI, *raiseAC, *raiseDT, *raiseLI);
     // The constant-trip recognizer reads NVPTX's thread and block registers.
     if (Triple(F.getParent()->getTargetTriple()).isNVPTX())
-      findScalarLoopMatmuls(F, *raiseSE, *raiseLI, profileHeader,
+      findScalarLoopMatmuls(O, F, *raiseSE, *raiseLI, profileHeader,
                             abstractMatmuls);
     // Runtime-shape dense GEMMs (finite-element partial-assembly reduces). Runs
     // after the constant-trip recognizer and skips whatever that one claimed,
     // so previously recognized sites keep their exact candidate sets.
-    findHostGemmLoopNests(F, *raiseSE, *raiseLI, profileHeader, profileMap,
+    findHostGemmLoopNests(O, F, *raiseSE, *raiseLI, profileHeader, profileMap,
                           abstractMatmuls);
   }
 
   SmallPtrSet<Instruction *, 32> reductionFMAs;
-  if (flags::ReductionSubgraphs)
+  if (O.Candidates.ReductionSubgraphs)
     for (const auto &am : abstractMatmuls)
       if (am.origin == AbstractMatmul::Origin::ScalarLoopReduction &&
           am.scalarLoop.fma)
         reductionFMAs.insert(am.scalarLoop.fma);
 
-  if (flags::Print && !abstractMatmuls.empty()) {
+  if (O.Diagnostics.Print && !abstractMatmuls.empty()) {
     llvm::errs() << "[poseidon] Found " << abstractMatmuls.size()
                  << " AbstractMatmul(s) for " << F.getName() << "\n";
     auto dimStr = [](unsigned d) -> std::string {
@@ -945,7 +939,7 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
 
   // Nothing above prices: a compile for a device no model has been measured
   // on yet still reports what it recognized before it refuses.
-  requireCostModel(F);
+  requireCostModel(S.CostModel, F);
 
   int symbolCounter = 0;
   auto getNextSymbol = [&symbolCounter]() -> std::string {
@@ -961,7 +955,7 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
     for (auto &I : BB) {
       if (!isOptimizable(I)) {
         valueToNodeMap[&I] = std::make_shared<FPLLValue>(&I, "__nh", "__nh");
-        if (flags::Print)
+        if (O.Diagnostics.Print)
           llvm::errs()
               << "Registered FPLLValue for non-isOptimizable instruction: " << I
               << "\n";
@@ -1001,7 +995,7 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
             }
             valueToNodeMap[operand] =
                 std::make_shared<FPLLValue>(Arg, "__arg", dtype);
-            if (flags::Print)
+            if (O.Diagnostics.Print)
               llvm::errs() << "Registered FPNode for argument: " << *Arg
                            << "\n";
           } else if (auto C = dyn_cast<ConstantFP>(operand)) {
@@ -1017,7 +1011,7 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
             }
             valueToNodeMap[operand] =
                 std::make_shared<FPConst>(value.c_str(), dtype);
-            if (flags::Print)
+            if (O.Diagnostics.Print)
               llvm::errs() << "Registered FPNode for " << dtype
                            << " constant: " << value << "\n";
           } else if (auto CI = dyn_cast<ConstantInt>(operand)) {
@@ -1027,7 +1021,7 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
             std::string doubleStr = std::to_string(exponent);
             valueToNodeMap[operand] =
                 std::make_shared<FPConst>(doubleStr.c_str(), dtype);
-            if (flags::Print)
+            if (O.Diagnostics.Print)
               llvm::errs() << "Registered FPNode for " << dtype
                            << " constant (casted from integer): " << doubleStr
                            << "\n";
@@ -1047,7 +1041,7 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
             }
             valueToNodeMap[operand] =
                 std::make_shared<FPLLValue>(GV, "__gv", dtype);
-            if (flags::Print)
+            if (O.Diagnostics.Print)
               llvm::errs() << "Registered FPNode for global variable: " << *GV
                            << "\n";
           } else {
@@ -1064,19 +1058,19 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
   for (auto &BB : F) {
     for (auto &I : BB) {
       if (!isOptimizable(I)) {
-        if (flags::Print)
+        if (O.Diagnostics.Print)
           llvm::errs() << "Skipping non-isOptimizable instruction: " << I
                        << "\n";
         continue;
       }
 
       if (processed.contains(&I)) {
-        if (flags::Print)
+        if (O.Diagnostics.Print)
           llvm::errs() << "Skipping already seen instruction: " << I << "\n";
         continue;
       }
 
-      if (flags::Print)
+      if (O.Diagnostics.Print)
         llvm::errs() << "Starting floodfill from: " << I << "\n";
 
       SmallVector<Value *, 8> todo;
@@ -1092,7 +1086,7 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
         auto I2 = cast<Instruction>(cur);
 
         if (operation_seen.contains(I2)) {
-          if (flags::Print)
+          if (O.Diagnostics.Print)
             llvm::errs() << "Skipping already seen instruction: " << *I2
                          << "\n";
           continue;
@@ -1100,7 +1094,7 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
 
         assert(!processed.contains(cur));
 
-        if (flags::Print)
+        if (O.Diagnostics.Print)
           llvm::errs() << "Insert to operation_seen and processed: " << *I2
                        << "\n";
         operation_seen.insert(I2);
@@ -1111,14 +1105,14 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
 
         for (const auto &operand : operands) {
           if (!isOptimizable(*operand)) {
-            if (flags::Print)
+            if (O.Diagnostics.Print)
               llvm::errs() << "Non-isOptimizable input found: " << *operand
                            << "\n";
 
             if (!isa<ConstantFP>(operand))
               input_seen.insert(operand);
           } else {
-            if (flags::Print)
+            if (O.Diagnostics.Print)
               llvm::errs() << "Adding operand to todo list: " << *operand
                            << "\n";
             todo.push_back(operand);
@@ -1128,11 +1122,11 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
         for (auto U : I2->users()) {
           if (auto I3 = dyn_cast<Instruction>(U)) {
             if (!isOptimizable(*I3)) {
-              if (flags::Print)
+              if (O.Diagnostics.Print)
                 llvm::errs() << "Output instruction found: " << *I2 << "\n";
               output_seen.insert(I2);
             } else {
-              if (flags::Print)
+              if (O.Diagnostics.Print)
                 llvm::errs() << "Adding user to todo list: " << *I3 << "\n";
               todo.push_back(I3);
             }
@@ -1141,7 +1135,7 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
       }
 
       if (!operation_seen.empty()) {
-        if (flags::Print) {
+        if (O.Diagnostics.Print) {
           llvm::errs() << "Found a subgraph with " << operation_seen.size()
                        << " operations and " << input_seen.size()
                        << " inputs and " << output_seen.size() << " outputs\n";
@@ -1165,11 +1159,11 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
 
         if (operation_seen.size() == 1 &&
             !reductionFMAs.contains(*operation_seen.begin())) {
-          if (flags::Print)
+          if (O.Diagnostics.Print)
             llvm::errs() << "Skipping trivial subgraph\n";
           continue;
         }
-        if (operation_seen.size() == 1 && flags::Print)
+        if (operation_seen.size() == 1 && O.Diagnostics.Print)
           llvm::errs() << "Keeping 1-op reduction subgraph: "
                        << **operation_seen.begin() << "\n";
 
@@ -1178,7 +1172,7 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
     }
   }
 
-  if (flags::Print) {
+  if (O.Diagnostics.Print) {
     llvm::errs() << "[poseidon] Found " << subgraphs.size()
                  << " initial subgraphs in " << F.getName() << "\n";
   }
@@ -1198,9 +1192,10 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
             node->sens = profileInfo.sumSens;
             node->grad = profileInfo.sumGrad;
             node->executions = profileInfo.exec;
-            node->updateBounds(profileInfo.minRes, profileInfo.maxRes);
+            node->updateBounds(profileInfo.minRes, profileInfo.maxRes,
+                               O.Diagnostics.Print);
 
-            if (flags::Print) {
+            if (O.Diagnostics.Print) {
               llvm::errs() << "Range of " << *op << " is ["
                            << node->getLowerBound() << ", "
                            << node->getUpperBound() << "]\n";
@@ -1222,8 +1217,9 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
               if (i < profileInfo.minOperands.size()) {
                 auto operandNode = valueToNodeMap[operand];
                 operandNode->updateBounds(profileInfo.minOperands[i],
-                                          profileInfo.maxOperands[i]);
-                if (flags::Print) {
+                                          profileInfo.maxOperands[i],
+                                          O.Diagnostics.Print);
+                if (O.Diagnostics.Print) {
                   llvm::errs() << "Range of " << *operand << " is ["
                                << operandNode->getLowerBound() << ", "
                                << operandNode->getUpperBound() << "]\n";
@@ -1231,7 +1227,7 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
               }
             }
           } else {
-            if (!flags::LooseCoverage) {
+            if (!O.Profiling.LooseCoverage) {
               llvm::errs() << "FP Instruction " << *op
                            << " has no execution logged (idx=" << idx << ")!\n";
               llvm_unreachable("Unexecuted instruction found; set "
@@ -1242,7 +1238,7 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
             node->sens = 0;
             node->grad = 0;
             node->executions = 0;
-            if (flags::Print)
+            if (O.Diagnostics.Print)
               llvm::errs() << "Sensitivity/gradient/executions of " << *op
                            << " not found in the log; using 0 for all\n";
           }
@@ -1251,28 +1247,28 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
     }
   }
 
-  if (flags::AggressiveDCE)
-    aggressiveDCE(F, subgraphs, valueToNodeMap, profileMap, zeroGradIdx,
+  if (O.Solver.AggressiveDCE)
+    aggressiveDCE(O, F, subgraphs, valueToNodeMap, profileMap, zeroGradIdx,
                   abstractMatmuls);
 
-  splitSubgraphs(subgraphs);
+  splitSubgraphs(O, subgraphs);
 
-  if (flags::Print) {
+  if (O.Diagnostics.Print) {
     llvm::errs() << "[poseidon] After splitting, have " << subgraphs.size()
                  << " subgraphs in " << F.getName() << "\n";
   }
 
   // After splitting so a merged unit is never re-split, and before the
   // frequency map below is built from the merged unit's instructions.
-  if (flags::MergeSharedStaging) {
-    mergeSharedStagingSubgraphs(subgraphs, F);
-    if (flags::Print)
+  if (O.Candidates.MergeSharedStaging) {
+    mergeSharedStagingSubgraphs(O, subgraphs, F);
+    if (O.Diagnostics.Print)
       llvm::errs() << "[poseidon] After staging-tier merge, have "
                    << subgraphs.size() << " subgraphs in " << F.getName()
                    << "\n";
   }
 
-  if (flags::Print) {
+  if (O.Diagnostics.Print) {
     llvm::errs() << "\n=== Function IR after Subgraph Splitting ===\n";
 
     std::unordered_map<Instruction *, int> instToSubgraphIdx;
@@ -1305,7 +1301,7 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
   }
 
   if (subgraphs.empty() && abstractMatmuls.empty()) {
-    if (flags::Print)
+    if (O.Diagnostics.Print)
       llvm::errs() << "No subgraphs or matmuls found\n";
     return false;
   }
@@ -1315,7 +1311,7 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
 
   bool expansionSafe = true;
 #if LLVM_VERSION_MAJOR < 24
-  if (flags::EnablePT && flags::EnableMultifloat && isGPUMode(F) &&
+  if (O.Candidates.EnablePT && O.Candidates.EnableMultifloat && isGPUMode(F) &&
       !subgraphs.empty()) {
     const std::string reason = fastFPReason(F);
     expansionSafe = reason.empty();
@@ -1326,7 +1322,7 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
                    << ". An expansion is exact only if each of its operations "
                       "is rounded as written; it needs -ffp-contract=on or "
                       "-ffp-contract=off, without -ffast-math.\n";
-      if (flags::StrictMode)
+      if (O.Model.StrictMode)
         report_fatal_error("Poseidon strict mode: site '" + F.getName() +
                            "': " + reason +
                            "; floating-point expansions need -ffp-contract=on "
@@ -1340,7 +1336,7 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
   for (auto &subgraph : subgraphs) {
     assert(subgraph.inputs.size() > 0 && "No inputs found for subgraph");
 
-    if (flags::EnableHerbie) {
+    if (O.Candidates.EnableHerbie) {
       for (const auto &input : subgraph.inputs) {
         auto node = valueToNodeMap[input];
         if (node->op == "__const") {
@@ -1351,7 +1347,7 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
           node->symbol = getNextSymbol();
         }
         symbolToValueMap[node->symbol] = input;
-        if (flags::Print)
+        if (O.Diagnostics.Print)
           llvm::errs() << "assigning symbol: " << node->symbol << " to "
                        << *input << "\n";
       }
@@ -1374,7 +1370,7 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
         getUniqueArgs(E.expr, args);
 
         std::string precondition =
-            getPrecondition(args, valueToNodeMap, symbolToValueMap);
+            getPrecondition(O, args, valueToNodeMap, symbolToValueMap);
 
         std::string argStr;
         for (const auto &arg : args) {
@@ -1388,13 +1384,14 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
           properties += std::string(" :precision ") + prec;
           properties += " :pre " + precondition;
 
-          CandidateOutput CO(subgraph, E.output, E.expr, E.grad, E.executions);
+          CandidateOutput CO(S.CostModel, subgraph, E.output, E.expr, E.grad,
+                             E.executions);
           CO.herbiePrecision = prec;
           properties += " :name \"" + std::to_string(cos.size()) + "\"";
 
           std::string herbieInput =
               "(FPCore (" + argStr + ") " + properties + " " + E.expr + ")";
-          if (flags::Print)
+          if (O.Diagnostics.Print)
             llvm::errs() << "Herbie input:\n" << herbieInput << "\n";
 
           inputs.push_back(herbieInput);
@@ -1416,39 +1413,40 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
         std::string expr = valueToNodeMap[output]->toFullExpression(
             valueToNodeMap, subgraph.inputs);
 
-        if (expr.length() > flags::MaxExprLength) {
+        if (expr.length() > O.Candidates.MaxExprLength) {
           llvm::errs() << "WARNING: Skipping Herbie optimization for "
                        << *output << " since expression length "
                        << expr.length() << " exceeds limit of "
-                       << flags::MaxExprLength << "\n";
+                       << O.Candidates.MaxExprLength << "\n";
           continue;
         }
 
         auto parenCount = std::count(expr.begin(), expr.end(), '(');
         assert(parenCount > 0);
         if (parenCount == 1) {
-          if (flags::Print)
+          if (O.Diagnostics.Print)
             llvm::errs() << "Skipping Herbie for simple expression: " << expr
                          << "\n";
           continue;
         }
 
         Eligible E{output, expr, grad, executions};
-        if (flags::HerbieArrays)
+        if (O.Herbie.HerbieArrays)
           eligible.push_back(std::move(E));
         else
           emitPerOutput(E, {"binary64", "binary32"}, herbieInputs, newCOs);
       }
 
-      if (flags::HerbieArrays && (!StringRef(flags::HerbieArrayGrouping)
-                                       .equals_insensitive("inputs") &&
-                                  !StringRef(flags::HerbieArrayGrouping)
-                                       .equals_insensitive("executions")))
+      if (O.Herbie.HerbieArrays && (!StringRef(O.Herbie.HerbieArrayGrouping)
+                                         .equals_insensitive("inputs") &&
+                                    !StringRef(O.Herbie.HerbieArrayGrouping)
+                                         .equals_insensitive("executions")))
         report_fatal_error("Poseidon: -poseidon-herbie-array-grouping must be "
                            "'inputs' or 'executions'");
-      if (flags::HerbieArrays && flags::HerbieArrayWeights != "sensitivity" &&
-          flags::HerbieArrayWeights != "gradient" &&
-          flags::HerbieArrayWeights != "none")
+      if (O.Herbie.HerbieArrays &&
+          O.Herbie.HerbieArrayWeights != "sensitivity" &&
+          O.Herbie.HerbieArrayWeights != "gradient" &&
+          O.Herbie.HerbieArrayWeights != "none")
         report_fatal_error("Poseidon: -poseidon-herbie-array-weights must be "
                            "'sensitivity', 'gradient' or 'none'");
 
@@ -1457,7 +1455,7 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
       // at that count.
       auto groupKey = [&](const Eligible &E) {
         std::string key = std::to_string(E.executions);
-        if (flags::HerbieArrayGrouping == "inputs") {
+        if (O.Herbie.HerbieArrayGrouping == "inputs") {
           SmallSet<std::string, 8> args;
           getUniqueArgs(E.expr, args);
           std::vector<std::string> sorted(args.begin(), args.end());
@@ -1499,7 +1497,7 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
         SmallSet<std::string, 8> args;
         getUniqueArgs(body, args);
         std::string precondition =
-            getPrecondition(args, valueToNodeMap, symbolToValueMap);
+            getPrecondition(O, args, valueToNodeMap, symbolToValueMap);
         std::string argStr;
         for (const auto &arg : args) {
           if (!argStr.empty())
@@ -1507,11 +1505,11 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
           argStr += arg;
         }
         std::string weights;
-        if (flags::HerbieArrayWeights != "none") {
+        if (O.Herbie.HerbieArrayWeights != "none") {
           SmallVector<double, 8> sens;
           for (Instruction *output : outputs) {
             FPNode *N = valueToNodeMap[output].get();
-            if (flags::HerbieArrayWeights == "gradient") {
+            if (O.Herbie.HerbieArrayWeights == "gradient") {
               double lo = N->getLowerBound(), hi = N->getUpperBound();
               double meanMag = lo >= 0 || hi <= 0
                                    ? (std::fabs(lo) + std::fabs(hi)) / 2
@@ -1546,11 +1544,11 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
               ") :herbie-conversions ([binary64 binary32]) :precision " + prec +
               " :pre " + precondition + weights + " :name \"" +
               std::to_string(arrayCOs.size()) + "\" " + body + ")";
-          if (flags::Print)
+          if (O.Diagnostics.Print)
             llvm::errs() << "Herbie array input:\n" << herbieInput << "\n";
           arrayInputs.push_back(herbieInput);
-          arrayCOs.emplace_back(subgraph, ArrayRef<Value *>(roots), grads, body,
-                                G.front()->executions);
+          arrayCOs.emplace_back(S.CostModel, subgraph, ArrayRef<Value *>(roots),
+                                grads, body, G.front()->executions);
           arrayCOs.back().herbiePrecision = prec;
           arrayGroups.push_back(&G);
         }
@@ -1569,9 +1567,9 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
         if (!inArray(E))
           emitPerOutput(E, precs, numArrayCores ? arrayInputs : herbieInputs,
                         numArrayCores ? arrayCOs : newCOs);
-      if (numArrayCores && !improveViaHerbie(arrayInputs, arrayCOs,
+      if (numArrayCores && !improveViaHerbie(S, arrayInputs, arrayCOs,
                                              subgraphCounter, F.getName())) {
-        if (flags::Print)
+        if (O.Diagnostics.Print)
           llvm::errs() << "Failed to optimize expressions using Herbie!\n";
       }
       for (const Eligible &E : eligible) {
@@ -1590,9 +1588,9 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
       COs.insert(COs.end(), arrayCOs.begin(), arrayCOs.end());
 
       if (!herbieInputs.empty()) {
-        if (!improveViaHerbie(herbieInputs, newCOs, subgraphCounter,
+        if (!improveViaHerbie(S, herbieInputs, newCOs, subgraphCounter,
                               F.getName())) {
-          if (flags::Print)
+          if (O.Diagnostics.Print)
             llvm::errs() << "Failed to optimize expressions using Herbie!\n";
         }
 
@@ -1600,7 +1598,7 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
       }
     }
 
-    if (flags::EnablePT) {
+    if (O.Candidates.EnablePT) {
       auto *o0 = subgraph.outputs[0];
       const unsigned o0Exec = valueToNodeMap[o0]->executions;
 
@@ -1609,7 +1607,7 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
       subgraph.opExec.clear();
       subgraph.depthExec.clear();
       subgraph.execNormalizer = o0Exec;
-      if (flags::FreqWeightedPricing) {
+      if (O.Model.FreqWeightedPricing) {
         DominatorTree freqDT(F);
         LoopInfo freqLI(freqDT);
         auto note = [&](Instruction *I) {
@@ -1639,7 +1637,7 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
             if (dit != subgraph.depthExec.end())
               kv.second = dit->second;
           }
-        if (flags::Print && subgraph.depthExec.size() > 1) {
+        if (O.Diagnostics.Print && subgraph.depthExec.size() > 1) {
           llvm::errs() << "[poseidon] frequency-heterogeneous subgraph "
                           "(normalizer "
                        << o0Exec << ", measured depth:exec";
@@ -1650,7 +1648,7 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
         }
       }
 
-      CandidateSubgraph CS(subgraph);
+      CandidateSubgraph CS(S.CostModel, subgraph);
       CS.executions = o0Exec;
 
       // Synthetic output-boundary casts execute at most once per thread per
@@ -1667,7 +1665,7 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
                               (double)CS.executions);
       }
 
-      const auto &PTFuncs = getPTFuncs();
+      const auto &PTFuncs = getPTFuncs(S.CostModel);
       SetVector<FPLLValue *> funcsSet, allSet;
       for (auto *I : subgraph.operations) {
         assert(isa<FPLLValue>(valueToNodeMap[I].get()) &&
@@ -1690,7 +1688,7 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
       const bool gpuMode = isGPUMode(F);
       static const std::unordered_set<std::string> kEmptyScalars;
       const std::unordered_set<std::string> &hwScalar =
-          gpuMode ? getScalarTypes() : kEmptyScalars;
+          gpuMode ? getScalarTypes(S.CostModel) : kEmptyScalars;
       PrecisionChangeType curr =
           getPrecisionChangeType(subgraph.outputs[0]->getType());
 
@@ -1713,7 +1711,7 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
       auto sweepTwoTier = [&](TierPair tp, ArrayRef<FPLLValue *> sortedAsc,
                               StringRef label) {
         const size_t N = sortedAsc.size();
-        const int step = std::max(5, flags::TwoTierStep.getValue());
+        const int step = std::max(5, O.Candidates.TwoTierStep);
         size_t prev = N + 1;
         for (int pct = 0; pct <= 100 - step; pct += step) {
           size_t k = N * pct / 100;
@@ -1724,7 +1722,7 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
           SetVector<FPLLValue *> hiOps(sortedAsc.end() - k, sortedAsc.end());
           SetVector<FPLLValue *> loOps(sortedAsc.begin(), sortedAsc.end() - k);
 
-          if (flags::Print) {
+          if (O.Diagnostics.Print) {
             llvm::errs() << "Created " << label
                          << " two-tier PT candidate: " << fmtPrecPct(tp.hi, pct)
                          << " + " << fmtPrecPct(tp.lo, 100 - pct) << " (N=" << N
@@ -1763,7 +1761,7 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
             SetVector<FPLLValue *> loOps(sortedAsc.begin(),
                                          sortedAsc.end() - k1);
 
-            if (flags::Print) {
+            if (O.Diagnostics.Print) {
               llvm::errs() << "Created " << label
                            << " three-tier PT candidate: "
                            << fmtPrecPct(tr.hi, pctHi) << " + "
@@ -1792,16 +1790,16 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
       };
 
       for (TierPair tp : kCanonicalPairs) {
-        if (!tierPairAllowed(tp, gpuMode, expansionSafe, hwScalar))
+        if (!tierPairAllowed(O, tp, gpuMode, expansionSafe, hwScalar))
           continue;
         sweepTwoTier(tp, sortedAllOps, "All");
         if (!sortedFuncs.empty())
           sweepTwoTier(tp, sortedFuncs, "Funcs");
       }
 
-      if (flags::EnableThreeTier) {
+      if (O.Candidates.EnableThreeTier) {
         for (TierTriple tr : kCanonicalTriples) {
-          if (!tierTripleAllowed(tr, gpuMode, expansionSafe, hwScalar))
+          if (!tierTripleAllowed(O, tr, gpuMode, expansionSafe, hwScalar))
             continue;
           sweepThreeTier(tr, sortedAllOps, "All");
         }
@@ -1817,7 +1815,7 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
                         "tier combinations filtered); the solve cannot "
                         "propose any rewrite here. Check the cost model's "
                         "scalar_types header.\n";
-        if (flags::StrictMode)
+        if (O.Model.StrictMode)
           report_fatal_error(
               "Poseidon strict mode: nonempty FP subgraph synthesized zero "
               "candidates with precision tuning enabled");
@@ -1831,10 +1829,10 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
   }
 
   auto &CMs = st.CMs;
-  generateMatmulCandidates(abstractMatmuls, profileMap, kDefaultConfidence,
+  generateMatmulCandidates(S, abstractMatmuls, profileMap, kDefaultConfidence,
                            st.sampleLogBits, CMs);
 
-  priceUnlessCached(st, profilePath);
+  priceUnlessCached(S, st, profilePath);
 
   // Put this site's error on the application's scale. kappa is the measured
   // response of the declared quantity of interest to computing this site with a
@@ -1850,7 +1848,7 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
     for (const auto &kv : profileMap)
       siteSumSens += kv.second.sumSens;
     // Per-output weights are already divided by each output's own total.
-    if (!flags::OutputProfiles.empty()) {
+    if (!O.Profiling.OutputProfiles.empty()) {
       if (profileHeader.hasKappa)
         report_fatal_error(
             Twine("Poseidon: the profile of ") + F.getName() +
@@ -1905,8 +1903,8 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
     }
   }
 
-  if (flags::Print) {
-    if (flags::EnableHerbie) {
+  if (O.Diagnostics.Print) {
+    if (O.Candidates.EnableHerbie) {
       for (auto &CO : COs) {
         llvm::errs() << "\n################################\n";
         llvm::errs() << "Initial AccuracyCost: " << CO.initialAccCost << "\n";
@@ -1924,7 +1922,7 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
         for (size_t i = 0; i < CO.candidates.size(); ++i) {
           auto &candidate = CO.candidates[i];
           llvm::errs() << CO.getAccCostDelta(i) << "\t\t"
-                       << CO.getCompCostDelta(i) << "\t\t"
+                       << CO.getCompCostDelta(S.CostModel, i) << "\t\t"
                        << candidate.herbieCost << "\t\t"
                        << candidate.herbieAccuracy << "\t\t" << candidate.expr
                        << "\n";
@@ -1932,7 +1930,7 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
         llvm::errs() << "################################\n\n";
       }
     }
-    if (flags::EnablePT) {
+    if (O.Candidates.EnablePT) {
       for (auto &CS : CSs) {
         llvm::errs() << "\n################################\n";
         llvm::errs() << "Initial AccuracyCost: " << CS.initialAccCost << "\n";
@@ -1952,7 +1950,7 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
     }
   }
 
-  if (flags::Print) {
+  if (O.Diagnostics.Print) {
     for (const auto &cm : CMs) {
       llvm::errs() << "Matmul[" << cm.matmul->id
                    << "] candidates (initial cost=" << cm.initialCompCost
@@ -1980,29 +1978,30 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
 
 // Split out of fpOptimize so the joint solver can collect across functions,
 // solve once, then materialize each function with its own steps.
-bool materializeFPSolution(Function &F, FunctionFPState &st,
+bool materializeFPSolution(Session &S, Function &F, FunctionFPState &st,
                            ArrayRef<SolutionStep> steps) {
+  const Options &O = S.Opts;
   auto &valueToNodeMap = st.valueToNodeMap;
   auto &symbolToValueMap = st.symbolToValueMap;
   auto &subgraphs = st.subgraphs;
   SmallVector<SolutionStep> applied;
   bool changed =
-      applySolution(steps, valueToNodeMap, symbolToValueMap, applied);
-  printPin(st, applied);
+      applySolution(S, steps, valueToNodeMap, symbolToValueMap, applied);
+  printPin(S, st, applied);
 
   llvm::errs() << "[poseidon] Finished optimizing " << F.getName() << "\n";
 
   if (changed) {
     for (auto &subgraph : subgraphs) {
       if (subgraph.outputs_rewritten != subgraph.outputs.size()) {
-        if (flags::Print)
+        if (O.Diagnostics.Print)
           llvm::errs() << "Skip erasing a subgraph: only rewrote "
                        << subgraph.outputs_rewritten << " of "
                        << subgraph.outputs.size() << " outputs\n";
         continue; // Intermediate operations cannot be erased safely
       }
       for (auto *I : subgraph.operations) {
-        if (flags::Print)
+        if (O.Diagnostics.Print)
           llvm::errs() << "Erasing: " << *I << "\n";
         if (!I->use_empty()) {
           I->replaceAllUsesWith(UndefValue::get(I->getType()));
@@ -2015,11 +2014,12 @@ bool materializeFPSolution(Function &F, FunctionFPState &st,
   }
 
   if (changed)
-    applyStagingNarrowing(
-        F, /*announce=*/true,
-        flags::NarrowParamStaging ? ParamArm::Both : ParamArm::None, &F);
+    applyStagingNarrowing(S, F, /*announce=*/true,
+                          O.Materialization.NarrowParamStaging ? ParamArm::Both
+                                                               : ParamArm::None,
+                          &F);
   if (changed && demoteFPCastPHIs(F)) {
-    if (flags::Print)
+    if (O.Diagnostics.Print)
       llvm::errs() << "[poseidon] demoted fpcast-sandwiched FP64 PHIs in "
                    << F.getName() << "\n";
   }
@@ -2042,7 +2042,7 @@ bool materializeFPSolution(Function &F, FunctionFPState &st,
     F.addFnAttr(Attribute::AlwaysInline);
   }
 
-  if (flags::Print) {
+  if (O.Diagnostics.Print) {
     llvm::errs() << "[poseidon] Finished Optimization\n";
     F.print(llvm::errs());
   }
@@ -2050,11 +2050,12 @@ bool materializeFPSolution(Function &F, FunctionFPState &st,
   return changed;
 }
 
-bool fpOptimize(Function &F, double errorTol) {
+bool fpOptimize(Session &S, Function &F, double errorTol) {
+  const Options &O = S.Opts;
   // A target written AT THE SITE wins over -poseidon-tau, which is the target
   // of every site that carries none. Either way the number means the same: one
   // path below solves the site under it.
-  const double target = errorTol > 0.0 ? errorTol : (double)flags::Tau;
+  const double target = errorTol > 0.0 ? errorTol : (double)O.Solver.Tau;
 
   // Matrix-product selection is only trustworthy with dynamic-range-aware
   // sampling (uniform [min,max] under-prices fixed-point Ozaki on
@@ -2062,40 +2063,40 @@ bool fpOptimize(Function &F, double errorTol) {
   // wide log-uniform range; an explicit -poseidon-sample-log-bits still
   // overrides. Read only by the matmul accuracy model, so a site with no matrix
   // product is unaffected.
-  unsigned sampleLogBits = flags::SampleLogBits;
+  unsigned sampleLogBits = O.Model.SampleLogBits;
   if (target > 0.0 && sampleLogBits == 0)
     sampleLogBits = 40;
 
   FunctionFPState st;
-  if (!collectFPCandidates(F, errorTol, sampleLogBits, st)) {
-    explainNothingToOptimize(F);
+  if (!collectFPCandidates(S, F, errorTol, sampleLogBits, st)) {
+    explainNothingToOptimize(S, F);
     return false;
   }
 
-  if (errorTol > 0.0 && flags::Tau > 0.0)
+  if (errorTol > 0.0 && O.Solver.Tau > 0.0)
     llvm::errs() << "[poseidon] " << F.getName()
                  << ": the site's own accuracy target " << errorTol
-                 << " overrides -poseidon-tau=" << flags::Tau << "\n";
+                 << " overrides -poseidon-tau=" << O.Solver.Tau << "\n";
 
   SolveRecord record;
-  SolveRecord *rec = explainWanted(F) ? &record : nullptr;
+  SolveRecord *rec = explainWanted(O, F) ? &record : nullptr;
   record.accScale = st.accScale;
   record.tau = target;
   record.siteTarget = errorTol > 0.0;
   SmallVector<SolutionStep> steps;
-  if (!flags::ApplyRewrites.empty()) {
-    steps = parseManualRewrites(st);
+  if (!O.Solver.ApplyRewrites.empty()) {
+    steps = parseManualRewrites(S, st);
     record.selector = "manual";
   } else if (target > 0.0 && !st.CMs.empty()) {
     // The target is a RELATIVE error, and for a matrix product that is what
     // errorBudgetSelector compares against. Whatever elementwise work the
     // products do not cover is then solved by the normalized DP under the same
     // number.
-    steps = errorBudgetSelector(st.CMs, target, kDefaultConfidence);
+    steps = errorBudgetSelector(O, st.CMs, target, kDefaultConfidence);
     if (!st.COs.empty() || !st.CSs.empty()) {
       SmallVector<CandidateMatmul, 4> noCMs;
       SmallVector<SolutionStep> elem = accuracyDPSolver(
-          F, st.COs, st.CSs, noCMs, st.valueToNodeMap, st.symbolToValueMap,
+          S, F, st.COs, st.CSs, noCMs, st.valueToNodeMap, st.symbolToValueMap,
           target, st.accScale, rec, st.table.get());
       for (const SolutionStep &e : elem) {
         // The two selectors ran independently, so the footprint rule the DP
@@ -2114,16 +2115,17 @@ bool fpOptimize(Function &F, double errorTol) {
     }
     record.selector = "error-budget";
   } else {
-    steps = accuracyDPSolver(F, st.COs, st.CSs, st.CMs, st.valueToNodeMap,
+    steps = accuracyDPSolver(S, F, st.COs, st.CSs, st.CMs, st.valueToNodeMap,
                              st.symbolToValueMap, target, st.accScale, rec,
                              st.table.get());
   }
   if (rec)
-    explainSolve(F, st, steps, record);
-  return materializeFPSolution(F, st, steps);
+    explainSolve(S, F, st, steps, record);
+  return materializeFPSolution(S, F, st, steps);
 }
 
-bool solveJointly(Module &M, FunctionAnalysisManager &FAM) {
+bool solveJointly(Session &S, Module &M, FunctionAnalysisManager &FAM) {
+  const Options &O = S.Opts;
   SmallVector<Function *, 4> marked;
   for (Function &F : M)
     if (!F.empty() && F.hasFnAttribute("poseidon-joint-errtol"))
@@ -2146,7 +2148,7 @@ bool solveJointly(Module &M, FunctionAnalysisManager &FAM) {
         .getAsDouble(errTol);
     F->removeFnAttr("poseidon-joint-errtol");
     allFromSite &= errTol > 0.0;
-    targets.push_back({F, errTol > 0.0 ? errTol : (double)flags::Tau});
+    targets.push_back({F, errTol > 0.0 ? errTol : (double)O.Solver.Tau});
   }
   const double jointErrTol = targets.front().second;
   if (llvm::any_of(targets,
@@ -2156,7 +2158,7 @@ bool solveJointly(Module &M, FunctionAnalysisManager &FAM) {
     os << "Poseidon: the sites of one -poseidon-joint-dp solve have different "
           "accuracy targets:";
     for (auto &[F, t] : targets) {
-      const Function *origin = siteOriginOf(*F);
+      const Function *origin = siteOriginOf(S, *F);
       os << " "
          << llvm::demangle((origin ? origin->getName() : F->getName()).str())
          << " (";
@@ -2170,19 +2172,19 @@ bool solveJointly(Module &M, FunctionAnalysisManager &FAM) {
     M.getContext().diagnose(DiagnosticInfoUnsupported(
         *targets.front().first, os.str(), DiagnosticLocation(), DS_Error));
     for (auto &[F, t] : targets)
-      redirectNoopSite(F);
+      redirectNoopSite(S, F);
     return false;
   }
 
   std::vector<std::unique_ptr<FunctionFPState>> states;
   for (auto &[F, errTol] : targets) {
     auto st = std::make_unique<FunctionFPState>();
-    if (collectFPCandidates(*F, errTol, flags::SampleLogBits, *st)) {
+    if (collectFPCandidates(S, *F, errTol, O.Model.SampleLogBits, *st)) {
       states.push_back(std::move(st));
     } else {
       llvm::errs() << "Poseidon JOINT: nothing to optimize in " << F->getName()
                    << "\n";
-      redirectNoopSite(F);
+      redirectNoopSite(S, F);
     }
   }
   if (states.empty())
@@ -2194,19 +2196,19 @@ bool solveJointly(Module &M, FunctionAnalysisManager &FAM) {
 
   SolveRecord record;
   const bool explain = llvm::any_of(
-      raw, [](FunctionFPState *st) { return explainWanted(*st->F); });
+      raw, [&](FunctionFPState *st) { return explainWanted(O, *st->F); });
   record.tau = jointErrTol;
   record.siteTarget = allFromSite;
   SmallVector<SolutionStep> steps;
-  if (!flags::ApplyRewrites.empty()) {
+  if (!O.Solver.ApplyRewrites.empty()) {
     for (auto *st : raw) {
-      auto s = parseManualRewrites(*st);
+      auto s = parseManualRewrites(S, *st);
       steps.append(s.begin(), s.end());
     }
     record.selector = "manual";
   } else {
     steps =
-        jointAccuracyDPSolver(raw, jointErrTol, explain ? &record : nullptr);
+        jointAccuracyDPSolver(S, raw, jointErrTol, explain ? &record : nullptr);
   }
 
   std::unordered_map<const void *, FunctionFPState *> owner;
@@ -2232,17 +2234,17 @@ bool solveJointly(Module &M, FunctionAnalysisManager &FAM) {
   // bit-identically, and an unrewritten site must be numerically transparent.
   if (explain)
     for (auto *st : raw)
-      explainSolve(*st->F, *st, perState[st], record);
+      explainSolve(S, *st->F, *st, perState[st], record);
   bool changed = false;
   for (auto *st : raw) {
-    bool ch = materializeFPSolution(*st->F, *st, perState[st]);
+    bool ch = materializeFPSolution(S, *st->F, *st, perState[st]);
     if (!ch)
-      redirectNoopSite(st->F);
+      redirectNoopSite(S, st->F);
     changed |= ch;
   }
   // The joint materialize has stashed the host-dispatch notes; emit the
   // deferred descriptors now.
-  flushPendingGemmDispatches();
+  flushPendingGemmDispatches(S);
   return changed;
 }
 

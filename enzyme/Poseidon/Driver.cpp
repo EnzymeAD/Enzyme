@@ -4,6 +4,7 @@
 #include "Optimize.h"
 #include "Pass/Explain.h"
 #include "Pass/Flags.h"
+#include "Pass/Session.h"
 #include "Profile/DeviceProfile.h"
 #include "Profile/Instrument.h"
 #include "Profile/ProfileRead.h"
@@ -47,6 +48,7 @@
 #include "llvm/IR/PassManager.h"
 #include "llvm/IR/ValueHandle.h"
 #include "llvm/Passes/PassBuilder.h"
+#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Format.h"
@@ -284,7 +286,7 @@ bool callsEnzymeRequest(Function &F) {
 
 // True when this site belongs to the late run. Marks the body the first time,
 // so that both phases and both passes agree without re-deciding.
-bool deferSite(CallInst *CI) {
+bool deferSite(const Options &O, CallInst *CI) {
   Function *F = markerTargetOrNull(CI);
   if (!F || F->empty())
     return false;
@@ -293,7 +295,7 @@ bool deferSite(CallInst *CI) {
   if (!callsEnzymeRequest(*F))
     return false;
   F->addFnAttr(kSiteDeferred);
-  if (flags::Print)
+  if (O.Diagnostics.Print)
     llvm::errs() << "[poseidon] " << F->getName()
                  << ": marked body still holds an __enzyme_* request; "
                     "deferred to the late run\n";
@@ -478,38 +480,18 @@ bool parseMarker(CallInst *CI, Function *F, MarkerArgs &out) {
   return true;
 }
 
-SmallVector<WeakVH, 4> &siteClones() {
-  static SmallVector<WeakVH, 4> clones;
-  return clones;
-}
-
-// The functions a solve rewrote a site in, with every function that calls
-// them: what the module as written does not have.
-SmallVector<WeakVH, 4> &rewrittenFunctions() {
-  static SmallVector<WeakVH, 4> functions;
-  return functions;
-}
-
-void noteRewritten(Function &F) {
+void noteRewritten(Session &S, Function &F) {
   SmallVector<Function *, 4> work{&F};
   SmallPtrSet<Function *, 4> seen;
   while (!work.empty()) {
     Function *G = work.pop_back_val();
     if (!seen.insert(G).second)
       continue;
-    rewrittenFunctions().push_back(G);
+    S.RewrittenFunctions.push_back(G);
     for (User *U : G->users())
       if (auto *CB = dyn_cast<CallBase>(U))
         work.push_back(CB->getFunction());
   }
-}
-
-// Markers on the same body with the same target share one solve, as they share
-// one profile record: a body inlined at several call sites otherwise pays the
-// whole solve once per copy.
-std::map<std::pair<const Function *, double>, WeakVH> &solvedSites() {
-  static std::map<std::pair<const Function *, double>, WeakVH> solved;
-  return solved;
 }
 
 // The body a site's call targets is a device of this pass and must not reach
@@ -580,8 +562,8 @@ struct Unprofiled {
   bool mayNotHaveRun = false;
 };
 
-std::optional<Unprofiled> unprofiledSite(Function &clone) {
-  const std::string file = siteProfileStem(clone) + ".fpprofile";
+std::optional<Unprofiled> unprofiledSite(Session &S, Function &clone) {
+  const std::string file = siteProfileStem(S, clone) + ".fpprofile";
   std::optional<Unprofiled> absent, neverExecuted;
   auto read = [&](StringRef dir, StringRef flag) {
     SmallString<128> path(dir);
@@ -589,8 +571,8 @@ std::optional<Unprofiled> unprofiledSite(Function &clone) {
     if (!sys::fs::exists(path)) {
       requireProfileDirectory(dir, flag);
       if (!absent)
-        absent =
-            Unprofiled{false, path.str().str(), !profileDirNamesFormat(dir)};
+        absent = Unprofiled{false, path.str().str(),
+                            !profileDirNamesFormat(S.ProfileDirFormats, dir)};
     } else if (isNeverExecutedProfile(path.str().str())) {
       std::unordered_map<size_t, ProfileInfo> records;
       FunctionProfileHeader header;
@@ -601,20 +583,20 @@ std::optional<Unprofiled> unprofiledSite(Function &clone) {
         neverExecuted = Unprofiled{true, path.str().str()};
     }
   };
-  read(flags::ProfileUse, "-poseidon-profile-use");
-  for (const std::string &dir : flags::OutputProfiles)
+  read(S.Opts.Profiling.ProfileUse, "-poseidon-profile-use");
+  for (const std::string &dir : S.Opts.Profiling.OutputProfiles)
     read(dir, "-poseidon-output-profiles");
   return absent ? absent : neverExecuted;
 }
 
-void reportUnprofiled(CallBase *CI, const Function &body, Function &clone,
-                      const Unprofiled &site) {
+void reportUnprofiled(Session &S, CallBase *CI, const Function &body,
+                      Function &clone, const Unprofiled &site) {
   if (site.neverExecuted) {
     const char *cause =
         "the profiling run instrumented this site and never executed it";
     llvm::errs() << "[poseidon] " << body.getName() << ": " << cause << " ("
                  << site.path << "); left unchanged\n";
-    explainUnprofiled(clone, cause);
+    explainUnprofiled(S, clone, cause);
     return;
   }
   if (site.mayNotHaveRun) {
@@ -626,14 +608,14 @@ void reportUnprofiled(CallBase *CI, const Function &body, Function &clone,
                  "; leaving the site unchanged");
     llvm::errs() << "[poseidon] " << body.getName() << ": " << cause
                  << " (no profile at " << site.path << "); left unchanged\n";
-    explainUnprofiled(clone, cause);
+    explainUnprofiled(S, clone, cause);
     return;
   }
   const char *cause =
       "the profiled program did not contain this site (it was annotated "
       "after the profiling run, is in a translation unit the profiled "
       "program did not link, or was renamed)";
-  if (flags::StrictMode)
+  if (S.Opts.Model.StrictMode)
     report_fatal_error(Twine("Poseidon: no profile of ") + body.getName() +
                            " at " + site.path + ": " + cause +
                            ", and -poseidon-strict-mode does not leave a "
@@ -645,33 +627,33 @@ void reportUnprofiled(CallBase *CI, const Function &body, Function &clone,
                << ": the profiled program did not contain this site (no "
                   "profile at "
                << site.path << "); left unchanged\n";
-  explainUnprofiled(clone, cause);
+  explainUnprofiled(S, clone, cause);
 }
 
 // Profile use, shared by both annotation forms: `CI` is the call the site's
 // body is reached through (the marker call, or the wrapper kernel's call of its
 // own outlined body), `F` the body and `primalArgs` the caller values its
 // parameters take.
-bool optimizeSiteBody(CallBase *CI, Function *F,
+bool optimizeSiteBody(Session &S, CallBase *CI, Function *F,
                       SmallVectorImpl<Value *> &primalArgs, double errTol,
                       SmallVectorImpl<CallBase *> &calls) {
-  const bool profileUse =
-      flags::ProfileUse.getNumOccurrences() && !flags::ProfileUse.empty();
+  const Options &O = S.Opts;
+  const bool profileUse = O.Profiling.usesProfile();
   if (!profileUse) {
     warn(CI, "a Poseidon site was compiled without -poseidon-profile-generate "
              "or -poseidon-profile-use=<dir>. Emitting the original "
              "computation.");
   } else {
-    noteSiteForPins(*F);
+    noteSiteForPins(S, *F);
     auto key = std::make_pair((const Function *)F, errTol);
-    auto prior = solvedSites().find(key);
-    if (!flags::JointDP && prior != solvedSites().end())
+    auto prior = S.SolvedSites.find(key);
+    if (!O.Solver.JointDP && prior != S.SolvedSites.end())
       if (auto *done = dyn_cast_or_null<Function>(prior->second)) {
         if (done != F)
-          noteRewritten(*CI->getFunction());
+          noteRewritten(S, *CI->getFunction());
         GemmBodyNote ozNote;
-        if (flags::OzakiHostDispatch && getGemmBody(done, ozNote))
-          writeGemmDescriptor(*CI->getFunction(), primalArgs, ozNote);
+        if (O.Matmul.OzakiHostDispatch && getGemmBody(S, done, ozNote))
+          writeGemmDescriptor(S, *CI->getFunction(), primalArgs, ozNote);
         llvm::errs() << "[poseidon] " << F->getName()
                      << ": same body and target as an earlier site; reusing "
                         "its solve ("
@@ -685,39 +667,39 @@ bool optimizeSiteBody(CallBase *CI, Function *F,
     // the original).
     Function *sourceBody = F;
     F = canonicalize(*F);
-    siteClones().push_back(F);
+    S.SiteClones.push_back(F);
     setSlotMetadata(*F);
-    noteSiteOrigin(F, sourceBody);
-    noteSiteArgs(F, primalArgs);
-    noteSiteCall(F, CI->getDebugLoc());
+    noteSiteOrigin(S, F, sourceBody);
+    noteSiteArgs(S, F, primalArgs);
+    noteSiteCall(S, F, CI->getDebugLoc());
 
     // A site with nothing to solve from still has to build and run, so it keeps
     // the ORIGINAL body rather than failing the compile.
-    if (std::optional<Unprofiled> site = unprofiledSite(*F)) {
-      reportUnprofiled(CI, *sourceBody, *F, *site);
+    if (std::optional<Unprofiled> site = unprofiledSite(S, *F)) {
+      reportUnprofiled(S, CI, *sourceBody, *F, *site);
       markOutlineTransparent(sourceBody);
       return emitSiteCall(CI, sourceBody, primalArgs, calls);
     }
 
-    if (flags::Print) {
+    if (O.Diagnostics.Print) {
       llvm::errs() << "[poseidon] Optimizing " << F->getName()
                    << " with relative error tolerance: "
-                   << (errTol > 0.0 ? errTol : (double)flags::Tau) << "\n";
+                   << (errTol > 0.0 ? errTol : (double)O.Solver.Tau) << "\n";
     }
 
-    if (flags::JointDP) {
+    if (O.Solver.JointDP) {
       // Joint mode: defer; mark F with its tolerance so the joint solve takes
       // it with the module's other sites under one shared budget.
       F->addFnAttr("poseidon-joint-errtol", exactDouble(errTol));
       // Host-dispatch note is produced only by the later joint materialize;
       // capture the body-param -> wrapper-arg mapping now (primalArgs valid
       // here).
-      if (flags::OzakiHostDispatch)
-        addPendingGemmDispatch(F, *CI->getFunction(), primalArgs);
+      if (O.Matmul.OzakiHostDispatch)
+        addPendingGemmDispatch(S, F, *CI->getFunction(), primalArgs);
     } else {
-      bool optimized = fpOptimize(*F, errTol);
+      bool optimized = fpOptimize(S, *F, errTol);
       if (optimized)
-        noteRewritten(*CI->getFunction());
+        noteRewritten(S, *CI->getFunction());
 
       if (!optimized)
         warn(CI,
@@ -729,8 +711,8 @@ bool optimizeSiteBody(CallBase *CI, Function *F,
       // geometry) for the host sub-compilation to consume.
       {
         GemmBodyNote ozNote;
-        if (flags::OzakiHostDispatch && getGemmBody(F, ozNote))
-          writeGemmDescriptor(*CI->getFunction(), primalArgs, ozNote);
+        if (O.Matmul.OzakiHostDispatch && getGemmBody(S, F, ozNote))
+          writeGemmDescriptor(S, *CI->getFunction(), primalArgs, ozNote);
       }
 
       // No rewrite was applied: call the ORIGINAL body so the wrapped site is
@@ -742,7 +724,7 @@ bool optimizeSiteBody(CallBase *CI, Function *F,
                      << " (bit-transparent no-op)\n";
         F = sourceBody;
       }
-      solvedSites()[key] = F;
+      S.SolvedSites[key] = F;
     }
   }
 
@@ -753,7 +735,8 @@ bool optimizeSiteBody(CallBase *CI, Function *F,
   return emitSiteCall(CI, F, primalArgs, calls);
 }
 
-bool optimizeSite(CallInst *CI, SmallVectorImpl<CallBase *> &calls) {
+bool optimizeSite(Session &S, CallInst *CI,
+                  SmallVectorImpl<CallBase *> &calls) {
   Function *F = markerTarget(CI);
   if (!F)
     return false;
@@ -761,7 +744,7 @@ bool optimizeSite(CallInst *CI, SmallVectorImpl<CallBase *> &calls) {
   MarkerArgs marker;
   if (!parseMarker(CI, F, marker))
     return false;
-  return optimizeSiteBody(CI, F, marker.primalArgs, marker.errTol, calls);
+  return optimizeSiteBody(S, CI, F, marker.primalArgs, marker.errTol, calls);
 }
 
 // --------------------------------------------------------------------------
@@ -892,8 +875,9 @@ MapVector<Function *, std::optional<double>> annotatedFunctions(Module &M) {
   return out;
 }
 
-void noteSiteTarget(const Function &F, std::optional<double> tau) {
-  if (flags::Print && tau)
+void noteSiteTarget(const Options &O, const Function &F,
+                    std::optional<double> tau) {
+  if (O.Diagnostics.Print && tau)
     llvm::errs() << "[poseidon] site " << displayName(F) << ": accuracy target "
                  << shortDouble(*tau) << "\n";
 }
@@ -902,7 +886,8 @@ void noteSiteTarget(const Function &F, std::optional<double> tau) {
 // given, receives the sites -poseidon-kernels named and the attribute did not:
 // those are the ones the cost-share filter applies to. `tauOut`, when given,
 // receives the accuracy target of each site whose annotation carried one.
-void collectAnnotatedSites(Module &M, SmallVectorImpl<Function *> &out,
+void collectAnnotatedSites(const Options &O, Module &M,
+                           SmallVectorImpl<Function *> &out,
                            SmallPtrSetImpl<Function *> *byRegex = nullptr,
                            DenseMap<Function *, double> *tauOut = nullptr) {
   const bool device = isDeviceModule(M);
@@ -932,12 +917,12 @@ void collectAnnotatedSites(Module &M, SmallVectorImpl<Function *> &out,
       (*tauOut)[fn] = *tau;
   }
 
-  if (!flags::Kernels.empty()) {
-    bool all = flags::Kernels == "all";
-    Regex re(flags::Kernels);
+  if (!O.Profiling.Kernels.empty()) {
+    bool all = O.Profiling.Kernels == "all";
+    Regex re(O.Profiling.Kernels);
     std::string err;
     if (!all && !re.isValid(err))
-      report_fatal_error(Twine("-poseidon-kernels=") + flags::Kernels +
+      report_fatal_error(Twine("-poseidon-kernels=") + O.Profiling.Kernels +
                          " is not a valid regular expression: " + err);
     for (Function &F : M)
       if (!F.isDeclaration() && !F.hasFnAttribute(kSiteLowered) &&
@@ -1207,10 +1192,10 @@ bool dropSiteAnnotations(Module &M) {
 // function it names, which the inliner counts as a second caller (no last-call
 // bonus, no deletion once inlined), so the module then compiles as its source
 // does without them.
-bool leaveSitesAsWritten(Module &M) {
+bool leaveSitesAsWritten(const Options &O, Module &M) {
   SmallVector<Function *, 4> sites;
   SmallPtrSet<Function *, 4> byRegex;
-  collectAnnotatedSites(M, sites, &byRegex);
+  collectAnnotatedSites(O, M, sites, &byRegex);
   for (Function *K : sites)
     if (!byRegex.count(K))
       warnWithoutProfile(*K);
@@ -1386,15 +1371,15 @@ CallInst *outlineKernelBody(Function &K, Function *&bodyOut) {
 // use canonicalizes and slot-numbers it, so the profile is recorded against
 // the form the solve will later see. Null if the body holds nothing profilable.
 // `staticOut`, if given, receives the header the profile will carry.
-Function *instrumentedClone(Function &F, unsigned siteId,
+Function *instrumentedClone(Session &S, Function &F, unsigned siteId,
                             std::string *staticOut = nullptr) {
   Function *clone = canonicalize(F);
-  siteClones().push_back(clone);
+  S.SiteClones.push_back(clone);
   setSlotMetadata(*clone);
   // Before the probes: they break the reduction shape the trip count is read
   // from.
   SmallVector<std::pair<size_t, unsigned>, 4> trips;
-  collectScalarLoopReductionTrips(*clone, trips);
+  collectScalarLoopReductionTrips(S.Opts, *clone, trips);
   if (!instrumentForProfiling(*clone, siteId)) {
     clone->eraseFromParent();
     return nullptr;
@@ -1420,7 +1405,8 @@ CallInst *withShadows(CallInst *CI, Function &clone, const MarkerArgs &marker);
 // request over the instrumented clone: the custom derivative on each probe is
 // what puts the gradient record inside the reverse pass, so the host's AD needs
 // no profiling mode of its own.
-bool profileSite(CallInst *CI, DenseMap<Function *, Function *> &clones,
+bool profileSite(Session &S, CallInst *CI,
+                 DenseMap<Function *, Function *> &clones,
                  unsigned &nextSiteId) {
   Function *F = markerTarget(CI);
   if (!F)
@@ -1437,7 +1423,7 @@ bool profileSite(CallInst *CI, DenseMap<Function *, Function *> &clones,
   if (!clone) {
     // Two markers on the same body share one profile record and therefore one
     // site id; the id counts clones in marker order.
-    clone = instrumentedClone(*F, nextSiteId++);
+    clone = instrumentedClone(S, *F, nextSiteId++);
     if (!clone) {
       warn(CI, Twine("no profilable operation in ") + F->getName());
       return false;
@@ -1640,7 +1626,7 @@ uint64_t maxStaticShared(const Module &M) {
 // derivative request over the instrumented clone. The host half of the same
 // compilation reads the descriptor recorded here and fills those shadows in at
 // every launch.
-bool profileAnnotatedKernel(Function &K, unsigned &nextSiteId) {
+bool profileAnnotatedKernel(Session &S, Function &K, unsigned &nextSiteId) {
   Module &M = *K.getParent();
   LLVMContext &C = M.getContext();
   const DataLayout &DL = M.getDataLayout();
@@ -1664,7 +1650,7 @@ bool profileAnnotatedKernel(Function &K, unsigned &nextSiteId) {
   const unsigned nOrigArgs = K.arg_size();
 
   std::string header;
-  Function *clone = instrumentedClone(*body, nextSiteId, &header);
+  Function *clone = instrumentedClone(S, *body, nextSiteId, &header);
   if (!clone) {
     InlineFunctionInfo IFI;
     (void)InlineFunction(*call, IFI);
@@ -1827,7 +1813,7 @@ bool profileAnnotatedKernel(Function &K, unsigned &nextSiteId) {
     }
   msg << "\n";
   recordDescriptor(
-      LaunchKind::Profiling, kernelName,
+      S, LaunchKind::Profiling, kernelName,
       [&](raw_ostream &os) {
         os << ' ' << siteId << ' ' << nOrigArgs << ' ' << shadowed.size();
         for (const Shadowed &s : shadowed)
@@ -1843,7 +1829,7 @@ bool profileAnnotatedKernel(Function &K, unsigned &nextSiteId) {
       std::move(message));
   // The host half registers it with the profiling runtime, so that a kernel
   // that never launches still gets a profile, one saying so.
-  recordProfileHeader(kernelName, profileName, header);
+  recordProfileHeader(S, kernelName, profileName, header);
   return true;
 }
 
@@ -1962,7 +1948,7 @@ void outlineHostFunction(Function &F, std::optional<double> tau) {
 // name it alike at any -O level and for any target: its profile, DP table and
 // rewritten copy are that call's own. In device code the copy becomes a marker
 // site instead (lowerDeviceCallSites).
-bool lowerPerCallSites(Module &M) {
+bool lowerPerCallSites(const Options &O, Module &M) {
   Function *site = M.getFunction("__poseidon_site");
   Function *siteTau = M.getFunction("__poseidon_site_tau");
   if (!site && !siteTau)
@@ -1976,10 +1962,7 @@ bool lowerPerCallSites(Module &M) {
           helpers.push_back(CI);
   if (helpers.empty())
     return false;
-  applyFlagDefaults();
-  const bool active =
-      flags::ProfileGenerate ||
-      (flags::ProfileUse.getNumOccurrences() && !flags::ProfileUse.empty());
+  const bool active = O.Profiling.ProfileGenerate || O.Profiling.usesProfile();
   auto annotated = annotatedFunctions(M);
   DenseMap<Function *, SmallVector<double, 2>> targets;
   for (CallInst *H : helpers)
@@ -2074,7 +2057,7 @@ bool lowerPerCallSites(Module &M) {
     appendToCompilerUsed(M, {B});
     call->setCalledOperand(B);
     H->eraseFromParent();
-    if (flags::Print && hasTau)
+    if (O.Diagnostics.Print && hasTau)
       llvm::errs() << "[poseidon] site " << name << " at its call in "
                    << displayName(*caller) << ": accuracy target "
                    << shortDouble(tau) << "\n";
@@ -2082,16 +2065,13 @@ bool lowerPerCallSites(Module &M) {
   return true;
 }
 
-bool outlineHostSites(Module &M) {
+bool outlineHostSites(const Options &O, Module &M) {
   if (isDeviceModule(M))
     return false;
   auto annotated = annotatedFunctions(M);
   if (annotated.empty())
     return false;
-  applyFlagDefaults();
-  const bool active =
-      flags::ProfileGenerate ||
-      (flags::ProfileUse.getNumOccurrences() && !flags::ProfileUse.empty());
+  const bool active = O.Profiling.ProfileGenerate || O.Profiling.usesProfile();
 
   SmallVector<CallInst *, 4> markers;
   for (Function &G : M)
@@ -2147,7 +2127,7 @@ bool outlineHostSites(Module &M) {
                    DS_Warning);
       continue;
     }
-    noteSiteTarget(*F, tau);
+    noteSiteTarget(O, *F, tau);
     outlineHostFunction(*F, tau);
     changed = true;
   }
@@ -2262,9 +2242,9 @@ void popStackArrays(CallBase &CB, unsigned n) {
 
 // Every call in this module that passes a stack object to someone else; a
 // site may be reached through any of them.
-void registerStackArrays(Module &M) {
+void registerStackArrays(Session &S, Module &M) {
   SmallPtrSet<Function *, 8> clones;
-  for (WeakVH &handle : siteClones())
+  for (WeakVH &handle : S.SiteClones)
     if (auto *F = dyn_cast_or_null<Function>(handle))
       clones.insert(F);
   SmallVector<CallBase *, 16> todo;
@@ -2402,12 +2382,12 @@ void emitProfiledHostCall(CallBase *CB, const HostSiteData &D) {
   CI->eraseFromParent();
 }
 
-bool profileHostSite(Function &B, unsigned &nextSiteId) {
+bool profileHostSite(Session &S, Function &B, unsigned &nextSiteId) {
   Module &M = *B.getParent();
   LLVMContext &C = M.getContext();
   takeHostBody(B);
   SmallVector<CallBase *, 4> calls = callsOf(B);
-  Function *clone = instrumentedClone(B, nextSiteId);
+  Function *clone = instrumentedClone(S, B, nextSiteId);
   if (!clone) {
     markOutlineTransparent(&B);
     return false;
@@ -2458,7 +2438,7 @@ bool profileHostSite(Function &B, unsigned &nextSiteId) {
 // Profile use of a host site: the body is solved once, and every call of it,
 // the wrapper's and the ones the inliner placed in F's callers, is redirected
 // to what the solve chose.
-bool optimizeHostSite(Function &B) {
+bool optimizeHostSite(Session &S, Function &B) {
   double errTol = takeHostBody(B);
   markOutlineTransparent(&B);
   SmallVector<CallBase *, 4> calls = callsOf(B);
@@ -2472,7 +2452,7 @@ bool optimizeHostSite(Function &B) {
   llvm::erase(calls, rep);
   SmallVector<Value *, 8> primalArgs(rep->args());
   SmallVector<CallBase *, 1> lowered;
-  bool changed = optimizeSiteBody(rep, &B, primalArgs, errTol, lowered);
+  bool changed = optimizeSiteBody(S, rep, &B, primalArgs, errTol, lowered);
   Function *target = lowered.back()->getCalledFunction();
   for (CallBase *CB : calls)
     CB->setCalledFunction(target);
@@ -2774,11 +2754,11 @@ bool lowerDeviceCallSites(Module &M) {
 
 } // namespace
 
-bool lowerMarkers(ArrayRef<CallInst *> markers,
+bool lowerMarkers(Session &S, ArrayRef<CallInst *> markers,
                   SmallVectorImpl<CallBase *> &calls) {
   bool changed = false;
   for (CallInst *CI : markers)
-    changed |= optimizeSite(CI, calls);
+    changed |= optimizeSite(S, CI, calls);
   return changed;
 }
 
@@ -2786,8 +2766,8 @@ bool lowerMarkers(ArrayRef<CallInst *> markers,
 // records, the execution count times the CSV price of the operation the slot
 // names. A site the run never reached has no records and costs nothing, which
 // is what -poseidon-kernels=all over a whole library produces for most kernels.
-double profiledSiteCost(Function &body) {
-  SmallString<128> profilePath(flags::ProfileUse);
+double profiledSiteCost(Session &S, Function &body) {
+  SmallString<128> profilePath(S.Opts.Profiling.ProfileUse);
   llvm::sys::path::append(
       profilePath,
       profileNameStem(("preprocess_" + body.getName()).str()) + ".fpprofile");
@@ -2803,7 +2783,7 @@ double profiledSiteCost(Function &body) {
   // read off it too. Thrown away again: the site's real clone is made by
   // optimizeSiteBody, under the same name.
   Function *clone = canonicalize(body);
-  requireCostModel(*clone);
+  requireCostModel(S.CostModel, *clone);
   double cost = 0.0;
   size_t slot = 0;
   for (Instruction &I : instructions(*clone)) {
@@ -2811,7 +2791,7 @@ double profiledSiteCost(Function &body) {
       continue;
     auto it = profileMap.find(slot++);
     if (it != profileMap.end())
-      cost += (double)it->second.exec * getInstructionCompCost(&I);
+      cost += (double)it->second.exec * getInstructionCompCost(S.CostModel, &I);
   }
   clone->eraseFromParent();
   return cost;
@@ -2826,23 +2806,24 @@ void inlineKernelBody(CallInst *call, Function *body) {
     body->eraseFromParent();
 }
 
-bool optimizeAnnotatedSites(Module &M) {
-  if (flags::ProfileGenerate)
+bool optimizeAnnotatedSites(Session &Sess, Module &M) {
+  const Options &O = Sess.Opts;
+  if (O.Profiling.ProfileGenerate)
     return false;
   bool changed = false;
   for (Function *B : hostSiteBodies(M))
-    changed |= optimizeHostSite(*B);
+    changed |= optimizeHostSite(Sess, *B);
 
   SmallVector<Function *, 4> sites;
   SmallPtrSet<Function *, 4> byRegex;
   DenseMap<Function *, double> siteTau;
-  collectAnnotatedSites(M, sites, &byRegex, &siteTau);
+  collectAnnotatedSites(O, M, sites, &byRegex, &siteTau);
   if (sites.empty())
     return changed;
 
   // Without a profile nothing can be applied, so the kernels are left exactly
   // as written rather than outlined and never folded back.
-  if (!flags::ProfileUse.getNumOccurrences() || flags::ProfileUse.empty()) {
+  if (!O.Profiling.usesProfile()) {
     for (Function *K : sites)
       warnWithoutProfile(*K);
     return changed;
@@ -2855,13 +2836,14 @@ bool optimizeAnnotatedSites(Module &M) {
     SmallVector<Value *, 8> primalArgs(call->args());
     auto it = siteTau.find(kernel);
     double errTol = it != siteTau.end() ? it->second : 0.0;
-    noteSiteTarget(*kernel, it != siteTau.end() ? std::optional<double>(errTol)
-                                                : std::nullopt);
-    changed |= optimizeSiteBody(call, body, primalArgs, errTol, calls);
+    noteSiteTarget(O, *kernel,
+                   it != siteTau.end() ? std::optional<double>(errTol)
+                                       : std::nullopt);
+    changed |= optimizeSiteBody(Sess, call, body, primalArgs, errTol, calls);
   };
 
-  if (byRegex.empty() || flags::MinCostShare <= 0.0 ||
-      flags::ProfileUse.empty()) {
+  if (byRegex.empty() || O.Profiling.MinCostShare <= 0.0 ||
+      !O.Profiling.usesProfile()) {
     for (Function *K : sites) {
       Function *body = nullptr;
       if (CallInst *call = outlineKernelBody(*K, body)) {
@@ -2889,19 +2871,19 @@ bool optimizeAnnotatedSites(Module &M) {
     if (!call)
       continue;
     markOutlineTransparent(body);
-    double cost = byRegex.count(K) ? profiledSiteCost(*body) : 0.0;
+    double cost = byRegex.count(K) ? profiledSiteCost(Sess, *body) : 0.0;
     regexTotal += cost;
     outlined.push_back({K, body, call, cost});
   }
 
   for (Site &S : outlined) {
     double share = regexTotal > 0.0 ? S.cost / regexTotal : 1.0;
-    if (byRegex.count(S.kernel) && share < flags::MinCostShare) {
+    if (byRegex.count(S.kernel) && share < O.Profiling.MinCostShare) {
       llvm::errs() << "[poseidon] " << S.kernel->getName() << " is "
                    << format("%.4g", share * 100)
                    << "% of the profiled FP cost of the kernels "
                       "-poseidon-kernels named, below -poseidon-min-cost-share="
-                   << format("%g", (double)flags::MinCostShare)
+                   << format("%g", (double)O.Profiling.MinCostShare)
                    << "; left unoptimized\n";
       inlineKernelBody(S.call, S.body);
       continue;
@@ -2911,9 +2893,8 @@ bool optimizeAnnotatedSites(Module &M) {
   return changed;
 }
 
-bool prepareModule(Module &M) {
-  applyFlagDefaults();
-  if (!flags::ProfileGenerate)
+bool prepareModule(Session &S, Module &M) {
+  if (!S.Opts.Profiling.ProfileGenerate)
     return false;
   // The FP profiler's CUDA registration has to happen from main, not from a
   // static constructor (see injectHostProfilerInit). No-op on the device module
@@ -2937,21 +2918,21 @@ bool prepareModule(Module &M) {
   for (CallInst *CI : markers) {
     // A site whose body is still a derivative request is the late run's; its
     // marker stays where it is.
-    if (deferSite(CI))
+    if (deferSite(S.Opts, CI))
       continue;
-    profileSite(CI, clones, nextSiteId);
+    profileSite(S, CI, clones, nextSiteId);
     anySite = true;
   }
 
   SmallVector<Function *, 4> annotated;
-  collectAnnotatedSites(M, annotated);
+  collectAnnotatedSites(S.Opts, M, annotated);
   for (Function *K : annotated)
-    anySite |= profileAnnotatedKernel(*K, nextSiteId);
+    anySite |= profileAnnotatedKernel(S, *K, nextSiteId);
   SmallVector<Function *, 4> hostBodies = hostSiteBodies(M);
   for (Function *B : hostBodies)
-    anySite |= profileHostSite(*B, nextSiteId);
+    anySite |= profileHostSite(S, *B, nextSiteId);
   if (!hostBodies.empty()) {
-    registerStackArrays(M);
+    registerStackArrays(S, M);
     registerGlobals(M);
     // The profiling runtime records allocations only in a program that links
     // a host site; this definition is what it looks for.
@@ -2972,22 +2953,22 @@ bool prepareModule(Module &M) {
   return anySite;
 }
 
-bool solveDeferredSites(Module &M, FunctionAnalysisManager &FAM) {
-  if (!flags::JointDP)
+bool solveDeferredSites(Session &S, Module &M, FunctionAnalysisManager &FAM) {
+  if (!S.Opts.Solver.JointDP)
     return false;
-  return solveJointly(M, FAM);
+  return solveJointly(S, M, FAM);
 }
 
 // The body a site's wrapper ended up inlining carries the function's debug
 // info: the subprogram most of its code is in goes back to the wrapper once
 // nothing else holds it, and the return outlineHostFunction located in the
 // source body follows it there.
-static void restoreHostWrapperDebugInfo(Module &M) {
+static void restoreHostWrapperDebugInfo(Module &M, bool profileGenerate) {
   for (Function &F : M) {
     if (!F.hasFnAttribute(kHostWrapper))
       continue;
     F.removeFnAttr(kHostWrapper);
-    if (F.getSubprogram() || flags::ProfileGenerate)
+    if (F.getSubprogram() || profileGenerate)
       continue;
     MapVector<DISubprogram *, unsigned> uses;
     for (Instruction &I : instructions(F))
@@ -3009,19 +2990,19 @@ static void restoreHostWrapperDebugInfo(Module &M) {
   }
 }
 
-void finalizeModule(Module &M) {
-  checkPinnedSites();
+void finalizeModule(Session &S, Module &M) {
+  checkPinnedSites(S);
   // A site whose solve applied nothing calls the original body again, and an
   // applied site's wrapper call may have been inlined away, in both cases
   // leaving a canonicalized clone nothing calls.
-  for (WeakVH &handle : siteClones()) {
+  for (WeakVH &handle : S.SiteClones) {
     auto *clone = dyn_cast_or_null<Function>(handle);
     if (clone && clone->getParent() == &M && clone->use_empty())
       clone->eraseFromParent();
   }
-  siteClones().clear();
-  solvedSites().clear();
-  restoreHostWrapperDebugInfo(M);
+  S.SiteClones.clear();
+  S.SolvedSites.clear();
+  restoreHostWrapperDebugInfo(M, S.Opts.Profiling.ProfileGenerate);
   // The site counter is a note the early run leaves for the late one; nothing
   // downstream reads it.
   if (auto *NMD = M.getNamedMetadata(kNextSiteIdMD))
@@ -3054,8 +3035,8 @@ bool enzymeAlreadyRan(Module &M) {
   return false;
 }
 
-bool hasSite(Module &M) {
-  if (!flags::Kernels.empty() || !annotatedFunctions(M).empty())
+bool hasSite(const Options &O, Module &M) {
+  if (!O.Profiling.Kernels.empty() || !annotatedFunctions(M).empty())
     return true;
   for (Function &F : M) {
     if (F.hasFnAttribute(kHostBody) || F.hasFnAttribute(kSiteCallee))
@@ -3070,13 +3051,12 @@ bool hasSite(Module &M) {
 
 // Whether this compile generates or uses a profile: anything else leaves every
 // site as written.
-bool profileAction() {
-  applyFlagDefaults();
-  return flags::ProfileGenerate || !flags::ProfileUse.empty();
+bool profileAction(const Options &O) {
+  return O.Profiling.ProfileGenerate || O.Profiling.usesProfile();
 }
 
-void requirePluginOrder(Module &M) {
-  if (!hasSite(M) || !enzymeAlreadyRan(M))
+void requirePluginOrder(const Options &O, Module &M) {
+  if (!hasSite(O, M) || !enzymeAlreadyRan(M))
     return;
   report_fatal_error(
       "Poseidon: Enzyme's pass has already run on this module. The plugins "
@@ -3089,14 +3069,16 @@ void requirePluginOrder(Module &M) {
 // extension point.
 struct OptimizePass : PassParent<OptimizePass> {
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &MAM) {
-    requirePluginOrder(M);
+    Session &S = sessionOf(M, MAM);
+    const Options &O = S.Opts;
+    requirePluginOrder(O, M);
 
-    bool changed = lowerPerCallSites(M);
+    bool changed = lowerPerCallSites(O, M);
     changed |= lowerDeviceCallSites(M);
-    changed |= outlineHostSites(M);
+    changed |= outlineHostSites(O, M);
     changed |= foldDeviceSiteCallees(M);
-    changed |= prepareModule(M);
-    changed |= optimizeAnnotatedSites(M);
+    changed |= prepareModule(S, M);
+    changed |= optimizeAnnotatedSites(S, M);
 
     SmallVector<CallInst *, 4> markers;
     SmallVector<CallBase *, 4> calls;
@@ -3108,15 +3090,15 @@ struct OptimizePass : PassParent<OptimizePass> {
         for (Instruction &I : BB)
           if (auto *CI = dyn_cast<CallInst>(&I))
             if (Function *callee = calleeOf(CI))
-              if (isMarkerCall(callee->getName()) && !deferSite(CI))
+              if (isMarkerCall(callee->getName()) && !deferSite(O, CI))
                 markers.push_back(CI);
       if (!markers.empty())
-        changed |= lowerMarkers(markers, calls);
+        changed |= lowerMarkers(S, markers, calls);
     }
 
     auto &FAM =
         MAM.getResult<FunctionAnalysisManagerModuleProxy>(M).getManager();
-    changed |= solveDeferredSites(M, FAM);
+    changed |= solveDeferredSites(S, M, FAM);
     return changed ? PreservedAnalyses::none() : PreservedAnalyses::all();
   }
   static bool isRequired() { return true; }
@@ -3126,13 +3108,15 @@ struct OptimizePass : PassParent<OptimizePass> {
 // registered through the PassBuilder the surrounding pipeline was built with,
 // which is what makes another plugin's pipeline name (Enzyme's "enzyme")
 // resolvable from here; keeping them local means nothing the outer pipeline
-// cached is handed to a pass that runs out of order.
+// cached is handed to a pass that runs out of order. The session of the module
+// they run on is registered first, so that it is the one they hand out.
 struct LocalAnalysisManagers {
   LoopAnalysisManager LAM;
   FunctionAnalysisManager FAM;
   CGSCCAnalysisManager CGAM;
   ModuleAnalysisManager MAM;
-  explicit LocalAnalysisManagers(PassBuilder &PB) {
+  LocalAnalysisManagers(PassBuilder &PB, Session &S) {
+    MAM.registerPass([&S] { return SessionAnalysis(S); });
     PB.registerModuleAnalyses(MAM);
     PB.registerCGSCCAnalyses(CGAM);
     PB.registerFunctionAnalyses(FAM);
@@ -3195,14 +3179,15 @@ struct LatePass : PassParent<LatePass> {
   // of the pipeline follows them; here nothing follows, so a module-wide run
   // would be the only thing standing between a deferred-site build and the
   // codegen it would otherwise have had.
-  void canonicalizeBodies(Module &M, ArrayRef<Function *> bodies,
+  void canonicalizeBodies(const Options &O, Module &M,
+                          ArrayRef<Function *> bodies,
                           LocalAnalysisManagers &AMs,
                           DenseMap<Function *, Function *> *asLeft) {
     for (Function *F : bodies) {
       if (asLeft)
         asLeftByPipeline(*F, *asLeft);
       unsigned folded = foldEnzymeGenerated(*F);
-      if (flags::Print && folded)
+      if (O.Diagnostics.Print && folded)
         llvm::errs() << "[poseidon] " << F->getName() << ": folded " << folded
                      << " Enzyme-generated call(s) into the deferred body\n";
     }
@@ -3262,13 +3247,15 @@ struct LatePass : PassParent<LatePass> {
     MPM.run(M, AMs.MAM);
   }
 
-  PreservedAnalyses run(Module &M, ModuleAnalysisManager &) {
+  PreservedAnalyses run(Module &M, ModuleAnalysisManager &MAM) {
     SmallVector<CallInst *, 4> markers;
     collectDeferredMarkers(M, markers);
     if (markers.empty())
       return PreservedAnalyses::all();
 
-    LocalAnalysisManagers AMs(*PB);
+    Session &S = sessionOf(M, MAM);
+    const Options &O = S.Opts;
+    LocalAnalysisManagers AMs(*PB, S);
 
     SmallVector<Function *, 4> bodies;
     SmallPtrSet<Function *, 4> bodySet;
@@ -3294,18 +3281,18 @@ struct LatePass : PassParent<LatePass> {
     // that the slots the profile was numbered against are the ones the solve
     // sees.
     DenseMap<Function *, Function *> asLeft;
-    canonicalizeBodies(M, bodies, AMs,
-                       flags::ProfileGenerate ? nullptr : &asLeft);
+    canonicalizeBodies(O, M, bodies, AMs,
+                       O.Profiling.ProfileGenerate ? nullptr : &asLeft);
 
     markers.clear();
     collectDeferredMarkers(M, markers);
 
     bool instrumented = false;
-    if (flags::ProfileGenerate) {
+    if (O.Profiling.ProfileGenerate) {
       DenseMap<Function *, Function *> clones;
       unsigned nextSiteId = getNextSiteId(M);
       for (CallInst *CI : markers)
-        instrumented |= profileSite(CI, clones, nextSiteId);
+        instrumented |= profileSite(S, CI, clones, nextSiteId);
       setNextSiteId(M, nextSiteId);
       if (instrumented)
         injectBlockDimProbes(M);
@@ -3317,9 +3304,9 @@ struct LatePass : PassParent<LatePass> {
     // solve in profile-use mode, a call of the original body otherwise.
     SmallVector<CallBase *, 4> calls;
     if (!markers.empty())
-      lowerMarkers(markers, calls);
+      lowerMarkers(S, markers, calls);
     SmallVector<WeakVH, 4> lowered(calls.begin(), calls.end());
-    solveDeferredSites(M, AMs.FAM);
+    solveDeferredSites(S, M, AMs.FAM);
     // A site that kept its body calls the body as the pipeline left it rather
     // than its canonical form.
     for (WeakVH &handle : lowered)
@@ -3368,17 +3355,18 @@ struct LatePass : PassParent<LatePass> {
 // inliner can fold the function into its callers, and on a device function it
 // is handed to the kernels that call it while those calls still exist.
 struct HostSitePass : PassParent<HostSitePass> {
-  PreservedAnalyses run(Module &M, ModuleAnalysisManager &) {
+  PreservedAnalyses run(Module &M, ModuleAnalysisManager &MAM) {
+    const Options &O = sessionOf(M, MAM).Opts;
     bool changed = false;
     if (isDeviceModule(M))
-      changed = profileAction() && hasSite(M) ? keepDeviceMath(M)
-                                              : releaseDeviceMath(M);
-    changed |= lowerPerCallSites(M);
+      changed = profileAction(O) && hasSite(O, M) ? keepDeviceMath(M)
+                                                  : releaseDeviceMath(M);
+    changed |= lowerPerCallSites(O, M);
     changed |= propagateDeviceSites(M);
-    changed |= outlineHostSites(M);
-    changed |= registerDeviceProfileTable(M);
-    if (!profileAction())
-      changed |= leaveSitesAsWritten(M);
+    changed |= outlineHostSites(O, M);
+    changed |= registerDeviceProfileTable(M, O.Profiling.ProfileGenerate);
+    if (!profileAction(O))
+      changed |= leaveSitesAsWritten(O, M);
     return changed ? PreservedAnalyses::none() : PreservedAnalyses::all();
   }
   static bool isRequired() { return true; }
@@ -3391,23 +3379,16 @@ struct HostSitePass : PassParent<HostSitePass> {
 // 134). The module is compiled once more, from its state before any of that
 // and as a build without a profile compiles it, and every function no rewrite
 // reached is emitted from that compile.
-std::map<const Module *, std::unique_ptr<Module>> &asWrittenTwins() {
-  static std::map<const Module *, std::unique_ptr<Module>> twins;
-  return twins;
-}
-
-bool compilingTwin = false;
-
 // At PipelineStart, before HostSitePass.
 struct TwinSnapshotPass : PassParent<TwinSnapshotPass> {
-  PreservedAnalyses run(Module &M, ModuleAnalysisManager &) {
-    if (compilingTwin || !isDeviceModule(M) || !hasSite(M))
+  PreservedAnalyses run(Module &M, ModuleAnalysisManager &MAM) {
+    Session &S = sessionOf(M, MAM);
+    const Options &O = S.Opts;
+    if (S.IsTwin || !isDeviceModule(M) || !hasSite(O, M))
       return PreservedAnalyses::all();
-    applyFlagDefaults();
-    const bool profileUse =
-        flags::ProfileUse.getNumOccurrences() && !flags::ProfileUse.empty();
-    if (profileUse && !flags::ProfileGenerate && !flags::JointDP)
-      asWrittenTwins()[&M] = CloneModule(M);
+    if (O.Profiling.usesProfile() && !O.Profiling.ProfileGenerate &&
+        !O.Solver.JointDP)
+      S.AsWrittenTwin = CloneModule(M);
     return PreservedAnalyses::all();
   }
   static bool isRequired() { return true; }
@@ -3416,8 +3397,8 @@ struct TwinSnapshotPass : PassParent<TwinSnapshotPass> {
 // Runs the default pipeline of `Phase` on `twin` as a build without a profile,
 // the diagnostics already given for the module's sites silenced. False if it
 // reported an error.
-bool compileAsWritten(Module &twin, PassBuilder &PB, OptimizationLevel Level,
-                      ThinOrFullLTOPhase Phase) {
+bool compileAsWritten(Module &twin, const Session &parent, PassBuilder &PB,
+                      OptimizationLevel Level, ThinOrFullLTOPhase Phase) {
   struct Quiet : DiagnosticHandler {
     bool failed = false;
     bool handleDiagnostics(const DiagnosticInfo &DI) override {
@@ -3430,24 +3411,18 @@ bool compileAsWritten(Module &twin, PassBuilder &PB, OptimizationLevel Level,
   auto quiet = std::make_unique<Quiet>();
   Quiet *q = quiet.get();
   C.setDiagnosticHandler(std::move(quiet));
-  // No -poseidon-profile-use at all, not an empty one, which means the default
-  // profile directory.
-  const std::string profileUse = flags::ProfileUse;
-  const bool print = flags::Print;
-  flags::ProfileUse.reset();
-  flags::Print = false;
-  compilingTwin = true;
+  Options asWritten = parent.Opts;
+  asWritten.Profiling.ProfileUse.clear();
+  asWritten.Diagnostics.Print = false;
+  Session S(std::move(asWritten), /*IsTwin=*/true);
   {
-    LocalAnalysisManagers AMs(PB);
+    LocalAnalysisManagers AMs(PB, S);
     ModulePassManager MPM =
         Phase == ThinOrFullLTOPhase::ThinLTOPreLink
             ? PB.buildThinLTOPreLinkDefaultPipeline(Level)
             : PB.buildPerModuleDefaultPipeline(Level, Phase);
     MPM.run(twin, AMs.MAM);
   }
-  compilingTwin = false;
-  flags::ProfileUse.addOccurrence(0, flags::ProfileUse.ArgStr, profileUse);
-  flags::Print = print;
   const bool failed = q->failed;
   C.setDiagnosticHandler(std::move(handler));
   return !failed;
@@ -3660,7 +3635,9 @@ struct FinalizePass : PassParent<FinalizePass> {
                ThinOrFullLTOPhase Phase)
       : PB(PB), Level(Level), Phase(Phase), PhaseKnown(true) {}
 
-  PreservedAnalyses run(Module &M, ModuleAnalysisManager &) {
+  PreservedAnalyses run(Module &M, ModuleAnalysisManager &MAM) {
+    Session &S = sessionOf(M, MAM);
+    const Options &O = S.Opts;
     for (Function &F : M)
       if (F.isDeclaration() && !F.use_empty() &&
           F.getName().starts_with("__enzyme_autodiff_poseidon"))
@@ -3671,40 +3648,37 @@ struct FinalizePass : PassParent<FinalizePass> {
     // Every site of the module has been processed by now, in the early run or
     // the late one. A module without a descriptor removes the unit's manifest,
     // so that what an earlier compile of the unit recorded is not applied.
-    if (isDeviceModule(M) && !compilingTwin && handsOverLaunches())
-      writeLaunchManifest(M);
-    finalizeModule(M);
+    if (isDeviceModule(M) && !S.IsTwin && handsOverLaunches(O))
+      writeLaunchManifest(S, M);
+    finalizeModule(S, M);
     // An annotation takes the address of the function it names, and AMDGPU
     // allocates the shared memory of every address-taken function in each
     // kernel that may make an unknown call, as a profiled kernel does.
-    if (flags::ProfileGenerate && Triple(M.getTargetTriple()).isAMDGPU())
+    if (O.Profiling.ProfileGenerate && Triple(M.getTargetTriple()).isAMDGPU())
       dropSiteAnnotations(M);
-    linkDeviceProfiler(M);
-    requireDeviceCallees(M);
+    linkDeviceProfiler(M, O.Profiling.ProfileGenerate);
+    requireDeviceCallees(M, O.Profiling.ProfileGenerate);
     releaseDeviceMath(M);
     SmallVector<Function *, 4> rewritten;
-    for (WeakVH &handle : rewrittenFunctions())
+    for (WeakVH &handle : S.RewrittenFunctions)
       if (auto *F = dyn_cast_or_null<Function>(handle);
           F && F->getParent() == &M && !F->isDeclaration() &&
           !is_contained(rewritten, F))
         rewritten.push_back(F);
-    erase_if(rewrittenFunctions(), [&](WeakVH &handle) {
+    erase_if(S.RewrittenFunctions, [&](WeakVH &handle) {
       auto *F = dyn_cast_or_null<Function>(handle);
       return !F || F->getParent() == &M;
     });
     for (Function *F : rewritten)
       inlineDeviceMath(*F);
-    auto twin = asWrittenTwins().find(&M);
-    if (twin != asWrittenTwins().end()) {
-      std::unique_ptr<Module> S = std::move(twin->second);
-      asWrittenTwins().erase(twin);
-      if (PB && compileAsWritten(*S, *PB, Level, Phase)) {
-        if (takeRewritten(*S, rewritten)) {
-          adoptModule(M, *S);
-          if (flags::Print && rewritten.empty())
+    if (std::unique_ptr<Module> Twin = std::move(S.AsWrittenTwin)) {
+      if (PB && compileAsWritten(*Twin, S, *PB, Level, Phase)) {
+        if (takeRewritten(*Twin, rewritten)) {
+          adoptModule(M, *Twin);
+          if (O.Diagnostics.Print && rewritten.empty())
             llvm::errs() << "[poseidon] every site of " << M.getName()
                          << " was left alone; emitting the module as written\n";
-          else if (flags::Print)
+          else if (O.Diagnostics.Print)
             llvm::errs() << "[poseidon] " << M.getName() << ": "
                          << rewritten.size()
                          << " function(s) a rewrite reached; every other "
@@ -3722,17 +3696,25 @@ struct FinalizePass : PassParent<FinalizePass> {
   static bool isRequired() { return true; }
 };
 
-// A module without a site compiles as it does without the plugin.
+// A module without a site compiles as it does without the plugin; profile
+// generation also binds the profiler from main, wherever main is. The canonical
+// prefix runs first in a compile that generates or uses a profile.
 struct IfSitePass : PassParent<IfSitePass> {
+  ModulePassManager Prefix;
   ModulePassManager Pipeline;
 
-  explicit IfSitePass(ModulePassManager Pipeline)
-      : Pipeline(std::move(Pipeline)) {}
+  IfSitePass(ModulePassManager Prefix, ModulePassManager Pipeline)
+      : Prefix(std::move(Prefix)), Pipeline(std::move(Pipeline)) {}
 
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &MAM) {
-    if (!hasSite(M))
+    const Options &O = sessionOf(M, MAM).Opts;
+    if (!O.Profiling.ProfileGenerate && !hasSite(O, M))
       return PreservedAnalyses::all();
-    return Pipeline.run(M, MAM);
+    PreservedAnalyses PA = PreservedAnalyses::all();
+    if (profileAction(O))
+      PA.intersect(Prefix.run(M, MAM));
+    PA.intersect(Pipeline.run(M, MAM));
+    return PA;
   }
   static bool isRequired() { return true; }
 };
@@ -3763,6 +3745,14 @@ void addCanonicalPrefix(ModulePassManager &MPM, OptimizationLevel Level) {
 } // namespace
 
 void registerPasses(PassBuilder &PB) {
+  // Every pass reads the options from the session of the module it runs on, so
+  // the module compiled as written, whose session carries its own, runs the
+  // same pipeline.
+  PB.registerAnalysisRegistrationCallback(
+      [O = readOptions()](ModuleAnalysisManager &MAM) {
+        MAM.registerPass([&] { return SessionAnalysis(O); });
+      });
+
   auto loadHostStub = [](ModulePassManager &MPM, OptimizationLevel) {
     MPM.addPass(HostSitePass());
     // Host-side GEMM dispatch must rewrite the launch stub BEFORE inlining, so
@@ -3777,19 +3767,15 @@ void registerPasses(PassBuilder &PB) {
       });
 
   auto loadPoseidon = [](ModulePassManager &MPM, OptimizationLevel Level) {
+    ModulePassManager Prefix;
+    addCanonicalPrefix(Prefix, Level);
     ModulePassManager Sites;
-    if (profileAction())
-      addCanonicalPrefix(Sites, Level);
     Sites.addPass(OptimizePass());
     // Fold the outlined site bodies and the materialized clones back into
     // their kernels here; nothing later in the pipeline inlines, and the
     // AlwaysInlinerPass the Enzyme plugin adds is another plugin's business.
     Sites.addPass(AlwaysInlinerPass());
-    // Profile generation also binds the profiler from main, wherever main is.
-    if (flags::ProfileGenerate)
-      MPM.addPass(std::move(Sites));
-    else
-      MPM.addPass(IfSitePass(std::move(Sites)));
+    MPM.addPass(IfSitePass(std::move(Prefix), std::move(Sites)));
   };
   // The late run owns the sites the early run deferred: the canonical prefix,
   // the site handler, the always-inliner and, in profile-generate mode, a

@@ -1,4 +1,4 @@
-//=- Flags.h - every Poseidon command-line flag, declared once ------------=//
+//=- Flags.h - every Poseidon command-line flag, read once -----------------=//
 //
 // Part of the Poseidon Project, under the Apache License v2.0 with LLVM
 // Exceptions.
@@ -7,131 +7,26 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// Poseidon's flags are defined in Flags.cpp and declared here, so a
-// flag's name, type and default live in one place and no translation unit has
-// to re-declare one. Every flag is spelled -poseidon-<name>, reaches the pass
-// as -mllvm -poseidon-<name>, and is supplied by poseidon-clang from the
-// -poseidon-<name> the user writes. Defaults are part of the paper
-// configuration: changing one changes every banked result.
+// Poseidon's flags are defined in Flags.cpp, the one place a flag's name and
+// help live and the only reader of a flag; its default is the initializer of
+// its field in Core/Options.h. Every flag is spelled -poseidon-<name>, reaches
+// the pass as -mllvm -poseidon-<name>, and is supplied by poseidon-clang from
+// the -poseidon-<name> the user writes.
 //
 //===----------------------------------------------------------------------===//
 
 #ifndef POSEIDON_FLAGS_H
 #define POSEIDON_FLAGS_H
 
-#include "poseidon/poseidon.h"
-
-#include "llvm/ADT/SmallVector.h"
-#include "llvm/Support/CommandLine.h"
-
-#include <cstdint>
-#include <string>
-#include <utility>
+#include "Core/Options.h"
 
 namespace poseidon {
 
-// The directory a profiling run writes and a solve reads when neither is told
-// otherwise; the same constant the profiler runtimes default to.
-constexpr const char *kDefaultProfileDir = POSEIDON_DEFAULT_PROFILE_DIR;
-constexpr const char *kDefaultCacheDir = "./.poseidon";
+// The options of this compile, with the defaults of the flag spellings that
+// carry one only when written without a value. Fails the compile when a
+// -poseidon-* flag is listed by neither or both of solveFlagValues() and
+// notSolveInputs().
+Options readOptions();
 
-// The percentile of the sampled relative errors a matrix product is scored at.
-constexpr double kDefaultConfidence = 0.95;
-
-// Resolve the flag spellings that carry a default only when written without a
-// value. Idempotent; called at the entry of each phase.
-void applyFlagDefaults();
-
-// The name and value of every flag a DP table depends on, that is every flag
-// that changes the candidate set or its pricing. Every other -poseidon-* flag
-// is in notSolveInputs() in Flags.cpp, and applyFlagDefaults() fails the
-// compile when a flag is in neither list or in both.
-using FlagValues = llvm::SmallVector<std::pair<llvm::StringRef, std::string>>;
-FlagValues solveFlagValues();
-// The name and value of every -poseidon-* flag.
-FlagValues allFlagValues();
-
-// One flag per line, in --help order. A flag's name is its variable name in
-// kebab case: `Tau` is -poseidon-tau, `HerbieNumPts` is
-// -poseidon-herbie-num-pts. PT, DP, WMMA and InKernel keep their case.
-namespace flags {
-
-// Profiling.
-extern llvm::cl::opt<bool> ProfileGenerate;
-extern llvm::cl::opt<std::string> ProfileUse;
-extern llvm::cl::list<std::string> OutputProfiles;
-extern llvm::cl::opt<std::string> Kernels;
-extern llvm::cl::opt<double> MinCostShare;
-extern llvm::cl::opt<bool> LooseCoverage;
-
-// Candidate classes.
-extern llvm::cl::opt<bool> EnableHerbie;
-extern llvm::cl::opt<bool> EnablePT;
-extern llvm::cl::opt<bool> EnableMultifloat;
-extern llvm::cl::opt<unsigned> ExpansionComponents;
-extern llvm::cl::opt<bool> EnableThreeTier;
-extern llvm::cl::opt<int> TwoTierStep;
-extern llvm::cl::opt<bool> RaiseWMMA;
-extern llvm::cl::opt<unsigned> MaxExprLength;
-extern llvm::cl::opt<unsigned> MinUsesSplit;
-extern llvm::cl::opt<unsigned> MinOpsSplit;
-extern llvm::cl::opt<bool> ReductionSubgraphs;
-extern llvm::cl::opt<bool> MergeSharedStaging;
-extern llvm::cl::list<std::string> SplitCalls;
-
-// Solver and budgets.
-extern llvm::cl::opt<int64_t> CompCostBudget;
-extern llvm::cl::opt<double> Tau;
-extern llvm::cl::opt<bool> TauCheapest;
-extern llvm::cl::opt<bool> EarlyPrune;
-extern llvm::cl::opt<bool> JointDP;
-extern llvm::cl::opt<bool> AggressiveDCE;
-extern llvm::cl::opt<std::string> ApplyRewrites;
-
-// Cost and accuracy model.
-extern llvm::cl::opt<std::string> CostModel;
-extern llvm::cl::opt<unsigned> NumSamples;
-extern llvm::cl::opt<unsigned> RandomSeed;
-extern llvm::cl::opt<unsigned> SampleLogBits;
-extern llvm::cl::opt<bool> StrictMode;
-extern llvm::cl::opt<unsigned> MinArmSamples;
-extern llvm::cl::opt<unsigned> ArmSearchFactor;
-extern llvm::cl::opt<double> MaxBrokenShare;
-extern llvm::cl::opt<double> ExponentPenalty;
-extern llvm::cl::opt<bool> FreqWeightedPricing;
-
-// Herbie and the result cache.
-extern llvm::cl::opt<std::string> Cache;
-extern llvm::cl::opt<std::string> Unit;
-extern llvm::cl::opt<std::string> ImportAccuracyMemo;
-extern llvm::cl::opt<int> HerbieNumThreads;
-extern llvm::cl::opt<int> HerbieTimeout;
-extern llvm::cl::opt<int> HerbieNumPts;
-extern llvm::cl::opt<int> HerbieNumIters;
-extern llvm::cl::opt<int> HerbieNumEnodes;
-extern llvm::cl::opt<unsigned> HerbieSubgraphTimeout;
-extern llvm::cl::opt<unsigned> HerbieProcesses;
-extern llvm::cl::opt<unsigned> HerbiePreFloorBits;
-extern llvm::cl::opt<std::string> HerbieBinary;
-extern llvm::cl::opt<std::string> HerbiePlatform;
-extern llvm::cl::opt<bool> HerbieArrays;
-extern llvm::cl::opt<std::string> HerbieArrayWeights;
-extern llvm::cl::opt<std::string> HerbieArrayGrouping;
-
-// Matmul raising and host dispatch.
-extern llvm::cl::opt<bool> OzakiHostDispatch;
-extern llvm::cl::opt<bool> InKernelCalibration;
-
-// Materialization.
-extern llvm::cl::opt<bool> NarrowParamStaging;
-extern llvm::cl::opt<bool> NarrowMultiviewStaging;
-
-// Diagnostics.
-extern llvm::cl::opt<bool> Print;
-extern llvm::cl::opt<bool> ShowTable;
-extern llvm::cl::opt<std::string> ReportPath;
-extern llvm::cl::opt<std::string> Explain;
-
-} // namespace flags
 } // namespace poseidon
 #endif // POSEIDON_FLAGS_H
