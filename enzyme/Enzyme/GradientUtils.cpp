@@ -9183,6 +9183,24 @@ void GradientUtils::computeMinCache() {
         }
       }
     }
+
+    // If a cached user may retain an interior pointer or alias to an
+    // allocation call, keep the allocation itself cached across the pass
+    // boundary so it is not freed before the reverse pass finishes using it.
+    for (BasicBlock &Block : *oldFunc) {
+      if (notForAnalysis.count(&Block))
+        continue;
+      for (Instruction &Allocation : Block) {
+        if (!isAllocationCall(&Allocation, TLI))
+          continue;
+        auto Found = knownRecomputeHeuristic.find(&Allocation);
+        if ((Found == knownRecomputeHeuristic.end() || Found->second) &&
+            needsCacheWholeAllocation(&Allocation)) {
+          knownRecomputeHeuristic[&Allocation] = false;
+          unnecessaryIntermediates.erase(&Allocation);
+        }
+      }
+    }
   }
   if (rematerializableAllocations.size()) {
 
@@ -10582,10 +10600,10 @@ llvm::CallInst *freeKnownAllocation(llvm::IRBuilder<> &builder,
 
 bool GradientUtils::needsCacheWholeAllocation(
     const llvm::Value *origInst) const {
-  auto found = knownRecomputeHeuristic.find(origInst);
-  if (found == knownRecomputeHeuristic.end())
+  if (knownRecomputeHeuristic.empty())
     return false;
-  if (!found->second)
+  auto Found = knownRecomputeHeuristic.find(origInst);
+  if (Found != knownRecomputeHeuristic.end() && !Found->second)
     return true;
   // User, operand of input, whehter the input is the original allocation
   SmallVector<std::tuple<const Instruction *, size_t, bool>, 1> todo;
@@ -10608,58 +10626,60 @@ bool GradientUtils::needsCacheWholeAllocation(
       if (II->getIntrinsicID() == Intrinsic::masked_load)
         continue;
 
+    // Non-pointer results cannot carry an interior pointer or alias of the
+    // allocation into the cache or to downstream SSA users.
+    if (!TR.anyPointer(const_cast<Instruction *>(cur)))
+      continue;
+
     bool returnedSameValue = false;
 
-    if (auto CI = dyn_cast<CallInst>(cur)) {
+    if (auto *Call = dyn_cast<CallBase>(cur)) {
 #if LLVM_VERSION_MAJOR >= 14
-      if (idx < CI->arg_size())
+      if (idx < Call->arg_size())
 #else
-      if (idx < CI->getNumArgOperands())
+      if (idx < Call->getNumArgOperands())
 #endif
       {
-
         // Calling a non-empty function with a julia base object, this is fine.
         // as GC will deal with any issues with.
-        if (auto PT = dyn_cast<PointerType>(CI->getArgOperand(idx)->getType()))
-          if (PT->getAddressSpace() == 10)
+        if (auto *ArgumentPointerType =
+                dyn_cast<PointerType>(Call->getArgOperand(idx)->getType()))
+          if (ArgumentPointerType->getAddressSpace() == 10)
             if (EnzymeJuliaAddrLoad)
-              if (auto F = getFunctionFromCall(CI))
-                if (!F->empty())
+              if (auto *Callee = getFunctionFromCall(Call))
+                if (!Callee->empty())
                   continue;
 
-        if (isNoCapture(CI, idx))
+        if (isNoCapture(Call, idx) || isNoAlias(Call))
           continue;
 
-        if (auto F = CI->getCalledFunction())
-          if (F->getCallingConv() == CI->getCallingConv() && !F->empty()) {
-            bool onlyReturnUses = true;
-            bool hasReturnUse = true;
+        if (auto *Callee = getFunctionFromCall(Call))
+          if (Callee->getCallingConv() == Call->getCallingConv() &&
+              !Callee->empty()) {
+            bool OnlyReturnUses = true;
+            bool HasReturnUse = false;
 
-            if (CI->getFunctionType() != F->getFunctionType() ||
-                idx >= F->getFunctionType()->getNumParams()) {
-              onlyReturnUses = false;
+            if (Call->getFunctionType() != Callee->getFunctionType() ||
+                idx >= Callee->getFunctionType()->getNumParams()) {
+              OnlyReturnUses = false;
             } else {
-              for (auto u : F->getArg(idx)->users()) {
-                if (isa<ReturnInst>(u)) {
-                  hasReturnUse = true;
+              for (User *ArgumentUser : Callee->getArg(idx)->users()) {
+                if (isa<ReturnInst>(ArgumentUser)) {
+                  HasReturnUse = true;
                   continue;
                 }
-                onlyReturnUses = false;
-                continue;
+                OnlyReturnUses = false;
               }
             }
-            // The arg itself has no use in the function
-            if (onlyReturnUses && !hasReturnUse)
+            // The argument itself has no use in the function.
+            if (OnlyReturnUses && !HasReturnUse)
               continue;
 
             // If this is the original allocation, we return it guaranteed, and
             // cache the return, that's still fine
-            if (onlyReturnUses && orig) {
-              found = knownRecomputeHeuristic.find(cur);
-              if (found == knownRecomputeHeuristic.end())
-                continue;
-
-              if (!found->second)
+            if (OnlyReturnUses && orig) {
+              Found = knownRecomputeHeuristic.find(cur);
+              if (Found != knownRecomputeHeuristic.end() && !Found->second)
                 continue;
               returnedSameValue = true;
             }
@@ -10671,10 +10691,6 @@ bool GradientUtils::needsCacheWholeAllocation(
       }
     }
 
-    found = knownRecomputeHeuristic.find(cur);
-    if (found == knownRecomputeHeuristic.end())
-      continue;
-
     // If caching a julia base object, this is fine as
     // GC will deal with any issues with.
     if (auto PT = dyn_cast<PointerType>(cur->getType()))
@@ -10682,22 +10698,16 @@ bool GradientUtils::needsCacheWholeAllocation(
         if (EnzymeJuliaAddrLoad)
           continue;
 
-    // If caching this user, it cannot be a gep/cast of original
-    if (!found->second) {
-      llvm::errs() << " mod: " << *oldFunc->getParent() << "\n";
-      llvm::errs() << " oldFunc: " << *oldFunc << "\n";
-      for (auto &pair : knownRecomputeHeuristic)
-        llvm::errs() << " krc[" << *pair.first << "] = " << pair.second << "\n";
-      llvm::errs() << " cur: " << *cur << "\n";
-      llvm::errs() << " origInst: " << *origInst << "\n";
-      assert(false && "caching potentially capturing/offset of allocation");
-    } else {
-      // if not caching this user, it is legal to recompute, consider its users
-      for (auto &use : cur->uses()) {
-        todo.push_back(std::make_tuple(cast<Instruction>(use.getUser()),
-                                       use.getOperandNo(),
-                                       returnedSameValue && orig));
-      }
+    Found = knownRecomputeHeuristic.find(cur);
+    if (Found != knownRecomputeHeuristic.end() && !Found->second) {
+      return true;
+    }
+
+    // If not caching this user, it is legal to recompute; consider its users.
+    for (const Use &UserEdge : cur->uses()) {
+      todo.push_back(std::make_tuple(cast<Instruction>(UserEdge.getUser()),
+                                     UserEdge.getOperandNo(),
+                                     returnedSameValue && orig));
     }
   }
   return false;
