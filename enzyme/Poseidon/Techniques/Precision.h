@@ -33,7 +33,7 @@ namespace poseidon {
 class FPNode;
 class FPLLValue;
 struct Subgraph;
-class CandidateSubgraph;
+class PrecisionUnit;
 struct Options;
 class Session;
 struct FunctionProfileHeader;
@@ -109,7 +109,7 @@ void changePrecision(llvm::Instruction *I, PrecisionChange &change,
 double getCompCost(Session &S, Subgraph &subgraph, PTCandidate &pt);
 
 void setUnifiedAccuracyCost(
-    const Options &O, CandidateSubgraph &CS,
+    const Options &O, PrecisionUnit &CS,
     std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, llvm::Value *> &symbolToValueMap);
 
@@ -120,7 +120,7 @@ void proposePrecisionCandidates(
     Session &S, llvm::Function &F, Subgraph &subgraph,
     std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     const FunctionProfileHeader &profileHeader, bool expansionSafe,
-    llvm::SmallVectorImpl<CandidateSubgraph> &CSs);
+    llvm::SmallVectorImpl<PrecisionUnit> &CSs);
 
 } // namespace poseidon
 #endif // POSEIDON_PRECISION_H

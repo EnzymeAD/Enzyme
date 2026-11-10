@@ -23,9 +23,9 @@ namespace poseidon {
 // F16/BF16/TF32 input slice and an F32 accumulator; aborts on any precondition
 // violation (callers filter to valid candidates upstream).
 void materializeOzakiIRaise(const AbstractMatmul &m,
-                            const CandidateMatmul::Option &opt);
+                            const MatmulUnit::Option &opt);
 
-std::string ozakiIOptionLabel(const CandidateMatmul::Option &opt);
+std::string ozakiIOptionLabel(const MatmulUnit::Option &opt);
 
 } // namespace poseidon
 #endif // POSEIDON_IN_KERNEL_RAISE_H

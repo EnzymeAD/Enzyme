@@ -126,10 +126,9 @@ static std::string inKernelDescription(const SchemeVariant &v, unsigned tileM,
 
 static void proposeInKernel(const Product &P, const InKernelSite &K,
                             const SchemeVariant &v, unsigned tileM,
-                            unsigned tileN, unsigned tileK,
-                            CandidateMatmul &cm) {
+                            unsigned tileN, unsigned tileK, MatmulUnit &cm) {
   const AbstractMatmul &m = P.m;
-  CandidateMatmul::Option opt;
+  MatmulUnit::Option opt;
   opt.tileM = tileM;
   opt.tileN = tileN;
   opt.tileK = tileK;
@@ -158,7 +157,7 @@ static void proposeInKernel(const Product &P, const InKernelSite &K,
 }
 
 static void proposeInKernelDirect(const Product &P, const InKernelSite *K,
-                                  CandidateMatmul &cm) {
+                                  MatmulUnit &cm) {
   if (!K)
     return;
   for (const WmmaTarget &t : getAvailableWmmaTargets(P.S)) {
@@ -194,7 +193,7 @@ static constexpr InKernelSplitVariant kInKernelSplitVariants[] = {
 };
 
 static void proposeInKernelSplit(const Product &P, const InKernelSite *K,
-                                 CandidateMatmul &cm) {
+                                 MatmulUnit &cm) {
   if (!K)
     return;
   for (const InKernelSplitVariant &s : kInKernelSplitVariants) {
@@ -303,10 +302,9 @@ static LibrarySite librarySite(Session &S, const AbstractMatmul &m) {
   llvm_unreachable("unexpected Origin::Invalid");
 }
 
-static CandidateMatmul::Option libraryOption(const SchemeVariant &v,
-                                             unsigned tileM, unsigned tileN,
-                                             unsigned tileK) {
-  CandidateMatmul::Option opt;
+static MatmulUnit::Option libraryOption(const SchemeVariant &v, unsigned tileM,
+                                        unsigned tileN, unsigned tileK) {
+  MatmulUnit::Option opt;
   opt.tileM = tileM;
   opt.tileN = tileN;
   opt.tileK = tileK;
@@ -317,8 +315,8 @@ static CandidateMatmul::Option libraryOption(const SchemeVariant &v,
   return opt;
 }
 
-static void pushLibraryCandidate(const Product &P, CandidateMatmul::Option opt,
-                                 CandidateMatmul &cm) {
+static void pushLibraryCandidate(const Product &P, MatmulUnit::Option opt,
+                                 MatmulUnit &cm) {
   opt.accuracyCost =
       schemeAccuracyCost(P, opt.variant, opt.tileK, &opt.domainError);
   cm.candidates.push_back(opt);
@@ -332,7 +330,7 @@ static void pushLibraryCandidate(const Product &P, CandidateMatmul::Option opt,
 // dispatch the per-MAC cost no longer depends on the column count, and the
 // column count is the one dimension that follows the mesh.
 static void proposeLibraryModular(const Product &P, const LibrarySite &L,
-                                  CandidateMatmul &cm) {
+                                  MatmulUnit &cm) {
   if (!L.modularOffered)
     return;
   const AbstractMatmul &m = P.m;
@@ -374,7 +372,7 @@ static void proposeLibraryModular(const Product &P, const LibrarySite &L,
                "the padding ratio and is over-priced by roughly that ratio. "
                "Measure the row before trusting a refusal at this site.\n";
     }
-    CandidateMatmul::Option opt =
+    MatmulUnit::Option opt =
         libraryOption(v, kModularTile, kModularTile, kModularTile);
     opt.mChain = L.mChain;
     opt.nChain = L.nChain;
@@ -392,14 +390,14 @@ static void proposeLibraryModular(const Product &P, const LibrarySite &L,
 // tcec_dispatch_rel row it is not proposed. The runtime repacks operands
 // rather than padding to a square, so no shape ratio is charged.
 static void proposeLibrarySplit(const Product &P, const LibrarySite &L,
-                                CandidateMatmul &cm) {
+                                MatmulUnit &cm) {
   if (!L.dispatchable)
     return;
   double rel =
       queryCostModelOr(P.S.CostModel, "tcec_dispatch_rel", "fp16tcec", -1.0);
   if (rel <= 0.0)
     return;
-  CandidateMatmul::Option opt = libraryOption(
+  MatmulUnit::Option opt = libraryOption(
       SchemeVariant::split(FPKind::F16, FPKind::F32, 2), 16, 16, 16);
   opt.compCost = P.baselinePerMac * rel;
   pushLibraryCandidate(P, opt, cm);
@@ -429,7 +427,7 @@ static constexpr LibraryDirectVariant kLibraryDirectVariants[] = {
 };
 
 static void proposeLibraryDirect(const Product &P, const LibrarySite &L,
-                                 CandidateMatmul &cm) {
+                                 MatmulUnit &cm) {
   if (!L.dispatchable)
     return;
   const AbstractMatmul &m = P.m;
@@ -454,7 +452,7 @@ static void proposeLibraryDirect(const Product &P, const LibrarySite &L,
             Twine(costModelPath(P.S.CostModel)));
       continue;
     }
-    CandidateMatmul::Option opt =
+    MatmulUnit::Option opt =
         libraryOption(d.variant, d.tileM, d.tileN, d.tileK);
     opt.compCost = P.baselinePerMac * rel;
     pushLibraryCandidate(P, opt, cm);
@@ -470,7 +468,7 @@ static void proposeLibraryDirect(const Product &P, const LibrarySite &L,
 // magnitude above what it runs at, which kept a bit-exact candidate out of
 // every solution.
 static void proposeLibraryNative(const Product &P, const LibrarySite &L,
-                                 CandidateMatmul &cm) {
+                                 MatmulUnit &cm) {
   if (!L.dispatchable)
     return;
   double rel =
@@ -479,8 +477,7 @@ static void proposeLibraryNative(const Product &P, const LibrarySite &L,
     report_fatal_error("Poseidon: the cost model has no "
                        "'ozaki_dispatch_rel,dgemm' row for the native DGEMM "
                        "candidate; run poseidon-calibrate.");
-  CandidateMatmul::Option opt =
-      libraryOption(SchemeVariant::native(), 16, 16, 16);
+  MatmulUnit::Option opt = libraryOption(SchemeVariant::native(), 16, 16, 16);
   opt.compCost = P.baselinePerMac * rel;
   pushLibraryCandidate(P, opt, cm);
 }
@@ -489,7 +486,7 @@ void generateMatmulCandidates(
     Session &S, ArrayRef<AbstractMatmul> matmuls,
     const std::unordered_map<size_t, ProfileInfo> &scalarProfile,
     double confidence, unsigned sampleLogBits,
-    SmallVectorImpl<CandidateMatmul> &out) {
+    SmallVectorImpl<MatmulUnit> &out) {
   for (const AbstractMatmul &m : matmuls) {
     if (m.origin == AbstractMatmul::Origin::Invalid)
       report_fatal_error("unexpected Origin::Invalid");
@@ -536,7 +533,7 @@ void generateMatmulCandidates(
 
     MatmulProfile prof = loadProfile(m, scalarProfile);
 
-    CandidateMatmul cm;
+    MatmulUnit cm;
     cm.matmul = const_cast<AbstractMatmul *>(&m);
     cm.executions = prof.totalCalls;
 
@@ -623,21 +620,21 @@ void generateMatmulCandidates(
   }
 }
 
-std::string CandidateMatmul::candidateName(size_t i) const {
+std::string MatmulUnit::candidateName(size_t i) const {
   return matmulOptionLabel(candidates[i]);
 }
 
-std::string CandidateMatmul::selectionText(size_t i) const {
+std::string MatmulUnit::selectionText(size_t i) const {
   return "matmul[" + std::to_string(matmul->id) + "] -> " +
          matmulOptionLabel(candidates[i]);
 }
 
-std::string CandidateMatmul::choiceText(size_t i) const {
+std::string MatmulUnit::choiceText(size_t i) const {
   return "matmul[" + std::to_string(matmul->id) + "] -> " +
          matmulOptionLabel(candidates[i]) + " (#" + std::to_string(i) + ")";
 }
 
-json::Object CandidateMatmul::stepJSON(size_t i) {
+json::Object MatmulUnit::stepJSON(size_t i) {
   json::Object stepObj;
   stepObj["type"] = "matmul_rewrite";
   stepObj["candidate_index"] = static_cast<int64_t>(i);
@@ -649,13 +646,13 @@ json::Object CandidateMatmul::stepJSON(size_t i) {
   return stepObj;
 }
 
-void CandidateMatmul::scaleErrors(double factor) {
+void MatmulUnit::scaleErrors(double factor) {
   initialAccCost *= factor;
   for (auto &cand : candidates)
     cand.accuracyCost *= factor;
 }
 
-void CandidateMatmul::printPriced(raw_ostream &OS) {
+void MatmulUnit::printPriced(raw_ostream &OS) {
   OS << "Matmul[" << matmul->id
      << "] candidates (initial cost=" << initialCompCost
      << ", executions=" << executions << ", globalM=" << matmul->globalM
@@ -671,8 +668,7 @@ void CandidateMatmul::printPriced(raw_ostream &OS) {
        << " ΔaccCost=" << getAccCostDelta(i) << "\n";
 }
 
-void CandidateMatmul::writeReportStep(raw_ostream &OS, size_t i,
-                                      StringRef pad) {
+void MatmulUnit::writeReportStep(raw_ostream &OS, size_t i, StringRef pad) {
   OS << pad << "[Matmul] matmul[" << matmul->id << "] -> "
      << matmulOptionLabel(candidates[i]) << " (#" << i << ")\n";
 }

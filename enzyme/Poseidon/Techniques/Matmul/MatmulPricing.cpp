@@ -34,7 +34,7 @@ std::string mmaShapeSuffix(unsigned M, unsigned N, unsigned K) {
 // Labels name candidates in logs, reports and DP cache keys, so their irregular
 // forms are kept: the library split drops its slice count, and the
 // cuBLAS-backed library calls drop their tile.
-std::string matmulOptionLabel(const CandidateMatmul::Option &opt) {
+std::string matmulOptionLabel(const MatmulUnit::Option &opt) {
   const SchemeVariant &v = opt.variant;
   const std::string formats = schemeFormats(v, '/');
   const std::string wmma =
@@ -287,7 +287,7 @@ uint64_t enclosingKernelSharedBytes(Function &F) {
   return bytes;
 }
 
-uint64_t inKernelRaiseSharedBytes(Module &M, const CandidateMatmul::Option &opt,
+uint64_t inKernelRaiseSharedBytes(Module &M, const MatmulUnit::Option &opt,
                                   std::string *breakdown) {
   const DataLayout &DL = M.getDataLayout();
   LLVMContext &ctx = M.getContext();
@@ -340,8 +340,8 @@ uint64_t inKernelRaiseSharedBytes(Module &M, const CandidateMatmul::Option &opt,
 
 // Shared refusal for every in-kernel class. Returns true when the raise fits.
 bool inKernelRaiseFits(const Options &O, Function *F, const AbstractMatmul &m,
-                       const CandidateMatmul::Option &opt,
-                       uint64_t existingBytes, StringRef className) {
+                       const MatmulUnit::Option &opt, uint64_t existingBytes,
+                       StringRef className) {
   if (!F)
     return true;
   std::string breakdown;

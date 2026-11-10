@@ -6,7 +6,7 @@
 ; REQUIRES: poseidon, scev-trunc-iv-nowrap
 
 ; Two matrix products on one loop. The loop carries two reduction phis, so it
-; yields two CandidateMatmuls with the same footprint, at most one of them
+; yields two MatmulUnits with the same footprint, at most one of them
 ; raised. At K = 16 the native DGEMM dispatch has zero modelled error and
 ; dominates the empty strategy for the first product (the e reduction);
 ; pruning after it leaves no strategy without e, and the second (the d

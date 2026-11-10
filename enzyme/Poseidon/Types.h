@@ -216,7 +216,7 @@ struct RewriteCandidate {
       : herbieCost(cost), herbieAccuracy(accuracy), expr(expression) {}
 };
 
-class CandidateOutput : public SiteUnit {
+class RewriteUnit : public SiteUnit {
 public:
   Subgraph *subgraph;
   llvm::Value *oldOutput;
@@ -240,9 +240,9 @@ public:
   std::string unpricedReason;
   llvm::SmallVector<std::pair<std::string, std::string>, 1> dropped;
 
-  explicit CandidateOutput(CostModelState &CM, Subgraph &subgraph,
-                           llvm::Value *oldOutput, std::string expr,
-                           double grad, unsigned executions)
+  explicit RewriteUnit(CostModelState &CM, Subgraph &subgraph,
+                       llvm::Value *oldOutput, std::string expr, double grad,
+                       unsigned executions)
       : SiteUnit(UnitKind::R), subgraph(&subgraph), oldOutput(oldOutput),
         expr(expr), grad(grad), executions(executions), roots({oldOutput}),
         rootGrads({grad}) {
@@ -250,10 +250,10 @@ public:
     findErasableInstructions();
   }
 
-  explicit CandidateOutput(CostModelState &CM, Subgraph &subgraph,
-                           llvm::ArrayRef<llvm::Value *> outputs,
-                           llvm::ArrayRef<double> grads, std::string expr,
-                           unsigned executions)
+  explicit RewriteUnit(CostModelState &CM, Subgraph &subgraph,
+                       llvm::ArrayRef<llvm::Value *> outputs,
+                       llvm::ArrayRef<double> grads, std::string expr,
+                       unsigned executions)
       : SiteUnit(UnitKind::R), subgraph(&subgraph), oldOutput(outputs.front()),
         expr(expr), executions(executions),
         roots(outputs.begin(), outputs.end()),
@@ -268,7 +268,7 @@ public:
   }
 
   bool isArray() const { return roots.size() > 1; }
-  bool sharesRoot(const CandidateOutput &other) const;
+  bool sharesRoot(const RewriteUnit &other) const;
 
   void apply(size_t candidateIndex,
              std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>>
@@ -324,7 +324,7 @@ private:
   void findErasableInstructions();
 };
 
-class CandidateSubgraph : public SiteUnit {
+class PrecisionUnit : public SiteUnit {
 public:
   Subgraph *subgraph;
   double initialAccCost = std::numeric_limits<double>::quiet_NaN();
@@ -334,10 +334,10 @@ public:
   llvm::SmallVector<PTCandidate, 8> candidates;
   llvm::SmallVector<std::pair<std::string, std::string>, 1> dropped;
 
-  using CandidateOutputSet = std::set<CandidateOutput *>;
+  using RewriteUnitSet = std::set<RewriteUnit *>;
   struct CacheKey {
     size_t candidateIndex;
-    CandidateOutputSet CandidateOutputs;
+    RewriteUnitSet RewriteUnits;
     bool operator==(const CacheKey &other) const;
   };
 
@@ -349,7 +349,7 @@ public:
       compCostDeltaCache;
   std::unordered_map<CacheKey, double, CacheKeyHash> accCostDeltaCache;
 
-  explicit CandidateSubgraph(CostModelState &CM, Subgraph &subgraph)
+  explicit PrecisionUnit(CostModelState &CM, Subgraph &subgraph)
       : SiteUnit(UnitKind::PT), subgraph(&subgraph) {
     initialCompCost =
         getCompCost(CM, {subgraph.outputs.begin(), subgraph.outputs.end()},

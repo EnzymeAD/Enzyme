@@ -109,13 +109,13 @@ static void checkToleranceInputs(StringRef siteName, double accScale,
 // The DP table is anchored at the ORIGINAL program: costToAccuracyMap[0] == 0
 // and every entry is a sum of deltas. A tolerance is an ABSOLUTE level, so the
 // site's own modelled error has to be added back. Each subgraph contributes it
-// once: a CandidateSubgraph's perOutputInitialAccCost already covers all of its
+// once: a PrecisionUnit's perOutputInitialAccCost already covers all of its
 // subgraph's outputs (getAdjustedAccCostDelta excludes the ones a
-// CandidateOutput claims), so the per-output CandidateOutput baselines are only
-// counted for subgraphs that have no CandidateSubgraph at all. CandidateMatmul
+// RewriteUnit claims), so the per-output RewriteUnit baselines are only
+// counted for subgraphs that have no PrecisionUnit at all. MatmulUnit
 // baselines are zero by construction.
-static double baselineAccCost(ArrayRef<CandidateOutput> COs,
-                              ArrayRef<CandidateSubgraph> CSs,
+static double baselineAccCost(ArrayRef<RewriteUnit> COs,
+                              ArrayRef<PrecisionUnit> CSs,
                               unsigned *unpricedOut = nullptr) {
   SmallPtrSet<const Subgraph *, 4> subgraphsWithCS;
   double baseline = 0.0;
@@ -128,7 +128,7 @@ static double baselineAccCost(ArrayRef<CandidateOutput> COs,
   for (const auto &CO : COs) {
     if (subgraphsWithCS.count(CO.subgraph))
       continue;
-    // A CandidateOutput with no candidates was never priced (Herbie produced
+    // A RewriteUnit with no candidates was never priced (Herbie produced
     // nothing for it), so its share of the baseline was never measured. It
     // cannot appear in any solution either; the site's baseline is reported as
     // the part that WAS measured, and the caller says so.
@@ -414,7 +414,7 @@ static void priceCandidates(FunctionFPState &st) {
 SmallVector<SiteUnit *> solvedUnits(const FunctionFPState &st, bool target) {
   SmallVector<SiteUnit *> units;
   for (SiteUnit *unit : st.units)
-    if (!target || !isa<CandidateMatmul>(unit))
+    if (!target || !isa<MatmulUnit>(unit))
       units.push_back(unit);
   return units;
 }
@@ -673,15 +673,16 @@ emitReport(Session &S, StringRef funcName,
   }
 }
 
-SmallVector<SolutionStep>
-errorBudgetSelector(const Options &O, SmallVector<CandidateMatmul, 4> &CMs,
-                    double budget, double confidence) {
+SmallVector<SolutionStep> errorBudgetSelector(const Options &O,
+                                              SmallVector<MatmulUnit, 4> &CMs,
+                                              double budget,
+                                              double confidence) {
   SmallVector<SolutionStep> steps;
   for (auto &cm : CMs) {
     long best = -1;
     double bestComp = cm.initialCompCost;
     for (size_t i = 0; i < cm.candidates.size(); ++i) {
-      const CandidateMatmul::Option &c = cm.candidates[i];
+      const MatmulUnit::Option &c = cm.candidates[i];
       if (c.domainError <= budget && c.compCost < bestComp) {
         bestComp = c.compCost;
         best = (long)i;
@@ -695,12 +696,12 @@ errorBudgetSelector(const Options &O, SmallVector<CandidateMatmul, 4> &CMs,
       const double band = bestComp + kCostTieBandRel * std::fabs(bestComp);
       long tieBest = best;
       for (size_t i = 0; i < cm.candidates.size(); ++i) {
-        const CandidateMatmul::Option &c = cm.candidates[i];
+        const MatmulUnit::Option &c = cm.candidates[i];
         if (c.domainError > budget || c.compCost >= cm.initialCompCost)
           continue;
         if (c.compCost > band)
           continue;
-        const CandidateMatmul::Option &b = cm.candidates[tieBest];
+        const MatmulUnit::Option &b = cm.candidates[tieBest];
         if (c.domainError < b.domainError ||
             (c.domainError == b.domainError && c.compCost < b.compCost))
           tieBest = (long)i;
