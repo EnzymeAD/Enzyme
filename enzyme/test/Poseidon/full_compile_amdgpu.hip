@@ -5,20 +5,20 @@
 // RUN: llvm-offload-binary %t/drv-rdc/k.o --image=file=%t/drv-rdc/dev.bc,arch=%amdgpu_arch
 // RUN: llvm-dis %t/drv-rdc/dev.bc -o - | FileCheck --check-prefix=DEV --implicit-check-not=__enzyme %s
 //
-// RUN: %cmake %cmake_generator -S %S/Inputs/package_hip -B %t/pkg-gen -DCMAKE_CXX_COMPILER=%clangxx -DPoseidon_DIR=%poseidon_package_dir -DSOURCE=%s -DAMDGPU_ARCH=%amdgpu_arch -DROCM_PATH=%rocm_path -DACTION=ProfileGenerate -DPOSEIDON_FLAGS=-poseidon-cache=%t/pkg-gen/c > /dev/null
+// RUN: %cmake %cmake_generator -S %S/Inputs/package_hip -B %t/pkg-gen -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=%clangxx -DPoseidon_DIR=%poseidon_package_dir -DSOURCE=%s -DAMDGPU_ARCH=%amdgpu_arch -DROCM_PATH=%rocm_path -DACTION=ProfileGenerate -DPOSEIDON_FLAGS=-poseidon-cache=%t/pkg-gen/c > /dev/null
 // RUN: %cmake --build %t/pkg-gen -v > %t/pkg-gen.log 2>&1
 // RUN: FileCheck --check-prefix=PKGGEN %s < %t/pkg-gen.log
 // RUN: cd %t/pkg-gen && cp CMakeFiles/k.dir/k.cpp.o k.o && llvm-objdump --offloading k.o > /dev/null && llvm-readelf --dyn-syms k.o.*%amdgpu_arch | FileCheck --check-prefix=CO --implicit-check-not=__enzyme %s
 // RUN: llvm-offload-binary %t/pkg-gen/CMakeFiles/k_rdc.dir/k.cpp.o --image=file=%t/pkg-gen/dev.bc,arch=%amdgpu_arch
 // RUN: llvm-dis %t/pkg-gen/dev.bc -o - | FileCheck --check-prefix=DEV --implicit-check-not=__enzyme %s
 //
-// RUN: %cmake %cmake_generator -S %S/Inputs/package_hip -B %t/pkg-plain -DCMAKE_CXX_COMPILER=%clangxx -DPoseidon_DIR=%poseidon_package_dir -DSOURCE=%s -DAMDGPU_ARCH=%amdgpu_arch -DROCM_PATH=%rocm_path -DACTION=Plain -DLOAD_ENZYME=ON -DENZYME_OPTIONS=ON -DDEFINES=DEFERRED > /dev/null
+// RUN: %cmake %cmake_generator -S %S/Inputs/package_hip -B %t/pkg-plain -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=%clangxx -DPoseidon_DIR=%poseidon_package_dir -DSOURCE=%s -DAMDGPU_ARCH=%amdgpu_arch -DROCM_PATH=%rocm_path -DACTION=Plain -DLOAD_ENZYME=ON -DENZYME_OPTIONS=ON -DDEFINES=DEFERRED > /dev/null
 // RUN: %cmake --build %t/pkg-plain -v > %t/pkg-plain.log 2>&1
 // RUN: FileCheck --check-prefix=PKGENZYME %s < %t/pkg-plain.log
-// RUN: %cmake %cmake_generator -S %S/Inputs/package_hip -B %t/pkg-use -DCMAKE_CXX_COMPILER=%clangxx -DPoseidon_DIR=%poseidon_package_dir -DSOURCE=%s -DAMDGPU_ARCH=%amdgpu_arch -DROCM_PATH=%rocm_path -DACTION=ProfileUse -DLOAD_ENZYME=ON -DENZYME_OPTIONS=ON -DDEFINES=DEFERRED "-DPOSEIDON_FLAGS=-poseidon-profile-use=%S/Inputs/other_sites -poseidon-cost-model=%S/Inputs/cm_gfx942_synthetic.csv -poseidon-enable-herbie=0 -poseidon-cache=%t/pkg-use/c" > /dev/null
+// RUN: %cmake %cmake_generator -S %S/Inputs/package_hip -B %t/pkg-use -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=%clangxx -DPoseidon_DIR=%poseidon_package_dir -DSOURCE=%s -DAMDGPU_ARCH=%amdgpu_arch -DROCM_PATH=%rocm_path -DACTION=ProfileUse -DLOAD_ENZYME=ON -DENZYME_OPTIONS=ON -DDEFINES=DEFERRED "-DPOSEIDON_FLAGS=-poseidon-profile-use=%S/Inputs/other_sites -poseidon-cost-model=%S/Inputs/cm_gfx942_synthetic.csv -poseidon-enable-herbie=0 -poseidon-cache=%t/pkg-use/c" > /dev/null
 // RUN: %cmake --build %t/pkg-use -v > %t/pkg-use.log 2>&1
 // RUN: FileCheck --check-prefix=PKGENZYME %s < %t/pkg-use.log
-// RUN: %cmake %cmake_generator -S %S/Inputs/package_hip -B %t/pkg-noopt -DCMAKE_CXX_COMPILER=%clangxx -DPoseidon_DIR=%poseidon_package_dir -DSOURCE=%s -DAMDGPU_ARCH=%amdgpu_arch -DROCM_PATH=%rocm_path -DACTION=Plain -DLOAD_ENZYME=ON -DDEFINES=DEFERRED > /dev/null
+// RUN: %cmake %cmake_generator -S %S/Inputs/package_hip -B %t/pkg-noopt -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=%clangxx -DPoseidon_DIR=%poseidon_package_dir -DSOURCE=%s -DAMDGPU_ARCH=%amdgpu_arch -DROCM_PATH=%rocm_path -DACTION=Plain -DLOAD_ENZYME=ON -DDEFINES=DEFERRED > /dev/null
 // RUN: env TMPDIR=%t not %cmake --build %t/pkg-noopt > %t/pkg-noopt.log 2>&1
 // RUN: FileCheck --check-prefix=DEFERRED-PKG --implicit-check-not=REPRODUCER --implicit-check-not=ld.lld %s < %t/pkg-noopt.log
 // REQUIRES: poseidon, enzyme, amdgpu-registered-target, rocm
