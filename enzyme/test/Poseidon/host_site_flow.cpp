@@ -8,7 +8,7 @@
 // RUN: FileCheck --check-prefix=GEN %s < %t/gen.err
 // RUN: env POSEIDON_PROFILE_DIR=%t/prof %t/gen > %t/gen.out
 // RUN: diff %t/stock.out %t/gen.out
-// RUN: %poseidon_clangxx -O2 -g -poseidon-profile-use=%t/prof -poseidon-tau=1e-6 -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-enable-herbie=0 -poseidon-cache=%t/c -poseidon-explain=%t/x -Rpass=poseidon %s %t/other.o -o %t/use 2> %t/use.err
+// RUN: %poseidon_clangxx -O2 -g -poseidon-profile-use=%t/prof -poseidon-tau=1e-6 -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-enable-herbie=0 -poseidon-cache=%t/c -poseidon-explain=%t/x -Rpass=poseidon %s %t/other.o -o %t/use 2> %t/use.err
 // RUN: FileCheck --check-prefix=USE %s < %t/use.err
 // RUN: FileCheck --check-prefix=REMARK %s < %t/use.err
 // RUN: %t/use > %t/use.out
@@ -19,13 +19,13 @@
 // RUN: %poseidon_clangxx -O0 -poseidon-profile-generate -poseidon-cache=%t/c0 %s %t/other.o -o %t/gen0 2>/dev/null
 // RUN: env POSEIDON_PROFILE_DIR=%t/prof0 %t/gen0 > %t/gen0.out
 // RUN: diff %t/stock.out %t/gen0.out
-// RUN: %poseidon_clangxx -O0 -poseidon-profile-use=%t/prof0 -poseidon-tau=1e-6 -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-enable-herbie=0 -poseidon-cache=%t/c0 %s %t/other.o -o %t/use0 2>&1 | FileCheck --check-prefix=LEVEL %s
+// RUN: %poseidon_clangxx -O0 -poseidon-profile-use=%t/prof0 -poseidon-tau=1e-6 -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-enable-herbie=0 -poseidon-cache=%t/c0 %s %t/other.o -o %t/use0 2>&1 | FileCheck --check-prefix=LEVEL %s
 // RUN: %poseidon_clangxx -O1 -poseidon-profile-generate -poseidon-cache=%t/c1 %s %t/other.o -o %t/gen1 2>/dev/null
 // RUN: env POSEIDON_PROFILE_DIR=%t/prof1 %t/gen1 > %t/gen1.out
-// RUN: %poseidon_clangxx -O1 -poseidon-profile-use=%t/prof1 -poseidon-tau=1e-6 -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-enable-herbie=0 -poseidon-cache=%t/c1 %s %t/other.o -o %t/use1 2>&1 | FileCheck --check-prefix=LEVEL %s
+// RUN: %poseidon_clangxx -O1 -poseidon-profile-use=%t/prof1 -poseidon-tau=1e-6 -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-enable-herbie=0 -poseidon-cache=%t/c1 %s %t/other.o -o %t/use1 2>&1 | FileCheck --check-prefix=LEVEL %s
 // RUN: %poseidon_clangxx -O3 -poseidon-profile-generate -poseidon-cache=%t/c3 %s %t/other.o -o %t/gen3 2>/dev/null
 // RUN: env POSEIDON_PROFILE_DIR=%t/prof3 %t/gen3 > %t/gen3.out
-// RUN: %poseidon_clangxx -O3 -poseidon-profile-use=%t/prof3 -poseidon-tau=1e-6 -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-enable-herbie=0 -poseidon-cache=%t/c3 %s %t/other.o -o %t/use3 2>&1 | FileCheck --check-prefix=LEVEL %s
+// RUN: %poseidon_clangxx -O3 -poseidon-profile-use=%t/prof3 -poseidon-tau=1e-6 -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-enable-herbie=0 -poseidon-cache=%t/c3 %s %t/other.o -o %t/use3 2>&1 | FileCheck --check-prefix=LEVEL %s
 
 // POSEIDON_OPTIMIZE on host functions: a free function called directly,
 // through a pointer and from another translation unit, a member function, a

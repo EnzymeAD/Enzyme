@@ -2,7 +2,7 @@
 // RUN: rm -rf %t && mkdir -p %t
 // RUN: %poseidon_clangxx -O2 -poseidon-profile-generate -poseidon-cache=%t/c %s -o %t/gen 2>/dev/null
 // RUN: env POSEIDON_PROFILE_DIR=%t/prof %t/gen > /dev/null
-// RUN: %poseidon_clangxx -O2 -poseidon-profile-use=%t/prof -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-enable-herbie=0 -poseidon-cache=%t/c -S %s -o %t/pose.s 2> %t/use.err
+// RUN: %poseidon_clangxx -O2 -poseidon-profile-use=%t/prof -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-enable-herbie=0 -poseidon-cache=%t/c -S %s -o %t/pose.s 2> %t/use.err
 // RUN: FileCheck %s < %t/use.err
 // RUN: %clang -x c++ -O2 -ffp-contract=on -I%poseidon_profile_inc -S %s -o %t/stock.s
 // RUN: awk '/^_Z4wavePKdPdi:/{p=1} p{print} p&&/^\.Lfunc_end/{exit}' %t/stock.s | sed -E 's/\.(LBB|LCPI|Ltmp|Lfunc_end)[0-9_]+/.L/g' > %t/stock.fn

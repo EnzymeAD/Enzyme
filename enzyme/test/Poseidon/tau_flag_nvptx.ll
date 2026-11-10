@@ -1,7 +1,7 @@
 ; RUN: rm -rf %t && mkdir -p %t
 ; RUN: sed 's/ptr @.args }/ptr null }/' %s > %t/flag.ll
 ; RUN: grep -q 'i32 2, ptr null }' %t/flag.ll
-; RUN: %opt %t/flag.ll %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/annotated_kernel -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-enable-multifloat=true -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_x1e6.csv -poseidon-cache=%t -poseidon-tau=1e-12 -S 2>&1 | FileCheck %s
+; RUN: %opt %t/flag.ll %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/annotated_kernel -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-enable-multifloat=true -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cache=%t -poseidon-tau=1e-12 -S 2>&1 | FileCheck %s
 
 ; -poseidon-tau on the command line is the accuracy target of a site that
 ; carries none, and a site with no matrix product solves its elementwise work

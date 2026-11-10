@@ -69,7 +69,8 @@ jobs:
           # The lit fixture's prices only run the examples here: a host Herbie
           # search does not read the cost model, so their results hold under
           # the explorer's own, and the tarball carries none.
-          export POSEIDON_CE_COST_MODEL=$PWD/enzyme/test/Poseidon/Inputs/cm_cpu_native.csv
+          python3 enzyme/test/Poseidon/Inputs/make_cost_models.py $RUNNER_TEMP/cm
+          export POSEIDON_CE_COST_MODEL=$RUNNER_TEMP/cm/cm_cpu_native.csv
           enzyme/Poseidon/tools/explorer/package.sh build - $P
           tar czf $P.tar.gz $P
           test ! -e $P/cost_models/cm_x86-64_explorer.csv

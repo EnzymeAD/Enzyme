@@ -1,10 +1,10 @@
 ; RUN: rm -rf %t && mkdir -p %t/prof %t/c
 ; RUN: sed '1i CanonicalHash = 1fa032681b79bf6d' %S/Inputs/regime_split/profiles/preprocess_tester.fpprofile > %t/prof/preprocess_tester.fpprofile
 ; RUN: printf '#!/bin/sh\n[ -z "$FAKE_HERBIE_SIGNAL" ] || kill -KILL $$\nexec %S/Inputs/fake-herbie.sh "$@"\n' > %t/herbie.sh && chmod +x %t/herbie.sh
-; RUN: env FAKE_HERBIE_SIGNAL=1 FAKE_HERBIE_DIR=%S/Inputs/dp_cache_keys %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%t/prof -poseidon-enable-herbie=true -poseidon-herbie-binary=%t/herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-pt=false -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-cost-budget=1e9 -poseidon-cache=%t/c -S -o /dev/null > %t/signal.log 2>&1 || true
+; RUN: env FAKE_HERBIE_SIGNAL=1 FAKE_HERBIE_DIR=%S/Inputs/dp_cache_keys %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%t/prof -poseidon-enable-herbie=true -poseidon-herbie-binary=%t/herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cost-budget=1e9 -poseidon-cache=%t/c -S -o /dev/null > %t/signal.log 2>&1 || true
 ; RUN: FileCheck --check-prefix=SIGNAL --implicit-check-not="KILLED after" %s < %t/signal.log
 ; RUN: ls %t/c | FileCheck --allow-empty --check-prefix=FILES %s
-; RUN: env FAKE_HERBIE_DIR=%S/Inputs/dp_cache_keys %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%t/prof -poseidon-enable-herbie=true -poseidon-herbie-binary=%t/herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-pt=false -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-cost-budget=1e9 -poseidon-cache=%t/c -S -o /dev/null 2>&1 | FileCheck --check-prefix=RETRY %s
+; RUN: env FAKE_HERBIE_DIR=%S/Inputs/dp_cache_keys %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%t/prof -poseidon-enable-herbie=true -poseidon-herbie-binary=%t/herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cost-budget=1e9 -poseidon-cache=%t/c -S -o /dev/null 2>&1 | FileCheck --check-prefix=RETRY %s
 
 ; A Herbie process that dies from a signal (here SIGKILL, as the OOM killer
 ; sends) well inside its wall budget crashed; it did not time out. The compile

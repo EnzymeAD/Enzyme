@@ -1,14 +1,14 @@
 ; REQUIRES: scev-trunc-iv-nowrap
 ; RUN: rm -rf %t && mkdir -p %t
-; RUN: grep -v '^tcec_dispatch_rel,' %S/Inputs/cm_gpu_fixture_dispatch_x1e6.csv > %t/cm_shifted.csv
-; RUN: %opt %S/Inputs/stale_cache/matmul_device.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/raise_tcec -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_dispatch_x1e6.csv -poseidon-cache=%t/full "-poseidon-apply-rewrites=M0=native-dgemm cublas f64/f64" -S -o /dev/null 2>&1 | FileCheck --check-prefixes=NATIVE,FULL %s
+; RUN: grep -v '^tcec_dispatch_rel,' %cost_models/cm_sm_120_synthetic_dispatch.csv > %t/cm_shifted.csv
+; RUN: %opt %S/Inputs/stale_cache/matmul_device.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/raise_tcec -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv -poseidon-cache=%t/full "-poseidon-apply-rewrites=M0=native-dgemm cublas f64/f64" -S -o /dev/null 2>&1 | FileCheck --check-prefixes=NATIVE,FULL %s
 ; RUN: %opt %S/Inputs/stale_cache/matmul_device.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/raise_tcec -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-cost-model=%t/cm_shifted.csv -poseidon-cache=%t/shifted "-poseidon-apply-rewrites=M0=native-dgemm cublas f64/f64" -S -o /dev/null 2>&1 | FileCheck --check-prefixes=NATIVE,SHIFTED %s
 
 ; The value a tolerance-selected product prints applies the same candidate,
 ; and the unit's dispatch manifest is the same, without the tolerance.
-; RUN: %opt %S/Inputs/stale_cache/matmul_device.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/raise_tcec -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_dispatch_x1e6.csv -poseidon-cache=%t/tau -poseidon-unit=tcec -poseidon-tau=1e-7 -S -o %t/tau.ll 2> %t/tau.err
+; RUN: %opt %S/Inputs/stale_cache/matmul_device.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/raise_tcec -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv -poseidon-cache=%t/tau -poseidon-unit=tcec -poseidon-tau=1e-7 -S -o %t/tau.ll 2> %t/tau.err
 ; RUN: FileCheck --check-prefix=TAU %s < %t/tau.err
-; RUN: %opt %S/Inputs/stale_cache/matmul_device.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/raise_tcec -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_dispatch_x1e6.csv -poseidon-cache=%t/pinned -poseidon-unit=tcec "-poseidon-apply-rewrites=$(sed -n 's/^\[poseidon\] pin: //p' %t/tau.err | paste -sd, -)" -S -o %t/pinned.ll 2> %t/pinned.err
+; RUN: %opt %S/Inputs/stale_cache/matmul_device.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/raise_tcec -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv -poseidon-cache=%t/pinned -poseidon-unit=tcec "-poseidon-apply-rewrites=$(sed -n 's/^\[poseidon\] pin: //p' %t/tau.err | paste -sd, -)" -S -o %t/pinned.ll 2> %t/pinned.err
 ; RUN: diff %t/tau.ll %t/pinned.ll
 ; RUN: diff %t/tau/launches_tcec_matmul.cu_*.json %t/pinned/launches_tcec_matmul.cu_*.json
 ; RUN: grep -E '^Applying solution for|^\[poseidon\] pin: |wrote descriptor' %t/tau.err > %t/tau.picks

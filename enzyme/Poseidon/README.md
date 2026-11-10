@@ -26,7 +26,6 @@ enzyme/Poseidon/            the pass: the sources beside and under Pass/ (the
   runtime/                  profiler and GEMM dispatch runtimes the driver links
   tools/                    poseidon-clang driver, poseidon-calibrate, poseidon-explain,
                             Herbie platform
-  cost_models/              the paper's RTX 5090 model and its Herbie platform
 enzyme/include/poseidon/    the one public header
 enzyme/test/Poseidon/       lit suite: check-poseidon, check-poseidon-integration
 ```
@@ -224,18 +223,20 @@ Any other `-poseidon-<flag>` is passed as `"SHELL:-mllvm -poseidon-<flag>"`.
 ## The cost model
 
 Poseidon prices every candidate from a CSV measured on the device the code will
-run on; a model measured elsewhere reproduces that device's decisions.
-`poseidon-calibrate` measures one, the way `llvm-profdata` prepares a profile:
+run on; a model measured elsewhere reproduces that device's decisions. No model
+ships with Poseidon. `poseidon-calibrate` measures one, the way `llvm-profdata`
+prepares a profile:
 
 ```sh
 poseidon-calibrate --gpu 0            # writes ~/.cache/poseidon/cm_<arch>_<gpu>.csv
 poseidon-calibrate --gpu 0 --check    # validate the resolved model against this device
 ```
 
-A compile that is not given `-poseidon-cost-model=<csv>` looks one up by the
-module's target-cpu, in `~/.cache/poseidon` and then in what the installation
-ships; zero or several matches abort naming the tool. `cost_models/README.md`
-describes the row families and what each calibration arm measures.
+A compile that is not given `-poseidon-cost-model=<csv>` (or
+`POSEIDON_COST_MODEL`) looks one up by the module's target-cpu in
+`~/.cache/poseidon`; zero or several matches abort naming the tool.
+`tools/calibrate/README.md` describes the row families and what each
+calibration arm measures.
 
 ## What a compile decided
 

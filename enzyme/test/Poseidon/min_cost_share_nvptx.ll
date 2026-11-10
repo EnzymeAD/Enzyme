@@ -1,6 +1,6 @@
-; RUN: rm -rf %t && %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-kernels=.*_kernel -poseidon-profile-use=%S/Inputs/min_cost_share -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-enable-multifloat=true -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_x1e6.csv -poseidon-cache=%t -poseidon-cost-budget=-1e-9 -poseidon-print -S > %t.out 2>&1
+; RUN: rm -rf %t && %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-kernels=.*_kernel -poseidon-profile-use=%S/Inputs/min_cost_share -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-enable-multifloat=true -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cache=%t -poseidon-cost-budget=-1e-9 -poseidon-print -S > %t.out 2>&1
 ; RUN: FileCheck %s < %t.out
-; RUN: rm -rf %t2 && %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-kernels=.*_kernel -poseidon-min-cost-share=0 -poseidon-profile-use=%S/Inputs/min_cost_share -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-enable-multifloat=true -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_x1e6.csv -poseidon-cache=%t2 -poseidon-cost-budget=-1e-9 -poseidon-print -S > %t2.out 2>&1
+; RUN: rm -rf %t2 && %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-kernels=.*_kernel -poseidon-min-cost-share=0 -poseidon-profile-use=%S/Inputs/min_cost_share -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-enable-multifloat=true -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cache=%t2 -poseidon-cost-budget=-1e-9 -poseidon-print -S > %t2.out 2>&1
 ; RUN: FileCheck --check-prefix=NOFILTER %s < %t2.out
 ; RUN: not grep "Optimizing preprocess_cold_kernel_poseidon_body" %t.out
 
@@ -86,7 +86,7 @@ attributes #4 = { mustprogress nocallback nofree nosync nounwind speculatable wi
 !10 = !{!"double", !7, i64 0}
 
 ; CHECK: [poseidon] Optimizing preprocess_hot_kernel_poseidon_body
-; CHECK: [poseidon] cold_kernel is 0.02603% of the profiled FP cost of the kernels -poseidon-kernels named, below -poseidon-min-cost-share=0.01; left unoptimized
+; CHECK: [poseidon] cold_kernel is 0.02599% of the profiled FP cost of the kernels -poseidon-kernels named, below -poseidon-min-cost-share=0.01; left unoptimized
 ; CHECK-LABEL: define {{.*}} @hot_kernel(
 ; CHECK: call void @preprocess_hot_kernel_poseidon_body(
 ; CHECK-LABEL: define {{.*}} @cold_kernel(

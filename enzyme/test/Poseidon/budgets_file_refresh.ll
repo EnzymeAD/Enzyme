@@ -1,9 +1,9 @@
 ; RUN: rm -rf %t && mkdir -p %t/p2
 ; RUN: sed '0,/Exec = 64/s//Exec = 128/' %S/Inputs/pow_term/out0/preprocess_tester.fpprofile > %t/p2/preprocess_tester.fpprofile
-; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/pow_term/out0 -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-cache=%t/c -S -o /dev/null 2>&1 | FileCheck --check-prefix=FIRST %s
+; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/pow_term/out0 -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache=%t/c -S -o /dev/null 2>&1 | FileCheck --check-prefix=FIRST %s
 ; RUN: cp %t/c/budgets.txt %t/first_budgets.txt
-; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%t/p2 -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-cache=%t/c -S -o /dev/null 2>&1 | FileCheck --check-prefix=SECOND %s
-; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%t/p2 -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-cache=%t/fresh -S -o /dev/null 2>&1 | FileCheck --check-prefix=FIRST %s
+; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%t/p2 -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache=%t/c -S -o /dev/null 2>&1 | FileCheck --check-prefix=SECOND %s
+; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%t/p2 -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache=%t/fresh -S -o /dev/null 2>&1 | FileCheck --check-prefix=FIRST %s
 ; RUN: not diff %t/first_budgets.txt %t/fresh/budgets.txt
 ; RUN: diff %t/fresh/budgets.txt %t/c/budgets.txt
 

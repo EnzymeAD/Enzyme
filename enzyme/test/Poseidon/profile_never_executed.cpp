@@ -8,7 +8,7 @@
 // RUN: env POSEIDON_PROFILE_DIR=%t/flush %t/gen flush > /dev/null
 // RUN: FileCheck --check-prefix=NEVER %s < %t/flush/preprocess__Z7skippedPKdPdi_poseidon_body.fpprofile
 // RUN: FileCheck --check-prefix=RAN %s < %t/flush/preprocess__Z3ranPKdPdi_poseidon_body.fpprofile
-// RUN: %poseidon_clangxx -O2 -poseidon-profile-use=%t/prof -poseidon-tau=1e-6 -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-enable-herbie=0 -poseidon-cache=%t/c -c %s -o %t/use.o 2> %t/use.err
+// RUN: %poseidon_clangxx -O2 -poseidon-profile-use=%t/prof -poseidon-tau=1e-6 -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-enable-herbie=0 -poseidon-cache=%t/c -c %s -o %t/use.o 2> %t/use.err
 // RUN: FileCheck --check-prefix=USE --implicit-check-not=warning %s < %t/use.err
 
 // The profiling runtime writes a profile for every site it instrumented, run or

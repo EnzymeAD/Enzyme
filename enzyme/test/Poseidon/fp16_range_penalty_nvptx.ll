@@ -1,8 +1,8 @@
 ; RUN: rm -rf %t && mkdir -p %t
-; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-enable-multifloat=false -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_half_x1e6.csv -poseidon-print -S -poseidon-profile-use=%S/Inputs/fp16_range/in_range -poseidon-cache=%t/in16 -poseidon-cost-budget=-0.912 2>&1 | FileCheck --check-prefix=IN16 %s
-; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-enable-multifloat=false -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_half_x1e6.csv -poseidon-print -S -poseidon-profile-use=%S/Inputs/fp16_range/out_of_range -poseidon-cache=%t/out16 -poseidon-cost-budget=-0.912 2>&1 | FileCheck --check-prefix=OUT16 %s
-; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-enable-multifloat=false -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_half_x1e6.csv -poseidon-print -S -poseidon-profile-use=%S/Inputs/fp16_range/in_range -poseidon-cache=%t/in32 -poseidon-cost-budget=-0.9 2>&1 | FileCheck --check-prefix=IN32 %s
-; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-enable-multifloat=false -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_half_x1e6.csv -poseidon-print -S -poseidon-profile-use=%S/Inputs/fp16_range/out_of_range -poseidon-cache=%t/out32 -poseidon-cost-budget=-0.9 2>&1 | FileCheck --check-prefix=OUT32 %s
+; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-enable-multifloat=false -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_half.csv -poseidon-print -S -poseidon-profile-use=%S/Inputs/fp16_range/in_range -poseidon-cache=%t/in16 -poseidon-cost-budget=-0.904 2>&1 | FileCheck --check-prefix=IN16 %s
+; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-enable-multifloat=false -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_half.csv -poseidon-print -S -poseidon-profile-use=%S/Inputs/fp16_range/out_of_range -poseidon-cache=%t/out16 -poseidon-cost-budget=-0.904 2>&1 | FileCheck --check-prefix=OUT16 %s
+; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-enable-multifloat=false -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_half.csv -poseidon-print -S -poseidon-profile-use=%S/Inputs/fp16_range/in_range -poseidon-cache=%t/in32 -poseidon-cost-budget=-0.9 2>&1 | FileCheck --check-prefix=IN32 %s
+; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-enable-multifloat=false -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_half.csv -poseidon-print -S -poseidon-profile-use=%S/Inputs/fp16_range/out_of_range -poseidon-cache=%t/out32 -poseidon-cost-budget=-0.9 2>&1 | FileCheck --check-prefix=OUT32 %s
 ; FP16 range pricing of an elementwise precision-tuning candidate. One kernel, two profiles of it: x in
 ; [0.25, 0.75] (in_range: every value of the FP subgraph lies inside FP16's range) and x scaled by 1000
 ; (out_of_range: t*t reaches 2.2e6 and the output 5e12, past FP16's 65504). The FP16 candidate is the
@@ -12,7 +12,7 @@
 ; IR: Inputs/fp16_range/fp16_range.cu via clang -x cuda --cuda-device-only --cuda-gpu-arch=sm_120 -O2
 ; -ffp-contract=on -I<enzyme>/include -S -emit-llvm. Profiles: the same source through poseidon-clang++
 ; -poseidon-profile-generate, run with argument 1 (in_range) and 1000 (out_of_range). Cost model:
-; Inputs/cm_gpu_fixture_half_x1e6.csv (synthetic half rows, see its header).
+; cm_sm_120_synthetic_half.csv (half at half the float price, Inputs/make_cost_models.py).
 
 ; ModuleID = 'fp16_range/fp16_range.cu'
 source_filename = "fp16_range/fp16_range.cu"
@@ -80,10 +80,10 @@ attributes #2 = { mustprogress nocallback nofree nosync nounwind speculatable wi
 !11 = !{!"double", !8, i64 0}
 
 ; IN16: Initial AccuracyCost: 6.432707e-14
-; IN16: 4.192367e-05		-4.656102e+07		All FP64(0%) + FP32(100%)
-; IN16: 3.358604e-01		-4.662182e+07		All FP64(0%) + FP16(100%)
+; IN16: 4.192367e-05		-4.746240e+05		All FP64(0%) + FP32(100%)
+; IN16: 3.358604e-01		-4.753920e+05		All FP64(0%) + FP16(100%)
 ; IN16: Minimum accuracy cost within budget: 3.358604e-01
-; IN16-NEXT: Computation cost budget used: -9.127199e-01
+; IN16-NEXT: Computation cost budget used: -9.049708e-01
 ; IN16: Applying solution for CS: All FP64(0%) + FP16(100%) (#2)
 ; IN16-LABEL: define {{.*}} @_Z10fms_kernelPKdS0_Pd(
 ; IN16: fptrunc double %{{.+}} to half
@@ -91,7 +91,7 @@ attributes #2 = { mustprogress nocallback nofree nosync nounwind speculatable wi
 ; IN16: fpext half %{{.+}} to double
 
 ; OUT16: Initial AccuracyCost: 2.994823e-02
-; OUT16: 2.254356e+07		-4.656102e+07		All FP64(0%) + FP32(100%)
+; OUT16: 2.254356e+07		-4.746240e+05		All FP64(0%) + FP32(100%)
 ; OUT16-NOT: FP16(100%)
 ; OUT16-NOT: NOT caching the DP table
 ; OUT16: No solution found within the computation cost budget!

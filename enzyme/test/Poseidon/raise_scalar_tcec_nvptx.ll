@@ -1,5 +1,5 @@
 ; REQUIRES: scev-trunc-iv-nowrap
-; RUN: rm -rf %t && %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/raise_tcec -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_x1e6.csv -poseidon-cache=%t -poseidon-cost-budget=-1e-9 -poseidon-print -S > %t.out 2>&1
+; RUN: rm -rf %t && %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/raise_tcec -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cache=%t -poseidon-cost-budget=-1e-9 -poseidon-print -S > %t.out 2>&1
 ; RUN: FileCheck %s < %t.out
 ; RUN: FileCheck --check-prefix=CLEAN %s < %t.out
 ;
@@ -10,14 +10,14 @@
 ; sed makes the marker declaration variadic and appends the tolerance pair,
 ; which is what the front end emits for `poseidon_tau, <value>`.
 ; RUN: sed -e 's/ptr noundef, ptr noundef) local_unnamed_addr #3/ptr noundef, ptr noundef, ...) local_unnamed_addr #3/' -e 's/tail call void @_Z22__poseidon_fp_optimize\([^(]*\)(\(.*\)) #5/tail call void (ptr, i32, ptr, i32, ptr, i32, ptr, ptr, ...) @_Z22__poseidon_fp_optimize\1(\2, metadata !"poseidon_tau", double 1.000000e-04) #5/' %s > %t.tau4.ll
-; RUN: rm -rf %t.c4 && %opt %t.tau4.ll %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/raise_tcec -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_x1e6.csv -poseidon-cache=%t.c4 -poseidon-print -S 2>&1 | FileCheck --check-prefix=SITE4 %s
+; RUN: rm -rf %t.c4 && %opt %t.tau4.ll %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/raise_tcec -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cache=%t.c4 -poseidon-print -S 2>&1 | FileCheck --check-prefix=SITE4 %s
 ;
 ; RUN: sed -e 's/ptr noundef, ptr noundef) local_unnamed_addr #3/ptr noundef, ptr noundef, ...) local_unnamed_addr #3/' -e 's/tail call void @_Z22__poseidon_fp_optimize\([^(]*\)(\(.*\)) #5/tail call void (ptr, i32, ptr, i32, ptr, i32, ptr, ptr, ...) @_Z22__poseidon_fp_optimize\1(\2, metadata !"poseidon_tau", double 1.000000e-07) #5/' %s > %t.tau7.ll
-; RUN: rm -rf %t.c7 && %opt %t.tau7.ll %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/raise_tcec -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_x1e6.csv -poseidon-cache=%t.c7 -poseidon-print -S 2>&1 | FileCheck --check-prefix=SITE7 %s
+; RUN: rm -rf %t.c7 && %opt %t.tau7.ll %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/raise_tcec -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cache=%t.c7 -poseidon-print -S 2>&1 | FileCheck --check-prefix=SITE7 %s
 ;
 ; A tolerance nothing on the frontier meets refuses the site and keeps FP64.
 ; RUN: sed -e 's/ptr noundef, ptr noundef) local_unnamed_addr #3/ptr noundef, ptr noundef, ...) local_unnamed_addr #3/' -e 's/tail call void @_Z22__poseidon_fp_optimize\([^(]*\)(\(.*\)) #5/tail call void (ptr, i32, ptr, i32, ptr, i32, ptr, ptr, ...) @_Z22__poseidon_fp_optimize\1(\2, metadata !"poseidon_tau", double 1.000000e-08) #5/' %s > %t.tau8.ll
-; RUN: rm -rf %t.c8 && %opt %t.tau8.ll %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/raise_tcec -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_x1e6.csv -poseidon-cache=%t.c8 -poseidon-print -S 2>&1 | FileCheck --check-prefix=SITE8 %s
+; RUN: rm -rf %t.c8 && %opt %t.tau8.ll %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/raise_tcec -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cache=%t.c8 -poseidon-print -S 2>&1 | FileCheck --check-prefix=SITE8 %s
 ; Scalar FMA reduction loop raised in-kernel: direct and TCEC classes priced from the wmma_inkernel_rel fixture rows, the most accurate cost-reducing one (TCEC n=3) materialized; IR and profile from Inputs/raise_tcec/tcec_matmul.cu (clang -O2 -ffp-contract=on --cuda-gpu-arch=sm_120, profiled on an RTX 5090).
 
 ; ModuleID = 'tcec_matmul.cu'
@@ -109,14 +109,14 @@ attributes #5 = { convergent nounwind "uniform-work-group-size" }
 
 ; CHECK: [poseidon] Found 1 AbstractMatmul(s) for preprocess_matmul_body
 ; CHECK-NEXT: Matmul[0]: 16x16x16 a=f64 b=f64 acc=f64 d=f64 origin=ScalarLoopReduction
-; CHECK: matmul[0] pricing: baseline/MAC=4.988291e+04 executions=8192
-; CHECK-NEXT: {{#}}0 wmma m16n16k16 f16/f32 compCost/MAC=3.385254e+03 rel=6.786400e-02
-; CHECK-NEXT: {{#}}1 tcec n=2 wmma m16n16k16 f16/f32 compCost/MAC=4.159686e+03 rel=8.338900e-02
-; CHECK-NEXT: {{#}}2 tcec n=3 wmma m16n16k16 f16/f32 compCost/MAC=4.899349e+03 rel=9.821700e-02
-; CHECK: Matmul[0] candidates (initial cost=4.988291e+04, executions=8192,
-; CHECK-NEXT: wmma m16n16k16 f16/f32: {{.*}}cost=-3.809088e+08
-; CHECK-NEXT: tcec n=2 wmma m16n16k16 f16/f32: {{.*}}cost=-3.745646e+08
-; CHECK-NEXT: tcec n=3 wmma m16n16k16 f16/f32: {{.*}}cost=-3.685053e+08
+; CHECK: matmul[0] pricing: baseline/MAC=5.120000e+02 executions=8192
+; CHECK-NEXT: {{#}}0 wmma m16n16k16 f16/f32 compCost/MAC=3.200000e+01 rel=6.250000e-02
+; CHECK-NEXT: {{#}}1 tcec n=2 wmma m16n16k16 f16/f32 compCost/MAC=4.000000e+01 rel=7.812500e-02
+; CHECK-NEXT: {{#}}2 tcec n=3 wmma m16n16k16 f16/f32 compCost/MAC=4.800000e+01 rel=9.375000e-02
+; CHECK: Matmul[0] candidates (initial cost=5.120000e+02, executions=8192,
+; CHECK-NEXT: wmma m16n16k16 f16/f32: {{.*}}cost=-3.932160e+06
+; CHECK-NEXT: tcec n=2 wmma m16n16k16 f16/f32: {{.*}}cost=-3.866624e+06
+; CHECK-NEXT: tcec n=3 wmma m16n16k16 f16/f32: {{.*}}cost=-3.801088e+06
 ; CHECK: Applying solution for matmul[0] -> tcec n=3 wmma m16n16k16 f16/f32
 ; CHECK-LABEL: define {{.*}} @preprocess_matmul_body(
 ; CHECK: fptrunc double %{{.+}} to float

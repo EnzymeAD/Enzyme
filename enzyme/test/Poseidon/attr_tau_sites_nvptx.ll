@@ -1,7 +1,7 @@
 ; RUN: rm -rf %t && mkdir -p %t/prof
 ; RUN: cp %S/Inputs/annotated_kernel/preprocess_fms_kernel_poseidon_body.fpprofile %t/prof/preprocess_fms_loose_poseidon_body.fpprofile
 ; RUN: cp %S/Inputs/annotated_kernel/preprocess_fms_kernel_poseidon_body.fpprofile %t/prof/preprocess_fms_tight_poseidon_body.fpprofile
-; RUN: %opt %s %loadPoseidon -passes="poseidon,always-inline,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%t/prof -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-enable-multifloat=true -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_x1e6.csv -poseidon-cache=%t/cache -S > %t/out.ll 2> %t/err.txt
+; RUN: %opt %s %loadPoseidon -passes="poseidon,always-inline,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%t/prof -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-enable-multifloat=true -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cache=%t/cache -S > %t/out.ll 2> %t/err.txt
 ; RUN: FileCheck --check-prefix=ERR %s < %t/err.txt
 ; RUN: FileCheck --check-prefix=IR %s < %t/out.ll
 

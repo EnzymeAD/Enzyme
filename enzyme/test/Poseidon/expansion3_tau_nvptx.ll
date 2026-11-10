@@ -1,7 +1,7 @@
 ; RUN: rm -rf %t && mkdir -p %t
-; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/expansion3 -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-enable-multifloat=true -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_x1e6.csv -poseidon-print -S -poseidon-expansion-components=2 -poseidon-tau=1e-16 -poseidon-cache=%t/two 2>&1 | FileCheck --check-prefix=TWO %s
-; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/expansion3 -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-enable-multifloat=true -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_x1e6.csv -poseidon-print -S -poseidon-expansion-components=3 -poseidon-tau=1e-16 -poseidon-cache=%t/three 2>&1 | FileCheck --check-prefix=THREE %s
-; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/expansion3 -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-enable-multifloat=true -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_x1e6.csv -poseidon-print -S -poseidon-expansion-components=3 -poseidon-tau=1e-15 -poseidon-cache=%t/loose 2>&1 | FileCheck --check-prefix=LOOSE %s
+; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/expansion3 -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-enable-multifloat=true -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-print -S -poseidon-expansion-components=2 -poseidon-tau=1e-16 -poseidon-cache=%t/two 2>&1 | FileCheck --check-prefix=TWO %s
+; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/expansion3 -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-enable-multifloat=true -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-print -S -poseidon-expansion-components=3 -poseidon-tau=1e-16 -poseidon-cache=%t/three 2>&1 | FileCheck --check-prefix=THREE %s
+; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/expansion3 -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-enable-multifloat=true -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-print -S -poseidon-expansion-components=3 -poseidon-tau=1e-15 -poseidon-cache=%t/loose 2>&1 | FileCheck --check-prefix=LOOSE %s
 ; Three-component FP32 expansion (-poseidon-expansion-components=3, the N-limb arm of Techniques/Expansion.cpp). A
 ; 24-step logistic map (72 FP64 operations on one input) under the site tolerance 1e-16: the two-component
 ; expansion models 4.2e-16 and misses it, so with two components the cheapest point that clears it is the
@@ -142,15 +142,15 @@ attributes #1 = { mustprogress nocallback nofree nosync nounwind speculatable wi
 !10 = !{!11, !11, i64 0}
 !11 = !{!"double", !8, i64 0}
 
-; TWO: 2.013455e-07		-8.681925e+08		All FP64(0%) + Expansion2(100%)
+; TWO: 2.013455e-07		-8.835072e+06		All FP64(0%) + Expansion2(100%)
 ; TWO-NOT: Expansion3
 ; TWO: tau=1.000000e-16 S=4.913424e+08 A0=6.201450e-09 selected cost=0.000000e+00 accCost=0.000000e+00 rel=1.262144e-17
 ; TWO: no rewrite applied for preprocess__Z15logistic_kernelPKdPd_poseidon_body
 ; TWO-NOT: Applying solution
 
-; THREE: 2.013455e-07		-8.681925e+08		All FP64(0%) + Expansion2(100%)
-; THREE: -6.201441e-09		-7.965385e+08		All FP64(0%) + Expansion3(100%)
-; THREE: tau=1.000000e-16 S=4.913424e+08 A0=6.201450e-09 selected cost=-8.578391e-01 accCost=-6.201441e-09 rel=1.869795e-23
+; THREE: 2.013455e-07		-8.835072e+06		All FP64(0%) + Expansion2(100%)
+; THREE: -6.201441e-09		-8.142848e+06		All FP64(0%) + Expansion3(100%)
+; THREE: tau=1.000000e-16 S=4.913424e+08 A0=6.201450e-09 selected cost=-8.628472e-01 accCost=-6.201441e-09 rel=1.869795e-23
 ; THREE: Applying solution for CS: All FP64(0%) + Expansion3(100%) (#3)
 ; THREE-LABEL: define internal void @preprocess__Z15logistic_kernelPKdPd_poseidon_body(
 ; THREE: %mfx.split = fptrunc double %{{.+}} to float
@@ -171,8 +171,8 @@ attributes #1 = { mustprogress nocallback nofree nosync nounwind speculatable wi
 ; THREE-NEXT: store double %[[OUT]], ptr
 ; THREE-NEXT: ret void
 
-; LOOSE: -6.201441e-09		-7.965385e+08		All FP64(0%) + Expansion3(100%)
-; LOOSE: tau=1.000000e-15 S=4.913424e+08 A0=6.201450e-09 selected cost=-9.350074e-01 accCost=2.013455e-07 rel=4.224080e-16
+; LOOSE: -6.201441e-09		-8.142848e+06		All FP64(0%) + Expansion3(100%)
+; LOOSE: tau=1.000000e-15 S=4.913424e+08 A0=6.201450e-09 selected cost=-9.361979e-01 accCost=2.013455e-07 rel=4.224080e-16
 ; LOOSE: Applying solution for CS: All FP64(0%) + Expansion2(100%) (#1)
 ; LOOSE-LABEL: define internal void @preprocess__Z15logistic_kernelPKdPd_poseidon_body(
 ; LOOSE: !poseidon.ds.join

@@ -36,8 +36,8 @@
 // RUN: not diff %t/tree.pass %t/tree_sub_changed.pass
 // RUN: grep kAccuracyModelIdentity %t/tree_sub_changed.h > %t/tree_sub_changed.model
 // RUN: diff %t/before.model %t/tree_sub_changed.model
-// RUN: mkdir -p %t/tree/runtime/fpprofiler %t/tree/tools/driver %t/tree/cost_models %t/tree/cmake %t/tree/test %t/tree/build-x/identity %t/tree/out/identity
-// RUN: cp %S/../../Poseidon/Solvers.cpp %t/tree/runtime/fpprofiler/ && cp %S/../../Poseidon/Solvers.cpp %t/tree/tools/driver/ && cp %S/../../Poseidon/Solvers.cpp %t/tree/cost_models/ && cp %S/../../Poseidon/Solvers.cpp %t/tree/cmake/ && cp %S/../../Poseidon/Solvers.cpp %t/tree/test/
+// RUN: mkdir -p %t/tree/runtime/fpprofiler %t/tree/tools/driver %t/tree/cmake %t/tree/test %t/tree/build-x/identity %t/tree/out/identity
+// RUN: cp %S/../../Poseidon/Solvers.cpp %t/tree/runtime/fpprofiler/ && cp %S/../../Poseidon/Solvers.cpp %t/tree/tools/driver/ && cp %S/../../Poseidon/Solvers.cpp %t/tree/cmake/ && cp %S/../../Poseidon/Solvers.cpp %t/tree/test/
 // RUN: cp %t/tree.h %t/tree/build-x/identity/BuildIdentity.h && cp %t/tree.h %t/tree/out/identity/BuildIdentity.h
 // RUN: %cmake -DPASS_DIR=%t/tree -DBINARY_DIR=%t/tree/out -DACCURACY_FILES=MatmulAccuracy.cpp,FPKind.h,FPKind.cpp -DEQUIVALENTS=%t/equivalents.txt -DOUT=%t/tree_others.h -P %S/../../Poseidon/cmake/BuildIdentity.cmake
 // RUN: diff %t/tree_sub_changed.h %t/tree_others.h
@@ -58,9 +58,9 @@
 // changed gives another. Earlier model identities declared equivalent are read
 // from their list, comments and blank lines skipped. A source of the pass in a
 // subdirectory is one of its sources; a file under the runtimes, the tools, the
-// cost models, the CMake scripts, a test or a build directory is not, nor one
-// under the build directory the build names, but the Ozaki-II header the pass
-// shares with its runtime is one.
+// CMake scripts, a test or a build directory is not, nor one under the build
+// directory the build names, but the Ozaki-II header the pass shares with its
+// runtime is one.
 
 // ONEBYTE: {{^ *1 +57 +43$}}
 // ONEBYTE-NOT: {{.}}

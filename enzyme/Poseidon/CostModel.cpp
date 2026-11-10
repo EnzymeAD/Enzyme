@@ -35,8 +35,9 @@ using namespace llvm;
 namespace poseidon {
 
 // The CSV this compilation prices from, resolved once: the flag, the
-// environment, this user's cache, then what the installation ships. Everything
-// below reads it through costModelPath(), never the flag.
+// environment, then this user's cache. No model ships with Poseidon: a model is
+// one device's measurement. Everything below reads it through costModelPath(),
+// never the flag.
 static bool resolveFromRequest(CostModelState &CM) {
   if (CM.IsResolved)
     return true;
@@ -78,31 +79,25 @@ static void resolveForTarget(CostModelState &CM, StringRef TargetCpu,
                        " needs a measured cost model, and the module names no "
                        "target-cpu to look one up by; pass "
                        "-poseidon-cost-model=<csv>");
+  std::string Dir = userCacheDir();
   std::string Prefix = ("cm_" + TargetCpu + "_").str();
-  SmallVector<std::string, 4> Dirs;
-  if (std::string C = userCacheDir(); !C.empty())
-    Dirs.push_back(C);
-  Dirs.push_back(POSEIDON_INSTALL_COST_MODELS);
   SmallVector<std::string, 4> Found;
-  for (const std::string &Dir : Dirs) {
-    std::error_code EC;
-    for (sys::fs::directory_iterator It(Dir, EC), E; It != E && !EC;
-         It.increment(EC)) {
-      StringRef Name = sys::path::filename(It->path());
-      if (Name.starts_with(Prefix) && Name.ends_with(".csv"))
-        Found.push_back(It->path());
-    }
-    if (!Found.empty())
-      break;
+  std::error_code EC;
+  for (sys::fs::directory_iterator It(Dir, EC), E; It != E && !EC;
+       It.increment(EC)) {
+    StringRef Name = sys::path::filename(It->path());
+    if (Name.starts_with(Prefix) && Name.ends_with(".csv"))
+      Found.push_back(It->path());
   }
-  std::string Where;
-  for (const std::string &Dir : Dirs)
-    Where += (Where.empty() ? "" : ", ") + Dir;
   if (Found.empty())
-    report_fatal_error("Poseidon: no cost model for target-cpu '" +
-                       Twine(TargetCpu) + "' in " + Where +
-                       "; measure this device with poseidon-calibrate, or pass "
-                       "-poseidon-cost-model=<csv>");
+    report_fatal_error(
+        "Poseidon: no cost model for target-cpu '" + Twine(TargetCpu) +
+        "' in " +
+        (Dir.empty() ? "the user cache, which neither XDG_CACHE_HOME nor HOME "
+                       "locates"
+                     : Dir) +
+        "; measure this device with poseidon-calibrate, or pass "
+        "-poseidon-cost-model=<csv>");
   if (Found.size() > 1) {
     std::string List;
     for (const std::string &P : Found)
