@@ -47,7 +47,6 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
-#include <variant>
 #include <vector>
 
 #include "CostModel.h"
@@ -627,9 +626,6 @@ static void putOnApplicationScale(Session &S, Function &F,
   const Options &O = S.Opts;
   const auto &profileMap = P.map;
   const auto &profileHeader = P.header;
-  auto &COs = st.COs;
-  auto &CSs = st.CSs;
-  auto &CMs = st.CMs;
 
   double siteSumSens = 0.0;
   for (const auto &kv : profileMap)
@@ -666,106 +662,16 @@ static void putOnApplicationScale(Session &S, Function &F,
   // is compared against has to be scaled the same way; with a kappa this
   // reduces to kappa itself, without one to the site's total sensitivity.
   st.accScale = factor * siteSumSens;
-  if (factor != 1.0) {
-    for (auto &co : COs) {
-      co.initialAccCost *= factor;
-      for (auto &cand : co.candidates)
-        cand.accuracyCost *= factor;
-    }
-    for (auto &cs : CSs) {
-      cs.initialAccCost *= factor;
-      for (auto &[node, cost] : cs.perOutputInitialAccCost)
-        cost *= factor;
-      for (auto &cand : cs.candidates) {
-        cand.accuracyCost *= factor;
-        for (auto &[node, cost] : cand.perOutputAccCost)
-          cost *= factor;
-      }
-    }
-    for (auto &cm : CMs) {
-      cm.initialAccCost *= factor;
-      for (auto &cand : cm.candidates)
-        cand.accuracyCost *= factor;
-    }
-  }
+  if (factor != 1.0)
+    for (SiteUnit *unit : st.units)
+      unit->scaleErrors(factor);
 }
 
 // Prints every collected candidate with its priced deltas.
 static void printCandidates(Session &S, FunctionFPState &st) {
-  const Options &O = S.Opts;
-  auto &COs = st.COs;
-  auto &CSs = st.CSs;
-  auto &CMs = st.CMs;
-
-  if (O.Diagnostics.Print) {
-    if (O.Candidates.EnableHerbie) {
-      for (auto &CO : COs) {
-        llvm::errs() << "\n################################\n";
-        llvm::errs() << "Initial AccuracyCost: " << CO.initialAccCost << "\n";
-        llvm::errs() << "Initial ComputationCost: " << CO.initialCompCost
-                     << "\n";
-        llvm::errs() << "Initial HerbieCost: " << CO.initialHerbieCost << "\n";
-        llvm::errs() << "Initial HerbieAccuracy: " << CO.initialHerbieAccuracy
-                     << "\n";
-        llvm::errs() << "Initial Expression: " << CO.expr << "\n";
-        llvm::errs() << "Grad: " << CO.grad << "\n\n";
-        llvm::errs() << "Candidates:\n";
-        llvm::errs() << "Δ AccCost\t\tΔ "
-                        "CompCost\t\tHerbieCost\t\tAccuracy\t\tExpression\n";
-        llvm::errs() << "--------------------------------\n";
-        for (size_t i = 0; i < CO.candidates.size(); ++i) {
-          auto &candidate = CO.candidates[i];
-          llvm::errs() << CO.getAccCostDelta(i) << "\t\t"
-                       << CO.getCompCostDelta(S.CostModel, i) << "\t\t"
-                       << candidate.herbieCost << "\t\t"
-                       << candidate.herbieAccuracy << "\t\t" << candidate.expr
-                       << "\n";
-        }
-        llvm::errs() << "################################\n\n";
-      }
-    }
-    if (O.Candidates.EnablePT) {
-      for (auto &CS : CSs) {
-        llvm::errs() << "\n################################\n";
-        llvm::errs() << "Initial AccuracyCost: " << CS.initialAccCost << "\n";
-        llvm::errs() << "Initial ComputationCost: " << CS.initialCompCost
-                     << "\n";
-        llvm::errs() << "Candidates:\n";
-        llvm::errs() << "Δ AccCost\t\tΔ CompCost\t\tDescription\n"
-                     << "---------------------------\n";
-        for (size_t i = 0; i < CS.candidates.size(); ++i) {
-          auto &candidate = CS.candidates[i];
-          llvm::errs() << CS.getAccCostDelta(i) << "\t\t"
-                       << CS.getCompCostDelta(i) << "\t\t" << candidate.desc
-                       << "\n";
-        }
-        llvm::errs() << "################################\n\n";
-      }
-    }
-  }
-
-  if (O.Diagnostics.Print) {
-    for (const auto &cm : CMs) {
-      llvm::errs() << "Matmul[" << cm.matmul->id
-                   << "] candidates (initial cost=" << cm.initialCompCost
-                   << ", executions=" << cm.executions
-                   << ", globalM=" << cm.matmul->globalM
-                   << ", globalN=" << cm.matmul->globalN
-                   << ", globalK=" << cm.matmul->globalK
-                   << ", K=" << cm.matmul->K
-                   << ", gridCTAs=" << cm.matmul->gridCTAs << "):\n";
-      if (cm.candidates.empty()) {
-        llvm::errs() << "  (no candidates emitted)\n";
-        continue;
-      }
-      for (size_t i = 0; i < cm.candidates.size(); ++i) {
-        const auto &opt = cm.candidates[i];
-        llvm::errs() << "  " << matmulOptionLabel(opt)
-                     << ": Δcost=" << cm.getCompCostDelta(i)
-                     << " ΔaccCost=" << cm.getAccCostDelta(i) << "\n";
-      }
-    }
-  }
+  if (S.Opts.Diagnostics.Print)
+    for (SiteUnit *unit : st.units)
+      unit->printPriced(llvm::errs());
 }
 
 bool collectFPCandidates(Session &S, Function &F, double errorTol,
@@ -806,6 +712,7 @@ bool collectFPCandidates(Session &S, Function &F, double errorTol,
 
   generateMatmulCandidates(S, st.abstractMatmuls, profile.map,
                            kDefaultConfidence, st.sampleLogBits, st.CMs);
+  st.sealUnits(S);
 
   priceUnlessCached(S, st, profile.path);
 
@@ -820,12 +727,9 @@ bool collectFPCandidates(Session &S, Function &F, double errorTol,
 bool materializeFPSolution(Session &S, Function &F, FunctionFPState &st,
                            ArrayRef<SolutionStep> steps) {
   const Options &O = S.Opts;
-  auto &valueToNodeMap = st.valueToNodeMap;
-  auto &symbolToValueMap = st.symbolToValueMap;
   auto &subgraphs = st.subgraphs;
   SmallVector<SolutionStep> applied;
-  bool changed =
-      applySolution(S, steps, valueToNodeMap, symbolToValueMap, applied);
+  bool changed = applySolution(steps, applied);
   printPin(S, st, applied);
 
   llvm::errs() << "[poseidon] Finished optimizing " << F.getName() << "\n";
@@ -933,15 +837,14 @@ bool fpOptimize(Session &S, Function &F, double errorTol) {
     // number.
     steps = errorBudgetSelector(O, st.CMs, target, kDefaultConfidence);
     if (!st.COs.empty() || !st.CSs.empty()) {
-      SmallVector<CandidateMatmul, 4> noCMs;
-      SmallVector<SolutionStep> elem = accuracyDPSolver(
-          S, F, st.COs, st.CSs, noCMs, st.valueToNodeMap, st.symbolToValueMap,
-          target, st.accScale, rec, st.table.get());
+      SmallVector<SolutionStep> elem =
+          accuracyDPSolver(S, F, st, solvedUnits(st, /*target=*/true), target,
+                           st.accScale, rec, st.table.get());
       for (const SolutionStep &e : elem) {
         // The two selectors ran independently, so the footprint rule the DP
         // applies internally is applied between their results here. Never
         // silent: dropping a rewrite the DP priced changes what the site emits.
-        if (stepConflictsWithMatmulSteps(e, steps)) {
+        if (overlapsConsumed(e, steps)) {
           llvm::errs() << "[poseidon] " << F.getName()
                        << ": an elementwise rewrite the DP selected edits "
                           "instructions a selected matrix-product raise "
@@ -954,8 +857,7 @@ bool fpOptimize(Session &S, Function &F, double errorTol) {
     }
     record.selector = "error-budget";
   } else {
-    steps = accuracyDPSolver(S, F, st.COs, st.CSs, st.CMs, st.valueToNodeMap,
-                             st.symbolToValueMap, target, st.accScale, rec,
+    steps = accuracyDPSolver(S, F, st, st.units, target, st.accScale, rec,
                              st.table.get());
   }
   if (rec)
@@ -1050,23 +952,9 @@ bool solveJointly(Session &S, Module &M, FunctionAnalysisManager &FAM) {
         jointAccuracyDPSolver(S, raw, jointErrTol, explain ? &record : nullptr);
   }
 
-  std::unordered_map<const void *, FunctionFPState *> owner;
-  for (auto *st : raw) {
-    for (auto &CO : st->COs)
-      owner[&CO] = st;
-    for (auto &CS : st->CSs)
-      owner[&CS] = st;
-    for (auto &CM : st->CMs)
-      owner[&CM] = st;
-  }
   std::unordered_map<FunctionFPState *, SmallVector<SolutionStep>> perState;
-  for (auto &step : steps) {
-    const void *p =
-        std::visit([](auto *ptr) -> const void * { return ptr; }, step.item);
-    auto it = owner.find(p);
-    assert(it != owner.end() && "joint step references an unknown candidate");
-    perState[it->second].push_back(step);
-  }
+  for (auto &step : steps)
+    perState[&unitOf(step).site()].push_back(step);
 
   // A site whose step list is empty gets its wrapper call restored to the
   // original body: the preprocessed clone is not guaranteed to lower

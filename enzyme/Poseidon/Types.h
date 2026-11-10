@@ -35,11 +35,11 @@
 #include <set>
 #include <string>
 #include <unordered_map>
-#include <variant>
 
 #include "Utils.h"
 
 #include "Techniques/Precision.h"
+#include "Techniques/Unit.h"
 
 namespace poseidon {
 
@@ -196,8 +196,6 @@ struct Subgraph {
       : inputs(inputs), outputs(outputs), operations(operations) {}
 };
 
-struct SolutionStep;
-class CandidateMatmul;
 class Session;
 
 struct RewriteCandidate {
@@ -218,7 +216,7 @@ struct RewriteCandidate {
       : herbieCost(cost), herbieAccuracy(accuracy), expr(expression) {}
 };
 
-class CandidateOutput {
+class CandidateOutput : public SiteUnit {
 public:
   Subgraph *subgraph;
   llvm::Value *oldOutput;
@@ -245,8 +243,9 @@ public:
   explicit CandidateOutput(CostModelState &CM, Subgraph &subgraph,
                            llvm::Value *oldOutput, std::string expr,
                            double grad, unsigned executions)
-      : subgraph(&subgraph), oldOutput(oldOutput), expr(expr), grad(grad),
-        executions(executions), roots({oldOutput}), rootGrads({grad}) {
+      : SiteUnit(UnitKind::R), subgraph(&subgraph), oldOutput(oldOutput),
+        expr(expr), grad(grad), executions(executions), roots({oldOutput}),
+        rootGrads({grad}) {
     initialCompCost = getCompCost(CM, {oldOutput}, subgraph.inputs);
     findErasableInstructions();
   }
@@ -255,8 +254,9 @@ public:
                            llvm::ArrayRef<llvm::Value *> outputs,
                            llvm::ArrayRef<double> grads, std::string expr,
                            unsigned executions)
-      : subgraph(&subgraph), oldOutput(outputs.front()), expr(expr),
-        executions(executions), roots(outputs.begin(), outputs.end()),
+      : SiteUnit(UnitKind::R), subgraph(&subgraph), oldOutput(outputs.front()),
+        expr(expr), executions(executions),
+        roots(outputs.begin(), outputs.end()),
         rootGrads(grads.begin(), grads.end()) {
     grad = 0.0;
     for (double g : grads)
@@ -279,11 +279,52 @@ public:
                                          size_t candidateIndex);
   double getAccCostDelta(size_t candidateIndex);
 
+  static bool classof(const OptimizationUnit *U) {
+    return U->kind() == unsigned(UnitKind::R);
+  }
+  size_t numCandidates() const override { return candidates.size(); }
+  llvm::InstructionCost costDelta(size_t i,
+                                  llvm::ArrayRef<SolutionStep> prior) override;
+  double errorDelta(size_t i, llvm::ArrayRef<SolutionStep> prior) override;
+  bool consumesFootprint() const override { return false; }
+  // The searches of one output, and any two cores with the same outputs, are
+  // admitted and priced alike by every later unit.
+  bool sameRewriteTargetAs(const OptimizationUnit &earlier) const override;
+  const llvm::SetVector<llvm::Instruction *> *footprint() const override;
+  llvm::ArrayRef<llvm::Value *> rewrittenOutputs() const override {
+    return roots;
+  }
+  std::string candidateName(size_t i) const override {
+    return candidates[i].expr;
+  }
+  size_t ordinalOf(size_t i) const override { return candidates[i].ordinal; }
+  std::string choiceText(size_t i) const override;
+  llvm::json::Object stepJSON(size_t i) override;
+  void writeReportStep(llvm::raw_ostream &OS, size_t i,
+                       llvm::StringRef pad) override;
+  void materialize(size_t i) override;
+  void price() override;
+  void scaleErrors(double factor) override;
+  void printPriced(llvm::raw_ostream &OS) override;
+  std::string keyHeader() const override {
+    return "CO " + herbiePrecision + " " + expr;
+  }
+  llvm::ArrayRef<std::pair<std::string, std::string>>
+  droppedCandidates() const override {
+    return dropped;
+  }
+  std::string selectionText(size_t i) const override {
+    return expr + " -> " + candidates[i].expr;
+  }
+  void addReportSummary(llvm::json::Array &summary) override;
+  void writeReportSummary(llvm::raw_ostream &OS) override;
+  void addCuratedRewrites(llvm::json::Array &rewrites) override;
+
 private:
   void findErasableInstructions();
 };
 
-class CandidateSubgraph {
+class CandidateSubgraph : public SiteUnit {
 public:
   Subgraph *subgraph;
   double initialAccCost = std::numeric_limits<double>::quiet_NaN();
@@ -309,7 +350,7 @@ public:
   std::unordered_map<CacheKey, double, CacheKeyHash> accCostDeltaCache;
 
   explicit CandidateSubgraph(CostModelState &CM, Subgraph &subgraph)
-      : subgraph(&subgraph) {
+      : SiteUnit(UnitKind::PT), subgraph(&subgraph) {
     initialCompCost =
         getCompCost(CM, {subgraph.outputs.begin(), subgraph.outputs.end()},
                     subgraph.inputs, &subgraph.opExec, subgraph.execNormalizer);
@@ -320,24 +361,49 @@ public:
   double getAccCostDelta(size_t candidateIndex);
   llvm::InstructionCost
   getAdjustedCompCostDelta(Session &S, size_t candidateIndex,
-                           const llvm::SmallVectorImpl<SolutionStep> &steps);
+                           llvm::ArrayRef<SolutionStep> steps);
   double getAdjustedAccCostDelta(
-      size_t candidateIndex, const llvm::SmallVectorImpl<SolutionStep> &steps,
+      size_t candidateIndex, llvm::ArrayRef<SolutionStep> steps,
       std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>>
           &valueToNodeMap,
       std::unordered_map<std::string, llvm::Value *> &symbolToValueMap);
-};
 
-struct SolutionStep {
-  std::variant<CandidateOutput *, CandidateSubgraph *, CandidateMatmul *> item;
-  size_t candidateIndex;
-
-  SolutionStep(CandidateOutput *ao_, size_t idx)
-      : item(ao_), candidateIndex(idx) {}
-  SolutionStep(CandidateSubgraph *acc_, size_t idx)
-      : item(acc_), candidateIndex(idx) {}
-  SolutionStep(CandidateMatmul *cm_, size_t idx)
-      : item(cm_), candidateIndex(idx) {}
+  static bool classof(const OptimizationUnit *U) {
+    return U->kind() == unsigned(UnitKind::PT);
+  }
+  size_t numCandidates() const override { return candidates.size(); }
+  llvm::InstructionCost costDelta(size_t i,
+                                  llvm::ArrayRef<SolutionStep> prior) override;
+  double errorDelta(size_t i, llvm::ArrayRef<SolutionStep> prior) override;
+  // Priced over the outputs the algebraic units of its subgraph leave.
+  bool pricedAlone() const override { return false; }
+  size_t memoizedPricings() const override { return compCostDeltaCache.size(); }
+  bool consumesFootprint() const override { return false; }
+  bool pricedAgainst(const OptimizationUnit &earlier) const override;
+  const llvm::SetVector<llvm::Instruction *> *footprint() const override;
+  std::string candidateName(size_t i) const override {
+    return candidates[i].desc;
+  }
+  size_t ordinalOf(size_t i) const override { return candidates[i].ordinal; }
+  std::string choiceText(size_t i) const override;
+  llvm::json::Object stepJSON(size_t i) override;
+  void writeReportStep(llvm::raw_ostream &OS, size_t i,
+                       llvm::StringRef pad) override;
+  void materialize(size_t i) override;
+  void price() override;
+  void scaleErrors(double factor) override;
+  void printPriced(llvm::raw_ostream &OS) override;
+  std::string keyHeader() const override { return "CS"; }
+  llvm::ArrayRef<std::pair<std::string, std::string>>
+  droppedCandidates() const override {
+    return dropped;
+  }
+  std::string selectionText(size_t i) const override {
+    return candidates[i].desc;
+  }
+  void addReportSummary(llvm::json::Array &summary) override;
+  void writeReportSummary(llvm::raw_ostream &OS) override;
+  void addCuratedRewrites(llvm::json::Array &rewrites) override;
 };
 
 } // namespace poseidon

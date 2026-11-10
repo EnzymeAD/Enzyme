@@ -448,7 +448,7 @@ struct Alt {
   SmallVector<std::string, 4> changedOps;
   std::string changedTo;
   const Instruction *at = nullptr;
-  const void *item = nullptr;
+  const SiteUnit *item = nullptr;
   size_t index = 0;
   int rank = 9;
   double baseAcc = std::numeric_limits<double>::quiet_NaN();
@@ -491,42 +491,20 @@ class Explainer {
   ValueNamer namer;
   std::unordered_map<Value *, std::shared_ptr<FPNode>> nodes;
   std::unordered_map<std::string, Value *> symbols;
-  std::set<std::pair<const void *, size_t>> applied, skipped, onPareto,
+  std::set<std::pair<const SiteUnit *, size_t>> applied, skipped, onPareto,
       inSelected;
-  std::map<std::pair<const void *, size_t>, int64_t> firstBudget;
+  std::map<std::pair<const SiteUnit *, size_t>, int64_t> firstBudget;
   std::vector<Unit> units;
   double A0, S, tau;
 
-  static std::pair<const void *, size_t> keyOf(const SolutionStep &step) {
-    return {std::visit([](auto *p) -> const void * { return p; }, step.item),
-            step.candidateIndex};
+  static std::pair<const SiteUnit *, size_t> keyOf(const SolutionStep &step) {
+    return {&unitOf(step), step.candidateIndex};
   }
 
+  // Empty for a step of another site of a joint solve.
   std::string stepId(const SolutionStep &step) const {
-    std::string id;
-    std::visit(
-        [&](auto *item) {
-          using T = std::decay_t<decltype(*item)>;
-          if constexpr (std::is_same_v<T, CandidateOutput>) {
-            for (size_t i = 0; i < st.COs.size(); ++i)
-              if (&st.COs[i] == item)
-                id = formatv("R{0}_{1}", i,
-                             item->candidates[step.candidateIndex].ordinal)
-                         .str();
-          } else if constexpr (std::is_same_v<T, CandidateSubgraph>) {
-            for (size_t i = 0; i < st.CSs.size(); ++i)
-              if (&st.CSs[i] == item)
-                id = formatv("PT{0}_{1}", i,
-                             item->candidates[step.candidateIndex].ordinal)
-                         .str();
-          } else {
-            for (size_t i = 0; i < st.CMs.size(); ++i)
-              if (&st.CMs[i] == item)
-                id = formatv("M{0}_{1}", i, step.candidateIndex).str();
-          }
-        },
-        step.item);
-    return id;
+    const SiteUnit &unit = unitOf(step);
+    return &unit.site() == &st ? unit.candidateId(step.candidateIndex) : "";
   }
 
   double relErr(double acc) const {
@@ -601,14 +579,13 @@ public:
 void Explainer::markSteps() {
   SmallPtrSet<Value *, 8> rewritten;
   for (const SolutionStep &step : steps) {
-    if (auto *const *co = std::get_if<CandidateOutput *>(&step.item)) {
-      if (llvm::any_of((*co)->roots,
-                       [&](Value *r) { return rewritten.contains(r); })) {
-        skipped.insert(keyOf(step));
-        continue;
-      }
-      rewritten.insert((*co)->roots.begin(), (*co)->roots.end());
+    ArrayRef<Value *> outputs = unitOf(step).rewrittenOutputs();
+    if (llvm::any_of(outputs,
+                     [&](Value *r) { return rewritten.contains(r); })) {
+      skipped.insert(keyOf(step));
+      continue;
     }
+    rewritten.insert(outputs.begin(), outputs.end());
     applied.insert(keyOf(step));
   }
   for (const auto &[cost, sol] : rec.solutions)
@@ -907,7 +884,7 @@ void Explainer::judge(Unit &U) {
       continue;
     }
     if (A.kind == "matmul" && rec.selector == "error-budget") {
-      auto *CM = static_cast<const CandidateMatmul *>(A.item);
+      const auto *CM = cast<CandidateMatmul>(A.item);
       const CandidateMatmul::Option &o = CM->candidates[A.index];
       if (tau > 0.0 && o.domainError > tau) {
         A.reason = "modelled domain error " + num(o.domainError) +

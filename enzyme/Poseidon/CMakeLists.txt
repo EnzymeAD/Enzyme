@@ -61,6 +61,7 @@ set(POSEIDON_SRC
     Herbie.cpp
     Core/HerbieRun.cpp
     Core/Options.cpp
+    Core/Solver.cpp
     Techniques/Matmul/HostDispatch.cpp
     Techniques/Matmul/InKernelRaise.cpp
     Profile/Instrument.cpp
@@ -74,6 +75,7 @@ set(POSEIDON_SRC
     Solvers.cpp
     Subgraphs.cpp
     Techniques/Staging.cpp
+    Techniques/Unit.cpp
     Types.cpp
     Utils.cpp
     Techniques/Matmul/WmmaUtils.cpp
