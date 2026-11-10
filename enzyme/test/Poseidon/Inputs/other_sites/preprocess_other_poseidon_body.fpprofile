@@ -1,5 +1,6 @@
 SiteId = 0
 CanonicalHash = 0000000000000000
+ProfileFormat = 2
 0
 	MinRes = 1.0
 	MaxRes = 2.0

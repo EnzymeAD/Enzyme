@@ -54,11 +54,13 @@ int main(int argc, char **argv) {
 
 // NEVER: SiteId = {{[0-9]+}}
 // NEVER: CanonicalHash = {{[0-9a-f]+}}
+// NEVER-NEXT: ProfileFormat = 2
 // NEVER-NEXT: Executed = 0
 // NEVER-NOT: {{.}}
 
 // RAN: SiteId = {{[0-9]+}}
 // RAN: CanonicalHash = {{[0-9a-f]+}}
+// RAN-NEXT: ProfileFormat = 2
 // RAN-NOT: Executed
 // RAN: MinRes =
 

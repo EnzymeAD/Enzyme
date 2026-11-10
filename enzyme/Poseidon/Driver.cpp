@@ -575,6 +575,9 @@ void requireProfileDirectory(StringRef dir, StringRef flag) {
 struct Unprofiled {
   bool neverExecuted;
   std::string path;
+  // Absent from a directory whose profiles name no format: the run that wrote
+  // it left no file for a site it never executed.
+  bool mayNotHaveRun = false;
 };
 
 std::optional<Unprofiled> unprofiledSite(Function &clone) {
@@ -586,7 +589,8 @@ std::optional<Unprofiled> unprofiledSite(Function &clone) {
     if (!sys::fs::exists(path)) {
       requireProfileDirectory(dir, flag);
       if (!absent)
-        absent = Unprofiled{false, path.str().str()};
+        absent =
+            Unprofiled{false, path.str().str(), !profileDirNamesFormat(dir)};
     } else if (isNeverExecutedProfile(path.str().str())) {
       std::unordered_map<size_t, ProfileInfo> records;
       FunctionProfileHeader header;
@@ -610,6 +614,18 @@ void reportUnprofiled(CallBase *CI, const Function &body, Function &clone,
         "the profiling run instrumented this site and never executed it";
     llvm::errs() << "[poseidon] " << body.getName() << ": " << cause << " ("
                  << site.path << "); left unchanged\n";
+    explainUnprofiled(clone, cause);
+    return;
+  }
+  if (site.mayNotHaveRun) {
+    const char *cause =
+        "the profile directory was written before the profiling runtime "
+        "recorded sites that never ran, so this site may simply not have run "
+        "(or the profiled program did not contain it)";
+    warn(CI, Twine("no profile at ") + site.path + ": " + cause +
+                 "; leaving the site unchanged");
+    llvm::errs() << "[poseidon] " << body.getName() << ": " << cause
+                 << " (no profile at " << site.path << "); left unchanged\n";
     explainUnprofiled(clone, cause);
     return;
   }
@@ -1390,6 +1406,7 @@ Function *instrumentedClone(Function &F, unsigned siteId,
     for (const auto &kv : trips)
       os << "RedTrip = " << kv.first << " " << kv.second << "\n";
     os << "CanonicalHash = " << canonicalFormHash(*clone) << "\n";
+    os << kProfileFormatKey << " = " << kProfileFormat << "\n";
   }
   emitProfileStaticData(*clone, staticData);
   if (staticOut)
@@ -3124,6 +3141,40 @@ struct LocalAnalysisManagers {
   }
 };
 
+// Whether Enzyme left the module's derivative requests to the LTO post-link
+// run: in these phases it does unless -enzyme-lto-prelink is given
+// (augmentPassBuilder in Enzyme.cpp), and an Enzyme without that option never
+// does.
+bool enzymeDeferredToPostLink(ThinOrFullLTOPhase Phase,
+                              OptimizationLevel Level) {
+  if (Phase != ThinOrFullLTOPhase::FullLTOPreLink &&
+      (Phase != ThinOrFullLTOPhase::ThinLTOPreLink ||
+       Level == OptimizationLevel::O0))
+    return false;
+  auto &Opts = cl::getRegisteredOptions();
+  auto It = Opts.find("enzyme-lto-prelink");
+  return It != Opts.end() &&
+         !static_cast<cl::opt<bool> *>(It->second)->getValue();
+}
+
+// Why a derivative request is still unlowered where the pass expects Enzyme to
+// have run. A pass run by pipeline name is not told which phase it runs in.
+std::string unloweredRequestReason(bool phaseKnown, ThinOrFullLTOPhase Phase,
+                                   OptimizationLevel Level) {
+  if (phaseKnown && enzymeDeferredToPostLink(Phase, Level))
+    return "This is an LTO pre-link compile, where Enzyme leaves derivative "
+           "requests to the post-link run unless -enzyme-lto-prelink is "
+           "given; pass -mllvm -enzyme-lto-prelink=1 (for HIP through "
+           "-Xclang, as poseidon-clang does).";
+  std::string reason =
+      "Add -fpass-plugin=<ClangEnzyme>.so after the Poseidon plugin.";
+  if (!phaseKnown)
+    reason += " In an LTO pre-link pipeline Enzyme also leaves derivative "
+              "requests to the post-link run unless -enzyme-lto-prelink is "
+              "given.";
+  return reason;
+}
+
 // The late run of the site handler, at OptimizerLast: by now Enzyme has
 // lowered the derivative request the deferred body was made of, so the body
 // carries the derivative arithmetic and is profiled and solved like any other
@@ -3132,8 +3183,12 @@ struct LocalAnalysisManagers {
 struct LatePass : PassParent<LatePass> {
   PassBuilder *PB;
   OptimizationLevel Level;
+  ThinOrFullLTOPhase Phase = ThinOrFullLTOPhase::None;
+  bool PhaseKnown = false;
 
   LatePass(PassBuilder *PB, OptimizationLevel Level) : PB(PB), Level(Level) {}
+  LatePass(PassBuilder *PB, OptimizationLevel Level, ThinOrFullLTOPhase Phase)
+      : PB(PB), Level(Level), Phase(Phase), PhaseKnown(true) {}
 
   // The canonical prefix, applied to the deferred bodies only. At
   // OptimizerEarly the same passes run over the whole module because the rest
@@ -3226,6 +3281,15 @@ struct LatePass : PassParent<LatePass> {
       if (kernelSet.insert(CI->getFunction()).second)
         kernels.push_back(CI->getFunction());
     }
+    // Unlowered here, the request would surface only at the link, as an
+    // undefined __enzyme_* symbol.
+    for (Function *B : bodies)
+      if (callsEnzymeRequest(*B))
+        report_fatal_error(Twine("Poseidon: the marked body ") + B->getName() +
+                               " still holds an __enzyme_* request that "
+                               "nothing lowered. " +
+                               unloweredRequestReason(PhaseKnown, Phase, Level),
+                           /*gen_crash_diag=*/false);
     // The canonical form of a deferred site is taken here, in both phases, so
     // that the slots the profile was numbered against are the ones the solve
     // sees.
@@ -3584,22 +3648,6 @@ void adoptModule(Module &M, Module &from) {
   M.setModuleInlineAsm(from.getModuleInlineAsm());
 }
 
-// Whether Enzyme left the module's derivative requests to the LTO post-link
-// run: in these phases it does unless -enzyme-lto-prelink is given
-// (augmentPassBuilder in Enzyme.cpp), and an Enzyme without that option never
-// does.
-bool enzymeDeferredToPostLink(ThinOrFullLTOPhase Phase,
-                              OptimizationLevel Level) {
-  if (Phase != ThinOrFullLTOPhase::FullLTOPreLink &&
-      (Phase != ThinOrFullLTOPhase::ThinLTOPreLink ||
-       Level == OptimizationLevel::O0))
-    return false;
-  auto &Opts = cl::getRegisteredOptions();
-  auto It = Opts.find("enzyme-lto-prelink");
-  return It != Opts.end() &&
-         !static_cast<cl::opt<bool> *>(It->second)->getValue();
-}
-
 struct FinalizePass : PassParent<FinalizePass> {
   PassBuilder *PB = nullptr;
   OptimizationLevel Level = OptimizationLevel::O3;
@@ -3612,28 +3660,14 @@ struct FinalizePass : PassParent<FinalizePass> {
                ThinOrFullLTOPhase Phase)
       : PB(PB), Level(Level), Phase(Phase), PhaseKnown(true) {}
 
-  std::string unloweredRequestError() const {
-    std::string msg = "Poseidon: profile generation emitted a derivative "
-                      "request that nothing lowered. ";
-    if (PhaseKnown && enzymeDeferredToPostLink(Phase, Level))
-      return msg + "This is an LTO pre-link compile, where Enzyme leaves "
-                   "derivative requests to the post-link run unless "
-                   "-enzyme-lto-prelink is given; pass -mllvm "
-                   "-enzyme-lto-prelink=1 (for HIP through -Xclang, as "
-                   "poseidon-clang does).";
-    msg += "Add -fpass-plugin=<ClangEnzyme>.so after the Poseidon plugin.";
-    if (!PhaseKnown)
-      msg += " In an LTO pre-link pipeline Enzyme also leaves derivative "
-             "requests to the post-link run unless -enzyme-lto-prelink is "
-             "given.";
-    return msg;
-  }
-
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &) {
     for (Function &F : M)
       if (F.isDeclaration() && !F.use_empty() &&
           F.getName().starts_with("__enzyme_autodiff_poseidon"))
-        report_fatal_error(Twine(unloweredRequestError()));
+        report_fatal_error(Twine("Poseidon: profile generation emitted a "
+                                 "derivative request that nothing lowered. ") +
+                               unloweredRequestReason(PhaseKnown, Phase, Level),
+                           /*gen_crash_diag=*/false);
     // Every site of the module has been processed by now, in the early run or
     // the late one. A module without a descriptor removes the unit's manifest,
     // so that what an earlier compile of the unit recorded is not applied.
@@ -3771,7 +3805,7 @@ void registerPasses(PassBuilder &PB) {
     const bool fromSource = Phase == ThinOrFullLTOPhase::None ||
                             Phase == ThinOrFullLTOPhase::ThinLTOPreLink ||
                             Phase == ThinOrFullLTOPhase::FullLTOPreLink;
-    MPM.addPass(LatePass(PBp, Level));
+    MPM.addPass(LatePass(PBp, Level, Phase));
     MPM.addPass(FinalizePass(fromSource ? PBp : nullptr, Level, Phase));
   };
 

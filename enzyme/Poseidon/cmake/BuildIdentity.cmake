@@ -1,8 +1,11 @@
 # Writes OUT, the header naming this build of the pass and of its matrix
-# accuracy model by the contents of their sources: the pass is every *.cpp and
-# *.h in PASS_DIR, the model the comma-separated ACCURACY_FILES of PASS_DIR.
+# accuracy model by the contents of their sources: the pass is its sources in
+# PASS_DIR (PassSources.cmake; BINARY_DIR, if given, is the build directory to
+# leave out), the model the comma-separated ACCURACY_FILES of PASS_DIR.
 # EQUIVALENTS lists earlier model identities, one per line, whose results the
 # current model reproduces.
+
+include(${CMAKE_CURRENT_LIST_DIR}/PassSources.cmake)
 
 # A digest of `lines`, as the header spells an identity.
 function(poseidon_identity out_var lines)
@@ -12,8 +15,7 @@ function(poseidon_identity out_var lines)
   set(${out_var} ${_sha} PARENT_SCOPE)
 endfunction()
 
-file(GLOB _pass RELATIVE ${PASS_DIR} ${PASS_DIR}/*.cpp ${PASS_DIR}/*.h)
-list(SORT _pass)
+poseidon_pass_sources(_pass ${PASS_DIR} "${BINARY_DIR}")
 set(_lines "")
 foreach(_file ${_pass})
   file(SHA256 ${PASS_DIR}/${_file} _sha)

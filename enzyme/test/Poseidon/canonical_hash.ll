@@ -28,7 +28,7 @@ attributes #0 = { "target-cpu"="x86-64" }
 
 ; The digest the profile-gen compile embeds is the one the fixture carries; the
 ; site id in front of it is what the condition-number probe arms by.
-; GEN: @fpprofile_static_preprocess_tester = private unnamed_addr constant [45 x i8] c"SiteId = 0\0ACanonicalHash = f9f2bd660c90d989\0A\00"
+; GEN: @fpprofile_static_preprocess_tester = private unnamed_addr constant [63 x i8] c"SiteId = 0\0ACanonicalHash = f9f2bd660c90d989\0AProfileFormat = 2\0A\00"
 
 ; MATCH-NOT: has no CanonicalHash field
 ; MATCH-NOT: recorded against a different canonical form

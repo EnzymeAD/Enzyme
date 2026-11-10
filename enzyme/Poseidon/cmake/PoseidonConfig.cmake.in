@@ -13,6 +13,24 @@
 #   Poseidon::ProfileUse       the same as Plain with the GEMM dispatch
 #                              runtimes; the project names its profile with
 #                              "SHELL:${POSEIDON_MLLVM} -poseidon-profile-use=<dir>"
+#   Poseidon::EnzymeOptions    what a compile that loads Enzyme's plugin needs
+#                              besides the plugin, also in
+#                              POSEIDON_ENZYME_OPTIONS: for HIP
+#                              "SHELL:${POSEIDON_MLLVM} -enzyme-lto-prelink=1",
+#                              since every HIP device compile is an LTO
+#                              pre-link compile, in which Enzyme leaves a
+#                              derivative request to the post-link run unless
+#                              told otherwise, and the device link loads no
+#                              plugin; otherwise nothing. ProfileGenerate
+#                              carries it. A project that loads Enzyme itself
+#                              under Plain or ProfileUse (for derivatives of
+#                              its own, a site whose body is one among them)
+#                              links it to the targets that load Enzyme, and
+#                              to no other. The package's -enzyme-lto-prelink
+#                              wins over one the project gives a target
+#                              itself, since a target's own options come
+#                              before those of the targets it links (through
+#                              poseidon-clang a later one of the user's wins).
 #
 # Any other -poseidon-<flag> is passed as "SHELL:${POSEIDON_MLLVM}
 # -poseidon-<flag>". The GPU runtimes are CUDA's, or HIP's in a build without
@@ -39,8 +57,11 @@ if(POSEIDON_GPU_RUNTIME STREQUAL "HIP")
                         "built without POSEIDON_ROCM_PATH")
   endif()
   set(POSEIDON_MLLVM "-Xclang -mllvm -Xclang")
+  set(POSEIDON_ENZYME_OPTIONS
+      "SHELL:${POSEIDON_MLLVM} @POSEIDON_ENZYME_HIP_OPTION@")
 else()
   set(POSEIDON_MLLVM "-mllvm")
+  set(POSEIDON_ENZYME_OPTIONS "")
 endif()
 include("${CMAKE_CURRENT_LIST_DIR}/PoseidonTargets.cmake")
 
@@ -78,19 +99,20 @@ if(NOT TARGET Poseidon::Plain)
                                INTERFACE "${POSEIDON_INCLUDE_DIR}")
   endforeach()
 
+  add_library(Poseidon::EnzymeOptions INTERFACE IMPORTED)
+  if(POSEIDON_ENZYME_OPTIONS)
+    target_compile_options(Poseidon::EnzymeOptions
+                           INTERFACE ${POSEIDON_ENZYME_OPTIONS})
+  endif()
+
   target_compile_options(
     Poseidon::ProfileGenerate
     INTERFACE ${_enzyme_load}
-              "SHELL:${POSEIDON_MLLVM} -poseidon-profile-generate")
+              "SHELL:${POSEIDON_MLLVM} -poseidon-profile-generate"
+              ${POSEIDON_ENZYME_OPTIONS})
   target_link_libraries(Poseidon::ProfileGenerate
                         INTERFACE Poseidon::poseidon_profile_host)
   if(POSEIDON_GPU_RUNTIME STREQUAL "HIP")
-    # Every HIP device compile is an LTO pre-link compile, in which Enzyme
-    # leaves a derivative request to the post-link run unless told otherwise,
-    # and the device link loads no plugin; poseidon-clang passes the same.
-    target_compile_options(
-      Poseidon::ProfileGenerate
-      INTERFACE "SHELL:${POSEIDON_MLLVM} @POSEIDON_ENZYME_HIP_OPTION@")
     target_link_libraries(Poseidon::ProfileGenerate
                           INTERFACE Poseidon::poseidon_profile_hip)
     # Ozaki-II and the direct products; TCEC has no HIP build.

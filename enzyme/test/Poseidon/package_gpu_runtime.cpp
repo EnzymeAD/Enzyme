@@ -12,12 +12,19 @@
 // with the HIP runtimes would configure it. With HIP every Poseidon option
 // goes through -Xclang, and the action that loads Enzyme, profile generation,
 // also tells Enzyme that a HIP compile is an LTO pre-link compile, as
-// poseidon-clang does; with CUDA no action gets that option.
+// poseidon-clang does. The package exports that option, as
+// Poseidon::EnzymeOptions and POSEIDON_ENZYME_OPTIONS, for a project that
+// loads Enzyme itself under Plain or ProfileUse, which do not carry it. With
+// CUDA no target and no variable holds it.
 
 // HIP: -- HIP Plain: -fpass-plugin={{[^;]+}};-ffp-contract=on
 // HIP-NEXT: -- HIP ProfileGenerate: -fpass-plugin={{[^;]+}};-fpass-plugin={{[^;]+}};SHELL:-Xclang -mllvm -Xclang -poseidon-profile-generate;SHELL:-Xclang -mllvm -Xclang -enzyme-lto-prelink=1;-ffp-contract=on
 // HIP-NEXT: -- HIP ProfileUse: -fpass-plugin={{[^;]+}};-ffp-contract=on
+// HIP-NEXT: -- HIP EnzymeOptions: SHELL:-Xclang -mllvm -Xclang -enzyme-lto-prelink=1{{$}}
+// HIP-NEXT: -- HIP POSEIDON_ENZYME_OPTIONS: [SHELL:-Xclang -mllvm -Xclang -enzyme-lto-prelink=1]
 
 // CUDA: -- CUDA Plain: -fpass-plugin={{[^;]+}};-ffp-contract=on
 // CUDA-NEXT: -- CUDA ProfileGenerate: -fpass-plugin={{[^;]+}};-fpass-plugin={{[^;]+}};SHELL:-mllvm -poseidon-profile-generate;-ffp-contract=on
 // CUDA-NEXT: -- CUDA ProfileUse: -fpass-plugin={{[^;]+}};-ffp-contract=on
+// CUDA-NEXT: -- CUDA EnzymeOptions: options-NOTFOUND
+// CUDA-NEXT: -- CUDA POSEIDON_ENZYME_OPTIONS: []
