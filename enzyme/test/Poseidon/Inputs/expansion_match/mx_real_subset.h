@@ -1,19 +1,25 @@
 // Reference routines for expansion_reference_identity.cpp: mX_real's
 // three- and four-component FP32 types at Algorithm::Sloppy (tf_Real_sloppy,
-// qf_Real_sloppy), the routines the materializer's n = 3, 4 arm reproduces.
+// qf_Real_sloppy), the routines the materializer's n = 3, 4 arm reproduces,
+// and the division of its two-component type (df_Real_sloppy), which the
+// two-component division reproduces.
 //
 // Provenance: RIKEN-RCCS/mX_real, https://github.com/RIKEN-RCCS/mX_real,
 // commit 72a35d697b247fb44400a282a88e22ea3211a327 (2025-01-04).
 // - The QxW routines in namespace QxW are copied verbatim from
 //   Ozaki-QW/qxw.hpp, each at the line range given above it: the routines the
-//   two types' +, -, *, / and sqrt call, and every routine those call.
+//   three- and four-component types' +, -, *, / and sqrt and the
+//   two-component type's / call, and every routine those call.
 //   INLINE, NOEXCEPT and fp_const<T>::two(), which qxw.hpp takes from
 //   mX_real.hpp and Ozaki-QW/fp_const.hpp, are defined before them.
 // - The operators in namespace mxref condense mX_real's dispatch for these
-//   two types with mX_real.hpp's settings MX_REAL_USE_INF_NAN_EXCEPTION 0 and
+//   types with mX_real.hpp's settings MX_REAL_USE_INF_NAN_EXCEPTION 0 and
 //   MX_REAL_OPTIMIZE_MUL_BY_SQR 1 (mX_real.hpp lines 32-33). Starting lines:
-//   Normalize<Regular> at a non-Quasi algorithm, mX_real.hpp 469 and 519,
-//   whose quickSum is QxW::FastTwoSum (mX_real.hpp 331); unary minus,
+//   Normalize<Regular> at a non-Quasi algorithm, mX_real.hpp 431, 469 and
+//   519, whose quickSum is QxW::FastTwoSum (mX_real.hpp 331, 339); the
+//   two-component quotient, operator/ (dX_real.hpp 1877), operator_div (1811;
+//   its special-value branch is compiled out by the first setting) and
+//   operator_div_body (1682: div_PA_PA_PA and Normalize); unary minus,
 //   reversed_sign (tX_real.hpp and qX_real.hpp 660); a - b as a + (-b)
 //   (tX_real.hpp and qX_real.hpp 1015); the add, mul, div and sqrt bodies
 //   (tX_real.hpp 734, 1117, 1610, 2107; qX_real.hpp 679, 1044, 1546, 2095),
@@ -463,7 +469,9 @@ namespace mxref {
 
 // Normalize<NormalizeOption::Regular>, non-Quasi.
 inline void normalize(float *c, int n) {
-  if (n == 3) {
+  if (n == 2) {
+    QxW::FastTwoSum(c[0], c[1], c[0], c[1]);
+  } else if (n == 3) {
     QxW::FastTwoSum(c[1], c[2], c[1], c[2]);
     QxW::FastTwoSum(c[0], c[1], c[0], c[1]);
     QxW::FastTwoSum(c[1], c[2], c[1], c[2]);
@@ -516,7 +524,9 @@ inline void mul(const float *a, const float *b, float *c, int n) {
 }
 
 inline void div(const float *a, const float *b, float *c, int n) {
-  if (n == 3)
+  if (n == 2)
+    QxW::div_PA_PA_PA(a[0], a[1], b[0], b[1], c[0], c[1]);
+  else if (n == 3)
     QxW::div_QTW_QTW_QTW(a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2]);
   else
     QxW::div_QQW_QQW_QQW(a[0], a[1], a[2], a[3], b[0], b[1], b[2], b[3], c[0],

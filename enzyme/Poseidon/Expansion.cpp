@@ -35,9 +35,13 @@ static Type *f64Ty(IRBuilder<> &B) { return B.getDoubleTy(); }
 // emitTwoProdFMA two_prod (1070-1074), emitDSAdd mfadd (src/mfadd.jl 10-24),
 // emitDSSub x + (-y) (src/MultiFloats.jl 1102, 1020), emitDSMul mfmul
 // (src/mfmul.jl 10-23), emitDSSqrt sqrt_r, i.e. mfsqrt (src/MultiFloats.jl
-// 1416-1421) under sqrt_r's zero test (1448-1449). emitDSDiv is the published
-// div2 with the FMA two-product. emitDSFMA is Poseidon's own routine, with no
-// library counterpart; it is checked against the accuracy model only.
+// 1416-1421) under sqrt_r's zero test (1448-1449). emitDSDiv reproduces
+// mX_real's division of its two-component type at Algorithm::Sloppy, QxW's
+// div_PA_PA_PA followed by Normalize<Regular>, i.e. QxW's FastTwoSum
+// (RIKEN-RCCS/mX_real, which contains the QxW generator, is BSD-2-Clause); it
+// is defined with the n >= 3 arm, whose routines it uses. emitDSFMA is
+// Poseidon's own routine, with no library counterpart; it is checked against
+// the accuracy model only.
 
 DSValue emitTwoSum(IRBuilder<> &B, Value *a, Value *b) {
   Value *s = B.CreateFAdd(a, b, "ts.s");
@@ -114,24 +118,6 @@ DSValue emitDSFMA(IRBuilder<> &B, DSValue x, DSValue y, DSValue z) {
   Value *t = B.CreateFAdd(e, z.lo, "dsf.t0");
   t = B.CreateFAdd(t, s.lo, "dsf.t1");
   return emitFastTwoSum(B, s.hi, t);
-}
-
-DSValue emitDSDiv(IRBuilder<> &B, DSValue x, DSValue y) {
-  Value *z_hi = B.CreateFDiv(x.hi, y.hi, "dsd.zhi");
-  DSValue pe = emitTwoProdFMA(B, z_hi, y.hi);
-  Value *d1 = B.CreateFSub(x.hi, pe.hi, "dsd.d1");
-  Value *d2 = B.CreateFSub(d1, pe.lo, "dsd.d2");
-  Value *d3 = B.CreateFAdd(d2, x.lo, "dsd.d3");
-  Value *q = B.CreateFMul(z_hi, y.lo, "dsd.q");
-  Value *d4 = B.CreateFSub(d3, q, "dsd.d4");
-  Value *z_lo = B.CreateFDiv(d4, y.hi, "dsd.zlo");
-  // The published div2's renormalization, zz = (c - z) + cc, not
-  // emitFastTwoSum's b - (s - a): with the latter an exact quotient by a
-  // negative divisor gets a -0 low component where mX_real and MultiFloats.jl
-  // give +0.
-  Value *s = B.CreateFAdd(z_hi, z_lo, "dsd.s");
-  Value *e = B.CreateFAdd(B.CreateFSub(z_hi, s, "dsd.c"), z_lo, "dsd.e");
-  return {s, e};
 }
 
 DSValue emitDSSqrt(IRBuilder<> &B, DSValue x) {
@@ -584,27 +570,23 @@ namespace {
 
 struct ExpansionBuilder {
   IRBuilder<> &B;
-  Function *fmaFn;
-  Function *sqrtFn;
-  explicit ExpansionBuilder(IRBuilder<> &Builder) : B(Builder) {
-    Module *M = B.GetInsertBlock()->getParent()->getParent();
-    fmaFn =
-        Intrinsic::getOrInsertDeclaration(M, Intrinsic::fma, {B.getFloatTy()});
-    // Correctly-rounded F32 sqrt (sqrt.rn.f32 on NVPTX), NOT the MUFU
-    // approximation the lossy F32 tier uses: the expansion's Newton
-    // corrections only remove the seed's error to second/third order, so a
-    // 2-ulp seed would cap a triple-float at ~1e-14 instead of ~1e-21.
-    sqrtFn =
-        Intrinsic::getOrInsertDeclaration(M, Intrinsic::sqrt, {B.getFloatTy()});
-  }
+  explicit ExpansionBuilder(IRBuilder<> &Builder) : B(Builder) {}
   Value *add(Value *a, Value *b) { return B.CreateFAdd(a, b, "mfx.a"); }
   Value *mul(Value *a, Value *b) { return B.CreateFMul(a, b, "mfx.m"); }
   Value *div(Value *a, Value *b) { return B.CreateFDiv(a, b, "mfx.d"); }
   Value *neg(Value *a) { return B.CreateFNeg(a, "mfx.n"); }
   Value *fma(Value *a, Value *b, Value *c) {
-    return B.CreateCall(fmaFn, {a, b, c}, "mfx.f");
+    return B.CreateIntrinsic(Intrinsic::fma, {B.getFloatTy()}, {a, b, c}, {},
+                             "mfx.f");
   }
-  Value *sqrt(Value *a) { return B.CreateCall(sqrtFn, {a}, "mfx.q"); }
+  // Correctly-rounded F32 sqrt (sqrt.rn.f32 on NVPTX), NOT the MUFU
+  // approximation the lossy F32 tier uses: the expansion's Newton
+  // corrections only remove the seed's error to second/third order, so a
+  // 2-ulp seed would cap a triple-float at ~1e-14 instead of ~1e-21.
+  Value *sqrt(Value *a) {
+    return B.CreateIntrinsic(Intrinsic::sqrt, {B.getFloatTy()}, {a}, {},
+                             "mfx.q");
+  }
   Value *cst(double v) { return ConstantFP::get(B.getFloatTy(), v); }
   DSValue twoSum(Value *a, Value *b) { return emitTwoSum(B, a, b); }
   // QxW's FastTwoSum, y = (a - x) + b. Not emitFastTwoSum's b - (s - a),
@@ -1057,6 +1039,14 @@ void expansionCheckN(unsigned n) {
 }
 
 } // namespace
+
+// The two-component division, here for the QxW routines it shares.
+DSValue emitDSDiv(IRBuilder<> &B, DSValue x, DSValue y) {
+  ExpansionBuilder mb(B);
+  Value *c0, *c1;
+  expansionDivRaw22(mb, x.hi, x.lo, y.hi, y.lo, c0, c1);
+  return mb.fastTwoSum(c0, c1);
+}
 
 ExpansionValue emitExpansionNeg(IRBuilder<> &B, const ExpansionValue &a) {
   ExpansionValue r;

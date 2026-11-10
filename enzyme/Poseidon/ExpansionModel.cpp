@@ -50,7 +50,8 @@ F2 expansionTwoProd(float a, float b) {
   return {p, std::fma(a, b, -p)};
 }
 
-// Two components. The arm keeps MultiFloats.jl's FastTwoSum form.
+// Two components. The arm keeps MultiFloats.jl's FastTwoSum form; its
+// division, mX_real's, follows the QxW routines below.
 F2 dsFastTwoSum(float a, float b) {
   float s = a + b;
   return {s, b - (s - a)};
@@ -78,15 +79,6 @@ F2 dsFma(F2 x, F2 y, F2 z) {
   e = std::fma(x.lo, y.hi, e);
   F2 s = expansionTwoSum(p, z.hi);
   return dsFastTwoSum(s.hi, (e + z.lo) + s.lo);
-}
-// emitDSDiv
-F2 dsDiv(F2 x, F2 y) {
-  float zhi = x.hi / y.hi;
-  F2 pe = expansionTwoProd(zhi, y.hi);
-  float q = zhi * y.lo;
-  float zlo = ((((x.hi - pe.hi) - pe.lo) + x.lo) - q) / y.hi;
-  float s = zhi + zlo;
-  return {s, (zhi - s) + zlo};
 }
 // emitDSSqrt
 F2 dsSqrt(F2 x) {
@@ -199,6 +191,12 @@ void expansionDivRaw22(float a0, float a1, float b0, float b1, float &c0,
   c0 = a0 / bh;
   c1 = std::fma(-b0, c0, a0) + a1;
   c1 = std::fma(-b1, c0, c1) / bh;
+}
+// emitDSDiv
+F2 dsDiv(F2 x, F2 y) {
+  float c0, c1;
+  expansionDivRaw22(x.hi, x.lo, y.hi, y.lo, c0, c1);
+  return expansionFastTwoSum(c0, c1);
 }
 
 // QxW::div_QTW_QTW_QTW
