@@ -4419,6 +4419,66 @@ public:
     eraseIfUnused(FI);
   }
 
+  void visitAtomicCmpXchgInst(llvm::AtomicCmpXchgInst &I) {
+    using namespace llvm;
+
+    IRBuilder<> BuilderZ(&I);
+    getForwardBuilder(BuilderZ);
+
+    auto finishInactive = [&]() {
+      if (!gutils->isConstantValue(&I) &&
+          (Mode == DerivativeMode::ForwardMode ||
+           Mode == DerivativeMode::ForwardModeError ||
+           Mode == DerivativeMode::ForwardModeSplit)) {
+        resolveShadowPlaceholder(I);
+      }
+      if (Mode == DerivativeMode::ReverseModeGradient ||
+          Mode == DerivativeMode::ForwardModeSplit) {
+        eraseIfUnused(I, /*erase*/ true, /*check*/ false);
+      } else {
+        eraseIfUnused(I);
+      }
+    };
+
+    if (gutils->isConstantInstruction(&I)) {
+      finishInactive();
+      return;
+    }
+
+    if (looseTypeAnalysis) {
+      const DataLayout &DL = gutils->newFunc->getParent()->getDataLayout();
+      Type *valType = I.getCompareOperand()->getType();
+      size_t storeSize = (DL.getTypeSizeInBits(valType) + 7) / 8;
+      ConcreteType firstPtr =
+          TR.firstPointer(storeSize, I.getPointerOperand(), &I, gutils,
+                          /*errifnotfound*/ nullptr,
+                          /*pointerIntSame*/ true);
+      if (!firstPtr.isKnown() && valType->isIntOrIntVectorTy()) {
+        finishInactive();
+        return;
+      }
+    }
+
+    std::string message;
+    llvm::raw_string_ostream stream(message);
+    stream << *I.getParent()->getParent() << '\n' << I << '\n';
+    stream << " Active atomic cmpxchg inst not yet handled";
+    EmitNoDerivativeError(stream.str(), I, gutils, BuilderZ);
+    if (!gutils->isConstantValue(&I) &&
+        (Mode == DerivativeMode::ForwardMode ||
+         Mode == DerivativeMode::ForwardModeError ||
+         Mode == DerivativeMode::ForwardModeSplit)) {
+      resolveShadowPlaceholder(I);
+    }
+    if (!I.getType()->isVoidTy()) {
+      for (auto &U :
+           make_early_inc_range(gutils->getNewFromOriginal(&I)->uses())) {
+        U.set(UndefValue::get(I.getType()));
+      }
+    }
+    eraseIfUnused(I, /*erase*/ true, /*check*/ false);
+  }
+
   void visitIntrinsicInst(llvm::IntrinsicInst &II) {
     using namespace llvm;
 

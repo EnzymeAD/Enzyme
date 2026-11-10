@@ -4125,7 +4125,7 @@ bool GradientUtils::legalRecompute(const Value *val,
     auto found = fictiousPHIs.find(const_cast<llvm::PHINode *>(phi));
     if (found != fictiousPHIs.end()) {
       auto orig = found->second;
-      if (isa<AtomicRMWInst>(orig))
+      if (isa<AtomicRMWInst>(orig) || isa<AtomicCmpXchgInst>(orig))
         return false;
     }
 
