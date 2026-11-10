@@ -295,6 +295,13 @@ int main(int argc, char **argv) {
   AddPlugin(Plugin);
   if (!Enzyme.empty())
     AddPlugin(Enzyme);
+  // Every HIP device compile is an LTO pre-link compile, in which Enzyme leaves
+  // a derivative request to the post-link run unless told otherwise, and the
+  // device link loads no plugin. The requests profile generation emits, and a
+  // user's own request in a site, have to be lowered in the compile itself.
+  // Ahead of the user's arguments, so that a later -enzyme-lto-prelink wins.
+  if (IsHIP && !Enzyme.empty())
+    Cmd.append({"-Xclang", "-mllvm", "-Xclang", "-enzyme-lto-prelink=1"});
   Cmd.push_back("-I" + Include);
   // Error-free transformations survive only if the compiler contracts within a
   // statement and never across one.

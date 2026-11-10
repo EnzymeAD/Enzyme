@@ -47,6 +47,24 @@
 // RUN: env POSEIDON_ECHO=1 %poseidon_clangxx -Werror %t.link.o -### -o %t.exe 2>&1 \
 // RUN:   | FileCheck --check-prefix=LINK %s
 //
+// With Enzyme loaded, both compile jobs of a HIP compile get
+// -enzyme-lto-prelink=1, so that Enzyme differentiates in the device compile,
+// an LTO pre-link compile whose device link loads no plugin; the device link
+// does not get it, a HIP link is not warned about it, and a CUDA compile, which
+// has no LTO phase, does not get it. The plugin is named only, never loaded.
+// RUN: env POSEIDON_ECHO=1 ENZYME_PLUGIN=%t.enzyme/ClangEnzyme.so \
+// RUN:     %poseidon_clangxx -poseidon-profile-use -x hip --offload-arch=gfx942 \
+// RUN:     --rocm-path=%t.rocm -nogpuinc -nogpulib -### %s -o %t.o 2>&1 \
+// RUN:   | FileCheck --check-prefix=HIPLTO %s
+// RUN: env POSEIDON_ECHO=1 ENZYME_PLUGIN=%t.enzyme/ClangEnzyme.so \
+// RUN:     %poseidon_clangxx -Werror --hip-link --rocm-path=%t.rocm %t.link.o \
+// RUN:     -### -o %t.exe 2>&1 | FileCheck --check-prefix=HIPLINK %s
+// RUN: env POSEIDON_ECHO=1 ENZYME_PLUGIN=%t.enzyme/ClangEnzyme.so \
+// RUN:     %poseidon_clangxx -poseidon-profile-generate -x cuda \
+// RUN:     --cuda-gpu-arch=%gpu_arch --cuda-path=%t.cuda -nocudainc -nocudalib \
+// RUN:     -### %s -o %t.o 2>&1 \
+// RUN:   | FileCheck --check-prefix=CUDALTO --implicit-check-not=enzyme-lto-prelink %s
+//
 // REQUIRES: poseidon
 
 int main(void) { return 0; }
@@ -74,3 +92,18 @@ int main(void) { return 0; }
 // LINK: clang{{.*}} --start-no-unused-arguments -mllvm -poseidon-unit={{[0-9A-F]+}} --end-no-unused-arguments
 // LINK-NOT: poseidon-unit
 // LINK-NOT: unused
+
+// HIPLTO: clang{{.*}} -fpass-plugin={{[^ ]*}}/ClangEnzyme.so {{(-Xclang -load -Xclang [^ ]+ )?}}-Xclang -mllvm -Xclang -enzyme-lto-prelink=1 -I
+// HIPLTO: "-cc1" {{.*}}"-fcuda-is-device"{{.*}} "-mllvm" "-enzyme-lto-prelink=1"
+// HIPLTO-NOT: enzyme-lto-prelink
+// HIPLTO: clang-linker-wrapper"
+// HIPLTO-NOT: enzyme-lto-prelink
+// HIPLTO: "-cc1" "-triple" "x86_64-{{[^"]+}}"{{.*}} "-mllvm" "-enzyme-lto-prelink=1"
+// HIPLTO-NOT: enzyme-lto-prelink
+
+// HIPLINK: clang{{.*}} -Xclang -enzyme-lto-prelink=1
+// HIPLINK-NOT: argument unused
+
+// CUDALTO: clang{{.*}} -fpass-plugin={{[^ ]*}}/ClangEnzyme.so
+// CUDALTO: "-cc1" "-triple" "nvptx64-nvidia-cuda"
+// CUDALTO: "-cc1" "-triple" "x86_64-{{[^"]+}}"
