@@ -1281,20 +1281,24 @@ static StringRef annotationOf(Value *Entry) {
   return "";
 }
 
+/// Whether G is the clang plugin's registration of a device math function it
+/// kept alive (see releaseDeviceMath), which asks nothing of Enzyme itself.
+static bool isDeviceMathRegistration(const GlobalVariable &G) {
+  return G.getName().contains("__enzyme_device_math_autoreg_");
+}
+
 bool moduleUsesEnzyme(const Module &M) {
   for (const Function &F : M)
     if (F.getName().contains("__enzyme_") || F.hasFnAttribute("prev_fixup"))
       return true;
   for (const GlobalVariable &G : M.globals())
-    if (G.getName().contains("__enzyme_"))
+    if (G.getName().contains("__enzyme_") && !isDeviceMathRegistration(G))
       return true;
   if (auto GA = M.getGlobalVariable("llvm.global.annotations"))
     if (GA->hasInitializer())
-      for (Value *Entry : GA->getInitializer()->operands()) {
-        StringRef AS = annotationOf(Entry);
-        if (startsWith(AS, "enzyme_") && AS != "enzyme_device_math")
+      for (Value *Entry : GA->getInitializer()->operands())
+        if (startsWith(annotationOf(Entry), "enzyme_"))
           return true;
-      }
   return false;
 }
 
@@ -1310,55 +1314,23 @@ static void collectGlobals(Value *C, SmallVectorImpl<WeakVH> &Out) {
 }
 
 bool releaseDeviceMath(Module &M, bool Keep) {
-  GlobalVariable *GA = M.getGlobalVariable("llvm.global.annotations");
-  if (!GA || !GA->hasInitializer())
-    return false;
-  auto CA = dyn_cast<ConstantArray>(GA->getInitializer());
-  if (!CA)
-    return false;
-
-  SmallVector<Constant *, 4> others;
   SmallPtrSet<Constant *, 16> released;
   SmallVector<WeakVH, 16> maybeDead;
-  for (Value *Entry : CA->operands()) {
-    if (annotationOf(Entry) == "enzyme_device_math")
-      if (auto F = dyn_cast<Function>(cast<ConstantStruct>(Entry)
-                                          ->getOperand(0)
-                                          ->stripPointerCasts())) {
-        released.insert(F);
-        collectGlobals(Entry, maybeDead);
-        continue;
-      }
-    others.push_back(cast<Constant>(Entry));
+  for (GlobalVariable &G : M.globals()) {
+    if (!isDeviceMathRegistration(G))
+      continue;
+    released.insert(&G);
+    maybeDead.push_back(&G);
+    if (!Keep && G.hasInitializer())
+      released.insert(G.getInitializer()->stripPointerCasts());
   }
   if (released.empty())
     return false;
+  removeFromUsedLists(M, [&](Constant *C) { return released.count(C); });
 
-  if (others.empty()) {
-    GA->eraseFromParent();
-  } else {
-    // Clang types the array after its first entry, and on AMDGPU an entry
-    // without arguments (a null constant-space pointer) has another type than
-    // one with them (a global-space pointer); what is left takes its own.
-    Type *EntryTy = others.front()->getType();
-    if (!llvm::all_of(others,
-                      [&](Constant *C) { return C->getType() == EntryTy; }))
-      EntryTy = CA->getType()->getElementType();
-    auto NewCA =
-        ConstantArray::get(ArrayType::get(EntryTy, others.size()), others);
-    auto NewGA = new GlobalVariable(M, NewCA->getType(), GA->isConstant(),
-                                    GA->getLinkage(), NewCA, "", GA);
-    NewGA->setSection(GA->getSection());
-    NewGA->takeName(GA);
-    GA->eraseFromParent();
-  }
-  if (Keep)
-    released.clear();
-  else
-    removeFromUsedLists(M, [&](Constant *C) { return released.count(C); });
-
-  // Erase what was linked or emitted only for them, so that no later pass sees
-  // a use the module would not have had without the plugin.
+  // Erase the registrations and what was linked or emitted only for the
+  // functions given up, so that no later pass sees a use the module would not
+  // have had without the plugin.
   while (!maybeDead.empty()) {
     auto G = dyn_cast_or_null<GlobalValue>(maybeDead.pop_back_val());
     if (!G)
