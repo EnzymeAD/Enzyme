@@ -1,4 +1,4 @@
-; RUN: %clang -O0 -x ir %s %clangLoadPoseidon -mllvm -poseidon-profile-use=%S/Inputs/hoststub_cache -mllvm -poseidon-cache=%S/Inputs/hoststub_cache -mllvm -poseidon-unit=fixture -S -emit-llvm -o - 2>&1 | FileCheck %s
+; RUN: %clang -O0 -x ir -fno-discard-value-names %s %clangLoadPoseidon -mllvm -poseidon-profile-use=%S/Inputs/hoststub_cache -mllvm -poseidon-cache=%S/Inputs/hoststub_cache -mllvm -poseidon-unit=fixture -S -emit-llvm -o - 2>&1 | FileCheck %s
 ; REQUIRES: poseidon
 ; Host-side launch stubs replaced by library dispatches from the descriptors in the manifest of hoststub.cu, unit fixture, in Inputs/hoststub_cache (a square scheme-2 Direct FP16 one and a non-square scheme-1 TCEC one); the pass runs at PipelineStart of the clang pipeline, which is why this drives clang on IR. Host IR from Inputs/hoststub_cache/hoststub.cu (clang --cuda-host-only -O0).
 

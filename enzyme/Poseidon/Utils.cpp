@@ -85,7 +85,11 @@ bool isGPUMode(const Function &F) { return isDeviceModule(*F.getParent()); }
 
 void simplifyFunction(Function &F, OptimizationLevel Level) {
 
+#if LLVM_VERSION_MAJOR >= 24
+  PassBuilder PB(F.getContext());
+#else
   PassBuilder PB;
+#endif
   LoopAnalysisManager LAM;
   FunctionAnalysisManager FAM;
   CGSCCAnalysisManager CGAM;

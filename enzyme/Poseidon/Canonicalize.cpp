@@ -83,7 +83,7 @@ struct CanonicalizeAnalyses {
   FunctionAnalysisManager FAM;
   ModuleAnalysisManager MAM;
 
-  CanonicalizeAnalyses() {
+  explicit CanonicalizeAnalyses(LLVMContext &Ctx) {
     FAM.registerPass([] { return TypeBasedAA(); });
     FAM.registerPass([] { return BasicAA(); });
     MAM.registerPass([] { return GlobalsAA(); });
@@ -104,7 +104,11 @@ struct CanonicalizeAnalyses {
       return AM;
     });
 
+#if LLVM_VERSION_MAJOR >= 24
+    PassBuilder PB(Ctx);
+#else
     PassBuilder PB;
+#endif
     PB.registerModuleAnalyses(MAM);
     PB.registerFunctionAnalyses(FAM);
     PB.registerLoopAnalyses(LAM);
@@ -131,7 +135,11 @@ std::pair<PHINode *, Instruction *> insertNewCanonicalIV(Loop *L, Type *Ty,
   IRBuilder<> B(Header, Header->begin());
   PHINode *CanonicalIV = B.CreatePHI(Ty, 1, Name);
 
+#if LLVM_VERSION_MAJOR >= 24
+  B.SetInsertPoint(Header->getFirstNonPHIOrPseudoProbe());
+#else
   B.SetInsertPoint(Header->getFirstNonPHIOrDbg());
+#endif
   auto *Inc = cast<Instruction>(
       B.CreateAdd(CanonicalIV, ConstantInt::get(Ty, 1), Name + ".next",
                   /*NUW*/ true, /*NSW*/ true));
@@ -175,7 +183,7 @@ void removeRedundantIVs(BasicBlock *Header, PHINode *CanonicalIV,
     PN->replaceAllUsesWith(Tmp);
     PN->eraseFromParent();
 
-#if LLVM_VERSION_MAJOR >= 22
+#if LLVM_VERSION_MAJOR >= 22 && !defined(ENZYME_LLVM22_PRERELEASE)
     SCEVExpander Exp(SE, "poseidon");
 #else
     SCEVExpander Exp(SE, SE.getDataLayout(), "poseidon");
@@ -309,7 +317,7 @@ Function *canonicalize(Function &F) {
   NewF->addFnAttr(Attribute::MustProgress);
   setFullWillReturn(NewF);
 
-  CanonicalizeAnalyses A;
+  CanonicalizeAnalyses A(NewF->getContext());
   FunctionAnalysisManager &FAM = A.FAM;
 
   {

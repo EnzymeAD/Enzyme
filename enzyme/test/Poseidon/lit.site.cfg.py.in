@@ -26,10 +26,14 @@ config.substitutions.append(('%clangLoadPoseidonEnzyme',
                              clang_load(poseidon_plugin) + ' ' +
                              clang_load(enzyme_clang_plugin)))
 config.substitutions.append(('%clangLoadPoseidon', clang_load(poseidon_plugin)))
+# From LLVM 24 opt loads -load-pass-plugin only after parsing its command line,
+# so a plugin's options exist only if it is also loaded with -load.
+def opt_load(plugin):
+    return '-load-pass-plugin=' + plugin + ' -load=' + plugin
 config.substitutions.append(('%loadPoseidonEnzyme',
-                             '-load-pass-plugin=' + poseidon_plugin +
-                             ' -load-pass-plugin=' + enzyme_opt_plugin))
-config.substitutions.append(('%loadPoseidon', '-load-pass-plugin=' + poseidon_plugin))
+                             opt_load(poseidon_plugin) + ' ' +
+                             opt_load(enzyme_opt_plugin)))
+config.substitutions.append(('%loadPoseidon', opt_load(poseidon_plugin)))
 config.substitutions.append(('%poseidon_plugin', poseidon_plugin))
 config.substitutions.append(('%enzyme_plugin', enzyme_opt_plugin))
 
