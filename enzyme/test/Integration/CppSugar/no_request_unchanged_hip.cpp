@@ -12,6 +12,9 @@
 // RUN: diff %t/device.s %t/device.enzyme.s
 // RUN: %clang -x hip --cuda-device-only -nogpuinc -nogpulib --offload-arch=gfx90a -cuid=0 -O1 -Xclang -disable-llvm-passes -c -emit-llvm -include %t/__clang_hip_math.h %t/device.hip -o %t/device.enzyme.bc %loadClangEnzyme
 // RUN: llvm-dis %t/device.enzyme.bc -o - | FileCheck %s
+//
+// With debug info, no entry for a registration is left in the compile unit.
+// RUN: %clang -x hip --cuda-device-only -nogpuinc -nogpulib --offload-arch=gfx90a -cuid=0 -O2 -g -S -emit-llvm -include %t/__clang_hip_math.h %t/device.hip -o - %loadClangEnzyme | FileCheck --check-prefix=DEBUG --implicit-check-not=__enzyme_device_math_autoreg %s
 
 // HIP device code is compiled to LTO pre-link bitcode by default, as here with
 // -foffload-lto. There Enzyme leaves differentiation to the link unless
@@ -29,6 +32,8 @@
 // CHECK: @{{.*}}__enzyme_device_math_autoreg__ZL4sqrtd = internal addrspace(1) global ptr @_ZL4sqrtd
 // CHECK: @{{.*}}__enzyme_device_math_autoreg__ZL3cosd = internal addrspace(1) global ptr @_ZL3cosd
 // CHECK: @llvm.global.annotations = {{.*}} global [1 x
+
+// DEBUG: !DICompileUnit(
 
 // DEFERRED: define internal {{.*}}double @_ZL3cosd(
 // DEFERRED: "enzyme_math"="sqrt"
