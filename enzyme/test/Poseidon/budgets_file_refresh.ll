@@ -7,8 +7,6 @@
 ; RUN: not diff %t/first_budgets.txt %t/fresh/budgets.txt
 ; RUN: diff %t/fresh/budgets.txt %t/c/budgets.txt
 ; REQUIRES: poseidon
-; XFAIL: *
-; budgets.txt is written only when absent, so it keeps the first solve's breakpoints.
 
 ; budgets.txt lists the breakpoints of the last DP table solved into the cache.
 ; The second solve, under a profile with twice the executions, has other

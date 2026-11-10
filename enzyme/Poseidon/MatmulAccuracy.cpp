@@ -1,5 +1,7 @@
 // Matmul accuracy model: profile-driven sampling, the memoized accuracy cost
 // and the Ozaki-II quantization model.
+#include "BuildIdentity.h"
+#include "CacheKey.h"
 #include "Flags.h"
 #include "MatmulInternal.h"
 #include "Optimize.h"
@@ -10,6 +12,7 @@
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Format.h"
+#include "llvm/Support/JSON.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/raw_ostream.h"
@@ -76,84 +79,164 @@ static std::string percentileLabel(double confidence) {
   return s;
 }
 
-// Accuracy-model generation: bump whenever the body of getMatmulAccuracyCost
-// or getOzakiIIAccuracyCost changes the number it returns for existing inputs,
-// since the memo below is keyed on the model's inputs only.
-static constexpr uint64_t kAccModelGeneration = 1;
+// The accuracy memo: a model's result is a deterministic function of its
+// inputs, so it is kept in flags::Cache, one entry file per key. The key holds
+// the model's inputs and the model's identity, never its results: hosts differ
+// in the last digits of a result for equal inputs. An entry is filed under
+// every part but the identity, so one computed by another model is found and
+// reported, and one computed by a model declared equivalent is reused.
+namespace {
+struct AccMemo {
+  CacheKey key;
+  std::string path;
+  std::string legacyName;
+};
+} // namespace
 
-// Matmul accuracy cache: the per-candidate cost is a deterministic function of
-// the profile, dims, precision params, sample count, seed and sampling
-// distribution, so it is memoized to flags::Cache keyed by a hash of exactly
-// those (one file per key, race-free across parallel variant builds). The
-// distribution term matters: fpOptimize samples log-uniformly over 40 bits
-// under an error budget, and a shared memo would otherwise serve the other
-// mode's model.
-static uint64_t accHashMix(uint64_t h, uint64_t v) {
-  h ^= v + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
-  return h;
+// Exact, and readable back by StringRef::getAsDouble, infinity included.
+static std::string accNumber(double v) {
+  std::string s;
+  raw_string_ostream(s) << format("%.17g", v);
+  return s;
 }
-static uint64_t accHashD(uint64_t h, double d) {
-  uint64_t b;
-  std::memcpy(&b, &d, sizeof(b));
-  return accHashMix(h, b);
+
+template <typename T> static void appendBytes(std::string &bytes, T v) {
+  bytes.append(reinterpret_cast<const char *>(&v), sizeof(v));
 }
-static uint64_t accProfileHash(const AbstractMatmul &m,
-                               const MatmulProfile &prof,
-                               unsigned sampleLogBits) {
-  uint64_t h = 1469598103934665603ULL;
-  h = accHashMix(h, m.M);
-  h = accHashMix(h, m.N);
-  h = accHashMix(h, m.K);
-  auto hashCells = [&](const std::vector<CellStat> &v) {
-    h = accHashMix(h, v.size());
-    for (const auto &c : v) {
-      h = accHashD(h, c.min);
-      h = accHashD(h, c.max);
-      h = accHashD(h, c.sumValue);
-      h = accHashMix(h, c.count);
-      h = accHashD(h, c.minMag);
+
+static void addModelInputs(CacheKey &key, const AbstractMatmul &m,
+                           const MatmulProfile &prof, double confidence,
+                           unsigned sampleLogBits, unsigned numSamples) {
+  key.add("M", std::to_string(m.M));
+  key.add("N", std::to_string(m.N));
+  key.add("K", std::to_string(m.K));
+  std::string operands;
+  for (const std::vector<CellStat> *cells : {&prof.a, &prof.b}) {
+    appendBytes(operands, (uint64_t)cells->size());
+    for (const CellStat &c : *cells) {
+      appendBytes(operands, c.min);
+      appendBytes(operands, c.max);
+      appendBytes(operands, c.count);
+      appendBytes(operands, c.minMag);
     }
-  };
-  hashCells(prof.a);
-  hashCells(prof.b);
-  h = accHashMix(h, prof.gradD.size());
-  for (const auto &g : prof.gradD) {
-    h = accHashD(h, g.sumGrad);
-    h = accHashMix(h, g.count);
   }
-  h = accHashMix(h, flags::NumSamples);
-  h = accHashMix(h, (uint64_t)flags::RandomSeed);
-  h = accHashMix(h, (uint64_t)sampleLogBits);
-  h = accHashMix(h, kAccModelGeneration);
-  return h;
+  key.addContent("operand statistics", operands);
+  std::string gradients;
+  appendBytes(gradients, (uint64_t)prof.gradD.size());
+  for (const GradCellStat &g : prof.gradD)
+    appendBytes(gradients, g.sumGrad);
+  key.addContent("gradient statistics", gradients);
+  key.add("samples", std::to_string(numSamples));
+  key.add("seed", std::to_string(flags::RandomSeed));
+  key.add("sampling log bits", std::to_string(sampleLogBits));
+  key.add("exponent penalty", accNumber(flags::ExponentPenalty));
+  key.add("confidence", accNumber(confidence));
 }
-static bool accCacheLookup(uint64_t key, double &acc, double &dom) {
+
+static void fileAccMemo(AccMemo &memo) {
+  SmallString<256> p(flags::Cache);
+  sys::path::append(p, "matmulacc_" + memo.key.digest() + ".json");
+  memo.path = p.str().str();
+  memo.key.add("accuracy model", kAccuracyModelIdentity);
+}
+
+// The name the memo had while it was keyed on a hash of the inputs alone, kept
+// so -poseidon-import-accuracy-memo can bring its entries over.
+namespace {
+struct LegacyAccHash {
+  uint64_t h = 1469598103934665603ULL;
+  void mix(uint64_t v) { h ^= v + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2); }
+  void mixD(double d) {
+    uint64_t b;
+    std::memcpy(&b, &d, sizeof(b));
+    mix(b);
+  }
+  LegacyAccHash(const AbstractMatmul &m, const MatmulProfile &prof,
+                unsigned sampleLogBits) {
+    mix(m.M);
+    mix(m.N);
+    mix(m.K);
+    for (const std::vector<CellStat> *cells : {&prof.a, &prof.b}) {
+      mix(cells->size());
+      for (const auto &c : *cells) {
+        mixD(c.min);
+        mixD(c.max);
+        mixD(c.sumValue);
+        mix(c.count);
+        mixD(c.minMag);
+      }
+    }
+    mix(prof.gradD.size());
+    for (const auto &g : prof.gradD) {
+      mixD(g.sumGrad);
+      mix(g.count);
+    }
+    mix(flags::NumSamples);
+    mix((uint64_t)flags::RandomSeed);
+    mix((uint64_t)sampleLogBits);
+    mix(1); // the model generation every legacy entry was written under
+  }
+  std::string name() const { return "matmulacc_" + utohexstr(h) + ".txt"; }
+};
+} // namespace
+
+static void storeAccMemo(const AccMemo &memo, double acc, double dom) {
+  (void)sys::fs::create_directories(flags::Cache, true);
+  // As text: a domain error can be infinite, which JSON cannot hold.
+  json::Object value;
+  value["accuracy cost"] = accNumber(acc);
+  value["domain error"] = accNumber(dom);
+  if (Error E = writeCacheEntry(memo.path, memo.key, std::move(value)))
+    llvm::errs() << "[poseidon] could not write the accuracy memo " << memo.path
+                 << ": " << toString(std::move(E)) << "\n";
+}
+
+static bool parseAccNumber(const json::Object &value, StringRef name,
+                           double &out) {
+  std::optional<StringRef> text = value.getString(name);
+  return text && !text->getAsDouble(out);
+}
+
+static bool lookupAccMemo(const AccMemo &memo, double &acc, double &dom) {
   if (flags::Cache.empty())
     return false;
-  SmallString<256> p(flags::Cache);
-  sys::path::append(p, "matmulacc_" + utohexstr(key) + ".txt");
-  auto buf = MemoryBuffer::getFile(p);
+  CacheEntryRead read = readCacheEntry(
+      memo.path, memo.key, {"accuracy model", kAccuracyModelEquivalents});
+  if (read.value) {
+    const json::Object *value = read.value->getAsObject();
+    if (value && parseAccNumber(*value, "accuracy cost", acc) &&
+        parseAccNumber(*value, "domain error", dom))
+      return true;
+    read.unreadable = "its value does not parse";
+  }
+  if (!read.unreadable.empty())
+    llvm::errs() << "[poseidon] accuracy memo " << memo.path
+                 << " is unreadable (" << read.unreadable
+                 << "); recomputing it.\n";
+  else if (!read.differs.empty())
+    llvm::errs() << "[poseidon] accuracy memo " << memo.path
+                 << (read.differs == "format"
+                         ? " was written in another cache format"
+                         : " was computed for a different " + read.differs)
+                 << "; recomputing it.\n";
+
+  if (flags::ImportAccuracyMemo.empty())
+    return false;
+  SmallString<256> legacy(flags::ImportAccuracyMemo);
+  sys::path::append(legacy, memo.legacyName);
+  auto buf = MemoryBuffer::getFile(legacy);
   if (!buf)
     return false;
-  StringRef s = (*buf)->getBuffer().trim();
-  auto [accS, domS] = s.split(' ');
+  auto [accS, domS] = (*buf)->getBuffer().trim().split(' ');
   double a, d;
-  if (accS.getAsDouble(a) || domS.getAsDouble(d)) // getAsDouble: true == error
+  if (accS.getAsDouble(a) || domS.getAsDouble(d))
     return false;
   acc = a;
   dom = d;
+  storeAccMemo(memo, acc, dom);
+  llvm::errs() << "[poseidon] imported accuracy memo " << legacy << " as "
+               << memo.path << "\n";
   return true;
-}
-static void accCacheStore(uint64_t key, double acc, double dom) {
-  if (flags::Cache.empty())
-    return;
-  (void)sys::fs::create_directories(flags::Cache, true);
-  SmallString<256> p(flags::Cache);
-  sys::path::append(p, "matmulacc_" + utohexstr(key) + ".txt");
-  std::error_code EC;
-  raw_fd_ostream os(p, EC, sys::fs::OF_Text);
-  if (!EC)
-    os << format("%.17g %.17g\n", acc, dom);
 }
 
 // Round `x` to `bits` significand bits, keeping the F64 exponent range: an
@@ -192,26 +275,33 @@ double getMatmulAccuracyCost(const AbstractMatmul &m, const MatmulProfile &prof,
     report_fatal_error(
         "getMatmulAccuracyCost: unexpected profile cell-vector shape");
 
-  uint64_t cacheKey = accProfileHash(m, prof, sampleLogBits);
-  cacheKey = accHashMix(cacheKey, 0x6d6dULL); // "mm" discriminator
-  cacheKey = accHashMix(cacheKey, (uint64_t)inputPrec);
-  cacheKey = accHashMix(cacheKey, (uint64_t)accPrec);
-  cacheKey = accHashMix(cacheKey, (uint64_t)exponentPrec);
-  cacheKey = accHashD(cacheKey, flags::ExponentPenalty.getValue());
-  // The percentile the domain error is read off decides the number stored
-  // here, so a cached result is never reused across confidence levels. Mixed
-  // only away from the default, so entries banked before the level was a
-  // setting stay valid at the level they were computed at.
-  if (confidence != kDefaultConfidence)
-    cacheKey = accHashD(cacheKey, confidence);
-  // Mixed only when active so pre-existing cache entries stay valid.
-  if (orderTileK)
-    cacheKey = accHashMix(cacheKey, 0x746b00ULL | orderTileK); // "tk" tag
-  if (inputMantBits)
-    cacheKey = accHashMix(cacheKey, 0x6d6200ULL | inputMantBits); // "mb" tag
+  AccMemo memo;
+  memo.key.add("model", "getMatmulAccuracyCost");
+  memo.key.add("input format", fpKindName(inputPrec));
+  memo.key.add("accumulator format", fpKindName(accPrec));
+  memo.key.add("exponent format", fpKindName(exponentPrec));
+  memo.key.add("orderTileK", std::to_string(orderTileK));
+  memo.key.add("inputMantBits", std::to_string(inputMantBits));
+  addModelInputs(memo.key, m, prof, confidence, sampleLogBits, numSamples);
+  fileAccMemo(memo);
+  if (!flags::ImportAccuracyMemo.empty()) {
+    LegacyAccHash legacy(m, prof, sampleLogBits);
+    legacy.mix(0x6d6dULL);
+    legacy.mix((uint64_t)inputPrec);
+    legacy.mix((uint64_t)accPrec);
+    legacy.mix((uint64_t)exponentPrec);
+    legacy.mixD(flags::ExponentPenalty.getValue());
+    if (confidence != kDefaultConfidence)
+      legacy.mixD(confidence);
+    if (orderTileK)
+      legacy.mix(0x746b00ULL | orderTileK);
+    if (inputMantBits)
+      legacy.mix(0x6d6200ULL | inputMantBits);
+    memo.legacyName = legacy.name();
+  }
   {
     double cAcc, cDom;
-    if (accCacheLookup(cacheKey, cAcc, cDom)) {
+    if (lookupAccMemo(memo, cAcc, cDom)) {
       if (domainErrOut)
         *domainErrOut = cDom;
       return cAcc;
@@ -323,7 +413,8 @@ double getMatmulAccuracyCost(const AbstractMatmul &m, const MatmulProfile &prof,
   }
   if (domainErrOut)
     *domainErrOut = dom;
-  accCacheStore(cacheKey, acc, dom);
+  if (!flags::Cache.empty())
+    storeAccMemo(memo, acc, dom);
   return acc;
 }
 
@@ -344,14 +435,22 @@ double getOzakiIIAccuracyCost(const AbstractMatmul &m,
     report_fatal_error(
         "getOzakiIIAccuracyCost: unexpected profile cell-vector shape");
 
-  uint64_t cacheKey = accProfileHash(m, prof, sampleLogBits);
-  cacheKey = accHashMix(cacheKey, 0x6f7aULL); // "oz" discriminator
-  cacheKey = accHashMix(cacheKey, capturedBits);
-  if (confidence != kDefaultConfidence)
-    cacheKey = accHashD(cacheKey, confidence);
+  AccMemo memo;
+  memo.key.add("model", "getOzakiIIAccuracyCost");
+  memo.key.add("capturedBits", std::to_string(capturedBits));
+  addModelInputs(memo.key, m, prof, confidence, sampleLogBits, numSamples);
+  fileAccMemo(memo);
+  if (!flags::ImportAccuracyMemo.empty()) {
+    LegacyAccHash legacy(m, prof, sampleLogBits);
+    legacy.mix(0x6f7aULL);
+    legacy.mix(capturedBits);
+    if (confidence != kDefaultConfidence)
+      legacy.mixD(confidence);
+    memo.legacyName = legacy.name();
+  }
   {
     double cAcc, cDom;
-    if (accCacheLookup(cacheKey, cAcc, cDom)) {
+    if (lookupAccMemo(memo, cAcc, cDom)) {
       if (domainErrOut)
         *domainErrOut = cDom;
       return cAcc;
@@ -435,7 +534,8 @@ double getOzakiIIAccuracyCost(const AbstractMatmul &m,
     llvm::errs() << "DOMERR ozakiII capturedBits=" << capturedBits << " "
                  << percentileLabel(confidence) << "_relErr=" << dom
                  << " (sumcost=" << acc << ")\n";
-  accCacheStore(cacheKey, acc, dom);
+  if (!flags::Cache.empty())
+    storeAccMemo(memo, acc, dom);
   return acc;
 }
 

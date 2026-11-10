@@ -6,8 +6,6 @@
 ; RUN: ls %t/c | FileCheck --allow-empty --check-prefix=FILES %s
 ; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%t/prof -poseidon-enable-herbie=true -poseidon-herbie-binary=%t/herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-pt=false -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-comp-cost-budget=100000000 -poseidon-cache=%t/c -S -o /dev/null 2>&1 | FileCheck --check-prefix=RETRY %s
 ; REQUIRES: poseidon
-; XFAIL: *
-; A Herbie killed by a signal is reported and cached as a timeout.
 
 ; A Herbie process that dies from a signal (here SIGKILL, as the OOM killer
 ; sends) well inside its wall budget crashed; it did not time out. The compile

@@ -4,8 +4,6 @@
 ; RUN: grep -q '"-256": 1,' %t/c/table.json
 ; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/pow_term/out0 -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-comp-cost-budget=-200 -poseidon-cache=%t/c -S -o /dev/null 2>&1 | FileCheck --check-prefixes=FOREIGN,PICK %s
 ; REQUIRES: poseidon
-; XFAIL: *
-; A table.json entry whose key names no compiler is replayed.
 
 ; A table.json entry whose key names no compiler is a miss. The cached table
 ; gets other numbers (the point the solve picks made the worst) and loses any

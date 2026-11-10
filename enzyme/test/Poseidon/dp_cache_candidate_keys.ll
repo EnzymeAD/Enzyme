@@ -31,7 +31,7 @@ declare double @__poseidon_fp_optimize(double (double, double)*, ...)
 attributes #0 = { "target-cpu"="x86-64" }
 
 ; SOLVE: dropped (unpriced arm)
-; SOLVE: Applying solution for (- (sqrt (+ (* v0 v0) (* v1 v1))) v0) --(0)-> (/.f64 (*.f64 v1 v1)
+; SOLVE: Applying solution for (- (sqrt (+ (* v0 v0) (* v1 v1))) v0) --(1)-> (/.f64 (*.f64 v1 v1)
 ; SOLVE: define double @preprocess_tester
 ; SOLVE-NOT: select
 ; SOLVE: fdiv

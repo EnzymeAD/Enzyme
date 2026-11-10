@@ -243,10 +243,11 @@ HerbieRunResult runHerbie(const std::vector<std::string> &inputExprs,
       procs.push_back(PI);
   }
   bool killed = false;
+  std::string crash;
   int RC = 0;
   for (auto &PI : procs) {
     std::optional<unsigned> waitFor;
-    if (ExecutionFailed || killed) {
+    if (ExecutionFailed || killed || !crash.empty()) {
       waitFor = 1;
     } else if (wallBudget) {
       double spent = std::chrono::duration<double>(
@@ -256,10 +257,17 @@ HerbieRunResult runHerbie(const std::vector<std::string> &inputExprs,
     }
     std::string WaitErr;
     llvm::sys::ProcessInfo R = llvm::sys::Wait(PI, waitFor, &WaitErr);
-    if (R.ReturnCode == -2)
-      killed = true;
-    else if (R.ReturnCode != 0 && RC == 0)
+    // Wait returns -2 both when its own alarm killed the process and when a
+    // signal from elsewhere (the OOM killer's SIGKILL) ended it; only its
+    // message tells the two apart.
+    if (R.ReturnCode == -2) {
+      if (StringRef(WaitErr).starts_with("Child timed out"))
+        killed = true;
+      else if (crash.empty())
+        crash = "signal: " + WaitErr;
+    } else if (R.ReturnCode != 0 && RC == 0) {
       RC = R.ReturnCode;
+    }
   }
   double herbieSecs = std::chrono::duration<double>(
                           std::chrono::steady_clock::now() - herbieStart)
@@ -268,6 +276,19 @@ HerbieRunResult runHerbie(const std::vector<std::string> &inputExprs,
   if (ExecutionFailed) {
     llvm::errs() << "Execution failed: " << ErrMsg << "\n";
     removeShardFiles();
+    return Run;
+  }
+  // A crash is not a property of the input, so unlike a timeout it is not
+  // recorded: the next compile runs Herbie again.
+  if (!crash.empty()) {
+    llvm::errs() << "[poseidon] Herbie " << Label << ": crashed (" << crash
+                 << ") after " << herbieSecs
+                 << " s. No algebraic candidates for this subgraph in this "
+                    "compile; nothing is cached, so the next compile runs "
+                    "Herbie again.\n";
+    removeShardFiles();
+    Run.Result = Outcome::Crashed;
+    Run.Crash = crash;
     return Run;
   }
   if (killed) {
@@ -333,6 +354,10 @@ HerbieRunResult runHerbie(const std::vector<std::string> &inputExprs,
     os << json::Value(std::move(*merged));
   }
   removeShardFiles();
+  if (RC != 0)
+    llvm::errs() << "[poseidon] Warning: Herbie " << Label
+                 << " exited with status " << RC
+                 << " but wrote a usable results.json; using it.\n";
 
   llvm::errs() << "Herbie output: " << content << "\n";
 

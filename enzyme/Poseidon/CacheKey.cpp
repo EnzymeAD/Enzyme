@@ -11,6 +11,10 @@
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/Support/FileSystem.h"
+#include "llvm/Support/FormatVariadic.h"
+#include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/xxhash.h"
 
 using namespace llvm;
@@ -50,13 +54,18 @@ json::Object CacheKey::toJSON() const {
 }
 
 std::optional<std::string>
-CacheKey::firstDifference(const json::Object *stored) const {
+CacheKey::firstDifference(const json::Object *stored,
+                          const Equivalents &equivalents) const {
   if (!stored)
     return std::string("format");
   for (const auto &[name, value] : parts) {
     std::optional<StringRef> got = stored->getString(name);
-    if (!got || *got != value)
-      return name;
+    if (got && *got == value)
+      continue;
+    if (got && name == equivalents.part &&
+        llvm::is_contained(equivalents.values, *got))
+      continue;
+    return name;
   }
   if (stored->size() != parts.size())
     for (const auto &kv : *stored)
@@ -64,6 +73,51 @@ CacheKey::firstDifference(const json::Object *stored) const {
                         [&](const auto &p) { return p.first == kv.first; }))
         return kv.first.str();
   return std::nullopt;
+}
+
+Error writeFileAtomically(StringRef path, StringRef contents) {
+  return writeToOutput(path, [&](raw_ostream &os) {
+    os << contents;
+    return Error::success();
+  });
+}
+
+Error writeCacheEntry(StringRef path, const CacheKey &key, json::Value value) {
+  json::Object entry;
+  entry["key"] = key.toJSON();
+  entry["value"] = std::move(value);
+  return writeFileAtomically(
+      path, formatv("{0:2}", json::Value(std::move(entry))).str() + "\n");
+}
+
+CacheEntryRead readCacheEntry(StringRef path, const CacheKey &key,
+                              const CacheKey::Equivalents &equivalents) {
+  CacheEntryRead read;
+  if (!sys::fs::exists(path))
+    return read;
+  auto buf = MemoryBuffer::getFile(path);
+  if (!buf) {
+    read.unreadable = buf.getError().message();
+    return read;
+  }
+  Expected<json::Value> root = json::parse((*buf)->getBuffer());
+  if (!root) {
+    read.unreadable = toString(root.takeError());
+    return read;
+  }
+  json::Object *entry = root->getAsObject();
+  const json::Value *value = entry ? entry->get("value") : nullptr;
+  if (!value) {
+    read.unreadable = "it holds no entry";
+    return read;
+  }
+  if (std::optional<std::string> part =
+          key.firstDifference(entry->getObject("key"), equivalents)) {
+    read.differs = *part;
+    return read;
+  }
+  read.value = *value;
+  return read;
 }
 
 } // namespace poseidon

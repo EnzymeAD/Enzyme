@@ -7,8 +7,6 @@
 ; RUN: FileCheck --check-prefix=EXPLAIN -DID=$(cat %t/solve.id) %s < %t/solve/preprocess_tester.explain.json
 ; RUN: FileCheck --check-prefix=EXPLAIN -DID=$(cat %t/solve.id) %s < %t/hit/preprocess_tester.explain.json
 ; REQUIRES: poseidon
-; XFAIL: *
-; A compile that reads the cached table numbers candidates differently from the compile that solved it.
 
 ; Pricing drops the regime split Herbie lists first and a compile that reads
 ; the table back prices nothing. The rewrite id the solve's _rewrites.json

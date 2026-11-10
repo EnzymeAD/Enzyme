@@ -1,6 +1,6 @@
 ; RUN: %opt < %s %loadPoseidonEnzyme -passes="poseidon,enzyme,poseidon-finalize" -enzyme-preopt=false -poseidon-profile-generate -S | FileCheck %s --check-prefix=GEN
 ; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/canonical_hash -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-cache= -S 2>&1 | FileCheck %s --check-prefix=MATCH
-; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/canonical_hash_missing -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-cache= -S 2>&1 | FileCheck %s --check-prefix=NOFIELD
+; RUN: not --crash %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/canonical_hash_missing -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-cache= -S 2>&1 | FileCheck %s --check-prefix=NOFIELD
 ; RUN: sed '/^define double @tester/,/^}/s|%mul = fmul fast double %add, %z|%extra = fmul fast double %add, %add\n  %mul = fmul fast double %extra, %z|' %s > %t.drift.ll
 ; RUN: not --crash %opt < %t.drift.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/canonical_hash -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-cache= -S 2>&1 | FileCheck %s --check-prefix=DRIFT
 ; REQUIRES: poseidon, enzyme
@@ -33,6 +33,6 @@ attributes #0 = { "target-cpu"="x86-64" }
 ; MATCH-NOT: has no CanonicalHash field
 ; MATCH-NOT: recorded against a different canonical form
 
-; NOFIELD: Warning: {{.*}}canonical_hash_missing{{.*}} has no CanonicalHash field; the canonical form of preprocess_tester is not verified against the profile
+; NOFIELD: Poseidon: {{.*}}canonical_hash_missing{{.*}} has no CanonicalHash field, so its slot indices cannot be checked against the canonical form of preprocess_tester; re-run profile generation.
 
 ; DRIFT: Poseidon: the profile of preprocess_tester was recorded against a different canonical form (profile CanonicalHash f9f2bd660c90d989, this compile {{[0-9a-f]+}})
