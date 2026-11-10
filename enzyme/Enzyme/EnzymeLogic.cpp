@@ -6399,10 +6399,10 @@ llvm::Value *EnzymeLogic::CreateNoFree(RequestContext context,
       return castinst->getWithOperands(reps);
     }
 
-  // Alloca/allocations are unsafe here since one could store freeing functions
-  // into them. For now we will be unsafe regarding indirect function call
-  // frees.
-  if (isa<AllocaInst>(todiff))
+  // Alloca/allocations and arguments are unsafe here since one could pass or
+  // store freeing functions into them. For now we will be unsafe regarding
+  // indirect function call frees.
+  if (isa<AllocaInst>(todiff) || isa<Argument>(todiff))
     return todiff;
 
   std::string demangledCall;
