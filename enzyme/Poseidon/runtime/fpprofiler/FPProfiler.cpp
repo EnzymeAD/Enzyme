@@ -119,7 +119,9 @@ static bool g_metricSet = false;
 class FPProfiler {
 private:
   std::string functionName;
-  std::unordered_map<size_t, ProfileInfo> profileInfo;
+  // By slot index, the order the records are written in: the profile's bytes
+  // key the site's cached DP table.
+  std::map<size_t, ProfileInfo> profileInfo;
   static std::string dir;
 
 public:
