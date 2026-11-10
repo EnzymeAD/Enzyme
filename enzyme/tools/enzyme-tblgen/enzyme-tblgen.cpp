@@ -1974,10 +1974,27 @@ static void emitReverseCommon(raw_ostream &os, const Record *pattern,
       os << curIndent << INDENT << "if (toadd) gutils->addToDiffe(" << origName
          << "->getOperand(" << argIdx << "), toadd, builder);\n";
     } else {
-      os << curIndent << INDENT << "if (toadd) addToDiffe(" << origName
-         << ".getOperand(" << argIdx << "), toadd";
-      os << ", Builder2, " << origName << ".getOperand(" << argIdx
-         << ")->getType());\n";
+      os << curIndent << INDENT << "if (toadd) {\n";
+      os << curIndent << INDENT << INDENT << "Value *orig_op = " << origName
+         << ".getOperand(" << argIdx << ");\n";
+      os << curIndent << INDENT << INDENT
+         << "Type *addingType = orig_op->getType();\n";
+      os << curIndent << INDENT << INDENT
+         << "if (!addingType->isFPOrFPVectorTy()) {\n";
+      os << curIndent << INDENT << INDENT << INDENT << "size_t size = 1;\n";
+      os << curIndent << INDENT << INDENT << INDENT
+         << "if (addingType->isSized())\n";
+      os << curIndent << INDENT << INDENT << INDENT << INDENT
+         << "size = (gutils->newFunc->getParent()->getDataLayout()"
+            ".getTypeSizeInBits(addingType) + 7) / 8;\n";
+      os << curIndent << INDENT << INDENT << INDENT
+         << "addingType = TR.addingType(size, orig_op);\n";
+      os << curIndent << INDENT << INDENT << "}\n";
+      os << curIndent << INDENT << INDENT
+         << "if (addingType || TR.query(orig_op)[{-1}] != BaseType::Integer)\n";
+      os << curIndent << INDENT << INDENT << INDENT
+         << "addToDiffe(orig_op, toadd, Builder2, addingType);\n";
+      os << curIndent << INDENT << "}\n";
     }
     os << curIndent << "}\n";
   }
@@ -2690,6 +2707,8 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
     if (intrinsic != MLIRDerivatives) {
       os << "      case DerivativeMode::ReverseModeGradient:\n";
       os << "      case DerivativeMode::ReverseModeCombined:{\n";
+      os << "        if (!gutils->isConstantInstruction(&" << origName
+         << ")) {\n";
       os << "        IRBuilder<> Builder2(&" << origName << ");\n";
       os << "        getReverseBuilder(Builder2);\n";
       os << "        Value *dif = nullptr;\n";
@@ -2701,6 +2720,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os,
     emitReverseCommon(os, pattern, tree, intrinsic, origName, argOps);
 
     if (intrinsic != MLIRDerivatives) {
+      os << "        }\n";
       os << "        auto found = gutils->invertedPointers.find(&(" << origName
          << "));\n";
       os << "        if (found != gutils->invertedPointers.end() && "
