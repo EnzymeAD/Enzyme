@@ -6,21 +6,32 @@
 inline void emit_BLASTypes(raw_ostream &os) {
   os << "const bool byRef = blas.prefix == \"\" || blas.prefix == "
         "\"cublas_\";\n";
-  os << "const bool byRefFloat = byRef || blas.prefix == "
-        "\"cublas\";\n";
-  os << "(void)byRefFloat;\n";
   os << "const bool cblas = blas.prefix == \"cblas_\";\n";
+  os << "const bool byRefFloat = byRef || blas.prefix == "
+        "\"cublas\" || (cblas && (blas.floatType == \"c\" || blas.floatType == "
+        "\"z\" || blas.floatType == \"C\" || blas.floatType == \"Z\"));\n";
+  os << "(void)byRefFloat;\n";
   os << "const bool cublas = blas.prefix == \"cublas_\" || blas.prefix == "
         "\"cublas\";\n";
   os << "const bool cublasv2 = blas.prefix == "
         "\"cublas\" && StringRef(blas.suffix).contains(\"v2\");\n";
 
-  os << "TypeTree ttFloat;\n"
-     << "llvm::Type *floatType = blas.fpType(call.getContext(), true); \n"
+  os << "const auto &DL = fntypeinfo.Function->getParent()->getDataLayout();\n"
+     << "llvm::Type *floatType = blas.fpType(call.getContext(), true);\n"
+     << "llvm::Type *elemType = blas.fpType(call.getContext(), false);\n"
+     << "const uint64_t floatByteSize = (DL.getTypeSizeInBits(floatType) + 7) "
+        "/ 8;\n"
+     << "const uint64_t elemByteSize = (DL.getTypeSizeInBits(elemType) + 7) / "
+        "8;\n"
+     << "(void)floatByteSize;\n"
+     << "(void)elemByteSize;\n"
+     << "TypeTree ttFloat;\n"
      << "if (byRefFloat) {\n"
      << "  ttFloat.insert({-1},BaseType::Pointer);\n"
-     << "  ttFloat.insert({-1,0},floatType);\n"
-     << "} else { \n"
+     << "  for (uint64_t compOffset = 0; compOffset < elemByteSize; compOffset "
+        "+= floatByteSize)\n"
+     << "    ttFloat.insert({-1, int(compOffset)}, floatType);\n"
+     << "} else {\n"
      << "  ttFloat.insert({-1},floatType);\n"
      << "}\n";
 
@@ -115,15 +126,36 @@ inline void emit_BLASTA(TGPattern &pattern, raw_ostream &os) {
       // TODO, we need a get length arg number from vector since always assuming
       // it is arg 0 is wrong.
       if (!lv23)
-        os << "  if (auto n = dyn_cast<ConstantInt>(call.getArgOperand(0 + "
-              "offset))) {\n"
-           << "    if (auto inc = dyn_cast<ConstantInt>(call.getArgOperand("
-           << i << " + offset))) {\n"
-           << "      assert(!inc->isNegative());\n"
+        os << "  if (auto *lenConst = !byRef ? "
+              "dyn_cast<ConstantInt>(call.getArgOperand(0 + offset)) : "
+              "nullptr) {\n"
+           << "    if (auto *incConst = "
+              "dyn_cast<ConstantInt>(call.getArgOperand("
+           << (i + 1) << " + offset))) {\n"
            << "      TypeTree ttData = ttPtr;\n"
-           << "      for (size_t i = 1; i < n->getZExtValue(); i++)\n"
-           << "          ttData.insert({-1, int(i * inc->getZExtValue())}, "
-              "floatType);\n"
+           << "      if (!lenConst->isNegative() && !incConst->isZero() && "
+              "elemByteSize > 0) {\n"
+           << "        uint64_t count = lenConst->getLimitedValue();\n"
+           << "        uint64_t strideElems = "
+              "incConst->getValue().abs().getLimitedValue();\n"
+           << "        uint64_t maxByteOffset = MaxTypeOffset > 0 ? "
+              "uint64_t(MaxTypeOffset) : 0;\n"
+           << "        if (strideElems > 0 && strideElems <= maxByteOffset / "
+              "elemByteSize) {\n"
+           << "          uint64_t strideBytes = strideElems * elemByteSize;\n"
+           << "          for (uint64_t idx = 0; idx < count; ++idx) {\n"
+           << "            if (idx > maxByteOffset / strideBytes)\n"
+           << "              break;\n"
+           << "            uint64_t byteOffset = idx * strideBytes;\n"
+           << "            for (uint64_t compOffset = 0; compOffset < "
+              "elemByteSize; compOffset += floatByteSize) {\n"
+           << "              if (byteOffset + compOffset <= maxByteOffset)\n"
+           << "                ttData.insert({-1, int(byteOffset + "
+              "compOffset)}, floatType);\n"
+           << "            }\n"
+           << "          }\n"
+           << "        }\n"
+           << "      }\n"
            << "      updateAnalysis(call.getArgOperand(" << i
            << " + offset), ttData, &call);\n"
            << "    } else {\n"
