@@ -403,8 +403,7 @@ static void checkFlagClassification() {
     ++listed[kv.first];
   for (const auto &kv : notSolveInputs())
     ++listed[kv.first];
-  for (const auto &kv : cl::getRegisteredOptions()) {
-    StringRef name = kv.first;
+  for (const auto &[name, opt] : cl::getRegisteredOptions()) {
     if (name.starts_with("poseidon-") && listed.lookup(name) != 1)
       report_fatal_error(Twine("Poseidon: -") + name + " is in " +
                          (listed.lookup(name) ? "both" : "neither") +

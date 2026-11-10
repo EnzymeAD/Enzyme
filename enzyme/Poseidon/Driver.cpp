@@ -3502,24 +3502,56 @@ void adoptModule(Module &M, Module &from) {
   M.setModuleInlineAsm(from.getModuleInlineAsm());
 }
 
+// Whether Enzyme left the module's derivative requests to the LTO post-link
+// run: in these phases it does unless -enzyme-lto-prelink is given
+// (augmentPassBuilder in Enzyme.cpp), and an Enzyme without that option never
+// does.
+bool enzymeDeferredToPostLink(ThinOrFullLTOPhase Phase,
+                              OptimizationLevel Level) {
+  if (Phase != ThinOrFullLTOPhase::FullLTOPreLink &&
+      (Phase != ThinOrFullLTOPhase::ThinLTOPreLink ||
+       Level == OptimizationLevel::O0))
+    return false;
+  auto &Opts = cl::getRegisteredOptions();
+  auto It = Opts.find("enzyme-lto-prelink");
+  return It != Opts.end() &&
+         !static_cast<cl::opt<bool> *>(It->second)->getValue();
+}
+
 struct FinalizePass : PassParent<FinalizePass> {
   PassBuilder *PB = nullptr;
   OptimizationLevel Level = OptimizationLevel::O3;
   ThinOrFullLTOPhase Phase = ThinOrFullLTOPhase::None;
+  // Run by pipeline name, the pass is not told which phase it runs in.
+  bool PhaseKnown = false;
 
   FinalizePass() = default;
   FinalizePass(PassBuilder *PB, OptimizationLevel Level,
                ThinOrFullLTOPhase Phase)
-      : PB(PB), Level(Level), Phase(Phase) {}
+      : PB(PB), Level(Level), Phase(Phase), PhaseKnown(true) {}
+
+  std::string unloweredRequestError() const {
+    std::string msg = "Poseidon: profile generation emitted a derivative "
+                      "request that nothing lowered. ";
+    if (PhaseKnown && enzymeDeferredToPostLink(Phase, Level))
+      return msg + "This is an LTO pre-link compile, where Enzyme leaves "
+                   "derivative requests to the post-link run unless "
+                   "-enzyme-lto-prelink is given; pass -mllvm "
+                   "-enzyme-lto-prelink=1 (for HIP through -Xclang, as "
+                   "poseidon-clang does).";
+    msg += "Add -fpass-plugin=<ClangEnzyme>.so after the Poseidon plugin.";
+    if (!PhaseKnown)
+      msg += " In an LTO pre-link pipeline Enzyme also leaves derivative "
+             "requests to the post-link run unless -enzyme-lto-prelink is "
+             "given.";
+    return msg;
+  }
 
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &) {
     for (Function &F : M)
       if (F.isDeclaration() && !F.use_empty() &&
           F.getName().starts_with("__enzyme_autodiff_poseidon"))
-        report_fatal_error(
-            "Poseidon: profile generation emitted a derivative request that "
-            "nothing lowered. Add -fpass-plugin=<ClangEnzyme>.so after the "
-            "Poseidon plugin.");
+        report_fatal_error(Twine(unloweredRequestError()));
     // Every site of the module has been processed by now, in the early run or
     // the late one. A module without a descriptor removes the unit's manifest,
     // so that what an earlier compile of the unit recorded is not applied.
