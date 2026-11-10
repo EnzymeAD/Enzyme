@@ -1,4 +1,5 @@
 // RUN: %eopt --enzyme %s | FileCheck %s
+// RUN: %eopt --pass-pipeline="builtin.module(enzyme{dataflow})" %s | FileCheck %s
 
 // Test reverse mode AD for llvm.extractvalue on active (f64) struct elements.
 // See https://github.com/EnzymeAD/Enzyme/issues/2811

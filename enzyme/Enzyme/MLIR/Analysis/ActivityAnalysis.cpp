@@ -336,6 +336,11 @@ void enzyme::DataFlowActivityAnalyzer::joinActiveDataState(
 void enzyme::DataFlowActivityAnalyzer::joinActivePointerState(
     const AliasClassSet &aliasClasses, ForwardOriginsLattice &sources,
     BackwardOriginsLattice &sinks) {
+  if (aliasClasses.isUnknown()) {
+    (void)sources.markUnknown();
+    (void)sinks.markUnknown();
+    return;
+  }
   traversePointsToSets(aliasClasses, p2sets, [&](DistinctAttr aliasClass) {
     (void)sources.merge(forwardOriginsMap.getOrigins(aliasClass));
     (void)sinks.merge(backwardOriginsMap.getOrigins(aliasClass));
@@ -344,11 +349,13 @@ void enzyme::DataFlowActivityAnalyzer::joinActivePointerState(
 
 void enzyme::DataFlowActivityAnalyzer::joinActiveValueState(
     Value v, ForwardOriginsLattice &sources, BackwardOriginsLattice &sinks) {
-  if (isa<LLVM::LLVMPointerType, MemRefType>(v.getType())) {
+  if (containsPointerLike(v.getType())) {
     auto *aliasClasses = solver.getOrCreateState<AliasClassLattice>(v);
     joinActivePointerState(aliasClasses->getAliasClassesObject(), sources,
                            sinks);
-  } else {
+  }
+  if (containsValueActiveType(v.getType()) ||
+      !containsPointerLike(v.getType())) {
     joinActiveDataState(v, sources, sinks);
   }
 }

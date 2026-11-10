@@ -44,13 +44,62 @@
 // TODO: remove this once aliasing interface is factored out.
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/IR/BuiltinTypes.h"
 #include "llvm/ADT/SetOperations.h"
+#include "llvm/ADT/SmallPtrSet.h"
 
 using namespace mlir;
 using namespace mlir::dataflow;
 
+static bool containsPointerLikeImpl(Type type, SmallPtrSetImpl<Type> &visited) {
+  if (isa<MemRefType, UnrankedMemRefType, LLVM::LLVMPointerType,
+          enzyme::CacheType>(type))
+    return true;
+  if (auto shapedType = dyn_cast<ShapedType>(type))
+    return containsPointerLikeImpl(shapedType.getElementType(), visited);
+  if (auto arrayType = dyn_cast<LLVM::LLVMArrayType>(type))
+    return containsPointerLikeImpl(arrayType.getElementType(), visited);
+  if (auto structType = dyn_cast<LLVM::LLVMStructType>(type)) {
+    if (structType.isOpaque() || !visited.insert(type).second)
+      return false;
+    return llvm::any_of(structType.getBody(), [&](Type elementType) {
+      return containsPointerLikeImpl(elementType, visited);
+    });
+  }
+  return false;
+}
+
+bool enzyme::containsPointerLike(Type type) {
+  SmallPtrSet<Type, 4> visited;
+  return containsPointerLikeImpl(type, visited);
+}
+
+static bool containsValueActiveTypeImpl(Type type,
+                                        SmallPtrSetImpl<Type> &visited) {
+  if (isa<FloatType, ComplexType>(type))
+    return true;
+  if (isa<TensorType, VectorType>(type))
+    return containsValueActiveTypeImpl(cast<ShapedType>(type).getElementType(),
+                                       visited);
+  if (auto arrayType = dyn_cast<LLVM::LLVMArrayType>(type))
+    return containsValueActiveTypeImpl(arrayType.getElementType(), visited);
+  if (auto structType = dyn_cast<LLVM::LLVMStructType>(type)) {
+    if (structType.isOpaque() || !visited.insert(type).second)
+      return false;
+    return llvm::any_of(structType.getBody(), [&](Type elementType) {
+      return containsValueActiveTypeImpl(elementType, visited);
+    });
+  }
+  return false;
+}
+
+bool enzyme::containsValueActiveType(Type type) {
+  SmallPtrSet<Type, 4> visited;
+  return containsValueActiveTypeImpl(type, visited);
+}
+
 static bool isPointerLike(Type type) {
-  return isa<MemRefType, LLVM::LLVMPointerType, enzyme::CacheType>(type);
+  return enzyme::containsPointerLike(type);
 }
 
 //===----------------------------------------------------------------------===//
