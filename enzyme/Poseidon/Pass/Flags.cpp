@@ -192,8 +192,7 @@ cl::opt<std::string> CostModel(
     "poseidon-cost-model", cl::init(kDefaults.Model.CostModel), cl::Hidden,
     cl::value_desc("csv"),
     cl::desc("Cost model to price candidates from; without it the model for "
-             "the module's target-cpu is looked up in the user cache and then "
-             "in what the installation ships"));
+             "the module's target-cpu is looked up in the user cache"));
 cl::opt<unsigned>
     NumSamples("poseidon-num-samples", cl::init(kDefaults.Model.NumSamples),
                cl::Hidden,

@@ -27,6 +27,10 @@ config.environment['LD_LIBRARY_PATH'] = os.path.pathsep.join(
 for var in ('CUDA_VISIBLE_DEVICES', 'HOME'):
     if var in os.environ:
         config.environment[var] = os.environ[var]
+# A compile that names no cost model looks one up in the user cache: the tests
+# get one of their own, which holds none, never the developer's.
+config.environment['XDG_CACHE_HOME'] = os.path.join(config.test_exec_root,
+                                                    'xdg-cache')
 
 config.available_features.add('poseidon')
 # Before LLVM 21, SCEV does not carry no-wrap through the trunc of the i64

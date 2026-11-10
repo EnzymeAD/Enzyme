@@ -106,7 +106,7 @@ int main(int argc, char **argv) {
 // PRIMAL: GEMM-PASS
 
 // CHECK: Matmul[0]: 16x16x256 a=f64 b=f64 acc=f64 d=f64 origin=ScalarLoopReduction
-// CHECK: ozaki-ii nm=12 wmma m16n16k16 s8/s32  compCost/MAC={{.*}}  rel=4.443700e-02  domainError=
+// CHECK: ozaki-ii nm=12 wmma m16n16k16 s8/s32  compCost/MAC={{.*}}  rel=4.687500e-02  domainError=
 // CHECK: Poseidon error-budget: matmul -> ozaki-ii nm=12 wmma m16n16k16 s8/s32 (domain err {{.*}} <= 1.000000e-12 at confidence 9.500000e-01)
 // CHECK: Applying solution for matmul[0] -> ozaki-ii nm=12 wmma m16n16k16 s8/s32
 // CHECK: [ozaki-host-dispatch] wrote descriptor for _Z11gemm_kernelPdPKdS1_: C=arg0 A=arg1 B=arg2 256x256x256 nm=12 (standalone)

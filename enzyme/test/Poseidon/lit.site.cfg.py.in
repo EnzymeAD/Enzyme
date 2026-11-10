@@ -66,7 +66,9 @@ config.substitutions.append(('%cmake_generator',
 config.substitutions.append(('%cmake', '"@CMAKE_COMMAND@"'))
 config.substitutions.append(('%poseidon_package_dir', '@POSEIDON_BINARY_DIR@'))
 config.substitutions.append(('%enzyme_binary_dir', '@ENZYME_BINARY_DIR@'))
-config.substitutions.append(('%gpu_cost_model', '@POSEIDON_TEST_COST_MODEL@'))
+config.substitutions.append(('%gpu_cost_model',
+                             '@POSEIDON_TEST_COST_MODELS@/cm_gpu_synthetic.csv'))
+config.substitutions.append(('%cost_models', '@POSEIDON_TEST_COST_MODELS@'))
 config.substitutions.append(('%gpu_arch', '@POSEIDON_TEST_GPU_ARCH_RESOLVED@'))
 
 herbie_binary = '@POSEIDON_HERBIE_BINARY_PATH@'

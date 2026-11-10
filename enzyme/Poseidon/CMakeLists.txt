@@ -152,13 +152,6 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     PROPERTIES COMPILE_OPTIONS "-fno-fast-math;-ffp-contract=off")
 endif()
 include(GNUInstallDirs)
-# Where a compile looks for the cost model of its target device when neither
-# the flag nor the environment names one.
-set_source_files_properties(
-  CostModel.cpp
-  PROPERTIES
-    COMPILE_DEFINITIONS
-    POSEIDON_INSTALL_COST_MODELS="${CMAKE_INSTALL_FULL_DATADIR}/poseidon/cost_models")
 
 # The device half of the CUDA profiler, as NVPTX bitcode the plugin carries and
 # links into each device module it compiles for profile generation. The
@@ -529,7 +522,6 @@ install(
   DIRECTORY ${ENZYME_SOURCE_DIR}/include/poseidon
   DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 install(DIRECTORY runtime DESTINATION ${CMAKE_INSTALL_DATADIR}/poseidon)
-install(DIRECTORY cost_models DESTINATION ${CMAKE_INSTALL_DATADIR}/poseidon)
 install(DIRECTORY tools DESTINATION ${CMAKE_INSTALL_DATADIR}/poseidon)
 install(
   PROGRAMS tools/explain/poseidon-explain

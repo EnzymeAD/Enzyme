@@ -1,5 +1,5 @@
 ; RUN: rm -rf %t && mkdir -p %t
-; RUN: env FAKE_HERBIE_DIR=%S/Inputs/one_rewrite_per_output %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/regime_split/profiles -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/Inputs/fake-herbie.sh -poseidon-enable-pt=false -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-cost-budget=1e9 -poseidon-cache=%t -S 2>&1 | FileCheck %s
+; RUN: env FAKE_HERBIE_DIR=%S/Inputs/one_rewrite_per_output %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/regime_split/profiles -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/Inputs/fake-herbie.sh -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cost-budget=1e9 -poseidon-cache=%t -S 2>&1 | FileCheck %s
 
 ; The binary64 and binary32 searches of one output return the same exact
 ; rewrite. Each search is its own item, so a solve that may take one rewrite

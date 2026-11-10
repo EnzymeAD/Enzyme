@@ -1,25 +1,24 @@
 # The cost model
 
 Poseidon prices every candidate from one CSV measured on the device the code
-will run on. `poseidon-calibrate` produces it, and a compile that is not told
-which model to use looks one up by the module's target-cpu:
+will run on. No model ships with Poseidon: `poseidon-calibrate` produces one,
+and a compile that is not told which model to use looks one up by the module's
+target-cpu:
 
     -poseidon-cost-model=<csv>              what the compile was told
     POSEIDON_COST_MODEL=<csv>               what the environment says
     ~/.cache/poseidon/cm_<arch>_*.csv       what this user has measured
-    <prefix>/share/poseidon/cost_models/cm_<arch>_*.csv    what is installed
 
 Zero matches, or more than one, aborts the compile naming `poseidon-calibrate`
 and the files it found. A model whose `# native_arch=` header does not name the
 compile target aborts as well: another device's CSV is that device's prices, and
-would reproduce that device's picks.
+would reproduce that device's picks. Results solved with a measured model are
+reproduced from that model, so it is kept with them and named with
+`-poseidon-cost-model`.
 
-`cm_sm_120_RTX5090.csv` is the model the paper was solved with, measured on an
-RTX 5090 (Blackwell GB202). `cm_sm_120_RTX5090.herbie.rkt` beside it is the
-Herbie platform generated from it: Herbie ranks the rewrites its algebraic
-search finds by a platform cost table, and a compile passes the one that sits
-next to the CSV it prices from, so the search and the DP describe one device.
-Both are installed to `share/poseidon/cost_models/`.
+Herbie ranks the rewrites its algebraic search finds by a platform cost table.
+A compile passes the platform that sits next to the CSV it prices from
+(`<csv>.herbie.rkt`), so the search and the DP describe one device.
 
 ## Measuring a device
 

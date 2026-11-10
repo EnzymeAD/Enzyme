@@ -10,12 +10,6 @@ set(POSEIDON_HERBIE_BINARY ""
     CACHE
       FILEPATH
       "Prebuilt Herbie executable to use instead of building the herbie ExternalProject")
-# The paper GPU's model; the CUDA lit tests price from it.
-set(HERBIE_PLATFORM_CSV
-    "${CMAKE_CURRENT_SOURCE_DIR}/cost_models/cm_sm_120_RTX5090.csv"
-    CACHE
-      FILEPATH "Cost model CSV the shipped Herbie platform was generated from")
-
 if(POSEIDON_HERBIE_BINARY)
   set(POSEIDON_HERBIE_BINARY_PATH "${POSEIDON_HERBIE_BINARY}")
 else()
@@ -29,8 +23,8 @@ else()
     BUILD_IN_SOURCE
       1
       # Built from the source tree, not installed as a Racket package: the
-      # module names raco exe embeds are then `syntax/platform-language`, which
-      # is what the shipped cost_models/*.herbie.rkt platform files name.
+      # module names raco exe embeds are then `syntax/platform-language`, the
+      # language csv_to_herbie_platform.py names in the platforms it writes.
     BUILD_COMMAND cargo build --release --manifest-path=egg-herbie/Cargo.toml
     COMMAND
       raco

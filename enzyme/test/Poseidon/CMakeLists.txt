@@ -2,9 +2,6 @@ set(POSEIDON_TEST_GPU_ARCH ""
     CACHE
       STRING
       "CUDA architecture (sm_XY) the integration tests compile for; empty = detect with nvidia-smi")
-set(POSEIDON_TEST_COST_MODEL "${HERBIE_PLATFORM_CSV}"
-    CACHE FILEPATH "Cost-model CSV measured on the GPU the CUDA tests run on")
-
 set(POSEIDON_TEST_GPU_ARCH_RESOLVED "${POSEIDON_TEST_GPU_ARCH}")
 if(NOT POSEIDON_TEST_GPU_ARCH_RESOLVED)
   set(POSEIDON_TEST_GPU_ARCH_RESOLVED "sm_120")
@@ -22,6 +19,39 @@ if(NOT POSEIDON_TEST_GPU_ARCH_RESOLVED)
 endif()
 message(
   STATUS "Poseidon: integration tests target ${POSEIDON_TEST_GPU_ARCH_RESOLVED}")
+
+# The tests price from made-up cost models written into the build tree. A GPU
+# model a test runs Herbie under carries the Herbie platform generated from it,
+# as a calibrated model does. No test prices from a measurement.
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
+set(POSEIDON_TEST_COST_MODELS ${CMAKE_CURRENT_BINARY_DIR}/cost_models)
+set(_generator ${CMAKE_CURRENT_SOURCE_DIR}/Inputs/make_cost_models.py)
+set(_platform ${POSEIDON_SOURCE_DIR}/tools/herbie/csv_to_herbie_platform.py)
+set(_outputs "")
+foreach(_model cpu_native cpu_foreign cpu_noarch cpu_missing gfx942_synthetic
+               sm_120_synthetic_dispatch sm_120_synthetic_half)
+  list(APPEND _outputs ${POSEIDON_TEST_COST_MODELS}/cm_${_model}.csv)
+endforeach()
+set(_platforms "")
+foreach(_arch_model sm_120:sm_120_synthetic sm_90:sm_90_synthetic
+                    ${POSEIDON_TEST_GPU_ARCH_RESOLVED}:gpu_synthetic)
+  string(REPLACE ":" ";" _arch_model ${_arch_model})
+  list(GET _arch_model 0 _arch)
+  list(GET _arch_model 1 _model)
+  set(_csv ${POSEIDON_TEST_COST_MODELS}/cm_${_model}.csv)
+  set(_rkt ${POSEIDON_TEST_COST_MODELS}/cm_${_model}.herbie.rkt)
+  list(APPEND _outputs ${_csv} ${_rkt})
+  list(APPEND _platforms COMMAND ${Python3_EXECUTABLE} ${_platform} --csv
+       ${_csv} --arch ${_arch} --output ${_rkt})
+endforeach()
+add_custom_command(
+  OUTPUT ${_outputs}
+  COMMAND ${Python3_EXECUTABLE} ${_generator} ${POSEIDON_TEST_COST_MODELS}
+          ${POSEIDON_TEST_GPU_ARCH_RESOLVED}
+  ${_platforms}
+  DEPENDS ${_generator} ${_platform}
+  COMMENT "Writing the cost models of the Poseidon tests")
+add_custom_target(poseidon-test-cost-models DEPENDS ${_outputs})
 
 # The Enzyme plugin comes in two builds: ClangEnzyme for -fpass-plugin and
 # LLVMEnzyme for opt's -load-pass-plugin.
@@ -59,7 +89,7 @@ configure_lit_site_cfg(
 
 set(POSEIDON_TEST_DEPS Poseidon-${LLVM_VERSION_MAJOR} poseidon_profile
     poseidon_profile_host poseidon-clang poseidon-calibrate
-    LLVMEnzyme-${LLVM_VERSION_MAJOR})
+    poseidon-test-cost-models LLVMEnzyme-${LLVM_VERSION_MAJOR})
 if(TARGET ClangEnzyme-${LLVM_VERSION_MAJOR})
   list(APPEND POSEIDON_TEST_DEPS ClangEnzyme-${LLVM_VERSION_MAJOR})
 endif()

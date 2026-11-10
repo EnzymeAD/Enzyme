@@ -1,13 +1,13 @@
 ; RUN: rm -rf %t && mkdir -p %t/cache %t/nocm
-; RUN: cp %S/Inputs/fma_opt_cache/cachedHerbieOutput_default_06F0ECDBFA1A458D.txt %t/cache/cachedHerbieOutput_cuda-sm120_B8F90965B34ECC31.txt
+; RUN: cp %S/Inputs/fma_opt_cache/cachedHerbieOutput_default_06F0ECDBFA1A458D.txt %t/cache/cachedHerbieOutput_cuda-sm120_8F24F8744AC078E0.txt
 ; RUN: sed "s/sm_120/sm_90/" %s > %t/sm90.ll
-; RUN: cp %S/Inputs/cm_gpu_fixture_x1e6.csv %t/nocm/
-; RUN: mkdir -p %t/recal && cp %S/Inputs/cm_gpu_fixture_x1e6.csv %S/Inputs/cm_gpu_fixture_x1e6.herbie.rkt %t/recal/ && echo ";; recalibrated" >> %t/recal/cm_gpu_fixture_x1e6.herbie.rkt
+; RUN: cp %cost_models/cm_sm_120_synthetic.csv %t/nocm/
+; RUN: mkdir -p %t/recal && cp %cost_models/cm_sm_120_synthetic.csv %cost_models/cm_sm_120_synthetic.herbie.rkt %t/recal/ && echo ";; recalibrated" >> %t/recal/cm_sm_120_synthetic.herbie.rkt
 
-; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/fma_opt_profiles -poseidon-enable-herbie=true -poseidon-herbie-binary=/nonexistent/herbie -poseidon-enable-pt=false -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_x1e6.csv -poseidon-cache=%t/cache -S 2>&1 | FileCheck --check-prefix=MATCH %s
-; RUN: %opt < %t/sm90.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/fma_opt_profiles -poseidon-enable-herbie=true -poseidon-herbie-binary=/nonexistent/herbie -poseidon-enable-pt=false -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_sm90_x1e6.csv -poseidon-cache=%t/cache -S 2>&1 | FileCheck --check-prefix=OTHERARCH %s
-; RUN: (%opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/fma_opt_profiles -poseidon-enable-herbie=true -poseidon-herbie-binary=/nonexistent/herbie -poseidon-enable-pt=false -poseidon-cost-model=%t/nocm/cm_gpu_fixture_x1e6.csv -poseidon-cache=%t/nocm-cache -S 2>&1 || true) | FileCheck --check-prefix=NOPLATFORM %s
-; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/fma_opt_profiles -poseidon-enable-herbie=true -poseidon-herbie-binary=/nonexistent/herbie -poseidon-enable-pt=false -poseidon-cost-model=%t/recal/cm_gpu_fixture_x1e6.csv -poseidon-cache=%t/cache -S 2>&1 | FileCheck --check-prefix=RECALIBRATED %s
+; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/fma_opt_profiles -poseidon-enable-herbie=true -poseidon-herbie-binary=/nonexistent/herbie -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cache=%t/cache -S 2>&1 | FileCheck --check-prefix=MATCH %s
+; RUN: %opt < %t/sm90.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/fma_opt_profiles -poseidon-enable-herbie=true -poseidon-herbie-binary=/nonexistent/herbie -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_sm_90_synthetic.csv -poseidon-cache=%t/cache -S 2>&1 | FileCheck --check-prefix=OTHERARCH %s
+; RUN: (%opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/fma_opt_profiles -poseidon-enable-herbie=true -poseidon-herbie-binary=/nonexistent/herbie -poseidon-enable-pt=false -poseidon-cost-model=%t/nocm/cm_sm_120_synthetic.csv -poseidon-cache=%t/nocm-cache -S 2>&1 || true) | FileCheck --check-prefix=NOPLATFORM %s
+; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/fma_opt_profiles -poseidon-enable-herbie=true -poseidon-herbie-binary=/nonexistent/herbie -poseidon-enable-pt=false -poseidon-cost-model=%t/recal/cm_sm_120_synthetic.csv -poseidon-cache=%t/cache -S 2>&1 | FileCheck --check-prefix=RECALIBRATED %s
 
 ; Herbie ranks its rewrite candidates by a platform cost table, so a cached
 ; result belongs to the platform it was searched under and its cache entry is
@@ -43,14 +43,14 @@ declare double @__poseidon_fp_optimize(double (double, double, double)*, ...)
 
 attributes #0 = { "target-cpu"="sm_120" }
 
-; MATCH: Using cached Herbie output from {{.*}}cachedHerbieOutput_cuda-sm120_B8F90965B34ECC31.txt
+; MATCH: Using cached Herbie output from {{.*}}cachedHerbieOutput_cuda-sm120_8F24F8744AC078E0.txt
 ; MATCH: define double @preprocess_tester(double %x, double %y, double %z)
 
 ; OTHERARCH-NOT: Using cached Herbie output
 ; OTHERARCH: [poseidon] Herbie subgraph 0 of preprocess_tester
 ; OTHERARCH: Execution failed
 
-; NOPLATFORM: LLVM ERROR: Poseidon: the Herbie algebraic search needs the platform generated from this device's cost model, and {{.*}}cm_gpu_fixture_x1e6.herbie.rkt does not exist. Generate it with 'poseidon-calibrate --only herbie-platform --out {{.*}}cm_gpu_fixture_x1e6.csv'
+; NOPLATFORM: LLVM ERROR: Poseidon: the Herbie algebraic search needs the platform generated from this device's cost model, and {{.*}}cm_sm_120_synthetic.herbie.rkt does not exist. Generate it with 'poseidon-calibrate --only herbie-platform --out {{.*}}cm_sm_120_synthetic.csv'
 
 ; RECALIBRATED-NOT: Using cached Herbie output
 ; RECALIBRATED: [poseidon] Herbie subgraph 0 of preprocess_tester

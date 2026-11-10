@@ -8,7 +8,7 @@
 // RUN: env POSEIDON_PROFILE_DIR=%t/prof %t/gen > %t/gen.out
 // RUN: diff %t/stock.out %t/gen.out
 // RUN: ls %t/prof | FileCheck --check-prefix=PROFILES %s
-// RUN: %poseidon_clangxx -O2 -g -poseidon-profile-use=%t/prof -poseidon-tau=1e-6 -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-enable-herbie=0 -poseidon-cache=%t/c2 -poseidon-explain=%t/x -Rpass-analysis=poseidon %s -o %t/use 2> %t/use.err
+// RUN: %poseidon_clangxx -O2 -g -poseidon-profile-use=%t/prof -poseidon-tau=1e-6 -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-enable-herbie=0 -poseidon-cache=%t/c2 -poseidon-explain=%t/x -Rpass-analysis=poseidon %s -o %t/use 2> %t/use.err
 // RUN: FileCheck --check-prefix=USE %s < %t/use.err
 // RUN: FileCheck --check-prefix=REMARK %s < %t/use.err
 // RUN: %poseidon_explain %t/x --format report | FileCheck --check-prefix=REPORT %s
@@ -16,12 +16,12 @@
 // RUN: paste -d' ' %t/stock.out %t/use.out | awk '{ print ($1 == $4), ($2 == $5), ($3 == $6) }' | FileCheck --check-prefix=SAME %s
 //
 // The profile of each call is keyed by the call, the same at every -O level.
-// RUN: %poseidon_clangxx -O0 -poseidon-profile-use=%t/prof -poseidon-tau=1e-6 -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-enable-herbie=0 -poseidon-cache=%t/c0 %s -o %t/use0 2>&1 | FileCheck --check-prefix=LEVEL %s
-// RUN: %poseidon_clangxx -O1 -poseidon-profile-use=%t/prof -poseidon-tau=1e-6 -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-enable-herbie=0 -poseidon-cache=%t/c1 %s -o %t/use1 2>&1 | FileCheck --check-prefix=LEVEL %s
-// RUN: %poseidon_clangxx -O3 -poseidon-profile-use=%t/prof -poseidon-tau=1e-6 -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-enable-herbie=0 -poseidon-cache=%t/c3 %s -o %t/use3 2>&1 | FileCheck --check-prefix=LEVEL %s
+// RUN: %poseidon_clangxx -O0 -poseidon-profile-use=%t/prof -poseidon-tau=1e-6 -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-enable-herbie=0 -poseidon-cache=%t/c0 %s -o %t/use0 2>&1 | FileCheck --check-prefix=LEVEL %s
+// RUN: %poseidon_clangxx -O1 -poseidon-profile-use=%t/prof -poseidon-tau=1e-6 -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-enable-herbie=0 -poseidon-cache=%t/c1 %s -o %t/use1 2>&1 | FileCheck --check-prefix=LEVEL %s
+// RUN: %poseidon_clangxx -O3 -poseidon-profile-use=%t/prof -poseidon-tau=1e-6 -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-enable-herbie=0 -poseidon-cache=%t/c3 %s -o %t/use3 2>&1 | FileCheck --check-prefix=LEVEL %s
 // RUN: %poseidon_clangxx -O0 -poseidon-profile-generate -poseidon-cache=%t/cg0 %s -o %t/gen0 2>/dev/null
 // RUN: env POSEIDON_PROFILE_DIR=%t/prof0 %t/gen0 > /dev/null
-// RUN: %poseidon_clangxx -O2 -poseidon-profile-use=%t/prof0 -poseidon-tau=1e-6 -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-enable-herbie=0 -poseidon-cache=%t/c20 %s -o %t/use20 2>&1 | FileCheck --check-prefix=LEVEL %s
+// RUN: %poseidon_clangxx -O2 -poseidon-profile-use=%t/prof0 -poseidon-tau=1e-6 -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-enable-herbie=0 -poseidon-cache=%t/c20 %s -o %t/use20 2>&1 | FileCheck --check-prefix=LEVEL %s
 // RUN: %t/use0 > %t/use0.out
 // RUN: diff %t/use.out %t/use0.out
 //

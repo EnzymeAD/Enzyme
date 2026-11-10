@@ -698,14 +698,12 @@ std::string findExisting(const Device &D, const std::string &Preferred) {
   if (sys::fs::exists(Preferred))
     return Preferred;
   std::string Prefix = "cm_" + D.Arch + "_";
-  for (const std::string &Dir : {defaultOutDir(), shipped("cost_models")}) {
-    std::error_code EC;
-    for (sys::fs::directory_iterator It(Dir, EC), E; It != E && !EC;
-         It.increment(EC)) {
-      StringRef Name = sys::path::filename(It->path());
-      if (Name.starts_with(Prefix) && Name.ends_with(".csv"))
-        return It->path();
-    }
+  std::error_code EC;
+  for (sys::fs::directory_iterator It(defaultOutDir(), EC), E; It != E && !EC;
+       It.increment(EC)) {
+    StringRef Name = sys::path::filename(It->path());
+    if (Name.starts_with(Prefix) && Name.ends_with(".csv"))
+      return It->path();
   }
   return Preferred;
 }
@@ -714,7 +712,7 @@ int checkModel(const std::string &Preferred, const Device &D) {
   std::string Csv = findExisting(D, Preferred);
   if (!sys::fs::exists(Csv)) {
     errs() << "poseidon-calibrate: no cost model for " << D.Arch << " in "
-           << defaultOutDir() << " or " << shipped("cost_models")
+           << defaultOutDir()
            << "; measure this device with poseidon-calibrate\n";
     return 1;
   }

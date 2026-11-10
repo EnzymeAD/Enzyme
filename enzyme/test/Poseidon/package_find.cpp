@@ -9,7 +9,7 @@
 // RUN: %cmake --build %t/gen > /dev/null
 // RUN: env POSEIDON_PROFILE_DIR=%t/prof %t/gen/host | FileCheck --check-prefix=OUT %s
 // RUN: ls %t/prof | FileCheck --check-prefix=PROF %s
-// RUN: %cmake %cmake_generator -S %S/Inputs/package -B %t/use -DCMAKE_CXX_COMPILER=%clang++ -DPoseidon_DIR=%poseidon_package_dir -DPOSEIDON_MODE=optimize -DPOSEIDON_PROFILE=%t/prof "-DPOSEIDON_FLAGS=-poseidon-tau=1e-6 -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-enable-herbie=0 -poseidon-print" > /dev/null
+// RUN: %cmake %cmake_generator -S %S/Inputs/package -B %t/use -DCMAKE_CXX_COMPILER=%clang++ -DPoseidon_DIR=%poseidon_package_dir -DPOSEIDON_MODE=optimize -DPOSEIDON_PROFILE=%t/prof "-DPOSEIDON_FLAGS=-poseidon-tau=1e-6 -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-enable-herbie=0 -poseidon-print" > /dev/null
 // RUN: %cmake --build %t/use > %t/use.log 2>&1
 // RUN: FileCheck --check-prefix=USE %s < %t/use.log
 // RUN: %t/use/host | FileCheck --check-prefix=OUT %s

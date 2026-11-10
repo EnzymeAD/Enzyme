@@ -1,5 +1,5 @@
 ; REQUIRES: herbie
-; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/expm1div_profiles -poseidon-enable-herbie=true -poseidon-herbie-binary=%herbie_binary -poseidon-enable-pt=false -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-cache= -poseidon-print -S 2>&1 | FileCheck %s
+; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/expm1div_profiles -poseidon-enable-herbie=true -poseidon-herbie-binary=%herbie_binary -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache= -poseidon-print -S 2>&1 | FileCheck %s
 
 ; Live Herbie on (exp(x) - 1) / x: verifies expm1 candidate is produced.
 

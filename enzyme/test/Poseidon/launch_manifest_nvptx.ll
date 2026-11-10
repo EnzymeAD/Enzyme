@@ -1,16 +1,16 @@
 ; REQUIRES: scev-trunc-iv-nowrap
 ; RUN: rm -rf %t && mkdir -p %t
 ; RUN: sed 's/ozaki_stub\.cu/tcec_matmul.cu/g' %S/Inputs/ozaki_dispatch/ozaki_stub_host.ll > %t/host.ll
-; RUN: %opt %S/Inputs/stale_cache/matmul_device.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/raise_tcec -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_dispatch_x1e6.csv -poseidon-tau=1e-12 -poseidon-cache=%t/c -poseidon-unit=u -S -o /dev/null 2>&1 | FileCheck --check-prefix=WROTE %s
+; RUN: %opt %S/Inputs/stale_cache/matmul_device.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/raise_tcec -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv -poseidon-tau=1e-12 -poseidon-cache=%t/c -poseidon-unit=u -S -o /dev/null 2>&1 | FileCheck --check-prefix=WROTE %s
 ; RUN: ls %t/c | grep launches_ > %t/files
 ; RUN: FileCheck --check-prefix=FILES %s < %t/files
 ; RUN: count 1 < %t/files
 ; RUN: cat %t/c/launches_*.json | FileCheck --check-prefix=FULL %s
-; RUN: %opt %S/Inputs/stale_cache/matmul_device.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/raise_tcec -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma=false -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_dispatch_x1e6.csv -poseidon-tau=1e-12 -poseidon-cache=%t/c -poseidon-unit=u -S -o /dev/null 2>&1 | FileCheck --check-prefix=NONE %s
+; RUN: %opt %S/Inputs/stale_cache/matmul_device.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/raise_tcec -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv -poseidon-tau=1e-12 -poseidon-cache=%t/c -poseidon-unit=u -S -o /dev/null 2>&1 | FileCheck --check-prefix=NONE %s
 ; RUN: ls %t/c > %t/after
 ; RUN: not grep launches_ %t/after
 ; RUN: grep -v __poseidon_fp_optimize %S/Inputs/stale_cache/matmul_device.ll > %t/siteless.ll
-; RUN: %opt %t/siteless.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/raise_tcec -poseidon-raise-wmma -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_dispatch_x1e6.csv -poseidon-cache=%t/fresh -S -o /dev/null
+; RUN: %opt %t/siteless.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/raise_tcec -poseidon-raise-wmma -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv -poseidon-cache=%t/fresh -S -o /dev/null
 ; RUN: not ls %t/fresh
 ; RUN: %opt %t/siteless.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-generate -poseidon-cache=%t/freshgen -S -o /dev/null
 ; RUN: not ls %t/freshgen

@@ -1,8 +1,8 @@
 ; RUN: rm -rf %t && mkdir -p %t
-; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/pow_term/out0 -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-cost-budget=-0.09 -poseidon-cache=%t/c -S -o /dev/null 2>&1 | FileCheck --check-prefixes=SOLVE,PICK %s
+; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/pow_term/out0 -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cost-budget=-0.09 -poseidon-cache=%t/c -S -o /dev/null 2>&1 | FileCheck --check-prefixes=SOLVE,PICK %s
 ; RUN: head -c $(( $(wc -c < %t/c/table.json) / 2 )) %t/c/table.json > %t/half.json && mv %t/half.json %t/c/table.json
-; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/pow_term/out0 -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-cost-budget=-0.09 -poseidon-cache=%t/c -S -o /dev/null 2>&1 | FileCheck --check-prefixes=TRUNC,SOLVE,PICK %s
-; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/pow_term/out0 -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-cost-budget=-0.09 -poseidon-cache=%t/c -S -o /dev/null 2>&1 | FileCheck --check-prefixes=HIT,PICK %s
+; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/pow_term/out0 -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cost-budget=-0.09 -poseidon-cache=%t/c -S -o /dev/null 2>&1 | FileCheck --check-prefixes=TRUNC,SOLVE,PICK %s
+; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/pow_term/out0 -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cost-budget=-0.09 -poseidon-cache=%t/c -S -o /dev/null 2>&1 | FileCheck --check-prefixes=HIT,PICK %s
 
 ; A table.json cut off in the middle (an interrupted write) is reported,
 ; solved again and overwritten; the compile after that reads it back.
