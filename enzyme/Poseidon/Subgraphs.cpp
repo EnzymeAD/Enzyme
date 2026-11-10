@@ -33,10 +33,11 @@ static void aggressiveDCE(
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &nodes,
     const ProfileMap &profileMap, const std::unordered_set<size_t> &zeroGradIdx,
     const SmallVectorImpl<AbstractMatmul> &abstractMatmuls) {
-  SmallPtrSet<Value *, 32> critical;
+  // In the order marked, which -poseidon-print lists them in.
+  SmallSetVector<Value *, 32> critical;
   SmallVector<Value *, 16> worklist;
   auto mark = [&](Value *V) {
-    if (V->getType()->isFloatingPointTy() && critical.insert(V).second)
+    if (V->getType()->isFloatingPointTy() && critical.insert(V))
       worklist.push_back(V);
   };
   for (Instruction &I : instructions(F))
