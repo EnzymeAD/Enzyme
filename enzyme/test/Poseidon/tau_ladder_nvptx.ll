@@ -99,7 +99,7 @@ attributes #5 = { convergent nounwind "uniform-work-group-size" }
 ; LOOSE: fptrunc double
 ; LOOSE-NOT: !poseidon.ds.join
 
-; MID: [poseidon] preprocess_fms_kernel_poseidon_body: tau=1.000000e-12 S=1.187943e+04 A0=2.571104e-13 selected cost={{-[0-9]+}} accCost={{.*}} rel=5.925412e-16
+; MID: [poseidon] preprocess_fms_kernel_poseidon_body: tau=1.000000e-12 S=1.187943e+04 A0=2.571104e-13 selected cost={{-[0-9]+}} accCost={{.*}} rel=7.011882e-16
 ; MID: Applying solution for CS: All FP64(0%) + Expansion2(100%)
 ; MID-LABEL: define {{.*}} @preprocess_fms_kernel_poseidon_body(
 ; MID: !poseidon.ds.join

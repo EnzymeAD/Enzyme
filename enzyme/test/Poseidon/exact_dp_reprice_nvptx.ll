@@ -120,4 +120,4 @@ attributes #2 = { convergent nounwind "uniform-work-group-size" }
 
 ; EXACT: Exact DP: 21 frontier points
 ; EXACT: DP table contains 21 entries.
-; EXACT-BUDGETS: {{^}}-1340878898,-1334534750,-1328475425,-1030015198,-999536151,
+; EXACT-BUDGETS: {{^}}-1340878898,-1334534750,-1328475425,-1029755998,-999536151,

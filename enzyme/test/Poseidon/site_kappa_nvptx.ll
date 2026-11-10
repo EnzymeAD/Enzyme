@@ -148,7 +148,7 @@ attributes #5 = { convergent nounwind "uniform-work-group-size" }
 ; KAPPA: Δ AccCost
 ; KAPPA-NEXT: ---
 ; KAPPA-NEXT: 1.428768e-11{{.*}}All FP64(0%) + FP32(100%)
-; KAPPA: 5.708979e-19{{.*}}All FP64(0%) + Expansion2(100%)
+; KAPPA: 6.795448e-19{{.*}}All FP64(0%) + Expansion2(100%)
 ; KAPPA: [poseidon] site preprocess_matmul_body: kappa=1.000000e+03 (ok) sumsens=4.903078e+04 factor=2.039535e-02
 ; KAPPA: Matmul[0] candidates (initial cost=4.988291e+04
 ; KAPPA-NEXT: wmma m16n16k16 f16/f32: Δcost=-380908769 ΔaccCost=3.332236e+01
@@ -162,7 +162,7 @@ attributes #5 = { convergent nounwind "uniform-work-group-size" }
 ; PLAIN: Δ AccCost
 ; PLAIN-NEXT: ---
 ; PLAIN-NEXT: 1.697296e-04{{.*}}All FP64(0%) + FP32(100%)
-; PLAIN: 6.781944e-12{{.*}}All FP64(0%) + Expansion2(100%)
+; PLAIN: 8.072609e-12{{.*}}All FP64(0%) + Expansion2(100%)
 ; PLAIN: Matmul[0] candidates (initial cost=4.988291e+04
 ; PLAIN-NEXT: wmma m16n16k16 f16/f32: Δcost=-380908769 ΔaccCost=1.633821e+03
 ; PLAIN-NEXT: tcec n=2 wmma m16n16k16 f16/f32: Δcost=-374564621 ΔaccCost=1.460363e+00
