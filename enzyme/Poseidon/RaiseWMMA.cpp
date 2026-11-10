@@ -623,9 +623,11 @@ private:
 } // namespace
 
 void ScalarLoopRaiseMaterializer::run() {
-  if (t.strategy != CandidateMatmul::Option::Strategy::Direct)
+  if (t.realization != Realization::InKernel ||
+      t.variant.scheme != Scheme::Direct)
     report_fatal_error(
-        "ScalarLoopRaiseMaterializer: only Direct strategy supported");
+        "ScalarLoopRaiseMaterializer: only the in-kernel direct scheme is "
+        "realized here");
   if (t.tileM == 0 || t.tileN == 0 || t.tileK == 0 || t.mChain == 0 ||
       t.nChain == 0 || t.kChain == 0)
     report_fatal_error("ScalarLoopRaiseMaterializer: zero tile/chain dim");
@@ -653,8 +655,8 @@ void ScalarLoopRaiseMaterializer::run() {
 
   Type *srcInputTy = llvmTypeForFPKind(ctx, m.aType);
   Type *srcAccTy = llvmTypeForFPKind(ctx, m.accType);
-  Type *tgtInputTy = llvmTypeForFPKind(ctx, t.inputPrec);
-  Type *tgtAccTy = llvmTypeForFPKind(ctx, t.accPrec);
+  Type *tgtInputTy = llvmTypeForFPKind(ctx, t.variant.operand);
+  Type *tgtAccTy = llvmTypeForFPKind(ctx, t.variant.accumulator);
   int64_t srcInputByte =
       (int64_t)DL.getTypeAllocSize(srcInputTy).getFixedValue();
   int64_t tgtInputByte =
@@ -671,7 +673,7 @@ void ScalarLoopRaiseMaterializer::run() {
                        Twine(srcInputByte));
   bool bRowMajor = (h.bStrideByte != srcInputByte);
 
-  const bool needAccCvt = (m.accType != t.accPrec);
+  const bool needAccCvt = (m.accType != t.variant.accumulator);
   const unsigned mPad = t.mChain * t.tileM;
   const unsigned nPad = t.nChain * t.tileN;
   // A and B always route through scratch: a direct no-scratch path mishandled
@@ -686,10 +688,10 @@ void ScalarLoopRaiseMaterializer::run() {
   const std::string shape =
       ("m" + Twine(t.tileM) + "n" + Twine(t.tileN) + "k" + Twine(t.tileK))
           .str();
-  const std::string inputPrecStr = fpKindName(t.inputPrec);
-  const std::string accPrecStr = fpKindName(t.accPrec);
+  const std::string inputPrecStr = fpKindName(t.variant.operand);
+  const std::string accPrecStr = fpKindName(t.variant.accumulator);
   std::string mmaSuffix;
-  switch (t.inputPrec) {
+  switch (t.variant.operand) {
   case FPKind::F16:
     mmaSuffix = accPrecStr + "." + accPrecStr;
     break;
@@ -950,7 +952,7 @@ void ScalarLoopRaiseMaterializer::run() {
           bodyB.CreateMul(kOuter64, ConstantInt::get(i64Ty, h.aStrideByte)));
       if (padded)
         emitCooperativeScratchFillPadded(
-            bodyB, aScratchGen, tgtInputTy, t.inputPrec, aSrcForIter,
+            bodyB, aScratchGen, tgtInputTy, t.variant.operand, aSrcForIter,
             srcInputTy, /*fillRows=*/aFillRows, /*fillCols=*/aFillCols,
             /*validRows=*/validM, /*validCols=*/validK,
             /*srcRowStrideByte=*/h.aLeadingDimByte,
@@ -960,7 +962,7 @@ void ScalarLoopRaiseMaterializer::run() {
             /*assumeBlockCoversAll=*/aFillSingleShot);
       else
         emitCooperativeScratchFill(
-            bodyB, aScratchGen, tgtInputTy, t.inputPrec, aSrcForIter,
+            bodyB, aScratchGen, tgtInputTy, t.variant.operand, aSrcForIter,
             srcInputTy,
             /*numRows=*/m.M, /*numCols=*/(uint64_t)t.tileK,
             /*srcRowStrideByte=*/h.aLeadingDimByte,
@@ -978,7 +980,7 @@ void ScalarLoopRaiseMaterializer::run() {
       int64_t bNStrideByte = bRowMajor ? srcInputByte : h.bLeadingDimByte;
       if (padded)
         emitCooperativeScratchFillPadded(
-            bodyB, bScratchGen, tgtInputTy, t.inputPrec, bSrcForIter,
+            bodyB, bScratchGen, tgtInputTy, t.variant.operand, bSrcForIter,
             srcInputTy, /*fillRows=*/bFillRows, /*fillCols=*/bFillCols,
             /*validRows=*/validK, /*validCols=*/validN,
             /*srcRowStrideByte=*/bKStrideByte,
@@ -988,7 +990,7 @@ void ScalarLoopRaiseMaterializer::run() {
             /*assumeBlockCoversAll=*/bFillSingleShot);
       else
         emitCooperativeScratchFill(
-            bodyB, bScratchGen, tgtInputTy, t.inputPrec, bSrcForIter,
+            bodyB, bScratchGen, tgtInputTy, t.variant.operand, bSrcForIter,
             srcInputTy,
             /*numRows=*/(uint64_t)t.tileK, /*numCols=*/m.N,
             /*srcRowStrideByte=*/bKStrideByte,

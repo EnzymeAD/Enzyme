@@ -16,6 +16,7 @@
 #include "Optimize.h"
 
 #include "InKernelRaise.h"
+#include "MatmulInternal.h"
 #include "WmmaUtils.h"
 #include <functional>
 
@@ -105,9 +106,9 @@ struct OzakiVariant {
 
 OzakiVariant deriveOzakiVariant(const CandidateMatmul::Option &opt) {
   OzakiVariant v;
-  v.N = opt.strategyParam;
-  v.slice = sliceFromFPKind(opt.inputPrec);
-  v.accumKind = opt.accPrec;
+  v.N = sliceCount(opt.variant);
+  v.slice = sliceFromFPKind(opt.variant.operand);
+  v.accumKind = opt.variant.accumulator;
   v.tileM = opt.tileM;
   v.tileN = opt.tileN;
   v.tileK = opt.tileK;
@@ -224,26 +225,30 @@ private:
 } // namespace
 
 void OzakiIRaiseMaterializer::run() {
-  if (t.strategy != CandidateMatmul::Option::Strategy::OzakiI)
+  if (t.realization != Realization::InKernel ||
+      t.variant.scheme != Scheme::Split)
     report_fatal_error(
-        "OzakiIRaiseMaterializer: only OzakiI strategy supported");
-  if (t.strategyParam < 2 || t.strategyParam > 8)
-    report_fatal_error("OzakiIRaiseMaterializer: N (strategyParam) must be in "
+        "OzakiIRaiseMaterializer: only the in-kernel split scheme is "
+        "realized here");
+  const unsigned n = sliceCount(t.variant);
+  if (n < 2 || n > 8)
+    report_fatal_error("OzakiIRaiseMaterializer: the slice count must be in "
                        "[2, 8] (got " +
-                       Twine(t.strategyParam) + ")");
+                       Twine(n) + ")");
   runTcec();
 }
 
 void OzakiIRaiseMaterializer::runTcec() {
-  if (t.inputPrec != FPKind::F16 && t.inputPrec != FPKind::BF16 &&
-      t.inputPrec != FPKind::TF32)
+  const FPKind operand = t.variant.operand;
+  if (operand != FPKind::F16 && operand != FPKind::BF16 &&
+      operand != FPKind::TF32)
     report_fatal_error("OzakiIRaiseMaterializer: input slice must be F16, "
                        "BF16, or TF32 (got " +
-                       Twine(fpKindName(t.inputPrec)) + ")");
-  if (t.accPrec != FPKind::F32)
+                       Twine(fpKindName(operand)) + ")");
+  if (t.variant.accumulator != FPKind::F32)
     report_fatal_error(
         "OzakiIRaiseMaterializer: accumulator must be F32 (got " +
-        Twine(fpKindName(t.accPrec)) + ")");
+        Twine(fpKindName(t.variant.accumulator)) + ")");
   if (t.tileM == 0 || t.tileN == 0 || t.tileK == 0 || t.mChain == 0 ||
       t.nChain == 0 || t.kChain == 0)
     report_fatal_error("OzakiIRaiseMaterializer: zero tile/chain dim");
@@ -832,11 +837,10 @@ void materializeOzakiIRaise(const AbstractMatmul &m,
 }
 
 std::string ozakiIOptionLabel(const CandidateMatmul::Option &opt) {
-  // FP16-slice + F32-readback tensor-core error correction (TCEC).
-  return (Twine("tcec") + " n=" + Twine(opt.strategyParam) + " wmma m" +
-          Twine(opt.tileM) + "n" + Twine(opt.tileN) + "k" + Twine(opt.tileK) +
-          " " + fpKindName(opt.inputPrec) + "/" + fpKindName(opt.accPrec))
-      .str();
+  const SchemeVariant &v = opt.variant;
+  return std::string(schemeTag(v)) + " " + schemeParameter(v) + " wmma " +
+         mmaShapeSuffix(opt.tileM, opt.tileN, opt.tileK) + " " +
+         schemeFormats(v, '/');
 }
 
 } // namespace poseidon

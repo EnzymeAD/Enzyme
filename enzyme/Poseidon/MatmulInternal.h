@@ -17,8 +17,7 @@ namespace poseidon {
 std::string mmaShapeSuffix(unsigned M, unsigned N, unsigned K);
 double getMatmulCompCost(unsigned M, unsigned N, unsigned K, FPKind inputPrec,
                          FPKind accPrec);
-std::string inKernelDirectClass(FPKind inputPrec, FPKind accPrec);
-std::string inKernelTcecClass(unsigned n, FPKind inputPrec, FPKind accPrec);
+std::string inKernelCostClass(const SchemeVariant &v);
 bool priceInKernelRaiseFromMeasuredRow(const AbstractMatmul &m,
                                        const std::string &cls, unsigned tileM,
                                        unsigned tileN, unsigned tileK,

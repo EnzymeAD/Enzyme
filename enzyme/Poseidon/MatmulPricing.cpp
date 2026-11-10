@@ -31,32 +31,42 @@ std::string mmaShapeSuffix(unsigned M, unsigned N, unsigned K) {
   return ("m" + Twine(M) + "n" + Twine(N) + "k" + Twine(K)).str();
 }
 
+// Labels name candidates in logs, reports and DP cache keys, so their irregular
+// forms are kept: the library split drops its slice count, and the
+// cuBLAS-backed library calls drop their tile.
 std::string matmulOptionLabel(const CandidateMatmul::Option &opt) {
-  switch (opt.strategy) {
-  case CandidateMatmul::Option::Strategy::Direct:
-    return "wmma " + mmaShapeSuffix(opt.tileM, opt.tileN, opt.tileK) + " " +
-           std::string(fpKindName(opt.inputPrec)) + "/" +
-           fpKindName(opt.accPrec);
-  case CandidateMatmul::Option::Strategy::OzakiI:
-    return ozakiIOptionLabel(opt);
-  case CandidateMatmul::Option::Strategy::OzakiII:
-    // strategyParam encodes num_moduli for OzakiII (same role as N for OzakiI).
-    // nm=0 is the native cuBLAS DGEMM dispatch.
-    if (opt.strategyParam == 0)
-      return "native-dgemm cublas f64/f64";
-    return (Twine("ozaki-ii nm=") + Twine(opt.strategyParam) + " wmma m" +
-            Twine(opt.tileM) + "n" + Twine(opt.tileN) + "k" + Twine(opt.tileK) +
-            " s8/s32")
-        .str();
-  case CandidateMatmul::Option::Strategy::TcecDispatch:
-    return "tcec-dispatch wmma m" + std::to_string(opt.tileM) + "n" +
-           std::to_string(opt.tileN) + "k" + std::to_string(opt.tileK) + " " +
-           fpKindName(opt.inputPrec) + "/" + fpKindName(opt.accPrec);
-  case CandidateMatmul::Option::Strategy::DirectDispatch:
-    return "direct-dispatch cublas " + std::string(fpKindName(opt.inputPrec)) +
-           "/" + fpKindName(opt.accPrec);
+  const SchemeVariant &v = opt.variant;
+  const std::string formats = schemeFormats(v, '/');
+  const std::string wmma =
+      "wmma " + mmaShapeSuffix(opt.tileM, opt.tileN, opt.tileK);
+  switch (opt.realization) {
+  case Realization::InKernel:
+    switch (v.scheme) {
+    case Scheme::Direct:
+      return wmma + " " + formats;
+    case Scheme::Split:
+      return ozakiIOptionLabel(opt);
+    case Scheme::Modular:
+    case Scheme::Native:
+      break;
+    }
+    break;
+  case Realization::LibraryCall:
+    switch (v.scheme) {
+    case Scheme::Modular:
+      return std::string(schemeTag(v)) + " " + schemeParameter(v) + " " + wmma +
+             " " + formats;
+    case Scheme::Split:
+      return std::string(schemeTag(v)) + "-dispatch " + wmma + " " + formats;
+    case Scheme::Direct:
+      return std::string(schemeTag(v)) + "-dispatch cublas " + formats;
+    case Scheme::Native:
+      return std::string(schemeTag(v)) + " cublas " + formats;
+    }
+    break;
   }
-  llvm_unreachable("unhandled CandidateMatmul::Option::Strategy");
+  llvm_unreachable("a matrix-product candidate whose scheme has no such "
+                   "realization");
 }
 
 // TODO: include more wmma_load_{a,b,c} and wmma_store_d costs
@@ -84,12 +94,18 @@ double getMatmulCompCost(unsigned M, unsigned N, unsigned K, FPKind inputPrec,
 // with <class> naming the candidate as the solver's table does ("f16_f32",
 // "tcec_n2_f16_f32"). Composing a price from per-MMA rows omits the cooperative
 // fill, the shared-memory staging and the accumulator traffic.
-std::string inKernelDirectClass(FPKind inputPrec, FPKind accPrec) {
-  return std::string(fpKindName(inputPrec)) + "_" + fpKindName(accPrec);
-}
-std::string inKernelTcecClass(unsigned n, FPKind inputPrec, FPKind accPrec) {
-  return "tcec_n" + std::to_string(n) + "_" + fpKindName(inputPrec) + "_" +
-         fpKindName(accPrec);
+std::string inKernelCostClass(const SchemeVariant &v) {
+  switch (v.scheme) {
+  case Scheme::Direct:
+    return schemeFormats(v, '_');
+  case Scheme::Split:
+    return std::string(schemeTag(v)) + "_n" + std::to_string(sliceCount(v)) +
+           "_" + schemeFormats(v, '_');
+  case Scheme::Modular:
+  case Scheme::Native:
+    break;
+  }
+  llvm_unreachable("no in-kernel realization of this scheme");
 }
 // Measured rel for a class, or -1.0 when uncalibrated. The rel is shape
 // dependent (fill and padding scale with the tile), so a shape-qualified row
@@ -278,27 +294,29 @@ uint64_t inKernelRaiseSharedBytes(Module &M, const CandidateMatmul::Option &opt,
   const uint64_t mPad = (uint64_t)opt.mChain * opt.tileM;
   const uint64_t nPad = (uint64_t)opt.nChain * opt.tileN;
   const uint64_t tileK = opt.tileK;
+  const SchemeVariant &v = opt.variant;
 
-  switch (opt.strategy) {
-  case CandidateMatmul::Option::Strategy::Direct: {
+  if (opt.realization == Realization::LibraryCall)
+    return 0;
+  switch (v.scheme) {
+  case Scheme::Direct: {
     // Mirrors the Direct materializer's allocations: the D, A and B staging
     // tiles always exist.
-    uint64_t in = bytesOf(opt.inputPrec), acc = bytesOf(opt.accPrec);
+    uint64_t in = bytesOf(v.operand), acc = bytesOf(v.accumulator);
     uint64_t d = mPad * nPad * acc, a = mPad * tileK * in,
              b = tileK * nPad * in;
     if (breakdown)
       *breakdown = (Twine(d) + " B D tile (" + Twine(mPad) + "x" + Twine(nPad) +
-                    " " + fpKindName(opt.accPrec) + ") + " + Twine(a) +
+                    " " + fpKindName(v.accumulator) + ") + " + Twine(a) +
                     " B A tile + " + Twine(b) + " B B tile")
                        .str();
     return d + a + b;
   }
-  case CandidateMatmul::Option::Strategy::OzakiI: {
-    // Mirrors the Ozaki-I materializer: N slice buffers per side plus N F32
+  case Scheme::Split: {
+    // Mirrors the Split materializer: N slice buffers per side plus N F32
     // output tiles, all live at once.
-    uint64_t slice =
-        bytesOf(opt.inputPrec); // sliceScratchTy: f16/bf16 2, tf32 4
-    uint64_t n = opt.strategyParam;
+    uint64_t slice = bytesOf(v.operand); // sliceScratchTy: f16/bf16 2, tf32 4
+    uint64_t n = sliceCount(v);
     uint64_t per =
         mPad * tileK * slice + tileK * nPad * slice + mPad * nPad * 4;
     if (breakdown)
@@ -310,12 +328,11 @@ uint64_t inKernelRaiseSharedBytes(Module &M, const CandidateMatmul::Option &opt,
               .str();
     return n * per;
   }
-  case CandidateMatmul::Option::Strategy::OzakiII:
-  case CandidateMatmul::Option::Strategy::TcecDispatch:
-  case CandidateMatmul::Option::Strategy::DirectDispatch:
-    return 0; // library call
+  case Scheme::Modular:
+  case Scheme::Native:
+    break;
   }
-  llvm_unreachable("unhandled strategy in inKernelRaiseSharedBytes");
+  llvm_unreachable("no in-kernel realization of this scheme");
 }
 
 // Shared refusal for every in-kernel class. Returns true when the raise fits.

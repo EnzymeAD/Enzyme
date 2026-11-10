@@ -25,18 +25,6 @@ class Value;
 
 namespace poseidon {
 
-// GemmBodyNote roles are the optimized body's parameter indices;
-// optimizeSiteBody maps them to the wrapper kernel's launch-arg indices before
-// writing the descriptor. All host runtimes take the identical calling
-// convention, so the scheme selects only the callee name:
-//   OzakiII -> __poseidon_ozaki_dgemm(_ex): INT8 residue/CRT, accuracy set by
-//              num_moduli;
-//   Tcec    -> __poseidon_tcec_dgemm(_ex): FP16 tensor cores + error
-//              correction, F32-class;
-//   Direct  -> __poseidon_direct_dgemm(_ex): one rounding of each operand to
-//              FP16/BF16/TF32/FP32 (numModuli = 1/2/3/4), FP32 accumulator.
-enum class DispatchScheme { OzakiII, Tcec, Direct };
-
 // Marks a parameter of an outlined kernel body that carries the kernel's
 // by-value aggregate argument: the body reads the kernel's own copy, so the
 // parameter is no longer byval, and only this says its fields are launch
@@ -52,14 +40,17 @@ LaunchRef launchFieldOf(const llvm::Value *v);
 // parameter, or a pointer field of a by-value aggregate parameter.
 LaunchRef tracePointerRoot(const llvm::Value *v);
 
+// GemmBodyNote roles are the optimized body's parameter indices;
+// optimizeSiteBody maps them to the wrapper kernel's launch-arg indices before
+// writing the descriptor.
 struct GemmBodyNote {
   int cParam = -1, aParam = -1, bParam = -1;
   // Byte offsets of the three operand pointers inside their parameter, when
   // the parameter is a by-value aggregate; -1 when it is the pointer itself.
   int64_t cOffset = -1, aOffset = -1, bOffset = -1;
   unsigned N = 0; // square dim (== gK); square fast path
+  // descriptorScheme and descriptorModulusField of the selected variant.
   DispatchScheme scheme = DispatchScheme::OzakiII;
-  // Scheme parameter: Ozaki-II num_moduli, or the TCEC compute mode.
   unsigned numModuli = kOzakiIIMaxModuli;
   bool standalone = false; // body is a pure GEMM (only the C store)
   bool valid = false;

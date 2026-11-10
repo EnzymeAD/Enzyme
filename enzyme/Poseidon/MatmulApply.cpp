@@ -14,12 +14,92 @@ using namespace llvm;
 
 namespace poseidon {
 
-void CandidateMatmul::apply(size_t candidateIndex) {
-  if (candidateIndex >= candidates.size())
-    report_fatal_error("CandidateMatmul index out of range");
-  const Option &opt = candidates[candidateIndex];
+static const char *libraryCallFlagError(Scheme s) {
+  switch (s) {
+  case Scheme::Modular:
+  case Scheme::Native:
+    return "Ozaki-II candidate was selected but -poseidon-ozaki-host-dispatch "
+           "is not set; it cannot materialize. (Candidate generation should "
+           "not propose Ozaki-II without the host-dispatch flag.)";
+  case Scheme::Split:
+    return "TCEC dispatch was selected but -poseidon-ozaki-host-dispatch is "
+           "not set; it cannot materialize. (Candidate generation should not "
+           "propose it without the host-dispatch flag.)";
+  case Scheme::Direct:
+    return "direct reduced-precision dispatch was selected but "
+           "-poseidon-ozaki-host-dispatch is not set; it cannot materialize. "
+           "(Candidate generation should not propose it without the "
+           "host-dispatch flag.)";
+  }
+  llvm_unreachable("unknown Scheme");
+}
 
-  switch (matmul->origin) {
+static const char *libraryCallDescriptorError(Scheme s) {
+  switch (s) {
+  case Scheme::Modular:
+  case Scheme::Native:
+    return "Ozaki-II was SELECTED for this GEMM but the host-dispatch "
+           "descriptor could not be built (computeGemmBodyNote failed). The "
+           "padded dispatch must materialize the picked rewrite; refusing to "
+           "silently fall back to scalar FP64. Either the GEMM shape/layout is "
+           "genuinely unsupported (then it must not be PROPOSED in candidate "
+           "generation) or this is a descriptor-extraction bug.";
+  case Scheme::Split:
+    return "TCEC dispatch was SELECTED for this GEMM but the host-dispatch "
+           "descriptor could not be built (computeGemmBodyNote failed). "
+           "Refusing to silently fall back to scalar FP64.";
+  case Scheme::Direct:
+    return "direct reduced-precision dispatch was SELECTED for this GEMM but "
+           "the host-dispatch descriptor could not be built "
+           "(computeGemmBodyNote failed). Refusing to silently fall back to "
+           "scalar FP64.";
+  }
+  llvm_unreachable("unknown Scheme");
+}
+
+static GemmBodyNote runtimeShapeNote(const AbstractMatmul &m) {
+  const RuntimeGemmHandle &g = *m.hostGemm;
+  GemmBodyNote note;
+  note.cParam = g.cRef.param;
+  note.aParam = g.aRef.param;
+  note.bParam = g.bRef.param;
+  note.cOffset = g.cRef.offset;
+  note.aOffset = g.aRef.offset;
+  note.bOffset = g.bRef.offset;
+  note.assumedEqual = g.assumedEqual;
+  note.standalone = true;
+  note.valid = true;
+  note.runtimeDims = true;
+  note.beta = g.beta;
+  // Profile-scale constants, written only as the descriptor's fallback: the
+  // host rewrite evaluates the runtime forms below instead.
+  note.N = m.globalK;
+  note.gM = m.globalM;
+  note.gNcols = m.globalN;
+  note.gK = m.globalK;
+  note.lda = (unsigned)(g.lda.isConst() ? g.lda.add : m.globalK);
+  note.ldb = (unsigned)(g.ldb.isConst() ? g.ldb.add : m.globalK);
+  note.ldc = (unsigned)(g.ldc.isConst() ? g.ldc.add : m.globalM);
+  note.aColMajor = g.aColMajor;
+  note.bColMajor = g.bColMajor;
+  note.cColMajor = g.cColMajor;
+  note.rM = g.M;
+  note.rNcols = g.Ncols;
+  note.rK = g.K;
+  note.rlda = g.lda;
+  note.rldb = g.ldb;
+  note.rldc = g.ldc;
+  return note;
+}
+
+// Records the launch descriptor that the host compile rewrites the launch
+// from, fissioning a fused constant-trip body. The solver picked this
+// candidate, so failing to record it is a hard error rather than a silent FP64
+// fallback.
+static void applyLibraryCall(const AbstractMatmul &m, const SchemeVariant &v) {
+  Function *F = nullptr;
+  GemmBodyNote note;
+  switch (m.origin) {
   case AbstractMatmul::Origin::Invalid:
     report_fatal_error("Unexpected invalid AbstractMatmul origin");
   case AbstractMatmul::Origin::HostGemmLoopNest: {
@@ -28,8 +108,7 @@ void CandidateMatmul::apply(size_t candidateIndex) {
           "a runtime-shape host GEMM candidate was selected but "
           "-poseidon-ozaki-host-dispatch is not set; it has no other "
           "realization.");
-    const RuntimeGemmHandle &g = *matmul->hostGemm;
-    Function *F = g.cStore->getFunction();
+    F = m.hostGemm->cStore->getFunction();
     // Host dispatch replaces the whole launch, so the body must contain nothing
     // but the GEMM. A fused body would need the device-side fission path, which
     // cannot rewrite an accumulating epilogue whose value does not flow through
@@ -46,155 +125,54 @@ void CandidateMatmul::apply(size_t candidateIndex) {
           " argument-rooted stores; only a pure GEMM body can be replaced by a "
           "library dispatch. Candidate generation should not have proposed "
           "it.");
-    GemmBodyNote note;
-    note.cParam = g.cRef.param;
-    note.aParam = g.aRef.param;
-    note.bParam = g.bRef.param;
-    note.cOffset = g.cRef.offset;
-    note.aOffset = g.aRef.offset;
-    note.bOffset = g.bRef.offset;
-    note.assumedEqual = g.assumedEqual;
-    note.standalone = true;
-    note.valid = true;
-    note.runtimeDims = true;
-    note.beta = g.beta;
-    // Profile-scale constants, written only as the descriptor's fallback: the
-    // host rewrite evaluates the runtime forms below instead.
-    note.N = matmul->globalK;
-    note.gM = matmul->globalM;
-    note.gNcols = matmul->globalN;
-    note.gK = matmul->globalK;
-    note.lda = (unsigned)(g.lda.isConst() ? g.lda.add : matmul->globalK);
-    note.ldb = (unsigned)(g.ldb.isConst() ? g.ldb.add : matmul->globalK);
-    note.ldc = (unsigned)(g.ldc.isConst() ? g.ldc.add : matmul->globalM);
-    note.aColMajor = g.aColMajor;
-    note.bColMajor = g.bColMajor;
-    note.cColMajor = g.cColMajor;
-    note.rM = g.M;
-    note.rNcols = g.Ncols;
-    note.rK = g.K;
-    note.rlda = g.lda;
-    note.rldb = g.ldb;
-    note.rldc = g.ldc;
-    switch (opt.strategy) {
-    case CandidateMatmul::Option::Strategy::OzakiII:
-      note.scheme = DispatchScheme::OzakiII;
-      note.numModuli = opt.strategyParam;
-      break;
-    case CandidateMatmul::Option::Strategy::TcecDispatch:
-      note.scheme = DispatchScheme::Tcec;
-      note.numModuli = opt.strategyParam;
-      break;
-    case CandidateMatmul::Option::Strategy::DirectDispatch:
-      note.scheme = DispatchScheme::Direct;
-      note.numModuli = opt.strategyParam; // operand format
-      break;
-    default:
-      report_fatal_error("a runtime-shape host GEMM was selected with a "
-                         "strategy that has no host-dispatch realization");
-    }
-    noteGemmBody(F, note);
-    return;
+    note = runtimeShapeNote(m);
+    break;
   }
   case AbstractMatmul::Origin::ScalarLoopReduction:
-    switch (opt.strategy) {
-    case CandidateMatmul::Option::Strategy::Direct:
-      materializeScalarLoopRaise(*matmul, opt);
-      return;
-    case CandidateMatmul::Option::Strategy::OzakiI:
-      materializeOzakiIRaise(*matmul, opt);
-      return;
-    case CandidateMatmul::Option::Strategy::OzakiII:
-      // Ozaki-II is realized as the host library dispatch: record the
-      // descriptor at the solver-chosen nm and let the host pass rewrite the
-      // launch (fused bodies are fissioned). The solver picked this candidate,
-      // so failure is a hard error rather than a silent FP64 fallback.
-      if (!flags::OzakiHostDispatch)
-        report_fatal_error(
-            "Ozaki-II candidate was selected but -poseidon-ozaki-host-dispatch "
-            "is "
-            "not set; it cannot materialize. (Candidate generation should not "
-            "propose Ozaki-II without the host-dispatch flag.)");
-      {
-        llvm::Function *F = matmul->scalarLoop.fma
-                                ? matmul->scalarLoop.fma->getFunction()
-                                : nullptr;
-        GemmBodyNote note;
-        if (F && computeGemmBodyNote(*F, *matmul, note) && note.valid) {
-          note.numModuli = opt.strategyParam; // solver-chosen num_moduli
-          noteGemmBody(F, note);
-          if (!note.standalone)
-            fissionGemmForDispatch(*F, *matmul);
-          return;
-        }
-      }
-      report_fatal_error(
-          "Ozaki-II was SELECTED for this GEMM but the host-dispatch "
-          "descriptor "
-          "could not be built (computeGemmBodyNote failed). The padded "
-          "dispatch "
-          "must materialize the picked rewrite; refusing to silently fall back "
-          "to scalar FP64. Either the GEMM shape/layout is genuinely "
-          "unsupported (then it must not be PROPOSED in candidate generation) "
-          "or "
-          "this is a descriptor-extraction bug.");
-    case CandidateMatmul::Option::Strategy::TcecDispatch: {
-      // Same path as Ozaki-II; only the scheme stamped on the descriptor
-      // differs, selecting __poseidon_tcec_dgemm.
-      if (!flags::OzakiHostDispatch)
-        report_fatal_error(
-            "TCEC dispatch was selected but -poseidon-ozaki-host-dispatch is "
-            "not "
-            "set; it cannot materialize. (Candidate generation should not "
-            "propose it without the host-dispatch flag.)");
-      llvm::Function *F = matmul->scalarLoop.fma
-                              ? matmul->scalarLoop.fma->getFunction()
-                              : nullptr;
-      GemmBodyNote note;
-      if (F && computeGemmBodyNote(*F, *matmul, note) && note.valid) {
-        note.scheme = DispatchScheme::Tcec;
-        note.numModuli = opt.strategyParam; // TCEC compute mode
-        noteGemmBody(F, note);
-        if (!note.standalone)
-          fissionGemmForDispatch(*F, *matmul);
-        return;
-      }
-      report_fatal_error(
-          "TCEC dispatch was SELECTED for this GEMM but the host-dispatch "
-          "descriptor could not be built (computeGemmBodyNote failed). "
-          "Refusing to silently fall back to scalar FP64.");
-    }
-    case CandidateMatmul::Option::Strategy::DirectDispatch: {
-      // Same path as the TCEC and Ozaki-II dispatches; the scheme stamped on
-      // the descriptor selects __poseidon_direct_dgemm.
-      if (!flags::OzakiHostDispatch)
-        report_fatal_error(
-            "direct reduced-precision dispatch was selected but "
-            "-poseidon-ozaki-host-dispatch is not set; it cannot materialize. "
-            "(Candidate generation should not propose it without the "
-            "host-dispatch flag.)");
-      llvm::Function *F = matmul->scalarLoop.fma
-                              ? matmul->scalarLoop.fma->getFunction()
-                              : nullptr;
-      GemmBodyNote note;
-      if (F && computeGemmBodyNote(*F, *matmul, note) && note.valid) {
-        note.scheme = DispatchScheme::Direct;
-        note.numModuli = opt.strategyParam; // operand format
-        noteGemmBody(F, note);
-        if (!note.standalone)
-          fissionGemmForDispatch(*F, *matmul);
-        return;
-      }
-      report_fatal_error(
-          "direct reduced-precision dispatch was SELECTED for this GEMM but "
-          "the host-dispatch descriptor could not be built "
-          "(computeGemmBodyNote failed). Refusing to silently fall back to "
-          "scalar FP64.");
-    }
-    }
-    llvm_unreachable("unhandled strategy in ScalarLoopReduction apply");
+    if (!flags::OzakiHostDispatch)
+      report_fatal_error(libraryCallFlagError(v.scheme));
+    F = m.scalarLoop.fma ? m.scalarLoop.fma->getFunction() : nullptr;
+    if (!F || !computeGemmBodyNote(*F, m, note) || !note.valid)
+      report_fatal_error(libraryCallDescriptorError(v.scheme));
+    break;
   }
-  llvm_unreachable("Unexpected AbstractMatmul origin");
+  note.scheme = descriptorScheme(v);
+  note.numModuli = descriptorModulusField(v);
+  noteGemmBody(F, note);
+  if (!note.standalone)
+    fissionGemmForDispatch(*F, m);
+}
+
+void CandidateMatmul::apply(size_t candidateIndex) {
+  if (candidateIndex >= candidates.size())
+    report_fatal_error("CandidateMatmul index out of range");
+  const Option &opt = candidates[candidateIndex];
+
+  if (opt.realization == Realization::LibraryCall) {
+    applyLibraryCall(*matmul, opt.variant);
+    return;
+  }
+  switch (matmul->origin) {
+  case AbstractMatmul::Origin::Invalid:
+    report_fatal_error("Unexpected invalid AbstractMatmul origin");
+  case AbstractMatmul::Origin::HostGemmLoopNest:
+    report_fatal_error("a runtime-shape host GEMM was selected with a "
+                       "scheme that has no host-dispatch realization");
+  case AbstractMatmul::Origin::ScalarLoopReduction:
+    break;
+  }
+  switch (opt.variant.scheme) {
+  case Scheme::Direct:
+    materializeScalarLoopRaise(*matmul, opt);
+    return;
+  case Scheme::Split:
+    materializeOzakiIRaise(*matmul, opt);
+    return;
+  case Scheme::Modular:
+  case Scheme::Native:
+    break;
+  }
+  llvm_unreachable("no in-kernel realization of this scheme");
 }
 
 } // namespace poseidon
