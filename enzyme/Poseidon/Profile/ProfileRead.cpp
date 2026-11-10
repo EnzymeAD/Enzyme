@@ -16,6 +16,7 @@
 #include <cmath>
 #include <fstream>
 #include <regex>
+#include <unordered_map>
 
 #include "ProfileRead.h"
 #include "Targets/OffloadRuntime.h"
@@ -65,9 +66,8 @@ size_t readProfIdxMetadata(const Instruction *I) {
 static constexpr double kSensFloorRatio = 1e-6;
 static constexpr double kSensNullRatio = 1e-9;
 
-unsigned
-applySensitivityFloor(std::unordered_map<size_t, ProfileInfo> &profileMap,
-                      llvm::StringRef functionName) {
+unsigned applySensitivityFloor(ProfileMap &profileMap,
+                               llvm::StringRef functionName) {
   if (profileMap.empty())
     return 0;
 
@@ -129,14 +129,14 @@ applySensitivityFloor(std::unordered_map<size_t, ProfileInfo> &profileMap,
   return floored;
 }
 
-void mergeOutputProfiles(std::unordered_map<size_t, ProfileInfo> &profileMap,
-                         ArrayRef<std::string> dirs, StringRef fileName,
-                         StringRef canonicalHash, StringRef functionName) {
+void mergeOutputProfiles(ProfileMap &profileMap, ArrayRef<std::string> dirs,
+                         StringRef fileName, StringRef canonicalHash,
+                         StringRef functionName) {
   std::unordered_map<size_t, double> grad, sens;
   for (const std::string &dir : dirs) {
     SmallString<128> path(dir);
     sys::path::append(path, fileName);
-    std::unordered_map<size_t, ProfileInfo> out;
+    ProfileMap out;
     FunctionProfileHeader header;
     parseProfileFile(path.str().str(), out, &header);
     double total = 0.0;
@@ -179,8 +179,7 @@ void mergeOutputProfiles(std::unordered_map<size_t, ProfileInfo> &profileMap,
          << dirs.size() << " output profiles)\n";
 }
 
-void parseProfileFile(const std::string &profilePath,
-                      std::unordered_map<size_t, ProfileInfo> &profileMap,
+void parseProfileFile(const std::string &profilePath, ProfileMap &profileMap,
                       FunctionProfileHeader *header) {
   profileMap.clear();
   if (header)

@@ -28,13 +28,11 @@ using namespace llvm;
 namespace poseidon {
 
 // An op without a profile record (-poseidon-loose-coverage) counts as zero.
-static void
-aggressiveDCE(const Options &O, Function &F,
-              SmallVectorImpl<Subgraph> &subgraphs,
-              std::unordered_map<Value *, std::shared_ptr<FPNode>> &nodes,
-              const std::unordered_map<size_t, ProfileInfo> &profileMap,
-              const std::unordered_set<size_t> &zeroGradIdx,
-              const SmallVectorImpl<AbstractMatmul> &abstractMatmuls) {
+static void aggressiveDCE(
+    const Options &O, Function &F, SmallVectorImpl<Subgraph> &subgraphs,
+    std::unordered_map<Value *, std::shared_ptr<FPNode>> &nodes,
+    const ProfileMap &profileMap, const std::unordered_set<size_t> &zeroGradIdx,
+    const SmallVectorImpl<AbstractMatmul> &abstractMatmuls) {
   SmallPtrSet<Value *, 32> critical;
   SmallVector<Value *, 16> worklist;
   auto mark = [&](Value *V) {
@@ -349,7 +347,7 @@ void buildSubgraphs(
 }
 
 void attachProfile(
-    const Options &O, const std::unordered_map<size_t, ProfileInfo> &profileMap,
+    const Options &O, const ProfileMap &profileMap,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     ArrayRef<Subgraph> subgraphs) {
   for (auto &subgraph : subgraphs) {
@@ -423,8 +421,7 @@ void attachProfile(
 }
 
 void shapeSubgraphs(
-    const Options &O, Function &F,
-    const std::unordered_map<size_t, ProfileInfo> &profileMap,
+    const Options &O, Function &F, const ProfileMap &profileMap,
     const std::unordered_set<size_t> &zeroGradIdx,
     const SmallVectorImpl<AbstractMatmul> &abstractMatmuls,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,

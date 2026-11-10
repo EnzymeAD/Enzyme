@@ -20,7 +20,6 @@
 #include <memory>
 #include <optional>
 #include <string>
-#include <unordered_map>
 #include <vector>
 
 namespace llvm {
@@ -265,9 +264,8 @@ struct AbstractMatmul {
   llvm::Value *outputValue = nullptr;
 };
 
-MatmulProfile
-loadProfile(const AbstractMatmul &m,
-            const std::unordered_map<size_t, ProfileInfo> &scalarProfile);
+MatmulProfile loadProfile(const AbstractMatmul &m,
+                          const ProfileMap &scalarProfile);
 
 // Recognize dense GEMMs written as thread-parallel reduction NESTS with RUNTIME
 // dimensions (Origin::HostGemmLoopNest). Parallel arm to findScalarLoopMatmuls:
@@ -278,7 +276,7 @@ loadProfile(const AbstractMatmul &m,
 void findHostGemmLoopNests(const Options &O, llvm::Function &F,
                            llvm::ScalarEvolution &SE, llvm::LoopInfo &LI,
                            const FunctionProfileHeader &profileHeader,
-                           const std::unordered_map<size_t, ProfileInfo> &prof,
+                           const ProfileMap &prof,
                            llvm::SmallVectorImpl<AbstractMatmul> &out);
 
 class MatmulUnit : public SiteUnit {
@@ -376,11 +374,11 @@ uint64_t inKernelRaiseSharedBytes(llvm::Module &M,
 // `domainError` bounds.
 // `sampleLogBits`: 0 samples operands uniformly over the profiled [min, max];
 // B > 0 log-uniformly in magnitude over [maxMag * 2^-B, maxMag].
-void generateMatmulCandidates(
-    Session &S, llvm::ArrayRef<AbstractMatmul> matmuls,
-    const std::unordered_map<size_t, ProfileInfo> &scalarProfile,
-    double confidence, unsigned sampleLogBits,
-    llvm::SmallVectorImpl<MatmulUnit> &out);
+void generateMatmulCandidates(Session &S,
+                              llvm::ArrayRef<AbstractMatmul> matmuls,
+                              const ProfileMap &scalarProfile,
+                              double confidence, unsigned sampleLogBits,
+                              llvm::SmallVectorImpl<MatmulUnit> &out);
 
 } // namespace poseidon
 #endif // POSEIDON_MATMUL_H

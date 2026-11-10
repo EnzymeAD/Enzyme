@@ -18,7 +18,6 @@
 #include <optional>
 #include <set>
 #include <string>
-#include <unordered_map>
 
 using namespace llvm;
 
@@ -482,11 +481,10 @@ static void proposeLibraryNative(const Product &P, const LibrarySite &L,
   pushLibraryCandidate(P, opt, cm);
 }
 
-void generateMatmulCandidates(
-    Session &S, ArrayRef<AbstractMatmul> matmuls,
-    const std::unordered_map<size_t, ProfileInfo> &scalarProfile,
-    double confidence, unsigned sampleLogBits,
-    SmallVectorImpl<MatmulUnit> &out) {
+void generateMatmulCandidates(Session &S, ArrayRef<AbstractMatmul> matmuls,
+                              const ProfileMap &scalarProfile,
+                              double confidence, unsigned sampleLogBits,
+                              SmallVectorImpl<MatmulUnit> &out) {
   for (const AbstractMatmul &m : matmuls) {
     if (m.origin == AbstractMatmul::Origin::Invalid)
       report_fatal_error("unexpected Origin::Invalid");

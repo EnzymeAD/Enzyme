@@ -39,15 +39,14 @@ void buildSubgraphs(
 // Sets the profiled sensitivity, gradient, execution count and value ranges
 // of the subgraphs' nodes.
 void attachProfile(
-    const Options &O, const std::unordered_map<size_t, ProfileInfo> &profileMap,
+    const Options &O, const ProfileMap &profileMap,
     std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     llvm::ArrayRef<Subgraph> subgraphs);
 
 // The site's optimization units: the subgraphs after aggressive DCE, splitting
 // and the shared-staging merge.
 void shapeSubgraphs(
-    const Options &O, llvm::Function &F,
-    const std::unordered_map<size_t, ProfileInfo> &profileMap,
+    const Options &O, llvm::Function &F, const ProfileMap &profileMap,
     const std::unordered_set<size_t> &zeroGradIdx,
     const llvm::SmallVectorImpl<AbstractMatmul> &abstractMatmuls,
     std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>> &valueToNodeMap,

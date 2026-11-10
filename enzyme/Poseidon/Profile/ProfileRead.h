@@ -23,7 +23,6 @@
 #include <limits>
 #include <map>
 #include <string>
-#include <unordered_map>
 
 namespace llvm {
 class Instruction;
@@ -56,6 +55,10 @@ struct ProfileInfo {
         sumSens(0.0), sumGrad(0.0), sumAbsGrad(-1.0), exec(0) {}
 };
 
+// A site's profile records by slot index, iterated in slot order: what is
+// summed over them and reported about them does not depend on hashing.
+using ProfileMap = std::map<size_t, ProfileInfo>;
+
 // Launch geometry observed during profiling (max over launches).
 struct FunctionProfileHeader {
   uint32_t maxBlockDim[3] = {0, 0, 0}; // [x, y, z]
@@ -84,8 +87,7 @@ struct FunctionProfileHeader {
   std::string kappaMark;
 };
 
-void parseProfileFile(const std::string &profilePath,
-                      std::unordered_map<size_t, ProfileInfo> &profileMap,
+void parseProfileFile(const std::string &profilePath, ProfileMap &profileMap,
                       FunctionProfileHeader *header = nullptr);
 
 // The static header of every instrumented site names the profile format in a
@@ -126,9 +128,8 @@ void requireCanonicalHash(const FunctionProfileHeader &header,
 // per-execution sensitivity below 1e-9 of ref is reported. A value that is
 // always zero is left as it is. Returns the number of instructions whose
 // weight was raised.
-unsigned
-applySensitivityFloor(std::unordered_map<size_t, ProfileInfo> &profileMap,
-                      llvm::StringRef functionName);
+unsigned applySensitivityFloor(ProfileMap &profileMap,
+                               llvm::StringRef functionName);
 
 // Per-output accounting (-poseidon-output-profiles). Each directory holds this
 // site's profile recorded with one output seeded alone. An output's modelled
@@ -136,7 +137,7 @@ applySensitivityFloor(std::unordered_map<size_t, ProfileInfo> &profileMap,
 // instruction is weighted by the largest of its per-output gradients, each
 // divided by that output's total; summed over a site this bounds the worst
 // output's error, and the site's accuracy scale is 1.
-void mergeOutputProfiles(std::unordered_map<size_t, ProfileInfo> &profileMap,
+void mergeOutputProfiles(ProfileMap &profileMap,
                          llvm::ArrayRef<std::string> dirs,
                          llvm::StringRef fileName,
                          llvm::StringRef canonicalHash,
