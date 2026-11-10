@@ -1,7 +1,7 @@
 // Runs the raw-component functions emit.cpp writes (expansion-match-raw) on
 // the host against the external routines they reproduce, bit for bit (NaN
-// payload and sign excepted): n = 3, 4 against mX_real (mx_real_subset.h),
-// n = 2 add, sub, mul and sqrt against MultiFloats.jl
+// payload and sign excepted): n = 3, 4 and the n = 2 division against mX_real
+// (mx_real_subset.h), n = 2 add, sub, mul and sqrt against MultiFloats.jl
 // (multifloats_subset.h). Prints, per routine, the cases that differ, and the
 // two-component results at the special operands where mX_real and
 // MultiFloats.jl agree. Compile without contraction.
@@ -117,6 +117,8 @@ int main() {
         [](const Case &k, float *o) { mfref::mfmul(k.a, k.b, o); });
   check(2, "sqrt", E::sqrt,
         [](const Case &k, float *o) { mfref::sqrt_r(k.a, o); });
+  check(2, "div", E::div,
+        [](const Case &k, float *o) { mxref::div(k.a, k.b, o, 2); });
 
   float r[2];
   const float zeros[4][2] = {
