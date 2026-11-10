@@ -132,19 +132,40 @@ struct ScalarLoopHandle {
 // symbolically here and as launch-argument references in the host-dispatch
 // descriptor. Cost numbers come from the profile at profile scale (profM/N/K).
 
-// One GEMM dimension (extent or leading dimension) as an affine function of at
-// most ONE parameter of the optimized body:
-//     value = mul * param + add          (param < 0  =>  the constant `add`)
-// That is the largest form the host-side stub rewrite can evaluate from launch
-// arguments alone, and it covers a finite-element apply's geometry (M = nDofs,
-// K = d*numPoints, Ncols = d*NE, lda = ldb = d*numPoints, ldc = nDofs).
+// A value the host knows at the launch: a parameter of the optimized body, or a
+// field of an aggregate a parameter passes by value (the captures of a lambda a
+// kernel takes by value: DeviceTensor data pointers and sizes).
+struct LaunchRef {
+  int param = -1;
+  int64_t offset = -1; // byte offset of the field; -1 = the parameter itself
+  bool isField() const { return offset >= 0; }
+  bool operator==(const LaunchRef &o) const {
+    return param == o.param && offset == o.offset;
+  }
+  bool operator<(const LaunchRef &o) const {
+    return param != o.param ? param < o.param : offset < o.offset;
+  }
+};
+
+// One GEMM dimension (extent or leading dimension) as a monomial over launch
+// values of the optimized body:
+//     value = mul * factors[0] * factors[1] * ... + add
+// (no factors => the constant `add`). That is the form the host-side stub
+// rewrite can evaluate from launch arguments alone, and it covers a
+// finite-element apply's geometry (M = nDofs, K = d*numPoints, Ncols = d*NE,
+// lda = ldb = d*numPoints, ldc = nDofs), whether the extents arrive as kernel
+// parameters or as the sizes of the DeviceTensors a lambda captured.
 struct RuntimeDim {
-  int param = -1; // parameter index OF THE OPTIMIZED BODY (-1 = constant)
+  llvm::SmallVector<LaunchRef, 2> factors;
   int64_t mul = 1;
   int64_t add = 0;
-  bool isConst() const { return param < 0; }
+  bool isConst() const { return factors.empty(); }
+  // One whole parameter, the form a descriptor carries positionally.
+  bool isPlain() const {
+    return factors.size() < 2 && (factors.empty() || !factors[0].isField());
+  }
   bool operator==(const RuntimeDim &o) const {
-    return param == o.param && mul == o.mul && add == o.add;
+    return factors == o.factors && mul == o.mul && add == o.add;
   }
 };
 
@@ -166,9 +187,14 @@ struct RuntimeGemmHandle {
   llvm::StoreInst *cStore = nullptr;
 
   llvm::Value *aBase = nullptr, *bBase = nullptr, *cBase = nullptr;
-  int aParam = -1, bParam = -1, cParam = -1;
+  LaunchRef aRef, bRef, cRef;
 
   RuntimeDim M, Ncols, K, lda, ldb, ldc;
+  // Launch values the dense reading of the nest takes to be equal, with no way
+  // to prove it here: a DeviceTensor's extent and the loop bound captured next
+  // to it. The dispatch checks each pair at the launch and runs the kernel as
+  // written when one fails.
+  llvm::SmallVector<std::pair<LaunchRef, LaunchRef>, 2> assumedEqual;
   // Layout in the convention __poseidon_ozaki_dgemm_ex takes: "colMajor" means
   // the operand's REDUCTION index (A, B) or ROW index (C) is the contiguous
   // one.

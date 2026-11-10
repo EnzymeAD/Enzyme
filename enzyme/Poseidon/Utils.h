@@ -61,6 +61,9 @@ inline llvm::Value *branchCondition(llvm::Value *V) {
 }
 
 bool isGPUMode(const llvm::Function &F);
+// The device half of a CUDA or HIP compilation.
+bool isDeviceModule(const llvm::Module &M);
+bool isKernel(const llvm::Function &F);
 
 struct Subgraph;
 class FPNode;
@@ -69,11 +72,16 @@ std::string getLibmFunctionForPrecision(llvm::StringRef funcName,
                                         llvm::Type *newType);
 // The libm calls Poseidon prices and can retype.
 const std::unordered_set<std::string> &libmFuncs();
-// The libm name behind a CUDA libdevice entry point Poseidon handles, for both
-// the f64 and the f32 form ("__nv_sqrt" and "__nv_sqrtf" both give "sqrt"), or
-// the empty string. Poseidon recognizes these itself instead of reading the
-// attribute an AD pass would have put on them.
+// The libm name behind a CUDA libdevice or ROCm ocml entry point Poseidon
+// handles, for both the f64 and the f32 form ("__nv_sqrt", "__nv_sqrtf" and
+// "__ocml_sqrt_f64" all give "sqrt"), or the empty string. Poseidon recognizes
+// these itself instead of reading the attribute an AD pass would have put on
+// them.
 llvm::StringRef deviceMathName(llvm::StringRef fnName);
+// The device math library's function for libm's `base` in device module `M`,
+// at double or, for any narrower `Ty`, single precision.
+std::string deviceMathFunction(const llvm::Module &M, llvm::StringRef base,
+                               llvm::Type *Ty);
 double stringToDouble(const std::string &str);
 double literalToDouble(const std::string &str);
 void topoSort(const llvm::SetVector<llvm::Instruction *> &insts,
@@ -90,6 +98,12 @@ void collectExprInsts(llvm::Value *V,
                       llvm::SmallPtrSetImpl<llvm::Value *> &visited);
 
 void splitSubgraphs(llvm::SmallVectorImpl<Subgraph> &subgraphs);
+
+// Merge every group of subgraphs that touch a common staging buffer (a pointer
+// argument or an addrspace(3) global reached by a load feeding the subgraph or
+// a store consuming it) into one unit, so the per-unit tier is the buffer's.
+void mergeSharedStagingSubgraphs(llvm::SmallVectorImpl<Subgraph> &subgraphs,
+                                 llvm::Function &F);
 
 void simplifyFunction(llvm::Function &F, llvm::OptimizationLevel Level);
 

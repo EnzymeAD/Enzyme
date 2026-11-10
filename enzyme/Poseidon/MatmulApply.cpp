@@ -37,7 +37,7 @@ void CandidateMatmul::apply(size_t candidateIndex) {
     int argStores = 0;
     for (Instruction &I : instructions(*F))
       if (auto *S = dyn_cast<StoreInst>(&I))
-        if (traceToArgIndex(S->getPointerOperand()) >= 0)
+        if (tracePointerRoot(S->getPointerOperand()).param >= 0)
           ++argStores;
     if (argStores != 1)
       report_fatal_error(
@@ -47,9 +47,13 @@ void CandidateMatmul::apply(size_t candidateIndex) {
           "library dispatch. Candidate generation should not have proposed "
           "it.");
     GemmBodyNote note;
-    note.cParam = g.cParam;
-    note.aParam = g.aParam;
-    note.bParam = g.bParam;
+    note.cParam = g.cRef.param;
+    note.aParam = g.aRef.param;
+    note.bParam = g.bRef.param;
+    note.cOffset = g.cRef.offset;
+    note.aOffset = g.aRef.offset;
+    note.bOffset = g.bRef.offset;
+    note.assumedEqual = g.assumedEqual;
     note.standalone = true;
     note.valid = true;
     note.runtimeDims = true;
@@ -66,19 +70,12 @@ void CandidateMatmul::apply(size_t candidateIndex) {
     note.aColMajor = g.aColMajor;
     note.bColMajor = g.bColMajor;
     note.cColMajor = g.cColMajor;
-    auto rt = [](const RuntimeDim &d) {
-      GemmBodyNote::RtDim r;
-      r.param = d.param;
-      r.mul = d.mul;
-      r.add = d.add;
-      return r;
-    };
-    note.rM = rt(g.M);
-    note.rNcols = rt(g.Ncols);
-    note.rK = rt(g.K);
-    note.rlda = rt(g.lda);
-    note.rldb = rt(g.ldb);
-    note.rldc = rt(g.ldc);
+    note.rM = g.M;
+    note.rNcols = g.Ncols;
+    note.rK = g.K;
+    note.rlda = g.lda;
+    note.rldb = g.ldb;
+    note.rldc = g.ldc;
     switch (opt.strategy) {
     case CandidateMatmul::Option::Strategy::OzakiII:
       note.scheme = DispatchScheme::OzakiII;

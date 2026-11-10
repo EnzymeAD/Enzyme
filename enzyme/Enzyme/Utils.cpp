@@ -527,8 +527,10 @@ Function *getOrInsertExponentialAllocator(Module &M, Function *newFunc,
   Value *prevSize = B.CreateSelect(
       isFirstSize, ConstantInt::get(next->getType(), 0), halfNext);
 
+  // GPU device code has malloc and free but no realloc.
   auto Arch = llvm::Triple(M.getTargetTriple()).getArch();
-  bool forceMalloc = Arch == Triple::nvptx || Arch == Triple::nvptx64;
+  bool forceMalloc = Arch == Triple::nvptx || Arch == Triple::nvptx64 ||
+                     Arch == Triple::amd_target;
 
   if (!custom && !forceMalloc) {
     auto reallocF = M.getOrInsertFunction("realloc", allocType, allocType,

@@ -89,7 +89,7 @@ void printHelp(StringRef Prog) {
 
 bool isLanguageCXX(StringRef Lang) {
   return Lang == "cuda" || Lang == "c++" || Lang == "cu" ||
-         Lang == "c++-header" || Lang == "cuda-cpp-output";
+         Lang == "c++-header" || Lang == "cuda-cpp-output" || Lang == "hip";
 }
 
 // An option whose value is a SEPARATE argv entry. The value must reach clang
@@ -134,8 +134,9 @@ int main(int argc, char **argv) {
 
   bool WantCXX = Prog.contains("++");
   bool ProfileGenerate = false, ProfileUse = false;
-  bool IsCUDA = false, Links = true;
+  bool IsCUDA = false, IsHIP = false, Links = true;
   std::string CudaPath = POSEIDON_DRIVER_CUDA_ROOT;
+  std::string RocmPath = POSEIDON_DRIVER_ROCM_ROOT;
 
   SmallVector<std::string, 64> User;
   for (int I = 1; I < argc; ++I) {
@@ -165,6 +166,7 @@ int main(int argc, char **argv) {
     if (A == "-x" && I + 1 < argc) {
       StringRef Lang = argv[I + 1];
       IsCUDA |= Lang == "cuda" || Lang == "cu";
+      IsHIP |= Lang == "hip";
       WantCXX |= isLanguageCXX(Lang);
     } else if (A.starts_with("--cuda-gpu-arch=") || A == "-fcuda-rdc" ||
                A == "-fgpu-rdc") {
@@ -172,16 +174,41 @@ int main(int argc, char **argv) {
     } else if (A.starts_with("--cuda-path=")) {
       IsCUDA = true;
       CudaPath = A.substr(strlen("--cuda-path=")).str();
+    } else if (A.starts_with("--offload-arch=gfx") || A == "--hip-link") {
+      IsHIP = true;
+    } else if (A.starts_with("--rocm-path=")) {
+      IsHIP = true;
+      RocmPath = A.substr(strlen("--rocm-path=")).str();
     } else if (A == "-c" || A == "-S" || A == "-E" || A == "-fsyntax-only" ||
                A == "--cuda-device-only" || A == "--cuda-host-only") {
       Links = false;
     } else if (A.ends_with(".cu")) {
       IsCUDA = true;
+    } else if (A.ends_with(".hip")) {
+      IsHIP = true;
     }
     User.push_back(A.str());
     if (takesSeparateValue(A) && I + 1 < argc) {
       User.push_back(argv[++I]);
     }
+  }
+
+  // -fgpu-rdc is HIP's spelling too.
+  if (IsHIP)
+    IsCUDA = false;
+  // HIP's driver hands -mllvm to the device linker as well, which knows no
+  // Poseidon flag; -Xclang reaches the compiler alone.
+  if (IsHIP) {
+    SmallVector<std::string, 64> Cc1;
+    for (size_t K = 0; K < User.size(); ++K) {
+      if (User[K] == "-mllvm" && K + 1 < User.size() &&
+          StringRef(User[K + 1]).starts_with("-poseidon-")) {
+        Cc1.append({"-Xclang", "-mllvm", "-Xclang", User[++K]});
+        continue;
+      }
+      Cc1.push_back(User[K]);
+    }
+    User = std::move(Cc1);
   }
 
   if (ProfileGenerate && ProfileUse) {
@@ -238,15 +265,6 @@ int main(int argc, char **argv) {
   Cmd.push_back("-ffp-contract=on");
   Cmd.append(User.begin(), User.end());
 
-  if (ProfileGenerate && IsCUDA) {
-    // The instrumented device code calls the profiler's device functions, so
-    // the profiler is compiled into the application rather than linked.
-    Cmd.push_back("-fcuda-rdc");
-    Cmd.push_back(relativeToPrefix(
-        Prefix, "share/poseidon/runtime/fpprofiler/FPProfilerCUDA.cu",
-        POSEIDON_DRIVER_PROFILER_CU));
-  }
-
   if (Links) {
     // clang links no CUDA runtime of its own, and every action here ends in a
     // device launch.
@@ -254,11 +272,26 @@ int main(int argc, char **argv) {
       Cmd.push_back("-L" + CudaPath + "/lib64");
       Cmd.push_back("-lcudart");
     }
+    if (IsHIP && !RocmPath.empty()) {
+      Cmd.push_back("-L" + RocmPath + "/lib");
+      Cmd.push_back("-lamdhip64");
+    }
     Cmd.push_back("-L" + LibDir);
     // The shadows of a POSEIDON_OPTIMIZE function on the host are sized from
     // the allocations this library records.
     if (ProfileGenerate)
       Cmd.push_back("-lposeidon_profile_host");
+    // The host half of the CUDA profiler (the pass links the device half into
+    // each device module). Not keyed on CUDA inputs, so that a link of objects
+    // alone gets it; a program that references none of it takes nothing. The
+    // HIP build of it exports the same names, so a link takes one of the two:
+    // HIP's for HIP inputs or where it is the only one built.
+    bool HipProfiler = POSEIDON_DRIVER_PROFILER_HIP &&
+                       (IsHIP || !POSEIDON_DRIVER_PROFILER_CUDA);
+    if (ProfileGenerate && HipProfiler)
+      Cmd.push_back("-lposeidon_profile_hip");
+    else if (ProfileGenerate && POSEIDON_DRIVER_PROFILER_CUDA)
+      Cmd.push_back("-lposeidon_profile_cuda");
     // poseidon_metric, and the profiler the instrumented code calls into.
     Cmd.push_back("-lposeidon_profile");
     if (ProfileUse && IsCUDA) {
@@ -275,6 +308,11 @@ int main(int argc, char **argv) {
         Cmd.push_back("-Xlinker");
         Cmd.push_back((CuMp + "/build").str());
       }
+    }
+    if (ProfileUse && IsHIP) {
+      // Ozaki-II and the direct products on hipBLAS; TCEC has no HIP build.
+      Cmd.push_back("-lposeidon_rt_hip");
+      Cmd.push_back("-lhipblas");
     }
   }
 

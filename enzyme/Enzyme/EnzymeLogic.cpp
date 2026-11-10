@@ -4632,9 +4632,51 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
   unsigned int SharedAddrSpace = getGPUSharedAddrSpace(TT);
 
   if (key.mode == DerivativeMode::ReverseModeCombined) {
+    // Only the shared-memory shadows this derivative can reach are zeroed:
+    // each one it stores to counts towards its kernel's static shared memory.
+    SmallPtrSet<const Function *, 16> reachable;
+    bool indirectCall = false;
+    SmallVector<const Function *, 16> funcs;
+    if (isGPUArch(TT))
+      funcs.push_back(gutils->newFunc);
+    while (!funcs.empty()) {
+      const Function *F = funcs.pop_back_val();
+      if (!reachable.insert(F).second)
+        continue;
+      for (const Instruction &I : instructions(F))
+        if (auto *CB = dyn_cast<CallBase>(&I)) {
+          auto *Callee =
+              dyn_cast<Function>(CB->getCalledOperand()->stripPointerCasts());
+          if (!Callee)
+            indirectCall |= !CB->isInlineAsm();
+          else if (!Callee->isDeclaration())
+            funcs.push_back(Callee);
+        }
+    }
+    auto reached = [&](const GlobalVariable &g) {
+      if (indirectCall)
+        return true;
+      SmallVector<const User *, 8> users(g.users());
+      SmallPtrSet<const User *, 8> seen;
+      while (!users.empty()) {
+        const User *U = users.pop_back_val();
+        if (!seen.insert(U).second)
+          continue;
+        if (auto *I = dyn_cast<Instruction>(U)) {
+          if (reachable.count(I->getFunction()))
+            return true;
+        } else if (isa<Constant>(U)) {
+          users.append(U->user_begin(), U->user_end());
+        }
+      }
+      return false;
+    };
     BasicBlock *sharedBlock = nullptr;
     for (auto &g : gutils->newFunc->getParent()->globals()) {
       if (hasMetadata(&g, "enzyme_internalshadowglobal")) {
+        if (isGPUArch(TT) &&
+            g.getType()->getAddressSpace() == SharedAddrSpace && !reached(g))
+          continue;
         IRBuilder<> entryBuilder(gutils->inversionAllocs,
                                  gutils->inversionAllocs->begin());
 

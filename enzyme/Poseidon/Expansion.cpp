@@ -11,6 +11,8 @@
 #include "CostModel.h"
 #include "Flags.h"
 #include "Optimize.h"
+#include "Staging.h"
+#include "Utils.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/IR/Constants.h"
@@ -404,10 +406,11 @@ static DSValue emitDSForInstruction(IRBuilder<> &B, Instruction *I,
         mathName = "fma";
     } else if (callee->hasFnAttribute("enzyme_math")) {
       mathName = callee->getFnAttribute("enzyme_math").getValueAsString();
+    } else if (StringRef device = deviceMathName(callee->getName());
+               !device.empty()) {
+      mathName = device;
     } else {
       StringRef name = callee->getName();
-      if (name.starts_with("__nv_"))
-        name = name.drop_front(5);
       if (!name.empty() && (name.back() == 'f' || name.back() == 'l'))
         name = name.drop_back(1);
       mathName = name;
@@ -442,6 +445,9 @@ void applyExpansion(ArrayRef<Instruction *> instsToChange,
   DenseMap<Value *, DSValue> dsMap;
   deferredDSPhiIns().clear();
   g_lastExpansionLimbs.clear();
+  // Captured before the erase loop below invalidates instsToChange.
+  Function *parentF =
+      instsToChange.empty() ? nullptr : instsToChange[0]->getFunction();
 
   for (Instruction *I : instsToChange) {
     IRBuilder<> B(I);
@@ -535,6 +541,15 @@ void applyExpansion(ArrayRef<Instruction *> instsToChange,
   }
   for (PHINode *phi : carriedPhis)
     phi->eraseFromParent();
+
+  // The df64 parameter narrowing is value-preserving only once every load of
+  // the buffer is a Dekker split, i.e. after the last unit over it, so it is
+  // tried after each unit and self-gates until then. Here, not in the
+  // post-pass, so foldDSPairRoundtrip sees the join/split pair it cancels. A
+  // pricing clone is not a registered site, so the lookup fails and it bails.
+  if (flags::NarrowParamStaging && parentF &&
+      narrowSharedStagingParamDS(*parentF, parentF))
+    foldDSPairRoundtrip(*parentF, /*foldedLimbs=*/nullptr);
 }
 
 // Wider FP32 expansions (n = 3, 4), a parallel arm sharing only the exact
@@ -1222,10 +1237,11 @@ emitExpansionForInstruction(IRBuilder<> &B, Instruction *I, unsigned n,
         mathName = "fma";
     } else if (callee->hasFnAttribute("enzyme_math")) {
       mathName = callee->getFnAttribute("enzyme_math").getValueAsString();
+    } else if (StringRef device = deviceMathName(callee->getName());
+               !device.empty()) {
+      mathName = device;
     } else {
       StringRef name = callee->getName();
-      if (name.starts_with("__nv_"))
-        name = name.drop_front(5);
       if (!name.empty() && (name.back() == 'f' || name.back() == 'l'))
         name = name.drop_back(1);
       mathName = name;

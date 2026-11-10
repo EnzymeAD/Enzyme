@@ -3115,6 +3115,33 @@ extern cl::opt<unsigned> SetLicmMssaOptCap;
 #define EnableModuleInliner false
 } // namespace llvm
 
+/// The plugin's part of a pipeline, run only on a module that asks something of
+/// Enzyme. Any other module compiles as it would without the plugin: all that
+/// is left to do there is give up the device math functions the clang plugin
+/// kept alive for a derivative.
+class EnzymeIfUsedNewPM final : public PassParent<EnzymeIfUsedNewPM> {
+  friend PassParent<EnzymeIfUsedNewPM>;
+
+private:
+  ModulePassManager Pipeline;
+  static llvm::AnalysisKey Key;
+
+public:
+  using Result = llvm::PreservedAnalyses;
+  explicit EnzymeIfUsedNewPM(ModulePassManager Pipeline)
+      : Pipeline(std::move(Pipeline)) {}
+
+  Result run(llvm::Module &M, llvm::ModuleAnalysisManager &MAM) {
+    if (EnzymeTruncateAll.empty() && !moduleUsesEnzyme(M))
+      return releaseDeviceMath(M) ? PreservedAnalyses::none()
+                                  : PreservedAnalyses::all();
+    return Pipeline.run(M, MAM);
+  }
+
+  static bool isRequired() { return true; }
+};
+llvm::AnalysisKey EnzymeIfUsedNewPM::Key;
+
 void augmentPassBuilder(llvm::PassBuilder &PB) {
 
   auto prePass = [](ModulePassManager &MPM, OptimizationLevel Level) {
@@ -3150,10 +3177,10 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
   };
 
 #if LLVM_VERSION_MAJOR >= 20
-  auto loadPass = [prePass](ModulePassManager &MPM, OptimizationLevel Level,
-                            ThinOrFullLTOPhase)
+  auto buildPass = [prePass](ModulePassManager &MPM, OptimizationLevel Level,
+                             ThinOrFullLTOPhase)
 #else
-  auto loadPass = [prePass](ModulePassManager &MPM, OptimizationLevel Level)
+  auto buildPass = [prePass](ModulePassManager &MPM, OptimizationLevel Level)
 #endif
   {
     MPM.addPass(PreserveNVVMNewPM(/*Begin*/ true));
@@ -3191,11 +3218,27 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
     MPM.addPass(createModuleToFunctionPassAdaptor(std::move(OptimizerPM2)));
     MPM.addPass(GlobalOptPass());
   };
+#if LLVM_VERSION_MAJOR >= 20
+  auto loadPass = [buildPass](ModulePassManager &MPM, OptimizationLevel Level,
+                              ThinOrFullLTOPhase Phase) {
+    ModulePassManager EnzymeMPM;
+    buildPass(EnzymeMPM, Level, Phase);
+    MPM.addPass(EnzymeIfUsedNewPM(std::move(EnzymeMPM)));
+  };
+#else
+  auto loadPass = [buildPass](ModulePassManager &MPM, OptimizationLevel Level) {
+    ModulePassManager EnzymeMPM;
+    buildPass(EnzymeMPM, Level);
+    MPM.addPass(EnzymeIfUsedNewPM(std::move(EnzymeMPM)));
+  };
+#endif
   // TODO need for perf reasons to move Enzyme pass to the pre vectorization.
   PB.registerOptimizerEarlyEPCallback(loadPass);
 
   auto loadNVVM = [](ModulePassManager &MPM, OptimizationLevel) {
-    MPM.addPass(PreserveNVVMNewPM(/*Begin*/ true));
+    ModulePassManager EnzymeMPM;
+    EnzymeMPM.addPass(PreserveNVVMNewPM(/*Begin*/ true));
+    MPM.addPass(EnzymeIfUsedNewPM(std::move(EnzymeMPM)));
   };
 
   // We should register at vectorizer start for consistency, however,
@@ -3406,8 +3449,9 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
     MPM.addPass(RequireAnalysisPass<GlobalsAA, Module>());
   };
 
-  auto loadLTO = [preLTOPass, loadPass](ModulePassManager &MPM,
-                                        OptimizationLevel Level) {
+  auto loadLTO = [preLTOPass, buildPass](ModulePassManager &LTOMPM,
+                                         OptimizationLevel Level) {
+    ModulePassManager MPM;
     preLTOPass(MPM, Level);
     MPM.addPass(
         createModuleToPostOrderCGSCCPassAdaptor(PostOrderFunctionAttrsPass()));
@@ -3461,10 +3505,11 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
     // FIXME: Add loop interchange.
 
 #if LLVM_VERSION_MAJOR >= 20
-    loadPass(MPM, Level, ThinOrFullLTOPhase::None);
+    buildPass(MPM, Level, ThinOrFullLTOPhase::None);
 #else
-    loadPass(MPM, Level);
+    buildPass(MPM, Level);
 #endif
+    LTOMPM.addPass(EnzymeIfUsedNewPM(std::move(MPM)));
   };
   PB.registerFullLinkTimeOptimizationEarlyEPCallback(loadLTO);
 }

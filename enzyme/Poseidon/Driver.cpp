@@ -2,6 +2,8 @@
 
 #include "Canonicalize.h"
 #include "CostModel.h"
+#include "DeviceMath.h"
+#include "DeviceProfile.h"
 #include "Explain.h"
 #include "Flags.h"
 #include "HostDispatch.h"
@@ -16,10 +18,14 @@
 #include "FPProfileName.h"
 
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallString.h"
+#include "llvm/ADT/StringExtras.h"
+#include "llvm/ADT/StringMap.h"
+#include "llvm/ADT/bit.h"
 #include "llvm/Analysis/CGSCCPassManager.h"
 #include "llvm/Analysis/LoopAnalysisManager.h"
 #include "llvm/Analysis/ValueTracking.h"
@@ -28,7 +34,9 @@
 #include "llvm/IR/DebugInfoMetadata.h"
 #include "llvm/IR/DiagnosticInfo.h"
 #include "llvm/IR/Function.h"
+#include "llvm/IR/DiagnosticHandler.h"
 #include "llvm/IR/GlobalAlias.h"
+#include "llvm/IR/GlobalIFunc.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Instructions.h"
@@ -54,12 +62,14 @@
 #include "llvm/Transforms/Scalar/LoopUnrollPass.h"
 #include "llvm/Transforms/Scalar/LowerConstantIntrinsics.h"
 #include "llvm/Transforms/Scalar/SROA.h"
+#include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 #include "llvm/Transforms/Utils/Local.h"
 #include "llvm/Transforms/Utils/ModuleUtils.h"
 
 #include <cstdio>
 #include <map>
+#include <memory>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -213,6 +223,36 @@ unsigned foldEnzymeGenerated(Function &body) {
   return folded;
 }
 
+// A copy of a deferred body as the pipeline left it, with the functions Enzyme
+// generated for it, for a site the solve leaves alone. Nothing inlines after
+// Enzyme in a plugin-off build, so the always-inline functions Enzyme's code
+// calls (libdevice's __nv_*) stay calls there; in the copy those calls are
+// noinline, so that the late run's always-inliners leave them too and a
+// refused site is not optimized further than the code as written (the dFEM
+// JVP's primal and tangent sqrt would merge into one).
+Function *asLeftByPipeline(Function &body,
+                           DenseMap<Function *, Function *> &copies) {
+  if (Function *copy = copies.lookup(&body))
+    return copy;
+  ValueToValueMapTy VMap;
+  Function *copy = CloneFunction(&body, VMap);
+  copy->setName(body.getName() + ".left");
+  // NVPTX gives only a local symbol a name PTX can spell.
+  copy->setLinkage(GlobalValue::InternalLinkage);
+  copy->removeFnAttr(kSiteDeferred);
+  copies[&body] = copy;
+  for (Instruction &I : instructions(*copy))
+    if (auto *CB = dyn_cast<CallBase>(&I))
+      if (Function *callee = CB->getCalledFunction()) {
+        if (!callee->isDeclaration() &&
+            isEnzymeGeneratedName(callee->getName()))
+          CB->setCalledFunction(asLeftByPipeline(*callee, copies));
+        if (callee->hasFnAttribute(Attribute::AlwaysInline))
+          CB->addFnAttr(Attribute::NoInline);
+      }
+  return copy;
+}
+
 // Whether `F`, or anything it reaches through a direct call, still asks for a
 // derivative. The walk goes through the always-inline wrappers a frontend puts
 // between the marked body and the request.
@@ -323,6 +363,12 @@ std::optional<StringRef> activityMarkerName(Value *res) {
 struct MarkerArgs {
   SmallVector<Value *, 8> primalArgs;
   SmallVector<bool, 16> forward;
+  // The pointers marked poseidon_shadow, whose shadows profileSite makes: the
+  // marker argument naming the activity, the pointer's, and its parameter.
+  struct MadeShadow {
+    unsigned activity, arg, param;
+  };
+  SmallVector<MadeShadow, 4> madeShadows;
   double errTol = 0.0;
 };
 
@@ -334,6 +380,7 @@ bool parseMarker(CallInst *CI, Function *F, MarkerArgs &out) {
   for (size_t i = 1 + sret; i < CI->arg_size(); ++i) {
     Value *res = CI->getArgOperand(i);
     std::optional<bool> dup;
+    std::optional<unsigned> madeShadow;
     bool skipArg = false;
 
     while (auto name = activityMarkerName(res)) {
@@ -344,6 +391,9 @@ bool parseMarker(CallInst *CI, Function *F, MarkerArgs &out) {
       if (*name == "enzyme_dup" || *name == "enzyme_dupnoneed") {
         dup = true;
       } else if (*name == "enzyme_out" || *name == "enzyme_const") {
+        dup = false;
+      } else if (*name == "poseidon_shadow") {
+        madeShadow = i;
         dup = false;
       } else if (*name == "poseidon_tau") {
         out.forward[i] = false;
@@ -393,6 +443,14 @@ bool parseMarker(CallInst *CI, Function *F, MarkerArgs &out) {
       fail(CI, "more arguments than " + F->getName() + " has parameters");
       return false;
     }
+    if (madeShadow) {
+      if (!F->getFunctionType()->getParamType(param)->isPointerTy()) {
+        fail(CI, "poseidon_shadow on parameter " + Twine(param) + " of " +
+                     F->getName() + ", which is not a pointer");
+        return false;
+      }
+      out.madeShadows.push_back({*madeShadow, (unsigned)i, (unsigned)param});
+    }
     if (!dup) {
       Type *PTy = F->getFunctionType()->getParamType(param);
       if (PTy->isPointerTy())
@@ -422,6 +480,27 @@ bool parseMarker(CallInst *CI, Function *F, MarkerArgs &out) {
 SmallVector<WeakVH, 4> &siteClones() {
   static SmallVector<WeakVH, 4> clones;
   return clones;
+}
+
+// The functions a solve rewrote a site in, with every function that calls
+// them: what the module as written does not have.
+SmallVector<WeakVH, 4> &rewrittenFunctions() {
+  static SmallVector<WeakVH, 4> functions;
+  return functions;
+}
+
+void noteRewritten(Function &F) {
+  SmallVector<Function *, 4> work{&F};
+  SmallPtrSet<Function *, 4> seen;
+  while (!work.empty()) {
+    Function *G = work.pop_back_val();
+    if (!seen.insert(G).second)
+      continue;
+    rewrittenFunctions().push_back(G);
+    for (User *U : G->users())
+      if (auto *CB = dyn_cast<CallBase>(U))
+        work.push_back(CB->getFunction());
+  }
 }
 
 // Markers on the same body with the same target share one solve, as they share
@@ -461,7 +540,7 @@ bool emitSiteCall(CallBase *CI, Function *F,
                                             II->getNormalDest(),
                                             II->getUnwindDest(), primalArgs)
          : Builder.CreateCall(F->getFunctionType(), F, primalArgs);
-  optCall->setCallingConv(CI->getCallingConv());
+  optCall->setCallingConv(F->getCallingConv());
   optCall->setDebugLoc(CI->getDebugLoc());
 
   CI->replaceAllUsesWith(optCall);
@@ -490,6 +569,8 @@ bool optimizeSiteBody(CallBase *CI, Function *F,
     auto prior = solvedSites().find(key);
     if (!flags::JointDP && prior != solvedSites().end())
       if (auto *done = dyn_cast_or_null<Function>(prior->second)) {
+        if (done != F)
+          noteRewritten(*CI->getFunction());
         GemmBodyNote ozNote;
         if (flags::OzakiHostDispatch && getGemmBody(done, ozNote))
           writeGemmDescriptor(*CI->getFunction(), primalArgs, ozNote,
@@ -510,6 +591,7 @@ bool optimizeSiteBody(CallBase *CI, Function *F,
     siteClones().push_back(F);
     setSlotMetadata(*F);
     noteSiteOrigin(F, sourceBody);
+    noteSiteArgs(F, primalArgs);
     noteSiteCall(F, CI->getDebugLoc());
 
     SmallString<128> profilePath(flags::ProfileUse);
@@ -544,6 +626,8 @@ bool optimizeSiteBody(CallBase *CI, Function *F,
         addPendingGemmDispatch(F, *CI->getFunction(), primalArgs, flags::Cache);
     } else {
       bool optimized = fpOptimize(*F, errTol);
+      if (optimized)
+        noteRewritten(*CI->getFunction());
 
       if (!optimized)
         warn(CI,
@@ -607,6 +691,10 @@ constexpr StringLiteral kSiteLowered = "poseidon-site-lowered";
 
 // An annotated function that is not a site, diagnosed once.
 constexpr StringLiteral kNotASite = "poseidon-not-a-site";
+
+// The function a site's body was cut from (a host site's function, an
+// annotated kernel), until finalizeModule has given it its debug info back.
+constexpr StringLiteral kHostWrapper = "poseidon-site-wrapper";
 
 bool isLaunchStub(const Function &F) {
   return F.getName().contains("__device_stub__");
@@ -728,7 +816,7 @@ void noteSiteTarget(const Function &F, std::optional<double> tau) {
 void collectAnnotatedSites(Module &M, SmallVectorImpl<Function *> &out,
                            SmallPtrSetImpl<Function *> *byRegex = nullptr,
                            DenseMap<Function *, double> *tauOut = nullptr) {
-  const bool device = Triple(M.getTargetTriple()).isNVPTX();
+  const bool device = isDeviceModule(M);
   SmallPtrSet<Function *, 8> found;
 
   for (auto &[fn, tau] : annotatedFunctions(M)) {
@@ -737,13 +825,15 @@ void collectAnnotatedSites(Module &M, SmallVectorImpl<Function *> &out,
     if (isLaunchStub(*fn) || fn->hasFnAttribute(kSiteLowered))
       continue;
     // A host function is a site of its own (outlineHostSites); a device
-    // function is part of whatever kernel calls it.
-    if (fn->getCallingConv() != CallingConv::PTX_Kernel) {
+    // function makes the kernels that call it sites (propagateDeviceSites),
+    // and what is left here no kernel of this translation unit calls.
+    if (!isKernel(*fn)) {
       if (device)
         diagnoseSite(*fn,
                      displayName(*fn) +
-                         " is a device function; on the device, "
-                         "POSEIDON_OPTIMIZE marks kernels. Emitting the "
+                         " is a device function no kernel of this translation "
+                         "unit calls; on the device, POSEIDON_OPTIMIZE marks a "
+                         "kernel or a function a kernel calls. Emitting the "
                          "original computation.",
                      DS_Warning);
       continue;
@@ -762,8 +852,7 @@ void collectAnnotatedSites(Module &M, SmallVectorImpl<Function *> &out,
                          " is not a valid regular expression: " + err);
     for (Function &F : M)
       if (!F.isDeclaration() && !F.hasFnAttribute(kSiteLowered) &&
-          F.getCallingConv() == CallingConv::PTX_Kernel &&
-          (all || re.match(F.getName())))
+          isKernel(F) && (all || re.match(F.getName())))
         if (found.insert(&F).second && byRegex)
           byRegex->insert(&F);
   }
@@ -771,6 +860,358 @@ void collectAnnotatedSites(Module &M, SmallVectorImpl<Function *> &out,
   for (Function &F : M)
     if (found.count(&F))
       out.push_back(&F);
+}
+
+// --------------------------------------------------------------------------
+// Device-function sites: POSEIDON_OPTIMIZE on a function a kernel calls (the
+// lambda an mfem::forall body is written as) makes that kernel a site.
+// --------------------------------------------------------------------------
+
+// What `K` reaches through direct calls of defined functions, not looking
+// inside annotated ones: `wrappers` is K and everything reached that way,
+// `reached` the annotated device functions it calls.
+void kernelCallees(
+    Function &K, const MapVector<Function *, std::optional<double>> &annotated,
+    SetVector<Function *> &wrappers, SetVector<Function *> &reached) {
+  wrappers.insert(&K);
+  for (size_t w = 0; w < wrappers.size(); ++w)
+    for (Instruction &I : instructions(*wrappers[w]))
+      if (auto *CB = dyn_cast<CallBase>(&I))
+        if (Function *callee = CB->getCalledFunction();
+            callee && !callee->isDeclaration()) {
+          if (annotated.count(callee) && !isKernel(*callee))
+            reached.insert(callee);
+          else
+            wrappers.insert(callee);
+        }
+}
+
+// Why `K` cannot be the site of the annotated functions it calls, empty if it
+// can. A kernel is the site of an annotated device function only when the rest
+// of what it runs is a wrapper around the call (index arithmetic, a bounds
+// check, a loop over the call, further such wrappers); the whole kernel is what
+// gets profiled and rewritten, so floating-point work outside the annotated
+// function would be rewritten without having been marked.
+std::string deviceSiteRefusal(ArrayRef<Function *> wrappers) {
+  for (Function *W : wrappers)
+    for (Instruction &I : instructions(*W)) {
+      if (isOptimizable(I))
+        return "does floating-point work outside them (in " + displayName(*W) +
+               ")";
+      if (auto *CB = dyn_cast<CallBase>(&I);
+          CB && !CB->getCalledFunction() && !CB->isInlineAsm())
+        return "makes an indirect call (in " + displayName(*W) + ")";
+    }
+  return "";
+}
+
+// Gives `K` the annotation `fn` carries, target included, so that every later
+// phase sees an annotated kernel.
+void annotateLike(Function &K, Function &fn) {
+  Module &M = *K.getParent();
+  auto *GA = M.getGlobalVariable("llvm.global.annotations");
+  auto *arr = cast<ConstantArray>(GA->getInitializer());
+  SmallVector<Constant *, 8> entries;
+  Constant *copy = nullptr;
+  for (Value *op : arr->operands()) {
+    auto *entry = cast<Constant>(op);
+    entries.push_back(entry);
+    auto *ST = dyn_cast<ConstantStruct>(entry);
+    if (!ST || ST->getNumOperands() < 2 ||
+        ST->getOperand(0)->stripPointerCasts() != &fn)
+      continue;
+    auto *text =
+        dyn_cast<GlobalVariable>(ST->getOperand(1)->stripPointerCasts());
+    auto *str = text && text->hasInitializer()
+                    ? dyn_cast<ConstantDataArray>(text->getInitializer())
+                    : nullptr;
+    if (!str || !str->isCString() || str->getAsCString() != kAnnotation)
+      continue;
+    SmallVector<Constant *, 5> ops;
+    for (Use &U : ST->operands())
+      ops.push_back(cast<Constant>(U.get()));
+    ops[0] = ConstantExpr::getPointerCast(&K, ops[0]->getType());
+    copy = ConstantStruct::get(ST->getType(), ops);
+  }
+  if (!copy)
+    return;
+  entries.push_back(copy);
+  auto *init = ConstantArray::get(
+      ArrayType::get(arr->getType()->getElementType(), entries.size()),
+      entries);
+  auto *NG = new GlobalVariable(
+      M, init->getType(), GA->isConstant(), GA->getLinkage(), init, "", GA,
+      GA->getThreadLocalMode(), GA->getAddressSpace());
+  NG->setSection(GA->getSection());
+  NG->takeName(GA);
+  GA->eraseFromParent();
+}
+
+// The annotated device functions whose kernels are sites, and the wrappers on
+// the way to them: what foldDeviceSiteCallees folds into a site kernel the
+// inliner left calling them.
+constexpr StringLiteral kSiteCallee = "poseidon-site-callee";
+
+// Before inlining, on the device: every kernel that calls an annotated device
+// function becomes a site with that function's target. A kernel that cannot be
+// the site is left as written with a warning; an annotated kernel keeps its own
+// annotation.
+bool propagateDeviceSites(Module &M) {
+  if (!isDeviceModule(M))
+    return false;
+  auto annotated = annotatedFunctions(M);
+  if (llvm::none_of(annotated, [](auto &kv) { return !isKernel(*kv.first); }))
+    return false;
+
+  SmallPtrSet<Function *, 4> called;
+  SmallVector<std::pair<Function *, Function *>, 4> sites;
+  for (Function &K : M) {
+    if (K.isDeclaration() || !isKernel(K) || K.hasFnAttribute(kSiteLowered))
+      continue;
+    SetVector<Function *> wrappers, reached;
+    kernelCallees(K, annotated, wrappers, reached);
+    if (reached.empty())
+      continue;
+    called.insert(reached.begin(), reached.end());
+    std::string names;
+    std::optional<double> tau;
+    Function *governing = reached.front();
+    std::string why = deviceSiteRefusal(wrappers.getArrayRef());
+    for (Function *fn : reached) {
+      names += (names.empty() ? "" : ", ") + displayName(*fn);
+      std::optional<double> t = annotated.lookup(fn);
+      if (t && tau && *t != *tau)
+        why = "calls annotated functions with different accuracy targets";
+      if (t && !tau) {
+        tau = t;
+        governing = fn;
+      }
+    }
+    if (annotated.count(&K)) {
+      std::optional<double> own = annotated.lookup(&K);
+      if (tau && (!own || *own != *tau))
+        K.getContext().diagnose(DiagnosticInfoUnsupported(
+            K,
+            "Poseidon: " + displayName(K) +
+                " carries POSEIDON_OPTIMIZE and calls " + names +
+                ", which carry it too; the kernel's own annotation and target "
+                "apply",
+            K.getSubprogram(), DS_Warning));
+      continue;
+    }
+    if (!why.empty()) {
+      diagnoseSite(K,
+                   displayName(K) + " calls " + names +
+                       ", which carry POSEIDON_OPTIMIZE, and " + why +
+                       "; a kernel is the site of an annotated function only "
+                       "when it is a wrapper around the call. Emitting the "
+                       "original computation.",
+                   DS_Warning);
+      continue;
+    }
+    for (Function *W : wrappers)
+      if (W != &K)
+        W->addFnAttr(kSiteCallee);
+    for (Function *fn : reached)
+      fn->addFnAttr(kSiteCallee);
+    sites.push_back({&K, governing});
+  }
+  for (auto &[K, fn] : sites)
+    annotateLike(*K, *fn);
+  // Its kernels are the sites now; the function itself is not one.
+  for (Function *fn : called)
+    fn->addFnAttr(kNotASite);
+  return !called.empty();
+}
+
+// At OptimizerEarly: the kernel is the site, so what the inliner left of the
+// call to the annotated function is folded into it here. Inlining is not forced
+// earlier: a site the solve leaves alone has to compile exactly as the kernel
+// would without the annotation.
+bool foldDeviceSiteCallees(Module &M) {
+  if (!isDeviceModule(M))
+    return false;
+  bool changed = false;
+  for (auto &[K, tau] : annotatedFunctions(M)) {
+    if (!isKernel(*K) || K->hasFnAttribute(kSiteLowered))
+      continue;
+    for (unsigned round = 0; round < 8; ++round) {
+      SmallVector<CallBase *, 4> calls;
+      for (Instruction &I : instructions(*K))
+        if (auto *CB = dyn_cast<CallBase>(&I))
+          if (Function *callee = CB->getCalledFunction();
+              callee && !callee->isDeclaration() &&
+              callee->hasFnAttribute(kSiteCallee))
+            calls.push_back(CB);
+      if (calls.empty())
+        break;
+      for (CallBase *CB : calls) {
+        InlineFunctionInfo IFI;
+        changed |= InlineFunction(*CB, IFI).isSuccess();
+      }
+    }
+  }
+  return changed;
+}
+
+void warnWithoutProfile(Function &K) {
+  K.getContext().diagnose(DiagnosticInfoUnsupported(
+      K,
+      "Poseidon: a Poseidon site was compiled without "
+      "-poseidon-profile-generate or -poseidon-profile-use=<dir>. Emitting "
+      "the original computation.",
+      K.getSubprogram(), DS_Warning));
+}
+
+// The module's POSEIDON_OPTIMIZE annotations removed, with what only they
+// referred to.
+bool dropSiteAnnotations(Module &M) {
+  auto *GA = M.getGlobalVariable("llvm.global.annotations");
+  auto *arr =
+      GA ? dyn_cast_or_null<ConstantArray>(GA->getInitializer()) : nullptr;
+  if (!arr)
+    return false;
+  SmallVector<Constant *, 8> kept;
+  SmallSetVector<GlobalVariable *, 8> maybeDead;
+  for (Value *op : arr->operands()) {
+    auto *entry = cast<Constant>(op);
+    auto *ST = dyn_cast<ConstantStruct>(entry);
+    auto *text = ST && ST->getNumOperands() > 1
+                     ? dyn_cast<GlobalVariable>(
+                           ST->getOperand(1)->stripPointerCasts())
+                     : nullptr;
+    auto *str = text && text->hasInitializer()
+                    ? dyn_cast<ConstantDataArray>(text->getInitializer())
+                    : nullptr;
+    if (!str || !str->isCString() || str->getAsCString() != kAnnotation) {
+      kept.push_back(entry);
+      continue;
+    }
+    for (Use &U : ST->operands())
+      if (auto *G = dyn_cast<GlobalVariable>(U.get()->stripPointerCasts()))
+        maybeDead.insert(G);
+  }
+  if (kept.size() == arr->getNumOperands())
+    return false;
+  if (kept.empty()) {
+    GA->eraseFromParent();
+  } else {
+    auto *init = ConstantArray::get(
+        ArrayType::get(arr->getType()->getElementType(), kept.size()), kept);
+    auto *NG = new GlobalVariable(
+        M, init->getType(), GA->isConstant(), GA->getLinkage(), init, "", GA,
+        GA->getThreadLocalMode(), GA->getAddressSpace());
+    NG->setSection(GA->getSection());
+    NG->takeName(GA);
+    GA->eraseFromParent();
+  }
+  for (GlobalVariable *G : maybeDead) {
+    G->removeDeadConstantUsers();
+    if (G->use_empty() && G->isDiscardableIfUnused())
+      G->eraseFromParent();
+  }
+  return true;
+}
+
+// At PipelineStart without a profile action, once the sites are known: they
+// are reported and their annotations dropped. An annotation is a use of the
+// function it names, which the inliner counts as a second caller (no last-call
+// bonus, no deletion once inlined), so the module then compiles as its source
+// does without them.
+bool leaveSitesAsWritten(Module &M) {
+  SmallVector<Function *, 4> sites;
+  SmallPtrSet<Function *, 4> byRegex;
+  collectAnnotatedSites(M, sites, &byRegex);
+  for (Function *K : sites)
+    if (!byRegex.count(K))
+      warnWithoutProfile(*K);
+
+  bool changed = false;
+  for (Function &F : M)
+    for (StringRef attr : {kSiteCallee, kNotASite})
+      if (F.hasFnAttribute(attr)) {
+        F.removeFnAttr(attr);
+        changed = true;
+      }
+  return dropSiteAnnotations(M) || changed;
+}
+
+// The call operator of a lambda: what an annotated mfem::forall body is on the
+// host. A closure type demangles as 'lambda'(...), or as $_<n> where clang
+// needs no mangling number for it (a lambda in a function of a host-only
+// compile).
+bool isLambdaCallOperator(const Function &F) {
+  // The demangler's nodes point into the name it was given.
+  std::string mangled = F.getName().str();
+  ItaniumPartialDemangler D;
+  if (D.partialDemangle(mangled.c_str()) || !D.isFunction())
+    return false;
+  char *base = D.getFunctionBaseName(nullptr, nullptr);
+  char *context = D.getFunctionDeclContextName(nullptr, nullptr);
+  bool lambda = base && context && StringRef(base) == "operator()" &&
+                (StringRef(context).contains("'lambda") ||
+                 StringRef(context).rsplit("::").second.starts_with("$_"));
+  std::free(base);
+  std::free(context);
+  return lambda;
+}
+
+// The host half of a CUDA or HIP compilation: it launches kernels through
+// stubs.
+bool isCUDAHostModule(const Module &M) {
+  return M.getFunction("__cuda_module_ctor") ||
+         M.getFunction("__hip_module_ctor") ||
+         llvm::any_of(M, [](const Function &F) { return isLaunchStub(F); });
+}
+
+// Whether every use of `P`, a pointer to an aggregate, is one reroot can
+// rebuild over a pointer in another address space.
+bool reroots(const Value *P) {
+  for (const Use &U : P->uses()) {
+    const User *I = U.getUser();
+    if (auto *GEP = dyn_cast<GetElementPtrInst>(I)) {
+      if (U.getOperandNo() != GEP->getPointerOperandIndex() || !reroots(GEP))
+        return false;
+    } else if (isa<MemTransferInst>(I)) {
+      if (U.getOperandNo() != 1)
+        return false;
+    } else if (!isa<LoadInst>(I) && !isa<AddrSpaceCastInst>(I)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// The uses of `from` rebuilt over `to`, which points to the same aggregate
+// through the generic address space.
+void reroot(Value *from, Value *to) {
+  for (Use &U : make_early_inc_range(from->uses())) {
+    auto *I = cast<Instruction>(U.getUser());
+    IRBuilder<> B(I);
+    if (auto *GEP = dyn_cast<GetElementPtrInst>(I)) {
+      SmallVector<Value *, 4> idx(GEP->indices());
+      Value *N = B.CreateGEP(GEP->getSourceElementType(), to, idx, "",
+                             GEP->getNoWrapFlags());
+      N->takeName(GEP);
+      reroot(GEP, N);
+      GEP->eraseFromParent();
+    } else if (auto *MT = dyn_cast<MemTransferInst>(I)) {
+      CallInst *N = isa<MemMoveInst>(MT)
+                        ? B.CreateMemMove(MT->getRawDest(), MT->getDestAlign(),
+                                          to, MT->getSourceAlign(),
+                                          MT->getLength(), MT->isVolatile())
+                        : B.CreateMemCpy(MT->getRawDest(), MT->getDestAlign(),
+                                         to, MT->getSourceAlign(),
+                                         MT->getLength(), MT->isVolatile());
+      N->copyMetadata(*MT);
+      MT->eraseFromParent();
+    } else if (isa<AddrSpaceCastInst>(I) && I->getType() == to->getType()) {
+      I->replaceAllUsesWith(to);
+      I->eraseFromParent();
+    } else {
+      U.set(to);
+    }
+  }
 }
 
 // Make the kernel a wrapper around its own body so that both phases see the
@@ -787,10 +1228,39 @@ CallInst *outlineKernelBody(Function &K, Function *&bodyOut) {
     return nullptr;
   }
   Module &M = *K.getParent();
-  Function *B =
-      Function::Create(K.getFunctionType(), GlobalValue::InternalLinkage,
-                       K.getName() + "_poseidon_body", &M);
+  // An AMDGPU kernel takes an aggregate by reference into its constant
+  // argument segment; the body takes it through a generic pointer, which the
+  // profiled kernel can point at a copy that holds the shadows.
+  SmallVector<Type *, 8> params(K.getFunctionType()->params());
+  for (Argument &A : K.args())
+    if (A.hasByRefAttr()) {
+      if (!reroots(&A)) {
+        K.getContext().diagnose(DiagnosticInfoUnsupported(
+            K,
+            "Poseidon: " + displayName(K) + " uses its aggregate parameter " +
+                Twine(A.getArgNo() + 1) +
+                " otherwise than by loading or copying from it; the kernel "
+                "is not a site",
+            K.getSubprogram(), DS_Warning));
+        return nullptr;
+      }
+      params[A.getArgNo()] = PointerType::getUnqual(M.getContext());
+    }
+  // Named alike with and without -fgpu-rdc, which profile generation adds and
+  // a solve need not: the profile is found by this name.
+  Function *B = Function::Create(
+      FunctionType::get(K.getReturnType(), params, false),
+      GlobalValue::InternalLinkage,
+      withoutExternalizedPostfix(K.getName()) + "_poseidon_body", &M);
   B->setAttributes(K.getAttributes());
+  // The body reads the kernel's own copy of a by-value aggregate. Left byval,
+  // folding the body back would copy the aggregate a second time.
+  for (Argument &A : B->args())
+    if (A.hasByValAttr() || A.hasByRefAttr()) {
+      A.removeAttr(Attribute::ByVal);
+      A.removeAttr(Attribute::ByRef);
+      A.addAttr(Attribute::get(M.getContext(), kByValueParam));
+    }
   // The body is an ordinary device function; only the kernel stays an entry.
   B->setCallingConv(CallingConv::C);
   B->setSubprogram(K.getSubprogram());
@@ -798,16 +1268,27 @@ CallInst *outlineKernelBody(Function &K, Function *&bodyOut) {
   B->splice(B->begin(), &K);
   for (auto i = K.arg_begin(), j = B->arg_begin(); i != K.arg_end(); ++i, ++j) {
     j->setName(i->getName());
-    i->replaceAllUsesWith(&*j);
+    if (i->getType() != j->getType())
+      reroot(&*i, &*j);
+    else
+      i->replaceAllUsesWith(&*j);
   }
 
   IRBuilder<> Builder(BasicBlock::Create(M.getContext(), "entry", &K));
   SmallVector<Value *, 8> args;
   for (Argument &A : K.args())
-    args.push_back(&A);
+    args.push_back(A.hasByRefAttr()
+                       ? Builder.CreateAddrSpaceCast(
+                             &A, B->getArg(A.getArgNo())->getType())
+                       : &A);
   CallInst *call = Builder.CreateCall(B, args);
+  call->setCallingConv(B->getCallingConv());
   Builder.CreateRetVoid();
   K.addFnAttr(kSiteLowered);
+  // Folded back, the body's code still names the subprogram it took along;
+  // without it again the kernel compiles with no line table, and ptxas then
+  // allocates it differently.
+  K.addFnAttr(kHostWrapper);
   bodyOut = B;
   return call;
 }
@@ -839,6 +1320,8 @@ Function *instrumentedClone(Function &F, unsigned siteId) {
   return clone;
 }
 
+CallInst *withShadows(CallInst *CI, Function &clone, const MarkerArgs &marker);
+
 // Profile generation. The marker becomes an ordinary reverse-mode derivative
 // request over the instrumented clone: the custom derivative on each probe is
 // what puts the gradient record inside the reverse pass, so the host's AD needs
@@ -865,6 +1348,12 @@ bool profileSite(CallInst *CI, DenseMap<Function *, Function *> &clones,
       warn(CI, Twine("no profilable operation in ") + F->getName());
       return false;
     }
+  }
+  if (!marker.madeShadows.empty()) {
+    CI = withShadows(CI, *clone, marker);
+    marker = MarkerArgs();
+    if (!CI || !parseMarker(CI, F, marker))
+      return false;
   }
 
   Module &M = *CI->getModule();
@@ -937,14 +1426,142 @@ void collectOutputParams(Function &clone,
   }
 }
 
+bool holdsPointer(Type *T) {
+  if (T->isPointerTy())
+    return true;
+  if (auto *ST = dyn_cast<StructType>(T))
+    return llvm::any_of(ST->elements(), holdsPointer);
+  if (auto *AT = dyn_cast<ArrayType>(T))
+    return holdsPointer(AT->getElementType());
+  return false;
+}
+
+// Where an aggregate of type `T` holds pointers: the byte offset of each from
+// the aggregate's start and the insertvalue path that reaches it, in layout
+// order.
+struct PointerField {
+  uint64_t offset;
+  SmallVector<unsigned, 4> path;
+};
+void pointerFields(const DataLayout &DL, Type *T, uint64_t offset,
+                   SmallVectorImpl<unsigned> &path,
+                   SmallVectorImpl<PointerField> &out) {
+  if (T->isPointerTy()) {
+    out.push_back({offset, SmallVector<unsigned, 4>(path.begin(), path.end())});
+    return;
+  }
+  if (!holdsPointer(T))
+    return;
+  if (auto *ST = dyn_cast<StructType>(T)) {
+    const StructLayout *SL = DL.getStructLayout(ST);
+    for (unsigned i = 0; i < ST->getNumElements(); ++i) {
+      path.push_back(i);
+      pointerFields(DL, ST->getElementType(i), offset + SL->getElementOffset(i),
+                    path, out);
+      path.pop_back();
+    }
+  } else if (auto *AT = dyn_cast<ArrayType>(T)) {
+    uint64_t size = DL.getTypeAllocSize(AT->getElementType());
+    for (uint64_t i = 0; i < AT->getNumElements(); ++i) {
+      path.push_back((unsigned)i);
+      pointerFields(DL, AT->getElementType(), offset + i * size, path, out);
+      path.pop_back();
+    }
+  }
+}
+
+// The pointer fields of by-value aggregate parameters the site writes through,
+// in the element width it writes: collectOutputParams for the pointers a
+// kernel's lambda captured.
+void collectOutputFields(Function &clone,
+                         std::map<LaunchRef, unsigned> &seedWidth) {
+  auto mark = [&](Value *ptr, unsigned w) {
+    LaunchRef r = tracePointerRoot(ptr);
+    if (w && r.isField())
+      seedWidth[r] = std::max(seedWidth[r], w);
+  };
+  for (Instruction &I : instructions(clone)) {
+    if (auto *SI = dyn_cast<StoreInst>(&I))
+      mark(SI->getPointerOperand(),
+           fpStoreWidth(SI->getValueOperand()->getType()));
+    else if (auto *RMW = dyn_cast<AtomicRMWInst>(&I))
+      mark(RMW->getPointerOperand(),
+           fpStoreWidth(RMW->getValOperand()->getType()));
+  }
+}
+
+bool holdsFP(Type *T) {
+  if (T->isFPOrFPVectorTy())
+    return true;
+  if (auto *ST = dyn_cast<StructType>(T))
+    return llvm::any_of(ST->elements(), holdsFP);
+  if (auto *AT = dyn_cast<ArrayType>(T))
+    return holdsFP(AT->getElementType());
+  return false;
+}
+
+// The static shared memory of `K` once profiled: the derivative it runs keeps
+// a shadow next to every shared buffer that holds floating-point data.
+uint64_t profiledSharedBytes(Function &K) {
+  const DataLayout &DL = K.getParent()->getDataLayout();
+  SetVector<Function *> funcs;
+  SetVector<GlobalVariable *> shared;
+  funcs.insert(&K);
+  for (size_t f = 0; f < funcs.size(); ++f)
+    for (Instruction &I : instructions(*funcs[f])) {
+      if (auto *CB = dyn_cast<CallBase>(&I))
+        if (Function *callee = CB->getCalledFunction();
+            callee && !callee->isDeclaration())
+          funcs.insert(callee);
+      SmallVector<Value *, 4> ops(I.operands());
+      while (!ops.empty()) {
+        Value *V = ops.pop_back_val();
+        if (auto *GV = dyn_cast<GlobalVariable>(V)) {
+          if (GV->getAddressSpace() == 3)
+            shared.insert(GV);
+        } else if (auto *CE = dyn_cast<ConstantExpr>(V)) {
+          ops.append(CE->op_begin(), CE->op_end());
+        }
+      }
+    }
+  uint64_t bytes = 0;
+  for (GlobalVariable *GV : shared) {
+    uint64_t size = DL.getTypeAllocSize(GV->getValueType());
+    bytes += holdsFP(GV->getValueType()) ? 2 * size : size;
+  }
+  return bytes;
+}
+
+// The most static shared memory a kernel can declare: 48 KiB in CUDA, the
+// local data share an AMDGPU workgroup addresses (64 KiB on gfx942, AMDGPU.td
+// FeatureISAVersion9_4_2).
+uint64_t maxStaticShared(const Module &M) {
+  return Triple(M.getTargetTriple()).isAMDGPU() ? 64 * 1024 : 48 * 1024;
+}
+
 // Profile generation for an attribute site. The kernel keeps its name, its
 // launch handle and its original parameters and gains one shadow parameter per
-// pointer parameter; its body becomes the derivative request over the
-// instrumented clone. The host half of the same compilation reads the
-// descriptor written here and fills those shadows in at every launch.
+// pointer the launch passes: a pointer parameter, or a pointer field of an
+// aggregate it takes by value (the captures of a lambda). Its body becomes the
+// derivative request over the instrumented clone. The host half of the same
+// compilation reads the descriptor written here and fills those shadows in at
+// every launch.
 bool profileAnnotatedKernel(Function &K, unsigned &nextSiteId) {
   Module &M = *K.getParent();
   LLVMContext &C = M.getContext();
+  const DataLayout &DL = M.getDataLayout();
+
+  if (uint64_t bytes = profiledSharedBytes(K); bytes > maxStaticShared(M)) {
+    diagnoseSite(K,
+                 displayName(K) + " would declare " + std::to_string(bytes) +
+                     " bytes of static shared memory once profiled (a shadow "
+                     "next to each floating-point shared buffer), above the " +
+                     std::to_string(maxStaticShared(M)) +
+                     " a kernel can declare. The kernel is not profiled and "
+                     "stays as written.",
+                 DS_Warning);
+    return false;
+  }
 
   Function *body = nullptr;
   CallInst *call = outlineKernelBody(K, body);
@@ -963,15 +1580,45 @@ bool profileAnnotatedKernel(Function &K, unsigned &nextSiteId) {
 
   SmallVector<unsigned, 8> seedWidth;
   collectOutputParams(*clone, seedWidth);
+  std::map<LaunchRef, unsigned> fieldSeedWidth;
+  collectOutputFields(*clone, fieldSeedWidth);
 
-  SmallVector<unsigned, 8> ptrParams;
+  // The aggregate a parameter passes by value or as a value, if it holds a
+  // pointer.
+  auto aggregateOf = [&](unsigned i) -> Type * {
+    Type *T = K.getArg(i)->hasByValAttr()   ? K.getParamByValType(i)
+              : K.getArg(i)->hasByRefAttr() ? K.getParamByRefType(i)
+                                            : K.getArg(i)->getType();
+    return T->isAggregateType() && holdsPointer(T) ? T : nullptr;
+  };
+  struct Shadowed {
+    unsigned param;
+    int64_t offset; // -1: the parameter is the pointer
+    SmallVector<unsigned, 4> path;
+    unsigned seed;
+  };
+  SmallVector<Shadowed, 8> shadowed;
+  for (unsigned i = 0; i < K.arg_size(); ++i) {
+    if (Type *T = aggregateOf(i)) {
+      SmallVector<unsigned, 4> path;
+      SmallVector<PointerField, 8> fields;
+      pointerFields(DL, T, 0, path, fields);
+      for (PointerField &f : fields) {
+        LaunchRef r{(int)i, (int64_t)f.offset};
+        auto it = fieldSeedWidth.find(r);
+        shadowed.push_back(
+            {i, r.offset, f.path, it == fieldSeedWidth.end() ? 0 : it->second});
+      }
+    } else if (K.getArg(i)->getType()->isPointerTy() &&
+               !K.getArg(i)->hasByValAttr() && !K.getArg(i)->hasByRefAttr()) {
+      shadowed.push_back({i, -1, {}, seedWidth[i]});
+    }
+  }
+
   SmallVector<Type *, 16> params(K.getFunctionType()->params());
   Type *PtrTy = PointerType::getUnqual(C);
-  for (unsigned i = 0; i < K.arg_size(); ++i)
-    if (params[i]->isPointerTy()) {
-      ptrParams.push_back(i);
-      params.push_back(PtrTy);
-    }
+  for (size_t k = 0; k < shadowed.size(); ++k)
+    params.push_back(PtrTy);
 
   Function *P =
       Function::Create(FunctionType::get(Type::getVoidTy(C), params, false),
@@ -979,29 +1626,77 @@ bool profileAnnotatedKernel(Function &K, unsigned &nextSiteId) {
   P->setCallingConv(K.getCallingConv());
   // Function attributes only: the parameter attributes describe the primal
   // kernel's accesses, which say nothing about the shadows or about what the
-  // reverse pass touches.
+  // reverse pass touches. A by-value aggregate keeps the byval that makes it
+  // one, which is how the launch passes it.
   P->setAttributes(AttributeList::get(C, K.getAttributes().getFnAttrs(),
                                       AttributeSet(), {}));
+  for (unsigned i = 0; i < K.arg_size(); ++i)
+    if (K.getArg(i)->hasByValAttr() || K.getArg(i)->hasByRefAttr()) {
+      P->addParamAttr(
+          i, K.getArg(i)->hasByValAttr()
+                 ? Attribute::getWithByValType(C, K.getParamByValType(i))
+                 : Attribute::getWithByRefType(C, K.getParamByRefType(i)));
+      if (MaybeAlign align = K.getParamAlign(i))
+        P->addParamAttr(i, Attribute::getWithAlignment(C, *align));
+    }
   P->setMemoryEffects(MemoryEffects::unknown());
+  // The profiled kernel is launched with the original's block shape, which
+  // nothing at compile time bounds below the device's limit. Unbounded, ptxas
+  // sizes the reverse pass's registers for small blocks, and a launch the
+  // original makes (MFEM's 375-thread elasticity reduce at p = 4) runs out of
+  // registers. The probes it calls are linked into this module and compiled
+  // under the same bound. An AMDGPU kernel has its bound as the
+  // amdgpu-flat-work-group-size it shares with the original.
+  if (Triple(M.getTargetTriple()).isNVPTX() &&
+      !P->hasFnAttribute("nvvm.maxntid"))
+    P->addFnAttr("nvvm.maxntid", "1024");
 
   auto activity = [&](StringRef name) {
     return MetadataAsValue::get(C, MDString::get(C, name));
   };
+  IRBuilder<> B(BasicBlock::Create(C, "entry", P));
   SmallVector<Value *, 32> args{clone};
   unsigned shadow = K.arg_size();
+  const Shadowed *next = shadowed.begin();
   for (unsigned i = 0; i < K.arg_size(); ++i) {
     Value *a = P->getArg(i);
-    if (!a->getType()->isPointerTy()) {
+    if (a->getType() != clone->getArg(i)->getType())
+      a = B.CreateAddrSpaceCast(a, clone->getArg(i)->getType());
+    const Shadowed *first = next;
+    while (next != shadowed.end() && next->param == i)
+      ++next;
+    if (first == next) {
       args.push_back(activity("enzyme_const"));
       args.push_back(a);
       continue;
     }
     // Every pointer is duplicated, inputs included: with a constant input the
     // computation reading it has no active argument and Enzyme drops the
-    // reverse pass the profile is recorded from.
+    // reverse pass the profile is recorded from. An aggregate's shadow is the
+    // aggregate with each pointer replaced by its shadow.
+    Value *sh = nullptr;
+    if (first->offset < 0) {
+      sh = P->getArg(shadow++);
+    } else if (Type *T = K.getArg(i)->hasByValAttr()
+                             ? K.getParamByValType(i)
+                             : K.getArg(i)->getParamByRefType()) {
+      Align align = K.getParamAlign(i).valueOrOne();
+      AllocaInst *copy = B.CreateAlloca(T);
+      copy->setAlignment(std::max(align, copy->getAlign()));
+      B.CreateMemCpy(copy, copy->getAlign(), a, align, DL.getTypeAllocSize(T));
+      for (const Shadowed *f = first; f != next; ++f)
+        B.CreateStore(P->getArg(shadow++),
+                      B.CreateConstInBoundsGEP1_64(B.getInt8Ty(), copy,
+                                                   (uint64_t)f->offset));
+      sh = B.CreatePointerBitCastOrAddrSpaceCast(copy, a->getType());
+    } else {
+      sh = a;
+      for (const Shadowed *f = first; f != next; ++f)
+        sh = B.CreateInsertValue(sh, P->getArg(shadow++), f->path);
+    }
     args.push_back(activity("enzyme_dup"));
     args.push_back(a);
-    args.push_back(P->getArg(shadow++));
+    args.push_back(sh);
   }
 
   SmallVector<Type *, 32> argTys;
@@ -1011,7 +1706,6 @@ bool profileAnnotatedKernel(Function &K, unsigned &nextSiteId) {
       FunctionType::get(Type::getVoidTy(C), argTys, false),
       GlobalValue::ExternalLinkage, "__enzyme_autodiff_poseidon", &M);
 
-  IRBuilder<> B(BasicBlock::Create(C, "entry", P));
   B.CreateCall(autodiff, args);
   B.CreateRetVoid();
 
@@ -1023,20 +1717,30 @@ bool profileAnnotatedKernel(Function &K, unsigned &nextSiteId) {
     body->eraseFromParent();
   P->setName(kernelName);
 
+  bool anyField =
+      llvm::any_of(shadowed, [](const Shadowed &s) { return s.offset >= 0; });
   writeDescriptor(flags::Cache, kernelName, kProfGenScheme,
                   "[poseidon-profgen]", [&](raw_ostream &os) {
                     os << ' ' << siteId << ' ' << nOrigArgs << ' '
-                       << ptrParams.size();
-                    for (unsigned p : ptrParams)
-                      os << ' ' << p;
-                    for (unsigned p : ptrParams)
-                      os << ' ' << seedWidth[p];
+                       << shadowed.size();
+                    for (const Shadowed &s : shadowed)
+                      os << ' ' << s.param;
+                    for (const Shadowed &s : shadowed)
+                      os << ' ' << s.seed;
+                    if (anyField) {
+                      os << " off";
+                      for (const Shadowed &s : shadowed)
+                        os << ' ' << std::max<int64_t>(s.offset, 0);
+                    }
                   });
   errs() << "[poseidon-profgen] " << kernelName << ": site " << siteId << ", "
-         << ptrParams.size() << " shadow buffer(s), output(s)";
-  for (unsigned p : ptrParams)
-    if (seedWidth[p])
-      errs() << ' ' << p;
+         << shadowed.size() << " shadow buffer(s), output(s)";
+  for (const Shadowed &s : shadowed)
+    if (s.seed) {
+      errs() << ' ' << s.param;
+      if (s.offset >= 0)
+        errs() << "[+" << s.offset << "]";
+    }
   errs() << "\n";
   return true;
 }
@@ -1048,9 +1752,6 @@ bool profileAnnotatedKernel(Function &K, unsigned &nextSiteId) {
 // The outlined body of a host site. Its value is the site's accuracy target,
 // empty when the annotation carried none.
 constexpr StringLiteral kHostBody = "poseidon-site-body";
-// The function a host site's body was cut from, until finalizeModule has given
-// it its debug info back.
-constexpr StringLiteral kHostWrapper = "poseidon-site-wrapper";
 
 bool isHostScalar(Type *T) {
   return T->isIntegerTy() || T->isHalfTy() || T->isBFloatTy() ||
@@ -1083,6 +1784,27 @@ std::string hostSiteRefusal(Function &F) {
       if (CB->getCalledOperand()->stripPointerCasts() == &F)
         return "calls itself";
   return "";
+}
+
+// The name of a caller with the accuracy targets of its per-call sites left
+// out. A target the caller takes as a template argument (dFEM's Numerics tag)
+// gives it one instantiation, and one name, per target, while the profile of a
+// call does not depend on its target. In an Itanium name a target is a
+// floating-point literal, L, the type, the hex of its bits, E; it becomes the
+// external name `tau`.
+std::string targetFreeName(StringRef name, ArrayRef<double> targets) {
+  std::string out = name.str();
+  for (double t : targets) {
+    SmallVector<std::string, 2> spellings{
+        "Ld" + utohexstr(bit_cast<uint64_t>(t), /*LowerCase=*/true, 16) + "E"};
+    if (float f = (float)t; (double)f == t)
+      spellings.push_back(
+          "Lf" + utohexstr(bit_cast<uint32_t>(f), /*LowerCase=*/true, 8) + "E");
+    for (const std::string &s : spellings)
+      for (size_t at; (at = out.find(s)) != std::string::npos;)
+        out.replace(at, s.size(), "L_Z3tauE");
+  }
+  return out;
 }
 
 // Make `F` a wrapper around its own body, as outlineKernelBody does for a
@@ -1132,10 +1854,12 @@ void outlineHostFunction(Function &F, std::optional<double> tau) {
 
 // __poseidon_optimize: the call through the identity helper becomes a call of
 // a copy of the function made for that call alone, which is then a host site
-// like an outlined body. The copy is named after the caller and the call's
-// position among the caller's per-call sites, taken here, before inlining, so
-// that the generate and use compiles name it alike at any -O level: its
-// profile, DP table and rewritten copy are that call's own.
+// like an outlined body. The copy is named after the caller, without the
+// targets (targetFreeName), and the call's position among the caller's per-call
+// sites, taken here, before inlining, so that the generate and use compiles
+// name it alike at any -O level and for any target: its profile, DP table and
+// rewritten copy are that call's own. In device code the copy becomes a marker
+// site instead (lowerDeviceCallSites).
 bool lowerPerCallSites(Module &M) {
   Function *site = M.getFunction("__poseidon_site");
   Function *siteTau = M.getFunction("__poseidon_site_tau");
@@ -1151,16 +1875,24 @@ bool lowerPerCallSites(Module &M) {
   if (helpers.empty())
     return false;
   applyFlagDefaults();
-  const bool device = Triple(M.getTargetTriple()).isNVPTX();
   const bool active =
       flags::ProfileGenerate ||
       (flags::ProfileUse.getNumOccurrences() && !flags::ProfileUse.empty());
   auto annotated = annotatedFunctions(M);
-  DenseMap<Function *, unsigned> ordinal;
+  DenseMap<Function *, SmallVector<double, 2>> targets;
+  for (CallInst *H : helpers)
+    if (H->arg_size() > 1)
+      if (auto *C = dyn_cast<ConstantFP>(H->getArgOperand(1)))
+        targets[H->getFunction()].push_back(C->getValueAPF().convertToDouble());
+  // Two callers whose names differ in targets alone number their calls on
+  // from each other, so that they stay two sites.
+  StringMap<unsigned> ordinal;
 
   for (CallInst *H : helpers) {
     Function *caller = H->getFunction();
-    unsigned k = ordinal[caller]++;
+    const std::string callerKey =
+        targetFreeName(caller->getName(), targets.lookup(caller));
+    unsigned k = ordinal[callerKey]++;
     auto *fn = dyn_cast<Function>(H->getArgOperand(0)->stripPointerCasts());
     CallBase *call = nullptr;
     for (User *U : H->users())
@@ -1181,13 +1913,6 @@ bool lowerPerCallSites(Module &M) {
       continue;
     }
     const std::string name = displayName(*fn);
-    if (device) {
-      warn(call, "__poseidon_optimize has no effect in device code; a kernel "
-                 "is marked with POSEIDON_OPTIMIZE. The call of " +
-                     name + " runs as written.");
-      asWritten(call);
-      continue;
-    }
     const bool hasTau = H->arg_size() > 1;
     double tau = 0.0;
     if (hasTau) {
@@ -1236,8 +1961,7 @@ bool lowerPerCallSites(Module &M) {
 
     ValueToValueMapTy VMap;
     Function *B = CloneFunction(fn, VMap);
-    B->setName(fn->getName() + ".poseidon." + caller->getName() + "." +
-               Twine(k));
+    B->setName(fn->getName() + ".poseidon." + callerKey + "." + Twine(k));
     B->setLinkage(GlobalValue::InternalLinkage);
     B->setVisibility(GlobalValue::DefaultVisibility);
     B->setComdat(nullptr);
@@ -1257,7 +1981,7 @@ bool lowerPerCallSites(Module &M) {
 }
 
 bool outlineHostSites(Module &M) {
-  if (Triple(M.getTargetTriple()).isNVPTX())
+  if (isDeviceModule(M))
     return false;
   auto annotated = annotatedFunctions(M);
   if (annotated.empty())
@@ -1279,6 +2003,21 @@ bool outlineHostSites(Module &M) {
   for (auto &[F, tau] : annotated) {
     if (isLaunchStub(*F) || F->hasFnAttribute(kSiteLowered))
       continue;
+    // An annotated mfem::forall body: its kernels are the sites, which the
+    // device half of a CUDA compilation owns. A lambda's closure is no
+    // pointer the profiler can shadow, so a host-only build leaves it alone.
+    if (isLambdaCallOperator(*F)) {
+      if (isCUDAHostModule(M))
+        F->addFnAttr(kNotASite);
+      else
+        diagnoseSite(*F,
+                     displayName(*F) +
+                         " is a lambda; POSEIDON_OPTIMIZE on a lambda marks "
+                         "the GPU kernels that call it, and this compilation "
+                         "has none. Emitting the original computation.",
+                     DS_Warning);
+      continue;
+    }
     if (!active) {
       diagnoseSite(*F,
                    "a Poseidon site was compiled without "
@@ -1638,6 +2377,299 @@ bool optimizeHostSite(Function &B) {
   return changed;
 }
 
+// --------------------------------------------------------------------------
+// Device call sites: __poseidon_optimize in device code
+// --------------------------------------------------------------------------
+
+// The local object of `caller` that `p` points into, through the address
+// arithmetic its shadow can repeat; null if there is none.
+AllocaInst *localObject(Value *p, const Function *caller) {
+  for (;;) {
+    if (auto *AI = dyn_cast<AllocaInst>(p))
+      return AI->getFunction() == caller && AI->isStaticAlloca() ? AI : nullptr;
+    if (auto *GEP = dyn_cast<GetElementPtrInst>(p))
+      p = GEP->getPointerOperand();
+    else if (isa<BitCastInst, AddrSpaceCastInst>(p))
+      p = cast<Instruction>(p)->getOperand(0);
+    else
+      return nullptr;
+  }
+}
+
+// A pointer argument that points into no object: null, or undefined because the
+// call's copy never reads it and the optimizer stopped passing the object (the
+// address of an empty functor).
+bool pointsNowhere(Value *p) {
+  return isa<ConstantPointerNull>(p) || isa<UndefValue>(p);
+}
+
+// `p` with the object it points into replaced by `shadow`.
+Value *intoShadow(Value *p, AllocaInst *obj, AllocaInst *shadow,
+                  IRBuilder<> &B) {
+  if (p == obj)
+    return shadow;
+  auto *I = cast<Instruction>(p);
+  Value *base = intoShadow(I->getOperand(0), obj, shadow, B);
+  Instruction *copy = I->clone();
+  copy->setOperand(0, base);
+  return B.Insert(copy, p->getName() + ".shadow");
+}
+
+// The parameters the site reads a pointer through. A shadow of such an object
+// would have to hold shadows of those pointers, and one of zeros hands the
+// reverse pass null ones, so the object is passed as a constant instead.
+void collectPointerHolders(Function &clone, SmallVectorImpl<bool> &holds) {
+  holds.assign(clone.arg_size(), false);
+  for (Instruction &I : instructions(clone))
+    if (auto *LI = dyn_cast<LoadInst>(&I))
+      if (LI->getType()->isPtrOrPtrVectorTy())
+        if (int idx = traceToArgIndex(LI->getPointerOperand()); idx >= 0)
+          holds[idx] = true;
+}
+
+std::string perCallSiteName(const Function &B) {
+  auto [fnSymbol, where] = B.getName().split(".poseidon.");
+  std::string name = llvm::demangle(fnSymbol.str());
+  if (!where.empty()) {
+    auto [callerSymbol, k] = where.rsplit('.');
+    name += " at call " + k.str() + " in " + llvm::demangle(callerSymbol.str());
+  }
+  return name;
+}
+
+// Whether the program may read what `call` leaves in `obj`: an instruction the
+// call reaches before the object's lifetime ends, the call itself when it runs
+// again, or whatever the object's address escapes to. What the site writes and
+// nothing reads reaches no result of the program (dFEM's JVP writes the
+// q-function's primal outputs next to the tangents it is called for), so it is
+// no output to seed.
+bool readAfterCall(AllocaInst *obj, CallInst *call) {
+  SmallPtrSet<const Instruction *, 16> readers{call}, ends;
+  SmallPtrSet<const Value *, 16> seen{obj};
+  SmallVector<const Value *, 8> work{obj};
+  while (!work.empty()) {
+    const Value *V = work.pop_back_val();
+    for (const User *U : V->users()) {
+      const auto *I = dyn_cast<Instruction>(U);
+      if (!I)
+        return true;
+      if (isa<GetElementPtrInst, BitCastInst, AddrSpaceCastInst>(I)) {
+        if (seen.insert(I).second)
+          work.push_back(I);
+      } else if (I->isLifetimeStartOrEnd()) {
+        ends.insert(I);
+      } else if (isa<LoadInst>(I)) {
+        readers.insert(I);
+      } else if (auto *SI = dyn_cast<StoreInst>(I)) {
+        if (SI->getValueOperand() == V)
+          return true;
+      } else if (auto *MI = dyn_cast<MemIntrinsic>(I)) {
+        if (auto *MT = dyn_cast<MemTransferInst>(MI);
+            MT && MT->getRawSource() == V)
+          readers.insert(I);
+      } else if (I != call) {
+        return true;
+      }
+    }
+  }
+
+  SmallPtrSet<const BasicBlock *, 16> visited;
+  SmallVector<const BasicBlock *, 16> blocks;
+  auto reads = [&](BasicBlock::const_iterator it, const BasicBlock *BB) {
+    for (; it != BB->end(); ++it) {
+      if (readers.count(&*it))
+        return true;
+      if (ends.count(&*it))
+        return false;
+    }
+    for (const BasicBlock *S : successors(BB))
+      if (visited.insert(S).second)
+        blocks.push_back(S);
+    return false;
+  };
+  if (reads(std::next(call->getIterator()), call->getParent()))
+    return true;
+  while (!blocks.empty()) {
+    const BasicBlock *BB = blocks.pop_back_val();
+    if (reads(BB->begin(), BB))
+      return true;
+  }
+  return false;
+}
+
+// The marker in the explicit form, with a shadow for every pointer marked
+// poseidon_shadow: a local object like the one the pointer points into, zero,
+// and seeded by the kernel path's rule when the site writes into it and the
+// program reads it afterwards (readAfterCall). It is made at every execution of
+// the call, because the object the call sees is a new one each time: its
+// storage is reused, its value is not.
+CallInst *withShadows(CallInst *CI, Function &clone, const MarkerArgs &marker) {
+  SmallVector<unsigned, 8> seedWidth;
+  collectOutputParams(clone, seedWidth);
+  SmallVector<bool, 8> holdsPointers;
+  collectPointerHolders(clone, holdsPointers);
+  Function *body = markerTargetOrNull(CI);
+  const DataLayout &DL = CI->getModule()->getDataLayout();
+  LLVMContext &C = CI->getContext();
+
+  MapVector<AllocaInst *, std::pair<AllocaInst *, unsigned>> objects;
+  DenseMap<unsigned, AllocaInst *> objectOf;
+  DenseSet<unsigned> constant;
+  for (const MarkerArgs::MadeShadow &S : marker.madeShadows) {
+    Value *p = CI->getArgOperand(S.arg);
+    if (pointsNowhere(p) || holdsPointers[S.param]) {
+      constant.insert(S.activity);
+      continue;
+    }
+    AllocaInst *obj = localObject(p, CI->getFunction());
+    if (!obj) {
+      warn(CI, perCallSiteName(*body) + " no longer takes argument " +
+                   Twine(S.param + 1) + " as a pointer into a local object; " +
+                   "the call is not profiled");
+      return nullptr;
+    }
+    unsigned &width = objects[obj].second;
+    width = std::max(width, seedWidth[S.param]);
+    objectOf[S.arg] = obj;
+  }
+  SmallPtrSet<AllocaInst *, 4> unread;
+  for (auto &[obj, entry] : objects)
+    if (entry.second && !readAfterCall(obj, CI)) {
+      entry.second = 0;
+      unread.insert(obj);
+    }
+
+  for (auto &[obj, entry] : objects) {
+    auto &[shadow, width] = entry;
+    Type *T = width == 8   ? Type::getDoubleTy(C)
+              : width == 4 ? Type::getFloatTy(C)
+                           : nullptr;
+    if (width && !T) {
+      fail(CI, "no seed rule for a " + Twine(width) + "-byte output element");
+      return nullptr;
+    }
+    shadow = new AllocaInst(obj->getAllocatedType(), obj->getAddressSpace(),
+                            obj->getArraySize(), obj->getAlign(),
+                            obj->getName() + ".shadow",
+                            std::next(obj->getIterator()));
+    uint64_t bytes = obj->getAllocationSize(DL)->getFixedValue();
+    IRBuilder<> B(CI);
+    B.CreateMemSet(shadow, B.getInt8(0), bytes, obj->getAlign());
+    if (uint64_t n = T ? bytes / width : 0) {
+      auto [at, idx] =
+          SplitBlockAndInsertSimpleForLoop(B.getInt64(n), CI->getIterator());
+      IRBuilder<> L(at);
+      L.CreateStore(ConstantFP::get(T, 1.0), L.CreateGEP(T, shadow, idx));
+    }
+  }
+
+  IRBuilder<> B(CI);
+  SmallVector<Value *, 32> args;
+  for (unsigned i = 0; i < CI->arg_size(); ++i) {
+    Value *a = CI->getArgOperand(i);
+    if (llvm::any_of(marker.madeShadows,
+                     [&](const auto &S) { return S.activity == i; }))
+      a = MetadataAsValue::get(
+          C,
+          MDString::get(C, constant.count(i) ? "enzyme_const" : "enzyme_dup"));
+    args.push_back(a);
+    if (AllocaInst *obj = objectOf.lookup(i))
+      args.push_back(intoShadow(a, obj, objects[obj].first, B));
+  }
+  CallInst *NC =
+      B.CreateCall(CI->getFunctionType(), CI->getCalledOperand(), args);
+  NC->setCallingConv(CI->getCallingConv());
+  NC->setDebugLoc(CI->getDebugLoc());
+  AttributeList old = CI->getAttributes();
+  NC->setAttributes(
+      AttributeList::get(C, old.getFnAttrs(), old.getRetAttrs(), {}));
+  CI->replaceAllUsesWith(NC);
+  CI->eraseFromParent();
+
+  errs() << "[poseidon-profgen] " << perCallSiteName(*body) << ": "
+         << objects.size() << " shadow object(s), output(s)";
+  for (const MarkerArgs::MadeShadow &S : marker.madeShadows)
+    if (!constant.count(S.activity) && seedWidth[S.param] &&
+        !unread.count(objectOf.lookup(S.arg)))
+      errs() << ' ' << S.param;
+  if (!unread.empty()) {
+    errs() << ", not read after the call:";
+    for (const MarkerArgs::MadeShadow &S : marker.madeShadows)
+      if (unread.count(objectOf.lookup(S.arg)))
+        errs() << ' ' << S.param;
+  }
+  errs() << "\n";
+  return NC;
+}
+
+// __poseidon_optimize in device code: every call of the copy lowerPerCallSites
+// made becomes a marker over that copy, so that profiling, deferral and the
+// solve are the marker's. Its pointers are marked poseidon_shadow for
+// profileSite, which can only make shadows of local objects of the caller;
+// inlining has put the objects a call passes there by now.
+bool lowerDeviceCallSites(Module &M) {
+  if (!isDeviceModule(M))
+    return false;
+  SmallVector<Function *, 4> bodies = hostSiteBodies(M);
+  if (bodies.empty())
+    return false;
+  LLVMContext &C = M.getContext();
+  auto activity = [&](StringRef name) {
+    return MetadataAsValue::get(C, MDString::get(C, name));
+  };
+  for (Function *B : bodies) {
+    double tau = takeHostBody(*B);
+    for (CallBase *CB : callsOf(*B)) {
+      Function *caller = CB->getFunction();
+      std::string why;
+      if (!isa<CallInst>(CB))
+        why = "is reached through an invoke";
+      for (Use &U : CB->args())
+        if (why.empty() && U->getType()->isPointerTy() &&
+            !pointsNowhere(U.get()) && !localObject(U.get(), caller))
+          why = ("takes argument " + Twine(U.getOperandNo() + 1) +
+                 " as a pointer into memory that is not a local object of " +
+                 displayName(*caller))
+                    .str();
+      if (!why.empty()) {
+        warn(CB, perCallSiteName(*B) + " " + why +
+                     ", so this call is not a Poseidon site: the pass makes "
+                     "shadows of local objects only, and "
+                     "__poseidon_fp_optimize takes the caller's own. The call "
+                     "runs as written.");
+        markOutlineTransparent(B);
+        continue;
+      }
+      SmallVector<Value *, 16> args{B};
+      if (tau > 0.0) {
+        args.push_back(activity("poseidon_tau"));
+        args.push_back(ConstantFP::get(Type::getDoubleTy(C), tau));
+      }
+      if (!CB->getType()->isVoidTy())
+        args.push_back(activity("enzyme_primal_return"));
+      for (Value *a : CB->args()) {
+        Type *T = a->getType();
+        args.push_back(activity(T->isPointerTy()         ? "poseidon_shadow"
+                                : T->isFloatingPointTy() ? "enzyme_out"
+                                                         : "enzyme_const"));
+        args.push_back(a);
+      }
+      auto *FT = FunctionType::get(CB->getType(), {PointerType::getUnqual(C)},
+                                   /*isVarArg=*/true);
+      FunctionCallee fn = M.getOrInsertFunction("__poseidon_fp_optimize", FT);
+      IRBuilder<> Builder(CB);
+      CallInst *CI = Builder.CreateCall(FT, fn.getCallee(), args);
+      CI->setDebugLoc(CB->getDebugLoc());
+      AttributeList old = CB->getAttributes();
+      CI->setAttributes(
+          AttributeList::get(C, old.getFnAttrs(), old.getRetAttrs(), {}));
+      CB->replaceAllUsesWith(CI);
+      CB->eraseFromParent();
+    }
+  }
+  return true;
+}
+
 } // namespace
 
 bool lowerMarkers(ArrayRef<CallInst *> markers,
@@ -1710,12 +2742,7 @@ bool optimizeAnnotatedSites(Module &M) {
   // as written rather than outlined and never folded back.
   if (!flags::ProfileUse.getNumOccurrences() || flags::ProfileUse.empty()) {
     for (Function *K : sites)
-      K->getContext().diagnose(DiagnosticInfoUnsupported(
-          *K,
-          "Poseidon: a Poseidon site was compiled without "
-          "-poseidon-profile-generate or -poseidon-profile-use=<dir>. "
-          "Emitting the original computation.",
-          K->getSubprogram(), DS_Warning));
+      warnWithoutProfile(*K);
     return changed;
   }
 
@@ -1849,7 +2876,7 @@ bool solveDeferredSites(Module &M, FunctionAnalysisManager &FAM) {
   return solveJointly(M, FAM);
 }
 
-// The body a host site's wrapper ended up inlining carries the function's debug
+// The body a site's wrapper ended up inlining carries the function's debug
 // info: the subprogram most of its code is in goes back to the wrapper once
 // nothing else holds it, and the return outlineHostFunction located in the
 // source body follows it there.
@@ -1925,12 +2952,24 @@ bool enzymeAlreadyRan(Module &M) {
 }
 
 bool hasSite(Module &M) {
-  if (!flags::Kernels.empty() || M.getNamedGlobal("llvm.global.annotations"))
+  if (!flags::Kernels.empty() || !annotatedFunctions(M).empty())
     return true;
-  for (Function &F : M)
-    if (F.isDeclaration() && isMarkerCall(F.getName()) && !F.use_empty())
+  for (Function &F : M) {
+    if (F.hasFnAttribute(kHostBody) || F.hasFnAttribute(kSiteCallee))
       return true;
+    if (!F.use_empty() && ((F.isDeclaration() && isMarkerCall(F.getName())) ||
+                           F.getName() == "__poseidon_site" ||
+                           F.getName() == "__poseidon_site_tau"))
+      return true;
+  }
   return false;
+}
+
+// Whether this compile generates or uses a profile: anything else leaves every
+// site as written.
+bool profileAction() {
+  applyFlagDefaults();
+  return flags::ProfileGenerate || !flags::ProfileUse.empty();
 }
 
 void requirePluginOrder(Module &M) {
@@ -1950,7 +2989,9 @@ struct OptimizePass : PassParent<OptimizePass> {
     requirePluginOrder(M);
 
     bool changed = lowerPerCallSites(M);
+    changed |= lowerDeviceCallSites(M);
     changed |= outlineHostSites(M);
+    changed |= foldDeviceSiteCallees(M);
     changed |= prepareModule(M);
     changed |= optimizeAnnotatedSites(M);
 
@@ -2014,8 +3055,11 @@ struct LatePass : PassParent<LatePass> {
   // would be the only thing standing between a deferred-site build and the
   // codegen it would otherwise have had.
   void canonicalizeBodies(Module &M, ArrayRef<Function *> bodies,
-                          LocalAnalysisManagers &AMs) {
+                          LocalAnalysisManagers &AMs,
+                          DenseMap<Function *, Function *> *asLeft) {
     for (Function *F : bodies) {
+      if (asLeft)
+        asLeftByPipeline(*F, *asLeft);
       unsigned folded = foldEnzymeGenerated(*F);
       if (flags::Print && folded)
         llvm::errs() << "[poseidon] " << F->getName() << ": folded " << folded
@@ -2099,7 +3143,9 @@ struct LatePass : PassParent<LatePass> {
     // The canonical form of a deferred site is taken here, in both phases, so
     // that the slots the profile was numbered against are the ones the solve
     // sees.
-    canonicalizeBodies(M, bodies, AMs);
+    DenseMap<Function *, Function *> asLeft;
+    canonicalizeBodies(M, bodies, AMs,
+                       flags::ProfileGenerate ? nullptr : &asLeft);
 
     markers.clear();
     collectDeferredMarkers(M, markers);
@@ -2122,7 +3168,25 @@ struct LatePass : PassParent<LatePass> {
     SmallVector<CallBase *, 4> calls;
     if (!markers.empty())
       lowerMarkers(markers, calls);
+    SmallVector<WeakVH, 4> lowered(calls.begin(), calls.end());
     solveDeferredSites(M, AMs.FAM);
+    // A site that kept its body calls the body as the pipeline left it rather
+    // than its canonical form.
+    for (WeakVH &handle : lowered)
+      if (auto *CB = dyn_cast_or_null<CallBase>(handle))
+        if (Function *copy = asLeft.lookup(CB->getCalledFunction())) {
+          markOutlineTransparent(copy);
+          CB->setCalledFunction(copy);
+        }
+    for (bool erased = true; erased;) {
+      erased = false;
+      for (auto &[original, copy] : asLeft)
+        if (copy && copy->use_empty()) {
+          copy->eraseFromParent();
+          copy = nullptr;
+          erased = true;
+        }
+    }
     // The body a site ends up calling is made always-inline by
     // optimizeSiteBody, which both runs share, so the AlwaysInlinerPass below
     // folds a refused site back exactly as it folds a rewritten one.
@@ -2151,17 +3215,299 @@ struct LatePass : PassParent<LatePass> {
 };
 
 // POSEIDON_OPTIMIZE on a host function is lowered at PipelineStart, before the
-// inliner can fold the function into its callers.
+// inliner can fold the function into its callers, and on a device function it
+// is handed to the kernels that call it while those calls still exist.
 struct HostSitePass : PassParent<HostSitePass> {
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &) {
-    bool changed = lowerPerCallSites(M);
+    bool changed = false;
+    if (isDeviceModule(M))
+      changed = profileAction() && hasSite(M) ? keepDeviceMath(M)
+                                              : releaseDeviceMath(M);
+    changed |= lowerPerCallSites(M);
+    changed |= propagateDeviceSites(M);
     changed |= outlineHostSites(M);
+    changed |= registerDeviceProfileTable(M);
+    if (!profileAction())
+      changed |= leaveSitesAsWritten(M);
     return changed ? PreservedAnalyses::none() : PreservedAnalyses::all();
   }
   static bool isRequired() { return true; }
 };
 
+// A device module with a site is compiled for the solve otherwise than as
+// written in every function, not only the rewritten ones: libdevice math kept
+// out of line through the inliner, the canonical prefix, a per-call site's copy
+// kept out of line until it is lowered (lane G's hooke: 150 registers against
+// 134). The module is compiled once more, from its state before any of that
+// and as a build without a profile compiles it, and every function no rewrite
+// reached is emitted from that compile.
+std::map<const Module *, std::unique_ptr<Module>> &asWrittenTwins() {
+  static std::map<const Module *, std::unique_ptr<Module>> twins;
+  return twins;
+}
+
+bool compilingTwin = false;
+
+// At PipelineStart, before HostSitePass.
+struct TwinSnapshotPass : PassParent<TwinSnapshotPass> {
+  PreservedAnalyses run(Module &M, ModuleAnalysisManager &) {
+    if (compilingTwin || !isDeviceModule(M) || !hasSite(M))
+      return PreservedAnalyses::all();
+    applyFlagDefaults();
+    const bool profileUse =
+        flags::ProfileUse.getNumOccurrences() && !flags::ProfileUse.empty();
+    if (profileUse && !flags::ProfileGenerate && !flags::JointDP)
+      asWrittenTwins()[&M] = CloneModule(M);
+    return PreservedAnalyses::all();
+  }
+  static bool isRequired() { return true; }
+};
+
+// Runs the default pipeline of `Phase` on `twin` as a build without a profile,
+// the diagnostics already given for the module's sites silenced. False if it
+// reported an error.
+bool compileAsWritten(Module &twin, PassBuilder &PB, OptimizationLevel Level,
+                      ThinOrFullLTOPhase Phase) {
+  struct Quiet : DiagnosticHandler {
+    bool failed = false;
+    bool handleDiagnostics(const DiagnosticInfo &DI) override {
+      failed |= DI.getSeverity() == DS_Error;
+      return true;
+    }
+  };
+  LLVMContext &C = twin.getContext();
+  std::unique_ptr<DiagnosticHandler> handler = C.getDiagnosticHandler();
+  auto quiet = std::make_unique<Quiet>();
+  Quiet *q = quiet.get();
+  C.setDiagnosticHandler(std::move(quiet));
+  // No -poseidon-profile-use at all, not an empty one, which means the default
+  // profile directory.
+  const std::string profileUse = flags::ProfileUse;
+  const bool print = flags::Print;
+  flags::ProfileUse.reset();
+  flags::Print = false;
+  compilingTwin = true;
+  {
+    LocalAnalysisManagers AMs(PB);
+    ModulePassManager MPM =
+        Phase == ThinOrFullLTOPhase::ThinLTOPreLink
+            ? PB.buildThinLTOPreLinkDefaultPipeline(Level)
+            : PB.buildPerModuleDefaultPipeline(Level, Phase);
+    MPM.run(twin, AMs.MAM);
+  }
+  compilingTwin = false;
+  flags::ProfileUse.addOccurrence(0, flags::ProfileUse.ArgStr, profileUse);
+  flags::Print = print;
+  const bool failed = q->failed;
+  C.setDiagnosticHandler(std::move(handler));
+  return !failed;
+}
+
+// What a function copied from the rewritten module into the module as written
+// refers to: a declaration, or a variable that is one object for the whole
+// program, is the module's own of that name; anything else the rewritten
+// module defines is copied along, under its name unless the module has it.
+struct RewrittenReferences final : ValueMaterializer {
+  Module &T;
+  SmallVector<GlobalValue *, 8> pending;
+  bool mismatch = false;
+
+  explicit RewrittenReferences(Module &T) : T(T) {}
+
+  Value *materialize(Value *V) override {
+    auto *G = dyn_cast<GlobalValue>(V);
+    if (!G || G->getParent() == &T)
+      return nullptr;
+    auto *F = dyn_cast<Function>(G);
+    auto *var = dyn_cast<GlobalVariable>(G);
+    if (!F && !var) {
+      mismatch = true;
+      return PoisonValue::get(G->getType());
+    }
+    const bool copied =
+        !G->isDeclaration() &&
+        (F || (G->hasLocalLinkage() &&
+               (var->isConstant() || var->getAddressSpace() == 3)));
+    GlobalValue *own = T.getNamedValue(G->getName());
+    if (own && !copied) {
+      if (own->getValueID() != G->getValueID() ||
+          own->getValueType() != G->getValueType() ||
+          own->getAddressSpace() != G->getAddressSpace() ||
+          (F && cast<Function>(own)->getCallingConv() != F->getCallingConv())) {
+        mismatch = true;
+        return PoisonValue::get(G->getType());
+      }
+      return own;
+    }
+    GlobalValue *NG;
+    if (F) {
+      Function *NF = Function::Create(F->getFunctionType(), F->getLinkage(),
+                                      F->getAddressSpace(), F->getName(), &T);
+      NF->copyAttributesFrom(F);
+      NG = NF;
+    } else {
+      auto *NV = new GlobalVariable(T, var->getValueType(), var->isConstant(),
+                                    var->getLinkage(), nullptr, var->getName(),
+                                    nullptr, var->getThreadLocalMode(),
+                                    var->getAddressSpace(),
+                                    var->isExternallyInitialized());
+      NV->copyAttributesFrom(var);
+      NG = NV;
+    }
+    if (own)
+      NG->setLinkage(GlobalValue::InternalLinkage);
+    if (!G->isDeclaration())
+      pending.push_back(G);
+    return NG;
+  }
+};
+
+void collectReferences(Value *V, SmallVectorImpl<WeakVH> &out) {
+  if (auto *G = dyn_cast<GlobalValue>(V))
+    out.push_back(G);
+  else if (auto *C = dyn_cast<Constant>(V))
+    for (Value *op : C->operands())
+      collectReferences(op, out);
+}
+
+void collectReferences(Function &F, SmallVectorImpl<WeakVH> &out) {
+  for (Instruction &I : instructions(F))
+    for (Value *op : I.operands())
+      if (isa<Constant>(op))
+        collectReferences(op, out);
+}
+
+// Into `T`, the module as written compiled, the functions of `M` a rewrite
+// reached, each in place of T's of the same name, with what they refer to.
+// False if a reference has no counterpart in T, which is then unusable.
+bool takeRewritten(Module &T, ArrayRef<Function *> rewritten) {
+  ValueToValueMapTy VMap;
+  RewrittenReferences refs(T);
+  SmallVector<std::pair<Function *, Function *>, 4> replaced;
+  for (Function *F : rewritten) {
+    Function *own = T.getFunction(F->getName());
+    Function *NF = Function::Create(F->getFunctionType(), F->getLinkage(),
+                                    F->getAddressSpace(), F->getName());
+    if (own)
+      T.getFunctionList().insert(own->getIterator(), NF);
+    else
+      T.getFunctionList().push_back(NF);
+    if (own && own->getFunctionType() == F->getFunctionType())
+      replaced.push_back({own, NF});
+    else if (own)
+      NF->setLinkage(GlobalValue::InternalLinkage);
+    VMap[F] = NF;
+    refs.pending.push_back(F);
+  }
+  while (!refs.pending.empty()) {
+    GlobalValue *G = refs.pending.pop_back_val();
+    if (auto *F = dyn_cast<Function>(G)) {
+      auto *NF = cast<Function>(VMap[F]);
+      for (auto [from, to] : zip(F->args(), NF->args()))
+        VMap[&from] = &to;
+      // Cloning copies the visibility, which a local copy cannot keep.
+      const GlobalValue::LinkageTypes linkage = NF->getLinkage();
+      NF->setLinkage(F->getLinkage());
+      SmallVector<ReturnInst *, 4> returns;
+      CloneFunctionInto(NF, F, VMap, CloneFunctionChangeType::DifferentModule,
+                        returns, "", nullptr, nullptr, &refs);
+      NF->setLinkage(linkage);
+    } else {
+      auto *V = cast<GlobalVariable>(G);
+      cast<GlobalVariable>(VMap[V])->setInitializer(
+          MapValue(V->getInitializer(), VMap, RF_None, nullptr, &refs));
+    }
+  }
+  if (refs.mismatch)
+    return false;
+
+  SmallVector<WeakVH, 16> maybeDead;
+  for (auto [own, NF] : replaced) {
+    collectReferences(*own, maybeDead);
+    own->replaceAllUsesWith(NF);
+    NF->setComdat(own->getComdat());
+    std::string name = own->getName().str();
+    own->eraseFromParent();
+    NF->setName(name);
+  }
+  // What only T's own versions of them referred to.
+  while (!maybeDead.empty()) {
+    auto *G = dyn_cast_or_null<GlobalValue>(maybeDead.pop_back_val());
+    if (!G)
+      continue;
+    G->removeDeadConstantUsers();
+    if (!G->use_empty() || !G->isDiscardableIfUnused())
+      continue;
+    if (auto *F = dyn_cast<Function>(G))
+      collectReferences(*F, maybeDead);
+    else if (auto *V = dyn_cast<GlobalVariable>(G); V && V->hasInitializer())
+      collectReferences(V->getInitializer(), maybeDead);
+    else
+      continue;
+    G->eraseFromParent();
+  }
+  return true;
+}
+
+// The contents of `M` replaced by those of `from`, which is left empty.
+void adoptModule(Module &M, Module &from) {
+  M.dropAllReferences();
+  for (GlobalValue &GV : make_early_inc_range(M.global_values()))
+    GV.removeDeadConstantUsers();
+  for (Function &F : make_early_inc_range(M))
+    F.eraseFromParent();
+  for (GlobalVariable &GV : make_early_inc_range(M.globals()))
+    GV.eraseFromParent();
+  for (GlobalAlias &GA : make_early_inc_range(M.aliases()))
+    GA.eraseFromParent();
+  for (GlobalIFunc &GI : make_early_inc_range(M.ifuncs()))
+    GI.eraseFromParent();
+  for (NamedMDNode &N : make_early_inc_range(M.named_metadata()))
+    M.eraseNamedMetadata(&N);
+
+  auto comdat = [&](GlobalObject &GO) {
+    if (const Comdat *C = GO.getComdat()) {
+      Comdat *own = M.getOrInsertComdat(C->getName());
+      own->setSelectionKind(C->getSelectionKind());
+      GO.setComdat(own);
+    }
+  };
+  for (GlobalVariable &GV : make_early_inc_range(from.globals())) {
+    GV.removeFromParent();
+    M.insertGlobalVariable(&GV);
+    comdat(GV);
+  }
+  for (Function &F : make_early_inc_range(from)) {
+    F.removeFromParent();
+    M.getFunctionList().push_back(&F);
+    comdat(F);
+  }
+  for (GlobalAlias &GA : make_early_inc_range(from.aliases())) {
+    GA.removeFromParent();
+    M.insertAlias(&GA);
+  }
+  for (GlobalIFunc &GI : make_early_inc_range(from.ifuncs())) {
+    GI.removeFromParent();
+    M.insertIFunc(&GI);
+  }
+  for (NamedMDNode &N : from.named_metadata()) {
+    NamedMDNode *own = M.getOrInsertNamedMetadata(N.getName());
+    for (MDNode *op : N.operands())
+      own->addOperand(op);
+  }
+  M.setModuleInlineAsm(from.getModuleInlineAsm());
+}
+
 struct FinalizePass : PassParent<FinalizePass> {
+  PassBuilder *PB = nullptr;
+  OptimizationLevel Level = OptimizationLevel::O3;
+  ThinOrFullLTOPhase Phase = ThinOrFullLTOPhase::None;
+
+  FinalizePass() = default;
+  FinalizePass(PassBuilder *PB, OptimizationLevel Level,
+               ThinOrFullLTOPhase Phase)
+      : PB(PB), Level(Level), Phase(Phase) {}
+
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &) {
     for (Function &F : M)
       if (F.isDeclaration() && !F.use_empty() &&
@@ -2171,7 +3517,65 @@ struct FinalizePass : PassParent<FinalizePass> {
             "nothing lowered. Add -fpass-plugin=<ClangEnzyme>.so after the "
             "Poseidon plugin.");
     finalizeModule(M);
+    // An annotation takes the address of the function it names, and AMDGPU
+    // allocates the shared memory of every address-taken function in each
+    // kernel that may make an unknown call, as a profiled kernel does.
+    if (flags::ProfileGenerate && Triple(M.getTargetTriple()).isAMDGPU())
+      dropSiteAnnotations(M);
+    linkDeviceProfiler(M);
+    requireDeviceCallees(M);
+    releaseDeviceMath(M);
+    SmallVector<Function *, 4> rewritten;
+    for (WeakVH &handle : rewrittenFunctions())
+      if (auto *F = dyn_cast_or_null<Function>(handle);
+          F && F->getParent() == &M && !F->isDeclaration() &&
+          !is_contained(rewritten, F))
+        rewritten.push_back(F);
+    erase_if(rewrittenFunctions(), [&](WeakVH &handle) {
+      auto *F = dyn_cast_or_null<Function>(handle);
+      return !F || F->getParent() == &M;
+    });
+    for (Function *F : rewritten)
+      inlineDeviceMath(*F);
+    auto twin = asWrittenTwins().find(&M);
+    if (twin != asWrittenTwins().end()) {
+      std::unique_ptr<Module> S = std::move(twin->second);
+      asWrittenTwins().erase(twin);
+      if (PB && compileAsWritten(*S, *PB, Level, Phase)) {
+        if (takeRewritten(*S, rewritten)) {
+          adoptModule(M, *S);
+          if (flags::Print && rewritten.empty())
+            llvm::errs() << "[poseidon] every site of " << M.getName()
+                         << " was left alone; emitting the module as written\n";
+          else if (flags::Print)
+            llvm::errs() << "[poseidon] " << M.getName() << ": "
+                         << rewritten.size()
+                         << " function(s) a rewrite reached; every other "
+                            "function as written\n";
+        } else {
+          llvm::errs() << "[poseidon] " << M.getName()
+                       << ": a rewritten function refers to what the module "
+                          "as written does not hold alike; emitting the "
+                          "rewritten module\n";
+        }
+      }
+    }
     return PreservedAnalyses::none();
+  }
+  static bool isRequired() { return true; }
+};
+
+// A module without a site compiles as it does without the plugin.
+struct IfSitePass : PassParent<IfSitePass> {
+  ModulePassManager Pipeline;
+
+  explicit IfSitePass(ModulePassManager Pipeline)
+      : Pipeline(std::move(Pipeline)) {}
+
+  PreservedAnalyses run(Module &M, ModuleAnalysisManager &MAM) {
+    if (!hasSite(M))
+      return PreservedAnalyses::all();
+    return Pipeline.run(M, MAM);
   }
   static bool isRequired() { return true; }
 };
@@ -2206,18 +3610,29 @@ void registerPasses(PassBuilder &PB) {
     MPM.addPass(HostSitePass());
     // Host-side GEMM dispatch must rewrite the launch stub BEFORE inlining, so
     // it runs at PipelineStart. No-op unless -poseidon-ozaki-host-dispatch is
-    // set and the module is the host (non-NVPTX) module.
+    // set and the module is a host module.
     MPM.addPass(HostStubPass());
   };
-  PB.registerPipelineStartEPCallback(loadHostStub);
+  PB.registerPipelineStartEPCallback(
+      [loadHostStub](ModulePassManager &MPM, OptimizationLevel Level) {
+        MPM.addPass(TwinSnapshotPass());
+        loadHostStub(MPM, Level);
+      });
 
   auto loadPoseidon = [](ModulePassManager &MPM, OptimizationLevel Level) {
-    addCanonicalPrefix(MPM, Level);
-    MPM.addPass(OptimizePass());
+    ModulePassManager Sites;
+    if (profileAction())
+      addCanonicalPrefix(Sites, Level);
+    Sites.addPass(OptimizePass());
     // Fold the outlined site bodies and the materialized clones back into
     // their kernels here; nothing later in the pipeline inlines, and the
     // AlwaysInlinerPass the Enzyme plugin adds is another plugin's business.
-    MPM.addPass(AlwaysInlinerPass());
+    Sites.addPass(AlwaysInlinerPass());
+    // Profile generation also binds the profiler from main, wherever main is.
+    if (flags::ProfileGenerate)
+      MPM.addPass(std::move(Sites));
+    else
+      MPM.addPass(IfSitePass(std::move(Sites)));
   };
   // The late run owns the sites the early run deferred: the canonical prefix,
   // the site handler, the always-inliner and, in profile-generate mode, a
@@ -2225,21 +3640,29 @@ void registerPasses(PassBuilder &PB) {
   // in a module that deferred nothing. FinalizePass's "nothing lowered this
   // request" check therefore runs after that second Enzyme run.
   PassBuilder *PBp = &PB;
-  auto loadFinalize = [PBp](ModulePassManager &MPM, OptimizationLevel Level) {
+  // The module as written is compiled with the default pipeline of the phase
+  // the module is in: a compile from source, also one that writes LTO bitcode
+  // (every HIP device compile does). An LTO link has no module as written.
+  auto loadFinalize = [PBp](ModulePassManager &MPM, OptimizationLevel Level,
+                            ThinOrFullLTOPhase Phase) {
+    const bool fromSource = Phase == ThinOrFullLTOPhase::None ||
+                            Phase == ThinOrFullLTOPhase::ThinLTOPreLink ||
+                            Phase == ThinOrFullLTOPhase::FullLTOPreLink;
     MPM.addPass(LatePass(PBp, Level));
-    MPM.addPass(FinalizePass());
+    MPM.addPass(FinalizePass(fromSource ? PBp : nullptr, Level, Phase));
   };
 
 #if LLVM_VERSION_MAJOR >= 20
   PB.registerOptimizerEarlyEPCallback(
       [loadPoseidon](ModulePassManager &MPM, OptimizationLevel Level,
                      ThinOrFullLTOPhase) { loadPoseidon(MPM, Level); });
-  PB.registerOptimizerLastEPCallback(
-      [loadFinalize](ModulePassManager &MPM, OptimizationLevel Level,
-                     ThinOrFullLTOPhase) { loadFinalize(MPM, Level); });
+  PB.registerOptimizerLastEPCallback(loadFinalize);
 #else
   PB.registerOptimizerEarlyEPCallback(loadPoseidon);
-  PB.registerOptimizerLastEPCallback(loadFinalize);
+  PB.registerOptimizerLastEPCallback(
+      [loadFinalize](ModulePassManager &MPM, OptimizationLevel Level) {
+        loadFinalize(MPM, Level, ThinOrFullLTOPhase::None);
+      });
 #endif
   PB.registerFullLinkTimeOptimizationEarlyEPCallback(
       [loadHostStub, loadPoseidon](ModulePassManager &MPM,
@@ -2247,7 +3670,10 @@ void registerPasses(PassBuilder &PB) {
         loadHostStub(MPM, Level);
         loadPoseidon(MPM, Level);
       });
-  PB.registerFullLinkTimeOptimizationLastEPCallback(loadFinalize);
+  PB.registerFullLinkTimeOptimizationLastEPCallback(
+      [loadFinalize](ModulePassManager &MPM, OptimizationLevel Level) {
+        loadFinalize(MPM, Level, ThinOrFullLTOPhase::FullLTOPostLink);
+      });
 
   PB.registerPipelineParsingCallback(
       [](StringRef Name, ModulePassManager &MPM,

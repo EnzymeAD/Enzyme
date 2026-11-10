@@ -37,6 +37,9 @@ config.substitutions.append(('%poseidon_clangxx',
                              '@POSEIDON_BINARY_DIR@/bin/poseidon-clang++'))
 config.substitutions.append(('%poseidon_clang',
                              '@POSEIDON_BINARY_DIR@/bin/poseidon-clang'))
+config.substitutions.append(('%poseidon_calibrate',
+                             '@POSEIDON_BINARY_DIR@/bin/poseidon-calibrate'))
+config.substitutions.append(('%python', '"' + sys.executable + '"'))
 config.substitutions.append(('%poseidon_explain',
                              '"' + sys.executable + '" @POSEIDON_SOURCE_DIR@/tools/explain/poseidon-explain'))
 
@@ -49,13 +52,20 @@ config.substitutions.append(('%shlibext', config.llvm_shlib_ext))
 config.substitutions.append(('%llvmver', config.llvm_ver))
 config.substitutions.append(('%FileCheck', config.llvm_tools_dir + "/FileCheck"))
 config.substitutions.append(('%opt', config.llvm_tools_dir + "/opt"))
+config.substitutions.append(('%clangxx', config.llvm_tools_dir + "/clang++"))
 config.substitutions.append(('%clang', config.llvm_tools_dir + "/clang"))
 config.substitutions.append(('%simplifycfg', 'simplifycfg'))
 
-config.substitutions.append(('%FPProfileCUDASrc', '@POSEIDON_SOURCE_DIR@/runtime/fpprofiler/FPProfilerCUDA.cu'))
+config.substitutions.append(('%FPProfileCUDALib', '@POSEIDON_BINARY_DIR@/lib/libposeidon_profile_cuda.a'))
 config.substitutions.append(('%FPProfileLib', '@POSEIDON_BINARY_DIR@/lib/libposeidon_profile.a'))
 config.substitutions.append(('%FPProfileInc',
                              '@POSEIDON_SOURCE_DIR@/runtime/fpprofiler -I@ENZYME_SOURCE_DIR@/include'))
+# The CMake package of this build tree, and what installing it takes.
+config.substitutions.append(('%cmake_generator',
+                             '-G "@CMAKE_GENERATOR@" -DCMAKE_MAKE_PROGRAM=@CMAKE_MAKE_PROGRAM@'))
+config.substitutions.append(('%cmake', '"@CMAKE_COMMAND@"'))
+config.substitutions.append(('%poseidon_package_dir', '@POSEIDON_BINARY_DIR@'))
+config.substitutions.append(('%enzyme_binary_dir', '@ENZYME_BINARY_DIR@'))
 config.substitutions.append(('%gpu_cost_model', '@POSEIDON_TEST_COST_MODEL@'))
 config.substitutions.append(('%gpu_arch', '@POSEIDON_TEST_GPU_ARCH_RESOLVED@'))
 
@@ -67,5 +77,21 @@ if os.path.isfile(enzyme_clang_plugin):
     config.available_features.add('enzyme')
 if @POSEIDON_TEST_HAS_CUDA@:
     config.available_features.add('cuda-runtime')
+# HIP device compiles against the ROCm installation the build names; a compile
+# that links the device profiler or the HIP runtimes targets their processor.
+if @POSEIDON_TEST_HAS_AMDGPU@:
+    config.available_features.add('amdgpu-registered-target')
+rocm_path = "@POSEIDON_ROCM_PATH@"
+config.substitutions.append(('%rocm_path', rocm_path))
+config.substitutions.append(('%amdgpu_arch', '@POSEIDON_AMDGPU_ARCH@'))
+if rocm_path and os.path.isdir(os.path.join(rocm_path, 'amdgcn', 'bitcode')):
+    config.available_features.add('rocm')
+# The HIP runtimes, and an AMD GPU to run what links them.
+config.substitutions.append(('%poseidon_rt_hip_lib',
+                             '@POSEIDON_BINARY_DIR@/lib/libposeidon_rt_hip.a'))
+config.substitutions.append(('%poseidon_runtime_inc',
+                             '@POSEIDON_SOURCE_DIR@/runtime'))
+if @POSEIDON_TEST_HAS_HIP@ and os.path.exists('/dev/kfd'):
+    config.available_features.add('hip-runtime')
 
 lit_config.load_config(config, "@CMAKE_CURRENT_SOURCE_DIR@/lit.cfg.py")

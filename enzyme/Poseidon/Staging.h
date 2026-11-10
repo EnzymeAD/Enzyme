@@ -34,10 +34,28 @@ bool narrowSharedStaging(llvm::Function &F);
 // same 8-byte slot) and turn each split into a pair load.
 bool narrowSharedStagingDS(llvm::Function &F);
 
-// The arms in the order every site must apply them: the FP32 narrowing, then
-// the df64 one. `announce` prints the per-arm line the solve log carries. True
-// if any arm changed F.
-bool applyStagingNarrowing(llvm::Function &F, bool announce);
+// The same two transforms for a buffer that reaches F as a POINTER PARAMETER:
+// the arms above root at the global's addrspacecast and see no GEP of a
+// `double *` the kernel hands to an annotated `noinline` body. `Proxy` is the
+// function the site arguments were recorded against (F at materialization, the
+// site function when pricing a clone).
+bool narrowSharedStagingParam(llvm::Function &F,
+                              llvm::Function *Proxy = nullptr);
+bool narrowSharedStagingParamDS(llvm::Function &F,
+                                llvm::Function *Proxy = nullptr);
+
+// Which parameter arm applyStagingNarrowing runs. Both self-gate on the reader
+// set, so the materializer runs Both; a pricing clone runs one, because
+// narrowing an expansion's operand buffer to one float zeroes its `lo` limb
+// and prices the expansion as free.
+enum class ParamArm { None, Both, FP32, DS };
+
+// The arms in the order every site must apply them: the FP32 narrowing, the
+// parameter arms `param` selects, then the df64 narrowing. `announce` prints
+// the per-arm line the solve log carries. True if any arm changed F.
+bool applyStagingNarrowing(llvm::Function &F, bool announce,
+                           ParamArm param = ParamArm::None,
+                           llvm::Function *paramProxy = nullptr);
 
 } // namespace poseidon
 #endif // POSEIDON_STAGING_H

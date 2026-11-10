@@ -25,6 +25,10 @@
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/TargetParser/Triple.h"
+#if LLVM_VERSION_MAJOR >= 24
+#include "llvm/TargetParser/AMDGPUTargetParser.h"
+#endif
 
 #include <cstdlib>
 #include <cstring>
@@ -230,8 +234,20 @@ uint64_t getCostModelFingerprint() {
   return FP;
 }
 
+// AMDGPU names the processor in the triple (amdgpu9.42-amd-amdhsa), and a
+// function carries target-cpu only where it differs.
+StringRef targetCpuOf(const Function &F) {
+  StringRef cpu = F.getFnAttribute("target-cpu").getValueAsString();
+#if LLVM_VERSION_MAJOR >= 24
+  Triple T(F.getParent()->getTargetTriple());
+  if (cpu.empty() && T.isAMDGPU())
+    return AMDGPU::getArchNameFromSubArch(T.getSubArch());
+#endif
+  return cpu;
+}
+
 void requireCostModel(const Function &F) {
-  StringRef targetCpu = F.getFnAttribute("target-cpu").getValueAsString();
+  StringRef targetCpu = targetCpuOf(F);
   resolveForTarget(targetCpu, F);
   getCostModel();
   if (CostModelNativeArch.empty())
@@ -579,7 +595,9 @@ double getCompCost(Function *F) {
 }
 
 double getCompCost(const SmallVector<Value *> &outputs,
-                   const SetVector<Value *> &inputs) {
+                   const SetVector<Value *> &inputs,
+                   const DenseMap<const Instruction *, uint64_t> *opExec,
+                   uint64_t normalizer) {
   assert(!outputs.empty());
   SmallPtrSet<Value *, 8> seen;
   SmallVector<Value *, 8> todo;
@@ -596,7 +614,13 @@ double getCompCost(const SmallVector<Value *> &outputs,
 
     if (auto *I = dyn_cast<Instruction>(cur)) {
       // TODO: unfair to ignore branches when calculating cost
-      cost += getInstructionCompCost(I);
+      auto instCost = getInstructionCompCost(I);
+      if (opExec && normalizer) {
+        auto it = opExec->find(I);
+        if (it != opExec->end())
+          instCost *= (double)it->second / (double)normalizer;
+      }
+      cost += instCost;
 
       auto operands =
           isa<CallInst>(I) ? cast<CallInst>(I)->args() : I->operands();

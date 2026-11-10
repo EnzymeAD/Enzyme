@@ -66,12 +66,15 @@ const HerbiePlatform &getHerbiePlatform() {
 
   const std::string &NativeArch = getCostModelNativeArch();
   bool IsCUDA = StringRef(NativeArch).starts_with("sm_");
+  bool IsHIP = StringRef(NativeArch).starts_with("gfx");
   if (IsCUDA) {
     std::string Stripped = NativeArch;
     size_t Pos;
     while ((Pos = Stripped.find('_')) != std::string::npos)
       Stripped.erase(Pos, 1);
     P.Name = "cuda-" + Stripped;
+  } else if (IsHIP) {
+    P.Name = "hip-" + NativeArch;
   } else {
     P.Name = "default";
   }
@@ -85,7 +88,7 @@ const HerbiePlatform &getHerbiePlatform() {
       P.Path = V.str();
     else
       P.Name = V.str();
-  } else if (IsCUDA) {
+  } else if (IsCUDA || IsHIP) {
     // Generated next to the CSV it was priced from, by
     // `poseidon-calibrate --only herbie-platform`.
     StringRef Csv(costModelPath());

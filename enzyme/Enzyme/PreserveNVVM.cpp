@@ -30,12 +30,15 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringMap.h"
 
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/GlobalVariable.h"
+#include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Module.h"
+#include "llvm/IR/ValueHandle.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include "llvm/Support/TimeProfiler.h"
@@ -43,6 +46,7 @@
 #include "llvm/Pass.h"
 
 #include "llvm/Transforms/Utils.h"
+#include "llvm/Transforms/Utils/ModuleUtils.h"
 
 #include <map>
 
@@ -537,6 +541,9 @@ bool preserveNVVM(bool Begin, Module &M,
     for (CallInst *Call : functionLikeCalls)
       Call->eraseFromParent();
   }
+
+  if (Begin)
+    changed |= releaseDeviceMath(M, /*Keep*/ true);
 
   if (Begin)
     if (GlobalVariable *GA = M.getGlobalVariable("llvm.global.annotations")) {
@@ -1206,6 +1213,119 @@ bool preserveNVVM(bool Begin, Module &M,
     }
   }
   return changed;
+}
+
+/// The string of an entry of llvm.global.annotations, or "" for anything else.
+static StringRef annotationOf(Value *Entry) {
+  auto CS = dyn_cast<ConstantStruct>(Entry);
+  if (!CS || CS->getNumOperands() < 2)
+    return "";
+  Value *Str = CS->getOperand(1)->stripPointerCasts();
+  if (auto GV = dyn_cast<GlobalVariable>(Str))
+    if (GV->hasInitializer())
+      Str = GV->getInitializer();
+  if (auto A = dyn_cast<ConstantDataArray>(Str))
+    if (A->isCString())
+      return A->getAsCString();
+  return "";
+}
+
+bool moduleUsesEnzyme(const Module &M) {
+  for (const Function &F : M)
+    if (F.getName().contains("__enzyme_") || F.hasFnAttribute("prev_fixup"))
+      return true;
+  for (const GlobalVariable &G : M.globals())
+    if (G.getName().contains("__enzyme_"))
+      return true;
+  if (auto GA = M.getGlobalVariable("llvm.global.annotations"))
+    if (GA->hasInitializer())
+      for (Value *Entry : GA->getInitializer()->operands()) {
+        StringRef AS = annotationOf(Entry);
+        if (startsWith(AS, "enzyme_") && AS != "enzyme_device_math")
+          return true;
+      }
+  return false;
+}
+
+/// Push every global value C refers to, through constant expressions.
+static void collectGlobals(Value *C, SmallVectorImpl<WeakVH> &Out) {
+  if (auto G = dyn_cast<GlobalValue>(C)) {
+    Out.push_back(G);
+    return;
+  }
+  if (auto CE = dyn_cast<Constant>(C))
+    for (Value *Op : CE->operands())
+      collectGlobals(Op, Out);
+}
+
+bool releaseDeviceMath(Module &M, bool Keep) {
+  GlobalVariable *GA = M.getGlobalVariable("llvm.global.annotations");
+  if (!GA || !GA->hasInitializer())
+    return false;
+  auto CA = dyn_cast<ConstantArray>(GA->getInitializer());
+  if (!CA)
+    return false;
+
+  SmallVector<Constant *, 4> others;
+  SmallPtrSet<Constant *, 16> released;
+  SmallVector<WeakVH, 16> maybeDead;
+  for (Value *Entry : CA->operands()) {
+    if (annotationOf(Entry) == "enzyme_device_math")
+      if (auto F = dyn_cast<Function>(cast<ConstantStruct>(Entry)
+                                          ->getOperand(0)
+                                          ->stripPointerCasts())) {
+        released.insert(F);
+        collectGlobals(Entry, maybeDead);
+        continue;
+      }
+    others.push_back(cast<Constant>(Entry));
+  }
+  if (released.empty())
+    return false;
+
+  if (others.empty()) {
+    GA->eraseFromParent();
+  } else {
+    // Clang types the array after its first entry, and on AMDGPU an entry
+    // without arguments (a null constant-space pointer) has another type than
+    // one with them (a global-space pointer); what is left takes its own.
+    Type *EntryTy = others.front()->getType();
+    if (!llvm::all_of(others,
+                      [&](Constant *C) { return C->getType() == EntryTy; }))
+      EntryTy = CA->getType()->getElementType();
+    auto NewCA =
+        ConstantArray::get(ArrayType::get(EntryTy, others.size()), others);
+    auto NewGA = new GlobalVariable(M, NewCA->getType(), GA->isConstant(),
+                                    GA->getLinkage(), NewCA, "", GA);
+    NewGA->setSection(GA->getSection());
+    NewGA->takeName(GA);
+    GA->eraseFromParent();
+  }
+  if (Keep)
+    released.clear();
+  else
+    removeFromUsedLists(M, [&](Constant *C) { return released.count(C); });
+
+  // Erase what was linked or emitted only for them, so that no later pass sees
+  // a use the module would not have had without the plugin.
+  while (!maybeDead.empty()) {
+    auto G = dyn_cast_or_null<GlobalValue>(maybeDead.pop_back_val());
+    if (!G)
+      continue;
+    G->removeDeadConstantUsers();
+    if (!G->use_empty() || (!G->isDeclaration() && !G->isDiscardableIfUnused()))
+      continue;
+    if (auto F = dyn_cast<Function>(G)) {
+      for (Instruction &I : instructions(*F))
+        for (Value *Op : I.operands())
+          collectGlobals(Op, maybeDead);
+    } else if (auto V = dyn_cast<GlobalVariable>(G)) {
+      if (V->hasInitializer())
+        collectGlobals(V->getInitializer(), maybeDead);
+    }
+    G->eraseFromParent();
+  }
+  return true;
 }
 
 namespace {

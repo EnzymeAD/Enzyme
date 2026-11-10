@@ -1,6 +1,6 @@
 // RUN: %clang -x cuda --cuda-gpu-arch=%gpu_arch -fcuda-rdc -O2 \
 // RUN:     %clangLoadPoseidonEnzyme -mllvm --poseidon-profile-generate \
-// RUN:     -I%FPProfileInc %s %FPProfileCUDASrc -x none %FPProfileLib \
+// RUN:     -I%FPProfileInc %s -x none %FPProfileCUDALib %FPProfileLib \
 // RUN:     -L/usr/local/cuda/lib64 -lcudart -lstdc++ -lm -o %t.exe
 // RUN: rm -rf %t.profiles && POSEIDON_PROFILE_DIR=%t.profiles %t.exe
 //

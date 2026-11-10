@@ -75,6 +75,8 @@ extern llvm::cl::opt<bool> RaiseWMMA;
 extern llvm::cl::opt<unsigned> MaxExprLength;
 extern llvm::cl::opt<unsigned> MinUsesSplit;
 extern llvm::cl::opt<unsigned> MinOpsSplit;
+extern llvm::cl::opt<bool> ReductionSubgraphs;
+extern llvm::cl::opt<bool> MergeSharedStaging;
 extern llvm::cl::list<std::string> SplitCalls;
 
 // Solver and budgets.
@@ -96,6 +98,7 @@ extern llvm::cl::opt<unsigned> MinArmSamples;
 extern llvm::cl::opt<unsigned> ArmSearchFactor;
 extern llvm::cl::opt<double> MaxBrokenShare;
 extern llvm::cl::opt<double> ExponentPenalty;
+extern llvm::cl::opt<bool> FreqWeightedPricing;
 
 // Herbie and the result cache.
 extern llvm::cl::opt<std::string> Cache;
@@ -116,6 +119,10 @@ extern llvm::cl::opt<std::string> HerbieArrayGrouping;
 // Matmul raising and host dispatch.
 extern llvm::cl::opt<bool> OzakiHostDispatch;
 extern llvm::cl::opt<bool> InKernelCalibration;
+
+// Materialization.
+extern llvm::cl::opt<bool> NarrowParamStaging;
+extern llvm::cl::opt<bool> NarrowMultiviewStaging;
 
 // Diagnostics.
 extern llvm::cl::opt<bool> Print;

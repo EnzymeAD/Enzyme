@@ -39,6 +39,9 @@ namespace poseidon {
 // names this function's target-cpu.
 void requireCostModel(const llvm::Function &F);
 
+// The processor F compiles for (sm_120, gfx942, ...).
+llvm::StringRef targetCpuOf(const llvm::Function &F);
+
 const std::map<std::pair<std::string, std::string>, double> &getCostModel();
 
 // The device the loaded CSV was measured on ("# native_arch=").
@@ -75,8 +78,14 @@ double computeMaxCost(llvm::BasicBlock *BB,
 
 double getCompCost(llvm::Function *F);
 
-double getCompCost(const llvm::SmallVector<llvm::Value *> &outputs,
-                   const llvm::SetVector<llvm::Value *> &inputs);
+// With `opExec`, each priced instruction is weighted by its measured
+// execution count over `normalizer` (Subgraph::opExec); an instruction with no
+// count, or no map, weighs 1.
+double getCompCost(
+    const llvm::SmallVector<llvm::Value *> &outputs,
+    const llvm::SetVector<llvm::Value *> &inputs,
+    const llvm::DenseMap<const llvm::Instruction *, uint64_t> *opExec = nullptr,
+    uint64_t normalizer = 0);
 
 } // namespace poseidon
 #endif // POSEIDON_COST_MODEL_H

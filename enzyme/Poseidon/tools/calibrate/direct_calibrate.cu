@@ -9,12 +9,18 @@
 //     direct_dispatch_rel,bf16_f32,<rel>
 //     direct_dispatch_rel,tf32_f32,<rel>
 //     direct_dispatch_rel,f32_f32,<rel>   (cuBLAS SGEMM, no tensor cores)
+// Built as HIP it measures hipBLAS, which has no TF32 compute type, so that
+// class has no row there.
 // Build: nvcc -O3 -arch=sm_120 direct_calibrate.cu <path>/direct_rt.cu \
 //        -lcublas -o direct_calibrate
 // Run:   ./direct_calibrate [N=2048] [reps=30]   (CSV rows on stdout)
 #include <cstdio>
 #include <cstdlib>
+#ifdef __HIP__
+#include "../../runtime/hip_as_cuda.h"
+#else
 #include <cuda_runtime.h>
+#endif
 
 extern "C" void __poseidon_direct_dgemm(double *C, const double *A,
                                         const double *B, int N, int lda,
@@ -66,9 +72,14 @@ int main(int argc, char **argv) {
           N, REPS, t_ref);
 
   // Same order and the same class spelling the cost-model rows use.
+#ifdef __HIP__
+  const int modes[] = {1, 2, 4};
+  const char *classes[] = {"f16_f32", "bf16_f32", "f32_f32"};
+#else
   const int modes[] = {1, 2, 3, 4};
   const char *classes[] = {"f16_f32", "bf16_f32", "tf32_f32", "f32_f32"};
-  for (int i = 0; i < 4; ++i) {
+#endif
+  for (int i = 0; i < (int)(sizeof(modes) / sizeof(modes[0])); ++i) {
     MODE = modes[i];
     float t = timeit(run_dr, REPS);
     double rel = (double)t / (double)t_ref;

@@ -2,60 +2,76 @@
 //
 // Provenance: this file is an independent implementation of the published
 // Ozaki Scheme II algorithm (K. Ozaki, Y. Uchino, T. Imamura,
-// arXiv:2504.08009). No code is derived from the reference GEMMul8 library
-// (MIT licensed); GEMMul8 is used only as a benchmark reference and as the
-// layout-compatibility target for the shared cuBLAS INT8 strided-batched
-// entry point. The Barrett-multiply residue reduction and the coalesced
-// bit-pattern magnitude scan are original to this implementation.
+// arXiv:2504.08009), fast mode (Cauchy-Schwarz operand scaling). No code is
+// derived from the reference GEMMul8 library (MIT licensed). The paper leaves
+// the scaling constants and the CRT working precision to the implementation;
+// for those this file follows GEMMul8 v3.1.1's fast mode (the authors'
+// implementation): the same moduli, the same shift formula and rounding, the
+// same truncation, residue representatives and CRT constants, each computed
+// here from its defining formula, so that the same operands give the same
+// result bit for bit. The Barrett-multiply residue reduction and the pipeline
+// layout (one strided-batched INT8 GEMM, layout-aware rectangular arm) are
+// original to this implementation.
+//
+// GEMMul8 (https://github.com/RIKEN-RCCS/GEMMul8): Copyright (c) 2025- RIKEN
+// R-CCS, MIT License. Its numerical conventions are followed with
+// acknowledgment; upstream GEMMul8 can replace this runtime at link time
+// (same entry points via a shim) without changing any result.
 //
 // Exposes the host entry points the Poseidon host-module pass substitutes for
-// a raised FP64 GEMM kernel launch: row/column magnitude scan -> num_moduli
+// a raised FP64 GEMM kernel launch: row/column scaling shifts -> num_moduli
 // int8 residue planes -> one strided-batched INT8 tensor-core GEMM ->
-// double-double CRT, at a solver-chosen num_moduli. The CRT constants and the
-// integer scaling budget (beta) are recomputed per nm at runtime; the modulus
-// and moduli-count tables are shared with the compiler through OzakiII.h.
+// double-double CRT, at a solver-chosen num_moduli. The modulus table and the
+// scaling constant are shared with the compiler through OzakiII.h; the CRT
+// constants are recomputed per nm at runtime.
+//
+// Operand scaling (the published fast mode). For each row a of A and each
+// column b of B, s = ||a||_2^2 is accumulated in FP64 with every operation
+// rounded upward, and the shift is
+//   sft = floor(log2P(nm) - log2(s)/2),  log2P(nm) = rd(log2(P-1)/2 - 1/2),
+// evaluated in float with directed rounding plus a 2^-23 allowance for the
+// hardware log2 (poz_shiftOf). The scaled operand is trunc(2^sft * a), so
+// ||a'||_2 <= 2^log2P <= sqrt((P-1)/2) and, by Cauchy-Schwarz, every entry of
+// the integer product lies in the symmetric CRT window [-(P-1)/2, (P-1)/2].
+// The sum-of-squares reduction order is fixed per operand layout (contiguous
+// or strided vector, matching the reference's), so the shifts are
+// reproducible. A row whose sum of squares overflows (|a| beyond ~1e154) or
+// underflows to zero is outside the fast mode's range, as in the reference.
 //
 // The per-modulus products are one cublasGemmStridedBatchedEx(CUBLAS_OP_T,
 // CUBLAS_OP_N, CUDA_R_8I -> CUDA_R_32I, CUBLAS_COMPUTE_32I) call. Residues are
 // laid out for its TN form: A residues row-major (column-major view A^T) and
 // B residues transposed (column-major view B), so the batched product is the
 // column-major C^T = B^T*A^T, i.e. the row-major C the CRT pass reads. Because
-// the accumulation is INT32 and the scaling budget keeps every partial sum
-// below 2^31, the result is bit-identical to any other correct INT8 GEMM
-// engine at the same nm.
+// the accumulation is INT32 and |sum_k r_a*r_b| <= K*128*128 < 2^31 for
+// K < 2^17, the result is bit-identical to any other correct INT8 GEMM engine.
 //
 // Semantics: C = alpha*(A@B) + beta*C. __poseidon_ozaki_dgemm handles the
 // square, row-major, leading-dim-N, no-transpose case; __poseidon_ozaki_dgemm_ex
-// handles general M x Ncols x K layout-aware shapes by padding to a square.
-// Scratch buffers (sized for the max 14 moduli) and the per-nm CRT constants
-// are cached across calls. Forward dispatch only.
+// handles general M x Ncols x K layout-aware shapes (rectangular arm, or the
+// square pipeline after padding). Scratch buffers (sized for the max 14
+// moduli) and the per-nm constants are cached across calls. Forward dispatch
+// only.
 //
 // num_moduli == 0 selects the native cuBLAS DGEMM path (no emulation), which
 // the solver routes to when the cost model prices it below every Ozaki rung.
-//
-// Operand scaling rule: two arms, selected by the POSEIDON_OZAKI_SCALE
-// environment variable or __poseidon_ozaki_set_scale_rule().
-//
-//   "maxbeta" (default): one global bit budget
-//   beta = clamp((bitlen(P)-3-ceil(log2 K))/2, 1, 50) applied to the per-row /
-//   per-column max, so the scaled inner product is bounded by the worst case
-//   K*max_a*max_b <= 2^(bitlen(P)-3).
-//
-//   "norm2": the Cauchy-Schwarz rule of the published scheme: the shift is
-//   chosen so each row's / column's scaled 2-norm reaches sqrt((P-1)/2), hence
-//   |sum a'*b'| <= ||a'||_2*||b'||_2 <= (P-1)/2, the symmetric-CRT window with
-//   no slack given away.
-//
-// The arms differ only in how sftA/sftB are computed; the residue fill, the
-// batched INT8 GEMM and the CRT recombine are shared.
 #include <cstdint>
 #include <cstdlib>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <algorithm>
+#ifdef __HIP__
+#include "../hip_as_cuda.h"
+// Every shuffle below is a step of a 32-lane tree over threadIdx.x of a 32-wide
+// block row (poz_warpSumRU). Width 32 keeps it in its row's half of a 64-lane
+// wavefront, where a source lane past the row returns the caller's own value as
+// on a warp, so both halves sum in the CUDA order and give the CUDA shifts.
+#define __shfl_down_sync(mask, var, delta) __shfl_down(var, delta, 32)
+#else
 #include <cublas_v2.h>
 #include <cuda_runtime.h>
+#endif
 
 #include "../../OzakiII.h"
 
@@ -77,7 +93,7 @@
 
 namespace {
 constexpr int POZ_MAXNM = (int)kOzakiIIMaxModuli;
-// Runtime-configured CRT constants (uploaded per num_moduli).
+// Runtime-configured constants (uploaded per num_moduli).
 __constant__ int poz_nm;
 __constant__ int poz_P[POZ_MAXNM];
 // Barrett magics for the moduli: poz_M[i] = 2^64/p + 1 (Lemire fastmod) and
@@ -89,6 +105,12 @@ __constant__ double poz_QLo[POZ_MAXNM];
 __constant__ double poz_PHi;
 __constant__ double poz_PLo;
 __constant__ double poz_InvP;
+__constant__ float poz_log2P;
+
+// Sum-of-squares reduction geometry (fixed: it decides the shifts' bits).
+constexpr int POZ_NRM_THREADS = 256; // contiguous vector: threads per vector
+constexpr int POZ_NRM_SPLIT_K = 1024; // strided vector: chunk K at or above
+constexpr int POZ_NRM_KCHUNK = 256;   // strided vector: chunk length
 
 // Lazily-created, process-lifetime cuBLAS handle (same caching convention as
 // the Ozaki scratch/constants); the stream is set on every dispatch.
@@ -110,10 +132,11 @@ __device__ __forceinline__ unsigned poz_fastmod(unsigned n,
   return (unsigned)__umul64hi(M * (unsigned long long)n, (unsigned long long)d);
 }
 
-// |a| < 2^beta <= 2^50, so |a| splits into two 32-bit halves that are each
-// reduced with fastmod and recombined through 2^32 mod p; the recombination
-// stays below 2^16, so a third fastmod finishes it. The sign is reapplied
-// afterwards to reproduce C's truncating % exactly.
+// Symmetric residue of a scaled operand entry. |a| <= 2^log2P < 2^55, so |a|
+// splits into two 32-bit halves that are each reduced with fastmod and
+// recombined through 2^32 mod p; the recombination stays below 2^17, so a
+// third fastmod finishes it. Representatives: [-(p-1)/2, (p-1)/2] for odd p,
+// [-128, 127] for p = 256 (the int8 wraparound of the published scheme).
 __device__ __forceinline__ int8_t poz_modI8(long a, int p, unsigned long long M,
                                             unsigned t32) {
   unsigned long long ua = (unsigned long long)(a < 0 ? -a : a);
@@ -132,7 +155,8 @@ __device__ __forceinline__ int8_t poz_modI8(long a, int p, unsigned long long M,
   return (int8_t)r;
 }
 
-// The residue-GEMM output is int32, so one fastmod on |raw| suffices.
+// Residue of an INT32 product entry, same representatives as poz_modI8 (the
+// CRT constants and the quotient below assume them).
 __device__ __forceinline__ int poz_modI32(int raw, int p, unsigned long long M) {
   unsigned ur = (unsigned)(raw < 0 ? -raw : raw);
   int r = (int)poz_fastmod(ur, M, (unsigned)p);
@@ -143,181 +167,135 @@ __device__ __forceinline__ int poz_modI32(int raw, int p, unsigned long long M) 
     r -= p;
   else if (r < -h)
     r += p;
+  if ((p & 1) == 0 && r == h)
+    r -= p;
   return r;
 }
 
-// Row maxima of |A| and column maxima of |B|, both read along the CONTIGUOUS
-// axis: 32x8 threads walk a 32x32 tile, the A reduction runs across the warp
-// (shuffle) and the B reduction down the tile (shared), so each matrix is
-// streamed exactly once at full coalescing. Maxima are folded with atomicMax on
-// the IEEE bit pattern of the absolute value, which is monotone over the
-// non-negative doubles, so the result is order-independent and identical to a
-// sequential scan for finite inputs.
-__device__ __forceinline__ unsigned long long poz_absKey(double v) {
-  return (unsigned long long)__double_as_longlong(fabs(v));
+// ---------------------------------------------------------------------------
+// Scaling shifts.
+// ---------------------------------------------------------------------------
+__device__ __forceinline__ double poz_warpSumRU(double s) {
+  s = __dadd_ru(s, __shfl_down_sync(0xffffffffu, s, 16));
+  s = __dadd_ru(s, __shfl_down_sync(0xffffffffu, s, 8));
+  s = __dadd_ru(s, __shfl_down_sync(0xffffffffu, s, 4));
+  s = __dadd_ru(s, __shfl_down_sync(0xffffffffu, s, 2));
+  s = __dadd_ru(s, __shfl_down_sync(0xffffffffu, s, 1));
+  return s;
 }
 
-__global__ void poz_absMax(const double *A, const double *B,
-                           unsigned long long *mxA, unsigned long long *mxB,
-                           int N) {
-  __shared__ unsigned long long shB[8][32];
-  int c = blockIdx.x * 32 + threadIdx.x;
-  int rBase = blockIdx.y * 32;
-  int tx = threadIdx.x, ty = threadIdx.y;
-  unsigned long long bAcc = 0;
-#pragma unroll
-  for (int j = 0; j < 4; j++) {
-    int r = rBase + ty + 8 * j;
-    unsigned long long a = 0, b = 0;
-    if (r < N && c < N) {
-      a = poz_absKey(A[(size_t)r * N + c]);
-      b = poz_absKey(B[(size_t)r * N + c]);
-    }
-    // Row max of A: reduce across the 32 lanes of this warp (blockDim.x == 32).
-    for (int off = 16; off; off >>= 1) {
-      unsigned long long o = __shfl_xor_sync(0xffffffffu, a, off);
-      a = a > o ? a : o;
-    }
-    if (tx == 0 && r < N)
-      atomicMax(&mxA[r], a);
-    bAcc = bAcc > b ? bAcc : b;
-  }
-  // Column max of B: fold the 8 y-rows in shared, then one atomic per column.
-  shB[ty][tx] = bAcc;
+// floor(log2P - log2(s)/2) for s = ||a||_2^2 (an upper bound). Each rounding
+// is directed so the shift can only come out smaller: log2P is rounded down,
+// the mantissa of s up, and 2^-23 covers the error of the hardware log2.
+__device__ __forceinline__ short poz_shiftOf(double s) {
+  if (s == 0.0)
+    return 0;
+  const int e = ilogb(s);
+  const float m = __double2float_ru(scalbn(s, -e));
+  const float mu0 = __fsub_rd(poz_log2P, (float)e * 0.5f);
+  const float mu1 = __fadd_ru(__log2f(m) * 0.5f, 0x1p-23f);
+  return (short)__float2int_rd(__fsub_rd(mu0, mu1));
+}
+
+// Contiguous vectors (vector r is src[r*ld + k], k < K): one block per vector,
+// thread t folds k = t, t+256, ..., then a warp tree and a tree over the
+// eight warp sums.
+__global__ void poz_sftContig(const double *src, size_t ld, int K,
+                              short *sft) {
+  __shared__ double sh[POZ_NRM_THREADS / 32];
+  const double *v = src + (size_t)blockIdx.x * ld;
+  double s = 0.0;
+  for (int k = threadIdx.x; k < K; k += POZ_NRM_THREADS)
+    s = __fma_ru(v[k], v[k], s);
+  s = poz_warpSumRU(s);
+  if ((threadIdx.x & 31) == 0)
+    sh[threadIdx.x >> 5] = s;
   __syncthreads();
-  if (ty == 0 && c < N) {
-    unsigned long long m = shB[0][tx];
-#pragma unroll
-    for (int j = 1; j < 8; j++)
-      m = m > shB[j][tx] ? m : shB[j][tx];
-    atomicMax(&mxB[c], m);
+  if (threadIdx.x < 32) {
+    s = (threadIdx.x < POZ_NRM_THREADS / 32) ? sh[threadIdx.x] : 0.0;
+    s = poz_warpSumRU(s);
+    if (threadIdx.x == 0)
+      sft[blockIdx.x] = poz_shiftOf(s);
   }
 }
 
-__global__ void poz_shifts(const unsigned long long *mxA,
-                           const unsigned long long *mxB, short *sftA,
-                           short *sftB, int N, int beta) {
-  int i = blockIdx.x * blockDim.x + threadIdx.x;
-  if (i >= N)
-    return;
-  double ma = __longlong_as_double((long long)mxA[i]);
-  double mb = __longlong_as_double((long long)mxB[i]);
-  sftA[i] = (short)(ma > 0 ? beta - 1 - ilogb(ma) : 0);
-  sftB[i] = (short)(mb > 0 ? beta - 1 - ilogb(mb) : 0);
-}
-
-// norm2 arm: same 32x8-over-32x32-tile traversal as poz_absMax, but each tile
-// also folds the sum of squares of its 32 A-row / 32 B-column entries into a
-// per-(row, blockIdx.x) / per-(column, blockIdx.y) partial. Partials, not
-// atomicAdd: a float sum folded by atomics depends on block scheduling and the
-// shift could flip by one between runs of the same binary. The two-stage form
-// reduces in a fixed lane order.
-// The sums of squares are accumulated in FP32, not FP64: they are consumed by
-// a floor() to an integer power of two, so the norm only has to be trustworthy
-// as a bound, and FP32 summation of K terms is relative-accurate to K*2^-24,
-// which poz_run_square's capEff margin absorbs; in FP64 the scan would run on
-// the deprioritized FP64 pipe. Extreme ranges (a square that overflows or
-// flushes in FP32) are caught in poz_sftFromNorm and fall back to the
-// conservative max*sqrt(K) bound.
-__global__ void poz_scanNorm(const double *A, const double *B,
-                             unsigned long long *mxA, unsigned long long *mxB,
-                             float *psA, float *psB, int N, int gridX,
-                             int gridY) {
-  __shared__ unsigned long long shB[8][32];
-  __shared__ float shBs[8][32];
-  int c = blockIdx.x * 32 + threadIdx.x;
-  int rBase = blockIdx.y * 32;
-  int tx = threadIdx.x, ty = threadIdx.y;
-  unsigned long long bAcc = 0;
-  float bSq = 0.0f;
-#pragma unroll
-  for (int j = 0; j < 4; j++) {
-    int r = rBase + ty + 8 * j;
-    unsigned long long a = 0, b = 0;
-    float avf = 0.0f, bvf = 0.0f;
-    if (r < N && c < N) {
-      double av = A[(size_t)r * N + c];
-      double bv = B[(size_t)r * N + c];
-      a = poz_absKey(av);
-      b = poz_absKey(bv);
-      avf = (float)av;
-      bvf = (float)bv;
+// Strided vectors (vector r is src[k*ld + r]), 32 vectors per 32x32 block:
+// thread (x, y) folds k = k0+y, k0+y+32, ... < k1 of vector 32*blockIdx.x + x;
+// a shared-memory transpose puts a vector's 32 phases in one warp.
+__device__ __forceinline__ double poz_stridedTile(const double *src, size_t ld,
+                                                  int R, int k0, int k1) {
+  __shared__ double sh[32][33];
+  const int r = blockIdx.x * 32 + threadIdx.x;
+  double s = 0.0;
+  if (r < R)
+    for (int k = k0 + (int)threadIdx.y; k < k1; k += 32) {
+      const double a = src[(size_t)k * ld + r];
+      s = __fma_ru(a, a, s);
     }
-    float aSq = avf * avf;
-#pragma unroll
-    for (int off = 16; off; off >>= 1) {
-      unsigned long long o = __shfl_xor_sync(0xffffffffu, a, off);
-      a = a > o ? a : o;
-      aSq += __shfl_xor_sync(0xffffffffu, aSq, off); // butterfly: fixed order
-    }
-    if (tx == 0 && r < N) {
-      atomicMax(&mxA[r], a);
-      psA[(size_t)r * gridX + blockIdx.x] = aSq;
-    }
-    bAcc = bAcc > b ? bAcc : b;
-    bSq += bvf * bvf;
-  }
-  shB[ty][tx] = bAcc;
-  shBs[ty][tx] = bSq;
+  sh[threadIdx.y][threadIdx.x] = s;
   __syncthreads();
-  if (ty == 0 && c < N) {
-    unsigned long long m = shB[0][tx];
-    float s = shBs[0][tx];
-#pragma unroll
-    for (int j = 1; j < 8; j++) {
-      m = m > shB[j][tx] ? m : shB[j][tx];
-      s += shBs[j][tx];
-    }
-    atomicMax(&mxB[c], m);
-    psB[(size_t)c * gridY + blockIdx.y] = s;
-  }
+  return poz_warpSumRU(sh[threadIdx.x][threadIdx.y]);
 }
 
-// Reduce the per-tile partials in a fixed order and turn each 2-norm into the
-// integer shift. `capEff` already carries the round-to-nearest and summation
-// safety margins (see poz_run_square).
-__device__ __forceinline__ short poz_sftFromNorm(double s2, double mx,
-                                                 double capEff, int K) {
-  if (!(mx > 0.0))
-    return 0; // all-zero row/column: residues are zero, sft irrelevant
-  // s2 overflows only for ||a||2 > 1.3e154 and flushes to zero only for
-  // |a| < 1.5e-162 throughout; max*sqrt(K) is a valid (conservative) upper
-  // bound on ||a||2 in both cases, so the arm degrades to the worst-case bound
-  // rather than producing a wrong shift.
-  double nrm = (s2 > 0.0 && isfinite(s2)) ? sqrt(s2) : mx * sqrt((double)K);
-  int sft = (int)floor(log2(capEff) - log2(nrm));
-  // log2 is faithful to <1 ulp, so the floor can be off by one either way.
-  // Repair it exactly; both loops terminate in at most one step in practice.
-#pragma unroll
-  for (int t = 0; t < 3; t++)
-    if (scalbn(nrm, sft) > capEff)
-      --sft;
-#pragma unroll
-  for (int t = 0; t < 3; t++)
-    if (scalbn(nrm, sft + 1) <= capEff)
-      ++sft;
-  return (short)sft;
+// K < POZ_NRM_SPLIT_K: the whole vector in one tile.
+__global__ void poz_sftStrided(const double *src, size_t ld, int R, int K,
+                               short *sft) {
+  const double s = poz_stridedTile(src, ld, R, 0, K);
+  const int r = blockIdx.x * 32 + threadIdx.y;
+  if (threadIdx.x == 0 && r < R)
+    sft[r] = poz_shiftOf(s);
 }
 
-__global__ void poz_shiftsNorm(const float *psA, const float *psB,
-                               const unsigned long long *mxA,
-                               const unsigned long long *mxB, short *sftA,
-                               short *sftB, int N, int gridX, int gridY,
-                               double capEff, int K) {
-  int i = blockIdx.x * blockDim.x + threadIdx.x;
-  if (i >= N)
+// K >= POZ_NRM_SPLIT_K: one partial per (vector, 256-long chunk) ...
+__global__ void poz_sumStridedPart(const double *src, size_t ld, int R, int K,
+                                   double *part) {
+  const int k0 = blockIdx.y * POZ_NRM_KCHUNK;
+  const double s = poz_stridedTile(src, ld, R, k0, min(K, k0 + POZ_NRM_KCHUNK));
+  const int r = blockIdx.x * 32 + threadIdx.y;
+  if (threadIdx.x == 0 && r < R)
+    part[(size_t)r * gridDim.y + blockIdx.y] = s;
+}
+
+// ... then lane x of a vector's warp folds chunks x, x+32, ... and a warp tree
+// finishes it. Block (32, 8): one warp per vector.
+__global__ void poz_sftStridedReduce(const double *part, int R, int nChunk,
+                                     short *sft) {
+  const int r = blockIdx.x * 8 + threadIdx.y;
+  if (r >= R)
+    return; // warp-uniform
+  double s = 0.0;
+  for (int c = threadIdx.x; c < nChunk; c += 32)
+    s = __dadd_ru(s, part[(size_t)r * nChunk + c]);
+  s = poz_warpSumRU(s);
+  if (threadIdx.x == 0)
+    sft[r] = poz_shiftOf(s);
+}
+
+// Shifts of the R vectors (length K) of one operand. `part` holds
+// R*ceil(K/256) doubles for the strided K >= 1024 case.
+void poz_shifts(const double *src, size_t ld, int R, int K, bool contiguous,
+                short *sft, double *part, cudaStream_t stream) {
+  if (contiguous) {
+    poz_sftContig<<<R, POZ_NRM_THREADS, 0, stream>>>(src, ld, K, sft);
     return;
-  // One thread per row/column over ceil(N/32) partials: N·ceil(N/32) FP64 adds
-  // for the whole matrix, so this reduction can stay in FP64 for free.
-  double sa = 0.0, sb = 0.0;
-  for (int j = 0; j < gridX; j++)
-    sa += (double)psA[(size_t)i * gridX + j];
-  for (int j = 0; j < gridY; j++)
-    sb += (double)psB[(size_t)i * gridY + j];
-  sftA[i] = poz_sftFromNorm(sa, __longlong_as_double((long long)mxA[i]), capEff,
-                            K);
-  sftB[i] = poz_sftFromNorm(sb, __longlong_as_double((long long)mxB[i]), capEff,
-                            K);
+  }
+  const int gx = (R + 31) / 32;
+  if (K < POZ_NRM_SPLIT_K) {
+    poz_sftStrided<<<gx, dim3(32, 32), 0, stream>>>(src, ld, R, K, sft);
+    return;
+  }
+  const int nChunk = (K + POZ_NRM_KCHUNK - 1) / POZ_NRM_KCHUNK;
+  poz_sumStridedPart<<<dim3(gx, nChunk), dim3(32, 32), 0, stream>>>(
+      src, ld, R, K, part);
+  poz_sftStridedReduce<<<(R + 7) / 8, dim3(32, 8), 0, stream>>>(part, R,
+                                                                 nChunk, sft);
+}
+
+// Scaled operand entry: trunc(2^sft * x), exact (scalbn only moves the
+// exponent and |result| < 2^55). scalbn(x, sft), NOT x * scalbn(1.0, sft): sft
+// can exceed 1023 for a row whose norm is tiny, where scalbn(1.0, sft) is inf.
+__device__ __forceinline__ long poz_quant(double x, int sft) {
+  return __double2ll_rz(scalbn(x, sft));
 }
 
 // Residue fill for the batched TN INT8 GEMM. A residues keep the row-major
@@ -344,12 +322,8 @@ __global__ void poz_fillRes(const double *A, const double *B, const short *sftA,
     bool inb = (r < N && k < N);
     long ap = 0, bp = 0;
     if (inb) {
-      // scalbn(x, sft), NOT x * scalbn(1.0, sft): under the norm2 arm sft can
-      // legally exceed 1023 for a row whose 2-norm is subnormal-small, and
-      // scalbn(1.0, 1077) is inf while scalbn(x, 1077) is exact. Identical for
-      // every shift the maxbeta arm produces on normal data.
-      ap = llround(scalbn(A[(size_t)r * N + k], sftA[r]));
-      bp = llround(scalbn(B[(size_t)r * N + k], sftB[k]));
+      ap = poz_quant(A[(size_t)r * N + k], sftA[r]);
+      bp = poz_quant(B[(size_t)r * N + k], sftB[k]);
     }
     shB[rl][tx] = bp;
     if (r < Np && k < Np) {
@@ -374,6 +348,56 @@ __global__ void poz_fillRes(const double *A, const double *B, const short *sftA,
   }
 }
 
+// CRT recombine of the four residue vectors in `raw` planes for one output
+// quad. x accumulates the high parts of q_i = (P/p_i)*((P/p_i)^-1 mod p_i)
+// error-free (each is a multiple of one 2^G and the sum stays below 2^(G+53)),
+// y the low parts; the quotient round(x/P) is taken from x, then
+// x + y - quot*P is formed with P as a double-double. With nm <= 6 P and the
+// q_i are exact doubles and the CRT is single FP64.
+__device__ __forceinline__ void poz_crtQuad(const int32_t *Cr, size_t off,
+                                            size_t plane, double *out) {
+  double x[4], y[4];
+  {
+    int4 raw = *reinterpret_cast<const int4 *>(Cr + off);
+    const int *rawv = reinterpret_cast<const int *>(&raw);
+    const int p = poz_P[0];
+    const unsigned long long M = poz_M[0];
+    const double qhi = poz_QHi[0], qlo = poz_QLo[0];
+#pragma unroll
+    for (int j = 0; j < 4; j++) {
+      double d = (double)poz_modI32(rawv[j], p, M);
+      x[j] = qhi * d;
+      y[j] = qlo * d;
+    }
+  }
+  for (int i = 1; i < poz_nm; i++) {
+    int4 raw = *reinterpret_cast<const int4 *>(Cr + i * plane + off);
+    const int *rawv = reinterpret_cast<const int *>(&raw);
+    const int p = poz_P[i];
+    const unsigned long long M = poz_M[i];
+    const double qhi = poz_QHi[i], qlo = poz_QLo[i];
+#pragma unroll
+    for (int j = 0; j < 4; j++) {
+      double d = (double)poz_modI32(rawv[j], p, M);
+      x[j] = fma(qhi, d, x[j]);
+      y[j] = fma(qlo, d, y[j]);
+    }
+  }
+  const bool single = poz_nm <= (int)kOzakiIIPIsDouble;
+#pragma unroll
+  for (int j = 0; j < 4; j++) {
+    const double quot = rint(poz_InvP * x[j]);
+    out[j] = single ? fma(poz_PHi, quot, x[j])
+                    : fma(poz_PLo, quot, fma(poz_PHi, quot, x[j]) + y[j]);
+  }
+}
+
+// C = alpha*AB + beta*C; beta == 0 never reads C.
+__device__ __forceinline__ double poz_axpby(double alpha, double ab,
+                                            double beta, double c) {
+  return (beta == 0.0) ? alpha * ab : fma(beta, c, alpha * ab);
+}
+
 // Four columns per thread, loaded as one int4 per residue plane: the recombine
 // is a pure memory stream over nm int32 planes, so the four independent
 // accumulator pairs are what keeps enough loads in flight to saturate it. Np is
@@ -385,46 +409,21 @@ __global__ void poz_crt(const int32_t *Cr, const short *sftA, const short *sftB,
   int c0 = (blockIdx.x * blockDim.x + threadIdx.x) * 4;
   if (r >= N || c0 >= N)
     return;
-  size_t off = (size_t)r * Np + c0, plane = (size_t)Np * Np;
-  double x[4] = {0, 0, 0, 0}, y[4] = {0, 0, 0, 0};
-  for (int i = 0; i < poz_nm; i++) {
-    int4 raw = *reinterpret_cast<const int4 *>(Cr + i * plane + off);
-    const int *rawv = reinterpret_cast<const int *>(&raw);
-    int p = poz_P[i];
-    unsigned long long M = poz_M[i];
-    double qhi = poz_QHi[i], qlo = poz_QLo[i];
-#pragma unroll
-    for (int j = 0; j < 4; j++) {
-      double d = (double)poz_modI32(rawv[j], p, M);
-      x[j] = fma(qhi, d, x[j]);
-      y[j] = fma(qlo, d, y[j]);
-    }
-  }
+  double crtv[4];
+  poz_crtQuad(Cr, (size_t)r * Np + c0, (size_t)Np * Np, crtv);
   short sa = sftA[r];
 #pragma unroll
   for (int j = 0; j < 4; j++) {
     int c = c0 + j;
     if (c >= N)
       return;
-    // The quotient must come from x+y, not from the error-free part x alone.
-    // y is the accumulated qPiLo residual, up to ~2^-29 of P, so a quotient
-    // taken from x is wrong whenever the exact product lands within 2^-29·P of
-    // ±P/2 and the answer is then off by exactly P. The maxbeta arm never gets
-    // closer than P/8 and cannot hit it; the norm2 arm deliberately runs the
-    // Cauchy-Schwarz bound up to (P-1)/2, where a rank-1 or near-parallel
-    // operand pair saturates it exactly. One FP64 add narrows the band from
-    // 2^-28.4 to 2^-52. The reconstruction itself is unchanged.
-    double quot = rint(poz_InvP * (x[j] + y[j]));
-    double crtv = fma(poz_PLo, quot, fma(poz_PHi, quot, x[j]) + y[j]);
-    double prod = scalbn(crtv, -(sa + sftB[c]));
+    double prod = scalbn(crtv[j], -(sa + sftB[c]));
     size_t o = (size_t)r * N + c;
-    C[o] = (beta == 0.0) ? alpha * prod : alpha * prod + beta * C[o];
+    C[o] = poz_axpby(alpha, prod, beta, C[o]);
   }
 }
 
-// Host-side per-nm CRT constant computation: qPi_i = (M_i·y_i) mod P, qPiHi
-// truncated to 41 bits for the FMA recombine, budget = ⌊log2 P⌋−3 for the
-// scaling beta.
+// Host-side per-nm constants.
 static long pozModInv(long a, long m) {
   long o_r = ((a % m) + m) % m, r = m, o_s = 1, s = 0;
   while (r) {
@@ -439,47 +438,67 @@ static int pozBitLen(__int128 v) {
   while (v) { ++n; v >>= 1; }
   return n;
 }
+// 1/P rounded to nearest-even, by exact long division (P < 2^112, so the
+// remainder stays inside __int128).
+static double pozRecipRN(__int128 P) {
+  __int128 r = 1;
+  int e = 0;
+  while (r < P) { r <<= 1; ++e; } // 2^e / P in [1, 2)
+  unsigned long long q = 0;       // floor(2^(e+53) / P), 54 bits
+  for (int i = 0; i < 54; i++) {
+    q <<= 1;
+    if (r >= P) { r -= P; q |= 1; }
+    r <<= 1;
+  }
+  const bool rnd = q & 1, sticky = r != 0;
+  q >>= 1;
+  if (rnd && (sticky || (q & 1)))
+    ++q;
+  return std::ldexp((double)q, -(e + 52));
+}
 struct PozConsts {
-  int nm = 0, budgetBits = 0;
+  int nm = 0;
   int mod[POZ_MAXNM];
   unsigned long long magic[POZ_MAXNM];
   unsigned t32[POZ_MAXNM];
   double qhi[POZ_MAXNM], qlo[POZ_MAXNM], pHi, pLo, invP;
-  // norm2 arm: the largest scaled 2-norm a row/column may reach,
-  // sqrt((P-1)/2). Then |Σ a'·b'| <= ||a'||₂·||b'||₂ <= (P-1)/2, the exact
-  // symmetric-CRT window. long double (64-bit significand) carries P <= 2^111
-  // to a relative 2^-64, far finer than the integer floor that consumes it.
-  double capNrm = 0.0;
+  float log2P = 0.0f;
 };
 static void pozComputeConsts(int nm, PozConsts &c) {
   c.nm = nm;
   __int128 P = 1;
+  int rho = 0; // sum of floor(p_i/2): bound on sum |residue_i|
   for (int i = 0; i < nm; i++) {
     unsigned p = (unsigned)kOzakiIIModuli[i];
     c.mod[i] = kOzakiIIModuli[i];
     c.magic[i] = ~0ull / p + 1;
     c.t32[i] = (unsigned)((1ull << 32) % p);
     P *= kOzakiIIModuli[i];
+    rho += kOzakiIIModuli[i] / 2;
   }
+  // -P as a round-to-nearest double-double.
   double pHiPos = (double)P;
   c.pHi = -pHiPos;
   c.pLo = -(double)(P - (__int128)pHiPos);
-  c.invP = 1.0 / (double)P;
-  c.budgetBits = pozBitLen(P) - 3;
-  c.capNrm = (double)sqrtl(((long double)P - 1.0L) / 2.0L);
-  // Truncate every qPi at ONE global granularity (2^(bitlen(P)-41)): per-index
-  // granularities make the recombine x = sum qhi_i*d_i round at ulp(x) when the
-  // e_i bitlens spread (nm=12/13), deploying LESS accurately than nm=10.
-  int pbl = pozBitLen(P);
+  c.invP = pozRecipRN(P);
+  c.log2P = kOzakiIILog2P[nm];
+  // High parts of q_i keep 53 - ceil(log2 rho) bits below bitlen(P), all at
+  // one granularity 2^G, so sum_i qhi_i*r_i (|r_i| <= floor(p_i/2)) is exact.
+  int ceilLog2Rho = pozBitLen((__int128)(rho - 1));
+  int G = pozBitLen(P) - (53 - ceilLog2Rho);
   for (int i = 0; i < nm; i++) {
     long p = kOzakiIIModuli[i];
     __int128 Mi = P / p;
     long yi = pozModInv((long)(Mi % p), p);
     __int128 e = (Mi * (__int128)yi) % P;
-    __int128 hiI = e;
-    if (pbl > 41) { int sh = pbl - 41; hiI = (e >> sh) << sh; }
-    c.qhi[i] = (double)hiI;
-    c.qlo[i] = (double)(e - hiI);
+    if (nm <= (int)kOzakiIIPIsDouble) {
+      c.qhi[i] = (double)e; // exact: e < P < 2^48
+      c.qlo[i] = 0.0;
+    } else {
+      __int128 hiI = (e >> G) << G;
+      c.qhi[i] = (double)hiI;
+      c.qlo[i] = (double)(e - hiI);
+    }
   }
 }
 
@@ -488,11 +507,8 @@ struct PozScratch {
   int8_t *Ar = nullptr, *Br = nullptr;
   int32_t *Cr = nullptr;
   short *sA = nullptr, *sB = nullptr;
-  unsigned long long *mA = nullptr, *mB = nullptr; // |.| maxima, atomicMax keys
-  // norm2 arm: per-(row, tile-column) and per-(column, tile-row) partial sums
-  // of squares, FP32 (see poz_scanNorm). Np*ceil(Np/32) floats each
-  // (8.4 MB at N=8192).
-  float *pA = nullptr, *pB = nullptr;
+  // Strided-vector partial sums of squares: Np*ceil(Np/256) doubles.
+  double *part = nullptr;
   // Padded square F64 operand/result buffers for the non-square (_ex) path:
   // a non-square M×Ncols×K source is repacked into As/Bs (S×S, S=pad of
   // max(M,Ncols,K)) so the square pipeline can run, then Cs is cropped back.
@@ -502,37 +518,15 @@ PozScratch g_scratch;
 PozConsts g_consts;
 int g_uploadedNm = 0;
 
-// Scaling arm: 0 = maxbeta (default), 1 = norm2. Read once from
-// POSEIDON_OZAKI_SCALE; __poseidon_ozaki_set_scale_rule overrides in-process so
-// a harness can A/B both arms in one binary.
-int g_scaleRule = -1;
-int poz_scaleRule() {
-  if (g_scaleRule < 0) {
-    const char *e = getenv("POSEIDON_OZAKI_SCALE");
-    if (!e || !*e)
-      g_scaleRule = 0;
-    else if (!strcmp(e, "norm2"))
-      g_scaleRule = 1;
-    else if (!strcmp(e, "maxbeta"))
-      g_scaleRule = 0;
-    else {
-      // Never guess: an unrecognised arm name is a configuration error, and
-      // silently running the other rule would misattribute every number.
-      printf("poseidon_ozaki_rt: FATAL unknown POSEIDON_OZAKI_SCALE='%s' "
-             "(expected 'maxbeta' or 'norm2')\n",
-             e);
-      abort();
-    }
-  }
-  return g_scaleRule;
-}
-
 // INT8 tensor-core GEMM leading dimensions must be multiples of 4; the residue
 // planes are therefore held at Np = roundup(N, 16), which also keeps every
 // per-modulus plane base 16-byte aligned. For the sizes the solver dispatches
 // (multiples of 16 in ozp, and the _ex path's own S = roundup(.,16)) Np == N,
 // so the padding costs nothing.
 static inline int pozPad(int N) { return ((N + 15) / 16) * 16; }
+static inline size_t pozChunks(int K) {
+  return (size_t)((K + POZ_NRM_KCHUNK - 1) / POZ_NRM_KCHUNK);
+}
 
 void poz_ensure(int N) {
   int Np = pozPad(N);
@@ -540,11 +534,8 @@ void poz_ensure(int N) {
     return;
   if (g_scratch.Ar) {
     cudaFree(g_scratch.Ar); cudaFree(g_scratch.Br); cudaFree(g_scratch.Cr);
-    cudaFree(g_scratch.sA); cudaFree(g_scratch.sB);
-    cudaFree(g_scratch.mA); cudaFree(g_scratch.mB);
+    cudaFree(g_scratch.sA); cudaFree(g_scratch.sB); cudaFree(g_scratch.part);
     cudaFree(g_scratch.As); cudaFree(g_scratch.Bs); cudaFree(g_scratch.Cs);
-    if (g_scratch.pA) { cudaFree(g_scratch.pA); cudaFree(g_scratch.pB); }
-    g_scratch.pA = g_scratch.pB = nullptr;
   }
   size_t plane = (size_t)Np * Np;
   POZ_CK(cudaMalloc(&g_scratch.Ar, POZ_MAXNM * plane));
@@ -552,16 +543,10 @@ void poz_ensure(int N) {
   POZ_CK(cudaMalloc(&g_scratch.Cr, POZ_MAXNM * plane * 4));
   POZ_CK(cudaMalloc(&g_scratch.sA, Np * 2));
   POZ_CK(cudaMalloc(&g_scratch.sB, Np * 2));
-  POZ_CK(cudaMalloc(&g_scratch.mA, Np * sizeof(unsigned long long)));
-  POZ_CK(cudaMalloc(&g_scratch.mB, Np * sizeof(unsigned long long)));
+  POZ_CK(cudaMalloc(&g_scratch.part, (size_t)Np * pozChunks(Np) * sizeof(double)));
   POZ_CK(cudaMalloc(&g_scratch.As, plane * sizeof(double)));
   POZ_CK(cudaMalloc(&g_scratch.Bs, plane * sizeof(double)));
   POZ_CK(cudaMalloc(&g_scratch.Cs, plane * sizeof(double)));
-  if (poz_scaleRule() == 1) {
-    size_t tiles = (size_t)((Np + 31) / 32);
-    POZ_CK(cudaMalloc(&g_scratch.pA, (size_t)Np * tiles * sizeof(float)));
-    POZ_CK(cudaMalloc(&g_scratch.pB, (size_t)Np * tiles * sizeof(float)));
-  }
   g_scratch.Np = Np;
 }
 void poz_uploadConsts(int nm) {
@@ -578,6 +563,7 @@ void poz_uploadConsts(int nm) {
   POZ_CK(cudaMemcpyToSymbol(poz_PHi, &g_consts.pHi, sizeof(double)));
   POZ_CK(cudaMemcpyToSymbol(poz_PLo, &g_consts.pLo, sizeof(double)));
   POZ_CK(cudaMemcpyToSymbol(poz_InvP, &g_consts.invP, sizeof(double)));
+  POZ_CK(cudaMemcpyToSymbol(poz_log2P, &g_consts.log2P, sizeof(float)));
   g_uploadedNm = nm;
 }
 
@@ -604,28 +590,15 @@ __global__ void poz_crop(double *C, const double *Cs, int M, int Ncols, int ldc,
   if (i >= M || j >= Ncols)
     return;
   size_t dst = cColMajor ? (size_t)j * ldc + i : (size_t)i * ldc + j;
-  C[dst] = alpha * Cs[(size_t)i * S + j] + beta * C[dst];
+  C[dst] = poz_axpby(alpha, Cs[(size_t)i * S + j], beta, C[dst]);
 }
 
-// num_moduli selects the Ozaki-II precision (1..14); the per-nm CRT constants
-// and scaling budget are computed and uploaded here (cached). Square N x N x N,
-// NN, row-major pipeline: C = alpha*(A@B)+beta*C.
+// num_moduli selects the Ozaki-II precision (kOzakiIIMinModuli..14); the per-nm
+// constants are computed and uploaded here (cached). Square N x N x N, NN,
+// row-major pipeline: C = alpha*(A@B)+beta*C.
 static void poz_run_square(double *C, const double *A, const double *B, int N,
                            double alpha, double beta, cudaStream_t stream,
                            int num_moduli) {
-  poz_ensure(N);
-  poz_uploadConsts(num_moduli);
-  int Np = g_scratch.Np;
-  int log2K = (int)ceil(log2((double)N));
-  int beta_exp = (g_consts.budgetBits - log2K) / 2;
-  if (beta_exp > 50) beta_exp = 50;
-  if (beta_exp < 1) beta_exp = 1;
-  size_t plane = (size_t)Np * Np;
-  dim3 tile(32, 8), gTile((Np + 31) / 32, (Np + 31) / 32);
-  POZ_CK(cudaMemsetAsync(g_scratch.mA, 0, Np * sizeof(unsigned long long),
-                         stream));
-  POZ_CK(cudaMemsetAsync(g_scratch.mB, 0, Np * sizeof(unsigned long long),
-                         stream));
   // s32 residue-GEMM accumulator: |sum_k r_a*r_b| <= K*128*128 = K*2^14 must
   // stay under 2^31, i.e. K < 131072.
   if (N >= 131072) { // 2^31 / 2^14, written out: 1<<31 overflows a signed int
@@ -634,40 +607,16 @@ static void poz_run_square(double *C, const double *A, const double *B, int N,
            N);
     abort();
   }
-  int tilesN = (N + 31) / 32;
-  if (poz_scaleRule() == 1 && !g_scratch.pA) {
-    // Reachable when the arm is switched in-process after the scratch set was
-    // sized for maxbeta (an A/B harness); poz_ensure covers the normal case.
-    size_t tiles = (size_t)((Np + 31) / 32);
-    POZ_CK(cudaMalloc(&g_scratch.pA, (size_t)Np * tiles * sizeof(float)));
-    POZ_CK(cudaMalloc(&g_scratch.pB, (size_t)Np * tiles * sizeof(float)));
-  }
-  if (poz_scaleRule() == 1) {
-    // norm2: the shift comes from each row's / column's 2-norm, so the padded
-    // extent never enters and the real reduction length K = N is what the
-    // round-to-nearest margin is sized against.
-    // Margin: the FP32 sums of squares are relative-accurate to K·2^-24, so a
-    // (1 - K·2^-24) haircut on the cap covers a norm under-estimate (K·2^-25
-    // on the norm itself, doubled); the 2^-20 floor covers the FP64 reduction
-    // and the sqrtl of the cap. The -0.5·sqrt(K) term is what makes ROUND-TO-
-    // NEAREST quantization legal: each rounded element can exceed its scaled
-    // value by 0.5, so ||a'||₂ can exceed 2^sft·||a||₂ by up to 0.5·sqrt(K).
-    // Together they cost ~1e-3 bits.
-    double relMargin = std::max(1.0 / 1048576.0, (double)N / 16777216.0);
-    double capEff =
-        g_consts.capNrm * (1.0 - relMargin) - 0.5 * std::sqrt((double)N);
-    poz_scanNorm<<<dim3(tilesN, tilesN), tile, 0, stream>>>(
-        A, B, g_scratch.mA, g_scratch.mB, g_scratch.pA, g_scratch.pB, N, tilesN,
-        tilesN);
-    poz_shiftsNorm<<<(N + 127) / 128, 128, 0, stream>>>(
-        g_scratch.pA, g_scratch.pB, g_scratch.mA, g_scratch.mB, g_scratch.sA,
-        g_scratch.sB, N, tilesN, tilesN, capEff, N);
-  } else {
-    poz_absMax<<<dim3(tilesN, tilesN), tile, 0, stream>>>(
-        A, B, g_scratch.mA, g_scratch.mB, N);
-    poz_shifts<<<(N + 127) / 128, 128, 0, stream>>>(
-        g_scratch.mA, g_scratch.mB, g_scratch.sA, g_scratch.sB, N, beta_exp);
-  }
+  poz_ensure(N);
+  poz_uploadConsts(num_moduli);
+  int Np = g_scratch.Np;
+  size_t plane = (size_t)Np * Np;
+  dim3 tile(32, 8), gTile((Np + 31) / 32, (Np + 31) / 32);
+  // Rows of A are contiguous, columns of B strided (row-major operands).
+  poz_shifts(A, N, N, N, /*contiguous=*/true, g_scratch.sA, g_scratch.part,
+             stream);
+  poz_shifts(B, N, N, N, /*contiguous=*/false, g_scratch.sB, g_scratch.part,
+             stream);
   poz_fillRes<<<gTile, tile, 0, stream>>>(A, B, g_scratch.sA, g_scratch.sB,
                                           g_scratch.Ar, g_scratch.Br, N, Np);
   // One strided-batched INT8 tensor-core GEMM over all num_moduli residue
@@ -702,115 +651,22 @@ static void poz_run_square(double *C, const double *A, const double *B, int N,
 // same cublasGemmStridedBatchedEx(OP_T, OP_N) the square path issues produces
 // the column-major C^T(Ncols x M), i.e. row-major C with row stride Ncp. The
 // scaling shift is indexed by the destination row for both operands, so one
-// scan / shift / fill kernel serves both; the only per-operand difference is
-// whether the source's contiguous axis is k ("direct") or the destination row
-// ("transposed"), which is aColMajor for A and !bColMajor for B.
-//
-// Numerics are the square arm's with the padding removed from the bound: the
-// maxbeta budget uses ceil(log2 K) on the real reduction length and the norm2
-// cap uses the real K in its round-to-nearest margin, so a rung is at least as
-// accurate here as there.
+// shift / fill path serves both; the only per-operand difference is whether
+// the source's contiguous axis is k ("direct", a contiguous vector) or the
+// destination row ("transposed", a strided vector), which is aColMajor for A
+// and !bColMajor for B. Shifts depend only on the vector and its layout, so
+// this arm gives the square arm's bits on an exactly square dispatch.
 
-// One thread per output row of a residue plane; `transposed` selects the
-// source addressing. Rows of the destination beyond R are not written: cuBLAS
-// never reads them (they only exist so the plane stride stays 16-byte aligned)
-// and the fill zeroes their residues anyway.
+// Residue fill into the (Rp x Kp) planes. `transposed` selects the source
+// addressing:
 //   direct     (transposed==0): src(r,k) = src[r*ld + k]   (contiguous in k)
 //   transposed (transposed==1): src(r,k) = src[k*ld + r]   (contiguous in r)
-// Both traversals fold the FP32 sums of squares in a fixed lane order, for the
-// reproducibility reason poz_scanNorm gives.
-__global__ void poz_scanRect(const double *src, unsigned long long *mx,
-                             float *ps, int R, int K, int ld, int transposed,
-                             int nPart, int wantNorm) {
-  __shared__ unsigned long long shM[8][32];
-  __shared__ float shS[8][32];
-  const int tx = threadIdx.x, ty = threadIdx.y;
-  if (!transposed) {
-    const int kBase = blockIdx.x * 32, rBase = blockIdx.y * 32;
-    const int k = kBase + tx;
-#pragma unroll
-    for (int j = 0; j < 4; j++) {
-      const int r = rBase + ty + 8 * j;
-      unsigned long long a = 0;
-      float sq = 0.0f;
-      if (r < R && k < K) {
-        double v = src[(size_t)r * ld + k];
-        a = poz_absKey(v);
-        float vf = (float)v;
-        sq = vf * vf;
-      }
-#pragma unroll
-      for (int off = 16; off; off >>= 1) {
-        unsigned long long o = __shfl_xor_sync(0xffffffffu, a, off);
-        a = a > o ? a : o;
-        sq += __shfl_xor_sync(0xffffffffu, sq, off); // butterfly: fixed order
-      }
-      if (tx == 0 && r < R) {
-        atomicMax(&mx[r], a);
-        if (wantNorm)
-          ps[(size_t)r * nPart + blockIdx.x] = sq;
-      }
-    }
-  } else {
-    const int rBase = blockIdx.x * 32, kBase = blockIdx.y * 32;
-    const int r = rBase + tx;
-    unsigned long long acc = 0;
-    float accS = 0.0f;
-#pragma unroll
-    for (int j = 0; j < 4; j++) {
-      const int k = kBase + ty + 8 * j;
-      if (r < R && k < K) {
-        double v = src[(size_t)k * ld + r];
-        unsigned long long a = poz_absKey(v);
-        acc = acc > a ? acc : a;
-        float vf = (float)v;
-        accS += vf * vf;
-      }
-    }
-    shM[ty][tx] = acc;
-    shS[ty][tx] = accS;
-    __syncthreads();
-    if (ty == 0 && r < R) {
-      unsigned long long m = shM[0][tx];
-      float s = shS[0][tx];
-#pragma unroll
-      for (int j = 1; j < 8; j++) {
-        m = m > shM[j][tx] ? m : shM[j][tx];
-        s += shS[j][tx];
-      }
-      atomicMax(&mx[r], m);
-      if (wantNorm)
-        ps[(size_t)r * nPart + blockIdx.y] = s;
-    }
-  }
-}
-
-// Both scaling arms in one launch (the branch is block-uniform): rule 0 =
-// maxbeta on the row/column max, rule 1 = norm2 on the reduced 2-norm.
-__global__ void poz_shiftsRect(const unsigned long long *mx, const float *ps,
-                               short *sft, int R, int nPart, int rule,
-                               int beta_exp, double capEff, int K) {
-  const int i = blockIdx.x * blockDim.x + threadIdx.x;
-  if (i >= R)
-    return;
-  const double m = __longlong_as_double((long long)mx[i]);
-  if (rule == 0) {
-    sft[i] = (short)(m > 0 ? beta_exp - 1 - ilogb(m) : 0);
-    return;
-  }
-  double s = 0.0;
-  for (int j = 0; j < nPart; j++)
-    s += (double)ps[(size_t)i * nPart + j];
-  sft[i] = poz_sftFromNorm(s, m, capEff, K);
-}
-
-// Residue fill into the (Rp x Kp) planes. `transposed` has the same meaning as
-// in poz_scanRect; in the transposed case the scaled integers are staged in
-// shared and written back with the tile transposed, so BOTH the source read
-// and the int8 store stay coalesced. Every destination element with r >= R or
-// k >= K is written as an explicit zero: the k pad is inside the contraction
-// range the batched GEMM is issued over, so it must not carry garbage, and the
-// r pad keeps the residues of the (never-read) alignment rows well defined.
+// In the transposed case the scaled integers are staged in shared and written
+// back with the tile transposed, so BOTH the source read and the int8 store
+// stay coalesced. Every destination element with r >= R or k >= K is written
+// as an explicit zero: the k pad is inside the contraction range the batched
+// GEMM is issued over, so it must not carry garbage, and the r pad keeps the
+// residues of the (never-read) alignment rows well defined.
 __global__ void poz_fillRect(const double *src, const short *sft, int8_t *dst,
                              int R, int K, int ld, int transposed, int Rp,
                              int Kp) {
@@ -826,8 +682,7 @@ __global__ void poz_fillRect(const double *src, const short *sft, int8_t *dst,
       if (r >= Rp || k >= Kp)
         continue;
       const bool inb = (r < R && k < K);
-      // scalbn(x, sft), NOT x * scalbn(1.0, sft): see poz_fillRes.
-      const long v = inb ? llround(scalbn(src[(size_t)r * ld + k], sft[r])) : 0L;
+      const long v = inb ? poz_quant(src[(size_t)r * ld + k], sft[r]) : 0L;
       const size_t off = (size_t)r * Kp + k;
       for (int i = 0; i < poz_nm; i++)
         dst[i * plane + off] =
@@ -842,7 +697,7 @@ __global__ void poz_fillRect(const double *src, const short *sft, int8_t *dst,
       for (int j = 0; j < 4; j++) {
         const int kl = ty + 8 * j, k = kBase + kl;
         sh[kl][tx] =
-            (r < R && k < K) ? llround(scalbn(src[(size_t)k * ld + r], s)) : 0L;
+            (r < R && k < K) ? poz_quant(src[(size_t)k * ld + r], s) : 0L;
       }
     }
     __syncthreads();
@@ -879,35 +734,18 @@ __global__ void poz_crtRect(const int32_t *Cr, const short *sftA,
   const int tx = threadIdx.x, ty = threadIdx.y; // blockDim = (8, 32)
   const int cBase = blockIdx.x * 32, rBase = blockIdx.y * 32;
   const int r = rBase + ty, c0 = cBase + 4 * tx;
-  const size_t plane = (size_t)Mp * ldCr;
   double prod[4] = {0, 0, 0, 0};
   const bool live = (r < M && c0 < Ncols);
   if (live) {
-    const size_t off = (size_t)r * ldCr + c0;
-    double x[4] = {0, 0, 0, 0}, y[4] = {0, 0, 0, 0};
-    for (int i = 0; i < poz_nm; i++) {
-      int4 raw = *reinterpret_cast<const int4 *>(Cr + i * plane + off);
-      const int *rawv = reinterpret_cast<const int *>(&raw);
-      const int p = poz_P[i];
-      const unsigned long long Mg = poz_M[i];
-      const double qhi = poz_QHi[i], qlo = poz_QLo[i];
-#pragma unroll
-      for (int j = 0; j < 4; j++) {
-        double d = (double)poz_modI32(rawv[j], p, Mg);
-        x[j] = fma(qhi, d, x[j]);
-        y[j] = fma(qlo, d, y[j]);
-      }
-    }
+    double crtv[4];
+    poz_crtQuad(Cr, (size_t)r * ldCr + c0, (size_t)Mp * ldCr, crtv);
     const short sa = sftA[r];
 #pragma unroll
     for (int j = 0; j < 4; j++) {
       const int c = c0 + j;
       if (c >= Ncols)
         break;
-      // Quotient from x+y, not x alone: see poz_crt.
-      const double quot = rint(poz_InvP * (x[j] + y[j]));
-      const double crtv = fma(poz_PLo, quot, fma(poz_PHi, quot, x[j]) + y[j]);
-      prod[j] = scalbn(crtv, -(sa + sftB[c]));
+      prod[j] = scalbn(crtv[j], -(sa + sftB[c]));
     }
   }
   if (!cColMajor) {
@@ -919,7 +757,7 @@ __global__ void poz_crtRect(const int32_t *Cr, const short *sftA,
       if (c >= Ncols)
         return;
       const size_t o = (size_t)r * ldc + c;
-      C[o] = (beta == 0.0) ? alpha * prod[j] : alpha * prod[j] + beta * C[o];
+      C[o] = poz_axpby(alpha, prod[j], beta, C[o]);
     }
     return;
   }
@@ -940,14 +778,12 @@ __global__ void poz_crtRect(const int32_t *Cr, const short *sftA,
     if (c >= Ncols)
       break;
     const size_t o = (size_t)c * ldc + rw;
-    const double v = alpha * sh[rl][cl];
-    C[o] = (beta == 0.0) ? v : v + beta * C[o];
+    C[o] = poz_axpby(alpha, sh[rl][cl], beta, C[o]);
   }
 }
 
 // Runtime knobs for the rectangular arm. Parsed once; an unparseable value
-// aborts rather than silently selecting the other behaviour, the same
-// convention POSEIDON_OZAKI_SCALE follows.
+// aborts rather than silently selecting the other behaviour.
 //   POSEIDON_OZAKI_PATH           auto (default) | rect | square
 //   POSEIDON_OZAKI_RECT_MIN_WASTE padWaste above which "auto" picks rect
 //   POSEIDON_OZAKI_RECT_CAP_MB    residue-scratch budget driving the column
@@ -1001,9 +837,9 @@ int poz_pathMode() {
 // Threshold on padWaste = S^3/(M*Ncols*K). 1.05 is "square up to the 16-column
 // alignment rounding": an exactly square dispatch has padWaste 1.0 and the
 // worst a square shape rounds up to is (S/N)^3 <= 1.05 for N >= 320, so every
-// genuinely square _ex call stays on the square arm bit for bit. The
-// rectangular arm is faster even at padWaste 1.0 (it skips the poz_pack /
-// poz_crop FP64 repacks), so the threshold buys conservatism, not speed;
+// genuinely square _ex call stays on the square arm. The rectangular arm is
+// faster even at padWaste 1.0 (it skips the poz_pack / poz_crop FP64
+// repacks), so the threshold buys conservatism, not speed;
 // POSEIDON_OZAKI_RECT_MIN_WASTE=1 recovers that.
 static double poz_rectMinWaste() {
   static double v = poz_envDouble("POSEIDON_OZAKI_RECT_MIN_WASTE", 1.05);
@@ -1016,10 +852,10 @@ static size_t poz_rectCapBytes() {
 
 // Internal column chunking: the rectangular arm's cost is linear in the column
 // count, so the only reason to split is the residue scratch, POZ_MAXNM*(Kp +
-// 4*Mp) bytes per column plus the norm2 partials. Chunking is numerically
-// inert (A's shift is a per-row property of the whole operand and B's a
-// per-column property of one column, so every chunking returns the same bits),
-// which makes the split point a pure memory/launch-overhead trade.
+// 4*Mp) bytes per column plus the shift and its partial sums. Chunking is
+// numerically inert (A's shift is a per-row property of the whole operand and
+// B's a per-column property of one column, so every chunking returns the same
+// bits), which makes the split point a pure memory/launch-overhead trade.
 long g_rectChunk = -1; // <0 = not yet read from the environment
 static int poz_rectChunk(int Mp, int Kp, int Ncols) {
   if (g_rectChunk < 0)
@@ -1028,7 +864,7 @@ static int poz_rectChunk(int Mp, int Kp, int Ncols) {
   if (forced > 0)
     return (int)std::min<long>(forced, Ncols);
   double perCol = (double)POZ_MAXNM * ((double)Kp + 4.0 * (double)Mp) +
-                  4.0 * (double)((Kp + 31) / 32) + 10.0;
+                  8.0 * (double)pozChunks(Kp) + 2.0;
   long c = (long)((double)poz_rectCapBytes() / perCol);
   c &= ~127L; // keep every chunk but the last a multiple of 128 columns
   if (c < 128)
@@ -1043,45 +879,39 @@ static int poz_rectChunk(int Mp, int Kp, int Ncols) {
 // the promise, and inferring it from the pointer alone would be wrong for B
 // (same buffer, new contents, every call). The reuse is dropped whenever
 // anything the residues depend on changes: the operand descriptor, the modulus
-// count, the scaling arm, or a scratch reallocation.
+// count, or a scratch reallocation.
 struct PozPinA {
   const double *ptr = nullptr;
   int M = 0, K = 0, lda = 0, colMajor = 0;
   bool pinned = false;
   // state of the planes currently sitting in g_rect.Ar
   bool filled = false;
-  int nm = 0, rule = -1;
+  int nm = 0;
   unsigned long long gen = 0;
 };
 PozPinA g_pinA;
 unsigned long long g_rectGen = 0; // bumped on every scratch (re)allocation
 
 struct PozRectScratch {
-  int Mp = 0, Kp = 0, Ncp = 0, tiles = 0;
+  int Mp = 0, Kp = 0, Ncp = 0;
   int8_t *Ar = nullptr, *Br = nullptr;
   int32_t *Cr = nullptr;
   short *sA = nullptr, *sB = nullptr;
-  unsigned long long *mA = nullptr, *mB = nullptr;
-  float *pA = nullptr, *pB = nullptr;
+  double *part = nullptr; // max(Mp, Ncp)*ceil(Kp/256) partial sums of squares
 };
 PozRectScratch g_rect;
 
 // Grow-only: an alternating shape sequence (the last chunk of a dispatch is
 // short) must not free and re-allocate on every call.
 static void poz_ensureRect(int Mp, int Kp, int Ncp) {
-  const bool norm = (poz_scaleRule() == 1);
-  if (g_rect.Mp >= Mp && g_rect.Kp >= Kp && g_rect.Ncp >= Ncp &&
-      (!norm || g_rect.pA))
+  if (g_rect.Mp >= Mp && g_rect.Kp >= Kp && g_rect.Ncp >= Ncp)
     return;
   Mp = std::max(Mp, g_rect.Mp);
   Kp = std::max(Kp, g_rect.Kp);
   Ncp = std::max(Ncp, g_rect.Ncp);
-  const int tiles = (Kp + 31) / 32;
   if (g_rect.Ar) {
     cudaFree(g_rect.Ar); cudaFree(g_rect.Br); cudaFree(g_rect.Cr);
-    cudaFree(g_rect.sA); cudaFree(g_rect.sB);
-    cudaFree(g_rect.mA); cudaFree(g_rect.mB);
-    if (g_rect.pA) { cudaFree(g_rect.pA); cudaFree(g_rect.pB); }
+    cudaFree(g_rect.sA); cudaFree(g_rect.sB); cudaFree(g_rect.part);
     g_rect = PozRectScratch();
   }
   POZ_CK(cudaMalloc(&g_rect.Ar, (size_t)POZ_MAXNM * Mp * Kp));
@@ -1089,19 +919,15 @@ static void poz_ensureRect(int Mp, int Kp, int Ncp) {
   POZ_CK(cudaMalloc(&g_rect.Cr, (size_t)POZ_MAXNM * Ncp * Mp * sizeof(int32_t)));
   POZ_CK(cudaMalloc(&g_rect.sA, (size_t)Mp * sizeof(short)));
   POZ_CK(cudaMalloc(&g_rect.sB, (size_t)Ncp * sizeof(short)));
-  POZ_CK(cudaMalloc(&g_rect.mA, (size_t)Mp * sizeof(unsigned long long)));
-  POZ_CK(cudaMalloc(&g_rect.mB, (size_t)Ncp * sizeof(unsigned long long)));
-  if (norm) {
-    POZ_CK(cudaMalloc(&g_rect.pA, (size_t)Mp * tiles * sizeof(float)));
-    POZ_CK(cudaMalloc(&g_rect.pB, (size_t)Ncp * tiles * sizeof(float)));
-  }
-  g_rect.Mp = Mp; g_rect.Kp = Kp; g_rect.Ncp = Ncp; g_rect.tiles = tiles;
+  POZ_CK(cudaMalloc(&g_rect.part,
+                    (size_t)std::max(Mp, Ncp) * pozChunks(Kp) * sizeof(double)));
+  g_rect.Mp = Mp; g_rect.Kp = Kp; g_rect.Ncp = Ncp;
   ++g_rectGen; // any cached A planes lived in the buffer that was just freed
 }
 
 // Rectangular Ozaki-II: C(M x Ncols) = alpha*(A@B) + beta*C, A(M x K),
 // B(K x Ncols), each operand row- or column-major per the {a,b,c}ColMajor
-// flags. Columns are chunked internally; A is scanned and quantized once for
+// flags. Columns are chunked internally; A is scaled and quantized once for
 // the whole dispatch because its residues are a property of A alone.
 static void poz_run_rect(double *C, const double *A, const double *B, int M,
                          int Ncols, int K, int lda, int ldb, int ldc,
@@ -1118,19 +944,8 @@ static void poz_run_rect(double *C, const double *A, const double *B, int M,
   }
   poz_uploadConsts(num_moduli);
   const int Kp = pozPad(K), Mp = pozPad(M);
-  const int rule = poz_scaleRule();
   const int chunk = poz_rectChunk(Mp, Kp, Ncols);
   poz_ensureRect(Mp, Kp, pozPad(chunk));
-
-  const int log2K = (int)ceil(log2((double)K));
-  int beta_exp = (g_consts.budgetBits - log2K) / 2;
-  if (beta_exp > 50) beta_exp = 50;
-  if (beta_exp < 1) beta_exp = 1;
-  // Same margin recipe as poz_run_square, on the real reduction length.
-  const double relMargin = std::max(1.0 / 1048576.0, (double)K / 16777216.0);
-  const double capEff =
-      g_consts.capNrm * (1.0 - relMargin) - 0.5 * std::sqrt((double)K);
-  const int nPart = (Kp + 31) / 32;
   const dim3 tile(32, 8);
 
   // A, once for the whole dispatch (and, if the caller pinned it, once for the
@@ -1138,24 +953,19 @@ static void poz_run_rect(double *C, const double *A, const double *B, int M,
   const bool reuseA = g_pinA.pinned && g_pinA.filled && g_pinA.ptr == A &&
                       g_pinA.M == M && g_pinA.K == K && g_pinA.lda == lda &&
                       g_pinA.colMajor == aColMajor && g_pinA.nm == num_moduli &&
-                      g_pinA.rule == rule && g_pinA.gen == g_rectGen;
+                      g_pinA.gen == g_rectGen;
   if (!reuseA) {
     const int tr = aColMajor ? 1 : 0; // col-major A is contiguous in m, not k
-    POZ_CK(cudaMemsetAsync(g_rect.mA, 0, (size_t)Mp * sizeof(unsigned long long),
-                           stream));
+    poz_shifts(A, lda, M, K, /*contiguous=*/!tr, g_rect.sA, g_rect.part,
+               stream);
     const dim3 g = tr ? dim3((Mp + 31) / 32, (Kp + 31) / 32)
                       : dim3((Kp + 31) / 32, (Mp + 31) / 32);
-    poz_scanRect<<<g, tile, 0, stream>>>(A, g_rect.mA, g_rect.pA, M, K, lda, tr,
-                                         nPart, rule == 1);
-    poz_shiftsRect<<<(M + 127) / 128, 128, 0, stream>>>(
-        g_rect.mA, g_rect.pA, g_rect.sA, M, nPart, rule, beta_exp, capEff, K);
     poz_fillRect<<<g, tile, 0, stream>>>(A, g_rect.sA, g_rect.Ar, M, K, lda, tr,
                                          Mp, Kp);
     if (g_pinA.pinned && g_pinA.ptr == A && g_pinA.M == M && g_pinA.K == K &&
         g_pinA.lda == lda && g_pinA.colMajor == aColMajor) {
       g_pinA.filled = true;
       g_pinA.nm = num_moduli;
-      g_pinA.rule = rule;
       g_pinA.gen = g_rectGen;
     }
   }
@@ -1172,14 +982,10 @@ static void poz_run_rect(double *C, const double *A, const double *B, int M,
     double *Cc = cColMajor ? C + (size_t)j0 * ldc : C + j0;
     const int trB = bColMajor ? 0 : 1; // row-major B is contiguous in c, not k
 
-    POZ_CK(cudaMemsetAsync(g_rect.mB, 0,
-                           (size_t)ncp * sizeof(unsigned long long), stream));
+    poz_shifts(Bc, ldb, nc, K, /*contiguous=*/!trB, g_rect.sB, g_rect.part,
+               stream);
     const dim3 gB = trB ? dim3((ncp + 31) / 32, (Kp + 31) / 32)
                         : dim3((Kp + 31) / 32, (ncp + 31) / 32);
-    poz_scanRect<<<gB, tile, 0, stream>>>(Bc, g_rect.mB, g_rect.pB, nc, K, ldb,
-                                          trB, nPart, rule == 1);
-    poz_shiftsRect<<<(nc + 127) / 128, 128, 0, stream>>>(
-        g_rect.mB, g_rect.pB, g_rect.sB, nc, nPart, rule, beta_exp, capEff, K);
     poz_fillRect<<<gB, tile, 0, stream>>>(Bc, g_rect.sB, g_rect.Br, nc, K, ldb,
                                           trB, ncp, Kp);
     // Column-major C^T(ncp x Mp) = op_T(Br) · op_N(Ar) = B^T·A^T, so the int32
@@ -1223,20 +1029,22 @@ static void poz_native_dgemm(double *C, const double *A, const double *B, int M,
                        &alpha, B, ldb, A, lda, &beta, C, ldc));
   }
 }
-} // namespace
 
-// Select the operand scaling arm in-process: 0 = maxbeta (default), 1 = norm2.
-// Overrides POSEIDON_OZAKI_SCALE. Must be called before the first dispatch,
-// because the scratch set is sized for the selected arm.
-extern "C" void __poseidon_ozaki_set_scale_rule(int rule) {
-  if (rule != 0 && rule != 1) {
-    printf("poseidon_ozaki_rt: FATAL __poseidon_ozaki_set_scale_rule(%d): "
-           "expected 0 (maxbeta) or 1 (norm2)\n",
-           rule);
+// Normalize num_moduli: 0 = native DGEMM; out of range (< 0 or > 14) = 14,
+// the full-precision rung; 1..kOzakiIIMinModuli-1 has no published scaling
+// constant and is refused.
+int poz_checkNm(int num_moduli) {
+  if (num_moduli < 0 || num_moduli > POZ_MAXNM)
+    return POZ_MAXNM;
+  if (num_moduli > 0 && num_moduli < (int)kOzakiIIMinModuli) {
+    printf("poseidon_ozaki_rt: FATAL num_moduli=%d: Ozaki-II is defined here "
+           "for %u..%d moduli\n",
+           num_moduli, kOzakiIIMinModuli, POZ_MAXNM);
     abort();
   }
-  g_scaleRule = rule;
+  return num_moduli;
 }
+} // namespace
 
 // Select the _ex shape arm in-process: 0 = auto (shape-driven, default),
 // 1 = force rectangular, 2 = force square-padded. Overrides
@@ -1255,8 +1063,8 @@ extern "C" void __poseidon_ozaki_set_path(int mode) {
 // Promise that the A operand described here does not change until unpinned,
 // letting the rectangular arm reuse its quantized residue planes across
 // dispatches. The runtime cannot verify the promise, so it is opt-in and never
-// inferred; pinning a different descriptor or changing num_moduli / the
-// scaling arm invalidates the cached planes. Rectangular arm only.
+// inferred; pinning a different descriptor or changing num_moduli invalidates
+// the cached planes. Rectangular arm only.
 extern "C" void __poseidon_ozaki_pin_a(const double *A, int M, int K, int lda,
                                        int aColMajor) {
   if (!A || M <= 0 || K <= 0) {
@@ -1295,9 +1103,7 @@ extern "C" void __poseidon_ozaki_dgemm(double *C, const double *A,
                                        cudaStream_t stream, int num_moduli) {
   if (N <= 0)
     return;
-  // nm==0 => native cuBLAS DGEMM; out-of-range => full-precision Ozaki (14).
-  if (num_moduli < 0 || num_moduli > 14)
-    num_moduli = 14;
+  num_moduli = poz_checkNm(num_moduli);
   if (transA || transB || (lda && lda != N) || (ldb && ldb != N) ||
       (ldc && ldc != N)) {
     printf("poseidon_ozaki_rt: unsupported GEMM shape (transA=%d transB=%d "
@@ -1333,9 +1139,7 @@ extern "C" void __poseidon_ozaki_dgemm_ex(double *C, const double *A,
                                           int num_moduli) {
   if (M <= 0 || Ncols <= 0 || K <= 0)
     return;
-  // nm==0 => native cuBLAS DGEMM; out-of-range => full-precision Ozaki (14).
-  if (num_moduli < 0 || num_moduli > 14)
-    num_moduli = 14;
+  num_moduli = poz_checkNm(num_moduli);
   if (num_moduli == 0) {
     // Native path needs no padding: every {a,b,c}ColMajor combination maps
     // directly onto one cublasDgemm (see poz_native_dgemm).

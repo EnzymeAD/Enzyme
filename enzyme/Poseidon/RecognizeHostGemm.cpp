@@ -22,6 +22,7 @@
 // (RgPoly below) make the comparison exact and total, and every dimension is
 // either derived or the whole site is refused.
 #include "Flags.h"
+#include "HostDispatch.h"
 #include "MatmulInternal.h"
 #include "ProfileRead.h"
 #include "Utils.h"
@@ -39,11 +40,11 @@
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Intrinsics.h"
+#include "llvm/IR/IntrinsicsAMDGPU.h"
 #include "llvm/IR/IntrinsicsNVPTX.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Operator.h"
 #include "llvm/Support/raw_ostream.h"
-#include "llvm/TargetParser/Triple.h"
 
 #include <algorithm>
 #include <map>
@@ -61,7 +62,13 @@ std::string runtimeDimString(const RuntimeDim &d) {
   std::string s;
   if (d.mul != 1)
     s += std::to_string(d.mul) + "*";
-  s += "arg" + std::to_string(d.param);
+  for (const LaunchRef &f : d.factors) {
+    if (&f != &d.factors.front())
+      s += "*";
+    s += "arg" + std::to_string(f.param);
+    if (f.isField())
+      s += "[+" + std::to_string(f.offset) + "]";
+  }
   if (d.add)
     s += (d.add > 0 ? "+" : "") + std::to_string(d.add);
   return s;
@@ -199,9 +206,26 @@ static bool rgDivideByAtom(const RgPoly &p, unsigned atom, RgPoly &q,
 // coef*(tid.k + ntid.k*j), and the two coefficients can be checked against
 // each other instead of assuming the loop runs once.
 // ---------------------------------------------------------------------------
+static std::string rgRefString(const LaunchRef &r) {
+  std::string s = std::to_string(r.param);
+  if (r.isField())
+    s += "[+" + std::to_string(r.offset) + "]";
+  return s;
+}
+
+// A parameter of the optimized body, or a field of a by-value aggregate
+// parameter: a value the host can read at the launch.
+static LaunchRef rgLaunchValue(const Value *v) {
+  if (auto *Arg = dyn_cast<Argument>(v))
+    return {(int)Arg->getArgNo(), -1};
+  return launchFieldOf(v);
+}
+
 struct RgAtoms {
   SmallVector<const SCEV *, 16> byId; // null for synthetic loop-counter atoms
   DenseMap<const SCEV *, unsigned> idOf;
+  // Two loads of one field are one atom: the value is the launch's either way.
+  std::map<LaunchRef, unsigned> idOfField;
   DenseMap<const Loop *, unsigned> counterOf;
   SmallVector<std::string, 16> name;
 
@@ -209,9 +233,22 @@ struct RgAtoms {
     auto it = idOf.find(S);
     if (it != idOf.end())
       return it->second;
+    LaunchRef field;
+    if (auto *U = dyn_cast<SCEVUnknown>(S))
+      if (!isa<Argument>(U->getValue()))
+        field = launchFieldOf(U->getValue());
+    if (field.param >= 0) {
+      auto fit = idOfField.find(field);
+      if (fit != idOfField.end()) {
+        idOf[S] = fit->second;
+        return fit->second;
+      }
+    }
     unsigned n = byId.size();
     byId.push_back(S);
     idOf[S] = n;
+    if (field.param >= 0)
+      idOfField[field] = n;
     std::string s;
     raw_string_ostream os(s);
     S->print(os);
@@ -305,40 +342,53 @@ struct RgExpand {
   }
 };
 
-// A GEMM dimension is usable only if it is affine in at most ONE parameter of
-// the optimized body: mul*param + add. That is exactly what the host-side stub
-// rewrite can evaluate from the launch arguments, and refusing anything wider
-// is what keeps the emitted call honest rather than approximately right.
+// A GEMM dimension is usable only if it is one monomial over launch values of
+// the optimized body plus a constant: mul*v0*v1*... + add. That is exactly what
+// the host-side stub rewrite can evaluate from the launch arguments, and
+// refusing anything wider is what keeps the emitted call honest rather than
+// approximately right.
 static bool rgToRuntimeDim(const RgPoly &p, const RgAtoms &A, RuntimeDim &out,
                            std::string &why) {
   out = RuntimeDim{};
-  bool haveArg = false;
+  bool haveTerm = false;
   for (auto &kv : p.t) {
     if (kv.first.empty()) {
       out.add = kv.second;
       continue;
     }
-    if (kv.first.size() != 1) {
-      why = "value is a product of two or more runtime terms";
-      return false;
-    }
-    if (haveArg) {
+    if (haveTerm) {
       why = "value depends on more than one runtime term";
       return false;
     }
-    const SCEV *S = A.byId[kv.first[0]];
-    auto *U = S ? dyn_cast<SCEVUnknown>(S) : nullptr;
-    auto *Arg = U ? dyn_cast<Argument>(U->getValue()) : nullptr;
-    if (!Arg) {
-      why = "value depends on a term that is not a parameter of the optimized "
-            "body";
-      return false;
+    for (unsigned a : kv.first) {
+      const SCEV *S = A.byId[a];
+      auto *U = S ? dyn_cast<SCEVUnknown>(S) : nullptr;
+      LaunchRef r = U ? rgLaunchValue(U->getValue()) : LaunchRef{};
+      if (r.param < 0) {
+        why = "value depends on a term that is not a parameter of the "
+              "optimized body or a field of one passed by value";
+        return false;
+      }
+      out.factors.push_back(r);
     }
-    out.param = (int)Arg->getArgNo();
+    // In launch order rather than in the order the atoms were met.
+    llvm::sort(out.factors);
     out.mul = kv.second;
-    haveArg = true;
+    haveTerm = true;
   }
   return true;
+}
+
+// The launch value `p` is, when it is exactly one (coefficient 1, no constant).
+static bool rgSingleLaunchValue(const RgPoly &p, const RgAtoms &A,
+                                LaunchRef &out) {
+  if (p.t.size() != 1 || p.t.begin()->first.size() != 1 ||
+      p.t.begin()->second != 1)
+    return false;
+  const SCEV *S = A.byId[p.t.begin()->first[0]];
+  auto *U = S ? dyn_cast<SCEVUnknown>(S) : nullptr;
+  out = U ? rgLaunchValue(U->getValue()) : LaunchRef{};
+  return out.param >= 0 && U->getType()->isIntegerTy();
 }
 
 // ---------------------------------------------------------------------------
@@ -389,16 +439,37 @@ static int rgTidAxis(const Value *v) {
     return -1;
   switch (II->getIntrinsicID()) {
   case Intrinsic::nvvm_read_ptx_sreg_tid_x:
+  case Intrinsic::amdgcn_workitem_id_x:
     return 0;
   case Intrinsic::nvvm_read_ptx_sreg_tid_y:
+  case Intrinsic::amdgcn_workitem_id_y:
     return 1;
   case Intrinsic::nvvm_read_ptx_sreg_tid_z:
+  case Intrinsic::amdgcn_workitem_id_z:
     return 2;
   default:
     return -1;
   }
 }
+// AMDGPU has no block-size register: HIP's blockDim reads the work-group size
+// out of the implicit kernel arguments, three i16 from byte 12 (code object
+// v5 and later), zero-extended where the index arithmetic uses it.
 static int rgNtidAxis(const Value *v) {
+  if (auto *Z = dyn_cast<ZExtInst>(v))
+    v = Z->getOperand(0);
+  if (auto *L = dyn_cast<LoadInst>(v)) {
+    if (!L->getType()->isIntegerTy(16))
+      return -1;
+    const DataLayout &DL = L->getModule()->getDataLayout();
+    APInt off(DL.getIndexTypeSizeInBits(L->getPointerOperandType()), 0);
+    auto *base = dyn_cast<IntrinsicInst>(
+        L->getPointerOperand()->stripAndAccumulateConstantOffsets(
+            DL, off, /*AllowNonInbounds=*/false));
+    if (!base || base->getIntrinsicID() != Intrinsic::amdgcn_implicitarg_ptr)
+      return -1;
+    int64_t o = off.getSExtValue();
+    return o == 12 || o == 14 || o == 16 ? (int)(o - 12) / 2 : -1;
+  }
   auto *II = dyn_cast<IntrinsicInst>(v);
   if (!II)
     return -1;
@@ -419,10 +490,13 @@ static int rgCtaidAxis(const Value *v) {
     return -1;
   switch (II->getIntrinsicID()) {
   case Intrinsic::nvvm_read_ptx_sreg_ctaid_x:
+  case Intrinsic::amdgcn_workgroup_id_x:
     return 0;
   case Intrinsic::nvvm_read_ptx_sreg_ctaid_y:
+  case Intrinsic::amdgcn_workgroup_id_y:
     return 1;
   case Intrinsic::nvvm_read_ptx_sreg_ctaid_z:
+  case Intrinsic::amdgcn_workgroup_id_z:
     return 2;
   default:
     return -1;
@@ -528,27 +602,6 @@ static bool rgIsZeroSeed(Value *v, unsigned depth = 0) {
     return true;
   }
   return false;
-}
-
-// Walk GEP / cast chains back to a Function argument index (-1 if none).
-static int rgArgIndex(const Value *v) {
-  while (v) {
-    if (auto *A = dyn_cast<Argument>(v))
-      return (int)A->getArgNo();
-    if (auto *G = dyn_cast<GEPOperator>(v)) {
-      v = G->getPointerOperand();
-      continue;
-    }
-    if (auto *O = dyn_cast<Operator>(v)) {
-      if (O->getOpcode() == Instruction::BitCast ||
-          O->getOpcode() == Instruction::AddrSpaceCast) {
-        v = O->getOperand(0);
-        continue;
-      }
-    }
-    break;
-  }
-  return -1;
 }
 
 } // namespace
@@ -831,7 +884,8 @@ static bool rgAnalyzeChain(Function &F, ScalarEvolution &SE, LoopInfo &LI,
     base = cur;
     return true;
   };
-  auto isBasePointer = [&](const RgPoly &b, int &argIdx, Value *&val) -> bool {
+  auto isBasePointer = [&](const RgPoly &b, LaunchRef &ref,
+                           Value *&val) -> bool {
     if (b.t.size() != 1)
       return false;
     auto &kv = *b.t.begin();
@@ -842,8 +896,22 @@ static bool rgAnalyzeChain(Function &F, ScalarEvolution &SE, LoopInfo &LI,
     if (!U || !U->getType()->isPointerTy())
       return false;
     val = U->getValue();
-    argIdx = rgArgIndex(val);
-    return argIdx >= 0;
+    ref = tracePointerRoot(val);
+    return ref.param >= 0;
+  };
+  // Exact equality, or two launch values the dense reading needs equal and
+  // nothing here can prove so (a DeviceTensor's extent and the loop bound
+  // captured next to it): kept for the dispatch to check at the launch.
+  auto sameOrAssumed = [&](const RgPoly &a, const RgPoly &b) -> bool {
+    if (a == b)
+      return true;
+    LaunchRef x, y;
+    if (!rgSingleLaunchValue(a, atoms, x) || !rgSingleLaunchValue(b, atoms, y))
+      return false;
+    std::pair<LaunchRef, LaunchRef> eq = std::minmax(x, y);
+    if (!llvm::is_contained(H.assumedEqual, eq))
+      H.assumedEqual.push_back(eq);
+    return true;
   };
 
   SmallVector<RgPoly, 8> op0Poly(R), op1Poly(R);
@@ -898,11 +966,14 @@ static bool rgAnalyzeChain(Function &F, ScalarEvolution &SE, LoopInfo &LI,
   }
 
   // --- flattening: member r must start exactly r*trip elements along ---------
+  H.assumedEqual.clear();
   for (unsigned r = 1; r < R; ++r) {
-    RgPoly wantA = rgMul(RgPoly::constant((int64_t)r * step0[0]), tripPoly);
-    RgPoly wantB = rgMul(RgPoly::constant((int64_t)r * step1[0]), tripPoly);
-    if (!(rgSub(op0Poly[r], op0Poly[0]) == wantA) ||
-        !(rgSub(op1Poly[r], op1Poly[0]) == wantB)) {
+    RgPoly along0, along1;
+    if (!rgDivExact(rgSub(op0Poly[r], op0Poly[0]), (int64_t)r * step0[0],
+                    along0) ||
+        !rgDivExact(rgSub(op1Poly[r], op1Poly[0]), (int64_t)r * step1[0],
+                    along1) ||
+        !sameOrAssumed(along0, tripPoly) || !sameOrAssumed(along1, tripPoly)) {
       why = "chain member " + std::to_string(r) +
             " is not contiguous with member 0 along the reduction axis, so the "
             "two contraction levels do not flatten into one index";
@@ -1144,9 +1215,9 @@ static bool rgAnalyzeChain(Function &F, ScalarEvolution &SE, LoopInfo &LI,
 
   // --- operand roles as body parameters ------------------------------------
   Value *aBaseVal = nullptr, *bBaseVal = nullptr, *cBaseVal = nullptr;
-  if (!isBasePointer(aBasePoly, H.aParam, aBaseVal) ||
-      !isBasePointer(bBasePoly, H.bParam, bBaseVal) ||
-      !isBasePointer(bC, H.cParam, cBaseVal)) {
+  if (!isBasePointer(aBasePoly, H.aRef, aBaseVal) ||
+      !isBasePointer(bBasePoly, H.bRef, bBaseVal) ||
+      !isBasePointer(bC, H.cRef, cBaseVal)) {
     why = "an operand does not root in a parameter of the optimized body";
     return false;
   }
@@ -1380,7 +1451,7 @@ void findHostGemmLoopNests(Function &F, ScalarEvolution &SE, LoopInfo &LI,
                            const std::unordered_map<size_t, ProfileInfo> &prof,
                            SmallVectorImpl<AbstractMatmul> &out) {
   Module *M = F.getParent();
-  if (!Triple(M->getTargetTriple()).isNVPTX())
+  if (!isDeviceModule(*M))
     return;
   if (profileHeader.launchCount == 0) {
     if (flags::Print)
@@ -1556,9 +1627,13 @@ void findHostGemmLoopNests(Function &F, ScalarEvolution &SE, LoopInfo &LI,
                    << "[hostgemm]   aColMajor=" << (g.aColMajor ? 1 : 0)
                    << " bColMajor=" << (g.bColMajor ? 1 : 0)
                    << " cColMajor=" << (g.cColMajor ? 1 : 0) << "  C=param"
-                   << g.cParam << " A=param" << g.aParam << " B=param"
-                   << g.bParam << "\n"
-                   << "[hostgemm]   profile shape M=" << g.profM
+                   << rgRefString(g.cRef) << " A=param" << rgRefString(g.aRef)
+                   << " B=param" << rgRefString(g.bRef) << "\n";
+      for (const auto &[x, y] : g.assumedEqual)
+        llvm::errs() << "[hostgemm]   dense only if param" << rgRefString(x)
+                     << " == param" << rgRefString(y)
+                     << " (checked at the launch)\n";
+      llvm::errs() << "[hostgemm]   profile shape M=" << g.profM
                    << " Ncols=" << g.profN << " K=" << g.profK
                    << " (per-CTA tile " << g.tileM << "x" << g.tileN
                    << ", launches=" << g.launches
