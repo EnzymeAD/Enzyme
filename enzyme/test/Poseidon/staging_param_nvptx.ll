@@ -11,8 +11,8 @@
 ; IR and profile from Inputs/staging_param/staged_body.cu (clang -O2
 ; -ffp-contract=on --cuda-gpu-arch=sm_120, profiled on an RTX 5090).
 
-; ModuleID = '/mnt4/sbrantq/numerics/docs/mfem-poseidon-2026-10/lanes/E/wt/enzyme/test/Poseidon/Inputs/staging_param/staged_body.cu'
-source_filename = "/mnt4/sbrantq/numerics/docs/mfem-poseidon-2026-10/lanes/E/wt/enzyme/test/Poseidon/Inputs/staging_param/staged_body.cu"
+; ModuleID = 'Inputs/staging_param/staged_body.cu'
+source_filename = "Inputs/staging_param/staged_body.cu"
 target datalayout = "e-p6:32:32-i64:64-i128:128-i256:256-v16:16-v32:32-n16:32:64"
 target triple = "nvptx64-nvidia-cuda"
 
