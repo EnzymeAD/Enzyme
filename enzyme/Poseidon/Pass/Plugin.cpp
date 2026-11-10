@@ -7,7 +7,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "Driver.h"
+#include "Pipeline.h"
 
 #include "llvm/Passes/PassBuilder.h"
 #if LLVM_VERSION_MAJOR >= 22 && !defined(ENZYME_LLVM22_PRERELEASE)
