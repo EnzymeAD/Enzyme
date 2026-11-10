@@ -4853,11 +4853,9 @@ bool AdjointGenerator::handleKnownCallDerivatives(
 
         auto frees = Builder2.CreateCall(free->getFunctionType(), free, args);
         frees->setDebugLoc(gutils->getNewFromOriginal(call.getDebugLoc()));
-
-        eraseIfUnused(call);
-        return true;
       }
       eraseIfUnused(call);
+      return true;
     }
     auto callval = call.getCalledOperand();
 
