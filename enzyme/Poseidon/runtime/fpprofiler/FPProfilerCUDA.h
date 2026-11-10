@@ -35,8 +35,8 @@
 
 // Length of the per-function buffer the compile-time static data (the header
 // lines Poseidon computed about the site and cannot recompute at profile-use)
-// is published through. Overflow aborts in poseidonProfileStaticCUDA rather than
-// writing a truncated header line.
+// is published through. Overflow aborts in poseidonProfileStaticCUDA rather
+// than writing a truncated header line.
 #define POSEIDON_PROFILE_STATIC_MAXLEN 4096
 
 // The device variable every profiled device module defines and the host half
@@ -124,9 +124,9 @@ struct PoseidonCUDAProfileTable {
   // of one operator run under different block shapes, and a module-global max
   // would corrupt the matmul M/N reconstruction and the boundary-cast frequency
   // scale that read them. 0 = unknown (neutral).
-  uint32_t *gridDimByFunc;                // [maxFuncs][3]
-  uint32_t *blockDimByFunc;               // [maxFuncs][3]
-  unsigned long long *launchCountByFunc;  // [maxFuncs]
+  uint32_t *gridDimByFunc;               // [maxFuncs][3]
+  uint32_t *blockDimByFunc;              // [maxFuncs][3]
+  unsigned long long *launchCountByFunc; // [maxFuncs]
   // Per-function compile-time static data, published by the site's own kernel
   // through the same pointer-keyed registry the names use and copied verbatim
   // into the .fpprofile header. [maxFuncs][POSEIDON_PROFILE_STATIC_MAXLEN]

@@ -427,10 +427,10 @@ bool dropSiteAnnotations(Module &M) {
   for (Value *op : arr->operands()) {
     auto *entry = cast<Constant>(op);
     auto *ST = dyn_cast<ConstantStruct>(entry);
-    auto *text = ST && ST->getNumOperands() > 1
-                     ? dyn_cast<GlobalVariable>(
-                           ST->getOperand(1)->stripPointerCasts())
-                     : nullptr;
+    auto *text =
+        ST && ST->getNumOperands() > 1
+            ? dyn_cast<GlobalVariable>(ST->getOperand(1)->stripPointerCasts())
+            : nullptr;
     auto *str = text && text->hasInitializer()
                     ? dyn_cast<ConstantDataArray>(text->getInitializer())
                     : nullptr;

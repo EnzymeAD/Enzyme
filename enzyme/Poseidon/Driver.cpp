@@ -94,12 +94,11 @@ void requireProfileDirectory(StringRef dir, StringRef flag) {
          it.increment(EC))
       if (sys::path::extension(it->path()) == ".fpprofile")
         return;
-  report_fatal_error(Twine("Poseidon: the profile directory ") + dir + " (" +
-                         flag + ") " +
-                         (isDir ? "holds no .fpprofile file"
-                                : "does not exist") +
-                         "; no profiling run wrote into it",
-                     /*gen_crash_diag=*/false);
+  report_fatal_error(
+      Twine("Poseidon: the profile directory ") + dir + " (" + flag + ") " +
+          (isDir ? "holds no .fpprofile file" : "does not exist") +
+          "; no profiling run wrote into it",
+      /*gen_crash_diag=*/false);
 }
 
 // Why a site has no records to solve from, read from every directory that

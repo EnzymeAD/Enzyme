@@ -103,11 +103,10 @@ struct RewrittenReferences final : ValueMaterializer {
       NF->copyAttributesFrom(F);
       NG = NF;
     } else {
-      auto *NV = new GlobalVariable(T, var->getValueType(), var->isConstant(),
-                                    var->getLinkage(), nullptr, var->getName(),
-                                    nullptr, var->getThreadLocalMode(),
-                                    var->getAddressSpace(),
-                                    var->isExternallyInitialized());
+      auto *NV = new GlobalVariable(
+          T, var->getValueType(), var->isConstant(), var->getLinkage(), nullptr,
+          var->getName(), nullptr, var->getThreadLocalMode(),
+          var->getAddressSpace(), var->isExternallyInitialized());
       NV->copyAttributesFrom(var);
       NG = NV;
     }
