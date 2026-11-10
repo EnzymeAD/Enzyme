@@ -12,17 +12,22 @@
 // to clang PGO: run it once per GPU, and every later compile finds the model by
 // the module's target-cpu.
 //
-// Five arms write disjoint row families into the same CSV:
+// Six arms write disjoint row families into the same CSV:
 //   microbm    per-op saturated reciprocal throughputs and the WMMA tile rows,
 //              plus the "# native_arch=" header the compiler matches on
 //   ozaki      ozaki_dispatch_rel,nm*   host-dispatched Ozaki-II GEMM
+//   ozaki-rect ozaki_dispatch_rect_rel  its rectangular arm, at given (M, K)
 //   tcec       tcec_dispatch_rel        host-dispatched error-corrected GEMM
 //   direct     direct_dispatch_rel      host-dispatched reduced-precision GEMM
 //   inkernel   wmma_inkernel_rel        tensor-core raises inside a kernel
 // Each dispatch row is the candidate's wall clock over the scalar-FP64 GEMM's
-// on this device, so all four families are comparable in one unit.
+// on this device, so all five families are comparable in one unit.
 //
-// A sixth arm, herbie-platform, measures nothing: it translates the CSV into
+// An AMD GPU is measured by the HIP builds of the same calibrators. It has no
+// error-corrected runtime and no in-kernel raises, so those families and the
+// WMMA tile rows stay absent from its model.
+//
+// A seventh arm, herbie-platform, measures nothing: it translates the CSV into
 // the Herbie platform file (<csv>.herbie.rkt) that the algebraic search ranks
 // its rewrites by, so Herbie and the DP price the same device. It needs no
 // GPU, so `--only herbie-platform --out <csv>` runs anywhere.
@@ -49,7 +54,9 @@ namespace {
 
 cl::opt<std::string> GpuId("gpu", cl::init(""), cl::value_desc("id"),
                            cl::desc("Device to measure (default: the first of "
-                                    "CUDA_VISIBLE_DEVICES, else 0)"));
+                                    "CUDA_VISIBLE_DEVICES, or of "
+                                    "HIP_VISIBLE_DEVICES on an AMD GPU, else "
+                                    "0)"));
 cl::opt<std::string>
     Out("out", cl::init(""), cl::value_desc("path"),
         cl::desc("Cost model to write; a directory takes cm_<arch>_<gpu>.csv "
@@ -62,7 +69,8 @@ cl::opt<bool> Force("force",
 cl::opt<std::string>
     Only("only", cl::init(""), cl::value_desc("arms"),
          cl::desc("Comma-separated subset of "
-                  "microbm,ozaki,tcec,direct,inkernel,herbie-platform"));
+                  "microbm,ozaki,ozaki-rect,tcec,direct,inkernel,"
+                  "herbie-platform"));
 cl::opt<std::string> ProfileDir(
     "profile", cl::init(""), cl::value_desc("dir"),
     cl::desc("Profile of a GEMM site the in-kernel arm enumerates its "
@@ -76,6 +84,10 @@ cl::opt<std::string> CuMpSGEMM(
     "cumpsgemm", cl::init(POSEIDON_CALIBRATE_CUMPSGEMM), cl::value_desc("dir"),
     cl::desc("cuMpSGEMM checkout whose build/ the TCEC arm is measured "
              "against"));
+cl::opt<std::string> OzakiRect(
+    "ozaki-rect", cl::init(""), cl::value_desc("MxK,..."),
+    cl::desc("(M, K) of the M x Ncols x K host GEMMs whose rectangular "
+             "Ozaki-II rows the ozaki-rect arm measures"));
 cl::opt<unsigned> RefN("n", cl::init(2048), cl::value_desc("N"),
                        cl::desc("Square reference shape the dispatch arms and "
                                 "the in-kernel arm are timed at"));
@@ -199,10 +211,49 @@ void mergeRows(std::string &Csv, StringRef Rows) {
 struct Device {
   std::string Id;
   std::string Name; // punctuation stripped, as it appears in the file name
-  std::string Arch; // sm_<cc>
+  std::string Arch; // sm_<cc>, or gfx<NNN> on an AMD GPU
+  bool Hip = false;
 };
 
+// The HIP runtime names an AMD GPU itself, through the HIP microbenchmark run
+// on the device HIP_VISIBLE_DEVICES selects.
+Device queryHipDevice() {
+  Device D;
+  D.Hip = true;
+  D.Id = GpuId;
+  if (D.Id.empty()) {
+    if (const char *V = ::getenv("HIP_VISIBLE_DEVICES"))
+      D.Id = StringRef(V).split(',').first.str();
+    if (D.Id.empty())
+      D.Id = "0";
+  }
+  ::setenv("HIP_VISIBLE_DEVICES", D.Id.c_str(), 1);
+  std::string O = capture({sibling("poseidon-microbm-hip"), "--device"});
+  StringRef NameRef, Arch;
+  std::tie(NameRef, Arch) = StringRef(O).split('\n').first.split('\t');
+  if (Arch.trim().empty())
+    fail("no HIP device with id " + D.Id);
+  // A device ID several products share has a marketing name listing them all
+  // ("AMD Instinct MI250X / MI250"); the first names the device.
+  NameRef = NameRef.split('/').first;
+  for (char C : NameRef.trim())
+    if (isAlnum(C))
+      D.Name += C;
+  StringRef N(D.Name);
+  for (StringRef Prefix : {"AMD", "Instinct", "Radeon"})
+    while (N.consume_front(Prefix))
+      ;
+  D.Name = N.str();
+  if (D.Name.empty())
+    fail("the HIP runtime gives device " + D.Id + " no name");
+  D.Arch = Arch.trim().str();
+  return D;
+}
+
 Device queryDevice() {
+  const bool Hip = sys::fs::exists(sibling("poseidon-microbm-hip"));
+  if (Hip && !sys::findProgramByName("nvidia-smi"))
+    return queryHipDevice();
   Device D;
   D.Id = GpuId;
   if (D.Id.empty()) {
@@ -217,6 +268,9 @@ Device queryDevice() {
   std::string O = capture({*Smi, "-i", D.Id, "--query-gpu=name,compute_cap",
                            "--format=csv,noheader"});
   StringRef Line = StringRef(O).split('\n').first.trim();
+  // Some AMD systems install nvidia-smi without an NVIDIA GPU.
+  if (Line.empty() && Hip)
+    return queryHipDevice();
   if (Line.empty())
     fail("no CUDA device with id " + D.Id);
   StringRef NameRef, CC;
@@ -271,6 +325,17 @@ bool wants(StringRef Arm) {
   return llvm::is_contained(Arms, Arm);
 }
 
+// The calibrator binary that measures this device: the HIP build of it on an
+// AMD GPU.
+std::string tool(const Device &D, StringRef Name) {
+  return sibling(D.Hip ? (Name + "-hip").str() : Name.str());
+}
+
+// The architectures of a GPU cost model; anything else is a host's.
+bool isGpuArch(StringRef Arch) {
+  return Arch.starts_with("sm_") || Arch.starts_with("gfx");
+}
+
 // ---- the arms -------------------------------------------------------------
 
 // The Herbie platform generated from a CSV lives next to it, named after it:
@@ -298,7 +363,7 @@ void armHerbiePlatform(const std::string &Csv) {
   if (Arch.empty())
     fail(Csv + " carries no '# native_arch=' header, so no Herbie platform "
                "can be generated from it");
-  if (!StringRef(Arch).starts_with("sm_")) {
+  if (!isGpuArch(Arch)) {
     outs() << "[calibrate] herbie-platform: " << Arch
            << " is a host cost model; Herbie keeps its own default platform\n";
     return;
@@ -337,14 +402,14 @@ void armHerbiePlatform(const std::string &Csv) {
   outs() << "[calibrate] wrote " << Out << '\n';
 }
 
-void armMicrobm(const std::string &Csv) {
+void armMicrobm(const std::string &Csv, const Device &D) {
   if (sys::fs::exists(Csv) && !Force) {
     outs() << "[calibrate] per-op throughputs already measured: " << Csv
            << '\n';
     return;
   }
   outs() << "[calibrate] measuring per-op throughput (several minutes)\n";
-  std::string Rows = capture({sibling("poseidon-microbm")});
+  std::string Rows = capture({tool(D, "poseidon-microbm")});
   if (!StringRef(Rows).contains("\nfmul,double,") ||
       !StringRef(Rows).contains("# native_arch="))
     fail("the microbenchmark produced no usable cost model");
@@ -376,8 +441,51 @@ void armDispatch(const std::string &Csv, StringRef Arm, StringRef Family,
   if (alreadyMeasured(Csv, Arm, Family))
     return;
   outs() << "[calibrate] measuring " << Arm << " host dispatch\n";
-  writeRows(Csv, Arm, Family,
-            capture({sibling(Tool), utostr(RefN), utostr(Reps)}));
+  writeRows(Csv, Arm, Family, capture({Tool, utostr(RefN), utostr(Reps)}));
+}
+
+// The rectangular rows are keyed by the (M, K) of the product they price, so
+// the shapes come from the caller. Rows of shapes this run does not measure
+// are kept.
+void armOzakiRect(const std::string &Csv, const Device &D) {
+  if (OzakiRect.empty()) {
+    outs() << "[calibrate] ozaki-rect: no --ozaki-rect shapes, nothing to "
+              "measure\n";
+    return;
+  }
+  std::string Content = readFile(Csv);
+  SmallVector<StringRef, 4> Shapes;
+  StringRef(OzakiRect).split(Shapes, ',', -1, false);
+  SmallVector<std::string, 8> Argv = {tool(D, "poseidon-ozaki-calibrate"),
+                                      utostr(RefN), utostr(Reps)};
+  SmallVector<std::string, 4> Keys;
+  for (StringRef Shape : Shapes) {
+    StringRef M, K;
+    std::tie(M, K) = Shape.trim().split('x');
+    unsigned MV, KV;
+    if (M.getAsInteger(10, MV) || K.getAsInteger(10, KV) || !MV || !KV)
+      fail("--ozaki-rect: '" + Shape + "' is not a shape MxK");
+    std::string Key = "_m" + utostr(MV) + "k" + utostr(KV) + ",";
+    if (!Force && StringRef(Content).contains(Key)) {
+      outs() << "  = " << Shape << " already measured\n";
+      continue;
+    }
+    Argv.push_back(utostr(MV) + "x" + utostr(KV));
+    Keys.push_back(Key);
+  }
+  if (Keys.empty())
+    return;
+  outs() << "[calibrate] measuring ozaki-rect host dispatch\n";
+  SmallVector<StringRef, 8> Args(Argv.begin(), Argv.end());
+  std::string Rows = capture(Args);
+  if (!hasFamily(Rows, "ozaki_dispatch_rect_rel"))
+    fail("ozaki-rect calibration produced no ozaki_dispatch_rect_rel row");
+  for (StringRef Line : llvm::split(Content, '\n'))
+    if (Line.starts_with("ozaki_dispatch_rect_rel,") &&
+        llvm::none_of(Keys,
+                      [&](const std::string &K) { return Line.contains(K); }))
+      Rows += (Line + "\n").str();
+  writeRows(Csv, "ozaki-rect", "ozaki_dispatch_rect_rel", Rows);
 }
 
 // The error-corrected dispatch has a backend: the built-in cuBLAS kernels, or
@@ -385,6 +493,11 @@ void armDispatch(const std::string &Csv, StringRef Arm, StringRef Family,
 // is a measurement, so the caller names the library and the calibrator is
 // rebuilt against it rather than assumed.
 void armTcec(const std::string &Csv, const Device &D) {
+  if (D.Hip) {
+    outs() << "[calibrate] tcec: the error-corrected dispatch has no HIP "
+              "runtime; its row stays absent\n";
+    return;
+  }
   if (alreadyMeasured(Csv, "tcec", "tcec_dispatch_rel"))
     return;
   if (CuMpSGEMM.empty()) {
@@ -424,6 +537,11 @@ void armTcec(const std::string &Csv, const Device &D) {
 // per class through the plugin and times what a real solve would emit. A class
 // the pass cannot propose or build here is reported and left absent.
 void armInKernel(const std::string &Csv, const Device &D) {
+  if (D.Hip) {
+    outs() << "[calibrate] inkernel: tensor-core raises inside a kernel are "
+              "NVPTX-only; their rows stay absent\n";
+    return;
+  }
   std::string Content = readFile(Csv);
   std::string Src = shipped("tools/calibrate/inkernel_calibrate.cu");
   if (!sys::fs::exists(Src))
@@ -617,7 +735,7 @@ int checkModel(const std::string &Preferred, const Device &D) {
     outs() << "native_arch " << Arch << "  ok\n";
   }
   std::string Platform = platformPathFor(Csv);
-  if (StringRef(Arch).starts_with("sm_")) {
+  if (isGpuArch(Arch)) {
     bool Have = sys::fs::exists(Platform);
     outs() << (Have ? "have        " : "MISSING     ") << Platform
            << "  (Herbie algebraic-search platform; regenerate with "
@@ -628,13 +746,20 @@ int checkModel(const std::string &Preferred, const Device &D) {
   struct {
     const char *Family;
     const char *What;
-  } Families[] = {{"fmul", "per-op throughputs"},
-                  {"wmma_mma_m16n16k16", "tensor-core tile prices"},
-                  {"ozaki_dispatch_rel", "Ozaki-II host dispatch"},
-                  {"tcec_dispatch_rel", "error-corrected host dispatch"},
-                  {"direct_dispatch_rel", "reduced-precision host dispatch"},
-                  {"wmma_inkernel_rel", "in-kernel tensor-core raises"}};
+    bool NvidiaOnly;
+  } Families[] = {
+      {"fmul", "per-op throughputs", false},
+      {"wmma_mma_m16n16k16", "tensor-core tile prices", true},
+      {"ozaki_dispatch_rel", "Ozaki-II host dispatch", false},
+      {"tcec_dispatch_rel", "error-corrected host dispatch", true},
+      {"direct_dispatch_rel", "reduced-precision host dispatch", false},
+      {"wmma_inkernel_rel", "in-kernel tensor-core raises", true}};
   for (const auto &F : Families) {
+    if (D.Hip && F.NvidiaOnly) {
+      outs() << "n/a         " << F.Family << "  (" << F.What << ": none on "
+             << D.Arch << ")\n";
+      continue;
+    }
     bool Have = hasFamily(Content, F.Family);
     outs() << (Have ? "have        " : "MISSING     ") << F.Family << "  ("
            << F.What << ")\n";
@@ -668,7 +793,8 @@ int main(int argc, char **argv) {
 
   Device D = queryDevice();
   // Every child runs on the device that is being measured.
-  ::setenv("CUDA_VISIBLE_DEVICES", D.Id.c_str(), 1);
+  ::setenv(D.Hip ? "HIP_VISIBLE_DEVICES" : "CUDA_VISIBLE_DEVICES", D.Id.c_str(),
+           1);
   std::string Csv = resolveCsv(D);
 
   if (Check)
@@ -677,7 +803,7 @@ int main(int argc, char **argv) {
   outs() << "[calibrate] device " << D.Name << " (" << D.Arch << ", id " << D.Id
          << ")\n";
   if (wants("microbm"))
-    armMicrobm(Csv);
+    armMicrobm(Csv, D);
   if (!sys::fs::exists(Csv))
     fail("no cost model at " + Csv +
          "; run the microbm arm before the dispatch arms");
@@ -685,12 +811,15 @@ int main(int argc, char **argv) {
   if (wants("microbm") || wants("herbie-platform"))
     armHerbiePlatform(Csv);
   if (wants("ozaki"))
-    armDispatch(Csv, "ozaki", "ozaki_dispatch_rel", "poseidon-ozaki-calibrate");
+    armDispatch(Csv, "ozaki", "ozaki_dispatch_rel",
+                tool(D, "poseidon-ozaki-calibrate"));
+  if (wants("ozaki-rect"))
+    armOzakiRect(Csv, D);
   if (wants("tcec"))
     armTcec(Csv, D);
   if (wants("direct"))
     armDispatch(Csv, "direct", "direct_dispatch_rel",
-                "poseidon-direct-calibrate");
+                tool(D, "poseidon-direct-calibrate"));
   if (wants("inkernel"))
     armInKernel(Csv, D);
   outs() << "[calibrate] cost model: " << Csv << '\n';

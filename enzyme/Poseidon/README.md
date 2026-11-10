@@ -37,8 +37,11 @@ enzyme/test/Poseidon/       lit suite: check-poseidon, check-poseidon-integratio
   produced with LLVM 23 (`a70419505471`), and the apt packages of LLVM 21 and
   22 build the CPU path.
 - **Enzyme**: the one in this tree. Enzyme differentiates the probes the
-  profiler places, so it is needed for profile generation; a profile-use
-  compile does not load it. The two fixes on the paper path (NVPTX barrier
+  profiler places, so profile generation needs its plugin; profile use and
+  plain compiles need it only for Enzyme requests of their own, such as the
+  body of a deferred site. `poseidon-clang++` loads it for every action: a
+  module that asks nothing of Enzyme compiles as it does without it. The two
+  fixes on the paper path (NVPTX barrier
   operands in the adjoint on LLVM 21+, a TypeAnalysis guard against zero-sized
   globals) are commits on this branch.
 - **MPFR** (with GMP): the accuracy model evaluates candidates against an
@@ -91,6 +94,12 @@ poseidon-clang++ -poseidon-profile-generate app.cu -o app
 poseidon-clang++ -poseidon-profile-use -poseidon-tau=1e-7 app.cu -o app_opt
 ```
 
+A CUDA program is profiled as it is built otherwise, one translation unit at a
+time or several at once, with or without relocatable device code, and its
+units may sit in static libraries: the plugin links the device half of the
+profiler into every device module it compiles for profile generation, and
+the link takes the host half from `libposeidon_profile_cuda`.
+
 The ways to opt in, simplest first:
 
 1. `POSEIDON_OPTIMIZE` on a function or kernel, and `-poseidon-tau=<t>` on the
@@ -104,8 +113,9 @@ The ways to opt in, simplest first:
    args...)` with that call's own target: one call instead of every call. The
    call has its own profile, target and rewritten copy of `fn`, so two calls of
    one function can be rewritten differently, and other calls of `fn` run it as
-   written; no shadows are needed. `fn` names a host function defined in the
-   same translation unit, and `t` is a compile-time constant.
+   written; no shadows are needed. `fn` names a function defined in the same
+   translation unit, on the host or in device code, and `t` is a compile-time
+   constant.
 4. `-poseidon-kernels=<regex>|all`: GPU kernels opted in without editing the
    source (library code); only the ones above `-poseidon-min-cost-share` of the
    profiled cost are optimized.
@@ -125,7 +135,8 @@ Precedence: the site's own target (`POSEIDON_OPTIMIZE_TAU`,
 `__poseidon_optimize_tau`, or `poseidon_tau` in the call) > `-poseidon-tau` >
 none. The target is the same number wherever
 it is written: moving it from the flag into the source never changes what a
-site emits. A site with no target is solved against
+site emits, and changing it needs no new profile, also when a template argument
+carries it to the call. A site with no target is solved against
 `-poseidon-comp-cost-budget` instead; at its default of 0 that is the most
 accurate rewrite costing no more than the code as written, which may be the
 code as written. `poseidon-clang++ -poseidon-help` lists the user flags, and
@@ -143,6 +154,19 @@ read back by a compile at any -O level as long as the site's code has the same
 canonical form there; when it does not (for example `std::sqrt` is a libm call
 at -O1 and an intrinsic at -O2), the compile says so and asks for a new
 profile.
+
+In device code the pointers a call made through `__poseidon_optimize` passes
+point into local objects of the calling kernel or device function (a
+`tensor<real_t, 3, 3> &` input, a `real_t *` output). The profiling build gives
+each such object a shadow of its own, zero, with 1.0 in what the call writes
+when the program may read it after the call, at every execution of the call; an
+object that holds pointers, and the address of an object the call never reads
+(an empty functor's), are passed as constants, and a call that passes a pointer
+into device memory runs as written with a warning. A `fn` whose body is an
+Enzyme request (`__enzyme_fwddiff` and the like) is profiled and rewritten in
+the code Enzyme generates for it. When the solve leaves every call site of a
+device compilation alone, the compilation emits the code as written: its
+module is compiled once more as without a profile.
 
 The accuracy target is empirical, not a formally verified bound.
 `-poseidon-tau` is compared against an error the accuracy model estimates by
@@ -172,6 +196,22 @@ __poseidon_fp_optimize<void>((void *)kernel, poseidon_tau, 1e-10,
 A function that carries `POSEIDON_OPTIMIZE` is a site at every call already,
 and naming it in `__poseidon_optimize` or `__poseidon_fp_optimize` as well is
 a compile error.
+
+### CMake
+
+A project compiled with the clang Poseidon is built against uses it through
+`find_package(Poseidon CONFIG)`, from the build tree (`Poseidon_DIR` is
+`build/Poseidon`) or an installation. One interface target per action carries
+what `poseidon-clang++` adds for it:
+
+```cmake
+find_package(Poseidon 0.1 CONFIG REQUIRED)
+target_link_libraries(app PRIVATE Poseidon::ProfileGenerate)  # or Poseidon::Plain
+# or: Poseidon::ProfileUse, with the profile it reads
+target_compile_options(app PRIVATE "SHELL:-mllvm -poseidon-profile-use=${PROFILE}")
+```
+
+Any other `-poseidon-<flag>` is passed as `"SHELL:-mllvm -poseidon-<flag>"`.
 
 ## The cost model
 

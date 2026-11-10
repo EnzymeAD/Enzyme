@@ -90,6 +90,20 @@ cl::opt<unsigned>
     MinOpsSplit("poseidon-min-ops-split", cl::init(99), cl::Hidden,
                 cl::desc("Minimum number of upstream operations of "
                          "bottleneck node to trigger split"));
+// Under -ffp-contract=on a contraction body is a single llvm.fmuladd, which the
+// triviality filter discards, so only a tensor-core raise could reach it. Off
+// by default: it adds elementwise candidates to every recognized reduction.
+cl::opt<bool> ReductionSubgraphs(
+    "poseidon-reduction-subgraphs", cl::init(false), cl::Hidden,
+    cl::desc("Admit a one-instruction subgraph when its single operation is "
+             "the accumulating FMA of a recognized scalar reduction loop"));
+// A staging buffer narrows only when every reader agrees on a tier, so units
+// that share one must be one unit for the per-unit tier to be the buffer's.
+cl::opt<bool> MergeSharedStaging(
+    "poseidon-merge-shared-staging", cl::init(false), cl::Hidden,
+    cl::desc("Merge FP subgraphs that share a staging buffer (pointer "
+             "argument or addrspace(3) global) into one optimization unit, so "
+             "the solver cannot pick two storage tiers for one buffer"));
 cl::list<std::string> SplitCalls(
     "poseidon-split-calls", cl::Hidden, cl::CommaSeparated,
     cl::value_desc("op,op,..."),
@@ -171,6 +185,13 @@ cl::opt<double> ExponentPenalty(
     cl::desc("Penalty added to a matmul candidate's accuracy cost when the "
              "candidate input format flushes the smallest nonzero operand "
              "magnitude the profiler observed to zero"));
+// A subgraph is billed at outputs[0]'s execution count, which over-bills the
+// once-per-thread code a reduction body feeds by the trip count; that is where
+// an expansion pays its FP64 boundary conversions.
+cl::opt<bool> FreqWeightedPricing(
+    "poseidon-freq-weighted-pricing", cl::init(false), cl::Hidden,
+    cl::desc("Price each instruction of a frequency-heterogeneous FP subgraph "
+             "at its own profiled execution count instead of the subgraph's"));
 
 // Herbie and the result cache.
 cl::opt<std::string>
@@ -262,6 +283,23 @@ cl::opt<bool> InKernelCalibration(
              "carry no measured wmma_inkernel_rel row so they can be "
              "materialized and timed (requires -poseidon-apply-rewrites)"));
 
+// Materialization.
+// The global-rooted narrowing only sees GEPs off the global's addrspacecast; a
+// kernel that hands its __shared__ scratch to the annotated body as `double *`
+// has every element GEP off the callee's pointer parameter instead.
+cl::opt<bool> NarrowParamStaging(
+    "poseidon-narrow-param-staging", cl::init(false), cl::Hidden,
+    cl::desc("Narrow addrspace(3) staging buffers that reach the annotated "
+             "body as pointer parameters"));
+// A shared-memory kernel that uses one __shared__ array through views of
+// different shapes and constant offsets (MFEM's) has element GEPs of several
+// strides, which the global-rooted narrowing gives up on.
+cl::opt<bool> NarrowMultiviewStaging(
+    "poseidon-narrow-multiview-staging", cl::init(false), cl::Hidden,
+    cl::desc("With -poseidon-narrow-param-staging, also narrow addrspace(3) "
+             "staging buffers the body accesses directly, through views of "
+             "any shape"));
+
 // Diagnostics.
 cl::opt<bool> Print("poseidon-print", cl::init(false), cl::Hidden,
                     cl::desc("Print Poseidon debug info"));
@@ -334,7 +372,9 @@ FlagValues solveFlagValues() {
                   MaxBrokenShare, ExponentPenalty, HerbieNumPts, HerbieNumIters,
                   HerbieNumEnodes, HerbiePreFloorBits, HerbieArrays,
                   HerbieArrayGrouping, HerbieArrayWeights, OzakiHostDispatch,
-                  InKernelCalibration);
+                  InKernelCalibration, ReductionSubgraphs, MergeSharedStaging,
+                  FreqWeightedPricing, NarrowParamStaging,
+                  NarrowMultiviewStaging);
 }
 
 static void checkFlagClassification() {

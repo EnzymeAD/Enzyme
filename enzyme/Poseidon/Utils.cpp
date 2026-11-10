@@ -15,6 +15,7 @@
 #include <llvm/Config/llvm-config.h>
 
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/SmallVector.h"
@@ -70,12 +71,17 @@ using namespace llvm;
 
 namespace poseidon {
 
-static bool isTargetNVPTX(const Module &M) {
-  return Triple(M.getTargetTriple()).isNVPTX();
+bool isDeviceModule(const Module &M) {
+  Triple T(M.getTargetTriple());
+  return T.isNVPTX() || T.isAMDGPU();
 }
 
-// TODO: handle amd
-bool isGPUMode(const Function &F) { return isTargetNVPTX(*F.getParent()); }
+bool isKernel(const Function &F) {
+  return F.getCallingConv() == CallingConv::PTX_Kernel ||
+         F.getCallingConv() == CallingConv::AMDGPU_KERNEL;
+}
+
+bool isGPUMode(const Function &F) { return isDeviceModule(*F.getParent()); }
 
 void simplifyFunction(Function &F, OptimizationLevel Level) {
 
@@ -114,13 +120,19 @@ const std::unordered_set<std::string> &libmFuncs() {
 StringRef deviceMathName(StringRef fnName) {
   static const std::unordered_set<std::string> Bases = [] {
     std::unordered_set<std::string> bases = libmFuncs();
-    // getLLValue emits these as llvm.minnum/llvm.maxnum, which NVPTX selects.
+    // getLLValue emits these as llvm.minnum/llvm.maxnum, which both GPU
+    // targets select.
     bases.insert("fmin");
     bases.insert("fmax");
     return bases;
   }();
 
   StringRef base = fnName;
+  if (base.consume_front("__ocml_"))
+    return (base.consume_back("_f64") || base.consume_back("_f32")) &&
+                   Bases.count(base.str())
+               ? base
+               : "";
   if (!base.consume_front("__nv_"))
     return "";
   if (Bases.count(base.str()))
@@ -130,7 +142,24 @@ StringRef deviceMathName(StringRef fnName) {
   return "";
 }
 
+std::string deviceMathFunction(const Module &M, StringRef base, Type *Ty) {
+  if (Triple(M.getTargetTriple()).isAMDGPU())
+    return ("__ocml_" + base + (Ty->isDoubleTy() ? "_f64" : "_f32")).str();
+  return ("__nv_" + base + (Ty->isDoubleTy() ? "" : "f")).str();
+}
+
 std::string getLibmFunctionForPrecision(StringRef funcName, Type *newType) {
+  if (StringRef ocml = funcName; ocml.consume_front("__ocml_")) {
+    if (!(ocml.consume_back("_f64") || ocml.consume_back("_f32")) ||
+        !libmFuncs().count(ocml.str()))
+      return "";
+    if (newType->isDoubleTy())
+      return ("__ocml_" + ocml + "_f64").str();
+    if (newType->isHalfTy() || newType->isBFloatTy() || newType->isFloatTy())
+      return ("__ocml_" + ocml + "_f32").str();
+    return "";
+  }
+
   std::string baseName = funcName.str();
 
   std::string prefix;
@@ -494,6 +523,117 @@ void splitSubgraphAtBottleneck(Subgraph &currentSubgraph,
 
   remainingSubgraph.inputs = findReachedInputs(remainingSubgraph.operations);
   assert(remainingSubgraph.inputs.contains(bottleneck));
+}
+
+// The memory object a value is loaded from / stored to when that object is a
+// staging buffer (pointer argument or addrspace(3) global), else nullptr.
+static const Value *stagingObjectOf(const Value *Ptr) {
+  const Value *Obj = getUnderlyingObject(Ptr);
+  if (!Obj)
+    return nullptr;
+  if (isa<Argument>(Obj) && Obj->getType()->isPointerTy())
+    return Obj;
+  if (auto *GV = dyn_cast<GlobalVariable>(Obj))
+    if (GV->getAddressSpace() == 3)
+      return Obj;
+  return nullptr;
+}
+
+void mergeSharedStagingSubgraphs(SmallVectorImpl<Subgraph> &subgraphs,
+                                 Function &F) {
+  if (subgraphs.size() < 2)
+    return;
+
+  SmallVector<SmallPtrSet<const Value *, 4>, 8> touched(subgraphs.size());
+  for (size_t i = 0; i < subgraphs.size(); ++i) {
+    auto add = [&](const Value *Ptr) {
+      if (const Value *O = stagingObjectOf(Ptr))
+        touched[i].insert(O);
+    };
+    for (Value *In : subgraphs[i].inputs)
+      if (auto *LI = dyn_cast<LoadInst>(In))
+        add(LI->getPointerOperand());
+    for (Instruction *Op : subgraphs[i].operations)
+      for (Value *V : Op->operands())
+        if (auto *LI = dyn_cast<LoadInst>(V))
+          add(LI->getPointerOperand());
+    for (Instruction *Out : subgraphs[i].outputs)
+      for (User *U : Out->users())
+        if (auto *SI = dyn_cast<StoreInst>(U))
+          if (SI->getValueOperand() == Out)
+            add(SI->getPointerOperand());
+  }
+
+  SmallVector<unsigned, 8> parent(subgraphs.size());
+  for (unsigned i = 0; i < parent.size(); ++i)
+    parent[i] = i;
+  std::function<unsigned(unsigned)> find = [&](unsigned x) -> unsigned {
+    while (parent[x] != x) {
+      parent[x] = parent[parent[x]];
+      x = parent[x];
+    }
+    return x;
+  };
+  auto unite = [&](unsigned a, unsigned b) {
+    a = find(a);
+    b = find(b);
+    if (a != b)
+      parent[b] = a;
+  };
+  for (size_t i = 0; i < subgraphs.size(); ++i)
+    for (size_t j = i + 1; j < subgraphs.size(); ++j)
+      for (const Value *O : touched[i])
+        if (touched[j].count(O)) {
+          unite(i, j);
+          break;
+        }
+
+  MapVector<unsigned, SmallVector<unsigned, 8>> groups;
+  for (unsigned i = 0; i < subgraphs.size(); ++i)
+    groups[find(i)].push_back(i);
+  if (groups.size() == subgraphs.size())
+    return; // nothing shares a buffer
+
+  SmallVector<Subgraph, 8> merged;
+  for (auto &kv : groups) {
+    if (kv.second.size() == 1) {
+      merged.push_back(subgraphs[kv.second.front()]);
+      continue;
+    }
+    Subgraph M;
+    for (unsigned idx : kv.second) {
+      for (Instruction *Op : subgraphs[idx].operations)
+        M.operations.insert(Op);
+      for (Instruction *Out : subgraphs[idx].outputs)
+        M.outputs.insert(Out);
+    }
+    // An input of one member may be produced by another member; those edges
+    // are internal to the merged unit and must not be re-declared as inputs.
+    for (unsigned idx : kv.second)
+      for (Value *In : subgraphs[idx].inputs) {
+        auto *I = dyn_cast<Instruction>(In);
+        if (I && (M.operations.contains(I) || M.outputs.contains(I)))
+          continue;
+        M.inputs.insert(In);
+      }
+    if (flags::Print) {
+      SmallPtrSet<const Value *, 4> objs;
+      for (unsigned idx : kv.second)
+        for (const Value *O : touched[idx])
+          objs.insert(O);
+      llvm::errs() << "[poseidon] merged " << kv.second.size()
+                   << " FP subgraphs sharing " << objs.size()
+                   << " staging buffer(s) into one optimization unit ("
+                   << M.operations.size() << " operations, " << M.inputs.size()
+                   << " inputs, " << M.outputs.size() << " outputs) in "
+                   << F.getName() << "\n";
+    }
+    merged.push_back(std::move(M));
+  }
+
+  subgraphs.clear();
+  for (auto &M : merged)
+    subgraphs.push_back(std::move(M));
 }
 
 void splitSubgraphs(SmallVectorImpl<Subgraph> &subgraphs) {

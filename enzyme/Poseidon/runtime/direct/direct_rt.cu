@@ -28,13 +28,20 @@
 // because the operand narrow, the FP32 accumulator and the widen-back are
 // identical and only the compute type differs.
 // Out-of-range values abort rather than silently substituting a precision.
+//
+// Compiled as HIP (POSEIDON_ROCM_PATH) the same entries run on hipBLAS, every
+// mode but TF32, which has no hipBLAS compute type.
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#ifdef __HIP__
+#include "../hip_as_cuda.h"
+#else
 #include <cublas_v2.h>
 #include <cuda_bf16.h>
 #include <cuda_fp16.h>
 #include <cuda_runtime.h>
+#endif
 
 #define PDR_CK(x)                                                              \
   do {                                                                         \
@@ -201,8 +208,10 @@ PdrFormat pdr_format(int mode) {
     return {CUDA_R_16F, CUBLAS_COMPUTE_32F, sizeof(__half)};
   case 2:
     return {CUDA_R_16BF, CUBLAS_COMPUTE_32F, sizeof(__nv_bfloat16)};
+#ifndef __HIP__
   case 3:
     return {CUDA_R_32F, CUBLAS_COMPUTE_32F_FAST_TF32, sizeof(float)};
+#endif
   case 4:
     return {CUDA_R_32F, CUBLAS_COMPUTE_32F, sizeof(float)};
   }

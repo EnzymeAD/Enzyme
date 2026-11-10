@@ -1,13 +1,117 @@
 @PACKAGE_INIT@
 
+# The plugin, its runtimes and tools as Poseidon:: targets, and one interface
+# target per action with what poseidon-clang adds for it, for a project that
+# compiles with POSEIDON_CLANGXX (the clang the plugin is built against):
+#
+#   Poseidon::Plain            the plugin, -ffp-contract=on,
+#                              poseidon/poseidon.h; the annotations compile,
+#                              nothing is rewritten
+#   Poseidon::ProfileGenerate  the same with Enzyme's plugin,
+#                              -poseidon-profile-generate and the profiling
+#                              runtimes, the GPU's included
+#   Poseidon::ProfileUse       the same as Plain with the GEMM dispatch
+#                              runtimes; the project names its profile with
+#                              "SHELL:${POSEIDON_MLLVM} -poseidon-profile-use=<dir>"
+#
+# Any other -poseidon-<flag> is passed as "SHELL:${POSEIDON_MLLVM}
+# -poseidon-<flag>". The GPU runtimes are CUDA's, or HIP's in a build without
+# CUDA or when the project sets POSEIDON_GPU_RUNTIME to HIP before
+# find_package; POSEIDON_MLLVM is -mllvm, or for HIP -Xclang -mllvm -Xclang,
+# since HIP's driver hands -mllvm to the device linker as well.
+
 include(CMakeFindDependencyMacro)
-list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}")
-find_dependency(MPFR)
+set(POSEIDON_HAS_CUDA @POSEIDON_HAS_CUDA@)
+set(POSEIDON_HAS_HIP @POSEIDON_HAS_HIP@)
+if(POSEIDON_HAS_CUDA)
+  find_dependency(CUDAToolkit)
+endif()
+if(NOT DEFINED POSEIDON_GPU_RUNTIME)
+  if(POSEIDON_HAS_CUDA)
+    set(POSEIDON_GPU_RUNTIME CUDA)
+  elseif(POSEIDON_HAS_HIP)
+    set(POSEIDON_GPU_RUNTIME HIP)
+  endif()
+endif()
+if(POSEIDON_GPU_RUNTIME STREQUAL "HIP")
+  if(NOT POSEIDON_HAS_HIP)
+    message(FATAL_ERROR "POSEIDON_GPU_RUNTIME is HIP, but this Poseidon was "
+                        "built without POSEIDON_ROCM_PATH")
+  endif()
+  set(POSEIDON_MLLVM "-Xclang -mllvm -Xclang")
+else()
+  set(POSEIDON_MLLVM "-mllvm")
+endif()
 include("${CMAKE_CURRENT_LIST_DIR}/PoseidonTargets.cmake")
 
+set(POSEIDON_LLVM_VERSION_MAJOR @LLVM_VERSION_MAJOR@)
+set(POSEIDON_CLANG "@LLVM_TOOLS_BINARY_DIR@/clang")
+set(POSEIDON_CLANGXX "@LLVM_TOOLS_BINARY_DIR@/clang++")
 set(POSEIDON_PLUGIN "$<TARGET_FILE:Poseidon::Poseidon-@LLVM_VERSION_MAJOR@>")
-set(POSEIDON_INCLUDE_DIR "@PACKAGE_CMAKE_INSTALL_INCLUDEDIR@")
-set(POSEIDON_RUNTIME_DIR "@PACKAGE_CMAKE_INSTALL_DATADIR@/poseidon/runtime")
-set(POSEIDON_COST_MODEL_DIR
-    "@PACKAGE_CMAKE_INSTALL_DATADIR@/poseidon/cost_models")
+set_and_check(POSEIDON_ENZYME_PLUGIN "@PACKAGE_POSEIDON_CONFIG_ENZYME_PLUGIN@")
+set_and_check(POSEIDON_INCLUDE_DIR "@PACKAGE_POSEIDON_CONFIG_INCLUDE_DIR@")
+set_and_check(POSEIDON_RUNTIME_DIR "@PACKAGE_POSEIDON_CONFIG_DATA_DIR@/runtime")
+set_and_check(POSEIDON_COST_MODEL_DIR
+              "@PACKAGE_POSEIDON_CONFIG_DATA_DIR@/cost_models")
 set(POSEIDON_HERBIE_BINARY "@POSEIDON_HERBIE_BINARY_PATH@")
+set(POSEIDON_CUMPSGEMM_ROOT "@POSEIDON_CUMPSGEMM_ROOT@")
+
+if(NOT TARGET Poseidon::Plain)
+  # Poseidon's plugin in every action, and Enzyme's after it to generate a
+  # profile, where it differentiates the probes. A project whose own code asks
+  # for derivatives (the body of a deferred site among them) loads Enzyme in
+  # every action itself, as it would without Poseidon. Before LLVM 22 clang
+  # parses -mllvm before it loads -fpass-plugin, so a plugin's options exist
+  # only if it is also loaded with -load.
+  set(_poseidon_load "-fpass-plugin=${POSEIDON_PLUGIN}")
+  set(_enzyme_load "-fpass-plugin=${POSEIDON_ENZYME_PLUGIN}")
+  if(POSEIDON_LLVM_VERSION_MAJOR LESS 22)
+    list(APPEND _poseidon_load "SHELL:-Xclang -load -Xclang ${POSEIDON_PLUGIN}")
+    list(APPEND _enzyme_load
+         "SHELL:-Xclang -load -Xclang ${POSEIDON_ENZYME_PLUGIN}")
+  endif()
+
+  foreach(_action Plain ProfileGenerate ProfileUse)
+    add_library(Poseidon::${_action} INTERFACE IMPORTED)
+    target_compile_options(Poseidon::${_action} INTERFACE ${_poseidon_load})
+    target_include_directories(Poseidon::${_action}
+                               INTERFACE "${POSEIDON_INCLUDE_DIR}")
+  endforeach()
+
+  target_compile_options(
+    Poseidon::ProfileGenerate
+    INTERFACE ${_enzyme_load}
+              "SHELL:${POSEIDON_MLLVM} -poseidon-profile-generate")
+  target_link_libraries(Poseidon::ProfileGenerate
+                        INTERFACE Poseidon::poseidon_profile_host)
+  if(POSEIDON_GPU_RUNTIME STREQUAL "HIP")
+    target_link_libraries(Poseidon::ProfileGenerate
+                          INTERFACE Poseidon::poseidon_profile_hip)
+    # Ozaki-II and the direct products; TCEC has no HIP build.
+    target_link_libraries(Poseidon::ProfileUse
+                          INTERFACE Poseidon::poseidon_rt_hip)
+  elseif(POSEIDON_HAS_CUDA)
+    target_link_libraries(Poseidon::ProfileGenerate
+                          INTERFACE Poseidon::poseidon_profile_cuda)
+    # A rewrite may dispatch a matrix product to any of the GEMM runtimes.
+    target_link_libraries(Poseidon::ProfileUse INTERFACE Poseidon::poseidon_rt)
+    if(POSEIDON_CUMPSGEMM_ROOT)
+      target_link_libraries(
+        Poseidon::ProfileUse
+        INTERFACE "${POSEIDON_CUMPSGEMM_ROOT}/build/libcumpsgemm.so")
+    endif()
+  endif()
+
+  # Error-free transformations survive only if the compiler contracts within a
+  # statement and never across one.
+  foreach(_action Plain ProfileGenerate ProfileUse)
+    target_compile_options(Poseidon::${_action} INTERFACE -ffp-contract=on)
+    target_link_libraries(Poseidon::${_action}
+                          INTERFACE Poseidon::poseidon_profile)
+  endforeach()
+  unset(_poseidon_load)
+  unset(_enzyme_load)
+  unset(_action)
+endif()
+
+check_required_components(Poseidon)

@@ -33,6 +33,7 @@
 #include <optional>
 
 #include "CostModel.h"
+#include "DeviceMath.h"
 #include "Flags.h"
 #include "Herbie.h"
 #include "Optimize.h"
@@ -61,10 +62,9 @@ static Type *fpTypeFromDtype(StringRef dtype, IRBuilder<> &builder) {
 
 static std::string libmFuncName(Module *M, Type *Ty, StringRef dblBase,
                                 StringRef fltBase) {
-  StringRef base = Ty->isDoubleTy() ? dblBase : fltBase;
-  if (Triple(M->getTargetTriple()).isNVPTX())
-    return ("__nv_" + base).str();
-  return base.str();
+  if (isDeviceModule(*M))
+    return deviceMathFunction(*M, dblBase, Ty);
+  return (Ty->isDoubleTy() ? dblBase : fltBase).str();
 }
 
 FPNode::NodeType FPNode::getType() const { return ntype; }
@@ -224,7 +224,7 @@ Value *FPNode::getLLValue(IRBuilder<> &builder, const ValueToValueMapTy *VMap) {
              std::string funcName = libmFuncName(M, Ty, "tan", "tanf");
              FunctionType *FT = FunctionType::get(Ty, {Ty}, false);
              FunctionCallee tanFunc = M->getOrInsertFunction(funcName, FT);
-             return b.CreateCall(tanFunc, {ops[0]}, "herbie.tan");
+             return createMathCall(b, tanFunc, {ops[0]}, "herbie.tan");
 #endif
            }},
           {"exp",
@@ -240,7 +240,7 @@ Value *FPNode::getLLValue(IRBuilder<> &builder, const ValueToValueMapTy *VMap) {
              std::string funcName = libmFuncName(M, Ty, "expm1", "expm1f");
              FunctionType *FT = FunctionType::get(Ty, {Ty}, false);
              FunctionCallee f = M->getOrInsertFunction(funcName, FT);
-             return b.CreateCall(f, {ops[0]}, "herbie.expm1");
+             return createMathCall(b, f, {ops[0]}, "herbie.expm1");
            }},
           {"log",
            [](IRBuilder<> &b, Module *M,
@@ -255,7 +255,7 @@ Value *FPNode::getLLValue(IRBuilder<> &builder, const ValueToValueMapTy *VMap) {
              std::string funcName = libmFuncName(M, Ty, "log1p", "log1pf");
              FunctionType *FT = FunctionType::get(Ty, {Ty}, false);
              FunctionCallee f = M->getOrInsertFunction(funcName, FT);
-             return b.CreateCall(f, {ops[0]}, "herbie.log1p");
+             return createMathCall(b, f, {ops[0]}, "herbie.log1p");
            }},
           {"sqrt",
            [](IRBuilder<> &b, Module *M,
@@ -270,7 +270,7 @@ Value *FPNode::getLLValue(IRBuilder<> &builder, const ValueToValueMapTy *VMap) {
              std::string funcName = libmFuncName(M, Ty, "cbrt", "cbrtf");
              FunctionType *FT = FunctionType::get(Ty, {Ty}, false);
              FunctionCallee f = M->getOrInsertFunction(funcName, FT);
-             return b.CreateCall(f, {ops[0]}, "herbie.cbrt");
+             return createMathCall(b, f, {ops[0]}, "herbie.cbrt");
            }},
           {"pow",
            [](IRBuilder<> &b, Module *M,
@@ -286,8 +286,8 @@ Value *FPNode::getLLValue(IRBuilder<> &builder, const ValueToValueMapTy *VMap) {
                      M, Intrinsic::powi, overloadedTypes);
                  Value *exponent =
                      ConstantInt::get(Type::getInt32Ty(M->getContext()), exp);
-                 return b.CreateCall(powiFunc, {ops[0], exponent},
-                                     "herbie.powi");
+                 return createMathCall(b, powiFunc, {ops[0], exponent},
+                                       "herbie.powi");
                }
              }
 
@@ -301,7 +301,7 @@ Value *FPNode::getLLValue(IRBuilder<> &builder, const ValueToValueMapTy *VMap) {
              std::string funcName = libmFuncName(M, Ty, "pow", "powf");
              FunctionType *FT = FunctionType::get(Ty, {Ty, Ty}, false);
              FunctionCallee f = M->getOrInsertFunction(funcName, FT);
-             return b.CreateCall(f, {ops[0], ops[1]}, "herbie.pow");
+             return createMathCall(b, f, {ops[0], ops[1]}, "herbie.pow");
            }},
           {"fma",
            [](IRBuilder<> &b, Module *M,
@@ -323,7 +323,7 @@ Value *FPNode::getLLValue(IRBuilder<> &builder, const ValueToValueMapTy *VMap) {
              std::string funcName = libmFuncName(M, Ty, "hypot", "hypotf");
              FunctionType *FT = FunctionType::get(Ty, {Ty, Ty}, false);
              FunctionCallee f = M->getOrInsertFunction(funcName, FT);
-             return b.CreateCall(f, {ops[0], ops[1]}, "herbie.hypot");
+             return createMathCall(b, f, {ops[0], ops[1]}, "herbie.hypot");
            }},
           {"asin",
            [](IRBuilder<> &b, Module *M,
@@ -336,7 +336,7 @@ Value *FPNode::getLLValue(IRBuilder<> &builder, const ValueToValueMapTy *VMap) {
              std::string funcName = libmFuncName(M, Ty, "asin", "asinf");
              FunctionType *FT = FunctionType::get(Ty, {Ty}, false);
              FunctionCallee f = M->getOrInsertFunction(funcName, FT);
-             return b.CreateCall(f, {ops[0]}, "herbie.asin");
+             return createMathCall(b, f, {ops[0]}, "herbie.asin");
 #endif
            }},
           {"acos",
@@ -350,7 +350,7 @@ Value *FPNode::getLLValue(IRBuilder<> &builder, const ValueToValueMapTy *VMap) {
              std::string funcName = libmFuncName(M, Ty, "acos", "acosf");
              FunctionType *FT = FunctionType::get(Ty, {Ty}, false);
              FunctionCallee f = M->getOrInsertFunction(funcName, FT);
-             return b.CreateCall(f, {ops[0]}, "herbie.acos");
+             return createMathCall(b, f, {ops[0]}, "herbie.acos");
 #endif
            }},
           {"atan",
@@ -364,7 +364,7 @@ Value *FPNode::getLLValue(IRBuilder<> &builder, const ValueToValueMapTy *VMap) {
              std::string funcName = libmFuncName(M, Ty, "atan", "atanf");
              FunctionType *FT = FunctionType::get(Ty, {Ty}, false);
              FunctionCallee f = M->getOrInsertFunction(funcName, FT);
-             return b.CreateCall(f, {ops[0]}, "herbie.atan");
+             return createMathCall(b, f, {ops[0]}, "herbie.atan");
 #endif
            }},
           {"atan2",
@@ -378,7 +378,7 @@ Value *FPNode::getLLValue(IRBuilder<> &builder, const ValueToValueMapTy *VMap) {
              std::string funcName = libmFuncName(M, Ty, "atan2", "atan2f");
              FunctionType *FT = FunctionType::get(Ty, {Ty, Ty}, false);
              FunctionCallee f = M->getOrInsertFunction(funcName, FT);
-             return b.CreateCall(f, {ops[0], ops[1]}, "herbie.atan2");
+             return createMathCall(b, f, {ops[0], ops[1]}, "herbie.atan2");
 #endif
            }},
           {"sinh",
@@ -392,7 +392,7 @@ Value *FPNode::getLLValue(IRBuilder<> &builder, const ValueToValueMapTy *VMap) {
              std::string funcName = libmFuncName(M, Ty, "sinh", "sinhf");
              FunctionType *FT = FunctionType::get(Ty, {Ty}, false);
              FunctionCallee f = M->getOrInsertFunction(funcName, FT);
-             return b.CreateCall(f, {ops[0]}, "herbie.sinh");
+             return createMathCall(b, f, {ops[0]}, "herbie.sinh");
 #endif
            }},
           {"cosh",
@@ -406,7 +406,7 @@ Value *FPNode::getLLValue(IRBuilder<> &builder, const ValueToValueMapTy *VMap) {
              std::string funcName = libmFuncName(M, Ty, "cosh", "coshf");
              FunctionType *FT = FunctionType::get(Ty, {Ty}, false);
              FunctionCallee f = M->getOrInsertFunction(funcName, FT);
-             return b.CreateCall(f, {ops[0]}, "herbie.cosh");
+             return createMathCall(b, f, {ops[0]}, "herbie.cosh");
 #endif
            }},
           {"tanh",
@@ -420,7 +420,7 @@ Value *FPNode::getLLValue(IRBuilder<> &builder, const ValueToValueMapTy *VMap) {
              std::string funcName = libmFuncName(M, Ty, "tanh", "tanhf");
              FunctionType *FT = FunctionType::get(Ty, {Ty}, false);
              FunctionCallee f = M->getOrInsertFunction(funcName, FT);
-             return b.CreateCall(f, {ops[0]}, "herbie.tanh");
+             return createMathCall(b, f, {ops[0]}, "herbie.tanh");
 #endif
            }},
           {"copysign",
@@ -489,7 +489,7 @@ Value *FPNode::getLLValue(IRBuilder<> &builder, const ValueToValueMapTy *VMap) {
              std::string funcName = libmFuncName(M, Ty, "fdim", "fdimf");
              FunctionType *FT = FunctionType::get(Ty, {Ty, Ty}, false);
              FunctionCallee f = M->getOrInsertFunction(funcName, FT);
-             return b.CreateCall(f, {ops[0], ops[1]}, "herbie.fdim");
+             return createMathCall(b, f, {ops[0], ops[1]}, "herbie.fdim");
            }},
           {"fmod",
            [](IRBuilder<> &b, Module *M,
@@ -498,7 +498,7 @@ Value *FPNode::getLLValue(IRBuilder<> &builder, const ValueToValueMapTy *VMap) {
              std::string funcName = libmFuncName(M, Ty, "fmod", "fmodf");
              FunctionType *FT = FunctionType::get(Ty, {Ty, Ty}, false);
              FunctionCallee f = M->getOrInsertFunction(funcName, FT);
-             return b.CreateCall(f, {ops[0], ops[1]}, "herbie.fmod");
+             return createMathCall(b, f, {ops[0], ops[1]}, "herbie.fmod");
            }},
           {"remainder",
            [](IRBuilder<> &b, Module *M,
@@ -508,7 +508,7 @@ Value *FPNode::getLLValue(IRBuilder<> &builder, const ValueToValueMapTy *VMap) {
                  libmFuncName(M, Ty, "remainder", "remainderf");
              FunctionType *FT = FunctionType::get(Ty, {Ty, Ty}, false);
              FunctionCallee f = M->getOrInsertFunction(funcName, FT);
-             return b.CreateCall(f, {ops[0], ops[1]}, "herbie.remainder");
+             return createMathCall(b, f, {ops[0], ops[1]}, "herbie.remainder");
            }},
           {"erf",
            [](IRBuilder<> &b, Module *M,
@@ -517,7 +517,7 @@ Value *FPNode::getLLValue(IRBuilder<> &builder, const ValueToValueMapTy *VMap) {
              std::string funcName = libmFuncName(M, Ty, "erf", "erff");
              FunctionType *FT = FunctionType::get(Ty, {Ty}, false);
              FunctionCallee f = M->getOrInsertFunction(funcName, FT);
-             return b.CreateCall(f, {ops[0]}, "herbie.erf");
+             return createMathCall(b, f, {ops[0]}, "herbie.erf");
            }},
           {"lgamma",
            [](IRBuilder<> &b, Module *M,
@@ -526,7 +526,7 @@ Value *FPNode::getLLValue(IRBuilder<> &builder, const ValueToValueMapTy *VMap) {
              std::string funcName = libmFuncName(M, Ty, "lgamma", "lgammaf");
              FunctionType *FT = FunctionType::get(Ty, {Ty}, false);
              FunctionCallee f = M->getOrInsertFunction(funcName, FT);
-             return b.CreateCall(f, {ops[0]}, "herbie.lgamma");
+             return createMathCall(b, f, {ops[0]}, "herbie.lgamma");
            }},
           {"tgamma",
            [](IRBuilder<> &b, Module *M,
@@ -535,7 +535,7 @@ Value *FPNode::getLLValue(IRBuilder<> &builder, const ValueToValueMapTy *VMap) {
              std::string funcName = libmFuncName(M, Ty, "tgamma", "tgammaf");
              FunctionType *FT = FunctionType::get(Ty, {Ty}, false);
              FunctionCallee f = M->getOrInsertFunction(funcName, FT);
-             return b.CreateCall(f, {ops[0]}, "herbie.tgamma");
+             return createMathCall(b, f, {ops[0]}, "herbie.tgamma");
            }},
           {"asinh",
            [](IRBuilder<> &b, Module *M,
@@ -544,7 +544,7 @@ Value *FPNode::getLLValue(IRBuilder<> &builder, const ValueToValueMapTy *VMap) {
              std::string funcName = libmFuncName(M, Ty, "asinh", "asinhf");
              FunctionType *FT = FunctionType::get(Ty, {Ty}, false);
              FunctionCallee f = M->getOrInsertFunction(funcName, FT);
-             return b.CreateCall(f, {ops[0]}, "herbie.asinh");
+             return createMathCall(b, f, {ops[0]}, "herbie.asinh");
            }},
           {"acosh",
            [](IRBuilder<> &b, Module *M,
@@ -553,7 +553,7 @@ Value *FPNode::getLLValue(IRBuilder<> &builder, const ValueToValueMapTy *VMap) {
              std::string funcName = libmFuncName(M, Ty, "acosh", "acoshf");
              FunctionType *FT = FunctionType::get(Ty, {Ty}, false);
              FunctionCallee f = M->getOrInsertFunction(funcName, FT);
-             return b.CreateCall(f, {ops[0]}, "herbie.acosh");
+             return createMathCall(b, f, {ops[0]}, "herbie.acosh");
            }},
           {"atanh",
            [](IRBuilder<> &b, Module *M,
@@ -562,7 +562,7 @@ Value *FPNode::getLLValue(IRBuilder<> &builder, const ValueToValueMapTy *VMap) {
              std::string funcName = libmFuncName(M, Ty, "atanh", "atanhf");
              FunctionType *FT = FunctionType::get(Ty, {Ty}, false);
              FunctionCallee f = M->getOrInsertFunction(funcName, FT);
-             return b.CreateCall(f, {ops[0]}, "herbie.atanh");
+             return createMathCall(b, f, {ops[0]}, "herbie.atanh");
            }},
           {"==",
            [](IRBuilder<> &b, Module *M,
@@ -642,50 +642,26 @@ Value *FPNode::getLLValue(IRBuilder<> &builder, const ValueToValueMapTy *VMap) {
            }},
       };
 
-  // On NVPTX the generic math intrinsics emitted by opMap (llvm.sin/cos/exp/
-  // log/...) have no native instruction and fail instruction selection
-  // ("Cannot select: fNN = fsin"). libdevice provides __nv_<f> for f64 and
-  // __nv_<f>f for f32. Algebraic / native ops (sqrt, fabs, floor, ceil, trunc,
-  // rint, round, copysign, fma, fmin/fmax, +,-,*,/) DO lower on NVPTX, so they
-  // fall through to opMap.
+  // On a GPU the generic math intrinsics emitted by opMap (llvm.sin/cos/exp/
+  // log/...) mostly have no native instruction and fail instruction selection
+  // ("Cannot select: fNN = fsin"). The device's math library provides them:
+  // libdevice __nv_<f> for f64 and __nv_<f>f for f32 on NVPTX, ROCm ocml
+  // __ocml_<f>_f64 and __ocml_<f>_f32 on AMDGPU. Algebraic / native ops (sqrt,
+  // fabs, floor, ceil, trunc, rint, round, copysign, fma, fmin/fmax, +,-,*,/)
+  // DO lower on both, so they fall through to opMap.
   if (isGPUMode(*builder.GetInsertBlock()->getParent())) {
-    static const std::unordered_map<std::string,
-                                    std::pair<const char *, const char *>>
-        nvLibdevice = {
-            {"sin", {"__nv_sin", "__nv_sinf"}},
-            {"cos", {"__nv_cos", "__nv_cosf"}},
-            {"tan", {"__nv_tan", "__nv_tanf"}},
-            {"asin", {"__nv_asin", "__nv_asinf"}},
-            {"acos", {"__nv_acos", "__nv_acosf"}},
-            {"atan", {"__nv_atan", "__nv_atanf"}},
-            {"atan2", {"__nv_atan2", "__nv_atan2f"}},
-            {"sinh", {"__nv_sinh", "__nv_sinhf"}},
-            {"cosh", {"__nv_cosh", "__nv_coshf"}},
-            {"tanh", {"__nv_tanh", "__nv_tanhf"}},
-            {"asinh", {"__nv_asinh", "__nv_asinhf"}},
-            {"acosh", {"__nv_acosh", "__nv_acoshf"}},
-            {"atanh", {"__nv_atanh", "__nv_atanhf"}},
-            {"exp", {"__nv_exp", "__nv_expf"}},
-            {"exp2", {"__nv_exp2", "__nv_exp2f"}},
-            {"expm1", {"__nv_expm1", "__nv_expm1f"}},
-            {"log", {"__nv_log", "__nv_logf"}},
-            {"log2", {"__nv_log2", "__nv_log2f"}},
-            {"log10", {"__nv_log10", "__nv_log10f"}},
-            {"log1p", {"__nv_log1p", "__nv_log1pf"}},
-            {"pow", {"__nv_pow", "__nv_powf"}},
-            {"cbrt", {"__nv_cbrt", "__nv_cbrtf"}},
-        };
-    auto nvIt = nvLibdevice.find(op);
-    if (nvIt != nvLibdevice.end() && !operandValues.empty() &&
+    static const std::unordered_set<std::string> deviceMath = {
+        "sin",  "cos",  "tan",   "asin",  "acos",  "atan", "atan2", "sinh",
+        "cosh", "tanh", "asinh", "acosh", "atanh", "exp",  "exp2",  "expm1",
+        "log",  "log2", "log10", "log1p", "pow",   "cbrt"};
+    if (deviceMath.count(op) && !operandValues.empty() &&
         (operandValues[0]->getType()->isFloatTy() ||
          operandValues[0]->getType()->isDoubleTy())) {
       Type *Ty = operandValues[0]->getType();
-      const char *fname =
-          Ty->isFloatTy() ? nvIt->second.second : nvIt->second.first;
       SmallVector<Type *, 2> argTys(operandValues.size(), Ty);
-      FunctionCallee fn =
-          M->getOrInsertFunction(fname, FunctionType::get(Ty, argTys, false));
-      return builder.CreateCall(fn, operandValues, "herbie." + op);
+      FunctionCallee fn = M->getOrInsertFunction(
+          deviceMathFunction(*M, op, Ty), FunctionType::get(Ty, argTys, false));
+      return createMathCall(builder, fn, operandValues, "herbie." + op);
     }
   }
 
@@ -1164,9 +1140,9 @@ InstructionCost CandidateSubgraph::getAdjustedCompCostDelta(
     return 0;
   }
 
-  double initialCompCost =
-      getCompCost({newSubgraph.outputs.begin(), newSubgraph.outputs.end()},
-                  newSubgraph.inputs);
+  double initialCompCost = getCompCost(
+      {newSubgraph.outputs.begin(), newSubgraph.outputs.end()},
+      newSubgraph.inputs, &newSubgraph.opExec, newSubgraph.execNormalizer);
 
   double candidateCompCost =
       getCompCost(newSubgraph, candidates[candidateIndex]);

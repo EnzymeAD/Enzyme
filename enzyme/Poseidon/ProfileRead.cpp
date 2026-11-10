@@ -366,7 +366,7 @@ void parseProfileFile(const std::string &profilePath,
 // away.
 void predeclareInactiveProfilerProbes(llvm::Module &M) {
   using namespace llvm;
-  if (!Triple(M.getTargetTriple()).isNVPTX())
+  if (!isDeviceModule(M))
     return;
   LLVMContext &Ctx = M.getContext();
   Type *VoidTy = Type::getVoidTy(Ctx);
@@ -409,16 +409,21 @@ void predeclareInactiveProfilerProbes(llvm::Module &M) {
 //
 // The host side of a .cu and a plain .cpp share the x86 triple, so the CUDA SDK
 // version clang records on the module and __cudaRegisterFatBinary are the
-// module facts that separate them. Erring towards injection is deliberate: a
-// wrongly skipped injection loses the profile silently, a wrongly kept one
-// fails loudly at link.
+// module facts that separate them; a HIP unit, kernels or not, carries the
+// __hip_cuid_ global that pairs it with its device half. Erring towards
+// injection is deliberate: a wrongly skipped injection loses the profile
+// silently, a wrongly kept one fails loudly at link.
 static bool isCUDAHostModule(const llvm::Module &M) {
-  return !M.getSDKVersion().empty() || M.getFunction("__cudaRegisterFatBinary");
+  return !M.getSDKVersion().empty() ||
+         M.getFunction("__cudaRegisterFatBinary") ||
+         llvm::any_of(M.globals(), [](const llvm::GlobalVariable &G) {
+           return G.getName().starts_with("__hip_cuid_");
+         });
 }
 
 void injectHostProfilerInit(llvm::Module &M) {
   using namespace llvm;
-  if (Triple(M.getTargetTriple()).isNVPTX())
+  if (isDeviceModule(M))
     return;
   // A host-only build links no CUDA profiler runtime, so the call injected
   // below would be an undefined reference to __poseidon_profile_init_cuda.
@@ -452,7 +457,7 @@ void injectHostProfilerInit(llvm::Module &M) {
 // and sits at the entry of the function owning those probes.
 void injectBlockDimProbes(llvm::Module &M) {
   using namespace llvm;
-  if (!Triple(M.getTargetTriple()).isNVPTX())
+  if (!isDeviceModule(M))
     return;
   Function *logFn = M.getFunction("poseidonLogValueCUDA");
   if (!logFn)

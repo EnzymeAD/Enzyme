@@ -10,9 +10,9 @@
 // Device and host code are separate compilations, so a device-side solve that
 // changes how a kernel must be launched reaches the host through a file: one
 // single-line descriptor per wrapper kernel, named "<wrapper><scheme>" in the
-// cache directory. Every feature that rewrites a launch stub shares the note
-// map, the file format and the stub locator here and keeps only its own payload
-// and rewrite body.
+// cache directory (the wrapper name through profileNameStem). Every feature
+// that rewrites a launch stub shares the note map, the file format and the
+// stub locator here and keeps only its own payload and rewrite body.
 //
 //===----------------------------------------------------------------------===//
 
@@ -47,7 +47,7 @@ private:
   std::map<const llvm::Function *, Note> notes;
 };
 
-// Write "<wrapperName><payload>\n" to <cacheDir>/<wrapperName><scheme>;
+// Write "<wrapperName><payload>\n" to <cacheDir>/<stem(wrapperName)><scheme>;
 // `emitPayload` appends everything after the name. False if the file could not
 // be opened (reported on stderr under `tag`).
 bool writeDescriptor(llvm::StringRef cacheDir, llvm::StringRef wrapperName,
@@ -68,6 +68,13 @@ void readDescriptors(
 // The part of a kernel's mangled name shared with its launch stub: kernel
 // `_Z<L><id><params>` and stub `_Z<L+15>__device_stub__<id><params>`.
 llvm::StringRef mangledSuffix(llvm::StringRef mangled);
+
+// `name` without the postfix clang appends under -fgpu-rdc to the device-side
+// name of a kernel with internal linkage ("__intern__<hash>", in HIP
+// ".intern.<hash>"). The host stub's name has none, and the hash follows the
+// compile's macros, so neither the stub nor a later compile without -fgpu-rdc
+// can be matched on it.
+llvm::StringRef withoutExternalizedPostfix(llvm::StringRef name);
 
 // Whether F is the kernel named `kernelName` or that kernel's launch stub.
 bool isLaunchStubFor(const llvm::Function &F, llvm::StringRef kernelName);

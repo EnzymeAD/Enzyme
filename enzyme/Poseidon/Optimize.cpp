@@ -108,6 +108,28 @@ std::string siteProfileStem(const Function &clone) {
   return profileNameStem(clone.getName().str());
 }
 
+// The site clone has no callers while it is optimized, so the caller values of
+// its parameters are kept here for the parameter-staging arm to resolve a
+// pointer parameter to its addrspace(3) global.
+static std::map<const Function *, SmallVector<WeakTrackingVH, 12>> &
+siteArgsMap() {
+  static std::map<const Function *, SmallVector<WeakTrackingVH, 12>> m;
+  return m;
+}
+void noteSiteArgs(Function *clone, ArrayRef<Value *> primalArgs) {
+  auto &v = siteArgsMap()[clone];
+  v.clear();
+  for (Value *A : primalArgs)
+    v.emplace_back(A);
+}
+bool isSiteClone(const Function *F) { return siteArgsMap().count(F); }
+Value *siteArg(const Function *clone, unsigned i) {
+  auto it = siteArgsMap().find(clone);
+  if (it == siteArgsMap().end() || i >= it->second.size())
+    return nullptr;
+  return it->second[i].pointsToAliveValue() ? (Value *)it->second[i] : nullptr;
+}
+
 bool redirectNoopSite(Function *clone) {
   auto it = siteOriginMap().find(clone);
   if (it == siteOriginMap().end() || !it->second)
@@ -739,7 +761,6 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
   st.F = &F;
   st.errTol = errorTol;
   st.sampleLogBits = sampleLogBits;
-  requireCostModel(F);
 
   if (isGPUMode(F))
     llvm::errs() << "[poseidon] GPU mode active for " << F.getName() << "\n";
@@ -829,14 +850,23 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
     raiseTLII.emplace(Triple(F.getParent()->getTargetTriple()));
     raiseTLI.emplace(*raiseTLII, &F);
     raiseSE.emplace(F, *raiseTLI, *raiseAC, *raiseDT, *raiseLI);
-    findScalarLoopMatmuls(F, *raiseSE, *raiseLI, profileHeader,
-                          abstractMatmuls);
+    // The constant-trip recognizer reads NVPTX's thread and block registers.
+    if (Triple(F.getParent()->getTargetTriple()).isNVPTX())
+      findScalarLoopMatmuls(F, *raiseSE, *raiseLI, profileHeader,
+                            abstractMatmuls);
     // Runtime-shape dense GEMMs (finite-element partial-assembly reduces). Runs
     // after the constant-trip recognizer and skips whatever that one claimed,
     // so previously recognized sites keep their exact candidate sets.
     findHostGemmLoopNests(F, *raiseSE, *raiseLI, profileHeader, profileMap,
                           abstractMatmuls);
   }
+
+  SmallPtrSet<Instruction *, 32> reductionFMAs;
+  if (flags::ReductionSubgraphs)
+    for (const auto &am : abstractMatmuls)
+      if (am.origin == AbstractMatmul::Origin::ScalarLoopReduction &&
+          am.scalarLoop.fma)
+        reductionFMAs.insert(am.scalarLoop.fma);
 
   if (flags::Print && !abstractMatmuls.empty()) {
     llvm::errs() << "[poseidon] Found " << abstractMatmuls.size()
@@ -862,6 +892,10 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
         llvm::errs() << "    (profile dump skipped for ScalarLoopReduction)\n";
     }
   }
+
+  // Nothing above prices: a compile for a device no model has been measured
+  // on yet still reports what it recognized before it refuses.
+  requireCostModel(F);
 
   int symbolCounter = 0;
   auto getNextSymbol = [&symbolCounter]() -> std::string {
@@ -1079,11 +1113,15 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
           }
         }
 
-        if (operation_seen.size() == 1) {
+        if (operation_seen.size() == 1 &&
+            !reductionFMAs.contains(*operation_seen.begin())) {
           if (flags::Print)
             llvm::errs() << "Skipping trivial subgraph\n";
           continue;
         }
+        if (operation_seen.size() == 1 && flags::Print)
+          llvm::errs() << "Keeping 1-op reduction subgraph: "
+                       << **operation_seen.begin() << "\n";
 
         subgraphs.emplace_back(input_seen, output_seen, operation_seen);
       }
@@ -1172,6 +1210,16 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
   if (flags::Print) {
     llvm::errs() << "[poseidon] After splitting, have " << subgraphs.size()
                  << " subgraphs in " << F.getName() << "\n";
+  }
+
+  // After splitting so a merged unit is never re-split, and before the
+  // frequency map below is built from the merged unit's instructions.
+  if (flags::MergeSharedStaging) {
+    mergeSharedStagingSubgraphs(subgraphs, F);
+    if (flags::Print)
+      llvm::errs() << "[poseidon] After staging-tier merge, have "
+                   << subgraphs.size() << " subgraphs in " << F.getName()
+                   << "\n";
   }
 
   if (flags::Print) {
@@ -1483,6 +1531,52 @@ bool collectFPCandidates(Function &F, double errorTol, unsigned sampleLogBits,
     if (flags::EnablePT) {
       auto *o0 = subgraph.outputs[0];
       const unsigned o0Exec = valueToNodeMap[o0]->executions;
+
+      // Filled before CS is built, so its baseline walk and every candidate's
+      // weight each instruction by its own measured frequency.
+      subgraph.opExec.clear();
+      subgraph.depthExec.clear();
+      subgraph.execNormalizer = o0Exec;
+      if (flags::FreqWeightedPricing) {
+        DominatorTree freqDT(F);
+        LoopInfo freqLI(freqDT);
+        auto note = [&](Instruction *I) {
+          auto it = valueToNodeMap.find(I);
+          if (it == valueToNodeMap.end() || !it->second ||
+              it->second->executions == 0)
+            return;
+          uint64_t e = it->second->executions;
+          subgraph.opExec[I] = e;
+          unsigned d = freqLI.getLoopDepth(I->getParent());
+          auto dit = subgraph.depthExec.find(d);
+          if (dit == subgraph.depthExec.end())
+            subgraph.depthExec[d] = e;
+          else
+            dit->second = std::max(dit->second, e);
+        };
+        for (auto *op : subgraph.operations)
+          note(op);
+        for (auto *o : subgraph.outputs)
+          note(o);
+        // A materialized instruction keeps only its loop depth, so the baseline
+        // is snapped onto the same depth classes as the candidate walk.
+        for (auto &kv : subgraph.opExec)
+          if (auto *I = dyn_cast<Instruction>(kv.first)) {
+            auto dit =
+                subgraph.depthExec.find(freqLI.getLoopDepth(I->getParent()));
+            if (dit != subgraph.depthExec.end())
+              kv.second = dit->second;
+          }
+        if (flags::Print && subgraph.depthExec.size() > 1) {
+          llvm::errs() << "[poseidon] frequency-heterogeneous subgraph "
+                          "(normalizer "
+                       << o0Exec << ", measured depth:exec";
+          for (auto &kv : subgraph.depthExec)
+            llvm::errs() << " " << kv.first << ":" << kv.second;
+          llvm::errs() << "); pricing each instruction at its own measured "
+                          "frequency\n";
+        }
+      }
 
       CandidateSubgraph CS(subgraph);
       CS.executions = o0Exec;
@@ -1845,7 +1939,9 @@ bool materializeFPSolution(Function &F, FunctionFPState &st,
   }
 
   if (changed)
-    applyStagingNarrowing(F, /*announce=*/true);
+    applyStagingNarrowing(
+        F, /*announce=*/true,
+        flags::NarrowParamStaging ? ParamArm::Both : ParamArm::None, &F);
   if (changed && demoteFPCastPHIs(F)) {
     if (flags::Print)
       llvm::errs() << "[poseidon] demoted fpcast-sandwiched FP64 PHIs in "

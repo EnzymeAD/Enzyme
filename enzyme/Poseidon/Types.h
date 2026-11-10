@@ -171,6 +171,24 @@ struct Subgraph {
   // min(1, threadsPerLaunch * launchCount / exec(output)); 1 for elementwise.
   double outBoundaryFreqScale = 1.0;
 
+  // Measured execution counts of this subgraph's instructions (`opExec`) and
+  // the same counts by loop depth (`depthExec`), the frequency class that
+  // survives materialization. Empty prices exactly as an unweighted walk.
+  llvm::DenseMap<const llvm::Instruction *, uint64_t> opExec;
+  std::map<unsigned, uint64_t> depthExec;
+  uint64_t execNormalizer = 0;
+
+  // The measured count of the deepest class at or below `d` (the shallowest
+  // class outside every recorded loop) over the normalizer; 1.0 without one.
+  double freqWeightAtDepth(unsigned d) const {
+    if (depthExec.empty() || execNormalizer == 0)
+      return 1.0;
+    auto it = depthExec.upper_bound(d);
+    uint64_t e = (it == depthExec.begin()) ? depthExec.begin()->second
+                                           : std::prev(it)->second;
+    return (double)e / (double)execNormalizer;
+  }
+
   Subgraph() = default;
   explicit Subgraph(llvm::SetVector<llvm::Value *> inputs,
                     llvm::SetVector<llvm::Instruction *> outputs,
@@ -283,8 +301,9 @@ public:
   std::unordered_map<CacheKey, double, CacheKeyHash> accCostDeltaCache;
 
   explicit CandidateSubgraph(Subgraph &subgraph) : subgraph(&subgraph) {
-    initialCompCost = getCompCost(
-        {subgraph.outputs.begin(), subgraph.outputs.end()}, subgraph.inputs);
+    initialCompCost =
+        getCompCost({subgraph.outputs.begin(), subgraph.outputs.end()},
+                    subgraph.inputs, &subgraph.opExec, subgraph.execNormalizer);
   }
 
   void apply(size_t candidateIndex);

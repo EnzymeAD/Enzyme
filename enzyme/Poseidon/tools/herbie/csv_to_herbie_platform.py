@@ -11,6 +11,8 @@ Usage:
     # Or dump to stdout:
     python3 csv_to_herbie_platform.py --csv ... --arch sm_<cc>
 
+An AMD GPU's model (--arch gfx<NNN>) gives the platform hip-gfx<NNN>.
+
 The file is passed to Herbie by path (`herbie report --platform <path>`), so it
 lives next to the CSV it was generated from and no Herbie tree is patched.
 
@@ -347,6 +349,13 @@ def embedded_module_names(herbie_binary: Path) -> Tuple[Optional[str], Optional[
             f"'|{flonum.group(0).decode()}|" if flonum else None)
 
 
+def default_platform_name(arch: str) -> str:
+    """cuda-sm120 for an NVIDIA architecture, hip-gfx942 for an AMD one: the
+    name Poseidon keys its Herbie cache with (Herbie.cpp)."""
+    vendor = "hip" if arch.startswith("gfx") else "cuda"
+    return f"{vendor}-{arch.replace('_', '')}"
+
+
 def emit_platform(costs: Dict[Tuple[str, str], float],
                   meta: Dict[str, str],
                   arch: str,
@@ -368,8 +377,9 @@ def emit_platform(costs: Dict[Tuple[str, str], float],
             move_costs[bits] = _fmt(cost(costs, "fcmp", prec))
     move_bool = move_costs.get(16, move_costs.get(32, "5"))
 
+    vendor = "HIP" if arch.startswith("gfx") else "CUDA"
     header = [
-        f";; CUDA {arch} platform, generated from a Poseidon GPU cost model CSV.",
+        f";; {vendor} {arch} platform, generated from a Poseidon GPU cost model CSV.",
     ]
     if device:
         header.append(f";; Target device: {device}")
@@ -430,10 +440,10 @@ def main() -> int:
     ap.add_argument("--csv", required=True, type=Path,
                     help="Poseidon cost model CSV (cm_<arch>_<device>.csv)")
     ap.add_argument("--arch", required=True,
-                    help="Architecture tag as used in the CSV, e.g. sm_120")
+                    help="Architecture tag as used in the CSV, e.g. sm_120 or gfx942")
     ap.add_argument("--platform-name",
                     help="Herbie platform name (default: 'cuda-<arch with underscores stripped>', "
-                         "e.g. cuda-sm120)")
+                         "e.g. cuda-sm120, or hip-<arch> for gfx<NNN>)")
     ap.add_argument("--device",
                     help="Optional device name for the file-header comment (e.g. RTX5090)")
     ap.add_argument("--output", type=Path,
@@ -480,7 +490,7 @@ def main() -> int:
                        & {"float", "double"})
     print(f"precisions found in CSV: {', '.join(csv_precs)}", file=sys.stderr)
 
-    platform_name = args.platform_name or f"cuda-{args.arch.replace('_', '')}"
+    platform_name = args.platform_name or default_platform_name(args.arch)
 
     try:
         rkt = emit_platform(costs, meta, args.arch, args.device, platform_name,

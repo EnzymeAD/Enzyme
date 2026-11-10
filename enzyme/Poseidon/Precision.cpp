@@ -34,6 +34,7 @@
 #include <unordered_map>
 
 #include "CostModel.h"
+#include "DeviceMath.h"
 #include "Evaluators.h"
 #include "Expansion.h"
 #include "Flags.h"
@@ -315,11 +316,12 @@ void changePrecision(Instruction *I, PrecisionChange &change,
       // before this pass runs, so a fresh __nv_fmaxf would reach ptxas
       // undefined).
       {
-        std::string base = funcName.str();
-        if (base.size() > 5 && base.compare(0, 5, "__nv_") == 0)
-          base = base.substr(5);
-        if (!base.empty() && (base.back() == 'f' || base.back() == 'l'))
-          base.pop_back();
+        std::string base = deviceMathName(funcName).str();
+        if (base.empty()) {
+          base = funcName.str();
+          if (!base.empty() && (base.back() == 'f' || base.back() == 'l'))
+            base.pop_back();
+        }
         if ((base == "fmax" || base == "fmin") && newArgs.size() == 2) {
           Intrinsic::ID id =
               (base == "fmax") ? Intrinsic::maxnum : Intrinsic::minnum;
@@ -354,7 +356,7 @@ void changePrecision(Instruction *I, PrecisionChange &change,
             newFuncName, FunctionType::get(funcType, funcArgTypes, false));
 
         if (Function *newFunc = dyn_cast<Function>(newFuncCallee.getCallee())) {
-          Value *callResult = Builder.CreateCall(newFunc, callArgs);
+          Value *callResult = createMathCall(Builder, newFunc, callArgs);
           if (needsPromotion)
             newI =
                 Builder.CreateFPTrunc(callResult, newType, "poseidon.demote");
@@ -659,7 +661,27 @@ double getCompCost(Subgraph &subgraph, PTCandidate &pt) {
   // Mirror the real materialization's cleanups so the price charges only the
   // casts the materializer emits. demoteFPCastPHIs RAUWs each demoted PHI with
   // fpext(new PHI) before erasing it, and the WeakTrackingVH handles follow.
-  applyStagingNarrowing(*FClone, /*announce=*/false);
+  // FClone has no call sites, so F supplies the parameter-to-global mapping
+  // (the arguments are positionally identical). A df64 candidate wants the pair
+  // layout and anything else the halved one, so exactly one parameter arm runs.
+  const bool wantsDS = [&] {
+    for (auto &ch : pt.changes)
+      if (ch.newType == PrecisionChangeType::Expansion2)
+        return true;
+    return false;
+  }();
+  const ParamArm paramArm = !flags::NarrowParamStaging ? ParamArm::None
+                            : wantsDS                  ? ParamArm::DS
+                                                       : ParamArm::FP32;
+  // The df64 narrowing turns a staged load's split, some of whose halves are
+  // limbs, into a pair load: the limbs follow it through handles.
+  SmallVector<WeakTrackingVH, 32> limbHandles(expansionLimbs.begin(),
+                                              expansionLimbs.end());
+  applyStagingNarrowing(*FClone, /*announce=*/false, paramArm, F);
+  expansionLimbs.clear();
+  for (Value *L : limbHandles)
+    if (L)
+      expansionLimbs.push_back(L);
   // Cancel the join/split roundtrip the df64 conversion leaves on an expansion
   // restore, as applyExpansion does in the emitted code; no-op without the
   // poseidon.ds.join tag.
@@ -773,11 +795,18 @@ double getCompCost(Subgraph &subgraph, PTCandidate &pt) {
     if (!isa<FPExtInst>(I) && !isa<FPTruncInst>(I))
       bodyDepth = std::max(bodyDepth, cloneLI.getLoopDepth(I->getParent()));
 
+  const bool freqWeighted =
+      flags::FreqWeightedPricing && subgraph.depthExec.size() > 1;
   for (Instruction *I : coneInsts) {
     double c = getInstructionCompCost(I);
     unsigned d = cloneLI.getLoopDepth(I->getParent());
-    if ((isa<FPExtInst>(I) || isa<FPTruncInst>(I)) && bodyDepth > 0 &&
-        d < bodyDepth) {
+    if (freqWeighted) {
+      // The measured frequency of this depth subsumes the boundary-cast scale
+      // and also reaches the arithmetic emitted outside the body loop, where a
+      // df64 boundary conversion lives.
+      c *= subgraph.freqWeightAtDepth(d);
+    } else if ((isa<FPExtInst>(I) || isa<FPTruncInst>(I)) && bodyDepth > 0 &&
+               d < bodyDepth) {
       c *= subgraph.outBoundaryFreqScale;
     }
     cost += c;

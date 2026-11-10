@@ -1,6 +1,6 @@
 // RUN: rm -rf %t.cache && %clang -x cuda --cuda-gpu-arch=%gpu_arch -fcuda-rdc -O2 -ffp-contract=on \
 // RUN:     %clangLoadPoseidonEnzyme -mllvm --poseidon-profile-generate -mllvm --poseidon-cache=%t.cache \
-// RUN:     -I%FPProfileInc %s %FPProfileCUDASrc -x none %FPProfileLib \
+// RUN:     -I%FPProfileInc %s -x none %FPProfileCUDALib %FPProfileLib \
 // RUN:     -L/usr/local/cuda/lib64 -lcudart -lstdc++ -lm -o %t.exe
 // RUN: cat %t.cache/_Z4axpbPdPKdS1_i.profgen | FileCheck --check-prefix=DESC %s
 // RUN: rm -rf %t.profiles && POSEIDON_PROFILE_DIR=%t.profiles %t.exe | FileCheck --check-prefix=PRIMAL %s

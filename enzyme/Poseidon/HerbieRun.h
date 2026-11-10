@@ -32,7 +32,7 @@ namespace poseidon {
 // proposed against another device's costs is that device's answer.
 struct HerbiePlatform {
   // Identity, and the cache-entry component. "cuda-sm120", "cuda-sm90",
-  // "default" (Herbie's own platform, for a host cost model).
+  // "hip-gfx942", "default" (Herbie's own platform, for a host cost model).
   std::string Name;
   // The .rkt handed to `--platform`; empty means pass Name instead.
   std::string Path;

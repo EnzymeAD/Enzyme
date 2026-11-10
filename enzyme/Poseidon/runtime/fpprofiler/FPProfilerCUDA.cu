@@ -1,3 +1,8 @@
+// The host half of the CUDA profiler, a library a profile-generate build links
+// (libposeidon_profile_cuda, and compiled as HIP libposeidon_profile_hip): it
+// allocates the tables the probes of every profiled device module record into
+// (FPProfilerDevice.cu), writes each module's handles to them, and writes the
+// profile at exit.
 #include <algorithm>
 #include <cerrno>
 #include <cmath>
@@ -5,8 +10,12 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#ifdef __HIP__
+#include "../hip_as_cuda.h"
+#else
 #include <cuda_fp16.h>
 #include <cuda_runtime.h>
+#endif
 #include <fstream>
 #include <iomanip>
 #include <limits>
@@ -21,368 +30,15 @@
 // The one filename rule, shared verbatim with the host runtime and with the
 // pass that reads what this file writes.
 #include "FPProfileName.h"
+#include "FPProfilerCUDA.h"
 #include "poseidon/poseidon.h"
-
-// Per-function slot range: bounds the static optimizable-instruction count of
-// a single site (one slot per instruction, setPoseidonMetadata), not the
-// dynamic execution count. Overflow aborts in poseidonLogValueCUDA; raise
-// POSEIDON_PROFILE_MAX_SLOTS if a site ever needs more.
-#define POSEIDON_DEFAULT_MAX_SLOTS 4096
-#define POSEIDON_DEFAULT_MAX_FUNCS 512
-#define POSEIDON_MAX_OPERANDS 8
-
-__device__ __host__ inline uint64_t doubleToOrderedUint64(double val) {
-  uint64_t bits;
-  memcpy(&bits, &val, sizeof(bits));
-  if (bits & 0x8000000000000000ULL)
-    return ~bits;
-  else
-    return bits | 0x8000000000000000ULL;
-}
-
-__device__ __host__ inline double orderedUint64ToDouble(uint64_t bits) {
-  if (bits & 0x8000000000000000ULL)
-    bits = bits & ~0x8000000000000000ULL;
-  else
-    bits = ~bits;
-  double val;
-  memcpy(&val, &bits, sizeof(val));
-  return val;
-}
-
-// Every minimum in this file is stored complemented and folded with atomicMax,
-// so that 0 is the identity for every field and the whole table can be
-// initialized with a plain cudaMemset instead of a kernel launch from a static
-// initializer, which in a multi-TU executable can run before the other
-// translation units' __cudaRegisterFatBinary constructors.
-//
-// 0 is a strict identity: ~ordered(v) == 0 only for a positive NaN, which every
-// writer rejects first. Readback is orderedUint64ToDoubleMin; an unset field
-// (stored 0, so ~0 == UINT64_MAX) decodes to the same sentinel value the
-// .fpprofile readers expect, so the emitted text is unchanged.
-__device__ __host__ inline uint64_t doubleToOrderedUint64Min(double val) {
-  return ~doubleToOrderedUint64(val);
-}
-
-__device__ __host__ inline double orderedUint64ToDoubleMin(uint64_t stored) {
-  return orderedUint64ToDouble(~stored);
-}
-
-struct GPUProfileSlot {
-  uint64_t minRes;
-  uint64_t maxRes;
-  uint64_t minOperands[POSEIDON_MAX_OPERANDS];
-  uint64_t maxOperands[POSEIDON_MAX_OPERANDS];
-  uint64_t minMagOperands[POSEIDON_MAX_OPERANDS]; // smallest nonzero |operand|
-  double sumValue;
-  double sumGrad;
-  // Sum of |gradient|. The signed sum is what the accuracy model weights with,
-  // and it cancels for any value whose adjoint alternates in sign across
-  // executions -- a sum-factorization contraction read by a derivative operator
-  // does exactly that. The magnitude sum cannot cancel, so it is the honest
-  // answer to "how much does the output move when this value moves".
-  double sumAbsGrad;
-  double sumSens;
-  uint64_t exec;
-  uint32_t numOperands;
-};
-
-__constant__ GPUProfileSlot *d_slots;
-__constant__ size_t d_slotCount;
-
-// Length of the per-function name slot the device registry copies a profiled
-// function's mangled name into. A truncated name is not a cosmetic loss: the
-// host would write the profile under the truncated name while the pass looks
-// for it under the full one. 2048 covers every name observed with an order of
-// magnitude of slack; overflow aborts in poseidonRegisterIdx rather than
-// clipping.
-#define POSEIDON_FUNCNAME_MAXLEN 2048
-
-// Length of the per-function buffer the compile-time static data (the header
-// lines Poseidon computed about the site and cannot recompute at profile-use)
-// is published through. Overflow aborts in poseidonProfileStaticCUDA rather than
-// writing a truncated header line.
-#define POSEIDON_PROFILE_STATIC_MAXLEN 4096
-
-// Multi-function support: each wrapped kernel gets its own slot block and
-// output file. A probe's funcName is a distinct device-global string constant,
-// so its pointer is a race-free key (atomicCAS on the 64-bit pointer). Slot
-// block = base[funcIdx*perFuncCount + idx]. The capacity is a runtime quantity
-// (POSEIDON_PROFILE_MAX_FUNCS): one fused framework integrator can produce
-// hundreds of profiled clones in one module. Overflow aborts
-// (poseidonRegisterIdx); it must never fold one function's atomics into
-// another function's slot block.
-__constant__ int d_maxFuncs;
-__constant__ const char **d_funcReg;  // [d_maxFuncs]
-__constant__ char *d_funcNames;       // [d_maxFuncs][POSEIDON_FUNCNAME_MAXLEN]
-
-// Per-function launch geometry: gridDim is captured in the value logger,
-// blockDim and the launch/CTA count in the entry probe
-// poseidonProfileBlockDimsCUDA. All three are per function: distinct clones of
-// one operator run under different block shapes, and a module-global max would
-// corrupt the matmul M/N reconstruction and the boundary-cast frequency scale
-// that read them. 0 = unknown (neutral).
-__constant__ uint32_t *d_gridDimByFunc;   // [d_maxFuncs][3]
-__constant__ uint32_t *d_blockDimByFunc;  // [d_maxFuncs][3]
-__constant__ unsigned long long *d_launchCountByFunc; // [d_maxFuncs]
-
-// Per-function compile-time static data, published by the site's own kernel
-// through the same pointer-keyed registry the names use and copied verbatim
-// into the .fpprofile header. [d_maxFuncs][POSEIDON_PROFILE_STATIC_MAXLEN]
-__constant__ char *d_staticByFunc;
-
-// One-shot gate for device-side fatal messages: every thread of a failing
-// launch would otherwise print the same 200-character diagnostic.
-__device__ int d_fatalReported = 0;
-__device__ __attribute__((noinline)) bool poseidonFirstFatal() {
-  return atomicCAS(&d_fatalReported, 0, 1) == 0;
-}
-
-// Open-addressed pointer-keyed registry for the value table. A full registry is
-// a hard error: reusing slot 0 would silently mix unrelated kernels'
-// statistics.
-// noinline: this is the only function holding the registry's atomicCAS, and a
-// device-profiled single-TU build (-include + a large inline threshold) would
-// otherwise replicate that cmpxchg into the function Enzyme is
-// differentiating, where reverse mode cannot handle it.
-__device__ __attribute__((noinline)) int
-poseidonRegisterIdx(const char **reg, char *names, int cap, const char *fn,
-                    const char *which, const char *envVar) {
-  if (!fn) {
-    if (poseidonFirstFatal())
-      printf("Poseidon FPProfiler: null %s function-name key (probe emitted "
-             "without its poseidon_site_<name> global).\n",
-             which);
-    __trap();
-  }
-  unsigned long long key = (unsigned long long)fn;
-  int home = (int)((key >> 4) % (unsigned long long)cap);
-  for (int p = 0; p < cap; ++p) {
-    int i = home + p;
-    if (i >= cap)
-      i -= cap;
-    const char *cur = *(const char *volatile *)&reg[i];
-    if (cur == fn)
-      return i;
-    if (cur == nullptr) {
-      unsigned long long old =
-          atomicCAS((unsigned long long *)&reg[i], 0ull, key);
-      if (old == 0ull) { // claimed: copy the name for host readback
-        char *dst = names + (size_t)i * POSEIDON_FUNCNAME_MAXLEN;
-        int k = 0;
-        for (; k < POSEIDON_FUNCNAME_MAXLEN - 1 && fn[k]; ++k)
-          dst[k] = fn[k];
-        dst[k] = '\0';
-        // A clipped name is unrecoverable, not degraded: the dump lands under
-        // the prefix while the pass looks under the stem of the FULL name, so
-        // the site is silently left unoptimized. Refuse instead.
-        if (fn[k]) {
-          if (poseidonFirstFatal())
-            printf("Poseidon FPProfiler: %s function name exceeds "
-                   "POSEIDON_FUNCNAME_MAXLEN (%d) and would be TRUNCATED. The "
-                   "profile would be written under a name the compiler can "
-                   "never look up. Raise POSEIDON_FUNCNAME_MAXLEN and rebuild. "
-                   "Name starts: '%.128s'\n",
-                   which, (int)POSEIDON_FUNCNAME_MAXLEN, fn);
-          __trap();
-        }
-        __threadfence();
-        return i;
-      }
-      if (old == key)
-        return i;
-    }
-  }
-  if (poseidonFirstFatal())
-    printf("Poseidon FPProfiler: %s function registry is FULL (%d entries) "
-           "while registering '%s'. Raise %s. Aborting rather than folding "
-           "this function's statistics into another function's slots.\n",
-           which, cap, fn, envVar);
-  __trap();
-  return -1;
-}
-
-__device__ inline int poseidonFuncIdx(const char *fn) {
-  return poseidonRegisterIdx(d_funcReg, d_funcNames, d_maxFuncs, fn, "value",
-                             "POSEIDON_PROFILE_MAX_FUNCS");
-}
-
-// Condition-number probe (profile-gen only). The compiler wraps the value of
-// every store a site makes through its own pointer arguments with
-// poseidonProbePerturbCUDA and passes the site's id as an immediate; the driver
-// re-runs the profiling workload once per (site, eps) with
-// POSEIDON_PROBE_SITE=<id> and POSEIDON_PROBE_EPS=<eps> and reads the declared
-// quantity of interest back from metric.txt (scripts/poseidon_probe.py). With
-// no env set (eps == 0) the hook returns its input unchanged, so the baseline
-// is bit-identical to an uninstrumented run.
-__device__ double d_probeEps = 0.0;
-__device__ int d_probeSite = -1;
-
-// Probe entry points are inactive and never inlined: they are pure
-// side-effect sinks Enzyme must not differentiate, and device-side profiling
-// of a single translation unit compiles this file into that unit (-include)
-// with a very large inline threshold, so without noinline the registry's
-// atomicCAS is inlined into the function Enzyme is differentiating and
-// reverse mode dies on `cannot handle unknown instruction: cmpxchg`.
-#if defined(__has_attribute)
-#if __has_attribute(enzyme_inactive)
-#define POSEIDON_PROBE_ATTRS                                                   \
-  __attribute__((enzyme_inactive, enzyme_nofree, noinline))
-#endif
-#endif
-#ifndef POSEIDON_PROBE_ATTRS
-#define POSEIDON_PROBE_ATTRS __attribute__((noinline))
-#endif
-
-extern "C" __device__ __attribute__((noinline)) double
-poseidonProbePerturbCUDA(int site, double v) {
-  double eps = d_probeEps;
-  if (eps == 0.0 || site != d_probeSite)
-    return v;
-  // Value-dependent sign (bit hash): a uniform (1+eps) factor commutes through
-  // linear operations and cancellations ((1+eps)x - (1+eps)y = (1+eps)(x-y)),
-  // hiding exactly the cancellation amplification the probe must expose. A
-  // deterministic +/-eps keyed on the value's bits models independent
-  // per-operation rounding while staying reproducible across runs.
-  unsigned long long b = __double_as_longlong(v);
-  b ^= b >> 33;
-  b *= 0xff51afd7ed558ccdULL;
-  b ^= b >> 33;
-  return v * (1.0 + ((b & 1ULL) ? eps : -eps));
-}
-
-extern "C" __device__ __attribute__((noinline)) float
-poseidonProbePerturbCUDAf(int site, float v) {
-  return (float)poseidonProbePerturbCUDA(site, (double)v);
-}
-
-// Complemented minimum (see doubleToOrderedUint64Min): folds with atomicMax so
-// the zero-initialized state is the identity.
-__device__ inline void atomicMinDouble(uint64_t *addr, double val) {
-  if (isnan(val))
-    return;
-  atomicMax((unsigned long long *)addr,
-            (unsigned long long)doubleToOrderedUint64Min(val));
-}
-
-__device__ inline void atomicMaxDouble(uint64_t *addr, double val) {
-  if (isnan(val))
-    return;
-  atomicMax((unsigned long long *)addr,
-            (unsigned long long)doubleToOrderedUint64(val));
-}
-
-__device__ inline void atomicAddFinite(double *addr, double val) {
-  if (isnan(val) || isinf(val))
-    return;
-  atomicAdd(addr, val);
-}
-
-// Block-geometry probe, injected at the entry of every function that carries
-// value probes (injectBlockDimProbes) and keyed by the SAME funcName global the
-// value probes use, so the geometry lands in the profiled function's own record
-// rather than in a module-global bucket shared with every other kernel.
-extern "C" __device__ POSEIDON_PROBE_ATTRS void poseidonProfileBlockDimsCUDA(const char *funcName) {
-  if (threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0) {
-    int fi = poseidonFuncIdx(funcName);
-    atomicMax(&d_blockDimByFunc[(size_t)fi * 3 + 0], blockDim.x);
-    atomicMax(&d_blockDimByFunc[(size_t)fi * 3 + 1], blockDim.y);
-    atomicMax(&d_blockDimByFunc[(size_t)fi * 3 + 2], blockDim.z);
-    atomicAdd(&d_launchCountByFunc[fi], 1ULL);
-  }
-}
-
-// Compile-time static data probe, injected at the entry of the site clone
-// alongside the geometry probe and keyed by the same funcName global. The text
-// is a constant of the module, so every launch writes the same bytes and the
-// first writer wins.
-extern "C" __device__ POSEIDON_PROBE_ATTRS void poseidonProfileStaticCUDA(const char *funcName,
-                                                 const char *text) {
-  if (threadIdx.x != 0 || threadIdx.y != 0 || threadIdx.z != 0)
-    return;
-  if (!text || !text[0])
-    return;
-  int fi = poseidonFuncIdx(funcName);
-  char *dst = d_staticByFunc + (size_t)fi * POSEIDON_PROFILE_STATIC_MAXLEN;
-  if (dst[0] != '\0')
-    return;
-  int k = 0;
-  for (; k < POSEIDON_PROFILE_STATIC_MAXLEN - 1 && text[k]; ++k)
-    dst[k] = text[k];
-  if (text[k]) {
-    if (poseidonFirstFatal())
-      printf("Poseidon FPProfiler: the static profile data of '%s' exceeds "
-             "POSEIDON_PROFILE_STATIC_MAXLEN (%d) and would be TRUNCATED into "
-             "the profile header. Raise it and rebuild.\n",
-             funcName, (int)POSEIDON_PROFILE_STATIC_MAXLEN);
-    __trap();
-  }
-  dst[k] = '\0';
-  __threadfence();
-}
-
-extern "C" __device__ POSEIDON_PROBE_ATTRS void poseidonLogValueCUDA(const char *funcName, size_t idx,
-                                              double res, size_t numOperands,
-                                              double *operands) {
-  if (idx >= d_slotCount) {
-    printf("Poseidon FPProfiler: probe idx %llu >= "
-           "POSEIDON_PROFILE_MAX_SLOTS=%llu. "
-           "Consider increasing POSEIDON_PROFILE_MAX_SLOTS.\n",
-           (unsigned long long)idx, (unsigned long long)d_slotCount);
-    __trap();
-  }
-
-  int fi = poseidonFuncIdx(funcName);
-  GPUProfileSlot *slot = &d_slots[(size_t)fi * d_slotCount + idx];
-
-  // Record this function's launch grid (idempotent atomicMax; gridDim is fixed
-  // per launch). Keyed by the same fi as the slots.
-  atomicMax(&d_gridDimByFunc[(size_t)fi * 3 + 0], gridDim.x);
-  atomicMax(&d_gridDimByFunc[(size_t)fi * 3 + 1], gridDim.y);
-  atomicMax(&d_gridDimByFunc[(size_t)fi * 3 + 2], gridDim.z);
-
-  atomicMinDouble(&slot->minRes, res);
-  atomicMaxDouble(&slot->maxRes, res);
-  atomicAddFinite(&slot->sumValue, res);
-  atomicAdd((unsigned long long *)&slot->exec, 1ULL);
-
-  slot->numOperands = (uint32_t)numOperands;
-
-  for (size_t i = 0; i < numOperands && i < POSEIDON_MAX_OPERANDS; i++) {
-    atomicMinDouble(&slot->minOperands[i], operands[i]);
-    atomicMaxDouble(&slot->maxOperands[i], operands[i]);
-    if (operands[i] != 0.0)
-      atomicMinDouble(&slot->minMagOperands[i], fabs(operands[i]));
-  }
-}
-
-extern "C" __device__ POSEIDON_PROBE_ATTRS void poseidonLogGradCUDA(const char *funcName,
-                                             size_t idx, double value,
-                                             double grad) {
-  if (idx >= d_slotCount) {
-    printf("Poseidon FPProfiler: probe idx %llu >= "
-           "POSEIDON_PROFILE_MAX_SLOTS=%llu. "
-           "Consider increasing POSEIDON_PROFILE_MAX_SLOTS.\n",
-           (unsigned long long)idx, (unsigned long long)d_slotCount);
-    __trap();
-  }
-
-  int fi = poseidonFuncIdx(funcName);
-  GPUProfileSlot *slot = &d_slots[(size_t)fi * d_slotCount + idx];
-
-  if (!isnan(grad) && !isinf(grad) && !isnan(value) && !isinf(value)) {
-    atomicAddFinite(&slot->sumGrad, grad);
-    atomicAddFinite(&slot->sumAbsGrad, fabs(grad));
-    atomicAddFinite(&slot->sumSens, fabs(grad * value));
-  }
-}
 
 static std::string profileDir = POSEIDON_DEFAULT_PROFILE_DIR;
 static GPUProfileSlot *g_devSlots = nullptr;
 static size_t g_slotCount = 0;
 // Host-side handles on the device-allocated registry (the device side reaches
-// them through __constant__ pointers; the host needs the raw pointers to read
-// them back at exit).
+// them through its module's PoseidonCUDAProfileTable; the host needs the raw
+// pointers to read them back at exit).
 static int g_maxFuncs = 0;
 static const char **g_devFuncReg = nullptr;
 static char *g_devFuncNames = nullptr;
@@ -390,6 +46,16 @@ static uint32_t *g_devGridByFunc = nullptr;
 static uint32_t *g_devBlockByFunc = nullptr;
 static unsigned long long *g_devLaunchByFunc = nullptr;
 static char *g_devStaticByFunc = nullptr;
+
+// What every profiled device module's table holds, and the host shadows of
+// those tables: one per translation unit, registered with the CUDA runtime by
+// that unit's own module constructor (the pass emits both), so each names the
+// copy in its own device module.
+static PoseidonCUDAProfileTable g_table;
+static std::vector<const void *> &poseidonModuleTables() {
+  static auto *v = new std::vector<const void *>();
+  return *v;
+}
 
 // A device-side profiler abort (__trap) poisons the CUDA context but does not
 // by itself fail the process: the host would return 0 with a truncated
@@ -472,6 +138,15 @@ static void poseidonProfileOpenFatal(const std::string &path,
   _exit(1);
 }
 
+// The canonical form a record was taken against, from its static header lines.
+static std::string poseidonCanonicalHash(const char *text) {
+  const char *p = strstr(text, "CanonicalHash = ");
+  if (!p)
+    return "";
+  const char *e = strchr(p, '\n');
+  return std::string(p, e ? (size_t)(e - p) : strlen(p));
+}
+
 static void writeAllCUDAProfiles() {
   poseidonProfileExitCheck();
   if (!g_devSlots || !g_devFuncNames)
@@ -510,6 +185,67 @@ static void writeAllCUDAProfiles() {
   cudaMemcpy(h_launchByFunc, g_devLaunchByFunc,
              (size_t)g_maxFuncs * sizeof(unsigned long long),
              cudaMemcpyDeviceToHost);
+
+  // A function compiled into several device modules (an inline device function
+  // called from kernels of two translation units) has one entry per module
+  // that ran it; its record is all of them, as with one device copy.
+  std::map<std::string, int> firstOf;
+  for (int fi = 0; fi < g_maxFuncs; ++fi) {
+    char *name = h_names + (size_t)fi * POSEIDON_FUNCNAME_MAXLEN;
+    if (name[0] == '\0')
+      continue;
+    auto [it, fresh] = firstOf.emplace(name, fi);
+    if (fresh)
+      continue;
+    int to = it->second;
+    // Two functions of one name (a static kernel, or a lambda of a static
+    // function, in two units) cannot share one profile file.
+    std::string ha = poseidonCanonicalHash(
+        h_static + (size_t)to * POSEIDON_PROFILE_STATIC_MAXLEN);
+    std::string hb = poseidonCanonicalHash(
+        h_static + (size_t)fi * POSEIDON_PROFILE_STATIC_MAXLEN);
+    if (!ha.empty() && !hb.empty() && ha != hb) {
+      fflush(stdout);
+      fprintf(stderr,
+              "Poseidon FPProfiler: two different functions were profiled "
+              "under the name '%s' in two device modules (%s, %s), and one "
+              "profile file cannot hold both. Give them distinct names. The "
+              "profile is NOT written.\n",
+              name, ha.c_str(), hb.c_str());
+      fflush(stderr);
+      _exit(1);
+    }
+    for (size_t i = 0; i < g_slotCount; i++) {
+      GPUProfileSlot &a = h_slots[(size_t)to * g_slotCount + i];
+      const GPUProfileSlot &b = h_slots[(size_t)fi * g_slotCount + i];
+      a.minRes = std::max(a.minRes, b.minRes);
+      a.maxRes = std::max(a.maxRes, b.maxRes);
+      for (int j = 0; j < POSEIDON_MAX_OPERANDS; j++) {
+        a.minOperands[j] = std::max(a.minOperands[j], b.minOperands[j]);
+        a.maxOperands[j] = std::max(a.maxOperands[j], b.maxOperands[j]);
+        a.minMagOperands[j] =
+            std::max(a.minMagOperands[j], b.minMagOperands[j]);
+      }
+      a.sumValue += b.sumValue;
+      a.sumGrad += b.sumGrad;
+      a.sumAbsGrad += b.sumAbsGrad;
+      a.sumSens += b.sumSens;
+      a.exec += b.exec;
+      a.numOperands = std::max(a.numOperands, b.numOperands);
+    }
+    for (int d = 0; d < 3; d++) {
+      h_gridByFunc[to * 3 + d] =
+          std::max(h_gridByFunc[to * 3 + d], h_gridByFunc[fi * 3 + d]);
+      h_blockByFunc[to * 3 + d] =
+          std::max(h_blockByFunc[to * 3 + d], h_blockByFunc[fi * 3 + d]);
+    }
+    h_launchByFunc[to] += h_launchByFunc[fi];
+    char *st = h_static + (size_t)to * POSEIDON_PROFILE_STATIC_MAXLEN;
+    if (st[0] == '\0')
+      memcpy(st, h_static + (size_t)fi * POSEIDON_PROFILE_STATIC_MAXLEN,
+             POSEIDON_PROFILE_STATIC_MAXLEN);
+    name[0] = '\0';
+  }
 
   poseidonMkdirP(profileDir);
 
@@ -601,6 +337,20 @@ static size_t readPositiveEnv(const char *name, size_t dflt) {
 // and the CUDA work happens here, called from the top of main by the compiler
 // (injectHostProfilerInit). Idempotent and safe to call by hand as well.
 static bool g_cudaInitDone = false;
+static size_t g_heapBytes = 0;
+
+static void poseidonBindModule(const void *table) {
+  POSEIDON_CUDA_OK(cudaMemcpyToSymbol(table, &g_table, sizeof(g_table)));
+}
+
+// Called by the module constructor of every translation unit whose device
+// code was compiled for profile generation; a unit loaded after main started
+// is bound here, the others when main starts.
+extern "C" void __poseidon_profile_register_module(const void *table) {
+  poseidonModuleTables().push_back(table);
+  if (g_cudaInitDone)
+    poseidonBindModule(table);
+}
 
 extern "C" void __poseidon_profile_init_cuda() {
   if (g_cudaInitDone)
@@ -614,6 +364,19 @@ extern "C" void __poseidon_profile_init_cuda() {
                                  POSEIDON_DEFAULT_MAX_SLOTS);
   size_t nfuncs =
       readPositiveEnv("POSEIDON_PROFILE_MAX_FUNCS", POSEIDON_DEFAULT_MAX_FUNCS);
+
+  // A profiled kernel's reverse pass caches what it cannot recompute in the
+  // device heap, which CUDA sizes at 8 MiB and an application sizes for its
+  // own kernels. It can only be resized before the first kernel that
+  // allocates, so it is raised here, and never lowered.
+  size_t heapBytes =
+      readPositiveEnv("POSEIDON_PROFILE_HEAP_MB", POSEIDON_DEFAULT_HEAP_MB)
+      << 20;
+  POSEIDON_CUDA_OK(cudaDeviceGetLimit(&g_heapBytes, cudaLimitMallocHeapSize));
+  if (g_heapBytes < heapBytes) {
+    POSEIDON_CUDA_OK(cudaDeviceSetLimit(cudaLimitMallocHeapSize, heapBytes));
+    g_heapBytes = heapBytes;
+  }
 
   // Function registry: pointer keys, names, and per-function launch geometry.
   // Allocated up front (device code cannot allocate) and zeroed, which is also
@@ -649,18 +412,13 @@ extern "C" void __poseidon_profile_init_cuda() {
   POSEIDON_CUDA_OK(cudaMemset(g_devLaunchByFunc, 0, lcBytes));
   POSEIDON_CUDA_OK(cudaMemset(g_devStaticByFunc, 0, stBytes));
   g_maxFuncs = (int)nfuncs;
-  int maxFuncsI = (int)nfuncs;
-  POSEIDON_CUDA_OK(cudaMemcpyToSymbol(d_maxFuncs, &maxFuncsI, sizeof(maxFuncsI)));
-  POSEIDON_CUDA_OK(cudaMemcpyToSymbol(d_funcReg, &g_devFuncReg, sizeof(g_devFuncReg)));
-  POSEIDON_CUDA_OK(cudaMemcpyToSymbol(d_funcNames, &g_devFuncNames, sizeof(g_devFuncNames)));
-  POSEIDON_CUDA_OK(cudaMemcpyToSymbol(d_gridDimByFunc, &g_devGridByFunc,
-                   sizeof(g_devGridByFunc)));
-  POSEIDON_CUDA_OK(cudaMemcpyToSymbol(d_blockDimByFunc, &g_devBlockByFunc,
-                   sizeof(g_devBlockByFunc)));
-  POSEIDON_CUDA_OK(cudaMemcpyToSymbol(d_launchCountByFunc, &g_devLaunchByFunc,
-                   sizeof(g_devLaunchByFunc)));
-  POSEIDON_CUDA_OK(cudaMemcpyToSymbol(d_staticByFunc, &g_devStaticByFunc,
-                   sizeof(g_devStaticByFunc)));
+  g_table.maxFuncs = (int)nfuncs;
+  g_table.funcReg = g_devFuncReg;
+  g_table.funcNames = g_devFuncNames;
+  g_table.gridDimByFunc = g_devGridByFunc;
+  g_table.blockDimByFunc = g_devBlockByFunc;
+  g_table.launchCountByFunc = g_devLaunchByFunc;
+  g_table.staticByFunc = g_devStaticByFunc;
 
   size_t bytes = nfuncs * count * sizeof(GPUProfileSlot);
   cudaError_t err = cudaMalloc(&g_devSlots, bytes);
@@ -674,8 +432,8 @@ extern "C" void __poseidon_profile_init_cuda() {
     abort();
   }
   g_slotCount = count;
-  POSEIDON_CUDA_OK(cudaMemcpyToSymbol(d_slots, &g_devSlots, sizeof(g_devSlots)));
-  POSEIDON_CUDA_OK(cudaMemcpyToSymbol(d_slotCount, &count, sizeof(count)));
+  g_table.slots = g_devSlots;
+  g_table.slotCount = count;
 
   // Condition-number probe (see poseidonProbePerturbCUDA): one site id per run;
   // eps == 0 (default) disables the hook.
@@ -709,13 +467,15 @@ extern "C" void __poseidon_profile_init_cuda() {
       fprintf(stderr, "Poseidon FPProfiler: perturbing site %d (eps=%g)\n",
               probeSite, probeEps);
     }
-    POSEIDON_CUDA_OK(cudaMemcpyToSymbol(d_probeSite, &probeSite, sizeof(probeSite)));
-    POSEIDON_CUDA_OK(cudaMemcpyToSymbol(d_probeEps, &probeEps, sizeof(probeEps)));
+    g_table.probeSite = probeSite;
+    g_table.probeEps = probeEps;
   }
 
   // Zero IS the initial state of every field (see doubleToOrderedUint64Min),
   // so no init kernel is launched from this static initializer.
   POSEIDON_CUDA_OK(cudaMemset(g_devSlots, 0, bytes));
+  for (const void *table : poseidonModuleTables())
+    poseidonBindModule(table);
   cudaDeviceSynchronize();
   // Registered HERE, not from the static constructor: atexit handlers run in
   // reverse registration order, and the CUDA runtime registers its own teardown
@@ -768,8 +528,19 @@ static void poseidonSeedShadow(void *p, size_t bytes, int width) {
 
 // The allocation a device pointer points into. Taken through the driver entry
 // point rather than by linking libcuda, so a profile-generation build needs no
-// extra library on its link line.
+// extra library on its link line; HIP's runtime answers it itself.
 static void poseidonAllocRange(void *p, void *&base, size_t &size) {
+#ifdef __HIP__
+  hipError_t e = hipMemGetAddressRange(&base, &size, p);
+  if (e != hipSuccess) {
+    fprintf(stderr,
+            "Poseidon FPProfiler: hipMemGetAddressRange failed (%s) for the "
+            "device pointer %p passed to a profiled kernel. Only allocations "
+            "the HIP allocator owns can be shadowed.\n",
+            hipGetErrorString(e), p);
+    abort();
+  }
+#else
   typedef int (*PFN_MemGetAddressRange)(unsigned long long *, size_t *,
                                         unsigned long long);
   static PFN_MemGetAddressRange getRange = nullptr;
@@ -800,6 +571,7 @@ static void poseidonAllocRange(void *p, void *&base, size_t &size) {
   }
   base = (void *)(uintptr_t)b;
   size = n;
+#endif
 }
 
 namespace {
@@ -838,12 +610,11 @@ static void poseidonFreeShadows() {
   poseidonShadows().clear();
 }
 
-extern "C" void __poseidon_launch_profiled(const void *func, int site,
-                                           const unsigned *grid,
-                                           const unsigned *block, size_t shmem,
-                                           void *stream, int nargs, void **args,
-                                           int nptr, const int *ptrIdx,
-                                           const int *seedWidth) {
+extern "C" void
+__poseidon_launch_profiled(const void *func, int site, const unsigned *grid,
+                           const unsigned *block, size_t shmem, void *stream,
+                           int nargs, void **args, int nptr, const int *ptrIdx,
+                           const int *ptrOff, const int *seedWidth) {
   static bool freeRegistered = false;
   if (!freeRegistered) {
     freeRegistered = true;
@@ -858,7 +629,9 @@ extern "C" void __poseidon_launch_profiled(const void *func, int site,
   // of the launch, whichever argument first reaches it below.
   std::map<void *, int> width;
   for (int k = 0; k < nptr; ++k) {
-    void *p = *(void **)args[ptrIdx[k]];
+    // A pointer argument, or a pointer field of an aggregate argument (the
+    // captures of a lambda the kernel takes by value).
+    void *p = *(void **)((char *)args[ptrIdx[k]] + ptrOff[k]);
     if (!p)
       continue;
     poseidonAllocRange(p, base[k], size[k]);
@@ -899,8 +672,10 @@ extern "C" void __poseidon_launch_profiled(const void *func, int site,
     fflush(stdout);
     fprintf(stderr,
             "Poseidon FPProfiler: the profiled launch of site %d failed (%s). "
-            "The profile is incomplete and is NOT written.\n",
-            site, cudaGetErrorString(e));
+            "The profile is incomplete and is NOT written. A reverse pass that "
+            "outgrows the device heap (%zu MiB, POSEIDON_PROFILE_HEAP_MB) "
+            "faults this way too.\n",
+            site, cudaGetErrorString(e), g_heapBytes >> 20);
     fflush(stderr);
     _exit(1);
   }

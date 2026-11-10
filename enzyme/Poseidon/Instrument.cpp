@@ -2,6 +2,7 @@
 
 #include "Optimize.h"
 #include "ProfileRead.h"
+#include "Utils.h"
 
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/IR/BasicBlock.h"
@@ -153,7 +154,7 @@ struct ProbeBuilder {
 size_t instrumentForProfiling(Function &clone, unsigned siteId) {
   Module &M = *clone.getParent();
   LLVMContext &Ctx = M.getContext();
-  bool isGPU = Triple(M.getTargetTriple()).isNVPTX();
+  bool isGPU = isDeviceModule(M);
   Type *DoubleTy = Type::getDoubleTy(Ctx);
   Type *PtrTy = PointerType::getUnqual(Ctx);
   Type *SizeTy = Type::getInt64Ty(Ctx);
@@ -219,6 +220,9 @@ size_t instrumentForProfiling(Function &clone, unsigned siteId) {
     Value *operandPtr = B.CreateGEP(
         operandArrayType, operandArray,
         {ConstantInt::get(Int32Ty, 0), ConstantInt::get(Int32Ty, 0)});
+    // AMDGPU's stack is its own address space.
+    if (operandPtr->getType() != PtrTy)
+      operandPtr = B.CreateAddrSpaceCast(operandPtr, PtrTy);
 
     Value *nops = isGPU ? ConstantInt::get(SizeTy, numOperands)
                         : ConstantInt::get(Int32Ty, numOperands);
@@ -236,7 +240,7 @@ void emitProfileStaticData(Function &clone, StringRef text) {
     return;
   Module &M = *clone.getParent();
   LLVMContext &Ctx = M.getContext();
-  bool isGPU = Triple(M.getTargetTriple()).isNVPTX();
+  bool isGPU = isDeviceModule(M);
   Type *VoidTy = Type::getVoidTy(Ctx);
   Type *PtrTy = PointerType::getUnqual(Ctx);
 

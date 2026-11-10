@@ -38,6 +38,16 @@ if(CMAKE_CUDA_COMPILER)
 else()
   set(POSEIDON_TEST_HAS_CUDA False)
 endif()
+if("AMDGPU" IN_LIST LLVM_TARGETS_TO_BUILD)
+  set(POSEIDON_TEST_HAS_AMDGPU True)
+else()
+  set(POSEIDON_TEST_HAS_AMDGPU False)
+endif()
+if(TARGET poseidon_rt_hip)
+  set(POSEIDON_TEST_HAS_HIP True)
+else()
+  set(POSEIDON_TEST_HAS_HIP False)
+endif()
 
 configure_lit_site_cfg(
   ${CMAKE_CURRENT_SOURCE_DIR}/lit.site.cfg.py.in
@@ -45,12 +55,16 @@ configure_lit_site_cfg(
   ${CMAKE_CURRENT_SOURCE_DIR}/lit.cfg.py)
 
 set(POSEIDON_TEST_DEPS Poseidon-${LLVM_VERSION_MAJOR} poseidon_profile
-    poseidon_profile_host poseidon-clang LLVMEnzyme-${LLVM_VERSION_MAJOR})
+    poseidon_profile_host poseidon-clang poseidon-calibrate
+    LLVMEnzyme-${LLVM_VERSION_MAJOR})
 if(TARGET ClangEnzyme-${LLVM_VERSION_MAJOR})
   list(APPEND POSEIDON_TEST_DEPS ClangEnzyme-${LLVM_VERSION_MAJOR})
 endif()
 if(TARGET poseidon_rt)
-  list(APPEND POSEIDON_TEST_DEPS poseidon_rt)
+  list(APPEND POSEIDON_TEST_DEPS poseidon_rt poseidon_profile_cuda)
+endif()
+if(TARGET poseidon_rt_hip)
+  list(APPEND POSEIDON_TEST_DEPS poseidon_rt_hip poseidon_profile_hip)
 endif()
 
 # check-poseidon needs no device; the tests under Integration/ compile and

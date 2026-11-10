@@ -24,6 +24,18 @@
 // RUN:     --cuda-path=%t.cuda -nocudainc -nocudalib -### %s -o %t.o 2>&1 \
 // RUN:   | FileCheck --check-prefix=XPAIR %s
 //
+// HIP: every -poseidon-<flag> reaches the compiler through -Xclang (HIP's
+// driver hands -mllvm to the device linker as well), and the runtimes are
+// HIP's.
+// RUN: env POSEIDON_ECHO=1 %poseidon_clangxx -poseidon-profile-use \
+// RUN:     -poseidon-tau=1e-7 -x hip --offload-arch=gfx942 \
+// RUN:     --rocm-path=%t.rocm -nogpuinc -nogpulib -### %s -o %t.o 2>&1 \
+// RUN:   | FileCheck --check-prefix=HIPUSE %s
+// RUN: env POSEIDON_ECHO=1 %poseidon_clangxx -poseidon-profile-generate \
+// RUN:     -x hip --offload-arch=gfx942 \
+// RUN:     --rocm-path=%t.rocm -nogpuinc -nogpulib -### %s -o %t.o 2>&1 \
+// RUN:   | FileCheck --check-prefix=HIPGEN %s
+//
 // REQUIRES: poseidon, enzyme
 
 int main(void) { return 0; }
@@ -34,7 +46,9 @@ int main(void) { return 0; }
 
 // GEN: clang{{.*}} -fpass-plugin={{.*}}Poseidon-{{[0-9]+}}.so -fpass-plugin={{.*}}Enzyme-{{[0-9]+}}.so
 // GEN-SAME: -mllvm -poseidon-profile-generate
-// GEN-SAME: -fcuda-rdc {{.*}}FPProfilerCUDA.cu -L{{.*}} -lcudart -L{{.*}} -lposeidon_profile_host -lposeidon_profile
+// No relocatable device code and no runtime source: the user's arguments are
+// followed by the runtimes alone.
+// GEN-SAME: -### {{[^ ]+}} -o {{[^ ]+}} -L{{[^ ]+}} -lcudart -L{{[^ ]+}} -lposeidon_profile_host{{( -lposeidon_profile_cuda)?}} -lposeidon_profile{{ ?$}}
 
 // HELP: -poseidon-profile-generate
 // HELP: -poseidon-profile-use
@@ -45,3 +59,11 @@ int main(void) { return 0; }
 // XPAIR-SAME: -Xclang -poseidon-not-a-flag
 // XPAIR-NOT: -mllvm --maxrregcount=160
 // XPAIR-NOT: -mllvm -poseidon-not-a-flag
+
+// HIPUSE: clang{{.*}} -Xclang -mllvm -Xclang -poseidon-profile-use -Xclang -mllvm -Xclang -poseidon-tau=1e-7
+// HIPUSE-NOT: -mllvm -poseidon-
+// HIPUSE-SAME: -L{{[^ ]+}}.rocm/lib -lamdhip64
+// HIPUSE-SAME: -lposeidon_profile -lposeidon_rt_hip -lhipblas{{ ?$}}
+
+// HIPGEN: clang{{.*}} -Xclang -mllvm -Xclang -poseidon-profile-generate
+// HIPGEN-SAME: -### {{[^ ]+}} -o {{[^ ]+}} -L{{[^ ]+}}.rocm/lib -lamdhip64 -L{{[^ ]+}} -lposeidon_profile_host{{( -lposeidon_profile_hip)?}} -lposeidon_profile{{ ?$}}

@@ -13,6 +13,7 @@
 #include "llvm/IR/PassManager.h"
 #include "llvm/Support/CommandLine.h"
 
+#include "Matmul.h"
 #include "OzakiII.h"
 #include "Utils.h"
 
@@ -23,8 +24,6 @@ class Value;
 } // namespace llvm
 
 namespace poseidon {
-
-struct AbstractMatmul;
 
 // GemmBodyNote roles are the optimized body's parameter indices;
 // optimizeSiteBody maps them to the wrapper kernel's launch-arg indices before
@@ -47,10 +46,30 @@ constexpr llvm::StringLiteral kOzDispatchScheme = ".ozdispatch";
 //   <kernel> <site id> <original arg count> <pointer arg count>
 //            <pointer arg index>...
 //            <seed width in bytes of that pointer, 0 if it is not an output>...
+//            [off <byte offset of that pointer in its argument>...]
+// The offsets are written when a pointer is a field of an aggregate argument.
 constexpr llvm::StringLiteral kProfGenScheme = ".profgen";
+
+// Marks a parameter of an outlined kernel body that carries the kernel's
+// by-value aggregate argument: the body reads the kernel's own copy, so the
+// parameter is no longer byval, and only this says its fields are launch
+// values.
+constexpr llvm::StringLiteral kByValueParam = "poseidon-by-value";
+
+// The field of a by-value aggregate parameter `v` reads (a load at a constant
+// offset from a parameter the body only reads, or an extractvalue of an
+// aggregate parameter); an invalid ref otherwise.
+LaunchRef launchFieldOf(const llvm::Value *v);
+
+// The launch value a pointer is derived from through GEP/cast chains: a
+// parameter, or a pointer field of a by-value aggregate parameter.
+LaunchRef tracePointerRoot(const llvm::Value *v);
 
 struct GemmBodyNote {
   int cParam = -1, aParam = -1, bParam = -1;
+  // Byte offsets of the three operand pointers inside their parameter, when
+  // the parameter is a by-value aggregate; -1 when it is the pointer itself.
+  int64_t cOffset = -1, aOffset = -1, bOffset = -1;
   unsigned N = 0; // square dim (== gK); square fast path
   DispatchScheme scheme = DispatchScheme::OzakiII;
   // Scheme parameter: Ozaki-II num_moduli, or the TCEC compute mode.
@@ -86,15 +105,15 @@ struct GemmBodyNote {
   // reduce accumulates into y (`y(i,q,e) += sum`), and a dispatch emitted with
   // a hard-wired beta = 0 would drop the caller's accumulator. Descriptors
   // written before these tokens existed carry neither and read back as false /
-  // 0.0.
-  struct RtDim {
-    int param = -1; // WRAPPER launch-argument index (-1 = use the constant)
-    int64_t mul = 1;
-    int64_t add = 0;
-  };
+  // 0.0. The factors name body parameters until the descriptor is written and
+  // WRAPPER launch arguments after.
+  using RtDim = RuntimeDim;
   bool runtimeDims = false;
   RtDim rM, rNcols, rK, rlda, rldb, rldc;
   double beta = 0.0;
+  // Launch values the recognition assumed equal (RuntimeGemmHandle); the stub
+  // dispatches only when every pair agrees and launches the kernel otherwise.
+  llvm::SmallVector<std::pair<LaunchRef, LaunchRef>, 2> assumedEqual;
 };
 
 // Walk GEP/bitcast/addrspacecast chains back to a Function Argument (-1 if
@@ -136,9 +155,10 @@ void flushPendingGemmDispatches();
 // launch stub; must run on the host module before inlining.
 bool rewriteGemmStubBodies(llvm::Module &M, llvm::StringRef cacheDir);
 
-// Read *.profgen in cacheDir and rewrite each matching launch stub into a call
-// of __poseidon_launch_profiled, which allocates, zeroes and seeds the shadow
-// buffers the profiling kernel takes and launches it. Host module only.
+// Read *.profgen in cacheDir and rewrite the launch in each matching launch
+// stub into a call of __poseidon_launch_profiled, which allocates, zeroes and
+// seeds the shadow buffers the profiling kernel takes and launches it. Host
+// module only.
 bool rewriteProfileStubBodies(llvm::Module &M, llvm::StringRef cacheDir);
 
 // PipelineStart pass wrapper for rewriteGemmStubBodies (host module only).

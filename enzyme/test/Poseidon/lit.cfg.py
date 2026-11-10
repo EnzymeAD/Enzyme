@@ -14,7 +14,7 @@ if LLVM_VERSION_MAJOR >= 23:
                                             force_execute_external=True)
 else:
     config.test_format = lit.formats.ShTest(platform.system() != 'Windows')
-config.suffixes = ['.ll', '.c', '.cpp', '.cu']
+config.suffixes = ['.ll', '.c', '.cpp', '.cu', '.hip']
 config.test_source_root = os.path.dirname(__file__)
 config.test_exec_root = config.poseidon_obj_root
 config.excludes = ['Inputs', 'CMakeFiles']

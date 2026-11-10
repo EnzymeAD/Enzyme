@@ -20,9 +20,10 @@
 //    args...) with that call's own target: the call fn(args...), and only that
 //    call, is the site. It has its own profile, target and rewritten copy of
 //    fn, so two calls of one function can be rewritten differently; other
-//    calls of fn run it as written. fn names a host function defined in the
-//    same translation unit; t is a compile-time constant. Without the plugin
-//    the call runs as written.
+//    calls of fn run it as written. fn names a function defined in the same
+//    translation unit, on the host or in device code; t is a compile-time
+//    constant. In device code the pointers the call passes point into local
+//    objects of the caller. Without the plugin the call runs as written.
 // 4. -poseidon-kernels=<regex>|all: GPU kernels opted in without editing their
 //    source; only those above -poseidon-min-cost-share of the profiled cost
 //    are optimized.
@@ -67,7 +68,7 @@
       __VA_ARGS__)
 
 // The identity keeps its plain name in C and C++ alike, never throws, and is
-// callable from device code, where the pass leaves the call as written.
+// callable from device code.
 #ifdef __cplusplus
 #define POSEIDON_SITE_HELPER inline __attribute__((nothrow))
 #else
@@ -100,6 +101,63 @@ __poseidon_site_tau(void *fn, double tau) {
 
 #ifdef __cplusplus
 }
+#endif
+
+// The libdevice (CUDA) or ocml (HIP) functions a rewrite or a derivative of a
+// device site may call, linked into every device module that includes this
+// header. The plugin keeps them while it profiles or rewrites a module's sites
+// and drops them from any other module, which then compiles as it does without
+// the header. Taking their addresses keeps them in the C calling convention the
+// calls a rewrite adds use; one only ever called directly may become fastcc.
+#if defined(__CUDA_ARCH__) && defined(__CLANG_CUDA_LIBDEVICE_DECLARES_H__)
+#define POSEIDON_KEEP(fn)                                                      \
+  keep = (void *)&__nv_##fn, keep = (void *)&__nv_##fn##f
+extern "C" inline __device__
+    __attribute__((used)) void __poseidon_device_math(void) {
+  void *volatile keep;
+  POSEIDON_KEEP(sin), POSEIDON_KEEP(cos), POSEIDON_KEEP(tan);
+  POSEIDON_KEEP(asin), POSEIDON_KEEP(acos), POSEIDON_KEEP(atan);
+  POSEIDON_KEEP(atan2), POSEIDON_KEEP(sinh), POSEIDON_KEEP(cosh);
+  POSEIDON_KEEP(tanh), POSEIDON_KEEP(asinh), POSEIDON_KEEP(acosh);
+  POSEIDON_KEEP(atanh), POSEIDON_KEEP(exp), POSEIDON_KEEP(exp2);
+  POSEIDON_KEEP(expm1), POSEIDON_KEEP(log), POSEIDON_KEEP(log2);
+  POSEIDON_KEEP(log10), POSEIDON_KEEP(log1p), POSEIDON_KEEP(sqrt);
+  POSEIDON_KEEP(cbrt), POSEIDON_KEEP(pow), POSEIDON_KEEP(powi);
+  POSEIDON_KEEP(hypot), POSEIDON_KEEP(erf), POSEIDON_KEEP(lgamma);
+  POSEIDON_KEEP(tgamma), POSEIDON_KEEP(fabs), POSEIDON_KEEP(fma);
+  POSEIDON_KEEP(ceil), POSEIDON_KEEP(floor), POSEIDON_KEEP(rint);
+  POSEIDON_KEEP(round), POSEIDON_KEEP(trunc), POSEIDON_KEEP(copysign);
+  POSEIDON_KEEP(fdim), POSEIDON_KEEP(fmod), POSEIDON_KEEP(remainder);
+  POSEIDON_KEEP(fmin), POSEIDON_KEEP(fmax);
+  (void)keep;
+}
+#undef POSEIDON_KEEP
+#elif defined(__HIP_DEVICE_COMPILE__) &&                                       \
+    defined(__CLANG_HIP_LIBDEVICE_DECLARES_H__)
+// HIP spells these as LLVM intrinsics, so its header does not declare them.
+extern "C" __device__ float __ocml_exp_f32(float);
+extern "C" __device__ float __ocml_exp2_f32(float);
+extern "C" __device__ float __ocml_log_f32(float);
+extern "C" __device__ float __ocml_log2_f32(float);
+extern "C" __device__ float __ocml_log10_f32(float);
+#define POSEIDON_KEEP(fn)                                                      \
+  keep = (void *)&__ocml_##fn##_f64, keep = (void *)&__ocml_##fn##_f32
+extern "C" inline __device__
+    __attribute__((used)) void __poseidon_device_math(void) {
+  void *volatile keep;
+  POSEIDON_KEEP(sin), POSEIDON_KEEP(cos), POSEIDON_KEEP(tan);
+  POSEIDON_KEEP(asin), POSEIDON_KEEP(acos), POSEIDON_KEEP(atan);
+  POSEIDON_KEEP(atan2), POSEIDON_KEEP(sinh), POSEIDON_KEEP(cosh);
+  POSEIDON_KEEP(tanh), POSEIDON_KEEP(asinh), POSEIDON_KEEP(acosh);
+  POSEIDON_KEEP(atanh), POSEIDON_KEEP(exp), POSEIDON_KEEP(exp2);
+  POSEIDON_KEEP(expm1), POSEIDON_KEEP(log), POSEIDON_KEEP(log2);
+  POSEIDON_KEEP(log10), POSEIDON_KEEP(log1p), POSEIDON_KEEP(cbrt);
+  POSEIDON_KEEP(pow), POSEIDON_KEEP(hypot), POSEIDON_KEEP(erf);
+  POSEIDON_KEEP(lgamma), POSEIDON_KEEP(tgamma), POSEIDON_KEEP(fdim);
+  POSEIDON_KEEP(fmod), POSEIDON_KEEP(remainder);
+  (void)keep;
+}
+#undef POSEIDON_KEEP
 #endif
 
 #endif // POSEIDON_PROFILE_H
