@@ -14,10 +14,12 @@
 #include "Implementations/CoreDialectsAutoDiffImplementations.h"
 #include "Interfaces/AutoDiffOpInterface.h"
 #include "Interfaces/AutoDiffTypeInterface.h"
+#include "Interfaces/EnzymeLogic.h"
 #include "Interfaces/GradientUtils.h"
 #include "Interfaces/GradientUtilsReverse.h"
 #include "Interfaces/OffsetViewInterface.h"
 #include "Interfaces/Utils.h"
+#include "Passes/RemovalUtils.h"
 
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/DialectRegistry.h"
@@ -497,6 +499,257 @@ struct MemRefAllocOpInterface
   }
 };
 
+struct AllocaScopeOpEnzymeOpsRemover
+    : public EnzymeOpsRemoverOpInterface::ExternalModel<
+          AllocaScopeOpEnzymeOpsRemover, memref::AllocaScopeOp> {
+  LogicalResult removeEnzymeOps(Operation *op,
+                                PatternRewriter &rewriter) const {
+    auto scopeOp = cast<memref::AllocaScopeOp>(op);
+    if (scopeOp.getBodyRegion().empty())
+      return success();
+
+    Block *bodyBlock = &scopeOp.getBodyRegion().front();
+
+    llvm::SetVector<Value> gradients;
+    llvm::MapVector<Value, CacheInfo> pushedCaches;
+    IRMapping mapping;
+
+    removalBlockExplore(bodyBlock, mapping, rewriter, gradients, pushedCaches);
+
+    if (gradients.empty() && pushedCaches.empty())
+      return success();
+
+    bool removeCaches =
+        !op->hasAttr(kPreserveCacheAttrName) && !pushedCaches.empty();
+    SmallVector<CacheInfo> caches = llvm::map_to_vector(
+        pushedCaches, [](auto pair) { return std::get<1>(pair); });
+
+    if (removeCaches && hasMinCut(scopeOp)) {
+      memref::AllocaScopeOp reverseScopeOp = nullptr;
+      for (auto &[_, info] : pushedCaches) {
+        Operation *parent = info.popOp->getParentOp();
+        if (isa<memref::AllocaScopeOp>(parent) &&
+            (reverseScopeOp == nullptr ||
+             parent->isProperAncestor(reverseScopeOp))) {
+          reverseScopeOp = cast<memref::AllocaScopeOp>(parent);
+        }
+      }
+
+      if (reverseScopeOp && !reverseScopeOp.getBodyRegion().empty()) {
+        Block *reverseBodyBlock = &reverseScopeOp.getBodyRegion().front();
+        OpBuilder::InsertionGuard guard(rewriter);
+        rewriter.setInsertionPointToStart(reverseBodyBlock);
+        enzyme::minCutCache(bodyBlock, reverseBodyBlock, caches, rewriter,
+                            mapping);
+      }
+    }
+
+    Operation *term = bodyBlock->getTerminator();
+
+    for (auto grad : gradients) {
+      auto val = mapping.lookupOrNull(grad);
+      if (!val) {
+        val = enzyme::GetOp::create(
+            rewriter, grad.getLoc(),
+            cast<enzyme::GradientType>(grad.getType()).getBasetype(), grad);
+      }
+      term->insertOperands(term->getNumOperands(), ValueRange(val));
+    }
+
+    if (removeCaches) {
+      for (auto &info : caches) {
+        Value pushedValue = info.pushedValue();
+        term->insertOperands(term->getNumOperands(), ValueRange(pushedValue));
+      }
+    }
+
+    size_t idx = scopeOp->getNumResults();
+    auto newScope = memref::AllocaScopeOp::create(rewriter, scopeOp->getLoc(),
+                                                  term->getOperandTypes());
+    newScope->setDiscardableAttrs(scopeOp->getDiscardableAttrDictionary());
+    newScope.getBodyRegion().takeBody(scopeOp.getBodyRegion());
+    rewriter.replaceAllUsesWith(
+        scopeOp->getResults(),
+        newScope->getResults().slice(0, scopeOp->getNumResults()));
+    rewriter.eraseOp(scopeOp);
+    scopeOp = newScope;
+
+    for (auto grad : gradients) {
+      enzyme::SetOp::create(rewriter, grad.getLoc(), grad,
+                            scopeOp->getResult(idx));
+      idx++;
+    }
+
+    if (removeCaches) {
+      for (auto &info : caches) {
+        enzyme::PushOp::create(rewriter, info.pushOp->getLoc(),
+                               info.initOp.getResult(),
+                               scopeOp->getResult(idx));
+        rewriter.eraseOp(info.pushOp);
+
+        if (isa<memref::AllocaScopeOp>(info.popOp->getParentOp())) {
+          OpBuilder::InsertionGuard guard(rewriter);
+          rewriter.setInsertionPoint(info.popOp->getParentOp());
+
+          auto newPop = enzyme::PopOp::create(rewriter, info.popOp->getLoc(),
+                                              info.popOp.getResult().getType(),
+                                              info.popOp.getCache());
+          rewriter.replaceAllUsesWith(info.popOp.getResult(), newPop);
+          rewriter.eraseOp(info.popOp);
+        }
+
+        idx++;
+      }
+    }
+
+    return success();
+  }
+};
+
+struct AllocaScopeOpInterfaceReverse
+    : public ReverseAutoDiffOpInterface::ExternalModel<
+          AllocaScopeOpInterfaceReverse, memref::AllocaScopeOp> {
+  LogicalResult createReverseModeAdjoint(Operation *op, OpBuilder &builder,
+                                         MGradientUtilsReverse *gutils,
+                                         SmallVector<Value> caches) const {
+    auto scopeOp = cast<memref::AllocaScopeOp>(op);
+
+    SmallVector<bool> resultsActive(scopeOp.getNumResults(), false);
+    for (int i = 0, e = resultsActive.size(); i < e; ++i) {
+      resultsActive[i] = !gutils->isConstantValue(op->getResult(i));
+    }
+
+    SmallVector<Value> incomingGradients;
+    for (auto &&[active, res] :
+         llvm::zip_equal(resultsActive, op->getResults())) {
+      if (active) {
+        if (!cast<AutoDiffTypeInterface>(res.getType()).isMutable()) {
+          incomingGradients.push_back(gutils->diffe(res, builder));
+          if (!gutils->isConstantValue(res))
+            gutils->zeroDiffe(res, builder);
+        }
+      }
+    }
+
+    auto revScope =
+        memref::AllocaScopeOp::create(builder, scopeOp.getLoc(), TypeRange{});
+    Block &revBB = revScope.getBodyRegion().emplaceBlock();
+    OpBuilder termB(&revBB, revBB.end());
+    memref::AllocaScopeReturnOp::create(termB, revScope.getLoc());
+
+    bool valid = true;
+    Block &oBB = scopeOp.getBodyRegion().front();
+    OpBuilder revBuilder(&revBB, revBB.end());
+    revBuilder.setInsertionPointToStart(&revBB);
+    mlir::enzyme::localizeGradients(revBuilder, gutils, &oBB);
+
+    revBuilder.setInsertionPoint(revBB.getTerminator());
+
+    Operation *term = oBB.getTerminator();
+    size_t gradIdx = 0;
+    for (auto &&[active, res, operand] : llvm::zip_equal(
+             resultsActive, scopeOp->getResults(), term->getOperands())) {
+      if (active) {
+        if (!cast<AutoDiffTypeInterface>(res.getType()).isMutable()) {
+          if (!gutils->isConstantValue(operand)) {
+            gutils->addToDiffe(operand, incomingGradients[gradIdx], revBuilder);
+          }
+          gradIdx++;
+        }
+      }
+    }
+
+    auto first = oBB.rbegin();
+    first++; // skip terminator
+
+    auto last = oBB.rend();
+
+    for (auto it = first; it != last; ++it) {
+      Operation *childOp = &*it;
+      valid &=
+          gutils->Logic.visitChild(childOp, revBuilder, gutils).succeeded();
+    }
+
+    return success(valid);
+  }
+
+  SmallVector<Value> cacheValues(Operation *op,
+                                 MGradientUtilsReverse *gutils) const {
+    return SmallVector<Value>();
+  }
+
+  LogicalResult createShadowValues(Operation *op, OpBuilder &builder,
+                                   MGradientUtilsReverse *gutils) const {
+    auto scopeOp = cast<memref::AllocaScopeOp>(op);
+    if (scopeOp->getNumResults() == 0)
+      return success();
+
+    auto newScope =
+        cast<memref::AllocaScopeOp>(gutils->getNewFromOriginal(scopeOp));
+
+    llvm::SmallDenseSet<unsigned> resultsToShadow;
+    SmallVector<Type> newResultTypes;
+    for (auto res : scopeOp->getResults()) {
+      newResultTypes.push_back(res.getType());
+      if (cast<AutoDiffTypeInterface>(res.getType()).isMutable() &&
+          !gutils->isConstantValue(res)) {
+        resultsToShadow.insert(res.getResultNumber());
+        newResultTypes.push_back(cast<AutoDiffTypeInterface>(res.getType())
+                                     .getShadowType(gutils->width));
+      }
+    }
+
+    if (resultsToShadow.empty())
+      return success();
+
+    auto repScope =
+        memref::AllocaScopeOp::create(builder, op->getLoc(), newResultTypes);
+    repScope.getBodyRegion().takeBody(newScope.getBodyRegion());
+
+    SmallVector<Value> repResults;
+    for (size_t i = 0, j = 0; i < scopeOp->getNumResults(); i++) {
+      repResults.push_back(repScope->getResult(j));
+      j++;
+      if (resultsToShadow.contains(i)) {
+        gutils->setInvertedPointer(scopeOp->getResult(i),
+                                   repScope->getResult(j));
+        j++;
+      }
+    }
+
+    gutils->replaceOrigOpWith(scopeOp, repResults);
+    gutils->erase(newScope);
+    gutils->originalToNewFn.map(scopeOp, repScope);
+
+    Block &origBlock = scopeOp.getBodyRegion().front();
+    Block &repBlock = repScope.getBodyRegion().front();
+    Operation *origTerm = origBlock.getTerminator();
+    Operation *repTerm = repBlock.getTerminator();
+
+    OpBuilder termBuilder(repTerm);
+    SmallVector<Value> newTermOperands;
+    for (OpOperand &operand : origTerm->getOpOperands()) {
+      unsigned idx = operand.getOperandNumber();
+      newTermOperands.push_back(repTerm->getOperand(idx));
+      if (resultsToShadow.contains(idx)) {
+        Value shadow;
+        if (gutils->isConstantValue(operand.get())) {
+          Type retTy = cast<AutoDiffTypeInterface>(operand.get().getType())
+                           .getShadowType(gutils->width);
+          shadow = cast<AutoDiffTypeInterface>(retTy).createNullValue(
+              termBuilder, operand.get().getLoc());
+        } else {
+          shadow = gutils->invertPointerM(operand.get(), termBuilder);
+        }
+        newTermOperands.push_back(shadow);
+      }
+    }
+    repTerm->setOperands(newTermOperands);
+
+    return success();
+  }
+};
+
 } // namespace
 
 void mlir::enzyme::registerMemRefDialectAutoDiffInterface(
@@ -514,6 +767,10 @@ void mlir::enzyme::registerMemRefDialectAutoDiffInterface(
     memref::StoreOp::attachInterface<StoreOpInterfaceReverse>(*context);
     memref::SubViewOp::attachInterface<SubViewOpInterfaceReverse>(*context);
     memref::AllocOp::attachInterface<MemRefAllocOpInterface>(*context);
+    memref::AllocaScopeOp::attachInterface<AllocaScopeOpInterfaceReverse>(
+        *context);
+    memref::AllocaScopeOp::attachInterface<AllocaScopeOpEnzymeOpsRemover>(
+        *context);
 
     memref::CastOp::attachInterface<OffsetViewInterface::Model<memref::CastOp>>(
         *context);
