@@ -4876,7 +4876,8 @@ Function *EnzymeLogic::CreateForwardDiff(
                          additionalArg,
                          oldTypeInfo,
                          runtimeActivity,
-                         strongZero};
+                         strongZero,
+                         freeMemory};
 
   if (ForwardCachedFunctions.find(tup) != ForwardCachedFunctions.end()) {
     return ForwardCachedFunctions.find(tup)->second;
@@ -5195,13 +5196,15 @@ Function *EnzymeLogic::CreateForwardDiff(
       Value *additionalValue = v;
       assert(augmenteddata);
 
-      // TODO VERIFY THIS
       if (augmenteddata->tapeType &&
-          augmenteddata->tapeType != additionalValue->getType()) {
+          additionalValue->getType()->isPointerTy()) {
         IRBuilder<> BuilderZ(gutils->inversionAllocs);
         if (!augmenteddata->tapeType->isEmptyTy()) {
           auto tapep = BuilderZ.CreatePointerCast(
-              additionalValue, getUnqual(augmenteddata->tapeType));
+              additionalValue,
+              getPointerType(augmenteddata->tapeType,
+                             cast<PointerType>(additionalValue->getType())
+                                 ->getAddressSpace()));
           LoadInst *truetape =
               BuilderZ.CreateLoad(augmenteddata->tapeType, tapep, "truetape");
           truetape->setMetadata("enzyme_mustcache",
@@ -5273,6 +5276,9 @@ Function *EnzymeLogic::CreateForwardDiff(
     restoreCache(gutils, augmenteddata->tapeIndices, guaranteedUnreachable);
 
   gutils->eraseFictiousPHIs();
+
+  if (mode == DerivativeMode::ForwardModeSplit)
+    gutils->finalizeForwardFrees();
 
   BasicBlock *entry = &gutils->newFunc->getEntryBlock();
 
