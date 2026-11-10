@@ -42,6 +42,7 @@
 #include "llvm/IR/StructuralHash.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 
+#include <chrono>
 #include <random>
 #include <set>
 
@@ -315,6 +316,254 @@ paretoPrune(std::map<InstructionCost, double> &cost,
   }
   cost = std::move(pruned);
   sol = std::move(prunedSol);
+}
+
+namespace {
+struct DPUnit {
+  decltype(SolutionStep::item) item;
+  size_t numCandidates;
+  std::function<InstructionCost(size_t, const SmallVectorImpl<SolutionStep> &)>
+      comp;
+  std::function<double(size_t, const SmallVectorImpl<SolutionStep> &)> acc;
+};
+} // namespace
+
+static SolutionStep unitStep(const DPUnit &unit, size_t i) {
+  return std::visit([&](auto *p) { return SolutionStep(p, i); }, unit.item);
+}
+
+static const void *itemKey(const decltype(SolutionStep::item) &item) {
+  return std::visit([](auto *p) -> const void * { return p; }, item);
+}
+
+// One rewrite per output, and no instruction claimed both by a matrix-product
+// raise and by another candidate.
+static bool excludes(const SolutionStep &a, const SolutionStep &b) {
+  auto *coA = std::get_if<CandidateOutput *>(&a.item);
+  auto *coB = std::get_if<CandidateOutput *>(&b.item);
+  if (coA && coB)
+    return (*coA)->sharesRoot(**coB);
+  SmallVector<SolutionStep, 1> other;
+  CandidateMatmul *cm = stepMatmul(a);
+  other.push_back(b);
+  if (!cm) {
+    cm = stepMatmul(b);
+    other.front() = a;
+  }
+  return cm && conflictsWithChosen(other, cm);
+}
+
+// Whether taking `later` is admitted or priced differently depending on
+// whether `earlier` was taken. Neither reads which candidate `earlier` took.
+static bool reads(const SolutionStep &later, const SolutionStep &earlier) {
+  if (excludes(later, earlier))
+    return true;
+  auto *cs = std::get_if<CandidateSubgraph *>(&later.item);
+  auto *co = std::get_if<CandidateOutput *>(&earlier.item);
+  return cs && co && (*cs)->subgraph == (*co)->subgraph;
+}
+
+// The binary64 and binary32 searches of one output, and any two cores with the
+// same outputs, are read alike by every later unit.
+static bool sameRewriteTarget(const CandidateOutput &a,
+                              const CandidateOutput &b) {
+  return a.subgraph == b.subgraph && a.roots.size() == b.roots.size() &&
+         llvm::all_of(a.roots,
+                      [&](Value *r) { return llvm::is_contained(b.roots, r); });
+}
+
+// -poseidon-early-prune=false. A partial solution is keyed by its cost and by
+// its signature: the taken units some later unit still reads. Two with one
+// signature are admitted and priced alike by every later unit, so one that is
+// cheaper and no less accurate than the other stays so under every completion,
+// and only such a one is dropped. After the last unit every signature is
+// empty and the one remaining bucket is the frontier of all
+// footprint-compatible strategies.
+static void
+exactParetoSolve(ArrayRef<DPUnit> units, std::map<InstructionCost, double> &cost,
+                 std::map<InstructionCost, SmallVector<SolutionStep>> &sol) {
+  const int n = units.size();
+  SmallVector<int> lastRead(n, -1), canon(n);
+  DenseMap<const void *, int> unitIndex;
+  for (int u = 0; u < n; ++u) {
+    unitIndex[itemKey(units[u].item)] = u;
+    canon[u] = u;
+    if (auto *co = std::get_if<CandidateOutput *>(&units[u].item))
+      for (int w = 0; w < u; ++w)
+        if (auto *other = std::get_if<CandidateOutput *>(&units[w].item))
+          if (sameRewriteTarget(**other, **co)) {
+            canon[u] = canon[w];
+            break;
+          }
+    for (int v = u + 1; v < n; ++v)
+      if (reads(unitStep(units[v], 0), unitStep(units[u], 0)))
+        lastRead[canon[u]] = std::max(lastRead[canon[u]], v);
+  }
+
+  using Signature = std::vector<int>;
+  struct Entry {
+    double acc;
+    SmallVector<SolutionStep> steps;
+  };
+  using Bucket = std::map<InstructionCost, Entry>;
+  auto insert = [](Bucket &b, InstructionCost c, double a,
+                   const SmallVectorImpl<SolutionStep> &steps) {
+    auto [it, fresh] = b.try_emplace(c);
+    if (!fresh && !(it->second.acc > a))
+      return;
+    it->second.acc = a;
+    it->second.steps.assign(steps.begin(), steps.end());
+  };
+  // paretoPrune's rule: an entry goes when a cheaper one is no less accurate.
+  auto prune = [](Bucket &b) {
+    std::optional<double> best;
+    for (auto it = b.begin(); it != b.end();) {
+      const double a = it->second.acc;
+      if (best && a >= *best) {
+        it = b.erase(it);
+        continue;
+      }
+      if (!std::isnan(a))
+        best = best ? std::min(*best, a) : a;
+      ++it;
+    }
+  };
+
+  std::map<Signature, Bucket> table;
+  insert(table[Signature()], cost.begin()->first, cost.begin()->second,
+         sol.begin()->second);
+  size_t peak = 1, peakSignatures = 1, pricings = 0;
+  const auto start = std::chrono::steady_clock::now();
+  for (int k = 0; k < n; ++k) {
+    const DPUnit &unit = units[k];
+    const SolutionStep step = unitStep(unit, 0);
+    auto stillRead = [&](const Signature &sig) {
+      Signature kept;
+      for (int u : sig)
+        if (lastRead[u] > k)
+          kept.push_back(u);
+      return kept;
+    };
+    auto *CS = std::get_if<CandidateSubgraph *>(&unit.item);
+    const size_t memoBefore = CS ? (*CS)->compCostDeltaCache.size() : 0;
+
+    std::map<Signature, Bucket> next;
+    for (const auto &[sig, bucket] : table) {
+      Bucket &into = next[stillRead(sig)];
+      for (const auto &[c, e] : bucket)
+        insert(into, c, e.acc, e.steps);
+    }
+    for (const auto &[sig, bucket] : table) {
+      if (unit.numCandidates == 0)
+        break;
+      // Everything a unit reads is in the signature, so one entry stands for
+      // the bucket.
+      const SmallVector<SolutionStep> &rep = bucket.begin()->second.steps;
+      if (llvm::any_of(rep,
+                       [&](const SolutionStep &s) { return excludes(step, s); }))
+        continue;
+      SmallVector<SolutionStep> priced;
+      for (const SolutionStep &s : rep) {
+        int u = canon[unitIndex.find(itemKey(s.item))->second];
+        priced.push_back(unitStep(units[u], s.candidateIndex));
+      }
+      SmallVector<InstructionCost> dc;
+      SmallVector<double> da;
+      for (size_t i = 0; i < unit.numCandidates; ++i) {
+        dc.push_back(unit.comp(i, priced));
+        da.push_back(unit.acc(i, priced));
+      }
+      Signature taken = stillRead(sig);
+      if (lastRead[canon[k]] > k) {
+        taken.push_back(canon[k]);
+        llvm::sort(taken);
+      }
+      Bucket &into = next[taken];
+      SmallVector<SolutionStep> steps;
+      for (const auto &[c, e] : bucket) {
+        steps.assign(e.steps.begin(), e.steps.end());
+        steps.push_back(step);
+        for (size_t i = 0; i < unit.numCandidates; ++i) {
+          steps.back().candidateIndex = i;
+          insert(into, c + dc[i], e.acc + da[i], steps);
+        }
+      }
+    }
+    size_t entries = 0;
+    for (auto &[sig, bucket] : next) {
+      prune(bucket);
+      entries += bucket.size();
+    }
+    table = std::move(next);
+    if (CS)
+      pricings += (*CS)->compCostDeltaCache.size() - memoBefore;
+    if (entries > peak) {
+      peak = entries;
+      peakSignatures = table.size();
+    }
+    llvm::errs() << "##### Exact DP: finished unit " << k + 1 << " of " << n
+                 << ": " << entries << " entries in " << table.size()
+                 << " signatures #####\n";
+  }
+  assert(table.size() == 1 && table.begin()->first.empty() &&
+         "exact DP: a signature outlived the last unit");
+
+  cost.clear();
+  sol.clear();
+  for (auto &[c, e] : table.begin()->second) {
+    cost[c] = e.acc;
+    sol[c] = std::move(e.steps);
+  }
+  const double secs =
+      std::chrono::duration<double>(std::chrono::steady_clock::now() - start)
+          .count();
+  llvm::errs() << "Exact DP: " << cost.size() << " frontier points; peak "
+               << peak << " entries in " << peakSignatures << " signatures; "
+               << pricings << " precision changes priced; " << secs << " s\n";
+}
+
+static void appendMatmulUnits(SmallVectorImpl<DPUnit> &units,
+                              MutableArrayRef<CandidateMatmul> CMs) {
+  for (auto &CM : CMs)
+    units.push_back(
+        {&CM, CM.candidates.size(),
+         [&CM](size_t i, const auto &) { return CM.getCompCostDelta(i); },
+         [&CM](size_t i, const auto &) { return CM.getAccCostDelta(i); }});
+}
+
+// Each CS right after the COs on its subgraph, the only steps that price it,
+// so they leave the signature there. The CMs come after every elementwise
+// unit, so a footprint conflict is always a CM's refusal.
+static void appendElementwiseUnits(
+    SmallVectorImpl<DPUnit> &units, MutableArrayRef<CandidateOutput> COs,
+    MutableArrayRef<CandidateSubgraph> CSs,
+    std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
+    std::unordered_map<std::string, Value *> &symbolToValueMap) {
+  auto appendCO = [&](CandidateOutput &CO) {
+    units.push_back(
+        {&CO, CO.candidates.size(),
+         [&CO](size_t i, const auto &) { return CO.getCompCostDelta(i); },
+         [&CO](size_t i, const auto &) { return CO.getAccCostDelta(i); }});
+  };
+  SmallPtrSet<const Subgraph *, 8> placed;
+  for (auto &CS : CSs) {
+    if (placed.insert(CS.subgraph).second)
+      for (auto &CO : COs)
+        if (CO.subgraph == CS.subgraph)
+          appendCO(CO);
+    units.push_back({&CS, CS.candidates.size(),
+                     [&CS](size_t i, const auto &prior) {
+                       return CS.getAdjustedCompCostDelta(i, prior);
+                     },
+                     [&CS, &valueToNodeMap,
+                      &symbolToValueMap](size_t i, const auto &prior) {
+                       return CS.getAdjustedAccCostDelta(
+                           i, prior, valueToNodeMap, symbolToValueMap);
+                     }});
+  }
+  for (auto &CO : COs)
+    if (!placed.contains(CO.subgraph))
+      appendCO(CO);
 }
 
 // A site tolerance is a per-operation relative rounding level, so everything
@@ -1406,52 +1655,58 @@ SmallVector<SolutionStep> accuracyDPSolver(
     costToAccuracyMap[0] = 0;
     costToSolutionMap[0] = {};
 
-    int COCounter = 0;
-    for (auto &CO : COs) {
-      paretoIntegrate(
-          costToAccuracyMap, costToSolutionMap, &CO, CO.candidates.size(),
-          [&](size_t i, const auto &) { return CO.getCompCostDelta(i); },
-          [&](size_t i, const auto &) { return CO.getAccCostDelta(i); });
-      // TODO: Do not prune CO parts of the DP table since COs influence CSs
-      if (flags::EarlyPrune)
+    if (!flags::EarlyPrune) {
+      SmallVector<DPUnit> units;
+      appendElementwiseUnits(units, COs, CSs, valueToNodeMap, symbolToValueMap);
+      appendMatmulUnits(units, CMs);
+      exactParetoSolve(units, costToAccuracyMap, costToSolutionMap);
+    } else {
+      // Each prune also compares partial solutions a later unit treats
+      // differently (a CS is priced against the COs chosen on its subgraph),
+      // so the frontier can miss points the exact solve finds.
+      int COCounter = 0;
+      for (auto &CO : COs) {
+        paretoIntegrate(
+            costToAccuracyMap, costToSolutionMap, &CO, CO.candidates.size(),
+            [&](size_t i, const auto &) { return CO.getCompCostDelta(i); },
+            [&](size_t i, const auto &) { return CO.getAccCostDelta(i); });
         paretoPrune(costToAccuracyMap, costToSolutionMap);
-      llvm::errs() << "##### Finished processing " << ++COCounter << " of "
-                   << COs.size() << " COs #####\n";
-      llvm::errs() << "Current DP table sizes: " << costToAccuracyMap.size()
-                   << "\n";
-    }
+        llvm::errs() << "##### Finished processing " << ++COCounter << " of "
+                     << COs.size() << " COs #####\n";
+        llvm::errs() << "Current DP table sizes: " << costToAccuracyMap.size()
+                     << "\n";
+      }
 
-    int CMCounter = 0;
-    for (auto &CM : CMs) {
-      paretoIntegrate(
-          costToAccuracyMap, costToSolutionMap, &CM, CM.candidates.size(),
-          [&](size_t i, const auto &) { return CM.getCompCostDelta(i); },
-          [&](size_t i, const auto &) { return CM.getAccCostDelta(i); });
-      if (flags::EarlyPrune)
+      int CMCounter = 0;
+      for (auto &CM : CMs) {
+        paretoIntegrate(
+            costToAccuracyMap, costToSolutionMap, &CM, CM.candidates.size(),
+            [&](size_t i, const auto &) { return CM.getCompCostDelta(i); },
+            [&](size_t i, const auto &) { return CM.getAccCostDelta(i); });
         paretoPrune(costToAccuracyMap, costToSolutionMap);
-      llvm::errs() << "##### Finished processing " << ++CMCounter << " of "
-                   << CMs.size() << " CMs #####\n";
-      llvm::errs() << "Current DP table sizes: " << costToAccuracyMap.size()
-                   << "\n";
-    }
+        llvm::errs() << "##### Finished processing " << ++CMCounter << " of "
+                     << CMs.size() << " CMs #####\n";
+        llvm::errs() << "Current DP table sizes: " << costToAccuracyMap.size()
+                     << "\n";
+      }
 
-    int CSCounter = 0;
-    for (auto &CS : CSs) {
-      paretoIntegrate(
-          costToAccuracyMap, costToSolutionMap, &CS, CS.candidates.size(),
-          [&](size_t i, const auto &prior) {
-            return CS.getAdjustedCompCostDelta(i, prior);
-          },
-          [&](size_t i, const auto &prior) {
-            return CS.getAdjustedAccCostDelta(i, prior, valueToNodeMap,
-                                              symbolToValueMap);
-          });
-      // CS always prunes (subsequent CSs see fewer dominated alternatives).
-      paretoPrune(costToAccuracyMap, costToSolutionMap);
-      llvm::errs() << "##### Finished processing " << ++CSCounter << " of "
-                   << CSs.size() << " CSs #####\n";
-      llvm::errs() << "Current DP table sizes: " << costToAccuracyMap.size()
-                   << "\n";
+      int CSCounter = 0;
+      for (auto &CS : CSs) {
+        paretoIntegrate(
+            costToAccuracyMap, costToSolutionMap, &CS, CS.candidates.size(),
+            [&](size_t i, const auto &prior) {
+              return CS.getAdjustedCompCostDelta(i, prior);
+            },
+            [&](size_t i, const auto &prior) {
+              return CS.getAdjustedAccCostDelta(i, prior, valueToNodeMap,
+                                                symbolToValueMap);
+            });
+        paretoPrune(costToAccuracyMap, costToSolutionMap);
+        llvm::errs() << "##### Finished processing " << ++CSCounter << " of "
+                     << CSs.size() << " CSs #####\n";
+        llvm::errs() << "Current DP table sizes: " << costToAccuracyMap.size()
+                     << "\n";
+      }
     }
 
     if (table)
@@ -1628,38 +1883,46 @@ jointAccuracyDPSolver(ArrayRef<FunctionFPState *> states, double errorTol,
 
   // Same integration order as accuracyDPSolver. The joint table is not cached
   // (table.json is per candidate set); budgets.txt is still written.
-  for (auto *st : states)
-    for (auto &CO : st->COs) {
-      paretoIntegrate(
-          costToAccuracyMap, costToSolutionMap, &CO, CO.candidates.size(),
-          [&](size_t i, const auto &) { return CO.getCompCostDelta(i); },
-          [&](size_t i, const auto &) { return CO.getAccCostDelta(i); });
-      if (flags::EarlyPrune)
+  if (!flags::EarlyPrune) {
+    SmallVector<DPUnit> units;
+    for (auto *st : states)
+      appendElementwiseUnits(units, st->COs, st->CSs, st->valueToNodeMap,
+                             st->symbolToValueMap);
+    for (auto *st : states)
+      appendMatmulUnits(units, st->CMs);
+    exactParetoSolve(units, costToAccuracyMap, costToSolutionMap);
+  } else {
+    for (auto *st : states)
+      for (auto &CO : st->COs) {
+        paretoIntegrate(
+            costToAccuracyMap, costToSolutionMap, &CO, CO.candidates.size(),
+            [&](size_t i, const auto &) { return CO.getCompCostDelta(i); },
+            [&](size_t i, const auto &) { return CO.getAccCostDelta(i); });
         paretoPrune(costToAccuracyMap, costToSolutionMap);
-    }
-  for (auto *st : states)
-    for (auto &CM : st->CMs) {
-      paretoIntegrate(
-          costToAccuracyMap, costToSolutionMap, &CM, CM.candidates.size(),
-          [&](size_t i, const auto &) { return CM.getCompCostDelta(i); },
-          [&](size_t i, const auto &) { return CM.getAccCostDelta(i); });
-      if (flags::EarlyPrune)
+      }
+    for (auto *st : states)
+      for (auto &CM : st->CMs) {
+        paretoIntegrate(
+            costToAccuracyMap, costToSolutionMap, &CM, CM.candidates.size(),
+            [&](size_t i, const auto &) { return CM.getCompCostDelta(i); },
+            [&](size_t i, const auto &) { return CM.getAccCostDelta(i); });
         paretoPrune(costToAccuracyMap, costToSolutionMap);
-    }
-  for (auto *st : states) {
-    auto &valueToNodeMap = st->valueToNodeMap;
-    auto &symbolToValueMap = st->symbolToValueMap;
-    for (auto &CS : st->CSs) {
-      paretoIntegrate(
-          costToAccuracyMap, costToSolutionMap, &CS, CS.candidates.size(),
-          [&](size_t i, const auto &prior) {
-            return CS.getAdjustedCompCostDelta(i, prior);
-          },
-          [&](size_t i, const auto &prior) {
-            return CS.getAdjustedAccCostDelta(i, prior, valueToNodeMap,
-                                              symbolToValueMap);
-          });
-      paretoPrune(costToAccuracyMap, costToSolutionMap);
+      }
+    for (auto *st : states) {
+      auto &valueToNodeMap = st->valueToNodeMap;
+      auto &symbolToValueMap = st->symbolToValueMap;
+      for (auto &CS : st->CSs) {
+        paretoIntegrate(
+            costToAccuracyMap, costToSolutionMap, &CS, CS.candidates.size(),
+            [&](size_t i, const auto &prior) {
+              return CS.getAdjustedCompCostDelta(i, prior);
+            },
+            [&](size_t i, const auto &prior) {
+              return CS.getAdjustedAccCostDelta(i, prior, valueToNodeMap,
+                                                symbolToValueMap);
+            });
+        paretoPrune(costToAccuracyMap, costToSolutionMap);
+      }
     }
   }
 
