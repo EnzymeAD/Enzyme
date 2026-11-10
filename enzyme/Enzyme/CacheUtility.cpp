@@ -1483,10 +1483,10 @@ Value *CacheUtility::computeIndexOfChunk(
 /// For every loop, this returns pair of the LoopContext and the limit of that
 /// loop Both the vector of Chunks and vector of Loops within a Chunk go from
 /// innermost loop to outermost loop.
-CacheUtility::SubLimitType CacheUtility::getSubLimits(bool inForwardPass,
-                                                      IRBuilder<> *RB,
-                                                      LimitContext ctx,
-                                                      Value *extraSize) {
+CacheUtility::SubLimitType
+CacheUtility::getSubLimits(bool inForwardPass, IRBuilder<> *RB,
+                           LimitContext ctx, Value *extraSize,
+                           const ValueToValueMapTy &available) {
   // Store the LoopContext's in InnerMost => Outermost order
   SmallVector<LoopContext, 4> contexts;
 
@@ -1616,6 +1616,8 @@ CacheUtility::SubLimitType CacheUtility::getSubLimits(bool inForwardPass,
       assert(limitMinus1 != nullptr);
 
       ValueToValueMapTy reverseMap;
+      for (const auto &pair : available)
+        reverseMap[pair.first] = pair.second;
       // Iterate from outermost loop down
       for (int j = contexts.size() - 1;; --j) {
         // If the preheader allocating memory for loop i
@@ -1624,7 +1626,7 @@ CacheUtility::SubLimitType CacheUtility::getSubLimits(bool inForwardPass,
         // from chunks outside us to compute loop bounds so add it to the
         // map
         if (allocationPreheaders[i] != contexts[j].preheader) {
-          if (!inForwardPass) {
+          if (!inForwardPass && !reverseMap.count(contexts[j].var)) {
             reverseMap[contexts[j].var] = RB->CreateLoad(
                 contexts[j].var->getType(), contexts[j].antivaralloc);
           }
@@ -1895,7 +1897,8 @@ Value *CacheUtility::getCachePointer(llvm::Type *T, bool inForwardPass,
                                      Value *extraSize) {
   assert(ctx.Block);
   assert(cache);
-  auto sublimits = getSubLimits(inForwardPass, &BuilderM, ctx, extraSize);
+  auto sublimits =
+      getSubLimits(inForwardPass, &BuilderM, ctx, extraSize, available);
 
   Value *next = cache;
   assert(next->getType()->isPointerTy());
@@ -1976,7 +1979,7 @@ Value *CacheUtility::getCachePointer(llvm::Type *T, bool inForwardPass,
         idx = BuilderM.CreateLShr(
             idx, ConstantInt::get(Type::getInt64Ty(newFunc->getContext()), 3));
       if (i == 0 && extraSize) {
-        Value *es = lookupM(extraSize, BuilderM);
+        Value *es = lookupM(extraSize, BuilderM, available);
         assert(es);
         idx = BuilderM.CreateMul(idx, es, "", /*NUW*/ true, /*NSW*/ true);
       }

@@ -969,13 +969,25 @@ void DifferentialUseAnalysis::minCut(const DataLayout &DL, LoopInfo &OrigLI,
       }
   }
 
+  auto cannotCache = [&](Value *V) {
+    if (hasNoCache(V))
+      return true;
+    auto found = gutils->rematerializableAllocations.find(V);
+    if (found != gutils->rematerializableAllocations.end()) {
+      if (found->second.LI &&
+          !found->second.LI->contains(cast<Instruction>(V)->getParent()))
+        return true;
+    }
+    return false;
+  };
+
   while (todo.size()) {
     auto V = todo.front();
     todo.remove(V);
     assert(MinReq.count(V));
 
     // Fix up non-cacheable calls to use their operand(s) instead
-    if (hasNoCache(V)) {
+    if (cannotCache(V)) {
       MinReq.remove(V);
       for (auto &pair : Orig) {
         if (pair.second.count(Node(V, false))) {
@@ -1021,7 +1033,7 @@ void DifferentialUseAnalysis::minCut(const DataLayout &DL, LoopInfo &OrigLI,
           if (G->getType()->getPointerAddressSpace() == 13)
             continue;
         }
-        if (hasNoCache((*mp.begin()).V)) {
+        if (cannotCache((*mp.begin()).V)) {
           continue;
         }
         // If an allocation call, we cannot cache any "capturing" users

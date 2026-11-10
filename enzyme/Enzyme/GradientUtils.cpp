@@ -3430,7 +3430,7 @@ BasicBlock *GradientUtils::prepRematerializedLoopEntry(LoopContext &lc) {
       }
     }
 
-    ValueToValueMapTy available;
+    std::map<Loop *, ValueToValueMapTy> loopAvailable;
 
     {
       IRBuilder<> NB(enterB);
@@ -3457,8 +3457,8 @@ BasicBlock *GradientUtils::prepRematerializedLoopEntry(LoopContext &lc) {
             iv->addIncoming(ConstantInt::get(iv->getType(), 0),
                             origToNewForward[PH]);
         }
-        available[flc.var] = iv;
-        available[flc.incvar] = inc;
+        loopAvailable[OL][flc.var] = iv;
+        loopAvailable[OL][flc.incvar] = inc;
       }
       for (auto SL : OL->getSubLoops())
         handleLoop(SL, /*subLoop*/ true);
@@ -3469,8 +3469,14 @@ BasicBlock *GradientUtils::prepRematerializedLoopEntry(LoopContext &lc) {
       auto newB = origToNewForward[B];
       IRBuilder<> NB(newB);
 
-      // TODO fill available with relevant IV's surrounding and
-      // IV's of inner loop phi's
+      ValueToValueMapTy available;
+      for (auto &pair : loopAvailable) {
+        if (pair.first->contains(B)) {
+          for (auto availPair : pair.second) {
+            available[availPair.first] = availPair.second;
+          }
+        }
+      }
 
       for (auto &I : *B) {
         // Only handle store, memset, and julia.write_barrier
@@ -7339,7 +7345,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
             getDynamicLoopLimit(LI.getLoopFor(lc.header)),
             /*isi1*/ false, available);
       } else {
-        lim = lookupM(lc.trueLimit, BuilderM);
+        lim = lookupM(lc.trueLimit, BuilderM, available);
       }
       lookup_cache[BuilderM.GetInsertBlock()][val] = lim;
       return lim;
@@ -7374,6 +7380,23 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
       result = BuilderM.CreateBitCast(result, val->getType());
       assert(result->getType() == inst->getType());
       return result;
+    }
+  }
+
+  {
+    LoopContext lc;
+    if (getContext(inst->getParent(), lc)) {
+      SmallVector<PHINode *, 2> missingVars;
+      for (LoopContext idx = lc;; getContext(idx.parent->getHeader(), idx)) {
+        if (available.count(idx.var) == 0) {
+          missingVars.push_back(idx.var);
+        }
+        if (idx.parent == nullptr)
+          break;
+      }
+      for (auto *var : llvm::reverse(missingVars)) {
+        available[var] = lookupM(var, BuilderM, available);
+      }
     }
   }
 
@@ -9949,7 +9972,7 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
 
   // Find the outermost loop of all stores, and the allocation/lifetime
   Loop *outer = OrigLI->getLoopFor(V->getParent());
-  if (LifetimeStarts.size() == 1) {
+  if (!nonRepeatableWritingCall && LifetimeStarts.size() == 1) {
     outer = OrigLI->getLoopFor((*LifetimeStarts.begin())->getParent());
   }
 

@@ -298,8 +298,11 @@ public:
                                     std::pair<LoopContext, llvm::Value *>, 4>>,
                             0>
       SubLimitType;
-  SubLimitType getSubLimits(bool inForwardPass, llvm::IRBuilder<> *RB,
-                            LimitContext ctx, llvm::Value *extraSize = nullptr);
+  SubLimitType
+  getSubLimits(bool inForwardPass, llvm::IRBuilder<> *RB, LimitContext ctx,
+               llvm::Value *extraSize = nullptr,
+               const llvm::ValueToValueMapTy &available =
+                   llvm::ValueToValueMapTy());
 
 private:
   /// Internal data structure used by getSubLimit to avoid computing the same
