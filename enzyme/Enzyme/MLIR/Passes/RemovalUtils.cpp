@@ -131,14 +131,16 @@ void mlir::enzyme::removalBlockExplore(
         rewriter.eraseOp(pushOp);
 
         // Move the pop before the other if
-        OpBuilder::InsertionGuard guard(rewriter);
-        rewriter.setInsertionPoint(info.popOp->getParentOp());
+        if (info.popOp->getBlock() != rewriter.getInsertionBlock()) {
+          OpBuilder::InsertionGuard guard(rewriter);
+          rewriter.setInsertionPoint(info.popOp->getParentOp());
 
-        auto newPop =
-            enzyme::PopOp::create(rewriter, info.popOp->getLoc(),
-                                  pushedValue.getType(), info.popOp.getCache());
-        rewriter.replaceAllUsesWith(info.popOp.getResult(), newPop);
-        rewriter.eraseOp(info.popOp);
+          auto newPop = enzyme::PopOp::create(rewriter, info.popOp->getLoc(),
+                                              pushedValue.getType(),
+                                              info.popOp.getCache());
+          rewriter.replaceAllUsesWith(info.popOp.getResult(), newPop);
+          rewriter.eraseOp(info.popOp);
+        }
 
         continue;
       }

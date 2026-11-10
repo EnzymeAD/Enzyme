@@ -20,13 +20,8 @@ def : ControlFlowOp<"memref", "AllocaScopeOp", [{
                                MGradientUtils *gutils,
                                Operation *original, ValueRange remappedOperands,
                                TypeRange rettys) const {
-    auto repScope = memref::AllocaScopeOp::create(
-        builder, original->getLoc(), rettys);
-    for (auto &&[newReg, augReg] :
-         llvm::zip(original->getRegions(), repScope->getRegions())) {
-      augReg.takeBody(newReg);
-    }
-    return repScope;
+    return memref::AllocaScopeOp::create(
+        builder, op->getLoc(), rettys);
   }
 }]>;
 
