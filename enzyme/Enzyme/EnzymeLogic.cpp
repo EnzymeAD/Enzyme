@@ -4936,32 +4936,58 @@ Function *EnzymeLogic::CreateForwardDiff(
         !hasconstant && returnUsed)
       return foundcalled;
 
-    if (!foundcalled->getReturnType()->isVoidTy() && !hasconstant) {
-      if (returnUsed && retType == DIFFE_TYPE::CONSTANT) {
+    if (!foundcalled->getReturnType()->isVoidTy() && !hasconstant &&
+        !returnUsed) {
+      // The caller does not want the primal: a registered derivative that
+      // returns only the derivative already has the expected signature, one
+      // returning the {primal, derivative} pair or a constant primal is
+      // wrapped to discard what is not needed.
+      Type *expectedReturn = retType != DIFFE_TYPE::CONSTANT
+                                 ? todiff->getReturnType()
+                                 : Type::getVoidTy(todiff->getContext());
+      if (foundcalled->getReturnType() == expectedReturn)
+        return foundcalled;
+
+      auto *pairReturn = dyn_cast<StructType>(foundcalled->getReturnType());
+      bool returnsPair = pairReturn && pairReturn->getNumElements() == 2 &&
+                         pairReturn->getElementType(1) == expectedReturn;
+      if (!returnsPair && retType != DIFFE_TYPE::CONSTANT) {
+        std::string s;
+        llvm::raw_string_ostream ss(s);
+        ss << "Failed to use custom forward mode derivative for "
+           << todiff->getName() << "\n";
+        ss << " expected the derivative " << foundcalled->getName()
+           << " to return " << *expectedReturn << " or { "
+           << *todiff->getReturnType() << ", " << *expectedReturn
+           << " } but it returns " << *foundcalled->getReturnType() << "\n";
+        EmitFailure("NoDerivative", context.req->getDebugLoc(), context.req,
+                    ss.str());
+        return ForwardCachedFunctions[tup] = nullptr;
       }
-      if (!returnUsed && retType != DIFFE_TYPE::CONSTANT && !hasconstant) {
-        FunctionType *FTy = FunctionType::get(
-            todiff->getReturnType(), foundcalled->getFunctionType()->params(),
-            foundcalled->getFunctionType()->isVarArg());
-        Function *NewF = Function::Create(
-            FTy, Function::LinkageTypes::InternalLinkage,
-            "fixderivative_" + todiff->getName(), todiff->getParent());
-        for (auto pair : llvm::zip(NewF->args(), foundcalled->args())) {
-          std::get<0>(pair).setName(std::get<1>(pair).getName());
-        }
 
-        BasicBlock *BB = BasicBlock::Create(NewF->getContext(), "entry", NewF);
-        IRBuilder<> bb(BB);
-        SmallVector<Value *, 2> args;
-        for (auto &a : NewF->args())
-          args.push_back(&a);
-        auto cal = bb.CreateCall(foundcalled, args);
-        cal->setCallingConv(foundcalled->getCallingConv());
+      FunctionType *FTy = FunctionType::get(
+          expectedReturn, foundcalled->getFunctionType()->params(),
+          foundcalled->getFunctionType()->isVarArg());
+      Function *NewF = Function::Create(
+          FTy, Function::LinkageTypes::InternalLinkage,
+          "fixderivative_" + todiff->getName(), todiff->getParent());
+      for (auto pair : llvm::zip(NewF->args(), foundcalled->args())) {
+        std::get<0>(pair).setName(std::get<1>(pair).getName());
+      }
 
+      BasicBlock *BB = BasicBlock::Create(NewF->getContext(), "entry", NewF);
+      IRBuilder<> bb(BB);
+      SmallVector<Value *, 2> args;
+      for (auto &a : NewF->args())
+        args.push_back(&a);
+      auto cal = bb.CreateCall(foundcalled, args);
+      cal->setCallingConv(foundcalled->getCallingConv());
+
+      if (retType == DIFFE_TYPE::CONSTANT)
+        bb.CreateRetVoid();
+      else
         bb.CreateRet(bb.CreateExtractValue(cal, 1));
-        return ForwardCachedFunctions[tup] = NewF;
-      }
-      assert(returnUsed);
+      return ForwardCachedFunctions[tup] = NewF;
     }
 
     SmallVector<Type *, 2> curTypes;
