@@ -272,8 +272,10 @@ void EmitWarning(llvm::StringRef RemarkName,
     Ctx.diagnose(R);
   }
 
-  if (EnzymePrintPerf)
+  if (EnzymePrintPerf) {
+    llvm::errs() << "in function " << BB->getParent()->getName() << ": ";
     (llvm::errs() << ... << args) << "\n";
+  }
 }
 
 template <typename... Args>
@@ -341,8 +343,10 @@ void EmitWarning(llvm::StringRef RemarkName, const llvm::Function &F,
     auto R = llvm::OptimizationRemark("enzyme", RemarkName, &F) << ss.str();
     Ctx.diagnose(R);
   }
-  if (EnzymePrintPerf)
+  if (EnzymePrintPerf) {
+    llvm::errs() << "in function " << F.getName() << ": ";
     (llvm::errs() << ... << args) << "\n";
+  }
 }
 
 class EnzymeFailure final : public llvm::DiagnosticInfoUnsupported {
