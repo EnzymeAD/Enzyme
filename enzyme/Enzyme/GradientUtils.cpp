@@ -2895,6 +2895,7 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
       inLoop = getContext(ctx.Block, lc);
     }
 
+    bool isPerThreadOMPLoop = false;
     if (!inLoop) {
       ret->setName(malloc->getName() + "_fromtape");
       if (omp) {
@@ -2913,6 +2914,31 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
 
       assert(malloc);
 
+      auto sublimits = getSubLimits(
+          /*inForwardPass*/ true, nullptr,
+          LimitContext(/*ReverseLimit*/ reverseBlocks.size() > 0,
+                       BuilderQ.GetInsertBlock()));
+      bool sharedOMPFor =
+          !sublimits.empty() &&
+          sublimits.back().second.back().first.maxLimit != nullptr &&
+          llvm::any_of(sublimits.back().second, [](const auto &actx) {
+            return actx.first.offset != nullptr;
+          });
+      isPerThreadOMPLoop = omp && !sharedOMPFor;
+      if (isPerThreadOMPLoop) {
+        Value *threadId = ompThreadId();
+#if LLVM_VERSION_MAJOR < 17
+        Type *slotType = ret->getContext().supportsTypedPointers()
+                             ? ret->getType()->getPointerElementType()
+                             : getInt8PtrTy(ret->getContext());
+#else
+        Type *slotType = getInt8PtrTy(ret->getContext());
+#endif
+        Value *threadSlotPtr = entryBuilder.CreateInBoundsGEP(
+            slotType, ret, ArrayRef<Value *>(threadId));
+        ret = entryBuilder.CreateLoad(slotType, threadSlotPtr);
+      }
+
       Type *innerType = nullptr;
 
 #if LLVM_VERSION_MAJOR < 17
@@ -2920,14 +2946,7 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
       if (ret->getContext().supportsTypedPointers()) {
 #endif
         innerType = ret->getType();
-        for (size_t i = 0,
-                    limit = getSubLimits(
-                                /*inForwardPass*/ true, nullptr,
-                                LimitContext(
-                                    /*ReverseLimit*/ reverseBlocks.size() > 0,
-                                    BuilderQ.GetInsertBlock()))
-                                .size();
-             i < limit; ++i) {
+        for (size_t i = 0, limit = sublimits.size(); i < limit; ++i) {
           if (!isa<PointerType>(innerType)) {
             llvm::errs() << "mod: "
                          << *BuilderQ.GetInsertBlock()->getParent()->getParent()
@@ -3158,9 +3177,15 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
               // not of the final value (thereby overwriting the new
               // inst
               IRBuilder<> lb(li);
-              auto replacewith =
+              Value *replacewith =
                   (idx < 0) ? tape
                             : lb.CreateExtractValue(tape, {(unsigned)idx});
+              if (isPerThreadOMPLoop) {
+                Value *threadId = ompThreadId();
+                Value *threadSlotPtr = lb.CreateInBoundsGEP(
+                    li->getType(), replacewith, ArrayRef<Value *>(threadId));
+                replacewith = lb.CreateLoad(li->getType(), threadSlotPtr);
+              }
               li->replaceAllUsesWith(replacewith);
               erase(li);
             } else {
@@ -3312,7 +3337,30 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
     }
 #endif
 #endif
-    addedTapeVals.push_back(toadd);
+    Value *toStoreInTape = toadd;
+    if (omp &&
+        !hasMetadata(scopeAllocs[found2->second.first][0], "enzyme_ompfor")) {
+      Value *numThreads = ompNumThreads();
+      Value *threadId = ompThreadId();
+      IRBuilder<> entryBuilder(inversionAllocs);
+      Value *threadTable =
+          CreateAllocation(entryBuilder, toadd->getType(), numThreads,
+                           toadd->getName() + "_malloccache");
+      Value *threadSlot = entryBuilder.CreateInBoundsGEP(
+          toadd->getType(), threadTable, ArrayRef<Value *>(threadId));
+      entryBuilder.CreateStore(
+          ConstantPointerNull::get(cast<PointerType>(toadd->getType())),
+          threadSlot);
+      if (auto *inst = dyn_cast<Instruction>(toadd)) {
+        IRBuilder<> storeBuilder(
+            getFirstNonPHIOrPlaceholder(inst->getNextNode()));
+        storeBuilder.CreateStore(toadd, threadSlot);
+      } else {
+        entryBuilder.CreateStore(toadd, threadSlot);
+      }
+      toStoreInTape = threadTable;
+    }
+    addedTapeVals.push_back(toStoreInTape);
     return malloc;
   }
   llvm::errs()
