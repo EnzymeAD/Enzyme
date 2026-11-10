@@ -13,6 +13,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/IR/Constants.h"
@@ -23,6 +24,7 @@
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Support/Casting.h"
+#include "llvm/Support/Format.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 
@@ -35,6 +37,7 @@
 #include "Herbie.h"
 #include "Optimize.h"
 #include "Pass/Session.h"
+#include "Solvers.h"
 #include "Targets/DeviceMath.h"
 #include "Targets/Target.h"
 #include "Techniques/Precision.h"
@@ -1089,14 +1092,14 @@ double CandidateOutput::getAccCostDelta(size_t candidateIndex) {
   return candidates[candidateIndex].accuracyCost - initialAccCost;
 }
 
-InstructionCost CandidateSubgraph::getAdjustedCompCostDelta(
-    Session &S, size_t candidateIndex,
-    const SmallVectorImpl<SolutionStep> &steps) {
+InstructionCost
+CandidateSubgraph::getAdjustedCompCostDelta(Session &S, size_t candidateIndex,
+                                            ArrayRef<SolutionStep> steps) {
   CandidateOutputSet CandidateOutputs;
   for (const auto &step : steps) {
-    if (auto *ptr = std::get_if<CandidateOutput *>(&step.item)) {
-      if ((*ptr)->subgraph == subgraph) {
-        CandidateOutputs.insert(*ptr);
+    if (auto *co = dyn_cast<CandidateOutput>(step.unit)) {
+      if (co->subgraph == subgraph) {
+        CandidateOutputs.insert(co);
       }
     }
   }
@@ -1111,8 +1114,8 @@ InstructionCost CandidateSubgraph::getAdjustedCompCostDelta(
   Subgraph newSubgraph = *this->subgraph;
 
   for (auto &step : steps) {
-    if (auto *ptr = std::get_if<CandidateOutput *>(&step.item)) {
-      const auto &CO = **ptr;
+    if (auto *co = dyn_cast<CandidateOutput>(step.unit)) {
+      const auto &CO = *co;
       if (CO.subgraph == subgraph) {
         newSubgraph.operations.remove_if(
             [&CO](Instruction *I) { return CO.erasableInsts.contains(I); });
@@ -1151,14 +1154,14 @@ InstructionCost CandidateSubgraph::getAdjustedCompCostDelta(
 }
 
 double CandidateSubgraph::getAdjustedAccCostDelta(
-    size_t candidateIndex, const SmallVectorImpl<SolutionStep> &steps,
+    size_t candidateIndex, ArrayRef<SolutionStep> steps,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, Value *> &symbolToValueMap) {
   CandidateOutputSet CandidateOutputs;
   for (const auto &step : steps) {
-    if (auto *ptr = std::get_if<CandidateOutput *>(&step.item)) {
-      if ((*ptr)->subgraph == subgraph) {
-        CandidateOutputs.insert(*ptr);
+    if (auto *co = dyn_cast<CandidateOutput>(step.unit)) {
+      if (co->subgraph == subgraph) {
+        CandidateOutputs.insert(co);
       }
     }
   }
@@ -1175,8 +1178,8 @@ double CandidateSubgraph::getAdjustedAccCostDelta(
 
   SmallPtrSet<FPNode *, 8> stepNodes;
   for (const auto &step : steps) {
-    if (auto *ptr = std::get_if<CandidateOutput *>(&step.item)) {
-      const auto &CO = **ptr;
+    if (auto *co = dyn_cast<CandidateOutput>(step.unit)) {
+      const auto &CO = *co;
       if (CO.subgraph == subgraph) {
         for (Value *root : CO.roots) {
           auto it = valueToNodeMap.find(root);
@@ -1203,6 +1206,442 @@ double CandidateSubgraph::getAdjustedAccCostDelta(
 
   accCostDeltaCache[key] = adjustedAccCostDelta;
   return adjustedAccCostDelta;
+}
+
+InstructionCost CandidateOutput::costDelta(size_t i, ArrayRef<SolutionStep>) {
+  return getCompCostDelta(session().CostModel, i);
+}
+
+double CandidateOutput::errorDelta(size_t i, ArrayRef<SolutionStep>) {
+  return getAccCostDelta(i);
+}
+
+bool CandidateOutput::sameRewriteTargetAs(
+    const OptimizationUnit &earlier) const {
+  const auto *other = dyn_cast<CandidateOutput>(&earlier);
+  return other && other->subgraph == subgraph &&
+         other->roots.size() == roots.size() &&
+         llvm::all_of(other->roots,
+                      [&](Value *r) { return llvm::is_contained(roots, r); });
+}
+
+const SetVector<Instruction *> *CandidateOutput::footprint() const {
+  return subgraph ? &subgraph->operations : nullptr;
+}
+
+InstructionCost CandidateSubgraph::costDelta(size_t i,
+                                             ArrayRef<SolutionStep> prior) {
+  return getAdjustedCompCostDelta(session(), i, prior);
+}
+
+double CandidateSubgraph::errorDelta(size_t i, ArrayRef<SolutionStep> prior) {
+  return getAdjustedAccCostDelta(i, prior, site().valueToNodeMap,
+                                 site().symbolToValueMap);
+}
+
+bool CandidateSubgraph::pricedAgainst(const OptimizationUnit &earlier) const {
+  const auto *co = dyn_cast<CandidateOutput>(&earlier);
+  return co && co->subgraph == subgraph;
+}
+
+const SetVector<Instruction *> *CandidateSubgraph::footprint() const {
+  return subgraph ? &subgraph->operations : nullptr;
+}
+
+std::string CandidateOutput::choiceText(size_t i) const {
+  const RewriteCandidate &cand = candidates[i];
+  return expr + " --(" + std::to_string(cand.ordinal) + ")-> " + cand.expr;
+}
+
+json::Object CandidateOutput::stepJSON(size_t i) {
+  json::Object stepObj;
+  stepObj["type"] = "rewrite";
+  stepObj["original_expr"] = expr;
+  auto &cand = candidates[i];
+  stepObj["rewritten_expr"] = cand.expr;
+  stepObj["herbie_cost"] = jsonFloat(cand.herbieCost);
+  stepObj["herbie_accuracy"] = jsonFloat(cand.herbieAccuracy);
+  stepObj["initial_herbie_cost"] = jsonFloat(initialHerbieCost);
+  stepObj["initial_herbie_accuracy"] = jsonFloat(initialHerbieAccuracy);
+  stepObj["computation_cost_delta"] =
+      GET_INSTRUCTION_COST(getCompCostDelta(session().CostModel, i));
+  stepObj["accuracy_cost_delta"] = jsonFloat(getAccCostDelta(i));
+  stepObj["gradient"] = jsonFloat(grad);
+  stepObj["executions"] = static_cast<int64_t>(executions);
+
+  SmallVector<Instruction *, 8> insts;
+  if (auto *I = dyn_cast<Instruction>(oldOutput))
+    insts.push_back(I);
+  for (auto *I : erasableInsts)
+    insts.push_back(I);
+  stepObj["source_locations"] = getSourceLocationsJSON(insts);
+
+  json::Array affectedIR;
+  if (auto *I = dyn_cast<Instruction>(oldOutput))
+    affectedIR.push_back(getValueStr(I));
+  for (auto *I : erasableInsts) {
+    if (I != oldOutput)
+      affectedIR.push_back(getValueStr(I));
+  }
+  stepObj["affected_instructions"] = std::move(affectedIR);
+  return stepObj;
+}
+
+void CandidateOutput::writeReportStep(raw_ostream &OS, size_t i,
+                                      StringRef pad) {
+  auto &cand = candidates[i];
+  OS << pad << "[Rewrite] " << expr << "  -->  " << cand.expr << "\n";
+  if (!std::isnan(initialHerbieAccuracy) && !std::isnan(cand.herbieAccuracy))
+    OS << pad << "  Herbie accuracy: " << initialHerbieAccuracy << " -> "
+       << cand.herbieAccuracy << " bits\n";
+  OS << pad << "  Gradient: " << grad << ", Executions: " << executions << "\n";
+
+  SmallSet<std::string, 4> seen;
+  auto printLoc = [&](Instruction *I) {
+    auto loc = getSourceLocationStr(I);
+    if (!loc.empty() && seen.insert(loc).second)
+      OS << pad << "  Source: " << loc << "\n";
+  };
+  if (auto *I = dyn_cast<Instruction>(oldOutput))
+    printLoc(I);
+  for (auto *I : erasableInsts)
+    printLoc(I);
+
+  OS << pad << "  Affected IR:\n";
+  if (auto *I = dyn_cast<Instruction>(oldOutput))
+    OS << pad << "    " << *I << "\n";
+  for (auto *I : erasableInsts) {
+    if (I != oldOutput)
+      OS << pad << "    " << *I << "\n";
+  }
+}
+
+void CandidateOutput::materialize(size_t i) {
+  apply(i, site().valueToNodeMap, site().symbolToValueMap,
+        session().Opts.Diagnostics.Print);
+}
+
+std::string CandidateSubgraph::choiceText(size_t i) const {
+  const PTCandidate &cand = candidates[i];
+  return "CS: " + cand.desc + " (#" + std::to_string(cand.ordinal) + ")";
+}
+
+json::Object CandidateSubgraph::stepJSON(size_t i) {
+  auto &cand = candidates[i];
+  json::Object stepObj;
+  stepObj["type"] = "precision_change";
+  stepObj["description"] = cand.desc;
+  stepObj["candidate_index"] = static_cast<int64_t>(cand.ordinal);
+
+  json::Array changes;
+  for (const auto &change : cand.changes) {
+    json::Object changeObj;
+    changeObj["from"] = getPrecisionChangeTypeString(change.oldType);
+    changeObj["to"] = getPrecisionChangeTypeString(change.newType);
+    changeObj["num_operations"] = static_cast<int64_t>(change.nodes.size());
+
+    SmallVector<Instruction *, 8> insts;
+    json::Array nodeIR;
+    for (auto *node : change.nodes) {
+      if (auto *I = dyn_cast<Instruction>(node->value)) {
+        insts.push_back(I);
+        nodeIR.push_back(getValueStr(I));
+      }
+    }
+    changeObj["source_locations"] = getSourceLocationsJSON(insts);
+    changeObj["affected_instructions"] = std::move(nodeIR);
+    changes.push_back(std::move(changeObj));
+  }
+  stepObj["changes"] = std::move(changes);
+  return stepObj;
+}
+
+void CandidateSubgraph::writeReportStep(raw_ostream &OS, size_t i,
+                                        StringRef pad) {
+  auto &cand = candidates[i];
+  OS << pad << "[Precision] " << cand.desc << " (#" << cand.ordinal << ")\n";
+  for (const auto &change : cand.changes) {
+    OS << pad << "  " << getPrecisionChangeTypeString(change.oldType) << " -> "
+       << getPrecisionChangeTypeString(change.newType) << " for "
+       << change.nodes.size() << " operations\n";
+    SmallSet<std::string, 4> seen;
+    for (auto *node : change.nodes) {
+      if (auto *I = dyn_cast<Instruction>(node->value)) {
+        auto loc = getSourceLocationStr(I);
+        if (!loc.empty() && seen.insert(loc).second)
+          OS << pad << "    Source: " << loc << "\n";
+      }
+    }
+  }
+}
+
+void CandidateSubgraph::materialize(size_t i) { apply(session(), i); }
+
+void CandidateOutput::price() {
+  if (!herbieAnswered)
+    return;
+  FunctionFPState &st = site();
+  Module *M = st.F->getParent();
+  const FastMathFlags FMF = cast<Instruction>(oldOutput)->getFastMathFlags();
+  for (RewriteCandidate &c : candidates)
+    c.CompCost = getCompCost(session().CostModel, c.expr, M, st.valueToNodeMap,
+                             st.symbolToValueMap, FMF, &subgraph->inputs);
+  setUnifiedAccuracyCost(session().Opts, *this, st.valueToNodeMap,
+                         st.symbolToValueMap);
+}
+
+void CandidateSubgraph::price() {
+  for (PTCandidate &c : candidates)
+    c.CompCost = getCompCost(session(), *subgraph, c);
+  setUnifiedAccuracyCost(session().Opts, *this, site().valueToNodeMap,
+                         site().symbolToValueMap);
+}
+
+void CandidateOutput::scaleErrors(double factor) {
+  initialAccCost *= factor;
+  for (auto &cand : candidates)
+    cand.accuracyCost *= factor;
+}
+
+void CandidateSubgraph::scaleErrors(double factor) {
+  initialAccCost *= factor;
+  for (auto &[node, cost] : perOutputInitialAccCost)
+    cost *= factor;
+  for (auto &cand : candidates) {
+    cand.accuracyCost *= factor;
+    for (auto &[node, cost] : cand.perOutputAccCost)
+      cost *= factor;
+  }
+}
+
+void CandidateOutput::printPriced(raw_ostream &OS) {
+  OS << "\n################################\n";
+  OS << "Initial AccuracyCost: " << initialAccCost << "\n";
+  OS << "Initial ComputationCost: " << initialCompCost << "\n";
+  OS << "Initial HerbieCost: " << initialHerbieCost << "\n";
+  OS << "Initial HerbieAccuracy: " << initialHerbieAccuracy << "\n";
+  OS << "Initial Expression: " << expr << "\n";
+  OS << "Grad: " << grad << "\n\n";
+  OS << "Candidates:\n";
+  OS << "Δ AccCost\t\tΔ "
+        "CompCost\t\tHerbieCost\t\tAccuracy\t\tExpression\n";
+  OS << "--------------------------------\n";
+  for (size_t i = 0; i < candidates.size(); ++i) {
+    auto &candidate = candidates[i];
+    OS << getAccCostDelta(i) << "\t\t"
+       << getCompCostDelta(session().CostModel, i) << "\t\t"
+       << candidate.herbieCost << "\t\t" << candidate.herbieAccuracy << "\t\t"
+       << candidate.expr << "\n";
+  }
+  OS << "################################\n\n";
+}
+
+void CandidateOutput::addReportSummary(json::Array &summary) {
+  json::Object co;
+  co["original_expr"] = expr;
+  co["num_candidates"] = static_cast<int64_t>(candidates.size());
+  co["gradient"] = jsonFloat(grad);
+  co["executions"] = static_cast<int64_t>(executions);
+  co["initial_accuracy_cost"] = jsonFloat(initialAccCost);
+  co["initial_computation_cost"] = initialCompCost;
+  if (auto *I = dyn_cast<Instruction>(oldOutput)) {
+    auto loc = getSourceLocationJSON(I);
+    if (!loc.empty())
+      co["source_location"] = std::move(loc);
+  }
+  summary.push_back(std::move(co));
+}
+
+void CandidateOutput::writeReportSummary(raw_ostream &textOut) {
+  textOut << "Expression #" << indexInKind() << ": " << expr << "\n";
+  textOut << "  Gradient: " << grad << ", Executions: " << executions << "\n";
+  if (auto *I = dyn_cast<Instruction>(oldOutput)) {
+    auto loc = getSourceLocationStr(I);
+    if (!loc.empty())
+      textOut << "  Source: " << loc << "\n";
+  }
+  textOut << "  Candidates: " << candidates.size() << "\n";
+  for (size_t j = 0; j < candidates.size(); ++j) {
+    auto &cand = candidates[j];
+    textOut << "    [" << cand.ordinal << "] " << cand.expr;
+    if (!std::isnan(cand.herbieAccuracy))
+      textOut << "  (accuracy: " << cand.herbieAccuracy << " bits)";
+    textOut << "\n";
+  }
+}
+
+void CandidateOutput::addCuratedRewrites(json::Array &rewrites) {
+  for (size_t ci = 0; ci < candidates.size(); ++ci) {
+    auto &cand = candidates[ci];
+    double accDelta = getAccCostDelta(ci);
+    auto compDelta = getCompCostDelta(session().CostModel, ci);
+    int64_t compDeltaVal = GET_INSTRUCTION_COST(compDelta);
+
+    if (std::isnan(accDelta))
+      continue;
+
+    // comp < 0 means faster, acc < 0 means more accurate
+    std::string category;
+    double efficiency = 0.0;
+    if (compDeltaVal <= 0 && accDelta <= 0) {
+      category = "free_win";
+      efficiency = std::abs(accDelta) + std::abs((double)compDeltaVal);
+    } else if (compDeltaVal <= 0 && accDelta > 0) {
+      category = "speed_for_accuracy";
+      efficiency = (accDelta > 1e-30)
+                       ? std::abs((double)compDeltaVal) / accDelta
+                       : std::abs((double)compDeltaVal);
+    } else if (compDeltaVal > 0 && accDelta <= 0) {
+      category = "accuracy_for_speed";
+      efficiency = (compDeltaVal > 0)
+                       ? std::abs(accDelta) / (double)compDeltaVal
+                       : std::abs(accDelta);
+    } else {
+      continue;
+    }
+
+    json::Object rw;
+    rw["id"] = candidateId(ci);
+    rw["original_expr"] = expr;
+    rw["rewritten_expr"] = cand.expr;
+    rw["category"] = category;
+    rw["efficiency"] = jsonFloat(efficiency);
+    rw["computation_cost_delta"] = compDeltaVal;
+    rw["accuracy_cost_delta"] = jsonFloat(accDelta);
+    rw["gradient"] = jsonFloat(grad);
+    rw["executions"] = static_cast<int64_t>(executions);
+    rw["herbie_accuracy"] = jsonFloat(cand.herbieAccuracy);
+    rw["initial_herbie_accuracy"] = jsonFloat(initialHerbieAccuracy);
+
+    if (auto *I = dyn_cast<Instruction>(oldOutput)) {
+      auto loc = getSourceLocationJSON(I);
+      if (!loc.empty())
+        rw["source_location"] = std::move(loc);
+    }
+
+    rewrites.push_back(std::move(rw));
+  }
+}
+
+// Top-N per-candidate deltas keep an all-dominated frontier auditable (the
+// table then collapses to the no-op point).
+static constexpr size_t kMaxCandRows = 40;
+
+// The candidates' positions by cost change, cheapest first.
+static SmallVector<size_t, 40> byCostDelta(CandidateSubgraph &CS) {
+  SmallVector<size_t, 40> order(CS.candidates.size());
+  for (size_t ci = 0; ci < order.size(); ++ci)
+    order[ci] = ci;
+  llvm::sort(order, [&](size_t a, size_t b) {
+    return GET_INSTRUCTION_COST(CS.getCompCostDelta(a)) <
+           GET_INSTRUCTION_COST(CS.getCompCostDelta(b));
+  });
+  return order;
+}
+
+void CandidateSubgraph::addReportSummary(json::Array &summary) {
+  json::Object cs;
+  cs["num_candidates"] = static_cast<int64_t>(candidates.size());
+  cs["initial_accuracy_cost"] = jsonFloat(initialAccCost);
+  cs["initial_computation_cost"] = initialCompCost;
+  SmallVector<size_t, 40> order = byCostDelta(*this);
+  json::Array cands;
+  for (size_t k = 0; k < order.size() && k < kMaxCandRows; ++k) {
+    size_t ci = order[k];
+    json::Object c;
+    c["id"] = candidateId(ci);
+    c["description"] = candidates[ci].desc;
+    c["computation_cost_delta"] = GET_INSTRUCTION_COST(getCompCostDelta(ci));
+    c["accuracy_cost_delta"] = jsonFloat(getAccCostDelta(ci));
+    cands.push_back(std::move(c));
+  }
+  cs["candidates"] = std::move(cands);
+  summary.push_back(std::move(cs));
+}
+
+void CandidateSubgraph::writeReportSummary(raw_ostream &textOut) {
+  textOut << "Subgraph #" << indexInKind() << ": " << candidates.size()
+          << " candidates (Δcost, Δacc; sorted by Δcost)\n";
+  SmallVector<size_t, 40> order = byCostDelta(*this);
+  for (size_t k = 0; k < order.size() && k < kMaxCandRows; ++k) {
+    size_t ci = order[k];
+    textOut << "  [" << candidateId(ci) << "] " << candidates[ci].desc
+            << ": Δcost=" << GET_INSTRUCTION_COST(getCompCostDelta(ci))
+            << " Δacc=" << format("%.6e", getAccCostDelta(ci)) << "\n";
+  }
+}
+
+void CandidateSubgraph::addCuratedRewrites(json::Array &rewrites) {
+  for (size_t ci = 0; ci < candidates.size(); ++ci) {
+    auto &pt = candidates[ci];
+    double accDelta = getAccCostDelta(ci);
+    auto compDelta = getCompCostDelta(ci);
+    int64_t compDeltaVal = GET_INSTRUCTION_COST(compDelta);
+
+    if (std::isnan(accDelta))
+      continue;
+
+    std::string category;
+    double efficiency = 0.0;
+    if (compDeltaVal <= 0 && accDelta <= 0) {
+      category = "free_win";
+      efficiency = std::abs(accDelta) + std::abs((double)compDeltaVal);
+    } else if (compDeltaVal <= 0 && accDelta > 0) {
+      category = "speed_for_accuracy";
+      efficiency = (accDelta > 1e-30)
+                       ? std::abs((double)compDeltaVal) / accDelta
+                       : std::abs((double)compDeltaVal);
+    } else if (compDeltaVal > 0 && accDelta <= 0) {
+      category = "accuracy_for_speed";
+      efficiency = (compDeltaVal > 0)
+                       ? std::abs(accDelta) / (double)compDeltaVal
+                       : std::abs(accDelta);
+    } else {
+      // Emitted even though dominated: an all-dominated frontier must
+      // leave a record of why each candidate lost.
+      category = "dominated";
+      efficiency = 0.0;
+    }
+
+    json::Object rw;
+    rw["id"] = candidateId(ci);
+    rw["type"] = "precision_change";
+    rw["description"] = pt.desc;
+    rw["category"] = category;
+    rw["efficiency"] = jsonFloat(efficiency);
+    rw["computation_cost_delta"] = compDeltaVal;
+    rw["accuracy_cost_delta"] = jsonFloat(accDelta);
+
+    SmallVector<Instruction *, 16> ptInsts;
+    for (const auto &change : pt.changes) {
+      for (auto *node : change.nodes) {
+        if (auto *I = dyn_cast<Instruction>(node->value))
+          ptInsts.push_back(I);
+      }
+    }
+    rw["source_locations"] = getSourceLocationsJSON(ptInsts);
+    json::Array affectedIR;
+    for (auto *I : ptInsts)
+      affectedIR.push_back(getValueStr(I));
+    rw["affected_instructions"] = std::move(affectedIR);
+
+    rewrites.push_back(std::move(rw));
+  }
+}
+
+void CandidateSubgraph::printPriced(raw_ostream &OS) {
+  OS << "\n################################\n";
+  OS << "Initial AccuracyCost: " << initialAccCost << "\n";
+  OS << "Initial ComputationCost: " << initialCompCost << "\n";
+  OS << "Candidates:\n";
+  OS << "Δ AccCost\t\tΔ CompCost\t\tDescription\n"
+     << "---------------------------\n";
+  for (size_t i = 0; i < candidates.size(); ++i) {
+    auto &candidate = candidates[i];
+    OS << getAccCostDelta(i) << "\t\t" << getCompCostDelta(i) << "\t\t"
+       << candidate.desc << "\n";
+  }
+  OS << "################################\n\n";
 }
 
 } // namespace poseidon

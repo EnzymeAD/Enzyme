@@ -623,4 +623,58 @@ void generateMatmulCandidates(
   }
 }
 
+std::string CandidateMatmul::candidateName(size_t i) const {
+  return matmulOptionLabel(candidates[i]);
+}
+
+std::string CandidateMatmul::selectionText(size_t i) const {
+  return "matmul[" + std::to_string(matmul->id) + "] -> " +
+         matmulOptionLabel(candidates[i]);
+}
+
+std::string CandidateMatmul::choiceText(size_t i) const {
+  return "matmul[" + std::to_string(matmul->id) + "] -> " +
+         matmulOptionLabel(candidates[i]) + " (#" + std::to_string(i) + ")";
+}
+
+json::Object CandidateMatmul::stepJSON(size_t i) {
+  json::Object stepObj;
+  stepObj["type"] = "matmul_rewrite";
+  stepObj["candidate_index"] = static_cast<int64_t>(i);
+  stepObj["matmul_id"] = static_cast<int64_t>(matmul->id);
+  stepObj["target"] = matmulOptionLabel(candidates[i]);
+  stepObj["computation_cost_delta"] = GET_INSTRUCTION_COST(getCompCostDelta(i));
+  stepObj["accuracy_cost_delta"] = jsonFloat(getAccCostDelta(i));
+  stepObj["executions"] = static_cast<int64_t>(executions);
+  return stepObj;
+}
+
+void CandidateMatmul::scaleErrors(double factor) {
+  initialAccCost *= factor;
+  for (auto &cand : candidates)
+    cand.accuracyCost *= factor;
+}
+
+void CandidateMatmul::printPriced(raw_ostream &OS) {
+  OS << "Matmul[" << matmul->id
+     << "] candidates (initial cost=" << initialCompCost
+     << ", executions=" << executions << ", globalM=" << matmul->globalM
+     << ", globalN=" << matmul->globalN << ", globalK=" << matmul->globalK
+     << ", K=" << matmul->K << ", gridCTAs=" << matmul->gridCTAs << "):\n";
+  if (candidates.empty()) {
+    OS << "  (no candidates emitted)\n";
+    return;
+  }
+  for (size_t i = 0; i < candidates.size(); ++i)
+    OS << "  " << matmulOptionLabel(candidates[i])
+       << ": Δcost=" << getCompCostDelta(i)
+       << " ΔaccCost=" << getAccCostDelta(i) << "\n";
+}
+
+void CandidateMatmul::writeReportStep(raw_ostream &OS, size_t i,
+                                      StringRef pad) {
+  OS << pad << "[Matmul] matmul[" << matmul->id << "] -> "
+     << matmulOptionLabel(candidates[i]) << " (#" << i << ")\n";
+}
+
 } // namespace poseidon

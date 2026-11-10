@@ -43,8 +43,6 @@ namespace poseidon {
 struct Options;
 class Session;
 
-enum class UnitKind { R, PT, M };
-
 // One item of -poseidon-apply-rewrites: [<site>:]<unit>_<ordinal> or
 // [<site>:]<unit>=<name>.
 struct ApplyItem {
@@ -98,14 +96,14 @@ struct SiteTable {
 // put on the application's scale by. Dividing an absolute accuracy cost by it
 // gives the per-operation relative rounding level that would produce the same
 // effect on the site's outputs, which is the unit `errorTol` is in.
-llvm::SmallVector<SolutionStep> accuracyDPSolver(
-    Session &S, llvm::Function &F, llvm::SmallVector<CandidateOutput, 4> &COs,
-    llvm::SmallVector<CandidateSubgraph, 4> &CSs,
-    llvm::SmallVector<CandidateMatmul, 4> &CMs,
-    std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-    std::unordered_map<std::string, llvm::Value *> &symbolToValueMap,
-    double errorTol = 0.0, double accScale = 0.0, SolveRecord *record = nullptr,
-    SiteTable *table = nullptr);
+struct FunctionFPState;
+
+// Solves `units`, units of the site `st`, in one DP.
+llvm::SmallVector<SolutionStep>
+accuracyDPSolver(Session &S, llvm::Function &F, FunctionFPState &st,
+                 llvm::ArrayRef<SiteUnit *> units, double errorTol = 0.0,
+                 double accScale = 0.0, SolveRecord *record = nullptr,
+                 SiteTable *table = nullptr);
 
 // Per matmul, pick the cheapest candidate whose estimated relative domain error
 // is <= `budget` and that beats the F64 baseline; scalar subgraphs are left at
@@ -115,13 +113,6 @@ llvm::SmallVector<SolutionStep>
 errorBudgetSelector(const Options &O,
                     llvm::SmallVector<CandidateMatmul, 4> &CMs, double budget,
                     double confidence);
-
-// True when an elementwise step edits instructions a chosen matmul step raises.
-// The two selectors run separately under a site tolerance, so the footprint
-// rule the DP applies internally has to be applied between their results as
-// well.
-bool stepConflictsWithMatmulSteps(const SolutionStep &elem,
-                                  llvm::ArrayRef<SolutionStep> matmulSteps);
 
 struct FunctionFPState {
   llvm::Function *F = nullptr;
@@ -140,6 +131,9 @@ struct FunctionFPState {
   llvm::SmallVector<CandidateOutput, 4> COs;
   llvm::SmallVector<CandidateSubgraph, 4> CSs;
   llvm::SmallVector<CandidateMatmul, 4> CMs;
+  // The site's units in site order (COs, CSs, CMs), each bound to this site.
+  llvm::SmallVector<SiteUnit *, 8> units;
+  bool unitsSealed = false;
   // Set when the site is solved against the DP table cache.
   std::unique_ptr<SiteTable> table;
 
@@ -154,7 +148,16 @@ struct FunctionFPState {
   std::optional<llvm::TargetLibraryInfoImpl> raiseTLII;
   std::optional<llvm::TargetLibraryInfo> raiseTLI;
   std::optional<llvm::ScalarEvolution> raiseSE;
+
+  // Binds every unit to this site and lists it in `units`. Once per site,
+  // after its last proposal: no unit is added to COs, CSs or CMs after it.
+  void sealUnits(Session &S);
 };
+
+// The units the DP solves: every unit of the site, or under an accuracy
+// target every unit but the matrix products, which errorBudgetSelector picks.
+llvm::SmallVector<SiteUnit *> solvedUnits(const FunctionFPState &st,
+                                          bool target);
 
 bool collectFPCandidates(Session &S, llvm::Function &F, double errorTol,
                          unsigned sampleLogBits, FunctionFPState &st);
@@ -190,11 +193,8 @@ void printPin(Session &S, const FunctionFPState &st,
 void checkPinnedSites(Session &S);
 
 // `applied` receives the steps materialized, in order.
-bool applySolution(
-    Session &S, llvm::ArrayRef<SolutionStep> steps,
-    std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-    std::unordered_map<std::string, llvm::Value *> &symbolToValueMap,
-    llvm::SmallVectorImpl<SolutionStep> &applied);
+bool applySolution(llvm::ArrayRef<SolutionStep> steps,
+                   llvm::SmallVectorImpl<SolutionStep> &applied);
 
 } // namespace poseidon
 #endif // POSEIDON_SOLVERS_H

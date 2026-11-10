@@ -4,6 +4,7 @@
 #include "MatmulScheme.h"
 #include "Profile/ProfileRead.h"
 #include "Techniques/Precision.h"
+#include "Techniques/Unit.h"
 
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
@@ -280,7 +281,7 @@ void findHostGemmLoopNests(const Options &O, llvm::Function &F,
                            const std::unordered_map<size_t, ProfileInfo> &prof,
                            llvm::SmallVectorImpl<AbstractMatmul> &out);
 
-class CandidateMatmul {
+class CandidateMatmul : public SiteUnit {
 public:
   struct Option {
     unsigned tileM = ~0u, tileN = ~0u, tileK = ~0u;
@@ -302,6 +303,8 @@ public:
     double domainError = 0.0;
   };
 
+  CandidateMatmul() : SiteUnit(UnitKind::M) {}
+
   AbstractMatmul *matmul = nullptr;
   double initialCompCost = -1.0; // per-MAC cost of the baseline (naive) matmul
   double initialAccCost = 0.0;
@@ -319,6 +322,35 @@ public:
   }
 
   void apply(Session &S, size_t candidateIndex);
+
+  static bool classof(const OptimizationUnit *U) {
+    return U->kind() == unsigned(UnitKind::M);
+  }
+  size_t numCandidates() const override { return candidates.size(); }
+  llvm::InstructionCost costDelta(size_t i,
+                                  llvm::ArrayRef<SolutionStep>) override {
+    return getCompCostDelta(i);
+  }
+  double errorDelta(size_t i, llvm::ArrayRef<SolutionStep>) override {
+    return getAccCostDelta(i);
+  }
+  // A raise replaces the loop that computes the product.
+  bool consumesFootprint() const override { return true; }
+  const llvm::SetVector<llvm::Instruction *> *footprint() const override {
+    return matmul ? &matmul->footprint : nullptr;
+  }
+  std::string candidateName(size_t i) const override;
+  std::string choiceText(size_t i) const override;
+  llvm::json::Object stepJSON(size_t i) override;
+  void writeReportStep(llvm::raw_ostream &OS, size_t i,
+                       llvm::StringRef pad) override;
+  void materialize(size_t i) override { apply(session(), i); }
+  void scaleErrors(double factor) override;
+  void printPriced(llvm::raw_ostream &OS) override;
+  std::string keyHeader() const override {
+    return "CM " + std::to_string(matmul->id);
+  }
+  std::string selectionText(size_t i) const override;
 };
 
 std::string matmulOptionLabel(const CandidateMatmul::Option &opt);
