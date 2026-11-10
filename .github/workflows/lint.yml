@@ -23,7 +23,7 @@ jobs:
     - name: Check for order-dependent IR emission
       run: |
         python3 enzyme/scripts/check_emission_order.py --github \
-          --include-llvm-builder enzyme/Enzyme
+          --include-llvm-builder enzyme/Enzyme enzyme/Poseidon
 
   llvm-api:
     name: Direct use of wrapped LLVM APIs

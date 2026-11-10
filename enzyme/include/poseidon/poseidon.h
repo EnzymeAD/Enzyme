@@ -112,8 +112,8 @@ __poseidon_site_tau(void *fn, double tau) {
 #if defined(__CUDA_ARCH__) && defined(__CLANG_CUDA_LIBDEVICE_DECLARES_H__)
 #define POSEIDON_KEEP(fn)                                                      \
   keep = (void *)&__nv_##fn, keep = (void *)&__nv_##fn##f
-extern "C" inline __device__
-    __attribute__((used)) void __poseidon_device_math(void) {
+extern "C" inline __device__ __attribute__((used)) void
+__poseidon_device_math(void) {
   void *volatile keep;
   POSEIDON_KEEP(sin), POSEIDON_KEEP(cos), POSEIDON_KEEP(tan);
   POSEIDON_KEEP(asin), POSEIDON_KEEP(acos), POSEIDON_KEEP(atan);
@@ -142,8 +142,8 @@ extern "C" __device__ float __ocml_log2_f32(float);
 extern "C" __device__ float __ocml_log10_f32(float);
 #define POSEIDON_KEEP(fn)                                                      \
   keep = (void *)&__ocml_##fn##_f64, keep = (void *)&__ocml_##fn##_f32
-extern "C" inline __device__
-    __attribute__((used)) void __poseidon_device_math(void) {
+extern "C" inline __device__ __attribute__((used)) void
+__poseidon_device_math(void) {
   void *volatile keep;
   POSEIDON_KEEP(sin), POSEIDON_KEEP(cos), POSEIDON_KEEP(tan);
   POSEIDON_KEEP(asin), POSEIDON_KEEP(acos), POSEIDON_KEEP(atan);
