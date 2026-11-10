@@ -100,7 +100,10 @@ def BatchDiffPass : Pass<"enzyme-diff-batch">{
 def EnzymeActivityOpt : Pass<"enzyme-activity-opt">{
   let summary = "Optimize activity for differentiation";
   let dependentDialects = [
+    "arith::ArithDialect",
+    "complex::ComplexDialect",
     "enzyme::EnzymeDialect",
+    "mlir::LLVM::LLVMDialect",
   ];
   let options = [
     Option<
