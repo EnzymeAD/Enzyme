@@ -1,14 +1,14 @@
 ; RUN: rm -rf %t && mkdir -p %t
-; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/pow_term/profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-comp-cost-budget=-100 -poseidon-print -poseidon-cache=%t/base -S -o /dev/null 2> %t/base.err
+; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/pow_term/profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-cost-budget=-0.04 -poseidon-print -poseidon-cache=%t/base -S -o /dev/null 2> %t/base.err
 ; RUN: FileCheck --check-prefix=BASE %s < %t/base.err
-; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/pow_term/profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-comp-cost-budget=-100 -poseidon-print -poseidon-cache=%t/split -poseidon-split-calls=pow -S -o /dev/null 2> %t/split.err
+; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/pow_term/profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-cost-budget=-0.04 -poseidon-print -poseidon-cache=%t/split -poseidon-split-calls=pow -S -o /dev/null 2> %t/split.err
 ; RUN: FileCheck --check-prefix=SPLIT %s < %t/split.err
-; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/pow_term/profiles -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/Inputs/pow_term/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-pt=false -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-comp-cost-budget=-1 -poseidon-print -poseidon-split-calls=pow -poseidon-cache=%t/herbie -S -o %t/herbie.ll 2> %t/herbie.err
+; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/pow_term/profiles -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/Inputs/pow_term/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-pt=false -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-cost-budget=-1e-9 -poseidon-print -poseidon-split-calls=pow -poseidon-cache=%t/herbie -S -o %t/herbie.ll 2> %t/herbie.err
 ; RUN: FileCheck --check-prefix=HERBIE-CORE %s < %t/herbie.err
 ; RUN: FileCheck --check-prefix=HERBIE %s < %t/herbie.ll
-; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/pow_term/profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-comp-cost-budget=-100 -poseidon-print -poseidon-cache=%t/po -poseidon-output-profiles=%S/Inputs/pow_term/out0,%S/Inputs/pow_term/out1 -S -o /dev/null 2> %t/po.err
+; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/pow_term/profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-cost-budget=-0.04 -poseidon-print -poseidon-cache=%t/po -poseidon-output-profiles=%S/Inputs/pow_term/out0,%S/Inputs/pow_term/out1 -S -o /dev/null 2> %t/po.err
 ; RUN: FileCheck --check-prefix=PO %s < %t/po.err
-; RUN: not %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/pow_term/profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-comp-cost-budget=-100 -poseidon-print -poseidon-cache=%t/pomissing -poseidon-output-profiles=%S/Inputs/pow_term/out0,%t/none -S -o /dev/null 2>&1 | FileCheck --check-prefix=PO-MISSING %s
+; RUN: not %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/pow_term/profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-cost-budget=-0.04 -poseidon-print -poseidon-cache=%t/pomissing -poseidon-output-profiles=%S/Inputs/pow_term/out0,%t/none -S -o /dev/null 2>&1 | FileCheck --check-prefix=PO-MISSING %s
 
 ; A rate term as generated reacting-flow code writes it (Exasim's reacting-air
 ; source has nine): pow(T, fma(-log T, a, b)), scaled to about 1e-25, with log T
@@ -96,7 +96,7 @@ attributes #0 = { "target-cpu"="x86-64" }
 
 ; HERBIE-CORE: fake-herbie: {{.*}} --enable reduce:dag-cost
 ; HERBIE-CORE: (FPCore (v0) {{.*}} :pre (and (<= 2.50000000000000000e+02 v0 9.70000000000000000e+03)) :name "0" (pow v0 (fma (- (log v0)) 0.017899999999999999 -1.4847999999999999)))
-; HERBIE-CORE: 3.687364e-18{{[[:space:]]+}}256{{[[:space:]]+}}{{.*}}(exp.f64 (*.f64 (fma.f64 (neg.f64 (log.f64 v0)) {{.*}} (log.f64 v0)))
+; HERBIE-CORE: 3.687364e-18{{[[:space:]]+}}2.560000e+02{{[[:space:]]+}}{{.*}}(exp.f64 (*.f64 (fma.f64 (neg.f64 (log.f64 v0)) {{.*}} (log.f64 v0)))
 ; HERBIE-CORE: Applying solution for (pow v0 {{.*}} --(0)-> (pow.f64 v0 #s(literal -81/50 binary64))
 
 ; HERBIE-LABEL: define void @preprocess_tester(

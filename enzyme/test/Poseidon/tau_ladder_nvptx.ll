@@ -92,13 +92,13 @@ attributes #5 = { convergent nounwind "uniform-work-group-size" }
 ; body is folded back the same way. In every case the kernel is one entry
 ; function with the arithmetic inline and no _poseidon_body symbol survives.
 
-; LOOSE: [poseidon] preprocess_fms_kernel_poseidon_body: tau=1.000000e-07 S=1.187943e+04 A0=2.571104e-13 selected cost={{-[0-9]+}} accCost={{.*}} rel=1.428768e-08
+; LOOSE: [poseidon] preprocess_fms_kernel_poseidon_body: tau=1.000000e-07 S=1.187943e+04 A0=2.571104e-13 selected cost={{-[0-9.e+-]+}} accCost={{.*}} rel=1.428768e-08
 ; LOOSE: Applying solution for CS: All FP64(0%) + FP32(100%)
 ; LOOSE-LABEL: define {{.*}} @preprocess_fms_kernel_poseidon_body(
 ; LOOSE: fptrunc double
 ; LOOSE-NOT: !poseidon.ds.join
 
-; MID: [poseidon] preprocess_fms_kernel_poseidon_body: tau=1.000000e-12 S=1.187943e+04 A0=2.571104e-13 selected cost={{-[0-9]+}} accCost={{.*}} rel=7.011882e-16
+; MID: [poseidon] preprocess_fms_kernel_poseidon_body: tau=1.000000e-12 S=1.187943e+04 A0=2.571104e-13 selected cost={{-[0-9.e+-]+}} accCost={{.*}} rel=7.011882e-16
 ; MID: Applying solution for CS: All FP64(0%) + Expansion2(100%)
 ; MID-LABEL: define {{.*}} @preprocess_fms_kernel_poseidon_body(
 ; MID: !poseidon.ds.join

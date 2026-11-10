@@ -1,8 +1,8 @@
 ; REQUIRES: scev-trunc-iv-nowrap
 ; RUN: rm -rf %t && mkdir -p %t
-; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/exact_dp/two_matmuls -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_dispatch_x1e6.csv -poseidon-comp-cost-budget=-1000000000000 -poseidon-print -S -o /dev/null -poseidon-cache=%t/prune 2>&1 | FileCheck --check-prefix=PRUNE %s
+; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/exact_dp/two_matmuls -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_dispatch_x1e6.csv -poseidon-cost-budget=-1 -poseidon-print -S -o /dev/null -poseidon-cache=%t/prune 2>&1 | FileCheck --check-prefix=PRUNE %s
 ; RUN: FileCheck --check-prefix=PRUNE-TABLE %s < %t/prune/table.json
-; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/exact_dp/two_matmuls -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_dispatch_x1e6.csv -poseidon-comp-cost-budget=-1000000000000 -poseidon-print -S -o /dev/null -poseidon-cache=%t/exact -poseidon-early-prune=false 2>&1 | FileCheck --check-prefix=EXACT %s
+; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/exact_dp/two_matmuls -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_dispatch_x1e6.csv -poseidon-cost-budget=-1 -poseidon-print -S -o /dev/null -poseidon-cache=%t/exact -poseidon-early-prune=false 2>&1 | FileCheck --check-prefix=EXACT %s
 ; RUN: FileCheck --check-prefix=EXACT-TABLE %s < %t/exact/table.json
 
 ; Two matrix products on one loop. The loop carries two reduction phis, so it
@@ -122,10 +122,10 @@ attributes #5 = { convergent nounwind "uniform-work-group-size" }
 !15 = !{!7, !7, i64 0}
 
 ; PRUNE: DP table contains 10 entries.
-; PRUNE-TABLE: "-809952151": 1633.82{{[0-9]*}}
+; PRUNE-TABLE: "-6479617209": 1633.8211240338183{{[0-9]*}}
 ; PRUNE-TABLE-NOT: "itemIndex": 1
 
 ; EXACT: Exact DP: 10 frontier points
 ; EXACT: DP table contains 10 entries.
-; EXACT-TABLE: "-809952151": 163.382{{[0-9]*}}
+; EXACT-TABLE: "-6479617209": 163.38211240338188{{[0-9]*}}
 ; EXACT-TABLE: "itemIndex": 1

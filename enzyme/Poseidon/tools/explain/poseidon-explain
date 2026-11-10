@@ -20,6 +20,11 @@ def num(v, digits=2):
     return "%.*g" % (digits, v)
 
 
+# A cost is a share of what the profiled run spent in the site.
+def cost(v):
+    return num(v, 6)
+
+
 def where(loc, file_name=None):
     if not loc:
         return "<unknown>"
@@ -97,7 +102,7 @@ def target_words(doc):
     if "tau" in t:
         src = " (the site's own)" if t.get("tau_from") == "site" else ""
         return "accuracy target tau = %s%s" % (num(t["tau"], 3), src)
-    return "cost budget %s" % t.get("budget", 0)
+    return "cost budget %s" % cost(t.get("budget", 0))
 
 
 def select_flag(doc, point):
@@ -105,7 +110,8 @@ def select_flag(doc, point):
     ids = ",".join(point.get("applied", []))
     if t.get("tau_from") == "site":
         return "-poseidon-apply-rewrites=%s" % ids if ids else "(as written)"
-    flag = "-poseidon-comp-cost-budget=%d" % point["budget"]
+    budget = float(point["budget"])
+    flag = "-poseidon-cost-budget=%s" % (int(budget) if budget.is_integer() else repr(budget))
     if "tau" in t:
         flag = "-poseidon-tau=0 " + flag
     return flag
@@ -128,13 +134,13 @@ def report(doc, args, w):
                                           t.get("selector", "?"), "; DP table from the cache" if t.get("from_cache") else ""))
     before, after = res.get("cost_before"), res.get("cost_after")
     w("  as written:   modelled error %s, cost %s" % (num(res.get("modelled_rel_error_as_written")),
-                                                     before if before is not None else "n/a"))
+                                                     cost(before)))
     pct = ""
     if before and after is not None:
         pct = " (%+.0f%%)" % (100.0 * (after - before) / before)
     applied = res.get("applied", [])
     w("  with Poseidon: modelled error %s, cost %s%s; applied %s" % (
-        num(res.get("modelled_rel_error")), after if after is not None else "n/a", pct,
+        num(res.get("modelled_rel_error")), cost(after), pct,
         ", ".join(applied) if applied else "nothing"))
 
     for unit in doc.get("subgraphs", []):
@@ -154,7 +160,7 @@ def report(doc, args, w):
         if unit.get("ops"):
             prof += "; %d operations" % len(unit["ops"])
         if unit.get("cost") is not None:
-            prof += "; cost %s" % unit["cost"]
+            prof += "; cost %s" % cost(unit["cost"])
         w("  profile: %s" % prof)
         alts = sorted(unit.get("alternatives", []), key=rank)
         for a in [a for a in alts if a.get("status") == "applied"]:
@@ -168,7 +174,7 @@ def report(doc, args, w):
             if "modelled_domain_error" in a:
                 detail.append("modelled domain error %s" % num(a["modelled_domain_error"]))
             if "cost_delta" in a:
-                detail.append("cost change %d" % a["cost_delta"])
+                detail.append("cost change %s" % cost(a["cost_delta"]))
             w("      %s" % "; ".join(d for d in detail if d))
         if unit.get("left_as_written"):
             w("  left as written: %s" % unit["left_as_written"])
@@ -180,7 +186,7 @@ def report(doc, args, w):
             for a in shown:
                 err = a.get("modelled_error", a.get("modelled_domain_error"))
                 w("    %-8s %-9s %-10s %9s %12s  %s" % (a.get("id", "-"), a.get("status"), a.get("kind"), num(err),
-                                                      a.get("cost_delta", "n/a"), clip(alt_words(a), 100)))
+                                                      cost(a.get("cost_delta")), clip(alt_words(a), 100)))
                 w("    %-8s %-9s %-10s %9s %12s    %s" % ("", "", "", "", "", a.get("reason", "")))
         if len(others) > len(shown):
             w("    ... %d more (--all)" % (len(others) - len(shown)))
@@ -191,7 +197,7 @@ def report(doc, args, w):
         w("Pareto frontier (cost, modelled error; * = selected):")
         w("    %12s %15s  %-24s %s" % ("cost", "modelled error", "rewrites", "select with"))
         for p in pareto:
-            w("  %s %12s %15s  %-24s %s" % ("*" if p.get("selected") else " ", p.get("cost", p["budget"]),
+            w("  %s %12s %15s  %-24s %s" % ("*" if p.get("selected") else " ", cost(p.get("cost", p["budget"])),
                                            num(p.get("modelled_rel_error")), ",".join(p.get("applied", [])) or "(as written)",
                                            select_flag(doc, p)))
         if doc.get("target", {}).get("tau_from") != "site":
@@ -210,7 +216,7 @@ def remarks(doc, args, w):
     if applied:
         msg += ", after %s; applied %s" % (num(res.get("modelled_rel_error")), ", ".join(applied))
         if res.get("cost_before") is not None and res.get("cost_after") is not None:
-            msg += "; cost %s -> %s" % (res["cost_before"], res["cost_after"])
+            msg += "; cost %s -> %s" % (cost(res["cost_before"]), cost(res["cost_after"]))
     else:
         msg += "; left as written"
     note(fn.get("site") or fn.get("loc"), msg)

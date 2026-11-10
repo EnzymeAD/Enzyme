@@ -1,7 +1,10 @@
-; RUN: rm -rf %t && %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/joint_profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-joint-dp -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -S -poseidon-cache=%t/both -poseidon-comp-cost-budget=-400 2>&1 | FileCheck --check-prefix=BOTH %s
+; RUN: rm -rf %t && %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/joint_profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-joint-dp -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -S -poseidon-cache=%t/both -poseidon-cost-budget=-0.4 2>&1 | FileCheck --check-prefix=BOTH %s
 ; RUN: FileCheck --check-prefix=BUDGETS %s < %t/both/budgets.txt
-; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/joint_profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-joint-dp -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -S -poseidon-cache=%t/one -poseidon-comp-cost-budget=-300 2>&1 | FileCheck --check-prefix=ONE %s
-; Two annotated sites solved under one shared budget (-poseidon-joint-dp): one budgets.txt lists the joint table's breakpoints, a budget of -400 rewrites both sites to FP32, a budget of -300 is spent on tester_b alone and site_a is restored to its original body. Profiles from running this module through the host profiler with Inputs/joint_profiles/joint_driver.c.
+; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/joint_profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-joint-dp -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -S -poseidon-cache=%t/one -poseidon-cost-budget=-0.2 2>&1 | FileCheck --check-prefix=ONE %s
+; RUN: not %opt %s %loadPoseidon -passes=poseidon -poseidon-comp-cost-budget=-400 -S -o /dev/null 2>&1 | FileCheck --check-prefix=RETIRED %s
+; RUN: not --crash %opt %s %loadPoseidon -passes=poseidon -poseidon-cost-budget=-400 -S -o /dev/null 2>&1 | FileCheck --check-prefix=STALE %s
+; RUN: not --crash %opt %s %loadPoseidon -passes=poseidon -poseidon-cost-budget=nan -S -o /dev/null 2>&1 | FileCheck --check-prefix=NONFINITE %s
+; Two annotated sites solved under one shared budget (-poseidon-joint-dp): one budgets.txt lists the joint table's breakpoints, a budget of -0.4 rewrites both sites to FP32, a budget of -0.2 is spent on tester_b alone and site_a is restored to its original body. Profiles from running this module through the host profiler with Inputs/joint_profiles/joint_driver.c.
 
 define double @tester_a(double %x, double %y) #0 {
 entry:
@@ -35,8 +38,8 @@ declare double @__poseidon_fp_optimize(double (double, double)*, ...)
 attributes #0 = { "target-cpu"="x86-64" }
 
 ; BOTH: Poseidon JOINT: collecting candidates from 2 marked function(s)
-; BOTH: JOINT DP table contains 4 entries; cost range [-576, 0]
-; BOTH: JOINT: minimum accuracy cost within budget: {{.*}}; computation cost used: -576
+; BOTH: JOINT DP table contains 4 entries; cost range [-4.500000e-01, 0.000000e+00]
+; BOTH: JOINT: minimum accuracy cost within budget: {{.*}}; computation cost used: -4.500000e-01
 ; BOTH: Applying solution for CS: All FP64(0%) + FP32(100%)
 ; BOTH: [poseidon] Finished optimizing preprocess_tester_a
 ; BOTH: Applying solution for CS: All FP64(0%) + FP32(100%)
@@ -59,10 +62,10 @@ attributes #0 = { "target-cpu"="x86-64" }
 ; BOTH: fdiv fast float
 ; BOTH: fpext float
 
-; BUDGETS: -576,-384,-64,0
+; BUDGETS: -0.45000000000000001,-0.29999999999999999,-0.050000000000000003,0
 
-; ONE: JOINT DP table contains 4 entries; cost range [-576, 0]
-; ONE: JOINT: minimum accuracy cost within budget: {{.*}}; computation cost used: -384
+; ONE: JOINT DP table contains 4 entries; cost range [-4.500000e-01, 0.000000e+00]
+; ONE: JOINT: minimum accuracy cost within budget: {{.*}}; computation cost used: -3.000000e-01
 ; ONE: [poseidon] Finished optimizing preprocess_tester_a
 ; ONE: [poseidon] no rewrite applied for preprocess_tester_a; wrapper call restored to original body tester_a
 ; ONE: Applying solution for CS: All FP64(0%) + FP32(100%)
@@ -74,3 +77,15 @@ attributes #0 = { "target-cpu"="x86-64" }
 ; ONE-NEXT: entry:
 ; ONE-NEXT: call double @preprocess_tester_b(double %x, double %y)
 ; ONE-NOT: define double @preprocess_tester_a(
+
+; The integer budget is gone; asking for it names the flag that replaced it.
+; RETIRED: Unknown command line argument '-poseidon-comp-cost-budget=-400'
+; RETIRED: Did you mean '--poseidon-cost-budget=-400'?
+
+; Carried over to the new flag, that integer asks to save more than the whole
+; profiled cost, which no solution can: it stops the compile rather than
+; selecting nothing, as a share that is not finite does.
+; STALE-NOT: Starting accuracy DP solver
+; STALE: LLVM ERROR: Poseidon: -poseidon-cost-budget=-400 asks a solution to save more than the whole profiled cost. It takes the share of a site's profiled cost a solution may add, negative for one it has to save (-0.25 requires saving a quarter); the integer budgets of -poseidon-comp-cost-budget are no longer accepted. A solve writes the shares of its frontier points to budgets.txt in its -poseidon-cache directory.
+; NONFINITE-NOT: Starting accuracy DP solver
+; NONFINITE: LLVM ERROR: Poseidon: -poseidon-cost-budget=nan is not a finite number. It takes the share of a site's profiled cost

@@ -2,9 +2,9 @@
 ; RUN: rm -rf %t && mkdir -p %t/nokappa %t/diverged && cp %S/Inputs/site_kappa/*.fpprofile %t/nokappa/ && cp %S/Inputs/site_kappa/*.fpprofile %t/diverged/
 ; RUN: sed -i "/^Kappa/d" %t/nokappa/preprocess_matmul_body.fpprofile %t/nokappa/preprocess_fms_body.fpprofile
 ; RUN: sed -i "s/^KappaMark = ok/KappaMark = diverged/" %t/diverged/preprocess_matmul_body.fpprofile
-; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/site_kappa -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-enable-multifloat=true -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_x1e6.csv -poseidon-cache=%t/c1 -poseidon-comp-cost-budget=-1 -poseidon-print -S > %t.kappa.out 2>&1
-; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%t/nokappa -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-enable-multifloat=true -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_x1e6.csv -poseidon-cache=%t/c2 -poseidon-comp-cost-budget=-1 -poseidon-print -S > %t.plain.out 2>&1
-; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%t/diverged -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_x1e6.csv -poseidon-cache=%t/c3 -poseidon-comp-cost-budget=-1 -poseidon-print -S > %t.div.out 2>&1
+; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/site_kappa -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-enable-multifloat=true -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_x1e6.csv -poseidon-cache=%t/c1 -poseidon-cost-budget=-1e-9 -poseidon-print -S > %t.kappa.out 2>&1
+; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%t/nokappa -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-enable-multifloat=true -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_x1e6.csv -poseidon-cache=%t/c2 -poseidon-cost-budget=-1e-9 -poseidon-print -S > %t.plain.out 2>&1
+; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%t/diverged -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_x1e6.csv -poseidon-cache=%t/c3 -poseidon-cost-budget=-1e-9 -poseidon-print -S > %t.div.out 2>&1
 ; RUN: FileCheck --check-prefix=KAPPA %s < %t.kappa.out
 ; RUN: FileCheck --check-prefix=PLAIN %s < %t.plain.out
 ; RUN: FileCheck --check-prefix=DIVERGED %s < %t.div.out
@@ -152,9 +152,9 @@ attributes #5 = { convergent nounwind "uniform-work-group-size" }
 ; KAPPA: 6.795448e-19{{.*}}All FP64(0%) + Expansion2(100%)
 ; KAPPA: [poseidon] site preprocess_matmul_body: kappa=1.000000e+03 (ok) sumsens=4.903078e+04 factor=2.039535e-02
 ; KAPPA: Matmul[0] candidates (initial cost=4.988291e+04
-; KAPPA-NEXT: wmma m16n16k16 f16/f32: {{[^ -~]+}}cost=-380908769 {{[^ -~]+}}accCost=3.332236e+01
-; KAPPA-NEXT: tcec n=2 wmma m16n16k16 f16/f32: {{[^ -~]+}}cost=-374564621 {{[^ -~]+}}accCost=2.978463e-02
-; KAPPA-NEXT: tcec n=3 wmma m16n16k16 f16/f32: {{[^ -~]+}}cost=-368505296 {{[^ -~]+}}accCost=2.540700e-02
+; KAPPA-NEXT: wmma m16n16k16 f16/f32: {{[^ -~]+}}cost=-3.809088e+08 {{[^ -~]+}}accCost=3.332236e+01
+; KAPPA-NEXT: tcec n=2 wmma m16n16k16 f16/f32: {{[^ -~]+}}cost=-3.745646e+08 {{[^ -~]+}}accCost=2.978463e-02
+; KAPPA-NEXT: tcec n=3 wmma m16n16k16 f16/f32: {{[^ -~]+}}cost=-3.685053e+08 {{[^ -~]+}}accCost=2.540700e-02
 
 ; The same solve with the two header lines gone: every accuracy cost is the
 ; unscaled one, and the computation costs are untouched in both runs.
@@ -165,15 +165,15 @@ attributes #5 = { convergent nounwind "uniform-work-group-size" }
 ; PLAIN-NEXT: 1.697296e-04{{.*}}All FP64(0%) + FP32(100%)
 ; PLAIN: 8.072609e-12{{.*}}All FP64(0%) + Expansion2(100%)
 ; PLAIN: Matmul[0] candidates (initial cost=4.988291e+04
-; PLAIN-NEXT: wmma m16n16k16 f16/f32: {{[^ -~]+}}cost=-380908769 {{[^ -~]+}}accCost=1.633821e+03
-; PLAIN-NEXT: tcec n=2 wmma m16n16k16 f16/f32: {{[^ -~]+}}cost=-374564621 {{[^ -~]+}}accCost=1.460363e+00
-; PLAIN-NEXT: tcec n=3 wmma m16n16k16 f16/f32: {{[^ -~]+}}cost=-368505296 {{[^ -~]+}}accCost=1.245725e+00
+; PLAIN-NEXT: wmma m16n16k16 f16/f32: {{[^ -~]+}}cost=-3.809088e+08 {{[^ -~]+}}accCost=1.633821e+03
+; PLAIN-NEXT: tcec n=2 wmma m16n16k16 f16/f32: {{[^ -~]+}}cost=-3.745646e+08 {{[^ -~]+}}accCost=1.460363e+00
+; PLAIN-NEXT: tcec n=3 wmma m16n16k16 f16/f32: {{[^ -~]+}}cost=-3.685053e+08 {{[^ -~]+}}accCost=1.245725e+00
 
 ; A site whose probe run diverged carries no measured kappa; its candidates are
 ; priced at 1e30, the order of the exponent penalty, so a joint budget is spent
 ; on any other site before this one's precision is traded away.
 ; DIVERGED: [poseidon] site preprocess_matmul_body: kappa=1.000000e+03 (diverged) sumsens=4.903078e+04 factor=1.000000e+30
 ; DIVERGED: Matmul[0] candidates (initial cost=4.988291e+04
-; DIVERGED-NEXT: wmma m16n16k16 f16/f32: {{[^ -~]+}}cost=-380908769 {{[^ -~]+}}accCost=1.633821e+33
-; DIVERGED-NEXT: tcec n=2 wmma m16n16k16 f16/f32: {{[^ -~]+}}cost=-374564621 {{[^ -~]+}}accCost=1.460363e+30
-; DIVERGED-NEXT: tcec n=3 wmma m16n16k16 f16/f32: {{[^ -~]+}}cost=-368505296 {{[^ -~]+}}accCost=1.245725e+30
+; DIVERGED-NEXT: wmma m16n16k16 f16/f32: {{[^ -~]+}}cost=-3.809088e+08 {{[^ -~]+}}accCost=1.633821e+33
+; DIVERGED-NEXT: tcec n=2 wmma m16n16k16 f16/f32: {{[^ -~]+}}cost=-3.745646e+08 {{[^ -~]+}}accCost=1.460363e+30
+; DIVERGED-NEXT: tcec n=3 wmma m16n16k16 f16/f32: {{[^ -~]+}}cost=-3.685053e+08 {{[^ -~]+}}accCost=1.245725e+30

@@ -98,8 +98,6 @@ std::string num(double v, int digits = 2) {
   return formatv("{0}", format("%.*g", digits, v)).str();
 }
 
-std::string costStr(int64_t c) { return std::to_string(c); }
-
 std::string pctStr(int64_t before, int64_t after) {
   if (before == 0)
     return "";
@@ -490,6 +488,13 @@ class Explainer {
   std::map<std::pair<const SiteUnit *, size_t>, int64_t> firstBudget;
   std::vector<Unit> units;
   double A0, S, tau;
+  // Puts the units' cost changes on the axis the solve compared them on.
+  CostScale scale;
+
+  // A cost on the DP's axis, as the share of the profiled cost it stands for.
+  std::string costStr(int64_t c) const {
+    return formatv("{0}", format("%.6g", scale.share(c))).str();
+  }
 
   static std::pair<const SiteUnit *, size_t> keyOf(const SolutionStep &step) {
     return {&unitOf(step), step.candidateIndex};
@@ -563,7 +568,8 @@ public:
             ArrayRef<SolutionStep> steps, const SolveRecord &rec)
       : Sess(Sess), F(F), st(st), steps(steps), rec(rec), namer(F),
         nodes(st.valueToNodeMap), symbols(st.symbolToValueMap),
-        A0(rec.baseline), S(rec.accScale), tau(rec.tau) {}
+        A0(rec.baseline), S(rec.accScale), tau(rec.tau),
+        scale(rec.profiledCost) {}
 
   void build();
   void emitRemarks();
@@ -622,7 +628,7 @@ void Explainer::addCOAlternatives(Unit &U, const Subgraph &sg) {
     std::string rdt = dtypeOfType(CO.oldOutput->getType());
     std::optional<int64_t> base;
     if (std::isfinite(CO.initialCompCost))
-      base = toDPCost(CO.initialCompCost * (double)CO.executions);
+      base = scale.toDPCost(CO.initialCompCost * (double)CO.executions);
 
     auto fill = [&](Alt &A, const std::string &expr) {
       A.kind = "algebraic";
@@ -687,7 +693,7 @@ void Explainer::addCOAlternatives(Unit &U, const Subgraph &sg) {
       A.index = j;
       fill(A, cand.expr);
       if (cand.CompCost != std::numeric_limits<double>::max())
-        A.costDelta = CO.getCompCostDelta(Sess.CostModel, j);
+        A.costDelta = scale.toDPCost(CO.getCompCostDelta(Sess.CostModel, j));
       double acc = CO.getAccCostDelta(j);
       if (std::isfinite(acc)) {
         A.accDelta = acc;
@@ -805,7 +811,7 @@ void Explainer::addCSAlternatives(Unit &U, const Subgraph &sg) {
         A.outputs.push_back(o);
       std::optional<int64_t> cost;
       if (cand.CompCost != std::numeric_limits<double>::max())
-        cost = CS.getCompCostDelta(j);
+        cost = scale.toDPCost(CS.getCompCostDelta(j));
       double acc = CS.getAccCostDelta(j);
       PrecisionUnit::RewriteUnitSet cos;
       for (const auto &[item, idx] : applied)
@@ -817,7 +823,7 @@ void Explainer::addCSAlternatives(Unit &U, const Subgraph &sg) {
         auto c = CS.compCostDeltaCache.find(key);
         cost = c == CS.compCostDeltaCache.end()
                    ? std::nullopt
-                   : std::optional<int64_t>(c->second);
+                   : std::optional<int64_t>(scale.toDPCost(c->second));
         auto a = CS.accCostDeltaCache.find(key);
         acc = a == CS.accCostDeltaCache.end()
                   ? std::numeric_limits<double>::quiet_NaN()
@@ -952,10 +958,10 @@ void Explainer::judge(Unit &U) {
       continue;
     }
     if (tau == 0.0 && A.costDelta &&
-        *A.costDelta > Sess.Opts.Solver.CompCostBudget) {
+        *A.costDelta > scale.fromShare(Sess.Opts.Solver.CostBudget)) {
       A.reason = "its cost change " + costStr(*A.costDelta) +
                  " is above the budget " +
-                 costStr(Sess.Opts.Solver.CompCostBudget);
+                 costStr(scale.fromShare(Sess.Opts.Solver.CostBudget));
       A.rank = 2;
       continue;
     }
@@ -1025,7 +1031,7 @@ std::string Explainer::leftReason(const Unit &U, const Subgraph *sg) {
            "selected rewrites";
   }
   return "no alternative lowers the modelled error within the cost budget " +
-         costStr(Sess.Opts.Solver.CompCostBudget);
+         costStr(scale.fromShare(Sess.Opts.Solver.CostBudget));
 }
 
 void Explainer::buildSubgraph(size_t s) {
@@ -1150,7 +1156,7 @@ void Explainer::buildSubgraph(size_t s) {
     SmallVector<Value *> outs(sg.outputs.begin(), sg.outputs.end());
     double base = getCompCost(Sess.CostModel, outs, sg.inputs);
     if (FPNode *N = nodeOf(sg.outputs[0]))
-      U.baseCost = toDPCost(base * (double)N->executions);
+      U.baseCost = scale.toDPCost(base * (double)N->executions);
   }
 
   addCOAlternatives(U, sg);
@@ -1181,7 +1187,7 @@ void Explainer::buildMatmul(size_t m) {
   U.loc = locOf(U.root);
   U.executions = CM.executions;
   if (CM.initialCompCost >= 0.0)
-    U.baseCost = toDPCost(CM.initialCompCost * (double)CM.executions);
+    U.baseCost = scale.toDPCost(CM.initialCompCost * (double)CM.executions);
   for (size_t j = 0; j < CM.candidates.size(); ++j) {
     const MatmulUnit::Option &o = CM.candidates[j];
     Alt A;
@@ -1191,7 +1197,7 @@ void Explainer::buildMatmul(size_t m) {
     A.item = &CM;
     A.index = j;
     A.at = U.root;
-    A.costDelta = CM.getCompCostDelta(j);
+    A.costDelta = scale.toDPCost(CM.getCompCostDelta(j));
     double acc = CM.getAccCostDelta(j);
     if (std::isfinite(acc)) {
       A.accDelta = acc;
@@ -1259,7 +1265,7 @@ json::Object Explainer::toJSON() {
     target["tau"] = tau;
     target["tau_from"] = rec.siteTarget ? "site" : "flag";
   } else {
-    target["budget"] = (int64_t)Sess.Opts.Solver.CompCostBudget;
+    target["budget"] = Sess.Opts.Solver.CostBudget;
   }
   target["cost_model"] = costModelPath(Sess.CostModel);
   target["selector"] = rec.selector;
@@ -1280,10 +1286,10 @@ json::Object Explainer::toJSON() {
   if (known)
     before = sum;
   if (before)
-    result["cost_before"] = *before;
+    result["cost_before"] = scale.share(*before);
   std::optional<int64_t> delta = appliedDelta();
   if (before && delta)
-    result["cost_after"] = *before + *delta;
+    result["cost_after"] = scale.share(*before + *delta);
   putNum(result, "modelled_rel_error_as_written", relErr(0.0));
   bool matmulApplied = false;
   for (const Unit &U : units)
@@ -1314,7 +1320,7 @@ json::Object Explainer::toJSON() {
     if (!U.shape.empty())
       u["shape"] = U.shape;
     if (U.baseCost)
-      u["cost"] = *U.baseCost;
+      u["cost"] = scale.share(*U.baseCost);
     u["executions"] = (int64_t)U.executions;
     if (U.kind == "subgraph") {
       u["ops"] = std::move(U.ops);
@@ -1382,7 +1388,7 @@ json::Object Explainer::toJSON() {
       if (!A.changes.empty())
         a["changes"] = std::move(A.changes);
       if (A.costDelta)
-        a["cost_delta"] = *A.costDelta;
+        a["cost_delta"] = scale.share(*A.costDelta);
       if (A.err)
         a["modelled_error"] = *A.err;
       if (A.domainError)
@@ -1410,9 +1416,9 @@ json::Object Explainer::toJSON() {
     for (const auto &[cost, acc] : rec.table) {
       json::Object p;
       int64_t b = cost;
-      p["budget"] = b;
+      p["budget"] = scale.share(b);
       if (before)
-        p["cost"] = *before + b;
+        p["cost"] = scale.share(*before + b);
       putNum(p, "modelled_rel_error", relErr(acc));
       json::Array ids;
       auto it = rec.solutions.find(cost);
@@ -1467,7 +1473,8 @@ void Explainer::emitRemarks() {
       R << "target " << ore::NV("Tau", num(tau));
     else
       R << "cost budget "
-        << ore::NV("Budget", costStr(Sess.Opts.Solver.CompCostBudget));
+        << ore::NV("Budget",
+                   costStr(scale.fromShare(Sess.Opts.Solver.CostBudget)));
     double asWritten = relErr(0.0);
     if (std::isfinite(asWritten))
       R << "; modelled error as written "

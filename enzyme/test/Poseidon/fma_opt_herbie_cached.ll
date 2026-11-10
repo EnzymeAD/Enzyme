@@ -30,8 +30,8 @@ attributes #0 = { "target-cpu"="x86-64" }
 
 ; The selection line reports the tolerance in the unit it is compared in: the
 ; original FP64 body sits at A0/S = 1.08e-15, the chosen point at `rel`.
-; CHEAPEST: [poseidon] preprocess_tester: tau=5.000000e-01 S={{.*}} A0={{.*}} selected cost=-200 accCost={{.*}} rel={{.*}}
-; ACCURATE: [poseidon] preprocess_tester: tau=5.000000e-01 S={{.*}} A0={{.*}} selected cost=800 accCost={{.*}} rel={{.*}}
+; CHEAPEST: [poseidon] preprocess_tester: tau=5.000000e-01 S={{.*}} A0={{.*}} selected cost=-2.500000e-01 accCost={{.*}} rel={{.*}}
+; ACCURATE: [poseidon] preprocess_tester: tau=5.000000e-01 S={{.*}} A0={{.*}} selected cost=1.000000e+00 accCost={{.*}} rel={{.*}}
 
 ; CHECK: define double @test_opt(double %x, double %y, double %z)
 ; CHECK-NEXT: entry:

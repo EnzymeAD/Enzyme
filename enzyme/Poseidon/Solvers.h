@@ -74,6 +74,9 @@ struct SolveRecord {
   SolutionMap solutions;
   double baseline = std::numeric_limits<double>::quiet_NaN();
   double accScale = 0.0;
+  // What the profiled run spent in the solved sites: the DP's cost axis is in
+  // shares of it.
+  double profiledCost = 0.0;
   double tau = 0.0;
   bool siteTarget = false;
   std::optional<int64_t> selected;
@@ -120,6 +123,9 @@ struct FunctionFPState {
   // costs carry; the denominator that turns an accuracy cost into a
   // per-operation relative rounding level. See accuracyDPSolver.
   double accScale = 0.0;
+  // What the profiled run spent in the site, in cost-model units: the
+  // execution count times the price of every operation the profile records.
+  double profiledCost = 0.0;
   std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>> valueToNodeMap;
   std::unordered_map<std::string, llvm::Value *> symbolToValueMap;
   llvm::SmallVector<Subgraph, 1> subgraphs;

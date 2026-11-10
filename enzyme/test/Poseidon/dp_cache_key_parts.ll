@@ -7,19 +7,19 @@
 ; RUN: not cmp -s %S/Inputs/cm_cpu_native.csv %t/cm.csv
 ; RUN: not cmp -s %s %t/const.ll
 ; RUN: not cmp -s %s %t/callee.ll
-; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/pow_term/profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-comp-cost-budget=-200 -poseidon-cache=%t/base -S -o /dev/null 2>&1 | FileCheck --check-prefixes=FRESH,SOLVED %s
+; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/pow_term/profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-cost-budget=-0.09 -poseidon-cache=%t/base -S -o /dev/null 2>&1 | FileCheck --check-prefixes=FRESH,SOLVED %s
 ; RUN: cp -r %t/base %t/same
-; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/pow_term/profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-comp-cost-budget=-200 -poseidon-cache=%t/same -S -o /dev/null 2>&1 | FileCheck --check-prefix=HIT %s
+; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/pow_term/profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-cost-budget=-0.09 -poseidon-cache=%t/same -S -o /dev/null 2>&1 | FileCheck --check-prefix=HIT %s
 ; RUN: cp -r %t/base %t/profile
-; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%t/p -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-comp-cost-budget=-200 -poseidon-cache=%t/profile -S -o /dev/null 2>&1 | FileCheck --check-prefixes=PROFILE,SOLVED %s
+; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%t/p -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-cost-budget=-0.09 -poseidon-cache=%t/profile -S -o /dev/null 2>&1 | FileCheck --check-prefixes=PROFILE,SOLVED %s
 ; RUN: cp -r %t/base %t/costmodel
-; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/pow_term/profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%t/cm.csv -poseidon-comp-cost-budget=-200 -poseidon-cache=%t/costmodel -S -o /dev/null 2>&1 | FileCheck --check-prefixes=COSTMODEL,SOLVED %s
+; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/pow_term/profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%t/cm.csv -poseidon-cost-budget=-0.09 -poseidon-cache=%t/costmodel -S -o /dev/null 2>&1 | FileCheck --check-prefixes=COSTMODEL,SOLVED %s
 ; RUN: cp -r %t/base %t/flag
-; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/pow_term/profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-comp-cost-budget=-200 -poseidon-cache=%t/flag -poseidon-random-seed=7 -S -o /dev/null 2>&1 | FileCheck --check-prefixes=FLAG,SOLVED %s
+; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/pow_term/profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-cost-budget=-0.09 -poseidon-cache=%t/flag -poseidon-random-seed=7 -S -o /dev/null 2>&1 | FileCheck --check-prefixes=FLAG,SOLVED %s
 ; RUN: cp -r %t/base %t/const
-; RUN: %opt %t/const.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/pow_term/profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-comp-cost-budget=-200 -poseidon-cache=%t/const -S -o /dev/null 2>&1 | FileCheck --check-prefixes=BODY,SOLVED %s
+; RUN: %opt %t/const.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/pow_term/profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-cost-budget=-0.09 -poseidon-cache=%t/const -S -o /dev/null 2>&1 | FileCheck --check-prefixes=BODY,SOLVED %s
 ; RUN: cp -r %t/base %t/callee
-; RUN: %opt %t/callee.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/pow_term/profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-comp-cost-budget=-200 -poseidon-cache=%t/callee -S -o /dev/null 2>&1 | FileCheck --check-prefixes=BODY,SOLVED %s
+; RUN: %opt %t/callee.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/pow_term/profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-cost-budget=-0.09 -poseidon-cache=%t/callee -S -o /dev/null 2>&1 | FileCheck --check-prefixes=BODY,SOLVED %s
 
 ; Each compile starts from the first one's cache and changes one input of the
 ; DP table (a profile byte, a cost-model row, a solve flag, a constant of the

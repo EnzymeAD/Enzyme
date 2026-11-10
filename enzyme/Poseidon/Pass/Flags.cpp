@@ -17,7 +17,10 @@
 #include "llvm/ADT/Twine.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/Format.h"
+#include "llvm/Support/FormatVariadic.h"
 
+#include <cmath>
 #include <string>
 
 using namespace llvm;
@@ -139,14 +142,16 @@ cl::list<std::string> SplitCalls(
              "-poseidon-min-uses-split/-poseidon-min-ops-split say"));
 
 // Solver and budgets.
-cl::opt<int64_t> CompCostBudget(
-    "poseidon-comp-cost-budget", cl::init(kDefaults.Solver.CompCostBudget),
-    cl::Hidden, cl::desc("The maximum computation cost budget for the solver"));
-cl::opt<double> Tau(
-    "poseidon-tau", cl::init(kDefaults.Solver.Tau), cl::Hidden,
-    cl::desc("Relative accuracy target of every site that carries none "
-             "(the dual of -poseidon-comp-cost-budget; 0 = disabled); a site "
-             "is solved under it exactly as under a target of its own"));
+cl::opt<double> CostBudget(
+    "poseidon-cost-budget", cl::init(kDefaults.Solver.CostBudget), cl::Hidden,
+    cl::desc("The share of a site's profiled cost a solution may add; a "
+             "negative share, down to -1, is one it has to save (0 = no "
+             "slower than as written)"));
+cl::opt<double>
+    Tau("poseidon-tau", cl::init(kDefaults.Solver.Tau), cl::Hidden,
+        cl::desc("Relative accuracy target of every site that carries none "
+                 "(the dual of -poseidon-cost-budget; 0 = disabled); a site "
+                 "is solved under it exactly as under a target of its own"));
 cl::opt<bool> TauCheapest(
     "poseidon-tau-cheapest", cl::init(kDefaults.Solver.TauCheapest), cl::Hidden,
     cl::desc("Site-level tau selects the cheapest frontier point whose "
@@ -425,6 +430,25 @@ static void checkFlagClassification(const Options &O) {
                      "in the first, any other in the second.");
 }
 
+// No solution saves more than the whole profiled cost, so a budget below -1 is
+// a mistake in the flag, most likely an integer budget of the cost axis that
+// came before, and not a solve that finds nothing.
+static void checkCostBudget(const SolverOptions &S) {
+  if (std::isfinite(S.CostBudget) && S.CostBudget >= -1.0)
+    return;
+  std::string value = formatv("{0}", format("%.17g", S.CostBudget)).str();
+  report_fatal_error(
+      "Poseidon: -poseidon-cost-budget=" + Twine(value) +
+      (std::isfinite(S.CostBudget)
+           ? " asks a solution to save more than the whole profiled cost"
+           : " is not a finite number") +
+      ". It takes the share of a site's profiled cost a solution may add, "
+      "negative for one it has to save (-0.25 requires saving a quarter); the "
+      "integer budgets of -poseidon-comp-cost-budget are no longer accepted. A "
+      "solve writes the shares of its frontier points to budgets.txt in its "
+      "-poseidon-cache directory.");
+}
+
 Options readOptions() {
   using namespace flags;
   Options O;
@@ -457,7 +481,7 @@ Options readOptions() {
   C.SplitCalls.assign(SplitCalls.begin(), SplitCalls.end());
 
   SolverOptions &S = O.Solver;
-  S.CompCostBudget = CompCostBudget;
+  S.CostBudget = CostBudget;
   S.Tau = Tau;
   S.TauCheapest = TauCheapest;
   S.EarlyPrune = EarlyPrune;
@@ -508,6 +532,7 @@ Options readOptions() {
   D.Explain = Explain;
 
   checkFlagClassification(O);
+  checkCostBudget(S);
   return O;
 }
 

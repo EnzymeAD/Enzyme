@@ -19,8 +19,8 @@
       "applied": [
         "PT0_10"
       ],
-      "budget": -5325000,
-      "cost": 1831000,
+      "budget": -0.7441307993292342,
+      "cost": 0.2558692006707658,
       "modelled_rel_error": 1.3241097083711176e-08,
       "selected": true
     },
@@ -28,22 +28,22 @@
       "applied": [
         "PT0_11"
       ],
-      "budget": -2578000,
-      "cost": 4578000,
+      "budget": -0.3602571268865288,
+      "cost": 0.6397428731134712,
       "modelled_rel_error": 5.48378996558033e-09
     },
     {
       "applied": [],
       "budget": 0,
-      "cost": 7156000,
+      "cost": 1.0,
       "modelled_rel_error": 1.0087777130359326e-17
     },
     {
       "applied": [
         "R4_0"
       ],
-      "budget": 3721000,
-      "cost": 10877000,
+      "budget": 0.5199832308552264,
+      "cost": 1.5199832308552264,
       "modelled_rel_error": 1.0081022676304851e-17
     }
   ],
@@ -51,8 +51,8 @@
     "applied": [
       "PT0_10"
     ],
-    "cost_after": 1831000,
-    "cost_before": 7156000,
+    "cost_after": 0.2558692006707658,
+    "cost_before": 1.0,
     "modelled_rel_error": 1.3241097083711176e-08,
     "modelled_rel_error_as_written": 1.0087777130359326e-17
   },
@@ -63,7 +63,7 @@
         {
           "approx": false,
           "c": "x * (sin(sqrt(fma(z, z, fma(x, x, y * y))) * 0.5) / sqrt(fma(z, z, fma(x, x, y * y))))",
-          "cost_delta": 3721000,
+          "cost_delta": 0.5199832308552264,
           "fpcore": "(*.f64 v1 (/.f64 (sin.f64 (*.f64 (sqrt.f64 (fma.f64 v2 v2 (fma.f64 v1 v1 (*.f64 v0 v0)))) #s(literal 1/2 binary64))) (sqrt.f64 (fma.f64 v2 v2 (fma.f64 v1 v1 (*.f64 v0 v0))))))",
           "herbie_error_bits": {
             "after": 0.30100000000000193,
@@ -83,7 +83,7 @@
         {
           "approx": false,
           "c": "x * (sin(0.5 * sqrt(fma(fmin(z, y), fmin(z, y), fma(fmax(z, y), fmax(z, y), x * x)))) / sqrt(fma(fmin(z, y), fmin(z, y), fma(x, x, fmax(z, y) * fmax(z, y)))))",
-          "cost_delta": 4238000,
+          "cost_delta": 0.592230296254891,
           "fpcore": "(*.f64 v1 (/.f64 (sin.f64 (*.f64 #s(literal 1/2 binary64) (sqrt.f64 (fma.f64 (fmin.f64 v2 v0) (fmin.f64 v2 v0) (fma.f64 (fmax.f64 v2 v0) (fmax.f64 v2 v0) (*.f64 v1 v1)))))) (sqrt.f64 (fma.f64 (fmin.f64 v2 v0) (fmin.f64 v2 v0) (fma.f64 v1 v1 (*.f64 (fmax.f64 v2 v0) (fmax.f64 v2 v0)))))))",
           "herbie_error_bits": {
             "after": 0.3290000000000006,
@@ -103,7 +103,7 @@
         {
           "approx": false,
           "c": "x * (sin(0.5 * sqrt(fma(z, z, fma(y, y, x * x)))) / sqrt(fma(x, x, fma(y, y, z * z))))",
-          "cost_delta": 4118000,
+          "cost_delta": 0.5754611514812744,
           "fpcore": "(*.f64 v1 (/.f64 (sin.f64 (*.f64 #s(literal 1/2 binary64) (sqrt.f64 (fma.f64 v2 v2 (fma.f64 v0 v0 (*.f64 v1 v1)))))) (sqrt.f64 (fma.f64 v1 v1 (fma.f64 v0 v0 (*.f64 v2 v2))))))",
           "herbie_error_bits": {
             "after": 0.40800000000000125,
@@ -124,7 +124,7 @@
           "approx": true,
           "approx_note": "series approximation of z * z + (x * x + y * y)",
           "c": "z * (sin(sqrt(fma(y, y, fma(x, x, z * z))) * 0.5) / sqrt(fma(y, y, fma(x, x, z * z))))",
-          "cost_delta": 3721000,
+          "cost_delta": 0.5199832308552264,
           "fpcore": "(*.f64 v2 (/.f64 (sin.f64 (*.f64 (sqrt.f64 #s(approx (+ (* v2 v2) (+ (* v1 v1) (* v0 v0))) (fma.f64 v0 v0 (fma.f64 v1 v1 (*.f64 v2 v2))))) #s(literal 1/2 binary64))) (sqrt.f64 #s(approx (+ (* v2 v2) (+ (* v1 v1) (* v0 v0))) (fma.f64 v0 v0 (fma.f64 v1 v1 (*.f64 v2 v2)))))))",
           "herbie_error_bits": {
             "after": 0.3160000000000025,
@@ -158,7 +158,7 @@
               "to": "FP32"
             }
           ],
-          "cost_delta": -5325000,
+          "cost_delta": -0.7441307993292342,
           "id": "PT0_10",
           "kind": "precision",
           "modelled_error": 1.3241097083711176e-08,
@@ -188,7 +188,7 @@
               "to": "FP32"
             }
           ],
-          "cost_delta": -2578000,
+          "cost_delta": -0.3602571268865288,
           "id": "PT0_11",
           "kind": "precision",
           "modelled_error": 5.48378996558033e-09,
@@ -203,7 +203,7 @@
           "summary": "Funcs FP64(50%) + FP32(50%): sin (13:16) in float (1 of 11 operations)"
         }
       ],
-      "cost": 7156000,
+      "cost": 1.0,
       "executions": 1000,
       "herbie": [
         {

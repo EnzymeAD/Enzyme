@@ -33,16 +33,61 @@ namespace poseidon {
 
 OptimizationUnit::~OptimizationUnit() = default;
 
-DPCost toDPCost(double delta) {
+// `value` in cost-model units on the axis 2^exponent scales them to.
+static DPCost onAxis(double value, int exponent, StringRef what) {
+  double q = std::ldexp(value, exponent);
   // 2^63 is the first double past the axis; every smaller magnitude rounds
   // into it.
-  if (!(std::fabs(delta) < 0x1p63)) {
+  if (!(std::fabs(q) < 0x1p63)) {
+    std::string Text;
+    raw_string_ostream(Text) << value;
+    report_fatal_error("Poseidon: " + Twine(what) + " " + Twine(Text) +
+                       " does not fit the DP's cost axis");
+  }
+  return std::llround(q);
+}
+
+CostScale::CostScale(double profiledCost) : ProfiledCost(profiledCost) {
+  if (!(profiledCost >= 0.0) || !std::isfinite(profiledCost)) {
+    std::string Text;
+    raw_string_ostream(Text) << profiledCost;
+    report_fatal_error("Poseidon: the profiled cost " + Twine(Text) +
+                       " cannot scale the DP's cost axis");
+  }
+  if (profiledCost > 0.0)
+    Exponent = 32 - std::ilogb(profiledCost);
+}
+
+DPCost CostScale::toDPCost(double delta) const {
+  // A solve the profile never reached costs nothing and saves nothing.
+  if (delta == 0.0)
+    return 0;
+  if (ProfiledCost == 0.0) {
     std::string Text;
     raw_string_ostream(Text) << delta;
     report_fatal_error("Poseidon: a cost change of " + Twine(Text) +
-                       " does not fit the DP's integer cost axis");
+                       " in a solve whose profiled run spent nothing");
   }
-  return std::llround(delta);
+  return onAxis(delta, Exponent, "a cost change of");
+}
+
+double CostScale::share(DPCost cost) const {
+  if (cost == 0)
+    return 0.0;
+  return std::ldexp((double)cost, -Exponent) / ProfiledCost;
+}
+
+DPCost CostScale::fromShare(double share) const {
+  // Nothing ran, so no change saves anything: a budget keeps only its sign.
+  if (ProfiledCost == 0.0)
+    return (share > 0.0) - (share < 0.0);
+  if (!std::isfinite(share)) {
+    std::string Text;
+    raw_string_ostream(Text) << share;
+    report_fatal_error("Poseidon: a budget of " + Twine(Text) +
+                       " of the profiled cost does not fit the DP's cost axis");
+  }
+  return onAxis(share * ProfiledCost, Exponent, "a budget of");
 }
 
 DPCost addDPCost(DPCost a, DPCost b) {
@@ -84,7 +129,8 @@ bool overlapsConsumed(const SolutionStep &step, ArrayRef<SolutionStep> chosen) {
 // priced against the steps before it. Without displacement the frontier keyed
 // by cost evicts equal-cost prefixes that later units would have extended.
 bool admit(ArrayRef<SolutionStep> prior, const OptimizationUnit &unit,
-           SmallVectorImpl<SolutionStep> &kept, DPCost &cost, double &error) {
+           const CostScale &scale, SmallVectorImpl<SolutionStep> &kept,
+           DPCost &cost, double &error) {
   // The binary64 and binary32 searches of one output are separate units, but
   // only one rewrite of that output can be materialized.
   for (const SolutionStep &p : prior)
@@ -101,7 +147,8 @@ bool admit(ArrayRef<SolutionStep> prior, const OptimizationUnit &unit,
   for (const SolutionStep &p : prior) {
     if (p.unit->consumesFootprint() && p.unit->footprintOverlaps(unit)) {
       assert(p.unit->pricedAlone() && "a displaced step is charged back alone");
-      cost = addDPCost(cost, -p.unit->costDelta(p.candidateIndex, {}));
+      cost = addDPCost(
+          cost, -scale.toDPCost(p.unit->costDelta(p.candidateIndex, {})));
       error -= p.unit->errorDelta(p.candidateIndex, {});
       continue;
     }
@@ -110,8 +157,8 @@ bool admit(ArrayRef<SolutionStep> prior, const OptimizationUnit &unit,
   return true;
 }
 
-static void paretoIntegrate(CostMap &cost, SolutionMap &sol,
-                            OptimizationUnit &unit) {
+static void paretoIntegrate(const CostScale &scale, CostMap &cost,
+                            SolutionMap &sol, OptimizationUnit &unit) {
   CostMap newCost = cost;
   SolutionMap newSol = sol;
   for (const auto &p : cost) {
@@ -119,10 +166,10 @@ static void paretoIntegrate(CostMap &cost, SolutionMap &sol,
     double currAcc = p.second;
     const SmallVector<SolutionStep> &chosen = sol[p.first];
     SmallVector<SolutionStep> priorSteps;
-    if (!admit(chosen, unit, priorSteps, curr, currAcc))
+    if (!admit(chosen, unit, scale, priorSteps, curr, currAcc))
       continue;
     for (size_t i = 0; i < unit.numCandidates(); ++i) {
-      auto cd = unit.costDelta(i, priorSteps);
+      DPCost cd = scale.toDPCost(unit.costDelta(i, priorSteps));
       auto ad = unit.errorDelta(i, priorSteps);
       // Compared against the post-displacement point, so a displacement that
       // gives back more than the candidate saves is dropped.
@@ -217,8 +264,8 @@ prunedOrder(ArrayRef<ArrayRef<OptimizationUnit *>> sites) {
 // and only such a one is dropped. After the last unit every signature is
 // empty and the one remaining bucket is the frontier of all
 // footprint-compatible strategies.
-void solveExact(ArrayRef<OptimizationUnit *> units, CostMap &cost,
-                SolutionMap &sol) {
+void solveExact(ArrayRef<OptimizationUnit *> units, const CostScale &scale,
+                CostMap &cost, SolutionMap &sol) {
   const int n = units.size();
   SmallVector<int> lastRead(n, -1), canon(n);
   DenseMap<const OptimizationUnit *, int> unitIndex;
@@ -305,7 +352,7 @@ void solveExact(ArrayRef<OptimizationUnit *> units, CostMap &cost,
       SmallVector<DPCost> dc;
       SmallVector<double> da;
       for (size_t i = 0; i < unit.numCandidates(); ++i) {
-        dc.push_back(unit.costDelta(i, priced));
+        dc.push_back(scale.toDPCost(unit.costDelta(i, priced)));
         da.push_back(unit.errorDelta(i, priced));
       }
       Signature taken = stillRead(sig);
@@ -356,13 +403,13 @@ void solveExact(ArrayRef<OptimizationUnit *> units, CostMap &cost,
                << pricings << " precision changes priced; " << secs << " s\n";
 }
 
-void solvePruned(ArrayRef<OptimizationUnit *> units, CostMap &cost,
-                 SolutionMap &sol, bool progress) {
+void solvePruned(ArrayRef<OptimizationUnit *> units, const CostScale &scale,
+                 CostMap &cost, SolutionMap &sol, bool progress) {
   StringMap<std::pair<size_t, size_t>> counts;
   for (const OptimizationUnit *unit : units)
     ++counts[unit->kindName()].second;
   for (OptimizationUnit *unit : units) {
-    paretoIntegrate(cost, sol, *unit);
+    paretoIntegrate(scale, cost, sol, *unit);
     paretoPrune(cost, sol);
     if (!progress)
       continue;

@@ -30,7 +30,7 @@ SYNTAX = HEADER + 'int main() { return undeclared; }\n'
 CRASH = HEADER + 'int main() {\n  ' + SITE + '\n  abort();\n}\n'
 SPIN = HEADER + 'int main() {\n  ' + SITE + '\n  for (volatile int k = 0;; ++k) {}\n}\n'
 SITE_ONLY = HEADER + 'int main() {\n  ' + SITE + '\n}\n'
-BUDGET = '-O2 -poseidon-tau=0 -poseidon-comp-cost-budget=-3453952'
+BUDGET = '-O2 -poseidon-tau=0 -poseidon-cost-budget=-0.9'
 
 
 def rows(out):

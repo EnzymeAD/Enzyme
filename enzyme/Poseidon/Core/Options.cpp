@@ -67,7 +67,7 @@ void SolverOptions::appendSolveInputs(FlagValues &out) const {
 }
 
 void SolverOptions::appendOtherValues(FlagValues &out) const {
-  add(out, "poseidon-comp-cost-budget", CompCostBudget);
+  add(out, "poseidon-cost-budget", CostBudget);
   add(out, "poseidon-tau", Tau);
   add(out, "poseidon-tau-cheapest", TauCheapest);
   add(out, "poseidon-joint-dp", JointDP);

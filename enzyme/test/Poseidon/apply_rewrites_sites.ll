@@ -22,14 +22,14 @@
 ; The values a solve prints, joined, apply what it applied: under a budget of
 ; -64 the per-site solves pick a different candidate at each site, and the
 ; joint solve spends it on tester_b alone.
-; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/joint_profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-cache=%t/site -poseidon-comp-cost-budget=-64 -S -o %t/site.ll 2> %t/site.err
+; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/joint_profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-cache=%t/site -poseidon-cost-budget=-0.04 -S -o %t/site.ll 2> %t/site.err
 ; RUN: FileCheck --check-prefix=SITE-SOLVE %s < %t/site.err
 ; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/joint_profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-cache=%t/site "-poseidon-apply-rewrites=$(sed -n 's/^\[poseidon\] pin: //p' %t/site.err | paste -sd, -)" -S -o %t/site.pinned.ll 2> %t/site.pinned.err
 ; RUN: diff %t/site.ll %t/site.pinned.ll
 ; RUN: grep -E '^Applying solution for|^\[poseidon\] pin: ' %t/site.err > %t/site.picks
 ; RUN: grep -E '^Applying solution for|^\[poseidon\] pin: ' %t/site.pinned.err > %t/site.pinned.picks
 ; RUN: diff %t/site.picks %t/site.pinned.picks
-; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/joint_profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-joint-dp -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-cache=%t/joint -poseidon-comp-cost-budget=-64 -S -o %t/joint.ll 2> %t/joint.err
+; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/joint_profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-joint-dp -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-cache=%t/joint -poseidon-cost-budget=-0.04 -S -o %t/joint.ll 2> %t/joint.err
 ; RUN: FileCheck --check-prefix=JOINT-SOLVE %s < %t/joint.err
 ; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/joint_profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-joint-dp -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-cache=%t/joint "-poseidon-apply-rewrites=$(sed -n 's/^\[poseidon\] pin: //p' %t/joint.err | paste -sd, -)" -S -o %t/joint.pinned.ll 2> %t/joint.pinned.err
 ; RUN: diff %t/joint.ll %t/joint.pinned.ll

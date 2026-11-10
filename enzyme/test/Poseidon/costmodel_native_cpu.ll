@@ -27,7 +27,7 @@ declare double @__poseidon_fp_optimize(double (double, double)*, ...)
 attributes #0 = { "target-cpu"="x86-64" }
 
 ; NATIVE: Initial ComputationCost: 8.000000e+00
-; NATIVE: {{^[-+.0-9e]+}} -192 All FP64(0%) + FP32(100%)
+; NATIVE: {{^[-+.0-9e]+}} -1.920000e+02 All FP64(0%) + FP32(100%)
 ; NATIVE: [poseidon] Finished Optimization
 
 ; MISSING: LLVM ERROR: Poseidon: cost model {{.*}}cm_cpu_missing.csv has no row 'fmul,double'

@@ -1,7 +1,7 @@
 ; RUN: rm -rf %t && mkdir -p %t/c
 ; RUN: printf '#!/bin/sh\nkill -KILL $$\n' > %t/herbie.sh && chmod +x %t/herbie.sh
-; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/regime_split/profiles -poseidon-enable-herbie=true -poseidon-herbie-binary=%t/herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-pt=false -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-comp-cost-budget=100000000 -poseidon-cache=%t/c -S 2>&1 | FileCheck --check-prefix=CONTINUE %s
-; RUN: not --crash %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/regime_split/profiles -poseidon-enable-herbie=true -poseidon-herbie-binary=%t/herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-pt=false -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-comp-cost-budget=100000000 -poseidon-cache=%t/c -poseidon-strict-mode -S -o /dev/null 2>&1 | FileCheck --check-prefix=STRICT %s
+; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/regime_split/profiles -poseidon-enable-herbie=true -poseidon-herbie-binary=%t/herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-pt=false -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-cost-budget=1e9 -poseidon-cache=%t/c -S 2>&1 | FileCheck --check-prefix=CONTINUE %s
+; RUN: not --crash %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/regime_split/profiles -poseidon-enable-herbie=true -poseidon-herbie-binary=%t/herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-pt=false -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-cost-budget=1e9 -poseidon-cache=%t/c -poseidon-strict-mode -S -o /dev/null 2>&1 | FileCheck --check-prefix=STRICT %s
 ; RUN: ls %t/c | FileCheck --allow-empty --check-prefix=FILES %s
 
 ; A Herbie that crashes leaves its subgraph without algebraic candidates: the

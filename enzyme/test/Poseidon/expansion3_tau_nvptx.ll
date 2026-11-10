@@ -142,15 +142,15 @@ attributes #1 = { mustprogress nocallback nofree nosync nounwind speculatable wi
 !10 = !{!11, !11, i64 0}
 !11 = !{!"double", !8, i64 0}
 
-; TWO: 2.013455e-07		-868192474		All FP64(0%) + Expansion2(100%)
+; TWO: 2.013455e-07		-8.681925e+08		All FP64(0%) + Expansion2(100%)
 ; TWO-NOT: Expansion3
-; TWO: tau=1.000000e-16 S=4.913424e+08 A0=6.201450e-09 selected cost=0 accCost=0.000000e+00 rel=1.262144e-17
+; TWO: tau=1.000000e-16 S=4.913424e+08 A0=6.201450e-09 selected cost=0.000000e+00 accCost=0.000000e+00 rel=1.262144e-17
 ; TWO: no rewrite applied for preprocess__Z15logistic_kernelPKdPd_poseidon_body
 ; TWO-NOT: Applying solution
 
-; THREE: 2.013455e-07		-868192474		All FP64(0%) + Expansion2(100%)
-; THREE: -6.201441e-09		-796538547		All FP64(0%) + Expansion3(100%)
-; THREE: tau=1.000000e-16 S=4.913424e+08 A0=6.201450e-09 selected cost=-796538547 accCost=-6.201441e-09 rel=1.869795e-23
+; THREE: 2.013455e-07		-8.681925e+08		All FP64(0%) + Expansion2(100%)
+; THREE: -6.201441e-09		-7.965385e+08		All FP64(0%) + Expansion3(100%)
+; THREE: tau=1.000000e-16 S=4.913424e+08 A0=6.201450e-09 selected cost=-8.578391e-01 accCost=-6.201441e-09 rel=1.869795e-23
 ; THREE: Applying solution for CS: All FP64(0%) + Expansion3(100%) (#3)
 ; THREE-LABEL: define internal void @preprocess__Z15logistic_kernelPKdPd_poseidon_body(
 ; THREE: %mfx.split = fptrunc double %{{.+}} to float
@@ -171,8 +171,8 @@ attributes #1 = { mustprogress nocallback nofree nosync nounwind speculatable wi
 ; THREE-NEXT: store double %[[OUT]], ptr
 ; THREE-NEXT: ret void
 
-; LOOSE: -6.201441e-09		-796538547		All FP64(0%) + Expansion3(100%)
-; LOOSE: tau=1.000000e-15 S=4.913424e+08 A0=6.201450e-09 selected cost=-868192474 accCost=2.013455e-07 rel=4.224080e-16
+; LOOSE: -6.201441e-09		-7.965385e+08		All FP64(0%) + Expansion3(100%)
+; LOOSE: tau=1.000000e-15 S=4.913424e+08 A0=6.201450e-09 selected cost=-9.350074e-01 accCost=2.013455e-07 rel=4.224080e-16
 ; LOOSE: Applying solution for CS: All FP64(0%) + Expansion2(100%) (#1)
 ; LOOSE-LABEL: define internal void @preprocess__Z15logistic_kernelPKdPd_poseidon_body(
 ; LOOSE: !poseidon.ds.join

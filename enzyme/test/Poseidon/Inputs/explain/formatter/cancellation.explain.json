@@ -19,7 +19,7 @@
       "applied": [
         "R0_1"
       ],
-      "budget": -3576832,
+      "budget": -1.0,
       "cost": 0,
       "modelled_rel_error": 1.1607706226323944e-16,
       "selected": true
@@ -28,8 +28,8 @@
       "applied": [
         "R0_0"
       ],
-      "budget": -3453952,
-      "cost": 122880,
+      "budget": -0.9656455768680218,
+      "cost": 0.03435442313197824,
       "modelled_rel_error": 2.1273352908378104e-25
     }
   ],
@@ -38,7 +38,7 @@
       "R0_1"
     ],
     "cost_after": 0,
-    "cost_before": 3576832,
+    "cost_before": 1.0,
     "modelled_rel_error": 1.1607706226323944e-16,
     "modelled_rel_error_as_written": 2.770306794452491e-10
   },
@@ -50,7 +50,7 @@
           "approx": true,
           "approx_note": "series approximation of (1.0 - cos(x[i])) / (x[i] * x[i])",
           "c": "fma(-0.041666666666666664, x[i] * x[i], 0.5)",
-          "cost_delta": -3453952,
+          "cost_delta": -0.9656455768680218,
           "fpcore": "#s(approx (/ (- 1 (cos v0)) (* v0 v0)) (fma.f64 #s(literal -1/24 binary64) (*.f64 v0 v0) #s(literal 1/2 binary64)))",
           "herbie_error_bits": {
             "after": 0,
@@ -71,7 +71,7 @@
           "approx": true,
           "approx_note": "series approximation of (1.0 - cos(x[i])) / (x[i] * x[i])",
           "c": "0.5",
-          "cost_delta": -3576832,
+          "cost_delta": -1.0,
           "fpcore": "#s(approx (/ (- 1 (cos v0)) (* v0 v0)) #s(literal 1/2 binary64))",
           "herbie_error_bits": {
             "after": 9.786000000000001,
@@ -92,7 +92,7 @@
           "approx": true,
           "approx_note": "series approximation of (1.0 - cos(x[i])) / (x[i] * x[i])",
           "c": "(double)0.5f",
-          "cost_delta": -3576832,
+          "cost_delta": -1.0,
           "fpcore": "#s(approx (/ (- 1 (cos v0)) (* v0 v0)) #s(literal 1/2 binary32))",
           "herbie_error_bits": {
             "after": 0,
@@ -123,7 +123,7 @@
               "to": "FP32"
             }
           ],
-          "cost_delta": -2782208,
+          "cost_delta": -0.777841397079874,
           "id": "PT0_0",
           "kind": "precision",
           "modelled_error": 4.999999998839222e-07,
@@ -147,7 +147,7 @@
               "to": "FP32"
             }
           ],
-          "cost_delta": 171008,
+          "cost_delta": 0.047809905525336385,
           "id": "PT0_1",
           "kind": "precision",
           "modelled_error": 4.999999998839222e-07,
@@ -159,7 +159,7 @@
           "summary": "All FP64(30%) + FP32(70%): '-' (15:19), '*' (15:45) and '/' (15:37) in float (3 of 4 operations)"
         }
       ],
-      "cost": 3576832,
+      "cost": 1.0,
       "executions": 1024,
       "herbie": [
         {

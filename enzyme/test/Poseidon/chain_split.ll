@@ -1,12 +1,12 @@
 ; RUN: rm -rf %t && mkdir -p %t
-; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/chain_split -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-comp-cost-budget=-100 -poseidon-print -S -poseidon-cache=%t/default -o %t/default.ll 2> %t/default.err
+; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/chain_split -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-cost-budget=-0.05 -poseidon-print -S -poseidon-cache=%t/default -o %t/default.ll 2> %t/default.err
 ; RUN: FileCheck --check-prefix=NOSPLIT %s < %t/default.err
-; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/chain_split -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-comp-cost-budget=-100 -poseidon-print -S -poseidon-cache=%t/split -poseidon-min-uses-split=3 -poseidon-min-ops-split=4 -o %t/split.ll 2> %t/split.err
+; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/chain_split -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-cost-budget=-0.05 -poseidon-print -S -poseidon-cache=%t/split -poseidon-min-uses-split=3 -poseidon-min-ops-split=4 -o %t/split.ll 2> %t/split.err
 ; RUN: FileCheck --check-prefix=SPLIT %s < %t/split.err
-; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/chain_split -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-comp-cost-budget=-100 -poseidon-print -S -poseidon-cache=%t/uses4 -poseidon-min-uses-split=4 -poseidon-min-ops-split=4 -o %t/uses4.ll 2> %t/uses4.err
+; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/chain_split -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-cost-budget=-0.05 -poseidon-print -S -poseidon-cache=%t/uses4 -poseidon-min-uses-split=4 -poseidon-min-ops-split=4 -o %t/uses4.ll 2> %t/uses4.err
 ; RUN: FileCheck --check-prefix=NOSPLIT %s < %t/uses4.err
 ; RUN: diff %t/default.ll %t/uses4.ll
-; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/chain_split -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-comp-cost-budget=-100 -poseidon-print -S -poseidon-cache=%t/ops5 -poseidon-min-uses-split=3 -poseidon-min-ops-split=5 -o %t/ops5.ll 2> %t/ops5.err
+; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/chain_split -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-cost-budget=-0.05 -poseidon-print -S -poseidon-cache=%t/ops5 -poseidon-min-uses-split=3 -poseidon-min-ops-split=5 -o %t/ops5.ll 2> %t/ops5.err
 ; RUN: FileCheck --check-prefix=NOSPLIT %s < %t/ops5.err
 ; RUN: diff %t/default.ll %t/ops5.ll
 ; Chain splitting (-poseidon-min-uses-split / -poseidon-min-ops-split, isExpansionBottleneck in Utils.cpp):
@@ -51,7 +51,7 @@ attributes #0 = { "target-cpu"="x86-64" }
 ; NOSPLIT-NEXT: Initial ComputationCost: 3.600000e+01
 ; NOSPLIT: Total candidate compositions: 1.000000e+01
 ; NOSPLIT: Minimum accuracy cost within budget: 2.672498e-03
-; NOSPLIT-NEXT: Computation cost budget used: -128
+; NOSPLIT-NEXT: Computation cost budget used: -5.555556e-02
 ; NOSPLIT: Applying solution for CS: All FP64(80%) + FP32(20%) (#7)
 
 ; SPLIT: Found a subgraph with 9 operations and 2 inputs and 2 outputs
@@ -81,5 +81,5 @@ attributes #0 = { "target-cpu"="x86-64" }
 ; SPLIT-NEXT: Initial ComputationCost: 2.000000e+01
 ; SPLIT: Total candidate compositions: 3.000000e+01
 ; SPLIT: Minimum accuracy cost within budget: 2.672498e-03
-; SPLIT-NEXT: Computation cost budget used: -128
+; SPLIT-NEXT: Computation cost budget used: -5.555556e-02
 ; SPLIT: Applying solution for CS: All FP64(60%) + FP32(40%) (#3)
