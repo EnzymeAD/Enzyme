@@ -452,7 +452,7 @@ namespace {
 // What collectFPCandidates reads from the site's profile.
 struct SiteProfileData {
   std::string path;
-  std::unordered_map<size_t, ProfileInfo> map;
+  ProfileMap map;
   FunctionProfileHeader header;
   std::unordered_set<size_t> zeroGradIdx;
 };

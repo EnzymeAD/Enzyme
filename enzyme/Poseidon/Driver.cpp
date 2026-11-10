@@ -39,7 +39,6 @@
 
 #include <optional>
 #include <string>
-#include <unordered_map>
 
 using namespace llvm;
 
@@ -123,7 +122,7 @@ std::optional<Unprofiled> unprofiledSite(Session &S, Function &clone) {
         absent = Unprofiled{false, path.str().str(),
                             !profileDirNamesFormat(S.ProfileDirFormats, dir)};
     } else if (isNeverExecutedProfile(path.str().str())) {
-      std::unordered_map<size_t, ProfileInfo> records;
+      ProfileMap records;
       FunctionProfileHeader header;
       parseProfileFile(path.str().str(), records, &header);
       requireCanonicalHash(header, canonicalFormHash(clone), path,
@@ -342,7 +341,7 @@ double profiledSiteCost(Session &S, Function &body) {
   if (!llvm::sys::fs::exists(profilePath.str()))
     return 0.0;
 
-  std::unordered_map<size_t, ProfileInfo> profileMap;
+  ProfileMap profileMap;
   parseProfileFile(profilePath.str().str(), profileMap);
   if (profileMap.empty())
     return 0.0;

@@ -727,9 +727,8 @@ struct RgFusedIndex {
 // is refused.
 static bool rgAnalyzeChain(Function &F, ScalarEvolution &SE, LoopInfo &LI,
                            DominatorTree &DT, const FunctionProfileHeader &hdr,
-                           const std::unordered_map<size_t, ProfileInfo> &prof,
-                           ArrayRef<RgMember> chain, RuntimeGemmHandle &H,
-                           std::string &why) {
+                           const ProfileMap &prof, ArrayRef<RgMember> chain,
+                           RuntimeGemmHandle &H, std::string &why) {
   const DataLayout &DL = F.getParent()->getDataLayout();
   const unsigned R = chain.size();
   Type *eltTy = chain[0].aLoad->getType();
@@ -1395,7 +1394,7 @@ static bool rgMatchReductionPhi(const Options &O, Loop *L, PHINode &phi,
 void findHostGemmLoopNests(const Options &O, Function &F, ScalarEvolution &SE,
                            LoopInfo &LI,
                            const FunctionProfileHeader &profileHeader,
-                           const std::unordered_map<size_t, ProfileInfo> &prof,
+                           const ProfileMap &prof,
                            SmallVectorImpl<AbstractMatmul> &out) {
   if (!Target::of(F).isDevice())
     return;

@@ -11,7 +11,6 @@
 #include <cmath>
 #include <limits>
 #include <string>
-#include <unordered_map>
 #include <vector>
 
 using namespace llvm;
@@ -26,9 +25,8 @@ static void resizeCells(MatmulProfile &p) {
   p.gradD.assign((size_t)p.M * p.N, GradCellStat{});
 }
 
-static MatmulProfile
-loadProfileRaise(const AbstractMatmul &m,
-                 const std::unordered_map<size_t, ProfileInfo> &profile) {
+static MatmulProfile loadProfileRaise(const AbstractMatmul &m,
+                                      const ProfileMap &profile) {
   const ScalarLoopHandle *h = &m.scalarLoop;
   size_t fmaIdx = readProfIdxMetadata(h->fma);
   auto fmaIt = profile.find(fmaIdx);
@@ -98,9 +96,8 @@ loadProfileRaise(const AbstractMatmul &m,
 // execution counts are their sum. Taking one member's record instead would
 // under-report both the value range the accuracy model samples from and the
 // MAC count the cost model scales by.
-static MatmulProfile
-loadProfileHostGemm(const AbstractMatmul &m,
-                    const std::unordered_map<size_t, ProfileInfo> &profile) {
+static MatmulProfile loadProfileHostGemm(const AbstractMatmul &m,
+                                         const ProfileMap &profile) {
   const RuntimeGemmHandle &h = *m.hostGemm;
   double aMin = std::numeric_limits<double>::max();
   double aMax = std::numeric_limits<double>::lowest();
@@ -163,9 +160,8 @@ loadProfileHostGemm(const AbstractMatmul &m,
   return out;
 }
 
-MatmulProfile
-loadProfile(const AbstractMatmul &m,
-            const std::unordered_map<size_t, ProfileInfo> &scalarProfile) {
+MatmulProfile loadProfile(const AbstractMatmul &m,
+                          const ProfileMap &scalarProfile) {
   switch (m.origin) {
   case AbstractMatmul::Origin::Invalid:
     report_fatal_error("Invalid AbstractMatmul origin");
