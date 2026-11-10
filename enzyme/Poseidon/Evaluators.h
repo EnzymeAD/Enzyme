@@ -21,6 +21,7 @@
 #include <mpfr.h>
 #include <unordered_map>
 
+#include "ExpansionModel.h"
 #include "Precision.h"
 #include "Types.h"
 
@@ -30,6 +31,12 @@ class FPEvaluator {
 private:
   std::unordered_map<const FPNode *, double> cache;
   std::unordered_map<const FPNode *, PrecisionChangeType> nodePrecisions;
+  // The change of the candidate a node belongs to, and the components of the
+  // nodes evaluated as an FP32 expansion.
+  std::unordered_map<const FPNode *, size_t> nodeChange;
+  std::unordered_map<const FPNode *, ExpansionLimbs> limbs;
+
+  bool evaluateExpansionNode(const FPNode *node, unsigned n);
 
 public:
   FPEvaluator(PTCandidate *pt = nullptr);

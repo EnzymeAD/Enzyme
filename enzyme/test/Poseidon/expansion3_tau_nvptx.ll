@@ -7,10 +7,12 @@
 ; 24-step logistic map (72 FP64 operations on one input) under the site tolerance 1e-16: the two-component
 ; expansion models 4.2e-16 and misses it, so with two components the cheapest point that clears it is the
 ; FP64 body itself and nothing is rewritten; admitting three components adds an Expansion3 candidate that
-; clears it and is cheaper than FP64 on this cost model, and that is the pick. At 1e-15 the cheaper
-; two-component point clears the tolerance and wins even with three admitted. The materialized body
-; splits the FP64 input into three FP32 components (mfx.split*), computes in FP32, and restores FP64
-; as the sum of three widened components (mfx.tof64); the double-single join tag is not used.
+; clears it and is cheaper than FP64 on this cost model, and that is the pick. Its modelled error is below
+; the FP64 body's (a negative accuracy cost): the model keeps the three components between operations, as
+; the emitted code does. At 1e-15 the cheaper two-component point clears the tolerance and wins even with
+; three admitted. The materialized body splits the FP64 input into three FP32 components (mfx.split*),
+; computes in FP32, and restores FP64 as the sum of three widened components (mfx.tof64); the
+; double-single join tag is not used.
 ; IR: Inputs/expansion3/logistic.cu via clang -x cuda --cuda-device-only --cuda-gpu-arch=sm_120 -O2
 ; -ffp-contract=on -I<enzyme>/include -S -emit-llvm (LLVM 24; the LLVM-24-only nocreateundeforpoison
 ; intrinsic attribute removed). Profile: the same source through poseidon-clang++
@@ -148,8 +150,8 @@ attributes #1 = { mustprogress nocallback nofree nosync nounwind speculatable wi
 ; TWO-NOT: Applying solution
 
 ; THREE: 2.013455e-07		-868192474		All FP64(0%) + Expansion2(100%)
-; THREE: 0.000000e+00		-796398147		All FP64(0%) + Expansion3(100%)
-; THREE: tau=1.000000e-16 S=4.913424e+08 A0=6.201450e-09 selected cost=-796398147 accCost=0.000000e+00 rel=1.262144e-17
+; THREE: -6.201441e-09		-796538547		All FP64(0%) + Expansion3(100%)
+; THREE: tau=1.000000e-16 S=4.913424e+08 A0=6.201450e-09 selected cost=-796538547 accCost=-6.201441e-09 rel=1.869795e-23
 ; THREE: Applying solution for CS: All FP64(0%) + Expansion3(100%) (#3)
 ; THREE-LABEL: define internal void @preprocess__Z15logistic_kernelPKdPd_poseidon_body(
 ; THREE: %mfx.split = fptrunc double %{{.+}} to float
@@ -170,7 +172,7 @@ attributes #1 = { mustprogress nocallback nofree nosync nounwind speculatable wi
 ; THREE-NEXT: store double %[[OUT]], ptr
 ; THREE-NEXT: ret void
 
-; LOOSE: 0.000000e+00		-796398147		All FP64(0%) + Expansion3(100%)
+; LOOSE: -6.201441e-09		-796538547		All FP64(0%) + Expansion3(100%)
 ; LOOSE: tau=1.000000e-15 S=4.913424e+08 A0=6.201450e-09 selected cost=-868192474 accCost=2.013455e-07 rel=4.224080e-16
 ; LOOSE: Applying solution for CS: All FP64(0%) + Expansion2(100%) (#1)
 ; LOOSE-LABEL: define internal void @preprocess__Z15logistic_kernelPKdPd_poseidon_body(

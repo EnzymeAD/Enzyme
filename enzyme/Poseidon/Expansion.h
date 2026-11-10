@@ -28,6 +28,8 @@ DSValue emitTwoProdFMA(llvm::IRBuilder<> &B, llvm::Value *a, llvm::Value *b);
 DSValue emitDSAdd(llvm::IRBuilder<> &B, DSValue x, DSValue y);
 DSValue emitDSSub(llvm::IRBuilder<> &B, DSValue x, DSValue y);
 DSValue emitDSMul(llvm::IRBuilder<> &B, DSValue x, DSValue y);
+// x * y + z, for llvm.fma and llvm.fmuladd.
+DSValue emitDSFMA(llvm::IRBuilder<> &B, DSValue x, DSValue y, DSValue z);
 DSValue emitDSDiv(llvm::IRBuilder<> &B, DSValue x, DSValue y);
 DSValue emitDSSqrt(llvm::IRBuilder<> &B, DSValue x);
 DSValue emitDSNeg(llvm::IRBuilder<> &B, DSValue x);
@@ -45,14 +47,15 @@ void applyExpansion(
     llvm::DenseMap<llvm::Value *, llvm::Value *> *restoredValues = nullptr);
 
 // Wider FP32 expansions (n = 3, 4), parallel to the two-component DSValue path
-// and sharing only the EFT primitives. The component sequences reproduce the
-// QxW triple/quad-word routines used by mX_real's Sloppy tier, followed by
-// mX_real's Normalize<Regular>, so a materialized expansion matches mX_real's
-// hand-written code operation for operation.
+// and sharing TwoSum and the two-product with it. The component sequences
+// reproduce the QxW triple/quad-word routines used by mX_real's Sloppy tier,
+// followed by mX_real's Normalize<Regular>, so a materialized expansion matches
+// mX_real's code operation for operation.
 
 // An n-component FP32 expansion. x[0] is the most significant limb; the value
 // is the unevaluated sum of the limbs. Every emitter below returns a value
-// whose limbs are normalized (|x[i+1]| <= ulp(x[i])/2).
+// whose limbs are normalized (|x[i+1]| <= ulp(x[i])/2), except the square root
+// of an operand with a zero leading limb, which is the operand.
 struct ExpansionValue {
   llvm::SmallVector<llvm::Value *, 4> x;
   unsigned n() const { return x.size(); }
@@ -64,6 +67,8 @@ ExpansionValue emitExpansionSub(llvm::IRBuilder<> &B, const ExpansionValue &a,
                                 const ExpansionValue &b);
 ExpansionValue emitExpansionMul(llvm::IRBuilder<> &B, const ExpansionValue &a,
                                 const ExpansionValue &b);
+// a * a, for a product whose two operands are one value.
+ExpansionValue emitExpansionSqr(llvm::IRBuilder<> &B, const ExpansionValue &a);
 ExpansionValue emitExpansionDiv(llvm::IRBuilder<> &B, const ExpansionValue &a,
                                 const ExpansionValue &b);
 ExpansionValue emitExpansionSqrt(llvm::IRBuilder<> &B, const ExpansionValue &a);

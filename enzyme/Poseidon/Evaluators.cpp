@@ -33,529 +33,62 @@ namespace poseidon {
 
 static constexpr unsigned kMaxMPFRPrec = 1024;
 
-namespace {
-struct DS {
-  float hi, lo;
-  double toF64() const { return (double)hi + (double)lo; }
-  static DS fromF64(double x) {
-    float h = (float)x;
-    return {h, (float)(x - (double)h)};
-  }
-};
-DS dsTwoSum(float a, float b) {
-  float s = a + b, ap = s - b, bp = s - ap;
-  return {s, (a - ap) + (b - bp)};
-}
-DS dsFastTwoSum(float a, float b) {
-  float s = a + b;
-  return {s, b - (s - a)};
-}
-DS dsTwoProd(float a, float b) {
-  float p = a * b;
-  const float c = 4097.0f;
-  float ta = c * a, hi_a = ta - (ta - a), lo_a = a - hi_a;
-  float tb = c * b, hi_b = tb - (tb - b), lo_b = b - hi_b;
-  float e = ((hi_a * hi_b - p) + hi_a * lo_b + lo_a * hi_b) + lo_a * lo_b;
-  return {p, e};
-}
-DS dsNeg(DS x) { return {-x.hi, -x.lo}; }
-DS dsAdd(DS x, DS y) {
-  DS ab = dsTwoSum(x.hi, y.hi), cd = dsTwoSum(x.lo, y.lo);
-  DS ac = dsFastTwoSum(ab.hi, cd.hi);
-  return dsFastTwoSum(ac.hi, (ab.lo + cd.lo) + ac.lo);
-}
-DS dsSub(DS x, DS y) { return dsAdd(x, dsNeg(y)); }
-DS dsMul(DS x, DS y) {
-  DS pe = dsTwoProd(x.hi, y.hi);
-  return dsFastTwoSum(pe.hi, pe.lo + (x.hi * y.lo + x.lo * y.hi));
-}
-DS dsDiv(DS x, DS y) {
-  float zhi = x.hi / y.hi;
-  DS pe = dsTwoProd(zhi, y.hi);
-  float d = ((x.hi - pe.hi) - pe.lo + x.lo) - zhi * y.lo;
-  return dsFastTwoSum(zhi, d / y.hi);
-}
-DS dsSqrt(DS x) {
-  float zhi = sqrtf(x.hi);
-  DS pe = dsTwoProd(zhi, zhi);
-  float d = ((x.hi - pe.hi) - pe.lo) + x.lo;
-  return dsFastTwoSum(zhi, d / (2.0f * zhi));
-}
-DS dsFma(DS a, DS b, DS c) { return dsAdd(dsMul(a, b), c); }
-
-// Wider FP32 expansions (n = 3, 4) for the accuracy model. Each routine is the
-// operation-for-operation twin of the corresponding emitter in
-// Expansion.cpp (same QxW routine, same association of the trailing
-// sums, std::fma exactly where the emitter emits llvm.fma.f32), so the model
-// simulates the code the materializer emits.
-struct F2 {
-  float hi, lo;
-};
-F2 expansionTwoSum(float a, float b) {
-  float s = a + b, ap = s - b, bp = s - ap;
-  return {s, (a - ap) + (b - bp)};
-}
-F2 expansionFastTwoSum(float a, float b) {
-  float s = a + b;
-  return {s, b - (s - a)};
-}
-F2 expansionTwoProd(float a, float b) {
-  float p = a * b;
-  return {p, std::fma(a, b, -p)};
-}
-
-struct ExpansionN {
-  float x[4];
-  int n;
-  double toF64() const {
-    double s = (double)x[n - 1];
-    for (int i = n - 2; i >= 0; --i)
-      s = (double)x[i] + s;
-    return s;
-  }
-  static ExpansionN fromF64(double v, int n) {
-    ExpansionN r;
-    r.n = n;
-    double rem = v;
-    for (int i = 0; i < n; ++i) {
-      float li = (float)rem;
-      r.x[i] = li;
-      rem -= (double)li;
-    }
-    for (int i = n; i < 4; ++i)
-      r.x[i] = 0.0f;
-    return r;
-  }
-};
-
-// mX_real Normalize<Regular>, non-Quasi.
-void expansionNorm3(float &x0, float &x1, float &x2) {
-  F2 t = expansionFastTwoSum(x1, x2);
-  x1 = t.hi;
-  x2 = t.lo;
-  t = expansionFastTwoSum(x0, x1);
-  x0 = t.hi;
-  x1 = t.lo;
-  t = expansionFastTwoSum(x1, x2);
-  x1 = t.hi;
-  x2 = t.lo;
-}
-void expansionNorm4(float &x0, float &x1, float &x2, float &x3) {
-  F2 t = expansionFastTwoSum(x2, x3);
-  x2 = t.hi;
-  x3 = t.lo;
-  t = expansionFastTwoSum(x1, x2);
-  x1 = t.hi;
-  x2 = t.lo;
-  t = expansionFastTwoSum(x0, x1);
-  x0 = t.hi;
-  x1 = t.lo;
-  t = expansionFastTwoSum(x2, x3);
-  x2 = t.hi;
-  x3 = t.lo;
-  t = expansionFastTwoSum(x1, x2);
-  x1 = t.hi;
-  x2 = t.lo;
-  t = expansionFastTwoSum(x2, x3);
-  x2 = t.hi;
-  x3 = t.lo;
-}
-
-// QxW::add_QTW_QTW_QTW
-void expansionAddRaw3(float a0, float a1, float a2, float b0, float b1,
-                      float b2, float &c0, float &c1, float &c2) {
-  F2 s = expansionTwoSum(a0, b0);
-  c0 = s.hi;
-  c1 = s.lo;
-  F2 u = expansionTwoSum(a1, b1);
-  float t0 = u.hi;
-  c2 = u.lo;
-  F2 v = expansionTwoSum(c1, t0);
-  c1 = v.hi;
-  t0 = v.lo;
-  float t1 = a2 + b2;
-  c2 = (c2 + t0) + t1;
-}
-
-// QxW::mul_QTW_QTW_QTW
-void expansionMulRaw3(float a0, float a1, float a2, float b0, float b1,
-                      float b2, float &c0, float &c1, float &c2) {
-  F2 p = expansionTwoProd(a0, b0);
-  c0 = p.hi;
-  c1 = p.lo;
-  F2 q = expansionTwoProd(a0, b1);
-  c2 = q.hi;
-  float t0 = q.lo;
-  F2 r = expansionTwoProd(a1, b0);
-  float t1 = r.hi, t2 = r.lo;
-  F2 s = expansionTwoSum(c1, c2);
-  c1 = s.hi;
-  c2 = s.lo;
-  F2 u = expansionTwoSum(c1, t1);
-  c1 = u.hi;
-  t1 = u.lo;
-  t0 = std::fma(a0, b2, t0);
-  c2 = std::fma(a1, b1, c2);
-  t2 = std::fma(a2, b0, t2);
-  c2 = ((t0 + c2) + t2) + t1;
-}
-
-// QxW::mul_PA_QTW_QTW
-void expansionMulRaw23(float a0, float a1, float b0, float b1, float b2,
-                       float &c0, float &c1, float &c2) {
-  F2 p = expansionTwoProd(a0, b0);
-  c0 = p.hi;
-  c1 = p.lo;
-  F2 q = expansionTwoProd(a0, b1);
-  c2 = q.hi;
-  float t0 = q.lo;
-  F2 r = expansionTwoProd(a1, b0);
-  float t1 = r.hi, t2 = r.lo;
-  F2 s = expansionTwoSum(c1, c2);
-  c1 = s.hi;
-  c2 = s.lo;
-  F2 u = expansionTwoSum(c1, t1);
-  c1 = u.hi;
-  t1 = u.lo;
-  t0 = std::fma(a0, b2, t0);
-  c2 = std::fma(a1, b1, c2);
-  c2 = ((t0 + c2) + t2) + t1;
-}
-
-// QxW::div_PA_PA_PA
-void expansionDivRaw22(float a0, float a1, float b0, float b1, float &c0,
-                       float &c1) {
-  float bh = b0 + b1;
-  c0 = a0 / bh;
-  c1 = std::fma(-b0, c0, a0) + a1;
-  c1 = std::fma(-b1, c0, c1) / bh;
-}
-
-// QxW::div_QTW_QTW_QTW
-void expansionDivRaw3(float a0, float a1, float a2, float b0, float b1,
-                      float b2, float &c0, float &c1, float &c2) {
-  float e40 = a1 + a2;
-  float e41 = b1 + b2;
-  expansionDivRaw22(a0, e40, b0, e41, c0, c1);
-  float t0, t1, t2;
-  expansionMulRaw23(c0, c1, b0, b1, b2, t0, t1, t2);
-  float s0, s1, s2;
-  expansionAddRaw3(a0, a1, a2, -t0, -t1, -t2, s0, s1, s2);
-  float tn = (s0 + s1) + s2;
-  float td = (b0 + b1) + b2;
-  c2 = tn / td;
-}
-
-// QxW::sqrt_QTW_PA
-void expansionSqrtRaw32(float a0, float a1, float a2, float &c0, float &c1) {
-  c0 = std::sqrt(a0);
-  float num = (std::fma(-c0, c0, a0) + a1) + a2;
-  c1 = num / (c0 + c0);
-}
-
-// QxW::sqr_PA_QTW
-void expansionSqrRaw23(float a0, float a1, float &c0, float &c1, float &c2) {
-  F2 p = expansionTwoProd(a0, a0);
-  c0 = p.hi;
-  c1 = p.lo;
-  float t0 = a0 + a0;
-  F2 q = expansionTwoProd(t0, a1);
-  c2 = q.hi;
-  float t1 = q.lo;
-  F2 s = expansionTwoSum(c1, c2);
-  c1 = s.hi;
-  c2 = s.lo;
-  c2 = c2 + t1;
-  c2 = std::fma(a1, a1, c2);
-}
-
-// QxW::sqrt_QTW_QTW
-void expansionSqrtRaw3(float a0, float a1, float a2, float &c0, float &c1,
-                       float &c2) {
-  expansionSqrtRaw32(a0, a1, a2, c0, c1);
-  float t0, t1, t2;
-  expansionSqrRaw23(c0, c1, t0, t1, t2);
-  float s0, s1, s2;
-  expansionAddRaw3(a0, a1, a2, -t0, -t1, -t2, s0, s1, s2);
-  float tn = (s0 + s1) + s2;
-  float td = (c0 + c1) * 2.0f;
-  c2 = tn / td;
-}
-
-// QxW::add_QQW_QQW_QQW
-void expansionAddRaw4(float a0, float a1, float a2, float a3, float b0,
-                      float b1, float b2, float b3, float &c0, float &c1,
-                      float &c2, float &c3) {
-  F2 s = expansionTwoSum(a0, b0);
-  c0 = s.hi;
-  c1 = s.lo;
-  F2 u = expansionTwoSum(a1, b1);
-  float t0 = u.hi;
-  c2 = u.lo;
-  F2 v = expansionTwoSum(a2, b2);
-  float t1 = v.hi;
-  c3 = v.lo;
-  F2 w = expansionTwoSum(c1, t0);
-  c1 = w.hi;
-  t0 = w.lo;
-  F2 x = expansionTwoSum(c2, t0);
-  c2 = x.hi;
-  t0 = x.lo;
-  F2 y = expansionTwoSum(c2, t1);
-  c2 = y.hi;
-  t1 = y.lo;
-  float t2 = a3 + b3;
-  c3 = ((c3 + t0) + t1) + t2;
-}
-
-// QxW::mul_QQW_QQW_QQW
-void expansionMulRaw4(float a0, float a1, float a2, float a3, float b0,
-                      float b1, float b2, float b3, float &c0, float &c1,
-                      float &c2, float &c3) {
-  F2 p = expansionTwoProd(a0, b0);
-  c0 = p.hi;
-  c1 = p.lo;
-  F2 q = expansionTwoProd(a0, b1);
-  c2 = q.hi;
-  c3 = q.lo;
-  F2 r = expansionTwoProd(a1, b0);
-  float t0 = r.hi, t1 = r.lo;
-  F2 s = expansionTwoSum(c1, c2);
-  c1 = s.hi;
-  c2 = s.lo;
-  F2 u = expansionTwoSum(c1, t0);
-  c1 = u.hi;
-  t0 = u.lo;
-  F2 v = expansionTwoProd(a0, b2);
-  float t2 = v.hi, t3 = v.lo;
-  F2 w = expansionTwoProd(a1, b1);
-  float t4 = w.hi, t5 = w.lo;
-  F2 x = expansionTwoProd(a2, b0);
-  float t6 = x.hi, t7 = x.lo;
-  F2 y = expansionTwoSum(c2, t0);
-  c2 = y.hi;
-  t0 = y.lo;
-  F2 z = expansionTwoSum(c2, c3);
-  c2 = z.hi;
-  c3 = z.lo;
-  F2 aa = expansionTwoSum(c2, t1);
-  c2 = aa.hi;
-  t1 = aa.lo;
-  F2 bb = expansionTwoSum(c2, t2);
-  c2 = bb.hi;
-  t2 = bb.lo;
-  F2 cc = expansionTwoSum(c2, t4);
-  c2 = cc.hi;
-  t4 = cc.lo;
-  F2 dd = expansionTwoSum(c2, t6);
-  c2 = dd.hi;
-  t6 = dd.lo;
-  c3 = std::fma(a0, b3, c3);
-  c3 = std::fma(a1, b2, c3);
-  c3 = std::fma(a2, b1, c3);
-  c3 = std::fma(a3, b0, c3);
-  c3 = c3 + t0;
-  c3 = c3 + t1;
-  c3 = c3 + t2;
-  c3 = c3 + t3;
-  c3 = c3 + t4;
-  c3 = c3 + t5;
-  c3 = c3 + t6;
-  c3 = c3 + t7;
-}
-
-// QxW::mul_QTW_QQW_QQW
-void expansionMulRaw34(float a0, float a1, float a2, float b0, float b1,
-                       float b2, float b3, float &c0, float &c1, float &c2,
-                       float &c3) {
-  F2 p = expansionTwoProd(a0, b0);
-  c0 = p.hi;
-  c1 = p.lo;
-  F2 q = expansionTwoProd(a0, b1);
-  c2 = q.hi;
-  c3 = q.lo;
-  F2 r = expansionTwoProd(a1, b0);
-  float t0 = r.hi, t1 = r.lo;
-  F2 s = expansionTwoSum(c1, c2);
-  c1 = s.hi;
-  c2 = s.lo;
-  F2 u = expansionTwoSum(c1, t0);
-  c1 = u.hi;
-  t0 = u.lo;
-  F2 v = expansionTwoProd(a0, b2);
-  float t2 = v.hi, t3 = v.lo;
-  F2 w = expansionTwoProd(a1, b1);
-  float t4 = w.hi, t5 = w.lo;
-  F2 x = expansionTwoProd(a2, b0);
-  float t6 = x.hi, t7 = x.lo;
-  F2 y = expansionTwoSum(c2, t0);
-  c2 = y.hi;
-  t0 = y.lo;
-  F2 z = expansionTwoSum(c2, c3);
-  c2 = z.hi;
-  c3 = z.lo;
-  F2 aa = expansionTwoSum(c2, t1);
-  c2 = aa.hi;
-  t1 = aa.lo;
-  F2 bb = expansionTwoSum(c2, t2);
-  c2 = bb.hi;
-  t2 = bb.lo;
-  F2 cc = expansionTwoSum(c2, t4);
-  c2 = cc.hi;
-  t4 = cc.lo;
-  F2 dd = expansionTwoSum(c2, t6);
-  c2 = dd.hi;
-  t6 = dd.lo;
-  c3 = std::fma(a0, b3, c3);
-  c3 = std::fma(a1, b2, c3);
-  c3 = std::fma(a2, b1, c3);
-  c3 = c3 + t0;
-  c3 = c3 + t1;
-  c3 = c3 + t2;
-  c3 = c3 + t3;
-  c3 = c3 + t4;
-  c3 = c3 + t5;
-  c3 = c3 + t6;
-  c3 = c3 + t7;
-}
-
-// QxW::sqr_QTW_QQW
-void expansionSqrRaw34(float a0, float a1, float a2, float &c0, float &c1,
-                       float &c2, float &c3) {
-  F2 p = expansionTwoProd(a0, a0);
-  c0 = p.hi;
-  c1 = p.lo;
-  float t0 = a0 + a0;
-  F2 q = expansionTwoProd(t0, a1);
-  c2 = q.hi;
-  c3 = q.lo;
-  F2 s = expansionTwoSum(c1, c2);
-  c1 = s.hi;
-  c2 = s.lo;
-  F2 u = expansionTwoSum(c2, c3);
-  c2 = u.hi;
-  c3 = u.lo;
-  F2 v = expansionTwoProd(t0, a2);
-  float t1 = v.hi, t2 = v.lo;
-  F2 w = expansionTwoProd(a1, a1);
-  float t3 = w.hi, t4 = w.lo;
-  F2 x = expansionTwoSum(c2, t1);
-  c2 = x.hi;
-  t1 = x.lo;
-  F2 y = expansionTwoSum(c2, t3);
-  c2 = y.hi;
-  t3 = y.lo;
-  float t5 = a1 + a1;
-  c3 = (((c3 + t1) + t2) + t3) + t4;
-  c3 = std::fma(t5, a2, c3);
-}
-
-// QxW::div_QQW_QQW_QQW
-void expansionDivRaw4(float a0, float a1, float a2, float a3, float b0,
-                      float b1, float b2, float b3, float &c0, float &c1,
-                      float &c2, float &c3) {
-  float e40 = a2 + a3;
-  float e41 = b2 + b3;
-  expansionDivRaw3(a0, a1, e40, b0, b1, e41, c0, c1, c2);
-  float t0, t1, t2, t3;
-  expansionMulRaw34(c0, c1, c2, b0, b1, b2, b3, t0, t1, t2, t3);
-  float s0, s1, s2, s3;
-  expansionAddRaw4(a0, a1, a2, a3, -t0, -t1, -t2, -t3, s0, s1, s2, s3);
-  float tn = ((s0 + s1) + s2) + s3;
-  float td = ((b0 + b1) + b2) + b3;
-  c3 = tn / td;
-}
-
-// QxW::sqrt_QQW_QQW (its sqrt_QQW_QTW is sqrt_QTW_QTW(a0, a1, a2 + a3, ...))
-void expansionSqrtRaw4(float a0, float a1, float a2, float a3, float &c0,
-                       float &c1, float &c2, float &c3) {
-  expansionSqrtRaw3(a0, a1, a2 + a3, c0, c1, c2);
-  float t0, t1, t2, t3;
-  expansionSqrRaw34(c0, c1, c2, t0, t1, t2, t3);
-  float s0, s1, s2, s3;
-  expansionAddRaw4(a0, a1, a2, a3, -t0, -t1, -t2, -t3, s0, s1, s2, s3);
-  float tn = ((s0 + s1) + s2) + s3;
-  float td = ((c0 + c1) + c2) * 2.0f;
-  c3 = tn / td;
-}
-
-ExpansionN expansionNNeg(ExpansionN a) {
-  for (int i = 0; i < a.n; ++i)
-    a.x[i] = -a.x[i];
-  return a;
-}
-ExpansionN expansionNAdd(ExpansionN a, ExpansionN b) {
-  ExpansionN c;
-  c.n = a.n;
-  c.x[3] = 0.0f;
-  if (a.n == 3) {
-    expansionAddRaw3(a.x[0], a.x[1], a.x[2], b.x[0], b.x[1], b.x[2], c.x[0],
-                     c.x[1], c.x[2]);
-    expansionNorm3(c.x[0], c.x[1], c.x[2]);
-  } else {
-    expansionAddRaw4(a.x[0], a.x[1], a.x[2], a.x[3], b.x[0], b.x[1], b.x[2],
-                     b.x[3], c.x[0], c.x[1], c.x[2], c.x[3]);
-    expansionNorm4(c.x[0], c.x[1], c.x[2], c.x[3]);
-  }
-  return c;
-}
-ExpansionN expansionNSub(ExpansionN a, ExpansionN b) {
-  return expansionNAdd(a, expansionNNeg(b));
-}
-ExpansionN expansionNMul(ExpansionN a, ExpansionN b) {
-  ExpansionN c;
-  c.n = a.n;
-  c.x[3] = 0.0f;
-  if (a.n == 3) {
-    expansionMulRaw3(a.x[0], a.x[1], a.x[2], b.x[0], b.x[1], b.x[2], c.x[0],
-                     c.x[1], c.x[2]);
-    expansionNorm3(c.x[0], c.x[1], c.x[2]);
-  } else {
-    expansionMulRaw4(a.x[0], a.x[1], a.x[2], a.x[3], b.x[0], b.x[1], b.x[2],
-                     b.x[3], c.x[0], c.x[1], c.x[2], c.x[3]);
-    expansionNorm4(c.x[0], c.x[1], c.x[2], c.x[3]);
-  }
-  return c;
-}
-ExpansionN expansionNDiv(ExpansionN a, ExpansionN b) {
-  ExpansionN c;
-  c.n = a.n;
-  c.x[3] = 0.0f;
-  if (a.n == 3) {
-    expansionDivRaw3(a.x[0], a.x[1], a.x[2], b.x[0], b.x[1], b.x[2], c.x[0],
-                     c.x[1], c.x[2]);
-    expansionNorm3(c.x[0], c.x[1], c.x[2]);
-  } else {
-    expansionDivRaw4(a.x[0], a.x[1], a.x[2], a.x[3], b.x[0], b.x[1], b.x[2],
-                     b.x[3], c.x[0], c.x[1], c.x[2], c.x[3]);
-    expansionNorm4(c.x[0], c.x[1], c.x[2], c.x[3]);
-  }
-  return c;
-}
-ExpansionN expansionNSqrt(ExpansionN a) {
-  ExpansionN c;
-  c.n = a.n;
-  c.x[3] = 0.0f;
-  if (a.n == 3) {
-    expansionSqrtRaw3(a.x[0], a.x[1], a.x[2], c.x[0], c.x[1], c.x[2]);
-    expansionNorm3(c.x[0], c.x[1], c.x[2]);
-  } else {
-    expansionSqrtRaw4(a.x[0], a.x[1], a.x[2], a.x[3], c.x[0], c.x[1], c.x[2],
-                      c.x[3]);
-    expansionNorm4(c.x[0], c.x[1], c.x[2], c.x[3]);
-  }
-  return c;
-}
-} // namespace
-
 FPEvaluator::FPEvaluator(PTCandidate *pt) {
   if (pt) {
-    for (const auto &change : pt->changes) {
+    for (const auto &[index, change] : enumerate(pt->changes)) {
       for (auto node : change.nodes) {
         nodePrecisions[node] = change.newType;
+        nodeChange[node] = index;
       }
     }
   }
+}
+
+// What the materializer emits for an operation of an expansion change: each
+// operand's components, kept from an operation of the same change (one
+// applyExpansion call keeps them in its map) and otherwise split from the
+// operand's value at its type; the result's components, kept for the
+// change's later operations; and the value its other users see, the restore
+// to the operation's own type.
+bool FPEvaluator::evaluateExpansionNode(const FPNode *node, unsigned n) {
+  const std::string &op = node->op;
+  const bool supported = op == "neg" || op == "+" || op == "-" || op == "*" ||
+                         op == "/" || op == "sqrt" || op == "fma";
+  if (!supported)
+    return false;
+  auto operand = [&](unsigned i) -> ExpansionLimbs {
+    const FPNode *o = node->operands[i].get();
+    auto kept = limbs.find(o);
+    if (kept != limbs.end() && nodeChange.at(o) == nodeChange.at(node))
+      return kept->second;
+    double v = getResult(o);
+    return o->dtype == "f32" ? expansionFromF32((float)v, n)
+                             : expansionFromF64(v, n);
+  };
+  // The materializer squares, rather than multiplies, a value by itself.
+  const bool sameFactor =
+      node->operands.size() >= 2 && node->operands[0] == node->operands[1];
+  ExpansionLimbs r;
+  if (op == "neg")
+    r = expansionNeg(operand(0));
+  else if (op == "+")
+    r = expansionAdd(operand(0), operand(1));
+  else if (op == "-")
+    r = expansionSub(operand(0), operand(1));
+  else if (op == "*")
+    r = sameFactor ? expansionSqr(operand(0))
+                   : expansionMul(operand(0), operand(1));
+  else if (op == "/")
+    r = expansionDiv(operand(0), operand(1));
+  else if (op == "sqrt")
+    r = expansionSqrt(operand(0));
+  else
+    r = sameFactor ? expansionFmaSqr(operand(0), operand(2))
+                   : expansionFma(operand(0), operand(1), operand(2));
+  limbs[node] = r;
+  cache.emplace(node, node->dtype == "f32" ? (double)expansionToF32(r)
+                                           : expansionToF64(r));
+  return true;
 }
 
 PrecisionChangeType FPEvaluator::getNodePrecision(const FPNode *node) const {
@@ -668,14 +201,15 @@ void FPEvaluator::evaluateNode(const FPNode *node,
       nodePrec == PrecisionChangeType::FP128)
     llvm_unreachable("FPEvaluator: FP80/FP128 evaluation not implemented");
 
+  if (const unsigned nExp = expansionComponents(nodePrec))
+    if (evaluateExpansionNode(node, nExp))
+      return;
+
   double res = 0.0;
 
   bool useReducedFloat = (nodePrec == PrecisionChangeType::FP32 ||
                           nodePrec == PrecisionChangeType::FP16 ||
                           nodePrec == PrecisionChangeType::BF16);
-  const unsigned nExp = expansionComponents(nodePrec);
-  bool useExpansion2 = (nExp == 2);
-  bool useExpansion = (nExp >= 3);
 
   auto truncToPrec = [&](float val) -> float {
     FPKind k = FPKind::Invalid;
@@ -692,60 +226,25 @@ void FPEvaluator::evaluateNode(const FPNode *node,
     return truncToPrec(static_cast<float>(v));
   };
 
-  using DSUnaryFn = DS (*)(DS);
-  using DSBinaryFn = DS (*)(DS, DS);
-  using DSTernaryFn = DS (*)(DS, DS, DS);
-  using ExpansionNUnaryFn = ExpansionN (*)(ExpansionN);
-  using ExpansionNBinaryFn = ExpansionN (*)(ExpansionN, ExpansionN);
-
-  auto operandExpansion = [&](unsigned i) -> ExpansionN {
-    return ExpansionN::fromF64(getResult(node->operands[i].get()), (int)nExp);
-  };
-  auto recordExpansion = [&](const ExpansionN &m) -> double {
-    return m.toF64();
-  };
-
-  auto evalUnary = [&](auto f64Fn, auto f32Fn, DSUnaryFn dsFn = nullptr,
-                       ExpansionNUnaryFn expansionFn = nullptr) -> double {
+  auto evalUnary = [&](auto f64Fn, auto f32Fn) -> double {
     double op = getResult(node->operands[0].get());
     if (useReducedFloat)
       return (double)truncToPrec(f32Fn(toF(op)));
-    if (useExpansion2 && dsFn)
-      return dsFn(DS::fromF64(op)).toF64();
-    if (useExpansion && expansionFn)
-      return recordExpansion(expansionFn(operandExpansion(0)));
     return f64Fn(op);
   };
-  auto evalBinary = [&](auto f64Fn, auto f32Fn, DSBinaryFn dsFn = nullptr,
-                        ExpansionNBinaryFn expansionFn = nullptr) -> double {
+  auto evalBinary = [&](auto f64Fn, auto f32Fn) -> double {
     double a = getResult(node->operands[0].get());
     double b = getResult(node->operands[1].get());
     if (useReducedFloat)
       return (double)truncToPrec(f32Fn(toF(a), toF(b)));
-    if (useExpansion2 && dsFn)
-      return dsFn(DS::fromF64(a), DS::fromF64(b)).toF64();
-    if (useExpansion && expansionFn)
-      return recordExpansion(
-          expansionFn(operandExpansion(0), operandExpansion(1)));
     return f64Fn(a, b);
   };
-  auto evalTernary = [&](auto f64Fn, auto f32Fn, DSTernaryFn dsFn = nullptr,
-                         ExpansionNBinaryFn expansionMulFn = nullptr,
-                         ExpansionNBinaryFn expansionAddFn =
-                             nullptr) -> double {
+  auto evalTernary = [&](auto f64Fn, auto f32Fn) -> double {
     double a = getResult(node->operands[0].get());
     double b = getResult(node->operands[1].get());
     double c = getResult(node->operands[2].get());
     if (useReducedFloat)
       return (double)truncToPrec(f32Fn(toF(a), toF(b), toF(c)));
-    if (useExpansion2 && dsFn)
-      return dsFn(DS::fromF64(a), DS::fromF64(b), DS::fromF64(c)).toF64();
-    // The n >= 3 materializer has no fused composite: it emits
-    // multiply-then-add, so the model must too.
-    if (useExpansion && expansionMulFn && expansionAddFn)
-      return recordExpansion(expansionAddFn(
-          expansionMulFn(operandExpansion(0), operandExpansion(1)),
-          operandExpansion(2)));
     return f64Fn(a, b, c);
   };
   auto evalCompare = [&](auto cmp) -> double {
@@ -756,24 +255,19 @@ void FPEvaluator::evaluateNode(const FPNode *node,
   };
 
   if (node->op == "neg") {
-    res = evalUnary([](double x) { return -x; }, [](float x) { return -x; },
-                    dsNeg, expansionNNeg);
+    res = evalUnary([](double x) { return -x; }, [](float x) { return -x; });
   } else if (node->op == "+") {
     res = evalBinary([](double a, double b) { return a + b; },
-                     [](float a, float b) { return a + b; }, dsAdd,
-                     expansionNAdd);
+                     [](float a, float b) { return a + b; });
   } else if (node->op == "-") {
     res = evalBinary([](double a, double b) { return a - b; },
-                     [](float a, float b) { return a - b; }, dsSub,
-                     expansionNSub);
+                     [](float a, float b) { return a - b; });
   } else if (node->op == "*") {
     res = evalBinary([](double a, double b) { return a * b; },
-                     [](float a, float b) { return a * b; }, dsMul,
-                     expansionNMul);
+                     [](float a, float b) { return a * b; });
   } else if (node->op == "/") {
     res = evalBinary([](double a, double b) { return a / b; },
-                     [](float a, float b) { return a / b; }, dsDiv,
-                     expansionNDiv);
+                     [](float a, float b) { return a / b; });
   } else if (node->op == "sin") {
     res = evalUnary(static_cast<double (*)(double)>(std::sin),
                     static_cast<float (*)(float)>(sinf));
@@ -796,9 +290,8 @@ void FPEvaluator::evaluateNode(const FPNode *node,
     res = evalUnary(static_cast<double (*)(double)>(std::log1p),
                     static_cast<float (*)(float)>(log1pf));
   } else if (node->op == "sqrt") {
-    res =
-        evalUnary(static_cast<double (*)(double)>(std::sqrt),
-                  static_cast<float (*)(float)>(sqrtf), dsSqrt, expansionNSqrt);
+    res = evalUnary(static_cast<double (*)(double)>(std::sqrt),
+                    static_cast<float (*)(float)>(sqrtf));
   } else if (node->op == "cbrt") {
     res = evalUnary(static_cast<double (*)(double)>(std::cbrt),
                     static_cast<float (*)(float)>(cbrtf));
@@ -885,8 +378,7 @@ void FPEvaluator::evaluateNode(const FPNode *node,
                      static_cast<float (*)(float, float)>(remainderf));
   } else if (node->op == "fma") {
     res = evalTernary(static_cast<double (*)(double, double, double)>(std::fma),
-                      static_cast<float (*)(float, float, float)>(fmaf), dsFma,
-                      expansionNMul, expansionNAdd);
+                      static_cast<float (*)(float, float, float)>(fmaf));
   } else if (node->op == "lgamma") {
     res = evalUnary(static_cast<double (*)(double)>(std::lgamma),
                     static_cast<float (*)(float)>(lgammaf));
@@ -918,8 +410,7 @@ void FPEvaluator::evaluateNode(const FPNode *node,
     // The value operation is the identity; the rounding is the node's own
     // precision (set by parseHerbieExpr to the destination format), which
     // evalUnary applies.
-    res = evalUnary([](double x) { return x; }, [](float x) { return x; },
-                    nullptr);
+    res = evalUnary([](double x) { return x; }, [](float x) { return x; });
   } else {
     std::string msg = "FPEvaluator: Unexpected operator " + node->op;
     llvm_unreachable(msg.c_str());

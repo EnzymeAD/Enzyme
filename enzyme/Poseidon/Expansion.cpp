@@ -17,11 +17,9 @@
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Intrinsics.h"
-#include "llvm/IR/IntrinsicsNVPTX.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
 #include "llvm/Support/CommandLine.h"
-#include "llvm/TargetParser/Triple.h"
 
 using namespace llvm;
 
@@ -116,18 +114,22 @@ DSValue emitDSDiv(IRBuilder<> &B, DSValue x, DSValue y) {
   Value *q = B.CreateFMul(z_hi, y.lo, "dsd.q");
   Value *d4 = B.CreateFSub(d3, q, "dsd.d4");
   Value *z_lo = B.CreateFDiv(d4, y.hi, "dsd.zlo");
-  return emitFastTwoSum(B, z_hi, z_lo);
+  // The published div2's renormalization, zz = (c - z) + cc, not
+  // emitFastTwoSum's b - (s - a): with the latter an exact quotient by a
+  // negative divisor gets a -0 low component where mX_real and MultiFloats.jl
+  // give +0.
+  Value *s = B.CreateFAdd(z_hi, z_lo, "dsd.s");
+  Value *e = B.CreateFAdd(B.CreateFSub(z_hi, s, "dsd.c"), z_lo, "dsd.e");
+  return {s, e};
 }
 
 DSValue emitDSSqrt(IRBuilder<> &B, DSValue x) {
   Module *M = B.GetInsertBlock()->getParent()->getParent();
-  Function *sqrtf_fn;
-  if (Triple(M->getTargetTriple()).isNVPTX())
-    sqrtf_fn =
-        Intrinsic::getOrInsertDeclaration(M, Intrinsic::nvvm_sqrt_approx_f, {});
-  else
-    sqrtf_fn =
-        Intrinsic::getOrInsertDeclaration(M, Intrinsic::sqrt, {f32Ty(B)});
+  // The correctly rounded square root on every target (sqrt.rn.f32 on
+  // NVPTX), so that the device computes what the host model and the
+  // reference routines compute.
+  Function *sqrtf_fn =
+      Intrinsic::getOrInsertDeclaration(M, Intrinsic::sqrt, {f32Ty(B)});
   Value *z_hi = B.CreateCall(sqrtf_fn, {x.hi}, "dssq.zhi");
   DSValue pe = emitTwoProdFMA(B, z_hi, z_hi);
   Value *d1 = B.CreateFSub(x.hi, pe.hi, "dssq.d1");
@@ -135,7 +137,14 @@ DSValue emitDSSqrt(IRBuilder<> &B, DSValue x) {
   Value *d3 = B.CreateFAdd(d2, x.lo, "dssq.d3");
   Value *two_z = B.CreateFMul(ConstantFP::get(f32Ty(B), 2.0), z_hi, "dssq.2z");
   Value *z_lo = B.CreateFDiv(d3, two_z, "dssq.zlo");
-  return emitFastTwoSum(B, z_hi, z_lo);
+  DSValue r = emitFastTwoSum(B, z_hi, z_lo);
+  // The square root of a zero operand is the operand, as in mX_real and
+  // MultiFloats.jl; the correction above would divide 0 by 0.
+  Value *zero = ConstantFP::get(f32Ty(B), 0.0);
+  Value *isZero = B.CreateAnd(B.CreateFCmpOEQ(x.hi, zero, "dssq.hz"),
+                              B.CreateFCmpOEQ(x.lo, zero, "dssq.lz"), "dssq.z");
+  return {B.CreateSelect(isZero, x.hi, r.hi, "dssq.hi"),
+          B.CreateSelect(isZero, x.lo, r.lo, "dssq.lo")};
 }
 
 DSValue emitDSNeg(IRBuilder<> &B, DSValue x) {
@@ -547,13 +556,17 @@ void applyExpansion(ArrayRef<Instruction *> instsToChange,
     foldDSPairRoundtrip(*parentF, /*foldedLimbs=*/nullptr);
 }
 
-// Wider FP32 expansions (n = 3, 4), a parallel arm sharing only the exact
-// transformations with the two-component code above. Each component sequence
-// reproduces, operation for operation, a routine of the Ozaki-Wakita QxW
-// generator as instantiated by mX_real at Algorithm::Sloppy (the add/mul/div/
-// sqrt _QTW_ and _QQW_ variants, each followed by Normalize<Regular>; mX_real
-// and Ozaki-QW are BSD-3-Clause). Subtraction is addition of the negated
-// operand and a fused multiply-add is materialized as multiply-then-add, as in
+// Wider FP32 expansions (n = 3, 4), a parallel arm sharing TwoSum and the FMA
+// two-product with the two-component code above. Each component sequence
+// reproduces, operation for operation, a routine of the QxW generator as
+// instantiated by mX_real at Algorithm::Sloppy (the add/mul/sqr/div/sqrt _QTW_
+// and _QQW_ variants, each followed by Normalize<Regular>, and the special
+// cases of mX_real's sqrt operator; RIKEN-RCCS/mX_real, which contains the
+// generator, is BSD-2-Clause). TwoSum forms its error from s - b where QxW's
+// starts from s - a, which gives the same sum, error and sign of zero.
+// Subtraction is addition of the negated operand, a product of a value with
+// itself is the square routine (mX_real squares when both operands are one
+// object), and a fused multiply-add is materialized as multiply-then-add, as in
 // the reference.
 
 namespace {
@@ -583,7 +596,12 @@ struct ExpansionBuilder {
   Value *sqrt(Value *a) { return B.CreateCall(sqrtFn, {a}, "mfx.q"); }
   Value *cst(double v) { return ConstantFP::get(B.getFloatTy(), v); }
   DSValue twoSum(Value *a, Value *b) { return emitTwoSum(B, a, b); }
-  DSValue fastTwoSum(Value *a, Value *b) { return emitFastTwoSum(B, a, b); }
+  // QxW's FastTwoSum, y = (a - x) + b. Not emitFastTwoSum's b - (s - a),
+  // MultiFloats.jl's form: the two differ in the sign of a zero error.
+  DSValue fastTwoSum(Value *a, Value *b) {
+    Value *s = add(a, b);
+    return {s, add(B.CreateFSub(a, s, "mfx.s"), b)};
+  }
   DSValue twoProd(Value *a, Value *b) { return emitTwoProdFMA(B, a, b); }
 };
 
@@ -738,6 +756,24 @@ void expansionSqrRaw23(ExpansionBuilder &b, Value *a0, Value *a1, Value *&c0,
   c1 = s.hi;
   c2 = s.lo;
   c2 = b.add(c2, t1);
+  c2 = b.fma(a1, a1, c2);
+}
+
+// QxW::sqr_QTW_QTW  (3 -> 3, unnormalized)
+void expansionSqrRaw3(ExpansionBuilder &b, Value *a0, Value *a1, Value *a2,
+                      Value *&c0, Value *&c1, Value *&c2) {
+  DSValue p = b.twoProd(a0, a0);
+  c0 = p.hi;
+  c1 = p.lo;
+  Value *t0 = b.add(a0, a0);
+  DSValue q = b.twoProd(t0, a1);
+  c2 = q.hi;
+  Value *t1 = q.lo;
+  DSValue s = b.twoSum(c1, c2);
+  c1 = s.hi;
+  c2 = s.lo;
+  c2 = b.add(c2, t1);
+  c2 = b.fma(t0, a2, c2);
   c2 = b.fma(a1, a1, c2);
 }
 
@@ -932,6 +968,41 @@ void expansionSqrRaw34(ExpansionBuilder &b, Value *a0, Value *a1, Value *a2,
   c3 = b.fma(t5, a2, c3);
 }
 
+// QxW::sqr_QQW_QQW  (4 -> 4, unnormalized)
+void expansionSqrRaw4(ExpansionBuilder &b, Value *a0, Value *a1, Value *a2,
+                      Value *a3, Value *&c0, Value *&c1, Value *&c2,
+                      Value *&c3) {
+  DSValue p = b.twoProd(a0, a0);
+  c0 = p.hi;
+  c1 = p.lo;
+  Value *t0 = b.add(a0, a0);
+  DSValue q = b.twoProd(t0, a1);
+  c2 = q.hi;
+  c3 = q.lo;
+  DSValue s = b.twoSum(c1, c2);
+  c1 = s.hi;
+  c2 = s.lo;
+  DSValue u = b.twoSum(c2, c3);
+  c2 = u.hi;
+  c3 = u.lo;
+  DSValue v = b.twoProd(t0, a2);
+  Value *t1 = v.hi;
+  Value *t2 = v.lo;
+  DSValue w = b.twoProd(a1, a1);
+  Value *t3 = w.hi;
+  Value *t4 = w.lo;
+  DSValue x = b.twoSum(c2, t1);
+  c2 = x.hi;
+  t1 = x.lo;
+  DSValue y = b.twoSum(c2, t3);
+  c2 = y.hi;
+  t3 = y.lo;
+  Value *t5 = b.add(a1, a1);
+  c3 = b.add(b.add(b.add(b.add(c3, t1), t2), t3), t4);
+  c3 = b.fma(t0, a3, c3);
+  c3 = b.fma(t5, a2, c3);
+}
+
 // QxW::div_QQW_QQW_QQW  (4 / 4 -> 4, unnormalized)
 void expansionDivRaw4(ExpansionBuilder &b, Value *a0, Value *a1, Value *a2,
                       Value *a3, Value *b0, Value *b1, Value *b2, Value *b3,
@@ -1026,6 +1097,21 @@ ExpansionValue emitExpansionMul(IRBuilder<> &B, const ExpansionValue &a,
   return ExpansionValue{{c0, c1, c2, c3}};
 }
 
+ExpansionValue emitExpansionSqr(IRBuilder<> &B, const ExpansionValue &a) {
+  expansionCheckN(a.n());
+  ExpansionBuilder mb(B);
+  if (a.n() == 3) {
+    Value *c0, *c1, *c2;
+    expansionSqrRaw3(mb, a.x[0], a.x[1], a.x[2], c0, c1, c2);
+    expansionNormalize3(mb, c0, c1, c2);
+    return ExpansionValue{{c0, c1, c2}};
+  }
+  Value *c0, *c1, *c2, *c3;
+  expansionSqrRaw4(mb, a.x[0], a.x[1], a.x[2], a.x[3], c0, c1, c2, c3);
+  expansionNormalize4(mb, c0, c1, c2, c3);
+  return ExpansionValue{{c0, c1, c2, c3}};
+}
+
 ExpansionValue emitExpansionDiv(IRBuilder<> &B, const ExpansionValue &a,
                                 const ExpansionValue &b) {
   assert(a.n() == b.n() && "expansion operands must agree on component count");
@@ -1048,20 +1134,36 @@ ExpansionValue emitExpansionDiv(IRBuilder<> &B, const ExpansionValue &a,
 ExpansionValue emitExpansionSqrt(IRBuilder<> &B, const ExpansionValue &a) {
   expansionCheckN(a.n());
   ExpansionBuilder mb(B);
+  ExpansionValue r;
   if (a.n() == 3) {
     Value *c0, *c1, *c2;
     expansionSqrtRaw3(mb, a.x[0], a.x[1], a.x[2], c0, c1, c2);
     expansionNormalize3(mb, c0, c1, c2);
-    return ExpansionValue{{c0, c1, c2}};
+    r.x = {c0, c1, c2};
+  } else {
+    Value *c0, *c1, *c2, *c3;
+    expansionSqrtRaw4(mb, a.x[0], a.x[1], a.x[2], a.x[3], c0, c1, c2, c3);
+    expansionNormalize4(mb, c0, c1, c2, c3);
+    r.x = {c0, c1, c2, c3};
   }
-  Value *c0, *c1, *c2, *c3;
-  expansionSqrtRaw4(mb, a.x[0], a.x[1], a.x[2], a.x[3], c0, c1, c2, c3);
-  expansionNormalize4(mb, c0, c1, c2, c3);
-  return ExpansionValue{{c0, c1, c2, c3}};
+  // mX_real's sqrt operator returns the operand when its leading component is
+  // zero and +Inf in every component when it is +Inf; the QxW routine gives NaN
+  // for both. A negative or NaN leading component gives NaN either way.
+  Value *isZero = B.CreateFCmpOEQ(a.x[0], mb.cst(0.0), "mfx.sqz");
+  Value *isInf = B.CreateFCmpOEQ(
+      a.x[0], ConstantFP::getInfinity(B.getFloatTy()), "mfx.sqi");
+  for (unsigned i = 0; i < a.n(); ++i)
+    r.x[i] = B.CreateSelect(
+        isZero, a.x[i],
+        B.CreateSelect(isInf, ConstantFP::getInfinity(B.getFloatTy()), r.x[i],
+                       "mfx.sqrti"),
+        "mfx.sqrtz");
+  return r;
 }
 
-// Greedy split, identical to the reference's `fromD`; an F64 source fills at
-// most three limbs, the extra precision is created by the arithmetic.
+// Greedy split into n components, which mX_real has no counterpart for (it
+// converts a double to its leading float); an F64 source fills at most three
+// limbs, the extra precision is created by the arithmetic.
 ExpansionValue emitToExpansion(IRBuilder<> &B, Value *fpval, unsigned n) {
   expansionCheckN(n);
   Type *F32 = B.getFloatTy();
@@ -1087,7 +1189,8 @@ ExpansionValue emitToExpansion(IRBuilder<> &B, Value *fpval, unsigned n) {
   return r;
 }
 
-// Sum the limbs least significant first, as the reference's `to_d` does.
+// Sum the limbs least significant first; mX_real converts back from the
+// leading limb alone.
 Value *emitExpansionToFP(IRBuilder<> &B, const ExpansionValue &v,
                          Type *targetTy) {
   expansionCheckN(v.n());
@@ -1191,17 +1294,21 @@ emitExpansionForInstruction(IRBuilder<> &B, Instruction *I, unsigned n,
   unsigned opcode = I->getOpcode();
 
   if (auto *BO = dyn_cast<BinaryOperator>(I)) {
+    const bool sameOperand = BO->getOperand(0) == BO->getOperand(1);
     ExpansionValue lhs =
         getOrSplitOperandExpansion(B, BO->getOperand(0), n, expansionMap);
     ExpansionValue rhs =
-        getOrSplitOperandExpansion(B, BO->getOperand(1), n, expansionMap);
+        sameOperand
+            ? lhs
+            : getOrSplitOperandExpansion(B, BO->getOperand(1), n, expansionMap);
     switch (opcode) {
     case Instruction::FAdd:
       return emitExpansionAdd(B, lhs, rhs);
     case Instruction::FSub:
       return emitExpansionSub(B, lhs, rhs);
     case Instruction::FMul:
-      return emitExpansionMul(B, lhs, rhs);
+      return sameOperand ? emitExpansionSqr(B, lhs)
+                         : emitExpansionMul(B, lhs, rhs);
     case Instruction::FDiv:
       return emitExpansionDiv(B, lhs, rhs);
     default:
@@ -1245,13 +1352,18 @@ emitExpansionForInstruction(IRBuilder<> &B, Instruction *I, unsigned n,
           B,
           getOrSplitOperandExpansion(B, CI->getArgOperand(0), n, expansionMap));
     if (mathName == "fmuladd" || mathName == "fma") {
+      const bool sameFactor = CI->getArgOperand(0) == CI->getArgOperand(1);
       ExpansionValue a =
           getOrSplitOperandExpansion(B, CI->getArgOperand(0), n, expansionMap);
       ExpansionValue b =
-          getOrSplitOperandExpansion(B, CI->getArgOperand(1), n, expansionMap);
+          sameFactor ? a
+                     : getOrSplitOperandExpansion(B, CI->getArgOperand(1), n,
+                                                  expansionMap);
       ExpansionValue c =
           getOrSplitOperandExpansion(B, CI->getArgOperand(2), n, expansionMap);
-      return emitExpansionAdd(B, emitExpansionMul(B, a, b), c);
+      return emitExpansionAdd(
+          B, sameFactor ? emitExpansionSqr(B, a) : emitExpansionMul(B, a, b),
+          c);
     }
   }
 

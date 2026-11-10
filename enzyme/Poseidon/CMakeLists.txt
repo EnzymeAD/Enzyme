@@ -40,6 +40,7 @@ set(POSEIDON_SRC
     Driver.cpp
     Evaluators.cpp
     Expansion.cpp
+    ExpansionModel.cpp
     Explain.cpp
     Flags.cpp
     FPKind.cpp
@@ -120,6 +121,13 @@ target_include_directories(${POSEIDON_PLUGIN_TARGET}
 set_source_files_properties(
   Herbie.cpp
   PROPERTIES COMPILE_DEFINITIONS HERBIE_BINARY="${POSEIDON_HERBIE_BINARY_PATH}")
+# The accuracy model emulates the emitted FP32 expansions bit for bit, which
+# holds only if each of its operations is rounded as written.
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+  set_source_files_properties(
+    ExpansionModel.cpp PROPERTIES COMPILE_OPTIONS
+                                  "-fno-fast-math;-ffp-contract=off")
+endif()
 include(GNUInstallDirs)
 # Where a compile looks for the cost model of its target device when neither
 # the flag nor the environment names one.
