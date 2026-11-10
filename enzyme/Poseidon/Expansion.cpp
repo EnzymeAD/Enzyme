@@ -28,6 +28,17 @@ namespace poseidon {
 static Type *f32Ty(IRBuilder<> &B) { return B.getFloatTy(); }
 static Type *f64Ty(IRBuilder<> &B) { return B.getDoubleTy(); }
 
+// Two components. Each routine but division and the fused multiply-add
+// reproduces, operation for operation, a MultiFloats.jl routine at Val{2}
+// (MultiFloats.jl commit 28041a3, MIT License): emitTwoSum two_sum
+// (src/MultiFloats.jl 313-321), emitFastTwoSum fast_two_sum (1047-1052),
+// emitTwoProdFMA two_prod (1070-1074), emitDSAdd mfadd (src/mfadd.jl 10-24),
+// emitDSSub x + (-y) (src/MultiFloats.jl 1102, 1020), emitDSMul mfmul
+// (src/mfmul.jl 10-23), emitDSSqrt sqrt_r, i.e. mfsqrt (src/MultiFloats.jl
+// 1416-1421) under sqrt_r's zero test (1448-1449). emitDSDiv is the published
+// div2 with the FMA two-product. emitDSFMA is Poseidon's own routine, with no
+// library counterpart; it is checked against the accuracy model only.
+
 DSValue emitTwoSum(IRBuilder<> &B, Value *a, Value *b) {
   Value *s = B.CreateFAdd(a, b, "ts.s");
   Value *a_prime = B.CreateFSub(s, b, "ts.ap");
@@ -130,21 +141,21 @@ DSValue emitDSSqrt(IRBuilder<> &B, DSValue x) {
   // reference routines compute.
   Function *sqrtf_fn =
       Intrinsic::getOrInsertDeclaration(M, Intrinsic::sqrt, {f32Ty(B)});
-  Value *z_hi = B.CreateCall(sqrtf_fn, {x.hi}, "dssq.zhi");
-  DSValue pe = emitTwoProdFMA(B, z_hi, z_hi);
-  Value *d1 = B.CreateFSub(x.hi, pe.hi, "dssq.d1");
-  Value *d2 = B.CreateFSub(d1, pe.lo, "dssq.d2");
-  Value *d3 = B.CreateFAdd(d2, x.lo, "dssq.d3");
-  Value *two_z = B.CreateFMul(ConstantFP::get(f32Ty(B), 2.0), z_hi, "dssq.2z");
-  Value *z_lo = B.CreateFDiv(d3, two_z, "dssq.zlo");
-  DSValue r = emitFastTwoSum(B, z_hi, z_lo);
-  // The square root of a zero operand is the operand, as in mX_real and
-  // MultiFloats.jl; the correction above would divide 0 by 0.
+  Function *fma_fn =
+      Intrinsic::getOrInsertDeclaration(M, Intrinsic::fma, {f32Ty(B)});
+  Value *y = B.CreateCall(sqrtf_fn, {x.hi}, "dssq.y");
+  Value *rem =
+      B.CreateCall(fma_fn, {B.CreateFNeg(y, "dssq.ny"), y, x.hi}, "dssq.rem");
+  Value *r = B.CreateFAdd(rem, x.lo, "dssq.r");
+  Value *q = B.CreateFDiv(r, B.CreateFAdd(y, y, "dssq.2y"), "dssq.q");
+  DSValue root = emitFastTwoSum(B, y, q);
+  // sqrt_r returns a zero operand itself; the correction would divide 0 by 0.
   Value *zero = ConstantFP::get(f32Ty(B), 0.0);
-  Value *isZero = B.CreateAnd(B.CreateFCmpOEQ(x.hi, zero, "dssq.hz"),
-                              B.CreateFCmpOEQ(x.lo, zero, "dssq.lz"), "dssq.z");
-  return {B.CreateSelect(isZero, x.hi, r.hi, "dssq.hi"),
-          B.CreateSelect(isZero, x.lo, r.lo, "dssq.lo")};
+  Value *hiZero = B.CreateFCmpOEQ(x.hi, zero, "dssq.hz");
+  Value *loZero = B.CreateFCmpOEQ(x.lo, zero, "dssq.lz");
+  Value *isZero = B.CreateAnd(hiZero, loZero, "dssq.z");
+  return {B.CreateSelect(isZero, x.hi, root.hi, "dssq.hi"),
+          B.CreateSelect(isZero, x.lo, root.lo, "dssq.lo")};
 }
 
 DSValue emitDSNeg(IRBuilder<> &B, DSValue x) {

@@ -16,11 +16,12 @@
 // mX_real's Sloppy types, whose routines are vendored in
 // Inputs/expansion_match/mx_real_subset.h, including the square of a value
 // (mX_real squares when both operands are one object) and the square root's
-// special cases; two components against MultiFloats.jl's addition and
-// multiplication. Where mX_real and MultiFloats.jl agree on a two-component
-// special value, the emitted code gives the same: the square root of a zero is
-// the zero, and an exact quotient by a negative divisor has a +0 low
-// component.
+// special cases; two components against MultiFloats.jl's addition,
+// subtraction, multiplication and square root, transcribed in
+// Inputs/expansion_match/multifloats_subset.h. Where mX_real and MultiFloats.jl
+// agree on a two-component special value, the emitted code gives the same: the
+// square root of a zero is the zero, and an exact quotient by a negative
+// divisor has a +0 low component.
 
 // CHECK: n=3 add: 80000 cases, 0 differ
 // CHECK-NEXT: n=3 sub: 80000 cases, 0 differ
@@ -43,6 +44,7 @@
 // CHECK-NEXT: n=2 add: 80000 cases, 0 differ
 // CHECK-NEXT: n=2 sub: 80000 cases, 0 differ
 // CHECK-NEXT: n=2 mul: 80000 cases, 0 differ
+// CHECK-NEXT: n=2 sqrt: 80000 cases, 0 differ
 // CHECK-NEXT: n=2 sqrt(0x0p+0, 0x0p+0) = 0x0p+0 0x0p+0
 // CHECK-NEXT: n=2 sqrt(-0x0p+0, 0x0p+0) = -0x0p+0 0x0p+0
 // CHECK-NEXT: n=2 sqrt(0x0p+0, -0x0p+0) = 0x0p+0 -0x0p+0
