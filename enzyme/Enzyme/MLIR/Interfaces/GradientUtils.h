@@ -14,6 +14,8 @@
 #include "mlir/IR/IRMapping.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
 
+#include <type_traits>
+
 namespace mlir {
 namespace enzyme {
 
@@ -28,7 +30,6 @@ public:
   FunctionOpInterface oldFunc;
   IRMapping invertedPointers;
   IRMapping originalToNewFn;
-  std::map<Operation *, Operation *> originalToNewFnOps;
 
   SmallPtrSet<Block *, 4> blocksNotForAnalysis;
   DenseMap<Operation *, bool> readOnlyCache;
@@ -68,11 +69,9 @@ public:
                  const SmallPtrSetImpl<mlir::Value> &activevals_,
                  ArrayRef<DIFFE_TYPE> ReturnActivities,
                  ArrayRef<DIFFE_TYPE> ArgDiffeTypes_,
-                 IRMapping &originalToNewFn_,
-                 std::map<Operation *, Operation *> &originalToNewFnOps_,
-                 DerivativeMode mode, unsigned width, bool omp,
-                 llvm::StringRef postpasses, bool verifyPostPasses,
-                 bool strongZero);
+                 IRMapping &originalToNewFn_, DerivativeMode mode,
+                 unsigned width, bool omp, llvm::StringRef postpasses,
+                 bool verifyPostPasses, bool strongZero);
   void erase(Operation *op) { op->erase(); }
   void replaceOrigOpWith(Operation *op, ValueRange vals) {
     for (auto &&[res, rep] : llvm::zip(op->getResults(), vals)) {
@@ -80,7 +79,7 @@ public:
     }
     auto newOp = getNewFromOriginal(op);
     newOp->replaceAllUsesWith(vals);
-    originalToNewFnOps.erase(op);
+    originalToNewFn.erase(op);
   }
   void eraseIfUnused(Operation *op, bool erase = true, bool check = true) {
     // TODO
@@ -116,6 +115,25 @@ public:
   mlir::Type getShadowType(mlir::Type T) {
     auto iface = cast<AutoDiffTypeInterface>(T);
     return iface.getShadowType(width);
+  }
+
+  /// Broadcast a primal-shaped value to the vector width so it can be combined
+  /// with a batched (shadow-shaped) value; the identity at width 1. Generated
+  /// derivative rules apply this to every operand of an op that mixes batched
+  /// and primal-shaped values, so overloads exist for a single value, a range
+  /// of values, and -- as a pass-through -- anything that is not a value
+  /// (attributes, types, enums), which width does not affect.
+  mlir::Value broadcastToWidth(mlir::OpBuilder &builder, mlir::Location loc,
+                               mlir::Value v);
+  llvm::SmallVector<mlir::Value, 1> broadcastToWidth(mlir::OpBuilder &builder,
+                                                     mlir::Location loc,
+                                                     mlir::ValueRange vs);
+  template <typename T>
+  std::enable_if_t<!std::is_convertible_v<T, mlir::Value> &&
+                       !std::is_convertible_v<T, mlir::ValueRange>,
+                   T>
+  broadcastToWidth(mlir::OpBuilder &, mlir::Location, T t) {
+    return t;
   }
 
   static llvm::SmallVector<mlir::Value, 1>
@@ -158,15 +176,13 @@ public:
                       const SmallPtrSetImpl<mlir::Value> &activevals_,
                       ArrayRef<DIFFE_TYPE> RetActivity,
                       ArrayRef<DIFFE_TYPE> ArgActivity, IRMapping &origToNew_,
-                      std::map<Operation *, Operation *> &origToNewOps_,
                       DerivativeMode mode, unsigned width, bool omp,
                       llvm::StringRef postpasses, bool verifyPostPasses,
                       bool strongZero)
       : MGradientUtils(Logic, newFunc_, oldFunc_, TA, TR, invertedPointers_,
                        returnPrimals, returnShadows, constantvalues_,
-                       activevals_, RetActivity, ArgActivity, origToNew_,
-                       origToNewOps_, mode, width, omp, postpasses,
-                       verifyPostPasses, strongZero),
+                       activevals_, RetActivity, ArgActivity, origToNew_, mode,
+                       width, omp, postpasses, verifyPostPasses, strongZero),
         initializationBlock(&*(newFunc.getFunctionBody().begin())) {}
 
   // Technically diffe constructor
@@ -198,7 +214,6 @@ public:
       prefix += std::to_string(width);
 
     IRMapping originalToNew;
-    std::map<Operation *, Operation *> originalToNewOps;
 
     SmallPtrSet<mlir::Value, 1> returnvals;
     SmallPtrSet<mlir::Value, 1> constant_values;
@@ -207,14 +222,13 @@ public:
     FunctionOpInterface newFunc = CloneFunctionWithReturns(
         mode, width, todiff, invertedPointers, ArgActivity, constant_values,
         nonconstant_values, returnvals, returnPrimals, returnShadows,
-        RetActivity, prefix + todiff.getName(), originalToNew, originalToNewOps,
-        additionalArg);
+        RetActivity, prefix + todiff.getName(), originalToNew, additionalArg);
     MTypeResults TR; // TODO
     return new MDiffeGradientUtils(
         Logic, newFunc, todiff, TA, TR, invertedPointers, returnPrimals,
         returnShadows, constant_values, nonconstant_values, RetActivity,
-        ArgActivity, originalToNew, originalToNewOps, mode, width, omp,
-        postpasses, verifyPostPasses, strongZero);
+        ArgActivity, originalToNew, mode, width, omp, postpasses,
+        verifyPostPasses, strongZero);
   }
 };
 

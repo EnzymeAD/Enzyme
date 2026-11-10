@@ -40,7 +40,8 @@ option(ENZYME_FORTRAN "Build Enzyme Fortran bindings" OFF)
 option(ENZYME_CLANG "Build enzyme clang plugin" ON)
 option(ENZYME_FLANG "Build enzyme flang plugin" OFF)
 option(ENZYME_MLIR "Build enzyme mlir plugin" OFF)
-option(ENZYME_IFX "Enable enzyme support for the Intel Fortran compiler IFX" OFF)
+option(
+  ENZYME_IFX "Enable enzyme support for the Intel Fortran compiler IFX" OFF)
 option(ENZYME_EXTERNAL_SHARED_LIB "Build external shared library" OFF)
 option(
   ENZYME_APPLE_DYNAMIC_LOOKUP
@@ -252,7 +253,10 @@ endif()
 message("found MLIR ${MLIR_FOUND}")
 # include(AddClang)
 
-add_definitions(${LLVM_DEFINITIONS})
+# LLVM_DEFINITIONS is a single space-separated string; split it so each flag is
+# its own definition (since LLVM 22 it starts with -D_GLIBCXX_USE_CXX11_ABI=1).
+separate_arguments(LLVM_DEFINITIONS_LIST NATIVE_COMMAND ${LLVM_DEFINITIONS})
+add_definitions(${LLVM_DEFINITIONS_LIST})
 include_directories(${LLVM_INCLUDE_DIRS})
 message("LLVM_INSTALL_PREFIX: ${LLVM_INSTALL_PREFIX}")
 message("LLVM_INCLUDE_DIRS: ${LLVM_INCLUDE_DIRS}")
@@ -268,9 +272,34 @@ if(ENZYME_FLANG_VERSION)
   add_definitions(-DFLANG=1)
 endif()
 
-option(ENZYME_ROCM_VERSION "Build for non-version compliant ROCM" OFF)
-if(ENZYME_ROCM_VERSION)
-  add_definitions(-DROCM=1)
+# A snapshot of LLVM 22, such as the LLVM of ROCm 7.2 (22.0.0git), can predate
+# API changes of the LLVM 22 release that the code uses (intrinsic names,
+# SCEVExpander, PassPlugin.h): then ENZYME_LLVM22_PRERELEASE makes the code
+# take the LLVM 21 branch there.
+function(enzyme_check_llvm22_release_api)
+  include(CheckCXXSourceCompiles)
+  set(CMAKE_REQUIRED_INCLUDES ${LLVM_INCLUDE_DIRS})
+  # Compile only: no LLVM library to link.
+  set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
+  check_cxx_source_compiles(
+    "
+#if !__has_include(\"llvm/Plugins/PassPlugin.h\")
+#error \"no llvm/Plugins/PassPlugin.h\"
+#endif
+#include \"llvm/IR/IntrinsicsNVPTX.h\"
+#include \"llvm/Transforms/Utils/ScalarEvolutionExpander.h\"
+#include <type_traits>
+static_assert(std::is_constructible<llvm::SCEVExpander, llvm::ScalarEvolution &, const char *, bool>::value, \"\");
+int main() { return llvm::Intrinsic::nvvm_barrier_cta_red_and_aligned_all + llvm::Intrinsic::nvvm_ex2_approx; }"
+    ENZYME_LLVM22_RELEASE_API)
+endfunction()
+if(LLVM_VERSION_MAJOR EQUAL 22)
+  enzyme_check_llvm22_release_api()
+  if(NOT ENZYME_LLVM22_RELEASE_API)
+    message(
+            "LLVM 22 snapshot without the API of the LLVM 22 release: ENZYME_LLVM22_PRERELEASE")
+    add_definitions(-DENZYME_LLVM22_PRERELEASE=1)
+  endif()
 endif()
 
 # Offer the user the choice of overriding the installation directories

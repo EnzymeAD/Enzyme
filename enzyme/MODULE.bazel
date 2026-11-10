@@ -1,20 +1,29 @@
 module(name = "enzyme")
 
-# LLVM's direct Bazel dependencies. Keep these versions in sync with
+# Dependencies for LLVM and its C++ build rules. Keep these compatible with
 # ../llvm-project/utils/bazel/MODULE.bazel.
 bazel_dep(
     name = "apple_support",
-    version = "2.6.1",
+    version = "2.8.0",
     repo_name = "build_bazel_apple_support",
 )
+bazel_dep(name = "bazel_features", version = "1.50.0")
 bazel_dep(name = "bazel_skylib", version = "1.9.0")
 bazel_dep(name = "llvm", version = "0.8.5")
 bazel_dep(name = "platforms", version = "1.1.0")
-bazel_dep(name = "rules_cc", version = "0.2.19")
+bazel_dep(name = "rules_cc", version = "0.2.25")
 bazel_dep(name = "rules_python", version = "1.9.0")
 bazel_dep(name = "rules_shell", version = "0.8.0")
+bazel_dep(name = "xz", version = "5.4.5.bcr.9", repo_name = "llvm_xz")
 bazel_dep(name = "zlib-ng", version = "2.3.3", repo_name = "llvm_zlib")
 bazel_dep(name = "zstd", version = "1.5.7.bcr.1", repo_name = "llvm_zstd")
+
+# Expose these repositories to the WORKSPACE C++ toolchain setup.
+bazel_features_version = use_extension(
+    "@bazel_features//private:extensions.bzl",
+    "version_extension",
+)
+use_repo(bazel_features_version, "bazel_features_globals", "bazel_features_version")
 
 rules_cc_compatibility = use_extension(
     "@rules_cc//cc:extensions.bzl",

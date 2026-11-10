@@ -398,7 +398,7 @@ public:
     // Replace all uses of original results
     gutils->replaceOrigOpWith(op, reps);
     gutils->erase(newOp);
-    gutils->originalToNewFnOps[op] = replacement;
+    gutils->originalToNewFn.map(orig, replacement.getOperation());
 
     return success();
   }

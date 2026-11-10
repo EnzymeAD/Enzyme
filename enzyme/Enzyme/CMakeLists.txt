@@ -16,7 +16,13 @@ else()
 endif()
 
 function(enzyme_tablegen ofn)
-  tablegen(Enzyme ${ARGV})
+  # LLVM 24 (d6a4b2ad0b90) renamed the generic tablegen() helper to
+  # tablegen_internal(), keeping only per-project wrappers public.
+  if(COMMAND tablegen)
+    tablegen(Enzyme ${ARGV})
+  else()
+    tablegen_internal(Enzyme ${ARGV})
+  endif()
   set(TABLEGEN_OUTPUT ${TABLEGEN_OUTPUT} ${CMAKE_CURRENT_BINARY_DIR}/${ofn}
       PARENT_SCOPE)
 endfunction()
@@ -92,7 +98,7 @@ if(ENZYME_ENABLE_PLUGINS)
         LLVM)
       target_compile_definitions(
         FlangEnzyme-${LLVM_VERSION_MAJOR}
-        PUBLIC ENZYME_RUNPASS)
+        PUBLIC ENZYME_RUNPASS ENZYME_FLANG_PLUGIN)
     endif() # ENZYME_FLANG
     add_llvm_library(
       LLDEnzyme-${LLVM_VERSION_MAJOR}
@@ -152,7 +158,7 @@ if(ENZYME_ENABLE_PLUGINS)
         ${ENZYME_FLANG_PLUGIN_TOOL})
       target_compile_definitions(
         FlangEnzyme-${LLVM_VERSION_MAJOR}
-        PUBLIC ENZYME_RUNPASS)
+        PUBLIC ENZYME_RUNPASS ENZYME_FLANG_PLUGIN)
     endif() # ENZYME_FLANG
     add_llvm_library(
       LLDEnzyme-${LLVM_VERSION_MAJOR}
@@ -335,6 +341,23 @@ if(ENZYME_ENABLE_PLUGINS)
       TARGETS FlangEnzyme-${LLVM_VERSION_MAJOR}
       EXPORT EnzymeTargets
       LIBRARY DESTINATION lib COMPONENT shlib COMPONENT dev)
+
+    # flang --config=FlangEnzyme-XX.cfg loads Enzyme into flang's optimization
+    # pipeline and, for -flto, into lld's link-time pipeline, which the LTO
+    # pre-link run defers to. <CFGDIR> is the directory holding the config
+    # file, so the same file works from the build tree and the install tree.
+    set(FLANG_ENZYME_CFG
+        "$<TARGET_FILE_DIR:FlangEnzyme-${LLVM_VERSION_MAJOR}>/FlangEnzyme-${LLVM_VERSION_MAJOR}.cfg")
+    file(
+      GENERATE
+      OUTPUT "${FLANG_ENZYME_CFG}"
+      CONTENT
+        "-fpass-plugin=<CFGDIR>/$<TARGET_FILE_NAME:FlangEnzyme-${LLVM_VERSION_MAJOR}>
+-fuse-ld=lld
+-Wl,-mllvm,-load=<CFGDIR>/$<TARGET_FILE_NAME:LLDEnzyme-${LLVM_VERSION_MAJOR}>
+-Wl,--load-pass-plugin=<CFGDIR>/$<TARGET_FILE_NAME:LLDEnzyme-${LLVM_VERSION_MAJOR}>
+")
+    install(FILES "${FLANG_ENZYME_CFG}" DESTINATION lib COMPONENT shlib)
   endif()
   install(
     TARGETS LLDEnzyme-${LLVM_VERSION_MAJOR}

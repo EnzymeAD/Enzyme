@@ -27,10 +27,10 @@ func.func private @loop_invariant_cache(%ub0: index, %ub1: index, %x: memref<?x?
 }
 
 func.func @dloop_invariant_cache(%ub0: index, %ub1: index, %x: memref<?x?xf32>, %dx: memref<?x?xf32>, %y: memref<?x?xf32>, %dy: memref<?x?xf32>) {
-  enzyme.autodiff @loop_invariant_cache(%ub0, %ub1, %x, %dx, %y, %dy) {
+  enzyme.autodiff @loop_invariant_cache(%ub0, %ub1, %x, %dx, %y, %dy) <{
     activity = [#enzyme.activity<enzyme_const>, #enzyme.activity<enzyme_const>, #enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_dup>],
     ret_activity = []
-  } : (index, index, memref<?x?xf32>, memref<?x?xf32>, memref<?x?xf32>, memref<?x?xf32>) -> ()
+  }> : (index, index, memref<?x?xf32>, memref<?x?xf32>, memref<?x?xf32>, memref<?x?xf32>) -> ()
   return
 }
 
@@ -83,3 +83,89 @@ func.func @dloop_invariant_cache(%ub0: index, %ub1: index, %x: memref<?x?xf32>, 
 // CHECK:           memref.dealloc %[[ALLOC_0]] : memref<?x8xf32>
 // CHECK:           return
 // CHECK:         }
+
+// -----
+
+func.func private @loop_invariant_cache_disabled_attr(%ub0: index, %ub1: index, %x: memref<?x?xf32> {llvm.noalias}, %y: memref<?x?xf32> {llvm.noalias}) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c8 = arith.constant 8 : index
+  %zero = arith.constant 0.0 : f32
+  %alloca = memref.alloca() : memref<8xf32>
+
+  scf.for %iv = %c0 to %c8 step %c1 {
+    %iv_i32 = arith.index_cast %iv : index to i32
+    %ivf = arith.sitofp %iv_i32 : i32 to f32
+    memref.store %ivf, %alloca[%iv] : memref<8xf32>
+  }
+
+  scf.for %iv = %c0 to %ub0 step %c1 {
+    scf.for %jv = %c0 to %ub1 step %c1 {
+      %xval = memref.load %x[%iv, %jv] : memref<?x?xf32>
+      %idx = arith.remsi %jv, %c8 : index
+      %allocaval = memref.load %alloca[%idx] : memref<8xf32>
+      %mul = arith.mulf %allocaval, %xval : f32
+      memref.store %mul, %y[%iv, %jv] : memref<?x?xf32>
+    } {enzyme.disable_loop_invariant_cache}
+  }
+  memref.store %zero, %alloca[%c0] : memref<8xf32>
+  return
+}
+
+func.func @dloop_invariant_cache_disabled_attr(%ub0: index, %ub1: index, %x: memref<?x?xf32>, %dx: memref<?x?xf32>, %y: memref<?x?xf32>, %dy: memref<?x?xf32>) {
+  enzyme.autodiff @loop_invariant_cache_disabled_attr(%ub0, %ub1, %x, %dx, %y, %dy) <{
+    activity = [#enzyme.activity<enzyme_const>, #enzyme.activity<enzyme_const>, #enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_dup>],
+    ret_activity = []
+  }> : (index, index, memref<?x?xf32>, memref<?x?xf32>, memref<?x?xf32>, memref<?x?xf32>) -> ()
+  return
+}
+
+// CHECK-LABEL:    func.func private @diffeloop_invariant_cache_disabled_attr(
+// CHECK-NOT:        memref<?x8xf32>
+// CHECK:            %[[CACHE_ATTR:.*]] = memref.alloc(%{{.*}}, %{{.*}}) : memref<?x?xf32>
+// CHECK:            memref.dealloc %[[CACHE_ATTR]] : memref<?x?xf32>
+// CHECK:            return
+
+// -----
+
+module attributes {enzyme.disable_loop_invariant_cache} {
+  func.func private @loop_invariant_cache_disabled_module(%ub0: index, %ub1: index, %x: memref<?x?xf32> {llvm.noalias}, %y: memref<?x?xf32> {llvm.noalias}) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c8 = arith.constant 8 : index
+    %zero = arith.constant 0.0 : f32
+    %alloca = memref.alloca() : memref<8xf32>
+
+    scf.for %iv = %c0 to %c8 step %c1 {
+      %iv_i32 = arith.index_cast %iv : index to i32
+      %ivf = arith.sitofp %iv_i32 : i32 to f32
+      memref.store %ivf, %alloca[%iv] : memref<8xf32>
+    }
+
+    scf.for %iv = %c0 to %ub0 step %c1 {
+      scf.for %jv = %c0 to %ub1 step %c1 {
+        %xval = memref.load %x[%iv, %jv] : memref<?x?xf32>
+        %idx = arith.remsi %jv, %c8 : index
+        %allocaval = memref.load %alloca[%idx] : memref<8xf32>
+        %mul = arith.mulf %allocaval, %xval : f32
+        memref.store %mul, %y[%iv, %jv] : memref<?x?xf32>
+      }
+    }
+    memref.store %zero, %alloca[%c0] : memref<8xf32>
+    return
+  }
+
+  func.func @dloop_invariant_cache_disabled_module(%ub0: index, %ub1: index, %x: memref<?x?xf32>, %dx: memref<?x?xf32>, %y: memref<?x?xf32>, %dy: memref<?x?xf32>) {
+    enzyme.autodiff @loop_invariant_cache_disabled_module(%ub0, %ub1, %x, %dx, %y, %dy) <{
+      activity = [#enzyme.activity<enzyme_const>, #enzyme.activity<enzyme_const>, #enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_dup>],
+      ret_activity = []
+    }> : (index, index, memref<?x?xf32>, memref<?x?xf32>, memref<?x?xf32>, memref<?x?xf32>) -> ()
+    return
+  }
+}
+
+// CHECK-LABEL:    func.func private @diffeloop_invariant_cache_disabled_module(
+// CHECK-NOT:        memref<?x8xf32>
+// CHECK:            %[[CACHE_MOD:.*]] = memref.alloc(%{{.*}}, %{{.*}}) : memref<?x?xf32>
+// CHECK:            memref.dealloc %[[CACHE_MOD]] : memref<?x?xf32>
+// CHECK:            return

@@ -482,14 +482,12 @@ static inline TypeTree parseTBAA(const llvm::MDNode *M, llvm::Instruction &I,
   return parseTBAA(AccessType, I, DL, MST);
 }
 
-/// Given an llvm::Instruction, return a TypeTree representing any
-/// types that can be derived from TBAA metadata attached
-static inline TypeTree parseTBAA(llvm::Instruction &I,
+static inline TypeTree parseTBAA(const llvm::AAMDNodes &AATags,
+                                 llvm::Instruction &I,
                                  const llvm::DataLayout &DL,
                                  std::shared_ptr<llvm::ModuleSlotTracker> MST) {
   TypeTree Result;
-  if (const llvm::MDNode *M =
-          I.getMetadata(llvm::LLVMContext::MD_tbaa_struct)) {
+  if (const llvm::MDNode *M = AATags.TBAAStruct) {
     for (unsigned i = 0, size = M->getNumOperands(); i < size; i += 3) {
       if (const llvm::MDNode *M2 =
               llvm::dyn_cast<llvm::MDNode>(M->getOperand(i + 2))) {
@@ -509,11 +507,19 @@ static inline TypeTree parseTBAA(llvm::Instruction &I,
       }
     }
   }
-  if (const llvm::MDNode *M = I.getMetadata(llvm::LLVMContext::MD_tbaa)) {
+  if (const llvm::MDNode *M = AATags.TBAA) {
     Result |= parseTBAA(M, I, DL, MST);
   }
   Result |= TypeTree(BaseType::Pointer);
   return Result;
+}
+
+/// Given an llvm::Instruction, return a TypeTree representing any
+/// types that can be derived from TBAA metadata attached
+static inline TypeTree parseTBAA(llvm::Instruction &I,
+                                 const llvm::DataLayout &DL,
+                                 std::shared_ptr<llvm::ModuleSlotTracker> MST) {
+  return parseTBAA(I.getAAMetadata(), I, DL, MST);
 }
 
 #endif

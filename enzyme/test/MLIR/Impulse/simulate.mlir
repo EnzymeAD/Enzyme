@@ -6,14 +6,14 @@ module {
   func.func private @logpdf(%x : tensor<f64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> tensor<f64>
 
   func.func @model(%rng : tensor<2xui64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> (tensor<2xui64>, tensor<f64>) {
-    %s:2 = impulse.sample @normal(%rng, %mean, %stddev) { logpdf = @logpdf, symbol = #impulse.symbol<1> } : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
-    %t:2 = impulse.sample @normal(%s#0, %s#1, %stddev) { logpdf = @logpdf, symbol = #impulse.symbol<2> } : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+    %s:2 = impulse.sample @normal(%rng, %mean, %stddev) <{ logpdf = @logpdf, symbol = #impulse.symbol<1> }> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+    %t:2 = impulse.sample @normal(%s#0, %s#1, %stddev) <{ logpdf = @logpdf, symbol = #impulse.symbol<2> }> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
     return %t#0, %t#1 : tensor<2xui64>, tensor<f64>
   }
 
   func.func @test_base(%rng : tensor<2xui64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> (tensor<1x2xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>) {
     %res:4 = impulse.simulate @model(%rng, %mean, %stddev)
-        { selection = [[#impulse.symbol<1>], [#impulse.symbol<2>]] }
+        <{ selection = [[#impulse.symbol<1>], [#impulse.symbol<2>]] }>
         : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<1x2xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>)
     return %res#0, %res#1, %res#2, %res#3 : tensor<1x2xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>
   }
@@ -49,20 +49,20 @@ module {
   func.func private @logpdf(%x : tensor<f64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> tensor<f64>
 
   func.func @inner(%rng : tensor<2xui64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> (tensor<2xui64>, tensor<f64>, tensor<f64>) {
-    %s:2 = impulse.sample @normal(%rng, %mean, %stddev) { logpdf = @logpdf, symbol = #impulse.symbol<3> } : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
-    %t:2 = impulse.sample @normal(%s#0, %mean, %stddev) { logpdf = @logpdf, symbol = #impulse.symbol<4> } : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+    %s:2 = impulse.sample @normal(%rng, %mean, %stddev) <{ logpdf = @logpdf, symbol = #impulse.symbol<3> }> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+    %t:2 = impulse.sample @normal(%s#0, %mean, %stddev) <{ logpdf = @logpdf, symbol = #impulse.symbol<4> }> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
     return %t#0, %s#1, %t#1 : tensor<2xui64>, tensor<f64>, tensor<f64>
   }
 
   func.func @outer(%rng : tensor<2xui64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> (tensor<2xui64>, tensor<f64>, tensor<f64>) {
-    %s:2 = impulse.sample @normal(%rng, %mean, %stddev) { logpdf = @logpdf, symbol = #impulse.symbol<1> } : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
-    %t:3 = impulse.sample @inner(%s#0, %s#1, %stddev) { symbol = #impulse.symbol<2> } : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>, tensor<f64>)
+    %s:2 = impulse.sample @normal(%rng, %mean, %stddev) <{ logpdf = @logpdf, symbol = #impulse.symbol<1> }> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+    %t:3 = impulse.sample @inner(%s#0, %s#1, %stddev) <{ symbol = #impulse.symbol<2> }> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>, tensor<f64>)
     return %t#0, %t#1, %t#2 : tensor<2xui64>, tensor<f64>, tensor<f64>
   }
 
   func.func @test_hier(%rng : tensor<2xui64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> (tensor<1x3xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<f64>) {
     %res:5 = impulse.simulate @outer(%rng, %mean, %stddev)
-        { selection = [[#impulse.symbol<1>], [#impulse.symbol<2>, #impulse.symbol<3>], [#impulse.symbol<2>, #impulse.symbol<4>]] }
+        <{ selection = [[#impulse.symbol<1>], [#impulse.symbol<2>, #impulse.symbol<3>], [#impulse.symbol<2>, #impulse.symbol<4>]] }>
         : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<1x3xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<f64>)
     return %res#0, %res#1, %res#2, %res#3, %res#4 : tensor<1x3xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>, tensor<f64>
   }

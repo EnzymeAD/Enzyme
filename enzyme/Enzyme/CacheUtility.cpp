@@ -577,7 +577,7 @@ void RemoveRedundantIVs(
 
     // This scope is necessary to ensure scevexpander cleans up before we erase
     // things
-#if LLVM_VERSION_MAJOR >= 22
+#if LLVM_VERSION_MAJOR >= 22 && !defined(ENZYME_LLVM22_PRERELEASE)
     SCEVExpander Exp(SE, "enzyme");
 #else
     SCEVExpander Exp(SE, Header->getParent()->getParent()->getDataLayout(),
@@ -875,14 +875,24 @@ std::pair<const SCEV *, const SCEV *> CacheUtility::computeLoopLimit(Loop *L) {
       }
     }
     if (seenHeaders) {
+      // An exit whose exact count is unknown, such as a convergence check
+      // combined with an iteration bound, may still bound the loop through
+      // the constant maximum of the exit limit.
+      const SCEV *ExitBound = EL.ExactNotTaken;
+      if (ExitBound == SE.getCouldNotCompute())
+#if LLVM_VERSION_MAJOR >= 16
+        ExitBound = EL.ConstantMaxNotTaken;
+#else
+        ExitBound = EL.MaxNotTaken;
+#endif
       if (MaxIterations == nullptr ||
           MaxIterations == SE.getCouldNotCompute()) {
-        MaxIterations = EL.ExactNotTaken;
+        MaxIterations = ExitBound;
       }
       if (MaxIterations != SE.getCouldNotCompute()) {
-        if (EL.ExactNotTaken != SE.getCouldNotCompute()) {
+        if (ExitBound != SE.getCouldNotCompute()) {
           MaxIterations =
-              SE.getUMaxFromMismatchedTypes(MaxIterations, EL.ExactNotTaken);
+              SE.getUMaxFromMismatchedTypes(MaxIterations, ExitBound);
         }
       }
 
@@ -964,98 +974,98 @@ bool CacheUtility::getContext(BasicBlock *BB, LoopContext &loopContext,
       report_fatal_error("Couldn't get canonical IV.");
     }
 
-    SmallPtrSet<const SCEV *, 2> PotentialMins;
-    SmallVector<const SCEV *, 2> Todo = {Limit};
-    while (Todo.size()) {
-      auto S = Todo.back();
-      Todo.pop_back();
-      if (auto SA = dyn_cast<SCEVSMaxExpr>(S)) {
-        for (auto op : SA->operands())
-          Todo.push_back(op);
-      } else if (auto SA = dyn_cast<SCEVUMaxExpr>(S)) {
-        for (auto op : SA->operands())
-          Todo.push_back(op);
-      } else if (auto SA = dyn_cast<SCEVAddExpr>(S)) {
-        for (auto op : SA->operands())
-          Todo.push_back(op);
-      } else
-        PotentialMins.insert(S);
-    }
-    for (auto op : PotentialMins) {
-      auto SM = dyn_cast<SCEVMulExpr>(op);
-      if (!SM)
-        continue;
-      if (SM->getNumOperands() != 2)
-        continue;
-      for (int i = 0; i < 2; i++)
-        if (auto C = dyn_cast<SCEVConstant>(SM->getOperand(i))) {
-          // is minus 1
-#if LLVM_VERSION_MAJOR > 16
-          if (C->getAPInt().isAllOnes())
-#else
-          if (C->getAPInt().isAllOnesValue())
-#endif
-          {
-            const SCEV *prev = SM->getOperand(1 - i);
-            while (true) {
-              if (auto ext = dyn_cast<SCEVZeroExtendExpr>(prev)) {
-                prev = ext->getOperand();
-                continue;
-              }
-              if (auto ext = dyn_cast<SCEVSignExtendExpr>(prev)) {
-                prev = ext->getOperand();
-                continue;
-              }
-              break;
-            }
-            if (auto V = dyn_cast<SCEVUnknown>(prev)) {
-              if (auto omp_lb_post = dyn_cast<LoadInst>(V->getValue())) {
-                auto AI =
-                    dyn_cast<AllocaInst>(omp_lb_post->getPointerOperand());
-                if (AI) {
-                  for (auto u : AI->users()) {
-                    CallInst *call = dyn_cast<CallInst>(u);
-                    if (!call)
-                      continue;
-                    Function *F = call->getCalledFunction();
-                    if (!F)
-                      continue;
-                    if (F->getName() == "__kmpc_for_static_init_4" ||
-                        F->getName() == "__kmpc_for_static_init_4u" ||
-                        F->getName() == "__kmpc_for_static_init_8" ||
-                        F->getName() == "__kmpc_for_static_init_8u") {
-                      Value *lb = nullptr;
-                      for (auto u : call->getArgOperand(4)->users()) {
-                        if (auto si = dyn_cast<StoreInst>(u)) {
-                          lb = si->getValueOperand();
-                          break;
-                        }
-                      }
-                      assert(lb);
-                      Value *ub = nullptr;
-                      for (auto u : call->getArgOperand(5)->users()) {
-                        if (auto si = dyn_cast<StoreInst>(u)) {
-                          ub = si->getValueOperand();
-                          break;
-                        }
-                      }
-                      assert(ub);
-                      IRBuilder<> post(omp_lb_post->getNextNode());
-                      loopContexts[L].allocLimit = post.CreateZExtOrTrunc(
-                          post.CreateSub(ub, lb), CanonicalIV->getType());
-                      loopContexts[L].offset = post.CreateZExtOrTrunc(
-                          post.CreateSub(omp_lb_post, lb, "", true, true),
-                          CanonicalIV->getType());
-                      goto endOMP;
-                    }
-                  }
-                }
-              }
-            }
+    // A loop over the chunk of an OpenMP worksharing loop assigned to this
+    // thread runs from the lower to the upper bound __kmpc_for_static_init
+    // stored for it. Size its cache for the iterations of all threads, as
+    // computable before the parallel region, and offset each thread's part
+    // by where its chunk starts. A loop whose limit was derived from these
+    // bounds otherwise (e.g. vectorized, or the remainder of a vectorized
+    // loop) runs at most as many iterations as its chunk has, so the same
+    // offset keeps the parts of different threads disjoint.
+    {
+      SmallVector<const SCEV *, 4> Todo = {Limit};
+      SmallPtrSet<const SCEV *, 8> Seen;
+      CallInst *ompInit = nullptr;
+      LoadInst *boundLoad = nullptr;
+      while (Todo.size() && !ompInit) {
+        auto S = Todo.pop_back_val();
+        if (!Seen.insert(S).second)
+          continue;
+        auto U = dyn_cast<SCEVUnknown>(S);
+        if (!U) {
+          // SCEV::operands() needs LLVM 16.
+          if (auto N = dyn_cast<SCEVNAryExpr>(S))
+            for (auto op : N->operands())
+              Todo.push_back(op);
+          else if (auto C = dyn_cast<SCEVCastExpr>(S))
+            Todo.push_back(C->getOperand());
+          else if (auto D = dyn_cast<SCEVUDivExpr>(S)) {
+            Todo.push_back(D->getLHS());
+            Todo.push_back(D->getRHS());
+          }
+          continue;
+        }
+        auto LI = dyn_cast<LoadInst>(U->getValue());
+        if (!LI)
+          continue;
+        auto AI = dyn_cast<AllocaInst>(LI->getPointerOperand());
+        if (!AI)
+          continue;
+        for (auto u : AI->users()) {
+          auto call = dyn_cast<CallInst>(u);
+          if (!call)
+            continue;
+          Function *F = call->getCalledFunction();
+          if (!F)
+            continue;
+          if ((F->getName() == "__kmpc_for_static_init_4" ||
+               F->getName() == "__kmpc_for_static_init_4u" ||
+               F->getName() == "__kmpc_for_static_init_8" ||
+               F->getName() == "__kmpc_for_static_init_8u") &&
+              (call->getArgOperand(4) == AI || call->getArgOperand(5) == AI)) {
+            ompInit = call;
+            boundLoad = LI;
+            break;
           }
         }
+      }
+      if (ompInit) {
+        auto storedValue = [](Value *ptr) -> Value * {
+          for (auto u : ptr->users())
+            if (auto si = dyn_cast<StoreInst>(u))
+              if (si->getPointerOperand() == ptr)
+                return si->getValueOperand();
+          return nullptr;
+        };
+        Value *lb = storedValue(ompInit->getArgOperand(4));
+        Value *ub = storedValue(ompInit->getArgOperand(5));
+        assert(lb);
+        assert(ub);
+        // The lower bound of this thread's chunk, as loaded after the call.
+        Value *omp_lb_post = nullptr;
+        if (boundLoad->getPointerOperand() == ompInit->getArgOperand(4))
+          omp_lb_post = boundLoad;
+        else
+          for (auto u : ompInit->getArgOperand(4)->users())
+            if (auto LI = dyn_cast<LoadInst>(u))
+              if (LI->getParent() == ompInit->getParent() &&
+                  ompInit->comesBefore(LI)) {
+                omp_lb_post = LI;
+                break;
+              }
+        IRBuilder<> post(ompInit->getNextNode());
+        if (omp_lb_post)
+          post.SetInsertPoint(cast<Instruction>(omp_lb_post)->getNextNode());
+        else
+          omp_lb_post = post.CreateLoad(
+              lb->getType(), ompInit->getArgOperand(4), "omp_lb_post");
+        loopContexts[L].allocLimit = post.CreateZExtOrTrunc(
+            post.CreateSub(ub, lb), CanonicalIV->getType());
+        loopContexts[L].offset = post.CreateZExtOrTrunc(
+            post.CreateSub(omp_lb_post, lb, "", true, true),
+            CanonicalIV->getType());
+      }
     }
-  endOMP:;
 
     if (Limit->getType() != CanonicalIV->getType()) {
       const SCEV *Zero = SE.getZero(Limit->getType());
@@ -1074,7 +1084,7 @@ bool CacheUtility::getContext(BasicBlock *BB, LoopContext &loopContext,
       }
     }
 
-#if LLVM_VERSION_MAJOR >= 22
+#if LLVM_VERSION_MAJOR >= 22 && !defined(ENZYME_LLVM22_PRERELEASE)
     SCEVExpander Exp(SE, "enzyme");
 #else
     SCEVExpander Exp(SE, BB->getParent()->getParent()->getDataLayout(),
@@ -1115,7 +1125,7 @@ bool CacheUtility::getContext(BasicBlock *BB, LoopContext &loopContext,
       MaxIterations =
           SE.getZeroExtendExpr(MaxIterations, CanonicalIV->getType());
 
-#if LLVM_VERSION_MAJOR >= 22
+#if LLVM_VERSION_MAJOR >= 22 && !defined(ENZYME_LLVM22_PRERELEASE)
     SCEVExpander Exp(SE, "enzyme");
 #else
     SCEVExpander Exp(SE, BB->getParent()->getParent()->getDataLayout(),
@@ -1623,6 +1633,31 @@ CacheUtility::SubLimitType CacheUtility::getSubLimits(bool inForwardPass,
         }
       }
 
+      bool canSkipLoop = false;
+      if (allocationPreheaders[i] != contexts[i].preheader) {
+        for (int k = i; (unsigned)(k + 1) < contexts.size() &&
+                        allocationPreheaders[k] != contexts[k].preheader;
+             ++k) {
+          BasicBlock *cur = contexts[k].preheader;
+          while (cur != contexts[k + 1].header) {
+            if (cur->getTerminator()->getNumSuccessors() != 1) {
+              canSkipLoop = true;
+              break;
+            }
+            cur = cur->getSinglePredecessor();
+            if (!cur) {
+              canSkipLoop = true;
+              break;
+            }
+          }
+          if (cur && cur->getTerminator()->getNumSuccessors() != 1) {
+            canSkipLoop = true;
+          }
+          if (canSkipLoop)
+            break;
+        }
+      }
+
       // We now need to compute the actual limit as opposed to the limit
       // minus one.
       if (inForwardPass) {
@@ -1634,9 +1669,14 @@ CacheUtility::SubLimitType CacheUtility::getSubLimits(bool inForwardPass,
         if (found != map.end() && found->second != nullptr) {
           limits[i] = found->second;
         } else {
-          limits[i] = map[allocationPreheaders[i]] =
-              allocationBuilder.CreateNSWAdd(
-                  limitMinus1, ConstantInt::get(limitMinus1->getType(), 1));
+          Value *add = allocationBuilder.CreateNSWAdd(
+              limitMinus1, ConstantInt::get(limitMinus1->getType(), 1));
+          if (canSkipLoop) {
+            auto zero = ConstantInt::get(limitMinus1->getType(), 0);
+            add = allocationBuilder.CreateSelect(
+                allocationBuilder.CreateICmpSLT(add, zero), zero, add);
+          }
+          limits[i] = map[allocationPreheaders[i]] = add;
         }
       } else {
         Value *lim = unwrapM(limitMinus1, *RB, reverseMap,
@@ -1647,7 +1687,12 @@ CacheUtility::SubLimitType CacheUtility::getSubLimits(bool inForwardPass,
           llvm::errs() << *limitMinus1 << "\n";
         }
         assert(lim);
-        limits[i] = RB->CreateNSWAdd(lim, ConstantInt::get(lim->getType(), 1));
+        Value *add = RB->CreateNSWAdd(lim, ConstantInt::get(lim->getType(), 1));
+        if (canSkipLoop) {
+          auto zero = ConstantInt::get(lim->getType(), 0);
+          add = RB->CreateSelect(RB->CreateICmpSLT(add, zero), zero, add);
+        }
+        limits[i] = add;
       }
     }
   }
@@ -1830,11 +1875,9 @@ void CacheUtility::storeInstructionInCache(LimitContext ctx,
   // If this is a PHINode, we need to store after all phinodes,
   // otherwise just after inst sufficies
   if (&*inst->getParent()->rbegin() != inst) {
-    auto pn = dyn_cast<PHINode>(inst);
-    Instruction *putafter = (pn && pn->getNumIncomingValues() > 0)
-                                ? (getFirstNonPHI(inst->getParent()))
-                                : getNextNonDebugInstruction(inst);
-    assert(putafter);
+    Instruction *putafter =
+        getFirstNonPHIOrPlaceholder(getNextNonDebugInstruction(inst));
+    assert(putafter && "expected an instruction after the cached value");
     v.SetInsertPoint(putafter);
   }
   v.setFastMathFlags(getFast());

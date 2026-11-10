@@ -75,6 +75,12 @@ extern llvm::cl::opt<bool> EnzymeAlwaysInlineDiff;
 // an error, or write to inaccesible memory.
 bool DetectReadonlyOrThrow(llvm::Module &M);
 
+namespace llvm {
+class PassBuilder;
+}
+
+llvm::PassBuilder makePassBuilder(llvm::LLVMContext &Ctx);
+
 class PreProcessCache {
 public:
   PreProcessCache();
@@ -411,6 +417,15 @@ void ReplaceFunctionImplementation(llvm::Module &M);
 
 /// Is the use of value val as an argument of call CI potentially captured
 bool couldFunctionArgumentCapture(llvm::CallInst *CI, llvm::Value *val);
+
+/// Whether parameter argno carries the function's result: an sret (also one
+/// still marked for Enzyme.jl's calling-convention fixup), a Julia sret union,
+/// or the roots of a returned value.
+bool isReturnLikeParam(const llvm::Function &F, unsigned argno);
+
+/// The same for a call site, consulting the callee when the call matches its
+/// signature.
+bool isReturnLikeParam(const llvm::CallBase &CB, unsigned argno);
 
 llvm::FunctionType *getFunctionTypeForClone(
     llvm::FunctionType *FTy, DerivativeMode mode, unsigned width,

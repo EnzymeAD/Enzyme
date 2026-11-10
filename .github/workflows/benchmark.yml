@@ -25,7 +25,7 @@ jobs:
       matrix:
         llvm: ["15"]
         build: ["Release"] #, "Debug" "RelWithDebInfo"
-        os: ["linux-x86-n2-32"]
+        os: ["linux-x86-n4-32"]
     timeout-minutes: 120 
     steps:
     - name: add llvm 

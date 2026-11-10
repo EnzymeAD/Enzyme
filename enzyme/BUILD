@@ -786,6 +786,31 @@ gentbl_cc_library(
 )
 
 td_library(
+    name = "OffsetViewInterfaceTdFiles",
+    srcs = ["Enzyme/MLIR/Interfaces/OffsetViewInterface.td"],
+    includes = ["."],
+    deps = ["@llvm-project//mlir:ViewLikeInterfaceTdFiles"],
+)
+
+gentbl_cc_library(
+    name = "OffsetViewInterfaceIncGen",
+    strip_include_prefix = "Enzyme",
+    tbl_outs = [
+        (
+            ["--gen-op-interface-decls"],
+            "Enzyme/MLIR/Interfaces/OffsetViewInterface.h.inc",
+        ),
+        (
+            ["--gen-op-interface-defs"],
+            "Enzyme/MLIR/Interfaces/OffsetViewInterface.cpp.inc",
+        ),
+    ],
+    tblgen = "@llvm-project//mlir:mlir-tblgen",
+    td_file = "Enzyme/MLIR/Interfaces/OffsetViewInterface.td",
+    deps = [":OffsetViewInterfaceTdFiles"],
+)
+
+td_library(
     name = "ImplementationsCommonTdFiles",
     srcs = [
         "Enzyme/MLIR/Implementations/Common.td",
@@ -976,6 +1001,7 @@ cc_library(
     ],
     visibility = ["//visibility:public"],
     deps = [
+        ":OffsetViewInterfaceIncGen",
         ":EnzymeAttributeInterfacesIncGen",
         ":EnzymeAttributesIncGen",
         ":EnzymeEnumsIncGen",

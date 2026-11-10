@@ -13,6 +13,10 @@ class ConstantFP<string val> : Operation</*primal*/0, /*shadow*/0> {
   string value = val;
 }
 
+// pi, created in the type of its operand (e.g. `(Pi $x)`) and rounded to that
+// type's precision.
+def Pi : ConstantFP<"3.14159265358979323846264338327950288">;
+
 class StaticSelect<string condition_> : Operation</*primal*/0, /*shadow*/0, /*custom*/0> {
   string condition = condition_;
 }
@@ -574,7 +578,7 @@ def : CallPattern<(Op $x),
                   [
                     (Select (FCmpOEQ $x, (ConstantFP<"0"> $x)),
                         (ConstantFP<"0"> $x),
-                  (FMul (DiffeRet), (FDiv (FSub (Intrinsic<"cos"> (FMul (ConstantFP<"3.1415926535897962684626433"> $x), $x)), (Call<(SameFunc), [ReadNone,NoUnwind]> $x)), $x)))],
+                  (FMul (DiffeRet), (FDiv (FSub (Intrinsic<"cos"> (FMul (Pi $x), $x)), (Call<(SameFunc), [ReadNone,NoUnwind]> $x)), $x)))],
                   (ForwardFromSummedReverse),
                   [ReadNone, NoUnwind]
                   >;
@@ -625,8 +629,8 @@ def : CallPattern<(Op $x),
                   ["sincospi", "sincospif", "sincospil"],
                   [
                   (
-                   ArrayRet (FMul (ConstantFP<"3.1415926535897962684626433"> $x), (FMul (ExtractValue<[1]> (Call<(SameFunc), [ReadNone,NoUnwind]> $x):$callset), (DiffeRet) ) ),
-                            (FMul (ConstantFP<"3.1415926535897962684626433"> $x),  (FNeg (FMul (ExtractValue<[0]> $callset), (DiffeRet) ) ) )
+                   ArrayRet (FMul (Pi $x), (FMul (ExtractValue<[1]> (Call<(SameFunc), [ReadNone,NoUnwind]> $x):$callset), (DiffeRet) ) ),
+                            (FMul (Pi $x),  (FNeg (FMul (ExtractValue<[0]> $callset), (DiffeRet) ) ) )
                   )
                   ],
                   (ForwardFromSummedReverse),
@@ -685,7 +689,7 @@ def : CallPattern<(Op $x),
                   ["sinpi", "sinpif", "sinpil", "cospi", "cospif", "cospil"],
                   [
                   (
-                   FMul (ConstantFP<"3.1415926535897962684626433"> $x), (FMul (Call<(SameFunc), [ReadNone,NoUnwind]> (FAdd $x, (ConstantFP<"0.5"> $x))), (DiffeRet) )
+                   FMul (Pi $x), (FMul (Call<(SameFunc), [ReadNone,NoUnwind]> (FAdd $x, (ConstantFP<"0.5"> $x))), (DiffeRet) )
                   )
                   ],
                   (ForwardFromSummedReverse),
@@ -847,20 +851,20 @@ def : CallPattern<(Op $xre, $xim, $yre, $yim),
                   ["__mulsc3", "__muldc3", "__multc3", "__mulxc3"],
                   [
                     (StructRet
-                      (ExtractValue<[0]> (CFMul (DiffeRetIndex<[]>), (ArrayRet $yre, $yim)):$r0),
-                      (ExtractValue<[1]> $r0)
+                      (FMul (DiffeRet), $yre),
+                      (FMul (DiffeRet), $yim)
                     ),
                     (StructRet
-                      (ExtractValue<[0]> (CFMul (DiffeRetIndex<[]>), (ArrayRet $yim, (FNeg $yre))):$r1),
-                      (ExtractValue<[1]> $r1)
+                      (FNeg (FMul (DiffeRet), $yim)),
+                      (FMul (DiffeRet), $yre)
                     ),
                     (StructRet
-                      (ExtractValue<[0]> (CFMul (DiffeRetIndex<[]>), (ArrayRet $xre, $xim)):$r2),
-                      (ExtractValue<[1]> $r2)
+                      (FMul (DiffeRet), $xre),
+                      (FMul (DiffeRet), $xim)
                     ),
                     (StructRet
-                      (ExtractValue<[0]> (CFMul (DiffeRetIndex<[]>), (ArrayRet $xim, (FNeg $xre))):$r3),
-                      (ExtractValue<[1]> $r3)
+                      (FNeg (FMul (DiffeRet), $xim)),
+                      (FMul (DiffeRet), $xre)
                     )
 // Alternate variant calling the same func (but likely much slower, per calling each one)
 // This would simply replace the cfmul call, the arrayret/extract code would also need to be
@@ -889,30 +893,31 @@ def : CallPattern<(Op $xre, $xim, $yre, $yim),
                   ["__divsc3", "__divdc3", "__divtc3", "__divxc3"],
                   [
                     (StructRet
-                      (ExtractValue<[0]> (CFDiv (DiffeRetIndex<[]>), (ArrayRet $yre, $yim)):$r0),
-                      (ExtractValue<[1]> $r0)
+                      (FMul (DiffeRet), (FDiv $yre, (FAdd (FMul $yre, $yre), (FMul $yim, $yim)):$yNormSquared0)),
+                      (FMul (DiffeRet), (FDiv (FNeg $yim), $yNormSquared0))
                     ),
                     (StructRet
-                      (ExtractValue<[0]> (CFDiv (DiffeRetIndex<[]>), (ArrayRet $yim, (FNeg $yre))):$r1),
-                      (ExtractValue<[1]> $r1)
+                      (FMul (DiffeRet), (FDiv $yim, (FAdd (FMul $yre, $yre), (FMul $yim, $yim)):$yNormSquared1)),
+                      (FMul (DiffeRet), (FDiv $yre, $yNormSquared1))
                     ),
                     (StructRet
-                      (ExtractValue<[0]> (CFNeg (CFDiv (CFMul (DiffeRetIndex<[]>), (ArrayRet $xre, $xim)), (CFMul_splat $yre, $yim, $yre, $yim))):$r2),
-                      (ExtractValue<[1]> $r2)
+                      (FMul (DiffeRet), (ExtractValue<[0]> (CFDiv (ArrayRet (FNeg $xre), (FNeg $xim)), (CFMul_splat $yre, $yim, $yre, $yim)):$negXOverYSquared0)),
+                      (FMul (DiffeRet), (ExtractValue<[1]> $negXOverYSquared0))
                     ),
                     (StructRet
-                      (ExtractValue<[0]> (CFDiv (CFMul (DiffeRetIndex<[]>), (ArrayRet $xim, (FNeg $xim))), (CFMul_splat $yre, $yim, $yre, $yim)):$r2),
-                      (ExtractValue<[1]> $r2)
+                      (FMul (DiffeRet), (FNeg (ExtractValue<[1]> (CFDiv (ArrayRet (FNeg $xre), (FNeg $xim)), (CFMul_splat $yre, $yim, $yre, $yim)):$negXOverYSquared1))),
+                      (FMul (DiffeRet), (ExtractValue<[0]> $negXOverYSquared1))
                     )
                   ],
-                  (ToStruct2 (CFAdd  (CFDiv_splat 
+                  (ToStruct2 (CFAdd (CFDiv_splat
                             (SelectIfActive $xre, (Shadow $xre), (Zero $xre)),
                             (SelectIfActive $xim, (Shadow $xim), (Zero $xim)),
                             $yre, $yim),
-                          (CFMul_splat
-                            (SelectIfActive $yre, (Shadow $yre), (Zero $yre)),
-                            (SelectIfActive $yim, (Shadow $yim), (Zero $yim)),
-                            (ExtractValue<[0]> (CFDiv (ArrayRet (FNeg $xre), (FNeg $xim)), (CFMul_splat $yre, $yim, $yre, $yim))), (ExtractValue<[1]> (CFMul_splat $yre, $yim, $yre, $yim)) ) )),
+                          (CFMul
+                            (ArrayRet
+                              (SelectIfActive $yre, (Shadow $yre), (Zero $yre)),
+                              (SelectIfActive $yim, (Shadow $yim), (Zero $yim))),
+                            (CFDiv (ArrayRet (FNeg $xre), (FNeg $xim)), (CFMul_splat $yre, $yim, $yre, $yim))))),
                   [ReadNone, NoUnwind]
                   >;
 
@@ -1218,7 +1223,7 @@ def : BinopPattern<(Op $x, $y), "FDiv", 0, 0,
                       (CheckedDiv (DiffeRet), $y),
                       (FNeg (CheckedMul (CheckedDiv (DiffeRet), $y), (FDiv $x, $y)))
                     ],
-                    (CheckedDiv (FSub (SelectIfActive $x, (FMul (Shadow $x), $y), (Zero $x)), (SelectIfActive $y, (FMul (Shadow $y), $x), (Zero $y))), (FMul $y, $y))
+                    (CheckedDiv (FSub (SelectIfActive $x, (Shadow $x), (Zero $x)), (SelectIfActive $y, (CheckedMul (Shadow $y), (FDiv $x, $y)), (Zero $y))), $y)
                   >;
 
 def : BinopPattern<(Op $x, $y), "FRem", 0, 0,

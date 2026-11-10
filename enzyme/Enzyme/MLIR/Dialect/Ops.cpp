@@ -1179,6 +1179,20 @@ LogicalResult AtomicRMWOp::canonicalize(AtomicRMWOp op,
   return success();
 }
 
+// A memref.cast that only makes the memref's sizes dynamic folds into the
+// access, as it does into loads and stores.
+OpFoldResult AtomicRMWOp::fold(FoldAdaptor adaptor) {
+  if (succeeded(memref::foldMemRefCast(*this, getValue())))
+    return getResult();
+  return OpFoldResult();
+}
+
+OpFoldResult AffineAtomicRMWOp::fold(FoldAdaptor adaptor) {
+  if (succeeded(memref::foldMemRefCast(*this, getValue())))
+    return getResult();
+  return OpFoldResult();
+}
+
 LogicalResult AffineAtomicRMWOp::canonicalize(AffineAtomicRMWOp op,
                                               PatternRewriter &rewriter) {
   if (!isRemovableAccumulation(op.getKind(), op.getValue(), op.getFastmath()))

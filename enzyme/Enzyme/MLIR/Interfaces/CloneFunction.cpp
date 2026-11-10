@@ -73,8 +73,7 @@ getFunctionTypeForClone(T FTy, DerivativeMode mode, unsigned width,
 }
 
 Operation *clone(Operation *src, IRMapping &mapper,
-                 Operation::CloneOptions options,
-                 std::map<Operation *, Operation *> &opMap) {
+                 Operation::CloneOptions options) {
   SmallVector<Value, 8> operands;
   SmallVector<Block *, 2> successors;
 
@@ -103,7 +102,7 @@ Operation *clone(Operation *src, IRMapping &mapper,
     // Clone the regions.
     if (options.shouldCloneRegions()) {
       for (unsigned i = 0; i != src->getNumRegions(); ++i)
-        cloneInto(&src->getRegion(i), &newOp->getRegion(i), mapper, opMap);
+        cloneInto(&src->getRegion(i), &newOp->getRegion(i), mapper);
     }
   }
 
@@ -111,18 +110,17 @@ Operation *clone(Operation *src, IRMapping &mapper,
   for (unsigned i = 0, e = src->getNumResults(); i != e; ++i)
     mapper.map(src->getResult(i), newOp->getResult(i));
 
-  opMap[src] = newOp;
+  mapper.map(src, newOp);
   return newOp;
 }
 
-void cloneInto(Region *src, Region *dest, IRMapping &mapper,
-               std::map<Operation *, Operation *> &opMap) {
-  cloneInto(src, dest, dest->end(), mapper, opMap);
+void cloneInto(Region *src, Region *dest, IRMapping &mapper) {
+  cloneInto(src, dest, dest->end(), mapper);
 }
 
 /// Clone this region into 'dest' before the given position in 'dest'.
 void cloneInto(Region *src, Region *dest, Region::iterator destPos,
-               IRMapping &mapper, std::map<Operation *, Operation *> &opMap) {
+               IRMapping &mapper) {
   assert(src);
   assert(dest && "expected valid region to clone into");
   assert(src != dest && "cannot clone region into itself");
@@ -175,7 +173,7 @@ void cloneInto(Region *src, Region *dest, Region::iterator destPos,
     Block &clonedBlock = std::get<1>(zippedBlocks);
     // Clone and remap the operations within this block.
     for (Operation &op : sourceBlock) {
-      clonedBlock.push_back(clone(&op, mapper, cloneOptions, opMap));
+      clonedBlock.push_back(clone(&op, mapper, cloneOptions));
     }
   }
 
@@ -195,7 +193,7 @@ void cloneInto(Region *src, Region *dest, Region::iterator destPos,
       clone.setOperands(operands);
 
       for (auto regions : llvm::zip(source.getRegions(), clone.getRegions()))
-        cloneInto(&std::get<0>(regions), &std::get<1>(regions), mapper, opMap);
+        cloneInto(&std::get<0>(regions), &std::get<1>(regions), mapper);
     }
   }
 }
@@ -208,8 +206,7 @@ FunctionOpInterface CloneFunctionWithReturns(
     SmallPtrSetImpl<mlir::Value> &returnvals,
     const std::vector<bool> &returnPrimals,
     const std::vector<bool> &returnShadows, ArrayRef<DIFFE_TYPE> RetActivity,
-    Twine name, IRMapping &VMap, std::map<Operation *, Operation *> &OpMap,
-    mlir::Type additionalArg) {
+    Twine name, IRMapping &VMap, mlir::Type additionalArg) {
   assert(!F.getFunctionBody().empty());
   // F = preprocessForClone(F, mode);
   // llvm::ValueToValueMapTy VMap;
@@ -254,7 +251,7 @@ FunctionOpInterface CloneFunctionWithReturns(
   SymbolTable::setSymbolVisibility(NewF, SymbolTable::Visibility::Private);
   cast<AutoDiffFunctionInterface>(*NewF).detachFromPrimalDefinition();
 
-  cloneInto(&F.getFunctionBody(), &NewF.getFunctionBody(), VMap, OpMap);
+  cloneInto(&F.getFunctionBody(), &NewF.getFunctionBody(), VMap);
 
   {
     SmallVector<mlir::Attribute> allAttrs(F.getNumArguments(), nullptr);

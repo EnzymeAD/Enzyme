@@ -16,10 +16,12 @@
 #include "Interfaces/AutoDiffTypeInterface.h"
 #include "Interfaces/GradientUtils.h"
 #include "Interfaces/GradientUtilsReverse.h"
+#include "Interfaces/OffsetViewInterface.h"
 #include "Interfaces/Utils.h"
 
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/DialectRegistry.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/Support/LogicalResult.h"
 
 using namespace mlir;
@@ -27,6 +29,22 @@ using namespace mlir::enzyme;
 
 namespace {
 #include "Implementations/MemRefDerivatives.inc"
+
+struct SubViewOpOffsetInterface
+    : public OffsetViewInterface::ExternalModel<SubViewOpOffsetInterface,
+                                                memref::SubViewOp> {
+  bool isZeroOffset(Operation *op) const {
+    return cast<memref::SubViewOp>(op).hasZeroOffset();
+  }
+};
+
+struct ViewOpOffsetInterface
+    : public OffsetViewInterface::ExternalModel<ViewOpOffsetInterface,
+                                                memref::ViewOp> {
+  bool isZeroOffset(Operation *op) const {
+    return matchPattern(cast<memref::ViewOp>(op).getByteShift(), m_Zero());
+  }
+};
 
 // Lets activity analysis treat memref.store generically via StoreLikeInterface.
 struct MemRefStoreLike
@@ -39,6 +57,21 @@ struct MemRefStoreLike
     return cast<memref::StoreOp>(op).getMemRef();
   }
 };
+
+struct MemRefLoadLike
+    : public LoadLikeInterface::ExternalModel<MemRefLoadLike, memref::LoadOp> {
+  Value getLoadedPointer(Operation *op) const {
+    return cast<memref::LoadOp>(op).getMemref();
+  }
+};
+
+struct MemRefAllocaLike
+    : public AllocaLikeInterface::ExternalModel<MemRefAllocaLike,
+                                                memref::AllocaOp> {};
+
+struct MemRefMallocLike
+    : public MallocLikeInterface::ExternalModel<MemRefMallocLike,
+                                                memref::AllocOp> {};
 
 struct LoadOpInterfaceReverse
     : public ReverseAutoDiffOpInterface::ExternalModel<LoadOpInterfaceReverse,
@@ -474,9 +507,27 @@ void mlir::enzyme::registerMemRefDialectAutoDiffInterface(
     MemRefType::attachInterface<MemRefClonableTypeInterface>(*context);
 
     memref::StoreOp::attachInterface<MemRefStoreLike>(*context);
+    memref::LoadOp::attachInterface<MemRefLoadLike>(*context);
     memref::LoadOp::attachInterface<LoadOpInterfaceReverse>(*context);
+    memref::AllocaOp::attachInterface<MemRefAllocaLike>(*context);
+    memref::AllocOp::attachInterface<MemRefMallocLike>(*context);
     memref::StoreOp::attachInterface<StoreOpInterfaceReverse>(*context);
     memref::SubViewOp::attachInterface<SubViewOpInterfaceReverse>(*context);
     memref::AllocOp::attachInterface<MemRefAllocOpInterface>(*context);
+
+    memref::CastOp::attachInterface<OffsetViewInterface::Model<memref::CastOp>>(
+        *context);
+    memref::MemorySpaceCastOp::attachInterface<
+        OffsetViewInterface::Model<memref::MemorySpaceCastOp>>(*context);
+    memref::ReshapeOp::attachInterface<
+        OffsetViewInterface::Model<memref::ReshapeOp>>(*context);
+    memref::ExpandShapeOp::attachInterface<
+        OffsetViewInterface::Model<memref::ExpandShapeOp>>(*context);
+    memref::CollapseShapeOp::attachInterface<
+        OffsetViewInterface::Model<memref::CollapseShapeOp>>(*context);
+    memref::TransposeOp::attachInterface<
+        OffsetViewInterface::Model<memref::TransposeOp>>(*context);
+    memref::SubViewOp::attachInterface<SubViewOpOffsetInterface>(*context);
+    memref::ViewOp::attachInterface<ViewOpOffsetInterface>(*context);
   });
 }

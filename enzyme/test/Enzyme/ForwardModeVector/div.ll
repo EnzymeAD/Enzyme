@@ -22,20 +22,18 @@ entry:
 
 ; CHECK: define internal [2 x double] @fwddiffe2tester(double %x, [2 x double] %"x'", double %y, [2 x double] %"y'")
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %[[i0:.+]] = extractvalue [2 x double] %"x'", 0
-; CHECK-NEXT:   %[[i2:.+]] = fmul fast double %[[i0]], %y
-; CHECK-NEXT:   %[[i5:.+]] = extractvalue [2 x double] %"x'", 1
-; CHECK-NEXT:   %[[i7:.+]] = fmul fast double %[[i5]], %y
-; CHECK-NEXT:   %[[i1:.+]] = extractvalue [2 x double] %"y'", 0
-; CHECK-NEXT:   %[[i3:.+]] = fmul fast double %[[i1]], %x
-; CHECK-NEXT:   %[[i6:.+]] = extractvalue [2 x double] %"y'", 1
-; CHECK-NEXT:   %[[i8:.+]] = fmul fast double %[[i6]], %x
-; CHECK-NEXT:   %[[i4:.+]] = fsub fast double %[[i2]], %[[i3]]
-; CHECK-NEXT:   %[[i9:.+]] = fsub fast double %[[i7]], %[[i8]]
-; CHECK-NEXT:   %[[i10:.+]] = fmul fast double %y, %y
-; CHECK-NEXT:   %[[i11:.+]] = fdiv fast double %[[i4]], %[[i10]]
-; CHECK-NEXT:   %[[i12:.+]] = insertvalue [2 x double] undef, double %[[i11]], 0
-; CHECK-NEXT:   %[[i13:.+]] = fdiv fast double %[[i9]], %[[i10]]
-; CHECK-NEXT:   %[[i14:.+]] = insertvalue [2 x double] %[[i12]], double %[[i13]], 1
-; CHECK-NEXT:   ret [2 x double] %[[i14]]
+; CHECK-NEXT:   %[[q:.+]] = fdiv fast double %x, %y
+; CHECK-NEXT:   %[[y0:.+]] = extractvalue [2 x double] %"y'", 0
+; CHECK-NEXT:   %[[m0:.+]] = fmul fast double %[[y0]], %[[q]]
+; CHECK-NEXT:   %[[y1:.+]] = extractvalue [2 x double] %"y'", 1
+; CHECK-NEXT:   %[[m1:.+]] = fmul fast double %[[y1]], %[[q]]
+; CHECK-NEXT:   %[[x0:.+]] = extractvalue [2 x double] %"x'", 0
+; CHECK-NEXT:   %[[s0:.+]] = fsub fast double %[[x0]], %[[m0]]
+; CHECK-NEXT:   %[[x1:.+]] = extractvalue [2 x double] %"x'", 1
+; CHECK-NEXT:   %[[s1:.+]] = fsub fast double %[[x1]], %[[m1]]
+; CHECK-NEXT:   %[[d0:.+]] = fdiv fast double %[[s0]], %y
+; CHECK-NEXT:   %[[r0:.+]] = insertvalue [2 x double] undef, double %[[d0]], 0
+; CHECK-NEXT:   %[[d1:.+]] = fdiv fast double %[[s1]], %y
+; CHECK-NEXT:   %[[r1:.+]] = insertvalue [2 x double] %[[r0]], double %[[d1]], 1
+; CHECK-NEXT:   ret [2 x double] %[[r1]]
 ; CHECK-NEXT: }
