@@ -593,6 +593,13 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
     }
 
     if (!shadow) {
+      if (funcName == "__kmpc_push_num_threads") {
+        if (EnzymePrintDiffUse)
+          llvm::errs() << " Need direct primal of " << *val
+                       << " in reverse from OpenMP runtime call " << *user
+                       << '\n';
+        return true;
+      }
 
       // Need the primal request in reverse.
       if (funcName == "cuStreamSynchronize")

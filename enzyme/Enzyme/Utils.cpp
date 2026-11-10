@@ -492,6 +492,8 @@ bool attributeKnownFunctions(llvm::Function &F) {
       "__kmpc_critical",
       "__kmpc_end_critical",
       "omp_get_thread_num",
+      "__kmpc_push_num_threads",
+      "omp_set_num_threads",
       "omp_get_num_threads",
       "omp_get_max_threads",
   };

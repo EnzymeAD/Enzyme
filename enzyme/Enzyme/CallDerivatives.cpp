@@ -2696,6 +2696,58 @@ bool AdjointGenerator::handleKnownCallDerivatives(
 
   // Handle lgamma, safe to recompute so no store/change to forward
   if (called) {
+    if (funcName == "__kmpc_push_num_threads") {
+      if (Mode == DerivativeMode::ReverseModeGradient ||
+          Mode == DerivativeMode::ForwardModeSplit) {
+        eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+      }
+      return true;
+    }
+    if (funcName == "omp_set_num_threads") {
+      Type *argType = call.getArgOperand(0)->getType();
+      Value *previousMaxThreads = nullptr;
+      if (Mode == DerivativeMode::ReverseModePrimal ||
+          Mode == DerivativeMode::ReverseModeCombined) {
+        Module &module = *gutils->newFunc->getParent();
+        FunctionType *maxThreadsType =
+            FunctionType::get(argType, ArrayRef<Type *>(), /*isVarArg=*/false);
+        if (Function *existing = module.getFunction("omp_get_max_threads")) {
+          if (existing->arg_empty() && existing->getReturnType()->isIntegerTy())
+            maxThreadsType = existing->getFunctionType();
+        }
+        FunctionCallee maxThreadsFn =
+            module.getOrInsertFunction("omp_get_max_threads", maxThreadsType);
+        CallInst *maxThreadsCall = BuilderZ.CreateCall(maxThreadsFn);
+        previousMaxThreads =
+            BuilderZ.CreateZExtOrTrunc(maxThreadsCall, argType);
+        if (Mode == DerivativeMode::ReverseModePrimal) {
+          previousMaxThreads = gutils->cacheForReverse(
+              BuilderZ, previousMaxThreads,
+              getIndex(&call, CacheType::Tape, BuilderZ));
+        }
+      } else if (Mode == DerivativeMode::ReverseModeGradient) {
+        PHINode *placeholder =
+            BuilderZ.CreatePHI(argType, 0, "prev_max_threads");
+        previousMaxThreads = gutils->cacheForReverse(
+            BuilderZ, placeholder, getIndex(&call, CacheType::Tape, BuilderZ));
+      }
+
+      if (Mode == DerivativeMode::ReverseModeGradient ||
+          Mode == DerivativeMode::ReverseModeCombined) {
+        IRBuilder<> Builder2(&call);
+        getReverseBuilder(Builder2);
+        Value *restoredThreads = lookup(previousMaxThreads, Builder2);
+        CallInst *restoreCall = Builder2.CreateCall(called->getFunctionType(),
+                                                    called, {restoredThreads});
+        restoreCall->setCallingConv(called->getCallingConv());
+      }
+
+      if (Mode == DerivativeMode::ReverseModeGradient ||
+          Mode == DerivativeMode::ForwardModeSplit) {
+        eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+      }
+      return true;
+    }
     if (funcName == "__kmpc_for_static_init_4" ||
         funcName == "__kmpc_for_static_init_4u" ||
         funcName == "__kmpc_for_static_init_8" ||
