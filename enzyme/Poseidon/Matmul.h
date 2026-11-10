@@ -1,6 +1,7 @@
 #ifndef POSEIDON_MATMUL_H
 #define POSEIDON_MATMUL_H
 
+#include "MatmulScheme.h"
 #include "Precision.h"
 #include "ProfileRead.h"
 
@@ -277,27 +278,8 @@ class CandidateMatmul {
 public:
   struct Option {
     unsigned tileM = ~0u, tileN = ~0u, tileK = ~0u;
-    FPKind inputPrec = FPKind::Invalid;
-    FPKind accPrec = FPKind::Invalid;
-
-    enum class Strategy {
-      Direct,
-      OzakiI,
-      OzakiII,
-      // Host dispatch to the TCEC runtime (__poseidon_tcec_dgemm): the same
-      // scheme as the in-kernel OzakiI/TCEC candidates, materialized as a
-      // library call. strategyParam carries the runtime's compute mode.
-      TcecDispatch,
-      // Host dispatch to the direct reduced-precision GEMM runtime
-      // (__poseidon_direct_dgemm): the same arithmetic as the in-kernel Direct
-      // candidate of the same (inputPrec, accPrec), whose accuracy evaluation
-      // it borrows. strategyParam is the operand format (1 = FP16, 2 = BF16,
-      // 3 = TF32, 4 = FP32, the last one cuBLAS's SGEMM rather than a
-      // tensor-core product).
-      DirectDispatch,
-    };
-    Strategy strategy = Strategy::Direct;
-    unsigned strategyParam = 1;
+    SchemeVariant variant;
+    Realization realization = Realization::InKernel;
 
     unsigned mChain = ~0u, nChain = ~0u, kChain = ~0u;
     unsigned padM = 0, padN = 0, padK = 0;
@@ -338,8 +320,8 @@ std::string matmulOptionLabel(const CandidateMatmul::Option &opt);
 // Static shared-memory preconditions for the in-kernel raises: ptxas caps a
 // kernel's static shared allocation at 48 KB on sm_120 and rejects the whole
 // module otherwise, so the proposer refuses a candidate whose scratch does not
-// fit. The two entry points mirror, allocation for allocation, what the Direct
-// and TCEC/Ozaki-I materializers create.
+// fit. The two entry points mirror, allocation for allocation, what the
+// in-kernel Direct and Split materializers create.
 constexpr uint64_t kStaticShmemCap = 48u * 1024u;
 
 // Bytes of addrspace(3) globals already live alongside a raise placed in `F`:
@@ -348,7 +330,7 @@ constexpr uint64_t kStaticShmemCap = 48u * 1024u;
 uint64_t enclosingKernelSharedBytes(llvm::Function &F);
 
 // Bytes of new static shared scratch an in-kernel raise of `opt` allocates
-// (0 for host dispatch); `breakdown` receives the term list for the refusal.
+// (0 for a library call); `breakdown` receives the term list for the refusal.
 uint64_t inKernelRaiseSharedBytes(llvm::Module &M,
                                   const CandidateMatmul::Option &opt,
                                   std::string *breakdown);
