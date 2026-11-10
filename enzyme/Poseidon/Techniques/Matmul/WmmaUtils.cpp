@@ -8,6 +8,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "WmmaUtils.h"
+#include "Targets/NVPTXTensorCore.h"
+#include "Targets/Target.h"
 
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Constants.h"
@@ -16,7 +18,6 @@
 #include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Intrinsics.h"
-#include "llvm/IR/IntrinsicsNVPTX.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
 #include "llvm/Support/Alignment.h"
@@ -47,13 +48,6 @@ Type *llvmTypeForFPKind(LLVMContext &ctx, FPKind k) {
   llvm_unreachable("unknown FPKind");
 }
 
-Intrinsic::ID resolveWmmaIntrinsic(const Twine &name) {
-  Intrinsic::ID id = Intrinsic::lookupIntrinsicID(name.str());
-  if (id == Intrinsic::not_intrinsic)
-    report_fatal_error("resolveWmmaIntrinsic: intrinsic not found: " + name);
-  return id;
-}
-
 Value *emitFPCast(IRBuilder<> &B, Value *v, Type *toTy) {
   Type *fromTy = v->getType();
   if (fromTy == toTy)
@@ -77,27 +71,27 @@ GlobalVariable *getOrCreateSharedScratch(Module *M, const Twine &name,
   auto *gv = new GlobalVariable(*M, arrTy, /*isConstant=*/false,
                                 GlobalValue::InternalLinkage, zero, nameStr,
                                 nullptr, GlobalVariable::NotThreadLocal,
-                                /*AddressSpace=*/3);
+                                *Target::of(*M).sharedAddressSpace());
   gv->setAlignment(MaybeAlign(16));
   return gv;
 }
 
 Value *emitTidIntrinsic(IRBuilder<> &B, Module *M, TidAxis axis) {
-  Intrinsic::ID id;
+  unsigned a;
   switch (axis) {
   case TidAxis::TidX:
-    id = Intrinsic::nvvm_read_ptx_sreg_tid_x;
+    a = 0;
     break;
   case TidAxis::TidY:
-    id = Intrinsic::nvvm_read_ptx_sreg_tid_y;
+    a = 1;
     break;
   case TidAxis::TidZ:
-    id = Intrinsic::nvvm_read_ptx_sreg_tid_z;
+    a = 2;
     break;
   default:
     report_fatal_error("emitTidIntrinsic: axis not resolved (Unknown/Other)");
   }
-  return B.CreateCall(Intrinsic::getOrInsertDeclaration(M, id));
+  return nvptx::emitThreadIndex(B, M, a);
 }
 
 Value *emitTidIndex(IRBuilder<> &B, Module *M, TidAxis fast, TidAxis slow,
@@ -116,24 +110,18 @@ Value *emitTidIndex(IRBuilder<> &B, Module *M, TidAxis fast, TidAxis slow,
 
 std::pair<Value *, Value *> emitThreadLinAndBlockSize(IRBuilder<> &B, Module *M,
                                                       bool is2DBlock) {
-  Value *tx = B.CreateCall(Intrinsic::getOrInsertDeclaration(
-      M, Intrinsic::nvvm_read_ptx_sreg_tid_x));
-  Value *ty = B.CreateCall(Intrinsic::getOrInsertDeclaration(
-      M, Intrinsic::nvvm_read_ptx_sreg_tid_y));
-  Value *nx = B.CreateCall(Intrinsic::getOrInsertDeclaration(
-      M, Intrinsic::nvvm_read_ptx_sreg_ntid_x));
-  Value *ny = B.CreateCall(Intrinsic::getOrInsertDeclaration(
-      M, Intrinsic::nvvm_read_ptx_sreg_ntid_y));
+  Value *tx = nvptx::emitThreadIndex(B, M, 0);
+  Value *ty = nvptx::emitThreadIndex(B, M, 1);
+  Value *nx = nvptx::emitBlockDim(B, M, 0);
+  Value *ny = nvptx::emitBlockDim(B, M, 1);
   if (is2DBlock) {
     // 2D block: tz == 0, nz == 1; fold away the tz / nz terms.
     Value *tlin = B.CreateAdd(B.CreateMul(ty, nx), tx);
     Value *bsz = B.CreateMul(nx, ny);
     return {tlin, bsz};
   }
-  Value *tz = B.CreateCall(Intrinsic::getOrInsertDeclaration(
-      M, Intrinsic::nvvm_read_ptx_sreg_tid_z));
-  Value *nz = B.CreateCall(Intrinsic::getOrInsertDeclaration(
-      M, Intrinsic::nvvm_read_ptx_sreg_ntid_z));
+  Value *tz = nvptx::emitThreadIndex(B, M, 2);
+  Value *nz = nvptx::emitBlockDim(B, M, 2);
   Value *tlin =
       B.CreateAdd(B.CreateMul(B.CreateAdd(B.CreateMul(tz, ny), ty), nx), tx);
   Value *bsz = B.CreateMul(B.CreateMul(nx, ny), nz);
@@ -174,12 +162,8 @@ void emitCooperativeScratchFill(IRBuilder<> &B, Value *scratchBase, Type *dstTy,
       // wmma.load.a/b.tf32 reads the float bit-pattern as-is and the MMA
       // truncates the low 13 mantissa bits, so an FPTrunc-only fill applies
       // truncation (one-signed bias) instead of round-to-nearest. RN-quantize
-      // with f2tf32.rna before the store, as the Ozaki slice path does.
-      Module *M = F->getParent();
-      Function *f2tf32 =
-          Intrinsic::getOrInsertDeclaration(M, Intrinsic::nvvm_f2tf32_rna);
-      Value *q = bodyB.CreateCall(f2tf32, {cvt});
-      cvt = bodyB.CreateBitCast(q, dstTy);
+      // before the store, as the Ozaki slice path does.
+      cvt = nvptx::emitRoundToTF32(bodyB, F->getParent(), cvt);
     }
     Value *dstOff = bodyB.CreateAdd(
         bodyB.CreateMul(r64, ConstantInt::get(i64Ty, dstRowStrideByte)),
@@ -287,11 +271,7 @@ void emitCooperativeScratchFillPadded(
     Value *cvt = emitFPCast(lB, srcVal, dstTy);
     if (dstKind == FPKind::TF32) {
       // Same RN quantization the unpadded fill applies (see there).
-      Module *M = F->getParent();
-      Function *f2tf32 =
-          Intrinsic::getOrInsertDeclaration(M, Intrinsic::nvvm_f2tf32_rna);
-      Value *q = lB.CreateCall(f2tf32, {cvt});
-      cvt = lB.CreateBitCast(q, dstTy);
+      cvt = nvptx::emitRoundToTF32(lB, F->getParent(), cvt);
     }
     BasicBlock *loadEndBB = lB.GetInsertBlock();
     lB.CreateBr(mergeBB);

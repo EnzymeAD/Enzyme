@@ -24,10 +24,8 @@
 
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Intrinsics.h"
-#include "llvm/IR/IntrinsicsNVPTX.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Verifier.h"
-#include "llvm/TargetParser/Triple.h"
 
 #include "llvm/Passes/PassBuilder.h"
 
@@ -61,6 +59,7 @@
 
 #include "Core/Options.h"
 #include "Herbie.h"
+#include "Targets/Target.h"
 #include "Types.h"
 #include "Utils.h"
 
@@ -69,18 +68,6 @@
 using namespace llvm;
 
 namespace poseidon {
-
-bool isDeviceModule(const Module &M) {
-  Triple T(M.getTargetTriple());
-  return T.isNVPTX() || T.isAMDGPU();
-}
-
-bool isKernel(const Function &F) {
-  return F.getCallingConv() == CallingConv::PTX_Kernel ||
-         F.getCallingConv() == CallingConv::AMDGPU_KERNEL;
-}
-
-bool isGPUMode(const Function &F) { return isDeviceModule(*F.getParent()); }
 
 void simplifyFunction(Function &F, OptimizationLevel Level) {
 
@@ -118,74 +105,6 @@ const std::unordered_set<std::string> &libmFuncs() {
       "lgamma",   "log10", "log2",  "rint",     "round", "tgamma", "trunc",
       "copysign", "fdim",  "fmod",  "remainder"};
   return LibmFuncs;
-}
-
-StringRef deviceMathName(StringRef fnName) {
-  static const std::unordered_set<std::string> Bases = [] {
-    std::unordered_set<std::string> bases = libmFuncs();
-    // getLLValue emits these as llvm.minnum/llvm.maxnum, which both GPU
-    // targets select.
-    bases.insert("fmin");
-    bases.insert("fmax");
-    return bases;
-  }();
-
-  StringRef base = fnName;
-  if (base.consume_front("__ocml_"))
-    return (base.consume_back("_f64") || base.consume_back("_f32")) &&
-                   Bases.count(base.str())
-               ? base
-               : "";
-  if (!base.consume_front("__nv_"))
-    return "";
-  if (Bases.count(base.str()))
-    return base;
-  if (base.ends_with("f") && Bases.count(base.drop_back(1).str()))
-    return base.drop_back(1);
-  return "";
-}
-
-std::string deviceMathFunction(const Module &M, StringRef base, Type *Ty) {
-  if (Triple(M.getTargetTriple()).isAMDGPU())
-    return ("__ocml_" + base + (Ty->isDoubleTy() ? "_f64" : "_f32")).str();
-  return ("__nv_" + base + (Ty->isDoubleTy() ? "" : "f")).str();
-}
-
-std::string getLibmFunctionForPrecision(StringRef funcName, Type *newType) {
-  if (StringRef ocml = funcName; ocml.consume_front("__ocml_")) {
-    if (!(ocml.consume_back("_f64") || ocml.consume_back("_f32")) ||
-        !libmFuncs().count(ocml.str()))
-      return "";
-    if (newType->isDoubleTy())
-      return ("__ocml_" + ocml + "_f64").str();
-    if (newType->isHalfTy() || newType->isBFloatTy() || newType->isFloatTy())
-      return ("__ocml_" + ocml + "_f32").str();
-    return "";
-  }
-
-  std::string baseName = funcName.str();
-
-  std::string prefix;
-  if (baseName.size() > 5 && baseName.substr(0, 5) == "__nv_") {
-    prefix = "__nv_";
-    baseName = baseName.substr(5);
-  }
-
-  if (!baseName.empty() && (baseName.back() == 'f' || baseName.back() == 'l')) {
-    baseName.pop_back();
-  }
-
-  if (libmFuncs().count(baseName)) {
-    if (newType->isHalfTy() || newType->isBFloatTy() || newType->isFloatTy()) {
-      return prefix + baseName + "f";
-    } else if (newType->isDoubleTy()) {
-      return prefix + baseName;
-    } else if (newType->isFP128Ty() || newType->isX86_FP80Ty()) {
-      return prefix + baseName + "l";
-    }
-  }
-
-  return "";
 }
 
 double stringToDouble(const std::string &str) {
@@ -538,7 +457,7 @@ static const Value *stagingObjectOf(const Value *Ptr) {
   if (isa<Argument>(Obj) && Obj->getType()->isPointerTy())
     return Obj;
   if (auto *GV = dyn_cast<GlobalVariable>(Obj))
-    if (GV->getAddressSpace() == 3)
+    if (Target::of(*GV->getParent()).isShared(*GV))
       return Obj;
   return nullptr;
 }

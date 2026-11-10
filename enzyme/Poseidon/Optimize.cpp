@@ -59,6 +59,8 @@
 #include "Profile/ProfileRead.h"
 #include "Sites/Canonicalize.h"
 #include "Solvers.h"
+#include "Targets/DeviceMath.h"
+#include "Targets/Target.h"
 #include "Techniques/Expansion.h"
 #include "Techniques/Matmul/HostDispatch.h"
 #include "Techniques/Matmul/Matmul.h"
@@ -817,7 +819,8 @@ bool collectFPCandidates(Session &S, Function &F, double errorTol,
   st.errTol = errorTol;
   st.sampleLogBits = sampleLogBits;
 
-  if (isGPUMode(F))
+  const Target &T = Target::of(F);
+  if (T.isDevice())
     llvm::errs() << "[poseidon] GPU mode active for " << F.getName() << "\n";
 
   assert(!O.Profiling.ProfileUse.empty());
@@ -887,15 +890,15 @@ bool collectFPCandidates(Session &S, Function &F, double errorTol,
   auto &raiseTLII = st.raiseTLII;
   auto &raiseTLI = st.raiseTLI;
   auto &raiseSE = st.raiseSE;
-  if (isGPUMode(F) && O.Candidates.RaiseWMMA) {
+  if (T.isDevice() && O.Candidates.RaiseWMMA) {
     raiseDT.emplace(F);
     raiseLI.emplace(*raiseDT);
     raiseAC.emplace(F);
     raiseTLII.emplace(Triple(F.getParent()->getTargetTriple()));
     raiseTLI.emplace(*raiseTLII, &F);
     raiseSE.emplace(F, *raiseTLI, *raiseAC, *raiseDT, *raiseLI);
-    // The constant-trip recognizer reads NVPTX's thread and block registers.
-    if (Triple(F.getParent()->getTargetTriple()).isNVPTX())
+    // The constant-trip products are the in-kernel raise's.
+    if (T.hasInKernelMatrixRaise())
       findScalarLoopMatmuls(O, F, *raiseSE, *raiseLI, profileHeader,
                             abstractMatmuls);
     // Runtime-shape dense GEMMs (finite-element partial-assembly reduces). Runs
@@ -1311,8 +1314,8 @@ bool collectFPCandidates(Session &S, Function &F, double errorTol,
 
   bool expansionSafe = true;
 #if LLVM_VERSION_MAJOR < 24
-  if (O.Candidates.EnablePT && O.Candidates.EnableMultifloat && isGPUMode(F) &&
-      !subgraphs.empty()) {
+  if (O.Candidates.EnablePT && O.Candidates.EnableMultifloat &&
+      Target::of(F).isDevice() && !subgraphs.empty()) {
     const std::string reason = fastFPReason(F);
     expansionSafe = reason.empty();
     if (!expansionSafe) {
@@ -1685,7 +1688,7 @@ bool collectFPCandidates(Session &S, Function &F, double errorTol,
       llvm::sort(sortedFuncs, bySens);
       llvm::sort(sortedAllOps, bySens);
 
-      const bool gpuMode = isGPUMode(F);
+      const bool gpuMode = Target::of(F).isDevice();
       static const std::unordered_set<std::string> kEmptyScalars;
       const std::unordered_set<std::string> &hwScalar =
           gpuMode ? getScalarTypes(S.CostModel) : kEmptyScalars;

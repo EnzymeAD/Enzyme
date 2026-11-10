@@ -8,6 +8,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "CostModel.h"
+#include "Targets/DeviceMath.h"
+#include "Targets/Target.h"
 #include "Types.h"
 #include "Utils.h"
 
@@ -17,17 +19,12 @@
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Intrinsics.h"
-#include "llvm/IR/IntrinsicsNVPTX.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/raw_ostream.h"
-#include "llvm/TargetParser/Triple.h"
-#if LLVM_VERSION_MAJOR >= 24
-#include "llvm/TargetParser/AMDGPUTargetParser.h"
-#endif
 
 #include <cstdlib>
 #include <cstring>
@@ -223,20 +220,8 @@ uint64_t getCostModelFingerprint(CostModelState &CM) {
   return FP;
 }
 
-// AMDGPU names the processor in the triple (amdgpu9.42-amd-amdhsa), and a
-// function carries target-cpu only where it differs.
-StringRef targetCpuOf(const Function &F) {
-  StringRef cpu = F.getFnAttribute("target-cpu").getValueAsString();
-#if LLVM_VERSION_MAJOR >= 24
-  Triple T(F.getParent()->getTargetTriple());
-  if (cpu.empty() && T.isAMDGPU())
-    return AMDGPU::getArchNameFromSubArch(T.getSubArch());
-#endif
-  return cpu;
-}
-
 void requireCostModel(CostModelState &CM, const Function &F) {
-  StringRef targetCpu = targetCpuOf(F);
+  StringRef targetCpu = Target::of(F).processor(F);
   resolveForTarget(CM, targetCpu, F);
   getCostModel(CM);
   if (CM.NativeArch.empty())
@@ -376,7 +361,6 @@ double getInstructionCompCost(CostModelState &CM, const Instruction *I) {
           OpcodeName = "log";
           break;
         case Intrinsic::sqrt:
-        case Intrinsic::nvvm_sqrt_approx_f:
           OpcodeName = "sqrt";
           break;
         case Intrinsic::fabs:
@@ -428,6 +412,11 @@ double getInstructionCompCost(CostModelState &CM, const Instruction *I) {
           OpcodeName = "copysign";
           break;
         default: {
+          // The square root precision tuning lowers an F32 one to.
+          if (isApproxSqrtF32(CalledFunc->getIntrinsicID())) {
+            OpcodeName = "sqrt";
+            break;
+          }
           std::string msg = "Custom cost model: unsupported intrinsic " +
                             CalledFunc->getName().str();
           llvm_unreachable(msg.c_str());

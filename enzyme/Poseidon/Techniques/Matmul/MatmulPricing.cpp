@@ -7,6 +7,7 @@
 #include "Optimize.h"
 #include "Pass/Session.h"
 #include "Solvers.h"
+#include "Targets/Target.h"
 #include "Utils.h"
 #include "WmmaUtils.h"
 
@@ -219,10 +220,11 @@ const SmallVector<WmmaTarget, 16> &getAvailableWmmaTargets(Session &S) {
 }
 
 // Static shared-memory preconditions at proposal time (see
-// kStaticShmemCap): a shape whose scratch exceeds the cap is
+// inKernelRaiseFits): a shape whose scratch exceeds the cap is
 // unbuildable, and ptxas reports it as a whole-module failure.
 uint64_t enclosingKernelSharedBytes(Function &F) {
   Module *mod = F.getParent();
+  const Target &T = Target::of(*mod);
   const DataLayout &DL = mod->getDataLayout();
   // Only the addrspace(3) globals co-resident with this raise count, so take
   // the max over the enclosing kernels rather than a module-wide sum (a
@@ -238,7 +240,7 @@ uint64_t enclosingKernelSharedBytes(Function &F) {
         for (Value *Op : I.operands()) {
           Value *base = Op->stripPointerCastsAndAliases();
           if (auto *GV = dyn_cast<GlobalVariable>(base))
-            if (GV->getAddressSpace() == 3 && GV->getValueType()->isSized())
+            if (T.isShared(*GV) && GV->getValueType()->isSized())
               out.insert(GV);
         }
         if (auto *CB = dyn_cast<CallBase>(&I))
@@ -269,7 +271,7 @@ uint64_t enclosingKernelSharedBytes(Function &F) {
     for (User *U : origFn->users())
       if (auto *CB = dyn_cast<CallBase>(U))
         if (Function *K = CB->getFunction())
-          if (K->getCallingConv() == CallingConv::PTX_Kernel) {
+          if (T.isKernel(*K)) {
             SmallPtrSet<GlobalVariable *, 16> s(own.begin(), own.end());
             sharedBytesUsedBy(K, s);
             bytes = std::max(bytes, sizeOfSet(s));
@@ -279,7 +281,7 @@ uint64_t enclosingKernelSharedBytes(Function &F) {
     // Module-wide sum, the conservative direction, even though a tighter answer
     // is available when F is itself the kernel.
     for (GlobalVariable &G : mod->globals())
-      if (G.getAddressSpace() == 3 && G.getValueType()->isSized())
+      if (T.isShared(G) && G.getValueType()->isSized())
         bytes += DL.getTypeAllocSize(G.getValueType()).getFixedValue();
   }
   return bytes;
@@ -348,16 +350,16 @@ bool inKernelRaiseFits(const Options &O, Function *F, const AbstractMatmul &m,
   if (raiseBytes == 0)
     return true;
   uint64_t total = existingBytes + raiseBytes;
-  if (total <= kStaticShmemCap)
+  const uint64_t cap = Target::of(*F).maxStaticSharedBytes();
+  if (total <= cap)
     return true;
   if (O.Diagnostics.Print)
     llvm::errs()
         << "  Matmul[" << m.id << "] " << m.M << "x" << m.N << "x" << m.K
         << ": " << className << " NOT PROPOSED -- it needs " << total
-        << " B of static shared memory against a " << kStaticShmemCap
-        << " B cap (" << existingBytes
-        << " B already live in the enclosing kernel + " << raiseBytes
-        << " B for the raise: " << breakdown
+        << " B of static shared memory against a " << cap << " B cap ("
+        << existingBytes << " B already live in the enclosing kernel + "
+        << raiseBytes << " B for the raise: " << breakdown
         << "). ptxas rejects the module outright at that size, so this "
            "is a capability refusal, not a cost decision; refusing to "
            "price a candidate the materializer could not emit.\n";

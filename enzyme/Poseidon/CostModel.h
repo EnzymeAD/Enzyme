@@ -67,9 +67,6 @@ struct CostModelState {
 // names this function's target-cpu.
 void requireCostModel(CostModelState &CM, const llvm::Function &F);
 
-// The processor F compiles for (sm_120, gfx942, ...).
-llvm::StringRef targetCpuOf(const llvm::Function &F);
-
 const std::map<std::pair<std::string, std::string>, double> &
 getCostModel(CostModelState &CM);
 

@@ -11,11 +11,11 @@
 #include "Core/CacheKey.h"
 #include "FPProfileName.h"
 #include "Pass/Session.h"
+#include "Targets/OffloadRuntime.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/SmallVector.h"
-#include "llvm/ADT/StringExtras.h"
 #include "llvm/Demangle/Demangle.h"
 #include "llvm/IR/GlobalVariable.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -50,10 +50,8 @@ StringRef kindName(LaunchKind kind) {
 std::string unitName(const Options &O, const Module &M) {
   if (!O.Herbie.Unit.empty())
     return O.Herbie.Unit;
-  constexpr StringLiteral cuidPrefix = "__hip_cuid_";
-  for (const GlobalVariable &G : M.globals())
-    if (G.getName().starts_with(cuidPrefix))
-      return G.getName().drop_front(cuidPrefix.size()).str();
+  if (std::optional<StringRef> cuid = compilationUnitId(M))
+    return cuid->str();
   CacheKey options;
   for (const auto &[name, value] : allFlagValues(O))
     options.add(name, value);
@@ -208,24 +206,11 @@ StringRef mangledSuffix(StringRef mangled) {
   return mangled;
 }
 
-StringRef withoutExternalizedPostfix(StringRef name) {
-  for (StringRef postfix : {"__intern__", ".intern."}) {
-    size_t at = name.rfind(postfix);
-    if (at == StringRef::npos)
-      continue;
-    StringRef hash = name.drop_front(at + postfix.size());
-    if (hash.empty() || !llvm::all_of(hash, llvm::isHexDigit))
-      continue;
-    return name.take_front(at);
-  }
-  return name;
-}
-
 bool isLaunchStubFor(const Function &F, StringRef kernelName) {
   StringRef n = F.getName();
   if (n == kernelName)
     return true;
-  constexpr StringLiteral stubPrefix = "__device_stub__";
+  const StringRef stubPrefix = launchStubPrefix();
   if (!n.contains(stubPrefix))
     return false;
   StringRef kernel = withoutExternalizedPostfix(kernelName);
