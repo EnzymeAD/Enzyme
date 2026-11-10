@@ -286,7 +286,7 @@ def MantissaMaskOfReturnForFrexp : GlobalExpr</*primal*/0, /*shadow*/0, [{
   }
   APInt eval = APInt::getBitsSet(tsize, low, high);
   auto ity = IntegerType::get(ty->getContext(), tsize);
-  ConstantInt::get(ity, eval);
+  return ConstantInt::get(ity, eval);
 }]>;
 
 def Zero : Operation</*primal*/0, /*shadow*/0> {
