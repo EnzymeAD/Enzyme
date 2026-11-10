@@ -1,7 +1,7 @@
+// REQUIRES: enzyme
 // RUN: rm -rf %t && mkdir -p %t
-// RUN: %clang -x c++ -O1 -S -emit-llvm -I%FPProfileInc %clangLoadPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/cache %s -o %t/gen.ll 2>&1 | FileCheck %s
+// RUN: %clang -x c++ -O1 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/cache %s -o %t/gen.ll 2>&1 | FileCheck %s
 // RUN: FileCheck --check-prefix=IR %s < %t/gen.ll
-// REQUIRES: poseidon, enzyme
 
 // An mfem::forall body compiled for the host only: the annotation on the lambda
 // marks the GPU kernels that call it, and a host build has none. The lambda's

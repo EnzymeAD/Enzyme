@@ -1,5 +1,4 @@
 ; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/fma_opt_profiles -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-cache= -S | FileCheck %s
-; REQUIRES: poseidon
 
 ; Opt phase with no Herbie/PT: nothing is applied, so the wrapper calls the
 ; ORIGINAL body and the preprocess clone is dropped.

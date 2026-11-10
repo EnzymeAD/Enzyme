@@ -1,5 +1,5 @@
+; REQUIRES: enzyme
 ; RUN: %opt < %s %loadPoseidonEnzyme -passes="poseidon,enzyme,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -enzyme-preopt=false -poseidon-profile-generate -S | FileCheck %s
-; REQUIRES: poseidon, enzyme
 
 ; Adapted from enzyme/test/Enzyme/ReverseMode/gradient-struct-ret.ll
 

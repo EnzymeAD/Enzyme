@@ -1,3 +1,4 @@
+// REQUIRES: enzyme, cuda-runtime
 // RUN: rm -rf %t && mkdir -p %t
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O3 -poseidon-profile-generate -poseidon-cache=%t/cg %s -o %t/gen 2> %t/gen.err
 // RUN: FileCheck --check-prefix=GEN %s < %t/gen.err
@@ -20,8 +21,6 @@
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O3 -poseidon-profile-use=%t/prof -poseidon-cost-model=%gpu_cost_model -poseidon-enable-herbie=0 -poseidon-print -poseidon-cache=%t/c %s -o %t/use 2> %t/use.err
 // RUN: FileCheck --check-prefix=USE %s < %t/use.err
 // RUN: %t/use | FileCheck --check-prefix=OUT %s
-//
-// REQUIRES: poseidon, enzyme, cuda-runtime
 
 // __poseidon_optimize_tau in device code: the call is a site, profiled with
 // shadows the pass makes for the local objects it passes, against the same

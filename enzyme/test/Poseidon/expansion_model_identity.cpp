@@ -1,10 +1,9 @@
 // RUN: rm -rf %t && mkdir -p %t
-// RUN: %clangxx $(llvm-config --cxxflags) -fPIC -shared -I%S/../../Poseidon %S/Inputs/expansion_match/emit.cpp -o %t/emit%shlibext
+// RUN: %clang++ $(llvm-config --cxxflags) -fPIC -shared -I%S/../../Poseidon %S/Inputs/expansion_match/emit.cpp -o %t/emit%shlibext
 // RUN: env EXPANSION_MATCH_OUT=%t %opt %S/Inputs/expansion_match/module.ll %loadPoseidon -load-pass-plugin=%t/emit%shlibext -passes=expansion-match-model -S -o %t/model.ll
-// RUN: %clangxx -O2 -c %t/model.ll -o %t/model.o
-// RUN: %clangxx -std=c++17 -O2 -ffp-contract=off -I%t %S/Inputs/expansion_match/model_harness.cpp %t/model.o -o %t/run
+// RUN: %clang++ -O2 -c %t/model.ll -o %t/model.o
+// RUN: %clang++ -std=c++17 -O2 -ffp-contract=off -I%t %S/Inputs/expansion_match/model_harness.cpp %t/model.o -o %t/run
 // RUN: %t/run %t | FileCheck %s
-// REQUIRES: poseidon
 
 // The accuracy model's emulation of the FP32 expansions computes what the
 // materializer emits, bit for bit with NaN payload and sign excepted, for

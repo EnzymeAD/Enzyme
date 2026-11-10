@@ -1,15 +1,15 @@
+; REQUIRES: scev-trunc-iv-nowrap
 ; RUN: rm -rf %t && mkdir -p %t
 ; RUN: sed 's/ozaki_stub\.cu/tcec_matmul.cu/g' %S/Inputs/ozaki_dispatch/ozaki_stub_host.ll > %t/host.ll
 ; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/raise_tcec -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_dispatch_x1e6.csv -poseidon-print -S -poseidon-cache=%t/tau12 -poseidon-unit=tcec -poseidon-tau=1e-12 -o %t/tau12.ll 2> %t/tau12.err
 ; RUN: FileCheck --check-prefix=TAU12 %s < %t/tau12.err
 ; RUN: cat %t/tau12/launches_*.json | FileCheck --check-prefix=DESC12 %s
-; RUN: %clang -O0 -x ir -fno-discard-value-names %t/host.ll %clangLoadPoseidon -mllvm -poseidon-profile-use=%S/Inputs/raise_tcec -mllvm -poseidon-cache=%t/tau12 -mllvm -poseidon-unit=tcec -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=HOST12 %s
+; RUN: %clang -O0 -x ir -fno-discard-value-names %t/host.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/Inputs/raise_tcec -mllvm -poseidon-cache=%t/tau12 -mllvm -poseidon-unit=tcec -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=HOST12 %s
 ; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/raise_tcec -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_dispatch_x1e6.csv -poseidon-print -S -poseidon-cache=%t/tau7 -poseidon-tau=1e-7 -o /dev/null 2>&1 | FileCheck --check-prefix=TAU7 %s
 ; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/raise_tcec -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_dispatch_x1e6.csv -poseidon-print -S -poseidon-cache=%t/tau10 -poseidon-tau=1e-10 -o /dev/null 2>&1 | FileCheck --check-prefix=TAU10 %s
 ; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/raise_tcec -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_dispatch_x1e6.csv -poseidon-print -S -poseidon-cache=%t/tau15 -poseidon-unit=tcec -poseidon-tau=1e-15 -o /dev/null 2>&1 | FileCheck --check-prefix=TAU15 %s
-; RUN: %clang -O0 -x ir %t/host.ll %clangLoadPoseidon -mllvm -poseidon-profile-use=%S/Inputs/raise_tcec -mllvm -poseidon-cache=%t/tau15 -mllvm -poseidon-unit=tcec -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=HOST15 %s
+; RUN: %clang -O0 -x ir %t/host.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/Inputs/raise_tcec -mllvm -poseidon-cache=%t/tau15 -mllvm -poseidon-unit=tcec -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=HOST15 %s
 ; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/raise_tcec -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_dispatch_x1e6.csv -poseidon-print -S -poseidon-cache=%t/off -poseidon-tau=1e-12 -poseidon-ozaki-host-dispatch=false -o /dev/null 2>&1 | FileCheck --check-prefix=OFF %s
-; REQUIRES: poseidon, scev-trunc-iv-nowrap
 ; Ozaki-II host dispatch selected by a tolerance: the scalar FP64 product of raise_scalar_tcec_nvptx.ll
 ; (same IR, same profile Inputs/raise_tcec) priced against the in-kernel raises and the host-dispatch
 ; families of Inputs/cm_gpu_fixture_dispatch_x1e6.csv. errorBudgetSelector takes the cheapest candidate
@@ -20,7 +20,6 @@
 ; -S -emit-llvm, renamed to this module's source and compiled as the same unit) is rewritten to
 ; __poseidon_ozaki_dgemm with that nm. nm = 0 is the native cuBLAS DGEMM arm of the same entry.
 
-; REQUIRES: poseidon, scev-trunc-iv-nowrap
 ; Scalar FMA reduction loop raised in-kernel: direct and TCEC classes priced from the wmma_inkernel_rel fixture rows, the most accurate cost-reducing one (TCEC n=3) materialized; IR and profile from Inputs/raise_tcec/tcec_matmul.cu (clang -O2 -ffp-contract=on --cuda-gpu-arch=sm_120, profiled on an RTX 5090).
 
 ; ModuleID = 'tcec_matmul.cu'

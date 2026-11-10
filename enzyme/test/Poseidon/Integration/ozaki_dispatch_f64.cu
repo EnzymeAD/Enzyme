@@ -5,8 +5,9 @@
 // compared elementwise with cublasDgemm on the same operands. The bound the
 // optimized binary is held to is tau itself.
 //
+// REQUIRES: enzyme, cuda-runtime
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 \
-// RUN:     -poseidon-profile-generate %s -o %t.exe -lcublas
+// RUN:     -poseidon-profile-generate -poseidon-cache=%t.pcache %s -o %t.exe -lcublas
 // RUN: rm -rf %t.profile && POSEIDON_PROFILE_DIR=%t.profile %t.exe 1e-13 \
 // RUN:   | FileCheck --check-prefix=PRIMAL %s
 //
@@ -16,8 +17,6 @@
 // RUN:     -poseidon-enable-herbie=0 -poseidon-enable-pt=0 -poseidon-tau=1e-12 \
 // RUN:     %s -o %t.opt.exe -lcublas 2>&1 | FileCheck %s
 // RUN: %t.opt.exe 1e-12 | FileCheck --check-prefix=OPT %s
-//
-// REQUIRES: poseidon, enzyme, cuda-runtime
 
 #include <cmath>
 #include <cstdio>

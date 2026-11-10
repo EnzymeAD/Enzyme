@@ -1,8 +1,9 @@
+// REQUIRES: enzyme, cuda-runtime
 // RUN: rm -rf %t.cache && %clang -x cuda --cuda-gpu-arch=%gpu_arch -fcuda-rdc -O2 -ffp-contract=on \
-// RUN:     %clangLoadPoseidonEnzyme -mllvm --poseidon-profile-generate \
+// RUN:     %loadClangPoseidonEnzyme -mllvm --poseidon-profile-generate \
 // RUN:     -mllvm --poseidon-cache=%t.cache -mllvm --poseidon-print \
-// RUN:     -I%FPProfileInc %s -x none %FPProfileCUDALib %FPProfileLib \
-// RUN:     -L/usr/local/cuda/lib64 -lcudart -lstdc++ -lm -o %t.exe 2>&1 \
+// RUN:     -I%poseidon_profile_inc %s -x none %poseidon_profile_cuda_lib %poseidon_profile_lib \
+// RUN:     -L%cuda_lib_dir -lcudart -lstdc++ -lm -o %t.exe 2>&1 \
 // RUN:   | FileCheck --check-prefix=DEFER %s
 // RUN: rm -rf %t.profiles && POSEIDON_PROFILE_DIR=%t.profiles %t.exe \
 // RUN:   | FileCheck --check-prefix=PRIMAL %s
@@ -10,15 +11,13 @@
 // RUN:   | FileCheck --check-prefix=PROFILE %s
 //
 // RUN: rm -rf %t.solve && %clang -x cuda --cuda-gpu-arch=%gpu_arch -O2 -ffp-contract=on \
-// RUN:     %clangLoadPoseidonEnzyme -mllvm --poseidon-profile-use=%t.profiles \
+// RUN:     %loadClangPoseidonEnzyme -mllvm --poseidon-profile-use=%t.profiles \
 // RUN:     -mllvm --poseidon-cache=%t.solve -mllvm --poseidon-print \
 // RUN:     -mllvm --poseidon-cost-model=%gpu_cost_model \
 // RUN:     -mllvm --poseidon-enable-herbie=0 \
-// RUN:     %s -L/usr/local/cuda/lib64 -lcudart -lstdc++ -lm -o %t.opt.exe 2>&1 \
+// RUN:     %s -L%cuda_lib_dir -lcudart -lstdc++ -lm -o %t.opt.exe 2>&1 \
 // RUN:   | FileCheck --check-prefix=SOLVE %s
 // RUN: %t.opt.exe | FileCheck --check-prefix=OPT %s
-//
-// REQUIRES: poseidon, enzyme, cuda-runtime
 
 // A site whose marked body is nothing but a forward-mode derivative request.
 // Before Enzyme has run, that body holds no floating-point arithmetic at all,

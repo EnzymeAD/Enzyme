@@ -3,7 +3,6 @@
 ; RUN: rm -rf %t2 && %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-kernels=.*_kernel -poseidon-min-cost-share=0 -poseidon-profile-use=%S/Inputs/min_cost_share -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-enable-multifloat=true -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_x1e6.csv -poseidon-cache=%t2 -poseidon-comp-cost-budget=-1 -poseidon-print -S > %t2.out 2>&1
 ; RUN: FileCheck --check-prefix=NOFILTER %s < %t2.out
 ; RUN: not grep "Optimizing preprocess_cold_kernel_poseidon_body" %t.out
-; REQUIRES: poseidon
 
 ; Two kernels reached by -poseidon-kernels, not by the attribute. cold_kernel
 ; ran once where hot_kernel ran 768 times over seven profiled operations, so it

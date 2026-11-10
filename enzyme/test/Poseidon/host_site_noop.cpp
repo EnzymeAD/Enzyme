@@ -1,14 +1,14 @@
+// REQUIRES: enzyme
 // RUN: rm -rf %t && mkdir -p %t
 // RUN: %poseidon_clangxx -O2 -poseidon-profile-generate -poseidon-cache=%t/c %s -o %t/gen 2>/dev/null
 // RUN: env POSEIDON_PROFILE_DIR=%t/prof %t/gen > /dev/null
 // RUN: %poseidon_clangxx -O2 -poseidon-profile-use=%t/prof -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-enable-herbie=0 -poseidon-cache=%t/c -S %s -o %t/pose.s 2> %t/use.err
 // RUN: FileCheck %s < %t/use.err
-// RUN: %clang -x c++ -O2 -ffp-contract=on -I%FPProfileInc -S %s -o %t/stock.s
+// RUN: %clang -x c++ -O2 -ffp-contract=on -I%poseidon_profile_inc -S %s -o %t/stock.s
 // RUN: awk '/^_Z4wavePKdPdi:/{p=1} p{print} p&&/^\.Lfunc_end/{exit}' %t/stock.s | sed -E 's/\.(LBB|LCPI|Ltmp|Lfunc_end)[0-9_]+/.L/g' > %t/stock.fn
 // RUN: awk '/^_Z4wavePKdPdi:/{p=1} p{print} p&&/^\.Lfunc_end/{exit}' %t/pose.s | sed -E 's/\.(LBB|LCPI|Ltmp|Lfunc_end)[0-9_]+/.L/g' > %t/pose.fn
 // RUN: grep -q ret %t/stock.fn
 // RUN: diff %t/stock.fn %t/pose.fn
-// REQUIRES: poseidon, enzyme
 
 // A site its target refuses is left as written: the function is the code plain
 // clang emits for it.

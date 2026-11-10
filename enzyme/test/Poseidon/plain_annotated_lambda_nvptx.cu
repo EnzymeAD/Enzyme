@@ -1,9 +1,8 @@
 // RUN: rm -rf %t && mkdir -p %t
-// RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O2 -S -emit-llvm -I%FPProfileInc -DUNANNOTATED %s -o %t/unannotated.ll
-// RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O2 -S -emit-llvm -I%FPProfileInc %clangLoadPoseidon %s -o %t/plain.ll 2>&1 | FileCheck --check-prefix=WARN %s
+// RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O2 -S -emit-llvm -I%poseidon_profile_inc -DUNANNOTATED %s -o %t/unannotated.ll
+// RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidon %s -o %t/plain.ll 2>&1 | FileCheck --check-prefix=WARN %s
 // RUN: diff %t/unannotated.ll %t/plain.ll
 // RUN: FileCheck %s < %t/plain.ll
-// REQUIRES: poseidon
 
 // Without a profile action an annotated lambda compiles as if it were not
 // annotated: its kernels are not made to inline it, and the annotation does

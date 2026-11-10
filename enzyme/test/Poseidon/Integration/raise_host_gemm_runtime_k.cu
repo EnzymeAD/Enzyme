@@ -12,6 +12,7 @@
 // nest differently from the profile-generate build and the slot indices then do
 // not name the same instructions.
 //
+// REQUIRES: enzyme, cuda-runtime
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 \
 // RUN:     -poseidon-profile-generate %s -o %t.exe
 // RUN: rm -rf %t.profile && POSEIDON_PROFILE_DIR=%t.profile %t.exe \
@@ -22,8 +23,6 @@
 // RUN:     -poseidon-cost-model=%gpu_cost_model -poseidon-print \
 // RUN:     -poseidon-enable-herbie=0 -poseidon-enable-pt=0 -poseidon-raise-wmma \
 // RUN:     %s -o %t.opt.exe 2>&1 | FileCheck %s
-//
-// REQUIRES: poseidon, enzyme, cuda-runtime
 
 #include <cmath>
 #include <cstdio>

@@ -5,7 +5,6 @@
 ; RUN: FileCheck --check-prefix=PRUNE-BUDGETS %s < %t/prune/budgets.txt
 ; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/exact_dp/joint -poseidon-enable-herbie=true -poseidon-herbie-binary=/nonexistent/herbie -poseidon-enable-pt=false -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_x1e6.csv -poseidon-joint-dp -poseidon-comp-cost-budget=-10000000 -poseidon-cache=%t/exact -poseidon-early-prune=false -S -o /dev/null 2>&1 | FileCheck --check-prefix=EXACT %s
 ; RUN: FileCheck --check-prefix=EXACT-BUDGETS %s < %t/exact/budgets.txt
-; REQUIRES: poseidon
 
 ; Two sites of exact_dp_one_output_nvptx.ll's kind under one shared budget.
 ; Pruning after each site's binary64 rewrite drops every strategy without it,

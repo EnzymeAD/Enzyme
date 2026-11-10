@@ -1,10 +1,10 @@
+; REQUIRES: global-fp-contract
 ; RUN: rm -rf %t && mkdir -p %t
 ; RUN: sed 's/tail call double @llvm.fmuladd/tail call contract double @llvm.fmuladd/' %S/Inputs/ds_expansion/ds_fms.ll > %t/contract.ll
 ; RUN: sed 's/tail call double @llvm.fmuladd/tail call fast double @llvm.fmuladd/; s/= fneg double/= fneg fast double/' %S/Inputs/ds_expansion/ds_fms.ll > %t/fast.ll
 ; RUN: %opt %t/contract.ll %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/ds_expansion -poseidon-enable-herbie=false -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_x1e6.csv -poseidon-comp-cost-budget=-1 -poseidon-cache=%t/contract -S -o /dev/null 2>&1 | FileCheck --check-prefix=REFUSED %s
 ; RUN: %opt %t/fast.ll %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/ds_expansion -poseidon-enable-herbie=false -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_x1e6.csv -poseidon-comp-cost-budget=-1 -poseidon-cache=%t/fast -S -o /dev/null 2>&1 | FileCheck --check-prefix=REFUSED %s
 ; RUN: not --crash %opt %t/contract.ll %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/ds_expansion -poseidon-enable-herbie=false -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_x1e6.csv -poseidon-comp-cost-budget=-1 -poseidon-cache=%t/strict -poseidon-strict-mode -S -o /dev/null 2>&1 | FileCheck --check-prefix=STRICT %s
-; REQUIRES: poseidon, global-fp-contract
 
 ; Up to LLVM 23 the code generator of a -ffp-contract=fast unit fuses
 ; multiply-add pairs that carry no 'contract' flag as well, which breaks the

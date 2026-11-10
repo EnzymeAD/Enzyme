@@ -1,17 +1,17 @@
+// REQUIRES: enzyme
 // RUN: rm -rf %t && mkdir -p %t && echo fatbin > %t/k.fatbin
-// RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O2 -S -emit-llvm -I%FPProfileInc %clangLoadPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c -mllvm -poseidon-unit=u %s -o %t/dev.ll
+// RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c -mllvm -poseidon-unit=u %s -o %t/dev.ll
 // RUN: cat %t/c/launches_*.json | FileCheck --check-prefix=MANIFEST %s
-// RUN: %clang -x cuda --cuda-host-only -nocudainc -nocudalib -O0 -S -emit-llvm -I%FPProfileInc -Xclang -fcuda-include-gpubinary -Xclang %t/k.fatbin %clangLoadPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c -mllvm -poseidon-unit=u %s -o %t/host.ll
+// RUN: %clang -x cuda --cuda-host-only -nocudainc -nocudalib -O0 -S -emit-llvm -I%poseidon_profile_inc -Xclang -fcuda-include-gpubinary -Xclang %t/k.fatbin %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c -mllvm -poseidon-unit=u %s -o %t/host.ll
 // RUN: FileCheck --check-prefix=HOST %s < %t/host.ll
 // RUN: grep -o 'c"SiteId[^"]*"' %t/dev.ll | sort > %t/dev.headers
 // RUN: grep -o 'c"SiteId[^"]*"' %t/host.ll | sort > %t/host.headers
 // RUN: count 2 < %t/dev.headers
 // RUN: diff %t/dev.headers %t/host.headers
-// RUN: %clang -x cuda --cuda-host-only -nocudainc -nocudalib -O0 -S -emit-llvm -I%FPProfileInc -Xclang -fcuda-include-gpubinary -Xclang %t/k.fatbin %clangLoadPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c -mllvm -poseidon-unit=other %s -o %t/other.ll
+// RUN: %clang -x cuda --cuda-host-only -nocudainc -nocudalib -O0 -S -emit-llvm -I%poseidon_profile_inc -Xclang -fcuda-include-gpubinary -Xclang %t/k.fatbin %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c -mllvm -poseidon-unit=other %s -o %t/other.ll
 // RUN: FileCheck --check-prefix=NONE --implicit-check-not=poseidonRegisterProfileStatic %s < %t/other.ll
-// RUN: %clang -x cuda --cuda-host-only -nocudainc -nocudalib -O0 -S -emit-llvm -I%FPProfileInc -Xclang -fcuda-include-gpubinary -Xclang %t/k.fatbin %clangLoadPoseidonEnzyme -mllvm -poseidon-cache=%t/c -mllvm -poseidon-unit=u %s -o %t/plain.ll
+// RUN: %clang -x cuda --cuda-host-only -nocudainc -nocudalib -O0 -S -emit-llvm -I%poseidon_profile_inc -Xclang -fcuda-include-gpubinary -Xclang %t/k.fatbin %loadClangPoseidonEnzyme -mllvm -poseidon-cache=%t/c -mllvm -poseidon-unit=u %s -o %t/plain.ll
 // RUN: FileCheck --check-prefix=PLAIN --implicit-check-not=poseidonRegisterProfileStatic %s < %t/plain.ll
-// REQUIRES: poseidon, enzyme
 
 // The device profiler writes a kernel's profile only once the kernel has run,
 // so the device half hands each profiled kernel's header to the host half

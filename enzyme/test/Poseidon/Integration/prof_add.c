@@ -1,10 +1,10 @@
+// REQUIRES: enzyme
 // RUN: %clang -O0 %s -S -emit-llvm -o %t.ll
 // RUN: %opt %t.ll %loadPoseidonEnzyme -passes="poseidon,enzyme,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -enzyme-preopt=false -poseidon-profile-generate -S -o %t.opt.ll
 // RUN: %clang -O0 %t.opt.ll -c -o %t.o
-// RUN: %clang++ %t.o %FPProfileLib -lstdc++ -lm -o %t.exe
+// RUN: %clang++ %t.o %poseidon_profile_lib -lstdc++ -lm -o %t.exe
 // RUN: rm -rf %t.profiles && POSEIDON_PROFILE_DIR=%t.profiles %t.exe
 // RUN: cat %t.profiles/preprocess_tester.fpprofile | FileCheck %s
-// REQUIRES: poseidon, enzyme
 
 #include <stdio.h>
 

@@ -1,6 +1,5 @@
 ; RUN: rm -rf %t && mkdir -p %t
 ; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/fma_opt_profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-enable-multifloat=false -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-cache=%t -S 2>&1 | FileCheck %s
-; REQUIRES: poseidon
 
 ; One marked body reached from TWO marker calls. The profiling run writes one
 ; record per BODY (profileSite shares one instrumented clone between a body's

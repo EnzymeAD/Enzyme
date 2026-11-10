@@ -2,7 +2,6 @@
 ; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/array_cores/profiles -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/Inputs/array_cores/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-pt=false -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-comp-cost-budget=100000000 -poseidon-cache=%t/arrays -poseidon-herbie-arrays -S 2>&1 | FileCheck --check-prefix=ARRAY %s
 ; RUN: env FAKE_HERBIE_ARRAY=timeout %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/array_cores/profiles -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/Inputs/array_cores/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-pt=false -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-comp-cost-budget=100000000 -poseidon-cache=%t/fallback -poseidon-herbie-arrays -S 2>&1 | FileCheck --check-prefix=FALLBACK %s
 ; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/array_cores/profiles -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/Inputs/array_cores/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-pt=false -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-comp-cost-budget=100000000 -poseidon-cache=%t/off -poseidon-herbie-arrays=false -S 2>&1 | FileCheck --check-prefix=OFF %s
-; REQUIRES: poseidon
 
 ; Both outputs read sqrt(x*x + y*y) - x. With -poseidon-herbie-arrays the
 ; subgraph goes to Herbie as one array core per precision, the shared subterm

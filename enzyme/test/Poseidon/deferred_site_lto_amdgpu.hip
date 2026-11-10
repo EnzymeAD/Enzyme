@@ -1,13 +1,13 @@
+// REQUIRES: enzyme, amdgpu-registered-target
 // RUN: rm -rf %t && mkdir -p %t/drv %t/opt %t/rdc
-// RUN: (env TMPDIR=%t %clang -x hip --offload-arch=gfx942 -nogpulib -nogpuinc -O2 -c -I%FPProfileInc %clangLoadPoseidonEnzyme %s -o %t/plain.o 2>&1; echo "exit status $?") | FileCheck --check-prefix=DEFERRED --implicit-check-not=REPRODUCER --implicit-check-not="exit code" --implicit-check-not=ld.lld %s
-// RUN: %clang -x hip --offload-arch=gfx942 -nogpulib -nogpuinc -O2 -c -I%FPProfileInc %clangLoadPoseidonEnzyme -Xclang -mllvm -Xclang -enzyme-lto-prelink=1 %s -o %t/opt/k.o
+// RUN: (env TMPDIR=%t %clang -x hip --offload-arch=gfx942 -nogpulib -nogpuinc -O2 -c -I%poseidon_profile_inc %loadClangPoseidonEnzyme %s -o %t/plain.o 2>&1; echo "exit status $?") | FileCheck --check-prefix=DEFERRED --implicit-check-not=REPRODUCER --implicit-check-not="exit code" --implicit-check-not=ld.lld %s
+// RUN: %clang -x hip --offload-arch=gfx942 -nogpulib -nogpuinc -O2 -c -I%poseidon_profile_inc %loadClangPoseidonEnzyme -Xclang -mllvm -Xclang -enzyme-lto-prelink=1 %s -o %t/opt/k.o
 // RUN: cd %t/opt && llvm-objdump --offloading k.o > /dev/null && llvm-readelf --dyn-syms k.o.*gfx942 | FileCheck --check-prefix=CO --implicit-check-not=__enzyme %s
 // RUN: %poseidon_clangxx -x hip --offload-arch=gfx942 -nogpulib -nogpuinc -O2 -c %s -o %t/drv/k.o
 // RUN: cd %t/drv && llvm-objdump --offloading k.o > /dev/null && llvm-readelf --dyn-syms k.o.*gfx942 | FileCheck --check-prefix=CO --implicit-check-not=__enzyme %s
 // RUN: %poseidon_clangxx -x hip --offload-arch=gfx942 -nogpulib -nogpuinc -fgpu-rdc -O2 -c %s -o %t/rdc/k.o
 // RUN: llvm-offload-binary %t/rdc/k.o --image=file=%t/rdc/dev.bc,arch=gfx942
 // RUN: llvm-dis %t/rdc/dev.bc -o - | FileCheck --check-prefix=DEV --implicit-check-not=__enzyme %s
-// REQUIRES: poseidon, enzyme, amdgpu-registered-target
 
 // A HIP compile with -c, without ROCm (no device library, the few runtime
 // declarations a kernel stub needs written out): the device half is an LTO

@@ -2,7 +2,6 @@
 ; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/fma_opt_profiles -poseidon-enable-herbie=true -poseidon-herbie-binary=/nonexistent/herbie -poseidon-enable-pt=false -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-cache=%t -S 2>&1 | FileCheck --check-prefixes=CHECK,CHEAPEST %s
 ; RUN: rm -rf %t2 && mkdir -p %t2 && cp %S/Inputs/fma_opt_cache/cachedHerbieOutput_* %t2/
 ; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/fma_opt_profiles -poseidon-enable-herbie=true -poseidon-herbie-binary=/nonexistent/herbie -poseidon-enable-pt=false -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-cache=%t2 -poseidon-tau-cheapest=false -S 2>&1 | FileCheck --check-prefixes=CHECK,ACCURATE %s
-; REQUIRES: poseidon
 
 ; Cached Herbie output replayed from Inputs/fma_opt_cache without invoking Herbie: (x + y) * z  -->  fma(x, z, y * z)
 ;

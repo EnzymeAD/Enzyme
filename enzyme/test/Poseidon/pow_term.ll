@@ -9,7 +9,6 @@
 ; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/pow_term/profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-comp-cost-budget=-100 -poseidon-print -poseidon-cache=%t/po -poseidon-output-profiles=%S/Inputs/pow_term/out0,%S/Inputs/pow_term/out1 -S -o /dev/null 2> %t/po.err
 ; RUN: FileCheck --check-prefix=PO %s < %t/po.err
 ; RUN: not %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/pow_term/profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-comp-cost-budget=-100 -poseidon-print -poseidon-cache=%t/pomissing -poseidon-output-profiles=%S/Inputs/pow_term/out0,%t/none -S -o /dev/null 2>&1 | FileCheck --check-prefix=PO-MISSING %s
-; REQUIRES: poseidon
 
 ; A rate term as generated reacting-flow code writes it (Exasim's reacting-air
 ; source has nine): pow(T, fma(-log T, a, b)), scaled to about 1e-25, with log T

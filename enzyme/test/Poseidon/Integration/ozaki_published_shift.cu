@@ -9,12 +9,11 @@
 //     C entry is 1 + 2^-36 exactly (a max-based shift of 35 drops that bit);
 //   row 2 = 0: C = 0.
 //
+// REQUIRES: cuda-runtime
 // RUN: %clang -x cuda --cuda-gpu-arch=%gpu_arch -O2 %s -x none \
-// RUN:     %poseidon_rt_lib -L/usr/local/cuda/lib64 -lcublas -lcudart \
+// RUN:     %poseidon_rt_lib -L%cuda_lib_dir -lcublas -lcudart \
 // RUN:     -lstdc++ -lm -o %t.exe
 // RUN: %t.exe | FileCheck %s
-//
-// REQUIRES: poseidon, cuda-runtime
 
 #include <cmath>
 #include <cstdio>

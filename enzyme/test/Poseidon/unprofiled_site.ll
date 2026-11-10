@@ -37,7 +37,6 @@
 ; RUN: not %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/canonical_hash -poseidon-output-profiles=%S/Inputs/other_sites -poseidon-strict-mode -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-cache= -S -o /dev/null 2>&1 | FileCheck --check-prefix=OUT-STRICT %s
 ; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/canonical_hash -poseidon-output-profiles=%S/Inputs/other_sites_format1 -poseidon-strict-mode -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-cache= -S -o %t/out_format1.ll 2>&1 | FileCheck --check-prefix=OUT-FORMAT1 %s
 ; RUN: FileCheck --check-prefix=LEFT %s < %t/out_format1.ll
-; REQUIRES: poseidon
 
 ; Why a site has no profile to solve from decides what profile use does. A
 ; site the profiling run instrumented and never executed has a profile that

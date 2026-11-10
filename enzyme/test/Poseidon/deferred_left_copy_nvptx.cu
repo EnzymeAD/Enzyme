@@ -1,5 +1,5 @@
-// RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O2 -S -I%FPProfileInc %clangLoadPoseidonEnzyme %s -o - | FileCheck --implicit-check-not=jvp_body.left %s
-// REQUIRES: poseidon, enzyme
+// REQUIRES: enzyme
+// RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O2 -S -I%poseidon_profile_inc %loadClangPoseidonEnzyme %s -o - | FileCheck --implicit-check-not=jvp_body.left %s
 
 // The copy of a deferred body that a site the solve leaves alone calls is the
 // module's own: PTX can spell its name, and it does not collide with the body.

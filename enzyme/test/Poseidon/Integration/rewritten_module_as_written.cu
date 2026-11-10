@@ -1,3 +1,4 @@
+// REQUIRES: enzyme, cuda-runtime
 // RUN: rm -rf %t && mkdir -p %t
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch --cuda-device-only -O2 -S %s -o %t/plain.ptx
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 -poseidon-profile-generate -poseidon-cache=%t/cg %s -o %t/gen
@@ -10,7 +11,6 @@
 // RUN: FileCheck --check-prefix=SOLVE %s < %t/use.err
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 -poseidon-profile-use=%t/prof -poseidon-cost-model=%gpu_cost_model -poseidon-enable-herbie=0 -poseidon-cache=%t/c %s -o %t/use
 // RUN: %t/use | FileCheck --check-prefix=OUT %s
-// REQUIRES: poseidon, enzyme, cuda-runtime
 
 // In a module where a site is rewritten, every function no rewrite reached is
 // the one as written: a kernel that is no site, and a site the profiling run

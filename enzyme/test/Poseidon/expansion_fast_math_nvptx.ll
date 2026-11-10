@@ -13,7 +13,6 @@
 ; RUN: sed -n '/^define .*@preprocess_fms_body/,/^}/p' %t/fast.out.ll | diff %t/plain.body.ll -
 ; RUN: sed -n '/^define .*@preprocess_fms_body/,/^}/p' %t/attr.out.ll | diff %t/plain.body.ll -
 ; RUN: sed -n '/^define .*@preprocess_fms_body/,/^}/p' %t/strict.out.ll | diff %t/plain.body.ll -
-; REQUIRES: poseidon
 ; UNSUPPORTED: global-fp-contract
 
 ; Floating-point expansions and fast-math flags, on the fmuladd chain of

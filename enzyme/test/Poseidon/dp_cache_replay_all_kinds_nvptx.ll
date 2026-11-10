@@ -1,3 +1,4 @@
+; REQUIRES: scev-trunc-iv-nowrap
 ; RUN: rm -rf %t && mkdir -p %t
 ; RUN: env FAKE_HERBIE_DIR=%S/Inputs/exact_dp/reprice_herbie %opt %S/exact_dp_reprice_nvptx.ll %loadPoseidon -passes=poseidon -poseidon-profile-use=%S/Inputs/exact_dp/reprice -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/Inputs/exact_dp/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-pt=true -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_x1e6.csv -poseidon-early-prune=false -poseidon-comp-cost-budget=-1328475425 -poseidon-print -poseidon-show-table -poseidon-cache=%t/reprice -S -o %t/solve.ll > %t/solve.log 2>&1
 ; RUN: env FAKE_HERBIE_DIR=%S/Inputs/exact_dp/reprice_herbie %opt %S/exact_dp_reprice_nvptx.ll %loadPoseidon -passes=poseidon -poseidon-profile-use=%S/Inputs/exact_dp/reprice -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/Inputs/exact_dp/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-pt=true -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_x1e6.csv -poseidon-early-prune=false -poseidon-comp-cost-budget=-1328475425 -poseidon-print -poseidon-show-table -poseidon-cache=%t/reprice -S -o %t/replay.ll > %t/replay.log 2>&1
@@ -16,7 +17,6 @@
 ; RUN: sed -n '/^\*\*\* DP Table/,/^\*\*\* End of DP Table/p' %t/two_replay.log > %t/two_replay.table
 ; RUN: diff %t/two_solve.table %t/two_replay.table
 ; RUN: diff %t/two_solve.ll %t/two_replay.ll
-; REQUIRES: poseidon, scev-trunc-iv-nowrap
 
 ; A DP table that holds every kind of step, read back. The exact solve of
 ; exact_dp_reprice_nvptx.ll puts algebraic, precision and product steps on its

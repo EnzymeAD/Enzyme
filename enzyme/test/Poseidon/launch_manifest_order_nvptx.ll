@@ -1,3 +1,4 @@
+; REQUIRES: scev-trunc-iv-nowrap
 ; RUN: rm -rf %t && mkdir -p %t
 ; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/raise_tcec -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_dispatch_x1e6.csv -poseidon-tau=1e-12 -poseidon-cache=%t/c -poseidon-unit=u -S -o /dev/null 2> %t/site1.err
 ; RUN: cp %t/c/launches_tcec_matmul.cu_*.json %t/site1.json
@@ -17,7 +18,6 @@
 ; RUN: grep 'wrote descriptor' %t/joint2.err > %t/joint2.wrote
 ; RUN: diff %t/joint1.wrote %t/joint2.wrote
 ; RUN: cmp %t/joint1.json %t/c/launches_tcec_matmul.cu_*.json
-; REQUIRES: poseidon, scev-trunc-iv-nowrap
 
 ; Two kernels of one module dispatch the product of matmul_body, matmul_kernel
 ; first in the module and alpha_kernel, with A and B swapped, second. Their

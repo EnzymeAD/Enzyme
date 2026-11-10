@@ -1,11 +1,11 @@
+; REQUIRES: enzyme
 ; RUN: rm -rf %t && mkdir -p %t
 ; RUN: sed 's/ozaki_stub\.cu/tcec_matmul.cu/g' %S/Inputs/ozaki_dispatch/ozaki_stub_host.ll > %t/host.ll
 ; RUN: grep -v llvm.global.annotations %S/Inputs/stale_cache/matmul_annotated_device.ll > %t/plain.ll
 ; RUN: %opt %S/Inputs/stale_cache/matmul_annotated_device.ll %loadPoseidonEnzyme -passes="poseidon,enzyme,poseidon-finalize,globaldce" -enzyme-preopt=false -poseidon-profile-generate -poseidon-cache=%t/c -S -o /dev/null 2>&1 | FileCheck --check-prefix=DEV1 %s
-; RUN: %clang -O0 -x ir %t/host.ll %clangLoadPoseidon -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=HOST1 %s
+; RUN: %clang -O0 -x ir %t/host.ll %loadClangPoseidon -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=HOST1 %s
 ; RUN: %opt %t/plain.ll %loadPoseidonEnzyme -passes="poseidon,enzyme,poseidon-finalize,globaldce" -enzyme-preopt=false -poseidon-profile-generate -poseidon-cache=%t/c -S -o /dev/null 2>&1 | FileCheck --allow-empty --check-prefix=DEV2 %s
-; RUN: %clang -O0 -x ir %t/host.ll %clangLoadPoseidon -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=HOST2 --implicit-check-not=__poseidon_launch_profiled %s
-; REQUIRES: poseidon, enzyme
+; RUN: %clang -O0 -x ir %t/host.ll %loadClangPoseidon -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=HOST2 --implicit-check-not=__poseidon_launch_profiled %s
 
 ; A profile-generate device compile of an annotated kernel writes its
 ; descriptor into the manifest of the unit; after the annotation is removed, a

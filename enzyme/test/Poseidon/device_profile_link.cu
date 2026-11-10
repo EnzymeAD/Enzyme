@@ -1,16 +1,16 @@
+// REQUIRES: enzyme
 // RUN: rm -rf %t && mkdir -p %t && echo fatbin > %t/k.fatbin
-// RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O2 -S -emit-llvm -I%FPProfileInc %clangLoadPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c -mllvm -poseidon-unit=scale %s -o %t/dev.ll
+// RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c -mllvm -poseidon-unit=scale %s -o %t/dev.ll
 // RUN: FileCheck --check-prefix=DEV %s < %t/dev.ll
-// RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O2 -S -emit-llvm -I%FPProfileInc %clangLoadPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c -mllvm -poseidon-unit=nosite -DNO_SITE %s -o %t/nosite.ll
+// RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c -mllvm -poseidon-unit=nosite -DNO_SITE %s -o %t/nosite.ll
 // RUN: FileCheck --check-prefix=NOSITE %s < %t/nosite.ll
-// RUN: %clang -x cuda --cuda-host-only -nocudainc -nocudalib -O0 -S -emit-llvm -I%FPProfileInc -Xclang -fcuda-include-gpubinary -Xclang %t/k.fatbin %clangLoadPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c -mllvm -poseidon-unit=scale %s -o %t/host.ll
+// RUN: %clang -x cuda --cuda-host-only -nocudainc -nocudalib -O0 -S -emit-llvm -I%poseidon_profile_inc -Xclang -fcuda-include-gpubinary -Xclang %t/k.fatbin %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c -mllvm -poseidon-unit=scale %s -o %t/host.ll
 // RUN: FileCheck --check-prefix=HOST %s < %t/host.ll
-// RUN: %clang -x cuda --cuda-host-only -fgpu-rdc -nocudainc -nocudalib -O0 -S -emit-llvm -I%FPProfileInc %clangLoadPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c -mllvm -poseidon-unit=scale %s -o %t/rdc.ll
+// RUN: %clang -x cuda --cuda-host-only -fgpu-rdc -nocudainc -nocudalib -O0 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c -mllvm -poseidon-unit=scale %s -o %t/rdc.ll
 // RUN: FileCheck --check-prefix=RDC %s < %t/rdc.ll
-// RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O2 -S -emit-llvm -I%FPProfileInc %clangLoadPoseidonEnzyme %s -o %t/plain-dev.ll
-// RUN: %clang -x cuda --cuda-host-only -nocudainc -nocudalib -O0 -S -emit-llvm -I%FPProfileInc -Xclang -fcuda-include-gpubinary -Xclang %t/k.fatbin %clangLoadPoseidonEnzyme %s -o %t/plain-host.ll
+// RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidonEnzyme %s -o %t/plain-dev.ll
+// RUN: %clang -x cuda --cuda-host-only -nocudainc -nocudalib -O0 -S -emit-llvm -I%poseidon_profile_inc -Xclang -fcuda-include-gpubinary -Xclang %t/k.fatbin %loadClangPoseidonEnzyme %s -o %t/plain-host.ll
 // RUN: cat %t/plain-dev.ll %t/plain-host.ll | FileCheck --check-prefix=PLAIN %s
-// REQUIRES: poseidon, enzyme
 
 // Profile generation without relocatable device code: the device module gets
 // the device half of the profiler, linked from the bitcode the plugin carries

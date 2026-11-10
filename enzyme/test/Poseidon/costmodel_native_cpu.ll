@@ -3,7 +3,6 @@
 ; RUN: (%opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/joint_profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-print -S -poseidon-cost-model=%S/Inputs/cm_cpu_foreign.csv -poseidon-cache=%t/foreign 2>&1 || true) | FileCheck --check-prefix=FOREIGN %s
 ; RUN: (%opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/joint_profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-print -S -poseidon-cost-model=%S/Inputs/cm_cpu_noarch.csv -poseidon-cache=%t/noarch 2>&1 || true) | FileCheck --check-prefix=NOARCH %s
 ; RUN: (%opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/joint_profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-print -S -poseidon-cache=%t/none 2>&1 || true) | FileCheck --check-prefix=NOMODEL %s
-; REQUIRES: poseidon
 ; The measured CSV is the only price source. A model whose native_arch matches the function's target-cpu is consumed as is (2 FP64 ops at 4 = 8); a model missing a required row, a model measured on another device, a model with no native_arch header and no model at all each abort instead of substituting a price.
 
 define double @tester_a(double %x, double %y) #0 {

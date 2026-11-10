@@ -1,7 +1,7 @@
+// REQUIRES: enzyme, amdgpu-registered-target, rocm
 // RUN: rm -rf %t && mkdir -p %t
-// RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-device-only -foffload-lto -cuid=0 -O2 -c -emit-llvm -I%FPProfileInc %clangLoadPoseidonEnzyme -Xclang -mllvm -Xclang -poseidon-profile-use=%S/Inputs/other_sites -Xclang -mllvm -Xclang -poseidon-cache=%t/c %s -o %t/dev.bc
+// RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-device-only -foffload-lto -cuid=0 -O2 -c -emit-llvm -I%poseidon_profile_inc %loadClangPoseidonEnzyme -Xclang -mllvm -Xclang -poseidon-profile-use=%S/Inputs/other_sites -Xclang -mllvm -Xclang -poseidon-cache=%t/c %s -o %t/dev.bc
 // RUN: llvm-dis %t/dev.bc -o - | FileCheck %s
-// REQUIRES: poseidon, enzyme, amdgpu-registered-target, rocm
 
 // A HIP unit compiles its device half to bitcode the device linker reads back
 // (what -c does without --cuda-device-only). Enzyme's plugin annotates the

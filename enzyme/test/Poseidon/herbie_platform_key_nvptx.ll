@@ -8,7 +8,6 @@
 ; RUN: %opt < %t/sm90.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/fma_opt_profiles -poseidon-enable-herbie=true -poseidon-herbie-binary=/nonexistent/herbie -poseidon-enable-pt=false -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_sm90_x1e6.csv -poseidon-cache=%t/cache -S 2>&1 | FileCheck --check-prefix=OTHERARCH %s
 ; RUN: (%opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/fma_opt_profiles -poseidon-enable-herbie=true -poseidon-herbie-binary=/nonexistent/herbie -poseidon-enable-pt=false -poseidon-cost-model=%t/nocm/cm_gpu_fixture_x1e6.csv -poseidon-cache=%t/nocm-cache -S 2>&1 || true) | FileCheck --check-prefix=NOPLATFORM %s
 ; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/fma_opt_profiles -poseidon-enable-herbie=true -poseidon-herbie-binary=/nonexistent/herbie -poseidon-enable-pt=false -poseidon-cost-model=%t/recal/cm_gpu_fixture_x1e6.csv -poseidon-cache=%t/cache -S 2>&1 | FileCheck --check-prefix=RECALIBRATED %s
-; REQUIRES: poseidon
 
 ; Herbie ranks its rewrite candidates by a platform cost table, so a cached
 ; result belongs to the platform it was searched under and its cache entry is

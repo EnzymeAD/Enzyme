@@ -1,3 +1,4 @@
+; REQUIRES: enzyme
 ; RUN: rm -rf %t && mkdir -p %t
 ; RUN: %opt %s %loadPoseidonEnzyme -passes="poseidon,enzyme,poseidon-finalize,globaldce" -enzyme-preopt=false -poseidon-profile-generate -poseidon-cache=%t/gen -S -o %t/gen.ll 2> %t/gen.err
 ; RUN: FileCheck --check-prefix=GEN %s < %t/gen.ll
@@ -8,7 +9,6 @@
 ; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -S -o %t/off.ll 2> %t/off.err
 ; RUN: FileCheck --check-prefix=OFF %s < %t/off.ll
 ; RUN: FileCheck --check-prefix=OFF-ERR %s < %t/off.err
-; REQUIRES: poseidon, enzyme
 
 ; POSEIDON_OPTIMIZE on a host function: the function becomes a wrapper around
 ; its outlined body, so every call of it is the site. Under profile generation

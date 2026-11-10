@@ -38,6 +38,9 @@ if(CMAKE_CUDA_COMPILER)
 else()
   set(POSEIDON_TEST_HAS_CUDA False)
 endif()
+# The CUDA libraries the integration tests link, from the toolkit the build
+# found.
+find_package(CUDAToolkit QUIET)
 if("AMDGPU" IN_LIST LLVM_TARGETS_TO_BUILD)
   set(POSEIDON_TEST_HAS_AMDGPU True)
 else()

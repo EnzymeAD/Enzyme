@@ -35,7 +35,6 @@ int main() {
 // RUN: %poseidon_explain %S/Inputs/explain/formatter/rotation.explain.json --format source --source %s --clang %clang | FileCheck --check-prefix=SOURCE %s
 // RUN: %poseidon_explain %S/Inputs/explain/formatter/rotation.explain.json --format remarks | FileCheck --check-prefix=REMARKS %s
 // RUN: %poseidon_explain %S/Inputs/explain/formatter/rotation.explain.json --format report | FileCheck --check-prefix=REPORT %s
-// REQUIRES: poseidon
 
 // The applied candidate moves the two library calls of one FP subgraph to
 // float; each is rewritten where it is written, with its operands cast.

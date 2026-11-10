@@ -1,6 +1,5 @@
 ; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/canonical_hash_missing -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-cost-model=%S/Inputs/cm_cpu_native.csv -poseidon-cache= -S -o /dev/null > %t.log 2>&1; echo "exit=$?" >> %t.log
 ; RUN: FileCheck %s < %t.log
-; REQUIRES: poseidon
 
 ; A profile that does not say which canonical form its slot indices number
 ; cannot be checked against this body, so profile use refuses it.

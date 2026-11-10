@@ -6,12 +6,11 @@
 // the general M x Ncols x K entry are both covered, with a non-unit alpha/beta
 // pair so the FP64 epilogue in the widen kernel is checked too.
 //
+// REQUIRES: cuda-runtime
 // RUN: %clang -x cuda --cuda-gpu-arch=%gpu_arch -O2 %s -x none \
-// RUN:     %poseidon_rt_lib -L/usr/local/cuda/lib64 -lcublas -lcudart \
+// RUN:     %poseidon_rt_lib -L%cuda_lib_dir -lcublas -lcudart \
 // RUN:     -lstdc++ -lm -o %t.exe
 // RUN: %t.exe | FileCheck %s
-//
-// REQUIRES: poseidon, cuda-runtime
 
 #include <cstdio>
 #include <cstdlib>

@@ -2,8 +2,9 @@
 // profile is generated with Enzyme's plugin and used without it, so the form
 // the profile names must be the form the use compile sees.
 //
+// REQUIRES: enzyme, cuda-runtime
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 \
-// RUN:     -poseidon-profile-generate %s -o %t.exe
+// RUN:     -poseidon-profile-generate -poseidon-cache=%t.pcache %s -o %t.exe
 // RUN: rm -rf %t.profile && POSEIDON_PROFILE_DIR=%t.profile %t.exe \
 // RUN:   | FileCheck --check-prefix=PRIMAL %s
 // RUN: rm -rf %t.cache && %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 \
@@ -12,8 +13,6 @@
 // RUN:     -poseidon-enable-herbie=0 -poseidon-tau=1e-6 %s -o %t.opt.exe 2> %t.use.log
 // RUN: cat %t.profile/*.fpprofile %t.use.log | FileCheck %s
 // RUN: %t.opt.exe | FileCheck --check-prefix=PRIMAL %s
-//
-// REQUIRES: poseidon, enzyme, cuda-runtime
 
 #include <cmath>
 #include <cstdio>

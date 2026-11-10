@@ -3,6 +3,7 @@
 // model already has is not measured again, --force measures it again, and the
 // rows of the shapes a run does not name are kept, as is every other row.
 //
+// REQUIRES: cuda-runtime
 // RUN: rm -rf %t && mkdir -p %t
 // RUN: cp %gpu_cost_model %t/cm.csv
 // RUN: %poseidon_calibrate --out %t/cm.csv --only ozaki-rect --ozaki-rect 125x648,216x1029 --n 512 --reps 3 | FileCheck --check-prefix=FIRST %s
@@ -13,8 +14,6 @@
 // RUN: grep -v '^ozaki_dispatch_rect_rel,' %t/cm.csv > %t/rest.csv
 // RUN: diff %gpu_cost_model %t/rest.csv
 // RUN: not %poseidon_calibrate --out %t/cm.csv --only ozaki-rect --ozaki-rect 12x 2>&1 | FileCheck --check-prefix=BAD %s
-//
-// REQUIRES: poseidon, cuda-runtime
 
 // FIRST: [calibrate] measuring ozaki-rect host dispatch
 // FIRST: ozaki_dispatch_rect_rel,nm8_m125k648,

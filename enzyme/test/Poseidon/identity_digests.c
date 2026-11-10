@@ -48,7 +48,6 @@
 // RUN: %cmake -DPASS_DIR=%t/tree -DBINARY_DIR=%t/tree/out -DACCURACY_FILES=MatmulAccuracy.cpp,FPKind.h,FPKind.cpp -DEQUIVALENTS=%t/equivalents.txt -DOUT=%t/tree_ozaki.h -P %S/../../Poseidon/cmake/BuildIdentity.cmake
 // RUN: grep kPassIdentity %t/tree_runtime_changed.h > %t/tree_runtime_changed.pass && grep kPassIdentity %t/tree_ozaki.h > %t/tree_ozaki.pass
 // RUN: not diff %t/tree_runtime_changed.pass %t/tree_ozaki.pass
-// REQUIRES: poseidon
 
 // The pass identity is a digest of every source of the pass, the accuracy-model
 // identity of the model's own files alone: a change elsewhere in the pass, the

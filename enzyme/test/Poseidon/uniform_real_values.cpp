@@ -1,7 +1,6 @@
 // RUN: rm -rf %t && mkdir -p %t
-// RUN: %clangxx -std=c++17 -O2 -fno-fast-math -ffp-contract=off -I%S/../../Poseidon %S/../../Poseidon/Core/UniformReal.cpp %s -o %t/uniform_real
+// RUN: %clang++ -std=c++17 -O2 -fno-fast-math -ffp-contract=off -I%S/../../Poseidon %S/../../Poseidon/Core/UniformReal.cpp %s -o %t/uniform_real
 // RUN: %t/uniform_real | FileCheck %s
-// REQUIRES: poseidon
 
 // The first uniform reals of each engine the accuracy models sample with, at
 // the default seed, as the standard library of the first build drew them:

@@ -1,3 +1,4 @@
+; REQUIRES: scev-trunc-iv-nowrap
 ; RUN: rm -rf %t && mkdir -p %t/old
 ; RUN: for h in 3A0C4F59C6907801 3A0C4F59CB4F208F 3A0C4F59CB4F20B1 83F790B2E595C48 83F790B2E595C4A 83F790B2E595C4C 83F790B2E595C50 83F790B2E595C54 83F790B2E595C58 83F790B2E595C5C D060729D8D884DBF D060729D8D8C25C2 D060729D8D92C0C4; do echo '0 0' > %t/old/matmulacc_$h.txt; done
 ; RUN: %opt %S/Inputs/stale_cache/matmul_device.ll %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/raise_tcec -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_dispatch_x1e6.csv -poseidon-tau=1e-12 -poseidon-print -poseidon-cache=%t/old -S -o /dev/null 2>&1 | FileCheck --check-prefix=COMPUTED --implicit-check-not=imported %s
@@ -5,7 +6,6 @@
 ; RUN: FileCheck --check-prefixes=IMPORT,PLANTED --implicit-check-not=DOMERR %s < %t/import.log
 ; RUN: grep -c 'imported accuracy memo' %t/import.log | FileCheck --check-prefix=COUNT %s
 ; RUN: %opt %S/Inputs/stale_cache/matmul_device.ll %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/raise_tcec -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_dispatch_x1e6.csv -poseidon-tau=1e-12 -poseidon-print -poseidon-cache=%t/new -S -o /dev/null 2>&1 | FileCheck --check-prefix=PLANTED --implicit-check-not=DOMERR --implicit-check-not=imported --implicit-check-not=recomputing %s
-; REQUIRES: poseidon, scev-trunc-iv-nowrap
 
 ; The 13 accuracy results of this compile as the memo filed them before it
 ; stored its key (matmulacc_<hash of the inputs>.txt), each planted with the

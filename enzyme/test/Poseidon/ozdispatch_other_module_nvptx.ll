@@ -1,12 +1,12 @@
+; REQUIRES: scev-trunc-iv-nowrap
 ; RUN: rm -rf %t && mkdir -p %t/prof
 ; RUN: sed '1i CanonicalHash = fea337c617ef94c9' %S/Inputs/raise_tcec/preprocess_matmul_body.fpprofile > %t/prof/preprocess_matmul_body.fpprofile
 ; RUN: sed 's/ozaki_stub\.cu/tcec_matmul.cu/g' %S/Inputs/ozaki_dispatch/ozaki_stub_host.ll > %t/same.ll
 ; RUN: sed 's/ozaki_stub\.cu/other_matmul.cu/g' %S/Inputs/ozaki_dispatch/ozaki_stub_host.ll > %t/other.ll
 ; RUN: %opt %S/Inputs/stale_cache/matmul_device.ll %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%t/prof -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_dispatch_x1e6.csv -poseidon-tau=1e-12 -poseidon-cache=%t/c -poseidon-unit=u -S -o /dev/null 2>&1 | FileCheck --check-prefix=DEV %s
-; RUN: %clang -O0 -x ir %t/same.ll %clangLoadPoseidon -mllvm -poseidon-profile-use=%t/prof -mllvm -poseidon-cache=%t/c -mllvm -poseidon-unit=u -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=SAME %s
-; RUN: %clang -O0 -x ir %t/other.ll %clangLoadPoseidon -mllvm -poseidon-profile-use=%t/prof -mllvm -poseidon-cache=%t/c -mllvm -poseidon-unit=u -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=OTHER --implicit-check-not=__poseidon_ozaki_dgemm %s
-; RUN: %clang -O0 -x ir %t/same.ll %clangLoadPoseidon -mllvm -poseidon-profile-use=%t/prof -mllvm -poseidon-cache=%t/c -mllvm -poseidon-unit=v -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=OTHERUNIT --implicit-check-not=__poseidon_ozaki_dgemm %s
-; REQUIRES: poseidon, scev-trunc-iv-nowrap
+; RUN: %clang -O0 -x ir %t/same.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%t/prof -mllvm -poseidon-cache=%t/c -mllvm -poseidon-unit=u -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=SAME %s
+; RUN: %clang -O0 -x ir %t/other.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%t/prof -mllvm -poseidon-cache=%t/c -mllvm -poseidon-unit=u -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=OTHER --implicit-check-not=__poseidon_ozaki_dgemm %s
+; RUN: %clang -O0 -x ir %t/same.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%t/prof -mllvm -poseidon-cache=%t/c -mllvm -poseidon-unit=v -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=OTHERUNIT --implicit-check-not=__poseidon_ozaki_dgemm %s
 
 ; The device compile of tcec_matmul.cu as unit u leaves a descriptor for
 ; matmul_kernel in the cache. The host compile of tcec_matmul.cu as unit u

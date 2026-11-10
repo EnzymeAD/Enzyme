@@ -1,12 +1,11 @@
 // RUN: rm -rf %t && mkdir -p %t
-// RUN: %clangxx -O1 %s %FPProfileLib -o %t/meet
+// RUN: %clang++ -O1 %s %poseidon_profile_lib -o %t/meet
 // RUN: env POSEIDON_PROFILE_DIR=%t/first MEET=device-first %t/meet | FileCheck --check-prefix=DEVICE-FIRST %s
 // RUN: diff %t/first.expected %t/first/k_ran.fpprofile
 // RUN: FileCheck --check-prefix=NEVER %s < %t/first/k_never.fpprofile
 // RUN: env POSEIDON_PROFILE_DIR=%t/last MEET=device-last %t/meet | FileCheck --check-prefix=DEVICE-LAST %s
 // RUN: diff %t/last.expected %t/last/k_ran.fpprofile
 // RUN: FileCheck --check-prefix=NEVER %s < %t/last/k_never.fpprofile
-// REQUIRES: poseidon
 
 // The two exit writers of a profile-generate CUDA or HIP program, without a
 // GPU: the device profiler's is played by deviceWriter, which writes what it

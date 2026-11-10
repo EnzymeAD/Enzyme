@@ -1,3 +1,4 @@
+; REQUIRES: scev-trunc-iv-nowrap
 ; RUN: rm -rf %t && mkdir -p %t
 ; RUN: grep -v '^tcec_dispatch_rel,' %S/Inputs/cm_gpu_fixture_dispatch_x1e6.csv > %t/cm_shifted.csv
 ; RUN: %opt %S/Inputs/stale_cache/matmul_device.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/raise_tcec -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-cost-model=%S/Inputs/cm_gpu_fixture_dispatch_x1e6.csv -poseidon-cache=%t/full "-poseidon-apply-rewrites=M0=native-dgemm cublas f64/f64" -S -o /dev/null 2>&1 | FileCheck --check-prefixes=NATIVE,FULL %s
@@ -13,7 +14,6 @@
 ; RUN: grep -E '^Applying solution for|^\[poseidon\] pin: |wrote descriptor' %t/tau.err > %t/tau.picks
 ; RUN: grep -E '^Applying solution for|^\[poseidon\] pin: |wrote descriptor' %t/pinned.err > %t/pinned.picks
 ; RUN: diff %t/tau.picks %t/pinned.picks
-; REQUIRES: poseidon, scev-trunc-iv-nowrap
 
 ; -poseidon-apply-rewrites names a matrix-product candidate by its label. The
 ; native DGEMM is candidate 14 of the product of Inputs/stale_cache/

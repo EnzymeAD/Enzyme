@@ -33,7 +33,6 @@ int main() {
 // RUN: %poseidon_explain %S/Inputs/explain/formatter/cancellation.explain.json --format source --source %s --clang %clang | FileCheck --check-prefix=SOURCE %s
 // RUN: %poseidon_explain %S/Inputs/explain/formatter/cancellation.explain.json --format diff --source %s --clang %clang | FileCheck --check-prefix=DIFF %s
 // RUN: %poseidon_explain %S/Inputs/explain/formatter/cancellation.explain.json --format source --source %s --clang /nonexistent/clang | FileCheck --check-prefix=NOAST %s
-// REQUIRES: poseidon
 
 // REPORT: Poseidon site kernel(double const*, double*, int)  [_Z6kernelPKdPdi]
 // REPORT-NEXT: called at explain_formatter.cpp:26:3
