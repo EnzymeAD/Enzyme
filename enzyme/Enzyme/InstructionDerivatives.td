@@ -98,6 +98,8 @@ def ICmpEQ : Inst<"ICmpEQ">;
 def FCmpUEQ : Inst<"FCmpUEQ">;
 def FCmpOEQ : Inst<"FCmpOEQ">;
 def FCmpOLT : Inst<"FCmpOLT">;
+def ICmpULT : Inst<"ICmpULT">;
+def ICmpSLT : Inst<"ICmpSLT">;
 
 class Call<dag mnemonic, list<Attribute> _fnattrs=[]> : Inst<"Call"> {
   dag func = mnemonic;
@@ -1115,6 +1117,45 @@ def : IntrPattern<(Op $x, $y),
                     (Select (FCmpOLT $x, $y), (DiffeRet), (ConstantFP<"0"> $x))
                   ],
                   (Select (FCmpOLT $x, $y), (SelectIfActive $y, (Shadow $y), (Zero $y)), (SelectIfActive $x, (Shadow $x), (Zero $x)))
+                  >;
+
+// Integer min/max are active when they operate on the bits of floats, e.g. in
+// Julia's `hypot`. The result is one of the operands, so the derivative is
+// that operand's.
+def : IntrPattern<(Op $x, $y),
+                  [["umin"]],
+                  [
+                    (Select (ICmpULT $x, $y), (DiffeRet), (ConstantInt<0> $x)),
+                    (Select (ICmpULT $x, $y), (ConstantInt<0> $x), (DiffeRet))
+                  ],
+                  (Select (ICmpULT $x, $y), (SelectIfActive $x, (Shadow $x), (Zero $x)), (SelectIfActive $y, (Shadow $y), (Zero $y)))
+                  >;
+
+def : IntrPattern<(Op $x, $y),
+                  [["umax"]],
+                  [
+                    (Select (ICmpULT $x, $y), (ConstantInt<0> $x), (DiffeRet)),
+                    (Select (ICmpULT $x, $y), (DiffeRet), (ConstantInt<0> $x))
+                  ],
+                  (Select (ICmpULT $x, $y), (SelectIfActive $y, (Shadow $y), (Zero $y)), (SelectIfActive $x, (Shadow $x), (Zero $x)))
+                  >;
+
+def : IntrPattern<(Op $x, $y),
+                  [["smin"]],
+                  [
+                    (Select (ICmpSLT $x, $y), (DiffeRet), (ConstantInt<0> $x)),
+                    (Select (ICmpSLT $x, $y), (ConstantInt<0> $x), (DiffeRet))
+                  ],
+                  (Select (ICmpSLT $x, $y), (SelectIfActive $x, (Shadow $x), (Zero $x)), (SelectIfActive $y, (Shadow $y), (Zero $y)))
+                  >;
+
+def : IntrPattern<(Op $x, $y),
+                  [["smax"]],
+                  [
+                    (Select (ICmpSLT $x, $y), (ConstantInt<0> $x), (DiffeRet)),
+                    (Select (ICmpSLT $x, $y), (DiffeRet), (ConstantInt<0> $x))
+                  ],
+                  (Select (ICmpSLT $x, $y), (SelectIfActive $y, (Shadow $y), (Zero $y)), (SelectIfActive $x, (Shadow $x), (Zero $x)))
                   >;
 
 def : CallPattern<(Op $x, $y),
