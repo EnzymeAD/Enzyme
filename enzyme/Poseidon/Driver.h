@@ -3,22 +3,17 @@
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
-#include "llvm/ADT/StringRef.h"
 #include "llvm/IR/PassManager.h"
 
 namespace llvm {
 class CallBase;
 class CallInst;
 class Module;
-class PassBuilder;
 } // namespace llvm
 
 namespace poseidon {
 
 class Session;
-
-// Whether a called function is the Poseidon annotation.
-bool isMarkerCall(llvm::StringRef calleeName);
 
 // Profile-use: lower every marker collected from one function into a call of
 // the optimized body.
@@ -43,8 +38,6 @@ bool solveDeferredSites(Session &S, llvm::Module &M,
 // Drop the canonicalized clones nothing calls any more. Runs once per module,
 // after the host has finished lowering and inlining every site.
 void finalizeModule(Session &S, llvm::Module &M);
-
-void registerPasses(llvm::PassBuilder &PB);
 
 } // namespace poseidon
 

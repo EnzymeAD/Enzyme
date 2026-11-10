@@ -44,6 +44,13 @@ set(POSEIDON_SRC
     Targets/OffloadRuntime.cpp
     Profile/DeviceProfile.cpp
     Driver.cpp
+    Sites/Markers.cpp
+    Sites/Annotations.cpp
+    Sites/KernelSites.cpp
+    Sites/HostSites.cpp
+    Profile/SiteProfile.cpp
+    Pass/Twin.cpp
+    Pass/Pipeline.cpp
     Evaluators.cpp
     Techniques/Expansion.cpp
     Core/ExpansionModel.cpp
