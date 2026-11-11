@@ -7,7 +7,7 @@
 ; it applies is printed: the product, the option, its position.
 
 ; CHECK: *** DP Table ***
-; CHECK: Computation cost: {{-?[0-9.e+-]+}}, Accuracy cost: 1.889655e-07
+; CHECK: Computation cost: {{-?[0-9.e+-]+}}, Accuracy cost: 1.144101e-06
 ; CHECK-NEXT: Solution steps:
 ; CHECK-NEXT: matmul[0] -> ozaki-ii nm=12 wmma m16n16k16 s8/s32 (#7)
 ; CHECK: Computation cost: {{-?[0-9.e+-]+}}, Accuracy cost: 0.000000e+00

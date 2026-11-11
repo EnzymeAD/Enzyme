@@ -76,7 +76,7 @@ double getTcecLibraryAccuracyCost(Session &S, const AbstractMatmul &m,
                                   double *domainErrOut = nullptr);
 double getOzakiIIAccuracyCost(Session &S, const AbstractMatmul &m,
                               const MatmulProfile &prof, double confidence,
-                              unsigned sampleLogBits, unsigned capturedBits,
+                              unsigned sampleLogBits, unsigned moduli,
                               double *domainErrOut = nullptr);
 
 } // namespace poseidon
