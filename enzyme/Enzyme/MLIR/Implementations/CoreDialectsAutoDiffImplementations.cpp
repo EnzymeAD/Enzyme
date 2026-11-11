@@ -12,6 +12,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "Implementations/CoreDialectsAutoDiffImplementations.h"
+#include "Dialect/Dialect.h"
 #include "Interfaces/AutoDiffOpInterface.h"
 #include "Interfaces/AutoDiffTypeInterface.h"
 #include "Interfaces/GradientUtils.h"
@@ -25,6 +26,7 @@
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/Matchers.h"
+#include "mlir/IR/PatternMatch.h"
 
 #include "llvm/ADT/APFloat.h"
 #include "llvm/Support/Casting.h"
@@ -592,36 +594,37 @@ LogicalResult mlir::enzyme::detail::controlFlowForwardHandler(
 
 namespace edetail = mlir::enzyme::detail;
 
-llvm::StringMap<ForwardCallHandler> mlir::enzyme::forwardCallHandlers;
-
 void mlir::enzyme::replaceForwardCall(Operation *orig, ValueRange values,
-                                      OpBuilder &builder,
                                       MGradientUtils *gutils) {
   Operation *newOp = gutils->getNewFromOriginal(orig);
-  Block *block = newOp->getBlock();
-  if (builder.getInsertionBlock() == block &&
-      builder.getInsertionPoint() == Block::iterator(newOp))
-    builder.setInsertionPoint(block, std::next(Block::iterator(newOp)));
   gutils->replaceOrigOpWith(orig, values);
   gutils->erase(newOp);
 }
 
-/// Returns the key of the call `op` in forwardCallHandlers, or an empty string
-/// if it has none.
+/// Returns the key that the forward call handlers attribute of the nearest
+/// symbol table assigns to the callee of `op`, or an empty string if it assigns
+/// none.
 static StringRef getForwardCallHandlerKey(Operation *op) {
   auto callOp = dyn_cast<CallOpInterface>(op);
   if (!callOp)
     return {};
-  if (auto key = op->getAttrOfType<StringAttr>("enzyme_math"))
-    return key.getValue();
   auto callee = dyn_cast_if_present<FlatSymbolRefAttr>(
       dyn_cast<SymbolRefAttr>(callOp.getCallableForCallee()));
   if (!callee)
     return {};
-  if (Operation *calleeOp = SymbolTable::lookupNearestSymbolFrom(op, callee))
-    if (auto key = calleeOp->getAttrOfType<StringAttr>("enzyme_math"))
-      return key.getValue();
-  return callee.getValue();
+  Operation *symbolTableOp = SymbolTable::getNearestSymbolTable(op);
+  if (!symbolTableOp)
+    return {};
+  ArrayAttr entries = symbolTableOp->getAttrOfType<ArrayAttr>(
+      EnzymeDialect::getForwardCallHandlersAttrName());
+  if (!entries)
+    return {};
+  for (Attribute entry : entries) {
+    auto pair = cast<ArrayAttr>(entry);
+    if (pair[0] == callee)
+      return cast<StringAttr>(pair[1]).getValue();
+  }
+  return {};
 }
 
 // The callee of `op`, or null where it is not a direct call to something this
@@ -643,9 +646,15 @@ LogicalResult edetail::callForwardHandler(Operation *orig, OpBuilder &builder,
 
   StringRef key = getForwardCallHandlerKey(orig);
   if (!key.empty()) {
-    auto found = forwardCallHandlers.find(key);
-    if (found != forwardCallHandlers.end())
-      return found->second(orig, builder, gutils);
+    EnzymeDialect *dialect =
+        orig->getContext()->getLoadedDialect<EnzymeDialect>();
+    const EnzymeDialect::ForwardCallHandler *handler =
+        dialect ? dialect->lookupForwardCallHandler(key) : nullptr;
+    if (!handler)
+      return orig->emitError()
+             << "no forward call handler registered under '" << key << "'";
+    IRRewriter rewriter(builder);
+    return (*handler)(rewriter, orig, gutils);
   }
 
   auto fn = getDirectCallee(orig);

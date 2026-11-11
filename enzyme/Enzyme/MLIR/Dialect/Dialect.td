@@ -22,6 +22,7 @@ def Enzyme_Dialect : Dialect {
   let cppNamespace = "::mlir::enzyme";
   let useDefaultAttributePrinterParser = 1;
   let useDefaultTypePrinterParser = 1;
+  let hasOperationAttrVerify = 1;
 
   // Canonicalizing an atomic accumulation of zero away leaves a plain load
   // behind, in whichever of these dialects the op was addressing memory in.
@@ -36,6 +37,30 @@ def Enzyme_Dialect : Dialect {
     static StringRef getAliasSummaryAttrName() { return "enzyme.alias"; }
     static StringRef getDenseActivityAnnotationAttrName() { return "enzyme.denseactive"; }
     static StringRef getSparseActivityAnnotationAttrName() { return "enzyme.sparseactive"; }
+
+    /// Name of the symbol table attribute that assigns forward-mode call
+    /// handlers: an array of `[@function, "key"]` pairs. A call to `@function`
+    /// in that symbol table is differentiated by the handler registered under
+    /// `key`.
+    static StringRef getForwardCallHandlersAttrName() {
+      return "enzyme.forward_call_handlers";
+    }
+
+    /// Forward-mode derivative of the call `orig`. `rewriter` is set before
+    /// the clone of `orig`. The handler must set the shadow of every active
+    /// result and may replace the clone with replaceForwardCall.
+    using ForwardCallHandler = std::function<LogicalResult(
+        RewriterBase &rewriter, Operation *orig, MGradientUtils *gutils)>;
+
+    /// Registers `handler` under `key`, replacing a handler already registered
+    /// under it. Not synchronized: must not run concurrently with a pass.
+    void registerForwardCallHandler(StringRef key, ForwardCallHandler handler);
+
+    /// Returns the handler registered under `key`, or null if there is none.
+    const ForwardCallHandler *lookupForwardCallHandler(StringRef key) const;
+
+  private:
+    llvm::StringMap<ForwardCallHandler> forwardCallHandlers;
   }];
 }
 

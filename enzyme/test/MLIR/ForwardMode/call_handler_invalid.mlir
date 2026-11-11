@@ -2,8 +2,8 @@
 
 // A handler's failure is the derivative's failure.
 
-module {
-  func.func private @norule(%x: f64) -> f64 attributes {enzyme_math = "norule"} {
+module attributes {enzyme.forward_call_handlers = [[@norule, "norule"]]} {
+  func.func private @norule(%x: f64) -> f64 {
     return %x : f64
   }
   func.func @f(%x: f64) -> f64 {
@@ -19,16 +19,29 @@ module {
 
 // -----
 
-// An indirect call names no callee to look a handler up for.
+// Every listed key needs a registered handler, also for a function that is
+// not called.
 
-module {
-  llvm.func @ind(%fp: !llvm.ptr, %x: f64) -> f64 {
-    // expected-error @below {{could not find the callee of}}
-    %y = llvm.call %fp(%x) : !llvm.ptr, (f64) -> f64
-    llvm.return %y : f64
-  }
-  llvm.func @dind(%fp: !llvm.ptr, %x: f64, %dx: f64) -> f64 {
-    %r = enzyme.fwddiff @ind(%fp, %x, %dx) <{ activity=[#enzyme.activity<enzyme_const>, #enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] }> : (!llvm.ptr, f64, f64) -> f64
-    llvm.return %r : f64
+// expected-error @below {{no forward call handler registered under 'unregistered'}}
+module attributes {enzyme.forward_call_handlers = [[@g, "unregistered"]]} {
+  func.func private @g(%x: f64) -> f64 {
+    return %x : f64
   }
 }
+
+// -----
+
+// expected-error @below {{'enzyme.forward_call_handlers' must be an array attribute}}
+module attributes {enzyme.forward_call_handlers = "norule"} {
+}
+
+// -----
+
+// expected-error @below {{'enzyme.forward_call_handlers' entry must be a [@function, "key"] pair, got [@f]}}
+module attributes {enzyme.forward_call_handlers = [[@f]]} {
+}
+
+// -----
+
+// expected-error @below {{'enzyme.forward_call_handlers' requires a symbol table operation}}
+func.func private @f() attributes {enzyme.forward_call_handlers = []}

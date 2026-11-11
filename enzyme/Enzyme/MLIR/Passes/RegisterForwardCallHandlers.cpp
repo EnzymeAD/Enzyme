@@ -11,12 +11,14 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "Dialect/Dialect.h"
 #include "Implementations/CoreDialectsAutoDiffImplementations.h"
 #include "Interfaces/GradientUtils.h"
 #include "Passes/PassDetails.h"
 #include "Passes/Passes.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Interfaces/CallInterfaces.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
@@ -46,7 +48,7 @@ enum class TestForwardCallHandlerKind {
 
 /// Calls `@name` at `builder`, or reports an error at `orig` if there is no
 /// such function.
-static FailureOr<func::CallOp> callTestRule(Operation *orig, OpBuilder &builder,
+static FailureOr<func::CallOp> callTestRule(OpBuilder &builder, Operation *orig,
                                             StringRef name, TypeRange types,
                                             ValueRange args) {
   if (!SymbolTable::lookupNearestSymbolFrom<FunctionOpInterface>(
@@ -58,7 +60,7 @@ static FailureOr<func::CallOp> callTestRule(Operation *orig, OpBuilder &builder,
 }
 
 /// Differentiates the call `orig` as described for `kind`.
-static LogicalResult testForwardCallHandler(Operation *orig, OpBuilder &builder,
+static LogicalResult testForwardCallHandler(OpBuilder &builder, Operation *orig,
                                             MGradientUtils *gutils,
                                             StringRef key,
                                             TestForwardCallHandlerKind kind) {
@@ -81,7 +83,7 @@ static LogicalResult testForwardCallHandler(Operation *orig, OpBuilder &builder,
   switch (kind) {
   case TestForwardCallHandlerKind::FwdDup: {
     FailureOr<func::CallOp> call = callTestRule(
-        orig, builder, (key + "_fwd_dup").str(), fwdDupTypes, args);
+        builder, orig, (key + "_fwd_dup").str(), fwdDupTypes, args);
     if (failed(call))
       return failure();
     for (unsigned i = 0, e = orig->getNumResults(); i < e; i++) {
@@ -92,7 +94,7 @@ static LogicalResult testForwardCallHandler(Operation *orig, OpBuilder &builder,
   }
   case TestForwardCallHandlerKind::Fwd: {
     FailureOr<func::CallOp> call =
-        callTestRule(orig, builder, (key + "_fwd").str(), shadowTypes, args);
+        callTestRule(builder, orig, (key + "_fwd").str(), shadowTypes, args);
     if (failed(call))
       return failure();
     llvm::append_range(shadows, call->getResults());
@@ -100,12 +102,13 @@ static LogicalResult testForwardCallHandler(Operation *orig, OpBuilder &builder,
   }
   case TestForwardCallHandlerKind::PrimalFirst: {
     FailureOr<func::CallOp> primalCall =
-        callTestRule(orig, builder, (key + "_primal").str(), types, primalArgs);
+        callTestRule(builder, orig, (key + "_primal").str(), types, primalArgs);
     if (failed(primalCall))
       return failure();
-    replaceForwardCall(orig, primalCall->getResults(), builder, gutils);
+    builder.setInsertionPointAfter(gutils->getNewFromOriginal(orig));
+    replaceForwardCall(orig, primalCall->getResults(), gutils);
     FailureOr<func::CallOp> call =
-        callTestRule(orig, builder, (key + "_fwd").str(), shadowTypes, args);
+        callTestRule(builder, orig, (key + "_fwd").str(), shadowTypes, args);
     if (failed(call))
       return failure();
     llvm::append_range(shadows, call->getResults());
@@ -117,7 +120,7 @@ static LogicalResult testForwardCallHandler(Operation *orig, OpBuilder &builder,
     if (!gutils->isConstantValue(result))
       gutils->setDiffe(result, shadow, builder);
   if (kind == TestForwardCallHandlerKind::FwdDup)
-    replaceForwardCall(orig, primals, builder, gutils);
+    replaceForwardCall(orig, primals, gutils);
   return success();
 }
 
@@ -129,6 +132,7 @@ struct RegisterForwardCallHandlersPass
       RegisterForwardCallHandlersPassBase;
 
   void runOnOperation() override {
+    EnzymeDialect *dialect = getContext().getLoadedDialect<EnzymeDialect>();
     for (const std::string &handler : handlers) {
       StringRef key = handler;
       TestForwardCallHandlerKind kind = TestForwardCallHandlerKind::FwdDup;
@@ -137,11 +141,11 @@ struct RegisterForwardCallHandlersPass
       else if (key.consume_back(":primal-first"))
         kind = TestForwardCallHandlerKind::PrimalFirst;
       std::string name = key.str();
-      forwardCallHandlers[key] = [name, kind](Operation *orig,
-                                              OpBuilder &builder,
-                                              MGradientUtils *gutils) {
-        return testForwardCallHandler(orig, builder, gutils, name, kind);
-      };
+      dialect->registerForwardCallHandler(
+          key, [name, kind](RewriterBase &rewriter, Operation *orig,
+                            MGradientUtils *gutils) {
+            return testForwardCallHandler(rewriter, orig, gutils, name, kind);
+          });
     }
     markAllAnalysesPreserved();
   }

@@ -293,14 +293,15 @@ def RegisterForwardCallHandlersPass
     : Pass<"test-register-forward-call-handlers"> {
   let summary = "Register forward-mode call handlers for tests";
   let description = [{
-    Registers a handler under each key of `handlers`, for the differentiation
-    passes that run after this one. The handler for `<key>` replaces a call
+    Registers a handler under each key of `handlers` in the Enzyme dialect, for
+    the differentiation passes that run after this one. The handler for `<key>` replaces a call
     with `@<key>_fwd_dup`, which takes each operand and its shadow and returns
     each result and its shadow. The handler for `<key>:fwd` keeps the call and
     gets the shadows from `@<key>_fwd`. The handler for `<key>:primal-first`
     replaces the call with `@<key>_primal` before calling `@<key>_fwd`.
   }];
   let dependentDialects = [
+    "enzyme::EnzymeDialect",
     "func::FuncDialect"
   ];
   let options = [

@@ -3,8 +3,11 @@
 // The rules' tangents differ from the callees' derivatives, so the output shows
 // whether the handler or the body was used.
 
-module {
-  func.func private @cube(%x: f64) -> f64 attributes {enzyme_math = "cube"} {
+module attributes {enzyme.forward_call_handlers = [
+    [@cube, "cube"], [@scale, "scale"], [@ext, "ext"], [@wcube, "wcube"],
+    [@twice, "twice"], [@sel, "sel"], [@sq, "sq"], [@alpha, "shared"],
+    [@beta, "shared"], [@gamma, "cube"]]} {
+  func.func private @cube(%x: f64) -> f64 {
     %x2 = arith.mulf %x, %x : f64
     %x3 = arith.mulf %x2, %x : f64
     return %x3 : f64
@@ -30,7 +33,7 @@ module {
   }
 
   // A constant operand of an active call gets a zero shadow.
-  func.func private @scale(%x: f64, %s: f64) -> f64 attributes {enzyme_math = "scale"} {
+  func.func private @scale(%x: f64, %s: f64) -> f64 {
     %y = arith.mulf %x, %s : f64
     return %y : f64
   }
@@ -49,7 +52,7 @@ module {
   }
 
   // A handler stands in for a missing body.
-  func.func private @ext(f64) -> f64 attributes {enzyme_math = "ext"}
+  func.func private @ext(f64) -> f64
   func.func private @ext_fwd_dup(%x: f64, %dx: f64) -> (f64, f64) {
     %two = arith.constant 2.0 : f64
     %y = arith.mulf %x, %x : f64
@@ -67,7 +70,7 @@ module {
   }
 
   // At width 2 the handler sees shadows with the leading width dimension.
-  func.func private @wcube(%x: f64) -> f64 attributes {enzyme_math = "wcube"} {
+  func.func private @wcube(%x: f64) -> f64 {
     %x2 = arith.mulf %x, %x : f64
     %x3 = arith.mulf %x2, %x : f64
     return %x3 : f64
@@ -89,7 +92,7 @@ module {
   }
 
   // A handler may leave the call's clone to compute the primal result.
-  func.func private @twice(%x: f64) -> f64 attributes {enzyme_math = "twice"} {
+  func.func private @twice(%x: f64) -> f64 {
     %y = arith.addf %x, %x : f64
     return %y : f64
   }
@@ -127,7 +130,7 @@ module {
     %b = arith.cmpf ogt, %x, %zero : f64
     return %y, %b : f64, i1
   }
-  func.func private @sel(%y: f64, %b: i1) -> f64 attributes {enzyme_math = "sel"} {
+  func.func private @sel(%y: f64, %b: i1) -> f64 {
     %zero = arith.constant 0.0 : f64
     %r = arith.select %b, %y, %zero : f64
     return %r : f64
@@ -149,7 +152,7 @@ module {
   }
 
   // A handler may replace the primal results first and go on inserting ops.
-  func.func private @sq(%x: f64) -> f64 attributes {enzyme_math = "sq"} {
+  func.func private @sq(%x: f64) -> f64 {
     %y = arith.mulf %x, %x : f64
     return %y : f64
   }
@@ -172,16 +175,16 @@ module {
     return %r : f64
   }
 
-  // Callees with the same key share its handler; the call's key wins.
-  func.func private @alpha(%x: f64) -> f64 attributes {enzyme_math = "shared"} {
+  // Callees with the same key share its handler.
+  func.func private @alpha(%x: f64) -> f64 {
     %y = arith.mulf %x, %x : f64
     return %y : f64
   }
-  func.func private @beta(%x: f64) -> f64 attributes {enzyme_math = "shared"} {
+  func.func private @beta(%x: f64) -> f64 {
     %y = arith.addf %x, %x : f64
     return %y : f64
   }
-  func.func private @gamma(%x: f64) -> f64 attributes {enzyme_math = "cube"} {
+  func.func private @gamma(%x: f64) -> f64 {
     %x2 = arith.mulf %x, %x : f64
     %x3 = arith.mulf %x2, %x : f64
     return %x3 : f64
@@ -195,44 +198,35 @@ module {
     %a = func.call @alpha(%x) : (f64) -> f64
     %b = func.call @beta(%a) : (f64) -> f64
     %c = func.call @gamma(%b) : (f64) -> f64
-    %d = func.call @gamma(%c) {enzyme_math = "shared"} : (f64) -> f64
-    return %d : f64
+    return %c : f64
   }
   func.func @dk(%x: f64, %dx: f64) -> f64 {
     %r = enzyme.fwddiff @k(%x, %dx) <{ activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] }> : (f64, f64) -> f64
     return %r : f64
   }
 
-  // A key on an indirect call selects its handler.
-  llvm.func @ind(%fp: !llvm.ptr, %x: f64) -> f64 {
-    %y = llvm.call %fp(%x) {enzyme_math = "cube"} : !llvm.ptr, (f64) -> f64
-    llvm.return %y : f64
-  }
-  llvm.func @dind(%fp: !llvm.ptr, %x: f64, %dx: f64) -> f64 {
-    %r = enzyme.fwddiff @ind(%fp, %x, %dx) <{ activity=[#enzyme.activity<enzyme_const>, #enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] }> : (!llvm.ptr, f64, f64) -> f64
-    llvm.return %r : f64
-  }
-
-  // Without `enzyme_math`, the callee's name is the key. @delta's key has no
-  // handler, so its name is not used.
-  func.func private @shared(%x: f64) -> f64 {
-    %y = arith.mulf %x, %x : f64
-    return %y : f64
-  }
-  func.func private @delta(%x: f64) -> f64 attributes {enzyme_math = "unregistered"} {
-    %y = arith.mulf %x, %x : f64
-    return %y : f64
-  }
-  func.func @e(%x: f64) -> f64 {
-    %y = func.call @shared(%x) : (f64) -> f64
-    %z = func.call @delta(%y) : (f64) -> f64
-    return %z : f64
-  }
-  func.func @de(%x: f64, %dx: f64) -> f64 {
-    %r = enzyme.fwddiff @e(%x, %dx) <{ activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] }> : (f64, f64) -> f64
-    return %r : f64
+  // The attribute of the outer module does not apply to a function of the
+  // same name in a nested module.
+  module @inner {
+    func.func private @cube(%x: f64) -> f64 {
+      %x2 = arith.mulf %x, %x : f64
+      return %x2 : f64
+    }
+    func.func @n(%x: f64) -> f64 {
+      %y = func.call @cube(%x) : (f64) -> f64
+      return %y : f64
+    }
+    func.func @dn(%x: f64, %dx: f64) -> f64 {
+      %r = enzyme.fwddiff @n(%x, %dx) <{ activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] }> : (f64, f64) -> f64
+      return %r : f64
+    }
   }
 }
+
+// CHECK-LABEL: func.func private @fwddiffen(
+// CHECK-SAME:      %[[x:.+]]: f64, %[[dx:.+]]: f64) -> f64 {
+// CHECK-NEXT:    %[[y:.+]]:2 = call @fwddiffecube(%[[x]], %[[dx]]) : (f64, f64) -> (f64, f64)
+// CHECK-NEXT:    return %[[y]]#1 : f64
 
 // CHECK-LABEL: func.func private @fwddiffef(
 // CHECK-SAME:      %[[x:.+]]: f64, %[[dx:.+]]: f64, %[[c:.+]]: f64) -> f64 {
@@ -297,15 +291,4 @@ module {
 // CHECK-NEXT:    %[[a:.+]]:2 = call @shared_fwd_dup(%[[x]], %[[dx]]) : (f64, f64) -> (f64, f64)
 // CHECK-NEXT:    %[[b:.+]]:2 = call @shared_fwd_dup(%[[a]]#0, %[[a]]#1) : (f64, f64) -> (f64, f64)
 // CHECK-NEXT:    %[[c:.+]]:2 = call @cube_fwd_dup(%[[b]]#0, %[[b]]#1) : (f64, f64) -> (f64, f64)
-// CHECK-NEXT:    %[[d:.+]]:2 = call @shared_fwd_dup(%[[c]]#0, %[[c]]#1) : (f64, f64) -> (f64, f64)
-// CHECK-NEXT:    return %[[d]]#1 : f64
-
-// CHECK-LABEL: llvm.func @fwddiffeind(
-// CHECK-SAME:      %{{.+}}: !llvm.ptr, %[[x:.+]]: f64, %[[dx:.+]]: f64) -> f64
-// CHECK-NEXT:    %{{.+}}:2 = func.call @cube_fwd_dup(%[[x]], %[[dx]]) : (f64, f64) -> (f64, f64)
-
-// CHECK-LABEL: func.func private @fwddiffee(
-// CHECK-SAME:      %[[x:.+]]: f64, %[[dx:.+]]: f64) -> f64 {
-// CHECK-NEXT:    %[[y:.+]]:2 = call @shared_fwd_dup(%[[x]], %[[dx]]) : (f64, f64) -> (f64, f64)
-// CHECK-NEXT:    %[[z:.+]]:2 = call @fwddiffedelta(%[[y]]#0, %[[y]]#1) : (f64, f64) -> (f64, f64)
-// CHECK-NEXT:    return %[[z]]#1 : f64
+// CHECK-NEXT:    return %[[c]]#1 : f64

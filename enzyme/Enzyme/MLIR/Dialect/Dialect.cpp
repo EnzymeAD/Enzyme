@@ -71,5 +71,38 @@ void EnzymeDialect::initialize() {
       >();
 }
 
+void EnzymeDialect::registerForwardCallHandler(StringRef key,
+                                               ForwardCallHandler handler) {
+  forwardCallHandlers[key] = std::move(handler);
+}
+
+const EnzymeDialect::ForwardCallHandler *
+EnzymeDialect::lookupForwardCallHandler(StringRef key) const {
+  auto found = forwardCallHandlers.find(key);
+  return found == forwardCallHandlers.end() ? nullptr : &found->second;
+}
+
+LogicalResult EnzymeDialect::verifyOperationAttribute(Operation *op,
+                                                      NamedAttribute attr) {
+  if (attr.getName() != getForwardCallHandlersAttrName())
+    return success();
+  if (!op->hasTrait<OpTrait::SymbolTable>())
+    return op->emitOpError() << "'" << attr.getName().getValue()
+                             << "' requires a symbol table operation";
+  auto entries = dyn_cast<ArrayAttr>(attr.getValue());
+  if (!entries)
+    return op->emitOpError() << "'" << attr.getName().getValue()
+                             << "' must be an array attribute";
+  for (Attribute entry : entries) {
+    auto pair = dyn_cast<ArrayAttr>(entry);
+    if (!pair || pair.size() != 2 || !isa<FlatSymbolRefAttr>(pair[0]) ||
+        !isa<StringAttr>(pair[1]))
+      return op->emitOpError()
+             << "'" << attr.getName().getValue()
+             << "' entry must be a [@function, \"key\"] pair, got " << entry;
+  }
+  return success();
+}
+
 #define GET_ATTRDEF_CLASSES
 #include "Dialect/EnzymeAttributes.cpp.inc"

@@ -177,25 +177,25 @@ DEFINE_C_API_STRUCT(EnzymeGradientUtils, void);
 /// Builds the forward-mode derivative of `call` with `builder`, which is
 /// positioned before the call's clone. It must set the shadow of every active
 /// result, and may replace the primal results with
-/// enzymeGradientUtilsReplaceOrigOpWith.
+/// enzymeGradientUtilsReplaceOrigOpWith. `userData` is the pointer given at
+/// registration.
 typedef MlirLogicalResult (*EnzymeForwardCallHandler)(
-    MlirRewriterBase builder, MlirOperation call, EnzymeGradientUtils gutils);
+    MlirRewriterBase builder, MlirOperation call, EnzymeGradientUtils gutils,
+    void *userData);
 
-/// Registers `handler` under `key`. A call's key is the `enzyme_math`
-/// attribute of the call, else of its callee, else the callee's name. Not
-/// synchronized.
+/// Registers `handler` under `key` in the Enzyme dialect of `context`. It
+/// differentiates the calls to the functions that the
+/// `enzyme.forward_call_handlers` attribute of their symbol table, an array of
+/// `[@function, "key"]` pairs, lists with `key`. Not synchronized: must not run
+/// concurrently with a pass.
 MLIR_CAPI_EXPORTED void
-enzymeRegisterForwardCallHandler(MlirStringRef key,
-                                 EnzymeForwardCallHandler handler);
+enzymeRegisterForwardCallHandler(MlirContext context, MlirStringRef key,
+                                 EnzymeForwardCallHandler handler,
+                                 void *userData);
 
 /// Returns the number of tangents computed at once.
 MLIR_CAPI_EXPORTED int64_t
 enzymeGradientUtilsGetWidth(EnzymeGradientUtils gutils);
-
-/// Returns the `externalContext` of the `mlir::enzyme::MEnzymeLogic` that
-/// `gutils` belongs to.
-MLIR_CAPI_EXPORTED void *
-enzymeGradientUtilsGetExternalContext(EnzymeGradientUtils gutils);
 
 /// Returns whether `value` of the original function is inactive.
 MLIR_CAPI_EXPORTED bool
@@ -220,11 +220,12 @@ MLIR_CAPI_EXPORTED void enzymeGradientUtilsSetDiffe(EnzymeGradientUtils gutils,
                                                     MlirValue shadow,
                                                     MlirRewriterBase builder);
 
-/// Replaces the results of `call` with `values` and erases its clone, moving
-/// `builder` past the clone if it points there.
-MLIR_CAPI_EXPORTED void enzymeGradientUtilsReplaceOrigOpWith(
-    EnzymeGradientUtils gutils, MlirOperation call, intptr_t nValues,
-    MlirValue const *values, MlirRewriterBase builder);
+/// Replaces the results of `call` with `values` and erases its clone. A builder
+/// must not insert before the clone afterwards.
+MLIR_CAPI_EXPORTED void
+enzymeGradientUtilsReplaceOrigOpWith(EnzymeGradientUtils gutils,
+                                     MlirOperation call, intptr_t nValues,
+                                     MlirValue const *values);
 
 #ifdef __cplusplus
 } // extern "C"
