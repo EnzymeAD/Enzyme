@@ -27,21 +27,6 @@ namespace poseidon {
 struct Options;
 class Session;
 
-// Marks a parameter of an outlined kernel body that carries the kernel's
-// by-value aggregate argument: the body reads the kernel's own copy, so the
-// parameter is no longer byval, and only this says its fields are launch
-// values.
-constexpr llvm::StringLiteral kByValueParam = "poseidon-by-value";
-
-// The field of a by-value aggregate parameter `v` reads (a load at a constant
-// offset from a parameter the body only reads, or an extractvalue of an
-// aggregate parameter); an invalid ref otherwise.
-LaunchRef launchFieldOf(const llvm::Value *v);
-
-// The launch value a pointer is derived from through GEP/cast chains: a
-// parameter, or a pointer field of a by-value aggregate parameter.
-LaunchRef tracePointerRoot(const llvm::Value *v);
-
 // GemmBodyNote roles are the optimized body's parameter indices;
 // optimizeSiteBody maps them to the wrapper kernel's launch-arg indices before
 // writing the descriptor.
@@ -95,10 +80,6 @@ struct GemmBodyNote {
   // dispatches only when every pair agrees and launches the kernel otherwise.
   llvm::SmallVector<std::pair<LaunchRef, LaunchRef>, 2> assumedEqual;
 };
-
-// Walk GEP/bitcast/addrspacecast chains back to a Function Argument (-1 if
-// none).
-int traceToArgIndex(const llvm::Value *v);
 
 // Compute the GemmBodyNote for matmul m inside optimized body F; false
 // (note.valid = false) if anything is unsupported.

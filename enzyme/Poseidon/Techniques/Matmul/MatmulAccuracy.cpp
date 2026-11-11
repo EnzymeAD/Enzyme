@@ -5,9 +5,7 @@
 #include "Core/UniformReal.h"
 #include "MatmulAccuracyMemo.h"
 #include "MatmulInternal.h"
-#include "Optimize.h"
 #include "Pass/Session.h"
-#include "Utils.h"
 
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/Format.h"

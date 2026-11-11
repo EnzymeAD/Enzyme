@@ -14,10 +14,17 @@
 #include "Targets/OffloadRuntime.h"
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Demangle/Demangle.h"
+#include "llvm/IR/Argument.h"
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/DataLayout.h"
+#include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/GlobalVariable.h"
+#include "llvm/IR/Instructions.h"
+#include "llvm/IR/Operator.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/JSON.h"
@@ -224,6 +231,132 @@ bool isLaunchStubFor(const Function &F, StringRef kernelName) {
     return false;
   stub.erase(at, stubPrefix.size());
   return stub == demangle(kernel);
+}
+
+int traceToArgIndex(const Value *v) {
+  while (v) {
+    if (auto *A = dyn_cast<Argument>(v))
+      return (int)A->getArgNo();
+    if (auto *GEP = dyn_cast<GetElementPtrInst>(v)) {
+      v = GEP->getPointerOperand();
+      continue;
+    }
+    if (auto *BC = dyn_cast<BitCastInst>(v)) {
+      v = BC->getOperand(0);
+      continue;
+    }
+    if (auto *AC = dyn_cast<AddrSpaceCastInst>(v)) {
+      v = AC->getOperand(0);
+      continue;
+    }
+    if (auto *CE = dyn_cast<ConstantExpr>(v)) {
+      if (CE->getOpcode() == Instruction::GetElementPtr || CE->isCast()) {
+        v = CE->getOperand(0);
+        continue;
+      }
+    }
+    break;
+  }
+  return -1;
+}
+
+static bool isByValueParam(const Argument &A) {
+  return A.hasByValAttr() || A.getParent()->getAttributes().hasParamAttr(
+                                 A.getArgNo(), kByValueParam);
+}
+
+// Whether nothing the body does writes the memory `A` points to. The readonly
+// attribute is not enough: under -fgpu-rdc, which profile generation adds, a
+// kernel is weak_odr and nothing infers it.
+static bool onlyRead(const Argument &A) {
+  if (A.onlyReadsMemory())
+    return true;
+  SmallVector<const Value *, 8> work{&A};
+  SmallPtrSet<const Value *, 8> seen{&A};
+  while (!work.empty()) {
+    const Value *v = work.pop_back_val();
+    for (const Use &U : v->uses()) {
+      const User *user = U.getUser();
+      if (isa<GetElementPtrInst>(user) || isa<BitCastInst>(user) ||
+          isa<AddrSpaceCastInst>(user)) {
+        if (seen.insert(user).second)
+          work.push_back(user);
+        continue;
+      }
+      if (auto *L = dyn_cast<LoadInst>(user)) {
+        if (!L->isVolatile())
+          continue;
+        return false;
+      }
+      if (auto *CB = dyn_cast<CallBase>(user))
+        if (CB->isArgOperand(&U) &&
+            CB->onlyReadsMemory(CB->getArgOperandNo(&U)) &&
+            CB->doesNotCapture(CB->getArgOperandNo(&U)))
+          continue;
+      return false;
+    }
+  }
+  return true;
+}
+
+LaunchRef launchFieldOf(const Value *v) {
+  if (auto *L = dyn_cast<LoadInst>(v)) {
+    if (!L->isSimple())
+      return {};
+    const DataLayout &DL = L->getModule()->getDataLayout();
+    APInt off(DL.getIndexTypeSizeInBits(L->getPointerOperandType()), 0);
+    const Value *base =
+        L->getPointerOperand()->stripAndAccumulateConstantOffsets(
+            DL, off, /*AllowNonInbounds=*/true);
+    // A field the body may overwrite is not the value the launch passed.
+    auto *A = dyn_cast<Argument>(base);
+    if (!A || !isByValueParam(*A) || !onlyRead(*A) || off.isNegative())
+      return {};
+    return {(int)A->getArgNo(), off.getSExtValue()};
+  }
+  if (auto *EV = dyn_cast<ExtractValueInst>(v)) {
+    auto *A = dyn_cast<Argument>(EV->getAggregateOperand());
+    if (!A)
+      return {};
+    const DataLayout &DL = EV->getModule()->getDataLayout();
+    Type *T = A->getType();
+    uint64_t off = 0;
+    for (unsigned idx : EV->indices()) {
+      if (auto *ST = dyn_cast<StructType>(T)) {
+        off += DL.getStructLayout(ST)->getElementOffset(idx);
+        T = ST->getElementType(idx);
+      } else {
+        T = cast<ArrayType>(T)->getElementType();
+        off += idx * DL.getTypeAllocSize(T);
+      }
+    }
+    return {(int)A->getArgNo(), (int64_t)off};
+  }
+  return {};
+}
+
+LaunchRef tracePointerRoot(const Value *v) {
+  while (v) {
+    if (auto *A = dyn_cast<Argument>(v)) {
+      if (isByValueParam(*A))
+        return {};
+      return {(int)A->getArgNo(), -1};
+    }
+    if (auto *GEP = dyn_cast<GEPOperator>(v)) {
+      v = GEP->getPointerOperand();
+      continue;
+    }
+    if (auto *O = dyn_cast<Operator>(v);
+        O && (O->getOpcode() == Instruction::BitCast ||
+              O->getOpcode() == Instruction::AddrSpaceCast)) {
+      v = O->getOperand(0);
+      continue;
+    }
+    if (v->getType()->isPointerTy())
+      return launchFieldOf(v);
+    break;
+  }
+  return {};
 }
 
 } // namespace poseidon

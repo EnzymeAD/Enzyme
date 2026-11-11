@@ -34,6 +34,7 @@
 #include "Herbie.h"
 #include "Optimize.h"
 #include "Session.h"
+#include "Sites/SiteIdentity.h"
 #include "Solvers.h"
 #include "Techniques/Matmul/Matmul.h"
 #include "Techniques/Precision.h"

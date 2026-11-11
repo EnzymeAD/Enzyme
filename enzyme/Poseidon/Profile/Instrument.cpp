@@ -1,7 +1,7 @@
 #include "Instrument.h"
 
-#include "Optimize.h"
 #include "ProfileRead.h"
+#include "Sites/Canonicalize.h"
 #include "Targets/Target.h"
 
 #include "llvm/ADT/SmallVector.h"

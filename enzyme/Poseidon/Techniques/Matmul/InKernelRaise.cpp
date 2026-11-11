@@ -12,8 +12,6 @@
 // K-tile, and a readback combining sum_k d[k] / SCALE^k.
 //===----------------------------------------------------------------------===//
 
-#include "Optimize.h"
-
 #include "InKernelRaise.h"
 #include "MatmulInternal.h"
 #include "Targets/NVPTXTensorCore.h"

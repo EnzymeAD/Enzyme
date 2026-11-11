@@ -55,10 +55,6 @@
 
 #include "llvm/Support/Debug.h"
 
-#include "Core/Options.h"
-#include "Herbie.h"
-#include "Targets/Target.h"
-#include "Types.h"
 #include "Utils.h"
 
 #define DEBUG_TYPE "poseidon"

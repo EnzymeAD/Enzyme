@@ -34,11 +34,11 @@
 #include "CostModel.h"
 #include "Evaluators.h"
 #include "Expansion.h"
-#include "Optimize.h"
 #include "Pass/Session.h"
 #include "Precision.h"
 #include "Profile/ProfileRead.h"
 #include "Sampling.h"
+#include "Sites/Canonicalize.h"
 #include "Staging.h"
 #include "Targets/DeviceMath.h"
 #include "Targets/Target.h"
@@ -457,6 +457,117 @@ void PTCandidate::apply(Session &S, Subgraph &subgraph,
         subgraph.operations.remove(cast<Instruction>(oldV));
     }
   }
+}
+
+// Demote FP64 PHIs whose every incoming is fpext-from-float or a
+// float-representable constant. InstCombine folds fptrunc(fpext(x)) -> x but
+// stops at a loop-carried PHI, so an FP32 accumulator the solver chose would
+// otherwise keep its fptrunc/fpext roundtrip.
+bool demoteFPCastPHIs(llvm::Function &F) {
+  using namespace llvm;
+  LLVMContext &Ctx = F.getContext();
+  Type *DoubleTy = Type::getDoubleTy(Ctx);
+  Type *FloatTy = Type::getFloatTy(Ctx);
+
+  auto floatExtSrc = [&](Value *V) -> Value * {
+    if (auto *FE = dyn_cast<FPExtInst>(V))
+      if (FE->getOperand(0)->getType()->isFloatTy())
+        return FE->getOperand(0);
+    return nullptr;
+  };
+  auto floatReprConst = [&](Value *V, Constant *&out) -> bool {
+    if (isa<UndefValue>(V)) {
+      out = UndefValue::get(FloatTy);
+      return true;
+    }
+    auto *CFP = dyn_cast<ConstantFP>(V);
+    if (!CFP || !CFP->getType()->isDoubleTy())
+      return false;
+    APFloat v = CFP->getValueAPF();
+    bool losesInfo = false;
+    v.convert(APFloat::IEEEsingle(), APFloat::rmNearestTiesToEven, &losesInfo);
+    if (losesInfo)
+      return false;
+    out = ConstantFP::get(Ctx, v);
+    return true;
+  };
+
+  SmallVector<PHINode *, 16> phis;
+  SmallPtrSet<Value *, 16> inSet;
+  for (BasicBlock &BB : F)
+    for (PHINode &P : BB.phis())
+      if (P.getType()->isDoubleTy()) {
+        phis.push_back(&P);
+        inSet.insert(&P);
+      }
+  if (phis.empty())
+    return false;
+
+  bool shrunk = true;
+  while (shrunk) {
+    shrunk = false;
+    for (PHINode *P : phis) {
+      if (!inSet.count(P))
+        continue;
+      for (Value *IV : P->incoming_values()) {
+        Constant *c = nullptr;
+        if (inSet.count(IV) || floatExtSrc(IV) || floatReprConst(IV, c))
+          continue;
+        inSet.erase(P);
+        shrunk = true;
+        break;
+      }
+    }
+  }
+  SmallVector<PHINode *, 16> D;
+  for (PHINode *P : phis)
+    if (inSet.count(P))
+      D.push_back(P);
+  if (D.empty())
+    return false;
+
+  // Confirm the closure invariant holds for every surviving PHI before mutating
+  // anything; bail cleanly rather than leave a half-rewritten function.
+  for (PHINode *P : D)
+    for (Value *IV : P->incoming_values()) {
+      Constant *c = nullptr;
+      if (!(inSet.count(IV) || floatExtSrc(IV) || floatReprConst(IV, c)))
+        return false;
+    }
+
+  DenseMap<PHINode *, PHINode *> nmap;
+  for (PHINode *P : D) {
+    PHINode *NP = PHINode::Create(FloatTy, P->getNumIncomingValues(),
+                                  P->getName() + ".f32", P->getIterator());
+    nmap[P] = NP;
+  }
+  for (PHINode *P : D) {
+    PHINode *NP = nmap[P];
+    for (unsigned i = 0; i < P->getNumIncomingValues(); ++i) {
+      Value *IV = P->getIncomingValue(i);
+      Constant *c = nullptr;
+      Value *fv = nullptr;
+      if (auto *IVP = dyn_cast<PHINode>(IV))
+        if (nmap.count(IVP))
+          fv = nmap[IVP];
+      if (!fv)
+        if (Value *s = floatExtSrc(IV))
+          fv = s;
+      if (!fv && floatReprConst(IV, c))
+        fv = c;
+      assert(fv && "demoteFPCastPHIs: non-leaf incoming survived closure");
+      NP->addIncoming(fv, P->getIncomingBlock(i));
+    }
+  }
+  for (PHINode *P : D) {
+    PHINode *NP = nmap[P];
+    BasicBlock *BB = NP->getParent();
+    IRBuilder<> B(BB, BB->getFirstInsertionPt());
+    P->replaceAllUsesWith(B.CreateFPExt(NP, DoubleTy));
+  }
+  for (PHINode *P : D)
+    P->eraseFromParent();
+  return true;
 }
 
 void setUnifiedAccuracyCost(

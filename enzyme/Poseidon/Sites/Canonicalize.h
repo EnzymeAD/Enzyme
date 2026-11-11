@@ -5,6 +5,7 @@
 
 namespace llvm {
 class Function;
+class Value;
 } // namespace llvm
 
 namespace poseidon {
@@ -20,6 +21,10 @@ llvm::Function *canonicalize(llvm::Function &F);
 // name of a call. The profile carries the digest of the form its slots were
 // numbered against, and profile-use refuses a form that no longer matches.
 std::string canonicalFormHash(const llvm::Function &F);
+
+bool isOptimizable(const llvm::Value &V);
+
+void setSlotMetadata(llvm::Function &F);
 
 } // namespace poseidon
 

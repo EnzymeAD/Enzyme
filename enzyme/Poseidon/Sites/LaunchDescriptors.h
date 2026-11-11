@@ -28,6 +28,7 @@
 #include "llvm/IR/Module.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <cstdint>
 #include <map>
 #include <string>
 
@@ -121,6 +122,40 @@ llvm::StringRef mangledSuffix(llvm::StringRef mangled);
 
 // Whether F is the kernel named `kernelName` or that kernel's launch stub.
 bool isLaunchStubFor(const llvm::Function &F, llvm::StringRef kernelName);
+
+// A value the host knows at the launch: a parameter of the optimized body, or a
+// field of an aggregate a parameter passes by value (the captures of a lambda a
+// kernel takes by value: DeviceTensor data pointers and sizes).
+struct LaunchRef {
+  int param = -1;
+  int64_t offset = -1; // byte offset of the field; -1 = the parameter itself
+  bool isField() const { return offset >= 0; }
+  bool operator==(const LaunchRef &o) const {
+    return param == o.param && offset == o.offset;
+  }
+  bool operator<(const LaunchRef &o) const {
+    return param != o.param ? param < o.param : offset < o.offset;
+  }
+};
+
+// Marks a parameter of an outlined kernel body that carries the kernel's
+// by-value aggregate argument: the body reads the kernel's own copy, so the
+// parameter is no longer byval, and only this says its fields are launch
+// values.
+constexpr llvm::StringLiteral kByValueParam = "poseidon-by-value";
+
+// The field of a by-value aggregate parameter `v` reads (a load at a constant
+// offset from a parameter the body only reads, or an extractvalue of an
+// aggregate parameter); an invalid ref otherwise.
+LaunchRef launchFieldOf(const llvm::Value *v);
+
+// The launch value a pointer is derived from through GEP/cast chains: a
+// parameter, or a pointer field of a by-value aggregate parameter.
+LaunchRef tracePointerRoot(const llvm::Value *v);
+
+// Walk GEP/bitcast/addrspacecast chains back to a Function Argument (-1 if
+// none).
+int traceToArgIndex(const llvm::Value *v);
 
 } // namespace poseidon
 #endif // POSEIDON_LAUNCH_DESCRIPTORS_H

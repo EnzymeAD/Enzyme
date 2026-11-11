@@ -8,13 +8,10 @@
 //===----------------------------------------------------------------------===//
 
 #include "Expansion.h"
-#include "CostModel.h"
-#include "Optimize.h"
 #include "Pass/Session.h"
 #include "Staging.h"
 #include "Targets/DeviceMath.h"
 #include "Targets/Target.h"
-#include "Utils.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
