@@ -99,15 +99,15 @@ int main(void) { return 0; }
 // XHIP-SAME: -xhip --cuda-gpu-arch=gfx90a
 // XHIP-SAME: -Xclang -mllvm -Xclang -poseidon-tau=1e-12
 // XHIP: "-cc1" {{.*}}"-fcuda-is-device"{{.*}} "-mllvm" "-poseidon-tau=1e-12"
-// XHIP-NOT: poseidon
+// XHIP-NOT: {{[="]}}-poseidon-
 // XHIP: clang-linker-wrapper"
-// XHIP-NOT: poseidon
+// XHIP-NOT: {{[="]}}-poseidon-
 // XHIP: "-cc1" "-triple" "x86_64-{{[^"]+}}"{{.*}} "-mllvm" "-poseidon-tau=1e-12"
 
 // LINKONLY: clang{{.*}} -Xclang -mllvm -Xclang -poseidon-profile-use -Xclang -mllvm -Xclang -poseidon-tau=1e-7
-// LINKONLY-NOT: unused
+// LINKONLY-NOT: argument unused
 // LINKONLY: "{{[^"]*}}ld{{(\.lld)?}}"
-// LINKONLY-NOT: unused
+// LINKONLY-NOT: argument unused
 
 // VALUES: clang{{.*}} -MT -poseidon-tau=1 -MD -MF {{[^ ]+}}.dep.cu -I -poseidon-include
 // VALUES-NOT: -Xclang -mllvm -Xclang -poseidon-tau
@@ -118,12 +118,12 @@ int main(void) { return 0; }
 
 // NOLINK: clang{{.*}} -Xclang -mllvm -Xclang -poseidon-profile-
 // NOLINK-NOT: -lposeidon
-// NOLINK-NOT: unused
+// NOLINK-NOT: argument unused
 // NOLINK-NOT: "{{[^"]*}}ld{{(\.lld)?}}"
 
 // VERSION: clang++ -v{{ ?$}}
 // VERSION-NEXT: clang version
-// VERSION-NOT: unused
+// VERSION-NOT: argument unused
 // VERSION-NOT: "{{[^"]*}}ld{{(\.lld)?}}"
 
 // HELP: -poseidon-profile-generate

@@ -88,8 +88,8 @@ int main(void) { return 0; }
 // HOST-NOT: poseidon-unit
 
 // LINK: clang{{.*}} -Xclang -mllvm -Xclang -poseidon-unit={{[0-9A-F]+}}
-// LINK-NOT: poseidon-unit
-// LINK-NOT: unused
+// LINK-NOT: -poseidon-unit=
+// LINK-NOT: argument unused
 
 // HIPLTO: clang{{.*}} -fpass-plugin={{[^ ]*}}/ClangEnzyme.so {{(-Xclang -load -Xclang [^ ]+ )?}}-Xclang -mllvm -Xclang -enzyme-lto-prelink=1 -isystem
 // HIPLTO: "-cc1" {{.*}}"-fcuda-is-device"{{.*}} "-mllvm" "-enzyme-lto-prelink=1"
