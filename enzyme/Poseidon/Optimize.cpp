@@ -48,7 +48,6 @@
 #include <utility>
 #include <vector>
 
-#include "Herbie.h"
 #include "Model/CostModel.h"
 #include "Model/Evaluators.h"
 #include "Optimize.h"
@@ -62,12 +61,12 @@
 #include "Targets/DeviceMath.h"
 #include "Targets/Target.h"
 #include "Techniques/Expansion.h"
+#include "Techniques/Herbie.h"
 #include "Techniques/Matmul/HostDispatch.h"
 #include "Techniques/Matmul/Matmul.h"
 #include "Techniques/Matmul/RaiseWMMA.h"
 #include "Techniques/Precision.h"
 #include "Techniques/Staging.h"
-#include "Types.h"
 #include "Utils.h"
 
 using namespace llvm;

@@ -39,6 +39,7 @@ class raw_ostream;
 namespace poseidon {
 
 class Session;
+struct FPGraph;
 struct FunctionFPState;
 
 // The kinds of unit, by the letter -poseidon-apply-rewrites names them with.
@@ -78,7 +79,8 @@ public:
 
   // Binds the unit to the session and the site it was proposed for, as the
   // site's `indexInKind`-th unit of its kind. Once.
-  void bind(Session &S, FunctionFPState &site, size_t indexInKind);
+  void bind(Session &S, FunctionFPState &site, FPGraph &graph,
+            size_t indexInKind);
   Session &session() const {
     assert(boundSession && "unit read before its site was sealed");
     return *boundSession;
@@ -86,6 +88,10 @@ public:
   FunctionFPState &site() const {
     assert(boundSite && "unit read before its site was sealed");
     return *boundSite;
+  }
+  FPGraph &graph() const {
+    assert(boundGraph && "unit read before its site was sealed");
+    return *boundGraph;
   }
   // The i of R<i>, PT<i>, M<i>, and the DP table's itemIndex.
   size_t indexInKind() const {
@@ -154,6 +160,7 @@ protected:
 private:
   Session *boundSession = nullptr;
   FunctionFPState *boundSite = nullptr;
+  FPGraph *boundGraph = nullptr;
   size_t boundIndex = 0;
 };
 

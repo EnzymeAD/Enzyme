@@ -83,8 +83,9 @@ public:
   // Core/CostTable.cpp and Model/CostModel.cpp.
   CostModelState CostModel;
 
-  // Herbie.cpp. The platform Herbie searches against, derived from the cost
-  // model once it is resolved, and the digest of each Herbie binary run.
+  // Techniques/Herbie.cpp. The platform Herbie searches against, derived from
+  // the cost model once it is resolved, and the digest of each Herbie binary
+  // run.
   HerbiePlatform Platform;
   bool PlatformResolved = false;
   HerbieBinaryDigests HerbieDigests;

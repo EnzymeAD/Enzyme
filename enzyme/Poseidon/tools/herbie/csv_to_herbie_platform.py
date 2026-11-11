@@ -351,7 +351,7 @@ def embedded_module_names(herbie_binary: Path) -> Tuple[Optional[str], Optional[
 
 def default_platform_name(arch: str) -> str:
     """cuda-sm120 for an NVIDIA architecture, hip-gfx942 for an AMD one: the
-    name Poseidon keys its Herbie cache with (Herbie.cpp)."""
+    name Poseidon keys its Herbie cache with (Techniques/Herbie.cpp)."""
     vendor = "hip" if arch.startswith("gfx") else "cuda"
     return f"{vendor}-{arch.replace('_', '')}"
 

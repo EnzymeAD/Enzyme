@@ -186,5 +186,14 @@ struct Subgraph {
       : inputs(inputs), outputs(outputs), operations(operations) {}
 };
 
+// The expression graph of one site: the function it is built over, a node per
+// value (the subgraphs' inputs and operations), and the value each symbol of a
+// Herbie expression names. A unit reaches its site's graph through this.
+struct FPGraph {
+  llvm::Function *F = nullptr;
+  std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>> valueToNodeMap;
+  std::unordered_map<std::string, llvm::Value *> symbolToValueMap;
+};
+
 } // namespace poseidon
 #endif // POSEIDON_MODEL_FP_NODE_H

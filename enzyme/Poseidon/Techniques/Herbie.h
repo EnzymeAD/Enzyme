@@ -1,4 +1,4 @@
-//=- Types.h - AST node declarations for Poseidon -------------------------=//
+//=- Herbie.h - Herbie integration utilities ------------------------------=//
 //
 // Part of the Poseidon Project, under the Apache License v2.0 with LLVM
 // Exceptions.
@@ -7,42 +7,37 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file declares the AST node classes for representing floating-point
-// expressions in the Poseidon optimization pass.
+// This file declares utilities for integrating with the Herbie tool for
+// floating-point expression optimization.
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef POSEIDON_TYPES_H
-#define POSEIDON_TYPES_H
-
-#include "Model/CostModel.h"
-#include "Model/FPNode.h"
+#ifndef POSEIDON_HERBIE_H
+#define POSEIDON_HERBIE_H
 
 #include "llvm/ADT/DenseMap.h"
-#include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SetVector.h"
+#include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/SmallVector.h"
-#include "llvm/IR/Dominators.h"
-#include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Value.h"
-#include "llvm/Transforms/Utils/ValueMapper.h"
 
 #include <cmath>
+#include <cstdint>
 #include <functional>
 #include <limits>
-#include <map>
 #include <memory>
-#include <set>
 #include <string>
 #include <unordered_map>
 
-#include "Utils.h"
-
-#include "Techniques/Precision.h"
-#include "Techniques/Unit.h"
+#include "Core/CacheKey.h"
+#include "Model/CostModel.h"
+#include "Model/FPCore.h"
+#include "Model/FPNode.h"
+#include "Unit.h"
 
 namespace poseidon {
 
+struct Options;
 class Session;
 
 struct RewriteCandidate {
@@ -168,84 +163,42 @@ private:
   void findErasableInstructions();
 };
 
-class PrecisionUnit : public SiteUnit {
-public:
-  Subgraph *subgraph;
-  double initialAccCost = std::numeric_limits<double>::quiet_NaN();
-  double initialCompCost = std::numeric_limits<double>::quiet_NaN();
-  uint64_t executions = 0;
-  llvm::MapVector<FPNode *, double> perOutputInitialAccCost;
-  llvm::SmallVector<PTCandidate, 8> candidates;
-  llvm::SmallVector<std::pair<std::string, std::string>, 1> dropped;
+// The parts of a cache key that say which Herbie searched: its binary and the
+// platform it ranks candidates by.
+void addHerbieKeyParts(Session &S, CacheKey &key);
 
-  using RewriteUnitSet = std::set<RewriteUnit *>;
-  struct CacheKey {
-    size_t candidateIndex;
-    RewriteUnitSet RewriteUnits;
-    bool operator==(const CacheKey &other) const;
-  };
+// Collects Herbie's rewrites of `inputExprs` into `COs`, unpriced.
+bool improveViaHerbie(Session &S, const std::vector<std::string> &inputExprs,
+                      std::vector<RewriteUnit> &COs, int subgraphIdx,
+                      llvm::StringRef funcTag);
 
-  struct CacheKeyHash {
-    std::size_t operator()(const CacheKey &key) const;
-  };
+std::string getPrecondition(
+    const Options &O, const llvm::SmallSet<std::string, 8> &args,
+    const std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>>
+        &valueToNodeMap,
+    const std::unordered_map<std::string, llvm::Value *> &symbolToValueMap);
 
-  std::unordered_map<CacheKey, double, CacheKeyHash> compCostDeltaCache;
-  std::unordered_map<CacheKey, double, CacheKeyHash> accCostDeltaCache;
+void setUnifiedAccuracyCost(
+    const Options &O, RewriteUnit &CO,
+    std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
+    std::unordered_map<std::string, llvm::Value *> &symbolToValueMap);
 
-  explicit PrecisionUnit(CostModelState &CM, Subgraph &subgraph)
-      : SiteUnit(UnitKind::PT), subgraph(&subgraph) {
-    initialCompCost =
-        getCompCost(CM, {subgraph.outputs.begin(), subgraph.outputs.end()},
-                    subgraph.inputs, &subgraph.opExec, subgraph.execNormalizer);
-  }
+double getCompCost(
+    CostModelState &CM, const std::string &expr, llvm::Module *M,
+    std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
+    std::unordered_map<std::string, llvm::Value *> &symbolToValueMap,
+    const llvm::FastMathFlags &FMF,
+    const llvm::SetVector<llvm::Value *> *subgraphInputs = nullptr);
 
-  void apply(Session &S, size_t candidateIndex);
-  double getCompCostDelta(size_t candidateIndex);
-  double getAccCostDelta(size_t candidateIndex);
-  double getAdjustedCompCostDelta(Session &S, size_t candidateIndex,
-                                  llvm::ArrayRef<SolutionStep> steps);
-  double getAdjustedAccCostDelta(
-      size_t candidateIndex, llvm::ArrayRef<SolutionStep> steps,
-      std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>>
-          &valueToNodeMap,
-      std::unordered_map<std::string, llvm::Value *> &symbolToValueMap);
-
-  static bool classof(const OptimizationUnit *U) {
-    return U->kind() == unsigned(UnitKind::PT);
-  }
-  size_t numCandidates() const override { return candidates.size(); }
-  double costDelta(size_t i, llvm::ArrayRef<SolutionStep> prior) override;
-  double errorDelta(size_t i, llvm::ArrayRef<SolutionStep> prior) override;
-  // Priced over the outputs the algebraic units of its subgraph leave.
-  bool pricedAlone() const override { return false; }
-  size_t memoizedPricings() const override { return compCostDeltaCache.size(); }
-  bool consumesFootprint() const override { return false; }
-  bool pricedAgainst(const OptimizationUnit &earlier) const override;
-  const llvm::SetVector<llvm::Instruction *> *footprint() const override;
-  std::string candidateName(size_t i) const override {
-    return candidates[i].desc;
-  }
-  size_t ordinalOf(size_t i) const override { return candidates[i].ordinal; }
-  std::string choiceText(size_t i) const override;
-  llvm::json::Object stepJSON(size_t i) override;
-  void writeReportStep(llvm::raw_ostream &OS, size_t i,
-                       llvm::StringRef pad) override;
-  void materialize(size_t i) override;
-  void price() override;
-  void scaleErrors(double factor) override;
-  void printPriced(llvm::raw_ostream &OS) override;
-  std::string keyHeader() const override { return "CS"; }
-  llvm::ArrayRef<std::pair<std::string, std::string>>
-  droppedCandidates() const override {
-    return dropped;
-  }
-  std::string selectionText(size_t i) const override {
-    return candidates[i].desc;
-  }
-  void addReportSummary(llvm::json::Array &summary) override;
-  void writeReportSummary(llvm::raw_ostream &OS) override;
-  void addCuratedRewrites(llvm::json::Array &rewrites) override;
-};
+// Herbie's rewrites of the outputs of `subgraph`, the site's subgraph number
+// `subgraphCounter`, appended to `COs` unpriced. Its inputs are named from
+// `symbolCounter`, which the site's subgraphs share.
+void proposeHerbieCandidates(
+    Session &S, llvm::Function &F, Subgraph &subgraph, int subgraphCounter,
+    int &symbolCounter,
+    std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
+    std::unordered_map<std::string, llvm::Value *> &symbolToValueMap,
+    llvm::SmallVectorImpl<RewriteUnit> &COs);
 
 } // namespace poseidon
-#endif // POSEIDON_TYPES_H
+#endif // POSEIDON_HERBIE_H

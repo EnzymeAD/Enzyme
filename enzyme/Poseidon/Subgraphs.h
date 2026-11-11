@@ -16,8 +16,8 @@
 #include <unordered_map>
 #include <unordered_set>
 
+#include "Model/FPNode.h"
 #include "Profile/ProfileRead.h"
-#include "Types.h"
 
 namespace llvm {
 class Function;

@@ -32,6 +32,7 @@
 #include <unordered_map>
 
 #include "Expansion.h"
+#include "Herbie.h"
 #include "Model/CostModel.h"
 #include "Model/Evaluators.h"
 #include "Model/Sampling.h"
@@ -42,7 +43,6 @@
 #include "Staging.h"
 #include "Targets/DeviceMath.h"
 #include "Targets/Target.h"
-#include "Types.h"
 #include "Utils.h"
 
 using namespace llvm;
@@ -1095,6 +1095,371 @@ void proposePrecisionCandidates(
   }
 
   CSs.push_back(std::move(CS));
+}
+
+bool PrecisionUnit::RepriceKey::operator==(const RepriceKey &other) const {
+  return candidateIndex == other.candidateIndex &&
+         RewriteUnits == other.RewriteUnits;
+}
+
+std::size_t
+PrecisionUnit::RepriceKeyHash::operator()(const RepriceKey &key) const {
+  std::size_t seed = std::hash<size_t>{}(key.candidateIndex);
+  for (const auto *ao : key.RewriteUnits) {
+    seed ^= std::hash<const RewriteUnit *>{}(ao) + 0x9e3779b9 + (seed << 6) +
+            (seed >> 2);
+  }
+  return seed;
+}
+
+void PrecisionUnit::apply(Session &S, size_t candidateIndex) {
+  if (candidateIndex >= candidates.size()) {
+    llvm_unreachable("Invalid candidate index");
+  }
+
+  candidates[candidateIndex].apply(S, *subgraph);
+}
+
+// Lower is better
+double PrecisionUnit::getCompCostDelta(size_t candidateIndex) {
+  // TODO: adjust this based on erasured instructions
+  return (candidates[candidateIndex].CompCost - initialCompCost) *
+         (double)executions;
+}
+
+// Lower is better
+double PrecisionUnit::getAccCostDelta(size_t candidateIndex) {
+  return candidates[candidateIndex].accuracyCost - initialAccCost;
+}
+
+double PrecisionUnit::getAdjustedCompCostDelta(Session &S,
+                                               size_t candidateIndex,
+                                               ArrayRef<SolutionStep> steps) {
+  RewriteUnitSet RewriteUnits;
+  for (const auto &step : steps) {
+    if (auto *co = dyn_cast<RewriteUnit>(step.unit)) {
+      if (co->subgraph == subgraph) {
+        RewriteUnits.insert(co);
+      }
+    }
+  }
+
+  RepriceKey key{candidateIndex, RewriteUnits};
+
+  auto cacheIt = compCostDeltaCache.find(key);
+  if (cacheIt != compCostDeltaCache.end()) {
+    return cacheIt->second;
+  }
+
+  Subgraph newSubgraph = *this->subgraph;
+
+  for (auto &step : steps) {
+    if (auto *co = dyn_cast<RewriteUnit>(step.unit)) {
+      const auto &CO = *co;
+      if (CO.subgraph == subgraph) {
+        newSubgraph.operations.remove_if(
+            [&CO](Instruction *I) { return CO.erasableInsts.contains(I); });
+        for (Value *root : CO.roots)
+          newSubgraph.outputs.remove(cast<Instruction>(root));
+      }
+    }
+  }
+
+  if (newSubgraph.outputs.empty()) {
+    compCostDeltaCache[key] = 0;
+    return 0;
+  }
+
+  double initialCompCost = getCompCost(
+      S.CostModel, {newSubgraph.outputs.begin(), newSubgraph.outputs.end()},
+      newSubgraph.inputs, &newSubgraph.opExec, newSubgraph.execNormalizer);
+
+  double candidateCompCost =
+      getCompCost(S, newSubgraph, candidates[candidateIndex]);
+
+  double adjustedCostDelta =
+      (candidateCompCost - initialCompCost) * (double)executions;
+  // Per-candidate pricing audit: with a one-point Pareto table these are the
+  // ONLY record of why each candidate lost (all-dominated frontiers must be
+  // auditable, not silent).
+  if (S.Opts.Diagnostics.Print)
+    llvm::errs() << "CS candidate '" << candidates[candidateIndex].desc
+                 << "': initial=" << initialCompCost
+                 << " cand=" << candidateCompCost << " exec=" << executions
+                 << " Δcost=" << adjustedCostDelta
+                 << " Δacc=" << getAccCostDelta(candidateIndex) << "\n";
+
+  compCostDeltaCache[key] = adjustedCostDelta;
+  return adjustedCostDelta;
+}
+
+double PrecisionUnit::getAdjustedAccCostDelta(
+    size_t candidateIndex, ArrayRef<SolutionStep> steps,
+    std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
+    std::unordered_map<std::string, Value *> &symbolToValueMap) {
+  RewriteUnitSet RewriteUnits;
+  for (const auto &step : steps) {
+    if (auto *co = dyn_cast<RewriteUnit>(step.unit)) {
+      if (co->subgraph == subgraph) {
+        RewriteUnits.insert(co);
+      }
+    }
+  }
+
+  RepriceKey key{candidateIndex, RewriteUnits};
+
+  auto cacheIt = accCostDeltaCache.find(key);
+  if (cacheIt != accCostDeltaCache.end()) {
+    return cacheIt->second;
+  }
+
+  double totalCandidateAccCost = 0.0;
+  double totalInitialAccCost = 0.0;
+
+  SmallPtrSet<FPNode *, 8> stepNodes;
+  for (const auto &step : steps) {
+    if (auto *co = dyn_cast<RewriteUnit>(step.unit)) {
+      const auto &CO = *co;
+      if (CO.subgraph == subgraph) {
+        for (Value *root : CO.roots) {
+          auto it = valueToNodeMap.find(root);
+          assert(it != valueToNodeMap.end() && it->second);
+          stepNodes.insert(it->second.get());
+        }
+      }
+    }
+  }
+
+  for (auto &[node, cost] : perOutputInitialAccCost) {
+    if (!stepNodes.count(node)) {
+      totalInitialAccCost += cost;
+    }
+  }
+
+  for (auto &[node, cost] : candidates[candidateIndex].perOutputAccCost) {
+    if (!stepNodes.count(node)) {
+      totalCandidateAccCost += cost;
+    }
+  }
+
+  double adjustedAccCostDelta = totalCandidateAccCost - totalInitialAccCost;
+
+  accCostDeltaCache[key] = adjustedAccCostDelta;
+  return adjustedAccCostDelta;
+}
+
+double PrecisionUnit::costDelta(size_t i, ArrayRef<SolutionStep> prior) {
+  return getAdjustedCompCostDelta(session(), i, prior);
+}
+
+double PrecisionUnit::errorDelta(size_t i, ArrayRef<SolutionStep> prior) {
+  return getAdjustedAccCostDelta(i, prior, graph().valueToNodeMap,
+                                 graph().symbolToValueMap);
+}
+
+bool PrecisionUnit::pricedAgainst(const OptimizationUnit &earlier) const {
+  const auto *co = dyn_cast<RewriteUnit>(&earlier);
+  return co && co->subgraph == subgraph;
+}
+
+const SetVector<Instruction *> *PrecisionUnit::footprint() const {
+  return subgraph ? &subgraph->operations : nullptr;
+}
+
+std::string PrecisionUnit::choiceText(size_t i) const {
+  const PTCandidate &cand = candidates[i];
+  return "CS: " + cand.desc + " (#" + std::to_string(cand.ordinal) + ")";
+}
+
+json::Object PrecisionUnit::stepJSON(size_t i) {
+  auto &cand = candidates[i];
+  json::Object stepObj;
+  stepObj["type"] = "precision_change";
+  stepObj["description"] = cand.desc;
+  stepObj["candidate_index"] = static_cast<int64_t>(cand.ordinal);
+
+  json::Array changes;
+  for (const auto &change : cand.changes) {
+    json::Object changeObj;
+    changeObj["from"] = getPrecisionChangeTypeString(change.oldType);
+    changeObj["to"] = getPrecisionChangeTypeString(change.newType);
+    changeObj["num_operations"] = static_cast<int64_t>(change.nodes.size());
+
+    SmallVector<Instruction *, 8> insts;
+    json::Array nodeIR;
+    for (auto *node : change.nodes) {
+      if (auto *I = dyn_cast<Instruction>(node->value)) {
+        insts.push_back(I);
+        nodeIR.push_back(getValueStr(I));
+      }
+    }
+    changeObj["source_locations"] = getSourceLocationsJSON(insts);
+    changeObj["affected_instructions"] = std::move(nodeIR);
+    changes.push_back(std::move(changeObj));
+  }
+  stepObj["changes"] = std::move(changes);
+  return stepObj;
+}
+
+void PrecisionUnit::writeReportStep(raw_ostream &OS, size_t i, StringRef pad) {
+  auto &cand = candidates[i];
+  OS << pad << "[Precision] " << cand.desc << " (#" << cand.ordinal << ")\n";
+  for (const auto &change : cand.changes) {
+    OS << pad << "  " << getPrecisionChangeTypeString(change.oldType) << " -> "
+       << getPrecisionChangeTypeString(change.newType) << " for "
+       << change.nodes.size() << " operations\n";
+    SmallSet<std::string, 4> seen;
+    for (auto *node : change.nodes) {
+      if (auto *I = dyn_cast<Instruction>(node->value)) {
+        auto loc = getSourceLocationStr(I);
+        if (!loc.empty() && seen.insert(loc).second)
+          OS << pad << "    Source: " << loc << "\n";
+      }
+    }
+  }
+}
+
+void PrecisionUnit::materialize(size_t i) { apply(session(), i); }
+
+void PrecisionUnit::price() {
+  for (PTCandidate &c : candidates)
+    c.CompCost = getCompCost(session(), *subgraph, c);
+  setUnifiedAccuracyCost(session().Opts, *this, graph().valueToNodeMap,
+                         graph().symbolToValueMap);
+}
+
+void PrecisionUnit::scaleErrors(double factor) {
+  initialAccCost *= factor;
+  for (auto &[node, cost] : perOutputInitialAccCost)
+    cost *= factor;
+  for (auto &cand : candidates) {
+    cand.accuracyCost *= factor;
+    for (auto &[node, cost] : cand.perOutputAccCost)
+      cost *= factor;
+  }
+}
+
+// Top-N per-candidate deltas keep an all-dominated frontier auditable (the
+// table then collapses to the no-op point).
+static constexpr size_t kMaxCandRows = 40;
+
+// The candidates' positions by cost change, cheapest first; equal changes keep
+// their positions' order.
+static SmallVector<size_t, 40> byCostDelta(PrecisionUnit &CS) {
+  SmallVector<size_t, 40> order(CS.candidates.size());
+  for (size_t ci = 0; ci < order.size(); ++ci)
+    order[ci] = ci;
+  llvm::stable_sort(order, [&](size_t a, size_t b) {
+    return CS.getCompCostDelta(a) < CS.getCompCostDelta(b);
+  });
+  return order;
+}
+
+void PrecisionUnit::addReportSummary(json::Array &summary) {
+  json::Object cs;
+  cs["num_candidates"] = static_cast<int64_t>(candidates.size());
+  cs["initial_accuracy_cost"] = jsonFloat(initialAccCost);
+  cs["initial_computation_cost"] = initialCompCost;
+  SmallVector<size_t, 40> order = byCostDelta(*this);
+  json::Array cands;
+  for (size_t k = 0; k < order.size() && k < kMaxCandRows; ++k) {
+    size_t ci = order[k];
+    json::Object c;
+    c["id"] = candidateId(ci);
+    c["description"] = candidates[ci].desc;
+    c["computation_cost_delta"] = getCompCostDelta(ci);
+    c["accuracy_cost_delta"] = jsonFloat(getAccCostDelta(ci));
+    cands.push_back(std::move(c));
+  }
+  cs["candidates"] = std::move(cands);
+  summary.push_back(std::move(cs));
+}
+
+void PrecisionUnit::writeReportSummary(raw_ostream &textOut) {
+  textOut << "Subgraph #" << indexInKind() << ": " << candidates.size()
+          << " candidates (Δcost, Δacc; sorted by Δcost)\n";
+  SmallVector<size_t, 40> order = byCostDelta(*this);
+  for (size_t k = 0; k < order.size() && k < kMaxCandRows; ++k) {
+    size_t ci = order[k];
+    textOut << "  [" << candidateId(ci) << "] " << candidates[ci].desc
+            << ": Δcost=" << getCompCostDelta(ci)
+            << " Δacc=" << format("%.6e", getAccCostDelta(ci)) << "\n";
+  }
+}
+
+void PrecisionUnit::addCuratedRewrites(json::Array &rewrites) {
+  for (size_t ci = 0; ci < candidates.size(); ++ci) {
+    auto &pt = candidates[ci];
+    double accDelta = getAccCostDelta(ci);
+    auto compDelta = getCompCostDelta(ci);
+    double compDeltaVal = compDelta;
+
+    if (std::isnan(accDelta))
+      continue;
+
+    std::string category;
+    double efficiency = 0.0;
+    if (compDeltaVal <= 0 && accDelta <= 0) {
+      category = "free_win";
+      efficiency = std::abs(accDelta) + std::abs(compDeltaVal);
+    } else if (compDeltaVal <= 0 && accDelta > 0) {
+      category = "speed_for_accuracy";
+      efficiency = (accDelta > 1e-30) ? std::abs(compDeltaVal) / accDelta
+                                      : std::abs(compDeltaVal);
+    } else if (compDeltaVal > 0 && accDelta <= 0) {
+      category = "accuracy_for_speed";
+      efficiency = (compDeltaVal > 0) ? std::abs(accDelta) / compDeltaVal
+                                      : std::abs(accDelta);
+    } else {
+      // Emitted even though dominated: an all-dominated frontier must
+      // leave a record of why each candidate lost.
+      category = "dominated";
+      efficiency = 0.0;
+    }
+
+    json::Object rw;
+    rw["id"] = candidateId(ci);
+    rw["type"] = "precision_change";
+    rw["description"] = pt.desc;
+    rw["category"] = category;
+    rw["efficiency"] = jsonFloat(efficiency);
+    rw["computation_cost_delta"] = compDeltaVal;
+    rw["accuracy_cost_delta"] = jsonFloat(accDelta);
+
+    SmallVector<Instruction *, 16> ptInsts;
+    for (const auto &change : pt.changes) {
+      for (auto *node : change.nodes) {
+        if (auto *I = dyn_cast<Instruction>(node->value))
+          ptInsts.push_back(I);
+      }
+    }
+    rw["source_locations"] = getSourceLocationsJSON(ptInsts);
+    json::Array affectedIR;
+    for (auto *I : ptInsts)
+      affectedIR.push_back(getValueStr(I));
+    rw["affected_instructions"] = std::move(affectedIR);
+
+    rewrites.push_back(std::move(rw));
+  }
+}
+
+void PrecisionUnit::printPriced(raw_ostream &OS) {
+  OS << "\n################################\n";
+  OS << "Initial AccuracyCost: " << initialAccCost << "\n";
+  OS << "Initial ComputationCost: " << initialCompCost << "\n";
+  OS << "Candidates:\n";
+  OS << "Δ AccCost\t\tΔ CompCost\t\tDescription\n"
+     << "---------------------------\n";
+  for (size_t i = 0; i < candidates.size(); ++i) {
+    auto &candidate = candidates[i];
+    OS << getAccCostDelta(i) << "\t\t";
+    if (candidate.CompCost == std::numeric_limits<double>::max())
+      OS << "unpriced";
+    else
+      OS << getCompCostDelta(i);
+    OS << "\t\t" << candidate.desc << "\n";
+  }
+  OS << "################################\n\n";
 }
 
 } // namespace poseidon

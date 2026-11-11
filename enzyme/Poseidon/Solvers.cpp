@@ -33,9 +33,8 @@
 #include "Pass/Session.h"
 #include "Sites/SiteIdentity.h"
 #include "Solvers.h"
-#include "Types.h"
 
-#include "Herbie.h"
+#include "Techniques/Herbie.h"
 #include "Techniques/Matmul/Matmul.h"
 #include "Techniques/Precision.h"
 #include "Utils.h"
@@ -423,15 +422,15 @@ void FunctionFPState::sealUnits(Session &S) {
   assert(!unitsSealed && "a site's units are sealed once");
   unitsSealed = true;
   for (size_t i = 0; i < COs.size(); ++i) {
-    COs[i].bind(S, *this, i);
+    COs[i].bind(S, *this, *this, i);
     units.push_back(&COs[i]);
   }
   for (size_t i = 0; i < CSs.size(); ++i) {
-    CSs[i].bind(S, *this, i);
+    CSs[i].bind(S, *this, *this, i);
     units.push_back(&CSs[i]);
   }
   for (size_t i = 0; i < CMs.size(); ++i) {
-    CMs[i].bind(S, *this, i);
+    CMs[i].bind(S, *this, *this, i);
     units.push_back(&CMs[i]);
   }
 }

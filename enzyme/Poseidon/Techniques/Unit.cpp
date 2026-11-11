@@ -40,10 +40,12 @@ const UnitKindInfo &infoOf(UnitKind kind) {
   return info;
 }
 
-void SiteUnit::bind(Session &S, FunctionFPState &site, size_t indexInKind) {
+void SiteUnit::bind(Session &S, FunctionFPState &site, FPGraph &graph,
+                    size_t indexInKind) {
   assert(!boundSite && "a unit is bound to its site once");
   boundSession = &S;
   boundSite = &site;
+  boundGraph = &graph;
   boundIndex = indexInKind;
 }
 
