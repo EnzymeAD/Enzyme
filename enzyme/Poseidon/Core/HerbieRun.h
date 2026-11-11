@@ -80,6 +80,15 @@ using HerbieBinaryDigests = std::map<std::string, std::string>;
 std::string herbieBinaryDigest(llvm::StringRef Program,
                                HerbieBinaryDigests &Digests);
 
+// What a compile keeps between its Herbie runs: the platform Herbie searches
+// against, derived from the cost model once it is resolved, and the digest of
+// each Herbie binary run.
+struct HerbieRunState {
+  HerbiePlatform Platform;
+  bool PlatformResolved = false;
+  HerbieBinaryDigests HerbieDigests;
+};
+
 // The arguments that decide what Herbie returns for a core. Its timeouts and
 // worker count decide only whether and how soon it returns.
 llvm::SmallVector<std::string> herbieSearchArgs(const HerbieRunOptions &Opts);

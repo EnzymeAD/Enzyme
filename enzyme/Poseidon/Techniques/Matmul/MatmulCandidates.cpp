@@ -356,7 +356,7 @@ static void proposeLibraryModular(const Product &P, const LibrarySite &L,
     if (relRect > 0.0) {
       shapeRatio = 1.0; // the measurement already is this shape
     } else if (L.padWaste >= 1.05) {
-      if (P.S.WarnedRectangularRows.insert((const void *)&m).second)
+      if (P.S.Matmul.WarnedRectangularRows.insert((const void *)&m).second)
         llvm::errs()
             << "[poseidon] WARNING: matmul[" << m.id << "] " << m.M << "x"
             << m.N << "x" << m.K << ": padWaste=" << L.padWaste
@@ -432,7 +432,7 @@ static void proposeLibraryDirect(const Product &P, const LibrarySite &L,
     double rel =
         queryCostModelOr(P.S.CostModel, "direct_dispatch_rel", cls, -1.0);
     if (rel <= 0.0) {
-      if (P.S.ReportedDirectRows.insert(cls).second)
+      if (P.S.Matmul.ReportedDirectRows.insert(cls).second)
         llvm::errs()
             << "[poseidon] WARNING: matmul[" << m.id << "] " << m.M << "x"
             << m.N << "x" << m.K << ": " << schemeTag(d.variant) << " " << cls

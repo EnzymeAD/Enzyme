@@ -137,7 +137,7 @@ bool priceInKernelRaiseFromMeasuredRow(Session &S, const AbstractMatmul &m,
     return true;
   }
 
-  if (S.ReportedInKernelRows.insert(key).second) {
+  if (S.Matmul.ReportedInKernelRows.insert(key).second) {
     llvm::errs()
         << "[poseidon] WARNING: matmul[" << m.id << "] " << m.M << "x" << m.N
         << "x" << m.K << ": " << what
@@ -176,7 +176,7 @@ static constexpr WmmaTarget kExpectedWmmaTargets[] = {
 };
 
 const SmallVector<WmmaTarget, 16> &getAvailableWmmaTargets(Session &S) {
-  if (!S.AvailableWmmaTargets) {
+  if (!S.Matmul.AvailableWmmaTargets) {
     SmallVector<WmmaTarget, 16> result;
     const auto &model = getCostModel(S.CostModel);
     for (const WmmaTarget &t : kExpectedWmmaTargets) {
@@ -192,9 +192,9 @@ const SmallVector<WmmaTarget, 16> &getAvailableWmmaTargets(Session &S) {
                      << " — this target will not be considered.\n";
       }
     }
-    S.AvailableWmmaTargets = std::move(result);
+    S.Matmul.AvailableWmmaTargets = std::move(result);
   }
-  return *S.AvailableWmmaTargets;
+  return *S.Matmul.AvailableWmmaTargets;
 }
 
 // Static shared-memory preconditions at proposal time (see

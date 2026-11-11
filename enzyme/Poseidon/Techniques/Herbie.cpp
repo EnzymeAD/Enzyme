@@ -57,10 +57,10 @@ namespace poseidon {
 // is derived from the resolved cost model.
 namespace {
 const HerbiePlatform &getHerbiePlatform(Session &S) {
-  HerbiePlatform &P = S.Platform;
-  if (S.PlatformResolved)
+  HerbiePlatform &P = S.Herbie.Platform;
+  if (S.Herbie.PlatformResolved)
     return P;
-  S.PlatformResolved = true;
+  S.Herbie.PlatformResolved = true;
 
   const std::string &NativeArch = getCostModelNativeArch(S.CostModel);
   const Target &T = Target::measuredOn(NativeArch);
@@ -124,7 +124,7 @@ static HerbieRunOptions herbieRunOptions(Session &S) {
 }
 
 void addHerbieKeyParts(Session &S, CacheKey &key) {
-  addHerbieKeyParts(key, herbieRunOptions(S), S.HerbieDigests);
+  addHerbieKeyParts(key, herbieRunOptions(S), S.Herbie.HerbieDigests);
 }
 
 bool improveViaHerbie(Session &S, const std::vector<std::string> &inputExprs,
@@ -139,7 +139,8 @@ bool improveViaHerbie(Session &S, const std::vector<std::string> &inputExprs,
 
   const std::string Label =
       "subgraph " + std::to_string(subgraphIdx) + " of " + funcTag.str();
-  HerbieRunResult Run = runHerbie(inputExprs, Opts, Label, S.HerbieDigests);
+  HerbieRunResult Run =
+      runHerbie(inputExprs, Opts, Label, S.Herbie.HerbieDigests);
   if (Run.Result == HerbieRunResult::Outcome::Timeout)
     for (RewriteUnit &CO : COs)
       CO.herbieStatus = "timeout";
