@@ -288,6 +288,16 @@ cl::opt<int> HerbieNumEnodes(
     cl::Hidden,
     cl::desc("Number of equivalence graph nodes to use when doing algebraic "
              "reasoning in Herbie."));
+// Upstream Herbie caps a Taylor series at 2 terms since 7efa8b032 (4 before);
+// each count is its own search because a longer cap can lose a shorter
+// series' answers.
+cl::list<unsigned> HerbieNumTaylorTerms(
+    "poseidon-herbie-num-taylor-terms", cl::Hidden, cl::CommaSeparated,
+    cl::value_desc("n,n,..."),
+    cl::desc("Search every core once per term count, passing Herbie "
+             "--num-taylor-terms <n>, and take the union of the answers, the "
+             "fewest terms first; each search is cached on its own. Unset, "
+             "Herbie keeps its own cap. Needs a Herbie that takes the option"));
 // Wall-clock budget for one subgraph's Herbie invocation, enforced twice on
 // purpose: Herbie's own per-core --timeout is clamped to it so a timed-out
 // core still writes results.json, and ExecuteAndWait's SecondsToWait backstops
@@ -509,6 +519,11 @@ Options readOptions() {
   H.HerbieNumPts = HerbieNumPts;
   H.HerbieNumIters = HerbieNumIters;
   H.HerbieNumEnodes = HerbieNumEnodes;
+  H.HerbieNumTaylorTerms.assign(HerbieNumTaylorTerms.begin(),
+                                HerbieNumTaylorTerms.end());
+  llvm::sort(H.HerbieNumTaylorTerms);
+  H.HerbieNumTaylorTerms.erase(llvm::unique(H.HerbieNumTaylorTerms),
+                               H.HerbieNumTaylorTerms.end());
   H.HerbieSubgraphTimeout = HerbieSubgraphTimeout;
   H.HerbieProcesses = HerbieProcesses;
   H.HerbiePreFloorBits = HerbiePreFloorBits;

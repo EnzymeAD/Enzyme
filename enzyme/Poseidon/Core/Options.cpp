@@ -22,6 +22,9 @@ std::string value(bool v) { return v ? "1" : "0"; }
 std::string value(double v) { return formatv("{0:e16}", v).str(); }
 std::string value(const std::string &v) { return v; }
 std::string value(const std::vector<std::string> &v) { return join(v, ","); }
+std::string value(const std::vector<unsigned> &v) {
+  return join(map_range(v, [](unsigned n) { return std::to_string(n); }), ",");
+}
 template <typename T> std::string value(T v) { return std::to_string(v); }
 
 template <typename T> void add(FlagValues &out, StringRef name, const T &v) {
@@ -97,6 +100,7 @@ void HerbieOptions::appendSolveInputs(FlagValues &out) const {
   add(out, "poseidon-herbie-num-pts", HerbieNumPts);
   add(out, "poseidon-herbie-num-iters", HerbieNumIters);
   add(out, "poseidon-herbie-num-enodes", HerbieNumEnodes);
+  add(out, "poseidon-herbie-num-taylor-terms", HerbieNumTaylorTerms);
   add(out, "poseidon-herbie-pre-floor-bits", HerbiePreFloorBits);
   add(out, "poseidon-herbie-arrays", HerbieArrays);
   add(out, "poseidon-herbie-array-grouping", HerbieArrayGrouping);
