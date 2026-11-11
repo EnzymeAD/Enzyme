@@ -112,13 +112,15 @@ jobs:
       if: matrix.build == 'Release'
       working-directory: ${{ env.BASE_DIR }}/Enzyme
       run: |
-        DIFF_ARGS=()
+        # Steps in a container run under sh, which has no arrays, so the
+        # optional arguments are kept in a string and expanded unquoted.
+        DIFF_ARGS=""
         if [ "${GITHUB_EVENT_NAME:-}" = "pull_request" ] && git rev-parse --verify -q HEAD^2 >/dev/null; then
-          DIFF_ARGS=(--diff-base HEAD^1)
+          DIFF_ARGS="--diff-base HEAD^1"
         fi
         python3 enzyme/scripts/run_clang_tidy.py \
           --clang-tidy-binary "${BASE_DIR}/llvm-project/mlir-build/bin/clang-tidy" \
           -p "${BASE_DIR}/Enzyme/enzyme-build" \
-          --github "${DIFF_ARGS[@]}" \
+          --github ${DIFF_ARGS} \
           enzyme/Enzyme enzyme/tools
 
