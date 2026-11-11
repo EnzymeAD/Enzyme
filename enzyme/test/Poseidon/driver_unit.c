@@ -67,17 +67,17 @@
 
 int main(void) { return 0; }
 
-// CUDA: clang{{.*}} --start-no-unused-arguments -mllvm -poseidon-unit=[[UNIT:[0-9A-F]+]] --end-no-unused-arguments -mllvm -poseidon-profile-use
+// CUDA: clang{{.*}} -Xclang -mllvm -Xclang -poseidon-unit=[[UNIT:[0-9A-F]+]] -Xclang -mllvm -Xclang -poseidon-profile-use
 // CUDA: "-cc1" "-triple" "nvptx64-nvidia-cuda"{{.*}} "-mllvm" "-poseidon-unit=[[UNIT]]"
 // CUDA: "-cc1" "-triple" "x86_64-{{[^"]+}}"{{.*}} "-mllvm" "-poseidon-unit=[[UNIT]]"
 // CUDA-NOT: poseidon-unit
 
-// HIP: clang{{.*}} --start-no-unused-arguments -Xclang -mllvm -Xclang -poseidon-unit=[[UNIT:[0-9A-F]+]] --end-no-unused-arguments -Xclang -mllvm -Xclang -poseidon-profile-use
+// HIP: clang{{.*}} -Xclang -mllvm -Xclang -poseidon-unit=[[UNIT:[0-9A-F]+]] -Xclang -mllvm -Xclang -poseidon-profile-use
 // HIP: "-cc1" {{.*}}"-fcuda-is-device"{{.*}} "-mllvm" "-poseidon-unit=[[UNIT]]"
 // HIP: "-cc1" "-triple" "x86_64-{{[^"]+}}"{{.*}} "-mllvm" "-poseidon-unit=[[UNIT]]"
 // HIP-NOT: poseidon-unit
 
-// MINE: clang{{.*}} -mllvm -poseidon-unit=mine
+// MINE: clang{{.*}} -Xclang -mllvm -Xclang -poseidon-unit=mine
 // MINE: "-cc1" "-triple" "nvptx64-nvidia-cuda"{{.*}} "-mllvm" "-poseidon-unit=mine"
 // MINE: "-cc1" "-triple" "x86_64-{{[^"]+}}"{{.*}} "-mllvm" "-poseidon-unit=mine"
 // MINE-NOT: poseidon-unit
@@ -87,7 +87,7 @@ int main(void) { return 0; }
 // HOST: "-cc1" "-triple" "x86_64-{{[^"]+}}"{{.*}} "-mllvm" "-poseidon-unit=mine"
 // HOST-NOT: poseidon-unit
 
-// LINK: clang{{.*}} --start-no-unused-arguments -mllvm -poseidon-unit={{[0-9A-F]+}} --end-no-unused-arguments
+// LINK: clang{{.*}} -Xclang -mllvm -Xclang -poseidon-unit={{[0-9A-F]+}}
 // LINK-NOT: poseidon-unit
 // LINK-NOT: unused
 
