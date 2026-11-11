@@ -4,9 +4,14 @@
 # with one of them is reused; one stamped with any other is recomputed.
 #
 # Add the identity a change replaces only when the change provably returns the
-# same numbers, since every entry computed by that model is then trusted. One
-# identity per line, as the memo entries print it.
+# same numbers, since every entry computed by that model is then trusted. An
+# entry is found by its key, which names the model function and its
+# parameters: a function whose numbers change takes new key parts (the
+# modular scheme's `moduli`), so that none of its earlier entries is found
+# under an identity kept here. One identity per line, as the memo entries
+# print it.
 A64586055CB6B123
 DD97D448B86A78F8
 276BB945C2268EA9
 5F14F219CB89C8BC
+FCE162CDEA35C698
