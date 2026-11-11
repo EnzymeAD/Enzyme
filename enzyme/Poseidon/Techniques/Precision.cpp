@@ -941,7 +941,7 @@ void proposePrecisionCandidates(
         1.0, thr * (double)profileHeader.launchCount / (double)CS.executions);
   }
 
-  const auto &PTFuncs = getPTFuncs(S.CostModel);
+  const auto &PTFuncs = getPTFuncs(S.CostModel, F);
   SetVector<FPLLValue *> funcsSet, allSet;
   for (auto *I : subgraph.operations) {
     assert(isa<FPLLValue>(valueToNodeMap[I].get()) &&
@@ -964,7 +964,7 @@ void proposePrecisionCandidates(
   const bool gpuMode = Target::of(F).isDevice();
   static const std::unordered_set<std::string> kEmptyScalars;
   const std::unordered_set<std::string> &hwScalar =
-      gpuMode ? getScalarTypes(S.CostModel) : kEmptyScalars;
+      gpuMode ? getScalarTypes(S.CostModel, F) : kEmptyScalars;
   PrecisionChangeType curr =
       getPrecisionChangeType(subgraph.outputs[0]->getType());
 

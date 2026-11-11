@@ -17,10 +17,7 @@
 #include "llvm/ADT/Twine.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/ErrorHandling.h"
-#include "llvm/Support/Format.h"
-#include "llvm/Support/FormatVariadic.h"
 
-#include <cmath>
 #include <string>
 
 using namespace llvm;
@@ -448,25 +445,6 @@ static void checkFlagClassification(const Options &O) {
                      "in the first, any other in the second.");
 }
 
-// No solution saves more than the whole profiled cost, so a budget below -1 is
-// a mistake in the flag, most likely an integer budget of the cost axis that
-// came before, and not a solve that finds nothing.
-static void checkCostBudget(const SolverOptions &S) {
-  if (std::isfinite(S.CostBudget) && S.CostBudget >= -1.0)
-    return;
-  std::string value = formatv("{0}", format("%.17g", S.CostBudget)).str();
-  report_fatal_error(
-      "Poseidon: -poseidon-cost-budget=" + Twine(value) +
-      (std::isfinite(S.CostBudget)
-           ? " asks a solution to save more than the whole profiled cost"
-           : " is not a finite number") +
-      ". It takes the share of a site's profiled cost a solution may add, "
-      "negative for one it has to save (-0.25 requires saving a quarter); the "
-      "integer budgets of -poseidon-comp-cost-budget are no longer accepted. A "
-      "solve writes the shares of its frontier points to budgets.txt in its "
-      "-poseidon-cache directory.");
-}
-
 Options readOptions() {
   using namespace flags;
   Options O;
@@ -556,7 +534,6 @@ Options readOptions() {
   D.Explain = Explain;
 
   checkFlagClassification(O);
-  checkCostBudget(S);
   return O;
 }
 

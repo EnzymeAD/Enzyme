@@ -40,6 +40,7 @@
 #include "llvm/Support/Path.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <cmath>
 #include <optional>
 #include <string>
 
@@ -195,6 +196,27 @@ void reportUnprofiled(Session &S, CallBase *CI, const Function &body,
   explainUnprofiled(S, clone, cause);
 }
 
+// No solution saves more than the whole profiled cost, so a budget below -1 is
+// a mistake in the flag, most likely an integer budget of the cost axis that
+// came before, and not a solve that finds nothing.
+void requireCostBudget(const SolverOptions &O, const CallBase &CI) {
+  if (std::isfinite(O.CostBudget) && O.CostBudget >= -1.0)
+    return;
+  std::string value;
+  raw_string_ostream(value) << format("%.17g", O.CostBudget);
+  reportUserError(
+      CI, "-poseidon-cost-budget=" + Twine(value) +
+              (std::isfinite(O.CostBudget)
+                   ? " asks a solution to save more than the whole profiled "
+                     "cost"
+                   : " is not a finite number") +
+              ". It takes the share of a site's profiled cost a solution may "
+              "add, negative for one it has to save (-0.25 requires saving a "
+              "quarter); the integer budgets of -poseidon-comp-cost-budget are "
+              "no longer accepted. A solve writes the shares of its frontier "
+              "points to budgets.txt in its -poseidon-cache directory.");
+}
+
 // Profile use, shared by both annotation forms: `CI` is the call the site's
 // body is reached through (the marker call, or the wrapper kernel's call of its
 // own outlined body), `F` the body and `primalArgs` the caller values its
@@ -245,6 +267,10 @@ bool optimizeSiteBody(Session &S, CallBase *CI, Function *F,
       markOutlineTransparent(sourceBody);
       return emitSiteCall(CI, sourceBody, primalArgs, calls);
     }
+
+    // Only a solve with no accuracy target selects by the budget.
+    if (errTol <= 0.0 && O.Solver.Tau <= 0.0 && O.Solver.ApplyRewrites.empty())
+      requireCostBudget(O.Solver, *CI);
 
     if (O.Diagnostics.Print) {
       llvm::errs() << "[poseidon] Optimizing " << F->getName()

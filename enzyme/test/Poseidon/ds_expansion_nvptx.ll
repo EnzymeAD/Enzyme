@@ -2,7 +2,7 @@
 ; RUN: FileCheck %s < %t.out
 ; RUN: FileCheck --check-prefix=CLEAN %s < %t.out
 ; RUN: rm -rf %t.noscalar && mkdir -p %t.noscalar && grep -v '^# scalar_types=' %cost_models/cm_sm_120_synthetic.csv > %t.noscalar/cm.csv
-; RUN: (%opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/ds_expansion -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%t.noscalar/cm.csv -poseidon-cache=%t.noscalar -S 2>&1 || true) | FileCheck --check-prefix=NOSCALAR %s
+; RUN: not %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/ds_expansion -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%t.noscalar/cm.csv -poseidon-cache=%t.noscalar -S 2>&1 | FileCheck --check-prefix=NOSCALAR %s
 ; Double-single (two-component FP32 expansion) materialization of an fmuladd chain on NVPTX; IR and profile from Inputs/ds_expansion/ds_fms.cu (clang -O2 -ffp-contract=on --cuda-gpu-arch=sm_120, profiled on an RTX 5090).
 
 ; ModuleID = 'ds_fms.cu'
@@ -128,4 +128,4 @@ attributes #5 = { convergent nounwind "uniform-work-group-size" }
 
 ; A device model that does not name the formats it has hardware for stops the
 ; compile.
-; NOSCALAR: LLVM ERROR: Poseidon: cost model {{.*}}cm.csv carries no '# scalar_types=' header
+; NOSCALAR: error: {{.*}}Poseidon: cost model {{.*}}cm.csv carries no '# scalar_types=' header
