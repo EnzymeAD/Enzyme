@@ -85,7 +85,7 @@
 
 int main(void) { return 0; }
 
-// USE: clang{{.*}} -fpass-plugin={{.*}}Poseidon-{{[0-9]+}}.so -fpass-plugin={{.*}}Enzyme-{{[0-9]+}}.so -I{{.*}}/include -ffp-contract=on
+// USE: clang{{.*}} -fpass-plugin={{.*}}Poseidon-{{[0-9]+}}.so -fpass-plugin={{.*}}Enzyme-{{[0-9]+}}.so -isystem {{.*}}/include -ffp-contract=on
 // USE-SAME: -Xclang -mllvm -Xclang -poseidon-profile-use -Xclang -mllvm -Xclang -poseidon-tau=1e-7 -Xclang -mllvm -Xclang -poseidon-cache=
 // USE-SAME: -lposeidon_profile -lposeidon_rt -lcublas
 

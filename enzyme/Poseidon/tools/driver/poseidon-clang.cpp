@@ -388,7 +388,9 @@ int main(int argc, char **argv) {
     if (IsHIP && !Enzyme.empty())
       Cmd.append(
           {"-Xclang", "-mllvm", "-Xclang", POSEIDON_DRIVER_ENZYME_HIP_OPTION});
-    Cmd.push_back("-I" + Include);
+    // A system directory, as the CMake package gives it: the header's
+    // diagnostics are not the user's.
+    Cmd.append({"-isystem", Include});
     // Error-free transformations survive only if the compiler contracts within
     // a statement and never across one.
     Cmd.push_back("-ffp-contract=on");

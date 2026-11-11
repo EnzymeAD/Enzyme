@@ -209,16 +209,20 @@ a compile error.
 A project compiled with the clang Poseidon is built against uses it through
 `find_package(Poseidon CONFIG)`, from the build tree (`Poseidon_DIR` is
 `build/Poseidon`) or an installation. One interface target per action carries
-what `poseidon-clang++` adds for it:
+what `poseidon-clang++` adds for it (`cmake/PoseidonConfig.cmake.in` lists
+where the two differ):
 
 ```cmake
 find_package(Poseidon 0.1 CONFIG REQUIRED)
 target_link_libraries(app PRIVATE Poseidon::ProfileGenerate)  # or Poseidon::Plain
 # or: Poseidon::ProfileUse, with the profile it reads
-target_compile_options(app PRIVATE "SHELL:-mllvm -poseidon-profile-use=${PROFILE}")
+target_compile_options(app PRIVATE "SHELL:${POSEIDON_MLLVM} -poseidon-profile-use=${PROFILE}")
 ```
 
-Any other `-poseidon-<flag>` is passed as `"SHELL:-mllvm -poseidon-<flag>"`.
+Any other `-poseidon-<flag>` is passed as `"SHELL:${POSEIDON_MLLVM}
+-poseidon-<flag>"`, that is `-Xclang -mllvm -Xclang -poseidon-<flag>`, which
+clang hands to its compilers and to no linker; `poseidon-clang++` passes every
+Poseidon flag so.
 
 ## The cost model
 
