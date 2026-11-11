@@ -29,6 +29,6 @@ declare double @__poseidon_fp_optimize(double (double, double)*, ...)
 attributes #0 = { "target-cpu"="x86-64" }
 
 ; ENABLED: [poseidon] Herbie subgraph 0 of preprocess_tester: 2 FPCore(s) in
-; ENABLED: LLVM ERROR: Poseidon: the cache {{.*}}c holds no Herbie answer for subgraph 0 of preprocess_tester, and the Herbie at {{.*}}no-herbie cannot run ({{.+}}). Point -poseidon-herbie-binary at a Herbie, or turn algebraic rewriting off with -poseidon-enable-herbie=0.
+; ENABLED: LLVM ERROR: Poseidon: the cache {{.*}}c holds no Herbie answer for subgraph 0 of preprocess_tester, and the Herbie at {{.*}}no-herbie cannot run ({{.+}}). Point -poseidon-herbie-binary at a Herbie, replay the answers another Herbie gave with -poseidon-import-herbie-answers, or turn algebraic rewriting off with -poseidon-enable-herbie=0.
 
 ; DISABLED: Solving the DP for preprocess_tester.

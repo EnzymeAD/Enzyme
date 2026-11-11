@@ -119,6 +119,7 @@ static HerbieRunOptions herbieRunOptions(Session &S) {
   Opts.Processes = O.Herbie.HerbieProcesses;
   Opts.SubgraphTimeout = O.Herbie.HerbieSubgraphTimeout;
   Opts.CacheDir = O.Herbie.Cache;
+  Opts.ImportDir = O.Herbie.ImportHerbieAnswers;
   Opts.Print = O.Diagnostics.Print;
   return Opts;
 }
@@ -162,13 +163,27 @@ bool improveViaHerbie(Session &S, const std::vector<std::string> &inputExprs,
                    : "the cache " + Opts.CacheDir + " holds no Herbie answer") +
               " for " + RunLabel + ", and the Herbie at " + Opts.Program +
               " cannot run (" + Runs.back().Failure +
-              "). Point -poseidon-herbie-binary at a Herbie, or turn "
-              "algebraic rewriting off with -poseidon-enable-herbie=0.",
+              "). Point -poseidon-herbie-binary at a Herbie, replay the "
+              "answers another Herbie gave with "
+              "-poseidon-import-herbie-answers, or turn algebraic rewriting "
+              "off with -poseidon-enable-herbie=0.",
           /*gen_crash_diag=*/false);
     if (Runs.back().Result == HerbieRunResult::Outcome::Crashed &&
         O.Model.StrictMode)
       report_fatal_error(Twine("Poseidon strict mode: Herbie crashed (") +
                          Runs.back().Crash + ") on " + RunLabel);
+    if (Runs.back().Result == HerbieRunResult::Outcome::Ok)
+      switch (Runs.back().From) {
+      case HerbieRunResult::Origin::Cache:
+        ++S.Herbie.Cached;
+        break;
+      case HerbieRunResult::Origin::Imported:
+        ++S.Herbie.Imported;
+        break;
+      case HerbieRunResult::Origin::Fresh:
+        ++S.Herbie.Fresh;
+        break;
+      }
   }
 
   std::vector<std::unordered_set<std::string>> seenExprs(COs.size());
@@ -287,6 +302,18 @@ bool improveViaHerbie(Session &S, const std::vector<std::string> &inputExprs,
                               : "crashed";
   }
   return answered;
+}
+
+void reportHerbieAnswers(Session &S) {
+  HerbieRunState &H = S.Herbie;
+  if (!H.Cached && !H.Imported && !H.Fresh)
+    return;
+  llvm::errs() << "[poseidon] Herbie answers: " << H.Fresh << " fresh, "
+               << H.Cached << " from the cache, " << H.Imported << " replayed";
+  if (!S.Opts.Herbie.ImportHerbieAnswers.empty())
+    llvm::errs() << " from " << S.Opts.Herbie.ImportHerbieAnswers;
+  llvm::errs() << "\n";
+  H.Cached = H.Imported = H.Fresh = 0;
 }
 
 std::string getPrecondition(

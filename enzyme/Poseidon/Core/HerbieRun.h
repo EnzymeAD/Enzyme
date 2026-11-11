@@ -69,6 +69,9 @@ struct HerbieRunOptions {
 
   // The directory of cached results; empty for none.
   std::string CacheDir;
+  // A directory whose answers are replayed whichever Herbie gave them, for a
+  // search CacheDir has no answer of this binary to; empty for none.
+  std::string ImportDir;
   // Print the command line and the platform.
   bool Print = false;
 };
@@ -90,6 +93,8 @@ struct HerbieRunState {
   HerbiePlatform Platform;
   bool PlatformResolved = false;
   HerbieBinaryDigests HerbieDigests;
+  // The answers searches took, by origin, since they were last reported.
+  unsigned Cached = 0, Imported = 0, Fresh = 0;
 };
 
 // The arguments that decide what Herbie returns for a core. Its timeouts and
@@ -116,14 +121,19 @@ struct HerbieRunResult {
     Failed,
   };
   Outcome Result = Outcome::Failed;
+  // Where an Ok result came from.
+  enum class Origin { Cache, Imported, Fresh };
+  Origin From = Origin::Fresh;
   std::string ResultsJson;
   std::string Crash;
   std::string Failure;
 };
 
-// Runs Herbie on `Cores`, each a complete (FPCore ...), through the cache.
-// `Label` names the cores in diagnostics, e.g. "subgraph 0 of foo". Herbie
-// exiting without a usable results.json is a fatal error.
+// Runs Herbie on `Cores`, each a complete (FPCore ...), through the cache:
+// the answer this binary gave, else the answer ImportDir records for the
+// same question, else a run, whose answer is cached with a record of the
+// question. `Label` names the cores in diagnostics, e.g. "subgraph 0 of foo".
+// Herbie exiting without a usable results.json is a fatal error.
 HerbieRunResult runHerbie(const std::vector<std::string> &Cores,
                           const HerbieRunOptions &Opts, llvm::StringRef Label,
                           HerbieBinaryDigests &Digests);
