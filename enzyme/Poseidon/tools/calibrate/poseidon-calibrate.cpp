@@ -16,7 +16,8 @@
 //   microbm    per-op saturated reciprocal throughputs and the WMMA tile rows,
 //              plus the "# native_arch=" header the compiler matches on
 //   ozaki      ozaki_dispatch_rel,nm*   host-dispatched Ozaki-II GEMM
-//   ozaki-rect ozaki_dispatch_rect_rel  its rectangular arm, at given (M, K)
+//   ozaki-rect ozaki_dispatch_rect_rel  its rectangular arm at given (M, K),
+//                                       the native DGEMM at given MxNxK
 //   tcec       tcec_dispatch_rel        host-dispatched error-corrected GEMM
 //   direct     direct_dispatch_rel      host-dispatched reduced-precision GEMM
 //   inkernel   wmma_inkernel_rel        tensor-core raises inside a kernel
@@ -85,9 +86,11 @@ cl::opt<std::string> CuMpSGEMM(
     cl::desc("cuMpSGEMM checkout whose build/ the TCEC arm is measured "
              "against"));
 cl::opt<std::string> OzakiRect(
-    "ozaki-rect", cl::init(""), cl::value_desc("MxK,..."),
-    cl::desc("(M, K) of the M x Ncols x K host GEMMs whose rectangular "
-             "Ozaki-II rows the ozaki-rect arm measures"));
+    "ozaki-rect", cl::init(""), cl::value_desc("MxK|MxNxK,..."),
+    cl::desc(
+        "(M, K) of the M x Ncols x K host GEMMs whose rectangular "
+        "Ozaki-II rows the ozaki-rect arm measures; MxNxK instead measures "
+        "the native DGEMM row of a call with exactly those extents"));
 cl::opt<unsigned> RefN("n", cl::init(2048), cl::value_desc("N"),
                        cl::desc("Square reference shape the dispatch arms and "
                                 "the in-kernel arm are timed at"));
@@ -444,9 +447,11 @@ void armDispatch(const std::string &Csv, StringRef Arm, StringRef Family,
   writeRows(Csv, Arm, Family, capture({Tool, utostr(RefN), utostr(Reps)}));
 }
 
-// The rectangular rows are keyed by the (M, K) of the product they price, so
-// the shapes come from the caller. Rows of shapes this run does not measure
-// are kept.
+// The rectangular rows are keyed by the shape of the product they price, so
+// the shapes come from the caller: MxK measures the Ozaki-II rows of (M, K)
+// at the calibrator's large column count, MxNxK the native DGEMM row of a call
+// with exactly those extents. Rows of shapes this run does not measure are
+// kept.
 void armOzakiRect(const std::string &Csv, const Device &D) {
   if (OzakiRect.empty()) {
     outs() << "[calibrate] ozaki-rect: no --ozaki-rect shapes, nothing to "
@@ -460,17 +465,27 @@ void armOzakiRect(const std::string &Csv, const Device &D) {
                                       utostr(RefN), utostr(Reps)};
   SmallVector<std::string, 4> Keys;
   for (StringRef Shape : Shapes) {
-    StringRef M, K;
-    std::tie(M, K) = Shape.trim().split('x');
-    unsigned MV, KV;
-    if (M.getAsInteger(10, MV) || K.getAsInteger(10, KV) || !MV || !KV)
-      fail("--ozaki-rect: '" + Shape + "' is not a shape MxK");
-    std::string Key = "_m" + utostr(MV) + "k" + utostr(KV) + ",";
+    SmallVector<StringRef, 3> Dims;
+    Shape.trim().split(Dims, 'x');
+    SmallVector<std::string, 3> V;
+    for (StringRef Dim : Dims) {
+      unsigned X;
+      if (Dim.getAsInteger(10, X) || !X)
+        break;
+      V.push_back(utostr(X));
+    }
+    if (V.size() != Dims.size() || (V.size() != 2 && V.size() != 3))
+      fail("--ozaki-rect: '" + Shape + "' is not a shape MxK or MxNxK");
+    std::string Arg = V[0] + "x" + V[1], Key = "_m" + V[0] + "k" + V[1] + ",";
+    if (V.size() == 3) {
+      Arg += "x" + V[2];
+      Key = "_m" + V[0] + "n" + V[1] + "k" + V[2] + ",";
+    }
     if (!Force && StringRef(Content).contains(Key)) {
       outs() << "  = " << Shape << " already measured\n";
       continue;
     }
-    Argv.push_back(utostr(MV) + "x" + utostr(KV));
+    Argv.push_back(Arg);
     Keys.push_back(Key);
   }
   if (Keys.empty())
