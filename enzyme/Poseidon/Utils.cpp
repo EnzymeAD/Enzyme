@@ -30,6 +30,7 @@
 #include "llvm/Passes/PassBuilder.h"
 
 #include "llvm/Support/Casting.h"
+#include "llvm/Support/Signals.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include "llvm/Pass.h"
@@ -42,6 +43,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <functional>
@@ -62,6 +64,20 @@
 using namespace llvm;
 
 namespace poseidon {
+
+void reportUserError(const Function &F, const DiagnosticLocation &Loc,
+                     const Twine &Message) {
+  F.getContext().diagnose(DiagnosticInfoUnsupported(
+      F, "Poseidon: " + Message.str(), Loc, DS_Error));
+  // What LLVM's own handler does for a fatal error that is not a crash, short
+  // of the crash recovery an in-process clang would turn it into.
+  sys::RunInterruptHandlers();
+  exit(1);
+}
+
+void reportUserError(const Instruction &I, const Twine &Message) {
+  reportUserError(*I.getFunction(), I.getDebugLoc(), Message);
+}
 
 void simplifyFunction(Function &F, OptimizationLevel Level) {
 

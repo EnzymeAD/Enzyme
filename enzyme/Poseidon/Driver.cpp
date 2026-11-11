@@ -15,6 +15,7 @@
 #include "Solvers.h"
 #include "Techniques/Herbie.h"
 #include "Techniques/Matmul/HostDispatch.h"
+#include "Utils.h"
 // The one profile-filename rule, shared verbatim with both FP profiler
 // runtimes; the existence check below must look where they wrote.
 #include "FPProfileName.h"
@@ -87,7 +88,7 @@ bool emitSiteCall(CallBase *CI, Function *F,
 
 // A profile-use compile pointed at a directory no profiling run wrote into
 // would otherwise leave every site as written and succeed.
-void requireProfileDirectory(StringRef dir, StringRef flag) {
+void requireProfileDirectory(CallBase *CI, StringRef dir, StringRef flag) {
   const bool isDir = sys::fs::is_directory(dir);
   std::error_code EC;
   if (isDir)
@@ -95,11 +96,12 @@ void requireProfileDirectory(StringRef dir, StringRef flag) {
          it.increment(EC))
       if (sys::path::extension(it->path()) == ".fpprofile")
         return;
-  report_fatal_error(
-      Twine("Poseidon: the profile directory ") + dir + " (" + flag + ") " +
-          (isDir ? "holds no .fpprofile file" : "does not exist") +
-          "; no profiling run wrote into it",
-      /*gen_crash_diag=*/false);
+  reportUserError(*CI,
+                  Twine("the profile directory ") + dir + " (" + flag + ") " +
+                      (isDir ? "holds no .fpprofile file" : "does not exist") +
+                      "; no profiling run wrote into it. Run the "
+                      "program built with -poseidon-profile-generate "
+                      "first, or pass the directory it wrote");
 }
 
 // Why a site has no records to solve from, read from every directory that
@@ -112,14 +114,15 @@ struct Unprofiled {
   bool mayNotHaveRun = false;
 };
 
-std::optional<Unprofiled> unprofiledSite(Session &S, Function &clone) {
+std::optional<Unprofiled> unprofiledSite(Session &S, CallBase *CI,
+                                         Function &clone) {
   const std::string file = siteProfileStem(S, clone) + ".fpprofile";
   std::optional<Unprofiled> absent, neverExecuted;
   auto read = [&](StringRef dir, StringRef flag) {
     SmallString<128> path(dir);
     sys::path::append(path, file);
     if (!sys::fs::exists(path)) {
-      requireProfileDirectory(dir, flag);
+      requireProfileDirectory(CI, dir, flag);
       if (!absent)
         absent = Unprofiled{false, path.str().str(),
                             !profileDirNamesFormat(S.ProfileDirFormats, dir)};
@@ -225,7 +228,7 @@ bool optimizeSiteBody(Session &S, CallBase *CI, Function *F,
 
     // A site with nothing to solve from still has to build and run, so it keeps
     // the ORIGINAL body rather than failing the compile.
-    if (std::optional<Unprofiled> site = unprofiledSite(S, *F)) {
+    if (std::optional<Unprofiled> site = unprofiledSite(S, CI, *F)) {
       reportUnprofiled(S, CI, *sourceBody, *F, *site);
       markOutlineTransparent(sourceBody);
       return emitSiteCall(CI, sourceBody, primalArgs, calls);
