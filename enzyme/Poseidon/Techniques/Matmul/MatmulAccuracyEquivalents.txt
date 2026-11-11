@@ -1,6 +1,6 @@
 # Earlier identities of the matrix accuracy model (kAccuracyModelIdentity, a
-# digest of MatmulAccuracy.cpp, FPKind.h and FPKind.cpp) whose results the
-# current model reproduces for every input. An accuracy memo entry stamped
+# digest of the files POSEIDON_ACCURACY_MODEL_FILES names in CMakeLists.txt)
+# whose results the current model reproduces for every input. An accuracy memo entry stamped
 # with one of them is reused; one stamped with any other is recomputed.
 #
 # Add the identity a change replaces only when the change provably returns the

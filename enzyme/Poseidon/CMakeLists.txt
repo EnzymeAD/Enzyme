@@ -93,6 +93,7 @@ set(POSEIDON_SRC
     Techniques/Matmul/MatmulCandidates.cpp
     Techniques/Matmul/MatmulPricing.cpp
     Techniques/Matmul/MatmulProfile.cpp
+    Techniques/Matmul/MatmulSimulation.cpp
     Techniques/Matmul/RecognizeHostGemm.cpp)
 
 set(POSEIDON_PLUGIN_TARGET Poseidon-${LLVM_VERSION_MAJOR})
@@ -114,8 +115,14 @@ target_link_libraries(${POSEIDON_PLUGIN_TARGET} PRIVATE MPFR::MPFR)
 # that decides what the matrix accuracy model returns. Hashed when they change,
 # not when the build is configured.
 set(POSEIDON_ACCURACY_MODEL_FILES
-    Techniques/Matmul/MatmulAccuracy.cpp Core/FPKind.h Core/FPKind.cpp
-    Core/UniformReal.h Core/UniformReal.cpp)
+    Techniques/Matmul/MatmulAccuracy.cpp
+    Techniques/Matmul/MatmulSimulation.h
+    Techniques/Matmul/MatmulSimulation.cpp
+    runtime/tcec/tcec_scale.h
+    Core/FPKind.h
+    Core/FPKind.cpp
+    Core/UniformReal.h
+    Core/UniformReal.cpp)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/PassSources.cmake)
 poseidon_pass_sources(POSEIDON_PASS_FILES ${CMAKE_CURRENT_SOURCE_DIR}
                       ${CMAKE_CURRENT_BINARY_DIR} CONFIGURE_DEPENDS)
@@ -150,12 +157,14 @@ target_include_directories(${POSEIDON_PLUGIN_TARGET}
 set_source_files_properties(
   Techniques/Herbie.cpp
   PROPERTIES COMPILE_DEFINITIONS HERBIE_BINARY="${POSEIDON_HERBIE_BINARY_PATH}")
-# The accuracy model emulates the emitted FP32 expansions bit for bit, and the
-# sampler reproduces the standard library's uniform reals bit for bit; each
-# holds only if every operation is rounded as written.
+# The accuracy model emulates the emitted FP32 expansions and the GEMM
+# runtimes bit for bit, and the sampler reproduces the standard library's
+# uniform reals bit for bit; each holds only if every operation is rounded as
+# written.
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
   set_source_files_properties(
     Core/ExpansionModel.cpp Core/UniformReal.cpp
+    Techniques/Matmul/MatmulSimulation.cpp
     PROPERTIES COMPILE_OPTIONS "-fno-fast-math;-ffp-contract=off")
 endif()
 include(GNUInstallDirs)
@@ -276,6 +285,11 @@ set(POSEIDON_CUMPSGEMM_ROOT ""
       PATH
       "cuMpSGEMM checkout the TCEC runtime is built against and applications link
      against; required by POSEIDON_TCEC_USE_CUMPSGEMM")
+# The matrix accuracy model simulates the backend the runtime is built with.
+if(POSEIDON_TCEC_USE_CUMPSGEMM)
+  target_compile_definitions(${POSEIDON_PLUGIN_TARGET}
+                             PRIVATE POSEIDON_TCEC_USE_CUMPSGEMM)
+endif()
 
 if(CMAKE_CUDA_COMPILER)
   add_library(

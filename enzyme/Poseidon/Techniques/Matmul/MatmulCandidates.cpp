@@ -33,9 +33,12 @@ struct Product {
 } // namespace
 
 // The accuracy model is called with what the scheme computes, whichever code
-// realizes it; only the reorder charge reads the realized tile.
+// realizes it; only the reorder charge reads the realized tile, and the split
+// library call, which scales its operands before it splits them, has its own
+// simulation.
 static double schemeAccuracyCost(const Product &P, const SchemeVariant &v,
-                                 unsigned tileK, double *domainError) {
+                                 Realization r, unsigned tileK,
+                                 double *domainError) {
   const AbstractMatmul &m = P.m;
   switch (v.scheme) {
   case Scheme::Direct: {
@@ -50,6 +53,10 @@ static double schemeAccuracyCost(const Product &P, const SchemeVariant &v,
                                  /*orderTileK=*/identityPrec ? tileK : 0);
   }
   case Scheme::Split:
+    if (r == Realization::LibraryCall)
+      return getTcecLibraryAccuracyCost(
+          P.S, m, P.prof, P.confidence, P.sampleLogBits,
+          splitLibraryComputeMode(v), domainError);
     return getMatmulAccuracyCost(P.S, m, P.prof, P.confidence, P.sampleLogBits,
                                  FPKind::F32, FPKind::F32, domainError,
                                  /*exponentPrec=*/v.operand, /*orderTileK=*/0,
@@ -148,7 +155,8 @@ static void proposeInKernel(const Product &P, const InKernelSite &K,
                                          tileN, tileK, P.baselinePerMac, what,
                                          opt.compCost))
     return;
-  opt.accuracyCost = schemeAccuracyCost(P, v, tileK, &opt.domainError);
+  opt.accuracyCost =
+      schemeAccuracyCost(P, v, opt.realization, tileK, &opt.domainError);
   cm.candidates.push_back(opt);
 }
 
@@ -322,8 +330,8 @@ static MatmulUnit::Option libraryOption(const SchemeVariant &v, unsigned tileM,
 
 static void pushLibraryCandidate(const Product &P, MatmulUnit::Option opt,
                                  MatmulUnit &cm) {
-  opt.accuracyCost =
-      schemeAccuracyCost(P, opt.variant, opt.tileK, &opt.domainError);
+  opt.accuracyCost = schemeAccuracyCost(P, opt.variant, opt.realization,
+                                        opt.tileK, &opt.domainError);
   cm.candidates.push_back(opt);
 }
 

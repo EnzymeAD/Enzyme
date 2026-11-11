@@ -172,6 +172,21 @@ MatmulAccuracyMemo::ozakiII(const Options &O, const AbstractMatmul &m,
   return memo;
 }
 
+// No entry from before the memo kept its keys was computed by this model.
+MatmulAccuracyMemo
+MatmulAccuracyMemo::tcecLibrary(const Options &O, const AbstractMatmul &m,
+                                const MatmulProfile &prof, double confidence,
+                                unsigned sampleLogBits, unsigned numSamples,
+                                TcecBackend backend) {
+  MatmulAccuracyMemo memo;
+  memo.key.add("model", "getTcecLibraryAccuracyCost");
+  memo.key.add("TCEC backend", tcecBackendName(backend));
+  addModelInputs(O, memo.key, m, prof, confidence, sampleLogBits, numSamples);
+  memo.path = entryPath(O, memo.key);
+  memo.key.add("accuracy model", kAccuracyModelIdentity);
+  return memo;
+}
+
 void MatmulAccuracyMemo::store(const Options &O, double accuracyCost,
                                double domainError) const {
   if (O.Herbie.Cache.empty())
@@ -243,6 +258,8 @@ bool MatmulAccuracyMemo::lookup(Session &S, double &accuracyCost,
     noteLegacyEntries(S);
     return false;
   }
+  if (legacyName.empty())
+    return false;
   SmallString<256> legacy(O.Herbie.ImportAccuracyMemo);
   sys::path::append(legacy, legacyName);
   auto buf = MemoryBuffer::getFile(legacy);

@@ -14,12 +14,12 @@
 ; RUN: grep -c 'was computed for a different accuracy model' %t/model.log | FileCheck --check-prefix=ALL %s
 
 ; An accuracy memo entry holds its key's parts. The compile after the first
-; finds all 13 entries under the same key and computes nothing. An entry whose
+; finds all 14 entries under the same key and computes nothing. An entry whose
 ; stored key differs from the compile's in one part is recomputed, and the
 ; compile says which part: here the sampling seed, and the identity of the
 ; accuracy model, which no earlier model listed as equivalent to this one has.
 
-; ALL: {{^13$}}
+; ALL: {{^14$}}
 
 ; EDITED-SEED: "seed": "1"
 ; EDITED-SEED-NOT: seed

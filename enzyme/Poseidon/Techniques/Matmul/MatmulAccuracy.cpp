@@ -1,12 +1,15 @@
-// Matmul accuracy model: profile-driven sampling and the Ozaki-II quantization
-// model. The model's identity is a digest of this file, FPKind.{h,cpp} and
-// UniformReal.{h,cpp}, so they hold only what decides the numbers it returns;
-// storing and finding those numbers is MatmulAccuracyMemo's.
+// Matmul accuracy model: profile-driven sampling and the arithmetic of each
+// candidate on the samples. The model's identity is a digest of the files
+// POSEIDON_ACCURACY_MODEL_FILES names (CMakeLists.txt), so they hold only what
+// decides the numbers it returns; storing and finding those numbers is
+// MatmulAccuracyMemo's.
 #include "Core/UniformReal.h"
 #include "MatmulAccuracyMemo.h"
 #include "MatmulInternal.h"
+#include "MatmulSimulation.h"
 #include "Pass/Session.h"
 
+#include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/Format.h"
 #include "llvm/Support/raw_ostream.h"
@@ -68,6 +71,89 @@ static std::string percentileLabel(double confidence) {
   return s;
 }
 
+static unsigned sampleCount(const Options &O) {
+  return std::max<unsigned>(8u, std::min<unsigned>(O.Model.NumSamples, 256u));
+}
+
+static void checkProfileShape(const AbstractMatmul &m,
+                              const MatmulProfile &prof, StringRef model) {
+  if (prof.a.size() != (size_t)m.M * m.K ||
+      prof.b.size() != (size_t)m.K * m.N ||
+      prof.gradD.size() != (size_t)m.M * m.N)
+    report_fatal_error(model + ": unexpected profile cell-vector shape");
+}
+
+namespace {
+// A candidate's product of sampled operands: A (M x K) and B (K x N),
+// row-major, into C (M x N).
+using SimulatedProduct =
+    function_ref<void(const std::vector<double> &A,
+                      const std::vector<double> &B, std::vector<double> &C)>;
+
+struct SampledError {
+  double accuracyCost = 0.0;
+  double domainError = 0.0;
+  // Some sample's error was not finite: the candidate overflowed.
+  bool nonFinite = false;
+};
+} // namespace
+
+// The candidate's product against the FP64 one on sampled operands. Per
+// sample, the error is the gradient-weighted absolute error summed over the
+// outputs; the accuracy cost is its mean over the samples where it is finite,
+// and the domain error (call-site budget) the `confidence` percentile of its
+// ratio to the weighted result, which cancels the size/exec scaling of the
+// bare sum.
+static SampledError sampleError(const Options &O, const AbstractMatmul &m,
+                                const MatmulProfile &prof, double confidence,
+                                unsigned sampleLogBits, unsigned numSamples,
+                                SimulatedProduct simulate, StringRef model) {
+  const size_t mk = (size_t)m.M * m.K;
+  const size_t kn = (size_t)m.K * m.N;
+  const size_t mn = (size_t)m.M * m.N;
+  std::mt19937_64 rng(O.Model.RandomSeed);
+  std::vector<double> Ad(mk), Bd(kn), gold(mn), cand(mn);
+  SampledError result;
+  double sumSampleErr = 0.0;
+  unsigned finiteSamples = 0;
+  std::vector<double> relSamples;
+  relSamples.reserve(numSamples);
+  for (unsigned s = 0; s < numSamples; ++s) {
+    for (size_t i = 0; i < mk; ++i)
+      Ad[i] = sampleCell(prof.a[i], rng, sampleLogBits);
+    for (size_t i = 0; i < kn; ++i)
+      Bd[i] = sampleCell(prof.b[i], rng, sampleLogBits);
+    for (unsigned mi = 0; mi < m.M; ++mi)
+      for (unsigned ni = 0; ni < m.N; ++ni) {
+        double accD = 0.0;
+        for (unsigned ki = 0; ki < m.K; ++ki)
+          accD += Ad[mi * m.K + ki] * Bd[ki * m.N + ni];
+        gold[mi * m.N + ni] = accD;
+      }
+    simulate(Ad, Bd, cand);
+
+    double sampleErr = 0.0, sampleDen = 0.0;
+    for (size_t i = 0; i < mn; ++i) {
+      double g = std::fabs(prof.gradD[i].sumGrad);
+      sampleErr += g * std::fabs(gold[i] - cand[i]);
+      sampleDen += g * std::fabs(gold[i]);
+    }
+    if (std::isfinite(sampleErr)) {
+      sumSampleErr += sampleErr;
+      ++finiteSamples;
+    } else {
+      result.nonFinite = true;
+    }
+    if (sampleDen > 0.0 && std::isfinite(sampleErr / sampleDen))
+      relSamples.push_back(sampleErr / sampleDen);
+  }
+  if (finiteSamples == 0)
+    report_fatal_error(model + ": unexpected all-non-finite samples");
+  result.accuracyCost = sumSampleErr / finiteSamples;
+  result.domainError = percentile(relSamples, confidence);
+  return result;
+}
+
 // Round `x` to `bits` significand bits, keeping the F64 exponent range: an
 // emulation scheme's captured precision (16 bits for two BF16 limbs, 22 for two
 // FP16/TF32 limbs) is not a hardware FPKind, and rounding to the nearest kind
@@ -97,15 +183,8 @@ double getMatmulAccuracyCost(Session &S, const AbstractMatmul &m,
                              FPKind exponentPrec, unsigned orderTileK,
                              unsigned inputMantBits) {
   const Options &O = S.Opts;
-  const unsigned numSamples =
-      std::max<unsigned>(8u, std::min<unsigned>(O.Model.NumSamples, 256u));
-  const size_t mk = (size_t)m.M * m.K;
-  const size_t kn = (size_t)m.K * m.N;
-  const size_t mn = (size_t)m.M * m.N;
-  if (prof.a.size() != mk || prof.b.size() != kn || prof.gradD.size() != mn)
-    report_fatal_error(
-        "getMatmulAccuracyCost: unexpected profile cell-vector shape");
-
+  checkProfileShape(m, prof, "getMatmulAccuracyCost");
+  const unsigned numSamples = sampleCount(O);
   const MatmulAccuracyMemo memo = MatmulAccuracyMemo::matmul(
       O, m, prof, confidence, sampleLogBits, numSamples, inputPrec, accPrec,
       exponentPrec, orderTileK, inputMantBits);
@@ -118,35 +197,22 @@ double getMatmulAccuracyCost(Session &S, const AbstractMatmul &m,
     }
   }
 
-  std::mt19937_64 rng(O.Model.RandomSeed);
-  unsigned overflowed = 0;
-  std::vector<double> Ad(mk), Bd(kn);
-  std::vector<double> Ar(mk), Br(kn);
-  std::vector<double> gold(mn), cand(mn);
-
-  double sumSampleErr = 0.0;
-  unsigned sampleCount = 0;
-  std::vector<double> relSamples; // per-sample relative domain error
-  relSamples.reserve(numSamples);
-  for (unsigned s = 0; s < numSamples; ++s) {
-    for (size_t i = 0; i < mk; ++i) {
-      Ad[i] = sampleCell(prof.a[i], rng, sampleLogBits);
+  std::vector<double> Ar, Br;
+  auto product = [&](const std::vector<double> &Ad,
+                     const std::vector<double> &Bd, std::vector<double> &C) {
+    Ar.resize(Ad.size());
+    Br.resize(Bd.size());
+    for (size_t i = 0; i < Ad.size(); ++i)
       Ar[i] = inputMantBits ? roundToMantBits(Ad[i], inputMantBits)
                             : roundToPrec(Ad[i], inputPrec);
-    }
-    for (size_t i = 0; i < kn; ++i) {
-      Bd[i] = sampleCell(prof.b[i], rng, sampleLogBits);
+    for (size_t i = 0; i < Bd.size(); ++i)
       Br[i] = inputMantBits ? roundToMantBits(Bd[i], inputMantBits)
                             : roundToPrec(Bd[i], inputPrec);
-    }
-
     for (unsigned mi = 0; mi < m.M; ++mi) {
       for (unsigned ni = 0; ni < m.N; ++ni) {
-        double accD = 0.0;
         double accC = 0.0;
         double tilePartial = 0.0; // orderTileK: per-k-tile partial dot
         for (unsigned ki = 0; ki < m.K; ++ki) {
-          accD += Ad[mi * m.K + ki] * Bd[ki * m.N + ni];
           double prod = Ar[mi * m.K + ki] * Br[ki * m.N + ni];
           if (orderTileK) {
             // Raised order: dot within the k-tile, then fold the tile partial
@@ -160,33 +226,14 @@ double getMatmulAccuracyCost(Session &S, const AbstractMatmul &m,
             accC = roundToPrec(accC + prod, accPrec);
           }
         }
-        gold[mi * m.N + ni] = accD;
-        cand[mi * m.N + ni] = accC;
+        C[mi * m.N + ni] = accC;
       }
     }
-
-    double sampleErr = 0.0, sampleDen = 0.0;
-    for (size_t i = 0; i < mn; ++i) {
-      double g = std::fabs(prof.gradD[i].sumGrad);
-      sampleErr += g * std::fabs(gold[i] - cand[i]);
-      sampleDen += g * std::fabs(gold[i]);
-    }
-    if (std::isfinite(sampleErr)) {
-      sumSampleErr += sampleErr;
-      ++sampleCount;
-    } else {
-      ++overflowed;
-    }
-    // Domain-error estimate (call-site budget): sensitivity-weighted relative
-    // output error; the ratio cancels the size/exec scaling of the bare sum.
-    if (sampleDen > 0.0 && std::isfinite(sampleErr / sampleDen))
-      relSamples.push_back(sampleErr / sampleDen);
-  }
-  if (sampleCount == 0)
-    report_fatal_error(
-        "getMatmulAccuracyCost: unexpected all-non-finite samples");
-  double acc = sumSampleErr / sampleCount;
-  double dom = percentile(relSamples, confidence);
+  };
+  SampledError e = sampleError(O, m, prof, confidence, sampleLogBits,
+                               numSamples, product, "getMatmulAccuracyCost");
+  double acc = e.accuracyCost;
+  double dom = e.domainError;
   if (O.Diagnostics.Print) {
     llvm::errs() << "DOMERR matmul in=" << fpKindName(inputPrec);
     if (inputMantBits)
@@ -199,9 +246,10 @@ double getMatmulAccuracyCost(Session &S, const AbstractMatmul &m,
   // Exponent-range adequacy: the absolute error above is blind to a format that
   // flushes the smallest operands to zero, so if the exponent format cannot
   // represent the smallest nonzero operand magnitude the profiler observed,
-  // charge -poseidon-exponent-penalty. Emulation schemes store values in a
-  // narrow-exponent base type, so the check uses `exponentPrec` (Invalid =
-  // inputPrec).
+  // charge -poseidon-exponent-penalty. The operands reach `exponentPrec`
+  // (Invalid = inputPrec) unscaled: a scheme that scales them first has its
+  // own simulation.
+  bool outOfRange = e.nonFinite;
   FPKind expK = (exponentPrec == FPKind::Invalid) ? inputPrec : exponentPrec;
   double minSub = minSubnormalForKind(expK);
   if (minSub > 0.0) {
@@ -213,16 +261,62 @@ double getMatmulAccuracyCost(Session &S, const AbstractMatmul &m,
       if (c.minMag > 0.0 && (opMinMag == 0.0 || c.minMag < opMinMag))
         opMinMag = c.minMag;
     if (opMinMag > 0.0 && opMinMag < minSub)
-      overflowed = 1;
+      outOfRange = true;
   }
   // A format that overflowed or flushed a profiled operand is refused on the
   // tolerance path as well, not only priced out of the budget path.
-  if (overflowed) {
+  if (outOfRange) {
     acc += O.Model.ExponentPenalty;
     dom = std::numeric_limits<double>::infinity();
   }
   if (domainErrOut)
     *domainErrOut = dom;
+  memo.store(O, acc, dom);
+  return acc;
+}
+
+double getTcecLibraryAccuracyCost(Session &S, const AbstractMatmul &m,
+                                  const MatmulProfile &prof, double confidence,
+                                  unsigned sampleLogBits, unsigned mode,
+                                  double *domainErrOut) {
+  if (mode != 1)
+    report_fatal_error("the matrix accuracy model simulates "
+                       "__poseidon_tcec_dgemm in mode 1 (FP16TCEC) only");
+  const Options &O = S.Opts;
+  checkProfileShape(m, prof, "getTcecLibraryAccuracyCost");
+  const unsigned numSamples = sampleCount(O);
+  const MatmulAccuracyMemo memo = MatmulAccuracyMemo::tcecLibrary(
+      O, m, prof, confidence, sampleLogBits, numSamples, kLinkedTcecBackend);
+  {
+    double cAcc, cDom;
+    if (memo.lookup(S, cAcc, cDom)) {
+      if (domainErrOut)
+        *domainErrOut = cDom;
+      return cAcc;
+    }
+  }
+
+  auto product = [&](const std::vector<double> &Ad,
+                     const std::vector<double> &Bd, std::vector<double> &C) {
+    simulateTcecDgemm(kLinkedTcecBackend, Ad.data(), Bd.data(), m.M, m.N, m.K,
+                      C.data());
+  };
+  SampledError e =
+      sampleError(O, m, prof, confidence, sampleLogBits, numSamples, product,
+                  "getTcecLibraryAccuracyCost");
+  double acc = e.accuracyCost;
+  double dom = e.domainError;
+  if (e.nonFinite) {
+    acc += O.Model.ExponentPenalty;
+    dom = std::numeric_limits<double>::infinity();
+  }
+  if (domainErrOut)
+    *domainErrOut = dom;
+  if (O.Diagnostics.Print)
+    llvm::errs() << "DOMERR tcec library backend="
+                 << tcecBackendName(kLinkedTcecBackend) << " "
+                 << percentileLabel(confidence) << "_relErr=" << dom
+                 << " (sumcost=" << acc << ")\n";
   memo.store(O, acc, dom);
   return acc;
 }
@@ -236,15 +330,8 @@ double getOzakiIIAccuracyCost(Session &S, const AbstractMatmul &m,
                               unsigned sampleLogBits, unsigned capturedBits,
                               double *domainErrOut) {
   const Options &O = S.Opts;
-  const unsigned numSamples =
-      std::max<unsigned>(8u, std::min<unsigned>(O.Model.NumSamples, 256u));
-  const size_t mk = (size_t)m.M * m.K;
-  const size_t kn = (size_t)m.K * m.N;
-  const size_t mn = (size_t)m.M * m.N;
-  if (prof.a.size() != mk || prof.b.size() != kn || prof.gradD.size() != mn)
-    report_fatal_error(
-        "getOzakiIIAccuracyCost: unexpected profile cell-vector shape");
-
+  checkProfileShape(m, prof, "getOzakiIIAccuracyCost");
+  const unsigned numSamples = sampleCount(O);
   const MatmulAccuracyMemo memo = MatmulAccuracyMemo::ozakiII(
       O, m, prof, confidence, sampleLogBits, numSamples, capturedBits);
   {
@@ -256,18 +343,11 @@ double getOzakiIIAccuracyCost(Session &S, const AbstractMatmul &m,
     }
   }
 
-  std::mt19937_64 rng(O.Model.RandomSeed);
-  unsigned overflowed = 0;
-  std::vector<double> Ad(mk), Bd(kn), Ar(mk), Br(kn), gold(mn), cand(mn);
-  double sumSampleErr = 0.0;
-  unsigned sampleCount = 0;
-  std::vector<double> relSamples;
-  relSamples.reserve(numSamples);
-  for (unsigned s = 0; s < numSamples; ++s) {
-    for (size_t i = 0; i < mk; ++i)
-      Ad[i] = sampleCell(prof.a[i], rng, sampleLogBits);
-    for (size_t i = 0; i < kn; ++i)
-      Bd[i] = sampleCell(prof.b[i], rng, sampleLogBits);
+  std::vector<double> Ar, Br;
+  auto product = [&](const std::vector<double> &Ad,
+                     const std::vector<double> &Bd, std::vector<double> &C) {
+    Ar.resize(Ad.size());
+    Br.resize(Bd.size());
     // Quantize A per row and B per column as the real kernel does: each row or
     // column is scaled by 2^(beta-1-ilogb(max)) and rounded to the integer
     // grid, so a small element keeps fewer than beta bits.
@@ -295,35 +375,17 @@ double getOzakiIIAccuracyCost(Session &S, const AbstractMatmul &m,
     }
     for (unsigned mi = 0; mi < m.M; ++mi)
       for (unsigned ni = 0; ni < m.N; ++ni) {
-        double accD = 0.0, accC = 0.0;
-        for (unsigned ki = 0; ki < m.K; ++ki) {
-          accD += Ad[mi * m.K + ki] * Bd[ki * m.N + ni];
+        double accC = 0.0;
+        for (unsigned ki = 0; ki < m.K; ++ki)
           accC += Ar[mi * m.K + ki] * Br[ki * m.N + ni]; // EXACT K-sum
-        }
-        gold[mi * m.N + ni] = accD;
-        cand[mi * m.N + ni] = accC;
+        C[mi * m.N + ni] = accC;
       }
-    double sampleErr = 0.0, sampleDen = 0.0;
-    for (size_t i = 0; i < mn; ++i) {
-      double g = std::fabs(prof.gradD[i].sumGrad);
-      sampleErr += g * std::fabs(gold[i] - cand[i]);
-      sampleDen += g * std::fabs(gold[i]);
-    }
-    if (std::isfinite(sampleErr)) {
-      sumSampleErr += sampleErr;
-      ++sampleCount;
-    } else {
-      ++overflowed;
-    }
-    if (sampleDen > 0.0 && std::isfinite(sampleErr / sampleDen))
-      relSamples.push_back(sampleErr / sampleDen);
-  }
-  if (sampleCount == 0)
-    report_fatal_error(
-        "getOzakiIIAccuracyCost: unexpected all-non-finite samples");
-  double acc = sumSampleErr / sampleCount;
-  double dom = percentile(relSamples, confidence);
-  if (overflowed) {
+  };
+  SampledError e = sampleError(O, m, prof, confidence, sampleLogBits,
+                               numSamples, product, "getOzakiIIAccuracyCost");
+  double acc = e.accuracyCost;
+  double dom = e.domainError;
+  if (e.nonFinite) {
     acc += O.Model.ExponentPenalty;
     dom = std::numeric_limits<double>::infinity();
   }
