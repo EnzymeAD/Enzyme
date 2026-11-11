@@ -69,6 +69,10 @@ Function *markerTargetOrNull(CallInst *CI) {
   return cast<Function>(fn);
 }
 
+Value *activityArg(LLVMContext &C, StringRef name) {
+  return MetadataAsValue::get(C, MDString::get(C, name));
+}
+
 Function *markerTarget(CallInst *CI) {
   Function *F = markerTargetOrNull(CI);
   if (!F) {
