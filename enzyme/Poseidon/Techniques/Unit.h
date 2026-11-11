@@ -166,6 +166,14 @@ private:
 
 // For the reports: a number, or null when it is not finite.
 llvm::json::Value jsonFloat(double v);
+// A candidate's entry of the curated rewrites, from its cost and accuracy
+// deltas (negative is faster, more accurate): its category and efficiency;
+// none when it is both slower and less accurate.
+struct Tradeoff {
+  llvm::StringLiteral category;
+  double efficiency;
+};
+std::optional<Tradeoff> classifyTradeoff(double compDelta, double accDelta);
 // An instruction's source location: file, line and column; empty without one.
 llvm::json::Object getSourceLocationJSON(llvm::Value *V);
 // An instruction's source location as file:line:col; empty without one.
