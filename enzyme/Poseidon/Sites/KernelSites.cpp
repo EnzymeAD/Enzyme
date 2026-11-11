@@ -221,9 +221,6 @@ bool lowerDeviceCallSites(Module &M) {
   if (bodies.empty())
     return false;
   LLVMContext &C = M.getContext();
-  auto activity = [&](StringRef name) {
-    return MetadataAsValue::get(C, MDString::get(C, name));
-  };
   for (Function *B : bodies) {
     double tau = takeHostBody(*B);
     for (CallBase *CB : callsOf(*B)) {
@@ -249,16 +246,17 @@ bool lowerDeviceCallSites(Module &M) {
       }
       SmallVector<Value *, 16> args{B};
       if (tau > 0.0) {
-        args.push_back(activity("poseidon_tau"));
+        args.push_back(activityArg(C, "poseidon_tau"));
         args.push_back(ConstantFP::get(Type::getDoubleTy(C), tau));
       }
       if (!CB->getType()->isVoidTy())
-        args.push_back(activity("enzyme_primal_return"));
+        args.push_back(activityArg(C, "enzyme_primal_return"));
       for (Value *a : CB->args()) {
         Type *T = a->getType();
-        args.push_back(activity(T->isPointerTy()         ? "poseidon_shadow"
-                                : T->isFloatingPointTy() ? "enzyme_out"
-                                                         : "enzyme_const"));
+        args.push_back(activityArg(C, T->isPointerTy() ? "poseidon_shadow"
+                                      : T->isFloatingPointTy()
+                                          ? "enzyme_out"
+                                          : "enzyme_const"));
         args.push_back(a);
       }
       auto *FT = FunctionType::get(CB->getType(), {PointerType::getUnqual(C)},

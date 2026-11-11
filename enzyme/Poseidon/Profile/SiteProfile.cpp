@@ -405,9 +405,6 @@ bool profileAnnotatedKernel(Session &S, Function &K, unsigned &nextSiteId) {
   // bound.
   Target::of(M).boundProfiledLaunch(*P);
 
-  auto activity = [&](StringRef name) {
-    return MetadataAsValue::get(C, MDString::get(C, name));
-  };
   IRBuilder<> B(BasicBlock::Create(C, "entry", P));
   SmallVector<Value *, 32> args{clone};
   unsigned shadow = K.arg_size();
@@ -420,7 +417,7 @@ bool profileAnnotatedKernel(Session &S, Function &K, unsigned &nextSiteId) {
     while (next != shadowed.end() && next->param == i)
       ++next;
     if (first == next) {
-      args.push_back(activity("enzyme_const"));
+      args.push_back(activityArg(C, "enzyme_const"));
       args.push_back(a);
       continue;
     }
@@ -448,7 +445,7 @@ bool profileAnnotatedKernel(Session &S, Function &K, unsigned &nextSiteId) {
       for (const Shadowed *f = first; f != next; ++f)
         sh = B.CreateInsertValue(sh, P->getArg(shadow++), f->path);
     }
-    args.push_back(activity("enzyme_dup"));
+    args.push_back(activityArg(C, "enzyme_dup"));
     args.push_back(a);
     args.push_back(sh);
   }
@@ -696,23 +693,20 @@ void emitProfiledHostCall(CallBase *CB, const HostSiteData &D) {
                            D.param, D.seed, D.paramNames, shadows});
   }
 
-  auto activity = [&](StringRef name) {
-    return MetadataAsValue::get(C, MDString::get(C, name));
-  };
   SmallVector<Value *, 32> args{D.clone};
   if (!CI->getType()->isVoidTy())
-    args.push_back(activity("enzyme_primal_return"));
+    args.push_back(activityArg(C, "enzyme_primal_return"));
   unsigned k = 0;
   for (Argument &A : D.clone->args()) {
     Value *a = CI->getArgOperand(A.getArgNo());
     if (A.getType()->isPointerTy()) {
-      args.push_back(activity("enzyme_dup"));
+      args.push_back(activityArg(C, "enzyme_dup"));
       args.push_back(a);
       args.push_back(B.CreateLoad(
           PtrTy, B.CreateConstInBoundsGEP2_32(arrTy, shadows, 0, k++)));
     } else {
-      args.push_back(activity(
-          A.getType()->isFloatingPointTy() ? "enzyme_out" : "enzyme_const"));
+      args.push_back(activityArg(
+          C, A.getType()->isFloatingPointTy() ? "enzyme_out" : "enzyme_const"));
       args.push_back(a);
     }
   }
@@ -942,9 +936,7 @@ CallInst *withShadows(CallInst *CI, Function &clone, const MarkerArgs &marker) {
     Value *a = CI->getArgOperand(i);
     if (llvm::any_of(marker.madeShadows,
                      [&](const auto &S) { return S.activity == i; }))
-      a = MetadataAsValue::get(
-          C,
-          MDString::get(C, constant.count(i) ? "enzyme_const" : "enzyme_dup"));
+      a = activityArg(C, constant.count(i) ? "enzyme_const" : "enzyme_dup");
     args.push_back(a);
     if (AllocaInst *obj = objectOf.lookup(i))
       args.push_back(intoShadow(a, obj, objects[obj].first, B));

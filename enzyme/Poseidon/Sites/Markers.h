@@ -13,6 +13,7 @@ namespace llvm {
 class CallBase;
 class CallInst;
 class Function;
+class LLVMContext;
 class Module;
 class Value;
 } // namespace llvm
@@ -29,6 +30,9 @@ void fail(llvm::CallBase *CI, const llvm::Twine &message);
 llvm::Function *calleeOf(llvm::CallInst *CI);
 llvm::Function *markerTargetOrNull(llvm::CallInst *CI);
 llvm::Function *markerTarget(llvm::CallInst *CI);
+// The argument of a marker call or an Enzyme request that says what the
+// argument after it is, as enzyme_dup does.
+llvm::Value *activityArg(llvm::LLVMContext &C, llvm::StringRef name);
 
 unsigned foldEnzymeGenerated(llvm::Function &body);
 llvm::Function *
