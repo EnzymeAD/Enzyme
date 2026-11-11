@@ -38,6 +38,9 @@ OffloadRuntime offloadRuntimeOf(const llvm::Module &M);
 // stub launches one.
 bool launchesKernels(const llvm::Module &M);
 
+// Whether `M` is the host half of a CUDA or HIP compilation.
+bool isOffloadHostHalf(const llvm::Module &M);
+
 // The id clang gives both halves of a HIP compilation.
 std::optional<llvm::StringRef> compilationUnitId(const llvm::Module &M);
 

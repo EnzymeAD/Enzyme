@@ -171,6 +171,13 @@ canonical form there; when it does not (for example `std::sqrt` is a libm call
 at -O1 and an intrinsic at -O2), the compile says so and asks for a new
 profile.
 
+In a CUDA or HIP compilation only device code holds sites: the compilation has
+one device and one cost model. The host half of a `__host__ __device__`
+function that calls `__poseidon_optimize` or carries `POSEIDON_OPTIMIZE`
+compiles as written, in profile generation and profile use alike, and so does
+a host function of that compilation, without a warning: the host half cannot
+tell the two apart. A host site belongs in a C or C++ translation unit.
+
 In device code the profiling build makes the shadow of every pointer a call made
 through `__poseidon_optimize` passes, at every execution of the call. A pointer
 into a local object of the calling kernel or device function (a

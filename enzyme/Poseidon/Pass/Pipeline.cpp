@@ -13,6 +13,7 @@
 #include "Sites/LaunchDescriptors.h"
 #include "Sites/Markers.h"
 #include "Targets/DeviceMath.h"
+#include "Targets/OffloadRuntime.h"
 #include "Targets/Target.h"
 #include "Techniques/Matmul/HostDispatch.h"
 #include "Twin.h"
@@ -65,15 +66,21 @@ bool enzymeAlreadyRan(Module &M) {
   return false;
 }
 
+// The host half of a CUDA or HIP compilation holds no site of the annotation
+// or the call form, whatever annotations and calls it carries
+// (lowerPerCallSites); the annotation of a kernel is its device half's.
 bool hasSite(const Options &O, Module &M) {
-  if (!O.Profiling.Kernels.empty() || !annotatedFunctions(M).empty())
+  const bool hostHalf = isOffloadHostHalf(M);
+  if (!hostHalf &&
+      (!O.Profiling.Kernels.empty() || !annotatedFunctions(M).empty()))
     return true;
   for (Function &F : M) {
     if (F.hasFnAttribute(kHostBody) || F.hasFnAttribute(kSiteCallee))
       return true;
-    if (!F.use_empty() && ((F.isDeclaration() && isMarkerCall(F.getName())) ||
-                           F.getName() == "__poseidon_site" ||
-                           F.getName() == "__poseidon_site_tau"))
+    if (!F.use_empty() &&
+        ((F.isDeclaration() && isMarkerCall(F.getName())) ||
+         (!hostHalf && (F.getName() == "__poseidon_site" ||
+                        F.getName() == "__poseidon_site_tau"))))
       return true;
   }
   return false;
