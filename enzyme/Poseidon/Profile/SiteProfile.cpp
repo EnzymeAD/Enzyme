@@ -751,12 +751,7 @@ bool profileHostSite(Session &S, Function &B, unsigned &nextSiteId) {
   }
   StringRef symbol = B.getName();
   symbol.consume_back("_poseidon_body");
-  auto [fnSymbol, where] = symbol.split(".poseidon.");
-  std::string name = llvm::demangle(fnSymbol.str());
-  if (!where.empty()) {
-    auto [callerSymbol, k] = where.rsplit('.');
-    name += " at call " + k.str() + " in " + llvm::demangle(callerSymbol.str());
-  }
+  std::string name = perCallSiteName(symbol);
   if (!D.ptrParams.empty()) {
     D.name = cString(M, name);
     D.param = constantArray(M, I32, param);
@@ -890,7 +885,7 @@ CallInst *withShadows(CallInst *CI, Function &clone, const MarkerArgs &marker) {
     }
     AllocaInst *obj = localObject(p, CI->getFunction());
     if (!obj) {
-      warn(CI, perCallSiteName(*body) + " no longer takes argument " +
+      warn(CI, perCallSiteName(body->getName()) + " no longer takes argument " +
                    Twine(S.param + 1) + " as a pointer into a local object; " +
                    "the call is not profiled");
       return nullptr;
@@ -951,7 +946,7 @@ CallInst *withShadows(CallInst *CI, Function &clone, const MarkerArgs &marker) {
   CI->replaceAllUsesWith(NC);
   CI->eraseFromParent();
 
-  errs() << "[poseidon-profgen] " << perCallSiteName(*body) << ": "
+  errs() << "[poseidon-profgen] " << perCallSiteName(body->getName()) << ": "
          << objects.size() << " shadow object(s), output(s)";
   for (const MarkerArgs::MadeShadow &S : marker.madeShadows)
     if (!constant.count(S.activity) && seedWidth[S.param] &&
