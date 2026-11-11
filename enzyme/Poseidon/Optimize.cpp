@@ -184,7 +184,7 @@ static void recognizeMatrixProducts(Session &S, Function &F,
                             abstractMatmuls);
     // Runtime-shape dense GEMMs (finite-element partial-assembly reduces). Runs
     // after the constant-trip recognizer and skips whatever that one claimed,
-    // so previously recognized sites keep their exact candidate sets.
+    // so a product both recognize keeps the constant-trip candidate set.
     findHostGemmLoopNests(O, F, *raiseSE, *raiseLI, profileHeader, profileMap,
                           abstractMatmuls);
   }
