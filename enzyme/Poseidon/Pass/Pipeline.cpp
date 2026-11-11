@@ -462,9 +462,9 @@ struct FinalizePass : PassParent<FinalizePass> {
   static bool isRequired() { return true; }
 };
 
-// A module without a site compiles as it does without the plugin; profile
-// generation also binds the profiler from main, wherever main is. The canonical
-// prefix runs first in a compile that generates or uses a profile.
+// A module without a site compiles as it does without the plugin, but that
+// profile generation binds the profiler from main, wherever main is. The
+// canonical prefix runs first in a compile that generates or uses a profile.
 struct IfSitePass : PassParent<IfSitePass> {
   ModulePassManager Prefix;
   ModulePassManager Pipeline;
@@ -474,8 +474,10 @@ struct IfSitePass : PassParent<IfSitePass> {
 
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &MAM) {
     const Options &O = sessionOf(M, MAM).Opts;
-    if (!O.Profiling.ProfileGenerate && !hasSite(O, M))
-      return PreservedAnalyses::all();
+    if (!hasSite(O, M))
+      return O.Profiling.ProfileGenerate && injectHostProfilerInit(M)
+                 ? PreservedAnalyses::none()
+                 : PreservedAnalyses::all();
     PreservedAnalyses PA = PreservedAnalyses::all();
     if (O.Profiling.profileAction())
       PA.intersect(Prefix.run(M, MAM));

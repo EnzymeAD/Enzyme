@@ -154,8 +154,9 @@ bool tryReadProfIdxMetadata(const llvm::Instruction *I, size_t &out);
 void injectBlockDimProbes(llvm::Module &M);
 
 // Profile-gen only, host module only: call the FP profiler's CUDA registration
-// from the top of main (see the definition for why not a static constructor).
-void injectHostProfilerInit(llvm::Module &M);
+// from the top of main (see the definition for why not a static constructor);
+// whether it placed the call.
+bool injectHostProfilerInit(llvm::Module &M);
 
 // Profile-gen only, device module only: pre-declare the probes with
 // enzyme_inactive so AD never differentiates them.

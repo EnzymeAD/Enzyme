@@ -478,18 +478,18 @@ void predeclareInactiveProfilerProbes(llvm::Module &M) {
 // profiler. Erring towards injection is deliberate: a wrongly skipped
 // injection loses the profile silently, a wrongly kept one fails loudly at
 // link.
-void injectHostProfilerInit(llvm::Module &M) {
+bool injectHostProfilerInit(llvm::Module &M) {
   using namespace llvm;
   if (Target::of(M).isDevice())
-    return;
+    return false;
   // A host-only build links no CUDA profiler runtime, so the call injected
   // below would be an undefined reference to __poseidon_profile_init_cuda.
   OffloadRuntime R = offloadRuntimeOf(M);
   if (R == OffloadRuntime::None)
-    return;
+    return false;
   Function *mainF = M.getFunction("main");
   if (!mainF || mainF->isDeclaration())
-    return;
+    return false;
   LLVMContext &Ctx = M.getContext();
   FunctionCallee initFn =
       M.getOrInsertFunction(deviceProfilerInit(R),
@@ -504,10 +504,11 @@ void injectHostProfilerInit(llvm::Module &M) {
     if (auto *CI = dyn_cast<CallInst>(&I))
       if (auto *CF = CI->getCalledFunction())
         if (CF->getName() == deviceProfilerInit(R))
-          return;
+          return false;
   IRBuilder<> B(&*mainF->getEntryBlock().getFirstInsertionPt());
   B.CreateCall(initFn, {})->setDoesNotThrow();
   llvm::errs() << "[poseidon] FP profiler CUDA registration injected at main\n";
+  return true;
 }
 
 // Launch geometry is a per-function fact: the probe is keyed by the
