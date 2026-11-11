@@ -28,7 +28,7 @@ a second pass plugin on top of Enzyme: it profiles a program's floating-point
 instructions (Enzyme differentiates the probes), then rewrites the program to
 run as fast as a user accuracy target allows, on CPUs and NVIDIA GPUs.
 Configure with `-DENZYME_POSEIDON=ON`; `enzyme/Poseidon/README.md` has the
-build, the usage and the reproduction packages.
+build and the usage.
 
 A short example of how to install Enzyme is below:
 ```

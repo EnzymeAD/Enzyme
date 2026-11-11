@@ -504,9 +504,9 @@ void armOzakiRect(const std::string &Csv, const Device &D) {
 }
 
 // The error-corrected dispatch has a backend: the built-in cuBLAS kernels, or
-// the cuMpSGEMM library the paper measured. Which one a device is faster with
-// is a measurement, so the caller names the library and the calibrator is
-// rebuilt against it rather than assumed.
+// the cuMpSGEMM library. Which one a device is faster with is a measurement, so
+// the caller names the library and the calibrator is rebuilt against it rather
+// than assumed.
 void armTcec(const std::string &Csv, const Device &D) {
   if (D.Hip) {
     outs() << "[calibrate] tcec: the error-corrected dispatch has no HIP "

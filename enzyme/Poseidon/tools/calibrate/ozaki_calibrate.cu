@@ -22,7 +22,7 @@
 #include <cuda_runtime.h>
 #endif
 
-// Square host dispatch (the entry ozp/dm_purify use for square GEMMs).
+// Square host dispatch (the entry a square GEMM is dispatched to).
 extern "C" void __poseidon_ozaki_dgemm(double *C, const double *A,
                                        const double *B, int N, int lda, int ldb,
                                        int ldc, int transA, int transB,
