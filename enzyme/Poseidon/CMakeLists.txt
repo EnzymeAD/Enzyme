@@ -35,6 +35,7 @@ set(POSEIDON_SRC
     Core/CacheKey.cpp
     Sites/Canonicalize.cpp
     CostModel.cpp
+    Core/CostTable.cpp
     Targets/DeviceMath.cpp
     Targets/Target.cpp
     Targets/Host.cpp
