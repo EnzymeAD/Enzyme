@@ -1,5 +1,7 @@
 #include "OffloadRuntime.h"
 
+#include "Target.h"
+
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Config/llvm-config.h"
@@ -29,6 +31,11 @@ bool launchesKernels(const Module &M) {
   return M.getFunction("__cuda_module_ctor") ||
          M.getFunction("__hip_module_ctor") ||
          llvm::any_of(M, [](const Function &F) { return isLaunchStub(F); });
+}
+
+bool isOffloadHostHalf(const Module &M) {
+  return !Target::of(M).isDevice() &&
+         (offloadRuntimeOf(M) != OffloadRuntime::None || launchesKernels(M));
 }
 
 std::optional<StringRef> compilationUnitId(const Module &M) {

@@ -171,8 +171,14 @@ void outlineHostFunction(Function &F, std::optional<double> tau) {
 // sites, taken here, before inlining, so that the generate and use compiles
 // name it alike at any -O level and for any target: its profile, DP table and
 // rewritten copy are that call's own. In device code the copy becomes a marker
-// site instead (lowerDeviceCallSites).
+// site instead (lowerDeviceCallSites). The host half of a CUDA or HIP
+// compilation holds no site: the compilation has one device and one cost
+// model, and the call of a host-device function is the device half's site.
+// There the call through the identity is left for the inliner to fold, as
+// without the plugin.
 bool lowerPerCallSites(const Options &O, Module &M) {
+  if (isOffloadHostHalf(M))
+    return false;
   Function *site = M.getFunction("__poseidon_site");
   Function *siteTau = M.getFunction("__poseidon_site_tau");
   if (!site && !siteTau)
@@ -289,8 +295,10 @@ bool lowerPerCallSites(const Options &O, Module &M) {
   return true;
 }
 
+// As lowerPerCallSites, the host half of a CUDA or HIP compilation holds no
+// site: a function carrying POSEIDON_OPTIMIZE there compiles as written.
 bool outlineHostSites(const Options &O, Module &M) {
-  if (Target::of(M).isDevice())
+  if (Target::of(M).isDevice() || isOffloadHostHalf(M))
     return false;
   auto annotated = annotatedFunctions(M);
   if (annotated.empty())
@@ -304,19 +312,16 @@ bool outlineHostSites(const Options &O, Module &M) {
   for (auto &[F, tau] : annotated) {
     if (isLaunchStub(*F) || F->hasFnAttribute(kSiteLowered))
       continue;
-    // An annotated mfem::forall body: its kernels are the sites, which the
-    // device half of a CUDA compilation owns. A lambda's closure is no
-    // pointer the profiler can shadow, so a host-only build leaves it alone.
+    // An annotated lambda marks the kernels that call it, which only a CUDA
+    // or HIP compilation has. Its closure is no pointer the profiler can
+    // shadow, so a host-only build leaves it alone.
     if (isLambdaCallOperator(*F)) {
-      if (launchesKernels(M))
-        F->addFnAttr(kNotASite);
-      else
-        diagnoseSite(*F,
-                     displayName(*F) +
-                         " is a lambda; POSEIDON_OPTIMIZE on a lambda marks "
-                         "the GPU kernels that call it, and this compilation "
-                         "has none. Emitting the original computation.",
-                     DS_Warning);
+      diagnoseSite(*F,
+                   displayName(*F) +
+                       " is a lambda; POSEIDON_OPTIMIZE on a lambda marks the "
+                       "GPU kernels that call it, and this compilation has "
+                       "none. Emitting the original computation.",
+                   DS_Warning);
       continue;
     }
     if (!active) {
