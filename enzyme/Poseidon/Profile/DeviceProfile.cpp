@@ -73,8 +73,9 @@ bool linkDeviceProfiler(Module &M, bool profileGenerate) {
   StringRef bitcode = target.profilerBitcode();
   if (bitcode.empty()) {
     const ProbeABI &P = target.probes();
-    const StringRef probes[] = {P.LogValue,   P.LogGradient, P.PerturbF64,
-                                P.PerturbF32, P.BlockDims,   P.PublishStatic};
+    const StringRef probes[] = {
+        P.LogValue,  P.LogGradient,   P.PerturbF64,          P.PerturbF32,
+        P.BlockDims, P.PublishStatic, P.OverlappingArguments};
     for (Function &F : M)
       for (Instruction &I : instructions(F))
         if (const auto *call = dyn_cast<CallBase>(&I))

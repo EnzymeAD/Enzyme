@@ -171,21 +171,33 @@ canonical form there; when it does not (for example `std::sqrt` is a libm call
 at -O1 and an intrinsic at -O2), the compile says so and asks for a new
 profile.
 
-In device code the pointers a call made through `__poseidon_optimize` passes
-point into local objects of the calling kernel or device function (a
+In device code the profiling build makes the shadow of every pointer a call made
+through `__poseidon_optimize` passes, at every execution of the call. A pointer
+into a local object of the calling kernel or device function (a
 `tensor<real_t, 3, 3> &` input, a `real_t *` output) or into an aggregate it
-takes by value (a kernel's closure, a `__grid_constant__` parameter). The
-profiling build gives each such object a shadow of its own, a local object of
-its type, zero, with 1.0 in what the call writes when the program may read it
-after the call, at every execution of the call; the call itself still reads
-and writes the object, and nothing else is stored through it. An object that
+takes by value (a kernel's closure, a `__grid_constant__` parameter) gets a
+local object of that object's type, zero, with 1.0 in what the call writes when
+the program may read it after the call. Any other pointer (into device memory,
+or a reference parameter of the caller) gets a local object that covers the
+bytes the call reaches through it, zero, with 1.0 wherever the call writes;
+those bytes have to be a constant range: every access at a constant offset from
+the pointer, in `fn` or in a function it passes the pointer to, and the pointer
+never stored, converted or passed where the pass cannot see. Pointers that lie a
+constant distance apart (one pointer and the same variable indices, through any
+casts) share one shadow, overlapping where they overlap; other pointers get
+shadows of their own, and the profiling run stops with a message at a call where
+the memory such a shadow stands for overlaps another argument's and the call
+writes into one of the two. The call itself reads and writes through the
+pointers it is given, and nothing else is stored through them. An object that
 holds pointers, and the address of an object the call never reads (an empty
-functor's), are passed as constants, and a call that passes a pointer into
-device memory runs as written with a warning. A `fn` whose body is an
-Enzyme request (`__enzyme_fwddiff` and the like) is profiled and rewritten in
-the code Enzyme generates for it. When the solve leaves every call site of a
-device compilation alone, the compilation emits the code as written: its
-module is compiled once more as without a profile.
+functor's), are passed as constants. A call that passes a pointer whose range is
+not constant (a loop over a length the call is given) runs as written, with a
+warning that names every such argument: copy it into a local object, or write
+the call with `__poseidon_fp_optimize` and shadows of your own. A `fn` whose
+body is an Enzyme request (`__enzyme_fwddiff` and the like) is profiled and
+rewritten in the code Enzyme generates for it. When the solve leaves every call
+site of a device compilation alone, the compilation emits the code as written:
+its module is compiled once more as without a profile.
 
 The accuracy target is empirical, not a formally verified bound.
 `-poseidon-tau` is compared against an error the accuracy model estimates by

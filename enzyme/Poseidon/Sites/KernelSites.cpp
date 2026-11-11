@@ -8,6 +8,8 @@
 #include "Targets/Target.h"
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/SmallSet.h"
 #include "llvm/Demangle/Demangle.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DiagnosticInfo.h"
@@ -205,6 +207,169 @@ bool pointsNowhere(Value *p) {
   return isa<ConstantPointerNull>(p) || isa<UndefValue>(p);
 }
 
+namespace {
+
+// accessedExtent: every use of the pointer, through constant address
+// arithmetic and into the functions it is passed to.
+struct ExtentWalk {
+  const DataLayout &DL;
+  PointerExtent ext;
+  bool anyAccess = false, anyWrite = false;
+  std::string why;
+  SmallSet<std::pair<const Argument *, int64_t>, 4> entered;
+  // The parameters the pointer is in on the way down.
+  SmallPtrSet<const Argument *, 4> active;
+
+  bool fail(const Twine &reason) {
+    why = reason.str();
+    return false;
+  }
+
+  void claim(int64_t off, MaybeAlign align) {
+    if (align && align->value() > ext.align) {
+      ext.align = align->value();
+      ext.alignedAt = off;
+    }
+  }
+
+  void access(int64_t off, uint64_t bytes, bool write) {
+    if (!bytes)
+      return;
+    const int64_t end = off + (int64_t)bytes;
+    ext.lo = anyAccess ? std::min(ext.lo, off) : off;
+    ext.hi = anyAccess ? std::max(ext.hi, end) : end;
+    anyAccess = true;
+    if (!write)
+      return;
+    ext.writeLo = anyWrite ? std::min(ext.writeLo, off) : off;
+    ext.writeHi = anyWrite ? std::max(ext.writeHi, end) : end;
+    anyWrite = true;
+  }
+
+  bool memoryAccess(int64_t off, Type *T, Align align, bool write) {
+    TypeSize bytes = DL.getTypeStoreSize(T);
+    if (bytes.isScalable())
+      return fail("accesses a scalable vector through");
+    access(off, bytes.getFixedValue(), write);
+    claim(off, align);
+    return true;
+  }
+
+  // An optimizer may load anywhere a parameter's attributes call
+  // dereferenceable, also after the extent is taken, so the extent covers it.
+  // A function that receives the pointer again at another offset while it is
+  // being walked reaches no constant range through it.
+  bool enter(Argument &A, int64_t off) {
+    if (!entered.insert({&A, off}).second)
+      return true;
+    if (!active.insert(&A).second)
+      return fail("passes to " + displayName(*A.getParent()) +
+                  ", which passes it on to itself at another offset");
+    access(off,
+           std::max(A.getDereferenceableBytes(),
+                    A.getDereferenceableOrNullBytes()),
+           false);
+    claim(off, A.getParamAlign());
+    const bool ok = walk(&A, off);
+    active.erase(&A);
+    return ok;
+  }
+
+  bool walk(Value *P, int64_t off) {
+    for (Use &U : P->uses()) {
+      auto *I = dyn_cast<Instruction>(U.getUser());
+      if (!I)
+        return fail("uses otherwise than to load and store through");
+      if (auto *GEP = dyn_cast<GetElementPtrInst>(I)) {
+        APInt delta(DL.getIndexTypeSizeInBits(GEP->getType()), 0);
+        if (!GEP->accumulateConstantOffset(DL, delta))
+          return fail("indexes with a value that is not a constant");
+        if (!walk(GEP, off + delta.getSExtValue()))
+          return false;
+      } else if (isa<BitCastInst, AddrSpaceCastInst>(I)) {
+        if (!walk(I, off))
+          return false;
+      } else if (auto *LI = dyn_cast<LoadInst>(I)) {
+        if (!memoryAccess(off, LI->getType(), LI->getAlign(), false))
+          return false;
+      } else if (auto *SI = dyn_cast<StoreInst>(I)) {
+        if (U.getOperandNo() != SI->getPointerOperandIndex())
+          return fail("stores to memory");
+        if (!memoryAccess(off, SI->getValueOperand()->getType(), SI->getAlign(),
+                          true))
+          return false;
+      } else if (auto *RMW = dyn_cast<AtomicRMWInst>(I)) {
+        if (U.getOperandNo() != RMW->getPointerOperandIndex())
+          return fail("stores to memory");
+        if (!memoryAccess(off, RMW->getValOperand()->getType(), RMW->getAlign(),
+                          true))
+          return false;
+      } else if (auto *CX = dyn_cast<AtomicCmpXchgInst>(I)) {
+        if (U.getOperandNo() != CX->getPointerOperandIndex())
+          return fail("stores to memory");
+        if (!memoryAccess(off, CX->getNewValOperand()->getType(),
+                          CX->getAlign(), true))
+          return false;
+      } else if (isa<MemTransferInst, MemSetInst>(I)) {
+        auto *MI = cast<MemIntrinsic>(I);
+        auto *len = dyn_cast<ConstantInt>(MI->getLength());
+        if (!len)
+          return fail("copies or sets through with a length that is not a "
+                      "constant");
+        const bool dest = U.getOperandNo() == 0;
+        access(off, len->getZExtValue(), dest);
+        claim(off, dest ? MI->getDestAlign()
+                        : cast<MemTransferInst>(MI)->getSourceAlign());
+      } else if (auto *II = dyn_cast<IntrinsicInst>(I);
+                 II &&
+                 (II->isLifetimeStartOrEnd() || II->isAssumeLikeIntrinsic())) {
+        continue;
+      } else if (isa<ICmpInst>(I)) {
+        continue;
+      } else if (auto *CB = dyn_cast<CallBase>(I)) {
+        if (!CB->isArgOperand(&U))
+          return fail("calls as a function");
+        const unsigned no = CB->getArgOperandNo(&U);
+        if (CB->doesNotAccessMemory(no) && CB->doesNotCapture(no))
+          continue;
+        if (Type *T = CB->getParamByValType(no)) {
+          if (!memoryAccess(off, T, CB->getParamAlign(no).valueOrOne(), false))
+            return false;
+          continue;
+        }
+        Function *callee = CB->getCalledFunction();
+        if (!callee || callee->isDeclaration() || no >= callee->arg_size())
+          return fail("passes to " +
+                      (callee ? displayName(*callee)
+                              : std::string("an indirect call")) +
+                      ", whose body the pass cannot see");
+        if (!enter(*callee->getArg(no), off))
+          return false;
+      } else if (isa<PHINode, SelectInst>(I)) {
+        return fail("merges with another pointer");
+      } else if (isa<PtrToIntInst>(I)) {
+        return fail("converts to an integer");
+      } else if (isa<ReturnInst>(I)) {
+        return fail("returns");
+      } else {
+        return fail("uses otherwise than to load and store through");
+      }
+    }
+    return true;
+  }
+};
+
+} // namespace
+
+std::optional<PointerExtent> accessedExtent(Argument &A, std::string &why) {
+  ExtentWalk W{A.getParent()->getParent()->getDataLayout(), {}};
+  if (!W.enter(A, 0)) {
+    why = W.why;
+    return std::nullopt;
+  }
+  return W.ext;
+}
+
 std::string perCallSiteName(StringRef symbol) {
   auto [fnSymbol, where] = symbol.split(".poseidon.");
   std::string name = llvm::demangle(fnSymbol.str());
@@ -218,8 +383,10 @@ std::string perCallSiteName(StringRef symbol) {
 // __poseidon_optimize in device code: every call of the copy lowerPerCallSites
 // made becomes a marker over that copy, so that profiling, deferral and the
 // solve are the marker's. Its pointers are marked poseidon_shadow for
-// profileSite, which makes shadows of the caller's objects whose extent it
-// knows (localObject); inlining has put the objects a call passes there by now.
+// profileSite, which makes the shadow of a pointer into an object of the
+// caller whose extent it knows (localObject; inlining has put the objects a
+// call passes there by now) or else of the constant range the call reaches
+// through it (accessedExtent).
 bool lowerDeviceCallSites(Module &M) {
   if (!Target::of(M).isDevice())
     return false;
@@ -230,23 +397,35 @@ bool lowerDeviceCallSites(Module &M) {
   for (Function *B : bodies) {
     double tau = takeHostBody(*B);
     for (CallBase *CB : callsOf(*B)) {
-      Function *caller = CB->getFunction();
+      if (!isa<CallInst>(CB)) {
+        warn(CB, perCallSiteName(B->getName()) +
+                     " is reached through an invoke, so this call is not a "
+                     "Poseidon site. The call runs as written.");
+        markOutlineTransparent(B);
+        continue;
+      }
       std::string why;
-      if (!isa<CallInst>(CB))
-        why = "is reached through an invoke";
-      for (Use &U : CB->args())
-        if (why.empty() && U->getType()->isPointerTy() &&
-            !pointsNowhere(U.get()) && !localObject(U.get(), caller))
-          why = ("takes argument " + Twine(U.getOperandNo() + 1) +
-                 " as a pointer into memory that is neither a local object "
-                 "of " +
-                 displayName(*caller) + " nor an aggregate it takes by value")
-                    .str();
+      for (Use &U : CB->args()) {
+        std::string reason;
+        if (!U->getType()->isPointerTy() || pointsNowhere(U.get()) ||
+            localObject(U.get(), CB->getFunction()) ||
+            accessedExtent(*B->getArg(U.getOperandNo()), reason))
+          continue;
+        why +=
+            (Twine(why.empty() ? "" : "; ") + "argument " +
+             Twine(U.getOperandNo() + 1) + " is a pointer the call " + reason)
+                .str();
+      }
       if (!why.empty()) {
-        warn(CB, perCallSiteName(B->getName()) + " " + why +
-                     ", so this call is not a Poseidon site: the pass makes "
-                     "shadows of those only, and __poseidon_fp_optimize takes "
-                     "the caller's own. The call runs as written.");
+        warn(CB, perCallSiteName(B->getName()) +
+                     " is not a Poseidon site: " + why +
+                     ". The pass makes the shadow of a pointer into a local "
+                     "object of the caller or an aggregate it takes by value, "
+                     "or else of the constant range of memory the call "
+                     "reaches through the pointer. Copy such an argument into "
+                     "a local object, or write the call with "
+                     "__poseidon_fp_optimize and shadows of your own. The "
+                     "call runs as written.");
         markOutlineTransparent(B);
         continue;
       }
