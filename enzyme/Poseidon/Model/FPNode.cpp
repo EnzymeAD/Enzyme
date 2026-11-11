@@ -756,6 +756,9 @@ double FPLLValue::getUpperBound() const { return ub; }
 
 Value *FPLLValue::getLLValue(IRBuilder<> &builder,
                              const ValueToValueMapTy *VMap) {
+  if (!value)
+    report_fatal_error("Poseidon: a rewrite names a value an earlier step "
+                       "erased");
   if (VMap) {
     assert(VMap->count(value) && "FPLLValue not found in passed-in VMap!");
     return VMap->lookup(value);
@@ -765,6 +768,18 @@ Value *FPLLValue::getLLValue(IRBuilder<> &builder,
 
 bool FPLLValue::classof(const FPNode *N) {
   return N->getType() == NodeType::LLValue;
+}
+
+void FPGraph::replaceErased(Value *erased, Value *now) {
+  auto it = valueToNodeMap.find(erased);
+  if (it == valueToNodeMap.end())
+    return;
+  auto *node = cast<FPLLValue>(it->second.get());
+  if (node->hasSymbol()) {
+    symbolToValueMap[node->symbol] = now;
+    valueToNodeMap[now] = std::make_shared<FPLLValue>(now, "__no", node->dtype);
+  }
+  node->value = nullptr;
 }
 
 std::string FPConst::toFullExpression(
