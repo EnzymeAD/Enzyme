@@ -37,10 +37,16 @@
 # CUDA or when the project sets POSEIDON_GPU_RUNTIME to HIP before
 # find_package; POSEIDON_MLLVM is -mllvm, or for HIP -Xclang -mllvm -Xclang,
 # since HIP's driver hands -mllvm to the device linker as well.
+# POSEIDON_AMDGPU_ARCH is the one AMD GPU processor the HIP runtimes and the
+# HIP device profiler are built for: profile generation compiles HIP device
+# code for that processor only.
 
 include(CMakeFindDependencyMacro)
 set(POSEIDON_HAS_CUDA @POSEIDON_HAS_CUDA@)
 set(POSEIDON_HAS_HIP @POSEIDON_HAS_HIP@)
+if(POSEIDON_HAS_HIP)
+  set(POSEIDON_AMDGPU_ARCH @POSEIDON_AMDGPU_ARCH@)
+endif()
 if(NOT DEFINED POSEIDON_GPU_RUNTIME)
   if(POSEIDON_HAS_CUDA)
     set(POSEIDON_GPU_RUNTIME CUDA)
