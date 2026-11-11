@@ -7,6 +7,7 @@
 #include "Profile/SiteProfile.h"
 #include "Session.h"
 #include "Sites/Annotations.h"
+#include "Sites/Canonicalize.h"
 #include "Sites/HostSites.h"
 #include "Sites/KernelSites.h"
 #include "Sites/LaunchDescriptors.h"
@@ -29,14 +30,6 @@
 #include "llvm/Support/Error.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/IPO/AlwaysInliner.h"
-#include "llvm/Transforms/Scalar/Float2Int.h"
-#include "llvm/Transforms/Scalar/GVN.h"
-#include "llvm/Transforms/Scalar/LoopDeletion.h"
-#include "llvm/Transforms/Scalar/LoopPassManager.h"
-#include "llvm/Transforms/Scalar/LoopRotation.h"
-#include "llvm/Transforms/Scalar/LoopUnrollPass.h"
-#include "llvm/Transforms/Scalar/LowerConstantIntrinsics.h"
-#include "llvm/Transforms/Scalar/SROA.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 
 #include <memory>
@@ -208,15 +201,7 @@ struct LatePass : PassParent<LatePass> {
                      << " Enzyme-generated call(s) into the deferred body\n";
     }
     FunctionPassManager Pre;
-    if (Level != OptimizationLevel::O0) {
-      Pre.addPass(Float2IntPass());
-      Pre.addPass(LowerConstantIntrinsicsPass());
-      LoopPassManager LPM;
-      LPM.addPass(LoopRotatePass(/*EnableHeaderDuplication=*/true, false));
-      LPM.addPass(LoopDeletionPass());
-      LPM.addPass(LoopFullUnrollPass());
-      Pre.addPass(createFunctionToLoopPassAdaptor(std::move(LPM)));
-    }
+    addCanonicalPreInline(Pre, Level);
     for (Function *F : bodies)
       Pre.run(*F, AMs.FAM);
 
@@ -225,8 +210,7 @@ struct LatePass : PassParent<LatePass> {
     Inline.run(M, AMs.MAM);
 
     FunctionPassManager Post;
-    Post.addPass(GVNPass());
-    Post.addPass(SROAPass(SROAOptions::PreserveCFG));
+    addCanonicalPostInline(Post);
     for (Function *F : bodies)
       Post.run(*F, AMs.FAM);
   }
@@ -513,19 +497,12 @@ struct IfSitePass : PassParent<IfSitePass> {
 void addCanonicalPrefix(ModulePassManager &MPM, OptimizationLevel Level) {
   if (Level != OptimizationLevel::O0) {
     FunctionPassManager OptimizePM;
-    OptimizePM.addPass(Float2IntPass());
-    OptimizePM.addPass(LowerConstantIntrinsicsPass());
-    LoopPassManager LPM;
-    LPM.addPass(LoopRotatePass(/*EnableHeaderDuplication=*/true, false));
-    LPM.addPass(LoopDeletionPass());
-    LPM.addPass(LoopFullUnrollPass());
-    OptimizePM.addPass(createFunctionToLoopPassAdaptor(std::move(LPM)));
+    addCanonicalPreInline(OptimizePM, Level);
     MPM.addPass(createModuleToFunctionPassAdaptor(std::move(OptimizePM)));
   }
   MPM.addPass(AlwaysInlinerPass());
   FunctionPassManager FPM;
-  FPM.addPass(GVNPass());
-  FPM.addPass(SROAPass(SROAOptions::PreserveCFG));
+  addCanonicalPostInline(FPM);
   MPM.addPass(createModuleToFunctionPassAdaptor(std::move(FPM)));
 }
 

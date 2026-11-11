@@ -26,7 +26,13 @@
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Transforms/InstCombine/InstCombine.h"
 #include "llvm/Transforms/Scalar/EarlyCSE.h"
+#include "llvm/Transforms/Scalar/Float2Int.h"
 #include "llvm/Transforms/Scalar/GVN.h"
+#include "llvm/Transforms/Scalar/LoopDeletion.h"
+#include "llvm/Transforms/Scalar/LoopPassManager.h"
+#include "llvm/Transforms/Scalar/LoopRotation.h"
+#include "llvm/Transforms/Scalar/LoopUnrollPass.h"
+#include "llvm/Transforms/Scalar/LowerConstantIntrinsics.h"
 #include "llvm/Transforms/Scalar/SROA.h"
 #include "llvm/Transforms/Scalar/SimplifyCFG.h"
 #include "llvm/Transforms/Utils/Cloning.h"
@@ -154,6 +160,23 @@ void setSlotMetadata(Function &F) {
       ++slotIdx;
     }
   }
+}
+
+void addCanonicalPreInline(FunctionPassManager &FPM, OptimizationLevel Level) {
+  if (Level == OptimizationLevel::O0)
+    return;
+  FPM.addPass(Float2IntPass());
+  FPM.addPass(LowerConstantIntrinsicsPass());
+  LoopPassManager LPM;
+  LPM.addPass(LoopRotatePass(/*EnableHeaderDuplication=*/true, false));
+  LPM.addPass(LoopDeletionPass());
+  LPM.addPass(LoopFullUnrollPass());
+  FPM.addPass(createFunctionToLoopPassAdaptor(std::move(LPM)));
+}
+
+void addCanonicalPostInline(FunctionPassManager &FPM) {
+  FPM.addPass(GVNPass());
+  FPM.addPass(SROAPass(SROAOptions::PreserveCFG));
 }
 
 std::string canonicalFormHash(const Function &F) {
