@@ -205,7 +205,7 @@ int main(int argc, char **argv) {
   bool ProfileGenerate = false, ProfileUse = false;
   bool IsCUDA = false, IsHIP = false, StopsBeforeLink = false, HasInput = false;
   std::string CudaPath = POSEIDON_DRIVER_CUDA_ROOT;
-  std::string RocmPath = POSEIDON_DRIVER_ROCM_ROOT;
+  StringRef RocmPathArg, HipPathArg;
 
   SmallVector<std::string, 64> User;
   for (int I = 1; I < argc; ++I) {
@@ -264,7 +264,10 @@ int main(int argc, char **argv) {
       IsHIP = true;
     } else if (A.starts_with("--rocm-path=")) {
       IsHIP = true;
-      RocmPath = A.substr(strlen("--rocm-path=")).str();
+      RocmPathArg = A.substr(strlen("--rocm-path="));
+    } else if (A.starts_with("--hip-path=")) {
+      IsHIP = true;
+      HipPathArg = A.substr(strlen("--hip-path="));
     } else if (stopsBeforeLink(A)) {
       StopsBeforeLink = true;
     } else if (!A.starts_with("-") || A == "-") {
@@ -299,6 +302,14 @@ int main(int argc, char **argv) {
   // -fgpu-rdc is HIP's spelling too.
   if (IsHIP)
     IsCUDA = false;
+  // The HIP runtime's libraries, from where clang takes the HIP runtime:
+  // --hip-path, HIP_PATH, --rocm-path, ROCM_PATH, else the ROCm Poseidon was
+  // built against.
+  std::string RocmPath = HipPathArg.str();
+  if (RocmPath.empty())
+    RocmPath = envOr("HIP_PATH", RocmPathArg);
+  if (RocmPath.empty())
+    RocmPath = envOr("ROCM_PATH", POSEIDON_DRIVER_ROCM_ROOT);
 
   if (ProfileGenerate && ProfileUse) {
     errs() << Prog
