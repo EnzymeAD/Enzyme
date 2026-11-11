@@ -86,6 +86,17 @@ if(POSEIDON_TCEC_USE_CUMPSGEMM)
 else()
   set(POSEIDON_TEST_TCEC_CUMPSGEMM False)
 endif()
+# The device profilers the plugin carries.
+if(TARGET poseidon_device_profiler)
+  set(POSEIDON_TEST_NVPTX_PROFILER True)
+else()
+  set(POSEIDON_TEST_NVPTX_PROFILER False)
+endif()
+if(TARGET poseidon_device_profiler_amdgpu)
+  set(POSEIDON_TEST_AMDGPU_PROFILER True)
+else()
+  set(POSEIDON_TEST_AMDGPU_PROFILER False)
+endif()
 
 configure_lit_site_cfg(
   ${CMAKE_CURRENT_SOURCE_DIR}/lit.site.cfg.py.in

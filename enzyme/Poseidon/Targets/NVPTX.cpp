@@ -139,6 +139,15 @@ public:
     return "";
 #endif
   }
+  std::string profilerMismatch(const Function &) const override {
+#ifdef POSEIDON_DEVICE_PROFILER
+    return "";
+#else
+    return "this build of Poseidon has no NVPTX device profiler, so it cannot "
+           "profile CUDA device code; configure it where CMake finds a CUDA "
+           "compiler";
+#endif
+  }
 };
 
 } // namespace

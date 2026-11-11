@@ -177,8 +177,12 @@ public:
               "' (POSEIDON_AMDGPU_ARCH) but " +
               F.getName() + " compiles for target-cpu '" + processor(F) + "'")
           .str();
-#endif
     return "";
+#else
+    return "this build of Poseidon has no AMDGPU device profiler, so it cannot "
+           "profile HIP device code; configure it with POSEIDON_ROCM_PATH and "
+           "an LLVM that builds the AMDGPU target";
+#endif
   }
 };
 

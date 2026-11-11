@@ -3,6 +3,7 @@
 #include "FPProfilerCUDA.h"
 #include "Targets/OffloadRuntime.h"
 #include "Targets/Target.h"
+#include "Utils.h"
 
 #include "llvm/ADT/StringSet.h"
 #include "llvm/Bitcode/BitcodeReader.h"
@@ -10,6 +11,7 @@
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/DiagnosticInfo.h"
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Linker/Linker.h"
@@ -66,11 +68,21 @@ bool linkDeviceProfiler(Module &M, bool profileGenerate) {
   if (GlobalVariable *T = M.getNamedGlobal(POSEIDON_CUDA_PROFILE_TABLE))
     if (!T->isDeclaration())
       return false;
-  // A build without the target's device profiler links none, and has no host
-  // half either, so the probes stay external and the program does not link.
+  // Without the target's device profiler the probes would stay external and
+  // the program would fail only at its link.
   StringRef bitcode = target.profilerBitcode();
-  if (bitcode.empty())
+  if (bitcode.empty()) {
+    const ProbeABI &P = target.probes();
+    const StringRef probes[] = {P.LogValue,   P.LogGradient, P.PerturbF64,
+                                P.PerturbF32, P.BlockDims,   P.PublishStatic};
+    for (Function &F : M)
+      for (Instruction &I : instructions(F))
+        if (const auto *call = dyn_cast<CallBase>(&I))
+          if (const Function *callee = call->getCalledFunction();
+              callee && is_contained(probes, callee->getName()))
+            reportUserError(I, target.profilerMismatch(F));
     return false;
+  }
   Expected<std::unique_ptr<Module>> parsed = parseBitcodeFile(
       MemoryBufferRef(bitcode, "FPProfilerDevice.bc"), M.getContext());
   if (!parsed)
