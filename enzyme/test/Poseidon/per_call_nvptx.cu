@@ -43,7 +43,7 @@ __attribute__((global)) void k(double *x) {
 // CHECK-DAG: [poseidon] _Z2sqd.poseidon._Z1kPd.0: the profiled program did not contain this site (no profile at {{.*}}); left unchanged
 // CHECK-DAG: [poseidon] _Z5scalePKdPd.poseidon._Z1kPd.1: the profiled program did not contain this site (no profile at {{.*}}); left unchanged
 // CHECK-DAG: [poseidon] _Z5weighRK6holderPKdPd.poseidon._Z1kPd.3: the profiled program did not contain this site (no profile at {{.*}}); left unchanged
-// CHECK-DAG: warning: {{.*}}Poseidon: scale(double const*, double*) at call 2 in k(double*) takes argument 1 as a pointer into memory that is not a local object of k(double*), so this call is not a Poseidon site: the pass makes shadows of local objects only, and __poseidon_fp_optimize takes the caller's own. The call runs as written.
+// CHECK-DAG: warning: {{.*}}Poseidon: scale(double const*, double*) at call 2 in k(double*) takes argument 1 as a pointer into memory that is neither a local object of k(double*) nor an aggregate it takes by value, so this call is not a Poseidon site: the pass makes shadows of those only, and __poseidon_fp_optimize takes the caller's own. The call runs as written.
 // IR-LABEL: define {{.*}} @_Z1kPd(
 // IR-NOT: call
 // IR: ret void

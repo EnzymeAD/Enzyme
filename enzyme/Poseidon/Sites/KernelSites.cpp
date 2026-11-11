@@ -177,12 +177,18 @@ CallInst *outlineKernelBody(Function &K, Function *&bodyOut) {
 // Device call sites: __poseidon_optimize in device code
 // --------------------------------------------------------------------------
 
-// The local object of `caller` that `p` points into, through the address
-// arithmetic its shadow can repeat; null if there is none.
-AllocaInst *localObject(Value *p, const Function *caller) {
+// The object of `caller` that `p` points into, through the address arithmetic
+// its shadow can repeat, when the pass knows the object's whole extent: a
+// static alloca, or an aggregate `caller` takes by value (byval). Null if there
+// is none. (An AMDGPU kernel takes an aggregate by reference into its constant
+// argument segment, and the frontend copies it into an alloca once its address
+// is taken.)
+Value *localObject(Value *p, const Function *caller) {
   for (;;) {
     if (auto *AI = dyn_cast<AllocaInst>(p))
       return AI->getFunction() == caller && AI->isStaticAlloca() ? AI : nullptr;
+    if (auto *A = dyn_cast<Argument>(p))
+      return A->getParent() == caller && A->hasByValAttr() ? A : nullptr;
     if (auto *GEP = dyn_cast<GetElementPtrInst>(p))
       p = GEP->getPointerOperand();
     else if (isa<BitCastInst, AddrSpaceCastInst>(p))
@@ -212,8 +218,8 @@ std::string perCallSiteName(StringRef symbol) {
 // __poseidon_optimize in device code: every call of the copy lowerPerCallSites
 // made becomes a marker over that copy, so that profiling, deferral and the
 // solve are the marker's. Its pointers are marked poseidon_shadow for
-// profileSite, which can only make shadows of local objects of the caller;
-// inlining has put the objects a call passes there by now.
+// profileSite, which makes shadows of the caller's objects whose extent it
+// knows (localObject); inlining has put the objects a call passes there by now.
 bool lowerDeviceCallSites(Module &M) {
   if (!Target::of(M).isDevice())
     return false;
@@ -232,15 +238,15 @@ bool lowerDeviceCallSites(Module &M) {
         if (why.empty() && U->getType()->isPointerTy() &&
             !pointsNowhere(U.get()) && !localObject(U.get(), caller))
           why = ("takes argument " + Twine(U.getOperandNo() + 1) +
-                 " as a pointer into memory that is not a local object of " +
-                 displayName(*caller))
+                 " as a pointer into memory that is neither a local object "
+                 "of " +
+                 displayName(*caller) + " nor an aggregate it takes by value")
                     .str();
       if (!why.empty()) {
         warn(CB, perCallSiteName(B->getName()) + " " + why +
                      ", so this call is not a Poseidon site: the pass makes "
-                     "shadows of local objects only, and "
-                     "__poseidon_fp_optimize takes the caller's own. The call "
-                     "runs as written.");
+                     "shadows of those only, and __poseidon_fp_optimize takes "
+                     "the caller's own. The call runs as written.");
         markOutlineTransparent(B);
         continue;
       }

@@ -173,12 +173,15 @@ profile.
 
 In device code the pointers a call made through `__poseidon_optimize` passes
 point into local objects of the calling kernel or device function (a
-`tensor<real_t, 3, 3> &` input, a `real_t *` output). The profiling build gives
-each such object a shadow of its own, zero, with 1.0 in what the call writes
-when the program may read it after the call, at every execution of the call; an
-object that holds pointers, and the address of an object the call never reads
-(an empty functor's), are passed as constants, and a call that passes a pointer
-into device memory runs as written with a warning. A `fn` whose body is an
+`tensor<real_t, 3, 3> &` input, a `real_t *` output) or into an aggregate it
+takes by value (a kernel's closure, a `__grid_constant__` parameter). The
+profiling build gives each such object a shadow of its own, a local object of
+its type, zero, with 1.0 in what the call writes when the program may read it
+after the call, at every execution of the call; the call itself still reads
+and writes the object, and nothing else is stored through it. An object that
+holds pointers, and the address of an object the call never reads (an empty
+functor's), are passed as constants, and a call that passes a pointer into
+device memory runs as written with a warning. A `fn` whose body is an
 Enzyme request (`__enzyme_fwddiff` and the like) is profiled and rewritten in
 the code Enzyme generates for it. When the solve leaves every call site of a
 device compilation alone, the compilation emits the code as written: its
