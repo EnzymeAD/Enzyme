@@ -4,7 +4,7 @@
 ; RUN: cp %t/c/launches_tcec_matmul.cu_*.json %t/site1.json
 ; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/raise_tcec -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv -poseidon-tau=1e-12 -poseidon-cache=%t/c -poseidon-unit=u -S -o /dev/null 2> %t/site2.err
 ; RUN: FileCheck --check-prefix=LOG %s < %t/site1.err
-; RUN: FileCheck --check-prefix=MANIFEST -DNM=12 %s < %t/site1.json
+; RUN: FileCheck --check-prefix=MANIFEST -DNMA=12 -DNMM=12 %s < %t/site1.json
 ; RUN: grep 'wrote descriptor' %t/site1.err > %t/site1.wrote
 ; RUN: grep 'wrote descriptor' %t/site2.err > %t/site2.wrote
 ; RUN: diff %t/site1.wrote %t/site2.wrote
@@ -13,7 +13,7 @@
 ; RUN: cp %t/c/launches_tcec_matmul.cu_*.json %t/joint1.json
 ; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/raise_tcec -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv -poseidon-tau=1e-12 -poseidon-cache=%t/c -poseidon-unit=u -poseidon-joint-dp -S -o /dev/null 2> %t/joint2.err
 ; RUN: FileCheck --check-prefix=JOINT %s < %t/joint1.err
-; RUN: FileCheck --check-prefix=MANIFEST -DNM=13 %s < %t/joint1.json
+; RUN: FileCheck --check-prefix=MANIFEST -DNMA=14 -DNMM=13 %s < %t/joint1.json
 ; RUN: grep 'wrote descriptor' %t/joint1.err > %t/joint1.wrote
 ; RUN: grep 'wrote descriptor' %t/joint2.err > %t/joint2.wrote
 ; RUN: diff %t/joint1.wrote %t/joint2.wrote
@@ -33,12 +33,12 @@
 ; LOG-NEXT: [ozaki-host-dispatch] wrote descriptor for _Z13matmul_kernelPKdS0_PdS1_: C=arg2 A=arg0 B=arg1 16x16x16 nm=12 (standalone)
 
 ; JOINT: JOINT: minimum accuracy cost within budget
-; JOINT: [ozaki-host-dispatch] wrote descriptor for _Z12alpha_kernelPKdS0_PdS1_: C=arg2 A=arg1 B=arg0 16x16x16 nm=13 (standalone)
+; JOINT: [ozaki-host-dispatch] wrote descriptor for _Z12alpha_kernelPKdS0_PdS1_: C=arg2 A=arg1 B=arg0 16x16x16 nm=14 (standalone)
 ; JOINT-NEXT: [ozaki-host-dispatch] wrote descriptor for _Z13matmul_kernelPKdS0_PdS1_: C=arg2 A=arg0 B=arg1 16x16x16 nm=13 (standalone)
 
 ; MANIFEST:      "host dispatch": [
-; MANIFEST-NEXT:   "_Z12alpha_kernelPKdS0_PdS1_ 2 1 0 16 1 [[NM]] 16 16 16 16 16 16 0 0 0 0",
-; MANIFEST-NEXT:   "_Z13matmul_kernelPKdS0_PdS1_ 2 0 1 16 1 [[NM]] 16 16 16 16 16 16 0 0 0 0"
+; MANIFEST-NEXT:   "_Z12alpha_kernelPKdS0_PdS1_ 2 1 0 16 1 [[NMA]] 16 16 16 16 16 16 0 0 0 0",
+; MANIFEST-NEXT:   "_Z13matmul_kernelPKdS0_PdS1_ 2 0 1 16 1 [[NMM]] 16 16 16 16 16 16 0 0 0 0"
 ; MANIFEST-NEXT: ],
 ; MANIFEST-NEXT: "profile generation": []
 

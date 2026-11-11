@@ -150,29 +150,22 @@ MatmulAccuracyMemo MatmulAccuracyMemo::matmul(
   return memo;
 }
 
+// No entry from before the memo kept its keys was computed by these two
+// models.
 MatmulAccuracyMemo
 MatmulAccuracyMemo::ozakiII(const Options &O, const AbstractMatmul &m,
                             const MatmulProfile &prof, double confidence,
                             unsigned sampleLogBits, unsigned numSamples,
-                            unsigned capturedBits) {
+                            unsigned moduli) {
   MatmulAccuracyMemo memo;
   memo.key.add("model", "getOzakiIIAccuracyCost");
-  memo.key.add("capturedBits", std::to_string(capturedBits));
+  memo.key.add("moduli", std::to_string(moduli));
   addModelInputs(O, memo.key, m, prof, confidence, sampleLogBits, numSamples);
   memo.path = entryPath(O, memo.key);
   memo.key.add("accuracy model", kAccuracyModelIdentity);
-  if (!O.Herbie.ImportAccuracyMemo.empty()) {
-    LegacyAccHash legacy(O, m, prof, sampleLogBits);
-    legacy.mix(0x6f7aULL);
-    legacy.mix(capturedBits);
-    if (confidence != kDefaultConfidence)
-      legacy.mixD(confidence);
-    memo.legacyName = legacy.name();
-  }
   return memo;
 }
 
-// No entry from before the memo kept its keys was computed by this model.
 MatmulAccuracyMemo
 MatmulAccuracyMemo::tcecLibrary(const Options &O, const AbstractMatmul &m,
                                 const MatmulProfile &prof, double confidence,

@@ -40,6 +40,26 @@ const char *tcecBackendName(TcecBackend backend);
 void simulateTcecDgemm(TcecBackend backend, const double *A, const double *B,
                        unsigned M, unsigned N, unsigned K, double *C);
 
+// One operand of __poseidon_ozaki_dgemm(_ex) as runtime/ozaki/ozaki_rt.cu
+// scales it: R vectors of K elements, element k of vector r at src[r * ld + k]
+// when `contiguous` and at src[k * ld + r] otherwise. The layout decides the
+// order in which the runtime sums a vector's squares.
+struct OzakiIIOperand {
+  const double *src;
+  unsigned ld;
+  unsigned R;
+  bool contiguous;
+};
+
+// P (A.R x B.R, row-major): the product of each vector of A with each vector
+// of B as __poseidon_ozaki_dgemm(_ex) returns it with nm moduli before its
+// alpha/beta epilogue, which is GEMMul8's fast mode, bit for bit wherever the
+// host's log2 and the device's __log2f put a scaling shift on the same side of
+// an integer. A vector whose sum of squares is not finite is outside the fast
+// mode's range, and its products are NaN.
+void simulateOzakiIIDgemm(unsigned nm, const OzakiIIOperand &A,
+                          const OzakiIIOperand &B, unsigned K, double *P);
+
 } // namespace poseidon
 
 #endif // POSEIDON_MATMUL_SIMULATION_H

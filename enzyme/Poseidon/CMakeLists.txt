@@ -118,6 +118,7 @@ set(POSEIDON_ACCURACY_MODEL_FILES
     Techniques/Matmul/MatmulAccuracy.cpp
     Techniques/Matmul/MatmulSimulation.h
     Techniques/Matmul/MatmulSimulation.cpp
+    runtime/ozaki/OzakiII.h
     runtime/tcec/tcec_scale.h
     Core/FPKind.h
     Core/FPKind.cpp
@@ -164,8 +165,12 @@ set_source_files_properties(
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
   set_source_files_properties(
     Core/ExpansionModel.cpp Core/UniformReal.cpp
-    Techniques/Matmul/MatmulSimulation.cpp
     PROPERTIES COMPILE_OPTIONS "-fno-fast-math;-ffp-contract=off")
+  # The runtimes' directed roundings change the rounding mode.
+  set_source_files_properties(
+    Techniques/Matmul/MatmulSimulation.cpp
+    PROPERTIES COMPILE_OPTIONS
+               "-fno-fast-math;-ffp-contract=off;-frounding-math")
 endif()
 include(GNUInstallDirs)
 

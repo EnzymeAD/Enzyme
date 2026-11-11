@@ -61,14 +61,9 @@ static double schemeAccuracyCost(const Product &P, const SchemeVariant &v,
                                  FPKind::F32, FPKind::F32, domainError,
                                  /*exponentPrec=*/v.operand, /*orderTileK=*/0,
                                  /*inputMantBits=*/splitCapturedBits(v));
-  case Scheme::Modular: {
-    unsigned log2K = 0;
-    for (unsigned kk = 1; kk < m.K; kk <<= 1)
-      ++log2K;
-    long capturedBits = ozakiIICapturedBits(modulusCount(v), log2K);
+  case Scheme::Modular:
     return getOzakiIIAccuracyCost(P.S, m, P.prof, P.confidence, P.sampleLogBits,
-                                  (unsigned)capturedBits, domainError);
-  }
+                                  modulusCount(v), domainError);
   case Scheme::Native:
     // Full FP64 but not the scalar chain's accumulation order, so the reorder
     // is priced through orderTileK instead of claiming exact zero.

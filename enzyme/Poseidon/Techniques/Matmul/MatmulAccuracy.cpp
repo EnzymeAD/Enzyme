@@ -321,19 +321,18 @@ double getTcecLibraryAccuracyCost(Session &S, const AbstractMatmul &m,
   return acc;
 }
 
-// Ozaki Scheme II: the integer K-sum is CRT-reconstructed exactly, so the only
-// error is the input quantization, which is per row of A and per column of B to
-// `capturedBits` bits, matching the computeSft+fillRes kernel; num_moduli sets
-// the captured bits.
+// Ozaki Scheme II with `moduli` moduli, as runtime/ozaki/ozaki_rt.cu computes
+// it on row-major operands: the shifts of A's rows from sums of squares over
+// contiguous vectors, those of B's columns over strided ones.
 double getOzakiIIAccuracyCost(Session &S, const AbstractMatmul &m,
                               const MatmulProfile &prof, double confidence,
-                              unsigned sampleLogBits, unsigned capturedBits,
+                              unsigned sampleLogBits, unsigned moduli,
                               double *domainErrOut) {
   const Options &O = S.Opts;
   checkProfileShape(m, prof, "getOzakiIIAccuracyCost");
   const unsigned numSamples = sampleCount(O);
   const MatmulAccuracyMemo memo = MatmulAccuracyMemo::ozakiII(
-      O, m, prof, confidence, sampleLogBits, numSamples, capturedBits);
+      O, m, prof, confidence, sampleLogBits, numSamples, moduli);
   {
     double cAcc, cDom;
     if (memo.lookup(S, cAcc, cDom)) {
@@ -343,43 +342,11 @@ double getOzakiIIAccuracyCost(Session &S, const AbstractMatmul &m,
     }
   }
 
-  std::vector<double> Ar, Br;
   auto product = [&](const std::vector<double> &Ad,
                      const std::vector<double> &Bd, std::vector<double> &C) {
-    Ar.resize(Ad.size());
-    Br.resize(Bd.size());
-    // Quantize A per row and B per column as the real kernel does: each row or
-    // column is scaled by 2^(beta-1-ilogb(max)) and rounded to the integer
-    // grid, so a small element keeps fewer than beta bits.
-    for (unsigned mi = 0; mi < m.M; ++mi) {
-      double rowmax = 0.0;
-      for (unsigned ki = 0; ki < m.K; ++ki)
-        rowmax = std::max(rowmax, std::fabs(Ad[mi * m.K + ki]));
-      double scl =
-          rowmax > 0.0
-              ? std::ldexp(1.0, (int)capturedBits - 1 - std::ilogb(rowmax))
-              : 1.0;
-      for (unsigned ki = 0; ki < m.K; ++ki)
-        Ar[mi * m.K + ki] = std::round(Ad[mi * m.K + ki] * scl) / scl;
-    }
-    for (unsigned ni = 0; ni < m.N; ++ni) {
-      double colmax = 0.0;
-      for (unsigned ki = 0; ki < m.K; ++ki)
-        colmax = std::max(colmax, std::fabs(Bd[ki * m.N + ni]));
-      double scl =
-          colmax > 0.0
-              ? std::ldexp(1.0, (int)capturedBits - 1 - std::ilogb(colmax))
-              : 1.0;
-      for (unsigned ki = 0; ki < m.K; ++ki)
-        Br[ki * m.N + ni] = std::round(Bd[ki * m.N + ni] * scl) / scl;
-    }
-    for (unsigned mi = 0; mi < m.M; ++mi)
-      for (unsigned ni = 0; ni < m.N; ++ni) {
-        double accC = 0.0;
-        for (unsigned ki = 0; ki < m.K; ++ki)
-          accC += Ar[mi * m.K + ki] * Br[ki * m.N + ni]; // EXACT K-sum
-        C[mi * m.N + ni] = accC;
-      }
+    simulateOzakiIIDgemm(moduli, {Ad.data(), m.K, m.M, /*contiguous=*/true},
+                         {Bd.data(), m.N, m.N, /*contiguous=*/false}, m.K,
+                         C.data());
   };
   SampledError e = sampleError(O, m, prof, confidence, sampleLogBits,
                                numSamples, product, "getOzakiIIAccuracyCost");
@@ -392,7 +359,7 @@ double getOzakiIIAccuracyCost(Session &S, const AbstractMatmul &m,
   if (domainErrOut)
     *domainErrOut = dom;
   if (O.Diagnostics.Print)
-    llvm::errs() << "DOMERR ozakiII capturedBits=" << capturedBits << " "
+    llvm::errs() << "DOMERR ozakiII nm=" << moduli << " "
                  << percentileLabel(confidence) << "_relErr=" << dom
                  << " (sumcost=" << acc << ")\n";
   memo.store(O, acc, dom);

@@ -49,7 +49,7 @@ public:
   static MatmulAccuracyMemo ozakiII(const Options &O, const AbstractMatmul &m,
                                     const MatmulProfile &prof,
                                     double confidence, unsigned sampleLogBits,
-                                    unsigned numSamples, unsigned capturedBits);
+                                    unsigned numSamples, unsigned moduli);
   // For getTcecLibraryAccuracyCost on these inputs, with `backend` linked.
   static MatmulAccuracyMemo
   tcecLibrary(const Options &O, const AbstractMatmul &m,

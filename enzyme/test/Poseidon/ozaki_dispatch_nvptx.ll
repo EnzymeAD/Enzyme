@@ -7,8 +7,8 @@
 ; RUN: %clang -O0 -x ir -fno-discard-value-names %t/host.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/Inputs/raise_tcec -mllvm -poseidon-cache=%t/tau12 -mllvm -poseidon-unit=tcec -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=HOST12 %s
 ; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/raise_tcec -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv -poseidon-print -S -poseidon-cache=%t/tau7 -poseidon-tau=1e-7 -o /dev/null 2>&1 | FileCheck --check-prefix=TAU7 %s
 ; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/raise_tcec -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv -poseidon-print -S -poseidon-cache=%t/tau10 -poseidon-tau=1e-10 -o /dev/null 2>&1 | FileCheck --check-prefix=TAU10 %s
-; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/raise_tcec -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv -poseidon-print -S -poseidon-cache=%t/tau15 -poseidon-unit=tcec -poseidon-tau=1e-15 -o /dev/null 2>&1 | FileCheck --check-prefix=TAU15 %s
-; RUN: %clang -O0 -x ir %t/host.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/Inputs/raise_tcec -mllvm -poseidon-cache=%t/tau15 -mllvm -poseidon-unit=tcec -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=HOST15 %s
+; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/raise_tcec -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv -poseidon-print -S -poseidon-cache=%t/tau16 -poseidon-unit=tcec -poseidon-tau=1e-16 -o /dev/null 2>&1 | FileCheck --check-prefix=TAU16 %s
+; RUN: %clang -O0 -x ir %t/host.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/Inputs/raise_tcec -mllvm -poseidon-cache=%t/tau16 -mllvm -poseidon-unit=tcec -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=HOST16 %s
 ; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/raise_tcec -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv -poseidon-print -S -poseidon-cache=%t/off -poseidon-tau=1e-12 -poseidon-ozaki-host-dispatch=false -o /dev/null 2>&1 | FileCheck --check-prefix=OFF %s
 ; Ozaki-II host dispatch selected by a tolerance: the scalar FP64 product of raise_scalar_tcec_nvptx.ll
 ; (same IR, same profile Inputs/raise_tcec) priced against the in-kernel raises and the host-dispatch
@@ -113,19 +113,19 @@ attributes #5 = { convergent nounwind "uniform-work-group-size" }
 ; TAU12-NEXT: #0 wmma m16n16k16 f16/f32  compCost/MAC=3.200000e+01  rel=6.250000e-02  domainError=3.137966e-04
 ; TAU12-NEXT: #1 tcec n=2 wmma m16n16k16 f16/f32  compCost/MAC=4.000000e+01  rel=7.812500e-02  domainError=1.572576e-07
 ; TAU12-NEXT: #2 tcec n=3 wmma m16n16k16 f16/f32  compCost/MAC=4.800000e+01  rel=9.375000e-02  domainError=5.874975e-08
-; TAU12-NEXT: #3 ozaki-ii nm=8 wmma m16n16k16 s8/s32  compCost/MAC=1.600000e+01  rel=3.125000e-02  domainError=1.919601e-08
-; TAU12-NEXT: #4 ozaki-ii nm=9 wmma m16n16k16 s8/s32  compCost/MAC=1.800000e+01  rel=3.515625e-02  domainError=1.237043e-09
-; TAU12-NEXT: #5 ozaki-ii nm=10 wmma m16n16k16 s8/s32  compCost/MAC=2.000000e+01  rel=3.906250e-02  domainError=8.318238e-11
-; TAU12-NEXT: #6 ozaki-ii nm=11 wmma m16n16k16 s8/s32  compCost/MAC=2.200000e+01  rel=4.296875e-02  domainError=5.322777e-12
-; TAU12-NEXT: #7 ozaki-ii nm=12 wmma m16n16k16 s8/s32  compCost/MAC=2.400000e+01  rel=4.687500e-02  domainError=3.148603e-13
-; TAU12-NEXT: #8 ozaki-ii nm=13 wmma m16n16k16 s8/s32  compCost/MAC=2.600000e+01  rel=5.078125e-02  domainError=2.044637e-14
-; TAU12-NEXT: #9 ozaki-ii nm=14 wmma m16n16k16 s8/s32  compCost/MAC=2.800000e+01  rel=5.468750e-02  domainError=5.085896e-15
+; TAU12-NEXT: #3 ozaki-ii nm=8 wmma m16n16k16 s8/s32  compCost/MAC=1.600000e+01  rel=3.125000e-02  domainError=7.986923e-09
+; TAU12-NEXT: #4 ozaki-ii nm=9 wmma m16n16k16 s8/s32  compCost/MAC=1.800000e+01  rel=3.515625e-02  domainError=5.811304e-10
+; TAU12-NEXT: #5 ozaki-ii nm=10 wmma m16n16k16 s8/s32  compCost/MAC=2.000000e+01  rel=3.906250e-02  domainError=4.205447e-11
+; TAU12-NEXT: #6 ozaki-ii nm=11 wmma m16n16k16 s8/s32  compCost/MAC=2.200000e+01  rel=4.296875e-02  domainError=2.759331e-12
+; TAU12-NEXT: #7 ozaki-ii nm=12 wmma m16n16k16 s8/s32  compCost/MAC=2.400000e+01  rel=4.687500e-02  domainError=1.840864e-13
+; TAU12-NEXT: #8 ozaki-ii nm=13 wmma m16n16k16 s8/s32  compCost/MAC=2.600000e+01  rel=5.078125e-02  domainError=1.220929e-14
+; TAU12-NEXT: #9 ozaki-ii nm=14 wmma m16n16k16 s8/s32  compCost/MAC=2.800000e+01  rel=5.468750e-02  domainError=8.567043e-16
 ; TAU12-NEXT: #10 tcec-dispatch wmma m16n16k16 f16/f32  compCost/MAC=1.400000e+01  rel=2.734375e-02  domainError={{[0-9.e+-]+}}
 ; TAU12-NEXT: #11 direct-dispatch cublas f16/f32  compCost/MAC=4.000000e+00  rel=7.812500e-03  domainError=3.137966e-04
 ; TAU12-NEXT: #12 direct-dispatch cublas bf16/f32  compCost/MAC=6.000000e+00  rel=1.171875e-02  domainError=2.340575e-03
 ; TAU12-NEXT: #13 direct-dispatch cublas tf32/f32  compCost/MAC=8.000000e+00  rel=1.562500e-02  domainError=3.137466e-04
 ; TAU12-NEXT: #14 native-dgemm cublas f64/f64  compCost/MAC=2.560000e+02  rel=5.000000e-01  domainError=0.000000e+00
-; TAU12: Poseidon error-budget: matmul -> ozaki-ii nm=12 wmma m16n16k16 s8/s32 (domain err 3.148603e-13 <= 1.000000e-12 at confidence 9.500000e-01)
+; TAU12: Poseidon error-budget: matmul -> ozaki-ii nm=12 wmma m16n16k16 s8/s32 (domain err 1.840864e-13 <= 1.000000e-12 at confidence 9.500000e-01)
 ; TAU12: Applying solution for matmul[0] -> ozaki-ii nm=12 wmma m16n16k16 s8/s32 (#7)
 ; TAU12: [ozaki-host-dispatch] wrote descriptor for _Z13matmul_kernelPKdS0_PdS1_: C=arg2 A=arg0 B=arg1 16x16x16 nm=12 (standalone)
 
@@ -138,19 +138,19 @@ attributes #5 = { convergent nounwind "uniform-work-group-size" }
 ; HOST12-NEXT: ret void
 ; HOST12-NOT: cudaLaunchKernel(ptr {{.*}}@_Z28__device_stub__matmul_kernel
 
-; TAU7: Poseidon error-budget: matmul -> ozaki-ii nm=8 wmma m16n16k16 s8/s32 (domain err 1.919601e-08 <= 1.000000e-07 at confidence 9.500000e-01)
+; TAU7: Poseidon error-budget: matmul -> ozaki-ii nm=8 wmma m16n16k16 s8/s32 (domain err 7.986923e-09 <= 1.000000e-07 at confidence 9.500000e-01)
 ; TAU7: Applying solution for matmul[0] -> ozaki-ii nm=8 wmma m16n16k16 s8/s32 (#3)
 ; TAU7: wrote descriptor for _Z13matmul_kernelPKdS0_PdS1_: C=arg2 A=arg0 B=arg1 16x16x16 nm=8 (standalone)
 
-; TAU10: Poseidon error-budget: matmul -> ozaki-ii nm=10 wmma m16n16k16 s8/s32 (domain err 8.318238e-11 <= 1.000000e-10 at confidence 9.500000e-01)
+; TAU10: Poseidon error-budget: matmul -> ozaki-ii nm=10 wmma m16n16k16 s8/s32 (domain err 4.205447e-11 <= 1.000000e-10 at confidence 9.500000e-01)
 ; TAU10: Applying solution for matmul[0] -> ozaki-ii nm=10 wmma m16n16k16 s8/s32 (#5)
 ; TAU10: wrote descriptor for _Z13matmul_kernelPKdS0_PdS1_: C=arg2 A=arg0 B=arg1 16x16x16 nm=10 (standalone)
 
-; TAU15: Poseidon error-budget: matmul -> native-dgemm cublas f64/f64 (domain err 0.000000e+00 <= 1.000000e-15 at confidence 9.500000e-01)
-; TAU15: Applying solution for matmul[0] -> native-dgemm cublas f64/f64 (#14)
-; TAU15: wrote descriptor for _Z13matmul_kernelPKdS0_PdS1_: C=arg2 A=arg0 B=arg1 16x16x16 nm=0 (standalone)
+; TAU16: Poseidon error-budget: matmul -> native-dgemm cublas f64/f64 (domain err 0.000000e+00 <= 1.000000e-16 at confidence 9.500000e-01)
+; TAU16: Applying solution for matmul[0] -> native-dgemm cublas f64/f64 (#14)
+; TAU16: wrote descriptor for _Z13matmul_kernelPKdS0_PdS1_: C=arg2 A=arg0 B=arg1 16x16x16 nm=0 (standalone)
 
-; HOST15: call void @__poseidon_ozaki_dgemm(ptr %2, ptr %0, ptr %1, i32 16, i32 16, i32 16, i32 16, i32 0, i32 0, double 1.000000e+00, double 0.000000e+00, ptr null, i32 0)
+; HOST16: call void @__poseidon_ozaki_dgemm(ptr %2, ptr %0, ptr %1, i32 16, i32 16, i32 16, i32 16, i32 0, i32 0, double 1.000000e+00, double 0.000000e+00, ptr null, i32 0)
 
 ; OFF-NOT: ozaki-ii
 ; OFF: Poseidon error-budget: matmul -> baseline F64 (no rewrite clears 1.000000e-12 at confidence 9.500000e-01 faster than F64)

@@ -7,16 +7,15 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// Shared by the compiler's Ozaki-II pricing and by runtime/ozaki/ozaki_rt.cu,
-// which includes it by its bare name: keep it free of LLVM and of anything
-// beyond C++14.
+// Shared by the compiler's Ozaki-II pricing and accuracy model and by
+// runtime/ozaki/ozaki_rt.cu, which includes it by its bare name: keep it free
+// of LLVM and of anything beyond C++14.
 //
 //===----------------------------------------------------------------------===//
 
 #ifndef POSEIDON_OZAKI_II_H
 #define POSEIDON_OZAKI_II_H
 
-#include <cmath>
 #include <cstdint>
 
 constexpr unsigned kOzakiIIMaxModuli = 14;
@@ -49,21 +48,5 @@ constexpr float kOzakiIILog2P[kOzakiIIMaxModuli + 1] = {
     0.0f,        0.0f,        0.0f,        11.4886732f, 15.4744444f,
     19.4486275f, 23.4050732f, 27.3555069f, 31.2875996f, 35.2071991f,
     39.1204758f, 43.0209236f, 46.9016991f, 50.762249f,  54.5805626f};
-
-// Bits captured per operand at modulus count nm for a reduction of length
-// 2^log2K: beta = clamp((bitlen(P) - 3 - ceil(log2 K)) / 2, 1, 50), the same
-// scaling ozaki_rt.cu applies (pozComputeConsts + poz_run_square).
-inline long ozakiIICapturedBits(unsigned nm, unsigned log2K) {
-  double l2 = 0.0;
-  for (unsigned i = 0; i < nm; ++i)
-    l2 += std::log2((double)kOzakiIIModuli[i]);
-  long log2P = (long)std::floor(l2) + 1;
-  long bits = (log2P - 3 - (long)log2K) / 2;
-  if (bits > 50)
-    bits = 50;
-  if (bits < 1)
-    bits = 1;
-  return bits;
-}
 
 #endif // POSEIDON_OZAKI_II_H
