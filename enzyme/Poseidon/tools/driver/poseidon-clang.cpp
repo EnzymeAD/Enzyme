@@ -27,7 +27,9 @@
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/ADT/StringSet.h"
 #include "llvm/Config/llvm-config.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Path.h"
@@ -98,35 +100,40 @@ bool isLanguageCXX(StringRef Lang) {
          Lang == "c++-header" || Lang == "cuda-cpp-output" || Lang == "hip";
 }
 
-// An option whose value is a SEPARATE argv entry. The value must reach clang
-// paired with its option and must never be read as a flag of its own: without
-// this, a value that happens to spell a Poseidon flag is rewritten into an
-// `-mllvm -poseidon-<x>` of its own and the pair is split, and a value that
-// happens to end in `.cu` silently switches the driver into CUDA mode.
-bool takesSeparateValue(StringRef A) {
-  static const char *const Opts[] = {"-Xcuda-ptxas",
-                                     "-Xcuda-nvlink",
-                                     "-Xclang",
-                                     "-Xlinker",
-                                     "-Xassembler",
-                                     "-Xpreprocessor",
-                                     "-Xarch_device",
-                                     "-Xarch_host",
-                                     "-Xoffload-linker",
-                                     "-mllvm",
-                                     "-include",
-                                     "-isystem",
-                                     "-idirafter",
-                                     "-iquote",
-                                     "-o",
-                                     "-x",
-                                     "-T",
-                                     "-u",
-                                     "-z"};
-  for (const char *O : Opts)
-    if (A == O)
-      return true;
-  return false;
+// How many argv entries after `A` are its value: clang's driver options whose
+// value can be the next entry (ClangSeparateOptions.def, as the clang the
+// plugin is built against has them, the MultiArg ones, and the
+// JoinedAndSeparate ones by their prefix). Such a value reaches clang paired
+// with its option and is never read as a flag or an input of its own: a value
+// that spells a Poseidon flag is not rewritten, and one that ends in .cu does
+// not make the compile CUDA.
+unsigned separateValues(StringRef A) {
+  static const StringSet<> One = {
+#define CLANG_SEPARATE_OPTION(Name) Name,
+#define CLANG_SEPARATE_OPTION_IN(Name, First, Last)
+#include "ClangSeparateOptions.def"
+#undef CLANG_SEPARATE_OPTION
+#undef CLANG_SEPARATE_OPTION_IN
+  };
+  static const StringMap<unsigned> Several = {
+      {"-sectalign", 3}, {"-sectcreate", 3}, {"-sectobjectsymbols", 2},
+      {"-sectorder", 3}, {"-segaddr", 2},    {"-segcreate", 3},
+      {"-segprot", 3}};
+  if (One.contains(A))
+    return 1;
+#define CLANG_SEPARATE_OPTION(Name)
+#define CLANG_SEPARATE_OPTION_IN(Name, First, Last)                            \
+  if (A == Name && First <= LLVM_VERSION_MAJOR &&                              \
+      (Last == 0 || LLVM_VERSION_MAJOR <= Last))                               \
+    return 1;
+#include "ClangSeparateOptions.def"
+#undef CLANG_SEPARATE_OPTION
+#undef CLANG_SEPARATE_OPTION_IN
+  for (StringRef Prefix : {"-Xarch_", "-Xoffload-compiler", "-Xoffload-linker",
+                           "-Xopenmp-target="})
+    if (A.starts_with(Prefix))
+      return 1;
+  return Several.lookup(A);
 }
 
 // The name and value of a Poseidon flag, -poseidon-<flag>[=<value>] or
@@ -230,9 +237,8 @@ int main(int argc, char **argv) {
       IsHIP = true;
     }
     User.push_back(A.str());
-    if (takesSeparateValue(A) && I + 1 < argc) {
+    for (unsigned N = separateValues(A); N && I + 1 < argc; --N)
       User.push_back(argv[++I]);
-    }
   }
 
   // The host half of a compile takes the launch descriptors of the device half
