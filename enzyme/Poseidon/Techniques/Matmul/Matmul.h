@@ -361,5 +361,13 @@ void generateMatmulCandidates(Session &S,
                               double confidence, unsigned sampleLogBits,
                               llvm::SmallVectorImpl<MatmulUnit> &out);
 
+// Per matmul, pick the cheapest candidate whose estimated relative domain error
+// is <= `budget` and that beats the F64 baseline; scalar subgraphs are left at
+// baseline in this mode. `confidence` is the level those errors were computed
+// at; the selector only reports it, since it is already in the numbers.
+llvm::SmallVector<SolutionStep>
+errorBudgetSelector(const Options &O, llvm::SmallVector<MatmulUnit, 4> &CMs,
+                    double budget, double confidence);
+
 } // namespace poseidon
 #endif // POSEIDON_MATMUL_H

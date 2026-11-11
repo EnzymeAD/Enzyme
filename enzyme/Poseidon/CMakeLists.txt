@@ -55,7 +55,7 @@ set(POSEIDON_SRC
     Model/Evaluators.cpp
     Techniques/Expansion.cpp
     Core/ExpansionModel.cpp
-    Pass/Explain.cpp
+    Explain.cpp
     Pass/Flags.cpp
     Pass/Session.cpp
     Core/FPKind.cpp
@@ -77,6 +77,9 @@ set(POSEIDON_SRC
     Techniques/Matmul/RaiseWMMA.cpp
     Model/Sampling.cpp
     Solvers.cpp
+    SiteTable.cpp
+    Pins.cpp
+    Report.cpp
     Subgraphs.cpp
     Techniques/Staging.cpp
     Techniques/Unit.cpp
