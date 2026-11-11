@@ -109,7 +109,6 @@ public:
   }
 
   bool isArray() const { return roots.size() > 1; }
-  bool sharesRoot(const RewriteUnit &other) const;
 
   void apply(size_t candidateIndex,
              std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>>

@@ -94,18 +94,6 @@ Routines routines(IRBuilder<> &B) { return Routines(IRArith{B}); }
 
 } // namespace
 
-DSValue emitTwoSum(IRBuilder<> &B, Value *a, Value *b) {
-  return routines(B).twoSum(a, b);
-}
-
-DSValue emitFastTwoSum(IRBuilder<> &B, Value *a, Value *b) {
-  return routines(B).dsFastTwoSum(a, b);
-}
-
-DSValue emitTwoProdFMA(IRBuilder<> &B, Value *a, Value *b) {
-  return routines(B).twoProd(a, b);
-}
-
 DSValue emitDSAdd(IRBuilder<> &B, DSValue x, DSValue y) {
   return routines(B).dsAdd(x, y);
 }

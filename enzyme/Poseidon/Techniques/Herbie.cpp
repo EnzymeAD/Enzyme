@@ -1343,13 +1343,6 @@ void RewriteUnit::apply(
   subgraph->outputs_rewritten += roots.size();
 }
 
-bool RewriteUnit::sharesRoot(const RewriteUnit &other) const {
-  for (Value *root : roots)
-    if (llvm::is_contained(other.roots, root))
-      return true;
-  return false;
-}
-
 // Lower is better
 double RewriteUnit::getCompCostDelta(CostModelState &CM,
                                      size_t candidateIndex) {

@@ -59,13 +59,5 @@ void getSampledPoints(
     const CancellationPlan *plan = nullptr, size_t count = 0,
     unsigned seedOffset = 0);
 
-void getSampledPoints(
-    const Options &O, const std::string &expr,
-    const std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>>
-        &valueToNodeMap,
-    const std::unordered_map<std::string, llvm::Value *> &symbolToValueMap,
-    llvm::SmallVector<llvm::MapVector<llvm::Value *, double>, 4>
-        &sampledPoints);
-
 } // namespace poseidon
 #endif // POSEIDON_SAMPLING_H

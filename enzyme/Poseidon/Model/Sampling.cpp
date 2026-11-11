@@ -267,20 +267,4 @@ void getSampledPoints(
   }
 }
 
-void getSampledPoints(
-    const Options &O, const std::string &expr,
-    const std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-    const std::unordered_map<std::string, Value *> &symbolToValueMap,
-    SmallVector<MapVector<Value *, double>, 4> &sampledPoints) {
-  SmallSet<std::string, 8> argStrSet;
-  getUniqueArgs(expr, argStrSet);
-
-  SmallVector<Value *, 4> inputs;
-  for (const auto &argStr : argStrSet) {
-    inputs.push_back(symbolToValueMap.at(argStr));
-  }
-
-  getSampledPoints(O, inputs, valueToNodeMap, symbolToValueMap, sampledPoints);
-}
-
 } // namespace poseidon
