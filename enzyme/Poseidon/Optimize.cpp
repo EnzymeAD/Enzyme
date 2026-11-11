@@ -5,6 +5,7 @@
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/ADT/StringSet.h"
 
 #include "llvm/Analysis/AssumptionCache.h"
 #include "llvm/Analysis/LoopInfo.h"
@@ -309,6 +310,22 @@ static void priceCandidates(FunctionFPState &st) {
     unit->price();
 }
 
+// Candidates are priced, and repriced by the solve, on scratch copies of the
+// site, and what the copies declare is not the module's: a replay prices
+// nothing, and its module is the solve's.
+static StringSet<> declaredFunctions(const Module &M) {
+  StringSet<> names;
+  for (const Function &G : M)
+    names.insert(G.getName());
+  return names;
+}
+
+static void eraseScratchDeclarations(Module &M, const StringSet<> &before) {
+  for (Function &G : make_early_inc_range(M))
+    if (G.isDeclaration() && G.use_empty() && !before.contains(G.getName()))
+      G.eraseFromParent();
+}
+
 SmallVector<SiteUnit *> solvedUnits(const FunctionFPState &st, bool target) {
   SmallVector<SiteUnit *> units;
   for (SiteUnit *unit : st.units)
@@ -400,7 +417,14 @@ bool collectFPCandidates(Session &S, Function &F, double errorTol,
   priceUnlessCached(S, st, profile.path);
 
   putOnApplicationScale(S, F, profile, st);
-  printCandidates(S, st);
+  if (st.table && st.table->hit) {
+    if (O.Diagnostics.Print)
+      llvm::errs() << "[poseidon] " << F.getName()
+                   << ": candidates not priced; the DP table read from the "
+                      "cache holds the prices its solve used\n";
+  } else {
+    printCandidates(S, st);
+  }
 
   return true;
 }
@@ -523,6 +547,7 @@ bool fpOptimize(Session &S, Function &F, double errorTol) {
   if (target > 0.0 && sampleLogBits == 0)
     sampleLogBits = 40;
 
+  const StringSet<> declared = declaredFunctions(*F.getParent());
   FunctionFPState st;
   if (!collectFPCandidates(S, F, errorTol, sampleLogBits, st)) {
     explainNothingToOptimize(S, F);
@@ -576,6 +601,7 @@ bool fpOptimize(Session &S, Function &F, double errorTol) {
   }
   if (rec)
     explainSolve(S, F, st, steps, record);
+  eraseScratchDeclarations(*F.getParent(), declared);
   return materializeFPSolution(S, F, st, steps);
 }
 
@@ -629,6 +655,7 @@ bool solveJointly(Session &S, Module &M, FunctionAnalysisManager &FAM) {
     return false;
   }
 
+  const StringSet<> declared = declaredFunctions(M);
   std::vector<std::unique_ptr<FunctionFPState>> states;
   for (auto &[F, errTol] : targets) {
     auto st = std::make_unique<FunctionFPState>();
@@ -676,6 +703,7 @@ bool solveJointly(Session &S, Module &M, FunctionAnalysisManager &FAM) {
   if (explain)
     for (auto *st : raw)
       explainSolve(S, *st->F, *st, perState[st], record);
+  eraseScratchDeclarations(M, declared);
   bool changed = false;
   for (auto *st : raw) {
     bool ch = materializeFPSolution(S, *st->F, *st, perState[st]);
