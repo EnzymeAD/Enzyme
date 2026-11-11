@@ -8,9 +8,9 @@
 
 // The action targets of this build tree's package for either GPU runtime,
 // without the runtime's toolchain: the HIP arm reads the package as a build
-// with the HIP runtimes would configure it. With HIP every Poseidon option
-// goes through -Xclang, and the action that loads Enzyme, profile generation,
-// also tells Enzyme that a HIP compile is an LTO pre-link compile, as
+// with the HIP runtimes would configure it. Every Poseidon option goes through
+// -Xclang, and with HIP the action that loads Enzyme, profile generation, also
+// tells Enzyme that a HIP compile is an LTO pre-link compile, as
 // poseidon-clang does. The package exports that option, as
 // Poseidon::EnzymeOptions and POSEIDON_ENZYME_OPTIONS, for a project that
 // loads Enzyme itself under Plain or ProfileUse, which do not carry it. With
@@ -27,7 +27,7 @@
 // HIP-NEXT: -- HIP POSEIDON_AMDGPU_ARCH: [gfx{{[0-9a-f]+}}]
 
 // CUDA: -- CUDA Plain: -fpass-plugin={{[^;]+}};-ffp-contract=on
-// CUDA-NEXT: -- CUDA ProfileGenerate: -fpass-plugin={{[^;]+}};-fpass-plugin={{[^;]+}};SHELL:-mllvm -poseidon-profile-generate;-ffp-contract=on
+// CUDA-NEXT: -- CUDA ProfileGenerate: -fpass-plugin={{[^;]+}};-fpass-plugin={{[^;]+}};SHELL:-Xclang -mllvm -Xclang -poseidon-profile-generate;-ffp-contract=on
 // CUDA-NEXT: -- CUDA ProfileUse: -fpass-plugin={{[^;]+}};-ffp-contract=on
 // CUDA-NEXT: -- CUDA EnzymeOptions: options-NOTFOUND
 // CUDA-NEXT: -- CUDA POSEIDON_ENZYME_OPTIONS: []

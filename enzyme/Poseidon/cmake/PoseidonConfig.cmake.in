@@ -1,8 +1,8 @@
 @PACKAGE_INIT@
 
 # The plugin, its runtimes and tools as Poseidon:: targets, and one interface
-# target per action with what poseidon-clang adds for it, for a project that
-# compiles with POSEIDON_CLANGXX (the clang the plugin is built against):
+# target per action, for a project that compiles with POSEIDON_CLANGXX (the
+# clang the plugin is built against):
 #
 #   Poseidon::Plain            the plugin, -ffp-contract=on,
 #                              poseidon/poseidon.h; the annotations compile,
@@ -33,13 +33,22 @@
 #                              poseidon-clang a later one of the user's wins).
 #
 # Any other -poseidon-<flag> is passed as "SHELL:${POSEIDON_MLLVM}
-# -poseidon-<flag>". The GPU runtimes are CUDA's, or HIP's in a build without
-# CUDA or when the project sets POSEIDON_GPU_RUNTIME to HIP before
-# find_package; POSEIDON_MLLVM is -mllvm, or for HIP -Xclang -mllvm -Xclang,
-# since HIP's driver hands -mllvm to the device linker as well.
+# -poseidon-<flag>". POSEIDON_MLLVM is -Xclang -mllvm -Xclang, which clang
+# hands to its compile jobs and to no linker (HIP's driver hands -mllvm to the
+# device linker as well), as poseidon-clang passes every Poseidon flag. The GPU
+# runtimes are CUDA's, or HIP's in a build without CUDA or when the project
+# sets POSEIDON_GPU_RUNTIME to HIP before find_package.
 # POSEIDON_AMDGPU_ARCH is the one AMD GPU processor the HIP runtimes and the
 # HIP device profiler are built for: profile generation compiles HIP device
 # code for that processor only.
+#
+# The actions add what poseidon-clang adds, but for three differences.
+# poseidon-clang also loads Enzyme's plugin under Plain and ProfileUse, which
+# a project does itself where its own code asks for derivatives. It names the
+# translation unit of each invocation with -poseidon-unit, which a project can
+# pass per target; without it the pass names the unit from HIP's compilation
+# id or the Poseidon flags. And it appends the runtime libraries to every link
+# line, also where the line names them already; here targets give them once.
 
 include(CMakeFindDependencyMacro)
 set(POSEIDON_HAS_CUDA @POSEIDON_HAS_CUDA@)
@@ -59,13 +68,12 @@ if(POSEIDON_GPU_RUNTIME STREQUAL "HIP")
     message(FATAL_ERROR "POSEIDON_GPU_RUNTIME is HIP, but this Poseidon was "
                         "built without POSEIDON_ROCM_PATH")
   endif()
-  set(POSEIDON_MLLVM "-Xclang -mllvm -Xclang")
   set(POSEIDON_ENZYME_OPTIONS
-      "SHELL:${POSEIDON_MLLVM} @POSEIDON_ENZYME_HIP_OPTION@")
+      "SHELL:-Xclang -mllvm -Xclang @POSEIDON_ENZYME_HIP_OPTION@")
 else()
-  set(POSEIDON_MLLVM "-mllvm")
   set(POSEIDON_ENZYME_OPTIONS "")
 endif()
+set(POSEIDON_MLLVM "-Xclang -mllvm -Xclang")
 # The CUDA runtimes link the toolkit's libraries; a project on the HIP runtimes
 # links none of them.
 if(POSEIDON_HAS_CUDA AND POSEIDON_GPU_RUNTIME STREQUAL "CUDA")

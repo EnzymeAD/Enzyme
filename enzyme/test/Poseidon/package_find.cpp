@@ -57,14 +57,14 @@
 // INST-NEXT: -- Poseidon plugins [[PREFIX]]/lib{{(64)?}}/Poseidon-{{[0-9]+}}.so [[PREFIX]]/lib/ClangEnzyme-{{[0-9]+}}.so
 // INST-NEXT: -- Poseidon include [[PREFIX]]/include
 
-// INSTCMD: -fpass-plugin=[[PREFIX]]/lib{{(64)?}}/Poseidon-{{[0-9]+}}.so -fpass-plugin=[[PREFIX]]/lib/ClangEnzyme-{{[0-9]+}}.so -mllvm -poseidon-profile-generate -ffp-contract=on
+// INSTCMD: -fpass-plugin=[[PREFIX]]/lib{{(64)?}}/Poseidon-{{[0-9]+}}.so -fpass-plugin=[[PREFIX]]/lib/ClangEnzyme-{{[0-9]+}}.so -Xclang -mllvm -Xclang -poseidon-profile-generate -ffp-contract=on
 // INSTCMD: libposeidon_profile_host.a
 
 // The installed driver takes the plugins, the header and the runtimes from its
 // installation, and stops when one of them is missing there.
 
 // INSTDRV: clang{{.*}} -fpass-plugin=[[PREFIX]]/lib{{(64)?}}/Poseidon-{{[0-9]+}}.so {{(-Xclang -load -Xclang [^ ]+ )?}}-fpass-plugin=[[PREFIX]]/lib/ClangEnzyme-{{[0-9]+}}.so
-// INSTDRV-SAME: -I[[PREFIX]]/include
+// INSTDRV-SAME: -isystem [[PREFIX]]/include
 // INSTDRV-SAME: -L[[PREFIX]]/lib{{(64)?}} -lposeidon_profile_host
 
 // NOENZYME: Enzyme plugin not found at [[PREFIX]]/lib/ClangEnzyme-{{[0-9]+}}.so
