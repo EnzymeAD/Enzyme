@@ -7,6 +7,7 @@
 ; RUN: sed -n '/^\*\*\* DP Table/,/^\*\*\* End of DP Table/p' %t/solve.log > %t/solve.table
 ; RUN: sed -n '/^\*\*\* DP Table/,/^\*\*\* End of DP Table/p' %t/replay.log > %t/replay.table
 ; RUN: diff %t/solve.table %t/replay.table
+; RUN: diff %t/solve.ll %t/replay.ll
 ; RUN: grep -B3 '"itemType": "CO"' %t/reprice/table.json | FileCheck --check-prefix=TABLE-CO %s
 ; RUN: grep -B3 '"itemType": "CS"' %t/reprice/table.json | FileCheck --check-prefix=TABLE-CS %s
 ; RUN: grep -B2 '"itemType": "CM"' %t/reprice/table.json | FileCheck --check-prefix=TABLE-CM --implicit-check-not=candidateKey %s
@@ -23,7 +24,8 @@
 ; frontier; table.json names an algebraic or precision step's candidate by key
 ; and a product step's by position. The second compile reads the table, binds
 ; every step to its unit again and prints the same table; the selected point
-; (a precision change and a raise) is applied as on the solve. The same for
+; (a precision change and a raise) is applied as on the solve, and the module
+; is the solve's. The same for
 ; exact_dp_two_matmuls_nvptx.ll, two products on one loop. The poseidon pass
 ; runs alone: the precision change calls libdevice float functions this
 ; hand-written module does not define, which poseidon-finalize refuses.
