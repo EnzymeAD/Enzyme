@@ -36,6 +36,20 @@
 // RUN:     -MF %t.dep.cu -I -poseidon-include %t.link.o -### -o %t.exe 2>&1 \
 // RUN:   | FileCheck --check-prefix=VALUES %s
 //
+// The runtimes go to a line that links: not to one that only writes
+// dependencies, a module or an AST, and not to one without an input, which
+// gets the user's arguments alone.
+// RUN: %poseidon_clangxx -Werror -poseidon-profile-generate -MM -MT %t.o -x c %s \
+// RUN:   | FileCheck --check-prefix=DEPS %s
+// RUN: env POSEIDON_ECHO=1 %poseidon_clangxx -Werror -poseidon-profile-use \
+// RUN:     -emit-ast -x c %s -### -o %t.ast 2>&1 \
+// RUN:   | FileCheck --check-prefix=NOLINK %s
+// RUN: env POSEIDON_ECHO=1 %poseidon_clangxx -Werror -poseidon-profile-use \
+// RUN:     --precompile -x c++-header %s -### -o %t.pcm 2>&1 \
+// RUN:   | FileCheck --check-prefix=NOLINK %s
+// RUN: env POSEIDON_ECHO=1 %poseidon_clangxx -v 2>&1 \
+// RUN:   | FileCheck --check-prefix=VERSION %s
+//
 // An option whose value is a separate argv entry keeps that value: the pair
 // reaches clang adjacent, and a value that spells a Poseidon flag is NOT
 // rewritten into a flag of its own. A Poseidon flag the user wrote after
@@ -87,6 +101,19 @@ int main(void) { return 0; }
 // VALUES: clang{{.*}} -MT -poseidon-tau=1 -MD -MF {{[^ ]+}}.dep.cu -I -poseidon-include
 // VALUES-NOT: -Xclang -mllvm -Xclang -poseidon-tau
 // VALUES-NOT: -lcudart
+
+// DEPS: {{.*}}.o: {{\\$}}
+// DEPS-NEXT: {{.*}}driver_flags.c
+
+// NOLINK: clang{{.*}} -Xclang -mllvm -Xclang -poseidon-profile-
+// NOLINK-NOT: -lposeidon
+// NOLINK-NOT: unused
+// NOLINK-NOT: "{{[^"]*}}ld{{(\.lld)?}}"
+
+// VERSION: clang++ -v{{ ?$}}
+// VERSION-NEXT: clang version
+// VERSION-NOT: unused
+// VERSION-NOT: "{{[^"]*}}ld{{(\.lld)?}}"
 
 // HELP: -poseidon-profile-generate
 // HELP: -poseidon-profile-use

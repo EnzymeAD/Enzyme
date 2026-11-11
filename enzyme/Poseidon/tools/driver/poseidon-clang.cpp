@@ -136,6 +136,43 @@ unsigned separateValues(StringRef A) {
   return Several.lookup(A);
 }
 
+// Whether clang stops before the link when given `A` (the options of
+// Driver::getFinalPhase), or the driver compiles one half of a GPU source.
+bool stopsBeforeLink(StringRef A) {
+  static const StringSet<> Stops = {"-E",
+                                    "--preprocess",
+                                    "-M",
+                                    "--dependencies",
+                                    "-MM",
+                                    "--user-dependencies",
+                                    "--precompile",
+                                    "--precompile-reduced-bmi",
+                                    "-extract-api",
+                                    "-fmodule-header",
+                                    "-fsyntax-only",
+                                    "-print-supported-cpus",
+                                    "--print-supported-cpus",
+                                    "-mcpu=help",
+                                    "-mtune=help",
+                                    "-print-enabled-extensions",
+                                    "--print-enabled-extensions",
+                                    "-module-file-info",
+                                    "-verify-pch",
+                                    "-rewrite-objc",
+                                    "-rewrite-legacy-objc",
+                                    "--analyze",
+                                    "-emit-cir",
+                                    "-emit-ast",
+                                    "-S",
+                                    "--assemble",
+                                    "-c",
+                                    "--compile",
+                                    "-emit-interface-stubs",
+                                    "--cuda-device-only",
+                                    "--cuda-host-only"};
+  return Stops.contains(A) || A.starts_with("-fmodule-header=");
+}
+
 // The name and value of a Poseidon flag, -poseidon-<flag>[=<value>] or
 // --poseidon-<flag>[=<value>].
 std::optional<StringRef> poseidonFlag(StringRef A) {
@@ -166,7 +203,7 @@ int main(int argc, char **argv) {
 
   bool WantCXX = Prog.contains("++");
   bool ProfileGenerate = false, ProfileUse = false;
-  bool IsCUDA = false, IsHIP = false, Links = true;
+  bool IsCUDA = false, IsHIP = false, StopsBeforeLink = false, HasInput = false;
   std::string CudaPath = POSEIDON_DRIVER_CUDA_ROOT;
   std::string RocmPath = POSEIDON_DRIVER_ROCM_ROOT;
 
@@ -228,13 +265,12 @@ int main(int argc, char **argv) {
     } else if (A.starts_with("--rocm-path=")) {
       IsHIP = true;
       RocmPath = A.substr(strlen("--rocm-path=")).str();
-    } else if (A == "-c" || A == "-S" || A == "-E" || A == "-fsyntax-only" ||
-               A == "--cuda-device-only" || A == "--cuda-host-only") {
-      Links = false;
-    } else if (A.ends_with(".cu")) {
-      IsCUDA = true;
-    } else if (A.ends_with(".hip")) {
-      IsHIP = true;
+    } else if (stopsBeforeLink(A)) {
+      StopsBeforeLink = true;
+    } else if (!A.starts_with("-") || A == "-") {
+      HasInput = true;
+      IsCUDA |= A.ends_with(".cu");
+      IsHIP |= A.ends_with(".hip");
     }
     User.push_back(A.str());
     for (unsigned N = separateValues(A); N && I + 1 < argc; --N)
@@ -244,7 +280,8 @@ int main(int argc, char **argv) {
   // The host half of a compile takes the launch descriptors of the device half
   // that compiled the same source under the same unit name, so every compile
   // job of this invocation gets one, and no other invocation gets it.
-  if (llvm::none_of(ArrayRef<char *>(argv + 1, argc - 1), namesUnit)) {
+  if (HasInput &&
+      llvm::none_of(ArrayRef<char *>(argv + 1, argc - 1), namesUnit)) {
     SmallString<256> Cwd;
     (void)sys::fs::current_path(Cwd);
     std::string Invocation(Cwd);
@@ -300,32 +337,37 @@ int main(int argc, char **argv) {
 
   SmallVector<std::string, 128> Cmd;
   Cmd.push_back(Clang);
-  // Before LLVM 22 clang parses -mllvm before loading -fpass-plugin, so the
-  // plugins' options are known only if they are also loaded with -load.
-  auto AddPlugin = [&](const std::string &P) {
-    Cmd.push_back("-fpass-plugin=" + P);
+  // Without an input clang compiles and links nothing (-v, --version,
+  // -print-*), and gets the user's arguments alone.
+  if (HasInput) {
+    // Before LLVM 22 clang parses -mllvm before loading -fpass-plugin, so the
+    // plugins' options are known only if they are also loaded with -load.
+    auto AddPlugin = [&](const std::string &P) {
+      Cmd.push_back("-fpass-plugin=" + P);
 #if LLVM_VERSION_MAJOR < 22
-    Cmd.append({"-Xclang", "-load", "-Xclang", P});
+      Cmd.append({"-Xclang", "-load", "-Xclang", P});
 #endif
-  };
-  AddPlugin(Plugin);
-  if (!Enzyme.empty())
-    AddPlugin(Enzyme);
-  // Every HIP device compile is an LTO pre-link compile, in which Enzyme leaves
-  // a derivative request to the post-link run unless told otherwise, and the
-  // device link loads no plugin. The requests profile generation emits, and a
-  // user's own request in a site, have to be lowered in the compile itself.
-  // Ahead of the user's arguments, so that a later -enzyme-lto-prelink wins.
-  if (IsHIP && !Enzyme.empty())
-    Cmd.append(
-        {"-Xclang", "-mllvm", "-Xclang", POSEIDON_DRIVER_ENZYME_HIP_OPTION});
-  Cmd.push_back("-I" + Include);
-  // Error-free transformations survive only if the compiler contracts within a
-  // statement and never across one.
-  Cmd.push_back("-ffp-contract=on");
+    };
+    AddPlugin(Plugin);
+    if (!Enzyme.empty())
+      AddPlugin(Enzyme);
+    // Every HIP device compile is an LTO pre-link compile, in which Enzyme
+    // leaves a derivative request to the post-link run unless told otherwise,
+    // and the device link loads no plugin. The requests profile generation
+    // emits, and a user's own request in a site, have to be lowered in the
+    // compile itself. Ahead of the user's arguments, so that a later
+    // -enzyme-lto-prelink wins.
+    if (IsHIP && !Enzyme.empty())
+      Cmd.append(
+          {"-Xclang", "-mllvm", "-Xclang", POSEIDON_DRIVER_ENZYME_HIP_OPTION});
+    Cmd.push_back("-I" + Include);
+    // Error-free transformations survive only if the compiler contracts within
+    // a statement and never across one.
+    Cmd.push_back("-ffp-contract=on");
+  }
   Cmd.append(User.begin(), User.end());
 
-  if (Links) {
+  if (HasInput && !StopsBeforeLink) {
     // clang links no CUDA runtime of its own, and every action here ends in a
     // device launch.
     if (IsCUDA && !CudaPath.empty()) {
