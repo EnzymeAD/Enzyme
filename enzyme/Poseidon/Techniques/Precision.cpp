@@ -1397,24 +1397,14 @@ void PrecisionUnit::addCuratedRewrites(json::Array &rewrites) {
     if (std::isnan(accDelta))
       continue;
 
-    std::string category;
+    // Emitted even though dominated: an all-dominated frontier must leave a
+    // record of why each candidate lost.
+    std::string category = "dominated";
     double efficiency = 0.0;
-    if (compDeltaVal <= 0 && accDelta <= 0) {
-      category = "free_win";
-      efficiency = std::abs(accDelta) + std::abs(compDeltaVal);
-    } else if (compDeltaVal <= 0 && accDelta > 0) {
-      category = "speed_for_accuracy";
-      efficiency = (accDelta > 1e-30) ? std::abs(compDeltaVal) / accDelta
-                                      : std::abs(compDeltaVal);
-    } else if (compDeltaVal > 0 && accDelta <= 0) {
-      category = "accuracy_for_speed";
-      efficiency = (compDeltaVal > 0) ? std::abs(accDelta) / compDeltaVal
-                                      : std::abs(accDelta);
-    } else {
-      // Emitted even though dominated: an all-dominated frontier must
-      // leave a record of why each candidate lost.
-      category = "dominated";
-      efficiency = 0.0;
+    if (std::optional<Tradeoff> tradeoff =
+            classifyTradeoff(compDeltaVal, accDelta)) {
+      category = tradeoff->category.str();
+      efficiency = tradeoff->efficiency;
     }
 
     json::Object rw;

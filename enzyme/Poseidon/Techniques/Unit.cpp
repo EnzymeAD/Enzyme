@@ -92,6 +92,20 @@ json::Value jsonFloat(double v) {
   return json::Value(nullptr);
 }
 
+std::optional<Tradeoff> classifyTradeoff(double compDelta, double accDelta) {
+  if (compDelta <= 0 && accDelta <= 0)
+    return Tradeoff{"free_win", std::abs(accDelta) + std::abs(compDelta)};
+  if (compDelta <= 0 && accDelta > 0)
+    return Tradeoff{"speed_for_accuracy", (accDelta > 1e-30)
+                                              ? std::abs(compDelta) / accDelta
+                                              : std::abs(compDelta)};
+  if (compDelta > 0 && accDelta <= 0)
+    return Tradeoff{"accuracy_for_speed", (compDelta > 0)
+                                              ? std::abs(accDelta) / compDelta
+                                              : std::abs(accDelta)};
+  return std::nullopt;
+}
+
 json::Object getSourceLocationJSON(Value *V) {
   json::Object loc;
   if (auto *I = dyn_cast<Instruction>(V)) {
