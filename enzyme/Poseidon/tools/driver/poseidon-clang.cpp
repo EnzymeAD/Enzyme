@@ -16,7 +16,7 @@
 // The driver execs the clang the plugins were built against with both pass
 // plugins in the order the pipeline needs, Poseidon's include directory, and
 // the runtime libraries the selected action requires. Every other
-// -poseidon-<flag> reaches the pass as -mllvm -poseidon-<flag>.
+// -poseidon-<flag> reaches the pass as -Xclang -mllvm -Xclang -poseidon-<flag>.
 //
 //===----------------------------------------------------------------------===//
 
@@ -36,6 +36,7 @@
 #include "llvm/Support/xxhash.h"
 
 #include <cstring>
+#include <optional>
 #include <string>
 
 using namespace llvm;
@@ -85,11 +86,11 @@ void printHelp(StringRef Prog) {
          "  -poseidon-explain=<dir>       write <func>.explain.json (see\n"
          "                                tools/explain/poseidon-explain)\n"
          "  -poseidon-help                this message\n\n"
-         "Any other -poseidon-<flag>[=<value>] is passed to the pass as\n"
-         "-mllvm -poseidon-<flag>[=<value>]. POSEIDON_PLUGIN and "
-         "ENZYME_PLUGIN\n"
-         "override the plugin paths baked in at build time; POSEIDON_ECHO=1\n"
-         "prints the clang command line this driver runs.\n";
+         "Any other -poseidon-<flag>[=<value>], with or without -mllvm before\n"
+         "it, reaches the pass as -Xclang -mllvm -Xclang -poseidon-<flag>.\n"
+         "POSEIDON_PLUGIN and ENZYME_PLUGIN override the plugin paths baked\n"
+         "in at build time; POSEIDON_ECHO=1 prints the clang command line\n"
+         "this driver runs.\n";
 }
 
 bool isLanguageCXX(StringRef Lang) {
@@ -128,6 +129,15 @@ bool takesSeparateValue(StringRef A) {
   return false;
 }
 
+// The name and value of a Poseidon flag, -poseidon-<flag>[=<value>] or
+// --poseidon-<flag>[=<value>].
+std::optional<StringRef> poseidonFlag(StringRef A) {
+  if (A.consume_front("-") &&
+      (A.consume_front("-poseidon-") || A.consume_front("poseidon-")))
+    return A;
+  return std::nullopt;
+}
+
 // Whether the argument names the translation unit itself, written as a
 // Poseidon flag or as the value of an option that forwards it.
 bool namesUnit(StringRef A) {
@@ -162,34 +172,51 @@ int main(int argc, char **argv) {
       return 0;
     }
 
-    StringRef Flag = A;
-    if (Flag.consume_front("-") &&
-        (Flag.consume_front("-poseidon-") || Flag.consume_front("poseidon-"))) {
-      StringRef Name = Flag.split('=').first;
+    // A Poseidon flag, bare or after clang's -mllvm. clang hands -Xclang to
+    // each of its compile jobs and to nothing else, so the flag reaches every
+    // compiler that loads the plugin and never a linker, on every target, and
+    // a line that only links is not warned about it.
+    std::optional<StringRef> Flag = poseidonFlag(A);
+    if (!Flag && A == "-mllvm" && I + 1 < argc &&
+        (Flag = poseidonFlag(argv[I + 1])))
+      ++I;
+    if (!Flag && A.starts_with("-mllvm="))
+      Flag = poseidonFlag(A.substr(strlen("-mllvm=")));
+    if (Flag) {
+      StringRef Name = Flag->split('=').first;
       if (Name == "profile-generate")
         ProfileGenerate = true;
       else if (Name == "profile-use")
         ProfileUse = true;
-      // A caller that already wrote -mllvm in front of the flag gets what it
-      // asked for; anyone else gets the -mllvm added here.
-      if (User.empty() || User.back() != "-mllvm")
-        User.push_back("-mllvm");
-      User.push_back(("-poseidon-" + Flag).str());
+      User.append(
+          {"-Xclang", "-mllvm", "-Xclang", ("-poseidon-" + *Flag).str()});
       continue;
     }
 
-    if (A == "-x" && I + 1 < argc) {
-      StringRef Lang = argv[I + 1];
+    StringRef Lang;
+    if (A == "-x" && I + 1 < argc)
+      Lang = argv[I + 1];
+    else if (A.starts_with("-x"))
+      Lang = A.substr(strlen("-x"));
+    StringRef Arch = A;
+    if (!Lang.empty()) {
       IsCUDA |= Lang == "cuda" || Lang == "cu";
       IsHIP |= Lang == "hip";
       WantCXX |= isLanguageCXX(Lang);
-    } else if (A.starts_with("--cuda-gpu-arch=") || A == "-fcuda-rdc" ||
-               A == "-fgpu-rdc") {
+    } else if (Arch.consume_front("--cuda-gpu-arch=") ||
+               Arch.consume_front("--offload-arch=")) {
+      // The processor tells the GPU; --cuda-gpu-arch is an alias of
+      // --offload-arch, also for HIP.
+      if (Arch.starts_with("gfx"))
+        IsHIP = true;
+      else if (Arch.starts_with("sm_") || A.starts_with("--cuda-gpu-arch="))
+        IsCUDA = true;
+    } else if (A == "-fcuda-rdc" || A == "-fgpu-rdc") {
       IsCUDA = true;
     } else if (A.starts_with("--cuda-path=")) {
       IsCUDA = true;
       CudaPath = A.substr(strlen("--cuda-path=")).str();
-    } else if (A.starts_with("--offload-arch=gfx") || A == "--hip-link") {
+    } else if (A == "--hip-link") {
       IsHIP = true;
     } else if (A.starts_with("--rocm-path=")) {
       IsHIP = true;
@@ -210,9 +237,7 @@ int main(int argc, char **argv) {
 
   // The host half of a compile takes the launch descriptors of the device half
   // that compiled the same source under the same unit name, so every compile
-  // job of this invocation gets one, and no other invocation gets it. An
-  // invocation that only links has no job to take it, which clang would warn
-  // about.
+  // job of this invocation gets one, and no other invocation gets it.
   if (llvm::none_of(ArrayRef<char *>(argv + 1, argc - 1), namesUnit)) {
     SmallString<256> Cwd;
     (void)sys::fs::current_path(Cwd);
@@ -222,30 +247,15 @@ int main(int argc, char **argv) {
       Invocation += argv[I];
     }
     User.insert(User.begin(),
-                {"--start-no-unused-arguments", "-mllvm",
+                {"-Xclang", "-mllvm", "-Xclang",
                  "-poseidon-unit=" + utohexstr(xxh3_64bits(Invocation),
                                                /*LowerCase=*/false,
-                                               /*Width=*/16),
-                 "--end-no-unused-arguments"});
+                                               /*Width=*/16)});
   }
 
   // -fgpu-rdc is HIP's spelling too.
   if (IsHIP)
     IsCUDA = false;
-  // HIP's driver hands -mllvm to the device linker as well, which knows no
-  // Poseidon flag; -Xclang reaches the compiler alone.
-  if (IsHIP) {
-    SmallVector<std::string, 64> Cc1;
-    for (size_t K = 0; K < User.size(); ++K) {
-      if (User[K] == "-mllvm" && K + 1 < User.size() &&
-          StringRef(User[K + 1]).starts_with("-poseidon-")) {
-        Cc1.append({"-Xclang", "-mllvm", "-Xclang", User[++K]});
-        continue;
-      }
-      Cc1.push_back(User[K]);
-    }
-    User = std::move(Cc1);
-  }
 
   if (ProfileGenerate && ProfileUse) {
     errs() << Prog
