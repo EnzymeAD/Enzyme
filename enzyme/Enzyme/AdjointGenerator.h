@@ -1312,6 +1312,126 @@ public:
     }
 
     if (gutils->isConstantValue(orig_ptr)) {
+      bool constantval = gutils->isConstantValue(orig_val) ||
+                         parseTBAA(I, DL, nullptr)[{-1}].isIntegral();
+      if (!constantval && !gutils->runtimeActivity &&
+          !isa<UndefValue>(orig_val) && !isa<ConstantPointerNull>(orig_val) &&
+          !isa<Function>(orig_val) && !isa<InlineAsm>(orig_val) &&
+          !isa<Constant>(orig_val)) {
+        SmallVector<Value *, 1> todo = {orig_ptr};
+        SmallPtrSet<Value *, 2> seen;
+        SmallVector<Value *, 1> roots;
+        while (!todo.empty()) {
+          Value *cur = todo.pop_back_val();
+          if (!seen.insert(cur).second)
+            continue;
+          auto baseObjs = getBaseObjects(cur);
+          if (baseObjs.size() != 1 || baseObjs[0] != cur) {
+            for (Value *v : baseObjs)
+              todo.push_back(v);
+            continue;
+          }
+          if (isa<AllocaInst>(cur) || isAllocationCall(cur, gutils->TLI) ||
+              isa<ConstantPointerNull>(cur) || isa<UndefValue>(cur))
+            continue;
+          if (auto *arg = dyn_cast<Argument>(cur)) {
+            if (arg->hasByValAttr())
+              continue;
+            roots.push_back(cur);
+            continue;
+          }
+          if (auto *LI = dyn_cast<LoadInst>(cur)) {
+            todo.push_back(LI->getPointerOperand());
+            continue;
+          }
+          if (isNVLoad(cur)) {
+            todo.push_back(cast<Instruction>(cur)->getOperand(0));
+            continue;
+          }
+          roots.push_back(cur);
+        }
+        if (!roots.empty()) {
+          bool hasOtherUse = false;
+          for (User *U : orig_val->users()) {
+            if (U == &I)
+              continue;
+            if (auto *UI = dyn_cast<Instruction>(U)) {
+              if (!gutils->isConstantInstruction(UI) ||
+                  !gutils->isConstantValue(UI) ||
+                  (retType != DIFFE_TYPE::CONSTANT && isa<ReturnInst>(UI))) {
+                hasOtherUse = true;
+                break;
+              }
+            }
+          }
+          bool mayBeRead = false;
+          if (hasOtherUse) {
+            SmallVector<Value *, 2> rtodo(roots.begin(), roots.end());
+            SmallPtrSet<Value *, 4> rseen;
+            while (!rtodo.empty()) {
+              Value *cur = rtodo.pop_back_val();
+              if (!rseen.insert(cur).second)
+                continue;
+              for (User *U : cur->users()) {
+                if (U == &I)
+                  continue;
+                if (isa<LoadInst>(U) || isNVLoad(U)) {
+                  if (seen.count(U))
+                    rtodo.push_back(U);
+                  else {
+                    mayBeRead = true;
+                    break;
+                  }
+                  continue;
+                }
+                if (auto *CB = dyn_cast<CallBase>(U)) {
+                  if (auto *II = dyn_cast<IntrinsicInst>(CB)) {
+                    if (II->isAssumeLikeIntrinsic() ||
+                        II->getIntrinsicID() == Intrinsic::lifetime_start ||
+                        II->getIntrinsicID() == Intrinsic::lifetime_end)
+                      continue;
+                  }
+                  Function *F = getFunctionFromCall(CB);
+                  if (isDebugFunction(F))
+                    continue;
+                  if (F && F->getName() == "julia.gc_loaded") {
+                    rtodo.push_back(U);
+                    continue;
+                  }
+                  mayBeRead = true;
+                  break;
+                }
+                if (isa<ReturnInst>(U)) {
+                  mayBeRead = true;
+                  break;
+                }
+                if (isa<GetElementPtrInst>(U) || isa<CastInst>(U) ||
+                    isa<PHINode>(U) || isa<SelectInst>(U))
+                  rtodo.push_back(U);
+              }
+              if (mayBeRead)
+                break;
+            }
+          }
+          if (!hasOtherUse || mayBeRead) {
+            std::string str;
+            raw_string_ostream ss(str);
+            ss << "Mismatched activity for: " << I
+               << " const ptr: " << *orig_ptr;
+            if (CustomErrorHandler) {
+              IRBuilder<> BuilderZ(gutils->getNewFromOriginal(&I));
+              LLVMBuilderRef BR = startCallbackBuilder(BuilderZ);
+              CustomErrorHandler(str.c_str(), wrap(&I),
+                                 ErrorType::MixedActivityError, gutils,
+                                 wrap(orig_ptr), BR);
+              finishCallbackBuilder(BR, BuilderZ);
+            } else {
+              EmitWarningAlways("MixedActivityError", I, ss.str(),
+                                MixedActivityHint);
+            }
+          }
+        }
+      }
       return;
     }
 
