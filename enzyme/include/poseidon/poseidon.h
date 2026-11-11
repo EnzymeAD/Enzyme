@@ -55,7 +55,11 @@
 #ifndef POSEIDON_PROFILE_H
 #define POSEIDON_PROFILE_H
 
-#define POSEIDON_OPTIMIZE __attribute__((annotate("poseidon")))
+// Both forms carry one argument, so that every Poseidon entry of
+// llvm.global.annotations has one type: clang types the array after its first
+// entry, and on AMDGPU an entry without arguments has another. The int 0 is no
+// accuracy target.
+#define POSEIDON_OPTIMIZE __attribute__((annotate("poseidon", 0)))
 #define POSEIDON_OPTIMIZE_TAU(t)                                               \
   __attribute__((annotate("poseidon", (double)(t))))
 

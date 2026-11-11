@@ -31,9 +31,9 @@ std::string shortDouble(double v) {
 
 // --------------------------------------------------------------------------
 // Attribute sites: a function or kernel carrying POSEIDON_OPTIMIZE
-// (__attribute__((annotate("poseidon")))) is a site whose annotated
+// (__attribute__((annotate("poseidon", 0)))) is a site whose annotated
 // computation is its whole body. POSEIDON_OPTIMIZE_TAU(t) passes the site's
-// accuracy target as the annotation's one argument.
+// accuracy target as the annotation's one argument instead.
 // --------------------------------------------------------------------------
 
 namespace {
@@ -56,6 +56,17 @@ void diagnoseSite(Function &F, const Twine &message,
 }
 
 namespace {
+
+// Whether an annotation's argument global is POSEIDON_OPTIMIZE's int 0.
+bool carriesNoTarget(Constant *args) {
+  auto *GV = dyn_cast<GlobalVariable>(args->stripPointerCasts());
+  if (!GV || !GV->hasInitializer())
+    return false;
+  auto *ST = dyn_cast<StructType>(GV->getValueType());
+  return ST && ST->getNumElements() == 1 &&
+         ST->getElementType(0)->isIntegerTy() &&
+         GV->getInitializer()->isNullValue();
+}
 
 // The value of an annotation's argument global when it is one double.
 std::optional<double> annotationTarget(Constant *args) {
@@ -138,7 +149,7 @@ MapVector<Function *, std::optional<double>> annotatedFunctions(Module &M) {
     std::optional<double> tau;
     Constant *args =
         entry->getNumOperands() > 4 ? entry->getOperand(4) : nullptr;
-    if (args && !args->isNullValue()) {
+    if (args && !args->isNullValue() && !carriesNoTarget(args)) {
       tau = annotationTarget(args);
       if (!tau) {
         diagnoseSite(*fn,
