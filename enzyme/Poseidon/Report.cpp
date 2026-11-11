@@ -10,6 +10,8 @@
 #include "Report.h"
 #include "Pass/Session.h"
 
+#include "FPProfileName.h"
+
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/Path.h"
@@ -54,6 +56,9 @@ void emitReport(Session &S, StringRef funcName, const CostScale &scale,
       return;
     }
   }
+  // Named as the site's profile is, which keeps a mangled name within a file
+  // name's length.
+  const std::string stem = profileNameStem(funcName.str());
 
   json::Object report;
   report["function"] = funcName.str();
@@ -93,7 +98,7 @@ void emitReport(Session &S, StringRef funcName, const CostScale &scale,
   report["pareto_points"] = std::move(paretoPoints);
 
   std::string jsonFile =
-      (Twine(O.Diagnostics.ReportPath) + "/" + funcName + ".json").str();
+      (Twine(O.Diagnostics.ReportPath) + "/" + stem + ".json").str();
   raw_fd_ostream jsonOut(jsonFile, EC, sys::fs::OF_Text);
   if (EC) {
     llvm::errs() << "Error writing JSON report: " << EC.message() << "\n";
@@ -103,7 +108,7 @@ void emitReport(Session &S, StringRef funcName, const CostScale &scale,
   }
 
   std::string textFile =
-      (Twine(O.Diagnostics.ReportPath) + "/" + funcName + ".txt").str();
+      (Twine(O.Diagnostics.ReportPath) + "/" + stem + ".txt").str();
   raw_fd_ostream textOut(textFile, EC, sys::fs::OF_Text);
   if (EC) {
     llvm::errs() << "Error writing text report: " << EC.message() << "\n";
@@ -216,8 +221,7 @@ void emitReport(Session &S, StringRef funcName, const CostScale &scale,
       sortedRewrites.push_back(std::move(v));
 
     std::string rewritesFile =
-        (Twine(O.Diagnostics.ReportPath) + "/" + funcName + "_rewrites.json")
-            .str();
+        (Twine(O.Diagnostics.ReportPath) + "/" + stem + "_rewrites.json").str();
     raw_fd_ostream rwOut(rewritesFile, EC, sys::fs::OF_Text);
     if (EC) {
       llvm::errs() << "Error writing rewrites report: " << EC.message() << "\n";

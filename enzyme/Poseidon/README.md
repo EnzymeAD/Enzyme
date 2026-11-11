@@ -258,8 +258,9 @@ Poseidon reports through LLVM's optimization remarks under the pass name
 expression, rewrite, error and cost as separate arguments.
 
 `-poseidon-explain=<dir>` (also implied by `-poseidon-report-path`) writes
-`<func>.explain.json` per site, schema `poseidon-explain/1`. Every number in it
-is the solver's own; a field the solve did not compute (for example a modelled
+`<func>.explain.json` per site, schema `poseidon-explain/1`; a name over 200
+characters is cut to its first 160 and a hash of the whole, as a profile's file
+name is. Every number in it is the solver's own; a field the solve did not compute (for example a modelled
 error when the DP table came from the cache) is omitted.
 
 | field | content |

@@ -2,9 +2,18 @@
 ; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/explain/precision -poseidon-enable-herbie=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache=%t/a -poseidon-tau=1e-6 -pass-remarks=poseidon -pass-remarks-missed=poseidon -pass-remarks-analysis=poseidon -poseidon-explain=%t/a -disable-output 2>&1 | FileCheck --check-prefix=FLOAT %s
 ; RUN: FileCheck --check-prefix=JSON %s < %t/a/preprocess_tester.explain.json
 ; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/explain/precision -poseidon-enable-herbie=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache=%t/b -poseidon-tau=1e-12 -pass-remarks-missed=poseidon -disable-output 2>&1 | FileCheck --check-prefix=KEPT %s
+; RUN: %python -c "print('tester' + 'x' * 250)" > %t/long.name
+; RUN: sed "s/@tester\b/@$(cat %t/long.name)/" %s > %t/long.ll
+; RUN: mkdir -p %t/long.prof && cp %S/Inputs/explain/precision/preprocess_tester.fpprofile %t/long.prof/$(%python -c "import functools, sys; n = 'preprocess_' + sys.argv[1]; print(n[:160] + '~' + format(functools.reduce(lambda h, c: (h ^ c) * 1099511628211 % 2**64, n.encode(), 14695981039346656037), '016x'))" $(cat %t/long.name)).fpprofile
+; RUN: %opt < %t/long.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%t/long.prof -poseidon-enable-herbie=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache=%t/c -poseidon-tau=1e-6 -poseidon-report-path=%t/long -disable-output 2>&1 | FileCheck --check-prefix=LONG --implicit-check-not="Error writing" %s
+; RUN: ls %t/long | FileCheck --check-prefix=LONGFILES %s
+; RUN: cat %t/long/*.explain.json | FileCheck --check-prefix=LONGJSON -DNAME=$(cat %t/long.name) %s
 
 ; exp(-0.5 x^2) cos(4 x) on x in [-2, 2]. At tau 1e-6 single precision is
 ; accurate enough for both library calls; at 1e-12 nothing is.
+; The site's files are named as its profile is: a name longer than a file
+; name may be keeps its first 160 characters and a hash of the whole, and the
+; files hold the whole name.
 
 ; FLOAT: wave.c:4:3: Poseidon site tester: target 1e-06
 ; FLOAT: wave.c:4:41: Poseidon profile of exp(x[i] * (x[i] * -0.5)) * cos(x[i] * 4.0): x[i] in [-2, 2]; 1024 executions
@@ -24,6 +33,15 @@
 
 ; KEPT: wave.c:4:41: Poseidon left exp(x[i] * (x[i] * -0.5)) * cos(x[i] * 4.0) as written: every alternative's modelled error is above the target 1e-12 (best: PT0_{{[0-9]+}}, {{.*}})
 ; KEPT: Poseidon rejected the precision change PT0_{{[0-9]+}} to {{.*}}: modelled error {{.*}} is above the target 1e-12
+
+; LONG: Poseidon explanation written to {{.*}}/long/preprocess_testerxxx{{x+}}~{{[0-9a-f]+}}.explain.json
+
+; LONGFILES-DAG: preprocess_testerxxx{{x+}}~{{[0-9a-f]+}}.explain.json
+; LONGFILES-DAG: preprocess_testerxxx{{x+}}~{{[0-9a-f]+}}.json
+; LONGFILES-DAG: preprocess_testerxxx{{x+}}~{{[0-9a-f]+}}_rewrites.json
+; LONGFILES-DAG: preprocess_testerxxx{{x+}}~{{[0-9a-f]+}}.txt
+
+; LONGJSON: "ir": "preprocess_[[NAME]]"
 
 target triple = "x86_64-unknown-linux-gnu"
 

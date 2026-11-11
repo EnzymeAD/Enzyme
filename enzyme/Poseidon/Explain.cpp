@@ -30,6 +30,7 @@
 #include "llvm/Support/Path.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include "FPProfileName.h"
 #include "Model/CostModel.h"
 #include "Model/FPCore.h"
 #include "Optimize.h"
@@ -1711,7 +1712,7 @@ void explainSolve(Session &S, Function &F, FunctionFPState &st,
     return;
   }
   SmallString<128> path(dir);
-  sys::path::append(path, F.getName() + ".explain.json");
+  sys::path::append(path, profileNameStem(F.getName().str()) + ".explain.json");
   std::error_code EC;
   raw_fd_ostream out(path, EC, sys::fs::OF_Text);
   if (EC) {
