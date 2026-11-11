@@ -38,7 +38,8 @@ declare double @tgamma(double)
 ; CHECK-NEXT:   %0 = fmul fast double %differeturn, %arg
 ; CHECK-NEXT:   %1 = fmul fast double %i8, %differeturn
 ; CHECK-NEXT:   %2 = call fast double @digamma(double %arg) 
-; CHECK-NEXT:   %3 = fmul fast double %2, %0
-; CHECK-NEXT:   %4 = fadd fast double %1, %3
-; CHECK-NEXT:   %5 = insertvalue { double } undef, double %4, 0
-; CHECK-NEXT:   ret { double } %5
+; CHECK-NEXT:   %3 = fmul fast double %i8, %2
+; CHECK-NEXT:   %4 = fmul fast double %3, %0
+; CHECK-NEXT:   %5 = fadd fast double %1, %4
+; CHECK-NEXT:   %6 = insertvalue { double } undef, double %5, 0
+; CHECK-NEXT:   ret { double } %6
