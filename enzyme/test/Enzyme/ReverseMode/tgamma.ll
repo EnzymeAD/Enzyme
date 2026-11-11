@@ -35,11 +35,11 @@ declare double @tgamma(double)
 ; CHECK: define internal fastcc { double } @diffea5(double %arg, double %differeturn)
 ; CHECK-NEXT: bb:
 ; CHECK-NEXT:   %i8 = call double @tgamma(double %arg) 
-; CHECK-NEXT:   %0 = fmul fast double %differeturn, %arg
-; CHECK-NEXT:   %1 = fmul fast double %i8, %differeturn
-; CHECK-NEXT:   %2 = call fast double @digamma(double %arg) 
-; CHECK-NEXT:   %3 = fmul fast double %i8, %2
-; CHECK-NEXT:   %4 = fmul fast double %3, %0
-; CHECK-NEXT:   %5 = fadd fast double %1, %4
-; CHECK-NEXT:   %6 = insertvalue { double } undef, double %5, 0
-; CHECK-NEXT:   ret { double } %6
+; CHECK-NEXT:   %[[V0:.+]] = fmul fast double %differeturn, %arg
+; CHECK-NEXT:   %[[V1:.+]] = fmul fast double %i8, %differeturn
+; CHECK-NEXT:   %[[V2:.+]] = call fast double @digamma(double %arg) 
+; CHECK-NEXT:   %[[V3:.+]] = fmul fast double %i8, %[[V2]]
+; CHECK-NEXT:   %[[V4:.+]] = fmul fast double %[[V3]], %[[V0]]
+; CHECK-NEXT:   %[[V5:.+]] = fadd fast double %[[V1]], %[[V4]]
+; CHECK-NEXT:   %[[V6:.+]] = insertvalue { double } undef, double %[[V5]], 0
+; CHECK-NEXT:   ret { double } %[[V6]]

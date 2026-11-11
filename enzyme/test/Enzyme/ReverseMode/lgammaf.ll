@@ -21,8 +21,8 @@ declare float @__enzyme_autodiff(float (float)*, ...)
 
 ; CHECK: define internal { float } @diffetester(float %x, float %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = call fast float @digammaf(float %x)
-; CHECK-NEXT:   %1 = fmul fast float %0, %differeturn
-; CHECK-NEXT:   %2 = insertvalue { float } undef, float %1, 0
-; CHECK-NEXT:   ret { float } %2
+; CHECK-NEXT:   %[[V0:.+]] = call fast float @digammaf(float %x)
+; CHECK-NEXT:   %[[V1:.+]] = fmul fast float %[[V0]], %differeturn
+; CHECK-NEXT:   %[[V2:.+]] = insertvalue { float } undef, float %[[V1]], 0
+; CHECK-NEXT:   ret { float } %[[V2]]
 ; CHECK-NEXT: }

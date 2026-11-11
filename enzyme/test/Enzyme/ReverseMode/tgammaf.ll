@@ -21,10 +21,10 @@ declare float @__enzyme_autodiff(float (float)*, ...)
 
 ; CHECK: define internal { float } @diffetester(float %x, float %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = call fast float @tgammaf(float %x)
-; CHECK-NEXT:   %1 = call fast float @digammaf(float %x)
-; CHECK-NEXT:   %2 = fmul fast float %0, %1
-; CHECK-NEXT:   %3 = fmul fast float %2, %differeturn
-; CHECK-NEXT:   %4 = insertvalue { float } undef, float %3, 0
-; CHECK-NEXT:   ret { float } %4
+; CHECK-NEXT:   %[[V0:.+]] = call fast float @tgammaf(float %x)
+; CHECK-NEXT:   %[[V1:.+]] = call fast float @digammaf(float %x)
+; CHECK-NEXT:   %[[V2:.+]] = fmul fast float %[[V0]], %[[V1]]
+; CHECK-NEXT:   %[[V3:.+]] = fmul fast float %[[V2]], %differeturn
+; CHECK-NEXT:   %[[V4:.+]] = insertvalue { float } undef, float %[[V3]], 0
+; CHECK-NEXT:   ret { float } %[[V4]]
 ; CHECK-NEXT: }

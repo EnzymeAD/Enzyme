@@ -21,8 +21,8 @@ declare double @__enzyme_autodiff(double (double)*, ...)
 
 ; CHECK: define internal { double } @diffetester(double %x, double %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = call fast double @digamma(double %x)
-; CHECK-NEXT:   %1 = fmul fast double %0, %differeturn
-; CHECK-NEXT:   %2 = insertvalue { double } undef, double %1, 0
-; CHECK-NEXT:   ret { double } %2
+; CHECK-NEXT:   %[[V0:.+]] = call fast double @digamma(double %x)
+; CHECK-NEXT:   %[[V1:.+]] = fmul fast double %[[V0]], %differeturn
+; CHECK-NEXT:   %[[V2:.+]] = insertvalue { double } undef, double %[[V1]], 0
+; CHECK-NEXT:   ret { double } %[[V2]]
 ; CHECK-NEXT: }

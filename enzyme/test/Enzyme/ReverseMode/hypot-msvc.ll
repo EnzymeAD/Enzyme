@@ -21,13 +21,13 @@ declare float @__enzyme_autodiff(float (float, float)*, ...)
 
 ; CHECK: define internal { float, float } @diffetester(float %x, float %y, float %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = fmul fast float %differeturn, %x
-; CHECK-NEXT:   %1 = call fast float @_hypotf(float %x, float %y)
-; CHECK-NEXT:   %2 = fdiv fast float %0, %1
-; CHECK-NEXT:   %3 = fmul fast float %differeturn, %y
-; CHECK-NEXT:   %4 = call fast float @_hypotf(float %x, float %y)
-; CHECK-NEXT:   %5 = fdiv fast float %3, %4
-; CHECK-NEXT:   %6 = insertvalue { float, float } undef, float %2, 0
-; CHECK-NEXT:   %7 = insertvalue { float, float } %6, float %5, 1
-; CHECK-NEXT:   ret { float, float } %7
+; CHECK-NEXT:   %[[V0:.+]] = fmul fast float %differeturn, %x
+; CHECK-NEXT:   %[[V1:.+]] = call fast float @_hypotf(float %x, float %y)
+; CHECK-NEXT:   %[[V2:.+]] = fdiv fast float %[[V0]], %[[V1]]
+; CHECK-NEXT:   %[[V3:.+]] = fmul fast float %differeturn, %y
+; CHECK-NEXT:   %[[V4:.+]] = call fast float @_hypotf(float %x, float %y)
+; CHECK-NEXT:   %[[V5:.+]] = fdiv fast float %[[V3]], %[[V4]]
+; CHECK-NEXT:   %[[V6:.+]] = insertvalue { float, float } undef, float %[[V2]], 0
+; CHECK-NEXT:   %[[V7:.+]] = insertvalue { float, float } %[[V6]], float %[[V5]], 1
+; CHECK-NEXT:   ret { float, float } %[[V7]]
 ; CHECK-NEXT: }

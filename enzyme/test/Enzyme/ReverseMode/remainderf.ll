@@ -21,11 +21,11 @@ declare float @__enzyme_autodiff(float (float, float)*, ...)
 
 ; CHECK: define internal { float, float } @diffetester(float %x, float %y, float %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = {{(fneg fast float|fsub fast float \-0\.000000e\+00,)}} %differeturn
-; CHECK-NEXT:   %1 = fdiv fast float %x, %y
-; CHECK-NEXT:   %2 = call fast float @llvm.round.f32(float %1)
-; CHECK-NEXT:   %3 = fmul fast float %0, %2
-; CHECK-NEXT:   %4 = insertvalue { float, float } undef, float %differeturn, 0
-; CHECK-NEXT:   %5 = insertvalue { float, float } %4, float %3, 1
-; CHECK-NEXT:   ret { float, float } %5
+; CHECK-NEXT:   %[[V0:.+]] = {{(fneg fast float|fsub fast float \-0\.000000e\+00,)}} %differeturn
+; CHECK-NEXT:   %[[V1:.+]] = fdiv fast float %x, %y
+; CHECK-NEXT:   %[[V2:.+]] = call fast float @llvm.round.f32(float %[[V1]])
+; CHECK-NEXT:   %[[V3:.+]] = fmul fast float %[[V0]], %[[V2]]
+; CHECK-NEXT:   %[[V4:.+]] = insertvalue { float, float } undef, float %differeturn, 0
+; CHECK-NEXT:   %[[V5:.+]] = insertvalue { float, float } %[[V4]], float %[[V3]], 1
+; CHECK-NEXT:   ret { float, float } %[[V5]]
 ; CHECK-NEXT: }

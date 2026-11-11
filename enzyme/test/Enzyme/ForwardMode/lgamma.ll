@@ -21,7 +21,7 @@ declare double @__enzyme_fwddiff(double (double)*, ...)
 
 ; CHECK: define internal double @fwddiffetester(double %x, double %"x'")
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = call fast double @digamma(double %x)
-; CHECK-NEXT:   %1 = fmul fast double %0, %"x'"
-; CHECK-NEXT:   ret double %1
+; CHECK-NEXT:   %[[V0:.+]] = call fast double @digamma(double %x)
+; CHECK-NEXT:   %[[V1:.+]] = fmul fast double %[[V0]], %"x'"
+; CHECK-NEXT:   ret double %[[V1]]
 ; CHECK-NEXT: }
