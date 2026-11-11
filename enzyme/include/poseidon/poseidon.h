@@ -22,8 +22,10 @@
 //    fn, so two calls of one function can be rewritten differently; other
 //    calls of fn run it as written. fn names a function defined in the same
 //    translation unit, on the host or in device code; t is a compile-time
-//    constant. In device code the pointers the call passes point into local
-//    objects of the caller. Without the plugin the call runs as written.
+//    constant. In device code a pointer the call passes points into a local
+//    object or a by-value aggregate of the caller, or the call reaches a
+//    constant range of memory through it. Without the plugin the call runs as
+//    written.
 // 4. -poseidon-kernels=<regex>|all: GPU kernels opted in without editing their
 //    source; only those above -poseidon-min-cost-share of the profiled cost
 //    are optimized.

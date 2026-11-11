@@ -7,7 +7,8 @@
 
 // per_call_nvptx.cu for HIP: in AMDGPU device code a per-call site is a site
 // as on the host, with the shadow of every local object a call passes made by
-// the pass; a pointer into device memory leaves the call as written.
+// the pass, and one shadow for two pointers into device memory at a constant
+// distance.
 
 #include <hip/hip_runtime.h>
 
@@ -43,7 +44,8 @@ __global__ void k(double *x) {
 // CHECK-DAG: [poseidon] _Z2sqd.poseidon._Z1kPd.0: the profiled program did not contain this site (no profile at {{.*}}); left unchanged
 // CHECK-DAG: [poseidon] _Z5scalePKdPd.poseidon._Z1kPd.1: the profiled program did not contain this site (no profile at {{.*}}); left unchanged
 // CHECK-DAG: [poseidon] _Z5weighRK6holderPKdPd.poseidon._Z1kPd.3: the profiled program did not contain this site (no profile at {{.*}}); left unchanged
-// CHECK-DAG: warning: {{.*}}Poseidon: scale(double const*, double*) at call 2 in k(double*) takes argument 1 as a pointer into memory that is neither a local object of k(double*) nor an aggregate it takes by value, so this call is not a Poseidon site: the pass makes shadows of those only, and __poseidon_fp_optimize takes the caller's own. The call runs as written.
+// CHECK-DAG: [poseidon] _Z5scalePKdPd.poseidon._Z1kPd.2: the profiled program did not contain this site (no profile at {{.*}}); left unchanged
+// CHECK-NOT: is not a Poseidon site
 // IR-LABEL: define {{.*}}amdgpu_kernel void @_Z1kPd(
 // IR-NOT: call
 // IR: ret void
@@ -51,12 +53,18 @@ __global__ void k(double *x) {
 // IR-NOT: __poseidon_site
 
 // GEN-DAG: [poseidon-profgen] scale(double const*, double*) at call 1 in k(double*): 2 shadow object(s), output(s) 1
+// GEN-DAG: [poseidon-profgen] scale(double const*, double*) at call 2 in k(double*): 1 shadow object(s), output(s) 1
 // GEN-DAG: [poseidon-profgen] weigh(holder const&, double const*, double*) at call 3 in k(double*): 2 shadow object(s), output(s) 2
 // GENIR-LABEL: define {{.*}}amdgpu_kernel void @_Z1kPd(
 // GENIR: call void @llvm.memset
 // GENIR: store double 1.000000e+00
 // GENIR: call {{.*}} @diffe{{.*}}_Z5scalePKdPd.poseidon._Z1kPd.1(ptr {{%[0-9]+}}, ptr {{%[0-9]+}}, ptr {{%[0-9]+}}, ptr {{%[0-9]+}})
-// GENIR-NOT: _Z5scalePKdPd.poseidon._Z1kPd.2(
+// x + 5 and x + 7 share one shadow, the second 16 bytes into it, as far as the
+// pointers are apart.
+// GENIR: %[[Y:[0-9]+]] = getelementptr inbounds{{.*}} i8, ptr addrspace(5) %[[X:[0-9]+]], i32 16
+// GENIR: %[[XG:[0-9]+]] = addrspacecast ptr addrspace(5) %[[X]] to ptr
+// GENIR: %[[YG:[0-9]+]] = addrspacecast ptr addrspace(5) %[[Y]] to ptr
+// GENIR: call {{.*}} @diffe{{.*}}_Z5scalePKdPd.poseidon._Z1kPd.2(ptr {{.*}}, ptr %[[XG]], ptr {{.*}}, ptr %[[YG]])
 // The holder has no shadow; d and c do.
 // GENIR: call {{.*}} @diffe{{.*}}_Z5weighRK6holderPKdPd.poseidon._Z1kPd.3(ptr {{%[0-9]+}}, ptr {{%[0-9]+}}, ptr {{%[0-9]+}}, ptr {{%[0-9]+}}, ptr {{%[0-9]+}})
 // GENIR: ret void

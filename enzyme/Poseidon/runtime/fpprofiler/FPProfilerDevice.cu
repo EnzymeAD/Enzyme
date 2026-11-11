@@ -104,6 +104,22 @@ __device__ inline int poseidonFuncIdx(const char *fn) {
                              "POSEIDON_PROFILE_MAX_FUNCS");
 }
 
+// A device call site whose arguments reach overlapping memory, one of them
+// written, that the profiling build gives shadows that are separate objects:
+// the gradients the run would record miss what the call writes through one
+// pointer and reads through the other.
+extern "C" __device__ __attribute__((noinline)) void
+poseidonOverlappingArgumentsCUDA(const char *site, int a, int b) {
+  if (poseidonFirstFatal())
+    printf("Poseidon FPProfiler: %s takes arguments %d and %d as pointers "
+           "into overlapping memory, which the profiling build gives shadows "
+           "that do not overlap; its profile would be wrong. Pass the call "
+           "memory that does not overlap, or copy one of the two into a local "
+           "object.\n",
+           site, a, b);
+  __trap();
+}
+
 // Probe entry points are inactive and never inlined: they are pure
 // side-effect sinks Enzyme must not differentiate.
 #if defined(__has_attribute)

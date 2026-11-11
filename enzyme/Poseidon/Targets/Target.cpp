@@ -50,7 +50,7 @@ const ProbeABI &deviceProbes() {
       "poseidonProbePerturbCUDA",     "poseidonProbePerturbCUDAf",
       "poseidonProfileBlockDimsCUDA", "poseidonProfileStaticCUDA",
       /*RegisterStatic=*/"",          /*RuntimeAnchor=*/"",
-      /*OperandCountBits=*/64};
+      /*OperandCountBits=*/64,        "poseidonOverlappingArgumentsCUDA"};
   return P;
 }
 

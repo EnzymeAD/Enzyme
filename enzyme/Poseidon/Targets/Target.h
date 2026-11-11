@@ -50,6 +50,10 @@ struct ProbeABI {
   // The variable that links the host runtime's writer into the program.
   llvm::StringRef RuntimeAnchor;
   unsigned OperandCountBits;
+  // (site name, argument, argument): stops the profiling run at a device call
+  // site whose arguments reach overlapping memory the pass gave separate
+  // shadows.
+  llvm::StringRef OverlappingArguments = "";
 };
 
 class Target {
