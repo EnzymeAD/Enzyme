@@ -152,6 +152,18 @@ void reportUnprofiled(Session &S, CallBase *CI, const Function &body,
     explainUnprofiled(S, clone, cause);
     return;
   }
+  // Strict mode leaves a site unchanged only for a cause that says the site
+  // did not run.
+  if (site.mayNotHaveRun && S.Opts.Model.StrictMode) {
+    fail(CI, Twine("no profile of ") + body.getName() + " at " + site.path +
+                 ": the profile directory was written before the profiling "
+                 "runtime recorded sites that never ran, so it cannot tell "
+                 "whether this site did not run or the profiled program did "
+                 "not contain it, and -poseidon-strict-mode does not leave a "
+                 "site unchanged; generate the profile again with this "
+                 "Poseidon");
+    return;
+  }
   if (site.mayNotHaveRun) {
     const char *cause =
         "the profile directory was written before the profiling runtime "
@@ -168,12 +180,12 @@ void reportUnprofiled(Session &S, CallBase *CI, const Function &body,
       "the profiled program did not contain this site (it was annotated "
       "after the profiling run, is in a translation unit the profiled "
       "program did not link, or was renamed)";
-  if (S.Opts.Model.StrictMode)
-    report_fatal_error(Twine("Poseidon: no profile of ") + body.getName() +
-                           " at " + site.path + ": " + cause +
-                           ", and -poseidon-strict-mode does not leave a "
-                           "site unchanged",
-                       /*gen_crash_diag=*/false);
+  if (S.Opts.Model.StrictMode) {
+    fail(CI, Twine("no profile of ") + body.getName() + " at " + site.path +
+                 ": " + cause +
+                 ", and -poseidon-strict-mode does not leave a site unchanged");
+    return;
+  }
   warn(CI, Twine("no profile at ") + site.path + ": " + cause +
                "; leaving the site unchanged");
   llvm::errs() << "[poseidon] " << body.getName()
