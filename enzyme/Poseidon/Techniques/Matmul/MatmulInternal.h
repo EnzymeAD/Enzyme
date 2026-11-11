@@ -51,6 +51,7 @@ struct MatmulState {
   // given.
   std::optional<llvm::SmallVector<WmmaTarget, 16>> AvailableWmmaTargets;
   std::set<const void *> WarnedRectangularRows;
+  std::set<const void *> WarnedSquareNativeRows;
   std::set<std::string> ReportedDirectRows;
   std::set<std::string> ReportedInKernelRows;
   bool LegacyMemoEntriesNoted = false;

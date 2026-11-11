@@ -223,6 +223,10 @@ struct LibrarySite {
   double padWaste = 1.0;
   // Keys the rectangular modular row "ozaki_dispatch_rect_rel,nmNN_m<M>k<K>".
   unsigned rectM = 0, rectK = 0;
+  // The extents the dispatch is compiled with, when all three are constants of
+  // this compile (a scalar-loop product's descriptor); 0 when one is a
+  // run-time value.
+  unsigned staticM = 0, staticN = 0, staticK = 0;
   // The chains and padding the modular candidate carries.
   unsigned mChain = 1, nChain = 1, kChain = 1;
   unsigned padM = 0, padN = 0, padK = 0;
@@ -276,6 +280,11 @@ static LibrarySite librarySite(Session &S, const AbstractMatmul &m) {
                       "failed: operands do not trace to Function "
                       "arguments, or the body is not a pure GEMM).\n";
     L.modularOffered = s8TileAvailable && L.dispatchable;
+    if (L.dispatchable && !probe.runtimeDims) {
+      L.staticM = probe.gM;
+      L.staticN = probe.gNcols;
+      L.staticK = probe.gK;
+    }
     L.rectM = m.globalM ? m.globalM : m.M;
     L.rectK = m.globalK ? m.globalK : m.K;
     L.mChain = (m.M + kModularTile - 1) / kModularTile;
@@ -462,17 +471,51 @@ static void proposeLibraryDirect(const Product &P, const LibrarySite &L,
 // (runtime/ozaki/ozaki_rt.cu, "Native path needs no padding"). Charging the
 // square ratio here priced a rectangular launch at up to two orders of
 // magnitude above what it runs at, which kept a bit-exact candidate out of
-// every solution.
+// every solution. Its per-MAC rate still depends on the shape, a DGEMM with
+// few columns running far below the square one, so a call whose extents are
+// constants of this compile is priced from the row measured at those extents
+// when the model has one. A run-time extent leaves only the square row: the
+// surrogate's shape is not the one the call runs at.
 static void proposeLibraryNative(const Product &P, const LibrarySite &L,
                                  MatmulUnit &cm) {
   if (!L.dispatchable)
     return;
-  double rel =
-      queryCostModelOr(P.S.CostModel, "ozaki_dispatch_rel", "dgemm", -1.0);
-  if (rel <= 0.0)
-    report_fatal_error("Poseidon: the cost model has no "
-                       "'ozaki_dispatch_rel,dgemm' row for the native DGEMM "
-                       "candidate; run poseidon-calibrate.");
+  const AbstractMatmul &m = P.m;
+  const bool isStatic = L.staticM && L.staticN && L.staticK;
+  const std::string shape = std::to_string(L.staticM) + "x" +
+                            std::to_string(L.staticN) + "x" +
+                            std::to_string(L.staticK);
+  const std::string key = "dgemm_m" + std::to_string(L.staticM) + "n" +
+                          std::to_string(L.staticN) + "k" +
+                          std::to_string(L.staticK);
+  double rel = isStatic ? queryCostModelOr(P.S.CostModel,
+                                           "ozaki_dispatch_rect_rel", key, -1.0)
+                        : -1.0;
+  if (rel <= 0.0) {
+    rel = queryCostModelOr(P.S.CostModel, "ozaki_dispatch_rel", "dgemm", -1.0);
+    if (rel <= 0.0)
+      report_fatal_error("Poseidon: the cost model has no "
+                         "'ozaki_dispatch_rel,dgemm' row for the native DGEMM "
+                         "candidate; run poseidon-calibrate.");
+    const double side = std::max({L.staticM, L.staticN, L.staticK});
+    const double padWaste =
+        isStatic
+            ? side * side * side / ((double)L.staticM * L.staticN * L.staticK)
+            : 1.0;
+    if (padWaste >= 1.05 &&
+        P.S.Matmul.WarnedSquareNativeRows.insert((const void *)&m).second)
+      llvm::errs() << "[poseidon] WARNING: matmul[" << m.id << "] " << m.M
+                   << "x" << m.N << "x" << m.K << ": the native DGEMM runs at "
+                   << shape << " (padWaste=" << padWaste
+                   << "), but the cost model has no measured "
+                      "'ozaki_dispatch_rect_rel,"
+                   << key
+                   << "' row, so it is priced from the SQUARE "
+                      "'ozaki_dispatch_rel,dgemm' row, a rate a DGEMM of this "
+                      "shape need not reach. Measure the row (poseidon-"
+                      "calibrate --ozaki-rect "
+                   << shape << ") before trusting a pick at this site.\n";
+  }
   MatmulUnit::Option opt = libraryOption(SchemeVariant::native(), 16, 16, 16);
   opt.compCost = P.baselinePerMac * rel;
   pushLibraryCandidate(P, opt, cm);
