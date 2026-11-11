@@ -4937,8 +4937,6 @@ Function *EnzymeLogic::CreateForwardDiff(
       return foundcalled;
 
     if (!foundcalled->getReturnType()->isVoidTy() && !hasconstant) {
-      if (returnUsed && retType == DIFFE_TYPE::CONSTANT) {
-      }
       if (!returnUsed && retType != DIFFE_TYPE::CONSTANT && !hasconstant) {
         FunctionType *FTy = FunctionType::get(
             todiff->getReturnType(), foundcalled->getFunctionType()->params(),
@@ -4958,33 +4956,21 @@ Function *EnzymeLogic::CreateForwardDiff(
         auto cal = bb.CreateCall(foundcalled, args);
         cal->setCallingConv(foundcalled->getCallingConv());
 
-        bb.CreateRet(bb.CreateExtractValue(cal, 1));
+        if (foundcalled->getReturnType() == todiff->getReturnType())
+          bb.CreateRet(cal);
+        else
+          bb.CreateRet(bb.CreateExtractValue(cal, 1));
         return ForwardCachedFunctions[tup] = NewF;
       }
-      assert(returnUsed);
     }
 
     SmallVector<Type *, 2> curTypes;
-    bool legal = true;
-    SmallVector<DIFFE_TYPE, 4> nextConstantArgs;
     for (auto tup : llvm::zip(todiff->args(), constant_args)) {
       auto &arg = std::get<0>(tup);
       curTypes.push_back(arg.getType());
       if (std::get<1>(tup) != DIFFE_TYPE::CONSTANT) {
         curTypes.push_back(arg.getType());
-        nextConstantArgs.push_back(std::get<1>(tup));
         continue;
-      }
-      auto TT = oldTypeInfo.Arguments.find(&arg)->second[{-1}];
-      if (TT.isFloat()) {
-        nextConstantArgs.push_back(DIFFE_TYPE::DUP_ARG);
-        continue;
-      } else if (TT == BaseType::Integer) {
-        nextConstantArgs.push_back(DIFFE_TYPE::DUP_ARG);
-        continue;
-      } else {
-        legal = false;
-        break;
       }
     }
     if (augmenteddata && augmenteddata->returns.find(AugmentedStruct::Tape) !=
@@ -4992,77 +4978,69 @@ Function *EnzymeLogic::CreateForwardDiff(
       assert(additionalArg);
       curTypes.push_back(additionalArg);
     }
-    if (legal) {
-      Type *RT = todiff->getReturnType();
-      if (returnUsed && retType != DIFFE_TYPE::CONSTANT) {
-        RT = StructType::get(RT->getContext(), {RT, RT});
-      }
-      if (!returnUsed && retType == DIFFE_TYPE::CONSTANT) {
-        RT = Type::getVoidTy(RT->getContext());
-      }
-
-      FunctionType *FTy = FunctionType::get(
-          RT, curTypes, todiff->getFunctionType()->isVarArg());
-
-      Function *NewF = Function::Create(
-          FTy, Function::LinkageTypes::InternalLinkage,
-          "fixderivative_" + todiff->getName(), todiff->getParent());
-
-      auto foundArg = NewF->arg_begin();
-      SmallVector<Value *, 2> nextArgs;
-      for (auto tup : llvm::zip(todiff->args(), constant_args)) {
-        nextArgs.push_back(foundArg);
-        auto &arg = std::get<0>(tup);
-        foundArg->setName(arg.getName());
-        foundArg++;
-        if (std::get<1>(tup) != DIFFE_TYPE::CONSTANT) {
-          foundArg->setName(arg.getName() + "'");
-          nextConstantArgs.push_back(std::get<1>(tup));
-          nextArgs.push_back(foundArg);
-          foundArg++;
-          continue;
-        }
-        auto TT = oldTypeInfo.Arguments.find(&arg)->second[{-1}];
-        if (TT.isFloat()) {
-          nextArgs.push_back(Constant::getNullValue(arg.getType()));
-          nextConstantArgs.push_back(DIFFE_TYPE::DUP_ARG);
-          continue;
-        } else if (TT == BaseType::Integer) {
-          nextArgs.push_back(nextArgs.back());
-          nextConstantArgs.push_back(DIFFE_TYPE::DUP_ARG);
-          continue;
-        } else {
-          legal = false;
-          break;
-        }
-      }
-      if (augmenteddata && augmenteddata->returns.find(AugmentedStruct::Tape) !=
-                               augmenteddata->returns.end()) {
-        foundArg->setName("tapeArg");
-        nextArgs.push_back(foundArg);
-        foundArg++;
-      }
-
-      BasicBlock *BB = BasicBlock::Create(NewF->getContext(), "entry", NewF);
-      IRBuilder<> bb(BB);
-      auto cal = bb.CreateCall(foundcalled, nextArgs);
-      cal->setCallingConv(foundcalled->getCallingConv());
-
-      if (returnUsed && retType != DIFFE_TYPE::CONSTANT) {
-        bb.CreateRet(cal);
-      } else if (returnUsed) {
-        bb.CreateRet(bb.CreateExtractValue(cal, 0));
-      } else if (retType != DIFFE_TYPE::CONSTANT) {
-        bb.CreateRet(bb.CreateExtractValue(cal, 1));
-      } else {
-        bb.CreateRetVoid();
-      }
-
-      return ForwardCachedFunctions[tup] = NewF;
+    Type *RT = todiff->getReturnType();
+    if (returnUsed && retType != DIFFE_TYPE::CONSTANT) {
+      RT = StructType::get(RT->getContext(), {RT, RT});
+    }
+    if (!returnUsed && retType == DIFFE_TYPE::CONSTANT) {
+      RT = Type::getVoidTy(RT->getContext());
     }
 
-    EmitWarning("NoCustom", *todiff,
-                "Cannot use provided custom derivative pass");
+    FunctionType *FTy =
+        FunctionType::get(RT, curTypes, todiff->getFunctionType()->isVarArg());
+
+    Function *NewF = Function::Create(
+        FTy, Function::LinkageTypes::InternalLinkage,
+        "fixderivative_" + todiff->getName(), todiff->getParent());
+
+    auto foundArg = NewF->arg_begin();
+    SmallVector<Value *, 2> nextArgs;
+    for (auto tup : llvm::zip(todiff->args(), constant_args)) {
+      nextArgs.push_back(foundArg);
+      auto &arg = std::get<0>(tup);
+      foundArg->setName(arg.getName());
+      foundArg++;
+      if (std::get<1>(tup) != DIFFE_TYPE::CONSTANT) {
+        foundArg->setName(arg.getName() + "'");
+        nextArgs.push_back(foundArg);
+        foundArg++;
+        continue;
+      }
+      auto TT = oldTypeInfo.Arguments.find(&arg)->second[{-1}];
+      if (arg.getType()->isFPOrFPVectorTy() || TT.isFloat())
+        nextArgs.push_back(Constant::getNullValue(arg.getType()));
+      else
+        nextArgs.push_back(nextArgs.back());
+    }
+    if (augmenteddata && augmenteddata->returns.find(AugmentedStruct::Tape) !=
+                             augmenteddata->returns.end()) {
+      foundArg->setName("tapeArg");
+      nextArgs.push_back(foundArg);
+      foundArg++;
+    }
+
+    BasicBlock *BB = BasicBlock::Create(NewF->getContext(), "entry", NewF);
+    IRBuilder<> bb(BB);
+    auto cal = bb.CreateCall(foundcalled, nextArgs);
+    cal->setCallingConv(foundcalled->getCallingConv());
+
+    if (returnUsed && retType != DIFFE_TYPE::CONSTANT) {
+      bb.CreateRet(cal);
+    } else if (returnUsed) {
+      if (foundcalled->getReturnType() == todiff->getReturnType())
+        bb.CreateRet(cal);
+      else
+        bb.CreateRet(bb.CreateExtractValue(cal, 0));
+    } else if (retType != DIFFE_TYPE::CONSTANT) {
+      if (foundcalled->getReturnType() == todiff->getReturnType())
+        bb.CreateRet(cal);
+      else
+        bb.CreateRet(bb.CreateExtractValue(cal, 1));
+    } else {
+      bb.CreateRetVoid();
+    }
+
+    return ForwardCachedFunctions[tup] = NewF;
   }
 
   bool retActive = retType != DIFFE_TYPE::CONSTANT;
