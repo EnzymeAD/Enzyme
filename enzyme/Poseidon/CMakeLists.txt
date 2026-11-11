@@ -59,7 +59,7 @@ set(POSEIDON_SRC
     Pass/Flags.cpp
     Pass/Session.cpp
     Core/FPKind.cpp
-    Herbie.cpp
+    Techniques/Herbie.cpp
     Model/FPCore.cpp
     Core/HerbieRun.cpp
     Core/Options.cpp
@@ -80,7 +80,6 @@ set(POSEIDON_SRC
     Subgraphs.cpp
     Techniques/Staging.cpp
     Techniques/Unit.cpp
-    Types.cpp
     Model/FPNode.cpp
     Utils.cpp
     Techniques/Matmul/WmmaUtils.cpp
@@ -145,7 +144,7 @@ target_include_directories(${POSEIDON_PLUGIN_TARGET}
                            PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/identity)
 
 set_source_files_properties(
-  Herbie.cpp
+  Techniques/Herbie.cpp
   PROPERTIES COMPILE_DEFINITIONS HERBIE_BINARY="${POSEIDON_HERBIE_BINARY_PATH}")
 # The accuracy model emulates the emitted FP32 expansions bit for bit, and the
 # sampler reproduces the standard library's uniform reals bit for bit; each

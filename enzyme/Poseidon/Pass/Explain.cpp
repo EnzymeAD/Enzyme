@@ -30,16 +30,15 @@
 #include "llvm/Support/Path.h"
 #include "llvm/Support/raw_ostream.h"
 
-#include "Herbie.h"
 #include "Model/CostModel.h"
 #include "Model/FPCore.h"
 #include "Optimize.h"
 #include "Session.h"
 #include "Sites/SiteIdentity.h"
 #include "Solvers.h"
+#include "Techniques/Herbie.h"
 #include "Techniques/Matmul/Matmul.h"
 #include "Techniques/Precision.h"
-#include "Types.h"
 #include "Utils.h"
 
 #include <cmath>
@@ -821,7 +820,7 @@ void Explainer::addCSAlternatives(Unit &U, const Subgraph &sg) {
           if (&CO == item && CO.subgraph == &sg)
             cos.insert(&CO);
       if (applied.count({&CS, j}) && !cos.empty()) {
-        PrecisionUnit::CacheKey key{j, cos};
+        PrecisionUnit::RepriceKey key{j, cos};
         auto c = CS.compCostDeltaCache.find(key);
         cost = c == CS.compCostDeltaCache.end()
                    ? std::nullopt

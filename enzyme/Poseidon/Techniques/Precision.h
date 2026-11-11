@@ -21,9 +21,14 @@
 #include "llvm/IR/Type.h"
 #include "llvm/Transforms/Utils/ValueMapper.h"
 
+#include "Model/CostModel.h"
 #include "Model/FPFormat.h"
+#include "Model/FPNode.h"
+#include "Unit.h"
 
+#include <cstdint>
 #include <limits>
+#include <set>
 #include <string>
 #include <unordered_map>
 
@@ -33,6 +38,7 @@ class FPNode;
 class FPLLValue;
 struct Subgraph;
 class PrecisionUnit;
+class RewriteUnit;
 struct Options;
 class Session;
 struct FunctionProfileHeader;
@@ -77,6 +83,85 @@ void proposePrecisionCandidates(
     std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     const FunctionProfileHeader &profileHeader, bool expansionSafe,
     llvm::SmallVectorImpl<PrecisionUnit> &CSs);
+
+class PrecisionUnit : public SiteUnit {
+public:
+  Subgraph *subgraph;
+  double initialAccCost = std::numeric_limits<double>::quiet_NaN();
+  double initialCompCost = std::numeric_limits<double>::quiet_NaN();
+  uint64_t executions = 0;
+  llvm::MapVector<FPNode *, double> perOutputInitialAccCost;
+  llvm::SmallVector<PTCandidate, 8> candidates;
+  llvm::SmallVector<std::pair<std::string, std::string>, 1> dropped;
+
+  using RewriteUnitSet = std::set<RewriteUnit *>;
+  struct RepriceKey {
+    size_t candidateIndex;
+    RewriteUnitSet RewriteUnits;
+    bool operator==(const RepriceKey &other) const;
+  };
+
+  struct RepriceKeyHash {
+    std::size_t operator()(const RepriceKey &key) const;
+  };
+
+  std::unordered_map<RepriceKey, double, RepriceKeyHash> compCostDeltaCache;
+  std::unordered_map<RepriceKey, double, RepriceKeyHash> accCostDeltaCache;
+
+  explicit PrecisionUnit(CostModelState &CM, Subgraph &subgraph)
+      : SiteUnit(UnitKind::PT), subgraph(&subgraph) {
+    initialCompCost =
+        getCompCost(CM, {subgraph.outputs.begin(), subgraph.outputs.end()},
+                    subgraph.inputs, &subgraph.opExec, subgraph.execNormalizer);
+  }
+
+  void apply(Session &S, size_t candidateIndex);
+  double getCompCostDelta(size_t candidateIndex);
+  double getAccCostDelta(size_t candidateIndex);
+  double getAdjustedCompCostDelta(Session &S, size_t candidateIndex,
+                                  llvm::ArrayRef<SolutionStep> steps);
+  double getAdjustedAccCostDelta(
+      size_t candidateIndex, llvm::ArrayRef<SolutionStep> steps,
+      std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>>
+          &valueToNodeMap,
+      std::unordered_map<std::string, llvm::Value *> &symbolToValueMap);
+
+  static bool classof(const OptimizationUnit *U) {
+    return U->kind() == unsigned(UnitKind::PT);
+  }
+  size_t numCandidates() const override { return candidates.size(); }
+  double costDelta(size_t i, llvm::ArrayRef<SolutionStep> prior) override;
+  double errorDelta(size_t i, llvm::ArrayRef<SolutionStep> prior) override;
+  // Priced over the outputs the algebraic units of its subgraph leave.
+  bool pricedAlone() const override { return false; }
+  size_t memoizedPricings() const override { return compCostDeltaCache.size(); }
+  bool consumesFootprint() const override { return false; }
+  bool pricedAgainst(const OptimizationUnit &earlier) const override;
+  const llvm::SetVector<llvm::Instruction *> *footprint() const override;
+  std::string candidateName(size_t i) const override {
+    return candidates[i].desc;
+  }
+  size_t ordinalOf(size_t i) const override { return candidates[i].ordinal; }
+  std::string choiceText(size_t i) const override;
+  llvm::json::Object stepJSON(size_t i) override;
+  void writeReportStep(llvm::raw_ostream &OS, size_t i,
+                       llvm::StringRef pad) override;
+  void materialize(size_t i) override;
+  void price() override;
+  void scaleErrors(double factor) override;
+  void printPriced(llvm::raw_ostream &OS) override;
+  std::string keyHeader() const override { return "CS"; }
+  llvm::ArrayRef<std::pair<std::string, std::string>>
+  droppedCandidates() const override {
+    return dropped;
+  }
+  std::string selectionText(size_t i) const override {
+    return candidates[i].desc;
+  }
+  void addReportSummary(llvm::json::Array &summary) override;
+  void writeReportSummary(llvm::raw_ostream &OS) override;
+  void addCuratedRewrites(llvm::json::Array &rewrites) override;
+};
 
 } // namespace poseidon
 #endif // POSEIDON_PRECISION_H

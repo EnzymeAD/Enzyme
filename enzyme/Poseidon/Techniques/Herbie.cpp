@@ -19,6 +19,7 @@
 #include "llvm/Analysis/BasicAliasAnalysis.h"
 #include "llvm/Analysis/TargetLibraryInfo.h"
 #include "llvm/IR/Dominators.h"
+#include "llvm/IR/InstIterator.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Support/Casting.h"
@@ -39,7 +40,6 @@
 #include "Pass/Session.h"
 #include "Targets/DeviceMath.h"
 #include "Targets/Target.h"
-#include "Types.h"
 #include "Utils.h"
 
 #include <iomanip>
@@ -1197,6 +1197,378 @@ void proposeHerbieCandidates(
     }
 
     COs.insert(COs.end(), newCOs.begin(), newCOs.end());
+  }
+}
+
+void RewriteUnit::apply(
+    size_t candidateIndex,
+    std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
+    std::unordered_map<std::string, Value *> &symbolToValueMap, bool print) {
+  if (candidateIndex >= candidates.size()) {
+    if (print)
+      llvm::errs() << "RewriteUnit::apply: candidateIndex " << candidateIndex
+                   << " out of range (size " << candidates.size()
+                   << "), skipping\n";
+    return;
+  }
+  for (Value *root : roots) {
+    auto *oldInst = dyn_cast<Instruction>(root);
+    if (!oldInst || !oldInst->getParent()) {
+      if (print)
+        llvm::errs() << "RewriteUnit::apply: oldOutput "
+                     << "is not in a basic block (already erased?), skipping\n";
+      return;
+    }
+  }
+
+  auto parsedNode =
+      parseHerbieExpr(candidates[candidateIndex].expr, valueToNodeMap,
+                      symbolToValueMap, nullptr, &subgraph->inputs);
+  SmallVector<std::shared_ptr<FPNode>, 1> elements;
+  if (isArray()) {
+    if (parsedNode->op != "array" ||
+        parsedNode->operands.size() != roots.size())
+      report_fatal_error("Poseidon: an array rewrite does not have one element "
+                         "per output of its subgraph");
+    elements.append(parsedNode->operands.begin(), parsedNode->operands.end());
+  } else {
+    elements.push_back(parsedNode);
+  }
+
+  SmallVector<Value *, 4> newOutputs;
+  if (isArray()) {
+    DominatorTree DT(*cast<Instruction>(oldOutput)->getFunction());
+    std::optional<IRBuilder<>> builder;
+    newOutputs = emitSharedElements(
+        elements,
+        [&](size_t k) -> IRBuilder<> & {
+          auto *oldInst = cast<Instruction>(roots[k]);
+          builder.emplace(oldInst->getParent(),
+                          ++BasicBlock::iterator(oldInst));
+          builder->setFastMathFlags(oldInst->getFastMathFlags());
+          return *builder;
+        },
+        nullptr, &DT);
+  }
+
+  for (auto [k, root, element] : llvm::enumerate(roots, elements)) {
+    auto *oldInst = cast<Instruction>(root);
+    IRBuilder<> builder(oldInst->getParent(), ++BasicBlock::iterator(oldInst));
+    builder.setFastMathFlags(oldInst->getFastMathFlags());
+
+    Value *newOutput = isArray() ? newOutputs[k] : element->getLLValue(builder);
+    assert(newOutput && "Failed to get value from parsed node");
+    if (isArray() && isa<Instruction>(newOutput))
+      builder.SetInsertPoint(cast<Instruction>(newOutput)->getNextNode());
+
+    if (newOutput->getType() != root->getType())
+      newOutput =
+          builder.CreateFPCast(newOutput, root->getType(), "herbie.fpcast");
+
+    root->replaceAllUsesWith(newOutput);
+    symbolToValueMap[valueToNodeMap[root]->symbol] = newOutput;
+    valueToNodeMap[newOutput] = std::make_shared<FPLLValue>(
+        newOutput, "__no", valueToNodeMap[root]->dtype);
+  }
+
+  for (auto *I : erasableInsts) {
+    if (!I->use_empty())
+      I->replaceAllUsesWith(UndefValue::get(I->getType()));
+    I->eraseFromParent();
+    subgraph->operations.remove(I); // Avoid a second removal
+    cast<FPLLValue>(valueToNodeMap[I].get())->value = nullptr;
+  }
+
+  subgraph->outputs_rewritten += roots.size();
+}
+
+bool RewriteUnit::sharesRoot(const RewriteUnit &other) const {
+  for (Value *root : roots)
+    if (llvm::is_contained(other.roots, root))
+      return true;
+  return false;
+}
+
+// Lower is better
+double RewriteUnit::getCompCostDelta(CostModelState &CM,
+                                     size_t candidateIndex) {
+  double erasableCost = 0.0;
+
+  for (auto *I : erasableInsts) {
+    erasableCost += getInstructionCompCost(CM, I);
+  }
+
+  return (candidates[candidateIndex].CompCost - erasableCost) *
+         (double)executions;
+}
+
+void RewriteUnit::findErasableInstructions() {
+  SmallPtrSet<Value *, 8> visited;
+  SmallPtrSet<Instruction *, 8> exprInsts;
+  for (Value *root : roots)
+    collectExprInsts(root, subgraph->inputs, exprInsts, visited);
+  visited.clear();
+
+  // Seeded in IR order, not in the order the pointers happened to hash: the
+  // topological sort below is stable, so its input order decides the order the
+  // report lists these instructions in and the order their costs are summed.
+  SetVector<Instruction *> instsToProcess;
+  for (Instruction &I :
+       instructions(*cast<Instruction>(oldOutput)->getFunction()))
+    if (exprInsts.contains(&I))
+      instsToProcess.insert(&I);
+
+  SmallVector<Instruction *, 8> instsToProcessSorted;
+  reverseTopoSort(instsToProcess, instsToProcessSorted);
+
+  erasableInsts.clear();
+  for (Value *root : roots)
+    erasableInsts.insert(cast<Instruction>(root));
+
+  for (auto *I : instsToProcessSorted) {
+    if (erasableInsts.contains(I))
+      continue;
+
+    bool usedOutside = false;
+    for (auto user : I->users()) {
+      if (auto *userI = dyn_cast<Instruction>(user)) {
+        if (erasableInsts.contains(userI)) {
+          continue;
+        }
+      }
+      usedOutside = true;
+      break;
+    }
+
+    if (!usedOutside) {
+      erasableInsts.insert(I);
+    }
+  }
+}
+
+// Lower is better
+double RewriteUnit::getAccCostDelta(size_t candidateIndex) {
+  return candidates[candidateIndex].accuracyCost - initialAccCost;
+}
+
+double RewriteUnit::costDelta(size_t i, ArrayRef<SolutionStep>) {
+  return getCompCostDelta(session().CostModel, i);
+}
+
+double RewriteUnit::errorDelta(size_t i, ArrayRef<SolutionStep>) {
+  return getAccCostDelta(i);
+}
+
+bool RewriteUnit::sameRewriteTargetAs(const OptimizationUnit &earlier) const {
+  const auto *other = dyn_cast<RewriteUnit>(&earlier);
+  return other && other->subgraph == subgraph &&
+         other->roots.size() == roots.size() &&
+         llvm::all_of(other->roots,
+                      [&](Value *r) { return llvm::is_contained(roots, r); });
+}
+
+const SetVector<Instruction *> *RewriteUnit::footprint() const {
+  return subgraph ? &subgraph->operations : nullptr;
+}
+
+std::string RewriteUnit::choiceText(size_t i) const {
+  const RewriteCandidate &cand = candidates[i];
+  return expr + " --(" + std::to_string(cand.ordinal) + ")-> " + cand.expr;
+}
+
+json::Object RewriteUnit::stepJSON(size_t i) {
+  json::Object stepObj;
+  stepObj["type"] = "rewrite";
+  stepObj["original_expr"] = expr;
+  auto &cand = candidates[i];
+  stepObj["rewritten_expr"] = cand.expr;
+  stepObj["herbie_cost"] = jsonFloat(cand.herbieCost);
+  stepObj["herbie_accuracy"] = jsonFloat(cand.herbieAccuracy);
+  stepObj["initial_herbie_cost"] = jsonFloat(initialHerbieCost);
+  stepObj["initial_herbie_accuracy"] = jsonFloat(initialHerbieAccuracy);
+  stepObj["computation_cost_delta"] = getCompCostDelta(session().CostModel, i);
+  stepObj["accuracy_cost_delta"] = jsonFloat(getAccCostDelta(i));
+  stepObj["gradient"] = jsonFloat(grad);
+  stepObj["executions"] = static_cast<int64_t>(executions);
+
+  SmallVector<Instruction *, 8> insts;
+  if (auto *I = dyn_cast<Instruction>(oldOutput))
+    insts.push_back(I);
+  for (auto *I : erasableInsts)
+    insts.push_back(I);
+  stepObj["source_locations"] = getSourceLocationsJSON(insts);
+
+  json::Array affectedIR;
+  if (auto *I = dyn_cast<Instruction>(oldOutput))
+    affectedIR.push_back(getValueStr(I));
+  for (auto *I : erasableInsts) {
+    if (I != oldOutput)
+      affectedIR.push_back(getValueStr(I));
+  }
+  stepObj["affected_instructions"] = std::move(affectedIR);
+  return stepObj;
+}
+
+void RewriteUnit::writeReportStep(raw_ostream &OS, size_t i, StringRef pad) {
+  auto &cand = candidates[i];
+  OS << pad << "[Rewrite] " << expr << "  -->  " << cand.expr << "\n";
+  if (!std::isnan(initialHerbieAccuracy) && !std::isnan(cand.herbieAccuracy))
+    OS << pad << "  Herbie accuracy: " << initialHerbieAccuracy << " -> "
+       << cand.herbieAccuracy << " bits\n";
+  OS << pad << "  Gradient: " << grad << ", Executions: " << executions << "\n";
+
+  SmallSet<std::string, 4> seen;
+  auto printLoc = [&](Instruction *I) {
+    auto loc = getSourceLocationStr(I);
+    if (!loc.empty() && seen.insert(loc).second)
+      OS << pad << "  Source: " << loc << "\n";
+  };
+  if (auto *I = dyn_cast<Instruction>(oldOutput))
+    printLoc(I);
+  for (auto *I : erasableInsts)
+    printLoc(I);
+
+  OS << pad << "  Affected IR:\n";
+  if (auto *I = dyn_cast<Instruction>(oldOutput))
+    OS << pad << "    " << *I << "\n";
+  for (auto *I : erasableInsts) {
+    if (I != oldOutput)
+      OS << pad << "    " << *I << "\n";
+  }
+}
+
+void RewriteUnit::materialize(size_t i) {
+  apply(i, graph().valueToNodeMap, graph().symbolToValueMap,
+        session().Opts.Diagnostics.Print);
+}
+
+void RewriteUnit::price() {
+  if (!herbieAnswered)
+    return;
+  FPGraph &st = graph();
+  Module *M = st.F->getParent();
+  const FastMathFlags FMF = cast<Instruction>(oldOutput)->getFastMathFlags();
+  for (RewriteCandidate &c : candidates)
+    c.CompCost = getCompCost(session().CostModel, c.expr, M, st.valueToNodeMap,
+                             st.symbolToValueMap, FMF, &subgraph->inputs);
+  setUnifiedAccuracyCost(session().Opts, *this, st.valueToNodeMap,
+                         st.symbolToValueMap);
+}
+
+void RewriteUnit::scaleErrors(double factor) {
+  initialAccCost *= factor;
+  for (auto &cand : candidates)
+    cand.accuracyCost *= factor;
+}
+
+void RewriteUnit::printPriced(raw_ostream &OS) {
+  OS << "\n################################\n";
+  OS << "Initial AccuracyCost: " << initialAccCost << "\n";
+  OS << "Initial ComputationCost: " << initialCompCost << "\n";
+  OS << "Initial HerbieCost: " << initialHerbieCost << "\n";
+  OS << "Initial HerbieAccuracy: " << initialHerbieAccuracy << "\n";
+  OS << "Initial Expression: " << expr << "\n";
+  OS << "Grad: " << grad << "\n\n";
+  OS << "Candidates:\n";
+  OS << "Δ AccCost\t\tΔ "
+        "CompCost\t\tHerbieCost\t\tAccuracy\t\tExpression\n";
+  OS << "--------------------------------\n";
+  for (size_t i = 0; i < candidates.size(); ++i) {
+    auto &candidate = candidates[i];
+    OS << getAccCostDelta(i) << "\t\t";
+    // A compile that reads its DP table from the cache prices no candidate.
+    if (candidate.CompCost == std::numeric_limits<double>::max())
+      OS << "unpriced";
+    else
+      OS << getCompCostDelta(session().CostModel, i);
+    OS << "\t\t" << candidate.herbieCost << "\t\t" << candidate.herbieAccuracy
+       << "\t\t" << candidate.expr << "\n";
+  }
+  OS << "################################\n\n";
+}
+
+void RewriteUnit::addReportSummary(json::Array &summary) {
+  json::Object co;
+  co["original_expr"] = expr;
+  co["num_candidates"] = static_cast<int64_t>(candidates.size());
+  co["gradient"] = jsonFloat(grad);
+  co["executions"] = static_cast<int64_t>(executions);
+  co["initial_accuracy_cost"] = jsonFloat(initialAccCost);
+  co["initial_computation_cost"] = initialCompCost;
+  if (auto *I = dyn_cast<Instruction>(oldOutput)) {
+    auto loc = getSourceLocationJSON(I);
+    if (!loc.empty())
+      co["source_location"] = std::move(loc);
+  }
+  summary.push_back(std::move(co));
+}
+
+void RewriteUnit::writeReportSummary(raw_ostream &textOut) {
+  textOut << "Expression #" << indexInKind() << ": " << expr << "\n";
+  textOut << "  Gradient: " << grad << ", Executions: " << executions << "\n";
+  if (auto *I = dyn_cast<Instruction>(oldOutput)) {
+    auto loc = getSourceLocationStr(I);
+    if (!loc.empty())
+      textOut << "  Source: " << loc << "\n";
+  }
+  textOut << "  Candidates: " << candidates.size() << "\n";
+  for (size_t j = 0; j < candidates.size(); ++j) {
+    auto &cand = candidates[j];
+    textOut << "    [" << cand.ordinal << "] " << cand.expr;
+    if (!std::isnan(cand.herbieAccuracy))
+      textOut << "  (accuracy: " << cand.herbieAccuracy << " bits)";
+    textOut << "\n";
+  }
+}
+
+void RewriteUnit::addCuratedRewrites(json::Array &rewrites) {
+  for (size_t ci = 0; ci < candidates.size(); ++ci) {
+    auto &cand = candidates[ci];
+    double accDelta = getAccCostDelta(ci);
+    auto compDelta = getCompCostDelta(session().CostModel, ci);
+    double compDeltaVal = compDelta;
+
+    if (std::isnan(accDelta))
+      continue;
+
+    // comp < 0 means faster, acc < 0 means more accurate
+    std::string category;
+    double efficiency = 0.0;
+    if (compDeltaVal <= 0 && accDelta <= 0) {
+      category = "free_win";
+      efficiency = std::abs(accDelta) + std::abs(compDeltaVal);
+    } else if (compDeltaVal <= 0 && accDelta > 0) {
+      category = "speed_for_accuracy";
+      efficiency = (accDelta > 1e-30) ? std::abs(compDeltaVal) / accDelta
+                                      : std::abs(compDeltaVal);
+    } else if (compDeltaVal > 0 && accDelta <= 0) {
+      category = "accuracy_for_speed";
+      efficiency = (compDeltaVal > 0) ? std::abs(accDelta) / compDeltaVal
+                                      : std::abs(accDelta);
+    } else {
+      continue;
+    }
+
+    json::Object rw;
+    rw["id"] = candidateId(ci);
+    rw["original_expr"] = expr;
+    rw["rewritten_expr"] = cand.expr;
+    rw["category"] = category;
+    rw["efficiency"] = jsonFloat(efficiency);
+    rw["computation_cost_delta"] = compDeltaVal;
+    rw["accuracy_cost_delta"] = jsonFloat(accDelta);
+    rw["gradient"] = jsonFloat(grad);
+    rw["executions"] = static_cast<int64_t>(executions);
+    rw["herbie_accuracy"] = jsonFloat(cand.herbieAccuracy);
+    rw["initial_herbie_accuracy"] = jsonFloat(initialHerbieAccuracy);
+
+    if (auto *I = dyn_cast<Instruction>(oldOutput)) {
+      auto loc = getSourceLocationJSON(I);
+      if (!loc.empty())
+        rw["source_location"] = std::move(loc);
+    }
+
+    rewrites.push_back(std::move(rw));
   }
 }
 

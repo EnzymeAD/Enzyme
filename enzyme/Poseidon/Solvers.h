@@ -35,8 +35,9 @@
 #include <vector>
 
 #include "Core/CacheKey.h"
+#include "Techniques/Herbie.h"
 #include "Techniques/Matmul/Matmul.h"
-#include "Types.h"
+#include "Techniques/Precision.h"
 
 namespace poseidon {
 
@@ -115,8 +116,7 @@ llvm::SmallVector<SolutionStep>
 errorBudgetSelector(const Options &O, llvm::SmallVector<MatmulUnit, 4> &CMs,
                     double budget, double confidence);
 
-struct FunctionFPState {
-  llvm::Function *F = nullptr;
+struct FunctionFPState : FPGraph {
   double errTol = 0.0;
   unsigned sampleLogBits = 0;
   // Sum of the profile's per-slot sumSens, times the kappa factor the accuracy
@@ -126,8 +126,6 @@ struct FunctionFPState {
   // What the profiled run spent in the site, in cost-model units: the
   // execution count times the price of every operation the profile records.
   double profiledCost = 0.0;
-  std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>> valueToNodeMap;
-  std::unordered_map<std::string, llvm::Value *> symbolToValueMap;
   llvm::SmallVector<Subgraph, 1> subgraphs;
   // Backing storage for the matmuls; MatmulUnit::matmul points into this,
   // so it must outlive materialization (it does NOT live in a collect-local).
