@@ -12,6 +12,7 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/Twine.h"
+#include "llvm/Support/Error.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Path.h"
@@ -60,15 +61,16 @@ static std::string userCacheDir() {
 
 // One measured model per device: the file name carries the architecture it was
 // measured on, so the module's target-cpu names it.
-static void resolveForTarget(CostModelState &CM, StringRef TargetCpu,
-                             StringRef FnName) {
+static Error resolveForTarget(CostModelState &CM, StringRef TargetCpu,
+                              StringRef FnName) {
   if (resolveFromRequest(CM))
-    return;
+    return Error::success();
   if (TargetCpu.empty())
-    report_fatal_error("Poseidon: optimizing " + Twine(FnName) +
-                       " needs a measured cost model, and the module names no "
-                       "target-cpu to look one up by; pass "
-                       "-poseidon-cost-model=<csv>");
+    return createStringError(inconvertibleErrorCode(),
+                             "optimizing " + Twine(FnName) +
+                                 " needs a measured cost model, and the module "
+                                 "names no target-cpu to look one up by; pass "
+                                 "-poseidon-cost-model=<csv>");
   std::string Dir = userCacheDir();
   std::string Prefix = ("cm_" + TargetCpu + "_").str();
   SmallVector<std::string, 4> Found;
@@ -80,87 +82,88 @@ static void resolveForTarget(CostModelState &CM, StringRef TargetCpu,
       Found.push_back(It->path());
   }
   if (Found.empty())
-    report_fatal_error(
-        "Poseidon: no cost model for target-cpu '" + Twine(TargetCpu) +
-        "' in " +
-        (Dir.empty() ? "the user cache, which neither XDG_CACHE_HOME nor HOME "
-                       "locates"
-                     : Dir) +
-        "; measure this device with poseidon-calibrate, or pass "
-        "-poseidon-cost-model=<csv>");
+    return createStringError(
+        inconvertibleErrorCode(),
+        "no cost model for target-cpu '" + Twine(TargetCpu) + "' in " +
+            (Dir.empty()
+                 ? "the user cache, which neither XDG_CACHE_HOME nor HOME "
+                   "locates"
+                 : Dir) +
+            "; measure this device with poseidon-calibrate, or pass "
+            "-poseidon-cost-model=<csv>");
   if (Found.size() > 1) {
     std::string List;
     for (const std::string &P : Found)
       List += (List.empty() ? "" : ", ") + P;
-    report_fatal_error("Poseidon: several cost models for target-cpu '" +
-                       Twine(TargetCpu) + "': " + List +
-                       "; name the one to price from with "
-                       "-poseidon-cost-model=<csv>");
+    return createStringError(inconvertibleErrorCode(),
+                             "several cost models for target-cpu '" +
+                                 Twine(TargetCpu) + "': " + List +
+                                 "; name the one to price from with "
+                                 "-poseidon-cost-model=<csv>");
   }
   CM.Resolved = Found.front();
   CM.IsResolved = true;
+  return Error::success();
 }
 
 // A price comes from the model or not at all: a part of the model that is
 // missing or unreadable stops the compile, naming the model.
-[[noreturn]] static void modelError(CostModelState &CM, const Twine &What) {
-  report_fatal_error("Poseidon: cost model " + Twine(costModelPath(CM)) + " " +
-                     What);
+static Error modelError(CostModelState &CM, const Twine &What) {
+  return createStringError(inconvertibleErrorCode(),
+                           "cost model " + Twine(costModelPath(CM)) + " " +
+                               What);
 }
 
-const std::unordered_set<std::string> &getScalarTypes(CostModelState &CM) {
-  getCostModel(CM);
-  if (CM.ScalarTypes.empty())
-    modelError(CM, "carries no '# scalar_types=' header, so the formats the "
-                   "device has hardware for are unknown");
-  return CM.ScalarTypes;
+static Error loadCostModel(CostModelState &CM) {
+  if (CM.Loaded)
+    return Error::success();
+  std::ifstream CostFile(costModelPath(CM));
+  if (!CostFile.is_open())
+    return modelError(CM, "cannot be opened");
+  std::string Line;
+  unsigned LineNo = 0;
+  while (std::getline(CostFile, Line)) {
+    ++LineNo;
+    if (Line.empty())
+      continue;
+    if (Line[0] == '#') {
+      auto content = StringRef(Line).drop_front(1).trim();
+      StringRef key, vals;
+      std::tie(key, vals) = content.split('=');
+      key = key.trim();
+      vals = vals.trim();
+      if (key == "native_arch") {
+        CM.NativeArch = vals.str();
+        continue;
+      }
+      if (key == "scalar_types") {
+        SmallVector<StringRef, 8> tokens;
+        vals.split(tokens, ',', -1, false);
+        for (auto t : tokens)
+          CM.ScalarTypes.insert(t.str());
+      }
+      continue;
+    }
+    SmallVector<StringRef, 3> Fields;
+    StringRef(Line).split(Fields, ',');
+    double Cost;
+    if (Fields.size() != 3 || Fields[2].trim().getAsDouble(Cost))
+      return modelError(CM, "line " + Twine(LineNo) +
+                                " is not '<opcode>,<type>,<cost>': " + Line);
+    if (!CM.Model.try_emplace({Fields[0].str(), Fields[1].str()}, Cost).second)
+      return modelError(CM, "has the row '" + Fields[0] + "," + Fields[1] +
+                                "' twice");
+  }
+  CM.Loaded = true;
+  return Error::success();
 }
 
 const std::map<std::pair<std::string, std::string>, double> &
 getCostModel(CostModelState &CM) {
-  std::map<std::pair<std::string, std::string>, double> &CostModel = CM.Model;
-  if (!CM.Loaded) {
-    std::ifstream CostFile(costModelPath(CM));
-    if (!CostFile.is_open())
-      modelError(CM, "cannot be opened");
-    std::string Line;
-    unsigned LineNo = 0;
-    while (std::getline(CostFile, Line)) {
-      ++LineNo;
-      if (Line.empty())
-        continue;
-      if (Line[0] == '#') {
-        auto content = StringRef(Line).drop_front(1).trim();
-        StringRef key, vals;
-        std::tie(key, vals) = content.split('=');
-        key = key.trim();
-        vals = vals.trim();
-        if (key == "native_arch") {
-          CM.NativeArch = vals.str();
-          continue;
-        }
-        if (key == "scalar_types") {
-          SmallVector<StringRef, 8> tokens;
-          vals.split(tokens, ',', -1, false);
-          for (auto t : tokens)
-            CM.ScalarTypes.insert(t.str());
-        }
-        continue;
-      }
-      SmallVector<StringRef, 3> Fields;
-      StringRef(Line).split(Fields, ',');
-      double Cost;
-      if (Fields.size() != 3 || Fields[2].trim().getAsDouble(Cost))
-        modelError(CM, "line " + Twine(LineNo) +
-                           " is not '<opcode>,<type>,<cost>': " + Line);
-      if (!CostModel.try_emplace({Fields[0].str(), Fields[1].str()}, Cost)
-               .second)
-        modelError(CM,
-                   "has the row '" + Fields[0] + "," + Fields[1] + "' twice");
-    }
-    CM.Loaded = true;
-  }
-  return CostModel;
+  if (!CM.Loaded)
+    report_fatal_error("Poseidon: the cost model is read before a site "
+                       "required it");
+  return CM.Model;
 }
 
 // Hashes the parsed map rather than the file bytes so comments and row order
@@ -195,22 +198,21 @@ uint64_t getCostModelFingerprint(CostModelState &CM) {
   return FP;
 }
 
-void requireCostModel(CostModelState &CM, StringRef targetCpu,
-                      StringRef function) {
-  resolveForTarget(CM, targetCpu, function);
-  getCostModel(CM);
+Error requireCostModel(CostModelState &CM, StringRef targetCpu,
+                       StringRef function) {
+  if (Error E = resolveForTarget(CM, targetCpu, function))
+    return E;
+  if (Error E = loadCostModel(CM))
+    return E;
   if (CM.NativeArch.empty())
-    report_fatal_error("Poseidon: cost model " + Twine(costModelPath(CM)) +
-                       " carries no '# native_arch=' header, so it cannot be "
-                       "matched against the compile target");
-  if (targetCpu != CM.NativeArch) {
-    std::string msg =
-        "Poseidon: cost model " + costModelPath(CM) +
-        " was measured on native_arch '" + CM.NativeArch + "' but " +
-        function.str() + " compiles for target-cpu '" +
-        (targetCpu.empty() ? std::string("<unset>") : targetCpu.str()) + "'";
-    report_fatal_error(Twine(msg));
-  }
+    return modelError(CM, "carries no '# native_arch=' header, so it cannot "
+                          "be matched against the compile target");
+  if (targetCpu != CM.NativeArch)
+    return modelError(CM,
+                      "was measured on native_arch '" + CM.NativeArch +
+                          "' but " + function + " compiles for target-cpu '" +
+                          (targetCpu.empty() ? "<unset>" : targetCpu) + "'");
+  return Error::success();
 }
 
 const std::string &getCostModelNativeArch(CostModelState &CM) {
@@ -219,20 +221,18 @@ const std::string &getCostModelNativeArch(CostModelState &CM) {
   return CM.NativeArch;
 }
 
-double queryCostModel(CostModelState &CM, const std::string &OpcodeName,
-                      const std::string &PrecisionName) {
+std::optional<double> lookupCost(CostModelState &CM, StringRef OpcodeName,
+                                 StringRef TypeName) {
   const auto &CostModel = getCostModel(CM);
-  auto It = CostModel.find(std::make_pair(OpcodeName, PrecisionName));
+  auto It = CostModel.find({OpcodeName.str(), TypeName.str()});
   if (It == CostModel.end())
-    modelError(CM, "has no row '" + OpcodeName + "," + PrecisionName + "'");
+    return std::nullopt;
   return It->second;
 }
 
 double queryCostModelOr(CostModelState &CM, const std::string &OpcodeName,
                         const std::string &PrecisionName, double fallback) {
-  const auto &CostModel = getCostModel(CM);
-  auto It = CostModel.find(std::make_pair(OpcodeName, PrecisionName));
-  return (It != CostModel.end()) ? It->second : fallback;
+  return lookupCost(CM, OpcodeName, PrecisionName).value_or(fallback);
 }
 
 } // namespace poseidon

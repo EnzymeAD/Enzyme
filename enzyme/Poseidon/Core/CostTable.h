@@ -10,7 +10,7 @@
 // The CSV measured on the target device that every price comes from: rows
 // "<opcode>,<type>,<cost>" and the headers "# native_arch=" and
 // "# scalar_types=", resolved and loaded once per compilation. A part of the
-// model that is missing or unreadable stops the compile, naming the model.
+// model that is missing or unreadable is an error naming the model.
 //
 //===----------------------------------------------------------------------===//
 
@@ -18,6 +18,7 @@
 #define POSEIDON_CORE_COST_TABLE_H
 
 #include "llvm/ADT/StringRef.h"
+#include "llvm/Support/Error.h"
 
 #include <cstdint>
 #include <map>
@@ -52,10 +53,11 @@ struct CostModelState {
 };
 
 // Resolves and loads the model for the function named `function`, compiled for
-// `targetCpu`, and aborts unless its native_arch header names `targetCpu`.
-void requireCostModel(CostModelState &CM, llvm::StringRef targetCpu,
-                      llvm::StringRef function);
+// `targetCpu`, and fails unless its native_arch header names `targetCpu`.
+llvm::Error requireCostModel(CostModelState &CM, llvm::StringRef targetCpu,
+                             llvm::StringRef function);
 
+// The loaded model; a site has required it.
 const std::map<std::pair<std::string, std::string>, double> &
 getCostModel(CostModelState &CM);
 
@@ -71,13 +73,9 @@ const std::string &costModelPath(CostModelState &CM);
 // previous model's picks.
 uint64_t getCostModelFingerprint(CostModelState &CM);
 
-// The scalar formats the target has hardware for, from the CSV header; aborts
-// when the model has no "# scalar_types=" header.
-const std::unordered_set<std::string> &getScalarTypes(CostModelState &CM);
-
-// The (opcode,type) row; aborts naming the model when it is absent.
-double queryCostModel(CostModelState &CM, const std::string &OpcodeName,
-                      const std::string &TypeName);
+// The (opcode,type) row, if the model has it.
+std::optional<double> lookupCost(CostModelState &CM, llvm::StringRef OpcodeName,
+                                 llvm::StringRef TypeName);
 // The (opcode,type) row, or `fallback` when the model has none: for the rows a
 // candidate is proposed only with (such as "ozaki_dispatch_rel").
 double queryCostModelOr(CostModelState &CM, const std::string &OpcodeName,

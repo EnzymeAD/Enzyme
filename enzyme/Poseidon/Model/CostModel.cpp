@@ -37,7 +37,35 @@ namespace poseidon {
 
 void requireCostModel(CostModelState &CM, const Function &F) {
   StringRef targetCpu = Target::of(F).processor(F);
-  requireCostModel(CM, targetCpu, F.getName());
+  if (Error E = requireCostModel(CM, targetCpu, F.getName()))
+    reportUserError(F, F.getSubprogram(), toString(std::move(E)));
+}
+
+// A price the compile needs and the model does not have.
+[[noreturn]] static void missingRow(CostModelState &CM, const Function &F,
+                                    const DiagnosticLocation &Loc,
+                                    StringRef Opcode, StringRef Type) {
+  reportUserError(F, Loc,
+                  "cost model " + Twine(costModelPath(CM)) + " has no row '" +
+                      Opcode + "," + Type +
+                      "'; measure it with poseidon-calibrate");
+}
+
+static double rowCost(CostModelState &CM, const Instruction &I,
+                      StringRef Opcode, StringRef Type) {
+  if (std::optional<double> cost = lookupCost(CM, Opcode, Type))
+    return *cost;
+  missingRow(CM, *I.getFunction(), I.getDebugLoc(), Opcode, Type);
+}
+
+const std::unordered_set<std::string> &getScalarTypes(CostModelState &CM,
+                                                      const Function &F) {
+  if (CM.ScalarTypes.empty())
+    reportUserError(F, F.getSubprogram(),
+                    "cost model " + Twine(costModelPath(CM)) +
+                        " carries no '# scalar_types=' header, so the formats "
+                        "the device has hardware for are unknown");
+  return CM.ScalarTypes;
 }
 
 // An instruction no row family prices.
@@ -61,7 +89,7 @@ double getInstructionCompCost(CostModelState &CM, const Instruction *I) {
                                           : "";
       if (P.empty())
         unpriced(I);
-      return queryCostModel(CM, "sin", P) + queryCostModel(CM, "cos", P);
+      return rowCost(CM, *I, "sin", P) + rowCost(CM, *I, "cos", P);
     }
 #endif
   // A regime split's condition is an fcmp, whose i1 result is not an FP type
@@ -275,7 +303,7 @@ double getInstructionCompCost(CostModelState &CM, const Instruction *I) {
     PrecisionName = SrcPrecisionName;
   }
 
-  return queryCostModel(CM, OpcodeName, PrecisionName);
+  return rowCost(CM, *I, OpcodeName, PrecisionName);
 }
 
 double profiledCost(CostModelState &CM, const Function &F,
@@ -293,15 +321,20 @@ double profiledCost(CostModelState &CM, const Function &F,
   return cost;
 }
 
-const std::unordered_set<std::string> &getPTFuncs(CostModelState &CM) {
+const std::unordered_set<std::string> &getPTFuncs(CostModelState &CM,
+                                                  const Function &F) {
   if (!CM.PTFuncs) {
+    auto row = [&](StringRef Opcode, StringRef Type) {
+      if (std::optional<double> cost = lookupCost(CM, Opcode, Type))
+        return *cost;
+      missingRow(CM, F, F.getSubprogram(), Opcode, Type);
+    };
     std::unordered_set<std::string> funcs;
     for (const auto &func : libmFuncs()) {
-      double costFP32 = queryCostModel(CM, func, "float");
-      double costFP64 = queryCostModel(CM, func, "double");
-      double costFPTrunc =
-          queryCostModel(CM, "fptrunc_double_to_float", "double");
-      double costFPExt = queryCostModel(CM, "fpext_float_to_double", "float");
+      double costFP32 = row(func, "float");
+      double costFP64 = row(func, "double");
+      double costFPTrunc = row("fptrunc_double_to_float", "double");
+      double costFPExt = row("fpext_float_to_double", "float");
       double costFPCast = costFPTrunc + costFPExt;
       if (costFP32 + costFPCast < costFP64)
         funcs.insert(func);

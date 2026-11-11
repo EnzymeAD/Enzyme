@@ -41,12 +41,18 @@ namespace poseidon {
 
 // Poseidon prices every candidate from the measured CSV; a site cannot be
 // optimized without one, and a CSV measured on another device is not a price
-// for this one. Aborts unless the model is present and its native_arch header
-// names this function's target-cpu.
+// for this one. Stops the compile with an error at `F` unless the model is
+// present and its native_arch header names this function's target-cpu.
 void requireCostModel(CostModelState &CM, const llvm::Function &F);
 
-// The row that prices `I`; aborts when no row family prices its kind.
+// The row that prices `I`; a model without that row is an error at `I`, and an
+// instruction no row family prices aborts.
 double getInstructionCompCost(CostModelState &CM, const llvm::Instruction *I);
+
+// The scalar formats the device of `F` has hardware for, from the CSV header;
+// a model without the "# scalar_types=" header is an error at `F`.
+const std::unordered_set<std::string> &getScalarTypes(CostModelState &CM,
+                                                      const llvm::Function &F);
 
 // What the profiled run spent in `F`: every operation the profile records, its
 // execution count times its price. `slotOf` gives an instruction's profile
@@ -56,8 +62,9 @@ double profiledCost(
     llvm::function_ref<bool(const llvm::Instruction &, size_t &)> slotOf);
 
 // The libm calls that are cheaper computed at FP32 and converted back than at
-// FP64 on this device.
-const std::unordered_set<std::string> &getPTFuncs(CostModelState &CM);
+// FP64 on this device. A model without a row this needs is an error at `F`.
+const std::unordered_set<std::string> &getPTFuncs(CostModelState &CM,
+                                                  const llvm::Function &F);
 
 double computeMaxCost(CostModelState &CM, llvm::BasicBlock *BB,
                       std::unordered_map<llvm::BasicBlock *, double> &MaxCost,
