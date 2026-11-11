@@ -81,6 +81,11 @@ if(TARGET poseidon_rt_hip)
 else()
   set(POSEIDON_TEST_HAS_HIP False)
 endif()
+if(POSEIDON_TCEC_USE_CUMPSGEMM)
+  set(POSEIDON_TEST_TCEC_CUMPSGEMM True)
+else()
+  set(POSEIDON_TEST_TCEC_CUMPSGEMM False)
+endif()
 
 configure_lit_site_cfg(
   ${CMAKE_CURRENT_SOURCE_DIR}/lit.site.cfg.py.in
