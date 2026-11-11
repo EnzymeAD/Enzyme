@@ -9,8 +9,8 @@
 
 #include "Staging.h"
 #include "Expansion.h"
-#include "Optimize.h"
 #include "Pass/Session.h"
+#include "Sites/SiteIdentity.h"
 #include "Targets/Target.h"
 
 #include "llvm/ADT/SetVector.h"

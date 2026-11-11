@@ -1,7 +1,7 @@
 #include "Annotations.h"
 
+#include "Canonicalize.h"
 #include "Core/Options.h"
-#include "Optimize.h"
 #include "Targets/OffloadRuntime.h"
 #include "Targets/Target.h"
 

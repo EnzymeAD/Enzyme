@@ -11,6 +11,7 @@
 #include "Sites/HostSites.h"
 #include "Sites/KernelSites.h"
 #include "Sites/Markers.h"
+#include "Sites/SiteIdentity.h"
 #include "Solvers.h"
 #include "Techniques/Matmul/HostDispatch.h"
 // The one profile-filename rule, shared verbatim with both FP profiler

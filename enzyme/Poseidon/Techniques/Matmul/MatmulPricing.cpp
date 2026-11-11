@@ -1,14 +1,10 @@
 // Matmul candidate pricing: option labels, measured in-kernel rows, the
 // WMMA target table and shared-memory capacity.
 #include "CostModel.h"
-#include "Evaluators.h"
 #include "InKernelRaise.h"
 #include "MatmulInternal.h"
-#include "Optimize.h"
 #include "Pass/Session.h"
-#include "Solvers.h"
 #include "Targets/Target.h"
-#include "Utils.h"
 #include "WmmaUtils.h"
 
 #include "llvm/ADT/StringExtras.h"

@@ -31,6 +31,7 @@
 #include "CostModel.h"
 #include "Optimize.h"
 #include "Pass/Session.h"
+#include "Sites/SiteIdentity.h"
 #include "Solvers.h"
 #include "Types.h"
 

@@ -35,7 +35,6 @@
 #include "CostModel.h"
 #include "Evaluators.h"
 #include "Herbie.h"
-#include "Optimize.h"
 #include "Pass/Session.h"
 #include "Sampling.h"
 #include "Targets/DeviceMath.h"

@@ -10,7 +10,6 @@
 #include "RaiseWMMA.h"
 #include "Core/Options.h"
 
-#include "Optimize.h"
 #include "Targets/NVPTXTensorCore.h"
 #include "Targets/Target.h"
 #include "Techniques/Precision.h"

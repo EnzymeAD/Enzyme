@@ -1,6 +1,6 @@
 #include "Canonicalize.h"
 
-#include "Optimize.h"
+#include "Targets/DeviceMath.h"
 
 #include "llvm/Analysis/AssumptionCache.h"
 #include "llvm/Analysis/BasicAliasAnalysis.h"
@@ -20,6 +20,7 @@
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Module.h"
+#include "llvm/IR/PatternMatch.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -37,6 +38,123 @@
 using namespace llvm;
 
 namespace poseidon {
+
+bool isOptimizable(const llvm::Value &V) {
+  const Instruction *I = dyn_cast<Instruction>(&V);
+  if (!I)
+    return false;
+
+  switch (I->getOpcode()) {
+  case Instruction::FNeg:
+  case Instruction::FAdd:
+  case Instruction::FSub:
+  case Instruction::FMul:
+  case Instruction::FDiv:
+  case Instruction::FRem:
+    return I->getType()->isFloatTy() || I->getType()->isDoubleTy();
+  case Instruction::Call: {
+    const CallInst *CI = dyn_cast<CallInst>(I);
+    if (!CI)
+      return false;
+
+    const Function *Callee = CI->getCalledFunction();
+    if (!Callee)
+      return false;
+
+    // GPU: the CUDA libdevice entry points Poseidon handles.
+    if (!deviceMathName(Callee->getName()).empty())
+      return true;
+
+    if (CI->getType()->isFloatTy() || CI->getType()->isDoubleTy()) {
+      StringRef funcName = Callee->getName();
+      return
+          // LLVM intrinsics
+          funcName.starts_with("llvm.sin.") ||
+          funcName.starts_with("llvm.cos.") ||
+          funcName.starts_with("llvm.tan.") ||
+          funcName.starts_with("llvm.asin.") ||
+          funcName.starts_with("llvm.acos.") ||
+          funcName.starts_with("llvm.atan.") ||
+          funcName.starts_with("llvm.atan2.") ||
+          funcName.starts_with("llvm.sinh.") ||
+          funcName.starts_with("llvm.cosh.") ||
+          funcName.starts_with("llvm.tanh.") ||
+          funcName.starts_with("llvm.exp.") ||
+          funcName.starts_with("llvm.log.") ||
+          funcName.starts_with("llvm.sqrt.") ||
+          funcName.starts_with("llvm.pow.") ||
+          funcName.starts_with("llvm.powi.") ||
+          funcName.starts_with("llvm.fabs.") ||
+          funcName.starts_with("llvm.fma.") ||
+          funcName.starts_with("llvm.fmuladd.") ||
+          funcName.starts_with("llvm.maxnum.") ||
+          funcName.starts_with("llvm.minnum.") ||
+          funcName.starts_with("llvm.ceil.") ||
+          funcName.starts_with("llvm.floor.") ||
+          funcName.starts_with("llvm.exp2.") ||
+          funcName.starts_with("llvm.log10.") ||
+          funcName.starts_with("llvm.log2.") ||
+          funcName.starts_with("llvm.rint.") ||
+          funcName.starts_with("llvm.round.") ||
+          funcName.starts_with("llvm.trunc.") ||
+          funcName.starts_with("llvm.copysign.") ||
+          funcName.starts_with("llvm.fdim.") ||
+          funcName.starts_with("llvm.fmod.") ||
+
+          // libm functions
+          funcName == "sin" || funcName == "sinf" || funcName == "cos" ||
+          funcName == "cosf" || funcName == "tan" || funcName == "tanf" ||
+          funcName == "asin" || funcName == "asinf" || funcName == "acos" ||
+          funcName == "acosf" || funcName == "atan" || funcName == "atanf" ||
+          funcName == "atan2" || funcName == "atan2f" || funcName == "sinh" ||
+          funcName == "sinhf" || funcName == "cosh" || funcName == "coshf" ||
+          funcName == "tanh" || funcName == "tanhf" || funcName == "asinh" ||
+          funcName == "asinhf" || funcName == "acosh" || funcName == "acoshf" ||
+          funcName == "atanh" || funcName == "atanhf" || funcName == "sqrt" ||
+          funcName == "sqrtf" || funcName == "cbrt" || funcName == "cbrtf" ||
+          funcName == "pow" || funcName == "powf" || funcName == "exp" ||
+          funcName == "expf" || funcName == "log" || funcName == "logf" ||
+          funcName == "fabs" || funcName == "fabsf" || funcName == "fma" ||
+          funcName == "fmaf" || funcName == "hypot" || funcName == "hypotf" ||
+          funcName == "expm1" || funcName == "expm1f" || funcName == "log1p" ||
+          funcName == "log1pf" || funcName == "ceil" || funcName == "ceilf" ||
+          funcName == "floor" || funcName == "floorf" || funcName == "erf" ||
+          funcName == "erff" || funcName == "exp2" || funcName == "exp2f" ||
+          funcName == "lgamma" || funcName == "lgammaf" ||
+          funcName == "log10" || funcName == "log10f" || funcName == "log2" ||
+          funcName == "log2f" || funcName == "rint" || funcName == "rintf" ||
+          funcName == "round" || funcName == "roundf" || funcName == "tgamma" ||
+          funcName == "tgammaf" || funcName == "trunc" ||
+          funcName == "truncf" || funcName == "copysign" ||
+          funcName == "copysignf" || funcName == "fdim" ||
+          funcName == "fdimf" || funcName == "fmod" || funcName == "fmodf" ||
+          funcName == "remainder" || funcName == "remainderf";
+    }
+    return false;
+  }
+  default:
+    return false;
+  }
+}
+
+void setSlotMetadata(Function &F) {
+  // The fpprofile idx must be invariant between the profile-generate and
+  // profile-use compiles, which differ in their non-optimizable instructions
+  // (profiler instrumentation shifts absolute positions). Index by rank among
+  // optimizable ops only, so the idx stays synchronized across both compiles.
+  size_t slotIdx = 0;
+  for (Instruction &I : instructions(F)) {
+    if (isOptimizable(I)) {
+      I.setMetadata("enzyme_active", MDNode::get(I.getContext(), {}));
+      I.setMetadata(
+          "poseidon.prof.idx",
+          MDNode::get(I.getContext(),
+                      {ConstantAsMetadata::get(ConstantInt::get(
+                          Type::getInt64Ty(I.getContext()), slotIdx))}));
+      ++slotIdx;
+    }
+  }
+}
 
 std::string canonicalFormHash(const Function &F) {
   std::string form;
@@ -287,6 +405,147 @@ void removeRedundantPHI(Function *F, FunctionAnalysisManager &FAM) {
         if (!isa<Instruction>(V) || DT.dominates(cast<Instruction>(V), PN)) {
           PN->replaceAllUsesWith(V);
           PN->eraseFromParent();
+        }
+      }
+    }
+  }
+}
+
+void preprocess(Function *F) {
+  using namespace llvm::PatternMatch;
+
+  // fmul + fadd -> fmuladd
+  for (auto &BB : *F) {
+    for (auto &I : make_early_inc_range(BB)) {
+      Value *X, *Y, *Z;
+
+      if (auto *FAdd = dyn_cast<BinaryOperator>(&I)) {
+        // `contract` alone licenses fusing a*b+c into one rounded fmuladd;
+        // `reassoc` is about regrouping across additions and is not needed.
+        // CUDA-default -ffp-contract=fast sets contract but not reassoc.
+        if (!isa<FPMathOperator>(FAdd) || !FAdd->hasAllowContract())
+          continue;
+
+        // fadd (fmul X, Y), Z
+        if (match(FAdd, m_FAdd(m_OneUse(m_FMul(m_Value(X), m_Value(Y))),
+                               m_Value(Z)))) {
+          IRBuilder<> B(FAdd);
+          B.setFastMathFlags(FAdd->getFastMathFlags());
+
+          Value *FMulAdd =
+              B.CreateIntrinsic(Intrinsic::fmuladd, FAdd->getType(), {X, Y, Z});
+          FAdd->replaceAllUsesWith(FMulAdd);
+          FAdd->eraseFromParent();
+        }
+        // fadd Z, (fmul X, Y)
+        else if (match(FAdd,
+                       m_FAdd(m_Value(Z),
+                              m_OneUse(m_FMul(m_Value(X), m_Value(Y)))))) {
+          IRBuilder<> B(FAdd);
+          B.setFastMathFlags(FAdd->getFastMathFlags());
+
+          Value *FMulAdd =
+              B.CreateIntrinsic(Intrinsic::fmuladd, FAdd->getType(), {X, Y, Z});
+          FAdd->replaceAllUsesWith(FMulAdd);
+
+          FAdd->eraseFromParent();
+        }
+      }
+    }
+  }
+
+  for (auto &BB : *F) {
+    for (auto &I : make_early_inc_range(BB)) {
+      Value *X, *Y, *Z;
+
+      if (auto *FSub = dyn_cast<BinaryOperator>(&I)) {
+        if (!isa<FPMathOperator>(FSub) || !FSub->hasAllowContract())
+          continue;
+
+        // Pattern: fsub (fmul X, Y), Z -> fmuladd(X, Y, -Z)
+        if (match(FSub, m_FSub(m_OneUse(m_FMul(m_Value(X), m_Value(Y))),
+                               m_Value(Z)))) {
+          IRBuilder<> B(FSub);
+          B.setFastMathFlags(FSub->getFastMathFlags());
+
+          Value *NegZ = B.CreateFNeg(Z);
+          Value *FMulAdd = B.CreateIntrinsic(Intrinsic::fmuladd,
+                                             FSub->getType(), {X, Y, NegZ});
+          FSub->replaceAllUsesWith(FMulAdd);
+          FSub->eraseFromParent();
+        }
+        // Pattern: fsub Z, (fmul X, Y) -> fmuladd(-X, Y, Z)
+        else if (match(FSub,
+                       m_FSub(m_Value(Z),
+                              m_OneUse(m_FMul(m_Value(X), m_Value(Y)))))) {
+          IRBuilder<> B(FSub);
+          B.setFastMathFlags(FSub->getFastMathFlags());
+
+          Value *NegX = B.CreateFNeg(X);
+          Value *FMulAdd = B.CreateIntrinsic(Intrinsic::fmuladd,
+                                             FSub->getType(), {NegX, Y, Z});
+          FSub->replaceAllUsesWith(FMulAdd);
+          FSub->eraseFromParent();
+        }
+      }
+    }
+  }
+
+  // fcmp + select -> fmax/fmin
+  for (auto &BB : *F) {
+    for (auto &I : make_early_inc_range(BB)) {
+      if (auto *Select = dyn_cast<SelectInst>(&I)) {
+        Value *Cond = Select->getCondition();
+        Value *TrueVal = Select->getTrueValue();
+        Value *FalseVal = Select->getFalseValue();
+
+        if (!Select->getType()->isFloatingPointTy())
+          continue;
+
+        CmpPredicate Pred;
+        Value *CmpLHS, *CmpRHS;
+
+        if (match(Cond, m_FCmp(Pred, m_Value(CmpLHS), m_Value(CmpRHS)))) {
+          IRBuilder<> B(Select);
+          Value *Result = nullptr;
+
+          // select (fcmp ogt X, 0.0), X, 0.0 -> maxnum(X, 0.0)
+          if (Pred == FCmpInst::FCMP_OGT && match(CmpRHS, m_AnyZeroFP()) &&
+              CmpLHS == TrueVal && match(FalseVal, m_AnyZeroFP())) {
+            Result = B.CreateIntrinsic(
+                Intrinsic::maxnum, CmpLHS->getType(),
+                {CmpLHS, ConstantFP::get(CmpLHS->getType(), 0.0)});
+          }
+          // select (fcmp olt X, 0.0), 0.0, X -> maxnum(X, 0.0)
+          else if (Pred == FCmpInst::FCMP_OLT && match(CmpRHS, m_AnyZeroFP()) &&
+                   CmpLHS == FalseVal && match(TrueVal, m_AnyZeroFP())) {
+            Result = B.CreateIntrinsic(
+                Intrinsic::maxnum, CmpLHS->getType(),
+                {CmpLHS, ConstantFP::get(CmpLHS->getType(), 0.0)});
+          }
+          // select (fcmp ogt X, Y), X, Y -> maxnum(X, Y)
+          else if (Pred == FCmpInst::FCMP_OGT && CmpLHS == TrueVal &&
+                   CmpRHS == FalseVal) {
+            Result = B.CreateIntrinsic(Intrinsic::maxnum, CmpLHS->getType(),
+                                       {CmpLHS, CmpRHS});
+          }
+          // select (fcmp olt X, Y), X, Y -> minnum(X, Y)
+          else if (Pred == FCmpInst::FCMP_OLT && CmpLHS == TrueVal &&
+                   CmpRHS == FalseVal) {
+            Result = B.CreateIntrinsic(Intrinsic::minnum, CmpLHS->getType(),
+                                       {CmpLHS, CmpRHS});
+          }
+
+          if (Result) {
+            Select->replaceAllUsesWith(Result);
+            Select->eraseFromParent();
+
+            if (auto *FCmp = dyn_cast<FCmpInst>(Cond)) {
+              if (FCmp->use_empty()) {
+                FCmp->eraseFromParent();
+              }
+            }
+          }
         }
       }
     }

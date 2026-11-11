@@ -1,7 +1,6 @@
 #include "SiteProfile.h"
 
 #include "Instrument.h"
-#include "Optimize.h"
 #include "Pass/Session.h"
 #include "ProfileRead.h"
 #include "Sites/Annotations.h"
@@ -11,8 +10,6 @@
 #include "Sites/LaunchDescriptors.h"
 #include "Sites/Markers.h"
 #include "Targets/Target.h"
-#include "Techniques/Matmul/HostDispatch.h"
-#include "Techniques/Matmul/Matmul.h"
 #include "Techniques/Matmul/RaiseWMMA.h"
 
 #include "llvm/ADT/DenseMap.h"

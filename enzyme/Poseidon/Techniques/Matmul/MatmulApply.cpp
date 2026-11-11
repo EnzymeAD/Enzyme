@@ -4,6 +4,7 @@
 #include "MatmulInternal.h"
 #include "Pass/Session.h"
 #include "RaiseWMMA.h"
+#include "Sites/LaunchDescriptors.h"
 
 #include "llvm/ADT/Twine.h"
 #include "llvm/IR/InstIterator.h"

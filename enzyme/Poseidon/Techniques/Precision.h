@@ -104,6 +104,8 @@ struct PTCandidate {
 void changePrecision(llvm::Instruction *I, PrecisionChange &change,
                      llvm::MapVector<llvm::Value *, llvm::Value *> &oldToNew);
 
+bool demoteFPCastPHIs(llvm::Function &F);
+
 double getCompCost(Session &S, Subgraph &subgraph, PTCandidate &pt);
 
 void setUnifiedAccuracyCost(

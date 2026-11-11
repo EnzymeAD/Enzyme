@@ -9,18 +9,10 @@
 #include "llvm/IR/Value.h"
 #include "llvm/Transforms/Utils/ValueMapper.h"
 
-#include "Sites/SiteIdentity.h"
-
 namespace poseidon {
 
 class Session;
 
-bool isOptimizable(const llvm::Value &V);
-
-bool demoteFPCastPHIs(llvm::Function &F);
-
-void setSlotMetadata(llvm::Function &F);
-void preprocess(llvm::Function *F);
 // `errorTol` > 0 is the accuracy target written AT the site; 0 means the site
 // wrote none and -poseidon-tau decides.
 bool fpOptimize(Session &S, llvm::Function &F, double errorTol = 0.0);

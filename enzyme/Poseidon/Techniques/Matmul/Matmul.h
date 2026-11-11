@@ -3,6 +3,7 @@
 
 #include "MatmulScheme.h"
 #include "Profile/ProfileRead.h"
+#include "Sites/LaunchDescriptors.h"
 #include "Techniques/Precision.h"
 #include "Techniques/Unit.h"
 
@@ -137,21 +138,6 @@ struct ScalarLoopHandle {
 // nest: extents and leading dimensions are runtime expressions, carried
 // symbolically here and as launch-argument references in the host-dispatch
 // descriptor. Cost numbers come from the profile at profile scale (profM/N/K).
-
-// A value the host knows at the launch: a parameter of the optimized body, or a
-// field of an aggregate a parameter passes by value (the captures of a lambda a
-// kernel takes by value: DeviceTensor data pointers and sizes).
-struct LaunchRef {
-  int param = -1;
-  int64_t offset = -1; // byte offset of the field; -1 = the parameter itself
-  bool isField() const { return offset >= 0; }
-  bool operator==(const LaunchRef &o) const {
-    return param == o.param && offset == o.offset;
-  }
-  bool operator<(const LaunchRef &o) const {
-    return param != o.param ? param < o.param : offset < o.offset;
-  }
-};
 
 // One GEMM dimension (extent or leading dimension) as a monomial over launch
 // values of the optimized body:

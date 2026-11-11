@@ -1,12 +1,9 @@
 // Matmul candidate proposal: one proposer per (scheme, realization), run in a
 // fixed order by generateMatmulCandidates.
 #include "CostModel.h"
-#include "Evaluators.h"
 #include "HostDispatch.h"
 #include "MatmulInternal.h"
-#include "Optimize.h"
 #include "Pass/Session.h"
-#include "Utils.h"
 #include "runtime/ozaki/OzakiII.h"
 
 #include "llvm/ADT/StringExtras.h"
