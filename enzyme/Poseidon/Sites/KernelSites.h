@@ -9,7 +9,6 @@
 #include <string>
 
 namespace llvm {
-class AllocaInst;
 class CallInst;
 class Function;
 class Module;
@@ -20,7 +19,7 @@ namespace poseidon {
 
 void markOutlineTransparent(llvm::Function *body);
 llvm::CallInst *outlineKernelBody(llvm::Function &K, llvm::Function *&bodyOut);
-llvm::AllocaInst *localObject(llvm::Value *p, const llvm::Function *caller);
+llvm::Value *localObject(llvm::Value *p, const llvm::Function *caller);
 bool pointsNowhere(llvm::Value *p);
 std::string perCallSiteName(llvm::StringRef symbol);
 bool lowerDeviceCallSites(llvm::Module &M);

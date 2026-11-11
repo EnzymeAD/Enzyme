@@ -776,8 +776,7 @@ bool profileHostSite(Session &S, Function &B, unsigned &nextSiteId) {
 namespace {
 
 // `p` with the object it points into replaced by `shadow`.
-Value *intoShadow(Value *p, AllocaInst *obj, AllocaInst *shadow,
-                  IRBuilder<> &B) {
+Value *intoShadow(Value *p, Value *obj, AllocaInst *shadow, IRBuilder<> &B) {
   if (p == obj)
     return shadow;
   auto *I = cast<Instruction>(p);
@@ -785,6 +784,33 @@ Value *intoShadow(Value *p, AllocaInst *obj, AllocaInst *shadow,
   Instruction *copy = I->clone();
   copy->setOperand(0, base);
   return B.Insert(copy, p->getName() + ".shadow");
+}
+
+// A local object like `obj` (localObject), for its shadow: next to an alloca,
+// in the entry block for an aggregate the function takes by value, which is
+// in the stack's address space as the parameter is.
+AllocaInst *shadowObject(Value *obj) {
+  if (auto *AI = dyn_cast<AllocaInst>(obj))
+    return new AllocaInst(AI->getAllocatedType(), AI->getAddressSpace(),
+                          AI->getArraySize(), AI->getAlign(),
+                          AI->getName() + ".shadow",
+                          std::next(AI->getIterator()));
+  auto *A = cast<Argument>(obj);
+  Function &F = *A->getParent();
+  const DataLayout &DL = F.getParent()->getDataLayout();
+  Type *T = A->getPointeeInMemoryValueType();
+  Align align =
+      std::max(A->getParamAlign().valueOrOne(), DL.getABITypeAlign(T));
+  return new AllocaInst(T, DL.getAllocaAddrSpace(), nullptr, align,
+                        A->getName() + ".shadow",
+                        F.getEntryBlock().getFirstInsertionPt());
+}
+
+uint64_t objectBytes(Value *obj, const DataLayout &DL) {
+  if (auto *AI = dyn_cast<AllocaInst>(obj))
+    return AI->getAllocationSize(DL)->getFixedValue();
+  return DL.getTypeAllocSize(
+      cast<Argument>(obj)->getPointeeInMemoryValueType());
 }
 
 // The parameters the site reads a pointer through. A shadow of such an object
@@ -799,13 +825,14 @@ void collectPointerHolders(Function &clone, SmallVectorImpl<bool> &holds) {
           holds[idx] = true;
 }
 
-// Whether the program may read what `call` leaves in `obj`: an instruction the
-// call reaches before the object's lifetime ends, the call itself when it runs
-// again, or whatever the object's address escapes to. What the site writes and
-// nothing reads reaches no result of the program (dFEM's JVP writes the
-// q-function's primal outputs next to the tangents it is called for), so it is
+// Whether the program may read what `call` leaves in `obj`, a local object
+// (localObject): an instruction the call reaches before the object's lifetime
+// ends, the call itself when it runs again, or whatever the object's address
+// escapes to. A by-value parameter's lifetime ends with the function. What the
+// site writes and nothing reads reaches no result of the program (a JVP that
+// writes the primal outputs next to the tangents it is called for), so it is
 // no output to seed.
-bool readAfterCall(AllocaInst *obj, CallInst *call) {
+bool readAfterCall(Value *obj, CallInst *call) {
   SmallPtrSet<const Instruction *, 16> readers{call}, ends;
   SmallPtrSet<const Value *, 16> seen{obj};
   SmallVector<const Value *, 8> work{obj};
@@ -874,8 +901,8 @@ CallInst *withShadows(CallInst *CI, Function &clone, const MarkerArgs &marker) {
   const DataLayout &DL = CI->getModule()->getDataLayout();
   LLVMContext &C = CI->getContext();
 
-  MapVector<AllocaInst *, std::pair<AllocaInst *, unsigned>> objects;
-  DenseMap<unsigned, AllocaInst *> objectOf;
+  MapVector<Value *, std::pair<AllocaInst *, unsigned>> objects;
+  DenseMap<unsigned, Value *> objectOf;
   DenseSet<unsigned> constant;
   for (const MarkerArgs::MadeShadow &S : marker.madeShadows) {
     Value *p = CI->getArgOperand(S.arg);
@@ -883,18 +910,19 @@ CallInst *withShadows(CallInst *CI, Function &clone, const MarkerArgs &marker) {
       constant.insert(S.activity);
       continue;
     }
-    AllocaInst *obj = localObject(p, CI->getFunction());
+    Value *obj = localObject(p, CI->getFunction());
     if (!obj) {
       warn(CI, perCallSiteName(body->getName()) + " no longer takes argument " +
-                   Twine(S.param + 1) + " as a pointer into a local object; " +
-                   "the call is not profiled");
+                   Twine(S.param + 1) +
+                   " as a pointer into an object whose extent the pass "
+                   "knows; the call is not profiled");
       return nullptr;
     }
     unsigned &width = objects[obj].second;
     width = std::max(width, seedWidth[S.param]);
     objectOf[S.arg] = obj;
   }
-  SmallPtrSet<AllocaInst *, 4> unread;
+  SmallPtrSet<Value *, 4> unread;
   for (auto &[obj, entry] : objects)
     if (entry.second && !readAfterCall(obj, CI)) {
       entry.second = 0;
@@ -910,13 +938,10 @@ CallInst *withShadows(CallInst *CI, Function &clone, const MarkerArgs &marker) {
       fail(CI, "no seed rule for a " + Twine(width) + "-byte output element");
       return nullptr;
     }
-    shadow = new AllocaInst(obj->getAllocatedType(), obj->getAddressSpace(),
-                            obj->getArraySize(), obj->getAlign(),
-                            obj->getName() + ".shadow",
-                            std::next(obj->getIterator()));
-    uint64_t bytes = obj->getAllocationSize(DL)->getFixedValue();
+    shadow = shadowObject(obj);
+    uint64_t bytes = objectBytes(obj, DL);
     IRBuilder<> B(CI);
-    B.CreateMemSet(shadow, B.getInt8(0), bytes, obj->getAlign());
+    B.CreateMemSet(shadow, B.getInt8(0), bytes, shadow->getAlign());
     if (uint64_t n = T ? bytes / width : 0) {
       auto [at, idx] =
           SplitBlockAndInsertSimpleForLoop(B.getInt64(n), CI->getIterator());
@@ -933,7 +958,7 @@ CallInst *withShadows(CallInst *CI, Function &clone, const MarkerArgs &marker) {
                      [&](const auto &S) { return S.activity == i; }))
       a = activityArg(C, constant.count(i) ? "enzyme_const" : "enzyme_dup");
     args.push_back(a);
-    if (AllocaInst *obj = objectOf.lookup(i))
+    if (Value *obj = objectOf.lookup(i))
       args.push_back(intoShadow(a, obj, objects[obj].first, B));
   }
   CallInst *NC =
