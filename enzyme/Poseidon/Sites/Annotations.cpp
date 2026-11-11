@@ -72,6 +72,35 @@ std::optional<double> annotationTarget(Constant *args) {
   return value->getValueAPF().convertToDouble();
 }
 
+// The C string an annotation entry's second field names; none when that is not
+// a global with a C-string initializer.
+std::optional<StringRef> annotationString(ConstantStruct &entry) {
+  auto *text =
+      dyn_cast<GlobalVariable>(entry.getOperand(1)->stripPointerCasts());
+  auto *str = text && text->hasInitializer()
+                  ? dyn_cast<ConstantDataArray>(text->getInitializer())
+                  : nullptr;
+  if (!str || !str->isCString())
+    return std::nullopt;
+  return str->getAsCString();
+}
+
+// Replaces the module's llvm.global.annotations, `GA`, by an array of
+// `entries`.
+void replaceAnnotations(Module &M, GlobalVariable *GA,
+                        ArrayRef<Constant *> entries) {
+  auto *arr = cast<ConstantArray>(GA->getInitializer());
+  auto *init = ConstantArray::get(
+      ArrayType::get(arr->getType()->getElementType(), entries.size()),
+      entries);
+  auto *NG = new GlobalVariable(
+      M, init->getType(), GA->isConstant(), GA->getLinkage(), init, "", GA,
+      GA->getThreadLocalMode(), GA->getAddressSpace());
+  NG->setSection(GA->getSection());
+  NG->takeName(GA);
+  GA->eraseFromParent();
+}
+
 } // namespace
 
 // The annotated functions of this module with the accuracy target each
@@ -91,14 +120,12 @@ MapVector<Function *, std::optional<double>> annotatedFunctions(Module &M) {
     if (!entry || entry->getNumOperands() < 2)
       continue;
     auto *fn = dyn_cast<Function>(entry->getOperand(0)->stripPointerCasts());
-    auto *ann =
-        dyn_cast<GlobalVariable>(entry->getOperand(1)->stripPointerCasts());
-    if (!fn || fn->isDeclaration() || !ann || !ann->hasInitializer())
+    if (!fn || fn->isDeclaration())
       continue;
-    auto *text = dyn_cast<ConstantDataArray>(ann->getInitializer());
-    if (!text || !text->isCString())
+    std::optional<StringRef> text = annotationString(*entry);
+    if (!text)
       continue;
-    StringRef str = text->getAsCString();
+    StringRef str = *text;
     if (str != kAnnotation) {
       if (str.starts_with("poseidon;"))
         diagnoseSite(*fn,
@@ -271,12 +298,8 @@ void annotateLike(Function &K, Function &fn) {
     if (!ST || ST->getNumOperands() < 2 ||
         ST->getOperand(0)->stripPointerCasts() != &fn)
       continue;
-    auto *text =
-        dyn_cast<GlobalVariable>(ST->getOperand(1)->stripPointerCasts());
-    auto *str = text && text->hasInitializer()
-                    ? dyn_cast<ConstantDataArray>(text->getInitializer())
-                    : nullptr;
-    if (!str || !str->isCString() || str->getAsCString() != kAnnotation)
+    std::optional<StringRef> str = annotationString(*ST);
+    if (!str || *str != kAnnotation)
       continue;
     SmallVector<Constant *, 5> ops;
     for (Use &U : ST->operands())
@@ -287,15 +310,7 @@ void annotateLike(Function &K, Function &fn) {
   if (!copy)
     return;
   entries.push_back(copy);
-  auto *init = ConstantArray::get(
-      ArrayType::get(arr->getType()->getElementType(), entries.size()),
-      entries);
-  auto *NG = new GlobalVariable(
-      M, init->getType(), GA->isConstant(), GA->getLinkage(), init, "", GA,
-      GA->getThreadLocalMode(), GA->getAddressSpace());
-  NG->setSection(GA->getSection());
-  NG->takeName(GA);
-  GA->eraseFromParent();
+  replaceAnnotations(M, GA, entries);
 }
 
 } // namespace
@@ -427,14 +442,10 @@ bool dropSiteAnnotations(Module &M) {
   for (Value *op : arr->operands()) {
     auto *entry = cast<Constant>(op);
     auto *ST = dyn_cast<ConstantStruct>(entry);
-    auto *text =
-        ST && ST->getNumOperands() > 1
-            ? dyn_cast<GlobalVariable>(ST->getOperand(1)->stripPointerCasts())
-            : nullptr;
-    auto *str = text && text->hasInitializer()
-                    ? dyn_cast<ConstantDataArray>(text->getInitializer())
-                    : nullptr;
-    if (!str || !str->isCString() || str->getAsCString() != kAnnotation) {
+    std::optional<StringRef> str;
+    if (ST && ST->getNumOperands() > 1)
+      str = annotationString(*ST);
+    if (!str || *str != kAnnotation) {
       kept.push_back(entry);
       continue;
     }
@@ -444,18 +455,10 @@ bool dropSiteAnnotations(Module &M) {
   }
   if (kept.size() == arr->getNumOperands())
     return false;
-  if (kept.empty()) {
+  if (kept.empty())
     GA->eraseFromParent();
-  } else {
-    auto *init = ConstantArray::get(
-        ArrayType::get(arr->getType()->getElementType(), kept.size()), kept);
-    auto *NG = new GlobalVariable(
-        M, init->getType(), GA->isConstant(), GA->getLinkage(), init, "", GA,
-        GA->getThreadLocalMode(), GA->getAddressSpace());
-    NG->setSection(GA->getSection());
-    NG->takeName(GA);
-    GA->eraseFromParent();
-  }
+  else
+    replaceAnnotations(M, GA, kept);
   for (GlobalVariable *G : maybeDead) {
     G->removeDeadConstantUsers();
     if (G->use_empty() && G->isDiscardableIfUnused())
