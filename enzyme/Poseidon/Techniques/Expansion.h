@@ -31,10 +31,6 @@ struct ExpansionState {
   llvm::SmallVector<llvm::Value *, 32> LastExpLimbs;
 };
 
-DSValue emitTwoSum(llvm::IRBuilder<> &B, llvm::Value *a, llvm::Value *b);
-DSValue emitFastTwoSum(llvm::IRBuilder<> &B, llvm::Value *a, llvm::Value *b);
-DSValue emitTwoProdFMA(llvm::IRBuilder<> &B, llvm::Value *a, llvm::Value *b);
-
 DSValue emitDSAdd(llvm::IRBuilder<> &B, DSValue x, DSValue y);
 DSValue emitDSSub(llvm::IRBuilder<> &B, DSValue x, DSValue y);
 DSValue emitDSMul(llvm::IRBuilder<> &B, DSValue x, DSValue y);
