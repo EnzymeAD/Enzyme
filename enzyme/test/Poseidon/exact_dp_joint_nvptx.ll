@@ -8,8 +8,9 @@
 ; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/exact_dp/joint -poseidon-enable-herbie=true -poseidon-herbie-binary=/nonexistent/herbie -poseidon-enable-pt=false -poseidon-cost-model=%t/cm_sm_120_fma.csv -poseidon-joint-dp -poseidon-cost-budget=-0.7 -poseidon-cache=%t/exact -poseidon-early-prune=false -S -o /dev/null 2>&1 | FileCheck --check-prefix=EXACT %s
 ; RUN: FileCheck --check-prefix=EXACT-BUDGETS %s < %t/exact/budgets.txt
 
-; Two sites of exact_dp_one_output_nvptx.ll's kind, on its cost model, under
-; one shared budget.
+; Two sites of exact_dp_one_output_nvptx.ll's kind, on its cost model (the
+; synthetic one with the FP64 FMA lowered to 7/8 of an FP64 add, so that the
+; binary64 rewrite is cheaper than the original), under one shared budget.
 ; Pruning after each site's binary64 rewrite drops every strategy without it,
 ; so neither site's binary32 rewrite reaches the joint frontier. The exact
 ; frontier is the sum of the two sites' own: both binary32 rewrites, one of

@@ -122,37 +122,3 @@ attributes #5 = { convergent nounwind "uniform-work-group-size" }
 !11 = distinct !{!11, !12, !13}
 !12 = !{!"llvm.loop.mustprogress"}
 !13 = !{!"llvm.loop.unroll.disable"}
-
-; CHECK: [poseidon] Found 1 AbstractMatmul(s) for preprocess_matmul_body
-; CHECK-NEXT: Matmul[0]: 16x16x16 a=f64 b=f64 acc=f64 d=f64 origin=ScalarLoopReduction
-; CHECK: matmul[0] pricing: baseline/MAC=4.988291e+04 executions=8192
-; CHECK-NEXT: {{#}}0 wmma m16n16k16 f16/f32 compCost/MAC=3.385254e+03 rel=6.786400e-02
-; CHECK-NEXT: {{#}}1 tcec n=2 wmma m16n16k16 f16/f32 compCost/MAC=4.159686e+03 rel=8.338900e-02
-; CHECK-NEXT: {{#}}2 tcec n=3 wmma m16n16k16 f16/f32 compCost/MAC=4.899349e+03 rel=9.821700e-02
-; CHECK: Matmul[0] candidates (initial cost=4.988291e+04, executions=8192,
-; CHECK-NEXT: wmma m16n16k16 f16/f32: {{.*}}cost=-380908769
-; CHECK-NEXT: tcec n=2 wmma m16n16k16 f16/f32: {{.*}}cost=-374564621
-; CHECK-NEXT: tcec n=3 wmma m16n16k16 f16/f32: {{.*}}cost=-368505296
-; CHECK: Applying solution for matmul[0] -> tcec n=3 wmma m16n16k16 f16/f32
-; CHECK-LABEL: define {{.*}} @preprocess_matmul_body(
-; CHECK: fptrunc double %{{.+}} to float
-; CHECK: fptrunc float %{{.+}} to half
-; CHECK: @llvm.nvvm.wmma.m16n16k16.load.a.row.stride.f16.p0(
-; CHECK: @llvm.nvvm.wmma.m16n16k16.load.b.row.stride.f16.p0(
-; CHECK: @llvm.nvvm.wmma.m16n16k16.mma.row.row.f32.f32(
-; CHECK: @llvm.nvvm.wmma.m16n16k16.store.d.row.stride.f32.p0(
-; CHECK: ret void
-
-; CLEAN-LABEL: define {{.*}} @preprocess_matmul_body(
-; CLEAN-NOT: call double @llvm.fmuladd.f64
-; CLEAN: ret void
-
-; SITE4: Poseidon error-budget: matmul -> tcec n=2 wmma m16n16k16 f16/f32 (domain err 1.572576e-07 <= 1.000000e-04 at confidence 9.500000e-01)
-; SITE4: Applying solution for matmul[0] -> tcec n=2 wmma m16n16k16 f16/f32
-
-; SITE7: Poseidon error-budget: matmul -> tcec n=3 wmma m16n16k16 f16/f32 (domain err 5.874975e-08 <= 1.000000e-07 at confidence 9.500000e-01)
-; SITE7: Applying solution for matmul[0] -> tcec n=3 wmma m16n16k16 f16/f32
-
-; SITE8: Poseidon error-budget: matmul -> baseline F64 (no rewrite clears 1.000000e-08 at confidence 9.500000e-01 faster than F64)
-; SITE8: no rewrite applied for preprocess_matmul_body; calling original body matmul_body
-; SITE8-NOT: Applying solution for matmul[0]

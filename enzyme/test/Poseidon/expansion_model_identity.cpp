@@ -1,6 +1,8 @@
 // RUN: rm -rf %t && mkdir -p %t
 // RUN: %clang++ $(llvm-config --cxxflags) -fPIC -shared -I%S/../../Poseidon %S/Inputs/expansion_match/emit.cpp -o %t/emit%shlibext
 // RUN: env EXPANSION_MATCH_OUT=%t %opt %S/Inputs/expansion_match/module.ll %loadPoseidon -load-pass-plugin=%t/emit%shlibext -passes=expansion-match-model -S -o %t/model.ll
+// RUN: mkdir -p %t/again && env EXPANSION_MATCH_OUT=%t/again %opt %S/Inputs/expansion_match/module.ll %loadPoseidon -load-pass-plugin=%t/emit%shlibext -passes=expansion-match-model -S -o %t/again/model.ll
+// RUN: diff %t/model.ll %t/again/model.ll
 // RUN: %clang++ -O2 -c %t/model.ll -o %t/model.o
 // RUN: %clang++ -std=c++17 -O2 -ffp-contract=off -I%t %S/Inputs/expansion_match/model_harness.cpp %t/model.o -o %t/run
 // RUN: %t/run %t | FileCheck %s
@@ -16,7 +18,8 @@
 // them; across two changes, and around an operation left in FP64, both split
 // the FP64 value again; an FP32 function is converted and restored in FP32.
 // The model is the plugin's own, as built, so a build of the compiler that
-// contracted the model's products and sums would fail here.
+// contracted the model's products and sums would fail here. Two runs emit the
+// same model.ll: the materializer emits in an order the source fixes.
 
 // CHECK: n=2 FP32 chains: 16000 cases, 0 differ
 // CHECK-NEXT: n=2 a*a: 80000 cases, 0 differ
