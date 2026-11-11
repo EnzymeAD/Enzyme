@@ -340,7 +340,8 @@ bool optimizeSite(Session &S, CallInst *CI,
 
 // Profile use of a host site: the body is solved once, and every call of it,
 // the wrapper's and the ones the inliner placed in F's callers, is redirected
-// to what the solve chose.
+// to what the solve chose; a caller redirected to a rewrite is a function the
+// rewrite reached.
 bool optimizeHostSite(Session &S, Function &B) {
   double errTol = takeHostBody(B);
   markOutlineTransparent(&B);
@@ -357,8 +358,11 @@ bool optimizeHostSite(Session &S, Function &B) {
   SmallVector<CallBase *, 1> lowered;
   bool changed = optimizeSiteBody(S, rep, &B, primalArgs, errTol, lowered);
   Function *target = lowered.back()->getCalledFunction();
-  for (CallBase *CB : calls)
+  for (CallBase *CB : calls) {
     CB->setCalledFunction(target);
+    if (target != &B)
+      noteRewritten(S, *CB->getFunction());
+  }
   return changed;
 }
 

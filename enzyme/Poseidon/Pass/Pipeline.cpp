@@ -374,19 +374,23 @@ struct HostSitePass : PassParent<HostSitePass> {
   static bool isRequired() { return true; }
 };
 
-// A device module with a site is compiled for the solve otherwise than as
-// written in every function, not only the rewritten ones: libdevice math kept
-// out of line through the inliner, the canonical prefix, a per-call site's copy
-// kept out of line until it is lowered (150 registers against 134 for one
-// finite-element kernel). The module is compiled once more, from its state
-// before any of that and as a build without a profile compiles it, and every
-// function no rewrite reached is emitted from that compile.
+// A module with a site is compiled for the solve otherwise than as written in
+// every function, not only the rewritten ones: the canonical prefix, a site's
+// body or per-call copy kept out of line until it is lowered (150 registers
+// against 134 for one finite-element kernel; a host loop over the call no
+// longer vectorized), and on a device libdevice math kept out of line through
+// the inliner. The module is compiled once more, from its state before any of
+// that and as a build without a profile compiles it, and every function no
+// rewrite reached is emitted from that compile. Not the host half of a CUDA or
+// HIP compilation, which holds no site of the call or the annotation form and
+// whose launch stubs are rewritten for its device half's sites at
+// PipelineStart, where no rewrite is recorded.
 // At PipelineStart, before HostSitePass.
 struct TwinSnapshotPass : PassParent<TwinSnapshotPass> {
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &MAM) {
     Session &S = sessionOf(M, MAM);
     const Options &O = S.Opts;
-    if (S.IsTwin || !Target::of(M).isDevice() || !hasSite(O, M))
+    if (S.IsTwin || isOffloadHostHalf(M) || !hasSite(O, M))
       return PreservedAnalyses::all();
     if (O.Profiling.usesProfile() && !O.Profiling.ProfileGenerate &&
         !O.Solver.JointDP)
