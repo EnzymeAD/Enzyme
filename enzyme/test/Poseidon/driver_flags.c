@@ -71,6 +71,17 @@
 // RUN:     -x hip --offload-arch=gfx942 \
 // RUN:     --rocm-path=%t.rocm -nogpuinc -nogpulib -### %s -o %t.o 2>&1 \
 // RUN:   | FileCheck --check-prefix=HIPGEN %s
+//
+// The HIP runtime's libraries come from where clang takes the HIP runtime:
+// HIP_PATH before --rocm-path, ROCM_PATH without either.
+// RUN: env POSEIDON_ECHO=1 HIP_PATH=%t.hippath %poseidon_clangxx \
+// RUN:     -poseidon-profile-use -x hip --offload-arch=gfx942 \
+// RUN:     --rocm-path=%t.rocm -nogpuinc -nogpulib -### %s -o %t.o 2>&1 \
+// RUN:   | FileCheck --check-prefix=HIPPATH %s
+// RUN: env POSEIDON_ECHO=1 ROCM_PATH=%t.rocmpath %poseidon_clangxx \
+// RUN:     -poseidon-profile-use -x hip --offload-arch=gfx942 -nogpuinc \
+// RUN:     -nogpulib -### %s -o %t.o 2>&1 \
+// RUN:   | FileCheck --check-prefix=ROCMPATH %s
 
 int main(void) { return 0; }
 
@@ -134,3 +145,7 @@ int main(void) { return 0; }
 
 // HIPGEN: clang{{.*}} -Xclang -mllvm -Xclang -poseidon-profile-generate
 // HIPGEN-SAME: -### {{[^ ]+}} -o {{[^ ]+}} -L{{[^ ]+}}.rocm/lib -lamdhip64 -L{{[^ ]+}} -lposeidon_profile_host{{( -lposeidon_profile_hip)?}} -lposeidon_profile{{ ?$}}
+
+// HIPPATH: clang{{.*}} -L{{[^ ]+}}.hippath/lib -lamdhip64
+
+// ROCMPATH: clang{{.*}} -L{{[^ ]+}}.rocmpath/lib -lamdhip64
