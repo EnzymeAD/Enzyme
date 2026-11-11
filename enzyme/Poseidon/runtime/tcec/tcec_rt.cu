@@ -132,25 +132,61 @@ __device__ __forceinline__ unsigned long long ptc_absBits(double v) {
   return (unsigned long long)__double_as_longlong(fabs(v));
 }
 
-// Layout-aware, so a caller passing a strided sub-matrix view (ld larger than
-// the packed extent) is measured over exactly the elements the GEMM will read,
-// not over whatever happens to lie in the gaps.
-__global__ void ptc_absmax(const double *__restrict__ X,
-                           unsigned long long *out, int slot, int rows,
-                           int cols, int ld, int colMajor) {
-  int r = blockIdx.y * blockDim.y + threadIdx.y;
-  int c = blockIdx.x * blockDim.x + threadIdx.x;
-  unsigned long long m = 0;
-  if (r < rows && c < cols) {
-    size_t s = colMajor ? (size_t)c * ld + r : (size_t)r * ld + c;
-    m = ptc_absBits(X[s]);
-  }
+__device__ __forceinline__ unsigned long long
+ptc_warpMax(unsigned long long m) {
   for (int off = 16; off; off >>= 1) {
     unsigned long long o = __shfl_xor_sync(0xffffffffu, m, off);
     m = o > m ? o : m;
   }
+  return m;
+}
+
+// Layout-aware, so a caller passing a strided sub-matrix view (ld larger than
+// the packed extent) is measured over exactly the elements the GEMM will read,
+// not over whatever happens to lie in the gaps. Only magnitudes matter, so the
+// operand is walked in storage order: `inner` elements are contiguous and the
+// `outer` runs are ld apart. Each thread folds PTC_AM_RUN runs and each block
+// publishes one atomic: a 64-bit atomic per warp on the one slot costs more
+// than reading the operand.
+#define PTC_AM_THREADS 256
+#define PTC_AM_RUN 16
+__global__ void ptc_absmax(const double *__restrict__ X,
+                           unsigned long long *out, int slot, int rows,
+                           int cols, int ld, int colMajor) {
+  int inner = colMajor ? rows : cols, outer = colMajor ? cols : rows;
+  int i = blockIdx.x * PTC_AM_THREADS + threadIdx.x;
+  unsigned long long m = 0;
+  if (i < inner)
+    for (int o0 = blockIdx.y * PTC_AM_RUN; o0 < outer;
+         o0 += gridDim.y * PTC_AM_RUN) {
+      int e = min(outer, o0 + PTC_AM_RUN);
+      for (int o = o0; o < e; ++o) {
+        unsigned long long v = ptc_absBits(X[(size_t)o * ld + i]);
+        m = v > m ? v : m;
+      }
+    }
+  __shared__ unsigned long long warpMax[PTC_AM_THREADS / 32];
+  m = ptc_warpMax(m);
   if ((threadIdx.x & 31) == 0)
-    atomicMax(&out[slot], m);
+    warpMax[threadIdx.x >> 5] = m;
+  __syncthreads();
+  if (threadIdx.x < 32) {
+    m = ptc_warpMax(threadIdx.x < PTC_AM_THREADS / 32 ? warpMax[threadIdx.x]
+                                                      : 0ull);
+    if (threadIdx.x == 0 && m)
+      atomicMax(&out[slot], m);
+  }
+}
+
+void ptc_launchAbsmax(const double *X, unsigned long long *out, int slot,
+                      int rows, int cols, int ld, int colMajor,
+                      cudaStream_t stream) {
+  int inner = colMajor ? rows : cols, outer = colMajor ? cols : rows;
+  int runs = (outer + PTC_AM_RUN - 1) / PTC_AM_RUN;
+  dim3 grid((inner + PTC_AM_THREADS - 1) / PTC_AM_THREADS,
+            runs < 65535 ? runs : 65535);
+  ptc_absmax<<<grid, PTC_AM_THREADS, 0, stream>>>(X, out, slot, rows, cols, ld,
+                                                  colMajor);
 }
 
 __global__ void ptc_scales(const unsigned long long *absmax, int *scaleExp) {
@@ -252,11 +288,9 @@ void ptc_run(double *C, const double *A, const double *B, int M, int Ncols,
   // Range normalization must see the operands as laid out, but only their
   // magnitudes, so it can stream them flat regardless of layout.
   PTC_CK(cudaMemsetAsync(g.absmax, 0, 2 * sizeof(unsigned long long), stream));
+  ptc_launchAbsmax(A, g.absmax, 0, M, K, lda, aColMajor, stream);
+  ptc_launchAbsmax(B, g.absmax, 1, K, Ncols, ldb, bColMajor, stream);
   dim3 b(16, 16);
-  ptc_absmax<<<dim3((K + 15) / 16, (M + 15) / 16), b, 0, stream>>>(
-      A, g.absmax, 0, M, K, lda, aColMajor);
-  ptc_absmax<<<dim3((Ncols + 15) / 16, (K + 15) / 16), b, 0, stream>>>(
-      B, g.absmax, 1, K, Ncols, ldb, bColMajor);
   ptc_scales<<<1, 1, 0, stream>>>(g.absmax, g.scaleExp);
 
   ptc_narrow<<<dim3((K + 15) / 16, (M + 15) / 16), b, 0, stream>>>(
