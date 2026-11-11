@@ -30,6 +30,12 @@
 // RUN:     -poseidon-tau=1e-7 %t.link.o -### -o %t.exe 2>&1 \
 // RUN:   | FileCheck --check-prefix=LINKONLY %s
 //
+// Every option of clang's whose value is the next argv entry keeps it, also
+// where the value spells a Poseidon flag or a CUDA source.
+// RUN: env POSEIDON_ECHO=1 %poseidon_clangxx -MT -poseidon-tau=1 -MD \
+// RUN:     -MF %t.dep.cu -I -poseidon-include %t.link.o -### -o %t.exe 2>&1 \
+// RUN:   | FileCheck --check-prefix=VALUES %s
+//
 // An option whose value is a separate argv entry keeps that value: the pair
 // reaches clang adjacent, and a value that spells a Poseidon flag is NOT
 // rewritten into a flag of its own. A Poseidon flag the user wrote after
@@ -77,6 +83,10 @@ int main(void) { return 0; }
 // LINKONLY-NOT: unused
 // LINKONLY: "{{[^"]*}}ld{{(\.lld)?}}"
 // LINKONLY-NOT: unused
+
+// VALUES: clang{{.*}} -MT -poseidon-tau=1 -MD -MF {{[^ ]+}}.dep.cu -I -poseidon-include
+// VALUES-NOT: -Xclang -mllvm -Xclang -poseidon-tau
+// VALUES-NOT: -lcudart
 
 // HELP: -poseidon-profile-generate
 // HELP: -poseidon-profile-use
