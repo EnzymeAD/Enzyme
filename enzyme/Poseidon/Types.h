@@ -15,7 +15,7 @@
 #ifndef POSEIDON_TYPES_H
 #define POSEIDON_TYPES_H
 
-#include "CostModel.h"
+#include "Model/CostModel.h"
 #include "Model/FPNode.h"
 
 #include "llvm/ADT/DenseMap.h"

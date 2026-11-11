@@ -33,8 +33,8 @@
 #include <functional>
 #include <optional>
 
-#include "CostModel.h"
 #include "Herbie.h"
+#include "Model/CostModel.h"
 #include "Pass/Session.h"
 #include "Solvers.h"
 #include "Targets/DeviceMath.h"

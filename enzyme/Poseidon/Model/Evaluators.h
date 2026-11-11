@@ -15,14 +15,15 @@
 #ifndef POSEIDON_EVALUATORS_H
 #define POSEIDON_EVALUATORS_H
 
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/IR/Value.h"
 #include <mpfr.h>
 #include <unordered_map>
 
 #include "Core/ExpansionModel.h"
-#include "Model/FPNode.h"
-#include "Techniques/Precision.h"
+#include "FPFormat.h"
+#include "FPNode.h"
 
 namespace poseidon {
 
@@ -38,7 +39,7 @@ private:
   bool evaluateExpansionNode(const FPNode *node, unsigned n);
 
 public:
-  FPEvaluator(PTCandidate *pt = nullptr);
+  FPEvaluator(llvm::ArrayRef<PrecisionChange> changes = {});
 
   PrecisionChangeType getNodePrecision(const FPNode *node) const;
   void evaluateNode(const FPNode *node,
@@ -65,7 +66,7 @@ private:
   std::unordered_map<const FPNode *, unsigned> nodeToNewPrec;
 
 public:
-  MPFREvaluator(unsigned prec, PTCandidate *pt = nullptr);
+  MPFREvaluator(unsigned prec, llvm::ArrayRef<PrecisionChange> changes = {});
   virtual ~MPFREvaluator() = default;
 
   unsigned getNodePrecision(const FPNode *node, bool groundTruth) const;
@@ -78,13 +79,13 @@ public:
 void getFPValues(llvm::ArrayRef<FPNode *> outputs,
                  const llvm::MapVector<llvm::Value *, double> &inputValues,
                  llvm::SmallVectorImpl<double> &results,
-                 PTCandidate *pt = nullptr);
+                 llvm::ArrayRef<PrecisionChange> changes = {});
 
 void getMPFRValues(llvm::ArrayRef<FPNode *> outputs,
                    const llvm::MapVector<llvm::Value *, double> &inputValues,
                    llvm::SmallVectorImpl<double> &results, bool groundTruth,
                    const unsigned groundTruthPrec = 53,
-                   PTCandidate *pt = nullptr);
+                   llvm::ArrayRef<PrecisionChange> changes = {});
 
 } // namespace poseidon
 #endif // POSEIDON_EVALUATORS_H

@@ -28,7 +28,7 @@
 #endif
 
 #include "BuildIdentity.h"
-#include "CostModel.h"
+#include "Model/CostModel.h"
 #include "Optimize.h"
 #include "Pass/Session.h"
 #include "Sites/SiteIdentity.h"

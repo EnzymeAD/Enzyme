@@ -10,9 +10,9 @@
 #include "RaiseWMMA.h"
 #include "Core/Options.h"
 
+#include "Model/FPFormat.h"
 #include "Targets/NVPTXTensorCore.h"
 #include "Targets/Target.h"
-#include "Techniques/Precision.h"
 #include "WmmaUtils.h"
 
 #include "llvm/Support/raw_ostream.h"

@@ -30,8 +30,8 @@
 #include "llvm/Support/Path.h"
 #include "llvm/Support/raw_ostream.h"
 
-#include "CostModel.h"
 #include "Herbie.h"
+#include "Model/CostModel.h"
 #include "Model/FPCore.h"
 #include "Optimize.h"
 #include "Session.h"

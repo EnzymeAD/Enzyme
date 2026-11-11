@@ -11,8 +11,8 @@
 #include "Core/Options.h"
 #include "Core/UniformReal.h"
 #include "Evaluators.h"
-#include "Model/FPCore.h"
-#include "Model/FPNode.h"
+#include "FPCore.h"
+#include "FPNode.h"
 
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallPtrSet.h"

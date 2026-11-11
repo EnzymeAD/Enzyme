@@ -17,7 +17,7 @@
 // app.bin (the points and the model's results for each function) and
 // fns.inc (the functions, for the harness).
 #include "Core/ExpansionModel.h"
-#include "Evaluators.h"
+#include "Model/Evaluators.h"
 #include "Model/FPCore.h"
 #include "Model/FPNode.h"
 #include "Pass/Session.h"
@@ -436,7 +436,7 @@ void modelApplied(std::vector<AppFn> &fns) {
         in[a.F->getArg(j)] =
             f32 ? (double)(float)pts[3 * i + j] : pts[3 * i + j];
       SmallVector<double, 1> r;
-      getFPValues({root.get()}, in, r, &pt);
+      getFPValues({root.get()}, in, r, pt.changes);
       fwrite(&r[0], 8, 1, out);
     }
     fprintf(inc, "FN(%s, %u, %s, \"%s\")\n", a.F->getName().str().c_str(), a.n,

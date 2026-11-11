@@ -21,7 +21,7 @@
 #include "llvm/IR/Type.h"
 #include "llvm/Transforms/Utils/ValueMapper.h"
 
-#include "Core/FPKind.h"
+#include "Model/FPFormat.h"
 
 #include <limits>
 #include <string>
@@ -36,50 +36,6 @@ class PrecisionUnit;
 struct Options;
 class Session;
 struct FunctionProfileHeader;
-
-enum class PrecisionChangeType {
-  BF16,
-  FP16,
-  FP32,
-  FP64,
-  FP80,
-  FP128,
-  Expansion2,
-  // Wider FP32 expansions; appended so no existing enumerator value shifts.
-  Expansion3,
-  Expansion4
-};
-// Component count of an FP32 expansion type, or 0 if `t` is not one; the one
-// place the family's parameterization is written down.
-inline unsigned expansionComponents(PrecisionChangeType t) {
-  switch (t) {
-  case PrecisionChangeType::Expansion2:
-    return 2;
-  case PrecisionChangeType::Expansion3:
-    return 3;
-  case PrecisionChangeType::Expansion4:
-    return 4;
-  default:
-    return 0;
-  }
-}
-unsigned getMPFRPrec(PrecisionChangeType type);
-llvm::Type *getLLVMFPType(PrecisionChangeType type, llvm::LLVMContext &context);
-PrecisionChangeType getPrecisionChangeType(llvm::Type *type);
-llvm::StringRef getPrecisionChangeTypeString(PrecisionChangeType type);
-
-FPKind fpKindFromType(llvm::Type *T);
-
-struct PrecisionChange {
-  llvm::SetVector<FPLLValue *> nodes;
-  PrecisionChangeType oldType;
-  PrecisionChangeType newType;
-
-  explicit PrecisionChange(llvm::SetVector<FPLLValue *> &nodes,
-                           PrecisionChangeType oldType,
-                           PrecisionChangeType newType)
-      : nodes(nodes), oldType(oldType), newType(newType) {}
-};
 
 struct PTCandidate {
   llvm::SmallVector<PrecisionChange, 1> changes;

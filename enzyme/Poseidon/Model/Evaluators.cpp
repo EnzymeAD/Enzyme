@@ -22,9 +22,9 @@
 #include <vector>
 
 #include "Evaluators.h"
-#include "Model/FPNode.h"
+#include "FPFormat.h"
+#include "FPNode.h"
 #include "Sampling.h"
-#include "Techniques/Precision.h"
 
 using namespace llvm;
 
@@ -32,9 +32,9 @@ namespace poseidon {
 
 static constexpr unsigned kMaxMPFRPrec = 1024;
 
-FPEvaluator::FPEvaluator(PTCandidate *pt) {
-  if (pt) {
-    for (const auto &[index, change] : enumerate(pt->changes)) {
+FPEvaluator::FPEvaluator(ArrayRef<PrecisionChange> changes) {
+  if (!changes.empty()) {
+    for (const auto &[index, change] : enumerate(changes)) {
       for (auto node : change.nodes) {
         nodePrecisions[node] = change.newType;
         nodeChange[node] = index;
@@ -447,9 +447,10 @@ MPFREvaluator::CachedValue::operator=(CachedValue &&other) noexcept {
 
 MPFREvaluator::CachedValue::~CachedValue() { mpfr_clear(value); }
 
-MPFREvaluator::MPFREvaluator(unsigned prec, PTCandidate *pt) : prec(prec) {
-  if (pt) {
-    for (const auto &change : pt->changes) {
+MPFREvaluator::MPFREvaluator(unsigned prec, ArrayRef<PrecisionChange> changes)
+    : prec(prec) {
+  if (!changes.empty()) {
+    for (const auto &change : changes) {
       for (auto node : change.nodes) {
         nodeToNewPrec[node] = getMPFRPrec(change.newType);
       }
@@ -886,11 +887,12 @@ mpfr_t &MPFREvaluator::getResult(FPNode *node) {
 
 void getFPValues(ArrayRef<FPNode *> outputs,
                  const MapVector<Value *, double> &inputValues,
-                 SmallVectorImpl<double> &results, PTCandidate *pt) {
+                 SmallVectorImpl<double> &results,
+                 ArrayRef<PrecisionChange> changes) {
   assert(!outputs.empty());
   results.resize(outputs.size());
 
-  FPEvaluator evaluator(pt);
+  FPEvaluator evaluator(changes);
 
   for (const auto *output : outputs) {
     evaluator.evaluateNode(output, inputValues);
@@ -906,12 +908,13 @@ void getFPValues(ArrayRef<FPNode *> outputs,
 void getMPFRValues(ArrayRef<FPNode *> outputs,
                    const MapVector<Value *, double> &inputValues,
                    SmallVectorImpl<double> &results, bool groundTruth,
-                   const unsigned groundTruthPrec, PTCandidate *pt) {
+                   const unsigned groundTruthPrec,
+                   ArrayRef<PrecisionChange> changes) {
   assert(!outputs.empty());
   results.resize(outputs.size());
 
   if (!groundTruth) {
-    MPFREvaluator evaluator(0, pt);
+    MPFREvaluator evaluator(0, changes);
 
     for (const auto *output : outputs) {
       evaluator.evaluateNode(output, inputValues, false);
@@ -930,7 +933,7 @@ void getMPFRValues(ArrayRef<FPNode *> outputs,
   size_t numConverged = 0;
 
   while (true) {
-    MPFREvaluator evaluator(curPrec, nullptr);
+    MPFREvaluator evaluator(curPrec, {});
 
     for (const auto *output : outputs) {
       evaluator.evaluateNode(output, inputValues, true);
