@@ -132,12 +132,9 @@ bool isEnzymeGeneratedName(StringRef name) {
 // Fold the code Enzyme generated for the request into the deferred body. What
 // Enzyme leaves behind is a body holding one call to the generated function,
 // and nothing in the -O2/-O3 pipeline inlines after OptimizerEarly, so without
-// this the site is still a call and still has no arithmetic. The frozen
-// integration had it for free: it ran inside lowerEnzymeCalls, which folded the
-// generated function into the marked body before the site handler saw it.
-// Only the generated functions are folded; a libdevice call the body makes
-// stays a call, so the solve prices it exactly as it prices one in a primal
-// site.
+// this the site is still a call and still has no arithmetic. Only the generated
+// functions are folded; a libdevice call the body makes stays a call, so the
+// solve prices it exactly as it prices one in a primal site.
 unsigned foldEnzymeGenerated(Function &body) {
   unsigned folded = 0;
   for (unsigned round = 0; round < 8; ++round) {

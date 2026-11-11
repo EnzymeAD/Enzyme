@@ -370,10 +370,10 @@ struct HostSitePass : PassParent<HostSitePass> {
 // A device module with a site is compiled for the solve otherwise than as
 // written in every function, not only the rewritten ones: libdevice math kept
 // out of line through the inliner, the canonical prefix, a per-call site's copy
-// kept out of line until it is lowered (lane G's hooke: 150 registers against
-// 134). The module is compiled once more, from its state before any of that
-// and as a build without a profile compiles it, and every function no rewrite
-// reached is emitted from that compile.
+// kept out of line until it is lowered (150 registers against 134 for one
+// finite-element kernel). The module is compiled once more, from its state
+// before any of that and as a build without a profile compiles it, and every
+// function no rewrite reached is emitted from that compile.
 // At PipelineStart, before HostSitePass.
 struct TwinSnapshotPass : PassParent<TwinSnapshotPass> {
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &MAM) {

@@ -4,10 +4,10 @@
 // on the same kernel at the same shape. poseidon-calibrate compiles this file
 // once per candidate class through the plugin with -poseidon-apply-rewrites and
 // times the result, so what is measured is the code a real solve emits. The
-// GEMM is byte for byte the shape the dense-GEMM benchmark uses (row-major A,
-// K-strided B, one thread per output element, 16x16 blocks, `#pragma unroll 1`
-// over the reduction), and without the plugin the annotation is inert, so the
-// same kernel is the scalar-FP64 denominator.
+// GEMM is a naive dense one (row-major A, K-strided B, one thread per output
+// element, 16x16 blocks, `#pragma unroll 1` over the reduction), and without
+// the plugin the annotation is inert, so the same kernel is the scalar-FP64
+// denominator.
 //
 // Run:  ./bin [reps=5]        ("time_ms = <ms>" on stdout)
 //       ./bin --profiling     (a launch of the site, for a profile run)
@@ -34,11 +34,11 @@
     }                                                                          \
   } while (0)
 
-// The name and signature are the dense-GEMM benchmark's annotated kernel, so
-// its surrogate profile is the profile this harness enumerates candidates
-// from: reverse-mode AD of a K=N reduction does not survive on this
-// translation unit, and the profile only decides which candidates exist, never
-// what they measure.
+// The name and signature are those of the GEMM site whose profile --profile
+// names, written at a small size, so that profile is the one this harness
+// enumerates candidates from: reverse-mode AD of a K=N reduction does not
+// survive on this translation unit, and the profile only decides which
+// candidates exist, never what they measure.
 POSEIDON_OPTIMIZE __global__ void matmul_opt(double *C, const double *A,
                                              const double *B) {
   int row = blockIdx.x * blockDim.x + threadIdx.x;

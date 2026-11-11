@@ -12,8 +12,8 @@
 // one Options per compile and is the only reader of a flag. A field's
 // initializer is its flag's default, the one place it is written (the flag
 // takes it from a default-constructed Options), so a default-constructed
-// Options is a compile given no flag. Defaults are part of the paper
-// configuration: changing one changes every banked result.
+// Options is a compile given no flag. Changing a default changes the decisions
+// of every compile that does not give the flag.
 //
 //===----------------------------------------------------------------------===//
 

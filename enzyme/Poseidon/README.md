@@ -34,21 +34,17 @@ enzyme/test/Poseidon/       lit suite: check-poseidon, check-poseidon-integratio
 
 - **LLVM**, with its clang. The plugin is built against one LLVM and loaded by
   that LLVM's clang. This tree is built and tested against LLVM 24
-  (`e56c2cefc3e7`, the commit Enzyme's CI pins); the paper's numbers were
-  produced with LLVM 23 (`a70419505471`), and the apt packages of LLVM 21 and
-  22 build the CPU path.
+  (`e56c2cefc3e7`, the commit Enzyme's CI pins), and the apt packages of LLVM
+  21 and 22 build the CPU path.
 - **Enzyme**: the one in this tree. Enzyme differentiates the probes the
   profiler places, so profile generation needs its plugin; profile use and
   plain compiles need it only for Enzyme requests of their own, such as the
   body of a deferred site. `poseidon-clang++` loads it for every action: a
-  module that asks nothing of Enzyme compiles as it does without it. The two
-  fixes on the paper path (NVPTX barrier
-  operands in the adjoint on LLVM 21+, a TypeAnalysis guard against zero-sized
-  globals) are commits on this branch.
+  module that asks nothing of Enzyme compiles as it does without it.
 - **MPFR** (with GMP): the accuracy model evaluates candidates against an
   arbitrary-precision reference.
-- **CUDA** 12.x or 13.x for the GPU path (cuBLAS, and cuSOLVER for the
-  eigensolver benchmark). Poseidon builds and runs its CPU tests without CUDA.
+- **CUDA** 12.x or 13.x for the GPU path (cuBLAS). Poseidon builds and runs
+  its CPU tests without CUDA.
 - **Herbie**, for the algebraic rewrites. The build compiles upstream
   [herbie-fp/herbie](https://github.com/herbie-fp/herbie) at the commit
   `cmake/Herbie.cmake` pins (Racket 8.15 and Rust are then needed);
@@ -376,23 +372,10 @@ Poseidon diff and Poseidon FPCore show it through `poseidon-explain`.
 `llvm-mca` and `nm` are available for both compilers, and the Templates menu has
 an assembly diff of plain clang against clang + Poseidon.
 
-## Artifacts
-
-The reproduction packages of the papers (`artifacts/cgo2027`, `artifacts/cgo2026`,
-`artifacts/mfem-workshop-2026`, each with its own `README.md` and
-`expected_results.md`) are kept in the PRONTOLab/Poseidon-dev tree, not on the
-Enzyme branch.
-
 ## Citation
 
-    @inproceedings{poseidon-gpu,
-      title  = {Floating up the Peak: Automatic Numerical Rewriting Enables Fast
-                and Tensorized Accelerator Code},
-      note   = {To appear, CGO 2027},
-    }
-
-The framework this extends is the CPU Poseidon of CGO 2026, "Thinking Fast
-and Correct: Automated Rewriting of Numerical Code through Compiler Augmentation".
+Poseidon extends the CPU optimizer of "Thinking Fast and Correct: Automated
+Rewriting of Numerical Code through Compiler Augmentation" (CGO 2026).
 
 ## License
 
