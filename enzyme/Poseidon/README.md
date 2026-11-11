@@ -22,7 +22,7 @@ tree with `-DENZYME_POSEIDON=ON`:
 ```
 enzyme/Poseidon/            the pass: the sources beside and under Pass/ (the
                             plugin entry Pass/Plugin.cpp), Core/, Sites/,
-                            Profile/, Techniques/ and Targets/
+                            Profile/, Model/, Techniques/ and Targets/
   runtime/                  profiler and GEMM dispatch runtimes the driver links
   tools/                    poseidon-clang driver, poseidon-calibrate, poseidon-explain,
                             Herbie platform

@@ -32,6 +32,7 @@
 
 #include "CostModel.h"
 #include "Herbie.h"
+#include "Model/FPCore.h"
 #include "Optimize.h"
 #include "Session.h"
 #include "Sites/SiteIdentity.h"

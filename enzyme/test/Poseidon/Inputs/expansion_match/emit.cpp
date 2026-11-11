@@ -18,11 +18,11 @@
 // fns.inc (the functions, for the harness).
 #include "Core/ExpansionModel.h"
 #include "Evaluators.h"
-#include "Herbie.h"
+#include "Model/FPCore.h"
+#include "Model/FPNode.h"
 #include "Pass/Session.h"
 #include "Techniques/Expansion.h"
 #include "Techniques/Precision.h"
-#include "Types.h"
 #include "Utils.h"
 
 #include "llvm/IR/IRBuilder.h"

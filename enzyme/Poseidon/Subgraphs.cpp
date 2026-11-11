@@ -17,7 +17,7 @@
 #include <functional>
 
 #include "Core/Options.h"
-#include "Herbie.h"
+#include "Model/FPCore.h"
 #include "Sites/Canonicalize.h"
 #include "Targets/Target.h"
 #include "Techniques/Matmul/Matmul.h"

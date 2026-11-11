@@ -26,43 +26,13 @@
 #include <unordered_map>
 
 #include "Core/CacheKey.h"
+#include "Model/FPCore.h"
 #include "Types.h"
 
 namespace poseidon {
 
 struct Options;
 class Session;
-
-std::shared_ptr<FPNode> parseHerbieExpr(
-    const std::string &expr,
-    std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-    std::unordered_map<std::string, llvm::Value *> &symbolToValueMap,
-    llvm::SmallVectorImpl<std::pair<std::string, std::string>> *approxSpecs =
-        nullptr,
-    const llvm::SetVector<llvm::Value *> *subgraphInputs = nullptr);
-
-std::string dtypeOfType(llvm::Type *T);
-
-struct CRendering {
-  const llvm::SetVector<llvm::Value *> *inputs = nullptr;
-  std::function<std::string(llvm::Value *)> leafName;
-  const llvm::DenseMap<const FPNode *, std::string> *dtypes = nullptr;
-};
-
-std::string renderC(const FPNode &node, const CRendering &how,
-                    llvm::StringRef resultDtype = "");
-
-bool isRenderableFPCore(
-    llvm::StringRef expr,
-    const std::unordered_map<std::string, llvm::Value *> &symbolToValueMap);
-
-llvm::SmallVector<std::string, 1> fpcoreToC(
-    const std::string &expr,
-    std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-    std::unordered_map<std::string, llvm::Value *> &symbolToValueMap,
-    const CRendering &how, llvm::StringRef resultDtype = "",
-    llvm::SmallVectorImpl<std::pair<std::string, std::string>> *approxSpecs =
-        nullptr);
 
 // The parts of a cache key that say which Herbie searched: its binary and the
 // platform it ranks candidates by.
@@ -72,8 +42,6 @@ void addHerbieKeyParts(Session &S, CacheKey &key);
 bool improveViaHerbie(Session &S, const std::vector<std::string> &inputExprs,
                       std::vector<RewriteUnit> &COs, int subgraphIdx,
                       llvm::StringRef funcTag);
-
-std::string getHerbieOperator(const llvm::Instruction &I);
 
 std::string getPrecondition(
     const Options &O, const llvm::SmallSet<std::string, 8> &args,

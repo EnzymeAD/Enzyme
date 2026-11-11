@@ -22,9 +22,9 @@
 #include <vector>
 
 #include "Evaluators.h"
+#include "Model/FPNode.h"
 #include "Sampling.h"
 #include "Techniques/Precision.h"
-#include "Types.h"
 
 using namespace llvm;
 
