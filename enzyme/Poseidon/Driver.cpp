@@ -460,15 +460,7 @@ bool prepareModule(Session &S, Module &M) {
   predeclareInactiveProfilerProbes(M);
 
   SmallVector<CallInst *, 4> markers;
-  for (Function &F : M) {
-    if (F.isDeclaration())
-      continue;
-    for (Instruction &I : instructions(F))
-      if (auto *CI = dyn_cast<CallInst>(&I))
-        if (Function *callee = calleeOf(CI))
-          if (isMarkerCall(callee->getName()))
-            markers.push_back(CI);
-  }
+  collectMarkerCalls(M, markers);
   DenseMap<Function *, Function *> clones;
   unsigned nextSiteId = getNextSiteId(M);
   bool anySite = false;

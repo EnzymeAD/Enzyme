@@ -36,6 +36,9 @@ asLeftByPipeline(llvm::Function &body,
                  llvm::DenseMap<llvm::Function *, llvm::Function *> &copies);
 bool callsEnzymeRequest(llvm::Function &F);
 bool deferSite(const Options &O, llvm::CallInst *CI);
+// The marker calls of the module, in module order.
+void collectMarkerCalls(llvm::Module &M,
+                        llvm::SmallVectorImpl<llvm::CallInst *> &out);
 void collectDeferredMarkers(llvm::Module &M,
                             llvm::SmallVectorImpl<llvm::CallInst *> &out);
 
