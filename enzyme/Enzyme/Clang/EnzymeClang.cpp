@@ -36,6 +36,7 @@
 #include "clang/Sema/Sema.h"
 #include "clang/Sema/SemaDiagnostic.h"
 
+#include "llvm/ADT/SmallString.h"
 #include "llvm/Support/Path.h"
 
 #include "../Utils.h"
@@ -260,8 +261,27 @@ public:
     y2k.tm_mon = 0;
     y2k.tm_mday = 1;
     time_t timer = mktime(&y2k);
+    // The bundled headers are named "/enzymeroot/<header>". Such a name is
+    // absolute on POSIX, but not on Windows, where it lacks a drive, and the
+    // in-memory file system resolves any path which is not absolute against
+    // its working directory -- which pushOverlay changes below. Root the
+    // headers in the root of the working directory instead ("/" on POSIX,
+    // e.g. "C:\" on Windows), which is absolute on every platform.
+    llvm::SmallString<128> EnzymeRoot;
+    if (auto CWD = baseFS->getCurrentWorkingDirectory())
+      EnzymeRoot = llvm::sys::path::root_path(*CWD);
+    if (EnzymeRoot.empty())
+      EnzymeRoot = "/";
+    llvm::sys::path::append(EnzymeRoot, "enzymeroot");
+
     for (const auto &pair : include_headers) {
-      fs->addFile(StringRef(pair[0]), timer,
+      StringRef RelPath(pair[0]);
+      bool HasPrefix = RelPath.consume_front("/enzymeroot/");
+      assert(HasPrefix && "bundled header is not under /enzymeroot/");
+      (void)HasPrefix;
+      llvm::SmallString<128> Path(EnzymeRoot);
+      llvm::sys::path::append(Path, RelPath);
+      fs->addFile(Path, timer,
                   llvm::MemoryBuffer::getMemBuffer(
                       StringRef(pair[1]), StringRef(pair[0]),
                       /*RequiresNullTerminator*/ true));
@@ -271,7 +291,7 @@ public:
     fuseFS->pushOverlay(baseFS);
     CI.getFileManager().setVirtualFileSystem(fuseFS);
 
-    auto DE = CI.getFileManager().getDirectoryRef("/enzymeroot");
+    auto DE = CI.getFileManager().getDirectoryRef(EnzymeRoot);
     assert(DE);
     auto DL = DirectoryLookup(*DE, SrcMgr::C_User,
                               /*isFramework=*/false);
