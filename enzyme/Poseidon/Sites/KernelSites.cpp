@@ -199,8 +199,8 @@ bool pointsNowhere(Value *p) {
   return isa<ConstantPointerNull>(p) || isa<UndefValue>(p);
 }
 
-std::string perCallSiteName(const Function &B) {
-  auto [fnSymbol, where] = B.getName().split(".poseidon.");
+std::string perCallSiteName(StringRef symbol) {
+  auto [fnSymbol, where] = symbol.split(".poseidon.");
   std::string name = llvm::demangle(fnSymbol.str());
   if (!where.empty()) {
     auto [callerSymbol, k] = where.rsplit('.');
@@ -236,7 +236,7 @@ bool lowerDeviceCallSites(Module &M) {
                  displayName(*caller))
                     .str();
       if (!why.empty()) {
-        warn(CB, perCallSiteName(*B) + " " + why +
+        warn(CB, perCallSiteName(B->getName()) + " " + why +
                      ", so this call is not a Poseidon site: the pass makes "
                      "shadows of local objects only, and "
                      "__poseidon_fp_optimize takes the caller's own. The call "

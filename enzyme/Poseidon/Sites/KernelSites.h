@@ -4,6 +4,8 @@
 #ifndef POSEIDON_KERNEL_SITES_H
 #define POSEIDON_KERNEL_SITES_H
 
+#include "llvm/ADT/StringRef.h"
+
 #include <string>
 
 namespace llvm {
@@ -20,7 +22,7 @@ void markOutlineTransparent(llvm::Function *body);
 llvm::CallInst *outlineKernelBody(llvm::Function &K, llvm::Function *&bodyOut);
 llvm::AllocaInst *localObject(llvm::Value *p, const llvm::Function *caller);
 bool pointsNowhere(llvm::Value *p);
-std::string perCallSiteName(const llvm::Function &B);
+std::string perCallSiteName(llvm::StringRef symbol);
 bool lowerDeviceCallSites(llvm::Module &M);
 void inlineKernelBody(llvm::CallInst *call, llvm::Function *body);
 
