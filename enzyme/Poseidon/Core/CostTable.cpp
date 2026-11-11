@@ -114,7 +114,8 @@ static Error modelError(CostModelState &CM, const Twine &What) {
                                What);
 }
 
-static Error loadCostModel(CostModelState &CM) {
+static Error loadCostModel(CostModelState &CM,
+                           function_ref<bool(StringRef, StringRef)> IsRow) {
   if (CM.Loaded)
     return Error::success();
   std::ifstream CostFile(costModelPath(CM));
@@ -150,6 +151,13 @@ static Error loadCostModel(CostModelState &CM) {
     if (Fields.size() != 3 || Fields[2].trim().getAsDouble(Cost))
       return modelError(CM, "line " + Twine(LineNo) +
                                 " is not '<opcode>,<type>,<cost>': " + Line);
+    if (!IsRow(Fields[0], Fields[1]))
+      return modelError(CM, "line " + Twine(LineNo) + " has the row '" +
+                                Fields[0] + "," + Fields[1] +
+                                "', of no row family Poseidon reads (the "
+                                "calibrator's README lists them); remove the "
+                                "line, or compile with the Poseidon whose "
+                                "poseidon-calibrate wrote it");
     if (!CM.Model.try_emplace({Fields[0].str(), Fields[1].str()}, Cost).second)
       return modelError(CM, "has the row '" + Fields[0] + "," + Fields[1] +
                                 "' twice");
@@ -199,10 +207,11 @@ uint64_t getCostModelFingerprint(CostModelState &CM) {
 }
 
 Error requireCostModel(CostModelState &CM, StringRef targetCpu,
-                       StringRef function) {
+                       StringRef function,
+                       function_ref<bool(StringRef, StringRef)> IsRow) {
   if (Error E = resolveForTarget(CM, targetCpu, function))
     return E;
-  if (Error E = loadCostModel(CM))
+  if (Error E = loadCostModel(CM, IsRow))
     return E;
   if (CM.NativeArch.empty())
     return modelError(CM, "carries no '# native_arch=' header, so it cannot "

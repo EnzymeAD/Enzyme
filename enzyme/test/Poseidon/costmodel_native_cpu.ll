@@ -5,9 +5,11 @@
 ; RUN: not %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/joint_profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-print -S -poseidon-cache=%t/none 2>&1 | FileCheck --check-prefix=NOMODEL %s
 ; RUN: (cat %cost_models/cm_cpu_native.csv; echo 'fadd,float,1') > %t/twice.csv
 ; RUN: not %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/joint_profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -S -poseidon-cost-model=%t/twice.csv -poseidon-cache=%t/twice 2>&1 | FileCheck --check-prefix=TWICE %s
+; RUN: (cat %cost_models/cm_cpu_native.csv; echo 'fwibble,double,3') > %t/unknown.csv
+; RUN: not %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/joint_profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -S -poseidon-cost-model=%t/unknown.csv -poseidon-cache=%t/unknown 2>&1 | FileCheck --check-prefix=UNKNOWN %s
 ; RUN: (cat %cost_models/cm_cpu_native.csv; echo 'fadd,float') > %t/short.csv
 ; RUN: not %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/joint_profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -S -poseidon-cost-model=%t/short.csv -poseidon-cache=%t/short 2>&1 | FileCheck --check-prefix=SHORT %s
-; The measured CSV is the only price source. A model whose native_arch matches the function's target-cpu is consumed as is (2 FP64 ops at 4 = 8); a model missing a required row, a model measured on another device, a model with no native_arch header, a model with a row twice or a line that is not a row, and no model at all each stop the compile with an error instead of substituting a price.
+; The measured CSV is the only price source. A model whose native_arch matches the function's target-cpu is consumed as is (2 FP64 ops at 4 = 8); a model missing a required row, a model measured on another device, a model with no native_arch header, a model with a row twice, a line that is not a row or a row of no family Poseidon reads, and no model at all each stop the compile with an error instead of substituting a price.
 
 define double @tester_a(double %x, double %y) #0 {
 entry:
@@ -48,6 +50,9 @@ attributes #0 = { "target-cpu"="x86-64" }
 
 ; TWICE: error: {{.*}}Poseidon: cost model {{.*}}twice.csv has the row 'fadd,float' twice
 ; TWICE-NOT: [poseidon] Finished Optimization
+
+; UNKNOWN: error: {{.*}}Poseidon: cost model {{.*}}unknown.csv line {{[0-9]+}} has the row 'fwibble,double', of no row family Poseidon reads
+; UNKNOWN-NOT: [poseidon] Finished Optimization
 
 ; SHORT: error: {{.*}}Poseidon: cost model {{.*}}short.csv line {{[0-9]+}} is not '<opcode>,<type>,<cost>': fadd,float
 ; SHORT-NOT: [poseidon] Finished Optimization
