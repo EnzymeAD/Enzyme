@@ -2682,65 +2682,6 @@ public:
       }
     }
 
-    if (Changed && EnzymeAttributor) {
-      // TODO consider enabling when attributor does not delete
-      // dead internal functions, which invalidates Enzyme's cache
-      // code left here to re-enable upon Attributor patch
-
-#if !defined(FLANG)
-
-      AnalysisGetter AG(Logic.PPC.FAM);
-      SetVector<Function *> Functions;
-      for (Function &F2 : *F.getParent()) {
-        Functions.insert(&F2);
-      }
-
-      CallGraphUpdater CGUpdater;
-      BumpPtrAllocator Allocator;
-      InformationCache InfoCache(*F.getParent(), AG, Allocator,
-                                 /* CGSCC */ nullptr);
-
-      DenseSet<const char *> Allowed = {
-        &AAHeapToStack::ID,
-        &AANoCapture::ID,
-
-        &AAMemoryBehavior::ID,
-        &AAMemoryLocation::ID,
-        &AANoUnwind::ID,
-        &AANoSync::ID,
-        &AANoRecurse::ID,
-        &AAWillReturn::ID,
-        &AANoReturn::ID,
-        &AANonNull::ID,
-        &AANoAlias::ID,
-        &AADereferenceable::ID,
-        &AAAlign::ID,
-#if LLVM_VERSION_MAJOR < 17
-        &AAReturnedValues::ID,
-#endif
-        &AANoFree::ID,
-        &AANoUndef::ID,
-
-        //&AAValueSimplify::ID,
-        //&AAReachability::ID,
-        //&AAValueConstantRange::ID,
-        //&AAUndefinedBehavior::ID,
-        //&AAPotentialValues::ID,
-      };
-
-      AttributorConfig aconfig(CGUpdater);
-      aconfig.Allowed = &Allowed;
-      aconfig.DeleteFns = false;
-      Attributor A(Functions, InfoCache, aconfig);
-      for (Function *F : Functions) {
-        // Populate the Attributor with abstract attribute opportunities in
-        // the function and the information cache with IR information.
-        A.identifyDefaultAbstractAttributes(*F);
-      }
-      A.run();
-#endif
-    }
-
     return Changed;
   }
 
@@ -2982,6 +2923,52 @@ public:
     for (const auto &pair : Logic.PPC.cache)
       pair.second->eraseFromParent();
     Logic.clear();
+
+    if (changed && EnzymeAttributor) {
+#if !defined(FLANG)
+      AnalysisGetter AG(Logic.PPC.FAM);
+      SetVector<Function *> Functions;
+      for (Function &F2 : M) {
+        if (F2.hasLocalLinkage() && F2.use_empty())
+          continue;
+        Functions.insert(&F2);
+      }
+
+      CallGraphUpdater CGUpdater;
+      BumpPtrAllocator Allocator;
+      InformationCache InfoCache(M, AG, Allocator, /* CGSCC */ nullptr);
+
+      DenseSet<const char *> Allowed = {
+          &AAHeapToStack::ID,     &AANoCapture::ID,
+
+          &AAMemoryBehavior::ID,  &AAMemoryLocation::ID, &AANoUnwind::ID,
+          &AANoSync::ID,          &AANoRecurse::ID,      &AAWillReturn::ID,
+          &AANoReturn::ID,        &AANonNull::ID,        &AANoAlias::ID,
+          &AADereferenceable::ID, &AAAlign::ID,
+#if LLVM_VERSION_MAJOR < 17
+          &AAReturnedValues::ID,
+#endif
+          &AANoFree::ID,          &AANoUndef::ID,
+
+          //&AAValueSimplify::ID,
+          //&AAReachability::ID,
+          //&AAValueConstantRange::ID,
+          //&AAUndefinedBehavior::ID,
+          //&AAPotentialValues::ID,
+      };
+
+      AttributorConfig aconfig(CGUpdater);
+      aconfig.Allowed = &Allowed;
+      aconfig.DeleteFns = false;
+      Attributor A(Functions, InfoCache, aconfig);
+      for (Function *F : Functions) {
+        // Populate the Attributor with abstract attribute opportunities in
+        // the function and the information cache with IR information.
+        A.identifyDefaultAbstractAttributes(*F);
+      }
+      A.run();
+#endif
+    }
 
     if (changed && Logic.PostOpt) {
       TimeTraceScope timeScope("Enzyme PostOpt", M.getName());
