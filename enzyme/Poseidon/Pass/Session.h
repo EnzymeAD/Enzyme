@@ -80,7 +80,7 @@ public:
   // Solvers.cpp. The items of -poseidon-apply-rewrites and the sites they name.
   PinState Pins;
 
-  // CostModel.cpp.
+  // Core/CostTable.cpp and Model/CostModel.cpp.
   CostModelState CostModel;
 
   // Herbie.cpp. The platform Herbie searches against, derived from the cost

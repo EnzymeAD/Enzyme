@@ -2,9 +2,9 @@
 #define POSEIDON_MATMUL_H
 
 #include "MatmulScheme.h"
+#include "Model/FPFormat.h"
 #include "Profile/ProfileRead.h"
 #include "Sites/LaunchDescriptors.h"
-#include "Techniques/Precision.h"
 #include "Techniques/Unit.h"
 
 #include "llvm/ADT/SetVector.h"

@@ -48,9 +48,9 @@
 #include <utility>
 #include <vector>
 
-#include "CostModel.h"
-#include "Evaluators.h"
 #include "Herbie.h"
+#include "Model/CostModel.h"
+#include "Model/Evaluators.h"
 #include "Optimize.h"
 #include "Pass/Explain.h"
 #include "Pass/Session.h"

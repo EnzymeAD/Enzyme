@@ -34,7 +34,7 @@ set(POSEIDON_SRC
     Pass/Plugin.cpp
     Core/CacheKey.cpp
     Sites/Canonicalize.cpp
-    CostModel.cpp
+    Model/CostModel.cpp
     Core/CostTable.cpp
     Targets/DeviceMath.cpp
     Targets/Target.cpp
@@ -52,7 +52,7 @@ set(POSEIDON_SRC
     Profile/SiteProfile.cpp
     Pass/Twin.cpp
     Pass/Pipeline.cpp
-    Evaluators.cpp
+    Model/Evaluators.cpp
     Techniques/Expansion.cpp
     Core/ExpansionModel.cpp
     Pass/Explain.cpp
@@ -72,9 +72,10 @@ set(POSEIDON_SRC
     Optimize.cpp
     Sites/SiteIdentity.cpp
     Techniques/Precision.cpp
+    Model/FPFormat.cpp
     Profile/ProfileRead.cpp
     Techniques/Matmul/RaiseWMMA.cpp
-    Sampling.cpp
+    Model/Sampling.cpp
     Solvers.cpp
     Subgraphs.cpp
     Techniques/Staging.cpp

@@ -10,7 +10,6 @@
 #include "CostModel.h"
 #include "Targets/DeviceMath.h"
 #include "Targets/Target.h"
-#include "Types.h"
 #include "Utils.h"
 
 #include "llvm/ADT/SmallPtrSet.h"
