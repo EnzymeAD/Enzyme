@@ -1,6 +1,7 @@
 #include "Canonicalize.h"
 
 #include "Targets/DeviceMath.h"
+#include "Targets/MathFunctions.h"
 
 #include "llvm/Analysis/AssumptionCache.h"
 #include "llvm/Analysis/BasicAliasAnalysis.h"
@@ -108,33 +109,7 @@ bool isOptimizable(const llvm::Value &V) {
           funcName.starts_with("llvm.fmod.") ||
 
           // libm functions
-          funcName == "sin" || funcName == "sinf" || funcName == "cos" ||
-          funcName == "cosf" || funcName == "tan" || funcName == "tanf" ||
-          funcName == "asin" || funcName == "asinf" || funcName == "acos" ||
-          funcName == "acosf" || funcName == "atan" || funcName == "atanf" ||
-          funcName == "atan2" || funcName == "atan2f" || funcName == "sinh" ||
-          funcName == "sinhf" || funcName == "cosh" || funcName == "coshf" ||
-          funcName == "tanh" || funcName == "tanhf" || funcName == "asinh" ||
-          funcName == "asinhf" || funcName == "acosh" || funcName == "acoshf" ||
-          funcName == "atanh" || funcName == "atanhf" || funcName == "sqrt" ||
-          funcName == "sqrtf" || funcName == "cbrt" || funcName == "cbrtf" ||
-          funcName == "pow" || funcName == "powf" || funcName == "exp" ||
-          funcName == "expf" || funcName == "log" || funcName == "logf" ||
-          funcName == "fabs" || funcName == "fabsf" || funcName == "fma" ||
-          funcName == "fmaf" || funcName == "hypot" || funcName == "hypotf" ||
-          funcName == "expm1" || funcName == "expm1f" || funcName == "log1p" ||
-          funcName == "log1pf" || funcName == "ceil" || funcName == "ceilf" ||
-          funcName == "floor" || funcName == "floorf" || funcName == "erf" ||
-          funcName == "erff" || funcName == "exp2" || funcName == "exp2f" ||
-          funcName == "lgamma" || funcName == "lgammaf" ||
-          funcName == "log10" || funcName == "log10f" || funcName == "log2" ||
-          funcName == "log2f" || funcName == "rint" || funcName == "rintf" ||
-          funcName == "round" || funcName == "roundf" || funcName == "tgamma" ||
-          funcName == "tgammaf" || funcName == "trunc" ||
-          funcName == "truncf" || funcName == "copysign" ||
-          funcName == "copysignf" || funcName == "fdim" ||
-          funcName == "fdimf" || funcName == "fmod" || funcName == "fmodf" ||
-          funcName == "remainder" || funcName == "remainderf";
+          isOptimizableLibmCall(funcName);
     }
     return false;
   }

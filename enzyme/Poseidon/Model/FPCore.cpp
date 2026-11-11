@@ -9,11 +9,11 @@
 
 #include "FPCore.h"
 #include "Targets/DeviceMath.h"
+#include "Targets/MathFunctions.h"
 #include "Utils.h"
 
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringExtras.h"
-#include "llvm/ADT/StringSet.h"
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicInst.h"
@@ -303,17 +303,6 @@ CExpr castTo(const CExpr &e, StringRef dtype) {
           dtype.str()};
 }
 
-bool isLibmName(StringRef op) {
-  static const StringSet<> names = {
-      "sin",  "cos",   "tan",   "asin",   "acos",   "atan",     "atan2",
-      "sinh", "cosh",  "tanh",  "asinh",  "acosh",  "atanh",    "exp",
-      "exp2", "expm1", "log",   "log2",   "log10",  "log1p",    "pow",
-      "cbrt", "sqrt",  "fabs",  "fma",    "fmin",   "fmax",     "hypot",
-      "ceil", "floor", "trunc", "round",  "rint",   "fmod",     "remainder",
-      "fdim", "erf",   "erfc",  "lgamma", "tgamma", "copysign", "nearbyint"};
-  return names.contains(op);
-}
-
 constexpr unsigned kMaxRenderedNodes = 512;
 
 class CRenderer {
@@ -486,7 +475,7 @@ public:
     SmallVector<CExpr, 3> es = operands(N, want);
     std::string rdt = want.empty() ? firstFP(es) : want;
     std::string name = op == "rem" ? "fmod" : op;
-    if (isLibmName(name) && rdt == "f32")
+    if (hasFloatSuffixInC(name) && rdt == "f32")
       name += "f";
     std::string t = name + "(";
     for (auto [k, e] : llvm::enumerate(es))

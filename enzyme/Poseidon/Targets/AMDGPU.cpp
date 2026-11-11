@@ -1,4 +1,5 @@
 // AMDGPU: HIP kernels, ROCm's ocml.
+#include "MathFunctions.h"
 #include "Peers.h"
 
 #include "Utils.h"

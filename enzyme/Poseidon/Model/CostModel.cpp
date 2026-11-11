@@ -9,6 +9,7 @@
 
 #include "CostModel.h"
 #include "Targets/DeviceMath.h"
+#include "Targets/MathFunctions.h"
 #include "Targets/Target.h"
 #include "Utils.h"
 
