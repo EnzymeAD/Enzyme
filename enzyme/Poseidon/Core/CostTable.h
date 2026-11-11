@@ -17,6 +17,7 @@
 #ifndef POSEIDON_CORE_COST_TABLE_H
 #define POSEIDON_CORE_COST_TABLE_H
 
+#include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Error.h"
 
@@ -53,9 +54,11 @@ struct CostModelState {
 };
 
 // Resolves and loads the model for the function named `function`, compiled for
-// `targetCpu`, and fails unless its native_arch header names `targetCpu`.
-llvm::Error requireCostModel(CostModelState &CM, llvm::StringRef targetCpu,
-                             llvm::StringRef function);
+// `targetCpu`, and fails unless its native_arch header names `targetCpu` and
+// `IsRow` takes each of its rows as (opcode, type).
+llvm::Error requireCostModel(
+    CostModelState &CM, llvm::StringRef targetCpu, llvm::StringRef function,
+    llvm::function_ref<bool(llvm::StringRef, llvm::StringRef)> IsRow);
 
 // The loaded model; a site has required it.
 const std::map<std::pair<std::string, std::string>, double> &

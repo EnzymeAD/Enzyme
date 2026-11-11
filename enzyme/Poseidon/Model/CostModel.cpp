@@ -13,6 +13,7 @@
 #include "Targets/Target.h"
 #include "Utils.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/IR/CFG.h"
@@ -35,9 +36,49 @@ using namespace llvm;
 
 namespace poseidon {
 
+static bool isScalarTypeName(StringRef T) {
+  return is_contained({"bf16", "half", "float", "double", "fp80", "fp128"}, T);
+}
+
+// The row families poseidon-calibrate writes (tools/calibrate/README.md),
+// read by a compile or not: the operations at a scalar type, the conversions
+// by their source type, the tensor-core tiles by shape and by input and
+// accumulator type, and one dimensionless family per matrix-product
+// realization. A new family is added here with the calibrator arm that writes
+// it.
+static bool isCostModelRow(StringRef Opcode, StringRef Type) {
+  if (is_contained({"ozaki_dispatch_rel", "ozaki_dispatch_rect_rel",
+                    "tcec_dispatch_rel", "direct_dispatch_rel",
+                    "wmma_inkernel_rel"},
+                   Opcode))
+    return !Type.empty();
+  for (StringRef Tile : {"wmma_mma_", "wmma_load_a_", "wmma_load_b_",
+                         "wmma_load_c_", "wmma_store_d_"})
+    if (Opcode.consume_front(Tile)) {
+      unsigned M, N, K;
+      return Opcode.consume_front("m") && !Opcode.consumeInteger(10, M) &&
+             Opcode.consume_front("n") && !Opcode.consumeInteger(10, N) &&
+             Opcode.consume_front("k") && !Opcode.consumeInteger(10, K) &&
+             Opcode.empty() && !Type.empty();
+    }
+  for (StringRef Cast : {"fpext_", "fptrunc_"})
+    if (Opcode.consume_front(Cast)) {
+      auto [From, To] = Opcode.split("_to_");
+      return isScalarTypeName(From) && isScalarTypeName(To) && Type == From;
+    }
+  if (!isScalarTypeName(Type))
+    return false;
+  // rsqrt is measured on GPUs and priced by no compile yet.
+  return is_contained({"fneg", "fadd", "fsub", "fmul", "fdiv", "fcmp",
+                       "fmuladd", "maxnum", "minnum", "rsqrt"},
+                      Opcode) ||
+         any_of(mathFunctions(),
+                [&](const MathFunction &Fn) { return Fn.Name == Opcode; });
+}
+
 void requireCostModel(CostModelState &CM, const Function &F) {
   StringRef targetCpu = Target::of(F).processor(F);
-  if (Error E = requireCostModel(CM, targetCpu, F.getName()))
+  if (Error E = requireCostModel(CM, targetCpu, F.getName(), isCostModelRow))
     reportUserError(F, F.getSubprogram(), toString(std::move(E)));
 }
 
