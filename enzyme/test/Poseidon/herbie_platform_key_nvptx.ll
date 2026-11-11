@@ -5,16 +5,16 @@
 ; RUN: mkdir -p %t/recal && cp %cost_models/cm_sm_120_synthetic.csv %cost_models/cm_sm_120_synthetic.herbie.rkt %t/recal/ && echo ";; recalibrated" >> %t/recal/cm_sm_120_synthetic.herbie.rkt
 
 ; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/fma_opt_profiles -poseidon-enable-herbie=true -poseidon-herbie-binary=/nonexistent/herbie -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cache=%t/cache -S 2>&1 | FileCheck --check-prefix=MATCH %s
-; RUN: %opt < %t/sm90.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/fma_opt_profiles -poseidon-enable-herbie=true -poseidon-herbie-binary=/nonexistent/herbie -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_sm_90_synthetic.csv -poseidon-cache=%t/cache -S 2>&1 | FileCheck --check-prefix=OTHERARCH %s
+; RUN: not %opt < %t/sm90.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/fma_opt_profiles -poseidon-enable-herbie=true -poseidon-herbie-binary=/nonexistent/herbie -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_sm_90_synthetic.csv -poseidon-cache=%t/cache -S 2>&1 | FileCheck --check-prefix=OTHERARCH %s
 ; RUN: (%opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/fma_opt_profiles -poseidon-enable-herbie=true -poseidon-herbie-binary=/nonexistent/herbie -poseidon-enable-pt=false -poseidon-cost-model=%t/nocm/cm_sm_120_synthetic.csv -poseidon-cache=%t/nocm-cache -S 2>&1 || true) | FileCheck --check-prefix=NOPLATFORM %s
-; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/fma_opt_profiles -poseidon-enable-herbie=true -poseidon-herbie-binary=/nonexistent/herbie -poseidon-enable-pt=false -poseidon-cost-model=%t/recal/cm_sm_120_synthetic.csv -poseidon-cache=%t/cache -S 2>&1 | FileCheck --check-prefix=RECALIBRATED %s
+; RUN: not %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/fma_opt_profiles -poseidon-enable-herbie=true -poseidon-herbie-binary=/nonexistent/herbie -poseidon-enable-pt=false -poseidon-cost-model=%t/recal/cm_sm_120_synthetic.csv -poseidon-cache=%t/cache -S 2>&1 | FileCheck --check-prefix=RECALIBRATED %s
 
 ; Herbie ranks its rewrite candidates by a platform cost table, so a cached
 ; result belongs to the platform it was searched under and its cache entry is
 ; named after it. Four runs over one seeded entry, keyed cuda-sm120:
 ;   MATCH        the same architecture reads it,
 ;   OTHERARCH    an sm_90 cost model does not, and runs Herbie instead (which
-;                here cannot start, and says so, rather than silently
+;                here cannot start, so the compile stops rather than
 ;                replaying the other device's answer),
 ;   NOPLATFORM   a CUDA cost model with no platform file beside it aborts the
 ;                compile naming the file and the command that writes it,
@@ -48,10 +48,10 @@ attributes #0 = { "target-cpu"="sm_120" }
 
 ; OTHERARCH-NOT: Using cached Herbie output
 ; OTHERARCH: [poseidon] Herbie subgraph 0 of preprocess_tester
-; OTHERARCH: Execution failed
+; OTHERARCH: Poseidon: the cache {{.*}}cache holds no Herbie answer for subgraph 0 of preprocess_tester, and the Herbie at /nonexistent/herbie cannot run (
 
 ; NOPLATFORM: LLVM ERROR: Poseidon: the Herbie algebraic search needs the platform generated from this device's cost model, and {{.*}}cm_sm_120_synthetic.herbie.rkt does not exist. Generate it with 'poseidon-calibrate --only herbie-platform --out {{.*}}cm_sm_120_synthetic.csv'
 
 ; RECALIBRATED-NOT: Using cached Herbie output
 ; RECALIBRATED: [poseidon] Herbie subgraph 0 of preprocess_tester
-; RECALIBRATED: Execution failed
+; RECALIBRATED: Poseidon: the cache {{.*}}cache holds no Herbie answer for subgraph 0 of preprocess_tester, and the Herbie at /nonexistent/herbie cannot run (
