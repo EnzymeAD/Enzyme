@@ -166,7 +166,7 @@ std::string unloweredRequestReason(bool phaseKnown, ThinOrFullLTOPhase Phase,
 // lowered the derivative request the deferred body was made of, so the body
 // carries the derivative arithmetic and is profiled and solved like any other
 // site. A module with no deferred site leaves here without touching anything,
-// which is what keeps every other build byte for byte what it was.
+// so its output is byte for byte what it is without this pass.
 struct LatePass : PassParent<LatePass> {
   PassBuilder *PB;
   OptimizationLevel Level;
