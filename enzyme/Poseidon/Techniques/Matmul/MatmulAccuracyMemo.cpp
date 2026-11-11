@@ -197,9 +197,9 @@ static bool parseAccNumber(const json::Object &value, StringRef name,
 // the cost they were kept to save.
 static void noteLegacyEntries(Session &S) {
   const Options &O = S.Opts;
-  if (S.LegacyMemoEntriesNoted)
+  if (S.Matmul.LegacyMemoEntriesNoted)
     return;
-  S.LegacyMemoEntriesNoted = true;
+  S.Matmul.LegacyMemoEntriesNoted = true;
   std::error_code EC;
   for (sys::fs::directory_iterator it(O.Herbie.Cache, EC), end;
        it != end && !EC; it.increment(EC)) {

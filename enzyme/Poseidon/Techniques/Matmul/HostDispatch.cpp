@@ -422,10 +422,10 @@ bool fissionGemmForDispatch(Function &F, const AbstractMatmul &m) {
 }
 
 void noteGemmBody(Session &S, const Function *body, const GemmBodyNote &n) {
-  S.GemmBodies.note(body, n);
+  S.Matmul.GemmBodies.note(body, n);
 }
 bool getGemmBody(const Session &S, const Function *body, GemmBodyNote &out) {
-  return S.GemmBodies.get(body, out);
+  return S.Matmul.GemmBodies.get(body, out);
 }
 
 static std::string launchArgString(int arg, int64_t offset) {
@@ -565,11 +565,11 @@ void addPendingGemmDispatch(Session &S, const Function *body, Function &wrapper,
   pg.paramToArg.resize(primalArgs.size());
   for (size_t i = 0; i < primalArgs.size(); ++i)
     pg.paramToArg[i] = traceToArgIndex(primalArgs[i]);
-  S.PendingGemms[body] = std::move(pg);
+  S.Matmul.PendingGemms[body] = std::move(pg);
 }
 
 void flushPendingGemmDispatches(Session &S) {
-  for (auto &kv : S.PendingGemms) {
+  for (auto &kv : S.Matmul.PendingGemms) {
     GemmBodyNote n;
     if (!getGemmBody(S, kv.first, n))
       continue; // this site was not materialized as a host dispatch
@@ -580,7 +580,7 @@ void flushPendingGemmDispatches(Session &S) {
       return pg.paramToArg[bp];
     });
   }
-  S.PendingGemms.clear();
+  S.Matmul.PendingGemms.clear();
 }
 
 namespace {

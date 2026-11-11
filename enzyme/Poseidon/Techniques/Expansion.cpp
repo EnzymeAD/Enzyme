@@ -440,8 +440,9 @@ static DSValue emitDSForInstruction(IRBuilder<> &B, Instruction *I,
 // df64 limbs produced for the rewritten instructions; getCompCost re-roots its
 // cost walk on them because the original F64 roots are RAUW'd and DCE'd.
 void takeLastExpansionLimbs(Session &S, SmallVectorImpl<Value *> &out) {
-  out.append(S.LastExpansionLimbs.begin(), S.LastExpansionLimbs.end());
-  S.LastExpansionLimbs.clear();
+  out.append(S.Expansion.LastExpansionLimbs.begin(),
+             S.Expansion.LastExpansionLimbs.end());
+  S.Expansion.LastExpansionLimbs.clear();
 }
 
 void applyExpansion(Session &S, ArrayRef<Instruction *> instsToChange,
@@ -449,7 +450,7 @@ void applyExpansion(Session &S, ArrayRef<Instruction *> instsToChange,
                     DenseMap<Value *, Value *> *restoredValues) {
   DSMap dsMap;
   DeferredDSPhiIns deferred;
-  S.LastExpansionLimbs.clear();
+  S.Expansion.LastExpansionLimbs.clear();
   // Captured before the erase loop below invalidates instsToChange.
   Function *parentF =
       instsToChange.empty() ? nullptr : instsToChange[0]->getFunction();
@@ -468,9 +469,9 @@ void applyExpansion(Session &S, ArrayRef<Instruction *> instsToChange,
 
     dsMap[I] = ds;
     if (ds.hi)
-      S.LastExpansionLimbs.push_back(ds.hi);
+      S.Expansion.LastExpansionLimbs.push_back(ds.hi);
     if (ds.lo)
-      S.LastExpansionLimbs.push_back(ds.lo);
+      S.Expansion.LastExpansionLimbs.push_back(ds.lo);
   }
 
   // Resolve deferred back-edge phi incomings now the subgraph is in dsMap;
@@ -1378,12 +1379,12 @@ emitExpansionForInstruction(IRBuilder<> &B, Instruction *I, unsigned n,
 // change and a double-single change, and applyExpansion clears its list on
 // entry.
 void takeLastExpLimbs(Session &S, SmallVectorImpl<Value *> &out) {
-  out.append(S.LastExpLimbs.begin(), S.LastExpLimbs.end());
-  S.LastExpLimbs.clear();
+  out.append(S.Expansion.LastExpLimbs.begin(), S.Expansion.LastExpLimbs.end());
+  S.Expansion.LastExpLimbs.clear();
 }
 // Cleared once per candidate, not per change: a tier pair calls applyExpansion
 // twice.
-void resetExpLimbs(Session &S) { S.LastExpLimbs.clear(); }
+void resetExpLimbs(Session &S) { S.Expansion.LastExpLimbs.clear(); }
 
 void applyExpansion(Session &S, unsigned n,
                     ArrayRef<Instruction *> instsToChange,
@@ -1405,7 +1406,7 @@ void applyExpansion(Session &S, unsigned n,
     }
     expansionMap[I] = mf;
     for (Value *v : mf.x)
-      S.LastExpLimbs.push_back(v);
+      S.Expansion.LastExpLimbs.push_back(v);
   }
 
   while (!deferred.empty()) {

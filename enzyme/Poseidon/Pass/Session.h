@@ -22,10 +22,9 @@
 #include "Core/Options.h"
 #include "Pins.h"
 #include "Sites/LaunchDescriptors.h"
-#include "Techniques/Matmul/HostDispatch.h"
+#include "Techniques/Expansion.h"
 #include "Techniques/Matmul/MatmulInternal.h"
 
-#include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/IR/DebugLoc.h"
@@ -36,7 +35,6 @@
 #include <map>
 #include <memory>
 #include <optional>
-#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -83,12 +81,8 @@ public:
   // Core/CostTable.cpp and Model/CostModel.cpp.
   CostModelState CostModel;
 
-  // Techniques/Herbie.cpp. The platform Herbie searches against, derived from
-  // the cost model once it is resolved, and the digest of each Herbie binary
-  // run.
-  HerbiePlatform Platform;
-  bool PlatformResolved = false;
-  HerbieBinaryDigests HerbieDigests;
+  // Techniques/Herbie.cpp.
+  HerbieRunState Herbie;
 
   // Profile/ProfileRead.cpp. Whether each profile directory's profiles name
   // their format, by directory.
@@ -100,27 +94,11 @@ public:
   std::map<std::string, Recorded> RecordedLaunches[2];
   std::map<std::string, ProfileHeader> ProfileHeaders;
 
-  // Techniques/Matmul/HostDispatch.cpp. fpOptimize records the note keyed by
-  // the optimized body clone; optimizeSiteBody retrieves it after fpOptimize
-  // returns.
-  NoteMap<GemmBodyNote> GemmBodies;
-  // In the order the sites were split, so that of two sites of one wrapper the
-  // same one is recorded last in every compile.
-  llvm::MapVector<const llvm::Function *, PendingGemm> PendingGemms;
+  // Techniques/Matmul.
+  MatmulState Matmul;
 
-  // Techniques/Expansion.cpp. The limbs the last two-component applyExpansion
-  // produced, and those every wider one produced since resetExpLimbs, for
-  // getCompCost to re-root its cost walk on.
-  llvm::SmallVector<llvm::Value *, 32> LastExpansionLimbs;
-  llvm::SmallVector<llvm::Value *, 32> LastExpLimbs;
-
-  // Techniques/Matmul. The tensor-core shapes the cost model prices, and the
-  // warnings already given.
-  std::optional<llvm::SmallVector<WmmaTarget, 16>> AvailableWmmaTargets;
-  std::set<const void *> WarnedRectangularRows;
-  std::set<std::string> ReportedDirectRows;
-  std::set<std::string> ReportedInKernelRows;
-  bool LegacyMemoEntriesNoted = false;
+  // Techniques/Expansion.cpp.
+  ExpansionState Expansion;
 };
 
 // The session of each module an analysis manager is asked about. Registered
