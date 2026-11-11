@@ -202,9 +202,14 @@ not constant (a loop over a length the call is given) runs as written, with a
 warning that names every such argument: copy it into a local object, or write
 the call with `__poseidon_fp_optimize` and shadows of your own. A `fn` whose
 body is an Enzyme request (`__enzyme_fwddiff` and the like) is profiled and
-rewritten in the code Enzyme generates for it. When the solve leaves every call
-site of a device compilation alone, the compilation emits the code as written:
-its module is compiled once more as without a profile.
+rewritten in the code Enzyme generates for it.
+
+A profile-use compile of a module that holds a site, device code or a C or
+C++ translation unit, compiles the module once more as a build without a
+profile does (except in an LTO link and under `-poseidon-joint-dp`), and
+emits every function no rewrite reached from that compile: when the solve
+leaves every site alone, the compilation emits the code as written. The cost
+is one more run of the optimization pipeline over such a module.
 
 The accuracy target is empirical, not a formally verified bound.
 `-poseidon-tau` is compared against an error the accuracy model estimates by
