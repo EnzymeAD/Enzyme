@@ -7,13 +7,14 @@ target-cpu:
 
     -poseidon-cost-model=<csv>              what the compile was told
     POSEIDON_COST_MODEL=<csv>               what the environment says
-    ~/.cache/poseidon/cm_<arch>_*.csv       what this user has measured
+    $XDG_CACHE_HOME/poseidon/cm_<arch>_*.csv  what this user has measured
+                                            (default ~/.cache/poseidon)
 
-Zero matches, or more than one, aborts the compile naming `poseidon-calibrate`
-and the files it found. A model whose `# native_arch=` header does not name the
-compile target aborts as well: another device's CSV is that device's prices, and
-would reproduce that device's picks. Results solved with a measured model are
-reproduced from that model, so it is kept with them and named with
+No match stops the compile naming `poseidon-calibrate`; more than one stops it
+naming the files it found. A model whose `# native_arch=` header does not name
+the compile target aborts as well: another device's CSV is that device's
+prices, and would reproduce that device's picks. Results solved with a measured
+model are reproduced from that model, so it is kept with them and named with
 `-poseidon-cost-model`.
 
 Herbie ranks the rewrites its algebraic search finds by a platform cost table.
