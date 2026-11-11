@@ -31,6 +31,9 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/StringSet.h"
 #include "llvm/Config/llvm-config.h"
+#include "llvm/Support/Allocator.h"
+#include "llvm/Support/CommandLine.h"
+#include "llvm/Support/Error.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/Program.h"
@@ -210,14 +213,24 @@ int main(int argc, char **argv) {
   StringRef Prog = sys::path::filename(argv[0]);
   SmallString<256> Prefix(sys::path::parent_path(sys::path::parent_path(Exe)));
 
+  // Response files are expanded first, with the quoting clang reads them with,
+  // so that a Poseidon flag in one is converted and the file is no input.
+  BumpPtrAllocator Alloc;
+  SmallVector<const char *, 64> Args(argv, argv + argc);
+  if (Error E = cl::ExpansionContext(Alloc, cl::TokenizeGNUCommandLine)
+                    .expandResponseFiles(Args)) {
+    errs() << Prog << ": " << toString(std::move(E)) << '\n';
+    return 1;
+  }
+
   bool WantCXX = Prog.contains("++");
   bool ProfileGenerate = false, ProfileUse = false;
   bool IsCUDA = false, IsHIP = false, StopsBeforeLink = false, HasInput = false;
   StringRef CudaPathArg, RocmPathArg, HipPathArg;
 
   SmallVector<std::string, 64> User;
-  for (int I = 1; I < argc; ++I) {
-    StringRef A = argv[I];
+  for (size_t I = 1; I < Args.size(); ++I) {
+    StringRef A = Args[I];
 
     if (A == "-poseidon-help" || A == "--poseidon-help") {
       printHelp(Prog);
@@ -229,8 +242,8 @@ int main(int argc, char **argv) {
     // compiler that loads the plugin and never a linker, on every target, and
     // a line that only links is not warned about it.
     std::optional<StringRef> Flag = poseidonFlag(A);
-    if (!Flag && A == "-mllvm" && I + 1 < argc &&
-        (Flag = poseidonFlag(argv[I + 1])))
+    if (!Flag && A == "-mllvm" && I + 1 < Args.size() &&
+        (Flag = poseidonFlag(Args[I + 1])))
       ++I;
     if (!Flag && A.starts_with("-mllvm="))
       Flag = poseidonFlag(A.substr(strlen("-mllvm=")));
@@ -246,8 +259,8 @@ int main(int argc, char **argv) {
     }
 
     StringRef Lang;
-    if (A == "-x" && I + 1 < argc)
-      Lang = argv[I + 1];
+    if (A == "-x" && I + 1 < Args.size())
+      Lang = Args[I + 1];
     else if (A.starts_with("-x"))
       Lang = A.substr(strlen("-x"));
     StringRef Arch = A;
@@ -284,21 +297,21 @@ int main(int argc, char **argv) {
       IsHIP |= A.ends_with(".hip");
     }
     User.push_back(A.str());
-    for (unsigned N = separateValues(A); N && I + 1 < argc; --N)
-      User.push_back(argv[++I]);
+    for (unsigned N = separateValues(A); N && I + 1 < Args.size(); --N)
+      User.push_back(Args[++I]);
   }
 
   // The host half of a compile takes the launch descriptors of the device half
   // that compiled the same source under the same unit name, so every compile
   // job of this invocation gets one, and no other invocation gets it.
   if (HasInput &&
-      llvm::none_of(ArrayRef<char *>(argv + 1, argc - 1), namesUnit)) {
+      llvm::none_of(ArrayRef<const char *>(Args).drop_front(), namesUnit)) {
     SmallString<256> Cwd;
     (void)sys::fs::current_path(Cwd);
     std::string Invocation(Cwd);
-    for (int I = 0; I < argc; ++I) {
+    for (const char *A : Args) {
       Invocation += '\0';
-      Invocation += argv[I];
+      Invocation += A;
     }
     User.insert(User.begin(),
                 {"-Xclang", "-mllvm", "-Xclang",
@@ -465,9 +478,47 @@ int main(int argc, char **argv) {
     errs() << '\n';
   }
 
+  // An expanded response file can make the command longer than the system
+  // takes: clang then reads it from one of the driver's own, written as clang
+  // writes its response files.
+  SmallString<128> ResponseFile;
+  std::string ResponseArg;
+  if (!sys::commandLineFitsWithinSystemLimits(Clang, Argv)) {
+    int FD;
+    if (std::error_code EC = sys::fs::createTemporaryFile(
+            "poseidon-clang", "rsp", FD, ResponseFile)) {
+      errs() << Prog << ": cannot create a response file: " << EC.message()
+             << '\n';
+      return 1;
+    }
+    raw_fd_ostream OS(FD, /*shouldClose=*/true);
+    for (StringRef A : ArrayRef<StringRef>(Argv).drop_front()) {
+      OS << '"';
+      for (char C : A) {
+        if (C == '"' || C == '\\')
+          OS << '\\';
+        OS << C;
+      }
+      OS << "\" ";
+    }
+    OS.close();
+    if (OS.has_error()) {
+      errs() << Prog << ": cannot write " << ResponseFile << ": "
+             << OS.error().message() << '\n';
+      OS.clear_error();
+      sys::fs::remove(ResponseFile);
+      return 1;
+    }
+    ResponseArg = ("@" + ResponseFile).str();
+    StringRef Program = Argv.front();
+    Argv.assign({Program, StringRef(ResponseArg)});
+  }
+
   std::string Err;
   int RC = sys::ExecuteAndWait(Clang, Argv, std::nullopt, {}, 0, 0, &Err);
   if (!Err.empty())
     errs() << Prog << ": " << Err << '\n';
+  if (!ResponseFile.empty())
+    sys::fs::remove(ResponseFile);
   return RC;
 }

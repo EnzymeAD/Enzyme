@@ -128,7 +128,9 @@ public:
   // The device profiler, as bitcode this build carries; empty if it carries
   // none for this target.
   virtual llvm::StringRef profilerBitcode() const { return ""; }
-  // Why the profiler bitcode cannot serve the probes of `F`, empty if it can.
+  // Why this build's device profiler cannot serve the probes of `F` (it
+  // carries none for this target, or one for another processor), empty if it
+  // can.
   virtual std::string profilerMismatch(const llvm::Function &F) const {
     return "";
   }
