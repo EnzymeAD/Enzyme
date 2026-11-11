@@ -10297,21 +10297,71 @@ void GradientUtils::computeGuaranteedFrees() {
       StringRef funcName = getFuncNameFromCall(CI);
 
       if (isDeallocationFunction(funcName, TLI)) {
-        llvm::Value *val = getBaseObject(CI->getArgOperand(0));
+        SmallPtrSet<Value *, 4> seen;
+        SmallVector<Value *, 4> todo = {CI->getArgOperand(0)};
+        SmallPtrSet<CallInst *, 2> foundAllocs;
+        SmallVector<BasicBlock *, 4> nonAllocIncomingBBs;
+        bool allValid = true;
 
-        if (auto dc = dyn_cast<CallInst>(val)) {
-          StringRef sfuncName = getFuncNameFromCall(dc);
-          if (isAllocationFunction(sfuncName, TLI)) {
+        while (!todo.empty()) {
+          Value *curr = getBaseObject(todo.pop_back_val());
+          if (!seen.insert(curr).second)
+            continue;
 
-            bool hasPDFree = false;
-            if (dc->getParent() == CI->getParent() ||
-                OrigPDT->dominates(CI->getParent(), dc->getParent())) {
-              hasPDFree = true;
+          if (isa<ConstantPointerNull>(curr) || isa<UndefValue>(curr))
+            continue;
+
+          if (auto phi = dyn_cast<PHINode>(curr)) {
+            for (unsigned i = 0, e = phi->getNumIncomingValues(); i < e; ++i) {
+              Value *inc = getBaseObject(phi->getIncomingValue(i));
+              if (isa<ConstantPointerNull>(inc) || isa<UndefValue>(inc)) {
+                nonAllocIncomingBBs.push_back(phi->getIncomingBlock(i));
+                continue;
+              }
+              todo.push_back(inc);
             }
+            continue;
+          }
 
-            if (hasPDFree) {
-              allocationsWithGuaranteedFree[dc].insert(CI);
+          if (auto sel = dyn_cast<SelectInst>(curr)) {
+            Value *tv = getBaseObject(sel->getTrueValue());
+            Value *fv = getBaseObject(sel->getFalseValue());
+            if (isa<ConstantPointerNull>(tv) || isa<UndefValue>(tv) ||
+                isa<ConstantPointerNull>(fv) || isa<UndefValue>(fv)) {
+              allValid = false;
+              break;
             }
+            todo.push_back(tv);
+            todo.push_back(fv);
+            continue;
+          }
+
+          if (auto dc = dyn_cast<CallInst>(curr)) {
+            StringRef sfuncName = getFuncNameFromCall(dc);
+            if (isAllocationFunction(sfuncName, TLI)) {
+              foundAllocs.insert(dc);
+              continue;
+            }
+          }
+
+          allValid = false;
+          break;
+        }
+
+        if (allValid && foundAllocs.size() == 1) {
+          CallInst *dc = *foundAllocs.begin();
+          bool hasPDFree = dc->getParent() == CI->getParent() ||
+                           OrigPDT->dominates(CI->getParent(), dc->getParent());
+          if (hasPDFree) {
+            for (BasicBlock *incBB : nonAllocIncomingBBs) {
+              if (OrigDT->dominates(dc->getParent(), incBB)) {
+                hasPDFree = false;
+                break;
+              }
+            }
+          }
+          if (hasPDFree) {
+            allocationsWithGuaranteedFree[dc].insert(CI);
           }
         }
       }
