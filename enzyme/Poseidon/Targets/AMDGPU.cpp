@@ -172,7 +172,7 @@ public:
   std::string profilerMismatch(const Function &F) const override {
 #ifdef POSEIDON_DEVICE_PROFILER_AMDGPU
     if (processor(F) != POSEIDON_DEVICE_PROFILER_AMDGPU_ARCH)
-      return (Twine("Poseidon: the AMDGPU device profiler was built for '") +
+      return (Twine("the AMDGPU device profiler was built for '") +
               POSEIDON_DEVICE_PROFILER_AMDGPU_ARCH
               "' (POSEIDON_AMDGPU_ARCH) but " +
               F.getName() + " compiles for target-cpu '" + processor(F) + "'")
