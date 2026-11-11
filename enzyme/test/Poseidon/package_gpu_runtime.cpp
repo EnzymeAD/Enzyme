@@ -14,16 +14,19 @@
 // poseidon-clang does. The package exports that option, as
 // Poseidon::EnzymeOptions and POSEIDON_ENZYME_OPTIONS, for a project that
 // loads Enzyme itself under Plain or ProfileUse, which do not carry it. With
-// CUDA no target and no variable holds it.
+// CUDA no target and no variable holds it. Only the CUDA runtimes need the
+// CUDA toolkit; a project on the HIP runtimes is not made to find one.
 
 // HIP: -- HIP Plain: -fpass-plugin={{[^;]+}};-ffp-contract=on
 // HIP-NEXT: -- HIP ProfileGenerate: -fpass-plugin={{[^;]+}};-fpass-plugin={{[^;]+}};SHELL:-Xclang -mllvm -Xclang -poseidon-profile-generate;SHELL:-Xclang -mllvm -Xclang -enzyme-lto-prelink=1;-ffp-contract=on
 // HIP-NEXT: -- HIP ProfileUse: -fpass-plugin={{[^;]+}};-ffp-contract=on
 // HIP-NEXT: -- HIP EnzymeOptions: SHELL:-Xclang -mllvm -Xclang -enzyme-lto-prelink=1{{$}}
 // HIP-NEXT: -- HIP POSEIDON_ENZYME_OPTIONS: [SHELL:-Xclang -mllvm -Xclang -enzyme-lto-prelink=1]
+// HIP-NEXT: -- HIP CUDAToolkit: []
 
 // CUDA: -- CUDA Plain: -fpass-plugin={{[^;]+}};-ffp-contract=on
 // CUDA-NEXT: -- CUDA ProfileGenerate: -fpass-plugin={{[^;]+}};-fpass-plugin={{[^;]+}};SHELL:-mllvm -poseidon-profile-generate;-ffp-contract=on
 // CUDA-NEXT: -- CUDA ProfileUse: -fpass-plugin={{[^;]+}};-ffp-contract=on
 // CUDA-NEXT: -- CUDA EnzymeOptions: options-NOTFOUND
 // CUDA-NEXT: -- CUDA POSEIDON_ENZYME_OPTIONS: []
+// CUDA-NEXT: -- CUDA CUDAToolkit:

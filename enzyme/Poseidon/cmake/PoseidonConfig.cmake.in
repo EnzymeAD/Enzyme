@@ -41,9 +41,6 @@
 include(CMakeFindDependencyMacro)
 set(POSEIDON_HAS_CUDA @POSEIDON_HAS_CUDA@)
 set(POSEIDON_HAS_HIP @POSEIDON_HAS_HIP@)
-if(POSEIDON_HAS_CUDA)
-  find_dependency(CUDAToolkit)
-endif()
 if(NOT DEFINED POSEIDON_GPU_RUNTIME)
   if(POSEIDON_HAS_CUDA)
     set(POSEIDON_GPU_RUNTIME CUDA)
@@ -62,6 +59,11 @@ if(POSEIDON_GPU_RUNTIME STREQUAL "HIP")
 else()
   set(POSEIDON_MLLVM "-mllvm")
   set(POSEIDON_ENZYME_OPTIONS "")
+endif()
+# The CUDA runtimes link the toolkit's libraries; a project on the HIP runtimes
+# links none of them.
+if(POSEIDON_HAS_CUDA AND POSEIDON_GPU_RUNTIME STREQUAL "CUDA")
+  find_dependency(CUDAToolkit)
 endif()
 include("${CMAKE_CURRENT_LIST_DIR}/PoseidonTargets.cmake")
 
