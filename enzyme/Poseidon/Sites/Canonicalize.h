@@ -1,6 +1,9 @@
 #ifndef POSEIDON_CANONICALIZE_H
 #define POSEIDON_CANONICALIZE_H
 
+#include "llvm/IR/PassManager.h"
+#include "llvm/Passes/OptimizationLevel.h"
+
 #include <string>
 
 namespace llvm {
@@ -25,6 +28,12 @@ std::string canonicalFormHash(const llvm::Function &F);
 bool isOptimizable(const llvm::Value &V);
 
 void setSlotMetadata(llvm::Function &F);
+
+// The passes of the canonical prefix before and after its always-inliner (none
+// before it at O0).
+void addCanonicalPreInline(llvm::FunctionPassManager &FPM,
+                           llvm::OptimizationLevel Level);
+void addCanonicalPostInline(llvm::FunctionPassManager &FPM);
 
 } // namespace poseidon
 
