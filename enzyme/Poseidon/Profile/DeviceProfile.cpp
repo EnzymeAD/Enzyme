@@ -8,6 +8,7 @@
 #include "llvm/Bitcode/BitcodeReader.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/DiagnosticInfo.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Module.h"
@@ -93,8 +94,12 @@ bool linkDeviceProfiler(Module &M, bool profileGenerate) {
     for (const User *U : probe->users())
       if (const auto *call = dyn_cast<CallBase>(U))
         if (std::string why = target.profilerMismatch(*call->getFunction());
-            !why.empty())
-          report_fatal_error(Twine(why));
+            !why.empty()) {
+          M.getContext().diagnose(DiagnosticInfoUnsupported(
+              *call->getFunction(), "Poseidon: " + why, call->getDebugLoc(),
+              DS_Error));
+          return false;
+        }
   }
 
   L.setTargetTriple(M.getTargetTriple());
