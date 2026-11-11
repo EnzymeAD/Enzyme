@@ -166,6 +166,20 @@ unsigned fpStoreWidth(Type *T) {
   return 0;
 }
 
+// Every store and atomicrmw of `clone`: the pointer it writes through and the
+// width of the floating-point scalar it writes (fpStoreWidth).
+void forEachWrite(Function &clone,
+                  function_ref<void(Value *ptr, unsigned width)> mark) {
+  for (Instruction &I : instructions(clone)) {
+    if (auto *SI = dyn_cast<StoreInst>(&I))
+      mark(SI->getPointerOperand(),
+           fpStoreWidth(SI->getValueOperand()->getType()));
+    else if (auto *RMW = dyn_cast<AtomicRMWInst>(&I))
+      mark(RMW->getPointerOperand(),
+           fpStoreWidth(RMW->getValOperand()->getType()));
+  }
+}
+
 // Which parameters the site writes through, and in what element width. An
 // application does not say which of its buffers are outputs, and reverse mode
 // needs to know: the output shadows are the ones the seed goes into.
@@ -177,14 +191,7 @@ void collectOutputParams(Function &clone,
     if (w && idx >= 0 && (size_t)idx < seedWidth.size())
       seedWidth[idx] = std::max(seedWidth[idx], w);
   };
-  for (Instruction &I : instructions(clone)) {
-    if (auto *SI = dyn_cast<StoreInst>(&I))
-      mark(SI->getPointerOperand(),
-           fpStoreWidth(SI->getValueOperand()->getType()));
-    else if (auto *RMW = dyn_cast<AtomicRMWInst>(&I))
-      mark(RMW->getPointerOperand(),
-           fpStoreWidth(RMW->getValOperand()->getType()));
-  }
+  forEachWrite(clone, mark);
 }
 
 bool holdsPointer(Type *T) {
@@ -241,14 +248,7 @@ void collectOutputFields(Function &clone,
     if (w && r.isField())
       seedWidth[r] = std::max(seedWidth[r], w);
   };
-  for (Instruction &I : instructions(clone)) {
-    if (auto *SI = dyn_cast<StoreInst>(&I))
-      mark(SI->getPointerOperand(),
-           fpStoreWidth(SI->getValueOperand()->getType()));
-    else if (auto *RMW = dyn_cast<AtomicRMWInst>(&I))
-      mark(RMW->getPointerOperand(),
-           fpStoreWidth(RMW->getValOperand()->getType()));
-  }
+  forEachWrite(clone, mark);
 }
 
 bool holdsFP(Type *T) {
