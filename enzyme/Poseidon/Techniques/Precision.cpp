@@ -227,9 +227,10 @@ void changePrecision(Instruction *I, PrecisionChange &change,
 }
 
 // If `VMap` is passed, map `llvm::Value`s in `subgraph` to their cloned
-// values and change outputs in VMap to new casted outputs.
-void PTCandidate::apply(Session &S, Subgraph &subgraph,
-                        ValueToValueMapTy *VMap) {
+// values and change outputs in VMap to new casted outputs. Otherwise `graph`,
+// if passed, learns of each erased operation whose users read a new value.
+void PTCandidate::apply(Session &S, Subgraph &subgraph, ValueToValueMapTy *VMap,
+                        FPGraph *graph) {
   SetVector<Instruction *> operations;
   DenseMap<Value *, Value *>
       clonedToOriginal; // Maps cloned outputs to old outputs
@@ -304,6 +305,10 @@ void PTCandidate::apply(Session &S, Subgraph &subgraph,
       } else {
         for (auto *I : instsToChangeSorted)
           subgraph.operations.remove(I);
+        if (graph)
+          for (Instruction *I : instsToChangeSorted)
+            if (Value *restored = restoredValues.lookup(I))
+              graph->replaceErased(I, restored);
       }
       continue;
     }
@@ -340,6 +345,8 @@ void PTCandidate::apply(Session &S, Subgraph &subgraph,
         if (VMap) {
           assert(VMap->count(clonedToOriginal[oldV]));
           (*VMap)[clonedToOriginal[oldV]] = casted;
+        } else if (graph) {
+          graph->replaceErased(oldV, casted);
         }
       }
 
@@ -1117,7 +1124,10 @@ void PrecisionUnit::apply(Session &S, size_t candidateIndex) {
     llvm_unreachable("Invalid candidate index");
   }
 
-  candidates[candidateIndex].apply(S, *subgraph);
+  // An operation this change erases may be an input of another subgraph whose
+  // rewrite a later step materializes: the rewrite reads the value the
+  // operation's users now read, as the units were priced.
+  candidates[candidateIndex].apply(S, *subgraph, nullptr, &graph());
 }
 
 // Lower is better

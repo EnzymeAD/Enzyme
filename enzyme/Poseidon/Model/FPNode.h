@@ -193,6 +193,10 @@ struct FPGraph {
   llvm::Function *F = nullptr;
   std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>> valueToNodeMap;
   std::unordered_map<std::string, llvm::Value *> symbolToValueMap;
+
+  // `erased` was erased and its users read `now` instead: a later rewrite
+  // whose expression names `erased` reads `now`.
+  void replaceErased(llvm::Value *erased, llvm::Value *now);
 };
 
 } // namespace poseidon

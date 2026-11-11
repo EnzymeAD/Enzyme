@@ -60,7 +60,7 @@ struct PTCandidate {
       : changes(std::move(changes)), desc(desc) {}
 
   void apply(Session &S, Subgraph &subgraph,
-             llvm::ValueToValueMapTy *VMap = nullptr);
+             llvm::ValueToValueMapTy *VMap = nullptr, FPGraph *graph = nullptr);
 };
 
 void changePrecision(llvm::Instruction *I, PrecisionChange &change,
