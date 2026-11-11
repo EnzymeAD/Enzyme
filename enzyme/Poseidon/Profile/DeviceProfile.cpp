@@ -104,10 +104,12 @@ bool linkDeviceProfiler(Module &M, bool profileGenerate) {
 
   L.setTargetTriple(M.getTargetTriple());
   L.setDataLayout(M.getDataLayout());
-  // The library's module flags and keep-alive lists describe its own compile;
-  // the module keeps its own, and takes only what its probes reach.
+  // The library's module flags, producer and keep-alive lists describe its own
+  // compile; the module keeps its own, and takes only what its probes reach.
   if (NamedMDNode *moduleFlags = L.getModuleFlagsMetadata())
     L.eraseNamedMetadata(moduleFlags);
+  if (NamedMDNode *ident = L.getNamedMetadata("llvm.ident"))
+    L.eraseNamedMetadata(ident);
   for (StringRef used : {"llvm.used", "llvm.compiler.used"})
     if (GlobalVariable *G = L.getNamedGlobal(used))
       G->eraseFromParent();
