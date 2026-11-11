@@ -297,22 +297,6 @@ static void putOnApplicationScale(Session &S, Function &F,
       unit->scaleErrors(factor);
 }
 
-// What the profiled run spent in `F`: every operation the profile records, its
-// execution count times its price.
-static double profiledCost(CostModelState &CM, const Function &F,
-                           const ProfileMap &profile) {
-  double cost = 0.0;
-  for (const Instruction &I : instructions(F)) {
-    size_t slot;
-    if (!tryReadProfIdxMetadata(&I, slot))
-      continue;
-    auto it = profile.find(slot);
-    if (it != profile.end())
-      cost += (double)it->second.exec * getInstructionCompCost(CM, &I);
-  }
-  return cost;
-}
-
 // Prints every collected candidate with its priced deltas.
 static void printCandidates(Session &S, FunctionFPState &st) {
   if (S.Opts.Diagnostics.Print)
@@ -387,7 +371,10 @@ bool collectFPCandidates(Session &S, Function &F, double errorTol,
   // Nothing above prices: a compile for a device no model has been measured
   // on yet still reports what it recognized before it refuses.
   requireCostModel(S.CostModel, F);
-  st.profiledCost = profiledCost(S.CostModel, F, profile.map);
+  st.profiledCost = profiledCost(S.CostModel, F, profile.map,
+                                 [](const Instruction &I, size_t &slot) {
+                                   return tryReadProfIdxMetadata(&I, slot);
+                                 });
 
   buildSubgraphs(O, F, st.abstractMatmuls, st.valueToNodeMap, st.subgraphs);
 
@@ -596,7 +583,7 @@ bool solveJointly(Session &S, Module &M, FunctionAnalysisManager &FAM) {
   const Options &O = S.Opts;
   SmallVector<Function *, 4> marked;
   for (Function &F : M)
-    if (!F.empty() && F.hasFnAttribute("poseidon-joint-errtol"))
+    if (!F.empty() && F.hasFnAttribute(kJointErrTol))
       marked.push_back(&F);
   if (marked.empty())
     return false;
@@ -611,10 +598,8 @@ bool solveJointly(Session &S, Module &M, FunctionAnalysisManager &FAM) {
   bool allFromSite = true;
   for (Function *F : marked) {
     double errTol = 0.0;
-    F->getFnAttribute("poseidon-joint-errtol")
-        .getValueAsString()
-        .getAsDouble(errTol);
-    F->removeFnAttr("poseidon-joint-errtol");
+    F->getFnAttribute(kJointErrTol).getValueAsString().getAsDouble(errTol);
+    F->removeFnAttr(kJointErrTol);
     allFromSite &= errTol > 0.0;
     targets.push_back({F, errTol > 0.0 ? errTol : (double)O.Solver.Tau});
   }

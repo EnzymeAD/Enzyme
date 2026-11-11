@@ -239,7 +239,7 @@ bool optimizeSiteBody(Session &S, CallBase *CI, Function *F,
     if (O.Solver.JointDP) {
       // Joint mode: defer; mark F with its tolerance so the joint solve takes
       // it with the module's other sites under one shared budget.
-      F->addFnAttr("poseidon-joint-errtol", exactDouble(errTol));
+      F->addFnAttr(kJointErrTol, exactDouble(errTol));
       // Host-dispatch note is produced only by the later joint materialize;
       // capture the body-param -> wrapper-arg mapping now (primalArgs valid
       // here).
@@ -334,7 +334,7 @@ bool lowerMarkers(Session &S, ArrayRef<CallInst *> markers,
 // records, the execution count times the CSV price of the operation the slot
 // names. A site the run never reached has no records and costs nothing, which
 // is what -poseidon-kernels=all over a whole library produces for most kernels.
-double profiledSiteCost(Session &S, Function &body) {
+static double profiledSiteCost(Session &S, Function &body) {
   SmallString<128> profilePath(S.Opts.Profiling.ProfileUse);
   llvm::sys::path::append(
       profilePath,
@@ -352,15 +352,14 @@ double profiledSiteCost(Session &S, Function &body) {
   // optimizeSiteBody, under the same name.
   Function *clone = canonicalize(body);
   requireCostModel(S.CostModel, *clone);
-  double cost = 0.0;
-  size_t slot = 0;
-  for (Instruction &I : instructions(*clone)) {
-    if (!isOptimizable(I))
-      continue;
-    auto it = profileMap.find(slot++);
-    if (it != profileMap.end())
-      cost += (double)it->second.exec * getInstructionCompCost(S.CostModel, &I);
-  }
+  size_t nextSlot = 0;
+  double cost = profiledCost(S.CostModel, *clone, profileMap,
+                             [&](const Instruction &I, size_t &slot) {
+                               if (!isOptimizable(I))
+                                 return false;
+                               slot = nextSlot++;
+                               return true;
+                             });
   clone->eraseFromParent();
   return cost;
 }
@@ -401,8 +400,7 @@ bool optimizeAnnotatedSites(Session &Sess, Module &M) {
     changed |= optimizeSiteBody(Sess, call, body, primalArgs, errTol, calls);
   };
 
-  if (byRegex.empty() || O.Profiling.MinCostShare <= 0.0 ||
-      !O.Profiling.usesProfile()) {
+  if (byRegex.empty() || O.Profiling.MinCostShare <= 0.0) {
     for (Function *K : sites) {
       Function *body = nullptr;
       if (CallInst *call = outlineKernelBody(*K, body)) {

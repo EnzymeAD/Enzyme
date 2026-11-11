@@ -16,6 +16,7 @@
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/IR/CFG.h"
+#include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Intrinsics.h"
@@ -275,6 +276,21 @@ double getInstructionCompCost(CostModelState &CM, const Instruction *I) {
   }
 
   return queryCostModel(CM, OpcodeName, PrecisionName);
+}
+
+double profiledCost(CostModelState &CM, const Function &F,
+                    const ProfileMap &profile,
+                    function_ref<bool(const Instruction &, size_t &)> slotOf) {
+  double cost = 0.0;
+  for (const Instruction &I : instructions(F)) {
+    size_t slot;
+    if (!slotOf(I, slot))
+      continue;
+    auto it = profile.find(slot);
+    if (it != profile.end())
+      cost += (double)it->second.exec * getInstructionCompCost(CM, &I);
+  }
+  return cost;
 }
 
 const std::unordered_set<std::string> &getPTFuncs(CostModelState &CM) {

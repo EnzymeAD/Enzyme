@@ -82,8 +82,12 @@ bool materializeFPSolution(Session &S, llvm::Function &F, FunctionFPState &st,
 // wrote none and -poseidon-tau decides.
 bool fpOptimize(Session &S, llvm::Function &F, double errorTol = 0.0);
 
-// Joint-DP entry: optimizeSiteBody marks each site with "poseidon-joint-errtol"
-// instead of optimizing it inline; this solves one DP over all marked sites.
+// The attribute optimizeSiteBody marks a site of the joint solve with, holding
+// the site's accuracy target.
+constexpr llvm::StringLiteral kJointErrTol = "poseidon-joint-errtol";
+
+// Joint-DP entry: optimizeSiteBody marks each site with kJointErrTol instead
+// of optimizing it inline; this solves one DP over all marked sites.
 bool solveJointly(Session &S, llvm::Module &M,
                   llvm::FunctionAnalysisManager &FAM);
 

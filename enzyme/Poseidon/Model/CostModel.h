@@ -18,8 +18,10 @@
 #define POSEIDON_COST_MODEL_H
 
 #include "Core/CostTable.h"
+#include "Profile/ProfileRead.h"
 
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/IR/BasicBlock.h"
@@ -45,6 +47,13 @@ void requireCostModel(CostModelState &CM, const llvm::Function &F);
 
 // The row that prices `I`; aborts when no row family prices its kind.
 double getInstructionCompCost(CostModelState &CM, const llvm::Instruction *I);
+
+// What the profiled run spent in `F`: every operation the profile records, its
+// execution count times its price. `slotOf` gives an instruction's profile
+// slot, or false for an instruction without one.
+double profiledCost(
+    CostModelState &CM, const llvm::Function &F, const ProfileMap &profile,
+    llvm::function_ref<bool(const llvm::Instruction &, size_t &)> slotOf);
 
 // The libm calls that are cheaper computed at FP32 and converted back than at
 // FP64 on this device.
