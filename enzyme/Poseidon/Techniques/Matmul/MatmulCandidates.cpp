@@ -668,4 +668,71 @@ void MatmulUnit::writeReportStep(raw_ostream &OS, size_t i, StringRef pad) {
      << matmulOptionLabel(candidates[i]) << " (#" << i << ")\n";
 }
 
+// Dispatch and raise prices are measured wall-clock ratios that repeat to about
+// 0.6% run to run, so a smaller modelled cost gap is a tie.
+static constexpr double kCostTieBandRel = 0.006;
+
+SmallVector<SolutionStep> errorBudgetSelector(const Options &O,
+                                              SmallVector<MatmulUnit, 4> &CMs,
+                                              double budget,
+                                              double confidence) {
+  SmallVector<SolutionStep> steps;
+  for (auto &cm : CMs) {
+    long best = -1;
+    double bestComp = cm.initialCompCost;
+    for (size_t i = 0; i < cm.candidates.size(); ++i) {
+      const MatmulUnit::Option &c = cm.candidates[i];
+      if (c.domainError <= budget && c.compCost < bestComp) {
+        bestComp = c.compCost;
+        best = (long)i;
+      }
+    }
+    // Inside the calibration noise band two costs are a tie: among qualifying
+    // candidates within band of the cheapest, the winner is the smallest
+    // modelled domainError, then the smallest compCost, then the lowest index.
+    // The guard never widens the qualifying set.
+    if (best >= 0) {
+      const double band = bestComp + kCostTieBandRel * std::fabs(bestComp);
+      long tieBest = best;
+      for (size_t i = 0; i < cm.candidates.size(); ++i) {
+        const MatmulUnit::Option &c = cm.candidates[i];
+        if (c.domainError > budget || c.compCost >= cm.initialCompCost)
+          continue;
+        if (c.compCost > band)
+          continue;
+        const MatmulUnit::Option &b = cm.candidates[tieBest];
+        if (c.domainError < b.domainError ||
+            (c.domainError == b.domainError && c.compCost < b.compCost))
+          tieBest = (long)i;
+      }
+      if (tieBest != best && O.Diagnostics.Print)
+        llvm::errs() << "Poseidon error-budget: cost tie inside "
+                     << (kCostTieBandRel * 100.0) << "% calibration band ("
+                     << matmulOptionLabel(cm.candidates[best]) << " cost "
+                     << cm.candidates[best].compCost << " vs "
+                     << matmulOptionLabel(cm.candidates[tieBest]) << " cost "
+                     << cm.candidates[tieBest].compCost
+                     << ") -> broken on modelled domain error ("
+                     << cm.candidates[tieBest].domainError << " < "
+                     << cm.candidates[best].domainError << ")\n";
+      best = tieBest;
+    }
+    if (best < 0) {
+      if (O.Diagnostics.Print)
+        llvm::errs() << "Poseidon error-budget: matmul -> baseline F64 (no "
+                        "rewrite clears "
+                     << budget << " at confidence " << confidence
+                     << " faster than F64)\n";
+      continue;
+    }
+    if (O.Diagnostics.Print)
+      llvm::errs() << "Poseidon error-budget: matmul -> "
+                   << matmulOptionLabel(cm.candidates[best]) << " (domain err "
+                   << cm.candidates[best].domainError << " <= " << budget
+                   << " at confidence " << confidence << ")\n";
+    steps.emplace_back(&cm, (size_t)best);
+  }
+  return steps;
+}
+
 } // namespace poseidon

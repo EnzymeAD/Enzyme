@@ -20,8 +20,8 @@
 #include "Core/CostTable.h"
 #include "Core/HerbieRun.h"
 #include "Core/Options.h"
+#include "Pins.h"
 #include "Sites/LaunchDescriptors.h"
-#include "Solvers.h"
 #include "Techniques/Matmul/HostDispatch.h"
 #include "Techniques/Matmul/MatmulInternal.h"
 
@@ -74,10 +74,10 @@ public:
   std::map<const llvm::Function *, llvm::SmallVector<llvm::WeakTrackingVH, 12>>
       SiteArgs;
 
-  // Pass/Explain.cpp. Where each site is called from.
+  // Explain.cpp. Where each site is called from.
   std::map<const llvm::Function *, llvm::DebugLoc> SiteCalls;
 
-  // Solvers.cpp. The items of -poseidon-apply-rewrites and the sites they name.
+  // Pins.cpp. The items of -poseidon-apply-rewrites and the sites they name.
   PinState Pins;
 
   // Core/CostTable.cpp and Model/CostModel.cpp.

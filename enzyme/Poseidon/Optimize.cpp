@@ -48,10 +48,10 @@
 #include <utility>
 #include <vector>
 
+#include "Explain.h"
 #include "Model/CostModel.h"
 #include "Model/Evaluators.h"
 #include "Optimize.h"
-#include "Pass/Explain.h"
 #include "Pass/Session.h"
 #include "Profile/ProfileRead.h"
 #include "Sites/Canonicalize.h"
@@ -320,6 +320,55 @@ static void printCandidates(Session &S, FunctionFPState &st) {
       unit->printPriced(llvm::errs());
 }
 
+static void priceCandidates(FunctionFPState &st) {
+  for (SiteUnit *unit : st.units)
+    unit->price();
+}
+
+SmallVector<SiteUnit *> solvedUnits(const FunctionFPState &st, bool target) {
+  SmallVector<SiteUnit *> units;
+  for (SiteUnit *unit : st.units)
+    if (!target || !isa<MatmulUnit>(unit))
+      units.push_back(unit);
+  return units;
+}
+
+void FunctionFPState::sealUnits(Session &S) {
+  assert(!unitsSealed && "a site's units are sealed once");
+  unitsSealed = true;
+  for (size_t i = 0; i < COs.size(); ++i) {
+    COs[i].bind(S, *this, *this, i);
+    units.push_back(&COs[i]);
+  }
+  for (size_t i = 0; i < CSs.size(); ++i) {
+    CSs[i].bind(S, *this, *this, i);
+    units.push_back(&CSs[i]);
+  }
+  for (size_t i = 0; i < CMs.size(); ++i) {
+    CMs[i].bind(S, *this, *this, i);
+    units.push_back(&CMs[i]);
+  }
+}
+
+// Prices the collected candidates, unless the site's DP table is read back
+// from the cache: the table already holds every price its solve used.
+static void priceUnlessCached(Session &S, FunctionFPState &st,
+                              StringRef profilePath) {
+  const Options &O = S.Opts;
+  // A joint or a manual solve reads no table, and an accuracy target leaves
+  // the matrix products to errorBudgetSelector (fpOptimize).
+  if (!O.Herbie.Cache.empty() && !O.Solver.JointDP &&
+      O.Solver.ApplyRewrites.empty()) {
+    const bool target = st.errTol > 0.0 || O.Solver.Tau > 0.0;
+    const SmallVector<SiteUnit *> units = solvedUnits(st, target);
+    st.table = std::make_unique<SiteTable>();
+    st.table->key = solveKey(S, st, units, profilePath);
+    if (readSiteTable(O, st.F->getName(), *st.table, units))
+      return;
+  }
+  priceCandidates(st);
+}
+
 bool collectFPCandidates(Session &S, Function &F, double errorTol,
                          unsigned sampleLogBits, FunctionFPState &st) {
   const Options &O = S.Opts;
@@ -366,6 +415,36 @@ bool collectFPCandidates(Session &S, Function &F, double errorTol,
   putOnApplicationScale(S, F, profile, st);
   printCandidates(S, st);
 
+  return true;
+}
+
+// `applied` receives the steps materialized, in order.
+static bool applySolution(ArrayRef<SolutionStep> steps,
+                          SmallVectorImpl<SolutionStep> &applied) {
+  if (steps.empty())
+    return false;
+  llvm::errs() << "\n!!! Applying solution (" << steps.size()
+               << " step(s)) "
+                  "... !!!\n";
+  // The binary64 and binary32 searches of one output are separate items, and
+  // the first rewrite erases the output the second would replace.
+  SmallPtrSet<Value *, 8> rewrittenOutputs;
+  for (const auto &step : steps) {
+    SiteUnit &unit = unitOf(step);
+    llvm::errs() << "Applying solution for "
+                 << unit.choiceText(step.candidateIndex) << "\n";
+    ArrayRef<Value *> outputs = unit.rewrittenOutputs();
+    if (llvm::any_of(outputs,
+                     [&](Value *V) { return rewrittenOutputs.contains(V); })) {
+      llvm::errs() << "[poseidon] output already rewritten by an "
+                      "earlier step; skipping this one\n";
+      continue;
+    }
+    rewrittenOutputs.insert(outputs.begin(), outputs.end());
+    unit.materialize(step.candidateIndex);
+    applied.push_back(step);
+  }
+  llvm::errs() << "!!! Solution applied !!!\n\n";
   return true;
 }
 
