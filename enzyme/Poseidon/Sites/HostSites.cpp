@@ -298,12 +298,7 @@ bool outlineHostSites(const Options &O, Module &M) {
   const bool active = O.Profiling.profileAction();
 
   SmallVector<CallInst *, 4> markers;
-  for (Function &G : M)
-    for (Instruction &I : instructions(G))
-      if (auto *CI = dyn_cast<CallInst>(&I))
-        if (Function *callee = calleeOf(CI))
-          if (isMarkerCall(callee->getName()))
-            markers.push_back(CI);
+  collectMarkerCalls(M, markers);
 
   bool changed = false;
   for (auto &[F, tau] : annotated) {

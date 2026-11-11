@@ -231,22 +231,26 @@ bool deferSite(const Options &O, CallInst *CI) {
   return true;
 }
 
-// The marker calls this module still owes the late run.
-void collectDeferredMarkers(Module &M, SmallVectorImpl<CallInst *> &out) {
+void collectMarkerCalls(Module &M, SmallVectorImpl<CallInst *> &out) {
   for (Function &F : M) {
     if (F.isDeclaration())
       continue;
-    for (Instruction &I : instructions(F)) {
-      auto *CI = dyn_cast<CallInst>(&I);
-      if (!CI)
-        continue;
-      Function *callee = calleeOf(CI);
-      if (!callee || !isMarkerCall(callee->getName()))
-        continue;
-      Function *target = markerTargetOrNull(CI);
-      if (target && target->hasFnAttribute(kSiteDeferred))
-        out.push_back(CI);
-    }
+    for (Instruction &I : instructions(F))
+      if (auto *CI = dyn_cast<CallInst>(&I))
+        if (Function *callee = calleeOf(CI))
+          if (isMarkerCall(callee->getName()))
+            out.push_back(CI);
+  }
+}
+
+// The marker calls this module still owes the late run.
+void collectDeferredMarkers(Module &M, SmallVectorImpl<CallInst *> &out) {
+  SmallVector<CallInst *, 4> markers;
+  collectMarkerCalls(M, markers);
+  for (CallInst *CI : markers) {
+    Function *target = markerTargetOrNull(CI);
+    if (target && target->hasFnAttribute(kSiteDeferred))
+      out.push_back(CI);
   }
 }
 
