@@ -17,9 +17,9 @@
 #ifndef POSEIDON_SESSION_H
 #define POSEIDON_SESSION_H
 
+#include "Core/CostTable.h"
 #include "Core/HerbieRun.h"
 #include "Core/Options.h"
-#include "CostModel.h"
 #include "Sites/LaunchDescriptors.h"
 #include "Solvers.h"
 #include "Techniques/Matmul/HostDispatch.h"
