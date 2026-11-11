@@ -7,13 +7,13 @@
 // generator can propose (nm 8..14) plus the native cuBLAS DGEMM row
 // `ozaki_dispatch_rel,dgemm,<rel>` the native DGEMM candidate is priced from.
 //
-// Given rectangular shapes MxK after N and reps, it measures the rectangular
-// rows of those shapes instead (rect_rows below).
+// Given rectangular shapes MxK or MxNxK after N and reps, it measures the
+// rectangular rows of those shapes instead (rect_rows and full_row below).
 // Build: nvcc -O3 -arch=sm_120 ozaki_calibrate.cu <path>/ozaki_rt.cu \
 //        -lcublas -o ozaki_calibrate
 // Run:   ./ozaki_calibrate [N=2048] [reps=30]  >>  cm_sm_120_RTX5090.csv
 //        (strip any prior `ozaki_dispatch_rel,` rows from the CSV before appending)
-//        ./ozaki_calibrate N reps MxK...   (the rectangular rows instead)
+//        ./ozaki_calibrate N reps MxK|MxNxK...   (the rectangular rows instead)
 #include <cstdio>
 #include <cstdlib>
 #ifdef __HIP__
@@ -114,6 +114,21 @@ static void rect_rows(int M, int K, float t_ref) {
   CK(cudaFree(rA));
 }
 
+// The native DGEMM through the same entry (nm=0) at a product's own extents:
+// a DGEMM with few columns runs far below its rate at many, so a call whose
+// extents are constants of its compile is priced from this row, keyed by them.
+static void full_row(int M, int Ncols, int K, float t_ref) {
+  const double ref_per_mac = (double)t_ref / ((double)N * N * N);
+  RM = M; RK = K;
+  rA = rand_dev((size_t)M * K);
+  NM = 0;
+  double rel = rect_per_mac(Ncols) / ref_per_mac;
+  fprintf(stderr, "[ozaki_calibrate] rect dgemm M=%d Ncols=%d K=%d  rel = "
+                  "%.6f\n", M, Ncols, K, rel);
+  printf("ozaki_dispatch_rect_rel,dgemm_m%dn%dk%d,%.6f\n", M, Ncols, K, rel);
+  CK(cudaFree(rA));
+}
+
 int main(int argc, char **argv) {
   if (argc > 1) N = atoi(argv[1]);
   if (argc > 2) REPS = atoi(argv[2]);
@@ -131,9 +146,16 @@ int main(int argc, char **argv) {
 
   if (argc > 3) {
     for (int i = 3; i < argc; ++i) {
-      int M = 0, K = 0;
-      if (sscanf(argv[i], "%dx%d", &M, &K) != 2 || M <= 0 || K <= 0) {
-        fprintf(stderr, "[ozaki_calibrate] '%s' is not a shape MxK\n", argv[i]);
+      int M = 0, Ncols = 0, K = 0, end = 0;
+      if (sscanf(argv[i], "%dx%dx%d%n", &M, &Ncols, &K, &end) == 3 &&
+          !argv[i][end] && M > 0 && Ncols > 0 && K > 0) {
+        full_row(M, Ncols, K, t_ref);
+        continue;
+      }
+      if (sscanf(argv[i], "%dx%d%n", &M, &K, &end) != 2 || argv[i][end] ||
+          M <= 0 || K <= 0) {
+        fprintf(stderr, "[ozaki_calibrate] '%s' is not a shape MxK or MxNxK\n",
+                argv[i]);
         return 1;
       }
       rect_rows(M, K, t_ref);

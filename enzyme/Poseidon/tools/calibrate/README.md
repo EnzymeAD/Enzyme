@@ -26,6 +26,7 @@ A compile passes the platform that sits next to the CSV it prices from
     poseidon-calibrate --gpu 1 --out <dir>     # or somewhere else
     poseidon-calibrate --gpu 1 --check         # is the resolved model this device's?
     poseidon-calibrate --gpu 1 --ozaki-rect 343x1536   # plus the rectangular rows of an M x Ncols x K GEMM
+    poseidon-calibrate --gpu 1 --ozaki-rect 112x112x2048  # the native DGEMM row of an M x Ncols x K call
 
 Six arms write disjoint row families into the same file; `--only` runs a
 subset, `--force` re-measures a family that is already there. A seventh,
@@ -38,7 +39,7 @@ machine that does not have the GPU the CSV was measured on.
 |---|---|---|
 | microbm | `<op>,<type>,<cost>`, `wmma_mma_<shape>,<in>_<acc>,<cost>` | Saturated reciprocal throughput per (op, type), and per tensor-core tile, from dependent op chains on every SM. Also writes the `# native_arch=`, `# scalar_types=` and `# matrix_types=` headers. |
 | ozaki | `ozaki_dispatch_rel,nm<8..14>`, `ozaki_dispatch_rel,dgemm` | Host-dispatched Ozaki-II GEMM per modulus count, and the native cuBLAS DGEMM. |
-| ozaki-rect | `ozaki_dispatch_rect_rel,nm<8..14>_m<M>k<K>` | The rectangular arm of the Ozaki-II dispatch at the `--ozaki-rect` shapes, per MAC. A host GEMM whose square padding would waste work runs that arm, whose cost is linear in the column count, so the row is keyed by (M, K) and replaces the square row times the padding ratio. Rows of shapes a run does not name are kept. |
+| ozaki-rect | `ozaki_dispatch_rect_rel,nm<8..14>_m<M>k<K>`, `ozaki_dispatch_rect_rel,dgemm_m<M>n<N>k<K>` | The rectangular arm of the Ozaki-II dispatch at the `--ozaki-rect` shapes `MxK`, per MAC. A host GEMM whose square padding would waste work runs that arm, whose cost is linear in the column count, so the row is keyed by (M, K) and replaces the square row times the padding ratio. A shape `MxNxK` measures the native DGEMM of a call with exactly those extents (`dgemm_m<M>n<N>k<K>`): a DGEMM with few columns runs far below the square rate, and a call whose three extents are constants of its compile is priced from this row when the model has it, from `ozaki_dispatch_rel,dgemm` otherwise. Rows of shapes a run does not name are kept. |
 | tcec | `tcec_dispatch_rel,fp16tcec` | Host-dispatched error-corrected GEMM. `--cumpsgemm <dir>` measures it against that cuMpSGEMM build, which is what the paper measured; without it the runtime's built-in cuBLAS backend is measured, and that is a different and slower product. |
 | direct | `direct_dispatch_rel,<in>_<acc>` | Host-dispatched reduced-precision cuBLAS GEMM. |
 | inkernel | `wmma_inkernel_rel,<class>` | Tensor-core raises inside a kernel, one class at a time: the harness is compiled through `poseidon-clang++` with `-poseidon-apply-rewrites`, so what is timed is the code a real solve emits. |
