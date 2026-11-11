@@ -21,6 +21,7 @@
 #include "llvm/ADT/StringRef.h"
 
 #include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -52,6 +53,8 @@ struct HerbieRunOptions {
   int NumPoints = 0;
   int NumIters = 0;
   int NumEnodes = 0;
+  // Herbie's --num-taylor-terms; none leaves Herbie its own cap.
+  std::optional<unsigned> TaylorTerms;
 
   // What decides only whether and how soon Herbie returns.
   // Herbie's per-core --timeout, in seconds.

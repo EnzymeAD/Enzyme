@@ -15,6 +15,7 @@
 #include "llvm/Support/Error.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/FileSystem.h"
+#include "llvm/Support/FileUtilities.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Program.h"
@@ -52,12 +53,31 @@ std::string herbieBinaryDigest(StringRef Program,
 SmallVector<std::string> herbieSearchArgs(const HerbieRunOptions &Opts) {
   // Herbie prunes alternatives by tree cost unless told otherwise, paying a
   // shared subterm once per occurrence; the emitted code computes it once.
-  return {"--seed",       std::to_string(Opts.Seed),
-          "--num-points", std::to_string(Opts.NumPoints),
-          "--num-iters",  std::to_string(Opts.NumIters),
-          "--num-enodes", std::to_string(Opts.NumEnodes),
-          "--disable",    "generate:proofs",
-          "--enable",     "reduce:dag-cost"};
+  SmallVector<std::string> Args = {
+      "--seed",       std::to_string(Opts.Seed),
+      "--num-points", std::to_string(Opts.NumPoints),
+      "--num-iters",  std::to_string(Opts.NumIters),
+      "--num-enodes", std::to_string(Opts.NumEnodes),
+      "--disable",    "generate:proofs",
+      "--enable",     "reduce:dag-cost"};
+  if (Opts.TaylorTerms)
+    Args.append({"--num-taylor-terms", std::to_string(*Opts.TaylorTerms)});
+  return Args;
+}
+
+// Whether `herbie report --help` of the Herbie at `Program` lists
+// --num-taylor-terms.
+static bool takesTaylorTerms(StringRef Program) {
+  SmallString<128> Help;
+  if (sys::fs::createTemporaryFile("herbie_help", "txt", Help))
+    return false;
+  FileRemover RemoveHelp(Help);
+  std::optional<StringRef> Redirects[] = {std::nullopt, StringRef(Help),
+                                          StringRef(Help)};
+  sys::ExecuteAndWait(Program, {Program, "report", "--help"},
+                      /*Env=*/std::nullopt, Redirects, /*SecondsToWait=*/60);
+  auto Buf = MemoryBuffer::getFile(Help);
+  return Buf && (*Buf)->getBuffer().contains("--num-taylor-terms");
 }
 
 void addHerbieKeyParts(CacheKey &Key, const HerbieRunOptions &Opts,
@@ -330,6 +350,14 @@ HerbieRunResult runHerbie(const std::vector<std::string> &inputExprs,
       if (!parsed)
         consumeError(parsed.takeError());
       removeShardFiles();
+      if (Opts.TaylorTerms && !takesTaylorTerms(Program))
+        report_fatal_error(
+            Twine("Poseidon: -poseidon-herbie-num-taylor-terms passes Herbie "
+                  "--num-taylor-terms, and the Herbie at ") +
+                Program +
+                " does not take it ('report --help' does not list it). Use a "
+                "Herbie built with the option, or leave the flag out.",
+            /*gen_crash_diag=*/false);
       std::string where = Platform.Name;
       if (!Platform.Path.empty())
         where += ", " + Platform.Path;

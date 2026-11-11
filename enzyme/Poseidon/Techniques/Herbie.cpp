@@ -139,20 +139,24 @@ bool improveViaHerbie(Session &S, const std::vector<std::string> &inputExprs,
 
   const std::string Label =
       "subgraph " + std::to_string(subgraphIdx) + " of " + funcTag.str();
-  HerbieRunResult Run =
-      runHerbie(inputExprs, Opts, Label, S.Herbie.HerbieDigests);
-  if (Run.Result == HerbieRunResult::Outcome::Timeout)
-    for (RewriteUnit &CO : COs)
-      CO.herbieStatus = "timeout";
-  if (Run.Result == HerbieRunResult::Outcome::Crashed) {
-    if (O.Model.StrictMode)
+  SmallVector<std::optional<unsigned>, 2> TermCounts(
+      O.Herbie.HerbieNumTaylorTerms.begin(),
+      O.Herbie.HerbieNumTaylorTerms.end());
+  if (TermCounts.empty())
+    TermCounts.push_back(std::nullopt);
+  SmallVector<HerbieRunResult, 2> Runs;
+  for (std::optional<unsigned> Terms : TermCounts) {
+    Opts.TaylorTerms = Terms;
+    const std::string RunLabel =
+        Terms ? Label + " at " + std::to_string(*Terms) + " Taylor terms"
+              : Label;
+    Runs.push_back(
+        runHerbie(inputExprs, Opts, RunLabel, S.Herbie.HerbieDigests));
+    if (Runs.back().Result == HerbieRunResult::Outcome::Crashed &&
+        O.Model.StrictMode)
       report_fatal_error(Twine("Poseidon strict mode: Herbie crashed (") +
-                         Run.Crash + ") on " + Label);
-    for (RewriteUnit &CO : COs)
-      CO.herbieStatus = "crashed";
+                         Runs.back().Crash + ") on " + RunLabel);
   }
-  if (Run.Result != HerbieRunResult::Outcome::Ok)
-    return false;
 
   std::vector<std::unordered_set<std::string>> seenExprs(COs.size());
 
@@ -188,7 +192,8 @@ bool improveViaHerbie(Session &S, const std::vector<std::string> &inputExprs,
                      << "\": no output expression (status " << status
                      << ") -- no algebraic candidate from this core.\n";
         size_t noOutput;
-        if (!testName.getAsInteger(10, noOutput) && noOutput < COs.size())
+        if (!testName.getAsInteger(10, noOutput) && noOutput < COs.size() &&
+            !COs[noOutput].herbieAnswered)
           COs[noOutput].herbieStatus = status.str();
         continue;
       }
@@ -201,8 +206,9 @@ bool improveViaHerbie(Session &S, const std::vector<std::string> &inputExprs,
       }
 
       RewriteUnit &CO = COs[index];
+      if (!CO.herbieAnswered)
+        CO.herbieStatus = status.str();
       CO.herbieAnswered = true;
-      CO.herbieStatus = status.str();
       auto &seenExprSet = seenExprs[index];
 
       double bits = test.getNumber("bits").value();
@@ -253,7 +259,21 @@ bool improveViaHerbie(Session &S, const std::vector<std::string> &inputExprs,
     return true;
   };
 
-  return processHerbieOutput(Run.ResultsJson);
+  bool answered = false;
+  for (const HerbieRunResult &Run : Runs)
+    if (Run.Result == HerbieRunResult::Outcome::Ok)
+      answered |= processHerbieOutput(Run.ResultsJson);
+  for (const HerbieRunResult &Run : Runs) {
+    if (Run.Result != HerbieRunResult::Outcome::Timeout &&
+        Run.Result != HerbieRunResult::Outcome::Crashed)
+      continue;
+    for (RewriteUnit &CO : COs)
+      if (!CO.herbieAnswered)
+        CO.herbieStatus = Run.Result == HerbieRunResult::Outcome::Timeout
+                              ? "timeout"
+                              : "crashed";
+  }
+  return answered;
 }
 
 std::string getPrecondition(

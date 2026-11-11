@@ -121,6 +121,8 @@ struct HerbieOptions {
   int HerbieNumPts = 1024;
   int HerbieNumIters = 6;
   int HerbieNumEnodes = 8000;
+  // Ascending, each once; empty passes Herbie no term count.
+  std::vector<unsigned> HerbieNumTaylorTerms;
   unsigned HerbieSubgraphTimeout = 1800;
   unsigned HerbieProcesses = 0;
   unsigned HerbiePreFloorBits = 0;
