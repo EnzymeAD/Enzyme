@@ -9,10 +9,10 @@
 program main
   use enzyme, only: enzyme_dup, enzyme_autodiff, enzyme_fwddiff
   use mpi, only: mpi_init, mpi_comm_rank, mpi_comm_size, mpi_finalize, &
-                 mpi_comm_world, mpi_real
+                 mpi_comm_world, mpi_gather, mpi_real
   implicit none
 
-  real :: x, dx, y, dy
+  real :: x, dx, dxg(2), y, dy
   integer :: ierr, rank, numprocs
 
   call mpi_init(ierr)
@@ -33,8 +33,20 @@ program main
     write(*,"(f0.1)") dy
   end if
 
-  ! TODO: Do the same thing with reverse mode
-  !       https://github.com/EnzymeAD/Enzyme/issues/3203
+  ! Do the same thing with reverse mode
+  x = 3.0
+  dx = 0.0
+  if (rank == 0) then
+    dy = 1.0
+  else
+    dy = 0.0
+  end if
+  call enzyme_autodiff(power, enzyme_dup, x, dx, enzyme_dup, y, dy)
+  call mpi_gather(dx, 1, mpi_real, dxg, 1, mpi_real, 0, mpi_comm_world, ierr)
+  if (rank == 0) then
+    write(*,"(f0.1)") dxg(1)
+    write(*,"(f0.1)") dxg(2)
+  end if
 
   call mpi_finalize(ierr)
 
@@ -62,3 +74,5 @@ contains
 end program main
 
 ! CHECK: 4.0
+! CHECK-NEXT: 0.0
+! CHECK-NEXT: 6.0

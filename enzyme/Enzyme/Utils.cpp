@@ -221,6 +221,18 @@ bool attributeKnownFunctions(llvm::Function &F) {
       addFunctionNoCapture(&F, 2);
       F.addParamAttr(2, Attribute::ReadOnly);
     }
+    if (isFortranMPICall(F.getName())) {
+      for (unsigned idx : {1u, 3u, 4u, 5u}) {
+        if (idx < FT->getNumParams() && FT->getParamType(idx)->isPointerTy()) {
+          addFunctionNoCapture(&F, idx);
+          F.addParamAttr(idx, Attribute::ReadOnly);
+        }
+      }
+      if (FT->getNumParams() > 7 && FT->getParamType(7)->isPointerTy()) {
+        addFunctionNoCapture(&F, 7);
+        F.addParamAttr(7, Attribute::WriteOnly);
+      }
+    }
     if (FT->getParamType(6)->isPointerTy()) {
       F.addParamAttr(6, Attribute::WriteOnly);
     } else {
@@ -253,6 +265,18 @@ bool attributeKnownFunctions(llvm::Function &F) {
     if (FT->getParamType(2)->isPointerTy()) {
       addFunctionNoCapture(&F, 2);
       F.addParamAttr(2, Attribute::ReadOnly);
+    }
+    if (isFortranMPICall(F.getName())) {
+      for (unsigned idx : {1u, 3u, 4u, 5u}) {
+        if (idx < FT->getNumParams() && FT->getParamType(idx)->isPointerTy()) {
+          addFunctionNoCapture(&F, idx);
+          F.addParamAttr(idx, Attribute::ReadOnly);
+        }
+      }
+      if (FT->getNumParams() > 7 && FT->getParamType(7)->isPointerTy()) {
+        addFunctionNoCapture(&F, 7);
+        F.addParamAttr(7, Attribute::WriteOnly);
+      }
     }
     if (FT->getParamType(6)->isPointerTy()) {
       F.addParamAttr(6, Attribute::WriteOnly);
@@ -310,6 +334,11 @@ bool attributeKnownFunctions(llvm::Function &F) {
       F.addParamAttr(1, Attribute::WriteOnly);
       addFunctionNoCapture(&F, 1);
     }
+    if (F.getFunctionType()->getNumParams() > 2 &&
+        F.getFunctionType()->getParamType(2)->isPointerTy()) {
+      F.addParamAttr(2, Attribute::WriteOnly);
+      addFunctionNoCapture(&F, 2);
+    }
   }
   if (canonMPIName == "MPI_Waitall") {
     changed = true;
@@ -318,12 +347,22 @@ bool attributeKnownFunctions(llvm::Function &F) {
     F.addFnAttr(Attribute::WillReturn);
     F.addFnAttr(Attribute::NoFree);
     F.addFnAttr(Attribute::NoSync);
+    if (isFortranMPICall(F.getName()) &&
+        F.getFunctionType()->getParamType(0)->isPointerTy()) {
+      F.addParamAttr(0, Attribute::ReadOnly);
+      addFunctionNoCapture(&F, 0);
+    }
     if (F.getFunctionType()->getParamType(1)->isPointerTy()) {
       addFunctionNoCapture(&F, 1);
     }
     if (F.getFunctionType()->getParamType(2)->isPointerTy()) {
       F.addParamAttr(2, Attribute::WriteOnly);
       addFunctionNoCapture(&F, 2);
+    }
+    if (F.getFunctionType()->getNumParams() > 3 &&
+        F.getFunctionType()->getParamType(3)->isPointerTy()) {
+      F.addParamAttr(3, Attribute::WriteOnly);
+      addFunctionNoCapture(&F, 3);
     }
   }
   // Map of MPI function name to the arg index of its type argument
@@ -2804,35 +2843,77 @@ llvm::Function *getOrInsertDifferentialMPI_Wait(llvm::Module &M,
   d_req->setName("d_req");
 
   auto isendfn = M.getFunction(getRenamedPerCallingConv(caller, "MPI_Isend"));
-  assert(isendfn);
-  // TODO: what if Isend not defined, but Irecv is?
-  FunctionType *FuT = isendfn->getFunctionType();
+  auto irecvfn = M.getFunction(getRenamedPerCallingConv(caller, "MPI_Irecv"));
+  assert((isendfn || irecvfn) &&
+         "Expected MPI_Isend or MPI_Irecv declaration in module");
+  Function *protoFn = isendfn ? isendfn : irecvfn;
+  FunctionType *FuT = protoFn->getFunctionType();
+  if (!isendfn)
+    isendfn =
+        cast<Function>(M.getOrInsertFunction(
+                            getRenamedPerCallingConv(caller, "MPI_Isend"), FuT)
+                           .getCallee());
+  if (!irecvfn)
+    irecvfn =
+        cast<Function>(M.getOrInsertFunction(
+                            getRenamedPerCallingConv(caller, "MPI_Irecv"), FuT)
+                           .getCallee());
+  assert(isendfn && irecvfn && "Expected both MPI_Isend and MPI_Irecv");
 
-  auto irecvfn = cast<Function>(
-      M.getOrInsertFunction(getRenamedPerCallingConv(caller, "MPI_Irecv"), FuT)
-          .getCallee());
-  assert(irecvfn);
-
+  Type *i32Ty = Type::getInt32Ty(M.getContext());
   IRBuilder<> B(entry);
-  auto arg = isendfn->arg_begin();
+  auto arg = protoFn->arg_begin();
   if (arg->getType()->isIntegerTy())
     buf = B.CreatePtrToInt(buf, arg->getType());
+  else if (buf->getType() != arg->getType())
+    buf = B.CreatePointerCast(buf, arg->getType());
   arg++;
-  count = B.CreateZExtOrTrunc(count, arg->getType());
+  if (arg->getType()->isPointerTy()) {
+    auto countAlloc = B.CreateAlloca(i32Ty);
+    B.CreateStore(B.CreateZExtOrTrunc(count, i32Ty), countAlloc);
+    count = B.CreatePointerCast(countAlloc, arg->getType());
+  } else {
+    count = B.CreateZExtOrTrunc(count, arg->getType());
+  }
   arg++;
-  datatype = B.CreatePointerCast(datatype, arg->getType());
+  if (arg->getType()->isIntegerTy())
+    datatype = B.CreatePtrToInt(datatype, arg->getType());
+  else
+    datatype = B.CreatePointerCast(datatype, arg->getType());
   arg++;
-  source = B.CreateZExtOrTrunc(source, arg->getType());
+  if (arg->getType()->isPointerTy()) {
+    auto sourceAlloc = B.CreateAlloca(i32Ty);
+    B.CreateStore(B.CreateZExtOrTrunc(source, i32Ty), sourceAlloc);
+    source = B.CreatePointerCast(sourceAlloc, arg->getType());
+  } else {
+    source = B.CreateZExtOrTrunc(source, arg->getType());
+  }
   arg++;
-  tag = B.CreateZExtOrTrunc(tag, arg->getType());
+  if (arg->getType()->isPointerTy()) {
+    auto tagAlloc = B.CreateAlloca(i32Ty);
+    B.CreateStore(B.CreateZExtOrTrunc(tag, i32Ty), tagAlloc);
+    tag = B.CreatePointerCast(tagAlloc, arg->getType());
+  } else {
+    tag = B.CreateZExtOrTrunc(tag, arg->getType());
+  }
   arg++;
-  comm = B.CreatePointerCast(comm, arg->getType());
+  if (arg->getType()->isIntegerTy())
+    comm = B.CreatePtrToInt(comm, arg->getType());
+  else
+    comm = B.CreatePointerCast(comm, arg->getType());
   arg++;
   if (arg->getType()->isIntegerTy())
     d_req = B.CreatePtrToInt(d_req, arg->getType());
-  Value *args[] = {
+  else if (d_req->getType() != arg->getType())
+    d_req = B.CreatePointerCast(d_req, arg->getType());
+  SmallVector<Value *, 8> args = {
       buf, count, datatype, source, tag, comm, d_req,
   };
+  if (FuT->getNumParams() > 7) {
+    arg++;
+    auto ierrAlloc = B.CreateAlloca(i32Ty);
+    args.push_back(B.CreatePointerCast(ierrAlloc, arg->getType()));
+  }
 
   B.CreateCondBr(B.CreateICmpEQ(fn, ConstantInt::get(fn->getType(),
                                                      (int)MPI_CallType::ISEND)),
@@ -2841,14 +2922,14 @@ llvm::Function *getOrInsertDifferentialMPI_Wait(llvm::Module &M,
   {
     B.SetInsertPoint(isend);
     auto fcall = B.CreateCall(irecvfn, args);
-    fcall->setCallingConv(isendfn->getCallingConv());
+    fcall->setCallingConv(protoFn->getCallingConv());
     B.CreateRetVoid();
   }
 
   {
     B.SetInsertPoint(irecv);
     auto fcall = B.CreateCall(isendfn, args);
-    fcall->setCallingConv(isendfn->getCallingConv());
+    fcall->setCallingConv(protoFn->getCallingConv());
     B.CreateRetVoid();
   }
   return F;

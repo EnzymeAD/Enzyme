@@ -5498,13 +5498,16 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
       updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
       return;
     }
-    if (funcName == "MPI_Comm_size" || funcName == "MPI_Comm_rank" ||
-        funcName == "MPI_Get_processor_name") {
+    if (canonicalizeMPIName(funcName) == "MPI_Comm_size" ||
+        canonicalizeMPIName(funcName) == "MPI_Comm_rank" ||
+        canonicalizeMPIName(funcName) == "MPI_Get_processor_name") {
       TypeTree ptrint;
       ptrint.insert({-1}, BaseType::Pointer);
       ptrint.insert({-1, 0}, BaseType::Integer);
       updateAnalysis(call.getOperand(1), ptrint, &call);
-      updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      if (!isFortranMPICall(funcName))
+        updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call),
+                       &call);
       return;
     }
     if (funcName == "MPI_Barrier" || funcName == "MPI_Finalize") {
@@ -5549,49 +5552,58 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
       updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
       return;
     }
-    if (funcName == "MPI_Isend" || funcName == "MPI_Irecv" ||
-        funcName == "PMPI_Isend" || funcName == "PMPI_Irecv") {
+    if (canonicalizeMPIName(funcName) == "MPI_Isend" ||
+        canonicalizeMPIName(funcName) == "MPI_Irecv") {
+      bool fortranABI = isFortranMPICall(funcName);
       TypeTree buf = TypeTree(BaseType::Pointer);
 
-      if (Constant *C = dyn_cast<Constant>(call.getOperand(2))) {
-        while (ConstantExpr *CE = dyn_cast<ConstantExpr>(C)) {
-          C = CE->getOperand(0);
-        }
-        if (auto GV = dyn_cast<GlobalVariable>(C)) {
-          if (GV->getName() == "ompi_mpi_double") {
-            buf.insert({0}, Type::getDoubleTy(C->getContext()));
-          } else if (GV->getName() == "ompi_mpi_float") {
-            buf.insert({0}, Type::getFloatTy(C->getContext()));
-          } else if (GV->getName() == "ompi_mpi_cxx_bool") {
-            buf.insert({0}, BaseType::Integer);
+      if (!fortranABI) {
+        if (Constant *C = dyn_cast<Constant>(call.getOperand(2))) {
+          while (ConstantExpr *CE = dyn_cast<ConstantExpr>(C)) {
+            C = CE->getOperand(0);
           }
-        } else if (auto CI = dyn_cast<ConstantInt>(C)) {
-          // MPICH
-          if (CI->getValue() == 1275070475) {
-            buf.insert({0}, Type::getDoubleTy(C->getContext()));
-          } else if (CI->getValue() == 1275069450) {
-            buf.insert({0}, Type::getFloatTy(C->getContext()));
+          if (auto GV = dyn_cast<GlobalVariable>(C)) {
+            if (GV->getName() == "ompi_mpi_double") {
+              buf.insert({0}, Type::getDoubleTy(C->getContext()));
+            } else if (GV->getName() == "ompi_mpi_float") {
+              buf.insert({0}, Type::getFloatTy(C->getContext()));
+            } else if (GV->getName() == "ompi_mpi_cxx_bool") {
+              buf.insert({0}, BaseType::Integer);
+            }
+          } else if (auto CI = dyn_cast<ConstantInt>(C)) {
+            // MPICH
+            if (CI->getValue() == 1275070475) {
+              buf.insert({0}, Type::getDoubleTy(C->getContext()));
+            } else if (CI->getValue() == 1275069450) {
+              buf.insert({0}, Type::getFloatTy(C->getContext()));
+            }
           }
         }
       }
       updateAnalysis(call.getOperand(0), buf.Only(-1, &call), &call);
-      updateAnalysis(call.getOperand(1),
-                     TypeTree(BaseType::Integer).Only(-1, &call), &call);
-      updateAnalysis(call.getOperand(3),
-                     TypeTree(BaseType::Integer).Only(-1, &call), &call);
-      updateAnalysis(call.getOperand(4),
-                     TypeTree(BaseType::Integer).Only(-1, &call), &call);
-      updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      if (!fortranABI) {
+        updateAnalysis(call.getOperand(1),
+                       TypeTree(BaseType::Integer).Only(-1, &call), &call);
+        updateAnalysis(call.getOperand(3),
+                       TypeTree(BaseType::Integer).Only(-1, &call), &call);
+        updateAnalysis(call.getOperand(4),
+                       TypeTree(BaseType::Integer).Only(-1, &call), &call);
+        updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call),
+                       &call);
+      }
       updateAnalysis(call.getOperand(6),
                      TypeTree(BaseType::Pointer).Only(-1, &call), &call);
       return;
     }
-    if (funcName == "MPI_Wait") {
+    if (canonicalizeMPIName(funcName) == "MPI_Wait") {
+      bool fortranABI = isFortranMPICall(funcName);
       updateAnalysis(call.getOperand(0),
                      TypeTree(BaseType::Pointer).Only(-1, &call), &call);
       updateAnalysis(call.getOperand(1),
                      TypeTree(BaseType::Pointer).Only(-1, &call), &call);
-      updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      if (!fortranABI)
+        updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call),
+                       &call);
       return;
     }
     if (funcName == "MPI_Waitany") {

@@ -6678,11 +6678,60 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     IRBuilder<> bb(getNewFromOriginal(inst));
     Value *asize = getNewFromOriginal(inst->getArraySize());
 
-    auto rule1 = [&]() {
-      AllocaInst *antialloca = bb.CreateAlloca(
-          inst->getAllocatedType(), inst->getType()->getPointerAddressSpace(),
-          asize, inst->getName() + "'ipa");
-      antialloca->setAlignment(inst->getAlign());
+    Type *allocTy = inst->getAllocatedType();
+    Align align = inst->getAlign();
+    if (mode == DerivativeMode::ReverseModePrimal ||
+        mode == DerivativeMode::ReverseModeGradient ||
+        mode == DerivativeMode::ReverseModeCombined) {
+      auto &DL = M->getDataLayout();
+      Type *ptrTy = getInt8PtrTy(oval->getContext());
+      Type *elTy = allocTy;
+      if (auto AT = dyn_cast<ArrayType>(elTy))
+        elTy = AT->getElementType();
+      if (DL.getTypeAllocSizeInBits(elTy) < DL.getPointerSizeInBits()) {
+        SmallVector<const Value *, 4> todo = {inst};
+        bool isMPIReq = false;
+        while (!todo.empty() && !isMPIReq) {
+          const Value *cur = todo.pop_back_val();
+          for (const User *U : cur->users()) {
+            if (isa<BitCastInst>(U) || isa<GetElementPtrInst>(U)) {
+              todo.push_back(U);
+              continue;
+            }
+            if (auto CI = dyn_cast<CallInst>(U)) {
+              if (Function *F =
+                      getFunctionFromCall(const_cast<CallInst *>(CI))) {
+                StringRef canonName = canonicalizeMPIName(F->getName());
+                if (((canonName == "MPI_Isend" || canonName == "MPI_Irecv") &&
+                     CI->arg_size() > 6 && CI->getArgOperand(6) == cur) ||
+                    (canonName == "MPI_Wait" && CI->arg_size() > 0 &&
+                     CI->getArgOperand(0) == cur) ||
+                    (canonName == "MPI_Waitall" && CI->arg_size() > 1 &&
+                     CI->getArgOperand(1) == cur)) {
+                  isMPIReq = true;
+                  break;
+                }
+              }
+            }
+          }
+        }
+        if (isMPIReq) {
+          if (auto AT = dyn_cast<ArrayType>(allocTy))
+            allocTy = ArrayType::get(ptrTy, AT->getNumElements());
+          else
+            allocTy = ptrTy;
+          align = std::max(align, DL.getPointerABIAlignment(0));
+        }
+      }
+    }
+
+    auto rule1 = [&]() -> Value * {
+      AllocaInst *antialloca =
+          bb.CreateAlloca(allocTy, inst->getType()->getPointerAddressSpace(),
+                          asize, inst->getName() + "'ipa");
+      antialloca->setAlignment(align);
+      if (allocTy != inst->getAllocatedType())
+        return bb.CreateBitCast(antialloca, oval->getType());
       return antialloca;
     };
 
@@ -6695,9 +6744,15 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       if (ci->isOne()) {
 
         auto rule = [&](Value *antialloca) {
-          StoreInst *st = bb.CreateStore(
-              Constant::getNullValue(inst->getAllocatedType()), antialloca);
-          cast<StoreInst>(st)->setAlignment(inst->getAlign());
+          Value *storePtr = antialloca;
+          if (allocTy != inst->getAllocatedType())
+            storePtr = bb.CreateBitCast(
+                antialloca,
+                getPointerType(allocTy,
+                               inst->getType()->getPointerAddressSpace()));
+          StoreInst *st =
+              bb.CreateStore(Constant::getNullValue(allocTy), storePtr);
+          cast<StoreInst>(st)->setAlignment(align);
         };
 
         applyChainRule(bb, rule, antialloca);
@@ -6715,8 +6770,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       auto len_arg = bb.CreateMul(
           bb.CreateZExtOrTrunc(asize, Type::getInt64Ty(oval->getContext())),
           ConstantInt::get(Type::getInt64Ty(oval->getContext()),
-                           M->getDataLayout().getTypeAllocSizeInBits(
-                               inst->getAllocatedType()) /
+                           M->getDataLayout().getTypeAllocSizeInBits(allocTy) /
                                8),
           "", true, true);
       auto volatile_arg = ConstantInt::getFalse(oval->getContext());
@@ -6726,7 +6780,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       auto memset = cast<CallInst>(bb.CreateCall(
           getIntrinsicDeclaration(M, Intrinsic::memset, tys), args));
       memset->addParamAttr(
-          0, Attribute::getWithAlignment(inst->getContext(), inst->getAlign()));
+          0, Attribute::getWithAlignment(inst->getContext(), align));
       memset->addParamAttr(0, Attribute::NonNull);
     };
 
