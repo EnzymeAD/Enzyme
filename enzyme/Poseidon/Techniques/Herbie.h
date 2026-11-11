@@ -167,6 +167,10 @@ private:
 // platform it ranks candidates by.
 void addHerbieKeyParts(Session &S, CacheKey &key);
 
+// Prints how many Herbie answers the compile ran fresh, read from the cache
+// and replayed from -poseidon-import-herbie-answers.
+void reportHerbieAnswers(Session &S);
+
 // Collects Herbie's rewrites of `inputExprs` into `COs`, unpriced.
 bool improveViaHerbie(Session &S, const std::vector<std::string> &inputExprs,
                       std::vector<RewriteUnit> &COs, int subgraphIdx,

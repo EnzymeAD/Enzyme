@@ -13,6 +13,7 @@
 #include "Sites/Markers.h"
 #include "Sites/SiteIdentity.h"
 #include "Solvers.h"
+#include "Techniques/Herbie.h"
 #include "Techniques/Matmul/HostDispatch.h"
 // The one profile-filename rule, shared verbatim with both FP profiler
 // runtimes; the existence check below must look where they wrote.
@@ -541,6 +542,7 @@ static void restoreHostWrapperDebugInfo(Module &M, bool profileGenerate) {
 
 void finalizeModule(Session &S, Module &M) {
   checkPinnedSites(S);
+  reportHerbieAnswers(S);
   // A site whose solve applied nothing calls the original body again, and an
   // applied site's wrapper call may have been inlined away, in both cases
   // leaving a canonicalized clone nothing calls.

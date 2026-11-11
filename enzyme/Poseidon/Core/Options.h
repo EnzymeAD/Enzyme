@@ -116,6 +116,7 @@ struct HerbieOptions {
   std::string Cache = "./.poseidon";
   std::string Unit;
   std::string ImportAccuracyMemo;
+  std::string ImportHerbieAnswers;
   int HerbieNumThreads = 8;
   int HerbieTimeout = 9999;
   int HerbieNumPts = 1024;

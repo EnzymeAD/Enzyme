@@ -266,6 +266,15 @@ cl::opt<std::string> ImportAccuracyMemo(
              "written before the memo stored its key; a result missing from "
              "the cache is taken from there when the file of the same inputs "
              "exists, and stored in the cache under its key"));
+cl::opt<std::string> ImportHerbieAnswers(
+    "poseidon-import-herbie-answers",
+    cl::init(kDefaults.Herbie.ImportHerbieAnswers), cl::Hidden,
+    cl::value_desc("directory"),
+    cl::desc("Cache directory whose Herbie answers are replayed whichever "
+             "Herbie binary gave them: a search the cache holds no answer of "
+             "this binary to takes the one recorded there for the same cores, "
+             "platform and search options, and runs Herbie only when there is "
+             "none. A replayed answer is not cached as this binary's"));
 cl::opt<int> HerbieNumThreads("poseidon-herbie-num-threads",
                               cl::init(kDefaults.Herbie.HerbieNumThreads),
                               cl::Hidden,
@@ -514,6 +523,7 @@ Options readOptions() {
   H.Cache = Cache;
   H.Unit = Unit;
   H.ImportAccuracyMemo = ImportAccuracyMemo;
+  H.ImportHerbieAnswers = ImportHerbieAnswers;
   H.HerbieNumThreads = HerbieNumThreads;
   H.HerbieTimeout = HerbieTimeout;
   H.HerbieNumPts = HerbieNumPts;
