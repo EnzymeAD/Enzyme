@@ -296,6 +296,19 @@ each), `source` (the source with each rewrite spliced in as C, using clang's
 AST to find the expression), `diff`, `remarks` (`file:line:col: note:` lines),
 `fpcore` (before and after, for Herbie) and `json`.
 
+## Errors
+
+A mistake in what a compile is given (a flag value, a file that is missing or
+unreadable, a cost model or a profile that does not fit the compile) is an
+error, `error: Poseidon: ...`, that says what to do, at the source location of
+the site concerned where there is one. The compile exits with status 1 and
+writes no output, without clang's crash report (no request for a bug report,
+stack dump or reproducer files). Where the site can be left as written the
+compile goes on and reports the other sites' errors too; a mistake that leaves
+nothing to compile with, such as a flag value, a missing profile directory or a
+cost model that cannot price the compile, ends it at once. A broken internal
+invariant of Poseidon stops the compile as a crash, to be reported as a bug.
+
 ## Compiler Explorer
 
 `tools/explorer/` puts Poseidon in Compiler Explorer. `poseidon-ce.sh` is the

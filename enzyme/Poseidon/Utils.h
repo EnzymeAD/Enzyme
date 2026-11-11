@@ -19,7 +19,9 @@
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/ADT/Twine.h"
 #include "llvm/Config/llvm-config.h"
+#include "llvm/IR/DiagnosticInfo.h"
 #include "llvm/IR/InstrTypes.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/PassManager.h"
@@ -72,6 +74,15 @@ void collectExprInsts(llvm::Value *V,
                       llvm::SmallPtrSetImpl<llvm::Value *> &visited);
 
 void simplifyFunction(llvm::Function &F, llvm::OptimizationLevel Level);
+
+// A mistake in what the compile was given that leaves nothing to compile with:
+// an error diagnostic at `Loc` in `F`, then the compile ends with exit status 1
+// and without crash diagnostics (README, "Errors").
+[[noreturn]] void reportUserError(const llvm::Function &F,
+                                  const llvm::DiagnosticLocation &Loc,
+                                  const llvm::Twine &Message);
+[[noreturn]] void reportUserError(const llvm::Instruction &I,
+                                  const llvm::Twine &Message);
 
 } // namespace poseidon
 #endif // POSEIDON_UTILS_H

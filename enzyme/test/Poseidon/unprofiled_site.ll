@@ -79,9 +79,9 @@ attributes #0 = { "target-cpu"="x86-64" }
 
 ; DRIFT: Poseidon: the profile of preprocess_tester was recorded against a different canonical form (profile CanonicalHash f9f2bd660c90d989, this compile {{[0-9a-f]+}})
 
-; NODIR: LLVM ERROR: Poseidon: the profile directory {{.*}}missing (-poseidon-profile-use) does not exist; no profiling run wrote into it
-; EMPTY: LLVM ERROR: Poseidon: the profile directory {{.*}}empty (-poseidon-profile-use) holds no .fpprofile file; no profiling run wrote into it
-; METRIC: LLVM ERROR: Poseidon: the profile directory {{.*}}metric_only (-poseidon-profile-use) holds no .fpprofile file; no profiling run wrote into it
+; NODIR: error: {{.*}}Poseidon: the profile directory {{.*}}missing (-poseidon-profile-use) does not exist; no profiling run wrote into it. Run the program built with -poseidon-profile-generate first, or pass the directory it wrote
+; EMPTY: error: {{.*}}Poseidon: the profile directory {{.*}}empty (-poseidon-profile-use) holds no .fpprofile file; no profiling run wrote into it. Run the program built with -poseidon-profile-generate first, or pass the directory it wrote
+; METRIC: error: {{.*}}Poseidon: the profile directory {{.*}}metric_only (-poseidon-profile-use) holds no .fpprofile file; no profiling run wrote into it. Run the program built with -poseidon-profile-generate first, or pass the directory it wrote
 
 ; ABSENT: warning: {{.*}}Poseidon: no profile at {{.*}}other_sites/preprocess_tester.fpprofile: the profiled program did not contain this site (it was annotated after the profiling run, is in a translation unit the profiled program did not link, or was renamed); leaving the site unchanged
 ; ABSENT: [poseidon] tester: the profiled program did not contain this site (no profile at {{.*}}other_sites/preprocess_tester.fpprofile); left unchanged
@@ -96,8 +96,8 @@ attributes #0 = { "target-cpu"="x86-64" }
 ; MIXED: LLVM ERROR: Poseidon: no profile of tester at {{.*}}mixed/preprocess_tester.fpprofile: the profiled program did not contain this site
 
 ; OUT-NEVER: [poseidon] tester: the profiling run instrumented this site and never executed it ({{.*}}never_executed/preprocess_tester.fpprofile); left unchanged
-; OUT-NODIR: LLVM ERROR: Poseidon: the profile directory {{.*}}missing (-poseidon-output-profiles) does not exist; no profiling run wrote into it
-; OUT-EMPTY: LLVM ERROR: Poseidon: the profile directory {{.*}}empty (-poseidon-output-profiles) holds no .fpprofile file; no profiling run wrote into it
+; OUT-NODIR: error: {{.*}}Poseidon: the profile directory {{.*}}missing (-poseidon-output-profiles) does not exist; no profiling run wrote into it. Run the program built with -poseidon-profile-generate first, or pass the directory it wrote
+; OUT-EMPTY: error: {{.*}}Poseidon: the profile directory {{.*}}empty (-poseidon-output-profiles) holds no .fpprofile file; no profiling run wrote into it. Run the program built with -poseidon-profile-generate first, or pass the directory it wrote
 ; OUT-ABSENT: warning: {{.*}}Poseidon: no profile at {{.*}}other_sites/preprocess_tester.fpprofile: the profiled program did not contain this site
 ; OUT-ABSENT: [poseidon] tester: the profiled program did not contain this site (no profile at {{.*}}other_sites/preprocess_tester.fpprofile); left unchanged
 ; OUT-STRICT: LLVM ERROR: Poseidon: no profile of tester at {{.*}}other_sites/preprocess_tester.fpprofile: the profiled program did not contain this site
