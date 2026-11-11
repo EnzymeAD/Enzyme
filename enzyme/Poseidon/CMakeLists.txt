@@ -37,6 +37,7 @@ set(POSEIDON_SRC
     Model/CostModel.cpp
     Core/CostTable.cpp
     Targets/DeviceMath.cpp
+    Targets/MathFunctions.cpp
     Targets/Target.cpp
     Targets/Host.cpp
     Targets/NVPTX.cpp

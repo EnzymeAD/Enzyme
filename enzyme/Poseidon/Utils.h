@@ -59,8 +59,6 @@ inline llvm::Value *branchCondition(llvm::Value *V) {
 #endif
 }
 
-// The libm calls Poseidon prices and can retype.
-const std::unordered_set<std::string> &libmFuncs();
 double stringToDouble(const std::string &str);
 double literalToDouble(const std::string &str);
 void topoSort(const llvm::SetVector<llvm::Instruction *> &insts,

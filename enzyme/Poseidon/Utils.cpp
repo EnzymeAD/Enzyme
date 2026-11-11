@@ -90,17 +90,6 @@ void simplifyFunction(Function &F, OptimizationLevel Level) {
   (void)FPM.run(F, FAM);
 }
 
-const std::unordered_set<std::string> &libmFuncs() {
-  static const std::unordered_set<std::string> LibmFuncs = {
-      "sin",      "cos",   "tan",   "asin",     "acos",  "atan",   "atan2",
-      "sinh",     "cosh",  "tanh",  "asinh",    "acosh", "atanh",  "exp",
-      "log",      "sqrt",  "cbrt",  "pow",      "powi",  "fabs",   "fma",
-      "hypot",    "expm1", "log1p", "ceil",     "floor", "erf",    "exp2",
-      "lgamma",   "log10", "log2",  "rint",     "round", "tgamma", "trunc",
-      "copysign", "fdim",  "fmod",  "remainder"};
-  return LibmFuncs;
-}
-
 double stringToDouble(const std::string &str) {
   char *end;
   errno = 0;

@@ -1,4 +1,5 @@
 #include "DeviceMath.h"
+#include "MathFunctions.h"
 #include "Peers.h"
 
 #include "Utils.h"
@@ -53,9 +54,10 @@ void collectGlobals(Value *V, SmallVectorImpl<WeakVH> &out) {
 
 const std::unordered_set<std::string> &mathBases() {
   static const std::unordered_set<std::string> Bases = [] {
-    std::unordered_set<std::string> bases = libmFuncs();
-    bases.insert("fmin");
-    bases.insert("fmax");
+    std::unordered_set<std::string> bases;
+    for (const MathFunction &F : mathFunctions())
+      if (F.Device)
+        bases.insert(F.Name.str());
     return bases;
   }();
   return Bases;
