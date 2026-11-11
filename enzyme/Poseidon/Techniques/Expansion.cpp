@@ -8,6 +8,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "Expansion.h"
+#include "Core/ExpansionRoutines.h"
 #include "Pass/Session.h"
 #include "Staging.h"
 #include "Targets/DeviceMath.h"
@@ -27,143 +28,115 @@ using namespace llvm;
 namespace poseidon {
 
 static Type *f32Ty(IRBuilder<> &B) { return B.getFloatTy(); }
-static Type *f64Ty(IRBuilder<> &B) { return B.getDoubleTy(); }
 
-// Two components. Each routine but division and the fused multiply-add
-// reproduces, operation for operation, a MultiFloats.jl routine at Val{2}
-// (MultiFloats.jl commit 28041a3, MIT License): emitTwoSum two_sum
-// (src/MultiFloats.jl 313-321), emitFastTwoSum fast_two_sum (1047-1052),
-// emitTwoProdFMA two_prod (1070-1074), emitDSAdd mfadd (src/mfadd.jl 10-24),
-// emitDSSub x + (-y) (src/MultiFloats.jl 1102, 1020), emitDSMul mfmul
-// (src/mfmul.jl 10-23), emitDSSqrt sqrt_r, i.e. mfsqrt (src/MultiFloats.jl
-// 1416-1421) under sqrt_r's zero test (1448-1449). emitDSDiv reproduces
-// mX_real's division of its two-component type at Algorithm::Sloppy, QxW's
-// div_PA_PA_PA followed by Normalize<Regular>, i.e. QxW's FastTwoSum
-// (RIKEN-RCCS/mX_real, which contains the QxW generator, is BSD-2-Clause); it
-// is defined with the n >= 3 arm, whose routines it uses. emitDSFMA is
-// Poseidon's own routine, with no library counterpart; it is checked against
-// the accuracy model only.
+namespace {
+
+// The arithmetic the routines of Core/ExpansionRoutines.h are emitted with.
+struct IRArith {
+  using F32 = Value *;
+  using F64 = Value *;
+  using Bool = Value *;
+  using Pair = DSValue;
+
+  IRBuilder<> &B;
+
+  Value *add(Value *a, Value *b, const char *name) {
+    return B.CreateFAdd(a, b, name);
+  }
+  Value *sub(Value *a, Value *b, const char *name) {
+    return B.CreateFSub(a, b, name);
+  }
+  Value *mul(Value *a, Value *b, const char *name) {
+    return B.CreateFMul(a, b, name);
+  }
+  Value *div(Value *a, Value *b, const char *name) {
+    return B.CreateFDiv(a, b, name);
+  }
+  Value *neg(Value *a, const char *name) { return B.CreateFNeg(a, name); }
+  Value *fma(Value *a, Value *b, Value *c, const char *name) {
+    return B.CreateIntrinsic(Intrinsic::fma, {B.getFloatTy()}, {a, b, c}, {},
+                             name);
+  }
+  Value *sqrt(Value *a, const char *name) {
+    return B.CreateIntrinsic(Intrinsic::sqrt, {B.getFloatTy()}, {a}, {}, name);
+  }
+  Value *fmaCall(Value *a, Value *b, Value *c, const char *name) {
+    return B.CreateCall(declaration(Intrinsic::fma), {a, b, c}, name);
+  }
+  Value *sqrtCall(Value *a, const char *name) {
+    return B.CreateCall(declaration(Intrinsic::sqrt), {a}, name);
+  }
+  Value *constant(double v) { return ConstantFP::get(B.getFloatTy(), v); }
+  Value *equal(Value *a, Value *b, const char *name) {
+    return B.CreateFCmpOEQ(a, b, name);
+  }
+  Value *both(Value *a, Value *b, const char *name) {
+    return B.CreateAnd(a, b, name);
+  }
+  Value *select(Value *c, Value *t, Value *f, const char *name) {
+    return B.CreateSelect(c, t, f, name);
+  }
+  Value *truncate(Value *v, const char *name) {
+    return B.CreateFPTrunc(v, B.getFloatTy(), name);
+  }
+  Value *extend(Value *v, const char *name) {
+    return B.CreateFPExt(v, B.getDoubleTy(), name);
+  }
+
+  Function *declaration(Intrinsic::ID id) {
+    Module *M = B.GetInsertBlock()->getParent()->getParent();
+    return Intrinsic::getOrInsertDeclaration(M, id, {B.getFloatTy()});
+  }
+};
+
+using Routines = ExpansionRoutines<IRArith>;
+Routines routines(IRBuilder<> &B) { return Routines(IRArith{B}); }
+
+} // namespace
 
 DSValue emitTwoSum(IRBuilder<> &B, Value *a, Value *b) {
-  Value *s = B.CreateFAdd(a, b, "ts.s");
-  Value *a_prime = B.CreateFSub(s, b, "ts.ap");
-  Value *b_prime = B.CreateFSub(s, a_prime, "ts.bp");
-  Value *da = B.CreateFSub(a, a_prime, "ts.da");
-  Value *db = B.CreateFSub(b, b_prime, "ts.db");
-  Value *e = B.CreateFAdd(da, db, "ts.e");
-  return {s, e};
+  return routines(B).twoSum(a, b);
 }
 
 DSValue emitFastTwoSum(IRBuilder<> &B, Value *a, Value *b) {
-  Value *s = B.CreateFAdd(a, b, "fts.s");
-  Value *bp = B.CreateFSub(s, a, "fts.bp");
-  Value *e = B.CreateFSub(b, bp, "fts.e");
-  return {s, e};
+  return routines(B).dsFastTwoSum(a, b);
 }
 
 DSValue emitTwoProdFMA(IRBuilder<> &B, Value *a, Value *b) {
-  Value *p = B.CreateFMul(a, b, "tp.p");
-  Value *neg_p = B.CreateFNeg(p, "tp.np");
-  Module *M = B.GetInsertBlock()->getParent()->getParent();
-  Function *fma_fn =
-      Intrinsic::getOrInsertDeclaration(M, Intrinsic::fma, {f32Ty(B)});
-  Value *e = B.CreateCall(fma_fn, {a, b, neg_p}, "tp.e");
-  return {p, e};
+  return routines(B).twoProd(a, b);
 }
 
 DSValue emitDSAdd(IRBuilder<> &B, DSValue x, DSValue y) {
-  DSValue ab = emitTwoSum(B, x.hi, y.hi);
-  DSValue cd = emitTwoSum(B, x.lo, y.lo);
-  DSValue ac = emitFastTwoSum(B, ab.hi, cd.hi);
-  Value *bd = B.CreateFAdd(ab.lo, cd.lo, "dsa.bd");
-  Value *b3 = B.CreateFAdd(bd, ac.lo, "dsa.b3");
-  return emitFastTwoSum(B, ac.hi, b3);
+  return routines(B).dsAdd(x, y);
 }
 
 DSValue emitDSSub(IRBuilder<> &B, DSValue x, DSValue y) {
-  DSValue neg_y = emitDSNeg(B, y);
-  return emitDSAdd(B, x, neg_y);
+  return routines(B).dsSub(x, y);
 }
 
 DSValue emitDSMul(IRBuilder<> &B, DSValue x, DSValue y) {
-  DSValue pe = emitTwoProdFMA(B, x.hi, y.hi);
-  Value *c1 = B.CreateFMul(x.hi, y.lo, "dsm.c1");
-  Value *c2 = B.CreateFMul(x.lo, y.hi, "dsm.c2");
-  Value *cross = B.CreateFAdd(c1, c2, "dsm.cr");
-  Value *e2 = B.CreateFAdd(pe.lo, cross, "dsm.e2");
-  return emitFastTwoSum(B, pe.hi, e2);
+  return routines(B).dsMul(x, y);
 }
 
-// Fused double-single FMA (16 F32 ops against 30 for emitDSMul + emitDSAdd).
-// The product's renormalizing fastTwoSum is dead work when the pair is consumed
-// by an addition, the cross terms become hardware FMAs into the residual, and
-// the addition's second twoSum over the low limbs is dropped because after the
-// exact twoSum of the high parts every remaining term is O(eps) relative to
-// max(|x*y|, |z|). x.lo*y.lo is dropped as in emitDSMul. Low-limb accumulation
-// is ordered smallest-magnitude first.
 DSValue emitDSFMA(IRBuilder<> &B, DSValue x, DSValue y, DSValue z) {
-  Module *M = B.GetInsertBlock()->getParent()->getParent();
-  Function *fma_fn =
-      Intrinsic::getOrInsertDeclaration(M, Intrinsic::fma, {f32Ty(B)});
-
-  // p + e == x.hi*y.hi exactly.
-  Value *p = B.CreateFMul(x.hi, y.hi, "dsf.p");
-  Value *neg_p = B.CreateFNeg(p, "dsf.np");
-  Value *e = B.CreateCall(fma_fn, {x.hi, y.hi, neg_p}, "dsf.e");
-  e = B.CreateCall(fma_fn, {x.hi, y.lo, e}, "dsf.e1");
-  e = B.CreateCall(fma_fn, {x.lo, y.hi, e}, "dsf.e2");
-
-  // s.hi + s.lo == p + z.hi exactly (captures catastrophic cancellation).
-  DSValue s = emitTwoSum(B, p, z.hi);
-
-  Value *t = B.CreateFAdd(e, z.lo, "dsf.t0");
-  t = B.CreateFAdd(t, s.lo, "dsf.t1");
-  return emitFastTwoSum(B, s.hi, t);
+  return routines(B).dsFma(x, y, z);
 }
 
-DSValue emitDSSqrt(IRBuilder<> &B, DSValue x) {
-  Module *M = B.GetInsertBlock()->getParent()->getParent();
-  // The correctly rounded square root on every target (sqrt.rn.f32 on
-  // NVPTX), so that the device computes what the host model and the
-  // reference routines compute.
-  Function *sqrtf_fn =
-      Intrinsic::getOrInsertDeclaration(M, Intrinsic::sqrt, {f32Ty(B)});
-  Function *fma_fn =
-      Intrinsic::getOrInsertDeclaration(M, Intrinsic::fma, {f32Ty(B)});
-  Value *y = B.CreateCall(sqrtf_fn, {x.hi}, "dssq.y");
-  Value *rem =
-      B.CreateCall(fma_fn, {B.CreateFNeg(y, "dssq.ny"), y, x.hi}, "dssq.rem");
-  Value *r = B.CreateFAdd(rem, x.lo, "dssq.r");
-  Value *q = B.CreateFDiv(r, B.CreateFAdd(y, y, "dssq.2y"), "dssq.q");
-  DSValue root = emitFastTwoSum(B, y, q);
-  // sqrt_r returns a zero operand itself; the correction would divide 0 by 0.
-  Value *zero = ConstantFP::get(f32Ty(B), 0.0);
-  Value *hiZero = B.CreateFCmpOEQ(x.hi, zero, "dssq.hz");
-  Value *loZero = B.CreateFCmpOEQ(x.lo, zero, "dssq.lz");
-  Value *isZero = B.CreateAnd(hiZero, loZero, "dssq.z");
-  return {B.CreateSelect(isZero, x.hi, root.hi, "dssq.hi"),
-          B.CreateSelect(isZero, x.lo, root.lo, "dssq.lo")};
+DSValue emitDSDiv(IRBuilder<> &B, DSValue x, DSValue y) {
+  return routines(B).dsDiv(x, y);
 }
 
-DSValue emitDSNeg(IRBuilder<> &B, DSValue x) {
-  Value *neg_hi = B.CreateFNeg(x.hi, "dsn.hi");
-  Value *neg_lo = B.CreateFNeg(x.lo, "dsn.lo");
-  return {neg_hi, neg_lo};
-}
+DSValue emitDSSqrt(IRBuilder<> &B, DSValue x) { return routines(B).dsSqrt(x); }
+
+DSValue emitDSNeg(IRBuilder<> &B, DSValue x) { return routines(B).dsNeg(x); }
 
 DSValue emitF64ToDS(IRBuilder<> &B, Value *f64val) {
   assert(f64val->getType()->isDoubleTy() && "emitF64ToDS: input must be f64");
-  Value *hi = B.CreateFPTrunc(f64val, f32Ty(B), "ds.hi");
-  Value *hi_back = B.CreateFPExt(hi, f64Ty(B), "ds.hib");
-  Value *lo_src = B.CreateFSub(f64val, hi_back, "ds.los");
-  Value *lo = B.CreateFPTrunc(lo_src, f32Ty(B), "ds.lo");
-  return {hi, lo};
+  return routines(B).dsFromF64(f64val);
 }
 
 Value *emitDSToF64(IRBuilder<> &B, DSValue ds) {
-  Value *hi64 = B.CreateFPExt(ds.hi, f64Ty(B), "ds.hi64");
-  Value *lo64 = B.CreateFPExt(ds.lo, f64Ty(B), "ds.lo64");
-  Value *joined = B.CreateFAdd(hi64, lo64, "ds.f64");
+  Value *joined = routines(B).dsToF64(ds);
   // Tag the restore so foldDSPairRoundtrip can recover {hi,lo} exactly: every
   // DS value here is normalized, so a Dekker split of this restore returns the
   // same two limbs. Only tagged values are folded.
@@ -261,12 +234,12 @@ bool foldDSPairRoundtrip(Function &F, SmallVectorImpl<Value *> *foldedLimbs,
 // F32 source: exact in the hi slot, lo = 0.
 static DSValue emitF32ToDS(IRBuilder<> &B, Value *f32val) {
   assert(f32val->getType()->isFloatTy() && "emitF32ToDS: input must be f32");
-  return {f32val, ConstantFP::get(f32Ty(B), 0.0)};
+  return routines(B).dsFromF32(f32val);
 }
 
 // F32 target: sum the halves; as accurate as F32 allows.
 static Value *emitDSToF32(IRBuilder<> &B, DSValue ds) {
-  return B.CreateFAdd(ds.hi, ds.lo, "ds.f32");
+  return routines(B).dsToF32(ds);
 }
 
 DSValue emitToDS(IRBuilder<> &B, Value *fpval) {
@@ -556,483 +529,13 @@ void applyExpansion(Session &S, ArrayRef<Instruction *> instsToChange,
                         S.Opts.Diagnostics.Print);
 }
 
-// Wider FP32 expansions (n = 3, 4), a parallel arm sharing TwoSum and the FMA
-// two-product with the two-component code above. Each component sequence
-// reproduces, operation for operation, a routine of the QxW generator as
-// instantiated by mX_real at Algorithm::Sloppy (the add/mul/sqr/div/sqrt _QTW_
-// and _QQW_ variants, each followed by Normalize<Regular>, and the special
-// cases of mX_real's sqrt operator; RIKEN-RCCS/mX_real, which contains the
-// generator, is BSD-2-Clause). TwoSum forms its error from s - b where QxW's
-// starts from s - a, which gives the same sum, error and sign of zero.
-// Subtraction is addition of the negated operand, a product of a value with
-// itself is the square routine (mX_real squares when both operands are one
-// object), and a fused multiply-add is materialized as multiply-then-add, as in
-// the reference.
+// Wider FP32 expansions (n = 3, 4): the QxW routines of
+// Core/ExpansionRoutines.h. A fused multiply-add is materialized as
+// multiply-then-add, as in the reference.
 
 namespace {
 
-struct ExpansionBuilder {
-  IRBuilder<> &B;
-  explicit ExpansionBuilder(IRBuilder<> &Builder) : B(Builder) {}
-  Value *add(Value *a, Value *b) { return B.CreateFAdd(a, b, "mfx.a"); }
-  Value *mul(Value *a, Value *b) { return B.CreateFMul(a, b, "mfx.m"); }
-  Value *div(Value *a, Value *b) { return B.CreateFDiv(a, b, "mfx.d"); }
-  Value *neg(Value *a) { return B.CreateFNeg(a, "mfx.n"); }
-  Value *fma(Value *a, Value *b, Value *c) {
-    return B.CreateIntrinsic(Intrinsic::fma, {B.getFloatTy()}, {a, b, c}, {},
-                             "mfx.f");
-  }
-  // Correctly-rounded F32 sqrt (sqrt.rn.f32 on NVPTX), NOT the MUFU
-  // approximation the lossy F32 tier uses: the expansion's Newton
-  // corrections only remove the seed's error to second/third order, so a
-  // 2-ulp seed would cap a triple-float at ~1e-14 instead of ~1e-21.
-  Value *sqrt(Value *a) {
-    return B.CreateIntrinsic(Intrinsic::sqrt, {B.getFloatTy()}, {a}, {},
-                             "mfx.q");
-  }
-  Value *cst(double v) { return ConstantFP::get(B.getFloatTy(), v); }
-  DSValue twoSum(Value *a, Value *b) { return emitTwoSum(B, a, b); }
-  // QxW's FastTwoSum, y = (a - x) + b. Not emitFastTwoSum's b - (s - a),
-  // MultiFloats.jl's form: the two differ in the sign of a zero error.
-  DSValue fastTwoSum(Value *a, Value *b) {
-    Value *s = add(a, b);
-    return {s, add(B.CreateFSub(a, s, "mfx.s"), b)};
-  }
-  DSValue twoProd(Value *a, Value *b) { return emitTwoProdFMA(B, a, b); }
-};
-
-// mX_real Normalize<NormalizeOption::Regular> for a 3-limb expansion at a
-// non-Quasi algorithm: three in-place fastTwoSum sweeps.
-void expansionNormalize3(ExpansionBuilder &b, Value *&x0, Value *&x1,
-                         Value *&x2) {
-  DSValue t = b.fastTwoSum(x1, x2);
-  x1 = t.hi;
-  x2 = t.lo;
-  t = b.fastTwoSum(x0, x1);
-  x0 = t.hi;
-  x1 = t.lo;
-  t = b.fastTwoSum(x1, x2);
-  x1 = t.hi;
-  x2 = t.lo;
-}
-
-// mX_real Normalize<Regular> for a 4-limb expansion at a non-Quasi algorithm.
-void expansionNormalize4(ExpansionBuilder &b, Value *&x0, Value *&x1,
-                         Value *&x2, Value *&x3) {
-  DSValue t = b.fastTwoSum(x2, x3);
-  x2 = t.hi;
-  x3 = t.lo;
-  t = b.fastTwoSum(x1, x2);
-  x1 = t.hi;
-  x2 = t.lo;
-  t = b.fastTwoSum(x0, x1);
-  x0 = t.hi;
-  x1 = t.lo;
-  t = b.fastTwoSum(x2, x3);
-  x2 = t.hi;
-  x3 = t.lo;
-  t = b.fastTwoSum(x1, x2);
-  x1 = t.hi;
-  x2 = t.lo;
-  t = b.fastTwoSum(x2, x3);
-  x2 = t.hi;
-  x3 = t.lo;
-}
-
-// QxW::add_QTW_QTW_QTW  (3 + 3 -> 3, unnormalized)
-void expansionAddRaw3(ExpansionBuilder &b, Value *a0, Value *a1, Value *a2,
-                      Value *b0, Value *b1, Value *b2, Value *&c0, Value *&c1,
-                      Value *&c2) {
-  DSValue s = b.twoSum(a0, b0);
-  c0 = s.hi;
-  c1 = s.lo;
-  DSValue u = b.twoSum(a1, b1);
-  Value *t0 = u.hi;
-  c2 = u.lo;
-  DSValue v = b.twoSum(c1, t0);
-  c1 = v.hi;
-  t0 = v.lo;
-  Value *t1 = b.add(a2, b2);
-  c2 = b.add(b.add(c2, t0), t1);
-}
-
-// QxW::mul_QTW_QTW_QTW  (3 * 3 -> 3, unnormalized)
-void expansionMulRaw3(ExpansionBuilder &b, Value *a0, Value *a1, Value *a2,
-                      Value *b0, Value *b1, Value *b2, Value *&c0, Value *&c1,
-                      Value *&c2) {
-  DSValue p = b.twoProd(a0, b0);
-  c0 = p.hi;
-  c1 = p.lo;
-  DSValue q = b.twoProd(a0, b1);
-  c2 = q.hi;
-  Value *t0 = q.lo;
-  DSValue r = b.twoProd(a1, b0);
-  Value *t1 = r.hi;
-  Value *t2 = r.lo;
-  DSValue s = b.twoSum(c1, c2);
-  c1 = s.hi;
-  c2 = s.lo;
-  DSValue u = b.twoSum(c1, t1);
-  c1 = u.hi;
-  t1 = u.lo;
-  t0 = b.fma(a0, b2, t0);
-  c2 = b.fma(a1, b1, c2);
-  t2 = b.fma(a2, b0, t2);
-  c2 = b.add(b.add(b.add(t0, c2), t2), t1);
-}
-
-// QxW::mul_PA_QTW_QTW  (2 * 3 -> 3, unnormalized)
-void expansionMulRaw23(ExpansionBuilder &b, Value *a0, Value *a1, Value *b0,
-                       Value *b1, Value *b2, Value *&c0, Value *&c1,
-                       Value *&c2) {
-  DSValue p = b.twoProd(a0, b0);
-  c0 = p.hi;
-  c1 = p.lo;
-  DSValue q = b.twoProd(a0, b1);
-  c2 = q.hi;
-  Value *t0 = q.lo;
-  DSValue r = b.twoProd(a1, b0);
-  Value *t1 = r.hi;
-  Value *t2 = r.lo;
-  DSValue s = b.twoSum(c1, c2);
-  c1 = s.hi;
-  c2 = s.lo;
-  DSValue u = b.twoSum(c1, t1);
-  c1 = u.hi;
-  t1 = u.lo;
-  t0 = b.fma(a0, b2, t0);
-  c2 = b.fma(a1, b1, c2);
-  c2 = b.add(b.add(b.add(t0, c2), t2), t1);
-}
-
-// QxW::div_PA_PA_PA  (2 / 2 -> 2, unnormalized)
-void expansionDivRaw22(ExpansionBuilder &b, Value *a0, Value *a1, Value *b0,
-                       Value *b1, Value *&c0, Value *&c1) {
-  Value *bh = b.add(b0, b1);
-  c0 = b.div(a0, bh);
-  c1 = b.add(b.fma(b.neg(b0), c0, a0), a1);
-  c1 = b.div(b.fma(b.neg(b1), c0, c1), bh);
-}
-
-// QxW::div_QTW_QTW_QTW  (3 / 3 -> 3, unnormalized)
-void expansionDivRaw3(ExpansionBuilder &b, Value *a0, Value *a1, Value *a2,
-                      Value *b0, Value *b1, Value *b2, Value *&c0, Value *&c1,
-                      Value *&c2) {
-  Value *e40 = b.add(a1, a2);
-  Value *e41 = b.add(b1, b2);
-  expansionDivRaw22(b, a0, e40, b0, e41, c0, c1);
-  Value *t0, *t1, *t2;
-  expansionMulRaw23(b, c0, c1, b0, b1, b2, t0, t1, t2);
-  Value *s0, *s1, *s2;
-  expansionAddRaw3(b, a0, a1, a2, b.neg(t0), b.neg(t1), b.neg(t2), s0, s1, s2);
-  Value *tn = b.add(b.add(s0, s1), s2);
-  Value *td = b.add(b.add(b0, b1), b2);
-  c2 = b.div(tn, td);
-}
-
-// QxW::sqrt_QTW_PA  (sqrt of a 3-limb value to 2 limbs, unnormalized)
-void expansionSqrtRaw32(ExpansionBuilder &b, Value *a0, Value *a1, Value *a2,
-                        Value *&c0, Value *&c1) {
-  c0 = b.sqrt(a0);
-  Value *num = b.add(b.add(b.fma(b.neg(c0), c0, a0), a1), a2);
-  c1 = b.div(num, b.add(c0, c0));
-}
-
-// QxW::sqr_PA_QTW  (square of a 2-limb value to 3 limbs, unnormalized)
-void expansionSqrRaw23(ExpansionBuilder &b, Value *a0, Value *a1, Value *&c0,
-                       Value *&c1, Value *&c2) {
-  DSValue p = b.twoProd(a0, a0);
-  c0 = p.hi;
-  c1 = p.lo;
-  Value *t0 = b.add(a0, a0);
-  DSValue q = b.twoProd(t0, a1);
-  c2 = q.hi;
-  Value *t1 = q.lo;
-  DSValue s = b.twoSum(c1, c2);
-  c1 = s.hi;
-  c2 = s.lo;
-  c2 = b.add(c2, t1);
-  c2 = b.fma(a1, a1, c2);
-}
-
-// QxW::sqr_QTW_QTW  (3 -> 3, unnormalized)
-void expansionSqrRaw3(ExpansionBuilder &b, Value *a0, Value *a1, Value *a2,
-                      Value *&c0, Value *&c1, Value *&c2) {
-  DSValue p = b.twoProd(a0, a0);
-  c0 = p.hi;
-  c1 = p.lo;
-  Value *t0 = b.add(a0, a0);
-  DSValue q = b.twoProd(t0, a1);
-  c2 = q.hi;
-  Value *t1 = q.lo;
-  DSValue s = b.twoSum(c1, c2);
-  c1 = s.hi;
-  c2 = s.lo;
-  c2 = b.add(c2, t1);
-  c2 = b.fma(t0, a2, c2);
-  c2 = b.fma(a1, a1, c2);
-}
-
-// QxW::sqrt_QTW_QTW  (3 -> 3, unnormalized)
-void expansionSqrtRaw3(ExpansionBuilder &b, Value *a0, Value *a1, Value *a2,
-                       Value *&c0, Value *&c1, Value *&c2) {
-  expansionSqrtRaw32(b, a0, a1, a2, c0, c1);
-  Value *t0, *t1, *t2;
-  expansionSqrRaw23(b, c0, c1, t0, t1, t2);
-  Value *s0, *s1, *s2;
-  expansionAddRaw3(b, a0, a1, a2, b.neg(t0), b.neg(t1), b.neg(t2), s0, s1, s2);
-  Value *tn = b.add(b.add(s0, s1), s2);
-  Value *td = b.mul(b.add(c0, c1), b.cst(2.0));
-  c2 = b.div(tn, td);
-}
-
-// QxW::add_QQW_QQW_QQW  (4 + 4 -> 4, unnormalized)
-void expansionAddRaw4(ExpansionBuilder &b, Value *a0, Value *a1, Value *a2,
-                      Value *a3, Value *b0, Value *b1, Value *b2, Value *b3,
-                      Value *&c0, Value *&c1, Value *&c2, Value *&c3) {
-  DSValue s = b.twoSum(a0, b0);
-  c0 = s.hi;
-  c1 = s.lo;
-  DSValue u = b.twoSum(a1, b1);
-  Value *t0 = u.hi;
-  c2 = u.lo;
-  DSValue v = b.twoSum(a2, b2);
-  Value *t1 = v.hi;
-  c3 = v.lo;
-  DSValue w = b.twoSum(c1, t0);
-  c1 = w.hi;
-  t0 = w.lo;
-  DSValue x = b.twoSum(c2, t0);
-  c2 = x.hi;
-  t0 = x.lo;
-  DSValue y = b.twoSum(c2, t1);
-  c2 = y.hi;
-  t1 = y.lo;
-  Value *t2 = b.add(a3, b3);
-  c3 = b.add(b.add(b.add(c3, t0), t1), t2);
-}
-
-// QxW::mul_QQW_QQW_QQW  (4 * 4 -> 4, unnormalized)
-void expansionMulRaw4(ExpansionBuilder &b, Value *a0, Value *a1, Value *a2,
-                      Value *a3, Value *b0, Value *b1, Value *b2, Value *b3,
-                      Value *&c0, Value *&c1, Value *&c2, Value *&c3) {
-  DSValue p = b.twoProd(a0, b0);
-  c0 = p.hi;
-  c1 = p.lo;
-  DSValue q = b.twoProd(a0, b1);
-  c2 = q.hi;
-  c3 = q.lo;
-  DSValue r = b.twoProd(a1, b0);
-  Value *t0 = r.hi;
-  Value *t1 = r.lo;
-  DSValue s = b.twoSum(c1, c2);
-  c1 = s.hi;
-  c2 = s.lo;
-  DSValue u = b.twoSum(c1, t0);
-  c1 = u.hi;
-  t0 = u.lo;
-  DSValue v = b.twoProd(a0, b2);
-  Value *t2 = v.hi;
-  Value *t3 = v.lo;
-  DSValue w = b.twoProd(a1, b1);
-  Value *t4 = w.hi;
-  Value *t5 = w.lo;
-  DSValue x = b.twoProd(a2, b0);
-  Value *t6 = x.hi;
-  Value *t7 = x.lo;
-  DSValue y = b.twoSum(c2, t0);
-  c2 = y.hi;
-  t0 = y.lo;
-  DSValue z = b.twoSum(c2, c3);
-  c2 = z.hi;
-  c3 = z.lo;
-  DSValue A = b.twoSum(c2, t1);
-  c2 = A.hi;
-  t1 = A.lo;
-  DSValue C = b.twoSum(c2, t2);
-  c2 = C.hi;
-  t2 = C.lo;
-  DSValue D = b.twoSum(c2, t4);
-  c2 = D.hi;
-  t4 = D.lo;
-  DSValue E = b.twoSum(c2, t6);
-  c2 = E.hi;
-  t6 = E.lo;
-  c3 = b.fma(a0, b3, c3);
-  c3 = b.fma(a1, b2, c3);
-  c3 = b.fma(a2, b1, c3);
-  c3 = b.fma(a3, b0, c3);
-  c3 = b.add(c3, t0);
-  c3 = b.add(c3, t1);
-  c3 = b.add(c3, t2);
-  c3 = b.add(c3, t3);
-  c3 = b.add(c3, t4);
-  c3 = b.add(c3, t5);
-  c3 = b.add(c3, t6);
-  c3 = b.add(c3, t7);
-}
-
-// QxW::mul_QTW_QQW_QQW  (3 * 4 -> 4, unnormalized)
-void expansionMulRaw34(ExpansionBuilder &b, Value *a0, Value *a1, Value *a2,
-                       Value *b0, Value *b1, Value *b2, Value *b3, Value *&c0,
-                       Value *&c1, Value *&c2, Value *&c3) {
-  DSValue p = b.twoProd(a0, b0);
-  c0 = p.hi;
-  c1 = p.lo;
-  DSValue q = b.twoProd(a0, b1);
-  c2 = q.hi;
-  c3 = q.lo;
-  DSValue r = b.twoProd(a1, b0);
-  Value *t0 = r.hi;
-  Value *t1 = r.lo;
-  DSValue s = b.twoSum(c1, c2);
-  c1 = s.hi;
-  c2 = s.lo;
-  DSValue u = b.twoSum(c1, t0);
-  c1 = u.hi;
-  t0 = u.lo;
-  DSValue v = b.twoProd(a0, b2);
-  Value *t2 = v.hi;
-  Value *t3 = v.lo;
-  DSValue w = b.twoProd(a1, b1);
-  Value *t4 = w.hi;
-  Value *t5 = w.lo;
-  DSValue x = b.twoProd(a2, b0);
-  Value *t6 = x.hi;
-  Value *t7 = x.lo;
-  DSValue y = b.twoSum(c2, t0);
-  c2 = y.hi;
-  t0 = y.lo;
-  DSValue z = b.twoSum(c2, c3);
-  c2 = z.hi;
-  c3 = z.lo;
-  DSValue A = b.twoSum(c2, t1);
-  c2 = A.hi;
-  t1 = A.lo;
-  DSValue C = b.twoSum(c2, t2);
-  c2 = C.hi;
-  t2 = C.lo;
-  DSValue D = b.twoSum(c2, t4);
-  c2 = D.hi;
-  t4 = D.lo;
-  DSValue E = b.twoSum(c2, t6);
-  c2 = E.hi;
-  t6 = E.lo;
-  c3 = b.fma(a0, b3, c3);
-  c3 = b.fma(a1, b2, c3);
-  c3 = b.fma(a2, b1, c3);
-  c3 = b.add(c3, t0);
-  c3 = b.add(c3, t1);
-  c3 = b.add(c3, t2);
-  c3 = b.add(c3, t3);
-  c3 = b.add(c3, t4);
-  c3 = b.add(c3, t5);
-  c3 = b.add(c3, t6);
-  c3 = b.add(c3, t7);
-}
-
-// QxW::sqr_QTW_QQW  (square of a 3-limb value to 4 limbs, unnormalized)
-void expansionSqrRaw34(ExpansionBuilder &b, Value *a0, Value *a1, Value *a2,
-                       Value *&c0, Value *&c1, Value *&c2, Value *&c3) {
-  DSValue p = b.twoProd(a0, a0);
-  c0 = p.hi;
-  c1 = p.lo;
-  Value *t0 = b.add(a0, a0);
-  DSValue q = b.twoProd(t0, a1);
-  c2 = q.hi;
-  c3 = q.lo;
-  DSValue s = b.twoSum(c1, c2);
-  c1 = s.hi;
-  c2 = s.lo;
-  DSValue u = b.twoSum(c2, c3);
-  c2 = u.hi;
-  c3 = u.lo;
-  DSValue v = b.twoProd(t0, a2);
-  Value *t1 = v.hi;
-  Value *t2 = v.lo;
-  DSValue w = b.twoProd(a1, a1);
-  Value *t3 = w.hi;
-  Value *t4 = w.lo;
-  DSValue x = b.twoSum(c2, t1);
-  c2 = x.hi;
-  t1 = x.lo;
-  DSValue y = b.twoSum(c2, t3);
-  c2 = y.hi;
-  t3 = y.lo;
-  Value *t5 = b.add(a1, a1);
-  c3 = b.add(b.add(b.add(b.add(c3, t1), t2), t3), t4);
-  c3 = b.fma(t5, a2, c3);
-}
-
-// QxW::sqr_QQW_QQW  (4 -> 4, unnormalized)
-void expansionSqrRaw4(ExpansionBuilder &b, Value *a0, Value *a1, Value *a2,
-                      Value *a3, Value *&c0, Value *&c1, Value *&c2,
-                      Value *&c3) {
-  DSValue p = b.twoProd(a0, a0);
-  c0 = p.hi;
-  c1 = p.lo;
-  Value *t0 = b.add(a0, a0);
-  DSValue q = b.twoProd(t0, a1);
-  c2 = q.hi;
-  c3 = q.lo;
-  DSValue s = b.twoSum(c1, c2);
-  c1 = s.hi;
-  c2 = s.lo;
-  DSValue u = b.twoSum(c2, c3);
-  c2 = u.hi;
-  c3 = u.lo;
-  DSValue v = b.twoProd(t0, a2);
-  Value *t1 = v.hi;
-  Value *t2 = v.lo;
-  DSValue w = b.twoProd(a1, a1);
-  Value *t3 = w.hi;
-  Value *t4 = w.lo;
-  DSValue x = b.twoSum(c2, t1);
-  c2 = x.hi;
-  t1 = x.lo;
-  DSValue y = b.twoSum(c2, t3);
-  c2 = y.hi;
-  t3 = y.lo;
-  Value *t5 = b.add(a1, a1);
-  c3 = b.add(b.add(b.add(b.add(c3, t1), t2), t3), t4);
-  c3 = b.fma(t0, a3, c3);
-  c3 = b.fma(t5, a2, c3);
-}
-
-// QxW::div_QQW_QQW_QQW  (4 / 4 -> 4, unnormalized)
-void expansionDivRaw4(ExpansionBuilder &b, Value *a0, Value *a1, Value *a2,
-                      Value *a3, Value *b0, Value *b1, Value *b2, Value *b3,
-                      Value *&c0, Value *&c1, Value *&c2, Value *&c3) {
-  Value *e40 = b.add(a2, a3);
-  Value *e41 = b.add(b2, b3);
-  expansionDivRaw3(b, a0, a1, e40, b0, b1, e41, c0, c1, c2);
-  Value *t0, *t1, *t2, *t3;
-  expansionMulRaw34(b, c0, c1, c2, b0, b1, b2, b3, t0, t1, t2, t3);
-  Value *s0, *s1, *s2, *s3;
-  expansionAddRaw4(b, a0, a1, a2, a3, b.neg(t0), b.neg(t1), b.neg(t2),
-                   b.neg(t3), s0, s1, s2, s3);
-  Value *tn = b.add(b.add(b.add(s0, s1), s2), s3);
-  Value *td = b.add(b.add(b.add(b0, b1), b2), b3);
-  c3 = b.div(tn, td);
-}
-
-// QxW::sqrt_QQW_QQW  (4 -> 4, unnormalized). QxW::sqrt_QQW_QTW is
-// sqrt_QTW_QTW(a0, a1, a2 + a3, ...).
-void expansionSqrtRaw4(ExpansionBuilder &b, Value *a0, Value *a1, Value *a2,
-                       Value *a3, Value *&c0, Value *&c1, Value *&c2,
-                       Value *&c3) {
-  expansionSqrtRaw3(b, a0, a1, b.add(a2, a3), c0, c1, c2);
-  Value *t0, *t1, *t2, *t3;
-  expansionSqrRaw34(b, c0, c1, c2, t0, t1, t2, t3);
-  Value *s0, *s1, *s2, *s3;
-  expansionAddRaw4(b, a0, a1, a2, a3, b.neg(t0), b.neg(t1), b.neg(t2),
-                   b.neg(t3), s0, s1, s2, s3);
-  Value *tn = b.add(b.add(b.add(s0, s1), s2), s3);
-  Value *td = b.mul(b.add(b.add(c0, c1), c2), b.cst(2.0));
-  c3 = b.div(tn, td);
-}
-
-// Only the component counts whose QxW routines are transcribed above exist.
+// Only the component counts whose QxW routines are transcribed exist.
 void expansionCheckN(unsigned n) {
   if (n != 3 && n != 4)
     report_fatal_error(
@@ -1043,18 +546,10 @@ void expansionCheckN(unsigned n) {
 
 } // namespace
 
-// The two-component division, here for the QxW routines it shares.
-DSValue emitDSDiv(IRBuilder<> &B, DSValue x, DSValue y) {
-  ExpansionBuilder mb(B);
-  Value *c0, *c1;
-  expansionDivRaw22(mb, x.hi, x.lo, y.hi, y.lo, c0, c1);
-  return mb.fastTwoSum(c0, c1);
-}
-
 ExpansionValue emitExpansionNeg(IRBuilder<> &B, const ExpansionValue &a) {
   ExpansionValue r;
-  for (Value *v : a.x)
-    r.x.push_back(B.CreateFNeg(v, "mfx.neg"));
+  r.x.resize(a.n());
+  routines(B).expansionNeg(a.n(), a.x.data(), r.x.data());
   return r;
 }
 
@@ -1062,154 +557,79 @@ ExpansionValue emitExpansionAdd(IRBuilder<> &B, const ExpansionValue &a,
                                 const ExpansionValue &b) {
   assert(a.n() == b.n() && "expansion operands must agree on component count");
   expansionCheckN(a.n());
-  ExpansionBuilder mb(B);
-  if (a.n() == 3) {
-    Value *c0, *c1, *c2;
-    expansionAddRaw3(mb, a.x[0], a.x[1], a.x[2], b.x[0], b.x[1], b.x[2], c0, c1,
-                     c2);
-    expansionNormalize3(mb, c0, c1, c2);
-    return ExpansionValue{{c0, c1, c2}};
-  }
-  Value *c0, *c1, *c2, *c3;
-  expansionAddRaw4(mb, a.x[0], a.x[1], a.x[2], a.x[3], b.x[0], b.x[1], b.x[2],
-                   b.x[3], c0, c1, c2, c3);
-  expansionNormalize4(mb, c0, c1, c2, c3);
-  return ExpansionValue{{c0, c1, c2, c3}};
+  ExpansionValue r;
+  r.x.resize(a.n());
+  routines(B).expansionAdd(a.n(), a.x.data(), b.x.data(), r.x.data());
+  return r;
 }
 
 ExpansionValue emitExpansionSub(IRBuilder<> &B, const ExpansionValue &a,
                                 const ExpansionValue &b) {
-  return emitExpansionAdd(B, a, emitExpansionNeg(B, b));
+  assert(a.n() == b.n() && "expansion operands must agree on component count");
+  expansionCheckN(a.n());
+  ExpansionValue r;
+  r.x.resize(a.n());
+  routines(B).expansionSub(a.n(), a.x.data(), b.x.data(), r.x.data());
+  return r;
 }
 
 ExpansionValue emitExpansionMul(IRBuilder<> &B, const ExpansionValue &a,
                                 const ExpansionValue &b) {
   assert(a.n() == b.n() && "expansion operands must agree on component count");
   expansionCheckN(a.n());
-  ExpansionBuilder mb(B);
-  if (a.n() == 3) {
-    Value *c0, *c1, *c2;
-    expansionMulRaw3(mb, a.x[0], a.x[1], a.x[2], b.x[0], b.x[1], b.x[2], c0, c1,
-                     c2);
-    expansionNormalize3(mb, c0, c1, c2);
-    return ExpansionValue{{c0, c1, c2}};
-  }
-  Value *c0, *c1, *c2, *c3;
-  expansionMulRaw4(mb, a.x[0], a.x[1], a.x[2], a.x[3], b.x[0], b.x[1], b.x[2],
-                   b.x[3], c0, c1, c2, c3);
-  expansionNormalize4(mb, c0, c1, c2, c3);
-  return ExpansionValue{{c0, c1, c2, c3}};
+  ExpansionValue r;
+  r.x.resize(a.n());
+  routines(B).expansionMul(a.n(), a.x.data(), b.x.data(), r.x.data());
+  return r;
 }
 
 ExpansionValue emitExpansionSqr(IRBuilder<> &B, const ExpansionValue &a) {
   expansionCheckN(a.n());
-  ExpansionBuilder mb(B);
-  if (a.n() == 3) {
-    Value *c0, *c1, *c2;
-    expansionSqrRaw3(mb, a.x[0], a.x[1], a.x[2], c0, c1, c2);
-    expansionNormalize3(mb, c0, c1, c2);
-    return ExpansionValue{{c0, c1, c2}};
-  }
-  Value *c0, *c1, *c2, *c3;
-  expansionSqrRaw4(mb, a.x[0], a.x[1], a.x[2], a.x[3], c0, c1, c2, c3);
-  expansionNormalize4(mb, c0, c1, c2, c3);
-  return ExpansionValue{{c0, c1, c2, c3}};
+  ExpansionValue r;
+  r.x.resize(a.n());
+  routines(B).expansionSqr(a.n(), a.x.data(), r.x.data());
+  return r;
 }
 
 ExpansionValue emitExpansionDiv(IRBuilder<> &B, const ExpansionValue &a,
                                 const ExpansionValue &b) {
   assert(a.n() == b.n() && "expansion operands must agree on component count");
   expansionCheckN(a.n());
-  ExpansionBuilder mb(B);
-  if (a.n() == 3) {
-    Value *c0, *c1, *c2;
-    expansionDivRaw3(mb, a.x[0], a.x[1], a.x[2], b.x[0], b.x[1], b.x[2], c0, c1,
-                     c2);
-    expansionNormalize3(mb, c0, c1, c2);
-    return ExpansionValue{{c0, c1, c2}};
-  }
-  Value *c0, *c1, *c2, *c3;
-  expansionDivRaw4(mb, a.x[0], a.x[1], a.x[2], a.x[3], b.x[0], b.x[1], b.x[2],
-                   b.x[3], c0, c1, c2, c3);
-  expansionNormalize4(mb, c0, c1, c2, c3);
-  return ExpansionValue{{c0, c1, c2, c3}};
+  ExpansionValue r;
+  r.x.resize(a.n());
+  routines(B).expansionDiv(a.n(), a.x.data(), b.x.data(), r.x.data());
+  return r;
 }
 
 ExpansionValue emitExpansionSqrt(IRBuilder<> &B, const ExpansionValue &a) {
   expansionCheckN(a.n());
-  ExpansionBuilder mb(B);
   ExpansionValue r;
-  if (a.n() == 3) {
-    Value *c0, *c1, *c2;
-    expansionSqrtRaw3(mb, a.x[0], a.x[1], a.x[2], c0, c1, c2);
-    expansionNormalize3(mb, c0, c1, c2);
-    r.x = {c0, c1, c2};
-  } else {
-    Value *c0, *c1, *c2, *c3;
-    expansionSqrtRaw4(mb, a.x[0], a.x[1], a.x[2], a.x[3], c0, c1, c2, c3);
-    expansionNormalize4(mb, c0, c1, c2, c3);
-    r.x = {c0, c1, c2, c3};
-  }
-  // mX_real's sqrt operator returns the operand when its leading component is
-  // zero and +Inf in every component when it is +Inf; the QxW routine gives NaN
-  // for both. A negative or NaN leading component gives NaN either way.
-  Value *isZero = B.CreateFCmpOEQ(a.x[0], mb.cst(0.0), "mfx.sqz");
-  Value *isInf = B.CreateFCmpOEQ(
-      a.x[0], ConstantFP::getInfinity(B.getFloatTy()), "mfx.sqi");
-  for (unsigned i = 0; i < a.n(); ++i)
-    r.x[i] = B.CreateSelect(
-        isZero, a.x[i],
-        B.CreateSelect(isInf, ConstantFP::getInfinity(B.getFloatTy()), r.x[i],
-                       "mfx.sqrti"),
-        "mfx.sqrtz");
+  r.x.resize(a.n());
+  routines(B).expansionSqrt(a.n(), a.x.data(), r.x.data());
   return r;
 }
 
-// Greedy split into n components, which mX_real has no counterpart for (it
-// converts a double to its leading float); an F64 source fills at most three
-// limbs, the extra precision is created by the arithmetic.
 ExpansionValue emitToExpansion(IRBuilder<> &B, Value *fpval, unsigned n) {
   expansionCheckN(n);
-  Type *F32 = B.getFloatTy();
-  Type *F64 = B.getDoubleTy();
   ExpansionValue r;
+  r.x.resize(n);
   if (fpval->getType()->isFloatTy()) {
-    r.x.push_back(fpval);
-    for (unsigned i = 1; i < n; ++i)
-      r.x.push_back(ConstantFP::get(F32, 0.0));
+    routines(B).expansionFromF32(n, fpval, r.x.data());
     return r;
   }
   assert(fpval->getType()->isDoubleTy() &&
          "emitToExpansion: only f32/f64 sources");
-  Value *rem = fpval;
-  for (unsigned i = 0; i < n; ++i) {
-    Value *li = B.CreateFPTrunc(rem, F32, "mfx.split");
-    r.x.push_back(li);
-    if (i + 1 < n) {
-      Value *back = B.CreateFPExt(li, F64, "mfx.splitb");
-      rem = B.CreateFSub(rem, back, "mfx.splitr");
-    }
-  }
+  routines(B).expansionFromF64(n, fpval, r.x.data());
   return r;
 }
 
-// Sum the limbs least significant first; mX_real converts back from the
-// leading limb alone.
 Value *emitExpansionToFP(IRBuilder<> &B, const ExpansionValue &v,
                          Type *targetTy) {
   expansionCheckN(v.n());
-  if (targetTy->isFloatTy()) {
-    Value *s = v.x[v.n() - 1];
-    for (int i = (int)v.n() - 2; i >= 0; --i)
-      s = B.CreateFAdd(v.x[i], s, "mfx.tof32");
-    return s;
-  }
+  if (targetTy->isFloatTy())
+    return routines(B).expansionToF32(v.n(), v.x.data());
   assert(targetTy->isDoubleTy() && "emitExpansionToFP: only f32/f64 targets");
-  Type *F64 = B.getDoubleTy();
-  Value *s = B.CreateFPExt(v.x[v.n() - 1], F64, "mfx.e");
-  for (int i = (int)v.n() - 2; i >= 0; --i)
-    s = B.CreateFAdd(B.CreateFPExt(v.x[i], F64, "mfx.e"), s, "mfx.tof64");
-  return s;
+  return routines(B).expansionToF64(v.n(), v.x.data());
 }
 
 // Materializer for n >= 3; mirrors applyExpansion without the two-component
