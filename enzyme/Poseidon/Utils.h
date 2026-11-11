@@ -68,9 +68,6 @@ void topoSort(const llvm::SetVector<llvm::Instruction *> &insts,
 void reverseTopoSort(const llvm::SetVector<llvm::Instruction *> &insts,
                      llvm::SmallVectorImpl<llvm::Instruction *> &instsSorted);
 
-void getUniqueArgs(const std::string &expr,
-                   llvm::SmallSet<std::string, 8> &args);
-
 void collectExprInsts(llvm::Value *V,
                       const llvm::SetVector<llvm::Value *> &inputs,
                       llvm::SmallPtrSetImpl<llvm::Instruction *> &exprInsts,

@@ -60,6 +60,7 @@ set(POSEIDON_SRC
     Pass/Session.cpp
     Core/FPKind.cpp
     Herbie.cpp
+    Model/FPCore.cpp
     Core/HerbieRun.cpp
     Core/Options.cpp
     Core/Solver.cpp
@@ -79,6 +80,7 @@ set(POSEIDON_SRC
     Techniques/Staging.cpp
     Techniques/Unit.cpp
     Types.cpp
+    Model/FPNode.cpp
     Utils.cpp
     Techniques/Matmul/WmmaUtils.cpp
     Techniques/Matmul/MatmulAccuracy.cpp

@@ -182,18 +182,6 @@ void reverseTopoSort(const SetVector<Instruction *> &insts,
   std::reverse(instsSorted.begin(), instsSorted.end());
 }
 
-void getUniqueArgs(const std::string &expr, SmallSet<std::string, 8> &args) {
-  std::regex argPattern("v\\d+");
-
-  std::sregex_iterator begin(expr.begin(), expr.end(), argPattern);
-  std::sregex_iterator end;
-
-  while (begin != end) {
-    args.insert(begin->str());
-    ++begin;
-  }
-}
-
 void collectExprInsts(Value *V, const SetVector<Value *> &inputs,
                       SmallPtrSetImpl<Instruction *> &exprInsts,
                       SmallPtrSetImpl<Value *> &visited) {
