@@ -24,9 +24,7 @@
 ; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/other_sites_format1 -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache= -pass-remarks-missed=poseidon -S -o %t/format1.ll 2> %t/format1.err
 ; RUN: FileCheck --check-prefix=FORMAT1 %s < %t/format1.err
 ; RUN: FileCheck --check-prefix=LEFT %s < %t/format1.ll
-; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/other_sites_format1 -poseidon-strict-mode -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache= -pass-remarks-missed=poseidon -S -o %t/format1_strict.ll 2> %t/format1_strict.err
-; RUN: FileCheck --check-prefix=FORMAT1 %s < %t/format1_strict.err
-; RUN: FileCheck --check-prefix=LEFT %s < %t/format1_strict.ll
+; RUN: not %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/other_sites_format1 -poseidon-strict-mode -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache= -S -o /dev/null 2>&1 | FileCheck --check-prefix=FORMAT1-STRICT %s
 ;
 ; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/canonical_hash -poseidon-output-profiles=%S/Inputs/never_executed -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache= -S -o %t/out_never.ll 2>&1 | FileCheck --check-prefix=OUT-NEVER --implicit-check-not=warning --implicit-check-not=Warning %s
 ; RUN: FileCheck --check-prefix=LEFT %s < %t/out_never.ll
@@ -35,8 +33,9 @@
 ; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/canonical_hash -poseidon-output-profiles=%S/Inputs/other_sites -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache= -S -o %t/out_absent.ll 2>&1 | FileCheck --check-prefix=OUT-ABSENT %s
 ; RUN: FileCheck --check-prefix=LEFT %s < %t/out_absent.ll
 ; RUN: not %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/canonical_hash -poseidon-output-profiles=%S/Inputs/other_sites -poseidon-strict-mode -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache= -S -o /dev/null 2>&1 | FileCheck --check-prefix=OUT-STRICT %s
-; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/canonical_hash -poseidon-output-profiles=%S/Inputs/other_sites_format1 -poseidon-strict-mode -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache= -S -o %t/out_format1.ll 2>&1 | FileCheck --check-prefix=OUT-FORMAT1 %s
+; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/canonical_hash -poseidon-output-profiles=%S/Inputs/other_sites_format1 -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache= -S -o %t/out_format1.ll 2>&1 | FileCheck --check-prefix=OUT-FORMAT1 %s
 ; RUN: FileCheck --check-prefix=LEFT %s < %t/out_format1.ll
+; RUN: not %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/canonical_hash -poseidon-output-profiles=%S/Inputs/other_sites_format1 -poseidon-strict-mode -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache= -S -o /dev/null 2>&1 | FileCheck --check-prefix=OUT-FORMAT1-STRICT %s
 
 ; Why a site has no profile to solve from decides what profile use does. A
 ; site the profiling run instrumented and never executed has a profile that
@@ -46,8 +45,9 @@
 ; A directory none of whose profiles names its format (ProfileFormat) was
 ; written before the runtime left a profile for a site it never executed, so a
 ; site absent from it may simply not have run: it is left as written with a
-; warning that says so, under strict mode too; one such profile beside one that
-; names its format does not make the directory that old. A directory that holds
+; warning that says so, and refused under strict mode, which leaves a site
+; unchanged only when its profile says it did not run; one such profile beside
+; one that names its format does not make the directory that old. A directory that holds
 ; no profile at all was not written by a profiling run and is refused. Every
 ; -poseidon-output-profiles directory is read by the same rules.
 
@@ -87,19 +87,22 @@ attributes #0 = { "target-cpu"="x86-64" }
 ; ABSENT: [poseidon] tester: the profiled program did not contain this site (no profile at {{.*}}other_sites/preprocess_tester.fpprofile); left unchanged
 ; ABSENT: remark: {{.*}}Poseidon left the site unchanged: the profiled program did not contain this site (it was annotated after the profiling run, is in a translation unit the profiled program did not link, or was renamed)
 
-; STRICT: LLVM ERROR: Poseidon: no profile of tester at {{.*}}other_sites/preprocess_tester.fpprofile: the profiled program did not contain this site (it was annotated after the profiling run, is in a translation unit the profiled program did not link, or was renamed), and -poseidon-strict-mode does not leave a site unchanged
+; STRICT: error: {{.*}}Poseidon: no profile of tester at {{.*}}other_sites/preprocess_tester.fpprofile: the profiled program did not contain this site (it was annotated after the profiling run, is in a translation unit the profiled program did not link, or was renamed), and -poseidon-strict-mode does not leave a site unchanged
 
 ; FORMAT1: warning: {{.*}}Poseidon: no profile at {{.*}}other_sites_format1/preprocess_tester.fpprofile: the profile directory was written before the profiling runtime recorded sites that never ran, so this site may simply not have run (or the profiled program did not contain it); leaving the site unchanged
 ; FORMAT1: [poseidon] tester: the profile directory was written before the profiling runtime recorded sites that never ran, so this site may simply not have run (or the profiled program did not contain it) (no profile at {{.*}}other_sites_format1/preprocess_tester.fpprofile); left unchanged
 ; FORMAT1: remark: {{.*}}Poseidon left the site unchanged: the profile directory was written before the profiling runtime recorded sites that never ran, so this site may simply not have run (or the profiled program did not contain it)
 
-; MIXED: LLVM ERROR: Poseidon: no profile of tester at {{.*}}mixed/preprocess_tester.fpprofile: the profiled program did not contain this site
+; FORMAT1-STRICT: error: {{.*}}Poseidon: no profile of tester at {{.*}}other_sites_format1/preprocess_tester.fpprofile: the profile directory was written before the profiling runtime recorded sites that never ran, so it cannot tell whether this site did not run or the profiled program did not contain it, and -poseidon-strict-mode does not leave a site unchanged; generate the profile again with this Poseidon
+
+; MIXED: error: {{.*}}Poseidon: no profile of tester at {{.*}}mixed/preprocess_tester.fpprofile: the profiled program did not contain this site
 
 ; OUT-NEVER: [poseidon] tester: the profiling run instrumented this site and never executed it ({{.*}}never_executed/preprocess_tester.fpprofile); left unchanged
 ; OUT-NODIR: error: {{.*}}Poseidon: the profile directory {{.*}}missing (-poseidon-output-profiles) does not exist; no profiling run wrote into it. Run the program built with -poseidon-profile-generate first, or pass the directory it wrote
 ; OUT-EMPTY: error: {{.*}}Poseidon: the profile directory {{.*}}empty (-poseidon-output-profiles) holds no .fpprofile file; no profiling run wrote into it. Run the program built with -poseidon-profile-generate first, or pass the directory it wrote
 ; OUT-ABSENT: warning: {{.*}}Poseidon: no profile at {{.*}}other_sites/preprocess_tester.fpprofile: the profiled program did not contain this site
 ; OUT-ABSENT: [poseidon] tester: the profiled program did not contain this site (no profile at {{.*}}other_sites/preprocess_tester.fpprofile); left unchanged
-; OUT-STRICT: LLVM ERROR: Poseidon: no profile of tester at {{.*}}other_sites/preprocess_tester.fpprofile: the profiled program did not contain this site
+; OUT-STRICT: error: {{.*}}Poseidon: no profile of tester at {{.*}}other_sites/preprocess_tester.fpprofile: the profiled program did not contain this site
 ; OUT-FORMAT1: warning: {{.*}}Poseidon: no profile at {{.*}}other_sites_format1/preprocess_tester.fpprofile: the profile directory was written before the profiling runtime recorded sites that never ran
 ; OUT-FORMAT1: [poseidon] tester: the profile directory was written before the profiling runtime recorded sites that never ran, so this site may simply not have run (or the profiled program did not contain it) (no profile at {{.*}}other_sites_format1/preprocess_tester.fpprofile); left unchanged
+; OUT-FORMAT1-STRICT: error: {{.*}}Poseidon: no profile of tester at {{.*}}other_sites_format1/preprocess_tester.fpprofile: the profile directory was written before the profiling runtime recorded sites that never ran
