@@ -152,6 +152,19 @@ bool improveViaHerbie(Session &S, const std::vector<std::string> &inputExprs,
               : Label;
     Runs.push_back(
         runHerbie(inputExprs, Opts, RunLabel, S.Herbie.HerbieDigests));
+    // A timeout is Herbie's answer for these cores; a Herbie that does not
+    // start gives none.
+    if (Runs.back().Result == HerbieRunResult::Outcome::Failed)
+      report_fatal_error(
+          Twine("Poseidon: ") +
+              (Opts.CacheDir.empty()
+                   ? "no cache is kept"
+                   : "the cache " + Opts.CacheDir + " holds no Herbie answer") +
+              " for " + RunLabel + ", and the Herbie at " + Opts.Program +
+              " cannot run (" + Runs.back().Failure +
+              "). Point -poseidon-herbie-binary at a Herbie, or turn "
+              "algebraic rewriting off with -poseidon-enable-herbie=0.",
+          /*gen_crash_diag=*/false);
     if (Runs.back().Result == HerbieRunResult::Outcome::Crashed &&
         O.Model.StrictMode)
       report_fatal_error(Twine("Poseidon strict mode: Herbie crashed (") +

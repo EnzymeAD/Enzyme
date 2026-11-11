@@ -226,8 +226,7 @@ HerbieRunResult runHerbie(const std::vector<std::string> &inputExprs,
       setupFailed = true;
   }
   if (setupFailed) {
-    llvm::errs() << "Failed to create the Herbie input files or output "
-                    "directories.\n";
+    Run.Failure = "its input files or output directories could not be created";
     removeShardFiles();
     return Run;
   }
@@ -296,7 +295,7 @@ HerbieRunResult runHerbie(const std::vector<std::string> &inputExprs,
                           .count();
 
   if (ExecutionFailed) {
-    llvm::errs() << "Execution failed: " << ErrMsg << "\n";
+    Run.Failure = ErrMsg;
     removeShardFiles();
     return Run;
   }

@@ -111,12 +111,14 @@ struct HerbieRunResult {
     // Herbie ended by a signal the runner did not send; `Crash` names it.
     // Nothing is cached.
     Crashed,
-    // Herbie could not be started, or its input files could not be written.
+    // Herbie could not be started, or its input files could not be written;
+    // `Failure` says which.
     Failed,
   };
   Outcome Result = Outcome::Failed;
   std::string ResultsJson;
   std::string Crash;
+  std::string Failure;
 };
 
 // Runs Herbie on `Cores`, each a complete (FPCore ...), through the cache.
