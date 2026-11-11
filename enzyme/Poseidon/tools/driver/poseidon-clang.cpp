@@ -394,16 +394,15 @@ int main(int argc, char **argv) {
     // the allocations this library records.
     if (ProfileGenerate)
       Cmd.push_back("-lposeidon_profile_host");
-    // The host half of the CUDA profiler (the pass links the device half into
-    // each device module). Not keyed on CUDA inputs, so that a link of objects
-    // alone gets it; a program that references none of it takes nothing. The
-    // HIP build of it exports the same names, so a link takes one of the two:
-    // HIP's for HIP inputs or where it is the only one built.
-    bool HipProfiler = POSEIDON_DRIVER_PROFILER_HIP &&
-                       (IsHIP || !POSEIDON_DRIVER_PROFILER_CUDA);
-    if (ProfileGenerate && HipProfiler)
+    // The host half of the GPU profiler (the pass links the device half into
+    // each device module): HIP's for HIP, CUDA's for CUDA, and for a link of
+    // objects alone, which names no GPU, the one this build has; a program
+    // that references none of it takes nothing. The two export the same names,
+    // so a link takes one of them, and never the other GPU's.
+    bool HipProfiler = IsHIP || (!IsCUDA && !POSEIDON_DRIVER_PROFILER_CUDA);
+    if (ProfileGenerate && HipProfiler && POSEIDON_DRIVER_PROFILER_HIP)
       Cmd.push_back("-lposeidon_profile_hip");
-    else if (ProfileGenerate && POSEIDON_DRIVER_PROFILER_CUDA)
+    else if (ProfileGenerate && !HipProfiler && POSEIDON_DRIVER_PROFILER_CUDA)
       Cmd.push_back("-lposeidon_profile_cuda");
     // poseidon_metric, and the profiler the instrumented code calls into.
     Cmd.push_back("-lposeidon_profile");
