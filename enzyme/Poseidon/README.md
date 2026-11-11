@@ -25,7 +25,7 @@ enzyme/Poseidon/            the pass: the sources beside and under Pass/ (the
                             Profile/, Model/, Techniques/ and Targets/
   runtime/                  profiler and GEMM dispatch runtimes the driver links
   tools/                    poseidon-clang driver, poseidon-calibrate, poseidon-explain,
-                            Herbie platform
+                            Herbie platform, Compiler Explorer
 enzyme/include/poseidon/    the one public header
 enzyme/test/Poseidon/       lit suite: check-poseidon, check-poseidon-integration
 ```
@@ -34,8 +34,8 @@ enzyme/test/Poseidon/       lit suite: check-poseidon, check-poseidon-integratio
 
 - **LLVM**, with its clang. The plugin is built against one LLVM and loaded by
   that LLVM's clang. This tree is built and tested against LLVM 24
-  (`e56c2cefc3e7`, the commit Enzyme's CI pins), and the apt packages of LLVM
-  21 and 22 build the CPU path.
+  (`9d618fc02431`, the commit Enzyme's MLIR CI pins), and the apt packages of
+  LLVM 21 and 22 build the CPU path.
 - **Enzyme**: the one in this tree. Enzyme differentiates the probes the
   profiler places, so profile generation needs its plugin; profile use and
   plain compiles need it only for Enzyme requests of their own, such as the
@@ -44,13 +44,27 @@ enzyme/test/Poseidon/       lit suite: check-poseidon, check-poseidon-integratio
 - **MPFR** (with GMP): the accuracy model evaluates candidates against an
   arbitrary-precision reference.
 - **CUDA** 12.x or 13.x for the GPU path (cuBLAS). Poseidon builds and runs
-  its CPU tests without CUDA.
+  its CPU tests without CUDA; without a CUDA compiler at configure time it has
+  no device profiler for NVIDIA GPUs.
+- **ROCm**, for HIP, optional: `-DPOSEIDON_ROCM_PATH=<rocm>` with an LLVM that
+  builds the AMDGPU target adds the AMDGPU device profiler, the HIP runtimes
+  and calibrators, for the one processor `-DPOSEIDON_AMDGPU_ARCH` names
+  (default `gfx942`).
+- **cuMpSGEMM**, optional: `-DPOSEIDON_TCEC_USE_CUMPSGEMM=ON
+  -DPOSEIDON_CUMPSGEMM_ROOT=<checkout>` makes the error-corrected GEMM runtime
+  delegate to that build of cuMpSGEMM instead of its built-in cuBLAS kernels.
 - **Herbie**, for the algebraic rewrites. The build compiles upstream
   [herbie-fp/herbie](https://github.com/herbie-fp/herbie) at the commit
   `cmake/Herbie.cmake` pins (Racket 8.15 and Rust are then needed);
-  `-DPOSEIDON_HERBIE_BINARY=<path>` reuses an existing one instead. Herbie
-  results are cached under the digest of the binary that produced them and
-  are searched again under any other.
+  `-DPOSEIDON_HERBIE_BINARY=<path>` reuses an existing one instead, and
+  `-poseidon-herbie-binary=<path>` names one for a compile. Herbie results are
+  cached under the digest of the binary that produced them and are searched
+  again under any other, unless `-poseidon-import-herbie-answers=<dir>` names a
+  cache directory whose answers are then replayed whichever binary gave them.
+  `-poseidon-herbie-num-taylor-terms=<n,...>` searches every expression once
+  per series length and takes the union of the answers; it needs a Herbie
+  that takes `--num-taylor-terms`, which the pinned commit does not, and a
+  compile given the flag with a Herbie that does not stops with an error.
 
 ## Build
 
@@ -138,9 +152,8 @@ carries it to the call. A site with no target is solved against
 the site that a solution may add (a negative share, down to -1, is one it has
 to save: -0.25 requires saving a quarter); at its default of 0 that is the most
 accurate rewrite costing no more than the code as written, which may be the
-code as written. A share below -1 or one that is not finite stops the compile:
-the integer budgets of `-poseidon-comp-cost-budget` are no longer accepted, and
-a solve writes the shares of its frontier points to `budgets.txt` in its
+code as written. A share below -1 or one that is not finite stops the compile,
+and a solve writes the shares of its frontier points to `budgets.txt` in its
 `-poseidon-cache` directory.
 `poseidon-clang++ -poseidon-help` lists the user flags, and any other
 `-poseidon-<flag>` reaches the pass.
@@ -232,11 +245,14 @@ poseidon-calibrate --gpu 0            # writes ~/.cache/poseidon/cm_<arch>_<gpu>
 poseidon-calibrate --gpu 0 --check    # validate the resolved model against this device
 ```
 
-A compile that is not given `-poseidon-cost-model=<csv>` (or
+A CPU is measured by `tools/calibrate/microbm_cpu.py --native-arch
+<target-cpu> --out cm_<target-cpu>_<name>.csv` (Python 3 with `numpy` and
+`llvmlite`). A compile that is not given `-poseidon-cost-model=<csv>` (or
 `POSEIDON_COST_MODEL`) looks one up by the module's target-cpu in
-`~/.cache/poseidon`; zero or several matches abort naming the tool.
-`tools/calibrate/README.md` describes the row families and what each
-calibration arm measures.
+`$XDG_CACHE_HOME/poseidon`, by default `~/.cache/poseidon`, where
+`poseidon-calibrate` writes; no match stops the compile naming the tool, and
+several stop it naming the files. `tools/calibrate/README.md` describes the
+row families and what each calibration arm measures.
 
 ## What a compile decided
 
@@ -346,8 +362,9 @@ functions marked `POSEIDON_OPTIMIZE` and calls made through
 marker, per-function targets, per-call sites and a regime split, and each
 prints the values of an unmarked copy next to Poseidon's. Compile with `-O1` or
 higher. Herbie results are kept in `POSEIDON_CE_CACHE`
-(default `/tmp/poseidon-ce-cache`) and reused by later compiles; `package.sh`
-ships the examples' results so their first compile does not search. The
+(default `$TMPDIR/poseidon-ce-cache`, `/tmp` without `TMPDIR`) and reused by
+later compiles; `package.sh` ships the examples' results so their first
+compile does not search. The
 defaults suit a shared machine: at most `POSEIDON_CE_MAX_SEARCHES` (2)
 compiles profile and search at once, and one that finds both slots taken for
 3 seconds is compiled as written with a note to try again; a search gets
