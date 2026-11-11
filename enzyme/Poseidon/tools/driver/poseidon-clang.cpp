@@ -52,15 +52,24 @@ std::string envOr(const char *Name, StringRef Fallback) {
   return Fallback.str();
 }
 
-// A file under the installation the driver was started from, falling back to
-// the build-time location when the driver runs out of its build tree.
-std::string relativeToPrefix(StringRef Prefix, StringRef Rel,
-                             StringRef Fallback) {
+// `Rel` under the installation prefix `Prefix`.
+std::string underPrefix(StringRef Prefix, const Twine &Rel) {
   SmallString<256> P(Prefix);
   sys::path::append(P, Rel);
-  if (sys::fs::exists(P))
-    return std::string(P);
-  return Fallback.str();
+  return std::string(P);
+}
+
+// The toolkit a GPU runtime is linked from: the one given, else the one
+// Poseidon was built against (none if it was built without), which has to be
+// on this machine.
+std::optional<std::string> toolkitRoot(StringRef Prog, StringRef Toolkit,
+                                       StringRef Given, StringRef Built,
+                                       StringRef How) {
+  if (!Given.empty() || Built.empty() || sys::fs::is_directory(Built))
+    return Given.empty() ? Built.str() : Given.str();
+  errs() << Prog << ": the " << Toolkit << " Poseidon was built against, "
+         << Built << ", is not on this machine; " << How << "\n";
+  return std::nullopt;
 }
 
 void printHelp(StringRef Prog) {
@@ -204,8 +213,7 @@ int main(int argc, char **argv) {
   bool WantCXX = Prog.contains("++");
   bool ProfileGenerate = false, ProfileUse = false;
   bool IsCUDA = false, IsHIP = false, StopsBeforeLink = false, HasInput = false;
-  std::string CudaPath = POSEIDON_DRIVER_CUDA_ROOT;
-  StringRef RocmPathArg, HipPathArg;
+  StringRef CudaPathArg, RocmPathArg, HipPathArg;
 
   SmallVector<std::string, 64> User;
   for (int I = 1; I < argc; ++I) {
@@ -259,7 +267,7 @@ int main(int argc, char **argv) {
       IsCUDA = true;
     } else if (A.starts_with("--cuda-path=")) {
       IsCUDA = true;
-      CudaPath = A.substr(strlen("--cuda-path=")).str();
+      CudaPathArg = A.substr(strlen("--cuda-path="));
     } else if (A == "--hip-link") {
       IsHIP = true;
     } else if (A.starts_with("--rocm-path=")) {
@@ -309,7 +317,7 @@ int main(int argc, char **argv) {
   if (RocmPath.empty())
     RocmPath = envOr("HIP_PATH", RocmPathArg);
   if (RocmPath.empty())
-    RocmPath = envOr("ROCM_PATH", POSEIDON_DRIVER_ROCM_ROOT);
+    RocmPath = envOr("ROCM_PATH", "");
 
   if (ProfileGenerate && ProfileUse) {
     errs() << Prog
@@ -318,25 +326,34 @@ int main(int argc, char **argv) {
     return 1;
   }
 
+  // The clang the plugin is built against, wherever the driver runs, and the
+  // plugins, header and runtimes of the build tree the driver runs from or of
+  // its installation, never some of each. Enzyme installs its plugins to lib/.
   std::string Clang = WantCXX ? POSEIDON_DRIVER_CLANGXX : POSEIDON_DRIVER_CLANG;
-  std::string Plugin =
-      envOr("POSEIDON_PLUGIN",
-            relativeToPrefix(Prefix, "lib/" POSEIDON_DRIVER_PLUGIN_NAME,
-                             POSEIDON_DRIVER_PLUGIN));
-  std::string Enzyme = envOr("ENZYME_PLUGIN", POSEIDON_DRIVER_ENZYME);
-  std::string Include =
-      relativeToPrefix(Prefix, "include/poseidon/poseidon.h",
-                       POSEIDON_DRIVER_INCLUDE "/poseidon/poseidon.h");
-  Include =
-      std::string(sys::path::parent_path(sys::path::parent_path(Include)));
-  std::string LibDir =
-      relativeToPrefix(Prefix, "lib/libposeidon_profile.a",
-                       POSEIDON_DRIVER_LIBDIR "/libposeidon_profile.a");
-  LibDir = std::string(sys::path::parent_path(LibDir));
-
+  StringRef BuiltEnzyme = POSEIDON_DRIVER_ENZYME;
+  std::string Plugin = POSEIDON_DRIVER_PLUGIN, Enzyme = BuiltEnzyme.str();
+  std::string Include = POSEIDON_DRIVER_INCLUDE;
+  std::string LibDir = POSEIDON_DRIVER_LIBDIR;
+  if (!sys::fs::equivalent(sys::path::parent_path(Exe),
+                           POSEIDON_DRIVER_BINDIR)) {
+    Plugin = underPrefix(Prefix, POSEIDON_DRIVER_INSTALL_LIBDIR
+                         "/" POSEIDON_DRIVER_PLUGIN_NAME);
+    if (!BuiltEnzyme.empty())
+      Enzyme = underPrefix(Prefix, "lib/" + sys::path::filename(BuiltEnzyme));
+    Include = underPrefix(Prefix, POSEIDON_DRIVER_INSTALL_INCLUDEDIR);
+    LibDir = underPrefix(Prefix, POSEIDON_DRIVER_INSTALL_LIBDIR);
+  }
+  Plugin = envOr("POSEIDON_PLUGIN", Plugin);
   if (!sys::fs::exists(Plugin)) {
     errs() << Prog << ": Poseidon plugin not found at " << Plugin
            << "; set POSEIDON_PLUGIN\n";
+    return 1;
+  }
+  if (std::string Given = envOr("ENZYME_PLUGIN", ""); !Given.empty()) {
+    Enzyme = Given;
+  } else if (!Enzyme.empty() && !sys::fs::exists(Enzyme)) {
+    errs() << Prog << ": Enzyme plugin not found at " << Enzyme
+           << "; install Enzyme to the same prefix or set ENZYME_PLUGIN\n";
     return 1;
   }
   if (Enzyme.empty() && ProfileGenerate) {
@@ -381,12 +398,23 @@ int main(int argc, char **argv) {
   if (HasInput && !StopsBeforeLink) {
     // clang links no CUDA runtime of its own, and every action here ends in a
     // device launch.
-    if (IsCUDA && !CudaPath.empty()) {
-      Cmd.push_back("-L" + CudaPath + "/lib64");
+    std::optional<std::string> CudaRoot =
+        IsCUDA
+            ? toolkitRoot(Prog, "CUDA toolkit", CudaPathArg,
+                          POSEIDON_DRIVER_CUDA_ROOT, "pass --cuda-path=<dir>")
+            : "";
+    std::optional<std::string> RocmRoot =
+        IsHIP ? toolkitRoot(Prog, "ROCm", RocmPath, POSEIDON_DRIVER_ROCM_ROOT,
+                            "pass --rocm-path=<dir> or set ROCM_PATH")
+              : "";
+    if (!CudaRoot || !RocmRoot)
+      return 1;
+    if (!CudaRoot->empty()) {
+      Cmd.push_back("-L" + *CudaRoot + "/lib64");
       Cmd.push_back("-lcudart");
     }
-    if (IsHIP && !RocmPath.empty()) {
-      Cmd.push_back("-L" + RocmPath + "/lib");
+    if (!RocmRoot->empty()) {
+      Cmd.push_back("-L" + *RocmRoot + "/lib");
       Cmd.push_back("-lamdhip64");
     }
     Cmd.push_back("-L" + LibDir);
