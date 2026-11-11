@@ -3279,13 +3279,23 @@ void TypeAnalyzer::visitAtomicRMWInst(llvm::AtomicRMWInst &I) {
     break;
   }
   case AtomicRMWInst::Add:
-    visitBinaryOperation(DL, I.getType(), BinaryOperator::Add, Args, Ret, LHS,
-                         RHS, &I);
+  case AtomicRMWInst::Sub: {
+    Type *ScalarTy = I.getType()->getScalarType();
+    if (ScalarTy->isIntegerTy() &&
+        DL.getTypeSizeInBits(ScalarTy) < DL.getPointerSizeInBits()) {
+      TypeTree IntTT = TypeTree(BaseType::Integer).Only(-1, &I);
+      LHS = IntTT;
+      RHS = IntTT;
+      Ret = IntTT;
+    } else {
+      visitBinaryOperation(DL, I.getType(),
+                           I.getOperation() == AtomicRMWInst::Add
+                               ? BinaryOperator::Add
+                               : BinaryOperator::Sub,
+                           Args, Ret, LHS, RHS, &I);
+    }
     break;
-  case AtomicRMWInst::Sub:
-    visitBinaryOperation(DL, I.getType(), BinaryOperator::Sub, Args, Ret, LHS,
-                         RHS, &I);
-    break;
+  }
   case AtomicRMWInst::And:
     visitBinaryOperation(DL, I.getType(), BinaryOperator::And, Args, Ret, LHS,
                          RHS, &I);
@@ -3324,7 +3334,16 @@ void TypeAnalyzer::visitAtomicRMWInst(llvm::AtomicRMWInst &I) {
   case AtomicRMWInst::Min:
   case AtomicRMWInst::UMax:
   case AtomicRMWInst::UMin:
-  case AtomicRMWInst::Nand:
+  case AtomicRMWInst::Nand: {
+    Type *ScalarTy = I.getType()->getScalarType();
+    if (ScalarTy->isIntegerTy()) {
+      TypeTree IntTT = TypeTree(BaseType::Integer).Only(-1, &I);
+      LHS = IntTT;
+      RHS = IntTT;
+      Ret = IntTT;
+    }
+    break;
+  }
   default:
     break;
   }
