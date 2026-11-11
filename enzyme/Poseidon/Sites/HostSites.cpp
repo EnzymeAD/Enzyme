@@ -186,7 +186,7 @@ bool lowerPerCallSites(const Options &O, Module &M) {
           helpers.push_back(CI);
   if (helpers.empty())
     return false;
-  const bool active = O.Profiling.ProfileGenerate || O.Profiling.usesProfile();
+  const bool active = O.Profiling.profileAction();
   auto annotated = annotatedFunctions(M);
   DenseMap<Function *, SmallVector<double, 2>> targets;
   for (CallInst *H : helpers)
@@ -295,7 +295,7 @@ bool outlineHostSites(const Options &O, Module &M) {
   auto annotated = annotatedFunctions(M);
   if (annotated.empty())
     return false;
-  const bool active = O.Profiling.ProfileGenerate || O.Profiling.usesProfile();
+  const bool active = O.Profiling.profileAction();
 
   SmallVector<CallInst *, 4> markers;
   for (Function &G : M)

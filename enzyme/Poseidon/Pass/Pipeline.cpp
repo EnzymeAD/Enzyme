@@ -79,12 +79,6 @@ bool hasSite(const Options &O, Module &M) {
   return false;
 }
 
-// Whether this compile generates or uses a profile: anything else leaves every
-// site as written.
-bool profileAction(const Options &O) {
-  return O.Profiling.ProfileGenerate || O.Profiling.usesProfile();
-}
-
 void requirePluginOrder(const Options &O, Module &M) {
   if (!hasSite(O, M) || !enzymeAlreadyRan(M))
     return;
@@ -359,13 +353,14 @@ struct HostSitePass : PassParent<HostSitePass> {
     const Options &O = sessionOf(M, MAM).Opts;
     bool changed = false;
     if (Target::of(M).isDevice())
-      changed = profileAction(O) && hasSite(O, M) ? keepDeviceMath(M)
-                                                  : releaseDeviceMath(M);
+      changed = O.Profiling.profileAction() && hasSite(O, M)
+                    ? keepDeviceMath(M)
+                    : releaseDeviceMath(M);
     changed |= lowerPerCallSites(O, M);
     changed |= propagateDeviceSites(M);
     changed |= outlineHostSites(O, M);
     changed |= registerDeviceProfileTable(M, O.Profiling.ProfileGenerate);
-    if (!profileAction(O))
+    if (!O.Profiling.profileAction())
       changed |= leaveSitesAsWritten(O, M);
     return changed ? PreservedAnalyses::none() : PreservedAnalyses::all();
   }
@@ -482,7 +477,7 @@ struct IfSitePass : PassParent<IfSitePass> {
     if (!O.Profiling.ProfileGenerate && !hasSite(O, M))
       return PreservedAnalyses::all();
     PreservedAnalyses PA = PreservedAnalyses::all();
-    if (profileAction(O))
+    if (O.Profiling.profileAction())
       PA.intersect(Prefix.run(M, MAM));
     PA.intersect(Pipeline.run(M, MAM));
     return PA;

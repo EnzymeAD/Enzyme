@@ -48,6 +48,9 @@ struct ProfilingOptions {
 
   // The compile solves from profiles.
   bool usesProfile() const { return !ProfileUse.empty(); }
+  // Whether this compile generates or uses a profile: anything else leaves
+  // every site as written.
+  bool profileAction() const { return ProfileGenerate || usesProfile(); }
 
   void appendSolveInputs(FlagValues &out) const;
   void appendOtherValues(FlagValues &out) const;
