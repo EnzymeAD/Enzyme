@@ -48,7 +48,9 @@ enzyme/test/Poseidon/       lit suite: check-poseidon (a folder per part of the
   arbitrary-precision reference.
 - **CUDA** 12.x or 13.x for the GPU path (cuBLAS). Poseidon builds and runs
   its CPU tests without CUDA; without a CUDA compiler at configure time it has
-  no device profiler for NVIDIA GPUs.
+  no device profiler for NVIDIA GPUs. The runtimes are compiled for the GPU
+  that configuration finds; where none is visible, configuration stops unless
+  `-DCMAKE_CUDA_ARCHITECTURES` names the architecture (such as `120-real`).
 - **ROCm**, for HIP, optional: `-DPOSEIDON_ROCM_PATH=<rocm>` with an LLVM that
   builds the AMDGPU target adds the AMDGPU device profiler, the HIP runtimes
   and calibrators, for the one processor `-DPOSEIDON_AMDGPU_ARCH` names

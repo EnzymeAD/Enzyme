@@ -25,6 +25,22 @@ if(CMAKE_CUDA_COMPILER)
     set(CMAKE_CUDA_ARCHITECTURES native CACHE STRING "CUDA architectures")
   endif()
   enable_language(CUDA)
+  # CMake passes `native` on to nvcc, which resolves it at every compile and,
+  # with no GPU visible there, falls back to an architecture whose code every
+  # newer GPU runs only through the driver's JIT. The GPUs CMake found here are
+  # used instead, and finding none is an error; a failed detection can leave
+  # its message in place of the list, so the list is checked for its form.
+  if(CMAKE_CUDA_ARCHITECTURES STREQUAL "native")
+    if(NOT CMAKE_CUDA_ARCHITECTURES_NATIVE
+       MATCHES "^[0-9]+-real(;[0-9]+-real)*$")
+      message(
+        FATAL_ERROR
+          "CMAKE_CUDA_ARCHITECTURES is 'native', but CMake found no GPU; give "
+          "the architecture of the GPU the runtimes are for, such as "
+          "-DCMAKE_CUDA_ARCHITECTURES=120-real")
+    endif()
+    set(CMAKE_CUDA_ARCHITECTURES ${CMAKE_CUDA_ARCHITECTURES_NATIVE})
+  endif()
 endif()
 find_package(CUDAToolkit QUIET)
 
