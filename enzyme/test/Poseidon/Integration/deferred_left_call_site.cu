@@ -1,16 +1,16 @@
 // REQUIRES: enzyme, cuda-runtime
 // RUN: rm -rf %t && mkdir -p %t
-// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch --cuda-device-only -O2 -S -emit-llvm %s -o %t/plain.ll
+// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch --cuda-device-only -O2 -S -emit-llvm %loadClangEnzyme %s -o %t/plain.ll
 //
 // Every site left alone (no profile): the module is the one as written.
-// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch --cuda-device-only -O2 -S -emit-llvm -poseidon-profile-use=%S/../Inputs/other_sites %s -o %t/none.ll
+// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch --cuda-device-only -O2 -S -emit-llvm %loadClangEnzyme -poseidon-profile-use=%S/../Inputs/other_sites %s -o %t/none.ll
 // RUN: diff %t/plain.ll %t/none.ll
 //
 // One site rewritten and one refused: the refused one's kernel and tangent are
 // the ones as written.
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 -poseidon-profile-generate -poseidon-cache=%t/cg %s -o %t/gen
 // RUN: env POSEIDON_PROFILE_DIR=%t/prof %t/gen
-// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch --cuda-device-only -O2 -S -emit-llvm -poseidon-profile-use=%t/prof -poseidon-cost-model=%gpu_cost_model -poseidon-enable-herbie=0 -poseidon-cache=%t/c -poseidon-print %s -o %t/left.ll 2>&1 | FileCheck --check-prefix=SOLVE %s
+// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch --cuda-device-only -O2 -S -emit-llvm %loadClangEnzyme -poseidon-profile-use=%t/prof -poseidon-cost-model=%gpu_cost_model -poseidon-enable-herbie=0 -poseidon-cache=%t/c -poseidon-print %s -o %t/left.ll 2>&1 | FileCheck --check-prefix=SOLVE %s
 // RUN: awk '/^define .*@(_Z5jvp_bPKdS0_PdS1_|fwddiffe_Z2qfPKdPd)\(/{p=1} p{print} /^}/{p=0}' %t/plain.ll | sed -E 's/#[0-9]+/#/g; s/![0-9]+/!/g' > %t/plain.fns
 // RUN: awk '/^define .*@(_Z5jvp_bPKdS0_PdS1_|fwddiffe_Z2qfPKdPd)\(/{p=1} p{print} /^}/{p=0}' %t/left.ll | sed -E 's/#[0-9]+/#/g; s/![0-9]+/!/g' > %t/left.fns
 // RUN: diff %t/plain.fns %t/left.fns
@@ -21,6 +21,8 @@
 // pipeline left them: Enzyme's tangent of 1/sqrt(s) calls libdevice's
 // __nv_sqrt once more, nothing inlines after Enzyme without a site, so the two
 // square roots stay two calls; the late run must not inline and merge them.
+// The program asks Enzyme for a derivative of its own, so it loads Enzyme's
+// plugin itself where poseidon-clang++ does not, outside profile generation.
 
 #include "poseidon/poseidon.h"
 #include <cuda_runtime.h>

@@ -1,15 +1,9 @@
 // The site is named with -poseidon-kernels and poseidon.h, which links the
-// libdevice functions a rewrite or a site's derivative may call, is not
-// included. A derivative or a rewrite that needs one the module does not define
-// stops the compile with an error saying so, rather than the backend failing
-// on an intrinsic NVPTX cannot lower or ptxas on an unresolved function.
+// libdevice functions a rewrite may call, is not included. A rewrite that
+// needs one the module does not define stops the compile with an error saying
+// so, rather than ptxas failing on an unresolved function.
 //
 // REQUIRES: enzyme, cuda-runtime
-//
-// The derivative of cos is written with sin.
-// RUN: not %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 -DWITH_COS \
-// RUN:     -poseidon-kernels=waved -poseidon-profile-generate -poseidon-cache=%t.pcache %s -o %t.cos.exe 2>&1 \
-// RUN:   | FileCheck --check-prefix=DERIV --implicit-check-not="Cannot select" %s
 //
 // Single precision is cheapest at 1e-3, and nothing calls __nv_expf.
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 \
@@ -28,11 +22,7 @@ __global__ void waved(double *o, const double *a, int n) {
   int i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i < n) {
     double x = a[i];
-#ifdef WITH_COS
-    o[i] = exp(-x) * cos(x) + x;
-#else
     o[i] = exp(-x) * x + x;
-#endif
   }
 }
 
@@ -47,8 +37,5 @@ int main() {
   cudaDeviceSynchronize();
   return 0;
 }
-
-// DERIV: Poseidon: the derivative profile generation takes in {{.*}} calls llvm.sin.f64, which NVPTX lowers only through libdevice
-// DERIV-SAME: include it in this translation unit (with -poseidon-kernels, pass -include poseidon/poseidon.h)
 
 // REWRITE: Poseidon: a rewrite in waved(double*, double const*, int) calls __nv_expf, which this device module does not define.

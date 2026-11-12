@@ -69,7 +69,7 @@ POSEIDON_OPTIMIZE __global__ void sum(const double *x, double *y) {
 
 // HOST: @__poseidon_profile_table = internal global [[[N:[0-9]+]] x i8] zeroinitializer, align 8
 // HOST: @llvm.global_ctors = appending global [3 x { i32, ptr, ptr }] [{ i32, ptr, ptr } { i32 65535, ptr @__hip_module_ctor, ptr null }, { i32, ptr, ptr } { i32 65535, ptr @__poseidon_profile_register_module_table, ptr null }, { i32, ptr, ptr } { i32 0, ptr @poseidon_register_static_preprocess__Z5scalePdd_poseidon_body, ptr null }]
-// HOST: define internal void @__hip_register_globals(ptr %[[H:[0-9]+]])
+// HOST: define internal {{(fastcc )?}}void @__hip_register_globals(ptr %[[H:[0-9]+]])
 // HOST: call void @__hipRegisterVar(ptr %[[H]], ptr @__poseidon_profile_table, ptr @[[NAME:[^,]+]], ptr @[[NAME]], i32 0, i64 [[N]], i32 1, i32 0)
 // HOST-NEXT: ret void
 // HOST: define internal void @__poseidon_profile_register_module_table()

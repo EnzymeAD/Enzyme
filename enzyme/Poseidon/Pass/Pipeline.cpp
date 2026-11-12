@@ -161,8 +161,8 @@ std::string unloweredRequestReason(bool phaseKnown, ThinOrFullLTOPhase Phase,
   if (phaseKnown && enzymeDeferredToPostLink(Phase, Level))
     return "This is an LTO pre-link compile, where Enzyme leaves derivative "
            "requests to the post-link run unless -enzyme-lto-prelink is "
-           "given; pass -mllvm -enzyme-lto-prelink=1 (for HIP through "
-           "-Xclang, as poseidon-clang does).";
+           "given; pass -mllvm -enzyme-lto-prelink=1 (for HIP as -Xclang "
+           "-mllvm -Xclang -enzyme-lto-prelink=1).";
   std::string reason =
       "Add -fpass-plugin=<ClangEnzyme>.so after the Poseidon plugin.";
   if (!phaseKnown)

@@ -3,9 +3,10 @@
 // RUN: (env TMPDIR=%t %clang -x hip --offload-arch=gfx942 -nogpulib -nogpuinc -O2 -c -I%poseidon_profile_inc %loadClangPoseidonEnzyme %s -o %t/plain.o 2>&1; echo "exit status $?") | FileCheck --check-prefix=DEFERRED --implicit-check-not=REPRODUCER --implicit-check-not="exit code" --implicit-check-not=ld.lld %s
 // RUN: %clang -x hip --offload-arch=gfx942 -nogpulib -nogpuinc -O2 -c -I%poseidon_profile_inc %loadClangPoseidonEnzyme -Xclang -mllvm -Xclang -enzyme-lto-prelink=1 %s -o %t/opt/k.o
 // RUN: cd %t/opt && llvm-objdump --offloading k.o > /dev/null && llvm-readelf --dyn-syms k.o.*gfx942 | FileCheck --check-prefix=CO --implicit-check-not=__enzyme %s
-// RUN: %poseidon_clangxx -x hip --offload-arch=gfx942 -nogpulib -nogpuinc -O2 -c %s -o %t/drv/k.o
+// RUN: (env TMPDIR=%t %poseidon_clangxx -x hip --offload-arch=gfx942 -nogpulib -nogpuinc -O2 -c %s -o %t/drv/none.o 2>&1; echo "exit status $?") | FileCheck --check-prefix=NOENZYME --implicit-check-not=REPRODUCER --implicit-check-not="exit code" --implicit-check-not=ld.lld %s
+// RUN: %poseidon_clangxx -x hip --offload-arch=gfx942 -nogpulib -nogpuinc -O2 -c %loadClangEnzyme -Xclang -mllvm -Xclang -enzyme-lto-prelink=1 %s -o %t/drv/k.o
 // RUN: cd %t/drv && llvm-objdump --offloading k.o > /dev/null && llvm-readelf --dyn-syms k.o.*gfx942 | FileCheck --check-prefix=CO --implicit-check-not=__enzyme %s
-// RUN: %poseidon_clangxx -x hip --offload-arch=gfx942 -nogpulib -nogpuinc -fgpu-rdc -O2 -c %s -o %t/rdc/k.o
+// RUN: %poseidon_clangxx -x hip --offload-arch=gfx942 -nogpulib -nogpuinc -fgpu-rdc -O2 -c %loadClangEnzyme -Xclang -mllvm -Xclang -enzyme-lto-prelink=1 %s -o %t/rdc/k.o
 // RUN: llvm-offload-binary %t/rdc/k.o --image=file=%t/rdc/dev.bc,arch=gfx942
 // RUN: llvm-dis %t/rdc/dev.bc -o - | FileCheck --check-prefix=DEV --implicit-check-not=__enzyme %s
 
@@ -16,10 +17,12 @@
 // loads no plugin. A site whose body is the user's own derivative request is
 // handled after Enzyme has lowered that request: with both plugins and without
 // the option the compile stops in the device compiler with the reason, not at
-// the device link with an undefined __enzyme_* symbol, and without a crash.
-// With the option, and through poseidon-clang++, which passes it, the code
-// object and the relocatable device code hold no request. The device code is
-// that of deferred_left_copy_nvptx.cu.
+// the device link with an undefined __enzyme_* symbol, and without a crash;
+// through poseidon-clang++, which loads Enzyme only to generate a profile, it
+// stops asking for Enzyme's plugin.
+// With the option, also through poseidon-clang++ given Enzyme's plugin and the
+// option as clang is, the code object and the relocatable device code hold no
+// request. The device code is that of deferred_left_copy_nvptx.cu.
 
 #include <cstddef>
 
@@ -66,6 +69,9 @@ __global__ void jvp(const double *x, const double *dx, double *y, double *dy) {
 
 // DEFERRED: Poseidon: the marked body jvp_body still holds an __enzyme_* request that nothing lowered. This is an LTO pre-link compile, where Enzyme leaves derivative requests to the post-link run unless -enzyme-lto-prelink is given; pass -mllvm -enzyme-lto-prelink=1
 // DEFERRED: exit status 1
+
+// NOENZYME: Poseidon: the marked body jvp_body still holds an __enzyme_* request that nothing lowered. Add -fpass-plugin=<ClangEnzyme>.so after the Poseidon plugin.
+// NOENZYME: exit status 1
 
 // CO-NOT: UND {{[_a-zA-Z]}}
 // CO: _Z3jvpPKdS0_PdS1_

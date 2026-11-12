@@ -28,7 +28,8 @@
 // RUN: test -x %t/inst/bin/poseidon-clang++
 // RUN: env POSEIDON_ECHO=1 %t/inst/bin/poseidon-clang++ -poseidon-profile-generate %S/../Inputs/package/host.cpp -### -o %t/inst.exe 2>&1 | FileCheck --check-prefix=INSTDRV -DPREFIX=%t/inst %s
 // RUN: cp -r %t/inst %t/noenzyme && rm %t/noenzyme/lib/ClangEnzyme-*.so
-// RUN: not %t/noenzyme/bin/poseidon-clang++ -c %S/../Inputs/package/host.cpp -o %t/noenzyme.o 2>&1 | FileCheck --check-prefix=NOENZYME -DPREFIX=%t/noenzyme %s
+// RUN: not %t/noenzyme/bin/poseidon-clang++ -poseidon-profile-generate -c %S/../Inputs/package/host.cpp -o %t/noenzyme.o 2>&1 | FileCheck --check-prefix=NOENZYME -DPREFIX=%t/noenzyme %s
+// RUN: %t/noenzyme/bin/poseidon-clang++ -c %S/../Inputs/package/host.cpp -o %t/noenzyme.o
 
 // find_package(Poseidon) from the build tree and from an installation, and
 // one interface target per action: Poseidon's plugin, and Enzyme's after it to
@@ -61,7 +62,8 @@
 // INSTCMD: libposeidon_profile_host.a
 
 // The installed driver takes the plugins, the header and the runtimes from its
-// installation, and stops when one of them is missing there.
+// installation, and stops when one it needs is missing there: Enzyme's only
+// to generate a profile.
 
 // INSTDRV: clang{{.*}} -fpass-plugin=[[PREFIX]]/lib{{(64)?}}/Poseidon-{{[0-9]+}}.so {{(-Xclang -load -Xclang [^ ]+ )?}}-fpass-plugin=[[PREFIX]]/lib/ClangEnzyme-{{[0-9]+}}.so
 // INSTDRV-SAME: -isystem [[PREFIX]]/include

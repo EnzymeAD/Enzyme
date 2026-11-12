@@ -17,14 +17,16 @@
 // RUN:   | awk '{ d = $3 - $6; if (d * d > 1e-24 * $3 * $3) bad = 1 } END { print bad ? "SUMS DIFFER" : "SUMS SAME" }' \
 // RUN:   | FileCheck --check-prefix=SUMS %s
 //
-// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 -poseidon-profile-use=%t/prof -poseidon-cost-model=%gpu_cost_model -poseidon-enable-herbie=0 -poseidon-print -poseidon-cache=%t/c %s -o %t/opt 2>&1 \
+// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 %loadClangEnzyme -poseidon-profile-use=%t/prof -poseidon-cost-model=%gpu_cost_model -poseidon-enable-herbie=0 -poseidon-print -poseidon-cache=%t/c %s -o %t/opt 2>&1 \
 // RUN:   | FileCheck --check-prefix=SOLVE %s
 // RUN: %t/opt | FileCheck --check-prefix=OPT %s
 
 // deferred_jvp_site.cu with the site written as a call: the body is one
 // __enzyme_fwddiff request, so the call is a deferred site, profiled and solved
 // by the late run on the tangent code Enzyme generated for it. Its pointers
-// point into local objects of the kernel, whose shadows the pass makes.
+// point into local objects of the kernel, whose shadows the pass makes. The
+// optimizing compile loads Enzyme's plugin itself, as poseidon-clang++ loads it
+// only to generate a profile.
 
 #include "poseidon/poseidon.h"
 #include <cmath>

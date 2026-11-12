@@ -45,13 +45,12 @@
 # HIP device profiler are built for: profile generation compiles HIP device
 # code for that processor only.
 #
-# The actions add what poseidon-clang adds, but for three differences.
-# poseidon-clang also loads Enzyme's plugin under Plain and ProfileUse, which
-# a project does itself where its own code asks for derivatives. It names the
-# translation unit of each invocation with -poseidon-unit, which a project can
-# pass per target; without it the pass names the unit from HIP's compilation
-# id or the Poseidon flags. And it appends the runtime libraries to every link
-# line, also where the line names them already; here targets give them once.
+# The actions add what poseidon-clang adds, but for two differences.
+# poseidon-clang names the translation unit of each invocation with
+# -poseidon-unit, which a project can pass per target; without it the pass
+# names the unit from HIP's compilation id or the Poseidon flags. And it
+# appends the runtime libraries to every link line, also where the line names
+# them already; here targets give them once.
 
 include(CMakeFindDependencyMacro)
 set(POSEIDON_HAS_CUDA @POSEIDON_HAS_CUDA@)

@@ -13,10 +13,11 @@
 //   ./app small_problem
 //   poseidon-clang++ -poseidon-profile-use -poseidon-tau=1e-7 app.cu -o app_opt
 //
-// The driver execs the clang the plugins were built against with both pass
-// plugins in the order the pipeline needs, Poseidon's include directory, and
-// the runtime libraries the selected action requires. Every other
-// -poseidon-<flag> reaches the pass as -Xclang -mllvm -Xclang -poseidon-<flag>.
+// The driver execs the clang the plugins were built against with Poseidon's
+// pass plugin, and Enzyme's after it to generate a profile, Poseidon's include
+// directory, and the runtime libraries the selected action requires. Every
+// other -poseidon-<flag> reaches the pass as -Xclang -mllvm -Xclang
+// -poseidon-<flag>.
 //
 //===----------------------------------------------------------------------===//
 
@@ -375,17 +376,23 @@ int main(int argc, char **argv) {
   if (!sys::fs::exists(Plugin))
     return userError(Prog, "Poseidon plugin not found at " + Plugin +
                                "; set POSEIDON_PLUGIN");
-  if (std::string Given = envOr("ENZYME_PLUGIN", ""); !Given.empty()) {
+  // Enzyme differentiates the probes and is loaded for nothing else, so that
+  // Enzyme changes no other compile. A program that asks Enzyme for
+  // derivatives of its own loads the plugin among its arguments, as with clang
+  // alone; they come after Poseidon's plugin, the order the two need.
+  if (!ProfileGenerate) {
+    Enzyme.clear();
+  } else if (std::string Given = envOr("ENZYME_PLUGIN", ""); !Given.empty()) {
     Enzyme = Given;
-  } else if (!Enzyme.empty() && !sys::fs::exists(Enzyme)) {
+  } else if (Enzyme.empty()) {
+    return userError(Prog, "-poseidon-profile-generate needs Enzyme to "
+                           "differentiate the probes; set ENZYME_PLUGIN to "
+                           "the pinned ClangEnzyme-*.so");
+  } else if (!sys::fs::exists(Enzyme)) {
     return userError(Prog, "Enzyme plugin not found at " + Enzyme +
                                "; install Enzyme to the same prefix or set "
                                "ENZYME_PLUGIN");
   }
-  if (Enzyme.empty() && ProfileGenerate)
-    return userError(Prog, "-poseidon-profile-generate needs Enzyme to "
-                           "differentiate the probes; set ENZYME_PLUGIN to "
-                           "the pinned ClangEnzyme-*.so");
 
   SmallVector<std::string, 128> Cmd;
   Cmd.push_back(Clang);
