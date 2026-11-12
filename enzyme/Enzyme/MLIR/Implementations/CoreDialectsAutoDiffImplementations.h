@@ -21,6 +21,7 @@
 #include "mlir/Support/LogicalResult.h"
 
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/STLFunctionalExtras.h"
 
 namespace mlir {
 class DialectRegistry;
@@ -54,9 +55,24 @@ void branchingForwardHandler(Operation *op, OpBuilder &builder,
 void regionTerminatorForwardHandler(Operation *op, OpBuilder &builder,
                                     MGradientUtils *gutils);
 
-// Implements reverse-mode differentiation of return operations.
+/// Implements reverse-mode differentiation of return operations.
 void returnReverseHandler(Operation *op, OpBuilder &builder,
                           MGradientUtilsReverse *gutils);
+
+/// Implements reverse-mode differentiation of a single-region operation whose
+/// region contains a single block and whose results are yielded by its
+/// terminator (e.g., `memref.alloca_scope`, `scf.execute_region`).
+LogicalResult singleRegionReverseHandler(
+    Operation *op, OpBuilder &builder, MGradientUtilsReverse *gutils,
+    llvm::function_ref<Operation *(OpBuilder &, Location)>
+        createEmptyReverseOp);
+
+/// Augments a region-bearing operation with shadow results and shadow
+/// terminator operands for active mutable results in reverse mode.
+LogicalResult regionShadowValuesHandler(
+    Operation *op, OpBuilder &builder, MGradientUtilsReverse *gutils,
+    llvm::function_ref<Operation *(OpBuilder &, Location, TypeRange)>
+        createAugmentedOp);
 
 // Implements forward-mode differentiation of read-only (including read-none)
 // operations which do not perform computation
@@ -255,6 +271,44 @@ public:
   LogicalResult createShadowValues(Operation *op, OpBuilder &builder,
                                    MGradientUtilsReverse *gutils) const {
     return success();
+  }
+};
+
+/// ReverseAutoDiffOpInterface ExternalModel for zero-operand single-region
+/// operations whose results are yielded by `TerminatorOpTy` (e.g.,
+/// `memref.alloca_scope`, `scf.execute_region`).
+template <typename OpTy, typename TerminatorOpTy>
+class SingleRegionRevAutoDiffInterface
+    : public ReverseAutoDiffOpInterface::ExternalModel<
+          SingleRegionRevAutoDiffInterface<OpTy, TerminatorOpTy>, OpTy> {
+public:
+  LogicalResult createReverseModeAdjoint(Operation *op, OpBuilder &builder,
+                                         MGradientUtilsReverse *gutils,
+                                         SmallVector<Value> caches) const {
+    return detail::singleRegionReverseHandler(
+        op, builder, gutils, [op](OpBuilder &b, Location loc) -> Operation * {
+          auto revOp =
+              OpTy::create(b, loc, TypeRange{}, ValueRange{}, op->getAttrs());
+          Block &revBB = revOp->getRegion(0).emplaceBlock();
+          OpBuilder termB(&revBB, revBB.end());
+          TerminatorOpTy::create(termB, loc);
+          return revOp;
+        });
+  }
+
+  SmallVector<Value> cacheValues(Operation *op,
+                                 MGradientUtilsReverse *gutils) const {
+    return SmallVector<Value>();
+  }
+
+  LogicalResult createShadowValues(Operation *op, OpBuilder &builder,
+                                   MGradientUtilsReverse *gutils) const {
+    return detail::regionShadowValuesHandler(
+        op, builder, gutils,
+        [op](OpBuilder &b, Location loc, TypeRange resultTypes) -> Operation * {
+          return OpTy::create(b, loc, resultTypes, ValueRange{},
+                              op->getAttrs());
+        });
   }
 };
 

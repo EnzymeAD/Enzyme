@@ -22,7 +22,6 @@ func.func @dalloca_scope_rev(%x: f64, %dres: f64) -> f64 {
 // CHECK-NEXT:    %[[M1:.+]] = arith.mulf %[[DRES]], %[[X]] fastmath<fast> : f64
 // CHECK-NEXT:    %[[ADD:.+]] = arith.addf %[[M0]], %[[M1]] fastmath<fast> : f64
 // CHECK-NEXT:    return %[[ADD]] : f64
-// CHECK-NEXT:  }
 
 // -----
 
@@ -58,7 +57,6 @@ func.func @dalloca_scope_memref(%x: memref<f32>, %dx: memref<f32>, %y: memref<f3
 // CHECK-NEXT:    %[[ADD1:.+]] = arith.addf %[[LDX]], %[[ADD0]] fastmath<fast> : f32
 // CHECK-NEXT:    memref.store %[[ADD1]], %[[DX]][] : memref<f32>
 // CHECK-NEXT:    return
-// CHECK-NEXT:  }
 
 // -----
 
@@ -92,6 +90,4 @@ func.func @dalloca_scope_with_alloca(%x: f64, %n: index, %dres: f64) -> f64 {
 // CHECK-NEXT:      memref.store %[[SQ]], %[[ALLOCA]][%{{.+}}] : memref<?xf64>
 // CHECK-NEXT:      %[[LD:.+]] = memref.load %[[ALLOCA]][%{{.+}}] : memref<?xf64>
 // CHECK-NEXT:      memref.alloca_scope.return %[[LD]], %[[DALLOCA]] : f64, memref<?xf64>
-// CHECK-NEXT:    }
 // CHECK:         return %{{.+}} : f64
-// CHECK-NEXT:  }

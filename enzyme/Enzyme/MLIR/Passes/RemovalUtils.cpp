@@ -155,6 +155,142 @@ void mlir::enzyme::removalBlockExplore(
   }
 }
 
+LogicalResult mlir::enzyme::removeEnzymeOpsFromRegionLikeOp(
+    Operation *op, PatternRewriter &rewriter, ArrayRef<Block *> fwdBlocks,
+    llvm::function_ref<bool(Operation *)> isReverseOp,
+    llvm::function_ref<SmallVector<Block *, 2>(Operation *)> getReverseBlocks,
+    llvm::function_ref<Value(Location, Type)> getDummyValue,
+    llvm::function_ref<Operation *(TypeRange)> replaceOp) {
+  if (fwdBlocks.empty())
+    return success();
+
+  // Gradients whose value is set in any branch.
+  llvm::SetVector<Value> gradients;
+
+  // We assume pushes are exclusive across branches.
+  SmallVector<llvm::MapVector<Value, CacheInfo>, 2> pushedCachesPerBlock(
+      fwdBlocks.size());
+  SmallVector<IRMapping, 2> mappings(fwdBlocks.size());
+
+  for (auto [block, mapping, pushedCaches] :
+       llvm::zip_equal(fwdBlocks, mappings, pushedCachesPerBlock)) {
+    removalBlockExplore(block, mapping, rewriter, gradients, pushedCaches);
+  }
+
+  bool cachesEmpty =
+      llvm::all_of(pushedCachesPerBlock,
+                   [](const llvm::MapVector<Value, CacheInfo> &caches) {
+                     return caches.empty();
+                   });
+  if (gradients.empty() && cachesEmpty)
+    return success();
+
+  bool removeCaches = !op->hasAttr(kPreserveCacheAttrName) && !cachesEmpty;
+
+  SmallVector<SmallVector<CacheInfo>, 2> cachesPerBlock;
+  cachesPerBlock.reserve(fwdBlocks.size());
+  for (const llvm::MapVector<Value, CacheInfo> &pushedCaches :
+       pushedCachesPerBlock) {
+    SmallVector<CacheInfo> blockCaches;
+    blockCaches.reserve(pushedCaches.size());
+    for (const std::pair<Value, CacheInfo> &entry : pushedCaches)
+      blockCaches.push_back(entry.second);
+    cachesPerBlock.push_back(std::move(blockCaches));
+  }
+
+  if (removeCaches && hasMinCut(op)) {
+    Operation *reverseOp = nullptr;
+    for (const SmallVector<CacheInfo> &blockCaches : cachesPerBlock) {
+      for (const CacheInfo &info : blockCaches) {
+        Operation *parent = info.popOp->getParentOp();
+        if (parent && isReverseOp(parent) &&
+            (reverseOp == nullptr || parent->isProperAncestor(reverseOp)))
+          reverseOp = parent;
+      }
+    }
+
+    if (reverseOp) {
+      SmallVector<Block *, 2> revBlocks = getReverseBlocks(reverseOp);
+      if (revBlocks.size() == fwdBlocks.size()) {
+        for (auto [fwdBlock, revBlock, blockCaches, mapping] :
+             llvm::zip_equal(fwdBlocks, revBlocks, cachesPerBlock, mappings)) {
+          OpBuilder::InsertionGuard guard(rewriter);
+          rewriter.setInsertionPointToStart(revBlock);
+          enzyme::minCutCache(fwdBlock, revBlock, blockCaches, rewriter,
+                              mapping);
+        }
+      }
+    }
+  }
+
+  for (Value grad : gradients) {
+    for (auto [block, mapping] : llvm::zip_equal(fwdBlocks, mappings)) {
+      Operation *term = block->getTerminator();
+      Value val = mapping.lookupOrNull(grad);
+      if (!val) {
+        val = enzyme::GetOp::create(
+            rewriter, grad.getLoc(),
+            cast<enzyme::GradientType>(grad.getType()).getBasetype(), grad);
+      }
+      term->insertOperands(term->getNumOperands(), ValueRange(val));
+    }
+  }
+
+  SmallVector<CacheInfo> allCaches;
+  for (const SmallVector<CacheInfo> &blockCaches : cachesPerBlock)
+    allCaches.append(blockCaches);
+
+  if (removeCaches) {
+    for (CacheInfo &info : allCaches) {
+      Value pushedValue = info.pushedValue();
+      Value dummy;
+      if (fwdBlocks.size() > 1)
+        dummy = getDummyValue(pushedValue.getLoc(), pushedValue.getType());
+
+      for (Block *block : fwdBlocks) {
+        Operation *term = block->getTerminator();
+        Value val = pushedValue.getParentBlock() == block ? pushedValue : dummy;
+        term->insertOperands(term->getNumOperands(), ValueRange(val));
+      }
+    }
+  }
+
+  size_t idx = op->getNumResults();
+  Operation *newOp =
+      replaceOp(fwdBlocks.front()->getTerminator()->getOperandTypes());
+  rewriter.setInsertionPointAfter(newOp);
+
+  for (Value grad : gradients) {
+    enzyme::SetOp::create(rewriter, grad.getLoc(), grad, newOp->getResult(idx));
+    idx++;
+  }
+
+  if (removeCaches) {
+    for (CacheInfo &info : allCaches) {
+      enzyme::PushOp::create(rewriter, info.pushOp->getLoc(),
+                             info.initOp.getResult(), newOp->getResult(idx));
+      rewriter.eraseOp(info.pushOp);
+
+      Operation *popParent = info.popOp->getParentOp();
+      if (popParent && isReverseOp(popParent) &&
+          info.popOp->getBlock() != rewriter.getInsertionBlock()) {
+        OpBuilder::InsertionGuard guard(rewriter);
+        rewriter.setInsertionPoint(popParent);
+
+        auto newPop = enzyme::PopOp::create(rewriter, info.popOp->getLoc(),
+                                            info.popOp.getResult().getType(),
+                                            info.popOp.getCache());
+        rewriter.replaceAllUsesWith(info.popOp.getResult(), newPop);
+        rewriter.eraseOp(info.popOp);
+      }
+
+      idx++;
+    }
+  }
+
+  return success();
+}
+
 namespace {
 
 // A node in the compute/flow graph. It identifies either an operation or a

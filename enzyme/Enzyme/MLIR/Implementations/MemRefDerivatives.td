@@ -15,14 +15,6 @@ def : InactiveOp<"memref", "DimOp">;
 def : AllocationOp<"memref", "AllocOp">;
 def : AllocationOp<"memref", "AllocaOp">;
 
-def : ControlFlowOp<"memref", "AllocaScopeOp", [{
-  Operation *createWithShadows(Operation *op, OpBuilder &builder,
-                               MGradientUtils *gutils,
-                               Operation *original, ValueRange remappedOperands,
-                               TypeRange rettys) const {
-    return memref::AllocaScopeOp::create(
-        builder, op->getLoc(), rettys);
-  }
-}]>;
+def : SingleRegionControlFlowOp<"memref", "AllocaScopeOp">;
 
 def : RegionTerminatorOp<"memref", "AllocaScopeReturnOp">;

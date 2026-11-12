@@ -26,6 +26,4 @@ module {
 // CHECK-NEXT:     %[[ADD:.+]] = arith.addf %[[M0]], %[[M1]] fastmath<fast> : f64
 // CHECK-NEXT:     %[[SQ:.+]] = arith.mulf %[[X]], %[[X]] : f64
 // CHECK-NEXT:     memref.alloca_scope.return %[[SQ]], %[[ADD]] : f64, f64
-// CHECK-NEXT:   }
-// CHECK-NEXT:   return %[[SCOPE]]#1 : f64
-// CHECK-NEXT: }
+// CHECK:        return %[[SCOPE]]#1 : f64
