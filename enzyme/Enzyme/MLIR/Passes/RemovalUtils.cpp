@@ -11,11 +11,22 @@
 #include "Interfaces/AutoDiffTypeInterface.h"
 #include "Interfaces/GradientUtilsReverse.h"
 #include "Utils.h"
+#include "mlir/Analysis/AliasAnalysis/LocalAliasAnalysis.h"
 #include "mlir/Analysis/TopologicalSortUtils.h"
+#include "mlir/Dialect/Affine/IR/AffineOps.h"
+#include "mlir/Dialect/Affine/Utils.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/IR/PatternMatch.h"
+#include "mlir/Interfaces/FunctionInterfaces.h"
+#include "mlir/Interfaces/ValueBoundsOpInterface.h"
+#include "mlir/Interfaces/ViewLikeInterface.h"
 #include "mlir/Transforms/RegionUtils.h"
+#include "llvm/Support/MathExtras.h"
 #include <cassert>
 #include <deque>
+#include <limits>
 
 // loop-invariant cache requires a copy, which is implemented using an scf.for
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -1245,79 +1256,732 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
   caches0 = std::move(newCacheInfos);
 }
 
-static LogicalResult loopInvariantCacheImpl(CacheInfo info,
-                                            LoopLikeOpInterface fwdLoop,
-                                            LoopLikeOpInterface revLoop,
-                                            IRMapping &mapping,
-                                            int64_t threshold) {
+namespace {
+
+/// Represents a half-open index interval `[lb, lb + size)` whose lower bound is
+/// expressed as a single-result AffineMap over loop-invariant index values.
+struct DimBound {
+  AffineMap lbMap;
+  SmallVector<Value> lbOperands;
+  int64_t size = 0;
+
+  bool isConstantLB(int64_t *val = nullptr) const {
+    if (!lbMap || !lbMap.isSingleConstant())
+      return false;
+    if (val)
+      *val = lbMap.getSingleConstantResult();
+    return true;
+  }
+
+  bool operator==(const DimBound &other) const {
+    return lbMap == other.lbMap && lbOperands == other.lbOperands &&
+           size == other.size;
+  }
+};
+
+struct CachedSliceEntry {
+  Value memref;
+  SmallVector<DimBound> bounds;
+  Value cachedMemRef;
+};
+
+static bool isLoopInvariantValue(Value v, LoopLikeOpInterface fwdLoop,
+                                 DominanceInfo &dom) {
+  if (Operation *defOp = v.getDefiningOp())
+    return !fwdLoop->isAncestor(defOp) && dom.dominates(defOp, fwdLoop);
+  auto arg = cast<BlockArgument>(v);
+  return !fwdLoop->isAncestor(arg.getOwner()->getParentOp()) &&
+         dom.dominates(v, fwdLoop);
+}
+
+static DimBound makeConstBound(int64_t lb, int64_t size, MLIRContext *ctx) {
+  return DimBound{AffineMap::getConstantMap(lb, ctx), {}, size};
+}
+
+static DimBound makeValueBound(Value v) {
+  return DimBound{AffineMap::getMultiDimIdentityMap(1, v.getContext()), {v}, 1};
+}
+
+static void mergeOperands(AffineMap &mapA, SmallVectorImpl<Value> &opsA,
+                          AffineMap &mapB, SmallVectorImpl<Value> &opsB,
+                          SmallVectorImpl<Value> &merged) {
+  DenseMap<Value, unsigned> pos;
+  auto remap = [&](AffineMap map, ArrayRef<Value> ops) {
+    SmallVector<AffineExpr> dimRepl, symRepl;
+    for (unsigned i = 0; i < ops.size(); ++i) {
+      auto [it, inserted] = pos.try_emplace(ops[i], merged.size());
+      if (inserted)
+        merged.push_back(ops[i]);
+      AffineExpr e = getAffineDimExpr(it->second, map.getContext());
+      if (i < map.getNumDims())
+        dimRepl.push_back(e);
+      else
+        symRepl.push_back(e);
+    }
+    return map.replaceDimsAndSymbols(dimRepl, symRepl, merged.size(), 0);
+  };
+  mapA = remap(mapA, opsA);
+  mapB = remap(mapB, opsB);
+}
+
+static std::optional<DimBound> addDimBounds(const DimBound &a,
+                                            const DimBound &b) {
+  if (a.size == 0 || b.size == 0)
+    return makeConstBound(0, 0, a.lbMap.getContext());
+  if (a.size - 1 > std::numeric_limits<int64_t>::max() - b.size)
+    return std::nullopt;
+  AffineMap mA = a.lbMap, mB = b.lbMap;
+  SmallVector<Value> oA = a.lbOperands, oB = b.lbOperands, merged;
+  mergeOperands(mA, oA, mB, oB, merged);
+  MLIRContext *ctx = mA.getContext();
+  AffineMap sumMap = simplifyAffineMap(
+      AffineMap::get(merged.size(), 0, mA.getResult(0) + mB.getResult(0), ctx));
+  affine::canonicalizeMapAndOperands(&sumMap, &merged);
+  return DimBound{sumMap, std::move(merged), a.size + b.size - 1};
+}
+
+static std::optional<DimBound> scaleDimBound(const DimBound &b, int64_t k) {
+  MLIRContext *ctx = b.lbMap.getContext();
+  if (b.size == 0)
+    return makeConstBound(0, 0, ctx);
+  if (k == 0)
+    return makeConstBound(0, 1, ctx);
+  int64_t absK = k > 0 ? k : -k;
+  if (b.size - 1 > (std::numeric_limits<int64_t>::max() - 1) / absK)
+    return std::nullopt;
+  int64_t newSize = absK * (b.size - 1) + 1;
+  AffineExpr lbExpr = b.lbMap.getResult(0);
+  AffineExpr newLbExpr = k > 0 ? lbExpr * k : (lbExpr + (b.size - 1)) * k;
+  AffineMap newMap = simplifyAffineMap(
+      AffineMap::get(b.lbMap.getNumDims(), 0, newLbExpr, ctx));
+  SmallVector<Value> ops = b.lbOperands;
+  affine::canonicalizeMapAndOperands(&newMap, &ops);
+  return DimBound{newMap, std::move(ops), newSize};
+}
+
+static std::optional<DimBound> unionDimBounds(const DimBound &a,
+                                              const DimBound &b) {
+  if (a.size == 0)
+    return b;
+  if (b.size == 0)
+    return a;
+  MLIRContext *ctx = a.lbMap.getContext();
+  int64_t lbA = 0, lbB = 0;
+  if (a.isConstantLB(&lbA) && b.isConstantLB(&lbB)) {
+    int64_t lo = std::min(lbA, lbB);
+    int64_t hi = std::max(lbA + a.size, lbB + b.size);
+    return makeConstBound(lo, hi - lo, ctx);
+  }
+  AffineMap mA = a.lbMap, mB = b.lbMap;
+  SmallVector<Value> oA = a.lbOperands, oB = b.lbOperands, merged;
+  mergeOperands(mA, oA, mB, oB, merged);
+  AffineMap diff = simplifyAffineMap(
+      AffineMap::get(merged.size(), 0, mB.getResult(0) - mA.getResult(0), ctx));
+  if (!diff.isSingleConstant())
+    return std::nullopt;
+  int64_t d = diff.getSingleConstantResult();
+  if (d >= 0) {
+    int64_t newSize = std::max(a.size, d + b.size);
+    return DimBound{a.lbMap, a.lbOperands, newSize};
+  }
+  int64_t newSize = std::max(b.size, (-d) + a.size);
+  return DimBound{b.lbMap, b.lbOperands, newSize};
+}
+
+static bool isProvenNonNegative(Value v, unsigned depth = 0) {
+  if (depth > 8)
+    return false;
+  APInt c;
+  if (matchPattern(v, m_ConstantInt(&c)))
+    return c.getSExtValue() >= 0;
+  if (v.getType().isIndex()) {
+    auto lb = ValueBoundsConstraintSet::computeConstantBound(
+        presburger::BoundType::LB, v);
+    if (succeeded(lb) && *lb >= 0)
+      return true;
+  }
+  if (auto arg = dyn_cast<BlockArgument>(v)) {
+    if (auto loop =
+            dyn_cast<LoopLikeOpInterface>(arg.getOwner()->getParentOp())) {
+      auto ivs = loop.getLoopInductionVars();
+      auto lbs = loop.getLoopLowerBounds();
+      auto steps = loop.getLoopSteps();
+      if (ivs && lbs && steps) {
+        for (auto [idx, iv] : llvm::enumerate(*ivs)) {
+          if (iv != v)
+            continue;
+          auto stepC = getConstantIntValue((*steps)[idx]);
+          if (!stepC || *stepC <= 0)
+            return false;
+          if (auto lbC = getConstantIntValue((*lbs)[idx]))
+            return *lbC >= 0;
+          if (auto lbVal = dyn_cast<Value>((*lbs)[idx]))
+            return isProvenNonNegative(lbVal, depth + 1);
+        }
+      }
+    }
+    return false;
+  }
+  Operation *def = v.getDefiningOp();
+  if (!def)
+    return false;
+  if (isa<arith::RemUIOp, memref::DimOp, memref::RankOp>(def))
+    return true;
+  if (auto andOp = dyn_cast<arith::AndIOp>(def)) {
+    APInt lhsC, rhsC;
+    return (matchPattern(andOp.getLhs(), m_ConstantInt(&lhsC)) &&
+            lhsC.getSExtValue() >= 0) ||
+           (matchPattern(andOp.getRhs(), m_ConstantInt(&rhsC)) &&
+            rhsC.getSExtValue() >= 0);
+  }
+  if (auto remOp = dyn_cast<arith::RemSIOp>(def)) {
+    APInt rhsC;
+    return matchPattern(remOp.getRhs(), m_ConstantInt(&rhsC)) &&
+           rhsC.getSExtValue() > 0 &&
+           isProvenNonNegative(remOp.getLhs(), depth + 1);
+  }
+  if (isa<arith::AddIOp, arith::MulIOp, arith::MinSIOp>(def))
+    return isProvenNonNegative(def->getOperand(0), depth + 1) &&
+           isProvenNonNegative(def->getOperand(1), depth + 1);
+  if (isa<arith::MaxSIOp>(def))
+    return isProvenNonNegative(def->getOperand(0), depth + 1) ||
+           isProvenNonNegative(def->getOperand(1), depth + 1);
+  if (auto selOp = dyn_cast<arith::SelectOp>(def))
+    return isProvenNonNegative(selOp.getTrueValue(), depth + 1) &&
+           isProvenNonNegative(selOp.getFalseValue(), depth + 1);
+  return false;
+}
+
+static std::optional<DimBound>
+tryValueBounds(const ValueBoundsConstraintSet::Variable &var,
+               LoopLikeOpInterface fwdLoop, DominanceInfo &dom,
+               MLIRContext *ctx) {
+  auto lbConst = ValueBoundsConstraintSet::computeConstantBound(
+      presburger::BoundType::LB, var);
+  auto ubConst = ValueBoundsConstraintSet::computeConstantBound(
+      presburger::BoundType::UB, var);
+  if (succeeded(lbConst) && succeeded(ubConst)) {
+    int64_t sz = *ubConst <= *lbConst ? 0 : *ubConst - *lbConst;
+    return makeConstBound(*lbConst, sz, ctx);
+  }
+
+  auto stopCond = [&](Value v, std::optional<int64_t> dim,
+                      ValueBoundsConstraintSet &) {
+    return !dim.has_value() && isLoopInvariantValue(v, fwdLoop, dom);
+  };
+  AffineMap lbMap, ubMap;
+  ValueDimList lbOps, ubOps;
+  if (failed(ValueBoundsConstraintSet::computeBound(
+          lbMap, lbOps, presburger::BoundType::LB, var, stopCond)) ||
+      failed(ValueBoundsConstraintSet::computeBound(
+          ubMap, ubOps, presburger::BoundType::UB, var, stopCond)))
+    return std::nullopt;
+
+  auto extractInvariantOps = [&](const ValueDimList &list,
+                                 SmallVectorImpl<Value> &out) {
+    for (const auto &[val, dim] : list) {
+      if (dim.has_value() || !isLoopInvariantValue(val, fwdLoop, dom))
+        return false;
+      out.push_back(val);
+    }
+    return true;
+  };
+  SmallVector<Value> lbVals, ubVals;
+  if (!extractInvariantOps(lbOps, lbVals) ||
+      !extractInvariantOps(ubOps, ubVals))
+    return std::nullopt;
+
+  SmallVector<Value> merged;
+  mergeOperands(lbMap, lbVals, ubMap, ubVals, merged);
+  std::optional<DimBound> best;
+  for (AffineExpr lbExpr : lbMap.getResults()) {
+    for (AffineExpr ubExpr : ubMap.getResults()) {
+      AffineMap diff = simplifyAffineMap(
+          AffineMap::get(merged.size(), 0, ubExpr - lbExpr, ctx));
+      if (!diff.isSingleConstant())
+        continue;
+      int64_t d = diff.getSingleConstantResult();
+      int64_t sz = d <= 0 ? 0 : d;
+      if (best && best->size <= sz)
+        continue;
+      AffineMap resMap =
+          simplifyAffineMap(AffineMap::get(merged.size(), 0, lbExpr, ctx));
+      SmallVector<Value> resOps = merged;
+      affine::canonicalizeMapAndOperands(&resMap, &resOps);
+      best = DimBound{resMap, std::move(resOps), sz};
+    }
+  }
+  return best;
+}
+
+static std::optional<DimBound>
+computeAffineExprBound(AffineExpr expr, ValueRange dims, ValueRange syms,
+                       LoopLikeOpInterface fwdLoop, DominanceInfo &dom,
+                       unsigned depth = 0);
+
+static std::optional<DimBound> computeValueBound(Value v,
+                                                 LoopLikeOpInterface fwdLoop,
+                                                 DominanceInfo &dom,
+                                                 unsigned depth = 0) {
+  if (depth > 8 || !v.getType().isIndex())
+    return std::nullopt;
+  MLIRContext *ctx = v.getContext();
+  APInt c;
+  if (matchPattern(v, m_ConstantInt(&c)))
+    return makeConstBound(c.getSExtValue(), 1, ctx);
+  if (isLoopInvariantValue(v, fwdLoop, dom))
+    return makeValueBound(v);
+
+  std::optional<DimBound> result;
+  auto pickTighter = [&](std::optional<DimBound> cand) {
+    if (!cand)
+      return;
+    if (!result || cand->size < result->size)
+      result = std::move(cand);
+  };
+
+  if (auto arg = dyn_cast<BlockArgument>(v)) {
+    if (auto loop =
+            dyn_cast<LoopLikeOpInterface>(arg.getOwner()->getParentOp())) {
+      auto ivs = loop.getLoopInductionVars();
+      auto lbs = loop.getLoopLowerBounds();
+      auto ubs = loop.getLoopUpperBounds();
+      auto steps = loop.getLoopSteps();
+      if (ivs && lbs && ubs && steps) {
+        for (auto [idx, iv] : llvm::enumerate(*ivs)) {
+          if (iv != v)
+            continue;
+          auto stepC = getConstantIntValue((*steps)[idx]);
+          if (stepC && *stepC > 0) {
+            auto ofrBound = [&](OpFoldResult ofr) -> std::optional<DimBound> {
+              if (auto ivC = getConstantIntValue(ofr))
+                return makeConstBound(*ivC, 1, ctx);
+              return computeValueBound(cast<Value>(ofr), fwdLoop, dom,
+                                       depth + 1);
+            };
+            auto lbB = ofrBound((*lbs)[idx]);
+            auto ubB = ofrBound((*ubs)[idx]);
+            if (lbB && ubB) {
+              AffineMap mL = lbB->lbMap, mU = ubB->lbMap;
+              SmallVector<Value> oL = lbB->lbOperands, oU = ubB->lbOperands,
+                                 merged;
+              mergeOperands(mL, oL, mU, oU, merged);
+              AffineMap diff = simplifyAffineMap(AffineMap::get(
+                  merged.size(), 0, mU.getResult(0) - mL.getResult(0), ctx));
+              if (diff.isSingleConstant()) {
+                int64_t span = diff.getSingleConstantResult() + (ubB->size - 1);
+                int64_t sz = span <= 0 ? 0 : span;
+                pickTighter(DimBound{lbB->lbMap, lbB->lbOperands, sz});
+              }
+            }
+          }
+          break;
+        }
+      }
+    }
+  } else if (Operation *def = v.getDefiningOp()) {
+    if (auto remU = dyn_cast<arith::RemUIOp>(def)) {
+      if (matchPattern(remU.getRhs(), m_ConstantInt(&c)) &&
+          c.getSExtValue() > 0)
+        pickTighter(makeConstBound(0, c.getSExtValue(), ctx));
+    } else if (auto remS = dyn_cast<arith::RemSIOp>(def)) {
+      if (matchPattern(remS.getRhs(), m_ConstantInt(&c)) &&
+          c.getSExtValue() > 0 && isProvenNonNegative(remS.getLhs()))
+        pickTighter(makeConstBound(0, c.getSExtValue(), ctx));
+    } else if (auto andOp = dyn_cast<arith::AndIOp>(def)) {
+      if (matchPattern(andOp.getLhs(), m_ConstantInt(&c)) &&
+          c.getSExtValue() >= 0)
+        pickTighter(makeConstBound(0, c.getSExtValue() + 1, ctx));
+      else if (matchPattern(andOp.getRhs(), m_ConstantInt(&c)) &&
+               c.getSExtValue() >= 0)
+        pickTighter(makeConstBound(0, c.getSExtValue() + 1, ctx));
+    } else if (auto minU = dyn_cast<arith::MinUIOp>(def)) {
+      for (Value op : {minU.getLhs(), minU.getRhs()}) {
+        if (auto b = computeValueBound(op, fwdLoop, dom, depth + 1)) {
+          int64_t lbC = 0;
+          if (b->isConstantLB(&lbC) && lbC >= 0)
+            pickTighter(makeConstBound(0, lbC + b->size, ctx));
+        }
+      }
+    } else if (auto minS = dyn_cast<arith::MinSIOp>(def)) {
+      auto bL = computeValueBound(minS.getLhs(), fwdLoop, dom, depth + 1);
+      auto bR = computeValueBound(minS.getRhs(), fwdLoop, dom, depth + 1);
+      int64_t lbL = 0, lbR = 0;
+      if (bL && bR && bL->isConstantLB(&lbL) && bR->isConstantLB(&lbR)) {
+        int64_t lo = std::min(lbL, lbR);
+        int64_t hi = std::min(lbL + bL->size, lbR + bR->size);
+        pickTighter(makeConstBound(lo, hi <= lo ? 0 : hi - lo, ctx));
+      } else if (isProvenNonNegative(minS.getLhs()) &&
+                 isProvenNonNegative(minS.getRhs())) {
+        for (const auto &b : {bL, bR}) {
+          int64_t lbC = 0;
+          if (b && b->isConstantLB(&lbC))
+            pickTighter(
+                makeConstBound(0, std::max<int64_t>(0, lbC + b->size), ctx));
+        }
+      }
+    } else if (auto maxS = dyn_cast<arith::MaxSIOp>(def)) {
+      auto bL = computeValueBound(maxS.getLhs(), fwdLoop, dom, depth + 1);
+      auto bR = computeValueBound(maxS.getRhs(), fwdLoop, dom, depth + 1);
+      int64_t lbL = 0, lbR = 0;
+      if (bL && bR && bL->isConstantLB(&lbL) && bR->isConstantLB(&lbR)) {
+        int64_t lo = std::max(lbL, lbR);
+        int64_t hi = std::max(lbL + bL->size, lbR + bR->size);
+        pickTighter(makeConstBound(lo, hi <= lo ? 0 : hi - lo, ctx));
+      }
+    } else if (auto addOp = dyn_cast<arith::AddIOp>(def)) {
+      auto bL = computeValueBound(addOp.getLhs(), fwdLoop, dom, depth + 1);
+      auto bR = computeValueBound(addOp.getRhs(), fwdLoop, dom, depth + 1);
+      if (bL && bR)
+        pickTighter(addDimBounds(*bL, *bR));
+    } else if (auto subOp = dyn_cast<arith::SubIOp>(def)) {
+      auto bL = computeValueBound(subOp.getLhs(), fwdLoop, dom, depth + 1);
+      auto bR = computeValueBound(subOp.getRhs(), fwdLoop, dom, depth + 1);
+      if (bL && bR) {
+        if (auto negR = scaleDimBound(*bR, -1))
+          pickTighter(addDimBounds(*bL, *negR));
+      }
+    } else if (auto mulOp = dyn_cast<arith::MulIOp>(def)) {
+      if (matchPattern(mulOp.getRhs(), m_ConstantInt(&c))) {
+        if (auto bL =
+                computeValueBound(mulOp.getLhs(), fwdLoop, dom, depth + 1))
+          pickTighter(scaleDimBound(*bL, c.getSExtValue()));
+      } else if (matchPattern(mulOp.getLhs(), m_ConstantInt(&c))) {
+        if (auto bR =
+                computeValueBound(mulOp.getRhs(), fwdLoop, dom, depth + 1))
+          pickTighter(scaleDimBound(*bR, c.getSExtValue()));
+      }
+    } else if (auto selOp = dyn_cast<arith::SelectOp>(def)) {
+      auto bT =
+          computeValueBound(selOp.getTrueValue(), fwdLoop, dom, depth + 1);
+      auto bF =
+          computeValueBound(selOp.getFalseValue(), fwdLoop, dom, depth + 1);
+      if (bT && bF)
+        pickTighter(unionDimBounds(*bT, *bF));
+    } else if (auto applyOp = dyn_cast<affine::AffineApplyOp>(def)) {
+      AffineMap map = applyOp.getAffineMap();
+      if (map.getNumResults() == 1) {
+        pickTighter(computeAffineExprBound(
+            map.getResult(0), applyOp.getDimOperands(),
+            applyOp.getSymbolOperands(), fwdLoop, dom, depth + 1));
+      }
+    }
+  }
+
+  pickTighter(
+      tryValueBounds(ValueBoundsConstraintSet::Variable(v), fwdLoop, dom, ctx));
+  return result;
+}
+
+static std::optional<DimBound>
+computeAffineExprBound(AffineExpr expr, ValueRange dims, ValueRange syms,
+                       LoopLikeOpInterface fwdLoop, DominanceInfo &dom,
+                       unsigned depth) {
+  if (depth > 8)
+    return std::nullopt;
+  MLIRContext *ctx = expr.getContext();
+  if (auto cst = dyn_cast<AffineConstantExpr>(expr))
+    return makeConstBound(cst.getValue(), 1, ctx);
+  if (auto dim = dyn_cast<AffineDimExpr>(expr))
+    return computeValueBound(dims[dim.getPosition()], fwdLoop, dom, depth + 1);
+  if (auto sym = dyn_cast<AffineSymbolExpr>(expr))
+    return computeValueBound(syms[sym.getPosition()], fwdLoop, dom, depth + 1);
+  auto bin = dyn_cast<AffineBinaryOpExpr>(expr);
+  if (!bin)
+    return std::nullopt;
+  switch (bin.getKind()) {
+  case AffineExprKind::Add: {
+    auto bL = computeAffineExprBound(bin.getLHS(), dims, syms, fwdLoop, dom,
+                                     depth + 1);
+    auto bR = computeAffineExprBound(bin.getRHS(), dims, syms, fwdLoop, dom,
+                                     depth + 1);
+    if (bL && bR)
+      return addDimBounds(*bL, *bR);
+    return std::nullopt;
+  }
+  case AffineExprKind::Mul: {
+    if (auto rhsC = dyn_cast<AffineConstantExpr>(bin.getRHS())) {
+      if (auto bL = computeAffineExprBound(bin.getLHS(), dims, syms, fwdLoop,
+                                           dom, depth + 1))
+        return scaleDimBound(*bL, rhsC.getValue());
+    } else if (auto lhsC = dyn_cast<AffineConstantExpr>(bin.getLHS())) {
+      if (auto bR = computeAffineExprBound(bin.getRHS(), dims, syms, fwdLoop,
+                                           dom, depth + 1))
+        return scaleDimBound(*bR, lhsC.getValue());
+    }
+    return std::nullopt;
+  }
+  case AffineExprKind::Mod: {
+    if (auto rhsC = dyn_cast<AffineConstantExpr>(bin.getRHS())) {
+      int64_t mod = rhsC.getValue();
+      if (mod > 0)
+        return makeConstBound(0, mod, ctx);
+    }
+    return std::nullopt;
+  }
+  case AffineExprKind::FloorDiv:
+  case AffineExprKind::CeilDiv: {
+    auto rhsC = dyn_cast<AffineConstantExpr>(bin.getRHS());
+    if (!rhsC || rhsC.getValue() <= 0)
+      return std::nullopt;
+    auto bL = computeAffineExprBound(bin.getLHS(), dims, syms, fwdLoop, dom,
+                                     depth + 1);
+    int64_t lbC = 0;
+    if (!bL || !bL->isConstantLB(&lbC))
+      return std::nullopt;
+    if (bL->size == 0)
+      return makeConstBound(0, 0, ctx);
+    int64_t d = rhsC.getValue();
+    int64_t hiC = lbC + bL->size - 1;
+    int64_t qLo = bin.getKind() == AffineExprKind::FloorDiv
+                      ? llvm::divideFloorSigned(lbC, d)
+                      : llvm::divideCeilSigned(lbC, d);
+    int64_t qHi = bin.getKind() == AffineExprKind::FloorDiv
+                      ? llvm::divideFloorSigned(hiC, d)
+                      : llvm::divideCeilSigned(hiC, d);
+    return makeConstBound(qLo, qHi - qLo + 1, ctx);
+  }
+  default:
+    return std::nullopt;
+  }
+}
+
+static std::optional<int64_t> getStaticTripCount(LoopLikeOpInterface loop) {
+  auto lbs = loop.getLoopLowerBounds();
+  auto ubs = loop.getLoopUpperBounds();
+  auto steps = loop.getLoopSteps();
+  if (!lbs || !ubs || !steps || lbs->empty())
+    return std::nullopt;
+  int64_t total = 1;
+  for (auto [lbOfr, ubOfr, stepOfr] : llvm::zip(*lbs, *ubs, *steps)) {
+    auto lb = getConstantIntValue(lbOfr);
+    auto ub = getConstantIntValue(ubOfr);
+    auto step = getConstantIntValue(stepOfr);
+    if (!lb || !ub || !step || *step <= 0)
+      return std::nullopt;
+    int64_t trips = *ub <= *lb ? 0 : (*ub - *lb + *step - 1) / *step;
+    if (trips > 0 && total > std::numeric_limits<int64_t>::max() / trips)
+      return std::nullopt;
+    total *= trips;
+  }
+  return total;
+}
+
+static bool mayAliasMemRef(Value a, Value b,
+                           LocalAliasAnalysis &aliasAnalysis) {
+  if (a == b)
+    return true;
+  if (aliasAnalysis.alias(a, b).isNo())
+    return false;
+  auto getRootArg = [](Value v) -> BlockArgument {
+    while (auto view = v.getDefiningOp<ViewLikeOpInterface>())
+      v = view.getViewSource();
+    return dyn_cast<BlockArgument>(v);
+  };
+  if (auto argA = getRootArg(a)) {
+    if (auto argB = getRootArg(b)) {
+      if (argA != argB && argA.getOwner() == argB.getOwner()) {
+        if (auto func =
+                dyn_cast<FunctionOpInterface>(argA.getOwner()->getParentOp())) {
+          if (func.getArgAttr(argA.getArgNumber(), "llvm.noalias") ||
+              func.getArgAttr(argB.getArgNumber(), "llvm.noalias"))
+            return false;
+        }
+      }
+    }
+  }
+  return true;
+}
+
+static Value materializeAffineBound(ImplicitLocOpBuilder &builder,
+                                    AffineMap map, ArrayRef<Value> operands) {
+  if (map.isSingleConstant())
+    return arith::ConstantIndexOp::create(builder,
+                                          map.getSingleConstantResult());
+  if (map.isIdentity() && operands.size() == 1)
+    return operands[0];
+  auto expanded = affine::expandAffineMap(builder, builder.getLoc(), map,
+                                          SmallVector<Value>(operands));
+  assert(expanded && expanded->size() == 1 &&
+         "failed to expand affine lower bound map");
+  return (*expanded)[0];
+}
+
+} // namespace
+
+static LogicalResult
+loopInvariantCacheImpl(CacheInfo info, LoopLikeOpInterface fwdLoop,
+                       LoopLikeOpInterface revLoop, IRMapping &mapping,
+                       SmallVectorImpl<CachedSliceEntry> &cachedSlices,
+                       int64_t threshold) {
   Operation *definingOp = info.pushedValue().getDefiningOp();
   if (!definingOp)
     return failure();
-  auto loadOp = dyn_cast<memref::LoadOp>(definingOp);
-  if (!loadOp)
-    return failure();
-  auto alloc = loadOp.getMemRef();
-  auto allocaOp = dyn_cast_if_present<memref::AllocaOp>(alloc.getDefiningOp());
-  if (!allocaOp)
-    return failure();
-  // This transformation will store the entire allocation, so only store when
-  // it has a known "small" size.
-  if (!(allocaOp.getType().hasStaticShape() &&
-        allocaOp.getType().getNumElements() <= threshold)) {
+
+  Value memref;
+  MemRefType memrefType;
+  SmallVector<Value> loadOperands;
+  std::optional<AffineMap> affineMap;
+  if (auto loadOp = dyn_cast<memref::LoadOp>(definingOp)) {
+    memref = loadOp.getMemRef();
+    memrefType = loadOp.getMemRefType();
+    loadOperands.assign(loadOp.getIndices().begin(), loadOp.getIndices().end());
+  } else if (auto affineLoad = dyn_cast<affine::AffineLoadOp>(definingOp)) {
+    memref = affineLoad.getMemref();
+    memrefType = affineLoad.getMemRefType();
+    loadOperands.assign(affineLoad.getMapOperands().begin(),
+                        affineLoad.getMapOperands().end());
+    affineMap = affineLoad.getAffineMap();
+  } else {
     return failure();
   }
 
-  // Check if the allocation is written to inside the loop body
-  // TODO: need alias analysis for full correctness
-  auto walkResult = fwdLoop->walk([&alloc](Operation *op) {
-    if (hasEffect<MemoryEffects::Write>(op, alloc) || hasUnknownEffects(op))
+  DominanceInfo dom;
+  if (!isLoopInvariantValue(memref, fwdLoop, dom))
+    return failure();
+
+  // Check if the memref (or any aliasing view) may be written or freed inside
+  // the loop body.
+  LocalAliasAnalysis aliasAnalysis;
+  auto walkResult = fwdLoop->walk([&](Operation *op) {
+    if (auto memEffect = dyn_cast<MemoryEffectOpInterface>(op)) {
+      SmallVector<MemoryEffects::EffectInstance> effects;
+      memEffect.getEffects(effects);
+      for (const auto &effect : effects) {
+        if (!isa<MemoryEffects::Write, MemoryEffects::Free>(effect.getEffect()))
+          continue;
+        Value target = effect.getValue();
+        if (!target || mayAliasMemRef(target, memref, aliasAnalysis))
+          return WalkResult::interrupt();
+      }
+      return WalkResult::advance();
+    }
+    if (!op->hasTrait<OpTrait::HasRecursiveMemoryEffects>())
       return WalkResult::interrupt();
     return WalkResult::advance();
   });
   if (walkResult.wasInterrupted())
     return failure();
 
-  ImplicitLocOpBuilder builder(alloc.getLoc(), info.initOp);
-  // Find the values that are necessary to re-compute the indices
+  // Compute tight, loop-invariant lower/upper bounds for each dimension of the
+  // load. Static memref dimensions always provide a fallback `[0, dimSize)`.
+  MLIRContext *ctx = definingOp->getContext();
+  int64_t rank = memrefType.getRank();
+  SmallVector<DimBound> sliceBounds;
+  sliceBounds.reserve(rank);
+  int64_t totalElements = 1;
+  for (int64_t d = 0; d < rank; ++d) {
+    std::optional<DimBound> idxBound;
+    if (affineMap) {
+      ValueRange dimOps =
+          ArrayRef<Value>(loadOperands).take_front(affineMap->getNumDims());
+      ValueRange symOps =
+          ArrayRef<Value>(loadOperands).drop_front(affineMap->getNumDims());
+      idxBound = computeAffineExprBound(affineMap->getResult(d), dimOps, symOps,
+                                        fwdLoop, dom);
+      AffineMap singleMap =
+          AffineMap::get(affineMap->getNumDims(), affineMap->getNumSymbols(),
+                         affineMap->getResult(d), ctx);
+      auto vb = tryValueBounds(
+          ValueBoundsConstraintSet::Variable(singleMap, loadOperands), fwdLoop,
+          dom, ctx);
+      if (vb && (!idxBound || vb->size < idxBound->size))
+        idxBound = std::move(vb);
+    } else {
+      idxBound = computeValueBound(loadOperands[d], fwdLoop, dom);
+    }
+
+    DimBound dimBound;
+    if (!memrefType.isDynamicDim(d)) {
+      int64_t dimSize = memrefType.getDimSize(d);
+      dimBound = makeConstBound(0, dimSize, ctx);
+      if (idxBound) {
+        int64_t lbC = 0;
+        if (idxBound->isConstantLB(&lbC)) {
+          int64_t lo = std::max<int64_t>(0, lbC);
+          int64_t hi = std::min<int64_t>(dimSize, lbC + idxBound->size);
+          dimBound = makeConstBound(lo, hi <= lo ? 0 : hi - lo, ctx);
+        } else if (idxBound->size < dimSize) {
+          dimBound = *idxBound;
+        }
+      }
+    } else {
+      if (!idxBound)
+        return failure();
+      int64_t lbC = 0;
+      if (idxBound->isConstantLB(&lbC) && lbC < 0) {
+        int64_t hi = lbC + idxBound->size;
+        dimBound = makeConstBound(0, hi <= 0 ? 0 : hi, ctx);
+      } else {
+        dimBound = *idxBound;
+      }
+    }
+
+    if (dimBound.size <= 0)
+      return failure();
+    if (totalElements > std::numeric_limits<int64_t>::max() / dimBound.size)
+      return failure();
+    totalElements *= dimBound.size;
+    sliceBounds.push_back(std::move(dimBound));
+  }
+
+  if (totalElements > threshold)
+    return failure();
+  if (auto tripCount = getStaticTripCount(fwdLoop)) {
+    if (totalElements >= *tripCount)
+      return failure();
+  }
+
+  // Find the values and operations needed to re-compute the load operands (and
+  // any dynamic slice lower bounds) in the reverse loop.
   SmallVector<Value> pushedValues;
   SmallVector<Operation *> toCopy;
   std::queue<Value> worklist;
   DenseSet<Value> visited;
-  for (Value idx : loadOp.getIndices()) {
-    worklist.push(idx);
-    visited.insert(idx);
-  }
+  auto enqueue = [&](Value v) {
+    if (visited.insert(v).second)
+      worklist.push(v);
+  };
+  for (Value idx : loadOperands)
+    enqueue(idx);
+  for (const DimBound &b : sliceBounds)
+    for (Value op : b.lbOperands)
+      enqueue(op);
+
   while (!worklist.empty()) {
     Value curr = worklist.front();
     worklist.pop();
 
     if (mapping.contains(curr))
       continue;
-    DominanceInfo dom;
-    // Check if we can just re-use the same value in forward and reverse
     if (dom.dominates(curr, revLoop))
       continue;
 
-    if (Operation *definingOp = curr.getDefiningOp()) {
-      // Push values that are defined outside the fwd loop while copying ops
-      // defined inside
-      if (fwdLoop->isProperAncestor(definingOp)) {
-        toCopy.push_back(definingOp);
-        for (Value operand : definingOp->getOperands()) {
-          if (!visited.contains(operand)) {
-            visited.insert(operand);
-            worklist.push(operand);
-          }
-        }
+    if (Operation *defOp = curr.getDefiningOp()) {
+      if (fwdLoop->isProperAncestor(defOp)) {
+        if (!isMemoryEffectFree(defOp) || defOp->getNumRegions() > 0)
+          return failure();
+        toCopy.push_back(defOp);
+        for (Value operand : defOp->getOperands())
+          enqueue(operand);
       } else {
         pushedValues.push_back(curr);
       }
+    } else if (auto arg = dyn_cast<BlockArgument>(curr)) {
+      if (fwdLoop->isAncestor(arg.getOwner()->getParentOp()))
+        return failure();
+      pushedValues.push_back(curr);
     } else {
       return failure();
     }
   }
 
-  // Make new caches for the values needed to store the indices
+  if (!computeTopologicalSorting(toCopy))
+    return failure();
+
+  ImplicitLocOpBuilder builder(memref.getLoc(), info.initOp);
+
+  // Make new caches for the values needed to store the indices / lower bounds.
   builder.setInsertionPoint(info.initOp);
   SmallVector<Value> newInits =
       llvm::map_to_vector(pushedValues, [&](Value val) -> Value {
@@ -1335,57 +1999,227 @@ static LogicalResult loopInvariantCacheImpl(CacheInfo info,
     mapping.map(val, popped);
   }
 
-  // Clone the ops necessary to re-compute the load indices
+  // Clone the ops necessary to re-compute the load indices.
   builder.setInsertionPoint(info.popOp);
-  for (Operation *op : llvm::reverse(toCopy)) {
+  for (Operation *op : toCopy) {
+    if (auto applyOp = dyn_cast<affine::AffineApplyOp>(op)) {
+      SmallVector<Value> ops =
+          llvm::map_to_vector(applyOp.getOperands(), [&](Value v) {
+            return mapping.lookupOrDefault(v);
+          });
+      unsigned numDims = applyOp.getAffineMap().getNumDims();
+      bool validAffine = true;
+      for (unsigned i = 0; i < ops.size(); ++i) {
+        if (i < numDims ? !affine::isValidDim(ops[i])
+                        : !affine::isValidSymbol(ops[i])) {
+          validAffine = false;
+          break;
+        }
+      }
+      if (validAffine) {
+        builder.clone(*op, mapping);
+      } else {
+        auto expanded = affine::expandAffineMap(builder, applyOp.getLoc(),
+                                                applyOp.getAffineMap(), ops);
+        assert(expanded && expanded->size() == 1 &&
+               "failed to expand affine.apply map");
+        mapping.map(applyOp.getResult(), (*expanded)[0]);
+      }
+      continue;
+    }
     builder.clone(*op, mapping);
   }
 
+  SmallVector<int64_t> sliceShape;
+  sliceShape.reserve(rank);
+  for (const DimBound &b : sliceBounds)
+    sliceShape.push_back(b.size);
+  auto copyType =
+      MemRefType::get(sliceShape, memrefType.getElementType(),
+                      MemRefLayoutAttrInterface(), memrefType.getMemorySpace());
+
   Value cachedMemRef;
-  if (mapping.contains(alloc)) {
-    cachedMemRef = mapping.lookup(alloc);
-  } else {
+  for (const CachedSliceEntry &entry : cachedSlices) {
+    if (entry.memref == memref && entry.bounds == sliceBounds) {
+      cachedMemRef = entry.cachedMemRef;
+      break;
+    }
+  }
+  if (!cachedMemRef) {
     builder.setInsertionPoint(info.initOp);
     Value newCache = enzyme::InitOp::create(
-        builder, enzyme::CacheType::get(builder.getContext(), alloc.getType()));
+        builder, enzyme::CacheType::get(builder.getContext(), copyType));
 
     builder.setInsertionPoint(fwdLoop);
-    Value copyAlloc = memref::AllocOp::create(
-        builder, allocaOp.getType(), allocaOp.getDynamicSizes(),
-        allocaOp.getSymbolOperands(), allocaOp.getAlignmentAttr());
-    // Copy over the contents in a loop nest so any resulting subviews may be
-    // folded
+    IntegerAttr alignmentAttr;
+    if (auto allocaOp =
+            dyn_cast_if_present<memref::AllocaOp>(memref.getDefiningOp()))
+      alignmentAttr = allocaOp.getAlignmentAttr();
+    else if (auto allocOp =
+                 dyn_cast_if_present<memref::AllocOp>(memref.getDefiningOp()))
+      alignmentAttr = allocOp.getAlignmentAttr();
+    Value copyAlloc = memref::AllocOp::create(builder, copyType, ValueRange{},
+                                              ValueRange{}, alignmentAttr);
+
+    // Copy the accessed slice in a loop nest so enclosing subviews may fold.
+    // Clamp the copy bounds against the source memref dimensions so the copy
+    // remains in-bounds even if `fwdLoop` executes zero iterations.
     Value zero = arith::ConstantIndexOp::create(builder, 0);
     Value one = arith::ConstantIndexOp::create(builder, 1);
 
-    int64_t rank = loadOp.getMemRefType().getRank();
     SmallVector<Value> lbs(rank, zero);
     SmallVector<Value> steps(rank, one);
     SmallVector<Value> ubs(rank);
-    for (int64_t i = 0; i < rank; i++)
-      ubs[i] = memref::DimOp::create(builder, alloc, i);
+    SmallVector<Value> fwdSliceLbs(rank);
+    SmallVector<bool> isZeroLb(rank, false);
+    for (int64_t i = 0; i < rank; ++i) {
+      int64_t lbC = 0;
+      bool constLb = sliceBounds[i].isConstantLB(&lbC);
+      bool fullStaticDim = constLb && lbC == 0 && !memrefType.isDynamicDim(i) &&
+                           sliceBounds[i].size == memrefType.getDimSize(i);
+      if (constLb && lbC == 0)
+        isZeroLb[i] = true;
+      else
+        fwdSliceLbs[i] = materializeAffineBound(builder, sliceBounds[i].lbMap,
+                                                sliceBounds[i].lbOperands);
+
+      if (fullStaticDim) {
+        ubs[i] = memref::DimOp::create(builder, memref, i);
+      } else if (constLb && lbC >= 0 && !memrefType.isDynamicDim(i) &&
+                 lbC + sliceBounds[i].size <= memrefType.getDimSize(i)) {
+        ubs[i] = arith::ConstantIndexOp::create(builder, sliceBounds[i].size);
+      } else {
+        Value dimVal = memref::DimOp::create(builder, memref, i);
+        Value sizeVal =
+            arith::ConstantIndexOp::create(builder, sliceBounds[i].size);
+        if (!constLb || lbC < 0) {
+          Value negLb = arith::SubIOp::create(builder, zero, fwdSliceLbs[i]);
+          lbs[i] = arith::MaxSIOp::create(builder, zero, negLb);
+        }
+        Value avail = isZeroLb[i] ? dimVal
+                                  : arith::SubIOp::create(builder, dimVal,
+                                                          fwdSliceLbs[i]);
+        Value availNonNeg = arith::MaxSIOp::create(builder, zero, avail);
+        ubs[i] = arith::MinSIOp::create(builder, sizeVal, availNonNeg);
+      }
+    }
 
     scf::buildLoopNest(
         builder, builder.getLoc(), lbs, ubs, steps,
         [&](OpBuilder &bodyBuilder, Location loc, ValueRange ivs) {
-          Value loaded = memref::LoadOp::create(bodyBuilder, loc, alloc, ivs);
+          SmallVector<Value> srcIndices(rank);
+          for (int64_t i = 0; i < rank; ++i) {
+            srcIndices[i] =
+                isZeroLb[i] ? ivs[i]
+                            : Value(arith::AddIOp::create(
+                                  bodyBuilder, loc, fwdSliceLbs[i], ivs[i]));
+          }
+          Value loaded =
+              memref::LoadOp::create(bodyBuilder, loc, memref, srcIndices);
           memref::StoreOp::create(bodyBuilder, loc, loaded, copyAlloc, ivs);
         });
 
     enzyme::PushOp::create(builder, newCache, copyAlloc);
 
     builder.setInsertionPoint(revLoop);
-    cachedMemRef = enzyme::PopOp::create(builder, alloc.getType(), newCache);
-    mapping.map(alloc, cachedMemRef);
+    cachedMemRef = enzyme::PopOp::create(builder, copyType, newCache);
+    cachedSlices.push_back({memref, sliceBounds, cachedMemRef});
   }
 
   builder.setInsertionPoint(info.popOp);
-  SmallVector<Value> revIndices =
-      llvm::map_to_vector(loadOp.getIndices(), [&](Value idx) -> Value {
+  SmallVector<Value> revOperands =
+      llvm::map_to_vector(loadOperands, [&](Value idx) -> Value {
         return mapping.lookupOrDefault(idx);
       });
 
-  Value newLoad = memref::LoadOp::create(builder, cachedMemRef, revIndices);
+  Value newLoad;
+  if (affineMap) {
+    unsigned numDims = affineMap->getNumDims();
+    unsigned numSyms = affineMap->getNumSymbols();
+    bool canKeepAffine = true;
+    SmallVector<Value> combinedOps = revOperands;
+    DenseMap<Value, unsigned> dimPos;
+    DenseMap<Value, unsigned> symPos;
+    for (unsigned i = 0; i < combinedOps.size(); ++i) {
+      if (i < numDims ? !affine::isValidDim(combinedOps[i])
+                      : !affine::isValidSymbol(combinedOps[i])) {
+        canKeepAffine = false;
+        break;
+      }
+      if (i < numDims)
+        dimPos.try_emplace(combinedOps[i], i);
+      else
+        symPos.try_emplace(combinedOps[i], i - numDims);
+    }
+
+    SmallVector<AffineExpr> shiftedResults;
+    SmallVector<Value> extraSyms;
+    if (canKeepAffine) {
+      for (int64_t i = 0; i < rank; ++i) {
+        AffineExpr origExpr = affineMap->getResult(i);
+        SmallVector<AffineExpr> lbDimRepl;
+        for (Value lbOp : sliceBounds[i].lbOperands) {
+          Value revLbOp = mapping.lookupOrDefault(lbOp);
+          if (auto it = dimPos.find(revLbOp); it != dimPos.end()) {
+            lbDimRepl.push_back(
+                getAffineDimExpr(it->second, builder.getContext()));
+          } else if (auto it = symPos.find(revLbOp); it != symPos.end()) {
+            lbDimRepl.push_back(
+                getAffineSymbolExpr(it->second, builder.getContext()));
+          } else if (affine::isValidSymbol(revLbOp)) {
+            unsigned idx = numSyms + extraSyms.size();
+            symPos[revLbOp] = idx;
+            extraSyms.push_back(revLbOp);
+            lbDimRepl.push_back(getAffineSymbolExpr(idx, builder.getContext()));
+          } else {
+            canKeepAffine = false;
+            break;
+          }
+        }
+        if (!canKeepAffine)
+          break;
+        AffineExpr lbExpr =
+            sliceBounds[i].lbMap.getResult(0).replaceDimsAndSymbols(lbDimRepl,
+                                                                    {});
+        shiftedResults.push_back(origExpr - lbExpr);
+      }
+    }
+
+    if (canKeepAffine) {
+      combinedOps.append(extraSyms.begin(), extraSyms.end());
+      AffineMap shiftedMap = simplifyAffineMap(
+          AffineMap::get(numDims, numSyms + extraSyms.size(), shiftedResults,
+                         builder.getContext()));
+      affine::canonicalizeMapAndOperands(&shiftedMap, &combinedOps);
+      newLoad = affine::AffineLoadOp::create(builder, cachedMemRef, shiftedMap,
+                                             combinedOps);
+    }
+  }
+  if (!newLoad) {
+    SmallVector<Value> revIndices;
+    if (affineMap) {
+      auto expanded = affine::expandAffineMap(builder, builder.getLoc(),
+                                              *affineMap, revOperands);
+      assert(expanded && "failed to expand affine.load index map");
+      revIndices = std::move(*expanded);
+    } else {
+      revIndices = std::move(revOperands);
+    }
+    for (int64_t i = 0; i < rank; ++i) {
+      int64_t lbC = 0;
+      if (sliceBounds[i].isConstantLB(&lbC) && lbC == 0)
+        continue;
+      SmallVector<Value> revLbOps =
+          llvm::map_to_vector(sliceBounds[i].lbOperands, [&](Value v) {
+            return mapping.lookupOrDefault(v);
+          });
+      Value revLb =
+          materializeAffineBound(builder, sliceBounds[i].lbMap, revLbOps);
+      revIndices[i] = arith::SubIOp::create(builder, revIndices[i], revLb);
+    }
+    newLoad = memref::LoadOp::create(builder, cachedMemRef, revIndices);
+  }
+
   info.popOp.replaceAllUsesWith(newLoad);
   return success();
 }
@@ -1396,10 +2230,11 @@ void mlir::enzyme::loopInvariantCache(SmallVectorImpl<CacheInfo> &caches,
                                       const IRMapping &fwdrevmap,
                                       int64_t threshold) {
   SmallVector<CacheInfo> newCaches;
+  SmallVector<CachedSliceEntry> cachedSlices;
   IRMapping mapping = fwdrevmap;
   for (auto info : caches) {
     if (succeeded(loopInvariantCacheImpl(info, fwdLoop, revLoop, mapping,
-                                         threshold))) {
+                                         cachedSlices, threshold))) {
       info.pushOp->erase();
       info.popOp->erase();
       info.initOp->erase();

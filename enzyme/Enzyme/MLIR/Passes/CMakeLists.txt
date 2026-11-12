@@ -42,7 +42,9 @@ add_mlir_dialect_library(
   LINK_LIBS
   PUBLIC
   MLIRAffineDialect
+  MLIRAnalysis
   MLIRArithDialect
+  MLIRArithValueBoundsOpInterfaceImpl
   MLIRAsyncDialect
   MLIRAffineUtils
   MLIRFuncDialect
@@ -57,9 +59,11 @@ add_mlir_dialect_library(
   MLIRNVVMDialect
   MLIRPass
   MLIREnzymeAnalysis
+  MLIRSCFDialect
   MLIRSideEffectInterfaces
   MLIRControlFlowInterfaces
   MLIRSCFToControlFlow
   MLIRTransformUtils
+  MLIRValueBoundsOpInterface
   MLIREnzymeAutoDiffInterface
   MLIRImpulse)
