@@ -83,7 +83,6 @@ inline void emit_BLASTA(TGPattern &pattern, raw_ostream &os) {
   os << " ? 1 : 0);\n";
 
   auto argTypeMap = pattern.getArgTypeMap();
-  DenseSet<size_t> mutableArgs = pattern.getMutableArgs();
 
   // Now we can build TypeTrees
   for (size_t j = 0; j < argTypeMap.size(); j++) {
