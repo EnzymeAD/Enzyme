@@ -2626,7 +2626,11 @@ public:
     lowered.insert(&F);
 
     if (Logic.PostOpt) {
+#if LLVM_VERSION_MAJOR >= 24
+      auto Params = llvm::getInlineParams(F.getContext());
+#else
       auto Params = llvm::getInlineParams();
+#endif
 
       llvm::SetVector<CallInst *> Q;
       for (auto call : calls)
@@ -3122,10 +3126,17 @@ AnalysisKey EnzymeNewPM::Key;
 #include "llvm/Transforms/Scalar/LoopFlatten.h"
 #include "llvm/Transforms/Scalar/MergedLoadStoreMotion.h"
 
-static InlineParams getInlineParamsFromOptLevel(OptimizationLevel Level) {
-#if LLVM_VERSION_MAJOR >= 23
+static InlineParams getInlineParamsFromOptLevel(const PassBuilder &PB,
+                                                OptimizationLevel Level) {
+#if LLVM_VERSION_MAJOR >= 24
+  // The inliner thresholds are read from the LLVMContext's library options.
+  return llvm::getInlineParamsFromOptLevel(PB.getContext(),
+                                           static_cast<unsigned>(Level));
+#elif LLVM_VERSION_MAJOR >= 23
+  (void)PB;
   return getInlineParamsFromOptLevel(static_cast<unsigned>(Level));
 #else
+  (void)PB;
   return getInlineParams(Level.getSpeedupLevel(), Level.getSizeLevel());
 #endif
 }
@@ -3270,7 +3281,7 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
   PB.registerPipelineStartEPCallback(loadNVVM);
   PB.registerFullLinkTimeOptimizationEarlyEPCallback(loadNVVM);
 
-  auto preLTOPass = [](ModulePassManager &MPM, OptimizationLevel Level) {
+  auto preLTOPass = [&PB](ModulePassManager &MPM, OptimizationLevel Level) {
     // Create a function that performs CFI checks for cross-DSO calls with
     // targets in the current module.
     MPM.addPass(CrossDSOCFIPass());
@@ -3389,12 +3400,12 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
     // isn't clear this is valuable as the inliner doesn't currently care
     // whether it is inlining an invoke or a call. Run the inliner now.
     if (EnableModuleInliner) {
-      MPM.addPass(ModuleInlinerPass(getInlineParamsFromOptLevel(Level),
+      MPM.addPass(ModuleInlinerPass(getInlineParamsFromOptLevel(PB, Level),
                                     UseInlineAdvisor,
                                     ThinOrFullLTOPhase::FullLTOPostLink));
     } else {
       MPM.addPass(ModuleInlinerWrapperPass(
-          getInlineParamsFromOptLevel(Level),
+          getInlineParamsFromOptLevel(PB, Level),
           /* MandatoryFirst */ true,
           InlineContext{ThinOrFullLTOPhase::FullLTOPostLink,
                         InlinePass::CGSCCInliner}));
