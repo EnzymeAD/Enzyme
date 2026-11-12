@@ -37,7 +37,9 @@
 # hands to its compile jobs and to no linker (HIP's driver hands -mllvm to the
 # device linker as well), as poseidon-clang passes every Poseidon flag. The GPU
 # runtimes are CUDA's, or HIP's in a build without CUDA or when the project
-# sets POSEIDON_GPU_RUNTIME to HIP before find_package.
+# sets POSEIDON_GPU_RUNTIME to HIP before find_package; an installed package
+# takes hipBLAS and the HIP runtime of the HIP runtimes from the ROCm
+# installation ROCM_PATH names, else /opt/rocm.
 # POSEIDON_AMDGPU_ARCH is the one AMD GPU processor the HIP runtimes and the
 # HIP device profiler are built for: profile generation compiles HIP device
 # code for that processor only.
@@ -74,10 +76,32 @@ else()
   set(POSEIDON_ENZYME_OPTIONS "")
 endif()
 set(POSEIDON_MLLVM "-Xclang -mllvm -Xclang")
-# The CUDA runtimes link the toolkit's libraries; a project on the HIP runtimes
-# links none of them.
+# The CUDA runtimes link the toolkit's libraries, the HIP runtimes hipBLAS and
+# the HIP runtime of this machine's ROCm installation (ROCM_PATH, else
+# /opt/rocm); a project links only those of its runtime.
 if(POSEIDON_HAS_CUDA AND POSEIDON_GPU_RUNTIME STREQUAL "CUDA")
   find_dependency(CUDAToolkit)
+elseif(POSEIDON_GPU_RUNTIME STREQUAL "HIP" AND @POSEIDON_CONFIG_FINDS_ROCM@)
+  # An installation names them by these targets; a build tree links the
+  # libraries of the ROCm it was built against.
+  foreach(_lib hipblas amdhip64)
+    find_library(POSEIDON_ROCM_${_lib} ${_lib}
+                 HINTS $ENV{ROCM_PATH}/lib /opt/rocm/lib)
+    if(NOT POSEIDON_ROCM_${_lib})
+      set(Poseidon_FOUND FALSE)
+      set(Poseidon_NOT_FOUND_MESSAGE
+          "the HIP runtimes link lib${_lib}, and no ROCm installation has it "
+          "(ROCM_PATH, /opt/rocm or the CMake search path)")
+      return()
+    endif()
+    if(NOT TARGET Poseidon::rocm_${_lib})
+      add_library(Poseidon::rocm_${_lib} SHARED IMPORTED)
+      set_target_properties(Poseidon::rocm_${_lib}
+                            PROPERTIES IMPORTED_LOCATION
+                                       "${POSEIDON_ROCM_${_lib}}")
+    endif()
+  endforeach()
+  unset(_lib)
 endif()
 include("${CMAKE_CURRENT_LIST_DIR}/PoseidonTargets.cmake")
 
