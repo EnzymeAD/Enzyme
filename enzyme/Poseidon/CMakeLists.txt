@@ -401,9 +401,15 @@ if(POSEIDON_ROCM_PATH AND "AMDGPU" IN_LIST LLVM_TARGETS_TO_BUILD)
                            runtime/fpprofiler/FPProfilerCUDA.cu)
   poseidon_add_hip_library(poseidon_rt_hip runtime/ozaki/ozaki_rt.cu
                            runtime/direct/direct_rt.cu)
+  # In this build tree, the libraries of POSEIDON_ROCM_PATH; installed, those
+  # of the ROCm installation of the machine the package is used on, which the
+  # package configuration finds.
   target_link_libraries(
-    poseidon_rt_hip INTERFACE ${POSEIDON_ROCM_PATH}/lib/libhipblas.so
-                              ${POSEIDON_ROCM_PATH}/lib/libamdhip64.so)
+    poseidon_rt_hip
+    INTERFACE $<BUILD_INTERFACE:${POSEIDON_ROCM_PATH}/lib/libhipblas.so>
+              $<BUILD_INTERFACE:${POSEIDON_ROCM_PATH}/lib/libamdhip64.so>
+              $<INSTALL_INTERFACE:Poseidon::rocm_hipblas>
+              $<INSTALL_INTERFACE:Poseidon::rocm_amdhip64>)
 
   # The calibrators of an AMD GPU, built the same way. The HIP runtime's own
   # dependencies (the HSA runtime) resolve when a calibrator runs, so a host
@@ -604,6 +610,7 @@ set(POSEIDON_CONFIG_INCLUDE_DIR ${ENZYME_SOURCE_DIR}/include)
 set(POSEIDON_CONFIG_DATA_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 set(POSEIDON_CONFIG_ENZYME_PLUGIN
     ${ENZYME_BINARY_DIR}/Enzyme/${POSEIDON_ENZYME_PLUGIN_NAME})
+set(POSEIDON_CONFIG_FINDS_ROCM FALSE)
 configure_package_config_file(
   cmake/PoseidonConfig.cmake.in ${CMAKE_CURRENT_BINARY_DIR}/PoseidonConfig.cmake
   INSTALL_DESTINATION ${CMAKE_CURRENT_BINARY_DIR}
@@ -614,6 +621,7 @@ configure_package_config_file(
 set(POSEIDON_CONFIG_INCLUDE_DIR ${CMAKE_INSTALL_INCLUDEDIR})
 set(POSEIDON_CONFIG_DATA_DIR ${CMAKE_INSTALL_DATADIR}/poseidon)
 set(POSEIDON_CONFIG_ENZYME_PLUGIN lib/${POSEIDON_ENZYME_PLUGIN_NAME})
+set(POSEIDON_CONFIG_FINDS_ROCM TRUE)
 configure_package_config_file(
   cmake/PoseidonConfig.cmake.in
   ${CMAKE_CURRENT_BINARY_DIR}${CMAKE_FILES_DIRECTORY}/PoseidonConfig.cmake
