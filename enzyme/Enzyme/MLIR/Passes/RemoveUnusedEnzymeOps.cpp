@@ -16,11 +16,15 @@
 #include "PassDetails.h"
 #include "Passes/Passes.h"
 #include "Passes/RemovalUtils.h"
+#include "mlir/Dialect/Affine/IR/ValueBoundsOpInterfaceImpl.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Arith/IR/ValueBoundsOpInterfaceImpl.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/MemRef/IR/ValueBoundsOpInterfaceImpl.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/SCF/IR/ValueBoundsOpInterfaceImpl.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Transforms/DialectConversion.h"
 
@@ -673,6 +677,14 @@ LogicalResult PostOrderWalkDriver::processWorklist() {
 struct RemoveUnusedEnzymeOpsPass
     : public enzyme::impl::RemoveUnusedEnzymeOpsPassBase<
           RemoveUnusedEnzymeOpsPass> {
+  void getDependentDialects(DialectRegistry &registry) const override {
+    RemoveUnusedEnzymeOpsPassBase::getDependentDialects(registry);
+    affine::registerValueBoundsOpInterfaceExternalModels(registry);
+    arith::registerValueBoundsOpInterfaceExternalModels(registry);
+    memref::registerValueBoundsOpInterfaceExternalModels(registry);
+    scf::registerValueBoundsOpInterfaceExternalModels(registry);
+  }
+
   void runOnOperation() override {
     auto op = getOperation();
 
