@@ -4586,8 +4586,6 @@ GradientUtils *GradientUtils::CreateFromClone(
   }
 
   ValueToValueMapTy invertedPointers;
-  SmallPtrSet<Instruction *, 4> constants;
-  SmallPtrSet<Instruction *, 20> nonconstant;
   SmallPtrSet<Value *, 2> returnvals;
   llvm::ValueMap<const llvm::Value *, AssertingReplacingVH> originalToNew;
 

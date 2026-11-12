@@ -2114,7 +2114,6 @@ public:
     SetVector<CallInst *> toExpandValue;
     MapVector<CallInst *, ProbProgMode> toProbProg;
     SetVector<CallInst *> InactiveCalls;
-    SetVector<CallInst *> IterCalls;
     SetVector<Function *> nestedTargets;
   retry:;
     for (BasicBlock &BB : F) {
