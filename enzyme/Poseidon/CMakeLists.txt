@@ -32,7 +32,6 @@ include(Herbie)
 
 set(POSEIDON_SRC
     Plugin.cpp
-    CacheKey.cpp
     Canonicalize.cpp
     CostModel.cpp
     Driver.cpp
@@ -41,7 +40,6 @@ set(POSEIDON_SRC
     Explain.cpp
     Flags.cpp
     Herbie.cpp
-    HerbieRun.cpp
     HostDispatch.cpp
     InKernelRaise.cpp
     Instrument.cpp
@@ -63,6 +61,12 @@ set(POSEIDON_SRC
     MatmulProfile.cpp
     RecognizeHostGemm.cpp)
 
+# Running Herbie and keying its cache read no LLVM IR, so they are a library
+# of their own, linked by the plugin and by poseidon-mlir-opt.
+add_library(PoseidonHerbie STATIC CacheKey.cpp HerbieRun.cpp)
+target_include_directories(PoseidonHerbie PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+llvm_update_compile_flags(PoseidonHerbie)
+
 set(POSEIDON_PLUGIN_TARGET Poseidon-${LLVM_VERSION_MAJOR})
 if(Clang_FOUND)
   add_llvm_library(${POSEIDON_PLUGIN_TARGET} ${POSEIDON_SRC} MODULE
@@ -76,7 +80,9 @@ target_include_directories(
   PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR} ${ENZYME_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/runtime/fpprofiler)
-target_link_libraries(${POSEIDON_PLUGIN_TARGET} PRIVATE MPFR::MPFR)
+target_link_libraries(
+  ${POSEIDON_PLUGIN_TARGET}
+  PRIVATE MPFR::MPFR PoseidonHerbie)
 set_source_files_properties(
   Herbie.cpp
   PROPERTIES COMPILE_DEFINITIONS HERBIE_BINARY="${POSEIDON_HERBIE_BINARY_PATH}")
@@ -208,8 +214,7 @@ add_custom_command(
     ${CMAKE_COMMAND} -E create_symlink poseidon-clang
     $<TARGET_FILE_DIR:poseidon-clang>/poseidon-clang++)
 
-option(POSEIDON_MLIR "Build poseidon-mlir-opt, Poseidon's MLIR rewriting tool"
-       OFF)
+# POSEIDON_MLIR is declared at the top level, which finds MLIR for it.
 if(POSEIDON_MLIR)
   add_subdirectory(MLIR)
 endif()

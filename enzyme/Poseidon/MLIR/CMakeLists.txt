@@ -1,33 +1,21 @@
 # poseidon-mlir-opt: Poseidon's rewriting of floating-point chains, on MLIR.
-# It needs the MLIR of the LLVM build Poseidon is built against, found here
-# rather than through ENZYME_MLIR, which would also build Enzyme's MLIR tree.
-find_package(MLIR REQUIRED CONFIG HINTS "${LLVM_DIR}/../mlir")
-message(STATUS "Poseidon: MLIR from ${MLIR_CMAKE_DIR}")
-# A cached MLIR_DIR is what the top-level CMakeLists takes as ENZYME_MLIR's
-# MLIR on the next configure, adding its definitions and include paths to
-# every target. Found again here each time instead.
-unset(MLIR_DIR CACHE)
+# It uses the MLIR that the top-level CMakeLists finds, the same one Enzyme's
+# own MLIR code is built against.
+if(NOT MLIR_FOUND)
+  message(
+    FATAL_ERROR "POSEIDON_MLIR needs MLIR: build LLVM with it, or set MLIR_DIR")
+endif()
 
-list(APPEND CMAKE_MODULE_PATH "${MLIR_CMAKE_DIR}")
-include(TableGen)
-include(AddMLIR)
-
-include_directories(${MLIR_INCLUDE_DIRS} ${CMAKE_CURRENT_SOURCE_DIR}
-                    ${CMAKE_CURRENT_SOURCE_DIR}/.. ${CMAKE_CURRENT_BINARY_DIR})
-add_definitions(${MLIR_DEFINITIONS})
+include_directories(${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
 
 set(LLVM_TARGET_DEFINITIONS Passes.td)
 mlir_tablegen(Passes.h.inc -gen-pass-decls -name Poseidon)
 add_public_tablegen_target(MLIRPoseidonPassIncGen)
 
-# The Herbie runner and its cache keys read no LLVM IR, so they are compiled
-# in here too rather than linked from the pass plugin, which cannot be.
 add_mlir_library(
   MLIRPoseidonTransforms
   HerbieResults.cpp
   PoseidonRewrite.cpp
-  ../CacheKey.cpp
-  ../HerbieRun.cpp
   PARTIAL_SOURCES_INTENDED
   DEPENDS
   MLIRPoseidonPassIncGen
@@ -39,7 +27,8 @@ add_mlir_library(
   MLIRIR
   MLIRMathDialect
   MLIRPass
-  MLIRTensorDialect)
+  MLIRTensorDialect
+  PoseidonHerbie)
 
 set_source_files_properties(
   PoseidonRewrite.cpp
