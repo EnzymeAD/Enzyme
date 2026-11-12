@@ -3153,88 +3153,7 @@ static unsigned EnzymeLicmMssaNoAccForPromotionCap() {
 #define EnableModuleInliner false
 } // namespace llvm
 
-#if LLVM_VERSION_MAJOR >= 20
-/// Whether a pipeline at Level and Phase leaves differentiation to the
-/// post-link run (see loadPass in augmentPassBuilder).
-static bool defersToLink(OptimizationLevel Level, ThinOrFullLTOPhase Phase) {
-  return !EnzymeLTOPreLink && (Phase == ThinOrFullLTOPhase::FullLTOPreLink ||
-                               (Phase == ThinOrFullLTOPhase::ThinLTOPreLink &&
-                                Level != OptimizationLevel::O0));
-}
-#endif
-
-/// The plugin's part of a pipeline, run only on a module that asks something of
-/// Enzyme, or in a pipeline that defers differentiation to the link, where a
-/// derivative another unit asks for may still need what it keeps. Any other
-/// module compiles as it would without the plugin: all that is left to do there
-/// is give up the device math functions the clang plugin kept alive for a
-/// derivative.
-class EnzymeIfUsedNewPM final : public PassParent<EnzymeIfUsedNewPM> {
-  friend PassParent<EnzymeIfUsedNewPM>;
-
-private:
-  ModulePassManager Pipeline;
-  // Whether the pipeline this pass is part of defers differentiation to the
-  // link, which may be settled only after the pass is added to it.
-  std::shared_ptr<const bool> DefersToLink;
-  static llvm::AnalysisKey Key;
-
-public:
-  using Result = llvm::PreservedAnalyses;
-  EnzymeIfUsedNewPM(ModulePassManager Pipeline,
-                    std::shared_ptr<const bool> DefersToLink)
-      : Pipeline(std::move(Pipeline)), DefersToLink(std::move(DefersToLink)) {}
-
-  Result run(llvm::Module &M, llvm::ModuleAnalysisManager &MAM) {
-    if (!*DefersToLink && EnzymeTruncateAll.empty() && !moduleUsesEnzyme(M))
-      return releaseDeviceMath(M) ? PreservedAnalyses::none()
-                                  : PreservedAnalyses::all();
-    return Pipeline.run(M, MAM);
-  }
-
-  static bool isRequired() { return true; }
-};
-llvm::AnalysisKey EnzymeIfUsedNewPM::Key;
-
 void augmentPassBuilder(llvm::PassBuilder &PB) {
-
-  // Every extension point below adds its passes through ifUsed, so that they
-  // run only on a module that asks something of Enzyme or in a pipeline that
-  // defers differentiation to the link. DefersToLink tells which pipeline that
-  // is from the arguments of the extension point's callback.
-  auto ifUsed = [](auto Load, auto DefersToLink) {
-    return [=](ModulePassManager &MPM, auto... Args) {
-      ModulePassManager EnzymeMPM;
-      Load(EnzymeMPM, Args...);
-      MPM.addPass(
-          EnzymeIfUsedNewPM(std::move(EnzymeMPM), DefersToLink(Args...)));
-    };
-  };
-  // Post-link pipelines, and any pipeline before LLVM 20, never defer.
-  auto never = [](auto...) { return std::make_shared<const bool>(false); };
-#if LLVM_VERSION_MAJOR >= 20
-  auto fromPhase = [](OptimizationLevel Level, ThinOrFullLTOPhase Phase) {
-    return std::make_shared<const bool>(defersToLink(Level, Phase));
-  };
-  // The PipelineStart callback is not told the phase. The early simplification
-  // callback is, and every pipeline that invokes the former invokes the latter
-  // next, so the former leaves its decision open for the latter to settle.
-  auto Unsettled = std::make_shared<std::shared_ptr<bool>>();
-  auto settledLater = [Unsettled](OptimizationLevel) {
-    *Unsettled = std::make_shared<bool>(false);
-    return std::shared_ptr<const bool>(*Unsettled);
-  };
-  PB.registerPipelineEarlySimplificationEPCallback(
-      [Unsettled](ModulePassManager &, OptimizationLevel Level,
-                  ThinOrFullLTOPhase Phase) {
-        if (*Unsettled)
-          **Unsettled = defersToLink(Level, Phase);
-        Unsettled->reset();
-      });
-#else
-  auto fromPhase = never;
-  auto settledLater = never;
-#endif
 
   auto prePass = [](ModulePassManager &MPM, OptimizationLevel Level) {
     FunctionPassManager OptimizePM;
@@ -3298,7 +3217,9 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
     // This requires the plugin to be loaded by the linker as well, e.g.
     // -Wl,--load-pass-plugin=LLDEnzyme-<N>.so. Pass -enzyme-lto-prelink=1 to
     // restore the old behaviour when that is not possible.
-    if (defersToLink(Level, Phase)) {
+    if (!EnzymeLTOPreLink && (Phase == ThinOrFullLTOPhase::FullLTOPreLink ||
+                              (Phase == ThinOrFullLTOPhase::ThinLTOPreLink &&
+                               Level != OptimizationLevel::O0))) {
       MPM.addPass(PreserveNVVMNewPM(/*Begin*/ false,
                                     /*PreserveCustomRuleLinkage*/ true,
                                     /*LTOPreLink*/ true));
@@ -3337,7 +3258,7 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
     MPM.addPass(GlobalOptPass());
   };
   // TODO need for perf reasons to move Enzyme pass to the pre vectorization.
-  PB.registerOptimizerEarlyEPCallback(ifUsed(loadPass, fromPhase));
+  PB.registerOptimizerEarlyEPCallback(loadPass);
 
   auto loadNVVM = [](ModulePassManager &MPM, OptimizationLevel) {
     MPM.addPass(PreserveNVVMNewPM(/*Begin*/ true));
@@ -3346,8 +3267,8 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
   // We should register at vectorizer start for consistency, however,
   // that requires a functionpass, and we have a modulepass.
   // PB.registerVectorizerStartEPCallback(loadPass);
-  PB.registerPipelineStartEPCallback(ifUsed(loadNVVM, settledLater));
-  PB.registerFullLinkTimeOptimizationEarlyEPCallback(ifUsed(loadNVVM, never));
+  PB.registerPipelineStartEPCallback(loadNVVM);
+  PB.registerFullLinkTimeOptimizationEarlyEPCallback(loadNVVM);
 
   auto preLTOPass = [](ModulePassManager &MPM, OptimizationLevel Level) {
     // Create a function that performs CFI checks for cross-DSO calls with
@@ -3616,7 +3537,7 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
     loadPass(MPM, Level);
 #endif
   };
-  PB.registerFullLinkTimeOptimizationEarlyEPCallback(ifUsed(loadLTO, never));
+  PB.registerFullLinkTimeOptimizationEarlyEPCallback(loadLTO);
 }
 
 bool registerFixupJuliaPass(llvm::StringRef Name, llvm::ModulePassManager &MPM);

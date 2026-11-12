@@ -35,10 +35,8 @@
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/GlobalVariable.h"
-#include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Module.h"
-#include "llvm/IR/ValueHandle.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include "llvm/Support/TimeProfiler.h"
@@ -543,9 +541,6 @@ bool preserveNVVM(bool Begin, Module &M,
     for (CallInst *Call : functionLikeCalls)
       Call->eraseFromParent();
   }
-
-  if (Begin)
-    changed |= releaseDeviceMath(M, /*Keep*/ true);
 
   if (Begin)
     if (GlobalVariable *GA = M.getGlobalVariable("llvm.global.annotations")) {
@@ -1264,121 +1259,6 @@ static bool preserveNVVMLTOPreLinkEnd(Module &M) {
     changed = true;
   }
   return changed;
-}
-
-/// The string of an entry of llvm.global.annotations, or "" for anything else.
-static StringRef annotationOf(Value *Entry) {
-  auto CS = dyn_cast<ConstantStruct>(Entry);
-  if (!CS || CS->getNumOperands() < 2)
-    return "";
-  Value *Str = CS->getOperand(1)->stripPointerCasts();
-  if (auto GV = dyn_cast<GlobalVariable>(Str))
-    if (GV->hasInitializer())
-      Str = GV->getInitializer();
-  if (auto A = dyn_cast<ConstantDataArray>(Str))
-    if (A->isCString())
-      return A->getAsCString();
-  return "";
-}
-
-/// Whether G is the clang plugin's registration of a device math function it
-/// kept alive (see releaseDeviceMath), which asks nothing of Enzyme itself.
-static bool isDeviceMathRegistration(const GlobalVariable &G) {
-  return G.getName().contains("__enzyme_device_math_autoreg_");
-}
-
-bool moduleUsesEnzyme(const Module &M) {
-  for (const Function &F : M)
-    if (F.getName().contains("__enzyme_") || F.hasFnAttribute("prev_fixup"))
-      return true;
-  for (const GlobalVariable &G : M.globals())
-    if (G.getName().contains("__enzyme_") && !isDeviceMathRegistration(G))
-      return true;
-  if (auto GA = M.getGlobalVariable("llvm.global.annotations"))
-    if (GA->hasInitializer())
-      for (Value *Entry : GA->getInitializer()->operands())
-        if (startsWith(annotationOf(Entry), "enzyme_"))
-          return true;
-  return false;
-}
-
-#if LLVM_VERSION_MAJOR < 16
-// ModuleUtils has removeFromUsedLists from LLVM 16.
-static void removeFromUsedLists(Module &M,
-                                function_ref<bool(Constant *)> ShouldRemove) {
-  for (StringRef Name : {"llvm.used", "llvm.compiler.used"}) {
-    GlobalVariable *GV = M.getNamedGlobal(Name);
-    if (!GV)
-      continue;
-    auto *Init = cast<ConstantArray>(GV->getInitializer());
-    SmallVector<Constant *, 4> Kept;
-    for (Use &U : Init->operands())
-      if (!ShouldRemove(cast<Constant>(U)->stripPointerCasts()))
-        Kept.push_back(cast<Constant>(U));
-    if (Kept.size() == Init->getNumOperands())
-      continue;
-    if (!Kept.empty()) {
-      ArrayType *Ty =
-          ArrayType::get(Init->getType()->getElementType(), Kept.size());
-      auto *NewGV = new GlobalVariable(
-          M, Ty, /*isConstant=*/false, GlobalValue::AppendingLinkage,
-          ConstantArray::get(Ty, Kept), "", GV, GV->getThreadLocalMode(),
-          GV->getAddressSpace());
-      NewGV->setSection(GV->getSection());
-      NewGV->takeName(GV);
-    }
-    GV->eraseFromParent();
-  }
-}
-#endif
-
-/// Push every global value C refers to, through constant expressions.
-static void collectGlobals(Value *C, SmallVectorImpl<WeakVH> &Out) {
-  if (auto G = dyn_cast<GlobalValue>(C)) {
-    Out.push_back(G);
-    return;
-  }
-  if (auto CE = dyn_cast<Constant>(C))
-    for (Value *Op : CE->operands())
-      collectGlobals(Op, Out);
-}
-
-bool releaseDeviceMath(Module &M, bool Keep) {
-  SmallPtrSet<Constant *, 16> released;
-  SmallVector<WeakVH, 16> maybeDead;
-  for (GlobalVariable &G : M.globals()) {
-    if (!isDeviceMathRegistration(G))
-      continue;
-    released.insert(&G);
-    maybeDead.push_back(&G);
-    if (!Keep && G.hasInitializer())
-      released.insert(G.getInitializer()->stripPointerCasts());
-  }
-  if (released.empty())
-    return false;
-  removeFromUsedLists(M, [&](Constant *C) { return released.count(C); });
-
-  // Erase the registrations and what was linked or emitted only for the
-  // functions given up, so that no later pass sees a use the module would not
-  // have had without the plugin.
-  while (!maybeDead.empty()) {
-    auto G = dyn_cast_or_null<GlobalValue>(maybeDead.pop_back_val());
-    if (!G)
-      continue;
-    G->removeDeadConstantUsers();
-    if (!G->use_empty() || (!G->isDeclaration() && !G->isDiscardableIfUnused()))
-      continue;
-    if (auto F = dyn_cast<Function>(G)) {
-      for (Instruction &I : instructions(*F))
-        for (Value *Op : I.operands())
-          collectGlobals(Op, maybeDead);
-    } else if (auto V = dyn_cast<GlobalVariable>(G)) {
-      if (V->hasInitializer())
-        collectGlobals(V->getInitializer(), maybeDead);
-    }
-    G->eraseFromParent();
-  }
-  return true;
 }
 
 namespace {
