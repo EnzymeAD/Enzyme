@@ -1313,6 +1313,7 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(
   assert(prediff);
 
   BasicBlock *merge = nullptr;
+  bool checkedActivity = false;
 
   while (1) {
     unsigned nextStart = size;
@@ -1362,29 +1363,86 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(
         }
       }
 
-      if (!isConstantValue(origptr)) {
-        auto basePtr = getBaseObject(origptr);
-        assert(!isConstantValue(basePtr));
-        // If runtime activity, first see if we can prove that the shadow/primal
-        // are distinct statically as they are allocas/mallocs, if not compare
-        // the pointers and conditionally execute.
-        if ((!isa<AllocaInst>(basePtr) && !isAllocationCall(basePtr, TLI)) &&
-            runtimeActivity && !merge) {
-          Value *primal_val = lookupM(getNewFromOriginal(origptr), Builder2);
-          Value *shadow_val =
-              lookupM(invertPointerM(origptr, Builder2), Builder2);
-          if (getWidth() != 1) {
-            shadow_val = extractMeta(Builder2, shadow_val, 0);
+      if (!checkedActivity && !isConstantValue(origptr)) {
+        checkedActivity = true;
+        while (auto SI = dyn_cast<SelectInst>(origptr)) {
+          if (SI->getCondition()->getType()->isIntegerTy(1)) {
+            if (isConstantValue(SI->getTrueValue())) {
+              if (isConstantValue(SI->getFalseValue())) {
+                origptr = SI->getTrueValue();
+                break;
+              }
+              Value *cond =
+                  lookupM(getNewFromOriginal(SI->getCondition()), Builder2);
+              BasicBlock *current = Builder2.GetInsertBlock();
+              BasicBlock *conditional =
+                  addReverseBlock(current, current->getName() + "_active");
+              if (!merge)
+                merge = addReverseBlock(conditional,
+                                        current->getName() + "_amerge");
+              Builder2.CreateCondBr(cond, merge, conditional);
+              Builder2.SetInsertPoint(conditional);
+              origptr = SI->getFalseValue();
+              continue;
+            }
+            if (isConstantValue(SI->getFalseValue())) {
+              Value *cond =
+                  lookupM(getNewFromOriginal(SI->getCondition()), Builder2);
+              BasicBlock *current = Builder2.GetInsertBlock();
+              BasicBlock *conditional =
+                  addReverseBlock(current, current->getName() + "_active");
+              if (!merge)
+                merge = addReverseBlock(conditional,
+                                        current->getName() + "_amerge");
+              Builder2.CreateCondBr(cond, conditional, merge);
+              Builder2.SetInsertPoint(conditional);
+              origptr = SI->getTrueValue();
+              continue;
+            }
           }
-          Value *shadow = Builder2.CreateICmpNE(primal_val, shadow_val);
-
-          BasicBlock *current = Builder2.GetInsertBlock();
-          BasicBlock *conditional =
-              addReverseBlock(current, current->getName() + "_active");
-          merge = addReverseBlock(conditional, current->getName() + "_amerge");
-          Builder2.CreateCondBr(shadow, conditional, merge);
-          Builder2.SetInsertPoint(conditional);
+          break;
         }
+        if (!isConstantValue(origptr)) {
+          auto basePtr = getBaseObject(origptr);
+          assert(!isConstantValue(basePtr) &&
+                 "base pointer of active pointer must not be constant");
+          bool hasConstantBase = false;
+          if (!runtimeActivity) {
+            for (auto v : getBaseObjects(origptr)) {
+              if (isConstantValue(v)) {
+                hasConstantBase = true;
+                break;
+              }
+            }
+          }
+          // If runtime activity or mixed constant/active base objects, first
+          // see if we can prove that the shadow/primal are distinct statically
+          // as they are allocas/mallocs, if not compare the pointers and
+          // conditionally execute.
+          if (((!isa<AllocaInst>(basePtr) && !isAllocationCall(basePtr, TLI)) &&
+               runtimeActivity) ||
+              hasConstantBase) {
+            Value *primal_val = lookupM(getNewFromOriginal(origptr), Builder2);
+            Value *shadow_val =
+                lookupM(invertPointerM(origptr, Builder2), Builder2);
+            if (getWidth() != 1) {
+              shadow_val = extractMeta(Builder2, shadow_val, 0);
+            }
+            Value *shadow = Builder2.CreateICmpNE(primal_val, shadow_val);
+
+            BasicBlock *current = Builder2.GetInsertBlock();
+            BasicBlock *conditional =
+                addReverseBlock(current, current->getName() + "_active");
+            if (!merge)
+              merge =
+                  addReverseBlock(conditional, current->getName() + "_amerge");
+            Builder2.CreateCondBr(shadow, conditional, merge);
+            Builder2.SetInsertPoint(conditional);
+          }
+        }
+      }
+
+      if (!isConstantValue(origptr)) {
         // Masked partial type is unhanled.
         if (premask)
           assert(start == 0 && nextStart == LoadSize);
