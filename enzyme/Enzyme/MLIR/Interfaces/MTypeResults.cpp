@@ -15,6 +15,8 @@
 
 #include "EnzymeLogic.h"
 
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
+
 #ifdef ENZYME_CLANG_HAS_CIR
 #include "clang/CIR/Dialect/IR/CIRDialect.h"
 #include "clang/CIR/Dialect/IR/CIRTypes.h"
@@ -89,6 +91,8 @@ MConcreteType MTypeResults::intType(size_t num, Value val, bool errIfNotFound,
                                     bool pointerIntSame) const {
   if (isa<IntegerType, IndexType>(val.getType()))
     return BaseType::Integer;
+  if (isa<FloatType>(val.getType()))
+    return MConcreteType(val.getType());
 #ifdef ENZYME_CLANG_HAS_CIR
   {
     MConcreteType ct = cirConcreteType(val.getType());
@@ -103,7 +107,8 @@ MConcreteType MTypeResults::intType(size_t num, Value val, bool errIfNotFound,
 }
 
 // A pointer produced by a cast may be punning, so it answers Unknown; so do
-// byte and void pointers.
+// byte and void pointers. For memref, the cast is memref.view, and the byte
+// pointers are i8 memrefs, the buffers it reads.
 MConcreteType MTypeResults::firstPointer(size_t num, Value val,
                                          bool errIfNotFound,
                                          bool pointerIntSame) const {
@@ -117,6 +122,16 @@ MConcreteType MTypeResults::firstPointer(size_t num, Value val,
     }
   }
 #endif
+  if (auto memref = dyn_cast<BaseMemRefType>(val.getType())) {
+    Type elt = memref.getElementType();
+    if (!val.getDefiningOp<memref::ViewOp>() &&
+        !(isa<IntegerType>(elt) && elt.getIntOrFloatBitWidth() == 8)) {
+      if (isa<IntegerType, IndexType>(elt))
+        return BaseType::Integer;
+      if (isa<FloatType>(elt))
+        return MConcreteType(elt);
+    }
+  }
   if (errIfNotFound)
     llvm_unreachable("MTypeResults::firstPointer: could not deduce the pointee "
                      "type of the value from its MLIR type");

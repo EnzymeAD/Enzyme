@@ -18,9 +18,14 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/IR/SymbolTable.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
 #include "mlir/Interfaces/ViewLikeInterface.h"
 #include <optional>
+
+#ifdef ENZYME_CLANG_HAS_CIR
+#include "clang/CIR/Dialect/IR/CIRDialect.h"
+#endif
 
 using namespace mlir;
 using namespace mlir::enzyme;
@@ -136,6 +141,50 @@ Value getBaseObject(Value v, bool offsetAllowed) {
   return v;
 }
 
+Operation *getGlobalForAddress(Value v) {
+  Operation *def = v.getDefiningOp();
+  if (!def)
+    return nullptr;
+  FlatSymbolRefAttr name;
+  if (auto op = dyn_cast<memref::GetGlobalOp>(def))
+    name = op.getNameAttr();
+  else if (auto op = dyn_cast<LLVM::AddressOfOp>(def))
+    name = op.getGlobalNameAttr();
+#ifdef ENZYME_CLANG_HAS_CIR
+  else if (auto op = dyn_cast<cir::GetGlobalOp>(def))
+    name = op.getNameAttr();
+#endif
+  if (!name)
+    return nullptr;
+  Operation *global = SymbolTable::lookupNearestSymbolFrom(def, name);
+  if (!global || isa<FunctionOpInterface>(global))
+    return nullptr;
+  return global;
+}
+
+bool isConstantGlobal(Operation *global) {
+  if (auto op = dyn_cast<memref::GlobalOp>(global))
+    return op.getConstant();
+  if (auto op = dyn_cast<LLVM::GlobalOp>(global))
+    return op.getConstant();
+#ifdef ENZYME_CLANG_HAS_CIR
+  if (auto op = dyn_cast<cir::GlobalOp>(global))
+    return op.getConstant();
+#endif
+  return false;
+}
+
+bool isLocalGlobal(Operation *global) {
+  if (auto op = dyn_cast<LLVM::GlobalOp>(global))
+    return op.getLinkage() == LLVM::Linkage::Internal ||
+           op.getLinkage() == LLVM::Linkage::Private;
+#ifdef ENZYME_CLANG_HAS_CIR
+  if (auto op = dyn_cast<cir::GlobalOp>(global))
+    return cir::isLocalLinkage(op.getLinkage());
+#endif
+  return cast<SymbolOpInterface>(global).isPrivate();
+}
+
 static bool isFreshAllocation(Value v) {
   return v.getDefiningOp<enzyme::MallocLikeInterface>() ||
          v.getDefiningOp<enzyme::AllocaLikeInterface>();
@@ -149,29 +198,19 @@ bool mayAlias(Value v1, Value v2) {
 
   // We may now assume neither v1 nor v2 are subindices
 
-  if (auto glob = v1.getDefiningOp<memref::GetGlobalOp>()) {
-    if (auto Aglob = v2.getDefiningOp<memref::GetGlobalOp>()) {
-      return glob.getName() == Aglob.getName();
-    }
-  }
-
-  if (auto glob = v1.getDefiningOp<LLVM::AddressOfOp>()) {
-    if (auto Aglob = v2.getDefiningOp<LLVM::AddressOfOp>()) {
-      return glob.getGlobalName() == Aglob.getGlobalName();
-    }
-  }
+  Operation *global1 = getGlobalForAddress(v1);
+  Operation *global2 = getGlobalForAddress(v2);
+  if (global1 && global2)
+    return global1 == global2;
 
   bool isAlloca[2];
   bool isGlobal[2];
 
   isAlloca[0] = isFreshAllocation(v1);
-  isGlobal[0] = v1.getDefiningOp<memref::GetGlobalOp>() ||
-                v1.getDefiningOp<LLVM::AddressOfOp>();
+  isGlobal[0] = global1;
 
   isAlloca[1] = isFreshAllocation(v2);
-
-  isGlobal[1] = v2.getDefiningOp<memref::GetGlobalOp>() ||
-                v2.getDefiningOp<LLVM::AddressOfOp>();
+  isGlobal[1] = global2;
 
   // Non-equivalent allocas/global's cannot conflict with each other
   if ((isAlloca[0] || isGlobal[0]) && (isAlloca[1] || isGlobal[1]))
