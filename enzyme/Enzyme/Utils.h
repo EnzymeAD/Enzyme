@@ -3139,4 +3139,128 @@ const llvm::SCEV *evaluateAtIterationWithoutExt(const llvm::SCEVAddRecExpr *AR,
                                                 const llvm::SCEV *It,
                                                 llvm::ScalarEvolution &SE);
 
+/// Match Zig standard library floating-point math functions (such as
+/// `math.pow.pow__anon_19626`, `math.acos.acos__anon_123`, `math.acos.acos32`,
+/// `math.atan2.atan2_64`, etc.) and return `{mathName, llvmIntrinsicName}`
+/// (e.g. `{"powf", "llvm.pow.f32"}` or `{"pow", "llvm.pow.f64"}`), checking
+/// the LLVM function signature so integer or unrelated helpers are ignored.
+static inline std::optional<std::pair<std::string, std::string>>
+classifyZigMathFunction(const llvm::Function &F) {
+  auto *FT = F.getFunctionType();
+  if (FT->isVarArg())
+    return std::nullopt;
+
+  llvm::Type *RetTy = FT->getReturnType();
+  const char *libmSuffix = nullptr;
+  const char *llvmSuffix = nullptr;
+  if (RetTy->isFloatTy()) {
+    libmSuffix = "f";
+    llvmSuffix = "f32";
+  } else if (RetTy->isDoubleTy()) {
+    libmSuffix = "";
+    llvmSuffix = "f64";
+  } else if (RetTy->isX86_FP80Ty() || RetTy->isFP128Ty() ||
+             RetTy->isPPC_FP128Ty()) {
+    libmSuffix = "l";
+    llvmSuffix = RetTy->isFP128Ty() ? "f128" : "f80";
+  } else {
+    return std::nullopt;
+  }
+
+  llvm::StringRef Name = F.getName();
+  Name.consume_front("std.");
+  if (!Name.consume_front("math."))
+    return std::nullopt;
+
+  auto Split = Name.split('.');
+  llvm::StringRef Mod = Split.first;
+  llvm::StringRef Sym = Split.second;
+  if (Mod.empty() || Sym.empty())
+    return std::nullopt;
+
+  enum class Arity { Unary, Binary, FloatInt };
+  struct Entry {
+    llvm::StringLiteral Mod;
+    llvm::StringLiteral ZigFn;
+    llvm::StringLiteral LibmBase;
+    Arity Kind;
+  };
+  static constexpr Entry Table[] = {
+      {"pow", "pow", "pow", Arity::Binary},
+      {"atan2", "atan2", "atan2", Arity::Binary},
+      {"hypot", "hypot", "hypot", Arity::Binary},
+      {"copysign", "copysign", "copysign", Arity::Binary},
+      {"ldexp", "ldexp", "ldexp", Arity::FloatInt},
+      {"scalbn", "scalbn", "scalbn", Arity::FloatInt},
+      {"acos", "acos", "acos", Arity::Unary},
+      {"acosh", "acosh", "acosh", Arity::Unary},
+      {"asin", "asin", "asin", Arity::Unary},
+      {"asinh", "asinh", "asinh", Arity::Unary},
+      {"atan", "atan", "atan", Arity::Unary},
+      {"atanh", "atanh", "atanh", Arity::Unary},
+      {"cbrt", "cbrt", "cbrt", Arity::Unary},
+      {"cos", "cos", "cos", Arity::Unary},
+      {"cosh", "cosh", "cosh", Arity::Unary},
+      {"erf", "erf", "erf", Arity::Unary},
+      {"erfc", "erfc", "erfc", Arity::Unary},
+      {"exp", "exp", "exp", Arity::Unary},
+      {"exp2", "exp2", "exp2", Arity::Unary},
+      {"expm1", "expm1", "expm1", Arity::Unary},
+      {"gamma", "gamma", "tgamma", Arity::Unary},
+      {"gamma", "lgamma", "lgamma", Arity::Unary},
+      {"log10", "log10", "log10", Arity::Unary},
+      {"log1p", "log1p", "log1p", Arity::Unary},
+      {"log2", "log2", "log2", Arity::Unary},
+      {"sin", "sin", "sin", Arity::Unary},
+      {"sinh", "sinh", "sinh", Arity::Unary},
+      {"sqrt", "sqrt", "sqrt", Arity::Unary},
+      {"tan", "tan", "tan", Arity::Unary},
+      {"tanh", "tanh", "tanh", Arity::Unary},
+  };
+
+  for (const Entry &E : Table) {
+    if (Mod != E.Mod)
+      continue;
+    llvm::StringRef Rest = Sym;
+    if (!Rest.consume_front(E.ZigFn))
+      continue;
+    bool suffixOk = false;
+    if (Rest.empty()) {
+      suffixOk = true;
+    } else if (Rest.consume_front("__anon_")) {
+      suffixOk = !Rest.empty() && llvm::all_of(Rest, [](unsigned char c) {
+        return c >= '0' && c <= '9';
+      });
+    } else if (RetTy->isFloatTy() && (Rest == "32" || Rest == "_32")) {
+      suffixOk = true;
+    } else if (RetTy->isDoubleTy() && (Rest == "64" || Rest == "_64")) {
+      suffixOk = true;
+    }
+    if (!suffixOk)
+      continue;
+
+    bool sigOk = false;
+    switch (E.Kind) {
+    case Arity::Unary:
+      sigOk = FT->getNumParams() == 1 && FT->getParamType(0) == RetTy;
+      break;
+    case Arity::Binary:
+      sigOk = FT->getNumParams() == 2 && FT->getParamType(0) == RetTy &&
+              FT->getParamType(1) == RetTy;
+      break;
+    case Arity::FloatInt:
+      sigOk = FT->getNumParams() == 2 && FT->getParamType(0) == RetTy &&
+              FT->getParamType(1)->isIntegerTy(32);
+      break;
+    }
+    if (!sigOk)
+      return std::nullopt;
+
+    std::string mathName = (E.LibmBase + libmSuffix).str();
+    std::string llName = ("llvm." + E.LibmBase + "." + llvmSuffix).str();
+    return std::make_pair(std::move(mathName), std::move(llName));
+  }
+  return std::nullopt;
+}
+
 #endif // ENZYME_UTILS_H

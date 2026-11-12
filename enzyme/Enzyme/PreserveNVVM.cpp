@@ -1167,6 +1167,15 @@ bool preserveNVVM(bool Begin, Module &M,
         F.addFnAttr("enzyme_math", found->second.first);
         changed |= preserveLinkage(Begin, F);
       }
+    } else if (auto zigMath = classifyZigMathFunction(F)) {
+      changed = true;
+      if (Begin) {
+        F.addFnAttr("implements", zigMath->second);
+        F.addFnAttr("implements2", zigMath->first);
+        if (!F.hasFnAttribute("enzyme_math"))
+          F.addFnAttr("enzyme_math", zigMath->first);
+        changed |= preserveLinkage(Begin, F);
+      }
     } else if (F.getName() == "_ZL21__internal_float2halffRjS_" ||
                F.getName() == "_ZL4hlog6__half" ||
                F.getName() == "_ZL6__hdiv6__halfS_" ||

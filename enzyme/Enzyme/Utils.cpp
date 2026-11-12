@@ -139,6 +139,14 @@ bool isFlangRuntimeNoFree(llvm::StringRef name) {
 
 bool attributeKnownFunctions(llvm::Function &F) {
   bool changed = false;
+  if (!F.hasFnAttribute("enzyme_math")) {
+    if (auto zigMath = classifyZigMathFunction(F)) {
+      F.addFnAttr("enzyme_math", zigMath->first);
+      F.addFnAttr("implements", zigMath->second);
+      F.addFnAttr("implements2", zigMath->first);
+      changed = true;
+    }
+  }
   if (F.getName() == "fprintf") {
     for (auto &arg : F.args()) {
       if (arg.getType()->isPointerTy()) {
