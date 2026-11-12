@@ -621,21 +621,23 @@ LogicalResult edetail::callForwardHandler(Operation *orig, OpBuilder &builder,
       fwdArguments.push_back(gutils->invertPointerM(arg, builder));
   }
 
-  auto *fwdCallOp = cast<AutoDiffFunctionInterface>(forwardFn.getOperation())
-                        .createCall(builder, orig->getLoc(), fwdArguments);
+  auto fwdIface = cast<AutoDiffFunctionInterface>(forwardFn.getOperation());
+  auto *fwdCallOp = fwdIface.createCall(builder, orig->getLoc(), fwdArguments);
+  SmallVector<Value> fwdResults = fwdIface.unpackCallResults(
+      builder, fwdCallOp, nret + llvm::count(RetActivity, DIFFE_TYPE::DUP_ARG));
 
   SmallVector<Value> primals;
   primals.reserve(nret);
 
   int fwdIndex = 0;
   for (auto &&[ret, act] : llvm::zip_equal(orig->getResults(), RetActivity)) {
-    auto fwdRet = fwdCallOp->getResult(fwdIndex);
+    auto fwdRet = fwdResults[fwdIndex];
     primals.push_back(fwdRet);
 
     fwdIndex++;
 
     if (act == DIFFE_TYPE::DUP_ARG) {
-      gutils->setDiffe(ret, fwdCallOp->getResult(fwdIndex), builder);
+      gutils->setDiffe(ret, fwdResults[fwdIndex], builder);
       fwdIndex++;
     }
   }
@@ -806,8 +808,10 @@ LogicalResult edetail::callReverseHandler(Operation *orig, OpBuilder &builder,
     revArguments.push_back(gutils->diffe(result, builder));
   }
 
-  auto *revCallOp = cast<AutoDiffFunctionInterface>(revFn.getOperation())
-                        .createCall(builder, orig->getLoc(), revArguments);
+  auto revIface = cast<AutoDiffFunctionInterface>(revFn.getOperation());
+  auto *revCallOp = revIface.createCall(builder, orig->getLoc(), revArguments);
+  SmallVector<Value> revResults = revIface.unpackCallResults(
+      builder, revCallOp, llvm::count(ArgActivity, DIFFE_TYPE::OUT_DIFF));
 
   int revIndex = 0, fwdIndex = 0;
   for (auto [arg, act] : llvm::zip_equal(orig->getOperands(), ArgActivity)) {
@@ -821,7 +825,7 @@ LogicalResult edetail::callReverseHandler(Operation *orig, OpBuilder &builder,
           .freeClonedValue(builder, revArguments[fwdIndex - 1]);
       fwdIndex++;
     } else {
-      auto diffe = revCallOp->getResult(revIndex);
+      auto diffe = revResults[revIndex];
       gutils->addToDiffe(arg, diffe, builder);
       revIndex++;
     }

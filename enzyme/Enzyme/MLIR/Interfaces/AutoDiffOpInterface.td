@@ -349,6 +349,19 @@ def AutoDiffFunctionInterface : OpInterface<"AutoDiffFunctionInterface"> {
     >,
     InterfaceMethod<
     /*desc=*/[{
+      The values a call from createCall returns, one for each of the
+      numResults results the derivative was built with.
+    }],
+    /*retTy=*/"::llvm::SmallVector<::mlir::Value>",
+    /*methodName=*/"unpackCallResults",
+    /*args=*/(ins "::mlir::OpBuilder &" : $builder, "::mlir::Operation *" : $call, "unsigned" : $numResults),
+    /*methodBody=*/"",
+    /*defaultImplementation=*/[{
+      return ::llvm::SmallVector<::mlir::Value>(call->getResults());
+    }]
+    >,
+    InterfaceMethod<
+    /*desc=*/[{
       Create return.
     }],
     /*retTy=*/"::mlir::Operation *",
