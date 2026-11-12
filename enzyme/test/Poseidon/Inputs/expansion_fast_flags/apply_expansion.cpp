@@ -3,9 +3,9 @@
 // function named ex<n>_*, as an n-component FP32 expansion, with no candidate
 // selection in between. Loaded after the Poseidon plugin, whose applyExpansion
 // it calls.
+#include "IR/Utils.h"
 #include "Pass/Session.h"
 #include "Techniques/Expansion.h"
-#include "Utils.h"
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallPtrSet.h"

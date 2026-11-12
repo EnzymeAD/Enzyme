@@ -45,7 +45,7 @@ set(POSEIDON_SRC
     Targets/NVPTXTensorCore.cpp
     Targets/OffloadRuntime.cpp
     Profile/DeviceProfile.cpp
-    Driver.cpp
+    Pass/Driver.cpp
     Sites/Markers.cpp
     Sites/Annotations.cpp
     Sites/KernelSites.cpp
@@ -56,7 +56,7 @@ set(POSEIDON_SRC
     Model/Evaluators.cpp
     Techniques/Expansion.cpp
     Core/ExpansionModel.cpp
-    Explain.cpp
+    Solve/Explain.cpp
     Pass/Flags.cpp
     Pass/Session.cpp
     Core/FPKind.cpp
@@ -70,22 +70,22 @@ set(POSEIDON_SRC
     Techniques/Matmul/InKernelRaise.cpp
     Profile/Instrument.cpp
     Sites/LaunchDescriptors.cpp
-    Optimize.cpp
+    Solve/Optimize.cpp
     Sites/SiteIdentity.cpp
     Techniques/Precision.cpp
     Model/FPFormat.cpp
     Profile/ProfileRead.cpp
     Techniques/Matmul/RaiseWMMA.cpp
     Model/Sampling.cpp
-    Solvers.cpp
-    SiteTable.cpp
-    Pins.cpp
-    Report.cpp
-    Subgraphs.cpp
+    Solve/Solvers.cpp
+    Solve/SiteTable.cpp
+    Solve/Pins.cpp
+    Solve/Report.cpp
+    Solve/Subgraphs.cpp
     Techniques/Staging.cpp
     Techniques/Unit.cpp
     Model/FPNode.cpp
-    Utils.cpp
+    IR/Utils.cpp
     Techniques/Matmul/WmmaUtils.cpp
     Techniques/Matmul/MatmulAccuracy.cpp
     Techniques/Matmul/MatmulAccuracyMemo.cpp

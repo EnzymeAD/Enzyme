@@ -8,10 +8,10 @@
 //===----------------------------------------------------------------------===//
 
 #include "CostModel.h"
+#include "IR/Utils.h"
 #include "Targets/DeviceMath.h"
 #include "Targets/MathFunctions.h"
 #include "Targets/Target.h"
-#include "Utils.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"

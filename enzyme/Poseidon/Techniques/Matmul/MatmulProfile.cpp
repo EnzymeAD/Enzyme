@@ -1,6 +1,6 @@
 // Matmul profile loading from the scalar .fpprofile records.
+#include "IR/Utils.h"
 #include "MatmulInternal.h"
-#include "Utils.h"
 
 #include "llvm/ADT/Twine.h"
 #include "llvm/IR/Instruction.h"

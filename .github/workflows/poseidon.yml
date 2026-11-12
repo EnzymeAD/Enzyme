@@ -85,6 +85,7 @@ jobs:
           # nothing that involves a derivative.
           for t in $(grep -rl 'REQUIRES:.*enzyme' "$GITHUB_WORKSPACE"/enzyme/test/Poseidon --include='*.ll' --include='*.c'); do
             case "$t" in */Integration/*) continue ;; esac
-            grep -q "^PASS: Poseidon :: $(basename "$t") " lit-poseidon.log \
-              || { echo "$(basename "$t") did not run"; exit 1; }
+            name=${t#"$GITHUB_WORKSPACE"/enzyme/test/Poseidon/}
+            grep -q "^PASS: Poseidon :: $name " lit-poseidon.log \
+              || { echo "$name did not run"; exit 1; }
           done

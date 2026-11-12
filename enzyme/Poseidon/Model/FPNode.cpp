@@ -8,9 +8,9 @@
 //===----------------------------------------------------------------------===//
 
 #include "FPNode.h"
+#include "IR/Utils.h"
 #include "Targets/DeviceMath.h"
 #include "Targets/Target.h"
-#include "Utils.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"

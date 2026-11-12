@@ -20,14 +20,16 @@ Poseidon is a subproject of the Enzyme repository, built from the same CMake
 tree with `-DENZYME_POSEIDON=ON`:
 
 ```
-enzyme/Poseidon/            the pass: the sources beside and under Pass/ (the
-                            plugin entry Pass/Plugin.cpp), Core/, Sites/,
-                            Profile/, Model/, Techniques/ and Targets/
+enzyme/Poseidon/            the pass: Core/, IR/, Targets/, Sites/, Profile/,
+                            Model/, Techniques/, Solve/ and Pass/ (the plugin
+                            entry Pass/Plugin.cpp), lowest layer first
   runtime/                  profiler and GEMM dispatch runtimes the driver links
   tools/                    poseidon-clang driver, poseidon-calibrate, poseidon-explain,
                             Herbie platform, Compiler Explorer
 enzyme/include/poseidon/    the one public header
-enzyme/test/Poseidon/       lit suite: check-poseidon, check-poseidon-integration
+enzyme/test/Poseidon/       lit suite: check-poseidon (a folder per part of the
+                            pass, fixtures in Inputs/) and
+                            check-poseidon-integration (Integration/)
 ```
 
 ## Requirements

@@ -20,8 +20,8 @@
 #include "Core/CostTable.h"
 #include "Core/HerbieRun.h"
 #include "Core/Options.h"
-#include "Pins.h"
 #include "Sites/LaunchDescriptors.h"
+#include "Solve/Pins.h"
 #include "Techniques/Expansion.h"
 #include "Techniques/Matmul/MatmulInternal.h"
 

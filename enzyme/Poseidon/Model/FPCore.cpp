@@ -8,9 +8,9 @@
 //===----------------------------------------------------------------------===//
 
 #include "FPCore.h"
+#include "IR/Utils.h"
 #include "Targets/DeviceMath.h"
 #include "Targets/MathFunctions.h"
-#include "Utils.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLExtras.h"

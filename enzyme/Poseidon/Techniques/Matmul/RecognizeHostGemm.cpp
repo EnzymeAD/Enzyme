@@ -23,10 +23,10 @@
 // either derived or the whole site is refused.
 #include "Core/Options.h"
 #include "HostDispatch.h"
+#include "IR/Utils.h"
 #include "MatmulInternal.h"
 #include "Profile/ProfileRead.h"
 #include "Targets/Target.h"
-#include "Utils.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"

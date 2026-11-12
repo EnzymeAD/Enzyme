@@ -2,7 +2,7 @@
 #include "MathFunctions.h"
 #include "Peers.h"
 
-#include "Utils.h"
+#include "IR/Utils.h"
 
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Demangle/Demangle.h"

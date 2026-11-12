@@ -9,11 +9,11 @@
 
 #include "Expansion.h"
 #include "Core/ExpansionRoutines.h"
+#include "IR/Utils.h"
 #include "Pass/Session.h"
 #include "Staging.h"
 #include "Targets/DeviceMath.h"
 #include "Targets/Target.h"
-#include "Utils.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/MapVector.h"

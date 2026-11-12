@@ -2,6 +2,7 @@
 
 #include "Driver.h"
 #include "Flags.h"
+#include "IR/Utils.h"
 #include "Profile/DeviceProfile.h"
 #include "Profile/ProfileRead.h"
 #include "Profile/SiteProfile.h"
@@ -17,7 +18,6 @@
 #include "Targets/Target.h"
 #include "Techniques/Matmul/HostDispatch.h"
 #include "Twin.h"
-#include "Utils.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"

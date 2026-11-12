@@ -4,13 +4,13 @@
 // is given.
 //===---------------------------------------------------------------------===//
 #include "HostDispatch.h"
+#include "IR/Utils.h"
 #include "Matmul.h"
 #include "Pass/Session.h"
 #include "Profile/Instrument.h"
 #include "Sites/LaunchDescriptors.h"
 #include "Targets/OffloadRuntime.h"
 #include "Targets/Target.h"
-#include "Utils.h"
 
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/STLExtras.h"

@@ -17,13 +17,13 @@
 // app.bin (the points and the model's results for each function) and
 // fns.inc (the functions, for the harness).
 #include "Core/ExpansionModel.h"
+#include "IR/Utils.h"
 #include "Model/Evaluators.h"
 #include "Model/FPCore.h"
 #include "Model/FPNode.h"
 #include "Pass/Session.h"
 #include "Techniques/Expansion.h"
 #include "Techniques/Precision.h"
-#include "Utils.h"
 
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Intrinsics.h"
