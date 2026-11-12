@@ -10,10 +10,12 @@
 #include "HerbieResults.h"
 
 #include "llvm/ADT/APInt.h"
+#include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/MemoryBuffer.h"
 
+#include <algorithm>
 #include <limits>
 
 using namespace llvm;
@@ -168,6 +170,45 @@ std::optional<HerbieExpr> parseHerbieExpr(StringRef text, std::string &error) {
   return ExprParser(text, error).parseAll();
 }
 
+// p/q, for p >= 0 and q > 0, rounded once to the nearest value of
+// `semantics`, ties to even. Dividing in a wider format and then converting
+// would round twice, which is wrong when the first rounding lands exactly
+// halfway between two values of `semantics`.
+static std::optional<APFloat> roundFraction(APInt p, APInt q,
+                                            const fltSemantics &semantics) {
+  // n = floor(p * 2^k / q), with k large enough that n has at least two bits
+  // more than `semantics` keeps. When the division leaves a remainder, one
+  // more bit, set, stands for it. n * 2^-k is then on the same side of every
+  // point where rounding changes as p/q is, so rounding it rounds p/q.
+  unsigned precision = APFloat::semanticsPrecision(semantics);
+  unsigned pBits = p.getActiveBits(), qBits = q.getActiveBits();
+  unsigned k =
+      qBits + precision + 3 > pBits ? qBits + precision + 3 - pBits : 0;
+  unsigned width = std::max(pBits + k, qBits) + 2;
+  APInt n, remainder;
+  APInt::udivrem(p.zextOrTrunc(width).shl(k), q.zextOrTrunc(width), n,
+                 remainder);
+  if (!remainder.isZero()) {
+    n = n.shl(1);
+    n.setBit(0);
+    ++k;
+  }
+  // APFloat reads n * 2^-k, written in hexadecimal, exactly and rounds it
+  // once, subnormal and overflowing results included.
+  SmallString<64> hex("0x");
+  n.toStringUnsigned(hex, 16);
+  hex += "p-";
+  hex += std::to_string(k);
+  APFloat value(semantics);
+  auto status = value.convertFromString(hex, APFloat::rmNearestTiesToEven);
+  if (!status) {
+    consumeError(status.takeError());
+    return std::nullopt;
+  }
+  // Inexact, overflow and underflow: the rounding asked for.
+  return value;
+}
+
 std::optional<APFloat> literalValue(StringRef text,
                                     const fltSemantics &semantics) {
   bool negative = text.consume_front("-");
@@ -179,18 +220,14 @@ std::optional<APFloat> literalValue(StringRef text,
   } else if (text == "nan.0") {
     value = APFloat::getNaN(semantics);
   } else if (auto [num, den] = text.split('/'); !den.empty()) {
-    // A fraction: numerator and denominator as integers of any size, divided
-    // in quadruple precision, then rounded to the tensor's precision.
+    // A fraction: numerator and denominator as integers of any size.
     APInt p, q;
     if (num.getAsInteger(10, p) || den.getAsInteger(10, q) || q.isZero())
       return std::nullopt;
-    APFloat fp(APFloat::IEEEquad()), fq(APFloat::IEEEquad());
-    fp.convertFromAPInt(p, /*IsSigned=*/false, APFloat::rmNearestTiesToEven);
-    fq.convertFromAPInt(q, /*IsSigned=*/false, APFloat::rmNearestTiesToEven);
-    fp.divide(fq, APFloat::rmNearestTiesToEven);
-    bool losesInfo;
-    fp.convert(semantics, APFloat::rmNearestTiesToEven, &losesInfo);
-    value = fp;
+    std::optional<APFloat> fraction = roundFraction(p, q, semantics);
+    if (!fraction)
+      return std::nullopt;
+    value = *fraction;
     if (negative)
       value.changeSign();
   } else {

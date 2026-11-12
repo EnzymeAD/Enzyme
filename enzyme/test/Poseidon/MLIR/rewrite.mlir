@@ -134,3 +134,34 @@ func.func @third(%x: tensor<4xf32>) -> tensor<4xf32> {
   %2 = arith.divf %1, %three : tensor<4xf32>
   return %2 : tensor<4xf32>
 }
+
+// A fraction is rounded once, to the tensor's precision. Each of these is just
+// above a point halfway between two values, by less than quadruple precision
+// can hold: dividing in quad and then rounding would land on the halfway
+// point and round to the even value below.
+// 1 + 2^-53 + 1/(3 * 2^114), in f64:
+// CHECK-LABEL: func.func @halfway64
+// CHECK:         arith.constant dense<1.0000000000000002> : tensor<4xf64>
+func.func @halfway64(%x: tensor<4xf64>) -> tensor<4xf64> {
+  %0 = arith.mulf %x, %x : tensor<4xf64>
+  %1 = arith.addf %0, %x : tensor<4xf64>
+  return %1 : tensor<4xf64>
+}
+
+// 1 + 2^-24 + 1/(3 * 2^114), in f32:
+// CHECK-LABEL: func.func @halfway32
+// CHECK:         arith.constant dense<1.00000012> : tensor<4xf32>
+func.func @halfway32(%x: tensor<4xf32>) -> tensor<4xf32> {
+  %0 = arith.mulf %x, %x : tensor<4xf32>
+  %1 = arith.addf %0, %x : tensor<4xf32>
+  return %1 : tensor<4xf32>
+}
+
+// 2^-1075 + 2^-1200 / 3: just above half the smallest f64, 2^-1074.
+// CHECK-LABEL: func.func @subnormal
+// CHECK:         arith.constant dense<4.940660e-324> : tensor<4xf64>
+func.func @subnormal(%x: tensor<4xf64>) -> tensor<4xf64> {
+  %0 = arith.mulf %x, %x : tensor<4xf64>
+  %1 = arith.addf %0, %x : tensor<4xf64>
+  return %1 : tensor<4xf64>
+}
