@@ -46,9 +46,9 @@ config.substitutions.append(('%poseidon_explain',
                              '"' + sys.executable + '" @POSEIDON_SOURCE_DIR@/tools/explain/poseidon-explain'))
 
 # The GEMM dispatch runtimes, for tests that call an entry point directly
-# instead of having the pass emit the call.
+# instead of having the pass emit the call, with what the runtime links.
 config.substitutions.append(('%poseidon_rt_lib',
-                             '@POSEIDON_BINARY_DIR@/lib/libposeidon_rt.a'))
+                             '@POSEIDON_BINARY_DIR@/lib/libposeidon_rt.a@POSEIDON_TEST_RT_LINK@'))
 
 config.substitutions.append(('%shlibext', config.llvm_shlib_ext))
 config.substitutions.append(('%opt', config.llvm_tools_dir + "/opt"))

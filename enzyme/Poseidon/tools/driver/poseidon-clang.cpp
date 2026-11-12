@@ -454,14 +454,19 @@ int main(int argc, char **argv) {
       // runtimes; they export disjoint symbols and only the chosen one runs.
       Cmd.push_back("-lposeidon_rt");
       Cmd.push_back("-lcublas");
-      StringRef CuMp = POSEIDON_DRIVER_CUMPSGEMM;
-      if (!CuMp.empty()) {
-        Cmd.push_back(("-L" + CuMp + "/build").str());
-        Cmd.push_back("-lcumpsgemm");
+      // What the runtime links besides the toolkit's libraries, each found
+      // again where it was built when the program runs, after cuBLAS:
+      // cuMpSGEMM defines cuBLAS's GEMM entry points. Handed to the linker
+      // alone: after the user's -x cuda clang would compile a file input.
+      SmallVector<StringRef, 2> RtLibs;
+      StringRef(POSEIDON_DRIVER_RT_LIBS).split(RtLibs, ',', -1, false);
+      for (StringRef Lib : RtLibs) {
+        Cmd.push_back("-Xlinker");
+        Cmd.push_back(Lib.str());
         Cmd.push_back("-Xlinker");
         Cmd.push_back("-rpath");
         Cmd.push_back("-Xlinker");
-        Cmd.push_back((CuMp + "/build").str());
+        Cmd.push_back(sys::path::parent_path(Lib).str());
       }
     }
     if (ProfileUse && IsHIP) {
