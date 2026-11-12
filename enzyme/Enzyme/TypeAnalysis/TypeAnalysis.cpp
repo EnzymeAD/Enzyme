@@ -157,7 +157,9 @@ const llvm::StringMap<llvm::Intrinsic::ID> LIBM_FUNCTIONS = {
     {"logb", Intrinsic::not_intrinsic},
     {"pow", Intrinsic::pow},
     {"sqrt", Intrinsic::sqrt},
+    {"rsqrt", Intrinsic::not_intrinsic},
     {"cbrt", Intrinsic::not_intrinsic},
+    {"rcbrt", Intrinsic::not_intrinsic},
     {"hypot", Intrinsic::not_intrinsic},
 
     {"__mulsc3", Intrinsic::not_intrinsic},
@@ -183,7 +185,13 @@ const llvm::StringMap<llvm::Intrinsic::ID> LIBM_FUNCTIONS = {
     {"erf", Intrinsic::not_intrinsic},
     {"erfi", Intrinsic::not_intrinsic},
     {"erfc", Intrinsic::not_intrinsic},
+    {"erfcx", Intrinsic::not_intrinsic},
     {"erfinv", Intrinsic::not_intrinsic},
+    {"erfcinv", Intrinsic::not_intrinsic},
+    {"normcdf", Intrinsic::not_intrinsic},
+    {"normcdfinv", Intrinsic::not_intrinsic},
+    {"ncdf", Intrinsic::not_intrinsic},
+    {"ncdfinv", Intrinsic::not_intrinsic},
 
     {"__fd_sincos_1", Intrinsic::not_intrinsic},
     {"sincospi", Intrinsic::not_intrinsic},
@@ -4364,6 +4372,12 @@ void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
   case Intrinsic::nearbyint:
   case Intrinsic::round:
   case Intrinsic::sqrt:
+  case Intrinsic::nvvm_rsqrt_approx_f:
+  case Intrinsic::nvvm_rsqrt_approx_d:
+  case Intrinsic::nvvm_rsqrt_approx_ftz_f:
+#if LLVM_VERSION_MAJOR >= 19
+  case Intrinsic::nvvm_rsqrt_approx_ftz_d:
+#endif
 #if LLVM_VERSION_MAJOR >= 21
   case Intrinsic::nvvm_fabs:
   case Intrinsic::nvvm_fabs_ftz:
