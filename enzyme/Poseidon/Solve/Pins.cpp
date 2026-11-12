@@ -237,6 +237,20 @@ SmallVector<SolutionStep> parseManualRewrites(Session &S, FunctionFPState &st) {
                           "': " + kind.tag + " " + Twine(item.unit) +
                           " already has " + kind.appliedNoun +
                           " applied; give one item per unit");
+    // The rule the solvers keep: a raise replaces the loop it reads, so no
+    // other step may edit an instruction of that loop.
+    for (const SolutionStep &prior : steps) {
+      const SiteUnit &other = unitOf(prior);
+      if ((unit->consumesFootprint() || other.consumesFootprint()) &&
+          unit->footprintOverlaps(other))
+        reportUserError(F, F.getSubprogram(),
+                        "-poseidon-apply-rewrites item '" + Twine(id) +
+                            "': " + kind.tag + " " + Twine(item.unit) +
+                            " and " + other.info().tag + " " +
+                            Twine(other.indexInKind()) +
+                            " change the same instructions, and one of "
+                            "them replaces them; give one of the two");
+    }
     llvm::errs() << "[poseidon] Selecting " << id << ": "
                  << unit->selectionText(pos) << "\n";
     steps.emplace_back(unit, pos);
