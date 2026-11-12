@@ -1418,7 +1418,8 @@ json::Object Explainer::toJSON() {
     for (const auto &[cost, acc] : rec.table) {
       json::Object p;
       int64_t b = cost;
-      p["budget"] = scale.share(b);
+      if (selectable(Sess.Opts, acc))
+        p["budget"] = scale.share(b);
       if (before)
         p["cost"] = scale.share(*before + b);
       putNum(p, "modelled_rel_error", relErr(acc));

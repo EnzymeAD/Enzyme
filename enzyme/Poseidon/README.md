@@ -153,8 +153,9 @@ the site that a solution may add (a negative share, down to -1, is one it has
 to save: -0.25 requires saving a quarter); at its default of 0 that is the most
 accurate rewrite costing no more than the code as written, which may be the
 code as written. A share below -1 or one that is not finite stops the compile,
-and a solve writes the shares of its frontier points to `budgets.txt` in its
-`-poseidon-cache` directory.
+and a solve writes to `budgets.txt` in its `-poseidon-cache` directory the
+share of each frontier point a budget selects: passed back as the budget, each
+selects that point.
 `poseidon-clang++ -poseidon-help` lists the user flags, and any other
 `-poseidon-<flag>` reaches the pass.
 
@@ -313,7 +314,7 @@ error when the DP table came from the cache) is omitted.
 | `result` | `cost_before`, `cost_after`, `modelled_rel_error_as_written`, `modelled_rel_error`, `applied` (ids) |
 | `subgraphs[]` | `id`, `kind` (`subgraph` or `matmul`), `loc`, `cost`, `executions`, `ops[]` (`opcode`, `type`, `loc`, `executions`, `sensitivity`, `gradient`, `min`, `max`), `inputs[]` (`var`, `name`, `loc`, `type`, `min`, `max`), `outputs[]` (`name`, `loc`, `fpcore`, `c`, the `ops` and `inputs` it depends on), `original` (`fpcore`, `c`), `herbie[]` (per core: precision, status), `left_as_written` |
 | `subgraphs[].alternatives[]` | `id` (what `-poseidon-apply-rewrites` takes), `kind` (`algebraic`, `precision`, `expansion`, `matmul`), `summary`, `fpcore`, `c`, `approx`, `approx_note`, `changes`, `cost_delta`, `modelled_error`, `herbie_error_bits` (`before`, `after`), `status` (`applied`, `pareto`, `rejected`), `reason` |
-| `pareto[]` | `budget` (what `-poseidon-cost-budget` takes), `cost`, `modelled_rel_error`, `applied`, `selected` |
+| `pareto[]` | `budget` (what `-poseidon-cost-budget` takes to select the point; absent on a point no budget selects), `cost`, `modelled_rel_error`, `applied`, `selected` |
 
 Locations are `{file, line, col}`; modelled errors are relative and in the
 unit `-poseidon-tau` is given in; costs and budgets are shares of what the

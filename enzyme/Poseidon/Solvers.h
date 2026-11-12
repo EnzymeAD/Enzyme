@@ -82,5 +82,11 @@ llvm::SmallVector<SolutionStep>
 jointAccuracyDPSolver(Session &S, llvm::ArrayRef<FunctionFPState *> states,
                       double errorTol, SolveRecord *record = nullptr);
 
+// Whether a budget or an accuracy target can select a frontier point of this
+// accuracy cost. A point whose cost is not finite or carries the exponent
+// penalty stays on the frontier when nothing cheaper beats it, and no
+// selection takes it.
+bool selectable(const Options &O, double accCost);
+
 } // namespace poseidon
 #endif // POSEIDON_SOLVERS_H
