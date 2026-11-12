@@ -52,6 +52,9 @@ endif()
 if(TARGET poseidon_rt)
   list(APPEND POSEIDON_TEST_DEPS poseidon_rt)
 endif()
+if(TARGET poseidon-mlir-opt)
+  list(APPEND POSEIDON_TEST_DEPS poseidon-mlir-opt)
+endif()
 
 # check-poseidon needs no device; the tests under Integration/ compile and
 # launch CUDA kernels and have their own target.
