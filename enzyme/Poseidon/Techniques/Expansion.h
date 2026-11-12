@@ -47,6 +47,10 @@ llvm::Value *emitDSToF64(llvm::IRBuilder<> &B, DSValue ds);
 DSValue emitToDS(llvm::IRBuilder<> &B, llvm::Value *fpval);
 llvm::Value *emitDSToFP(llvm::IRBuilder<> &B, DSValue ds, llvm::Type *targetTy);
 
+// Materialize `instsToChange` as a two-component expansion and erase them,
+// with the FP64 PHIs the expansion carries as pairs. `restoredValues`, if
+// given, receives each erased value whose users now read another, with that
+// value.
 void applyExpansion(
     Session &S, llvm::ArrayRef<llvm::Instruction *> instsToChange,
     const llvm::SmallPtrSetImpl<llvm::Instruction *> &allChanged,
@@ -87,8 +91,9 @@ ExpansionValue emitToExpansion(llvm::IRBuilder<> &B, llvm::Value *fpval,
 llvm::Value *emitExpansionToFP(llvm::IRBuilder<> &B, const ExpansionValue &v,
                                llvm::Type *targetTy);
 
-// Materialize as an n-component expansion (n >= 3); mirrors applyExpansion
-// but never touches the two-component df64 staging machinery.
+// Materialize as an n-component expansion (n >= 3), erasing and reporting as
+// the two-component applyExpansion does, but never touching the df64 staging
+// machinery.
 void applyExpansion(
     Session &S, unsigned n, llvm::ArrayRef<llvm::Instruction *> instsToChange,
     const llvm::SmallPtrSetImpl<llvm::Instruction *> &allChanged,
