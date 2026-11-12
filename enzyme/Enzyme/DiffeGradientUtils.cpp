@@ -77,14 +77,15 @@ DiffeGradientUtils::DiffeGradientUtils(
     ValueToValueMapTy &invertedPointers_,
     const SmallPtrSetImpl<Value *> &constantvalues_,
     const SmallPtrSetImpl<Value *> &returnvals_, DIFFE_TYPE ActiveReturn,
-    bool shadowReturnUsed, ArrayRef<DIFFE_TYPE> constant_values,
+    bool shadowReturnUsed, bool diffeReturnUsed,
+    ArrayRef<DIFFE_TYPE> constant_values,
     llvm::ValueMap<const llvm::Value *, AssertingReplacingVH> &origToNew_,
     DerivativeMode mode, bool runtimeActivity, bool strongZero, unsigned width,
     bool omp)
     : GradientUtils(Logic, newFunc_, oldFunc_, TLI, TA, TR, invertedPointers_,
                     constantvalues_, returnvals_, ActiveReturn,
-                    shadowReturnUsed, constant_values, origToNew_, mode,
-                    runtimeActivity, strongZero, width, omp) {
+                    shadowReturnUsed, diffeReturnUsed, constant_values,
+                    origToNew_, mode, runtimeActivity, strongZero, width, omp) {
   if (oldFunc_->empty())
     return;
   assert(reverseBlocks.size() == 0);
@@ -183,8 +184,8 @@ DiffeGradientUtils *DiffeGradientUtils::CreateFromClone(
 
   auto res = new DiffeGradientUtils(
       Logic, newFunc, oldFunc, TLI, TA, TR, invertedPointers, constant_values,
-      nonconstant_values, retType, shadowReturn, constant_args, originalToNew,
-      mode, runtimeActivity, strongZero, width, omp);
+      nonconstant_values, retType, shadowReturn, diffeReturnArg, constant_args,
+      originalToNew, mode, runtimeActivity, strongZero, width, omp);
 
   return res;
 }

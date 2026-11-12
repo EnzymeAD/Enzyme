@@ -1925,7 +1925,9 @@ public:
         for (auto u : P0->users()) {
           if (!gutils->isConstantInstruction(cast<Instruction>(u))) {
             activeUses.push_back(cast<Instruction>(u));
-          } else if (retType == DIFFE_TYPE::OUT_DIFF && isa<ReturnInst>(u))
+          } else if ((retType == DIFFE_TYPE::OUT_DIFF ||
+                      gutils->diffeReturnUsed) &&
+                     isa<ReturnInst>(u))
             activeUses.push_back(cast<Instruction>(u));
         }
         if (activeUses.size() == 1 && activeUses[0] == &SI &&
@@ -1947,7 +1949,9 @@ public:
               auto UI = cast<Instruction>(u);
               if (UI != P0 && L->contains(UI) &&
                   (!gutils->isConstantInstruction(UI) ||
-                   (retType == DIFFE_TYPE::OUT_DIFF && isa<ReturnInst>(UI)))) {
+                   ((retType == DIFFE_TYPE::OUT_DIFF ||
+                     gutils->diffeReturnUsed) &&
+                    isa<ReturnInst>(UI)))) {
                 allIncoming = false;
                 break;
               }
@@ -2384,18 +2388,8 @@ public:
       }
     } else {
       for (InsertValueInst *iv = &IVI;;) {
-        size_t size0 = 1;
-        if (iv->getInsertedValueOperand()->getType()->isSized() &&
-            (iv->getInsertedValueOperand()->getType()->isIntOrIntVectorTy() ||
-             iv->getInsertedValueOperand()->getType()->isFPOrFPVectorTy()))
-          size0 =
-              (gutils->newFunc->getParent()->getDataLayout().getTypeSizeInBits(
-                   iv->getInsertedValueOperand()->getType()) +
-               7) /
-              8;
-        auto it = TR.intType(size0, iv->getInsertedValueOperand(), iv, gutils,
-                             /*err*/ nullptr);
-        if (it.isFloat() || !it.isKnown()) {
+        if (TR.anyFloat(iv->getInsertedValueOperand(),
+                        /*anythingIsFloat=*/false)) {
           floatingInsertion = true;
           break;
         }
@@ -2710,7 +2704,9 @@ public:
         for (auto u : P0->users()) {
           if (!gutils->isConstantInstruction(cast<Instruction>(u))) {
             activeUses.push_back(cast<Instruction>(u));
-          } else if (retType == DIFFE_TYPE::OUT_DIFF && isa<ReturnInst>(u)) {
+          } else if ((retType == DIFFE_TYPE::OUT_DIFF ||
+                      gutils->diffeReturnUsed) &&
+                     isa<ReturnInst>(u)) {
             activeUses.push_back(cast<Instruction>(u));
           }
         }
@@ -2733,7 +2729,9 @@ public:
               auto UI = cast<Instruction>(u);
               if (UI != P0 && L->contains(UI) &&
                   (!gutils->isConstantInstruction(UI) ||
-                   (retType == DIFFE_TYPE::OUT_DIFF && isa<ReturnInst>(UI)))) {
+                   ((retType == DIFFE_TYPE::OUT_DIFF ||
+                     gutils->diffeReturnUsed) &&
+                    isa<ReturnInst>(UI)))) {
                 allIncoming = false;
                 break;
               }
@@ -5268,6 +5266,7 @@ public:
                 .overwritten_args = overwritten_args,
                 .returnUsed = false,
                 .shadowReturnUsed = false,
+                .diffeReturnUsed = (subretType == DIFFE_TYPE::OUT_DIFF),
                 .mode = DerivativeMode::ReverseModeGradient,
                 .width = gutils->getWidth(),
                 .freeMemory = true,
@@ -5634,7 +5633,7 @@ public:
                                     llvm::Function *called,
                                     bool subsequent_calls_may_write,
                                     const std::vector<bool> &overwritten_args,
-                                    bool shadowReturnUsed,
+                                    bool shadowReturnUsed, bool diffeReturnUsed,
                                     DIFFE_TYPE subretType, bool subretused) {
     using namespace llvm;
 
@@ -6279,7 +6278,8 @@ public:
               /*return is used*/ subretused, shadowReturnUsed, nextTypeInfo,
               subsequent_calls_may_write, overwritten_args, nowrite_shadows,
               false, gutils->runtimeActivity, gutils->strongZero,
-              gutils->getWidth(), gutils->AtomicAdd);
+              gutils->getWidth(), gutils->AtomicAdd, /*omp*/ false,
+              diffeReturnUsed);
           if (Mode == DerivativeMode::ReverseModePrimal) {
             assert(augmentedReturn);
             auto subaugmentations =
@@ -6731,6 +6731,7 @@ public:
               .overwritten_args = overwritten_args,
               .returnUsed = replaceFunction && subretused,
               .shadowReturnUsed = shadowReturnUsed && replaceFunction,
+              .diffeReturnUsed = diffeReturnUsed,
               .mode = subMode,
               .width = gutils->getWidth(),
               .freeMemory = true,
@@ -6782,7 +6783,9 @@ public:
           fptype, Builder2.CreateConstGEP1_64(fptype, newcalled, 1));
     }
 
-    if (subretType == DIFFE_TYPE::OUT_DIFF) {
+    bool passDiffeReturn =
+        called ? diffeReturnUsed : (subretType == DIFFE_TYPE::OUT_DIFF);
+    if (passDiffeReturn) {
       args.push_back(diffe(&call, Builder2));
     }
 
@@ -6887,7 +6890,7 @@ public:
              structidx);
     }
 
-    if (subretType == DIFFE_TYPE::OUT_DIFF)
+    if (passDiffeReturn)
       setDiffe(&call,
                Constant::getNullValue(gutils->getShadowType(call.getType())),
                Builder2);
@@ -7056,11 +7059,12 @@ public:
 
     bool subretused = false;
     bool shadowReturnUsed = false;
+    bool diffeReturnUsed = false;
     auto smode = Mode;
     if (smode == DerivativeMode::ReverseModeGradient)
       smode = DerivativeMode::ReverseModePrimal;
     DIFFE_TYPE subretType = gutils->getReturnDiffeType(
-        &call, &subretused, &shadowReturnUsed, smode);
+        &call, &subretused, &shadowReturnUsed, smode, &diffeReturnUsed);
 
     if (Mode == DerivativeMode::ForwardMode ||
         Mode == DerivativeMode::ForwardModeError) {
@@ -7492,7 +7496,7 @@ public:
 
     return recursivelyHandleSubfunction(
         call, called, subsequent_calls_may_write, overwritten_args,
-        shadowReturnUsed, subretType, subretused);
+        shadowReturnUsed, diffeReturnUsed, subretType, subretused);
   }
 };
 

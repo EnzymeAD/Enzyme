@@ -2129,11 +2129,14 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     bool subsequent_calls_may_write, const std::vector<bool> _overwritten_args,
     const std::vector<bool> &nowrite_shadows, bool forceAnonymousTape,
     bool runtimeActivity, bool strongZero, unsigned width, bool AtomicAdd,
-    bool omp) {
+    bool omp, bool diffeReturnUsed) {
 
   TimeTraceScope timeScope("CreateAugmentedPrimal", todiff->getName());
 
   assert(nowrite_shadows.size() == todiff->arg_size());
+
+  bool effDiffeReturnUsed =
+      (retType == DIFFE_TYPE::OUT_DIFF) || diffeReturnUsed;
 
   if (returnUsed)
     assert(!todiff->getReturnType()->isEmptyTy() &&
@@ -2151,6 +2154,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
                            nowrite_shadows,
                            returnUsed,
                            shadowReturnUsed,
+                           effDiffeReturnUsed,
                            oldTypeInfo,
                            forceAnonymousTape,
                            AtomicAdd,
@@ -2177,7 +2181,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       return insert_or_assign<AugmentedCacheKey, AugmentedReturn>(
                  AugmentedCachedFunctions, tup,
                  AugmentedReturn(newFunc, nullptr, {}, returnMapping, {}, {},
-                                 constant_args, shadowReturnUsed))
+                                 constant_args, shadowReturnUsed,
+                                 effDiffeReturnUsed))
           ->second;
     }
     llvm::errs() << "mod: " << *todiff->getParent() << "\n";
@@ -2251,7 +2256,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
           context, todiff, retType, next_constant_args, TA, returnUsed,
           shadowReturnUsed, oldTypeInfo_, subsequent_calls_may_write,
           _overwritten_args, nowrite_shadows, forceAnonymousTape,
-          runtimeActivity, strongZero, width, AtomicAdd, omp);
+          runtimeActivity, strongZero, width, AtomicAdd, omp,
+          effDiffeReturnUsed);
 
       FunctionType *FTy =
           FunctionType::get(aug.fn->getReturnType(), dupargs,
@@ -2301,7 +2307,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
                  AugmentedReturn(NewF, aug.tapeType, aug.tapeIndices,
                                  aug.returns, aug.overwritten_args_map,
                                  aug.can_modref_map, next_constant_args,
-                                 shadowReturnUsed))
+                                 shadowReturnUsed, effDiffeReturnUsed))
           ->second;
     }
 
@@ -2361,7 +2367,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       return insert_or_assign<AugmentedCacheKey, AugmentedReturn>(
                  AugmentedCachedFunctions, tup,
                  AugmentedReturn(foundcalled, nullptr, {}, returnMapping, {},
-                                 {}, constant_args, shadowReturnUsed))
+                                 {}, constant_args, shadowReturnUsed,
+                                 effDiffeReturnUsed))
           ->second;
     }
 
@@ -2444,7 +2451,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
         return insert_or_assign<AugmentedCacheKey, AugmentedReturn>(
                    AugmentedCachedFunctions, tup,
                    AugmentedReturn(foundcalled, nullptr, {}, returnMapping, {},
-                                   {}, constant_args, shadowReturnUsed))
+                                   {}, constant_args, shadowReturnUsed,
+                                   effDiffeReturnUsed))
             ->second;
       }
       if (ST->getNumElements() == 2 &&
@@ -2457,7 +2465,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
         return insert_or_assign<AugmentedCacheKey, AugmentedReturn>(
                    AugmentedCachedFunctions, tup,
                    AugmentedReturn(foundcalled, nullptr, {}, returnMapping, {},
-                                   {}, constant_args, shadowReturnUsed))
+                                   {}, constant_args, shadowReturnUsed,
+                                   effDiffeReturnUsed))
             ->second;
       }
       if (ST->getNumElements() == 2) {
@@ -2521,7 +2530,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
         return insert_or_assign<AugmentedCacheKey, AugmentedReturn>(
                    AugmentedCachedFunctions, tup,
                    AugmentedReturn(foundcalled, nullptr, {}, returnMapping, {},
-                                   {}, constant_args, shadowReturnUsed))
+                                   {}, constant_args, shadowReturnUsed,
+                                   effDiffeReturnUsed))
             ->second;
       }
     }
@@ -2539,7 +2549,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     return insert_or_assign<AugmentedCacheKey, AugmentedReturn>(
                AugmentedCachedFunctions, tup,
                AugmentedReturn(foundcalled, nullptr, {}, returnMapping, {}, {},
-                               constant_args, shadowReturnUsed))
+                               constant_args, shadowReturnUsed,
+                               effDiffeReturnUsed))
         ->second; // dyn_cast<StructType>(st->getElementType(0)));
   }
 
@@ -2549,7 +2560,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       *this, runtimeActivity, strongZero, width, todiff, TLI, TA, oldTypeInfo,
       retType, constant_args,
       /*returnUsed*/ returnUsed, /*shadowReturnUsed*/ shadowReturnUsed,
-      returnMapping, omp);
+      /*diffeReturnUsed*/ effDiffeReturnUsed, returnMapping, omp);
   gutils->nowrite_shadows = nowrite_shadows;
 
   if (todiff->empty()) {
@@ -2584,7 +2595,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       return insert_or_assign<AugmentedCacheKey, AugmentedReturn>(
                  AugmentedCachedFunctions, tup,
                  AugmentedReturn(newFunc, nullptr, {}, returnMapping, {}, {},
-                                 constant_args, shadowReturnUsed))
+                                 constant_args, shadowReturnUsed,
+                                 effDiffeReturnUsed))
           ->second;
     }
     llvm::errs() << "mod: " << *todiff->getParent() << "\n";
@@ -2640,7 +2652,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
   insert_or_assign(AugmentedCachedFunctions, tup,
                    AugmentedReturn(gutils->newFunc, nullptr, {}, returnMapping,
                                    overwritten_args_map, can_modref_map,
-                                   constant_args, shadowReturnUsed));
+                                   constant_args, shadowReturnUsed,
+                                   effDiffeReturnUsed));
 
   auto getIndex = [&](Instruction *I, CacheType u, IRBuilder<> &B) -> unsigned {
     return gutils->getIndex(
@@ -3586,7 +3599,8 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
     for (auto u : orig->users()) {
       if (!gutils->isConstantInstruction(cast<Instruction>(u)))
         activeUses.push_back(cast<Instruction>(u));
-      else if (retType == DIFFE_TYPE::OUT_DIFF && isa<ReturnInst>(u))
+      else if ((retType == DIFFE_TYPE::OUT_DIFF || gutils->diffeReturnUsed) &&
+               isa<ReturnInst>(u))
         activeUses.push_back(cast<Instruction>(u));
     }
     if (activeUses.size() == 1 && inLoop &&
@@ -3607,7 +3621,8 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
           auto UI = cast<Instruction>(u);
           if (UI != orig && L->contains(UI) &&
               (!gutils->isConstantInstruction(UI) ||
-               (retType == DIFFE_TYPE::OUT_DIFF && isa<ReturnInst>(UI)))) {
+               ((retType == DIFFE_TYPE::OUT_DIFF || gutils->diffeReturnUsed) &&
+                isa<ReturnInst>(UI)))) {
             allIncoming = false;
             break;
           }
@@ -3949,17 +3964,19 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
       IRBuilder<> bb(BB);
 
       std::vector<bool> nowrite_shadows(key.todiff->arg_size(), false);
+      bool customDiffeRet =
+          key.retType == DIFFE_TYPE::OUT_DIFF || key.diffeReturnUsed;
       auto &aug = CreateAugmentedPrimal(
           context, key.todiff, key.retType, key.constant_args, TA,
           key.returnUsed, key.shadowReturnUsed, key.typeInfo,
           key.subsequent_calls_may_write, key.overwritten_args, nowrite_shadows,
           /*forceAnonymousTape*/ false, key.runtimeActivity, key.strongZero,
-          key.width, key.AtomicAdd, omp);
+          key.width, key.AtomicAdd, omp, customDiffeRet);
 
       SmallVector<Value *, 4> fwdargs;
       for (auto &a : NewF->args())
         fwdargs.push_back(&a);
-      if (key.retType == DIFFE_TYPE::OUT_DIFF)
+      if (customDiffeRet)
         fwdargs.pop_back();
       auto cal = bb.CreateCall(aug.fn, fwdargs);
       cal->setCallingConv(aug.fn->getCallingConv());
@@ -4001,6 +4018,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
                             .overwritten_args = key.overwritten_args,
                             .returnUsed = false,
                             .shadowReturnUsed = false,
+                            .diffeReturnUsed = customDiffeRet,
                             .mode = DerivativeMode::ReverseModeGradient,
                             .width = key.width,
                             .freeMemory = key.freeMemory,
@@ -4100,6 +4118,8 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
                             .overwritten_args = key.overwritten_args,
                             .returnUsed = key.returnUsed,
                             .shadowReturnUsed = false,
+                            .diffeReturnUsed =
+                                (nextRetType == DIFFE_TYPE::OUT_DIFF),
                             .mode = DerivativeMode::ReverseModeGradient,
                             .width = key.width,
                             .freeMemory = key.freeMemory,
@@ -4392,7 +4412,8 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
     assert(augmenteddata->constant_args == key.constant_args);
   }
 
-  bool diffeReturnArg = key.retType == DIFFE_TYPE::OUT_DIFF;
+  bool diffeReturnArg =
+      key.retType == DIFFE_TYPE::OUT_DIFF || key.diffeReturnUsed;
 
   DiffeGradientUtils *gutils = DiffeGradientUtils::CreateFromClone(
       *this, key.mode, key.runtimeActivity, key.strongZero, key.width,
@@ -4542,7 +4563,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
   }
 
   Argument *differetval = nullptr;
-  if (key.retType == DIFFE_TYPE::OUT_DIFF) {
+  if (diffeReturnArg) {
     auto endarg = gutils->newFunc->arg_end();
     endarg--;
     if (key.additionalType)
@@ -4602,15 +4623,19 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
                                        gutils->TR.getReturnAnalysis()),
                 dretAlloca);
           }
-        } else if (key.retType == DIFFE_TYPE::OUT_DIFF) {
-          assert(orig->getReturnValue());
-          assert(differetval);
+        } else if (!diffeReturnArg) {
+          assert(dretAlloca == nullptr &&
+                 "non-duplicated return should not have a shadow return slot");
+        }
+        if (diffeReturnArg) {
+          assert(orig->getReturnValue() &&
+                 "active differential return requires a return value");
+          assert(differetval &&
+                 "active differential return requires differetval argument");
           if (!gutils->isConstantValue(orig->getReturnValue())) {
             IRBuilder<> reverseB(gutils->reverseBlocks[BB].back());
             gutils->setDiffe(orig->getReturnValue(), differetval, reverseB);
           }
-        } else {
-          assert(dretAlloca == nullptr);
         }
 
         rb.CreateBr(gutils->reverseBlocks[BB].front());

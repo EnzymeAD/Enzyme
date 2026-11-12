@@ -417,6 +417,7 @@ public:
   unsigned getWidth() { return width; }
 
   bool shadowReturnUsed;
+  bool diffeReturnUsed;
 
   llvm::ArrayRef<DIFFE_TYPE> ArgDiffeTypes;
 
@@ -428,7 +429,7 @@ public:
                 const llvm::SmallPtrSetImpl<llvm::Value *> &constantvalues_,
                 const llvm::SmallPtrSetImpl<llvm::Value *> &activevals_,
                 DIFFE_TYPE ReturnActivity, bool shadowReturnUsed,
-                llvm::ArrayRef<DIFFE_TYPE> ArgDiffeTypes_,
+                bool diffeReturnUsed, llvm::ArrayRef<DIFFE_TYPE> ArgDiffeTypes_,
                 llvm::ValueMap<const llvm::Value *, AssertingReplacingVH>
                     &originalToNewFn_,
                 DerivativeMode mode, bool runtimeActivity, bool strongZero,
@@ -437,9 +438,11 @@ public:
 public:
   DIFFE_TYPE getDiffeType(llvm::Value *v, bool foreignFunction) const;
 
+  bool hasActiveDiffeUse(llvm::Value *orig) const;
+
   DIFFE_TYPE getReturnDiffeType(llvm::Value *orig, bool *primalReturnUsedP,
-                                bool *shadowReturnUsedP,
-                                DerivativeMode cmode) const;
+                                bool *shadowReturnUsedP, DerivativeMode cmode,
+                                bool *diffeReturnUsedP = nullptr) const;
 
   //! Whether the augmented pass used the primal of \p orig. In the reverse pass
   //! of split mode this is the augmented pass's answer rather than one from
@@ -447,7 +450,8 @@ public:
   bool augmentedPrimalReturnUsed(llvm::Value *orig) const;
 
   DIFFE_TYPE getReturnDiffeType(llvm::Value *orig, bool *primalReturnUsedP,
-                                bool *shadowReturnUsedP) const;
+                                bool *shadowReturnUsedP,
+                                bool *diffeReturnUsedP = nullptr) const;
 
   static GradientUtils *
   CreateFromClone(EnzymeLogic &Logic, bool runtimeActivity, bool strongZero,
@@ -455,7 +459,7 @@ public:
                   llvm::TargetLibraryInfo &TLI, TypeAnalysis &TA,
                   FnTypeInfo &oldTypeInfo, DIFFE_TYPE retType,
                   llvm::ArrayRef<DIFFE_TYPE> constant_args, bool returnUsed,
-                  bool shadowReturnUsed,
+                  bool shadowReturnUsed, bool diffeReturnUsed,
                   std::map<AugmentedStruct, int> &returnMapping, bool omp);
 
   llvm::ValueMap<const llvm::Value *, llvm::MDNode *>
