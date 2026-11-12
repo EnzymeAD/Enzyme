@@ -44,6 +44,7 @@
 #include "llvm/Pass.h"
 
 #include "DesulAtomics.h"
+#include "KokkosUtils.h"
 
 #include "llvm/Transforms/Utils.h"
 #include "llvm/Transforms/Utils/ModuleUtils.h"
@@ -1193,6 +1194,10 @@ bool preserveNVVM(bool Begin, Module &M,
       if (Begin) {
         changed |= preserveLinkage(Begin, F);
       }
+    } else if (Begin && !F.empty() &&
+               enzyme_kokkos::isKokkosPreservedFunctionMangled(F.getName())) {
+      changed = true;
+      changed |= preserveLinkage(Begin, F);
     }
     // Desul's linear atomic fetch_oper templates are lowered to atomicrmw by
     // Enzyme (see LowerDesulAtomicFetchOper); keep them out of line until then.

@@ -56,6 +56,7 @@
 
 #include "../EnzymeLogic.h"
 #include "../FlangRuntime.h"
+#include "../KokkosUtils.h"
 #include "../Utils.h"
 #include "TypeAnalysis.h"
 
@@ -5257,6 +5258,95 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
       for (int i : {5, 6, 8, 10, 11})
         updateAnalysis(call.getArgOperand(i), ptrdbl, &call);
       return;
+    }
+
+    if (startsWith(funcName, "llvm.nvvm.isspacep")) {
+      updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      if (call.arg_size() >= 1)
+        updateAnalysis(call.getArgOperand(0),
+                       TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      return;
+    }
+
+    if (enzyme_kokkos::mayBeKokkosRelevantSymbol(funcName)) {
+      std::string normDem = ENZYME_KOKKOS_DEMANGLE(funcName);
+      if (enzyme_kokkos::isKokkosInactiveCall(funcName, normDem)) {
+        llvm::StringRef k =
+            enzyme_kokkos::stripReturnTypeToNamespace(normDem, "Kokkos::");
+        if (startsWith(k, "Kokkos::Impl::HostBarrier::") &&
+            call.arg_size() >= 1 &&
+            call.getArgOperand(0)->getType()->isPointerTy()) {
+          TypeTree ptrTT;
+          ptrTT.insert({-1}, BaseType::Pointer);
+          for (int off = 0; off < 4; ++off)
+            ptrTT.insert({-1, off}, BaseType::Integer);
+          updateAnalysis(call.getArgOperand(0), ptrTT, &call);
+        }
+        for (unsigned idx = 0; idx < call.arg_size(); ++idx) {
+          if (call.getArgOperand(idx)->getType()->isIntOrIntVectorTy())
+            updateAnalysis(call.getArgOperand(idx),
+                           TypeTree(BaseType::Integer).Only(-1, &call), &call);
+        }
+        if (call.getType()->isIntOrIntVectorTy())
+          updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call),
+                         &call);
+        else if (call.getType()->isPointerTy())
+          updateAnalysis(&call, TypeTree(BaseType::Pointer).Only(-1, &call),
+                         &call);
+        return;
+      }
+      if (auto CopyInfo =
+              enzyme_kokkos::getKokkosDeepCopyInfo(call, funcName, normDem)) {
+        unsigned dstIdx = CopyInfo->DstIdx, srcIdx = CopyInfo->SrcIdx,
+                 lenIdx = CopyInfo->LenIdx;
+        if (call.getType()->isIntOrIntVectorTy())
+          updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call),
+                         &call);
+        updateAnalysis(call.getArgOperand(lenIdx),
+                       TypeTree(BaseType::Integer).Only(-1, &call), &call);
+        if (direction & UP) {
+          size_t sz = 1;
+          for (auto val : fntypeinfo.knownIntegralValues(
+                   call.getArgOperand(lenIdx), DT, intseen, SE)) {
+            if (val >= 0)
+              sz = max(sz, (size_t)val);
+          }
+          auto &dl = fntypeinfo.Function->getParent()->getDataLayout();
+          TypeTree res = getAnalysis(call.getArgOperand(dstIdx))
+                             .PurgeAnything()
+                             .Data0()
+                             .ShiftIndices(dl, 0, sz, 0);
+          TypeTree res2 = getAnalysis(call.getArgOperand(srcIdx))
+                              .PurgeAnything()
+                              .Data0()
+                              .ShiftIndices(dl, 0, sz, 0);
+          bool Legal = true;
+          res.checkedOrIn(res2, /*PointerIntSame*/ false, Legal);
+          if (Legal) {
+            res.insert({}, BaseType::Pointer);
+            res = res.Only(-1, &call);
+            updateAnalysis(call.getArgOperand(dstIdx), res, &call);
+            updateAnalysis(call.getArgOperand(srcIdx), res, &call);
+          }
+        }
+        return;
+      }
+      if (auto MemsetInfo =
+              enzyme_kokkos::getKokkosZeroMemsetInfo(call, funcName, normDem)) {
+        unsigned dstIdx = MemsetInfo->DstIdx, lenIdx = MemsetInfo->LenIdx;
+        int valIdx = MemsetInfo->ValIdx;
+        if (call.getType()->isIntOrIntVectorTy())
+          updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call),
+                         &call);
+        updateAnalysis(call.getArgOperand(dstIdx),
+                       TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+        updateAnalysis(call.getArgOperand(lenIdx),
+                       TypeTree(BaseType::Integer).Only(-1, &call), &call);
+        if (valIdx >= 0 && (unsigned)valIdx < call.arg_size())
+          updateAnalysis(call.getArgOperand(valIdx),
+                         TypeTree(BaseType::Integer).Only(-1, &call), &call);
+        return;
+      }
     }
 
     if (funcName == "__kmpc_fork_call") {
