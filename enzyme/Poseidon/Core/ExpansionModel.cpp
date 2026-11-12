@@ -49,11 +49,19 @@ struct HostArith {
   float mul(float a, float b, const char *) { return a * b; }
   float div(float a, float b, const char *) { return a / b; }
   float neg(float a, const char *) { return -a; }
+  // Up to LLVM 22, clang takes fma(x, x, y) for never -0, although a negative
+  // sum that underflows is -0, and then rewrites a later b - (s - a) into
+  // b + (a - s), which turns a -0 into +0. Read through a volatile, the result
+  // is what IEEE arithmetic gives whatever compiler builds the pass.
+  static float unanalyzed(float v) {
+    volatile float r = v;
+    return r;
+  }
   float fma(float a, float b, float c, const char *) {
-    return std::fma(a, b, c);
+    return unanalyzed(std::fma(a, b, c));
   }
   float fmaCall(float a, float b, float c, const char *) {
-    return std::fma(a, b, c);
+    return unanalyzed(std::fma(a, b, c));
   }
   float sqrt(float a, const char *) { return std::sqrt(a); }
   float sqrtCall(float a, const char *) { return std::sqrt(a); }
