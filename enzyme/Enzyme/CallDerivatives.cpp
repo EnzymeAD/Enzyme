@@ -4965,13 +4965,14 @@ bool AdjointGenerator::handleKnownCallDerivatives(
 
     llvm::Value *val = getBaseObject(call.getArgOperand(0));
     if (isa<ConstantPointerNull>(val)) {
-      llvm::errs() << "removing free of null pointer\n";
+      EmitWarning("FreeNullPointer", call, "removing free of null pointer");
       eraseIfUnused(call, /*erase*/ true, /*check*/ false);
       return true;
     }
 
     // TODO HANDLE FREE
-    llvm::errs() << "freeing without malloc " << *val << " in " << call << "\n";
+    EmitWarning("FreeWithoutMalloc", call, "freeing without malloc ", *val,
+                " in ", call);
     eraseIfUnused(call, /*erase*/ true, /*check*/ false);
     return true;
   }
