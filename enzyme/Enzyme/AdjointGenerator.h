@@ -32,6 +32,7 @@
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Analysis/ValueTracking.h"
+#include "llvm/Demangle/Demangle.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/IntrinsicsX86.h"
@@ -44,6 +45,7 @@
 #include "EnzymeLogic.h"
 #include "FunctionUtils.h"
 #include "GradientUtils.h"
+#include "KokkosUtils.h"
 #include "LibraryFuncs.h"
 #include "TraceUtils.h"
 #include "TypeAnalysis/TBAA.h"
@@ -7023,6 +7025,17 @@ public:
   void handleMPI(llvm::CallInst &call, llvm::Function *called,
                  llvm::StringRef funcName);
 
+  void visitKokkosThreadsCall(llvm::CallInst &Call);
+
+  bool handleKokkosCallDerivatives(llvm::CallInst &Call, llvm::Function *Called,
+                                   llvm::StringRef FuncName,
+                                   llvm::CallInst *const NewCall);
+
+  bool handleKokkosCallDerivativesImpl(
+      llvm::CallInst &Call, llvm::Function *Called, llvm::StringRef FuncName,
+      llvm::CallInst *const NewCall,
+      llvm::SmallVectorImpl<llvm::Instruction *> &DeferredErase);
+
   bool handleKnownCallDerivatives(llvm::CallInst &call, llvm::Function *called,
                                   llvm::StringRef funcName,
                                   bool subsequent_calls_may_write,
@@ -7324,6 +7337,13 @@ public:
       if (funcName == "__kmpc_fork_call") {
         visitOMPCall(call);
         return;
+      }
+      if (enzyme_kokkos::mayBeKokkosRelevantSymbol(funcName)) {
+        std::string NormDem = ENZYME_KOKKOS_DEMANGLE(funcName);
+        if (enzyme_kokkos::isKokkosThreadsStart(funcName, NormDem)) {
+          visitKokkosThreadsCall(call);
+          return;
+        }
       }
     }
 
