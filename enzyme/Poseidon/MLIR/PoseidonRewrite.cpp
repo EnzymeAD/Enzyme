@@ -24,12 +24,19 @@
 #include "mlir/IR/PatternMatch.h"
 
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/MapVector.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/Sequence.h"
+#include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/SmallString.h"
+#include "llvm/ADT/StringMap.h"
 #include "llvm/Support/Format.h"
+#include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/xxhash.h"
 
-#include <cmath>
+#include <algorithm>
 #include <memory>
 #include <mutex>
 #include <random>
@@ -55,146 +62,198 @@ namespace herbie = ::poseidon;
 // tensors independently, so the scalar FPCore describes the whole tensor op.
 // The same table, read the other way, says which op builds each operator of a
 // rewrite.
+//
+// FPCore's fmax and fmin return the other operand when one is NaN, as
+// arith.maxnumf and arith.minnumf do; arith.maximumf and arith.minimumf
+// return NaN instead, so they compute no FPCore operator.
 struct ChainOp {
   StringRef mlir;
   StringRef fpcore;
   unsigned arity;
 };
+// The op's name comes from its class, so that the compiler checks it.
+template <typename OpTy>
+constexpr ChainOp chainOp(StringRef fpcore, unsigned arity) {
+  return {OpTy::getOperationName(), fpcore, arity};
+}
 const ChainOp chainOps[] = {
-    {"arith.addf", "+", 2},       {"arith.subf", "-", 2},
-    {"arith.mulf", "*", 2},       {"arith.divf", "/", 2},
-    {"arith.negf", "neg", 1},     {"arith.remf", "fmod", 2},
-    {"arith.maxnumf", "fmax", 2}, {"arith.minnumf", "fmin", 2},
-    {"math.absf", "fabs", 1},     {"math.sqrt", "sqrt", 1},
-    {"math.cbrt", "cbrt", 1},     {"math.exp", "exp", 1},
-    {"math.exp2", "exp2", 1},     {"math.expm1", "expm1", 1},
-    {"math.log", "log", 1},       {"math.log2", "log2", 1},
-    {"math.log10", "log10", 1},   {"math.log1p", "log1p", 1},
-    {"math.powf", "pow", 2},      {"math.fma", "fma", 3},
-    {"math.sin", "sin", 1},       {"math.cos", "cos", 1},
-    {"math.tan", "tan", 1},       {"math.asin", "asin", 1},
-    {"math.acos", "acos", 1},     {"math.atan", "atan", 1},
-    {"math.atan2", "atan2", 2},   {"math.sinh", "sinh", 1},
-    {"math.cosh", "cosh", 1},     {"math.tanh", "tanh", 1},
-    {"math.asinh", "asinh", 1},   {"math.acosh", "acosh", 1},
-    {"math.atanh", "atanh", 1},   {"math.erf", "erf", 1},
-    {"math.erfc", "erfc", 1},     {"math.copysign", "copysign", 2},
-    {"math.floor", "floor", 1},   {"math.ceil", "ceil", 1},
-    {"math.round", "round", 1},   {"math.trunc", "trunc", 1},
+    chainOp<arith::AddFOp>("+", 2),
+    chainOp<arith::SubFOp>("-", 2),
+    chainOp<arith::MulFOp>("*", 2),
+    chainOp<arith::DivFOp>("/", 2),
+    chainOp<arith::NegFOp>("neg", 1),
+    chainOp<arith::RemFOp>("fmod", 2),
+    chainOp<arith::MaxNumFOp>("fmax", 2),
+    chainOp<arith::MinNumFOp>("fmin", 2),
+    chainOp<math::AbsFOp>("fabs", 1),
+    chainOp<math::SqrtOp>("sqrt", 1),
+    chainOp<math::CbrtOp>("cbrt", 1),
+    chainOp<math::ExpOp>("exp", 1),
+    chainOp<math::Exp2Op>("exp2", 1),
+    chainOp<math::ExpM1Op>("expm1", 1),
+    chainOp<math::LogOp>("log", 1),
+    chainOp<math::Log2Op>("log2", 1),
+    chainOp<math::Log10Op>("log10", 1),
+    chainOp<math::Log1pOp>("log1p", 1),
+    chainOp<math::PowFOp>("pow", 2),
+    chainOp<math::FmaOp>("fma", 3),
+    chainOp<math::SinOp>("sin", 1),
+    chainOp<math::CosOp>("cos", 1),
+    chainOp<math::TanOp>("tan", 1),
+    chainOp<math::AsinOp>("asin", 1),
+    chainOp<math::AcosOp>("acos", 1),
+    chainOp<math::AtanOp>("atan", 1),
+    chainOp<math::Atan2Op>("atan2", 2),
+    chainOp<math::SinhOp>("sinh", 1),
+    chainOp<math::CoshOp>("cosh", 1),
+    chainOp<math::TanhOp>("tanh", 1),
+    chainOp<math::AsinhOp>("asinh", 1),
+    chainOp<math::AcoshOp>("acosh", 1),
+    chainOp<math::AtanhOp>("atanh", 1),
+    chainOp<math::ErfOp>("erf", 1),
+    chainOp<math::ErfcOp>("erfc", 1),
+    chainOp<math::CopySignOp>("copysign", 2),
+    chainOp<math::FloorOp>("floor", 1),
+    chainOp<math::CeilOp>("ceil", 1),
+    chainOp<math::RoundOp>("round", 1),
+    chainOp<math::TruncOp>("trunc", 1),
 };
 
-const ChainOp *chainOpByMlirName(StringRef name) {
-  for (const ChainOp &op : chainOps)
-    if (op.mlir == name)
-      return &op;
-  return nullptr;
-}
+// An op of the table, as one context names it.
+struct KnownOp {
+  KnownOp(OperationName name, const ChainOp *info) : name(name), info(info) {}
+  OperationName name;
+  const ChainOp *info;
+};
 
-const ChainOp *chainOpByFPCore(StringRef name) {
-  for (const ChainOp &op : chainOps)
-    if (op.fpcore == name)
-      return &op;
-  return nullptr;
-}
+// The table, looked up by an op's name in one context and by FPCore operator.
+class ChainOpTable {
+public:
+  explicit ChainOpTable(MLIRContext *context) {
+    for (const ChainOp &op : chainOps) {
+      OperationName name(op.mlir, context);
+      byName.try_emplace(name, &op);
+      byFPCore.try_emplace(op.fpcore, name, &op);
+    }
+  }
 
-// The FPCore operator an op computes, or "" for an op that is not part of a
-// chain.
-StringRef fpcoreOperator(Operation *op) {
-  const ChainOp *info = chainOpByMlirName(op->getName().getStringRef());
-  return info ? info->fpcore : StringRef();
-}
+  // The entry of `op`'s kind, or null for an op that is not part of a chain.
+  const ChainOp *forOp(Operation *op) const {
+    return byName.lookup(op->getName());
+  }
+
+  // The op that computes FPCore operator `fpcore`, or null.
+  const KnownOp *forFPCore(StringRef fpcore) const {
+    auto it = byFPCore.find(fpcore);
+    return it == byFPCore.end() ? nullptr : &it->second;
+  }
+
+private:
+  llvm::DenseMap<OperationName, const ChainOp *> byName;
+  llvm::StringMap<KnownOp> byFPCore;
+};
 
 // A ranked tensor of f32 or f64: the precisions Herbie searches in.
-bool isFloatTensor(Type type) {
+bool isF32OrF64Tensor(Type type) {
   auto tensor = dyn_cast<RankedTensorType>(type);
   return tensor &&
          (tensor.getElementType().isF32() || tensor.getElementType().isF64());
 }
 
-bool isChainOp(Operation *op) {
-  if (fpcoreOperator(op).empty())
-    return false;
-  return llvm::all_of(op->getOperandTypes(), isFloatTensor) &&
-         llvm::all_of(op->getResultTypes(), isFloatTensor);
+bool isChainOp(const ChainOpTable &table, Operation *op) {
+  return table.forOp(op) &&
+         llvm::all_of(op->getOperandTypes(), isF32OrF64Tensor) &&
+         llvm::all_of(op->getResultTypes(), isF32OrF64Tensor);
 }
 
-// A tensor whose elements are all the same float, written into the FPCore as
-// a number instead of becoming an input.
-std::optional<std::string> splatLiteral(Value value) {
+// The element of a tensor whose elements are all the same float. Such a
+// tensor is written into the FPCore as a number instead of becoming an input.
+std::optional<APFloat> splatValue(Value value) {
   auto constant = value.getDefiningOp<arith::ConstantOp>();
   if (!constant)
     return std::nullopt;
   auto dense = dyn_cast<DenseFPElementsAttr>(constant.getValue());
   if (!dense || !dense.isSplat())
     return std::nullopt;
-  double v = dense.getSplatValue<APFloat>().convertToDouble();
-  if (std::isnan(v))
-    return std::string("NAN");
-  if (std::isinf(v))
-    return std::string(v > 0 ? "INFINITY" : "(- INFINITY)");
-  // 17 significant digits name a double (and so a float) exactly.
-  std::string text;
-  llvm::raw_string_ostream os(text);
-  os << llvm::format("%.17g", v);
-  return text;
+  return dense.getSplatValue<APFloat>();
+}
+
+// `v` as an FPCore number, in its own precision's digits: 17 for f64 and 9
+// for f32, enough to read back as the same value.
+void printNumber(const APFloat &v, raw_ostream &os) {
+  if (v.isNaN()) {
+    os << "NAN";
+    return;
+  }
+  if (v.isInfinity()) {
+    os << (v.isNegative() ? "(- INFINITY)" : "INFINITY");
+    return;
+  }
+  SmallString<32> text;
+  v.toString(text);
+  // FPCore writes the exponent with a lower-case e.
+  std::replace(text.begin(), text.end(), 'E', 'e');
+  os << text;
 }
 
 // A connected group of chain ops in one block, connected through the values
 // they pass each other.
 struct Chain {
   // In block order.
-  SmallVector<Operation *> ops;
-  llvm::SmallPtrSet<Operation *, 16> members;
-  // The values the chain reads from outside it, in first-use order; input i
-  // is the FPCore variable xi. Splat constants are not inputs.
-  SmallVector<Value> inputs;
-  llvm::DenseMap<Value, unsigned> inputIndex;
+  llvm::SetVector<Operation *> ops;
+  // The values the chain reads from outside it, in first-use order, each with
+  // its position: input i is the FPCore variable xi. Splat constants are not
+  // inputs.
+  llvm::MapVector<Value, unsigned> inputs;
   // The chain's results that something outside the chain uses: each is
   // written as its own FPCore and is what a rewrite replaces.
   SmallVector<Value> outputs;
 };
 
-SmallVector<Chain, 4> findChains(Block &block) {
-  SmallVector<Chain, 4> chains;
+SmallVector<Chain> findChains(Block &block, const ChainOpTable &table) {
+  SmallVector<Chain> chains;
   llvm::SmallPtrSet<Operation *, 32> assigned;
   for (Operation &start : block) {
-    if (!isChainOp(&start) || assigned.contains(&start))
+    if (!isChainOp(table, &start) || assigned.contains(&start))
       continue;
 
     // Everything reachable from `start` through def-use edges between chain
     // ops of this block, in either direction.
-    Chain chain;
+    llvm::SetVector<Operation *> found;
     SmallVector<Operation *> worklist = {&start};
     while (!worklist.empty()) {
       Operation *op = worklist.pop_back_val();
-      if (!chain.members.insert(op).second)
+      if (!found.insert(op))
         continue;
       for (Value operand : op->getOperands())
         if (Operation *def = operand.getDefiningOp())
-          if (def->getBlock() == &block && isChainOp(def))
+          if (def->getBlock() == &block && isChainOp(table, def))
             worklist.push_back(def);
       for (Operation *user : op->getUsers())
-        if (user->getBlock() == &block && isChainOp(user))
+        if (user->getBlock() == &block && isChainOp(table, user))
           worklist.push_back(user);
     }
-    assigned.insert(chain.members.begin(), chain.members.end());
+    assigned.insert(found.begin(), found.end());
 
-    chain.ops.assign(chain.members.begin(), chain.members.end());
-    llvm::sort(chain.ops, [](Operation *a, Operation *b) {
+    // In block order, so that the inputs are numbered the same way however
+    // the chain was discovered.
+    SmallVector<Operation *> sorted = found.takeVector();
+    llvm::sort(sorted, [](Operation *a, Operation *b) {
       return a->isBeforeInBlock(b);
     });
+    Chain chain;
+    chain.ops.insert(sorted.begin(), sorted.end());
     for (Operation *op : chain.ops) {
       for (Value operand : op->getOperands()) {
         Operation *def = operand.getDefiningOp();
-        if (def && chain.members.contains(def))
+        if (def && chain.ops.contains(def))
           continue;
-        if (!splatLiteral(operand) &&
-            chain.inputIndex.try_emplace(operand, chain.inputs.size()).second)
-          chain.inputs.push_back(operand);
+        if (!splatValue(operand))
+          chain.inputs.try_emplace(operand, chain.inputs.size());
       }
       for (Value result : op->getResults())
         if (llvm::any_of(result.getUsers(), [&](Operation *user) {
-              return !chain.members.contains(user);
+              return !chain.ops.contains(user);
             }))
           chain.outputs.push_back(result);
     }
@@ -203,75 +262,56 @@ SmallVector<Chain, 4> findChains(Block &block) {
   return chains;
 }
 
-// The FPCore expression `value` computes in terms of the chain's inputs. A
-// value used twice is written out twice: FPCore expressions are trees.
-std::string renderExpr(Value value, const Chain &chain) {
+// Prints the FPCore expression `value` computes in terms of the chain's
+// inputs. A value used twice is written out twice: FPCore expressions are
+// trees.
+void printExpr(Value value, const Chain &chain, const ChainOpTable &table,
+               raw_ostream &os) {
   Operation *def = value.getDefiningOp();
-  if (!def || !chain.members.contains(def)) {
-    if (auto literal = splatLiteral(value))
-      return *literal;
-    return "x" + std::to_string(chain.inputIndex.lookup(value));
+  if (!def || !chain.ops.contains(def)) {
+    if (std::optional<APFloat> literal = splatValue(value))
+      printNumber(*literal, os);
+    else
+      os << "x" << chain.inputs.lookup(value);
+    return;
   }
-  std::string expr = "(" + fpcoreOperator(def).str();
-  for (Value operand : def->getOperands())
-    expr += " " + renderExpr(operand, chain);
-  return expr + ")";
+  os << "(" << table.forOp(def)->fpcore << " ";
+  llvm::interleave(
+      def->getOperands(), os,
+      [&](Value operand) { printExpr(operand, chain, table, os); }, " ");
+  os << ")";
 }
 
 // One Herbie problem: the output as a function of the chain's inputs.
 // `name` comes back in Herbie's results and says which output a rewrite is
 // for.
-std::string renderFPCore(Value output, const Chain &chain, StringRef name) {
-  std::string args;
-  for (size_t i = 0; i < chain.inputs.size(); ++i)
-    args += (i ? " x" : "x") + std::to_string(i);
+std::string renderFPCore(Value output, const Chain &chain,
+                         const ChainOpTable &table, StringRef name) {
+  std::string core;
+  llvm::raw_string_ostream os(core);
+  os << "(FPCore (";
+  llvm::interleave(
+      llvm::seq<size_t>(0, chain.inputs.size()), os,
+      [&](size_t i) { os << "x" << i; }, " ");
   Type element = cast<RankedTensorType>(output.getType()).getElementType();
-  return "(FPCore (" + args + ") :name \"" + name.str() + "\" :precision " +
-         (element.isF64() ? "binary64" : "binary32") + " " +
-         renderExpr(output, chain) + ")";
+  os << llvm::formatv(") :name \"{0}\" :precision {1} ", name,
+                      element.isF64() ? "binary64" : "binary32");
+  printExpr(output, chain, table, os);
+  os << ")";
+  return core;
 }
 
-// The value of a Herbie literal ("1/2", "3.5", "-inf.0") in `semantics`,
-// e.g. IEEE double for an f64 tensor.
-std::optional<APFloat> literalValue(StringRef text,
-                                    const llvm::fltSemantics &semantics) {
-  bool negative = text.consume_front("-");
-  if (!negative)
-    text.consume_front("+");
-  APFloat value(semantics);
-  if (text == "inf.0") {
-    value = APFloat::getInf(semantics, negative);
-  } else if (text == "nan.0") {
-    value = APFloat::getNaN(semantics);
-  } else if (auto [num, den] = text.split('/'); !den.empty()) {
-    // A fraction: numerator and denominator as integers of any size, divided
-    // in quadruple precision, then rounded to the tensor's precision.
-    APInt p, q;
-    if (num.getAsInteger(10, p) || den.getAsInteger(10, q) || q.isZero())
-      return std::nullopt;
-    APFloat fp(APFloat::IEEEquad()), fq(APFloat::IEEEquad());
-    fp.convertFromAPInt(p, /*IsSigned=*/false, APFloat::rmNearestTiesToEven);
-    fq.convertFromAPInt(q, /*IsSigned=*/false, APFloat::rmNearestTiesToEven);
-    fp.divide(fq, APFloat::rmNearestTiesToEven);
-    bool losesInfo;
-    fp.convert(semantics, APFloat::rmNearestTiesToEven, &losesInfo);
-    value = fp;
-    if (negative)
-      value.changeSign();
-  } else {
-    auto status = value.convertFromString(text, APFloat::rmNearestTiesToEven);
-    if (!status) {
-      llvm::consumeError(status.takeError());
-      return std::nullopt;
-    }
-    if (negative)
-      value.changeSign();
-  }
-  return value;
+// The input an FPCore variable names, as renderFPCore names them: 3 for "x3".
+std::optional<unsigned> inputIndex(StringRef name) {
+  unsigned i;
+  if (!name.consume_front("x") || name.getAsInteger(10, i))
+    return std::nullopt;
+  return i;
 }
 
-// Herbie's comparisons, as arith.cmpf predicates. The ordered ones are false
-// when either side is NaN, as in C; != is true then.
+// Herbie's comparisons, as arith.cmpf predicates: MLIR's, so here rather than
+// with the parser, which knows no MLIR. The ordered ones are false when either
+// side is NaN, as in C; != is true then.
 std::optional<arith::CmpFPredicate> comparison(StringRef name) {
   if (name == "<")
     return arith::CmpFPredicate::OLT;
@@ -288,77 +328,84 @@ std::optional<arith::CmpFPredicate> comparison(StringRef name) {
   return std::nullopt;
 }
 
-// The input an FPCore variable names: 3 for "x3".
-std::optional<unsigned> inputIndex(StringRef name) {
-  unsigned i;
-  if (!name.consume_front("x") || name.getAsInteger(10, i))
-    return std::nullopt;
-  return i;
-}
-
 // Builds Herbie expressions as ops on tensors of one type. `inputs[i]` is the
 // value of the FPCore variable xi, or null where that input cannot be used
 // at the insertion point.
 class ExprBuilder {
 public:
-  ExprBuilder(RankedTensorType type, ArrayRef<Value> inputs)
-      : type(type), inputs(inputs) {}
+  ExprBuilder(const ChainOpTable &table, RankedTensorType type,
+              ArrayRef<Value> inputs)
+      : table(table), type(type), inputs(inputs) {}
 
-  // Why `e` cannot be built, or "" when it can. Checked before building so
-  // that a candidate that cannot be built leaves no ops behind. `boolean` is
-  // whether `e` is a condition (an `if`'s first argument).
-  std::string whyNot(const poseidon::HerbieExpr &e,
-                     bool boolean = false) const {
+  // Whether `e` can be built; when it cannot, says why in `why`. Checked
+  // before building so that a candidate that cannot be built leaves no ops
+  // behind. `boolean` is whether `e` is a condition (an `if`'s first
+  // argument).
+  LogicalResult canBuild(const poseidon::HerbieExpr &e, raw_ostream &why,
+                         bool boolean = false) const {
     using Kind = poseidon::HerbieExpr::Kind;
     StringRef element = type.getElementType().isF64() ? "f64" : "f32";
-    if (!e.precision.empty() && e.precision != element)
-      return "computes in " + e.precision + ", not " + element.str();
+    if (!e.precision.empty() && e.precision != element) {
+      why << "computes in " << e.precision << ", not " << element;
+      return failure();
+    }
     if (boolean) {
-      if (e.kind == Kind::Op && comparison(e.name)) {
-        if (e.args.size() != 2)
-          return "'" + e.name + "' with other than two operands";
-        return whyNotAll(e.args, false);
+      bool comparing = e.kind == Kind::Op && comparison(e.name);
+      bool joining = e.kind == Kind::Op && (e.name == "and" || e.name == "or");
+      if (!comparing && !joining) {
+        why << "not a condition";
+        return failure();
       }
-      if (e.kind == Kind::Op && (e.name == "and" || e.name == "or")) {
-        if (e.args.size() != 2)
-          return "'" + e.name + "' with other than two operands";
-        return whyNotAll(e.args, true);
+      if (e.args.size() != 2) {
+        why << "'" << e.name << "' with other than two operands";
+        return failure();
       }
-      return "not a condition";
+      return canBuildAll(e.args, why, /*boolean=*/joining);
     }
     switch (e.kind) {
     case Kind::Var: {
       std::optional<unsigned> i = inputIndex(e.name);
-      if (!i || *i >= inputs.size())
-        return "unknown variable " + e.name;
-      if (!inputs[*i])
-        return e.name + " is defined after the chain's output";
-      return "";
+      if (!i || *i >= inputs.size()) {
+        why << "unknown variable " << e.name;
+        return failure();
+      }
+      if (!inputs[*i]) {
+        why << e.name << " is defined after the chain's output";
+        return failure();
+      }
+      return success();
     }
     case Kind::Number:
-      if (!literalValue(e.name, semantics()))
-        return "unreadable literal " + e.name;
-      return "";
+      if (!poseidon::literalValue(e.name, semantics())) {
+        why << "unreadable literal " << e.name;
+        return failure();
+      }
+      return success();
     case Kind::Op:
       if (e.name == "if") {
-        if (e.args.size() != 3)
-          return "'if' with other than three operands";
-        if (std::string why = whyNot(e.args[0], true); !why.empty())
-          return why;
-        return whyNotAll(ArrayRef(e.args).drop_front(), false);
+        if (e.args.size() != 3) {
+          why << "'if' with other than three operands";
+          return failure();
+        }
+        if (failed(canBuild(e.args[0], why, /*boolean=*/true)))
+          return failure();
+        return canBuildAll(ArrayRef(e.args).drop_front(), why,
+                           /*boolean=*/false);
       }
-      if (const ChainOp *op = chainOpByFPCore(e.name)) {
-        if (e.args.size() != op->arity)
-          return "'" + e.name + "' with " + std::to_string(e.args.size()) +
-                 " operands";
-        return whyNotAll(e.args, false);
+      if (const KnownOp *op = table.forFPCore(e.name)) {
+        if (e.args.size() != op->info->arity) {
+          why << "'" << e.name << "' with " << e.args.size() << " operands";
+          return failure();
+        }
+        return canBuildAll(e.args, why, /*boolean=*/false);
       }
-      return "no MLIR op computes '" + e.name + "'";
+      why << "no MLIR op computes '" << e.name << "'";
+      return failure();
     }
     llvm_unreachable("unknown HerbieExpr kind");
   }
 
-  // Builds `e`, which whyNot accepted, at the rewriter's insertion point.
+  // Builds `e`, which canBuild accepted, at the rewriter's insertion point.
   Value build(IRRewriter &rewriter, Location loc,
               const poseidon::HerbieExpr &e) const {
     using Kind = poseidon::HerbieExpr::Kind;
@@ -366,12 +413,12 @@ public:
       return inputs[*inputIndex(e.name)];
     if (e.kind == Kind::Number) {
       // A tensor whose every element is the literal: a splat constant.
-      APFloat value = *literalValue(e.name, semantics());
+      APFloat value = *poseidon::literalValue(e.name, semantics());
       return arith::ConstantOp::create(
           rewriter, loc,
           cast<TypedAttr>(DenseElementsAttr::get(type, ArrayRef(value))));
     }
-    SmallVector<Value, 3> args;
+    SmallVector<Value> args;
     for (const poseidon::HerbieExpr &arg : e.args)
       args.push_back(build(rewriter, loc, arg));
     // Conditions are tensors of i1, compared and selected element by element.
@@ -385,13 +432,14 @@ public:
       return arith::SelectOp::create(rewriter, loc, args[0], args[1], args[2]);
     // Every op in the table is built the same way: its name, its operands,
     // and one result of the chain's tensor type.
-    OperationState state(loc, chainOpByFPCore(e.name)->mlir);
+    OperationState state(loc, table.forFPCore(e.name)->name);
     state.addOperands(args);
     state.addTypes(type);
     return rewriter.create(state)->getResult(0);
   }
 
 private:
+  const ChainOpTable &table;
   RankedTensorType type;
   ArrayRef<Value> inputs;
 
@@ -399,12 +447,12 @@ private:
     return cast<FloatType>(type.getElementType()).getFloatSemantics();
   }
 
-  std::string whyNotAll(ArrayRef<poseidon::HerbieExpr> args,
-                        bool boolean) const {
+  LogicalResult canBuildAll(ArrayRef<poseidon::HerbieExpr> args,
+                            raw_ostream &why, bool boolean) const {
     for (const poseidon::HerbieExpr &arg : args)
-      if (std::string why = whyNot(arg, boolean); !why.empty())
-        return why;
-    return "";
+      if (failed(canBuild(arg, why, boolean)))
+        return failure();
+    return success();
   }
 };
 
@@ -414,7 +462,7 @@ private:
 SmallVector<Value> usableInputs(const Chain &chain, Value output) {
   Operation *at = output.getDefiningOp();
   SmallVector<Value> usable;
-  for (Value input : chain.inputs) {
+  for (Value input : llvm::make_first_range(chain.inputs)) {
     Operation *def = input.getDefiningOp();
     bool before =
         !def || def->getBlock() != at->getBlock() || def->isBeforeInBlock(at);
@@ -434,6 +482,9 @@ struct PoseidonRewrite
 
   using Answers = llvm::StringMap<poseidon::HerbieAnswer>;
 
+  // The chain ops, as this pass's context names them.
+  std::shared_ptr<const ChainOpTable> chainOpTable;
+
   // Herbie's answers by core name, read from herbie-results and shared by the
   // copies of the pass that run on different functions at once. Null without
   // herbie-results.
@@ -444,6 +495,7 @@ struct PoseidonRewrite
 
   // Runs once, before the pass runs on any function.
   LogicalResult initialize(MLIRContext *context) override {
+    chainOpTable = std::make_shared<const ChainOpTable>(context);
     if (!herbieResults.empty()) {
       std::string error;
       std::optional<std::string> json =
@@ -559,14 +611,17 @@ struct PoseidonRewrite
                    << llvm::format("%g", answer.initialErrorBits) << " bits\n";
 
     SmallVector<Value> inputs = usableInputs(chain, output);
-    ExprBuilder builder(cast<RankedTensorType>(output.getType()), inputs);
+    ExprBuilder builder(*chainOpTable, cast<RankedTensorType>(output.getType()),
+                        inputs);
     SmallVector<poseidon::HerbieExpr> buildable;
     for (auto [i, candidate] : llvm::enumerate(answer.candidates)) {
+      // Why the candidate cannot be built, when it cannot: unparseable, or no
+      // ops for it.
       std::string why;
       std::optional<poseidon::HerbieExpr> expr =
           poseidon::parseHerbieExpr(candidate.expr, why);
-      if (expr)
-        why = builder.whyNot(*expr);
+      llvm::raw_string_ostream whyOS(why);
+      bool canBuild = expr && succeeded(builder.canBuild(*expr, whyOS));
       if (dumpFPCore) {
         llvm::errs() << "      " << i << ": "
                      << llvm::format("%g", candidate.errorBits)
@@ -576,11 +631,11 @@ struct PoseidonRewrite
           expr->print(llvm::errs());
         else
           llvm::errs() << "unparseable: " << candidate.expr;
-        if (!why.empty())
+        if (!canBuild)
           llvm::errs() << " [cannot build: " << why << "]";
         llvm::errs() << "\n";
       }
-      if (why.empty())
+      if (canBuild)
         buildable.push_back(std::move(*expr));
     }
     if (buildable.empty()) {
@@ -606,9 +661,9 @@ struct PoseidonRewrite
 
   void runOnOperation() override {
     func::FuncOp func = getOperation();
-    SmallVector<Chain, 4> chains;
+    SmallVector<Chain> chains;
     func.walk([&](Block *block) {
-      for (Chain &chain : findChains(*block))
+      for (Chain &chain : findChains(*block, *chainOpTable))
         // One op alone is a single rounding, which no rewrite improves.
         if (chain.ops.size() >= 2 && !chain.outputs.empty())
           chains.push_back(std::move(chain));
@@ -620,8 +675,9 @@ struct PoseidonRewrite
     for (Chain &chain : chains)
       for (Value output : chain.outputs) {
         names.push_back(
-            (func.getSymName() + "/" + std::to_string(names.size())).str());
-        cores.push_back(renderFPCore(output, chain, names.back()));
+            llvm::formatv("{0}/{1}", func.getSymName(), names.size()).str());
+        cores.push_back(
+            renderFPCore(output, chain, *chainOpTable, names.back()));
       }
 
     // Herbie's answers: read from herbie-results, or Herbie run now.
@@ -644,7 +700,7 @@ struct PoseidonRewrite
         llvm::errs() << "poseidon-rewrite: @" << func.getSymName() << " chain "
                      << index << ": " << chain.ops.size() << " ops, "
                      << chain.outputs.size() << " output(s)\n";
-        for (auto [i, input] : llvm::enumerate(chain.inputs)) {
+        for (auto [input, i] : chain.inputs) {
           llvm::errs() << "  x" << i << " = ";
           input.printAsOperand(llvm::errs(), OpPrintingFlags());
           llvm::errs() << "\n";
@@ -671,7 +727,8 @@ struct PoseidonRewrite
     for (Rewrite &rewrite : rewrites) {
       Operation *old = rewrite.output.getDefiningOp();
       rewriter.setInsertionPoint(old);
-      ExprBuilder builder(cast<RankedTensorType>(rewrite.output.getType()),
+      ExprBuilder builder(*chainOpTable,
+                          cast<RankedTensorType>(rewrite.output.getType()),
                           rewrite.inputs);
       Value replacement = builder.build(rewriter, old->getLoc(), rewrite.expr);
       rewriter.replaceAllUsesWith(rewrite.output, replacement);

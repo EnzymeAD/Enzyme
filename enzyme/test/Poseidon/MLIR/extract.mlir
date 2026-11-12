@@ -28,6 +28,30 @@ func.func @log_one_plus(%x: tensor<8xf64>) -> tensor<8xf64> {
   return %1 : tensor<8xf64>
 }
 
+// A number has as many digits as its own precision needs to read back as the
+// same value: 17 for f64, 9 for f32. Infinity and NaN are FPCore's constants.
+// CHECK-LABEL: @numbers chain 0: 6 ops, 1 output(s)
+// CHECK:         (FPCore (x0) :name "numbers/0" :precision binary64 (+ (* (* (* (- (+ x0 1.0e+16) 0.10000000000000001) 2.5e-300) (- INFINITY)) NAN) x0))
+// CHECK-LABEL: @numbers chain 1: 2 ops, 1 output(s)
+// CHECK:         (FPCore (x0) :name "numbers/1" :precision binary32 (+ (* x0 0.100000001) x0))
+func.func @numbers(%x: tensor<4xf64>, %y: tensor<4xf32>) -> (tensor<4xf64>, tensor<4xf32>) {
+  %big = arith.constant dense<1.0e16> : tensor<4xf64>
+  %tenth = arith.constant dense<0.1> : tensor<4xf64>
+  %tiny = arith.constant dense<2.5e-300> : tensor<4xf64>
+  %ninf = arith.constant dense<0xFFF0000000000000> : tensor<4xf64>
+  %nan = arith.constant dense<0x7FF8000000000000> : tensor<4xf64>
+  %0 = arith.addf %x, %big : tensor<4xf64>
+  %1 = arith.subf %0, %tenth : tensor<4xf64>
+  %2 = arith.mulf %1, %tiny : tensor<4xf64>
+  %3 = arith.mulf %2, %ninf : tensor<4xf64>
+  %4 = arith.mulf %3, %nan : tensor<4xf64>
+  %5 = arith.addf %4, %x : tensor<4xf64>
+  %tenth32 = arith.constant dense<0.1> : tensor<4xf32>
+  %6 = arith.mulf %y, %tenth32 : tensor<4xf32>
+  %7 = arith.addf %6, %y : tensor<4xf32>
+  return %5, %7 : tensor<4xf64>, tensor<4xf32>
+}
+
 // f32 tensors are searched in binary32. A value used twice is written twice.
 // CHECK-LABEL: @square_minus chain 0: 2 ops, 1 output(s)
 // CHECK-NEXT:    x0 = %arg0

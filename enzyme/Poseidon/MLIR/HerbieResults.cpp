@@ -9,6 +9,7 @@
 
 #include "HerbieResults.h"
 
+#include "llvm/ADT/APInt.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/MemoryBuffer.h"
@@ -165,6 +166,43 @@ void HerbieExpr::print(raw_ostream &os) const {
 
 std::optional<HerbieExpr> parseHerbieExpr(StringRef text, std::string &error) {
   return ExprParser(text, error).parseAll();
+}
+
+std::optional<APFloat> literalValue(StringRef text,
+                                    const fltSemantics &semantics) {
+  bool negative = text.consume_front("-");
+  if (!negative)
+    text.consume_front("+");
+  APFloat value(semantics);
+  if (text == "inf.0") {
+    value = APFloat::getInf(semantics, negative);
+  } else if (text == "nan.0") {
+    value = APFloat::getNaN(semantics);
+  } else if (auto [num, den] = text.split('/'); !den.empty()) {
+    // A fraction: numerator and denominator as integers of any size, divided
+    // in quadruple precision, then rounded to the tensor's precision.
+    APInt p, q;
+    if (num.getAsInteger(10, p) || den.getAsInteger(10, q) || q.isZero())
+      return std::nullopt;
+    APFloat fp(APFloat::IEEEquad()), fq(APFloat::IEEEquad());
+    fp.convertFromAPInt(p, /*IsSigned=*/false, APFloat::rmNearestTiesToEven);
+    fq.convertFromAPInt(q, /*IsSigned=*/false, APFloat::rmNearestTiesToEven);
+    fp.divide(fq, APFloat::rmNearestTiesToEven);
+    bool losesInfo;
+    fp.convert(semantics, APFloat::rmNearestTiesToEven, &losesInfo);
+    value = fp;
+    if (negative)
+      value.changeSign();
+  } else {
+    auto status = value.convertFromString(text, APFloat::rmNearestTiesToEven);
+    if (!status) {
+      consumeError(status.takeError());
+      return std::nullopt;
+    }
+    if (negative)
+      value.changeSign();
+  }
+  return value;
 }
 
 std::optional<StringMap<HerbieAnswer>> parseHerbieResults(StringRef json,

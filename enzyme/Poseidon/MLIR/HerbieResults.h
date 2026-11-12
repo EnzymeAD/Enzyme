@@ -15,6 +15,7 @@
 #ifndef POSEIDON_MLIR_HERBIERESULTS_H
 #define POSEIDON_MLIR_HERBIERESULTS_H
 
+#include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/raw_ostream.h"
@@ -47,6 +48,12 @@ struct HerbieExpr {
 // Parses one Herbie expression; on failure, says why in `error`.
 std::optional<HerbieExpr> parseHerbieExpr(llvm::StringRef text,
                                           std::string &error);
+
+// The value of a Herbie number ("1/2", "3.5", "-inf.0"), the name of a
+// HerbieExpr of kind Number, in `semantics`, e.g. IEEE double for an f64
+// tensor. Null when it is not a number.
+std::optional<llvm::APFloat> literalValue(llvm::StringRef text,
+                                          const llvm::fltSemantics &semantics);
 
 // One rewrite Herbie proposes for a core.
 struct HerbieCandidate {
