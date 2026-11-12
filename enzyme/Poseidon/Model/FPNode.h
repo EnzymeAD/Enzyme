@@ -17,6 +17,7 @@
 #define POSEIDON_MODEL_FP_NODE_H
 
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/IR/Dominators.h"

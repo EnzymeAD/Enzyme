@@ -58,7 +58,11 @@ jobs:
             -DPOSEIDON_TEST_GPU_ARCH=sm_120
 
     - name: Build
-      run: cmake --build build
+      run: |
+          cmake --build build
+          # The tests price from cost models that check-poseidon generates;
+          # lit run directly below does not.
+          cmake --build build --target poseidon-test-cost-models
 
     - name: lit features
       working-directory: build

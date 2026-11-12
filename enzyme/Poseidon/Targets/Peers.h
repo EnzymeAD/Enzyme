@@ -4,6 +4,8 @@
 
 #include "Target.h"
 
+#include "llvm/ADT/StringRef.h"
+
 #include <string>
 #include <unordered_set>
 

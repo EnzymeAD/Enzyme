@@ -2,6 +2,7 @@
 #include "Subgraphs.h"
 
 #include "llvm/ADT/MapVector.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallSet.h"
@@ -15,6 +16,7 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <functional>
+#include <string>
 
 #include "Core/Options.h"
 #include "Model/FPCore.h"

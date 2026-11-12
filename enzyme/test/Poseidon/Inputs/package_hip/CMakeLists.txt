@@ -15,20 +15,20 @@ set(ACTION ProfileGenerate CACHE STRING "Plain, ProfileGenerate or ProfileUse")
 set(POSEIDON_FLAGS "" CACHE STRING "Additional -poseidon-<flag>s")
 set(DEFINES "" CACHE STRING "Preprocessor definitions")
 option(LOAD_ENZYME "Load Enzyme's plugin in the project's own options" OFF)
-option(ENZYME_OPTIONS "Link Poseidon::EnzymeOptions where Enzyme is loaded"
-       OFF)
+option(ENZYME_OPTIONS "Link Poseidon::EnzymeOptions where Enzyme is loaded" OFF)
 
 set(POSEIDON_GPU_RUNTIME HIP)
 find_package(Poseidon CONFIG REQUIRED)
 
 add_library(hip_device INTERFACE)
 target_compile_options(
-  hip_device INTERFACE -x hip --offload-arch=${AMDGPU_ARCH}
-                       --rocm-path=${ROCM_PATH})
+  hip_device
+  INTERFACE -x hip --offload-arch=${AMDGPU_ARCH} --rocm-path=${ROCM_PATH})
 
 add_library(project_enzyme INTERFACE)
-target_compile_options(project_enzyme
-                       INTERFACE -fpass-plugin=${POSEIDON_ENZYME_PLUGIN})
+target_compile_options(
+  project_enzyme
+  INTERFACE -fpass-plugin=${POSEIDON_ENZYME_PLUGIN})
 if(POSEIDON_LLVM_VERSION_MAJOR LESS 22)
   target_compile_options(
     project_enzyme

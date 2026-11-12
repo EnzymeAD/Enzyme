@@ -12,6 +12,9 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "llvm/ADT/MapVector.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringSet.h"
 #include "llvm/ADT/StringSwitch.h"
@@ -46,8 +49,11 @@
 #include <map>
 #include <optional>
 #include <regex>
+#include <sstream>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
+#include <vector>
 
 using namespace llvm;
 

@@ -12,7 +12,8 @@
 #                              runtimes, the GPU's included
 #   Poseidon::ProfileUse       the same as Plain with the GEMM dispatch
 #                              runtimes; the project names its profile with
-#                              "SHELL:${POSEIDON_MLLVM} -poseidon-profile-use=<dir>"
+#                              "SHELL:${POSEIDON_MLLVM}
+#                              -poseidon-profile-use=<dir>"
 #   Poseidon::EnzymeOptions    what a compile that loads Enzyme's plugin needs
 #                              besides the plugin, also in
 #                              POSEIDON_ENZYME_OPTIONS: for HIP
@@ -67,8 +68,10 @@ if(NOT DEFINED POSEIDON_GPU_RUNTIME)
 endif()
 if(POSEIDON_GPU_RUNTIME STREQUAL "HIP")
   if(NOT POSEIDON_HAS_HIP)
-    message(FATAL_ERROR "POSEIDON_GPU_RUNTIME is HIP, but this Poseidon was "
-                        "built without POSEIDON_ROCM_PATH")
+    message(
+      FATAL_ERROR
+        "POSEIDON_GPU_RUNTIME is HIP, but this Poseidon was "
+        "built without POSEIDON_ROCM_PATH")
   endif()
   set(POSEIDON_ENZYME_OPTIONS
       "SHELL:-Xclang -mllvm -Xclang @POSEIDON_ENZYME_HIP_OPTION@")
@@ -85,8 +88,9 @@ elseif(POSEIDON_GPU_RUNTIME STREQUAL "HIP" AND @POSEIDON_CONFIG_FINDS_ROCM@)
   # An installation names them by these targets; a build tree links the
   # libraries of the ROCm it was built against.
   foreach(_lib hipblas amdhip64)
-    find_library(POSEIDON_ROCM_${_lib} ${_lib}
-                 HINTS $ENV{ROCM_PATH}/lib /opt/rocm/lib)
+    find_library(
+      POSEIDON_ROCM_${_lib} ${_lib}
+      HINTS $ENV{ROCM_PATH}/lib /opt/rocm/lib)
     if(NOT POSEIDON_ROCM_${_lib})
       set(Poseidon_FOUND FALSE)
       set(Poseidon_NOT_FOUND_MESSAGE
@@ -96,9 +100,9 @@ elseif(POSEIDON_GPU_RUNTIME STREQUAL "HIP" AND @POSEIDON_CONFIG_FINDS_ROCM@)
     endif()
     if(NOT TARGET Poseidon::rocm_${_lib})
       add_library(Poseidon::rocm_${_lib} SHARED IMPORTED)
-      set_target_properties(Poseidon::rocm_${_lib}
-                            PROPERTIES IMPORTED_LOCATION
-                                       "${POSEIDON_ROCM_${_lib}}")
+      set_target_properties(
+        Poseidon::rocm_${_lib}
+        PROPERTIES IMPORTED_LOCATION "${POSEIDON_ROCM_${_lib}}")
     endif()
   endforeach()
   unset(_lib)
@@ -132,32 +136,38 @@ if(NOT TARGET Poseidon::Plain)
   foreach(_action Plain ProfileGenerate ProfileUse)
     add_library(Poseidon::${_action} INTERFACE IMPORTED)
     target_compile_options(Poseidon::${_action} INTERFACE ${_poseidon_load})
-    target_include_directories(Poseidon::${_action}
-                               INTERFACE "${POSEIDON_INCLUDE_DIR}")
+    target_include_directories(
+      Poseidon::${_action}
+      INTERFACE "${POSEIDON_INCLUDE_DIR}")
   endforeach()
 
   add_library(Poseidon::EnzymeOptions INTERFACE IMPORTED)
   if(POSEIDON_ENZYME_OPTIONS)
-    target_compile_options(Poseidon::EnzymeOptions
-                           INTERFACE ${POSEIDON_ENZYME_OPTIONS})
+    target_compile_options(
+      Poseidon::EnzymeOptions
+      INTERFACE ${POSEIDON_ENZYME_OPTIONS})
   endif()
 
   target_compile_options(
     Poseidon::ProfileGenerate
-    INTERFACE ${_enzyme_load}
-              "SHELL:${POSEIDON_MLLVM} -poseidon-profile-generate"
-              ${POSEIDON_ENZYME_OPTIONS})
-  target_link_libraries(Poseidon::ProfileGenerate
-                        INTERFACE Poseidon::poseidon_profile_host)
+    INTERFACE
+      ${_enzyme_load} "SHELL:${POSEIDON_MLLVM} -poseidon-profile-generate"
+      ${POSEIDON_ENZYME_OPTIONS})
+  target_link_libraries(
+    Poseidon::ProfileGenerate
+    INTERFACE Poseidon::poseidon_profile_host)
   if(POSEIDON_GPU_RUNTIME STREQUAL "HIP")
-    target_link_libraries(Poseidon::ProfileGenerate
-                          INTERFACE Poseidon::poseidon_profile_hip)
+    target_link_libraries(
+      Poseidon::ProfileGenerate
+      INTERFACE Poseidon::poseidon_profile_hip)
     # Ozaki-II and the direct products; TCEC has no HIP build.
-    target_link_libraries(Poseidon::ProfileUse
-                          INTERFACE Poseidon::poseidon_rt_hip)
+    target_link_libraries(
+      Poseidon::ProfileUse
+      INTERFACE Poseidon::poseidon_rt_hip)
   elseif(POSEIDON_HAS_CUDA)
-    target_link_libraries(Poseidon::ProfileGenerate
-                          INTERFACE Poseidon::poseidon_profile_cuda)
+    target_link_libraries(
+      Poseidon::ProfileGenerate
+      INTERFACE Poseidon::poseidon_profile_cuda)
     # A rewrite may dispatch a matrix product to any of the GEMM runtimes.
     target_link_libraries(Poseidon::ProfileUse INTERFACE Poseidon::poseidon_rt)
   endif()
@@ -166,8 +176,9 @@ if(NOT TARGET Poseidon::Plain)
   # statement and never across one.
   foreach(_action Plain ProfileGenerate ProfileUse)
     target_compile_options(Poseidon::${_action} INTERFACE -ffp-contract=on)
-    target_link_libraries(Poseidon::${_action}
-                          INTERFACE Poseidon::poseidon_profile)
+    target_link_libraries(
+      Poseidon::${_action}
+      INTERFACE Poseidon::poseidon_profile)
   endforeach()
   unset(_poseidon_load)
   unset(_enzyme_load)

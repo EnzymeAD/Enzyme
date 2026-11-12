@@ -7,6 +7,9 @@
 #include "llvm/IR/IntrinsicsNVPTX.h"
 #include "llvm/IR/Type.h"
 
+#include <optional>
+#include <string>
+
 using namespace llvm;
 
 namespace poseidon {

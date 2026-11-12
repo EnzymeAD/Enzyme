@@ -21,6 +21,9 @@
 #include "llvm/TargetParser/AMDGPUTargetParser.h"
 #endif
 
+#include <optional>
+#include <string>
+
 using namespace llvm;
 
 namespace poseidon {

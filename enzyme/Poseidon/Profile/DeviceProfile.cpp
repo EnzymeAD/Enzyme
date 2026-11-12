@@ -5,7 +5,9 @@
 #include "Targets/Target.h"
 #include "Utils.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringSet.h"
 #include "llvm/Bitcode/BitcodeReader.h"
 #include "llvm/IR/Constants.h"
@@ -20,7 +22,9 @@
 #include "llvm/Support/MemoryBufferRef.h"
 #include "llvm/Transforms/Utils/ModuleUtils.h"
 
+#include <memory>
 #include <optional>
+#include <string>
 
 using namespace llvm;
 

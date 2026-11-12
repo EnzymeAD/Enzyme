@@ -19,7 +19,9 @@
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringRef.h"
 #include "llvm/IR/Value.h"
+#include "llvm/Support/JSON.h"
 
 #include <cmath>
 #include <cstdint>
@@ -28,6 +30,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 #include "Core/CacheKey.h"
 #include "Model/CostModel.h"

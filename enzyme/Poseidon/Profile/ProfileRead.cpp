@@ -16,6 +16,7 @@
 #include <cmath>
 #include <fstream>
 #include <regex>
+#include <system_error>
 #include <unordered_map>
 
 #include "ProfileRead.h"
@@ -36,6 +37,7 @@
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Path.h"
+#include "llvm/Support/raw_ostream.h"
 
 using namespace llvm;
 

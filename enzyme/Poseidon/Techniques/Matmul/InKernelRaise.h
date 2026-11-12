@@ -17,6 +17,8 @@
 
 #include "Matmul.h"
 
+#include <string>
+
 namespace poseidon {
 
 // Emit the Ozaki Scheme I N-slice rewrite for a scalar-loop matmul with an

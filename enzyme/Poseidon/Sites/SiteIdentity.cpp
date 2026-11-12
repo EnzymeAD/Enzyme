@@ -3,6 +3,7 @@
 
 #include "Pass/Session.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/Demangle/Demangle.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/InstrTypes.h"

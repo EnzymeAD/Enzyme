@@ -9,12 +9,16 @@
 #define POSEIDON_HOST_DISPATCH_H
 
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/IR/PassManager.h"
 
 #include "Matmul.h"
 #include "Utils.h"
 #include "runtime/ozaki/OzakiII.h"
+
+#include <string>
+#include <vector>
 
 namespace llvm {
 class Function;

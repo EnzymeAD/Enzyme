@@ -17,6 +17,9 @@
 #include "llvm/Transforms/Utils/Cloning.h"
 #include "llvm/Transforms/Utils/ModuleUtils.h"
 
+#include <optional>
+#include <unordered_set>
+
 using namespace llvm;
 
 namespace poseidon {

@@ -13,9 +13,12 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/ADT/APFloat.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <cstring>
+#include <limits>
+#include <string>
 
 #include <algorithm>
 #include <cmath>
