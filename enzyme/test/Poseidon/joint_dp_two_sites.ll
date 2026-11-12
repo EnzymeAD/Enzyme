@@ -1,7 +1,6 @@
 ; RUN: rm -rf %t && %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/joint_profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-joint-dp -poseidon-cost-model=%cost_models/cm_cpu_native.csv -S -poseidon-cache=%t/both -poseidon-cost-budget=-0.4 2>&1 | FileCheck --check-prefix=BOTH %s
 ; RUN: FileCheck --check-prefix=BUDGETS %s < %t/both/budgets.txt
 ; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/joint_profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-joint-dp -poseidon-cost-model=%cost_models/cm_cpu_native.csv -S -poseidon-cache=%t/one -poseidon-cost-budget=-0.2 2>&1 | FileCheck --check-prefix=ONE %s
-; RUN: not %opt %s %loadPoseidon -passes=poseidon -poseidon-comp-cost-budget=-400 -S -o /dev/null 2>&1 | FileCheck --check-prefix=RETIRED %s
 ; RUN: not %opt %s %loadPoseidon -passes=poseidon -poseidon-profile-use=%S/Inputs/joint_profiles -poseidon-enable-herbie=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache= -poseidon-cost-budget=-400 -S -o /dev/null 2>&1 | FileCheck --check-prefix=STALE %s
 ; RUN: not %opt %s %loadPoseidon -passes=poseidon -poseidon-profile-use=%S/Inputs/joint_profiles -poseidon-enable-herbie=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache= -poseidon-joint-dp -poseidon-cost-budget=inf -S -o /dev/null 2>&1 | FileCheck --check-prefix=NONFINITE %s
 ; RUN: not %opt %s %loadPoseidon -passes=poseidon -poseidon-profile-use=%S/Inputs/joint_profiles -poseidon-enable-herbie=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache= -poseidon-cost-budget= -S -o /dev/null 2>&1 | FileCheck --check-prefix=EMPTY -DFLAG=poseidon-cost-budget %s
@@ -87,17 +86,13 @@ attributes #0 = { "target-cpu"="x86-64" }
 ; ONE-NEXT: call double @preprocess_tester_b(double %x, double %y)
 ; ONE-NOT: define double @preprocess_tester_a(
 
-; The integer budget is gone; asking for it names the flag that replaced it.
-; RETIRED: Unknown command line argument '-poseidon-comp-cost-budget=-400'
-; RETIRED: Did you mean '--poseidon-cost-budget=-400'?
-
-; Carried over to the new flag, that integer asks to save more than the whole
-; profiled cost, which no solution can: a solve that selects by the budget
+; A cost given where the budget takes a share (-400) asks to save more than the
+; whole profiled cost, which no solution can: a solve that selects by the budget
 ; stops with an error at the site rather than selecting nothing, as it does
 ; for a share that is not finite. A compile that solves nothing, or solves
 ; under an accuracy target, does not read the budget.
 ; STALE-NOT: Starting accuracy DP solver
-; STALE: error: {{.*}}Poseidon: -poseidon-cost-budget=-400 asks a solution to save more than the whole profiled cost. It takes the share of a site's profiled cost a solution may add, negative for one it has to save (-0.25 requires saving a quarter); the integer budgets of -poseidon-comp-cost-budget are no longer accepted. A solve writes the shares of its frontier points to budgets.txt in its -poseidon-cache directory.
+; STALE: error: {{.*}}Poseidon: -poseidon-cost-budget=-400 asks a solution to save more than the whole profiled cost. It takes the share of a site's profiled cost a solution may add, negative for one it has to save (-0.25 requires saving a quarter), not a cost. A solve writes to budgets.txt in its -poseidon-cache directory the share of each frontier point a budget selects.
 ; NONFINITE-NOT: Starting accuracy DP solver
 ; NONFINITE: error: {{.*}}Poseidon: -poseidon-cost-budget=inf is not a finite number. It takes the share of a site's profiled cost
 ; UNUSED-NOT: error:

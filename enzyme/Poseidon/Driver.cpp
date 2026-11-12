@@ -235,9 +235,9 @@ void requireCostBudget(const SolverOptions &O, const CallBase &CI) {
                    : " is not a finite number") +
               ". It takes the share of a site's profiled cost a solution may "
               "add, negative for one it has to save (-0.25 requires saving a "
-              "quarter); the integer budgets of -poseidon-comp-cost-budget are "
-              "no longer accepted. A solve writes the shares of its frontier "
-              "points to budgets.txt in its -poseidon-cache directory.");
+              "quarter), not a cost. A solve writes to budgets.txt in its "
+              "-poseidon-cache directory the share of each frontier point a "
+              "budget selects.");
 }
 
 // Profile use, shared by both annotation forms: `CI` is the call the site's
