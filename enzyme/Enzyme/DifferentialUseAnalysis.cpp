@@ -969,6 +969,49 @@ void DifferentialUseAnalysis::minCut(const DataLayout &DL, LoopInfo &OrigLI,
       }
   }
 
+  // The innermost loop for which caching V requires caching a distinct value
+  // per iteration. This is the loop containing V, except for allocations whose
+  // contents are only valid for an iteration of a loop which does not contain
+  // the allocation (e.g. a stack allocation in the entry block whose
+  // lifetime.start is within a loop). Caching such an allocation requires
+  // caching its contents for each iteration of that loop (see
+  // GradientUtils::getWholeAllocationCacheLoop).
+  auto getCacheLoop = [&](Value *V) {
+    auto found = gutils->rematerializableAllocations.find(V);
+    if (found != gutils->rematerializableAllocations.end())
+      if (auto L = found->second.LI)
+        if (!L->contains(cast<Instruction>(V)->getParent()))
+          return L;
+    return OrigLI.getLoopFor(cast<Instruction>(V)->getParent());
+  };
+
+  // The number of bits which must be cached per iteration of getCacheLoop(V) in
+  // order to cache V. This is the size of V, except for the allocations
+  // described above, for which the contents of the allocation must be cached
+  // rather than the pointer.
+  auto getCacheSizeInBits = [&](Value *V) -> uint64_t {
+    auto found = gutils->rematerializableAllocations.find(V);
+    if (found != gutils->rematerializableAllocations.end())
+      if (auto L = found->second.LI)
+        if (!L->contains(cast<Instruction>(V)->getParent())) {
+          SmallVector<Value *, 2> Counts;
+          uint64_t EltSize = 0;
+          MaybeAlign Alignment;
+          if (!gutils->getOrigAllocationSize(cast<Instruction>(V), Counts,
+                                             EltSize, Alignment))
+            return std::numeric_limits<uint64_t>::max();
+          uint64_t Size = 8 * EltSize;
+          for (auto Count : Counts) {
+            auto CI = dyn_cast<ConstantInt>(Count);
+            if (!CI)
+              return std::numeric_limits<uint64_t>::max();
+            Size *= CI->getLimitedValue();
+          }
+          return Size;
+        }
+    return DL.getTypeSizeInBits(V->getType());
+  };
+
   while (todo.size()) {
     auto V = todo.front();
     todo.remove(V);
@@ -997,9 +1040,7 @@ void DifferentialUseAnalysis::minCut(const DataLayout &DL, LoopInfo &OrigLI,
             isa<PHINode>((*mp.begin()).V) &&
             OrigLI.isLoopHeader(cast<PHINode>((*mp.begin()).V)->getParent());
         int moreOuterLoop =
-            cmpLoopNest(OrigLI.getLoopFor(cast<Instruction>(V)->getParent()),
-                        OrigLI.getLoopFor(
-                            cast<Instruction>(((*mp.begin()).V))->getParent()));
+            cmpLoopNest(getCacheLoop(V), getCacheLoop((*mp.begin()).V));
         if (potentiallyRecursive)
           continue;
         if (moreOuterLoop == -1)
@@ -1047,8 +1088,7 @@ void DifferentialUseAnalysis::minCut(const DataLayout &DL, LoopInfo &OrigLI,
 
         if (moreOuterLoop == 1 ||
             (moreOuterLoop == 0 &&
-             DL.getTypeSizeInBits(V->getType()) >=
-                 DL.getTypeSizeInBits((*mp.begin()).V->getType()))) {
+             getCacheSizeInBits(V) >= getCacheSizeInBits((*mp.begin()).V))) {
           MinReq.remove(V);
           auto nnode = (*mp.begin()).V;
           MinReq.insert(nnode);

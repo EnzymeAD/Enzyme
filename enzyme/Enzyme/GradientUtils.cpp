@@ -10720,13 +10720,10 @@ GradientUtils::getWholeAllocationCacheLoop(const llvm::Value *V) const {
   return L;
 }
 
-/// Given an original allocation, set Counts to the original values whose
-/// product, multiplied by EltSize, is the number of bytes allocated, and set
-/// Alignment to the known alignment of the allocation. Returns false if the
-/// size of the allocation is not known.
-static bool getOrigAllocationSize(Instruction *orig, TargetLibraryInfo &TLI,
-                                  SmallVectorImpl<Value *> &Counts,
-                                  uint64_t &EltSize, MaybeAlign &Alignment) {
+bool GradientUtils::getOrigAllocationSize(Instruction *orig,
+                                          SmallVectorImpl<Value *> &Counts,
+                                          uint64_t &EltSize,
+                                          MaybeAlign &Alignment) const {
   auto &DL = orig->getParent()->getParent()->getParent()->getDataLayout();
   if (auto AI = dyn_cast<AllocaInst>(orig)) {
     Counts.push_back(AI->getArraySize());
@@ -10784,8 +10781,7 @@ void GradientUtils::cacheWholeAllocationInLoop(llvm::Instruction *orig,
   uint64_t EltSize = 0;
   MaybeAlign Alignment;
   SmallVector<Value *, 2> origCounts;
-  bool knownSize =
-      getOrigAllocationSize(orig, TLI, origCounts, EltSize, Alignment);
+  bool knownSize = getOrigAllocationSize(orig, origCounts, EltSize, Alignment);
   // In split mode, the size of the allocation must be available in the reverse
   // pass without having been explicitly cached.
   if (knownSize && mode != DerivativeMode::ReverseModeCombined)
@@ -10894,7 +10890,7 @@ BasicBlock *GradientUtils::restoreLoopCachedAllocations(LoopContext &lc,
     MaybeAlign Alignment;
     SmallVector<Value *, 2> origCounts;
     bool knownSize =
-        getOrigAllocationSize(orig, TLI, origCounts, EltSize, Alignment);
+        getOrigAllocationSize(orig, origCounts, EltSize, Alignment);
     (void)knownSize;
     assert(knownSize && "allocation cached per iteration has unknown size");
     Value *size =

@@ -723,6 +723,15 @@ public:
   /// Returns nullptr otherwise.
   llvm::Loop *getWholeAllocationCacheLoop(const llvm::Value *V) const;
 
+  /// Given an original allocation, set Counts to the original values whose
+  /// product, multiplied by EltSize, is the number of bytes allocated, and set
+  /// Alignment to the known alignment of the allocation. Returns false if the
+  /// size of the allocation is not known.
+  bool getOrigAllocationSize(llvm::Instruction *orig,
+                             llvm::SmallVectorImpl<llvm::Value *> &Counts,
+                             uint64_t &EltSize,
+                             llvm::MaybeAlign &Alignment) const;
+
   /// Given an original allocation `orig` for which
   /// getWholeAllocationCacheLoop returns the loop `L`, cache the contents of
   /// the allocation for each iteration of L. In the forward pass, this
