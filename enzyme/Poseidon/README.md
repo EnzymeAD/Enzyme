@@ -49,7 +49,10 @@ enzyme/test/Poseidon/       lit suite: check-poseidon, check-poseidon-integratio
 - **ROCm**, for HIP, optional: `-DPOSEIDON_ROCM_PATH=<rocm>` with an LLVM that
   builds the AMDGPU target adds the AMDGPU device profiler, the HIP runtimes
   and calibrators, for the one processor `-DPOSEIDON_AMDGPU_ARCH` names
-  (default `gfx942`).
+  (default `gfx942`). `poseidon-clang` links the HIP runtime of the ROCm
+  installation `--hip-path`, `HIP_PATH`, `--rocm-path` or `ROCM_PATH` names,
+  else of this one, not of the one clang alone would look for; a variable that
+  names no directory is an error.
 - **cuMpSGEMM**, optional: `-DPOSEIDON_TCEC_USE_CUMPSGEMM=ON
   -DPOSEIDON_CUMPSGEMM_ROOT=<checkout>` makes the error-corrected GEMM runtime
   delegate to that build of cuMpSGEMM instead of its built-in cuBLAS kernels.

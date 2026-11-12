@@ -71,10 +71,16 @@ std::string underPrefix(StringRef Prefix, const Twine &Rel) {
 
 // The toolkit a GPU runtime is linked from: the one given, else the one
 // Poseidon was built against (none if it was built without), which has to be
-// on this machine.
+// on this machine. `GivenBy` names the environment variable that gave it; a
+// path on the command line clang checks itself where it needs one.
 std::optional<std::string> toolkitRoot(StringRef Prog, StringRef Toolkit,
-                                       StringRef Given, StringRef Built,
-                                       StringRef How) {
+                                       StringRef Given, StringRef GivenBy,
+                                       StringRef Built, StringRef How) {
+  if (!Given.empty() && !GivenBy.empty() && !sys::fs::is_directory(Given)) {
+    userError(Prog, GivenBy + "=" + Given + " names no directory; set it to " +
+                        "the " + Toolkit + " installation or unset it");
+    return std::nullopt;
+  }
   if (!Given.empty() || Built.empty() || sys::fs::is_directory(Built))
     return Given.empty() ? Built.str() : Given.str();
   userError(Prog, "the " + Toolkit + " Poseidon was built against, " + Built +
@@ -333,10 +339,13 @@ int main(int argc, char **argv) {
   // --hip-path, HIP_PATH, --rocm-path, ROCM_PATH, else the ROCm Poseidon was
   // built against.
   std::string RocmPath = HipPathArg.str();
+  StringRef RocmPathBy;
+  if (RocmPath.empty() && !(RocmPath = envOr("HIP_PATH", "")).empty())
+    RocmPathBy = "HIP_PATH";
   if (RocmPath.empty())
-    RocmPath = envOr("HIP_PATH", RocmPathArg);
-  if (RocmPath.empty())
-    RocmPath = envOr("ROCM_PATH", "");
+    RocmPath = RocmPathArg.str();
+  if (RocmPath.empty() && !(RocmPath = envOr("ROCM_PATH", "")).empty())
+    RocmPathBy = "ROCM_PATH";
 
   if (ProfileGenerate && ProfileUse)
     return userError(Prog, "-poseidon-profile-generate and "
@@ -415,11 +424,12 @@ int main(int argc, char **argv) {
     // device launch.
     std::optional<std::string> CudaRoot =
         IsCUDA
-            ? toolkitRoot(Prog, "CUDA toolkit", CudaPathArg,
+            ? toolkitRoot(Prog, "CUDA toolkit", CudaPathArg, "",
                           POSEIDON_DRIVER_CUDA_ROOT, "pass --cuda-path=<dir>")
             : "";
     std::optional<std::string> RocmRoot =
-        IsHIP ? toolkitRoot(Prog, "ROCm", RocmPath, POSEIDON_DRIVER_ROCM_ROOT,
+        IsHIP ? toolkitRoot(Prog, "ROCm", RocmPath, RocmPathBy,
+                            POSEIDON_DRIVER_ROCM_ROOT,
                             "pass --rocm-path=<dir> or set ROCM_PATH")
               : "";
     if (!CudaRoot || !RocmRoot)
