@@ -38,6 +38,10 @@
 #include "Model/FPNode.h"
 #include "Unit.h"
 
+namespace llvm {
+class LoopInfo;
+} // namespace llvm
+
 namespace poseidon {
 
 struct Options;
@@ -58,6 +62,20 @@ struct RewriteCandidate {
 
   RewriteCandidate(double cost, double accuracy, std::string expression)
       : herbieCost(cost), herbieAccuracy(accuracy), expr(expression) {}
+};
+
+// How often the conversions on the boundary of a rewrite in another precision
+// execute in the emitted code, per execution of the rewritten outputs; a
+// conversion not listed runs with the outputs. A conversion of a value
+// computed outside the outputs' loop is hoisted to that value (`hoisted`).
+// A value the rewrite itself carries across the back edge stays in the
+// rewrite's precision inside the loop when the rewrite reads it only
+// converted and returns converted results: its conversion (`carried`) and the
+// results' (`output`) then run once per entry of the loop.
+struct BoundaryCastFreq {
+  llvm::SmallDenseMap<const llvm::Value *, double, 8> hoisted;
+  llvm::SmallDenseMap<const llvm::Value *, double, 2> carried;
+  double output = 1.0;
 };
 
 class RewriteUnit : public SiteUnit {
@@ -120,6 +138,10 @@ public:
              bool print);
   double getCompCostDelta(CostModelState &CM, size_t candidateIndex);
   double getAccCostDelta(size_t candidateIndex);
+  BoundaryCastFreq boundaryCastFreq(
+      const llvm::LoopInfo &LI,
+      const std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>>
+          &valueToNodeMap) const;
 
   static bool classof(const OptimizationUnit *U) {
     return U->kind() == unsigned(UnitKind::R);
@@ -196,7 +218,8 @@ double getCompCost(
     std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, llvm::Value *> &symbolToValueMap,
     const llvm::FastMathFlags &FMF,
-    const llvm::SetVector<llvm::Value *> *subgraphInputs = nullptr);
+    const llvm::SetVector<llvm::Value *> *subgraphInputs = nullptr,
+    const BoundaryCastFreq *Boundary = nullptr);
 
 // Herbie's rewrites of the outputs of `subgraph`, the site's subgraph number
 // `subgraphCounter`, appended to `COs` unpriced. Its inputs are named from

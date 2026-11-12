@@ -20,6 +20,7 @@
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Analysis/BasicAliasAnalysis.h"
+#include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/TargetLibraryInfo.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/InstIterator.h"
@@ -815,7 +816,8 @@ double getCompCost(
     CostModelState &CM, const std::string &expr, Module *M,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, Value *> &symbolToValueMap,
-    const FastMathFlags &FMF, const SetVector<Value *> *subgraphInputs) {
+    const FastMathFlags &FMF, const SetVector<Value *> *subgraphInputs,
+    const BoundaryCastFreq *Boundary) {
   SmallSet<std::string, 8> argStrSet;
   getUniqueArgs(expr, argStrSet);
 
@@ -927,10 +929,132 @@ double getCompCost(
 
   simplifyFunction(*tempFunction, OptimizationLevel::O3);
 
-  double cost = getCompCost(CM, tempFunction);
+  // A conversion of an argument or of a returned value is on the boundary of
+  // the rewrite and costs what it executes in the emitted code.
+  auto leafOf = [&](const Argument *A) -> const Value * {
+    return A->getArgNo() < argNames.size()
+               ? symbolToValueMap[argNames[A->getArgNo()]]
+               : mappedArgs[A->getArgNo() - argNames.size()];
+  };
+  SmallPtrSet<const Value *, 4> returned;
+  bool carriesConverted = Boundary && !Boundary->carried.empty();
+  if (Boundary) {
+    for (BasicBlock &BB : *tempFunction)
+      if (auto *RI = dyn_cast<ReturnInst>(BB.getTerminator())) {
+        Value *RV = RI->getReturnValue();
+        while (auto *IV = dyn_cast_or_null<InsertValueInst>(RV)) {
+          returned.insert(IV->getInsertedValueOperand());
+          RV = IV->getAggregateOperand();
+        }
+        if (RV && !isa<UndefValue>(RV))
+          returned.insert(RV);
+      }
+    for (const Value *RV : returned)
+      carriesConverted &= isa<FPExtInst>(RV) || isa<FPTruncInst>(RV);
+    for (const Argument &A : tempFunction->args())
+      if (Boundary->carried.count(leafOf(&A)))
+        for (const User *U : A.users())
+          carriesConverted &= isa<FPExtInst>(U) || isa<FPTruncInst>(U);
+  }
+  auto weight = [&](const Instruction &I) {
+    if (!isa<FPExtInst>(I) && !isa<FPTruncInst>(I))
+      return 1.0;
+    if (auto *A = dyn_cast<Argument>(I.getOperand(0))) {
+      const Value *Leaf = leafOf(A);
+      if (auto It = Boundary->hoisted.find(Leaf); It != Boundary->hoisted.end())
+        return It->second;
+      if (auto It = Boundary->carried.find(Leaf);
+          carriesConverted && It != Boundary->carried.end())
+        return It->second;
+      return 1.0;
+    }
+    return carriesConverted && returned.contains(&I) ? Boundary->output : 1.0;
+  };
+  double cost = Boundary ? getCompCost(CM, tempFunction, weight)
+                         : getCompCost(CM, tempFunction);
 
   tempFunction->eraseFromParent();
   return cost;
+}
+
+BoundaryCastFreq RewriteUnit::boundaryCastFreq(
+    const LoopInfo &LI,
+    const std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap)
+    const {
+  BoundaryCastFreq B;
+  const Loop *L = LI.getLoopFor(cast<Instruction>(oldOutput)->getParent());
+  if (!L || executions == 0)
+    return B;
+  for (Value *Root : roots)
+    if (LI.getLoopFor(cast<Instruction>(Root)->getParent()) != L)
+      return B;
+
+  // The measured executions of a value computed outside the loop, per
+  // execution of the outputs.
+  auto outside = [&](const Value *V) -> std::optional<double> {
+    auto *I = dyn_cast<Instruction>(V);
+    if (!I || L->contains(I))
+      return std::nullopt;
+    auto It = valueToNodeMap.find(const_cast<Value *>(V));
+    if (It == valueToNodeMap.end() || !It->second || !It->second->executions)
+      return std::nullopt;
+    return std::min(1.0, (double)It->second->executions / (double)executions);
+  };
+
+  double carried = 0.0;
+  SmallPtrSet<const PHINode *, 2> carriedPHIs;
+  for (Value *In : subgraph->inputs) {
+    if (auto Freq = outside(In)) {
+      B.hoisted[In] = *Freq;
+      continue;
+    }
+    // A header PHI whose value on every back edge is an output of this rewrite
+    // and that nothing else in the loop reads: the loop carries the value in
+    // the rewrite's precision, converted where the loop is entered.
+    auto *PN = dyn_cast<PHINode>(In);
+    if (!PN || PN->getParent() != L->getHeader())
+      continue;
+    double entry = 0.0;
+    bool isCarried = true;
+    for (unsigned i = 0, e = PN->getNumIncomingValues(); i != e; ++i) {
+      Value *V = PN->getIncomingValue(i);
+      if (L->contains(PN->getIncomingBlock(i)))
+        isCarried &= is_contained(roots, V);
+      else if (auto Freq = outside(V))
+        entry += *Freq;
+      else
+        isCarried &= isa<Constant>(V);
+    }
+    for (const User *U : PN->users()) {
+      auto *UI = dyn_cast<Instruction>(U);
+      isCarried &=
+          UI && (!L->contains(UI) ||
+                 erasableInsts.contains(const_cast<Instruction *>(UI)));
+    }
+    if (!isCarried || entry == 0.0)
+      continue;
+    B.carried[In] = std::min(1.0, entry);
+    carried = std::max(carried, B.carried[In]);
+    carriedPHIs.insert(PN);
+  }
+
+  // The outputs are converted back only where the loop is left when every
+  // reader inside it is such a PHI; otherwise nothing is carried converted.
+  bool leavesConverted = !carriedPHIs.empty();
+  for (Value *Root : roots)
+    for (const User *U : Root->users()) {
+      auto *UI = dyn_cast<Instruction>(U);
+      if (UI && (!L->contains(UI) ||
+                 erasableInsts.contains(const_cast<Instruction *>(UI))))
+        continue;
+      auto *PN = dyn_cast_or_null<PHINode>(UI);
+      leavesConverted &= PN && carriedPHIs.contains(PN);
+    }
+  if (leavesConverted)
+    B.output = carried;
+  else
+    B.carried.clear();
+  return B;
 }
 
 namespace {
@@ -1516,9 +1640,13 @@ void RewriteUnit::price() {
   FPGraph &st = graph();
   Module *M = st.F->getParent();
   const FastMathFlags FMF = cast<Instruction>(oldOutput)->getFastMathFlags();
+  DominatorTree DT(*st.F);
+  LoopInfo LI(DT);
+  const BoundaryCastFreq Boundary = boundaryCastFreq(LI, st.valueToNodeMap);
   for (RewriteCandidate &c : candidates)
-    c.CompCost = getCompCost(session().CostModel, c.expr, M, st.valueToNodeMap,
-                             st.symbolToValueMap, FMF, &subgraph->inputs);
+    c.CompCost =
+        getCompCost(session().CostModel, c.expr, M, st.valueToNodeMap,
+                    st.symbolToValueMap, FMF, &subgraph->inputs, &Boundary);
   setUnifiedAccuracyCost(session().Opts, *this, st.valueToNodeMap,
                          st.symbolToValueMap);
 }

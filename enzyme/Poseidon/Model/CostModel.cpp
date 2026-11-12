@@ -388,7 +388,8 @@ const std::unordered_set<std::string> &getPTFuncs(CostModelState &CM,
 
 double computeMaxCost(CostModelState &CM, BasicBlock *BB,
                       std::unordered_map<BasicBlock *, double> &MaxCost,
-                      std::unordered_set<BasicBlock *> &Visited) {
+                      std::unordered_set<BasicBlock *> &Visited,
+                      InstWeight Weight) {
   if (MaxCost.find(BB) != MaxCost.end())
     return MaxCost[BB];
 
@@ -401,6 +402,8 @@ double computeMaxCost(CostModelState &CM, BasicBlock *BB,
       continue;
 
     auto instCost = getInstructionCompCost(CM, &I);
+    if (Weight)
+      instCost *= Weight(I);
 
     BBCost += instCost;
   }
@@ -410,7 +413,7 @@ double computeMaxCost(CostModelState &CM, BasicBlock *BB,
   if (!succ_empty(BB)) {
     double maxSuccCost = 0;
     for (BasicBlock *Succ : successors(BB)) {
-      double succBBCost = computeMaxCost(CM, Succ, MaxCost, Visited);
+      double succBBCost = computeMaxCost(CM, Succ, MaxCost, Visited, Weight);
       if (succBBCost > maxSuccCost)
         maxSuccCost = succBBCost;
     }
@@ -423,12 +426,12 @@ double computeMaxCost(CostModelState &CM, BasicBlock *BB,
   return totalCost;
 }
 
-double getCompCost(CostModelState &CM, Function *F) {
+double getCompCost(CostModelState &CM, Function *F, InstWeight Weight) {
   std::unordered_map<BasicBlock *, double> MaxCost;
   std::unordered_set<BasicBlock *> Visited;
 
   BasicBlock *EntryBB = &F->getEntryBlock();
-  double TotalCost = computeMaxCost(CM, EntryBB, MaxCost, Visited);
+  double TotalCost = computeMaxCost(CM, EntryBB, MaxCost, Visited, Weight);
   return TotalCost;
 }
 
