@@ -344,6 +344,20 @@ def : CallPattern<(Op $x),
                   [ReadNone, NoUnwind]
                   >;
 
+def : CallPattern<(Op $x),
+                  ["rcbrt", "rcbrtf", "rcbrtl", "__nv_rcbrt", "__nv_rcbrtf", "__nv_rcbrtl"],
+                  [(FNeg (FDiv (FMul (DiffeRet), (Call<(SameFunc), [ReadNone,NoUnwind]> $x)), (FMul (ConstantFP<"3.0"> $x), $x)))],
+                  (ForwardFromSummedReverse),
+                  [ReadNone, NoUnwind]
+                  >;
+
+def : CallPattern<(Op $x),
+                  ["rsqrt", "rsqrtf", "rsqrtl", "__nv_rsqrt", "__nv_rsqrtf", "__nv_rsqrtl"],
+                  [(FNeg (FDiv (FMul (DiffeRet), (Call<(SameFunc), [ReadNone,NoUnwind]> $x)), (FMul (ConstantFP<"2.0"> $x), $x)))],
+                  (ForwardFromSummedReverse),
+                  [ReadNone, NoUnwind]
+                  >;
+
 def : CallPattern<(Op $x, $y),
                   ["hypot", "hypotf", "hypotl", "__hypot_finite", "_hypot", "_hypotf"],
                   [
@@ -585,7 +599,7 @@ def : CallPattern<(Op $x),
 
 // Normalized Faddeeva_erfcx_re(x) = Exp[z^2] Erfc[z] -> 2 dx ( x f(x) - 1/sqrt(pi))
 def : CallPattern<(Op $x),
-                  ["Faddeeva_erfcx_re"],
+                  ["Faddeeva_erfcx_re", "erfcx", "erfcxf", "erfcxl", "__nv_erfcx", "__nv_erfcxf", "__nv_erfcxl"],
                   [
                   (FMul (DiffeRet), (FMul (ConstantFP<"2.0"> $x), (FSub (FMul $x, (Call<(SameFunc), [ReadNone,NoUnwind]> $x)), (ConstantFP<"0.56418958354775628694807945156077258584405062932900"> $x) )))
                   ],
@@ -843,6 +857,33 @@ def : CallPattern<(Op $x),
                   ["erfinv","erfinvf","erfinvl", "__nv_erfinv","__nv_erfinvf","__nv_erfinvl", ],
                   [
                     (FMul (FMul (ConstantFP<"0.8862269254527580136490837416705725913987747280611935641069038949264556422955160906874753283692723327"> $x), (Intrinsic<"exp"> (FMul (Call<(SameFunc), [ReadNone, NoUnwind]> $x):$ei, $ei))), (DiffeRet))
+                  ],
+                  (ForwardFromSummedReverse),
+                  [ReadNone, NoUnwind]
+                  >;
+
+def : CallPattern<(Op $x),
+                  ["erfcinv", "erfcinvf", "erfcinvl", "__nv_erfcinv", "__nv_erfcinvf", "__nv_erfcinvl"],
+                  [
+                    (FMul (FMul (ConstantFP<"-0.8862269254527580136490837416705725913987747280611935641069038949264556422955160906874753283692723327"> $x), (Intrinsic<"exp"> (FMul (Call<(SameFunc), [ReadNone, NoUnwind]> $x):$ei, $ei))), (DiffeRet))
+                  ],
+                  (ForwardFromSummedReverse),
+                  [ReadNone, NoUnwind]
+                  >;
+
+def : CallPattern<(Op $x),
+                  ["normcdf", "normcdff", "normcdfl", "__nv_normcdf", "__nv_normcdff", "__nv_normcdfl", "ncdf", "ncdff"],
+                  [
+                    (FMul (DiffeRet), (FMul (ConstantFP<"0.39894228040143267793994605993438186847585863116493465766592582967"> $x), (Intrinsic<"exp"> (FMul (ConstantFP<"-0.5"> $x), (FMul $x, $x)))))
+                  ],
+                  (ForwardFromSummedReverse),
+                  [ReadNone, NoUnwind]
+                  >;
+
+def : CallPattern<(Op $x),
+                  ["normcdfinv", "normcdfinvf", "normcdfinvl", "__nv_normcdfinv", "__nv_normcdfinvf", "__nv_normcdfinvl", "ncdfinv", "ncdfinvf"],
+                  [
+                    (FMul (DiffeRet), (FMul (ConstantFP<"2.5066282746310005024157652848110452530069867406099383166299235763"> $x), (Intrinsic<"exp"> (FMul (ConstantFP<"0.5"> $x), (FMul (Call<(SameFunc), [ReadNone, NoUnwind]> $x):$ni, $ni)))))
                   ],
                   (ForwardFromSummedReverse),
                   [ReadNone, NoUnwind]
@@ -1163,7 +1204,7 @@ def : CallPattern<(Op $x, $y),
                   >;
 
 def : IntrPattern<(Op $x),
-                  [["fabs"]],
+                  [["fabs"], ["nvvm_fabs_f", "", "20"], ["nvvm_fabs_d", "", "20"], ["nvvm_fabs_ftz_f", "", "20"], ["nvvm_fabs", "21", ""], ["nvvm_fabs_ftz", "21", ""]],
                   [
                     (FMul (DiffeRet), (Select (FCmpOLT $x, (ConstantFP<"0"> $x)), (ConstantFP<"-1"> $x), (ConstantFP<"1"> $x)))
                   ],
@@ -1173,6 +1214,12 @@ def : IntrPattern<(Op $x),
 def : IntrPattern<(Op $x),
                   [["sqrt"]],
                   [(Select (FCmpUEQ $x, (ConstantFP<"0"> $x)), (ConstantFP<"0"> $x), (FDiv (DiffeRet), (FMul (ConstantFP<"2"> $x), (Call<(SameFunc), [ReadNone,NoUnwind]> $x))))],
+                  (ForwardFromSummedReverse)
+                 >;
+
+def : IntrPattern<(Op $x),
+                  [["nvvm_rsqrt_approx_f"], ["nvvm_rsqrt_approx_d"], ["nvvm_rsqrt_approx_ftz_f"], ["nvvm_rsqrt_approx_ftz_d", "19", ""]],
+                  [(FNeg (FDiv (FMul (DiffeRet), (Call<(SameFunc), [ReadNone,NoUnwind]> $x)), (FMul (ConstantFP<"2.0"> $x), $x)))],
                   (ForwardFromSummedReverse)
                  >;
 
