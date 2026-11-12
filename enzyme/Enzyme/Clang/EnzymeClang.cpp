@@ -178,12 +178,14 @@ void registerEnzymeDeclIfNotDefinedHere(Sema &S, Decl *D) {
   }
 }
 
+} // namespace
+
 /// Define Name as an object-like macro expanding to Value. The plugin is
 /// created after the preprocessor is initialized, so this cannot extend the
 /// predefines buffer: with C++20 modules enabled, clang keeps the -include
 /// inputs out of that buffer and drops them once it is set again, as it would
 /// for an implicit PCH.
-void defineMacro(Preprocessor &PP, StringRef Name, unsigned Value) {
+static void defineMacro(Preprocessor &PP, StringRef Name, unsigned Value) {
   Token Tok;
   Tok.startToken();
   Tok.setKind(tok::numeric_constant);
@@ -192,8 +194,6 @@ void defineMacro(Preprocessor &PP, StringRef Name, unsigned Value) {
   MI->setTokens(Tok, PP.getPreprocessorAllocator());
   PP.appendDefMacroDirective(PP.getIdentifierInfo(Name), MI);
 }
-
-} // namespace
 
 /// Whether Loc lies in one of clang's device math wrapper headers, whose
 /// functions forward to libdevice (__nv_*) or ocml (__ocml_*). Keeping every
