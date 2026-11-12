@@ -21,6 +21,7 @@
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "mlir/Interfaces/DataLayoutInterfaces.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Support/LogicalResult.h"
 #include "clang/CIR/Dialect/Builder/CIRBaseBuilder.h"
 #include "clang/CIR/Dialect/IR/CIRDialect.h"
@@ -735,6 +736,19 @@ public:
                    : fn.getFunctionType().getReturnType();
     return cir::CallOp::create(b, loc, SymbolRefAttr::get(fn), res, args);
   }
+  SmallVector<Value> unpackCallResults(Operation *, OpBuilder &b,
+                                       Operation *call,
+                                       unsigned numResults) const {
+    if (numResults == call->getNumResults())
+      return SmallVector<Value>(call->getResults());
+    assert(call->getNumResults() == 1 && "expected one packed result");
+    Value packed = call->getResult(0);
+    SmallVector<Value> results;
+    for (unsigned i = 0; i < numResults; ++i)
+      results.push_back(
+          cir::ExtractMemberOp::create(b, call->getLoc(), packed, i));
+    return results;
+  }
   Operation *createReturn(Operation *, OpBuilder &b, Location loc,
                           ValueRange args) const {
     if (args.size() <= 1)
@@ -827,6 +841,16 @@ struct CIRReturnOpFunctionReturnInterface
     : public FunctionReturnOpInterface::ExternalModel<
           CIRReturnOpFunctionReturnInterface, cir::ReturnOp> {};
 
+template <typename OpTy>
+struct CIRNoMemoryEffect
+    : public MemoryEffectOpInterface::ExternalModel<CIRNoMemoryEffect<OpTy>,
+                                                    OpTy> {
+  void
+  getEffects(Operation *,
+             SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+                 &) const {}
+};
+
 void mlir::enzyme::registerCIRDialectAutoDiffInterface(
     DialectRegistry &registry) {
   registry.addExtension(+[](MLIRContext *context, cir::CIRDialect *) {
@@ -888,6 +912,11 @@ void mlir::enzyme::registerCIRDialectAutoDiffInterface(
     registerCIRAutoDiffTypeInterfaces(context);
     cir::FuncOp::attachInterface<AutoDiffCIRFuncOpFunctionInterface>(*context);
     cir::ReturnOp::attachInterface<CIRReturnOpFunctionReturnInterface>(
+        *context);
+    cir::ReturnOp::attachInterface<CIRNoMemoryEffect<cir::ReturnOp>>(*context);
+    cir::SwitchFlatOp::attachInterface<CIRNoMemoryEffect<cir::SwitchFlatOp>>(
+        *context);
+    cir::UnreachableOp::attachInterface<CIRNoMemoryEffect<cir::UnreachableOp>>(
         *context);
   });
 }
