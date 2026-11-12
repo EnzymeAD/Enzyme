@@ -14,6 +14,8 @@
 
 #include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/IR/Instructions.h"
+#include "llvm/IR/Module.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <cstring>
@@ -28,6 +30,7 @@
 #include "FPFormat.h"
 #include "FPNode.h"
 #include "Sampling.h"
+#include "Targets/Target.h"
 
 using namespace llvm;
 
@@ -41,9 +44,26 @@ FPEvaluator::FPEvaluator(ArrayRef<PrecisionChange> changes) {
       for (auto node : change.nodes) {
         nodePrecisions[node] = change.newType;
         nodeChange[node] = index;
+        auto *CI = dyn_cast<CallInst>(node->value);
+        if (change.newType == PrecisionChangeType::FP32 && CI &&
+            approxSqrtF32Of(*CI) != Intrinsic::not_intrinsic)
+          approxSqrtError[node] =
+              Target::of(*CI->getModule()).approxSqrtF32Error();
       }
     }
   }
+}
+
+// The device's approximate root is known only to lie within `bound` of the
+// exact root, and its bits differ between GPU generations, so the model
+// cannot reproduce them as it does an expansion's. It returns the FP32 value
+// at least `bound` above the exact root instead: the worst error at the
+// operation, in a fixed direction. Downstream, where that error meets other
+// rounding errors of opposite sign, an output can show less than the device's.
+static float approxSqrtModel(float x, double bound) {
+  double far = std::sqrt((double)x) * (1 + bound);
+  float r = (float)far;
+  return r < far ? std::nextafter(r, INFINITY) : r;
 }
 
 // What the materializer emits for an operation of an expansion change: each
@@ -292,8 +312,13 @@ void FPEvaluator::evaluateNode(const FPNode *node,
     res = evalUnary(static_cast<double (*)(double)>(std::log1p),
                     static_cast<float (*)(float)>(log1pf));
   } else if (node->op == "sqrt") {
-    res = evalUnary(static_cast<double (*)(double)>(std::sqrt),
-                    static_cast<float (*)(float)>(sqrtf));
+    auto approx = approxSqrtError.find(node);
+    if (approx != approxSqrtError.end())
+      res = approxSqrtModel(toF(getResult(node->operands[0].get())),
+                            approx->second);
+    else
+      res = evalUnary(static_cast<double (*)(double)>(std::sqrt),
+                      static_cast<float (*)(float)>(sqrtf));
   } else if (node->op == "cbrt") {
     res = evalUnary(static_cast<double (*)(double)>(std::cbrt),
                     static_cast<float (*)(float)>(cbrtf));

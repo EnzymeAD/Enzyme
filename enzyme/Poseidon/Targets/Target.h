@@ -16,6 +16,7 @@
 #include <string>
 
 namespace llvm {
+class CallInst;
 class Function;
 class GlobalValue;
 class Module;
@@ -122,6 +123,9 @@ public:
   virtual llvm::Intrinsic::ID approxSqrtF32() const {
     return llvm::Intrinsic::not_intrinsic;
   }
+  // The largest relative error, from the exact root, of what the code
+  // generator makes of approxSqrtF32() and of one divided by it.
+  virtual double approxSqrtF32Error() const { return 0; }
 
   // Whether a matrix product can be raised onto matrix instructions inside
   // its kernel (Targets/NVPTXTensorCore.h).
@@ -149,6 +153,11 @@ protected:
 // Whether `ID` is a target's approximate single-precision square root, in any
 // module.
 bool isApproxSqrtF32(llvm::Intrinsic::ID ID);
+
+// The approximate square root precision tuning writes the square root call
+// `CI` as when it retypes the call to single precision, not_intrinsic if it
+// calls the library's single-precision function instead.
+llvm::Intrinsic::ID approxSqrtF32Of(const llvm::CallInst &CI);
 
 // The launch geometry `V` reads, in the target of its module.
 LaunchGeometry launchGeometryOf(const llvm::Value *V);
