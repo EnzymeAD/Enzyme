@@ -1302,6 +1302,36 @@ bool moduleUsesEnzyme(const Module &M) {
   return false;
 }
 
+#if LLVM_VERSION_MAJOR < 16
+// ModuleUtils has removeFromUsedLists from LLVM 16.
+static void removeFromUsedLists(Module &M,
+                                function_ref<bool(Constant *)> ShouldRemove) {
+  for (StringRef Name : {"llvm.used", "llvm.compiler.used"}) {
+    GlobalVariable *GV = M.getNamedGlobal(Name);
+    if (!GV)
+      continue;
+    auto *Init = cast<ConstantArray>(GV->getInitializer());
+    SmallVector<Constant *, 4> Kept;
+    for (Use &U : Init->operands())
+      if (!ShouldRemove(cast<Constant>(U)->stripPointerCasts()))
+        Kept.push_back(cast<Constant>(U));
+    if (Kept.size() == Init->getNumOperands())
+      continue;
+    if (!Kept.empty()) {
+      ArrayType *Ty =
+          ArrayType::get(Init->getType()->getElementType(), Kept.size());
+      auto *NewGV = new GlobalVariable(
+          M, Ty, /*isConstant=*/false, GlobalValue::AppendingLinkage,
+          ConstantArray::get(Ty, Kept), "", GV, GV->getThreadLocalMode(),
+          GV->getAddressSpace());
+      NewGV->setSection(GV->getSection());
+      NewGV->takeName(GV);
+    }
+    GV->eraseFromParent();
+  }
+}
+#endif
+
 /// Push every global value C refers to, through constant expressions.
 static void collectGlobals(Value *C, SmallVectorImpl<WeakVH> &Out) {
   if (auto G = dyn_cast<GlobalValue>(C)) {
