@@ -5,6 +5,7 @@
 // RUN: mkdir -p %t/tmp && env TMPDIR=%t/tmp not %clang -x hip --offload-arch=gfx1100 --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c1100 -mllvm -poseidon-unit=scale %s -o %t/other.ll 2>&1 | FileCheck --check-prefix=ARCH --implicit-check-not=PLEASE %s
 // RUN: mkdir -p %t/tmpg && env TMPDIR=%t/tmpg not %clang -x hip --offload-arch=gfx1100 --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -g -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c1100g -mllvm -poseidon-unit=scale %s -o %t/other-g.ll 2>&1 | FileCheck --check-prefix=ARCH --implicit-check-not=PLEASE %s
 // RUN: ls %t/tmpg | count 0
+// RUN: not ls %t/c1100/launches_* %t/c1100g/launches_*
 // RUN: ls %t/tmp | count 0
 // RUN: %clang -x hip --offload-arch=%amdgpu_arch --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c -mllvm -poseidon-unit=nosite -DNO_SITE %s -o %t/nosite.ll
 // RUN: FileCheck --check-prefix=NOSITE %s < %t/nosite.ll
@@ -32,8 +33,8 @@
 // which knows no Poseidon flag.) The bitcode carries the ROCm device libraries
 // of the processor Poseidon was built for (POSEIDON_AMDGPU_ARCH), so a module
 // for another one (here gfx1100) whose probes call into it is refused with
-// an error at the user's kernel, not a crash; one without probes takes the
-// table alone.
+// an error at the user's kernel, not a crash, and leaves no launch manifest
+// a host half could read; one without probes takes the table alone.
 
 #include <hip/hip_runtime.h>
 
