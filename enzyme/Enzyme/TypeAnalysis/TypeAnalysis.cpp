@@ -2042,16 +2042,28 @@ void TypeAnalyzer::visitCmpInst(CmpInst &cmp) {
   // No directionality check needed as always true
   updateAnalysis(&cmp, TypeTree(BaseType::Integer).Only(-1, &cmp), &cmp);
   if (direction & UP) {
-    updateAnalysis(
-        cmp.getOperand(0),
-        TypeTree(getAnalysis(cmp.getOperand(1)).Inner0().PurgeAnything())
-            .Only(-1, &cmp),
-        &cmp);
-    updateAnalysis(
-        cmp.getOperand(1),
-        TypeTree(getAnalysis(cmp.getOperand(0)).Inner0().PurgeAnything())
-            .Only(-1, &cmp),
-        &cmp);
+    auto &DL = fntypeinfo.Function->getParent()->getDataLayout();
+    // Comparing a value already known to be a pointer against a low-bit tag
+    // sentinel (e.g. `ptrtoint %p == 1`, tested before clearing low tag bits)
+    // does not make it an integer.
+    auto isTaggedPointerCmp = [&](Value *Sentinel, Value *Other) {
+      return isPointerTagSentinelConstant(Sentinel, DL) &&
+             getAnalysis(Other).Inner0() == BaseType::Pointer;
+    };
+    bool Sentinel0 = isTaggedPointerCmp(cmp.getOperand(0), cmp.getOperand(1));
+    bool Sentinel1 = isTaggedPointerCmp(cmp.getOperand(1), cmp.getOperand(0));
+    if (!Sentinel1)
+      updateAnalysis(
+          cmp.getOperand(0),
+          TypeTree(getAnalysis(cmp.getOperand(1)).Inner0().PurgeAnything())
+              .Only(-1, &cmp),
+          &cmp);
+    if (!Sentinel0)
+      updateAnalysis(
+          cmp.getOperand(1),
+          TypeTree(getAnalysis(cmp.getOperand(0)).Inner0().PurgeAnything())
+              .Only(-1, &cmp),
+          &cmp);
   }
 }
 
@@ -3850,6 +3862,20 @@ void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
           }
           if (validXor) {
             Result = ConcreteType(FT);
+          }
+        }
+        // `or` with a small non-negative constant (low-bit tagging) preserves
+        // the type of the other operand: a tagged pointer is still a pointer
+        // and a tagged integer is still an integer.
+        if (!Result[{}].isKnown() || Result[{}] == BaseType::Anything) {
+          for (int i = 0; i < 2; ++i) {
+            auto *CI = dyn_cast_or_null<ConstantInt>(Args[i]);
+            if (!CI || CI->isNegative() || CI->isZero() ||
+                CI->getLimitedValue() > 4096)
+              continue;
+            auto Other = (i == 0 ? AnalysisRHS : AnalysisLHS)[{}];
+            if (Other == BaseType::Pointer || Other == BaseType::Integer)
+              Result = TypeTree(Other);
           }
         }
       }
