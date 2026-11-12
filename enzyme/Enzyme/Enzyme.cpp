@@ -293,6 +293,27 @@ static Value *adaptReturnedVector(Value *ret, Value *diffret,
   return diffret;
 }
 
+/// Return the byte offset immediately after the last non-padding element of
+/// `Ty`, excluding trailing struct alignment padding.
+static uint64_t getUnpaddedReturnSizeInBytes(const DataLayout &DL, Type *Ty) {
+  if (auto *ST = dyn_cast<StructType>(Ty)) {
+    if (ST->getNumElements() == 0)
+      return 0;
+    const StructLayout *Layout = DL.getStructLayout(ST);
+    unsigned LastElement = ST->getNumElements() - 1;
+    return Layout->getElementOffset(LastElement) +
+           getUnpaddedReturnSizeInBytes(DL, ST->getElementType(LastElement));
+  }
+  if (auto *AT = dyn_cast<ArrayType>(Ty)) {
+    if (AT->getNumElements() == 0)
+      return 0;
+    Type *ElementType = AT->getElementType();
+    return (AT->getNumElements() - 1) * DL.getTypeAllocSize(ElementType) +
+           getUnpaddedReturnSizeInBytes(DL, ElementType);
+  }
+  return DL.getTypeStoreSize(Ty);
+}
+
 static bool ReplaceOriginalCall(IRBuilder<> &Builder, Value *ret,
                                 Type *retElemType, Value *diffret,
                                 Instruction *CI, DerivativeMode mode) {
@@ -372,6 +393,49 @@ static bool ReplaceOriginalCall(IRBuilder<> &Builder, Value *ret,
       return true;
     } else if (diffretType == retType) {
       CI->replaceAllUsesWith(diffret);
+      CI->eraseFromParent();
+      return true;
+    }
+    if (auto *TargetStruct = dyn_cast<StructType>(retType),
+        *SourceStruct = dyn_cast<StructType>(diffreti->getType());
+        TargetStruct && SourceStruct &&
+        TargetStruct->isLayoutIdentical(SourceStruct)) {
+      Value *Repacked = UndefValue::get(TargetStruct);
+      for (unsigned ElementIndex = 0;
+           ElementIndex < TargetStruct->getStructNumElements();
+           ++ElementIndex) {
+        Value *Element = Builder.CreateExtractValue(diffreti, {ElementIndex});
+        Repacked = Builder.CreateInsertValue(Repacked, Element, {ElementIndex});
+      }
+      CI->replaceAllUsesWith(Repacked);
+      CI->eraseFromParent();
+      return true;
+    }
+    uint64_t UnpaddedTargetBytes = getUnpaddedReturnSizeInBytes(DL, retType);
+    if (!retType->isFloatingPointTy() && !retType->isPointerTy() &&
+        UnpaddedTargetBytes > 0 &&
+        UnpaddedTargetBytes == getUnpaddedReturnSizeInBytes(DL, diffretType)) {
+      BasicBlock &EntryBlock = CI->getFunction()->getEntryBlock();
+      IRBuilder<> EntryBuilder(&EntryBlock, EntryBlock.begin());
+      uint64_t BufferBytes = std::max<uint64_t>(
+          DL.getTypeAllocSize(retType), DL.getTypeAllocSize(diffretType));
+      Align BufferAlignment = std::max(DL.getPrefTypeAlign(retType),
+                                       DL.getPrefTypeAlign(diffretType));
+      AllocaInst *CoercionSlot = EntryBuilder.CreateAlloca(
+          ArrayType::get(EntryBuilder.getInt8Ty(), BufferBytes));
+      CoercionSlot->setAlignment(BufferAlignment);
+      unsigned AddressSpace = CoercionSlot->getAddressSpace();
+      Builder.CreateAlignedStore(
+          diffret,
+          Builder.CreateBitCast(CoercionSlot,
+                                getPointerType(diffretType, AddressSpace)),
+          BufferAlignment);
+      Value *CoercedLoad = Builder.CreateAlignedLoad(
+          retType,
+          Builder.CreateBitCast(CoercionSlot,
+                                getPointerType(retType, AddressSpace)),
+          BufferAlignment);
+      CI->replaceAllUsesWith(CoercedLoad);
       CI->eraseFromParent();
       return true;
     }
