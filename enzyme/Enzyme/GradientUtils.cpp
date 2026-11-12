@@ -10720,32 +10720,53 @@ GradientUtils::getWholeAllocationCacheLoop(const llvm::Value *V) const {
   return L;
 }
 
-/// Given an original allocation, return the original value representing the
-/// number of elements allocated, and set EltSize to the size of each element in
-/// bytes and Alignment to the known alignment of the allocation. Returns
-/// nullptr if the size of the allocation is not known.
-static Value *getOrigAllocationCount(Instruction *orig, uint64_t &EltSize,
-                                     MaybeAlign &Alignment) {
+/// Given an original allocation, set Counts to the original values whose
+/// product, multiplied by EltSize, is the number of bytes allocated, and set
+/// Alignment to the known alignment of the allocation. Returns false if the
+/// size of the allocation is not known.
+static bool getOrigAllocationSize(Instruction *orig, TargetLibraryInfo &TLI,
+                                  SmallVectorImpl<Value *> &Counts,
+                                  uint64_t &EltSize, MaybeAlign &Alignment) {
   auto &DL = orig->getParent()->getParent()->getParent()->getDataLayout();
   if (auto AI = dyn_cast<AllocaInst>(orig)) {
+    Counts.push_back(AI->getArraySize());
     EltSize = DL.getTypeAllocSize(AI->getAllocatedType());
     Alignment = AI->getAlign();
-    return AI->getArraySize();
+    return true;
   }
-  if (auto CI = dyn_cast<CallInst>(orig)) {
-    if (auto MD = hasMetadata(CI, "enzyme_fromstack")) {
-      auto A = cast<ConstantInt>(
-                   cast<ConstantAsMetadata>(MD->getOperand(0))->getValue())
-                   ->getLimitedValue();
-      if (A)
-        Alignment = Align(A);
-    }
-    if (getFuncNameFromCall(CI) == "malloc") {
-      EltSize = 1;
-      return CI->getArgOperand(0);
-    }
+  auto CI = dyn_cast<CallInst>(orig);
+  // The allocation must return the pointer to the memory itself.
+  if (!CI || !CI->getType()->isPointerTy())
+    return false;
+  StringRef funcName = getFuncNameFromCall(CI);
+  if (!isAllocationFunction(funcName, TLI))
+    return false;
+  if (auto MD = hasMetadata(CI, "enzyme_fromstack")) {
+    auto A = cast<ConstantInt>(
+                 cast<ConstantAsMetadata>(MD->getOperand(0))->getValue())
+                 ->getLimitedValue();
+    if (A)
+      Alignment = Align(A);
   }
-  return nullptr;
+  for (auto idx : getAllocationSizeArgIndices(funcName, TLI, CI))
+    Counts.push_back(CI->getArgOperand(idx));
+  EltSize = 1;
+  return true;
+}
+
+/// Compute the number of bytes of an allocation, given the result of
+/// getOrigAllocationSize, where the original values are each converted to
+/// values usable by B through getValue.
+static Value *
+computeAllocationSize(IRBuilder<> &B, ArrayRef<Value *> Counts,
+                      uint64_t EltSize,
+                      llvm::function_ref<Value *(Value *)> getValue) {
+  auto i64 = Type::getInt64Ty(B.getContext());
+  Value *size = ConstantInt::get(i64, EltSize);
+  for (auto Count : Counts)
+    size = B.CreateMul(size, B.CreateZExtOrTrunc(getValue(Count), i64), "",
+                       /*NUW*/ true, /*NSW*/ true);
+  return size;
 }
 
 void GradientUtils::cacheWholeAllocationInLoop(llvm::Instruction *orig,
@@ -10762,11 +10783,16 @@ void GradientUtils::cacheWholeAllocationInLoop(llvm::Instruction *orig,
 
   uint64_t EltSize = 0;
   MaybeAlign Alignment;
-  Value *origCount = getOrigAllocationCount(orig, EltSize, Alignment);
+  SmallVector<Value *, 2> origCounts;
+  bool knownSize =
+      getOrigAllocationSize(orig, TLI, origCounts, EltSize, Alignment);
   // In split mode, the size of the allocation must be available in the reverse
   // pass without having been explicitly cached.
-  if (!origCount || (mode != DerivativeMode::ReverseModeCombined &&
-                     !isa<ConstantInt>(origCount))) {
+  if (knownSize && mode != DerivativeMode::ReverseModeCombined)
+    for (auto Count : origCounts)
+      if (!isa<ConstantInt>(Count))
+        knownSize = false;
+  if (!knownSize) {
     std::string str;
     raw_string_ostream ss(str);
     ss << "Cannot cache contents of allocation " << *orig
@@ -10797,10 +10823,10 @@ void GradientUtils::cacheWholeAllocationInLoop(llvm::Instruction *orig,
     return;
   }
 
-  auto i64 = Type::getInt64Ty(header->getContext());
-  Value *size = B.CreateZExtOrTrunc(getNewFromOriginal(origCount), i64);
-  size = B.CreateMul(size, ConstantInt::get(i64, EltSize), "", /*NUW*/ true,
-                     /*NSW*/ true);
+  Value *size =
+      computeAllocationSize(B, origCounts, EltSize, [&](Value *Count) {
+        return getNewFromOriginal(Count);
+      });
 
   auto snapshot = cast<Instruction>(
       CreateAllocation(B, i8, size, orig->getName() + "_snapshot"));
@@ -10866,13 +10892,15 @@ BasicBlock *GradientUtils::restoreLoopCachedAllocations(LoopContext &lc,
 
     uint64_t EltSize = 0;
     MaybeAlign Alignment;
-    Value *origCount = getOrigAllocationCount(orig, EltSize, Alignment);
-    assert(origCount && "allocation cached per iteration has unknown size");
-    auto i64 = Type::getInt64Ty(newFunc->getContext());
+    SmallVector<Value *, 2> origCounts;
+    bool knownSize =
+        getOrigAllocationSize(orig, TLI, origCounts, EltSize, Alignment);
+    (void)knownSize;
+    assert(knownSize && "allocation cached per iteration has unknown size");
     Value *size =
-        NB.CreateZExtOrTrunc(lookupM(getNewFromOriginal(origCount), NB), i64);
-    size = NB.CreateMul(size, ConstantInt::get(i64, EltSize), "", /*NUW*/ true,
-                        /*NSW*/ true);
+        computeAllocationSize(NB, origCounts, EltSize, [&](Value *Count) {
+          return lookupM(getNewFromOriginal(Count), NB);
+        });
 
     Value *alloc = lookupM(getNewFromOriginal((Value *)orig), NB);
     NB.CreateMemCpy(alloc, Alignment, saved, MaybeAlign(), size);
