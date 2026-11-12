@@ -1807,6 +1807,16 @@ void emit_dag(bool forward, Twine resultVarName, const DagInit *ruleDag,
     else
       os << "blas.suffix;\n";
 
+    if (dfnc_name == "lascl") {
+      os << "    if (cblas && !EnzymeLapackCopy && "
+            "!gutils->oldFunc->getParent()->getFunction("
+            "getRenamedPerCallingConv(called->getName(), str_lascl))) {\n"
+         << "      callLasclHelper(Builder2, *gutils->oldFunc->getParent(), "
+            "blas, "
+         << argPrefix << ", Defs);\n"
+         << "    } else {\n";
+    }
+
     os << "    auto derivcall_" << dfnc_name
        << " = gutils->oldFunc->getParent()->getOrInsertFunction(\n"
        << "  getRenamedPerCallingConv(called->getName(), str_" << dfnc_name
@@ -1827,6 +1837,9 @@ void emit_dag(bool forward, Twine resultVarName, const DagInit *ruleDag,
       os << "         if (cublasv2) " << resultVarName
          << " = Builder2.CreateLoad(fpType, " << argPrefix << "[" << argPrefix
          << ".size()-1]);\n";
+    }
+    if (dfnc_name == "lascl") {
+      os << "    }\n";
     }
 
     if (!forward && !runtimeChecked)
