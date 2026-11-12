@@ -108,7 +108,8 @@ def target_words(doc):
 def select_flag(doc, point):
     t = doc.get("target", {})
     ids = ",".join(point.get("applied", []))
-    if t.get("tau_from") == "site":
+    # A point without a budget is one no budget selects.
+    if t.get("tau_from") == "site" or "budget" not in point:
         return "-poseidon-apply-rewrites=%s" % ids if ids else "(as written)"
     budget = float(point["budget"])
     flag = "-poseidon-cost-budget=%s" % (int(budget) if budget.is_integer() else repr(budget))
@@ -197,7 +198,7 @@ def report(doc, args, w):
         w("Pareto frontier (cost, modelled error; * = selected):")
         w("    %12s %15s  %-24s %s" % ("cost", "modelled error", "rewrites", "select with"))
         for p in pareto:
-            w("  %s %12s %15s  %-24s %s" % ("*" if p.get("selected") else " ", cost(p.get("cost", p["budget"])),
+            w("  %s %12s %15s  %-24s %s" % ("*" if p.get("selected") else " ", cost(p.get("cost", p.get("budget"))),
                                            num(p.get("modelled_rel_error")), ",".join(p.get("applied", [])) or "(as written)",
                                            select_flag(doc, p)))
         if doc.get("target", {}).get("tau_from") != "site":

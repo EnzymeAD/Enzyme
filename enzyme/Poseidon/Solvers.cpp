@@ -119,10 +119,29 @@ double baselineAccCost(ArrayRef<RewriteUnit> COs, ArrayRef<PrecisionUnit> CSs,
   return baseline;
 }
 
-// Write the DP table's cost breakpoints to <cache>/budgets.txt for the Pareto-
-// variant workflow, on every solve and replay. Parallel variant builds reusing
-// a cached table write the same breakpoints, and the replace is atomic, so
-// none of them reads a partial file.
+bool selectable(const Options &O, double accCost) {
+  return std::isfinite(accCost) && accCost < O.Model.ExponentPenalty;
+}
+
+// The most accurate selectable point within the budget. The frontier's
+// accuracy cost falls as its cost rises, so each selectable point is the
+// one its own share selects.
+static std::optional<DPCost> selectWithinBudget(const Options &O,
+                                                const CostScale &scale,
+                                                const CostMap &frontier) {
+  const DPCost budget = scale.fromShare(O.Solver.CostBudget);
+  std::optional<DPCost> best;
+  for (const auto &[cost, acc] : frontier)
+    if (cost <= budget && selectable(O, acc) &&
+        (!best || acc < frontier.at(*best)))
+      best = cost;
+  return best;
+}
+
+// Write the shares of the selectable frontier points to <cache>/budgets.txt
+// for the Pareto-variant workflow, on every solve and replay. Parallel variant
+// builds reusing a cached table write the same shares, and the replace is
+// atomic, so none of them reads a partial file.
 static void writeBudgetsFile(const Options &O, const CostScale &scale,
                              const CostMap &costToAccuracyMap) {
   if (O.Herbie.Cache.empty())
@@ -130,7 +149,8 @@ static void writeBudgetsFile(const Options &O, const CostScale &scale,
   std::string budgetsFile = O.Herbie.Cache + "/budgets.txt";
   std::string budgetsStr;
   for (const auto &pair : costToAccuracyMap)
-    budgetsStr += formatv("{0},", format("%.17g", scale.share(pair.first)));
+    if (selectable(O, pair.second))
+      budgetsStr += formatv("{0},", format("%.17g", scale.share(pair.first)));
   if (!budgetsStr.empty())
     budgetsStr.pop_back();
   if (Error E = writeFileAtomically(budgetsFile, budgetsStr))
@@ -271,8 +291,7 @@ accuracyDPSolver(Session &S, Function &F, FunctionFPState &st,
       double accCost = pair.second;
       double rel = (baseline + accCost) / accScale;
 
-      if (std::isfinite(accCost) && accCost < O.Model.ExponentPenalty &&
-          rel <= errorTol) {
+      if (selectable(O, accCost) && rel <= errorTol) {
         const bool better =
             O.Solver.TauCheapest
                 ? (compCost < bestCompCost ||
@@ -303,26 +322,19 @@ accuracyDPSolver(Session &S, Function &F, FunctionFPState &st,
                  << " selected cost=" << scale.share(bestCompCost)
                  << " accCost=" << minAccCost << " rel=" << bestRel << "\n";
   } else {
-    const DPCost budget = scale.fromShare(O.Solver.CostBudget);
-    for (const auto &pair : costToAccuracyMap) {
-      DPCost compCost = pair.first;
-      double accCost = pair.second;
-
-      if (compCost <= budget && std::isfinite(accCost) &&
-          accCost < O.Model.ExponentPenalty && accCost < minAccCost) {
-        minAccCost = accCost;
-        bestCompCost = compCost;
-      }
-    }
+    std::optional<DPCost> best =
+        selectWithinBudget(O, scale, costToAccuracyMap);
 
     // A kept whole-kernel candidate has positive cost and worse model accuracy
     // than the baseline, so min-accuracy selection can never choose it; an
     // exact positive-budget match dispatches it directly.
 
-    if (minAccCost == std::numeric_limits<double>::infinity()) {
+    if (!best) {
       llvm::errs() << "No solution found within the computation cost budget!\n";
       return {};
     }
+    bestCompCost = *best;
+    minAccCost = costToAccuracyMap.at(*best);
 
     llvm::errs() << "Minimum accuracy cost within budget: " << minAccCost
                  << "\n";
@@ -428,8 +440,7 @@ jointAccuracyDPSolver(Session &S, ArrayRef<FunctionFPState *> states,
     double bestRel = 0.0;
     for (const auto &pair : costToAccuracyMap) {
       double rel = (baseline + pair.second) / accScale;
-      if (!std::isfinite(pair.second) ||
-          pair.second >= O.Model.ExponentPenalty || rel > errorTol)
+      if (!selectable(O, pair.second) || rel > errorTol)
         continue;
       const bool better =
           O.Solver.TauCheapest
@@ -457,17 +468,15 @@ jointAccuracyDPSolver(Session &S, ArrayRef<FunctionFPState *> states,
                  << " selected cost=" << scale.share(bestCompCost)
                  << " accCost=" << minAccCost << " rel=" << bestRel << "\n";
   } else {
-    const DPCost budget = scale.fromShare(O.Solver.CostBudget);
-    for (const auto &pair : costToAccuracyMap)
-      if (pair.first <= budget && pair.second < minAccCost) {
-        minAccCost = pair.second;
-        bestCompCost = pair.first;
-      }
-    if (minAccCost == std::numeric_limits<double>::infinity()) {
+    std::optional<DPCost> best =
+        selectWithinBudget(O, scale, costToAccuracyMap);
+    if (!best) {
       llvm::errs()
           << "JOINT: no solution within the computation cost budget!\n";
       return {};
     }
+    bestCompCost = *best;
+    minAccCost = costToAccuracyMap.at(*best);
   }
   llvm::errs() << "JOINT: minimum accuracy cost within budget: " << minAccCost
                << "; computation cost used: " << scale.share(bestCompCost)
