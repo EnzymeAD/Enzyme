@@ -3,6 +3,8 @@
 // RUN: %clang -x hip --offload-arch=%amdgpu_arch --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c -mllvm -poseidon-unit=scale %s -o %t/dev.ll
 // RUN: FileCheck --check-prefix=DEV %s < %t/dev.ll
 // RUN: mkdir -p %t/tmp && env TMPDIR=%t/tmp not %clang -x hip --offload-arch=gfx1100 --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c1100 -mllvm -poseidon-unit=scale %s -o %t/other.ll 2>&1 | FileCheck --check-prefix=ARCH --implicit-check-not=PLEASE %s
+// RUN: mkdir -p %t/tmpg && env TMPDIR=%t/tmpg not %clang -x hip --offload-arch=gfx1100 --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -g -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c1100g -mllvm -poseidon-unit=scale %s -o %t/other-g.ll 2>&1 | FileCheck --check-prefix=ARCH --implicit-check-not=PLEASE %s
+// RUN: ls %t/tmpg | count 0
 // RUN: ls %t/tmp | count 0
 // RUN: %clang -x hip --offload-arch=%amdgpu_arch --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c -mllvm -poseidon-unit=nosite -DNO_SITE %s -o %t/nosite.ll
 // RUN: FileCheck --check-prefix=NOSITE %s < %t/nosite.ll
@@ -30,7 +32,8 @@
 // which knows no Poseidon flag.) The bitcode carries the ROCm device libraries
 // of the processor Poseidon was built for (POSEIDON_AMDGPU_ARCH), so a module
 // for another one (here gfx1100) whose probes call into it is refused with
-// an error, not a crash; one without probes takes the table alone.
+// an error at the user's kernel, not a crash; one without probes takes the
+// table alone.
 
 #include <hip/hip_runtime.h>
 
@@ -58,7 +61,7 @@ POSEIDON_OPTIMIZE __global__ void sum(const double *x, double *y) {
 // DEV-DAG: define internal void @poseidonProfileStaticCUDA(
 // DEV-DAG: define amdgpu_kernel void @_Z5scalePdd(
 
-// ARCH: error: Poseidon: the AMDGPU device profiler was built for '{{gfx[0-9a-f]+}}' (POSEIDON_AMDGPU_ARCH) but {{.*}} compiles for target-cpu 'gfx1100'
+// ARCH: device_profile_link_amdgpu.hip:[[@LINE-19]]:{{[0-9]+}}: error: Poseidon: the AMDGPU device profiler was built for '{{gfx[0-9a-f]+}}' (POSEIDON_AMDGPU_ARCH) but scale(double*, double) compiles for target-cpu 'gfx1100'; build Poseidon for this processor, or compile the profiling build for that one
 
 // NOSITE: @__poseidon_profile_table = weak_odr protected addrspace(4)
 // NOSITE-NOT: poseidonLogValueCUDA
