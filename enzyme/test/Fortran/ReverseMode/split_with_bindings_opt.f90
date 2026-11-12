@@ -41,7 +41,10 @@ program main
   print *, dx
   print *, dx2
 
-  ! A function with an active return
+  ! A function with an active return. Unlike square, whose output y has a
+  ! shadow dy to seed, cube returns its result by value, so there is no shadow
+  ! argument for it. When no return adjoint is passed, enzyme_reverse seeds it
+  ! with 1.0, giving dx = 3*x**2 = 48.
   x = 4
   dx = 0
   call enzyme_augmentfwd(cube, enzyme_tape, tape, x, dx)
