@@ -306,6 +306,12 @@ if(CMAKE_CUDA_COMPILER)
   # entry point in its own file, so the archive carries complete fatbins and an
   # application built by any compiler can link it.
   set_target_properties(poseidon_rt PROPERTIES CUDA_SEPARABLE_COMPILATION OFF)
+  # Linked into the user's program, the runtime is optimized whatever this
+  # build's type, as its device code is by nvcc's default and as LLVM's own
+  # runtimes are; a Debug build keeps its host code debuggable. -Xcompiler:
+  # nvcc warns when its own -O is given twice.
+  target_compile_options(poseidon_rt
+                         PRIVATE $<$<NOT:$<CONFIG:Debug>>:-Xcompiler=-O3>)
   # What a program that links poseidon_rt links besides it is said here only:
   # the package exports it with the target, poseidon-clang's link line
   # (poseidon_rt_link_files) and the tests read it from the target.
