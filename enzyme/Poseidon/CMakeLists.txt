@@ -306,6 +306,9 @@ if(CMAKE_CUDA_COMPILER)
   # entry point in its own file, so the archive carries complete fatbins and an
   # application built by any compiler can link it.
   set_target_properties(poseidon_rt PROPERTIES CUDA_SEPARABLE_COMPILATION OFF)
+  # What a program that links poseidon_rt links besides it is said here only:
+  # the package exports it with the target, poseidon-clang's link line
+  # (poseidon_rt_link_files) and the tests read it from the target.
   target_link_libraries(poseidon_rt PUBLIC CUDA::cublas CUDA::cudart)
   if(POSEIDON_TCEC_USE_CUMPSGEMM)
     if(NOT POSEIDON_CUMPSGEMM_ROOT)
@@ -316,6 +319,8 @@ if(CMAKE_CUDA_COMPILER)
     target_include_directories(
       poseidon_rt
       PRIVATE ${POSEIDON_CUMPSGEMM_ROOT}/include)
+    target_link_libraries(poseidon_rt
+                          PUBLIC ${POSEIDON_CUMPSGEMM_ROOT}/build/libcumpsgemm.so)
   endif()
 
   # The host half of the CUDA profiler, linked by every profile-generate build
@@ -341,15 +346,6 @@ if(CMAKE_CUDA_COMPILER)
     target_link_libraries(
       poseidon-${_cal}-calibrate
       PRIVATE poseidon_rt CUDA::cublas)
-    if(POSEIDON_TCEC_USE_CUMPSGEMM)
-      target_link_directories(
-        poseidon-${_cal}-calibrate
-        PRIVATE ${POSEIDON_CUMPSGEMM_ROOT}/build)
-      target_link_libraries(poseidon-${_cal}-calibrate PRIVATE cumpsgemm)
-      set_target_properties(
-        poseidon-${_cal}-calibrate
-        PROPERTIES BUILD_RPATH ${POSEIDON_CUMPSGEMM_ROOT}/build)
-    endif()
     list(APPEND POSEIDON_TOOL_TARGETS poseidon-${_cal}-calibrate)
   endforeach()
 endif()
@@ -481,6 +477,25 @@ if(TARGET ClangEnzyme-${LLVM_VERSION_MAJOR})
   set(POSEIDON_ENZYME_PLUGIN "$<TARGET_FILE:ClangEnzyme-${LLVM_VERSION_MAJOR}>")
 endif()
 
+# The libraries poseidon_rt links that are files, not the CUDA toolkit's
+# targets: what a link of it adds beyond the toolkit's libraries, which
+# poseidon-clang takes from the toolkit it is given.
+function(poseidon_rt_link_files out)
+  set(_files "")
+  if(TARGET poseidon_rt)
+    get_target_property(_libs poseidon_rt INTERFACE_LINK_LIBRARIES)
+    foreach(_lib ${_libs})
+      if(NOT TARGET ${_lib})
+        list(APPEND _files ${_lib})
+      endif()
+    endforeach()
+  endif()
+  set(${out} ${_files} PARENT_SCOPE)
+endfunction()
+poseidon_rt_link_files(POSEIDON_DRIVER_RT_LIBS)
+# Comma-separated: a compile definition is no CMake list.
+string(JOIN "," POSEIDON_DRIVER_RT_LIBS ${POSEIDON_DRIVER_RT_LIBS})
+
 # One binary, two names: the C or the C++ clang, chosen from argv[0].
 add_executable(poseidon-clang tools/driver/poseidon-clang.cpp)
 target_include_directories(poseidon-clang PRIVATE ${ENZYME_SOURCE_DIR}/include)
@@ -500,7 +515,7 @@ target_compile_definitions(
     POSEIDON_DRIVER_INSTALL_INCLUDEDIR="${CMAKE_INSTALL_INCLUDEDIR}"
     POSEIDON_DRIVER_PROFILER_CUDA=$<BOOL:${CMAKE_CUDA_COMPILER}>
     POSEIDON_DRIVER_PROFILER_HIP=$<BOOL:${POSEIDON_HIP_RUNTIMES}>
-    POSEIDON_DRIVER_CUMPSGEMM="${POSEIDON_CUMPSGEMM_ROOT}"
+    POSEIDON_DRIVER_RT_LIBS="${POSEIDON_DRIVER_RT_LIBS}"
     POSEIDON_DRIVER_CUDA_ROOT="${CUDAToolkit_TARGET_DIR}"
     POSEIDON_DRIVER_ROCM_ROOT="${POSEIDON_ROCM_PATH}")
 llvm_map_components_to_libnames(POSEIDON_DRIVER_LLVM_LIBS support)

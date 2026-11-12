@@ -89,7 +89,6 @@ set_and_check(POSEIDON_ENZYME_PLUGIN "@PACKAGE_POSEIDON_CONFIG_ENZYME_PLUGIN@")
 set_and_check(POSEIDON_INCLUDE_DIR "@PACKAGE_POSEIDON_CONFIG_INCLUDE_DIR@")
 set_and_check(POSEIDON_RUNTIME_DIR "@PACKAGE_POSEIDON_CONFIG_DATA_DIR@/runtime")
 set(POSEIDON_HERBIE_BINARY "@POSEIDON_HERBIE_BINARY_PATH@")
-set(POSEIDON_CUMPSGEMM_ROOT "@POSEIDON_CUMPSGEMM_ROOT@")
 
 if(NOT TARGET Poseidon::Plain)
   # Poseidon's plugin in every action, and Enzyme's after it to generate a
@@ -137,11 +136,6 @@ if(NOT TARGET Poseidon::Plain)
                           INTERFACE Poseidon::poseidon_profile_cuda)
     # A rewrite may dispatch a matrix product to any of the GEMM runtimes.
     target_link_libraries(Poseidon::ProfileUse INTERFACE Poseidon::poseidon_rt)
-    if(POSEIDON_CUMPSGEMM_ROOT)
-      target_link_libraries(
-        Poseidon::ProfileUse
-        INTERFACE "${POSEIDON_CUMPSGEMM_ROOT}/build/libcumpsgemm.so")
-    endif()
   endif()
 
   # Error-free transformations survive only if the compiler contracts within a

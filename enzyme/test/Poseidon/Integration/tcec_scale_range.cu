@@ -1,5 +1,4 @@
-// The TCEC runtime's power-of-two operand scaling on the device (built-in
-// FP16TCEC backend):
+// The TCEC runtime's power-of-two operand scaling on the device:
 //   grid:     single-entry 16 x 16 products 1.5 * 2^eA times 1.25 * 2^eB
 //             through __poseidon_tcec_dgemm, over operand maxima inside and
 //             outside FP32's range. Every step of the product is exact, so the
@@ -12,14 +11,16 @@
 //             the square entry (beta 0, and alpha 0.75 with beta -1.25, which
 //             takes the epilogue's fused multiply-add) and the general entry
 //             (A row-major, B and C column-major, beta 1). The digests are the
-//             runtime's from before its scales were carried as exponents; the
-//             'record' argument prints them for the runtime linked in.
+//             built-in FP16TCEC backend's from before the runtime's scales
+//             were carried as exponents; the 'record' argument prints them for
+//             the runtime linked in. cuMpSGEMM's products differ call to call,
+//             so with that backend the digests are printed and not compared.
 //
 // REQUIRES: cuda-runtime
 // RUN: %clang -x cuda --cuda-gpu-arch=%gpu_arch -O2 %s -x none \
 // RUN:     %poseidon_rt_lib -L%cuda_lib_dir -lcublas -lcudart \
 // RUN:     -lstdc++ -lm -o %t.exe
-// RUN: %t.exe | FileCheck %s
+// RUN: %t.exe | FileCheck --check-prefixes=CHECK,%if tcec-cumpsgemm %{CUMPSGEMM%} %else %{BUILTIN%} %s
 
 #include <algorithm>
 #include <cmath>
@@ -215,8 +216,7 @@ const OrdinaryCase kOrdinary[] = {
      0x622da3a8cbee232full},
 };
 
-int ordinary(bool record) {
-  int failed = 0;
+void ordinary(bool record) {
   for (const OrdinaryCase &oc : kOrdinary) {
     g_state = 0x9e3779b97f4a7c15ull;
     const std::vector<double> A = operand(oc.M, oc.K, oc.aColMajor);
@@ -240,29 +240,31 @@ int ordinary(bool record) {
       printf("%s 0x%016llxull\n", oc.name, (unsigned long long)h);
       continue;
     }
-    const bool same = h == oc.bits;
     printf("ordinary %s digest=%016llx %s\n", oc.name, (unsigned long long)h,
-           same ? "BITS-MATCH" : "BITS-DIFFER");
-    failed |= !same;
+           h == oc.bits ? "BITS-MATCH" : "BITS-DIFFER");
   }
-  return failed;
 }
 
 } // namespace
 
 int main(int argc, char **argv) {
-  if (argc > 1 && !strcmp(argv[1], "record"))
-    return ordinary(true);
+  if (argc > 1 && !strcmp(argv[1], "record")) {
+    ordinary(true);
+    return 0;
+  }
   int failed = grid();
   failed |= tiny();
-  failed |= ordinary(false);
+  ordinary(false);
   printf(failed ? "FAIL\n" : "PASS\n");
   return failed;
 }
 
 // CHECK: grid 2097 cases: representable 2054, exact 2054; not representable 43, rounded once 43
 // CHECK: tiny max|A| {{[0-9.]+e-[0-9]+}} max|B| {{[0-9.]+e-[0-9]+}}: 2^-166 x ordinary 4096 of 4096, error against FP64 equal to ordinary's
-// CHECK: ordinary square256 digest={{[0-9a-f]+}} BITS-MATCH
-// CHECK: ordinary square256-alpha-beta digest={{[0-9a-f]+}} BITS-MATCH
-// CHECK: ordinary ex343x192x1536 digest={{[0-9a-f]+}} BITS-MATCH
+// BUILTIN: ordinary square256 digest={{[0-9a-f]+}} BITS-MATCH
+// BUILTIN: ordinary square256-alpha-beta digest={{[0-9a-f]+}} BITS-MATCH
+// BUILTIN: ordinary ex343x192x1536 digest={{[0-9a-f]+}} BITS-MATCH
+// CUMPSGEMM: ordinary square256 digest=
+// CUMPSGEMM: ordinary square256-alpha-beta digest=
+// CUMPSGEMM: ordinary ex343x192x1536 digest=
 // CHECK: PASS
