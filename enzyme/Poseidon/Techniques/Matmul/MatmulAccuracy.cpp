@@ -286,7 +286,7 @@ double getTcecLibraryAccuracyCost(Session &S, const AbstractMatmul &m,
   checkProfileShape(m, prof, "getTcecLibraryAccuracyCost");
   const unsigned numSamples = sampleCount(O);
   const MatmulAccuracyMemo memo = MatmulAccuracyMemo::tcecLibrary(
-      O, m, prof, confidence, sampleLogBits, numSamples, kLinkedTcecBackend);
+      O, m, prof, confidence, sampleLogBits, numSamples);
   {
     double cAcc, cDom;
     if (memo.lookup(S, cAcc, cDom)) {
@@ -298,8 +298,7 @@ double getTcecLibraryAccuracyCost(Session &S, const AbstractMatmul &m,
 
   auto product = [&](const std::vector<double> &Ad,
                      const std::vector<double> &Bd, std::vector<double> &C) {
-    simulateTcecDgemm(kLinkedTcecBackend, Ad.data(), Bd.data(), m.M, m.N, m.K,
-                      C.data());
+    simulateTcecDgemm(Ad.data(), Bd.data(), m.M, m.N, m.K, C.data());
   };
   SampledError e =
       sampleError(O, m, prof, confidence, sampleLogBits, numSamples, product,
@@ -313,10 +312,8 @@ double getTcecLibraryAccuracyCost(Session &S, const AbstractMatmul &m,
   if (domainErrOut)
     *domainErrOut = dom;
   if (O.Diagnostics.Print)
-    llvm::errs() << "DOMERR tcec library backend="
-                 << tcecBackendName(kLinkedTcecBackend) << " "
-                 << percentileLabel(confidence) << "_relErr=" << dom
-                 << " (sumcost=" << acc << ")\n";
+    llvm::errs() << "DOMERR tcec library " << percentileLabel(confidence)
+                 << "_relErr=" << dom << " (sumcost=" << acc << ")\n";
   memo.store(O, acc, dom);
   return acc;
 }

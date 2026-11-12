@@ -172,11 +172,11 @@ MatmulAccuracyMemo::ozakiII(const Options &O, const AbstractMatmul &m,
 MatmulAccuracyMemo
 MatmulAccuracyMemo::tcecLibrary(const Options &O, const AbstractMatmul &m,
                                 const MatmulProfile &prof, double confidence,
-                                unsigned sampleLogBits, unsigned numSamples,
-                                TcecBackend backend) {
+                                unsigned sampleLogBits, unsigned numSamples) {
   MatmulAccuracyMemo memo;
   memo.key.add("model", "getTcecLibraryAccuracyCost");
-  memo.key.add("TCEC backend", tcecBackendName(backend));
+  // The library whose product the model simulates.
+  memo.key.add("TCEC backend", "cuMpSGEMM");
   addModelInputs(O, memo.key, m, prof, confidence, sampleLogBits, numSamples);
   memo.path = entryPath(O, memo.key);
   memo.key.add("accuracy model", kAccuracyModelIdentity);

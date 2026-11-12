@@ -1,16 +1,13 @@
 // tcec_rt.cu: Poseidon host-dispatch runtime for tensor-core error
-// correction (TCEC), the F32-accuracy-class sibling of ozaki_rt.cu.
-// -DPOSEIDON_TCEC_USE_CUMPSGEMM delegates to cuMpSGEMM instead of the built-in
-// three-GEMM cuBLAS backend.
+// correction (TCEC), the F32-accuracy-class sibling of ozaki_rt.cu. The
+// product is cuMpSGEMM's, the published implementation of the scheme
+// (Ootomo and Yokota): its error correction accumulates outside the tensor
+// cores with round-to-nearest, which a GEMM library accumulating inside them
+// does not reproduce. It is built only with POSEIDON_TCEC_USE_CUMPSGEMM.
 //
-// The split, on operands already narrowed to FP32:
-//   A = A_hi + A_lo/S,  A_hi = fp16(A),  A_lo = fp16((A - A_hi)*S),  S = 2^11
-//   A*B ~ A_hi*B_hi + (A_hi*B_lo + A_lo*B_hi)/S
-// with A_lo*B_lo dropped (O(S^-2), below the F32 target). The two correction
-// products accumulate into their own FP32 buffer: added directly they would be
-// absorbed by the much larger main term. The GEMM runs with alpha=1,beta=0
-// into scratch and the FP64 alpha/beta are applied in the widen kernel, so
-// C = alpha*(A@B) + beta*C keeps FP64 scalar semantics.
+// The operands are narrowed to FP32 for the library, which runs with
+// alpha=1,beta=0 into scratch; the FP64 alpha/beta are applied in the widen
+// kernel, so C = alpha*(A@B) + beta*C keeps FP64 scalar semantics.
 //
 // TCEC is not exact: the FP64->FP32 narrowing (~6e-8 relative) composes with
 // the FP16+correction product error, giving F32-class results (~2e-7 relL2 at
@@ -28,11 +25,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cublas_v2.h>
-#include <cuda_fp16.h>
 #include <cuda_runtime.h>
-#ifdef POSEIDON_TCEC_USE_CUMPSGEMM
 #include <cumpsgemm/cumpsgemm.hpp>
-#endif
 
 #include "tcec_scale.h"
 
@@ -64,7 +58,6 @@ cublasHandle_t ptc_cublas() {
     PTC_CB(cublasCreate(&h));
   return h;
 }
-#ifdef POSEIDON_TCEC_USE_CUMPSGEMM
 cuMpSGEMM_handle_t ptc_cumps() {
   static cuMpSGEMM_handle_t h = nullptr;
   static bool init = false;
@@ -74,15 +67,10 @@ cuMpSGEMM_handle_t ptc_cumps() {
   }
   return h;
 }
-#endif
 
 struct PtcScratch {
   size_t capA = 0, capB = 0, capC = 0;
   float *A = nullptr, *B = nullptr, *C = nullptr;
-  // Split-correction working set (own-backend path only).
-  size_t capAh = 0, capBh = 0, capCc = 0;
-  __half *Ah = nullptr, *Al = nullptr, *Bh = nullptr, *Bl = nullptr;
-  float *Ccorr = nullptr;
   // Exponents of the power-of-two scales: [0] of A, [1] of B, [2] of the
   // result, which undoes both.
   int *scaleExp = nullptr;
@@ -97,31 +85,6 @@ void ptc_reserve(float **p, size_t *cap, size_t need) {
     PTC_CK(cudaFree(*p));
   PTC_CK(cudaMalloc(p, need * sizeof(float)));
   *cap = need;
-}
-
-// Reserve a paired FP16 hi/lo buffer of `need` elements each.
-void ptc_reserve_half2(__half **hi, __half **lo, size_t *cap, size_t need) {
-  if (*cap >= need)
-    return;
-  if (*hi) { PTC_CK(cudaFree(*hi)); PTC_CK(cudaFree(*lo)); }
-  PTC_CK(cudaMalloc(hi, need * sizeof(__half)));
-  PTC_CK(cudaMalloc(lo, need * sizeof(__half)));
-  *cap = need;
-}
-
-// Ootomo's split scale: the residual A - fp16(A) is ~2^-11 of A, so lifting it
-// by 2^11 puts it back in FP16's normal range instead of its subnormals.
-#define PTC_SPLIT_S 2048.0f
-
-__global__ void ptc_split(const float *__restrict__ src, __half *__restrict__ hi,
-                          __half *__restrict__ lo, size_t n) {
-  size_t i = blockIdx.x * (size_t)blockDim.x + threadIdx.x;
-  if (i >= n)
-    return;
-  float v = src[i];
-  __half h = __float2half(v);
-  hi[i] = h;
-  lo[i] = __float2half((v - __half2float(h)) * PTC_SPLIT_S);
 }
 
 // FP16 spans only ~4 decades, so an FP32 operand outside that window splits
@@ -214,13 +177,12 @@ __global__ void ptc_narrow(float *__restrict__ dst, const double *__restrict__ s
 }
 
 // Widen the column-major FP32 result back into the layout-aware FP64
-// destination, applying the FP64 alpha/beta the library never saw. `corr` is
-// the separate correction accumulator (null when the backend already folded
-// the correction in). The epilogue's one fused multiply-add is written out so
-// that its rounding does not depend on the compiler's contraction.
+// destination, applying the FP64 alpha/beta the library never saw. The
+// epilogue's one fused multiply-add is written out so that its rounding does
+// not depend on the compiler's contraction.
 __global__ void ptc_widen(double *__restrict__ C, const float *__restrict__ src,
-                          const float *__restrict__ corr, int rows, int cols,
-                          int ldc, int cColMajor, double alpha, double beta,
+                          int rows, int cols, int ldc, int cColMajor,
+                          double alpha, double beta,
                           const int *__restrict__ scaleExp) {
   int r = blockIdx.y * blockDim.y + threadIdx.y;
   int c = blockIdx.x * blockDim.x + threadIdx.x;
@@ -228,14 +190,10 @@ __global__ void ptc_widen(double *__restrict__ C, const float *__restrict__ src,
     return;
   size_t o = (size_t)c * rows + r;
   size_t d = cColMajor ? (size_t)c * ldc + r : (size_t)r * ldc + c;
-  double v = (double)src[o];
-  if (corr)
-    v += (double)corr[o] / (double)PTC_SPLIT_S;
-  v = ptc_ldexp(v, scaleExp[2]);
+  double v = ptc_ldexp((double)src[o], scaleExp[2]);
   C[d] = (beta == 0.0) ? alpha * v : fma(alpha, v, beta * C[d]);
 }
 
-#ifdef POSEIDON_TCEC_USE_CUMPSGEMM
 cuMpSGEMM_compute_mode_t ptc_mode(int mode) {
   switch (mode) {
   case 1: return CUMPSGEMM_FP16TCEC;
@@ -250,7 +208,6 @@ cuMpSGEMM_compute_mode_t ptc_mode(int mode) {
           mode);
   abort();
 }
-#endif
 
 // Layout-aware native DGEMM (mode == 0): every {a,b,c}ColMajor combination is
 // one call.
@@ -271,7 +228,7 @@ void ptc_native_dgemm(double *C, const double *A, const double *B, int M,
   }
 }
 
-// The one real path: narrow -> library TCEC SGEMM (alpha=1,beta=0) -> widen.
+// The one real path: narrow -> cuMpSGEMM (alpha=1,beta=0) -> widen.
 // Operands are packed column-major, so the library call is a plain NN GEMM.
 void ptc_run(double *C, const double *A, const double *B, int M, int Ncols,
              int K, int lda, int ldb, int ldc, int aColMajor, int bColMajor,
@@ -299,54 +256,15 @@ void ptc_run(double *C, const double *A, const double *B, int M, int Ncols,
       g.B, B, K, Ncols, ldb, bColMajor, g.scaleExp, 1);
 
   const float one = 1.0f, zero = 0.0f;
-  const float *corr = nullptr;
-#ifdef POSEIDON_TCEC_USE_CUMPSGEMM
-  {
-    cuMpSGEMM_handle_t h = ptc_cumps();
-    cumpsgemm::set_stream(h, stream);
-    cumpsgemm::gemm<float>(h, CUBLAS_OP_N, CUBLAS_OP_N, (uint64_t)M,
-                           (uint64_t)Ncols, (uint64_t)K, &one, g.A, (uint64_t)M,
-                           g.B, (uint64_t)K, &zero, g.C, (uint64_t)M,
-                           ptc_mode(mode));
-  }
-#else
-  if (mode != 1) {
-    fprintf(stderr,
-            "poseidon_tcec_rt FATAL: mode %d is only available from the "
-            "cuMpSGEMM reference backend (-DPOSEIDON_TCEC_USE_CUMPSGEMM); the "
-            "self-contained backend implements FP16TCEC (mode 1) only. "
-            "Refusing to substitute a different precision.\n", mode);
-    abort();
-  }
-  ptc_reserve_half2(&g.Ah, &g.Al, &g.capAh, (size_t)M * K);
-  ptc_reserve_half2(&g.Bh, &g.Bl, &g.capBh, (size_t)K * Ncols);
-  ptc_reserve(&g.Ccorr, &g.capCc, (size_t)M * Ncols);
-  {
-    size_t nA = (size_t)M * K, nB = (size_t)K * Ncols;
-    ptc_split<<<(unsigned)((nA + 255) / 256), 256, 0, stream>>>(g.A, g.Ah, g.Al, nA);
-    ptc_split<<<(unsigned)((nB + 255) / 256), 256, 0, stream>>>(g.B, g.Bh, g.Bl, nB);
-    cublasHandle_t h = ptc_cublas();
-    PTC_CB(cublasSetStream(h, stream));
-    // main term
-    PTC_CB(cublasGemmEx(h, CUBLAS_OP_N, CUBLAS_OP_N, M, Ncols, K, &one, g.Ah,
-                        CUDA_R_16F, M, g.Bh, CUDA_R_16F, K, &zero, g.C,
-                        CUDA_R_32F, M, CUBLAS_COMPUTE_32F,
-                        CUBLAS_GEMM_DEFAULT_TENSOR_OP));
-    // corrections, into their own accumulator
-    PTC_CB(cublasGemmEx(h, CUBLAS_OP_N, CUBLAS_OP_N, M, Ncols, K, &one, g.Ah,
-                        CUDA_R_16F, M, g.Bl, CUDA_R_16F, K, &zero, g.Ccorr,
-                        CUDA_R_32F, M, CUBLAS_COMPUTE_32F,
-                        CUBLAS_GEMM_DEFAULT_TENSOR_OP));
-    PTC_CB(cublasGemmEx(h, CUBLAS_OP_N, CUBLAS_OP_N, M, Ncols, K, &one, g.Al,
-                        CUDA_R_16F, M, g.Bh, CUDA_R_16F, K, &one, g.Ccorr,
-                        CUDA_R_32F, M, CUBLAS_COMPUTE_32F,
-                        CUBLAS_GEMM_DEFAULT_TENSOR_OP));
-    corr = g.Ccorr;
-  }
-#endif
+  cuMpSGEMM_handle_t h = ptc_cumps();
+  cumpsgemm::set_stream(h, stream);
+  cumpsgemm::gemm<float>(h, CUBLAS_OP_N, CUBLAS_OP_N, (uint64_t)M,
+                         (uint64_t)Ncols, (uint64_t)K, &one, g.A, (uint64_t)M,
+                         g.B, (uint64_t)K, &zero, g.C, (uint64_t)M,
+                         ptc_mode(mode));
 
   ptc_widen<<<dim3((Ncols + 15) / 16, (M + 15) / 16), b, 0, stream>>>(
-      C, g.C, corr, M, Ncols, ldc, cColMajor, alpha, beta, g.scaleExp);
+      C, g.C, M, Ncols, ldc, cColMajor, alpha, beta, g.scaleExp);
 }
 
 } // namespace

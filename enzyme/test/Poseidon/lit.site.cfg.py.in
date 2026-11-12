@@ -81,8 +81,7 @@ if os.path.isfile(enzyme_clang_plugin):
     config.available_features.add('enzyme')
 if @POSEIDON_TEST_HAS_CUDA@:
     config.available_features.add('cuda-runtime')
-# The TCEC backend the runtime is built with, which the accuracy model
-# simulates.
+# The error-corrected GEMM dispatch, which only a build with cuMpSGEMM has.
 if @POSEIDON_TEST_TCEC_CUMPSGEMM@:
     config.available_features.add('tcec-cumpsgemm')
 # The device profilers the plugin carries; profile generation for a GPU

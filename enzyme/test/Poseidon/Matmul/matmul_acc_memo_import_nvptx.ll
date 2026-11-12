@@ -14,10 +14,9 @@
 ; directory they are never read: the first compile computes every result.
 ; Named by -poseidon-import-accuracy-memo, the six of models that have not
 ; changed since are taken over, so the FP16 dispatch is picked, and stored
-; under their keys: the compile after it, without the flag, finds all 14 in the
+; under their keys: the compile after it, without the flag, finds all 13 in the
 ; cache and computes none. No entry from before was computed by the Ozaki-II
-; model or the split library call's, so the import compile computes those
-; eight.
+; model, so the import compile computes those seven.
 
 ; COMPUTED: DOMERR matmul in=f16 acc=f32 p95_relErr=3.137966e-04
 ; COMPUTED: #0 wmma m16n16k16 f16/f32  compCost/MAC=3.200000e+01  rel=6.250000e-02  domainError=3.137966e-04
@@ -35,10 +34,9 @@
 ; NEWER-NEXT: DOMERR ozakiII nm=12
 ; NEWER-NEXT: DOMERR ozakiII nm=13
 ; NEWER-NEXT: DOMERR ozakiII nm=14
-; NEWER-NEXT: DOMERR tcec library backend=
 ; NEWER-NOT: DOMERR
 
 ; PLANTED: #0 wmma m16n16k16 f16/f32  compCost/MAC=3.200000e+01  rel=6.250000e-02  domainError=0.000000e+00
 ; PLANTED: #7 ozaki-ii nm=12 wmma m16n16k16 s8/s32  compCost/MAC=2.400000e+01  rel=4.687500e-02  domainError=1.840864e-13
-; PLANTED: #11 direct-dispatch cublas f16/f32  compCost/MAC=4.000000e+00  rel=7.812500e-03  domainError=0.000000e+00
+; PLANTED: #10 direct-dispatch cublas f16/f32  compCost/MAC=4.000000e+00  rel=7.812500e-03  domainError=0.000000e+00
 ; PLANTED: Poseidon error-budget: matmul -> direct-dispatch cublas f16/f32

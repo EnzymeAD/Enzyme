@@ -26,7 +26,8 @@
 //
 // An AMD GPU is measured by the HIP builds of the same calibrators. It has no
 // error-corrected runtime and no in-kernel raises, so those families and the
-// WMMA tile rows stay absent from its model.
+// WMMA tile rows stay absent from its model. A build without cuMpSGEMM has no
+// error-corrected runtime for any GPU.
 //
 // A seventh arm, herbie-platform, measures nothing: it translates the CSV into
 // the Herbie platform file (<csv>.herbie.rkt) that the algebraic search ranks
@@ -85,10 +86,6 @@ cl::opt<std::string>
            cl::value_desc("path"),
            cl::desc("Herbie binary the generated platform must load into "
                     "(default: the one this build was configured with)"));
-cl::opt<std::string> CuMpSGEMM(
-    "cumpsgemm", cl::init(POSEIDON_CALIBRATE_CUMPSGEMM), cl::value_desc("dir"),
-    cl::desc("cuMpSGEMM checkout whose build/ the TCEC arm is measured "
-             "against"));
 cl::opt<std::string> OzakiRect(
     "ozaki-rect", cl::init(""), cl::value_desc("MxK|MxNxK,..."),
     cl::desc(
@@ -507,48 +504,23 @@ void armOzakiRect(const std::string &Csv, const Device &D) {
   writeRows(Csv, "ozaki-rect", "ozaki_dispatch_rect_rel", Rows);
 }
 
-// The error-corrected dispatch has a backend: the built-in cuBLAS kernels, or
-// the cuMpSGEMM library. Which one a device is faster with is a measurement, so
-// the caller names the library and the calibrator is rebuilt against it rather
-// than assumed.
+// The error-corrected dispatch runs on cuMpSGEMM, so a build without it has no
+// such candidate for the row to price.
 void armTcec(const std::string &Csv, const Device &D) {
   if (D.Hip) {
     outs() << "[calibrate] tcec: the error-corrected dispatch has no HIP "
               "runtime; its row stays absent\n";
     return;
   }
-  if (alreadyMeasured(Csv, "tcec", "tcec_dispatch_rel"))
-    return;
-  if (CuMpSGEMM.empty()) {
-    outs() << "[calibrate] measuring tcec host dispatch (built-in backend)\n";
-    writeRows(Csv, "tcec", "tcec_dispatch_rel",
-              capture({sibling("poseidon-tcec-calibrate"), utostr(RefN),
-                       utostr(Reps)}));
+  if (!POSEIDON_CALIBRATE_TCEC) {
+    outs() << "[calibrate] tcec: this build has no error-corrected dispatch, "
+              "which needs cuMpSGEMM (configure with "
+              "-DPOSEIDON_TCEC_USE_CUMPSGEMM=ON "
+              "-DPOSEIDON_CUMPSGEMM_ROOT=<checkout>); its row stays absent\n";
     return;
   }
-  auto Nvcc = sys::findProgramByName("nvcc", {POSEIDON_CALIBRATE_CUDA_BIN});
-  if (!Nvcc)
-    fail("nvcc is needed to measure the TCEC arm against cuMpSGEMM");
-  SmallString<256> WorkBuf;
-  sys::fs::createUniqueDirectory("poseidon-tcec", WorkBuf);
-  std::string Bin = std::string(WorkBuf) + "/tcec_calibrate";
-  std::string Lib = CuMpSGEMM + "/build";
-  outs() << "[calibrate] measuring tcec host dispatch against " << Lib << '\n';
-  if (run({*Nvcc, "-O3", "-arch=" + D.Arch, "-std=c++17",
-           shipped("tools/calibrate/tcec_calibrate.cu"),
-           shipped("runtime/tcec/tcec_rt.cu"), "-DPOSEIDON_TCEC_USE_CUMPSGEMM",
-           "-I" + CuMpSGEMM + "/include", "-L" + Lib, "-lcumpsgemm", "-lcublas",
-           "-o", Bin},
-          std::string(WorkBuf) + "/build.log",
-          std::string(WorkBuf) + "/build.log"))
-    fail("the TCEC calibrator did not build against " + CuMpSGEMM + "; see " +
-         std::string(WorkBuf) + "/build.log");
-  std::string LdPath = Lib;
-  if (const char *P = ::getenv("LD_LIBRARY_PATH"))
-    LdPath += std::string(":") + P;
-  ::setenv("LD_LIBRARY_PATH", LdPath.c_str(), 1);
-  writeRows(Csv, "tcec", "tcec_dispatch_rel",
-            capture({Bin, utostr(RefN), utostr(Reps)}));
+  armDispatch(Csv, "tcec", "tcec_dispatch_rel",
+              sibling("poseidon-tcec-calibrate"));
 }
 
 // The in-kernel classes are the one family the compiler has to be asked about:
@@ -775,6 +747,12 @@ int checkModel(const std::string &Preferred, const Device &D) {
     if (D.Hip && F.NvidiaOnly) {
       outs() << "n/a         " << F.Family << "  (" << F.What << ": none on "
              << D.Arch << ")\n";
+      continue;
+    }
+    if (!POSEIDON_CALIBRATE_TCEC &&
+        StringRef(F.Family) == "tcec_dispatch_rel") {
+      outs() << "n/a         " << F.Family << "  (" << F.What
+             << ": none in a build without cuMpSGEMM)\n";
       continue;
     }
     bool Have = hasFamily(Content, F.Family);

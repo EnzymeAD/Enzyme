@@ -399,18 +399,29 @@ static void proposeLibraryModular(const Product &P, const LibrarySite &L,
 
 // The split scheme as __poseidon_tcec_dgemm, which realizes a different rate
 // than the in-kernel raise and so is a distinct candidate. Absent its measured
-// tcec_dispatch_rel row it is not proposed. The runtime repacks operands
-// rather than padding to a square, so no shape ratio is charged.
+// tcec_dispatch_rel row it is not proposed, and in a build without cuMpSGEMM,
+// which has no such runtime, a pin that names it is told why. The runtime
+// repacks operands rather than padding to a square, so no shape ratio is
+// charged.
 static void proposeLibrarySplit(const Product &P, const LibrarySite &L,
                                 MatmulUnit &cm) {
   if (!L.dispatchable)
     return;
+  MatmulUnit::Option opt = libraryOption(
+      SchemeVariant::split(FPKind::F16, FPKind::F32, 2), 16, 16, 16);
+  if (!kHaveTcecDispatch) {
+    cm.dropped.push_back(
+        {matmulOptionLabel(opt),
+         "this compiler was built without cuMpSGEMM, on which the "
+         "error-corrected dispatch runs; configure it with "
+         "-DPOSEIDON_TCEC_USE_CUMPSGEMM=ON "
+         "-DPOSEIDON_CUMPSGEMM_ROOT=<cuMpSGEMM checkout>"});
+    return;
+  }
   double rel =
       queryCostModelOr(P.S.CostModel, "tcec_dispatch_rel", "fp16tcec", -1.0);
   if (rel <= 0.0)
     return;
-  MatmulUnit::Option opt = libraryOption(
-      SchemeVariant::split(FPKind::F16, FPKind::F32, 2), 16, 16, 16);
   opt.compCost = P.baselinePerMac * rel;
   pushLibraryCandidate(P, opt, cm);
 }

@@ -15,7 +15,7 @@
 #include "Sites/SiteIdentity.h"
 #include "Solvers.h"
 #include "Techniques/Herbie.h"
-#include "Techniques/Matmul/MatmulSimulation.h"
+#include "Techniques/Matmul/MatmulScheme.h"
 
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/SmallVector.h"
@@ -116,8 +116,9 @@ CacheKey solveKey(Session &S, const FunctionFPState &st,
     }
   key.addContent("function body", body);
   key.add("device", getCostModelNativeArch(S.CostModel));
-  // Two builds of one source can link different TCEC backends.
-  key.add("TCEC backend", tcecBackendName(kLinkedTcecBackend));
+  // Two builds of one source differ in whether the error-corrected dispatch is
+  // a candidate.
+  key.add("TCEC backend", kHaveTcecDispatch ? "cuMpSGEMM" : "none");
   key.add("cost model", utohexstr(getCostModelFingerprint(S.CostModel)));
   key.add("cost axis", "cost-model units times 2^(32 - log2 profiled cost)");
 

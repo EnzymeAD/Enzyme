@@ -294,6 +294,8 @@ public:
   // Profiled total MAC count; deploy-size profiles exceed 2^32.
   uint64_t executions = 0;
   llvm::SmallVector<Option, 8> candidates;
+  // Candidates this build cannot offer, by name, each with why.
+  llvm::SmallVector<std::pair<std::string, std::string>, 1> dropped;
 
   double getCompCostDelta(size_t idx) const {
     return (candidates[idx].compCost - initialCompCost) * (double)executions;
@@ -320,6 +322,10 @@ public:
     return matmul ? &matmul->footprint : nullptr;
   }
   std::string candidateName(size_t i) const override;
+  llvm::ArrayRef<std::pair<std::string, std::string>>
+  droppedCandidates() const override {
+    return dropped;
+  }
   std::string choiceText(size_t i) const override;
   llvm::json::Object stepJSON(size_t i) override;
   void writeReportStep(llvm::raw_ostream &OS, size_t i,

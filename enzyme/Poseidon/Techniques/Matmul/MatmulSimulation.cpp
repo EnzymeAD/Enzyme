@@ -32,16 +32,6 @@
 
 namespace poseidon {
 
-const char *tcecBackendName(TcecBackend backend) {
-  switch (backend) {
-  case TcecBackend::BuiltIn:
-    return "built-in";
-  case TcecBackend::CuMpSGEMM:
-    return "cuMpSGEMM";
-  }
-  return "";
-}
-
 // An FP32 value rounded to the nearest FP16 value, ties to even, with FP16's
 // subnormals and overflow, as __float2half.
 static float toHalf(float v) {
@@ -72,10 +62,10 @@ static float mma(float acc, const float *a, const float *b, unsigned n) {
 }
 
 namespace {
-// An operand as the runtime hands it to the backend: scaled by 2^scale
-// (ptc_absmax, ptc_scales), narrowed to FP32 (ptc_narrow), and split into an
-// FP16 high slice and the FP16 residual times 2^11 (ptc_split; cuMpSGEMM's
-// load_matrix_sync splits the same way). Rows of A, columns of B, each K long.
+// An operand as the runtime hands it to cuMpSGEMM, scaled by 2^scale
+// (ptc_absmax, ptc_scales) and narrowed to FP32 (ptc_narrow), and as
+// cuMpSGEMM's load_matrix_sync splits it: an FP16 high slice and the FP16
+// residual times 2^11. Rows of A, columns of B, each K long.
 struct SplitOperand {
   int scale = 0;
   std::vector<float> hi, lo;
@@ -100,46 +90,25 @@ struct SplitOperand {
 };
 } // namespace
 
-void simulateTcecDgemm(TcecBackend backend, const double *A, const double *B,
-                       unsigned M, unsigned N, unsigned K, double *C) {
+void simulateTcecDgemm(const double *A, const double *B, unsigned M, unsigned N,
+                       unsigned K, double *C) {
   const SplitOperand a(A, M, K, /*columns=*/false, K);
   const SplitOperand b(B, N, K, /*columns=*/true, N);
   for (unsigned i = 0; i < M; ++i)
     for (unsigned j = 0; j < N; ++j) {
       const float *ah = &a.hi[(size_t)i * K], *al = &a.lo[(size_t)i * K];
       const float *bh = &b.hi[(size_t)j * K], *bl = &b.lo[(size_t)j * K];
-      double v = 0.0;
-      switch (backend) {
-      case TcecBackend::BuiltIn: {
-        // Three cublasGemmEx calls, each accumulating over all of K in the
-        // tensor core; the third adds into the second with beta = 1. The
-        // widen combines the two in FP64 (ptc_widen).
-        float main = 0.f, corr = 0.f, corr2 = 0.f;
-        for (unsigned k = 0; k < K; k += kMmaK) {
-          unsigned n = std::min(kMmaK, K - k);
-          main = mma(main, ah + k, bh + k, n);
-          corr = mma(corr, ah + k, bl + k, n);
-          corr2 = mma(corr2, al + k, bh + k, n);
-        }
-        corr = corr2 + corr;
-        v = (double)main + (double)corr / 2048.0;
-        break;
+      // mma_rn_sync: the main term of each block from a zero accumulator,
+      // added in FP32; the two corrections, low A slice first, chained in the
+      // tensor core; store_matrix_sync combines them in FP32.
+      float main = 0.f, corr = 0.f;
+      for (unsigned k = 0; k < K; k += kMmaK) {
+        unsigned n = std::min(kMmaK, K - k);
+        main = main + mma(0.f, ah + k, bh + k, n);
+        corr = mma(corr, al + k, bh + k, n);
+        corr = mma(corr, ah + k, bl + k, n);
       }
-      case TcecBackend::CuMpSGEMM: {
-        // mma_rn_sync: the main term of each block from a zero accumulator,
-        // added in FP32; the two corrections, low A slice first, chained in
-        // the tensor core; store_matrix_sync combines them in FP32.
-        float main = 0.f, corr = 0.f;
-        for (unsigned k = 0; k < K; k += kMmaK) {
-          unsigned n = std::min(kMmaK, K - k);
-          main = main + mma(0.f, ah + k, bh + k, n);
-          corr = mma(corr, al + k, bh + k, n);
-          corr = mma(corr, ah + k, bl + k, n);
-        }
-        v = (double)(main + corr / 2048.f);
-        break;
-      }
-      }
+      double v = (double)(main + corr / 2048.f);
       C[(size_t)i * N + j] = ptc_ldexp(v, -(a.scale + b.scale));
     }
 }

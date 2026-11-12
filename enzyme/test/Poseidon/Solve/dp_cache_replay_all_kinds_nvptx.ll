@@ -52,4 +52,4 @@
 ; TABLE-CM-NEXT: "itemType": "CM"
 
 ; TWO: Cache entry for preprocess_matmul_body found. Loaded DP tables from cache.
-; TWO: Applying solution for matmul[1] -> direct-dispatch cublas f16/f32 (#11)
+; TWO: Applying solution for matmul[1] -> direct-dispatch cublas f16/f32 (#10)

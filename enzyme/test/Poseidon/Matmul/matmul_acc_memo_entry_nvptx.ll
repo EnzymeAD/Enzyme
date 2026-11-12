@@ -14,12 +14,12 @@
 ; RUN: grep -c 'was computed for a different accuracy model' %t/model.log | FileCheck --check-prefix=ALL %s
 
 ; An accuracy memo entry holds its key's parts. The compile after the first
-; finds all 14 entries under the same key and computes nothing. An entry whose
+; finds all 13 entries under the same key and computes nothing. An entry whose
 ; stored key differs from the compile's in one part is recomputed, and the
 ; compile says which part: here the sampling seed, and the identity of the
 ; accuracy model, which no earlier model listed as equivalent to this one has.
 
-; ALL: {{^14$}}
+; ALL: {{^13$}}
 
 ; EDITED-SEED: "seed": "1"
 ; EDITED-SEED-NOT: seed
@@ -33,5 +33,5 @@
 
 ; PRICED: #0 wmma m16n16k16 f16/f32  compCost/MAC=3.200000e+01  rel=6.250000e-02  domainError=3.137966e-04
 ; PRICED: #7 ozaki-ii nm=12 wmma m16n16k16 s8/s32  compCost/MAC=2.400000e+01  rel=4.687500e-02  domainError=1.840864e-13
-; PRICED: #11 direct-dispatch cublas f16/f32  compCost/MAC=4.000000e+00  rel=7.812500e-03  domainError=3.137966e-04
+; PRICED: #10 direct-dispatch cublas f16/f32  compCost/MAC=4.000000e+00  rel=7.812500e-03  domainError=3.137966e-04
 ; PRICED: Poseidon error-budget: matmul -> ozaki-ii nm=12 wmma m16n16k16 s8/s32 (domain err 1.840864e-13 <= 1.000000e-12 at confidence 9.500000e-01)

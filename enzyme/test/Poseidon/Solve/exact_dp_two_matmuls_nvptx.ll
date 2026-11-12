@@ -121,11 +121,11 @@ attributes #5 = { convergent nounwind "uniform-work-group-size" }
 !14 = !{!"llvm.loop.unroll.disable"}
 !15 = !{!7, !7, i64 0}
 
-; PRUNE: DP table contains 10 entries.
+; PRUNE: DP table contains 9 entries.
 ; PRUNE-TABLE: "-4261412864": 1633.8211240338183{{[0-9]*}}
 ; PRUNE-TABLE-NOT: "itemIndex": 1
 
-; EXACT: Exact DP: 10 frontier points
-; EXACT: DP table contains 10 entries.
+; EXACT: Exact DP: 9 frontier points
+; EXACT: DP table contains 9 entries.
 ; EXACT-TABLE: "-4261412864": 163.38211240338188{{[0-9]*}}
 ; EXACT-TABLE: "itemIndex": 1

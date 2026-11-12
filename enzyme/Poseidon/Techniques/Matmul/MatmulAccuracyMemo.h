@@ -24,7 +24,6 @@
 
 #include "Core/CacheKey.h"
 #include "Core/FPKind.h"
-#include "MatmulSimulation.h"
 
 #include <string>
 
@@ -50,11 +49,11 @@ public:
                                     const MatmulProfile &prof,
                                     double confidence, unsigned sampleLogBits,
                                     unsigned numSamples, unsigned moduli);
-  // For getTcecLibraryAccuracyCost on these inputs, with `backend` linked.
+  // For getTcecLibraryAccuracyCost on these inputs.
   static MatmulAccuracyMemo
   tcecLibrary(const Options &O, const AbstractMatmul &m,
               const MatmulProfile &prof, double confidence,
-              unsigned sampleLogBits, unsigned numSamples, TcecBackend backend);
+              unsigned sampleLogBits, unsigned numSamples);
 
   // The stored result, or one imported by -poseidon-import-accuracy-memo;
   // false when the model has to compute it.
