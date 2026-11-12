@@ -1,4 +1,4 @@
-; REQUIRES: enzyme, scev-trunc-iv-nowrap
+; REQUIRES: enzyme, scev-trunc-iv-nowrap, nvptx-device-profiler
 ; RUN: rm -rf %t && mkdir -p %t && echo > %t/file
 ; RUN: not %opt %S/../Inputs/stale_cache/matmul_device.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/raise_tcec -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv -poseidon-tau=1e-12 -poseidon-cache=%t/file/c -S -o /dev/null 2>&1 | FileCheck --check-prefix=DISPATCH -DCACHE=%t/file/c %s
 ; RUN: not %opt %S/../Inputs/stale_cache/matmul_annotated_device.ll %loadPoseidonEnzyme -passes="poseidon,enzyme,poseidon-finalize,globaldce" -enzyme-preopt=false -poseidon-profile-generate -poseidon-cache=%t/file/c -S -o /dev/null 2>&1 | FileCheck --check-prefix=PROFILE -DCACHE=%t/file/c %s

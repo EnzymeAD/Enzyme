@@ -1,4 +1,4 @@
-; REQUIRES: enzyme
+; REQUIRES: enzyme, nvptx-device-profiler
 ; RUN: rm -rf %t && mkdir -p %t
 ; RUN: sed 's/ozaki_stub\.cu/tcec_matmul.cu/g' %S/../Inputs/ozaki_dispatch/ozaki_stub_host.ll > %t/host.ll
 ; RUN: grep -v llvm.global.annotations %S/../Inputs/stale_cache/matmul_annotated_device.ll > %t/plain.ll

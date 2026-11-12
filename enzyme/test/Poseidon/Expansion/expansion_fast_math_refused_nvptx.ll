@@ -4,7 +4,7 @@
 ; RUN: sed 's/tail call double @llvm.fmuladd/tail call fast double @llvm.fmuladd/; s/= fneg double/= fneg fast double/' %S/../Inputs/ds_expansion/ds_fms.ll > %t/fast.ll
 ; RUN: %opt %t/contract.ll %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/../Inputs/ds_expansion -poseidon-enable-herbie=false -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cost-budget=-1e-9 -poseidon-cache=%t/contract -S -o /dev/null 2>&1 | FileCheck --check-prefix=REFUSED %s
 ; RUN: %opt %t/fast.ll %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/../Inputs/ds_expansion -poseidon-enable-herbie=false -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cost-budget=-1e-9 -poseidon-cache=%t/fast -S -o /dev/null 2>&1 | FileCheck --check-prefix=REFUSED %s
-; RUN: not --crash %opt %t/contract.ll %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/../Inputs/ds_expansion -poseidon-enable-herbie=false -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cost-budget=-1e-9 -poseidon-cache=%t/strict -poseidon-strict-mode -S -o /dev/null 2>&1 | FileCheck --check-prefix=STRICT %s
+; RUN: not %opt %t/contract.ll %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/../Inputs/ds_expansion -poseidon-enable-herbie=false -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cost-budget=-1e-9 -poseidon-cache=%t/strict -poseidon-strict-mode -S -o /dev/null 2>&1 | FileCheck --check-prefix=STRICT %s
 
 ; Up to LLVM 23 the code generator of a -ffp-contract=fast unit fuses
 ; multiply-add pairs that carry no 'contract' flag as well, which breaks the
@@ -23,4 +23,4 @@
 ; REFUSED-NOT: Expansion
 ; REFUSED: Applying solution for CS: All FP64(0%) + FP32(100%)
 
-; STRICT: Poseidon strict mode: site 'preprocess_fms_body': its floating-point operations carry 'contract' (the first llvm.fmuladd.f64), as under -ffp-contract=fast or -ffast-math, with which this LLVM's code generator also fuses multiply-add pairs that carry no flag; floating-point expansions need -ffp-contract=on or -ffp-contract=off
+; STRICT: error: {{.*}}Poseidon: strict mode: site 'preprocess_fms_body': its floating-point operations carry 'contract' (the first llvm.fmuladd.f64), as under -ffp-contract=fast or -ffast-math, with which this LLVM's code generator also fuses multiply-add pairs that carry no flag; floating-point expansions need -ffp-contract=on or -ffp-contract=off

@@ -1,4 +1,5 @@
-// REQUIRES: enzyme
+// REQUIRES: enzyme, cuda-runtime
+// Without a CUDA installation clang emits the old cudaLaunch API in the host half.
 // RUN: rm -rf %t && mkdir -p %t
 // RUN: %clang -x cuda --cuda-host-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O2 -S -emit-llvm -I%poseidon_profile_inc %s -o %t/plain.ll
 // RUN: %clang -x cuda --cuda-host-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/other_sites -mllvm -poseidon-cache=%t/u %s -o %t/use.ll 2>&1 | FileCheck --allow-empty --check-prefix=HOST %s

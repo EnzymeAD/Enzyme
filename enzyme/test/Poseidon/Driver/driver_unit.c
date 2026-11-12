@@ -94,7 +94,7 @@ int main(void) { return 0; }
 // HIPLTO: clang{{.*}} -fpass-plugin={{[^ ]*}}/ClangEnzyme.so {{(-Xclang -load -Xclang [^ ]+ )?}}-Xclang -mllvm -Xclang -enzyme-lto-prelink=1 -isystem
 // HIPLTO: "-cc1" {{.*}}"-fcuda-is-device"{{.*}} "-mllvm" "-enzyme-lto-prelink=1"
 // HIPLTO-NOT: enzyme-lto-prelink
-// HIPLTO: clang-linker-wrapper"
+// HIPLTO: {{(clang-linker-wrapper|[/"]lld)}}"
 // HIPLTO-NOT: enzyme-lto-prelink
 // HIPLTO: "-cc1" "-triple" "x86_64-{{[^"]+}}"{{.*}} "-mllvm" "-enzyme-lto-prelink=1"
 // HIPLTO-NOT: enzyme-lto-prelink

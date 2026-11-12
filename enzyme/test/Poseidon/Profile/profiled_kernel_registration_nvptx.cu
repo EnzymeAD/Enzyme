@@ -1,4 +1,4 @@
-// REQUIRES: enzyme
+// REQUIRES: enzyme, nvptx-device-profiler
 // RUN: rm -rf %t && mkdir -p %t && echo fatbin > %t/k.fatbin
 // RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c -mllvm -poseidon-unit=u %s -o %t/dev.ll
 // RUN: cat %t/c/launches_*.json | FileCheck --check-prefix=MANIFEST %s

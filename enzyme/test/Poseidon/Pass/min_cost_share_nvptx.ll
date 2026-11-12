@@ -1,3 +1,5 @@
+; REQUIRES: cuda-runtime
+; From LLVM 22 an sm_120 compile needs the PTX version of a CUDA installation.
 ; RUN: rm -rf %t && %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-kernels=.*_kernel -poseidon-profile-use=%S/../Inputs/min_cost_share -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-enable-multifloat=true -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cache=%t -poseidon-cost-budget=-1e-9 -poseidon-print -S > %t.out 2>&1
 ; RUN: FileCheck %s < %t.out
 ; RUN: rm -rf %t2 && %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-kernels=.*_kernel -poseidon-min-cost-share=0 -poseidon-profile-use=%S/../Inputs/min_cost_share -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-enable-multifloat=true -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cache=%t2 -poseidon-cost-budget=-1e-9 -poseidon-print -S > %t2.out 2>&1
