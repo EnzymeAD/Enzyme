@@ -141,20 +141,13 @@ void changePrecision(Instruction *I, PrecisionChange &change,
       StringRef funcName = calledFunc->getName();
 
       // An F32-downcast sqrt becomes the target's approximate square root
-      // where it has one, instead of a correctly-rounded library call: the
-      // lossy F32 tier tolerates the approximation, and a per-evaluation
-      // function call would dominate sqrt-heavy kernels.
+      // where it has one, instead of a correctly-rounded library call: a
+      // per-evaluation function call would dominate sqrt-heavy kernels, and
+      // the accuracy model charges the approximation's error
+      // (Target::approxSqrtF32Error).
       {
-        const Target &T = Target::of(*CI->getModule());
-        std::string base = funcName.str();
-        if (!base.empty() && (base.back() == 'f' || base.back() == 'l'))
-          base.pop_back();
-        const std::string librarySqrt =
-            T.mathFunction("sqrt", Type::getDoubleTy(CI->getContext()));
-        bool isSqrt = (base == "sqrt" || base == librarySqrt);
-        Intrinsic::ID approxSqrt = T.approxSqrtF32();
-        if (isSqrt && newType->isFloatTy() &&
-            approxSqrt != Intrinsic::not_intrinsic && newArgs.size() == 1) {
+        Intrinsic::ID approxSqrt = approxSqrtF32Of(*CI);
+        if (newType->isFloatTy() && approxSqrt != Intrinsic::not_intrinsic) {
           Function *fastSqrt = Intrinsic::getOrInsertDeclaration(
               CI->getModule(), approxSqrt, {});
           newI = Builder.CreateCall(fastSqrt, {newArgs[0]});

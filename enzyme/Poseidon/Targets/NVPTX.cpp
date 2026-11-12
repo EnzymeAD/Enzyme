@@ -7,6 +7,7 @@
 #include "llvm/IR/IntrinsicsNVPTX.h"
 #include "llvm/IR/Type.h"
 
+#include <cmath>
 #include <optional>
 #include <string>
 
@@ -126,9 +127,18 @@ public:
       return false;
     }
   }
-  // MUFU, inlined; the lossy F32 tier tolerates its ~2^-22 error.
+  // One instruction where sqrt.rn.f32 is a sequence; the backend selects one
+  // divided by it as rsqrt.approx.f32.
   Intrinsic::ID approxSqrtF32() const override {
     return Intrinsic::nvvm_sqrt_approx_f;
+  }
+  // PTX ISA 8.8, sections 9.7.3.15 and 9.7.3.16: over the positive finite
+  // range, sqrt.approx.f32 is within 2^-23 and rsqrt.approx.f32 within
+  // 2^-22.9 of the exact result. The model divides one by its root and rounds
+  // where rsqrt.approx.f32 does not, which can take up to 2^-24 off the error
+  // it carries.
+  double approxSqrtF32Error() const override {
+    return std::exp2(-22.9) + 0x1p-24;
   }
 
   bool hasInKernelMatrixRaise() const override { return true; }

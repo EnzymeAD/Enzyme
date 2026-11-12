@@ -36,6 +36,8 @@ private:
   // nodes evaluated as an FP32 expansion.
   std::unordered_map<const FPNode *, size_t> nodeChange;
   std::unordered_map<const FPNode *, ExpansionLimbs> limbs;
+  // The relative error bound of the square roots a change makes approximate.
+  std::unordered_map<const FPNode *, double> approxSqrtError;
 
   bool evaluateExpansionNode(const FPNode *node, unsigned n);
 
