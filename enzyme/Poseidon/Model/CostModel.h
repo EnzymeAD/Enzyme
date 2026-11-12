@@ -66,11 +66,17 @@ double profiledCost(
 const std::unordered_set<std::string> &getPTFuncs(CostModelState &CM,
                                                   const llvm::Function &F);
 
+// `Weight`, when given, is how often an instruction executes per execution of
+// the function it is priced in.
+using InstWeight = llvm::function_ref<double(const llvm::Instruction &)>;
+
 double computeMaxCost(CostModelState &CM, llvm::BasicBlock *BB,
                       std::unordered_map<llvm::BasicBlock *, double> &MaxCost,
-                      std::unordered_set<llvm::BasicBlock *> &Visited);
+                      std::unordered_set<llvm::BasicBlock *> &Visited,
+                      InstWeight Weight = nullptr);
 
-double getCompCost(CostModelState &CM, llvm::Function *F);
+double getCompCost(CostModelState &CM, llvm::Function *F,
+                   InstWeight Weight = nullptr);
 
 // With `opExec`, each priced instruction is weighted by its measured
 // execution count over `normalizer` (Subgraph::opExec); an instruction with no
