@@ -326,19 +326,91 @@ bool attributeKnownFunctions(llvm::Function &F) {
       addFunctionNoCapture(&F, 2);
     }
   }
+  auto addMPIAttrHelper = [&](ArrayRef<unsigned> readOnlyPtrs,
+                              ArrayRef<unsigned> writeOnlyPtrs,
+                              ArrayRef<unsigned> rwPtrs, bool isNoFree) {
+    auto FT = F.getFunctionType();
+    changed = true;
+    F.addFnAttr(Attribute::NoUnwind);
+    F.addFnAttr(Attribute::NoRecurse);
+    F.addFnAttr(Attribute::WillReturn);
+    if (isNoFree)
+      F.addFnAttr(Attribute::NoFree);
+    F.addFnAttr(Attribute::NoSync);
+    F.addAttribute(
+        AttributeList::FunctionIndex,
+        Attribute::get(F.getContext(), "enzyme_no_escaping_allocation"));
+#if LLVM_VERSION_MAJOR >= 16
+    F.setOnlyAccessesInaccessibleMemOrArgMem();
+#else
+    F.addFnAttr(Attribute::InaccessibleMemOrArgMemOnly);
+#endif
+    for (unsigned idx : readOnlyPtrs) {
+      if (idx < FT->getNumParams() && FT->getParamType(idx)->isPointerTy()) {
+        addFunctionNoCapture(&F, idx);
+        F.addParamAttr(idx, Attribute::ReadOnly);
+      }
+    }
+    for (unsigned idx : writeOnlyPtrs) {
+      if (idx < FT->getNumParams() && FT->getParamType(idx)->isPointerTy()) {
+        addFunctionNoCapture(&F, idx);
+        F.addParamAttr(idx, Attribute::WriteOnly);
+      }
+    }
+    for (unsigned idx : rwPtrs) {
+      if (idx < FT->getNumParams() && FT->getParamType(idx)->isPointerTy()) {
+        addFunctionNoCapture(&F, idx);
+      }
+    }
+  };
+  if (canonMPIName == "MPI_Comm_group") {
+    addMPIAttrHelper({0}, {1, 2}, {}, /*isNoFree*/ true);
+  } else if (canonMPIName == "MPI_Group_incl") {
+    addMPIAttrHelper({0, 1, 2}, {3, 4}, {}, /*isNoFree*/ true);
+  } else if (canonMPIName == "MPI_Info_create" ||
+             canonMPIName == "MPI_Initialized") {
+    addMPIAttrHelper({}, {0, 1}, {}, /*isNoFree*/ true);
+  } else if (canonMPIName == "MPI_Info_set") {
+    addMPIAttrHelper({1, 2}, {3}, {0}, /*isNoFree*/ true);
+  } else if (canonMPIName == "MPI_Type_commit") {
+    addMPIAttrHelper({}, {1}, {0}, /*isNoFree*/ true);
+  } else if (canonMPIName == "MPI_Type_create_subarray") {
+    addMPIAttrHelper({0, 1, 2, 3, 4, 5}, {6, 7}, {}, /*isNoFree*/ true);
+  } else if (canonMPIName == "MPI_Type_free") {
+    addMPIAttrHelper({}, {1}, {0}, /*isNoFree*/ false);
+  } else if (canonMPIName == "MPI_Wtick" || canonMPIName == "MPI_Wtime") {
+    changed = true;
+    F.addFnAttr(Attribute::NoUnwind);
+    F.addFnAttr(Attribute::NoRecurse);
+    F.addFnAttr(Attribute::WillReturn);
+    F.addFnAttr(Attribute::NoFree);
+    F.addFnAttr(Attribute::NoSync);
+    F.addAttribute(
+        AttributeList::FunctionIndex,
+        Attribute::get(F.getContext(), "enzyme_no_escaping_allocation"));
+#if LLVM_VERSION_MAJOR >= 16
+    F.setOnlyAccessesInaccessibleMemory();
+    F.setOnlyReadsMemory();
+#else
+    F.addFnAttr(Attribute::InaccessibleMemOnly);
+    F.addFnAttr(Attribute::ReadOnly);
+#endif
+  }
   // Map of MPI function name to the arg index of its type argument
   std::map<std::string, int> MPI_TYPE_ARGS = {
-      {"MPI_Send", 2},      {"MPI_Ssend", 2},     {"MPI_Bsend", 2},
-      {"MPI_Recv", 2},      {"MPI_Brecv", 2},     {"PMPI_Send", 2},
-      {"PMPI_Ssend", 2},    {"PMPI_Bsend", 2},    {"PMPI_Recv", 2},
+      {"MPI_Send", 2},      {"MPI_Ssend", 2},      {"MPI_Bsend", 2},
+      {"MPI_Recv", 2},      {"MPI_Brecv", 2},      {"PMPI_Send", 2},
+      {"PMPI_Ssend", 2},    {"PMPI_Bsend", 2},     {"PMPI_Recv", 2},
       {"PMPI_Brecv", 2},
 
-      {"MPI_Isend", 2},     {"MPI_Irecv", 2},     {"PMPI_Isend", 2},
+      {"MPI_Isend", 2},     {"MPI_Irecv", 2},      {"PMPI_Isend", 2},
       {"PMPI_Irecv", 2},
 
       {"MPI_Reduce", 3},    {"PMPI_Reduce", 3},
 
-      {"MPI_Allreduce", 3}, {"PMPI_Allreduce", 3}};
+      {"MPI_Allreduce", 3}, {"PMPI_Allreduce", 3},
+
+      {"MPI_Alltoall", 2},  {"MPI_Alltoallv", 3}};
   {
     auto found = MPI_TYPE_ARGS.find(canonMPIName.str());
     if (found != MPI_TYPE_ARGS.end()) {
