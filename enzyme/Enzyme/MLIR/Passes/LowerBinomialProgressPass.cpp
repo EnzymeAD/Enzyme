@@ -14,12 +14,14 @@
 #include "Dialect/Ops.h"
 #include "Passes/Passes.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Matchers.h"
 
 namespace mlir {
 namespace enzyme {
 #define GEN_PASS_DEF_LOWERBINOMIALPROGRESSPASS
+#define GEN_PASS_DEF_LOWERCHECKPOINTINGPROGRESSPASS
 #include "Passes/Passes.h.inc"
 } // namespace enzyme
 } // namespace mlir
@@ -212,6 +214,29 @@ struct LowerBinomialProgressPass
         [&](enzyme::BinomialProgressOp op) { ops.push_back(op); });
     for (auto op : ops)
       lowerBinomialProgress(op);
+  }
+};
+} // end anonymous namespace
+
+namespace {
+// Combined pass that lowers both enzyme.binomial_progress and
+// enzyme.online_progress, replacing the need to chain both individual passes.
+struct LowerCheckpointingProgressPass
+    : public enzyme::impl::LowerCheckpointingProgressPassBase<
+          LowerCheckpointingProgressPass> {
+  void runOnOperation() override {
+    SmallVector<enzyme::BinomialProgressOp> binomialOps;
+    SmallVector<enzyme::OnlineProgressOp> onlineOps;
+    getOperation()->walk([&](enzyme::BinomialProgressOp op) {
+      binomialOps.push_back(op);
+    });
+    getOperation()->walk([&](enzyme::OnlineProgressOp op) {
+      onlineOps.push_back(op);
+    });
+    for (auto op : binomialOps)
+      lowerBinomialProgress(op);
+    for (auto op : onlineOps)
+      mlir::enzyme::lowerOnlineProgressOp(op);
   }
 };
 } // end anonymous namespace

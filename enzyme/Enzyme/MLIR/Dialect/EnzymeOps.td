@@ -323,6 +323,81 @@ def BinomialProgressOp : Enzyme_Op<"binomial_progress",
   let hasFolder = 1;
 }
 
+def OnlineProgressOp : Enzyme_Op<"online_progress", []> {
+  let summary = "Online_r2 checkpoint scheduling step";
+  let description = [{
+    Advances the Online_r2 checkpoint-scheduling state machine by one step and
+    returns an action code plus the updated scalar state.  The three memref
+    arrays (ch, ord_ch, num_rep) are updated in place.
+
+    The algorithm is a direct port of `Online_r2::revolve()` from the PyRevolve
+    library (Griewank, Walther, Stumm, Common Public License), which in turn
+    implements the schedule from:
+
+      Stumm & Walther, "New Algorithms for Optimal Online Checkpointing,"
+      SIAM J. Sci. Comput. 32(2), 836-854, 2010.
+
+    Action values returned in `$action`:
+      0  -- terminate: the budget is exhausted (or the r=2 range is exceeded).
+             `rev_checkpoint_while` should hand off to offline Revolve.
+      1  -- takeshot:  store a checkpoint at the current primal position.
+      2  -- advance:   run the primal forward by one step.
+
+    Scalar state semantics (all index-typed):
+      check        index of the most recently filled checkpoint slot (-1 = none).
+      capo         current forward time step.
+      oldcapo_o    capo at the time the last r=1 takeshot was issued.
+      t            outer repetition counter.
+      incr         step-advance increment for the current round.
+      iter         inner iteration counter within the current round.
+      oldind       saved ord_ch slot index from the previous round.
+      ind          working slot index into ord_ch.
+      old_f        flag set when the first takeshot lands on capo == snaps-1.
+      offset       number of "free" slot rotations remaining in the current
+                   sweep (decremented toward zero as checkpoints are placed).
+
+    Array state (memref<snaps x index>, updated in place):
+      ch       ch[i] is the forward step at which checkpoint slot i was taken.
+      ord_ch   ord_ch[j] is the slot index used at priority position j.
+      num_rep  num_rep[i] is the repetition count for checkpoint slot i.
+  }];
+  let arguments = (ins
+    Index:$check,
+    Index:$capo,
+    Index:$oldcapo_o,
+    Index:$t,
+    Index:$incr,
+    Index:$iter,
+    Index:$oldind,
+    Index:$ind,
+    Index:$old_f,
+    Index:$offset,
+    Index:$snaps,
+    Arg<AnyMemRef, "checkpoint-step array",  [MemRead, MemWrite]>:$ch,
+    Arg<AnyMemRef, "slot-ordering array",    [MemRead, MemWrite]>:$ord_ch,
+    Arg<AnyMemRef, "repetition-count array", [MemRead, MemWrite]>:$num_rep
+  );
+  let results = (outs
+    Index:$action,
+    Index:$new_check,
+    Index:$new_capo,
+    Index:$new_oldcapo_o,
+    Index:$new_t,
+    Index:$new_incr,
+    Index:$new_iter,
+    Index:$new_oldind,
+    Index:$new_ind,
+    Index:$new_old_f,
+    Index:$new_offset
+  );
+  let assemblyFormat = [{
+    $check `,` $capo `,` $oldcapo_o `,` $t `,` $incr `,` $iter `,`
+    $oldind `,` $ind `,` $old_f `,` $offset `,` $snaps `,`
+    $ch `,` $ord_ch `,` $num_rep attr-dict `:`
+    type($ch) `,` type($ord_ch) `,` type($num_rep)
+  }];
+}
+
 def InitOp : Enzyme_Op<"init",
     [DeclareOpInterfaceMethods<PromotableAllocationOpInterface>]> {
   let summary = "Create enzyme.gradient and enzyme.cache";

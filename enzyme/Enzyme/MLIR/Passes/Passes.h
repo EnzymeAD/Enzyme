@@ -100,6 +100,19 @@ bool inlineAutodiffOp(enzyme::AutoDiffOp &op, RewriterBase &rewriter,
 /// Returns whether anything moved.
 bool hoistLoopAllocations(LoopLikeOpInterface loop,
                           uint64_t maxHoistedBytes = 0);
+} // namespace enzyme (temporarily closed for forward declaration)
+} // end namespace mlir (temporarily closed)
+
+// Forward declaration (full type defined in Dialect/Ops.h).
+namespace mlir::enzyme { class OnlineProgressOp; }
+
+namespace mlir {
+namespace enzyme {
+
+/// Called by LowerCheckpointingProgressPass to lower online progress ops.
+/// Defined in LowerOnlineProgressPass.cpp.
+void lowerOnlineProgressOp(mlir::enzyme::OnlineProgressOp op);
+
 } // namespace enzyme
 
 } // end namespace mlir
