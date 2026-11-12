@@ -40,10 +40,18 @@ enzyme/test/Poseidon/       lit suite: check-poseidon (a folder per part of the
   LLVM 21 and 22 build it and run the tests that need no GPU toolchain
   (`.github/workflows/poseidon.yml`).
 - **Enzyme**: the one in this tree. Enzyme differentiates the probes the
-  profiler places, so profile generation needs its plugin; profile use and
-  plain compiles need it only for Enzyme requests of their own, such as the
-  body of a deferred site. `poseidon-clang++` loads it for every action: a
-  module that asks nothing of Enzyme compiles as it does without it.
+  profiler places, so profile generation needs its plugin, and
+  `poseidon-clang++` loads it there and nowhere else. Profile use and plain
+  compiles load Poseidon's plugin alone, and with it a file with nothing to
+  profile or rewrite compiles as with plain clang. A program that asks Enzyme
+  for derivatives of its own (a site whose body is an Enzyme request among
+  them) passes `-fpass-plugin=<ClangEnzyme>.so` as it would to clang;
+  `poseidon-clang++` puts Poseidon's plugin ahead of the user's arguments,
+  and Poseidon's has to come first. For HIP such a program also passes
+  `-Xclang -mllvm -Xclang -enzyme-lto-prelink=1`, which `poseidon-clang++`
+  adds only where it loads Enzyme itself: every HIP device compile is an LTO
+  pre-link compile, where Enzyme otherwise leaves a derivative request to a
+  post-link run that loads no plugin.
 - **MPFR** (with GMP): the accuracy model evaluates candidates against an
   arbitrary-precision reference.
 - **CUDA** 12.x or 13.x for the GPU path (cuBLAS). Poseidon builds and runs

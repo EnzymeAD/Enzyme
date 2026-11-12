@@ -1,16 +1,16 @@
-// The driver's translation: two pass plugins in pipeline order, Poseidon's
-// include directory, statement-only FP contraction, every -poseidon-<flag>
-// forwarded to the pass through -Xclang, and the runtime the selected action
-// needs. Naming
-// the CUDA path and dropping its headers and libdevice keeps clang's exit
-// status, and -lcudart, independent of the host's CUDA.
+// The driver's translation: Poseidon's pass plugin, and Enzyme's after it to
+// generate a profile, Poseidon's include directory, statement-only FP
+// contraction, every -poseidon-<flag> forwarded to the pass through -Xclang,
+// and the runtime the selected action needs. Naming the CUDA path and
+// dropping its headers and libdevice keeps clang's exit status, and -lcudart,
+// independent of the host's CUDA.
 //
 // REQUIRES: enzyme
 // RUN: env POSEIDON_ECHO=1 %poseidon_clangxx -poseidon-profile-use \
 // RUN:     -poseidon-tau=1e-7 -poseidon-cache=%t.cache \
 // RUN:     -x cuda --cuda-gpu-arch=%gpu_arch \
 // RUN:     --cuda-path=%t.cuda -nocudainc -nocudalib -### %s -o %t.o 2>&1 \
-// RUN:   | FileCheck --check-prefix=USE %s
+// RUN:   | FileCheck --check-prefix=USE --implicit-check-not=ClangEnzyme %s
 // RUN: env POSEIDON_ECHO=1 %poseidon_clangxx -poseidon-profile-generate \
 // RUN:     -x cuda --cuda-gpu-arch=%gpu_arch \
 // RUN:     --cuda-path=%t.cuda -nocudainc -nocudalib -### %s -o %t.o 2>&1 \
@@ -18,12 +18,13 @@
 // RUN: %poseidon_clangxx -poseidon-help | FileCheck --check-prefix=HELP %s
 //
 // The GPU language from a joined -x and from the processor, also when
-// --cuda-gpu-arch names an AMD one: a HIP compile gets the HIP Enzyme option,
-// its compilers the Poseidon flags, and its device link none. A line that only
-// links is not warned about the flags it carries.
+// --cuda-gpu-arch names an AMD one: a HIP compile that loads Enzyme gets the
+// HIP Enzyme option, its compilers the Poseidon flags, and its device link
+// none. A line that only links is not warned about the flags it carries.
 // RUN: env POSEIDON_ECHO=1 ENZYME_PLUGIN=%t.enzyme/ClangEnzyme.so \
 // RUN:     %poseidon_clangxx -xhip --cuda-gpu-arch=gfx90a --rocm-path=%t.rocm \
-// RUN:     -nogpuinc -nogpulib -poseidon-tau=1e-12 -c -### %s -o %t.o 2>&1 \
+// RUN:     -nogpuinc -nogpulib -poseidon-profile-generate -poseidon-tau=1e-12 \
+// RUN:     -c -### %s -o %t.o 2>&1 \
 // RUN:   | FileCheck --check-prefix=XHIP %s
 // RUN: echo > %t.link.o
 // RUN: env POSEIDON_ECHO=1 %poseidon_clangxx -Werror -poseidon-profile-use \
@@ -66,7 +67,8 @@
 // RUN: env POSEIDON_ECHO=1 %poseidon_clangxx -poseidon-profile-use \
 // RUN:     -poseidon-tau=1e-7 -x hip --offload-arch=gfx942 \
 // RUN:     --rocm-path=%t.rocm -nogpuinc -nogpulib -### %s -o %t.o 2>&1 \
-// RUN:   | FileCheck --check-prefix=HIPUSE %s
+// RUN:   | FileCheck --check-prefix=HIPUSE --implicit-check-not=ClangEnzyme \
+// RUN:     --implicit-check-not=enzyme-lto-prelink %s
 // RUN: env POSEIDON_ECHO=1 %poseidon_clangxx -poseidon-profile-generate \
 // RUN:     -x hip --offload-arch=gfx942 \
 // RUN:     --rocm-path=%t.rocm -nogpuinc -nogpulib -### %s -o %t.o 2>&1 \
@@ -85,7 +87,7 @@
 
 int main(void) { return 0; }
 
-// USE: clang{{.*}} -fpass-plugin={{.*}}Poseidon-{{[0-9]+}}.so -fpass-plugin={{.*}}Enzyme-{{[0-9]+}}.so -isystem {{.*}}/include -ffp-contract=on
+// USE: clang{{.*}} -fpass-plugin={{.*}}Poseidon-{{[0-9]+}}.so {{(-Xclang -load -Xclang [^ ]+ )?}}-isystem {{.*}}/include -ffp-contract=on
 // USE-SAME: -Xclang -mllvm -Xclang -poseidon-profile-use -Xclang -mllvm -Xclang -poseidon-tau=1e-7 -Xclang -mllvm -Xclang -poseidon-cache=
 // USE-SAME: -lposeidon_profile -lposeidon_rt -lcublas
 

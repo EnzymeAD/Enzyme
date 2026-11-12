@@ -3,14 +3,15 @@
 // RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -ffp-contract=on -S -DAS_WRITTEN -DNO_SITE %s -o %t/as_written.s
 // RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -ffp-contract=on -S -I%poseidon_profile_inc %loadClangPoseidon %s -o %t/plain.s
 // RUN: diff %t/as_written.s %t/plain.s
-// RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -ffp-contract=on -S -I%poseidon_profile_inc %loadClangPoseidonEnzyme %s -o %t/plain.enzyme.s
-// RUN: diff %t/as_written.s %t/plain.enzyme.s
 // RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -ffp-contract=on -S -DNO_SITE -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/other_sites %s -o %t/use.nosite.s
 // RUN: diff %t/as_written.s %t/use.nosite.s
 // RUN: %clang -x hip --offload-arch=%amdgpu_arch --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -ffp-contract=on -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/cache %s -o %t/gen.ll
 // RUN: FileCheck --check-prefix=CALLS %s < %t/gen.ll
 // RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -ffp-contract=on -S -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/other_sites %s -o %t/use.s
 // RUN: diff %t/as_written.s %t/use.s
+// RUN: mkdir -p %t/prof
+// RUN: sed -n 's/^@fpprofile_static_preprocess__Z4wavePdPKdi_poseidon_body = .*c"\(.*\)\\00".*/\1Executed = 0\\0A/p' %t/gen.ll | sed 's/\\0A/\n/g' > %t/prof/preprocess__Z4wavePdPKdi_poseidon_body.fpprofile
+// RUN: %clang -x hip --offload-arch=%amdgpu_arch --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -ffp-contract=on -S -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%t/prof -mllvm -poseidon-print %s -o %t/use.profiled.s 2>&1 | FileCheck --check-prefix=PROFILED %s
 // RUN: %clang -x hip --offload-arch=gfx90a --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -ffp-contract=on -S -DAS_WRITTEN -DNO_SITE %s -o %t/as_written.90a.s
 // RUN: %clang -x hip --offload-arch=gfx90a --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -ffp-contract=on -S -I%poseidon_profile_inc %loadClangPoseidon %s -o %t/plain.90a.s
 // RUN: diff %t/as_written.90a.s %t/plain.90a.s
@@ -18,9 +19,10 @@
 // RUN: diff %t/as_written.90a.s %t/use.90a.s
 
 // device_math_plugins.cu for HIP: the ocml math of a site stays a call, which
-// Enzyme differentiates by name, under profile generation, and nothing the
-// plugins or poseidon.h add for it is left in a compile that profiles or
-// rewrites nothing (gfx942, and gfx90a).
+// Enzyme differentiates by name, under profile generation, a use compile with
+// Poseidon's plugin alone accepts the profile of the form generation numbered,
+// and nothing Poseidon's plugin or poseidon.h add for it is left in a compile
+// that profiles or rewrites nothing (gfx942, and gfx90a).
 
 #include <hip/hip_runtime.h>
 
@@ -38,7 +40,7 @@ POSEIDON_OPTIMIZE __global__ void wave(double *o, const double *a, int n) {
   int i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i < n) {
     double x = a[i];
-    o[i] = sqrt(x) * exp(-x) + (1.0 - cos(x)) / (x * x);
+    o[i] = sqrt(x) * exp(-x) + (1.0 - cos(x)) / (x * x) + pow(x, 1.5) * sin(x);
   }
 }
 
@@ -47,3 +49,6 @@ POSEIDON_OPTIMIZE __global__ void wave(double *o, const double *a, int n) {
 // CALLS-DAG: call {{.*}}double @__ocml_cos_f64(
 // CALLS-DAG: call {{.*}}double @__ocml_exp_f64(
 // CALLS-DAG: call {{.*}}double @__ocml_sin_f64(
+// CALLS-DAG: call {{.*}}double @__ocml_pow_f64(
+
+// PROFILED: preprocess__Z4wavePdPKdi_poseidon_body.fpprofile); left unchanged

@@ -47,18 +47,20 @@
 // RUN: env POSEIDON_ECHO=1 %poseidon_clangxx -Werror %t.link.o -### -o %t.exe 2>&1 \
 // RUN:   | FileCheck --check-prefix=LINK %s
 //
-// With Enzyme loaded, both compile jobs of a HIP compile get
-// -enzyme-lto-prelink=1, so that Enzyme differentiates in the device compile,
-// an LTO pre-link compile whose device link loads no plugin; the device link
-// does not get it, a HIP link is not warned about it, and a CUDA compile, which
-// has no LTO phase, does not get it. The plugin is named only, never loaded.
+// With Enzyme loaded, to generate a profile, both compile jobs of a HIP
+// compile get -enzyme-lto-prelink=1, so that Enzyme differentiates in the
+// device compile, an LTO pre-link compile whose device link loads no plugin;
+// the device link does not get it, a HIP link is not warned about it, and a
+// CUDA compile, which has no LTO phase, does not get it. The plugin is named
+// only, never loaded.
 // RUN: env POSEIDON_ECHO=1 ENZYME_PLUGIN=%t.enzyme/ClangEnzyme.so \
-// RUN:     %poseidon_clangxx -poseidon-profile-use -x hip --offload-arch=gfx942 \
-// RUN:     --rocm-path=%t.rocm -nogpuinc -nogpulib -### %s -o %t.o 2>&1 \
-// RUN:   | FileCheck --check-prefix=HIPLTO %s
+// RUN:     %poseidon_clangxx -poseidon-profile-generate -x hip \
+// RUN:     --offload-arch=gfx942 --rocm-path=%t.rocm -nogpuinc -nogpulib -### %s \
+// RUN:     -o %t.o 2>&1 | FileCheck --check-prefix=HIPLTO %s
 // RUN: env POSEIDON_ECHO=1 ENZYME_PLUGIN=%t.enzyme/ClangEnzyme.so \
-// RUN:     %poseidon_clangxx -Werror --hip-link --rocm-path=%t.rocm %t.link.o \
-// RUN:     -### -o %t.exe 2>&1 | FileCheck --check-prefix=HIPLINK %s
+// RUN:     %poseidon_clangxx -Werror -poseidon-profile-generate --hip-link \
+// RUN:     --rocm-path=%t.rocm %t.link.o -### -o %t.exe 2>&1 \
+// RUN:   | FileCheck --check-prefix=HIPLINK %s
 // RUN: env POSEIDON_ECHO=1 ENZYME_PLUGIN=%t.enzyme/ClangEnzyme.so \
 // RUN:     %poseidon_clangxx -poseidon-profile-generate -x cuda \
 // RUN:     --cuda-gpu-arch=%gpu_arch --cuda-path=%t.cuda -nocudainc -nocudalib \

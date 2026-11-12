@@ -24,7 +24,8 @@ POSEIDON_OPTIMIZE __global__ void wave(float *o, const float *a, int n) {
   int i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i < n) {
     float x = a[i];
-    o[i] = sqrtf(x) * expf(-x) + (1.0f - cosf(x)) / (x * x);
+    o[i] = sqrtf(x) * expf(-x) + (1.0f - cosf(x)) / (x * x) +
+           powf(x, 1.5f) * sinf(x);
   }
 }
 
@@ -40,7 +41,8 @@ int main() {
   double err = 0;
   for (int i = 0; i < n; ++i) {
     double x = a[i];
-    double ref = std::sqrt(x) * std::exp(-x) + (1.0 - std::cos(x)) / (x * x);
+    double ref = std::sqrt(x) * std::exp(-x) + (1.0 - std::cos(x)) / (x * x) +
+                 std::pow(x, 1.5) * std::sin(x);
     err = std::fmax(err, std::fabs(o[i] - ref) / std::fabs(ref));
   }
   printf(err < 1e-5 ? "WAVE-PASS\n" : "WAVE-FAIL %g\n", err);
