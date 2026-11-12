@@ -4,7 +4,7 @@
 ; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/joint_profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache=%t/c "-poseidon-apply-rewrites=PT0=All FP64(0%%) + FP32(100%%)" -S -o /dev/null 2>&1 | FileCheck --check-prefix=EVERY %s
 ; RUN: not %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/joint_profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache=%t/c "-poseidon-apply-rewrites=tester_c:PT0=All FP64(0%%) + FP32(100%%)" -S -o /dev/null 2>&1 | FileCheck --check-prefix=NOSITE %s
 ; RUN: not %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/joint_profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache=%t/c "-poseidon-apply-rewrites=tester_a:PT0=All FP64(10%%) + FP32(90%%)" -S -o /dev/null 2>&1 | FileCheck --check-prefix=NONAME %s
-; RUN: not --crash %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/joint_profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache=%t/c "-poseidon-apply-rewrites=tester_a:PT0=All FP64(50%%) + FP32(50%%),PT0_0" -S -o /dev/null 2>&1 | FileCheck --check-prefix=TWICE %s
+; RUN: not %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/joint_profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache=%t/c "-poseidon-apply-rewrites=tester_a:PT0=All FP64(50%%) + FP32(50%%),PT0_0" -S -o /dev/null 2>&1 | FileCheck --check-prefix=TWICE %s
 
 ; Two sites whose symbols demangle to one name, tester(double, double) and
 ; tester(double, int): the name is ambiguous and each symbol names its own
@@ -83,17 +83,17 @@ attributes #0 = { "target-cpu"="x86-64" }
 
 ; NOSITE: [poseidon] pin: {{$}}
 ; NOSITE: [poseidon] pin: {{$}}
-; NOSITE: LLVM ERROR: [poseidon] -poseidon-apply-rewrites item 'tester_c:PT0=All FP64(0%) + FP32(100%)' names the site 'tester_c', which is no site of this module. Its sites are:
+; NOSITE: error: Poseidon: -poseidon-apply-rewrites item 'tester_c:PT0=All FP64(0%) + FP32(100%)' names the site 'tester_c', which is no site of this module. Its sites are:
 ; NOSITE-NEXT: {{^}}  tester_a{{$}}
 ; NOSITE-NEXT: {{^}}  tester_b{{$}}
 
-; NONAME: LLVM ERROR: [poseidon] tester_a: PT0 has no candidate named 'All FP64(10%) + FP32(90%)'. Its candidates are:
+; NONAME: error: {{.*}}Poseidon: -poseidon-apply-rewrites: tester_a: PT0 has no candidate named 'All FP64(10%) + FP32(90%)'. Its candidates are:
 ; NONAME-NEXT: {{^}}  All FP64(0%) + FP32(100%){{$}}
 ; NONAME-NEXT: {{^}}  All FP64(50%) + FP32(50%){{$}}
 
-; TWICE: LLVM ERROR: [poseidon] CS 0 already has a PT applied (duplicate ID 'PT0_0')
+; TWICE: error: {{.*}}Poseidon: -poseidon-apply-rewrites item 'PT0_0': CS 0 already has a PT applied; give one item per unit
 
-; AMBIGUOUS: LLVM ERROR: [poseidon] -poseidon-apply-rewrites item 'tester:PT0=All FP64(0%) + FP32(100%)' names the site 'tester', which more than one site of this module answers to; give one of them by its symbol:
+; AMBIGUOUS: error: {{.*}}Poseidon: -poseidon-apply-rewrites item 'tester:PT0=All FP64(0%) + FP32(100%)' names the site 'tester', which more than one site of this module answers to; give one of them by its symbol:
 ; AMBIGUOUS-NEXT: {{^}}  _Z6testerdd (tester(double, double)){{$}}
 ; AMBIGUOUS-NEXT: {{^}}  _Z6testerdi (tester(double, int)){{$}}
 

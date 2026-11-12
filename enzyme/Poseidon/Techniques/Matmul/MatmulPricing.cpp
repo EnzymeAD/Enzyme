@@ -5,6 +5,7 @@
 #include "Model/CostModel.h"
 #include "Pass/Session.h"
 #include "Targets/Target.h"
+#include "Utils.h"
 #include "WmmaUtils.h"
 
 #include "llvm/ADT/StringExtras.h"
@@ -122,12 +123,11 @@ bool priceInKernelRaiseFromMeasuredRow(Session &S, const AbstractMatmul &m,
   const std::string key = cls + "_" + mmaShapeSuffix(tileM, tileN, tileK);
   if (O.Matmul.InKernelCalibration) {
     if (O.Solver.ApplyRewrites.empty())
-      report_fatal_error(
-          "Poseidon: -poseidon-inkernel-calibration requires "
-          "-poseidon-apply-rewrites. Uncalibrated in-kernel classes are "
-          "proposed "
-          "at a placeholder price under that flag, and a DP solve must never "
-          "see one.");
+      reportUserError(anchorOf(m),
+                      "-poseidon-inkernel-calibration requires "
+                      "-poseidon-apply-rewrites. Uncalibrated in-kernel "
+                      "classes are proposed at a placeholder price under "
+                      "that flag, and a DP solve must never see one.");
     costOut = baselinePerMac;
     llvm::errs() << "[poseidon] CALIBRATION MODE: " << what
                  << " has no measured wmma_inkernel_rel," << key
@@ -152,10 +152,12 @@ bool priceInKernelRaiseFromMeasuredRow(Session &S, const AbstractMatmul &m,
            "poseidon-calibrate on this device.\n";
   }
   if (O.Model.StrictMode)
-    report_fatal_error("Poseidon strict mode: in-kernel raise class '" +
-                       Twine(key) +
-                       "' has no measured wmma_inkernel_rel row in " +
-                       Twine(costModelPath(S.CostModel)));
+    reportUserError(anchorOf(m), "strict mode: in-kernel raise class '" +
+                                     Twine(key) +
+                                     "' has no measured wmma_inkernel_rel row "
+                                     "in " +
+                                     Twine(costModelPath(S.CostModel)) +
+                                     "; measure it with poseidon-calibrate.");
   return false;
 }
 

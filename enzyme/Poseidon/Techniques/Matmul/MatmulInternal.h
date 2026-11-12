@@ -22,6 +22,15 @@ struct CostModelState;
 struct Options;
 class Session;
 
+// An instruction of the product, where an error about it is reported.
+inline const llvm::Instruction &anchorOf(const AbstractMatmul &m) {
+  if (m.scalarLoop.fma)
+    return *m.scalarLoop.fma;
+  if (m.hostGemm && m.hostGemm->cStore)
+    return *m.hostGemm->cStore;
+  return *m.footprint.front();
+}
+
 std::string mmaShapeSuffix(unsigned M, unsigned N, unsigned K);
 std::string inKernelCostClass(const SchemeVariant &v);
 bool priceInKernelRaiseFromMeasuredRow(Session &S, const AbstractMatmul &m,

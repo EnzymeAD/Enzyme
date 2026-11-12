@@ -4,6 +4,7 @@
 #include "Core/Options.h"
 #include "Targets/OffloadRuntime.h"
 #include "Targets/Target.h"
+#include "Utils.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Demangle/Demangle.h"
@@ -234,8 +235,11 @@ void collectAnnotatedSites(const Options &O, Module &M,
     Regex re(O.Profiling.Kernels);
     std::string err;
     if (!all && !re.isValid(err))
-      report_fatal_error(Twine("-poseidon-kernels=") + O.Profiling.Kernels +
-                         " is not a valid regular expression: " + err);
+      reportUserError(M.getContext(),
+                      Twine("-poseidon-kernels=") + O.Profiling.Kernels +
+                          " is not a valid regular expression: " + err +
+                          ". Give a regular expression of kernel names, or "
+                          "'all'.");
     for (Function &F : M)
       if (!F.isDeclaration() && !F.hasFnAttribute(kSiteLowered) &&
           T.isKernel(F) && (all || re.match(F.getName())))

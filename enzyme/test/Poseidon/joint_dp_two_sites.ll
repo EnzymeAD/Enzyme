@@ -3,6 +3,7 @@
 ; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/Inputs/joint_profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-joint-dp -poseidon-cost-model=%cost_models/cm_cpu_native.csv -S -poseidon-cache=%t/one -poseidon-cost-budget=-0.2 2>&1 | FileCheck --check-prefix=ONE %s
 ; RUN: not %opt %s %loadPoseidon -passes=poseidon -poseidon-profile-use=%S/Inputs/joint_profiles -poseidon-enable-herbie=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache= -poseidon-cost-budget=-400 -S -o /dev/null 2>&1 | FileCheck --check-prefix=STALE %s
 ; RUN: not %opt %s %loadPoseidon -passes=poseidon -poseidon-profile-use=%S/Inputs/joint_profiles -poseidon-enable-herbie=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache= -poseidon-joint-dp -poseidon-cost-budget=inf -S -o /dev/null 2>&1 | FileCheck --check-prefix=NONFINITE %s
+; RUN: not %opt %s %loadPoseidon -passes=poseidon -poseidon-profile-use=%S/Inputs/joint_profiles -poseidon-enable-herbie=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache= -poseidon-cost-budget=1e300 -S -o /dev/null 2>&1 | FileCheck --check-prefix=HUGE %s
 ; RUN: not %opt %s %loadPoseidon -passes=poseidon -poseidon-profile-use=%S/Inputs/joint_profiles -poseidon-enable-herbie=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache= -poseidon-cost-budget= -S -o /dev/null 2>&1 | FileCheck --check-prefix=EMPTY -DFLAG=poseidon-cost-budget %s
 ; RUN: not %opt %s %loadPoseidon -passes=poseidon -poseidon-profile-use=%S/Inputs/joint_profiles -poseidon-enable-herbie=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache= -poseidon-joint-dp -poseidon-cost-budget=nan -S -o /dev/null 2>&1 | FileCheck --check-prefix=EMPTY -DFLAG=poseidon-cost-budget %s
 ; RUN: not %opt %s %loadPoseidon -passes=poseidon -poseidon-profile-use=%S/Inputs/joint_profiles -poseidon-enable-herbie=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache= -poseidon-tau= -S -o /dev/null 2>&1 | FileCheck --check-prefix=EMPTY -DFLAG=poseidon-tau %s
@@ -93,6 +94,7 @@ attributes #0 = { "target-cpu"="x86-64" }
 ; under an accuracy target, does not read the budget.
 ; STALE-NOT: Starting accuracy DP solver
 ; STALE: error: {{.*}}Poseidon: -poseidon-cost-budget=-400 asks a solution to save more than the whole profiled cost. It takes the share of a site's profiled cost a solution may add, negative for one it has to save (-0.25 requires saving a quarter), not a cost. A solve writes to budgets.txt in its -poseidon-cache directory the share of each frontier point a budget selects.
+; HUGE: error: {{.*}}Poseidon: -poseidon-cost-budget=1.0000000000000001e+300 lets a solution add more than 2^30 times the profiled cost, which the DP's cost axis does not hold; give a share of at most 1073741824.
 ; NONFINITE-NOT: Starting accuracy DP solver
 ; NONFINITE: error: {{.*}}Poseidon: -poseidon-cost-budget=inf is not a finite number. It takes the share of a site's profiled cost
 ; UNUSED-NOT: error:

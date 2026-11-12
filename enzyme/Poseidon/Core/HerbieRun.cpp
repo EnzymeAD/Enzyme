@@ -425,21 +425,21 @@ HerbieRunResult runHerbie(const std::vector<std::string> &inputExprs,
       if (!parsed)
         consumeError(parsed.takeError());
       removeShardFiles();
-      if (Opts.TaylorTerms && !takesTaylorTerms(Program))
-        report_fatal_error(
-            Twine("Poseidon: -poseidon-herbie-num-taylor-terms passes Herbie "
-                  "--num-taylor-terms, and the Herbie at ") +
-                Program +
-                " does not take it ('report --help' does not list it). Use a "
-                "Herbie built with the option, or leave the flag out.",
-            /*gen_crash_diag=*/false);
+      if (Opts.TaylorTerms && !takesTaylorTerms(Program)) {
+        Run.Failure = "-poseidon-herbie-num-taylor-terms passes it "
+                      "--num-taylor-terms, which it does not take ('report "
+                      "--help' does not list it); use a Herbie built with the "
+                      "option, or leave the flag out";
+        return Run;
+      }
       std::string where = Platform.Name;
       if (!Platform.Path.empty())
         where += ", " + Platform.Path;
-      report_fatal_error(
-          Twine("Poseidon: Herbie exited with status ") + Twine(RC) +
-          " and produced no usable results.json for " + Label + " (platform " +
-          where + "). Its own diagnostics are on stderr above.");
+      Run.Failure = (Twine("it exited with status ") + Twine(RC) +
+                     " and wrote no usable results.json (platform " + where +
+                     "); its own diagnostics are on stderr above")
+                        .str();
+      return Run;
     }
     if (shards == 1) {
       content = (*Buf)->getBuffer().str();

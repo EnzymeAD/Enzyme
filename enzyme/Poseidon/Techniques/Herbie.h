@@ -164,16 +164,18 @@ private:
 
 // The parts of a cache key that say which Herbie searched: its binary and the
 // platform it ranks candidates by.
-void addHerbieKeyParts(Session &S, CacheKey &key);
+// `F` is the site a mistake in the platform is reported at.
+void addHerbieKeyParts(Session &S, const llvm::Function &F, CacheKey &key);
 
 // Prints how many Herbie answers the compile ran fresh, read from the cache
 // and replayed from -poseidon-import-herbie-answers.
 void reportHerbieAnswers(Session &S);
 
-// Collects Herbie's rewrites of `inputExprs` into `COs`, unpriced.
+// Collects Herbie's rewrites of `inputExprs`, cores of the site `F`, into
+// `COs`, unpriced.
 bool improveViaHerbie(Session &S, const std::vector<std::string> &inputExprs,
                       std::vector<RewriteUnit> &COs, int subgraphIdx,
-                      llvm::StringRef funcTag);
+                      const llvm::Function &F);
 
 std::string getPrecondition(
     const Options &O, const llvm::SmallSet<std::string, 8> &args,

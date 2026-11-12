@@ -12,11 +12,11 @@
 
 ; DISPATCH: Applying solution for matmul[0] -> ozaki-ii nm=12 wmma m16n16k16 s8/s32
 ; DISPATCH-NOT: wrote descriptor
-; DISPATCH: LLVM ERROR: Poseidon: cannot write the launch manifest [[CACHE]]/launches_tcec_matmul.cu_{{[0-9A-F]+}}.json: Not a directory
+; DISPATCH: error: Poseidon: cannot write the launch manifest [[CACHE]]/launches_tcec_matmul.cu_{{[0-9A-F]+}}.json: Not a directory
 ; DISPATCH-NOT: wrote descriptor
 
 ; PROFILE-NOT: [poseidon-profgen] _Z13matmul_kernelPKdS0_PdS1_: site
-; PROFILE: LLVM ERROR: Poseidon: cannot write the launch manifest [[CACHE]]/launches_tcec_matmul.cu_{{[0-9A-F]+}}.json: Not a directory
+; PROFILE: error: Poseidon: cannot write the launch manifest [[CACHE]]/launches_tcec_matmul.cu_{{[0-9A-F]+}}.json: Not a directory
 ; PROFILE-NOT: [poseidon-profgen] _Z13matmul_kernelPKdS0_PdS1_: site
 
 ; NONE: [poseidon] no rewrite applied for preprocess_matmul_body

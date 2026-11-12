@@ -3,6 +3,9 @@
 ; RUN: rm -rf %t2 && %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-kernels=.*_kernel -poseidon-min-cost-share=0 -poseidon-profile-use=%S/Inputs/min_cost_share -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-enable-multifloat=true -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cache=%t2 -poseidon-cost-budget=-1e-9 -poseidon-print -S > %t2.out 2>&1
 ; RUN: FileCheck --check-prefix=NOFILTER %s < %t2.out
 ; RUN: not grep "Optimizing preprocess_cold_kernel_poseidon_body" %t.out
+; RUN: not %opt %s %loadPoseidon -passes=poseidon "-poseidon-kernels=(" -poseidon-profile-use=%S/Inputs/min_cost_share -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cache= -S -o /dev/null 2>&1 | FileCheck --check-prefix=BADREGEX %s
+; RUN: mkdir -p %t3 && not env TMPDIR=%t3 %clang --target=nvptx64-nvidia-cuda -march=sm_120 -O2 -c -x ir %s %loadClangPoseidon -mllvm "-poseidon-kernels=(" -mllvm -poseidon-profile-use=%S/Inputs/min_cost_share -mllvm -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -mllvm -poseidon-cache= -o %t3/k.o 2>&1 | FileCheck --check-prefix=BADREGEX --implicit-check-not="error in backend" --implicit-check-not="Stack dump" --implicit-check-not=PLEASE %s
+; RUN: ls %t3 | count 0
 
 ; Two kernels reached by -poseidon-kernels, not by the attribute. cold_kernel
 ; ran once where hot_kernel ran 768 times over seven profiled operations, so it
@@ -96,3 +99,7 @@ attributes #4 = { mustprogress nocallback nofree nosync nounwind speculatable wi
 ; NOFILTER-NOT: left unoptimized
 ; NOFILTER: [poseidon] Optimizing preprocess_hot_kernel_poseidon_body
 ; NOFILTER: [poseidon] Optimizing preprocess_cold_kernel_poseidon_body
+
+; A -poseidon-kernels value that is no regular expression is an error of the
+; compile, under opt and under clang, without clang's crash reporting.
+; BADREGEX: error: Poseidon: -poseidon-kernels=( is not a valid regular expression: {{.+}}. Give a regular expression of kernel names, or 'all'.

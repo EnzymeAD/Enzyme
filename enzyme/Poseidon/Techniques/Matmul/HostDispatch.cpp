@@ -10,6 +10,7 @@
 #include "Sites/LaunchDescriptors.h"
 #include "Targets/OffloadRuntime.h"
 #include "Targets/Target.h"
+#include "Utils.h"
 
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
@@ -351,12 +352,12 @@ bool computeGemmBodyNote(const Options &O, Function &F, const AbstractMatmul &m,
              "be MATERIALLY LESS ACCURATE than the withdrawn one. Re-check the "
              "selected scheme for this site before trusting the result.\n";
       if (O.Model.StrictMode)
-        llvm::report_fatal_error(
-            "host-dispatch geometry is unrecoverable for a non-square GEMM at "
-            "a "
-            "changed deploy scale, and -poseidon-strict-mode is set: refusing "
-            "to "
-            "continue with a silently reduced candidate set.");
+        reportUserError(
+            F, F.getSubprogram(),
+            "strict mode: the host-dispatch geometry of " + F.getName() +
+                " is unrecoverable for a non-square GEMM at a changed deploy "
+                "scale, so its candidate set would be reduced; profile at the "
+                "deploy shape, or leave out -poseidon-strict-mode.");
       note.valid = false;
       return false;
     }

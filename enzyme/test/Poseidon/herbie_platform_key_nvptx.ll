@@ -50,7 +50,7 @@ attributes #0 = { "target-cpu"="sm_120" }
 ; OTHERARCH: [poseidon] Herbie subgraph 0 of preprocess_tester
 ; OTHERARCH: Poseidon: the cache {{.*}}cache holds no Herbie answer for subgraph 0 of preprocess_tester, and the Herbie at /nonexistent/herbie cannot run (
 
-; NOPLATFORM: LLVM ERROR: Poseidon: the Herbie algebraic search needs the platform generated from this device's cost model, and {{.*}}cm_sm_120_synthetic.herbie.rkt does not exist. Generate it with 'poseidon-calibrate --only herbie-platform --out {{.*}}cm_sm_120_synthetic.csv'
+; NOPLATFORM: error: {{.*}}Poseidon: the Herbie algebraic search needs the platform generated from this device's cost model, and {{.*}}cm_sm_120_synthetic.herbie.rkt does not exist. Generate it with 'poseidon-calibrate --only herbie-platform --out {{.*}}cm_sm_120_synthetic.csv'
 
 ; RECALIBRATED-NOT: Using cached Herbie output
 ; RECALIBRATED: [poseidon] Herbie subgraph 0 of preprocess_tester

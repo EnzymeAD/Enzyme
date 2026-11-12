@@ -28,6 +28,7 @@
 
 namespace llvm {
 class Function;
+class Module;
 } // namespace llvm
 
 namespace poseidon {
@@ -75,7 +76,7 @@ void printPin(Session &S, const FunctionFPState &st,
 
 // At the end of a module: an item that names a site has to have named a site
 // of the module, if the module has any.
-void checkPinnedSites(Session &S);
+void checkPinnedSites(Session &S, llvm::Module &M);
 
 } // namespace poseidon
 #endif // POSEIDON_PINS_H

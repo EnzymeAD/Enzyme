@@ -47,9 +47,9 @@ attributes #0 = { "target-cpu"="x86-64" }
 ; NAMED-NOT: select
 ; NAMED: ret double
 
-; DROPPED: LLVM ERROR: [poseidon] tester: R0 has no candidate named '(if.f64 (<=.f64 v1 #s(literal -4999/5000 binary64)) {{.*}}': pricing dropped it, because a regime-split arm is reached by fewer than {{[0-9]+}} samples
+; DROPPED: error: {{.*}}Poseidon: -poseidon-apply-rewrites: tester: R0 has no candidate named '(if.f64 (<=.f64 v1 #s(literal -4999/5000 binary64)) {{.*}}': pricing dropped it, because a regime-split arm is reached by fewer than {{[0-9]+}} samples
 
-; UNKNOWN: LLVM ERROR: [poseidon] tester: R0 has no candidate named '(-.f64 v0 v1)'. Its candidates are:
+; UNKNOWN: error: {{.*}}Poseidon: -poseidon-apply-rewrites: tester: R0 has no candidate named '(-.f64 v0 v1)'. Its candidates are:
 ; UNKNOWN-NEXT: {{^}}  (/.f64 (*.f64 v1 v1) (+.f64 (sqrt.f64 (+.f64 (*.f64 v0 v0) (*.f64 v1 v1))) v0)){{$}}
 
 ; SOLVE: DP table for preprocess_tester cached to file.

@@ -84,4 +84,4 @@ attributes #0 = { "target-cpu"="x86-64" }
 ; UNSET-NOT: Taylor terms
 ; UNSET: Saved Herbie output to cache file {{.*}}cachedHerbieOutput_default_D7072D91AD47CF1E.txt
 
-; NOOPTION: Poseidon: -poseidon-herbie-num-taylor-terms passes Herbie --num-taylor-terms, and the Herbie at {{.*}}no-option-herbie.sh does not take it ('report --help' does not list it). Use a Herbie built with the option, or leave the flag out.
+; NOOPTION: error: {{.*}}Poseidon: the cache {{.*}}old holds no Herbie answer for subgraph 0 of preprocess_tester at {{[0-9]+}} Taylor terms, and the Herbie at {{.*}}no-option-herbie.sh cannot run (-poseidon-herbie-num-taylor-terms passes it --num-taylor-terms, which it does not take ('report --help' does not list it); use a Herbie built with the option, or leave the flag out)

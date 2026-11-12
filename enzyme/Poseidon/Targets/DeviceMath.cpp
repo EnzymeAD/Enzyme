@@ -205,13 +205,13 @@ void requireDeviceCallees(Module &M, bool profileGenerate) {
         continue;
       std::string msg;
       if (CI->getMetadata(kUndefinedCallee)) {
-        msg = (Twine("Poseidon: a rewrite in ") + demangle(F.getName()) +
-               " calls " + callee->getName() +
+        msg = (Twine("a rewrite in ") + demangle(F.getName()) + " calls " +
+               callee->getName() +
                ", which this device module does not define." + includeAdvice(T))
                   .str();
       } else if (profileGenerate &&
                  T.needsMathLibrary(callee->getIntrinsicID(), CI->getType())) {
-        msg = (Twine("Poseidon: the derivative profile generation takes in ") +
+        msg = (Twine("the derivative profile generation takes in ") +
                demangle(F.getName()) + " calls " + callee->getName() +
                ", which " + T.name() + " lowers only through " +
                T.mathLibrary() + ", and this module does not define " +
@@ -219,7 +219,7 @@ void requireDeviceCallees(Module &M, bool profileGenerate) {
                   .str();
       }
       if (!msg.empty())
-        report_fatal_error(Twine(msg), /*gen_crash_diag=*/false);
+        reportUserError(*CI, msg);
     }
 }
 

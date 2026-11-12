@@ -52,28 +52,32 @@ namespace poseidon {
 
 // A site tolerance is a per-operation relative rounding level, so everything
 // the ratio is built from has to be real and measured; a missing piece is an
-// upstream defect, never something to substitute a value for.
-static void checkToleranceInputs(StringRef siteName, double accScale,
-                                 double baseline) {
+// upstream defect, never something to substitute a value for. `at` is the
+// site the error is reported at.
+static void checkToleranceInputs(const Function &at, StringRef siteName,
+                                 double accScale, double baseline) {
   if (!(accScale > 0.0) || !std::isfinite(accScale)) {
     std::string scaleStr;
     llvm::raw_string_ostream(scaleStr) << accScale;
-    report_fatal_error(
-        Twine("Poseidon: site ") + siteName +
-        " was given an accuracy tolerance but its profile carries a total "
-        "sensitivity of " +
-        scaleStr +
-        ", so no rewrite's modelled error can be expressed as a "
-        "per-operation relative level; re-run profile generation for this "
-        "site.");
+    reportUserError(at, at.getSubprogram(),
+                    Twine("site ") + siteName +
+                        " was given an accuracy tolerance but its profile "
+                        "carries a total sensitivity of " +
+                        scaleStr +
+                        ", so no rewrite's modelled error can be expressed "
+                        "as a per-operation relative level; re-run profile "
+                        "generation for this site.");
   }
 
   if (!std::isfinite(baseline))
-    report_fatal_error(
-        Twine("Poseidon: site ") + siteName +
-        " was given an accuracy tolerance but its own baseline accuracy cost "
-        "is not finite, so no candidate's modelled error can be placed on an "
-        "absolute scale.");
+    reportUserError(at, at.getSubprogram(),
+                    Twine("site ") + siteName +
+                        " was given an accuracy tolerance but its own "
+                        "baseline accuracy cost is not finite, so no "
+                        "candidate's modelled error can be placed on an "
+                        "absolute scale; give the site a cost budget "
+                        "instead of a tolerance, or re-run profile "
+                        "generation if its profile is not of this program.");
 }
 
 // The DP table is anchored at the ORIGINAL program: costToAccuracyMap[0] == 0
@@ -281,7 +285,7 @@ accuracyDPSolver(Session &S, Function &F, FunctionFPState &st,
                    << " subgraph output(s) carry no priced candidate, so the "
                       "baseline below covers only the priced ones and the "
                       "reported relative error is a lower bound.\n";
-    checkToleranceInputs(F.getName(), accScale, baseline);
+    checkToleranceInputs(F, F.getName(), accScale, baseline);
 
     bool foundSolution = false;
     double bestRel = 0.0;
@@ -434,7 +438,7 @@ jointAccuracyDPSolver(Session &S, ArrayRef<FunctionFPState *> states,
         names += ",";
       names += st->F ? st->F->getName().str() : std::string("<unnamed>");
     }
-    checkToleranceInputs(names, accScale, baseline);
+    checkToleranceInputs(*states.front()->F, names, accScale, baseline);
 
     bool found = false;
     double bestRel = 0.0;

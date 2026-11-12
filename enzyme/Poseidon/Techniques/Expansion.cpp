@@ -13,6 +13,7 @@
 #include "Staging.h"
 #include "Targets/DeviceMath.h"
 #include "Targets/Target.h"
+#include "Utils.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
@@ -938,10 +939,10 @@ bool expansionsRoundedAsWritten(const Options &O, Function &F,
                       "is rounded as written; it needs -ffp-contract=on or "
                       "-ffp-contract=off, without -ffast-math.\n";
       if (O.Model.StrictMode)
-        report_fatal_error("Poseidon strict mode: site '" + F.getName() +
-                           "': " + reason +
-                           "; floating-point expansions need -ffp-contract=on "
-                           "or -ffp-contract=off");
+        reportUserError(F, F.getSubprogram(),
+                        "strict mode: site '" + F.getName() + "': " + reason +
+                            "; floating-point expansions need "
+                            "-ffp-contract=on or -ffp-contract=off");
     }
   }
 #endif

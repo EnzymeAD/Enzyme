@@ -25,6 +25,7 @@
 #include <string>
 
 namespace llvm {
+class Function;
 class Instruction;
 class Module;
 } // namespace llvm
@@ -99,20 +100,21 @@ inline constexpr unsigned kProfileFormat = 2;
 
 // Whether `profilePath` is the profile the profiling runtime writes for a site
 // it instrumented and never executed: the site's header, an `Executed = 0`
-// line, and no records. Reads no further than the header.
-bool isNeverExecutedProfile(const std::string &profilePath);
+// line, and no records. Reads no further than the header. A profile that says
+// both is an error at the site `F`.
+bool isNeverExecutedProfile(const std::string &profilePath,
+                            const llvm::Function &F);
 
 // Whether a profile in `dir` names its format, so that a site the profiled run
 // never executed would have left a file there. Reads headers only, once per
 // directory: `known` holds the answers given.
 bool profileDirNamesFormat(llvm::StringMap<bool> &known, llvm::StringRef dir);
 
-// Fatal unless the profile's slot indices were numbered against the canonical
-// form `canonicalHash` names.
+// An error at the site `F` unless the profile's slot indices were numbered
+// against the canonical form `canonicalHash` names.
 void requireCanonicalHash(const FunctionProfileHeader &header,
                           llvm::StringRef canonicalHash,
-                          llvm::StringRef profilePath,
-                          llvm::StringRef functionName);
+                          llvm::StringRef profilePath, const llvm::Function &F);
 
 // Degenerate-adjoint guard. A candidate is priced as (local error) * |sum of
 // gradients|, so a value whose profiled gradient is ~0 is priced free; that
@@ -141,7 +143,7 @@ void mergeOutputProfiles(ProfileMap &profileMap,
                          llvm::ArrayRef<std::string> dirs,
                          llvm::StringRef fileName,
                          llvm::StringRef canonicalHash,
-                         llvm::StringRef functionName);
+                         const llvm::Function &F);
 
 size_t readProfIdxMetadata(const llvm::Instruction *I);
 

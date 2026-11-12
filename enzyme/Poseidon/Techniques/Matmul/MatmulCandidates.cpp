@@ -4,6 +4,7 @@
 #include "MatmulInternal.h"
 #include "Model/CostModel.h"
 #include "Pass/Session.h"
+#include "Utils.h"
 #include "runtime/ozaki/OzakiII.h"
 
 #include "llvm/ADT/StringExtras.h"
@@ -454,10 +455,12 @@ static void proposeLibraryDirect(const Product &P, const LibrarySite &L,
             << "' row. Run poseidon-calibrate on this device; "
                "refusing to price a library dispatch on an unmeasured model.\n";
       if (P.S.Opts.Model.StrictMode)
-        report_fatal_error(
-            "Poseidon strict mode: direct host-dispatch class '" + Twine(cls) +
-            "' has no measured direct_dispatch_rel row in " +
-            Twine(costModelPath(P.S.CostModel)));
+        reportUserError(anchorOf(m),
+                        "strict mode: direct host-dispatch class '" +
+                            Twine(cls) +
+                            "' has no measured direct_dispatch_rel row in " +
+                            Twine(costModelPath(P.S.CostModel)) +
+                            "; measure it with poseidon-calibrate.");
       continue;
     }
     MatmulUnit::Option opt =
@@ -497,9 +500,11 @@ static void proposeLibraryNative(const Product &P, const LibrarySite &L,
   if (rel <= 0.0) {
     rel = queryCostModelOr(P.S.CostModel, "ozaki_dispatch_rel", "dgemm", -1.0);
     if (rel <= 0.0)
-      report_fatal_error("Poseidon: the cost model has no "
-                         "'ozaki_dispatch_rel,dgemm' row for the native DGEMM "
-                         "candidate; run poseidon-calibrate.");
+      reportUserError(anchorOf(m),
+                      "the cost model " + Twine(costModelPath(P.S.CostModel)) +
+                          " has no 'ozaki_dispatch_rel,dgemm' row for the "
+                          "native DGEMM candidate; measure it with "
+                          "poseidon-calibrate.");
     const double side = std::max({L.staticM, L.staticN, L.staticK});
     const double padWaste =
         isStatic
@@ -559,8 +564,13 @@ void generateMatmulCandidates(Session &S, ArrayRef<AbstractMatmul> matmuls,
     }
     if (!profiled) {
       if (!S.Opts.Profiling.LooseCoverage)
-        report_fatal_error("matmul site has no profile coverage; set "
-                           "-poseidon-loose-coverage to suppress");
+        reportUserError(anchorOf(m),
+                        "the profile does not cover matrix product " +
+                            Twine(m.id) +
+                            ": the profiling run never executed it. Profile "
+                            "an input that runs it, or pass "
+                            "-poseidon-loose-coverage to leave it as "
+                            "written.");
       const Function *F = m.scalarLoop.fma ? m.scalarLoop.fma->getFunction()
                           : m.hostGemm && m.hostGemm->cStore
                               ? m.hostGemm->cStore->getFunction()

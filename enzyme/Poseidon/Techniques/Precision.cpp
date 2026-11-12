@@ -1095,9 +1095,11 @@ void proposePrecisionCandidates(
                     "propose any rewrite here. Check the cost model's "
                     "scalar_types header.\n";
     if (O.Model.StrictMode)
-      report_fatal_error(
-          "Poseidon strict mode: nonempty FP subgraph synthesized zero "
-          "candidates with precision tuning enabled");
+      reportUserError(F, F.getSubprogram(),
+                      "strict mode: an FP subgraph of " + F.getName() +
+                          " has no precision candidate with precision tuning "
+                          "enabled; check the scalar_types header of the cost "
+                          "model.");
   }
 
   CSs.push_back(std::move(CS));

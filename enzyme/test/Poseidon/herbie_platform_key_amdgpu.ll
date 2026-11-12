@@ -53,4 +53,4 @@ attributes #0 = { "target-cpu"="gfx942" }
 ; MATCH: Using cached Herbie output from {{.*}}cachedHerbieOutput_hip-gfx942_70805211AE06B2CB.txt
 ; MATCH: define double @preprocess_tester(double %x, double %y, double %z)
 
-; NOPLATFORM: LLVM ERROR: Poseidon: the Herbie algebraic search needs the platform generated from this device's cost model, and {{.*}}nocm/cm_gfx942_Fixture.herbie.rkt does not exist. Generate it with 'poseidon-calibrate --only herbie-platform --out {{.*}}nocm/cm_gfx942_Fixture.csv'
+; NOPLATFORM: error: {{.*}}Poseidon: the Herbie algebraic search needs the platform generated from this device's cost model, and {{.*}}nocm/cm_gfx942_Fixture.herbie.rkt does not exist. Generate it with 'poseidon-calibrate --only herbie-platform --out {{.*}}nocm/cm_gfx942_Fixture.csv'

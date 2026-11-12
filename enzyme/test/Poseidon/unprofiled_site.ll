@@ -9,7 +9,7 @@
 ; RUN: FileCheck --check-prefix=NEVER-REMARK %s < %t/never.err
 ; RUN: FileCheck --check-prefix=LEFT %s < %t/never.ll
 ; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/never_executed -poseidon-strict-mode -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache= -S -o /dev/null 2>&1 | FileCheck --check-prefix=NEVER --implicit-check-not=warning --implicit-check-not=Warning %s
-; RUN: not --crash %opt < %t/drift.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/never_executed -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache= -S -o /dev/null 2>&1 | FileCheck --check-prefix=DRIFT %s
+; RUN: not %opt < %t/drift.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/never_executed -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache= -S -o /dev/null 2>&1 | FileCheck --check-prefix=DRIFT %s
 ;
 ; RUN: not %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%t/missing -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache= -S -o /dev/null 2>&1 | FileCheck --check-prefix=NODIR %s
 ; RUN: not %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%t/empty -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache= -S -o /dev/null 2>&1 | FileCheck --check-prefix=EMPTY %s

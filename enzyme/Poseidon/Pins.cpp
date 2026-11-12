@@ -11,12 +11,12 @@
 #include "Optimize.h"
 #include "Pass/Session.h"
 #include "Sites/SiteIdentity.h"
+#include "Utils.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Demangle/Demangle.h"
 #include "llvm/IR/Function.h"
-#include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
 
 using namespace llvm;
@@ -53,7 +53,7 @@ static std::optional<ApplyItem> parseUnitRef(StringRef s) {
 
 // A name may itself hold ':' (a Herbie precision annotation), so the unit is
 // read first and a site prefix only when the item does not start with one.
-static ApplyItem parseApplyItem(StringRef text) {
+static ApplyItem parseApplyItem(StringRef text, const Function &site) {
   std::optional<ApplyItem> item = parseUnitRef(text);
   if (!item) {
     auto [site, rest] = text.split(':');
@@ -61,16 +61,18 @@ static ApplyItem parseApplyItem(StringRef text) {
       item->site = site.str();
   }
   if (!item)
-    report_fatal_error("[poseidon] -poseidon-apply-rewrites: cannot read '" +
-                       Twine(text) +
-                       "'; an item is [<site>:]<unit>_<ordinal> or "
-                       "[<site>:]<unit>=<name>, <unit> being R<i>, PT<i> or "
-                       "M<i>");
+    reportUserError(site, site.getSubprogram(),
+                    "-poseidon-apply-rewrites: cannot read '" + Twine(text) +
+                        "'; an item is [<site>:]<unit>_<ordinal> or "
+                        "[<site>:]<unit>=<name>, <unit> being R<i>, PT<i> or "
+                        "M<i>");
   item->text = text.str();
   return *item;
 }
 
-static std::vector<ApplyItem> &applyItems(Session &S) {
+// `site` is the site the items are read for, where a mistake in them is
+// reported.
+static std::vector<ApplyItem> &applyItems(Session &S, const Function &site) {
   PinState &P = S.Pins;
   if (P.spec != S.Opts.Solver.ApplyRewrites) {
     P.spec = S.Opts.Solver.ApplyRewrites;
@@ -78,7 +80,7 @@ static std::vector<ApplyItem> &applyItems(Session &S) {
     SmallVector<StringRef> texts;
     StringRef(P.spec).split(texts, ',', /*MaxSplit=*/-1, /*KeepEmpty=*/false);
     for (StringRef text : texts)
-      P.items.push_back(parseApplyItem(text.trim()));
+      P.items.push_back(parseApplyItem(text.trim(), site));
   }
   return P.items;
 }
@@ -111,35 +113,34 @@ void noteSiteForPins(Session &S, const Function &body) {
     return;
   P.sites.push_back(key);
   SmallVector<std::string, 2> aliases = siteAliases(key);
-  for (ApplyItem &item : applyItems(S)) {
+  for (ApplyItem &item : applyItems(S, body)) {
     if (item.site.empty() || !namesSite(item, key, aliases))
       continue;
     item.named.insert(key);
     if (item.named.size() > 1)
-      report_fatal_error("[poseidon] -poseidon-apply-rewrites item '" +
-                             Twine(item.text) + "' names the site '" +
-                             item.site +
-                             "', which more than one site of this module "
-                             "answers to; give one of them by its symbol:" +
-                             listSites(item.named),
-                         /*gen_crash_diag=*/false);
+      reportUserError(body, body.getSubprogram(),
+                      "-poseidon-apply-rewrites item '" + Twine(item.text) +
+                          "' names the site '" + item.site +
+                          "', which more than one site of this module "
+                          "answers to; give one of them by its symbol:" +
+                          listSites(item.named));
   }
 }
 
-void checkPinnedSites(Session &S) {
+void checkPinnedSites(Session &S, Module &M) {
   PinState &P = S.Pins;
   // The host half of a CUDA or HIP unit is given the items too, and the sites
-  // they name are the device half's.
+  // they name are the device half's. A noted site read the items.
   if (!P.sites.empty())
-    for (const ApplyItem &item : applyItems(S))
+    for (const ApplyItem &item : P.items)
       if (!item.site.empty() && item.named.empty())
-        report_fatal_error(
-            "[poseidon] -poseidon-apply-rewrites item '" + Twine(item.text) +
+        reportUserError(
+            M.getContext(),
+            "-poseidon-apply-rewrites item '" + Twine(item.text) +
                 "' names the site '" + item.site +
                 "', which is no site of this module. Its sites are:" +
                 listSites(
-                    std::set<std::string>(P.sites.begin(), P.sites.end())),
-            /*gen_crash_diag=*/false);
+                    std::set<std::string>(P.sites.begin(), P.sites.end())));
   P.sites.clear();
   P.printed.clear();
   for (ApplyItem &item : P.items)
@@ -149,36 +150,36 @@ void checkPinnedSites(Session &S) {
 // The position of the candidate an item names in a unit's list. A candidate
 // pricing dropped is not in the list, and is told apart from a name the unit
 // never had.
-static size_t findNamed(const ApplyItem &item, StringRef site, StringRef unit,
-                        const SiteUnit &cands) {
+static size_t findNamed(const ApplyItem &item, const Function &F,
+                        StringRef site, StringRef unit, const SiteUnit &cands) {
   std::optional<size_t> found;
   for (size_t i = 0; i < cands.numCandidates(); ++i) {
     if (cands.candidateName(i) != item.name)
       continue;
     if (found)
-      report_fatal_error("[poseidon] " + Twine(site) + ": " + unit +
-                             " has more than one candidate named '" +
-                             item.name + "'; give it as " + unit + "_<ordinal>",
-                         /*gen_crash_diag=*/false);
+      reportUserError(F, F.getSubprogram(),
+                      "-poseidon-apply-rewrites: " + Twine(site) + ": " + unit +
+                          " has more than one candidate named '" + item.name +
+                          "'; give it as " + unit + "_<ordinal>");
     found = i;
   }
   if (found)
     return *found;
   for (const auto &[name, why] : cands.droppedCandidates())
     if (name == item.name)
-      report_fatal_error("[poseidon] " + Twine(site) + ": " + unit +
-                             " has no candidate named '" + item.name +
-                             "': pricing dropped it, because " + why,
-                         /*gen_crash_diag=*/false);
+      reportUserError(F, F.getSubprogram(),
+                      "-poseidon-apply-rewrites: " + Twine(site) + ": " + unit +
+                          " has no candidate named '" + item.name +
+                          "': pricing dropped it, because " + why);
   std::string names;
   for (size_t i = 0; i < cands.numCandidates(); ++i)
     names += "\n  " + cands.candidateName(i);
   if (names.empty())
     names = " none";
-  report_fatal_error("[poseidon] " + Twine(site) + ": " + unit +
-                         " has no candidate named '" + item.name +
-                         "'. Its candidates are:" + names,
-                     /*gen_crash_diag=*/false);
+  reportUserError(F, F.getSubprogram(),
+                  "-poseidon-apply-rewrites: " + Twine(site) + ": " + unit +
+                      " has no candidate named '" + item.name +
+                      "'. Its candidates are:" + names);
 }
 
 SmallVector<SolutionStep> parseManualRewrites(Session &S, FunctionFPState &st) {
@@ -186,7 +187,8 @@ SmallVector<SolutionStep> parseManualRewrites(Session &S, FunctionFPState &st) {
   const SmallVector<std::string, 2> aliases = siteAliases(key);
   SmallVector<SolutionStep> steps;
   SmallPtrSet<const SiteUnit *, 8> appliedUnits;
-  for (const ApplyItem &item : applyItems(S)) {
+  const Function &F = *st.F;
+  for (const ApplyItem &item : applyItems(S, F)) {
     if (!namesSite(item, key, aliases))
       continue;
     const std::string &id = item.text;
@@ -201,31 +203,38 @@ SmallVector<SolutionStep> parseManualRewrites(Session &S, FunctionFPState &st) {
       ++ofKind;
     }
     if (!unit)
-      report_fatal_error("[poseidon] " + Twine(kind.tag) + " index " +
-                         Twine(item.unit) + " out of range (" + Twine(ofKind) +
-                         " " + kind.tag + "s)");
+      reportUserError(F, F.getSubprogram(),
+                      "-poseidon-apply-rewrites item '" + Twine(id) +
+                          "': " + kind.tag + " index " + Twine(item.unit) +
+                          " out of range (" + Twine(ofKind) + " " + kind.tag +
+                          "s)");
     size_t pos;
     if (item.ordinal) {
       std::optional<size_t> found = unit->positionOfOrdinal(*item.ordinal);
       if (!found && kind.pricingDrops)
-        report_fatal_error("[poseidon] " + Twine(kind.tag) + " " +
-                           Twine(item.unit) + " has no candidate " +
-                           Twine(*item.ordinal) + " that pricing kept ('" +
-                           Twine(id) + "')");
+        reportUserError(F, F.getSubprogram(),
+                        "-poseidon-apply-rewrites item '" + Twine(id) +
+                            "': " + kind.tag + " " + Twine(item.unit) +
+                            " has no candidate " + Twine(*item.ordinal) +
+                            " that pricing kept");
       if (!found)
-        report_fatal_error("[poseidon] candidate index " +
-                           Twine(*item.ordinal) + " out of range for " +
-                           kind.tag + " " + Twine(item.unit) + " (" +
-                           Twine(unit->numCandidates()) + " candidates)");
+        reportUserError(F, F.getSubprogram(),
+                        "-poseidon-apply-rewrites item '" + Twine(id) +
+                            "': candidate index " + Twine(*item.ordinal) +
+                            " out of range for " + kind.tag + " " +
+                            Twine(item.unit) + " (" +
+                            Twine(unit->numCandidates()) + " candidates)");
       pos = *found;
     } else {
-      pos =
-          findNamed(item, key, (kind.idPrefix + Twine(item.unit)).str(), *unit);
+      pos = findNamed(item, F, key, (kind.idPrefix + Twine(item.unit)).str(),
+                      *unit);
     }
     if (!appliedUnits.insert(unit).second)
-      report_fatal_error("[poseidon] " + Twine(kind.tag) + " " +
-                         Twine(item.unit) + " already has " + kind.appliedNoun +
-                         " applied (duplicate ID '" + Twine(id) + "')");
+      reportUserError(F, F.getSubprogram(),
+                      "-poseidon-apply-rewrites item '" + Twine(id) +
+                          "': " + kind.tag + " " + Twine(item.unit) +
+                          " already has " + kind.appliedNoun +
+                          " applied; give one item per unit");
     llvm::errs() << "[poseidon] Selecting " << id << ": "
                  << unit->selectionText(pos) << "\n";
     steps.emplace_back(unit, pos);

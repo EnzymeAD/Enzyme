@@ -1,5 +1,6 @@
 // Matmul profile loading from the scalar .fpprofile records.
 #include "MatmulInternal.h"
+#include "Utils.h"
 
 #include "llvm/ADT/Twine.h"
 #include "llvm/IR/Instruction.h"
@@ -49,9 +50,12 @@ static MatmulProfile loadProfileRaise(const AbstractMatmul &m,
     abIdx = fmulIdx;
   }
   if (abInfo->minOperands.size() < 2)
-    report_fatal_error("expected >= 2 operand stats on fmul/fma instIdx " +
-                       Twine(abIdx) + ", got " +
-                       Twine((unsigned)abInfo->minOperands.size()));
+    reportUserError(*(h->fmul ? h->fmul : h->fma),
+                    "the profile records " +
+                        Twine((unsigned)abInfo->minOperands.size()) +
+                        " operand range(s) of instruction " + Twine(abIdx) +
+                        ", the multiply of a matrix product, which has two; "
+                        "re-run profile generation.");
 
   MatmulProfile out;
   out.M = m.M;
@@ -113,8 +117,11 @@ static MatmulProfile loadProfileHostGemm(const AbstractMatmul &m,
                          Twine(r) + " (instIdx " + Twine(abIdx) + ")");
     const ProfileInfo &ai = abIt->second;
     if (ai.minOperands.size() < 2)
-      report_fatal_error("expected >= 2 operand stats on host-GEMM member " +
-                         Twine(r) + " (instIdx " + Twine(abIdx) + ")");
+      reportUserError(
+          *ab, "the profile records " + Twine((unsigned)ai.minOperands.size()) +
+                   " operand range(s) of instruction " + Twine(abIdx) +
+                   ", the multiply of a matrix product, which "
+                   "has two; re-run profile generation.");
     size_t fmaIdx = readProfIdxMetadata(h.fmas[r]);
     auto fIt = profile.find(fmaIdx);
     if (fIt == profile.end() || fIt->second.exec == 0)
