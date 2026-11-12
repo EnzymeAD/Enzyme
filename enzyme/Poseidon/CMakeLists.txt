@@ -339,16 +339,23 @@ target_compile_features(poseidon_profile PRIVATE cxx_std_17)
 add_library(poseidon_profile_host STATIC runtime/fpprofiler/FPProfilerHost.cpp)
 target_compile_features(poseidon_profile_host PRIVATE cxx_std_17)
 
+# The error-corrected GEMM dispatch is cuMpSGEMM's; a build without it neither
+# offers that candidate nor has its runtime.
 option(
   POSEIDON_TCEC_USE_CUMPSGEMM
-  "Delegate the TCEC runtime to cuMpSGEMM instead of the built-in kernels" OFF)
+  "Build the error-corrected GEMM dispatch, which runs on cuMpSGEMM" OFF)
 set(POSEIDON_CUMPSGEMM_ROOT ""
     CACHE
       PATH
       "cuMpSGEMM checkout the TCEC runtime is built against and applications link
      against; required by POSEIDON_TCEC_USE_CUMPSGEMM")
-# The matrix accuracy model simulates the backend the runtime is built with.
 if(POSEIDON_TCEC_USE_CUMPSGEMM)
+  if(NOT CMAKE_CUDA_COMPILER OR NOT POSEIDON_CUMPSGEMM_ROOT)
+    message(
+      FATAL_ERROR
+        "POSEIDON_TCEC_USE_CUMPSGEMM needs a CUDA compiler and "
+        "POSEIDON_CUMPSGEMM_ROOT")
+  endif()
   target_compile_definitions(
     ${POSEIDON_PLUGIN_TARGET}
     PRIVATE POSEIDON_TCEC_USE_CUMPSGEMM)
@@ -357,9 +364,7 @@ endif()
 if(CMAKE_CUDA_COMPILER)
   add_library(
     poseidon_rt
-    STATIC
-      runtime/ozaki/ozaki_rt.cu runtime/tcec/tcec_rt.cu
-      runtime/direct/direct_rt.cu)
+    STATIC runtime/ozaki/ozaki_rt.cu runtime/direct/direct_rt.cu)
   # Whole-program per translation unit: every kernel is launched from the host
   # entry point in its own file, so the archive carries complete fatbins and an
   # application built by any compiler can link it.
@@ -376,11 +381,7 @@ if(CMAKE_CUDA_COMPILER)
   # (poseidon_rt_link_files) and the tests read it from the target.
   target_link_libraries(poseidon_rt PUBLIC CUDA::cublas CUDA::cudart)
   if(POSEIDON_TCEC_USE_CUMPSGEMM)
-    if(NOT POSEIDON_CUMPSGEMM_ROOT)
-      message(
-        FATAL_ERROR "POSEIDON_TCEC_USE_CUMPSGEMM needs POSEIDON_CUMPSGEMM_ROOT")
-    endif()
-    target_compile_definitions(poseidon_rt PRIVATE POSEIDON_TCEC_USE_CUMPSGEMM)
+    target_sources(poseidon_rt PRIVATE runtime/tcec/tcec_rt.cu)
     target_include_directories(
       poseidon_rt
       PRIVATE ${POSEIDON_CUMPSGEMM_ROOT}/include)
@@ -407,7 +408,11 @@ if(CMAKE_CUDA_COMPILER)
   add_executable(poseidon-microbm tools/calibrate/microbm.cu)
   set(POSEIDON_TOOL_TARGETS poseidon-microbm)
   # The dispatch calibrators time the runtime entry points, so they link it.
-  foreach(_cal ozaki tcec direct)
+  set(_calibrators ozaki direct)
+  if(POSEIDON_TCEC_USE_CUMPSGEMM)
+    list(APPEND _calibrators tcec)
+  endif()
+  foreach(_cal ${_calibrators})
     add_executable(poseidon-${_cal}-calibrate
                    tools/calibrate/${_cal}_calibrate.cu)
     target_link_libraries(
@@ -415,6 +420,13 @@ if(CMAKE_CUDA_COMPILER)
       PRIVATE poseidon_rt CUDA::cublas)
     list(APPEND POSEIDON_TOOL_TARGETS poseidon-${_cal}-calibrate)
   endforeach()
+  # Installed, it still finds cuMpSGEMM where it was built, as the programs
+  # poseidon-clang links do.
+  if(POSEIDON_TCEC_USE_CUMPSGEMM)
+    set_target_properties(
+      poseidon-tcec-calibrate
+      PROPERTIES INSTALL_RPATH_USE_LINK_PATH ON)
+  endif()
 endif()
 
 # The same runtimes compiled as HIP for POSEIDON_AMDGPU_ARCH, each source whole
@@ -540,9 +552,8 @@ add_executable(poseidon-calibrate tools/calibrate/poseidon-calibrate.cpp)
 target_compile_definitions(
   poseidon-calibrate
   PRIVATE
-    POSEIDON_CALIBRATE_CUMPSGEMM="${POSEIDON_CUMPSGEMM_ROOT}"
+    POSEIDON_CALIBRATE_TCEC=$<BOOL:${POSEIDON_TCEC_USE_CUMPSGEMM}>
     POSEIDON_CALIBRATE_HERBIE="${POSEIDON_HERBIE_BINARY_PATH}"
-    POSEIDON_CALIBRATE_CUDA_BIN="${CUDAToolkit_BIN_DIR}"
     POSEIDON_CALIBRATE_PYTHON="${Python3_EXECUTABLE}"
     POSEIDON_CALIBRATE_SRCDIR="${CMAKE_CURRENT_SOURCE_DIR}")
 llvm_map_components_to_libnames(POSEIDON_CALIBRATE_LLVM_LIBS support)

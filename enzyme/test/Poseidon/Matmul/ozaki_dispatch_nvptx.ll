@@ -120,11 +120,10 @@ attributes #5 = { convergent nounwind "uniform-work-group-size" }
 ; TAU12-NEXT: #7 ozaki-ii nm=12 wmma m16n16k16 s8/s32  compCost/MAC=2.400000e+01  rel=4.687500e-02  domainError=1.840864e-13
 ; TAU12-NEXT: #8 ozaki-ii nm=13 wmma m16n16k16 s8/s32  compCost/MAC=2.600000e+01  rel=5.078125e-02  domainError=1.220929e-14
 ; TAU12-NEXT: #9 ozaki-ii nm=14 wmma m16n16k16 s8/s32  compCost/MAC=2.800000e+01  rel=5.468750e-02  domainError=8.567043e-16
-; TAU12-NEXT: #10 tcec-dispatch wmma m16n16k16 f16/f32  compCost/MAC=1.400000e+01  rel=2.734375e-02  domainError={{[0-9.e+-]+}}
-; TAU12-NEXT: #11 direct-dispatch cublas f16/f32  compCost/MAC=4.000000e+00  rel=7.812500e-03  domainError=3.137966e-04
-; TAU12-NEXT: #12 direct-dispatch cublas bf16/f32  compCost/MAC=6.000000e+00  rel=1.171875e-02  domainError=2.340575e-03
-; TAU12-NEXT: #13 direct-dispatch cublas tf32/f32  compCost/MAC=8.000000e+00  rel=1.562500e-02  domainError=3.137466e-04
-; TAU12-NEXT: #14 native-dgemm cublas f64/f64  compCost/MAC=2.560000e+02  rel=5.000000e-01  domainError=0.000000e+00
+; TAU12-NEXT: #10 direct-dispatch cublas f16/f32  compCost/MAC=4.000000e+00  rel=7.812500e-03  domainError=3.137966e-04
+; TAU12-NEXT: #11 direct-dispatch cublas bf16/f32  compCost/MAC=6.000000e+00  rel=1.171875e-02  domainError=2.340575e-03
+; TAU12-NEXT: #12 direct-dispatch cublas tf32/f32  compCost/MAC=8.000000e+00  rel=1.562500e-02  domainError=3.137466e-04
+; TAU12-NEXT: #13 native-dgemm cublas f64/f64  compCost/MAC=2.560000e+02  rel=5.000000e-01  domainError=0.000000e+00
 ; TAU12: Poseidon error-budget: matmul -> ozaki-ii nm=12 wmma m16n16k16 s8/s32 (domain err 1.840864e-13 <= 1.000000e-12 at confidence 9.500000e-01)
 ; TAU12: Applying solution for matmul[0] -> ozaki-ii nm=12 wmma m16n16k16 s8/s32 (#7)
 ; TAU12: [ozaki-host-dispatch] wrote descriptor for _Z13matmul_kernelPKdS0_PdS1_: C=arg2 A=arg0 B=arg1 16x16x16 nm=12 (standalone)
@@ -147,7 +146,7 @@ attributes #5 = { convergent nounwind "uniform-work-group-size" }
 ; TAU10: wrote descriptor for _Z13matmul_kernelPKdS0_PdS1_: C=arg2 A=arg0 B=arg1 16x16x16 nm=10 (standalone)
 
 ; TAU16: Poseidon error-budget: matmul -> native-dgemm cublas f64/f64 (domain err 0.000000e+00 <= 1.000000e-16 at confidence 9.500000e-01)
-; TAU16: Applying solution for matmul[0] -> native-dgemm cublas f64/f64 (#14)
+; TAU16: Applying solution for matmul[0] -> native-dgemm cublas f64/f64 (#13)
 ; TAU16: wrote descriptor for _Z13matmul_kernelPKdS0_PdS1_: C=arg2 A=arg0 B=arg1 16x16x16 nm=0 (standalone)
 
 ; HOST16: call void @__poseidon_ozaki_dgemm(ptr %2, ptr %0, ptr %1, i32 16, i32 16, i32 16, i32 16, i32 0, i32 0, double 1.000000e+00, double 0.000000e+00, ptr null, i32 0)

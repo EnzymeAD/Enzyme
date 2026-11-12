@@ -19,26 +19,13 @@
 
 namespace poseidon {
 
-// The backend of __poseidon_tcec_dgemm (runtime/tcec/tcec_rt.cu): the
-// runtime's own split into three cuBLAS GEMMs, or cuMpSGEMM's FP16TCEC when
-// the runtime is built with POSEIDON_TCEC_USE_CUMPSGEMM.
-enum class TcecBackend { BuiltIn, CuMpSGEMM };
-
-// The backend of the runtime this build of the compiler links.
-#ifdef POSEIDON_TCEC_USE_CUMPSGEMM
-inline constexpr TcecBackend kLinkedTcecBackend = TcecBackend::CuMpSGEMM;
-#else
-inline constexpr TcecBackend kLinkedTcecBackend = TcecBackend::BuiltIn;
-#endif
-
-const char *tcecBackendName(TcecBackend backend);
-
-// C = A * B as __poseidon_tcec_dgemm returns it in mode 1 (FP16TCEC) on
-// `backend`, for A (M x K), B (K x N) and C (M x N) row-major. No source
-// specifies how a tensor-core MMA adds its products; it is taken to round the
-// exact sum of its 16 products and the accumulator toward zero to FP32.
-void simulateTcecDgemm(TcecBackend backend, const double *A, const double *B,
-                       unsigned M, unsigned N, unsigned K, double *C);
+// C = A * B as __poseidon_tcec_dgemm (runtime/tcec/tcec_rt.cu) returns it in
+// mode 1, cuMpSGEMM's FP16TCEC, for A (M x K), B (K x N) and C (M x N)
+// row-major. No source specifies how a tensor-core MMA adds its products; it
+// is taken to round the exact sum of its 16 products and the accumulator
+// toward zero to FP32.
+void simulateTcecDgemm(const double *A, const double *B, unsigned M, unsigned N,
+                       unsigned K, double *C);
 
 // One operand of __poseidon_ozaki_dgemm(_ex) as runtime/ozaki/ozaki_rt.cu
 // scales it: R vectors of K elements, element k of vector r at src[r * ld + k]

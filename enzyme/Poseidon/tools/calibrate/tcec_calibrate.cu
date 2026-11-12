@@ -5,7 +5,8 @@
 // families are priced in one unit. Emits one row:
 //     tcec_dispatch_rel,fp16tcec,<rel>
 // Build: nvcc -O3 -arch=sm_120 tcec_calibrate.cu <path>/tcec_rt.cu \
-//        -lcublas -o tcec_calibrate
+//        -I<cuMpSGEMM>/include -L<cuMpSGEMM>/build -lcumpsgemm -lcublas \
+//        -o tcec_calibrate
 // Run:   ./tcec_calibrate [N=2048] [reps=30]   (CSV row on stdout)
 #include <cstdio>
 #include <cstdlib>

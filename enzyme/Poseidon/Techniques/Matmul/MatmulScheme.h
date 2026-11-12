@@ -97,9 +97,16 @@ inline unsigned splitCapturedBits(const SchemeVariant &v) {
   return std::min(sliceSigBits * sliceCount(v), 24u);
 }
 
-// __poseidon_tcec_dgemm's compute mode (runtime/tcec/tcec_rt.cu); its
-// self-contained backend implements mode 1, FP16TCEC, a two-slice FP16 split
-// with an FP32 accumulator.
+// Whether this compiler has __poseidon_tcec_dgemm (runtime/tcec/tcec_rt.cu),
+// which runs on cuMpSGEMM and exists only in a build with it.
+#ifdef POSEIDON_TCEC_USE_CUMPSGEMM
+inline constexpr bool kHaveTcecDispatch = true;
+#else
+inline constexpr bool kHaveTcecDispatch = false;
+#endif
+
+// __poseidon_tcec_dgemm's compute mode: mode 1 is cuMpSGEMM's FP16TCEC, a
+// two-slice FP16 split with an FP32 accumulator.
 inline unsigned splitLibraryComputeMode(const SchemeVariant &v) {
   if (v.scheme == Scheme::Split && v.operand == FPKind::F16 &&
       v.accumulator == FPKind::F32 && v.slices == 2)

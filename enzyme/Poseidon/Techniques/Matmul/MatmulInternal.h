@@ -78,7 +78,7 @@ double getMatmulAccuracyCost(Session &S, const AbstractMatmul &m,
                              FPKind exponentPrec = FPKind::Invalid,
                              unsigned orderTileK = 0,
                              unsigned inputMantBits = 0);
-// __poseidon_tcec_dgemm in compute `mode` on the backend this build links.
+// __poseidon_tcec_dgemm in compute `mode`, on cuMpSGEMM.
 double getTcecLibraryAccuracyCost(Session &S, const AbstractMatmul &m,
                                   const MatmulProfile &prof, double confidence,
                                   unsigned sampleLogBits, unsigned mode,

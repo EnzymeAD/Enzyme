@@ -7,20 +7,19 @@
 //   tiny:     2^-66 A times 2^-100 B (entries around 1e-20 and 1e-30) gives
 //             2^-166 times the product of A and B bit for bit, and so the
 //             accuracy against the FP64 product that ordinary operands get.
-//   ordinary: random operands reduced to digests of the result bits, through
-//             the square entry (beta 0, and alpha 0.75 with beta -1.25, which
-//             takes the epilogue's fused multiply-add) and the general entry
-//             (A row-major, B and C column-major, beta 1). The digests are the
-//             built-in FP16TCEC backend's from before the runtime's scales
-//             were carried as exponents; the 'record' argument prints them for
-//             the runtime linked in. cuMpSGEMM's products differ call to call,
-//             so with that backend the digests are printed and not compared.
+//   ordinary: random operands through the square entry (beta 0, and alpha
+//             0.75 with beta -1.25, which takes the epilogue's fused
+//             multiply-add) and the general entry (A row-major, B and C
+//             column-major, beta 1), each within 2^-21 of the FP64 result
+//             relative to |alpha||A||B| + |beta C|, about four times the
+//             error FP16TCEC has there. cuMpSGEMM's products differ call to
+//             call for some shapes, so their bits are not compared.
 //
-// REQUIRES: cuda-runtime
+// REQUIRES: cuda-runtime, tcec-cumpsgemm
 // RUN: %clang -x cuda --cuda-gpu-arch=%gpu_arch -O2 %s -x none \
 // RUN:     %poseidon_rt_lib -L%cuda_lib_dir -lcublas -lcudart \
 // RUN:     -lstdc++ -lm -o %t.exe
-// RUN: %t.exe | FileCheck --check-prefixes=CHECK,%if tcec-cumpsgemm %{CUMPSGEMM%} %else %{BUILTIN%} %s
+// RUN: %t.exe | FileCheck %s
 
 #include <algorithm>
 #include <cmath>
@@ -77,18 +76,6 @@ std::vector<double> operand(int rows, int cols, int colMajor) {
           std::ldexp(uniform() - 0.5, e);
     }
   return v;
-}
-
-uint64_t digest(const std::vector<double> &v) {
-  uint64_t h = 14695981039346656037ull;
-  for (double d : v) {
-    uint64_t b = bitsOf(d);
-    for (int i = 0; i < 8; ++i) {
-      h ^= (b >> (8 * i)) & 0xff;
-      h *= 1099511628211ull;
-    }
-  }
-  return h;
 }
 
 struct Device {
@@ -152,18 +139,31 @@ int grid() {
   return exact != representable || rounded != others;
 }
 
-// Largest |C - R| / (|A||B|) of a row-major N x N product, R in FP64.
+// Element (r, c) of a rows x cols matrix stored row-major, or column-major
+// when colMajor.
+size_t at(int r, int c, int rows, int cols, int colMajor) {
+  return colMajor ? (size_t)c * rows + r : (size_t)r * cols + c;
+}
+
+// Largest |C - R| / (|alpha| |A||B| + |beta C0|) of an M x N result, R =
+// alpha A B + beta C0 in FP64.
 double error(const std::vector<double> &A, const std::vector<double> &B,
-             const std::vector<double> &C, int N) {
+             const std::vector<double> &C0, const std::vector<double> &C, int M,
+             int N, int K, int aColMajor, int bColMajor, int cColMajor,
+             double alpha, double beta) {
   double e = 0.0;
-  for (int r = 0; r < N; ++r)
+  for (int r = 0; r < M; ++r)
     for (int c = 0; c < N; ++c) {
       double ref = 0.0, mag = 0.0;
-      for (int k = 0; k < N; ++k) {
-        ref += A[r * N + k] * B[k * N + c];
-        mag += std::fabs(A[r * N + k] * B[k * N + c]);
+      for (int k = 0; k < K; ++k) {
+        double p = A[at(r, k, M, K, aColMajor)] * B[at(k, c, K, N, bColMajor)];
+        ref += p;
+        mag += std::fabs(p);
       }
-      e = std::fmax(e, std::fabs(C[r * N + c] - ref) / mag);
+      const size_t o = at(r, c, M, N, cColMajor);
+      ref = alpha * ref + beta * C0[o];
+      mag = std::fabs(alpha) * mag + std::fabs(beta * C0[o]);
+      e = std::fmax(e, std::fabs(C[o] - ref) / mag);
     }
   return e;
 }
@@ -192,7 +192,9 @@ int tiny() {
     maxA = std::fmax(maxA, std::fabs(At[i]));
     maxB = std::fmax(maxB, std::fabs(Bt[i]));
   }
-  const double e = error(A, B, C, N), et = error(At, Bt, Ct, N);
+  const std::vector<double> zero(C.size(), 0.0);
+  const double e = error(A, B, zero, C, N, N, N, 0, 0, 0, 1.0, 0.0);
+  const double et = error(At, Bt, zero, Ct, N, N, N, 0, 0, 0, 1.0, 0.0);
   const bool ok = same == (long)C.size() && et == e;
   printf("tiny max|A| %.1e max|B| %.1e: 2^-166 x ordinary %ld of %zu, error "
          "against FP64 %s ordinary's (%.3e)\n",
@@ -205,18 +207,16 @@ struct OrdinaryCase {
   bool square;
   int M, Ncols, K, aColMajor, bColMajor, cColMajor;
   double alpha, beta;
-  uint64_t bits;
 };
 
 const OrdinaryCase kOrdinary[] = {
-    {"square256", true, 256, 256, 256, 0, 0, 0, 1.0, 0.0, 0x41df4190c638113dull},
-    {"square256-alpha-beta", true, 256, 256, 256, 0, 0, 0, 0.75, -1.25,
-     0xc129590242f94997ull},
-    {"ex343x192x1536", false, 343, 192, 1536, 0, 1, 1, 1.0, 1.0,
-     0x622da3a8cbee232full},
+    {"square256", true, 256, 256, 256, 0, 0, 0, 1.0, 0.0},
+    {"square256-alpha-beta", true, 256, 256, 256, 0, 0, 0, 0.75, -1.25},
+    {"ex343x192x1536", false, 343, 192, 1536, 0, 1, 1, 1.0, 1.0},
 };
 
-void ordinary(bool record) {
+int ordinary() {
+  int failed = 0;
   for (const OrdinaryCase &oc : kOrdinary) {
     g_state = 0x9e3779b97f4a7c15ull;
     const std::vector<double> A = operand(oc.M, oc.K, oc.aColMajor);
@@ -235,36 +235,30 @@ void ordinary(bool record) {
           oc.bColMajor ? oc.K : oc.Ncols, oc.cColMajor ? oc.M : oc.Ncols,
           oc.aColMajor, oc.bColMajor, oc.cColMajor, oc.alpha, oc.beta, nullptr,
           1);
-    const uint64_t h = digest(d.getC(C0.size()));
-    if (record) {
-      printf("%s 0x%016llxull\n", oc.name, (unsigned long long)h);
-      continue;
-    }
-    printf("ordinary %s digest=%016llx %s\n", oc.name, (unsigned long long)h,
-           h == oc.bits ? "BITS-MATCH" : "BITS-DIFFER");
+    const double e =
+        error(A, B, C0, d.getC(C0.size()), oc.M, oc.Ncols, oc.K, oc.aColMajor,
+              oc.bColMajor, oc.cColMajor, oc.alpha, oc.beta);
+    const bool ok = e <= 0x1p-21;
+    failed |= !ok;
+    printf("ordinary %s error against FP64 %s 2^-21 (%.3e)\n", oc.name,
+           ok ? "within" : "NOT within", e);
   }
+  return failed;
 }
 
 } // namespace
 
-int main(int argc, char **argv) {
-  if (argc > 1 && !strcmp(argv[1], "record")) {
-    ordinary(true);
-    return 0;
-  }
+int main() {
   int failed = grid();
   failed |= tiny();
-  ordinary(false);
+  failed |= ordinary();
   printf(failed ? "FAIL\n" : "PASS\n");
   return failed;
 }
 
 // CHECK: grid 2097 cases: representable 2054, exact 2054; not representable 43, rounded once 43
 // CHECK: tiny max|A| {{[0-9.]+e-[0-9]+}} max|B| {{[0-9.]+e-[0-9]+}}: 2^-166 x ordinary 4096 of 4096, error against FP64 equal to ordinary's
-// BUILTIN: ordinary square256 digest={{[0-9a-f]+}} BITS-MATCH
-// BUILTIN: ordinary square256-alpha-beta digest={{[0-9a-f]+}} BITS-MATCH
-// BUILTIN: ordinary ex343x192x1536 digest={{[0-9a-f]+}} BITS-MATCH
-// CUMPSGEMM: ordinary square256 digest=
-// CUMPSGEMM: ordinary square256-alpha-beta digest=
-// CUMPSGEMM: ordinary ex343x192x1536 digest=
+// CHECK: ordinary square256 error against FP64 within 2^-21
+// CHECK: ordinary square256-alpha-beta error against FP64 within 2^-21
+// CHECK: ordinary ex343x192x1536 error against FP64 within 2^-21
 // CHECK: PASS

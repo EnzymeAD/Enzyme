@@ -1,11 +1,11 @@
-; REQUIRES: scev-trunc-iv-nowrap
+; REQUIRES: scev-trunc-iv-nowrap, tcec-cumpsgemm
 ; RUN: rm -rf %t && mkdir -p %t
-; RUN: %opt %S/../Inputs/stale_cache/matmul_device.ll %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/../Inputs/fp16_range/matmul_tiny -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv -poseidon-tau=1e-6 -poseidon-print -poseidon-cache=%t/tau -S -o /dev/null 2>&1 | FileCheck --check-prefixes=TAU,%if tcec-cumpsgemm %{TAU-CUMPSGEMM%} %else %{TAU-BUILTIN%} %s
-; RUN: grep -h '"TCEC backend"' %t/tau/matmulacc_*.json | FileCheck --check-prefixes=KEY,%if tcec-cumpsgemm %{KEY-CUMPSGEMM%} %else %{KEY-BUILTIN%} %s
-; RUN: %opt %S/../Inputs/stale_cache/matmul_device.ll %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/../Inputs/fp16_range/matmul_tiny -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv -poseidon-cost-budget=0 -poseidon-cache=%t/budget -S -o /dev/null
-; RUN: grep -h '"TCEC backend"' %t/budget/table.json | FileCheck --check-prefixes=KEY,%if tcec-cumpsgemm %{KEY-CUMPSGEMM%} %else %{KEY-BUILTIN%} %s
+; RUN: %opt %S/../Inputs/stale_cache/matmul_device.ll %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/../Inputs/fp16_range/matmul_tiny -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_tcec.csv -poseidon-tau=1e-6 -poseidon-print -poseidon-cache=%t/tau -S -o /dev/null 2>&1 | FileCheck --check-prefix=TAU %s
+; RUN: grep -h '"TCEC backend"' %t/tau/matmulacc_*.json | FileCheck --check-prefix=KEY %s
+; RUN: %opt %S/../Inputs/stale_cache/matmul_device.ll %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/../Inputs/fp16_range/matmul_tiny -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_tcec.csv -poseidon-cost-budget=0 -poseidon-cache=%t/budget -S -o /dev/null
+; RUN: grep -h '"TCEC backend"' %t/budget/table.json | FileCheck --check-prefix=KEY %s
 ; RUN: sed -i 's/"TCEC backend": "[^"]*"/"TCEC backend": "another"/' %t/budget/table.json %t/budget/matmulacc_*.json
-; RUN: %opt %S/../Inputs/stale_cache/matmul_device.ll %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/../Inputs/fp16_range/matmul_tiny -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv -poseidon-cost-budget=0 -poseidon-cache=%t/budget -S -o /dev/null 2>&1 | FileCheck --check-prefix=ANOTHER %s
+; RUN: %opt %S/../Inputs/stale_cache/matmul_device.ll %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/../Inputs/fp16_range/matmul_tiny -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_tcec.csv -poseidon-cost-budget=0 -poseidon-cache=%t/budget -S -o /dev/null 2>&1 | FileCheck --check-prefix=ANOTHER %s
 
 ; Which realizations of a matrix product the FP16 range rule refuses. The
 ; product of ozaki_dispatch_nvptx.ll profiled with A at 1e-9 (Inputs/
@@ -15,14 +15,12 @@
 ; direct library call (__poseidon_direct_dgemm) rounds it once without scaling:
 ; all of them are refused. The split library call (__poseidon_tcec_dgemm)
 ; first scales each operand by the power of two that brings its largest
-; magnitude to [2^10, 2^11], so it is simulated on the backend the runtime is
-; built with instead, and at tolerance 1e-6 it is the cheapest candidate that
-; clears it. Its result is filed under that backend, in its accuracy memo entry
-; and in the DP table's key; a table or entry of another backend is solved and
-; computed again.
+; magnitude to [2^10, 2^11], so it is simulated as cuMpSGEMM computes it
+; instead, and at tolerance 1e-6 it is the cheapest candidate that clears it.
+; Its result is filed under that library, in its accuracy memo entry and in the
+; DP table's key; a table or entry of another is solved and computed again.
 
-; TAU-BUILTIN: DOMERR tcec library backend=built-in p95_relErr=1.077071e-07
-; TAU-CUMPSGEMM: DOMERR tcec library backend=cuMpSGEMM p95_relErr=1.106362e-07
+; TAU: DOMERR tcec library p95_relErr=1.106362e-07
 ; TAU: #0 wmma m16n16k16 f16/f32  {{.*}}  domainError=INF
 ; TAU-NEXT: #1 tcec n=2 wmma m16n16k16 f16/f32  {{.*}}  domainError=INF
 ; TAU-NEXT: #2 tcec n=3 wmma m16n16k16 f16/f32  {{.*}}  domainError=INF
@@ -31,8 +29,7 @@
 ; TAU: Poseidon error-budget: matmul -> tcec-dispatch wmma m16n16k16 f16/f32 (domain err [[ERR]] <= 1.000000e-06
 ; TAU: Applying solution for matmul[0] -> tcec-dispatch wmma m16n16k16 f16/f32 (#10)
 
-; KEY-BUILTIN: "TCEC backend": "built-in",
-; KEY-CUMPSGEMM: "TCEC backend": "cuMpSGEMM",
+; KEY: "TCEC backend": "cuMpSGEMM",
 ; KEY-NOT: TCEC backend
 
 ; ANOTHER-DAG: [poseidon] accuracy memo {{.*}}matmulacc_{{[0-9A-F]+}}.json was computed for a different TCEC backend; recomputing it.

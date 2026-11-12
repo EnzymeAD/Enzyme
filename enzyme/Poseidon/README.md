@@ -59,8 +59,11 @@ enzyme/test/Poseidon/       lit suite: check-poseidon (a folder per part of the
   else of this one, not of the one clang alone would look for; a variable that
   names no directory is an error.
 - **cuMpSGEMM**, optional: `-DPOSEIDON_TCEC_USE_CUMPSGEMM=ON
-  -DPOSEIDON_CUMPSGEMM_ROOT=<checkout>` makes the error-corrected GEMM runtime
-  delegate to that build of cuMpSGEMM instead of its built-in cuBLAS kernels.
+  -DPOSEIDON_CUMPSGEMM_ROOT=<checkout>` adds the error-corrected FP16
+  tensor-core GEMM (FP16TCEC) as a host-dispatched candidate, run by that build
+  of cuMpSGEMM, the published implementation of the scheme. A compiler built
+  without it does not offer that candidate, and a pin that names it is an
+  error.
 - **Herbie**, for the algebraic rewrites. The build compiles upstream
   [herbie-fp/herbie](https://github.com/herbie-fp/herbie) at the commit
   `cmake/Herbie.cmake` pins (Racket 8.15 and Rust are then needed);
