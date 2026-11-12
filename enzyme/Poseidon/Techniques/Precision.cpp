@@ -306,9 +306,8 @@ void PTCandidate::apply(Session &S, Subgraph &subgraph, ValueToValueMapTy *VMap,
         for (auto *I : instsToChangeSorted)
           subgraph.operations.remove(I);
         if (graph)
-          for (Instruction *I : instsToChangeSorted)
-            if (Value *restored = restoredValues.lookup(I))
-              graph->replaceErased(I, restored);
+          for (auto &[erased, restored] : restoredValues)
+            graph->replaceErased(erased, restored);
       }
       continue;
     }

@@ -501,7 +501,10 @@ void applyExpansion(Session &S, ArrayRef<Instruction *> instsToChange,
         carriedPhis.push_back(phi);
   for (PHINode *phi : carriedPhis) {
     IRBuilder<> RB(phi->getParent(), phi->getParent()->getFirstNonPHIIt());
-    phi->replaceAllUsesWith(emitDSToFP(RB, dsMap[phi], phi->getType()));
+    Value *restored = emitDSToFP(RB, dsMap[phi], phi->getType());
+    phi->replaceAllUsesWith(restored);
+    if (restoredValues)
+      (*restoredValues)[phi] = restored;
   }
   for (PHINode *phi : carriedPhis)
     phi->eraseFromParent();
@@ -877,8 +880,10 @@ void applyExpansion(Session &S, unsigned n,
         carriedPhis.push_back(phi);
   for (PHINode *phi : carriedPhis) {
     IRBuilder<> RB(phi->getParent(), phi->getParent()->getFirstNonPHIIt());
-    phi->replaceAllUsesWith(
-        emitExpansionToFP(RB, expansionMap[phi], phi->getType()));
+    Value *restored = emitExpansionToFP(RB, expansionMap[phi], phi->getType());
+    phi->replaceAllUsesWith(restored);
+    if (restoredValues)
+      (*restoredValues)[phi] = restored;
   }
   for (PHINode *phi : carriedPhis)
     phi->eraseFromParent();
