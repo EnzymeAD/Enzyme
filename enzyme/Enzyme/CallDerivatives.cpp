@@ -4009,6 +4009,10 @@ bool AdjointGenerator::handleKnownCallDerivatives(
     bool cacheWholeAllocation = gutils->needsCacheWholeAllocation(&call);
     if (cacheWholeAllocation) {
       primalNeededInReverse = true;
+      // If the contents of this allocation are only valid for an iteration of
+      // a loop which does not contain the allocation, caching the pointer is
+      // insufficient, and we must cache the contents for each iteration.
+      cacheWholeAllocationInLoop(call, BuilderZ);
     }
 
     auto restoreFromStack = [&](MDNode *MD) {

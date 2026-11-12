@@ -523,8 +523,36 @@ public:
       return;
     }
     default:
+      // If the contents of this allocation are only valid for an iteration of
+      // a loop which does not contain the allocation, preserving the stack
+      // allocation is insufficient, and we must cache the contents for each
+      // iteration. Stack allocations are only preserved as such in combined
+      // mode, they are otherwise upgraded to heap allocations (and handled
+      // there).
+      if (Mode == DerivativeMode::ReverseModeCombined)
+        if (auto L = gutils->getWholeAllocationCacheLoop(&I))
+          gutils->cacheWholeAllocationInLoop(&I, L, /*idx*/ -1);
       return;
     }
+  }
+
+  /// If the allocation call I must be cached in its entirety, but its contents
+  /// are only valid for an iteration of a loop which does not contain I (see
+  /// GradientUtils::getWholeAllocationCacheLoop), cache the contents of the
+  /// allocation for each iteration of that loop.
+  void cacheWholeAllocationInLoop(llvm::CallInst &I,
+                                  llvm::IRBuilder<> &BuilderZ) {
+    if (Mode != DerivativeMode::ReverseModeCombined &&
+        Mode != DerivativeMode::ReverseModePrimal &&
+        Mode != DerivativeMode::ReverseModeGradient)
+      return;
+    auto L = gutils->getWholeAllocationCacheLoop(&I);
+    if (!L)
+      return;
+    int idx = -1;
+    if (Mode != DerivativeMode::ReverseModeCombined)
+      idx = getIndex(&I, CacheType::Tape, BuilderZ);
+    gutils->cacheWholeAllocationInLoop(&I, L, idx);
   }
 
   void visitICmpInst(llvm::ICmpInst &I) { eraseIfUnused(I); }
