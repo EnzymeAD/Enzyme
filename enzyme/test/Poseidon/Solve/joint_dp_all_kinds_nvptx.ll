@@ -10,7 +10,7 @@
 ; RUN: FileCheck --check-prefix=EXACT %s < %t/exact.log
 ; RUN: FileCheck --check-prefix=EXACT-BUDGETS %s < %t/exact/budgets.txt
 ; RUN: cat %t/ex_exact/preprocess_matmul_body_b.explain.json | FileCheck --check-prefix=EXACT-EXPLAIN %s
-; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/exact_dp/reprice_herbie %opt %s %loadPoseidon -passes=poseidon -poseidon-profile-use=%t/prof -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/exact_dp/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-pt=true -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-joint-dp -poseidon-cache=%t/pins -poseidon-explain=%t/ex_pins -poseidon-apply-rewrites='matmul_body:R0_1,matmul_body_b:PT1_0,matmul_body_b:M0_2,matmul_body:M0_0,matmul_body_b:PT0_3' -S -o %t/pins.ll > %t/pins.log 2>&1
+; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/exact_dp/reprice_herbie %opt %s %loadPoseidon -passes=poseidon -poseidon-profile-use=%t/prof -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/exact_dp/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-pt=true -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-joint-dp -poseidon-cache=%t/pins -poseidon-explain=%t/ex_pins -poseidon-apply-rewrites='matmul_body:R0_1,matmul_body_b:M0_2,matmul_body:M0_0,matmul_body_b:PT0_3' -S -o %t/pins.ll > %t/pins.log 2>&1
 ; RUN: FileCheck --check-prefix=PINS %s < %t/pins.log
 
 ; A joint solve over two sites that each hold algebraic, precision and product
@@ -55,15 +55,13 @@
 
 ; PINS: [poseidon] Selecting matmul_body:R0_1:
 ; PINS: [poseidon] Selecting matmul_body:M0_0: matmul[0] -> wmma m16n16k16 f16/f32
-; PINS: [poseidon] Selecting matmul_body_b:PT1_0: All FP64(0%) + FP32(100%)
-; PINS-NEXT: [poseidon] Selecting matmul_body_b:M0_2: matmul[0] -> tcec n=3 wmma m16n16k16 f16/f32
+; PINS: [poseidon] Selecting matmul_body_b:M0_2: matmul[0] -> tcec n=3 wmma m16n16k16 f16/f32
 ; PINS-NEXT: [poseidon] Selecting matmul_body_b:PT0_3: All FP64(30%) + FP32(70%)
 ; PINS: Applying solution for matmul[0] -> wmma m16n16k16 f16/f32 (#0)
 ; PINS: [poseidon] pin: matmul_body:R0=
-; PINS: Applying solution for CS: All FP64(0%) + FP32(100%) (#0)
-; PINS-NEXT: Applying solution for matmul[0] -> tcec n=3 wmma m16n16k16 f16/f32 (#2)
+; PINS: Applying solution for matmul[0] -> tcec n=3 wmma m16n16k16 f16/f32 (#2)
 ; PINS-NEXT: Applying solution for CS: All FP64(30%) + FP32(70%) (#3)
-; PINS: [poseidon] pin: matmul_body_b:PT1=All FP64(0%) + FP32(100%),matmul_body_b:M0=tcec n=3 wmma m16n16k16 f16/f32,matmul_body_b:PT0=All FP64(30%) + FP32(70%)
+; PINS: [poseidon] pin: matmul_body_b:M0=tcec n=3 wmma m16n16k16 f16/f32,matmul_body_b:PT0=All FP64(30%) + FP32(70%)
 
 
 
