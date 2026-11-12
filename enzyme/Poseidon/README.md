@@ -153,9 +153,9 @@ the site that a solution may add (a negative share, down to -1, is one it has
 to save: -0.25 requires saving a quarter); at its default of 0 that is the most
 accurate rewrite costing no more than the code as written, which may be the
 code as written. A share below -1 or one that is not finite stops the compile,
-and a solve writes to `budgets.txt` in its `-poseidon-cache` directory the
-share of each frontier point a budget selects: passed back as the budget, each
-selects that point.
+as does a number flag given no number (`-poseidon-tau=`), and a solve writes
+to `budgets.txt` in its `-poseidon-cache` directory the share of each frontier
+point a budget selects: passed back as the budget, each selects that point.
 `poseidon-clang++ -poseidon-help` lists the user flags, and any other
 `-poseidon-<flag>` reaches the pass.
 

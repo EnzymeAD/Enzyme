@@ -18,6 +18,7 @@
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/ErrorHandling.h"
 
+#include <limits>
 #include <string>
 
 using namespace llvm;
@@ -30,6 +31,23 @@ constexpr const char *kDefaultProfileDir = POSEIDON_DEFAULT_PROFILE_DIR;
 
 // Before the flags, which take their defaults from it.
 static const Options kDefaults;
+
+// LLVM's parser<double> reads an empty value as 0: strtod reads nothing and
+// stops at the end of the string. A Poseidon number flag reads it as NaN, no
+// number, which the solve that reads the flag refuses (Driver.cpp), so
+// `-poseidon-tau=` from a variable that was never set does not solve without
+// a target.
+class NumberParser : public cl::parser<double> {
+public:
+  using cl::parser<double>::parser;
+  bool parse(cl::Option &O, StringRef ArgName, StringRef Arg, double &Value) {
+    if (!Arg.empty())
+      return cl::parser<double>::parse(O, ArgName, Arg, Value);
+    Value = std::numeric_limits<double>::quiet_NaN();
+    return false;
+  }
+};
+using NumberOpt = cl::opt<double, false, NumberParser>;
 
 // One flag per line, in --help order. A flag's name is its variable name in
 // kebab case: `Tau` is -poseidon-tau, `HerbieNumPts` is
@@ -59,7 +77,7 @@ cl::opt<std::string> Kernels(
     cl::desc("Treat every kernel whose name matches this regular expression as "
              "an optimization site, as if it carried POSEIDON_OPTIMIZE ('all' "
              "matches every kernel; empty disables)"));
-cl::opt<double> MinCostShare(
+NumberOpt MinCostShare(
     "poseidon-min-cost-share", cl::init(kDefaults.Profiling.MinCostShare),
     cl::Hidden, cl::value_desc("fraction"),
     cl::desc("Share of the profiled FP cost of all -poseidon-kernels sites a "
@@ -139,12 +157,12 @@ cl::list<std::string> SplitCalls(
              "-poseidon-min-uses-split/-poseidon-min-ops-split say"));
 
 // Solver and budgets.
-cl::opt<double> CostBudget(
+NumberOpt CostBudget(
     "poseidon-cost-budget", cl::init(kDefaults.Solver.CostBudget), cl::Hidden,
     cl::desc("The share of a site's profiled cost a solution may add; a "
              "negative share, down to -1, is one it has to save (0 = no "
              "slower than as written)"));
-cl::opt<double>
+NumberOpt
     Tau("poseidon-tau", cl::init(kDefaults.Solver.Tau), cl::Hidden,
         cl::desc("Relative accuracy target of every site that carries none "
                  "(the dual of -poseidon-cost-budget; 0 = disabled); a site "
@@ -221,14 +239,14 @@ cl::opt<unsigned> ArmSearchFactor(
     cl::Hidden,
     cl::desc("Rejection-sampling budget for an under-sampled regime-split arm, "
              "in multiples of -poseidon-num-samples"));
-cl::opt<double> MaxBrokenShare(
+NumberOpt MaxBrokenShare(
     "poseidon-max-broken-share", cl::init(kDefaults.Model.MaxBrokenShare),
     cl::Hidden,
     cl::desc("Drop a Herbie candidate whose relative error reaches 1 (wrong "
              "sign or magnitude) on more than this share of the samples the "
              "original gets within 1; the gradient-weighted accuracy model is "
              "first order and cannot price such a change (negative = off)"));
-cl::opt<double> ExponentPenalty(
+NumberOpt ExponentPenalty(
     "poseidon-exponent-penalty", cl::init(kDefaults.Model.ExponentPenalty),
     cl::Hidden,
     cl::desc("Penalty added to a matmul candidate's accuracy cost when the "

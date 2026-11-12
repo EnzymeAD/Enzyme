@@ -196,10 +196,33 @@ void reportUnprofiled(Session &S, CallBase *CI, const Function &body,
   explainUnprofiled(S, clone, cause);
 }
 
+// A number flag holds NaN when it was given no number (Pass/Flags.cpp).
+[[noreturn]] void reportNoNumber(const CallBase &CI, StringRef flag) {
+  reportUserError(CI, "-" + flag +
+                          " was given no number: its value is empty or nan. "
+                          "Write a number after '=', or leave the flag out "
+                          "for its default.");
+}
+
+// The number flags every solve reads; the budget is read only by a solve that
+// selects by it.
+void requireNumbers(const Options &O, const CallBase &CI) {
+  const std::pair<StringRef, double> numbers[] = {
+      {"poseidon-tau", O.Solver.Tau},
+      {"poseidon-min-cost-share", O.Profiling.MinCostShare},
+      {"poseidon-max-broken-share", O.Model.MaxBrokenShare},
+      {"poseidon-exponent-penalty", O.Model.ExponentPenalty}};
+  for (const auto &[flag, value] : numbers)
+    if (std::isnan(value))
+      reportNoNumber(CI, flag);
+}
+
 // No solution saves more than the whole profiled cost, so a budget below -1 is
 // a mistake in the flag, most likely an integer budget of the cost axis that
 // came before, and not a solve that finds nothing.
 void requireCostBudget(const SolverOptions &O, const CallBase &CI) {
+  if (std::isnan(O.CostBudget))
+    reportNoNumber(CI, "poseidon-cost-budget");
   if (std::isfinite(O.CostBudget) && O.CostBudget >= -1.0)
     return;
   std::string value;
@@ -268,6 +291,7 @@ bool optimizeSiteBody(Session &S, CallBase *CI, Function *F,
       return emitSiteCall(CI, sourceBody, primalArgs, calls);
     }
 
+    requireNumbers(O, *CI);
     // Only a solve with no accuracy target selects by the budget.
     if (errTol <= 0.0 && O.Solver.Tau <= 0.0 && O.Solver.ApplyRewrites.empty())
       requireCostBudget(O.Solver, *CI);
