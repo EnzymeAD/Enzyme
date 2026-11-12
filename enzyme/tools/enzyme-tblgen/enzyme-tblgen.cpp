@@ -1695,6 +1695,9 @@ static void emitMLIRReverse(raw_ostream &os, const Record *pattern,
   os << "                                 MGradientUtilsReverse *gutils) "
         "const {\n";
   os << "         SmallVector<bool> toret(op->getNumOperands(), false);\n";
+  os << "         if (gutils->isConstantInstruction(op) || "
+        "gutils->isConstantValue(op->getResult(0)))\n";
+  os << "           return toret;\n";
   StringMap<std::tuple<std::string, std::string, bool>> varNameToCondition;
 
   std::function<void(const DagInit *, ArrayRef<unsigned>)> insert =

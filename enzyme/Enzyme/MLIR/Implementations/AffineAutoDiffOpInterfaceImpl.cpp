@@ -426,7 +426,10 @@ struct AffineForOpInterfaceReverse
   static affine::AffineForOp
   createConstantScaffoldLoop(OpBuilder &builder, Location loc, int64_t lb,
                              int64_t ub, int64_t step, ValueRange inits) {
-    return affine::AffineForOp::create(builder, loc, lb, ub, step, inits);
+    auto loop = affine::AffineForOp::create(builder, loc, lb, ub, step, inits);
+    if (!loop.getBody()->empty())
+      loop.getBody()->front().erase();
+    return loop;
   }
 
   // Both outer loops count segments: one iteration per checkpoint, so the trip
@@ -477,10 +480,13 @@ struct AffineForOpInterfaceReverse
     AffineExpr remainingExpr =
         builder.getAffineConstantExpr(numIters) - nInnerExpr * j;
     AffineMap ubMap = AffineMap::get(1, 0, {nInnerExpr, remainingExpr}, ctx);
-    return affine::AffineForOp::create(
+    auto loop = affine::AffineForOp::create(
         builder, loc, /*lbOperands=*/ValueRange{},
         AffineMap::getConstantMap(0, ctx), ValueRange{outerIV}, ubMap,
         /*step=*/1, inits);
+    if (!loop.getBody()->empty())
+      loop.getBody()->front().erase();
+    return loop;
   }
 
   // Reverse counterpart. `outerIV` (call it j) is the reverse outer loop's own
@@ -510,19 +516,25 @@ struct AffineForOpInterfaceReverse
     AffineExpr remainingExpr =
         builder.getAffineConstantExpr(constOffset) + nInnerExpr * j;
     AffineMap ubMap = AffineMap::get(1, 0, {nInnerExpr, remainingExpr}, ctx);
-    return affine::AffineForOp::create(
+    auto loop = affine::AffineForOp::create(
         builder, loc, /*lbOperands=*/ValueRange{},
         AffineMap::getConstantMap(0, ctx), ValueRange{outerIV}, ubMap,
         /*step=*/1, inits);
+    if (!loop.getBody()->empty())
+      loop.getBody()->front().erase();
+    return loop;
   }
 
   static affine::AffineForOp
   createLoopWithSameBounds(OpBuilder &builder, Location loc,
                            affine::AffineForOp templateLoop, ValueRange inits) {
-    return affine::AffineForOp::create(
+    auto loop = affine::AffineForOp::create(
         builder, loc, templateLoop.getLowerBoundOperands(),
         templateLoop.getLowerBoundMap(), templateLoop.getUpperBoundOperands(),
         templateLoop.getUpperBoundMap(), templateLoop.getStepAsInt(), inits);
+    if (!loop.getBody()->empty())
+      loop.getBody()->front().erase();
+    return loop;
   }
 
   // (nInner * j + localIV) * step + start, as one affine.apply -- the whole

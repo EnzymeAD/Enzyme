@@ -122,6 +122,21 @@ def ReverseAutoDiffOpInterface : OpInterface<"ReverseAutoDiffOpInterface"> {
     /*retTy=*/"SmallVector<Value>",
     /*methodName=*/"cacheValues",
     /*args=*/(ins "::mlir::enzyme::MGradientUtilsReverse *":$gutils)
+    >,
+
+    InterfaceMethod<
+    /*desc=*/[{
+      Returns a boolean mask with one entry per operand indicating whether that
+      operand's primal value is needed to compute the reverse-mode adjoint.
+      Defaults conservatively to all true.
+    }],
+    /*retTy=*/"SmallVector<bool>",
+    /*methodName=*/"cachedArguments",
+    /*args=*/(ins "::mlir::enzyme::MGradientUtilsReverse *":$gutils),
+    /*methodBody=*/"",
+    /*defaultImplementation=*/[{
+      return SmallVector<bool>($_op->getNumOperands(), true);
+    }]
     >
   ];
 }
