@@ -345,7 +345,7 @@ def : CallPattern<(Op $x),
                   >;
 
 def : CallPattern<(Op $x, $y),
-                  ["hypot", "hypotf", "hypotl", "__hypot_finite"],
+                  ["hypot", "hypotf", "hypotl", "__hypot_finite", "_hypot", "_hypotf"],
                   [
                     (FDiv (FMul (DiffeRet), $x), (Call<(SameFunc), [ReadNone,NoUnwind]> $x, $y)),
                     (FDiv (FMul (DiffeRet), $y), (Call<(SameFunc), [ReadNone,NoUnwind]> $x, $y))
@@ -524,7 +524,7 @@ def : CallPattern<(Op $x),
                   [ReadNone, NoUnwind]
                   >;
 def : CallPattern<(Op $x, $y),
-                  ["remainder"],
+                  ["remainder", "remainderf", "remainderl"],
                   [
                     (DiffeRet),
                     (FMul (FNeg (DiffeRet)), (Intrinsic<"round"> (FDiv $x, $y)))
@@ -654,7 +654,7 @@ def : CallPattern<(Op $x),
                   ["tgamma"],
                   [
                   (
-                   FMul (Call<(ArgAsRetTypesFunc<"digamma">), [ReadNone,NoUnwind]> $x), (DiffeRet)
+                   FMul (FMul (Call<(SameFunc), [ReadNone,NoUnwind]> $x), (Call<(ArgAsRetTypesFunc<"digamma">), [ReadNone,NoUnwind]> $x)), (DiffeRet)
                   )
                   ],
                   (ForwardFromSummedReverse),
@@ -662,7 +662,42 @@ def : CallPattern<(Op $x),
                   >;
 
 def : CallPattern<(Op $x),
-                  ["logabsgamma", "lgamma"],
+                  ["tgammaf"],
+                  [
+                  (
+                   FMul (FMul (Call<(SameFunc), [ReadNone,NoUnwind]> $x), (Call<(ArgAsRetTypesFunc<"digammaf">), [ReadNone,NoUnwind]> $x)), (DiffeRet)
+                  )
+                  ],
+                  (ForwardFromSummedReverse),
+                  [ReadNone, NoUnwind]
+                  >;
+
+// C lgamma returns a scalar, unlike logabsgamma which also returns the sign.
+def : CallPattern<(Op $x),
+                  ["lgamma"],
+                  [
+                  (
+                   FMul (Call<(ArgAsRetTypesFunc<"digamma">), [ReadNone,NoUnwind]> $x), (DiffeRet)
+                  )
+                  ],
+                  (ForwardFromSummedReverse),
+                  [ReadNone, NoUnwind]
+                  >;
+
+// C lgamma returns a scalar, unlike logabsgamma which also returns the sign.
+def : CallPattern<(Op $x),
+                  ["lgammaf"],
+                  [
+                  (
+                   FMul (Call<(ArgAsRetTypesFunc<"digammaf">), [ReadNone,NoUnwind]> $x), (DiffeRet)
+                  )
+                  ],
+                  (ForwardFromSummedReverse),
+                  [ReadNone, NoUnwind]
+                  >;
+
+def : CallPattern<(Op $x),
+                  ["logabsgamma"],
                   [
                   (
                    ArrayRet (FMul (Call<(ArgAsRetTypesFunc<"digamma">), [ReadNone,NoUnwind]> $x), (DiffeRet) ),
@@ -674,7 +709,7 @@ def : CallPattern<(Op $x),
                   >;
 
 def : CallPattern<(Op $x),
-                  ["logabsgammaf", "lgammaf"],
+                  ["logabsgammaf"],
                   [
                   (
                    ArrayRet (FMul (Call<(ArgAsRetTypesFunc<"digammaf">), [ReadNone,NoUnwind]> $x), (DiffeRet) ),
@@ -805,9 +840,9 @@ def : CallPattern<(Op $x),
                   >;
 
 def : CallPattern<(Op $x),
-                  ["erfinv","erfinvf","erfinfvl", "__nv_erfinv","__nv_erfinvf","__nv_erfinfvl", ],
+                  ["erfinv","erfinvf","erfinvl", "__nv_erfinv","__nv_erfinvf","__nv_erfinvl", ],
                   [
-                    (FMul (FMul (ConstantFP<"0.8862269254527580136490837416705725913987747280611935641069038949264556422955160906874753283692723327"> $x), (FMul (Call<(SameFunc), [ReadNone, NoUnwind]> $x):$ei, $ei)), (DiffeRet))
+                    (FMul (FMul (ConstantFP<"0.8862269254527580136490837416705725913987747280611935641069038949264556422955160906874753283692723327"> $x), (Intrinsic<"exp"> (FMul (Call<(SameFunc), [ReadNone, NoUnwind]> $x):$ei, $ei))), (DiffeRet))
                   ],
                   (ForwardFromSummedReverse),
                   [ReadNone, NoUnwind]
