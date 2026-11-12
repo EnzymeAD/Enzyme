@@ -26,7 +26,8 @@ Detailed information on installing and using Enzyme can be found on our website:
 This tree also carries Poseidon, a profile-guided numerical optimizer built as
 a second pass plugin on top of Enzyme: it profiles a program's floating-point
 instructions (Enzyme differentiates the probes), then rewrites the program to
-run as fast as a user accuracy target allows, on CPUs and NVIDIA GPUs.
+run as fast as a user accuracy target allows, on CPUs, NVIDIA GPUs (CUDA) and
+AMD GPUs (HIP).
 Configure with `-DENZYME_POSEIDON=ON`; `enzyme/Poseidon/README.md` has the
 build and the usage.
 
