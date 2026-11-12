@@ -3598,6 +3598,98 @@ bool AdjointGenerator::handleKnownCallDerivatives(
   if (isAllocationFunction(funcName, gutils->TLI)) {
 
     bool constval = gutils->isConstantValue(&call);
+    bool hasPDFree = gutils->allocationsWithGuaranteedFree.count(&call);
+    bool escapesWithoutFree = false;
+    if (!hasPDFree && (Mode == DerivativeMode::ReverseModeCombined ||
+                       !EnzymeFreeInternalAllocations)) {
+      bool escapes = false;
+      bool reachesFree = false;
+      std::set<std::pair<const Instruction *, const Value *>> seen;
+      SmallVector<std::pair<const Instruction *, const Value *>, 8> todo;
+      for (auto U : call.users()) {
+        if (auto I = dyn_cast<Instruction>(U))
+          todo.emplace_back(I, &call);
+      }
+      while (!todo.empty()) {
+        auto curAndPrev = todo.pop_back_val();
+        const Instruction *cur = curAndPrev.first;
+        const Value *prev = curAndPrev.second;
+        if (!seen.insert(curAndPrev).second)
+          continue;
+        if (gutils->notForAnalysis.count(cur->getParent()))
+          continue;
+        if (isPointerArithmeticInst(cur) || isa<PHINode>(cur) ||
+            isa<SelectInst>(cur) || isa<InsertValueInst>(cur) ||
+            isa<ExtractValueInst>(cur)) {
+          for (auto U : cur->users()) {
+            if (auto I = dyn_cast<Instruction>(U))
+              todo.emplace_back(I, cur);
+          }
+          continue;
+        }
+        if (isa<ReturnInst>(cur)) {
+          escapes = true;
+          continue;
+        }
+        if (auto SI = dyn_cast<StoreInst>(cur)) {
+          if (SI->getValueOperand() == prev) {
+            const Value *ptrOp = SI->getPointerOperand();
+            const Value *base = getBaseObject(ptrOp);
+            if (auto AI = dyn_cast<AllocaInst>(base)) {
+              SmallVector<const Value *, 4> ptrs = {AI};
+              SmallPtrSet<const Value *, 4> seenPtrs = {AI};
+              while (!ptrs.empty()) {
+                const Value *p = ptrs.pop_back_val();
+                for (auto U : p->users()) {
+                  if (auto LI = dyn_cast<LoadInst>(U)) {
+                    for (auto LU : LI->users()) {
+                      if (auto I = dyn_cast<Instruction>(LU))
+                        todo.emplace_back(I, LI);
+                    }
+                  } else if (auto I = dyn_cast<Instruction>(U)) {
+                    if (isPointerArithmeticInst(I) || isa<PHINode>(I) ||
+                        isa<SelectInst>(I)) {
+                      if (seenPtrs.insert(I).second)
+                        ptrs.push_back(I);
+                    }
+                  }
+                }
+              }
+            } else if (isAllocationCall(base, gutils->TLI)) {
+              for (auto U : base->users()) {
+                if (auto I = dyn_cast<Instruction>(U))
+                  todo.emplace_back(I, base);
+              }
+            } else {
+              escapes = true;
+              bool inLoop =
+                  gutils->OrigLI->getLoopFor(SI->getParent()) != nullptr;
+              for (auto U : ptrOp->users()) {
+                if (auto LI = dyn_cast<LoadInst>(U)) {
+                  if (inLoop || !gutils->OrigDT->dominates(LI, SI)) {
+                    for (auto LU : LI->users()) {
+                      if (auto I = dyn_cast<Instruction>(LU))
+                        todo.emplace_back(I, LI);
+                    }
+                  }
+                }
+              }
+            }
+          }
+          continue;
+        }
+        if (auto CI = dyn_cast<CallInst>(cur)) {
+          StringRef fn = getFuncNameFromCall(const_cast<CallInst *>(CI));
+          if (isDeallocationFunction(fn, gutils->TLI)) {
+            if (CI->getArgOperand(0) == prev)
+              reachesFree = true;
+            continue;
+          }
+        }
+      }
+      if (escapes && !reachesFree)
+        escapesWithoutFree = true;
+    }
 
     if (!constval) {
       auto dbgLoc = gutils->getNewFromOriginal(&call)->getDebugLoc();
@@ -3886,7 +3978,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
         if (((Mode == DerivativeMode::ReverseModeCombined && shouldFree()) ||
              (Mode == DerivativeMode::ReverseModeGradient && shouldFree()) ||
              (Mode == DerivativeMode::ForwardModeSplit && shouldFree())) &&
-            !isAlloca) {
+            !isAlloca && !escapesWithoutFree) {
           IRBuilder<> Builder2(&call);
           getReverseBuilder(Builder2);
           assert(anti);
@@ -4194,7 +4286,6 @@ bool AdjointGenerator::handleKnownCallDerivatives(
     // free behavior and do not rematerialize this for the reverse. However,
     // this is only safe to perform for allocations with a guaranteed free
     // as can we can only guarantee that we don't erase those frees.
-    bool hasPDFree = gutils->allocationsWithGuaranteedFree.count(&call);
     if (!primalNeededInReverse && hasPDFree) {
       if (unnecessaryValues.count(&call)) {
         eraseIfUnused(call, /*erase*/ true, /*check*/ false);
@@ -4235,7 +4326,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
       return true;
     }
 
-    if (EnzymeFreeInternalAllocations)
+    if (EnzymeFreeInternalAllocations && !escapesWithoutFree)
       hasPDFree = true;
 
     // TODO enable this if we need to free the memory
@@ -4279,7 +4370,6 @@ bool AdjointGenerator::handleKnownCallDerivatives(
         }
       }
     } else if (Mode == DerivativeMode::ReverseModeGradient ||
-               Mode == DerivativeMode::ReverseModeCombined ||
                Mode == DerivativeMode::ForwardModeSplit) {
       // Note that here we cannot simply replace with null as users who
       // try to find the shadow pointer will use the shadow of null rather
@@ -4289,6 +4379,9 @@ bool AdjointGenerator::handleKnownCallDerivatives(
       gutils->fictiousPHIs[pn] = &call;
       gutils->replaceAWithB(newCall, pn);
       gutils->erase(newCall);
+    } else if (Mode == DerivativeMode::ReverseModeCombined &&
+               unnecessaryValues.count(&call)) {
+      eraseIfUnused(call, /*erase*/ true, /*check*/ false);
     }
 
     return true;
