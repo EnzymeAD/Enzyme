@@ -19,10 +19,10 @@
 #include <system_error>
 #include <unordered_map>
 
+#include "IR/Utils.h"
 #include "ProfileRead.h"
 #include "Targets/OffloadRuntime.h"
 #include "Targets/Target.h"
-#include "Utils.h"
 
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallString.h"

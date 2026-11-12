@@ -45,6 +45,7 @@
 
 #include "Expansion.h"
 #include "Herbie.h"
+#include "IR/Utils.h"
 #include "Model/CostModel.h"
 #include "Model/Evaluators.h"
 #include "Model/Sampling.h"
@@ -55,7 +56,6 @@
 #include "Staging.h"
 #include "Targets/DeviceMath.h"
 #include "Targets/Target.h"
-#include "Utils.h"
 
 using namespace llvm;
 

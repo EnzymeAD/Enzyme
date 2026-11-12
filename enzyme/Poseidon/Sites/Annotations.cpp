@@ -2,9 +2,9 @@
 
 #include "Canonicalize.h"
 #include "Core/Options.h"
+#include "IR/Utils.h"
 #include "Targets/OffloadRuntime.h"
 #include "Targets/Target.h"
-#include "Utils.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLExtras.h"

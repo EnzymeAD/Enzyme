@@ -13,8 +13,8 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/IR/PassManager.h"
 
+#include "IR/Utils.h"
 #include "Matmul.h"
-#include "Utils.h"
 #include "runtime/ozaki/OzakiII.h"
 
 #include <string>
