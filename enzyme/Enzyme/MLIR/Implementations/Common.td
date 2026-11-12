@@ -17,6 +17,15 @@ class ControlFlowOp<string dialect_, string opName_, string impl_> {
   string impl = impl_;
 }
 
+class SingleRegionControlFlowOp<string dialect_, string opName_>
+    : ControlFlowOp<dialect_, opName_,
+        "Operation *createWithShadows(Operation *op, OpBuilder &builder, "
+        "MGradientUtils *gutils, Operation *original, "
+        "ValueRange remappedOperands, TypeRange rettys) const { "
+        "return " # dialect_ # "::" # opName_ #
+        "::create(builder, op->getLoc(), rettys, remappedOperands, "
+        "original->getAttrs()); }">;
+
 class InactiveArgSpec {
   bit asserting;
 }

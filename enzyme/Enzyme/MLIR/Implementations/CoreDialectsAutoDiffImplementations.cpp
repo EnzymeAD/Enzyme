@@ -17,6 +17,7 @@
 #include "Interfaces/GradientUtils.h"
 #include "Interfaces/GradientUtilsReverse.h"
 #include "Interfaces/Utils.h"
+#include "Passes/RemovalUtils.h"
 #include "Passes/Utils.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -27,6 +28,7 @@
 #include "mlir/IR/Matchers.h"
 
 #include "llvm/ADT/APFloat.h"
+#include "llvm/ADT/BitVector.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/CommandLine.h"
 
@@ -378,6 +380,139 @@ void mlir::enzyme::detail::returnReverseHandler(Operation *op,
       idx++;
     }
   }
+}
+
+LogicalResult mlir::enzyme::detail::singleRegionReverseHandler(
+    Operation *op, OpBuilder &builder, MGradientUtilsReverse *gutils,
+    llvm::function_ref<Operation *(OpBuilder &, Location)>
+        createEmptyReverseOp) {
+  Region &bodyRegion = op->getRegion(0);
+  if (bodyRegion.empty())
+    return success();
+  if (!bodyRegion.hasOneBlock())
+    return op->emitError() << "reverse mode differentiation of multi-block "
+                           << op->getName() << " is not yet supported";
+
+  llvm::BitVector resultsActive(op->getNumResults(), false);
+  for (unsigned i = 0, e = op->getNumResults(); i < e; ++i) {
+    Value res = op->getResult(i);
+    auto iface = dyn_cast<AutoDiffTypeInterface>(res.getType());
+    bool needsGrad = iface && !iface.isMutable();
+    resultsActive[i] = needsGrad && !gutils->isConstantValue(res);
+  }
+
+  SmallVector<Value> incomingGradients;
+  incomingGradients.reserve(resultsActive.count());
+  for (unsigned i : resultsActive.set_bits()) {
+    Value res = op->getResult(i);
+    incomingGradients.push_back(gutils->diffe(res, builder));
+    gutils->zeroDiffe(res, builder);
+  }
+
+  Operation *revOp = createEmptyReverseOp(builder, op->getLoc());
+  Block &revBB = revOp->getRegion(0).front();
+
+  bool valid = true;
+  Block &origBB = bodyRegion.front();
+  OpBuilder revBuilder(&revBB, revBB.begin());
+  mlir::enzyme::localizeGradients(revBuilder, gutils, &origBB);
+
+  revBuilder.setInsertionPoint(revBB.getTerminator());
+
+  Operation *term = origBB.getTerminator();
+  for (auto [idx, incomingGrad] :
+       llvm::zip_equal(resultsActive.set_bits(), incomingGradients)) {
+    Value operand = term->getOperand(idx);
+    if (!gutils->isConstantValue(operand))
+      gutils->addToDiffe(operand, incomingGrad, revBuilder);
+  }
+
+  for (auto it = std::next(origBB.rbegin()), e = origBB.rend(); it != e; ++it) {
+    Operation *childOp = &*it;
+    valid &= gutils->Logic.visitChild(childOp, revBuilder, gutils).succeeded();
+  }
+
+  return success(valid);
+}
+
+LogicalResult mlir::enzyme::detail::regionShadowValuesHandler(
+    Operation *op, OpBuilder &builder, MGradientUtilsReverse *gutils,
+    llvm::function_ref<Operation *(OpBuilder &, Location, TypeRange)>
+        createAugmentedOp) {
+  if (op->getNumResults() == 0)
+    return success();
+
+  Operation *newOp = gutils->getNewFromOriginal(op);
+
+  llvm::BitVector resultsToShadow(op->getNumResults(), false);
+  SmallVector<Type> newResultTypes;
+  newResultTypes.reserve(op->getNumResults() * 2);
+  for (OpResult res : op->getResults()) {
+    newResultTypes.push_back(res.getType());
+    auto iface = dyn_cast<AutoDiffTypeInterface>(res.getType());
+    if (iface && iface.isMutable() && !gutils->isConstantValue(res)) {
+      resultsToShadow.set(res.getResultNumber());
+      newResultTypes.push_back(iface.getShadowType(gutils->width));
+    }
+  }
+
+  if (resultsToShadow.none())
+    return success();
+
+  Operation *repOp = createAugmentedOp(builder, op->getLoc(), newResultTypes);
+  for (auto [newRegion, repRegion] :
+       llvm::zip_equal(newOp->getRegions(), repOp->getRegions())) {
+    repRegion.takeBody(newRegion);
+  }
+
+  SmallVector<Value> repResults;
+  repResults.reserve(op->getNumResults());
+  for (size_t i = 0, j = 0, e = op->getNumResults(); i < e; ++i) {
+    repResults.push_back(repOp->getResult(j));
+    j++;
+    if (resultsToShadow.test(i)) {
+      gutils->setInvertedPointer(op->getResult(i), repOp->getResult(j));
+      j++;
+    }
+  }
+
+  gutils->replaceOrigOpWith(op, repResults);
+  gutils->erase(newOp);
+  gutils->originalToNewFn.map(op, repOp);
+
+  for (auto [origRegion, repRegion] :
+       llvm::zip_equal(op->getRegions(), repOp->getRegions())) {
+    for (auto [origBlock, repBlock] : llvm::zip_equal(origRegion, repRegion)) {
+      Operation *origTerm = origBlock.getTerminator();
+      Operation *repTerm = repBlock.getTerminator();
+      if (origTerm->getNumSuccessors() != 0)
+        continue;
+
+      OpBuilder termBuilder(repTerm);
+      SmallVector<Value> newTermOperands;
+      newTermOperands.reserve(origTerm->getNumOperands() +
+                              resultsToShadow.count());
+      for (OpOperand &operand : origTerm->getOpOperands()) {
+        unsigned idx = operand.getOperandNumber();
+        newTermOperands.push_back(repTerm->getOperand(idx));
+        if (resultsToShadow.test(idx)) {
+          Value shadow;
+          if (gutils->isConstantValue(operand.get())) {
+            Type retTy = cast<AutoDiffTypeInterface>(operand.get().getType())
+                             .getShadowType(gutils->width);
+            shadow = cast<AutoDiffTypeInterface>(retTy).createNullValue(
+                termBuilder, operand.get().getLoc());
+          } else {
+            shadow = gutils->invertPointerM(operand.get(), termBuilder);
+          }
+          newTermOperands.push_back(shadow);
+        }
+      }
+      repTerm->setOperands(newTermOperands);
+    }
+  }
+
+  return success();
 }
 
 void mlir::enzyme::detail::regionTerminatorForwardHandler(

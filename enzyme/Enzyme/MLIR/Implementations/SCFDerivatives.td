@@ -80,16 +80,7 @@ def : ControlFlowOp<"scf", "WhileOp", [{
   }
 }]>;
 
-def : ControlFlowOp<"scf", "ExecuteRegionOp", [{
-  Operation *createWithShadows(Operation *op, OpBuilder &builder,
-                               MGradientUtils *gutils, Operation *original,
-                               ValueRange remappedOperands,
-                               TypeRange rettys) const {
-    auto repIf = scf::ExecuteRegionOp::create(
-        builder, op->getLoc(), rettys);
-    return repIf;
-  }
-}]>;
+def : SingleRegionControlFlowOp<"scf", "ExecuteRegionOp">;
 
 def : RegionTerminatorOp<"scf", "YieldOp">;
 def : RegionTerminatorOp<"scf", "ConditionOp">;

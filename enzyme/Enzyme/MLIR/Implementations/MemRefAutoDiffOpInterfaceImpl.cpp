@@ -18,6 +18,7 @@
 #include "Interfaces/GradientUtilsReverse.h"
 #include "Interfaces/OffsetViewInterface.h"
 #include "Interfaces/Utils.h"
+#include "Passes/RemovalUtils.h"
 
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/DialectRegistry.h"
@@ -514,6 +515,10 @@ void mlir::enzyme::registerMemRefDialectAutoDiffInterface(
     memref::StoreOp::attachInterface<StoreOpInterfaceReverse>(*context);
     memref::SubViewOp::attachInterface<SubViewOpInterfaceReverse>(*context);
     memref::AllocOp::attachInterface<MemRefAllocOpInterface>(*context);
+    memref::AllocaScopeOp::attachInterface<SingleRegionRevAutoDiffInterface<
+        memref::AllocaScopeOp, memref::AllocaScopeReturnOp>>(*context);
+    memref::AllocaScopeOp::attachInterface<
+        SingleRegionEnzymeOpsRemover<memref::AllocaScopeOp>>(*context);
 
     memref::CastOp::attachInterface<OffsetViewInterface::Model<memref::CastOp>>(
         *context);
