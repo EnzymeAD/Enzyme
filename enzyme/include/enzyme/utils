@@ -157,8 +157,38 @@ namespace enzyme {
         using type = T;
     };
 
+    template < typename T >
+    struct grad_out_type {
+        using type = nodiff;
+    };
+
+    template < typename T >
+    struct grad_out_type < Active<T> > {
+        using type = T;
+    };
+
+    template < typename T >
+    struct primal_ret_type {
+        using type = typename type_info<T>::type;
+    };
+
+    template < typename T >
+    struct primal_ret_type < Const<T> > {
+        using type = T;
+    };
+
+    template <>
+    struct primal_ret_type < Const<void> > {
+        using type = nodiff;
+    };
+
     template < typename ... T >
     struct concatenated;
+
+    template < typename ... S, typename ... rest >
+    struct concatenated < tuple < S ... >, nodiff, rest ... > {
+        using type = typename concatenated< tuple< S ... >, rest ... >::type;
+    };
 
     template < typename ... S, typename T, typename ... rest >
     struct concatenated < tuple < S ... >, T, rest ... > {
@@ -179,7 +209,7 @@ namespace enzyme {
     struct autodiff_return<ReverseMode<false>, RetType, T...>
     {
         using type = tuple<typename concatenated< tuple< >,
-            typename type_info<
+            typename grad_out_type<
                 typename remove_cvref< T >::type
             >::type ...
         >::type>;
@@ -189,9 +219,9 @@ namespace enzyme {
     struct autodiff_return<ReverseMode<true>, RetType, T...>
     {
         using type = tuple<
-            typename type_info<RetType>::type,
+            typename primal_ret_type<RetType>::type,
             typename concatenated< tuple< >,
-                typename type_info<
+                typename grad_out_type<
                     typename remove_cvref< T >::type
                 >::type ...
             >::type
@@ -202,6 +232,12 @@ namespace enzyme {
     struct autodiff_return<ForwardMode, Const<T0>, T...>
     {
         using type = tuple<T0>;
+    };
+
+    template < typename ... T >
+    struct autodiff_return<ForwardMode, Const<void>, T...>
+    {
+        using type = tuple<>;
     };
 
     template < typename T0, typename ... T >
@@ -353,6 +389,24 @@ namespace enzyme {
           return tuple{get<1>(t), get<0>(t)};
         }
 
+        template <typename T>
+        __attribute__((always_inline))
+        constexpr decltype(auto) decay_ptr(T&& v) noexcept {
+          using Raw = remove_cvref_t<T>;
+          if constexpr (std::is_pointer_v<Raw>) {
+            using Pointee = std::remove_cv_t<std::remove_pointer_t<Raw>>;
+            if constexpr (std::is_fundamental_v<Pointee>) {
+              return impl::forward<T>(v);
+            } else if constexpr (std::is_function_v<Pointee>) {
+              return reinterpret_cast<void*>(v);
+            } else {
+              return const_cast<void*>(static_cast<const volatile void*>(v));
+            }
+          } else {
+            return impl::forward<T>(v);
+          }
+        }
+
         template <typename Mode>
         struct autodiff_apply {};
 
@@ -361,7 +415,7 @@ namespace enzyme {
         template <class return_type, class Tuple, std::size_t... I, typename... ExtraArgs>
         __attribute__((always_inline))
         static constexpr decltype(auto) impl(void* f, int* ret_attr, Tuple&& t, std::index_sequence<I...>, ExtraArgs... args) {
-            return push_return_last(__enzyme_autodiff<return_type>(f, ret_attr, args..., enzyme::get<I>(impl::forward<Tuple>(t))...));
+            return push_return_last(__enzyme_autodiff<return_type>(f, ret_attr, decay_ptr(args)..., decay_ptr(enzyme::get<I>(impl::forward<Tuple>(t)))...));
         }
         };
 
@@ -370,7 +424,7 @@ namespace enzyme {
         template <class return_type, class Tuple, std::size_t... I, typename... ExtraArgs>
         __attribute__((always_inline))
         static constexpr return_type impl(void* f, int* ret_attr, Tuple&& t, std::index_sequence<I...>, ExtraArgs... args) {
-            return __enzyme_fwddiff<return_type>(f, ret_attr, args..., enzyme::get<I>(impl::forward<Tuple>(t))...);
+            return __enzyme_fwddiff<return_type>(f, ret_attr, decay_ptr(args)..., decay_ptr(enzyme::get<I>(impl::forward<Tuple>(t)))...);
         }
         };
 
@@ -449,6 +503,10 @@ namespace enzyme {
         struct ret_used<ForwardMode, Const<T>> {
           static constexpr int* value = &enzyme_primal_return;
         };
+        template<>
+        struct ret_used<ForwardMode, Const<void>> {
+          static constexpr int* value = &enzyme_noret;
+        };
         template<typename T>
         struct ret_used<ForwardMode, Duplicated<T>> {
           static constexpr int* value = &enzyme_primal_return;
@@ -459,13 +517,13 @@ namespace enzyme {
           static constexpr bool value = true;
         };
 
-        template <typename... Args>
-        struct verify_dup_args<enzyme::Reverse, Args...> {
+        template <bool ReturnPrimal, typename... Args>
+        struct verify_dup_args<ReverseMode<ReturnPrimal>, Args...> {
           static constexpr bool value = (
             (
-              !type_info<Args>::is_duplicated
-              || std::is_reference_v<typename type_info<Args>::type>
-              || std::is_pointer_v<typename type_info<Args>::type>
+              !type_info<remove_cvref_t<Args>>::is_duplicated
+              || std::is_reference_v<typename type_info<remove_cvref_t<Args>>::type>
+              || std::is_pointer_v<typename type_info<remove_cvref_t<Args>>::type>
             ) && ...
           );
         };
