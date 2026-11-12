@@ -309,14 +309,19 @@ struct ProbeRun {
 };
 } // namespace
 
+// The value is the last field of the line: the name may hold spaces.
 static bool probeReadMetric(const std::string &dir, double &value) {
   std::ifstream in(dir + "/metric.txt");
-  if (!in.is_open())
+  std::string line;
+  if (!in.is_open() || !std::getline(in, line))
     return false;
-  std::string name;
-  if (!(in >> name >> value))
+  size_t at = line.rfind(' ');
+  if (at == std::string::npos)
     return false;
-  return true;
+  const char *field = line.c_str() + at + 1;
+  char *end = nullptr;
+  value = std::strtod(field, &end);
+  return end != field && *end == '\0';
 }
 
 // Run the workload again with `extra` added to the environment, its output in
