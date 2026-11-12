@@ -7172,7 +7172,7 @@ bool TypeResults::anyFloat(Value *val, bool anythingIsFloat) const {
       i++;
       continue;
     }
-    if (!anythingIsFloat && dt == BaseType::Integer) {
+    if (!anythingIsFloat && dt == BaseType::Anything) {
       i++;
       continue;
     }

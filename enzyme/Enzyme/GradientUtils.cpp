@@ -162,7 +162,8 @@ GradientUtils::GradientUtils(
     ValueToValueMapTy &invertedPointers_,
     const SmallPtrSetImpl<Value *> &constantvalues_,
     const SmallPtrSetImpl<Value *> &activevals_, DIFFE_TYPE ReturnActivity,
-    bool shadowReturnUsed_, ArrayRef<DIFFE_TYPE> ArgDiffeTypes_,
+    bool shadowReturnUsed_, bool diffeReturnUsed_,
+    ArrayRef<DIFFE_TYPE> ArgDiffeTypes_,
     llvm::ValueMap<const llvm::Value *, AssertingReplacingVH> &originalToNewFn_,
     DerivativeMode mode, bool runtimeActivity, bool strongZero, unsigned width,
     bool omp)
@@ -196,7 +197,7 @@ GradientUtils::GradientUtils(
                                : &Logic.PPC.getAAResultsFromFunction(oldFunc_)),
       TA(TA_), TR(TR_), omp(omp), runtimeActivity(runtimeActivity),
       strongZero(strongZero), width(width), shadowReturnUsed(shadowReturnUsed_),
-      ArgDiffeTypes(ArgDiffeTypes_) {
+      diffeReturnUsed(diffeReturnUsed_), ArgDiffeTypes(ArgDiffeTypes_) {
   if (oldFunc_->empty())
     return;
   if (oldFunc_->getSubprogram()) {
@@ -4561,7 +4562,8 @@ GradientUtils *GradientUtils::CreateFromClone(
     Function *todiff, TargetLibraryInfo &TLI, TypeAnalysis &TA,
     FnTypeInfo &oldTypeInfo, DIFFE_TYPE retType,
     ArrayRef<DIFFE_TYPE> constant_args, bool returnUsed, bool shadowReturnUsed,
-    std::map<AugmentedStruct, int> &returnMapping, bool omp) {
+    bool diffeReturnUsed, std::map<AugmentedStruct, int> &returnMapping,
+    bool omp) {
   Function *oldFunc = todiff;
 
   // Since this is forward pass this should always return the tape (at index 0)
@@ -4639,23 +4641,87 @@ GradientUtils *GradientUtils::CreateFromClone(
 
   auto res = new GradientUtils(
       Logic, newFunc, oldFunc, TLI, TA, TR, invertedPointers, constant_values,
-      nonconstant_values, retType, shadowReturnUsed, constant_args,
-      originalToNew, DerivativeMode::ReverseModePrimal, runtimeActivity,
-      strongZero, width, omp);
+      nonconstant_values, retType, shadowReturnUsed, diffeReturnUsed,
+      constant_args, originalToNew, DerivativeMode::ReverseModePrimal,
+      runtimeActivity, strongZero, width, omp);
   return res;
 }
 
-DIFFE_TYPE GradientUtils::getReturnDiffeType(llvm::Value *orig,
-                                             bool *primalReturnUsedP,
-                                             bool *shadowReturnUsedP) const {
-  return getReturnDiffeType(orig, primalReturnUsedP, shadowReturnUsedP, mode);
+static bool containsNonPointer(llvm::Type *T) {
+  if (T->isPointerTy())
+    return false;
+  if (auto *ST = llvm::dyn_cast<llvm::StructType>(T)) {
+    for (unsigned i = 0; i < ST->getNumElements(); ++i)
+      if (containsNonPointer(ST->getElementType(i)))
+        return true;
+    return false;
+  }
+  if (auto *AT = llvm::dyn_cast<llvm::ArrayType>(T))
+    return containsNonPointer(AT->getElementType());
+  if (auto *VT = llvm::dyn_cast<llvm::VectorType>(T))
+    return containsNonPointer(VT->getElementType());
+  return true;
+}
+
+bool GradientUtils::hasActiveDiffeUse(llvm::Value *orig) const {
+  if (isConstantValue(orig))
+    return false;
+  if (!containsNonPointer(orig->getType()) || !TR.anyFloat(orig))
+    return false;
+
+  SmallVector<llvm::Value *, 4> todo{orig};
+  SmallPtrSet<llvm::Value *, 4> seen;
+  seen.insert(orig);
+  while (!todo.empty()) {
+    llvm::Value *cur = todo.pop_back_val();
+    for (auto *U : cur->users()) {
+      auto *UI = dyn_cast<Instruction>(U);
+      if (!UI || notForAnalysis.count(UI->getParent()))
+        continue;
+      if (isa<ReturnInst>(UI)) {
+        if (diffeReturnUsed)
+          return true;
+        continue;
+      }
+      if (isa<ExtractValueInst>(UI) || isa<ExtractElementInst>(UI)) {
+        if (isConstantInstruction(UI) || isConstantValue(UI))
+          continue;
+        if (!containsNonPointer(UI->getType()) || !TR.anyFloat(UI))
+          continue;
+        if (seen.insert(UI).second)
+          todo.push_back(UI);
+        continue;
+      }
+      if (isa<InsertValueInst>(UI) || isa<InsertElementInst>(UI) ||
+          isa<PHINode>(UI) || isa<SelectInst>(UI) || isa<BitCastInst>(UI)) {
+        if (isConstantValue(UI))
+          continue;
+        if (seen.insert(UI).second)
+          todo.push_back(UI);
+        continue;
+      }
+      if (!isConstantInstruction(UI))
+        return true;
+    }
+  }
+  return false;
 }
 
 DIFFE_TYPE GradientUtils::getReturnDiffeType(llvm::Value *orig,
                                              bool *primalReturnUsedP,
                                              bool *shadowReturnUsedP,
-                                             DerivativeMode cmode) const {
+                                             bool *diffeReturnUsedP) const {
+  return getReturnDiffeType(orig, primalReturnUsedP, shadowReturnUsedP, mode,
+                            diffeReturnUsedP);
+}
+
+DIFFE_TYPE GradientUtils::getReturnDiffeType(llvm::Value *orig,
+                                             bool *primalReturnUsedP,
+                                             bool *shadowReturnUsedP,
+                                             DerivativeMode cmode,
+                                             bool *diffeReturnUsedP) const {
   bool shadowReturnUsed = false;
+  bool diffeReturnUsed = false;
 
   DIFFE_TYPE subretType;
   if (isConstantValue(orig)) {
@@ -4677,10 +4743,16 @@ DIFFE_TYPE GradientUtils::getReturnDiffeType(llvm::Value *orig,
                 QueryType::Shadow>(this, orig, cmode, notForAnalysis)) {
           subretType = DIFFE_TYPE::DUP_ARG;
           shadowReturnUsed = true;
-        } else
+          diffeReturnUsed = hasActiveDiffeUse(orig);
+        } else if (hasActiveDiffeUse(orig)) {
+          subretType = DIFFE_TYPE::OUT_DIFF;
+          diffeReturnUsed = true;
+        } else {
           subretType = DIFFE_TYPE::CONSTANT;
+        }
       } else {
         subretType = DIFFE_TYPE::OUT_DIFF;
+        diffeReturnUsed = true;
       }
     }
   }
@@ -4699,6 +4771,8 @@ DIFFE_TYPE GradientUtils::getReturnDiffeType(llvm::Value *orig,
 
   if (shadowReturnUsedP)
     *shadowReturnUsedP = shadowReturnUsed;
+  if (diffeReturnUsedP)
+    *diffeReturnUsedP = diffeReturnUsed;
   return subretType;
 }
 
@@ -5085,6 +5159,7 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
                           .overwritten_args = overwritten_args,
                           .returnUsed = false,
                           .shadowReturnUsed = false,
+                          .diffeReturnUsed = (retType == DIFFE_TYPE::OUT_DIFF),
                           .mode = DerivativeMode::ReverseModeGradient,
                           .width = width,
                           .freeMemory = true,

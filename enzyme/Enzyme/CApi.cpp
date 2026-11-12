@@ -735,6 +735,7 @@ LLVMValueRef EnzymeCreatePrimalAndGradient(
           .overwritten_args = overwritten_args,
           .returnUsed = (bool)returnValue,
           .shadowReturnUsed = (bool)dretUsed,
+          .diffeReturnUsed = ((DIFFE_TYPE)retType == DIFFE_TYPE::OUT_DIFF),
           .mode = (DerivativeMode)mode,
           .width = width,
           .freeMemory = (bool)freeMemory,
