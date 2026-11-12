@@ -540,6 +540,8 @@ if(POSEIDON_HIP_RUNTIMES)
   add_dependencies(poseidon-calibrate ${POSEIDON_HIP_TOOL_TARGETS})
 endif()
 
+add_executable(poseidon-probe tools/probe/poseidon-probe.cpp)
+
 # Every HIP device compile is an LTO pre-link compile, in which Enzyme leaves a
 # derivative request to the post-link run unless told otherwise, and the device
 # link loads no plugin. poseidon-clang gives this option to the HIP compiles
@@ -611,7 +613,7 @@ add_custom_command(
 
 install(
   TARGETS ${POSEIDON_PLUGIN_TARGET} poseidon_profile poseidon_profile_host
-  poseidon-clang poseidon-calibrate
+  poseidon-clang poseidon-calibrate poseidon-probe
   EXPORT PoseidonTargets
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}

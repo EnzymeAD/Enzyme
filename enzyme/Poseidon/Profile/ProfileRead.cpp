@@ -426,6 +426,21 @@ void requireCanonicalHash(const FunctionProfileHeader &header,
                         "instructions; re-run profile generation.");
 }
 
+void requireMeasuredKappa(const FunctionProfileHeader &header,
+                          StringRef profilePath, const Function &F) {
+  if (header.hasKappa || header.kappaMark != kKappaUnmeasured)
+    return;
+  reportUserError(
+      F, F.getSubprogram(),
+      Twine("the profiling run declared a quantity of interest with "
+            "poseidon_metric and did not measure the condition number of ") +
+          F.getName() + " against it (" + profilePath +
+          "). Run the profiling build again as 'poseidon-probe -- <program> "
+          "[args...]', the command the profiling run printed, to measure it, "
+          "or with POSEIDON_PROBE=0 in its environment to solve each site "
+          "against its own target.");
+}
+
 // Profile-gen only, device module only: pre-declare the probes with
 // enzyme_inactive before any AD runs. The tblgen-generated logging code creates
 // them on first use without the attribute, and with only a declaration in the

@@ -140,6 +140,7 @@ set(POSEIDON_TEST_DEPS
     poseidon_profile_host
     poseidon-clang
     poseidon-calibrate
+    poseidon-probe
     poseidon-test-cost-models
     LLVMEnzyme-${LLVM_VERSION_MAJOR})
 if(TARGET ClangEnzyme-${LLVM_VERSION_MAJOR})

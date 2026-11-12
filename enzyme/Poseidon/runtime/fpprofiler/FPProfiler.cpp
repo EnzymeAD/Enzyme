@@ -241,10 +241,13 @@ static void writeMetric() {
 // poseidon_metric. How far that number moves when one site is computed at a
 // relative precision eps is the site's condition number, and it is what puts
 // every site's accuracy cost on one application-level scale. Measuring it takes
-// the workload run again per (site, eps), so the profiling run does exactly
-// that: it re-executes itself with the site armed through the environment, once
-// more unperturbed for the noise floor, and folds the result into the profiles
-// it just wrote. A child has POSEIDON_PROBE=0 and never re-executes.
+// the workload run again per (site, eps), so a profiling run asked to with
+// POSEIDON_PROBE=1 (poseidon-probe sets it) re-executes itself with the site
+// armed through the environment, once more unperturbed for the noise floor, and
+// folds the result into the profiles it just wrote. A run not asked to marks
+// the profiles as unmeasured instead, and profile use stops on them; a run
+// that declines with POSEIDON_PROBE=0 leaves them as a run without a metric
+// writes them. A child has POSEIDON_PROBE=child and never re-executes.
 // ---------------------------------------------------------------------------
 
 // The children re-run the same GPU workload while this process is still inside
@@ -274,6 +277,28 @@ static void captureProbeArgv() {
     probeArgv().push_back(all.substr(at, end - at));
     at = end + 1;
   }
+}
+
+// The command line, quoted for a POSIX shell, that the notice tells the user to
+// run again.
+static std::string probeCommand() {
+  std::string cmd;
+  for (const std::string &a : probeArgv()) {
+    if (!cmd.empty())
+      cmd += ' ';
+    if (!a.empty() &&
+        a.find_first_not_of("abcdefghijklmnopqrstuvwxyz"
+                            "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+                            "0123456789@%_+=:,./-") == std::string::npos) {
+      cmd += a;
+      continue;
+    }
+    cmd += '\'';
+    for (char c : a)
+      cmd += c == '\'' ? std::string("'\\''") : std::string(1, c);
+    cmd += '\'';
+  }
+  return cmd;
 }
 
 namespace {
@@ -382,11 +407,10 @@ static void probeDecide(const std::vector<ProbeRun> &ladder, double &kappa,
   mark = hasDiverge ? "ok" : "nonlinear";
 }
 
-// Replace the site's Kappa lines, keeping them in the header block the
-// profile-use compile reads before the first slot.
-static void probeWriteKappa(const std::string &path, double kappa,
-                            const std::string &mark, bool hasDiverge,
-                            double divergesAbove) {
+// Replace the site's Kappa lines with `hdr`, keeping them in the header block
+// the profile-use compile reads before the first slot.
+static void probeReplaceKappa(const std::string &path,
+                              const std::vector<std::string> &hdr) {
   std::vector<std::string> lines;
   {
     std::ifstream in(path);
@@ -407,6 +431,15 @@ static void probeWriteKappa(const std::string &path, double kappa,
     if (kept[i].compare(0, 13, "CanonicalHash") == 0)
       break;
   }
+  kept.insert(kept.begin() + at, hdr.begin(), hdr.end());
+  std::ofstream out(path);
+  for (const std::string &l : kept)
+    out << l << "\n";
+}
+
+static void probeWriteKappa(const std::string &path, double kappa,
+                            const std::string &mark, bool hasDiverge,
+                            double divergesAbove) {
   char buf[128];
   std::vector<std::string> hdr;
   std::snprintf(buf, sizeof(buf), "Kappa = %.17g", kappa);
@@ -417,10 +450,7 @@ static void probeWriteKappa(const std::string &path, double kappa,
                   divergesAbove);
     hdr.push_back(buf);
   }
-  kept.insert(kept.begin() + at, hdr.begin(), hdr.end());
-  std::ofstream out(path);
-  for (const std::string &l : kept)
-    out << l << "\n";
+  probeReplaceKappa(path, hdr);
 }
 
 static void probeRemoveDir(const std::string &dir) {
@@ -434,13 +464,11 @@ static void probeRemoveDir(const std::string &dir) {
 }
 
 static void poseidonProbeDriver() {
-  if (getenv("POSEIDON_PROBE_SITE"))
-    return; // a child: it is the measurement, not the driver
-  if (const char *off = getenv("POSEIDON_PROBE"); off && !strcmp(off, "0"))
+  // A run the driver started, or one armed by hand, is a measurement.
+  const char *request = getenv("POSEIDON_PROBE");
+  if (getenv("POSEIDON_PROBE_SITE") || (request && !strcmp(request, "child")))
     return;
   if (!g_metricSet)
-    return;
-  if (probeArgv().empty())
     return;
 
   const std::string pdir = FPProfiler::outputDir();
@@ -486,6 +514,45 @@ static void poseidonProbeDriver() {
       p = (*end == ',') ? end + 1 : end;
     }
   }
+  const size_t runs = 1 + sites.size() * ladder.size();
+
+  if (request && !strcmp(request, "0")) {
+    fprintf(stderr,
+            "[probe] metric \"%s\" was declared and its condition numbers at "
+            "%zu sites are not measured (POSEIDON_PROBE=0): each site is "
+            "solved against its own target\n",
+            metricName().c_str(), sites.size());
+    return;
+  }
+
+  // Until a measurement replaces it, so that profile use can tell a declared
+  // metric left unmeasured from none.
+  for (const auto &kv : sites)
+    probeReplaceKappa(kv.second, {"KappaMark = unmeasured"});
+
+  if (!request || strcmp(request, "1")) {
+    fprintf(
+        stderr,
+        "[probe] metric \"%s\" was declared but its condition numbers at %zu "
+        "sites were not measured, and profile use needs them "
+        "(POSEIDON_PROBE=0 on this run solves each site against its own "
+        "target instead); measuring takes %zu more runs of this program: "
+        "poseidon-probe -- %s\n",
+        metricName().c_str(), sites.size(), runs, probeCommand().c_str());
+    return;
+  }
+  if (probeArgv().empty()) {
+    std::cerr << "[probe] cannot read this program's command line from "
+                 "/proc/self/cmdline; not measuring condition numbers"
+              << std::endl;
+    return;
+  }
+  fprintf(
+      stderr,
+      "[probe] measuring the condition numbers of metric \"%s\" at %zu sites: "
+      "%zu more runs of this program (run it without POSEIDON_PROBE=1 to "
+      "skip)\n",
+      metricName().c_str(), sites.size(), runs);
 
   char tmpl[] = "/tmp/poseidon_probe_XXXXXX";
   const char *tmp = mkdtemp(tmpl);
@@ -499,7 +566,7 @@ static void poseidonProbeDriver() {
 
   const double m0 = g_metricValue;
   auto childEnv = [&](const std::string &dir) {
-    return std::vector<std::string>{"POSEIDON_PROBE=0",
+    return std::vector<std::string>{"POSEIDON_PROBE=child",
                                     "POSEIDON_PROFILE_DIR=" + dir};
   };
 

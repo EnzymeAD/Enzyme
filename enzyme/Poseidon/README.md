@@ -24,8 +24,8 @@ enzyme/Poseidon/            the pass: Core/, IR/, Targets/, Sites/, Profile/,
                             Model/, Techniques/, Solve/ and Pass/ (the plugin
                             entry Pass/Plugin.cpp), lowest layer first
   runtime/                  profiler and GEMM dispatch runtimes the driver links
-  tools/                    poseidon-clang driver, poseidon-calibrate, poseidon-explain,
-                            Herbie platform, Compiler Explorer
+  tools/                    poseidon-clang driver, poseidon-calibrate, poseidon-probe,
+                            poseidon-explain, Herbie platform, Compiler Explorer
 enzyme/include/poseidon/    the one public header
 enzyme/test/Poseidon/       lit suite: check-poseidon (a folder per part of the
                             pass, fixtures in Inputs/) and
@@ -107,7 +107,7 @@ int main() { ...; poseidon_metric("energy drift", drift); }
 
 ```sh
 poseidon-clang++ -poseidon-profile-generate app.cu -o app
-./app small_problem                  # writes ./poseidon.profile
+poseidon-probe -- ./app small_problem # writes ./poseidon.profile
 poseidon-clang++ -poseidon-profile-use -poseidon-tau=1e-7 app.cu -o app_opt
 ```
 
@@ -138,8 +138,16 @@ The ways to opt in, simplest first:
    profiled cost are optimized.
 5. `poseidon_metric(name, value)`, once at the end of the profiling run: the
    quantity the target refers to, so the solver can spend error where it does
-   not reach that quantity. The profiling run measures how far it moves when
-   each site is perturbed. Optional.
+   not reach that quantity. How far it moves when each site is perturbed is
+   measured by running the profiling build as `poseidon-probe -- <program>
+   [args...]` (or with `POSEIDON_PROBE=1` in its environment): at exit the
+   program says how many more runs of itself the measurement takes and runs
+   itself that many times, once for a noise floor and once per site and
+   perturbation size, repeating whatever else it does on each run. Run
+   without the request, a program that declares a metric runs once and says
+   what measuring would take, and profile use stops at its sites until they
+   are measured. With `POSEIDON_PROBE=0` nothing is measured and each site is
+   solved against its own target. Optional.
 6. `__poseidon_fp_optimize(fn, args...)`: one call with explicit Enzyme
    activities and shadows; see [Advanced: one call with shadows](#advanced-one-call-with-shadows).
 
