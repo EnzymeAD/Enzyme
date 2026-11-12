@@ -44,6 +44,7 @@
 #include "llvm/Pass.h"
 
 #include "DesulAtomics.h"
+#include "Locks.h"
 
 #include "llvm/Transforms/Utils.h"
 #include "llvm/Transforms/Utils/ModuleUtils.h"
@@ -1199,6 +1200,11 @@ bool preserveNVVM(bool Begin, Module &M,
     if (Begin && !F.empty() &&
         desul_atomics::classifyLinearFetchOper(F.getName()) !=
             desul_atomics::LinearFetchOp::None) {
+      changed |= preserveLinkage(Begin, F);
+    }
+    // Locked sections are re-established in the reverse pass; keep the lock
+    // and unlock entry points out of line so the calls are visible to Enzyme.
+    if (Begin && !F.empty() && locks::classifyLockCall(F.getName())) {
       changed |= preserveLinkage(Begin, F);
     }
     if (!Begin && F.hasFnAttribute("prev_fixup")) {
