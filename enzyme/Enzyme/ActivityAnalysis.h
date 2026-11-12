@@ -169,18 +169,21 @@ private:
   void insertConstantsFrom(TypeResults const &TR,
                            ActivityAnalyzer &Hypothesis) {
     for (auto I : Hypothesis.ConstantInstructions) {
-      InsertConstantInstruction(TR, I);
+      if (!ConstantInstructions.count(I))
+        InsertConstantInstruction(TR, I);
     }
     for (auto V : Hypothesis.ConstantValues) {
-      InsertConstantValue(TR, V);
+      if (!ConstantValues.count(V))
+        InsertConstantValue(TR, V);
     }
   }
 
   /// Import known data from an existing analyzer
   void insertAllFrom(TypeResults const &TR, ActivityAnalyzer &Hypothesis,
                      llvm::Value *Orig, llvm::Value *Orig2 = nullptr) {
-    insertConstantsFrom(TR, Hypothesis);
     for (auto I : Hypothesis.ActiveInstructions) {
+      if (ConstantInstructions.count(I))
+        continue;
       bool inserted = ActiveInstructions.insert(I).second;
       if (inserted && directions == 3 && EnzymeEnableRecursiveHypotheses) {
         ReEvaluateInstIfInactiveValue[Orig].insert(I);
@@ -189,6 +192,8 @@ private:
       }
     }
     for (auto V : Hypothesis.ActiveValues) {
+      if (ConstantValues.count(V))
+        continue;
       bool inserted = ActiveValues.insert(V).second;
       if (inserted && directions == 3 && EnzymeEnableRecursiveHypotheses) {
         ReEvaluateValueIfInactiveValue[Orig].insert(V);
@@ -198,8 +203,8 @@ private:
     }
 
     for (auto &pair : Hypothesis.ReEvaluateValueIfInactiveInst) {
-      ReEvaluateValueIfInactiveValue[pair.first].insert(pair.second.begin(),
-                                                        pair.second.end());
+      ReEvaluateValueIfInactiveInst[pair.first].insert(pair.second.begin(),
+                                                       pair.second.end());
       if (ConstantInstructions.count(pair.first)) {
         InsertConstantInstruction(TR, pair.first);
       }
@@ -218,6 +223,7 @@ private:
         InsertConstantValue(TR, pair.first);
       }
     }
+    insertConstantsFrom(TR, Hypothesis);
   }
 
   /// Is the use of value val as an argument of call CI known to be inactive
