@@ -36,7 +36,8 @@
 // them as if no metric had been declared. Declining with POSEIDON_PROBE=0 is
 // the way to have exactly that. The program counts its own runs.
 // The host target has no perturbation hook, so what a measurement finds here
-// is not checked, only that it ran.
+// is not checked, only that it ran. The metric's name holds a space, which
+// the measurement runs have to read back.
 
 #include "poseidon/poseidon.h"
 #include <cmath>
@@ -64,7 +65,7 @@ int main(int argc, char **argv) {
     x[i] = -2.0 + 4.0 * i / (n - 1);
   gauss(x.data(), y.data(), n);
   wave(x.data(), z.data(), n);
-  poseidon_metric("y", y[n / 3] + z[n / 3]);
+  poseidon_metric("y sum", y[n / 3] + z[n / 3]);
   printf("%.17g\n", y[n / 3] + z[n / 3]);
 }
 
@@ -74,10 +75,10 @@ int main(int argc, char **argv) {
 // FOUR-COUNT-4: run
 // FOUR-NOT: run
 
-// NOTICE: [probe] metric "y" was declared but its condition numbers at 2 sites were not measured, and profile use needs them (POSEIDON_PROBE=0 on this run solves each site against its own target instead); measuring takes 3 more runs of this program: poseidon-probe -- {{.*}}/gen {{.*}}/plain.runs
+// NOTICE: [probe] metric "y sum" was declared but its condition numbers at 2 sites were not measured, and profile use needs them (POSEIDON_PROBE=0 on this run solves each site against its own target instead); measuring takes 3 more runs of this program: poseidon-probe -- {{.*}}/gen {{.*}}/plain.runs
 // NOTICE-NOT: [probe]
 
-// DECLINED: [probe] metric "y" was declared and its condition numbers at 2 sites are not measured (POSEIDON_PROBE=0): each site is solved against its own target
+// DECLINED: [probe] metric "y sum" was declared and its condition numbers at 2 sites are not measured (POSEIDON_PROBE=0): each site is solved against its own target
 // DECLINED-NOT: [probe]
 
 // NOKAPPA-NOT: Kappa
@@ -87,7 +88,7 @@ int main(int argc, char **argv) {
 // UNMEASURED-NOT: Kappa
 
 // MEASURE-NOT: [probe]
-// MEASURE: [probe] measuring the condition numbers of metric "y" at 2 sites: 3 more runs of this program (run it without POSEIDON_PROBE=1 to skip)
+// MEASURE: [probe] measuring the condition numbers of metric "y sum" at 2 sites: 3 more runs of this program (run it without POSEIDON_PROBE=1 to skip)
 // MEASURE-NEXT: [probe] baseline run 2 -> noise floor
 // MEASURE-NOT: not measured
 

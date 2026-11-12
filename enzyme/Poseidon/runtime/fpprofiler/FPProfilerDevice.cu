@@ -137,7 +137,7 @@ poseidonOverlappingArgumentsCUDA(const char *site, int a, int b) {
 // poseidonProbePerturbCUDA and passes the site's id as an immediate; the driver
 // re-runs the profiling workload once per (site, eps) with
 // POSEIDON_PROBE_SITE=<id> and POSEIDON_PROBE_EPS=<eps> and reads the declared
-// quantity of interest back from metric.txt (scripts/poseidon_probe.py). With
+// quantity of interest back from metric.txt. With
 // no env set (eps == 0) the hook returns its input unchanged, so the baseline
 // is bit-identical to an uninstrumented run.
 extern "C" __device__ __attribute__((noinline)) double
