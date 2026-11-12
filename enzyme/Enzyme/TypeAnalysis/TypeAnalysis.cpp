@@ -221,6 +221,28 @@ const llvm::StringMap<llvm::Intrinsic::ID> LIBM_FUNCTIONS = {
     {"scalbln", Intrinsic::not_intrinsic},
     {"powi", Intrinsic::powi},
     {"cabs", Intrinsic::not_intrinsic},
+    {"carg", Intrinsic::not_intrinsic},
+    {"cimag", Intrinsic::not_intrinsic},
+    {"creal", Intrinsic::not_intrinsic},
+    {"conj", Intrinsic::not_intrinsic},
+    {"cproj", Intrinsic::not_intrinsic},
+    {"cexp", Intrinsic::not_intrinsic},
+    {"clog", Intrinsic::not_intrinsic},
+    {"clog10", Intrinsic::not_intrinsic},
+    {"cpow", Intrinsic::not_intrinsic},
+    {"csqrt", Intrinsic::not_intrinsic},
+    {"csin", Intrinsic::not_intrinsic},
+    {"ccos", Intrinsic::not_intrinsic},
+    {"ctan", Intrinsic::not_intrinsic},
+    {"casin", Intrinsic::not_intrinsic},
+    {"cacos", Intrinsic::not_intrinsic},
+    {"catan", Intrinsic::not_intrinsic},
+    {"csinh", Intrinsic::not_intrinsic},
+    {"ccosh", Intrinsic::not_intrinsic},
+    {"ctanh", Intrinsic::not_intrinsic},
+    {"casinh", Intrinsic::not_intrinsic},
+    {"cacosh", Intrinsic::not_intrinsic},
+    {"catanh", Intrinsic::not_intrinsic},
     {"ldexp", Intrinsic::not_intrinsic},
     {"fmod", Intrinsic::not_intrinsic},
     {"finite", Intrinsic::not_intrinsic},
@@ -6551,7 +6573,10 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
     CONSIDER(remquof)
     CONSIDER(remquol)
 
-    if (isMemFreeLibMFunction(funcName)) {
+    if (isMemFreeLibMFunction(funcName) &&
+        !llvm::any_of(call.args(), [](const Use &Arg) {
+          return Arg->getType()->isPointerTy();
+        })) {
 #if LLVM_VERSION_MAJOR >= 14
       for (size_t i = 0; i < call.arg_size(); ++i)
 #else
@@ -6597,6 +6622,20 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
                     .Only(-1, &call),
                 &call);
           else if (AT->getElementType()->isIntegerTy()) {
+            updateAnalysis(call.getArgOperand(i),
+                           TypeTree(BaseType::Integer).Only(-1, &call), &call);
+          } else {
+            llvm::errs() << *T << " - " << call << "\n";
+            llvm_unreachable("Unknown type for libm");
+          }
+        } else if (auto VT = dyn_cast<VectorType>(T)) {
+          if (VT->getElementType()->isFloatingPointTy()) {
+            updateAnalysis(
+                call.getArgOperand(i),
+                TypeTree(ConcreteType(VT->getElementType()->getScalarType()))
+                    .Only(-1, &call),
+                &call);
+          } else if (VT->getElementType()->isIntegerTy()) {
             updateAnalysis(call.getArgOperand(i),
                            TypeTree(BaseType::Integer).Only(-1, &call), &call);
           } else {
@@ -6658,6 +6697,20 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
                   .Only(-1, &call),
               &call);
         else {
+          llvm::errs() << *T << " - " << call << "\n";
+          llvm_unreachable("Unknown type for libm");
+        }
+      } else if (auto VT = dyn_cast<VectorType>(T)) {
+        if (VT->getElementType()->isFloatingPointTy()) {
+          updateAnalysis(
+              &call,
+              TypeTree(ConcreteType(VT->getElementType()->getScalarType()))
+                  .Only(-1, &call),
+              &call);
+        } else if (VT->getElementType()->isIntegerTy()) {
+          updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call),
+                         &call);
+        } else {
           llvm::errs() << *T << " - " << call << "\n";
           llvm_unreachable("Unknown type for libm");
         }

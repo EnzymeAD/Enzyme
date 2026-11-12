@@ -6988,6 +6988,10 @@ public:
   void handleMPI(llvm::CallInst &call, llvm::Function *called,
                  llvm::StringRef funcName);
 
+  bool handleC99ComplexMathCall(llvm::CallInst &call, llvm::StringRef funcName,
+                                llvm::CallInst *const newCall,
+                                llvm::IRBuilder<> &BuilderZ);
+
   bool handleKnownCallDerivatives(llvm::CallInst &call, llvm::Function *called,
                                   llvm::StringRef funcName,
                                   bool subsequent_calls_may_write,
