@@ -10,8 +10,11 @@ foreach(action Plain ProfileGenerate ProfileUse EnzymeOptions)
   get_target_property(options Poseidon::${action} INTERFACE_COMPILE_OPTIONS)
   message(STATUS "${POSEIDON_GPU_RUNTIME} ${action}: ${options}")
 endforeach()
-message(STATUS "${POSEIDON_GPU_RUNTIME} POSEIDON_ENZYME_OPTIONS: "
-               "[${POSEIDON_ENZYME_OPTIONS}]")
+message(
+  STATUS
+    "${POSEIDON_GPU_RUNTIME} POSEIDON_ENZYME_OPTIONS: "
+    "[${POSEIDON_ENZYME_OPTIONS}]")
 message(STATUS "${POSEIDON_GPU_RUNTIME} CUDAToolkit: [${CUDAToolkit_FOUND}]")
-message(STATUS "${POSEIDON_GPU_RUNTIME} POSEIDON_AMDGPU_ARCH: "
-               "[${POSEIDON_AMDGPU_ARCH}]")
+message(
+  STATUS
+    "${POSEIDON_GPU_RUNTIME} POSEIDON_AMDGPU_ARCH: " "[${POSEIDON_AMDGPU_ARCH}]")

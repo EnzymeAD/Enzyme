@@ -13,6 +13,7 @@
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Value.h"
+#include "llvm/Support/JSON.h"
 
 #include <cmath>
 #include <cstddef>

@@ -12,6 +12,11 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "llvm/ADT/APFloat.h"
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/SmallSet.h"
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Analysis/BasicAliasAnalysis.h"
 #include "llvm/Analysis/LoopInfo.h"
@@ -22,14 +27,21 @@
 #include "llvm/IR/Module.h"
 #include "llvm/IR/ValueHandle.h"
 #include "llvm/Passes/PassBuilder.h"
+#include "llvm/Support/Format.h"
+#include "llvm/Support/JSON.h"
+#include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Scalar/EarlyCSE.h"
 #include "llvm/Transforms/Scalar/GVN.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 #include "llvm/Transforms/Utils/Mem2Reg.h"
 
 #include <cmath>
+#include <functional>
+#include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 
 #include "Expansion.h"
 #include "Herbie.h"

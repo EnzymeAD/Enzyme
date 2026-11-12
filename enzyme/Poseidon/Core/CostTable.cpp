@@ -20,6 +20,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <system_error>
+#include <tuple>
 
 using namespace llvm;
 

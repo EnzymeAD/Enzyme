@@ -17,7 +17,10 @@
 #include "Targets/NVPTXTensorCore.h"
 #include "WmmaUtils.h"
 #include <functional>
+#include <string>
 
+#include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/IRBuilder.h"

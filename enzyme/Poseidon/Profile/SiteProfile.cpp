@@ -16,7 +16,11 @@
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/STLFunctionalExtras.h"
+#include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/Twine.h"
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/Demangle/Demangle.h"
 #include "llvm/IR/Constants.h"
@@ -36,6 +40,7 @@
 #include "llvm/Transforms/Utils/ModuleUtils.h"
 
 #include <map>
+#include <optional>
 #include <string>
 
 using namespace llvm;
@@ -1123,13 +1128,15 @@ CallInst *withShadows(CallInst *CI, Function &clone, const MarkerArgs &marker) {
         Value *addr = B.CreatePtrToInt(
             B.CreatePointerBitCastOrAddrSpaceCast(R.pointer, B.getPtrTy()),
             B.getInt64Ty());
-        return std::make_pair(B.CreateAdd(addr, B.getInt64(R.lo)),
-                              B.CreateAdd(addr, B.getInt64(R.hi)));
+        Value *lo = B.CreateAdd(addr, B.getInt64(R.lo));
+        Value *hi = B.CreateAdd(addr, B.getInt64(R.hi));
+        return std::make_pair(lo, hi);
       };
       auto [glo, ghi] = bounds(*g);
       auto [hlo, hhi] = bounds(*h);
-      Value *overlap =
-          B.CreateAnd(B.CreateICmpULT(glo, hhi), B.CreateICmpULT(hlo, ghi));
+      Value *gBeforeH = B.CreateICmpULT(glo, hhi);
+      Value *hBeforeG = B.CreateICmpULT(hlo, ghi);
+      Value *overlap = B.CreateAnd(gBeforeH, hBeforeG);
       Instruction *stop = SplitBlockAndInsertIfThen(overlap, CI->getIterator(),
                                                     /*Unreachable=*/true);
       IRBuilder<> S(stop);

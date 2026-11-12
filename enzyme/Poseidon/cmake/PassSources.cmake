@@ -9,8 +9,14 @@
 # simulates with their scaling. CONFIGURE_DEPENDS globs again
 # at build time, so that a file added or removed reconfigures.
 function(poseidon_pass_sources out_var pass_dir binary_dir)
-  file(GLOB_RECURSE _all RELATIVE ${pass_dir} ${ARGN} ${pass_dir}/*.cpp
-       ${pass_dir}/*.h)
+  file(
+    GLOB_RECURSE
+    _all
+    RELATIVE
+    ${pass_dir}
+    ${ARGN}
+    ${pass_dir}/*.cpp
+    ${pass_dir}/*.h)
   set(_binary "")
   if(binary_dir)
     file(RELATIVE_PATH _binary ${pass_dir} ${binary_dir})
@@ -20,9 +26,10 @@ function(poseidon_pass_sources out_var pass_dir binary_dir)
   endif()
   set(_sources "")
   foreach(_file IN LISTS _all)
-    if((_file MATCHES "^(runtime|tools|cmake)/" AND
-        NOT _file MATCHES "^runtime/(ozaki/OzakiII|tcec/tcec_scale)\\.h$") OR
-       _file MATCHES "(^|/)(test|tests|unittests|CMakeFiles|build[^/]*)/")
+    if(
+      (_file MATCHES "^(runtime|tools|cmake)/" AND
+        NOT _file MATCHES "^runtime/(ozaki/OzakiII|tcec/tcec_scale)\\.h$")
+      OR _file MATCHES "(^|/)(test|tests|unittests|CMakeFiles|build[^/]*)/")
       continue()
     endif()
     if(_binary)

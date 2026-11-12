@@ -19,6 +19,7 @@
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/IR/Type.h"
+#include "llvm/Support/JSON.h"
 #include "llvm/Transforms/Utils/ValueMapper.h"
 
 #include "Model/CostModel.h"
@@ -28,6 +29,7 @@
 
 #include <cstdint>
 #include <limits>
+#include <memory>
 #include <set>
 #include <string>
 #include <unordered_map>

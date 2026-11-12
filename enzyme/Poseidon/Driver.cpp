@@ -43,6 +43,7 @@
 #include <cmath>
 #include <optional>
 #include <string>
+#include <system_error>
 
 using namespace llvm;
 

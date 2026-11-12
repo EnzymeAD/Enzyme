@@ -3,6 +3,7 @@
 #include "Targets/Target.h"
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DiagnosticHandler.h"
 #include "llvm/IR/DiagnosticInfo.h"

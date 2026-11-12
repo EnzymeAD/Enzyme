@@ -9,8 +9,13 @@
 
 #include "Explain.h"
 
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/MapVector.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallSet.h"
+#include "llvm/ADT/SmallString.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringSet.h"
 #include "llvm/Analysis/OptimizationRemarkEmitter.h"
@@ -25,6 +30,7 @@
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Operator.h"
 #include "llvm/Support/FileSystem.h"
+#include "llvm/Support/Format.h"
 #include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/Path.h"
@@ -43,9 +49,14 @@
 #include "Utils.h"
 
 #include <cmath>
+#include <limits>
 #include <map>
+#include <memory>
 #include <optional>
 #include <set>
+#include <string>
+#include <unordered_map>
+#include <vector>
 
 using namespace llvm;
 

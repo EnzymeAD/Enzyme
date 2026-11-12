@@ -17,6 +17,7 @@
 #define POSEIDON_EXPLAIN_H
 
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/StringRef.h"
 #include "llvm/IR/DebugLoc.h"
 #include "llvm/IR/Function.h"
 

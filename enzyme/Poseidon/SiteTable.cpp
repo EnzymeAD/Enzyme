@@ -17,12 +17,16 @@
 #include "Techniques/Matmul/MatmulSimulation.h"
 #include "Utils.h"
 
+#include "llvm/ADT/SmallString.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Config/llvm-config.h"
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/StructuralHash.h"
+#include "llvm/Support/Error.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/FileSystem.h"
+#include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
@@ -32,6 +36,10 @@
 #endif
 
 #include "BuildIdentity.h"
+
+#include <map>
+#include <string>
+#include <vector>
 
 using namespace llvm;
 

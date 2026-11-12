@@ -4,6 +4,7 @@
 #include "Sites/Canonicalize.h"
 #include "Targets/Target.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Constants.h"
@@ -18,6 +19,8 @@
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/ModRef.h"
 #include "llvm/Transforms/Utils/ModuleUtils.h"
+
+#include <string>
 
 using namespace llvm;
 

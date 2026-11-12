@@ -30,6 +30,7 @@
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/StringSet.h"
+#include "llvm/ADT/Twine.h"
 #include "llvm/Config/llvm-config.h"
 #include "llvm/Support/Allocator.h"
 #include "llvm/Support/CommandLine.h"
@@ -43,6 +44,7 @@
 #include <cstring>
 #include <optional>
 #include <string>
+#include <system_error>
 
 using namespace llvm;
 

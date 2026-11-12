@@ -10,6 +10,10 @@
 #ifndef POSEIDON_EXPANSION_H
 #define POSEIDON_EXPANSION_H
 
+#include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Value.h"
 

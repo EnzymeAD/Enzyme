@@ -14,7 +14,9 @@
 #include "Utils.h"
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/ADT/StringRef.h"
 #include "llvm/Demangle/Demangle.h"
 #include "llvm/IR/Function.h"
 #include "llvm/Support/raw_ostream.h"

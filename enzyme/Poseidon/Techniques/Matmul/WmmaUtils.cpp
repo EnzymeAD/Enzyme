@@ -23,6 +23,8 @@
 #include "llvm/Support/Alignment.h"
 #include "llvm/Support/ErrorHandling.h"
 
+#include <string>
+
 using namespace llvm;
 
 namespace poseidon {
