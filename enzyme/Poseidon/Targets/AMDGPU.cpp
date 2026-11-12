@@ -7,6 +7,7 @@
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/Config/llvm-config.h"
+#include "llvm/Demangle/Demangle.h"
 #include "llvm/IR/CallingConv.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/Function.h"
@@ -175,7 +176,10 @@ public:
       return (Twine("the AMDGPU device profiler was built for '") +
               POSEIDON_DEVICE_PROFILER_AMDGPU_ARCH
               "' (POSEIDON_AMDGPU_ARCH) but " +
-              F.getName() + " compiles for target-cpu '" + processor(F) + "'")
+              demangle(F.getName()) + " compiles for target-cpu '" +
+              processor(F) +
+              "'; build Poseidon for this processor, or compile the profiling "
+              "build for that one")
           .str();
     return "";
 #else

@@ -5,11 +5,11 @@
 #include "Targets/Target.h"
 #include "Utils.h"
 
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringSet.h"
 #include "llvm/Bitcode/BitcodeReader.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
-#include "llvm/IR/DiagnosticInfo.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Instructions.h"
@@ -61,6 +61,33 @@ bool registerDeviceProfileTable(Module &M, bool profileGenerate) {
   return true;
 }
 
+// The user's function a probe call serves. Profile generation calls the
+// probes from functions it and Enzyme synthesize, all of local linkage; the
+// nearest caller of other linkage is the kernel or device function the user
+// wrote.
+static const Function &userFunctionOf(const Function &F) {
+  SmallVector<const Function *, 8> work{&F};
+  SmallPtrSet<const Function *, 8> seen{&F};
+  for (size_t i = 0; i < work.size(); ++i) {
+    const Function *G = work[i];
+    if (!G->hasLocalLinkage())
+      return *G;
+    for (const User *U : G->users())
+      if (const auto *call = dyn_cast<CallBase>(U))
+        if (seen.insert(call->getFunction()).second)
+          work.push_back(call->getFunction());
+  }
+  return F;
+}
+
+// A probe compiled for a processor the device profiler cannot serve: an error
+// at the user's function.
+[[noreturn]] static void refuseProbe(const Target &target,
+                                     const Function &caller) {
+  const Function &F = userFunctionOf(caller);
+  reportUserError(F, F.getSubprogram(), target.profilerMismatch(F));
+}
+
 bool linkDeviceProfiler(Module &M, bool profileGenerate) {
   const Target &target = Target::of(M);
   if (!profileGenerate || !target.isDevice())
@@ -81,7 +108,7 @@ bool linkDeviceProfiler(Module &M, bool profileGenerate) {
         if (const auto *call = dyn_cast<CallBase>(&I))
           if (const Function *callee = call->getCalledFunction();
               callee && is_contained(probes, callee->getName()))
-            reportUserError(I, target.profilerMismatch(F));
+            refuseProbe(target, F);
     return false;
   }
   Expected<std::unique_ptr<Module>> parsed = parseBitcodeFile(
@@ -106,13 +133,8 @@ bool linkDeviceProfiler(Module &M, bool profileGenerate) {
       continue;
     for (const User *U : probe->users())
       if (const auto *call = dyn_cast<CallBase>(U))
-        if (std::string why = target.profilerMismatch(*call->getFunction());
-            !why.empty()) {
-          M.getContext().diagnose(DiagnosticInfoUnsupported(
-              *call->getFunction(), "Poseidon: " + why, call->getDebugLoc(),
-              DS_Error));
-          return false;
-        }
+        if (!target.profilerMismatch(*call->getFunction()).empty())
+          refuseProbe(target, *call->getFunction());
   }
 
   L.setTargetTriple(M.getTargetTriple());
