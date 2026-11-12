@@ -115,26 +115,29 @@ __poseidon_site_tau(void *fn, double tau) {
 // and drops them from any other module, which then compiles as it does without
 // the header. Taking their addresses keeps them in the C calling convention the
 // calls a rewrite adds use; one only ever called directly may become fastcc.
+// Each address is stored by a statement of its own: C++20 deprecates using the
+// value of an assignment to a volatile object.
 #if defined(__CUDA_ARCH__) && defined(__CLANG_CUDA_LIBDEVICE_DECLARES_H__)
 #define POSEIDON_KEEP(fn)                                                      \
-  keep = (void *)&__nv_##fn, keep = (void *)&__nv_##fn##f
+  keep = (void *)&__nv_##fn;                                                   \
+  keep = (void *)&__nv_##fn##f
 extern "C" inline __device__ __attribute__((used)) void
 __poseidon_device_math(void) {
   void *volatile keep;
-  POSEIDON_KEEP(sin), POSEIDON_KEEP(cos), POSEIDON_KEEP(tan);
-  POSEIDON_KEEP(asin), POSEIDON_KEEP(acos), POSEIDON_KEEP(atan);
-  POSEIDON_KEEP(atan2), POSEIDON_KEEP(sinh), POSEIDON_KEEP(cosh);
-  POSEIDON_KEEP(tanh), POSEIDON_KEEP(asinh), POSEIDON_KEEP(acosh);
-  POSEIDON_KEEP(atanh), POSEIDON_KEEP(exp), POSEIDON_KEEP(exp2);
-  POSEIDON_KEEP(expm1), POSEIDON_KEEP(log), POSEIDON_KEEP(log2);
-  POSEIDON_KEEP(log10), POSEIDON_KEEP(log1p), POSEIDON_KEEP(sqrt);
-  POSEIDON_KEEP(cbrt), POSEIDON_KEEP(pow), POSEIDON_KEEP(powi);
-  POSEIDON_KEEP(hypot), POSEIDON_KEEP(erf), POSEIDON_KEEP(lgamma);
-  POSEIDON_KEEP(tgamma), POSEIDON_KEEP(fabs), POSEIDON_KEEP(fma);
-  POSEIDON_KEEP(ceil), POSEIDON_KEEP(floor), POSEIDON_KEEP(rint);
-  POSEIDON_KEEP(round), POSEIDON_KEEP(trunc), POSEIDON_KEEP(copysign);
-  POSEIDON_KEEP(fdim), POSEIDON_KEEP(fmod), POSEIDON_KEEP(remainder);
-  POSEIDON_KEEP(fmin), POSEIDON_KEEP(fmax);
+  POSEIDON_KEEP(sin); POSEIDON_KEEP(cos); POSEIDON_KEEP(tan);
+  POSEIDON_KEEP(asin); POSEIDON_KEEP(acos); POSEIDON_KEEP(atan);
+  POSEIDON_KEEP(atan2); POSEIDON_KEEP(sinh); POSEIDON_KEEP(cosh);
+  POSEIDON_KEEP(tanh); POSEIDON_KEEP(asinh); POSEIDON_KEEP(acosh);
+  POSEIDON_KEEP(atanh); POSEIDON_KEEP(exp); POSEIDON_KEEP(exp2);
+  POSEIDON_KEEP(expm1); POSEIDON_KEEP(log); POSEIDON_KEEP(log2);
+  POSEIDON_KEEP(log10); POSEIDON_KEEP(log1p); POSEIDON_KEEP(sqrt);
+  POSEIDON_KEEP(cbrt); POSEIDON_KEEP(pow); POSEIDON_KEEP(powi);
+  POSEIDON_KEEP(hypot); POSEIDON_KEEP(erf); POSEIDON_KEEP(lgamma);
+  POSEIDON_KEEP(tgamma); POSEIDON_KEEP(fabs); POSEIDON_KEEP(fma);
+  POSEIDON_KEEP(ceil); POSEIDON_KEEP(floor); POSEIDON_KEEP(rint);
+  POSEIDON_KEEP(round); POSEIDON_KEEP(trunc); POSEIDON_KEEP(copysign);
+  POSEIDON_KEEP(fdim); POSEIDON_KEEP(fmod); POSEIDON_KEEP(remainder);
+  POSEIDON_KEEP(fmin); POSEIDON_KEEP(fmax);
   (void)keep;
 }
 #undef POSEIDON_KEEP
@@ -147,20 +150,21 @@ extern "C" __device__ float __ocml_log_f32(float);
 extern "C" __device__ float __ocml_log2_f32(float);
 extern "C" __device__ float __ocml_log10_f32(float);
 #define POSEIDON_KEEP(fn)                                                      \
-  keep = (void *)&__ocml_##fn##_f64, keep = (void *)&__ocml_##fn##_f32
+  keep = (void *)&__ocml_##fn##_f64;                                           \
+  keep = (void *)&__ocml_##fn##_f32
 extern "C" inline __device__ __attribute__((used)) void
 __poseidon_device_math(void) {
   void *volatile keep;
-  POSEIDON_KEEP(sin), POSEIDON_KEEP(cos), POSEIDON_KEEP(tan);
-  POSEIDON_KEEP(asin), POSEIDON_KEEP(acos), POSEIDON_KEEP(atan);
-  POSEIDON_KEEP(atan2), POSEIDON_KEEP(sinh), POSEIDON_KEEP(cosh);
-  POSEIDON_KEEP(tanh), POSEIDON_KEEP(asinh), POSEIDON_KEEP(acosh);
-  POSEIDON_KEEP(atanh), POSEIDON_KEEP(exp), POSEIDON_KEEP(exp2);
-  POSEIDON_KEEP(expm1), POSEIDON_KEEP(log), POSEIDON_KEEP(log2);
-  POSEIDON_KEEP(log10), POSEIDON_KEEP(log1p), POSEIDON_KEEP(cbrt);
-  POSEIDON_KEEP(pow), POSEIDON_KEEP(hypot), POSEIDON_KEEP(erf);
-  POSEIDON_KEEP(lgamma), POSEIDON_KEEP(tgamma), POSEIDON_KEEP(fdim);
-  POSEIDON_KEEP(fmod), POSEIDON_KEEP(remainder);
+  POSEIDON_KEEP(sin); POSEIDON_KEEP(cos); POSEIDON_KEEP(tan);
+  POSEIDON_KEEP(asin); POSEIDON_KEEP(acos); POSEIDON_KEEP(atan);
+  POSEIDON_KEEP(atan2); POSEIDON_KEEP(sinh); POSEIDON_KEEP(cosh);
+  POSEIDON_KEEP(tanh); POSEIDON_KEEP(asinh); POSEIDON_KEEP(acosh);
+  POSEIDON_KEEP(atanh); POSEIDON_KEEP(exp); POSEIDON_KEEP(exp2);
+  POSEIDON_KEEP(expm1); POSEIDON_KEEP(log); POSEIDON_KEEP(log2);
+  POSEIDON_KEEP(log10); POSEIDON_KEEP(log1p); POSEIDON_KEEP(cbrt);
+  POSEIDON_KEEP(pow); POSEIDON_KEEP(hypot); POSEIDON_KEEP(erf);
+  POSEIDON_KEEP(lgamma); POSEIDON_KEEP(tgamma); POSEIDON_KEEP(fdim);
+  POSEIDON_KEEP(fmod); POSEIDON_KEEP(remainder);
   (void)keep;
 }
 #undef POSEIDON_KEEP
