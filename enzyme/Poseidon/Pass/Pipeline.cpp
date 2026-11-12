@@ -423,12 +423,7 @@ struct FinalizePass : PassParent<FinalizePass> {
                         Twine("profile generation emitted a derivative "
                               "request that nothing lowered. ") +
                             unloweredRequestReason(PhaseKnown, Phase, Level));
-    // Every site of the module has been processed by now, in the early run or
-    // the late one. A module without a descriptor removes the unit's manifest,
-    // so that what an earlier compile of the unit recorded is not applied.
     const Target &T = Target::of(M);
-    if (T.isDevice() && !S.IsTwin && handsOverLaunches(O))
-      writeLaunchManifest(S, M);
     finalizeModule(S, M);
     // An annotation takes the address of the function it names, and a profiled
     // kernel may make an unknown call.
@@ -436,6 +431,13 @@ struct FinalizePass : PassParent<FinalizePass> {
       dropSiteAnnotations(M);
     linkDeviceProfiler(M, O.Profiling.ProfileGenerate);
     requireDeviceCallees(M, O.Profiling.ProfileGenerate);
+    // Every site of the module has been processed by now, in the early run or
+    // the late one, and every check that can stop the compile has passed, so
+    // a host half never reads the manifest of a device half that failed. A
+    // module without a descriptor removes the unit's manifest, so that what an
+    // earlier compile of the unit recorded is not applied.
+    if (T.isDevice() && !S.IsTwin && handsOverLaunches(O))
+      writeLaunchManifest(S, M);
     releaseDeviceMath(M);
     SmallVector<Function *, 4> rewritten;
     for (WeakVH &handle : S.RewrittenFunctions)
