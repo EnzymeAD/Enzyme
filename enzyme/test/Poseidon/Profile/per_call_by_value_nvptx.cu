@@ -1,4 +1,4 @@
-// REQUIRES: enzyme
+// REQUIRES: enzyme, nvptx-device-profiler
 // RUN: rm -rf %t && mkdir -p %t
 // RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c %s -o %t/gen.ll 2>&1 | FileCheck --check-prefix=GEN --implicit-check-not=warning: %s
 // RUN: FileCheck --check-prefix=IR %s < %t/gen.ll

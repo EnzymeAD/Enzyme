@@ -1,8 +1,8 @@
 # Builds Enzyme with the Poseidon plugin against an apt LLVM and runs the
-# Poseidon tests that need no GPU. check-poseidon-integration compiles and
-# launches CUDA kernels, which a GitHub-hosted runner cannot do. LLVM 20 also
-# builds, but there the two scalar-loop raise tests are skipped (its SCEV does
-# not carry no-wrap through the canonical IV's trunc).
+# Poseidon tests that need no GPU toolchain: the job installs no CUDA, ROCm or
+# Herbie, so the tests that require them are unsupported here.
+# check-poseidon-integration compiles and launches CUDA kernels, which a
+# GitHub-hosted runner cannot do.
 name: Poseidon CI
 
 on:
@@ -37,7 +37,7 @@ jobs:
           wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key|sudo apt-key add -
           sudo apt-add-repository "deb http://apt.llvm.org/`lsb_release -c | cut -f2`/ llvm-toolchain-`lsb_release -c | cut -f2`-${{ matrix.llvm }} main" || true
           sudo apt-get update
-          sudo apt-get install -y cmake ninja-build gcc g++ llvm-${{ matrix.llvm }}-dev clang-${{ matrix.llvm }} libclang-${{ matrix.llvm }}-dev libzstd-dev libmpfr-dev
+          sudo apt-get install -y cmake ninja-build gcc g++ llvm-${{ matrix.llvm }}-dev clang-${{ matrix.llvm }} libclang-${{ matrix.llvm }}-dev lld-${{ matrix.llvm }} libzstd-dev libmpfr-dev
           sudo python3 -m pip install --upgrade pip lit
 
     - name: Checkout Enzyme repository
@@ -82,9 +82,11 @@ jobs:
           test "$(grep -c '^FAIL:' lit-poseidon.log)" -eq 0
           # Every test that asks for Enzyme must have RUN. Without the plugin
           # each is UNSUPPORTED and the check above passes while testing
-          # nothing that involves a derivative.
+          # nothing that involves a derivative. Tests that also need the GPU
+          # toolchains this job does not install are left out.
           for t in $(grep -rl 'REQUIRES:.*enzyme' "$GITHUB_WORKSPACE"/enzyme/test/Poseidon --include='*.ll' --include='*.c'); do
             case "$t" in */Integration/*) continue ;; esac
+            grep -qE 'REQUIRES:.*(nvptx-device-profiler|cuda-runtime|rocm|hip-runtime)' "$t" && continue
             name=${t#"$GITHUB_WORKSPACE"/enzyme/test/Poseidon/}
             grep -q "^PASS: Poseidon :: $name " lit-poseidon.log \
               || { echo "$name did not run"; exit 1; }

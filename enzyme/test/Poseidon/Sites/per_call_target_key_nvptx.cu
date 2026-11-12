@@ -1,3 +1,5 @@
+// REQUIRES: cuda-runtime
+// From LLVM 22 an sm_120 compile needs the PTX version of a CUDA installation.
 // RUN: rm -rf %t && mkdir -p %t
 // RUN: %clang -x cuda -std=c++20 --cuda-device-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O1 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/other_sites -DA=1e-6 -DB=1e-9 %s -o /dev/null 2>&1 | FileCheck %s
 // RUN: %clang -x cuda -std=c++20 --cuda-device-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O1 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/other_sites -DA=1e-12 -DB=1e-3 %s -o /dev/null 2>&1 | FileCheck %s

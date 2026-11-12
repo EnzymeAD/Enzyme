@@ -1,4 +1,4 @@
-// REQUIRES: enzyme
+// REQUIRES: enzyme, nvptx-device-profiler
 // RUN: rm -rf %t && mkdir -p %t
 // RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O2 -Xclang -disable-llvm-passes -S -emit-llvm -I%poseidon_profile_inc %s -o %t/dev.ll
 // RUN: (env TMPDIR=%t %clang --target=nvptx64-nvidia-cuda -march=%gpu_arch -O2 -flto -x ir %t/dev.ll %loadClangPoseidonEnzyme -S -emit-llvm -o /dev/null 2>&1; echo "exit status $?") | FileCheck --check-prefix=DEFERRED --implicit-check-not=REPRODUCER --implicit-check-not="exit code" %s

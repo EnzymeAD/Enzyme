@@ -1,3 +1,5 @@
+// REQUIRES: cuda-runtime
+// From LLVM 22 an sm_120 compile needs the PTX version of a CUDA installation.
 // RUN: rm -rf %t && mkdir -p %t/prof
 // RUN: sed -e 's/^MaxGridDims = 192 1 1$/MaxGridDims = 1536 1 1/' -e 's/^LaunchCount = 192$/LaunchCount = 1536/' %S/../Inputs/host_gemm_hip/preprocess__ZL11HipKernel2DIZ6reduceiiiiPdS0_S0_iEUliE_EviT__poseidon_body.fpprofile > %t/prof/preprocess__ZL10CuKernel2DIZ6reduceiiiiPdS0_S0_iEUliE_EviT__poseidon_body.fpprofile
 // RUN: cp %cost_models/cm_sm_120_synthetic_dispatch.csv %t/cm.csv && echo 'ozaki_dispatch_rect_rel,dgemm_m24n1536k192,0.05' >> %t/cm.csv

@@ -42,3 +42,7 @@ if int(config.llvm_ver) >= 21:
 # floating-point operations that carry no 'contract' flag as well.
 if int(config.llvm_ver) < 24:
     config.available_features.add('global-fp-contract')
+# From LLVM 23 clang compiles CUDA and HIP through the new offload driver, in
+# which a HIP compile's device half is an LTO pre-link compile.
+if int(config.llvm_ver) >= 23:
+    config.available_features.add('offload-new-driver')

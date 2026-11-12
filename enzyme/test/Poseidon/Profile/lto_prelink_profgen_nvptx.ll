@@ -1,4 +1,4 @@
-; REQUIRES: enzyme
+; REQUIRES: enzyme, nvptx-device-profiler
 ; RUN: rm -rf %t && mkdir -p %t
 ; RUN: (env TMPDIR=%t %clang --target=nvptx64-nvidia-cuda -march=sm_120 -O2 -flto -x ir %s %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/full -S -emit-llvm -o /dev/null 2>&1; echo "exit status $?") | FileCheck --check-prefix=DEFERRED --implicit-check-not=REPRODUCER --implicit-check-not="exit code" --implicit-check-not="error in backend" --implicit-check-not="Stack dump" --implicit-check-not=PLEASE %s
 ; RUN: (env TMPDIR=%t %clang --target=nvptx64-nvidia-cuda -march=sm_120 -O2 -flto=thin -x ir %s %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/thin -S -emit-llvm -o /dev/null 2>&1; echo "exit status $?") | FileCheck --check-prefix=DEFERRED --implicit-check-not=REPRODUCER --implicit-check-not="exit code" --implicit-check-not="error in backend" --implicit-check-not="Stack dump" --implicit-check-not=PLEASE %s

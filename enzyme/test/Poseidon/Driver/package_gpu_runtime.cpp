@@ -18,17 +18,17 @@
 // CUDA toolkit; a project on the HIP runtimes is not made to find one. The
 // AMD GPU processor of the HIP builds is the project's to see.
 
-// HIP: -- HIP Plain: -fpass-plugin={{[^;]+}};-ffp-contract=on
-// HIP-NEXT: -- HIP ProfileGenerate: -fpass-plugin={{[^;]+}};-fpass-plugin={{[^;]+}};SHELL:-Xclang -mllvm -Xclang -poseidon-profile-generate;SHELL:-Xclang -mllvm -Xclang -enzyme-lto-prelink=1;-ffp-contract=on
-// HIP-NEXT: -- HIP ProfileUse: -fpass-plugin={{[^;]+}};-ffp-contract=on
+// HIP: -- HIP Plain: -fpass-plugin={{[^;]+}};{{(SHELL:-Xclang -load -Xclang [^;]+;)?}}-ffp-contract=on
+// HIP-NEXT: -- HIP ProfileGenerate: -fpass-plugin={{[^;]+}};{{(SHELL:-Xclang -load -Xclang [^;]+;)?}}-fpass-plugin={{[^;]+}};{{(SHELL:-Xclang -load -Xclang [^;]+;)?}}SHELL:-Xclang -mllvm -Xclang -poseidon-profile-generate;SHELL:-Xclang -mllvm -Xclang -enzyme-lto-prelink=1;-ffp-contract=on
+// HIP-NEXT: -- HIP ProfileUse: -fpass-plugin={{[^;]+}};{{(SHELL:-Xclang -load -Xclang [^;]+;)?}}-ffp-contract=on
 // HIP-NEXT: -- HIP EnzymeOptions: SHELL:-Xclang -mllvm -Xclang -enzyme-lto-prelink=1{{$}}
 // HIP-NEXT: -- HIP POSEIDON_ENZYME_OPTIONS: [SHELL:-Xclang -mllvm -Xclang -enzyme-lto-prelink=1]
 // HIP-NEXT: -- HIP CUDAToolkit: []
 // HIP-NEXT: -- HIP POSEIDON_AMDGPU_ARCH: [gfx{{[0-9a-f]+}}]
 
-// CUDA: -- CUDA Plain: -fpass-plugin={{[^;]+}};-ffp-contract=on
-// CUDA-NEXT: -- CUDA ProfileGenerate: -fpass-plugin={{[^;]+}};-fpass-plugin={{[^;]+}};SHELL:-Xclang -mllvm -Xclang -poseidon-profile-generate;-ffp-contract=on
-// CUDA-NEXT: -- CUDA ProfileUse: -fpass-plugin={{[^;]+}};-ffp-contract=on
+// CUDA: -- CUDA Plain: -fpass-plugin={{[^;]+}};{{(SHELL:-Xclang -load -Xclang [^;]+;)?}}-ffp-contract=on
+// CUDA-NEXT: -- CUDA ProfileGenerate: -fpass-plugin={{[^;]+}};{{(SHELL:-Xclang -load -Xclang [^;]+;)?}}-fpass-plugin={{[^;]+}};{{(SHELL:-Xclang -load -Xclang [^;]+;)?}}SHELL:-Xclang -mllvm -Xclang -poseidon-profile-generate;-ffp-contract=on
+// CUDA-NEXT: -- CUDA ProfileUse: -fpass-plugin={{[^;]+}};{{(SHELL:-Xclang -load -Xclang [^;]+;)?}}-ffp-contract=on
 // CUDA-NEXT: -- CUDA EnzymeOptions: options-NOTFOUND
 // CUDA-NEXT: -- CUDA POSEIDON_ENZYME_OPTIONS: []
 // CUDA-NEXT: -- CUDA CUDAToolkit:

@@ -100,7 +100,7 @@ int main(void) { return 0; }
 // XHIP-SAME: -Xclang -mllvm -Xclang -poseidon-tau=1e-12
 // XHIP: "-cc1" {{.*}}"-fcuda-is-device"{{.*}} "-mllvm" "-poseidon-tau=1e-12"
 // XHIP-NOT: {{[="]}}-poseidon-
-// XHIP: clang-linker-wrapper"
+// XHIP: {{(clang-linker-wrapper|[/"]lld)}}"
 // XHIP-NOT: {{[="]}}-poseidon-
 // XHIP: "-cc1" "-triple" "x86_64-{{[^"]+}}"{{.*}} "-mllvm" "-poseidon-tau=1e-12"
 

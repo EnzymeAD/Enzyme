@@ -1,4 +1,4 @@
-// REQUIRES: enzyme, amdgpu-registered-target
+// REQUIRES: enzyme, amdgpu-registered-target, offload-new-driver
 // RUN: rm -rf %t && mkdir -p %t/drv %t/opt %t/rdc
 // RUN: (env TMPDIR=%t %clang -x hip --offload-arch=gfx942 -nogpulib -nogpuinc -O2 -c -I%poseidon_profile_inc %loadClangPoseidonEnzyme %s -o %t/plain.o 2>&1; echo "exit status $?") | FileCheck --check-prefix=DEFERRED --implicit-check-not=REPRODUCER --implicit-check-not="exit code" --implicit-check-not=ld.lld %s
 // RUN: %clang -x hip --offload-arch=gfx942 -nogpulib -nogpuinc -O2 -c -I%poseidon_profile_inc %loadClangPoseidonEnzyme -Xclang -mllvm -Xclang -enzyme-lto-prelink=1 %s -o %t/opt/k.o

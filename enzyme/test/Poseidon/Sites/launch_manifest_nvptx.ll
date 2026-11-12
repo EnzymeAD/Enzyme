@@ -14,10 +14,10 @@
 ; RUN: not ls %t/fresh
 ; RUN: %opt %t/siteless.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-generate -poseidon-cache=%t/freshgen -S -o /dev/null
 ; RUN: not ls %t/freshgen
-; RUN: %clang -O0 -x ir %t/host.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/raise_tcec -mllvm -poseidon-cache=%t/none -mllvm -poseidon-unit=u -S -emit-llvm -o %t/use.ll 2> %t/use.err
+; RUN: %clang -O0 -Wno-override-module -x ir %t/host.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/raise_tcec -mllvm -poseidon-cache=%t/none -mllvm -poseidon-unit=u -S -emit-llvm -o %t/use.ll 2> %t/use.err
 ; RUN: count 0 < %t/use.err
 ; RUN: FileCheck --check-prefix=LAUNCH --implicit-check-not=__poseidon %s < %t/use.ll
-; RUN: %clang -O0 -x ir %t/host.ll %loadClangPoseidon -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/none -mllvm -poseidon-unit=u -S -emit-llvm -o %t/gen.ll 2> %t/gen.err
+; RUN: %clang -O0 -Wno-override-module -x ir %t/host.ll %loadClangPoseidon -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/none -mllvm -poseidon-unit=u -S -emit-llvm -o %t/gen.ll 2> %t/gen.err
 ; RUN: count 0 < %t/gen.err
 ; RUN: FileCheck --check-prefix=LAUNCH --implicit-check-not=__poseidon %s < %t/gen.ll
 ; RUN: not ls %t/none
