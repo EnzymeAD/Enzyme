@@ -73,7 +73,6 @@ module {
 // CHECK:           cir.store %[[CONST_0]], %[[ALLOCA_8]] : !rec_P, !cir.ptr<!rec_P>
 // CHECK:           %[[ALLOCA_9:.*]] = cir.alloca "q" align(8) init : !cir.ptr<!rec_P>
 // CHECK:           cir.store %[[LOAD_1]], %[[ALLOCA_5]] : !rec_P, !cir.ptr<!rec_P>
-// CHECK:           cir.copy %[[ALLOCA_4]] align(8) to %[[ALLOCA_8]] align(8) : !cir.ptr<!rec_P>
 // CHECK:           cir.copy %[[ALLOCA_5]] align(8) to %[[ALLOCA_9]] align(8) : !cir.ptr<!rec_P>
 // CHECK:           %[[GET_MEMBER_4:.*]] = cir.get_member %[[ALLOCA_8]][0] {name = "x"} : !cir.ptr<!rec_P> -> !cir.ptr<!cir.double>
 // CHECK:           %[[GET_MEMBER_5:.*]] = cir.get_member %[[ALLOCA_9]][0] {name = "x"} : !cir.ptr<!rec_P> -> !cir.ptr<!cir.double>

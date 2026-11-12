@@ -20,6 +20,7 @@
 #include "Interfaces/Utils.h"
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
+#include "mlir/Interfaces/DataLayoutInterfaces.h"
 #include "mlir/Support/LogicalResult.h"
 #include "clang/CIR/Dialect/Builder/CIRBaseBuilder.h"
 #include "clang/CIR/Dialect/IR/CIRDialect.h"
@@ -388,6 +389,114 @@ struct CIRCastOpReverse
   }
 };
 
+static FailureOr<Type> uniformFloatType(Type t) {
+  if (isa<cir::FPTypeInterface>(t))
+    return t;
+  if (isa<cir::IntType, cir::BoolType, cir::PointerType>(t))
+    return Type();
+  if (auto a = dyn_cast<cir::ArrayType>(t))
+    return uniformFloatType(a.getElementType());
+  if (auto v = dyn_cast<cir::VectorType>(t))
+    return uniformFloatType(v.getElementType());
+  if (auto c = dyn_cast<cir::ComplexType>(t))
+    return uniformFloatType(c.getElementType());
+  if (auto s = dyn_cast<cir::StructType>(t)) {
+    std::optional<Type> acc;
+    for (Type member : s.getMembers()) {
+      FailureOr<Type> f = uniformFloatType(member);
+      if (failed(f) || (acc && *acc != *f))
+        return failure();
+      acc = *f;
+    }
+    return acc.value_or(Type());
+  }
+  return failure();
+}
+
+static bool copiesOnlyFloatFreeData(Type t) {
+  FailureOr<Type> f = uniformFloatType(t);
+  return succeeded(f) && !*f;
+}
+
+static Type memcpyCopiedType(cir::MemCpyOp memcpy) {
+  for (Value ptr : {memcpy.getDst(), memcpy.getSrc()}) {
+    if (auto castOp = ptr.getDefiningOp<cir::CastOp>();
+        castOp && castOp.getKind() == cir::CastKind::bitcast)
+      ptr = castOp.getSrc();
+    Type pointee = cast<cir::PointerType>(ptr.getType()).getPointee();
+    if (!isa<cir::VoidType>(pointee))
+      return pointee;
+  }
+  return Type();
+}
+
+static FailureOr<Type> memcpyFloatType(cir::MemCpyOp memcpy) {
+  Type copied = memcpyCopiedType(memcpy);
+  if (!copied)
+    return failure();
+  return uniformFloatType(copied);
+}
+
+static void zeroBytes(OpBuilder &builder, Location loc, Value dst, Value len) {
+  auto u8 = cir::IntType::get(builder.getContext(), 8, /*isSigned=*/false);
+  Value zero = cir::ConstantOp::create(builder, loc, u8,
+                                       cir::IntAttr::get(u8, APInt(8, 0)));
+  cir::MemSetOp::create(builder, loc, dst, /*alignment=*/nullptr, zero, len);
+}
+
+// dsrc[i] += ddst[i]; ddst[i] = 0 for each floatTy element in len bytes.
+static void accumulateAndZero(OpBuilder &builder, Location loc, Type floatTy,
+                              Value dstShadow, Value srcShadow, Value len) {
+  auto ptrTy = cir::PointerType::get(floatTy);
+  Value dst = cir::CastOp::create(builder, loc, ptrTy, cir::CastKind::bitcast,
+                                  dstShadow);
+  Value src = cir::CastOp::create(builder, loc, ptrTy, cir::CastKind::bitcast,
+                                  srcShadow);
+  auto lenTy = cast<cir::IntType>(len.getType());
+  auto constLen = [&](OpBuilder &b, uint64_t v) -> Value {
+    return cir::ConstantOp::create(
+        b, loc, lenTy, cir::IntAttr::get(lenTy, APInt(lenTy.getWidth(), v)));
+  };
+  DataLayout layout =
+      DataLayout::closest(builder.getInsertionBlock()->getParentOp());
+  Value count = cir::DivOp::create(
+      builder, loc, len, constLen(builder, layout.getTypeSize(floatTy)));
+
+  Operation *fn = builder.getInsertionBlock()->getParentOp();
+  if (!isa<FunctionOpInterface>(fn))
+    fn = fn->getParentOfType<FunctionOpInterface>();
+  OpBuilder entryBuilder = OpBuilder::atBlockBegin(&fn->getRegion(0).front());
+  Value iv = cir::AllocaOp::create(
+      entryBuilder, loc, cir::PointerType::get(lenTy), "memcpy.idx",
+      entryBuilder.getI64IntegerAttr(layout.getTypeABIAlignment(lenTy)));
+  cir::StoreOp::create(builder, loc, constLen(builder, 0), iv);
+
+  auto iface = cast<AutoDiffTypeInterface>(floatTy);
+  cir::ForOp::create(
+      builder, loc,
+      [&](OpBuilder &b, Location l) {
+        Value i = cir::LoadOp::create(b, l, lenTy, iv);
+        Value more = cir::CmpOp::create(b, l, cir::CmpOpKind::lt, i, count);
+        cir::ConditionOp::create(b, l, more);
+      },
+      [&](OpBuilder &b, Location l) {
+        Value i = cir::LoadOp::create(b, l, lenTy, iv);
+        Value d = cir::PtrStrideOp::create(b, l, ptrTy, dst, i);
+        Value s = cir::PtrStrideOp::create(b, l, ptrTy, src, i);
+        Value dAdj = cir::LoadOp::create(b, l, floatTy, d);
+        Value sAdj = cir::LoadOp::create(b, l, floatTy, s);
+        cir::StoreOp::create(b, l, iface.createAddOp(b, l, sAdj, dAdj), s);
+        cir::StoreOp::create(b, l, iface.createNullValue(b, l), d);
+        cir::YieldOp::create(b, l);
+      },
+      [&](OpBuilder &b, Location l) {
+        Value i = cir::LoadOp::create(b, l, lenTy, iv);
+        cir::StoreOp::create(b, l, cir::AddOp::create(b, l, i, constLen(b, 1)),
+                             iv);
+        cir::YieldOp::create(b, l);
+      });
+}
+
 struct CIRCopyOpForward
     : public AutoDiffOpInterface::ExternalModel<CIRCopyOpForward, cir::CopyOp> {
   LogicalResult createForwardModeTangent(Operation *op, OpBuilder &builder,
@@ -475,10 +584,119 @@ struct CIRCopyOpReverse
     Value src = copyOp.getSrc();
     if (gutils->isConstantValue(dst) || gutils->isConstantValue(src))
       return success();
+    // Copying float shadows now would overwrite the adjoint seed of dst.
+    if (!copiesOnlyFloatFreeData(
+            cast<cir::PointerType>(dst.getType()).getPointee()))
+      return success();
     auto newOp = cast<cir::CopyOp>(gutils->getNewFromOriginal(op));
     auto shadowOp = cast<cir::CopyOp>(builder.clone(*newOp));
     shadowOp.getDstMutable().assign(gutils->invertPointerM(dst, builder));
     shadowOp.getSrcMutable().assign(gutils->invertPointerM(src, builder));
+    return success();
+  }
+};
+
+struct CIRMemCpyOpForward
+    : public AutoDiffOpInterface::ExternalModel<CIRMemCpyOpForward,
+                                                cir::MemCpyOp> {
+  LogicalResult createForwardModeTangent(Operation *op, OpBuilder &builder,
+                                         MGradientUtils *gutils) const {
+    auto memcpy = cast<cir::MemCpyOp>(op);
+    if (gutils->isConstantValue(memcpy.getDst()))
+      return success();
+    Value dstShadow = gutils->invertPointerM(memcpy.getDst(), builder);
+    auto newOp = cast<cir::MemCpyOp>(gutils->getNewFromOriginal(op));
+    if (!gutils->isConstantValue(memcpy.getSrc())) {
+      auto shadowOp = cast<cir::MemCpyOp>(builder.clone(*newOp));
+      shadowOp.getDstMutable().assign(dstShadow);
+      shadowOp.getSrcMutable().assign(
+          gutils->invertPointerM(memcpy.getSrc(), builder));
+    } else {
+      FailureOr<Type> floatTy = memcpyFloatType(memcpy);
+      if (failed(floatTy))
+        return op->emitError()
+               << "could not compute the tangent of a memcpy from an "
+                  "undifferentiated source without knowing what it copies "
+               << *op;
+      if (*floatTy) {
+        zeroBytes(builder, op->getLoc(), dstShadow, newOp.getLen());
+      } else {
+        auto shadowOp = cast<cir::MemCpyOp>(builder.clone(*newOp));
+        shadowOp.getDstMutable().assign(dstShadow);
+      }
+    }
+    if (gutils->primalStoreElidable(memcpy.getDst()))
+      gutils->erase(newOp);
+    return success();
+  }
+};
+
+struct CIRMemCpyOpReverse
+    : public ReverseAutoDiffOpInterface::ExternalModel<CIRMemCpyOpReverse,
+                                                       cir::MemCpyOp> {
+  LogicalResult createReverseModeAdjoint(Operation *op, OpBuilder &builder,
+                                         MGradientUtilsReverse *gutils,
+                                         SmallVector<Value> caches) const {
+    auto memcpy = cast<cir::MemCpyOp>(op);
+    if (gutils->isConstantValue(memcpy.getDst()))
+      return success();
+    FailureOr<Type> floatTy = memcpyFloatType(memcpy);
+    if (failed(floatTy))
+      return op->emitError() << "could not compute the adjoint of a memcpy "
+                                "without knowing what it copies "
+                             << *op;
+    if (*floatTy) {
+      Location loc = op->getLoc();
+      Value dstShadow = gutils->popCache(caches[0], builder);
+      Value len = gutils->popCache(caches[1], builder);
+      if (gutils->isConstantValue(memcpy.getSrc()))
+        zeroBytes(builder, loc, dstShadow, len);
+      else
+        accumulateAndZero(builder, loc, *floatTy, dstShadow,
+                          gutils->popCache(caches[2], builder), len);
+    }
+    if (gutils->primalStoreElidable(memcpy.getDst()))
+      gutils->erase(gutils->getNewFromOriginal(op));
+    return success();
+  }
+
+  SmallVector<Value> cacheValues(Operation *op,
+                                 MGradientUtilsReverse *gutils) const {
+    auto memcpy = cast<cir::MemCpyOp>(op);
+    if (gutils->isConstantValue(memcpy.getDst()))
+      return {};
+    FailureOr<Type> floatTy = memcpyFloatType(memcpy);
+    if (failed(floatTy) || !*floatTy)
+      return {};
+    OpBuilder cacheBuilder(gutils->getNewFromOriginal(op));
+    SmallVector<Value> caches{
+        gutils->initAndPushCache(
+            gutils->invertPointerM(memcpy.getDst(), cacheBuilder),
+            cacheBuilder),
+        gutils->initAndPushCache(gutils->getNewFromOriginal(memcpy.getLen()),
+                                 cacheBuilder)};
+    if (!gutils->isConstantValue(memcpy.getSrc()))
+      caches.push_back(gutils->initAndPushCache(
+          gutils->invertPointerM(memcpy.getSrc(), cacheBuilder), cacheBuilder));
+    return caches;
+  }
+
+  LogicalResult createShadowValues(Operation *op, OpBuilder &builder,
+                                   MGradientUtilsReverse *gutils) const {
+    auto memcpy = cast<cir::MemCpyOp>(op);
+    if (gutils->isConstantValue(memcpy.getDst()))
+      return success();
+    // Float shadows hold adjoint seeds now; leave them for the reverse sweep.
+    FailureOr<Type> floatTy = memcpyFloatType(memcpy);
+    if (failed(floatTy) || *floatTy)
+      return success();
+    auto newOp = cast<cir::MemCpyOp>(gutils->getNewFromOriginal(op));
+    auto shadowOp = cast<cir::MemCpyOp>(builder.clone(*newOp));
+    shadowOp.getDstMutable().assign(
+        gutils->invertPointerM(memcpy.getDst(), builder));
+    if (!gutils->isConstantValue(memcpy.getSrc()))
+      shadowOp.getSrcMutable().assign(
+          gutils->invertPointerM(memcpy.getSrc(), builder));
     return success();
   }
 };
@@ -624,6 +842,8 @@ void mlir::enzyme::registerCIRDialectAutoDiffInterface(
     cir::CopyOp::attachInterface<CIRMemTransfer<cir::CopyOp>>(*context);
     cir::MemCpyOp::attachInterface<CIRMemTransfer<cir::MemCpyOp>>(*context);
     cir::MemMoveOp::attachInterface<CIRMemTransfer<cir::MemMoveOp>>(*context);
+    cir::MemCpyOp::attachInterface<CIRMemCpyOpForward>(*context);
+    cir::MemCpyOp::attachInterface<CIRMemCpyOpReverse>(*context);
     cir::GetGlobalOp::attachInterface<CIRGetGlobalOpForward>(*context);
     cir::GetGlobalOp::attachInterface<CIRGetGlobalOpReverse>(*context);
     cir::LifetimeStartOp::attachInterface<
