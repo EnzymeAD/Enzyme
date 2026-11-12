@@ -38,19 +38,6 @@ class FunctionPass;
 llvm::ModulePass *createPreserveNVVMPass(bool Begin);
 llvm::FunctionPass *createPreserveNVVMFnPass(bool Begin);
 
-/// Whether M asks anything of Enzyme: it calls or declares one of its
-/// __enzyme_* entry points, holds a registration global or an annotation from
-/// one of its attributes, or has functions an earlier PreserveNVVM run marked.
-/// The registrations of device math functions do not count.
-bool moduleUsesEnzyme(const llvm::Module &M);
-
-/// The clang plugin keeps every device math function it sees alive, and
-/// registers it in a global named __enzyme_device_math_autoreg_*, so that the
-/// libdevice definitions a derivative may call are linked into the module.
-/// Removes the registrations and, unless Keep, gives the functions up again,
-/// with what was linked or emitted only for them. Returns whether M changed.
-bool releaseDeviceMath(llvm::Module &M, bool Keep = false);
-
 class PreserveNVVMNewPM final : public PassParent<PreserveNVVMNewPM> {
   friend PassParent<PreserveNVVMNewPM>;
 
