@@ -76,17 +76,20 @@ struct FunctionProfileHeader {
   // no SiteId line.
   int siteId = -1;
   // Measured relative condition number of the declared quantity of interest
-  // with respect to this site's outputs, written by
-  // Poseidon/scripts/poseidon_probe.py. 1.0 when the profile carries no Kappa
-  // line, which is the no-cross-site-weighting case.
+  // with respect to this site's outputs, written by the profiling run. 1.0
+  // when the profile carries no Kappa line, which is the
+  // no-cross-site-weighting case.
   double kappa = 1.0;
-  // False when the profile carries no Kappa line, which is the case with no
-  // declared quantity of interest and so no cross-site weighting.
+  // False when the profile carries no Kappa line: no declared quantity of
+  // interest and so no cross-site weighting, or one left unmeasured.
   bool hasKappa = false;
-  // "ok", "below-noise", "nonlinear" or "diverged"; empty when there is no
-  // Kappa line.
+  // "ok", "below-noise", "nonlinear" or "diverged" with a Kappa line;
+  // kKappaUnmeasured without one when the run declared a quantity of interest
+  // and did not measure the condition number; empty otherwise.
   std::string kappaMark;
 };
+
+inline constexpr llvm::StringLiteral kKappaUnmeasured = "unmeasured";
 
 void parseProfileFile(const std::string &profilePath, ProfileMap &profileMap,
                       FunctionProfileHeader *header = nullptr);
@@ -114,6 +117,11 @@ bool profileDirNamesFormat(llvm::StringMap<bool> &known, llvm::StringRef dir);
 // against the canonical form `canonicalHash` names.
 void requireCanonicalHash(const FunctionProfileHeader &header,
                           llvm::StringRef canonicalHash,
+                          llvm::StringRef profilePath, const llvm::Function &F);
+
+// An error at the site `F` when the profiling run declared a quantity of
+// interest and did not measure the site's condition number against it.
+void requireMeasuredKappa(const FunctionProfileHeader &header,
                           llvm::StringRef profilePath, const llvm::Function &F);
 
 // Degenerate-adjoint guard. A candidate is priced as (local error) * |sum of

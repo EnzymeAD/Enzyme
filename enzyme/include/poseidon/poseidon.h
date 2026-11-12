@@ -31,8 +31,13 @@
 //    are optimized.
 // 5. poseidon_metric(name, value), once at the end of the profiling run: the
 //    quantity of interest the target refers to. The profiler runtime writes it
-//    to <profile dir>/metric.txt and measures each site's condition number
-//    against it. Optional.
+//    to <profile dir>/metric.txt. Run under `poseidon-probe -- <program>
+//    [args...]` (or with POSEIDON_PROBE=1), the program then runs itself again
+//    at exit to measure each site's condition number against it, after saying
+//    how many runs that takes; run without, it says what measuring would take,
+//    and profile use stops at the sites until they are measured. With
+//    POSEIDON_PROBE=0 nothing is measured and each site is solved against its
+//    own target. Optional.
 // 6. __poseidon_fp_optimize(fn, args...): one call with Enzyme activity
 //    markers and shadows the caller provides, for pointers the profiler cannot
 //    size or a custom seed; poseidon_tau, t among the arguments sets that

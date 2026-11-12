@@ -142,6 +142,10 @@ static void readSiteProfile(Session &S, Function &F, SiteProfileData &P) {
     // scalar-reduction matmul gradD cells all see one consistent weight.
     applySensitivityFloor(profileMap, F.getName());
     requireCanonicalHash(profileHeader, canonicalHash, profilePath, F);
+    // Per-output accounting weighs each output on its own scale and takes no
+    // condition number.
+    if (O.Profiling.OutputProfiles.empty())
+      requireMeasuredKappa(profileHeader, profilePath, F);
     if (O.Diagnostics.Print && profileHeader.launchCount > 0) {
       llvm::errs() << "[poseidon] profile header for " << F.getName()
                    << ": MaxBlockDims=(" << profileHeader.maxBlockDim[0] << ","

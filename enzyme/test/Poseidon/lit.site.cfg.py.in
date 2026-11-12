@@ -41,6 +41,8 @@ config.substitutions.append(('%poseidon_clang',
                              '@POSEIDON_BINARY_DIR@/bin/poseidon-clang'))
 config.substitutions.append(('%poseidon_calibrate',
                              '@POSEIDON_BINARY_DIR@/bin/poseidon-calibrate'))
+config.substitutions.append(('%poseidon_probe',
+                             '@POSEIDON_BINARY_DIR@/bin/poseidon-probe'))
 config.substitutions.append(('%python', '"' + sys.executable + '"'))
 config.substitutions.append(('%poseidon_explain',
                              '"' + sys.executable + '" @POSEIDON_SOURCE_DIR@/tools/explain/poseidon-explain'))
