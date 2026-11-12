@@ -17,6 +17,7 @@
 #include "Targets/Target.h"
 #include "Techniques/Matmul/HostDispatch.h"
 #include "Twin.h"
+#include "Utils.h"
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
@@ -89,10 +90,10 @@ bool hasSite(const Options &O, Module &M) {
 void requirePluginOrder(const Options &O, Module &M) {
   if (!hasSite(O, M) || !enzymeAlreadyRan(M))
     return;
-  report_fatal_error(
-      "Poseidon: Enzyme's pass has already run on this module. The plugins "
-      "must be given in the order -fpass-plugin=<Poseidon>.so "
-      "-fpass-plugin=<ClangEnzyme>.so.");
+  reportUserError(M.getContext(),
+                  "Enzyme's pass has already run on this module. The plugins "
+                  "must be given in the order -fpass-plugin=<Poseidon>.so "
+                  "-fpass-plugin=<ClangEnzyme>.so.");
 }
 
 // One module pass for both phases, at OptimizerEarly so that profile
@@ -238,12 +239,12 @@ struct LatePass : PassParent<LatePass> {
     ModulePassManager MPM;
     if (Error E = PB->parsePassPipeline(MPM, "enzyme")) {
       std::string msg = toString(std::move(E));
-      report_fatal_error(Twine("Poseidon: a deferred site needs a second "
-                               "Enzyme run and the Enzyme pass pipeline is "
-                               "not registered (") +
-                         msg +
-                         "). Add -fpass-plugin=<ClangEnzyme>.so after the "
-                         "Poseidon plugin.");
+      reportUserError(M.getContext(),
+                      Twine("a deferred site needs a second Enzyme run and the "
+                            "Enzyme pass pipeline is not registered (") +
+                          msg +
+                          "). Add -fpass-plugin=<ClangEnzyme>.so after the "
+                          "Poseidon plugin.");
     }
     MPM.run(M, AMs.MAM);
   }
@@ -273,11 +274,11 @@ struct LatePass : PassParent<LatePass> {
     // undefined __enzyme_* symbol.
     for (Function *B : bodies)
       if (callsEnzymeRequest(*B))
-        report_fatal_error(Twine("Poseidon: the marked body ") + B->getName() +
-                               " still holds an __enzyme_* request that "
-                               "nothing lowered. " +
-                               unloweredRequestReason(PhaseKnown, Phase, Level),
-                           /*gen_crash_diag=*/false);
+        reportUserError(*B, B->getSubprogram(),
+                        Twine("the marked body ") + B->getName() +
+                            " still holds an __enzyme_* request that nothing "
+                            "lowered. " +
+                            unloweredRequestReason(PhaseKnown, Phase, Level));
     // The canonical form of a deferred site is taken here, in both phases, so
     // that the slots the profile was numbered against are the ones the solve
     // sees.
@@ -418,10 +419,10 @@ struct FinalizePass : PassParent<FinalizePass> {
     for (Function &F : M)
       if (F.isDeclaration() && !F.use_empty() &&
           F.getName().starts_with("__enzyme_autodiff_poseidon"))
-        report_fatal_error(Twine("Poseidon: profile generation emitted a "
-                                 "derivative request that nothing lowered. ") +
-                               unloweredRequestReason(PhaseKnown, Phase, Level),
-                           /*gen_crash_diag=*/false);
+        reportUserError(M.getContext(),
+                        Twine("profile generation emitted a derivative "
+                              "request that nothing lowered. ") +
+                            unloweredRequestReason(PhaseKnown, Phase, Level));
     // Every site of the module has been processed by now, in the early run or
     // the late one. A module without a descriptor removes the unit's manifest,
     // so that what an earlier compile of the unit recorded is not applied.

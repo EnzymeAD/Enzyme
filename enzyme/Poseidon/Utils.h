@@ -83,6 +83,10 @@ void simplifyFunction(llvm::Function &F, llvm::OptimizationLevel Level);
                                   const llvm::Twine &Message);
 [[noreturn]] void reportUserError(const llvm::Instruction &I,
                                   const llvm::Twine &Message);
+// The same for a mistake no site is concerned in: a flag value, a plugin or a
+// file of the whole compile.
+[[noreturn]] void reportUserError(llvm::LLVMContext &Ctx,
+                                  const llvm::Twine &Message);
 
 } // namespace poseidon
 #endif // POSEIDON_UTILS_H

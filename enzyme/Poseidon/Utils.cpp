@@ -79,6 +79,14 @@ void reportUserError(const Instruction &I, const Twine &Message) {
   reportUserError(*I.getFunction(), I.getDebugLoc(), Message);
 }
 
+void reportUserError(LLVMContext &Ctx, const Twine &Message) {
+  const std::string Text = "Poseidon: " + Message.str();
+  const Twine T(Text);
+  Ctx.diagnose(DiagnosticInfoGeneric(T, DS_Error));
+  sys::RunInterruptHandlers();
+  exit(1);
+}
+
 void simplifyFunction(Function &F, OptimizationLevel Level) {
 
 #if LLVM_VERSION_MAJOR >= 24

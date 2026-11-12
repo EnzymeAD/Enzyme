@@ -131,7 +131,11 @@ unsigned applySensitivityFloor(ProfileMap &profileMap,
 
 void mergeOutputProfiles(ProfileMap &profileMap, ArrayRef<std::string> dirs,
                          StringRef fileName, StringRef canonicalHash,
-                         StringRef functionName) {
+                         const Function &F) {
+  const StringRef functionName = F.getName();
+  auto refuse = [&](const Twine &why) {
+    reportUserError(F, F.getSubprogram(), why);
+  };
   std::unordered_map<size_t, double> grad, sens;
   for (const std::string &dir : dirs) {
     SmallString<128> path(dir);
@@ -143,25 +147,23 @@ void mergeOutputProfiles(ProfileMap &profileMap, ArrayRef<std::string> dirs,
     for (const auto &kv : out)
       total += kv.second.sumSens;
     if (!(total > 0.0) || !std::isfinite(total))
-      report_fatal_error(Twine("Poseidon: output profile ") + path + " of " +
-                         functionName +
-                         " is missing or carries no sensitivity; re-run "
-                         "profile generation with that output seeded.");
+      refuse(Twine("output profile ") + path + " of " + functionName +
+             " is missing or carries no sensitivity; re-run profile "
+             "generation with that output seeded.");
     if (!canonicalHash.empty() && header.canonicalHash != canonicalHash)
-      report_fatal_error(Twine("Poseidon: output profile ") + path +
-                         " was recorded against a different canonical form "
-                         "than the site's profile; re-run profile generation.");
+      refuse(Twine("output profile ") + path +
+             " was recorded against a different canonical form than the "
+             "site's profile; re-run profile generation.");
     if (out.size() != profileMap.size())
-      report_fatal_error(Twine("Poseidon: output profile ") + path +
-                         " records " + Twine(out.size()) +
-                         " instructions, the site's profile " +
-                         Twine(profileMap.size()) +
-                         "; both must come from the same profiling binary.");
+      refuse(Twine("output profile ") + path + " records " + Twine(out.size()) +
+             " instructions, the site's profile " + Twine(profileMap.size()) +
+             "; both must come from the same profiling binary.");
     for (const auto &kv : out) {
       if (!profileMap.count(kv.first))
-        report_fatal_error(Twine("Poseidon: output profile ") + path +
-                           " names instruction " + Twine(kv.first) +
-                           " that the site's profile does not.");
+        refuse(Twine("output profile ") + path + " names instruction " +
+               Twine(kv.first) +
+               " that the site's profile does not; both must come from the "
+               "same profiling binary.");
       const ProfileInfo &p = kv.second;
       double w = p.sumAbsGrad >= 0.0 ? p.sumAbsGrad : std::fabs(p.sumGrad);
       grad[kv.first] = std::max(grad[kv.first], w / total);
@@ -357,7 +359,7 @@ void parseProfileFile(const std::string &profilePath, ProfileMap &profileMap,
   }
 }
 
-bool isNeverExecutedProfile(const std::string &profilePath) {
+bool isNeverExecutedProfile(const std::string &profilePath, const Function &F) {
   std::ifstream file(profilePath);
   std::string line;
   bool marked = false;
@@ -367,9 +369,10 @@ bool isNeverExecutedProfile(const std::string &profilePath) {
     if (!line.empty() &&
         line.find_first_not_of("0123456789") == std::string::npos) {
       if (marked)
-        report_fatal_error(Twine("Poseidon: ") + profilePath +
-                           " says its site was never executed and records "
-                           "executions of it; re-run profile generation.");
+        reportUserError(F, F.getSubprogram(),
+                        Twine(profilePath) +
+                            " says its site was never executed and records "
+                            "executions of it; re-run profile generation.");
       return false;
     }
     marked |= line == "Executed = 0";
@@ -403,21 +406,22 @@ bool profileDirNamesFormat(StringMap<bool> &known, StringRef dir) {
 
 void requireCanonicalHash(const FunctionProfileHeader &header,
                           StringRef canonicalHash, StringRef profilePath,
-                          StringRef functionName) {
+                          const Function &F) {
   if (header.canonicalHash.empty())
-    report_fatal_error(
-        Twine("Poseidon: ") + profilePath +
-        " has no CanonicalHash field, so its slot indices cannot be checked "
-        "against the canonical form of " +
-        functionName + "; re-run profile generation.");
+    reportUserError(F, F.getSubprogram(),
+                    Twine(profilePath) +
+                        " has no CanonicalHash field, so its slot indices "
+                        "cannot be checked against the canonical form of " +
+                        F.getName() + "; re-run profile generation.");
   if (header.canonicalHash != canonicalHash)
-    report_fatal_error(
-        Twine("Poseidon: the profile of ") + functionName +
-        " was recorded against a different canonical form (profile "
-        "CanonicalHash " +
-        header.canonicalHash + ", this compile " + canonicalHash +
-        "). Its slot indices do not name the same instructions; re-run "
-        "profile generation.");
+    reportUserError(F, F.getSubprogram(),
+                    Twine("the profile of ") + F.getName() +
+                        " was recorded against a different canonical form "
+                        "(profile CanonicalHash " +
+                        header.canonicalHash + ", this compile " +
+                        canonicalHash +
+                        "). Its slot indices do not name the same "
+                        "instructions; re-run profile generation.");
 }
 
 // Profile-gen only, device module only: pre-declare the probes with

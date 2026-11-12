@@ -127,12 +127,11 @@ std::optional<Unprofiled> unprofiledSite(Session &S, CallBase *CI,
       if (!absent)
         absent = Unprofiled{false, path.str().str(),
                             !profileDirNamesFormat(S.ProfileDirFormats, dir)};
-    } else if (isNeverExecutedProfile(path.str().str())) {
+    } else if (isNeverExecutedProfile(path.str().str(), clone)) {
       ProfileMap records;
       FunctionProfileHeader header;
       parseProfileFile(path.str().str(), records, &header);
-      requireCanonicalHash(header, canonicalFormHash(clone), path,
-                           clone.getName());
+      requireCanonicalHash(header, canonicalFormHash(clone), path, clone);
       if (!neverExecuted)
         neverExecuted = Unprofiled{true, path.str().str()};
     }
@@ -219,10 +218,19 @@ void requireNumbers(const Options &O, const CallBase &CI) {
 
 // No solution saves more than the whole profiled cost, so a budget below -1 is
 // a mistake in the flag, most likely an integer budget of the cost axis that
-// came before, and not a solve that finds nothing.
+// came before, and not a solve that finds nothing. The axis puts the profiled
+// cost below 2^33 of its units in 2^63, so it holds every share up to 2^30.
 void requireCostBudget(const SolverOptions &O, const CallBase &CI) {
   if (std::isnan(O.CostBudget))
     reportNoNumber(CI, "poseidon-cost-budget");
+  if (std::isfinite(O.CostBudget) && O.CostBudget > 0x1p30) {
+    std::string value;
+    raw_string_ostream(value) << format("%.17g", O.CostBudget);
+    reportUserError(CI, "-poseidon-cost-budget=" + Twine(value) +
+                            " lets a solution add more than 2^30 times the "
+                            "profiled cost, which the DP's cost axis does not "
+                            "hold; give a share of at most 1073741824.");
+  }
   if (std::isfinite(O.CostBudget) && O.CostBudget >= -1.0)
     return;
   std::string value;
@@ -610,7 +618,7 @@ static void restoreHostWrapperDebugInfo(Module &M, bool profileGenerate) {
 }
 
 void finalizeModule(Session &S, Module &M) {
-  checkPinnedSites(S);
+  checkPinnedSites(S, M);
   reportHerbieAnswers(S);
   // A site whose solve applied nothing calls the original body again, and an
   // applied site's wrapper call may have been inlined away, in both cases

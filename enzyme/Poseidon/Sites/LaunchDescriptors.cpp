@@ -12,6 +12,7 @@
 #include "FPProfileName.h"
 #include "Pass/Session.h"
 #include "Targets/OffloadRuntime.h"
+#include "Utils.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
@@ -115,9 +116,11 @@ void writeLaunchManifest(Session &S, const Module &M) {
   // buffers), so a host half reading no manifest or an earlier one would build
   // a wrong program.
   auto fail = [&](StringRef action, const Twine &why) {
-    report_fatal_error("Poseidon: cannot " + action + " the launch manifest " +
-                           m.path + ": " + why,
-                       /*gen_crash_diag=*/false);
+    reportUserError(M.getContext(),
+                    "cannot " + action + " the launch manifest " + m.path +
+                        ": " + why +
+                        ". The manifest is kept in the -poseidon-cache "
+                        "directory, which has to be writable.");
   };
   if (llvm::all_of(
           kKinds, [&](LaunchKind kind) { return recorded(S, kind).empty(); })) {

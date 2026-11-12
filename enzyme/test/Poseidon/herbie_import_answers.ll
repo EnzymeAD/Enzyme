@@ -56,7 +56,7 @@ attributes #0 = { "target-cpu"="x86-64" }
 
 ; MINE-NOT: cachedHerbie
 
-; NOFLAG: LLVM ERROR: Poseidon: the cache {{.*}}mine holds no Herbie answer for subgraph 0 of preprocess_tester at 2 Taylor terms, and the Herbie at {{.*}}no-herbie cannot run (
+; NOFLAG: error: {{.*}}Poseidon: the cache {{.*}}mine holds no Herbie answer for subgraph 0 of preprocess_tester at 2 Taylor terms, and the Herbie at {{.*}}no-herbie cannot run (
 
 ; MIXED: at 2 Taylor terms: replayed the answer of the Herbie with digest
 ; MIXED: at 4 Taylor terms: replayed the answer of the Herbie with digest

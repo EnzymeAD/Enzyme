@@ -56,7 +56,7 @@ namespace poseidon {
 // The Herbie platform this compile searches against. It is the device's, so it
 // is derived from the resolved cost model.
 namespace {
-const HerbiePlatform &getHerbiePlatform(Session &S) {
+const HerbiePlatform &getHerbiePlatform(Session &S, const Function &F) {
   HerbiePlatform &P = S.Herbie.Platform;
   if (S.Herbie.PlatformResolved)
     return P;
@@ -82,34 +82,37 @@ const HerbiePlatform &getHerbiePlatform(Session &S) {
     P.Path =
         (Csv.ends_with(".csv") ? Csv.drop_back(4) : Csv).str() + ".herbie.rkt";
     if (!sys::fs::exists(P.Path))
-      report_fatal_error(
-          Twine("Poseidon: the Herbie algebraic search needs the platform "
-                "generated from this device's cost model, and ") +
-          P.Path +
-          " does not exist. Generate it with 'poseidon-calibrate --only "
-          "herbie-platform --out " +
-          costModelPath(S.CostModel) +
-          "'. Another architecture's platform is that architecture's prices "
-          "and is never substituted.");
+      reportUserError(
+          F, F.getSubprogram(),
+          Twine("the Herbie algebraic search needs the platform generated "
+                "from this device's cost model, and ") +
+              P.Path +
+              " does not exist. Generate it with 'poseidon-calibrate --only "
+              "herbie-platform --out " +
+              costModelPath(S.CostModel) +
+              "'. Another architecture's platform is that architecture's "
+              "prices and is never substituted.");
   }
 
   if (!P.Path.empty()) {
     P.Digest = readFileDigest(P.Path);
     if (P.Digest.empty())
-      report_fatal_error(Twine("Poseidon: cannot read the Herbie platform ") +
-                         P.Path);
+      reportUserError(F, F.getSubprogram(),
+                      Twine("cannot read the Herbie platform ") + P.Path +
+                          "; -poseidon-herbie-platform names a platform file "
+                          "or a platform compiled into Herbie.");
   }
   return P;
 }
 } // namespace
 
 // How this compile runs Herbie: its -poseidon-herbie-* flags.
-static HerbieRunOptions herbieRunOptions(Session &S) {
+static HerbieRunOptions herbieRunOptions(Session &S, const Function &F) {
   const Options &O = S.Opts;
   HerbieRunOptions Opts;
   Opts.Program = O.Herbie.HerbieBinary.empty() ? std::string(HERBIE_BINARY)
                                                : O.Herbie.HerbieBinary;
-  Opts.Platform = getHerbiePlatform(S);
+  Opts.Platform = getHerbiePlatform(S, F);
   Opts.Seed = O.Model.RandomSeed;
   Opts.NumPoints = O.Herbie.HerbieNumPts;
   Opts.NumIters = O.Herbie.HerbieNumIters;
@@ -124,22 +127,22 @@ static HerbieRunOptions herbieRunOptions(Session &S) {
   return Opts;
 }
 
-void addHerbieKeyParts(Session &S, CacheKey &key) {
-  addHerbieKeyParts(key, herbieRunOptions(S), S.Herbie.HerbieDigests);
+void addHerbieKeyParts(Session &S, const Function &F, CacheKey &key) {
+  addHerbieKeyParts(key, herbieRunOptions(S, F), S.Herbie.HerbieDigests);
 }
 
 bool improveViaHerbie(Session &S, const std::vector<std::string> &inputExprs,
                       std::vector<RewriteUnit> &COs, int subgraphIdx,
-                      StringRef funcTag) {
+                      const Function &F) {
   const Options &O = S.Opts;
   if (!O.Herbie.HerbieBinary.empty() && O.Diagnostics.Print)
     llvm::errs() << "Poseidon: using Herbie binary '" << O.Herbie.HerbieBinary
                  << "'\n";
   llvm::errs() << "random seed: " << std::to_string(O.Model.RandomSeed) << "\n";
-  HerbieRunOptions Opts = herbieRunOptions(S);
+  HerbieRunOptions Opts = herbieRunOptions(S, F);
 
   const std::string Label =
-      "subgraph " + std::to_string(subgraphIdx) + " of " + funcTag.str();
+      "subgraph " + std::to_string(subgraphIdx) + " of " + F.getName().str();
   SmallVector<std::optional<unsigned>, 2> TermCounts(
       O.Herbie.HerbieNumTaylorTerms.begin(),
       O.Herbie.HerbieNumTaylorTerms.end());
@@ -156,22 +159,24 @@ bool improveViaHerbie(Session &S, const std::vector<std::string> &inputExprs,
     // A timeout is Herbie's answer for these cores; a Herbie that does not
     // start gives none.
     if (Runs.back().Result == HerbieRunResult::Outcome::Failed)
-      report_fatal_error(
-          Twine("Poseidon: ") +
-              (Opts.CacheDir.empty()
-                   ? "no cache is kept"
-                   : "the cache " + Opts.CacheDir + " holds no Herbie answer") +
+      reportUserError(
+          F, F.getSubprogram(),
+          Twine(Opts.CacheDir.empty() ? "no cache is kept"
+                                      : "the cache " + Opts.CacheDir +
+                                            " holds no Herbie answer") +
               " for " + RunLabel + ", and the Herbie at " + Opts.Program +
               " cannot run (" + Runs.back().Failure +
               "). Point -poseidon-herbie-binary at a Herbie, replay the "
               "answers another Herbie gave with "
               "-poseidon-import-herbie-answers, or turn algebraic rewriting "
-              "off with -poseidon-enable-herbie=0.",
-          /*gen_crash_diag=*/false);
+              "off with -poseidon-enable-herbie=0.");
     if (Runs.back().Result == HerbieRunResult::Outcome::Crashed &&
         O.Model.StrictMode)
-      report_fatal_error(Twine("Poseidon strict mode: Herbie crashed (") +
-                         Runs.back().Crash + ") on " + RunLabel);
+      reportUserError(F, F.getSubprogram(),
+                      Twine("strict mode: Herbie crashed (") +
+                          Runs.back().Crash + ") on " + RunLabel +
+                          ". Without -poseidon-strict-mode the subgraph is "
+                          "left as written.");
     if (Runs.back().Result == HerbieRunResult::Outcome::Ok)
       switch (Runs.back().From) {
       case HerbieRunResult::Origin::Cache:
@@ -204,7 +209,7 @@ bool improveViaHerbie(Session &S, const std::vector<std::string> &inputExprs,
       StringRef testName = test.getString("name").value_or(StringRef("?"));
       StringRef status = test.getString("status").value_or(StringRef("?"));
       llvm::errs() << "[poseidon] Herbie core \"" << testName << "\" (subgraph "
-                   << subgraphIdx << " of " << funcTag
+                   << subgraphIdx << " of " << F.getName()
                    << "): status=" << status;
       if (auto t = test.getNumber("time"))
         llvm::errs() << " time=" << (*t / 1000.0) << "s";
@@ -1107,13 +1112,17 @@ void proposeHerbieCandidates(
       (!StringRef(O.Herbie.HerbieArrayGrouping).equals_insensitive("inputs") &&
        !StringRef(O.Herbie.HerbieArrayGrouping)
             .equals_insensitive("executions")))
-    report_fatal_error("Poseidon: -poseidon-herbie-array-grouping must be "
-                       "'inputs' or 'executions'");
+    reportUserError(F, F.getSubprogram(),
+                    "-poseidon-herbie-array-grouping=" +
+                        Twine(O.Herbie.HerbieArrayGrouping) +
+                        " is not 'inputs' or 'executions'.");
   if (O.Herbie.HerbieArrays && O.Herbie.HerbieArrayWeights != "sensitivity" &&
       O.Herbie.HerbieArrayWeights != "gradient" &&
       O.Herbie.HerbieArrayWeights != "none")
-    report_fatal_error("Poseidon: -poseidon-herbie-array-weights must be "
-                       "'sensitivity', 'gradient' or 'none'");
+    reportUserError(
+        F, F.getSubprogram(),
+        "-poseidon-herbie-array-weights=" + Twine(O.Herbie.HerbieArrayWeights) +
+            " is not 'sensitivity', 'gradient' or 'none'.");
 
   // Outputs that read the same inputs (hence the same precondition) and
   // execute equally often form one array core; the joint rewrite is priced
@@ -1230,8 +1239,8 @@ void proposeHerbieCandidates(
     if (!inArray(E))
       emitPerOutput(E, precs, numArrayCores ? arrayInputs : herbieInputs,
                     numArrayCores ? arrayCOs : newCOs);
-  if (numArrayCores && !improveViaHerbie(S, arrayInputs, arrayCOs,
-                                         subgraphCounter, F.getName())) {
+  if (numArrayCores &&
+      !improveViaHerbie(S, arrayInputs, arrayCOs, subgraphCounter, F)) {
     if (O.Diagnostics.Print)
       llvm::errs() << "Failed to optimize expressions using Herbie!\n";
   }
@@ -1251,8 +1260,7 @@ void proposeHerbieCandidates(
   COs.insert(COs.end(), arrayCOs.begin(), arrayCOs.end());
 
   if (!herbieInputs.empty()) {
-    if (!improveViaHerbie(S, herbieInputs, newCOs, subgraphCounter,
-                          F.getName())) {
+    if (!improveViaHerbie(S, herbieInputs, newCOs, subgraphCounter, F)) {
       if (O.Diagnostics.Print)
         llvm::errs() << "Failed to optimize expressions using Herbie!\n";
     }

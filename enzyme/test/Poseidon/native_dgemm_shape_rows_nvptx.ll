@@ -18,7 +18,7 @@
 ; RUN: %opt %S/Inputs/stale_cache/matmul_device.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%t/rect -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-cost-model=%t/rowonly.csv -poseidon-cache=%t/c_rowonly -poseidon-print -poseidon-tau=1e-14 -S -o /dev/null 2>&1 | FileCheck --check-prefix=HIGH --implicit-check-not='the native DGEMM runs at' %s
 ; RUN: %opt %S/Inputs/stale_cache/matmul_device.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/raise_tcec -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv -poseidon-cache=%t/c_square -poseidon-print -poseidon-tau=1e-14 -S -o /dev/null 2>&1 | FileCheck --check-prefix=SQ --implicit-check-not='the native DGEMM runs at' %s
 ; RUN: %opt %S/Inputs/stale_cache/matmul_device.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/Inputs/raise_tcec -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-cost-model=%t/square.csv -poseidon-cache=%t/c_squarerow -poseidon-print -poseidon-tau=1e-14 -S -o /dev/null 2>&1 | FileCheck --check-prefix=HIGH --implicit-check-not='the native DGEMM runs at' %s
-; RUN: not --crash %opt %S/Inputs/stale_cache/matmul_device.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%t/rect -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-cost-model=%t/none.csv -poseidon-cache=%t/c_none -poseidon-tau=1e-14 -S -o /dev/null 2>&1 | FileCheck --check-prefix=NONE %s
+; RUN: not %opt %S/Inputs/stale_cache/matmul_device.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%t/rect -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-cost-model=%t/none.csv -poseidon-cache=%t/c_none -poseidon-tau=1e-14 -S -o /dev/null 2>&1 | FileCheck --check-prefix=NONE %s
 
 ; The native DGEMM candidate of the product of Inputs/stale_cache/
 ; matmul_device.ll, whose dispatch extents are constants of the compile. Made
@@ -42,4 +42,4 @@
 
 ; ONCE: 1
 
-; NONE: the cost model has no 'ozaki_dispatch_rel,dgemm' row for the native DGEMM candidate; run poseidon-calibrate.
+; NONE: error: {{.*}}Poseidon: the cost model {{.*}}none.csv has no 'ozaki_dispatch_rel,dgemm' row for the native DGEMM candidate; measure it with poseidon-calibrate.

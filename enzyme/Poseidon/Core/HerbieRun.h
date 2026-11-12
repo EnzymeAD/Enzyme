@@ -116,8 +116,8 @@ struct HerbieRunResult {
     // Herbie ended by a signal the runner did not send; `Crash` names it.
     // Nothing is cached.
     Crashed,
-    // Herbie could not be started, or its input files could not be written;
-    // `Failure` says which.
+    // Herbie could not be started, its input files could not be written, or
+    // it exited without a usable results.json; `Failure` says which.
     Failed,
   };
   Outcome Result = Outcome::Failed;
@@ -133,7 +133,6 @@ struct HerbieRunResult {
 // the answer this binary gave, else the answer ImportDir records for the
 // same question, else a run, whose answer is cached with a record of the
 // question. `Label` names the cores in diagnostics, e.g. "subgraph 0 of foo".
-// Herbie exiting without a usable results.json is a fatal error.
 HerbieRunResult runHerbie(const std::vector<std::string> &Cores,
                           const HerbieRunOptions &Opts, llvm::StringRef Label,
                           HerbieBinaryDigests &Digests);

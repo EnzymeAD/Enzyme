@@ -126,7 +126,7 @@ static void readSiteProfile(Session &S, Function &F, SiteProfileData &P) {
     if (!O.Profiling.OutputProfiles.empty())
       mergeOutputProfiles(profileMap, O.Profiling.OutputProfiles,
                           siteProfileStem(S, F) + ".fpprofile", canonicalHash,
-                          F.getName());
+                          F);
     // Before the floor below, which would hide the exact zeros.
     if (O.Solver.AggressiveDCE)
       for (const auto &kv : profileMap) {
@@ -139,8 +139,7 @@ static void readSiteProfile(Session &S, Function &F, SiteProfileData &P) {
     // candidate pricing, the precision-tuning per-output costs and the
     // scalar-reduction matmul gradD cells all see one consistent weight.
     applySensitivityFloor(profileMap, F.getName());
-    requireCanonicalHash(profileHeader, canonicalHash, profilePath,
-                         F.getName());
+    requireCanonicalHash(profileHeader, canonicalHash, profilePath, F);
     if (O.Diagnostics.Print && profileHeader.launchCount > 0) {
       llvm::errs() << "[poseidon] profile header for " << F.getName()
                    << ": MaxBlockDims=(" << profileHeader.maxBlockDim[0] << ","
@@ -264,10 +263,12 @@ static void putOnApplicationScale(Session &S, Function &F,
   // Per-output weights are already divided by each output's own total.
   if (!O.Profiling.OutputProfiles.empty()) {
     if (profileHeader.hasKappa)
-      report_fatal_error(
-          Twine("Poseidon: the profile of ") + F.getName() +
-          " carries a measured condition number, which scales one site-wide "
-          "error; it cannot be combined with -poseidon-output-profiles.");
+      reportUserError(
+          F, F.getSubprogram(),
+          Twine("the profile of ") + F.getName() +
+              " carries a measured condition number, which scales one "
+              "site-wide error; it cannot be combined with "
+              "-poseidon-output-profiles. Leave out one or the other.");
     siteSumSens = 1.0;
   }
 
@@ -275,12 +276,12 @@ static void putOnApplicationScale(Session &S, Function &F,
   if (profileHeader.hasKappa) {
     double sumSens = siteSumSens;
     if (sumSens == 0.0)
-      report_fatal_error(
-          Twine("Poseidon: the profile of ") + F.getName() +
-          " carries a measured condition number but a zero total "
-          "sensitivity, "
-          "so the accuracy costs cannot be put on the scale the condition "
-          "number was measured against; re-run profile generation.");
+      reportUserError(F, F.getSubprogram(),
+                      Twine("the profile of ") + F.getName() +
+                          " carries a measured condition number but a zero "
+                          "total sensitivity, so the accuracy costs cannot "
+                          "be put on the scale the condition number was "
+                          "measured against; re-run profile generation.");
     factor = profileHeader.kappaMark == "diverged"
                  ? 1e30
                  : profileHeader.kappa / sumSens;

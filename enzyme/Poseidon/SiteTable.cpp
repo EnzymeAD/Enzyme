@@ -15,6 +15,7 @@
 #include "Solvers.h"
 #include "Techniques/Herbie.h"
 #include "Techniques/Matmul/MatmulSimulation.h"
+#include "Utils.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Config/llvm-config.h"
@@ -122,8 +123,12 @@ CacheKey solveKey(Session &S, const FunctionFPState &st,
   for (const std::string &path : profilePaths) {
     auto buf = MemoryBuffer::getFile(path);
     if (!buf)
-      report_fatal_error(Twine("Poseidon: cannot read the profile ") + path +
-                         " again to key the DP table of " + F.getName());
+      reportUserError(F, F.getSubprogram(),
+                      Twine("cannot read the profile ") + path +
+                          " again to key the DP table of " + F.getName() +
+                          " (" + buf.getError().message() +
+                          "); a profile directory must not change while a "
+                          "compile reads it.");
     profiles += contentDigest((*buf)->getBuffer()) + "\n";
   }
   key.addContent("profile", profiles);
@@ -132,7 +137,7 @@ CacheKey solveKey(Session &S, const FunctionFPState &st,
     key.add(("-" + name).str(), value);
   // Only a site that sent Herbie cores depends on which Herbie answered them.
   if (!st.COs.empty())
-    addHerbieKeyParts(S, key);
+    addHerbieKeyParts(S, F, key);
 
   std::string candidates;
   raw_string_ostream os(candidates);
