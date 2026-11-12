@@ -1,10 +1,11 @@
 // RUN: %eopt --enzyme --split-input-file --verify-diagnostics %s
 
-// Storing an active value into a global needs somewhere to keep its tangent.
+// Storing an active value into a global needs somewhere to keep its tangent,
+// and a global defined in another module cannot get one here.
 module {
-  cir.global external @g = #cir.fp<3.000000e+00> : !cir.double
+  cir.global "private" external @g : !cir.double
   cir.func @write(%x: !cir.double) -> !cir.double {
-    // expected-error @+1 {{global @g is active, so it needs a shadow global named by an enzyme_shadow attribute}}
+    // expected-error @+1 {{global @g is active and defined outside this module, so it needs a shadow global named by an enzyme_shadow attribute}}
     %0 = cir.get_global @g : !cir.ptr<!cir.double>
     cir.store %x, %0 : !cir.double, !cir.ptr<!cir.double>
     cir.return %x : !cir.double
@@ -38,9 +39,9 @@ module {
 // A public global may be written with an active value outside this module, so
 // even reading it needs a shadow.
 module {
-  cir.global external @g = #cir.fp<3.000000e+00> : !cir.double
+  cir.global "private" external @g : !cir.double
   cir.func @read(%x: !cir.double) -> !cir.double {
-    // expected-error @+1 {{global @g is active, so it needs a shadow global named by an enzyme_shadow attribute}}
+    // expected-error @+1 {{global @g is active and defined outside this module, so it needs a shadow global named by an enzyme_shadow attribute}}
     %0 = cir.get_global @g : !cir.ptr<!cir.double>
     %1 = cir.load %0 : !cir.ptr<!cir.double>, !cir.double
     %2 = cir.fmul %x, %1 : !cir.double
