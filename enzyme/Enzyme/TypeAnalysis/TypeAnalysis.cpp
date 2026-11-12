@@ -888,6 +888,10 @@ void getConstantAnalysis(Constant *Val, TypeAnalyzer &TA,
       return;
     }
     if (CE->getOpcode() == Instruction::GetElementPtr) {
+      // Seed analysis[Val] before visiting so recursive getAnalysis(&gep)
+      // calls inside visitGEPOperator (e.g. for null-base or non-inbounds
+      // ConstantExpr GEPs) terminate instead of overflowing the stack.
+      analysis[Val];
       TA.visitGEPOperator(*cast<GEPOperator>(CE));
       return;
     }
