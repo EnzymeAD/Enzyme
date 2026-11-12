@@ -514,6 +514,16 @@ public:
   }
 
   void visitAllocaInst(llvm::AllocaInst &I) {
+    // If the contents of this allocation are only valid for an iteration of
+    // a loop which does not contain the allocation, preserving the stack
+    // allocation is insufficient, and we must cache the contents for each
+    // iteration. Note that in practice this will only occur in combined mode,
+    // as stack allocations are otherwise upgraded to heap allocations (and
+    // handled there).
+    {
+      llvm::IRBuilder<> BuilderZ(gutils->getNewFromOriginal(&I));
+      cacheWholeAllocationInLoop(I, BuilderZ);
+    }
     eraseIfUnused(I);
     switch (Mode) {
     case DerivativeMode::ForwardModeSplit:
@@ -525,6 +535,25 @@ public:
     default:
       return;
     }
+  }
+
+  /// If the allocation I must be cached in its entirety, but its contents are
+  /// only valid for an iteration of a loop which does not contain I (see
+  /// GradientUtils::getWholeAllocationCacheLoop), cache the contents of the
+  /// allocation for each iteration of that loop.
+  void cacheWholeAllocationInLoop(llvm::Instruction &I,
+                                  llvm::IRBuilder<> &BuilderZ) {
+    if (Mode != DerivativeMode::ReverseModeCombined &&
+        Mode != DerivativeMode::ReverseModePrimal &&
+        Mode != DerivativeMode::ReverseModeGradient)
+      return;
+    auto L = gutils->getWholeAllocationCacheLoop(&I);
+    if (!L)
+      return;
+    int idx = -1;
+    if (Mode != DerivativeMode::ReverseModeCombined)
+      idx = getIndex(&I, CacheType::Tape, BuilderZ);
+    gutils->cacheWholeAllocationInLoop(&I, L, idx);
   }
 
   void visitICmpInst(llvm::ICmpInst &I) { eraseIfUnused(I); }

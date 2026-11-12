@@ -300,6 +300,46 @@ static inline bool isDeallocationFunction(const llvm::StringRef name,
   }
 }
 
+/// Given a call `orig` to the known allocation function `funcName`, return the
+/// indices of the arguments of the call whose product is the number of bytes
+/// being allocated.
+static inline llvm::SmallVector<unsigned, 2>
+getAllocationSizeArgIndices(const llvm::StringRef funcName,
+                            const llvm::TargetLibraryInfo &TLI,
+                            const llvm::CallBase *orig) {
+  assert(isAllocationFunction(funcName, TLI) &&
+         "can only compute the size of a known allocation function");
+  if (funcName == "calloc")
+    return {0, 1};
+  if (funcName == "julia.gc_alloc_obj" || funcName == "jl_gc_alloc_typed" ||
+      funcName == "ijl_gc_alloc_typed" || funcName == "aligned_alloc")
+    return {1};
+  if (funcName == "enzyme_allocator") {
+    auto index = getAllocationIndexFromCall(orig);
+    return {(unsigned)*index};
+  }
+  return {0};
+}
+
+/// Given a call `orig` to the known allocation function `funcName`, whose
+/// arguments are `argValues`, return the number of bytes being allocated as an
+/// i64, creating any instructions required to compute it with `bb`.
+static inline llvm::Value *getKnownAllocationSize(
+    llvm::IRBuilder<> &bb, llvm::ArrayRef<llvm::Value *> argValues,
+    const llvm::StringRef funcName, const llvm::TargetLibraryInfo &TLI,
+    const llvm::CallBase *orig) {
+  using namespace llvm;
+  auto i64 = Type::getInt64Ty(bb.getContext());
+  Value *allocSize = nullptr;
+  for (auto idx : getAllocationSizeArgIndices(funcName, TLI, orig)) {
+    Value *arg = bb.CreateZExtOrTrunc(argValues[idx], i64);
+    allocSize = allocSize ? bb.CreateMul(allocSize, arg, "", /*NUW*/ true,
+                                         /*NSW*/ true)
+                          : arg;
+  }
+  return allocSize;
+}
+
 static inline void zeroKnownAllocation(llvm::IRBuilder<> &bb,
                                        llvm::Value *toZero,
                                        llvm::ArrayRef<llvm::Value *> argValues,
@@ -313,15 +353,7 @@ static inline void zeroKnownAllocation(llvm::IRBuilder<> &bb,
   if (funcName == "calloc" || isRustZeroedAllocationFunction(funcName))
     return;
 
-  Value *allocSize = argValues[0];
-  if (funcName == "julia.gc_alloc_obj" || funcName == "jl_gc_alloc_typed" ||
-      funcName == "ijl_gc_alloc_typed" || funcName == "aligned_alloc") {
-    allocSize = argValues[1];
-  }
-  if (funcName == "enzyme_allocator") {
-    auto index = getAllocationIndexFromCall(orig);
-    allocSize = argValues[*index];
-  }
+  Value *allocSize = getKnownAllocationSize(bb, argValues, funcName, TLI, orig);
   Value *dst_arg = toZero;
 
   if (funcName == "__size_returning_new_experiment")
@@ -335,10 +367,7 @@ static inline void zeroKnownAllocation(llvm::IRBuilder<> &bb,
                               toZero->getType()->getPointerAddressSpace()));
 
   auto val_arg = ConstantInt::get(Type::getInt8Ty(toZero->getContext()), 0);
-  auto len_arg =
-      bb.CreateZExtOrTrunc(allocSize, Type::getInt64Ty(toZero->getContext()));
-
-  auto memset = bb.CreateMemSet(dst_arg, val_arg, len_arg, MaybeAlign());
+  auto memset = bb.CreateMemSet(dst_arg, val_arg, allocSize, MaybeAlign());
   memset->addParamAttr(0, Attribute::NonNull);
   if (auto CI = dyn_cast<ConstantInt>(allocSize)) {
     auto derefBytes = CI->getLimitedValue();
