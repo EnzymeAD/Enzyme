@@ -48,6 +48,13 @@ using namespace llvm;
 
 namespace {
 
+// A mistake in what the driver is given, in the form the pass reports one in
+// (README, "Errors"): `<driver>: error: Poseidon: <message>`, exit status 1.
+int userError(StringRef Prog, const Twine &Message) {
+  errs() << Prog << ": error: Poseidon: " << Message << '\n';
+  return 1;
+}
+
 std::string envOr(const char *Name, StringRef Fallback) {
   if (const char *V = ::getenv(Name))
     if (*V)
@@ -70,8 +77,8 @@ std::optional<std::string> toolkitRoot(StringRef Prog, StringRef Toolkit,
                                        StringRef How) {
   if (!Given.empty() || Built.empty() || sys::fs::is_directory(Built))
     return Given.empty() ? Built.str() : Given.str();
-  errs() << Prog << ": the " << Toolkit << " Poseidon was built against, "
-         << Built << ", is not on this machine; " << How << "\n";
+  userError(Prog, "the " + Toolkit + " Poseidon was built against, " + Built +
+                      ", is not on this machine; " + How);
   return std::nullopt;
 }
 
@@ -219,8 +226,7 @@ int main(int argc, char **argv) {
   SmallVector<const char *, 64> Args(argv, argv + argc);
   if (Error E = cl::ExpansionContext(Alloc, cl::TokenizeGNUCommandLine)
                     .expandResponseFiles(Args)) {
-    errs() << Prog << ": " << toString(std::move(E)) << '\n';
-    return 1;
+    return userError(Prog, toString(std::move(E)));
   }
 
   bool WantCXX = Prog.contains("++");
@@ -332,12 +338,10 @@ int main(int argc, char **argv) {
   if (RocmPath.empty())
     RocmPath = envOr("ROCM_PATH", "");
 
-  if (ProfileGenerate && ProfileUse) {
-    errs() << Prog
-           << ": -poseidon-profile-generate and -poseidon-profile-use are the "
-              "two halves of the workflow; pass one\n";
-    return 1;
-  }
+  if (ProfileGenerate && ProfileUse)
+    return userError(Prog, "-poseidon-profile-generate and "
+                           "-poseidon-profile-use are the two halves of the "
+                           "workflow; pass one");
 
   // The clang the plugin is built against, wherever the driver runs, and the
   // plugins, header and runtimes of the build tree the driver runs from or of
@@ -357,24 +361,20 @@ int main(int argc, char **argv) {
     LibDir = underPrefix(Prefix, POSEIDON_DRIVER_INSTALL_LIBDIR);
   }
   Plugin = envOr("POSEIDON_PLUGIN", Plugin);
-  if (!sys::fs::exists(Plugin)) {
-    errs() << Prog << ": Poseidon plugin not found at " << Plugin
-           << "; set POSEIDON_PLUGIN\n";
-    return 1;
-  }
+  if (!sys::fs::exists(Plugin))
+    return userError(Prog, "Poseidon plugin not found at " + Plugin +
+                               "; set POSEIDON_PLUGIN");
   if (std::string Given = envOr("ENZYME_PLUGIN", ""); !Given.empty()) {
     Enzyme = Given;
   } else if (!Enzyme.empty() && !sys::fs::exists(Enzyme)) {
-    errs() << Prog << ": Enzyme plugin not found at " << Enzyme
-           << "; install Enzyme to the same prefix or set ENZYME_PLUGIN\n";
-    return 1;
+    return userError(Prog, "Enzyme plugin not found at " + Enzyme +
+                               "; install Enzyme to the same prefix or set "
+                               "ENZYME_PLUGIN");
   }
-  if (Enzyme.empty() && ProfileGenerate) {
-    errs() << Prog
-           << ": -poseidon-profile-generate needs Enzyme to differentiate the "
-              "probes; set ENZYME_PLUGIN to the pinned ClangEnzyme-*.so\n";
-    return 1;
-  }
+  if (Enzyme.empty() && ProfileGenerate)
+    return userError(Prog, "-poseidon-profile-generate needs Enzyme to "
+                           "differentiate the probes; set ENZYME_PLUGIN to "
+                           "the pinned ClangEnzyme-*.so");
 
   SmallVector<std::string, 128> Cmd;
   Cmd.push_back(Clang);
@@ -492,9 +492,7 @@ int main(int argc, char **argv) {
     int FD;
     if (std::error_code EC = sys::fs::createTemporaryFile(
             "poseidon-clang", "rsp", FD, ResponseFile)) {
-      errs() << Prog << ": cannot create a response file: " << EC.message()
-             << '\n';
-      return 1;
+      return userError(Prog, "cannot create a response file: " + EC.message());
     }
     raw_fd_ostream OS(FD, /*shouldClose=*/true);
     for (StringRef A : ArrayRef<StringRef>(Argv).drop_front()) {
@@ -508,11 +506,10 @@ int main(int argc, char **argv) {
     }
     OS.close();
     if (OS.has_error()) {
-      errs() << Prog << ": cannot write " << ResponseFile << ": "
-             << OS.error().message() << '\n';
+      std::string Why = OS.error().message();
       OS.clear_error();
       sys::fs::remove(ResponseFile);
-      return 1;
+      return userError(Prog, "cannot write " + ResponseFile + ": " + Why);
     }
     ResponseArg = ("@" + ResponseFile).str();
     StringRef Program = Argv.front();
@@ -522,7 +519,7 @@ int main(int argc, char **argv) {
   std::string Err;
   int RC = sys::ExecuteAndWait(Clang, Argv, std::nullopt, {}, 0, 0, &Err);
   if (!Err.empty())
-    errs() << Prog << ": " << Err << '\n';
+    userError(Prog, "cannot run " + Clang + ": " + Err);
   if (!ResponseFile.empty())
     sys::fs::remove(ResponseFile);
   return RC;
