@@ -32,6 +32,7 @@
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Analysis/ValueTracking.h"
+#include "llvm/Demangle/Demangle.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/IntrinsicsX86.h"
@@ -44,6 +45,7 @@
 #include "EnzymeLogic.h"
 #include "FunctionUtils.h"
 #include "GradientUtils.h"
+#include "KokkosUtils.h"
 #include "LibraryFuncs.h"
 #include "TraceUtils.h"
 #include "TypeAnalysis/TBAA.h"
@@ -3789,6 +3791,16 @@ public:
         }
       }
       if (!vd.isKnownPastPointer()) {
+        if (gutils->oldFunc->getName().contains("Kokkos")) {
+          bool AnyFloat = false;
+          for (const auto &P : vd.getMapping())
+            if (P.second.isFloat())
+              AnyFloat = true;
+          if (!AnyFloat) {
+            vd = TypeTree(BaseType::Integer).Only(-1, &MS);
+            goto known;
+          }
+        }
         if (looseTypeAnalysis) {
 #if LLVM_VERSION_MAJOR < 17
           if (auto CI = dyn_cast<CastInst>(MS.getOperand(0))) {
@@ -4109,6 +4121,17 @@ public:
       }
 
       if (!vd.isKnownPastPointer()) {
+        if (isa<ConstantInt>(new_size) &&
+            gutils->oldFunc->getName().contains("Kokkos")) {
+          bool AnyFloat = false;
+          for (const auto &P : vd.getMapping())
+            if (P.second.isFloat())
+              AnyFloat = true;
+          if (!AnyFloat) {
+            vd = TypeTree(BaseType::Integer).Only(-1, &MTI);
+            goto known;
+          }
+        }
         if (looseTypeAnalysis) {
           for (auto val : {orig_dst, orig_src}) {
 #if LLVM_VERSION_MAJOR < 17
@@ -7022,6 +7045,15 @@ public:
 
   void handleMPI(llvm::CallInst &call, llvm::Function *called,
                  llvm::StringRef funcName);
+
+  bool handleKokkosCallDerivatives(llvm::CallInst &Call, llvm::Function *Called,
+                                   llvm::StringRef FuncName,
+                                   llvm::CallInst *const NewCall);
+
+  bool handleKokkosCallDerivativesImpl(
+      llvm::CallInst &Call, llvm::Function *Called, llvm::StringRef FuncName,
+      llvm::CallInst *const NewCall,
+      llvm::SmallVectorImpl<llvm::Instruction *> &DeferredErase);
 
   bool handleKnownCallDerivatives(llvm::CallInst &call, llvm::Function *called,
                                   llvm::StringRef funcName,

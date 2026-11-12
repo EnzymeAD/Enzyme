@@ -56,6 +56,7 @@
 
 #include "../EnzymeLogic.h"
 #include "../FlangRuntime.h"
+#include "../KokkosUtils.h"
 #include "../Utils.h"
 #include "TypeAnalysis.h"
 
@@ -5257,6 +5258,60 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
       for (int i : {5, 6, 8, 10, 11})
         updateAnalysis(call.getArgOperand(i), ptrdbl, &call);
       return;
+    }
+
+    if (enzyme_kokkos::mayBeKokkosRelevantSymbol(funcName)) {
+      std::string normDem = ENZYME_KOKKOS_DEMANGLE(funcName);
+      if (enzyme_kokkos::isKokkosInactiveCall(funcName, normDem)) {
+        llvm::StringRef k =
+            enzyme_kokkos::stripReturnTypeToNamespace(normDem, "Kokkos::");
+        if (startsWith(k, "Kokkos::Impl::ImplRangePolicy<Kokkos::Serial") &&
+            k.contains("::check_bounds_validity(") && call.arg_size() >= 1 &&
+            call.getArgOperand(0)->getType()->isPointerTy()) {
+          TypeTree ptrTT;
+          ptrTT.insert({-1}, BaseType::Pointer);
+          ptrTT.insert({-1, 0}, BaseType::Pointer);
+          ptrTT.insert({-1, 8}, BaseType::Pointer);
+          for (int off = 16; off < 48; ++off)
+            ptrTT.insert({-1, off}, BaseType::Integer);
+          updateAnalysis(call.getArgOperand(0), ptrTT, &call);
+        }
+        for (unsigned idx = 0; idx < call.arg_size(); ++idx) {
+          if (call.getArgOperand(idx)->getType()->isIntOrIntVectorTy())
+            updateAnalysis(call.getArgOperand(idx),
+                           TypeTree(BaseType::Integer).Only(-1, &call), &call);
+        }
+        if (call.getType()->isIntOrIntVectorTy())
+          updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call),
+                         &call);
+        else if (call.getType()->isPointerTy())
+          updateAnalysis(&call, TypeTree(BaseType::Pointer).Only(-1, &call),
+                         &call);
+        return;
+      }
+      if (enzyme_kokkos::isKokkosSerialDefaultCtor(funcName, normDem) ||
+          enzyme_kokkos::isKokkosSerialInternalCtor(funcName, normDem) ||
+          enzyme_kokkos::isKokkosSerialInternalDtor(funcName, normDem) ||
+          enzyme_kokkos::isKokkosSerialResizeTeamData(funcName, normDem)) {
+        unsigned thisIdx = funcName == "__enzyme_kokkos_serial_init_d" ? 1 : 0;
+        for (unsigned idx = 0; idx < call.arg_size(); ++idx) {
+          Value *Arg = call.getArgOperand(idx);
+          if (Arg->getType()->isPointerTy()) {
+            TypeTree ptrTT;
+            ptrTT.insert({-1}, BaseType::Pointer);
+            if (idx == thisIdx &&
+                enzyme_kokkos::isKokkosSerialDefaultCtor(funcName, normDem)) {
+              ptrTT.insert({-1, 0}, BaseType::Pointer);
+              ptrTT.insert({-1, 8}, BaseType::Pointer);
+            }
+            updateAnalysis(Arg, ptrTT, &call);
+          } else if (Arg->getType()->isIntOrIntVectorTy()) {
+            updateAnalysis(Arg, TypeTree(BaseType::Integer).Only(-1, &call),
+                           &call);
+          }
+        }
+        return;
+      }
     }
 
     if (funcName == "__kmpc_fork_call") {
