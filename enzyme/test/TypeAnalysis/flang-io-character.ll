@@ -1,5 +1,5 @@
-; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -print-type-analysis -opaque-pointers=1 -type-analysis-func=foo -o /dev/null | FileCheck %s; fi
-; RUN: %opt < %s %newLoadEnzyme -passes="print-type-analysis" -opaque-pointers=1 -type-analysis-func=foo -S -o /dev/null | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %OPloadEnzyme -print-type-analysis -type-analysis-func=foo -o /dev/null | FileCheck %s; fi
+; RUN: %opt < %s %OPnewLoadEnzyme -passes="print-type-analysis" -type-analysis-func=foo -S -o /dev/null | FileCheck %s
 
 ; The CHARACTER arguments (pointer + length) of the LLVM flang I/O runtime
 ; point to characters: exactly `len` bytes (times the kind for
