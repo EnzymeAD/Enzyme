@@ -4868,19 +4868,20 @@ void analyzeFuncTypes(RT (*fn)(Args...), CallBase &call, TypeAnalyzer &TA) {
 
 void analyzeIntelSubscriptIntrinsic(IntrinsicInst &II, TypeAnalyzer &TA) {
   assert(isIntelSubscriptIntrinsic(II));
-#if LLVM_VERSION_MAJOR >= 14
-  assert(II.arg_size() == 5);
-#else
-  assert(II.getNumArgOperands() == 5);
-#endif
-
-  constexpr size_t idxArgsIndices[4] = {0, 1, 2, 4};
   constexpr size_t ptrArgIndex = 3;
+#if LLVM_VERSION_MAJOR >= 14
+  size_t numArgs = II.arg_size();
+#else
+  size_t numArgs = II.getNumArgOperands();
+#endif
+  assert(numArgs >= 5 && "llvm.intel.subscript requires at least 5 arguments");
 
-  // Update analysis of index parameters
+  // Update analysis of index/bound parameters
 
   if (TA.direction & TypeAnalyzer::UP) {
-    for (auto i : idxArgsIndices) {
+    for (size_t i = 0; i < numArgs; ++i) {
+      if (i == ptrArgIndex)
+        continue;
       auto idx = II.getOperand(i);
       TA.updateAnalysis(idx, TypeTree(BaseType::Integer).Only(-1, &II), &II);
     }
@@ -4916,6 +4917,9 @@ void analyzeIntelSubscriptIntrinsic(IntrinsicInst &II, TypeAnalyzer &TA) {
                       TypeTree(TA.getAnalysis(&II).Inner0()).Only(-1, &II),
                       &II);
   }
+
+  if (numArgs > 6)
+    return;
 
   SmallVector<std::set<int64_t>, 4> idnext;
   // The first operand is used to denote the axis of a multidimensional array,

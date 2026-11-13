@@ -453,23 +453,29 @@ void RecursivelyReplaceAddressSpace(
     }
     if (auto II = dyn_cast<IntrinsicInst>(inst)) {
       if (isIntelSubscriptIntrinsic(*II)) {
+        constexpr size_t ptrArgIndex = 3;
+#if LLVM_VERSION_MAJOR >= 14
+        size_t numArgs = II->arg_size();
+#else
+        size_t numArgs = II->getNumArgOperands();
+#endif
+        assert(numArgs >= 5 &&
+               "llvm.intel.subscript requires at least 5 arguments");
 
-        const std::array<size_t, 4> idxArgsIndices{{0, 1, 2, 4}};
-        const size_t ptrArgIndex = 3;
-
-        SmallVector<Value *, 5> args(5);
-        for (auto i : idxArgsIndices) {
-          Value *idx = II->getOperand(i);
-          args[i] = idx;
+        SmallVector<Value *, 6> args(numArgs);
+        for (size_t i = 0; i < numArgs; ++i) {
+          args[i] = (i == ptrArgIndex) ? rep : II->getOperand(i);
         }
-        args[ptrArgIndex] = rep;
 
         IRBuilder<> B(II);
         auto nII = cast<CallInst>(B.CreateCall(II->getCalledFunction(), args));
+#if LLVM_VERSION_MAJOR >= 13
         // Must copy the elementtype attribute as it is needed by the intrinsic
-        nII->addParamAttr(
-            ptrArgIndex,
-            II->getParamAttr(ptrArgIndex, Attribute::AttrKind::ElementType));
+        if (II->paramHasAttr(ptrArgIndex, Attribute::AttrKind::ElementType))
+          nII->addParamAttr(
+              ptrArgIndex,
+              II->getParamAttr(ptrArgIndex, Attribute::AttrKind::ElementType));
+#endif
         nII->takeName(II);
         for (auto U : II->users()) {
           Todo.push_back(
