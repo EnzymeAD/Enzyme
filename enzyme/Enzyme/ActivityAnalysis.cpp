@@ -298,6 +298,7 @@ static const StringSet<> KnownInactiveFunctions = {
     "abort",
     "time",
     "memcmp",
+    "bcmp",
     "memchr",
     "gettimeofday",
     "stat",
@@ -523,6 +524,7 @@ static const char *DemangledKnownInactiveFunctionsStartingWith[] = {
     "std::__basic_file",
     "std::hash",
     "std::_Hash_bytes",
+    "std::_Fnv_hash_bytes",
 
     // __cxx11
     "std::__cxx11::basic_string",

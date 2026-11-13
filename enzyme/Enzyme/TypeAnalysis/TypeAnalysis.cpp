@@ -962,6 +962,21 @@ void getConstantAnalysis(Constant *Val, TypeAnalyzer &TA,
       analysis[Val] = T;
       return;
     }
+    // Clang/LLVM string literals (@.str, @.str.<N>, MSVC ??_C@...) hold
+    // character data.
+    if (GV->isConstant() &&
+        (GV->getName() == ".str" || startsWith(GV->getName(), ".str.") ||
+         startsWith(GV->getName(), "??_C@"))) {
+      if (auto AT = dyn_cast<ArrayType>(GV->getValueType())) {
+        if (AT->getElementType()->isIntegerTy()) {
+          TypeTree T;
+          T.insert({-1}, BaseType::Pointer);
+          T.insert({-1, -1}, BaseType::Integer);
+          analysis[Val] = T;
+          return;
+        }
+      }
+    }
     // A fixed constant global is a pointer to its initializer
     if (GV->isConstant() && GV->hasInitializer()) {
       // Record that this global is a pointer before analyzing its initializer.
@@ -5392,13 +5407,25 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
       updateAnalysis(&call, TypeTree(BaseType::Pointer).Only(-1, &call), &call);
       return;
     }
-    if (funcName == "memcmp") {
+    if ((funcName == "memcmp" || funcName == "bcmp") && call.arg_size() == 3) {
       updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
-      updateAnalysis(call.getOperand(0),
+      updateAnalysis(call.getArgOperand(0),
                      TypeTree(BaseType::Pointer).Only(-1, &call), &call);
-      updateAnalysis(call.getOperand(1),
+      updateAnalysis(call.getArgOperand(1),
                      TypeTree(BaseType::Pointer).Only(-1, &call), &call);
-      updateAnalysis(call.getOperand(2),
+      updateAnalysis(call.getArgOperand(2),
+                     TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      return;
+    }
+    if ((startsWith(funcName, "_ZSt11_Hash_bytes") ||
+         startsWith(funcName, "_ZSt15_Fnv_hash_bytes")) &&
+        call.arg_size() == 3) {
+      updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      updateAnalysis(call.getArgOperand(0),
+                     TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      updateAnalysis(call.getArgOperand(1),
+                     TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      updateAnalysis(call.getArgOperand(2),
                      TypeTree(BaseType::Integer).Only(-1, &call), &call);
       return;
     }
@@ -6405,16 +6432,6 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
                      TypeTree(BaseType::Pointer).Only(-1, &call), &call);
       updateAnalysis(call.getOperand(1),
                      TypeTree(BaseType::Pointer).Only(-1, &call), &call);
-      return;
-    }
-    if (funcName == "bcmp") {
-      updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
-      updateAnalysis(call.getOperand(0),
-                     TypeTree(BaseType::Pointer).Only(-1, &call), &call);
-      updateAnalysis(call.getOperand(1),
-                     TypeTree(BaseType::Pointer).Only(-1, &call), &call);
-      updateAnalysis(call.getOperand(2),
-                     TypeTree(BaseType::Integer).Only(-1, &call), &call);
       return;
     }
     if (funcName == "getcwd") {
