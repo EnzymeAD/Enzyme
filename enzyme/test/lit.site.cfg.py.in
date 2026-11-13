@@ -181,6 +181,9 @@ if "@ENZYME_MPI_FORTRAN_ENABLED@" == "1":
 # -Xflang -load also registers Enzyme's options, so that -mllvm -enzyme-* parses.
 flangEnzyme = ('@ENZYME_BINARY_DIR@/Enzyme/FlangEnzyme-'
                + config.llvm_ver + config.llvm_shlib_ext)
+# The flang -fc1 form, which takes -fpass-plugin itself. It must come before
+# %loadFlangEnzyme, which lit would otherwise substitute into it.
+config.substitutions.append(('%loadFlangEnzymeFc1', ' -fpass-plugin=' + flangEnzyme))
 config.substitutions.append(('%loadFlangEnzyme',
                              ' -fpass-plugin=' + flangEnzyme
                              + ' -Xflang -load -Xflang ' + flangEnzyme))
