@@ -617,15 +617,10 @@ def : CallPattern<(Op $x, $y),
                   [ReadNone, NoUnwind]
                   >;
 
-def : CallPattern<(Op $x, $integral_part_ptr),
-                  ["modf", "modff", "modfl"],
-                  [
-                    (DiffeRet),
-                    (InactiveArg)
-                  ],
-                  (ForwardFromSummedReverse),
-                  [ReadOnly, NoUnwind]
-                  >;
+// modf/modff/modfl are handled explicitly in Utils.cpp, Enzyme.cpp,
+// ActivityAnalysis.cpp, DifferentialUseAnalysis.cpp, and CallDerivatives.cpp
+// because their second argument is a write-only floating-point output pointer
+// whose shadow must be zeroed whenever it is active.
 
 def : CallPattern<(Op $x),
                   ["__fd_sincos_1", "__fd_sincos_1f", "__fd_sincos_1l"],

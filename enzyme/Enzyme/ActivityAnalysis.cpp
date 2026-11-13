@@ -1102,9 +1102,11 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
       if (isMemFreeLibMFunction(funcName)) {
         noActiveWrite = true;
       } else if (funcName == "frexp" || funcName == "frexpf" ||
-                 funcName == "frexpl" || funcName == "modf" ||
-                 funcName == "modff" || funcName == "modfl") {
+                 funcName == "frexpl") {
         noActiveWrite = true;
+      } else if (isModfCall(CI)) {
+        if (directions == 3 && isConstantValue(TR, CI->getArgOperand(1)))
+          noActiveWrite = true;
       }
     }
   }
@@ -2343,7 +2345,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
           }
         }
 
-        bool WriteOnly = isWriteOnly(CB);
+        bool WriteOnly = isWriteOnly(CB) || isModfCall(CB);
 
         if (ReadOnly && WriteOnly)
           AARes = ModRefInfo::NoModRef;
@@ -2479,7 +2481,8 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
           potentialStore = I;
           if (cop)
             potentiallyActiveStore = MTI;
-        } else if (isa<MemSetInst>(I)) {
+        } else if (isa<MemSetInst>(I) ||
+                   (isa<CallInst>(I) && isModfCall(cast<CallInst>(I)))) {
           potentialStore = I;
         } else {
           // Otherwise fallback and check if the instruction is active
@@ -2944,6 +2947,12 @@ bool ActivityAnalyzer::isInstructionInactiveFromOrigin(TypeResults const &TR,
         llvm::errs() << "constant(" << (int)directions << ") up-emptyconst "
                      << *inst << "\n";
       return true;
+    }
+    if (isModfCall(op)) {
+      if (considerValue)
+        return isConstantValue(TR, op->getArgOperand(0));
+      return isConstantValue(TR, op->getArgOperand(0)) &&
+             isConstantValue(TR, op->getArgOperand(1));
     }
     if (!isa<Constant>(callVal) && isConstantValue(TR, callVal)) {
       if (EnzymePrintActivity)

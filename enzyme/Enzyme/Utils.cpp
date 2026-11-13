@@ -385,6 +385,19 @@ bool attributeKnownFunctions(llvm::Function &F) {
 #endif
     F.addParamAttr(1, Attribute::WriteOnly);
   }
+  if (isModfFunction(&F)) {
+    changed = true;
+#if LLVM_VERSION_MAJOR >= 16
+    F.setOnlyAccessesArgMemory();
+    F.setOnlyWritesMemory();
+#else
+    F.addFnAttr(Attribute::ArgMemOnly);
+    F.addFnAttr(Attribute::WriteOnly);
+#endif
+    F.addFnAttr(Attribute::NoUnwind);
+    F.addParamAttr(1, Attribute::WriteOnly);
+    addFunctionNoCapture(&F, 1);
+  }
   if (F.getName() == "__fd_sincos_1" || F.getName() == "__fd_cos_1" ||
       F.getName() == "__mth_i_ipowi") {
     changed = true;

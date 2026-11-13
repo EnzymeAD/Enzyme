@@ -5281,6 +5281,11 @@ void GradientUtils::setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
         newval = BuilderM.CreateLoad(ty, valptr);
       }
 
+      ptr = BuilderM.CreatePointerCast(
+          ptr,
+          getPointerType(newval->getType(),
+                         cast<PointerType>(ptr->getType())->getAddressSpace()));
+
       auto ts = BuilderM.CreateStore(newval, ptr);
       if (align)
         ts->setAlignment(*align);

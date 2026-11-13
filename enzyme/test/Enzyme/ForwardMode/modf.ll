@@ -90,31 +90,43 @@ entry:
 
 ; CHECK: define internal double @fwddiffetestint(double %x, double %"x'")
 ; CHECK-NEXT: entry:
+; CHECK-NEXT:   %integral_part = alloca double, align 8
+; CHECK-NEXT:   %fractional_part = call double @modf(double %x, double* {{.*}}writeonly{{.*}} %integral_part)
 ; CHECK-NEXT:   ret double 0.000000e+00
 ; CHECK-NEXT: }
 
 ; CHECK: define internal double @fwddiffetestfrac(double %x, double %"x'")
 ; CHECK-NEXT: entry:
+; CHECK-NEXT:   %integral_part = alloca double, align 8
+; CHECK-NEXT:   %fractional_part = call double @modf(double %x, double* {{.*}}writeonly{{.*}} %integral_part)
 ; CHECK-NEXT:   ret double %"x'"
 ; CHECK-NEXT: }
 
 ; CHECK: define internal float @fwddiffetestintf(float %x, float %"x'")
 ; CHECK-NEXT: entry:
+; CHECK-NEXT:   %integral_part = alloca float, align 4
+; CHECK-NEXT:   %fractional_part = call float @modff(float %x, float* {{.*}}writeonly{{.*}} %integral_part)
 ; CHECK-NEXT:   ret float 0.000000e+00
 ; CHECK-NEXT: }
 
 ; CHECK: define internal float @fwddiffetestfracf(float %x, float %"x'")
 ; CHECK-NEXT: entry:
+; CHECK-NEXT:   %integral_part = alloca float, align 4
+; CHECK-NEXT:   %fractional_part = call float @modff(float %x, float* {{.*}}writeonly{{.*}} %integral_part)
 ; CHECK-NEXT:   ret float %"x'"
 ; CHECK-NEXT: }
 
 ; CHECK: define internal x86_fp80 @fwddiffetestintl(x86_fp80 %x, x86_fp80 %"x'")
 ; CHECK-NEXT: entry:
+; CHECK-NEXT:   %integral_part = alloca x86_fp80, align 8
+; CHECK-NEXT:   %fractional_part = call x86_fp80 @modfl(x86_fp80 %x, x86_fp80* {{.*}}writeonly{{.*}} %integral_part)
 ; CHECK-NEXT:   ret x86_fp80 0xK00000000000000000000
 ; CHECK-NEXT: }
 
 ; CHECK: define internal x86_fp80 @fwddiffetestfracl(x86_fp80 %x, x86_fp80 %"x'")
 ; CHECK-NEXT: entry:
+; CHECK-NEXT:   %integral_part = alloca x86_fp80, align 8
+; CHECK-NEXT:   %fractional_part = call x86_fp80 @modfl(x86_fp80 %x, x86_fp80* {{.*}}writeonly{{.*}} %integral_part)
 ; CHECK-NEXT:   ret x86_fp80 %"x'"
 ; CHECK-NEXT: }
 
