@@ -5861,11 +5861,18 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
             i += DL.getPointerSize(0);
             continue;
           } else if (auto flt = CT2.isFloat()) {
-            auto ptr = bb.CreateConstInBoundsGEP2_32(AT, cur, 0, i);
-            ptr = bb.CreatePointerCast(ptr, getUnqual(flt));
-            bb.CreateStore(Constant::getNullValue(flt), ptr);
-            size_t chunk = DL.getTypeSizeInBits(flt) / 8;
-            i += chunk;
+            size_t chunk = (DL.getTypeSizeInBits(flt) + 7) / 8;
+            if (i + chunk <= size) {
+              auto ptr = bb.CreateConstInBoundsGEP2_32(AT, cur, 0, i);
+              ptr = bb.CreatePointerCast(ptr, getUnqual(flt));
+              auto st = bb.CreateStore(Constant::getNullValue(flt), ptr);
+              st->setAlignment(commonAlignment(alloc->getAlign(), i));
+              i += chunk;
+            } else {
+              auto ptr = bb.CreateConstInBoundsGEP2_32(AT, cur, 0, i);
+              bb.CreateStore(Constant::getNullValue(bb.getInt8Ty()), ptr);
+              i++;
+            }
           } else if (CT2 != BaseType::Integer) {
             auto ptr = bb.CreateConstInBoundsGEP2_32(AT, cur, 0, i);
             bb.CreateStore(Constant::getNullValue(bb.getInt8Ty()), ptr);
