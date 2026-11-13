@@ -22,11 +22,15 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Complex/IR/Complex.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/Matchers.h"
+#include "mlir/Interfaces/ControlFlowInterfaces.h"
 
 #include "llvm/ADT/APFloat.h"
+#include "llvm/ADT/ScopeExit.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/CommandLine.h"
 
@@ -757,15 +761,410 @@ static bool splitReverseMemoryOk(Operation *orig, FunctionOpInterface fn) {
   return splitReverseMemoryOkImpl(orig, fn, visited);
 }
 
-static LogicalResult checkSplitReverseMemory(Operation *orig,
-                                             FunctionOpInterface fn) {
+// Trace `v` within `fn` back to either entry block arguments of `fn` or local
+// allocations inside `fn`. Returns false if `v` may originate from any other
+// memory (e.g., globals, loaded pointers, or unknown call results).
+static bool traceCalleeMemoryOrigins(Value v, FunctionOpInterface fn,
+                                     SmallVectorImpl<unsigned> &argIndices,
+                                     bool &hasLocalAlloc) {
+  SmallVector<Value, 4> worklist = {v};
+  SmallPtrSet<Value, 8> seen;
+  Block *entryBlock = &fn.getFunctionBody().front();
+
+  while (!worklist.empty()) {
+    Value cur = oputils::getBaseObject(worklist.pop_back_val());
+    if (!seen.insert(cur).second)
+      continue;
+
+    if (auto castOp = cur.getDefiningOp<UnrealizedConversionCastOp>()) {
+      if (castOp.getNumOperands() != 1)
+        return false;
+      worklist.push_back(castOp.getOperand(0));
+      continue;
+    }
+    if (auto selOp = cur.getDefiningOp<arith::SelectOp>()) {
+      worklist.push_back(selOp.getTrueValue());
+      worklist.push_back(selOp.getFalseValue());
+      continue;
+    }
+    if (auto selOp = cur.getDefiningOp<LLVM::SelectOp>()) {
+      worklist.push_back(selOp.getTrueValue());
+      worklist.push_back(selOp.getFalseValue());
+      continue;
+    }
+    if (auto ifOp = cur.getDefiningOp<scf::IfOp>()) {
+      unsigned resIdx = cast<OpResult>(cur).getResultNumber();
+      worklist.push_back(ifOp.thenYield().getOperand(resIdx));
+      if (!ifOp.getElseRegion().empty())
+        worklist.push_back(ifOp.elseYield().getOperand(resIdx));
+      continue;
+    }
+
+    if (auto ba = dyn_cast<BlockArgument>(cur)) {
+      if (ba.getOwner() == entryBlock) {
+        argIndices.push_back(ba.getArgNumber());
+        continue;
+      }
+      if (ba.getOwner()->getParent() == &fn.getFunctionBody()) {
+        for (Block *pred : ba.getOwner()->getPredecessors()) {
+          auto branch = dyn_cast<BranchOpInterface>(pred->getTerminator());
+          if (!branch)
+            return false;
+          for (unsigned succIdx = 0; succIdx < pred->getNumSuccessors();
+               ++succIdx) {
+            if (pred->getSuccessor(succIdx) != ba.getOwner())
+              continue;
+            SuccessorOperands succOps = branch.getSuccessorOperands(succIdx);
+            if (ba.getArgNumber() >= succOps.getProducedOperandCount()) {
+              unsigned opIdx =
+                  ba.getArgNumber() - succOps.getProducedOperandCount();
+              if (opIdx < succOps.size())
+                worklist.push_back(succOps[opIdx]);
+              else
+                return false;
+            } else {
+              return false;
+            }
+          }
+        }
+        continue;
+      }
+      return false;
+    }
+
+    if (Operation *def = cur.getDefiningOp()) {
+      if (def->getParentOfType<FunctionOpInterface>() == fn &&
+          (isa<enzyme::AllocaLikeInterface>(def) ||
+           isa<enzyme::MallocLikeInterface>(def))) {
+        hasLocalAlloc = true;
+        continue;
+      }
+    }
+
+    return false;
+  }
+
+  return true;
+}
+
+static bool writeMayEscapePointer(Operation *op, Value dest) {
+  if (auto store = dyn_cast<memref::StoreOp>(op)) {
+    auto ad =
+        dyn_cast<AutoDiffTypeInterface>(store.getValueToStore().getType());
+    return ad && ad.isMutable();
+  }
+  if (auto store = dyn_cast<LLVM::StoreOp>(op)) {
+    auto ad = dyn_cast<AutoDiffTypeInterface>(store.getValue().getType());
+    return ad && ad.isMutable();
+  }
+  if (auto copy = dyn_cast<memref::CopyOp>(op)) {
+    auto ad = dyn_cast<AutoDiffTypeInterface>(
+        copy.getSource().getType().getElementType());
+    return ad && ad.isMutable();
+  }
+  if (isa<LLVM::MemcpyOp, LLVM::MemmoveOp, LLVM::MemsetOp>(op))
+    return false;
+
+  for (Value operand : op->getOperands()) {
+    if (operand == dest)
+      continue;
+    if (auto ad = dyn_cast<AutoDiffTypeInterface>(operand.getType()))
+      if (ad.isMutable())
+        return true;
+  }
+  return false;
+}
+
+// Summarizes which entry arguments of `fn` are read or written when called at
+// `orig`. Returns false if `fn` may access non-argument memory (globals,
+// loaded pointers, unknown side effects), free caller memory, or escape a
+// pointer through a written argument.
+static bool analyzeCalleeArgEffectsImpl(Operation *orig, FunctionOpInterface fn,
+                                        SmallVectorImpl<bool> &argRead,
+                                        SmallVectorImpl<bool> &argWrite,
+                                        SmallPtrSetImpl<Operation *> &visited) {
+  unsigned numArgs = fn.getNumArguments();
+  argRead.assign(numArgs, false);
+  argWrite.assign(numArgs, false);
+
   if (splitReverseMemoryOk(orig, fn))
-    return success();
-  return orig->emitError()
-         << "cannot differentiate a call in reverse mode whose callee "
-            "touches memory; caching of overwritten arguments is not yet "
-            "implemented here: "
-         << fn.getNameAttr() << "\n";
+    return true;
+  if (fn.getFunctionBody().empty())
+    return false;
+  if (!visited.insert(fn.getOperation()).second)
+    return false;
+  auto eraseOnExit =
+      llvm::scope_exit([&]() { visited.erase(fn.getOperation()); });
+
+  auto walkRegion = [&](auto &&self, Region &region) -> bool {
+    for (Block &blk : region) {
+      for (Operation &op : blk) {
+        if (isMemoryEffectFree(&op))
+          continue;
+
+        if (op.getNumRegions() > 0 &&
+            op.hasTrait<OpTrait::HasRecursiveMemoryEffects>()) {
+          for (Region &subR : op.getRegions())
+            if (!self(self, subR))
+              return false;
+          continue;
+        }
+
+        if (auto callee = getDirectCallee(&op)) {
+          SmallVector<bool> subRead, subWrite;
+          if (!analyzeCalleeArgEffectsImpl(&op, callee, subRead, subWrite,
+                                           visited))
+            return false;
+          for (unsigned j = 0, e = op.getNumOperands(); j < e; ++j) {
+            if (!subRead[j] && !subWrite[j])
+              continue;
+            SmallVector<unsigned, 4> roots;
+            bool hasLocal = false;
+            if (!traceCalleeMemoryOrigins(op.getOperand(j), fn, roots,
+                                          hasLocal))
+              return false;
+            for (unsigned idx : roots) {
+              if (subRead[j])
+                argRead[idx] = true;
+              if (subWrite[j])
+                argWrite[idx] = true;
+            }
+          }
+          continue;
+        }
+
+        auto memIface = dyn_cast<MemoryEffectOpInterface>(&op);
+        if (!memIface)
+          return false;
+
+        SmallVector<MemoryEffects::EffectInstance, 4> effects;
+        memIface.getEffects(effects);
+        for (const MemoryEffects::EffectInstance &eff : effects) {
+          if (isa<MemoryEffects::Allocate>(eff.getEffect()))
+            continue;
+          Value val = eff.getValue();
+          if (!val)
+            return false;
+
+          SmallVector<unsigned, 4> roots;
+          bool hasLocal = false;
+          if (!traceCalleeMemoryOrigins(val, fn, roots, hasLocal))
+            return false;
+
+          if (isa<MemoryEffects::Free>(eff.getEffect())) {
+            if (!roots.empty())
+              return false;
+            continue;
+          }
+          if (isa<MemoryEffects::Read>(eff.getEffect())) {
+            for (unsigned idx : roots)
+              argRead[idx] = true;
+          }
+          if (isa<MemoryEffects::Write>(eff.getEffect())) {
+            if (!roots.empty() && writeMayEscapePointer(&op, val))
+              return false;
+            for (unsigned idx : roots)
+              argWrite[idx] = true;
+          }
+        }
+      }
+    }
+    return true;
+  };
+
+  if (!walkRegion(walkRegion, fn.getFunctionBody()))
+    return false;
+
+  // Reject callees that return a local allocation (mutable return escaping fn).
+  for (Block &blk : fn.getFunctionBody()) {
+    if (blk.getNumSuccessors() != 0)
+      continue;
+    for (Value retVal : blk.getTerminator()->getOperands()) {
+      if (auto ad = dyn_cast<AutoDiffTypeInterface>(retVal.getType())) {
+        if (ad.isMutable()) {
+          SmallVector<unsigned, 4> roots;
+          bool hasLocal = false;
+          if (!traceCalleeMemoryOrigins(retVal, fn, roots, hasLocal) ||
+              hasLocal)
+            return false;
+        }
+      }
+    }
+  }
+
+  return true;
+}
+
+static bool opMayWriteAlias(Operation *op, Value target) {
+  if (isMemoryEffectFree(op))
+    return false;
+
+  if (op->getNumRegions() > 0 &&
+      op->hasTrait<OpTrait::HasRecursiveMemoryEffects>()) {
+    for (Region &subR : op->getRegions())
+      for (Block &blk : subR)
+        for (Operation &nested : blk)
+          if (opMayWriteAlias(&nested, target))
+            return true;
+    return false;
+  }
+
+  if (auto callee = getDirectCallee(op)) {
+    SmallVector<bool> subRead, subWrite;
+    SmallPtrSet<Operation *, 8> visited;
+    if (!analyzeCalleeArgEffectsImpl(op, callee, subRead, subWrite, visited))
+      return true;
+    for (unsigned j = 0, e = op->getNumOperands(); j < e; ++j)
+      if (subWrite[j] && oputils::mayAlias(op->getOperand(j), target))
+        return true;
+    return false;
+  }
+
+  if (auto memIface = dyn_cast<MemoryEffectOpInterface>(op)) {
+    SmallVector<MemoryEffects::EffectInstance, 4> effects;
+    memIface.getEffects(effects);
+    for (const MemoryEffects::EffectInstance &eff : effects) {
+      if (isa<MemoryEffects::Write, MemoryEffects::Free>(eff.getEffect())) {
+        if (!eff.getValue() || oputils::mayAlias(eff.getValue(), target))
+          return true;
+      }
+    }
+    return false;
+  }
+
+  return true;
+}
+
+static bool isOverwrittenInCallerAfterCall(Operation *orig, Value target) {
+  Operation *cur = orig;
+  while (cur && !isa<FunctionOpInterface>(cur)) {
+    Block *blk = cur->getBlock();
+    for (auto it = std::next(cur->getIterator()), end = blk->end(); it != end;
+         ++it) {
+      if (opMayWriteAlias(&*it, target))
+        return true;
+    }
+
+    SmallPtrSet<Block *, 8> visitedBlocks;
+    SmallVector<Block *, 8> worklist;
+    for (Block *succ : blk->getSuccessors())
+      worklist.push_back(succ);
+    while (!worklist.empty()) {
+      Block *b = worklist.pop_back_val();
+      if (!visitedBlocks.insert(b).second)
+        continue;
+      for (Operation &op : *b) {
+        if (&op != orig && opMayWriteAlias(&op, target))
+          return true;
+      }
+      for (Block *succ : b->getSuccessors())
+        worklist.push_back(succ);
+    }
+
+    Operation *parent = blk->getParentOp();
+    if (!parent || isa<FunctionOpInterface>(parent))
+      break;
+
+    // An enclosing non-if region op (e.g. scf.for / affine.for / scf.while)
+    // may re-execute its body in later iterations before the reverse pass runs.
+    if (!isa<scf::IfOp>(parent)) {
+      bool foundWrite = false;
+      parent->walk([&](Operation *nested) {
+        if (nested == orig || nested == parent)
+          return WalkResult::advance();
+        if (nested->getNumRegions() > 0 &&
+            nested->hasTrait<OpTrait::HasRecursiveMemoryEffects>())
+          return WalkResult::advance();
+        if (opMayWriteAlias(nested, target)) {
+          foundWrite = true;
+          return WalkResult::interrupt();
+        }
+        return WalkResult::advance();
+      });
+      if (foundWrite)
+        return true;
+    }
+
+    cur = parent;
+  }
+  return false;
+}
+
+struct ReverseCallArgPlan {
+  SmallVector<bool> argRead;
+  SmallVector<bool> argWrite;
+  SmallVector<bool> needsClone;
+  std::string failureReason;
+
+  bool ok() const { return failureReason.empty(); }
+};
+
+static ReverseCallArgPlan analyzeReverseCall(Operation *orig,
+                                             FunctionOpInterface fn,
+                                             MGradientUtilsReverse *gutils) {
+  ReverseCallArgPlan plan;
+  unsigned narg = orig->getNumOperands();
+  plan.needsClone.assign(narg, false);
+
+  SmallPtrSet<Operation *, 8> visited;
+  if (!analyzeCalleeArgEffectsImpl(orig, fn, plan.argRead, plan.argWrite,
+                                   visited)) {
+    plan.failureReason = "cannot differentiate a call in reverse mode whose "
+                         "callee accesses non-argument memory: ";
+    return plan;
+  }
+
+  for (unsigned i = 0; i < narg; ++i) {
+    if (plan.argWrite[i] || (plan.argRead[i] && isOverwrittenInCallerAfterCall(
+                                                    orig, orig->getOperand(i))))
+      plan.needsClone[i] = true;
+  }
+
+  // If the same SSA value appears in multiple operand slots and any slot needs
+  // a snapshot clone, share that clone across all its slots to preserve
+  // must-alias semantics during reverse replay.
+  SmallPtrSet<Value, 4> clonedValues;
+  for (unsigned i = 0; i < narg; ++i)
+    if (plan.needsClone[i])
+      clonedValues.insert(orig->getOperand(i));
+  for (unsigned i = 0; i < narg; ++i)
+    if (clonedValues.contains(orig->getOperand(i)))
+      plan.needsClone[i] = true;
+
+  // Reject distinct operands that may alias while the callee writes one of
+  // them, since cloning them separately would break aliasing on replay.
+  for (unsigned i = 0; i < narg; ++i) {
+    if (!plan.argRead[i] && !plan.argWrite[i])
+      continue;
+    for (unsigned j = i + 1; j < narg; ++j) {
+      if (!plan.argRead[j] && !plan.argWrite[j])
+        continue;
+      if (!plan.argWrite[i] && !plan.argWrite[j])
+        continue;
+      if (orig->getOperand(i) == orig->getOperand(j))
+        continue;
+      if (oputils::mayAlias(orig->getOperand(i), orig->getOperand(j))) {
+        plan.failureReason = "cannot differentiate a call in reverse mode "
+                             "whose operands may alias a written argument: ";
+        return plan;
+      }
+    }
+  }
+
+  for (unsigned i = 0; i < narg; ++i) {
+    if (!plan.needsClone[i])
+      continue;
+    Value origArg = orig->getOperand(i);
+    Value newArg = gutils->getNewFromOriginal(origArg);
+    auto iface = dyn_cast<ClonableTypeInterface>(origArg.getType());
+    if (!iface || !iface.canCloneValue(newArg)) {
+      plan.failureReason = "cannot differentiate a call in reverse mode: "
+                           "cannot clone overwritten argument of callee ";
+      return plan;
+    }
+  }
+
+  return plan;
 }
 
 LogicalResult edetail::callReverseHandler(Operation *orig, OpBuilder &builder,
@@ -784,10 +1183,11 @@ LogicalResult edetail::callReverseHandler(Operation *orig, OpBuilder &builder,
               "without a registered derivative: "
            << fn.getNameAttr() << "\n";
   }
-  if (failed(checkSplitReverseMemory(orig, fn)))
-    return failure();
 
-  auto narg = orig->getNumOperands();
+  ReverseCallArgPlan plan = analyzeReverseCall(orig, fn, gutils);
+  if (!plan.ok())
+    return orig->emitError() << plan.failureReason << fn.getNameAttr() << "\n";
+
   auto nret = orig->getNumResults();
 
   std::vector<DIFFE_TYPE> RetActivity;
@@ -825,7 +1225,8 @@ LogicalResult edetail::callReverseHandler(Operation *orig, OpBuilder &builder,
            << "\n";
   }
 
-  std::vector<bool> overwritten_args(narg, true);
+  std::vector<bool> overwritten_args(plan.needsClone.begin(),
+                                     plan.needsClone.end());
   std::vector<bool> returnShadow(nret, false);
   std::vector<bool> returnPrimal(nret, false);
 
@@ -847,10 +1248,34 @@ LogicalResult edetail::callReverseHandler(Operation *orig, OpBuilder &builder,
            << fn.getNameAttr() << "\n";
 
   SmallVector<Value> revArguments;
+  llvm::SmallDenseMap<Value, Value, 4> poppedClones;
+  SmallVector<std::pair<Type, Value>, 4> clonesToFree;
 
   size_t cacheIdx = 0;
-  for (auto [arg, act] : llvm::zip_equal(orig->getOperands(), ArgActivity)) {
-    revArguments.push_back(gutils->popCache(caches[cacheIdx++], builder));
+  for (unsigned i = 0, e = orig->getNumOperands(); i < e; ++i) {
+    Value arg = orig->getOperand(i);
+    DIFFE_TYPE act = ArgActivity[i];
+    if (plan.needsClone[i]) {
+      auto it = poppedClones.find(arg);
+      Value clone;
+      if (it == poppedClones.end()) {
+        clone = gutils->popCache(caches[cacheIdx++], builder);
+        poppedClones[arg] = clone;
+        clonesToFree.emplace_back(arg.getType(), clone);
+      } else {
+        clone = it->second;
+      }
+      Value callArg = clone;
+      if (callArg.getType() != arg.getType() &&
+          isa<LLVM::LLVMPointerType>(callArg.getType()) &&
+          isa<LLVM::LLVMPointerType>(arg.getType())) {
+        callArg = LLVM::AddrSpaceCastOp::create(builder, orig->getLoc(),
+                                                arg.getType(), callArg);
+      }
+      revArguments.push_back(callArg);
+    } else {
+      revArguments.push_back(gutils->popCache(caches[cacheIdx++], builder));
+    }
     if (act == DIFFE_TYPE::DUP_ARG || act == DIFFE_TYPE::DUP_NONEED)
       revArguments.push_back(gutils->popCache(caches[cacheIdx++], builder));
   }
@@ -865,18 +1290,12 @@ LogicalResult edetail::callReverseHandler(Operation *orig, OpBuilder &builder,
   auto *revCallOp = cast<AutoDiffFunctionInterface>(revFn.getOperation())
                         .createCall(builder, orig->getLoc(), revArguments);
 
-  int revIndex = 0, fwdIndex = 0;
+  for (auto [ty, cloneVal] : clonesToFree)
+    cast<ClonableTypeInterface>(ty).freeClonedValue(builder, cloneVal);
+
+  int revIndex = 0;
   for (auto [arg, act] : llvm::zip_equal(orig->getOperands(), ArgActivity)) {
-    fwdIndex++;
-
-    if (gutils->isConstantValue(arg))
-      continue;
-
-    if (act == DIFFE_TYPE::DUP_ARG || act == DIFFE_TYPE::DUP_NONEED) {
-      cast<ClonableTypeInterface>(arg.getType())
-          .freeClonedValue(builder, revArguments[fwdIndex - 1]);
-      fwdIndex++;
-    } else {
+    if (act == DIFFE_TYPE::OUT_DIFF) {
       auto diffe = revCallOp->getResult(revIndex);
       gutils->addToDiffe(arg, diffe, builder);
       revIndex++;
@@ -890,29 +1309,32 @@ SmallVector<Value> edetail::callCacheValues(Operation *orig,
                                             MGradientUtilsReverse *gutils) {
   SmallVector<Value> cachedArguments;
 
-  // A callee the adjoint will refuse gets nothing cached: the caching of
-  // pointer arguments would already need the sizes and copies that the
-  // refusal is about.
   auto fn = getDirectCallee(orig);
-  if (!fn || fn.getFunctionBody().empty() || !splitReverseMemoryOk(orig, fn))
+  if (!fn || fn.getFunctionBody().empty())
+    return cachedArguments;
+
+  ReverseCallArgPlan plan = analyzeReverseCall(orig, fn, gutils);
+  if (!plan.ok())
     return cachedArguments;
 
   Operation *newOp = gutils->getNewFromOriginal(orig);
   OpBuilder cacheBuilder(newOp);
+  SmallPtrSet<Value, 4> alreadyCloned;
 
-  for (auto arg : orig->getOperands()) {
+  for (unsigned i = 0, e = orig->getNumOperands(); i < e; ++i) {
+    Value arg = orig->getOperand(i);
     Value toCache = gutils->getNewFromOriginal(arg);
-    if (auto iface = dyn_cast<ClonableTypeInterface>(arg.getType())) {
-      toCache = iface.cloneValue(cacheBuilder, toCache);
+    if (plan.needsClone[i]) {
+      if (alreadyCloned.insert(arg).second) {
+        Value clone = cast<ClonableTypeInterface>(arg.getType())
+                          .cloneValue(cacheBuilder, toCache);
+        cachedArguments.push_back(
+            gutils->initAndPushCache(clone, cacheBuilder));
+      }
+    } else {
+      cachedArguments.push_back(
+          gutils->initAndPushCache(toCache, cacheBuilder));
     }
-    Value cache = gutils->initAndPushCache(toCache, cacheBuilder);
-    cachedArguments.push_back(cache);
-    // A mutable shadow is a value of the forward pass -- a shadow of a
-    // pointer derived inside a loop body, say -- and the reverse pass
-    // cannot always rebuild it. Cache it beside its primal; the shadow
-    // buffer itself is shared, so it is the pointer that is put by, not a
-    // copy. (Groundwork: a memory-touching callee is refused until
-    // overwritten-args support lands, so this does not fire yet.)
     if (!gutils->isConstantValue(arg) &&
         cast<AutoDiffTypeInterface>(arg.getType()).isMutable()) {
       Value shadow = gutils->invertPointerM(arg, cacheBuilder);
