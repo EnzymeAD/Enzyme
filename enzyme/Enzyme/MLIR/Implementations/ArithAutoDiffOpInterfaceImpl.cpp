@@ -41,15 +41,31 @@ struct ArithConstantOpBatchInterface
     SmallVector<Type> resultTypes(src->getResultTypes().begin(),
                                   src->getResultTypes().end());
     for (auto &Ty : resultTypes) {
-      auto T = cast<TensorType>(Ty);
-      SmallVector<int64_t> shape(batchSizes.begin(), batchSizes.end());
-      shape.append(T.getShape().begin(), T.getShape().end());
-      Ty = T.clone(shape);
+      if (auto T = dyn_cast<TensorType>(Ty)) {
+        SmallVector<int64_t> shape(batchSizes.begin(), batchSizes.end());
+        shape.append(T.getShape().begin(), T.getShape().end());
+        Ty = T.clone(shape);
+      } else if (RankedTensorType::isValidElementType(Ty)) {
+        Ty = RankedTensorType::get(batchSizes, Ty);
+      } else {
+        return failure();
+      }
     }
     mlir::NamedAttrList attrs;
     for (auto attr : src->getAttrs()) {
-      auto eattr = cast<DenseElementsAttr>(attr.getValue());
-      attr.setValue(eattr.resizeSplat(cast<ShapedType>(resultTypes[0])));
+      if (attr.getName() == "value") {
+        auto shapedTy = cast<ShapedType>(resultTypes[0]);
+        if (auto eattr = dyn_cast<DenseElementsAttr>(attr.getValue())) {
+          if (!eattr.isSplat())
+            return failure();
+          attr.setValue(eattr.resizeSplat(shapedTy));
+        } else if (isa<FloatAttr, IntegerAttr>(attr.getValue())) {
+          attr.setValue(DenseElementsAttr::get(
+              shapedTy, ArrayRef<Attribute>(attr.getValue())));
+        } else {
+          return failure();
+        }
+      }
       attrs.append(attr);
     }
     auto cop = mlir::Operation::create(
