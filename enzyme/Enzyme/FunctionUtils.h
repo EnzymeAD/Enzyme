@@ -26,6 +26,7 @@
 #define ENZYME_FUNCTION_UTILS_H
 
 #include <deque>
+#include <memory>
 #include <set>
 
 #include <llvm/Config/llvm-config.h>
@@ -51,6 +52,7 @@
 #include "llvm/IR/Type.h"
 
 #include "llvm/IR/Instructions.h"
+#include "llvm/Transforms/Utils/Cloning.h"
 #include "llvm/Transforms/Utils/ValueMapper.h"
 
 #include "llvm/ADT/STLExtras.h"
@@ -92,14 +94,40 @@ public:
   PreProcessCache(PreProcessCache &&prev) : PreProcessCache() {
     cache = std::move(prev.cache);
     CloneOrigin = std::move(prev.CloneOrigin);
+    InlinedInstOrigin = std::move(prev.InlinedInstOrigin);
   };
+
+  struct CloneOriginConfig : llvm::ValueMapConfig<const llvm::Value *> {
+    enum { FollowRAUW = false };
+  };
+  struct CloneOriginEntry {
+    llvm::WeakTrackingVH DirectOrigin;
+    llvm::SmallVector<llvm::WeakTrackingVH, 2> InlinedOrigins;
+  };
+  using CloneOriginMap =
+      llvm::ValueMap<const llvm::Value *, CloneOriginEntry, CloneOriginConfig>;
+  using InlinedInstOriginMap =
+      llvm::ValueMap<const llvm::Value *,
+                     llvm::SmallVector<llvm::WeakTrackingVH, 2>,
+                     CloneOriginConfig>;
 
   llvm::LoopAnalysisManager LAM;
   llvm::FunctionAnalysisManager FAM;
   llvm::ModuleAnalysisManager MAM;
 
   std::map<std::pair<llvm::Function *, DerivativeMode>, llvm::Function *> cache;
-  std::map<llvm::Function *, llvm::Function *> CloneOrigin;
+  std::unique_ptr<CloneOriginMap> CloneOrigin;
+  std::unique_ptr<InlinedInstOriginMap> InlinedInstOrigin;
+
+  void recordCloneOrigin(llvm::Function *NewF, llvm::Function *Source,
+                         bool InheritDirectOrigin);
+  void recordInlinedOrigin(llvm::Function *Dst, llvm::Function *Callee);
+  llvm::Function *getCloneOrigin(llvm::Function *F) const;
+  bool isSameLogicalFunction(const llvm::Instruction *Inst,
+                             const llvm::Function *CurF) const;
+  llvm::InlineResult
+  inlineFunctionWithOriginTracking(llvm::CallBase &CB,
+                                   llvm::InlineFunctionInfo &IFI);
 
   llvm::Function *preprocessForClone(llvm::Function *F, DerivativeMode mode);
 
