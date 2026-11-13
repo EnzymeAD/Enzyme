@@ -6622,6 +6622,9 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     return li;
 
   } else if (auto arg = dyn_cast<BinaryOperator>(oval)) {
+    if (isUnknownNarrowIntegerOp(*arg, TR)) {
+      return Constant::getNullValue(getShadowType(arg->getType()));
+    }
     if (mode == DerivativeMode::ReverseModePrimal ||
         mode == DerivativeMode::ReverseModeCombined ||
         mode == DerivativeMode::ReverseModeGradient) {
@@ -6770,6 +6773,10 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       invertedPointers.insert(
           std::make_pair((const Value *)oval, InvertedPointerVH(this, shadow)));
       return shadow;
+    }
+
+    if (isUnknownNarrowIntegerOp(*II, TR)) {
+      return Constant::getNullValue(getShadowType(II->getType()));
     }
 
     IRBuilder<> bb(getNewFromOriginal(II));
