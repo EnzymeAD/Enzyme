@@ -377,6 +377,23 @@ public:
   llvm::ValueMap<const llvm::Instruction *, AssertingReplacingVH>
       unwrappedLoads;
 
+  struct PendingStridedCopy {
+    llvm::WeakTrackingVH marker;
+    llvm::WeakTrackingVH cache;
+    llvm::Type *elemTy;
+    llvm::WeakTrackingVH dst;
+    llvm::WeakTrackingVH srcI8;
+    llvm::WeakTrackingVH stepBytes;
+    llvm::WeakTrackingVH lim;
+    llvm::Align srcAlign;
+    llvm::MDNode *TBAA;
+    unsigned srcAddrSpace;
+  };
+  llvm::SmallVector<PendingStridedCopy, 4> pendingStridedCopies;
+  llvm::ValueMap<llvm::AllocaInst *,
+                 std::pair<llvm::WeakTrackingVH, llvm::WeakTrackingVH>>
+      speedCacheExtra;
+
   void replaceAWithB(llvm::Value *A, llvm::Value *B,
                      bool storeInCache = false) override;
 
