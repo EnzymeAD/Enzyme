@@ -99,17 +99,75 @@ add_mlir_library(
   MLIRSCFDialect
   MLIRLinalgDialect)
 
-# FlangEnzymeMLIR: a plugin for `flang -fc1 -load` that adds Enzyme's passes to
-# flang's MLIR pipeline (fir::registerPassPipelineConfigCallback) from its
-# static initializer. Its MLIR/FIR/flang symbols are left undefined and resolve
-# from the host `flang -fc1` at load, so no second copy of LLVM is pulled in.
+# The Flang-dependent Fortran plumbing: the shared Fortran autodiff registration
+# and the `enzyme-lower-fortran-calls` pass (f__enzyme_* hook calls -> enzyme.*
+# ops, see HLFIREnzymeCallLowering.cpp). Behind ENZYME_FLANG_MLIR so the core
+# Enzyme-MLIR build never gains a Flang dependency. Bundled into the FIREnzyme
+# and FlangEnzymeMLIR plugins.
 if(ENZYME_FLANG_MLIR)
+  add_mlir_library(
+    MLIREnzymeHLFIRImplementations
+    HLFIREnzymeCallLowering.cpp
+    EnzymeFortranAutoDiffRegistration.cpp
+    PARTIAL_SOURCES_INTENDED
+    DEPENDS
+    MLIRAutoDiffOpInterfaceIncGen
+    MLIREnzymeEnumsIncGen
+    LINK_LIBS
+    PUBLIC
+    MLIREnzymeImplementations
+    MLIREnzymeAutoDiffInterface
+    HLFIRDialect
+    FIRBuilder
+    MLIRIR)
+  target_include_directories(
+    MLIREnzymeHLFIRImplementations
+    PRIVATE ${FLANG_INCLUDE_DIRS})
+
+  # FlangEnzymeMLIR: a plugin for `flang -fc1 -load` that adds Enzyme's passes
+  # to flang's MLIR pipeline (fir::registerPassPipelineConfigCallback) from its
+  # static initializers. See HLFIRFlangPluginRegistration.cpp.
   add_llvm_library(
     FlangEnzymeMLIR-${LLVM_VERSION_MAJOR} MODULE FlangEnzymeMLIRPlugin.cpp
-    PARTIAL_SOURCES_INTENDED DISABLE_LLVM_LINK_LLVM_DYLIB)
+    HLFIRFlangPluginRegistration.cpp PARTIAL_SOURCES_INTENDED
+    DISABLE_LLVM_LINK_LLVM_DYLIB)
+  add_dependencies(
+    FlangEnzymeMLIR-${LLVM_VERSION_MAJOR}
+    MLIREnzymeHLFIRImplementations
+    MLIREnzymeTransforms
+    MLIREnzymeImplementations
+    MLIREnzymeAnalysis
+    MLIRLLVMExt
+    MLIREnzyme
+    MLIREnzymeAutoDiffInterface)
   target_include_directories(
     FlangEnzymeMLIR-${LLVM_VERSION_MAJOR}
     PRIVATE ${FLANG_INCLUDE_DIRS})
+  # Bundle only the Enzyme archives (by file); MLIR/FIR/HLFIR/flang symbols are
+  # left undefined and resolve from the host `flang -fc1` at load, so no second
+  # copy of LLVM is pulled in. They reference one another, hence the
+  # --start-group. The plugin registers autodiff models per dialect rather than
+  # via registerCoreDialectAutodiffInterfaces, so the Linalg/NVVM models --
+  # whose dialect symbols flang does not export -- are never linked in.
+  target_link_libraries(
+    FlangEnzymeMLIR-${LLVM_VERSION_MAJOR}
+    PRIVATE
+      -Wl,--start-group
+      $<TARGET_FILE:MLIREnzymeHLFIRImplementations>
+      $<TARGET_FILE:MLIREnzymeTransforms>
+      $<TARGET_FILE:MLIREnzymeImplementations>
+      $<TARGET_FILE:MLIREnzymeAnalysis>
+      # Enzyme's own llvm_ext dialect (referenced by the LLVM autodiff model).
+      $<TARGET_FILE:MLIRLLVMExt>
+      $<TARGET_FILE:MLIREnzyme>
+      $<TARGET_FILE:MLIREnzymeAutoDiffInterface>
+      # Tensor is the one upstream dialect the plugin cannot count on the host
+      # for (whether `flang -fc1` carries it depends on how it was configured),
+      # and the tensor autodiff model needs its TypeID and op classes. Where the
+      # host does export them they preempt the bundled copy, so there is a
+      # single instance either way.
+      $<TARGET_FILE:MLIRTensorDialect>
+      -Wl,--end-group)
   target_link_options(
     FlangEnzymeMLIR-${LLVM_VERSION_MAJOR}
     PRIVATE -Wl,--allow-shlib-undefined)
