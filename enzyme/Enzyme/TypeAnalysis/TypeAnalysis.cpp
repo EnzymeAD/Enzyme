@@ -5903,6 +5903,175 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
       updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
       return;
     }
+    {
+      StringRef canonMPI = canonicalizeMPIName(funcName);
+      bool fortranABI = isFortranMPICall(funcName);
+      auto setPtrInt = [&](unsigned idx) {
+        if (idx < call.arg_size()) {
+          TypeTree ptrint;
+          ptrint.insert({-1}, BaseType::Pointer);
+          ptrint.insert({-1, 0}, BaseType::Integer);
+          updateAnalysis(call.getOperand(idx), ptrint, &call);
+        }
+      };
+      auto deduceDatatype = [&](Value *dt, TypeTree &buf) {
+        if (Constant *C = dyn_cast<Constant>(dt)) {
+          while (ConstantExpr *CE = dyn_cast<ConstantExpr>(C)) {
+            C = CE->getOperand(0);
+          }
+          if (auto GV = dyn_cast<GlobalVariable>(C)) {
+            if (GV->getName() == "ompi_mpi_double") {
+              buf.insert({0}, Type::getDoubleTy(C->getContext()));
+            } else if (GV->getName() == "ompi_mpi_float") {
+              buf.insert({0}, Type::getFloatTy(C->getContext()));
+            } else if (GV->getName() == "ompi_mpi_cxx_bool") {
+              buf.insert({0}, BaseType::Integer);
+            }
+          } else if (auto CI = dyn_cast<ConstantInt>(C)) {
+            // MPICH
+            if (CI->getValue() == 1275070475) {
+              buf.insert({0}, Type::getDoubleTy(C->getContext()));
+            } else if (CI->getValue() == 1275069450) {
+              buf.insert({0}, Type::getFloatTy(C->getContext()));
+            }
+          }
+        }
+      };
+      auto propagateBufTypes = [&](unsigned sendIdx, unsigned recvIdx) {
+        if (direction & UP) {
+          auto &dl =
+              call.getParent()->getParent()->getParent()->getDataLayout();
+          TypeTree res = getAnalysis(call.getOperand(sendIdx))
+                             .PurgeAnything()
+                             .Data0()
+                             .ShiftIndices(dl, 0, 1, 0);
+          TypeTree res2 = getAnalysis(call.getOperand(recvIdx))
+                              .PurgeAnything()
+                              .Data0()
+                              .ShiftIndices(dl, 0, 1, 0);
+          bool Legal = true;
+          res.checkedOrIn(res2, /*PointerIntSame*/ false, Legal);
+          if (Legal) {
+            res.insert({}, BaseType::Pointer);
+            res = res.Only(-1, &call);
+            updateAnalysis(call.getOperand(sendIdx), res, &call);
+            updateAnalysis(call.getOperand(recvIdx), res, &call);
+          }
+        }
+      };
+      if (canonMPI == "MPI_Alltoall" && call.arg_size() >= 7) {
+        TypeTree sendBuf = TypeTree(BaseType::Pointer);
+        TypeTree recvBuf = TypeTree(BaseType::Pointer);
+        if (!fortranABI) {
+          deduceDatatype(call.getOperand(2), sendBuf);
+          deduceDatatype(call.getOperand(5), recvBuf);
+          updateAnalysis(call.getOperand(1),
+                         TypeTree(BaseType::Integer).Only(-1, &call), &call);
+          updateAnalysis(call.getOperand(4),
+                         TypeTree(BaseType::Integer).Only(-1, &call), &call);
+          updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call),
+                         &call);
+        }
+        updateAnalysis(call.getOperand(0), sendBuf.Only(-1, &call), &call);
+        updateAnalysis(call.getOperand(3), recvBuf.Only(-1, &call), &call);
+        propagateBufTypes(0, 3);
+        return;
+      }
+      if ((canonMPI == "MPI_Alltoallv" || canonMPI == "MPI_Alltoallw") &&
+          call.arg_size() >= 9) {
+        TypeTree sendBuf = TypeTree(BaseType::Pointer);
+        TypeTree recvBuf = TypeTree(BaseType::Pointer);
+        if (canonMPI == "MPI_Alltoallv" && !fortranABI) {
+          deduceDatatype(call.getOperand(3), sendBuf);
+          deduceDatatype(call.getOperand(7), recvBuf);
+        }
+        updateAnalysis(call.getOperand(0), sendBuf.Only(-1, &call), &call);
+        setPtrInt(1);
+        setPtrInt(2);
+        updateAnalysis(call.getOperand(4), recvBuf.Only(-1, &call), &call);
+        setPtrInt(5);
+        setPtrInt(6);
+        if (canonMPI == "MPI_Alltoallw") {
+          updateAnalysis(call.getOperand(3),
+                         TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+          updateAnalysis(call.getOperand(7),
+                         TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+        }
+        if (!fortranABI)
+          updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call),
+                         &call);
+        propagateBufTypes(0, 4);
+        return;
+      }
+      if (canonMPI == "MPI_Comm_group" && call.arg_size() >= 2) {
+        updateAnalysis(call.getOperand(1),
+                       TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+        if (!fortranABI)
+          updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call),
+                         &call);
+        return;
+      }
+      if (canonMPI == "MPI_Group_incl" && call.arg_size() >= 4) {
+        setPtrInt(2);
+        updateAnalysis(call.getOperand(3),
+                       TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+        if (!fortranABI) {
+          updateAnalysis(call.getOperand(1),
+                         TypeTree(BaseType::Integer).Only(-1, &call), &call);
+          updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call),
+                         &call);
+        }
+        return;
+      }
+      if ((canonMPI == "MPI_Info_create" || canonMPI == "MPI_Type_commit" ||
+           canonMPI == "MPI_Type_free") &&
+          call.arg_size() >= 1) {
+        updateAnalysis(call.getOperand(0),
+                       TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+        if (!fortranABI)
+          updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call),
+                         &call);
+        return;
+      }
+      if (canonMPI == "MPI_Info_set" && call.arg_size() >= 3) {
+        setPtrInt(1);
+        setPtrInt(2);
+        if (!fortranABI)
+          updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call),
+                         &call);
+        return;
+      }
+      if (canonMPI == "MPI_Initialized" && call.arg_size() >= 1) {
+        setPtrInt(0);
+        if (!fortranABI)
+          updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call),
+                         &call);
+        return;
+      }
+      if (canonMPI == "MPI_Type_create_subarray" && call.arg_size() >= 7) {
+        setPtrInt(1);
+        setPtrInt(2);
+        setPtrInt(3);
+        updateAnalysis(call.getOperand(6),
+                       TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+        if (!fortranABI) {
+          updateAnalysis(call.getOperand(0),
+                         TypeTree(BaseType::Integer).Only(-1, &call), &call);
+          updateAnalysis(call.getOperand(4),
+                         TypeTree(BaseType::Integer).Only(-1, &call), &call);
+          updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call),
+                         &call);
+        }
+        return;
+      }
+      if (canonMPI == "MPI_Wtick" || canonMPI == "MPI_Wtime") {
+        if (call.getType()->isFloatingPointTy())
+          updateAnalysis(
+              &call, TypeTree(call.getType()->getScalarType()).Only(-1, &call),
+              &call);
+        return;
+      }
+    }
     /// END MPI
 
     // Prob Prog
