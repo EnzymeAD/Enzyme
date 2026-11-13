@@ -277,6 +277,10 @@ public:
     // Instead of getting the actual limits, return a limit of one
     bool ForceSingleIteration;
 
+    // Enclosing loop headers in which the cached value is invariant and whose
+    // dimensions are omitted from the cache allocation and indexing.
+    llvm::SmallPtrSet<llvm::BasicBlock *, 4> InvariantLoopHeaders;
+
     LimitContext(bool ReverseLimit, llvm::BasicBlock *Block,
                  bool ForceSingleIteration = false)
         : ReverseLimit(ReverseLimit), Block(Block),

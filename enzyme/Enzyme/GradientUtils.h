@@ -554,6 +554,10 @@ public:
                           llvm::BasicBlock *scope = nullptr,
                           llvm::MDNode *TBAA = nullptr);
 
+  llvm::SmallPtrSet<llvm::BasicBlock *, 4>
+  computeInvariantLoopHeaders(llvm::Value *val, llvm::BasicBlock *scope,
+                              bool reverseLimit);
+
   std::map<llvm::Instruction *,
            llvm::ValueMap<llvm::BasicBlock *, llvm::WeakTrackingVH>>
       lcssaFixes;

@@ -1524,6 +1524,38 @@ CacheUtility::SubLimitType CacheUtility::getSubLimits(bool inForwardPass,
     blk = idx.preheader;
   }
 
+  // Whether loop i (indexed from inner => outer) is nested inside at least one
+  // omitted invariant loop.
+  SmallVector<bool, 4> insideOmitted(contexts.size(), false);
+  if (!ctx.InvariantLoopHeaders.empty() && !ctx.ForceSingleIteration &&
+      !extraSize && contexts.size() > 1) {
+    SmallVector<LoopContext, 4> filtered;
+    SmallVector<bool, 4> filteredInsideOmitted;
+    BasicBlock *pendingPreheader = nullptr;
+    bool seenOmitted = false;
+    for (int i = (int)contexts.size() - 1; i >= 0; --i) {
+      if (ctx.InvariantLoopHeaders.count(contexts[i].header)) {
+        if (!pendingPreheader)
+          pendingPreheader = contexts[i].preheader;
+        seenOmitted = true;
+        continue;
+      }
+      LoopContext kept = std::move(contexts[i]);
+      if (pendingPreheader) {
+        kept.preheader = pendingPreheader;
+        pendingPreheader = nullptr;
+      }
+      filtered.push_back(std::move(kept));
+      filteredInsideOmitted.push_back(seenOmitted);
+    }
+    if (!filtered.empty()) {
+      std::reverse(filtered.begin(), filtered.end());
+      std::reverse(filteredInsideOmitted.begin(), filteredInsideOmitted.end());
+      contexts = std::move(filtered);
+      insideOmitted = std::move(filteredInsideOmitted);
+    }
+  }
+
   // Legal preheaders for loop i (indexed from inner => outer)
   SmallVector<BasicBlock *, 4> allocationPreheaders(contexts.size(), nullptr);
   // Limit of loop i (indexed from inner => outer)
@@ -1633,11 +1665,13 @@ CacheUtility::SubLimitType CacheUtility::getSubLimits(bool inForwardPass,
         }
       }
 
-      bool canSkipLoop = false;
-      if (allocationPreheaders[i] != contexts[i].preheader) {
+      bool canSkipLoop = insideOmitted[i];
+      if (!canSkipLoop && allocationPreheaders[i] != contexts[i].preheader) {
         for (int k = i; (unsigned)(k + 1) < contexts.size() &&
                         allocationPreheaders[k] != contexts[k].preheader;
              ++k) {
+          assert(!insideOmitted[k] &&
+                 "outer loop cannot be nested inside an omitted loop");
           BasicBlock *cur = contexts[k].preheader;
           while (cur != contexts[k + 1].header) {
             if (cur->getTerminator()->getNumSuccessors() != 1) {
