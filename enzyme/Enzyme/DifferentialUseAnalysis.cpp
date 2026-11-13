@@ -452,7 +452,11 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
 
   if (ID != Intrinsic::not_intrinsic) {
     if (ID == Intrinsic::lifetime_start || ID == Intrinsic::lifetime_end ||
-        ID == Intrinsic::stacksave || ID == Intrinsic::stackrestore) {
+        ID == Intrinsic::stacksave || ID == Intrinsic::stackrestore
+#if LLVM_VERSION_MAJOR >= 20
+        || ID == Intrinsic::fake_use
+#endif
+    ) {
       return false;
     }
 #if LLVM_VERSION_MAJOR > 20

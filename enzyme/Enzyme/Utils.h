@@ -845,6 +845,9 @@ static inline bool isDebugFunction(llvm::Function *called) {
   case llvm::Intrinsic::dbg_declare:
   case llvm::Intrinsic::dbg_value:
   case llvm::Intrinsic::dbg_label:
+#if LLVM_VERSION_MAJOR >= 20
+  case llvm::Intrinsic::fake_use:
+#endif
 #if LLVM_VERSION_MAJOR <= 16
   case llvm::Intrinsic::dbg_addr:
 #endif
@@ -2307,6 +2310,9 @@ static inline bool isNoEscapingAllocation(const llvm::Function *F) {
   case Intrinsic::dbg_declare:
   case Intrinsic::dbg_value:
   case Intrinsic::dbg_label:
+#if LLVM_VERSION_MAJOR >= 20
+  case Intrinsic::fake_use:
+#endif
   case Intrinsic::invariant_start:
   case Intrinsic::invariant_end:
   case Intrinsic::var_annotation:

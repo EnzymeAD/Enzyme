@@ -247,6 +247,9 @@ const static unsigned constantIntrinsics[] = {
     // llvm::Intrinsic::dbg_addr,
     llvm::Intrinsic::dbg_declare,
     llvm::Intrinsic::dbg_value,
+#if LLVM_VERSION_MAJOR >= 20
+    llvm::Intrinsic::fake_use,
+#endif
     llvm::Intrinsic::invariant_start,
     llvm::Intrinsic::invariant_end,
     llvm::Intrinsic::var_annotation,
