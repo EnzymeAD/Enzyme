@@ -7296,222 +7296,193 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
   // fadd (ext a), (ext b) -> ext (a + b)
   // fsub (ext a), (ext b) -> ext (a - b)
   // fmul (ext a), (ext b) -> ext (a * b)
-  if (cur->getOpcode() == Instruction::FSub ||
-      cur->getOpcode() == Instruction::FAdd ||
-      cur->getOpcode() == Instruction::FMul ||
-      cur->getOpcode() == Instruction::FNeg ||
-      (isSum(cur) && callOperands(cast<CallBase>(cur)).size() == 2)) {
+  if ((cur->getOpcode() == Instruction::FSub ||
+       cur->getOpcode() == Instruction::FAdd ||
+       cur->getOpcode() == Instruction::FMul ||
+       cur->getOpcode() == Instruction::FNeg ||
+       (isSum(cur) && callOperands(cast<CallBase>(cur)).size() == 2)) &&
+      cur->getType()->isFloatingPointTy()) {
     auto opcode = cur->getOpcode();
     if (isSum(cur))
       opcode = Instruction::FAdd;
     auto Ty = B.getInt64Ty();
-    SmallPtrSet<Instruction *, 1> temporaries;
-    SmallVector<Instruction *, 1> precasts;
-    Value *lhs = nullptr;
+    bool hasNSZ = isSum(cur) || cur->hasNoSignedZeros();
 
     Value *prelhs = (cur->getOpcode() == Instruction::FNeg)
                         ? ConstantFP::get(cur->getType(), 0.0)
-                        : cur->getOperand(0);
+                        : (isSum(cur) ? cast<CallBase>(cur)->getArgOperand(0)
+                                      : cur->getOperand(0));
     Value *prerhs = (cur->getOpcode() == Instruction::FNeg)
                         ? cur->getOperand(0)
-                        : cur->getOperand(1);
+                        : (isSum(cur) ? cast<CallBase>(cur)->getArgOperand(1)
+                                      : cur->getOperand(1));
 
-    APInt minval(64, 0);
-    APInt maxval(64, 0);
-    if (auto C = dyn_cast<ConstantFP>(prelhs)) {
-      APSInt Tmp(64);
-      bool isExact = false;
-      C->getValue().convertToInteger(Tmp, llvm::RoundingMode::TowardZero,
-                                     &isExact);
-      if (isExact || C->isZero()) {
-        minval = maxval = Tmp;
-        lhs = ConstantInt::get(Ty, Tmp);
-      }
+    // Track exact signed integer ranges in 130 bits (wide enough that
+    // i64 * i64 cannot overflow) and require both operands and the result to
+    // fit in signed i64 AND be exactly representable in cur->getType().
+    constexpr unsigned RangeBits = 130;
+    APInt i64Min = APInt::getSignedMinValue(64).sext(RangeBits);
+    APInt i64Max = APInt::getSignedMaxValue(64).sext(RangeBits);
+    unsigned prec =
+        APFloat::semanticsPrecision(cur->getType()->getFltSemantics());
+    APInt minExact = i64Min;
+    APInt maxExact = i64Max;
+    if (prec <= 62) {
+      maxExact = APInt(RangeBits, 1) << prec;
+      minExact = -maxExact;
     }
-    if (auto ext = dyn_cast<CastInst>(prelhs)) {
-      if (ext->getOpcode() == Instruction::UIToFP ||
-          ext->getOpcode() == Instruction::SIToFP) {
-        precasts.push_back(ext);
-        auto ity = cast<IntegerType>(ext->getOperand(0)->getType());
+
+    auto extractIntRange = [&](Value *V, APInt &outMin, APInt &outMax,
+                               CastInst *&outCast) -> bool {
+      outCast = nullptr;
+      if (auto C = dyn_cast<ConstantFP>(V)) {
+        if (C->isZero() && C->isNegative() && !hasNSZ)
+          return false;
+        APSInt Tmp(RangeBits, /*isUnsigned=*/false);
+        bool isExact = false;
+        C->getValue().convertToInteger(Tmp, llvm::RoundingMode::TowardZero,
+                                       &isExact);
+        if (!isExact || Tmp.slt(minExact) || Tmp.sgt(maxExact))
+          return false;
+        outMin = outMax = Tmp;
+        return true;
+      }
+      if (auto ext = dyn_cast<CastInst>(V)) {
+        if (ext->getOpcode() != Instruction::UIToFP &&
+            ext->getOpcode() != Instruction::SIToFP)
+          return false;
+        auto *ity = dyn_cast<IntegerType>(ext->getOperand(0)->getType());
+        if (!ity || ity->getBitWidth() > 64)
+          return false;
+        bool isUnsigned = ext->getOpcode() == Instruction::UIToFP;
         bool md = false;
         if (auto I = dyn_cast<Instruction>(ext->getOperand(0)))
-          if (auto MD = hasMetadata(I, LLVMContext::MD_range)) {
-            md = true;
-            minval =
-                cast<ConstantInt>(
-                    cast<ConstantAsMetadata>(MD->getOperand(0))->getValue())
-                    ->getValue()
-                    .zextOrTrunc(64);
-            maxval =
-                cast<ConstantInt>(
-                    cast<ConstantAsMetadata>(MD->getOperand(1))->getValue())
-                    ->getValue()
-                    .zextOrTrunc(64);
-          }
+          if (auto MD = hasMetadata(I, LLVMContext::MD_range))
+            if (MD->getNumOperands() == 2) {
+              auto *LoMD = dyn_cast<ConstantAsMetadata>(MD->getOperand(0));
+              auto *HiMD = dyn_cast<ConstantAsMetadata>(MD->getOperand(1));
+              auto *LoCI =
+                  LoMD ? dyn_cast<ConstantInt>(LoMD->getValue()) : nullptr;
+              auto *HiCI =
+                  HiMD ? dyn_cast<ConstantInt>(HiMD->getValue()) : nullptr;
+              if (LoCI && HiCI && LoCI->getBitWidth() == ity->getBitWidth() &&
+                  HiCI->getBitWidth() == ity->getBitWidth()) {
+                const APInt &lo = LoCI->getValue();
+                const APInt &hi = HiCI->getValue();
+                if (isUnsigned && lo.ult(hi)) {
+                  md = true;
+                  outMin = lo.zext(RangeBits);
+                  outMax = (hi - 1).zext(RangeBits);
+                } else if (!isUnsigned && lo.slt(hi)) {
+                  md = true;
+                  outMin = lo.sext(RangeBits);
+                  outMax = (hi - 1).sext(RangeBits);
+                }
+              }
+            }
         if (!md) {
-          if (ext->getOpcode() == Instruction::UIToFP)
-            maxval = APInt::getMaxValue(ity->getBitWidth()).zextOrTrunc(64);
-          else {
-            maxval =
-                APInt::getSignedMaxValue(ity->getBitWidth()).zextOrTrunc(64);
-            minval =
-                APInt::getSignedMinValue(ity->getBitWidth()).zextOrTrunc(64);
-          }
-        }
-        if (ext->getOperand(0)->getType() == Ty)
-          lhs = ext->getOperand(0);
-        else if (ity->getBitWidth() < Ty->getBitWidth()) {
-          if (ext->getOpcode() == Instruction::UIToFP)
-            lhs = B.CreateZExt(ext->getOperand(0), Ty);
-          else
-            lhs = B.CreateSExt(ext->getOperand(0), Ty);
-          if (auto I = dyn_cast<Instruction>(lhs))
-            if (I != ext->getOperand(0))
-              temporaries.insert(I);
-        }
-      }
-    }
-
-    Value *rhs = nullptr;
-
-    if (auto C = dyn_cast<ConstantFP>(prerhs)) {
-      APSInt Tmp(64);
-      bool isExact = false;
-      C->getValue().convertToInteger(Tmp, llvm::RoundingMode::TowardZero,
-                                     &isExact);
-      if (isExact || C->isZero()) {
-        rhs = ConstantInt::get(Ty, Tmp);
-        switch (opcode) {
-        case Instruction::FAdd:
-          minval += Tmp;
-          maxval += Tmp;
-          break;
-        case Instruction::FSub:
-        case Instruction::FNeg:
-          minval -= Tmp;
-          maxval -= Tmp;
-          break;
-        case Instruction::FMul:
-          minval *= Tmp;
-          maxval *= Tmp;
-          break;
-        default:
-          llvm_unreachable("Illegal opcode");
-        }
-      }
-    }
-    if (auto ext = dyn_cast<CastInst>(prerhs)) {
-      if (ext->getOpcode() == Instruction::UIToFP ||
-          ext->getOpcode() == Instruction::SIToFP) {
-        precasts.push_back(ext);
-        auto ity = cast<IntegerType>(ext->getOperand(0)->getType());
-        bool md = false;
-        APInt rhsMin(64, 0);
-        APInt rhsMax(64, 0);
-        if (auto I = dyn_cast<Instruction>(ext->getOperand(0)))
-          if (auto MD = hasMetadata(I, LLVMContext::MD_range)) {
-            md = true;
-            rhsMin =
-                cast<ConstantInt>(
-                    cast<ConstantAsMetadata>(MD->getOperand(0))->getValue())
-                    ->getValue()
-                    .zextOrTrunc(64);
-            rhsMax =
-                cast<ConstantInt>(
-                    cast<ConstantAsMetadata>(MD->getOperand(1))->getValue())
-                    ->getValue()
-                    .zextOrTrunc(64);
-          }
-        if (!md) {
-          if (ext->getOpcode() == Instruction::UIToFP) {
-            rhsMax = APInt::getMaxValue(ity->getBitWidth()).zextOrTrunc(64);
-            rhsMin = APInt(64, 0);
+          if (isUnsigned) {
+            outMin = APInt(RangeBits, 0);
+            outMax = APInt::getMaxValue(ity->getBitWidth()).zext(RangeBits);
           } else {
-            rhsMax =
-                APInt::getSignedMaxValue(ity->getBitWidth()).zextOrTrunc(64);
-            rhsMin =
-                APInt::getSignedMinValue(ity->getBitWidth()).zextOrTrunc(64);
+            outMin =
+                APInt::getSignedMinValue(ity->getBitWidth()).sext(RangeBits);
+            outMax =
+                APInt::getSignedMaxValue(ity->getBitWidth()).sext(RangeBits);
           }
         }
-        switch (opcode) {
-        case Instruction::FAdd:
-          minval += rhsMin;
-          maxval += rhsMax;
-          break;
-        case Instruction::FSub:
-        case Instruction::FNeg:
-          minval -= rhsMax;
-          maxval -= rhsMin;
-          break;
-        case Instruction::FMul: {
-          auto minf = [&](APInt a, APInt b) { return a.sle(b) ? a : b; };
-          auto maxf = [&](APInt a, APInt b) { return a.sle(b) ? b : b; };
-          minval = minf(
-              minval * rhsMin,
-              minf(minval * rhsMax, minf(maxval * rhsMin, maxval * rhsMax)));
-          maxval = maxf(
-              minval * rhsMin,
-              maxf(minval * rhsMax, maxf(maxval * rhsMin, maxval * rhsMax)));
-          break;
-        }
-        default:
-          llvm_unreachable("Illegal opcode");
-        }
-        if (ext->getOperand(0)->getType() == Ty)
-          rhs = ext->getOperand(0);
-        else if (ity->getBitWidth() < Ty->getBitWidth()) {
-          if (ext->getOpcode() == Instruction::UIToFP)
-            rhs = B.CreateZExt(ext->getOperand(0), Ty);
-          else
-            rhs = B.CreateSExt(ext->getOperand(0), Ty);
-          if (auto I = dyn_cast<Instruction>(rhs))
-            if (I != ext->getOperand(0))
-              temporaries.insert(I);
-        }
+        if (outMin.slt(minExact) || outMax.sgt(maxExact))
+          return false;
+        outCast = ext;
+        return true;
       }
-    }
+      return false;
+    };
 
-    if (lhs && rhs) {
-      Value *res = nullptr;
-      if (temporaries.count(dyn_cast<Instruction>(lhs)))
-        lhs = pushcse(lhs);
-      if (temporaries.count(dyn_cast<Instruction>(rhs)))
-        rhs = pushcse(rhs);
+    APInt lhsMin(RangeBits, 0), lhsMax(RangeBits, 0);
+    APInt rhsMin(RangeBits, 0), rhsMax(RangeBits, 0);
+    CastInst *lhsCast = nullptr;
+    CastInst *rhsCast = nullptr;
+    if (extractIntRange(prelhs, lhsMin, lhsMax, lhsCast) &&
+        extractIntRange(prerhs, rhsMin, rhsMax, rhsCast) &&
+        (lhsCast || rhsCast)) {
+      APInt resMin(RangeBits, 0), resMax(RangeBits, 0);
+      bool canProduceNegZero = false;
       switch (opcode) {
       case Instruction::FAdd:
-        res = B.CreateAdd(lhs, rhs, "", false, true);
+        resMin = lhsMin + rhsMin;
+        resMax = lhsMax + rhsMax;
         break;
       case Instruction::FSub:
       case Instruction::FNeg:
-        res = B.CreateSub(lhs, rhs, "", false, true);
+        resMin = lhsMin - rhsMax;
+        resMax = lhsMax - rhsMin;
+        if (opcode == Instruction::FNeg)
+          canProduceNegZero = rhsMin.sle(0) && rhsMax.sge(0);
         break;
-      case Instruction::FMul:
-        res = B.CreateMul(lhs, rhs, "", false, true);
+      case Instruction::FMul: {
+        APInt p0 = lhsMin * rhsMin;
+        APInt p1 = lhsMin * rhsMax;
+        APInt p2 = lhsMax * rhsMin;
+        APInt p3 = lhsMax * rhsMax;
+        auto minf = [](const APInt &a, const APInt &b) {
+          return a.sle(b) ? a : b;
+        };
+        auto maxf = [](const APInt &a, const APInt &b) {
+          return a.sge(b) ? a : b;
+        };
+        resMin = minf(minf(p0, p1), minf(p2, p3));
+        resMax = maxf(maxf(p0, p1), maxf(p2, p3));
+        canProduceNegZero =
+            (lhsMin.isNegative() && rhsMin.sle(0) && rhsMax.sge(0)) ||
+            (rhsMin.isNegative() && lhsMin.sle(0) && lhsMax.sge(0));
         break;
+      }
       default:
         llvm_unreachable("Illegal opcode");
       }
-      res = pushcse(res);
-      for (auto I : precasts)
-        push(I);
-      /*
-      if (auto I = dyn_cast<Instruction>(res)) {
-        Q.insert(I);
-        Metadata *vals[] = {(Metadata *)ConstantAsMetadata::get(
-                                ConstantInt::get(Ty, minval)),
-                            (Metadata *)ConstantAsMetadata::get(
-                                ConstantInt::get(Ty, maxval))};
-        I->setMetadata(LLVMContext::MD_range,
-                       MDNode::get(I->getContext(), vals));
-      }
-      */
-      auto ext = pushcse(B.CreateSIToFP(res, cur->getType()));
-      replaceAndErase(cur, ext);
-      return "BinopExtToExtBinop";
 
-    } else {
-      for (auto I : temporaries)
-        I->eraseFromParent();
+      if (resMin.sge(minExact) && resMax.sle(maxExact) &&
+          (!canProduceNegZero || hasNSZ)) {
+        auto materializeI64 = [&](CastInst *castI,
+                                  const APInt &val) -> Value * {
+          if (!castI)
+            return ConstantInt::get(Ty, val.trunc(64));
+          Value *src = castI->getOperand(0);
+          if (src->getType() == Ty)
+            return src;
+          Value *extended = (castI->getOpcode() == Instruction::UIToFP)
+                                ? B.CreateZExt(src, Ty)
+                                : B.CreateSExt(src, Ty);
+          return pushcse(extended);
+        };
+
+        Value *lhs = materializeI64(lhsCast, lhsMin);
+        Value *rhs = materializeI64(rhsCast, rhsMin);
+        Value *res = nullptr;
+        switch (opcode) {
+        case Instruction::FAdd:
+          res = B.CreateAdd(lhs, rhs, "", false, true);
+          break;
+        case Instruction::FSub:
+        case Instruction::FNeg:
+          res = B.CreateSub(lhs, rhs, "", false, true);
+          break;
+        case Instruction::FMul:
+          res = B.CreateMul(lhs, rhs, "", false, true);
+          break;
+        default:
+          llvm_unreachable("Illegal opcode");
+        }
+        res = pushcse(res);
+        if (lhsCast)
+          push(lhsCast);
+        if (rhsCast)
+          push(rhsCast);
+        auto ext = pushcse(B.CreateSIToFP(res, cur->getType()));
+        replaceAndErase(cur, ext);
+        return "BinopExtToExtBinop";
+      }
     }
   }
 
