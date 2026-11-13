@@ -3413,12 +3413,16 @@ public:
                     7) /
                    8;
 
-          if (Type *flt = TR.addingType(size, orig_op0)) {
+          Type *flt = TR.addingType(size, orig_op0);
+          if (!flt)
+            flt = TR.addingType(size, &BO);
+          if (flt) {
             auto bits = gutils->newFunc->getParent()
                             ->getDataLayout()
                             .getTypeAllocSizeInBits(flt);
-            if (ci->getSExtValue() >= (int64_t)bits &&
-                ci->getSExtValue() % bits == 0) {
+            if ((ci->getSExtValue() >= (int64_t)bits &&
+                 ci->getSExtValue() % bits == 0) ||
+                (ci->getSExtValue() > 0 && ci->getSExtValue() % 8 == 0)) {
               auto rule = [&](Value *idiff) {
                 return Builder2.CreateLShr(idiff, ci);
               };
@@ -3441,7 +3445,8 @@ public:
     }
     case Instruction::Shl: {
       // Shift of a value holding floats by a multiple of the float size
-      // (e.g. to pack two floats into one integer): shift the shadow as well.
+      // (e.g. to pack two floats into one integer) or by a byte-aligned
+      // offset (e.g. reassembling a split float): shift the shadow as well.
       if (!gutils->isConstantValue(orig_op0)) {
         if (auto ci = dyn_cast<ConstantInt>(orig_op1)) {
           size_t size = 1;
@@ -3452,12 +3457,27 @@ public:
                     7) /
                    8;
 
-          if (Type *flt = TR.addingType(size, orig_op0)) {
+          Type *flt = TR.addingType(size, orig_op0);
+          if (!flt)
+            flt = TR.addingType(size, &BO);
+          if (!flt) {
+            for (auto *U : BO.users()) {
+              if (auto *OBI = dyn_cast<BinaryOperator>(U)) {
+                if (OBI->getOpcode() == Instruction::Or) {
+                  flt = TR.addingType(size, OBI);
+                  if (flt)
+                    break;
+                }
+              }
+            }
+          }
+          if (flt) {
             auto bits = gutils->newFunc->getParent()
                             ->getDataLayout()
                             .getTypeAllocSizeInBits(flt);
-            if (ci->getSExtValue() >= (int64_t)bits &&
-                ci->getSExtValue() % bits == 0) {
+            if ((ci->getSExtValue() >= (int64_t)bits &&
+                 ci->getSExtValue() % bits == 0) ||
+                (ci->getSExtValue() > 0 && ci->getSExtValue() % 8 == 0)) {
               auto rule = [&](Value *idiff) {
                 return Builder2.CreateShl(idiff, ci);
               };
