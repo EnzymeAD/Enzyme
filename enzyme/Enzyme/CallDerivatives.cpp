@@ -34,6 +34,64 @@ void (*EnzymeShadowAllocRewrite)(LLVMValueRef, void *, LLVMValueRef, uint64_t,
                                  LLVMValueRef, uint8_t) = nullptr;
 }
 
+/// Return an internal AlwaysInline helper that calls _FortranAAssign on shadow
+/// descriptors only when the destination shadow is distinct from the primal
+/// (both the descriptor pointer itself and any non-null base_addr it wraps).
+static Function *getOrInsertCheckedFortranAssign(Module &M, Function *called,
+                                                 CallingConv::ID CC) {
+  FunctionType *AssignTy = called->getFunctionType();
+  auto &C = M.getContext();
+  SmallVector<Type *, 5> ParamTys = {
+      AssignTy->getParamType(0), AssignTy->getParamType(0),
+      AssignTy->getParamType(1), AssignTy->getParamType(2),
+      AssignTy->getParamType(3)};
+  FunctionType *FT = FunctionType::get(Type::getVoidTy(C), ParamTys, false);
+  Function *F = cast<Function>(
+      M.getOrInsertFunction("__enzyme_checked_fortran_assign", FT).getCallee());
+  if (!F->empty())
+    return F;
+
+  F->setLinkage(Function::LinkageTypes::InternalLinkage);
+  F->addFnAttr(Attribute::AlwaysInline);
+
+  BasicBlock *entry = BasicBlock::Create(C, "entry", F);
+  BasicBlock *checkBase = BasicBlock::Create(C, "check_base", F);
+  BasicBlock *assign = BasicBlock::Create(C, "assign", F);
+  BasicBlock *done = BasicBlock::Create(C, "done", F);
+
+  Argument *primalTo = F->getArg(0);
+  Argument *sTo = F->getArg(1);
+  Argument *sFrom = F->getArg(2);
+  Argument *file = F->getArg(3);
+  Argument *line = F->getArg(4);
+
+  IRBuilder<> B(entry);
+  Value *sameDesc = B.CreateICmpEQ(sTo, primalTo);
+  Value *sToNull = B.CreateIsNull(sTo);
+  B.CreateCondBr(B.CreateOr(sameDesc, sToNull), done, checkBase);
+
+  B.SetInsertPoint(checkBase);
+  Type *I8PtrTy = getInt8PtrTy(C);
+  unsigned AS = cast<PointerType>(AssignTy->getParamType(0))->getAddressSpace();
+  Type *I8PtrPtrTy = getPointerType(I8PtrTy, AS);
+  Value *base =
+      B.CreateLoad(I8PtrTy, B.CreatePointerCast(primalTo, I8PtrPtrTy));
+  Value *sbase = B.CreateLoad(I8PtrTy, B.CreatePointerCast(sTo, I8PtrPtrTy));
+  Value *sbaseNull = B.CreateIsNull(sbase);
+  Value *diffBase = B.CreateICmpNE(sbase, base);
+  B.CreateCondBr(B.CreateOr(sbaseNull, diffBase), assign, done);
+
+  B.SetInsertPoint(assign);
+  auto dcall = B.CreateCall(AssignTy, called, {sTo, sFrom, file, line});
+  dcall->setCallingConv(CC);
+  B.CreateBr(done);
+
+  B.SetInsertPoint(done);
+  B.CreateRetVoid();
+
+  return F;
+}
+
 /// Whether \p Begin has exactly one llvm.julia.gc_preserve_end outside the
 /// abort-only blocks the reverse pass drops, as reversing the region requires;
 /// CanonicalizeGCPreserveEnds merges them where it can.
@@ -2892,9 +2950,15 @@ bool AdjointGenerator::handleKnownCallDerivatives(
       if (Mode == DerivativeMode::ForwardMode ||
           Mode == DerivativeMode::ForwardModeError) {
         if (!gutils->isConstantInstruction(&call)) {
+          if (gutils->isConstantValue(call.getArgOperand(0))) {
+            eraseIfUnused(call);
+            return true;
+          }
+
           IRBuilder<> Builder2(&call);
           getForwardBuilder(Builder2);
 
+          Value *primalTo = gutils->getNewFromOriginal(call.getArgOperand(0));
           Value *file = gutils->getNewFromOriginal(call.getArgOperand(2));
           Value *line = gutils->getNewFromOriginal(call.getArgOperand(3));
           Value *shadowTo =
@@ -2902,9 +2966,27 @@ bool AdjointGenerator::handleKnownCallDerivatives(
           Value *shadowFrom =
               gutils->invertPointerM(call.getArgOperand(1), Builder2);
 
+          Function *checkedAssign = nullptr;
+          if (gutils->runtimeActivity &&
+              called->getFunctionType()->getParamType(0)->isPointerTy())
+            checkedAssign = getOrInsertCheckedFortranAssign(
+                *called->getParent(), called, call.getCallingConv());
+
           auto rule = [&](Value *sTo, Value *sFrom) {
-            auto dcall = Builder2.CreateCall(called->getFunctionType(), called,
-                                             {sTo, sFrom, file, line});
+            // When the destination descriptor is inactive its shadow is the
+            // primal itself; assigning through it would overwrite primal data.
+            if (sTo == primalTo || sTo == call.getArgOperand(0))
+              return;
+            CallInst *dcall;
+            if (checkedAssign) {
+              dcall = Builder2.CreateCall(checkedAssign->getFunctionType(),
+                                          checkedAssign,
+                                          {primalTo, sTo, sFrom, file, line});
+            } else {
+              dcall = Builder2.CreateCall(called->getFunctionType(), called,
+                                          {sTo, sFrom, file, line});
+              dcall->setCallingConv(call.getCallingConv());
+            }
             dcall->setDebugLoc(gutils->getNewFromOriginal(call.getDebugLoc()));
           };
           applyChainRule(Builder2, rule, shadowTo, shadowFrom);
