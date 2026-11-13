@@ -6960,12 +6960,38 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
   NewF->setVisibility(llvm::GlobalValue::DefaultVisibility);
   NewF->setLinkage(llvm::GlobalValue::InternalLinkage);
 
-  const SmallPtrSet<BasicBlock *, 4> guaranteedUnreachable =
+  SmallPtrSet<BasicBlock *, 4> GuaranteedUnreachable =
       getGuaranteedUnreachable(NewF);
+
+  // Lower realloc into malloc, memcpy, and free before stripping deallocations
+  // so nofree clones (such as nested reverse derivatives growing loop caches)
+  // retain the reallocation copy while dropping only the old-buffer free.
+  bool HasRealloc = false;
+  for (BasicBlock &Block : *NewF) {
+    if (GuaranteedUnreachable.count(&Block))
+      continue;
+    for (Instruction &Inst : Block) {
+      auto *Call = dyn_cast<CallInst>(&Inst);
+      if (!Call || Call->hasFnAttr(Attribute::NoFree))
+        continue;
+      if (Function *Callee = Call->getCalledFunction()) {
+        if (Callee->getName() == "realloc") {
+          HasRealloc = true;
+          break;
+        }
+      }
+    }
+    if (HasRealloc)
+      break;
+  }
+  if (HasRealloc) {
+    PPC.ReplaceReallocs(NewF, /*mem2reg*/ true);
+    GuaranteedUnreachable = getGuaranteedUnreachable(NewF);
+  }
 
   SmallVector<Instruction *, 2> toErase;
   for (BasicBlock &BB : *NewF) {
-    if (guaranteedUnreachable.count(&BB))
+    if (GuaranteedUnreachable.count(&BB))
       continue;
     for (Instruction &I : BB) {
       StringRef funcName = "";
