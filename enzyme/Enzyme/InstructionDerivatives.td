@@ -136,10 +136,16 @@ class InsertValue<list<int> indices_> : Inst<"InsertValue"> {
 class MultiReturn : Operation</*primal*/1,/*shadow*/0> {
   bit struct;
   bit useRetType;
+  int useArgType = -1;
 }
 def RetMultiReturnRet : MultiReturn {
   bit struct = 0;
   bit useRetType = 1;
+}
+class ArgMultiReturnRet<int arg_> : MultiReturn {
+  bit struct = 0;
+  bit useRetType = 0;
+  int useArgType = arg_;
 }
 def StructRet : MultiReturn {
   bit struct = 1;
@@ -1052,10 +1058,8 @@ def : CallPattern<(Op $re, $im),
 // rather than the `assuming this function returns a struct` convention if used directly
 // within the call pattern.
 def Cabs_helper : SubRoutine<(Op (Op $re, $im):$z, $dr, $res),
-                    (ArrayRet
-                      (FMul $dr, (FDiv $re, $res)),
-                      (FMul $dr, (FDiv $im, $res))
-                  )>;
+                             (ArgMultiReturnRet<0> (FMul $dr, (FDiv $re, $res)),
+                                 (FMul $dr, (FDiv $im, $res)))>;
 
 def : CallPattern<(Op (Op $x, $y):$z),
                   ["cabs", "cabsf", "cabsl"],

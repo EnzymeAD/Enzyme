@@ -5384,9 +5384,72 @@ Type *GradientUtils::extractMeta(Type *T, ArrayRef<unsigned> off) {
       T = ST->getElementType(idx);
       continue;
     }
+    if (auto VT = dyn_cast<VectorType>(T)) {
+      T = VT->getElementType();
+      continue;
+    }
     assert(false && "could not sub index into type");
   }
   return T;
+}
+
+Value *GradientUtils::extractElementOrValue(IRBuilder<> &Builder, Value *Agg,
+                                            ArrayRef<unsigned> off,
+                                            const Twine &name) {
+  size_t i = 0;
+  while (i < off.size()) {
+    if (Agg->getType()->isVectorTy()) {
+      Agg = Builder.CreateExtractElement(Agg, off[i],
+                                         i + 1 == off.size() ? name : "");
+      i++;
+      continue;
+    }
+    size_t start = i;
+    Type *curTy = Agg->getType();
+    while (i < off.size() && !curTy->isVectorTy()) {
+      if (auto AT = dyn_cast<ArrayType>(curTy))
+        curTy = AT->getElementType();
+      else if (auto ST = dyn_cast<StructType>(curTy))
+        curTy = ST->getElementType(off[i]);
+      else
+        llvm_unreachable(
+            "extractElementOrValue: cannot index into non-aggregate type");
+      i++;
+    }
+    Agg = Builder.CreateExtractValue(Agg, off.slice(start, i - start),
+                                     i == off.size() ? name : "");
+  }
+  return Agg;
+}
+
+Value *GradientUtils::insertMeta(IRBuilder<> &Builder, Value *Agg, Value *Val,
+                                 ArrayRef<unsigned> off, const Twine &name) {
+  assert(!off.empty() && "insertMeta requires at least one index");
+  if (Agg->getType()->isVectorTy()) {
+    assert(off.size() == 1 && "cannot sub-index into vector element");
+    return Builder.CreateInsertElement(Agg, Val, off[0], name);
+  }
+  size_t vecPos = off.size();
+  Type *curTy = Agg->getType();
+  for (size_t i = 0; i < off.size(); ++i) {
+    if (curTy->isVectorTy()) {
+      vecPos = i;
+      break;
+    }
+    if (auto AT = dyn_cast<ArrayType>(curTy))
+      curTy = AT->getElementType();
+    else if (auto ST = dyn_cast<StructType>(curTy))
+      curTy = ST->getElementType(off[i]);
+    else
+      llvm_unreachable("insertMeta: cannot index into non-aggregate type");
+  }
+  if (vecPos == off.size())
+    return Builder.CreateInsertValue(Agg, Val, off, name);
+
+  auto prefix = off.slice(0, vecPos);
+  Value *sub = extractMeta(Builder, Agg, prefix);
+  sub = insertMeta(Builder, sub, Val, off.slice(vecPos));
+  return Builder.CreateInsertValue(Agg, sub, prefix, name);
 }
 
 Value *GradientUtils::extractMeta(IRBuilder<> &Builder, Value *Agg,
@@ -5421,6 +5484,22 @@ Value *GradientUtils::extractMeta(IRBuilder<> &Builder, Value *Agg,
         continue;
       }
     }
+    if (auto Ins = dyn_cast<InsertElementInst>(Agg)) {
+      if (auto FVT = dyn_cast<FixedVectorType>(Ins->getType())) {
+        if (auto CI = dyn_cast<ConstantInt>(Ins->getOperand(2))) {
+          if (CI->getValue().ult(FVT->getNumElements())) {
+            if (CI->equalsInt(off[0])) {
+              Agg = Ins->getOperand(1);
+              off.erase(off.begin());
+              continue;
+            } else {
+              Agg = Ins->getOperand(0);
+              continue;
+            }
+          }
+        }
+      }
+    }
     if (auto ext = dyn_cast<ExtractValueInst>(Agg)) {
       off.insert(off.begin(), ext->getIndices().begin(),
                  ext->getIndices().end());
@@ -5430,6 +5509,7 @@ Value *GradientUtils::extractMeta(IRBuilder<> &Builder, Value *Agg,
     if (auto CA = dyn_cast<ConstantAggregateZero>(Agg)) {
       Agg = CA->getElementValue(off[0]);
       off.erase(off.begin(), off.begin() + 1);
+      continue;
     }
     break;
   }
@@ -5439,10 +5519,7 @@ Value *GradientUtils::extractMeta(IRBuilder<> &Builder, Value *Agg,
   if (!fallback)
     return nullptr;
 
-  if (Agg->getType()->isVectorTy() && off.size() == 1)
-    return Builder.CreateExtractElement(Agg, off[0], name);
-
-  return Builder.CreateExtractValue(Agg, off, name);
+  return extractElementOrValue(Builder, Agg, off, name);
 }
 
 llvm::Value *GradientUtils::recursiveFAdd(llvm::IRBuilder<> &B,
@@ -5493,7 +5570,7 @@ llvm::Value *GradientUtils::recursiveFAdd(llvm::IRBuilder<> &B,
     }
     if (lhs_off.size()) {
       assert(prev);
-      res = B.CreateInsertValue(prev, res, lhs_off);
+      res = insertMeta(B, prev, res, lhs_off);
     }
     return res;
   } else if (isa<ArrayType>(lhs_ty) || isa<StructType>(lhs_ty)) {
