@@ -6466,6 +6466,32 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
                      TypeTree(BaseType::Pointer).Only(-1, &call), &call);
       return;
     }
+    if (funcName == "strncmp") {
+      updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      updateAnalysis(call.getOperand(0),
+                     TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      updateAnalysis(call.getOperand(1),
+                     TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      updateAnalysis(call.getOperand(2),
+                     TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      return;
+    }
+    if (funcName == "strchr" || funcName == "strrchr") {
+      updateAnalysis(&call, TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      updateAnalysis(call.getOperand(0),
+                     TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      updateAnalysis(call.getOperand(1),
+                     TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      return;
+    }
+    if (funcName == "strstr") {
+      updateAnalysis(&call, TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      updateAnalysis(call.getOperand(0),
+                     TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      updateAnalysis(call.getOperand(1),
+                     TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      return;
+    }
     if (funcName == "bcmp") {
       updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
       updateAnalysis(call.getOperand(0),
@@ -6550,17 +6576,16 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
                      TypeTree(BaseType::Pointer).Only(-1, &call), &call);
       return;
     }
-    if (funcName == "write" || funcName == "read" || funcName == "writev" ||
-        funcName == "readv") {
+    if (funcName == "write" || funcName == "read" || funcName == "pwrite" ||
+        funcName == "pread" || funcName == "writev" || funcName == "readv") {
       updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
-      // FD type not going to be defined here
-      // updateAnalysis(call.getOperand(0),
-      // TypeTree(BaseType::Pointer).Only(-1),
-      //               &call);
       updateAnalysis(call.getOperand(1),
                      TypeTree(BaseType::Pointer).Only(-1, &call), &call);
       updateAnalysis(call.getOperand(2),
                      TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      if ((funcName == "pread" || funcName == "pwrite") && call.arg_size() >= 4)
+        updateAnalysis(call.getOperand(3),
+                       TypeTree(BaseType::Integer).Only(-1, &call), &call);
       return;
     }
     if (funcName == "strtol" || funcName == "strtoul" ||
@@ -6793,9 +6818,34 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
       return;
     }
 
+    if (funcName == "snprintf" || funcName == "vsnprintf") {
+      updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      if (call.arg_size() >= 1)
+        updateAnalysis(call.getArgOperand(0),
+                       TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      if (call.arg_size() >= 2)
+        updateAnalysis(call.getArgOperand(1),
+                       TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      if (call.arg_size() >= 3)
+        updateAnalysis(call.getArgOperand(2),
+                       TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      return;
+    }
+    if (funcName == "sprintf" || funcName == "vsprintf") {
+      updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      if (call.arg_size() >= 1)
+        updateAnalysis(call.getArgOperand(0),
+                       TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      if (call.arg_size() >= 2)
+        updateAnalysis(call.getArgOperand(1),
+                       TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      return;
+    }
+
     if (funcName == "__cxa_guard_acquire" || funcName == "printf" ||
-        funcName == "vprintf" || funcName == "puts" || funcName == "fputc" ||
-        funcName == "fprintf") {
+        funcName == "vprintf" || funcName == "puts" || funcName == "fputs" ||
+        funcName == "putchar" || funcName == "fputc" || funcName == "fprintf" ||
+        funcName == "vfprintf" || funcName == "fflush") {
       updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
     }
 
