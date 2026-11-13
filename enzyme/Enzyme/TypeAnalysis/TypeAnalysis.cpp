@@ -3442,6 +3442,45 @@ void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
       }
       break;
 
+    case BinaryOperator::And:
+      if (direction & UP)
+        for (int i = 0; i < 2; ++i) {
+          Type *FT = nullptr;
+          if (!(FT = Ret.allFloat(origin, dl)))
+            continue;
+          // If & against 0x7fff... (clearing only the sign bit), the other
+          // operand is a float.
+          if (clearsOnlyAtMostTopBit(Args[i], FT, dl)) {
+            bool Legal = true;
+            ((i == 0) ? RHS : LHS)
+                .checkedOrIn(TypeTree(FT).Only(-1, nullptr),
+                             /*pointerintsame*/ false, Legal);
+
+            if (!Legal) {
+              std::string str;
+              raw_string_ostream ss(str);
+              if (!CustomErrorHandler) {
+                llvm::errs() << *fntypeinfo.Function->getParent() << "\n";
+                llvm::errs() << *fntypeinfo.Function << "\n";
+                dump(ss);
+              }
+              ss << "Illegal updateBinop (and up) Analysis " << *origin << "\n";
+              ss << " (i=" << i << ") " << (i == 0 ? "RHS" : "LHS") << " "
+                 << ((i == 0) ? RHS : LHS).str() << " FT from ret: " << *FT
+                 << "\n";
+              if (CustomErrorHandler) {
+                CustomErrorHandler(str.c_str(), wrap(origin),
+                                   ErrorType::IllegalTypeAnalysis, (void *)this,
+                                   wrap(origin), nullptr);
+              }
+              EmitFailure("IllegalUpdateAnalysis", origin->getDebugLoc(),
+                          origin, ss.str());
+              report_fatal_error("Performed illegal updateAnalysis");
+            }
+          }
+        }
+      break;
+
     case BinaryOperator::Xor:
       if (direction & UP)
         for (int i = 0; i < 2; ++i) {
@@ -3642,6 +3681,11 @@ void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
       }
       if (Opcode == BinaryOperator::And) {
         for (int i = 0; i < 2; ++i) {
+          Type *FT = (i == 0 ? RHS : LHS).allFloat(T, dl);
+          if (FT && clearsOnlyAtMostTopBit(Args[i], FT, dl)) {
+            Result = ConcreteType(FT);
+            continue;
+          }
           bool isNegMask = false;
           if (Args[i]) {
             if (auto CI = dyn_cast<ConstantInt>(Args[i])) {

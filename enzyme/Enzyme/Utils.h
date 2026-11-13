@@ -30,6 +30,7 @@
 #include "llvm/ADT/SmallPtrSet.h"
 
 #include "llvm/Analysis/AliasAnalysis.h"
+#include "llvm/Analysis/ConstantFolding.h"
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/IR/Attributes.h"
 #include "llvm/IR/Function.h"
@@ -2455,6 +2456,54 @@ static inline bool isStructurallyDisjointOr(const llvm::Value *V0,
   return (m0 | m1).isAllOnes();
 }
 
+static inline const llvm::Constant *
+extractConstantValueForBitMask(const llvm::Value *V,
+                               const llvm::DataLayout &dl) {
+  using namespace llvm;
+  if (!V)
+    return nullptr;
+  if (auto *C = dyn_cast<Constant>(V))
+    return C;
+  if (auto *BC = dyn_cast<BitCastInst>(V)) {
+    if (auto *SrcC = extractConstantValueForBitMask(BC->getOperand(0), dl))
+      return ConstantFoldCastOperand(Instruction::BitCast,
+                                     const_cast<Constant *>(SrcC),
+                                     BC->getType(), dl);
+    return nullptr;
+  }
+#if LLVM_VERSION_MAJOR >= 11
+  if (auto *IE = dyn_cast<InsertElementInst>(V)) {
+    auto *VTy = dyn_cast<FixedVectorType>(IE->getType());
+    if (!VTy)
+      return nullptr;
+    unsigned NumElts = VTy->getNumElements();
+    SmallVector<Constant *, 16> Elts(NumElts, nullptr);
+    const Value *Cur = IE;
+    while (auto *CurIE = dyn_cast<InsertElementInst>(Cur)) {
+      auto *Idx = dyn_cast<ConstantInt>(CurIE->getOperand(2));
+      auto *Val = dyn_cast<Constant>(CurIE->getOperand(1));
+      if (!Idx || !Val || Idx->getZExtValue() >= NumElts)
+        return nullptr;
+      unsigned I = Idx->getZExtValue();
+      if (!Elts[I])
+        Elts[I] = Val;
+      Cur = CurIE->getOperand(0);
+    }
+    auto *Base = dyn_cast<Constant>(Cur);
+    if (!Base)
+      return nullptr;
+    for (unsigned I = 0; I < NumElts; ++I) {
+      if (!Elts[I])
+        Elts[I] = Base->getAggregateElement(I);
+      if (!Elts[I] || isa<UndefValue>(Elts[I]))
+        return nullptr;
+    }
+    return ConstantVector::get(Elts);
+  }
+#endif
+  return nullptr;
+}
+
 static inline bool containsOnlyAtMostTopBit(const llvm::Value *V,
                                             llvm::Type *FT,
                                             const llvm::DataLayout &dl,
@@ -2462,6 +2511,8 @@ static inline bool containsOnlyAtMostTopBit(const llvm::Value *V,
   using namespace llvm;
   if (!V)
     return false;
+  if (auto *C = extractConstantValueForBitMask(V, dl))
+    V = C;
   if (auto CI = dyn_cast_or_null<ConstantInt>(V)) {
     if (CI->isZero()) {
       if (vFT)
@@ -2524,8 +2575,102 @@ static inline bool containsOnlyAtMostTopBit(const llvm::Value *V,
   if (auto BO = dyn_cast<BinaryOperator>(V)) {
     if (BO->getOpcode() == Instruction::And) {
       for (size_t i = 0; i < 2; i++) {
-        if (containsOnlyAtMostTopBit(BO->getOperand(i), FT, dl))
+        if (containsOnlyAtMostTopBit(BO->getOperand(i), FT, dl, vFT))
           return true;
+      }
+      return false;
+    }
+  }
+  return false;
+}
+
+static inline bool clearsOnlyAtMostTopBit(const llvm::Value *V, llvm::Type *FT,
+                                          const llvm::DataLayout &dl,
+                                          llvm::Type **vFT = nullptr) {
+  using namespace llvm;
+  if (!V || !FT || FT->isPPC_FP128Ty())
+    return false;
+  if (auto *C = extractConstantValueForBitMask(V, dl))
+    V = C;
+  if (auto CI = dyn_cast_or_null<ConstantInt>(V)) {
+    if (dl.getTypeSizeInBits(FT) == dl.getTypeSizeInBits(CI->getType())) {
+      if (CI->isMinusOne() || CI->isMaxValue(/*signed*/ true)) {
+        if (vFT)
+          *vFT = FT;
+        return true;
+      }
+    }
+    return false;
+  }
+  if (auto CV = dyn_cast_or_null<ConstantVector>(V)) {
+    bool legal = true;
+    for (size_t i = 0, end = CV->getNumOperands(); i < end; ++i) {
+      legal &= clearsOnlyAtMostTopBit(CV->getOperand(i), FT, dl);
+    }
+    if (legal && vFT) {
+#if LLVM_VERSION_MAJOR >= 12
+      *vFT = VectorType::get(FT, CV->getType()->getElementCount());
+#else
+      *vFT = VectorType::get(FT, CV->getType()->getNumElements());
+#endif
+    }
+    return legal;
+  }
+  if (auto CV = dyn_cast_or_null<ConstantDataVector>(V)) {
+    if (dl.getTypeSizeInBits(FT) != dl.getTypeSizeInBits(CV->getElementType()))
+      return false;
+    bool legal = true;
+    for (size_t i = 0, end = CV->getNumElements(); i < end; ++i) {
+      auto CI = CV->getElementAsAPInt(i);
+#if LLVM_VERSION_MAJOR > 16
+      if (CI.isAllOnes())
+        continue;
+#else
+      if (CI.isAllOnesValue())
+        continue;
+#endif
+      if (!CI.isMaxSignedValue()) {
+        legal = false;
+        break;
+      }
+    }
+    if (legal && vFT) {
+#if LLVM_VERSION_MAJOR >= 12
+      *vFT = VectorType::get(FT, CV->getType()->getElementCount());
+#else
+      *vFT = VectorType::get(FT, CV->getType()->getNumElements());
+#endif
+    }
+    return legal;
+  }
+#if LLVM_VERSION_MAJOR >= 12
+  if (auto *C = dyn_cast<Constant>(V)) {
+    if (auto *VT = dyn_cast<VectorType>(C->getType())) {
+      if (auto *SV = C->getSplatValue()) {
+        if (clearsOnlyAtMostTopBit(SV, FT, dl)) {
+          if (vFT)
+            *vFT = VectorType::get(FT, VT->getElementCount());
+          return true;
+        }
+      }
+    }
+  }
+#endif
+  if (auto BO = dyn_cast<BinaryOperator>(V)) {
+    if (BO->getOpcode() == Instruction::Or) {
+      for (size_t i = 0; i < 2; i++) {
+        if (clearsOnlyAtMostTopBit(BO->getOperand(i), FT, dl, vFT))
+          return true;
+      }
+      return false;
+    }
+    if (BO->getOpcode() == Instruction::Xor) {
+      for (size_t i = 0; i < 2; i++) {
+        if (auto *C = dyn_cast<Constant>(BO->getOperand(i))) {
+          if (C->isAllOnesValue() &&
+              containsOnlyAtMostTopBit(BO->getOperand(1 - i), FT, dl, vFT))
+            return true;
+        }
       }
       return false;
     }
