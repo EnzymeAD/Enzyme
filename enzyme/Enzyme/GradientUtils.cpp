@@ -6741,26 +6741,34 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     if (isIntelSubscriptIntrinsic(*II)) {
       IRBuilder<> bb(getNewFromOriginal(II));
 
-      const std::array<size_t, 4> idxArgsIndices{{0, 1, 2, 4}};
-      const size_t ptrArgIndex = 3;
+      constexpr size_t ptrArgIndex = 3;
+#if LLVM_VERSION_MAJOR >= 14
+      size_t numArgs = II->arg_size();
+#else
+      size_t numArgs = II->getNumArgOperands();
+#endif
+      assert(numArgs >= 5 &&
+             "llvm.intel.subscript requires at least 5 arguments");
 
-      SmallVector<Value *, 5> invertArgs(5);
-      for (auto i : idxArgsIndices) {
-        Value *idx = getNewFromOriginal(II->getOperand(i));
-        invertArgs[i] = idx;
+      SmallVector<Value *, 6> invertArgs(numArgs);
+      for (size_t i = 0; i < numArgs; ++i) {
+        if (i == ptrArgIndex)
+          continue;
+        invertArgs[i] = getNewFromOriginal(II->getOperand(i));
       }
       Value *invertPtrArg = invertPointerM(II->getOperand(ptrArgIndex), bb);
-      invertArgs[ptrArgIndex] = invertPtrArg;
 
       auto rule = [&](Value *ip) {
+        invertArgs[ptrArgIndex] = ip;
         auto shadow = bb.CreateCall(II->getCalledFunction(), invertArgs);
         assert(isa<CallInst>(shadow));
 #if LLVM_VERSION_MAJOR >= 13
         auto CI = cast<CallInst>(shadow);
         // Must copy the elementtype attribute as it is needed by the intrinsic
-        CI->addParamAttr(
-            ptrArgIndex,
-            II->getParamAttr(ptrArgIndex, Attribute::AttrKind::ElementType));
+        if (II->paramHasAttr(ptrArgIndex, Attribute::AttrKind::ElementType))
+          CI->addParamAttr(
+              ptrArgIndex,
+              II->getParamAttr(ptrArgIndex, Attribute::AttrKind::ElementType));
 #endif
         return shadow;
       };

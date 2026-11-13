@@ -457,9 +457,16 @@ inline bool is_value_needed_in_reverse(
     }
     if (auto II = dyn_cast<IntrinsicInst>(user)) {
       if (isIntelSubscriptIntrinsic(*II)) {
-        const std::array<size_t, 4> idxArgsIndices{{0, 1, 2, 4}};
+        constexpr size_t ptrArgIndex = 3;
+#if LLVM_VERSION_MAJOR >= 14
+        size_t numArgs = II->arg_size();
+#else
+        size_t numArgs = II->getNumArgOperands();
+#endif
         bool idxUsed = false;
-        for (auto i : idxArgsIndices) {
+        for (size_t i = 0; i < numArgs; ++i) {
+          if (i == ptrArgIndex)
+            continue;
           if (II->getOperand(i) == inst)
             idxUsed = true;
         }
