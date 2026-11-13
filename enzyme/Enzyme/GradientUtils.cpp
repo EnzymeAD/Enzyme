@@ -5604,7 +5604,16 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM) {
 }
 
 bool GradientUtils::isAtomic(Value *origptr) const {
-  return ::isAtomic(origptr, AtomicAdd, newFunc);
+  if (!AtomicAdd)
+    return false;
+  if (!origptr || !newFunc)
+    return AtomicAdd;
+
+  Triple TargetTriple(newFunc->getParent()->getTargetTriple());
+  if (isGPUThreadLocalPointer(origptr, TargetTriple, /*AllowByVal=*/false,
+                              oldFunc, &ThreadLocalShadows))
+    return false;
+  return AtomicAdd;
 }
 
 /// Slice `typeTree` to `[offset, offset + elementSize)` while preserving

@@ -1105,7 +1105,7 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
   auto Arch = TT.getArch();
   // No need to do atomic on local memory for CUDA since it can't be raced
   // upon
-  if (isa<AllocaInst>(TmpOrig) && isGPUArch(TT)) {
+  if (Atomic && allShadowLanesThreadLocal(ptr, getWidth(), TT)) {
     Atomic = false;
   }
   // Moreover no need to do atomic on local shadows regardless since they are

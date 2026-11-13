@@ -325,6 +325,7 @@ public:
   /// (for use) as a structure which carries data.
   llvm::ValueMap<llvm::Value *, ShadowRematerializer> backwardsOnlyShadows;
   std::vector<bool> nowrite_shadows;
+  llvm::SmallBitVector ThreadLocalShadows;
 
   void computeForwardingProperties(llvm::Instruction *V);
   void computeGuaranteedFrees();

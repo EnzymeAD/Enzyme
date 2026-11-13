@@ -4009,7 +4009,8 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
                             .forceAnonymousTape = key.forceAnonymousTape,
                             .typeInfo = key.typeInfo,
                             .runtimeActivity = key.runtimeActivity,
-                            .strongZero = key.strongZero},
+                            .strongZero = key.strongZero,
+                            .ThreadLocalShadows = key.ThreadLocalShadows},
           TA, &aug, omp);
 
       SmallVector<Value *, 4> revargs;
@@ -4108,7 +4109,8 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
                             .forceAnonymousTape = key.forceAnonymousTape,
                             .typeInfo = key.typeInfo,
                             .runtimeActivity = key.runtimeActivity,
-                            .strongZero = key.strongZero},
+                            .strongZero = key.strongZero,
+                            .ThreadLocalShadows = key.ThreadLocalShadows},
           TA, augmenteddata, omp);
 
       {
@@ -4402,6 +4404,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
       key.additionalType, omp);
 
   gutils->AtomicAdd = key.AtomicAdd;
+  gutils->ThreadLocalShadows = key.ThreadLocalShadows;
   gutils->FreeMemory = key.freeMemory;
   insert_or_assign2<ReverseCacheKey, Function *>(ReverseCachedFunctions, key,
                                                  gutils->newFunc);
