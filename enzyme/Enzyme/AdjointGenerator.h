@@ -5513,12 +5513,14 @@ public:
     size_t size = 1;
     if (auto ci = dyn_cast<ConstantInt>(len_arg)) {
       size = ci->getLimitedValue();
+      if (size == 0)
+        return;
     }
     auto &DL = gutils->newFunc->getParent()->getDataLayout();
     auto vd = TR.query(origArg).Data0().ShiftIndices(DL, 0, size, 0);
     if (!vd.isKnownPastPointer()) {
 #if LLVM_VERSION_MAJOR < 17
-      if (looseTypeAnalysis) {
+      if (looseTypeAnalysis && call.getContext().supportsTypedPointers()) {
         if (isa<CastInst>(origArg) &&
             cast<CastInst>(origArg)->getSrcTy()->isPointerTy() &&
             cast<CastInst>(origArg)
@@ -5582,27 +5584,54 @@ public:
       TR.dump();
       EmitFailure("CannotDeduceType", call.getDebugLoc(), &call,
                   "failed to deduce type of copy ", call);
+      return;
     }
   knownF:
+    Value *baseDst = dsto;
+    if (baseDst->getType()->isIntegerTy())
+      baseDst =
+          Builder2.CreateIntToPtr(baseDst, getInt8PtrTy(baseDst->getContext()));
+    unsigned dstaddr = cast<PointerType>(baseDst->getType())->getAddressSpace();
+
+    Value *baseSrc = srco;
+    if (baseSrc->getType()->isIntegerTy())
+      baseSrc =
+          Builder2.CreateIntToPtr(baseSrc, getInt8PtrTy(baseSrc->getContext()));
+    unsigned srcaddr = cast<PointerType>(baseSrc->getType())->getAddressSpace();
+
+    Value *dst_inactive = nullptr;
+    Value *src_inactive = nullptr;
+
     unsigned start = 0;
     while (1) {
       unsigned nextStart = size;
 
-      auto dt = vd[{-1}];
+      ConcreteType dt(BaseType::Unknown);
       for (size_t i = start; i < size; ++i) {
         bool Legal = true;
-        dt.checkedOrIn(vd[{(int)i}], /*PointerIntSame*/ true, Legal);
+        auto tmp = dt;
+        auto next = vd[{(int)i}];
+        tmp.checkedOrIn(next, /*PointerIntSame*/ true, Legal);
+        // Prevent fusion of {Anything, Float} since anything skips
+        // accumulation while float requires accumulating adjoints.
+        if ((dt == BaseType::Anything &&
+             (next != BaseType::Anything && next.isKnown())) ||
+            (next == BaseType::Anything &&
+             (dt != BaseType::Anything && dt.isKnown())))
+          Legal = false;
         if (!Legal) {
           nextStart = i;
           break;
         }
+        dt = tmp;
       }
       if (!dt.isKnown()) {
         TR.dump();
         llvm::errs() << " vd:" << vd.str() << " start:" << start
                      << " size: " << size << " dt:" << dt.str() << "\n";
       }
-      assert(dt.isKnown());
+      assert(dt.isKnown() &&
+             "DifferentiableMemCopyFloats could not deduce segment type");
 
       Value *length = len_arg;
       if (nextStart != size) {
@@ -5614,33 +5643,27 @@ public:
 
       if (auto secretty = dt.isFloat()) {
         auto offset = start;
-        if (dsto->getType()->isIntegerTy())
-          dsto =
-              Builder2.CreateIntToPtr(dsto, getInt8PtrTy(dsto->getContext()));
-        unsigned dstaddr =
-            cast<PointerType>(dsto->getType())->getAddressSpace();
-        auto secretpt = getPointerType(secretty, dstaddr);
+        Value *curDst = baseDst;
         if (offset != 0) {
-          dsto = Builder2.CreateConstInBoundsGEP1_64(
-              Type::getInt8Ty(dsto->getContext()), dsto, offset);
+          curDst = Builder2.CreatePointerCast(
+              curDst, getInt8PtrTy(curDst->getContext(), dstaddr));
+          curDst = Builder2.CreateConstInBoundsGEP1_64(
+              Type::getInt8Ty(curDst->getContext()), curDst, offset);
         }
-        if (srco->getType()->isIntegerTy())
-          srco =
-              Builder2.CreateIntToPtr(srco, getInt8PtrTy(dsto->getContext()));
-        unsigned srcaddr =
-            cast<PointerType>(srco->getType())->getAddressSpace();
-        secretpt = getPointerType(secretty, srcaddr);
-
+        Value *curSrc = baseSrc;
         if (offset != 0) {
-          srco = Builder2.CreateConstInBoundsGEP1_64(
-              Type::getInt8Ty(srco->getContext()), srco, offset);
+          curSrc = Builder2.CreatePointerCast(
+              curSrc, getInt8PtrTy(curSrc->getContext(), srcaddr));
+          curSrc = Builder2.CreateConstInBoundsGEP1_64(
+              Type::getInt8Ty(curSrc->getContext()), curSrc, offset);
         }
-        Value *args[3] = {
-            Builder2.CreatePointerCast(dsto, secretpt),
-            Builder2.CreatePointerCast(srco, secretpt),
+        auto dstpt = getPointerType(secretty, dstaddr);
+        auto srcpt = getPointerType(secretty, srcaddr);
+        SmallVector<Value *, 5> args = {
+            Builder2.CreatePointerCast(curDst, dstpt),
+            Builder2.CreatePointerCast(curSrc, srcpt),
             Builder2.CreateUDiv(
                 length,
-
                 ConstantInt::get(length->getType(),
                                  Builder2.GetInsertBlock()
                                          ->getParent()
@@ -5648,12 +5671,32 @@ public:
                                          ->getDataLayout()
                                          .getTypeAllocSizeInBits(secretty) /
                                      8))};
+        if (gutils->runtimeActivity) {
+          if (!dst_inactive) {
+            dst_inactive = ConstantInt::getFalse(Builder2.getContext());
+            if (gutils->isConstantValue(origArg)) {
+              src_inactive = ConstantInt::getTrue(Builder2.getContext());
+            } else {
+              Value *primal_src =
+                  lookup(gutils->getNewFromOriginal(origArg), Builder2);
+              if (primal_src->getType()->isIntegerTy())
+                primal_src = Builder2.CreateIntToPtr(
+                    primal_src, getInt8PtrTy(primal_src->getContext()));
+              if (primal_src->getType() != baseSrc->getType())
+                primal_src = Builder2.CreatePointerBitCastOrAddrSpaceCast(
+                    primal_src, baseSrc->getType());
+              src_inactive = Builder2.CreateICmpEQ(baseSrc, primal_src);
+            }
+          }
+          args.push_back(dst_inactive);
+          args.push_back(src_inactive);
+        }
 
         auto dmemcpy = getOrInsertDifferentialFloatMemcpy(
             *Builder2.GetInsertBlock()->getParent()->getParent(), secretty,
             /*dstalign*/ 1, /*srcalign*/ 1, dstaddr, srcaddr,
             cast<IntegerType>(length->getType())->getBitWidth(),
-            /*runtimeActivity*/ false, gutils->isAtomic(srco));
+            gutils->runtimeActivity, gutils->isAtomic(origArg));
 
         Builder2.CreateCall(dmemcpy, args, ReverseDefs);
       }
