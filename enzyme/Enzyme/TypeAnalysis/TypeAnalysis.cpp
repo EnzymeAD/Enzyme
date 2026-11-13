@@ -6614,6 +6614,240 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
       return;
     }
 
+    // GSL FFT wavetable/workspace allocators, deallocators, and transforms
+    if (funcName == "gsl_fft_real_wavetable_alloc" ||
+        funcName == "gsl_fft_halfcomplex_wavetable_alloc" ||
+        funcName == "gsl_fft_real_workspace_alloc" ||
+        funcName == "gsl_fft_complex_wavetable_alloc" ||
+        funcName == "gsl_fft_complex_workspace_alloc" ||
+        funcName == "gsl_fft_real_wavetable_float_alloc" ||
+        funcName == "gsl_fft_halfcomplex_wavetable_float_alloc" ||
+        funcName == "gsl_fft_real_workspace_float_alloc" ||
+        funcName == "gsl_fft_complex_wavetable_float_alloc" ||
+        funcName == "gsl_fft_complex_workspace_float_alloc") {
+      updateAnalysis(&call, TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      if (call.arg_size() >= 1)
+        updateAnalysis(call.getArgOperand(0),
+                       TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      return;
+    }
+    if (funcName == "gsl_fft_real_wavetable_free" ||
+        funcName == "gsl_fft_halfcomplex_wavetable_free" ||
+        funcName == "gsl_fft_real_workspace_free" ||
+        funcName == "gsl_fft_complex_wavetable_free" ||
+        funcName == "gsl_fft_complex_workspace_free" ||
+        funcName == "gsl_fft_real_wavetable_float_free" ||
+        funcName == "gsl_fft_halfcomplex_wavetable_float_free" ||
+        funcName == "gsl_fft_real_workspace_float_free" ||
+        funcName == "gsl_fft_complex_wavetable_float_free" ||
+        funcName == "gsl_fft_complex_workspace_float_free") {
+      if (call.arg_size() >= 1)
+        updateAnalysis(call.getArgOperand(0),
+                       TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      return;
+    }
+    if (funcName == "gsl_fft_complex_memcpy" ||
+        funcName == "gsl_fft_complex_float_memcpy") {
+      updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      if (call.arg_size() >= 2) {
+        updateAnalysis(call.getArgOperand(0),
+                       TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+        updateAnalysis(call.getArgOperand(1),
+                       TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      }
+      return;
+    }
+
+    auto makeGSLArrayTT = [&](Type *elemTy, Value *stride) {
+      TypeTree tt;
+      tt.insert({-1}, BaseType::Pointer);
+      if (auto CI = dyn_cast<ConstantInt>(stride)) {
+        if (CI->isOne())
+          tt.insert({-1, -1}, ConcreteType(elemTy));
+        else
+          tt.insert({-1, 0}, ConcreteType(elemTy));
+      } else {
+        tt.insert({-1, 0}, ConcreteType(elemTy));
+      }
+      return tt;
+    };
+
+    if (startsWith(funcName, "gsl_fft_")) {
+      bool isFloat = funcName.contains("_float_");
+      Type *elemTy = isFloat ? Type::getFloatTy(call.getContext())
+                             : Type::getDoubleTy(call.getContext());
+      if (funcName == "gsl_fft_halfcomplex_unpack" ||
+          funcName == "gsl_fft_halfcomplex_radix2_unpack" ||
+          funcName == "gsl_fft_real_unpack" ||
+          funcName == "gsl_fft_halfcomplex_float_unpack" ||
+          funcName == "gsl_fft_halfcomplex_float_radix2_unpack" ||
+          funcName == "gsl_fft_real_float_unpack") {
+        if (call.arg_size() >= 4) {
+          updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call),
+                         &call);
+          TypeTree arrTT = makeGSLArrayTT(elemTy, call.getArgOperand(2));
+          updateAnalysis(call.getArgOperand(0), arrTT, &call);
+          updateAnalysis(call.getArgOperand(1), arrTT, &call);
+          updateAnalysis(call.getArgOperand(2),
+                         TypeTree(BaseType::Integer).Only(-1, &call), &call);
+          updateAnalysis(call.getArgOperand(3),
+                         TypeTree(BaseType::Integer).Only(-1, &call), &call);
+        }
+        return;
+      }
+      if (funcName == "gsl_fft_real_transform" ||
+          funcName == "gsl_fft_real_float_transform" ||
+          funcName == "gsl_fft_halfcomplex_backward" ||
+          funcName == "gsl_fft_halfcomplex_inverse" ||
+          funcName == "gsl_fft_halfcomplex_transform" ||
+          funcName == "gsl_fft_halfcomplex_float_backward" ||
+          funcName == "gsl_fft_halfcomplex_float_inverse" ||
+          funcName == "gsl_fft_halfcomplex_float_transform" ||
+          funcName == "gsl_fft_real_radix2_transform" ||
+          funcName == "gsl_fft_real_float_radix2_transform" ||
+          funcName == "gsl_fft_halfcomplex_radix2_backward" ||
+          funcName == "gsl_fft_halfcomplex_radix2_inverse" ||
+          funcName == "gsl_fft_halfcomplex_radix2_transform" ||
+          funcName == "gsl_fft_halfcomplex_float_radix2_backward" ||
+          funcName == "gsl_fft_halfcomplex_float_radix2_inverse" ||
+          funcName == "gsl_fft_halfcomplex_float_radix2_transform" ||
+          funcName == "gsl_fft_complex_forward" ||
+          funcName == "gsl_fft_complex_backward" ||
+          funcName == "gsl_fft_complex_inverse" ||
+          funcName == "gsl_fft_complex_transform" ||
+          funcName == "gsl_fft_complex_float_forward" ||
+          funcName == "gsl_fft_complex_float_backward" ||
+          funcName == "gsl_fft_complex_float_inverse" ||
+          funcName == "gsl_fft_complex_float_transform" ||
+          funcName == "gsl_fft_complex_radix2_forward" ||
+          funcName == "gsl_fft_complex_radix2_backward" ||
+          funcName == "gsl_fft_complex_radix2_inverse" ||
+          funcName == "gsl_fft_complex_radix2_transform" ||
+          funcName == "gsl_fft_complex_radix2_dif_forward" ||
+          funcName == "gsl_fft_complex_radix2_dif_backward" ||
+          funcName == "gsl_fft_complex_radix2_dif_inverse" ||
+          funcName == "gsl_fft_complex_radix2_dif_transform" ||
+          funcName == "gsl_fft_complex_float_radix2_forward" ||
+          funcName == "gsl_fft_complex_float_radix2_backward" ||
+          funcName == "gsl_fft_complex_float_radix2_inverse" ||
+          funcName == "gsl_fft_complex_float_radix2_transform" ||
+          funcName == "gsl_fft_complex_float_radix2_dif_forward" ||
+          funcName == "gsl_fft_complex_float_radix2_dif_backward" ||
+          funcName == "gsl_fft_complex_float_radix2_dif_inverse" ||
+          funcName == "gsl_fft_complex_float_radix2_dif_transform") {
+        if (call.arg_size() >= 3) {
+          updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call),
+                         &call);
+          updateAnalysis(call.getArgOperand(0),
+                         makeGSLArrayTT(elemTy, call.getArgOperand(1)), &call);
+          updateAnalysis(call.getArgOperand(1),
+                         TypeTree(BaseType::Integer).Only(-1, &call), &call);
+          updateAnalysis(call.getArgOperand(2),
+                         TypeTree(BaseType::Integer).Only(-1, &call), &call);
+          if (call.arg_size() == 4) {
+            updateAnalysis(call.getArgOperand(3),
+                           TypeTree(BaseType::Integer).Only(-1, &call), &call);
+          } else if (call.arg_size() >= 5) {
+            updateAnalysis(call.getArgOperand(3),
+                           TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+            updateAnalysis(call.getArgOperand(4),
+                           TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+            if (call.arg_size() >= 6)
+              updateAnalysis(call.getArgOperand(5),
+                             TypeTree(BaseType::Integer).Only(-1, &call),
+                             &call);
+          }
+        }
+        return;
+      }
+    }
+
+    // GSL statistics routines
+    if (startsWith(funcName, "gsl_stats_")) {
+      StringRef suffix = funcName.drop_front(strlen("gsl_stats_"));
+      Type *elemTy = Type::getDoubleTy(call.getContext());
+      bool isLongDouble = false;
+      if (suffix.consume_front("float_")) {
+        elemTy = Type::getFloatTy(call.getContext());
+      } else if (suffix.consume_front("long_double_")) {
+        isLongDouble = true;
+      }
+      if (suffix == "max_index" || suffix == "min_index") {
+        if (call.arg_size() >= 3) {
+          updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call),
+                         &call);
+          if (!isLongDouble)
+            updateAnalysis(call.getArgOperand(0),
+                           makeGSLArrayTT(elemTy, call.getArgOperand(1)),
+                           &call);
+          else
+            updateAnalysis(call.getArgOperand(0),
+                           TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+          updateAnalysis(call.getArgOperand(1),
+                         TypeTree(BaseType::Integer).Only(-1, &call), &call);
+          updateAnalysis(call.getArgOperand(2),
+                         TypeTree(BaseType::Integer).Only(-1, &call), &call);
+        }
+        return;
+      }
+      if (suffix == "minmax_index") {
+        if (call.arg_size() >= 5) {
+          TypeTree ptrInt;
+          ptrInt.insert({-1}, BaseType::Pointer);
+          ptrInt.insert({-1, 0}, BaseType::Integer);
+          updateAnalysis(call.getArgOperand(0), ptrInt, &call);
+          updateAnalysis(call.getArgOperand(1), ptrInt, &call);
+          if (!isLongDouble)
+            updateAnalysis(call.getArgOperand(2),
+                           makeGSLArrayTT(elemTy, call.getArgOperand(3)),
+                           &call);
+          else
+            updateAnalysis(call.getArgOperand(2),
+                           TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+          updateAnalysis(call.getArgOperand(3),
+                         TypeTree(BaseType::Integer).Only(-1, &call), &call);
+          updateAnalysis(call.getArgOperand(4),
+                         TypeTree(BaseType::Integer).Only(-1, &call), &call);
+        }
+        return;
+      }
+      if (!isLongDouble && (suffix == "max" || suffix == "min")) {
+        if (call.arg_size() >= 3) {
+          updateAnalysis(&call, TypeTree(ConcreteType(elemTy)).Only(-1, &call),
+                         &call);
+          updateAnalysis(call.getArgOperand(0),
+                         makeGSLArrayTT(elemTy, call.getArgOperand(1)), &call);
+          updateAnalysis(call.getArgOperand(1),
+                         TypeTree(BaseType::Integer).Only(-1, &call), &call);
+          updateAnalysis(call.getArgOperand(2),
+                         TypeTree(BaseType::Integer).Only(-1, &call), &call);
+        }
+        return;
+      }
+      if (!isLongDouble &&
+          (suffix == "mean" || suffix == "variance" || suffix == "sd" ||
+           suffix == "tss" || suffix == "variance_m" || suffix == "sd_m" ||
+           suffix == "tss_m" || suffix == "variance_with_fixed_mean" ||
+           suffix == "sd_with_fixed_mean")) {
+        if (call.arg_size() >= 3) {
+          Type *retTy = Type::getDoubleTy(call.getContext());
+          updateAnalysis(&call, TypeTree(ConcreteType(retTy)).Only(-1, &call),
+                         &call);
+          updateAnalysis(call.getArgOperand(0),
+                         makeGSLArrayTT(elemTy, call.getArgOperand(1)), &call);
+          updateAnalysis(call.getArgOperand(1),
+                         TypeTree(BaseType::Integer).Only(-1, &call), &call);
+          updateAnalysis(call.getArgOperand(2),
+                         TypeTree(BaseType::Integer).Only(-1, &call), &call);
+          if (call.arg_size() >= 4)
+            updateAnalysis(call.getArgOperand(3),
+                           TypeTree(ConcreteType(retTy)).Only(-1, &call),
+                           &call);
+        }
+        return;
+      }
+    }
+
     // CONSIDER(__lgamma_r_finite)
 
     CONSIDER2(frexp, double, double, int *)

@@ -572,6 +572,56 @@ bool attributeKnownFunctions(llvm::Function &F) {
       F.addParamAttr(2, Attribute::ReadOnly);
     }
   }
+  static const StringRef ReadOnlyGSLStatsCalls[] = {
+      "gsl_stats_mean",
+      "gsl_stats_float_mean",
+      "gsl_stats_variance",
+      "gsl_stats_float_variance",
+      "gsl_stats_variance_m",
+      "gsl_stats_float_variance_m",
+      "gsl_stats_variance_with_fixed_mean",
+      "gsl_stats_float_variance_with_fixed_mean",
+      "gsl_stats_sd",
+      "gsl_stats_float_sd",
+      "gsl_stats_sd_m",
+      "gsl_stats_float_sd_m",
+      "gsl_stats_sd_with_fixed_mean",
+      "gsl_stats_float_sd_with_fixed_mean",
+      "gsl_stats_tss",
+      "gsl_stats_float_tss",
+      "gsl_stats_tss_m",
+      "gsl_stats_float_tss_m",
+      "gsl_stats_max",
+      "gsl_stats_float_max",
+      "gsl_stats_min",
+      "gsl_stats_float_min",
+      "gsl_stats_max_index",
+      "gsl_stats_float_max_index",
+      "gsl_stats_long_double_max_index",
+      "gsl_stats_min_index",
+      "gsl_stats_float_min_index",
+      "gsl_stats_long_double_min_index",
+  };
+  if (llvm::is_contained(ReadOnlyGSLStatsCalls, name)) {
+    changed = true;
+#if LLVM_VERSION_MAJOR >= 16
+    F.setOnlyAccessesArgMemory();
+    F.setOnlyReadsMemory();
+#else
+    F.addFnAttr(Attribute::ArgMemOnly);
+    F.addFnAttr(Attribute::ReadOnly);
+#endif
+    F.addFnAttr(Attribute::NoUnwind);
+    F.addFnAttr(Attribute::NoRecurse);
+    F.addFnAttr(Attribute::WillReturn);
+    F.addFnAttr(Attribute::NoFree);
+    F.addFnAttr(Attribute::NoSync);
+    if (F.getFunctionType()->getNumParams() >= 1 &&
+        F.getFunctionType()->getParamType(0)->isPointerTy()) {
+      addFunctionNoCapture(&F, 0);
+      F.addParamAttr(0, Attribute::ReadOnly);
+    }
+  }
   changed |= attributeTablegen(F);
   return changed;
 }
