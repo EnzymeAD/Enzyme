@@ -94,6 +94,7 @@ static const std::set<std::string> KnownInactiveFunctions = {
     "abort",
     "time",
     "memcmp",
+    "bcmp",
     "gettimeofday",
     "stat",
     "mkdir",

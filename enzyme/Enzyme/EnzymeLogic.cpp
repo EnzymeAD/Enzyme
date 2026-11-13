@@ -6655,6 +6655,9 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
       "std::basic_filebuf<char, std::char_traits<char>>::~basic_filebuf()",
 
       "std::__detail::_Prime_rehash_policy::_M_need_rehash(unsigned long, unsigned long, unsigned long) const",
+      "std::__detail::_Prime_rehash_policy::_M_need_rehash(unsigned int, unsigned int, unsigned int) const",
+      "std::__detail::_Prime_rehash_policy::_M_next_bkt(unsigned long) const",
+      "std::__detail::_Prime_rehash_policy::_M_next_bkt(unsigned int) const",
 
       "std::basic_streambuf<char, std::char_traits<char> >::xsputn(char const*, long)",
 

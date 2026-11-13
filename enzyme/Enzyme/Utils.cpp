@@ -172,7 +172,8 @@ bool attributeKnownFunctions(llvm::Function &F) {
       }
     }
   }
-  if (F.getName() == "memcmp") {
+  if ((F.getName() == "memcmp" || F.getName() == "bcmp") &&
+      F.getFunctionType()->getNumParams() >= 2) {
     changed = true;
 #if LLVM_VERSION_MAJOR >= 16
     F.setOnlyAccessesArgMemory();
@@ -191,6 +192,30 @@ bool attributeKnownFunctions(llvm::Function &F) {
         addFunctionNoCapture(&F, i);
         F.addParamAttr(i, Attribute::ReadOnly);
       }
+  }
+  if ((startsWith(F.getName(), "_ZSt11_Hash_bytes") ||
+       startsWith(F.getName(), "_ZSt15_Fnv_hash_bytes")) &&
+      F.getFunctionType()->getNumParams() == 3 &&
+      F.getFunctionType()->getParamType(0)->isPointerTy() &&
+      F.getReturnType()->isIntegerTy()) {
+    changed = true;
+#if LLVM_VERSION_MAJOR >= 16
+    F.setOnlyAccessesArgMemory();
+    F.setOnlyReadsMemory();
+#else
+    F.addFnAttr(Attribute::ArgMemOnly);
+    F.addFnAttr(Attribute::ReadOnly);
+#endif
+    F.addFnAttr(Attribute::NoUnwind);
+    F.addFnAttr(Attribute::NoRecurse);
+    F.addFnAttr(Attribute::WillReturn);
+    F.addFnAttr(Attribute::NoFree);
+    F.addFnAttr(Attribute::NoSync);
+    addFunctionNoCapture(&F, 0);
+    F.addParamAttr(0, Attribute::ReadOnly);
+    F.addAttribute(
+        AttributeList::FunctionIndex,
+        Attribute::get(F.getContext(), "enzyme_no_escaping_allocation"));
   }
 
   if (F.getName() ==
@@ -401,10 +426,14 @@ bool attributeKnownFunctions(llvm::Function &F) {
       "julia.get_pgcstack",
       "lgamma_r",
       "memcmp",
+      "bcmp",
       "_ZNSt6chrono3_V212steady_clock3nowEv",
       "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE9_M_"
       "createERmm",
       "_ZNKSt8__detail20_Prime_rehash_policy14_M_need_rehashEmmm",
+      "_ZNKSt8__detail20_Prime_rehash_policy14_M_need_rehashEjjj",
+      "_ZNKSt8__detail20_Prime_rehash_policy11_M_next_bktEm",
+      "_ZNKSt8__detail20_Prime_rehash_policy11_M_next_bktEj",
       "fprintf",
       "fwrite",
       "fputc",
