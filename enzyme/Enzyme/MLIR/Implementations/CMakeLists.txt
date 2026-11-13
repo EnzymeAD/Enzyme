@@ -105,9 +105,8 @@ add_mlir_library(
 # from the host `flang -fc1` at load, so no second copy of LLVM is pulled in.
 if(ENZYME_FLANG_MLIR)
   add_llvm_library(
-    FlangEnzymeMLIR-${LLVM_VERSION_MAJOR} MODULE
-    FlangEnzymeMLIRPlugin.cpp PARTIAL_SOURCES_INTENDED
-    DISABLE_LLVM_LINK_LLVM_DYLIB)
+    FlangEnzymeMLIR-${LLVM_VERSION_MAJOR} MODULE FlangEnzymeMLIRPlugin.cpp
+    PARTIAL_SOURCES_INTENDED DISABLE_LLVM_LINK_LLVM_DYLIB)
   target_include_directories(
     FlangEnzymeMLIR-${LLVM_VERSION_MAJOR}
     PRIVATE ${FLANG_INCLUDE_DIRS})
