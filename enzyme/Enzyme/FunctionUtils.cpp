@@ -5226,14 +5226,14 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
             candidate = dyn_cast<Instruction>(U);
             if (!candidate)
               continue;
-            if (candidate == I && candidate->getType() != I->getType()) {
+            if (candidate == I || candidate->getType() != I->getType()) {
               candidate = nullptr;
               continue;
             }
             bool isSame = candidate->isIdenticalTo(I);
             if (!isSame) {
               if (auto P1 = isProduct(I))
-                if (auto P2 = isProduct(I2)) {
+                if (auto P2 = isProduct(candidate)) {
                   std::multiset<llvm::Value *> s1;
                   std::multiset<llvm::Value *> s2;
                   for (auto &v : callOperands(P1))
@@ -5243,7 +5243,7 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
                   isSame = s1 == s2;
                 }
               if (auto P1 = isSum(I))
-                if (auto P2 = isSum(I2)) {
+                if (auto P2 = isSum(candidate)) {
                   std::multiset<llvm::Value *> s1;
                   std::multiset<llvm::Value *> s2;
                   for (auto &v : callOperands(P1))
@@ -5321,7 +5321,7 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
             candidate = dyn_cast<Instruction>(U);
             if (!candidate)
               continue;
-            if (candidate == cur && candidate->getType() != cur->getType()) {
+            if (candidate == cur || candidate->getType() != cur->getType()) {
               candidate = nullptr;
               continue;
             }
@@ -6283,67 +6283,82 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
       cur->isExact())
     if (auto C2 = dyn_cast<ConstantInt>(cur->getOperand(1)))
       if (auto mul = dyn_cast<BinaryOperator>(cur->getOperand(0))) {
-        //  (lshr exact (mul a, C1), C2), C -> mul a, (lhsr exact C1, C2) if
-        //  C2 divides C1
-        if (mul->getOpcode() == Instruction::Mul)
-          for (int i0 = 0; i0 < 2; i0++)
-            if (auto C1 = dyn_cast<ConstantInt>(mul->getOperand(i0))) {
-              auto lhs = C1->getValue();
-              APInt rhs = C2->getValue();
-              if (cur->getOpcode() == Instruction::LShr) {
-                rhs = APInt(rhs.getBitWidth(), 1) << rhs;
+        bool isUnsigned = cur->getOpcode() == Instruction::LShr ||
+                          cur->getOpcode() == Instruction::UDiv;
+        APInt rhs = C2->getValue();
+        bool validRhs = true;
+        if (cur->getOpcode() == Instruction::LShr) {
+          if (rhs.uge(rhs.getBitWidth()))
+            validRhs = false;
+          else
+            rhs = APInt(rhs.getBitWidth(), 1) << rhs;
+        }
+        if (validRhs && !rhs.isZero()) {
+          // (lshr/udiv exact (mul nuw a, C1), C2) -> mul a, (C1 / d)
+          // (sdiv exact (mul nsw a, C1), C2) -> mul a, (C1 / d)
+          if (mul->getOpcode() == Instruction::Mul &&
+              ((isUnsigned && mul->hasNoUnsignedWrap()) ||
+               (!isUnsigned && mul->hasNoSignedWrap())))
+            for (int i0 = 0; i0 < 2; i0++)
+              if (auto C1 = dyn_cast<ConstantInt>(mul->getOperand(i0))) {
+                auto lhs = C1->getValue();
+                if (!isUnsigned && lhs.isMinSignedValue() && C2->isMinusOne())
+                  continue;
+                APInt div, rem;
+                if (isUnsigned)
+                  APInt::udivrem(lhs, rhs, div, rem);
+                else
+                  APInt::sdivrem(lhs, rhs, div, rem);
+                if (rem == 0) {
+                  auto res = pushcse(
+                      B.CreateMul(mul->getOperand(1 - i0),
+                                  ConstantInt::get(cur->getType(), div),
+                                  "mdiv." + cur->getName(),
+                                  isUnsigned ? mul->hasNoUnsignedWrap() : false,
+                                  mul->hasNoSignedWrap()));
+                  push(mul);
+                  replaceAndErase(cur, res);
+                  return "IMulDivConst";
+                }
               }
-
-              APInt div, rem;
-              if (cur->getOpcode() == Instruction::LShr ||
-                  cur->getOpcode() == Instruction::UDiv)
-                APInt::udivrem(lhs, rhs, div, rem);
-              else
-                APInt::sdivrem(lhs, rhs, div, rem);
-              if (rem == 0) {
-                auto res = pushcse(B.CreateMul(
-                    mul->getOperand(1 - i0),
-                    ConstantInt::get(cur->getType(), div),
-                    "mdiv." + cur->getName(), mul->hasNoUnsignedWrap(),
-                    mul->hasNoSignedWrap()));
-                push(mul);
-                replaceAndErase(cur, res);
-                return "IMulDivConst";
+          // (lshr/udiv exact (add nuw a, C1), C2) ->
+          //   add (lshr/udiv exact a, C2), (C1 / d)
+          // (sdiv exact (add nsw a, C1), C2) ->
+          //   add (sdiv exact a, C2), (C1 / d) (for C2 != -1)
+          if (mul->getOpcode() == Instruction::Add &&
+              ((isUnsigned && mul->hasNoUnsignedWrap()) ||
+               (!isUnsigned && mul->hasNoSignedWrap() && !C2->isMinusOne())))
+            for (int i0 = 0; i0 < 2; i0++)
+              if (auto C1 = dyn_cast<ConstantInt>(mul->getOperand(i0))) {
+                auto lhs = C1->getValue();
+                APInt div, rem;
+                if (isUnsigned)
+                  APInt::udivrem(lhs, rhs, div, rem);
+                else
+                  APInt::sdivrem(lhs, rhs, div, rem);
+                if (rem == 0) {
+                  Value *divA = nullptr;
+                  if (cur->getOpcode() == Instruction::LShr)
+                    divA = B.CreateLShr(mul->getOperand(1 - i0), C2, "",
+                                        /*isExact=*/true);
+                  else if (cur->getOpcode() == Instruction::UDiv)
+                    divA = B.CreateUDiv(mul->getOperand(1 - i0), C2, "",
+                                        /*isExact=*/true);
+                  else
+                    divA = B.CreateSDiv(mul->getOperand(1 - i0), C2, "",
+                                        /*isExact=*/true);
+                  divA = pushcse(divA);
+                  auto res = pushcse(
+                      B.CreateAdd(divA, ConstantInt::get(cur->getType(), div),
+                                  "madd." + cur->getName(),
+                                  isUnsigned ? mul->hasNoUnsignedWrap() : false,
+                                  mul->hasNoSignedWrap()));
+                  push(mul);
+                  replaceAndErase(cur, res);
+                  return "IAddDivConst";
+                }
               }
-            }
-        //  (lshr exact (add a, C1), C2), C -> add a, (lhsr exact C1, C2) if
-        //  C2
-        if (mul->getOpcode() == Instruction::Add)
-          for (int i0 = 0; i0 < 2; i0++)
-            if (auto C1 = dyn_cast<ConstantInt>(mul->getOperand(i0))) {
-              auto lhs = C1->getValue();
-              APInt rhs = C2->getValue();
-              if (cur->getOpcode() == Instruction::LShr) {
-                rhs = APInt(rhs.getBitWidth(), 1) << rhs;
-              }
-
-              APInt div, rem;
-              if (cur->getOpcode() == Instruction::LShr ||
-                  cur->getOpcode() == Instruction::UDiv)
-                APInt::udivrem(lhs, rhs, div, rem);
-              else
-                APInt::sdivrem(lhs, rhs, div, rem);
-              if (rem == 0 && ((mul->hasNoUnsignedWrap() &&
-                                (cur->getOpcode() == Instruction::LShr ||
-                                 cur->getOpcode() == Instruction::UDiv)) ||
-                               (mul->hasNoSignedWrap() &&
-                                (cur->getOpcode() == Instruction::AShr ||
-                                 cur->getOpcode() == Instruction::SDiv)))) {
-                auto res = pushcse(B.CreateAdd(
-                    mul->getOperand(1 - i0),
-                    ConstantInt::get(cur->getType(), div),
-                    "madd." + cur->getName(), mul->hasNoUnsignedWrap(),
-                    mul->hasNoSignedWrap()));
-                push(mul);
-                replaceAndErase(cur, res);
-                return "IAddDivConst";
-              }
-            }
+        }
       }
 
   // mul (mul a, const1), (mul b, const2) -> mul (mul a, b), (const1, const2)
@@ -6376,8 +6391,10 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
       cur->getOpcode() == Instruction::Mul)
     for (auto i1 = 0; i1 < 2; i1++)
       if (auto mul1 = dyn_cast<Instruction>(cur->getOperand(i1)))
-        if (((mul1->getOpcode() == Instruction::FMul && mul1->isFast())) ||
-            mul1->getOpcode() == Instruction::FMul)
+        if ((cur->getOpcode() == Instruction::FMul &&
+             mul1->getOpcode() == Instruction::FMul && mul1->isFast()) ||
+            (cur->getOpcode() == Instruction::Mul &&
+             mul1->getOpcode() == Instruction::Mul))
           if (auto const2 = dyn_cast<Constant>(cur->getOperand(1 - i1)))
             for (auto i2 = 0; i2 < 2; i2++)
               if (auto const1 = dyn_cast<Constant>(mul1->getOperand(i2))) {
@@ -6502,10 +6519,11 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
       for (int i = 0; i < 2; i++)
         if (auto CI = dyn_cast<ConstantInt>(fcmp->getOperand(i)))
           if (CI->isZero()) {
-            // a + a ?= 0 -> a ?= 0
+            // a + a ?= 0 -> a ?= 0 (only when addition cannot wrap)
             if (auto addI = dyn_cast<Instruction>(fcmp->getOperand(1 - i))) {
               if (addI->getOpcode() == Instruction::Add &&
-                  addI->getOperand(0) == addI->getOperand(1)) {
+                  addI->getOperand(0) == addI->getOperand(1) &&
+                  (addI->hasNoUnsignedWrap() || addI->hasNoSignedWrap())) {
                 Value *res = pushcse(
                     B.CreateCmp(fcmp->getPredicate(), addI->getOperand(0), CI));
                 replaceAndErase(cur, res);
@@ -6831,18 +6849,16 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
         }
         */
 
-    // mul (sub x, y), -c   -> mul (sub, y, x), c
+    // mul (sub x, y), -c   -> mul (sub y, x), c
     for (int i = 0; i < 2; i++)
       if (auto inst = dyn_cast<Instruction>(cur->getOperand(i)))
         if (inst->getOpcode() == Instruction::Sub)
           if (auto CI = dyn_cast<ConstantInt>(cur->getOperand(1 - i)))
-            if (CI->isNegative()) {
-              auto sub2 = pushcse(B.CreateSub(
-                  inst->getOperand(1), inst->getOperand(0), "",
-                  inst->hasNoUnsignedWrap(), inst->hasNoSignedWrap()));
+            if (CI->isNegative() && !CI->getValue().isMinSignedValue()) {
+              auto sub2 = pushcse(
+                  B.CreateSub(inst->getOperand(1), inst->getOperand(0)));
               auto mul2 = pushcse(B.CreateMul(
-                  sub2, ConstantInt::get(CI->getType(), -CI->getValue()), "",
-                  cur->hasNoUnsignedWrap(), cur->hasNoSignedWrap()));
+                  sub2, ConstantInt::get(CI->getType(), -CI->getValue())));
 
               replaceAndErase(cur, mul2);
               return "MulSubNegConst";
@@ -6861,7 +6877,7 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
             replaceAndErase(cur, res);
             return "SubZExt";
           }
-          // sub 0, (mul nsw nuw constant, x) -> mul nsw nuw -constant, x
+          // sub 0, (mul nsw nuw constant, x) -> mul -constant, x
           if (zext->getOpcode() == Instruction::Mul &&
               zext->hasNoUnsignedWrap() && zext->hasNoSignedWrap()) {
             for (int i = 0; i < 2; i++)
@@ -6869,7 +6885,8 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
                 auto res = pushcse(B.CreateMul(
                     zext->getOperand(1 - i),
                     ConstantInt::get(CI->getType(), -CI->getValue()),
-                    "neg." + zext->getName(), true, true));
+                    "neg." + zext->getName(), cur->hasNoUnsignedWrap(),
+                    cur->hasNoSignedWrap()));
                 replaceAndErase(cur, res);
                 return "SubMulConstant";
               }
@@ -7276,11 +7293,12 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
                 }
                 res = pushcse(res);
                 Value *res2 = nullptr;
-                if (cur->getType()->isIntegerTy())
-                  res2 = B.CreateMul(
-                      res, mul1->getOperand(i1), "",
-                      mul1->hasNoUnsignedWrap() && mul1->hasNoUnsignedWrap(),
-                      mul2->hasNoSignedWrap() && mul2->hasNoSignedWrap());
+                if (cur->getType()->isIntOrIntVectorTy())
+                  res2 = B.CreateMul(res, mul1->getOperand(i1), "",
+                                     cur->hasNoUnsignedWrap() &&
+                                         mul1->hasNoUnsignedWrap() &&
+                                         mul2->hasNoUnsignedWrap(),
+                                     /*HasNSW=*/false);
                 else
                   res2 = B.CreateFMulFMF(res, mul1->getOperand(i1), cur);
 
@@ -7523,10 +7541,16 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
         if (auto sel = dyn_cast<SelectInst>(fcmp->getOperand(1 - i)))
           if (isa<Constant>(sel->getTrueValue()) ||
               isa<Constant>(sel->getFalseValue())) {
-            auto tval = pushcse(B.CreateFCmp(fcmp->getPredicate(),
-                                             sel->getTrueValue(), const2));
-            auto fval = pushcse(B.CreateFCmp(fcmp->getPredicate(),
-                                             sel->getFalseValue(), const2));
+            auto pred =
+                (i == 0) ? fcmp->getSwappedPredicate() : fcmp->getPredicate();
+            auto tval = B.CreateFCmp(pred, sel->getTrueValue(), const2);
+            if (auto *TI = dyn_cast<Instruction>(tval))
+              TI->copyFastMathFlags(fcmp);
+            tval = pushcse(tval);
+            auto fval = B.CreateFCmp(pred, sel->getFalseValue(), const2);
+            if (auto *FI = dyn_cast<Instruction>(fval))
+              FI->copyFastMathFlags(fcmp);
+            fval = pushcse(fval);
             auto res = pushcse(B.CreateSelect(sel->getCondition(), tval, fval));
             replaceAndErase(cur, res);
             return "FCmpSelectConst";
