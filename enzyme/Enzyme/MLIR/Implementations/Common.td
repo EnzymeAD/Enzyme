@@ -172,6 +172,10 @@ def ResultShadowTypes : GlobalExpr</*needsprimal*/0, /*needsshadow*/0, [{
 def TypeOf : Operation</*primal*/0, /*shadow*/0> {
 }
 
+// Element type of the op's first operand, which must be of complex type.
+def ComplexElementType : GlobalExpr</*needsprimal*/0, /*needsshadow*/0,
+  "cast<ComplexType>(op->getOperand(0).getType()).getElementType()">;
+
 class ComplexInst<string m> : Inst<m, "complex">;
 class ArithInst<string m> : Inst<m, "arith">;
 class LlvmInst<string m> : Inst<m, "LLVM">;
@@ -233,6 +237,12 @@ def ComplexTanh : ComplexInst<"TanhOp">;
 def ComplexExp : ComplexInst<"ExpOp">;
 def ComplexSqrt : ComplexInst<"SqrtOp">;
 def ComplexRsqrt : ComplexInst<"RsqrtOp">;
+def ComplexPow : ComplexInst<"PowOp">;
+def ComplexPowi : ComplexInst<"PowiOp">;
+// complex::PowiOp has no builder that defaults its optional fastmath attribute,
+// so it has to be passed explicitly as the last argument of ComplexPowi.
+def NoFastMathAttr : GlobalExpr</*needsprimal*/0, /*needsshadow*/0, "arith::FastMathFlagsAttr()">;
+def ComplexLog : ComplexInst<"LogOp">;
 
 
 def CheckedComplexMul : SubRoutine<(Op $diffret, $x),

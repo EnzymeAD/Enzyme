@@ -3914,10 +3914,14 @@ bool AdjointGenerator::handleKnownCallDerivatives(
                   gutils->getWidth() == 1
                       ? anti
                       : GradientUtils::extractMeta(Builder2, anti, i);
-              cast<Instruction>(anti_i)->setMetadata(
-                  "enzyme_cache_alloc", MDNode::get(CI->getContext(), {ident}));
-              CI->setMetadata("enzyme_cache_free",
-                              MDNode::get(CI->getContext(), {ident}));
+              // In split mode the shadow allocation comes out of the tape. If
+              // it is the only value on the tape, it is the tape argument.
+              if (auto anti_inst = dyn_cast<Instruction>(anti_i)) {
+                anti_inst->setMetadata("enzyme_cache_alloc",
+                                       MDNode::get(CI->getContext(), {ident}));
+                CI->setMetadata("enzyme_cache_free",
+                                MDNode::get(CI->getContext(), {ident}));
+              }
             }
           }
         }
@@ -4005,6 +4009,10 @@ bool AdjointGenerator::handleKnownCallDerivatives(
     bool cacheWholeAllocation = gutils->needsCacheWholeAllocation(&call);
     if (cacheWholeAllocation) {
       primalNeededInReverse = true;
+      // If the contents of this allocation are only valid for an iteration of
+      // a loop which does not contain the allocation, caching the pointer is
+      // insufficient, and we must cache the contents for each iteration.
+      cacheWholeAllocationInLoop(call, BuilderZ);
     }
 
     auto restoreFromStack = [&](MDNode *MD) {

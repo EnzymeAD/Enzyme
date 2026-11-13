@@ -3981,6 +3981,7 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
     auto tmp_resumeblock = prepRematerializedLoopEntry(lc);
     if (tmp_resumeblock)
       resumeblock = tmp_resumeblock;
+    resumeblock = restoreLoopCachedAllocations(lc, resumeblock);
     BasicBlock *incB = BasicBlock::Create(
         BB->getContext(), "inc" + reverseBlocks[lc.header].front()->getName(),
         BB->getParent());
@@ -4069,6 +4070,11 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
     auto tmp_resumeblock = prepRematerializedLoopEntry(exitingContexts.back());
     if (tmp_resumeblock)
       resumeblock = tmp_resumeblock;
+
+    // We are entering the last iteration of all of the loops being exited,
+    // restore any allocations cached per iteration of those loops.
+    for (auto &exitingContext : exitingContexts)
+      resumeblock = restoreLoopCachedAllocations(exitingContext, resumeblock);
 
     tbuild.CreateBr(resumeblock);
 
@@ -4586,8 +4592,6 @@ GradientUtils *GradientUtils::CreateFromClone(
   }
 
   ValueToValueMapTy invertedPointers;
-  SmallPtrSet<Instruction *, 4> constants;
-  SmallPtrSet<Instruction *, 20> nonconstant;
   SmallPtrSet<Value *, 2> returnvals;
   llvm::ValueMap<const llvm::Value *, AssertingReplacingVH> originalToNew;
 
@@ -7832,9 +7836,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                                      ->getDataLayout()
                                      .getTypeAllocSizeInBits(AT) /
                                  8;
-                    if ((bsize & (bsize - 1)) == 0) {
-                      st->setAlignment(Align(bsize));
-                    }
+                    st->setAlignment(Align(getCacheAlignment((unsigned)bsize)));
                     scopeInstructions[cache].push_back(st);
                     for (auto post : PostCacheStore(st, v)) {
                       scopeInstructions[cache].push_back(post);
@@ -8137,10 +8139,10 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                   newFunc->getParent()->getDataLayout().getTypeAllocSizeInBits(
                       li->getType()) /
                   8;
-              if ((bsize & (bsize - 1)) == 0) {
-                mem->addParamAttr(0, Attribute::getWithAlignment(
-                                         memcpyF->getContext(), Align(bsize)));
-              }
+              mem->addParamAttr(0,
+                                Attribute::getWithAlignment(
+                                    memcpyF->getContext(),
+                                    Align(getCacheAlignment((unsigned)bsize))));
 
               mem->addParamAttr(1, Attribute::getWithAlignment(
                                        memcpyF->getContext(), li->getAlign()));
@@ -10703,6 +10705,208 @@ bool GradientUtils::needsCacheWholeAllocation(
     }
   }
   return false;
+}
+
+llvm::Loop *
+GradientUtils::getWholeAllocationCacheLoop(const llvm::Value *V) const {
+  auto found = rematerializableAllocations.find(const_cast<Value *>(V));
+  if (found == rematerializableAllocations.end())
+    return nullptr;
+  Loop *L = found->second.LI;
+  if (!L || L->contains(cast<Instruction>(V)->getParent()))
+    return nullptr;
+  if (!needsCacheWholeAllocation(V))
+    return nullptr;
+  return L;
+}
+
+bool GradientUtils::getOrigAllocationSize(Instruction *orig,
+                                          SmallVectorImpl<Value *> &Counts,
+                                          uint64_t &EltSize,
+                                          MaybeAlign &Alignment) const {
+  auto &DL = orig->getParent()->getParent()->getParent()->getDataLayout();
+  if (auto AI = dyn_cast<AllocaInst>(orig)) {
+    Counts.push_back(AI->getArraySize());
+    EltSize = DL.getTypeAllocSize(AI->getAllocatedType());
+    Alignment = AI->getAlign();
+    return true;
+  }
+  auto CI = dyn_cast<CallInst>(orig);
+  // The allocation must return the pointer to the memory itself.
+  if (!CI || !CI->getType()->isPointerTy())
+    return false;
+  StringRef funcName = getFuncNameFromCall(CI);
+  if (!isAllocationFunction(funcName, TLI))
+    return false;
+  if (auto MD = hasMetadata(CI, "enzyme_fromstack")) {
+    auto A = cast<ConstantInt>(
+                 cast<ConstantAsMetadata>(MD->getOperand(0))->getValue())
+                 ->getLimitedValue();
+    if (A)
+      Alignment = Align(A);
+  }
+  for (auto idx : getAllocationSizeArgIndices(funcName, TLI, CI))
+    Counts.push_back(CI->getArgOperand(idx));
+  EltSize = 1;
+  return true;
+}
+
+/// Compute the number of bytes of an allocation, given the result of
+/// getOrigAllocationSize, where the original values are each converted to
+/// values usable by B through getValue.
+static Value *
+computeAllocationSize(IRBuilder<> &B, ArrayRef<Value *> Counts,
+                      uint64_t EltSize,
+                      llvm::function_ref<Value *(Value *)> getValue) {
+  auto i64 = Type::getInt64Ty(B.getContext());
+  Value *size = ConstantInt::get(i64, EltSize);
+  for (auto Count : Counts)
+    size = B.CreateMul(size, B.CreateZExtOrTrunc(getValue(Count), i64), "",
+                       /*NUW*/ true, /*NSW*/ true);
+  return size;
+}
+
+void GradientUtils::cacheWholeAllocationInLoop(llvm::Instruction *orig,
+                                               llvm::Loop *L, int idx) {
+  assert(mode == DerivativeMode::ReverseModeCombined ||
+         mode == DerivativeMode::ReverseModePrimal ||
+         mode == DerivativeMode::ReverseModeGradient);
+  assert(getWholeAllocationCacheLoop(orig) == L &&
+         "allocation need not be cached per iteration of this loop");
+#ifndef NDEBUG
+  for (auto &pair : loopCachedAllocations)
+    assert(pair.first != orig && "allocation already cached per iteration");
+#endif
+
+  uint64_t EltSize = 0;
+  MaybeAlign Alignment;
+  SmallVector<Value *, 2> origCounts;
+  bool knownSize = getOrigAllocationSize(orig, origCounts, EltSize, Alignment);
+  // In split mode, the size of the allocation must be available in the reverse
+  // pass without having been explicitly cached.
+  if (knownSize && mode != DerivativeMode::ReverseModeCombined)
+    for (auto Count : origCounts)
+      if (!isa<ConstantInt>(Count))
+        knownSize = false;
+  if (!knownSize) {
+    std::string str;
+    raw_string_ostream ss(str);
+    ss << "Cannot cache contents of allocation " << *orig
+       << " for each iteration of loop at " << L->getHeader()->getName()
+       << ", unknown allocation size";
+    if (CustomErrorHandler) {
+      CustomErrorHandler(ss.str().c_str(), wrap(orig), ErrorType::NoDerivative,
+                         nullptr, nullptr, nullptr);
+    } else {
+      EmitFailure("CannotCacheAllocation", orig->getDebugLoc(), orig, ss.str());
+    }
+    return;
+  }
+
+  auto header = cast<BasicBlock>(getNewFromOriginal(L->getHeader()));
+  // The snapshot is allocated in the header of the loop, such that there is
+  // exactly one per iteration, which is available throughout the iteration.
+  IRBuilder<> B(header->getTerminator());
+  auto i8 = Type::getInt8Ty(header->getContext());
+
+  if (mode == DerivativeMode::ReverseModeGradient) {
+    // The snapshot was made by the augmented forward pass, simply retrieve it
+    // from the tape.
+    PHINode *placeholder = B.CreatePHI(getInt8PtrTy(header->getContext()), 0,
+                                       orig->getName() + "_snapshot");
+    Value *snapshot = cacheForReverse(B, placeholder, idx);
+    loopCachedAllocations.emplace_back(orig, snapshot);
+    return;
+  }
+
+  Value *size =
+      computeAllocationSize(B, origCounts, EltSize, [&](Value *Count) {
+        return getNewFromOriginal(Count);
+      });
+
+  auto snapshot = cast<Instruction>(
+      CreateAllocation(B, i8, size, orig->getName() + "_snapshot"));
+
+  // Any iteration of the loop completes by either branching back to the
+  // header, or by exiting the loop. Save the contents of the allocation
+  // at these points.
+  Value *alloc = getNewFromOriginal((Value *)orig);
+  for (auto BB : L->blocks()) {
+    if (notForAnalysis.count(BB))
+      continue;
+    bool completesIteration = false;
+    for (auto Succ : successors(BB)) {
+      if (notForAnalysis.count(Succ))
+        continue;
+      if (Succ == L->getHeader() || !L->contains(Succ)) {
+        completesIteration = true;
+        break;
+      }
+    }
+    if (!completesIteration)
+      continue;
+    IRBuilder<> EB(getNewFromOriginal(BB->getTerminator()));
+    EB.CreateMemCpy(snapshot, MaybeAlign(), alloc, Alignment, size);
+  }
+
+  if (mode == DerivativeMode::ReverseModePrimal) {
+    cacheForReverse(B, snapshot, idx);
+  } else {
+    ensureLookupCached(snapshot, /*shouldFree*/ true, header);
+  }
+  loopCachedAllocations.emplace_back(orig, snapshot);
+}
+
+BasicBlock *GradientUtils::restoreLoopCachedAllocations(LoopContext &lc,
+                                                        BasicBlock *resume) {
+  BasicBlock *restoreB = nullptr;
+  IRBuilder<> NB(newFunc->getContext());
+  for (auto &pair : loopCachedAllocations) {
+    Instruction *orig = pair.first;
+    Value *snapshot = pair.second;
+    Loop *L = getWholeAllocationCacheLoop(orig);
+    assert(L && "allocation cached per iteration must have a loop");
+    if (getNewFromOriginal(L->getHeader()) != lc.header)
+      continue;
+
+    if (!restoreB) {
+      restoreB = BasicBlock::Create(
+          newFunc->getContext(),
+          "restore" + reverseBlocks[lc.header].front()->getName(), newFunc);
+      restoreB->moveAfter(reverseBlocks[lc.header].back());
+      // Mark this block as being within the loop for the purposes of looking
+      // up any values.
+      reverseBlockToPrimal[restoreB] = lc.header;
+      NB.SetInsertPoint(restoreB);
+    }
+
+    auto found = findInMap(scopeMap, snapshot);
+    assert(found && "snapshot of allocation must have been cached");
+    Value *saved = lookupValueFromCache(
+        snapshot->getType(), /*inForwardPass*/ false, NB, found->second,
+        found->first, /*isi1*/ false, /*available*/ ValueToValueMapTy());
+
+    uint64_t EltSize = 0;
+    MaybeAlign Alignment;
+    SmallVector<Value *, 2> origCounts;
+    bool knownSize =
+        getOrigAllocationSize(orig, origCounts, EltSize, Alignment);
+    (void)knownSize;
+    assert(knownSize && "allocation cached per iteration has unknown size");
+    Value *size =
+        computeAllocationSize(NB, origCounts, EltSize, [&](Value *Count) {
+          return lookupM(getNewFromOriginal(Count), NB);
+        });
+
+    Value *alloc = lookupM(getNewFromOriginal((Value *)orig), NB);
+    NB.CreateMemCpy(alloc, Alignment, saved, MaybeAlign(), size);
+    if (((DiffeGradientUtils *)this)->FreeMemory)
+      CreateDealloc(NB, saved);
+  }
+  if (!restoreB)
+    return resume;
+  NB.CreateBr(resume);
+  return restoreB;
 }
 
 void GradientUtils::replaceAndRemoveUnwrapCacheFor(llvm::Value *A,

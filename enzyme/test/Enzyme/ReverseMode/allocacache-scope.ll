@@ -88,7 +88,7 @@ entry:
 ; CHECK-LABEL: define internal void @diffef(
 ; CHECK: start:
 ; CHECK: %{{.*}} = tail call noalias nonnull dereferenceable(16) dereferenceable_or_null(16) ptr @malloc(i64 16)
-; CHECK: store [16 x i8] %{{.*}}, ptr %{{.*}}, align 16
+; CHECK: store [16 x i8] %{{.*}}, ptr %{{.*}}, align 8
 ; CHECK: scan:
 
 ; No value of the scan loop is made available inside %loop.

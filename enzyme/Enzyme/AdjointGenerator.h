@@ -514,6 +514,16 @@ public:
   }
 
   void visitAllocaInst(llvm::AllocaInst &I) {
+    // If the contents of this allocation are only valid for an iteration of
+    // a loop which does not contain the allocation, preserving the stack
+    // allocation is insufficient, and we must cache the contents for each
+    // iteration. Note that in practice this will only occur in combined mode,
+    // as stack allocations are otherwise upgraded to heap allocations (and
+    // handled there).
+    {
+      llvm::IRBuilder<> BuilderZ(gutils->getNewFromOriginal(&I));
+      cacheWholeAllocationInLoop(I, BuilderZ);
+    }
     eraseIfUnused(I);
     switch (Mode) {
     case DerivativeMode::ForwardModeSplit:
@@ -525,6 +535,25 @@ public:
     default:
       return;
     }
+  }
+
+  /// If the allocation I must be cached in its entirety, but its contents are
+  /// only valid for an iteration of a loop which does not contain I (see
+  /// GradientUtils::getWholeAllocationCacheLoop), cache the contents of the
+  /// allocation for each iteration of that loop.
+  void cacheWholeAllocationInLoop(llvm::Instruction &I,
+                                  llvm::IRBuilder<> &BuilderZ) {
+    if (Mode != DerivativeMode::ReverseModeCombined &&
+        Mode != DerivativeMode::ReverseModePrimal &&
+        Mode != DerivativeMode::ReverseModeGradient)
+      return;
+    auto L = gutils->getWholeAllocationCacheLoop(&I);
+    if (!L)
+      return;
+    int idx = -1;
+    if (Mode != DerivativeMode::ReverseModeCombined)
+      idx = getIndex(&I, CacheType::Tape, BuilderZ);
+    gutils->cacheWholeAllocationInLoop(&I, L, idx);
   }
 
   void visitICmpInst(llvm::ICmpInst &I) { eraseIfUnused(I); }
@@ -4129,21 +4158,25 @@ public:
           // the first type out of range as the memcpy type.
           if (size == 1 && !isa<ConstantInt>(new_size)) {
             for (auto ptr : {orig_dst, orig_src}) {
-              vd = TR.query(ptr).Data0().ShiftIndices(DL, 0, -1, 0);
+              vd = TR.query(ptr).Data0();
+              if (ptr == orig_src)
+                vd = vd.PurgeAnything();
+              vd = vd.ShiftIndices(DL, 0, -1, 0);
               if (vd.isKnownPastPointer()) {
                 ConcreteType mv(BaseType::Unknown);
-                size_t minInt = 0xFFFFFFFF;
+                int minInt = 0;
                 for (const auto &pair : vd.getMapping()) {
                   if (pair.first.size() != 1)
                     continue;
-                  if (minInt < (size_t)pair.first[0])
+                  if (mv != BaseType::Unknown && minInt < pair.first[0])
                     continue;
                   minInt = pair.first[0];
                   mv = pair.second;
                 }
-                assert(mv != BaseType::Unknown);
-                vd.insert({0}, mv);
-                goto known;
+                if (mv != BaseType::Unknown) {
+                  vd.insert({0}, mv);
+                  goto known;
+                }
               }
             }
           }
@@ -4952,11 +4985,12 @@ public:
           }
         }
         if (isAllocationCall(baseOp, gutils->TLI)) {
-          assert(!gutils->isConstantValue(baseOp));
-          if (Mode == DerivativeMode::ReverseModeCombined ||
-              Mode == DerivativeMode::ReverseModeGradient ||
-              Mode == DerivativeMode::ReverseModePrimal ||
-              Mode == DerivativeMode::ForwardModeSplit) {
+          if (gutils->isConstantValue(baseOp)) {
+            nowrite_shadows.back() = true;
+          } else if (Mode == DerivativeMode::ReverseModeCombined ||
+                     Mode == DerivativeMode::ReverseModeGradient ||
+                     Mode == DerivativeMode::ReverseModePrimal ||
+                     Mode == DerivativeMode::ForwardModeSplit) {
             bool forwardsShadow = true;
             {
               auto found = gutils->backwardsOnlyShadows.find(baseOp);
@@ -6135,11 +6169,12 @@ public:
           }
         }
         if (isAllocationCall(baseOp, gutils->TLI)) {
-          assert(!gutils->isConstantValue(baseOp));
-          if (Mode == DerivativeMode::ReverseModeCombined ||
-              Mode == DerivativeMode::ReverseModeGradient ||
-              Mode == DerivativeMode::ReverseModePrimal ||
-              Mode == DerivativeMode::ForwardModeSplit) {
+          if (gutils->isConstantValue(baseOp)) {
+            nowrite_shadows.back() = true;
+          } else if (Mode == DerivativeMode::ReverseModeCombined ||
+                     Mode == DerivativeMode::ReverseModeGradient ||
+                     Mode == DerivativeMode::ReverseModePrimal ||
+                     Mode == DerivativeMode::ForwardModeSplit) {
             bool forwardsShadow = true;
             {
               auto found = gutils->backwardsOnlyShadows.find(baseOp);
