@@ -106,10 +106,16 @@ add_mlir_library(
 if(ENZYME_FLANG_MLIR)
   add_llvm_library(
     FlangEnzymeMLIR-${LLVM_VERSION_MAJOR} MODULE FlangEnzymeMLIRPlugin.cpp
-    PARTIAL_SOURCES_INTENDED DISABLE_LLVM_LINK_LLVM_DYLIB)
+    FIRTypeAnnotations.cpp PARTIAL_SOURCES_INTENDED DISABLE_LLVM_LINK_LLVM_DYLIB)
+  add_dependencies(FlangEnzymeMLIR-${LLVM_VERSION_MAJOR} MLIREnzyme)
   target_include_directories(
     FlangEnzymeMLIR-${LLVM_VERSION_MAJOR}
     PRIVATE ${FLANG_INCLUDE_DIRS})
+  # The enzyme dialect carries the type annotations to LLVM IR; bundle it by
+  # file, so that its MLIR dependencies resolve from the host.
+  target_link_libraries(
+    FlangEnzymeMLIR-${LLVM_VERSION_MAJOR}
+    PRIVATE $<TARGET_FILE:MLIREnzyme>)
   target_link_options(
     FlangEnzymeMLIR-${LLVM_VERSION_MAJOR}
     PRIVATE -Wl,--allow-shlib-undefined)
