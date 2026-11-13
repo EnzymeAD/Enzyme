@@ -1257,6 +1257,63 @@ void PreProcessCache::ReplaceReallocs(Function *NewF, bool mem2reg) {
 
   for (auto CI : ToConvert) {
     assert(T);
+    if (CI->hasFnAttr("enzyme_exponential_realloc")) {
+      // Enzyme's exponential cache allocator doubles capacity on every growth
+      // step after the initial null pointer, so the previous allocation size
+      // is 0 when ptr == null and (req >> 1) otherwise. Lower directly without
+      // OldAllocationSize, which cannot track heap-stored nested-loop caches
+      // or un-inlined allocator arguments.
+      BasicBlock *SplitParent = CI->getParent();
+      BasicBlock *NextBlock = SplitParent->splitBasicBlock(CI);
+      BasicBlock *CopyBlock =
+          BasicBlock::Create(CI->getContext(), "expcopy" + CI->getName(), NewF);
+
+      SplitParent->getTerminator()->eraseFromParent();
+      IRBuilder<> B(SplitParent);
+      B.SetCurrentDebugLocation(CI->getDebugLoc());
+
+      Value *P = CI->getArgOperand(0);
+      Value *Req = CI->getArgOperand(1);
+
+      Module *M = NewF->getParent();
+      Type *BPTy = getInt8PtrTy(NewF->getContext());
+      auto MallocFunc = M->getOrInsertFunction("malloc", BPTy, Req->getType());
+      Value *Next = B.CreateCall(MallocFunc, Req);
+
+      Value *IsNull = B.CreateICmpEQ(
+          P, ConstantPointerNull::get(cast<PointerType>(P->getType())));
+      B.CreateCondBr(IsNull, NextBlock, CopyBlock);
+
+      B.SetInsertPoint(CopyBlock);
+      B.SetCurrentDebugLocation(CI->getDebugLoc());
+      Value *Old = B.CreateLShr(Req, ConstantInt::get(Req->getType(), 1));
+      Value *VolatileArg = ConstantInt::getFalse(CI->getContext());
+      Value *NArgs[] = {Next, P, Old, VolatileArg};
+      Type *Tys[] = {Next->getType(), P->getType(), Old->getType()};
+      auto MemcpyF = getIntrinsicDeclaration(M, Intrinsic::memcpy, Tys);
+      auto *Mem = cast<CallInst>(B.CreateCall(MemcpyF, NArgs));
+      Mem->setCallingConv(MemcpyF->getCallingConv());
+
+      Type *VoidTy = Type::getVoidTy(M->getContext());
+      auto FreeFunc = M->getOrInsertFunction("free", VoidTy, BPTy);
+      B.CreateCall(FreeFunc, B.CreatePointerCast(P, BPTy));
+      B.CreateBr(NextBlock);
+
+      B.SetInsertPoint(CI);
+      B.SetCurrentDebugLocation(CI->getDebugLoc());
+      Value *Res = B.CreatePointerCast(Next, CI->getType());
+      CI->replaceAllUsesWith(Res);
+      if (Next->getType() == CI->getType()) {
+        std::string Nam = CI->getName().str();
+        CI->setName("");
+        Next->setName(Nam);
+      }
+      reallocSizes[CI]->replaceAllUsesWith(Req);
+      cast<PHINode>(reallocSizes[CI])->eraseFromParent();
+      reallocSizes[CI] = Req;
+      continue;
+    }
+
     AllocaInst *AI =
         OldAllocationSize(CI->getArgOperand(0), CI, NewF, T, reallocSizes);
 
