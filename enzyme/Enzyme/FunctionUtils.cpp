@@ -1083,8 +1083,8 @@ void PreProcessCache::AlwaysInline(Function *NewF) {
 
   for (auto CI : ToInline) {
     InlineFunctionInfo IFI;
+    auto *F = CI->getCalledFunction();
 #if LLVM_VERSION_MAJOR >= 18 && LLVM_VERSION_MAJOR < 21
-    auto F = CI->getCalledFunction();
     if (CI->getParent()->IsNewDbgInfoFormat != F->IsNewDbgInfoFormat) {
       if (CI->getParent()->IsNewDbgInfoFormat) {
         F->convertToNewDbgValues();
@@ -1093,7 +1093,8 @@ void PreProcessCache::AlwaysInline(Function *NewF) {
       }
     }
 #endif
-    InlineFunction(*CI, IFI);
+    if (InlineFunction(*CI, IFI).isSuccess())
+      recordInlinedOrigin(NewF, F);
   }
 }
 
@@ -1592,7 +1593,8 @@ static void SimplifyMPIQueries(Function &NewF, FunctionAnalysisManager &FAM) {
 }
 
 /// Perform recursive inlinining on NewF up to the given limit
-static void ForceRecursiveInlining(Function *NewF, size_t Limit) {
+static void ForceRecursiveInlining(Function *NewF, size_t Limit,
+                                   PreProcessCache &PPC) {
   std::map<const Function *, RecurType> RecurResults;
   for (size_t count = 0; count < Limit; count++) {
     for (auto &BB : *NewF) {
@@ -1620,8 +1622,10 @@ static void ForceRecursiveInlining(Function *NewF, size_t Limit) {
                        << CI->getCalledFunction()->getName() << "\n");
             continue;
           }
+          Function *Callee = CI->getCalledFunction();
           InlineFunctionInfo IFI;
-          InlineFunction(*CI, IFI);
+          if (InlineFunction(*CI, IFI).isSuccess())
+            PPC.recordInlinedOrigin(NewF, Callee);
           goto outermostContinue;
         }
       }
@@ -1708,7 +1712,9 @@ void RemoveRedundantPHI(Function *F, FunctionAnalysisManager &FAM) {
   }
 }
 
-PreProcessCache::PreProcessCache() {
+PreProcessCache::PreProcessCache()
+    : CloneOrigin(std::make_unique<CloneOriginMap>()),
+      InlinedInstOrigin(std::make_unique<InlinedInstOriginMap>()) {
   // Explicitly chose AA passes that are stateless
   // and will not be invalidated
   FAM.registerPass([] { return TypeBasedAA(); });
@@ -1770,6 +1776,326 @@ llvm::PassBuilder makePassBuilder(LLVMContext &Ctx) {
 llvm::AAResults &
 PreProcessCache::getAAResultsFromFunction(llvm::Function *NewF) {
   return FAM.getResult<AAManager>(*NewF);
+}
+
+static void appendUniqueOrigin(SmallVectorImpl<WeakTrackingVH> &Dst,
+                               Function *Origin) {
+  if (!Origin)
+    return;
+  for (const auto &Existing : Dst) {
+    if (Existing == Origin)
+      return;
+  }
+  Dst.push_back(Origin);
+}
+
+static void appendUniqueFunc(SmallVectorImpl<Function *> &Dst,
+                             Function *Origin) {
+  if (!Origin)
+    return;
+  if (!llvm::is_contained(Dst, Origin))
+    Dst.push_back(Origin);
+}
+
+static void
+collectUsedGlobalVariables(const Constant *C,
+                           SmallPtrSetImpl<const Constant *> &Visited,
+                           SmallPtrSetImpl<GlobalVariable *> &Globals) {
+  if (!Visited.insert(C).second)
+    return;
+  if (auto *GV = dyn_cast<GlobalVariable>(C)) {
+    Globals.insert(const_cast<GlobalVariable *>(GV));
+    return;
+  }
+  if (isa<ConstantExpr>(C) || isa<ConstantAggregate>(C)) {
+    for (const Use &U : C->operands()) {
+      if (auto *SubC = dyn_cast<Constant>(U.get()))
+        collectUsedGlobalVariables(SubC, Visited, Globals);
+    }
+  }
+}
+
+static void collectInstUsedGlobals(const Instruction &I,
+                                   SmallPtrSetImpl<GlobalVariable *> &Globals) {
+  SmallPtrSet<const Constant *, 8> Visited;
+  for (const Use &U : I.operands()) {
+    auto *C = dyn_cast<Constant>(U.get());
+    if (!C || isa<ConstantData>(C) || isa<Function>(C) || isa<BlockAddress>(C))
+      continue;
+    collectUsedGlobalVariables(C, Visited, Globals);
+  }
+}
+
+static void
+collectGlobalUserInstructionsInFunc(GlobalVariable *GV, Function *F,
+                                    SmallPtrSetImpl<Instruction *> &Out) {
+  SmallVector<User *, 8> Worklist(GV->users().begin(), GV->users().end());
+  SmallPtrSet<User *, 16> Visited;
+  while (!Worklist.empty()) {
+    User *U = Worklist.pop_back_val();
+    if (!Visited.insert(U).second)
+      continue;
+    if (auto *I = dyn_cast<Instruction>(U)) {
+      if (I->getParent()->getParent() == F)
+        Out.insert(I);
+    } else if (isa<ConstantExpr>(U) || isa<ConstantAggregate>(U)) {
+      for (User *SubU : U->users())
+        Worklist.push_back(SubU);
+    }
+  }
+}
+
+void PreProcessCache::recordCloneOrigin(Function *NewF, Function *Source,
+                                        bool InheritDirectOrigin) {
+  assert(NewF && Source && "Clone and source functions must be non-null");
+  if (NewF == Source)
+    return;
+  Function *SourceDirect = nullptr;
+  SmallVector<Function *, 4> SourceInlined;
+  auto It = CloneOrigin->find(Source);
+  if (It != CloneOrigin->end()) {
+    SourceDirect = dyn_cast_or_null<Function>(
+        static_cast<Value *>(It->second.DirectOrigin));
+    for (const auto &Inlined : It->second.InlinedOrigins) {
+      if (auto *InlinedF =
+              dyn_cast_or_null<Function>(static_cast<Value *>(Inlined))) {
+        appendUniqueFunc(SourceInlined, InlinedF);
+      }
+    }
+  }
+
+  CloneOriginEntry Entry;
+  if (InheritDirectOrigin) {
+    Entry.DirectOrigin = SourceDirect ? SourceDirect : Source;
+  } else {
+    Entry.DirectOrigin = Source;
+    if (SourceDirect && SourceDirect != Source)
+      appendUniqueOrigin(Entry.InlinedOrigins, SourceDirect);
+  }
+  for (Function *InlinedF : SourceInlined) {
+    if (InlinedF != Entry.DirectOrigin)
+      appendUniqueOrigin(Entry.InlinedOrigins, InlinedF);
+  }
+  (*CloneOrigin)[NewF] = std::move(Entry);
+}
+
+void PreProcessCache::recordInlinedOrigin(Function *Dst, Function *Callee) {
+  if (!Dst || !Callee || Dst == Callee)
+    return;
+  if (CloneOrigin->find(Dst) == CloneOrigin->end())
+    return;
+
+  SmallVector<Function *, 4> CalleeOrigins;
+  appendUniqueFunc(CalleeOrigins, Callee);
+  auto CalleeIt = CloneOrigin->find(Callee);
+  if (CalleeIt != CloneOrigin->end()) {
+    if (auto *Direct = dyn_cast_or_null<Function>(
+            static_cast<Value *>(CalleeIt->second.DirectOrigin))) {
+      appendUniqueFunc(CalleeOrigins, Direct);
+    }
+    for (const auto &Inlined : CalleeIt->second.InlinedOrigins) {
+      if (auto *InlinedF =
+              dyn_cast_or_null<Function>(static_cast<Value *>(Inlined))) {
+        appendUniqueFunc(CalleeOrigins, InlinedF);
+      }
+    }
+  }
+  if (!InlinedInstOrigin->empty()) {
+    for (BasicBlock &BB : *Callee) {
+      for (Instruction &I : BB) {
+        auto InstIt = InlinedInstOrigin->find(&I);
+        if (InstIt == InlinedInstOrigin->end())
+          continue;
+        for (const auto &Orig : InstIt->second) {
+          if (auto *OrigF =
+                  dyn_cast_or_null<Function>(static_cast<Value *>(Orig))) {
+            appendUniqueFunc(CalleeOrigins, OrigF);
+          }
+        }
+      }
+    }
+  }
+
+  auto &Entry = (*CloneOrigin)[Dst];
+  for (Function *Orig : CalleeOrigins) {
+    if (Orig != Entry.DirectOrigin)
+      appendUniqueOrigin(Entry.InlinedOrigins, Orig);
+  }
+}
+
+Function *PreProcessCache::getCloneOrigin(Function *F) const {
+  if (!F || !CloneOrigin)
+    return F;
+  auto It = CloneOrigin->find(F);
+  if (It == CloneOrigin->end())
+    return F;
+  if (auto *Direct = dyn_cast_or_null<Function>(
+          static_cast<Value *>(It->second.DirectOrigin)))
+    return Direct;
+  return F;
+}
+
+bool PreProcessCache::isSameLogicalFunction(const Instruction *Inst,
+                                            const Function *CurF) const {
+  const Function *InstF = Inst->getParent()->getParent();
+  if (InstF == CurF)
+    return true;
+  if (!CloneOrigin)
+    return false;
+
+  const Function *TargetF = getCloneOrigin(const_cast<Function *>(CurF));
+
+  auto matchesTarget = [&](const Function *Candidate) -> bool {
+    if (!Candidate)
+      return false;
+    if (Candidate == TargetF || Candidate == CurF)
+      return true;
+    auto It = CloneOrigin->find(Candidate);
+    if (It == CloneOrigin->end())
+      return false;
+    if (It->second.DirectOrigin == TargetF || It->second.DirectOrigin == CurF)
+      return true;
+    for (const auto &Inlined : It->second.InlinedOrigins) {
+      if (Inlined == TargetF || Inlined == CurF)
+        return true;
+    }
+    return false;
+  };
+
+  if (InlinedInstOrigin) {
+    auto InstIt = InlinedInstOrigin->find(Inst);
+    if (InstIt != InlinedInstOrigin->end()) {
+      for (const auto &Orig : InstIt->second) {
+        if (auto *OrigF =
+                dyn_cast_or_null<Function>(static_cast<Value *>(Orig))) {
+          if (matchesTarget(OrigF))
+            return true;
+        }
+      }
+      return false;
+    }
+  }
+
+  return matchesTarget(InstF);
+}
+
+InlineResult
+PreProcessCache::inlineFunctionWithOriginTracking(CallBase &CB,
+                                                  InlineFunctionInfo &IFI) {
+  Function *Caller = CB.getParent()->getParent();
+  Function *Callee = CB.getCalledFunction();
+  if (!Callee || Callee->empty())
+    return InlineFunction(CB, IFI);
+
+  SmallVector<Function *, 4> CalleeCloneOrigins;
+  bool CalleeIsClone = false;
+  auto CalleeIt = CloneOrigin->find(Callee);
+  if (CalleeIt != CloneOrigin->end()) {
+    CalleeIsClone = true;
+    appendUniqueFunc(CalleeCloneOrigins, Callee);
+    if (auto *Direct = dyn_cast_or_null<Function>(
+            static_cast<Value *>(CalleeIt->second.DirectOrigin))) {
+      appendUniqueFunc(CalleeCloneOrigins, Direct);
+    }
+    for (const auto &Inlined : CalleeIt->second.InlinedOrigins) {
+      if (auto *InlinedF =
+              dyn_cast_or_null<Function>(static_cast<Value *>(Inlined))) {
+        appendUniqueFunc(CalleeCloneOrigins, InlinedF);
+      }
+    }
+  }
+
+  SmallDenseMap<GlobalVariable *, SmallVector<Function *, 4>, 4> TrackedGlobals;
+  SmallPtrSet<GlobalVariable *, 4> UntrackedGlobals;
+
+  // Check globals passed directly as arguments at the call site.
+  {
+    SmallPtrSet<GlobalVariable *, 4> CBGlobals;
+    collectInstUsedGlobals(CB, CBGlobals);
+    if (!CBGlobals.empty()) {
+      auto CBIt = InlinedInstOrigin->find(&CB);
+      if (CBIt != InlinedInstOrigin->end()) {
+        for (GlobalVariable *GV : CBGlobals) {
+          auto &Dst = TrackedGlobals[GV];
+          for (const auto &Orig : CBIt->second) {
+            if (auto *OrigF =
+                    dyn_cast_or_null<Function>(static_cast<Value *>(Orig))) {
+              appendUniqueFunc(Dst, OrigF);
+            }
+          }
+        }
+      } else {
+        for (GlobalVariable *GV : CBGlobals)
+          UntrackedGlobals.insert(GV);
+      }
+    }
+  }
+
+  for (BasicBlock &BB : *Callee) {
+    for (Instruction &I : BB) {
+      SmallPtrSet<GlobalVariable *, 4> InstGlobals;
+      collectInstUsedGlobals(I, InstGlobals);
+      if (InstGlobals.empty())
+        continue;
+
+      SmallVector<Function *, 4> InstOrigins;
+      bool FromClone = false;
+      auto InstIt = InlinedInstOrigin->find(&I);
+      if (InstIt != InlinedInstOrigin->end()) {
+        FromClone = true;
+        for (const auto &Orig : InstIt->second) {
+          if (auto *OrigF =
+                  dyn_cast_or_null<Function>(static_cast<Value *>(Orig))) {
+            appendUniqueFunc(InstOrigins, OrigF);
+          }
+        }
+      } else if (CalleeIsClone) {
+        FromClone = true;
+        InstOrigins = CalleeCloneOrigins;
+      }
+
+      for (GlobalVariable *GV : InstGlobals) {
+        if (!FromClone) {
+          UntrackedGlobals.insert(GV);
+          TrackedGlobals.erase(GV);
+        } else if (!UntrackedGlobals.count(GV)) {
+          auto &Dst = TrackedGlobals[GV];
+          for (Function *OrigF : InstOrigins)
+            appendUniqueFunc(Dst, OrigF);
+        }
+      }
+    }
+  }
+
+  if (TrackedGlobals.empty())
+    return InlineFunction(CB, IFI);
+
+  SmallDenseMap<GlobalVariable *, SmallPtrSet<Instruction *, 8>, 4>
+      ExistingUsers;
+  for (auto &Pair : TrackedGlobals) {
+    collectGlobalUserInstructionsInFunc(Pair.first, Caller,
+                                        ExistingUsers[Pair.first]);
+  }
+
+  InlineResult IR = InlineFunction(CB, IFI);
+  if (!IR.isSuccess())
+    return IR;
+
+  for (auto &Pair : TrackedGlobals) {
+    GlobalVariable *GV = Pair.first;
+    SmallPtrSet<Instruction *, 8> CurrentUsers;
+    collectGlobalUserInstructionsInFunc(GV, Caller, CurrentUsers);
+    const auto &PrevUsers = ExistingUsers[GV];
+    for (Instruction *I : CurrentUsers) {
+      if (PrevUsers.count(I))
+        continue;
+      auto &Entry = (*InlinedInstOrigin)[I];
+      for (Function *OrigF : Pair.second)
+        appendUniqueOrigin(Entry, OrigF);
+    }
+  }
+
+  return IR;
 }
 
 void setFullWillReturn(Function *NewF) {
@@ -3771,7 +4097,22 @@ Function *PreProcessCache::preprocessForClone(Function *F,
         Returns, "", nullptr);
     resetClonedGUID(NewF);
   }
-  CloneOrigin[NewF] = F;
+  recordCloneOrigin(NewF, F, /*InheritDirectOrigin=*/false);
+  if (!InlinedInstOrigin->empty()) {
+    for (BasicBlock &BB : *F) {
+      for (Instruction &I : BB) {
+        auto InstIt = InlinedInstOrigin->find(&I);
+        if (InstIt == InlinedInstOrigin->end())
+          continue;
+        for (const auto &Orig : InstIt->second) {
+          if (auto *OrigF =
+                  dyn_cast_or_null<Function>(static_cast<Value *>(Orig))) {
+            recordInlinedOrigin(NewF, OrigF);
+          }
+        }
+      }
+    }
+  }
   NewF->setAttributes(F->getAttributes());
   if (EnzymeNoAlias)
     for (auto j = NewF->arg_begin(); j != NewF->arg_end(); j++) {
@@ -3785,7 +4126,7 @@ Function *PreProcessCache::preprocessForClone(Function *F,
 
   if (EnzymePreopt) {
     if (EnzymeInline) {
-      ForceRecursiveInlining(NewF, /*Limit*/ EnzymeInlineCount);
+      ForceRecursiveInlining(NewF, /*Limit*/ EnzymeInlineCount, *this);
       setFullWillReturn(NewF);
       PreservedAnalyses PA;
       FAM.invalidate(*NewF, PA);
@@ -4555,7 +4896,7 @@ Function *PreProcessCache::CloneFunctionWithReturns(
     IRBuilder<> B(entry);
     B.CreateUnreachable();
   }
-  CloneOrigin[NewF] = F;
+  recordCloneOrigin(NewF, F, /*InheritDirectOrigin=*/true);
   if (VMapO) {
     for (const auto &data : VMap)
       VMapO->insert(std::pair<const llvm::Value *, AssertingReplacingVH>(
@@ -4965,6 +5306,10 @@ void PreProcessCache::clear() {
   FAM.clear();
   MAM.clear();
   cache.clear();
+  if (CloneOrigin)
+    CloneOrigin->clear();
+  if (InlinedInstOrigin)
+    InlinedInstOrigin->clear();
 }
 
 // Returns if a is guaranteed to be equivalent to not b

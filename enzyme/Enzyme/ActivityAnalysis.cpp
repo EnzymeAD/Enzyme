@@ -3379,20 +3379,16 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
     // if this instruction is in a different function, conservatively assume
     // it is active
     {
-      Function *InstF = cast<Instruction>(a)->getParent()->getParent();
-      while (PPC.CloneOrigin.find(InstF) != PPC.CloneOrigin.end())
-        InstF = PPC.CloneOrigin[InstF];
-
-      Function *F = TR.getFunction();
-      while (PPC.CloneOrigin.find(F) != PPC.CloneOrigin.end())
-        F = PPC.CloneOrigin[F];
-
-      if (InstF != F) {
-        if (EnzymePrintActivity)
+      auto *Inst = cast<Instruction>(a);
+      if (!PPC.isSameLogicalFunction(Inst, TR.getFunction())) {
+        if (EnzymePrintActivity) {
+          Function *InstF = PPC.getCloneOrigin(Inst->getParent()->getParent());
+          Function *F = PPC.getCloneOrigin(TR.getFunction());
           llvm::errs() << "found use in different function(" << (int)directions
                        << ")  val:" << *val << " user " << *a << " in "
                        << InstF->getName() << "@" << InstF
                        << " self: " << F->getName() << "@" << F << "\n";
+        }
         goto endloop;
       }
     }
@@ -3783,10 +3779,21 @@ bool ActivityAnalyzer::isValueActivelyStoredOrReturned(TypeResults const &TR,
       continue;
     }
 
-    if (auto I = dyn_cast<Instruction>(a))
+    if (auto I = dyn_cast<Instruction>(a)) {
+      if (I->getParent()->getParent() != TR.getFunction()) {
+        if (PPC.isSameLogicalFunction(I, TR.getFunction()))
+          continue;
+        if (EnzymePrintActivity)
+          llvm::errs() << " </ASOR" << (int)directions
+                       << " ignoreStoresInto=" << ignoreStoresInto
+                       << " active from-other-fn>" << *val << " - use=" << *a
+                       << "\n";
+        return StoredOrReturnedCache[key] = true;
+      }
       if (notForAnalysis.count(I->getParent())) {
         continue;
       }
+    }
 
     if (isa<ReturnInst>(a)) {
       if (ActiveReturns == DIFFE_TYPE::CONSTANT)

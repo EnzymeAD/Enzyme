@@ -5101,7 +5101,10 @@ public:
         if (subdata->returns.find(AugmentedStruct::Tape) !=
             subdata->returns.end()) {
           ValueToValueMapTy VMap;
+          Function *origcalled = newcalled;
           newcalled = CloneFunction(newcalled, VMap);
+          gutils->Logic.PPC.recordCloneOrigin(newcalled, origcalled,
+                                              /*InheritDirectOrigin=*/true);
           auto tapeArg = newcalled->arg_end();
           tapeArg--;
           Type *tapeElemType = subdata->tapeType;

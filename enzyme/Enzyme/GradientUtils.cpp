@@ -4911,6 +4911,7 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
       auto oldfn = fn;
       fn = Function::Create(oldfn->getFunctionType(), Function::InternalLinkage,
                             "callwrap_" + oldfn->getName(), oldfn->getParent());
+      Logic.PPC.recordCloneOrigin(fn, oldfn, /*InheritDirectOrigin=*/false);
       BasicBlock *entry = BasicBlock::Create(fn->getContext(), "entry", fn);
       IRBuilder<> B(entry);
       SmallVector<Value *, 4> args;
