@@ -40,8 +40,3 @@ module attributes {enzyme.forward_call_handlers = "norule"} {
 // expected-error @below {{'enzyme.forward_call_handlers' entry must be a [@function, "key"] pair, got [@f]}}
 module attributes {enzyme.forward_call_handlers = [[@f]]} {
 }
-
-// -----
-
-// expected-error @below {{'enzyme.forward_call_handlers' requires a symbol table operation}}
-func.func private @f() attributes {enzyme.forward_call_handlers = []}

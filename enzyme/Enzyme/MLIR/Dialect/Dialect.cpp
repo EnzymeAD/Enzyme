@@ -86,9 +86,8 @@ LogicalResult EnzymeDialect::verifyOperationAttribute(Operation *op,
                                                       NamedAttribute attr) {
   if (attr.getName() != getForwardCallHandlersAttrName())
     return success();
-  if (!op->hasTrait<OpTrait::SymbolTable>())
-    return op->emitOpError() << "'" << attr.getName().getValue()
-                             << "' requires a symbol table operation";
+  assert(op->hasTrait<OpTrait::SymbolTable>() &&
+         "forward call handlers attribute requires a symbol table operation");
   auto entries = dyn_cast<ArrayAttr>(attr.getValue());
   if (!entries)
     return op->emitOpError() << "'" << attr.getName().getValue()

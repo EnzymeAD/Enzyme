@@ -183,13 +183,13 @@ typedef MlirLogicalResult (*EnzymeForwardCallHandler)(
     MlirRewriterBase builder, MlirOperation call, EnzymeGradientUtils gutils,
     void *userData);
 
-/// Registers `handler` under `key` in the Enzyme dialect of `context`. It
-/// differentiates the calls to the functions that the
+/// Registers `handler` under `key` in `dialect`, which must be the Enzyme
+/// dialect. It differentiates the calls to the functions that the
 /// `enzyme.forward_call_handlers` attribute of their symbol table, an array of
-/// `[@function, "key"]` pairs, lists with `key`. Not synchronized: must not run
-/// concurrently with a pass.
+/// (function symbol, key) pairs, lists with `key`. Not synchronized: must not
+/// run concurrently with a pass.
 MLIR_CAPI_EXPORTED void
-enzymeRegisterForwardCallHandler(MlirContext context, MlirStringRef key,
+enzymeRegisterForwardCallHandler(MlirDialect dialect, MlirStringRef key,
                                  EnzymeForwardCallHandler handler,
                                  void *userData);
 

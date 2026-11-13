@@ -260,11 +260,10 @@ MlirAttribute enzymeSymbolAttrGet(MlirContext ctx, uint64_t ptr) {
 
 DEFINE_C_API_PTR_METHODS(EnzymeGradientUtils, mlir::enzyme::MGradientUtils)
 
-void enzymeRegisterForwardCallHandler(MlirContext context, MlirStringRef key,
+void enzymeRegisterForwardCallHandler(MlirDialect dialect, MlirStringRef key,
                                       EnzymeForwardCallHandler handler,
                                       void *userData) {
-  unwrap(context)
-      ->getOrLoadDialect<mlir::enzyme::EnzymeDialect>()
+  llvm::cast<mlir::enzyme::EnzymeDialect>(unwrap(dialect))
       ->registerForwardCallHandler(
           unwrap(key), [handler, userData](
                            mlir::RewriterBase &rewriter, mlir::Operation *orig,
