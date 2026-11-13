@@ -814,6 +814,75 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
     }
   }
 
+  auto getOpFullest = [&](IRBuilder<> &Builder, Value *v,
+                          BasicBlock *origParent,
+                          BasicBlock *lookupInst) -> Value * {
+    Type *vty = v->getType();
+    Value *___res;
+    if (unwrapMode == UnwrapMode::LegalFullUnwrap ||
+        unwrapMode == UnwrapMode::LegalFullUnwrapNoTapeReplace ||
+        unwrapMode == UnwrapMode::AttemptFullUnwrap ||
+        unwrapMode == UnwrapMode::AttemptFullUnwrapWithLookup) {
+      if (v == val)
+        ___res = nullptr;
+      else
+        ___res =
+            unwrapM(v, Builder, available, unwrapMode, origParent, permitCache);
+      if (!___res && unwrapMode == UnwrapMode::AttemptFullUnwrapWithLookup) {
+        bool noLookup = false;
+        auto found = available.find(v);
+        if (found != available.end() && !found->second)
+          noLookup = true;
+        if (auto opinst = dyn_cast<Instruction>(v))
+          if (isOriginalBlock(*Builder.GetInsertBlock())) {
+            if (!DT.dominates(opinst, &*Builder.GetInsertPoint()))
+              noLookup = true;
+          }
+        origParent = lookupInst;
+        if (!noLookup)
+          ___res = lookupM(v, Builder, available, v != val, origParent);
+      }
+      if (___res)
+        assert(___res->getType() == vty && "uw");
+    } else {
+      origParent = lookupInst;
+      assert(unwrapMode == UnwrapMode::AttemptSingleUnwrap &&
+             "expected AttemptSingleUnwrap mode");
+      auto found = available.find(v);
+      if (found != available.end() && !found->second)
+        ___res = nullptr;
+      else {
+        ___res = lookupM(v, Builder, available, v != val, origParent);
+        if (___res && ___res->getType() != vty) {
+          llvm::errs() << *newFunc << "\n";
+          llvm::errs() << " v = " << *v << " res = " << *___res << "\n";
+        }
+        if (___res)
+          assert(___res->getType() == vty && "lu");
+      }
+    }
+    return ___res;
+  };
+  auto getOpFull = [&](IRBuilder<> &Builder, Value *vtmp,
+                       BasicBlock *frominst) -> Value * {
+    BasicBlock *parent = scope;
+    if (parent == nullptr)
+      if (auto originst = dyn_cast<Instruction>(val))
+        parent = originst->getParent();
+    return getOpFullest(Builder, vtmp, frominst, parent);
+  };
+  auto getOpUnchecked = [&](Value *vtmp) -> Value * {
+    BasicBlock *parent = scope;
+    return getOpFullest(BuilderM, vtmp, parent, parent);
+  };
+  auto getOp = [&](Value *vtmp) -> Value * {
+    BasicBlock *parent = scope;
+    if (parent == nullptr)
+      if (auto originst = dyn_cast<Instruction>(val))
+        parent = originst->getParent();
+    return getOpFullest(BuilderM, vtmp, parent, parent);
+  };
+
   if (this->mode == DerivativeMode::ReverseModeGradient ||
       this->mode == DerivativeMode::ForwardModeSplit ||
       this->mode == DerivativeMode::ReverseModeCombined)
@@ -937,77 +1006,6 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
         }
       }
     }
-
-#define getOpFullest(Builder, vtmp, frominst, lookupInst, check)               \
-  ({                                                                           \
-    Value *v = vtmp;                                                           \
-    Type *vty = v->getType();                                                  \
-    BasicBlock *origParent = frominst;                                         \
-    Value *___res;                                                             \
-    if (unwrapMode == UnwrapMode::LegalFullUnwrap ||                           \
-        unwrapMode == UnwrapMode::LegalFullUnwrapNoTapeReplace ||              \
-        unwrapMode == UnwrapMode::AttemptFullUnwrap ||                         \
-        unwrapMode == UnwrapMode::AttemptFullUnwrapWithLookup) {               \
-      if (v == val)                                                            \
-        ___res = nullptr;                                                      \
-      else                                                                     \
-        ___res = unwrapM(v, Builder, available, unwrapMode, origParent,        \
-                         permitCache);                                         \
-      if (!___res && unwrapMode == UnwrapMode::AttemptFullUnwrapWithLookup) {  \
-        bool noLookup = false;                                                 \
-        auto found = available.find(v);                                        \
-        if (found != available.end() && !found->second)                        \
-          noLookup = true;                                                     \
-        if (auto opinst = dyn_cast<Instruction>(v))                            \
-          if (isOriginalBlock(*Builder.GetInsertBlock())) {                    \
-            if (!DT.dominates(opinst, &*Builder.GetInsertPoint()))             \
-              noLookup = true;                                                 \
-          }                                                                    \
-        origParent = lookupInst;                                               \
-        if (!noLookup)                                                         \
-          ___res = lookupM(v, Builder, available, v != val, origParent);       \
-      }                                                                        \
-      if (___res)                                                              \
-        assert(___res->getType() == vty && "uw");                              \
-    } else {                                                                   \
-      origParent = lookupInst;                                                 \
-      assert(unwrapMode == UnwrapMode::AttemptSingleUnwrap);                   \
-      auto found = available.find(v);                                          \
-      if (found != available.end() && !found->second)                          \
-        ___res = nullptr;                                                      \
-      else {                                                                   \
-        ___res = lookupM(v, Builder, available, v != val, origParent);         \
-        if (___res && ___res->getType() != vty) {                              \
-          llvm::errs() << *newFunc << "\n";                                    \
-          llvm::errs() << " v = " << *v << " res = " << *___res << "\n";       \
-        }                                                                      \
-        if (___res)                                                            \
-          assert(___res->getType() == vty && "lu");                            \
-      }                                                                        \
-    }                                                                          \
-    ___res;                                                                    \
-  })
-#define getOpFull(Builder, vtmp, frominst)                                     \
-  ({                                                                           \
-    BasicBlock *parent = scope;                                                \
-    if (parent == nullptr)                                                     \
-      if (auto originst = dyn_cast<Instruction>(val))                          \
-        parent = originst->getParent();                                        \
-    getOpFullest(Builder, vtmp, frominst, parent, true);                       \
-  })
-#define getOpUnchecked(vtmp)                                                   \
-  ({                                                                           \
-    BasicBlock *parent = scope;                                                \
-    getOpFullest(BuilderM, vtmp, parent, parent, false);                       \
-  })
-#define getOp(vtmp)                                                            \
-  ({                                                                           \
-    BasicBlock *parent = scope;                                                \
-    if (parent == nullptr)                                                     \
-      if (auto originst = dyn_cast<Instruction>(val))                          \
-        parent = originst->getParent();                                        \
-    getOpFullest(BuilderM, vtmp, parent, parent, true);                        \
-  })
 
   if (isa<Argument>(val) || isa<Constant>(val)) {
     return val;

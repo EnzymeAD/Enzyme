@@ -907,23 +907,24 @@ public:
         newType = cast<ShapedType>(cast<MemRefType>(newType)
                                        .clonePtrWith(memorySpace, std::nullopt)
                                        .value());
-      enzyme::InitOp newInit = ({
+      enzyme::InitOp newInit;
+      {
         OpBuilder::InsertionGuard guard(rewriter);
         rewriter.setInsertionPoint(info.initOp);
 
-        enzyme::InitOp::create(
+        newInit = enzyme::InitOp::create(
             rewriter, info.initOp->getLoc(),
             enzyme::CacheType::get(cache.getContext(), newType));
-      });
-      info.pushOp = ({
+      }
+      {
         OpBuilder::InsertionGuard guard(rewriter);
         rewriter.setInsertionPointAfter(forOp);
         auto newPush = enzyme::PushOp::create(rewriter, cache.getLoc(),
                                               newInit.getResult(),
                                               newPushValues[pushedValueIdx]);
         rewriter.eraseOp(info.pushOp);
-        newPush;
-      });
+        info.pushOp = newPush;
+      }
 
       pushedValueIdx++;
 
