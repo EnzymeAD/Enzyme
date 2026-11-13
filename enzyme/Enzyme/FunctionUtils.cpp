@@ -2123,10 +2123,11 @@ bool DetectNoUnwindOfFn(llvm::Function &F,
   return true;
 }
 
-// Checks whether a function is read only or throw, and whether only locally
-// (see `enzyme_LocalReadOnlyOrThrow`). Calls to functions not yet known to be
-// read only or throw are collected in `calls_todo`, and the function is only
-// marked once there are none.
+// Checks whether a function is read only or throw, local read only or throw
+// (`enzyme_LocalReadOnlyOrThrow`), or argmem only or throw
+// (`enzyme_ArgMemOnlyOrThrow`). Calls to functions not yet known to qualify are
+// collected in `calls_todo`, and the function is only marked once there are
+// none.
 class ReadOnlyOrThrowDetector {
 public:
   ReadOnlyOrThrowDetector(llvm::Function &F,
@@ -2153,6 +2154,8 @@ private:
   SmallPtrSetImpl<Function *> &calls_todo;
   llvm::TargetLibraryInfo &TLI;
   bool &local;
+  bool argmem = false;
+  SmallSet<unsigned, 4> writtenArgs;
   const bool canHandBack;
 
   // The escape queries are cached per written object, as a function often
@@ -2164,8 +2167,10 @@ private:
   // Whether F is local only matters once all its callees are known: with a
   // callee pending, F is checked again later, so the escape queries deciding
   // it are skipped. They are also skipped if F cannot hand back a pointer at
-  // all.
-  bool needLocal() const { return canHandBack && !local && calls_todo.empty(); }
+  // all, or is already only argmem.
+  bool needLocal() const {
+    return canHandBack && !local && !argmem && calls_todo.empty();
+  }
 
   // Whether Obj may reach the return value (see mayReachReturn).
   bool reaches(Value *Obj, bool Deep, Instruction *Ignore = nullptr) {
@@ -2235,14 +2240,15 @@ private:
   bool freshFieldMayReachReturn(Value *Base, int64_t Field);
 };
 
-// Restate what `enzyme_ReadOnlyOrThrow` / `enzyme_LocalReadOnlyOrThrow` mean in
-// attributes LLVM's alias analysis understands: the function reads any memory,
-// writes only inaccessible memory (the exception it may allocate, GC
-// bookkeeping) and, for the local variant, its `sret`-like arguments; every
-// other pointer argument is `readonly`. Effects a location already had are
-// kept when they are tighter. The derivative of a function marked here does
-// not inherit them: `CloneFunctionWithReturns` builds it afresh and only
-// copies `readonly` onto the primal arguments, which the derivative reads.
+// Restate what `enzyme_ReadOnlyOrThrow`, `enzyme_LocalReadOnlyOrThrow`, and
+// `enzyme_ArgMemOnlyOrThrow` mean in attributes LLVM's alias analysis
+// understands: the function reads any memory, writes only inaccessible memory
+// (the exception it may allocate, GC bookkeeping) and, for the local or argmem
+// variants, its `sret`-like or written pointer arguments; every other pointer
+// argument is `readonly`. Effects a location already had are kept when they are
+// tighter. The derivative of a function marked here does not inherit them:
+// `CloneFunctionWithReturns` builds it afresh and only copies `readonly` onto
+// the primal arguments, which the derivative reads.
 //
 // This is only valid with Julia's setjmp/longjmp exceptions: the analysis
 // permits writes on paths that throw, and there such a write is only
@@ -2257,7 +2263,7 @@ void ReadOnlyOrThrowDetector::addReadOnlyOrThrowAttributes() {
   MemoryEffects derived =
       MemoryEffects::readOnly() |
       MemoryEffects::inaccessibleMemOnly(ModRefInfo::ModRef);
-  if (local)
+  if (local || argmem)
     derived |= MemoryEffects::argMemOnly(ModRefInfo::ModRef);
   F.setMemoryEffects(F.getMemoryEffects() & derived);
 #endif
@@ -2267,17 +2273,19 @@ void ReadOnlyOrThrowDetector::addReadOnlyOrThrowAttributes() {
   for (auto &arg : F.args()) {
     if (!arg.getType()->isPointerTy())
       continue;
+    unsigned argno = arg.getArgNo();
+    if (writtenArgs.contains(argno))
+      continue;
     if (local) {
       if (arg.hasStructRetAttr() ||
-          F.getAttribute(arg.getArgNo() + AttributeList::FirstArgIndex,
+          F.getAttribute(argno + AttributeList::FirstArgIndex,
                          "enzymejl_returnRoots")
               .isValid() ||
-          F.getAttribute(arg.getArgNo() + AttributeList::FirstArgIndex,
+          F.getAttribute(argno + AttributeList::FirstArgIndex,
                          "enzymejl_sret_union_bytes")
               .isValid())
         continue;
     }
-    unsigned argno = arg.getArgNo();
     if (F.hasParamAttribute(argno, Attribute::ReadNone) ||
         F.hasParamAttribute(argno, Attribute::ReadOnly))
       continue;
@@ -2639,10 +2647,23 @@ bool ReadOnlyOrThrowDetector::hasSRetLikeArgument(CallBase *CB) {
   return false;
 }
 
-// Whether call CB may hand a pointer back to its caller, through its result or
-// an sret-like argument.
+// Whether call CB may hand a pointer back to its caller, through its result,
+// an sret-like argument, or (unless fully read-only-or-throw) a writable
+// pointer argument.
 bool ReadOnlyOrThrowDetector::mayHandBackPointer(CallBase *CB) {
-  return !cannotHoldPointer(CB) || hasSRetLikeArgument(CB);
+  if (!cannotHoldPointer(CB) || hasSRetLikeArgument(CB))
+    return true;
+  if (!isReadOnlyOrThrow(CB)) {
+#if LLVM_VERSION_MAJOR >= 14
+    size_t nargs = CB->arg_size();
+#else
+    size_t nargs = CB->getNumArgOperands();
+#endif
+    for (size_t i = 0; i < nargs; ++i)
+      if (CB->getArgOperand(i)->getType()->isPointerTy() && !isReadOnly(CB, i))
+        return true;
+  }
+  return false;
 }
 
 void ReadOnlyOrThrowDetector::pushMayBePointer(EscapeWorklist &todo, Value *V,
@@ -2874,6 +2895,32 @@ bool ReadOnlyOrThrowDetector::run() {
   if (F.empty())
     return false;
 
+  auto isSRetLikeArg = [&](unsigned argno) {
+    if (argno >= F.arg_size())
+      return false;
+    return F.getArg(argno)->hasStructRetAttr() ||
+           F.getAttribute(argno + AttributeList::FirstArgIndex,
+                          "enzymejl_returnRoots")
+               .isValid() ||
+           F.getAttribute(argno + AttributeList::FirstArgIndex,
+                          "enzymejl_sret_union_bytes")
+               .isValid();
+  };
+  auto classifyWrittenArg = [&](Argument *arg) {
+    unsigned argno = arg->getArgNo();
+    if (isSRetLikeArg(argno)) {
+      local = true;
+      return true;
+    }
+    if (!isReadOnly(&F, argno)) {
+      argmem = true;
+      writtenArgs.insert(argno);
+      return true;
+    }
+    return false;
+  };
+
+  SmallVector<CallBase *, 2> selfCalls;
   const auto unreachable = getGuaranteedUnreachable(&F);
   for (auto &BB : F) {
     if (unreachable.find(&BB) != unreachable.end()) {
@@ -2896,11 +2943,13 @@ bool ReadOnlyOrThrowDetector::run() {
       }
       if (hasMetadata(&I, "enzyme_ReadOnlyOrThrow"))
         continue;
-      // A call marked local read-only-or-throw is handled like a call to a
-      // local read-only-or-throw function below, as it may hand us memory it
-      // wrote.
+      // A call marked local or argmem read-only-or-throw is handled like a call
+      // to such a function below, as it may hand us memory it wrote.
       bool localMD = hasMetadata(&I, "enzyme_LocalReadOnlyOrThrow");
       if (localMD && !isa<CallBase>(&I))
+        continue;
+      bool argmemMD = hasMetadata(&I, "enzyme_ArgMemOnlyOrThrow");
+      if (argmemMD && !isa<CallBase>(&I))
         continue;
 
       if (auto MTI = dyn_cast<MemTransferInst>(&I)) {
@@ -2924,18 +2973,8 @@ bool ReadOnlyOrThrowDetector::run() {
           continue;
         }
         if (auto arg = dyn_cast<Argument>(Obj)) {
-          if (arg->hasStructRetAttr() ||
-              arg->getParent()
-                  ->getAttribute(arg->getArgNo() + AttributeList::FirstArgIndex,
-                                 "enzymejl_returnRoots")
-                  .isValid() ||
-              arg->getParent()
-                  ->getAttribute(arg->getArgNo() + AttributeList::FirstArgIndex,
-                                 "enzymejl_sret_union_bytes")
-                  .isValid()) {
-            local = true;
+          if (classifyWrittenArg(arg))
             continue;
-          }
         }
       }
       if (auto MSI = dyn_cast<MemSetInst>(&I)) {
@@ -2959,40 +2998,36 @@ bool ReadOnlyOrThrowDetector::run() {
           continue;
         }
         if (auto arg = dyn_cast<Argument>(Obj)) {
-          if (arg->hasStructRetAttr() ||
-              arg->getParent()
-                  ->getAttribute(arg->getArgNo() + AttributeList::FirstArgIndex,
-                                 "enzymejl_returnRoots")
-                  .isValid() ||
-              arg->getParent()
-                  ->getAttribute(arg->getArgNo() + AttributeList::FirstArgIndex,
-                                 "enzymejl_sret_union_bytes")
-                  .isValid()) {
-            local = true;
+          if (classifyWrittenArg(arg))
             continue;
-          }
         }
       }
 
       if (auto CI = dyn_cast<CallBase>(&I)) {
-        if (localMD || isLocalReadOnlyOrThrow(CI)) {
-          // A local read-only-or-throw callee may still write through its
-          // sret-like arguments, and those writes land in memory of ours.
-          // Classify them as we would a store of our own: memory local to us
-          // is fine, our own sret-like argument makes us local too (e.g. an
-          // sret passed straight through to the callee after call-slot
-          // optimization), and anything else disqualifies us.
+        auto Callee = CI->getCalledFunction();
+        bool isArgMemCall =
+            argmemMD || CI->hasFnAttr("enzyme_ArgMemOnlyOrThrow") ||
+            (Callee && Callee->getCallingConv() == CI->getCallingConv() &&
+             (Callee->hasFnAttribute("enzyme_ArgMemOnlyOrThrow") ||
+              (Callee->empty() && isArgMemOnlyOrThrow(CI))));
+        if (localMD || isLocalReadOnlyOrThrow(CI) || isArgMemCall) {
+          bool onlySRet = (localMD || isLocalReadOnlyOrThrow(CI)) && !argmemMD;
+          // A local or argmem read-only-or-throw callee may still write
+          // through its sret-like (or non-readonly pointer) arguments, and
+          // those writes land in memory of ours. Classify them as we would a
+          // store of our own: memory local to us is fine, our own sret-like
+          // argument makes us local too, an ordinary writable argument of ours
+          // makes us argmem, and anything else disqualifies us.
           if (!isReadOnlyOrThrow(CI)) {
-            // Unlike a fully read-only-or-throw callee, a local one may also
-            // write memory it allocates and hand it to us, through its result
-            // or its sret-like arguments. Like an allocation of ours that was
-            // written to, if that memory, or memory a pointer loaded from it
-            // points to, may escape us, we are only local read-only-or-throw
-            // too.
+            // Unlike a fully read-only-or-throw callee, a local or argmem one
+            // may also write memory it allocates and hand it to us, through
+            // its result or its writable arguments. Like an allocation of ours
+            // that was written to, if that memory, or memory a pointer loaded
+            // from it points to, may escape us, we are at least local
+            // read-only-or-throw too.
             if (needLocal() && !cannotHoldPointer(CI) &&
                 reaches(CI, /*Deep*/ true))
               local = true;
-            auto Callee = CI->getCalledFunction();
 #if LLVM_VERSION_MAJOR >= 14
             size_t nargs = CI->arg_size();
 #else
@@ -3002,22 +3037,27 @@ bool ReadOnlyOrThrowDetector::run() {
               Value *arg = CI->getArgOperand(i);
               if (!arg->getType()->isPointerTy())
                 continue;
-              bool sret = CI->paramHasAttr(i, Attribute::StructRet);
-              bool roots = false;
-              bool unionBytes = false;
-              if (Callee && i < Callee->arg_size()) {
-                roots = Callee
-                            ->getAttribute(i + AttributeList::FirstArgIndex,
-                                           "enzymejl_returnRoots")
-                            .isValid();
-                unionBytes =
-                    Callee
-                        ->getAttribute(i + AttributeList::FirstArgIndex,
-                                       "enzymejl_sret_union_bytes")
-                        .isValid();
+              if (onlySRet) {
+                bool sret = CI->paramHasAttr(i, Attribute::StructRet);
+                bool roots = false;
+                bool unionBytes = false;
+                if (Callee && i < Callee->arg_size()) {
+                  roots = Callee
+                              ->getAttribute(i + AttributeList::FirstArgIndex,
+                                             "enzymejl_returnRoots")
+                              .isValid();
+                  unionBytes =
+                      Callee
+                          ->getAttribute(i + AttributeList::FirstArgIndex,
+                                         "enzymejl_sret_union_bytes")
+                          .isValid();
+                }
+                if (!sret && !roots && !unionBytes)
+                  continue;
+              } else {
+                if (isReadOnly(CI, i))
+                  continue;
               }
-              if (!sret && !roots && !unionBytes)
-                continue;
               auto Obj = getBaseObject(arg);
               if (isa<AllocaInst>(Obj) || isAllocationCall(Obj, TLI)) {
                 if (needLocal() && reaches(Obj, /*Deep*/ true, CI))
@@ -3025,20 +3065,8 @@ bool ReadOnlyOrThrowDetector::run() {
                 continue;
               }
               if (auto A = dyn_cast<Argument>(Obj)) {
-                if (A->hasStructRetAttr() ||
-                    A->getParent()
-                        ->getAttribute(A->getArgNo() +
-                                           AttributeList::FirstArgIndex,
-                                       "enzymejl_returnRoots")
-                        .isValid() ||
-                    A->getParent()
-                        ->getAttribute(A->getArgNo() +
-                                           AttributeList::FirstArgIndex,
-                                       "enzymejl_sret_union_bytes")
-                        .isValid()) {
-                  local = true;
+                if (classifyWrittenArg(A))
                   continue;
-                }
               }
               if (EnzymePrintPerf) {
                 EmitWarning("WritingInstruction", I,
@@ -3069,20 +3097,8 @@ bool ReadOnlyOrThrowDetector::run() {
             continue;
           }
           if (auto arg = dyn_cast<Argument>(Obj)) {
-            if (arg->hasStructRetAttr() ||
-                arg->getParent()
-                    ->getAttribute(arg->getArgNo() +
-                                       AttributeList::FirstArgIndex,
-                                   "enzymejl_returnRoots")
-                    .isValid() ||
-                arg->getParent()
-                    ->getAttribute(arg->getArgNo() +
-                                       AttributeList::FirstArgIndex,
-                                   "enzymejl_sret_union_bytes")
-                    .isValid()) {
-              local = true;
+            if (classifyWrittenArg(arg))
               continue;
-            }
           }
         }
         if (auto F2 = CI->getCalledFunction()) {
@@ -3094,8 +3110,10 @@ bool ReadOnlyOrThrowDetector::run() {
               isRustNoAllocShimFunction(F2->getName()))
             continue;
           if (F2->getCallingConv() == CI->getCallingConv()) {
-            if (F2 == &F)
+            if (F2 == &F) {
+              selfCalls.push_back(CI);
               continue;
+            }
             if (isReadOnlyOrThrow(F2))
               continue;
             if (!F2->empty()) {
@@ -3133,18 +3151,8 @@ bool ReadOnlyOrThrowDetector::run() {
           continue;
         }
         if (auto arg = dyn_cast<Argument>(Obj)) {
-          if (arg->hasStructRetAttr() ||
-              arg->getParent()
-                  ->getAttribute(arg->getArgNo() + AttributeList::FirstArgIndex,
-                                 "enzymejl_returnRoots")
-                  .isValid() ||
-              arg->getParent()
-                  ->getAttribute(arg->getArgNo() + AttributeList::FirstArgIndex,
-                                 "enzymejl_sret_union_bytes")
-                  .isValid()) {
-            local = true;
+          if (classifyWrittenArg(arg))
             continue;
-          }
         }
       }
       // ignore atomic load impacts
@@ -3171,13 +3179,68 @@ bool ReadOnlyOrThrowDetector::run() {
     }
   }
 
+  if (!selfCalls.empty()) {
+    bool updated = true;
+    while (updated && (local || argmem)) {
+      updated = false;
+      bool prevLocal = local;
+      bool prevArgMem = argmem;
+      size_t prevWritten = writtenArgs.size();
+      for (CallBase *CI : selfCalls) {
+        if (needLocal() && !cannotHoldPointer(CI) && reaches(CI, /*Deep*/ true))
+          local = true;
+#if LLVM_VERSION_MAJOR >= 14
+        size_t nargs = CI->arg_size();
+#else
+        size_t nargs = CI->getNumArgOperands();
+#endif
+        for (size_t i = 0; i < nargs; ++i) {
+          Value *arg = CI->getArgOperand(i);
+          if (!arg->getType()->isPointerTy())
+            continue;
+          bool mayWriteParam = writtenArgs.contains(i) ||
+                               ((local || argmem) && isSRetLikeArg(i));
+          if (!mayWriteParam)
+            continue;
+          auto Obj = getBaseObject(arg);
+          if (isa<AllocaInst>(Obj) || isAllocationCall(Obj, TLI)) {
+            if (needLocal() && reaches(Obj, /*Deep*/ true, CI))
+              local = true;
+            continue;
+          }
+          if (auto A = dyn_cast<Argument>(Obj)) {
+            if (classifyWrittenArg(A))
+              continue;
+          }
+          if (EnzymePrintPerf) {
+            EmitWarning("WritingInstruction", *CI,
+                        "Instruction could write forcing ", F.getName(),
+                        " to not be marked readonly_or_throw per argument ", i,
+                        " of recursive call ", *CI);
+          }
+          return false;
+        }
+      }
+      if (local != prevLocal || argmem != prevArgMem ||
+          writtenArgs.size() != prevWritten)
+        updated = true;
+    }
+  }
+
   if (calls_todo.size() == 0) {
-    if (local) {
+    if (argmem) {
+      F.removeFnAttr("enzyme_ReadOnlyOrThrow");
+      F.removeFnAttr("enzyme_LocalReadOnlyOrThrow");
+      F.addFnAttr("enzyme_ArgMemOnlyOrThrow");
+    } else if (local) {
+      F.removeFnAttr("enzyme_ReadOnlyOrThrow");
+      F.removeFnAttr("enzyme_ArgMemOnlyOrThrow");
       F.addFnAttr("enzyme_LocalReadOnlyOrThrow");
     } else {
-      // A function is either local or fully read-only-or-throw, never both:
-      // an earlier run, e.g. on less optimized IR, may have marked it local.
+      // A function has at most one of the three attributes: an earlier run,
+      // e.g. on less optimized IR, may have marked it with a weaker one.
       F.removeFnAttr("enzyme_LocalReadOnlyOrThrow");
+      F.removeFnAttr("enzyme_ArgMemOnlyOrThrow");
       F.addFnAttr("enzyme_ReadOnlyOrThrow");
     }
     addReadOnlyOrThrowAttributes();
