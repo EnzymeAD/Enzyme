@@ -9500,15 +9500,86 @@ void InvertedPointerVH::deleted() {
   assert(0 && "erasing something in invertedPointers map");
 }
 
+void copySafeMemTransferAttrs(CallInst *cal, CallInst &MTI, size_t offset,
+                              bool isMemSet, MaybeAlign dalign,
+                              MaybeAlign salign) {
+  LLVMContext &Ctx = MTI.getContext();
+  AttributeList OrigAttrs = MTI.getAttributes();
+  AttributeList NewAttrs;
+  StringRef funcName = getFuncNameFromCall(&MTI);
+  bool isStdMemTransfer = isa<MemTransferInst>(&MTI) || funcName == "memcpy" ||
+                          funcName == "memmove";
+  if (!isMemSet && isStdMemTransfer) {
+    for (auto attr : OrigAttrs.getAttributes(AttributeList::FunctionIndex)) {
+      NewAttrs = NewAttrs.addAttribute(Ctx, AttributeList::FunctionIndex, attr);
+    }
+  }
+  auto copyArgAttrs = [&](unsigned argIdx) {
+#if LLVM_VERSION_MAJOR >= 14
+    unsigned numArgs = MTI.arg_size();
+#else
+    unsigned numArgs = MTI.getNumArgOperands();
+#endif
+    if (!isStdMemTransfer || argIdx >= numArgs)
+      return;
+    unsigned idx = AttributeList::FirstArgIndex + argIdx;
+    for (auto attr : OrigAttrs.getAttributes(idx)) {
+      if (attr.isEnumAttribute() && attr.getKindAsEnum() == Attribute::Returned)
+        continue;
+      if (attr.isIntAttribute()) {
+        auto Kind = attr.getKindAsEnum();
+        if (Kind == Attribute::Alignment)
+          continue;
+        if (offset != 0) {
+          if (Kind == Attribute::Dereferenceable) {
+            uint64_t Bytes = attr.getDereferenceableBytes();
+            if (Bytes > offset) {
+              NewAttrs = NewAttrs.addAttribute(
+                  Ctx, idx, Attribute::get(Ctx, Kind, Bytes - offset));
+            }
+            continue;
+          }
+          if (Kind == Attribute::DereferenceableOrNull)
+            continue;
+        }
+      }
+      NewAttrs = NewAttrs.addAttribute(Ctx, idx, attr);
+    }
+  };
+  copyArgAttrs(0);
+  if (!isMemSet)
+    copyArgAttrs(1);
+  if (dalign)
+    NewAttrs = NewAttrs.addAttribute(Ctx, AttributeList::FirstArgIndex,
+                                     Attribute::getWithAlignment(Ctx, *dalign));
+  if (!isMemSet && salign)
+    NewAttrs = NewAttrs.addAttribute(Ctx, AttributeList::FirstArgIndex + 1,
+                                     Attribute::getWithAlignment(Ctx, *salign));
+  cal->setAttributes(NewAttrs);
+}
+
 void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
                        Type *secretty, Intrinsic::ID intrinsic,
-                       unsigned dstalign, unsigned srcalign, unsigned offset,
+                       unsigned dstalign, unsigned srcalign, size_t offset,
                        bool dstConstant, Value *shadow_dst, Value *primal_dst,
                        bool srcConstant, Value *shadow_src, Value *primal_src,
                        Value *length, Value *isVolatile, llvm::CallInst *MTI,
                        bool allowForward, bool shadowsLookedUp,
                        bool backwardsShadow) {
-  // TODO offset
+  auto offsetBytePtr = [&](IRBuilder<> &B, Value *ptr) -> Value * {
+    if (ptr->getType()->isIntegerTy())
+      ptr = B.CreateIntToPtr(ptr, getInt8PtrTy(MTI->getContext()));
+    if (offset != 0) {
+      unsigned as = cast<PointerType>(ptr->getType())->getAddressSpace();
+      Type *i8Ty = Type::getInt8Ty(MTI->getContext());
+      Type *i8PtrTy = getPointerType(i8Ty, as);
+      if (ptr->getType() != i8PtrTy)
+        ptr = B.CreateBitCast(ptr, i8PtrTy);
+      ptr = B.CreateConstInBoundsGEP1_64(i8Ty, ptr, offset);
+    }
+    return ptr;
+  };
+
   if (secretty) {
     // no change to forward pass if represents floats
     if (mode == DerivativeMode::ReverseModeGradient ||
@@ -9523,32 +9594,33 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
       // If the src is constant simply zero d_dst and don't propagate to d_src
       // (which thus == src and may be illegal)
       if (srcConstant) {
-        // Don't zero in forward mode.
-        if (mode != DerivativeMode::ForwardModeSplit) {
-
-          Value *args[] = {
-              shadowsLookedUp ? shadow_dst
-                              : gutils->lookupM(shadow_dst, Builder2),
-              ConstantInt::get(Type::getInt8Ty(MTI->getContext()), 0),
-              gutils->lookupM(length, Builder2),
-              ConstantInt::getFalse(MTI->getContext())};
-
-          if (args[0]->getType()->isIntegerTy())
-            args[0] = Builder2.CreateIntToPtr(args[0],
-                                              getInt8PtrTy(MTI->getContext()));
-
-          Type *tys[] = {args[0]->getType(), args[2]->getType()};
-          auto memsetIntr = getIntrinsicDeclaration(
-              MTI->getParent()->getParent()->getParent(), Intrinsic::memset,
-              tys);
-          auto cal = Builder2.CreateCall(memsetIntr, args);
-          cal->setCallingConv(memsetIntr->getCallingConv());
-          if (dstalign != 0) {
-            cal->addParamAttr(0, Attribute::getWithAlignment(MTI->getContext(),
-                                                             Align(dstalign)));
-          }
+        auto dsto =
+            (shadowsLookedUp || mode == DerivativeMode::ForwardModeSplit)
+                ? shadow_dst
+                : gutils->lookupM(shadow_dst, Builder2);
+        Value *len = (mode == DerivativeMode::ForwardModeSplit)
+                         ? length
+                         : gutils->lookupM(length, Builder2);
+        if (gutils->runtimeActivity && primal_dst) {
+          Value *primal_dsto =
+              (shadowsLookedUp || mode == DerivativeMode::ForwardModeSplit)
+                  ? primal_dst
+                  : gutils->lookupM(primal_dst, Builder2);
+          if (primal_dsto->getType() != dsto->getType())
+            primal_dsto = Builder2.CreatePointerBitCastOrAddrSpaceCast(
+                primal_dsto, dsto->getType());
+          Value *dst_inactive = Builder2.CreateICmpEQ(dsto, primal_dsto);
+          len = Builder2.CreateSelect(dst_inactive,
+                                      ConstantInt::get(len->getType(), 0), len);
         }
-
+        dsto = offsetBytePtr(Builder2, dsto);
+        MaybeAlign dalign;
+        if (dstalign)
+          dalign = MaybeAlign(dstalign);
+        auto cal = Builder2.CreateMemSet(
+            dsto, ConstantInt::get(Type::getInt8Ty(MTI->getContext()), 0), len,
+            dalign);
+        cal->setDebugLoc(gutils->getNewFromOriginal(MTI->getDebugLoc()));
       } else {
         auto dsto =
             (shadowsLookedUp || mode == DerivativeMode::ForwardModeSplit)
@@ -9561,20 +9633,17 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
                 (shadowsLookedUp || mode == DerivativeMode::ForwardModeSplit)
                     ? primal_dst
                     : gutils->lookupM(primal_dst, Builder2);
+            if (primal_dsto->getType() != dsto->getType())
+              primal_dsto = Builder2.CreatePointerBitCastOrAddrSpaceCast(
+                  primal_dsto, dsto->getType());
             dst_inactive = Builder2.CreateICmpEQ(dsto, primal_dsto);
           } else {
             dst_inactive = ConstantInt::getFalse(Builder2.getContext());
           }
         }
-        if (dsto->getType()->isIntegerTy())
-          dsto =
-              Builder2.CreateIntToPtr(dsto, getInt8PtrTy(dsto->getContext()));
+        dsto = offsetBytePtr(Builder2, dsto);
         unsigned dstaddr =
             cast<PointerType>(dsto->getType())->getAddressSpace();
-        if (offset != 0) {
-          dsto = Builder2.CreateConstInBoundsGEP1_64(
-              Type::getInt8Ty(dsto->getContext()), dsto, offset);
-        }
         auto srco =
             (shadowsLookedUp || mode == DerivativeMode::ForwardModeSplit)
                 ? shadow_src
@@ -9588,21 +9657,18 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
                 (shadowsLookedUp || mode == DerivativeMode::ForwardModeSplit)
                     ? primal_src
                     : gutils->lookupM(primal_src, Builder2);
+            if (primal_srco->getType() != srco->getType())
+              primal_srco = Builder2.CreatePointerBitCastOrAddrSpaceCast(
+                  primal_srco, srco->getType());
             src_inactive = Builder2.CreateICmpEQ(srco, primal_srco);
           }
         }
         if (mode != DerivativeMode::ForwardModeSplit)
           dsto = Builder2.CreatePointerCast(dsto,
                                             getPointerType(secretty, dstaddr));
-        if (srco->getType()->isIntegerTy())
-          srco =
-              Builder2.CreateIntToPtr(srco, getInt8PtrTy(srco->getContext()));
+        srco = offsetBytePtr(Builder2, srco);
         unsigned srcaddr =
             cast<PointerType>(srco->getType())->getAddressSpace();
-        if (offset != 0) {
-          srco = Builder2.CreateConstInBoundsGEP1_64(
-              Type::getInt8Ty(srco->getContext()), srco, offset);
-        }
         if (mode != DerivativeMode::ForwardModeSplit)
           srco = Builder2.CreatePointerCast(srco,
                                             getPointerType(secretty, srcaddr));
@@ -9615,10 +9681,26 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
           if (srcalign)
             salign = MaybeAlign(srcalign);
 
+          Value *copyLength = length;
+          Value *zeroLength = nullptr;
+          if (gutils->runtimeActivity) {
+            Value *zero = ConstantInt::get(length->getType(), 0);
+            Value *copyCond = Builder2.CreateOr(dst_inactive, src_inactive);
+            copyLength = Builder2.CreateSelect(copyCond, zero, length);
+            Value *zeroCond = Builder2.CreateAnd(
+                Builder2.CreateNot(dst_inactive), src_inactive);
+            zeroLength = Builder2.CreateSelect(zeroCond, length, zero);
+          }
+
           if (intrinsic == Intrinsic::memmove) {
-            Builder2.CreateMemMove(dsto, dalign, srco, salign, length);
+            Builder2.CreateMemMove(dsto, dalign, srco, salign, copyLength);
           } else {
-            Builder2.CreateMemCpy(dsto, dalign, srco, salign, length);
+            Builder2.CreateMemCpy(dsto, dalign, srco, salign, copyLength);
+          }
+          if (zeroLength) {
+            Builder2.CreateMemSet(
+                dsto, ConstantInt::get(Type::getInt8Ty(MTI->getContext()), 0),
+                zeroLength, dalign);
           }
         } else {
           SmallVector<Value *, 5> args = {
@@ -9656,8 +9738,9 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
 
     // if represents pointer or integer type then only need to modify forward
     // pass with the copy
-    if ((allowForward && (mode == DerivativeMode::ReverseModePrimal ||
-                          mode == DerivativeMode::ReverseModeCombined)) ||
+    if ((allowForward && mode == DerivativeMode::ReverseModePrimal) ||
+        ((allowForward || backwardsShadow) &&
+         mode == DerivativeMode::ReverseModeCombined) ||
         (backwardsShadow && (mode == DerivativeMode::ReverseModeGradient ||
                              mode == DerivativeMode::ForwardModeSplit))) {
       assert(!shadowsLookedUp);
@@ -9679,21 +9762,19 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
       //  Optimization (not implemented): If dst can never escape Enzyme code,
       //  we may omit this copy.
       // no need to update pointers, even if dst is active
-      auto dsto = shadow_dst;
-      if (dsto->getType()->isIntegerTy())
-        dsto = BuilderZ.CreateIntToPtr(dsto, getInt8PtrTy(MTI->getContext()));
-      if (offset != 0) {
-        dsto = BuilderZ.CreateConstInBoundsGEP1_64(
-            Type::getInt8Ty(dsto->getContext()), dsto, offset);
+      Value *copyLen = length;
+      if (gutils->runtimeActivity && primal_dst) {
+        Value *cmpPrimal = primal_dst;
+        if (cmpPrimal->getType() != shadow_dst->getType())
+          cmpPrimal = BuilderZ.CreatePointerBitCastOrAddrSpaceCast(
+              cmpPrimal, shadow_dst->getType());
+        Value *dst_inactive = BuilderZ.CreateICmpEQ(shadow_dst, cmpPrimal);
+        copyLen = BuilderZ.CreateSelect(
+            dst_inactive, ConstantInt::get(length->getType(), 0), length);
       }
-      auto srco = shadow_src;
-      if (srco->getType()->isIntegerTy())
-        srco = BuilderZ.CreateIntToPtr(srco, getInt8PtrTy(MTI->getContext()));
-      if (offset != 0) {
-        srco = BuilderZ.CreateConstInBoundsGEP1_64(
-            Type::getInt8Ty(srco->getContext()), srco, offset);
-      }
-      Value *args[] = {dsto, srco, length, isVolatile};
+      auto dsto = offsetBytePtr(BuilderZ, shadow_dst);
+      auto srco = offsetBytePtr(BuilderZ, shadow_src);
+      Value *args[] = {dsto, srco, copyLen, isVolatile};
 
       Type *tys[] = {args[0]->getType(), args[1]->getType(),
                      args[2]->getType()};
@@ -9701,18 +9782,16 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
       auto memtransIntr =
           getIntrinsicDeclaration(gutils->newFunc->getParent(), intrinsic, tys);
       auto cal = BuilderZ.CreateCall(memtransIntr, args);
-      cal->setAttributes(MTI->getAttributes());
+      MaybeAlign dalign;
+      if (dstalign)
+        dalign = MaybeAlign(dstalign);
+      MaybeAlign salign;
+      if (srcalign)
+        salign = MaybeAlign(srcalign);
+      copySafeMemTransferAttrs(cal, *MTI, offset, /*isMemSet*/ false, dalign,
+                               salign);
       cal->setCallingConv(memtransIntr->getCallingConv());
       cal->setTailCallKind(MTI->getTailCallKind());
-
-      if (dstalign != 0) {
-        cal->addParamAttr(
-            0, Attribute::getWithAlignment(MTI->getContext(), Align(dstalign)));
-      }
-      if (srcalign != 0) {
-        cal->addParamAttr(
-            1, Attribute::getWithAlignment(MTI->getContext(), Align(srcalign)));
-      }
     }
   }
 }

@@ -1667,16 +1667,20 @@ void TypeAnalyzer::considerTBAA() {
         if (call->getCalledFunction() &&
             (call->getCalledFunction()->getIntrinsicID() == Intrinsic::memcpy ||
              call->getCalledFunction()->getIntrinsicID() ==
-                 Intrinsic::memmove)) {
+                 Intrinsic::memmove ||
+             call->getCalledFunction()->getName() == "memcpy" ||
+             call->getCalledFunction()->getName() == "memmove")) {
           int64_t copySize = 1;
           for (auto val : fntypeinfo.knownIntegralValues(call->getOperand(2),
                                                          DT, intseen, SE)) {
             copySize = max(copySize, val);
           }
+          int shiftSize =
+              (copySize > std::numeric_limits<int>::max()) ? -1 : (int)copySize;
           TypeTree update =
               vdptr
                   .ShiftIndices(DL, /*init offset*/ 0,
-                                /*max size*/ copySize, /*new offset*/ 0)
+                                /*max size*/ shiftSize, /*new offset*/ 0)
                   .Only(-1, call);
 
           updateAnalysis(call->getOperand(0), update, call);
@@ -3894,28 +3898,59 @@ void TypeAnalyzer::visitMemTransferCommon(llvm::CallBase &MTI) {
       !checkHypothesisPointerOperand(MTI.getArgOperand(1), &MTI))
     return;
 
+  if (MTI.getType()->isPointerTy()) {
+    if (direction & UP)
+      updateAnalysis(MTI.getArgOperand(0), getAnalysis(&MTI), &MTI);
+    if (direction & DOWN)
+      updateAnalysis(&MTI, getAnalysis(MTI.getArgOperand(0)), &MTI);
+  }
+
   if (!(direction & UP))
     return;
+
+#if LLVM_VERSION_MAJOR >= 14
+  for (unsigned i = 2; i < MTI.arg_size(); ++i)
+#else
+  for (unsigned i = 2; i < MTI.getNumArgOperands(); ++i)
+#endif
+  {
+    updateAnalysis(MTI.getArgOperand(i),
+                   TypeTree(BaseType::Integer).Only(-1, &MTI), &MTI);
+  }
 
   // If memcpy / memmove of pointer, we can propagate type information from src
   // to dst up to the length and vice versa
   size_t sz = 1;
+  bool knownLen = false;
   for (auto val :
        fntypeinfo.knownIntegralValues(MTI.getArgOperand(2), DT, intseen, SE)) {
     if (val >= 0) {
-      sz = max(sz, (size_t)val);
+      if (!knownLen) {
+        sz = (size_t)val;
+        knownLen = true;
+      } else {
+        sz = max(sz, (size_t)val);
+      }
     }
+  }
+  if (knownLen && sz == 0) {
+    updateAnalysis(MTI.getArgOperand(0),
+                   TypeTree(BaseType::Pointer).Only(-1, &MTI), &MTI);
+    updateAnalysis(MTI.getArgOperand(1),
+                   TypeTree(BaseType::Pointer).Only(-1, &MTI), &MTI);
+    return;
   }
 
   auto &dl = MTI.getParent()->getParent()->getParent()->getDataLayout();
+  int shiftSize = (sz > (size_t)std::numeric_limits<int>::max()) ? -1 : (int)sz;
   TypeTree res = getAnalysis(MTI.getArgOperand(0))
                      .PurgeAnything()
                      .Data0()
-                     .ShiftIndices(dl, 0, sz, 0);
+                     .ShiftIndices(dl, 0, shiftSize, 0);
   TypeTree res2 = getAnalysis(MTI.getArgOperand(1))
                       .PurgeAnything()
                       .Data0()
-                      .ShiftIndices(dl, 0, sz, 0);
+                      .ShiftIndices(dl, 0, shiftSize, 0);
 
   bool Legal = true;
   res.checkedOrIn(res2, /*PointerIntSame*/ false, Legal);
@@ -3946,15 +3981,6 @@ void TypeAnalyzer::visitMemTransferCommon(llvm::CallBase &MTI) {
   res = res.Only(-1, &MTI);
   updateAnalysis(MTI.getArgOperand(0), res, &MTI);
   updateAnalysis(MTI.getArgOperand(1), res, &MTI);
-#if LLVM_VERSION_MAJOR >= 14
-  for (unsigned i = 2; i < MTI.arg_size(); ++i)
-#else
-  for (unsigned i = 2; i < MTI.getNumArgOperands(); ++i)
-#endif
-  {
-    updateAnalysis(MTI.getArgOperand(i),
-                   TypeTree(BaseType::Integer).Only(-1, &MTI), &MTI);
-  }
 }
 
 void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {

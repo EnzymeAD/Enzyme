@@ -4031,7 +4031,38 @@ public:
                               llvm::Value *new_size, llvm::Value *isVolatile) {
     using namespace llvm;
 
-    if (gutils->isConstantValue(MTI.getOperand(0))) {
+    // C memcpy/memmove return their destination pointer (arg 0). Resolve any
+    // pre-created shadow placeholder before early returns.
+    if (auto ifound = gutils->invertedPointers.find(&MTI);
+        ifound != gutils->invertedPointers.end()) {
+      if (auto placeholder = dyn_cast<PHINode>(&*ifound->second)) {
+        IRBuilder<> B(gutils->getNewFromOriginal(&MTI));
+        Value *res;
+        if (gutils->isConstantValue(orig_dst)) {
+          Value *primal = gutils->getNewFromOriginal(orig_dst);
+          res = applyChainRule(MTI.getType(), B, [&]() -> Value * {
+            if (primal->getType() != MTI.getType())
+              return B.CreatePointerBitCastOrAddrSpaceCast(primal,
+                                                           MTI.getType());
+            return primal;
+          });
+        } else {
+          res = gutils->invertPointerM(orig_dst, B);
+          if (res->getType() != placeholder->getType()) {
+            res = applyChainRule(
+                MTI.getType(), B,
+                [&](Value *v) -> Value * {
+                  return B.CreatePointerBitCastOrAddrSpaceCast(v,
+                                                               MTI.getType());
+                },
+                res);
+          }
+        }
+        resolveShadowPlaceholder(MTI, res);
+      }
+    }
+
+    if (gutils->isConstantValue(orig_dst)) {
       eraseIfUnused(MTI);
       return;
     }
@@ -4088,16 +4119,18 @@ public:
                                     !gutils->runtimeActivity);
     } else {
       auto &DL = gutils->newFunc->getParent()->getDataLayout();
-      auto vd = TR.query(orig_dst).Data0().ShiftIndices(DL, 0, size, 0);
-      vd |= TR.query(orig_src).Data0().PurgeAnything().ShiftIndices(DL, 0, size,
-                                                                    0);
+      int shiftSize =
+          (size > (size_t)std::numeric_limits<int>::max()) ? -1 : (int)size;
+      auto vd = TR.query(orig_dst).Data0().ShiftIndices(DL, 0, shiftSize, 0);
+      vd |= TR.query(orig_src).Data0().PurgeAnything().ShiftIndices(
+          DL, 0, shiftSize, 0);
       for (size_t i = 0; i < MTI.getNumOperands(); i++)
         if (MTI.getOperand(i) == orig_dst)
           if (MTI.getAttributes().hasParamAttr(i, "enzyme_type")) {
             auto attr = MTI.getAttributes().getParamAttr(i, "enzyme_type");
             auto TT =
                 TypeTree::parse(attr.getValueAsString(), MTI.getContext());
-            vd |= TT.Data0().ShiftIndices(DL, 0, size, 0);
+            vd |= TT.Data0().ShiftIndices(DL, 0, shiftSize, 0);
             break;
           }
 
@@ -4199,23 +4232,27 @@ public:
 
     known:;
       {
+        size_t maxConcrete = 0;
+        for (const auto &pair : vd.getMapping()) {
+          if (pair.first.size() == 1 && pair.first[0] >= 0) {
+            size_t end = (size_t)pair.first[0] + 1;
+            if (end > maxConcrete)
+              maxConcrete = end;
+          }
+        }
+        size_t start = 0;
+        while (start < size) {
+          size_t nextStart = size;
 
-        unsigned start = 0;
-        while (1) {
-          unsigned nextStart = size;
-
-          auto dt = vd[{-1}];
-          for (size_t i = start; i < size; ++i) {
+          ConcreteType dt = BaseType::Unknown;
+          auto mergeByte = [&](ConcreteType next) -> bool {
             bool Legal = true;
             auto tmp = dt;
-            auto next = vd[{(int)i}];
             tmp.checkedOrIn(next, /*PointerIntSame*/ true, Legal);
-            // Prevent fusion of {Anything, Float} since anything is an int rule
-            // but float requires zeroing.
-            if ((dt == BaseType::Anything &&
-                 (next != BaseType::Anything && next.isKnown())) ||
-                (next == BaseType::Anything &&
-                 (dt != BaseType::Anything && dt.isKnown())))
+            // Prevent fusion of {Anything, Float} since anything uses the
+            // non-float rule while float requires zeroing.
+            if ((dt == BaseType::Anything && next.isFloat()) ||
+                (next == BaseType::Anything && dt.isFloat()))
               Legal = false;
             if (!Legal) {
               if (Mode == DerivativeMode::ForwardMode ||
@@ -4226,8 +4263,7 @@ public:
                 //   + copy
                 // if known non-constant, also the same
                 //   + copy
-                if ((dt.isFloat() == nullptr) ==
-                    (vd[{(int)i}].isFloat() == nullptr)) {
+                if ((dt.isFloat() == nullptr) == (next.isFloat() == nullptr)) {
                   Legal = true;
                 }
                 if (!gutils->isConstantValue(orig_src) &&
@@ -4235,23 +4271,32 @@ public:
                   Legal = true;
                 }
               }
-              if (!Legal) {
-                nextStart = i;
-                break;
-              }
-            } else
-              dt = tmp;
+              return Legal;
+            }
+            dt = tmp;
+            return true;
+          };
+
+          size_t limit = std::min(size, maxConcrete);
+          for (size_t i = start; i < limit; ++i) {
+            if (!mergeByte(vd[{(int)i}])) {
+              nextStart = i;
+              break;
+            }
+          }
+          if (nextStart == size && limit < size) {
+            if (!mergeByte(vd[{-1}])) {
+              nextStart = limit;
+            }
           }
           if (!dt.isKnown()) {
             TR.dump();
             llvm::errs() << " vd:" << vd.str() << " start:" << start
                          << " size: " << size << " dt:" << dt.str() << "\n";
           }
-          assert(dt.isKnown());
+          assert(dt.isKnown() && "Unknown type in memtransfer segment");
           toIterate.emplace_back(dt.isFloat(), start, nextStart - start);
 
-          if (nextStart == size)
-            break;
           start = nextStart;
         }
       }
@@ -4279,20 +4324,10 @@ public:
         length = BuilderZ.CreateSub(
             length, ConstantInt::get(new_size->getType(), seg_start));
 
-      unsigned subdstalign = dstalign;
-      // todo make better alignment calculation
-      if (dstalign != 0) {
-        if (seg_start % dstalign != 0) {
-          dstalign = 1;
-        }
-      }
-      unsigned subsrcalign = srcalign;
-      // todo make better alignment calculation
-      if (srcalign != 0) {
-        if (seg_start % srcalign != 0) {
-          srcalign = 1;
-        }
-      }
+      unsigned subdstalign =
+          dstalign ? commonAlignment(Align(dstalign), seg_start).value() : 0;
+      unsigned subsrcalign =
+          srcalign ? commonAlignment(Align(srcalign), seg_start).value() : 0;
       IRBuilder<> BuilderZ(gutils->getNewFromOriginal(&MTI));
       Value *shadow_dst = gutils->isConstantValue(orig_dst)
                               ? nullptr
@@ -4325,63 +4360,91 @@ public:
         MaybeAlign dalign;
         if (subdstalign)
           dalign = MaybeAlign(subdstalign);
-        MaybeAlign salign;
-        if (subsrcalign)
-          salign = MaybeAlign(subsrcalign);
-        if (ddst->getType()->isIntegerTy())
-          ddst =
-              BuilderZ.CreateIntToPtr(ddst, getInt8PtrTy(ddst->getContext()));
-        if (seg_start != 0) {
-          ddst = BuilderZ.CreateConstInBoundsGEP1_64(
-              Type::getInt8Ty(ddst->getContext()), ddst, seg_start);
+        auto toPtr = [&](Value *ptr) {
+          if (ptr->getType()->isIntegerTy())
+            ptr = BuilderZ.CreateIntToPtr(ptr, getInt8PtrTy(ptr->getContext()));
+          if (seg_start != 0) {
+            unsigned as = cast<PointerType>(ptr->getType())->getAddressSpace();
+            Type *i8Ty = Type::getInt8Ty(ptr->getContext());
+            Type *i8PtrTy = getPointerType(i8Ty, as);
+            if (ptr->getType() != i8PtrTy)
+              ptr = BuilderZ.CreateBitCast(ptr, i8PtrTy);
+            ptr = BuilderZ.CreateConstInBoundsGEP1_64(i8Ty, ptr, seg_start);
+          }
+          return ptr;
+        };
+        Value *dst_inactive = nullptr;
+        if (gutils->runtimeActivity) {
+          Value *dst = gutils->getNewFromOriginal(orig_dst);
+          if (dst->getType() != ddst->getType())
+            dst = BuilderZ.CreatePointerBitCastOrAddrSpaceCast(dst,
+                                                               ddst->getType());
+          dst_inactive = BuilderZ.CreateICmpEQ(ddst, dst);
         }
+        Value *ddstPtr = toPtr(ddst);
+        bool isVol = isa<ConstantInt>(isVolatile) &&
+                     cast<ConstantInt>(isVolatile)->isOne();
         CallInst *call;
         if (floatTy && gutils->isConstantValue(orig_src)) {
+          Value *zeroLen = length;
+          if (dst_inactive)
+            zeroLen = BuilderZ.CreateSelect(
+                dst_inactive, ConstantInt::get(length->getType(), 0), length);
           call = BuilderZ.CreateMemSet(
-              ddst, ConstantInt::get(Type::getInt8Ty(ddst->getContext()), 0),
-              length, dalign, cast<ConstantInt>(isVolatile)->isOne());
+              ddstPtr,
+              ConstantInt::get(Type::getInt8Ty(ddstPtr->getContext()), 0),
+              zeroLen, dalign, isVol);
+          copySafeMemTransferAttrs(call, MTI, seg_start, /*isMemSet*/ true,
+                                   dalign, MaybeAlign());
         } else {
-          auto toPtr = [&](Value *ptr) {
-            if (ptr->getType()->isIntegerTy())
-              ptr =
-                  BuilderZ.CreateIntToPtr(ptr, getInt8PtrTy(ptr->getContext()));
-            if (seg_start != 0) {
-              ptr = BuilderZ.CreateConstInBoundsGEP1_64(
-                  Type::getInt8Ty(ptr->getContext()), ptr, seg_start);
-            }
-            return ptr;
-          };
-          dsrc = toPtr(dsrc);
-
-          // With runtime activity, a source that is inactive at runtime has
-          // its primal as its shadow. Its float data has a zero derivative, so
-          // zero the shadow instead of copying the primal into it.
+          // With runtime activity, skip writing into a runtime-inactive
+          // destination (ddst == dst) so primal memory is never overwritten,
+          // and zero the shadow when the source is runtime-inactive (dsrc ==
+          // src) for floating-point segments.
           Value *copyLength = length;
           Value *zeroLength = nullptr;
-          if (floatTy && gutils->runtimeActivity) {
-            Value *src = toPtr(gutils->getNewFromOriginal(orig_src));
-            if (src->getType() != dsrc->getType())
-              src = BuilderZ.CreatePointerBitCastOrAddrSpaceCast(
-                  src, dsrc->getType());
-            Value *inactive = BuilderZ.CreateICmpEQ(dsrc, src);
+          if (gutils->runtimeActivity) {
             Value *zero = ConstantInt::get(length->getType(), 0);
-            copyLength = BuilderZ.CreateSelect(inactive, zero, length);
-            zeroLength = BuilderZ.CreateSelect(inactive, length, zero);
+            if (floatTy) {
+              Value *src = gutils->getNewFromOriginal(orig_src);
+              if (src->getType() != dsrc->getType())
+                src = BuilderZ.CreatePointerBitCastOrAddrSpaceCast(
+                    src, dsrc->getType());
+              Value *src_inactive = BuilderZ.CreateICmpEQ(dsrc, src);
+              Value *skipCopy = BuilderZ.CreateOr(dst_inactive, src_inactive);
+              copyLength = BuilderZ.CreateSelect(skipCopy, zero, length);
+              Value *doZero = BuilderZ.CreateAnd(
+                  BuilderZ.CreateNot(dst_inactive), src_inactive);
+              zeroLength = BuilderZ.CreateSelect(doZero, length, zero);
+            } else {
+              copyLength = BuilderZ.CreateSelect(dst_inactive, zero, length);
+            }
           }
+          Value *dsrcPtr = toPtr(dsrc);
 
+          MaybeAlign copyDalign =
+              dstAlign ? MaybeAlign(commonAlignment(*dstAlign, seg_start))
+                       : MaybeAlign();
+          MaybeAlign copySalign =
+              srcAlign ? MaybeAlign(commonAlignment(*srcAlign, seg_start))
+                       : MaybeAlign();
           if (ID == Intrinsic::memmove) {
-            call =
-                BuilderZ.CreateMemMove(ddst, dalign, dsrc, salign, copyLength);
+            call = BuilderZ.CreateMemMove(ddstPtr, copyDalign, dsrcPtr,
+                                          copySalign, copyLength, isVol);
           } else {
-            call =
-                BuilderZ.CreateMemCpy(ddst, dalign, dsrc, salign, copyLength);
+            call = BuilderZ.CreateMemCpy(ddstPtr, copyDalign, dsrcPtr,
+                                         copySalign, copyLength, isVol);
           }
-          call->setAttributes(MTI.getAttributes());
+          copySafeMemTransferAttrs(call, MTI, seg_start, /*isMemSet*/ false,
+                                   copyDalign, copySalign);
 
-          if (zeroLength)
-            BuilderZ.CreateMemSet(
-                ddst, ConstantInt::get(Type::getInt8Ty(ddst->getContext()), 0),
-                zeroLength, dalign);
+          if (zeroLength) {
+            auto zcall = BuilderZ.CreateMemSet(
+                ddstPtr,
+                ConstantInt::get(Type::getInt8Ty(ddstPtr->getContext()), 0),
+                zeroLength, dalign, isVol);
+            zcall->setDebugLoc(gutils->getNewFromOriginal(MTI.getDebugLoc()));
+          }
         }
         // TODO shadow scope/noalias (performance)
         call->setMetadata(LLVMContext::MD_alias_scope,
@@ -4398,6 +4461,7 @@ public:
           if (auto sliced = sliceTrueType(m, seg_start, seg_size))
             call->setMetadata("enzyme_truetype", sliced);
         call->setTailCallKind(MTI.getTailCallKind());
+        call->setDebugLoc(gutils->getNewFromOriginal(MTI.getDebugLoc()));
       };
 
       if (Mode == DerivativeMode::ForwardMode ||

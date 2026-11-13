@@ -35,9 +35,13 @@ attributes #3 = { nounwind }
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %[[dst:.+]] = bitcast ptr %dst to ptr
 ; CHECK-NEXT:   %[[src:.+]] = bitcast ptr %src to ptr
-; CHECK-NEXT:   %[[inactive:.+]] = icmp eq ptr %"src'", %[[src]]
-; CHECK-NEXT:   %[[cpylen:.+]] = select i1 %[[inactive]], i64 0, i64 %num
-; CHECK-NEXT:   %[[zerolen:.+]] = select i1 %[[inactive]], i64 %num, i64 0
+; CHECK-NEXT:   %[[dstinact:.+]] = icmp eq ptr %"dst'", %[[dst]]
+; CHECK-NEXT:   %[[srcinact:.+]] = icmp eq ptr %"src'", %[[src]]
+; CHECK-NEXT:   %[[skipcpy:.+]] = or i1 %[[dstinact]], %[[srcinact]]
+; CHECK-NEXT:   %[[cpylen:.+]] = select i1 %[[skipcpy]], i64 0, i64 %num
+; CHECK-NEXT:   %[[dstact:.+]] = xor i1 %[[dstinact]], true
+; CHECK-NEXT:   %[[dozero:.+]] = and i1 %[[dstact]], %[[srcinact]]
+; CHECK-NEXT:   %[[zerolen:.+]] = select i1 %[[dozero]], i64 %num, i64 0
 ; CHECK-NEXT:   tail call void @llvm.memcpy.p0.p0.i64(ptr align 1 %"dst'", ptr align 1 %"src'", i64 %[[cpylen]], i1 false)
 ; CHECK-NEXT:   call void @llvm.memset.p0.i64(ptr align 1 %"dst'", i8 0, i64 %[[zerolen]], i1 false)
 ; CHECK-NEXT:   tail call void @llvm.memcpy.p0.p0.i64(ptr align 1 %[[dst]], ptr align 1 %[[src]], i64 %num, i1 false)
