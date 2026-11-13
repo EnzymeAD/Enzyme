@@ -31,8 +31,8 @@ if(CMAKE_CUDA_COMPILER)
   # used instead, and finding none is an error; a failed detection can leave
   # its message in place of the list, so the list is checked for its form.
   if(CMAKE_CUDA_ARCHITECTURES STREQUAL "native")
-    if(NOT CMAKE_CUDA_ARCHITECTURES_NATIVE
-       MATCHES "^[0-9]+-real(;[0-9]+-real)*$")
+    if(NOT CMAKE_CUDA_ARCHITECTURES_NATIVE MATCHES
+       "^[0-9]+-real(;[0-9]+-real)*$")
       message(
         FATAL_ERROR
           "CMAKE_CUDA_ARCHITECTURES is 'native', but CMake found no GPU; give "
@@ -341,9 +341,8 @@ target_compile_features(poseidon_profile_host PRIVATE cxx_std_17)
 
 # The error-corrected GEMM dispatch is cuMpSGEMM's; a build without it neither
 # offers that candidate nor has its runtime.
-option(
-  POSEIDON_TCEC_USE_CUMPSGEMM
-  "Build the error-corrected GEMM dispatch, which runs on cuMpSGEMM" OFF)
+option(POSEIDON_TCEC_USE_CUMPSGEMM
+       "Build the error-corrected GEMM dispatch, which runs on cuMpSGEMM" OFF)
 set(POSEIDON_CUMPSGEMM_ROOT ""
     CACHE
       PATH
@@ -639,8 +638,13 @@ add_custom_command(
     $<TARGET_FILE_DIR:poseidon-clang>/poseidon-clang++)
 
 install(
-  TARGETS ${POSEIDON_PLUGIN_TARGET} poseidon_profile poseidon_profile_host
-  poseidon-clang poseidon-calibrate poseidon-probe
+  TARGETS
+  ${POSEIDON_PLUGIN_TARGET}
+  poseidon_profile
+  poseidon_profile_host
+  poseidon-clang
+  poseidon-calibrate
+  poseidon-probe
   EXPORT PoseidonTargets
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
