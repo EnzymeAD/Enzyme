@@ -126,7 +126,19 @@ namespace enzyme {
       Duplicated(T,T) -> Duplicated<T>;
 
       template < typename T >
+      Duplicated(const T*, T*) -> Duplicated<const T*>;
+
+      template < typename T >
+      Duplicated(T*, const T*) -> Duplicated<const T*>;
+
+      template < typename T >
       DuplicatedNoNeed(T,T) -> DuplicatedNoNeed<T>;
+
+      template < typename T >
+      DuplicatedNoNeed(const T*, T*) -> DuplicatedNoNeed<const T*>;
+
+      template < typename T >
+      DuplicatedNoNeed(T*, const T*) -> DuplicatedNoNeed<const T*>;
     #endif
 
     template < typename T >
@@ -327,13 +339,19 @@ namespace enzyme {
     template < typename T >
     __attribute__((always_inline))
     auto primal_args(const enzyme::Duplicated<T> & arg) {
-        return enzyme::tuple<T>{arg.value};
+        if constexpr (std::is_reference_v<T>)
+            return enzyme::tuple<T>{*arg.value};
+        else
+            return enzyme::tuple<T>{arg.value};
     }
 
     template < typename T >
     __attribute__((always_inline))
     auto primal_args(const enzyme::DuplicatedNoNeed<T> & arg) {
-        return enzyme::tuple<T>{arg.value};
+        if constexpr (std::is_reference_v<T>)
+            return enzyme::tuple<T>{*arg.value};
+        else
+            return enzyme::tuple<T>{arg.value};
     }
 
     template < typename T >
@@ -345,7 +363,10 @@ namespace enzyme {
     template < typename T >
     __attribute__((always_inline))
     auto primal_args(const enzyme::Const<T> & arg) {
-        return enzyme::tuple<T>{arg.value};
+        if constexpr (std::is_reference_v<T>)
+            return enzyme::tuple<T>{*arg.value};
+        else
+            return enzyme::tuple<T>{arg.value};
     }
 
     template < template <typename> class Template, typename Arg >
@@ -534,6 +555,48 @@ namespace enzyme {
         template<class T>
         struct is_function_or_function_ptr<T*> : std::is_function<T> {};
 
+        template <typename Param, typename Arg>
+        struct is_abi_compatible_arg {
+          static constexpr bool value =
+              std::is_same_v<Param, Arg> ||
+              (std::is_lvalue_reference_v<Param> &&
+               std::is_lvalue_reference_v<Arg> &&
+               std::is_convertible_v<Arg, Param> &&
+               std::is_same_v<remove_cvref_t<Param>, remove_cvref_t<Arg>>) ||
+              (std::is_rvalue_reference_v<Param> &&
+               std::is_rvalue_reference_v<Arg> &&
+               std::is_convertible_v<Arg, Param> &&
+               std::is_same_v<remove_cvref_t<Param>, remove_cvref_t<Arg>>);
+        };
+
+        template <typename Param, typename Arg>
+        struct is_abi_compatible_arg<Param*, Arg*> {
+          static constexpr bool value =
+              std::is_convertible_v<Arg*, Param*> &&
+              is_abi_compatible_arg<std::remove_cv_t<Param>,
+                                    std::remove_cv_t<Arg>>::value;
+        };
+
+        template <typename Fn, typename Functy, typename Enable = void>
+        struct is_abi_compatible_func : std::false_type {};
+
+        template <typename R1, typename... P1, typename R2, typename... P2>
+        struct is_abi_compatible_func<
+            R1(P1...), R2(P2...),
+            std::enable_if_t<sizeof...(P1) == sizeof...(P2)>> {
+          static constexpr bool value =
+              std::is_same_v<R1, R2> &&
+              (is_abi_compatible_arg<P1, P2>::value && ...);
+        };
+
+        template <typename R1, typename... P1, typename R2, typename... P2>
+        struct is_abi_compatible_func<R1(P1...) noexcept, R2(P2...)>
+            : is_abi_compatible_func<R1(P1...), R2(P2...)> {};
+
+        template <typename Fn, typename Functy>
+        struct is_abi_compatible_func<Fn*, Functy>
+            : is_abi_compatible_func<Fn, Functy> {};
+
         template <typename T>
         struct wrapped_callable {
           static constexpr bool is_wrapped = false;
@@ -631,14 +694,14 @@ namespace enzyme {
 
     template < typename function, typename ... arg_types, std::enable_if_t<!detail::wrapped_callable<remove_cvref_t<function>>::is_wrapped, int> = 0>
     auto primal_call(function && f, arg_types && ... args) {
-        return primal_impl<function>(impl::forward<function>(f), enzyme::tuple_cat(primal_args(args)...));
+        return primal_impl<function>(impl::forward<function>(f), enzyme::forward_as_tuple(enzyme::get<0>(primal_args(args))...));
     }
 
     template < typename function, typename ... arg_types, std::enable_if_t<detail::wrapped_callable<remove_cvref_t<function>>::is_wrapped, int> = 0>
     auto primal_call(function && f, arg_types && ... args) {
         using WC = detail::wrapped_callable<remove_cvref_t<function>>;
         auto* fp = WC::value_ptr(f);
-        return primal_impl<typename WC::fn_type&>(*fp, enzyme::tuple_cat(primal_args(args)...));
+        return primal_impl<typename WC::fn_type&>(*fp, enzyme::forward_as_tuple(enzyme::get<0>(primal_args(args))...));
     }
 
     template < typename return_type, typename DiffMode, typename function, typename functy, typename RetActivity, typename ... enz_arg_types, std::enable_if_t<!detail::is_function_or_function_ptr<typename remove_cvref< function >::type>::value, int> = 0>
@@ -655,7 +718,13 @@ namespace enzyme {
     __attribute__((always_inline))
     auto autodiff_impl(function && f, enzyme::tuple< enz_arg_types ... > && arg_tup) {
       using Tuple = enzyme::tuple< enz_arg_types ... >;
-      return detail::autodiff_apply<DiffMode>::template impl<return_type>((void*)static_cast<functy*>(f), detail::ret_global<RetActivity>::value, impl::forward<Tuple>(arg_tup), std::make_index_sequence<enzyme::tuple_size_v<Tuple>>{});
+      void* fn_ptr;
+      if constexpr (detail::is_abi_compatible_func<typename remove_cvref<function>::type, functy>::value) {
+        fn_ptr = reinterpret_cast<void*>(+f);
+      } else {
+        fn_ptr = (void*)static_cast<functy*>(f);
+      }
+      return detail::autodiff_apply<DiffMode>::template impl<return_type>(fn_ptr, detail::ret_global<RetActivity>::value, impl::forward<Tuple>(arg_tup), std::make_index_sequence<enzyme::tuple_size_v<Tuple>>{});
     }
 
     template < typename DiffMode, typename RetActivity, typename function, typename ... arg_types, std::enable_if_t<!detail::wrapped_callable<remove_cvref_t<function>>::is_wrapped, int> = 0>

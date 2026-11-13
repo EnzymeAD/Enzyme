@@ -275,6 +275,11 @@ endif()
 add_library(LLDEnzymeFlags INTERFACE)
 target_compile_options(LLDEnzymeFlags INTERFACE -flto)
 target_link_options(LLDEnzymeFlags INTERFACE "SHELL: -fuse-ld=lld")
+target_include_directories(
+  LLDEnzymeFlags
+  INTERFACE
+    $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:${INSTALL_INCLUDE_DIR}>)
 
 target_link_options(
   LLDEnzymeFlags
@@ -321,6 +326,11 @@ if(ENZYME_ENABLE_PLUGINS)
   target_compile_options(
     ClangEnzymeFlags
     INTERFACE "-fplugin=$<TARGET_FILE:ClangEnzyme-${LLVM_VERSION_MAJOR}>")
+  target_include_directories(
+    ClangEnzymeFlags
+    INTERFACE
+      $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
+      $<INSTALL_INTERFACE:${INSTALL_INCLUDE_DIR}>)
 
   # this custom target exists to prevent CMake from incorrectly assuming that
   # targets that link depend on ClangEnzyme-XX can be built at the same time or
@@ -343,9 +353,6 @@ if(ENZYME_ENABLE_PLUGINS)
       TARGETS ClangEnzyme-${LLVM_VERSION_MAJOR}
       EXPORT EnzymeTargets
       LIBRARY DESTINATION lib COMPONENT shlib COMPONENT dev)
-    install(
-      DIRECTORY "${PROJECT_SOURCE_DIR}/include/enzyme"
-      DESTINATION "include")
   endif()
   if(${ENZYME_FLANG})
     install(
@@ -376,6 +383,11 @@ if(ENZYME_ENABLE_PLUGINS)
     LIBRARY DESTINATION lib COMPONENT shlib COMPONENT dev)
 
 endif()
+
+install(
+  DIRECTORY "${PROJECT_SOURCE_DIR}/include/enzyme"
+  DESTINATION "${INSTALL_INCLUDE_DIR}"
+  COMPONENT dev)
 
 if(ENZYME_MLIR)
   add_subdirectory(MLIR)
