@@ -60,6 +60,7 @@
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/TimeProfiler.h"
+#include "llvm/Transforms/Utils/BasicBlockUtils.h"
 
 #if LLVM_VERSION_MAJOR >= 14
 #define addAttribute addAttributeAtIndex
@@ -1342,27 +1343,35 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
     toreturn->copyIRFlags(load);
     if (load->getParent()->getParent() == newFunc)
       if (auto orig = isOriginal(load)) {
-        SmallVector<Metadata *, 1> scopeMD = {
-            getDerivativeAliasScope(orig->getOperand(0), -1)};
+        bool distinct = isStaticallyDistinctFromShadow(orig->getOperand(0));
+        SmallVector<Metadata *, 1> scopeMD;
+        if (distinct)
+          scopeMD.push_back(getDerivativeAliasScope(orig->getOperand(0), -1));
         if (auto prev = orig->getMetadata(LLVMContext::MD_alias_scope)) {
           for (auto &M : cast<MDNode>(prev)->operands()) {
             scopeMD.push_back(M);
           }
         }
-        auto scope = MDNode::get(orig->getContext(), scopeMD);
-        toreturn->setMetadata(LLVMContext::MD_alias_scope, scope);
+        if (scopeMD.size()) {
+          auto scope = MDNode::get(orig->getContext(), scopeMD);
+          toreturn->setMetadata(LLVMContext::MD_alias_scope, scope);
+        }
 
         SmallVector<Metadata *, 1> MDs;
-        for (size_t j = 0; j < getWidth(); j++) {
-          MDs.push_back(getDerivativeAliasScope(orig->getOperand(0), j));
+        if (distinct) {
+          for (size_t j = 0; j < getWidth(); j++) {
+            MDs.push_back(getDerivativeAliasScope(orig->getOperand(0), j));
+          }
         }
         if (auto prev = orig->getMetadata(LLVMContext::MD_noalias)) {
           for (auto &M : cast<MDNode>(prev)->operands()) {
             MDs.push_back(M);
           }
         }
-        auto noscope = MDNode::get(orig->getContext(), MDs);
-        toreturn->setMetadata(LLVMContext::MD_noalias, noscope);
+        if (MDs.size()) {
+          auto noscope = MDNode::get(orig->getContext(), MDs);
+          toreturn->setMetadata(LLVMContext::MD_noalias, noscope);
+        }
       }
     unwrappedLoads[toreturn] = load;
     if (toreturn->getParent()->getParent() != load->getParent()->getParent())
@@ -1516,21 +1525,29 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
                 toreturn->setSyncScopeID(dli->getSyncScopeID());
                 llvm::SmallVector<unsigned int, 9> ToCopy2(MD_ToCopy);
                 toreturn->copyMetadata(*dli, ToCopy2);
-                SmallVector<Metadata *, 1> scopeMD = {
-                    getDerivativeAliasScope(dli->getOperand(0), s_idx)};
+                bool distinct =
+                    isStaticallyDistinctFromShadow(dli->getOperand(0));
+                SmallVector<Metadata *, 1> scopeMD;
+                if (distinct)
+                  scopeMD.push_back(
+                      getDerivativeAliasScope(dli->getOperand(0), s_idx));
                 if (auto prev = dli->getMetadata(LLVMContext::MD_alias_scope)) {
                   for (auto &M : cast<MDNode>(prev)->operands()) {
                     scopeMD.push_back(M);
                   }
                 }
-                auto scope = MDNode::get(dli->getContext(), scopeMD);
-                toreturn->setMetadata(LLVMContext::MD_alias_scope, scope);
+                if (scopeMD.size()) {
+                  auto scope = MDNode::get(dli->getContext(), scopeMD);
+                  toreturn->setMetadata(LLVMContext::MD_alias_scope, scope);
+                }
 
                 SmallVector<Metadata *, 1> MDs;
-                for (ssize_t j = -1; j < getWidth(); j++) {
-                  if (j != (ssize_t)s_idx)
-                    MDs.push_back(
-                        getDerivativeAliasScope(dli->getOperand(0), j));
+                if (distinct) {
+                  for (ssize_t j = -1; j < getWidth(); j++) {
+                    if (j != (ssize_t)s_idx)
+                      MDs.push_back(
+                          getDerivativeAliasScope(dli->getOperand(0), j));
+                  }
                 }
                 if (auto prev = dli->getMetadata(LLVMContext::MD_noalias)) {
                   for (auto &M : cast<MDNode>(prev)->operands()) {
@@ -4532,6 +4549,87 @@ bool GradientUtils::shouldRecompute(const Value *val,
   return true;
 }
 
+bool GradientUtils::isStaticallyDistinctFromShadow(const Value *origptr) const {
+  if (!runtimeActivity)
+    return true;
+  auto basePtr = getBaseObject(origptr);
+  return (isa<AllocaInst>(basePtr) || isAllocationCall(basePtr, TLI)) &&
+         !isConstantValue(const_cast<Value *>(basePtr));
+}
+
+void GradientUtils::addDeferredConditionalGuard(Value *cond,
+                                                ArrayRef<Instruction *> insts,
+                                                Instruction *result,
+                                                Value *fallback) {
+  assert(cond && "conditional guard requires a condition");
+  assert(!insts.empty() && "conditional guard requires instructions");
+  DeferredConditionalGuard G;
+  G.cond = cond;
+  for (Instruction *I : insts)
+    G.insts.emplace_back(I);
+  G.result = result;
+  G.fallback = fallback;
+  deferredConditionalGuards.push_back(std::move(G));
+}
+
+void GradientUtils::applyDeferredConditionalGuards() {
+  auto guards = std::move(deferredConditionalGuards);
+  deferredConditionalGuards.clear();
+  for (auto &G : guards) {
+    Value *cond = G.cond;
+    if (!cond)
+      continue;
+    SmallVector<Instruction *, 4> liveInsts;
+    for (auto &VH : G.insts) {
+      if (auto *I = dyn_cast_or_null<Instruction>(static_cast<Value *>(VH))) {
+        if (I->getParent())
+          liveInsts.push_back(I);
+      }
+    }
+    if (liveInsts.empty())
+      continue;
+    Instruction *resInst =
+        dyn_cast_or_null<Instruction>(static_cast<Value *>(G.result));
+    if (resInst && !resInst->getParent())
+      resInst = nullptr;
+    Value *fallback = G.fallback;
+
+    if (auto *CI = dyn_cast<ConstantInt>(cond)) {
+      if (CI->isOne())
+        continue;
+      if (resInst) {
+        assert(fallback && "missing fallback value for guarded result");
+        resInst->replaceAllUsesWith(fallback);
+      }
+      for (Instruction *I : llvm::reverse(liveInsts))
+        I->eraseFromParent();
+      continue;
+    }
+
+    Instruction *firstInst = liveInsts.front();
+    BasicBlock *origBB = firstInst->getParent();
+    Instruction *thenTerm =
+        SplitBlockAndInsertIfThen(cond, firstInst, /*Unreachable=*/false);
+    BasicBlock *thenBB = thenTerm->getParent();
+    BasicBlock *tailBB = firstInst->getParent();
+    for (Instruction *I : liveInsts) {
+      if (I->getParent() == tailBB)
+        moveBeforeInst(I, thenTerm);
+    }
+    if (resInst && resInst->getParent() == thenBB) {
+      assert(fallback && "missing fallback value for guarded result");
+      PHINode *PN =
+          PHINode::Create(resInst->getType(), 2, "", getFirstNonPHI(tailBB));
+      resInst->replaceUsesWithIf(PN, [thenBB](Use &U) {
+        auto *UI = dyn_cast<Instruction>(U.getUser());
+        return !UI || UI->getParent() != thenBB;
+      });
+      PN->addIncoming(resInst, thenBB);
+      PN->addIncoming(fallback, origBB);
+    }
+  }
+}
+
 MDNode *GradientUtils::getDerivativeAliasScope(const Value *origptr,
                                                ssize_t newptr) {
   origptr = getBaseObject(origptr);
@@ -5231,7 +5329,20 @@ void GradientUtils::setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
     }
   }
 
+  bool distinct = isStaticallyDistinctFromShadow(origptr);
+  bool guardForwardStore =
+      !distinct && isOriginalBlock(*BuilderM.GetInsertBlock());
+
   auto rule = [&](Value *ptr, Value *newval, Value *invertedBarrier) {
+    Value *raCond = nullptr;
+    if (guardForwardStore) {
+      Value *primalPtr = getNewFromOriginal(origptr);
+      if (primalPtr->getType() != ptr->getType())
+        primalPtr = BuilderM.CreatePointerBitCastOrAddrSpaceCast(
+            primalPtr, ptr->getType());
+      raCond = BuilderM.CreateICmpNE(primalPtr, ptr);
+    }
+
     auto storeSize = (DL.getTypeSizeInBits(newval->getType()) + 7) / 8;
     if (!mask) {
 
@@ -5307,15 +5418,26 @@ void GradientUtils::setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
         BuilderM.CreateCall(wb, subvals);
       }
 
+      if (raCond) {
+        SmallVector<Instruction *, 4> guardedInsts;
+        for (auto it = ts->getIterator(), end = BuilderM.GetInsertPoint();
+             it != end; ++it)
+          guardedInsts.push_back(&*it);
+        addDeferredConditionalGuard(raCond, guardedInsts);
+      }
+
       ts->setVolatile(isVolatile);
       ts->setOrdering(ordering);
       ts->setSyncScopeID(syncScope);
-      SmallVector<Metadata *, 1> scopeMD = {
-          getDerivativeAliasScope(origptr, idx)};
+      SmallVector<Metadata *, 1> scopeMD;
+      if (distinct)
+        scopeMD.push_back(getDerivativeAliasScope(origptr, idx));
       for (auto M : scopes)
         scopeMD.push_back(M);
-      auto scope = MDNode::get(ts->getContext(), scopeMD);
-      ts->setMetadata(LLVMContext::MD_alias_scope, scope);
+      if (scopeMD.size()) {
+        auto scope = MDNode::get(ts->getContext(), scopeMD);
+        ts->setMetadata(LLVMContext::MD_alias_scope, scope);
+      }
 
       if (start == 0 && size == storeSize) {
         ts->setMetadata(LLVMContext::MD_tbaa,
@@ -5326,9 +5448,11 @@ void GradientUtils::setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
       ts->setDebugLoc(getNewFromOriginal(orig->getDebugLoc()));
 
       SmallVector<Metadata *, 1> MDs;
-      for (ssize_t j = -1; j < getWidth(); j++) {
-        if (j != (ssize_t)idx)
-          MDs.push_back(getDerivativeAliasScope(origptr, j));
+      if (distinct) {
+        for (ssize_t j = -1; j < getWidth(); j++) {
+          if (j != (ssize_t)idx)
+            MDs.push_back(getDerivativeAliasScope(origptr, j));
+        }
       }
       for (auto M : noAlias)
         MDs.push_back(M);
@@ -5353,6 +5477,8 @@ void GradientUtils::setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
       ts->setMetadata(LLVMContext::MD_tbaa_struct,
                       orig->getMetadata(LLVMContext::MD_tbaa_struct));
       ts->setDebugLoc(getNewFromOriginal(orig->getDebugLoc()));
+      if (raCond)
+        addDeferredConditionalGuard(raCond, {ts});
     }
     idx++;
   };
@@ -6582,22 +6708,29 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       }
     }
     size_t idx = 0;
+    bool distinct = isStaticallyDistinctFromShadow(op0);
     auto rule = [&](Value *ip) {
       auto li = bb.CreateLoad(arg->getType(), ip, arg->getName() + "'ipl");
       llvm::SmallVector<unsigned int, 9> ToCopy2(MD_ToCopy);
       li->copyMetadata(*arg, ToCopy2);
       li->copyIRFlags(arg);
 
-      SmallVector<Metadata *, 1> scopeMD = {getDerivativeAliasScope(op0, idx)};
+      SmallVector<Metadata *, 1> scopeMD;
+      if (distinct)
+        scopeMD.push_back(getDerivativeAliasScope(op0, idx));
       for (auto M : prevScopes)
         scopeMD.push_back(M);
-      auto scope = MDNode::get(li->getContext(), scopeMD);
-      li->setMetadata(LLVMContext::MD_alias_scope, scope);
+      if (scopeMD.size()) {
+        auto scope = MDNode::get(li->getContext(), scopeMD);
+        li->setMetadata(LLVMContext::MD_alias_scope, scope);
+      }
 
       SmallVector<Metadata *, 1> MDs;
-      for (ssize_t j = -1; j < getWidth(); j++) {
-        if (j != (ssize_t)idx)
-          MDs.push_back(getDerivativeAliasScope(op0, j));
+      if (distinct) {
+        for (ssize_t j = -1; j < getWidth(); j++) {
+          if (j != (ssize_t)idx)
+            MDs.push_back(getDerivativeAliasScope(op0, j));
+        }
       }
       for (auto M : prevNoAlias)
         MDs.push_back(M);

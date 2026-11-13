@@ -220,6 +220,25 @@ public:
     ip = lookup(ip, Builder2);
     order = reverseLoadOrdering(order);
 
+    BasicBlock *merge = nullptr;
+    if (!gutils->isStaticallyDistinctFromShadow(ptr)) {
+      Value *primal_ptr = lookup(gutils->getNewFromOriginal(ptr), Builder2);
+      Value *shadow_ptr = ip;
+      if (gutils->getWidth() != 1)
+        shadow_ptr = gutils->extractMeta(Builder2, shadow_ptr, 0);
+      if (primal_ptr->getType() != shadow_ptr->getType())
+        primal_ptr = Builder2.CreatePointerBitCastOrAddrSpaceCast(
+            primal_ptr, shadow_ptr->getType());
+      Value *shadow = Builder2.CreateICmpNE(primal_ptr, shadow_ptr);
+      BasicBlock *current = Builder2.GetInsertBlock();
+      BasicBlock *conditional =
+          gutils->addReverseBlock(current, current->getName() + "_active");
+      merge =
+          gutils->addReverseBlock(conditional, current->getName() + "_amerge");
+      Builder2.CreateCondBr(shadow, conditional, merge);
+      Builder2.SetInsertPoint(conditional);
+    }
+
     auto rule = [&](Value *ip) -> Value * {
       LoadInst *dif1 = Builder2.CreateLoad(loadTy, ip, isVolatile);
       dif1->setAlignment(align);
@@ -235,6 +254,10 @@ public:
     Value *diff = applyChainRule(val->getType(), Builder2, rule, ip);
 
     addToDiffe(val, diff, Builder2, FT->getScalarType());
+    if (merge) {
+      Builder2.CreateBr(merge);
+      Builder2.SetInsertPoint(merge);
+    }
   }
 
   llvm::Value *MPI_TYPE_SIZE(llvm::Value *DT, llvm::IRBuilder<> &B,
@@ -585,27 +608,35 @@ public:
 
     auto *newi = dyn_cast<Instruction>(gutils->getNewFromOriginal(&I));
 
-    SmallVector<Metadata *, 1> scopeMD = {
-        gutils->getDerivativeAliasScope(I.getOperand(0), -1)};
+    bool distinct = gutils->isStaticallyDistinctFromShadow(I.getOperand(0));
+    SmallVector<Metadata *, 1> scopeMD;
+    if (distinct)
+      scopeMD.push_back(gutils->getDerivativeAliasScope(I.getOperand(0), -1));
     if (auto prev = I.getMetadata(LLVMContext::MD_alias_scope)) {
       for (auto &M : cast<MDNode>(prev)->operands()) {
         scopeMD.push_back(M);
       }
     }
-    auto scope = MDNode::get(I.getContext(), scopeMD);
-    newi->setMetadata(LLVMContext::MD_alias_scope, scope);
+    if (scopeMD.size()) {
+      auto scope = MDNode::get(I.getContext(), scopeMD);
+      newi->setMetadata(LLVMContext::MD_alias_scope, scope);
+    }
 
     SmallVector<Metadata *, 1> MDs;
-    for (size_t j = 0; j < gutils->getWidth(); j++) {
-      MDs.push_back(gutils->getDerivativeAliasScope(I.getOperand(0), j));
+    if (distinct) {
+      for (size_t j = 0; j < gutils->getWidth(); j++) {
+        MDs.push_back(gutils->getDerivativeAliasScope(I.getOperand(0), j));
+      }
     }
     if (auto prev = I.getMetadata(LLVMContext::MD_noalias)) {
       for (auto &M : cast<MDNode>(prev)->operands()) {
         MDs.push_back(M);
       }
     }
-    auto noscope = MDNode::get(I.getContext(), MDs);
-    newi->setMetadata(LLVMContext::MD_noalias, noscope);
+    if (MDs.size()) {
+      auto noscope = MDNode::get(I.getContext(), MDs);
+      newi->setMetadata(LLVMContext::MD_noalias, noscope);
+    }
 
     auto vd = TR.query(&I);
 
@@ -661,20 +692,214 @@ public:
           }
         } else {
           Value *newip = gutils->invertPointerM(&I, BuilderZ);
-          if (gutils->runtimeActivity && vd[{-1}].isFloat()) {
-            // TODO handle mask
-            assert(!mask);
-
-            auto rule = [&](Value *inop, Value *newip) -> Value * {
-              Value *shadow = BuilderZ.CreateICmpNE(
-                  gutils->getNewFromOriginal(I.getOperand(0)), inop);
-              newip = CreateSelect(BuilderZ, shadow, newip,
-                                   Constant::getNullValue(newip->getType()));
-              return newip;
+          if (!distinct) {
+            std::function<bool(Type *, int)> hasFloatInType = [&](Type *T,
+                                                                  int off) {
+              if (vd[{-1}].isFloat())
+                return true;
+              if (isa<ScalableVectorType>(T) || T->isPointerTy())
+                return false;
+              if (T->isFloatingPointTy())
+                return vd[{off}].isFloat() != nullptr;
+              if (auto *ST = dyn_cast<StructType>(T)) {
+                const StructLayout *SL = DL.getStructLayout(ST);
+                for (unsigned i = 0, e = ST->getNumElements(); i < e; ++i)
+                  if (hasFloatInType(ST->getElementType(i),
+                                     off + (int)SL->getElementOffset(i)))
+                    return true;
+                return false;
+              }
+              if (auto *AT = dyn_cast<ArrayType>(T)) {
+                uint64_t stride = DL.getTypeAllocSize(AT->getElementType());
+                for (uint64_t i = 0, e = AT->getNumElements(); i < e; ++i)
+                  if (hasFloatInType(AT->getElementType(),
+                                     off + (int)(i * stride)))
+                    return true;
+                return false;
+              }
+              if (auto *VT = dyn_cast<FixedVectorType>(T)) {
+                uint64_t elemBits = DL.getTypeSizeInBits(VT->getElementType());
+                if (elemBits < 8)
+                  return false;
+                uint64_t stride = elemBits / 8;
+                for (unsigned i = 0, e = VT->getNumElements(); i < e; ++i)
+                  if (hasFloatInType(VT->getElementType(),
+                                     off + (int)(i * stride)))
+                    return true;
+                return false;
+              }
+              if (T->isIntegerTy()) {
+                size_t sz = (DL.getTypeSizeInBits(T) + 7) / 8;
+                for (size_t b = 0; b < sz; ++b)
+                  if (vd[{off + (int)b}].isFloat())
+                    return true;
+                return false;
+              }
+              return false;
             };
-            newip = applyChainRule(
-                I.getType(), BuilderZ, rule,
-                gutils->invertPointerM(I.getOperand(0), BuilderZ), newip);
+            std::function<bool(Type *, int)> allFloatInType = [&](Type *T,
+                                                                  int off) {
+              if (vd[{-1}].isFloat())
+                return true;
+              if (isa<ScalableVectorType>(T) || T->isPointerTy())
+                return false;
+              if (T->isFloatingPointTy())
+                return vd[{off}].isFloat() != nullptr;
+              if (auto *ST = dyn_cast<StructType>(T)) {
+                if (ST->getNumElements() == 0)
+                  return false;
+                const StructLayout *SL = DL.getStructLayout(ST);
+                for (unsigned i = 0, e = ST->getNumElements(); i < e; ++i)
+                  if (!allFloatInType(ST->getElementType(i),
+                                      off + (int)SL->getElementOffset(i)))
+                    return false;
+                return true;
+              }
+              if (auto *AT = dyn_cast<ArrayType>(T)) {
+                if (AT->getNumElements() == 0)
+                  return false;
+                uint64_t stride = DL.getTypeAllocSize(AT->getElementType());
+                for (uint64_t i = 0, e = AT->getNumElements(); i < e; ++i)
+                  if (!allFloatInType(AT->getElementType(),
+                                      off + (int)(i * stride)))
+                    return false;
+                return true;
+              }
+              if (auto *VT = dyn_cast<FixedVectorType>(T)) {
+                uint64_t elemBits = DL.getTypeSizeInBits(VT->getElementType());
+                if (elemBits < 8)
+                  return false;
+                uint64_t stride = elemBits / 8;
+                for (unsigned i = 0, e = VT->getNumElements(); i < e; ++i)
+                  if (!allFloatInType(VT->getElementType(),
+                                      off + (int)(i * stride)))
+                    return false;
+                return true;
+              }
+              if (T->isIntegerTy()) {
+                size_t sz = (DL.getTypeSizeInBits(T) + 7) / 8;
+                if (sz == 0)
+                  return false;
+                for (size_t b = 0; b < sz;) {
+                  Type *flt = vd[{off + (int)b}].isFloat();
+                  if (!flt)
+                    return false;
+                  size_t fltBytes =
+                      std::max<size_t>(1, (DL.getTypeSizeInBits(flt) + 7) / 8);
+                  b += fltBytes;
+                }
+                return true;
+              }
+              return false;
+            };
+            std::function<Value *(Value *, int, Value *, Value *)>
+                zeroRuntimeInactiveFloats = [&](Value *V, int off,
+                                                Value *shadow,
+                                                Value *laneMask) -> Value * {
+              Type *T = V->getType();
+              if (!hasFloatInType(T, off))
+                return V;
+              if (allFloatInType(T, off)) {
+                Value *zero = Constant::getNullValue(T);
+                if (laneMask) {
+                  Value *inactive = CreateSelect(BuilderZ, laneMask, zero, V);
+                  return CreateSelect(BuilderZ, shadow, V, inactive);
+                }
+                return CreateSelect(BuilderZ, shadow, V, zero);
+              }
+              if (auto *ST = dyn_cast<StructType>(T)) {
+                assert(!laneMask && "masked load cannot produce struct");
+                const StructLayout *SL = DL.getStructLayout(ST);
+                Value *res = V;
+                for (unsigned i = 0, e = ST->getNumElements(); i < e; ++i) {
+                  int fieldOff = off + (int)SL->getElementOffset(i);
+                  if (!hasFloatInType(ST->getElementType(i), fieldOff))
+                    continue;
+                  Value *elem = BuilderZ.CreateExtractValue(V, {i});
+                  Value *newElem = zeroRuntimeInactiveFloats(elem, fieldOff,
+                                                             shadow, nullptr);
+                  res = BuilderZ.CreateInsertValue(res, newElem, {i});
+                }
+                return res;
+              }
+              if (auto *AT = dyn_cast<ArrayType>(T)) {
+                assert(!laneMask && "masked load cannot produce array");
+                uint64_t stride = DL.getTypeAllocSize(AT->getElementType());
+                Value *res = V;
+                for (uint64_t i = 0, e = AT->getNumElements(); i < e; ++i) {
+                  int elemOff = off + (int)(i * stride);
+                  if (!hasFloatInType(AT->getElementType(), elemOff))
+                    continue;
+                  Value *elem = BuilderZ.CreateExtractValue(V, {(unsigned)i});
+                  Value *newElem =
+                      zeroRuntimeInactiveFloats(elem, elemOff, shadow, nullptr);
+                  res = BuilderZ.CreateInsertValue(res, newElem, {(unsigned)i});
+                }
+                return res;
+              }
+              if (auto *VT = dyn_cast<FixedVectorType>(T)) {
+                uint64_t stride =
+                    DL.getTypeSizeInBits(VT->getElementType()) / 8;
+                Value *res = V;
+                for (unsigned i = 0, e = VT->getNumElements(); i < e; ++i) {
+                  int elemOff = off + (int)(i * stride);
+                  if (!hasFloatInType(VT->getElementType(), elemOff))
+                    continue;
+                  Value *laneShadow = shadow;
+                  if (laneMask) {
+                    Value *m = BuilderZ.CreateExtractElement(laneMask, i);
+                    laneShadow =
+                        BuilderZ.CreateOr(shadow, BuilderZ.CreateNot(m));
+                  }
+                  Value *elem = BuilderZ.CreateExtractElement(V, i);
+                  Value *newElem = zeroRuntimeInactiveFloats(
+                      elem, elemOff, laneShadow, nullptr);
+                  res = BuilderZ.CreateInsertElement(res, newElem, i);
+                }
+                return res;
+              }
+              if (auto *IT = dyn_cast<IntegerType>(T)) {
+                unsigned bitWidth = IT->getBitWidth();
+                size_t sz = (bitWidth + 7) / 8;
+                APInt keepMask = APInt::getAllOnes(bitWidth);
+                for (size_t b = 0; b < sz;) {
+                  Type *flt = vd[{off + (int)b}].isFloat();
+                  if (!flt) {
+                    ++b;
+                    continue;
+                  }
+                  size_t fltBytes =
+                      std::max<size_t>(1, (DL.getTypeSizeInBits(flt) + 7) / 8);
+                  size_t bEnd = std::min(b + fltBytes, sz);
+                  for (size_t k = b; k < bEnd; ++k) {
+                    unsigned bitLo =
+                        DL.isLittleEndian() ? k * 8 : (sz - 1 - k) * 8;
+                    unsigned bitHi = std::min(bitLo + 8, bitWidth);
+                    for (unsigned bit = bitLo; bit < bitHi; ++bit)
+                      keepMask.clearBit(bit);
+                  }
+                  b = bEnd;
+                }
+                Value *masked =
+                    BuilderZ.CreateAnd(V, ConstantInt::get(IT, keepMask));
+                return CreateSelect(BuilderZ, shadow, V, masked);
+              }
+              return V;
+            };
+
+            if (hasFloatInType(I.getType(), 0)) {
+              auto rule = [&](Value *inop, Value *newip) -> Value * {
+                Value *primalPtr = gutils->getNewFromOriginal(I.getOperand(0));
+                if (primalPtr->getType() != inop->getType())
+                  primalPtr = BuilderZ.CreatePointerBitCastOrAddrSpaceCast(
+                      primalPtr, inop->getType());
+                Value *shadow = BuilderZ.CreateICmpNE(primalPtr, inop);
+                return zeroRuntimeInactiveFloats(newip, 0, shadow, mask);
+              };
+              newip = applyChainRule(
+                  I.getType(), BuilderZ, rule,
+                  gutils->invertPointerM(I.getOperand(0), BuilderZ), newip);
+            }
           }
           assert(newip->getType() == type);
           placeholder->replaceAllUsesWith(newip);
@@ -981,14 +1206,30 @@ public:
       if (Mode == DerivativeMode::ForwardMode ||
           Mode == DerivativeMode::ForwardModeError ||
           Mode == DerivativeMode::ForwardModeSplit) {
+        bool guardRA = !gutils->isStaticallyDistinctFromShadow(orig_ptr);
         auto rule = [&](Value *ptr, Value *dif) -> Value * {
           if (dif == nullptr)
             dif = Constant::getNullValue(I.getType());
           if (!gutils->isConstantInstruction(&I)) {
             assert(ptr);
+            Value *raCond = nullptr;
+            if (guardRA) {
+              Value *primalPtr = gutils->getNewFromOriginal(orig_ptr);
+              if (primalPtr->getType() != ptr->getType())
+                primalPtr = BuilderZ.CreatePointerBitCastOrAddrSpaceCast(
+                    primalPtr, ptr->getType());
+              raCond = BuilderZ.CreateICmpNE(primalPtr, ptr);
+            }
             AtomicRMWInst *rmw = nullptr;
             rmw = BuilderZ.CreateAtomicRMW(Op, ptr, dif, align, ordering, ssid);
             rmw->setVolatile(isVolatile);
+            if (raCond) {
+              if (gutils->isConstantValue(&I))
+                gutils->addDeferredConditionalGuard(raCond, {rmw});
+              else
+                gutils->addDeferredConditionalGuard(
+                    raCond, {rmw}, rmw, Constant::getNullValue(dif->getType()));
+            }
             if (gutils->isConstantValue(&I))
               return Constant::getNullValue(dif->getType());
             else
@@ -1009,6 +1250,10 @@ public:
                 : gutils->invertPointerM(orig_val, BuilderZ, TR.query(&I)));
         if (!gutils->isConstantValue(&I))
           setDiffe(&I, diff, BuilderZ);
+        if (Mode == DerivativeMode::ForwardModeSplit)
+          eraseIfUnused(I, /*erase*/ true, /*check*/ false);
+        else
+          eraseIfUnused(I);
         return;
       }
       if (Mode == DerivativeMode::ReverseModePrimal) {
@@ -1043,6 +1288,25 @@ public:
           getReverseBuilder(Builder2);
           Value *ip =
               lookup(gutils->invertPointerM(orig_ptr, Builder2), Builder2);
+          BasicBlock *merge = nullptr;
+          if (!gutils->isStaticallyDistinctFromShadow(orig_ptr)) {
+            Value *primal_ptr =
+                lookup(gutils->getNewFromOriginal(orig_ptr), Builder2);
+            Value *shadow_ptr = ip;
+            if (gutils->getWidth() != 1)
+              shadow_ptr = gutils->extractMeta(Builder2, shadow_ptr, 0);
+            if (primal_ptr->getType() != shadow_ptr->getType())
+              primal_ptr = Builder2.CreatePointerBitCastOrAddrSpaceCast(
+                  primal_ptr, shadow_ptr->getType());
+            Value *shadow = Builder2.CreateICmpNE(primal_ptr, shadow_ptr);
+            BasicBlock *current = Builder2.GetInsertBlock();
+            BasicBlock *conditional = gutils->addReverseBlock(
+                current, current->getName() + "_active");
+            merge = gutils->addReverseBlock(conditional,
+                                            current->getName() + "_amerge");
+            Builder2.CreateCondBr(shadow, conditional, merge);
+            Builder2.SetInsertPoint(conditional);
+          }
           auto rule = [&](Value *ip, Value *dret) {
             auto *rmw =
                 Builder2.CreateAtomicRMW(AtomicRMWInst::FAdd, ip, dret, align,
@@ -1050,6 +1314,10 @@ public:
             rmw->setVolatile(isVolatile);
           };
           applyChainRule(Builder2, rule, ip, dret);
+          if (merge) {
+            Builder2.CreateBr(merge);
+            Builder2.SetInsertPoint(merge);
+          }
         }
         if (Mode == DerivativeMode::ReverseModeGradient) {
           eraseIfUnused(I, /*erase*/ true, /*check*/ false);
@@ -1130,12 +1398,21 @@ public:
                 : gutils->invertPointerM(orig_val, BuilderZ, TR.query(&I));
         AtomicOrdering LoadOrder = reverseLoadOrdering(ordering);
         AtomicOrdering StoreOrder = forwardStoreOrdering(ordering);
+        bool guardRA = !gutils->isStaticallyDistinctFromShadow(orig_ptr);
         auto Rule = [&](Value *Ptr, Value *DeltaVal) -> Value * {
           Value *Zero = Constant::getNullValue(ValTy);
           if (!DeltaVal)
             DeltaVal = Zero;
           Value *DiffeOld = Zero;
           if (Ptr) {
+            Value *raCond = nullptr;
+            if (guardRA) {
+              Value *primalPtr = gutils->getNewFromOriginal(orig_ptr);
+              if (primalPtr->getType() != Ptr->getType())
+                primalPtr = BuilderZ.CreatePointerBitCastOrAddrSpaceCast(
+                    primalPtr, Ptr->getType());
+              raCond = BuilderZ.CreateICmpNE(primalPtr, Ptr);
+            }
             unsigned AS = cast<PointerType>(Ptr->getType())->getAddressSpace();
             Value *TypedPtr =
                 BuilderZ.CreatePointerCast(Ptr, getPointerType(ValTy, AS));
@@ -1153,8 +1430,20 @@ public:
             StoreNew->setAlignment(align);
             StoreNew->setOrdering(StoreOrder);
             StoreNew->setSyncScopeID(ssid);
+
+            if (raCond) {
+              SmallVector<Instruction *, 3> guardedInsts = {LoadOld};
+              if (auto *DiffeNewI = dyn_cast<Instruction>(DiffeNew))
+                guardedInsts.push_back(DiffeNewI);
+              guardedInsts.push_back(StoreNew);
+              if (gutils->isConstantValue(&I))
+                gutils->addDeferredConditionalGuard(raCond, guardedInsts);
+              else
+                gutils->addDeferredConditionalGuard(raCond, guardedInsts,
+                                                    LoadOld, Zero);
+            }
           }
-          return DiffeOld;
+          return gutils->isConstantValue(&I) ? Zero : DiffeOld;
         };
         Value *Diff = applyChainRule(ValTy, BuilderZ, Rule, InvPtr, DiffeVal);
         if (!gutils->isConstantValue(&I))
@@ -1189,10 +1478,35 @@ public:
               lookup(gutils->invertPointerM(orig_ptr, Builder2), Builder2);
 
           BasicBlock *CurrentBB = Builder2.GetInsertBlock();
-          BasicBlock *ChangedBB = gutils->addReverseBlock(
-              CurrentBB, CurrentBB->getName() + "_changed");
-          BasicBlock *MergeBB = gutils->addReverseBlock(
-              ChangedBB, CurrentBB->getName() + "_merge");
+          BasicBlock *ActiveMergeBB = nullptr;
+          BasicBlock *ChangedBB = nullptr;
+          BasicBlock *MergeBB = nullptr;
+          if (!gutils->isStaticallyDistinctFromShadow(orig_ptr)) {
+            Value *PrimalPtr =
+                lookup(gutils->getNewFromOriginal(orig_ptr), Builder2);
+            Value *ShadowPtr = InvPtr;
+            if (gutils->getWidth() != 1)
+              ShadowPtr = gutils->extractMeta(Builder2, ShadowPtr, 0);
+            if (PrimalPtr->getType() != ShadowPtr->getType())
+              PrimalPtr = Builder2.CreatePointerBitCastOrAddrSpaceCast(
+                  PrimalPtr, ShadowPtr->getType());
+            Value *IsActive = Builder2.CreateICmpNE(PrimalPtr, ShadowPtr);
+            BasicBlock *ActiveBB = gutils->addReverseBlock(
+                CurrentBB, CurrentBB->getName() + "_active");
+            ChangedBB = gutils->addReverseBlock(ActiveBB, CurrentBB->getName() +
+                                                              "_changed");
+            MergeBB = gutils->addReverseBlock(ChangedBB,
+                                              CurrentBB->getName() + "_merge");
+            ActiveMergeBB = gutils->addReverseBlock(
+                MergeBB, CurrentBB->getName() + "_amerge");
+            Builder2.CreateCondBr(IsActive, ActiveBB, ActiveMergeBB);
+            Builder2.SetInsertPoint(ActiveBB);
+          } else {
+            ChangedBB = gutils->addReverseBlock(
+                CurrentBB, CurrentBB->getName() + "_changed");
+            MergeBB = gutils->addReverseBlock(ChangedBB,
+                                              CurrentBB->getName() + "_merge");
+          }
           Builder2.CreateCondBr(ChangedRev, ChangedBB, MergeBB);
 
           Builder2.SetInsertPoint(ChangedBB);
@@ -1225,6 +1539,10 @@ public:
             };
             applyChainRule(Builder2, AddRetRule, InvPtr, DiffeRet);
           }
+          if (ActiveMergeBB) {
+            Builder2.CreateBr(ActiveMergeBB);
+            Builder2.SetInsertPoint(ActiveMergeBB);
+          }
         }
 
         if (Mode == DerivativeMode::ReverseModeGradient)
@@ -1248,7 +1566,7 @@ public:
                                 /*pointerIntSame*/ true);
       if (!fp.isKnown() && valType->isIntOrIntVectorTy()) {
         if (Mode == DerivativeMode::ReverseModeGradient ||
-            Mode == DerivativeMode::ReverseModeGradient) {
+            Mode == DerivativeMode::ForwardModeSplit) {
           eraseIfUnused(I, /*erase*/ true, /*check*/ false);
         } else
           eraseIfUnused(I);
@@ -1344,8 +1662,10 @@ public:
       return;
     }
 
-    SmallVector<Metadata *, 1> scopeMD = {
-        gutils->getDerivativeAliasScope(orig_ptr, -1)};
+    bool distinct = gutils->isStaticallyDistinctFromShadow(orig_ptr);
+    SmallVector<Metadata *, 1> scopeMD;
+    if (distinct)
+      scopeMD.push_back(gutils->getDerivativeAliasScope(orig_ptr, -1));
     SmallVector<Metadata *, 1> prevScopes;
     if (auto prev = I.getMetadata(LLVMContext::MD_alias_scope)) {
       for (auto &M : cast<MDNode>(prev)->operands()) {
@@ -1353,14 +1673,18 @@ public:
         prevScopes.push_back(M);
       }
     }
-    auto scope = MDNode::get(I.getContext(), scopeMD);
     auto NewI = gutils->getNewFromOriginal(&I);
-    NewI->setMetadata(LLVMContext::MD_alias_scope, scope);
+    if (scopeMD.size()) {
+      auto scope = MDNode::get(I.getContext(), scopeMD);
+      NewI->setMetadata(LLVMContext::MD_alias_scope, scope);
+    }
 
     SmallVector<Metadata *, 1> MDs;
     SmallVector<Metadata *, 1> prevNoAlias;
-    for (size_t j = 0; j < gutils->getWidth(); j++) {
-      MDs.push_back(gutils->getDerivativeAliasScope(orig_ptr, j));
+    if (distinct) {
+      for (size_t j = 0; j < gutils->getWidth(); j++) {
+        MDs.push_back(gutils->getDerivativeAliasScope(orig_ptr, j));
+      }
     }
     if (auto prev = I.getMetadata(LLVMContext::MD_noalias)) {
       for (auto &M : cast<MDNode>(prev)->operands()) {
@@ -1368,8 +1692,10 @@ public:
         prevNoAlias.push_back(M);
       }
     }
-    auto noscope = MDNode::get(I.getContext(), MDs);
-    NewI->setMetadata(LLVMContext::MD_noalias, noscope);
+    if (MDs.size()) {
+      auto noscope = MDNode::get(I.getContext(), MDs);
+      NewI->setMetadata(LLVMContext::MD_noalias, noscope);
+    }
 
     bool constantval = gutils->isConstantValue(orig_val) ||
                        parseTBAA(I, DL, nullptr)[{-1}].isIntegral();
@@ -1537,32 +1863,26 @@ public:
         case DerivativeMode::ReverseModeGradient:
         case DerivativeMode::ReverseModeCombined: {
 
-          if (!merge && gutils->runtimeActivity) {
-            auto basePtr = getBaseObject(orig_ptr);
-
-            // If runtime activity, first see if we can prove that the
-            // shadow/primal are distinct statically as they are
-            // allocas/mallocs, if not compare the pointers and conditionally
-            // execute.
-            if (!isa<AllocaInst>(basePtr) &&
-                !isAllocationCall(basePtr, gutils->TLI)) {
-              auto shadow_ptr =
-                  lookup(gutils->invertPointerM(orig_ptr, Builder2), Builder2);
-              auto primal_ptr =
-                  lookup(gutils->getNewFromOriginal(orig_ptr), Builder2);
-              if (gutils->getWidth() != 1) {
-                shadow_ptr = gutils->extractMeta(Builder2, shadow_ptr, 0);
-              }
-              Value *shadow = Builder2.CreateICmpNE(primal_ptr, shadow_ptr);
-
-              BasicBlock *current = Builder2.GetInsertBlock();
-              BasicBlock *conditional = gutils->addReverseBlock(
-                  current, current->getName() + "_active");
-              merge = gutils->addReverseBlock(conditional,
-                                              current->getName() + "_amerge");
-              Builder2.CreateCondBr(shadow, conditional, merge);
-              Builder2.SetInsertPoint(conditional);
+          if (!merge && !distinct) {
+            auto shadow_ptr =
+                lookup(gutils->invertPointerM(orig_ptr, Builder2), Builder2);
+            auto primal_ptr =
+                lookup(gutils->getNewFromOriginal(orig_ptr), Builder2);
+            if (gutils->getWidth() != 1) {
+              shadow_ptr = gutils->extractMeta(Builder2, shadow_ptr, 0);
             }
+            if (primal_ptr->getType() != shadow_ptr->getType())
+              primal_ptr = Builder2.CreatePointerBitCastOrAddrSpaceCast(
+                  primal_ptr, shadow_ptr->getType());
+            Value *shadow = Builder2.CreateICmpNE(primal_ptr, shadow_ptr);
+
+            BasicBlock *current = Builder2.GetInsertBlock();
+            BasicBlock *conditional = gutils->addReverseBlock(
+                current, current->getName() + "_active");
+            merge = gutils->addReverseBlock(conditional,
+                                            current->getName() + "_amerge");
+            Builder2.CreateCondBr(shadow, conditional, merge);
+            Builder2.SetInsertPoint(conditional);
           }
 
           if (constantval) {
@@ -1587,23 +1907,30 @@ public:
                 dif1->setOrdering(ordering);
                 dif1->setSyncScopeID(syncScope);
 
-                SmallVector<Metadata *, 1> scopeMD = {
-                    gutils->getDerivativeAliasScope(orig_ptr, idx)};
+                SmallVector<Metadata *, 1> scopeMD;
+                if (distinct)
+                  scopeMD.push_back(
+                      gutils->getDerivativeAliasScope(orig_ptr, idx));
                 for (auto M : prevScopes)
                   scopeMD.push_back(M);
 
                 SmallVector<Metadata *, 1> MDs;
-                for (ssize_t j = -1; j < gutils->getWidth(); j++) {
-                  if (j != (ssize_t)idx)
-                    MDs.push_back(gutils->getDerivativeAliasScope(orig_ptr, j));
+                if (distinct) {
+                  for (ssize_t j = -1; j < gutils->getWidth(); j++) {
+                    if (j != (ssize_t)idx)
+                      MDs.push_back(
+                          gutils->getDerivativeAliasScope(orig_ptr, j));
+                  }
                 }
                 for (auto M : prevNoAlias)
                   MDs.push_back(M);
 
-                dif1->setMetadata(LLVMContext::MD_alias_scope,
-                                  MDNode::get(I.getContext(), scopeMD));
-                dif1->setMetadata(LLVMContext::MD_noalias,
-                                  MDNode::get(I.getContext(), MDs));
+                if (scopeMD.size())
+                  dif1->setMetadata(LLVMContext::MD_alias_scope,
+                                    MDNode::get(I.getContext(), scopeMD));
+                if (MDs.size())
+                  dif1->setMetadata(LLVMContext::MD_noalias,
+                                    MDNode::get(I.getContext(), MDs));
                 dif1->setMetadata(LLVMContext::MD_tbaa,
                                   I.getMetadata(LLVMContext::MD_tbaa));
                 dif1->setMetadata(LLVMContext::MD_tbaa_struct,

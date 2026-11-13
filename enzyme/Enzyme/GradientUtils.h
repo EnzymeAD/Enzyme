@@ -471,8 +471,23 @@ public:
       differentialAliasScopeDomains;
   llvm::ValueMap<const llvm::Value *, llvm::DenseMap<ssize_t, llvm::MDNode *>>
       differentialAliasScope;
+  bool isStaticallyDistinctFromShadow(const llvm::Value *origptr) const;
   llvm::MDNode *getDerivativeAliasScope(const llvm::Value *origptr,
                                         ssize_t newptr);
+
+  struct DeferredConditionalGuard {
+    llvm::WeakTrackingVH cond;
+    llvm::SmallVector<llvm::WeakTrackingVH, 4> insts;
+    llvm::WeakTrackingVH result;
+    llvm::WeakTrackingVH fallback;
+  };
+  llvm::SmallVector<DeferredConditionalGuard, 4> deferredConditionalGuards;
+
+  void addDeferredConditionalGuard(llvm::Value *cond,
+                                   llvm::ArrayRef<llvm::Instruction *> insts,
+                                   llvm::Instruction *result = nullptr,
+                                   llvm::Value *fallback = nullptr);
+  void applyDeferredConditionalGuards();
 
   void setPtrDiffe(llvm::Instruction *orig, llvm::Value *ptr,
                    llvm::Value *newval, llvm::IRBuilder<> &BuilderM,
