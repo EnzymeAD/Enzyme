@@ -6628,7 +6628,26 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
     CONSIDER(remquof)
     CONSIDER(remquol)
 
-    if (isMemFreeLibMFunction(funcName)) {
+    PointerSinCosInfo SinCosInfo;
+    if (classifyPointerSinCos(funcName, call.getFunctionType(), &SinCosInfo)) {
+      Type *valTy = call.getArgOperand(0)->getType()->getScalarType();
+      TypeTree fpTree = TypeTree(ConcreteType(valTy)).Only(-1, &call);
+      updateAnalysis(call.getArgOperand(0), fpTree, &call);
+      TypeTree ptrTree = TypeTree(ConcreteType(valTy)).Only(0, &call);
+      ptrTree.insert({}, BaseType::Pointer);
+      ptrTree = ptrTree.Only(-1, &call);
+      if (SinCosInfo.sinReturned) {
+        updateAnalysis(&call, fpTree, &call);
+      } else {
+        updateAnalysis(call.getArgOperand(SinCosInfo.sinPtrArg), ptrTree,
+                       &call);
+      }
+      updateAnalysis(call.getArgOperand(SinCosInfo.cosPtrArg), ptrTree, &call);
+      return;
+    }
+
+    if (isMemFreeLibMFunction(funcName, /*ID*/ nullptr,
+                              call.getFunctionType())) {
 #if LLVM_VERSION_MAJOR >= 14
       for (size_t i = 0; i < call.arg_size(); ++i)
 #else

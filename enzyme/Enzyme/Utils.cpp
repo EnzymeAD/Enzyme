@@ -193,6 +193,31 @@ bool attributeKnownFunctions(llvm::Function &F) {
       }
   }
 
+  PointerSinCosInfo SinCosInfo;
+  if (classifyPointerSinCos(getFuncName(&F), F.getFunctionType(),
+                            &SinCosInfo)) {
+    changed = true;
+#if LLVM_VERSION_MAJOR >= 16
+    F.setOnlyAccessesArgMemory();
+    F.setOnlyWritesMemory();
+#else
+    F.addFnAttr(Attribute::ArgMemOnly);
+    F.addFnAttr(Attribute::WriteOnly);
+#endif
+    F.addFnAttr(Attribute::NoUnwind);
+    F.addFnAttr(Attribute::NoRecurse);
+    F.addFnAttr(Attribute::WillReturn);
+    F.addFnAttr(Attribute::NoFree);
+    F.addFnAttr(Attribute::NoSync);
+    F.addFnAttr("enzyme_no_escaping_allocation");
+    if (!SinCosInfo.sinReturned) {
+      F.addParamAttr(SinCosInfo.sinPtrArg, Attribute::WriteOnly);
+      addFunctionNoCapture(&F, SinCosInfo.sinPtrArg);
+    }
+    F.addParamAttr(SinCosInfo.cosPtrArg, Attribute::WriteOnly);
+    addFunctionNoCapture(&F, SinCosInfo.cosPtrArg);
+  }
+
   if (F.getName() ==
       "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE9_M_createERmm") {
     changed = true;

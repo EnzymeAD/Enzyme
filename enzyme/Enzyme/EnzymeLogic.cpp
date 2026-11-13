@@ -1106,7 +1106,7 @@ void calculateUnusedValuesInFunction(
             }
           }
           Intrinsic::ID ID = Intrinsic::not_intrinsic;
-          if (isMemFreeLibMFunction(funcName, &ID)) {
+          if (isMemFreeLibMFunction(funcName, &ID, obj_op->getFunctionType())) {
             mayWriteToMemory = false;
             // Assume MemFreeLibMFunction is no throw if empty
             if (auto Fn = getFunctionFromCall(obj_op)) {
@@ -1116,6 +1116,19 @@ void calculateUnusedValuesInFunction(
             }
           } else if (isReadOnly(obj_op)) {
             mayWriteToMemory = false;
+          }
+          PointerSinCosInfo SinCosInfo;
+          if (classifyPointerSinCos(funcName, obj_op->getFunctionType(),
+                                    &SinCosInfo)) {
+            bool sinNoNeed =
+                SinCosInfo.sinReturned
+                    ? !DifferentialUseAnalysis::is_value_needed_in_reverse<
+                          QueryType::Primal>(gutils, obj_op, mode, PrimalSeen,
+                                             oldUnreachable)
+                    : isNoNeed(obj_op->getArgOperand(SinCosInfo.sinPtrArg));
+            if (sinNoNeed &&
+                isNoNeed(obj_op->getArgOperand(SinCosInfo.cosPtrArg)))
+              return UseReq::Recur;
           }
           if (funcName == "memset" || funcName == "memset_pattern16" ||
               funcName == "memcpy" || funcName == "memmove") {
@@ -6896,7 +6909,8 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
 
   {
     Intrinsic::ID ID = Intrinsic::not_intrinsic;
-    if (isMemFreeLibMFunction(getFuncName(F), &ID))
+    if (isMemFreeLibMFunction(getFuncName(F), &ID, F->getFunctionType()) ||
+        classifyPointerSinCos(getFuncName(F), F->getFunctionType()))
       return F;
   }
 

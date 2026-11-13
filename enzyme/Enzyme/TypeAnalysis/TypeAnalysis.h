@@ -59,8 +59,13 @@
 extern const llvm::StringMap<llvm::Intrinsic::ID> LIBM_FUNCTIONS;
 
 static inline bool isMemFreeLibMFunction(llvm::StringRef str,
-                                         llvm::Intrinsic::ID *ID = nullptr) {
+                                         llvm::Intrinsic::ID *ID = nullptr,
+                                         const llvm::FunctionType *FT = nullptr) {
   llvm::StringRef ogstr = str;
+  if ((FT && classifyPointerSinCos(str, FT)) ||
+      startsWith(ogstr, "__nv_sincos") || startsWith(ogstr, "__ocml_sincos") ||
+      startsWith(ogstr, "air.sincos") || startsWith(ogstr, "air.fast_sincos"))
+    return false;
   if (ID) {
     if (str == "llvm.enzyme.lifetime_start") {
       *ID = llvm::Intrinsic::lifetime_start;

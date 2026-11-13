@@ -4358,7 +4358,8 @@ bool GradientUtils::legalRecompute(const Value *val,
 
     if (ci->hasFnAttr("enzyme_shouldrecompute") ||
         (called && called->hasFnAttribute("enzyme_shouldrecompute")) ||
-        isMemFreeLibMFunction(n, &ID) || n == "lgamma_r" || n == "lgammaf_r" ||
+        isMemFreeLibMFunction(n, &ID, ci->getFunctionType()) ||
+        n == "lgamma_r" || n == "lgammaf_r" ||
         n == "lgammal_r" || n == "__lgamma_r_finite" ||
         n == "__lgammaf_r_finite" || n == "__lgammal_r_finite" || n == "tanh" ||
         n == "tanhf" || n == "__pow_finite" ||
@@ -4508,7 +4509,8 @@ bool GradientUtils::shouldRecompute(const Value *val,
     auto n = getFuncNameFromCall(const_cast<CallInst *>(ci));
     Intrinsic::ID ID = Intrinsic::not_intrinsic;
     if ((called && called->hasFnAttribute("enzyme_shouldrecompute")) ||
-        isMemFreeLibMFunction(n, &ID) || n == "lgamma_r" || n == "lgammaf_r" ||
+        isMemFreeLibMFunction(n, &ID, ci->getFunctionType()) ||
+        n == "lgamma_r" || n == "lgammaf_r" ||
         n == "lgammal_r" || n == "__lgamma_r_finite" ||
         n == "__lgammaf_r_finite" || n == "__lgammal_r_finite" || n == "tanh" ||
         n == "tanhf" || n == "__pow_finite" ||
