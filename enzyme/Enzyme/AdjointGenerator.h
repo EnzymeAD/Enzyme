@@ -4301,20 +4301,51 @@ public:
                               ? nullptr
                               : gutils->invertPointerM(orig_src, BuilderZ);
 
+      // A floating-point segment is differentiated in the reverse pass. Look
+      // up the shadows and primals there before the chain rule splits them
+      // into lanes: looking up a lane of a placeholder shadow (for instance of
+      // a not yet visited, uncacheable call) materializes the real shadow and
+      // erases the placeholder, which the remaining lanes would then be
+      // extracted from.
+      bool reverseFloat =
+          floatTy && (Mode == DerivativeMode::ReverseModeGradient ||
+                      Mode == DerivativeMode::ReverseModeCombined);
+      IRBuilder<> Builder2(&MTI);
+      Value *primal_dst = gutils->getNewFromOriginal(orig_dst);
+      Value *primal_src = gutils->getNewFromOriginal(orig_src);
+      if (reverseFloat) {
+        getReverseBuilder(Builder2);
+        // The primals are only read in the reverse pass to compare against
+        // the shadows under runtime activity; do not request them otherwise.
+        if (gutils->runtimeActivity) {
+          primal_dst = lookup(primal_dst, Builder2);
+          if (!gutils->isConstantValue(orig_src))
+            primal_src = lookup(primal_src, Builder2);
+        }
+        shadow_dst =
+            gutils->isConstantValue(orig_dst)
+                ? nullptr
+                : lookup(gutils->invertPointerM(orig_dst, Builder2), Builder2);
+        shadow_src =
+            gutils->isConstantValue(orig_src)
+                ? nullptr
+                : lookup(gutils->invertPointerM(orig_src, Builder2), Builder2);
+      }
+
       auto rev_rule = [&](Value *shadow_dst, Value *shadow_src) {
         if (shadow_dst == nullptr)
-          shadow_dst = gutils->getNewFromOriginal(orig_dst);
+          shadow_dst = primal_dst;
         if (shadow_src == nullptr)
-          shadow_src = gutils->getNewFromOriginal(orig_src);
-        SubTransferHelper(
-            gutils, Mode, floatTy, ID, subdstalign, subsrcalign,
-            /*offset*/ seg_start, gutils->isConstantValue(orig_dst), shadow_dst,
-            gutils->getNewFromOriginal(orig_dst),
-            gutils->isConstantValue(orig_src), shadow_src,
-            gutils->getNewFromOriginal(orig_src),
-            /*length*/ length, /*volatile*/ isVolatile, &MTI,
-            /*allowForward*/ forwardsShadow, /*shadowsLookedup*/ false,
-            /*backwardsShadow*/ backwardsShadow);
+          shadow_src = primal_src;
+        SubTransferHelper(gutils, Mode, floatTy, ID, subdstalign, subsrcalign,
+                          /*offset*/ seg_start,
+                          gutils->isConstantValue(orig_dst), shadow_dst,
+                          primal_dst, gutils->isConstantValue(orig_src),
+                          shadow_src, primal_src,
+                          /*length*/ length, /*volatile*/ isVolatile, &MTI,
+                          /*allowForward*/ forwardsShadow,
+                          /*shadowsLookedup*/ reverseFloat,
+                          /*backwardsShadow*/ backwardsShadow);
       };
 
       auto fwd_rule = [&](Value *ddst, Value *dsrc) {
@@ -4404,7 +4435,8 @@ public:
           Mode == DerivativeMode::ForwardModeError)
         applyChainRule(BuilderZ, fwd_rule, shadow_dst, shadow_src);
       else
-        applyChainRule(BuilderZ, rev_rule, shadow_dst, shadow_src);
+        applyChainRule(reverseFloat ? Builder2 : BuilderZ, rev_rule, shadow_dst,
+                       shadow_src);
     }
 
     eraseIfUnused(MTI);
