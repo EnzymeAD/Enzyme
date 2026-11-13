@@ -386,16 +386,31 @@ static bool ReplaceOriginalCall(IRBuilder<> &Builder, Value *ret,
   return false;
 }
 
+static bool moduleMayUseEnzyme(const Module &M) {
+  if (!EnzymeTruncateAll.empty() || EnzymeOMPOpt)
+    return true;
+  for (const Function &F : M) {
+    if (F.use_empty())
+      continue;
+    StringRef Name = F.getName();
+    if (Name.contains("__enzyme_") || Name == "f90_mzero8")
+      return true;
+  }
+  return false;
+}
+
 class EnzymeBase {
 public:
   EnzymeLogic Logic;
+  bool SkipIfNoEnzyme;
   // Functions whose Enzyme calls have been lowered, so postopt may inline
   // them into their callers.
   SmallPtrSet<Function *, 16> lowered;
   // Functions already visited when preparing nested request targets.
   SmallPtrSet<Function *, 16> prepared;
-  EnzymeBase(bool PostOpt)
-      : Logic(EnzymePostOpt.getNumOccurrences() ? EnzymePostOpt : PostOpt) {
+  EnzymeBase(bool PostOpt, bool SkipIfNoEnzyme = false)
+      : Logic(EnzymePostOpt.getNumOccurrences() ? EnzymePostOpt : PostOpt),
+        SkipIfNoEnzyme(SkipIfNoEnzyme) {
     // initializeLowerAutodiffIntrinsicPass(*PassRegistry::getPassRegistry());
   }
 
@@ -2748,6 +2763,9 @@ public:
   }
 
   bool run(Module &M) {
+    if (SkipIfNoEnzyme && !moduleMayUseEnzyme(M))
+      return false;
+
     Logic.clear();
 
     for (Function &F : make_early_inc_range(M)) {
@@ -2755,6 +2773,7 @@ public:
     }
 
     bool changed = false;
+    bool runPostOpt = false;
     for (Function &F : M) {
       if (F.empty())
         continue;
@@ -2795,6 +2814,7 @@ public:
         if (!F.empty())
           PromotePass().run(F, Logic.PPC.FAM);
       changed = true;
+      runPostOpt = true;
     }
 
     if (EnzymeDetectReadThrow && DetectReadonlyOrThrow(M)) {
@@ -2808,7 +2828,9 @@ public:
       if (F.empty())
         continue;
 
-      changed |= lowerEnzymeCalls(F, done);
+      bool loweredFn = lowerEnzymeCalls(F, done);
+      changed |= loweredFn;
+      runPostOpt |= loweredFn;
     }
 
     for (Function &F : M) {
@@ -2833,12 +2855,14 @@ public:
                   F->getName().contains("__enzyme_pointer")) {
                 CI->eraseFromParent();
                 changed = true;
+                runPostOpt = true;
               }
               if (F->getName().contains("__enzyme_iter") ||
                   F->getName().contains("__enzyme_ignore_derivatives")) {
                 CI->replaceAllUsesWith(CI->getArgOperand(0));
                 CI->eraseFromParent();
                 changed = true;
+                runPostOpt = true;
               }
             }
           }
@@ -2986,7 +3010,7 @@ public:
       pair.second->eraseFromParent();
     Logic.clear();
 
-    if (changed && Logic.PostOpt) {
+    if (runPostOpt && Logic.PostOpt) {
       TimeTraceScope timeScope("Enzyme PostOpt", M.getName());
 
       PassBuilder PB = makePassBuilder(M.getContext());
@@ -3023,7 +3047,8 @@ public:
 class EnzymeOldPM : public EnzymeBase, public ModulePass {
 public:
   static char ID;
-  EnzymeOldPM(bool PostOpt = false) : EnzymeBase(PostOpt), ModulePass(ID) {}
+  EnzymeOldPM(bool PostOpt = false, bool SkipIfNoEnzyme = false)
+      : EnzymeBase(PostOpt, SkipIfNoEnzyme), ModulePass(ID) {}
 
   void getAnalysisUsage(AnalysisUsage &AU) const override {
     AU.addRequired<TargetLibraryInfoWrapperPass>();
@@ -3044,7 +3069,9 @@ char EnzymeOldPM::ID = 0;
 
 static RegisterPass<EnzymeOldPM> X("enzyme", "Enzyme Pass");
 
-ModulePass *createEnzymePass(bool PostOpt) { return new EnzymeOldPM(PostOpt); }
+ModulePass *createEnzymePass(bool PostOpt, bool SkipIfNoEnzyme) {
+  return new EnzymeOldPM(PostOpt, SkipIfNoEnzyme);
+}
 
 #include <llvm-c/Core.h>
 #include <llvm-c/Types.h>
@@ -3052,7 +3079,8 @@ ModulePass *createEnzymePass(bool PostOpt) { return new EnzymeOldPM(PostOpt); }
 #include "llvm/IR/LegacyPassManager.h"
 
 extern "C" void AddEnzymePass(LLVMPassManagerRef PM) {
-  unwrap(PM)->add(createEnzymePass(/*PostOpt*/ false));
+  unwrap(PM)->add(
+      createEnzymePass(/*PostOpt*/ false, /*SkipIfNoEnzyme*/ false));
 }
 
 #if LLVM_VERSION_MAJOR >= 22 && !defined(ENZYME_LLVM22_PRERELEASE)
@@ -3069,7 +3097,8 @@ private:
 
 public:
   using Result = llvm::PreservedAnalyses;
-  EnzymeNewPM(bool PostOpt = false) : EnzymeBase(PostOpt) {}
+  EnzymeNewPM(bool PostOpt = false, bool SkipIfNoEnzyme = false)
+      : EnzymeBase(PostOpt, SkipIfNoEnzyme) {}
 
   Result run(llvm::Module &M, llvm::ModuleAnalysisManager &MAM) {
     return EnzymeBase::run(M) ? PreservedAnalyses::none()
@@ -3250,7 +3279,7 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
     OptimizerPM.addPass(llvm::SROAPass());
 #endif
     MPM.addPass(createModuleToFunctionPassAdaptor(std::move(OptimizerPM)));
-    MPM.addPass(EnzymeNewPM(/*PostOpt=*/true));
+    MPM.addPass(EnzymeNewPM(/*PostOpt=*/true, /*SkipIfNoEnzyme=*/true));
     MPM.addPass(PreserveNVVMNewPM(/*Begin*/ false));
 #if LLVM_VERSION_MAJOR >= 16
     OptimizerPM2.addPass(llvm::GVNPass());

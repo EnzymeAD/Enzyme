@@ -30,7 +30,8 @@
 #include "llvm/Pass.h"
 #include "llvm/Passes/PassBuilder.h"
 
-llvm::ModulePass *createEnzymePass(bool PostOpt = false);
+llvm::ModulePass *createEnzymePass(bool PostOpt = false,
+                                   bool SkipIfNoEnzyme = false);
 void augmentPassBuilder(llvm::PassBuilder &PB);
 
 #endif // ENZYME_H
