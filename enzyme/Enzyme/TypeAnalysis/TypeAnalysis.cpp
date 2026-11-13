@@ -6215,6 +6215,22 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
                      TypeTree(BaseType::Integer).Only(-1, &call), &call);
       return;
     }
+    if (isIfxAllocationFunction(funcName)) {
+      TypeTree ptrptr;
+      ptrptr.insert({-1}, BaseType::Pointer);
+      ptrptr.insert({-1, 0}, BaseType::Pointer);
+      updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      updateAnalysis(call.getOperand(0),
+                     TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      updateAnalysis(call.getOperand(1), ptrptr, &call);
+      if (call.arg_size() >= 3)
+        updateAnalysis(call.getOperand(2),
+                       TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      if (call.arg_size() >= 4)
+        updateAnalysis(call.getOperand(3),
+                       TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      return;
+    }
     if (funcName == "calloc") {
       updateAnalysis(&call, TypeTree(BaseType::Pointer).Only(-1, &call), &call);
       updateAnalysis(call.getOperand(0),
