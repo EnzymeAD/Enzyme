@@ -4428,7 +4428,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
                            ConstantInt::getFalse(call.getContext()));
     return true;
   }
-  if (funcName == "memset" || funcName == "memset_pattern16" ||
+  if (funcName == "memset" || funcName == "memset_pattern4" ||
+      funcName == "memset_pattern8" || funcName == "memset_pattern16" ||
       funcName == "__memset_chk") {
     visitMemSetCommon(call);
     return true;

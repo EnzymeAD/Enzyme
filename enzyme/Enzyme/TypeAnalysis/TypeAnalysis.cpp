@@ -1685,6 +1685,10 @@ void TypeAnalyzer::considerTBAA() {
         } else if (call->getCalledFunction() &&
                    (call->getCalledFunction()->getIntrinsicID() ==
                         Intrinsic::memset ||
+                    call->getCalledFunction()->getName() == "memset" ||
+                    call->getCalledFunction()->getName() == "__memset_chk" ||
+                    call->getCalledFunction()->getName() == "memset_pattern4" ||
+                    call->getCalledFunction()->getName() == "memset_pattern8" ||
                     call->getCalledFunction()->getName() ==
                         "memset_pattern16")) {
           int64_t copySize = 1;
@@ -1692,10 +1696,12 @@ void TypeAnalyzer::considerTBAA() {
                                                          DT, intseen, SE)) {
             copySize = max(copySize, val);
           }
+          int shiftSize =
+              (copySize > std::numeric_limits<int>::max()) ? -1 : (int)copySize;
           TypeTree update =
               vdptr
                   .ShiftIndices(DL, /*init offset*/ 0,
-                                /*max size*/ copySize, /*new offset*/ 0)
+                                /*max size*/ shiftSize, /*new offset*/ 0)
                   .Only(-1, call);
 
           updateAnalysis(call->getOperand(0), update, call);
@@ -1705,14 +1711,24 @@ void TypeAnalyzer::considerTBAA() {
                    (call->getCalledFunction()->getIntrinsicID() ==
                     Intrinsic::experimental_memset_pattern)) {
           int64_t copySize = 1;
+          int64_t elemSize =
+              DL.getTypeAllocSize(call->getArgOperand(1)->getType());
           for (auto val : fntypeinfo.knownIntegralValues(call->getOperand(2),
                                                          DT, intseen, SE)) {
-            copySize = max(copySize, val);
+            if (val >= 0 && elemSize > 0) {
+              int64_t bytes =
+                  (val > std::numeric_limits<int64_t>::max() / elemSize)
+                      ? std::numeric_limits<int64_t>::max()
+                      : val * elemSize;
+              copySize = max(copySize, bytes);
+            }
           }
+          int shiftSize =
+              (copySize > std::numeric_limits<int>::max()) ? -1 : (int)copySize;
           TypeTree update =
               vdptr
                   .ShiftIndices(DL, /*init offset*/ 0,
-                                /*max size*/ copySize, /*new offset*/ 0)
+                                /*max size*/ shiftSize, /*new offset*/ 0)
                   .Only(-1, call);
 
           updateAnalysis(call->getOperand(0), update, call);
@@ -4645,6 +4661,63 @@ void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
   case Intrinsic::memset:
     checkHypothesisPointerOperand(I.getOperand(0), &I);
     return;
+#if LLVM_VERSION_MAJOR >= 20
+  case Intrinsic::experimental_memset_pattern: {
+    if (!checkHypothesisPointerOperand(I.getArgOperand(0), &I))
+      return;
+    updateAnalysis(I.getArgOperand(2), TypeTree(BaseType::Integer).Only(-1, &I),
+                   &I);
+    if (!(direction & UP)) {
+      updateAnalysis(I.getArgOperand(0),
+                     TypeTree(BaseType::Pointer).Only(-1, &I), &I);
+      return;
+    }
+    auto &dl = I.getParent()->getParent()->getParent()->getDataLayout();
+    size_t elemSize = dl.getTypeAllocSize(I.getArgOperand(1)->getType());
+    if (elemSize == 0)
+      return;
+    size_t count = 1;
+    bool knownLen = false;
+    for (auto val :
+         fntypeinfo.knownIntegralValues(I.getArgOperand(2), DT, intseen, SE)) {
+      if (val >= 0) {
+        if (!knownLen) {
+          count = (size_t)val;
+          knownLen = true;
+        } else {
+          count = max(count, (size_t)val);
+        }
+      }
+    }
+    if (knownLen && count == 0)
+      return;
+    size_t maxBytes = (size_t)MaxTypeOffset;
+    size_t totalBytes =
+        knownLen ? ((count > maxBytes / elemSize) ? maxBytes : count * elemSize)
+                 : 1;
+    TypeTree patTT = getAnalysis(I.getArgOperand(1))
+                         .PurgeAnything()
+                         .ShiftIndices(dl, 0, (int)elemSize, 0);
+    TypeTree dstTT = getAnalysis(I.getArgOperand(0)).PurgeAnything().Data0();
+    TypeTree dstUpdate;
+    TypeTree valUpdate;
+    for (size_t off = 0; off < totalBytes; off += elemSize) {
+      size_t chunk = std::min(elemSize, totalBytes - off);
+      bool LegalDst = true;
+      bool LegalVal = true;
+      dstUpdate.checkedOrIn(patTT.ShiftIndices(dl, 0, (int)chunk, off),
+                            /*PointerIntSame*/ false, LegalDst);
+      valUpdate.checkedOrIn(dstTT.ShiftIndices(dl, (int)off, (int)chunk, 0),
+                            /*PointerIntSame*/ false, LegalVal);
+    }
+    dstUpdate.insert({}, BaseType::Pointer);
+    updateAnalysis(I.getArgOperand(0), dstUpdate.Only(-1, &I), &I);
+    if (valUpdate.isKnown())
+      updateAnalysis(I.getArgOperand(1),
+                     valUpdate.Only(-1, &I).Lookup(elemSize, dl), &I);
+    return;
+  }
+#endif
   case Intrinsic::masked_load:
     checkHypothesisPointerOperand(I.getOperand(0), &I);
     return;
@@ -6004,6 +6077,86 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
     if (funcName == "memcpy" || funcName == "memmove") {
       // TODO have this call common mem transfer to copy data
       visitMemTransferCommon(call);
+      return;
+    }
+    if (funcName == "memset" || funcName == "__memset_chk") {
+      if (call.arg_size() < 3)
+        return;
+      if (!checkHypothesisPointerOperand(call.getArgOperand(0), &call))
+        return;
+      updateAnalysis(call.getArgOperand(0),
+                     TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      updateAnalysis(call.getArgOperand(2),
+                     TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      if (funcName == "__memset_chk" && call.arg_size() >= 4)
+        updateAnalysis(call.getArgOperand(3),
+                       TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      if (call.getType()->isPointerTy()) {
+        if (direction & UP)
+          updateAnalysis(call.getArgOperand(0), getAnalysis(&call), &call);
+        if (direction & DOWN)
+          updateAnalysis(&call, getAnalysis(call.getArgOperand(0)), &call);
+      }
+      return;
+    }
+    if (funcName == "memset_pattern4" || funcName == "memset_pattern8" ||
+        funcName == "memset_pattern16") {
+      if (call.arg_size() < 3)
+        return;
+      if (!checkHypothesisPointerOperand(call.getArgOperand(0), &call) ||
+          !checkHypothesisPointerOperand(call.getArgOperand(1), &call))
+        return;
+      updateAnalysis(call.getArgOperand(2),
+                     TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      if (!(direction & UP)) {
+        updateAnalysis(call.getArgOperand(0),
+                       TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+        updateAnalysis(call.getArgOperand(1),
+                       TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+        return;
+      }
+      size_t patSize = funcName == "memset_pattern4"
+                           ? 4
+                           : (funcName == "memset_pattern8" ? 8 : 16);
+      size_t sz = 1;
+      bool knownLen = false;
+      for (auto val : fntypeinfo.knownIntegralValues(call.getArgOperand(2), DT,
+                                                     intseen, SE)) {
+        if (val >= 0) {
+          if (!knownLen) {
+            sz = (size_t)val;
+            knownLen = true;
+          } else {
+            sz = max(sz, (size_t)val);
+          }
+        }
+      }
+      if (knownLen && sz == 0)
+        return;
+      auto &dl = call.getParent()->getParent()->getParent()->getDataLayout();
+      size_t totalBytes =
+          knownLen ? std::min(sz, (size_t)MaxTypeOffset) : (size_t)1;
+      TypeTree patTT = getAnalysis(call.getArgOperand(1))
+                           .PurgeAnything()
+                           .Data0()
+                           .ShiftIndices(dl, 0, (int)patSize, 0);
+      TypeTree dstTT =
+          getAnalysis(call.getArgOperand(0)).PurgeAnything().Data0();
+      TypeTree dstUpdate;
+      TypeTree patUpdate;
+      for (size_t off = 0; off < totalBytes; off += patSize) {
+        size_t chunk = std::min(patSize, totalBytes - off);
+        bool LegalDst = true;
+        bool LegalPat = true;
+        dstUpdate.checkedOrIn(patTT.ShiftIndices(dl, 0, (int)chunk, off),
+                              /*PointerIntSame*/ false, LegalDst);
+        patUpdate.checkedOrIn(dstTT.ShiftIndices(dl, (int)off, (int)chunk, 0),
+                              /*PointerIntSame*/ false, LegalPat);
+      }
+      dstUpdate.insert({}, BaseType::Pointer);
+      patUpdate.insert({}, BaseType::Pointer);
+      updateAnalysis(call.getArgOperand(0), dstUpdate.Only(-1, &call), &call);
+      updateAnalysis(call.getArgOperand(1), patUpdate.Only(-1, &call), &call);
       return;
     }
     if (startsWith(funcName, "__atomic_load_") && call.arg_size() == 2 &&

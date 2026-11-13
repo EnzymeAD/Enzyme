@@ -3564,10 +3564,64 @@ public:
 
     Value *orig_op0 = MS.getArgOperand(0);
     Value *orig_op1 = MS.getArgOperand(1);
+    auto funcName = getFuncNameFromCall(&MS);
+
+    // memset and __memset_chk return their destination pointer (arg 0). Resolve
+    // any pre-created shadow placeholder before early returns.
+    if (auto ifound = gutils->invertedPointers.find(&MS);
+        ifound != gutils->invertedPointers.end()) {
+      if (auto placeholder = dyn_cast<PHINode>(&*ifound->second)) {
+        Value *res;
+        if (gutils->isConstantValue(orig_op0)) {
+          Value *primal = gutils->getNewFromOriginal(orig_op0);
+          res = applyChainRule(MS.getType(), BuilderZ, [&]() -> Value * {
+            if (primal->getType() != MS.getType())
+              return BuilderZ.CreatePointerBitCastOrAddrSpaceCast(primal,
+                                                                  MS.getType());
+            return primal;
+          });
+        } else {
+          res = gutils->invertPointerM(orig_op0, BuilderZ);
+          if (res->getType() != placeholder->getType()) {
+            res = applyChainRule(
+                MS.getType(), BuilderZ,
+                [&](Value *v) -> Value * {
+                  return BuilderZ.CreatePointerBitCastOrAddrSpaceCast(
+                      v, MS.getType());
+                },
+                res);
+          }
+        }
+        if (BuilderZ.GetInsertPoint() != BuilderZ.GetInsertBlock()->end() &&
+            &*BuilderZ.GetInsertPoint() == placeholder)
+          BuilderZ.SetInsertPoint(placeholder->getNextNode());
+        resolveShadowPlaceholder(MS, res);
+      }
+    }
 
     // If constant destination then no operation needs doing
     if (gutils->isConstantValue(orig_op0)) {
       return;
+    }
+
+    auto &DL = gutils->newFunc->getParent()->getDataLayout();
+    bool isPattern = startsWith(funcName, "memset_pattern");
+    bool isExperimentalPattern =
+        startsWith(funcName, "llvm.experimental.memset");
+    bool isPatternLike = isPattern || isExperimentalPattern;
+    size_t elemByteScale =
+        isExperimentalPattern ? DL.getTypeAllocSize(orig_op1->getType()) : 1;
+    if (elemByteScale == 0)
+      return;
+
+    size_t size = 1;
+    if (auto ci = dyn_cast<ConstantInt>(MS.getArgOperand(2))) {
+      uint64_t rawSize = ci->getLimitedValue();
+      if (rawSize == 0)
+        return;
+      size = (rawSize > std::numeric_limits<size_t>::max() / elemByteScale)
+                 ? std::numeric_limits<size_t>::max()
+                 : (size_t)(rawSize * elemByteScale);
     }
 
     bool activeValToSet = !gutils->isConstantValue(orig_op1);
@@ -3584,10 +3638,138 @@ public:
       EmitNoDerivativeError(ss.str(), MS, gutils, BuilderZ);
     }
 
-    if (Mode == DerivativeMode::ForwardMode ||
-        Mode == DerivativeMode::ForwardModeError) {
+    auto copyMemSetAttrs = [&](CallInst *cal, bool isCreateMemSet,
+                               size_t seg_start) {
+      AttributeList OrigAttrs = MS.getAttributes();
+      AttributeList NewAttrs;
+      LLVMContext &Ctx = MS.getContext();
+      auto addAdjustedArg0 = [&]() {
+        for (auto attr :
+             OrigAttrs.getAttributes(AttributeList::FirstArgIndex)) {
+          if (isCreateMemSet && attr.isEnumAttribute() &&
+              attr.getKindAsEnum() == Attribute::Returned)
+            continue;
+          if (seg_start != 0 && attr.isIntAttribute()) {
+            auto Kind = attr.getKindAsEnum();
+            if (Kind == Attribute::Alignment) {
+              Align A =
+                  commonAlignment(attr.getAlignment().valueOrOne(), seg_start);
+              NewAttrs = NewAttrs.addAttributeAtIndex(
+                  Ctx, AttributeList::FirstArgIndex,
+                  Attribute::getWithAlignment(Ctx, A));
+              continue;
+            }
+            if (Kind == Attribute::Dereferenceable) {
+              uint64_t Bytes = attr.getDereferenceableBytes();
+              if (Bytes > seg_start) {
+                NewAttrs = NewAttrs.addAttributeAtIndex(
+                    Ctx, AttributeList::FirstArgIndex,
+                    Attribute::get(Ctx, Kind, Bytes - seg_start));
+              }
+              continue;
+            }
+            if (Kind == Attribute::DereferenceableOrNull)
+              continue;
+          }
+          NewAttrs = NewAttrs.addAttributeAtIndex(
+              Ctx, AttributeList::FirstArgIndex, attr);
+        }
+      };
+      if (isCreateMemSet) {
+        for (auto attr : OrigAttrs.getAttributes(AttributeList::FunctionIndex))
+          NewAttrs = NewAttrs.addAttributeAtIndex(
+              Ctx, AttributeList::FunctionIndex, attr);
+        addAdjustedArg0();
+      } else if (seg_start == 0) {
+        NewAttrs = OrigAttrs;
+      } else {
+        for (auto attr : OrigAttrs.getAttributes(AttributeList::ReturnIndex))
+          NewAttrs = NewAttrs.addAttributeAtIndex(
+              Ctx, AttributeList::ReturnIndex, attr);
+        for (auto attr : OrigAttrs.getAttributes(AttributeList::FunctionIndex))
+          NewAttrs = NewAttrs.addAttributeAtIndex(
+              Ctx, AttributeList::FunctionIndex, attr);
+        addAdjustedArg0();
+        for (unsigned i = 1; i < MS.arg_size(); ++i) {
+          for (auto attr :
+               OrigAttrs.getAttributes(AttributeList::FirstArgIndex + i))
+            NewAttrs = NewAttrs.addAttributeAtIndex(
+                Ctx, AttributeList::FirstArgIndex + i, attr);
+        }
+      }
+      cal->setAttributes(NewAttrs);
+    };
+
+    auto guardRuntimeActivity = [&](IRBuilder<> &B, Value *shadowPtr,
+                                    Value *primalPtr, Value *len) -> Value * {
+      if (!gutils->runtimeActivity)
+        return len;
+      Value *primalCmp = primalPtr;
+      if (primalCmp->getType() != shadowPtr->getType())
+        primalCmp = B.CreatePointerBitCastOrAddrSpaceCast(primalCmp,
+                                                          shadowPtr->getType());
+      Value *inactive = B.CreateICmpEQ(shadowPtr, primalCmp);
+      return B.CreateSelect(inactive, ConstantInt::get(len->getType(), 0), len);
+    };
+
+    auto offsetPtr = [&](IRBuilder<> &B, Value *ptr, size_t off) -> Value * {
+      if (off == 0)
+        return ptr;
+      Type *i8Ty = Type::getInt8Ty(ptr->getContext());
+      unsigned as = cast<PointerType>(ptr->getType())->getAddressSpace();
+      Type *i8PtrTy = getPointerType(i8Ty, as);
+      if (ptr->getType() != i8PtrTy)
+        ptr = B.CreateBitCast(ptr, i8PtrTy);
+      Type *idxTy = off <= (size_t)std::numeric_limits<int32_t>::max()
+                        ? Type::getInt32Ty(ptr->getContext())
+                        : Type::getInt64Ty(ptr->getContext());
+      Value *idxs[] = {ConstantInt::get(idxTy, off)};
+      return B.CreateInBoundsGEP(i8Ty, ptr, idxs);
+    };
+
+    auto adjustChkDstLen = [&](IRBuilder<> &B, Value *dstlen,
+                               size_t seg_start) -> Value * {
+      if (!dstlen || seg_start == 0 || funcName != "__memset_chk")
+        return dstlen;
+      Value *allOnes = ConstantInt::getAllOnesValue(dstlen->getType());
+      Value *isUnknown = B.CreateICmpEQ(dstlen, allOnes);
+      Value *adj =
+          B.CreateSub(dstlen, ConstantInt::get(dstlen->getType(), seg_start));
+      return B.CreateSelect(isUnknown, allOnes, adj);
+    };
+
+    auto emitZeroMemSet = [&](IRBuilder<> &B, Value *dst, Value *segLen,
+                              Value *volVal) -> CallInst * {
+      if (volVal && !isa<ConstantInt>(volVal)) {
+        Type *i8Ty = Type::getInt8Ty(dst->getContext());
+        unsigned as = cast<PointerType>(dst->getType())->getAddressSpace();
+        Type *i8PtrTy = getPointerType(i8Ty, as);
+        if (dst->getType() != i8PtrTy)
+          dst = B.CreateBitCast(dst, i8PtrTy);
+        Type *tys[] = {dst->getType(), segLen->getType()};
+        auto F = getIntrinsicDeclaration(gutils->newFunc->getParent(),
+                                         Intrinsic::memset, tys);
+        Value *args[] = {dst, ConstantInt::get(i8Ty, 0), segLen, volVal};
+        return B.CreateCall(F, args);
+      }
+      bool isVol = volVal ? cast<ConstantInt>(volVal)->isOne() : false;
+      return B.CreateMemSet(dst, ConstantInt::get(B.getInt8Ty(), 0), segLen,
+                            MaybeAlign(), isVol);
+    };
+
+    // Fast path for ForwardMode / ForwardModeError when zero-filling bytes:
+    // both floating-point and non-floating-point shadow segments are zeroed, so
+    // TypeAnalysis is not needed. Non-zero fills and pattern fills must fall
+    // through so float segments are zeroed while int/pointer segments copy the
+    // fill byte or pattern.
+    bool isConstZeroFill = !isPatternLike && isa<ConstantInt>(orig_op1) &&
+                           cast<ConstantInt>(orig_op1)->isZero();
+    if ((Mode == DerivativeMode::ForwardMode ||
+         Mode == DerivativeMode::ForwardModeError) &&
+        isConstZeroFill) {
       Value *op0 = gutils->invertPointerM(orig_op0, BuilderZ);
-      Value *op1 = gutils->getNewFromOriginal(MS.getArgOperand(1));
+      Value *primal_op0 = gutils->getNewFromOriginal(orig_op0);
+      Value *op1 = gutils->getNewFromOriginal(orig_op1);
       Value *op2 = gutils->getNewFromOriginal(MS.getArgOperand(2));
       Value *op3 = nullptr;
       if (3 < MS.arg_size()) {
@@ -3600,21 +3782,17 @@ public:
                                       ValueType::Primal, ValueType::Primal},
                                      BuilderZ, /*lookup*/ false);
 
-      auto funcName = getFuncNameFromCall(&MS);
       applyChainRule(
           BuilderZ,
           [&](Value *op0) {
-            SmallVector<Value *, 4> args = {op0, op1, op2};
+            Value *segLen =
+                guardRuntimeActivity(BuilderZ, op0, primal_op0, op2);
+            SmallVector<Value *, 4> args = {op0, op1, segLen};
             if (op3)
               args.push_back(op3);
 
-            CallInst *cal;
-            if (startsWith(funcName, "memset_pattern") ||
-                startsWith(funcName, "llvm.experimental.memset"))
-              cal = Builder2.CreateMemSet(
-                  op0, ConstantInt::get(Builder2.getInt8Ty(), 0), op2, {});
-            else
-              cal = BuilderZ.CreateCall(MS.getCalledFunction(), args, Defs);
+            CallInst *cal =
+                BuilderZ.CreateCall(MS.getCalledFunction(), args, Defs);
 
             llvm::SmallVector<unsigned int, 9> ToCopy2(MD_ToCopy);
             ToCopy2.push_back(LLVMContext::MD_noalias);
@@ -3624,18 +3802,7 @@ public:
             if (auto m = hasMetadata(&MS, "enzyme_truetype"))
               cal->setMetadata("enzyme_truetype", m);
 
-            if (startsWith(funcName, "memset_pattern") ||
-                startsWith(funcName, "llvm.experimental.memset")) {
-              AttributeList NewAttrs;
-              for (auto idx :
-                   {AttributeList::ReturnIndex, AttributeList::FunctionIndex,
-                    AttributeList::FirstArgIndex})
-                for (auto attr : MS.getAttributes().getAttributes(idx))
-                  NewAttrs =
-                      NewAttrs.addAttributeAtIndex(MS.getContext(), idx, attr);
-              cal->setAttributes(NewAttrs);
-            } else
-              cal->setAttributes(MS.getAttributes());
+            copyMemSetAttrs(cal, /*isCreateMemSet*/ false, /*seg_start*/ 0);
             cal->setCallingConv(MS.getCallingConv());
             cal->setTailCallKind(MS.getTailCallKind());
             cal->setDebugLoc(gutils->getNewFromOriginal(MS.getDebugLoc()));
@@ -3647,19 +3814,6 @@ public:
     bool forwardsShadow, backwardsShadow;
     shadowStoreSchedule(MS, MS.getOperand(0), forwardsShadow, backwardsShadow);
 
-    size_t size = 1;
-    if (auto ci = dyn_cast<ConstantInt>(MS.getOperand(2))) {
-      size = ci->getLimitedValue();
-    }
-
-    // TODO note that we only handle memset of ONE type (aka memset of {int,
-    // double} not allowed)
-
-    if (size == 0) {
-      llvm::errs() << MS << "\n";
-    }
-    assert(size != 0);
-
     // Offsets of the form Optional<floating type>, segment start, segment size
     std::vector<std::tuple<Type *, size_t, size_t>> toIterate;
 
@@ -3668,73 +3822,76 @@ public:
     if (auto MD = hasMetadata(&MS, "enzyme_truetype")) {
       toIterate = parseTrueType(MD, Mode, false);
     } else {
-      auto &DL = gutils->newFunc->getParent()->getDataLayout();
-      auto vd = TR.query(MS.getOperand(0)).Data0().ShiftIndices(DL, 0, size, 0);
+      int shiftSize =
+          (size > (size_t)std::numeric_limits<int>::max()) ? -1 : (int)size;
+      auto vd =
+          TR.query(MS.getOperand(0)).Data0().ShiftIndices(DL, 0, shiftSize, 0);
 
       if (!vd.isKnownPastPointer()) {
         // If unknown type results, and zeroing known undef allocation, consider
         // integers
-        if (auto CI = dyn_cast<ConstantInt>(MS.getOperand(1)))
-          if (CI->isZero()) {
-            auto root = getBaseObject(MS.getOperand(0));
-            bool writtenTo = false;
-            bool undefMemory =
-                isa<AllocaInst>(root) || isAllocationCall(root, gutils->TLI);
-            if (auto arg = dyn_cast<Argument>(root))
-              if (arg->hasStructRetAttr())
-                undefMemory = true;
-            if (undefMemory) {
-              Instruction *cur = MS.getPrevNode();
-              while (cur) {
-                if (cur == root)
-                  break;
-                if (auto MCI = dyn_cast<ConstantInt>(MS.getOperand(2))) {
-                  if (auto II = dyn_cast<IntrinsicInst>(cur)) {
-                    if (II->getCalledFunction()->getName() ==
-                        "llvm.enzyme.lifetime_start") {
-                      if (getBaseObject(II->getOperand(1)) == root) {
-                        if (auto CI2 =
-                                dyn_cast<ConstantInt>(II->getOperand(0))) {
-                          if (MCI->getValue().ule(CI2->getValue()))
-                            break;
+        if (!isPatternLike)
+          if (auto CI = dyn_cast<ConstantInt>(MS.getOperand(1)))
+            if (CI->isZero()) {
+              auto root = getBaseObject(MS.getOperand(0));
+              bool writtenTo = false;
+              bool undefMemory =
+                  isa<AllocaInst>(root) || isAllocationCall(root, gutils->TLI);
+              if (auto arg = dyn_cast<Argument>(root))
+                if (arg->hasStructRetAttr())
+                  undefMemory = true;
+              if (undefMemory) {
+                Instruction *cur = MS.getPrevNode();
+                while (cur) {
+                  if (cur == root)
+                    break;
+                  if (auto MCI = dyn_cast<ConstantInt>(MS.getOperand(2))) {
+                    if (auto II = dyn_cast<IntrinsicInst>(cur)) {
+                      if (II->getCalledFunction()->getName() ==
+                          "llvm.enzyme.lifetime_start") {
+                        if (getBaseObject(II->getOperand(1)) == root) {
+                          if (auto CI2 =
+                                  dyn_cast<ConstantInt>(II->getOperand(0))) {
+                            if (MCI->getValue().ule(CI2->getValue()))
+                              break;
+                          }
                         }
+                        cur = cur->getPrevNode();
+                        continue;
                       }
-                      cur = cur->getPrevNode();
-                      continue;
-                    }
-                    // If the start of the lifetime for more memory than being
-                    // memset, its valid.
-                    if (II->getIntrinsicID() == Intrinsic::lifetime_start) {
-                      if (getBaseObject(II->getOperand(1)) == root) {
-                        if (auto CI2 =
-                                dyn_cast<ConstantInt>(II->getOperand(0))) {
-                          if (MCI->getValue().ule(CI2->getValue()))
-                            break;
+                      // If the start of the lifetime for more memory than being
+                      // memset, its valid.
+                      if (II->getIntrinsicID() == Intrinsic::lifetime_start) {
+                        if (getBaseObject(II->getOperand(1)) == root) {
+                          if (auto CI2 =
+                                  dyn_cast<ConstantInt>(II->getOperand(0))) {
+                            if (MCI->getValue().ule(CI2->getValue()))
+                              break;
+                          }
                         }
+                        cur = cur->getPrevNode();
+                        continue;
                       }
-                      cur = cur->getPrevNode();
-                      continue;
                     }
                   }
+                  if (cur->mayWriteToMemory()) {
+                    writtenTo = true;
+                    break;
+                  }
+                  cur = cur->getPrevNode();
+                  // We've hit the start of the block, assume written to by a
+                  // previous block.
+                  if (cur == nullptr) {
+                    writtenTo = true;
+                  }
                 }
-                if (cur->mayWriteToMemory()) {
-                  writtenTo = true;
-                  break;
-                }
-                cur = cur->getPrevNode();
-                // We've hit the start of the block, assume written to by a
-                // previous block.
-                if (cur == nullptr) {
-                  writtenTo = true;
-                }
-              }
 
-              if (!writtenTo) {
-                vd = TypeTree(BaseType::Pointer);
-                vd.insert({-1}, BaseType::Integer);
+                if (!writtenTo) {
+                  vd = TypeTree(BaseType::Pointer);
+                  vd.insert({-1}, BaseType::Integer);
+                }
               }
             }
-          }
       }
 
       if (!vd.isKnownPastPointer()) {
@@ -3778,7 +3935,8 @@ public:
             if (auto CI = dyn_cast<ConstantInt>(cur))
               if (CI->isZero())
                 continue;
-            auto curTT = TR.query(cur).Data0().ShiftIndices(DL, 0, size, 0);
+            auto curTT =
+                TR.query(cur).Data0().ShiftIndices(DL, 0, shiftSize, 0);
             if (!set)
               vd2 = curTT;
             else
@@ -3843,17 +4001,41 @@ public:
       }
     known:;
       {
-        unsigned start = 0;
-        while (1) {
-          unsigned nextStart = size;
-
-          auto dt = vd[{-1}];
-          for (size_t i = start; i < size; ++i) {
+        size_t maxConcrete = 0;
+        for (const auto &pair : vd.getMapping()) {
+          if (pair.first.size() == 1 && pair.first[0] >= 0) {
+            size_t end = (size_t)pair.first[0] + 1;
+            if (end > maxConcrete)
+              maxConcrete = end;
+          }
+        }
+        size_t start = 0;
+        while (start < size) {
+          size_t nextStart = size;
+          ConcreteType dt = BaseType::Unknown;
+          auto mergeByte = [&](ConcreteType next) -> bool {
             bool Legal = true;
-            dt.checkedOrIn(vd[{(int)i}], /*PointerIntSame*/ true, Legal);
-            if (!Legal) {
+            auto tmp = dt;
+            tmp.checkedOrIn(next, /*PointerIntSame*/ true, Legal);
+            // Prevent fusion of {Anything, Float} since Anything uses the
+            // non-float rule while Float requires zeroing.
+            if ((dt == BaseType::Anything && next.isFloat()) ||
+                (next == BaseType::Anything && dt.isFloat()))
+              Legal = false;
+            if (Legal)
+              dt = tmp;
+            return Legal;
+          };
+          size_t limit = std::min(size, maxConcrete);
+          for (size_t i = start; i < limit; ++i) {
+            if (!mergeByte(vd[{(int)i}])) {
               nextStart = i;
               break;
+            }
+          }
+          if (nextStart == size && limit < size) {
+            if (!mergeByte(vd[{-1}])) {
+              nextStart = limit;
             }
           }
           if (!dt.isKnown()) {
@@ -3861,7 +4043,7 @@ public:
             llvm::errs() << " vd:" << vd.str() << " start:" << start
                          << " size: " << size << " dt:" << dt.str() << "\n";
           }
-          assert(dt.isKnown());
+          assert(dt.isKnown() && "expected known type for memset segment");
           toIterate.emplace_back(dt.isFloat(), start, nextStart - start);
 
           if (nextStart == size)
@@ -3871,119 +4053,239 @@ public:
       }
     }
 
-#if 0
-    unsigned dstalign = dstAlign.valueOrOne().value();
-    unsigned srcalign = srcAlign.valueOrOne().value();
-#endif
-
-    Value *op1 = gutils->getNewFromOriginal(MS.getArgOperand(1));
+    Value *op1 = gutils->getNewFromOriginal(orig_op1);
     Value *new_size = gutils->getNewFromOriginal(MS.getArgOperand(2));
+    Value *new_byte_size =
+        (isExperimentalPattern && elemByteScale != 1)
+            ? BuilderZ.CreateMul(new_size, ConstantInt::get(new_size->getType(),
+                                                            elemByteScale))
+            : new_size;
     Value *op3 = nullptr;
     if (3 < MS.arg_size()) {
       op3 = gutils->getNewFromOriginal(MS.getOperand(3));
     }
+
+    Value *shadow_dst = nullptr;
+    Value *primal_dst = gutils->getNewFromOriginal(orig_op0);
+
+    bool emitNonFloat =
+        Mode == DerivativeMode::ForwardMode ||
+        Mode == DerivativeMode::ForwardModeError ||
+        (Mode == DerivativeMode::ReverseModePrimal && forwardsShadow) ||
+        (Mode == DerivativeMode::ReverseModeCombined &&
+         (forwardsShadow || backwardsShadow)) ||
+        (Mode == DerivativeMode::ReverseModeGradient && backwardsShadow) ||
+        (Mode == DerivativeMode::ForwardModeSplit && backwardsShadow);
+
+    bool emitFloatFwd = Mode == DerivativeMode::ForwardMode ||
+                        Mode == DerivativeMode::ForwardModeError ||
+                        Mode == DerivativeMode::ForwardModeSplit;
+    bool emitFloatRev = Mode == DerivativeMode::ReverseModeGradient ||
+                        Mode == DerivativeMode::ReverseModeCombined;
+
+    auto getShadowDst = [&]() -> Value * {
+      if (!shadow_dst)
+        shadow_dst = gutils->invertPointerM(orig_op0, BuilderZ);
+      return shadow_dst;
+    };
+
+    auto computeSegLength = [&](IRBuilder<> &B, Value *baseLen,
+                                size_t seg_start, size_t seg_size) -> Value * {
+      Value *len = baseLen;
+      if (seg_start != std::get<1>(toIterate.back())) {
+        len = ConstantInt::get(baseLen->getType(), seg_start + seg_size);
+      }
+      if (seg_start != 0)
+        len = B.CreateSub(len, ConstantInt::get(baseLen->getType(), seg_start));
+      return len;
+    };
 
     for (auto &&[secretty_ref, seg_start_ref, seg_size_ref] : toIterate) {
       auto secretty = secretty_ref;
       auto seg_start = seg_start_ref;
       auto seg_size = seg_size_ref;
 
-      Value *length = new_size;
-      if (seg_start != std::get<1>(toIterate.back())) {
-        length = ConstantInt::get(new_size->getType(), seg_start + seg_size);
-      }
-      if (seg_start != 0)
-        length = BuilderZ.CreateSub(
-            length, ConstantInt::get(new_size->getType(), seg_start));
-
-#if 0
-      unsigned subdstalign = dstalign;
-      // todo make better alignment calculation
-      if (dstalign != 0) {
-        if (start % dstalign != 0) {
-          dstalign = 1;
-        }
-      }
-      unsigned subsrcalign = srcalign;
-      // todo make better alignment calculation
-      if (srcalign != 0) {
-        if (start % srcalign != 0) {
-          srcalign = 1;
-        }
-      }
-#endif
-
-      Value *shadow_dst = gutils->invertPointerM(MS.getOperand(0), BuilderZ);
-
-      // TODO ponder forward split mode
-      if (!secretty &&
-          ((Mode == DerivativeMode::ReverseModePrimal && forwardsShadow) ||
-           (Mode == DerivativeMode::ReverseModeCombined && forwardsShadow) ||
-           (Mode == DerivativeMode::ReverseModeGradient && backwardsShadow) ||
-           (Mode == DerivativeMode::ForwardModeSplit && backwardsShadow))) {
+      if (!secretty && emitNonFloat) {
+        Value *length =
+            computeSegLength(BuilderZ, new_byte_size, seg_start, seg_size);
         auto Defs =
             gutils->getInvertedBundles(&MS,
                                        {ValueType::Shadow, ValueType::Primal,
                                         ValueType::Primal, ValueType::Primal},
                                        BuilderZ, /*lookup*/ false);
         auto rule = [&](Value *op0) {
-          if (seg_start != 0) {
-            Value *idxs[] = {ConstantInt::get(
-                Type::getInt32Ty(op0->getContext()), seg_start)};
-            op0 = BuilderZ.CreateInBoundsGEP(Type::getInt8Ty(op0->getContext()),
-                                             op0, idxs);
+          Value *segLen =
+              guardRuntimeActivity(BuilderZ, op0, primal_dst, length);
+          Value *dstPtr = offsetPtr(BuilderZ, op0, seg_start);
+
+          auto finalizeCall = [&](CallInst *cal, bool isCreateMemSet,
+                                  size_t attrOff) {
+            llvm::SmallVector<unsigned int, 9> ToCopy2(MD_ToCopy);
+            ToCopy2.push_back(LLVMContext::MD_noalias);
+            if (auto m = hasMetadata(&MS, "enzyme_zerostack"))
+              cal->setMetadata("enzyme_zerostack", m);
+            if (auto m = hasMetadata(&MS, "enzyme_truetype"))
+              if (auto sliced = sliceTrueType(m, seg_start, seg_size))
+                cal->setMetadata("enzyme_truetype", sliced);
+            cal->copyMetadata(MS, ToCopy2);
+            copyMemSetAttrs(cal, isCreateMemSet, attrOff);
+            if (!isCreateMemSet)
+              cal->setCallingConv(MS.getCallingConv());
+            cal->setTailCallKind(MS.getTailCallKind());
+            cal->setDebugLoc(gutils->getNewFromOriginal(MS.getDebugLoc()));
+          };
+
+          if (isPattern) {
+            size_t patSize = funcName == "memset_pattern4"
+                                 ? 4
+                                 : (funcName == "memset_pattern8" ? 8 : 16);
+            size_t patOff = seg_start % patSize;
+            if (patOff != 0) {
+              size_t prefix = patSize - patOff;
+              Value *patPtr = offsetPtr(BuilderZ, op1, patOff);
+              MaybeAlign dstAlign;
+              if (auto A = MS.getAttributes().getParamAlignment(0))
+                dstAlign = commonAlignment(*A, seg_start);
+              MaybeAlign srcAlign;
+              if (auto A = MS.getAttributes().getParamAlignment(1))
+                srcAlign = commonAlignment(*A, patOff);
+
+              if (auto *CLen = dyn_cast<ConstantInt>(length)) {
+                if (CLen->getLimitedValue() <= prefix) {
+                  auto cal = BuilderZ.CreateMemCpy(dstPtr, dstAlign, patPtr,
+                                                   srcAlign, segLen);
+                  cal->setDebugLoc(
+                      gutils->getNewFromOriginal(MS.getDebugLoc()));
+                  return;
+                }
+              }
+
+              Value *prefixVal = ConstantInt::get(segLen->getType(), prefix);
+              Value *firstLen = BuilderZ.CreateSelect(
+                  BuilderZ.CreateICmpULT(segLen, prefixVal), segLen, prefixVal);
+              auto cpy = BuilderZ.CreateMemCpy(dstPtr, dstAlign, patPtr,
+                                               srcAlign, firstLen);
+              cpy->setDebugLoc(gutils->getNewFromOriginal(MS.getDebugLoc()));
+              Value *remLen = BuilderZ.CreateSub(segLen, firstLen);
+              if (auto *CRem = dyn_cast<ConstantInt>(remLen))
+                if (CRem->isZero())
+                  return;
+              Type *i8Ty = Type::getInt8Ty(dstPtr->getContext());
+              unsigned as =
+                  cast<PointerType>(dstPtr->getType())->getAddressSpace();
+              Type *i8PtrTy = getPointerType(i8Ty, as);
+              Value *remDst = dstPtr;
+              if (remDst->getType() != i8PtrTy)
+                remDst = BuilderZ.CreateBitCast(remDst, i8PtrTy);
+              remDst = BuilderZ.CreateInBoundsGEP(i8Ty, remDst, firstLen);
+              if (remDst->getType() != orig_op0->getType())
+                remDst = BuilderZ.CreateBitCast(remDst, orig_op0->getType());
+              SmallVector<Value *, 4> args = {remDst, op1, remLen};
+              auto cal =
+                  BuilderZ.CreateCall(MS.getCalledFunction(), args, Defs);
+              finalizeCall(cal, /*isCreateMemSet*/ false, seg_start + prefix);
+              return;
+            }
           }
-          SmallVector<Value *, 4> args = {op0, op1, length};
-          if (op3)
-            args.push_back(op3);
+
+          if (isExperimentalPattern) {
+            if (toIterate.size() == 1 && seg_start == 0) {
+              Value *countLen =
+                  guardRuntimeActivity(BuilderZ, op0, primal_dst, new_size);
+              SmallVector<Value *, 4> args = {dstPtr, op1, countLen};
+              if (op3)
+                args.push_back(op3);
+              auto cal =
+                  BuilderZ.CreateCall(MS.getCalledFunction(), args, Defs);
+              finalizeCall(cal, /*isCreateMemSet*/ false, 0);
+              return;
+            }
+            if (seg_start % elemByteScale == 0 &&
+                seg_size % elemByteScale == 0) {
+              Value *countLen =
+                  (elemByteScale == 1)
+                      ? segLen
+                      : BuilderZ.CreateUDiv(
+                            segLen,
+                            ConstantInt::get(segLen->getType(), elemByteScale));
+              if (dstPtr->getType() != orig_op0->getType())
+                dstPtr = BuilderZ.CreateBitCast(dstPtr, orig_op0->getType());
+              SmallVector<Value *, 4> args = {dstPtr, op1, countLen};
+              if (op3)
+                args.push_back(op3);
+              auto cal =
+                  BuilderZ.CreateCall(MS.getCalledFunction(), args, Defs);
+              finalizeCall(cal, /*isCreateMemSet*/ false, seg_start);
+              return;
+            }
+            IRBuilder<> A(gutils->inversionAllocs);
+            AllocaInst *tmp = A.CreateAlloca(op1->getType());
+            BuilderZ.CreateStore(op1, tmp);
+            size_t patOff = seg_start % elemByteScale;
+            Value *patPtr = offsetPtr(BuilderZ, tmp, patOff);
+            MaybeAlign dstAlign;
+            if (auto A0 = MS.getAttributes().getParamAlignment(0))
+              dstAlign = commonAlignment(*A0, seg_start);
+            bool isVol = (op3 && isa<ConstantInt>(op3)) &&
+                         cast<ConstantInt>(op3)->isOne();
+            auto cpy = BuilderZ.CreateMemCpy(dstPtr, dstAlign, patPtr,
+                                             MaybeAlign(), segLen, isVol);
+            cpy->setDebugLoc(gutils->getNewFromOriginal(MS.getDebugLoc()));
+            return;
+          }
+
+          if (dstPtr->getType() != orig_op0->getType())
+            dstPtr = BuilderZ.CreateBitCast(dstPtr, orig_op0->getType());
+          Value *seg_op3 = adjustChkDstLen(BuilderZ, op3, seg_start);
+          SmallVector<Value *, 4> args = {dstPtr, op1, segLen};
+          if (seg_op3)
+            args.push_back(seg_op3);
           auto cal = BuilderZ.CreateCall(MS.getCalledFunction(), args, Defs);
-          llvm::SmallVector<unsigned int, 9> ToCopy2(MD_ToCopy);
-          ToCopy2.push_back(LLVMContext::MD_noalias);
-          if (auto m = hasMetadata(&MS, "enzyme_zerostack"))
-            cal->setMetadata("enzyme_zerostack", m);
-          if (auto m = hasMetadata(&MS, "enzyme_truetype"))
-            if (auto sliced = sliceTrueType(m, seg_start, seg_size))
-              cal->setMetadata("enzyme_truetype", sliced);
-          cal->copyMetadata(MS, ToCopy2);
-          cal->setAttributes(MS.getAttributes());
-          cal->setCallingConv(MS.getCallingConv());
-          cal->setTailCallKind(MS.getTailCallKind());
-          cal->setDebugLoc(gutils->getNewFromOriginal(MS.getDebugLoc()));
+          finalizeCall(cal, /*isCreateMemSet*/ false, seg_start);
         };
 
-        applyChainRule(BuilderZ, rule, shadow_dst);
+        applyChainRule(BuilderZ, rule, getShadowDst());
       }
-      if (secretty && (Mode == DerivativeMode::ReverseModeGradient ||
-                       Mode == DerivativeMode::ReverseModeCombined)) {
+
+      if (secretty && (emitFloatFwd || emitFloatRev)) {
+        bool isReverse = emitFloatRev;
+        IRBuilder<> &B = isReverse ? Builder2 : BuilderZ;
 
         auto Defs =
             gutils->getInvertedBundles(&MS,
                                        {ValueType::Shadow, ValueType::Primal,
                                         ValueType::Primal, ValueType::Primal},
-                                       BuilderZ, /*lookup*/ true);
-        Value *op1l = gutils->lookupM(op1, Builder2);
-        Value *op3l = op3;
-        if (op3l)
-          op3l = gutils->lookupM(op3l, BuilderZ);
-        length = gutils->lookupM(length, Builder2);
+                                       B, /*lookup*/ isReverse);
+        Value *op3_use =
+            op3 ? (isReverse ? gutils->lookupM(op3, B) : op3) : nullptr;
+        Value *baseLen =
+            isReverse ? gutils->lookupM(new_byte_size, B) : new_byte_size;
+        Value *length = computeSegLength(B, baseLen, seg_start, seg_size);
+        Value *primal_use =
+            gutils->runtimeActivity
+                ? (isReverse ? gutils->lookupM(primal_dst, B) : primal_dst)
+                : nullptr;
+        Value *sdst = getShadowDst();
+        Value *shadow_use = isReverse ? gutils->lookupM(sdst, B) : sdst;
+
         auto rule = [&](Value *op0) {
-          if (seg_start != 0) {
-            Value *idxs[] = {ConstantInt::get(
-                Type::getInt32Ty(op0->getContext()), seg_start)};
-            op0 = Builder2.CreateInBoundsGEP(Type::getInt8Ty(op0->getContext()),
-                                             op0, idxs);
-          }
-          SmallVector<Value *, 4> args = {op0, op1l, length};
-          if (op3l)
-            args.push_back(op3l);
+          Value *segLen = guardRuntimeActivity(B, op0, primal_use, length);
+          Value *dstPtr = offsetPtr(B, op0, seg_start);
+
           CallInst *cal;
-          auto funcName = getFuncNameFromCall(&MS);
-          if (startsWith(funcName, "memset_pattern") ||
-              startsWith(funcName, "llvm.experimental.memset"))
-            cal = Builder2.CreateMemSet(
-                op0, ConstantInt::get(Builder2.getInt8Ty(), 0), length, {});
-          else
-            cal = Builder2.CreateCall(MS.getCalledFunction(), args, Defs);
+          if (isPatternLike) {
+            cal = emitZeroMemSet(B, dstPtr, segLen,
+                                 isExperimentalPattern ? op3_use : nullptr);
+          } else {
+            if (dstPtr->getType() != orig_op0->getType())
+              dstPtr = B.CreateBitCast(dstPtr, orig_op0->getType());
+            Value *zeroFill = ConstantInt::get(orig_op1->getType(), 0);
+            Value *seg_op3 = adjustChkDstLen(B, op3_use, seg_start);
+            SmallVector<Value *, 4> args = {dstPtr, zeroFill, segLen};
+            if (seg_op3)
+              args.push_back(seg_op3);
+            cal = B.CreateCall(MS.getCalledFunction(), args, Defs);
+          }
           llvm::SmallVector<unsigned int, 9> ToCopy2(MD_ToCopy);
           ToCopy2.push_back(LLVMContext::MD_noalias);
           cal->copyMetadata(MS, ToCopy2);
@@ -3993,23 +4295,15 @@ public:
             if (auto sliced = sliceTrueType(m, seg_start, seg_size))
               cal->setMetadata("enzyme_truetype", sliced);
 
-          if (startsWith(funcName, "memset_pattern") ||
-              startsWith(funcName, "llvm.experimental.memset")) {
-            AttributeList NewAttrs;
-            for (auto idx :
-                 {AttributeList::ReturnIndex, AttributeList::FunctionIndex,
-                  AttributeList::FirstArgIndex})
-              for (auto attr : MS.getAttributes().getAttributes(idx))
-                NewAttrs =
-                    NewAttrs.addAttributeAtIndex(MS.getContext(), idx, attr);
-            cal->setAttributes(NewAttrs);
-          } else
-            cal->setAttributes(MS.getAttributes());
-          cal->setCallingConv(MS.getCallingConv());
+          copyMemSetAttrs(cal, /*isCreateMemSet*/ isPatternLike, seg_start);
+          if (!isPatternLike)
+            cal->setCallingConv(MS.getCallingConv());
+          if (!isReverse)
+            cal->setTailCallKind(MS.getTailCallKind());
           cal->setDebugLoc(gutils->getNewFromOriginal(MS.getDebugLoc()));
         };
 
-        applyChainRule(Builder2, rule, gutils->lookupM(shadow_dst, Builder2));
+        applyChainRule(B, rule, shadow_use);
       }
     }
   }
