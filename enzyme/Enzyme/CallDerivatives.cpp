@@ -2354,6 +2354,695 @@ classifyAtomicModifyOp(llvm::Function *op, unsigned &opArgNo, llvm::Type *&FT) {
   return AtomicRMWInst::BAD_BINOP;
 }
 
+static FunctionCallee getOrInsertGSLFunction(Module &M, Function *called,
+                                             StringRef baseName,
+                                             FunctionType *defaultFT) {
+  std::string renamed = getRenamedPerCallingConv(called->getName(), baseName);
+  if (Function *existing = M.getFunction(renamed)) {
+    if (existing->getFunctionType()->getNumParams() ==
+        defaultFT->getNumParams())
+      return FunctionCallee(existing->getFunctionType(), existing);
+  }
+  return getOrInsertPerCallingConv(M, called, baseName, defaultFT);
+}
+
+static CallInst *emitGSLCall(IRBuilder<> &B, FunctionCallee FC,
+                             ArrayRef<Value *> rawArgs,
+                             ArrayRef<OperandBundleDef> Defs,
+                             CallingConv::ID CC) {
+  SmallVector<Value *, 8> args;
+  args.reserve(rawArgs.size());
+  FunctionType *FT = FC.getFunctionType();
+  for (unsigned i = 0; i < rawArgs.size(); ++i) {
+    Value *arg = rawArgs[i];
+    Type *expected = FT->getParamType(i);
+    if (arg->getType() != expected) {
+      if (isa<PointerType>(arg->getType()) && isa<PointerType>(expected))
+        arg = B.CreatePointerCast(arg, expected);
+      else if (arg->getType()->isIntegerTy() && expected->isIntegerTy())
+        arg = B.CreateSExtOrTrunc(arg, expected);
+    }
+    args.push_back(arg);
+  }
+  CallInst *CI = B.CreateCall(FC, args, Defs);
+  CI->setCallingConv(CC);
+  return CI;
+}
+
+static std::string gslHelperSuffix(Type *elemTy, Type *sizeTy) {
+  return std::string(elemTy->isFloatTy() ? "_f32_i" : "_f64_i") +
+         std::to_string(sizeTy->getIntegerBitWidth());
+}
+
+static Function *getOrCreateGSLScaleHalfcomplexFn(Module &M, Type *elemTy,
+                                                  Type *sizeTy, bool radix2) {
+  std::string name = (radix2 ? "__enzyme_gsl_fft_scale_hc_radix2"
+                             : "__enzyme_gsl_fft_scale_hc") +
+                     gslHelperSuffix(elemTy, sizeTy);
+  if (Function *F = M.getFunction(name))
+    return F;
+
+  LLVMContext &C = M.getContext();
+  Type *ptrTy = getUnqual(elemTy);
+  FunctionType *FT = FunctionType::get(Type::getVoidTy(C),
+                                       {ptrTy, sizeTy, sizeTy, elemTy}, false);
+  Function *F = Function::Create(FT, Function::InternalLinkage, name, &M);
+  F->addFnAttr(Attribute::NoUnwind);
+
+  BasicBlock *entry = BasicBlock::Create(C, "entry", F);
+  BasicBlock *loop = BasicBlock::Create(C, "loop", F);
+  BasicBlock *exit = BasicBlock::Create(C, "exit", F);
+
+  auto argIt = F->arg_begin();
+  Value *data = &*argIt++;
+  Value *stride = &*argIt++;
+  Value *n = &*argIt++;
+  Value *factor = &*argIt++;
+
+  IRBuilder<> B(entry);
+  Value *one = ConstantInt::get(sizeTy, 1);
+  Value *two = ConstantInt::get(sizeTy, 2);
+
+  if (!radix2) {
+    Value *isOdd =
+        B.CreateICmpNE(B.CreateAnd(n, one), ConstantInt::get(sizeTy, 0));
+    Value *end = B.CreateSelect(isOdd, n, B.CreateSub(n, one));
+    B.CreateCondBr(B.CreateICmpULE(n, two), exit, loop);
+
+    B.SetInsertPoint(loop);
+    PHINode *k = B.CreatePHI(sizeTy, 2, "k");
+    k->addIncoming(one, entry);
+    Value *idx = B.CreateMul(k, stride);
+    Value *ptr = B.CreateInBoundsGEP(elemTy, data, idx);
+    Value *val = B.CreateLoad(elemTy, ptr);
+    B.CreateStore(B.CreateFMul(val, factor), ptr);
+    Value *kNext = B.CreateAdd(k, one, "", true, true);
+    k->addIncoming(kNext, loop);
+    B.CreateCondBr(B.CreateICmpULT(kNext, end), loop, exit);
+  } else {
+    Value *half = B.CreateLShr(n, one);
+    B.CreateCondBr(B.CreateICmpULE(half, one), exit, loop);
+
+    B.SetInsertPoint(loop);
+    PHINode *k = B.CreatePHI(sizeTy, 2, "k");
+    k->addIncoming(one, entry);
+    Value *idx1 = B.CreateMul(k, stride);
+    Value *ptr1 = B.CreateInBoundsGEP(elemTy, data, idx1);
+    B.CreateStore(B.CreateFMul(B.CreateLoad(elemTy, ptr1), factor), ptr1);
+
+    Value *idx2 = B.CreateMul(B.CreateAdd(half, k), stride);
+    Value *ptr2 = B.CreateInBoundsGEP(elemTy, data, idx2);
+    B.CreateStore(B.CreateFMul(B.CreateLoad(elemTy, ptr2), factor), ptr2);
+
+    Value *kNext = B.CreateAdd(k, one, "", true, true);
+    k->addIncoming(kNext, loop);
+    B.CreateCondBr(B.CreateICmpULT(kNext, half), loop, exit);
+  }
+
+  B.SetInsertPoint(exit);
+  B.CreateRetVoid();
+  return F;
+}
+
+static Function *getOrCreateGSLScaleAllFn(Module &M, Type *elemTy, Type *sizeTy,
+                                          bool isComplex) {
+  std::string name = (isComplex ? "__enzyme_gsl_fft_scale_complex"
+                                : "__enzyme_gsl_fft_scale_real") +
+                     gslHelperSuffix(elemTy, sizeTy);
+  if (Function *F = M.getFunction(name))
+    return F;
+
+  LLVMContext &C = M.getContext();
+  Type *ptrTy = getUnqual(elemTy);
+  FunctionType *FT = FunctionType::get(Type::getVoidTy(C),
+                                       {ptrTy, sizeTy, sizeTy, elemTy}, false);
+  Function *F = Function::Create(FT, Function::InternalLinkage, name, &M);
+  F->addFnAttr(Attribute::NoUnwind);
+
+  BasicBlock *entry = BasicBlock::Create(C, "entry", F);
+  BasicBlock *loop = BasicBlock::Create(C, "loop", F);
+  BasicBlock *exit = BasicBlock::Create(C, "exit", F);
+
+  auto argIt = F->arg_begin();
+  Value *data = &*argIt++;
+  Value *stride = &*argIt++;
+  Value *n = &*argIt++;
+  Value *factor = &*argIt++;
+
+  IRBuilder<> B(entry);
+  Value *zero = ConstantInt::get(sizeTy, 0);
+  Value *one = ConstantInt::get(sizeTy, 1);
+  Value *two = ConstantInt::get(sizeTy, 2);
+  B.CreateCondBr(B.CreateICmpEQ(n, zero), exit, loop);
+
+  B.SetInsertPoint(loop);
+  PHINode *i = B.CreatePHI(sizeTy, 2, "i");
+  i->addIncoming(zero, entry);
+  Value *idx = B.CreateMul(i, stride);
+  if (!isComplex) {
+    Value *ptr = B.CreateInBoundsGEP(elemTy, data, idx);
+    B.CreateStore(B.CreateFMul(B.CreateLoad(elemTy, ptr), factor), ptr);
+  } else {
+    Value *base = B.CreateMul(idx, two);
+    Value *pRe = B.CreateInBoundsGEP(elemTy, data, base);
+    Value *pIm = B.CreateInBoundsGEP(elemTy, data, B.CreateAdd(base, one));
+    B.CreateStore(B.CreateFMul(B.CreateLoad(elemTy, pRe), factor), pRe);
+    B.CreateStore(B.CreateFMul(B.CreateLoad(elemTy, pIm), factor), pIm);
+  }
+  Value *iNext = B.CreateAdd(i, one, "", true, true);
+  i->addIncoming(iNext, loop);
+  B.CreateCondBr(B.CreateICmpULT(iNext, n), loop, exit);
+
+  B.SetInsertPoint(exit);
+  B.CreateRetVoid();
+  return F;
+}
+
+static Function *getOrCreateGSLZeroComplexFn(Module &M, Type *elemTy,
+                                             Type *sizeTy) {
+  std::string name =
+      "__enzyme_gsl_fft_zero_complex" + gslHelperSuffix(elemTy, sizeTy);
+  if (Function *F = M.getFunction(name))
+    return F;
+
+  LLVMContext &C = M.getContext();
+  Type *ptrTy = getUnqual(elemTy);
+  FunctionType *FT =
+      FunctionType::get(Type::getVoidTy(C), {ptrTy, sizeTy, sizeTy}, false);
+  Function *F = Function::Create(FT, Function::InternalLinkage, name, &M);
+  F->addFnAttr(Attribute::NoUnwind);
+
+  BasicBlock *entry = BasicBlock::Create(C, "entry", F);
+  BasicBlock *loop = BasicBlock::Create(C, "loop", F);
+  BasicBlock *exit = BasicBlock::Create(C, "exit", F);
+
+  auto argIt = F->arg_begin();
+  Value *c = &*argIt++;
+  Value *stride = &*argIt++;
+  Value *n = &*argIt++;
+
+  IRBuilder<> B(entry);
+  Value *zero = ConstantInt::get(sizeTy, 0);
+  Value *one = ConstantInt::get(sizeTy, 1);
+  Value *two = ConstantInt::get(sizeTy, 2);
+  Value *fpZero = ConstantFP::get(elemTy, 0.0);
+  B.CreateCondBr(B.CreateICmpEQ(n, zero), exit, loop);
+
+  B.SetInsertPoint(loop);
+  PHINode *i = B.CreatePHI(sizeTy, 2, "i");
+  i->addIncoming(zero, entry);
+  Value *base = B.CreateMul(B.CreateMul(i, stride), two);
+  B.CreateStore(fpZero, B.CreateInBoundsGEP(elemTy, c, base));
+  B.CreateStore(fpZero, B.CreateInBoundsGEP(elemTy, c, B.CreateAdd(base, one)));
+  Value *iNext = B.CreateAdd(i, one, "", true, true);
+  i->addIncoming(iNext, loop);
+  B.CreateCondBr(B.CreateICmpULT(iNext, n), loop, exit);
+
+  B.SetInsertPoint(exit);
+  B.CreateRetVoid();
+  return F;
+}
+
+static Function *getOrCreateGSLRealUnpackRevFn(Module &M, Type *elemTy,
+                                               Type *sizeTy) {
+  std::string name =
+      "__enzyme_gsl_fft_real_unpack_rev" + gslHelperSuffix(elemTy, sizeTy);
+  if (Function *F = M.getFunction(name))
+    return F;
+
+  LLVMContext &C = M.getContext();
+  Type *ptrTy = getUnqual(elemTy);
+  FunctionType *FT = FunctionType::get(Type::getVoidTy(C),
+                                       {ptrTy, ptrTy, sizeTy, sizeTy}, false);
+  Function *F = Function::Create(FT, Function::InternalLinkage, name, &M);
+  F->addFnAttr(Attribute::NoUnwind);
+
+  BasicBlock *entry = BasicBlock::Create(C, "entry", F);
+  BasicBlock *loop = BasicBlock::Create(C, "loop", F);
+  BasicBlock *exit = BasicBlock::Create(C, "exit", F);
+
+  auto argIt = F->arg_begin();
+  Value *dreal = &*argIt++;
+  Value *dc = &*argIt++;
+  Value *stride = &*argIt++;
+  Value *n = &*argIt++;
+
+  IRBuilder<> B(entry);
+  Value *zero = ConstantInt::get(sizeTy, 0);
+  Value *one = ConstantInt::get(sizeTy, 1);
+  Value *two = ConstantInt::get(sizeTy, 2);
+  Value *fpZero = ConstantFP::get(elemTy, 0.0);
+  B.CreateCondBr(B.CreateICmpEQ(n, zero), exit, loop);
+
+  B.SetInsertPoint(loop);
+  PHINode *i = B.CreatePHI(sizeTy, 2, "i");
+  i->addIncoming(zero, entry);
+  Value *idx = B.CreateMul(i, stride);
+  Value *cBase = B.CreateMul(idx, two);
+  Value *pCRe = B.CreateInBoundsGEP(elemTy, dc, cBase);
+  Value *pCIm = B.CreateInBoundsGEP(elemTy, dc, B.CreateAdd(cBase, one));
+  Value *cRe = B.CreateLoad(elemTy, pCRe);
+  B.CreateStore(fpZero, pCRe);
+  B.CreateStore(fpZero, pCIm);
+  Value *pR = B.CreateInBoundsGEP(elemTy, dreal, idx);
+  B.CreateStore(B.CreateFAdd(B.CreateLoad(elemTy, pR), cRe), pR);
+  Value *iNext = B.CreateAdd(i, one, "", true, true);
+  i->addIncoming(iNext, loop);
+  B.CreateCondBr(B.CreateICmpULT(iNext, n), loop, exit);
+
+  B.SetInsertPoint(exit);
+  B.CreateRetVoid();
+  return F;
+}
+
+static Function *getOrCreateGSLHCUnpackRevFn(Module &M, Type *elemTy,
+                                             Type *sizeTy, bool radix2) {
+  std::string name = (radix2 ? "__enzyme_gsl_fft_hc_radix2_unpack_rev"
+                             : "__enzyme_gsl_fft_hc_unpack_rev") +
+                     gslHelperSuffix(elemTy, sizeTy);
+  if (Function *F = M.getFunction(name))
+    return F;
+
+  LLVMContext &C = M.getContext();
+  Type *ptrTy = getUnqual(elemTy);
+  FunctionType *FT = FunctionType::get(Type::getVoidTy(C),
+                                       {ptrTy, ptrTy, sizeTy, sizeTy}, false);
+  Function *F = Function::Create(FT, Function::InternalLinkage, name, &M);
+  F->addFnAttr(Attribute::NoUnwind);
+
+  BasicBlock *entry = BasicBlock::Create(C, "entry", F);
+  BasicBlock *dcBlock = BasicBlock::Create(C, "dc", F);
+  BasicBlock *loop = BasicBlock::Create(C, "loop", F);
+  BasicBlock *afterLoop = BasicBlock::Create(C, "after_loop", F);
+  BasicBlock *nyquist = BasicBlock::Create(C, "nyquist", F);
+  BasicBlock *exit = BasicBlock::Create(C, "exit", F);
+
+  auto argIt = F->arg_begin();
+  Value *dhc = &*argIt++;
+  Value *dc = &*argIt++;
+  Value *stride = &*argIt++;
+  Value *n = &*argIt++;
+
+  IRBuilder<> B(entry);
+  Value *zero = ConstantInt::get(sizeTy, 0);
+  Value *one = ConstantInt::get(sizeTy, 1);
+  Value *two = ConstantInt::get(sizeTy, 2);
+  Value *fpZero = ConstantFP::get(elemTy, 0.0);
+  B.CreateCondBr(B.CreateICmpEQ(n, zero), exit, dcBlock);
+
+  B.SetInsertPoint(dcBlock);
+  Value *c0 = B.CreateLoad(elemTy, dc);
+  B.CreateStore(fpZero, dc);
+  B.CreateStore(fpZero, B.CreateInBoundsGEP(elemTy, dc, one));
+  B.CreateStore(B.CreateFAdd(B.CreateLoad(elemTy, dhc), c0), dhc);
+  Value *limit = B.CreateLShr(B.CreateSub(n, one), one);
+  B.CreateCondBr(B.CreateICmpUGE(limit, one), loop, afterLoop);
+
+  B.SetInsertPoint(loop);
+  PHINode *i = B.CreatePHI(sizeTy, 2, "i");
+  i->addIncoming(one, dcBlock);
+  Value *j = B.CreateSub(n, i);
+  Value *ciBase = B.CreateMul(B.CreateMul(i, stride), two);
+  Value *cjBase = B.CreateMul(B.CreateMul(j, stride), two);
+  Value *pCIRe = B.CreateInBoundsGEP(elemTy, dc, ciBase);
+  Value *pCIIm = B.CreateInBoundsGEP(elemTy, dc, B.CreateAdd(ciBase, one));
+  Value *pCJRe = B.CreateInBoundsGEP(elemTy, dc, cjBase);
+  Value *pCJIm = B.CreateInBoundsGEP(elemTy, dc, B.CreateAdd(cjBase, one));
+  Value *cIRe = B.CreateLoad(elemTy, pCIRe);
+  Value *cIIm = B.CreateLoad(elemTy, pCIIm);
+  Value *cJRe = B.CreateLoad(elemTy, pCJRe);
+  Value *cJIm = B.CreateLoad(elemTy, pCJIm);
+  B.CreateStore(fpZero, pCIRe);
+  B.CreateStore(fpZero, pCIIm);
+  B.CreateStore(fpZero, pCJRe);
+  B.CreateStore(fpZero, pCJIm);
+
+  Value *reIdx;
+  Value *imIdx;
+  if (!radix2) {
+    Value *twoI = B.CreateMul(i, two);
+    reIdx = B.CreateMul(B.CreateSub(twoI, one), stride);
+    imIdx = B.CreateMul(twoI, stride);
+  } else {
+    reIdx = B.CreateMul(i, stride);
+    imIdx = B.CreateMul(j, stride);
+  }
+  Value *pHcRe = B.CreateInBoundsGEP(elemTy, dhc, reIdx);
+  Value *pHcIm = B.CreateInBoundsGEP(elemTy, dhc, imIdx);
+  B.CreateStore(
+      B.CreateFAdd(B.CreateLoad(elemTy, pHcRe), B.CreateFAdd(cIRe, cJRe)),
+      pHcRe);
+  B.CreateStore(
+      B.CreateFAdd(B.CreateLoad(elemTy, pHcIm), B.CreateFSub(cIIm, cJIm)),
+      pHcIm);
+  Value *iNext = B.CreateAdd(i, one, "", true, true);
+  i->addIncoming(iNext, loop);
+  B.CreateCondBr(B.CreateICmpULE(iNext, limit), loop, afterLoop);
+
+  B.SetInsertPoint(afterLoop);
+  Value *isEven = B.CreateICmpEQ(B.CreateAnd(n, one), zero);
+  B.CreateCondBr(isEven, nyquist, exit);
+
+  B.SetInsertPoint(nyquist);
+  Value *half = B.CreateLShr(n, one);
+  Value *cHBase = B.CreateMul(B.CreateMul(half, stride), two);
+  Value *pCHRe = B.CreateInBoundsGEP(elemTy, dc, cHBase);
+  Value *pCHIm = B.CreateInBoundsGEP(elemTy, dc, B.CreateAdd(cHBase, one));
+  Value *cHRe = B.CreateLoad(elemTy, pCHRe);
+  B.CreateStore(fpZero, pCHRe);
+  B.CreateStore(fpZero, pCHIm);
+  Value *nyqIdx = radix2 ? B.CreateMul(half, stride)
+                         : B.CreateMul(B.CreateSub(n, one), stride);
+  Value *pNyq = B.CreateInBoundsGEP(elemTy, dhc, nyqIdx);
+  B.CreateStore(B.CreateFAdd(B.CreateLoad(elemTy, pNyq), cHRe), pNyq);
+  B.CreateBr(exit);
+
+  B.SetInsertPoint(exit);
+  B.CreateRetVoid();
+  return F;
+}
+
+static Function *getOrCreateGSLCopyStridedFn(Module &M, Type *elemTy,
+                                             Type *sizeTy) {
+  std::string name =
+      "__enzyme_gsl_copy_strided" + gslHelperSuffix(elemTy, sizeTy);
+  if (Function *F = M.getFunction(name))
+    return F;
+
+  LLVMContext &C = M.getContext();
+  Type *ptrTy = getUnqual(elemTy);
+  FunctionType *FT = FunctionType::get(Type::getVoidTy(C),
+                                       {ptrTy, ptrTy, sizeTy, sizeTy}, false);
+  Function *F = Function::Create(FT, Function::InternalLinkage, name, &M);
+  F->addFnAttr(Attribute::NoUnwind);
+
+  BasicBlock *entry = BasicBlock::Create(C, "entry", F);
+  BasicBlock *loop = BasicBlock::Create(C, "loop", F);
+  BasicBlock *exit = BasicBlock::Create(C, "exit", F);
+
+  auto argIt = F->arg_begin();
+  Value *dst = &*argIt++;
+  Value *src = &*argIt++;
+  Value *stride = &*argIt++;
+  Value *n = &*argIt++;
+
+  IRBuilder<> B(entry);
+  Value *zero = ConstantInt::get(sizeTy, 0);
+  Value *one = ConstantInt::get(sizeTy, 1);
+  B.CreateCondBr(B.CreateICmpEQ(n, zero), exit, loop);
+
+  B.SetInsertPoint(loop);
+  PHINode *i = B.CreatePHI(sizeTy, 2, "i");
+  i->addIncoming(zero, entry);
+  Value *val = B.CreateLoad(
+      elemTy, B.CreateInBoundsGEP(elemTy, src, B.CreateMul(i, stride)));
+  B.CreateStore(val, B.CreateInBoundsGEP(elemTy, dst, i));
+  Value *iNext = B.CreateAdd(i, one, "", true, true);
+  i->addIncoming(iNext, loop);
+  B.CreateCondBr(B.CreateICmpULT(iNext, n), loop, exit);
+
+  B.SetInsertPoint(exit);
+  B.CreateRetVoid();
+  return F;
+}
+
+static Function *getOrCreateGSLStatsMeanRevFn(Module &M, Type *elemTy,
+                                              Type *sizeTy) {
+  std::string name =
+      "__enzyme_gsl_stats_mean_rev" + gslHelperSuffix(elemTy, sizeTy);
+  if (Function *F = M.getFunction(name))
+    return F;
+
+  LLVMContext &C = M.getContext();
+  Type *ptrTy = getUnqual(elemTy);
+  Type *f64Ty = Type::getDoubleTy(C);
+  FunctionType *FT = FunctionType::get(Type::getVoidTy(C),
+                                       {ptrTy, sizeTy, sizeTy, f64Ty}, false);
+  Function *F = Function::Create(FT, Function::InternalLinkage, name, &M);
+  F->addFnAttr(Attribute::NoUnwind);
+
+  BasicBlock *entry = BasicBlock::Create(C, "entry", F);
+  BasicBlock *loop = BasicBlock::Create(C, "loop", F);
+  BasicBlock *exit = BasicBlock::Create(C, "exit", F);
+
+  auto argIt = F->arg_begin();
+  Value *ddata = &*argIt++;
+  Value *stride = &*argIt++;
+  Value *n = &*argIt++;
+  Value *dret = &*argIt++;
+
+  IRBuilder<> B(entry);
+  Value *zero = ConstantInt::get(sizeTy, 0);
+  Value *one = ConstantInt::get(sizeTy, 1);
+  Value *nDouble = B.CreateUIToFP(n, f64Ty);
+  Value *inc = B.CreateFDiv(dret, nDouble);
+  if (elemTy != f64Ty)
+    inc = B.CreateFPTrunc(inc, elemTy);
+  B.CreateCondBr(B.CreateICmpEQ(n, zero), exit, loop);
+
+  B.SetInsertPoint(loop);
+  PHINode *i = B.CreatePHI(sizeTy, 2, "i");
+  i->addIncoming(zero, entry);
+  Value *ptr = B.CreateInBoundsGEP(elemTy, ddata, B.CreateMul(i, stride));
+  B.CreateStore(B.CreateFAdd(B.CreateLoad(elemTy, ptr), inc), ptr);
+  Value *iNext = B.CreateAdd(i, one, "", true, true);
+  i->addIncoming(iNext, loop);
+  B.CreateCondBr(B.CreateICmpULT(iNext, n), loop, exit);
+
+  B.SetInsertPoint(exit);
+  B.CreateRetVoid();
+  return F;
+}
+
+static Function *getOrCreateGSLStatsVarFwdFn(Module &M, Type *elemTy,
+                                             Type *sizeTy) {
+  std::string name =
+      "__enzyme_gsl_stats_var_fwd" + gslHelperSuffix(elemTy, sizeTy);
+  if (Function *F = M.getFunction(name))
+    return F;
+
+  LLVMContext &C = M.getContext();
+  Type *ptrTy = getUnqual(elemTy);
+  Type *f64Ty = Type::getDoubleTy(C);
+  FunctionType *FT = FunctionType::get(
+      f64Ty, {ptrTy, sizeTy, ptrTy, sizeTy, sizeTy, f64Ty, f64Ty}, false);
+  Function *F = Function::Create(FT, Function::InternalLinkage, name, &M);
+  F->addFnAttr(Attribute::NoUnwind);
+
+  BasicBlock *entry = BasicBlock::Create(C, "entry", F);
+  BasicBlock *loop = BasicBlock::Create(C, "loop", F);
+  BasicBlock *loadDx = BasicBlock::Create(C, "load_dx", F);
+  BasicBlock *mergeDx = BasicBlock::Create(C, "merge_dx", F);
+  BasicBlock *exit = BasicBlock::Create(C, "exit", F);
+
+  auto argIt = F->arg_begin();
+  Value *data = &*argIt++;
+  Value *dataStride = &*argIt++;
+  Value *ddata = &*argIt++;
+  Value *ddataStride = &*argIt++;
+  Value *n = &*argIt++;
+  Value *mu = &*argIt++;
+  Value *dmu = &*argIt++;
+
+  IRBuilder<> B(entry);
+  Value *zero = ConstantInt::get(sizeTy, 0);
+  Value *one = ConstantInt::get(sizeTy, 1);
+  Value *fZero = ConstantFP::get(f64Ty, 0.0);
+  Value *hasDData =
+      B.CreateICmpNE(ddata, ConstantPointerNull::get(cast<PointerType>(ptrTy)));
+  B.CreateCondBr(B.CreateICmpEQ(n, zero), exit, loop);
+
+  B.SetInsertPoint(loop);
+  PHINode *i = B.CreatePHI(sizeTy, 2, "i");
+  i->addIncoming(zero, entry);
+  PHINode *sum = B.CreatePHI(f64Ty, 2, "sum");
+  sum->addIncoming(fZero, entry);
+  Value *xi = B.CreateLoad(
+      elemTy, B.CreateInBoundsGEP(elemTy, data, B.CreateMul(i, dataStride)));
+  if (elemTy != f64Ty)
+    xi = B.CreateFPExt(xi, f64Ty);
+  Value *delta = B.CreateFSub(xi, mu);
+  B.CreateCondBr(hasDData, loadDx, mergeDx);
+
+  B.SetInsertPoint(loadDx);
+  Value *dxiLoaded = B.CreateLoad(
+      elemTy, B.CreateInBoundsGEP(elemTy, ddata, B.CreateMul(i, ddataStride)));
+  if (elemTy != f64Ty)
+    dxiLoaded = B.CreateFPExt(dxiLoaded, f64Ty);
+  B.CreateBr(mergeDx);
+
+  B.SetInsertPoint(mergeDx);
+  PHINode *dxi = B.CreatePHI(f64Ty, 2, "dxi");
+  dxi->addIncoming(fZero, loop);
+  dxi->addIncoming(dxiLoaded, loadDx);
+  Value *ddelta = B.CreateFSub(dxi, dmu);
+  Value *sumNext = B.CreateFAdd(sum, B.CreateFMul(delta, ddelta));
+  Value *iNext = B.CreateAdd(i, one, "", true, true);
+  i->addIncoming(iNext, mergeDx);
+  sum->addIncoming(sumNext, mergeDx);
+  B.CreateCondBr(B.CreateICmpULT(iNext, n), loop, exit);
+
+  B.SetInsertPoint(exit);
+  PHINode *retVal = B.CreatePHI(f64Ty, 2, "ret");
+  retVal->addIncoming(fZero, entry);
+  retVal->addIncoming(sumNext, mergeDx);
+  B.CreateRet(retVal);
+  return F;
+}
+
+static Function *getOrCreateGSLStatsVarRevFn(Module &M, Type *elemTy,
+                                             Type *sizeTy) {
+  std::string name =
+      "__enzyme_gsl_stats_var_rev" + gslHelperSuffix(elemTy, sizeTy);
+  if (Function *F = M.getFunction(name))
+    return F;
+
+  LLVMContext &C = M.getContext();
+  Type *ptrTy = getUnqual(elemTy);
+  Type *f64Ty = Type::getDoubleTy(C);
+  FunctionType *FT = FunctionType::get(
+      f64Ty, {ptrTy, sizeTy, ptrTy, sizeTy, sizeTy, f64Ty, f64Ty}, false);
+  Function *F = Function::Create(FT, Function::InternalLinkage, name, &M);
+  F->addFnAttr(Attribute::NoUnwind);
+
+  BasicBlock *entry = BasicBlock::Create(C, "entry", F);
+  BasicBlock *loop = BasicBlock::Create(C, "loop", F);
+  BasicBlock *accumDx = BasicBlock::Create(C, "accum_dx", F);
+  BasicBlock *loopEnd = BasicBlock::Create(C, "loop_end", F);
+  BasicBlock *exit = BasicBlock::Create(C, "exit", F);
+
+  auto argIt = F->arg_begin();
+  Value *data = &*argIt++;
+  Value *dataStride = &*argIt++;
+  Value *ddata = &*argIt++;
+  Value *ddataStride = &*argIt++;
+  Value *n = &*argIt++;
+  Value *mu = &*argIt++;
+  Value *scale = &*argIt++;
+
+  IRBuilder<> B(entry);
+  Value *zero = ConstantInt::get(sizeTy, 0);
+  Value *one = ConstantInt::get(sizeTy, 1);
+  Value *fZero = ConstantFP::get(f64Ty, 0.0);
+  Value *hasDData =
+      B.CreateICmpNE(ddata, ConstantPointerNull::get(cast<PointerType>(ptrTy)));
+  B.CreateCondBr(B.CreateICmpEQ(n, zero), exit, loop);
+
+  B.SetInsertPoint(loop);
+  PHINode *i = B.CreatePHI(sizeTy, 2, "i");
+  i->addIncoming(zero, entry);
+  PHINode *sumDelta = B.CreatePHI(f64Ty, 2, "sum_delta");
+  sumDelta->addIncoming(fZero, entry);
+  Value *xi = B.CreateLoad(
+      elemTy, B.CreateInBoundsGEP(elemTy, data, B.CreateMul(i, dataStride)));
+  if (elemTy != f64Ty)
+    xi = B.CreateFPExt(xi, f64Ty);
+  Value *delta = B.CreateFSub(xi, mu);
+  Value *sumDeltaNext = B.CreateFAdd(sumDelta, delta);
+  B.CreateCondBr(hasDData, accumDx, loopEnd);
+
+  B.SetInsertPoint(accumDx);
+  Value *grad = B.CreateFMul(scale, delta);
+  if (elemTy != f64Ty)
+    grad = B.CreateFPTrunc(grad, elemTy);
+  Value *pD = B.CreateInBoundsGEP(elemTy, ddata, B.CreateMul(i, ddataStride));
+  B.CreateStore(B.CreateFAdd(B.CreateLoad(elemTy, pD), grad), pD);
+  B.CreateBr(loopEnd);
+
+  B.SetInsertPoint(loopEnd);
+  Value *iNext = B.CreateAdd(i, one, "", true, true);
+  i->addIncoming(iNext, loopEnd);
+  sumDelta->addIncoming(sumDeltaNext, loopEnd);
+  B.CreateCondBr(B.CreateICmpULT(iNext, n), loop, exit);
+
+  B.SetInsertPoint(exit);
+  PHINode *totalDelta = B.CreatePHI(f64Ty, 2, "total_delta");
+  totalDelta->addIncoming(fZero, entry);
+  totalDelta->addIncoming(sumDeltaNext, loopEnd);
+  B.CreateRet(B.CreateFMul(B.CreateFNeg(scale), totalDelta));
+  return F;
+}
+
+static Function *getOrCreateGSLStatsMinMaxFwdFn(Module &M, Type *elemTy,
+                                                Type *sizeTy) {
+  std::string name =
+      "__enzyme_gsl_stats_minmax_fwd" + gslHelperSuffix(elemTy, sizeTy);
+  if (Function *F = M.getFunction(name))
+    return F;
+
+  LLVMContext &C = M.getContext();
+  Type *ptrTy = getUnqual(elemTy);
+  FunctionType *FT =
+      FunctionType::get(elemTy, {ptrTy, sizeTy, sizeTy, sizeTy}, false);
+  Function *F = Function::Create(FT, Function::InternalLinkage, name, &M);
+  F->addFnAttr(Attribute::NoUnwind);
+
+  BasicBlock *entry = BasicBlock::Create(C, "entry", F);
+  BasicBlock *nonEmpty = BasicBlock::Create(C, "nonempty", F);
+  BasicBlock *exit = BasicBlock::Create(C, "exit", F);
+
+  auto argIt = F->arg_begin();
+  Value *ddata = &*argIt++;
+  Value *stride = &*argIt++;
+  Value *n = &*argIt++;
+  Value *idx = &*argIt++;
+
+  IRBuilder<> B(entry);
+  B.CreateCondBr(B.CreateICmpEQ(n, ConstantInt::get(sizeTy, 0)), exit,
+                 nonEmpty);
+
+  B.SetInsertPoint(nonEmpty);
+  Value *val = B.CreateLoad(
+      elemTy, B.CreateInBoundsGEP(elemTy, ddata, B.CreateMul(idx, stride)));
+  B.CreateBr(exit);
+
+  B.SetInsertPoint(exit);
+  PHINode *ret = B.CreatePHI(elemTy, 2, "ret");
+  ret->addIncoming(ConstantFP::get(elemTy, 0.0), entry);
+  ret->addIncoming(val, nonEmpty);
+  B.CreateRet(ret);
+  return F;
+}
+
+static Function *getOrCreateGSLStatsMinMaxRevFn(Module &M, Type *elemTy,
+                                                Type *sizeTy) {
+  std::string name =
+      "__enzyme_gsl_stats_minmax_rev" + gslHelperSuffix(elemTy, sizeTy);
+  if (Function *F = M.getFunction(name))
+    return F;
+
+  LLVMContext &C = M.getContext();
+  Type *ptrTy = getUnqual(elemTy);
+  FunctionType *FT = FunctionType::get(
+      Type::getVoidTy(C), {ptrTy, sizeTy, sizeTy, sizeTy, elemTy}, false);
+  Function *F = Function::Create(FT, Function::InternalLinkage, name, &M);
+  F->addFnAttr(Attribute::NoUnwind);
+
+  BasicBlock *entry = BasicBlock::Create(C, "entry", F);
+  BasicBlock *nonEmpty = BasicBlock::Create(C, "nonempty", F);
+  BasicBlock *exit = BasicBlock::Create(C, "exit", F);
+
+  auto argIt = F->arg_begin();
+  Value *ddata = &*argIt++;
+  Value *stride = &*argIt++;
+  Value *n = &*argIt++;
+  Value *idx = &*argIt++;
+  Value *dret = &*argIt++;
+
+  IRBuilder<> B(entry);
+  B.CreateCondBr(B.CreateICmpEQ(n, ConstantInt::get(sizeTy, 0)), exit,
+                 nonEmpty);
+
+  B.SetInsertPoint(nonEmpty);
+  Value *ptr = B.CreateInBoundsGEP(elemTy, ddata, B.CreateMul(idx, stride));
+  B.CreateStore(B.CreateFAdd(B.CreateLoad(elemTy, ptr), dret), ptr);
+  B.CreateBr(exit);
+
+  B.SetInsertPoint(exit);
+  B.CreateRetVoid();
+  return F;
+}
+
 bool AdjointGenerator::handleKnownCallDerivatives(
     CallInst &call, Function *called, StringRef funcName,
     bool subsequent_calls_may_write, const std::vector<bool> &overwritten_args,
@@ -3241,6 +3930,1338 @@ bool AdjointGenerator::handleKnownCallDerivatives(
             ->addToDiffe(call.getOperand(2), fin_idx, Builder2, types[2]);
 
         return true;
+      }
+    }
+
+    // GSL FFT routines (real, halfcomplex, complex, unpack; double & float)
+    if (startsWith(funcName, "gsl_fft_")) {
+      Module &M = *called->getParent();
+      LLVMContext &C = call.getContext();
+      bool isFloat = funcName.contains("_float_");
+      Type *elemTy = isFloat ? Type::getFloatTy(C) : Type::getDoubleTy(C);
+      Type *elemPtrTy = getUnqual(elemTy);
+      Type *i8PtrTy = getInt8PtrTy(C);
+      unsigned width = gutils->getWidth();
+
+      auto finishUnused = [&]() {
+        if (Mode == DerivativeMode::ReverseModeGradient ||
+            Mode == DerivativeMode::ForwardModeSplit)
+          eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+        else
+          eraseIfUnused(call);
+      };
+
+      // 0. Inactive GSL FFT wavetable/workspace alloc, free, and memcpy
+      //    routines never free active memory; handle directly so reverse mode
+      //    does not attempt CreateNoFree on empty declarations.
+      if (funcName == "gsl_fft_real_wavetable_alloc" ||
+          funcName == "gsl_fft_real_wavetable_free" ||
+          funcName == "gsl_fft_halfcomplex_wavetable_alloc" ||
+          funcName == "gsl_fft_halfcomplex_wavetable_free" ||
+          funcName == "gsl_fft_real_workspace_alloc" ||
+          funcName == "gsl_fft_real_workspace_free" ||
+          funcName == "gsl_fft_complex_wavetable_alloc" ||
+          funcName == "gsl_fft_complex_wavetable_free" ||
+          funcName == "gsl_fft_complex_workspace_alloc" ||
+          funcName == "gsl_fft_complex_workspace_free" ||
+          funcName == "gsl_fft_complex_memcpy" ||
+          funcName == "gsl_fft_real_wavetable_float_alloc" ||
+          funcName == "gsl_fft_real_wavetable_float_free" ||
+          funcName == "gsl_fft_halfcomplex_wavetable_float_alloc" ||
+          funcName == "gsl_fft_halfcomplex_wavetable_float_free" ||
+          funcName == "gsl_fft_real_workspace_float_alloc" ||
+          funcName == "gsl_fft_real_workspace_float_free" ||
+          funcName == "gsl_fft_complex_wavetable_float_alloc" ||
+          funcName == "gsl_fft_complex_wavetable_float_free" ||
+          funcName == "gsl_fft_complex_workspace_float_alloc" ||
+          funcName == "gsl_fft_complex_workspace_float_free" ||
+          funcName == "gsl_fft_complex_float_memcpy") {
+        bool primalNeeded = false;
+        if (!call.getType()->isVoidTy() &&
+            (Mode == DerivativeMode::ReverseModePrimal ||
+             Mode == DerivativeMode::ReverseModeGradient ||
+             Mode == DerivativeMode::ForwardModeSplit)) {
+          auto found = gutils->knownRecomputeHeuristic.find(&call);
+          if (found != gutils->knownRecomputeHeuristic.end())
+            primalNeeded = !found->second;
+          else {
+            std::map<UsageKey, bool> Seen =
+                gutils->populateSeenFromKnownRecompute();
+            auto minCutMode = (Mode == DerivativeMode::ReverseModePrimal)
+                                  ? DerivativeMode::ReverseModeGradient
+                                  : Mode;
+            primalNeeded = DifferentialUseAnalysis::is_value_needed_in_reverse<
+                QueryType::Primal>(gutils, &call, minCutMode, Seen,
+                                   oldUnreachable);
+          }
+        }
+        if (primalNeeded) {
+          if (Mode == DerivativeMode::ReverseModePrimal) {
+            IRBuilder<> BuilderAfter(newCall->getNextNode());
+            gutils->cacheForReverse(
+                BuilderAfter, newCall,
+                getIndex(&call, CacheType::Self, BuilderAfter));
+          } else {
+            gutils->cacheForReverse(BuilderZ, newCall,
+                                    getIndex(&call, CacheType::Self, BuilderZ));
+          }
+          eraseIfUnused(call);
+        } else {
+          finishUnused();
+        }
+        return true;
+      }
+
+      // 1. GSL FFT unpack routines:
+      //    int gsl_fft_{halfcomplex,real}[_float]_[radix2_]unpack(
+      //        const T src[], T complex_out[], size_t stride, size_t n);
+      bool isUnpackHC = funcName == "gsl_fft_halfcomplex_unpack" ||
+                        funcName == "gsl_fft_halfcomplex_float_unpack";
+      bool isUnpackHCRadix2 =
+          funcName == "gsl_fft_halfcomplex_radix2_unpack" ||
+          funcName == "gsl_fft_halfcomplex_float_radix2_unpack";
+      bool isUnpackReal = funcName == "gsl_fft_real_unpack" ||
+                          funcName == "gsl_fft_real_float_unpack";
+      if ((isUnpackHC || isUnpackHCRadix2 || isUnpackReal) &&
+          call.arg_size() >= 4) {
+        Value *src = call.getArgOperand(0);
+        Value *dst = call.getArgOperand(1);
+        Value *stride = call.getArgOperand(2);
+        Value *n = call.getArgOperand(3);
+        if (gutils->isConstantValue(dst) ||
+            Mode == DerivativeMode::ReverseModePrimal) {
+          finishUnused();
+          return true;
+        }
+        bool constSrc = gutils->isConstantValue(src);
+        Type *sizeTy = stride->getType();
+
+        if (Mode == DerivativeMode::ForwardMode ||
+            Mode == DerivativeMode::ForwardModeError ||
+            Mode == DerivativeMode::ForwardModeSplit) {
+          IRBuilder<> Builder2(&call);
+          getForwardBuilder(Builder2);
+          Value *strideV = gutils->getNewFromOriginal(stride);
+          Value *nV = gutils->getNewFromOriginal(n);
+          Value *dDst = gutils->invertPointerM(dst, Builder2);
+          Value *dSrc =
+              constSrc ? nullptr : gutils->invertPointerM(src, Builder2);
+          ValueType BundleTypes[4] = {
+              constSrc ? ValueType::None : ValueType::Shadow, ValueType::Shadow,
+              ValueType::None, ValueType::None};
+          auto Defs = gutils->getInvertedBundles(&call, BundleTypes, Builder2,
+                                                 /*lookup*/ false);
+          Function *zeroFn =
+              constSrc ? getOrCreateGSLZeroComplexFn(M, elemTy, sizeTy)
+                       : nullptr;
+          for (unsigned w = 0; w < width; ++w) {
+            Value *dDstW =
+                width > 1 ? gutils->extractMeta(Builder2, dDst, w) : dDst;
+            if (constSrc) {
+              Builder2.CreateCall(
+                  zeroFn,
+                  {Builder2.CreatePointerCast(dDstW, elemPtrTy), strideV, nV});
+            } else {
+              Value *dSrcW =
+                  width > 1 ? gutils->extractMeta(Builder2, dSrc, w) : dSrc;
+              emitGSLCall(
+                  Builder2, FunctionCallee(call.getFunctionType(), called),
+                  {dSrcW, dDstW, strideV, nV}, Defs, call.getCallingConv());
+            }
+          }
+          finishUnused();
+          return true;
+        }
+
+        if (Mode == DerivativeMode::ReverseModeCombined ||
+            Mode == DerivativeMode::ReverseModeGradient) {
+          IRBuilder<> Builder2(&call);
+          getReverseBuilder(Builder2);
+          Value *strideV = lookup(gutils->getNewFromOriginal(stride), Builder2);
+          Value *nV = lookup(gutils->getNewFromOriginal(n), Builder2);
+          Value *dDst = lookup(gutils->invertPointerM(dst, Builder2), Builder2);
+          Value *dSrc = constSrc ? nullptr
+                                 : lookup(gutils->invertPointerM(src, Builder2),
+                                          Builder2);
+          Function *revFn =
+              constSrc ? getOrCreateGSLZeroComplexFn(M, elemTy, sizeTy)
+                       : (isUnpackReal
+                              ? getOrCreateGSLRealUnpackRevFn(M, elemTy, sizeTy)
+                              : getOrCreateGSLHCUnpackRevFn(M, elemTy, sizeTy,
+                                                            isUnpackHCRadix2));
+          for (unsigned w = 0; w < width; ++w) {
+            Value *dDstW =
+                width > 1 ? gutils->extractMeta(Builder2, dDst, w) : dDst;
+            Value *dDstCast = Builder2.CreatePointerCast(dDstW, elemPtrTy);
+            if (constSrc) {
+              Builder2.CreateCall(revFn, {dDstCast, strideV, nV});
+            } else {
+              Value *dSrcW =
+                  width > 1 ? gutils->extractMeta(Builder2, dSrc, w) : dSrc;
+              Builder2.CreateCall(revFn,
+                                  {Builder2.CreatePointerCast(dSrcW, elemPtrTy),
+                                   dDstCast, strideV, nV});
+            }
+          }
+          finishUnused();
+          return true;
+        }
+      }
+
+      // 2. GSL FFT in-place transforms (real, halfcomplex, complex; mixed-radix
+      //    and radix-2/DIF)
+      struct GSLFFTInfo {
+        bool valid = false;
+        bool isComplex = false;
+        bool isHalfcomplex = false;
+        bool isRadix2 = false;
+        bool isInverse = false;
+        bool hasSignArg = false;
+        StringRef revCalleeBase;
+        StringRef revWTAllocBase;
+        StringRef revWTFreeBase;
+        StringRef revWorkAllocBase;
+        StringRef revWorkFreeBase;
+        StringRef fwdWTAllocBase;
+        StringRef fwdWTFreeBase;
+        StringRef fwdWorkAllocBase;
+        StringRef fwdWorkFreeBase;
+      };
+
+      GSLFFTInfo info;
+      if (funcName == "gsl_fft_real_transform") {
+        info = {true,
+                false,
+                false,
+                false,
+                false,
+                false,
+                "gsl_fft_halfcomplex_backward",
+                "gsl_fft_halfcomplex_wavetable_alloc",
+                "gsl_fft_halfcomplex_wavetable_free",
+                "gsl_fft_real_workspace_alloc",
+                "gsl_fft_real_workspace_free",
+                "gsl_fft_real_wavetable_alloc",
+                "gsl_fft_real_wavetable_free",
+                "gsl_fft_real_workspace_alloc",
+                "gsl_fft_real_workspace_free"};
+      } else if (funcName == "gsl_fft_real_float_transform") {
+        info = {true,
+                false,
+                false,
+                false,
+                false,
+                false,
+                "gsl_fft_halfcomplex_float_backward",
+                "gsl_fft_halfcomplex_wavetable_float_alloc",
+                "gsl_fft_halfcomplex_wavetable_float_free",
+                "gsl_fft_real_workspace_float_alloc",
+                "gsl_fft_real_workspace_float_free",
+                "gsl_fft_real_wavetable_float_alloc",
+                "gsl_fft_real_wavetable_float_free",
+                "gsl_fft_real_workspace_float_alloc",
+                "gsl_fft_real_workspace_float_free"};
+      } else if (funcName == "gsl_fft_halfcomplex_backward" ||
+                 funcName == "gsl_fft_halfcomplex_transform" ||
+                 funcName == "gsl_fft_halfcomplex_inverse") {
+        info = {true,
+                false,
+                true,
+                false,
+                funcName == "gsl_fft_halfcomplex_inverse",
+                false,
+                "gsl_fft_real_transform",
+                "gsl_fft_real_wavetable_alloc",
+                "gsl_fft_real_wavetable_free",
+                "gsl_fft_real_workspace_alloc",
+                "gsl_fft_real_workspace_free",
+                "gsl_fft_halfcomplex_wavetable_alloc",
+                "gsl_fft_halfcomplex_wavetable_free",
+                "gsl_fft_real_workspace_alloc",
+                "gsl_fft_real_workspace_free"};
+      } else if (funcName == "gsl_fft_halfcomplex_float_backward" ||
+                 funcName == "gsl_fft_halfcomplex_float_transform" ||
+                 funcName == "gsl_fft_halfcomplex_float_inverse") {
+        info = {true,
+                false,
+                true,
+                false,
+                funcName == "gsl_fft_halfcomplex_float_inverse",
+                false,
+                "gsl_fft_real_float_transform",
+                "gsl_fft_real_wavetable_float_alloc",
+                "gsl_fft_real_wavetable_float_free",
+                "gsl_fft_real_workspace_float_alloc",
+                "gsl_fft_real_workspace_float_free",
+                "gsl_fft_halfcomplex_wavetable_float_alloc",
+                "gsl_fft_halfcomplex_wavetable_float_free",
+                "gsl_fft_real_workspace_float_alloc",
+                "gsl_fft_real_workspace_float_free"};
+      } else if (funcName == "gsl_fft_real_radix2_transform") {
+        info = {true,
+                false,
+                false,
+                true,
+                false,
+                false,
+                "gsl_fft_halfcomplex_radix2_backward",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                ""};
+      } else if (funcName == "gsl_fft_real_float_radix2_transform") {
+        info = {true,
+                false,
+                false,
+                true,
+                false,
+                false,
+                "gsl_fft_halfcomplex_float_radix2_backward",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                ""};
+      } else if (funcName == "gsl_fft_halfcomplex_radix2_backward" ||
+                 funcName == "gsl_fft_halfcomplex_radix2_transform" ||
+                 funcName == "gsl_fft_halfcomplex_radix2_inverse") {
+        info = {true,
+                false,
+                true,
+                true,
+                funcName == "gsl_fft_halfcomplex_radix2_inverse",
+                false,
+                "gsl_fft_real_radix2_transform",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                ""};
+      } else if (funcName == "gsl_fft_halfcomplex_float_radix2_backward" ||
+                 funcName == "gsl_fft_halfcomplex_float_radix2_transform" ||
+                 funcName == "gsl_fft_halfcomplex_float_radix2_inverse") {
+        info = {true,
+                false,
+                true,
+                true,
+                funcName == "gsl_fft_halfcomplex_float_radix2_inverse",
+                false,
+                "gsl_fft_real_float_radix2_transform",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                ""};
+      } else if (funcName == "gsl_fft_complex_forward" ||
+                 funcName == "gsl_fft_complex_backward" ||
+                 funcName == "gsl_fft_complex_inverse" ||
+                 funcName == "gsl_fft_complex_transform") {
+        StringRef revName = funcName == "gsl_fft_complex_forward"
+                                ? "gsl_fft_complex_backward"
+                                : (funcName == "gsl_fft_complex_transform"
+                                       ? "gsl_fft_complex_transform"
+                                       : "gsl_fft_complex_forward");
+        info = {true,
+                true,
+                false,
+                false,
+                funcName == "gsl_fft_complex_inverse",
+                funcName == "gsl_fft_complex_transform",
+                revName,
+                "gsl_fft_complex_wavetable_alloc",
+                "gsl_fft_complex_wavetable_free",
+                "gsl_fft_complex_workspace_alloc",
+                "gsl_fft_complex_workspace_free",
+                "gsl_fft_complex_wavetable_alloc",
+                "gsl_fft_complex_wavetable_free",
+                "gsl_fft_complex_workspace_alloc",
+                "gsl_fft_complex_workspace_free"};
+      } else if (funcName == "gsl_fft_complex_float_forward" ||
+                 funcName == "gsl_fft_complex_float_backward" ||
+                 funcName == "gsl_fft_complex_float_inverse" ||
+                 funcName == "gsl_fft_complex_float_transform") {
+        StringRef revName = funcName == "gsl_fft_complex_float_forward"
+                                ? "gsl_fft_complex_float_backward"
+                                : (funcName == "gsl_fft_complex_float_transform"
+                                       ? "gsl_fft_complex_float_transform"
+                                       : "gsl_fft_complex_float_forward");
+        info = {true,
+                true,
+                false,
+                false,
+                funcName == "gsl_fft_complex_float_inverse",
+                funcName == "gsl_fft_complex_float_transform",
+                revName,
+                "gsl_fft_complex_wavetable_float_alloc",
+                "gsl_fft_complex_wavetable_float_free",
+                "gsl_fft_complex_workspace_float_alloc",
+                "gsl_fft_complex_workspace_float_free",
+                "gsl_fft_complex_wavetable_float_alloc",
+                "gsl_fft_complex_wavetable_float_free",
+                "gsl_fft_complex_workspace_float_alloc",
+                "gsl_fft_complex_workspace_float_free"};
+      } else if (funcName == "gsl_fft_complex_radix2_forward" ||
+                 funcName == "gsl_fft_complex_radix2_backward" ||
+                 funcName == "gsl_fft_complex_radix2_inverse" ||
+                 funcName == "gsl_fft_complex_radix2_transform") {
+        StringRef revName =
+            funcName == "gsl_fft_complex_radix2_forward"
+                ? "gsl_fft_complex_radix2_backward"
+                : (funcName == "gsl_fft_complex_radix2_transform"
+                       ? "gsl_fft_complex_radix2_transform"
+                       : "gsl_fft_complex_radix2_forward");
+        info = {true,
+                true,
+                false,
+                true,
+                funcName == "gsl_fft_complex_radix2_inverse",
+                funcName == "gsl_fft_complex_radix2_transform",
+                revName,
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                ""};
+      } else if (funcName == "gsl_fft_complex_radix2_dif_forward" ||
+                 funcName == "gsl_fft_complex_radix2_dif_backward" ||
+                 funcName == "gsl_fft_complex_radix2_dif_inverse" ||
+                 funcName == "gsl_fft_complex_radix2_dif_transform") {
+        StringRef revName =
+            funcName == "gsl_fft_complex_radix2_dif_forward"
+                ? "gsl_fft_complex_radix2_dif_backward"
+                : (funcName == "gsl_fft_complex_radix2_dif_transform"
+                       ? "gsl_fft_complex_radix2_dif_transform"
+                       : "gsl_fft_complex_radix2_dif_forward");
+        info = {true,
+                true,
+                false,
+                true,
+                funcName == "gsl_fft_complex_radix2_dif_inverse",
+                funcName == "gsl_fft_complex_radix2_dif_transform",
+                revName,
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                ""};
+      } else if (funcName == "gsl_fft_complex_float_radix2_forward" ||
+                 funcName == "gsl_fft_complex_float_radix2_backward" ||
+                 funcName == "gsl_fft_complex_float_radix2_inverse" ||
+                 funcName == "gsl_fft_complex_float_radix2_transform") {
+        StringRef revName =
+            funcName == "gsl_fft_complex_float_radix2_forward"
+                ? "gsl_fft_complex_float_radix2_backward"
+                : (funcName == "gsl_fft_complex_float_radix2_transform"
+                       ? "gsl_fft_complex_float_radix2_transform"
+                       : "gsl_fft_complex_float_radix2_forward");
+        info = {true,
+                true,
+                false,
+                true,
+                funcName == "gsl_fft_complex_float_radix2_inverse",
+                funcName == "gsl_fft_complex_float_radix2_transform",
+                revName,
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                ""};
+      } else if (funcName == "gsl_fft_complex_float_radix2_dif_forward" ||
+                 funcName == "gsl_fft_complex_float_radix2_dif_backward" ||
+                 funcName == "gsl_fft_complex_float_radix2_dif_inverse" ||
+                 funcName == "gsl_fft_complex_float_radix2_dif_transform") {
+        StringRef revName =
+            funcName == "gsl_fft_complex_float_radix2_dif_forward"
+                ? "gsl_fft_complex_float_radix2_dif_backward"
+                : (funcName == "gsl_fft_complex_float_radix2_dif_transform"
+                       ? "gsl_fft_complex_float_radix2_dif_transform"
+                       : "gsl_fft_complex_float_radix2_dif_forward");
+        info = {true,
+                true,
+                false,
+                true,
+                funcName == "gsl_fft_complex_float_radix2_dif_inverse",
+                funcName == "gsl_fft_complex_float_radix2_dif_transform",
+                revName,
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                ""};
+      }
+
+      unsigned minArgs =
+          (info.isRadix2 ? 3U : 5U) + (info.hasSignArg ? 1U : 0U);
+      if (info.valid && call.arg_size() >= minArgs) {
+        Value *data = call.getArgOperand(0);
+        Value *stride = call.getArgOperand(1);
+        Value *n = call.getArgOperand(2);
+        unsigned signIdx = info.isRadix2 ? 3 : 5;
+        if (gutils->isConstantValue(data) ||
+            Mode == DerivativeMode::ReverseModePrimal) {
+          finishUnused();
+          return true;
+        }
+        Type *sizeTy = stride->getType();
+
+        auto allocGSLPlans = [&](IRBuilder<> &B, Value *nV,
+                                 StringRef wtAllocBase, StringRef workAllocBase,
+                                 Value *&wtOut, Value *&workOut) {
+          FunctionType *allocFT = FunctionType::get(i8PtrTy, {sizeTy}, false);
+          FunctionCallee wtAlloc =
+              getOrInsertGSLFunction(M, called, wtAllocBase, allocFT);
+          FunctionCallee workAlloc =
+              getOrInsertGSLFunction(M, called, workAllocBase, allocFT);
+          wtOut = emitGSLCall(B, wtAlloc, {nV}, {}, call.getCallingConv());
+          workOut = emitGSLCall(B, workAlloc, {nV}, {}, call.getCallingConv());
+        };
+
+        auto freeGSLPlans = [&](IRBuilder<> &B, StringRef wtFreeBase,
+                                StringRef workFreeBase, Value *wt,
+                                Value *work) {
+          FunctionType *wtFreeFT =
+              FunctionType::get(Type::getVoidTy(C), {wt->getType()}, false);
+          FunctionType *workFreeFT =
+              FunctionType::get(Type::getVoidTy(C), {work->getType()}, false);
+          FunctionCallee wtFree =
+              getOrInsertGSLFunction(M, called, wtFreeBase, wtFreeFT);
+          FunctionCallee workFree =
+              getOrInsertGSLFunction(M, called, workFreeBase, workFreeFT);
+          emitGSLCall(B, wtFree, {wt}, {}, call.getCallingConv());
+          emitGSLCall(B, workFree, {work}, {}, call.getCallingConv());
+        };
+
+        if (Mode == DerivativeMode::ForwardMode ||
+            Mode == DerivativeMode::ForwardModeError ||
+            Mode == DerivativeMode::ForwardModeSplit) {
+          IRBuilder<> Builder2(&call);
+          getForwardBuilder(Builder2);
+          Value *strideV = gutils->getNewFromOriginal(stride);
+          Value *nV = gutils->getNewFromOriginal(n);
+          Value *dData = gutils->invertPointerM(data, Builder2);
+          SmallVector<ValueType, 6> bundleTypes(call.arg_size(),
+                                                ValueType::None);
+          bundleTypes[0] = ValueType::Shadow;
+          auto Defs = gutils->getInvertedBundles(&call, bundleTypes, Builder2,
+                                                 /*lookup*/ false);
+
+          Value *wtV = nullptr;
+          Value *workV = nullptr;
+          bool allocatedPlans = false;
+          if (!info.isRadix2) {
+            if (Mode == DerivativeMode::ForwardModeSplit) {
+              allocGSLPlans(Builder2, nV, info.fwdWTAllocBase,
+                            info.fwdWorkAllocBase, wtV, workV);
+              allocatedPlans = true;
+            } else {
+              wtV = gutils->getNewFromOriginal(call.getArgOperand(3));
+              workV = gutils->getNewFromOriginal(call.getArgOperand(4));
+            }
+          }
+          Value *signV =
+              info.hasSignArg
+                  ? gutils->getNewFromOriginal(call.getArgOperand(signIdx))
+                  : nullptr;
+
+          for (unsigned w = 0; w < width; ++w) {
+            Value *dDataW =
+                width > 1 ? gutils->extractMeta(Builder2, dData, w) : dData;
+            SmallVector<Value *, 6> args = {dDataW, strideV, nV};
+            if (!info.isRadix2) {
+              args.push_back(wtV);
+              args.push_back(workV);
+            }
+            if (info.hasSignArg)
+              args.push_back(signV);
+            emitGSLCall(Builder2,
+                        FunctionCallee(call.getFunctionType(), called), args,
+                        Defs, call.getCallingConv());
+          }
+          if (allocatedPlans)
+            freeGSLPlans(Builder2, info.fwdWTFreeBase, info.fwdWorkFreeBase,
+                         wtV, workV);
+          finishUnused();
+          return true;
+        }
+
+        if (Mode == DerivativeMode::ReverseModeCombined ||
+            Mode == DerivativeMode::ReverseModeGradient) {
+          IRBuilder<> Builder2(&call);
+          getReverseBuilder(Builder2);
+          Value *strideV = lookup(gutils->getNewFromOriginal(stride), Builder2);
+          Value *nV = lookup(gutils->getNewFromOriginal(n), Builder2);
+          Value *dData =
+              lookup(gutils->invertPointerM(data, Builder2), Builder2);
+          SmallVector<ValueType, 6> bundleTypes(call.arg_size(),
+                                                ValueType::None);
+          bundleTypes[0] = ValueType::Shadow;
+          auto Defs = gutils->getInvertedBundles(&call, bundleTypes, Builder2,
+                                                 /*lookup*/ true);
+
+          Value *wtV = nullptr;
+          Value *workV = nullptr;
+          if (!info.isRadix2)
+            allocGSLPlans(Builder2, nV, info.revWTAllocBase,
+                          info.revWorkAllocBase, wtV, workV);
+
+          SmallVector<Type *, 6> revParamTys = {elemPtrTy, sizeTy, sizeTy};
+          if (!info.isRadix2) {
+            revParamTys.push_back(wtV->getType());
+            revParamTys.push_back(workV->getType());
+          }
+          Value *revSignV = nullptr;
+          if (info.hasSignArg) {
+            Value *signV =
+                lookup(gutils->getNewFromOriginal(call.getArgOperand(signIdx)),
+                       Builder2);
+            revSignV = Builder2.CreateNeg(signV);
+            revParamTys.push_back(revSignV->getType());
+          }
+          FunctionType *revDefaultFT =
+              FunctionType::get(call.getType(), revParamTys, false);
+          FunctionCallee revCallee = getOrInsertGSLFunction(
+              M, called, info.revCalleeBase, revDefaultFT);
+
+          Function *scaleHCFn = !info.isComplex
+                                    ? getOrCreateGSLScaleHalfcomplexFn(
+                                          M, elemTy, sizeTy, info.isRadix2)
+                                    : nullptr;
+          Function *scaleAllFn =
+              info.isInverse
+                  ? getOrCreateGSLScaleAllFn(M, elemTy, sizeTy, info.isComplex)
+                  : nullptr;
+          Value *invN = nullptr;
+          if (info.isInverse) {
+            Value *nZero =
+                Builder2.CreateICmpEQ(nV, ConstantInt::get(sizeTy, 0));
+            Value *nFp = Builder2.CreateUIToFP(nV, elemTy);
+            invN = Builder2.CreateSelect(
+                nZero, ConstantFP::get(elemTy, 0.0),
+                Builder2.CreateFDiv(ConstantFP::get(elemTy, 1.0), nFp));
+          }
+
+          for (unsigned w = 0; w < width; ++w) {
+            Value *dDataW =
+                width > 1 ? gutils->extractMeta(Builder2, dData, w) : dData;
+            Value *dDataCast = Builder2.CreatePointerCast(dDataW, elemPtrTy);
+
+            // Real -> halfcomplex adjoint scales interior entries by 0.5
+            // before calling halfcomplex backward.
+            if (!info.isComplex && !info.isHalfcomplex) {
+              Builder2.CreateCall(scaleHCFn, {dDataCast, strideV, nV,
+                                              ConstantFP::get(elemTy, 0.5)});
+            }
+
+            SmallVector<Value *, 6> revArgs = {dDataCast, strideV, nV};
+            if (!info.isRadix2) {
+              revArgs.push_back(wtV);
+              revArgs.push_back(workV);
+            }
+            if (info.hasSignArg)
+              revArgs.push_back(revSignV);
+            emitGSLCall(Builder2, revCallee, revArgs, Defs,
+                        call.getCallingConv());
+
+            // Halfcomplex -> real adjoint calls real transform then scales
+            // interior entries by 2.0 (and all entries by 1/n for inverse).
+            if (!info.isComplex && info.isHalfcomplex) {
+              Builder2.CreateCall(scaleHCFn, {dDataCast, strideV, nV,
+                                              ConstantFP::get(elemTy, 2.0)});
+            }
+            if (info.isInverse) {
+              Builder2.CreateCall(scaleAllFn, {dDataCast, strideV, nV, invN});
+            }
+          }
+
+          if (!info.isRadix2)
+            freeGSLPlans(Builder2, info.revWTFreeBase, info.revWorkFreeBase,
+                         wtV, workV);
+          finishUnused();
+          return true;
+        }
+      }
+    }
+
+    // GSL Statistics routines (mean, variance*, sd*, tss*, max, min; double &
+    // float)
+    if (startsWith(funcName, "gsl_stats_")) {
+      StringRef suffix = funcName.drop_front(strlen("gsl_stats_"));
+      bool isFloat = suffix.consume_front("float_");
+      bool isLongDouble = suffix.consume_front("long_double_");
+      if (suffix == "max_index" || suffix == "min_index" ||
+          suffix == "minmax_index") {
+        bool primalNeeded = false;
+        if (!call.getType()->isVoidTy() &&
+            (Mode == DerivativeMode::ReverseModePrimal ||
+             Mode == DerivativeMode::ReverseModeGradient ||
+             Mode == DerivativeMode::ForwardModeSplit)) {
+          auto found = gutils->knownRecomputeHeuristic.find(&call);
+          if (found != gutils->knownRecomputeHeuristic.end())
+            primalNeeded = !found->second;
+          else {
+            std::map<UsageKey, bool> Seen =
+                gutils->populateSeenFromKnownRecompute();
+            auto minCutMode = (Mode == DerivativeMode::ReverseModePrimal)
+                                  ? DerivativeMode::ReverseModeGradient
+                                  : Mode;
+            primalNeeded = DifferentialUseAnalysis::is_value_needed_in_reverse<
+                QueryType::Primal>(gutils, &call, minCutMode, Seen,
+                                   oldUnreachable);
+          }
+        }
+        if (primalNeeded) {
+          if (Mode == DerivativeMode::ReverseModePrimal) {
+            IRBuilder<> BuilderAfter(newCall->getNextNode());
+            gutils->cacheForReverse(
+                BuilderAfter, newCall,
+                getIndex(&call, CacheType::Self, BuilderAfter));
+          } else {
+            gutils->cacheForReverse(BuilderZ, newCall,
+                                    getIndex(&call, CacheType::Self, BuilderZ));
+          }
+          eraseIfUnused(call);
+        } else if (Mode == DerivativeMode::ReverseModeGradient ||
+                   Mode == DerivativeMode::ForwardModeSplit) {
+          eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+        } else {
+          eraseIfUnused(call);
+        }
+        return true;
+      }
+      if (!isLongDouble && call.arg_size() >= 3) {
+        Module &M = *called->getParent();
+        LLVMContext &C = call.getContext();
+        Type *elemTy = isFloat ? Type::getFloatTy(C) : Type::getDoubleTy(C);
+        Type *elemPtrTy = getUnqual(elemTy);
+        Type *f64Ty = Type::getDoubleTy(C);
+        unsigned width = gutils->getWidth();
+
+        Value *data = call.getArgOperand(0);
+        Value *stride = call.getArgOperand(1);
+        Value *n = call.getArgOperand(2);
+        Type *sizeTy = stride->getType();
+
+        auto finishStatsPrimal = [&](bool primalNeeded) {
+          if (primalNeeded) {
+            eraseIfUnused(call);
+          } else if (Mode == DerivativeMode::ReverseModeGradient ||
+                     Mode == DerivativeMode::ForwardModeSplit) {
+            eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+          } else {
+            eraseIfUnused(call);
+          }
+        };
+
+        auto isStatsPrimalNeededInReverse = [&]() {
+          if (Mode != DerivativeMode::ReverseModePrimal &&
+              Mode != DerivativeMode::ReverseModeGradient &&
+              Mode != DerivativeMode::ForwardModeSplit)
+            return false;
+          auto found = gutils->knownRecomputeHeuristic.find(&call);
+          if (found != gutils->knownRecomputeHeuristic.end())
+            return !found->second;
+          std::map<UsageKey, bool> Seen =
+              gutils->populateSeenFromKnownRecompute();
+          auto minCutMode = (Mode == DerivativeMode::ReverseModePrimal)
+                                ? DerivativeMode::ReverseModeGradient
+                                : Mode;
+          return DifferentialUseAnalysis::is_value_needed_in_reverse<
+              QueryType::Primal>(gutils, &call, minCutMode, Seen,
+                                 oldUnreachable);
+        };
+
+        // 1. gsl_stats[_float]_mean(data, stride, n)
+        if (suffix == "mean") {
+          bool constRet = gutils->isConstantValue(&call);
+          bool constData = gutils->isConstantValue(data);
+          bool primalNeeded = isStatsPrimalNeededInReverse();
+
+          IRBuilder<> BuilderFwd(&call);
+          if (Mode == DerivativeMode::ForwardMode ||
+              Mode == DerivativeMode::ForwardModeError ||
+              Mode == DerivativeMode::ForwardModeSplit)
+            getForwardBuilder(BuilderFwd);
+
+          if (primalNeeded) {
+            if (Mode == DerivativeMode::ReverseModePrimal) {
+              IRBuilder<> BuilderAfter(newCall->getNextNode());
+              gutils->cacheForReverse(
+                  BuilderAfter, newCall,
+                  getIndex(&call, CacheType::Self, BuilderAfter));
+            } else {
+              gutils->cacheForReverse(
+                  BuilderZ, newCall,
+                  getIndex(&call, CacheType::Self, BuilderZ));
+            }
+          }
+
+          if (Mode == DerivativeMode::ReverseModePrimal) {
+            finishStatsPrimal(primalNeeded);
+            return true;
+          }
+
+          if (constRet || constData) {
+            if (!constRet) {
+              if (Mode == DerivativeMode::ForwardMode ||
+                  Mode == DerivativeMode::ForwardModeError ||
+                  Mode == DerivativeMode::ForwardModeSplit) {
+                setDiffe(&call,
+                         Constant::getNullValue(
+                             gutils->getShadowType(call.getType())),
+                         BuilderFwd);
+              } else {
+                IRBuilder<> Builder2(&call);
+                getReverseBuilder(Builder2);
+                setDiffe(&call,
+                         Constant::getNullValue(
+                             gutils->getShadowType(call.getType())),
+                         Builder2);
+              }
+            }
+            finishStatsPrimal(primalNeeded);
+            return true;
+          }
+
+          if (Mode == DerivativeMode::ForwardMode ||
+              Mode == DerivativeMode::ForwardModeError ||
+              Mode == DerivativeMode::ForwardModeSplit) {
+            Value *strideV = gutils->getNewFromOriginal(stride);
+            Value *nV = gutils->getNewFromOriginal(n);
+            Value *dData = gutils->invertPointerM(data, BuilderFwd);
+            ValueType BundleTypes[3] = {ValueType::Shadow, ValueType::None,
+                                        ValueType::None};
+            auto Defs = gutils->getInvertedBundles(
+                &call, BundleTypes, BuilderFwd, /*lookup*/ false);
+            Value *dRet =
+                width > 1
+                    ? UndefValue::get(gutils->getShadowType(call.getType()))
+                    : nullptr;
+            for (unsigned w = 0; w < width; ++w) {
+              Value *dDataW =
+                  width > 1 ? gutils->extractMeta(BuilderFwd, dData, w) : dData;
+              Value *lane = emitGSLCall(
+                  BuilderFwd, FunctionCallee(call.getFunctionType(), called),
+                  {dDataW, strideV, nV}, Defs, call.getCallingConv());
+              if (width > 1)
+                dRet = BuilderFwd.CreateInsertValue(dRet, lane, {w});
+              else
+                dRet = lane;
+            }
+            setDiffe(&call, dRet, BuilderFwd);
+            finishStatsPrimal(primalNeeded);
+            return true;
+          }
+
+          if (Mode == DerivativeMode::ReverseModeCombined ||
+              Mode == DerivativeMode::ReverseModeGradient) {
+            IRBuilder<> Builder2(&call);
+            getReverseBuilder(Builder2);
+            Value *strideV =
+                lookup(gutils->getNewFromOriginal(stride), Builder2);
+            Value *nV = lookup(gutils->getNewFromOriginal(n), Builder2);
+            Value *dData =
+                lookup(gutils->invertPointerM(data, Builder2), Builder2);
+            Value *dRet = diffe(&call, Builder2);
+            setDiffe(
+                &call,
+                Constant::getNullValue(gutils->getShadowType(call.getType())),
+                Builder2);
+            Function *meanRevFn =
+                getOrCreateGSLStatsMeanRevFn(M, elemTy, sizeTy);
+            for (unsigned w = 0; w < width; ++w) {
+              Value *dDataW =
+                  width > 1 ? gutils->extractMeta(Builder2, dData, w) : dData;
+              Value *dRetW =
+                  width > 1 ? gutils->extractMeta(Builder2, dRet, w) : dRet;
+              Builder2.CreateCall(
+                  meanRevFn, {Builder2.CreatePointerCast(dDataW, elemPtrTy),
+                              strideV, nV, dRetW});
+            }
+            finishStatsPrimal(primalNeeded);
+            return true;
+          }
+        }
+
+        // 2. gsl_stats[_float]_{max,min}(data, stride, n)
+        if (suffix == "max" || suffix == "min") {
+          bool isMax = (suffix == "max");
+          bool constRet = gutils->isConstantValue(&call);
+          bool constData = gutils->isConstantValue(data);
+          bool primalNeeded = isStatsPrimalNeededInReverse();
+
+          IRBuilder<> BuilderFwd(&call);
+          if (Mode == DerivativeMode::ForwardMode ||
+              Mode == DerivativeMode::ForwardModeError ||
+              Mode == DerivativeMode::ForwardModeSplit)
+            getForwardBuilder(BuilderFwd);
+
+          bool activeDiff = !constRet && !constData;
+          bool cacheIdx = activeDiff && Mode != DerivativeMode::ForwardMode &&
+                          Mode != DerivativeMode::ForwardModeError &&
+                          !overwritten_args.empty() && overwritten_args[0];
+          Value *idxCached = nullptr;
+          FunctionType *idxFT =
+              FunctionType::get(sizeTy, {elemPtrTy, sizeTy, sizeTy}, false);
+          StringRef idxBase =
+              isFloat ? (isMax ? "gsl_stats_float_max_index"
+                               : "gsl_stats_float_min_index")
+                      : (isMax ? "gsl_stats_max_index" : "gsl_stats_min_index");
+          FunctionCallee idxFn =
+              getOrInsertGSLFunction(M, called, idxBase, idxFT);
+
+          if (cacheIdx) {
+            if (Mode == DerivativeMode::ReverseModePrimal ||
+                Mode == DerivativeMode::ReverseModeCombined) {
+              Value *dataOrig = gutils->getNewFromOriginal(data);
+              Value *strideOrig = gutils->getNewFromOriginal(stride);
+              Value *nOrig = gutils->getNewFromOriginal(n);
+              idxCached =
+                  emitGSLCall(BuilderZ, idxFn, {dataOrig, strideOrig, nOrig},
+                              {}, call.getCallingConv());
+              idxCached = gutils->cacheForReverse(
+                  BuilderZ, idxCached,
+                  getIndex(&call, CacheType::Tape, BuilderZ));
+            } else {
+              PHINode *phi =
+                  BuilderZ.CreatePHI(sizeTy, 1, call.getName() + "_gsl_idx");
+              idxCached = gutils->cacheForReverse(
+                  BuilderZ, phi, getIndex(&call, CacheType::Tape, BuilderZ));
+            }
+          }
+
+          if (primalNeeded) {
+            if (Mode == DerivativeMode::ReverseModePrimal) {
+              IRBuilder<> BuilderAfter(newCall->getNextNode());
+              gutils->cacheForReverse(
+                  BuilderAfter, newCall,
+                  getIndex(&call, CacheType::Self, BuilderAfter));
+            } else {
+              gutils->cacheForReverse(
+                  BuilderZ, newCall,
+                  getIndex(&call, CacheType::Self, BuilderZ));
+            }
+          }
+
+          if (Mode == DerivativeMode::ReverseModePrimal) {
+            finishStatsPrimal(primalNeeded);
+            return true;
+          }
+
+          if (!activeDiff) {
+            if (!constRet) {
+              if (Mode == DerivativeMode::ForwardMode ||
+                  Mode == DerivativeMode::ForwardModeError ||
+                  Mode == DerivativeMode::ForwardModeSplit) {
+                setDiffe(&call,
+                         Constant::getNullValue(
+                             gutils->getShadowType(call.getType())),
+                         BuilderFwd);
+              } else {
+                IRBuilder<> Builder2(&call);
+                getReverseBuilder(Builder2);
+                setDiffe(&call,
+                         Constant::getNullValue(
+                             gutils->getShadowType(call.getType())),
+                         Builder2);
+              }
+            }
+            finishStatsPrimal(primalNeeded);
+            return true;
+          }
+
+          if (Mode == DerivativeMode::ForwardMode ||
+              Mode == DerivativeMode::ForwardModeError ||
+              Mode == DerivativeMode::ForwardModeSplit) {
+            Value *strideV = gutils->getNewFromOriginal(stride);
+            Value *nV = gutils->getNewFromOriginal(n);
+            Value *idxV = cacheIdx
+                              ? idxCached
+                              : emitGSLCall(BuilderFwd, idxFn,
+                                            {gutils->getNewFromOriginal(data),
+                                             strideV, nV},
+                                            {}, call.getCallingConv());
+            Value *dData = gutils->invertPointerM(data, BuilderFwd);
+            Function *fwdHelper =
+                getOrCreateGSLStatsMinMaxFwdFn(M, elemTy, sizeTy);
+            Value *dRet =
+                width > 1
+                    ? UndefValue::get(gutils->getShadowType(call.getType()))
+                    : nullptr;
+            for (unsigned w = 0; w < width; ++w) {
+              Value *dDataW =
+                  width > 1 ? gutils->extractMeta(BuilderFwd, dData, w) : dData;
+              Value *lane = BuilderFwd.CreateCall(
+                  fwdHelper, {BuilderFwd.CreatePointerCast(dDataW, elemPtrTy),
+                              strideV, nV, idxV});
+              if (width > 1)
+                dRet = BuilderFwd.CreateInsertValue(dRet, lane, {w});
+              else
+                dRet = lane;
+            }
+            setDiffe(&call, dRet, BuilderFwd);
+            finishStatsPrimal(primalNeeded);
+            return true;
+          }
+
+          if (Mode == DerivativeMode::ReverseModeCombined ||
+              Mode == DerivativeMode::ReverseModeGradient) {
+            IRBuilder<> Builder2(&call);
+            getReverseBuilder(Builder2);
+            Value *strideV =
+                lookup(gutils->getNewFromOriginal(stride), Builder2);
+            Value *nV = lookup(gutils->getNewFromOriginal(n), Builder2);
+            Value *idxV =
+                cacheIdx ? lookup(idxCached, Builder2)
+                         : emitGSLCall(Builder2, idxFn,
+                                       {lookup(gutils->getNewFromOriginal(data),
+                                               Builder2),
+                                        strideV, nV},
+                                       {}, call.getCallingConv());
+            Value *dData =
+                lookup(gutils->invertPointerM(data, Builder2), Builder2);
+            Value *dRet = diffe(&call, Builder2);
+            setDiffe(
+                &call,
+                Constant::getNullValue(gutils->getShadowType(call.getType())),
+                Builder2);
+            Function *revHelper =
+                getOrCreateGSLStatsMinMaxRevFn(M, elemTy, sizeTy);
+            for (unsigned w = 0; w < width; ++w) {
+              Value *dDataW =
+                  width > 1 ? gutils->extractMeta(Builder2, dData, w) : dData;
+              Value *dRetW =
+                  width > 1 ? gutils->extractMeta(Builder2, dRet, w) : dRet;
+              Builder2.CreateCall(
+                  revHelper, {Builder2.CreatePointerCast(dDataW, elemPtrTy),
+                              strideV, nV, idxV, dRetW});
+            }
+            finishStatsPrimal(primalNeeded);
+            return true;
+          }
+        }
+
+        // 3. gsl_stats[_float]_{variance,sd,tss}[_m|_with_fixed_mean]
+        enum class GSLDenomKind { None, NMinus1, N, One };
+        GSLDenomKind denomKind = GSLDenomKind::None;
+        bool isSD = false;
+        bool hasMeanArg = false;
+        if (suffix == "variance") {
+          denomKind = GSLDenomKind::NMinus1;
+        } else if (suffix == "variance_m") {
+          denomKind = GSLDenomKind::NMinus1;
+          hasMeanArg = true;
+        } else if (suffix == "variance_with_fixed_mean") {
+          denomKind = GSLDenomKind::N;
+          hasMeanArg = true;
+        } else if (suffix == "sd") {
+          denomKind = GSLDenomKind::NMinus1;
+          isSD = true;
+        } else if (suffix == "sd_m") {
+          denomKind = GSLDenomKind::NMinus1;
+          isSD = true;
+          hasMeanArg = true;
+        } else if (suffix == "sd_with_fixed_mean") {
+          denomKind = GSLDenomKind::N;
+          isSD = true;
+          hasMeanArg = true;
+        } else if (suffix == "tss") {
+          denomKind = GSLDenomKind::One;
+        } else if (suffix == "tss_m") {
+          denomKind = GSLDenomKind::One;
+          hasMeanArg = true;
+        }
+
+        if (denomKind != GSLDenomKind::None &&
+            (!hasMeanArg || call.arg_size() >= 4)) {
+          Value *mean = hasMeanArg ? call.getArgOperand(3) : nullptr;
+          bool constRet = gutils->isConstantValue(&call);
+          bool constData = gutils->isConstantValue(data);
+          bool constMean = !hasMeanArg || gutils->isConstantValue(mean);
+          bool activeDiff = !constRet && (!constData || !constMean);
+          bool primalNeeded = isStatsPrimalNeededInReverse();
+
+          IRBuilder<> BuilderFwd(&call);
+          if (Mode == DerivativeMode::ForwardMode ||
+              Mode == DerivativeMode::ForwardModeError ||
+              Mode == DerivativeMode::ForwardModeSplit)
+            getForwardBuilder(BuilderFwd);
+
+          bool needDataCopy = activeDiff &&
+                              Mode != DerivativeMode::ForwardMode &&
+                              Mode != DerivativeMode::ForwardModeError &&
+                              !overwritten_args.empty() && overwritten_args[0];
+          Value *dataCopy = nullptr;
+          if (needDataCopy) {
+            if (Mode == DerivativeMode::ReverseModePrimal ||
+                Mode == DerivativeMode::ReverseModeCombined) {
+              Value *dataOrig = gutils->getNewFromOriginal(data);
+              Value *strideOrig = gutils->getNewFromOriginal(stride);
+              Value *nOrig = gutils->getNewFromOriginal(n);
+              dataCopy = CreateAllocation(BuilderZ, elemTy, nOrig);
+              Function *copyFn = getOrCreateGSLCopyStridedFn(M, elemTy, sizeTy);
+              BuilderZ.CreateCall(
+                  copyFn, {BuilderZ.CreatePointerCast(dataCopy, elemPtrTy),
+                           BuilderZ.CreatePointerCast(dataOrig, elemPtrTy),
+                           strideOrig, nOrig});
+              dataCopy = gutils->cacheForReverse(
+                  BuilderZ, dataCopy,
+                  getIndex(&call, CacheType::Tape, BuilderZ));
+            } else {
+              PHINode *phi = BuilderZ.CreatePHI(
+                  elemPtrTy, 1, call.getName() + "_gsl_datacopy");
+              dataCopy = gutils->cacheForReverse(
+                  BuilderZ, phi, getIndex(&call, CacheType::Tape, BuilderZ));
+            }
+          }
+
+          Value *yVal = newCall;
+          if (primalNeeded) {
+            if (Mode == DerivativeMode::ReverseModePrimal) {
+              IRBuilder<> BuilderAfter(newCall->getNextNode());
+              yVal = gutils->cacheForReverse(
+                  BuilderAfter, newCall,
+                  getIndex(&call, CacheType::Self, BuilderAfter));
+            } else {
+              yVal = gutils->cacheForReverse(
+                  BuilderZ, newCall,
+                  getIndex(&call, CacheType::Self, BuilderZ));
+            }
+          }
+
+          if (Mode == DerivativeMode::ReverseModePrimal) {
+            finishStatsPrimal(primalNeeded);
+            return true;
+          }
+
+          if (!activeDiff) {
+            if (!constRet) {
+              if (Mode == DerivativeMode::ForwardMode ||
+                  Mode == DerivativeMode::ForwardModeError ||
+                  Mode == DerivativeMode::ForwardModeSplit) {
+                setDiffe(&call,
+                         Constant::getNullValue(
+                             gutils->getShadowType(call.getType())),
+                         BuilderFwd);
+              } else {
+                IRBuilder<> Builder2(&call);
+                getReverseBuilder(Builder2);
+                setDiffe(&call,
+                         Constant::getNullValue(
+                             gutils->getShadowType(call.getType())),
+                         Builder2);
+              }
+            }
+            finishStatsPrimal(primalNeeded);
+            return true;
+          }
+
+          auto computeDenomAndGuard = [&](IRBuilder<> &B, Value *nV,
+                                          Value *&denomFp, Value *&degenerate) {
+            Value *zero = ConstantInt::get(sizeTy, 0);
+            Value *one = ConstantInt::get(sizeTy, 1);
+            if (denomKind == GSLDenomKind::One) {
+              denomFp = ConstantFP::get(f64Ty, 1.0);
+              degenerate = B.CreateICmpEQ(nV, zero);
+            } else if (denomKind == GSLDenomKind::N) {
+              degenerate = B.CreateICmpEQ(nV, zero);
+              denomFp = B.CreateUIToFP(nV, f64Ty);
+            } else {
+              degenerate = B.CreateICmpULE(nV, one);
+              denomFp = B.CreateUIToFP(B.CreateSub(nV, one), f64Ty);
+            }
+          };
+
+          auto computeMu = [&](IRBuilder<> &B, Value *srcPtr, Value *srcStride,
+                               Value *nV, bool doLookup) -> Value * {
+            if (hasMeanArg) {
+              Value *m = gutils->getNewFromOriginal(mean);
+              return doLookup ? lookup(m, B) : m;
+            }
+            FunctionType *meanFT =
+                FunctionType::get(f64Ty, {elemPtrTy, sizeTy, sizeTy}, false);
+            FunctionCallee meanFn = getOrInsertGSLFunction(
+                M, called, isFloat ? "gsl_stats_float_mean" : "gsl_stats_mean",
+                meanFT);
+            return emitGSLCall(B, meanFn, {srcPtr, srcStride, nV}, {},
+                               call.getCallingConv());
+          };
+
+          if (Mode == DerivativeMode::ForwardMode ||
+              Mode == DerivativeMode::ForwardModeError ||
+              Mode == DerivativeMode::ForwardModeSplit) {
+            Value *strideV = gutils->getNewFromOriginal(stride);
+            Value *nV = gutils->getNewFromOriginal(n);
+            Value *srcPtr =
+                needDataCopy ? dataCopy : gutils->getNewFromOriginal(data);
+            srcPtr = BuilderFwd.CreatePointerCast(srcPtr, elemPtrTy);
+            Value *srcStride =
+                needDataCopy ? ConstantInt::get(sizeTy, 1) : strideV;
+            Value *mu = computeMu(BuilderFwd, srcPtr, srcStride, nV,
+                                  /*doLookup*/ false);
+
+            Value *dData =
+                constData ? nullptr : gutils->invertPointerM(data, BuilderFwd);
+            Value *dMean =
+                (hasMeanArg && !constMean) ? diffe(mean, BuilderFwd) : nullptr;
+            Value *denomFp = nullptr;
+            Value *degenerate = nullptr;
+            computeDenomAndGuard(BuilderFwd, nV, denomFp, degenerate);
+            Value *y = isSD ? yVal : nullptr;
+            if (isSD) {
+              Value *yZero =
+                  BuilderFwd.CreateFCmpOEQ(y, ConstantFP::get(f64Ty, 0.0));
+              degenerate = BuilderFwd.CreateOr(degenerate, yZero);
+            }
+            Value *scaleDenom =
+                isSD ? BuilderFwd.CreateFMul(denomFp, y) : denomFp;
+            Value *factor = BuilderFwd.CreateSelect(
+                degenerate, ConstantFP::get(f64Ty, 0.0),
+                BuilderFwd.CreateFDiv(ConstantFP::get(f64Ty, isSD ? 1.0 : 2.0),
+                                      scaleDenom));
+
+            Function *varFwdFn = getOrCreateGSLStatsVarFwdFn(M, elemTy, sizeTy);
+            Value *nullPtr =
+                ConstantPointerNull::get(cast<PointerType>(elemPtrTy));
+            Value *fZero = ConstantFP::get(f64Ty, 0.0);
+            Value *dRet =
+                width > 1
+                    ? UndefValue::get(gutils->getShadowType(call.getType()))
+                    : nullptr;
+            for (unsigned w = 0; w < width; ++w) {
+              Value *dDataW =
+                  constData
+                      ? nullPtr
+                      : BuilderFwd.CreatePointerCast(
+                            width > 1
+                                ? gutils->extractMeta(BuilderFwd, dData, w)
+                                : dData,
+                            elemPtrTy);
+              Value *dMeanW =
+                  !dMean
+                      ? fZero
+                      : (width > 1 ? gutils->extractMeta(BuilderFwd, dMean, w)
+                                   : dMean);
+              Value *dot =
+                  BuilderFwd.CreateCall(varFwdFn, {srcPtr, srcStride, dDataW,
+                                                   strideV, nV, mu, dMeanW});
+              Value *lane = BuilderFwd.CreateFMul(factor, dot);
+              if (width > 1)
+                dRet = BuilderFwd.CreateInsertValue(dRet, lane, {w});
+              else
+                dRet = lane;
+            }
+            if (needDataCopy && shouldFree())
+              CreateDealloc(BuilderFwd, srcPtr);
+            setDiffe(&call, dRet, BuilderFwd);
+            finishStatsPrimal(primalNeeded);
+            return true;
+          }
+
+          if (Mode == DerivativeMode::ReverseModeCombined ||
+              Mode == DerivativeMode::ReverseModeGradient) {
+            IRBuilder<> Builder2(&call);
+            getReverseBuilder(Builder2);
+            Value *strideV =
+                lookup(gutils->getNewFromOriginal(stride), Builder2);
+            Value *nV = lookup(gutils->getNewFromOriginal(n), Builder2);
+            Value *srcPtr =
+                needDataCopy
+                    ? lookup(dataCopy, Builder2)
+                    : lookup(gutils->getNewFromOriginal(data), Builder2);
+            Value *srcPtrCast = Builder2.CreatePointerCast(srcPtr, elemPtrTy);
+            Value *srcStride =
+                needDataCopy ? ConstantInt::get(sizeTy, 1) : strideV;
+            Value *mu = computeMu(Builder2, srcPtrCast, srcStride, nV,
+                                  /*doLookup*/ true);
+
+            Value *dData =
+                constData
+                    ? nullptr
+                    : lookup(gutils->invertPointerM(data, Builder2), Builder2);
+            Value *dRet = diffe(&call, Builder2);
+            setDiffe(
+                &call,
+                Constant::getNullValue(gutils->getShadowType(call.getType())),
+                Builder2);
+
+            Value *denomFp = nullptr;
+            Value *degenerate = nullptr;
+            computeDenomAndGuard(Builder2, nV, denomFp, degenerate);
+            Value *y = isSD ? lookup(yVal, Builder2) : nullptr;
+            if (isSD) {
+              Value *yZero =
+                  Builder2.CreateFCmpOEQ(y, ConstantFP::get(f64Ty, 0.0));
+              degenerate = Builder2.CreateOr(degenerate, yZero);
+            }
+            Value *scaleDenom =
+                isSD ? Builder2.CreateFMul(denomFp, y) : denomFp;
+            Value *baseFactor = Builder2.CreateSelect(
+                degenerate, ConstantFP::get(f64Ty, 0.0),
+                Builder2.CreateFDiv(ConstantFP::get(f64Ty, isSD ? 1.0 : 2.0),
+                                    scaleDenom));
+
+            Function *varRevFn = getOrCreateGSLStatsVarRevFn(M, elemTy, sizeTy);
+            Value *nullPtr =
+                ConstantPointerNull::get(cast<PointerType>(elemPtrTy));
+            Value *dMeanAcc =
+                (hasMeanArg && !constMean && width > 1)
+                    ? UndefValue::get(gutils->getShadowType(f64Ty))
+                    : nullptr;
+            for (unsigned w = 0; w < width; ++w) {
+              Value *dRetW =
+                  width > 1 ? gutils->extractMeta(Builder2, dRet, w) : dRet;
+              Value *scaleW = Builder2.CreateFMul(baseFactor, dRetW);
+              Value *dDataW =
+                  constData
+                      ? nullPtr
+                      : Builder2.CreatePointerCast(
+                            width > 1 ? gutils->extractMeta(Builder2, dData, w)
+                                      : dData,
+                            elemPtrTy);
+              Value *dMeanW =
+                  Builder2.CreateCall(varRevFn, {srcPtrCast, srcStride, dDataW,
+                                                 strideV, nV, mu, scaleW});
+              if (hasMeanArg && !constMean) {
+                if (width > 1)
+                  dMeanAcc = Builder2.CreateInsertValue(dMeanAcc, dMeanW, {w});
+                else
+                  dMeanAcc = dMeanW;
+              }
+            }
+            if (hasMeanArg && !constMean)
+              ((DiffeGradientUtils *)gutils)
+                  ->addToDiffe(mean, dMeanAcc, Builder2, f64Ty);
+            if (needDataCopy && shouldFree())
+              CreateDealloc(Builder2, srcPtr);
+            finishStatsPrimal(primalNeeded);
+            return true;
+          }
+        }
       }
     }
 
