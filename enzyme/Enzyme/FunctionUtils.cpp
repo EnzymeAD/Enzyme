@@ -5283,7 +5283,8 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
     SetVector<Instruction *> operands;
     for (size_t i = 0; i < I->getNumOperands(); i++) {
       if (auto I2 = dyn_cast<Instruction>(I->getOperand(i))) {
-        if ((!I2->mayWriteToMemory() ||
+        if (I2 != I && I2 != candidate &&
+            (!I2->mayWriteToMemory() ||
              (isa<CallInst>(I2) && isReadOnly(cast<CallInst>(I2)))))
           operands.insert(I2);
       }
@@ -7921,6 +7922,14 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
 
   if (auto PN = dyn_cast<PHINode>(cur)) {
     B.SetInsertPoint(getFirstNonPHI(PN->getParent()));
+    auto isNonWrappingCanonicalIV = [&](const Loop *L, PHINode *IV) {
+      if (!IV || !SE.isSCEVable(IV->getType()))
+        return false;
+      auto *AR = dyn_cast<SCEVAddRecExpr>(SE.getSCEV(IV));
+      if (!AR || AR->getLoop() != L || !AR->isAffine())
+        return false;
+      return AR->hasNoUnsignedWrap() || AR->hasNoSignedWrap();
+    };
     if (SE.isSCEVable(PN->getType())) {
       auto S = SE.getSCEV(PN);
 
@@ -7934,11 +7943,27 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
             legal = true;
         }
       }
-      if (isa<SCEVAddRecExpr>(S)) {
+      if (auto AR = dyn_cast<SCEVAddRecExpr>(S)) {
         auto L = LI.getLoopFor(PN->getParent());
-        assert(L);
-        if (L->getCanonicalInductionVariable() != PN)
-          legal = true;
+        if (L && AR->getLoop()->getLoopPreheader() &&
+            L->getCanonicalInductionVariable() != PN) {
+          bool isPrimaryCanonicalIV = false;
+          if (AR->getLoop() == L && L->getHeader() == PN->getParent() &&
+              AR->isAffine() && AR->getStart()->isZero() &&
+              AR->getStepRecurrence(SE)->isOne()) {
+            isPrimaryCanonicalIV = true;
+            for (PHINode &Other : L->getHeader()->phis()) {
+              if (&Other == PN)
+                break;
+              if (Other.getType() == PN->getType() && SE.getSCEV(&Other) == S) {
+                isPrimaryCanonicalIV = false;
+                break;
+              }
+            }
+          }
+          if (!isPrimaryCanonicalIV)
+            legal = true;
+        }
       }
 
       if (legal) {
@@ -7946,8 +7971,10 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
           push(U);
         }
         auto point = getFirstNonPHI(PN->getParent());
-        auto tmp = cast<PHINode>(pushcse(B.CreatePHI(cur->getType(), 1)));
+        auto *tmp =
+            cast<Instruction>(B.CreateFreeze(PoisonValue::get(cur->getType())));
         cur->replaceAllUsesWith(tmp);
+        SE.forgetValue(cur);
         cur->eraseFromParent();
 
         Value *newIV = nullptr;
@@ -7962,7 +7989,8 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
           newIV = Exp.expandCodeFor(S, tmp->getType(), point);
           // sadly this doesn't exist on 11
           for (auto I : Exp.getAllInsertedInstructions())
-            Q.insert(I);
+            if (I->getParent() && !isa<PHINode>(I))
+              Q.insert(I);
         }
 
         tmp->replaceAllUsesWith(newIV);
@@ -7990,77 +8018,81 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
     if (auto L = LI.getLoopFor(PN->getParent()))
       if (L->getHeader() == PN->getParent())
         if (auto idx = L->getCanonicalInductionVariable())
-          if (auto PH = L->getLoopPreheader()) {
-            bool legal = idx != PN;
-            auto ph_idx = PN->getBasicBlockIndex(PH);
-            assert(ph_idx >= 0);
-            for (size_t i = 0; i < PN->getNumIncomingValues(); i++) {
-              if ((int)i == ph_idx)
-                continue;
-              auto v = PN->getIncomingValue(i);
-              if (v != PN->getIncomingValue(1 - ph_idx)) {
+          if (auto PH = L->getLoopPreheader())
+            if (PN->getNumIncomingValues() == 2 &&
+                isNonWrappingCanonicalIV(L, idx)) {
+              bool legal = idx != PN;
+              auto ph_idx = PN->getBasicBlockIndex(PH);
+              if (ph_idx < 0)
                 legal = false;
-                break;
+              for (size_t i = 0; legal && i < PN->getNumIncomingValues(); i++) {
+                if ((int)i == ph_idx)
+                  continue;
+                auto v = PN->getIncomingValue(i);
+                if (v != PN->getIncomingValue(1 - ph_idx)) {
+                  legal = false;
+                  break;
+                }
+                // The given var must dominate the loop
+                if (isa<Constant>(v))
+                  continue;
+                if (isa<Argument>(v))
+                  continue;
+                // exception for the induction itself, which we handle specially
+                if (v == idx)
+                  continue;
+                auto I = dyn_cast<Instruction>(v);
+                if (!I || !DT.dominates(I, PN)) {
+                  legal = false;
+                  break;
+                }
               }
-              // The given var must dominate the loop
-              if (isa<Constant>(v))
-                continue;
-              if (isa<Argument>(v))
-                continue;
-              // exception for the induction itself, which we handle specially
-              if (v == idx)
-                continue;
-              auto I = cast<Instruction>(v);
-              if (!DT.dominates(I, PN)) {
-                legal = false;
-                break;
-              }
-            }
-            if (legal) {
-              auto val = PN->getIncomingValue(1 - ph_idx);
-              push(val);
-              if (val == idx) {
+              if (legal) {
+                auto val = PN->getIncomingValue(1 - ph_idx);
+                push(val);
+                if (val == idx) {
+                  val = pushcse(
+                      B.CreateSub(idx, ConstantInt::get(idx->getType(), 1)));
+                }
+
+                auto val2 = PN->getIncomingValue(ph_idx);
+                push(val2);
+
+                auto c0 = ConstantInt::get(idx->getType(), 0);
+                // if (val2 == c0 && PN->getIncomingValue(1 - ph_idx) == idx) {
+                //  val = B.CreateBinaryIntrinsic(Intrinsic::umax, c0, val);
+                //} else {
+                auto eq = pushcse(B.CreateICmpEQ(idx, c0));
                 val = pushcse(
-                    B.CreateSub(idx, ConstantInt::get(idx->getType(), 1)));
+                    B.CreateSelect(eq, val2, val, "phisel." + cur->getName()));
+                //}
+
+                replaceAndErase(cur, val);
+                return "PhiLoop0Sel";
               }
-
-              auto val2 = PN->getIncomingValue(ph_idx);
-              push(val2);
-
-              auto c0 = ConstantInt::get(idx->getType(), 0);
-              // if (val2 == c0 && PN->getIncomingValue(1 - ph_idx) == idx) {
-              //  val = B.CreateBinaryIntrinsic(Intrinsic::umax, c0, val);
-              //} else {
-              auto eq = pushcse(B.CreateICmpEQ(idx, c0));
-              val = pushcse(
-                  B.CreateSelect(eq, val2, val, "phisel." + cur->getName()));
-              //}
-
-              replaceAndErase(cur, val);
-              return "PhiLoop0Sel";
             }
-          }
     // phi (sitofp a), (sitofp b) -> sitofp (phi a, b)
-    {
+    if (PN->getType()->isFloatingPointTy()) {
       SmallVector<Value *, 1> negOps;
       SmallVector<Instruction *, 1> prevNegOps;
       bool legal = true;
       for (size_t i = 0; i < PN->getNumIncomingValues(); i++) {
         auto v = PN->getIncomingValue(i);
         if (auto C = dyn_cast<ConstantFP>(v)) {
-          APSInt Tmp(64);
-          bool isExact = false;
-          C->getValue().convertToInteger(Tmp, llvm::RoundingMode::TowardZero,
-                                         &isExact);
-          if (isExact || C->isZero()) {
-            negOps.push_back(ConstantInt::get(B.getInt64Ty(), Tmp));
-            continue;
+          if (!(C->isZero() && C->isNegative())) {
+            APSInt Tmp(64, /*isUnsigned=*/false);
+            bool isExact = false;
+            auto Status = C->getValue().convertToInteger(
+                Tmp, llvm::RoundingMode::TowardZero, &isExact);
+            if (Status == APFloat::opOK && isExact) {
+              negOps.push_back(ConstantInt::get(B.getInt64Ty(), Tmp));
+              continue;
+            }
           }
         }
         if (auto fneg = dyn_cast<Instruction>(v)) {
           if (fneg->getOpcode() == Instruction::SIToFP &&
-              cast<IntegerType>(fneg->getOperand(0)->getType())
-                      ->getBitWidth() == 64) {
+              fneg->getOperand(0)->getType()->isIntegerTy(64)) {
             negOps.push_back(fneg->getOperand(0));
             prevNegOps.push_back(fneg);
             continue;
@@ -8068,16 +8100,15 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
         }
         legal = false;
       }
-      if (legal) {
-        auto PN2 = cast<PHINode>(
-            pushcse(B.CreatePHI(B.getInt64Ty(), PN->getNumIncomingValues())));
+      if (legal && !prevNegOps.empty()) {
+        auto PN2 = B.CreatePHI(B.getInt64Ty(), PN->getNumIncomingValues());
         PN2->takeName(PN);
         for (auto val : llvm::enumerate(negOps))
           PN2->addIncoming(val.value(), PN->getIncomingBlock(val.index()));
 
-        push(PN2);
+        auto PN2V = pushcse(PN2);
 
-        auto fneg = pushcse(B.CreateSIToFP(PN2, PN->getType()));
+        auto fneg = pushcse(B.CreateSIToFP(PN2V, PN->getType()));
 
         for (auto I : prevNegOps)
           push(I);
@@ -8094,34 +8125,33 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
       for (size_t i = 0; i < PN->getNumIncomingValues(); i++) {
         auto v = PN->getIncomingValue(i);
         if (auto C = dyn_cast<ConstantFP>(v)) {
-          negOps.push_back(C->isZero() ? C : pushcse(B.CreateFNeg(C)));
+          negOps.push_back(pushcse(B.CreateFNeg(C)));
           continue;
         }
         if (auto fneg = dyn_cast<Instruction>(v)) {
-          if (fneg->getOpcode() == Instruction::FNeg) {
+          if (fneg->getOpcode() == Instruction::FNeg &&
+              fneg->getOperand(0) != PN) {
             negOps.push_back(fneg->getOperand(0));
             prevNegOps.push_back(fneg);
+            hasNeg = true;
             continue;
           }
         }
         legal = false;
       }
       if (legal && hasNeg) {
+        auto PN2 = B.CreatePHI(PN->getType(), PN->getNumIncomingValues());
+        PN2->takeName(PN);
         for (auto val : llvm::enumerate(negOps))
-          PN->setIncomingValue(val.index(), val.value());
+          PN2->addIncoming(val.value(), PN->getIncomingBlock(val.index()));
 
-        push(PN);
+        auto PN2V = pushcse(PN2);
 
-        auto fneg = pushcse(B.CreateFNeg(PN));
+        auto fneg = pushcse(B.CreateFNeg(PN2V));
 
-        for (auto &U : cur->uses()) {
-          if (U.getUser() == fneg)
-            continue;
-          push(U.getUser());
-          U.set(fneg);
-        }
         for (auto I : prevNegOps)
           push(I);
+        replaceAndErase(cur, fneg);
         return "PhiFNeg";
       }
     }
@@ -8139,7 +8169,8 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
         }
         if (auto fneg = dyn_cast<BinaryOperator>(v)) {
           if (auto CI = dyn_cast<ConstantInt>(fneg->getOperand(0)))
-            if (fneg->getOpcode() == Instruction::Sub && CI->isZero()) {
+            if (fneg->getOpcode() == Instruction::Sub && CI->isZero() &&
+                fneg->getOperand(1) != PN) {
               negOps.push_back(fneg->getOperand(1));
               prevNegOps.push_back(fneg);
               hasNeg = true;
@@ -8149,21 +8180,18 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
         legal = false;
       }
       if (legal && hasNeg) {
+        auto PN2 = B.CreatePHI(PN->getType(), PN->getNumIncomingValues());
+        PN2->takeName(PN);
         for (auto val : llvm::enumerate(negOps))
-          PN->setIncomingValue(val.index(), val.value());
+          PN2->addIncoming(val.value(), PN->getIncomingBlock(val.index()));
 
-        push(PN);
+        auto PN2V = pushcse(PN2);
 
-        auto fneg = pushcse(B.CreateNeg(PN));
+        auto fneg = pushcse(B.CreateNeg(PN2V));
 
-        for (auto &U : cur->uses()) {
-          if (U.getUser() == fneg)
-            continue;
-          push(U.getUser());
-          U.set(fneg);
-        }
         for (auto I : prevNegOps)
           push(I);
+        replaceAndErase(cur, fneg);
         return "PHINeg";
       }
     }
@@ -8219,8 +8247,14 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
           auto v = PN->getIncomingValue(i);
           if (auto C = dyn_cast<ConstantInt>(v)) {
             if (code == Instruction::ZExt) {
-              lhsOps.push_back(ConstantInt::getFalse(C->getContext()));
-              continue;
+              if (C->isZero()) {
+                lhsOps.push_back(ConstantInt::getFalse(C->getContext()));
+                continue;
+              }
+              if (C->isOne()) {
+                lhsOps.push_back(ConstantInt::getTrue(C->getContext()));
+                continue;
+              }
             } else if (C->isZero()) {
               rhsOps.push_back(C);
               lhsOps.push_back(C);
@@ -8229,14 +8263,22 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
           }
           if (auto C = dyn_cast<ConstantFP>(v)) {
             if (code == Instruction::UIToFP) {
-              if (C->isZero()) {
+              if (C->isZero() && !C->isNegative()) {
                 lhsOps.push_back(ConstantInt::getFalse(C->getContext()));
+                continue;
+              }
+              if (C->isExactlyValue(1.0)) {
+                lhsOps.push_back(ConstantInt::getTrue(C->getContext()));
+                continue;
               }
             } else if (code == Instruction::FMul || code == Instruction::FSub ||
                        code == Instruction::FAdd) {
               if (C->isZero()) {
-                rhsOps.push_back(C);
                 lhsOps.push_back(C);
+                if (code == Instruction::FAdd)
+                  rhsOps.push_back(C);
+                else
+                  rhsOps.push_back(ConstantFP::getZero(C->getType()));
                 continue;
               }
             }
@@ -8293,8 +8335,8 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
                 break;
               case Instruction::ZExt:
               case Instruction::UIToFP:
-                if (cast<IntegerType>(fneg->getOperand(0)->getType())
-                        ->getBitWidth() != 1)
+                if (!fneg->getOperand(0)->getType()->isIntegerTy(1) ||
+                    fneg->getOperand(0) == PN)
                   legal = false;
                 lhsOps.push_back(fneg->getOperand(0));
                 break;
@@ -8315,16 +8357,26 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
           if (!cmpPredicate)
             legal = false;
           auto L = LI.getLoopFor(PN->getParent());
-          if (legal && L && L->getLoopPreheader() &&
-              L->getCanonicalInductionVariable() &&
-              L->getHeader() == PN->getParent()) {
+          if (legal && PN->getNumIncomingValues() == 2 &&
+              PN->getType()->isIntegerTy(1) && L && L->getLoopPreheader() &&
+              L->getHeader() == PN->getParent() &&
+              isNonWrappingCanonicalIV(L, L->getCanonicalInductionVariable())) {
             auto ph_idx = PN->getBasicBlockIndex(L->getLoopPreheader());
-            if (isa<ConstantInt>(PN->getIncomingValue(ph_idx))) {
+            if (ph_idx >= 0 && isa<ConstantInt>(PN->getIncomingValue(ph_idx))) {
               lhsOps[ph_idx] =
                   Constant::getNullValue(lhsOps[1 - ph_idx]->getType());
               rhsOps[ph_idx] =
                   Constant::getNullValue(rhsOps[1 - ph_idx]->getType());
               preheader_fix = ph_idx;
+            }
+          }
+          if (legal && !CmpInst::isFalseWhenEqual(*cmpPredicate)) {
+            for (size_t i = 0; i < PN->getNumIncomingValues(); i++) {
+              if ((int)i != preheader_fix &&
+                  isa<ConstantInt>(PN->getIncomingValue(i))) {
+                legal = false;
+                break;
+              }
             }
           }
           for (auto v : lhsOps)
@@ -8336,63 +8388,66 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
         }
 
         if (legal && changed) {
-          auto lhsPN = cast<PHINode>(pushcse(
-              B.CreatePHI(lhsOps[0]->getType(), PN->getNumIncomingValues())));
+          auto lhsPN =
+              B.CreatePHI(lhsOps[0]->getType(), PN->getNumIncomingValues());
           PHINode *rhsPN = nullptr;
           if (numOps == 2)
-            rhsPN = cast<PHINode>(pushcse(
-                B.CreatePHI(rhsOps[0]->getType(), PN->getNumIncomingValues())));
+            rhsPN =
+                B.CreatePHI(rhsOps[0]->getType(), PN->getNumIncomingValues());
 
           for (auto val : llvm::enumerate(lhsOps))
             lhsPN->addIncoming(val.value(), PN->getIncomingBlock(val.index()));
 
+          Value *lhsPNV = pushcse(lhsPN);
+          Value *rhsPNV = nullptr;
           if (numOps == 2) {
             for (auto val : llvm::enumerate(rhsOps))
               rhsPN->addIncoming(val.value(),
                                  PN->getIncomingBlock(val.index()));
+            rhsPNV = pushcse(rhsPN);
           }
 
           Value *fneg = nullptr;
           switch (code) {
           case Instruction::FMul:
-            fneg = B.CreateFMul(lhsPN, rhsPN);
+            fneg = B.CreateFMul(lhsPNV, rhsPNV);
             if (auto I = dyn_cast<Instruction>(fneg))
               I->setFast(fast);
             break;
           case Instruction::FAdd:
-            fneg = B.CreateFAdd(lhsPN, rhsPN);
+            fneg = B.CreateFAdd(lhsPNV, rhsPNV);
             if (auto I = dyn_cast<Instruction>(fneg))
               I->setFast(fast);
             break;
           case Instruction::FSub:
-            fneg = B.CreateFSub(lhsPN, rhsPN);
+            fneg = B.CreateFSub(lhsPNV, rhsPNV);
             if (auto I = dyn_cast<Instruction>(fneg))
               I->setFast(fast);
             break;
           case Instruction::Mul:
-            fneg = B.CreateMul(lhsPN, rhsPN, "", NUW, NSW);
+            fneg = B.CreateMul(lhsPNV, rhsPNV, "", NUW, NSW);
             break;
           case Instruction::Add:
-            fneg = B.CreateAdd(lhsPN, rhsPN, "", NUW, NSW);
+            fneg = B.CreateAdd(lhsPNV, rhsPNV, "", NUW, NSW);
             break;
           case Instruction::Sub:
-            fneg = B.CreateSub(lhsPN, rhsPN, "", NUW, NSW);
+            fneg = B.CreateSub(lhsPNV, rhsPNV, "", NUW, NSW);
             break;
           case Instruction::ZExt:
-            fneg = B.CreateZExt(lhsPN, PN->getType());
+            fneg = B.CreateZExt(lhsPNV, PN->getType());
             break;
           case Instruction::FCmp:
           case Instruction::ICmp:
-            fneg = B.CreateCmp(*cmpPredicate, lhsPN, rhsPN);
+            fneg = B.CreateCmp(*cmpPredicate, lhsPNV, rhsPNV);
             break;
           case Instruction::UIToFP:
-            fneg = B.CreateUIToFP(lhsPN, PN->getType());
+            fneg = B.CreateUIToFP(lhsPNV, PN->getType());
             break;
           case Instruction::Or:
-            fneg = B.CreateOr(lhsPN, rhsPN);
+            fneg = B.CreateOr(lhsPNV, rhsPNV);
             break;
           case Instruction::And:
-            fneg = B.CreateAnd(lhsPN, rhsPN);
+            fneg = B.CreateAnd(lhsPNV, rhsPNV);
             break;
           default:
             llvm_unreachable("unhandled opcode");
@@ -8419,7 +8474,7 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
     if (PN->getNumIncomingValues() == 2) {
       for (int i = 0; i < 2; i++) {
         auto prev = PN->getIncomingBlock(i);
-        if (!DT.dominates(prev, PN->getParent())) {
+        if (!DT.properlyDominates(prev, PN->getParent())) {
           continue;
         }
         auto br = (isAnyBranch(prev->getTerminator())
@@ -8434,7 +8489,12 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
         if (br->getSuccessor(0) != PN->getParent()) {
           continue;
         }
-        if (br->getSuccessor(1) != PN->getIncomingBlock(1 - i)) {
+        auto elseBB = PN->getIncomingBlock(1 - i);
+        if (br->getSuccessor(1) != elseBB || elseBB == prev ||
+            elseBB == PN->getParent()) {
+          continue;
+        }
+        if (!DT.dominates(prev, elseBB)) {
           continue;
         }
 
@@ -8449,26 +8509,37 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
           auto I = dyn_cast<Instruction>(cur);
           if (!I)
             continue;
-          if (I->mayReadOrWriteMemory()) {
+          if (DT.dominates(I, br))
+            continue;
+          if (I->getParent() != elseBB || isa<PHINode>(I) ||
+              I->mayReadOrWriteMemory() ||
+              !llvm::isSafeToSpeculativelyExecute(I, br, /*AC=*/nullptr, &DT)) {
             legal = false;
             break;
           }
-          if (DT.dominates(I, PN))
+          if (!toMove.insert(I))
             continue;
-          for (size_t i = 0; i < I->getNumOperands(); i++)
-            todo.insert(I->getOperand(i));
-          toMove.insert(I);
+          for (size_t opIdx = 0; opIdx < I->getNumOperands(); opIdx++)
+            todo.insert(I->getOperand(opIdx));
         }
         if (!legal)
           continue;
-        for (auto iter = toMove.rbegin(), end = toMove.rend(); iter != end;
-             iter++) {
-          moveBeforeInst(*iter, br);
+        SmallVector<Instruction *, 8> sortedToMove(toMove.begin(),
+                                                   toMove.end());
+        llvm::sort(sortedToMove, [](Instruction *a, Instruction *b) {
+          return a->comesBefore(b);
+        });
+        for (Instruction *Inst : sortedToMove) {
+          bool inQ = Q.contains(Inst);
+          if (inQ)
+            Q.remove(Inst);
+          moveBeforeInst(Inst, br);
+          if (inQ)
+            Q.insert(Inst);
         }
         auto sel = pushcse(B.CreateSelect(
-            getBranchCondition(br), PN->getIncomingValueForBlock(prev),
-            PN->getIncomingValueForBlock(br->getSuccessor(1)),
-            "tphisel." + cur->getName()));
+            getBranchCondition(br), PN->getIncomingValue(i),
+            PN->getIncomingValue(1 - i), "tphisel." + cur->getName()));
 
         replaceAndErase(cur, sel);
         return "TPhiSel";
