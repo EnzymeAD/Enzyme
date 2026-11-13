@@ -3279,6 +3279,19 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
   // PB.registerVectorizerStartEPCallback(loadPass);
   PB.registerPipelineStartEPCallback(loadNVVM);
   PB.registerFullLinkTimeOptimizationEarlyEPCallback(loadNVVM);
+#if LLVM_VERSION_MAJOR >= 20
+  // ThinLTO post-link pipelines do not invoke PipelineStart or
+  // FullLinkTimeOptimizationEarly callbacks, so register PreserveNVVM in
+  // PipelineEarlySimplification before IPSCCP/GlobalOpt/GlobalDCE can erase
+  // internalized Enzyme registration globals or inline target functions.
+  PB.registerPipelineEarlySimplificationEPCallback(
+      [](ModulePassManager &MPM, OptimizationLevel, ThinOrFullLTOPhase Phase) {
+        if (Phase == ThinOrFullLTOPhase::ThinLTOPostLink)
+          MPM.addPass(PreserveNVVMNewPM(/*Begin*/ true));
+      });
+#else
+  PB.registerPipelineEarlySimplificationEPCallback(loadNVVM);
+#endif
 
   auto preLTOPass = [&PB](ModulePassManager &MPM, OptimizationLevel Level) {
     // Create a function that performs CFI checks for cross-DSO calls with
