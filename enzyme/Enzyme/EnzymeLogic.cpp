@@ -4714,53 +4714,209 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
   unsigned int SharedAddrSpace = getGPUSharedAddrSpace(TT);
 
   if (key.mode == DerivativeMode::ReverseModeCombined) {
-    BasicBlock *sharedBlock = nullptr;
-    for (auto &g : gutils->newFunc->getParent()->globals()) {
-      if (hasMetadata(&g, "enzyme_internalshadowglobal")) {
-        IRBuilder<> entryBuilder(gutils->inversionAllocs,
-                                 gutils->inversionAllocs->begin());
+    Module *M = gutils->newFunc->getParent();
+    const DataLayout &DL = M->getDataLayout();
+    LLVMContext &Ctx = entry->getContext();
+    bool CanParallelZero =
+        Arch == Triple::nvptx || Arch == Triple::nvptx64 ||
+        (Arch == Triple::amd_target && TT.getOS() == Triple::AMDHSA);
 
-        if (isGPUArch(TT) &&
-            g.getType()->getAddressSpace() == SharedAddrSpace) {
-          if (sharedBlock == nullptr)
-            sharedBlock = BasicBlock::Create(entry->getContext(), "shblock",
-                                             gutils->newFunc);
-          entryBuilder.SetInsertPoint(sharedBlock);
+    struct ParallelSharedGlobal {
+      GlobalVariable *GV;
+      Type *ChunkTy;
+      uint64_t ChunkSize;
+      uint64_t NumChunks;
+    };
+    SmallVector<GlobalVariable *, 4> SingleThreadSharedGlobals;
+    SmallVector<ParallelSharedGlobal, 4> MultiThreadSharedGlobals;
+
+    for (auto &g : M->globals()) {
+      if (!hasMetadata(&g, "enzyme_internalshadowglobal"))
+        continue;
+
+      if (isGPUArch(TT) && g.getType()->getAddressSpace() == SharedAddrSpace) {
+        Type *ValTy = g.getValueType();
+        if (CanParallelZero && ValTy->isSized()) {
+          uint64_t TotalBytes = DL.getTypeAllocSize(ValTy);
+          uint64_t GAlign = g.getAlign() ? g.getAlign()->value()
+                                         : DL.getABITypeAlign(ValTy).value();
+          uint64_t ChunkSize = 1;
+          for (uint64_t Candidate : {8ULL, 4ULL, 2ULL, 1ULL}) {
+            if (GAlign >= Candidate && TotalBytes % Candidate == 0) {
+              ChunkSize = Candidate;
+              break;
+            }
+          }
+          uint64_t NumChunks = TotalBytes / ChunkSize;
+          if (TotalBytes > 8 && NumChunks > 1) {
+            Type *ChunkTy = Type::getIntNTy(Ctx, ChunkSize * 8);
+            MultiThreadSharedGlobals.push_back(
+                {&g, ChunkTy, ChunkSize, NumChunks});
+            continue;
+          }
         }
-        auto store = entryBuilder.CreateStore(
-            Constant::getNullValue(g.getValueType()), &g);
-        if (g.getAlign())
-          store->setAlignment(*g.getAlign());
+        SingleThreadSharedGlobals.push_back(&g);
+        continue;
       }
+
+      IRBuilder<> entryBuilder(gutils->inversionAllocs,
+                               gutils->inversionAllocs->begin());
+      auto store = entryBuilder.CreateStore(
+          Constant::getNullValue(g.getValueType()), &g);
+      if (g.getAlign())
+        store->setAlignment(*g.getAlign());
     }
-    if (sharedBlock) {
-      BasicBlock *OldEntryInsts = entry->splitBasicBlock(entry->begin());
-      entry->getTerminator()->eraseFromParent();
-      IRBuilder<> ebuilder(entry);
+
+    if (!SingleThreadSharedGlobals.empty() ||
+        !MultiThreadSharedGlobals.empty()) {
+      BasicBlock *OrigEntry = entry;
+      BasicBlock *OldEntryInsts =
+          OrigEntry->splitBasicBlock(OrigEntry->begin());
+      OrigEntry->getTerminator()->eraseFromParent();
+      IRBuilder<> ebuilder(OrigEntry);
 
       Value *tx, *ty, *tz;
       if (Arch == Triple::nvptx || Arch == Triple::nvptx64) {
-        tx = ebuilder.CreateCall(getIntrinsicDeclaration(
-            gutils->newFunc->getParent(), Intrinsic::nvvm_read_ptx_sreg_tid_x));
-        ty = ebuilder.CreateCall(getIntrinsicDeclaration(
-            gutils->newFunc->getParent(), Intrinsic::nvvm_read_ptx_sreg_tid_y));
-        tz = ebuilder.CreateCall(getIntrinsicDeclaration(
-            gutils->newFunc->getParent(), Intrinsic::nvvm_read_ptx_sreg_tid_z));
+        tx = ebuilder.CreateCall(
+            getIntrinsicDeclaration(M, Intrinsic::nvvm_read_ptx_sreg_tid_x));
+        ty = ebuilder.CreateCall(
+            getIntrinsicDeclaration(M, Intrinsic::nvvm_read_ptx_sreg_tid_y));
+        tz = ebuilder.CreateCall(
+            getIntrinsicDeclaration(M, Intrinsic::nvvm_read_ptx_sreg_tid_z));
       } else if (Arch == Triple::amd_target) {
-        tx = ebuilder.CreateCall(getIntrinsicDeclaration(
-            gutils->newFunc->getParent(), Intrinsic::amdgcn_workitem_id_x));
-        ty = ebuilder.CreateCall(getIntrinsicDeclaration(
-            gutils->newFunc->getParent(), Intrinsic::amdgcn_workitem_id_y));
-        tz = ebuilder.CreateCall(getIntrinsicDeclaration(
-            gutils->newFunc->getParent(), Intrinsic::amdgcn_workitem_id_z));
+        tx = ebuilder.CreateCall(
+            getIntrinsicDeclaration(M, Intrinsic::amdgcn_workitem_id_x));
+        ty = ebuilder.CreateCall(
+            getIntrinsicDeclaration(M, Intrinsic::amdgcn_workitem_id_y));
+        tz = ebuilder.CreateCall(
+            getIntrinsicDeclaration(M, Intrinsic::amdgcn_workitem_id_z));
       } else {
         llvm_unreachable("unknown gpu architecture");
       }
-      Value *OrVal = ebuilder.CreateOr(ebuilder.CreateOr(tx, ty), tz);
 
-      ebuilder.CreateCondBr(
-          ebuilder.CreateICmpEQ(OrVal, ConstantInt::get(OrVal->getType(), 0)),
-          sharedBlock, OldEntryInsts);
+      BasicBlock *LastPlaced = OrigEntry;
+      if (MultiThreadSharedGlobals.empty()) {
+        BasicBlock *sharedBlock =
+            BasicBlock::Create(Ctx, "shblock", gutils->newFunc);
+        Value *OrVal = ebuilder.CreateOr(ebuilder.CreateOr(tx, ty), tz);
+        ebuilder.CreateCondBr(
+            ebuilder.CreateICmpEQ(OrVal, ConstantInt::get(OrVal->getType(), 0)),
+            sharedBlock, OldEntryInsts);
+
+        IRBuilder<> sbuilder(sharedBlock);
+        for (auto *GV : SingleThreadSharedGlobals) {
+          auto *store = sbuilder.CreateStore(
+              Constant::getNullValue(GV->getValueType()), GV);
+          if (GV->getAlign())
+            store->setAlignment(*GV->getAlign());
+        }
+        sbuilder.CreateBr(OldEntryInsts);
+        sharedBlock->moveAfter(OrigEntry);
+        LastPlaced = sharedBlock;
+      } else {
+        Value *bx, *by, *bz;
+        if (Arch == Triple::nvptx || Arch == Triple::nvptx64) {
+          bx = ebuilder.CreateCall(
+              getIntrinsicDeclaration(M, Intrinsic::nvvm_read_ptx_sreg_ntid_x));
+          by = ebuilder.CreateCall(
+              getIntrinsicDeclaration(M, Intrinsic::nvvm_read_ptx_sreg_ntid_y));
+          bz = ebuilder.CreateCall(
+              getIntrinsicDeclaration(M, Intrinsic::nvvm_read_ptx_sreg_ntid_z));
+        } else {
+          Value *DispatchPtr = ebuilder.CreateCall(
+              getIntrinsicDeclaration(M, Intrinsic::amdgcn_dispatch_ptr));
+          Type *I8Ty = Type::getInt8Ty(Ctx);
+          Type *I16Ty = Type::getInt16Ty(Ctx);
+          Type *I32Ty = Type::getInt32Ty(Ctx);
+          Type *I64Ty = Type::getInt64Ty(Ctx);
+          PointerType *ConstI16PtrTy = PointerType::get(
+              I16Ty,
+              cast<PointerType>(DispatchPtr->getType())->getAddressSpace());
+          auto loadWorkgroupDim = [&](uint64_t Offset, Align Alignment) {
+            Value *GEP = ebuilder.CreateInBoundsGEP(
+                I8Ty, DispatchPtr, ConstantInt::get(I64Ty, Offset));
+            Value *Cast = ebuilder.CreateBitCast(GEP, ConstI16PtrTy);
+            auto *LI = ebuilder.CreateLoad(I16Ty, Cast);
+            LI->setAlignment(Alignment);
+            return ebuilder.CreateZExt(LI, I32Ty);
+          };
+          bx = loadWorkgroupDim(4, Align(4));
+          by = loadWorkgroupDim(6, Align(2));
+          bz = loadWorkgroupDim(8, Align(4));
+        }
+
+        Value *TyPlusByTz = ebuilder.CreateAdd(ty, ebuilder.CreateMul(by, tz));
+        Value *Tid = ebuilder.CreateAdd(tx, ebuilder.CreateMul(bx, TyPlusByTz));
+        Value *NumThreads = ebuilder.CreateMul(ebuilder.CreateMul(bx, by), bz);
+
+        BasicBlock *CurBlock = OrigEntry;
+        if (!SingleThreadSharedGlobals.empty()) {
+          BasicBlock *sharedBlock =
+              BasicBlock::Create(Ctx, "shblock", gutils->newFunc);
+          BasicBlock *afterSingle =
+              BasicBlock::Create(Ctx, "shblock.cont", gutils->newFunc);
+          IRBuilder<> sbuilder(sharedBlock);
+          for (auto *GV : SingleThreadSharedGlobals) {
+            auto *store = sbuilder.CreateStore(
+                Constant::getNullValue(GV->getValueType()), GV);
+            if (GV->getAlign())
+              store->setAlignment(*GV->getAlign());
+          }
+          sbuilder.CreateBr(afterSingle);
+
+          IRBuilder<> cb(CurBlock);
+          cb.CreateCondBr(
+              cb.CreateICmpEQ(Tid, ConstantInt::get(Tid->getType(), 0)),
+              sharedBlock, afterSingle);
+          sharedBlock->moveAfter(LastPlaced);
+          afterSingle->moveAfter(sharedBlock);
+          LastPlaced = afterSingle;
+          CurBlock = afterSingle;
+        }
+
+        for (size_t i = 0; i < MultiThreadSharedGlobals.size(); ++i) {
+          const auto &Info = MultiThreadSharedGlobals[i];
+          bool IsLast = (i + 1 == MultiThreadSharedGlobals.size());
+          BasicBlock *LoopBB =
+              BasicBlock::Create(Ctx, "shzero.loop", gutils->newFunc);
+          BasicBlock *NextBB =
+              IsLast ? OldEntryInsts
+                     : BasicBlock::Create(Ctx, "shzero.next", gutils->newFunc);
+
+          bool UseI64 = Info.NumChunks > (1ULL << 30);
+          Type *IdxTy = UseI64 ? Type::getInt64Ty(Ctx) : Tid->getType();
+
+          IRBuilder<> cb(CurBlock);
+          Value *StartIdx = UseI64 ? cb.CreateZExt(Tid, IdxTy) : Tid;
+          Value *Stride =
+              UseI64 ? cb.CreateZExt(NumThreads, IdxTy) : NumThreads;
+          Value *NumChunksVal = ConstantInt::get(IdxTy, Info.NumChunks);
+          Value *BasePtr = cb.CreateBitCast(
+              Info.GV, PointerType::get(Info.ChunkTy, SharedAddrSpace));
+          cb.CreateCondBr(cb.CreateICmpULT(StartIdx, NumChunksVal), LoopBB,
+                          NextBB);
+
+          IRBuilder<> lb(LoopBB);
+          PHINode *Idx = lb.CreatePHI(IdxTy, 2, "shzero.idx");
+          Idx->addIncoming(StartIdx, CurBlock);
+          Value *ElemPtr = lb.CreateInBoundsGEP(Info.ChunkTy, BasePtr, Idx);
+          auto *ST = lb.CreateStore(ConstantInt::get(Info.ChunkTy, 0), ElemPtr);
+          ST->setAlignment(Align(Info.ChunkSize));
+          Value *NextIdx = lb.CreateAdd(Idx, Stride, "shzero.idx.next");
+          Idx->addIncoming(NextIdx, LoopBB);
+          lb.CreateCondBr(lb.CreateICmpULT(NextIdx, NumChunksVal), LoopBB,
+                          NextBB);
+
+          LoopBB->moveAfter(LastPlaced);
+          if (!IsLast) {
+            NextBB->moveAfter(LoopBB);
+            LastPlaced = NextBB;
+            CurBlock = NextBB;
+          } else {
+            LastPlaced = LoopBB;
+          }
+        }
+      }
 
       IRBuilder<> instbuilder(OldEntryInsts, OldEntryInsts->begin());
 
@@ -4777,23 +4933,18 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
       SmallVector<Value *, 1> BarrierArgs = {};
 #if LLVM_VERSION_MAJOR > 20
       if (Arch == Triple::nvptx || Arch == Triple::nvptx64)
-        BarrierArgs.push_back(ConstantInt::get(
-            Type::getInt32Ty(gutils->newFunc->getContext()), 0));
+        BarrierArgs.push_back(ConstantInt::get(Type::getInt32Ty(Ctx), 0));
 #endif
-      instbuilder.CreateCall(
-          getIntrinsicDeclaration(gutils->newFunc->getParent(), BarrierInst),
-          BarrierArgs);
-      OldEntryInsts->moveAfter(entry);
-      sharedBlock->moveAfter(entry);
-      IRBuilder<> sbuilder(sharedBlock);
-      sbuilder.CreateBr(OldEntryInsts);
+      instbuilder.CreateCall(getIntrinsicDeclaration(M, BarrierInst),
+                             BarrierArgs);
+      OldEntryInsts->moveAfter(LastPlaced);
       SmallVector<AllocaInst *, 3> AIs;
       for (auto &I : *OldEntryInsts) {
         if (auto AI = dyn_cast<AllocaInst>(&I))
           AIs.push_back(AI);
       }
       for (auto AI : AIs)
-        moveBeforeInst(AI, getFirstNonPHIOrDbgOrLifetime(entry));
+        moveBeforeInst(AI, getFirstNonPHIOrDbgOrLifetime(OrigEntry));
       entry = OldEntryInsts;
     }
   }
