@@ -735,6 +735,33 @@ static const StringSet<> KnownInactiveFunctionInsts = {
   return false;
 }
 
+// Calls that produce no derivative flow from their operands (and may be marked
+// inactive instructions), yet overwrite destination memory whose shadow must
+// still be zeroed if the destination is active.
+static bool isMemOverwriteInactiveCall(const CallInst *CI) {
+  if (isa<MemSetInst>(CI))
+    return true;
+  auto *F = getFunctionFromCall(CI);
+  if (!F)
+    return false;
+#if LLVM_VERSION_MAJOR >= 20
+  if (F->getIntrinsicID() == Intrinsic::experimental_memset_pattern)
+    return true;
+#endif
+  StringRef Name = getFuncNameFromCall(CI);
+  return Name == "memset" || Name == "memset_pattern16" ||
+         Name == "__memset_chk";
+}
+
+static bool isMemOverwriteInactiveCallDest(const CallInst *CI,
+                                           const Value *Ptr) {
+  if (auto *MSI = dyn_cast<MemSetInst>(CI))
+    return MSI->getRawDest() == Ptr;
+  if (!isMemOverwriteInactiveCall(CI))
+    return false;
+  return CI->arg_size() >= 1 && CI->getArgOperand(0) == Ptr;
+}
+
 /// Is the use of value val as an argument of call CI known to be inactive
 /// This tool can only be used when in DOWN mode
 bool ActivityAnalyzer::isFunctionArgumentConstant(CallInst *CI, Value *val) {
@@ -2266,7 +2293,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
 
       // If this is a malloc or free, this doesn't impact the activity
       if (auto CI = dyn_cast<CallInst>(I)) {
-        if (isInactiveCallInst(*CI, TLI))
+        if (isInactiveCallInst(*CI, TLI) && !isMemOverwriteInactiveCall(CI))
           return false;
 
         StringRef funcName = getFuncNameFromCall(CI);
@@ -2365,7 +2392,9 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
       // If we haven't already shown a potentially active load
       // check if this loads the given value and is active
       if ((!potentiallyActiveLoad || !potentiallyActiveStore) &&
-          isRefSet(AARes)) {
+          isRefSet(AARes) &&
+          !(isa<CallInst>(I) &&
+            isMemOverwriteInactiveCall(cast<CallInst>(I)))) {
         if (EnzymePrintActivity)
           llvm::errs() << "potential active load: " << *I << "\n";
         if (isa<LoadInst>(I) || isNVLoad(I) || isa<AtomicRMWInst>(I) ||
@@ -2479,7 +2508,9 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
           potentialStore = I;
           if (cop)
             potentiallyActiveStore = MTI;
-        } else if (isa<MemSetInst>(I)) {
+        } else if (isa<MemSetInst>(I) ||
+                   (isa<CallInst>(I) &&
+                    isMemOverwriteInactiveCall(cast<CallInst>(I)))) {
           potentialStore = I;
         } else {
           // Otherwise fallback and check if the instruction is active
@@ -3096,6 +3127,79 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
   if (PUA == UseActivity::None && isAllocationCall(val, TLI))
     AllocaSet.insert(val);
 
+  // True when Ptr derives solely from val or a tracked local allocation in
+  // AllocaSet via pointer arithmetic/casts/phis/selects (without loading a
+  // pointer from memory or merging an untracked pointer). Writes through
+  // pointers that may reference external memory still require updating or
+  // zeroing the external shadow.
+  auto isDirectTrackedPointer = [&](Value *Ptr) {
+    SmallVector<Value *, 4> ptrTodo = {Ptr};
+    SmallPtrSet<Value *, 4> ptrSeen;
+    bool foundTrackedBase = false;
+    while (!ptrTodo.empty()) {
+      Value *Obj = ptrTodo.pop_back_val();
+      if (!ptrSeen.insert(Obj).second)
+        continue;
+      if (Obj == val || AllocaSet.count(Obj)) {
+        foundTrackedBase = true;
+        continue;
+      }
+      if (isa<ConstantPointerNull, UndefValue, PoisonValue>(Obj))
+        continue;
+      if (auto *PN = dyn_cast<PHINode>(Obj)) {
+        for (Value *Inc : PN->incoming_values())
+          ptrTodo.push_back(Inc);
+        continue;
+      }
+      if (auto *Sel = dyn_cast<SelectInst>(Obj)) {
+        ptrTodo.push_back(Sel->getTrueValue());
+        ptrTodo.push_back(Sel->getFalseValue());
+        continue;
+      }
+      if (auto *CI = dyn_cast<CastInst>(Obj)) {
+        ptrTodo.push_back(CI->getOperand(0));
+        continue;
+      }
+      if (auto *GEP = dyn_cast<GetElementPtrInst>(Obj)) {
+        ptrTodo.push_back(GEP->getPointerOperand());
+        continue;
+      }
+      if (auto *CE = dyn_cast<ConstantExpr>(Obj)) {
+        if (CE->isCast() || CE->getOpcode() == Instruction::GetElementPtr) {
+          ptrTodo.push_back(CE->getOperand(0));
+          continue;
+        }
+      }
+      if (auto *BO = dyn_cast<BinaryOperator>(Obj)) {
+        if (isPointerArithmeticInst(BO)) {
+          auto isIntegralOp = [&](Value *Op) {
+            return isa<ConstantInt>(Op) ||
+                   (BO->getParent()->getParent() == TR.getFunction() &&
+                    TR.query(Op)[{-1}].isIntegral());
+          };
+          Value *Op0 = BO->getOperand(0);
+          Value *Op1 = BO->getOperand(1);
+          bool Int0 = isIntegralOp(Op0);
+          bool Int1 = isIntegralOp(Op1);
+          if (Int0 && Int1)
+            return false;
+          if (!Int0)
+            ptrTodo.push_back(Op0);
+          if (!Int1)
+            ptrTodo.push_back(Op1);
+          continue;
+        }
+      }
+      Value *Base = getBaseObject(Obj, /*offsetAllowed=*/true);
+      if (Base != Obj) {
+        ptrTodo.push_back(Base);
+        continue;
+      }
+      return false;
+    }
+    return foundTrackedBase;
+  };
+
   while (todo.size()) {
     auto pair = todo.front();
     todo.pop_front();
@@ -3126,21 +3230,31 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
     // somewhere
     if (auto SI = dyn_cast<StoreInst>(a)) {
       if (SI->getValueOperand() != parent) {
-        if (UA == UseActivity::OnlyLoads) {
+        bool DirectStore = isDirectTrackedPointer(SI->getPointerOperand());
+        if (UA == UseActivity::OnlyLoads && DirectStore) {
           continue;
         }
         if (UA != UseActivity::AllStores) {
-          if (ConstantValues.count(SI->getValueOperand()) ||
-              isa<ConstantInt>(SI->getValueOperand()) ||
-              (SI->getParent()->getParent() == TR.getFunction() &&
-               TR.query(SI->getValueOperand())[{-1}].isIntegral()))
+          if (DirectStore) {
+            if (ConstantValues.count(SI->getValueOperand()) ||
+                isa<ConstantInt>(SI->getValueOperand()) ||
+                (SI->getParent()->getParent() == TR.getFunction() &&
+                 TR.query(SI->getValueOperand())[{-1}].isIntegral()))
+              continue;
+            else
+              ActiveVal = SI->getValueOperand();
+          } else if (SI->getParent()->getParent() == TR.getFunction() &&
+                     TR.query(SI->getPointerOperand())
+                         .Data0()[{-1}]
+                         .isIntegral()) {
             continue;
-          else
+          } else {
             ActiveVal = SI->getValueOperand();
+          }
         }
 
-        if (UA == UseActivity::None ||
-            UA == UseActivity::OnlyNonPointerStores) {
+        if (DirectStore && (UA == UseActivity::None ||
+                            UA == UseActivity::OnlyNonPointerStores)) {
           // If storing into itself, all potential uses are taken care of
           // elsewhere in the recursion.
           bool shouldContinue = true;
@@ -3254,17 +3368,17 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
         // If storing into itself, all potential uses are taken care of
         // elsewhere in the recursion.
         bool shouldContinue = true;
-        SmallVector<Value *, 1> vtodo = {SI->getPointerOperand()};
-        SmallSet<Value *, 1> seen;
+        SmallVector<std::pair<Value *, bool>, 1> vtodo = {
+            {SI->getPointerOperand(), false}};
+        SmallSet<std::pair<Value *, bool>, 1> seen;
         if (EnzymePrintActivity)
           llvm::errs() << "      @@ analyzing store2 " << *SI << " " << *val
                        << " via " << *SI->getPointerOperand() << "\n";
         while (vtodo.size()) {
-          auto TmpOrig = vtodo.back();
+          auto [TmpOrig, Indirect] = vtodo.back();
           vtodo.pop_back();
-          if (seen.count(TmpOrig))
+          if (!seen.insert({TmpOrig, Indirect}).second)
             continue;
-          seen.insert(TmpOrig);
 
           if (AllocaSet.count(TmpOrig)) {
             if (EnzymePrintActivity)
@@ -3296,7 +3410,16 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
           }
           if (PUA == UseActivity::None) {
             if (auto LI = dyn_cast<LoadInst>(TmpOrig)) {
-              vtodo.push_back(LI->getPointerOperand());
+              if (Indirect) {
+                if (EnzymePrintActivity)
+                  llvm::errs()
+                      << "      -- failed to continue indirect store2 from "
+                      << *val << " due to load through loaded pointer "
+                      << *TmpOrig << "\n";
+                shouldContinue = false;
+                break;
+              }
+              vtodo.push_back({LI->getPointerOperand(), true});
               if (EnzymePrintActivity)
                 llvm::errs()
                     << "      -- continuing indirect store2(load) from " << *val
@@ -3312,11 +3435,12 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
                 llvm::errs()
                     << "      -- continuing indirect store2(base) from " << *val
                     << " via " << *TmpOrig << " - v:" << *v << "\n";
-              vtodo.push_back(v);
+              vtodo.push_back({v, Indirect});
             }
             continue;
           }
-          if (UA == PUA && TmpOrig == val) {
+          if (UA == PUA && TmpOrig == val &&
+              (!Indirect || AllocaSet.count(val))) {
             continue;
           }
           if (EnzymePrintActivity)
@@ -3457,7 +3581,10 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
       }
 
       bool ConstantArg = isFunctionArgumentConstant(call, parent);
-      if (ConstantArg && UA != UseActivity::AllStores) {
+      if (ConstantArg && UA != UseActivity::AllStores &&
+          !(isMemOverwriteInactiveCallDest(call, parent) &&
+            !isDirectTrackedPointer(parent) &&
+            !TR.query(parent).Data0()[{-1}].isIntegral())) {
         if (EnzymePrintActivity) {
           llvm::errs() << "Value found constant callinst use:" << *val
                        << " user " << *call << " parent " << *parent << "\n";
@@ -3466,7 +3593,8 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
       }
 
       if (!mayCapture) {
-        if (!mayRead && UA == UseActivity::OnlyLoads) {
+        if (!mayRead && UA == UseActivity::OnlyLoads &&
+            isDirectTrackedPointer(parent)) {
           if (EnzymePrintActivity) {
             llvm::errs() << "Value found non-loading use:" << *val << " user "
                          << *call << "\n";
@@ -3498,21 +3626,29 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
             F->getName() == "julia.write_barrier_binding")
           continue;
         if (F->getIntrinsicID() == Intrinsic::memset &&
-            UA != UseActivity::AllStores) {
+            UA != UseActivity::AllStores &&
+            (isDirectTrackedPointer(call->getArgOperand(0)) ||
+             TR.query(call->getArgOperand(0)).Data0()[{-1}].isIntegral())) {
           continue;
         }
         if (F->getIntrinsicID() == Intrinsic::memcpy ||
             F->getIntrinsicID() == Intrinsic::memmove) {
+          bool DirectDest = isDirectTrackedPointer(call->getArgOperand(0));
 
-          // copies of constant string data do not impact activity.
-          if (auto cexpr = dyn_cast<ConstantExpr>(call->getArgOperand(1))) {
-            if (cexpr->getOpcode() == Instruction::GetElementPtr) {
-              if (auto GV = dyn_cast<GlobalVariable>(cexpr->getOperand(0))) {
-                if (GV->hasInitializer() && GV->isConstant()) {
-                  if (auto CDA =
-                          dyn_cast<ConstantDataArray>(GV->getInitializer())) {
-                    if (CDA->getType()->getElementType()->isIntegerTy(8))
-                      continue;
+          // copies of constant string data do not impact activity when writing
+          // into tracked/integral memory (overwriting external active memory
+          // still needs to zero its shadow).
+          if (DirectDest ||
+              TR.query(call->getArgOperand(0)).Data0()[{-1}].isIntegral()) {
+            if (auto cexpr = dyn_cast<ConstantExpr>(call->getArgOperand(1))) {
+              if (cexpr->getOpcode() == Instruction::GetElementPtr) {
+                if (auto GV = dyn_cast<GlobalVariable>(cexpr->getOperand(0))) {
+                  if (GV->hasInitializer() && GV->isConstant()) {
+                    if (auto CDA =
+                            dyn_cast<ConstantDataArray>(GV->getInitializer())) {
+                      if (CDA->getType()->getElementType()->isIntegerTy(8))
+                        continue;
+                    }
                   }
                 }
               }
@@ -3520,7 +3656,8 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
           }
 
           // Only need to care about loads from
-          if (UA == UseActivity::OnlyLoads && call->getArgOperand(1) != parent)
+          if (UA == UseActivity::OnlyLoads &&
+              call->getArgOperand(1) != parent && DirectDest)
             continue;
 
           // Only need to care about store from
@@ -3541,8 +3678,9 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
           if (UA != UseActivity::AllStores)
             for (int arg = 0; arg < 2; arg++)
               if (call->getArgOperand(arg) != parent &&
-                  (arg == 0 || (PUA == UseActivity::None))) {
+                  (arg == 0 || (DirectDest && PUA == UseActivity::None))) {
                 Value *TmpOrig = call->getOperand(arg);
+                bool Indirect = false;
                 while (1) {
                   if (AllocaSet.count(TmpOrig)) {
                     shouldContinue = true;
@@ -3560,6 +3698,9 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
                   }
                   if (PUA == UseActivity::None) {
                     if (auto LI = dyn_cast<LoadInst>(TmpOrig)) {
+                      if (Indirect)
+                        break;
+                      Indirect = true;
                       TmpOrig = LI->getPointerOperand();
                       continue;
                     }
@@ -3607,6 +3748,7 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
 
             Value *ptr = a;
             bool subValue = false;
+            bool Indirect = false;
             while (ptr) {
               auto TmpOrig2 = getBaseObject(ptr);
               if (AllocaSet.count(TmpOrig2)) {
@@ -3634,7 +3776,12 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
                   break;
                 }
                 if (auto L = dyn_cast<LoadInst>(TmpOrig2)) {
-                  ptr = L->getPointerOperand();
+                  if (Indirect) {
+                    ptr = nullptr;
+                  } else {
+                    Indirect = true;
+                    ptr = L->getPointerOperand();
+                  }
                 } else
                   ptr = nullptr;
               } else
@@ -3682,32 +3829,65 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
         continue;
       }
       if (UA != UseActivity::AllStores && ConstantInstructions.count(I)) {
-        if (I->getType()->isVoidTy() || I->getType()->isTokenTy() ||
-            ConstantValues.count(I)) {
+        // A constant instruction writing through a pointer loaded from
+        // val/AllocaSet (e.g., store 0.0 / memset / memcpy from constant data
+        // into *yp) still overwrites external memory and needs the shadow
+        // pointer to zero its derivative.
+        bool ExternalOverwrite = false;
+        if (auto *SI = dyn_cast<StoreInst>(I)) {
+          if (SI->getPointerOperand() == parent &&
+              !isDirectTrackedPointer(SI->getPointerOperand()) &&
+              !TR.query(SI->getPointerOperand()).Data0()[{-1}].isIntegral())
+            ExternalOverwrite = true;
+        } else if (auto *MI = dyn_cast<MemIntrinsic>(I)) {
+          if (MI->getRawDest() == parent &&
+              !isDirectTrackedPointer(MI->getRawDest()) &&
+              !TR.query(MI->getRawDest()).Data0()[{-1}].isIntegral())
+            ExternalOverwrite = true;
+        } else if (auto *RMW = dyn_cast<AtomicRMWInst>(I)) {
+          if (RMW->getPointerOperand() == parent &&
+              !isDirectTrackedPointer(RMW->getPointerOperand()) &&
+              !TR.query(RMW->getPointerOperand()).Data0()[{-1}].isIntegral())
+            ExternalOverwrite = true;
+        } else if (auto *CX = dyn_cast<AtomicCmpXchgInst>(I)) {
+          if (CX->getPointerOperand() == parent &&
+              !isDirectTrackedPointer(CX->getPointerOperand()) &&
+              !TR.query(CX->getPointerOperand()).Data0()[{-1}].isIntegral())
+            ExternalOverwrite = true;
+        } else if (auto *CI = dyn_cast<CallInst>(I)) {
+          if (isMemOverwriteInactiveCallDest(CI, parent) &&
+              !isDirectTrackedPointer(parent) &&
+              !TR.query(parent).Data0()[{-1}].isIntegral())
+            ExternalOverwrite = true;
+        }
+        if (!ExternalOverwrite) {
+          if (I->getType()->isVoidTy() || I->getType()->isTokenTy() ||
+              ConstantValues.count(I)) {
+            if (EnzymePrintActivity) {
+              llvm::errs() << "Value found constant inst use:" << *val
+                           << " user " << *I << "\n";
+            }
+            continue;
+          } else {
+            ActiveVal = I;
+          }
+          UseActivity NU = UA;
+          if (UA == UseActivity::OnlyLoads || UA == UseActivity::OnlyStores ||
+              UA == UseActivity::OnlyNonPointerStores) {
+            if (!isPointerArithmeticInst(I) &&
+                !(UA == UseActivity::OnlyNonPointerStores && isa<LoadInst>(I)))
+              NU = UseActivity::None;
+          }
+
           if (EnzymePrintActivity) {
-            llvm::errs() << "Value found constant inst use:" << *val << " user "
-                         << *I << "\n";
+            llvm::errs() << "Adding users of value " << *I
+                         << " now with sub UA " << to_string(NU) << "\n";
+          }
+          for (auto u : I->users()) {
+            todo.push_back(std::make_tuple(u, (Value *)I, NU));
           }
           continue;
-        } else {
-          ActiveVal = I;
         }
-        UseActivity NU = UA;
-        if (UA == UseActivity::OnlyLoads || UA == UseActivity::OnlyStores ||
-            UA == UseActivity::OnlyNonPointerStores) {
-          if (!isPointerArithmeticInst(I) &&
-              !(UA == UseActivity::OnlyNonPointerStores && isa<LoadInst>(I)))
-            NU = UseActivity::None;
-        }
-
-        if (EnzymePrintActivity) {
-          llvm::errs() << "Adding users of value " << *I << " now with sub UA "
-                       << to_string(NU) << "\n";
-        }
-        for (auto u : I->users()) {
-          todo.push_back(std::make_tuple(u, (Value *)I, NU));
-        }
-        continue;
       }
       if (!I->mayWriteToMemory() || isa<LoadInst>(I)) {
         if (TR.query(I)[{-1}].isIntegral()) {
