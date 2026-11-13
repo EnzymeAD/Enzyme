@@ -15,6 +15,17 @@ void scale_pair_into(const Pair &in, Pair &out, double scale) {
   out.b = scale * in.b;
 }
 
+void scale_pair_two_active(const Pair &in, Pair &out, double alpha,
+                           double beta) {
+  out.a = alpha * in.a * in.a;
+  out.b = beta * in.b;
+}
+
+void copy_scaled_pair_into(const Pair &in, Pair &out) {
+  out.a = in.a * in.a;
+  out.b = 3.0 * in.b;
+}
+
 double mixed_dup_and_active(const double *x, double alpha) {
   return alpha * x[0] * x[0] + alpha * x[1];
 }
@@ -53,5 +64,44 @@ int main() {
   APPROX_EQ(enzyme::get<0>(enzyme::get<0>(rp)), 14.0, 1e-10);
   APPROX_EQ(dx[0], 12.0, 1e-10);
   APPROX_EQ(dx[1], 2.0, 1e-10);
+
+  // ReverseWithPrimal on void-returning function with only Duplicated args
+  {
+    Pair vin{2.0, 3.0}, dvin{0.0, 0.0};
+    Pair vout{0.0, 0.0}, dvout{1.0, 1.0};
+    enzyme::autodiff<enzyme::ReverseWithPrimal>(
+        copy_scaled_pair_into, enzyme::Duplicated<const Pair &>{vin, dvin},
+        enzyme::DuplicatedNoNeed<Pair &>{vout, dvout});
+    APPROX_EQ(dvin.a, 4.0, 1e-10);
+    APPROX_EQ(dvin.b, 3.0, 1e-10);
+  }
+
+  // ReverseWithPrimal on void-returning function with 1 Active arg
+  {
+    Pair vin{2.0, 3.0}, dvin{0.0, 0.0};
+    Pair vout{0.0, 0.0}, dvout{1.0, 1.0};
+    auto rwp1 = enzyme::autodiff<enzyme::ReverseWithPrimal>(
+        scale_pair_into, enzyme::Duplicated<const Pair &>{vin, dvin},
+        enzyme::DuplicatedNoNeed<Pair &>{vout, dvout},
+        enzyme::Active<double>{4.0});
+    APPROX_EQ(enzyme::get<0>(enzyme::get<0>(rwp1)), 4.0 + 3.0, 1e-10);
+    APPROX_EQ(dvin.a, 16.0, 1e-10);
+    APPROX_EQ(dvin.b, 4.0, 1e-10);
+  }
+
+  // ReverseWithPrimal on void-returning function with 2 Active args
+  // (verifies return tuple omits nodiff and matches sret ABI layout)
+  {
+    Pair vin{2.0, 3.0}, dvin{0.0, 0.0};
+    Pair vout{0.0, 0.0}, dvout{1.0, 2.0};
+    auto rwp2 = enzyme::autodiff<enzyme::ReverseWithPrimal>(
+        scale_pair_two_active, enzyme::Duplicated<const Pair &>{vin, dvin},
+        enzyme::DuplicatedNoNeed<Pair &>{vout, dvout},
+        enzyme::Active<double>{4.0}, enzyme::Active<double>{5.0});
+    APPROX_EQ(enzyme::get<0>(enzyme::get<0>(rwp2)), 4.0, 1e-10);
+    APPROX_EQ(enzyme::get<1>(enzyme::get<0>(rwp2)), 6.0, 1e-10);
+    APPROX_EQ(dvin.a, 16.0, 1e-10);
+    APPROX_EQ(dvin.b, 10.0, 1e-10);
+  }
   return 0;
 }
