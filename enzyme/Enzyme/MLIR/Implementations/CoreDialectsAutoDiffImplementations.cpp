@@ -860,6 +860,7 @@ LogicalResult edetail::callReverseHandler(Operation *orig, OpBuilder &builder,
     if (gutils->isConstantValue(result))
       continue;
     revArguments.push_back(gutils->diffe(result, builder));
+    gutils->zeroDiffe(result, builder);
   }
 
   auto *revCallOp = cast<AutoDiffFunctionInterface>(revFn.getOperation())
