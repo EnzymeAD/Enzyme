@@ -466,7 +466,7 @@ SmallVector<SelectInst *, 4> DiffeGradientUtils::addToDiffe(
       if (start > 0) {
         for (unsigned j = 0; j < getWidth(); j++) {
           Value *Idxs[] = {
-              ConstantInt::get(Type ::getInt64Ty(val->getContext()), 0),
+              ConstantInt::get(Type::getInt64Ty(val->getContext()), 0),
               ConstantInt::get(Type::getInt32Ty(val->getContext()), j)};
           Value *Alj = BuilderM.CreateInBoundsGEP(subdif->getType(), Al, Idxs);
           Value *ptr_i8 = BuilderM.CreatePointerCast(
@@ -478,7 +478,7 @@ SmallVector<SelectInst *, 4> DiffeGradientUtils::addToDiffe(
       if (storeSize > start + size) {
         for (unsigned j = 0; j < getWidth(); j++) {
           Value *Idxs[] = {
-              ConstantInt::get(Type ::getInt64Ty(val->getContext()), 0),
+              ConstantInt::get(Type::getInt64Ty(val->getContext()), 0),
               ConstantInt::get(Type::getInt32Ty(val->getContext()), j)};
           Value *Alj = BuilderM.CreateInBoundsGEP(subdif->getType(), Al, Idxs);
           Value *ptr_i8 = BuilderM.CreatePointerCast(
@@ -863,6 +863,20 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
 
 void DiffeGradientUtils::setDiffe(Value *val, Value *toset,
                                   IRBuilder<> &BuilderM) {
+  if (mode == DerivativeMode::ForwardMode ||
+      mode == DerivativeMode::ForwardModeSplit ||
+      mode == DerivativeMode::ForwardModeError) {
+    if (isConstantValue(val)) {
+      if (auto *I = dyn_cast<Instruction>(val)) {
+        auto found = invertedPointers.find(I);
+        if (found != invertedPointers.end() &&
+            dualPlaceholders.count(&*found->second)) {
+          resolveOrEraseDualPlaceholder(I);
+          return;
+        }
+      }
+    }
+  }
 #ifndef NDEBUG
   if (auto arg = dyn_cast<Argument>(val))
     assert(arg->getParent() == oldFunc);
