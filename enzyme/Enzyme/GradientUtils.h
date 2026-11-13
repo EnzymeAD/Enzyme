@@ -615,6 +615,18 @@ public:
                                   const llvm::Twine &name = "",
                                   bool fallback = true);
 
+  //! Helper routine to extract a nested element from a struct/array/vector
+  //  without peeling InsertValue/InsertElement chains.
+  static llvm::Value *extractElementOrValue(llvm::IRBuilder<> &Builder,
+                                            llvm::Value *Agg,
+                                            llvm::ArrayRef<unsigned> off,
+                                            const llvm::Twine &name = "");
+
+  //! Helper routine to insert a nested element into a struct/array/vector.
+  static llvm::Value *insertMeta(llvm::IRBuilder<> &Builder, llvm::Value *Agg,
+                                 llvm::Value *Val, llvm::ArrayRef<unsigned> off,
+                                 const llvm::Twine &name = "");
+
   //! Helper routine to get the type of an extraction
   static llvm::Type *extractMeta(llvm::Type *T, llvm::ArrayRef<unsigned> off);
 
