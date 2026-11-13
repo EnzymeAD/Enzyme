@@ -12,17 +12,20 @@
 #include "Interfaces/GradientUtilsReverse.h"
 #include "Utils.h"
 #include "mlir/Analysis/TopologicalSortUtils.h"
+#include "mlir/IR/IntegerSet.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Transforms/RegionUtils.h"
 #include <cassert>
 #include <deque>
 
 // loop-invariant cache requires a copy, which is implemented using an scf.for
+#include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/PointerIntPair.h"
 #include "llvm/ADT/SetVector.h"
+#include "llvm/ADT/SmallBitVector.h"
 
 using namespace mlir;
 using namespace mlir::enzyme;
@@ -413,6 +416,192 @@ static inline bool isMovable(Operation *op) {
          (mlir::isPure(op) || isLoadMovable(op));
 }
 
+// Per-result slice of a non-looping, single-block-per-region
+// RegionBranchOpInterface (scf.if, affine.if, scf.index_switch).
+struct RegionResultSlice {
+  // Non-terminator operations strictly inside the region op (at any nesting
+  // depth) needed to compute this result.
+  SmallPtrSet<Operation *, 8> ops;
+  // For sliceable nested RegionBranchOpInterface ops strictly inside the region
+  // op, the bitset of result indices needed from that nested op.
+  DenseMap<Operation *, llvm::SmallBitVector> nestedResults;
+  // Values defined outside the region op required to recompute this result.
+  SetVector<Value> externalDeps;
+};
+
+static bool isSliceableRegionBranchOp(RegionBranchOpInterface regionBranch) {
+  if (!isa<scf::IfOp, affine::AffineIfOp, scf::IndexSwitchOp>(
+          regionBranch.getOperation()))
+    return false;
+  if (regionBranch->getNumResults() == 0 || regionBranch.hasLoop())
+    return false;
+  for (Region &region : regionBranch->getRegions()) {
+    if (!region.hasOneBlock())
+      return false;
+    Block &blk = region.front();
+    if (blk.getNumArguments() != 0)
+      return false;
+    Operation *term = blk.getTerminator();
+    if (!term || term->getNumOperands() != regionBranch->getNumResults())
+      return false;
+  }
+  return true;
+}
+
+static LogicalResult computeRegionResultSlice(RegionBranchOpInterface regionOp,
+                                              unsigned resIdx,
+                                              RegionResultSlice &slice) {
+  if (!isSliceableRegionBranchOp(regionOp) ||
+      resIdx >= regionOp->getNumResults())
+    return failure();
+
+  for (Value operand : regionOp->getOperands())
+    slice.externalDeps.insert(operand);
+
+  SmallVector<Value> worklist;
+  DenseSet<Value> visited;
+  for (Region &region : regionOp->getRegions())
+    worklist.push_back(region.front().getTerminator()->getOperand(resIdx));
+
+  auto isDefinedInsideRegionOp = [&](Value v) {
+    Region *parentReg = v.getParentRegion();
+    if (!parentReg)
+      return false;
+    Operation *parentOp = parentReg->getParentOp();
+    return parentOp && regionOp->isAncestor(parentOp);
+  };
+
+  while (!worklist.empty()) {
+    Value v = worklist.pop_back_val();
+    if (!visited.insert(v).second)
+      continue;
+
+    if (!isDefinedInsideRegionOp(v)) {
+      slice.externalDeps.insert(v);
+      continue;
+    }
+
+    Operation *defOp = v.getDefiningOp();
+    if (!defOp)
+      return failure();
+
+    if (auto nestedBranch = dyn_cast<RegionBranchOpInterface>(defOp)) {
+      if (isSliceableRegionBranchOp(nestedBranch)) {
+        unsigned nestedIdx = cast<OpResult>(v).getResultNumber();
+        llvm::SmallBitVector &bits = slice.nestedResults[nestedBranch];
+        if (bits.empty())
+          bits.resize(nestedBranch->getNumResults(), false);
+        if (!bits.test(nestedIdx)) {
+          bits.set(nestedIdx);
+          for (Value operand : nestedBranch->getOperands())
+            worklist.push_back(operand);
+          for (Region &nestedReg : nestedBranch->getRegions())
+            worklist.push_back(
+                nestedReg.front().getTerminator()->getOperand(nestedIdx));
+        }
+        continue;
+      }
+      if (!isRegionBranchMovable(nestedBranch))
+        return failure();
+      slice.ops.insert(nestedBranch);
+      for (Value operand : nestedBranch->getOperands())
+        worklist.push_back(operand);
+      SetVector<Value> usedAbove;
+      mlir::getUsedValuesDefinedAbove(nestedBranch->getRegions(), usedAbove);
+      for (Value above : usedAbove)
+        worklist.push_back(above);
+      continue;
+    }
+
+    if (!isMovable(defOp))
+      return failure();
+
+    slice.ops.insert(defOp);
+    for (Value operand : defOp->getOperands())
+      worklist.push_back(operand);
+  }
+
+  return success();
+}
+
+static Operation *clonePartialRegionBranchOp(
+    PatternRewriter &rewriter, RegionBranchOpInterface regionOp,
+    ArrayRef<unsigned> keptResults,
+    const SmallPtrSetImpl<Operation *> &neededOps,
+    const DenseMap<Operation *, llvm::SmallBitVector> &nestedResults,
+    IRMapping &localMapping) {
+  SmallVector<Type> resultTypes;
+  for (unsigned idx : keptResults)
+    resultTypes.push_back(regionOp->getResult(idx).getType());
+
+  Operation *newOp = nullptr;
+  if (auto ifOp = dyn_cast<scf::IfOp>(regionOp.getOperation())) {
+    newOp = scf::IfOp::create(rewriter, ifOp.getLoc(), resultTypes,
+                              localMapping.lookupOrDefault(ifOp.getCondition()),
+                              /*withElseRegion=*/true);
+  } else if (auto affineIfOp =
+                 dyn_cast<affine::AffineIfOp>(regionOp.getOperation())) {
+    SmallVector<Value> mappedOperands;
+    for (Value operand : affineIfOp.getOperands())
+      mappedOperands.push_back(localMapping.lookupOrDefault(operand));
+    newOp = affine::AffineIfOp::create(rewriter, affineIfOp.getLoc(),
+                                       resultTypes, affineIfOp.getIntegerSet(),
+                                       mappedOperands, /*withElseRegion=*/true);
+  } else if (auto switchOp =
+                 dyn_cast<scf::IndexSwitchOp>(regionOp.getOperation())) {
+    newOp = scf::IndexSwitchOp::create(
+        rewriter, switchOp.getLoc(), resultTypes,
+        localMapping.lookupOrDefault(switchOp.getArg()), switchOp.getCases(),
+        switchOp.getNumCases());
+  } else {
+    llvm_unreachable("unsupported sliceable RegionBranchOpInterface");
+  }
+
+  OpBuilder::InsertionGuard guard(rewriter);
+  for (auto [oldReg, newReg] :
+       llvm::zip_equal(regionOp->getRegions(), newOp->getRegions())) {
+    Block &oldBlk = oldReg.front();
+    Block *newBlk =
+        newReg.empty() ? rewriter.createBlock(&newReg) : &newReg.front();
+    if (!newBlk->empty() && newBlk->back().hasTrait<OpTrait::IsTerminator>())
+      rewriter.eraseOp(&newBlk->back());
+    rewriter.setInsertionPointToStart(newBlk);
+
+    for (Operation &bodyOp : oldBlk.without_terminator()) {
+      if (auto nestedIt = nestedResults.find(&bodyOp);
+          nestedIt != nestedResults.end()) {
+        SmallVector<unsigned> nestedKept;
+        for (unsigned i = 0, e = nestedIt->second.size(); i < e; ++i)
+          if (nestedIt->second.test(i))
+            nestedKept.push_back(i);
+        assert(!nestedKept.empty());
+        Operation *newNested = clonePartialRegionBranchOp(
+            rewriter, cast<RegionBranchOpInterface>(&bodyOp), nestedKept,
+            neededOps, nestedResults, localMapping);
+        for (auto [newIdx, origIdx] : llvm::enumerate(nestedKept))
+          localMapping.map(bodyOp.getResult(origIdx),
+                           newNested->getResult(newIdx));
+        continue;
+      }
+      if (!neededOps.contains(&bodyOp))
+        continue;
+      rewriter.clone(bodyOp, localMapping);
+    }
+
+    Operation *oldTerm = oldBlk.getTerminator();
+    SmallVector<Value> yieldOperands;
+    for (unsigned idx : keptResults)
+      yieldOperands.push_back(
+          localMapping.lookupOrDefault(oldTerm->getOperand(idx)));
+    if (isa<affine::AffineIfOp>(regionOp.getOperation()))
+      affine::AffineYieldOp::create(rewriter, oldTerm->getLoc(), yieldOperands);
+    else
+      scf::YieldOp::create(rewriter, oldTerm->getLoc(), yieldOperands);
+  }
+
+  return newOp;
+}
+
 // Given a graph `G`, construct a new graph `G2`, where all paths must terminate
 // in a node in the set `Required` and start at `Root`.
 template <typename T>
@@ -707,29 +896,34 @@ static void pushCachesDownstream(const Graph &Orig,
     if (!newCaches.contains(cur))
       continue;
 
-    // `cur` must feed exactly one operation; otherwise moving the cut past it
-    // would mean caching several values in place of one.
+    // `cur` must feed exactly one downstream node; otherwise moving the cut
+    // past it would mean caching several values in place of one.
     auto users = Orig.find(Node(cur));
     if (users == Orig.end() || users->second.size() != 1)
       continue;
     Node userNode = *users->second.begin();
-    if (!userNode.isOperation())
-      continue;
-    Operation *user = userNode.getOperation();
+    Value next;
+    if (userNode.isOperation()) {
+      Operation *user = userNode.getOperation();
 
-    // A required operation consumes `cur` itself in the reverse pass, so there
-    // is nothing downstream of it to slide to.
-    if (Required.contains(user))
-      continue;
+      // A required operation consumes `cur` itself in the reverse pass, so
+      // there is nothing downstream of it to slide to.
+      if (Required.contains(user))
+        continue;
 
-    // ... and that operation must produce exactly one value.
-    auto results = Orig.find(userNode);
-    if (results == Orig.end() || results->second.size() != 1)
-      continue;
-    Node resNode = *results->second.begin();
-    if (!resNode.isValue())
-      continue;
-    Value next = resNode.getValue();
+      // ... and that operation must produce exactly one value.
+      auto results = Orig.find(userNode);
+      if (results == Orig.end() || results->second.size() != 1)
+        continue;
+      Node resNode = *results->second.begin();
+      if (!resNode.isValue())
+        continue;
+      next = resNode.getValue();
+    } else {
+      // Direct value -> value dependency (a sliced RegionBranchOpInterface
+      // result): `next` is the sole downstream consumer in `Orig`.
+      next = userNode.getValue();
+    }
 
     // Never slide into a deeper region: a value defined inside a nested block
     // is live more often than the one it would replace. (The LLVM mincut makes
@@ -805,17 +999,28 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
   // Maintain a mapping of forward to reverse blocks. We later use this to place
   // the new cache pops and cloned ops to the correct blocks.
   DenseMap<Block *, OpBuilder::InsertPoint> insertionPointMap;
+  insertionPointMap[forward] = rewriter.saveInsertionPoint();
   for (const auto &info : caches) {
     Block *fwdBlock = info.pushOp->getBlock();
     Block *revBlock = info.popOp->getBlock();
     // For the top-level reverse block, we use the provided rewriter's insertion
     // point (to skip over things like IV calculations). New operations in inner
     // blocks should be inserted at the beginning of those blocks.
-    if (revBlock == reverse) {
-      insertionPointMap[fwdBlock] = rewriter.saveInsertionPoint();
-    } else {
-      insertionPointMap[fwdBlock] =
-          OpBuilder::InsertPoint(revBlock, revBlock->begin());
+    while (fwdBlock && revBlock) {
+      if (revBlock == reverse) {
+        insertionPointMap[fwdBlock] = rewriter.saveInsertionPoint();
+        break;
+      }
+      insertionPointMap.try_emplace(
+          fwdBlock, OpBuilder::InsertPoint(revBlock, revBlock->begin()));
+      if (fwdBlock == forward)
+        break;
+      Operation *fwdParent = fwdBlock->getParentOp();
+      Operation *revParent = revBlock->getParentOp();
+      if (!fwdParent || !revParent)
+        break;
+      fwdBlock = fwdParent->getBlock();
+      revBlock = revParent->getBlock();
     }
   }
 
@@ -837,6 +1042,10 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
   // nodes that cannot be recomputed
   SetVector<Value> roots;
 
+  DenseMap<Value, RegionResultSlice> regionResultSlices;
+  SmallPtrSet<Operation *, 8> sliceableRegionOps;
+  DenseSet<Value> visitedBackward;
+
   // Walk Backward
   //
   // Roots (sources) are either block arguments or values which are defined
@@ -850,8 +1059,33 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
       continue;
     }
 
+    if (!visitedBackward.insert(todo).second)
+      continue;
+
     Operation *owner = todo.getDefiningOp();
-    if (!owner || !isMovable(owner)) {
+    if (!owner) {
+      roots.insert(todo);
+      continue;
+    }
+
+    if (auto regionBranch = dyn_cast<RegionBranchOpInterface>(owner);
+        regionBranch && isSliceableRegionBranchOp(regionBranch)) {
+      unsigned resIdx = cast<OpResult>(todo).getResultNumber();
+      RegionResultSlice slice;
+      if (failed(computeRegionResultSlice(regionBranch, resIdx, slice))) {
+        roots.insert(todo);
+        continue;
+      }
+      sliceableRegionOps.insert(owner);
+      for (Value dep : slice.externalDeps) {
+        G[Node(dep)].insert(Node(todo));
+        worklist.push_back(dep);
+      }
+      regionResultSlices.try_emplace(todo, std::move(slice));
+      continue;
+    }
+
+    if (!isMovable(owner)) {
       roots.insert(todo);
       continue;
     }
@@ -862,14 +1096,14 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
         G[Node(operand)].insert(Node(owner));
         worklist.push_back(operand);
       }
-    }
-    if (auto regionBranch = dyn_cast<RegionBranchOpInterface>(owner)) {
-      SetVector<Value> valuesDefinedAbove;
-      mlir::getUsedValuesDefinedAbove(regionBranch->getRegions(),
-                                      valuesDefinedAbove);
-      for (Value val : valuesDefinedAbove) {
-        G[Node(val)].insert(Node(regionBranch));
-        worklist.push_back(val);
+      if (auto regionBranch = dyn_cast<RegionBranchOpInterface>(owner)) {
+        SetVector<Value> valuesDefinedAbove;
+        mlir::getUsedValuesDefinedAbove(regionBranch->getRegions(),
+                                        valuesDefinedAbove);
+        for (Value val : valuesDefinedAbove) {
+          G[Node(val)].insert(Node(regionBranch));
+          worklist.push_back(val);
+        }
       }
     }
   }
@@ -1012,26 +1246,33 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
     // llvm::sort(newCaches.getArrayRef().begin(),
     // newCaches.getArrayRef().end(), mlir::enzyme::valueCmp);
 
+    bool refined = false;
     SmallVector<Value> todo(newCaches.begin(), newCaches.end());
     while (todo.size()) {
       auto cur = todo.pop_back_val();
-
-      auto &next = cacheGraph.at(Node(cur));
-
-      if (next.size() > 1)
+      if (!newCaches.contains(cur))
         continue;
 
-      auto nextF = *next.begin();
-      assert(nextF.isOperation());
-      auto opNext = nextF.getOperation();
-
-      if (Required.count(opNext))
+      auto nextIt = cacheGraph.find(Node(cur));
+      if (nextIt == cacheGraph.end() || nextIt->second.size() != 1)
         continue;
 
-      if (opNext->getNumResults() != 1)
-        continue;
+      auto nextF = *nextIt->second.begin();
+      Value candidate;
+      Operation *opNext = nullptr;
+      if (nextF.isOperation()) {
+        opNext = nextF.getOperation();
+        if (Required.count(opNext))
+          continue;
+        if (opNext->getNumResults() != 1)
+          continue;
+        candidate = opNext->getResult(0);
+      } else {
+        candidate = nextF.getValue();
+      }
 
-      Value candidate = opNext->getResult(0);
+      if (candidate.getParentBlock() != cur.getParentBlock())
+        continue;
 
       int64_t curSize = computeSizeOfType(cur),
               curRank = computeRankOfType(cur);
@@ -1044,9 +1285,13 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
         newCaches.insert(candidate);
         todo.push_back(candidate);
         cacheGraph.erase(cur);
-        cacheGraph.erase(opNext);
+        if (opNext)
+          cacheGraph.erase(opNext);
+        refined = true;
       }
     }
+    if (refined)
+      cacheGraph = filterGraph(Orig, newCaches, Required);
 
     LLVM_DEBUG(llvm::dbgs() << "refined cacheGraph:\n");
     LLVM_DEBUG(dump(cacheGraph));
@@ -1175,49 +1420,149 @@ void mlir::enzyme::minCutCache(Block *forward, Block *reverse,
     }
   }
 
+  auto ensureOutsideValueMapped = [&](Value v) {
+    if (mapping.contains(v))
+      return;
+    if (forward->getParent()->isAncestor(v.getParentRegion()))
+      return;
+
+    enzyme::InitOp initOp = ({
+      OpBuilder::InsertionGuard guard(rewriter);
+      rewriter.setInsertionPoint(entry);
+      enzyme::InitOp::create(
+          rewriter, v.getLoc(),
+          enzyme::CacheType::get(v.getContext(), v.getType()));
+    });
+
+    {
+      OpBuilder::InsertionGuard guard(rewriter);
+      rewriter.setInsertionPoint(forward->getParentOp());
+      enzyme::PushOp::create(rewriter, v.getLoc(), initOp.getResult(), v);
+    };
+
+    enzyme::PopOp popOp = ({
+      OpBuilder::InsertionGuard guard(rewriter);
+      rewriter.setInsertionPoint(reverse->getParentOp());
+      enzyme::PopOp::create(rewriter, v.getLoc(), v.getType(),
+                            initOp.getResult());
+    });
+    mapping.map(v, popOp->getResult(0));
+  };
+
   forward->walk([&](Operation *op) {
+    if (sliceableRegionOps.contains(op)) {
+      SmallVector<unsigned> keptResults;
+      for (OpResult res : op->getResults()) {
+        if (cacheGraph.contains(Node(res)) && !newCaches.contains(res)) {
+          assert(regionResultSlices.contains(res) &&
+                 "recomputed region result must have a valid slice");
+          keptResults.push_back(res.getResultNumber());
+        }
+      }
+      if (keptResults.empty())
+        return;
+
+      SmallPtrSet<Operation *, 8> neededOps;
+      DenseMap<Operation *, llvm::SmallBitVector> nestedResults;
+      SetVector<Value> allExternalDeps;
+      for (unsigned idx : keptResults) {
+        auto sliceIt = regionResultSlices.find(op->getResult(idx));
+        assert(sliceIt != regionResultSlices.end());
+        const RegionResultSlice &slice = sliceIt->second;
+        neededOps.insert(slice.ops.begin(), slice.ops.end());
+        for (const auto &entry : slice.nestedResults) {
+          llvm::SmallBitVector &bits = nestedResults[entry.first];
+          if (bits.empty())
+            bits = entry.second;
+          else
+            bits |= entry.second;
+        }
+        for (Value dep : slice.externalDeps)
+          allExternalDeps.insert(dep);
+      }
+
+      for (Value dep : allExternalDeps)
+        ensureOutsideValueMapped(dep);
+
+      // Build a fresh local mapping containing only external dependencies so
+      // values defined inside `op`'s regions that may already be mapped in
+      // `mapping` (for inner reverse blocks) are recomputed locally inside the
+      // cloned/sliced regions with valid dominance.
+      IRMapping localMapping;
+      for (Value dep : allExternalDeps) {
+        if (mapping.contains(dep))
+          localMapping.map(dep, mapping.lookup(dep));
+      }
+
+      auto regionBranch = cast<RegionBranchOpInterface>(op);
+      auto allBodyOpsNeeded = [&](auto &&self,
+                                  RegionBranchOpInterface rb) -> bool {
+        for (Region &reg : rb->getRegions()) {
+          for (Operation &bodyOp : reg.front().without_terminator()) {
+            if (auto nestedIt = nestedResults.find(&bodyOp);
+                nestedIt != nestedResults.end()) {
+              auto nestedRb = cast<RegionBranchOpInterface>(&bodyOp);
+              if (nestedIt->second.count() != nestedRb->getNumResults() ||
+                  !self(self, nestedRb))
+                return false;
+              continue;
+            }
+            if (!neededOps.contains(&bodyOp))
+              return false;
+          }
+        }
+        return true;
+      };
+
+      OpBuilder::InsertionGuard guard(rewriter);
+      rewriter.restoreInsertionPoint(insertionPointMap.lookup(op->getBlock()));
+      Operation *newOp = nullptr;
+      if (keptResults.size() == op->getNumResults() &&
+          isRegionBranchMovable(regionBranch) &&
+          allBodyOpsNeeded(allBodyOpsNeeded, regionBranch)) {
+        newOp = rewriter.clone(*op, localMapping);
+      } else {
+        newOp =
+            clonePartialRegionBranchOp(rewriter, regionBranch, keptResults,
+                                       neededOps, nestedResults, localMapping);
+      }
+      for (auto [newIdx, origIdx] : llvm::enumerate(keptResults))
+        mapping.map(op->getResult(origIdx), newOp->getResult(newIdx));
+      insertionPointMap[op->getBlock()] = rewriter.saveInsertionPoint();
+      if (!firstClone)
+        firstClone = newOp;
+      return;
+    }
+
     if (!cacheGraph.contains(Node(op)))
       return;
     bool hasUse = false;
     for (auto res : op->getResults()) {
-      if (newCaches.contains(res)) {
-        continue;
+      if (cacheGraph.contains(Node(res)) && !newCaches.contains(res)) {
+        hasUse = true;
+        break;
       }
-      hasUse = true;
     }
     if (!hasUse)
       return;
-    for (auto v : op->getOperands()) {
-      if (mapping.contains(v))
-        continue;
-      if (forward->getParent()->isAncestor(v.getParentRegion()))
-        continue;
-
-      enzyme::InitOp initOp = ({
-        OpBuilder::InsertionGuard guard(rewriter);
-        rewriter.setInsertionPoint(entry);
-        enzyme::InitOp::create(
-            rewriter, v.getLoc(),
-            enzyme::CacheType::get(v.getContext(), v.getType()));
-      });
-
-      {
-        OpBuilder::InsertionGuard guard(rewriter);
-        rewriter.setInsertionPoint(forward->getParentOp());
-        enzyme::PushOp::create(rewriter, v.getLoc(), initOp.getResult(), v);
-      };
-
-      enzyme::PopOp popOp = ({
-        OpBuilder::InsertionGuard guard(rewriter);
-        rewriter.setInsertionPoint(reverse->getParentOp());
-        enzyme::PopOp::create(rewriter, v.getLoc(), v.getType(),
-                              initOp.getResult());
-      });
-      mapping.map(v, popOp->getResult(0));
+    for (auto v : op->getOperands())
+      ensureOutsideValueMapped(v);
+    if (op->getNumRegions() > 0) {
+      SetVector<Value> usedAbove;
+      mlir::getUsedValuesDefinedAbove(op->getRegions(), usedAbove);
+      for (Value v : usedAbove)
+        ensureOutsideValueMapped(v);
+    }
+    SmallVector<std::pair<Value, Value>> savedCachedResults;
+    for (auto res : op->getResults()) {
+      if (newCaches.contains(res) && mapping.contains(res))
+        savedCachedResults.emplace_back(res, mapping.lookup(res));
     }
     OpBuilder::InsertionGuard guard(rewriter);
     rewriter.restoreInsertionPoint(insertionPointMap.lookup(op->getBlock()));
     auto cop = rewriter.clone(*op, mapping);
+    for (auto [res, cachedVal] : savedCachedResults)
+      mapping.map(res, cachedVal);
     insertionPointMap[op->getBlock()] = rewriter.saveInsertionPoint();
     if (!firstClone)
       firstClone = cop;
