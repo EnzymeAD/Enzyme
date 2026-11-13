@@ -7332,69 +7332,261 @@ ConcreteType TypeResults::firstPointer(size_t num, Value *val, Instruction *I,
   return dt;
 }
 
-TypeTree defaultTypeTreeForLLVM(llvm::Type *ET, llvm::Instruction *I,
-                                bool intIsPointer) {
-  if (ET->isIntOrIntVectorTy()) {
-    if (intIsPointer)
-      return TypeTree(BaseType::Pointer).Only(-1, I);
-    else
-      return TypeTree(BaseType::Integer).Only(-1, I);
+TypeTree defaultTypeTreeForLLVM(llvm::Type *ElementType,
+                                const llvm::DataLayout &Layout,
+                                llvm::Instruction *Origin, bool IntIsPointer) {
+  if (ElementType->isIntOrIntVectorTy()) {
+    if (IntIsPointer)
+      return TypeTree(BaseType::Pointer).Only(-1, Origin);
+    return TypeTree(BaseType::Integer).Only(-1, Origin);
   }
-  if (ET->isFPOrFPVectorTy()) {
-    return TypeTree(ConcreteType(ET->getScalarType())).Only(-1, I);
+  if (ElementType->isFPOrFPVectorTy()) {
+    return TypeTree(ConcreteType(ElementType->getScalarType()))
+        .Only(-1, Origin);
   }
-  if (ET->isPointerTy()) {
-    return TypeTree(BaseType::Pointer).Only(-1, I);
+  if (ElementType->isPointerTy()) {
+    return TypeTree(BaseType::Pointer).Only(-1, Origin);
   }
-  if (auto ST = dyn_cast<StructType>(ET)) {
-    auto &DL = I->getParent()->getParent()->getParent()->getDataLayout();
-
+  if (auto *StructTy = dyn_cast<StructType>(ElementType)) {
     TypeTree Out;
-
-    for (size_t i = 0; i < ST->getNumElements(); i++) {
-      auto SubT =
-          defaultTypeTreeForLLVM(ST->getElementType(i), I, intIsPointer);
-      auto size = (DL.getTypeSizeInBits(ST->getElementType(i)) + 7) / 8;
-      int Off = (int)getAggregateElementOffset(DL, ST, i);
-      Out |= SubT.ShiftIndices(DL, 0, size, Off);
+    for (size_t Index = 0; Index < StructTy->getNumElements(); ++Index) {
+      Type *SubElementType = StructTy->getElementType(Index);
+      TypeTree SubTree =
+          defaultTypeTreeForLLVM(SubElementType, Layout, Origin, IntIsPointer);
+      size_t Size = (Layout.getTypeSizeInBits(SubElementType) + 7) / 8;
+      int Offset = (int)getAggregateElementOffset(Layout, StructTy, Index);
+      Out |= SubTree.ShiftIndices(Layout, 0, Size, Offset);
     }
     return Out;
   }
-  if (auto AT = dyn_cast<ArrayType>(ET)) {
-    auto SubT = defaultTypeTreeForLLVM(AT->getElementType(), I, intIsPointer);
-    auto &DL = I->getParent()->getParent()->getParent()->getDataLayout();
-
+  if (auto *ArrayTy = dyn_cast<ArrayType>(ElementType)) {
+    Type *SubElementType = ArrayTy->getElementType();
+    TypeTree SubTree =
+        defaultTypeTreeForLLVM(SubElementType, Layout, Origin, IntIsPointer);
+    size_t Size = (Layout.getTypeSizeInBits(SubElementType) + 7) / 8;
     TypeTree Out;
-    for (size_t i = 0; i < AT->getNumElements(); i++) {
-      int Off = (int)getAggregateElementOffset(DL, AT, i);
-      auto size = (DL.getTypeSizeInBits(AT->getElementType()) + 7) / 8;
-      Out |= SubT.ShiftIndices(DL, 0, size, Off);
+    for (size_t Index = 0; Index < ArrayTy->getNumElements(); ++Index) {
+      int Offset = (int)getAggregateElementOffset(Layout, ArrayTy, Index);
+      Out |= SubTree.ShiftIndices(Layout, 0, Size, Offset);
     }
     return Out;
   }
-  if (auto AT = dyn_cast<VectorType>(ET)) {
+  if (auto *VectorTy = dyn_cast<VectorType>(ElementType)) {
 #if LLVM_VERSION_MAJOR >= 12
-    assert(!AT->getElementCount().isScalable());
-    size_t numElems = AT->getElementCount().getKnownMinValue();
+    assert(!VectorTy->getElementCount().isScalable() &&
+           "scalable vector unsupported in defaultTypeTreeForLLVM");
+    size_t NumElements = VectorTy->getElementCount().getKnownMinValue();
 #else
-    size_t numElems = AT->getNumElements();
+    size_t NumElements = VectorTy->getNumElements();
 #endif
-    auto SubT = defaultTypeTreeForLLVM(AT->getElementType(), I, intIsPointer);
-    auto &DL = I->getParent()->getParent()->getParent()->getDataLayout();
-
+    Type *SubElementType = VectorTy->getElementType();
+    TypeTree SubTree =
+        defaultTypeTreeForLLVM(SubElementType, Layout, Origin, IntIsPointer);
+    size_t Size = (Layout.getTypeSizeInBits(SubElementType) + 7) / 8;
     TypeTree Out;
-    for (size_t i = 0; i < numElems; i++) {
-      int Off = (int)getAggregateElementOffset(DL, AT, i);
-      auto size = (DL.getTypeSizeInBits(AT->getElementType()) + 7) / 8;
-      Out |= SubT.ShiftIndices(DL, 0, size, Off);
+    for (size_t Index = 0; Index < NumElements; ++Index) {
+      int Offset = (int)getAggregateElementOffset(Layout, VectorTy, Index);
+      Out |= SubTree.ShiftIndices(Layout, 0, Size, Offset);
     }
     return Out;
   }
-  // Unhandled/unknown Type
-  llvm::errs() << "Error Unknown Type: " << *ET << "\n";
+  llvm::errs() << "Error Unknown Type: " << *ElementType << '\n';
   assert(0 && "Error Unknown Type: ");
   llvm_unreachable("Error Unknown Type: ");
-  // return TypeTree();
+}
+
+TypeTree defaultTypeTreeForLLVM(llvm::Type *ET, llvm::Instruction *I,
+                                bool intIsPointer) {
+  const DataLayout &Layout =
+      I->getParent()->getParent()->getParent()->getDataLayout();
+  return defaultTypeTreeForLLVM(ET, Layout, I, intIsPointer);
+}
+
+/// Whether `CandidateType` is an integer or a nested array of integers.
+static bool isIntegerOrIntegerArray(Type *CandidateType) {
+  while (auto *ArrayTy = dyn_cast<ArrayType>(CandidateType))
+    CandidateType = ArrayTy->getElementType();
+  return CandidateType->isIntOrIntVectorTy();
+}
+
+TypeTree augmentTypeTreeFromLLVM(const TypeTree &KnownTypes,
+                                 llvm::Type *ValueType,
+                                 const llvm::DataLayout &Layout,
+                                 llvm::Instruction *Origin,
+                                 bool AllowWideIntegers,
+                                 const llvm::MDNode *TrueTypeMetadata,
+                                 bool *WasCompletelyUnknown) {
+  if (WasCompletelyUnknown)
+    *WasCompletelyUnknown = false;
+  if (!ValueType->isSized() || KnownTypes[{-1}].isKnown())
+    return KnownTypes;
+
+  TypeSize BitSize = Layout.getTypeSizeInBits(ValueType);
+  if (BitSize.isScalable())
+    return KnownTypes;
+  size_t TotalSize = (BitSize.getFixedValue() + 7) / 8;
+  if (TotalSize == 0)
+    return KnownTypes;
+
+  SmallVector<bool, 32> CoveredBytes(TotalSize, false);
+  bool AllCovered = true;
+  for (size_t ByteOffset = 0; ByteOffset < TotalSize;) {
+    ConcreteType Entry = KnownTypes[{(int)ByteOffset}];
+    if (!Entry.isKnown() && TrueTypeMetadata) {
+      for (size_t OperandIndex = 0;
+           OperandIndex < TrueTypeMetadata->getNumOperands();
+           OperandIndex += 2) {
+        int64_t MetadataOffset =
+            cast<ConstantInt>(
+                cast<ConstantAsMetadata>(
+                    TrueTypeMetadata->getOperand(OperandIndex + 1))
+                    ->getValue())
+                ->getSExtValue();
+        if (MetadataOffset == (int64_t)ByteOffset) {
+          Entry = ConcreteType(
+              cast<MDString>(TrueTypeMetadata->getOperand(OperandIndex))
+                  ->getString(),
+              TrueTypeMetadata->getContext());
+          break;
+        }
+      }
+    }
+    if (!Entry.isKnown()) {
+      AllCovered = false;
+      ++ByteOffset;
+      continue;
+    }
+    size_t EntrySize = 1;
+    if (Type *FloatType = Entry.isFloat())
+      EntrySize = (Layout.getTypeSizeInBits(FloatType) + 7) / 8;
+    else if (Entry == BaseType::Pointer)
+      EntrySize = (Layout.getPointerSizeInBits() + 7) / 8;
+    EntrySize = std::max<size_t>(EntrySize, 1);
+    for (size_t Index = 0; Index < EntrySize && ByteOffset + Index < TotalSize;
+         ++Index)
+      CoveredBytes[ByteOffset + Index] = true;
+    ByteOffset += EntrySize;
+  }
+  if (AllCovered)
+    return KnownTypes;
+
+  struct WorkItem {
+    Type *SubType;
+    size_t Offset;
+    bool InWideIntegerArray;
+  };
+  struct UncoveredLeaf {
+    Type *LeafType;
+    size_t Offset;
+    size_t Size;
+  };
+  SmallVector<UncoveredLeaf, 8> UncoveredLeaves;
+  SmallVector<WorkItem, 8> Worklist = {{ValueType, 0, false}};
+  while (!Worklist.empty()) {
+    WorkItem Current = Worklist.pop_back_val();
+    Type *SubType = Current.SubType;
+    size_t SubOffset = Current.Offset;
+    if (auto *StructTy = dyn_cast<StructType>(SubType)) {
+      for (unsigned ElementNumber = StructTy->getNumElements();
+           ElementNumber > 0; --ElementNumber) {
+        unsigned Index = ElementNumber - 1;
+        size_t ElementOffset = SubOffset + (size_t)getAggregateElementOffset(
+                                               Layout, StructTy, Index);
+        Worklist.push_back(
+            {StructTy->getElementType(Index), ElementOffset, false});
+      }
+      continue;
+    }
+    if (auto *ArrayTy = dyn_cast<ArrayType>(SubType)) {
+      bool WideIntArray =
+          Current.InWideIntegerArray ||
+          (isIntegerOrIntegerArray(ArrayTy) &&
+           Layout.getTypeSizeInBits(ArrayTy).getFixedValue() >= 16);
+      for (uint64_t ElementNumber = ArrayTy->getNumElements();
+           ElementNumber > 0; --ElementNumber) {
+        uint64_t Index = ElementNumber - 1;
+        size_t ElementOffset = SubOffset + (size_t)getAggregateElementOffset(
+                                               Layout, ArrayTy, Index);
+        Worklist.push_back(
+            {ArrayTy->getElementType(), ElementOffset, WideIntArray});
+      }
+      continue;
+    }
+    if (!SubType->isFPOrFPVectorTy() && !SubType->isIntOrIntVectorTy() &&
+        !SubType->isPtrOrPtrVectorTy())
+      return KnownTypes;
+    TypeSize LeafBits = Layout.getTypeSizeInBits(SubType);
+    if (LeafBits.isScalable())
+      return KnownTypes;
+    size_t LeafSize = (LeafBits.getFixedValue() + 7) / 8;
+    if (LeafSize == 0)
+      continue;
+    bool AnyByteCovered = false;
+    for (size_t Index = 0; Index < LeafSize && SubOffset + Index < TotalSize;
+         ++Index) {
+      if (CoveredBytes[SubOffset + Index]) {
+        AnyByteCovered = true;
+        break;
+      }
+    }
+    if (AnyByteCovered)
+      continue;
+    if (!AllowWideIntegers && SubType->isIntOrIntVectorTy() &&
+        (Current.InWideIntegerArray || LeafBits.getFixedValue() >= 16))
+      return KnownTypes;
+    UncoveredLeaves.push_back({SubType, SubOffset, LeafSize});
+  }
+
+  SmallSet<size_t, 8> PaddingOffsets;
+  skippedBytes(PaddingOffsets, ValueType, Layout);
+
+  bool CompletelyUnknown =
+      !KnownTypes.isKnown() && !TrueTypeMetadata && !UncoveredLeaves.empty();
+  if (WasCompletelyUnknown)
+    *WasCompletelyUnknown = CompletelyUnknown;
+
+  TypeTree AugmentedTypes = KnownTypes;
+  for (const UncoveredLeaf &Leaf : UncoveredLeaves) {
+    AugmentedTypes |= defaultTypeTreeForLLVM(Leaf.LeafType, Layout, Origin,
+                                             /*IntIsPointer=*/false)
+                          .ShiftIndices(Layout, 0, Leaf.Size, Leaf.Offset);
+  }
+  for (size_t PaddingOffset : PaddingOffsets) {
+    if (PaddingOffset < TotalSize && !CoveredBytes[PaddingOffset]) {
+      AugmentedTypes.insert({(int)PaddingOffset}, BaseType::Integer);
+    }
+  }
+  return AugmentedTypes;
+}
+
+bool isKnownNonPointerWithFloat(const TypeTree &Tree, llvm::Type *ValueType,
+                                const llvm::DataLayout &Layout) {
+  if (!ValueType->isSized() || Layout.getTypeSizeInBits(ValueType).isScalable())
+    return false;
+  size_t ObjectSize =
+      (Layout.getTypeSizeInBits(ValueType).getFixedValue() + 7) / 8;
+  if (ObjectSize == 0)
+    return false;
+
+  ConcreteType AllBytes = Tree[{-1}];
+  if (AllBytes.isKnown())
+    return AllBytes.isFloat() != nullptr;
+
+  bool HasFloat = false;
+  for (size_t ByteOffset = 0; ByteOffset < ObjectSize;) {
+    ConcreteType Entry = Tree[{(int)ByteOffset}];
+    if (Type *FloatType = Entry.isFloat()) {
+      HasFloat = true;
+      ByteOffset += (Layout.getTypeSizeInBits(FloatType) + 7) / 8;
+      continue;
+    }
+    if (Entry == BaseType::Integer) {
+      ++ByteOffset;
+      continue;
+    }
+    return false;
+  }
+  return HasFloat;
 }
 
 Function *TypeResults::getFunction() const {
