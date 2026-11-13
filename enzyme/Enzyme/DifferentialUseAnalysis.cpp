@@ -547,6 +547,37 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
     if (shadow && isAllocationFunction(funcName, gutils->TLI))
       return false;
 
+    if (isModfCall(CI)) {
+      if (mode == DerivativeMode::ForwardModeError) {
+        if (!gutils->isConstantValue(const_cast<Value *>(val))) {
+          if (EnzymePrintDiffUse)
+            llvm::errs() << " Need: " << to_string(qtype) << " of " << *val
+                         << " in error propagation for modf " << *CI << "\n";
+          return true;
+        }
+      }
+      if (val == CI->getArgOperand(1) &&
+          !gutils->isConstantValue(CI->getArgOperand(1))) {
+        if (shadow || gutils->runtimeActivity) {
+          if (EnzymePrintDiffUse)
+            llvm::errs() << " Need: " << to_string(qtype) << " of " << *val
+                         << " for modf integral part shadow " << *CI << "\n";
+          return true;
+        }
+      }
+      if (val == CI->getArgOperand(0) && shadow && qtype == QueryType::Shadow &&
+          (mode == DerivativeMode::ForwardMode ||
+           mode == DerivativeMode::ForwardModeSplit) &&
+          !gutils->isConstantValue(CI->getArgOperand(0)) &&
+          !gutils->isConstantValue(const_cast<CallInst *>(CI))) {
+        if (EnzymePrintDiffUse)
+          llvm::errs() << " Need forward shadow of " << *val << " for modf "
+                       << *CI << "\n";
+        return true;
+      }
+      return false;
+    }
+
     // Even though inactive, keep the shadow pointer around in forward mode
     // to perform the same memory free behavior on the shadow.
     if (shadow &&

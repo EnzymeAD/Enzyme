@@ -92,6 +92,8 @@ entry:
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %"x'de" = alloca double, align 8
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"x'de", align 8
+; CHECK-NEXT:   %integral_part = alloca double, align 8
+; CHECK-NEXT:   %fractional_part = call double @modf(double %x, double* {{.*}}writeonly{{.*}} %integral_part)
 ; CHECK-NEXT:   br label %invertentry
 
 ; CHECK: invertentry:
@@ -106,6 +108,8 @@ entry:
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"fractional_part'de", align 8
 ; CHECK-NEXT:   %"x'de" = alloca double, align 8
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"x'de", align 8
+; CHECK-NEXT:   %integral_part = alloca double, align 8
+; CHECK-NEXT:   %fractional_part = call double @modf(double %x, double* {{.*}}writeonly{{.*}} %integral_part)
 ; CHECK-NEXT:   br label %invertentry
 
 ; CHECK: invertentry:
@@ -126,6 +130,8 @@ entry:
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %"x'de" = alloca float, align 4
 ; CHECK-NEXT:   store float 0.000000e+00, float* %"x'de", align 4
+; CHECK-NEXT:   %integral_part = alloca float, align 4
+; CHECK-NEXT:   %fractional_part = call float @modff(float %x, float* {{.*}}writeonly{{.*}} %integral_part)
 ; CHECK-NEXT:   br label %invertentry
 
 ; CHECK: invertentry:
@@ -140,6 +146,8 @@ entry:
 ; CHECK-NEXT:   store float 0.000000e+00, float* %"fractional_part'de", align 4
 ; CHECK-NEXT:   %"x'de" = alloca float, align 4
 ; CHECK-NEXT:   store float 0.000000e+00, float* %"x'de", align 4
+; CHECK-NEXT:   %integral_part = alloca float, align 4
+; CHECK-NEXT:   %fractional_part = call float @modff(float %x, float* {{.*}}writeonly{{.*}} %integral_part)
 ; CHECK-NEXT:   br label %invertentry
 
 ; CHECK: invertentry:
@@ -160,6 +168,8 @@ entry:
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %"x'de" = alloca x86_fp80, align 16
 ; CHECK-NEXT:   store x86_fp80 0xK00000000000000000000, x86_fp80* %"x'de", align 16
+; CHECK-NEXT:   %integral_part = alloca x86_fp80, align 8
+; CHECK-NEXT:   %fractional_part = call x86_fp80 @modfl(x86_fp80 %x, x86_fp80* {{.*}}writeonly{{.*}} %integral_part)
 ; CHECK-NEXT:   br label %invertentry
 
 ; CHECK: invertentry:
@@ -174,6 +184,8 @@ entry:
 ; CHECK-NEXT:   store x86_fp80 0xK00000000000000000000, x86_fp80* %"fractional_part'de", align 16
 ; CHECK-NEXT:   %"x'de" = alloca x86_fp80, align 16
 ; CHECK-NEXT:   store x86_fp80 0xK00000000000000000000, x86_fp80* %"x'de", align 16
+; CHECK-NEXT:   %integral_part = alloca x86_fp80, align 8
+; CHECK-NEXT:   %fractional_part = call x86_fp80 @modfl(x86_fp80 %x, x86_fp80* {{.*}}writeonly{{.*}} %integral_part)
 ; CHECK-NEXT:   br label %invertentry
 
 ; CHECK: invertentry:

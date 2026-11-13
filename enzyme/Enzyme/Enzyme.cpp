@@ -2230,6 +2230,17 @@ public:
 #endif
           CI->addParamAttr(1, Attribute::WriteOnly);
         }
+        if (isModfFunction(Fn) && isModfCall(CI)) {
+#if LLVM_VERSION_MAJOR >= 16
+          CI->setOnlyAccessesArgMemory();
+          CI->setOnlyWritesMemory();
+#else
+          CI->addAttribute(AttributeList::FunctionIndex, Attribute::ArgMemOnly);
+          CI->addAttribute(AttributeList::FunctionIndex, Attribute::WriteOnly);
+#endif
+          CI->addParamAttr(1, Attribute::WriteOnly);
+          addCallSiteNoCapture(CI, 1);
+        }
         if (Fn->getName() == "__fd_sincos_1" || Fn->getName() == "__fd_cos_1" ||
             Fn->getName() == "__mth_i_ipowi") {
 #if LLVM_VERSION_MAJOR >= 16

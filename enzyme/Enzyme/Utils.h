@@ -1515,6 +1515,27 @@ static inline llvm::StringRef getFuncNameFromCall(const llvm::CallBase *op) {
   return "";
 }
 
+static inline bool isModfFunction(const llvm::Function *F) {
+  if (!F)
+    return false;
+  llvm::StringRef name = getFuncName(const_cast<llvm::Function *>(F));
+  if (name != "modf" && name != "modff" && name != "modfl")
+    return false;
+  auto *FT = F->getFunctionType();
+  return FT->getNumParams() == 2 && FT->getReturnType()->isFloatingPointTy() &&
+         FT->getParamType(0) == FT->getReturnType() &&
+         FT->getParamType(1)->isPointerTy();
+}
+
+static inline bool isModfCall(const llvm::CallBase *CB) {
+  if (!CB || CB->arg_size() != 2 || !CB->getType()->isFloatingPointTy() ||
+      CB->getArgOperand(0)->getType() != CB->getType() ||
+      !CB->getArgOperand(1)->getType()->isPointerTy())
+    return false;
+  llvm::StringRef name = getFuncNameFromCall(CB);
+  return name == "modf" || name == "modff" || name == "modfl";
+}
+
 static inline bool hasNoCache(llvm::Value *op) {
   using namespace llvm;
   if (auto CB = dyn_cast<CallBase>(op)) {

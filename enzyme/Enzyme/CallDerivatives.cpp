@@ -2778,6 +2778,149 @@ bool AdjointGenerator::handleKnownCallDerivatives(
       return true;
     }
 
+    if (isModfCall(&call)) {
+      if (gutils->knownRecomputeHeuristic.find(&call) !=
+          gutils->knownRecomputeHeuristic.end()) {
+        if (!gutils->knownRecomputeHeuristic[&call]) {
+          gutils->cacheForReverse(BuilderZ, newCall,
+                                  getIndex(&call, CacheType::Self, BuilderZ));
+        }
+      }
+
+      Value *origX = call.getArgOperand(0);
+      Value *origPtr = call.getArgOperand(1);
+      Type *ValTy = call.getType();
+      const DataLayout &DL = call.getModule()->getDataLayout();
+      unsigned storeSize = (DL.getTypeSizeInBits(ValTy) + 7) / 8;
+      MaybeAlign align = call.getParamAlign(1);
+      Value *basePtr = getBaseObject(origPtr);
+      bool needsRuntimeCheck = gutils->runtimeActivity &&
+                               !isa<AllocaInst>(basePtr) &&
+                               !isAllocationCall(basePtr, gutils->TLI);
+
+      switch (Mode) {
+      case DerivativeMode::ForwardModeSplit:
+      case DerivativeMode::ForwardMode:
+      case DerivativeMode::ForwardModeError: {
+        // modf overwrites *origPtr with trunc(x), whose derivative is 0, so
+        // clear any prior derivative stored in the shadow of *origPtr.
+        if (!gutils->isConstantValue(origPtr)) {
+          if (needsRuntimeCheck) {
+            Value *primalPtr = gutils->getNewFromOriginal(origPtr);
+            Value *shadowPtr = gutils->invertPointerM(origPtr, BuilderZ);
+            Value *zeroByte =
+                ConstantInt::get(Type::getInt8Ty(call.getContext()), 0);
+            Type *sizeTy = Type::getInt64Ty(call.getContext());
+            Value *fullLen = ConstantInt::get(sizeTy, storeSize);
+            Value *zeroLen = ConstantInt::get(sizeTy, 0);
+            applyChainRule(
+                BuilderZ,
+                [&](Value *sp) {
+                  Value *pp = primalPtr;
+                  if (pp->getType() != sp->getType())
+                    pp = BuilderZ.CreatePointerBitCastOrAddrSpaceCast(
+                        pp, sp->getType());
+                  Value *isActive = BuilderZ.CreateICmpNE(sp, pp);
+                  Value *len =
+                      BuilderZ.CreateSelect(isActive, fullLen, zeroLen);
+                  auto *ms = BuilderZ.CreateMemSet(sp, zeroByte, len, align);
+                  ms->setDebugLoc(
+                      gutils->getNewFromOriginal(call.getDebugLoc()));
+                },
+                shadowPtr);
+          } else {
+            gutils->setPtrDiffe(
+                &call, origPtr,
+                Constant::getNullValue(gutils->getShadowType(ValTy)), BuilderZ,
+                align, 0, storeSize, /*isVolatile*/ false,
+                AtomicOrdering::NotAtomic, SyncScope::System,
+                /*mask*/ nullptr, /*noAlias*/ {}, /*scopes*/ {});
+          }
+        }
+
+        if (!gutils->isConstantValue(&call)) {
+          IRBuilder<> Builder2(&call);
+          getForwardBuilder(Builder2);
+          Value *res = Constant::getNullValue(gutils->getShadowType(ValTy));
+          if (Mode == DerivativeMode::ForwardModeError) {
+            if (!gutils->isConstantValue(origX)) {
+              Value *dif = diffe(origX, Builder2);
+              dif = Builder2.CreateFDiv(
+                  Builder2.CreateFMul(dif, gutils->getNewFromOriginal(origX)),
+                  gutils->getNewFromOriginal(&call));
+              res = Builder2.CreateIntrinsic(Intrinsic::fabs,
+                                             ArrayRef<Type *>(dif->getType()),
+                                             ArrayRef<Value *>(dif));
+            }
+            res = Builder2.CreateMaxNum(
+                get1ULP(Builder2, gutils->getNewFromOriginal(&call)), res);
+          } else if (!gutils->isConstantValue(origX)) {
+            res = diffe(origX, Builder2);
+          }
+          setDiffe(&call, res, Builder2);
+        }
+        break;
+      }
+      case DerivativeMode::ReverseModeGradient:
+      case DerivativeMode::ReverseModeCombined: {
+        bool activeRet = !gutils->isConstantValue(&call);
+        bool activePtr = !gutils->isConstantValue(origPtr);
+        if (activeRet || activePtr) {
+          IRBuilder<> Builder2(&call);
+          getReverseBuilder(Builder2);
+          if (activeRet) {
+            Value *dif = nullptr;
+            if (!gutils->isConstantValue(origX))
+              dif = diffe(&call, Builder2);
+            setDiffe(&call,
+                     Constant::getNullValue(gutils->getShadowType(ValTy)),
+                     Builder2);
+            if (dif)
+              addToDiffe(origX, dif, Builder2, ValTy);
+          }
+          if (activePtr) {
+            BasicBlock *merge = nullptr;
+            if (needsRuntimeCheck) {
+              Value *shadowPtr =
+                  lookup(gutils->invertPointerM(origPtr, Builder2), Builder2);
+              Value *primalPtr =
+                  lookup(gutils->getNewFromOriginal(origPtr), Builder2);
+              if (gutils->getWidth() != 1)
+                shadowPtr = gutils->extractMeta(Builder2, shadowPtr, 0);
+              if (primalPtr->getType() != shadowPtr->getType())
+                primalPtr = Builder2.CreatePointerBitCastOrAddrSpaceCast(
+                    primalPtr, shadowPtr->getType());
+              Value *isActive = Builder2.CreateICmpNE(primalPtr, shadowPtr);
+              BasicBlock *current = Builder2.GetInsertBlock();
+              BasicBlock *conditional = gutils->addReverseBlock(
+                  current, current->getName() + "_active");
+              merge = gutils->addReverseBlock(conditional,
+                                              current->getName() + "_amerge");
+              Builder2.CreateCondBr(isActive, conditional, merge);
+              Builder2.SetInsertPoint(conditional);
+            }
+            gutils->setPtrDiffe(
+                &call, origPtr,
+                Constant::getNullValue(gutils->getShadowType(ValTy)), Builder2,
+                align, 0, storeSize, /*isVolatile*/ false,
+                AtomicOrdering::NotAtomic, SyncScope::System,
+                /*mask*/ nullptr, /*noAlias*/ {}, /*scopes*/ {});
+            if (merge) {
+              Builder2.CreateBr(merge);
+              Builder2.SetInsertPoint(merge);
+            }
+          }
+        }
+        break;
+      }
+      case DerivativeMode::ReverseModePrimal:
+        break;
+      }
+
+      eraseIfUnused(call);
+      return true;
+    }
+
     auto mod = call.getParent()->getParent()->getParent();
 #include "CallDerivatives.inc"
 
