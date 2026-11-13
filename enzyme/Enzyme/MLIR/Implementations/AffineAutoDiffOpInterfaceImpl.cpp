@@ -778,17 +778,40 @@ struct AffineParallelOpInterfaceReverse
                                          MGradientUtilsReverse *gutils,
                                          SmallVector<Value> caches) const {
     auto parOp = cast<affine::AffineParallelOp>(op);
-    if (!parOp.getReductions().empty()) {
-      return parOp.emitError() << "parallel reductions not yet implemented";
-    }
     if (parOp.hasMinMaxBounds()) {
       return parOp.emitError() << "minmax bounds not yet supported";
+    }
+
+    auto yieldOp =
+        cast<affine::AffineYieldOp>(parOp.getBody()->getTerminator());
+    unsigned numReductions = parOp.getNumResults();
+    SmallVector<bool> resultsActive(numReductions, false);
+    SmallVector<Value> incomingGradients;
+    for (unsigned i = 0; i < numReductions; ++i) {
+      Value res = parOp.getResult(i);
+      auto iface = dyn_cast<AutoDiffTypeInterface>(res.getType());
+      bool needsGrad = iface && !iface.isMutable();
+      if (!needsGrad || gutils->isConstantValue(res))
+        continue;
+
+      auto kind =
+          cast<arith::AtomicRMWKindAttr>(parOp.getReductions()[i]).getValue();
+      if (kind != arith::AtomicRMWKind::addf &&
+          kind != arith::AtomicRMWKind::addi) {
+        return parOp.emitError()
+               << "reverse mode of active " << stringifyEnum(kind)
+               << " affine.parallel reduction is not yet implemented";
+      }
+
+      resultsActive[i] = true;
+      incomingGradients.push_back(gutils->diffe(res, builder));
+      gutils->zeroDiffe(res, builder);
     }
 
     SmallVector<Value> bounds = llvm::map_to_vector(
         caches, [&](Value cache) { return gutils->popCache(cache, builder); });
     auto revPar = affine::AffineParallelOp::create(
-        builder, op->getLoc(), parOp.getResultTypes(), parOp.getReductions(),
+        builder, op->getLoc(), TypeRange{}, builder.getArrayAttr({}),
         parOp.getLowerBoundsMap(), parOp.getLowerBoundsGroups(),
         parOp.getUpperBoundsMap(), parOp.getUpperBoundsGroups(),
         parOp.getSteps(), bounds);
@@ -815,6 +838,16 @@ struct AffineParallelOpInterfaceReverse
       mlir::enzyme::localizeGradients(bodyBuilder, gutils, oBB);
 
       bodyBuilder.setInsertionPoint(rBB->getTerminator());
+
+      unsigned gradIdx = 0;
+      for (unsigned i = 0; i < numReductions; ++i) {
+        if (!resultsActive[i])
+          continue;
+        Value incomingGrad = incomingGradients[gradIdx++];
+        Value operand = yieldOp.getOperand(i);
+        if (!gutils->isConstantValue(operand))
+          gutils->addToDiffe(operand, incomingGrad, bodyBuilder);
+      }
 
       auto first = oBB->rbegin();
       first++; // skip terminator
@@ -946,17 +979,21 @@ struct AffineParallelOpEnzymeOpsRemover
   replaceWithNewOperands(PatternRewriter &rewriter,
                          affine::AffineParallelOp otherParOp,
                          ArrayRef<Value> operands) {
+    SmallVector<Type> resultTypes(otherParOp.getResultTypes());
     SmallVector<mlir::Attribute> reductionKinds(
         otherParOp.getReductions().begin(), otherParOp.getReductions().end());
 
-    for (unsigned i = otherParOp->getNumOperands(); i < operands.size(); i++) {
-      reductionKinds.push_back(arith::AtomicRMWKindAttr::get(
-          otherParOp.getContext(), arith::AtomicRMWKind::addf));
+    for (Value operand : operands) {
+      resultTypes.push_back(operand.getType());
+      auto kind = isa<IntegerType>(operand.getType())
+                      ? arith::AtomicRMWKind::addi
+                      : arith::AtomicRMWKind::addf;
+      reductionKinds.push_back(
+          arith::AtomicRMWKindAttr::get(otherParOp.getContext(), kind));
     }
 
-    ValueRange operands_(operands);
     auto newOtherParOp = affine::AffineParallelOp::create(
-        rewriter, otherParOp.getLoc(), operands_.getTypes(),
+        rewriter, otherParOp.getLoc(), resultTypes,
         ArrayAttr::get(otherParOp.getContext(), reductionKinds),
         otherParOp.getLowerBoundsMap(), otherParOp.getLowerBoundsGroups(),
         otherParOp.getUpperBoundsMap(), otherParOp.getUpperBoundsGroups(),
@@ -1347,6 +1384,32 @@ struct AffineStoreOpInterfaceReverse
   }
 };
 
+struct AffineParallelOpADDataFlow
+    : public ADDataFlowOpInterface::ExternalModel<AffineParallelOpADDataFlow,
+                                                  affine::AffineParallelOp> {
+  SmallVector<Value> getPotentialIncomingValuesRes(Operation *op,
+                                                   OpResult res) const {
+    auto parOp = cast<affine::AffineParallelOp>(op);
+    return {
+        parOp.getBody()->getTerminator()->getOperand(res.getResultNumber())};
+  }
+  SmallVector<Value> getPotentialIncomingValuesArg(Operation *op,
+                                                   BlockArgument arg) const {
+    return {};
+  }
+  SmallVector<Value> getPotentialTerminatorUsers(Operation *op, Operation *term,
+                                                 Value val) const {
+    auto parOp = cast<affine::AffineParallelOp>(op);
+    SmallVector<Value> sv;
+    for (auto &&[res, operand] :
+         llvm::zip_equal(parOp->getResults(), term->getOperands())) {
+      if (operand == val)
+        sv.push_back(res);
+    }
+    return sv;
+  }
+};
+
 struct AffineForOpADDataFlow
     : public ADDataFlowOpInterface::ExternalModel<AffineForOpADDataFlow,
                                                   affine::AffineForOp> {
@@ -1549,6 +1612,8 @@ void mlir::enzyme::registerAffineDialectAutoDiffInterface(
     affine::AffineParallelOp::attachInterface<AffineParallelOpInterfaceReverse>(
         *context);
     affine::AffineParallelOp::attachInterface<AffineParallelOpEnzymeOpsRemover>(
+        *context);
+    affine::AffineParallelOp::attachInterface<AffineParallelOpADDataFlow>(
         *context);
     affine::AffineParallelOp::attachInterface<
         AffineParallelRegionBranchOpInterface>(*context);

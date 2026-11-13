@@ -19,6 +19,7 @@
 #include "Interfaces/GradientUtilsReverse.h"
 #include "Passes/RemovalUtils.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Complex/IR/Complex.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/DialectRegistry.h"
@@ -599,18 +600,23 @@ struct ParallelOpEnzymeOpsRemover
         otherParallelOp,
         newOtherParOp.getResults().slice(0, otherParallelOp.getNumResults()));
 
-    if (operands.size() >= 1) {
+    unsigned numOldReductions =
+        newOtherParOp.getBody()->getTerminator()->getNumRegions();
+    if (operands.size() > numOldReductions) {
       OpBuilder::InsertionGuard guard(rewriter);
       Operation *oldTerm = newOtherParOp.getBody()->getTerminator();
       rewriter.setInsertionPointToEnd(newOtherParOp.getBody());
       auto term = scf::ReduceOp::create(rewriter, newOtherParOp.getLoc(),
                                         oldTerm->getOperands());
 
-      for (auto [reg, operand] :
-           llvm::zip_equal(term->getRegions(), operands)) {
-        Block *b = &reg.front();
+      for (unsigned i = 0; i < numOldReductions; ++i)
+        term->getRegion(i).takeBody(oldTerm->getRegion(i));
+
+      for (unsigned i = numOldReductions; i < operands.size(); ++i) {
+        Block *b = &term->getRegion(i).front();
         rewriter.setInsertionPointToEnd(b);
 
+        Value operand = operands[i];
         auto Ty = cast<AutoDiffTypeInterface>(operand.getType());
         Value reduced = Ty.createAddOp(rewriter, operand.getLoc(),
                                        b->getArgument(0), b->getArgument(1));
@@ -639,6 +645,27 @@ struct ParallelOpEnzymeOpsRemover
   }
 };
 
+static bool isAdditiveReducer(Region &region) {
+  if (!llvm::hasSingleElement(region))
+    return false;
+  Block &block = region.front();
+  if (block.getNumArguments() != 2)
+    return false;
+  auto retOp = dyn_cast<scf::ReduceReturnOp>(block.getTerminator());
+  if (!retOp || retOp->getNumOperands() != 1)
+    return false;
+  if (std::distance(block.begin(), block.end()) != 2)
+    return false;
+  Operation &op = block.front();
+  if (op.getNumResults() != 1 || op.getResult(0) != retOp->getOperand(0))
+    return false;
+  if (!isa<arith::AddFOp, arith::AddIOp, complex::AddOp>(op))
+    return false;
+  Value lhs = op.getOperand(0), rhs = op.getOperand(1);
+  Value arg0 = block.getArgument(0), arg1 = block.getArgument(1);
+  return (lhs == arg0 && rhs == arg1) || (lhs == arg1 && rhs == arg0);
+}
+
 struct ParallelOpInterfaceReverse
     : public ReverseAutoDiffOpInterface::ExternalModel<
           ParallelOpInterfaceReverse, scf::ParallelOp> {
@@ -646,9 +673,27 @@ struct ParallelOpInterfaceReverse
                                          MGradientUtilsReverse *gutils,
                                          SmallVector<Value> caches) const {
     auto parallelOp = cast<scf::ParallelOp>(op);
-    if (parallelOp.getNumReductions() != 0) {
-      return parallelOp.emitError()
-             << "parallel reductions not yet implemented\n";
+    auto reduceOp = cast<scf::ReduceOp>(parallelOp.getBody()->getTerminator());
+
+    unsigned numReductions = parallelOp.getNumReductions();
+    SmallVector<bool> resultsActive(numReductions, false);
+    SmallVector<Value> incomingGradients;
+    for (unsigned i = 0; i < numReductions; ++i) {
+      Value res = parallelOp.getResult(i);
+      auto iface = dyn_cast<AutoDiffTypeInterface>(res.getType());
+      bool needsGrad = iface && !iface.isMutable();
+      if (!needsGrad || gutils->isConstantValue(res))
+        continue;
+
+      if (!isAdditiveReducer(reduceOp.getRegion(i))) {
+        return parallelOp.emitError()
+               << "reverse mode of non-additive scf.parallel reductions is not "
+                  "yet implemented";
+      }
+
+      resultsActive[i] = true;
+      incomingGradients.push_back(gutils->diffe(res, builder));
+      gutils->zeroDiffe(res, builder);
     }
 
     unsigned loopCount = parallelOp.getNumLoops();
@@ -676,6 +721,16 @@ struct ParallelOpInterfaceReverse
 
       bodyBuilder.setInsertionPoint(revBB->getTerminator());
 
+      unsigned gradIdx = 0;
+      for (unsigned i = 0; i < numReductions; ++i) {
+        if (!resultsActive[i])
+          continue;
+        Value incomingGrad = incomingGradients[gradIdx++];
+        Value operand = reduceOp->getOperand(i);
+        if (!gutils->isConstantValue(operand))
+          gutils->addToDiffe(operand, incomingGrad, bodyBuilder);
+      }
+
       auto first = oBB->rbegin();
       first++; // skip terminator
 
@@ -688,6 +743,17 @@ struct ParallelOpInterfaceReverse
     }
 
     gutils->AtomicAdd = wasAtomic;
+
+    unsigned gradIdx = 0;
+    for (unsigned i = 0; i < numReductions; ++i) {
+      if (!resultsActive[i])
+        continue;
+      Value incomingGrad = incomingGradients[gradIdx++];
+      Value initVal = parallelOp.getInitVals()[i];
+      if (!gutils->isConstantValue(initVal))
+        gutils->addToDiffe(initVal, incomingGrad, builder);
+    }
+
     return success(valid);
   }
 
@@ -977,9 +1043,8 @@ struct ParallelOpADDataFlow
   }
   SmallVector<Value> getPotentialIncomingValuesArg(Operation *op,
                                                    BlockArgument arg) const {
-    // TO DO:  do we need this?
-    assert(0);
-    return SmallVector<Value>();
+    // scf.parallel block arguments are induction variables only.
+    return {};
   }
   SmallVector<Value> getPotentialTerminatorUsers(Operation *op, Operation *term,
                                                  Value val) const {
