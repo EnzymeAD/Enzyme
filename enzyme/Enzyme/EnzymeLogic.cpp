@@ -3880,8 +3880,12 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
       return prevFunction;
   }
 
-  if (key.returnUsed)
-    assert(key.mode == DerivativeMode::ReverseModeCombined);
+  if (key.returnUsed) {
+    assert(key.mode == DerivativeMode::ReverseModeCombined &&
+           "primal return is only supported in combined reverse mode");
+    assert(!key.todiff->getReturnType()->isVoidTy() &&
+           "cannot return primal result of void-returning function");
+  }
 
   TargetLibraryInfo &TLI =
       PPC.FAM.getResult<TargetLibraryAnalysis>(*key.todiff);
