@@ -20,6 +20,7 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
+#include "mlir/Transforms/RegionUtils.h"
 
 #define DEBUG_TYPE "enzyme-batch"
 
@@ -49,6 +50,160 @@ mlir::TensorType applyBatchSizes(mlir::Type Ty,
   shape.append(T.getShape().begin(), T.getShape().end());
   auto T2 = T.clone(shape);
   return T2;
+}
+
+FailureOr<Value> broadcastFreeValue(OpBuilder &builder, Operation *op,
+                                    Value value,
+                                    llvm::ArrayRef<int64_t> batchSizes) {
+  if (batchSizes.empty())
+    return value;
+  Type ty = value.getType();
+  if (!isa<RankedTensorType>(ty) && !TensorType::isValidElementType(ty)) {
+    return op->emitError()
+           << "cannot broadcast captured value of unsupported type " << ty;
+  }
+  TensorType batchedTy = applyBatchSizes(ty, batchSizes);
+  return enzyme::BroadcastOp::create(builder, op->getLoc(), batchedTy, value,
+                                     batchSizes)
+      .getResult();
+}
+
+LogicalResult batchOperation(
+    OpBuilder &builder, enzyme::BatchRegionOp batchRegionOp,
+    std::map<BatchCacheKey, FunctionOpInterface> &batchedFunctionCache) {
+  Region &body = batchRegionOp.getBody();
+  if (body.empty())
+    return batchRegionOp.emitError()
+           << "enzyme.batch_region body must not be empty";
+
+  if (body.getNumArguments() != batchRegionOp.getInputs().size())
+    return batchRegionOp.emitError()
+           << "expected " << batchRegionOp.getInputs().size()
+           << " block arguments, got " << body.getNumArguments();
+
+  ArrayRef<int64_t> batchSizes = batchRegionOp.getBatchShape();
+  llvm::SetVector<Value> freeValues;
+  getUsedValuesDefinedAbove(body, freeValues);
+
+  OpBuilder::InsertionGuard insertGuard(builder);
+  if (body.hasOneBlock()) {
+    IRMapping mapper;
+    for (auto [arg, input] :
+         llvm::zip_equal(body.getArguments(), batchRegionOp.getInputs()))
+      mapper.map(arg, input);
+
+    builder.setInsertionPoint(batchRegionOp);
+    for (Value v : freeValues) {
+      auto bcast = broadcastFreeValue(builder, batchRegionOp, v, batchSizes);
+      if (failed(bcast))
+        return failure();
+      mapper.map(v, *bcast);
+    }
+
+    Block &origBlock = body.front();
+    auto yieldOp = dyn_cast<enzyme::YieldOp>(origBlock.getTerminator());
+    if (!yieldOp)
+      return batchRegionOp.emitError()
+             << "expected enzyme.yield terminator in enzyme.batch_region";
+    if (yieldOp.getNumOperands() != batchRegionOp.getNumResults())
+      return batchRegionOp.emitError()
+             << "enzyme.yield operand count does not match "
+                "enzyme.batch_region result count";
+
+    batchCloneBlock(builder, &origBlock, mapper, batchSizes,
+                    batchedFunctionCache, /*withoutTerminator=*/true);
+
+    SmallVector<Value> mappedResults;
+    mappedResults.reserve(yieldOp.getNumOperands());
+    for (Value operand : yieldOp.getOperands())
+      mappedResults.push_back(mapper.lookup(operand));
+    batchRegionOp.replaceAllUsesWith(mappedResults);
+    batchRegionOp.erase();
+    return success();
+  }
+
+  Operation *symbolTableOp =
+      batchRegionOp->getParentWithTrait<OpTrait::SymbolTable>();
+  if (!symbolTableOp)
+    return batchRegionOp.emitError()
+           << "multi-block enzyme.batch_region requires an enclosing symbol "
+              "table";
+
+  SmallVector<Value> callOperands(batchRegionOp.getInputs().begin(),
+                                  batchRegionOp.getInputs().end());
+  builder.setInsertionPoint(batchRegionOp);
+  for (Value v : freeValues) {
+    auto bcast = broadcastFreeValue(builder, batchRegionOp, v, batchSizes);
+    if (failed(bcast))
+      return failure();
+    callOperands.push_back(*bcast);
+  }
+
+  SmallVector<Type> argTypes;
+  argTypes.reserve(callOperands.size());
+  for (Value v : callOperands)
+    argTypes.push_back(v.getType());
+
+  std::string fnName = "batched_region";
+  if (auto parentSym = batchRegionOp->getParentOfType<SymbolOpInterface>())
+    fnName = ("batched_" + parentSym.getName() + "_region").str();
+  if (auto origFn = batchRegionOp.getFn())
+    fnName = ("batched_" + *origFn).str();
+
+  FunctionType fnType =
+      builder.getFunctionType(argTypes, batchRegionOp.getResultTypes());
+  builder.setInsertionPointToEnd(&symbolTableOp->getRegion(0).front());
+  auto newFunc =
+      func::FuncOp::create(builder, batchRegionOp.getLoc(), fnName, fnType);
+  SymbolTable table(symbolTableOp);
+  table.insert(newFunc);
+  SymbolTable::setSymbolVisibility(newFunc, SymbolTable::Visibility::Private);
+
+  Region &newRegion = newFunc.getBody();
+  IRMapping mapper;
+  for (auto &blk : body) {
+    auto *newBlk = new Block();
+    newRegion.push_back(newBlk);
+    mapper.map(&blk, newBlk);
+    bool isEntry = (&blk == &body.front());
+    for (auto arg : blk.getArguments()) {
+      Type argTy = isEntry
+                       ? batchRegionOp.getInputs()[arg.getArgNumber()].getType()
+                       : Type(applyBatchSizes(arg.getType(), batchSizes));
+      Value newArg = newBlk->addArgument(argTy, arg.getLoc());
+      mapper.map(arg, newArg);
+    }
+  }
+  Block &newEntry = newRegion.front();
+  for (auto [idx, v] : llvm::enumerate(freeValues)) {
+    Type freeTy =
+        callOperands[batchRegionOp.getInputs().size() + idx].getType();
+    Value newArg = newEntry.addArgument(freeTy, v.getLoc());
+    mapper.map(v, newArg);
+  }
+
+  for (auto &&[blk, newBlk] : llvm::zip(body, newRegion)) {
+    IRRewriter::InsertionGuard blockGuard(builder);
+    builder.setInsertionPointToEnd(&newBlk);
+    batchCloneBlock(builder, &blk, mapper, batchSizes, batchedFunctionCache,
+                    false);
+    if (!newBlk.empty()) {
+      if (auto yieldOp = dyn_cast<enzyme::YieldOp>(newBlk.getTerminator())) {
+        builder.setInsertionPoint(yieldOp);
+        func::ReturnOp::create(builder, yieldOp.getLoc(),
+                               yieldOp.getOperands());
+        yieldOp.erase();
+      }
+    }
+  }
+
+  builder.setInsertionPoint(batchRegionOp);
+  auto callOp =
+      func::CallOp::create(builder, batchRegionOp.getLoc(), newFunc.getName(),
+                           newFunc.getResultTypes(), callOperands);
+  batchRegionOp.replaceAllUsesWith(callOp.getResults());
+  batchRegionOp.erase();
+  return success();
 }
 
 LogicalResult handleCallLikeOp(
@@ -289,13 +444,23 @@ struct BatchPass : public enzyme::impl::BatchPassBase<BatchPass> {
           &BatchedFunctionCache) {
     {
       SmallVector<Operation *> toLower;
-      op->walk([&](enzyme::BatchOp dop) { toLower.push_back(dop); });
+      op->walk([&](Operation *nested) {
+        if (isa<enzyme::BatchOp, enzyme::BatchRegionOp>(nested))
+          toLower.push_back(nested);
+      });
 
       OpBuilder builder(op);
 
       for (auto T : toLower) {
         if (auto F = dyn_cast<enzyme::BatchOp>(T)) {
           auto res = enzyme::batchutils::batchOperation(symbolTable, builder, F,
+                                                        BatchedFunctionCache);
+          if (!res.succeeded()) {
+            signalPassFailure();
+            return;
+          }
+        } else if (auto R = dyn_cast<enzyme::BatchRegionOp>(T)) {
+          auto res = enzyme::batchutils::batchOperation(builder, R,
                                                         BatchedFunctionCache);
           if (!res.succeeded()) {
             signalPassFailure();

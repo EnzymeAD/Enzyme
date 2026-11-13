@@ -40,6 +40,14 @@ struct BatchCacheKey {
 mlir::TensorType applyBatchSizes(mlir::Type Ty,
                                  llvm::ArrayRef<int64_t> batchSizes);
 
+FailureOr<Value> broadcastFreeValue(OpBuilder &builder, Operation *op,
+                                    Value value,
+                                    llvm::ArrayRef<int64_t> batchSizes);
+
+LogicalResult batchOperation(
+    OpBuilder &builder, enzyme::BatchRegionOp batchRegionOp,
+    std::map<BatchCacheKey, FunctionOpInterface> &batchedFunctionCache);
+
 FunctionOpInterface batchCloneFunction(
     OpBuilder &builder, FunctionOpInterface F, Twine name,
     llvm::ArrayRef<int64_t> batchSizes,

@@ -84,8 +84,7 @@ def ExpandImpulsePass : Pass<"expand-impulse"> {
 
 def BatchPass : Pass<"enzyme-batch"> {
   let summary = "Batch Passes";
-  let dependentDialects = [
-  ];
+  let dependentDialects = ["func::FuncDialect", "enzyme::EnzymeDialect", ];
 }
 
 def BatchDiffPass : Pass<"enzyme-diff-batch">{
@@ -290,14 +289,13 @@ def PrintBaseObjectPass : Pass<"test-print-base-object"> {
 }
 
 def InlineEnzymeIntoRegionPass : Pass<"inline-enzyme-regions"> {
-  let summary = "Inline enzyme.autodiff ops into enzyme.autodiff_region ops.";
+  let summary = "Inline enzyme ops (autodiff, fwddiff, batch) into region ops.";
 }
 
 def OutlineEnzymeFromRegionPass : Pass<"outline-enzyme-regions"> {
-  let summary = "Outlines enzyme.autodiff_region ops into enzyme.autodiff ops.";
-  let dependentDialects = [
-    "func::FuncDialect"
-  ];
+  let summary = "Outlines enzyme region ops (autodiff_region, fwddiff_region, "
+                "batch_region) into symbol ops.";
+  let dependentDialects = ["func::FuncDialect", "enzyme::EnzymeDialect", ];
 }
 
 def HoistEnzymeFromRegionPass : Pass<"hoist-enzyme-regions"> {

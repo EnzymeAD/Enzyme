@@ -239,9 +239,12 @@ def ForwardDiffRegionOp : Enzyme_Op<"fwddiff_region", [AutomaticAllocationScope]
   }];
 }
 
-def YieldOp : Enzyme_Op<"yield", [Pure, ReturnLike, Terminator,
-    ParentOneOf<["AutoDiffRegionOp", "ForwardDiffRegionOp"]>]> {
-  let summary = "Yield values at the end of an autodiff_region";
+def YieldOp
+    : Enzyme_Op<
+          "yield", [Pure, ReturnLike, Terminator,
+                    ParentOneOf<["AutoDiffRegionOp", "ForwardDiffRegionOp",
+                                 "BatchRegionOp"]>]> {
+  let summary = "Yield values at the end of an enzyme region op";
   let arguments = (ins Variadic<AnyType>:$operands);
   let assemblyFormat = [{
     attr-dict ($operands^ `:` type($operands))?
@@ -250,13 +253,27 @@ def YieldOp : Enzyme_Op<"yield", [Pure, ReturnLike, Terminator,
 
 def BatchOp : Enzyme_Op<"batch",
     [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
-  let summary = "Perform reverse mode AD on a funcop";
+  let summary = "Perform batching on a funcop";
   let arguments = (ins FlatSymbolRefAttr:$fn, Variadic<AnyType>:$inputs, DenseI64ArrayAttr:$batch_shape);
   let results = (outs Variadic<AnyType>:$outputs);
 
   let assemblyFormat = [{
     $fn `(` $inputs `)` prop-dict attr-dict `:` functional-type($inputs, results)
   }];
+}
+
+def BatchRegionOp : Enzyme_Op<"batch_region", [AutomaticAllocationScope]> {
+  let summary = "Perform batching on a child region";
+  let arguments = (ins Variadic<AnyType>:$inputs,
+      DenseI64ArrayAttr:$batch_shape, OptionalAttr<StrAttr>:$fn);
+  let regions = (region AnyRegion:$body);
+  let results = (outs Variadic<AnyType>:$outputs);
+
+  let assemblyFormat = [{
+    `(` $inputs `)` $body prop-dict attr-dict-with-keyword `:` functional-type($inputs, results)
+  }];
+
+  let hasVerifier = 1;
 }
 
 def PushOp : Enzyme_Op<"push", [

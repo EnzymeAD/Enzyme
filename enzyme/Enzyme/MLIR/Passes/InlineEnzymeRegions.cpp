@@ -12,6 +12,7 @@
 //===----------------------------------------------------------------------===//
 #include "Dialect/Ops.h"
 #include "Interfaces/AutoDiffOpInterface.h"
+#include "Passes/EnzymeBatchPass.h"
 #include "Passes/Passes.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -126,6 +127,48 @@ struct InlineEnzymeForwardDiff
     auto regionOp = rewriter.replaceOpWithNewOp<enzyme::ForwardDiffRegionOp>(
         op, op.getResultTypes(), op.getInputs(), op.getActivity(),
         op.getRetActivity(), op.getWidth(), op.getStrongZero(), fnAttr);
+
+    serializeFunctionAttributes(fn, regionOp);
+    rewriter.cloneRegionBefore(targetRegion, regionOp.getBody(),
+                               regionOp.getBody().begin());
+
+    SmallVector<Operation *> toErase;
+    for (Operation &bodyOp : regionOp.getBody().getOps()) {
+      if (bodyOp.hasTrait<OpTrait::ReturnLike>()) {
+        PatternRewriter::InsertionGuard insertionGuard(rewriter);
+        rewriter.setInsertionPoint(&bodyOp);
+        enzyme::YieldOp::create(rewriter, bodyOp.getLoc(),
+                                bodyOp.getOperands());
+        toErase.push_back(&bodyOp);
+      }
+    }
+
+    for (Operation *opToErase : toErase)
+      rewriter.eraseOp(opToErase);
+    return success();
+  }
+};
+
+struct InlineEnzymeBatch : public OpRewritePattern<enzyme::BatchOp> {
+  using OpRewritePattern<enzyme::BatchOp>::OpRewritePattern;
+  LogicalResult matchAndRewrite(enzyme::BatchOp op,
+                                PatternRewriter &rewriter) const override {
+    SymbolTableCollection symbolTable;
+    FunctionOpInterface fn = dyn_cast_or_null<FunctionOpInterface>(
+        symbolTable.lookupNearestSymbolFrom(op, op.getFnAttr()));
+
+    if (!fn)
+      return failure();
+
+    Region &targetRegion = fn.getFunctionBody();
+
+    if (targetRegion.empty())
+      return failure();
+
+    auto fnAttr = StringAttr::get(op.getContext(), op.getFn());
+    auto regionOp = rewriter.replaceOpWithNewOp<enzyme::BatchRegionOp>(
+        op, op.getResultTypes(), op.getInputs(), op.getBatchShapeAttr(),
+        fnAttr);
 
     serializeFunctionAttributes(fn, regionOp);
     rewriter.cloneRegionBefore(targetRegion, regionOp.getBody(),
@@ -415,13 +458,99 @@ LogicalResult outlineEnzymeForwardDiffRegion(enzyme::ForwardDiffRegionOp op,
   return success();
 }
 
+LogicalResult outlineEnzymeBatchRegion(enzyme::BatchRegionOp op,
+                                       StringRef funcName, OpBuilder &builder) {
+  OpBuilder::InsertionGuard insertionGuard(builder);
+  builder.setInsertionPointAfter(op->getParentOfType<SymbolOpInterface>());
+
+  Region &batchRegion = op.getBody();
+  SmallVector<Type> argTypes(batchRegion.getArgumentTypes()), resultTypes;
+  SmallVector<Location> argLocs(batchRegion.getNumArguments(), op.getLoc());
+
+  bool found = false;
+  for (Block &block : batchRegion) {
+    if (block.empty())
+      continue;
+    if (auto yieldOp = dyn_cast<enzyme::YieldOp>(block.getTerminator())) {
+      found = true;
+      llvm::append_range(resultTypes, yieldOp.getOperandTypes());
+      break;
+    }
+  }
+  if (!found)
+    return op.emitError()
+           << "enzyme.yield was not found in enzyme.batch_region";
+
+  llvm::SetVector<Value> freeValues;
+  getUsedValuesDefinedAbove(batchRegion, freeValues);
+  for (Value value : freeValues) {
+    argTypes.push_back(value.getType());
+    argLocs.push_back(value.getLoc());
+  }
+
+  SmallVector<Value> allInputs(op.getInputs());
+  {
+    OpBuilder::InsertionGuard inputGuard(builder);
+    builder.setInsertionPoint(op);
+    for (Value value : freeValues) {
+      auto bcast = enzyme::batchutils::broadcastFreeValue(builder, op, value,
+                                                          op.getBatchShape());
+      if (failed(bcast))
+        return failure();
+      allInputs.push_back(*bcast);
+    }
+  }
+
+  auto fnType = builder.getFunctionType(argTypes, resultTypes);
+  Location loc = UnknownLoc::get(op.getContext());
+  auto outlinedFunc = func::FuncOp::create(builder, loc, funcName, fnType);
+  outlinedFunc.setPrivate();
+  Region &outlinedBody = outlinedFunc.getBody();
+  deserializeFunctionAttributes(op, outlinedFunc, freeValues.size());
+
+  IRMapping map;
+  Block *entryBlock = builder.createBlock(&outlinedBody, outlinedBody.begin(),
+                                          argTypes, argLocs);
+  unsigned originalArgCount = batchRegion.getNumArguments();
+  for (const auto &arg : batchRegion.getArguments())
+    map.map(arg, entryBlock->getArgument(arg.getArgNumber()));
+  for (const auto &operand : llvm::enumerate(freeValues))
+    map.map(operand.value(),
+            entryBlock->getArgument(originalArgCount + operand.index()));
+  batchRegion.cloneInto(&outlinedBody, map);
+
+  for (Block &block : batchRegion) {
+    Block *clonedBlock = map.lookup(&block);
+    auto terminator = dyn_cast<enzyme::YieldOp>(clonedBlock->getTerminator());
+    if (!terminator)
+      continue;
+    OpBuilder replacer(terminator);
+    func::ReturnOp::create(replacer, terminator->getLoc(),
+                           terminator->getOperands());
+    terminator->erase();
+  }
+
+  Block *clonedEntry = map.lookup(&batchRegion.front());
+  entryBlock->getOperations().splice(entryBlock->getOperations().end(),
+                                     clonedEntry->getOperations());
+  clonedEntry->erase();
+
+  builder.setInsertionPoint(op);
+  auto newOp = enzyme::BatchOp::create(
+      builder, op.getLoc(), op.getResultTypes(), outlinedFunc.getName(),
+      allInputs, op.getBatchShapeAttr());
+  op.replaceAllUsesWith(newOp.getResults());
+  op.erase();
+  return success();
+}
+
 struct InlineEnzymeIntoRegion
     : public enzyme::impl::InlineEnzymeIntoRegionPassBase<
           InlineEnzymeIntoRegion> {
   void runOnOperation() override {
     RewritePatternSet patterns(&getContext());
-    patterns.insert<InlineEnzymeAutoDiff, InlineEnzymeForwardDiff>(
-        &getContext());
+    patterns.insert<InlineEnzymeAutoDiff, InlineEnzymeForwardDiff,
+                    InlineEnzymeBatch>(&getContext());
 
     GreedyRewriteConfig config;
     config.setRegionSimplificationLevel(GreedySimplifyRegionLevel::Normal);
@@ -459,6 +588,20 @@ struct OutlineEnzymeFromRegion
           (Twine(symbol.getName(), "_to_fwddiff") + Twine(increment)).str();
       if (failed(
               outlineEnzymeForwardDiffRegion(regionOp, defaultName, builder)))
+        return signalPassFailure();
+
+      ++increment;
+    }
+
+    SmallVector<enzyme::BatchRegionOp> toOutlineBatch;
+    getOperation()->walk(
+        [&](enzyme::BatchRegionOp op) { toOutlineBatch.push_back(op); });
+
+    for (auto regionOp : toOutlineBatch) {
+      auto symbol = regionOp->getParentOfType<SymbolOpInterface>();
+      std::string defaultName =
+          (Twine(symbol.getName(), "_to_batch") + Twine(increment)).str();
+      if (failed(outlineEnzymeBatchRegion(regionOp, defaultName, builder)))
         return signalPassFailure();
 
       ++increment;
