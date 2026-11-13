@@ -4933,7 +4933,11 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
                                     mode != DerivativeMode::ForwardModeError;
   std::vector<bool> overwritten_args;
   FnTypeInfo type_args(fn);
-  if (isRealloc) {
+  if (fn->getAttributes().hasRetAttr("enzyme_type")) {
+    auto attr = fn->getAttributes().getRetAttrs().getAttribute("enzyme_type");
+    type_args.Return =
+        TypeTree::parse(attr.getValueAsString(), fn->getContext());
+  } else if (isRealloc) {
     llvm::errs() << "warning: assuming realloc only creates pointers\n";
     type_args.Return.insert({-1, -1}, BaseType::Pointer);
   }
@@ -4944,8 +4948,12 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
   for (auto &a : fn->args()) {
     overwritten_args.push_back(!a.getType()->isFPOrFPVectorTy());
     TypeTree TT;
-    if (a.getType()->isFPOrFPVectorTy())
+    if (fn->getAttributes().hasParamAttr(a.getArgNo(), "enzyme_type")) {
+      auto attr = fn->getAttributes().getParamAttr(a.getArgNo(), "enzyme_type");
+      TT = TypeTree::parse(attr.getValueAsString(), fn->getContext());
+    } else if (a.getType()->isFPOrFPVectorTy()) {
       TT.insert({-1}, ConcreteType(a.getType()->getScalarType()));
+    }
     type_args.Arguments.insert(std::pair<Argument *, TypeTree>(&a, TT));
     type_args.KnownValues.insert(
         std::pair<Argument *, std::set<int64_t>>(&a, {}));
