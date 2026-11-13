@@ -5429,189 +5429,244 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
           cur, cast<Constant>(B.CreateCast(CI->getOpcode(), C, CI->getType())));
       return "CastConstProp";
     }
-  std::function<Value *(Value *, Value *, Value *)> replace = [&](Value *val,
-                                                                  Value *orig,
-                                                                  Value *with) {
-    if (val == orig) {
-      return with;
-    }
-    if (isNot(val, orig)) {
-      return pushcse(B.CreateNot(with));
-    }
-    if (isa<PHINode>(val))
-      return val;
-
-    if (auto I = dyn_cast<Instruction>(val)) {
-      if (I->mayWriteToMemory() &&
-          !(isa<CallInst>(I) && isReadOnly(cast<CallInst>(I))))
-        return val;
-
-      if (I->getOpcode() == Instruction::Add) {
-        Value *lhs = replace(I->getOperand(0), orig, with);
-        Value *rhs = replace(I->getOperand(1), orig, with);
-        if (lhs == I->getOperand(0) && rhs == I->getOperand(1))
-          return val;
-        push(I);
-        return pushcse(B.CreateAdd(lhs, rhs, "sel." + I->getName(),
-                                   I->hasNoUnsignedWrap(),
-                                   I->hasNoSignedWrap()));
-      }
-
-      if (I->getOpcode() == Instruction::Sub) {
-        Value *lhs = replace(I->getOperand(0), orig, with);
-        Value *rhs = replace(I->getOperand(1), orig, with);
-        if (lhs == I->getOperand(0) && rhs == I->getOperand(1))
-          return val;
-        push(I);
-        return pushcse(B.CreateSub(lhs, rhs, "sel." + I->getName(),
-                                   I->hasNoUnsignedWrap(),
-                                   I->hasNoSignedWrap()));
-      }
-
-      if (I->getOpcode() == Instruction::Mul) {
-        Value *lhs = replace(I->getOperand(0), orig, with);
-        Value *rhs = replace(I->getOperand(1), orig, with);
-        if (lhs == I->getOperand(0) && rhs == I->getOperand(1))
-          return val;
-        push(I);
-        return pushcse(B.CreateMul(lhs, rhs, "sel." + I->getName(),
-                                   I->hasNoUnsignedWrap(),
-                                   I->hasNoSignedWrap()));
-      }
-
-      if (I->getOpcode() == Instruction::And) {
-        Value *lhs = replace(I->getOperand(0), orig, with);
-        Value *rhs = replace(I->getOperand(1), orig, with);
-        if (lhs == I->getOperand(0) && rhs == I->getOperand(1))
-          return val;
-        push(I);
-        return pushcse(B.CreateAnd(lhs, rhs, "sel." + I->getName()));
-      }
-
-      if (I->getOpcode() == Instruction::Or) {
-        Value *lhs = replace(I->getOperand(0), orig, with);
-        Value *rhs = replace(I->getOperand(1), orig, with);
-        if (lhs == I->getOperand(0) && rhs == I->getOperand(1))
-          return val;
-        push(I);
-        return pushcse(B.CreateOr(lhs, rhs, "sel." + I->getName()));
-      }
-
-      if (I->getOpcode() == Instruction::Xor) {
-        Value *lhs = replace(I->getOperand(0), orig, with);
-        Value *rhs = replace(I->getOperand(1), orig, with);
-        if (lhs == I->getOperand(0) && rhs == I->getOperand(1))
-          return val;
-        push(I);
-        return pushcse(B.CreateXor(lhs, rhs, "sel." + I->getName()));
-      }
-
-      if (I->getOpcode() == Instruction::FAdd) {
-        Value *lhs = replace(I->getOperand(0), orig, with);
-        Value *rhs = replace(I->getOperand(1), orig, with);
-        if (lhs == I->getOperand(0) && rhs == I->getOperand(1))
-          return val;
-        push(I);
-        return pushcse(B.CreateFAddFMF(lhs, rhs, I, "sel." + I->getName()));
-      }
-
-      if (I->getOpcode() == Instruction::FSub) {
-        Value *lhs = replace(I->getOperand(0), orig, with);
-        Value *rhs = replace(I->getOperand(1), orig, with);
-        if (lhs == I->getOperand(0) && rhs == I->getOperand(1))
-          return val;
-        push(I);
-        return pushcse(B.CreateFSubFMF(lhs, rhs, I, "sel." + I->getName()));
-      }
-
-      if (I->getOpcode() == Instruction::FMul) {
-        Value *lhs = replace(I->getOperand(0), orig, with);
-        Value *rhs = replace(I->getOperand(1), orig, with);
-        if (lhs == I->getOperand(0) && rhs == I->getOperand(1))
-          return val;
-        push(I);
-        return pushcse(B.CreateFMulFMF(lhs, rhs, I, "sel." + I->getName()));
-      }
-
-      if (I->getOpcode() == Instruction::ZExt) {
-        Value *op = replace(I->getOperand(0), orig, with);
-        if (op == I->getOperand(0))
-          return val;
-        push(I);
-        return pushcse(B.CreateZExt(op, I->getType(), "sel." + I->getName()));
-      }
-
-      if (I->getOpcode() == Instruction::SExt) {
-        Value *op = replace(I->getOperand(0), orig, with);
-        if (op == I->getOperand(0))
-          return val;
-        push(I);
-        return pushcse(B.CreateSExt(op, I->getType(), "sel." + I->getName()));
-      }
-
-      if (I->getOpcode() == Instruction::UIToFP) {
-        Value *op = replace(I->getOperand(0), orig, with);
-        if (op == I->getOperand(0))
-          return val;
-        push(I);
-        return pushcse(B.CreateUIToFP(op, I->getType(), "sel." + I->getName()));
-      }
-
-      if (I->getOpcode() == Instruction::SIToFP) {
-        Value *op = replace(I->getOperand(0), orig, with);
-        if (op == I->getOperand(0))
-          return val;
-        push(I);
-        return pushcse(B.CreateSIToFP(op, I->getType(), "sel." + I->getName()));
-      }
-
-      if (auto CI = dyn_cast<CmpInst>(I)) {
-        Value *lhs = replace(I->getOperand(0), orig, with);
-        Value *rhs = replace(I->getOperand(1), orig, with);
-        if (lhs == I->getOperand(0) && rhs == I->getOperand(1))
-          return val;
-        push(I);
-        return pushcse(
-            B.CreateCmp(CI->getPredicate(), lhs, rhs, "sel." + I->getName()));
-      }
-
-      if (auto SI = dyn_cast<SelectInst>(I)) {
-        Value *cond = replace(SI->getCondition(), orig, with);
-        Value *tval = replace(SI->getTrueValue(), orig, with);
-        Value *fval = replace(SI->getFalseValue(), orig, with);
-        if (cond == SI->getCondition() && tval == SI->getTrueValue() &&
-            fval == SI->getFalseValue())
-          return val;
-        push(I);
-        if (auto CI = dyn_cast<ConstantInt>(cond)) {
-          if (CI->isOne())
-            return tval;
-          else
-            return fval;
+  std::function<Value *(Value *, Value *, Value *, bool)> replace =
+      [&](Value *val, Value *orig, Value *with, bool preservePoisonFlags) {
+        if (val == orig) {
+          return with;
         }
-        return pushcse(B.CreateSelect(cond, tval, fval, "sel." + I->getName()));
-      }
+        if (isNot(val, orig)) {
+          return pushcse(B.CreateNot(with));
+        }
+        if (isa<PHINode>(val))
+          return val;
 
-      if (isProduct(I) || isSum(I)) {
-        auto C = cast<CallBase>(I);
-        auto ops = callOperands(C);
-        bool changed = false;
-        for (auto &op : ops) {
-          auto next = replace(op, orig, with);
-          if (next != op) {
-            changed = true;
-            op = next;
+        if (auto I = dyn_cast<Instruction>(val)) {
+          if (I->mayWriteToMemory() &&
+              !(isa<CallInst>(I) && isReadOnly(cast<CallInst>(I))))
+            return val;
+
+          if (I->getOpcode() == Instruction::Add) {
+            Value *lhs =
+                replace(I->getOperand(0), orig, with, preservePoisonFlags);
+            Value *rhs =
+                replace(I->getOperand(1), orig, with, preservePoisonFlags);
+            if (lhs == I->getOperand(0) && rhs == I->getOperand(1))
+              return val;
+            push(I);
+            return pushcse(
+                B.CreateAdd(lhs, rhs, "sel." + I->getName(),
+                            preservePoisonFlags && I->hasNoUnsignedWrap(),
+                            preservePoisonFlags && I->hasNoSignedWrap()));
+          }
+
+          if (I->getOpcode() == Instruction::Sub) {
+            Value *lhs =
+                replace(I->getOperand(0), orig, with, preservePoisonFlags);
+            Value *rhs =
+                replace(I->getOperand(1), orig, with, preservePoisonFlags);
+            if (lhs == I->getOperand(0) && rhs == I->getOperand(1))
+              return val;
+            push(I);
+            return pushcse(
+                B.CreateSub(lhs, rhs, "sel." + I->getName(),
+                            preservePoisonFlags && I->hasNoUnsignedWrap(),
+                            preservePoisonFlags && I->hasNoSignedWrap()));
+          }
+
+          if (I->getOpcode() == Instruction::Mul) {
+            Value *lhs =
+                replace(I->getOperand(0), orig, with, preservePoisonFlags);
+            Value *rhs =
+                replace(I->getOperand(1), orig, with, preservePoisonFlags);
+            if (lhs == I->getOperand(0) && rhs == I->getOperand(1))
+              return val;
+            push(I);
+            return pushcse(
+                B.CreateMul(lhs, rhs, "sel." + I->getName(),
+                            preservePoisonFlags && I->hasNoUnsignedWrap(),
+                            preservePoisonFlags && I->hasNoSignedWrap()));
+          }
+
+          if (I->getOpcode() == Instruction::And) {
+            Value *lhs =
+                replace(I->getOperand(0), orig, with, preservePoisonFlags);
+            Value *rhs =
+                replace(I->getOperand(1), orig, with, preservePoisonFlags);
+            if (lhs == I->getOperand(0) && rhs == I->getOperand(1))
+              return val;
+            push(I);
+            return pushcse(B.CreateAnd(lhs, rhs, "sel." + I->getName()));
+          }
+
+          if (I->getOpcode() == Instruction::Or) {
+            Value *lhs =
+                replace(I->getOperand(0), orig, with, preservePoisonFlags);
+            Value *rhs =
+                replace(I->getOperand(1), orig, with, preservePoisonFlags);
+            if (lhs == I->getOperand(0) && rhs == I->getOperand(1))
+              return val;
+            push(I);
+            return pushcse(B.CreateOr(lhs, rhs, "sel." + I->getName()));
+          }
+
+          if (I->getOpcode() == Instruction::Xor) {
+            Value *lhs =
+                replace(I->getOperand(0), orig, with, preservePoisonFlags);
+            Value *rhs =
+                replace(I->getOperand(1), orig, with, preservePoisonFlags);
+            if (lhs == I->getOperand(0) && rhs == I->getOperand(1))
+              return val;
+            push(I);
+            return pushcse(B.CreateXor(lhs, rhs, "sel." + I->getName()));
+          }
+
+          if (I->getOpcode() == Instruction::FAdd) {
+            Value *lhs =
+                replace(I->getOperand(0), orig, with, preservePoisonFlags);
+            Value *rhs =
+                replace(I->getOperand(1), orig, with, preservePoisonFlags);
+            if (lhs == I->getOperand(0) && rhs == I->getOperand(1))
+              return val;
+            push(I);
+            return pushcse(
+                preservePoisonFlags
+                    ? B.CreateFAddFMF(lhs, rhs, I, "sel." + I->getName())
+                    : B.CreateFAdd(lhs, rhs, "sel." + I->getName()));
+          }
+
+          if (I->getOpcode() == Instruction::FSub) {
+            Value *lhs =
+                replace(I->getOperand(0), orig, with, preservePoisonFlags);
+            Value *rhs =
+                replace(I->getOperand(1), orig, with, preservePoisonFlags);
+            if (lhs == I->getOperand(0) && rhs == I->getOperand(1))
+              return val;
+            push(I);
+            return pushcse(
+                preservePoisonFlags
+                    ? B.CreateFSubFMF(lhs, rhs, I, "sel." + I->getName())
+                    : B.CreateFSub(lhs, rhs, "sel." + I->getName()));
+          }
+
+          if (I->getOpcode() == Instruction::FMul) {
+            Value *lhs =
+                replace(I->getOperand(0), orig, with, preservePoisonFlags);
+            Value *rhs =
+                replace(I->getOperand(1), orig, with, preservePoisonFlags);
+            if (lhs == I->getOperand(0) && rhs == I->getOperand(1))
+              return val;
+            push(I);
+            return pushcse(
+                preservePoisonFlags
+                    ? B.CreateFMulFMF(lhs, rhs, I, "sel." + I->getName())
+                    : B.CreateFMul(lhs, rhs, "sel." + I->getName()));
+          }
+
+          if (I->getOpcode() == Instruction::ZExt) {
+            Value *op =
+                replace(I->getOperand(0), orig, with, preservePoisonFlags);
+            if (op == I->getOperand(0))
+              return val;
+            push(I);
+            return pushcse(
+                B.CreateZExt(op, I->getType(), "sel." + I->getName()));
+          }
+
+          if (I->getOpcode() == Instruction::SExt) {
+            Value *op =
+                replace(I->getOperand(0), orig, with, preservePoisonFlags);
+            if (op == I->getOperand(0))
+              return val;
+            push(I);
+            return pushcse(
+                B.CreateSExt(op, I->getType(), "sel." + I->getName()));
+          }
+
+          if (I->getOpcode() == Instruction::UIToFP) {
+            Value *op =
+                replace(I->getOperand(0), orig, with, preservePoisonFlags);
+            if (op == I->getOperand(0))
+              return val;
+            push(I);
+            return pushcse(
+                B.CreateUIToFP(op, I->getType(), "sel." + I->getName()));
+          }
+
+          if (I->getOpcode() == Instruction::SIToFP) {
+            Value *op =
+                replace(I->getOperand(0), orig, with, preservePoisonFlags);
+            if (op == I->getOperand(0))
+              return val;
+            push(I);
+            return pushcse(
+                B.CreateSIToFP(op, I->getType(), "sel." + I->getName()));
+          }
+
+          if (auto CI = dyn_cast<CmpInst>(I)) {
+            Value *lhs =
+                replace(I->getOperand(0), orig, with, preservePoisonFlags);
+            Value *rhs =
+                replace(I->getOperand(1), orig, with, preservePoisonFlags);
+            if (lhs == I->getOperand(0) && rhs == I->getOperand(1))
+              return val;
+            push(I);
+            return pushcse(B.CreateCmp(CI->getPredicate(), lhs, rhs,
+                                       "sel." + I->getName()));
+          }
+
+          if (auto SI = dyn_cast<SelectInst>(I)) {
+            Value *cond =
+                replace(SI->getCondition(), orig, with, preservePoisonFlags);
+            Value *tval =
+                replace(SI->getTrueValue(), orig, with, preservePoisonFlags);
+            Value *fval =
+                replace(SI->getFalseValue(), orig, with, preservePoisonFlags);
+            if (cond == SI->getCondition() && tval == SI->getTrueValue() &&
+                fval == SI->getFalseValue())
+              return val;
+            if (!preservePoisonFlags && cond != SI->getCondition()) {
+              if (auto CI = dyn_cast<ConstantInt>(cond)) {
+                Value *chosen = CI->isOne() ? tval : fval;
+                if (!llvm::isGuaranteedNotToBePoison(chosen, nullptr, cur, &DT))
+                  return val;
+              } else if (!llvm::isGuaranteedNotToBePoison(tval, nullptr, cur,
+                                                          &DT) ||
+                         !llvm::isGuaranteedNotToBePoison(fval, nullptr, cur,
+                                                          &DT)) {
+                return val;
+              }
+            }
+            push(I);
+            if (auto CI = dyn_cast<ConstantInt>(cond)) {
+              if (CI->isOne())
+                return tval;
+              else
+                return fval;
+            }
+            return pushcse(
+                B.CreateSelect(cond, tval, fval, "sel." + I->getName()));
+          }
+
+          if (preservePoisonFlags && (isProduct(I) || isSum(I))) {
+            auto C = cast<CallBase>(I);
+            auto ops = callOperands(C);
+            bool changed = false;
+            for (auto &op : ops) {
+              auto next = replace(op, orig, with, preservePoisonFlags);
+              if (next != op) {
+                changed = true;
+                op = next;
+              }
+            }
+            if (!changed)
+              return (Value *)I;
+            push(I);
+            return pushcse(B.CreateCall(getFunctionFromCall(C), ops,
+                                        "sel." + I->getName()));
           }
         }
-        if (!changed)
-          return (Value *)I;
-        push(I);
-        pushcse(
-            B.CreateCall(getFunctionFromCall(C), ops, "sel." + I->getName()));
-      }
-    }
-    return val;
-  };
+        return val;
+      };
 
   if (auto II = dyn_cast<IntrinsicInst>(cur))
     if (II->getIntrinsicID() == Intrinsic::fmuladd ||
@@ -5921,9 +5976,9 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
         size_t count = 0;
         for (size_t j = 0; j < conditions.size(); j++) {
           if (((conditions[i].first == conditions[j].first) &&
-               (conditions[i].second == conditions[i].second)) ||
+               (conditions[i].second == conditions[j].second)) ||
               ((isNot(conditions[i].first, conditions[j].first) &&
-                (conditions[i].second != conditions[i].second))))
+                (conditions[i].second != conditions[j].second))))
             count++;
         }
         if (count == conditions.size() && count > 1) {
@@ -6642,7 +6697,8 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
           if (C->isZero()) {
             if (auto fmul = dyn_cast<BinaryOperator>(fcmp->getOperand(1 - i))) {
               // (a*b) == 0 -> (a == 0) || (b == 0)
-              if (fmul->getOpcode() == Instruction::Mul) {
+              if (fmul->getOpcode() == Instruction::Mul &&
+                  (fmul->hasNoUnsignedWrap() || fmul->hasNoSignedWrap())) {
                 auto ncmp1 = pushcse(
                     B.CreateICmp(fcmp->getPredicate(), fmul->getOperand(0), C));
                 auto ncmp2 = pushcse(
@@ -6799,7 +6855,8 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
         if (Z->getOperand(0)->getType()->isIntegerTy(1)) {
           auto prev = cur->getOperand(1 - i);
           auto next = replace(prev, Z->getOperand(0),
-                              ConstantInt::getTrue(cur->getContext()));
+                              ConstantInt::getTrue(cur->getContext()),
+                              /*preservePoisonFlags=*/false);
           if (next != prev) {
             auto res = pushcse(B.CreateMul(Z, next, "postmul." + cur->getName(),
                                            cur->hasNoUnsignedWrap(),
@@ -8477,22 +8534,27 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
   }
 
   if (auto SI = dyn_cast<SelectInst>(cur)) {
-    auto tval = replace(SI->getTrueValue(), SI->getCondition(),
-                        ConstantInt::getTrue(SI->getContext()));
-    auto fval = replace(SI->getFalseValue(), SI->getCondition(),
-                        ConstantInt::getFalse(SI->getContext()));
-    if (tval != SI->getTrueValue() || fval != SI->getFalseValue()) {
-      auto res = pushcse(B.CreateSelect(SI->getCondition(), tval, fval,
-                                        "postsel." + SI->getName()));
-      replaceAndErase(cur, res);
-      return "SelectReplace";
+    if (SI->getCondition()->getType()->isIntegerTy(1)) {
+      auto tval = replace(SI->getTrueValue(), SI->getCondition(),
+                          ConstantInt::getTrue(SI->getContext()),
+                          /*preservePoisonFlags=*/true);
+      auto fval = replace(SI->getFalseValue(), SI->getCondition(),
+                          ConstantInt::getFalse(SI->getContext()),
+                          /*preservePoisonFlags=*/true);
+      if (tval != SI->getTrueValue() || fval != SI->getFalseValue()) {
+        auto res = pushcse(B.CreateSelect(SI->getCondition(), tval, fval,
+                                          "postsel." + SI->getName()));
+        replaceAndErase(cur, res);
+        return "SelectReplace";
+      }
     }
   }
 
   // and a, b -> and a b[with a true]
-  if (cur->getOpcode() == Instruction::And) {
+  if (cur->getOpcode() == Instruction::And && cur->getType()->isIntegerTy(1)) {
     auto lhs = replace(cur->getOperand(0), cur->getOperand(1),
-                       ConstantInt::getTrue(cur->getContext()));
+                       ConstantInt::getTrue(cur->getContext()),
+                       /*preservePoisonFlags=*/false);
     if (lhs != cur->getOperand(0)) {
       auto res = pushcse(
           B.CreateAnd(lhs, cur->getOperand(1), "postand." + cur->getName()));
@@ -8500,7 +8562,8 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
       return "AndReplaceLHS";
     }
     auto rhs = replace(cur->getOperand(1), cur->getOperand(0),
-                       ConstantInt::getTrue(cur->getContext()));
+                       ConstantInt::getTrue(cur->getContext()),
+                       /*preservePoisonFlags=*/false);
     if (rhs != cur->getOperand(1)) {
       auto res = pushcse(
           B.CreateAnd(cur->getOperand(0), rhs, "postand." + cur->getName()));
@@ -8510,9 +8573,10 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
   }
 
   // or a, b -> or a b[with a false]
-  if (cur->getOpcode() == Instruction::Or) {
+  if (cur->getOpcode() == Instruction::Or && cur->getType()->isIntegerTy(1)) {
     auto lhs = replace(cur->getOperand(0), cur->getOperand(1),
-                       ConstantInt::getFalse(cur->getContext()));
+                       ConstantInt::getFalse(cur->getContext()),
+                       /*preservePoisonFlags=*/false);
     if (lhs != cur->getOperand(0)) {
       auto res = pushcse(
           B.CreateOr(lhs, cur->getOperand(1), "postor." + cur->getName()));
@@ -8520,7 +8584,8 @@ std::optional<std::string> fixSparse_inner(Instruction *cur, llvm::Function &F,
       return "OrReplaceLHS";
     }
     auto rhs = replace(cur->getOperand(1), cur->getOperand(0),
-                       ConstantInt::getFalse(cur->getContext()));
+                       ConstantInt::getFalse(cur->getContext()),
+                       /*preservePoisonFlags=*/false);
     if (rhs != cur->getOperand(1)) {
       auto res = pushcse(
           B.CreateOr(cur->getOperand(0), rhs, "postor." + cur->getName()));
@@ -10056,9 +10121,11 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
     SetVector<Value *> Inputs, Outputs;
     auto F2 = ext.extractCodeRegion(cache, Inputs, Outputs);
     assert(F2);
+    F2->removeFnAttr(Attribute::NoInline);
+    F2->removeFnAttr(Attribute::OptimizeNone);
     F2->addFnAttr(Attribute::AlwaysInline);
 
-    for (auto U : F2->users())
+    for (auto U : llvm::make_early_inc_range(F2->users()))
       cast<Instruction>(U)->eraseFromParent();
 
     ssize_t induct_idx = -1;
