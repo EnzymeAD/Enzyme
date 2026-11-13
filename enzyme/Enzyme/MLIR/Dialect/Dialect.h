@@ -11,6 +11,18 @@
 
 #include "mlir/IR/Dialect.h"
 
+#include "llvm/ADT/StringMap.h"
+
+#include <functional>
+
+namespace mlir {
+class RewriterBase;
+
+namespace enzyme {
+class MGradientUtils;
+} // namespace enzyme
+} // namespace mlir
+
 #include "Dialect/EnzymeOpsDialect.h.inc"
 
 #endif // ENZYME_DIALECT_H

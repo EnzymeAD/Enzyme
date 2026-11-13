@@ -428,7 +428,32 @@ struct DifferentiatePass
 
 } // end anonymous namespace
 
+/// Reports every key of a forward call handlers attribute on or under `root`
+/// that has no handler registered in `dialect`.
+static LogicalResult
+verifyForwardCallHandlersRegistered(Operation *root, EnzymeDialect *dialect) {
+  LogicalResult result = success();
+  root->walk([&](Operation *op) {
+    ArrayAttr entries = op->getAttrOfType<ArrayAttr>(
+        EnzymeDialect::getForwardCallHandlersAttrName());
+    if (!entries)
+      return;
+    for (Attribute entry : entries) {
+      StringRef key = cast<StringAttr>(cast<ArrayAttr>(entry)[1]).getValue();
+      if (dialect->lookupForwardCallHandler(key))
+        continue;
+      op->emitError() << "no forward call handler registered under '" << key
+                      << "'";
+      result = failure();
+    }
+  });
+  return result;
+}
+
 void DifferentiatePass::runOnOperation() {
+  if (failed(verifyForwardCallHandlersRegistered(
+          getOperation(), getContext().getLoadedDialect<EnzymeDialect>())))
+    return signalPassFailure();
   MEnzymeLogic Logic(dataflowActivity);
   SymbolTableCollection symbolTable;
   symbolTable.getSymbolTable(getOperation());

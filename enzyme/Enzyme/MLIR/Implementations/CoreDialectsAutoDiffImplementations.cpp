@@ -12,6 +12,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "Implementations/CoreDialectsAutoDiffImplementations.h"
+#include "Dialect/Dialect.h"
 #include "Interfaces/AutoDiffOpInterface.h"
 #include "Interfaces/AutoDiffTypeInterface.h"
 #include "Interfaces/GradientUtils.h"
@@ -25,6 +26,7 @@
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/Matchers.h"
+#include "mlir/IR/PatternMatch.h"
 
 #include "llvm/ADT/APFloat.h"
 #include "llvm/Support/Casting.h"
@@ -592,6 +594,39 @@ LogicalResult mlir::enzyme::detail::controlFlowForwardHandler(
 
 namespace edetail = mlir::enzyme::detail;
 
+void mlir::enzyme::replaceForwardCall(Operation *orig, ValueRange values,
+                                      MGradientUtils *gutils) {
+  Operation *newOp = gutils->getNewFromOriginal(orig);
+  gutils->replaceOrigOpWith(orig, values);
+  gutils->erase(newOp);
+}
+
+/// Returns the key that the forward call handlers attribute of the nearest
+/// symbol table assigns to the callee of `op`, or an empty string if it assigns
+/// none.
+static StringRef getForwardCallHandlerKey(Operation *op) {
+  auto callOp = dyn_cast<CallOpInterface>(op);
+  if (!callOp)
+    return {};
+  auto callee = dyn_cast_if_present<FlatSymbolRefAttr>(
+      dyn_cast<SymbolRefAttr>(callOp.getCallableForCallee()));
+  if (!callee)
+    return {};
+  Operation *symbolTableOp = SymbolTable::getNearestSymbolTable(op);
+  if (!symbolTableOp)
+    return {};
+  ArrayAttr entries = symbolTableOp->getAttrOfType<ArrayAttr>(
+      EnzymeDialect::getForwardCallHandlersAttrName());
+  if (!entries)
+    return {};
+  for (Attribute entry : entries) {
+    auto pair = cast<ArrayAttr>(entry);
+    if (pair[0] == callee)
+      return cast<StringAttr>(pair[1]).getValue();
+  }
+  return {};
+}
+
 // The callee of `op`, or null where it is not a direct call to something this
 // can see the body of.
 static FunctionOpInterface getDirectCallee(Operation *op) {
@@ -608,6 +643,19 @@ static FunctionOpInterface getDirectCallee(Operation *op) {
 LogicalResult edetail::callForwardHandler(Operation *orig, OpBuilder &builder,
                                           MGradientUtils *gutils) {
   DerivativeMode mode = DerivativeMode::ForwardMode;
+
+  StringRef key = getForwardCallHandlerKey(orig);
+  if (!key.empty()) {
+    EnzymeDialect *dialect =
+        orig->getContext()->getLoadedDialect<EnzymeDialect>();
+    const EnzymeDialect::ForwardCallHandler *handler =
+        dialect ? dialect->lookupForwardCallHandler(key) : nullptr;
+    if (!handler)
+      return orig->emitError()
+             << "no forward call handler registered under '" << key << "'";
+    IRRewriter rewriter(builder);
+    return (*handler)(rewriter, orig, gutils);
+  }
 
   auto fn = getDirectCallee(orig);
   if (!fn) {
