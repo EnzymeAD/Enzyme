@@ -2948,6 +2948,38 @@ public:
               return;
             }
           }
+          // Clearing only the sign bit (e.g., & 0x7fffffff /
+          // 0x7fffffffffffffff) computes fabs on floating-point lanes and
+          // identity on all-ones lanes.
+          if (gutils->isConstantValue(BO.getOperand(i)) &&
+              clearsOnlyAtMostTopBit(BO.getOperand(i), eFT, dl, &FT)) {
+            setDiffe(
+                &BO,
+                Constant::getNullValue(gutils->getShadowType(BO.getType())),
+                Builder2);
+            if (!gutils->isConstantValue(BO.getOperand(1 - i))) {
+              auto mask = lookup(gutils->getNewFromOriginal(BO.getOperand(i)),
+                                 Builder2);
+              auto x = lookup(gutils->getNewFromOriginal(BO.getOperand(1 - i)),
+                              Builder2);
+              auto isMaskClearSign = Builder2.CreateICmpSGE(
+                  mask, Constant::getNullValue(BO.getType()));
+              auto xFP = Builder2.CreateBitCast(x, FT);
+              auto isNeg =
+                  Builder2.CreateFCmpOLT(xFP, Constant::getNullValue(FT));
+              auto shouldNeg = Builder2.CreateAnd(isMaskClearSign, isNeg);
+              auto rule = [&](Value *idiff) {
+                auto ext = Builder2.CreateBitCast(idiff, FT);
+                auto neg = Builder2.CreateFNeg(ext);
+                auto res = CreateSelect(Builder2, shouldNeg, neg, ext);
+                return Builder2.CreateBitCast(res, BO.getType());
+              };
+              auto bc = applyChainRule(BO.getOperand(1 - i)->getType(),
+                                       Builder2, rule, idiff);
+              addToDiffe(BO.getOperand(1 - i), bc, Builder2, FT);
+            }
+            return;
+          }
         }
       if (looseTypeAnalysis) {
         llvm::errs() << "warning: binary operator is integer and constant: "
@@ -3231,6 +3263,8 @@ public:
 
       auto FT = TR.query(&BO).allFloat(&BO, dl);
       auto eFT = FT;
+      Value *dif[2] = {constantval0 ? nullptr : diffe(orig_op0, Builder2),
+                       constantval1 ? nullptr : diffe(orig_op1, Builder2)};
       if (FT)
         for (int i = 0; i < 2; ++i) {
           auto CI = dyn_cast<ConstantInt>(BO.getOperand(i));
@@ -3242,6 +3276,27 @@ public:
               // bits of mantissa), no update
               return;
             }
+          }
+          if (clearsOnlyAtMostTopBit(BO.getOperand(i), eFT, dl, &FT) &&
+              dif[1 - i] && !dif[i]) {
+            auto mask = gutils->getNewFromOriginal(BO.getOperand(i));
+            auto x = gutils->getNewFromOriginal(BO.getOperand(1 - i));
+            auto isMaskClearSign = Builder2.CreateICmpSGE(
+                mask, Constant::getNullValue(BO.getType()));
+            auto xFP = Builder2.CreateBitCast(x, FT);
+            auto isNeg =
+                Builder2.CreateFCmpOLT(xFP, Constant::getNullValue(FT));
+            auto shouldNeg = Builder2.CreateAnd(isMaskClearSign, isNeg);
+            auto rule = [&](Value *idiff) {
+              auto ext = Builder2.CreateBitCast(idiff, FT);
+              auto neg = Builder2.CreateFNeg(ext);
+              auto res = CreateSelect(Builder2, shouldNeg, neg, ext);
+              return Builder2.CreateBitCast(res, BO.getType());
+            };
+            auto bc = applyChainRule(BO.getOperand(1 - i)->getType(), Builder2,
+                                     rule, dif[1 - i]);
+            setDiffe(&BO, bc, Builder2);
+            return;
           }
         }
       if (looseTypeAnalysis) {
