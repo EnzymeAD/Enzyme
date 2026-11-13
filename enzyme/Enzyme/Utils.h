@@ -2392,10 +2392,79 @@ static inline llvm::Value *CreateSelect(llvm::IRBuilder<> &Builder2,
   return Builder2.CreateSelect(cmp, tval, fval, Name);
 }
 
+static inline bool hasDirectUndefOrPoison(const llvm::Value *V,
+                                          unsigned depth = 0) {
+  if (!V || depth > 4)
+    return false;
+  if (llvm::isa<llvm::UndefValue>(V))
+    return true;
+  if (auto *CA = llvm::dyn_cast<llvm::ConstantAggregate>(V)) {
+    for (unsigned i = 0, e = CA->getNumOperands(); i < e; ++i) {
+      if (hasDirectUndefOrPoison(CA->getOperand(i), depth + 1))
+        return true;
+    }
+    return false;
+  }
+  if (auto *IEI = llvm::dyn_cast<llvm::InsertElementInst>(V)) {
+    if (auto *FVT = llvm::dyn_cast<llvm::FixedVectorType>(IEI->getType())) {
+      unsigned numElts = FVT->getNumElements();
+      llvm::SmallVector<bool, 8> written(numElts, false);
+      const llvm::Value *cur = IEI;
+      while (auto *curIE = llvm::dyn_cast<llvm::InsertElementInst>(cur)) {
+        auto *idxC = llvm::dyn_cast<llvm::ConstantInt>(curIE->getOperand(2));
+        if (!idxC || idxC->getValue().uge(numElts))
+          break;
+        unsigned idx = idxC->getZExtValue();
+        if (!written[idx]) {
+          if (hasDirectUndefOrPoison(curIE->getOperand(1), depth + 1))
+            return true;
+          written[idx] = true;
+        }
+        cur = curIE->getOperand(0);
+      }
+      if (llvm::all_of(written, [](bool b) { return b; }))
+        return false;
+      if (llvm::isa<llvm::UndefValue>(cur))
+        return true;
+      if (auto *CA = llvm::dyn_cast<llvm::ConstantAggregate>(cur)) {
+        for (unsigned i = 0; i < numElts; ++i) {
+          if (!written[i] &&
+              hasDirectUndefOrPoison(CA->getOperand(i), depth + 1))
+            return true;
+        }
+        return false;
+      }
+      return hasDirectUndefOrPoison(cur, depth + 1);
+    }
+  }
+  return false;
+}
+
+static inline bool hasUndefOrPoison(const llvm::Value *V, unsigned depth = 0) {
+  if (!V || depth > 4)
+    return false;
+  if (hasDirectUndefOrPoison(V, depth))
+    return true;
+  if (auto *I = llvm::dyn_cast<llvm::Instruction>(V)) {
+    if (llvm::isa<llvm::UnaryOperator>(I) ||
+        llvm::isa<llvm::BinaryOperator>(I) || llvm::isa<llvm::CastInst>(I)) {
+      for (const llvm::Value *Op : I->operands()) {
+        if (hasUndefOrPoison(Op, depth + 1))
+          return true;
+      }
+    }
+  }
+  return false;
+}
+
 static inline llvm::Value *checkedMul(bool strongZero,
                                       llvm::IRBuilder<> &Builder2,
                                       llvm::Value *idiff, llvm::Value *pres,
                                       const llvm::Twine &Name = "") {
+  if (hasDirectUndefOrPoison(pres))
+    pres = Builder2.CreateFreeze(pres);
+  else if (hasUndefOrPoison(pres))
+    strongZero = true;
   llvm::Value *res = Builder2.CreateFMul(idiff, pres, Name);
   if (strongZero) {
     llvm::Value *zero = llvm::Constant::getNullValue(idiff->getType());
@@ -2410,6 +2479,8 @@ static inline llvm::Value *checkedDiv(bool strongZero,
                                       llvm::IRBuilder<> &Builder2,
                                       llvm::Value *idiff, llvm::Value *pres,
                                       const llvm::Twine &Name = "") {
+  if (hasUndefOrPoison(pres))
+    strongZero = true;
   llvm::Value *res = Builder2.CreateFDiv(idiff, pres, Name);
   if (strongZero) {
     llvm::Value *zero = llvm::Constant::getNullValue(idiff->getType());

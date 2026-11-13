@@ -1263,8 +1263,8 @@ def : IntrPattern<(Op $x, $y),
 def : IntrPattern<(Op $x, $y, $z),
                   [["fma"], ["fmuladd"]],
                   [
-                    (FMul (DiffeRet), $y),
-                    (FMul (DiffeRet), $x),
+                    (CheckedMul (DiffeRet), $y),
+                    (CheckedMul (DiffeRet), $x),
                     (DiffeRet)
                   ],
                   (ForwardFromSummedReverse)
