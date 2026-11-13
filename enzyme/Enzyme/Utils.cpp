@@ -725,7 +725,9 @@ Function *getOrInsertExponentialAllocator(Module &M, Function *newFunc,
                                           Type::getInt64Ty(M.getContext()));
 
     Value *args[] = {B.CreatePointerCast(ptr, allocType), next};
-    gVal = B.CreateCall(reallocF, args);
+    auto *RC = B.CreateCall(reallocF, args);
+    RC->addFnAttr(Attribute::get(M.getContext(), "enzyme_exponential_realloc"));
+    gVal = RC;
   } else {
     Value *tsize = ConstantInt::get(
         next->getType(),
