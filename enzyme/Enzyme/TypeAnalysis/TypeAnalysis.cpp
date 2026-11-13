@@ -4553,6 +4553,13 @@ void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
       } else if (opType1 == BaseType::Integer &&
                  opType0 == BaseType::Anything) {
         updateAnalysis(&I, TypeTree(BaseType::Integer).Only(-1, &I), &I);
+      } else if (I.getType()->getScalarSizeInBits() <
+                 fntypeinfo.Function->getParent()
+                     ->getDataLayout()
+                     .getPointerSizeInBits()) {
+        // The minimum or maximum of two's complement integers narrower than
+        // a pointer is neither a pointer nor a floating-point value.
+        updateAnalysis(&I, TypeTree(BaseType::Integer).Only(-1, &I), &I);
       }
     }
     return;
