@@ -1606,25 +1606,12 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
     // Note that since there can't be a recursive constant this shouldn't
     // infinite loop
     if (auto ce = dyn_cast<ConstantExpr>(Val)) {
-      if (ce->isCast()) {
-        if (isConstantValue(TR, ce->getOperand(0))) {
-          if (EnzymePrintActivity)
-            llvm::errs() << " VALUE const cast from from operand " << *Val
-                         << "\n";
-          InsertConstantValue(TR, Val);
-          return true;
-        }
-      }
-      if (ce->getOpcode() == Instruction::GetElementPtr &&
-          llvm::all_of(ce->operand_values(),
+      if (llvm::all_of(ce->operand_values(),
                        [&](Value *v) { return isConstantValue(TR, v); })) {
-        if (isConstantValue(TR, ce->getOperand(0))) {
-          if (EnzymePrintActivity)
-            llvm::errs() << " VALUE const cast from gep operand " << *Val
-                         << "\n";
-          InsertConstantValue(TR, Val);
-          return true;
-        }
+        if (EnzymePrintActivity)
+          llvm::errs() << " VALUE const expr from operands " << *Val << "\n";
+        InsertConstantValue(TR, Val);
+        return true;
       }
       if (EnzymePrintActivity)
         llvm::errs() << " VALUE nonconst unknown expr " << *Val << "\n";

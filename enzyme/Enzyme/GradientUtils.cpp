@@ -5830,11 +5830,40 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
   // Nulling the shadow for a constant is only necessary if any of the data
   // could contain a float (e.g. should not be applied to pointers).
   if (shouldNullShadow) {
+    // A GlobalValue is always a symbol pointer and cannot carry float data.
+    // Returning it directly keeps aggregate shadows as Constants even when the
+    // sliced element TypeTree is empty.
+    if (isa<GlobalValue>(oval)) {
+      auto rule = [&oval]() { return oval; };
+      return applyChainRule(oval->getType(), BuilderM, rule);
+    }
+    if (isa<ConstantExpr>(oval) && !TT.isKnown())
+      TT = TR.query(oval);
+
     size_t size = (DL.getTypeSizeInBits(oval->getType()) + 7) / 8;
     if (TT.anyFloat(oval, DL)) {
       if (TT.allFloat(oval, DL, /*anythingIsFloat*/ true))
         return Constant::getNullValue(getShadowType(oval->getType()));
-      else {
+      // A ConstantExpr with no concrete float bytes (e.g. a relocatable
+      // ptrtoint expression whose sliced TypeTree is Unknown) cannot be
+      // rewritten via runtime alloca/store/load when inverted as an element of
+      // a ConstantStruct/ConstantArray/GlobalVariable initializer.
+      if (isa<ConstantExpr>(oval)) {
+        bool hasConcreteFloat = false;
+        for (size_t i = 0; i < size; ++i) {
+          if (TT[{(int)i}].isFloat()) {
+            hasConcreteFloat = true;
+            break;
+          }
+        }
+        if (!hasConcreteFloat) {
+          if (oval->getType()->isFPOrFPVectorTy())
+            return Constant::getNullValue(getShadowType(oval->getType()));
+          auto rule = [&oval]() { return oval; };
+          return applyChainRule(oval->getType(), BuilderM, rule);
+        }
+      }
+      {
         IRBuilder<> bb(inversionAllocs);
         // The scratch slot lives with the other allocas, so a value defined in
         // a loop does not grow the stack on every iteration.
@@ -5851,7 +5880,12 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
             bb.SetInsertPoint(NewInstruction->getParent());
         }
         auto AT = ArrayType::get(bb.getInt8Ty(), size);
-        bb.CreateStore(getNewFromOriginal(oval), alloc);
+        // Constants (other than BlockAddress) are shared between the old and
+        // new functions and are not always present in originalToNewFn.
+        Value *origVal = (isa<Constant>(oval) && !isa<BlockAddress>(oval))
+                             ? oval
+                             : getNewFromOriginal(oval);
+        bb.CreateStore(origVal, alloc);
         Value *cur = bb.CreatePointerCast(alloc, getUnqual(AT));
         size_t i = 0;
         assert(size > 0);
