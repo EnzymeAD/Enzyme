@@ -214,7 +214,10 @@ struct ForOpInterfaceReverse
     Value stepV = arith::ConstantIndexOp::create(builder, loc, step);
     Value ubV = arith::ConstantIndexOp::create(builder, loc, ub);
     Value lbV = arith::ConstantIndexOp::create(builder, loc, lb);
-    return scf::ForOp::create(builder, loc, lbV, ubV, stepV, inits);
+    auto loop = scf::ForOp::create(builder, loc, lbV, ubV, stepV, inits);
+    if (!loop.getBody()->empty())
+      loop.getBody()->front().erase();
+    return loop;
   }
 
   // Both outer loops count segments: one iteration per checkpoint, so the trip
@@ -272,7 +275,10 @@ struct ForOpInterfaceReverse
                                       ArrayRef<Value> hint, ValueRange inits) {
     Value one = arith::ConstantIndexOp::create(builder, loc, 1);
     Value zero = arith::ConstantIndexOp::create(builder, loc, 0);
-    return scf::ForOp::create(builder, loc, zero, hint[1], one, inits);
+    auto loop = scf::ForOp::create(builder, loc, zero, hint[1], one, inits);
+    if (!loop.getBody()->empty())
+      loop.getBody()->front().erase();
+    return loop;
   }
 
   static scf::ForOp createForwardSegmentLoop(OpBuilder &builder, Location loc,
@@ -292,9 +298,12 @@ struct ForOpInterfaceReverse
   static scf::ForOp createLoopWithSameBounds(OpBuilder &builder, Location loc,
                                              scf::ForOp templateLoop,
                                              ValueRange inits) {
-    return scf::ForOp::create(builder, loc, templateLoop.getLowerBound(),
-                              templateLoop.getUpperBound(),
-                              templateLoop.getStep(), inits);
+    auto loop = scf::ForOp::create(builder, loc, templateLoop.getLowerBound(),
+                                   templateLoop.getUpperBound(),
+                                   templateLoop.getStep(), inits);
+    if (!loop.getBody()->empty())
+      loop.getBody()->front().erase();
+    return loop;
   }
 
   // start + step * (segment base + localIV): the original loop's own induction

@@ -10,6 +10,7 @@ module {
     %0 = scf.for %i = %c0 to %c3 step %c1 iter_args(%it = %init) -> (f32) {
       %val = memref.load %m[] : memref<f32>
       %mul = arith.mulf %val, %it : f32
+      memref.store %mul, %m[] : memref<f32>
       scf.yield %mul : f32
     } {enzyme.enable_checkpointing = true,
        enzyme.binomial_checkpointing,
