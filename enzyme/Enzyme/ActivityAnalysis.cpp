@@ -26,6 +26,7 @@
 //===----------------------------------------------------------------------===//
 #include <cstdint>
 #include <deque>
+#include <limits>
 
 #include <llvm/Config/llvm-config.h>
 #include <memory>
@@ -936,22 +937,29 @@ static inline void propagateArgumentInformation(
 static bool isAllIntegralMemory(TypeResults const &TR, Value *Pointer,
                                 Type *AccessType) {
   const DataLayout &Layout = TR.getFunction()->getParent()->getDataLayout();
-  auto AccessSize = (Layout.getTypeSizeInBits(AccessType) + 7) / 8;
+  TypeSize BitSize = Layout.getTypeSizeInBits(AccessType);
+  if (BitSize.isScalable())
+    return false;
+  uint64_t AccessSize = (BitSize.getFixedValue() + 7) / 8;
+  if (AccessSize == 0)
+    return false;
 
-  bool SeenInteger = false;
   auto PointeeTree = TR.query(Pointer).Data0();
-  for (int Index = -1; Index < (int)AccessSize; ++Index) {
-    auto DataType = PointeeTree[{Index}];
-    if (DataType.isIntegral() || DataType == BaseType::Anything) {
-      SeenInteger = true;
-      if (Index == -1)
-        break;
-      continue;
+  if (PointeeTree[{-1}].isIntegral()) {
+    for (const auto &Entry : PointeeTree.getMapping()) {
+      if (Entry.first.size() == 1 && Entry.first[0] >= 0 &&
+          (uint64_t)Entry.first[0] < AccessSize && !Entry.second.isIntegral())
+        return false;
     }
-    if (DataType.isKnown())
+    return true;
+  }
+  if (AccessSize > (uint64_t)std::numeric_limits<int>::max())
+    return false;
+  for (uint64_t Index = 0; Index < AccessSize; ++Index) {
+    if (!PointeeTree[{(int)Index}].isIntegral())
       return false;
   }
-  return SeenInteger;
+  return true;
 }
 
 /// Return whether this instruction is known not to propagate adjoints
