@@ -695,10 +695,10 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
     }
     // Outside of forward mode, we don't need to keep a primal around in reverse
     // just for the deallocation
-    if (!(mode == DerivativeMode::ForwardMode ||
-          mode == DerivativeMode::ForwardModeError) &&
-        isDeallocationFunction(funcName, gutils->TLI)) {
-    } else {
+    bool isDealloc = !(mode == DerivativeMode::ForwardMode ||
+                       mode == DerivativeMode::ForwardModeError) &&
+                     isDeallocationFunction(funcName, gutils->TLI);
+    if (!isDealloc) {
       for (size_t i = 0; i < CI->arg_size(); i++) {
         if (val == CI->getArgOperand(i)) {
           if (!isNoCapture(CI, i)) {
@@ -713,9 +713,12 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
       }
     }
 
-    // Don't need the primal argument if it is write only and not captured
+    // Don't need the primal argument if it is a deallocation or write-only and
+    // not captured, unless runtime activity may compare it against its shadow.
     if (!shadow)
-      if (writeOnlyNoCapture) {
+      if (isDealloc || (writeOnlyNoCapture &&
+                        (!gutils->runtimeActivity ||
+                         gutils->isConstantValue(const_cast<Value *>(val))))) {
         if (EnzymePrintDiffUse)
           llvm::errs() << " No Need: primal of " << *val
                        << " per write-only no-capture use in " << *CI << "\n";

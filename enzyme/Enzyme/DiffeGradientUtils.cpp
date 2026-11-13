@@ -1213,22 +1213,28 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
       res = SanitizeDerivatives(orig, res, BuilderM);
       StoreInst *st = BuilderM.CreateStore(res, ptr);
 
-      SmallVector<Metadata *, 1> scopeMD = {
-          getDerivativeAliasScope(origptr, idx)};
+      bool distinct = isStaticallyDistinctFromShadow(origptr);
+      SmallVector<Metadata *, 1> scopeMD;
+      if (distinct)
+        scopeMD.push_back(getDerivativeAliasScope(origptr, idx));
       if (auto origValI = dyn_cast_or_null<Instruction>(origVal))
         if (auto MD = origValI->getMetadata(LLVMContext::MD_alias_scope)) {
           auto MDN = cast<MDNode>(MD);
           for (auto &o : MDN->operands())
             scopeMD.push_back(o);
         }
-      auto scope = MDNode::get(LI->getContext(), scopeMD);
-      LI->setMetadata(LLVMContext::MD_alias_scope, scope);
-      st->setMetadata(LLVMContext::MD_alias_scope, scope);
+      if (scopeMD.size()) {
+        auto scope = MDNode::get(LI->getContext(), scopeMD);
+        LI->setMetadata(LLVMContext::MD_alias_scope, scope);
+        st->setMetadata(LLVMContext::MD_alias_scope, scope);
+      }
 
       SmallVector<Metadata *, 1> MDs;
-      for (ssize_t j = -1; j < getWidth(); j++) {
-        if (j != (ssize_t)idx)
-          MDs.push_back(getDerivativeAliasScope(origptr, j));
+      if (distinct) {
+        for (ssize_t j = -1; j < getWidth(); j++) {
+          if (j != (ssize_t)idx)
+            MDs.push_back(getDerivativeAliasScope(origptr, j));
+        }
       }
       if (auto origValI = dyn_cast_or_null<Instruction>(origVal))
         if (auto MD = origValI->getMetadata(LLVMContext::MD_noalias)) {
@@ -1237,9 +1243,11 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
             MDs.push_back(o);
         }
       idx++;
-      auto noscope = MDNode::get(ptr->getContext(), MDs);
-      LI->setMetadata(LLVMContext::MD_noalias, noscope);
-      st->setMetadata(LLVMContext::MD_noalias, noscope);
+      if (MDs.size()) {
+        auto noscope = MDNode::get(ptr->getContext(), MDs);
+        LI->setMetadata(LLVMContext::MD_noalias, noscope);
+        st->setMetadata(LLVMContext::MD_noalias, noscope);
+      }
 
       if (origVal && isa<Instruction>(origVal) && start == 0 &&
           size == (DL.getTypeSizeInBits(origVal->getType()) + 7) / 8) {
@@ -1363,19 +1371,20 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(
       }
 
       if (!isConstantValue(origptr)) {
-        auto basePtr = getBaseObject(origptr);
-        assert(!isConstantValue(basePtr));
+        assert(!isConstantValue(getBaseObject(origptr)));
         // If runtime activity, first see if we can prove that the shadow/primal
         // are distinct statically as they are allocas/mallocs, if not compare
         // the pointers and conditionally execute.
-        if ((!isa<AllocaInst>(basePtr) && !isAllocationCall(basePtr, TLI)) &&
-            runtimeActivity && !merge) {
+        if (!isStaticallyDistinctFromShadow(origptr) && !merge) {
           Value *primal_val = lookupM(getNewFromOriginal(origptr), Builder2);
           Value *shadow_val =
               lookupM(invertPointerM(origptr, Builder2), Builder2);
           if (getWidth() != 1) {
             shadow_val = extractMeta(Builder2, shadow_val, 0);
           }
+          if (primal_val->getType() != shadow_val->getType())
+            primal_val = Builder2.CreatePointerBitCastOrAddrSpaceCast(
+                primal_val, shadow_val->getType());
           Value *shadow = Builder2.CreateICmpNE(primal_val, shadow_val);
 
           BasicBlock *current = Builder2.GetInsertBlock();
