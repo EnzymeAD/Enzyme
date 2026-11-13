@@ -1904,8 +1904,8 @@ static bool mayReadThroughCustomRule(Function &F, unsigned argno) {
   return !isReturnLikeParam(F, argno);
 }
 
-bool DetectPointerArgOfFn(llvm::Function &F,
-                          SmallPtrSetImpl<Function *> &calls_todo) {
+static bool DetectPointerArgOfFnImpl(
+    llvm::Function &F, llvm::SmallSetVector<llvm::Function *, 4> &calls_todo) {
   if (F.empty())
     return false;
   bool changed = false;
@@ -2002,7 +2002,7 @@ bool DetectPointerArgOfFn(llvm::Function &F,
 
           if (!isNoCapture(CB, U.getOperandNo()) && !arg.hasNoCaptureAttr()) {
             captured = true;
-            if (F2)
+            if (F2 && !F2->empty())
               calls_todo.insert(F2);
           }
 
@@ -2010,7 +2010,7 @@ bool DetectPointerArgOfFn(llvm::Function &F,
               !Attrs.hasParamAttr(arg.getArgNo(), Attribute::ReadNone) &&
               !Attrs.hasParamAttr(arg.getArgNo(), Attribute::ReadOnly)) {
             written = true;
-            if (F2)
+            if (F2 && !F2->empty())
               calls_todo.insert(F2);
           }
 
@@ -2018,7 +2018,7 @@ bool DetectPointerArgOfFn(llvm::Function &F,
               !Attrs.hasParamAttr(arg.getArgNo(), Attribute::ReadNone) &&
               !Attrs.hasParamAttr(arg.getArgNo(), Attribute::WriteOnly)) {
             read = true;
-            if (F2)
+            if (F2 && !F2->empty())
               calls_todo.insert(F2);
           }
           continue;
@@ -2083,15 +2083,24 @@ bool DetectPointerArgOfFn(llvm::Function &F,
   return changed;
 }
 
-// returns if newly changed, subject to the pending calls
-bool DetectNoUnwindOfFn(llvm::Function &F,
-                        SmallPtrSetImpl<Function *> &calls_todo) {
+bool DetectPointerArgOfFn(llvm::Function &F,
+                          SmallPtrSetImpl<Function *> &calls_todo) {
+  SmallSetVector<Function *, 4> ordered_todo;
+  bool changed = DetectPointerArgOfFnImpl(F, ordered_todo);
+  for (Function *F2 : ordered_todo)
+    calls_todo.insert(F2);
+  return changed;
+}
+
+// Returns whether F can be marked nounwind once all functions collected in
+// calls_todo are marked nounwind. Marks F immediately when calls_todo is empty.
+static bool
+DetectNoUnwindOfFn(llvm::Function &F,
+                   llvm::SmallSetVector<llvm::Function *, 4> &calls_todo) {
   if (F.empty())
     return false;
   if (F.doesNotThrow())
     return false;
-
-  bool mayThrow = false;
 
   for (auto &BB : F) {
     for (auto &I : BB) {
@@ -2106,20 +2115,20 @@ bool DetectNoUnwindOfFn(llvm::Function &F,
 #endif
       if (auto CB = dyn_cast<CallBase>(&I)) {
         if (auto F2 = CB->getCalledFunction()) {
-          if (F2 == &F)
+          if (F2 == &F || F2->doesNotThrow())
             continue;
-          if (F2->doesNotThrow())
+          if (!F2->empty()) {
+            calls_todo.insert(F2);
             continue;
-          calls_todo.insert(F2);
+          }
         }
       }
-      mayThrow = true;
-      break;
+      calls_todo.clear();
+      return false;
     }
   }
-  if (mayThrow)
-    return false;
-  F.setDoesNotThrow();
+  if (calls_todo.empty())
+    F.setDoesNotThrow();
   return true;
 }
 
@@ -3190,94 +3199,107 @@ bool DetectReadonlyOrThrow(Module &M) {
   bool changed = false;
 
   {
-    // Set of functions newly deduced readonly/nocapture/etc by this pass
+    // Functions newly deduced nounwind by this pass.
     SmallVector<llvm::Function *> todo;
 
-    // Map of functions which could be readonly if all functions in the set are
-    // marked readonly
-    DenseMap<llvm::Function *, SmallPtrSet<Function *, 1>> todo_map;
+    // Map from a function to its pending throwing callees.
+    DenseMap<llvm::Function *, SmallPtrSet<Function *, 4>> todo_map;
+
+    // Inverse of todo_map: callee -> callers waiting on it to become nounwind.
+    DenseMap<llvm::Function *, SmallSetVector<Function *, 4>> inverse_todo_map;
 
     for (Function &F : M) {
-      SmallPtrSet<Function *, 1> calls_todo;
+      SmallSetVector<Function *, 4> calls_todo;
       if (DetectNoUnwindOfFn(F, calls_todo)) {
-        changed = true;
-        for (auto F2 : todo_map[&F]) {
-          todo.push_back(F2);
+        if (calls_todo.empty()) {
+          changed = true;
+          todo.push_back(&F);
+        } else {
+          auto &fwd = todo_map[&F];
+          for (auto F2 : calls_todo) {
+            fwd.insert(F2);
+            inverse_todo_map[F2].insert(&F);
+          }
         }
-        todo_map.erase(&F);
-      }
-      for (auto tocheck : calls_todo) {
-        todo_map[tocheck].insert(&F);
-        todo.push_back(tocheck);
       }
     }
 
     while (!todo.empty()) {
       auto cur = todo.pop_back_val();
-
-      SmallPtrSet<Function *, 1> calls_todo;
-
-      if (!DetectNoUnwindOfFn(*cur, calls_todo))
+      auto found = inverse_todo_map.find(cur);
+      if (found == inverse_todo_map.end())
         continue;
 
-      for (auto F2 : todo_map[cur]) {
-        todo.push_back(F2);
+      for (auto F2 : found->second) {
+        auto found2 = todo_map.find(F2);
+        assert(found2 != todo_map.end() &&
+               "Pending caller missing from nounwind dependency map");
+        auto &fwd_set = found2->second;
+        fwd_set.erase(cur);
+        if (fwd_set.empty()) {
+          todo_map.erase(found2);
+          F2->setDoesNotThrow();
+          changed = true;
+          todo.push_back(F2);
+        }
       }
 
-      todo_map.erase(cur);
-
-      for (auto tocheck : calls_todo) {
-        todo_map[tocheck].insert(cur);
-        todo.push_back(tocheck);
-      }
-
-      changed = true;
+      inverse_todo_map.erase(found);
     }
   }
 
   {
-    // Set of functions newly deduced readonly/nocapture/etc by this pass
+    // Worklist of functions whose pointer-argument attributes should be
+    // re-checked after a callee gained new pointer attributes.
     SmallVector<llvm::Function *> todo;
+    SmallPtrSet<llvm::Function *, 32> inQueue;
+    auto enqueue = [&](Function *Fn) {
+      if (inQueue.insert(Fn).second)
+        todo.push_back(Fn);
+    };
 
-    // Map of functions which could be readonly if all functions in the set are
-    // marked readonly
-    DenseMap<llvm::Function *, SmallPtrSet<Function *, 1>> todo_map;
+    // Map from a callee to callers whose pointer arguments may gain
+    // attributes when the callee's pointer arguments gain attributes.
+    DenseMap<llvm::Function *, SmallSetVector<Function *, 4>> todo_map;
 
     for (Function &F : M) {
-      SmallPtrSet<Function *, 1> calls_todo;
-      if (DetectPointerArgOfFn(F, calls_todo)) {
-        changed = true;
-        for (auto F2 : todo_map[&F]) {
-          todo.push_back(F2);
-        }
-        todo_map.erase(&F);
-      }
+      SmallSetVector<Function *, 4> calls_todo;
+      bool fnChanged = DetectPointerArgOfFnImpl(F, calls_todo);
       for (auto tocheck : calls_todo) {
-        todo_map[tocheck].insert(&F);
-        todo.push_back(tocheck);
+        if (tocheck != &F)
+          todo_map[tocheck].insert(&F);
+      }
+      if (fnChanged) {
+        changed = true;
+        if (auto it = todo_map.find(&F); it != todo_map.end()) {
+          for (auto F2 : it->second)
+            enqueue(F2);
+        }
+        if (calls_todo.count(&F))
+          enqueue(&F);
       }
     }
 
     while (!todo.empty()) {
       auto cur = todo.pop_back_val();
+      inQueue.erase(cur);
 
-      SmallPtrSet<Function *, 1> calls_todo;
-
-      if (!DetectPointerArgOfFn(*cur, calls_todo))
+      SmallSetVector<Function *, 4> calls_todo;
+      bool fnChanged = DetectPointerArgOfFnImpl(*cur, calls_todo);
+      for (auto tocheck : calls_todo) {
+        if (tocheck != cur)
+          todo_map[tocheck].insert(cur);
+      }
+      if (!fnChanged)
         continue;
 
-      for (auto F2 : todo_map[cur]) {
-        todo.push_back(F2);
-      }
-
-      todo_map.erase(cur);
-
-      for (auto tocheck : calls_todo) {
-        todo_map[tocheck].insert(cur);
-        todo.push_back(tocheck);
-      }
-
       changed = true;
+      if (auto it = todo_map.find(cur); it != todo_map.end()) {
+        for (auto F2 : it->second)
+          enqueue(F2);
+      }
+      if (calls_todo.count(cur))
+        enqueue(cur);
     }
   }
 

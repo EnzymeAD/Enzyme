@@ -49,7 +49,7 @@ static void loadPass(const PassManagerBuilder &Builder,
   PM.add(createPreserveNVVMPass(/*Begin=*/true));
   PM.add(createGVNPass());
   PM.add(createSROAPass());
-  PM.add(createEnzymePass(/*PostOpt*/ true));
+  PM.add(createEnzymePass(/*PostOpt*/ true, /*SkipIfNoEnzyme*/ true));
   PM.add(createPreserveNVVMPass(/*Begin=*/false));
   PM.add(createGVNPass());
   PM.add(createSROAPass());
