@@ -8569,16 +8569,18 @@ struct ConstraintContext {
 };
 
 bool cannotDependOnLoopIV(const SCEV *S, const Loop *L) {
-  assert(L);
+  assert(L && "Loop must be non-null");
   if (isa<SCEVConstant>(S))
     return true;
-  if (auto M = dyn_cast<SCEVAddExpr>(S)) {
-    for (auto o : M->operands())
+  if (auto addrec = dyn_cast<SCEVAddRecExpr>(S)) {
+    if (addrec->getLoop() == L || L->contains(addrec->getLoop()))
+      return false;
+    for (auto o : addrec->operands())
       if (!cannotDependOnLoopIV(o, L))
         return false;
     return true;
   }
-  if (auto M = dyn_cast<SCEVMulExpr>(S)) {
+  if (auto M = dyn_cast<SCEVNAryExpr>(S)) {
     for (auto o : M->operands())
       if (!cannotDependOnLoopIV(o, L))
         return false;
@@ -8592,22 +8594,13 @@ bool cannotDependOnLoopIV(const SCEV *S, const Loop *L) {
   }
   if (auto UV = dyn_cast<SCEVUnknown>(S)) {
     auto U = UV->getValue();
-    if (isa<Argument>(U))
+    if (isa<Argument>(U) || isa<Constant>(U))
       return true;
-    if (isa<Constant>(U))
-      return true;
-    auto I = cast<Instruction>(U);
-    return !L->contains(I->getParent());
+    if (auto I = dyn_cast<Instruction>(U))
+      return !L->contains(I->getParent());
+    return false;
   }
-  if (auto addrec = dyn_cast<SCEVAddRecExpr>(S)) {
-    if (addrec->getLoop() == L)
-      return false;
-    for (auto o : addrec->operands())
-      if (!cannotDependOnLoopIV(o, L))
-        return false;
-    return true;
-  }
-  if (auto expr = dyn_cast<SCEVSignExtendExpr>(S)) {
+  if (auto expr = dyn_cast<SCEVCastExpr>(S)) {
     return cannotDependOnLoopIV(expr->getOperand(), L);
   }
   llvm::errs() << " cannot tell if depends on loop iv: " << *S << "\n";
@@ -8845,19 +8838,49 @@ return true;
     case Type::Union: {
       // not of or's is and of not's
       SetTy next;
-      for (const auto &v : values)
-        insert(next, v->notB(ctx));
+      for (const auto &v : values) {
+        auto nv = v->notB(ctx);
+        if (!nv)
+          return nullptr;
+        if (nv->isNone())
+          return Constraints::none();
+        if (nv->isAll())
+          continue;
+        if (nv->ty == Type::Intersect) {
+          for (const auto &sub : nv->values)
+            insert(next, sub);
+        } else {
+          insert(next, nv);
+        }
+      }
+      if (next.empty())
+        return Constraints::all();
       if (next.size() == 1)
-        llvm::errs() << " uold : " << *this << "\n";
+        return *next.begin();
       return std::make_shared<Constraints>(Type::Intersect, next);
     }
     case Type::Intersect: {
       // not of and's is or of not's
       SetTy next;
-      for (const auto &v : values)
-        insert(next, v->notB(ctx));
+      for (const auto &v : values) {
+        auto nv = v->notB(ctx);
+        if (!nv)
+          return nullptr;
+        if (nv->isAll())
+          return Constraints::all();
+        if (nv->isNone())
+          continue;
+        if (nv->ty == Type::Union) {
+          for (const auto &sub : nv->values)
+            insert(next, sub);
+        } else {
+          insert(next, nv);
+        }
+      }
+      if (next.empty())
+        return Constraints::none();
       if (next.size() == 1)
-        llvm::errs() << " old : " << *this << "\n";
+        return *next.begin();
       return std::make_shared<Constraints>(Type::Union, next);
     }
     }
@@ -8895,8 +8918,9 @@ return true;
       return nullptr;
     }
     if (ty == Type::Compare && rhs->ty == Type::Compare) {
-      auto sub = ctx.SE.getMinusSCEV(node, rhs->node);
-      if (Loop == rhs->Loop) {
+      bool sameTy = node->getType() == rhs->node->getType();
+      if (Loop == rhs->Loop && sameTy) {
+        auto sub = ctx.SE.getMinusSCEV(node, rhs->node);
         // llvm::errs() << " + sameloop, sub=" << *sub << "\n";
         if (auto cst = dyn_cast<SCEVConstant>(sub)) {
           // the two solves are equivalent to each other
@@ -8922,14 +8946,13 @@ return true;
               insert(vals, rhs);
               return std::make_shared<Constraints>(Type::Intersect, vals);
             } else if (!isEqual) {
-              assert(rhs->isEqual);
+              assert(rhs->isEqual && "Expected rhs equality");
               // iv != 0 and iv == 1
               return rhs;
-              ;
             } else {
               // iv == 0 and iv != 1
-              assert(isEqual);
-              assert(!rhs->isEqual);
+              assert(isEqual && "Expected lhs equality");
+              assert(!rhs->isEqual && "Expected rhs inequality");
               return shared_from_this();
             }
           }
@@ -8937,36 +8960,32 @@ return true;
           // llvm::errs() << " + botheq\n";
           // eq(i, a) & i ?= b -> eq(i, a) & (a ?= b)
           if (auto addrec = dyn_cast<SCEVAddRecExpr>(sub)) {
-            // we want a ?= b, but we can only represent loopvar ?= something
-            // so suppose a-b is of the form X + Y * lv  then a-b ?= 0 is
-            //   X + Y * lv ?= 0 -> lv ?= - X / Y
-            if (addrec->isAffine()) {
+            // Only solve unit-step affine recurrences X + (+/-1) * lv ?= 0
+            // directly, since non-unit or symbolic steps in a subtracted
+            // recurrence lack wrap guarantees and could divide inexactly or
+            // by zero.
+            if (addrec->isAffine() &&
+                addrec->getLoop()->getCanonicalInductionVariable()) {
               auto X = addrec->getStart();
               auto Y = addrec->getStepRecurrence(ctx.SE);
-              auto MinusX = X;
-
-              if (isa<SCEVConstant>(Y) &&
-                  cast<SCEVConstant>(Y)->getAPInt().isNegative())
-                Y = ctx.SE.getNegativeSCEV(Y);
-              else
-                MinusX = ctx.SE.getNegativeSCEV(X);
-
-              auto div = ctx.SE.getUDivExpr(MinusX, Y);
-              auto div_e = ctx.SE.getUDivExactExpr(MinusX, Y);
-              // in case of inexact division, check that these exactly equal
-              // for replacement
-
-              if (div == div_e) {
+              const SCEV *sol = nullptr;
+              if (auto YC = dyn_cast<SCEVConstant>(Y)) {
+                if (YC->getAPInt().isOne())
+                  sol = ctx.SE.getNegativeSCEV(X);
+                else if (YC->getAPInt().isAllOnes())
+                  sol = X;
+              }
+              if (sol && sol->getType() == addrec->getLoop()
+                                               ->getCanonicalInductionVariable()
+                                               ->getType()) {
                 if (isEqual) {
-                  auto res = make_compare(div, /*isEqual*/ rhs->isEqual,
+                  auto res = make_compare(sol, /*isEqual*/ rhs->isEqual,
                                           addrec->getLoop(), ctx);
-                  // llvm::errs() << " simplified rhs to: " << *res << "\n";
                   return andB(res, ctx);
                 } else {
-                  assert(rhs->isEqual);
-                  auto res = make_compare(div, /*isEqual*/ isEqual,
+                  assert(rhs->isEqual && "Expected rhs equality");
+                  auto res = make_compare(sol, /*isEqual*/ isEqual,
                                           addrec->getLoop(), ctx);
-                  // llvm::errs() << " simplified lhs to: " << *res << "\n";
                   return rhs->andB(res, ctx);
                 }
               }
@@ -9003,13 +9022,16 @@ return true;
               return andB(newrhs, ctx);
             }
 
-        // not loop -> node == 0
-        if (!Loop) {
-          for (auto sub1 : {ctx.SE.getMinusSCEV(node, rhs->node),
-                            ctx.SE.getMinusSCEV(rhs->node, node)}) {
-            // llvm::errs() << " maybe replace lhs: " << *this << " rhs: " <<
-            // *rhs
-            //             << " sub1: " << *sub1 << "\n";
+        // not loop -> node == 0. Substituting node = 0 into rhs preserves
+        // rhs->node +/- node, whereas node - rhs->node negates rhs->node and
+        // is only valid when !rhs->Loop (i.e. comparing against 0).
+        if (!Loop && sameTy) {
+          SmallVector<const SCEV *, 3> cands = {
+              ctx.SE.getMinusSCEV(rhs->node, node),
+              ctx.SE.getAddExpr(rhs->node, node)};
+          if (!rhs->Loop)
+            cands.push_back(ctx.SE.getMinusSCEV(node, rhs->node));
+          for (auto sub1 : cands) {
             auto newrhs = make_compare(sub1, rhs->isEqual, rhs->Loop, ctx);
             if (*newrhs == *this)
               return shared_from_this();
@@ -9028,16 +9050,17 @@ return true;
               return newlhs->andB(rhs, ctx);
             }
 
-        // not loop -> node == 0
-        if (!rhs->Loop) {
-          for (auto sub1 : {ctx.SE.getMinusSCEV(node, rhs->node),
-                            ctx.SE.getMinusSCEV(rhs->node, node)}) {
-            // llvm::errs() << " maybe replace lhs2: " << *this << " rhs: " <<
-            // *rhs
-            //             << " sub1: " << *sub1 << "\n";
+        // not loop -> rhs->node == 0.
+        if (!rhs->Loop && sameTy) {
+          SmallVector<const SCEV *, 3> cands = {
+              ctx.SE.getMinusSCEV(node, rhs->node),
+              ctx.SE.getAddExpr(node, rhs->node)};
+          if (!Loop)
+            cands.push_back(ctx.SE.getMinusSCEV(rhs->node, node));
+          for (auto sub1 : cands) {
             auto newlhs = make_compare(sub1, isEqual, Loop, ctx);
-            if (*newlhs == *this)
-              return shared_from_this();
+            if (*newlhs == *rhs)
+              return rhs;
             if (!isa<SCEVConstant>(node) && isa<SCEVConstant>(sub1)) {
               return newlhs->andB(rhs, ctx);
             }
@@ -9045,7 +9068,8 @@ return true;
         }
       }
 
-      if (!Loop && !rhs->Loop && isEqual == rhs->isEqual) {
+      if (!Loop && !rhs->Loop && isEqual == rhs->isEqual && sameTy &&
+          node->getType()->isIntegerTy()) {
         if (node == ctx.SE.getNegativeSCEV(rhs->node))
           return shared_from_this();
       }
@@ -9213,7 +9237,7 @@ return true;
             break;
         }
 
-        if (*cur != *rhs)
+        if (cur && *cur != *rhs)
           return andB(cur, ctx);
       }
 
@@ -9228,7 +9252,8 @@ return true;
     // (m or a or b or d) and (m or a or c or e ...) -> m or a or ( (b or d)
     // and (c or e))
     if (ty == Type::Union && rhs->ty == Type::Union) {
-      if (*this == *rhs->notB(ctx)) {
+      auto notRhs = rhs->notB(ctx);
+      if (notRhs && *this == *notRhs) {
         return Constraints::none();
       }
       SetTy intersection = intersect(values, rhs->values);
@@ -9241,7 +9266,10 @@ return true;
         else {
           remainder = std::make_shared<Constraints>(Type::Union, intersection);
         }
-        return remainder->orB(other_lhs->andB(other_rhs, ctx), ctx);
+        auto otherAnd = other_lhs->andB(other_rhs, ctx);
+        if (!otherAnd)
+          return nullptr;
+        return remainder->orB(otherAnd, ctx);
       }
 
       bool changed = false;
@@ -9333,6 +9361,7 @@ return true;
       return std::make_shared<Constraints>(ty, res);
     }
   }
+  bool hasFiniteSolutions(const ConstraintContext &ctx) const;
   SmallVector<std::pair<Value *, Value *>, 1>
   allSolutions(SCEVExpander &Exp, llvm::Type *T, Instruction *IP,
                const ConstraintContext &ctx, IRBuilder<> &B) const;
@@ -9383,6 +9412,69 @@ raw_ostream &operator<<(raw_ostream &os, const Constraints &c) {
   return os;
 }
 
+bool Constraints::hasFiniteSolutions(const ConstraintContext &ctx) const {
+  switch (ty) {
+  case Type::None:
+    return true;
+  case Type::All:
+    return false;
+  case Type::Compare:
+    return ctx.loopToSolve == Loop && isEqual;
+  case Type::Union:
+    for (const auto &v : values)
+      if (!v->hasFiniteSolutions(ctx))
+        return false;
+    return true;
+  case Type::Intersect: {
+    SmallVector<InnerTy, 1> vals(values.begin(), values.end());
+    ssize_t unionidx = -1;
+    for (unsigned i = 0; i < vals.size(); i++) {
+      if (vals[i]->ty == Type::Union) {
+        unionidx = i;
+        bool allne = true;
+        for (auto &v : vals[i]->values) {
+          if (v->ty != Type::Compare || v->isEqual) {
+            allne = false;
+            break;
+          }
+        }
+        if (allne)
+          break;
+      }
+    }
+    if (unionidx != -1) {
+      auto others = Constraints::all();
+      for (unsigned j = 0; j < vals.size(); j++)
+        if (unionidx != j) {
+          others = others->andB(vals[j], ctx);
+          if (!others)
+            return false;
+        }
+      for (auto &v : vals[unionidx]->values) {
+        auto tmp = v->andB(others, ctx);
+        if (!tmp || !tmp->hasFiniteSolutions(ctx))
+          return false;
+      }
+      return true;
+    }
+    bool foundLoopEq = false;
+    for (const auto &v : values) {
+      if (v->ty != Type::Compare)
+        return false;
+      if (v->Loop == ctx.loopToSolve) {
+        if (!v->isEqual || foundLoopEq)
+          return false;
+        foundLoopEq = true;
+      } else if (v->Loop && !v->Loop->getCanonicalInductionVariable()) {
+        return false;
+      }
+    }
+    return foundLoopEq;
+  }
+  }
+  return false;
+}
+
 SmallVector<std::pair<Value *, Value *>, 1>
 Constraints::allSolutions(SCEVExpander &Exp, llvm::Type *T, Instruction *IP,
                           const ConstraintContext &ctx, IRBuilder<> &B) const {
@@ -9395,14 +9487,17 @@ Constraints::allSolutions(SCEVExpander &Exp, llvm::Type *T, Instruction *IP,
   case Type::Compare: {
     Value *cond = ConstantInt::getTrue(T->getContext());
     if (ctx.loopToSolve != Loop) {
-      assert(ctx.loopToSolve);
-      Value *ivVal = Exp.expandCodeFor(node, T, IP);
+      assert(ctx.loopToSolve && "loopToSolve must be non-null");
       Value *iv = nullptr;
+      llvm::Type *cmpTy = node->getType();
       if (Loop) {
         iv = Loop->getCanonicalInductionVariable();
-        assert(iv);
-      } else {
-        iv = ConstantInt::getNullValue(ivVal->getType());
+        assert(iv && "Outer loop must have a canonical induction variable");
+        cmpTy = iv->getType();
+      }
+      Value *ivVal = Exp.expandCodeFor(node, cmpTy, IP);
+      if (!Loop) {
+        iv = Constant::getNullValue(ivVal->getType());
       }
       if (isEqual)
         cond = B.CreateICmpEQ(ivVal, iv);
@@ -9415,7 +9510,7 @@ Constraints::allSolutions(SCEVExpander &Exp, llvm::Type *T, Instruction *IP,
     }
     EmitFailure("NoSparsification", IP->getDebugLoc(), IP,
                 "Negated solution not handled: ", *this);
-    assert(0);
+    assert(0 && "Negated solution not handled");
     return {};
   }
   case Type::Union: {
@@ -9446,11 +9541,14 @@ Constraints::allSolutions(SCEVExpander &Exp, llvm::Type *T, Instruction *IP,
       if (unionidx != -1) {
         auto others = Constraints::all();
         for (unsigned j = 0; j < vals.size(); j++)
-          if (unionidx != j)
+          if (unionidx != j) {
             others = others->andB(vals[j], ctx);
+            assert(others && "Unexpected cycle in allSolutions");
+          }
         SmallVector<std::pair<Value *, Value *>, 1> resvals;
         for (auto &v : vals[unionidx]->values) {
           auto tmp = v->andB(others, ctx);
+          assert(tmp && "Unexpected cycle in allSolutions");
           for (const auto &sol : tmp->allSolutions(Exp, T, IP, ctx, B))
             resvals.push_back(sol);
         }
@@ -9496,14 +9594,21 @@ getSparseConditions(bool &legal, Value *val,
                     Instruction *scope, const ConstraintContext &ctx) {
   if (auto I = dyn_cast<Instruction>(val)) {
     // Binary `and` is a bit-wise `umin`.
-    if (I->getOpcode() == Instruction::And) {
+    if (I->getOpcode() == Instruction::And && I->getType()->isIntegerTy(1)) {
       auto lhs = getSparseConditions(legal, I->getOperand(0),
                                      Constraints::all(), I, ctx);
       auto rhs = getSparseConditions(legal, I->getOperand(1),
                                      Constraints::all(), I, ctx);
+      if (!lhs || !rhs) {
+        legal = false;
+        return defaultFloat;
+      }
       auto res = lhs->andB(rhs, ctx);
-      assert(res);
-      assert(ctx.seen.size() == 0);
+      if (!res) {
+        legal = false;
+        return defaultFloat;
+      }
+      assert(ctx.seen.size() == 0 && "Expected empty ConstraintContext");
       if (SparseDebug) {
         llvm::errs() << " getSparse(and, " << *I << "), lhs("
                      << *I->getOperand(0) << ") = " << *lhs << "\n";
@@ -9515,12 +9620,20 @@ getSparseConditions(bool &legal, Value *val,
     }
 
     // Binary `or` is a bit-wise `umax`.
-    if (I->getOpcode() == Instruction::Or) {
+    if (I->getOpcode() == Instruction::Or && I->getType()->isIntegerTy(1)) {
       auto lhs = getSparseConditions(legal, I->getOperand(0),
                                      Constraints::none(), I, ctx);
       auto rhs = getSparseConditions(legal, I->getOperand(1),
                                      Constraints::none(), I, ctx);
+      if (!lhs || !rhs) {
+        legal = false;
+        return defaultFloat;
+      }
       auto res = lhs->orB(rhs, ctx);
+      if (!res) {
+        legal = false;
+        return defaultFloat;
+      }
       if (SparseDebug) {
         llvm::errs() << " getSparse(or, " << *I << "), lhs("
                      << *I->getOperand(0) << ") = " << *lhs << "\n";
@@ -9531,14 +9644,26 @@ getSparseConditions(bool &legal, Value *val,
       return res;
     }
 
-    if (I->getOpcode() == Instruction::Xor) {
+    if (I->getOpcode() == Instruction::Xor && I->getType()->isIntegerTy(1)) {
       for (int i = 0; i < 2; i++) {
         if (auto C = dyn_cast<ConstantInt>(I->getOperand(i)))
           if (C->isOne()) {
-            auto pres =
-                getSparseConditions(legal, I->getOperand(1 - i),
-                                    defaultFloat->notB(ctx), scope, ctx);
+            auto defNot = defaultFloat->notB(ctx);
+            if (!defNot) {
+              legal = false;
+              return defaultFloat;
+            }
+            auto pres = getSparseConditions(legal, I->getOperand(1 - i), defNot,
+                                            scope, ctx);
+            if (!pres) {
+              legal = false;
+              return defaultFloat;
+            }
             auto res = pres->notB(ctx);
+            if (!res) {
+              legal = false;
+              return defaultFloat;
+            }
             if (SparseDebug) {
               llvm::errs() << " getSparse(not, " << *I << "), prev ("
                            << *I->getOperand(0) << ") = " << *pres << "\n";
@@ -9561,40 +9686,124 @@ getSparseConditions(bool &legal, Value *val,
 
       auto sub1 = ctx.SE.getMinusSCEV(lhs, rhs);
 
-      if (icmp->getPredicate() == ICmpInst::ICMP_EQ ||
-          icmp->getPredicate() == ICmpInst::ICMP_NE) {
+      if (icmp->getType()->isIntegerTy(1) &&
+          (icmp->getPredicate() == ICmpInst::ICMP_EQ ||
+           icmp->getPredicate() == ICmpInst::ICMP_NE)) {
+        bool isEq = icmp->getPredicate() == ICmpInst::ICMP_EQ;
+        auto makeLoopConstraint =
+            [&](const SCEV *sol, const Loop *AddL,
+                const SCEV *extraZero) -> Constraints::InnerTy {
+          auto iv = AddL->getCanonicalInductionVariable();
+          if (!iv)
+            return nullptr;
+          auto ivTy = iv->getType();
+          auto solTy = sol->getType();
+          if (!ivTy->isIntegerTy() || !solTy->isIntegerTy())
+            return nullptr;
+          unsigned ivBits = ctx.SE.getTypeSizeInBits(ivTy);
+          unsigned solBits = ctx.SE.getTypeSizeInBits(solTy);
+          Constraints::InnerTy eqRes;
+          if (solBits == ivBits) {
+            eqRes = Constraints::make_compare(sol, /*isEqual=*/true, AddL, ctx);
+          } else if (solBits > ivBits) {
+            auto narrow = ctx.SE.getTruncateExpr(sol, ivTy);
+            auto extBack = ctx.SE.getZeroExtendExpr(narrow, solTy);
+            auto hiDiff = ctx.SE.getMinusSCEV(extBack, sol);
+            auto cmpLoop =
+                Constraints::make_compare(narrow, /*isEqual=*/true, AddL, ctx);
+            auto cmpHi = Constraints::make_compare(hiDiff, /*isEqual=*/true,
+                                                   nullptr, ctx);
+            eqRes = cmpLoop->andB(cmpHi, ctx);
+          } else {
+            auto btc = ctx.SE.getBackedgeTakenCount(AddL);
+            if (isa<SCEVCouldNotCompute>(btc))
+              return nullptr;
+            auto maxBtc = ctx.SE.getUnsignedRangeMax(btc);
+            unsigned maxW = std::max(maxBtc.getBitWidth(), ivBits);
+            auto maxSol = APInt::getMaxValue(solBits).zext(maxW);
+            if (maxBtc.zext(maxW).ugt(maxSol))
+              return nullptr;
+            auto wide = ctx.SE.getZeroExtendExpr(sol, ivTy);
+            eqRes =
+                Constraints::make_compare(wide, /*isEqual=*/true, AddL, ctx);
+          }
+          if (!eqRes)
+            return nullptr;
+          if (extraZero) {
+            auto remCmp = Constraints::make_compare(extraZero, /*isEqual=*/true,
+                                                    nullptr, ctx);
+            eqRes = eqRes->andB(remCmp, ctx);
+            if (!eqRes)
+              return nullptr;
+          }
+          return isEq ? eqRes : eqRes->notB(ctx);
+        };
+
+        // Unit-step affine case: A + (+/-1) * iv == 0 (always exact mod 2^W).
         if (auto add = dyn_cast<SCEVAddRecExpr>(sub1)) {
           if (add->isAffine()) {
-            // 0 === A + B * inc -> -A / B = inc
-            auto A = add->getStart();
             if (auto B =
                     dyn_cast<SCEVConstant>(add->getStepRecurrence(ctx.SE))) {
-
-              auto MA = A;
-              if (B->getAPInt().isNegative())
-                B = cast<SCEVConstant>(ctx.SE.getNegativeSCEV(B));
-              else
-                MA = ctx.SE.getNegativeSCEV(A);
-              auto div = ctx.SE.getUDivExpr(MA, B);
-              auto div_e = ctx.SE.getUDivExactExpr(MA, B);
-              if (div == div_e) {
-                auto res = Constraints::make_compare(
-                    div, icmp->getPredicate() == ICmpInst::ICMP_EQ,
-                    add->getLoop(), ctx);
-                if (SparseDebug) {
-                  llvm::errs()
-                      << " getSparse(icmp, " << *I << ") = " << *res << "\n";
+              const SCEV *sol = nullptr;
+              if (B->getAPInt().isOne())
+                sol = ctx.SE.getNegativeSCEV(add->getStart());
+              else if (B->getAPInt().isAllOnes())
+                sol = add->getStart();
+              if (sol) {
+                if (auto res =
+                        makeLoopConstraint(sol, add->getLoop(), nullptr)) {
+                  if (SparseDebug) {
+                    llvm::errs()
+                        << " getSparse(icmp, " << *I << ") = " << *res << "\n";
+                  }
+                  return res;
                 }
-                return res;
               }
             }
           }
         }
+
+        // Non-unit constant-step affine case: {A,+,B}<nuw> == R (or <nsw> with
+        // A >= 0 and B > 0), where R does not depend on the loop IV. Without
+        // unsigned overflow, A + B * iv == R iff iv == (R - A) /u B and
+        // ((R - A) /u B) * B == R - A.
+        for (auto [candAdd, other] :
+             {std::make_pair(lhs, rhs), std::make_pair(rhs, lhs)}) {
+          auto add = dyn_cast<SCEVAddRecExpr>(candAdd);
+          if (!add || !add->isAffine())
+            continue;
+          if (!cannotDependOnLoopIV(other, add->getLoop()))
+            continue;
+          auto B = dyn_cast<SCEVConstant>(add->getStepRecurrence(ctx.SE));
+          if (!B || B->isZero() || !B->getType()->isIntegerTy())
+            continue;
+          auto A = add->getStart();
+          bool noUnsignedWrap =
+              add->hasNoUnsignedWrap() ||
+              (add->hasNoSignedWrap() && B->getAPInt().isStrictlyPositive() &&
+               A->getType()->isIntegerTy() && ctx.SE.isKnownNonNegative(A));
+          if (!noUnsignedWrap)
+            continue;
+          auto diff = ctx.SE.getMinusSCEV(other, A);
+          if (diff->getType() != B->getType())
+            continue;
+          auto div = ctx.SE.getUDivExpr(diff, B);
+          auto rem = ctx.SE.getMinusSCEV(ctx.SE.getMulExpr(div, B), diff);
+          if (auto res = makeLoopConstraint(div, add->getLoop(), rem)) {
+            if (SparseDebug) {
+              llvm::errs() << " getSparse(icmp_affine, " << *I << ") = " << *res
+                           << "\n";
+            }
+            return res;
+          }
+        }
+
         if (cannotDependOnLoopIV(sub1, ctx.loopToSolve)) {
-          auto res = Constraints::make_compare(
-              sub1, icmp->getPredicate() == ICmpInst::ICMP_EQ, nullptr, ctx);
-          llvm::errs() << " getSparse(icmp_noloop, " << *I << ") = " << *res
-                       << "\n";
+          auto res = Constraints::make_compare(sub1, isEq, nullptr, ctx);
+          if (SparseDebug) {
+            llvm::errs() << " getSparse(icmp_noloop, " << *I << ") = " << *res
+                         << "\n";
+          }
           return res;
         }
       }
@@ -9639,7 +9848,15 @@ Constraints::InnerTy Constraints::make_compare(const SCEV *v, bool isEqual,
                                                const llvm::Loop *Loop,
                                                const ConstraintContext &ctx) {
   if (!Loop) {
-    assert(!isa<SCEVAddRecExpr>(v));
+    if (auto *AR = dyn_cast<SCEVAddRecExpr>(v))
+      assert(AR->getLoop() != ctx.loopToSolve &&
+             "Unscoped Compare must not depend on loopToSolve");
+    if (auto C = dyn_cast<SCEVConstant>(v)) {
+      if (C->isZero() == isEqual)
+        return Constraints::all();
+      else
+        return Constraints::none();
+    }
     SmallVector<Instruction *, 1> noassumption;
     ConstraintContext ctx2(ctx.SE, ctx.loopToSolve, noassumption, ctx.DT);
     for (auto I : ctx.Assumptions) {
@@ -9650,10 +9867,12 @@ Constraints::InnerTy Constraints::make_compare(const SCEV *v, bool isEqual,
       auto parsedCond = getSparseConditions(legal, I->getOperand(0),
                                             Constraints::none(), nullptr, ctx2);
       bool dominates = ctx.DT.dominates(I, ctx.loopToSolve->getHeader());
-      if (legal && dominates) {
+      if (legal && parsedCond && dominates) {
         if (parsedCond->ty == Type::Compare && !parsedCond->Loop) {
           if (parsedCond->node == v ||
-              parsedCond->node == ctx.SE.getNegativeSCEV(v)) {
+              (parsedCond->node->getType() == v->getType() &&
+               v->getType()->isIntegerTy() &&
+               parsedCond->node == ctx.SE.getNegativeSCEV(v))) {
             InnerTy res;
             if (parsedCond->isEqual == isEqual)
               res = Constraints::all();
@@ -9665,15 +9884,23 @@ Constraints::InnerTy Constraints::make_compare(const SCEV *v, bool isEqual,
       }
     }
   }
-  // cannot have negative loop canonical induction var
+  // If v is a constant greater than the loop's maximum backedge-taken count,
+  // the canonical induction variable (0..btc) can never equal v.
   if (Loop)
-    if (auto C = dyn_cast<SCEVConstant>(v))
-      if (C->getAPInt().isNegative()) {
-        if (isEqual)
-          return Constraints::none();
-        else
-          return Constraints::all();
+    if (auto C = dyn_cast<SCEVConstant>(v)) {
+      auto btc = ctx.SE.getBackedgeTakenCount(Loop);
+      if (!isa<SCEVCouldNotCompute>(btc)) {
+        auto maxBtc = ctx.SE.getUnsignedRangeMax(btc);
+        auto cVal = C->getAPInt();
+        unsigned width = std::max(maxBtc.getBitWidth(), cVal.getBitWidth());
+        if (cVal.zext(width).ugt(maxBtc.zext(width))) {
+          if (isEqual)
+            return Constraints::none();
+          else
+            return Constraints::all();
+        }
       }
+    }
   return InnerTy(new Constraints(v, isEqual, Loop, false));
 }
 
@@ -9734,7 +9961,8 @@ static void eraseSparseInbounds(llvm::Function &F) {
     for (auto &I : BB)
       if (auto CI = dyn_cast<CallInst>(&I))
         if (auto Fn = CI->getCalledFunction())
-          if (Fn->getName() == "enzyme.sparse.inbounds")
+          if (Fn->getName() == "enzyme.sparse.inbounds" ||
+              startsWith(Fn->getName(), "enzyme.sparse.inbounds."))
             toErase.push_back(CI);
   for (auto CI : toErase)
     CI->eraseFromParent();
@@ -9949,26 +10177,59 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
         legal, cond, negated ? Constraints::all() : Constraints::none(),
         context, cctx);
     // llvm::errs() << " solutions pre negate: " << *solutions << "\n";
-    if (!negated) {
+    if (!negated && solutions) {
       solutions = solutions->notB(cctx);
     }
     // llvm::errs() << " solutions post negate: " << *solutions << "\n";
-    if (!legal) {
+    if (!legal || !solutions) {
+      if (legal && !solutions) {
+        EmitFailure("NoSparsification", context->getDebugLoc(), context,
+                    "F: ", F, "\nL: ", *L, "\ncond: ", *cond,
+                    " negated:", negated,
+                    "\n No sparsification: could not simplify constraints");
+      }
       sawError = true;
       continue;
     }
 
-    if (solutions == Constraints::none() || solutions == Constraints::all()) {
+    if (solutions->isNone() || solutions->isAll() ||
+        !solutions->hasFiniteSolutions(cctx)) {
       EmitFailure(
           "NoSparsification", context->getDebugLoc(), context, "F: ", F,
           "\nL: ", *L, "\ncond: ", *cond, " negated:", negated,
           "\n No sparsification: not sparse solvable(nosoltn): solutions:",
           *solutions);
       sawError = true;
+      continue;
     }
     // llvm::errs() << " found solvable solutions " << *solutions << "\n";
 
     if (forSparsification.count(L) == 0) {
+      auto LoopCountS = SE.getBackedgeTakenCount(L);
+      if (isa<SCEVCouldNotCompute>(LoopCountS)) {
+        EmitFailure("NoSparsification", context->getDebugLoc(), context,
+                    "F: ", F, "\nL: ", *L,
+                    "\n No sparsification: unknown loop trip count");
+        sawError = true;
+        continue;
+      }
+      unsigned idxBits = SE.getTypeSizeInBits(idx->getType());
+      unsigned btcBits = SE.getTypeSizeInBits(LoopCountS->getType());
+      if (btcBits > idxBits) {
+        auto maxBtc = SE.getUnsignedRangeMax(LoopCountS);
+        auto maxIdx = APInt::getMaxValue(idxBits).zext(btcBits);
+        if (maxBtc.ugt(maxIdx)) {
+          EmitFailure("NoSparsification", context->getDebugLoc(), context,
+                      "F: ", F, "\nL: ", *L,
+                      "\n No sparsification: induction variable may wrap");
+          sawError = true;
+          continue;
+        }
+        LoopCountS = SE.getTruncateExpr(LoopCountS, idx->getType());
+      } else if (btcBits < idxBits) {
+        LoopCountS = SE.getZeroExtendExpr(LoopCountS, idx->getType());
+      }
+
       {
         IRBuilder<> PB(preheader->getTerminator());
         auto loopIdxPhi = PB.CreatePHI(idx->getType(), 0, "loop.idx");
@@ -9976,29 +10237,25 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
         forSparsification[L].first = std::make_pair(phIdxPhi, loopIdxPhi);
       }
 
-      Value *LoopCount = nullptr;
-
       IRBuilder<> B(getFirstNonPHI(L->getHeader()));
+      Value *BackedgeCount = nullptr;
       {
 #if LLVM_VERSION_MAJOR >= 22 && !defined(ENZYME_LLVM22_PRERELEASE)
         SCEVExpander Exp(SE, "sparseenzyme");
 #else
         SCEVExpander Exp(SE, DL, "sparseenzyme");
 #endif
-        auto LoopCountS = SE.getBackedgeTakenCount(L);
-        LoopCount = B.CreateAdd(
-            ConstantInt::get(idx->getType(), 1),
-            Exp.expandCodeFor(LoopCountS, idx->getType(), &blk->front()));
+        BackedgeCount =
+            Exp.expandCodeFor(LoopCountS, idx->getType(), &*B.GetInsertPoint());
       }
-      Value *nonNegative =
-          B.CreateICmpSGE(idx, ConstantInt::get(idx->getType(), 0));
-      Value *belowCount = B.CreateICmpSLT(idx, LoopCount);
-      Value *inbounds = B.CreateAnd(belowCount, nonNegative);
+      Value *inbounds = B.CreateICmpULE(idx, BackedgeCount);
       Value *args[] = {inbounds, forSparsification[L].first.second};
-      B.CreateCall(F.getParent()->getOrInsertFunction(
-                       "enzyme.sparse.inbounds", B.getVoidTy(),
-                       inbounds->getType(), idx->getType()),
-                   args);
+      std::string inboundsName =
+          "enzyme.sparse.inbounds.i" + std::to_string(idxBits);
+      B.CreateCall(
+          F.getParent()->getOrInsertFunction(
+              inboundsName, B.getVoidTy(), inbounds->getType(), idx->getType()),
+          args);
     }
 
     IRBuilder<> B(br);
@@ -10198,7 +10455,8 @@ void fixSparseIndices(llvm::Function &F, llvm::FunctionAnalysisManager &FAM,
       auto BF = boundsCheck->getCalledFunction();
       if (!BF)
         continue;
-      if (BF->getName() != "enzyme.sparse.inbounds")
+      if (BF->getName() != "enzyme.sparse.inbounds" &&
+          !startsWith(BF->getName(), "enzyme.sparse.inbounds."))
         continue;
 
       auto boundsCond = boundsCheck->getArgOperand(0);
