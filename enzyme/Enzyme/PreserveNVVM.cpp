@@ -27,8 +27,10 @@
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SetVector.h"
+#include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringMap.h"
+#include "llvm/ADT/StringSwitch.h"
 
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallSet.h"
@@ -36,6 +38,7 @@
 #include "llvm/IR/Function.h"
 #include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -49,6 +52,7 @@
 #include "llvm/Transforms/Utils/ModuleUtils.h"
 
 #include <map>
+#include <optional>
 
 #include "PreserveNVVM.h"
 #include "Utils.h"
@@ -240,6 +244,276 @@ bool isTargetNVPTX(llvm::Module &M) {
   return M.getTargetTriple().find("nvptx") != std::string::npos;
 #endif
 }
+
+namespace {
+
+struct MangledCUDAMathWrapper {
+  StringRef MathName;
+  StringRef BaseName;
+  StringRef ParamEncoding;
+  Type *FloatTy = nullptr;
+  bool IsFloat = false;
+};
+
+static std::optional<MangledCUDAMathWrapper>
+parseMangledCUDAMathWrapper(const Function &F) {
+  if (!F.isDeclaration() || F.isIntrinsic())
+    return std::nullopt;
+
+  FunctionType *FT = F.getFunctionType();
+  if (FT->isVarArg())
+    return std::nullopt;
+
+  // Clang's __clang_cuda_math_forward_declares.h declares file-scope static
+  // device math overloads whose Itanium mangling has the form
+  // _ZL<length><math-name><parameter-types>. On Windows (MSVC headers),
+  // CUDA's crt/math_functions.hpp omits definitions for several C++11 float
+  // overloads (e.g. cbrt, copysign, fmin, fmax), leaving these as undefined
+  // declarations alongside the libdevice __nv_* definitions.
+  StringRef Encoded = F.getName();
+  if (!Encoded.consume_front("_ZL"))
+    return std::nullopt;
+
+  size_t LengthEnd = 0;
+  while (LengthEnd < Encoded.size() && Encoded[LengthEnd] >= '0' &&
+         Encoded[LengthEnd] <= '9')
+    ++LengthEnd;
+  if (LengthEnd == 0)
+    return std::nullopt;
+
+  unsigned NameLength = 0;
+  if (Encoded.take_front(LengthEnd).getAsInteger(10, NameLength) ||
+      NameLength == 0 || NameLength > Encoded.size() - LengthEnd)
+    return std::nullopt;
+
+  StringRef MathName = Encoded.substr(LengthEnd, NameLength);
+  StringRef ParamEncoding = Encoded.substr(LengthEnd + NameLength);
+  if (ParamEncoding.empty())
+    return std::nullopt;
+
+  Type *RetTy = FT->getReturnType();
+  unsigned NumParams = FT->getNumParams();
+
+  // T(T)
+  if (NumParams == 1 && RetTy == FT->getParamType(0) &&
+      ((RetTy->isFloatTy() && ParamEncoding == "f") ||
+       (RetTy->isDoubleTy() && ParamEncoding == "d"))) {
+    StringRef BaseName = (MathName == "abs") ? StringRef("fabs") : MathName;
+    return MangledCUDAMathWrapper{MathName, BaseName, ParamEncoding, RetTy,
+                                  RetTy->isFloatTy()};
+  }
+
+  // T(T, T)
+  if (NumParams == 2 && RetTy == FT->getParamType(0) &&
+      RetTy == FT->getParamType(1) &&
+      ((RetTy->isFloatTy() && ParamEncoding == "ff") ||
+       (RetTy->isDoubleTy() && ParamEncoding == "dd"))) {
+    return MangledCUDAMathWrapper{MathName, MathName, ParamEncoding, RetTy,
+                                  RetTy->isFloatTy()};
+  }
+
+  // T(T, T, T): fma
+  if (NumParams == 3 && MathName == "fma" && RetTy == FT->getParamType(0) &&
+      RetTy == FT->getParamType(1) && RetTy == FT->getParamType(2) &&
+      ((RetTy->isFloatTy() && ParamEncoding == "fff") ||
+       (RetTy->isDoubleTy() && ParamEncoding == "ddd"))) {
+    return MangledCUDAMathWrapper{MathName, MathName, ParamEncoding, RetTy,
+                                  RetTy->isFloatTy()};
+  }
+
+  // T(T, int): pow(T, int) -> __nv_powi[f], ldexp, scalbn
+  if (NumParams == 2 && RetTy == FT->getParamType(0) &&
+      FT->getParamType(1)->isIntegerTy(32) &&
+      ((RetTy->isFloatTy() && ParamEncoding == "fi") ||
+       (RetTy->isDoubleTy() && ParamEncoding == "di"))) {
+    if (MathName == "pow")
+      return MangledCUDAMathWrapper{MathName, "powi", ParamEncoding, RetTy,
+                                    RetTy->isFloatTy()};
+    if (MathName == "ldexp" || MathName == "scalbn")
+      return MangledCUDAMathWrapper{MathName, MathName, ParamEncoding, RetTy,
+                                    RetTy->isFloatTy()};
+    return std::nullopt;
+  }
+
+  // int(T): ilogb
+  if (NumParams == 1 && RetTy->isIntegerTy(32) && MathName == "ilogb" &&
+      ((FT->getParamType(0)->isFloatTy() && ParamEncoding == "f") ||
+       (FT->getParamType(0)->isDoubleTy() && ParamEncoding == "d"))) {
+    Type *ArgTy = FT->getParamType(0);
+    return MangledCUDAMathWrapper{MathName, MathName, ParamEncoding, ArgTy,
+                                  ArgTy->isFloatTy()};
+  }
+
+  // long long(T): llrint, llround
+  if (NumParams == 1 && RetTy->isIntegerTy(64) &&
+      (MathName == "llrint" || MathName == "llround") &&
+      ((FT->getParamType(0)->isFloatTy() && ParamEncoding == "f") ||
+       (FT->getParamType(0)->isDoubleTy() && ParamEncoding == "d"))) {
+    Type *ArgTy = FT->getParamType(0);
+    return MangledCUDAMathWrapper{MathName, MathName, ParamEncoding, ArgTy,
+                                  ArgTy->isFloatTy()};
+  }
+
+  // long(float): lrint, lround (implemented via lrintf/lroundf wrappers)
+  if (NumParams == 1 && (RetTy->isIntegerTy(32) || RetTy->isIntegerTy(64)) &&
+      (MathName == "lrint" || MathName == "lround") &&
+      FT->getParamType(0)->isFloatTy() && ParamEncoding == "f") {
+    return MangledCUDAMathWrapper{MathName, MathName, ParamEncoding,
+                                  FT->getParamType(0), true};
+  }
+
+  // float(float, long): scalbln (implemented via scalblnf wrapper)
+  if (NumParams == 2 && RetTy->isFloatTy() &&
+      FT->getParamType(0)->isFloatTy() &&
+      (FT->getParamType(1)->isIntegerTy(32) ||
+       FT->getParamType(1)->isIntegerTy(64)) &&
+      MathName == "scalbln" && ParamEncoding == "fl") {
+    return MangledCUDAMathWrapper{MathName, MathName, ParamEncoding, RetTy,
+                                  true};
+  }
+
+  // Pointer-out wrappers: frexp(T, int*), modf(T, T*), remquo(T, T, int*)
+  if (NumParams == 2 && RetTy == FT->getParamType(0) &&
+      FT->getParamType(1)->isPointerTy()) {
+    if (MathName == "frexp" &&
+        ((RetTy->isFloatTy() && ParamEncoding == "fPi") ||
+         (RetTy->isDoubleTy() && ParamEncoding == "dPi")))
+      return MangledCUDAMathWrapper{MathName, MathName, ParamEncoding, RetTy,
+                                    RetTy->isFloatTy()};
+    if (MathName == "modf" && ((RetTy->isFloatTy() && ParamEncoding == "fPf") ||
+                               (RetTy->isDoubleTy() && ParamEncoding == "dPd")))
+      return MangledCUDAMathWrapper{MathName, MathName, ParamEncoding, RetTy,
+                                    RetTy->isFloatTy()};
+  }
+  if (NumParams == 3 && MathName == "remquo" && RetTy == FT->getParamType(0) &&
+      RetTy == FT->getParamType(1) && FT->getParamType(2)->isPointerTy() &&
+      ((RetTy->isFloatTy() && ParamEncoding == "ffPi") ||
+       (RetTy->isDoubleTy() && ParamEncoding == "ddPi"))) {
+    return MangledCUDAMathWrapper{MathName, MathName, ParamEncoding, RetTy,
+                                  RetTy->isFloatTy()};
+  }
+
+  return std::nullopt;
+}
+
+static Intrinsic::ID getNVPTXNativeMathIntrinsic(StringRef BaseName) {
+  return StringSwitch<Intrinsic::ID>(BaseName)
+      .Case("copysign", Intrinsic::copysign)
+      .Case("fmin", Intrinsic::minnum)
+      .Case("fmax", Intrinsic::maxnum)
+      .Case("fma", Intrinsic::fma)
+      .Case("fabs", Intrinsic::fabs)
+      .Case("floor", Intrinsic::floor)
+      .Case("ceil", Intrinsic::ceil)
+      .Case("trunc", Intrinsic::trunc)
+      .Case("rint", Intrinsic::rint)
+      .Case("nearbyint", Intrinsic::nearbyint)
+      .Default(Intrinsic::not_intrinsic);
+}
+
+static bool replaceMangledDeviceMathWrapperDeclarations(
+    Module &M,
+    const StringMap<std::pair<std::string, std::string>> &Implements) {
+  if (!isTargetNVPTX(M))
+    return false;
+
+  bool changed = false;
+  for (Function &F : llvm::make_early_inc_range(M)) {
+    auto Wrapper = parseMangledCUDAMathWrapper(F);
+    if (!Wrapper)
+      continue;
+
+    FunctionType *FT = F.getFunctionType();
+    SmallString<32> NVName("__nv_");
+    NVName += Wrapper->BaseName;
+    if (Wrapper->IsFloat)
+      NVName += "f";
+
+    bool KnownNVDeviceMath = Implements.find(NVName) != Implements.end();
+    bool HasClangCWrapperOnly =
+        Wrapper->IsFloat &&
+        (Wrapper->MathName == "lrint" || Wrapper->MathName == "lround" ||
+         Wrapper->MathName == "scalbln");
+    if (!KnownNVDeviceMath && !HasClangCWrapperOnly)
+      continue;
+
+    Intrinsic::ID NativeIntrID = getNVPTXNativeMathIntrinsic(Wrapper->BaseName);
+    Function *Implementation = nullptr;
+
+    // Clang's __clang_cuda_math.h intentionally implements rint/nearbyint via
+    // LLVM builtins instead of libdevice (__nv_rint* is known buggy).
+    if (Wrapper->BaseName == "rint" || Wrapper->BaseName == "nearbyint") {
+      Implementation =
+          getIntrinsicDeclaration(&M, NativeIntrID, {Wrapper->FloatTy});
+    }
+
+    // Prefer an existing defined libdevice implementation in the module.
+    if (!Implementation && KnownNVDeviceMath) {
+      if (Function *Existing = M.getFunction(NVName)) {
+        if (!Existing->isDeclaration() && Existing->getFunctionType() == FT)
+          Implementation = Existing;
+      }
+    }
+
+    // Otherwise fall back to an NVPTX-native LLVM intrinsic when available.
+    if (!Implementation && NativeIntrID != Intrinsic::not_intrinsic) {
+      Implementation =
+          getIntrinsicDeclaration(&M, NativeIntrID, {Wrapper->FloatTy});
+    }
+
+    // Otherwise check for a defined Clang CUDA C float wrapper (e.g.
+    // _ZL6lrintff for _ZL5lrintf, _ZL7lroundff for _ZL6lroundf,
+    // _ZL8scalblnffl for _ZL7scalblnfl, or _ZL5cbrtff for _ZL4cbrtf).
+    if (!Implementation && Wrapper->IsFloat) {
+      std::string CWrapperName =
+          ("_ZL" + Twine(Wrapper->MathName.size() + 1) + Wrapper->MathName +
+           "f" + Wrapper->ParamEncoding)
+              .str();
+      if (Function *CWrapper = M.getFunction(CWrapperName)) {
+        if (!CWrapper->isDeclaration() && CWrapper->getFunctionType() == FT)
+          Implementation = CWrapper;
+      }
+    }
+
+    // Finally, if an existing __nv_* declaration matches, or if the wrapper is
+    // actually referenced and maps to a known libdevice entry, canonicalize to
+    // __nv_* so PreserveNVVM attaches enzyme_math and later libdevice linking
+    // can resolve it.
+    if (!Implementation && KnownNVDeviceMath) {
+      if (Function *Existing = M.getFunction(NVName)) {
+        if (Existing->getFunctionType() == FT)
+          Implementation = Existing;
+      } else if (!F.use_empty()) {
+        Implementation =
+            Function::Create(FT, Function::ExternalLinkage, NVName, M);
+        Implementation->addFnAttr(Attribute::NoUnwind);
+        Implementation->addFnAttr(Attribute::WillReturn);
+      }
+    }
+
+    if (!Implementation || Implementation == &F ||
+        Implementation->getFunctionType() != FT)
+      continue;
+
+    SmallVector<CallBase *, 4> Calls;
+    for (Use &U : F.uses()) {
+      if (auto *CB = dyn_cast<CallBase>(U.getUser())) {
+        if (CB->getCalledOperand()->stripPointerCasts() == &F)
+          Calls.push_back(CB);
+      }
+    }
+    F.replaceAllUsesWith(Implementation);
+    for (CallBase *CB : Calls)
+      CB->setCallingConv(Implementation->getCallingConv());
+    if (F.use_empty())
+      F.eraseFromParent();
+    changed = true;
+  }
+
+  return changed;
+}
+
+} // namespace
 
 template <const char *handlername, DerivativeMode Mode, int numargs>
 static void
@@ -1038,18 +1312,22 @@ bool preserveNVVM(bool Begin, Module &M,
     // CUDA
     // sincos, sinpi, cospi, sincospi, cyl_bessel_i1
     for (std::string name :
-         {"sin",        "cos",     "tan",       "log2",   "exp",    "exp2",
-          "exp10",      "cosh",    "sinh",      "tanh",   "atan2",  "atan",
-          "asin",       "acos",    "log",       "log10",  "log1p",  "acosh",
-          "asinh",      "atanh",   "expm1",     "hypot",  "rhypot", "norm3d",
-          "rnorm3d",    "norm4d",  "rnorm4d",   "norm",   "rnorm",  "cbrt",
-          "rcbrt",      "j0",      "j1",        "y0",     "y1",     "yn",
-          "jn",         "erf",     "erfinv",    "erfc",   "erfcx",  "erfcinv",
-          "normcdfinv", "normcdf", "lgamma",    "ldexp",  "scalbn", "frexp",
-          "modf",       "fmod",    "remainder", "remquo", "powi",   "tgamma",
-          "round",      "fdim",    "ilogb",     "logb",   "isinf",  "pow",
-          "sqrt",       "rsqrt",   "finite",    "fabs",   "fmax",   "fmin",
-          "copysign"}) {
+         {"sin",       "cos",       "tan",        "log2",      "exp",
+          "exp2",      "exp10",     "cosh",       "sinh",      "tanh",
+          "atan2",     "atan",      "asin",       "acos",      "log",
+          "log10",     "log1p",     "acosh",      "asinh",     "atanh",
+          "expm1",     "hypot",     "rhypot",     "norm3d",    "rnorm3d",
+          "norm4d",    "rnorm4d",   "norm",       "rnorm",     "cbrt",
+          "rcbrt",     "j0",        "j1",         "y0",        "y1",
+          "yn",        "jn",        "erf",        "erfinv",    "erfc",
+          "erfcx",     "erfcinv",   "normcdfinv", "normcdf",   "lgamma",
+          "ldexp",     "scalbn",    "frexp",      "modf",      "fmod",
+          "remainder", "remquo",    "powi",       "tgamma",    "round",
+          "fdim",      "ilogb",     "logb",       "isinf",     "pow",
+          "sqrt",      "rsqrt",     "finite",     "fabs",      "fmax",
+          "fmin",      "copysign",  "floor",      "ceil",      "trunc",
+          "rint",      "nearbyint", "fma",        "nextafter", "llrint",
+          "llround"}) {
       std::string nvname = "__nv_" + name;
       std::string llname = "llvm." + name + ".";
       std::string mathname = name;
@@ -1147,6 +1425,8 @@ bool preserveNVVM(bool Begin, Module &M,
       }
     }
   }
+  if (Begin)
+    changed |= replaceMangledDeviceMathWrapperDeclarations(M, Implements);
 #if ENZYME_ENABLE_NVVM_ATTRIBUTION
   for (auto &F : llvm::make_early_inc_range(M)) {
     if (Begin) {
