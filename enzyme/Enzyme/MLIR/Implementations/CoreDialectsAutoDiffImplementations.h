@@ -328,6 +328,12 @@ void registerTensorDialectAutoDiffInterface(DialectRegistry &registry);
 void registerGPUDialectAutoDiffInterface(DialectRegistry &registry);
 void registerEnzymeDialectAutoDiffInterface(DialectRegistry &registry);
 
+// StableHLO dialect — available in the Reactant/Bazel build.
+// Only compiled when ENZYME_ENABLE_STABLEHLO is set.
+#ifdef ENZYME_ENABLE_STABLEHLO
+void registerStablehloDialectAutoDiffInterface(DialectRegistry &registry);
+#endif
+
 void registerCoreDialectAutodiffInterfaces(DialectRegistry &registry);
 
 mlir::TypedAttr getConstantAttr(mlir::Type type, llvm::StringRef value);

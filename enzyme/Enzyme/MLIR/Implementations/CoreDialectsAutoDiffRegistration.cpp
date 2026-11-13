@@ -37,4 +37,7 @@ void mlir::enzyme::registerCoreDialectAutodiffInterfaces(
   enzyme::registerTensorDialectAutoDiffInterface(registry);
   enzyme::registerGPUDialectAutoDiffInterface(registry);
   enzyme::registerEnzymeDialectAutoDiffInterface(registry);
+#ifdef ENZYME_ENABLE_STABLEHLO
+  enzyme::registerStablehloDialectAutoDiffInterface(registry);
+#endif
 }
