@@ -481,6 +481,9 @@ static const std::set<Intrinsic::ID> KnownInactiveIntrinsics = {
     Intrinsic::dbg_declare,
     Intrinsic::dbg_value,
     Intrinsic::dbg_label,
+#if LLVM_VERSION_MAJOR >= 20
+    Intrinsic::fake_use,
+#endif
     Intrinsic::invariant_start,
     Intrinsic::invariant_end,
     Intrinsic::var_annotation,

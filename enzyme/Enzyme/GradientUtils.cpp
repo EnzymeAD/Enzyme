@@ -9811,6 +9811,9 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
         case Intrinsic::dbg_declare:
         case Intrinsic::dbg_value:
         case Intrinsic::dbg_label:
+#if LLVM_VERSION_MAJOR >= 20
+        case Intrinsic::fake_use:
+#endif
 #if LLVM_VERSION_MAJOR <= 16
         case llvm::Intrinsic::dbg_addr:
 #endif

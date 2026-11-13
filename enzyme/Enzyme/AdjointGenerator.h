@@ -4593,6 +4593,9 @@ public:
       case Intrinsic::nvvm_membar_gl:
       case Intrinsic::nvvm_membar_sys:
       case Intrinsic::amdgcn_s_barrier:
+#if LLVM_VERSION_MAJOR >= 20
+      case Intrinsic::fake_use:
+#endif
         return false;
       default:
         if (gutils->isConstantInstruction(&I))
@@ -4730,6 +4733,11 @@ public:
         return false;
       }
 
+#if LLVM_VERSION_MAJOR >= 20
+      case Intrinsic::fake_use:
+        return false;
+#endif
+
       case Intrinsic::vector_reduce_fmax: {
         if (vdiff && !gutils->isConstantValue(orig_ops[0])) {
           auto prev = lookup(gutils->getNewFromOriginal(orig_ops[0]), Builder2);
@@ -4845,6 +4853,10 @@ public:
         setDiffe(&I, dif, Builder2);
         return false;
       }
+#if LLVM_VERSION_MAJOR >= 20
+      case Intrinsic::fake_use:
+        return false;
+#endif
       default:
         if (!gutils->isConstantValue(&I)) {
           auto toset =
