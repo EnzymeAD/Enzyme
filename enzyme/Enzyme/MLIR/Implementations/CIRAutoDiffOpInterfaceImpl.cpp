@@ -83,6 +83,7 @@ struct CIRLoadOpInterfaceReverse
       return success();
     // shadow[p] += v;
     Value gradient = gutils->diffe(loadOp, builder);
+    gutils->zeroDiffe(loadOp, builder);
     Value addrGradient = gutils->popCache(caches.front(), builder);
     if (gutils->AtomicAdd) {
       // cir.atomic.fetch add accepts floating-point values and lowers to
@@ -363,6 +364,7 @@ struct CIRCastOpReverse
       return op->emitError() << "unsupported active cir.cast kind '"
                              << cir::stringifyCastKind(kind) << "' " << *op;
     Value dres = gutils->diffe(res, builder);
+    gutils->zeroDiffe(res, builder);
     Value dsrc = cir::CastOp::create(builder, op->getLoc(), src.getType(),
                                      cir::CastKind::floating, dres);
     gutils->addToDiffe(src, dsrc, builder);
