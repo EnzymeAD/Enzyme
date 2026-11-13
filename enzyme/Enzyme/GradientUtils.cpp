@@ -97,6 +97,10 @@ llvm::cl::opt<bool> EnzymeLoopInvariantCache(
     "enzyme-loop-invariant-cache", cl::init(true), cl::Hidden,
     cl::desc("Attempt to hoist cache outside of loop"));
 
+llvm::cl::opt<bool> EnzymePruneInvariantCacheLoops(
+    "enzyme-prune-invariant-cache-loops", cl::init(true), cl::Hidden,
+    cl::desc("Omit enclosing loops in which a cached load is invariant"));
+
 llvm::cl::opt<bool> EnzymeInactiveDynamic(
     "enzyme-inactive-dynamic", cl::init(true), cl::Hidden,
     cl::desc("Force wholy inactive dynamic loops to have 0 iter reverse pass"));
@@ -2518,6 +2522,287 @@ endCheck:
   return nullptr;
 }
 
+static bool isSCEVInvariantInLoop(const SCEV *S, const Loop *OrigL,
+                                  const BasicBlock *LoadBB,
+                                  DenseMap<const SCEV *, bool> &Memo) {
+  if (!S || isa<SCEVCouldNotCompute>(S))
+    return false;
+  auto Found = Memo.find(S);
+  if (Found != Memo.end())
+    return Found->second;
+  bool Res = false;
+  if (isa<SCEVConstant>(S)) {
+    Res = true;
+  } else if (auto *U = dyn_cast<SCEVUnknown>(S)) {
+    Res = OrigL->isLoopInvariant(U->getValue());
+  } else if (auto *AR = dyn_cast<SCEVAddRecExpr>(S)) {
+    if (AR->getLoop() != OrigL && AR->getLoop()->contains(LoadBB)) {
+      Res = true;
+      for (const SCEV *Op : AR->operands()) {
+        if (!isSCEVInvariantInLoop(Op, OrigL, LoadBB, Memo)) {
+          Res = false;
+          break;
+        }
+      }
+    }
+  } else if (auto *N = dyn_cast<SCEVNAryExpr>(S)) {
+    Res = true;
+    for (const SCEV *Op : N->operands()) {
+      if (!isSCEVInvariantInLoop(Op, OrigL, LoadBB, Memo)) {
+        Res = false;
+        break;
+      }
+    }
+  } else if (auto *C = dyn_cast<SCEVCastExpr>(S)) {
+    Res = isSCEVInvariantInLoop(C->getOperand(), OrigL, LoadBB, Memo);
+  } else if (auto *D = dyn_cast<SCEVUDivExpr>(S)) {
+    Res = isSCEVInvariantInLoop(D->getLHS(), OrigL, LoadBB, Memo) &&
+          isSCEVInvariantInLoop(D->getRHS(), OrigL, LoadBB, Memo);
+  }
+  Memo[S] = Res;
+  return Res;
+}
+
+static bool canUnwrapLimitAt(Value *V, BasicBlock *Preheader,
+                             const GradientUtils &GU,
+                             DenseMap<Value *, bool> &Memo) {
+  if (!V || !Preheader)
+    return false;
+  if (isa<Argument>(V) || isa<Constant>(V))
+    return true;
+  auto *I = dyn_cast<Instruction>(V);
+  if (!I)
+    return false;
+  auto Found = Memo.find(V);
+  if (Found != Memo.end())
+    return Found->second;
+  if (GU.inversionAllocs && I->getParent() == GU.inversionAllocs) {
+    Memo[V] = true;
+    return true;
+  }
+  if (I->getParent()->getParent() != GU.newFunc) {
+    Memo[V] = false;
+    return false;
+  }
+  Instruction *Term = Preheader->getTerminator();
+  if (!Term) {
+    Memo[V] = false;
+    return false;
+  }
+  if (GU.DT.dominates(I, Term)) {
+    Memo[V] = true;
+    return true;
+  }
+  // Do not speculate past a value chosen to be cached on the tape, which
+  // unwrapM refuses to recompute in split modes.
+  if (auto *Orig = GU.isOriginal(I)) {
+    auto KRC = GU.knownRecomputeHeuristic.find(Orig);
+    if (KRC != GU.knownRecomputeHeuristic.end() && !KRC->second) {
+      Memo[V] = false;
+      return false;
+    }
+  }
+  bool AllowedOp = isa<CastInst>(I) || isa<BinaryOperator>(I) ||
+                   isa<ICmpInst>(I) || isa<SelectInst>(I) || isa<FreezeInst>(I);
+  if (!AllowedOp) {
+    if (auto *II = dyn_cast<IntrinsicInst>(I)) {
+#if LLVM_VERSION_MAJOR >= 14
+      AllowedOp = II->doesNotAccessMemory();
+#else
+      AllowedOp = II->hasFnAttr(Attribute::ReadNone);
+#endif
+    }
+  }
+  if (!AllowedOp || !isSafeToSpeculativelyExecute(I)) {
+    Memo[V] = false;
+    return false;
+  }
+  // Guard against any unexpected cycle.
+  Memo[V] = false;
+  for (Value *Op : I->operands()) {
+    if (auto *II = dyn_cast<IntrinsicInst>(I))
+      if (Op == II->getCalledOperand())
+        continue;
+    if (!canUnwrapLimitAt(Op, Preheader, GU, Memo))
+      return false;
+  }
+  Memo[V] = true;
+  return true;
+}
+
+SmallPtrSet<BasicBlock *, 4>
+GradientUtils::computeInvariantLoopHeaders(Value *val, BasicBlock *scope,
+                                           bool reverseLimit) {
+  SmallPtrSet<BasicBlock *, 4> Result;
+  if (!EnzymePruneInvariantCacheLoops || omp || !val || !scope || !OrigSE ||
+      !OrigLI || !OrigAA || !OrigDT)
+    return Result;
+
+  auto *origLI = dyn_cast_or_null<LoadInst>(isOriginal(val));
+  if (!origLI || !origLI->isSimple())
+    return Result;
+
+  // Collect enclosing LoopContexts from innermost (0) to outermost (m - 1).
+  SmallVector<LoopContext, 4> allContexts;
+  for (BasicBlock *blk = scope; blk != nullptr;) {
+    LoopContext idx;
+    if (!CacheUtility::getContext(blk, idx, reverseLimit))
+      break;
+    allContexts.emplace_back(std::move(idx));
+    blk = idx.preheader;
+  }
+  if (allContexts.size() <= 1)
+    return Result;
+
+  // Map each loop to its counterpart in oldFunc.
+  SmallVector<Loop *, 4> origLoops;
+  origLoops.reserve(allContexts.size());
+  for (const auto &lc : allContexts) {
+    BasicBlock *origHeader = isOriginal(lc.header);
+    if (!origHeader)
+      return Result;
+    Loop *origL = OrigLI->getLoopFor(origHeader);
+    if (!origL || origL->getHeader() != origHeader ||
+        !origL->contains(origLI->getParent()))
+      return Result;
+    origLoops.push_back(origL);
+  }
+
+  Value *ptr = origLI->getPointerOperand();
+  const SCEV *ptrSCEV = OrigSE->getSCEV(ptr);
+  if (!ptrSCEV || isa<SCEVCouldNotCompute>(ptrSCEV))
+    return Result;
+
+  SetVector<Value *> objs = getBaseObjects(ptr);
+  if (objs.empty())
+    return Result;
+  for (Value *obj : objs) {
+    if (!obj->getType()->isPointerTy() || isa<ConstantPointerNull>(obj) ||
+        isa<UndefValue>(obj))
+      return Result;
+  }
+
+  // Determine which enclosing loops leave both the address and underlying
+  // memory of origLI completely invariant across iterations.
+  SmallVector<bool, 4> rawInvariant(allContexts.size(), false);
+  for (size_t k = 0; k < allContexts.size(); ++k) {
+    if (allContexts[k].offset || allContexts[k].allocLimit)
+      continue;
+    // Never omit a loop enclosing a dynamic or OpenMP loop.
+    bool hasBlockingInner = false;
+    for (size_t j = 0; j < k; ++j) {
+      if (!allContexts[j].maxLimit || allContexts[j].offset ||
+          allContexts[j].allocLimit) {
+        hasBlockingInner = true;
+        break;
+      }
+    }
+    if (hasBlockingInner)
+      continue;
+
+    Loop *origL = origLoops[k];
+    DenseMap<const SCEV *, bool> scevMemo;
+    if (!isSCEVInvariantInLoop(ptrSCEV, origL, origLI->getParent(), scevMemo))
+      continue;
+
+    bool baseInvariant = true;
+    for (Value *obj : objs) {
+      if (!origL->isLoopInvariant(obj)) {
+        baseInvariant = false;
+        break;
+      }
+    }
+    if (!baseInvariant)
+      continue;
+
+    bool modified = false;
+    for (BasicBlock *BB : origL->blocks()) {
+      for (Instruction &I : *BB) {
+        if (!I.mayWriteToMemory())
+          continue;
+        for (Value *obj : objs) {
+          if (writesToMemoryReadBy(*OrigAA, TLI,
+                                   MemoryLocation::getBeforeOrAfter(obj), &I)) {
+            modified = true;
+            break;
+          }
+        }
+        if (modified)
+          break;
+      }
+      if (modified)
+        break;
+    }
+    if (!modified)
+      rawInvariant[k] = true;
+  }
+
+  // Validate whether a candidate omission bitmask preserves all getSubLimits
+  // invariants: at least one kept loop, unwrappable bounds, and no kept chunk
+  // preheader placed inside any omitted loop.
+  BasicBlock *outermostPH = allContexts.back().preheader;
+  auto isValidOmission = [&](const SmallVectorImpl<bool> &omit) -> bool {
+    SmallVector<size_t, 4> keptIdx;
+    SmallVector<BasicBlock *, 4> effPH;
+    SmallVector<bool, 4> insideOmitted;
+    BasicBlock *pendingPH = nullptr;
+    bool seenOmitted = false;
+    for (int i = (int)allContexts.size() - 1; i >= 0; --i) {
+      if (omit[i]) {
+        if (!pendingPH)
+          pendingPH = allContexts[i].preheader;
+        seenOmitted = true;
+        continue;
+      }
+      BasicBlock *ph = pendingPH ? pendingPH : allContexts[i].preheader;
+      pendingPH = nullptr;
+      keptIdx.push_back((size_t)i);
+      effPH.push_back(ph);
+      insideOmitted.push_back(seenOmitted);
+    }
+    if (keptIdx.empty())
+      return false;
+
+    for (size_t idx = 0; idx < keptIdx.size(); ++idx) {
+      if (!insideOmitted[idx])
+        continue;
+      const LoopContext &lc = allContexts[keptIdx[idx]];
+      if (!lc.maxLimit || lc.offset || lc.allocLimit)
+        return false;
+      BasicBlock *origEffPH = isOriginal(effPH[idx]);
+      if (!origEffPH)
+        return false;
+      bool effPHInsideOmitted = false;
+      for (size_t o = 0; o < allContexts.size(); ++o) {
+        if (omit[o] && origLoops[o]->contains(origEffPH)) {
+          effPHInsideOmitted = true;
+          break;
+        }
+      }
+      BasicBlock *checkPH = effPHInsideOmitted ? outermostPH : effPH[idx];
+      DenseMap<Value *, bool> unwrapMemo;
+      if (!canUnwrapLimitAt(lc.maxLimit, checkPH, *this, unwrapMemo))
+        return false;
+    }
+    return true;
+  };
+
+  SmallVector<bool, 4> omit(allContexts.size(), false);
+  for (int k = (int)allContexts.size() - 1; k >= 0; --k) {
+    if (!rawInvariant[k])
+      continue;
+    omit[k] = true;
+    if (!isValidOmission(omit))
+      omit[k] = false;
+  }
+
+  for (size_t k = 0; k < allContexts.size(); ++k) {
+    if (omit[k])
+      Result.insert(allContexts[k].header);
+  }
+  return Result;
+}
+
 void GradientUtils::ensureLookupCached(Instruction *inst, bool shouldFree,
                                        BasicBlock *scope, MDNode *TBAA) {
   assert(inst);
@@ -2530,6 +2815,9 @@ void GradientUtils::ensureLookupCached(Instruction *inst, bool shouldFree,
     scope = inst->getParent();
 
   LimitContext lctx(/*ReverseLimit*/ reverseBlocks.size() > 0, scope);
+  if (scope == inst->getParent())
+    lctx.InvariantLoopHeaders =
+        computeInvariantLoopHeaders(inst, scope, lctx.ReverseLimit);
 
   AllocaInst *cache =
       createCacheForScope(lctx, inst->getType(), inst->getName(), shouldFree);
@@ -2883,6 +3171,9 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
                          inst->getParent());
     if (auto found = findInMap(scopeMap, malloc)) {
       ctx = found->second;
+    } else if (auto inst = dyn_cast<Instruction>(malloc)) {
+      ctx.InvariantLoopHeaders =
+          computeInvariantLoopHeaders(inst, ctx.Block, ctx.ReverseLimit);
     }
     assert(isOriginalBlock(*ctx.Block));
 
@@ -2913,6 +3204,13 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
 
       assert(malloc);
 
+      LimitContext lctx(/*ReverseLimit*/ reverseBlocks.size() > 0,
+                        BuilderQ.GetInsertBlock());
+      if (LI.getLoopFor(lctx.Block) == LI.getLoopFor(ctx.Block))
+        lctx.InvariantLoopHeaders = ctx.InvariantLoopHeaders;
+      else
+        ctx.InvariantLoopHeaders.clear();
+
       Type *innerType = nullptr;
 
 #if LLVM_VERSION_MAJOR < 17
@@ -2920,13 +3218,10 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
       if (ret->getContext().supportsTypedPointers()) {
 #endif
         innerType = ret->getType();
-        for (size_t i = 0,
-                    limit = getSubLimits(
-                                /*inForwardPass*/ true, nullptr,
-                                LimitContext(
-                                    /*ReverseLimit*/ reverseBlocks.size() > 0,
-                                    BuilderQ.GetInsertBlock()))
-                                .size();
+        for (size_t
+                 i = 0,
+                 limit =
+                     getSubLimits(/*inForwardPass*/ true, nullptr, lctx).size();
              i < limit; ++i) {
           if (!isa<PointerType>(innerType)) {
             llvm::errs() << "mod: "
@@ -2993,8 +3288,6 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
         }
       }
 
-      LimitContext lctx(/*ReverseLimit*/ reverseBlocks.size() > 0,
-                        BuilderQ.GetInsertBlock());
       AllocaInst *cache =
           createCacheForScope(lctx, innerType, "mdyncache_fromtape",
                               ((DiffeGradientUtils *)this)->FreeMemory, false);
@@ -3284,13 +3577,15 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
     if (toadd->getContext().supportsTypedPointers()) {
 #endif
       Type *innerType = toadd->getType();
-      for (size_t i = 0,
-                  limit = getSubLimits(
-                              /*inForwardPass*/ true, nullptr,
-                              LimitContext(
-                                  /*ReverseLimit*/ reverseBlocks.size() > 0,
-                                  BuilderQ.GetInsertBlock()))
-                              .size();
+      LimitContext checkCtx(/*ReverseLimit*/ reverseBlocks.size() > 0,
+                            BuilderQ.GetInsertBlock());
+      if (LI.getLoopFor(checkCtx.Block) ==
+          LI.getLoopFor(found2->second.second.Block))
+        checkCtx.InvariantLoopHeaders =
+            found2->second.second.InvariantLoopHeaders;
+      for (size_t i = 0, limit = getSubLimits(/*inForwardPass*/ true, nullptr,
+                                              checkCtx)
+                                     .size();
            i < limit; ++i) {
         innerType = innerType->getPointerElementType();
       }
