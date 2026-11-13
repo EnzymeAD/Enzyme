@@ -122,7 +122,7 @@ jobs:
             -DCMAKE_Fortran_COMPILER="${BASE_DIR}/llvm-project/flang-build/bin/flang"
           ninja
 
-    # Only the FIR suite: the rest of check-enzymemlir has failures on LLVM
+    # Only the FIR/HLFIR suite: the rest of check-enzymemlir has failures on LLVM
     # trunk unrelated to the Fortran path this workflow covers.
     - name: Check enzyme-mlir-flang
       working-directory: 'Enzyme/enzyme-build'

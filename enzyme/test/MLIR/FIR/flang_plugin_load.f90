@@ -1,5 +1,8 @@
-! `flang -fc1 -load` of FlangEnzymeMLIR loads it into flang, and code comes
-! through flang's pipeline unchanged.
+! Loading FlangEnzymeMLIR into `flang -fc1` registers the Enzyme passes into
+! flang's own HLFIR-to-FIR pipeline. Code with no differentiation hook must come
+! through that pipeline unchanged, which is what exercises the registration
+! itself: the plugin loads, the extension point fires, and both added passes run
+! as no-ops.
 !
 ! REQUIRES: flang_enzyme_mlir
 ! RUN: %flang_enzyme -emit-fir %s -o - | FileCheck %s
@@ -17,3 +20,4 @@ end module plain
 
 ! CHECK-LABEL: func.func @_QMplainPscale
 ! CHECK: arith.mulf
+! CHECK-NOT: enzyme.
