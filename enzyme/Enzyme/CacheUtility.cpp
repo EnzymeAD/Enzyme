@@ -1942,15 +1942,24 @@ Value *CacheUtility::getCachePointer(llvm::Type *T, bool inForwardPass,
       assert(next->getType()->isPointerTy());
     }
 
-    // Set appropriate invairant lookup flags
-    if (CachePointerInvariantGroups.find(std::make_pair(cache, i)) ==
-        CachePointerInvariantGroups.end()) {
-      MDNode *invgroup = MDNode::getDistinct(cache->getContext(), {});
-      CachePointerInvariantGroups[std::make_pair(cache, i)] = invgroup;
+    // Set appropriate invairant lookup flags. A chunk whose size is not known
+    // prior to executing its loops (see createCacheForScope) is reallocated as
+    // those loops execute. The pointer to such a chunk therefore changes
+    // between iterations within the forward pass, and loads of it cannot be
+    // marked as invariant. Once in the reverse pass, the chunk is fully
+    // allocated, and the pointer to it will no longer change.
+    bool reallocated =
+        inForwardPass && !sublimits[i].second.back().first.maxLimit;
+    if (!reallocated) {
+      if (CachePointerInvariantGroups.find(std::make_pair(cache, i)) ==
+          CachePointerInvariantGroups.end()) {
+        MDNode *invgroup = MDNode::getDistinct(cache->getContext(), {});
+        CachePointerInvariantGroups[std::make_pair(cache, i)] = invgroup;
+      }
+      cast<LoadInst>(next)->setMetadata(
+          LLVMContext::MD_invariant_group,
+          CachePointerInvariantGroups[std::make_pair(cache, i)]);
     }
-    cast<LoadInst>(next)->setMetadata(
-        LLVMContext::MD_invariant_group,
-        CachePointerInvariantGroups[std::make_pair(cache, i)]);
 
     // Set dereferenceable and alignment flags
     ConstantInt *byteSizeOfType = ConstantInt::get(
