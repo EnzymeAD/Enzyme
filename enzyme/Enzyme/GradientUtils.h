@@ -415,6 +415,13 @@ public:
   TypeResults TR;
   bool omp;
   bool runtimeActivity;
+  /// Return whether a pointer value may evaluate at runtime to an inactive
+  /// primal pointer whose shadow aliases the primal itself.
+  bool hasInactivePointerOrigin(const llvm::Value *OriginalPtr) const;
+
+  /// Return whether floating-point derivative accesses through a pointer must
+  /// check at runtime that its shadow differs from its primal.
+  bool needsRuntimeShadowPointerCheck(const llvm::Value *OriginalPtr) const;
   // Whether to use additional checks to ensure correct behavior when handling
   // functions with inf
   bool strongZero;

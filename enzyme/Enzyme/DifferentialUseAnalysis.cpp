@@ -124,7 +124,9 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
       }
 
       // And runtime activity updates
-      if (gutils->runtimeActivity && SI->getPointerOperand() == val) {
+      if (SI->getPointerOperand() == val &&
+          (gutils->runtimeActivity ||
+           gutils->needsRuntimeShadowPointerCheck(SI->getPointerOperand()))) {
         auto &DL = gutils->newFunc->getParent()->getDataLayout();
         auto ET = SI->getValueOperand()->getType();
         auto storeSize = (DL.getTypeSizeInBits(ET) + 7) / 8;
@@ -218,7 +220,8 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
 
   if (!shadow)
     if (auto LI = dyn_cast<LoadInst>(user)) {
-      if (gutils->runtimeActivity) {
+      if (gutils->runtimeActivity ||
+          gutils->needsRuntimeShadowPointerCheck(LI->getPointerOperand())) {
         auto vd = TR.query(const_cast<llvm::Instruction *>(user));
         if (!vd.isKnown()) {
           auto ET = LI->getType();

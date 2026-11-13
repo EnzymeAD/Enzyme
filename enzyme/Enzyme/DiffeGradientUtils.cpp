@@ -1365,11 +1365,9 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(
       if (!isConstantValue(origptr)) {
         auto basePtr = getBaseObject(origptr);
         assert(!isConstantValue(basePtr));
-        // If runtime activity, first see if we can prove that the shadow/primal
-        // are distinct statically as they are allocas/mallocs, if not compare
-        // the pointers and conditionally execute.
-        if ((!isa<AllocaInst>(basePtr) && !isAllocationCall(basePtr, TLI)) &&
-            runtimeActivity && !merge) {
+        // Compare primal and shadow pointers at runtime when the pointer may
+        // evaluate to an inactive address whose shadow aliases its primal.
+        if (needsRuntimeShadowPointerCheck(origptr) && !merge) {
           Value *primal_val = lookupM(getNewFromOriginal(origptr), Builder2);
           Value *shadow_val =
               lookupM(invertPointerM(origptr, Builder2), Builder2);
