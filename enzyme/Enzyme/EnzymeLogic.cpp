@@ -6859,7 +6859,8 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
   };
   // clang-format on
 
-  if (startsWith(F->getName(), "_ZNSolsE") || NoFrees.count(F->getName()))
+  if (startsWith(F->getName(), "_ZNSolsE") || NoFrees.count(F->getName()) ||
+      isIfxAllocationFunction(F->getName()))
     return F;
 
   std::string demangledName = llvm::demangle(F->getName().str());
@@ -7002,6 +7003,8 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
   }
 
   for (auto E : toErase) {
+    if (!E->use_empty())
+      E->replaceAllUsesWith(Constant::getNullValue(E->getType()));
     E->eraseFromParent();
   }
 

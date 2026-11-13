@@ -986,6 +986,13 @@ OldAllocationSize(Value *Ptr, CallInst *Loc, Function *NewF, IntegerType *T,
               success = true;
               break;
             }
+            if (isIfxAllocationFunction(F->getName()) && CI->arg_size() >= 2 &&
+                CI->getArgOperand(1) == LI->getOperand(0)) {
+              B.SetInsertPoint(next.second);
+              B.CreateStore(CI->getArgOperand(0), AI);
+              success = true;
+              break;
+            }
           }
         }
         if (prev->mayWriteToMemory()) {

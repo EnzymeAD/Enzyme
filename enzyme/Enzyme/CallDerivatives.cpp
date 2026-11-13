@@ -4555,20 +4555,50 @@ bool AdjointGenerator::handleKnownCallDerivatives(
       eraseIfUnused(call, /*erase*/ true, /*check*/ false);
     return true;
   }
+  bool isIfxAlloc = isIfxAllocationFunction(funcName);
   if (funcName == "posix_memalign" || funcName == "cuMemAllocAsync" ||
       funcName == "cuMemAlloc" || funcName == "cuMemAlloc_v2" ||
       funcName == "cudaMalloc" || funcName == "cudaMallocAsync" ||
-      funcName == "cudaMallocHost" || funcName == "cudaMallocFromPoolAsync") {
+      funcName == "cudaMallocHost" || funcName == "cudaMallocFromPoolAsync" ||
+      isIfxAlloc) {
+    bool isIfxHandle = funcName == "for_alloc_allocatable_handle" ||
+                       funcName == "for_allocate_handle";
+    unsigned ptrIdx = isIfxAlloc ? 1 : 0;
+    unsigned sizeIdx =
+        isIfxAlloc ? 0 : ((funcName == "posix_memalign") ? 2 : 1);
     bool constval = gutils->isConstantInstruction(&call);
+    auto M = gutils->newFunc->getParent();
 
-    Value *val;
+    Value *val = nullptr;
     llvm::Type *PT = getInt8PtrTy(call.getContext());
 #if LLVM_VERSION_MAJOR < 17
     if (call.getContext().supportsTypedPointers()) {
-      if (isa<PointerType>(call.getArgOperand(0)->getType()))
-        PT = call.getArgOperand(0)->getType()->getPointerElementType();
+      if (isa<PointerType>(call.getArgOperand(ptrIdx)->getType()))
+        PT = call.getArgOperand(ptrIdx)->getType()->getPointerElementType();
     }
 #endif
+    auto emitIfxFree = [&](IRBuilder<> &B, Value *ptr, Value *flagsL,
+                           Value *coarrayL) {
+      Type *IntPtrTy = getInt8PtrTy(M->getContext());
+      Value *ptrCast = B.CreateBitCast(ptr, IntPtrTy);
+      if (isIfxHandle && coarrayL) {
+        auto FreeFunc = getOrInsertPerCallingConv(
+            *M, called, "for_dealloc_allocatable_handle",
+            FunctionType::get(
+                call.getType(),
+                {IntPtrTy, flagsL->getType(), coarrayL->getType()}, false));
+        Value *nargs[] = {ptrCast, flagsL, coarrayL};
+        B.CreateCall(FreeFunc, nargs);
+      } else {
+        auto FreeFunc = getOrInsertPerCallingConv(
+            *M, called, "for_dealloc_allocatable",
+            FunctionType::get(call.getType(), {IntPtrTy, flagsL->getType()},
+                              false));
+        Value *nargs[] = {ptrCast, flagsL};
+        B.CreateCall(FreeFunc, nargs);
+      }
+    };
+
     if (!constval) {
       Value *stream = nullptr;
       if (funcName == "cuMemAllocAsync")
@@ -4578,21 +4608,22 @@ bool AdjointGenerator::handleKnownCallDerivatives(
       else if (funcName == "cudaMallocFromPoolAsync")
         stream = gutils->getNewFromOriginal(call.getArgOperand(3));
 
-      auto M = gutils->newFunc->getParent();
-
       if (Mode == DerivativeMode::ReverseModePrimal ||
           Mode == DerivativeMode::ReverseModeCombined ||
           Mode == DerivativeMode::ForwardMode ||
           Mode == DerivativeMode::ForwardModeError) {
         Value *ptrshadow =
-            gutils->invertPointerM(call.getArgOperand(0), BuilderZ);
-        SmallVector<Value *, 1> args;
-        SmallVector<ValueType, 1> valtys;
-        args.push_back(ptrshadow);
-        valtys.push_back(ValueType::Shadow);
-        for (size_t i = 1; i < call.arg_size(); ++i) {
-          args.push_back(gutils->getNewFromOriginal(call.getArgOperand(i)));
-          valtys.push_back(ValueType::Primal);
+            gutils->invertPointerM(call.getArgOperand(ptrIdx), BuilderZ);
+        SmallVector<Value *, 4> args;
+        SmallVector<ValueType, 4> valtys;
+        for (size_t i = 0; i < call.arg_size(); ++i) {
+          if (i == ptrIdx) {
+            args.push_back(ptrshadow);
+            valtys.push_back(ValueType::Shadow);
+          } else {
+            args.push_back(gutils->getNewFromOriginal(call.getArgOperand(i)));
+            valtys.push_back(ValueType::Primal);
+          }
         }
 
         auto Defs = gutils->getInvertedBundles(&call, valtys, BuilderZ,
@@ -4601,7 +4632,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
         val = applyChainRule(
             PT, BuilderZ,
             [&](Value *ptrshadow) {
-              args[0] = ptrshadow;
+              args[ptrIdx] = ptrshadow;
 
               BuilderZ.CreateCall(called, args, Defs);
               if (!isa<PointerType>(ptrshadow->getType()))
@@ -4613,11 +4644,11 @@ bool AdjointGenerator::handleKnownCallDerivatives(
 
               auto val_arg =
                   ConstantInt::get(Type::getInt8Ty(call.getContext()), 0);
-              auto len_arg = gutils->getNewFromOriginal(
-                  call.getArgOperand((funcName == "posix_memalign") ? 2 : 1));
+              auto len_arg =
+                  gutils->getNewFromOriginal(call.getArgOperand(sizeIdx));
 
               if (funcName == "posix_memalign" ||
-                  funcName == "cudaMallocHost") {
+                  funcName == "cudaMallocHost" || isIfxAlloc) {
                 BuilderZ.CreateMemSet(dst_arg, val_arg, len_arg, MaybeAlign());
               } else if (funcName == "cudaMalloc") {
                 Type *tys[] = {PT, val_arg->getType(), len_arg->getType()};
@@ -4690,6 +4721,20 @@ bool AdjointGenerator::handleKnownCallDerivatives(
           if (stream)
             streamL = gutils->lookupM(stream, Builder2);
 
+          Value *ifxFlagsL = nullptr;
+          Value *ifxCoarrayL = nullptr;
+          if (isIfxAlloc) {
+            ifxFlagsL =
+                call.arg_size() >= 3
+                    ? gutils->lookupM(
+                          gutils->getNewFromOriginal(call.getArgOperand(2)),
+                          Builder2)
+                    : ConstantInt::get(Type::getInt32Ty(M->getContext()), 0);
+            if (isIfxHandle && call.arg_size() >= 4)
+              ifxCoarrayL = gutils->lookupM(
+                  gutils->getNewFromOriginal(call.getArgOperand(3)), Builder2);
+          }
+
           applyChainRule(
               BuilderZ,
               [&](Value *tofree) {
@@ -4697,6 +4742,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
                   auto FreeFunc =
                       M->getOrInsertFunction("free", VoidTy, IntPtrTy);
                   Builder2.CreateCall(FreeFunc, tofree);
+                } else if (isIfxAlloc) {
+                  emitIfxFree(Builder2, tofree, ifxFlagsL, ifxCoarrayL);
                 } else if (funcName == "cuMemAllocAsync") {
                   auto FreeFunc = getOrInsertPerCallingConv(
                       *M, called, "cuMemFreeAsync",
@@ -4759,7 +4806,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
       //}
     } else if (Mode == DerivativeMode::ReverseModeCombined && shouldFree()) {
       IRBuilder<> Builder2(newCall->getNextNode());
-      auto ptrv = gutils->getNewFromOriginal(call.getOperand(0));
+      auto ptrv = gutils->getNewFromOriginal(call.getOperand(ptrIdx));
       if (!isa<PointerType>(ptrv->getType()))
         ptrv = BuilderZ.CreateIntToPtr(ptrv, getUnqual(PT));
       auto load = Builder2.CreateLoad(PT, ptrv, "posix_preread");
@@ -4777,13 +4824,28 @@ bool AdjointGenerator::handleKnownCallDerivatives(
       if (streamL)
         streamL = gutils->lookupM(streamL, Builder2);
 
-      auto M = gutils->newFunc->getParent();
+      Value *ifxFlagsL = nullptr;
+      Value *ifxCoarrayL = nullptr;
+      if (isIfxAlloc) {
+        ifxFlagsL =
+            call.arg_size() >= 3
+                ? gutils->lookupM(
+                      gutils->getNewFromOriginal(call.getArgOperand(2)),
+                      Builder2)
+                : ConstantInt::get(Type::getInt32Ty(M->getContext()), 0);
+        if (isIfxHandle && call.arg_size() >= 4)
+          ifxCoarrayL = gutils->lookupM(
+              gutils->getNewFromOriginal(call.getArgOperand(3)), Builder2);
+      }
+
       Type *VoidTy = Type::getVoidTy(M->getContext());
       Type *IntPtrTy = getInt8PtrTy(M->getContext());
 
       if (funcName == "posix_memalign") {
         auto FreeFunc = M->getOrInsertFunction("free", VoidTy, IntPtrTy);
         Builder2.CreateCall(FreeFunc, tofree);
+      } else if (isIfxAlloc) {
+        emitIfxFree(Builder2, tofree, ifxFlagsL, ifxCoarrayL);
       } else if (funcName == "cuMemAllocAsync") {
         auto FreeFunc = getOrInsertPerCallingConv(
             *M, called, "cuMemFreeAsync",
@@ -4866,6 +4928,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
         return true;
       }
       eraseIfUnused(call);
+      return true;
     }
     auto callval = call.getCalledOperand();
 
@@ -4884,7 +4947,9 @@ bool AdjointGenerator::handleKnownCallDerivatives(
           auto origfree = call.getArgOperand(0);
           auto tofree = gutils->invertPointerM(origfree, Builder2);
           if (tofree != origfree) {
-            SmallVector<Value *, 2> args = {tofree};
+            SmallVector<Value *, 3> args = {tofree};
+            for (size_t i = 1; i < call.arg_size(); i++)
+              args.push_back(gutils->getNewFromOriginal(call.getArgOperand(i)));
             CallInst *CI =
                 Builder2.CreateCall(call.getFunctionType(), callval, args);
             CI->setAttributes(call.getAttributes());
@@ -4948,8 +5013,25 @@ bool AdjointGenerator::handleKnownCallDerivatives(
       return true;
     }
 
-    if (gutils->postDominatingFrees.count(&call)) {
+    auto eraseDeallocCall = [&]() {
+      if (!call.getType()->isVoidTy()) {
+        if (auto newi =
+                dyn_cast<Instruction>(gutils->getNewFromOriginal(&call))) {
+          if (!newi->use_empty()) {
+            Value *zero = Constant::getNullValue(call.getType());
+            gutils->newToOriginalFn.erase(newi);
+            gutils->originalToNewFn[&call] = zero;
+            newi->replaceAllUsesWith(zero);
+            gutils->erase(newi);
+            return;
+          }
+        }
+      }
       eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+    };
+
+    if (gutils->postDominatingFrees.count(&call)) {
+      eraseDeallocCall();
       return true;
     }
 
@@ -4962,7 +5044,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
         }
       }
       if (!hasGuaranteedFree) {
-        eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+        eraseDeallocCall();
         return true;
       }
     }
@@ -4970,13 +5052,13 @@ bool AdjointGenerator::handleKnownCallDerivatives(
     llvm::Value *val = getBaseObject(call.getArgOperand(0));
     if (isa<ConstantPointerNull>(val)) {
       llvm::errs() << "removing free of null pointer\n";
-      eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+      eraseDeallocCall();
       return true;
     }
 
     // TODO HANDLE FREE
     llvm::errs() << "freeing without malloc " << *val << " in " << call << "\n";
-    eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+    eraseDeallocCall();
     return true;
   }
 
