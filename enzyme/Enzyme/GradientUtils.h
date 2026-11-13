@@ -743,9 +743,13 @@ public:
                                   int idx);
 };
 
+void copySafeMemTransferAttrs(llvm::CallInst *cal, llvm::CallInst &MTI,
+                              size_t offset, bool isMemSet,
+                              llvm::MaybeAlign dalign, llvm::MaybeAlign salign);
+
 void SubTransferHelper(GradientUtils *gutils, DerivativeMode Mode,
                        llvm::Type *secretty, llvm::Intrinsic::ID intrinsic,
-                       unsigned dstalign, unsigned srcalign, unsigned offset,
+                       unsigned dstalign, unsigned srcalign, size_t offset,
                        bool dstConstant, llvm::Value *shadow_dst,
                        llvm::Value *primal_dst, bool srcConstant,
                        llvm::Value *shadow_src, llvm::Value *primal_src,

@@ -4421,8 +4421,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
 
   if (funcName == "memcpy" || funcName == "memmove") {
     auto ID = (funcName == "memcpy") ? Intrinsic::memcpy : Intrinsic::memmove;
-    visitMemTransferCommon(ID, /*srcAlign*/ MaybeAlign(1),
-                           /*dstAlign*/ MaybeAlign(1), call,
+    visitMemTransferCommon(ID, /*srcAlign*/ call.getParamAlign(1),
+                           /*dstAlign*/ call.getParamAlign(0), call,
                            call.getArgOperand(0), call.getArgOperand(1),
                            gutils->getNewFromOriginal(call.getArgOperand(2)),
                            ConstantInt::getFalse(call.getContext()));
