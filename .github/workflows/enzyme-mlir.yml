@@ -93,14 +93,16 @@ jobs:
 
     - name: Enzyme build
       working-directory: ${{ env.BASE_DIR }}/Enzyme
+      env:
+        BUILD: ${{ matrix.build }}
       run: |
           mkdir enzyme-build && cd enzyme-build
-          cmake ../enzyme -GNinja -DCMAKE_BUILD_TYPE=${{ matrix.build }} \
-            -DLLVM_DIR=${{ env.BASE_DIR }}/llvm-project/mlir-build \
-            -DClang_DIR=${{ env.BASE_DIR }}/llvm-project/mlir-build/lib/cmake/clang \
-            -DFlang_DIR=${{ env.BASE_DIR }}/llvm-project/mlir-build/lib/cmake/flang \
+          cmake ../enzyme -GNinja -DCMAKE_BUILD_TYPE="${BUILD}" \
+            -DLLVM_DIR="${BASE_DIR}/llvm-project/mlir-build" \
+            -DClang_DIR="${BASE_DIR}/llvm-project/mlir-build/lib/cmake/clang" \
+            -DFlang_DIR="${BASE_DIR}/llvm-project/mlir-build/lib/cmake/flang" \
             -DENZYME_MLIR=ON -DENZYME_FLANG_MLIR=ON -DENZYME_FLANG=ON -DENZYME_FORTRAN=ON \
-            -DCMAKE_Fortran_COMPILER=${{ env.BASE_DIR }}/llvm-project/mlir-build/bin/flang
+            -DCMAKE_Fortran_COMPILER="${BASE_DIR}/llvm-project/mlir-build/bin/flang"
           ninja
 
     - name: Check enzyme-mlir
