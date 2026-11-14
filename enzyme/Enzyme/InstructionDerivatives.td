@@ -617,6 +617,33 @@ def : CallPattern<(Op $x, $y),
                   [ReadNone, NoUnwind]
                   >;
 
+// LLVM flang runtime MOD(a, p) = a - aint(a / p) * p and
+// MODULO(a, p) = a - floor(a / p) * p; the last two arguments are the source
+// location for error messages.
+def : CallPattern<(Op $x, $y, $file, $line),
+                  ["_FortranAModReal4", "_FortranAModReal8", "_FortranAModReal10"],
+                  [
+                  (DiffeRet),
+                  (CheckedMul (DiffeRet), (FNeg (Intrinsic<"trunc"> (FDiv $x, $y)))),
+                  (InactiveArg),
+                  (InactiveArg)
+                  ],
+                  (ForwardFromSummedReverse),
+                  [ReadOnly, NoUnwind]
+                  >;
+
+def : CallPattern<(Op $x, $y, $file, $line),
+                  ["_FortranAModuloReal4", "_FortranAModuloReal8", "_FortranAModuloReal10"],
+                  [
+                  (DiffeRet),
+                  (CheckedMul (DiffeRet), (FNeg (Intrinsic<"floor"> (FDiv $x, $y)))),
+                  (InactiveArg),
+                  (InactiveArg)
+                  ],
+                  (ForwardFromSummedReverse),
+                  [ReadOnly, NoUnwind]
+                  >;
+
 def : CallPattern<(Op $x, $integral_part_ptr),
                   ["modf", "modff", "modfl"],
                   [
