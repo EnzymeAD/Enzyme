@@ -5971,8 +5971,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         // With global activity, the derivative held in a global outlives
         // this call: a caller, or a later call of this function, reads or
         // writes the same shadow, so it must be the shadow global.
-        if (!EnzymeGlobalActivity && CT.isKnown() &&
-            CT != BaseType::Pointer) {
+        if (!EnzymeGlobalActivity && CT.isKnown() && CT != BaseType::Pointer) {
           bool seen = false;
           MemoryLocation
 #if LLVM_VERSION_MAJOR >= 12
