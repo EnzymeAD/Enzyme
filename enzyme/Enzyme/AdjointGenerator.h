@@ -3535,6 +3535,270 @@ public:
     }
   }
 
+  /// Deduce a uniform floating-point scalar element type when Pointer addresses
+  /// a static local or initialized global floating-point array whose transitive
+  /// accesses all use that element type at element-aligned byte offsets.
+  ConcreteType deduceUniformFloatingPointElementType(
+      llvm::Value *Pointer, size_t TransferBytes, const llvm::DataLayout &DL) {
+    using namespace llvm;
+    auto getUniformArrayElementType = [](Value *Object) -> Type * {
+      Type *ObjectType = nullptr;
+      if (auto *Alloca = dyn_cast<AllocaInst>(Object)) {
+        if (!Alloca->isStaticAlloca())
+          return nullptr;
+        ObjectType = Alloca->getAllocatedType();
+      } else if (auto *Global = dyn_cast<GlobalVariable>(Object)) {
+        if (!Global->hasInitializer() || Global->isExternallyInitialized() ||
+            Global->isConstant())
+          return nullptr;
+        Constant *Init = Global->getInitializer();
+        if (!isa<ConstantAggregateZero>(Init) && !isa<UndefValue>(Init))
+          return nullptr;
+        ObjectType = Global->getValueType();
+      } else {
+        return nullptr;
+      }
+
+      Type *ScalarType = ObjectType;
+      while (auto *ArrayTy = dyn_cast<ArrayType>(ScalarType))
+        ScalarType = ArrayTy->getElementType();
+      return ScalarType->isFloatingPointTy() ? ScalarType : nullptr;
+    };
+
+    Value *RootObject = getBaseObject(Pointer);
+    Type *ElementType = getUniformArrayElementType(RootObject);
+    if (!ElementType)
+      return ConcreteType(BaseType::Unknown);
+
+    size_t ElementBytes = (DL.getTypeSizeInBits(ElementType) + 7) / 8;
+    if (ElementBytes == 0 || (TransferBytes % ElementBytes) != 0)
+      return ConcreteType(BaseType::Unknown);
+
+    ConcreteType ExpectedType(ElementType);
+    auto isConfirmedFloatingPointValue = [&](Value *Val) {
+      if (auto *ConstFP = dyn_cast<ConstantFP>(Val))
+        return !ConstFP->isExactlyValue(0.0);
+      if (auto *Unary = dyn_cast<UnaryOperator>(Val))
+        return Unary->getOpcode() == Instruction::FNeg;
+      if (auto *Binary = dyn_cast<BinaryOperator>(Val)) {
+        switch (Binary->getOpcode()) {
+        case Instruction::FAdd:
+        case Instruction::FSub:
+        case Instruction::FMul:
+        case Instruction::FDiv:
+        case Instruction::FRem:
+          return true;
+        default:
+          return false;
+        }
+      }
+      return isa<FPExtInst>(Val) || isa<FPTruncInst>(Val);
+    };
+
+    auto isElementAlignedGEP = [&](GEPOperator *GEP) {
+      unsigned BitWidth = DL.getIndexSizeInBits(GEP->getPointerAddressSpace());
+      APInt ConstantOffset(BitWidth, 0);
+#if LLVM_VERSION_MAJOR >= 20
+      SmallMapVector<Value *, APInt, 4> VariableOffsets;
+#else
+      MapVector<Value *, APInt> VariableOffsets;
+#endif
+      if (!collectOffset(GEP, DL, BitWidth, VariableOffsets, ConstantOffset))
+        return false;
+      if (ConstantOffset.srem(ElementBytes) != 0)
+        return false;
+      for (const auto &Entry : VariableOffsets) {
+        if (Entry.second.srem(ElementBytes) != 0)
+          return false;
+      }
+      return true;
+    };
+
+    auto matchesElementOrVectorType = [&](Type *AccessType) {
+      if (AccessType == ElementType)
+        return true;
+      if (auto *VecTy = dyn_cast<FixedVectorType>(AccessType))
+        return VecTy->getElementType() == ElementType;
+      return false;
+    };
+
+    SmallVector<Value *, 16> Worklist = {RootObject};
+    SmallPtrSet<Value *, 32> VisitedValues = {RootObject};
+    bool ConfirmedFloatingPointAccess = false;
+
+    auto enqueuePointer = [&](Value *Candidate) {
+      if (VisitedValues.insert(Candidate).second)
+        Worklist.push_back(Candidate);
+    };
+
+    while (!Worklist.empty()) {
+      Value *CurrentPointer = Worklist.pop_back_val();
+      for (User *CurrentUser : CurrentPointer->users()) {
+        if (auto *ConstExpr = dyn_cast<ConstantExpr>(CurrentUser)) {
+          if (ConstExpr->use_empty())
+            continue;
+          if (ConstExpr->isCast()) {
+            if (!ConstExpr->getType()->isPointerTy())
+              return ConcreteType(BaseType::Unknown);
+            enqueuePointer(ConstExpr);
+            continue;
+          }
+          if (ConstExpr->getOpcode() == Instruction::GetElementPtr) {
+            if (!isElementAlignedGEP(cast<GEPOperator>(ConstExpr)))
+              return ConcreteType(BaseType::Unknown);
+            enqueuePointer(ConstExpr);
+            continue;
+          }
+          return ConcreteType(BaseType::Unknown);
+        }
+
+        auto *Inst = dyn_cast<Instruction>(CurrentUser);
+        if (!Inst)
+          return ConcreteType(BaseType::Unknown);
+
+        if (isa<BitCastInst>(Inst) || isa<AddrSpaceCastInst>(Inst)) {
+          enqueuePointer(Inst);
+          continue;
+        }
+        if (auto *GEP = dyn_cast<GetElementPtrInst>(Inst)) {
+          if (GEP->getPointerOperand() != CurrentPointer ||
+              !isElementAlignedGEP(cast<GEPOperator>(GEP)))
+            return ConcreteType(BaseType::Unknown);
+          enqueuePointer(GEP);
+          continue;
+        }
+        if (auto *Phi = dyn_cast<PHINode>(Inst)) {
+          enqueuePointer(Phi);
+          continue;
+        }
+        if (auto *Select = dyn_cast<SelectInst>(Inst)) {
+          if (Select->getCondition() == CurrentPointer)
+            return ConcreteType(BaseType::Unknown);
+          enqueuePointer(Select);
+          continue;
+        }
+        if (isa<ICmpInst>(Inst) || isa<DbgInfoIntrinsic>(Inst))
+          continue;
+
+        if (auto *Load = dyn_cast<LoadInst>(Inst)) {
+          if (Load->getPointerOperand() != CurrentPointer ||
+              !matchesElementOrVectorType(Load->getType()))
+            return ConcreteType(BaseType::Unknown);
+          if (Load->getFunction() == gutils->oldFunc) {
+            ConcreteType Deduced = TR.query(Load)[{-1}];
+            if (Deduced.isKnown() && Deduced != BaseType::Anything) {
+              if (Deduced != ExpectedType)
+                return ConcreteType(BaseType::Unknown);
+              ConfirmedFloatingPointAccess = true;
+            }
+          }
+          ConcreteType TBAAType = parseTBAA(*Load, DL, nullptr)[{0}];
+          if (TBAAType.isKnown() && TBAAType != BaseType::Anything) {
+            if (TBAAType != ExpectedType)
+              return ConcreteType(BaseType::Unknown);
+            ConfirmedFloatingPointAccess = true;
+          }
+          for (User *LoadUser : Load->users()) {
+            if (auto *LoadUserInst = dyn_cast<Instruction>(LoadUser)) {
+              if (isConfirmedFloatingPointValue(LoadUserInst) ||
+                  isa<FCmpInst>(LoadUserInst)) {
+                ConfirmedFloatingPointAccess = true;
+                break;
+              }
+            }
+          }
+          continue;
+        }
+
+        if (auto *Store = dyn_cast<StoreInst>(Inst)) {
+          Value *StoredValue = Store->getValueOperand();
+          if (Store->getPointerOperand() != CurrentPointer ||
+              StoredValue == CurrentPointer ||
+              !matchesElementOrVectorType(StoredValue->getType()))
+            return ConcreteType(BaseType::Unknown);
+          if (Store->getFunction() == gutils->oldFunc) {
+            ConcreteType Deduced = TR.query(StoredValue)[{-1}];
+            if (Deduced.isKnown() && Deduced != BaseType::Anything) {
+              if (Deduced != ExpectedType)
+                return ConcreteType(BaseType::Unknown);
+              ConfirmedFloatingPointAccess = true;
+            }
+          }
+          ConcreteType TBAAType = parseTBAA(*Store, DL, nullptr)[{0}];
+          if (TBAAType.isKnown() && TBAAType != BaseType::Anything) {
+            if (TBAAType != ExpectedType)
+              return ConcreteType(BaseType::Unknown);
+            ConfirmedFloatingPointAccess = true;
+          }
+          if (isConfirmedFloatingPointValue(StoredValue))
+            ConfirmedFloatingPointAccess = true;
+          continue;
+        }
+
+        if (auto *Call = dyn_cast<CallBase>(Inst)) {
+          if (Call->getCalledOperand() == CurrentPointer)
+            return ConcreteType(BaseType::Unknown);
+          Intrinsic::ID ID = Intrinsic::not_intrinsic;
+          if (auto *II = dyn_cast<IntrinsicInst>(Call)) {
+            ID = II->getIntrinsicID();
+          } else {
+            StringRef FuncName = getFuncNameFromCall(Call);
+            isMemFreeLibMFunction(FuncName, &ID);
+          }
+          if (ID == Intrinsic::lifetime_start ||
+              ID == Intrinsic::lifetime_end ||
+              ID == Intrinsic::invariant_start ||
+              ID == Intrinsic::invariant_end || ID == Intrinsic::assume)
+            continue;
+          if (ID == Intrinsic::memset) {
+            if (Call->getArgOperand(0) != CurrentPointer)
+              return ConcreteType(BaseType::Unknown);
+            auto *ByteVal = dyn_cast<ConstantInt>(Call->getArgOperand(1));
+            auto *ByteLen = dyn_cast<ConstantInt>(Call->getArgOperand(2));
+            if (!ByteVal || !ByteVal->isZero() || !ByteLen ||
+                (ByteLen->getLimitedValue() % ElementBytes) != 0)
+              return ConcreteType(BaseType::Unknown);
+            continue;
+          }
+          if (ID == Intrinsic::memcpy || ID == Intrinsic::memmove) {
+            if (Call->getArgOperand(0) != CurrentPointer &&
+                Call->getArgOperand(1) != CurrentPointer)
+              return ConcreteType(BaseType::Unknown);
+            auto *ByteLen = dyn_cast<ConstantInt>(Call->getArgOperand(2));
+            if (!ByteLen || (ByteLen->getLimitedValue() % ElementBytes) != 0)
+              return ConcreteType(BaseType::Unknown);
+            Value *PeerPointer = (Call->getArgOperand(0) == CurrentPointer)
+                                     ? Call->getArgOperand(1)
+                                     : Call->getArgOperand(0);
+            Value *PeerRoot = getBaseObject(PeerPointer);
+            if (getUniformArrayElementType(PeerRoot) != ElementType)
+              return ConcreteType(BaseType::Unknown);
+            enqueuePointer(PeerRoot);
+            continue;
+          }
+
+          Function *Callee = getFunctionFromCall(Call);
+          if (!Callee || !Callee->hasExactDefinition())
+            return ConcreteType(BaseType::Unknown);
+          for (unsigned ArgIdx = 0; ArgIdx < Call->arg_size(); ++ArgIdx) {
+            if (Call->getArgOperand(ArgIdx) == CurrentPointer) {
+              if (ArgIdx >= Callee->arg_size())
+                return ConcreteType(BaseType::Unknown);
+              enqueuePointer(Callee->getArg(ArgIdx));
+            }
+          }
+          continue;
+        }
+
+        return ConcreteType(BaseType::Unknown);
+      }
+    }
+
+    if (ConfirmedFloatingPointAccess)
+      return ExpectedType;
+    return ConcreteType(BaseType::Unknown);
+  }
+
   void visitMemSetInst(llvm::MemSetInst &MS) { visitMemSetCommon(MS); }
 
   void visitMemSetCommon(llvm::CallInst &MS) {
@@ -3735,6 +3999,13 @@ public:
               }
             }
           }
+      }
+
+      if (!vd.isKnownPastPointer() && isa<ConstantInt>(MS.getArgOperand(2))) {
+        ConcreteType UniformType = deduceUniformFloatingPointElementType(
+            MS.getArgOperand(0), size, DL);
+        if (UniformType.isKnown())
+          vd = TypeTree(UniformType).Only(-1, &MS);
       }
 
       if (!vd.isKnownPastPointer()) {
@@ -4100,6 +4371,17 @@ public:
             vd |= TT.Data0().ShiftIndices(DL, 0, size, 0);
             break;
           }
+
+      if (!vd.isKnownPastPointer() && isa<ConstantInt>(new_size)) {
+        for (Value *Candidate : {orig_dst, orig_src}) {
+          ConcreteType UniformType =
+              deduceUniformFloatingPointElementType(Candidate, size, DL);
+          if (UniformType.isKnown()) {
+            vd = TypeTree(UniformType).Only(-1, &MTI);
+            break;
+          }
+        }
+      }
 
       bool errorIfNoType = true;
       if ((Mode == DerivativeMode::ForwardMode ||
