@@ -12,6 +12,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "Implementations/CoreDialectsAutoDiffImplementations.h"
+#include "Interfaces/AutoDiffControlFlowInterface.h"
 #include "Interfaces/AutoDiffOpInterface.h"
 #include "Interfaces/GradientUtils.h"
 #include "Interfaces/GradientUtilsReverse.h"
@@ -839,6 +840,44 @@ struct CIRMemTransfer
   }
 };
 
+class CIRAutoDiffControlFlow : public AutoDiffControlFlowInterface {
+public:
+  using AutoDiffControlFlowInterface::AutoDiffControlFlowInterface;
+
+  Type getBranchIndexType(MLIRContext *context) const override {
+    return cir::IntType::get(context, 32, /*isSigned=*/true);
+  }
+  Value createBranchIndex(OpBuilder &b, Location loc,
+                          int64_t value) const override {
+    return cir::ConstantOp::create(
+        b, loc, cir::IntAttr::get(getBranchIndexType(b.getContext()), value));
+  }
+  Operation *createBranch(OpBuilder &b, Location loc,
+                          Block *dest) const override {
+    return cir::BrOp::create(b, loc, dest);
+  }
+  Operation *createSwitch(OpBuilder &b, Location loc, Value flag,
+                          Block *defaultDest, ArrayRef<int64_t> caseValues,
+                          BlockRange caseDests) const override {
+    // Switch with no case will be erased, fallback to normal br
+    if (caseValues.empty())
+      return cir::BrOp::create(b, loc, defaultDest);
+    SmallVector<APInt> values;
+    for (int64_t v : caseValues)
+      values.push_back(APInt(32, v, /*isSigned=*/true));
+    return cir::SwitchFlatOp::create(b, loc, flag, defaultDest, ValueRange(),
+                                     values, caseDests,
+                                     SmallVector<ValueRange>(values.size()));
+  }
+  Value createSelectOnBranchIndex(OpBuilder &b, Location loc, Value flag,
+                                  int64_t value, Value ifTrue,
+                                  Value ifFalse) const override {
+    Value isValue = cir::CmpOp::create(b, loc, cir::CmpOpKind::eq, flag,
+                                       createBranchIndex(b, loc, value));
+    return cir::SelectOp::create(b, loc, isValue, ifTrue, ifFalse);
+  }
+};
+
 struct CIRReturnOpFunctionReturnInterface
     : public FunctionReturnOpInterface::ExternalModel<
           CIRReturnOpFunctionReturnInterface, cir::ReturnOp> {};
@@ -855,7 +894,8 @@ struct CIRNoMemoryEffect
 
 void mlir::enzyme::registerCIRDialectAutoDiffInterface(
     DialectRegistry &registry) {
-  registry.addExtension(+[](MLIRContext *context, cir::CIRDialect *) {
+  registry.addExtension(+[](MLIRContext *context, cir::CIRDialect *dialect) {
+    dialect->addInterfaces<CIRAutoDiffControlFlow>();
     cir::SwitchFlatOp::attachInterface<SwitchFlatBranchOpInterface>(*context);
     cir::StoreOp::attachInterface<CIRStoreLike>(*context);
     cir::LoadOp::attachInterface<CIRLoadOpInterfaceReverse>(*context);

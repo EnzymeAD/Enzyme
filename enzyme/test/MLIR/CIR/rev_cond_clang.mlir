@@ -77,7 +77,7 @@ module {
 // CHECK:           %[[LOAD_6:.*]] = cir.load %[[ALLOCA_0]] : !cir.ptr<!cir.double>, !cir.double
 // CHECK:           %[[FADD_6:.*]] = cir.fadd %[[LOAD_6]], %[[FADD_3]] : !cir.double
 // CHECK:           cir.store %[[FADD_6]], %[[ALLOCA_0]] : !cir.double, !cir.ptr<!cir.double>
-// CHECK:           cf.br ^bb3
+// CHECK:           cir.br ^bb3
 // CHECK:         ^bb2:
 // CHECK:           %[[LOAD_7:.*]] = cir.load align(8) %[[ALLOCA_1]] : !cir.ptr<!cir.double>, !cir.double
 // CHECK:           %[[FNEG_0:.*]] = cir.fneg %[[LOAD_7]] : !cir.double
@@ -94,7 +94,7 @@ module {
 // CHECK:           %[[LOAD_10:.*]] = cir.load %[[ALLOCA_0]] : !cir.ptr<!cir.double>, !cir.double
 // CHECK:           %[[FADD_11:.*]] = cir.fadd %[[LOAD_10]], %[[FADD_10]] : !cir.double
 // CHECK:           cir.store %[[FADD_11]], %[[ALLOCA_0]] : !cir.double, !cir.ptr<!cir.double>
-// CHECK:           cf.br ^bb3
+// CHECK:           cir.br ^bb3
 // CHECK:         ^bb3:
 // CHECK:           %[[VAL_2:.*]] = "enzyme.pop"(%[[VAL_1]]) : (!enzyme.Cache<!cir.ptr<!cir.double>>) -> !cir.ptr<!cir.double>
 // CHECK:           %[[LOAD_11:.*]] = cir.load %[[VAL_2]] : !cir.ptr<!cir.double>, !cir.double
