@@ -37,6 +37,7 @@
 #include "llvm/Transforms/Utils/Mem2Reg.h"
 
 #include "Core/HerbieRun.h"
+#include "Core/Parallel.h"
 #include "Herbie.h"
 #include "IR/Utils.h"
 #include "Model/CostModel.h"
@@ -393,31 +394,32 @@ void collectIfNodes(const FPNode *node, SmallPtrSetImpl<const FPNode *> &seen,
 }
 
 // The arms the candidate actually evaluates at `point`, following each `if` the
-// way the materialised select resolves it.
+// way the materialised select resolves it. `ev` evaluates at `point`.
 void collectTakenArms(const FPNode *node,
-                      const MapVector<Value *, double> &point,
+                      const MapVector<Value *, double> &point, FPEvaluator &ev,
                       SmallPtrSetImpl<const FPNode *> &seen,
                       SmallVectorImpl<RegimeArm> &arms) {
   if (!seen.insert(node).second)
     return;
   if (node->op != "if") {
     for (const auto &operand : node->operands)
-      collectTakenArms(operand.get(), point, seen, arms);
+      collectTakenArms(operand.get(), point, ev, seen, arms);
     return;
   }
-  SmallVector<double, 1> cond;
-  getFPValues({node->operands[0].get()}, point, cond);
-  bool taken = cond[0] == 1.0;
+  const FPNode *cond = node->operands[0].get();
+  ev.evaluateNode(cond, point);
+  bool taken = ev.getResult(cond) == 1.0;
   arms.push_back({node, taken});
-  collectTakenArms(node->operands[0].get(), point, seen, arms);
-  collectTakenArms(node->operands[taken ? 1 : 2].get(), point, seen, arms);
+  collectTakenArms(cond, point, ev, seen, arms);
+  collectTakenArms(node->operands[taken ? 1 : 2].get(), point, ev, seen, arms);
 }
 
 SmallVector<RegimeArm, 4> takenArms(const FPNode *root,
-                                    const MapVector<Value *, double> &point) {
+                                    const MapVector<Value *, double> &point,
+                                    FPEvaluator &ev) {
   SmallPtrSet<const FPNode *, 32> seen;
   SmallVector<RegimeArm, 4> arms;
-  collectTakenArms(root, point, seen, arms);
+  collectTakenArms(root, point, ev, seen, arms);
   return arms;
 }
 
@@ -427,101 +429,69 @@ struct ArmStats {
   unsigned count = 0;
 };
 
-} // namespace
-
-namespace {
-
-// One round of the regime-arm search. A round's points and the original's
-// gold value and error at each depend only on the root and the round's seed, so
-// every regime-split candidate of the root shares them.
-struct ArmRound {
-  SmallVector<MapVector<Value *, double>, 4> points;
-  SmallVector<double, 4> gold, origError;
-  SmallVector<bool, 4> priced;
-};
-
-struct RootSamples {
-  Value *root = nullptr;
-  double grad = 0.0;
-  SmallVector<double, 4> goldVals, origErrors, origVals;
+// One element of a candidate, priced against its output's original on the
+// subgraph's samples. The pricing of an element reads nothing another element
+// writes, so the elements of a unit are priced concurrently.
+struct ElementPricing {
+  std::shared_ptr<FPNode> node;
+  // The output's original expression, its values at the samples, and its
+  // mean error there.
+  const FPNode *orig = nullptr;
+  const SubgraphSamples::Reference *ref = nullptr;
   double origCost = 0.0;
-  mutable std::vector<ArmRound> armRounds;
+  const std::string *exprForLog = nullptr;
+  SmallVector<const FPNode *, 2> ifNodes;
+
+  std::map<RegimeArm, ArmStats> armStats;
+  bool discard = false;
+  std::string why;
+  double cost = 0.0;
+  size_t drawn = 0;
+  bool searching = false;
+  // Its -poseidon-print lines, printed in candidate order.
+  std::string diag;
+
+  bool starved(const Options &O) const {
+    for (const auto &kv : armStats)
+      if (kv.second.count < O.Model.MinArmSamples)
+        return true;
+    return false;
+  }
 };
 
-bool sampleRoot(
-    const Options &O, RootSamples &R,
-    ArrayRef<MapVector<Value *, double>> sampledPoints,
-    std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap) {
-  R.goldVals.resize(O.Model.NumSamples);
-  R.origErrors.resize(O.Model.NumSamples);
-  R.origVals.resize(O.Model.NumSamples);
-  double sum = 0.0;
-  unsigned count = 0;
-  for (const auto &pair : enumerate(sampledPoints)) {
-    std::shared_ptr<FPNode> node = valueToNodeMap[R.root];
-    SmallVector<double, 1> results;
-    getMPFRValues({node.get()}, pair.value(), results, true, 53);
-    double goldVal = results[0];
-    R.goldVals[pair.index()] = goldVal;
-
-    getFPValues({node.get()}, pair.value(), results);
-    double realVal = results[0];
-    double error = sampleError(goldVal, realVal);
-    R.origErrors[pair.index()] = error;
-    R.origVals[pair.index()] = realVal;
-    if (!std::isnan(error)) {
-      sum += error;
-      ++count;
+// The element on the samples every candidate is priced on.
+void priceOnPoints(const Options &O, ElementPricing &E,
+                   ArrayRef<SubgraphSamples::Point> points) {
+  const size_t n = points.size();
+  SmallVector<double, 0> values(n);
+  SmallVector<SmallVector<RegimeArm, 4>, 0> arms(E.ifNodes.empty() ? 0 : n);
+  forEachBlock(O.Model.Threads, n, 64, [&](size_t begin, size_t end) {
+    for (size_t i = begin; i < end; ++i) {
+      FPEvaluator ev;
+      ev.evaluateNode(E.node.get(), points[i]);
+      values[i] = ev.getResult(E.node.get());
+      if (!E.ifNodes.empty())
+        arms[i] = takenArms(E.node.get(), points[i], ev);
     }
-  }
-  if (count == 0)
-    return false;
-  R.origCost = sum / count;
-  return true;
-}
-
-std::optional<double>
-priceRoot(const Options &O, const RootSamples &R,
-          std::shared_ptr<FPNode> parsedNode, const std::string &exprForLog,
-          const Subgraph &subgraph,
-          ArrayRef<MapVector<Value *, double>> sampledPoints,
-          std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-          std::unordered_map<std::string, Value *> &symbolToValueMap,
-          std::string &why) {
-  bool discardCandidate = false;
-  double candCost = 0.0;
-
-  SmallVector<const FPNode *, 2> ifNodes;
-  if (O.Model.MinArmSamples > 0) {
-    SmallPtrSet<const FPNode *, 32> seen;
-    collectIfNodes(parsedNode.get(), seen, ifNodes);
-  }
-  std::map<RegimeArm, ArmStats> armStats;
-  for (const FPNode *ifNode : ifNodes) {
-    armStats[{ifNode, true}];
-    armStats[{ifNode, false}];
-  }
+  });
 
   double sum = 0.0;
   unsigned count = 0;
   unsigned broken = 0;
-  for (const auto &pair : enumerate(sampledPoints)) {
-    SmallVector<double, 1> results;
-    getFPValues({parsedNode.get()}, pair.value(), results);
-    double realVal = results[0];
-    double goldVal = R.goldVals[pair.index()];
+  for (size_t i = 0; i < n; ++i) {
+    double realVal = values[i];
+    double goldVal = E.ref->gold[i];
     if (std::isfinite(goldVal) && goldVal != 0.0) {
-      double origRel =
-          std::fabs(R.origVals[pair.index()] - goldVal) / std::fabs(goldVal);
+      double origRel = std::fabs(E.ref->value[i] - goldVal) / std::fabs(goldVal);
       double candRel = std::fabs(realVal - goldVal) / std::fabs(goldVal);
       if (origRel < 1.0 && !(candRel < 1.0))
         ++broken;
     }
 
     if (std::isfinite(goldVal) && !std::isfinite(realVal)) {
-      discardCandidate = true;
-      why = "it returns a non-finite value at a sampled input where the "
-            "exact result is finite";
+      E.discard = true;
+      E.why = "it returns a non-finite value at a sampled input where the "
+              "exact result is finite";
       break;
     }
 
@@ -529,93 +499,128 @@ priceRoot(const Options &O, const RootSamples &R,
     if (!std::isnan(error)) {
       sum += error;
       ++count;
-      double origError = R.origErrors[pair.index()];
-      if (!ifNodes.empty() && !std::isnan(origError))
-        for (const RegimeArm &arm : takenArms(parsedNode.get(), pair.value())) {
-          ArmStats &st = armStats[arm];
+      double origError = E.ref->error[i];
+      if (!E.ifNodes.empty() && !std::isnan(origError))
+        for (const RegimeArm &arm : arms[i]) {
+          ArmStats &st = E.armStats[arm];
           st.candSum += error;
           st.origSum += origError;
           ++st.count;
         }
     }
   }
-  if (!discardCandidate) {
+  if (!E.discard) {
     if (count == 0) {
-      discardCandidate = true;
-      why = "every sample of it scored NaN";
+      E.discard = true;
+      E.why = "every sample of it scored NaN";
     } else {
-      candCost = sum / count;
+      E.cost = sum / count;
     }
   }
-  if (!discardCandidate && O.Model.MaxBrokenShare >= 0.0 &&
-      broken > O.Model.MaxBrokenShare * sampledPoints.size()) {
+  if (!E.discard && O.Model.MaxBrokenShare >= 0.0 &&
+      broken > O.Model.MaxBrokenShare * n) {
     if (O.Diagnostics.Print)
-      llvm::errs() << "[poseidon] dropping candidate: relative error >= 1 on "
-                   << broken << " of " << sampledPoints.size()
-                   << " samples: " << exprForLog.substr(0, 120) << "\n";
-    discardCandidate = true;
-    why = formatv("its relative error is 1 or more on {0} of {1} samples",
-                  broken, sampledPoints.size())
-              .str();
+      raw_string_ostream(E.diag)
+          << "[poseidon] dropping candidate: relative error >= 1 on " << broken
+          << " of " << n << " samples: " << E.exprForLog->substr(0, 120)
+          << "\n";
+    E.discard = true;
+    E.why = formatv("its relative error is 1 or more on {0} of {1} samples",
+                    broken, n)
+                .str();
   }
+  E.searching = !E.discard && !E.ifNodes.empty() && E.starved(O) &&
+                O.Model.ArmSearchFactor > 0 && O.Model.NumSamples > 0;
+}
 
-  // Uniform marginal sampling weights each regime by its share of the
-  // profiled box, which need not be its share of the workload: correlated
-  // inputs can put most of the run in an arm the box almost never reaches.
-  // Price every arm on its own samples and charge the worst arm's excess
-  // over the original.
-  if (!discardCandidate && !ifNodes.empty()) {
-    auto starved = [&] {
-      for (const auto &kv : armStats)
-        if (kv.second.count < O.Model.MinArmSamples)
-          return true;
-      return false;
+// Uniform marginal sampling weights each regime by its share of the profiled
+// box, which need not be its share of the workload: correlated inputs can put
+// most of the run in an arm the box almost never reaches. Every arm is priced
+// on its own samples, drawn round by round until it has enough or the budget
+// is spent. An element takes the rounds in order and at each point reads only
+// its own counts, so the elements advance through the rounds together, each
+// round's evaluations running concurrently.
+void searchArms(const Options &O, SubgraphSamples &samples,
+                ArrayRef<ElementPricing *> elements) {
+  const size_t budget =
+      static_cast<size_t>(O.Model.ArmSearchFactor) * O.Model.NumSamples;
+  for (unsigned round = 1;; ++round) {
+    SmallVector<ElementPricing *, 0> active;
+    for (ElementPricing *E : elements)
+      if (E->searching)
+        active.push_back(E);
+    if (active.empty())
+      return;
+    ArrayRef<SubgraphSamples::Point> points = samples.round(round);
+    const size_t n = points.size();
+    if (n == 0) {
+      for (ElementPricing *E : active)
+        E->searching = false;
+      return;
+    }
+
+    // A point an element can still take has an arm that is starved now, as
+    // counts only grow; the values it needs there are computed ahead.
+    struct RoundWork {
+      SmallVector<SmallVector<RegimeArm, 4>, 0> arms;
+      SmallVector<size_t, 0> wanted;
+      SmallVector<double, 0> values;
+      const SubgraphSamples::Reference *ref = nullptr;
     };
-    size_t budget =
-        static_cast<size_t>(O.Model.ArmSearchFactor) * O.Model.NumSamples;
-    size_t drawn = 0;
-    unsigned round = 0;
-    std::shared_ptr<FPNode> origNode = valueToNodeMap[R.root];
-    while (starved() && drawn < budget) {
-      if (R.armRounds.size() <= round) {
-        ArmRound fresh;
-        getSampledPoints(O, subgraph.inputs.getArrayRef(), valueToNodeMap,
-                         symbolToValueMap, fresh.points, nullptr,
-                         O.Model.NumSamples, round + 1);
-        fresh.gold.resize(fresh.points.size());
-        fresh.origError.resize(fresh.points.size());
-        fresh.priced.resize(fresh.points.size(), false);
-        R.armRounds.push_back(std::move(fresh));
-      }
-      ArmRound &rd = R.armRounds[round++];
-      if (rd.points.empty())
-        break;
-      drawn += rd.points.size();
-      for (size_t p = 0; p < rd.points.size(); ++p) {
-        const auto &point = rd.points[p];
-        SmallVector<RegimeArm, 4> arms = takenArms(parsedNode.get(), point);
-        bool wanted = false;
-        for (const RegimeArm &arm : arms)
-          if (armStats[arm].count < O.Model.MinArmSamples)
-            wanted = true;
-        if (!wanted)
-          continue;
-        SmallVector<double, 1> r;
-        if (!rd.priced[p]) {
-          getMPFRValues({origNode.get()}, point, r, true, 53);
-          rd.gold[p] = r[0];
-          getFPValues({origNode.get()}, point, r);
-          rd.origError[p] = sampleError(rd.gold[p], r[0]);
-          rd.priced[p] = true;
+    SmallVector<RoundWork, 0> work(active.size());
+    forEachIndex(O.Model.Threads, active.size(), [&](size_t a) {
+      ElementPricing &E = *active[a];
+      RoundWork &W = work[a];
+      W.arms.resize(n);
+      forEachBlock(O.Model.Threads, n, 64, [&](size_t begin, size_t end) {
+        for (size_t p = begin; p < end; ++p) {
+          FPEvaluator ev;
+          W.arms[p] = takenArms(E.node.get(), points[p], ev);
         }
-        double goldVal = rd.gold[p];
-        double origError = rd.origError[p];
-        getFPValues({parsedNode.get()}, point, r);
-        double error = sampleError(goldVal, r[0]);
+      });
+      for (size_t p = 0; p < n; ++p)
+        if (any_of(W.arms[p], [&](const RegimeArm &arm) {
+              return E.armStats[arm].count < O.Model.MinArmSamples;
+            }))
+          W.wanted.push_back(p);
+      W.values.resize(n);
+      forEachBlock(O.Model.Threads, W.wanted.size(), 16,
+                   [&](size_t begin, size_t end) {
+                     SmallVector<double, 1> r;
+                     for (size_t i = begin; i < end; ++i) {
+                       getFPValues({E.node.get()}, points[W.wanted[i]], r);
+                       W.values[W.wanted[i]] = r[0];
+                     }
+                   });
+    });
+    std::map<const FPNode *, SmallVector<size_t, 0>> byOrig;
+    for (auto [E, W] : zip(active, work))
+      llvm::append_range(byOrig[E->orig], W.wanted);
+    for (auto &[orig, which] : byOrig) {
+      const SubgraphSamples::Reference &ref =
+          samples.roundReference(orig, round, which);
+      for (auto [E, W] : zip(active, work))
+        if (E->orig == orig)
+          W.ref = &ref;
+    }
+
+    forEachIndex(O.Model.Threads, active.size(), [&](size_t a) {
+      ElementPricing &E = *active[a];
+      const RoundWork &W = work[a];
+      E.drawn += n;
+      for (size_t p : W.wanted) {
+        bool wantedHere = false;
+        for (const RegimeArm &arm : W.arms[p])
+          if (E.armStats[arm].count < O.Model.MinArmSamples)
+            wantedHere = true;
+        if (!wantedHere)
+          continue;
+        double origError = W.ref->error[p];
+        double error = sampleError(W.ref->gold[p], W.values[p]);
         if (std::isnan(error) || std::isnan(origError))
           continue;
-        for (const RegimeArm &arm : arms) {
-          ArmStats &st = armStats[arm];
+        for (const RegimeArm &arm : W.arms[p]) {
+          ArmStats &st = E.armStats[arm];
           if (st.count >= O.Model.MinArmSamples)
             continue;
           st.candSum += error;
@@ -623,43 +628,46 @@ priceRoot(const Options &O, const RootSamples &R,
           ++st.count;
         }
       }
-    }
+      E.searching = E.starved(O) && E.drawn < budget;
+    });
+  }
+}
 
-    double worst = candCost;
-    std::string armReport;
-    raw_string_ostream os(armReport);
-    for (const FPNode *ifNode : ifNodes)
-      for (bool taken : {false, true}) {
-        const ArmStats &st = armStats[{ifNode, taken}];
-        os << " " << (taken ? "then" : "else") << ":" << st.count;
-        if (st.count)
-          os << ":" << format("%.3e", st.candSum / st.count) << "/"
-             << format("%.3e", st.origSum / st.count);
-        if (st.count < O.Model.MinArmSamples) {
-          discardCandidate = true;
-          why = formatv("a regime-split arm is reached by fewer than {0} "
+// Charges the element its worst arm's excess over the original.
+void chargeWorstArm(const Options &O, ElementPricing &E) {
+  if (E.discard || E.ifNodes.empty())
+    return;
+  double worst = E.cost;
+  std::string armReport;
+  raw_string_ostream os(armReport);
+  for (const FPNode *ifNode : E.ifNodes)
+    for (bool taken : {false, true}) {
+      const ArmStats &st = E.armStats[{ifNode, taken}];
+      os << " " << (taken ? "then" : "else") << ":" << st.count;
+      if (st.count)
+        os << ":" << format("%.3e", st.candSum / st.count) << "/"
+           << format("%.3e", st.origSum / st.count);
+      if (st.count < O.Model.MinArmSamples) {
+        E.discard = true;
+        E.why = formatv("a regime-split arm is reached by fewer than {0} "
                         "samples",
                         (unsigned)O.Model.MinArmSamples)
                     .str();
-          continue;
-        }
-        worst =
-            std::max(worst, R.origCost + (st.candSum - st.origSum) / st.count);
+        continue;
       }
-    if (O.Diagnostics.Print)
-      llvm::errs() << "[poseidon] regime-split candidate: arms (samples:cand/"
-                      "orig mean error)"
-                   << os.str() << "; " << drawn << " extra draws; box cost "
-                   << format("%.3e", candCost) << " -> "
-                   << (discardCandidate ? std::string("dropped (unpriced arm)")
-                                        : formatv("{0:e}", worst).str())
-                   << "; " << exprForLog.substr(0, 120) << "\n";
-    if (!discardCandidate)
-      candCost = worst;
-  }
-  if (discardCandidate)
-    return std::nullopt;
-  return candCost;
+      worst = std::max(worst, E.origCost + (st.candSum - st.origSum) / st.count);
+    }
+  if (O.Diagnostics.Print)
+    raw_string_ostream(E.diag)
+        << "[poseidon] regime-split candidate: arms (samples:cand/"
+           "orig mean error)"
+        << os.str() << "; " << E.drawn << " extra draws; box cost "
+        << format("%.3e", E.cost) << " -> "
+        << (E.discard ? std::string("dropped (unpriced arm)")
+                      : formatv("{0:e}", worst).str())
+        << "; " << E.exprForLog->substr(0, 120) << "\n";
+  if (!E.discard)
+    E.cost = worst;
 }
 
 void collectInputs(const FPNode *node, const SetVector<Value *> &inputs,
@@ -682,13 +690,9 @@ void setUnifiedAccuracyCost(
     const Options &O, RewriteUnit &CO,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, Value *> &symbolToValueMap) {
-
-  CancellationPlan cancelPlan =
-      buildCancellationPlan(O, *CO.subgraph, valueToNodeMap);
-  SmallVector<MapVector<Value *, double>, 4> sampledPoints;
-
-  getSampledPoints(O, CO.subgraph->inputs.getArrayRef(), valueToNodeMap,
-                   symbolToValueMap, sampledPoints, &cancelPlan);
+  SubgraphSamples &samples =
+      samplesOf(O, *CO.subgraph, valueToNodeMap, symbolToValueMap);
+  ArrayRef<SubgraphSamples::Point> sampledPoints = samples.points();
 
   // No usable sample means the output cannot be priced: drop its candidates and
   // keep the original body, without inventing a bound or an accuracy number.
@@ -707,16 +711,30 @@ void setUnifiedAccuracyCost(
     return;
   }
 
-  SmallVector<RootSamples, 1> rootSamples(CO.roots.size());
+  struct RootSamples {
+    const FPNode *node;
+    const SubgraphSamples::Reference *ref;
+    double origCost;
+    double grad;
+  };
+  SmallVector<RootSamples, 1> rootSamples;
   double initialAccCost = 0.0;
-  for (auto [R, root, grad] : llvm::zip(rootSamples, CO.roots, CO.rootGrads)) {
-    R.root = root;
-    R.grad = grad;
-    if (!sampleRoot(O, R, sampledPoints, valueToNodeMap)) {
+  for (auto [root, grad] : llvm::zip(CO.roots, CO.rootGrads)) {
+    const FPNode *node = valueToNodeMap[root].get();
+    const SubgraphSamples::Reference &ref = samples.reference(node);
+    double sum = 0.0;
+    unsigned count = 0;
+    for (double error : ref.error)
+      if (!std::isnan(error)) {
+        sum += error;
+        ++count;
+      }
+    if (count == 0) {
       unpriceable("every sample of the original expression scored NaN");
       return;
     }
-    initialAccCost += R.origCost * std::fabs(R.grad);
+    rootSamples.push_back({node, &ref, sum / count, grad});
+    initialAccCost += rootSamples.back().origCost * std::fabs(grad);
   }
   CO.initialAccCost = initialAccCost;
   if (!std::isfinite(CO.initialAccCost)) {
@@ -742,62 +760,107 @@ void setUnifiedAccuracyCost(
     rootInputs.push_back(std::move(used));
   }
 
-  SmallVector<RewriteCandidate, 4> newCandidates;
-  for (auto &candidate : CO.candidates) {
-    std::shared_ptr<FPNode> parsedNode =
-        parseHerbieExpr(candidate.expr, valueToNodeMap, symbolToValueMap,
-                        nullptr, &CO.subgraph->inputs);
+  // Parsing extends the site's maps, so the candidates are read in order and
+  // only their elements are priced concurrently.
+  struct CandidatePricing {
+    std::shared_ptr<FPNode> parsed;
+    bool wrongShape = false;
+    // The elements in order up to the first that reads a value its output
+    // does not, whose index is `strayElement`.
+    SmallVector<ElementPricing, 1> elements;
+    std::optional<size_t> strayElement;
+  };
+  SmallVector<CandidatePricing, 4> pricings(CO.candidates.size());
+  SmallVector<ElementPricing *, 0> allElements;
+  for (auto [candidate, P] : llvm::zip(CO.candidates, pricings)) {
+    P.parsed = parseHerbieExpr(candidate.expr, valueToNodeMap,
+                               symbolToValueMap, nullptr, &CO.subgraph->inputs);
     SmallVector<std::shared_ptr<FPNode>, 1> elements;
     if (CO.isArray()) {
-      if (parsedNode->op != "array" ||
-          parsedNode->operands.size() != CO.roots.size()) {
-        llvm::errs() << "[poseidon] dropping array candidate with "
-                     << parsedNode->operands.size() << " element(s) for "
-                     << CO.roots.size() << " outputs\n";
-        CO.dropped.push_back(
-            {candidate.expr, "it does not have one element per output"});
+      if (P.parsed->op != "array" ||
+          P.parsed->operands.size() != CO.roots.size()) {
+        P.wrongShape = true;
         continue;
       }
-      elements.append(parsedNode->operands.begin(), parsedNode->operands.end());
+      elements.append(P.parsed->operands.begin(), P.parsed->operands.end());
     } else {
-      elements.push_back(parsedNode);
+      elements.push_back(P.parsed);
     }
-
-    bool discardCandidate = false;
-    double total = 0.0;
-    std::string perElement;
     for (auto [k, element] : llvm::enumerate(elements)) {
       SmallPtrSet<const FPNode *, 32> seen;
       SmallPtrSet<Value *, 8> used;
       collectInputs(element.get(), CO.subgraph->inputs, seen, used);
       if (!llvm::all_of(used,
                         [&](Value *V) { return rootInputs[k].contains(V); })) {
-        if (O.Diagnostics.Print)
-          llvm::errs() << "[poseidon] dropping candidate: element " << k
-                       << " reads a value its output does not\n";
-        discardCandidate = true;
-        CO.dropped.push_back(
-            {candidate.expr, formatv("its element {0} reads a value that "
-                                     "output does not",
-                                     k)
-                                 .str()});
+        P.strayElement = k;
         break;
       }
-      std::string why;
-      std::optional<double> cost =
-          priceRoot(O, rootSamples[k], element, candidate.expr, *CO.subgraph,
-                    sampledPoints, valueToNodeMap, symbolToValueMap, why);
-      if (!cost) {
+      ElementPricing &E = P.elements.emplace_back();
+      E.node = element;
+      E.orig = rootSamples[k].node;
+      E.ref = rootSamples[k].ref;
+      E.origCost = rootSamples[k].origCost;
+      E.exprForLog = &candidate.expr;
+      if (O.Model.MinArmSamples > 0) {
+        SmallPtrSet<const FPNode *, 32> seenIfs;
+        collectIfNodes(element.get(), seenIfs, E.ifNodes);
+      }
+      for (const FPNode *ifNode : E.ifNodes) {
+        E.armStats[{ifNode, true}];
+        E.armStats[{ifNode, false}];
+      }
+    }
+  }
+  for (CandidatePricing &P : pricings)
+    for (ElementPricing &E : P.elements)
+      allElements.push_back(&E);
+
+  forEachIndex(O.Model.Threads, allElements.size(), [&](size_t i) {
+    priceOnPoints(O, *allElements[i], sampledPoints);
+  });
+  searchArms(O, samples, allElements);
+  for (ElementPricing *E : allElements)
+    chargeWorstArm(O, *E);
+
+  SmallVector<RewriteCandidate, 4> newCandidates;
+  for (auto [candidate, P] : llvm::zip(CO.candidates, pricings)) {
+    if (P.wrongShape) {
+      llvm::errs() << "[poseidon] dropping array candidate with "
+                   << P.parsed->operands.size() << " element(s) for "
+                   << CO.roots.size() << " outputs\n";
+      CO.dropped.push_back(
+          {candidate.expr, "it does not have one element per output"});
+      continue;
+    }
+
+    bool discardCandidate = false;
+    double total = 0.0;
+    std::string perElement;
+    for (auto [k, E] : llvm::enumerate(P.elements)) {
+      llvm::errs() << E.diag;
+      if (E.discard) {
         discardCandidate = true;
-        CO.dropped.push_back({candidate.expr, why});
+        CO.dropped.push_back({candidate.expr, E.why});
         break;
       }
-      total += *cost * std::fabs(rootSamples[k].grad);
+      total += E.cost * std::fabs(rootSamples[k].grad);
       if (CO.isArray() && O.Diagnostics.Print)
         perElement +=
-            formatv(" {0:e}/{1:e}", *cost * std::fabs(rootSamples[k].grad),
+            formatv(" {0:e}/{1:e}", E.cost * std::fabs(rootSamples[k].grad),
                     rootSamples[k].origCost * std::fabs(rootSamples[k].grad))
                 .str();
+    }
+    if (!discardCandidate && P.strayElement) {
+      if (O.Diagnostics.Print)
+        llvm::errs() << "[poseidon] dropping candidate: element "
+                     << *P.strayElement
+                     << " reads a value its output does not\n";
+      discardCandidate = true;
+      CO.dropped.push_back({candidate.expr,
+                            formatv("its element {0} reads a value that "
+                                    "output does not",
+                                    *P.strayElement)
+                                .str()});
     }
     if (CO.isArray() && O.Diagnostics.Print && !discardCandidate)
       llvm::errs() << "[poseidon] array candidate per element (cand/orig):"

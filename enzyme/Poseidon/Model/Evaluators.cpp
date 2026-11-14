@@ -108,7 +108,7 @@ bool FPEvaluator::evaluateExpansionNode(const FPNode *node, unsigned n) {
     r = sameFactor ? expansionFmaSqr(operand(0), operand(2))
                    : expansionFma(operand(0), operand(1), operand(2));
   limbs[node] = r;
-  cache.emplace(node, node->dtype == "f32" ? (double)expansionToF32(r)
+  cache.try_emplace(node, node->dtype == "f32" ? (double)expansionToF32(r)
                                            : expansionToF64(r));
   return true;
 }
@@ -146,13 +146,13 @@ void FPEvaluator::evaluateNode(const FPNode *node,
 
   if (isa<FPConst>(node)) {
     double constVal = node->getLowerBound();
-    cache.emplace(node, constVal);
+    cache.try_emplace(node, constVal);
     return;
   }
 
   if (isa<FPLLValue>(node) && inputValues.count(cast<FPLLValue>(node)->value)) {
     double inputValue = inputValues.lookup(cast<FPLLValue>(node)->value);
-    cache.emplace(node, inputValue);
+    cache.try_emplace(node, inputValue);
     return;
   }
 
@@ -163,53 +163,53 @@ void FPEvaluator::evaluateNode(const FPNode *node,
     if (cond == 1.0) {
       evaluateNode(node->operands[1].get(), inputValues);
       double then_val = getResult(node->operands[1].get());
-      cache.emplace(node, then_val);
+      cache.try_emplace(node, then_val);
     } else {
       evaluateNode(node->operands[2].get(), inputValues);
       double else_val = getResult(node->operands[2].get());
-      cache.emplace(node, else_val);
+      cache.try_emplace(node, else_val);
     }
     return;
   } else if (node->op == "and") {
     evaluateNode(node->operands[0].get(), inputValues);
     double op0 = getResult(node->operands[0].get());
     if (op0 != 1.0) {
-      cache.emplace(node, 0.0);
+      cache.try_emplace(node, 0.0);
       return;
     }
     evaluateNode(node->operands[1].get(), inputValues);
     double op1 = getResult(node->operands[1].get());
     if (op1 != 1.0) {
-      cache.emplace(node, 0.0);
+      cache.try_emplace(node, 0.0);
       return;
     }
-    cache.emplace(node, 1.0);
+    cache.try_emplace(node, 1.0);
     return;
   } else if (node->op == "or") {
     evaluateNode(node->operands[0].get(), inputValues);
     double op0 = getResult(node->operands[0].get());
     if (op0 == 1.0) {
-      cache.emplace(node, 1.0);
+      cache.try_emplace(node, 1.0);
       return;
     }
     evaluateNode(node->operands[1].get(), inputValues);
     double op1 = getResult(node->operands[1].get());
     if (op1 == 1.0) {
-      cache.emplace(node, 1.0);
+      cache.try_emplace(node, 1.0);
       return;
     }
-    cache.emplace(node, 0.0);
+    cache.try_emplace(node, 0.0);
     return;
   } else if (node->op == "not") {
     evaluateNode(node->operands[0].get(), inputValues);
     double op = getResult(node->operands[0].get());
-    cache.emplace(node, (op == 1.0) ? 0.0 : 1.0);
+    cache.try_emplace(node, (op == 1.0) ? 0.0 : 1.0);
     return;
   } else if (node->op == "TRUE") {
-    cache.emplace(node, 1.0);
+    cache.try_emplace(node, 1.0);
     return;
   } else if (node->op == "FALSE") {
-    cache.emplace(node, 0.0);
+    cache.try_emplace(node, 0.0);
     return;
   }
 
@@ -443,7 +443,7 @@ void FPEvaluator::evaluateNode(const FPNode *node,
     llvm_unreachable(msg.c_str());
   }
 
-  cache.emplace(node, res);
+  cache.try_emplace(node, res);
 }
 
 double FPEvaluator::getResult(const FPNode *node) const {

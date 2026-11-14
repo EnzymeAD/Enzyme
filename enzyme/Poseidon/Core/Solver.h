@@ -108,6 +108,10 @@ public:
   virtual bool pricedAlone() const { return true; }
   // The pricings the unit has memoized so far.
   virtual size_t memoizedPricings() const { return 0; }
+  // Called before the solver asks for the deltas of every candidate against
+  // each of `priors`, for a unit that prices several of them at once.
+  virtual void priceAhead(llvm::ArrayRef<llvm::ArrayRef<SolutionStep>> priors) {
+  }
 
   // True when taking a candidate consumes the footprint (a raise replaces the
   // loop that computes a product); false when it edits the footprint in place

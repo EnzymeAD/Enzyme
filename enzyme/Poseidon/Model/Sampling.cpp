@@ -9,6 +9,7 @@
 
 #include "Sampling.h"
 #include "Core/Options.h"
+#include "Core/Parallel.h"
 #include "Core/UniformReal.h"
 #include "Evaluators.h"
 #include "FPCore.h"
@@ -205,35 +206,18 @@ void getSampledPoints(
 
   const size_t budget = kJointDrawFactor * numSamples;
   size_t drawn = 0;
-  SmallVector<double, 8> results;
-  while (sampledPoints.size() < numSamples && drawn < budget) {
-    ++drawn;
-    MapVector<Value *, double> leafPoint;
+  auto drawLeaves = [&](MapVector<Value *, double> &leafPoint) {
     for (const auto &entry : leafBox)
       leafPoint.insert(
           {entry.first, uniformReal(gen, entry.second[0], entry.second[1])});
-
-    if (sampledPoints.size() < numCoincidence) {
-      const double scaleLo = 1e-18;
-      double logScale = uniformReal(gen, std::log(scaleLo), std::log(maxRange));
-      double scale = std::exp(logScale);
-      for (const auto &pr : pairs) {
-        double anchor = leafPoint[pr.first];
-        double jitter = uniformReal(gen, 0.5, 1.5);
-        double sign = uniformReal(gen, 0.0, 1.0) < 0.5 ? -1.0 : 1.0;
-        // Clamped into the leaf's own profiled range so no out-of-distribution
-        // value is fabricated.
-        const auto &range = leafBox.find(pr.second)->second;
-        leafPoint[pr.second] =
-            std::clamp(anchor + sign * scale * jitter, range[0], range[1]);
-      }
-    }
-
+  };
+  // Whether the inputs computed from `leafPoint` lie in the box, then
+  // `point`.
+  auto evaluate = [&](const MapVector<Value *, double> &leafPoint,
+                      MapVector<Value *, double> &point,
+                      SmallVectorImpl<double> &results) {
     if (!computed.empty())
       getFPValues(computed, leafPoint, results);
-
-    MapVector<Value *, double> point;
-    bool inBox = true;
     size_t next = 0;
     for (const auto &entry : box) {
       FPNode *node = valueToNodeMap.at(entry.first).get();
@@ -244,14 +228,77 @@ void getSampledPoints(
         v = node->getLowerBound();
       else
         v = leafPoint.lookup(entry.first);
-      if (!(v >= entry.second[0] && v <= entry.second[1])) {
-        inBox = false;
-        break;
-      }
+      if (!(v >= entry.second[0] && v <= entry.second[1]))
+        return false;
       point.insert({entry.first, v});
     }
-    if (inBox)
+    return true;
+  };
+
+  // The coincidence stratum: a draw takes more numbers from `gen` while fewer
+  // than numCoincidence points are kept.
+  SmallVector<double, 8> results;
+  while (sampledPoints.size() < numCoincidence &&
+         sampledPoints.size() < numSamples && drawn < budget) {
+    ++drawn;
+    MapVector<Value *, double> leafPoint;
+    drawLeaves(leafPoint);
+
+    const double scaleLo = 1e-18;
+    double logScale = uniformReal(gen, std::log(scaleLo), std::log(maxRange));
+    double scale = std::exp(logScale);
+    for (const auto &pr : pairs) {
+      double anchor = leafPoint[pr.first];
+      double jitter = uniformReal(gen, 0.5, 1.5);
+      double sign = uniformReal(gen, 0.0, 1.0) < 0.5 ? -1.0 : 1.0;
+      // Clamped into the leaf's own profiled range so no out-of-distribution
+      // value is fabricated.
+      const auto &range = leafBox.find(pr.second)->second;
+      leafPoint[pr.second] =
+          std::clamp(anchor + sign * scale * jitter, range[0], range[1]);
+    }
+
+    MapVector<Value *, double> point;
+    if (evaluate(leafPoint, point, results))
       sampledPoints.push_back(std::move(point));
+  }
+
+  // Past it every draw takes the same numbers from `gen`, so a block of draws
+  // is drawn in order ahead of its evaluations, which run concurrently, and
+  // kept in order up to the first numSamples in the box.
+  const size_t numLeaves = leafBox.size();
+  SmallVector<double, 0> leafValues;
+  SmallVector<MapVector<Value *, double>, 0> points;
+  SmallVector<char, 0> inBox;
+  while (sampledPoints.size() < numSamples && drawn < budget) {
+    // As many draws as the points still missing take at the share kept so
+    // far, and a margin, so that few are evaluated past the last one kept.
+    const double missing = numSamples - sampledPoints.size();
+    const double kept = (sampledPoints.size() + 1.0) / (drawn + 1.0);
+    const size_t n = std::min<size_t>(
+        budget - drawn,
+        std::max(64.0, std::ceil(1.25 * missing / kept)));
+    leafValues.resize(n * numLeaves);
+    for (size_t i = 0; i < n; ++i)
+      for (auto [l, entry] : enumerate(leafBox))
+        leafValues[i * numLeaves + l] =
+            uniformReal(gen, entry.second[0], entry.second[1]);
+    points.assign(n, {});
+    inBox.assign(n, 0);
+    forEachBlock(O.Model.Threads, n, 64, [&](size_t begin, size_t end) {
+      SmallVector<double, 8> blockResults;
+      for (size_t i = begin; i < end; ++i) {
+        MapVector<Value *, double> leafPoint;
+        for (auto [l, entry] : enumerate(leafBox))
+          leafPoint.insert({entry.first, leafValues[i * numLeaves + l]});
+        inBox[i] = evaluate(leafPoint, points[i], blockResults);
+      }
+    });
+    for (size_t i = 0; i < n && sampledPoints.size() < numSamples; ++i) {
+      ++drawn;
+      if (inBox[i])
+        sampledPoints.push_back(std::move(points[i]));
+    }
   }
 
   if (O.Diagnostics.Print)
@@ -265,6 +312,109 @@ void getSampledPoints(
                     "cannot be priced and will keep its original body.\n";
     sampledPoints.clear();
   }
+}
+
+struct SubgraphSamples::RoundReference {
+  Reference values;
+  SmallVector<char, 0> computed;
+};
+
+SubgraphSamples::SubgraphSamples(
+    const Options &O, const Subgraph &subgraph,
+    const std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
+    const std::unordered_map<std::string, Value *> &symbolToValueMap)
+    : O(O), subgraph(subgraph), valueToNodeMap(valueToNodeMap),
+      symbolToValueMap(symbolToValueMap) {}
+
+SubgraphSamples::~SubgraphSamples() = default;
+
+ArrayRef<SubgraphSamples::Point> SubgraphSamples::points() {
+  if (!sampled) {
+    sampled = true;
+    CancellationPlan plan =
+        buildCancellationPlan(O, subgraph, valueToNodeMap);
+    getSampledPoints(O, subgraph.inputs.getArrayRef(), valueToNodeMap,
+                     symbolToValueMap, base, &plan);
+  }
+  return base;
+}
+
+// The exact and the as-written value of `node` at `point`, as the accuracy
+// model scores every candidate against.
+static void evaluateReference(FPNode *node, const SubgraphSamples::Point &point,
+                              SubgraphSamples::Reference &R, size_t i) {
+  SmallVector<double, 1> results;
+  getMPFRValues({node}, point, results, true, 53);
+  R.gold[i] = results[0];
+  getFPValues({node}, point, results);
+  R.value[i] = results[0];
+  R.error[i] = sampleError(R.gold[i], R.value[i]);
+}
+
+const SubgraphSamples::Reference &
+SubgraphSamples::reference(const FPNode *node) {
+  auto [it, fresh] = references.try_emplace(node);
+  Reference &R = it->second;
+  if (!fresh)
+    return R;
+  ArrayRef<Point> at = points();
+  R.gold.resize(at.size());
+  R.value.resize(at.size());
+  R.error.resize(at.size());
+  forEachBlock(O.Model.Threads, at.size(), 8, [&](size_t begin, size_t end) {
+    for (size_t i = begin; i < end; ++i)
+      evaluateReference(const_cast<FPNode *>(node), at[i], R, i);
+  });
+  return R;
+}
+
+ArrayRef<SubgraphSamples::Point> SubgraphSamples::round(unsigned round) {
+  assert(round > 0 && "round 0 is points()");
+  while (rounds.size() < round) {
+    rounds.emplace_back();
+    getSampledPoints(O, subgraph.inputs.getArrayRef(), valueToNodeMap,
+                     symbolToValueMap, rounds.back(), nullptr,
+                     O.Model.NumSamples, rounds.size());
+  }
+  return rounds[round - 1];
+}
+
+const SubgraphSamples::Reference &
+SubgraphSamples::roundReference(const FPNode *node, unsigned round,
+                                ArrayRef<size_t> which) {
+  ArrayRef<Point> at = this->round(round);
+  auto &perRound = roundReferences[node];
+  while (perRound.size() < round)
+    perRound.push_back(std::make_unique<RoundReference>());
+  RoundReference &RR = *perRound[round - 1];
+  if (RR.computed.empty()) {
+    RR.values.gold.resize(at.size());
+    RR.values.value.resize(at.size());
+    RR.values.error.resize(at.size());
+    RR.computed.resize(at.size(), 0);
+  }
+  SmallVector<size_t, 0> todo;
+  for (size_t p : which)
+    if (!RR.computed[p]) {
+      RR.computed[p] = 1;
+      todo.push_back(p);
+    }
+  forEachBlock(O.Model.Threads, todo.size(), 8, [&](size_t begin, size_t end) {
+    for (size_t i = begin; i < end; ++i)
+      evaluateReference(const_cast<FPNode *>(node), at[todo[i]], RR.values,
+                        todo[i]);
+  });
+  return RR.values;
+}
+
+SubgraphSamples &samplesOf(
+    const Options &O, Subgraph &subgraph,
+    const std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
+    const std::unordered_map<std::string, Value *> &symbolToValueMap) {
+  if (!subgraph.samples)
+    subgraph.samples = std::make_shared<SubgraphSamples>(
+        O, subgraph, valueToNodeMap, symbolToValueMap);
+  return *subgraph.samples;
 }
 
 } // namespace poseidon

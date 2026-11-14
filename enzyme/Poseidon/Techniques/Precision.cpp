@@ -37,12 +37,15 @@
 
 #include <cmath>
 #include <functional>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
+#include "Core/Parallel.h"
 #include "Expansion.h"
 #include "Herbie.h"
 #include "IR/Utils.h"
@@ -492,12 +495,8 @@ void setUnifiedAccuracyCost(
     const Options &O, PrecisionUnit &CS,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, Value *> &symbolToValueMap) {
-
-  CancellationPlan cancelPlan =
-      buildCancellationPlan(O, *CS.subgraph, valueToNodeMap);
-  SmallVector<MapVector<Value *, double>, 4> sampledPoints;
-  getSampledPoints(O, CS.subgraph->inputs.getArrayRef(), valueToNodeMap,
-                   symbolToValueMap, sampledPoints, &cancelPlan);
+  ArrayRef<SubgraphSamples::Point> sampledPoints =
+      samplesOf(O, *CS.subgraph, valueToNodeMap, symbolToValueMap).points();
 
   MapVector<FPNode *, SmallVector<double, 4>> goldVals;
   for (auto *output : CS.subgraph->outputs) {
@@ -518,15 +517,22 @@ void setUnifiedAccuracyCost(
   for (auto *node : outputs)
     runAcc[node] = RunningAccArith();
 
-  for (const auto &pair : enumerate(sampledPoints)) {
-    SmallVector<double, 8> results;
-    getMPFRValues(outputs, pair.value(), results, true, 53);
-    for (const auto &[node, result] : zip(outputs, results))
-      goldVals[node][pair.index()] = result;
+  // Every point is evaluated on its own; the sums run in point order.
+  SmallVector<SmallVector<double, 8>, 0> exact(sampledPoints.size()),
+      asWritten(sampledPoints.size());
+  forEachBlock(O.Model.Threads, sampledPoints.size(), 8,
+               [&](size_t begin, size_t end) {
+                 for (size_t i = begin; i < end; ++i) {
+                   getMPFRValues(outputs, sampledPoints[i], exact[i], true, 53);
+                   getFPValues(outputs, sampledPoints[i], asWritten[i]);
+                 }
+               });
+  for (size_t i = 0; i < sampledPoints.size(); ++i) {
+    for (const auto &[node, result] : zip(outputs, exact[i]))
+      goldVals[node][i] = result;
 
-    getFPValues(outputs, pair.value(), results);
-    for (const auto &[node, result] : zip(outputs, results)) {
-      double goldVal = goldVals[node][pair.index()];
+    for (const auto &[node, result] : zip(outputs, asWritten[i])) {
+      double goldVal = goldVals[node][i];
       double error = sampleError(goldVal, result);
       if (!std::isnan(error)) {
         runAcc[node].sum += error;
@@ -544,39 +550,48 @@ void setUnifiedAccuracyCost(
   }
   assert(!std::isnan(CS.initialAccCost));
 
-  SmallVector<PTCandidate, 4> newCandidates;
-  for (auto &candidate : CS.candidates) {
-    bool discardCandidate = false;
-    struct RunningAccArith {
-      double sum = 0.0;
-      unsigned count = 0;
-    };
+  // Each candidate is scored on its own, concurrently.
+  SmallVector<const SmallVector<double, 4> *, 4> goldOf;
+  for (auto *node : outputs)
+    goldOf.push_back(&goldVals.find(node)->second);
+  struct Scored {
+    bool discard = false;
     std::unordered_map<FPNode *, RunningAccArith> candAcc;
+  };
+  SmallVector<Scored, 0> scored(CS.candidates.size());
+  forEachIndex(O.Model.Threads, CS.candidates.size(), [&](size_t c) {
+    const PTCandidate &candidate = CS.candidates[c];
+    Scored &out = scored[c];
     for (auto *node : outputs)
-      candAcc[node] = RunningAccArith();
+      out.candAcc[node] = RunningAccArith();
 
-    for (const auto &pair : enumerate(sampledPoints)) {
-      SmallVector<double, 8> results;
-      getFPValues(outputs, pair.value(), results, candidate.changes);
-      for (const auto &[node, result] : zip(outputs, results)) {
-        double goldVal = goldVals[node][pair.index()];
+    SmallVector<double, 8> results;
+    for (size_t i = 0; i < sampledPoints.size(); ++i) {
+      getFPValues(outputs, sampledPoints[i], results, candidate.changes);
+      for (size_t j = 0; j < outputs.size(); ++j) {
+        double goldVal = (*goldOf[j])[i];
+        double result = results[j];
         if (std::isfinite(goldVal) && !std::isfinite(result)) {
-          discardCandidate = true;
+          out.discard = true;
           break;
         }
         double error = sampleError(goldVal, result);
         if (!std::isnan(error)) {
-          candAcc[node].sum += error;
-          ++candAcc[node].count;
+          out.candAcc[outputs[j]].sum += error;
+          ++out.candAcc[outputs[j]].count;
         }
       }
-      if (discardCandidate)
+      if (out.discard)
         break;
     }
-    if (!discardCandidate) {
+  });
+
+  SmallVector<PTCandidate, 4> newCandidates;
+  for (auto [candidate, out] : zip(CS.candidates, scored)) {
+    if (!out.discard) {
       candidate.accuracyCost = 0.0;
       for (auto *node : outputs) {
-        auto &ra = candAcc[node];
+        auto &ra = out.candAcc[node];
         assert(ra.count != 0 && "No valid sample found for candidate subgraph");
         double red = ra.sum / ra.count;
         candidate.perOutputAccCost[node] = red * std::fabs(node->grad);
@@ -593,16 +608,52 @@ void setUnifiedAccuracyCost(
   CS.candidates = std::move(newCandidates);
 }
 
-double getCompCost(Session &S, Subgraph &subgraph, PTCandidate &pt) {
+namespace {
+
+// A clone of the site with a candidate applied to the operations of a
+// subgraph and simplified as the materializer's output is, with handles on
+// what the cost walk starts from. Its IR does not depend on the outputs, so
+// one clone prices the candidate over any set of the subgraph's outputs.
+class CandidateClone {
+public:
+  CandidateClone(Session &S, Subgraph &subgraph,
+                 ArrayRef<Instruction *> outputs, PTCandidate &pt);
+  ~CandidateClone() {
+    cloneLI.reset();
+    cloneDT.reset();
+    FClone->eraseFromParent();
+  }
+
+  // The cost of the cone of outputs[i] for each i in `which`, in that order,
+  // and of the expansion roots.
+  double cost(Session &S, const Subgraph &subgraph, ArrayRef<size_t> which);
+
+private:
+  Function *FClone = nullptr;
+  SmallVector<WeakTrackingVH, 8> trackedInputs;
+  // A handle per output, then one per expansion root; each with the FP32
+  // operand of the extension it tracks, should the extension fold away.
+  SmallVector<WeakTrackingVH, 8> trackedOutputs;
+  SmallVector<WeakTrackingVH, 8> trackedOutputFallbacks;
+  size_t numOutputs = 0;
+  std::optional<DominatorTree> cloneDT;
+  std::optional<LoopInfo> cloneLI;
+  // The cost-model price of each instruction walked so far.
+  DenseMap<const Instruction *, double> prices;
+};
+
+} // namespace
+
+CandidateClone::CandidateClone(Session &S, Subgraph &subgraph,
+                               ArrayRef<Instruction *> outputs,
+                               PTCandidate &pt) {
   const Options &O = S.Opts;
-  assert(!subgraph.outputs.empty());
+  assert(!outputs.empty());
 
-  double cost = 0.0;
-
-  Function *F = cast<Instruction>(subgraph.outputs[0])->getFunction();
+  Function *F = outputs[0]->getFunction();
 
   ValueToValueMapTy VMap;
-  Function *FClone = CloneFunction(F, VMap);
+  FClone = CloneFunction(F, VMap);
   FClone->setName(F->getName() + "_clone");
 
   // Priced with the materializer's own carried-PHI elimination: the emitted
@@ -657,16 +708,15 @@ double getCompCost(Session &S, Subgraph &subgraph, PTCandidate &pt) {
   SmallVector<Value *, 8> dsFoldRoots;
   foldDSPairRoundtrip(*FClone, &dsFoldRoots, O.Diagnostics.Print);
 
-  SmallVector<WeakTrackingVH, 8> trackedInputs;
   for (auto &input : subgraph.inputs) {
     if (VMap.count(input))
       trackedInputs.emplace_back(VMap[input]);
   }
-  SmallVector<WeakTrackingVH, 8> trackedOutputs;
-  for (auto &output : subgraph.outputs) {
-    if (VMap.count(output))
-      trackedOutputs.emplace_back(VMap[output]);
-  }
+  // An output without a clone is held by an empty handle, which roots nothing.
+  for (Instruction *output : outputs)
+    trackedOutputs.emplace_back(VMap.count(output) ? VMap[output]
+                                                   : WeakTrackingVH());
+  numOutputs = trackedOutputs.size();
   // Re-root on the df64 limbs from applyExpansion and from foldDSPairRoundtrip:
   // they are the unit's outputs in the emitted code and the F64 handles above
   // are dead, so without this the candidate walks an empty cone and prices as
@@ -698,13 +748,21 @@ double getCompCost(Session &S, Subgraph &subgraph, PTCandidate &pt) {
   // Once the accumulator roundtrips fold, a tracked output ext can be DCE'd
   // without a RAUW and the handle nulls; keep its FP32 operand as a fallback
   // root so the accumulation cone stays priced.
-  SmallVector<WeakTrackingVH, 8> trackedOutputFallbacks(trackedOutputs.size());
+  trackedOutputFallbacks.resize(trackedOutputs.size());
   for (size_t i = 0; i < trackedOutputs.size(); ++i)
     if (trackedOutputs[i].pointsToAliveValue())
       if (auto *FE = dyn_cast_or_null<FPExtInst>((Value *)trackedOutputs[i]))
         trackedOutputFallbacks[i] = FE->getOperand(0);
 
   simplifyFunction(*FClone, OptimizationLevel::O3);
+
+  cloneDT.emplace(*FClone);
+  cloneLI.emplace(*cloneDT);
+}
+
+double CandidateClone::cost(Session &S, const Subgraph &subgraph,
+                            ArrayRef<size_t> which) {
+  const Options &O = S.Opts;
 
   SmallPtrSet<Value *, 8> clonedInputs;
   for (auto &VH : trackedInputs) {
@@ -717,13 +775,15 @@ double getCompCost(Session &S, Subgraph &subgraph, PTCandidate &pt) {
 
   // In output order: the walk below sums the cost in the order it reaches the
   // instructions.
+  SmallVector<size_t, 8> roots(which.begin(), which.end());
+  for (size_t i = numOutputs; i < trackedOutputs.size(); ++i)
+    roots.push_back(i);
   SmallSetVector<Value *, 8> clonedOutputs;
-  for (size_t i = 0; i < trackedOutputs.size(); ++i) {
+  for (size_t i : roots) {
     Value *V = nullptr;
     if (trackedOutputs[i].pointsToAliveValue())
       V = trackedOutputs[i];
-    else if (i < trackedOutputFallbacks.size() &&
-             trackedOutputFallbacks[i].pointsToAliveValue())
+    else if (trackedOutputFallbacks[i].pointsToAliveValue())
       V = trackedOutputFallbacks[i];
     if (V)
       clonedOutputs.insert(V);
@@ -759,18 +819,20 @@ double getCompCost(Session &S, Subgraph &subgraph, PTCandidate &pt) {
   }
 
   // Body-loop depth = the deepest loop hosting the cone's non-cast FP work.
-  DominatorTree cloneDT(*FClone);
-  LoopInfo cloneLI(cloneDT);
   unsigned bodyDepth = 0;
   for (Instruction *I : coneInsts)
     if (!isa<FPExtInst>(I) && !isa<FPTruncInst>(I))
-      bodyDepth = std::max(bodyDepth, cloneLI.getLoopDepth(I->getParent()));
+      bodyDepth = std::max(bodyDepth, cloneLI->getLoopDepth(I->getParent()));
 
   const bool freqWeighted =
       O.Model.FreqWeightedPricing && subgraph.depthExec.size() > 1;
+  double cost = 0.0;
   for (Instruction *I : coneInsts) {
-    double c = getInstructionCompCost(S.CostModel, I);
-    unsigned d = cloneLI.getLoopDepth(I->getParent());
+    auto [price, fresh] = prices.try_emplace(I);
+    if (fresh)
+      price->second = getInstructionCompCost(S.CostModel, I);
+    double c = price->second;
+    unsigned d = cloneLI->getLoopDepth(I->getParent());
     if (freqWeighted) {
       // The measured frequency of this depth subsumes the boundary-cast scale
       // and also reaches the arithmetic emitted outside the body loop, where a
@@ -782,10 +844,15 @@ double getCompCost(Session &S, Subgraph &subgraph, PTCandidate &pt) {
     }
     cost += c;
   }
-
-  FClone->eraseFromParent();
-
   return cost;
+}
+
+double getCompCost(Session &S, Subgraph &subgraph, PTCandidate &pt) {
+  CandidateClone clone(S, subgraph, subgraph.outputs.getArrayRef(), pt);
+  SmallVector<size_t, 8> all;
+  for (size_t i = 0; i < subgraph.outputs.size(); ++i)
+    all.push_back(i);
+  return clone.cost(S, subgraph, all);
 }
 
 static constexpr int kThreeTierStep = 20;
@@ -1148,9 +1215,9 @@ double PrecisionUnit::getAccCostDelta(size_t candidateIndex) {
   return candidates[candidateIndex].accuracyCost - initialAccCost;
 }
 
-double PrecisionUnit::getAdjustedCompCostDelta(Session &S,
-                                               size_t candidateIndex,
-                                               ArrayRef<SolutionStep> steps) {
+PrecisionUnit::RepriceKey
+PrecisionUnit::repriceKey(size_t candidateIndex,
+                          ArrayRef<SolutionStep> steps) const {
   RewriteUnitSet RewriteUnits;
   for (const auto &step : steps) {
     if (auto *co = dyn_cast<RewriteUnit>(step.unit)) {
@@ -1159,54 +1226,116 @@ double PrecisionUnit::getAdjustedCompCostDelta(Session &S,
       }
     }
   }
+  return RepriceKey{candidateIndex, RewriteUnits};
+}
 
-  RepriceKey key{candidateIndex, RewriteUnits};
+void PrecisionUnit::priceRequests(
+    Session &S, ArrayRef<std::pair<size_t, ArrayRef<SolutionStep>>> requests) {
+  // A candidate's clone depends only on the operations it changes, so the
+  // requests that leave a candidate the same operations share one clone and
+  // differ in the outputs its cost walk starts from.
+  struct Request {
+    RepriceKey key;
+    SmallVector<Value *> outputs;
+    SmallVector<size_t, 8> which;
+  };
+  struct Group {
+    size_t candidateIndex;
+    Subgraph subgraph;
+    SmallVector<Request, 1> requests;
+  };
+  SmallVector<Group, 0> groups;
+  std::map<std::pair<size_t, std::vector<const Instruction *>>, size_t> groupOf;
+  std::unordered_set<RepriceKey, RepriceKeyHash> requested;
+  DenseMap<const Instruction *, size_t> outputIndex;
+  for (auto [i, output] : enumerate(subgraph->outputs))
+    outputIndex[output] = i;
 
-  auto cacheIt = compCostDeltaCache.find(key);
-  if (cacheIt != compCostDeltaCache.end()) {
-    return cacheIt->second;
-  }
+  for (auto [candidateIndex, steps] : requests) {
+    RepriceKey key = repriceKey(candidateIndex, steps);
+    if (compCostDeltaCache.count(key) || !requested.insert(key).second)
+      continue;
 
-  Subgraph newSubgraph = *this->subgraph;
+    Subgraph newSubgraph = *this->subgraph;
 
-  for (auto &step : steps) {
-    if (auto *co = dyn_cast<RewriteUnit>(step.unit)) {
-      const auto &CO = *co;
-      if (CO.subgraph == subgraph) {
-        newSubgraph.operations.remove_if(
-            [&CO](Instruction *I) { return CO.erasableInsts.contains(I); });
-        for (Value *root : CO.roots)
-          newSubgraph.outputs.remove(cast<Instruction>(root));
+    for (auto &step : steps) {
+      if (auto *co = dyn_cast<RewriteUnit>(step.unit)) {
+        const auto &CO = *co;
+        if (CO.subgraph == subgraph) {
+          newSubgraph.operations.remove_if(
+              [&CO](Instruction *I) { return CO.erasableInsts.contains(I); });
+          for (Value *root : CO.roots)
+            newSubgraph.outputs.remove(cast<Instruction>(root));
+        }
       }
     }
+
+    if (newSubgraph.outputs.empty()) {
+      compCostDeltaCache[key] = 0;
+      continue;
+    }
+
+    std::vector<const Instruction *> changed;
+    for (const PrecisionChange &change : candidates[candidateIndex].changes) {
+      for (const auto *node : change.nodes)
+        if (node && node->value &&
+            newSubgraph.operations.contains(cast<Instruction>(node->value)))
+          changed.push_back(cast<Instruction>(node->value));
+      changed.push_back(nullptr);
+    }
+    auto [it, fresh] =
+        groupOf.try_emplace({candidateIndex, std::move(changed)}, groups.size());
+    if (fresh)
+      groups.push_back({candidateIndex, newSubgraph, {}});
+    Request &R = groups[it->second].requests.emplace_back();
+    R.key = std::move(key);
+    R.outputs.assign(newSubgraph.outputs.begin(), newSubgraph.outputs.end());
+    for (Instruction *output : newSubgraph.outputs)
+      R.which.push_back(outputIndex.lookup(output));
   }
 
-  if (newSubgraph.outputs.empty()) {
-    compCostDeltaCache[key] = 0;
-    return 0;
+  // What the outputs left cost as written, shared by every candidate.
+  std::map<SmallVector<Value *>, double> initialCompCosts;
+  for (Group &G : groups) {
+    CandidateClone clone(S, G.subgraph, subgraph->outputs.getArrayRef(),
+                         candidates[G.candidateIndex]);
+    for (Request &R : G.requests) {
+      auto [initial, fresh] = initialCompCosts.try_emplace(R.outputs);
+      if (fresh)
+        initial->second =
+            getCompCost(S.CostModel, R.outputs, subgraph->inputs,
+                        &subgraph->opExec, subgraph->execNormalizer);
+      double initialCompCost = initial->second;
+      double candidateCompCost = clone.cost(S, *subgraph, R.which);
+      double adjustedCostDelta =
+          (candidateCompCost - initialCompCost) * (double)executions;
+      // Per-candidate pricing audit: with a one-point Pareto table these are
+      // the ONLY record of why each candidate lost (all-dominated frontiers
+      // must be auditable, not silent).
+      if (S.Opts.Diagnostics.Print)
+        llvm::errs() << "CS candidate '" << candidates[G.candidateIndex].desc
+                     << "': initial=" << initialCompCost
+                     << " cand=" << candidateCompCost << " exec=" << executions
+                     << " Δcost=" << adjustedCostDelta
+                     << " Δacc=" << getAccCostDelta(G.candidateIndex) << "\n";
+      compCostDeltaCache[R.key] = adjustedCostDelta;
+    }
   }
+}
 
-  double initialCompCost = getCompCost(
-      S.CostModel, {newSubgraph.outputs.begin(), newSubgraph.outputs.end()},
-      newSubgraph.inputs, &newSubgraph.opExec, newSubgraph.execNormalizer);
+double PrecisionUnit::getAdjustedCompCostDelta(Session &S,
+                                               size_t candidateIndex,
+                                               ArrayRef<SolutionStep> steps) {
+  priceRequests(S, {{candidateIndex, steps}});
+  return compCostDeltaCache.at(repriceKey(candidateIndex, steps));
+}
 
-  double candidateCompCost =
-      getCompCost(S, newSubgraph, candidates[candidateIndex]);
-
-  double adjustedCostDelta =
-      (candidateCompCost - initialCompCost) * (double)executions;
-  // Per-candidate pricing audit: with a one-point Pareto table these are the
-  // ONLY record of why each candidate lost (all-dominated frontiers must be
-  // auditable, not silent).
-  if (S.Opts.Diagnostics.Print)
-    llvm::errs() << "CS candidate '" << candidates[candidateIndex].desc
-                 << "': initial=" << initialCompCost
-                 << " cand=" << candidateCompCost << " exec=" << executions
-                 << " Δcost=" << adjustedCostDelta
-                 << " Δacc=" << getAccCostDelta(candidateIndex) << "\n";
-
-  compCostDeltaCache[key] = adjustedCostDelta;
-  return adjustedCostDelta;
+void PrecisionUnit::priceAhead(ArrayRef<ArrayRef<SolutionStep>> priors) {
+  SmallVector<std::pair<size_t, ArrayRef<SolutionStep>>, 0> requests;
+  for (ArrayRef<SolutionStep> steps : priors)
+    for (size_t i = 0; i < candidates.size(); ++i)
+      requests.push_back({i, steps});
+  priceRequests(session(), requests);
 }
 
 double PrecisionUnit::getAdjustedAccCostDelta(

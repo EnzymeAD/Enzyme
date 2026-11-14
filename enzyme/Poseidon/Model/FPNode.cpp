@@ -798,7 +798,7 @@ bool FPConst::hasSymbol() const {
 
 void FPConst::updateBounds(double lower, double upper, bool print) { return; }
 
-double FPConst::getLowerBound() const {
+double FPConst::literalValue(const std::string &strValue) {
   if (strValue == "+inf.0") {
     return std::numeric_limits<double>::infinity();
   } else if (strValue == "-inf.0") {
@@ -807,6 +807,8 @@ double FPConst::getLowerBound() const {
 
   return literalToDouble(strValue);
 }
+
+double FPConst::getLowerBound() const { return value; }
 
 double FPConst::getUpperBound() const { return getLowerBound(); }
 

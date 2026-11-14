@@ -122,10 +122,16 @@ public:
 class FPConst : public FPNode {
 private:
   std::string strValue;
+  // The literal as a double, read once: the evaluators read it at every
+  // sample, and a rational literal is parsed in MPFR.
+  double value;
+
+  static double literalValue(const std::string &strValue);
 
 public:
   explicit FPConst(const std::string &strValue, const std::string &dtype)
-      : FPNode(NodeType::Const, "__const", dtype), strValue(strValue) {}
+      : FPNode(NodeType::Const, "__const", dtype), strValue(strValue),
+        value(literalValue(strValue)) {}
 
   std::string
   toFullExpression(std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>>
@@ -152,11 +158,15 @@ emitSharedElements(llvm::ArrayRef<std::shared_ptr<FPNode>> elements,
                    llvm::ValueToValueMapTy *VMap,
                    const llvm::DominatorTree *DT);
 
+class SubgraphSamples;
+
 struct Subgraph {
   llvm::SetVector<llvm::Value *> inputs;
   llvm::SetVector<llvm::Instruction *> outputs;
   llvm::SetVector<llvm::Instruction *> operations;
   size_t outputs_rewritten = 0;
+  // The points its units are priced at, while they are priced.
+  std::shared_ptr<SubgraphSamples> samples;
   // Frequency scale for synthetic output-boundary casts: they execute at the
   // insertion point's frequency (the output's consumer), not the body's.
   // min(1, threadsPerLaunch * launchCount / exec(output)); 1 for elementwise.

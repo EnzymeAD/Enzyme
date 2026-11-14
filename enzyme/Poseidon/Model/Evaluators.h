@@ -16,6 +16,7 @@
 #define POSEIDON_EVALUATORS_H
 
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/IR/Value.h"
@@ -30,7 +31,7 @@ namespace poseidon {
 
 class FPEvaluator {
 private:
-  std::unordered_map<const FPNode *, double> cache;
+  llvm::DenseMap<const FPNode *, double> cache;
   std::unordered_map<const FPNode *, PrecisionChangeType> nodePrecisions;
   // The change of the candidate a node belongs to, and the components of the
   // nodes evaluated as an FP32 expansion.

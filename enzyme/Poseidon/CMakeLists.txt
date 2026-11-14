@@ -80,6 +80,7 @@ set(POSEIDON_SRC
     Model/FPCore.cpp
     Core/HerbieRun.cpp
     Core/Options.cpp
+    Core/Parallel.cpp
     Core/Solver.cpp
     Core/UniformReal.cpp
     Techniques/Matmul/HostDispatch.cpp
