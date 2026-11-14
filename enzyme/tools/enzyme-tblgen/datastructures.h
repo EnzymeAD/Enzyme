@@ -19,6 +19,7 @@ enum class ArgType {
   len,
   vincData,
   vincInc,
+  ivec,
   cblas_layout, // is special (no non-blas equivalent)
   // following for lv2 only
   mldData,
@@ -124,6 +125,7 @@ private:
 
 public:
   TGPattern(const Record *r);
+  const Record *getRecord() const { return record; }
   SmallVector<size_t, 3> getRelatedLengthArgs(size_t arg,
                                               bool hideuplo = false) const;
   bool isBLASLevel2or3() const;
