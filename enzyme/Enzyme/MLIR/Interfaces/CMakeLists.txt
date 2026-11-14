@@ -10,6 +10,7 @@ add_mlir_library(
   MLIREnzymeAutoDiffInterface
   OffsetViewInterface.cpp
   AutoDiffOpInterface.cpp
+  AutoDiffControlFlowInterface.cpp
   AutoDiffTypeInterface.cpp
   CloneFunction.cpp
   GradientUtils.cpp

@@ -19,34 +19,34 @@ module {
   }
 }
 
-// CHECK:  func.func private @diffebbargs(%arg0: f64, %arg1: f64) -> f64 {
-// CHECK-NEXT:    %c-1_i32 = arith.constant -1 : i32
-// CHECK-NEXT:    %c0_i32 = arith.constant 0 : i32
-// CHECK-NEXT:    %cst = arith.constant 1.000000e+00 : f64
-// CHECK-NEXT:    %cst_0 = arith.constant 0.000000e+00 : f64
-// CHECK-NEXT:    %0 = "enzyme.init"() : () -> !enzyme.Cache<i32>
-// CHECK-NEXT:    %1 = "enzyme.init"() : () -> !enzyme.Cache<i32>
-// CHECK-NEXT:    %2 = arith.addf %arg0, %cst : f64
-// CHECK-NEXT:    "enzyme.push"(%1, %c0_i32) : (!enzyme.Cache<i32>, i32) -> ()
-// CHECK-NEXT:    cf.br ^bb1(%2 : f64)
-// CHECK-NEXT:  ^bb1(%3: f64):  // 2 preds: ^bb0, ^bb1
-// CHECK-NEXT:    %4 = arith.cmpf ult, %3, %cst_0 : f64
-// CHECK-NEXT:    "enzyme.push"(%1, %c-1_i32) : (!enzyme.Cache<i32>, i32) -> ()
-// CHECK-NEXT:    "enzyme.push"(%0, %c-1_i32) : (!enzyme.Cache<i32>, i32) -> ()
-// CHECK-NEXT:    cf.cond_br %4, ^bb1(%3 : f64), ^bb2
+// CHECK:  func.func private @diffebbargs(%[[X:.*]]: f64, %[[DRES:.*]]: f64) -> f64 {
+// CHECK-NEXT:    %[[CM1:.*]] = arith.constant -1 : i32
+// CHECK-NEXT:    %[[C0:.*]] = arith.constant 0 : i32
+// CHECK-NEXT:    %[[ONE:.*]] = arith.constant 1.000000e+00 : f64
+// CHECK-NEXT:    %[[ZERO:.*]] = arith.constant 0.000000e+00 : f64
+// CHECK-NEXT:    %[[BRCACHE:.*]] = "enzyme.init"() : () -> !enzyme.Cache<i32>
+// CHECK-NEXT:    %[[PREDCACHE:.*]] = "enzyme.init"() : () -> !enzyme.Cache<i32>
+// CHECK-NEXT:    %[[ADD:.*]] = arith.addf %[[X]], %[[ONE]] : f64
+// CHECK-NEXT:    "enzyme.push"(%[[PREDCACHE]], %[[C0]]) : (!enzyme.Cache<i32>, i32) -> ()
+// CHECK-NEXT:    cf.br ^bb1(%[[ADD]] : f64)
+// CHECK-NEXT:  ^bb1(%[[ARG:.*]]: f64):  // 2 preds: ^bb0, ^bb1
+// CHECK-NEXT:    %[[FLAG:.*]] = arith.cmpf ult, %[[ARG]], %[[ZERO]] : f64
+// CHECK-NEXT:    "enzyme.push"(%[[PREDCACHE]], %[[CM1]]) : (!enzyme.Cache<i32>, i32) -> ()
+// CHECK-NEXT:    "enzyme.push"(%[[BRCACHE]], %[[CM1]]) : (!enzyme.Cache<i32>, i32) -> ()
+// CHECK-NEXT:    cf.cond_br %[[FLAG]], ^bb1(%[[ARG]] : f64), ^bb2
 // CHECK-NEXT:  ^bb2:  // pred: ^bb1
-// CHECK-NEXT:    %5 = "enzyme.pop"(%0) : (!enzyme.Cache<i32>) -> i32
-// CHECK-NEXT:    %6 = arith.cmpi eq, %5, %c-1_i32 : i32
-// CHECK-NEXT:    %7 = arith.select %6, %arg1, %cst_0 : f64
+// CHECK-NEXT:    %[[BRIDX:.*]] = "enzyme.pop"(%[[BRCACHE]]) : (!enzyme.Cache<i32>) -> i32
+// CHECK-NEXT:    %[[ISRET:.*]] = arith.cmpi eq, %[[BRIDX]], %[[CM1]] : i32
+// CHECK-NEXT:    %[[DRET:.*]] = arith.select %[[ISRET]], %[[DRES]], %[[ZERO]] : f64
 // CHECK-NEXT:    cf.br ^bb3
 // CHECK-NEXT:  ^bb3:  // 2 preds: ^bb2, ^bb3
-// CHECK-NEXT:    %8 = "enzyme.pop"(%1) : (!enzyme.Cache<i32>) -> i32
-// CHECK-NEXT:    %9 = arith.cmpi eq, %8, %c-1_i32 : i32
-// CHECK-NEXT:    %10 = arith.select %9, %7, %cst_0 : f64
-// CHECK-NEXT:    cf.switch %8 : i32, [
+// CHECK-NEXT:    %[[PREDIDX:.*]] = "enzyme.pop"(%[[PREDCACHE]]) : (!enzyme.Cache<i32>) -> i32
+// CHECK-NEXT:    %[[ISENTRY:.*]] = arith.cmpi eq, %[[PREDIDX]], %[[C0]] : i32
+// CHECK-NEXT:    %[[DX:.*]] = arith.select %[[ISENTRY]], %[[DRET]], %[[ZERO]] : f64
+// CHECK-NEXT:    cf.switch %[[PREDIDX]] : i32, [
 // CHECK-NEXT:      default: ^bb3,
 // CHECK-NEXT:      0: ^bb4
 // CHECK-NEXT:    ]
 // CHECK-NEXT:  ^bb4:  // pred: ^bb3
-// CHECK-NEXT:    return %10 : f64
+// CHECK-NEXT:    return %[[DX]] : f64
 // CHECK-NEXT:  }
