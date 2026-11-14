@@ -1,4 +1,4 @@
-; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme" -S | FileCheck %s
+; RUN: if [ %llvmver -ge 16 ]; then %opt < %s %OPnewLoadEnzyme -enzyme-preopt=false -passes="enzyme" -S | FileCheck %s; fi
 
 ; The shadow of a global that is only used in the differentiated function is an
 ; alloca, so a constant GEP into the global needs a shadow GEP instruction.
