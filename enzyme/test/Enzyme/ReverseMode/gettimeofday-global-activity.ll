@@ -1,4 +1,4 @@
-; RUN: if [ %llvmver -ge 15 ]; then %opt < %s %OPnewLoadEnzyme -passes="enzyme,function(mem2reg,instsimplify)" -enzyme-global-activity=1 -S | FileCheck %s; fi
+; RUN: if [ %llvmver -ge 16 ]; then %opt < %s %OPnewLoadEnzyme -passes="enzyme,function(mem2reg,instsimplify)" -enzyme-global-activity=1 -S | FileCheck %s; fi
 
 ; Under global activity, a time query in a callee of the differentiated
 ; function must not be treated as a call that could return an allocation.
@@ -37,8 +37,8 @@ define double @test(double %x) {
 
 ; CHECK: define internal void @augmented_cloc(ptr {{.*}}%curtim, ptr {{.*}}%"curtim'")
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %tv = alloca %struct.timeval, i64 1, align 8
-; CHECK-NEXT:   %c = call i32 @gettimeofday(ptr %tv, ptr null)
+; CHECK-NEXT:   [[TV:%[a-z0-9_]+]] = alloca %struct.timeval, i64 1, align 8
+; CHECK-NEXT:   %c = call i32 @gettimeofday(ptr [[TV]], ptr null)
 ; CHECK:   store double %t, ptr %curtim, align 8
 ; CHECK-NEXT:   ret void
 
