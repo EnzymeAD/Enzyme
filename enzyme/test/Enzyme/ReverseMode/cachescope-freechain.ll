@@ -69,16 +69,16 @@ entry:
 
 ; CHECK: define internal ptr @augmented_g(ptr noalias {{.*}}%a, ptr {{.*}}%"a'", ptr noalias {{.*}}%out, ptr {{.*}}%"out'", i64 %n)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %tapemem = tail call noalias nonnull {{.*}}ptr @malloc(i64 16)
+; CHECK-NEXT:   [[TAPEMEM:%[^ ]+]] = tail call noalias nonnull {{.*}}ptr @malloc(i64 16)
 ; CHECK-NEXT:   %mallocsize = mul nuw nsw i64 %n, 8
 ; The augmented forward pass caches %x for every iteration and passes the
 ; cache to the reverse pass on the tape.
-; CHECK-NEXT:   %x_malloccache = tail call noalias nonnull ptr @malloc(i64 %mallocsize)
-; CHECK-NEXT:   store ptr %x_malloccache, ptr %tapemem, align 8
-; CHECK-NEXT:   %mallocsize6 = mul nuw nsw i64 %n, 8
-; CHECK-NEXT:   %v_malloccache = tail call noalias nonnull ptr @malloc(i64 %mallocsize6)
-; CHECK-NEXT:   [[A0:%[0-9]+]] = getelementptr inbounds { ptr, ptr }, ptr %tapemem, i32 0, i32 1
-; CHECK-NEXT:   store ptr %v_malloccache, ptr [[A0]], align 8
+; CHECK-NEXT:   [[XCACHE:%[^ ]+]] = tail call noalias nonnull ptr @malloc(i64 %mallocsize)
+; CHECK-NEXT:   store ptr [[XCACHE]], ptr [[TAPEMEM]], align 8
+; CHECK-NEXT:   [[VSIZE:%[^ ]+]] = mul nuw nsw i64 %n, 8
+; CHECK-NEXT:   [[VCACHE:%[^ ]+]] = tail call noalias nonnull ptr @malloc(i64 [[VSIZE]])
+; CHECK-NEXT:   [[A0:%[0-9]+]] = getelementptr inbounds { ptr, ptr }, ptr [[TAPEMEM]], i32 0, i32 1
+; CHECK-NEXT:   store ptr [[VCACHE]], ptr [[A0]], align 8
 ; CHECK-NEXT:   br label %loop
 ; CHECK-EMPTY:
 ; CHECK-NEXT: loop:
@@ -88,7 +88,7 @@ entry:
 ; CHECK-NEXT:   %c0 = icmp eq i64 %par, 0
 ; CHECK-NEXT:   %pa = getelementptr inbounds double, ptr %a, i64 %iv
 ; CHECK-NEXT:   %x = load double, ptr %pa, align 8
-; CHECK-NEXT:   [[A1:%[0-9]+]] = getelementptr inbounds double, ptr %x_malloccache, i64 %iv
+; CHECK-NEXT:   [[A1:%[0-9]+]] = getelementptr inbounds double, ptr [[XCACHE]], i64 %iv
 ; CHECK-NEXT:   store double %x, ptr [[A1]], align 8
 ; CHECK-NEXT:   br i1 %c0, label %T, label %J
 ; CHECK-EMPTY:
@@ -98,7 +98,7 @@ entry:
 ; CHECK-NEXT:   %pb = getelementptr inbounds double, ptr %out, i64 %n
 ; CHECK-NEXT:   %po2 = getelementptr inbounds double, ptr %pb, i64 %iv
 ; CHECK-NEXT:   store double %vv, ptr %po2, align 8
-; CHECK-NEXT:   [[A2:%[0-9]+]] = getelementptr inbounds double, ptr %v_malloccache, i64 %iv
+; CHECK-NEXT:   [[A2:%[0-9]+]] = getelementptr inbounds double, ptr [[VCACHE]], i64 %iv
 ; CHECK-NEXT:   store double %v, ptr [[A2]], align 8
 ; CHECK-NEXT:   br label %J
 ; CHECK-EMPTY:
@@ -106,8 +106,8 @@ entry:
 ; CHECK-NEXT:   %cphi = phi double [ %v, %T ], [ 1.000000e+00, %loop ]
 ; CHECK-NEXT:   %cond = fcmp ogt double %cphi, 0.000000e+00
 ; CHECK-NEXT:   %x2 = fmul double %x, 3.000000e+00
-; CHECK-NEXT:   %spec.select = select i1 %cond, double %x, double %x2
-; CHECK-NEXT:   %q = fmul double %spec.select, %spec.select
+; CHECK-NEXT:   [[AP:%[^ ]+]] = select i1 %cond, double %x, double %x2
+; CHECK-NEXT:   %q = fmul double [[AP]], [[AP]]
 ; CHECK-NEXT:   store double 0.000000e+00, ptr %pa, align 8
 ; CHECK-NEXT:   %po = getelementptr inbounds double, ptr %out, i64 %iv
 ; CHECK-NEXT:   store double %q, ptr %po, align 8
@@ -115,7 +115,7 @@ entry:
 ; CHECK-NEXT:   br i1 %done, label %exit, label %loop
 ; CHECK-EMPTY:
 ; CHECK-NEXT: exit:
-; CHECK-NEXT:   ret ptr %tapemem
+; CHECK-NEXT:   ret ptr [[TAPEMEM]]
 ; CHECK-NEXT: }
 
 ; CHECK: define internal void @diffeg(ptr noalias {{.*}}%a, ptr {{.*}}%"a'", ptr noalias {{.*}}%out, ptr {{.*}}%"out'", i64 %n, ptr %tapeArg)
@@ -126,11 +126,12 @@ entry:
 ; created its own cache for %x while unwrapping %p; cacheForReverse replaced
 ; that cache with the tape and removed its stores and frees. The cache
 ; allocation stays until then (it was erased with the free before).
-; CHECK-NEXT:   [[R0:%[0-9]+]] = extractvalue { ptr, ptr } %truetape, 0
-; CHECK-NEXT:   [[R1:%[0-9]+]] = extractvalue { ptr, ptr } %truetape, 1
+; The order of the two extractvalues depends on the LLVM version.
+; CHECK-DAG:    [[R0:%[0-9]+]] = extractvalue { ptr, ptr } %truetape, 0
+; CHECK-DAG:    [[R1:%[0-9]+]] = extractvalue { ptr, ptr } %truetape, 1
 ; CHECK-NEXT:   [[R2:%[0-9]+]] = add i64 %n, -1
-; CHECK-NEXT:   %mallocsize31 = mul nuw nsw i64 %n, 8
-; CHECK-NEXT:   %p_malloccache = tail call noalias nonnull ptr @malloc(i64 %mallocsize31)
+; CHECK-NEXT:   [[PSIZE:%[^ ]+]] = mul nuw nsw i64 %n, 8
+; CHECK-NEXT:   [[PCACHE:%[^ ]+]] = tail call noalias nonnull ptr @malloc(i64 [[PSIZE]])
 ; CHECK-NEXT:   br label %loop
 ; CHECK-EMPTY:
 ; CHECK-NEXT: loop:
@@ -152,17 +153,17 @@ entry:
 ; CHECK-NEXT:   %cphi = phi double [ %v, %T ], [ 1.000000e+00, %loop ]
 ; CHECK-NEXT:   %cond = fcmp ogt double %cphi, 0.000000e+00
 ; CHECK-NEXT:   %x2 = fmul double %x, 3.000000e+00
-; CHECK-NEXT:   %spec.select = select i1 %cond, double %x, double %x2
-; CHECK-NEXT:   [[R5:%[0-9]+]] = getelementptr inbounds double, ptr %p_malloccache, i64 %iv
-; CHECK-NEXT:   store double %spec.select, ptr [[R5]], align 8
+; CHECK-NEXT:   [[RP:%[^ ]+]] = select i1 %cond, double %x, double %x2
+; CHECK-NEXT:   [[R5:%[0-9]+]] = getelementptr inbounds double, ptr [[PCACHE]], i64 %iv
+; CHECK-NEXT:   store double [[RP]], ptr [[R5]], align 8
 ; CHECK-NEXT:   %done = icmp eq i64 %iv.next, %n
 ; CHECK-NEXT:   br i1 %done, label %invertlatch, label %loop
 ; CHECK-EMPTY:
 ; CHECK-NEXT: invertentry:
-; CHECK-NEXT:   tail call void @free(ptr nonnull %p_malloccache)
+; CHECK-NEXT:   tail call void @free(ptr nonnull [[PCACHE]])
 ; Only the tape caches are freed; no free of the removed cache remains.
-; CHECK-NEXT:   tail call void @free(ptr nonnull [[R0]])
-; CHECK-NEXT:   tail call void @free(ptr nonnull [[R1]])
+; CHECK-DAG:    tail call void @free(ptr nonnull [[R0]])
+; CHECK-DAG:    tail call void @free(ptr nonnull [[R1]])
 ; CHECK-NEXT:   ret void
 ; CHECK-EMPTY:
 ; CHECK-NEXT: invertloop:
@@ -192,10 +193,10 @@ entry:
 ; CHECK-NEXT:   [[R16:%[0-9]+]] = fadd fast double %"v'de.1", [[R15]]
 ; CHECK-NEXT:   [[R17:%[0-9]+]] = fmul fast double [[R11]], [[R14]]
 ; CHECK-NEXT:   [[R18:%[0-9]+]] = fadd fast double [[R16]], [[R17]]
-; CHECK-NEXT:   %"pa'ipg_unwrap6" = getelementptr inbounds double, ptr %"a'", i64 %"iv'ac.0"
-; CHECK-NEXT:   [[R19:%[0-9]+]] = load double, ptr %"pa'ipg_unwrap6", align 8
+; CHECK-NEXT:   [[PA6:%"pa'ipg_unwrap[0-9]+"]] = getelementptr inbounds double, ptr %"a'", i64 %"iv'ac.0"
+; CHECK-NEXT:   [[R19:%[0-9]+]] = load double, ptr [[PA6]], align 8
 ; CHECK-NEXT:   [[R20:%[0-9]+]] = fadd fast double [[R19]], [[R18]]
-; CHECK-NEXT:   store double [[R20]], ptr %"pa'ipg_unwrap6", align 8
+; CHECK-NEXT:   store double [[R20]], ptr [[PA6]], align 8
 ; CHECK-NEXT:   br label %invertloop
 ; CHECK-EMPTY:
 ; CHECK-NEXT: invertmerge_phirc:
@@ -207,7 +208,7 @@ entry:
 ; CHECK-NEXT: invertmerge_phimerge:
 ; CHECK-NEXT:   [[R24:%[0-9]+]] = phi fast double [ [[R23]], %invertmerge_phirc ], [ 1.000000e+00, %invertlatch ]
 ; CHECK-NEXT:   %cond_unwrap = fcmp ogt double [[R24]], 0.000000e+00
-; CHECK-NEXT:   [[R25:%[0-9]+]] = getelementptr inbounds double, ptr %p_malloccache, i64 %"iv'ac.0"
+; CHECK-NEXT:   [[R25:%[0-9]+]] = getelementptr inbounds double, ptr [[PCACHE]], i64 %"iv'ac.0"
 ; CHECK-NEXT:   [[R26:%[0-9]+]] = load double, ptr [[R25]], align 8
 ; CHECK-NEXT:   [[R27:%[0-9]+]] = fmul fast double [[R35:%[0-9]+]], [[R26]]
 ; CHECK-NEXT:   [[R28:%[0-9]+]] = fmul fast double [[R35]], [[R26]]
@@ -231,9 +232,9 @@ entry:
 ; CHECK-NEXT:   %"po'ipg_unwrap" = getelementptr inbounds double, ptr %"out'", i64 %"iv'ac.0"
 ; CHECK-NEXT:   [[R35]] = load double, ptr %"po'ipg_unwrap", align 8
 ; CHECK-NEXT:   store double 0.000000e+00, ptr %"po'ipg_unwrap", align 8
-; CHECK-NEXT:   %"pa'ipg_unwrap7" = getelementptr inbounds double, ptr %"a'", i64 %"iv'ac.0"
-; CHECK-NEXT:   store double 0.000000e+00, ptr %"pa'ipg_unwrap7", align 8
-; CHECK-NEXT:   %par_unwrap8 = and i64 %"iv'ac.0", 1
-; CHECK-NEXT:   %c0_unwrap9 = icmp eq i64 %par_unwrap8, 0
-; CHECK-NEXT:   br i1 %c0_unwrap9, label %invertmerge_phirc, label %invertmerge_phimerge
+; CHECK-NEXT:   [[PA7:%"pa'ipg_unwrap[0-9]+"]] = getelementptr inbounds double, ptr %"a'", i64 %"iv'ac.0"
+; CHECK-NEXT:   store double 0.000000e+00, ptr [[PA7]], align 8
+; CHECK-NEXT:   [[PAR8:%par_unwrap[0-9]+]] = and i64 %"iv'ac.0", 1
+; CHECK-NEXT:   [[C09:%c0_unwrap[0-9]+]] = icmp eq i64 [[PAR8]], 0
+; CHECK-NEXT:   br i1 [[C09]], label %invertmerge_phirc, label %invertmerge_phimerge
 ; CHECK-NEXT: }
