@@ -4496,8 +4496,47 @@ bool AdjointGenerator::handleKnownCallDerivatives(
     }
     return true;
   }
+  auto castAllocArg = [](IRBuilder<> &B, Value *V, Type *TargetTy) -> Value * {
+    Type *SrcTy = V->getType();
+    if (SrcTy == TargetTy)
+      return V;
+    if (SrcTy->isPointerTy() && TargetTy->isPointerTy())
+      return B.CreatePointerBitCastOrAddrSpaceCast(V, TargetTy);
+    if (SrcTy->isIntegerTy() && TargetTy->isPointerTy())
+      return B.CreateIntToPtr(V, TargetTy);
+    if (SrcTy->isPointerTy() && TargetTy->isIntegerTy())
+      return B.CreatePtrToInt(V, TargetTy);
+    if (SrcTy->isIntegerTy() && TargetTy->isIntegerTy())
+      return B.CreateZExtOrTrunc(V, TargetTy);
+    llvm_unreachable("unexpected allocation argument type");
+  };
+
+  auto resolveCompatFuncType = [](Module &M, StringRef Name,
+                                  FunctionType *DefaultFT) -> FunctionType * {
+    if (Function *Existing = M.getFunction(Name)) {
+      auto *EFT = Existing->getFunctionType();
+      if (EFT->getNumParams() == DefaultFT->getNumParams() &&
+          !EFT->isVarArg()) {
+        bool compatible = true;
+        for (size_t i = 0; i < DefaultFT->getNumParams(); ++i) {
+          Type *ET = EFT->getParamType(i);
+          Type *DT = DefaultFT->getParamType(i);
+          if (ET != DT && !((ET->isPointerTy() || ET->isIntegerTy()) &&
+                            (DT->isPointerTy() || DT->isIntegerTy()))) {
+            compatible = false;
+            break;
+          }
+        }
+        if (compatible)
+          return EFT;
+      }
+    }
+    return DefaultFT;
+  };
+
   if (funcName == "cuStreamCreate") {
     Value *val = nullptr;
+    auto M = gutils->newFunc->getParent();
     llvm::Type *PT = getInt8PtrTy(call.getContext());
 #if LLVM_VERSION_MAJOR < 17
     if (call.getContext().supportsTypedPointers()) {
@@ -4507,12 +4546,13 @@ bool AdjointGenerator::handleKnownCallDerivatives(
 #endif
     if (Mode == DerivativeMode::ReverseModePrimal ||
         Mode == DerivativeMode::ReverseModeCombined) {
+      IRBuilder<> BuilderAfter(newCall->getNextNode());
       val = gutils->getNewFromOriginal(call.getOperand(0));
       if (!isa<PointerType>(val->getType()))
-        val = BuilderZ.CreateIntToPtr(val, getUnqual(PT));
-      val = BuilderZ.CreateLoad(PT, val);
-      val = gutils->cacheForReverse(BuilderZ, val,
-                                    getIndex(&call, CacheType::Tape, BuilderZ));
+        val = BuilderAfter.CreateIntToPtr(val, getUnqual(PT));
+      val = BuilderAfter.CreateLoad(PT, val);
+      val = gutils->cacheForReverse(
+          BuilderAfter, val, getIndex(&call, CacheType::Tape, BuilderAfter));
 
     } else if (Mode == DerivativeMode::ReverseModeGradient) {
       PHINode *toReplace =
@@ -4524,11 +4564,15 @@ bool AdjointGenerator::handleKnownCallDerivatives(
         Mode == DerivativeMode::ReverseModeCombined) {
       IRBuilder<> Builder2(&call);
       getReverseBuilder(Builder2);
-      val = gutils->lookupM(val, Builder2);
-      auto FreeFunc = getOrInsertPerCallingConv(
-          *gutils->newFunc->getParent(), called, "cuStreamDestroy",
-          FunctionType::get(call.getType(), {PT}, false));
-      Value *nargs[] = {val};
+      val = gutils->lookupM(val, Builder2, ValueToValueMapTy(),
+                            /*tryLegalRecompute*/ false);
+      auto destroyName =
+          getRenamedPerCallingConv(called->getName(), "cuStreamDestroy");
+      FunctionType *FT = resolveCompatFuncType(
+          *M, destroyName, FunctionType::get(call.getType(), {PT}, false));
+      auto FreeFunc =
+          getOrInsertPerCallingConv(*M, called, "cuStreamDestroy", FT);
+      Value *nargs[] = {castAllocArg(Builder2, val, FT->getParamType(0))};
       Builder2.CreateCall(FreeFunc, nargs);
     }
     if (Mode == DerivativeMode::ReverseModeGradient)
@@ -4536,7 +4580,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
     return true;
   }
   if (funcName == "cuStreamDestroy") {
-    if (Mode == DerivativeMode::ReverseModeGradient ||
+    if (Mode == DerivativeMode::ReverseModePrimal ||
+        Mode == DerivativeMode::ReverseModeGradient ||
         Mode == DerivativeMode::ReverseModeCombined)
       eraseIfUnused(call, /*erase*/ true, /*check*/ false);
     return true;
@@ -4561,7 +4606,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
       funcName == "cudaMallocHost" || funcName == "cudaMallocFromPoolAsync") {
     bool constval = gutils->isConstantInstruction(&call);
 
-    Value *val;
+    Value *val = nullptr;
     llvm::Type *PT = getInt8PtrTy(call.getContext());
 #if LLVM_VERSION_MAJOR < 17
     if (call.getContext().supportsTypedPointers()) {
@@ -4569,6 +4614,57 @@ bool AdjointGenerator::handleKnownCallDerivatives(
         PT = call.getArgOperand(0)->getType()->getPointerElementType();
     }
 #endif
+    auto M = gutils->newFunc->getParent();
+
+    auto emitFree = [&](IRBuilder<> &B, Value *tofree, Value *streamVal) {
+      Type *VoidTy = Type::getVoidTy(M->getContext());
+      Type *IntPtrTy = getInt8PtrTy(M->getContext());
+
+      if (funcName == "posix_memalign") {
+        FunctionType *FT = resolveCompatFuncType(
+            *M, "free", FunctionType::get(VoidTy, {IntPtrTy}, false));
+        auto FreeFunc = M->getOrInsertFunction("free", FT);
+        B.CreateCall(FreeFunc, castAllocArg(B, tofree, FT->getParamType(0)));
+        return;
+      }
+
+      StringRef freeName;
+      bool isDriverAPI = false;
+      bool hasStream = false;
+      if (funcName == "cuMemAllocAsync") {
+        freeName = "cuMemFreeAsync";
+        isDriverAPI = true;
+        hasStream = true;
+      } else if (funcName == "cuMemAlloc" || funcName == "cuMemAlloc_v2") {
+        freeName = funcName == "cuMemAlloc_v2" ? "cuMemFree_v2" : "cuMemFree";
+        isDriverAPI = true;
+      } else if (funcName == "cudaMalloc") {
+        freeName = "cudaFree";
+      } else if (funcName == "cudaMallocAsync" ||
+                 funcName == "cudaMallocFromPoolAsync") {
+        freeName = "cudaFreeAsync";
+        hasStream = true;
+      } else if (funcName == "cudaMallocHost") {
+        freeName = "cudaFreeHost";
+      } else {
+        llvm_unreachable("unknown function to free");
+      }
+
+      Type *defaultArg0Ty = isDriverAPI ? PT : IntPtrTy;
+      SmallVector<Type *, 2> tys = {defaultArg0Ty};
+      if (hasStream)
+        tys.push_back(streamVal->getType());
+      auto renamed = getRenamedPerCallingConv(called->getName(), freeName);
+      FunctionType *FT = resolveCompatFuncType(
+          *M, renamed, FunctionType::get(call.getType(), tys, false));
+      auto FreeFunc = getOrInsertPerCallingConv(*M, called, freeName, FT);
+      SmallVector<Value *, 2> nargs = {
+          castAllocArg(B, tofree, FT->getParamType(0))};
+      if (hasStream)
+        nargs.push_back(castAllocArg(B, streamVal, FT->getParamType(1)));
+      B.CreateCall(FreeFunc, nargs);
+    };
+
     if (!constval) {
       Value *stream = nullptr;
       if (funcName == "cuMemAllocAsync")
@@ -4577,8 +4673,6 @@ bool AdjointGenerator::handleKnownCallDerivatives(
         stream = gutils->getNewFromOriginal(call.getArgOperand(2));
       else if (funcName == "cudaMallocFromPoolAsync")
         stream = gutils->getNewFromOriginal(call.getArgOperand(3));
-
-      auto M = gutils->newFunc->getParent();
 
       if (Mode == DerivativeMode::ReverseModePrimal ||
           Mode == DerivativeMode::ReverseModeCombined ||
@@ -4608,57 +4702,68 @@ bool AdjointGenerator::handleKnownCallDerivatives(
                 ptrshadow = BuilderZ.CreateIntToPtr(ptrshadow, getUnqual(PT));
               Value *val = BuilderZ.CreateLoad(PT, ptrshadow);
 
-              auto dst_arg =
-                  BuilderZ.CreateBitCast(val, getInt8PtrTy(call.getContext()));
-
-              auto val_arg =
-                  ConstantInt::get(Type::getInt8Ty(call.getContext()), 0);
               auto len_arg = gutils->getNewFromOriginal(
                   call.getArgOperand((funcName == "posix_memalign") ? 2 : 1));
 
               if (funcName == "posix_memalign" ||
                   funcName == "cudaMallocHost") {
+                unsigned AS = val->getType()->isPointerTy()
+                                  ? val->getType()->getPointerAddressSpace()
+                                  : 0;
+                auto dst_arg = castAllocArg(
+                    BuilderZ, val, getInt8PtrTy(call.getContext(), AS));
+                auto val_arg =
+                    ConstantInt::get(Type::getInt8Ty(call.getContext()), 0);
                 BuilderZ.CreateMemSet(dst_arg, val_arg, len_arg, MaybeAlign());
-              } else if (funcName == "cudaMalloc") {
-                Type *tys[] = {PT, val_arg->getType(), len_arg->getType()};
-                auto F = getOrInsertPerCallingConv(
-                    *M, called, "cudaMemset",
-                    FunctionType::get(call.getType(), tys, false));
-                Value *nargs[] = {dst_arg, val_arg, len_arg};
-                auto memset = cast<CallInst>(BuilderZ.CreateCall(F, nargs));
-                memset->addParamAttr(0, Attribute::NonNull);
-              } else if (funcName == "cudaMallocAsync" ||
-                         funcName == "cudaMallocFromPoolAsync") {
-                Type *tys[] = {PT, val_arg->getType(), len_arg->getType(),
-                               stream->getType()};
-                auto F = getOrInsertPerCallingConv(
-                    *M, called, "cudaMemsetAsync",
-                    FunctionType::get(call.getType(), tys, false));
-                Value *nargs[] = {dst_arg, val_arg, len_arg, stream};
-                auto memset = cast<CallInst>(BuilderZ.CreateCall(F, nargs));
-                memset->addParamAttr(0, Attribute::NonNull);
-              } else if (funcName == "cuMemAllocAsync") {
-                Type *tys[] = {PT, val_arg->getType(), len_arg->getType(),
-                               stream->getType()};
-                auto F = getOrInsertPerCallingConv(
-                    *M, called, "cuMemsetD8Async",
-                    FunctionType::get(call.getType(), tys, false));
-                Value *nargs[] = {dst_arg, val_arg, len_arg, stream};
-                auto memset = cast<CallInst>(BuilderZ.CreateCall(F, nargs));
-                memset->addParamAttr(0, Attribute::NonNull);
-              } else if (funcName == "cuMemAlloc" ||
-                         funcName == "cuMemAlloc_v2") {
-                Type *tys[] = {PT, val_arg->getType(), len_arg->getType()};
-                auto F = getOrInsertPerCallingConv(
-                    *M, called,
-                    funcName == "cuMemAlloc_v2" ? "cuMemsetD8_v2"
-                                                : "cuMemsetD8",
-                    FunctionType::get(call.getType(), tys, false));
-                Value *nargs[] = {dst_arg, val_arg, len_arg};
-                auto memset = cast<CallInst>(BuilderZ.CreateCall(F, nargs));
-                memset->addParamAttr(0, Attribute::NonNull);
               } else {
-                llvm_unreachable("unhandled allocation");
+                StringRef memsetName;
+                bool isDriverAPI = false;
+                bool hasStream = false;
+                if (funcName == "cudaMalloc") {
+                  memsetName = "cudaMemset";
+                } else if (funcName == "cudaMallocAsync" ||
+                           funcName == "cudaMallocFromPoolAsync") {
+                  memsetName = "cudaMemsetAsync";
+                  hasStream = true;
+                } else if (funcName == "cuMemAllocAsync") {
+                  memsetName = "cuMemsetD8Async";
+                  isDriverAPI = true;
+                  hasStream = true;
+                } else if (funcName == "cuMemAlloc" ||
+                           funcName == "cuMemAlloc_v2") {
+                  memsetName = funcName == "cuMemAlloc_v2" ? "cuMemsetD8_v2"
+                                                           : "cuMemsetD8";
+                  isDriverAPI = true;
+                } else {
+                  llvm_unreachable("unhandled allocation");
+                }
+
+                Type *defaultDstTy =
+                    isDriverAPI ? PT : getInt8PtrTy(call.getContext());
+                Type *defaultValTy = isDriverAPI
+                                         ? Type::getInt8Ty(call.getContext())
+                                         : Type::getInt32Ty(call.getContext());
+                SmallVector<Type *, 4> tys = {defaultDstTy, defaultValTy,
+                                              len_arg->getType()};
+                if (hasStream)
+                  tys.push_back(stream->getType());
+                auto renamed =
+                    getRenamedPerCallingConv(called->getName(), memsetName);
+                FunctionType *FT = resolveCompatFuncType(
+                    *M, renamed, FunctionType::get(call.getType(), tys, false));
+                auto F = getOrInsertPerCallingConv(*M, called, memsetName, FT);
+                Value *dst_arg =
+                    castAllocArg(BuilderZ, val, FT->getParamType(0));
+                Value *val_arg = Constant::getNullValue(FT->getParamType(1));
+                Value *len_cast =
+                    castAllocArg(BuilderZ, len_arg, FT->getParamType(2));
+                SmallVector<Value *, 4> nargs = {dst_arg, val_arg, len_cast};
+                if (hasStream)
+                  nargs.push_back(
+                      castAllocArg(BuilderZ, stream, FT->getParamType(3)));
+                auto memset = cast<CallInst>(BuilderZ.CreateCall(F, nargs));
+                if (dst_arg->getType()->isPointerTy())
+                  memset->addParamAttr(0, Attribute::NonNull);
               }
               return val;
             },
@@ -4683,57 +4788,13 @@ bool AdjointGenerator::handleKnownCallDerivatives(
           Value *tofree = gutils->lookupM(val, Builder2, ValueToValueMapTy(),
                                           /*tryLegalRecompute*/ false);
 
-          Type *VoidTy = Type::getVoidTy(M->getContext());
-          Type *IntPtrTy = getInt8PtrTy(M->getContext());
-
           Value *streamL = nullptr;
           if (stream)
             streamL = gutils->lookupM(stream, Builder2);
 
           applyChainRule(
-              BuilderZ,
-              [&](Value *tofree) {
-                if (funcName == "posix_memalign") {
-                  auto FreeFunc =
-                      M->getOrInsertFunction("free", VoidTy, IntPtrTy);
-                  Builder2.CreateCall(FreeFunc, tofree);
-                } else if (funcName == "cuMemAllocAsync") {
-                  auto FreeFunc = getOrInsertPerCallingConv(
-                      *M, called, "cuMemFreeAsync",
-                      FunctionType::get(VoidTy, {IntPtrTy, streamL->getType()},
-                                        false));
-                  Value *nargs[] = {tofree, streamL};
-                  Builder2.CreateCall(FreeFunc, nargs);
-                } else if (funcName == "cuMemAlloc" ||
-                           funcName == "cuMemAlloc_v2") {
-                  auto FreeFunc = getOrInsertPerCallingConv(
-                      *M, called, "cuMemFree",
-                      FunctionType::get(VoidTy, {IntPtrTy}, false));
-                  Value *nargs[] = {tofree};
-                  Builder2.CreateCall(FreeFunc, nargs);
-                } else if (funcName == "cudaMalloc") {
-                  auto FreeFunc = getOrInsertPerCallingConv(
-                      *M, called, "cudaFree",
-                      FunctionType::get(VoidTy, {IntPtrTy}, false));
-                  Value *nargs[] = {tofree};
-                  Builder2.CreateCall(FreeFunc, nargs);
-                } else if (funcName == "cudaMallocAsync" ||
-                           funcName == "cudaMallocFromPoolAsync") {
-                  auto FreeFunc = getOrInsertPerCallingConv(
-                      *M, called, "cudaFreeAsync",
-                      FunctionType::get(VoidTy, {IntPtrTy, streamL->getType()},
-                                        false));
-                  Value *nargs[] = {tofree, streamL};
-                  Builder2.CreateCall(FreeFunc, nargs);
-                } else if (funcName == "cudaMallocHost") {
-                  auto FreeFunc = getOrInsertPerCallingConv(
-                      *M, called, "cudaFreeHost",
-                      FunctionType::get(VoidTy, {IntPtrTy}, false));
-                  Value *nargs[] = {tofree};
-                  Builder2.CreateCall(FreeFunc, nargs);
-                } else
-                  llvm_unreachable("unknown function to free");
-              },
+              Builder2,
+              [&](Value *tofree) { emitFree(Builder2, tofree, streamL); },
               tofree);
         }
       }
@@ -4761,7 +4822,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
       IRBuilder<> Builder2(newCall->getNextNode());
       auto ptrv = gutils->getNewFromOriginal(call.getOperand(0));
       if (!isa<PointerType>(ptrv->getType()))
-        ptrv = BuilderZ.CreateIntToPtr(ptrv, getUnqual(PT));
+        ptrv = Builder2.CreateIntToPtr(ptrv, getUnqual(PT));
       auto load = Builder2.CreateLoad(PT, ptrv, "posix_preread");
       Builder2.SetInsertPoint(&call);
       getReverseBuilder(Builder2);
@@ -4777,46 +4838,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
       if (streamL)
         streamL = gutils->lookupM(streamL, Builder2);
 
-      auto M = gutils->newFunc->getParent();
-      Type *VoidTy = Type::getVoidTy(M->getContext());
-      Type *IntPtrTy = getInt8PtrTy(M->getContext());
-
-      if (funcName == "posix_memalign") {
-        auto FreeFunc = M->getOrInsertFunction("free", VoidTy, IntPtrTy);
-        Builder2.CreateCall(FreeFunc, tofree);
-      } else if (funcName == "cuMemAllocAsync") {
-        auto FreeFunc = getOrInsertPerCallingConv(
-            *M, called, "cuMemFreeAsync",
-            FunctionType::get(VoidTy, {IntPtrTy, streamL->getType()}, false));
-        Value *nargs[] = {tofree, streamL};
-        Builder2.CreateCall(FreeFunc, nargs);
-      } else if (funcName == "cuMemAlloc" || funcName == "cuMemAlloc_v2") {
-        auto FreeFunc = getOrInsertPerCallingConv(
-            *M, called, "cuMemFree",
-            FunctionType::get(VoidTy, {IntPtrTy}, false));
-        Value *nargs[] = {tofree};
-        Builder2.CreateCall(FreeFunc, nargs);
-      } else if (funcName == "cudaMalloc") {
-        auto FreeFunc = getOrInsertPerCallingConv(
-            *M, called, "cudaFree",
-            FunctionType::get(VoidTy, {IntPtrTy}, false));
-        Value *nargs[] = {tofree};
-        Builder2.CreateCall(FreeFunc, nargs);
-      } else if (funcName == "cudaMallocAsync" ||
-                 funcName == "cudaMallocFromPoolAsync") {
-        auto FreeFunc = getOrInsertPerCallingConv(
-            *M, called, "cudaFreeAsync",
-            FunctionType::get(VoidTy, {IntPtrTy, streamL->getType()}, false));
-        Value *nargs[] = {tofree, streamL};
-        Builder2.CreateCall(FreeFunc, nargs);
-      } else if (funcName == "cudaMallocHost") {
-        auto FreeFunc = getOrInsertPerCallingConv(
-            *M, called, "cudaFreeHost",
-            FunctionType::get(VoidTy, {IntPtrTy}, false));
-        Value *nargs[] = {tofree};
-        Builder2.CreateCall(FreeFunc, nargs);
-      } else
-        llvm_unreachable("unknown function to free");
+      emitFree(Builder2, tofree, streamL);
     }
 
     return true;
