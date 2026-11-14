@@ -1,6 +1,6 @@
 ; RUN: if [ %llvmver -ge 16 ]; then %opt < %s %OPnewLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -S | FileCheck %s; fi
 
-; Julia 1.14 (julia#60924) zeroes the GC pointer fields of a new object in
+; Julia 1.13.4 and 1.14 (julia#60924) zero the GC pointer fields of a new object in
 ; late-gc-lowering, from the julia.gc_alloc_ptr_offsets operand bundle on the
 ; allocation. The shadow allocation must carry the same bundle.
 
