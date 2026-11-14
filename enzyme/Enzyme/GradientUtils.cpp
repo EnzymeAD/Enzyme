@@ -6308,8 +6308,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
 
         auto rule = [&bb, &arg, &invertargs](Value *ip) {
           // TODO mark this the same inbounds as the original
-          return bb.CreateGEP(cast<GEPOperator>(ip)->getSourceElementType(), ip,
-                              invertargs, arg->getName() + "'ipg");
+          return bb.CreateGEP(cast<GEPOperator>(arg)->getSourceElementType(),
+                              ip, invertargs, arg->getName() + "'ipg");
         };
 
         Value *shadow = applyChainRule(arg->getType(), bb, rule, ip);
