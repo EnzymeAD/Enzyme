@@ -2682,6 +2682,63 @@ getIntrinsicDeclaration(llvm::Module *M, llvm::Intrinsic::ID id,
 #endif
 }
 
+/// Emit an IEEE 754-2019 signed-zero- and NaN-aware comparison for
+/// `llvm.maximum`, `llvm.minimum`, `llvm.maximumnum`, and `llvm.minimumnum`.
+///
+/// Returns `true` when `x < y` (treating `-0.0 < +0.0`), or when NaN handling
+/// selects the `true` branch:
+///   - `OrdFirst = true`  (`llvm.maximum`, `llvm.minimumnum`):
+///       `ord(x, x) && (ult(x, y) || (oeq(x, y) && signbit(x) && !signbit(y)))`
+///     True iff `x < y`, `(-0.0, +0.0)`, or `(!isnan(x) && isnan(y))`.
+///   - `OrdFirst = false` (`llvm.minimum`, `llvm.maximumnum`):
+///       `ord(y, y) && (ult(x, y) || (oeq(x, y) && signbit(x) && !signbit(y)))`
+///     True iff `x < y`, `(-0.0, +0.0)`, or `(isnan(x) && !isnan(y))`.
+///
+/// Fast-math flags are cleared locally so `nnan` and `nsz` do not poison or
+/// fold away the NaN and signed-zero checks.
+static inline llvm::Value *cmpMinMaxSignedZero(llvm::IRBuilder<> &Builder2,
+                                               bool OrdFirst, llvm::Value *x,
+                                               llvm::Value *y) {
+  llvm::IRBuilder<>::FastMathFlagGuard Guard(Builder2);
+  Builder2.clearFastMathFlags();
+
+  llvm::Type *Ty = x->getType();
+  llvm::Type *ScalarTy = Ty->getScalarType();
+  llvm::Value *ordVal = OrdFirst ? x : y;
+  llvm::Value *ordCheck = Builder2.CreateFCmpORD(ordVal, ordVal);
+  llvm::Value *ltOrNan = Builder2.CreateFCmpULT(x, y);
+  llvm::Value *eq = Builder2.CreateFCmpOEQ(x, y);
+
+  llvm::Value *signXNotSignY = nullptr;
+  if (!ScalarTy->isPPC_FP128Ty()) {
+    llvm::Type *IntTy = llvm::IntegerType::get(
+        Builder2.getContext(), ScalarTy->getPrimitiveSizeInBits());
+    if (auto *VT = llvm::dyn_cast<llvm::VectorType>(Ty))
+      IntTy = llvm::VectorType::get(IntTy, VT->getElementCount());
+    llvm::Value *xi = Builder2.CreateBitCast(x, IntTy);
+    llvm::Value *yi = Builder2.CreateBitCast(y, IntTy);
+    llvm::Value *notYi = Builder2.CreateNot(yi);
+    llvm::Value *mask = Builder2.CreateAnd(xi, notYi);
+    llvm::Value *zero = llvm::Constant::getNullValue(IntTy);
+    signXNotSignY = Builder2.CreateICmpSLT(mask, zero);
+  } else {
+    llvm::Module *M = Builder2.GetInsertBlock()->getParent()->getParent();
+    llvm::Function *copysign =
+        getIntrinsicDeclaration(M, llvm::Intrinsic::copysign, {Ty});
+    llvm::Value *one = llvm::ConstantFP::get(Ty, 1.0);
+    llvm::Value *zero = llvm::ConstantFP::get(Ty, 0.0);
+    llvm::Value *csX = Builder2.CreateCall(copysign, {one, x});
+    llvm::Value *csY = Builder2.CreateCall(copysign, {one, y});
+    llvm::Value *sx = Builder2.CreateFCmpOLT(csX, zero);
+    llvm::Value *sy = Builder2.CreateFCmpOGT(csY, zero);
+    signXNotSignY = Builder2.CreateAnd(sx, sy);
+  }
+
+  llvm::Value *negPosZero = Builder2.CreateAnd(eq, signXNotSignY);
+  llvm::Value *ltOrNegPosZero = Builder2.CreateOr(ltOrNan, negPosZero);
+  return Builder2.CreateAnd(ordCheck, ltOrNegPosZero);
+}
+
 static inline llvm::Instruction *getFirstNonPHI(llvm::BasicBlock *B) {
 #if LLVM_VERSION_MAJOR >= 18
   // NOLINTNEXTLINE(enzyme-first-non-phi): this is the wrapper

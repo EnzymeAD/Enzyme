@@ -1141,6 +1141,10 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
         os << "checkedMul(gutils->strongZero, " << builder << ", ";
       } else if (opName == "CheckedDiv") {
         os << "checkedDiv(gutils->strongZero, " << builder << ", ";
+      } else if (opName == "MinMaxCmpOrdFirst") {
+        os << "cmpMinMaxSignedZero(" << builder << ", /*OrdFirst*/ true, ";
+      } else if (opName == "MinMaxCmpOrdSecond") {
+        os << "cmpMinMaxSignedZero(" << builder << ", /*OrdFirst*/ false, ";
       } else if (intrinsic == MLIRDerivatives) {
         // Derivative expressions are built with fast-math, as they are on the
         // LLVM side; ops that carry no such flags are unaffected.
