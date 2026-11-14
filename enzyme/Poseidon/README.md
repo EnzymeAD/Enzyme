@@ -156,11 +156,14 @@ The ways to opt in, simplest first:
    [args...]` (or with `POSEIDON_PROBE=1` in its environment): at exit the
    program says how many more runs of itself the measurement takes and runs
    itself that many times, once for a noise floor and once per site and
-   perturbation size, repeating whatever else it does on each run. Run
-   without the request, a program that declares a metric runs once and says
-   what measuring would take, and profile use stops at its sites until they
-   are measured. With `POSEIDON_PROBE=0` nothing is measured and each site is
-   solved against its own target. Optional.
+   perturbation size, repeating whatever else it does on each run; those
+   runs record nothing but the metric. It ends by printing how long its own
+   run and the measurement took (`[probe] profile run:` and `[probe]
+   condition-number measurement:`). Run without the request, a program that
+   declares a metric runs once and says what measuring would take, and
+   profile use stops at its sites until they are measured. With
+   `POSEIDON_PROBE=0` nothing is measured and each site is solved against its
+   own target. Optional.
 6. `__poseidon_fp_optimize(fn, args...)`: one call with explicit Enzyme
    activities and shadows; see [Advanced: one call with shadows](#advanced-one-call-with-shadows).
 

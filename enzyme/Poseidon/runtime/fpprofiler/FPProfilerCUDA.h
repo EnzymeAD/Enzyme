@@ -135,6 +135,10 @@ struct PoseidonCUDAProfileTable {
   // run; eps == 0 disables the hook.
   double probeEps;
   int probeSite;
+  // Nonzero in a run of the condition-number measurement, which reads only
+  // the metric: the probes record nothing and the tables above are null. Zero
+  // in an unbound table, so a probe there still reports it.
+  int metricOnly;
 };
 
 #endif // POSEIDON_FPPROFILER_CUDA_H

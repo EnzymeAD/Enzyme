@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <cassert>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -115,6 +116,13 @@ static std::string &metricName() {
 }
 static double g_metricValue = 0.0;
 static bool g_metricSet = false;
+
+// A run of the condition-number measurement: its parent reads back only the
+// metric, so it records and writes nothing else.
+static bool g_metricOnly = false;
+
+// When the runtime was registered, before main: the start of the profile run.
+static std::chrono::steady_clock::time_point g_runtimeStart;
 
 class FPProfiler {
 private:
@@ -247,7 +255,8 @@ static void writeMetric() {
 // folds the result into the profiles it just wrote. A run not asked to marks
 // the profiles as unmeasured instead, and profile use stops on them; a run
 // that declines with POSEIDON_PROBE=0 leaves them as a run without a metric
-// writes them. A child has POSEIDON_PROBE=child and never re-executes.
+// writes them. A child has POSEIDON_PROBE=child, never re-executes and
+// records nothing but the metric.
 // ---------------------------------------------------------------------------
 
 // The children re-run the same GPU workload while this process is still inside
@@ -469,6 +478,8 @@ static void probeRemoveDir(const std::string &dir) {
 }
 
 static void poseidonProbeDriver() {
+  const std::chrono::duration<double> profileRun =
+      std::chrono::steady_clock::now() - g_runtimeStart;
   // A run the driver started, or one armed by hand, is a measurement.
   const char *request = getenv("POSEIDON_PROBE");
   if (getenv("POSEIDON_PROBE_SITE") || (request && !strcmp(request, "child")))
@@ -575,6 +586,7 @@ static void poseidonProbeDriver() {
                                     "POSEIDON_PROFILE_DIR=" + dir};
   };
 
+  const auto measureStart = std::chrono::steady_clock::now();
   const std::string base2 = std::string(tmp) + "/baseline2";
   mkdirP(base2);
   std::cerr << "[probe] baseline run 2 -> noise floor" << std::endl;
@@ -641,6 +653,11 @@ static void poseidonProbeDriver() {
     fprintf(stderr, "[probe] %-5d %-16.6e %-13s %s\n", kv.first, kappa,
             mark.c_str(), kv.second.c_str());
   }
+  const std::chrono::duration<double> measured =
+      std::chrono::steady_clock::now() - measureStart;
+  fprintf(stderr, "[probe] profile run: %.2f s\n", profileRun.count());
+  fprintf(stderr, "[probe] condition-number measurement: %zu runs, %.2f s\n",
+          runs, measured.count());
 
   probeRemoveDir(base2);
   for (const auto &kv : sites)
@@ -657,6 +674,10 @@ static void poseidonProbeDriver() {
 // or after this one: before, the kernels it wrote are skipped here; after, it
 // replaces what was written here for them.
 static void writeAllProfiles() {
+  if (g_metricOnly) {
+    writeMetric();
+    return;
+  }
   for (auto &pair : profilerRegistry)
     pair.second->write();
   for (const auto &pair : staticHeaders())
@@ -674,6 +695,9 @@ static void writeAllProfilesAtExit() {
 }
 
 static int RegisterFPProfileRuntime() {
+  g_runtimeStart = std::chrono::steady_clock::now();
+  const char *request = getenv("POSEIDON_PROBE");
+  g_metricOnly = request && !strcmp(request, "child");
   if (const char *envPath = getenv("POSEIDON_PROFILE_DIR"))
     FPProfiler::setOutputDir(envPath);
   else
@@ -719,7 +743,7 @@ void poseidonProfileWritten(const char *funcName) {
 
 void poseidonLogGrad(const char *funcName, size_t idx, double value,
                      double grad) {
-  if (!funcName)
+  if (!funcName || g_metricOnly)
     return;
 
   std::lock_guard<std::mutex> lock(registryMutex);
@@ -735,7 +759,7 @@ void poseidonLogGrad(const char *funcName, size_t idx, double value,
 
 void poseidonLogValue(const char *funcName, size_t idx, double res,
                       size_t numOperands, double *operands) {
-  if (!funcName)
+  if (!funcName || g_metricOnly)
     return;
 
   std::lock_guard<std::mutex> lock(registryMutex);
