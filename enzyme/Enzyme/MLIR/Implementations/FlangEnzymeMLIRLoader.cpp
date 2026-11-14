@@ -33,8 +33,6 @@
 
 #include <string>
 
-namespace {
-
 #if !defined(_WIN32)
 // Where FlangEnzymeMLIR is, relative to this plugin: next to it once
 // installed, under MLIR/Implementations in a build tree.
@@ -54,6 +52,7 @@ static std::string findFlangEnzymeMLIR() {
   return "";
 }
 
+namespace {
 struct LoadFlangEnzymeMLIR {
   LoadFlangEnzymeMLIR() {
     // Only in flang: FlangEnzymeMLIR registers itself with flang's pipeline
@@ -76,8 +75,8 @@ struct LoadFlangEnzymeMLIR {
     llvm::sys::DynamicLibrary::getPermanentLibrary(path.c_str(), &error);
   }
 };
+} // namespace
+
 // Runs when flang loads FlangEnzyme as a pass plugin.
 static LoadFlangEnzymeMLIR loadFlangEnzymeMLIR;
 #endif
-
-} // namespace
