@@ -591,10 +591,12 @@ Value *GradientUtils::getOrInsertConditionalIndex(Value *val, LoopContext &lc,
   }
 
   IRBuilder<> lbuilder(lc.header, lc.header->begin());
-  auto PN = lbuilder.CreatePHI(lc.incvar->getType(), 2);
-  Constant *Zero =
-      Constant::getNullValue(lc.incvar->getType()->getScalarType());
-  PN->addIncoming(Zero, lc.preheader);
+  // A vector condition selects per lane, so the index is a vector too.
+  Type *IdxTy = lc.incvar->getType();
+  if (auto *VTy = dyn_cast<VectorType>(val->getType()))
+    IdxTy = VectorType::get(IdxTy, VTy->getElementCount());
+  auto PN = lbuilder.CreatePHI(IdxTy, 2);
+  PN->addIncoming(Constant::getNullValue(IdxTy), lc.preheader);
   lbuilder.SetInsertPoint(lc.incvar->getNextNode());
   Value *red = lc.incvar;
   if (VectorType *VTy = dyn_cast<VectorType>(val->getType())) {
