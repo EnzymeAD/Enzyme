@@ -74,7 +74,7 @@ jobs:
       uses: wsmoses/gcp-cache@main
       with:
         path: ${{ env.BASE_DIR }}/llvm-project/mlir-build
-        key: ${{ matrix.llbuild }}-${{ matrix.os }}-mlir-tidy-${{ steps.mlir-commit.outputs.sha_short }}
+        key: ${{ matrix.llbuild }}-${{ matrix.os }}-mlir-flang-tidy-${{ steps.mlir-commit.outputs.sha_short }}
         gcp-bucket: enzyme-ci-transient
         gcp-prefix: enzyme-mlir/
 
@@ -82,8 +82,9 @@ jobs:
       if: steps.cache-mlir.outputs.cache-hit != 'true'
       working-directory: ${{ env.BASE_DIR }}/llvm-project
       run: |
-        mkdir mlir-build && cd mlir-build && cmake ../llvm -GNinja -DLLVM_ENABLE_PROJECTS="llvm;clang;mlir;clang-tools-extra" -DLLVM_ENABLE_RUNTIMES=openmp -DCMAKE_BUILD_TYPE=${{ matrix.llbuild }} \
+        mkdir mlir-build && cd mlir-build && cmake ../llvm -GNinja -DLLVM_ENABLE_PROJECTS="llvm;clang;mlir;flang;clang-tools-extra" -DLLVM_ENABLE_RUNTIMES=openmp -DCMAKE_BUILD_TYPE=${{ matrix.llbuild }} \
         -DLLVM_ENABLE_ASSERTIONS=ON -DLLVM_TARGETS_TO_BUILD=X86 \
+        -DFLANG_PLUGIN_SUPPORT=ON \
         -DLLVM_USE_LINKER=gold -DLLVM_PARALLEL_LINK_JOBS=2 -DLLVM_PARALLEL_COMPILE_JOBS=16 \
         -DCLANG_ENABLE_STATIC_ANALYZER=OFF -DCLANG_ENABLE_ARCMT=OFF \
         -DCLANG_TIDY_ENABLE_STATIC_ANALYZER=OFF -DCLANG_TIDY_ENABLE_QUERY_BASED_CUSTOM_CHECKS=ON \
@@ -94,7 +95,12 @@ jobs:
       working-directory: ${{ env.BASE_DIR }}/Enzyme
       run: |
           mkdir enzyme-build && cd enzyme-build
-          cmake ../enzyme -GNinja -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_DIR=${{ env.BASE_DIR }}/llvm-project/mlir-build -DENZYME_MLIR=ON
+          cmake ../enzyme -GNinja -DCMAKE_BUILD_TYPE=${{ matrix.build }} \
+            -DLLVM_DIR=${{ env.BASE_DIR }}/llvm-project/mlir-build \
+            -DClang_DIR=${{ env.BASE_DIR }}/llvm-project/mlir-build/lib/cmake/clang \
+            -DFlang_DIR=${{ env.BASE_DIR }}/llvm-project/mlir-build/lib/cmake/flang \
+            -DENZYME_MLIR=ON -DENZYME_FLANG_MLIR=ON -DENZYME_FLANG=ON -DENZYME_FORTRAN=ON \
+            -DCMAKE_Fortran_COMPILER=${{ env.BASE_DIR }}/llvm-project/mlir-build/bin/flang
           ninja
 
     - name: Check enzyme-mlir
