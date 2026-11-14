@@ -1,0 +1,69 @@
+0
+	MinRes = 1.0
+	MaxRes = 4.0
+	SumValue = 233.0
+	SumSens = 100.0
+	SumGrad = 100.0
+	Exec = 100
+	NumOperands = 2
+	Operand[0] = [1.0, 2.0]
+	Operand[1] = [1.0, 2.0]
+1
+	MinRes = 0.0
+	MaxRes = 1.0
+	SumValue = 33.0
+	SumSens = 100.0
+	SumGrad = 100.0
+	Exec = 100
+	NumOperands = 2
+	Operand[0] = [-1.0, 1.0]
+	Operand[1] = [-1.0, 1.0]
+2
+	MinRes = 1.0
+	MaxRes = 5.0
+	SumValue = 266.0
+	SumSens = 100.0
+	SumGrad = 100.0
+	Exec = 100
+	NumOperands = 2
+	Operand[0] = [1.0, 4.0]
+	Operand[1] = [0.0, 1.0]
+3
+	MinRes = 1.0
+	MaxRes = 2.24
+	SumValue = 160.0
+	SumSens = 100.0
+	SumGrad = 100.0
+	Exec = 100
+	NumOperands = 1
+	Operand[0] = [1.0, 5.0]
+4
+	MinRes = 0.0
+	MaxRes = 0.42
+	SumValue = 10.0
+	SumSens = 300.0
+	SumGrad = 150.0
+	Exec = 100
+	NumOperands = 2
+	Operand[0] = [1.0, 2.24]
+	Operand[1] = [1.0, 2.0]
+5
+	MinRes = 0.0
+	MaxRes = 0.21
+	SumValue = 5.0
+	SumSens = 100.0
+	SumGrad = 50.0
+	Exec = 100
+	NumOperands = 2
+	Operand[0] = [0.0, 0.42]
+	Operand[1] = [0.5, 0.5]
+6
+	MinRes = 2.5
+	MaxRes = 10.0
+	SumValue = 583.0
+	SumSens = 200.0
+	SumGrad = 80.0
+	Exec = 100
+	NumOperands = 2
+	Operand[0] = [1.0, 4.0]
+	Operand[1] = [2.5, 2.5]

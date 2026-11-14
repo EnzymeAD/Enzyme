@@ -1,0 +1,747 @@
+#!/usr/bin/env python3
+"""Present what Poseidon changed, considered and rejected, from the
+<func>.explain.json files a compile writes with -poseidon-explain=<dir>."""
+
+import argparse
+import difflib
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+
+STATUS_ORDER = {"applied": 0, "pareto": 1, "rejected": 2}
+
+
+def num(v, digits=2):
+    if v is None:
+        return "n/a"
+    return "%.*g" % (digits, v)
+
+
+def where(loc, file_name=None):
+    if not loc:
+        return "<unknown>"
+    f = file_name or loc.get("file", "")
+    return "%s:%d:%d" % (f, loc.get("line", 0), loc.get("col", 0))
+
+
+def short(loc):
+    if not loc:
+        return "?"
+    return "%s:%d:%d" % (os.path.basename(loc.get("file", "")), loc.get("line", 0), loc.get("col", 0))
+
+
+def clip(s, n=160):
+    return s if len(s) <= n else s[:n] + "..."
+
+
+def load(paths):
+    docs = []
+    for p in paths:
+        files = []
+        if os.path.isdir(p):
+            files = sorted(os.path.join(p, f) for f in os.listdir(p) if f.endswith(".explain.json"))
+        else:
+            files = [p]
+        for f in files:
+            with open(f) as fh:
+                doc = json.load(fh)
+            if doc.get("schema") != "poseidon-explain/1":
+                sys.exit("poseidon-explain: %s is not a poseidon-explain/1 file" % f)
+            docs.append(doc)
+    if not docs:
+        sys.exit("poseidon-explain: no .explain.json found in %s" % " ".join(paths))
+    return docs
+
+
+def alt_c(alt):
+    c = alt.get("c")
+    if isinstance(c, list):
+        return "; ".join(c)
+    return c or ""
+
+
+def alt_words(alt):
+    if alt.get("kind") in ("precision", "expansion") or isinstance(alt.get("c"), list):
+        return alt.get("summary", "")
+    return alt_c(alt) or alt.get("summary", "")
+
+
+def technique(unit, alt):
+    note = alt.get("approx_note", "")
+    if "series approximation" in note and ranges(unit):
+        note += ", valid on the profiled range " + ", ".join(ranges(unit))
+    return note
+
+
+def outputs_c(unit):
+    orig = unit.get("original", {}).get("c")
+    if isinstance(orig, list):
+        return orig
+    return [orig] if orig else []
+
+
+def ranges(unit):
+    out = []
+    for inp in unit.get("inputs", []):
+        label = inp.get("name") or inp.get("var")
+        if label and "min" in inp:
+            out.append("%s in [%s, %s]" % (label, num(inp["min"], 3), num(inp["max"], 3)))
+    return out
+
+
+def target_words(doc):
+    t = doc.get("target", {})
+    if "tau" in t:
+        src = " (the site's own)" if t.get("tau_from") == "site" else ""
+        return "accuracy target tau = %s%s" % (num(t["tau"], 3), src)
+    return "cost budget %s" % t.get("budget", 0)
+
+
+def select_flag(doc, point):
+    t = doc.get("target", {})
+    ids = ",".join(point.get("applied", []))
+    if t.get("tau_from") == "site":
+        return "-poseidon-apply-rewrites=%s" % ids if ids else "(as written)"
+    flag = "-poseidon-comp-cost-budget=%d" % point["budget"]
+    if "tau" in t:
+        flag = "-poseidon-tau=0 " + flag
+    return flag
+
+
+def rank(alt):
+    r = STATUS_ORDER.get(alt.get("status"), 3)
+    cheaper = alt.get("cost_delta", 0) < 0
+    return (r, 0 if cheaper else 1, alt.get("modelled_error", float("inf")))
+
+
+def report(doc, args, w):
+    fn = doc["function"]
+    res = doc.get("result", {})
+    w("Poseidon site %s  [%s]" % (fn.get("name"), fn.get("symbol")))
+    if fn.get("site"):
+        w("  called at %s" % short(fn["site"]))
+    t = doc.get("target", {})
+    w("  %s; cost model %s; selector %s%s" % (target_words(doc), os.path.basename(t.get("cost_model", "")),
+                                          t.get("selector", "?"), "; DP table from the cache" if t.get("from_cache") else ""))
+    before, after = res.get("cost_before"), res.get("cost_after")
+    w("  as written:   modelled error %s, cost %s" % (num(res.get("modelled_rel_error_as_written")),
+                                                     before if before is not None else "n/a"))
+    pct = ""
+    if before and after is not None:
+        pct = " (%+.0f%%)" % (100.0 * (after - before) / before)
+    applied = res.get("applied", [])
+    w("  with Poseidon: modelled error %s, cost %s%s; applied %s" % (
+        num(res.get("modelled_rel_error")), after if after is not None else "n/a", pct,
+        ", ".join(applied) if applied else "nothing"))
+
+    for unit in doc.get("subgraphs", []):
+        w("")
+        outs = outputs_c(unit)
+        if unit.get("kind") == "matmul":
+            w("%s  %s: the %s matrix product" % (short(unit.get("loc")), unit["id"], unit.get("shape", "?")))
+        else:
+            head = outs[0] if outs else "?"
+            w("%s  %s: %s" % (short(unit.get("loc")), unit["id"], head))
+            for k, o in enumerate(unit.get("outputs", [])[1:], 1):
+                w("%s  %s  output %d (%s): %s" % (" " * len(short(unit.get("loc"))), " " * len(unit["id"]), k,
+                                                 short(o.get("loc")), o.get("c", "")))
+        facts = ranges(unit)
+        prof = ", ".join(facts) + "; " if facts else ""
+        prof += "%s executions" % unit.get("executions", 0)
+        if unit.get("ops"):
+            prof += "; %d operations" % len(unit["ops"])
+        if unit.get("cost") is not None:
+            prof += "; cost %s" % unit["cost"]
+        w("  profile: %s" % prof)
+        alts = sorted(unit.get("alternatives", []), key=rank)
+        for a in [a for a in alts if a.get("status") == "applied"]:
+            w("  applied %s (%s%s): %s" % (a.get("id"), a.get("kind"),
+                                          ", " + a["precision"] if a.get("precision") else "", clip(alt_words(a), 400)))
+            detail = []
+            if technique(unit, a):
+                detail.append(technique(unit, a))
+            if "modelled_error" in a:
+                detail.append("modelled error %s" % num(a["modelled_error"]))
+            if "modelled_domain_error" in a:
+                detail.append("modelled domain error %s" % num(a["modelled_domain_error"]))
+            if "cost_delta" in a:
+                detail.append("cost change %d" % a["cost_delta"])
+            w("      %s" % "; ".join(d for d in detail if d))
+        if unit.get("left_as_written"):
+            w("  left as written: %s" % unit["left_as_written"])
+        others = [a for a in alts if a.get("status") != "applied"]
+        shown = others if args.all else others[:args.max]
+        if shown:
+            w("  considered:")
+            w("    %-8s %-9s %-10s %9s %12s  %s" % ("id", "status", "kind", "error", "cost change", "rewrite / reason"))
+            for a in shown:
+                err = a.get("modelled_error", a.get("modelled_domain_error"))
+                w("    %-8s %-9s %-10s %9s %12s  %s" % (a.get("id", "-"), a.get("status"), a.get("kind"), num(err),
+                                                      a.get("cost_delta", "n/a"), clip(alt_words(a), 100)))
+                w("    %-8s %-9s %-10s %9s %12s    %s" % ("", "", "", "", "", a.get("reason", "")))
+        if len(others) > len(shown):
+            w("    ... %d more (--all)" % (len(others) - len(shown)))
+
+    pareto = doc.get("pareto", [])
+    if pareto:
+        w("")
+        w("Pareto frontier (cost, modelled error; * = selected):")
+        w("    %12s %15s  %-24s %s" % ("cost", "modelled error", "rewrites", "select with"))
+        for p in pareto:
+            w("  %s %12s %15s  %-24s %s" % ("*" if p.get("selected") else " ", p.get("cost", p["budget"]),
+                                           num(p.get("modelled_rel_error")), ",".join(p.get("applied", [])) or "(as written)",
+                                           select_flag(doc, p)))
+        if doc.get("target", {}).get("tau_from") != "site":
+            w("  -poseidon-apply-rewrites=<ids> applies a point's rewrites directly.")
+
+
+def remarks(doc, args, w):
+    def note(loc, text):
+        w("%s: note: %s" % (where(loc, args.file_name), text))
+
+    fn = doc["function"]
+    res = doc.get("result", {})
+    applied = res.get("applied", [])
+    msg = "Poseidon site %s: %s; modelled error as written %s" % (
+        fn.get("name", "").split("(")[0], target_words(doc), num(res.get("modelled_rel_error_as_written")))
+    if applied:
+        msg += ", after %s; applied %s" % (num(res.get("modelled_rel_error")), ", ".join(applied))
+        if res.get("cost_before") is not None and res.get("cost_after") is not None:
+            msg += "; cost %s -> %s" % (res["cost_before"], res["cost_after"])
+    else:
+        msg += "; left as written"
+    note(fn.get("site") or fn.get("loc"), msg)
+    for unit in doc.get("subgraphs", []):
+        outs = outputs_c(unit)
+        orig = outs[0] if outs else "the %s matrix product" % unit.get("shape", "")
+        for a in unit.get("alternatives", []):
+            if a.get("status") != "applied":
+                continue
+            if a.get("kind") == "algebraic":
+                for k in a.get("outputs", [0]):
+                    c = a.get("c")
+                    now = c[a["outputs"].index(k)] if isinstance(c, list) else (c or a.get("fpcore", ""))
+                    o = unit.get("outputs", [{}])[k] if k < len(unit.get("outputs", [])) else {}
+                    text = "Poseidon rewrote %s as %s" % (clip(o.get("c", orig)), clip(now))
+                    if technique(unit, a):
+                        text += " (%s)" % technique(unit, a)
+                    if "modelled_error" in a:
+                        text += "; modelled error %s" % num(a["modelled_error"])
+                    note(o.get("loc") or unit.get("loc"), text + " [%s]" % a.get("id"))
+            else:
+                ops = unit.get("ops", [])
+                locs = [ops[i]["loc"] for ch in a.get("changes", []) for i in ch.get("ops", []) if i < len(ops) and ops[i].get("loc")]
+                text = "Poseidon: %s" % a.get("summary", "")
+                if "modelled_error" in a:
+                    text += "; modelled error %s" % num(a["modelled_error"])
+                note(min(locs, key=lambda l: (l["line"], l["col"])) if locs else unit.get("loc"), text + " [%s]" % a.get("id"))
+        if unit.get("left_as_written"):
+            note(unit.get("loc"), "Poseidon left %s as written: %s" % (clip(orig), unit["left_as_written"]))
+        rejected = sorted([a for a in unit.get("alternatives", []) if a.get("status") != "applied"], key=rank)
+        for a in rejected[:args.max_rejected]:
+            verb = "did not select" if a.get("status") == "pareto" else "rejected"
+            note(unit.get("loc"), "Poseidon %s %s %s: %s" % (verb, a.get("id", a.get("kind")), clip(alt_words(a)),
+                                                            a.get("reason", "")))
+
+
+def first_token_end(s):
+    depth = 0
+    for m, ch in enumerate(s):
+        depth += {"(": 1, ")": -1}.get(ch, 0)
+        if ch == " " and depth == 0:
+            return m
+    return len(s)
+
+
+def strip_types(expr):
+    expr = re.sub(r"#s\(literal\s+(\S+)\s+\w+\)", r"\1", expr)
+    out, i = [], 0
+    while i < len(expr):
+        if not expr.startswith("#s(approx", i):
+            out.append(expr[i])
+            i += 1
+            continue
+        depth, k = 1, i + 3
+        while k < len(expr) and depth:
+            depth += {"(": 1, ")": -1}.get(expr[k], 0)
+            k += 1
+        inner = expr[i + len("#s(approx"):k - 1].strip()
+        out.append(strip_types(inner[first_token_end(inner):].strip()))
+        i = k
+    return re.sub(r"\(([^\s()]+)\.f(32|64)\b", r"(\1", "".join(out))
+
+
+def fpcore(doc, args, w):
+    fn = doc["function"]
+    for unit in doc.get("subgraphs", []):
+        if unit.get("kind") != "subgraph":
+            continue
+        inputs = unit.get("inputs", [])
+        pre = []
+        for inp in inputs:
+            if inp.get("var") and "min" in inp:
+                pre.append("(<= %r %s %r)" % (inp["min"], inp["var"], inp["max"]))
+        pre_s = pre[0] if len(pre) == 1 else "(and %s)" % " ".join(pre) if pre else "TRUE"
+        args_s = " ".join(i["var"] for i in inputs if i.get("var"))
+        w(";; %s %s at %s" % (fn.get("name"), unit["id"], short(unit.get("loc"))))
+        for k, o in enumerate(unit.get("outputs", [])):
+            if not o.get("fpcore"):
+                continue
+            w("(FPCore (%s) :name \"%s output %d as written\" :precision binary64 :pre %s\n  %s)" % (
+                args_s, unit["id"], k, pre_s, o["fpcore"]))
+        for a in sorted(unit.get("alternatives", []), key=rank):
+            if a.get("kind") != "algebraic" or not a.get("fpcore") or not a.get("id"):
+                continue
+            if a.get("status") == "rejected" and not args.all:
+                continue
+            body = a["fpcore"]
+            prec = a.get("precision", "binary64")
+            if "->" in body:
+                w(";; %s (%s), as Herbie returned it:\n;; %s" % (a["id"], a.get("status"), body))
+                continue
+            w("(FPCore (%s) :name \"%s %s (%s)\" :precision %s :pre %s\n  %s)" % (
+                args_s, unit["id"], a["id"], a.get("status"), prec, pre_s, strip_types(body)))
+        w("")
+
+
+class Ast:
+    def __init__(self, nodes):
+        self.nodes = nodes
+
+    def covering(self, lo, hi, exprs_only=True):
+        best = None
+        for n in self.nodes:
+            if n["b"] <= lo and n["e"] >= hi and (not exprs_only or n["expr"]):
+                if best is None or (n["e"] - n["b"]) < (best["e"] - best["b"]):
+                    best = n
+        return best
+
+    def statement_of(self, off):
+        best = None
+        for n in self.nodes:
+            if n["b"] <= off < n["e"] and n["stmt"]:
+                if best is None or (n["e"] - n["b"]) < (best["e"] - best["b"]):
+                    best = n
+        return best
+
+    def call_at(self, off):
+        cands = [n for n in self.nodes if n["b"] == off and n["kind"] in ("CallExpr", "CXXOperatorCallExpr")]
+        return min(cands, key=lambda n: n["e"] - n["b"]) if cands else None
+
+    def binop_at(self, off):
+        best = None
+        for n in self.nodes:
+            if n["kind"] in ("BinaryOperator", "CompoundAssignOperator") and len(n["kids"]) == 2:
+                l, r = n["kids"]
+                if l["e"] <= off < r["b"]:
+                    if best is None or (n["e"] - n["b"]) < (best["e"] - best["b"]):
+                        best = n
+        return best
+
+    def value_at(self, off):
+        cands = [n for n in self.nodes if n["b"] == off and n["expr"]]
+        if not cands:
+            return None
+        loads = [n for n in cands if n["kind"] == "ImplicitCastExpr" and n["node"].get("castKind") == "LValueToRValue"]
+        pool = loads or cands
+        return max(pool, key=lambda n: n["e"] - n["b"]) if loads else min(pool, key=lambda n: n["e"] - n["b"])
+
+
+STMT_KINDS = {"DeclStmt", "ReturnStmt", "IfStmt", "ForStmt", "WhileStmt", "DoStmt", "CompoundStmt"}
+
+
+def is_expr_kind(kind):
+    return kind.endswith("Expr") or kind.endswith("Operator") or kind.endswith("Literal")
+
+
+def parse_ast(text, src):
+    dec = json.JSONDecoder()
+    docs, i = [], 0
+    while i < len(text):
+        while i < len(text) and text[i].isspace():
+            i += 1
+        if i >= len(text):
+            break
+        try:
+            o, i = dec.raw_decode(text, i)
+        except ValueError:
+            break
+        docs.append(o)
+    nodes = []
+    state = {"file": None}
+
+    def point(loc):
+        if not isinstance(loc, dict):
+            return None
+        if "expansionLoc" in loc:
+            point(loc.get("spellingLoc"))
+            return None
+        if "file" in loc:
+            state["file"] = loc["file"]
+        if "offset" not in loc:
+            return None
+        return loc["offset"], loc.get("tokLen", 0), state["file"]
+
+    def same(f):
+        if f is None:
+            return False
+        try:
+            return os.path.samefile(f, src)
+        except OSError:
+            return os.path.basename(f) == os.path.basename(src)
+
+    def walk(node, parent):
+        point(node.get("loc"))
+        rng = node.get("range", {})
+        b = point(rng.get("begin"))
+        e = point(rng.get("end"))
+        me = None
+        if b and e and same(b[2]) and same(e[2]) and node.get("kind"):
+            kind = node["kind"]
+            me = {"b": b[0], "e": e[0] + e[1], "kind": kind, "node": node, "kids": [],
+                  "expr": is_expr_kind(kind) and not (kind == "BinaryOperator" and node.get("opcode") in ("=", ",")),
+                  "stmt": kind in STMT_KINDS or (parent is not None and parent["kind"] == "CompoundStmt")}
+            nodes.append(me)
+            if parent is not None:
+                parent["kids"].append(me)
+        for child in node.get("inner", []) or []:
+            walk(child, me if me is not None else parent)
+
+    for d in docs:
+        walk(d, None)
+    return Ast(nodes)
+
+
+def run_clang(src, func, args):
+    clang = args.clang or os.environ.get("POSEIDON_EXPLAIN_CLANG")
+    if not clang:
+        for cand in ("clang++-21", "clang++", "clang"):
+            if shutil.which(cand):
+                clang = cand
+                break
+    if not clang:
+        return None, "no clang found (--clang)"
+    extra = list(args.clang_arg or [])
+    extra += os.environ.get("POSEIDON_EXPLAIN_CLANG_ARGS", "").split()
+    cmd = [clang, "-fsyntax-only", "-w", "-ferror-limit=0", "-Xclang", "-ast-dump=json",
+           "-Xclang", "-ast-dump-filter=" + func] + extra + [src]
+    try:
+        p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, timeout=120)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return None, str(e)
+    if not p.stdout.strip():
+        return None, (p.stderr.strip().splitlines() or ["clang produced no AST"])[0]
+    return parse_ast(p.stdout, src), None
+
+
+class Source:
+    def __init__(self, path):
+        with open(path) as fh:
+            self.text = fh.read()
+        self.starts = [0]
+        for m in re.finditer("\n", self.text):
+            self.starts.append(m.end())
+
+    def offset(self, loc):
+        if not loc or not loc.get("line"):
+            return None
+        line = loc["line"] - 1
+        if line >= len(self.starts):
+            return None
+        return self.starts[line] + max(loc.get("col", 1), 1) - 1
+
+    def span(self, n):
+        return self.text[n["b"]:n["e"]]
+
+
+SIMPLE = re.compile(r"^([A-Za-z_]\w*(::\w+)*(\[[^\[\]]*\])*|[0-9.]+[fFlL]?|\([^()]*\))$")
+
+
+def simple(t):
+    return bool(SIMPLE.match(t.strip()))
+
+
+def float_call_name(callee_text):
+    base = callee_text.split("::")[-1].strip()
+    if base.endswith("f") and base[:-1] in LIBM:
+        return base
+    return base + "f" if base in LIBM else base
+
+
+LIBM = {"sin", "cos", "tan", "asin", "acos", "atan", "atan2", "sinh", "cosh", "tanh", "asinh", "acosh", "atanh",
+        "exp", "exp2", "expm1", "log", "log2", "log10", "log1p", "pow", "cbrt", "sqrt", "fabs", "fma", "fmin",
+        "fmax", "hypot", "ceil", "floor", "trunc", "round", "rint", "fmod", "remainder", "fdim", "erf", "erfc",
+        "lgamma", "tgamma", "copysign"}
+
+
+def splice(src, node, repl):
+    out, pos = [], node["b"]
+    for kid in sorted(node["kids"], key=lambda k: k["b"]):
+        if kid["b"] < pos:
+            continue
+        t = repl(kid)
+        if t is None:
+            continue
+        out.append(src.text[pos:kid["b"]])
+        out.append(t)
+        pos = kid["e"]
+    out.append(src.text[pos:node["e"]])
+    return "".join(out)
+
+
+def core(n):
+    while n["kind"] in ("ImplicitCastExpr", "ParenExpr") and len(n["kids"]) == 1:
+        n = n["kids"][0]
+    return n
+
+
+def is_mul(n):
+    n = core(n)
+    return n["kind"] == "BinaryOperator" and n["node"].get("opcode") == "*" and len(n["kids"]) == 2
+
+
+def precision_text(src, node, changed, fused, ctype):
+    def contains(n):
+        return any(n["b"] <= c["b"] and c["e"] <= n["e"] for c in changed)
+
+    def operand(n):
+        t, isf = render(n, True)
+        return t if isf else "(%s)%s" % (ctype, t if simple(t) else "(" + t + ")")
+
+    def render(n, want_float):
+        if n in changed:
+            l, r = (n["kids"] + [None, None])[:2]
+            op = src.text[l["e"]:r["b"]].strip() if l and r else ""
+            if id(n) in fused and op in ("+", "-") and (is_mul(l) or (op == "+" and is_mul(r))):
+                mul, add = (core(l), r) if is_mul(l) else (core(r), l)
+                a, b = (operand(k) for k in mul["kids"])
+                c = operand(add)
+                text = "fmaf(%s, %s, %s)" % (a, b, c if op == "+" else "-" + c)
+            elif n["kind"] in ("CallExpr", "CXXOperatorCallExpr"):
+                callee, call_args = n["kids"][0], n["kids"][1:]
+                text = "%s(%s)" % (float_call_name(src.span(callee)), ", ".join(operand(a) for a in call_args))
+            else:
+                text = "(%s %s %s)" % (operand(l), op, operand(r))
+            if want_float:
+                return text, True
+            return "(double)" + text, False
+        if not contains(n):
+            return src.span(n), False
+        if n["kind"] == "ImplicitCastExpr" and len(n["kids"]) == 1 and n["kids"][0]["b"] == n["b"] and n["kids"][0]["e"] == n["e"]:
+            return render(n["kids"][0], want_float)
+        return splice(src, n, lambda k: render(k, False)[0] if contains(k) else None), False
+
+    return render(node, False)[0]
+
+
+def leaf_text(unit, src, ast):
+    names = {}
+    for inp in unit.get("inputs", []):
+        if inp.get("name") or not inp.get("var"):
+            continue
+        off = src.offset(inp.get("loc"))
+        n = ast.value_at(off) if (ast and off is not None) else None
+        if n:
+            names[inp["var"]] = src.span(n)
+    return names
+
+
+def substitute(text, names):
+    if not names:
+        return text
+    return re.sub(r"\b(v\d+)\b", lambda m: names.get(m.group(1), m.group(1)), text)
+
+
+def edits_for(doc, src, ast):
+    edits, notes = [], []
+    for unit in doc.get("subgraphs", []):
+        ops = unit.get("ops", [])
+        outs = unit.get("outputs", [])
+        for a in unit.get("alternatives", []):
+            if a.get("status") != "applied":
+                continue
+            what = a.get("approx_note") or ("algebraic rewrite at %s" % a.get("precision", "?"))
+            tag = "Poseidon: %s [%s]" % (what if a.get("kind") == "algebraic" else a.get("summary", ""), a.get("id"))
+            if "modelled_error" in a:
+                tag += ", modelled error %s" % num(a["modelled_error"])
+            if a.get("kind") == "algebraic":
+                names = leaf_text(unit, src, ast)
+                c = a.get("c")
+                for j, k in enumerate(a.get("outputs", [])):
+                    o = outs[k] if k < len(outs) else {}
+                    text = c[j] if isinstance(c, list) else c
+                    root = src.offset(o.get("loc"))
+                    node = None
+                    if ast and text and root is not None:
+                        stmt = ast.statement_of(root)
+                        offs = [root]
+                        for i in o.get("ops", []):
+                            off = src.offset(ops[i].get("loc")) if i < len(ops) else None
+                            if off is not None and (stmt is None or stmt["b"] <= off < stmt["e"]):
+                                offs.append(off)
+                        node = ast.covering(min(offs), max(offs) + 1)
+                    if node is not None:
+                        edits.append((node["b"], node["e"], substitute(text, names), tag))
+                    else:
+                        notes.append((o.get("loc") or unit.get("loc"), "%s -> %s" % (o.get("c", "?"), text or a.get("fpcore")), tag))
+            elif a.get("kind") == "precision":
+                changed, opname, missing = [], {}, False
+                ctype, words = "float", "float"
+                for ch in a.get("changes", []):
+                    ctype = {"FP32": "float", "FP16": "_Float16", "BF16": "__bf16"}.get(ch.get("to"), "float")
+                    words = {"FP16": "half", "BF16": "bfloat16"}.get(ch.get("to"), "float")
+                    for i in ch.get("ops", []):
+                        off = src.offset(ops[i].get("loc")) if i < len(ops) else None
+                        n = None
+                        if ast and off is not None:
+                            infix = ops[i].get("opcode") in ("+", "-", "*", "/", "fma")
+                            n = ast.binop_at(off) if infix else ast.call_at(off)
+                        if n is None:
+                            missing = True
+                        elif n not in changed:
+                            changed.append(n)
+                            opname[id(n)] = ops[i].get("opcode", "?")
+                if missing or not changed:
+                    notes.append((unit.get("loc"), a.get("summary", ""), tag))
+                    continue
+                tops = [n for n in changed if not any(m is not n and m["b"] <= n["b"] and n["e"] <= m["e"] for m in changed)]
+                for n in tops:
+                    inner = [opname[id(m)] for m in changed if n["b"] <= m["b"] and m["e"] <= n["e"]]
+                    fused = {id(m) for m in changed if opname[id(m)] == "fma"}
+                    edits.append((n["b"], n["e"], precision_text(src, n, changed, fused, ctype),
+                                  "Poseidon: %s in %s [%s]" % (", ".join(inner), words, a.get("id"))))
+            else:
+                notes.append((unit.get("loc"), a.get("summary", ""), tag))
+    return edits, notes
+
+
+def source_of(doc, args):
+    fn = doc["function"]
+    return args.source or (fn.get("site") or fn.get("loc") or {}).get("file")
+
+
+def rewritten_source(path, docs, args):
+    if not path or not os.path.exists(path):
+        sys.exit("poseidon-explain: source file %s not found (--source)" % path)
+    src = Source(path)
+    nodes, seen = [], set()
+    for doc in docs:
+        fn = doc["function"]
+        func = fn.get("name", "").split("(")[0] or fn.get("symbol", "")
+        if func in seen:
+            continue
+        seen.add(func)
+        ast, err = run_clang(path, func, args)
+        if ast is None:
+            if args.verbose:
+                sys.stderr.write("poseidon-explain: no AST for %s (%s); falling back to comments\n" % (func, err))
+            continue
+        nodes += ast.nodes
+    ast = Ast(nodes) if nodes else None
+    edits, notes = [], []
+    for doc in docs:
+        e, n = edits_for(doc, src, ast)
+        edits += e
+        notes += n
+    edits.sort(key=lambda e: e[0])
+    kept, last = [], -1
+    for e in edits:
+        if e[0] < last:
+            notes.append((None, "overlapping rewrite", e[3]))
+            continue
+        kept.append(e)
+        last = e[1]
+    out, pos, ends = [], 0, []
+    length = 0
+    for b, e, text, tag in kept:
+        piece = src.text[pos:b]
+        out.append(piece)
+        length += len(piece)
+        out.append(text)
+        length += len(text)
+        ends.append((length, tag))
+        pos = e
+    out.append(src.text[pos:])
+    new = "".join(out)
+    lines = new.split("\n")
+    starts = [0]
+    for line in lines[:-1]:
+        starts.append(starts[-1] + len(line) + 1)
+    tags = {}
+    for end, tag in ends:
+        ln = max(i for i, s in enumerate(starts) if s <= max(end - 1, 0))
+        tags.setdefault(ln, [])
+        if tag not in tags[ln]:
+            tags[ln].append(tag)
+    for ln, ts in tags.items():
+        lines[ln] += "  // " + "; ".join(t.replace("Poseidon: ", "", 1) if k else t for k, t in enumerate(ts))
+    above = {}
+    for loc, text, tag in notes:
+        if not loc:
+            continue
+        above.setdefault(loc["line"] - 1, []).append("%s: %s" % (tag.split(" [")[0], text) + " [" + tag.split(" [", 1)[-1])
+    result = []
+    for i, line in enumerate(lines):
+        for n in above.get(i, []):
+            indent = re.match(r"\s*", line).group(0)
+            result.append("%s// %s" % (indent, n))
+        result.append(line)
+    return path, src.text, "\n".join(result)
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="poseidon-explain", description=__doc__)
+    ap.add_argument("paths", nargs="+", help="<func>.explain.json files or directories holding them")
+    ap.add_argument("--format", default="report", choices=["report", "source", "diff", "remarks", "fpcore", "json"])
+    ap.add_argument("--source", help="the source file (default: the file the explanation names)")
+    ap.add_argument("--function", help="only the site whose name, symbol or IR name contains this")
+    ap.add_argument("--file-name", help="file name to print in remark lines")
+    ap.add_argument("--clang", help="clang used for the AST of --format source/diff")
+    ap.add_argument("--clang-arg", action="append", help="extra argument for that clang (repeatable)")
+    ap.add_argument("--max", type=int, default=8, help="alternatives listed per subgraph in the report")
+    ap.add_argument("--max-rejected", type=int, default=3, help="rejected alternatives per subgraph in remarks")
+    ap.add_argument("--all", action="store_true", help="list every alternative")
+    ap.add_argument("--verbose", action="store_true")
+    args = ap.parse_args()
+
+    docs = load(args.paths)
+    if args.function:
+        docs = [d for d in docs if any(args.function in d["function"].get(k, "") for k in ("name", "symbol", "ir"))]
+    out = sys.stdout.write
+
+    def w(line=""):
+        out(line + "\n")
+
+    if args.format == "json":
+        w(json.dumps(docs[0] if len(docs) == 1 else docs, indent=2, sort_keys=True))
+        return
+    if args.format in ("source", "diff"):
+        groups = {}
+        for doc in docs:
+            groups.setdefault(source_of(doc, args), []).append(doc)
+        for path, group in groups.items():
+            path, old, new = rewritten_source(path, group, args)
+            if not new.endswith("\n"):
+                new += "\n"
+            if args.format == "source":
+                out(new)
+            else:
+                name = os.path.basename(path)
+                out("".join(difflib.unified_diff(old.splitlines(True), new.splitlines(True), "a/" + name, "b/" + name)))
+        return
+    for k, doc in enumerate(docs):
+        if args.format == "report":
+            if k:
+                w("")
+            report(doc, args, w)
+        elif args.format == "remarks":
+            remarks(doc, args, w)
+        else:
+            fpcore(doc, args, w)
+
+
+if __name__ == "__main__":
+    main()
