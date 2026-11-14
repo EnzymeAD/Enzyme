@@ -288,7 +288,7 @@ SmallVector<bool, 1> prepareArgs(const Twine &curIndent, raw_ostream &os,
           if (!lookup)
             os << "gutils->extractMeta(" << builder << ", ";
           else
-            os << builder << ".CreateExtractValue(";
+            os << "GradientUtils::createExtractMeta(" << builder << ", ";
         }
 
         if (lookup && intrinsic != MLIRDerivatives)
@@ -752,6 +752,20 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
             "{(llvm::Constant*)ConstantFP::get(AT->getElementType(), \""
          << rvalue->getValue()
          << "\"), (llvm::Constant*)ConstantFP::get(AT->getElementType(), \""
+         << ivalue->getValue() << "\")});\n"
+         << "} else if (auto *VectorReturnType = "
+            "dyn_cast<FixedVectorType>(ty)) {\n"
+         << curIndent << INDENT << INDENT
+         << "assert(VectorReturnType->getNumElements() == 2 && \"expected "
+            "2-element complex vector\");\n"
+         << curIndent << INDENT << INDENT
+         << "ret = ConstantVector::get("
+            "{(llvm::Constant*)ConstantFP::get(VectorReturnType->"
+            "getElementType(), \""
+         << rvalue->getValue()
+         << "\"), "
+            "(llvm::Constant*)ConstantFP::get(VectorReturnType->getElementType("
+            "), \""
          << ivalue->getValue() << "\")});\n";
       os << curIndent << INDENT << "} else {\n";
       os << curIndent << INDENT << "  llvm::errs() << *ty << \"\\n\";\n";
@@ -944,8 +958,8 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
              << "if (gutils->getWidth() != 1) idxs.push_back(idx);\n";
         os << curIndent << INDENT << INDENT << INDENT << "idxs.push_back(" << i
            << ");\n";
-        os << curIndent << INDENT << INDENT << INDENT << "res = " << builder
-           << ".CreateInsertValue(res, ";
+        os << curIndent << INDENT << INDENT << INDENT
+           << "res = GradientUtils::insertMeta(" << builder << ", res, ";
         if (vectorValued[i])
           os << "(gutils->getWidth() == 1) ? " << argPattern << "_" << i
              << " : gutils->extractMeta(" << builder << ", " << argPattern
@@ -1007,8 +1021,8 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
                   os << curIndent << INDENT << "Value* local_"
                      << ptree->getArgNameStr(i) << " = ";
                   if (!vectorValued[next[0]]) {
-                    os << builder << ".CreateExtractValue(" << op
-                       << ", ArrayRef<unsigned>({";
+                    os << "GradientUtils::createExtractMeta(" << builder << ", "
+                       << op << ", ArrayRef<unsigned>({";
                     for (unsigned i = 1; i < next.size(); i++) {
                       if (i != 1)
                         os << ", ";
@@ -1148,6 +1162,10 @@ bool handle(const Twine &curIndent, const Twine &argPattern, raw_ostream &os,
         auto dialect = Def->getValueAsString("dialect");
         os << dialect << "::" << opName << "::create(" << builder
            << ", op.getLoc(), ";
+      } else if (opName == "ExtractValue") {
+        os << "GradientUtils::createExtractMeta(" << builder << ", ";
+      } else if (opName == "InsertValue") {
+        os << "GradientUtils::insertMeta(" << builder << ", ";
       } else {
         os << builder << ".Create" << opName << "(";
       }
