@@ -5968,7 +5968,11 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         // known not to contain a pointer, which may be initialized
         // outside of this function to contain other memory which
         // will not have a shadow within the current function.
-        if (CT.isKnown() && CT != BaseType::Pointer) {
+        // With global activity, the derivative held in a global outlives
+        // this call: a caller, or a later call of this function, reads or
+        // writes the same shadow, so it must be the shadow global.
+        if (!EnzymeGlobalActivity && CT.isKnown() &&
+            CT != BaseType::Pointer) {
           bool seen = false;
           MemoryLocation
 #if LLVM_VERSION_MAJOR >= 12
