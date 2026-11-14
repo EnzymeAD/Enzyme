@@ -3442,6 +3442,44 @@ void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
       }
       break;
 
+    case BinaryOperator::And:
+      if (direction & UP)
+        for (int OperandIndex = 0; OperandIndex < 2; ++OperandIndex) {
+          Type *FloatType = Ret.allFloat(origin, dl);
+          if (!FloatType)
+            continue;
+          if (clearsSignBitOfFloat(Args[OperandIndex], FloatType, dl)) {
+            bool Legal = true;
+            ((OperandIndex == 0) ? RHS : LHS)
+                .checkedOrIn(TypeTree(FloatType).Only(-1, nullptr),
+                             /*pointerintsame*/ false, Legal);
+            if (!Legal) {
+              std::string ErrorMessage;
+              raw_string_ostream ErrorStream(ErrorMessage);
+              if (!CustomErrorHandler) {
+                llvm::errs() << *fntypeinfo.Function->getParent() << '\n';
+                llvm::errs() << *fntypeinfo.Function << '\n';
+                dump(ErrorStream);
+              }
+              ErrorStream << "Illegal updateBinop (and up) Analysis " << *origin
+                          << '\n';
+              ErrorStream << " (i=" << OperandIndex << ") "
+                          << (OperandIndex == 0 ? "RHS" : "LHS") << " "
+                          << ((OperandIndex == 0) ? RHS : LHS).str()
+                          << " FT from ret: " << *FloatType << '\n';
+              if (CustomErrorHandler) {
+                CustomErrorHandler(ErrorMessage.c_str(), wrap(origin),
+                                   ErrorType::IllegalTypeAnalysis, (void *)this,
+                                   wrap(origin), nullptr);
+              }
+              EmitFailure("IllegalUpdateAnalysis", origin->getDebugLoc(),
+                          origin, ErrorStream.str());
+              report_fatal_error("Performed illegal updateAnalysis");
+            }
+          }
+        }
+      break;
+
     case BinaryOperator::Xor:
       if (direction & UP)
         for (int i = 0; i < 2; ++i) {
@@ -3642,6 +3680,15 @@ void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
       }
       if (Opcode == BinaryOperator::And) {
         for (int i = 0; i < 2; ++i) {
+          if (Args[1 - i]) {
+            if (Type *FloatType =
+                    (i == 0 ? RHS : LHS).allFloat(Args[1 - i], dl)) {
+              if (clearsSignBitOfFloat(Args[i], FloatType, dl)) {
+                Result = ConcreteType(FloatType);
+                break;
+              }
+            }
+          }
           bool isNegMask = false;
           if (Args[i]) {
             if (auto CI = dyn_cast<ConstantInt>(Args[i])) {
