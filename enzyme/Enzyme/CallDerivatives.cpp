@@ -3694,9 +3694,15 @@ bool AdjointGenerator::handleKnownCallDerivatives(
             Value *prev = nullptr;
             ;
             auto rule = [&]() {
+              // The shadow allocation has the primal's layout, so it takes the
+              // primal's bundles, such as those zeroing its GC pointers.
+              SmallVector<ValueType, 2> BundleTypes(args.size(),
+                                                    ValueType::Primal);
+              auto Defs = gutils->getInvertedBundles(&call, BundleTypes, bb,
+                                                     /*lookup*/ false);
               Value *anti =
                   bb.CreateCall(call.getFunctionType(), call.getCalledOperand(),
-                                args, call.getName() + "'mi");
+                                args, Defs, call.getName() + "'mi");
               cast<CallInst>(anti)->setAttributes(call.getAttributes());
               cast<CallInst>(anti)->setCallingConv(call.getCallingConv());
               cast<CallInst>(anti)->setTailCallKind(call.getTailCallKind());

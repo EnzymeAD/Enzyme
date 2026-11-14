@@ -256,6 +256,16 @@ GradientUtils::GradientUtils(
   }
 }
 
+// Bundles that Julia (1.13.4 and later) attaches to a GC allocation to have
+// late-gc-lowering zero its GC pointer fields or its data. Their operands are
+// byte offsets and sizes within the allocation, so they hold for a shadow
+// allocation as they do for the primal.
+static bool isJuliaAllocZeroingBundle(StringRef tag) {
+  return tag == "julia.gc_alloc_ptr_offsets" ||
+         tag == "julia.gc_alloc_zeroinit" ||
+         tag == "julia.gc_alloc_zeroinit_indirect";
+}
+
 // Whether a particular value is neded in rooting the reverse pass
 bool GradientUtils::usedInRooting(const llvm::CallBase *orig,
                                   ArrayRef<ValueType> types,
@@ -264,7 +274,8 @@ bool GradientUtils::usedInRooting(const llvm::CallBase *orig,
   orig->getOperandBundlesAsDefs(OrigDefs);
   SmallVector<OperandBundleDef, 2> Defs;
   for (auto bund : OrigDefs) {
-    // Only handle jl_roots & gc-transition tags (for now).
+    // Only handle jl_roots, gc-transition and Julia's allocation zeroing tags
+    // (for now).
     StringRef tag = bund.getTag();
     if (tag == "jl_roots") {
       bool anyPrimal = false;
@@ -290,7 +301,7 @@ bool GradientUtils::usedInRooting(const llvm::CallBase *orig,
         if (anyShadow && shadow)
           return true;
       }
-    } else if (tag == "gc-transition") {
+    } else if (tag == "gc-transition" || isJuliaAllocZeroingBundle(tag)) {
       if (shadow)
         continue;
       for (auto inp : bund.inputs()) {
@@ -317,7 +328,8 @@ GradientUtils::getInvertedBundles(CallInst *orig, ArrayRef<ValueType> types,
   orig->getOperandBundlesAsDefs(OrigDefs);
   SmallVector<OperandBundleDef, 2> Defs;
   for (auto bund : OrigDefs) {
-    // Only handle jl_roots & gc-transition tags (for now).
+    // Only handle jl_roots, gc-transition and Julia's allocation zeroing tags
+    // (for now).
     StringRef tag = bund.getTag();
     if (tag == "jl_roots") {
       // In the future we can reduce the number of roots
@@ -350,7 +362,7 @@ GradientUtils::getInvertedBundles(CallInst *orig, ArrayRef<ValueType> types,
         }
       }
       Defs.push_back(OperandBundleDef(tag.str(), bunds));
-    } else if (tag == "gc-transition") {
+    } else if (tag == "gc-transition" || isJuliaAllocZeroingBundle(tag)) {
       SmallVector<Value *, 2> bunds;
       for (auto inp : bund.inputs()) {
         Value *newv = getNewFromOriginal(inp);
