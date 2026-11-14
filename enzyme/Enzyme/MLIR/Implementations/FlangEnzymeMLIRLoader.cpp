@@ -34,8 +34,8 @@
 #include <string>
 
 #if !defined(_WIN32)
-// Where FlangEnzymeMLIR is, relative to this plugin: next to it once
-// installed, under MLIR/Implementations in a build tree.
+/// Where FlangEnzymeMLIR is, relative to this plugin: next to it once
+/// installed, under MLIR/Implementations in a build tree.
 static std::string findFlangEnzymeMLIR() {
   Dl_info info;
   if (!dladdr(reinterpret_cast<void *>(&findFlangEnzymeMLIR), &info) ||
