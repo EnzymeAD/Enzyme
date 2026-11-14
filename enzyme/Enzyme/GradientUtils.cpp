@@ -290,7 +290,7 @@ bool GradientUtils::usedInRooting(const llvm::CallBase *orig,
         if (anyShadow && shadow)
           return true;
       }
-    } else if (tag == "gc-transition") {
+    } else if (tag == "gc-transition" || isJuliaAllocInitBundle(tag)) {
       if (shadow)
         continue;
       for (auto inp : bund.inputs()) {
@@ -350,7 +350,7 @@ GradientUtils::getInvertedBundles(CallInst *orig, ArrayRef<ValueType> types,
         }
       }
       Defs.push_back(OperandBundleDef(tag.str(), bunds));
-    } else if (tag == "gc-transition") {
+    } else if (tag == "gc-transition" || isJuliaAllocInitBundle(tag)) {
       SmallVector<Value *, 2> bunds;
       for (auto inp : bund.inputs()) {
         Value *newv = getNewFromOriginal(inp);

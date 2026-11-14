@@ -3112,6 +3112,15 @@ static bool anyJuliaObjects(llvm::Type *T) {
 llvm::SmallVector<llvm::Value *, 1> getJuliaObjects(llvm::Value *v,
                                                     llvm::IRBuilder<> &B);
 
+/// Bundles with which Julia 1.14 asks its GC lowering to zero the pointer
+/// fields (or a region) of an allocation. Their operands are primal offsets and
+/// sizes, which a shadow allocation of the same type shares.
+static inline bool isJuliaAllocInitBundle(llvm::StringRef tag) {
+  return tag == "julia.gc_alloc_ptr_offsets" ||
+         tag == "julia.gc_alloc_zeroinit" ||
+         tag == "julia.gc_alloc_zeroinit_indirect";
+}
+
 // Find all user instructions of AI, returning tuples of <instruction, value,
 // byte offet from AI> Unlike a simple get users, this will recurse through any
 // constant gep offsets and casts
