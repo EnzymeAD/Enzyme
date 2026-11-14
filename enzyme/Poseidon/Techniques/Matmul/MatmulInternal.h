@@ -6,6 +6,7 @@
 #include "HostDispatch.h"
 #include "Matmul.h"
 
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
@@ -69,24 +70,43 @@ bool inKernelRaiseFits(const Options &O, llvm::Function *F,
                        const AbstractMatmul &m, const MatmulUnit::Option &opt,
                        uint64_t existingBytes, llvm::StringRef className);
 
-// `confidence` is the fraction of the sampled inputs the returned domain error
-// bounds (the percentile it is read off).
-double getMatmulAccuracyCost(Session &S, const AbstractMatmul &m,
-                             const MatmulProfile &prof, double confidence,
-                             unsigned sampleLogBits, FPKind inputPrec,
-                             FPKind accPrec, double *domainErrOut = nullptr,
-                             FPKind exponentPrec = FPKind::Invalid,
-                             unsigned orderTileK = 0,
-                             unsigned inputMantBits = 0);
-// __poseidon_tcec_dgemm in compute `mode`, on cuMpSGEMM.
-double getTcecLibraryAccuracyCost(Session &S, const AbstractMatmul &m,
-                                  const MatmulProfile &prof, double confidence,
-                                  unsigned sampleLogBits, unsigned mode,
-                                  double *domainErrOut = nullptr);
-double getOzakiIIAccuracyCost(Session &S, const AbstractMatmul &m,
-                              const MatmulProfile &prof, double confidence,
-                              unsigned sampleLogBits, unsigned moduli,
-                              double *domainErrOut = nullptr);
+// The arithmetic of one candidate, as the matrix accuracy model simulates it.
+struct MatmulAccuracyQuery {
+  enum class Model {
+    // Operands rounded to inputPrec, or to inputMantBits significand bits when
+    // that is nonzero, every multiply-accumulate rounded to accPrec, k-tiles
+    // of orderTileK folded into the accumulator when that is nonzero; the
+    // operands' smallest magnitude has to lie in the range of exponentPrec
+    // (Invalid = inputPrec).
+    Rounded,
+    // __poseidon_tcec_dgemm in compute `mode`, on cuMpSGEMM.
+    TcecLibrary,
+    // __poseidon_ozaki_dgemm with `moduli` moduli.
+    OzakiII,
+  };
+  Model model = Model::Rounded;
+  FPKind inputPrec = FPKind::Invalid;
+  FPKind accPrec = FPKind::Invalid;
+  FPKind exponentPrec = FPKind::Invalid;
+  unsigned orderTileK = 0;
+  unsigned inputMantBits = 0;
+  unsigned mode = 0;
+  unsigned moduli = 0;
+};
+
+struct MatmulAccuracy {
+  double accuracyCost = 0.0;
+  double domainError = 0.0;
+};
+
+// The accuracy of each query on the product `m`, all on the same sampled
+// operands. `confidence` is the fraction of the sampled inputs the returned
+// domain error bounds (the percentile it is read off).
+void evaluateMatmulAccuracy(Session &S, const AbstractMatmul &m,
+                            const MatmulProfile &prof, double confidence,
+                            unsigned sampleLogBits,
+                            llvm::ArrayRef<MatmulAccuracyQuery> queries,
+                            llvm::MutableArrayRef<MatmulAccuracy> results);
 
 } // namespace poseidon
 #endif // POSEIDON_MATMUL_INTERNAL_H

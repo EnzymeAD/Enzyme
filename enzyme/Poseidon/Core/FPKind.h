@@ -17,6 +17,8 @@
 #ifndef POSEIDON_FPKIND_H
 #define POSEIDON_FPKIND_H
 
+#include <cstdint>
+
 namespace poseidon {
 
 enum class FPKind {
@@ -32,6 +34,21 @@ enum class FPKind {
 const char *fpKindName(FPKind k);
 
 double roundToPrec(double x, FPKind k);
+// roundToPrec(x, k) with the format of `k` looked up once, for a loop that
+// rounds many values to it.
+class Rounding {
+public:
+  explicit Rounding(FPKind k);
+  double operator()(double x) const;
+
+private:
+  FPKind kind;
+  // 0 for the kinds every double is already in (F64, Invalid).
+  int precision = 0;
+  int minExponent = 0;
+  double subnormalUlp = 0.0;
+  uint64_t maxFinite = 0; // binary64 encoding of the largest finite value
+};
 // Smallest positive (subnormal) magnitude representable in `k`, as a double.
 // Returns 0 for F64/Invalid/integer kinds (no underflow constraint).
 double minSubnormalForKind(FPKind k);

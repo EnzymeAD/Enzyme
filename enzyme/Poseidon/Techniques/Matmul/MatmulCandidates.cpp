@@ -8,6 +8,7 @@
 #include "runtime/ozaki/OzakiII.h"
 
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -28,53 +29,52 @@ namespace {
 struct Product {
   Session &S;
   const AbstractMatmul &m;
-  const MatmulProfile &prof;
-  double confidence;
-  unsigned sampleLogBits;
   // The product's own per-MAC cost: the cost-model rows are ratios to it.
   double baselinePerMac;
 };
 } // namespace
 
-// The accuracy model is called with what the scheme computes, whichever code
+// The accuracy model is asked what the scheme computes, whichever code
 // realizes it; only the reorder charge reads the realized tile, and the split
 // library call, which scales its operands before it splits them, has its own
 // simulation.
-static double schemeAccuracyCost(const Product &P, const SchemeVariant &v,
-                                 Realization r, unsigned tileK,
-                                 double *domainError) {
-  const AbstractMatmul &m = P.m;
+static MatmulAccuracyQuery accuracyQuery(const AbstractMatmul &m,
+                                         const MatmulUnit::Option &opt) {
+  const SchemeVariant &v = opt.variant;
+  MatmulAccuracyQuery q;
   switch (v.scheme) {
-  case Scheme::Direct: {
+  case Scheme::Direct:
     // Identity-format products (f64->f64 DMMA) are invisible to the rounding
     // model, so charge the tensor tile's accumulation-order change
     // (orderTileK) instead; otherwise the candidate prices as exactly zero
     // error and can enter the budget-0 no-op solution.
-    bool identityPrec = (v.operand == m.aType && v.accumulator == m.accType);
-    return getMatmulAccuracyCost(P.S, m, P.prof, P.confidence, P.sampleLogBits,
-                                 v.operand, v.accumulator, domainError,
-                                 /*exponentPrec=*/FPKind::Invalid,
-                                 /*orderTileK=*/identityPrec ? tileK : 0);
-  }
+    q.inputPrec = v.operand;
+    q.accPrec = v.accumulator;
+    if (v.operand == m.aType && v.accumulator == m.accType)
+      q.orderTileK = opt.tileK;
+    return q;
   case Scheme::Split:
-    if (r == Realization::LibraryCall)
-      return getTcecLibraryAccuracyCost(
-          P.S, m, P.prof, P.confidence, P.sampleLogBits,
-          splitLibraryComputeMode(v), domainError);
-    return getMatmulAccuracyCost(P.S, m, P.prof, P.confidence, P.sampleLogBits,
-                                 FPKind::F32, FPKind::F32, domainError,
-                                 /*exponentPrec=*/v.operand, /*orderTileK=*/0,
-                                 /*inputMantBits=*/splitCapturedBits(v));
+    if (opt.realization == Realization::LibraryCall) {
+      q.model = MatmulAccuracyQuery::Model::TcecLibrary;
+      q.mode = splitLibraryComputeMode(v);
+      return q;
+    }
+    q.inputPrec = FPKind::F32;
+    q.accPrec = FPKind::F32;
+    q.exponentPrec = v.operand;
+    q.inputMantBits = splitCapturedBits(v);
+    return q;
   case Scheme::Modular:
-    return getOzakiIIAccuracyCost(P.S, m, P.prof, P.confidence, P.sampleLogBits,
-                                  modulusCount(v), domainError);
+    q.model = MatmulAccuracyQuery::Model::OzakiII;
+    q.moduli = modulusCount(v);
+    return q;
   case Scheme::Native:
     // Full FP64 but not the scalar chain's accumulation order, so the reorder
     // is priced through orderTileK instead of claiming exact zero.
-    return getMatmulAccuracyCost(P.S, m, P.prof, P.confidence, P.sampleLogBits,
-                                 v.operand, v.accumulator, domainError,
-                                 /*exponentPrec=*/FPKind::Invalid,
-                                 /*orderTileK=*/tileK);
+    q.inputPrec = v.operand;
+    q.accPrec = v.accumulator;
+    q.orderTileK = opt.tileK;
+    return q;
   }
   llvm_unreachable("unknown Scheme");
 }
@@ -154,8 +154,6 @@ static void proposeInKernel(const Product &P, const InKernelSite &K,
                                          tileN, tileK, P.baselinePerMac, what,
                                          opt.compCost))
     return;
-  opt.accuracyCost =
-      schemeAccuracyCost(P, v, opt.realization, tileK, &opt.domainError);
   cm.candidates.push_back(opt);
 }
 
@@ -327,13 +325,6 @@ static MatmulUnit::Option libraryOption(const SchemeVariant &v, unsigned tileM,
   return opt;
 }
 
-static void pushLibraryCandidate(const Product &P, MatmulUnit::Option opt,
-                                 MatmulUnit &cm) {
-  opt.accuracyCost = schemeAccuracyCost(P, opt.variant, opt.realization,
-                                        opt.tileK, &opt.domainError);
-  cm.candidates.push_back(opt);
-}
-
 // The rectangular row supersedes the square one when present: above padWaste
 // 1.05 the runtime takes its RECTANGULAR arm, whose cost is linear in the
 // column count, so charging S^3/(M*N*K) on top of a square-measured row
@@ -393,7 +384,7 @@ static void proposeLibraryModular(const Product &P, const LibrarySite &L,
     opt.padN = L.padN;
     opt.padK = L.padK;
     opt.compCost = P.baselinePerMac * rel * shapeRatio;
-    pushLibraryCandidate(P, opt, cm);
+    cm.candidates.push_back(opt);
   }
 }
 
@@ -423,7 +414,7 @@ static void proposeLibrarySplit(const Product &P, const LibrarySite &L,
   if (rel <= 0.0)
     return;
   opt.compCost = P.baselinePerMac * rel;
-  pushLibraryCandidate(P, opt, cm);
+  cm.candidates.push_back(opt);
 }
 
 // The direct scheme as __poseidon_direct_dgemm: each FP64 operand is rounded
@@ -480,7 +471,7 @@ static void proposeLibraryDirect(const Product &P, const LibrarySite &L,
     MatmulUnit::Option opt =
         libraryOption(d.variant, d.tileM, d.tileN, d.tileK);
     opt.compCost = P.baselinePerMac * rel;
-    pushLibraryCandidate(P, opt, cm);
+    cm.candidates.push_back(opt);
   }
 }
 
@@ -540,7 +531,7 @@ static void proposeLibraryNative(const Product &P, const LibrarySite &L,
   }
   MatmulUnit::Option opt = libraryOption(SchemeVariant::native(), 16, 16, 16);
   opt.compCost = P.baselinePerMac * rel;
-  pushLibraryCandidate(P, opt, cm);
+  cm.candidates.push_back(opt);
 }
 
 void generateMatmulCandidates(Session &S, ArrayRef<AbstractMatmul> matmuls,
@@ -635,7 +626,7 @@ void generateMatmulCandidates(Session &S, ArrayRef<AbstractMatmul> matmuls,
     }
     cm.initialCompCost = baselinePerMac;
     cm.initialAccCost = 0.0;
-    const Product P{S, m, prof, confidence, sampleLogBits, baselinePerMac};
+    const Product P{S, m, baselinePerMac};
 
     // The candidate index is the position in this sequence.
     const InKernelSite *K = kernel ? &*kernel : nullptr;
@@ -647,6 +638,16 @@ void generateMatmulCandidates(Session &S, ArrayRef<AbstractMatmul> matmuls,
       proposeLibrarySplit(P, L, cm);
       proposeLibraryDirect(P, L, cm);
       proposeLibraryNative(P, L, cm);
+    }
+    SmallVector<MatmulAccuracyQuery> queries;
+    for (const MatmulUnit::Option &opt : cm.candidates)
+      queries.push_back(accuracyQuery(m, opt));
+    SmallVector<MatmulAccuracy> accuracy(queries.size());
+    evaluateMatmulAccuracy(S, m, prof, confidence, sampleLogBits, queries,
+                           accuracy);
+    for (auto [opt, a] : zip_equal(cm.candidates, accuracy)) {
+      opt.accuracyCost = a.accuracyCost;
+      opt.domainError = a.domainError;
     }
 
     if (m.origin == AbstractMatmul::Origin::HostGemmLoopNest &&

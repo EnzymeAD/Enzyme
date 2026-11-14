@@ -95,6 +95,7 @@ void ModelOptions::appendLaterSolveInputs(FlagValues &out) const {
 
 void ModelOptions::appendOtherValues(FlagValues &out) const {
   add(out, "poseidon-cost-model", CostModel);
+  add(out, "poseidon-threads", Threads);
 }
 
 void HerbieOptions::appendSolveInputs(FlagValues &out) const {

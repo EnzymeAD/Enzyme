@@ -37,19 +37,19 @@ class Session;
 // The memo entry of one evaluation of a matrix accuracy model.
 class MatmulAccuracyMemo {
 public:
-  // For getMatmulAccuracyCost on these inputs.
+  // For a MatmulAccuracyQuery::Model::Rounded query on these inputs.
   static MatmulAccuracyMemo matmul(const Options &O, const AbstractMatmul &m,
                                    const MatmulProfile &prof, double confidence,
                                    unsigned sampleLogBits, unsigned numSamples,
                                    FPKind inputPrec, FPKind accPrec,
                                    FPKind exponentPrec, unsigned orderTileK,
                                    unsigned inputMantBits);
-  // For getOzakiIIAccuracyCost on these inputs.
+  // For a MatmulAccuracyQuery::Model::OzakiII query on these inputs.
   static MatmulAccuracyMemo ozakiII(const Options &O, const AbstractMatmul &m,
                                     const MatmulProfile &prof,
                                     double confidence, unsigned sampleLogBits,
                                     unsigned numSamples, unsigned moduli);
-  // For getTcecLibraryAccuracyCost on these inputs.
+  // For a MatmulAccuracyQuery::Model::TcecLibrary query on these inputs.
   static MatmulAccuracyMemo
   tcecLibrary(const Options &O, const AbstractMatmul &m,
               const MatmulProfile &prof, double confidence,
@@ -59,6 +59,9 @@ public:
   // false when the model has to compute it.
   bool lookup(Session &S, double &accuracyCost, double &domainError) const;
   void store(const Options &O, double accuracyCost, double domainError) const;
+  // The entry's file in -poseidon-cache: two memos of one file hold one
+  // result.
+  const std::string &file() const { return path; }
 
 private:
   CacheKey key;
