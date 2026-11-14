@@ -260,6 +260,10 @@ cl::opt<bool> FreqWeightedPricing(
     cl::init(kDefaults.Model.FreqWeightedPricing), cl::Hidden,
     cl::desc("Price each instruction of a frequency-heterogeneous FP subgraph "
              "at its own profiled execution count instead of the subgraph's"));
+cl::opt<unsigned> Threads(
+    "poseidon-threads", cl::init(kDefaults.Model.Threads), cl::Hidden,
+    cl::desc("Threads the accuracy model runs on (0 = all hardware threads); "
+             "its results do not depend on it"));
 
 // Herbie and the result cache.
 cl::opt<std::string>
@@ -514,6 +518,7 @@ Options readOptions() {
   M.MaxBrokenShare = MaxBrokenShare;
   M.ExponentPenalty = ExponentPenalty;
   M.FreqWeightedPricing = FreqWeightedPricing;
+  M.Threads = Threads;
 
   HerbieOptions &H = O.Herbie;
   H.Cache = Cache;

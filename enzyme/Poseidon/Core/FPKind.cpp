@@ -12,6 +12,11 @@
 #include "llvm/ADT/APFloat.h"
 #include "llvm/Support/ErrorHandling.h"
 
+#include <cassert>
+#include <cmath>
+#include <cstdint>
+#include <cstring>
+
 using namespace llvm;
 
 namespace poseidon {
@@ -58,19 +63,95 @@ static const fltSemantics *semanticsForKind(FPKind k) {
   return nullptr;
 }
 
-double roundToPrec(double x, FPKind k) {
+Rounding::Rounding(FPKind k) : kind(k) {
   if (k == FPKind::S8 || k == FPKind::S32)
     report_fatal_error(
         "roundToPrec: integer FPKind (S8/S32) has no FP rounding semantics");
   const fltSemantics *sem = semanticsForKind(k);
   if (!sem)
-    return x;
-  bool losesInfo;
-  APFloat ap(x);
-  ap.convert(*sem, APFloat::rmNearestTiesToEven, &losesInfo);
-  ap.convert(APFloat::IEEEdouble(), APFloat::rmNearestTiesToEven, &losesInfo);
-  return ap.convertToDouble();
+    return;
+  struct Format {
+    int precision, minExponent;
+    double subnormalUlp;
+    uint64_t maxFinite;
+  };
+  auto formatOf = [](FPKind narrow) {
+    const fltSemantics &sem = *semanticsForKind(narrow);
+    assert(APFloat::semanticsHasInf(sem) && "overflow does not round to inf");
+    Format f;
+    f.precision = APFloat::semanticsPrecision(sem);
+    f.minExponent = APFloat::semanticsMinExponent(sem);
+    f.subnormalUlp = std::ldexp(1.0, f.minExponent - f.precision + 1);
+    APFloat largest = APFloat::getLargest(sem);
+    bool losesInfo;
+    largest.convert(APFloat::IEEEdouble(), APFloat::rmNearestTiesToEven,
+                    &losesInfo);
+    f.maxFinite = largest.bitcastToAPInt().getZExtValue();
+    return f;
+  };
+  static const Format formats[] = {
+      formatOf(FPKind::F16), formatOf(FPKind::BF16), formatOf(FPKind::TF32),
+      formatOf(FPKind::F32)};
+  const Format &f = formats[(int)k - (int)FPKind::F16];
+  precision = f.precision;
+  minExponent = f.minExponent;
+  subnormalUlp = f.subnormalUlp;
+  maxFinite = f.maxFinite;
 }
+
+// Round to nearest, ties to even, as APFloat::convert does, computed with
+// integer arithmetic on the binary64 encoding: exact, independent of the
+// floating-point environment, and cheap enough for every multiply-accumulate
+// the matrix accuracy model simulates. memcpy rather than llvm::bit_cast keeps
+// this one call per value in a build without optimization.
+double Rounding::operator()(double x) const {
+  if (precision == 0)
+    return x;
+  uint64_t bits;
+  std::memcpy(&bits, &x, sizeof(bits));
+  const uint64_t sign = bits & (uint64_t(1) << 63);
+  const uint64_t mag = bits ^ sign;
+  const int exponent = int(mag >> 52) - 1023;
+  uint64_t r;
+  if (exponent == 1024) {
+    // Infinity and NaN keep APFloat's encoding.
+    bool losesInfo;
+    APFloat ap(x);
+    ap.convert(*semanticsForKind(kind), APFloat::rmNearestTiesToEven,
+               &losesInfo);
+    ap.convert(APFloat::IEEEdouble(), APFloat::rmNearestTiesToEven, &losesInfo);
+    return ap.convertToDouble();
+  }
+  if (exponent >= minExponent) {
+    // A carry out of the kept significand bits moves the exponent up.
+    const unsigned drop = 53 - precision;
+    const uint64_t half = uint64_t(1) << (drop - 1);
+    r = (mag + half - 1 + ((mag >> drop) & 1)) >> drop << drop;
+    if (r > maxFinite)
+      r = uint64_t(0x7ff) << 52; // infinity
+  } else {
+    // A subnormal result is a multiple of subnormalUlp. A binary64 subnormal
+    // lies far below any of these formats' and rounds to zero here.
+    const int drop = 53 - precision + (minExponent - exponent);
+    r = 0;
+    if (drop <= 63) {
+      const uint64_t significand =
+          (mag & ((uint64_t(1) << 52) - 1)) | (uint64_t(1) << 52);
+      const uint64_t half = uint64_t(1) << (drop - 1);
+      const double ulps =
+          (double)((significand + half - 1 + ((significand >> drop) & 1)) >>
+                   drop);
+      const double rounded = ulps * subnormalUlp;
+      std::memcpy(&r, &rounded, sizeof(r));
+    }
+  }
+  r |= sign;
+  double result;
+  std::memcpy(&result, &r, sizeof(result));
+  return result;
+}
+
+double roundToPrec(double x, FPKind k) { return Rounding(k)(x); }
 
 double minSubnormalForKind(FPKind k) {
   const fltSemantics *sem = semanticsForKind(k);

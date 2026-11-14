@@ -104,6 +104,7 @@ struct ModelOptions {
   double MaxBrokenShare = 0.01;
   double ExponentPenalty = 1e30;
   bool FreqWeightedPricing = false;
+  unsigned Threads = 0;
 
   void appendSolveInputs(FlagValues &out) const;
   // FreqWeightedPricing, which the DP key lists after the matrix options.
