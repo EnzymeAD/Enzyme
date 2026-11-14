@@ -1284,7 +1284,7 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
   return false;
 }
 
-bool isValuePotentiallyUsedAsPointer(llvm::Value *val) {
+bool isValuePotentiallyUsedAsPointer(llvm::Value *val, const TypeResults &TR) {
   std::deque<llvm::Value *> todo = {val};
   SmallPtrSet<Value *, 3> seen;
   while (todo.size()) {
@@ -1296,7 +1296,12 @@ bool isValuePotentiallyUsedAsPointer(llvm::Value *val) {
     for (auto u : cur->users()) {
       if (isa<ReturnInst>(u))
         return true;
-      if (!cast<Instruction>(u)->mayReadOrWriteMemory()) {
+      auto *UI = cast<Instruction>(u);
+      if (!EnzymeDisableActivityAnalysis &&
+          UI->getParent()->getParent() == TR.getFunction() &&
+          isUnknownNarrowIntegerOp(*UI, TR))
+        continue;
+      if (!UI->mayReadOrWriteMemory()) {
         todo.push_back(u);
         continue;
       }
@@ -1716,6 +1721,15 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
         }
       }
     }
+    if (auto *I = dyn_cast<Instruction>(Val)) {
+      if (isUnknownNarrowIntegerOp(*I, TR)) {
+        if (EnzymePrintActivity)
+          llvm::errs() << " inactive unknown narrow integer op " << *Val
+                       << "\n";
+        InsertConstantValue(TR, Val);
+        return true;
+      }
+    }
   }
 
   std::shared_ptr<ActivityAnalyzer> UpHypothesis;
@@ -1729,7 +1743,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
   if (containsPointer && Val->getType()->isFPOrFPVectorTy())
     containsPointer = false;
 
-  if (containsPointer && !isValuePotentiallyUsedAsPointer(Val)) {
+  if (containsPointer && !isValuePotentiallyUsedAsPointer(Val, TR)) {
     containsPointer = false;
     if (auto Arg = dyn_cast<Argument>(Val)) {
       assert(Arg->hasByValAttr());
@@ -1756,6 +1770,15 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
     if (TmpOrig == Val)
       return false;
     return isConstantValue(TR, TmpOrig);
+  }
+
+  // A scalar integer narrower than a pointer cannot itself hold a pointer,
+  // so its activity can be determined by direct SSA def-use flow rather than
+  // conservative memory alias search.
+  if (containsPointer && Val->getType()->isIntegerTy()) {
+    const auto &DL = TR.getFunction()->getParent()->getDataLayout();
+    if (Val->getType()->getIntegerBitWidth() < DL.getPointerSizeInBits())
+      containsPointer = false;
   }
 
   if (containsPointer) {
@@ -3133,7 +3156,11 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
           if (ConstantValues.count(SI->getValueOperand()) ||
               isa<ConstantInt>(SI->getValueOperand()) ||
               (SI->getParent()->getParent() == TR.getFunction() &&
-               TR.query(SI->getValueOperand())[{-1}].isIntegral()))
+               (TR.query(SI->getValueOperand())[{-1}].isIntegral() ||
+                (!EnzymeDisableActivityAnalysis &&
+                 isa<Instruction>(SI->getValueOperand()) &&
+                 isUnknownNarrowIntegerOp(
+                     *cast<Instruction>(SI->getValueOperand()), TR)))))
             continue;
           else
             ActiveVal = SI->getValueOperand();
@@ -3710,7 +3737,9 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
         continue;
       }
       if (!I->mayWriteToMemory() || isa<LoadInst>(I)) {
-        if (TR.query(I)[{-1}].isIntegral()) {
+        if (TR.query(I)[{-1}].isIntegral() ||
+            (!EnzymeDisableActivityAnalysis &&
+             isUnknownNarrowIntegerOp(*I, TR))) {
           continue;
         }
         if (UA == UseActivity::OnlyNonPointerStores &&

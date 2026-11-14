@@ -7394,9 +7394,12 @@ ConcreteType TypeResults::firstPointer(size_t num, Value *val, Instruction *I,
 TypeTree defaultTypeTreeForLLVM(llvm::Type *ET, llvm::Instruction *I,
                                 bool intIsPointer) {
   if (ET->isIntOrIntVectorTy()) {
-    if (intIsPointer)
-      return TypeTree(BaseType::Pointer).Only(-1, I);
-    else
+    if (intIsPointer) {
+      auto &DL = I->getParent()->getParent()->getParent()->getDataLayout();
+      if (ET->getScalarSizeInBits() >= DL.getPointerSizeInBits())
+        return TypeTree(BaseType::Pointer).Only(-1, I);
+      return TypeTree(BaseType::Anything).Only(-1, I);
+    } else
       return TypeTree(BaseType::Integer).Only(-1, I);
   }
   if (ET->isFPOrFPVectorTy()) {
@@ -7454,6 +7457,81 @@ TypeTree defaultTypeTreeForLLVM(llvm::Type *ET, llvm::Instruction *I,
   assert(0 && "Error Unknown Type: ");
   llvm_unreachable("Error Unknown Type: ");
   // return TypeTree();
+}
+
+bool isUnknownNarrowIntegerOp(const llvm::Instruction &I,
+                              const TypeResults &TR) {
+  if (hasMetadata(&I, "enzyme_active") || hasMetadata(&I, "enzyme_active_val"))
+    return false;
+
+  Type *IntTy = nullptr;
+  SmallVector<Value *, 2> Ops;
+
+  if (auto *BO = dyn_cast<BinaryOperator>(&I)) {
+    switch (BO->getOpcode()) {
+    case Instruction::AShr:
+    case Instruction::SDiv:
+    case Instruction::UDiv:
+    case Instruction::SRem:
+    case Instruction::URem:
+    case Instruction::Mul:
+    case Instruction::Sub:
+    case Instruction::Add:
+      IntTy = BO->getType();
+      Ops.push_back(BO->getOperand(0));
+      Ops.push_back(BO->getOperand(1));
+      break;
+    default:
+      return false;
+    }
+  } else if (auto *II = dyn_cast<IntrinsicInst>(&I)) {
+    switch (II->getIntrinsicID()) {
+    case Intrinsic::umax:
+    case Intrinsic::smax:
+    case Intrinsic::umin:
+    case Intrinsic::smin:
+    case Intrinsic::abs:
+    case Intrinsic::sadd_with_overflow:
+    case Intrinsic::uadd_with_overflow:
+    case Intrinsic::smul_with_overflow:
+    case Intrinsic::umul_with_overflow:
+    case Intrinsic::ssub_with_overflow:
+    case Intrinsic::usub_with_overflow:
+      IntTy = II->getArgOperand(0)->getType();
+      for (Value *Arg : II->args())
+        Ops.push_back(Arg);
+      break;
+    default:
+      return false;
+    }
+  } else {
+    return false;
+  }
+
+  if (!IntTy->isIntOrIntVectorTy())
+    return false;
+
+  const DataLayout &DL =
+      I.getParent()->getParent()->getParent()->getDataLayout();
+  if (IntTy->getScalarSizeInBits() >= DL.getPointerSizeInBits())
+    return false;
+
+  auto HasKnownFloatOrPointer = [&](Value *V) {
+    for (const auto &Pair : TR.query(V).getMapping()) {
+      if (Pair.first.size() > 1 || Pair.second.isFloat() ||
+          Pair.second == BaseType::Pointer)
+        return true;
+    }
+    return false;
+  };
+
+  if (HasKnownFloatOrPointer(const_cast<Instruction *>(&I)))
+    return false;
+  for (Value *Op : Ops)
+    if (HasKnownFloatOrPointer(Op))
+      return false;
+
+  return true;
 }
 
 Function *TypeResults::getFunction() const {
