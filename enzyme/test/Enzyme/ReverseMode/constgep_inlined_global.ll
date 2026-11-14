@@ -27,5 +27,5 @@ entry:
 
 ; CHECK: define internal { double } @diffef(double %x, double %differeturn)
 ; CHECK: %"g'ipa" = alloca [2 x double], align 8
-; CHECK: %"'ipg" = getelementptr [2 x double], ptr %"g'ipa", i64 0, i64 1
+; CHECK: %"'ipg" = getelementptr inbounds [2 x double], ptr %"g'ipa", i64 0, i64 1
 ; CHECK: load double, ptr %"'ipg"
