@@ -3083,6 +3083,7 @@ public:
 AnalysisKey EnzymeNewPM::Key;
 
 #include "ActivityAnalysisPrinter.h"
+#include "EnzymeSummary.h"
 #include "JLInstSimplify.h"
 #include "PreserveNVVM.h"
 #include "SimpleGVN.h"
@@ -3583,7 +3584,15 @@ extern "C" void registerEnzymeAndPassPipeline(llvm::PassBuilder &PB,
           MPM.addPass(ActivityAnalysisPrinterNewPM());
           return true;
         }
+        if (Name == "enzyme-summary") {
+          MPM.addPass(EnzymeSummaryNewPM());
+          return true;
+        }
         return false;
+      });
+  PB.registerAnalysisRegistrationCallback(
+      [](llvm::FunctionAnalysisManager &FAM) {
+        FAM.registerPass([] { return EnzymeFunctionSummaryAnalysis(); });
       });
   PB.registerPipelineParsingCallback(
       [](llvm::StringRef Name, llvm::FunctionPassManager &FPM,
@@ -3594,6 +3603,10 @@ extern "C" void registerEnzymeAndPassPipeline(llvm::PassBuilder &PB,
         }
         if (Name == "simple-gvn") {
           FPM.addPass(SimpleGVNNewPM());
+          return true;
+        }
+        if (Name == "print<enzyme-function-summary>") {
+          FPM.addPass(EnzymeFunctionSummaryPrinterPass(llvm::outs()));
           return true;
         }
         return false;
