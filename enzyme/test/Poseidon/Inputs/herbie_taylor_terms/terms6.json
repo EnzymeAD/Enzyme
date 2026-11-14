@@ -1,0 +1,1 @@
+{"tests":[{"bits":64,"name":"0","status":"imp-start","prec":"binary64","output":"(/.f64 (*.f64 v1 v1) (+.f64 v0 (sqrt.f64 (+.f64 (*.f64 v1 v1) (*.f64 v0 v0)))))","cost-accuracy":[[1.0,30.0],[1.3,0.6,"(/.f64 (*.f64 v1 v1) (+.f64 v0 (sqrt.f64 (+.f64 (*.f64 v1 v1) (*.f64 v0 v0)))))"],[[1.2,0.7,"(-.f64 (sqrt.f64 (fma.f64 v0 v0 (*.f64 v1 v1))) v0)"]]]}]}

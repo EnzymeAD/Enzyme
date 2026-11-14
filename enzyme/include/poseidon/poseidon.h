@@ -1,0 +1,224 @@
+//===- poseidon.h - public header for applications -----------------------===//
+//
+// Part of the Poseidon Project, under the Apache License v2.0 with LLVM
+// Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+//
+// How an application opts in, simplest first:
+//
+// 1. POSEIDON_OPTIMIZE on a function or a kernel, and -poseidon-tau=<t> on the
+//    optimizing compile. Every call of the function is the site: its whole
+//    body is profiled under -poseidon-profile-generate and rewritten under
+//    -poseidon-profile-use.
+// 2. POSEIDON_OPTIMIZE_TAU(t): the same, with that site's own target, which
+//    wins over -poseidon-tau. t may be a literal, a macro or a constant
+//    expression.
+// 3. __poseidon_optimize(fn, args...), or __poseidon_optimize_tau(t, fn,
+//    args...) with that call's own target: the call fn(args...), and only that
+//    call, is the site. It has its own profile, target and rewritten copy of
+//    fn, so two calls of one function can be rewritten differently; other
+//    calls of fn run it as written. fn names a function defined in the same
+//    translation unit, on the host or in device code; t is a compile-time
+//    constant. In device code a pointer the call passes points into a local
+//    object or a by-value aggregate of the caller, or the call reaches a
+//    constant range of memory through it. Without the plugin the call runs as
+//    written.
+// 4. -poseidon-kernels=<regex>|all: GPU kernels opted in without editing their
+//    source; only those above -poseidon-min-cost-share of the profiled cost
+//    are optimized.
+// 5. poseidon_metric(name, value), once at the end of the profiling run: the
+//    quantity of interest the target refers to. The profiler runtime writes it
+//    to <profile dir>/metric.txt. Run under `poseidon-probe -- <program>
+//    [args...]` (or with POSEIDON_PROBE=1), the program then runs itself again
+//    at exit to measure each site's condition number against it, after saying
+//    how many runs that takes; run without, it says what measuring would take,
+//    and profile use stops at the sites until they are measured. With
+//    POSEIDON_PROBE=0 nothing is measured and each site is solved against its
+//    own target. Optional.
+// 6. __poseidon_fp_optimize(fn, args...): one call with Enzyme activity
+//    markers and shadows the caller provides, for pointers the profiler cannot
+//    size or a custom seed; poseidon_tau, t among the arguments sets that
+//    call's target. Advanced.
+//
+// The target is the per-operation relative rounding level a site is allowed to
+// behave at, so 1e-16 is FP64, 6e-8 is FP32 and 1e-15 is a two-component
+// floating-point expansion. The solve takes the cheapest rewrite whose
+// modelled error stays under it, and refuses the site outright when no rewrite
+// (including leaving it alone) can reach it.
+//
+// Precedence for a site's accuracy target:
+//   its own (POSEIDON_OPTIMIZE_TAU, __poseidon_optimize_tau, or poseidon_tau
+//   in the call) > -poseidon-tau > none
+// The target is the same number wherever it is written. A site with none is
+// solved against -poseidon-cost-budget instead, a share of the site's profiled
+// cost; at its default of 0 that is the most accurate rewrite costing no more
+// than the code as written, which may be the code as written.
+//
+//===----------------------------------------------------------------------===//
+
+#ifndef POSEIDON_PROFILE_H
+#define POSEIDON_PROFILE_H
+
+// Both forms carry one argument, so that every Poseidon entry of
+// llvm.global.annotations has one type: clang types the array after its first
+// entry, and on AMDGPU an entry without arguments has another. The int 0 is no
+// accuracy target.
+#define POSEIDON_OPTIMIZE __attribute__((annotate("poseidon", 0)))
+#define POSEIDON_OPTIMIZE_TAU(t)                                               \
+  __attribute__((annotate("poseidon", (double)(t))))
+
+// The call through an identity the pass recognizes: the argument list is the
+// call's own, so conversions apply and the return value comes back.
+#define __poseidon_optimize(fn, ...)                                           \
+  ((__typeof__(fn) *)__poseidon_site((void *)(fn)))(__VA_ARGS__)
+#define __poseidon_optimize_tau(t, fn, ...)                                    \
+  ((__typeof__(fn) *)__poseidon_site_tau((void *)(fn), (double)(t)))(          \
+      __VA_ARGS__)
+
+// The identity keeps its plain name in C and C++ alike, never throws, and is
+// callable from device code.
+#ifdef __cplusplus
+#define POSEIDON_SITE_HELPER inline __attribute__((nothrow))
+#else
+#define POSEIDON_SITE_HELPER static inline __attribute__((nothrow))
+#endif
+#if defined(__CUDA__) || defined(__HIP__)
+#define POSEIDON_SITE_TARGETS __attribute__((host, device))
+#else
+#define POSEIDON_SITE_TARGETS
+#endif
+
+// Where a profiling run writes and a solve reads when neither is told
+// otherwise; POSEIDON_PROFILE_DIR overrides it.
+#define POSEIDON_DEFAULT_PROFILE_DIR "./poseidon.profile"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+void poseidon_metric(const char *name, double value);
+
+POSEIDON_SITE_HELPER POSEIDON_SITE_TARGETS void *__poseidon_site(void *fn) {
+  return fn;
+}
+POSEIDON_SITE_HELPER POSEIDON_SITE_TARGETS void *
+__poseidon_site_tau(void *fn, double tau) {
+  (void)tau;
+  return fn;
+}
+
+#ifdef __cplusplus
+}
+#endif
+
+// The libdevice (CUDA) or ocml (HIP) functions a rewrite or a derivative of a
+// device site may call, linked into every device module that includes this
+// header. The plugin keeps them while it profiles or rewrites a module's sites
+// and drops them from any other module, which then compiles as it does without
+// the header. Taking their addresses keeps them in the C calling convention the
+// calls a rewrite adds use; one only ever called directly may become fastcc.
+// Each address is stored by a statement of its own: C++20 deprecates using the
+// value of an assignment to a volatile object.
+#if defined(__CUDA_ARCH__) && defined(__CLANG_CUDA_LIBDEVICE_DECLARES_H__)
+#define POSEIDON_KEEP(fn)                                                      \
+  keep = (void *)&__nv_##fn;                                                   \
+  keep = (void *)&__nv_##fn##f
+extern "C" inline __device__ __attribute__((used)) void
+__poseidon_device_math(void) {
+  void *volatile keep;
+  POSEIDON_KEEP(sin);
+  POSEIDON_KEEP(cos);
+  POSEIDON_KEEP(tan);
+  POSEIDON_KEEP(asin);
+  POSEIDON_KEEP(acos);
+  POSEIDON_KEEP(atan);
+  POSEIDON_KEEP(atan2);
+  POSEIDON_KEEP(sinh);
+  POSEIDON_KEEP(cosh);
+  POSEIDON_KEEP(tanh);
+  POSEIDON_KEEP(asinh);
+  POSEIDON_KEEP(acosh);
+  POSEIDON_KEEP(atanh);
+  POSEIDON_KEEP(exp);
+  POSEIDON_KEEP(exp2);
+  POSEIDON_KEEP(expm1);
+  POSEIDON_KEEP(log);
+  POSEIDON_KEEP(log2);
+  POSEIDON_KEEP(log10);
+  POSEIDON_KEEP(log1p);
+  POSEIDON_KEEP(sqrt);
+  POSEIDON_KEEP(cbrt);
+  POSEIDON_KEEP(pow);
+  POSEIDON_KEEP(powi);
+  POSEIDON_KEEP(hypot);
+  POSEIDON_KEEP(erf);
+  POSEIDON_KEEP(lgamma);
+  POSEIDON_KEEP(tgamma);
+  POSEIDON_KEEP(fabs);
+  POSEIDON_KEEP(fma);
+  POSEIDON_KEEP(ceil);
+  POSEIDON_KEEP(floor);
+  POSEIDON_KEEP(rint);
+  POSEIDON_KEEP(round);
+  POSEIDON_KEEP(trunc);
+  POSEIDON_KEEP(copysign);
+  POSEIDON_KEEP(fdim);
+  POSEIDON_KEEP(fmod);
+  POSEIDON_KEEP(remainder);
+  POSEIDON_KEEP(fmin);
+  POSEIDON_KEEP(fmax);
+  (void)keep;
+}
+#undef POSEIDON_KEEP
+#elif defined(__HIP_DEVICE_COMPILE__) &&                                       \
+    defined(__CLANG_HIP_LIBDEVICE_DECLARES_H__)
+// HIP spells these as LLVM intrinsics, so its header does not declare them.
+extern "C" __device__ float __ocml_exp_f32(float);
+extern "C" __device__ float __ocml_exp2_f32(float);
+extern "C" __device__ float __ocml_log_f32(float);
+extern "C" __device__ float __ocml_log2_f32(float);
+extern "C" __device__ float __ocml_log10_f32(float);
+#define POSEIDON_KEEP(fn)                                                      \
+  keep = (void *)&__ocml_##fn##_f64;                                           \
+  keep = (void *)&__ocml_##fn##_f32
+extern "C" inline __device__ __attribute__((used)) void
+__poseidon_device_math(void) {
+  void *volatile keep;
+  POSEIDON_KEEP(sin);
+  POSEIDON_KEEP(cos);
+  POSEIDON_KEEP(tan);
+  POSEIDON_KEEP(asin);
+  POSEIDON_KEEP(acos);
+  POSEIDON_KEEP(atan);
+  POSEIDON_KEEP(atan2);
+  POSEIDON_KEEP(sinh);
+  POSEIDON_KEEP(cosh);
+  POSEIDON_KEEP(tanh);
+  POSEIDON_KEEP(asinh);
+  POSEIDON_KEEP(acosh);
+  POSEIDON_KEEP(atanh);
+  POSEIDON_KEEP(exp);
+  POSEIDON_KEEP(exp2);
+  POSEIDON_KEEP(expm1);
+  POSEIDON_KEEP(log);
+  POSEIDON_KEEP(log2);
+  POSEIDON_KEEP(log10);
+  POSEIDON_KEEP(log1p);
+  POSEIDON_KEEP(cbrt);
+  POSEIDON_KEEP(pow);
+  POSEIDON_KEEP(hypot);
+  POSEIDON_KEEP(erf);
+  POSEIDON_KEEP(lgamma);
+  POSEIDON_KEEP(tgamma);
+  POSEIDON_KEEP(fdim);
+  POSEIDON_KEEP(fmod);
+  POSEIDON_KEEP(remainder);
+  (void)keep;
+}
+#undef POSEIDON_KEEP
+#endif
+
+#endif // POSEIDON_PROFILE_H

@@ -1,0 +1,112 @@
+@LIT_SITE_CFG_IN_HEADER@
+
+import os
+import sys
+
+config.llvm_ver = "@LLVM_VERSION_MAJOR@"
+config.llvm_tools_dir = "@LLVM_TOOLS_BINARY_DIR@"
+config.llvm_libs_dir = "@LLVM_LIBRARY_DIR@"
+config.poseidon_obj_root = "@CMAKE_CURRENT_BINARY_DIR@"
+config.target_triple = "@LLVM_HOST_TRIPLE@"
+config.llvm_shlib_ext = "@CMAKE_SHARED_MODULE_SUFFIX@"
+
+poseidon_plugin = "@POSEIDON_BINARY_DIR@/lib/Poseidon-@LLVM_VERSION_MAJOR@" + config.llvm_shlib_ext
+enzyme_clang_plugin = "@POSEIDON_ENZYME_CLANG_PLUGIN@"
+enzyme_opt_plugin = "@POSEIDON_ENZYME_OPT_PLUGIN@"
+
+# Longest name first: lit applies substitutions in list order, so a shorter
+# name that is a prefix of a longer one has to come after it.
+# Before LLVM 22 clang parses -mllvm before loading -fpass-plugin, so the
+# plugin's options exist only if it is also loaded with -load.
+def clang_load(plugin):
+    if int(config.llvm_ver) < 22:
+        return '-fpass-plugin=' + plugin + ' -Xclang -load -Xclang ' + plugin
+    return '-fpass-plugin=' + plugin
+config.substitutions.append(('%loadClangPoseidonEnzyme',
+                             clang_load(poseidon_plugin) + ' ' +
+                             clang_load(enzyme_clang_plugin)))
+config.substitutions.append(('%loadClangPoseidon', clang_load(poseidon_plugin)))
+config.substitutions.append(('%loadClangEnzyme', clang_load(enzyme_clang_plugin)))
+# From LLVM 24 opt loads -load-pass-plugin only after parsing its command line,
+# so a plugin's options exist only if it is also loaded with -load.
+def opt_load(plugin):
+    return '-load-pass-plugin=' + plugin + ' -load=' + plugin
+config.substitutions.append(('%loadPoseidonEnzyme',
+                             opt_load(poseidon_plugin) + ' ' +
+                             opt_load(enzyme_opt_plugin)))
+config.substitutions.append(('%loadPoseidon', opt_load(poseidon_plugin)))
+
+config.substitutions.append(('%poseidon_clangxx',
+                             '@POSEIDON_BINARY_DIR@/bin/poseidon-clang++'))
+config.substitutions.append(('%poseidon_clang',
+                             '@POSEIDON_BINARY_DIR@/bin/poseidon-clang'))
+config.substitutions.append(('%poseidon_calibrate',
+                             '@POSEIDON_BINARY_DIR@/bin/poseidon-calibrate'))
+config.substitutions.append(('%poseidon_probe',
+                             '@POSEIDON_BINARY_DIR@/bin/poseidon-probe'))
+config.substitutions.append(('%python', '"' + sys.executable + '"'))
+config.substitutions.append(('%poseidon_explain',
+                             '"' + sys.executable + '" @POSEIDON_SOURCE_DIR@/tools/explain/poseidon-explain'))
+
+# The GEMM dispatch runtimes, for tests that call an entry point directly
+# instead of having the pass emit the call, with what the runtime links.
+config.substitutions.append(('%poseidon_rt_lib',
+                             '@POSEIDON_BINARY_DIR@/lib/libposeidon_rt.a@POSEIDON_TEST_RT_LINK@'))
+
+config.substitutions.append(('%shlibext', config.llvm_shlib_ext))
+config.substitutions.append(('%opt', config.llvm_tools_dir + "/opt"))
+# %clang++ is %clang followed by ++, as in Enzyme's suites.
+config.substitutions.append(('%clang', config.llvm_tools_dir + "/clang"))
+config.substitutions.append(('%simplifycfg', 'simplifycfg'))
+
+config.substitutions.append(('%poseidon_profile_cuda_lib', '@POSEIDON_BINARY_DIR@/lib/libposeidon_profile_cuda.a'))
+config.substitutions.append(('%poseidon_profile_lib', '@POSEIDON_BINARY_DIR@/lib/libposeidon_profile.a'))
+config.substitutions.append(('%poseidon_profile_inc',
+                             '@POSEIDON_SOURCE_DIR@/runtime/fpprofiler -I@ENZYME_SOURCE_DIR@/include'))
+# The CMake package of this build tree, and what installing it takes.
+config.substitutions.append(('%cmake_generator',
+                             '-G "@CMAKE_GENERATOR@" -DCMAKE_MAKE_PROGRAM=@CMAKE_MAKE_PROGRAM@'))
+config.substitutions.append(('%cmake', '"@CMAKE_COMMAND@"'))
+config.substitutions.append(('%poseidon_package_dir', '@POSEIDON_BINARY_DIR@'))
+config.substitutions.append(('%enzyme_binary_dir', '@ENZYME_BINARY_DIR@'))
+config.substitutions.append(('%gpu_cost_model',
+                             '@POSEIDON_TEST_COST_MODELS@/cm_gpu_synthetic.csv'))
+config.substitutions.append(('%cost_models', '@POSEIDON_TEST_COST_MODELS@'))
+config.substitutions.append(('%gpu_arch', '@POSEIDON_TEST_GPU_ARCH_RESOLVED@'))
+
+herbie_binary = '@POSEIDON_HERBIE_BINARY_PATH@'
+config.substitutions.append(('%herbie_binary', herbie_binary))
+if os.path.isfile(herbie_binary) and os.access(herbie_binary, os.X_OK):
+    config.available_features.add('herbie')
+if os.path.isfile(enzyme_clang_plugin):
+    config.available_features.add('enzyme')
+if @POSEIDON_TEST_HAS_CUDA@:
+    config.available_features.add('cuda-runtime')
+# The error-corrected GEMM dispatch, which only a build with cuMpSGEMM has.
+if @POSEIDON_TEST_TCEC_CUMPSGEMM@:
+    config.available_features.add('tcec-cumpsgemm')
+# The device profilers the plugin carries; profile generation for a GPU
+# without one stops at the first probe.
+if @POSEIDON_TEST_NVPTX_PROFILER@:
+    config.available_features.add('nvptx-device-profiler')
+if @POSEIDON_TEST_AMDGPU_PROFILER@:
+    config.available_features.add('amdgpu-device-profiler')
+config.substitutions.append(('%cuda_lib_dir', '@CUDAToolkit_LIBRARY_DIR@'))
+# HIP device compiles against the ROCm installation the build names; a compile
+# that links the device profiler or the HIP runtimes targets their processor.
+if @POSEIDON_TEST_HAS_AMDGPU@:
+    config.available_features.add('amdgpu-registered-target')
+rocm_path = "@POSEIDON_ROCM_PATH@"
+config.substitutions.append(('%rocm_path', rocm_path))
+config.substitutions.append(('%amdgpu_arch', '@POSEIDON_AMDGPU_ARCH@'))
+if rocm_path and os.path.isdir(os.path.join(rocm_path, 'amdgcn', 'bitcode')):
+    config.available_features.add('rocm')
+# The HIP runtimes, and an AMD GPU to run what links them.
+config.substitutions.append(('%poseidon_rt_hip_lib',
+                             '@POSEIDON_BINARY_DIR@/lib/libposeidon_rt_hip.a'))
+config.substitutions.append(('%poseidon_runtime_inc',
+                             '@POSEIDON_SOURCE_DIR@/runtime'))
+if @POSEIDON_TEST_HAS_HIP@ and os.path.exists('/dev/kfd'):
+    config.available_features.add('hip-runtime')
+
+lit_config.load_config(config, "@CMAKE_CURRENT_SOURCE_DIR@/lit.cfg.py")

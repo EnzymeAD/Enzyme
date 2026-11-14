@@ -1,0 +1,13 @@
+SiteId = 0
+CanonicalHash = 0000000000000000
+0
+	MinRes = 1.0
+	MaxRes = 2.0
+	SumValue = 3.0
+	SumSens = 3.0
+	SumGrad = 2.0
+	Exec = 2
+	NumOperands = 2
+	Operand[0] = [1.0, 2.0]
+	Operand[1] = [1.0, 1.0]
+

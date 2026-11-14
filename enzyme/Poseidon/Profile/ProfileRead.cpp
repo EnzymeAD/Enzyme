@@ -1,0 +1,603 @@
+//=- ProfileRead.cpp - Profiling utilities for Poseidon --------------------=//
+//
+// Part of the Poseidon Project, under the Apache License v2.0 with LLVM
+// Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+//
+// This file implements profiling-related utilities for the Poseidon
+// optimization pass.
+//
+//===----------------------------------------------------------------------===//
+
+#include <algorithm>
+#include <cmath>
+#include <fstream>
+#include <regex>
+#include <system_error>
+#include <unordered_map>
+
+#include "IR/Utils.h"
+#include "ProfileRead.h"
+#include "Targets/OffloadRuntime.h"
+#include "Targets/Target.h"
+
+#include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/SmallString.h"
+#include "llvm/ADT/StringMap.h"
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/InstIterator.h"
+#include "llvm/IR/Instruction.h"
+#include "llvm/IR/Instructions.h"
+#include "llvm/IR/Metadata.h"
+#include "llvm/IR/Module.h"
+#include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/FileSystem.h"
+#include "llvm/Support/Path.h"
+#include "llvm/Support/raw_ostream.h"
+
+using namespace llvm;
+
+namespace poseidon {
+
+bool tryReadProfIdxMetadata(const Instruction *I, size_t &out) {
+  if (!I)
+    return false;
+  MDNode *md = I->getMetadata("poseidon.prof.idx");
+  if (!md)
+    return false;
+  out = cast<ConstantInt>(
+            cast<ConstantAsMetadata>(md->getOperand(0).get())->getValue())
+            ->getZExtValue();
+  return true;
+}
+
+size_t readProfIdxMetadata(const Instruction *I) {
+  if (!I)
+    report_fatal_error("readProfIdxMetadata: null instruction");
+  size_t out;
+  if (!tryReadProfIdxMetadata(I, out))
+    report_fatal_error("instruction missing !poseidon.prof.idx metadata "
+                       "(forgot to run profgen?)");
+  return out;
+}
+
+static constexpr double kSensFloorRatio = 1e-6;
+static constexpr double kSensNullRatio = 1e-9;
+
+unsigned applySensitivityFloor(ProfileMap &profileMap,
+                               llvm::StringRef functionName) {
+  if (profileMap.empty())
+    return 0;
+
+  // sumAbsGrad is used when the profile carries it: the signed sum understates
+  // a value whose adjoint alternates in sign across executions.
+  auto weightOf = [](const ProfileInfo &p) {
+    return p.sumAbsGrad >= 0.0 ? p.sumAbsGrad : std::fabs(p.sumGrad);
+  };
+
+  double ref = 0.0;
+  for (const auto &kv : profileMap) {
+    if (kv.second.exec == 0)
+      continue;
+    ref = std::max(ref, kv.second.sumSens / (double)kv.second.exec);
+  }
+  if (!(ref > 0.0) || !std::isfinite(ref))
+    return 0;
+
+  unsigned floored = 0;
+  for (auto &kv : profileMap) {
+    ProfileInfo &p = kv.second;
+    if (p.exec == 0)
+      continue;
+    // A value that is always zero has no sensitivity to floor or report.
+    const double mag = std::max(std::fabs(p.minRes), std::fabs(p.maxRes));
+    if (!(mag > 0.0) || !std::isfinite(mag))
+      continue;
+    const double perExec = p.sumSens / (double)p.exec;
+    const double ratio = perExec / ref;
+    if (ratio < kSensNullRatio) {
+      llvm::errs()
+          << "Poseidon: profiled instruction " << kv.first << " of "
+          << functionName << " has per-execution sensitivity " << perExec
+          << ", " << ratio
+          << " of this site's largest. Either the value is negligible where "
+             "it is used, the largest is amplified by a cancellation, or the "
+             "adjoint seed lies in the left null space of the operator (a "
+             "constant seed does for any partition-of-unity basis with a "
+             "derivative contraction); in the last case re-profile with a "
+             "non-degenerate seed.\n";
+    }
+    // The weight multiplies an absolute error, so the gradient a sensitivity
+    // floor implies scales with 1 / the value's magnitude.
+    const double floorW = kSensFloorRatio * ref / mag * (double)p.exec;
+    if (weightOf(p) < floorW) {
+      // Write the floor back through sumGrad, which is what every consumer
+      // reads (FPNode::grad, RewriteUnit::grad, MatmulProfile::gradD).
+      p.sumGrad = std::copysign(floorW, p.sumGrad == 0.0 ? 1.0 : p.sumGrad);
+      if (p.sumAbsGrad >= 0.0)
+        p.sumAbsGrad = floorW;
+      ++floored;
+    }
+  }
+  if (floored)
+    llvm::errs() << "Poseidon: sensitivity floor raised the accuracy weight of "
+                 << floored << " of " << profileMap.size()
+                 << " profiled instruction(s) in " << functionName << " to "
+                 << kSensFloorRatio << " x the site maximum sensitivity\n";
+  return floored;
+}
+
+void mergeOutputProfiles(ProfileMap &profileMap, ArrayRef<std::string> dirs,
+                         StringRef fileName, StringRef canonicalHash,
+                         const Function &F) {
+  const StringRef functionName = F.getName();
+  auto refuse = [&](const Twine &why) {
+    reportUserError(F, F.getSubprogram(), why);
+  };
+  std::unordered_map<size_t, double> grad, sens;
+  for (const std::string &dir : dirs) {
+    SmallString<128> path(dir);
+    sys::path::append(path, fileName);
+    ProfileMap out;
+    FunctionProfileHeader header;
+    parseProfileFile(path.str().str(), out, &header);
+    double total = 0.0;
+    for (const auto &kv : out)
+      total += kv.second.sumSens;
+    if (!(total > 0.0) || !std::isfinite(total))
+      refuse(Twine("output profile ") + path + " of " + functionName +
+             " is missing or carries no sensitivity; re-run profile "
+             "generation with that output seeded.");
+    if (!canonicalHash.empty() && header.canonicalHash != canonicalHash)
+      refuse(Twine("output profile ") + path +
+             " was recorded against a different canonical form than the "
+             "site's profile; re-run profile generation.");
+    if (out.size() != profileMap.size())
+      refuse(Twine("output profile ") + path + " records " + Twine(out.size()) +
+             " instructions, the site's profile " + Twine(profileMap.size()) +
+             "; both must come from the same profiling binary.");
+    for (const auto &kv : out) {
+      if (!profileMap.count(kv.first))
+        refuse(Twine("output profile ") + path + " names instruction " +
+               Twine(kv.first) +
+               " that the site's profile does not; both must come from the "
+               "same profiling binary.");
+      const ProfileInfo &p = kv.second;
+      double w = p.sumAbsGrad >= 0.0 ? p.sumAbsGrad : std::fabs(p.sumGrad);
+      grad[kv.first] = std::max(grad[kv.first], w / total);
+      sens[kv.first] = std::max(sens[kv.first], p.sumSens / total);
+    }
+  }
+  for (auto &kv : profileMap) {
+    ProfileInfo &p = kv.second;
+    p.sumGrad = grad[kv.first];
+    if (p.sumAbsGrad >= 0.0)
+      p.sumAbsGrad = p.sumGrad;
+    p.sumSens = sens[kv.first];
+  }
+  errs() << "[poseidon] " << functionName << ": accuracy weighted per output ("
+         << dirs.size() << " output profiles)\n";
+}
+
+void parseProfileFile(const std::string &profilePath, ProfileMap &profileMap,
+                      FunctionProfileHeader *header) {
+  profileMap.clear();
+  if (header)
+    *header = FunctionProfileHeader{};
+  std::ifstream file(profilePath);
+  if (!file.is_open()) {
+    llvm::errs() << "Warning: Could not open profile file: " << profilePath
+                 << "\n";
+    return;
+  }
+
+  std::string line;
+  std::regex indexPattern(R"(^(\d+)$)");
+  std::regex blockDimsPattern(
+      R"(^\s*MaxBlockDims\s*=\s*(\d+)\s+(\d+)\s+(\d+))");
+  std::regex gridDimsPattern(R"(^\s*MaxGridDims\s*=\s*(\d+)\s+(\d+)\s+(\d+))");
+  std::regex launchCountPattern(R"(^\s*LaunchCount\s*=\s*(\d+))");
+  std::regex redTripPattern(R"(^\s*RedTrip\s*=\s*(\d+)\s+(\d+))");
+  std::regex canonicalHashPattern(R"(^\s*CanonicalHash\s*=\s*([0-9a-fA-F]+))");
+  std::regex siteIdPattern(R"(^\s*SiteId\s*=\s*(\d+))");
+  std::regex kappaPattern(
+      R"(^\s*Kappa\s*=\s*([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?|inf|-inf|nan|-nan))");
+  std::regex kappaMarkPattern(R"(^\s*KappaMark\s*=\s*(\S+))");
+
+  std::regex minResPattern(
+      R"(^\s*MinRes\s*=\s*([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?|inf|-inf|nan|-nan))");
+  std::regex maxResPattern(
+      R"(^\s*MaxRes\s*=\s*([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?|inf|-inf|nan|-nan))");
+  std::regex sumValuePattern(
+      R"(^\s*SumValue\s*=\s*([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?|inf|-inf|nan|-nan))");
+  std::regex sumSensPattern(
+      R"(^\s*SumSens\s*=\s*([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?|inf|-inf|nan|-nan))");
+  std::regex sumGradPattern(
+      R"(^\s*SumGrad\s*=\s*([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?|inf|-inf|nan|-nan))");
+  // Optional: profiles written before the runtime accumulated it have no line.
+  std::regex sumAbsGradPattern(
+      R"(^\s*SumAbsGrad\s*=\s*([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?|inf|-inf|nan|-nan))");
+  std::regex execPattern(R"(^\s*Exec\s*=\s*(\d+))");
+  std::regex numOperandsPattern(R"(^\s*NumOperands\s*=\s*(\d+))");
+  std::regex operandPattern(
+      R"(^\s*Operand\[(\d+)\]\s*=\s*\[([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?|inf|-inf|nan|-nan),\s*([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?|inf|-inf|nan|-nan)(?:,\s*([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?|inf|-inf|nan|-nan))?\])");
+
+  while (std::getline(file, line)) {
+    if (!line.empty() && line.back() == '\r') {
+      line.pop_back();
+    }
+
+    std::smatch match;
+    if (header && std::regex_search(line, match, blockDimsPattern)) {
+      header->maxBlockDim[0] = static_cast<uint32_t>(std::stoul(match[1]));
+      header->maxBlockDim[1] = static_cast<uint32_t>(std::stoul(match[2]));
+      header->maxBlockDim[2] = static_cast<uint32_t>(std::stoul(match[3]));
+      continue;
+    }
+    if (header && std::regex_search(line, match, gridDimsPattern)) {
+      header->maxGridDim[0] = static_cast<uint32_t>(std::stoul(match[1]));
+      header->maxGridDim[1] = static_cast<uint32_t>(std::stoul(match[2]));
+      header->maxGridDim[2] = static_cast<uint32_t>(std::stoul(match[3]));
+      continue;
+    }
+    if (header && std::regex_search(line, match, launchCountPattern)) {
+      header->launchCount = std::stoull(match[1]);
+      continue;
+    }
+    if (header && std::regex_search(line, match, redTripPattern)) {
+      header->redTrip[std::stoull(match[1])] =
+          static_cast<unsigned>(std::stoul(match[2]));
+      continue;
+    }
+    if (header && std::regex_search(line, match, canonicalHashPattern)) {
+      header->canonicalHash = match[1];
+      continue;
+    }
+    if (header && std::regex_search(line, match, siteIdPattern)) {
+      header->siteId = std::stoi(match[1]);
+      continue;
+    }
+    if (header && std::regex_search(line, match, kappaPattern)) {
+      header->kappa = std::stod(match[1]);
+      header->hasKappa = true;
+      continue;
+    }
+    if (header && std::regex_search(line, match, kappaMarkPattern)) {
+      header->kappaMark = match[1];
+      continue;
+    }
+    if (std::regex_match(line, match, indexPattern)) {
+      size_t idx = std::stoull(match[1]);
+      ProfileInfo info;
+
+      std::string minResLine, maxResLine, sumValueLine, sumSensLine,
+          sumGradLine, sumAbsGradLine, execLine, numOperandsLine;
+
+      if (std::getline(file, minResLine) && std::getline(file, maxResLine) &&
+          std::getline(file, sumValueLine) && std::getline(file, sumSensLine) &&
+          std::getline(file, sumGradLine) && std::getline(file, execLine) &&
+          (execLine.find("SumAbsGrad") == std::string::npos ||
+           (sumAbsGradLine = execLine, std::getline(file, execLine))) &&
+          std::getline(file, numOperandsLine)) {
+
+        auto stripCR = [](std::string &s) {
+          if (!s.empty() && s.back() == '\r')
+            s.pop_back();
+        };
+        stripCR(minResLine);
+        stripCR(maxResLine);
+        stripCR(sumValueLine);
+        stripCR(sumSensLine);
+        stripCR(sumGradLine);
+        stripCR(sumAbsGradLine);
+        stripCR(execLine);
+        stripCR(numOperandsLine);
+
+        std::smatch mMinRes, mMaxRes, mSumValue, mSumSens, mSumGrad, mExec,
+            mNumOperands;
+        if (std::regex_search(minResLine, mMinRes, minResPattern) &&
+            std::regex_search(maxResLine, mMaxRes, maxResPattern) &&
+            std::regex_search(sumValueLine, mSumValue, sumValuePattern) &&
+            std::regex_search(sumSensLine, mSumSens, sumSensPattern) &&
+            std::regex_search(sumGradLine, mSumGrad, sumGradPattern) &&
+            std::regex_search(execLine, mExec, execPattern) &&
+            std::regex_search(numOperandsLine, mNumOperands,
+                              numOperandsPattern)) {
+
+          info.minRes = stringToDouble(mMinRes[1]);
+          info.maxRes = stringToDouble(mMaxRes[1]);
+          info.sumValue = stringToDouble(mSumValue[1]);
+          info.sumSens = stringToDouble(mSumSens[1]);
+          info.sumGrad = stringToDouble(mSumGrad[1]);
+          std::smatch mSumAbsGrad;
+          if (!sumAbsGradLine.empty() &&
+              std::regex_search(sumAbsGradLine, mSumAbsGrad, sumAbsGradPattern))
+            info.sumAbsGrad = stringToDouble(mSumAbsGrad[1]);
+          info.exec = static_cast<uint64_t>(std::stoull(mExec[1]));
+          unsigned numOperands =
+              static_cast<unsigned>(std::stoul(mNumOperands[1]));
+
+          info.minOperands.resize(numOperands, 0.0);
+          info.maxOperands.resize(numOperands, 0.0);
+          info.minMagOperands.resize(numOperands, 0.0);
+
+          for (unsigned i = 0; i < numOperands; ++i) {
+            if (std::getline(file, line)) {
+              if (!line.empty() && line.back() == '\r')
+                line.pop_back();
+
+              std::smatch operandMatch;
+              if (std::regex_search(line, operandMatch, operandPattern)) {
+                unsigned opIdx =
+                    static_cast<unsigned>(std::stoul(operandMatch[1]));
+                double minVal = stringToDouble(operandMatch[2]);
+                double maxVal = stringToDouble(operandMatch[3]);
+
+                if (opIdx < numOperands) {
+                  info.minOperands[opIdx] = minVal;
+                  info.maxOperands[opIdx] = maxVal;
+                  if (operandMatch[4].matched)
+                    info.minMagOperands[opIdx] =
+                        stringToDouble(operandMatch[4]);
+                }
+              }
+            }
+          }
+
+          profileMap[idx] = info;
+        } else {
+          llvm::errs() << "Warning: Failed to parse profile fields for index "
+                       << idx << "\n";
+        }
+      } else {
+        llvm::errs() << "Warning: Incomplete profile entry for index " << idx
+                     << "\n";
+      }
+    }
+  }
+}
+
+bool isNeverExecutedProfile(const std::string &profilePath, const Function &F) {
+  std::ifstream file(profilePath);
+  std::string line;
+  bool marked = false;
+  while (std::getline(file, line)) {
+    if (!line.empty() && line.back() == '\r')
+      line.pop_back();
+    if (!line.empty() &&
+        line.find_first_not_of("0123456789") == std::string::npos) {
+      if (marked)
+        reportUserError(F, F.getSubprogram(),
+                        Twine(profilePath) +
+                            " says its site was never executed and records "
+                            "executions of it; re-run profile generation.");
+      return false;
+    }
+    marked |= line == "Executed = 0";
+  }
+  return marked;
+}
+
+bool profileDirNamesFormat(StringMap<bool> &known, StringRef dir) {
+  auto [it, inserted] = known.try_emplace(dir, false);
+  if (!inserted)
+    return it->second;
+  std::error_code EC;
+  for (sys::fs::directory_iterator entry(dir, EC), end; !EC && entry != end;
+       entry.increment(EC)) {
+    if (sys::path::extension(entry->path()) != ".fpprofile")
+      continue;
+    std::ifstream file(entry->path());
+    std::string line;
+    while (std::getline(file, line)) {
+      StringRef rest = StringRef(line).trim();
+      if (!rest.empty() &&
+          rest.find_first_not_of("0123456789") == StringRef::npos)
+        break;
+      if (rest.consume_front(kProfileFormatKey) &&
+          rest.ltrim().starts_with("="))
+        return it->second = true;
+    }
+  }
+  return false;
+}
+
+void requireCanonicalHash(const FunctionProfileHeader &header,
+                          StringRef canonicalHash, StringRef profilePath,
+                          const Function &F) {
+  if (header.canonicalHash.empty())
+    reportUserError(F, F.getSubprogram(),
+                    Twine(profilePath) +
+                        " has no CanonicalHash field, so its slot indices "
+                        "cannot be checked against the canonical form of " +
+                        F.getName() + "; re-run profile generation.");
+  if (header.canonicalHash != canonicalHash)
+    reportUserError(F, F.getSubprogram(),
+                    Twine("the profile of ") + F.getName() +
+                        " was recorded against a different canonical form "
+                        "(profile CanonicalHash " +
+                        header.canonicalHash + ", this compile " +
+                        canonicalHash +
+                        "). Its slot indices do not name the same "
+                        "instructions; re-run profile generation.");
+}
+
+void requireMeasuredKappa(const FunctionProfileHeader &header,
+                          StringRef profilePath, const Function &F) {
+  if (header.hasKappa || header.kappaMark != kKappaUnmeasured)
+    return;
+  reportUserError(
+      F, F.getSubprogram(),
+      Twine("the profiling run declared a quantity of interest with "
+            "poseidon_metric and did not measure the condition number of ") +
+          F.getName() + " against it (" + profilePath +
+          "). Run the profiling build again as 'poseidon-probe -- <program> "
+          "[args...]', the command the profiling run printed, to measure it, "
+          "or with POSEIDON_PROBE=0 in its environment to solve each site "
+          "against its own target.");
+}
+
+// Profile-gen only, device module only: pre-declare the probes with
+// enzyme_inactive before any AD runs. The tblgen-generated logging code creates
+// them on first use without the attribute, and with only a declaration in the
+// TU Enzyme demands a derivative ("No augmented forward pass found"). The
+// signatures must match the tblgen ones exactly. Annotating the runtime's own
+// definitions does not work: __has_attribute(enzyme_inactive) is false unless
+// the clang plugin is loaded, so under -fpass-plugin the attribute degrades
+// away.
+void predeclareInactiveProfilerProbes(llvm::Module &M) {
+  using namespace llvm;
+  const Target &T = Target::of(M);
+  if (!T.isDevice())
+    return;
+  const ProbeABI &P = T.probes();
+  LLVMContext &Ctx = M.getContext();
+  Type *VoidTy = Type::getVoidTy(Ctx);
+  Type *PtrTy = PointerType::getUnqual(Ctx);
+  Type *DoubleTy = Type::getDoubleTy(Ctx);
+  Type *SizeTy = Type::getInt64Ty(Ctx);
+  auto declare = [&](StringRef name, FunctionType *FT) {
+    FunctionCallee fc = M.getOrInsertFunction(name, FT);
+    if (auto *fn = dyn_cast<Function>(fc.getCallee())) {
+      if (!fn->hasFnAttribute("enzyme_inactive"))
+        fn->addFnAttr("enzyme_inactive");
+      fn->addFnAttr(Attribute::NoFree);
+    }
+  };
+  declare(P.LogValue,
+          FunctionType::get(VoidTy,
+                            {PtrTy, SizeTy, DoubleTy,
+                             IntegerType::get(Ctx, P.OperandCountBits), PtrTy},
+                            false));
+  declare(
+      P.LogGradient,
+      FunctionType::get(VoidTy, {PtrTy, SizeTy, DoubleTy, DoubleTy}, false));
+  // The perturbation hooks are inactive too: nothing reads a derivative of the
+  // perturbation (the probe reads the declared metric back from the run), and a
+  // second run of the pass would otherwise differentiate the calls the first
+  // run injected.
+  Type *FloatTy = Type::getFloatTy(Ctx);
+  Type *Int32Ty = Type::getInt32Ty(Ctx);
+  declare(P.PerturbF64,
+          FunctionType::get(DoubleTy, {Int32Ty, DoubleTy}, false));
+  declare(P.PerturbF32, FunctionType::get(FloatTy, {Int32Ty, FloatTy}, false));
+}
+
+// Profile-gen only, host module only: call the profiler's CUDA registration
+// from the top of main. A static constructor cannot do it: the runtime
+// publishes its device tables with cudaMemcpyToSymbol, and a dynamic
+// initializer can run before __cudaRegisterFatBinary has registered the device
+// module in a multi-TU binary ("invalid device symbol", surfacing later as a
+// sticky error on someone else's kernel). main runs after every static
+// constructor.
+//
+// Only the host half of an offload unit, kernels or not, links the device
+// profiler. Erring towards injection is deliberate: a wrongly skipped
+// injection loses the profile silently, a wrongly kept one fails loudly at
+// link.
+bool injectHostProfilerInit(llvm::Module &M) {
+  using namespace llvm;
+  if (Target::of(M).isDevice())
+    return false;
+  // A host-only build links no CUDA profiler runtime, so the call injected
+  // below would be an undefined reference to __poseidon_profile_init_cuda.
+  OffloadRuntime R = offloadRuntimeOf(M);
+  if (R == OffloadRuntime::None)
+    return false;
+  Function *mainF = M.getFunction("main");
+  if (!mainF || mainF->isDeclaration())
+    return false;
+  LLVMContext &Ctx = M.getContext();
+  FunctionCallee initFn =
+      M.getOrInsertFunction(deviceProfilerInit(R),
+                            FunctionType::get(Type::getVoidTy(Ctx), {}, false));
+  if (auto *Fn = dyn_cast<Function>(initFn.getCallee())) {
+    if (!Fn->hasFnAttribute("enzyme_inactive"))
+      Fn->addFnAttr("enzyme_inactive");
+    Fn->addFnAttr(Attribute::NoFree);
+  }
+  // Idempotence: never place a second call.
+  for (Instruction &I : instructions(*mainF))
+    if (auto *CI = dyn_cast<CallInst>(&I))
+      if (auto *CF = CI->getCalledFunction())
+        if (CF->getName() == deviceProfilerInit(R))
+          return false;
+  IRBuilder<> B(&*mainF->getEntryBlock().getFirstInsertionPt());
+  B.CreateCall(initFn, {})->setDoesNotThrow();
+  llvm::errs() << "[poseidon] FP profiler CUDA registration injected at main\n";
+  return true;
+}
+
+// Launch geometry is a per-function fact: the probe is keyed by the
+// poseidon_site_<name> global the value probes use (which exists only after AD)
+// and sits at the entry of the function owning those probes.
+void injectBlockDimProbes(llvm::Module &M) {
+  using namespace llvm;
+  const Target &T = Target::of(M);
+  if (!T.isDevice())
+    return;
+  const ProbeABI &P = T.probes();
+  Function *logFn = M.getFunction(P.LogValue);
+  if (!logFn)
+    return;
+  LLVMContext &Ctx = M.getContext();
+  Type *PtrTy = PointerType::getUnqual(Ctx);
+  FunctionCallee probeFn = M.getOrInsertFunction(
+      P.BlockDims, FunctionType::get(Type::getVoidTy(Ctx), {PtrTy}, false));
+  if (auto *Fn = dyn_cast<Function>(probeFn.getCallee())) {
+    if (!Fn->hasFnAttribute("enzyme_inactive"))
+      Fn->addFnAttr("enzyme_inactive");
+    Fn->addFnAttr(Attribute::NoFree);
+  }
+
+  unsigned placed = 0;
+  for (Function &F : M) {
+    if (F.isDeclaration())
+      continue;
+    Value *nameArg = nullptr;
+    bool already = false;
+    for (Instruction &I : instructions(F)) {
+      auto *CI = dyn_cast<CallInst>(&I);
+      if (!CI)
+        continue;
+      if (CI->getCalledOperand()->stripPointerCasts() == logFn) {
+        if (!nameArg)
+          nameArg = CI->getArgOperand(0);
+        continue;
+      }
+      if (auto *CF = CI->getCalledFunction())
+        if (CF->getName() == P.BlockDims)
+          already = true; // idempotence
+    }
+    if (!nameArg || already)
+      continue;
+    // Rebuild the name pointer at the entry block from the global (the log
+    // call's operand may not dominate the entry); same construction as the log
+    // probes, so the runtime sees the same registry slot.
+    auto *gv = dyn_cast<GlobalVariable>(nameArg->stripPointerCasts());
+    if (!gv) {
+      llvm::errs() << "[poseidon] block-geometry probe: value probe in "
+                   << F.getName()
+                   << " has a non-global name operand; cannot key the launch "
+                      "geometry to this function\n";
+      report_fatal_error("Poseidon: unkeyable poseidon_site_ name operand");
+    }
+    IRBuilder<> B(&*F.getEntryBlock().getFirstInsertionPt());
+    Value *nameAtEntry = B.CreateInBoundsGEP(gv->getValueType(), gv,
+                                             {B.getInt32(0), B.getInt32(0)});
+    if (nameAtEntry->getType() != PtrTy)
+      nameAtEntry = B.CreateAddrSpaceCast(nameAtEntry, PtrTy);
+    CallInst *call = B.CreateCall(probeFn, {nameAtEntry});
+    call->setDoesNotThrow();
+    ++placed;
+  }
+  if (placed)
+    llvm::errs() << "[poseidon] block-geometry probe placed in " << placed
+                 << " profiled function(s)\n";
+}
+
+} // namespace poseidon
