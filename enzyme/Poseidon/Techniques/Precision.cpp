@@ -1283,8 +1283,8 @@ void PrecisionUnit::priceRequests(
           changed.push_back(cast<Instruction>(node->value));
       changed.push_back(nullptr);
     }
-    auto [it, fresh] =
-        groupOf.try_emplace({candidateIndex, std::move(changed)}, groups.size());
+    auto [it, fresh] = groupOf.try_emplace({candidateIndex, std::move(changed)},
+                                           groups.size());
     if (fresh)
       groups.push_back({candidateIndex, newSubgraph, {}});
     Request &R = groups[it->second].requests.emplace_back();

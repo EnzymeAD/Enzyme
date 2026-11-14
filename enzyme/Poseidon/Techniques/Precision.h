@@ -125,8 +125,7 @@ public:
   // Memoizes the cost delta of each (candidate, steps) request.
   void priceRequests(
       Session &S,
-      llvm::ArrayRef<std::pair<size_t, llvm::ArrayRef<SolutionStep>>>
-          requests);
+      llvm::ArrayRef<std::pair<size_t, llvm::ArrayRef<SolutionStep>>> requests);
   RepriceKey repriceKey(size_t candidateIndex,
                         llvm::ArrayRef<SolutionStep> steps) const;
   double getAdjustedAccCostDelta(
