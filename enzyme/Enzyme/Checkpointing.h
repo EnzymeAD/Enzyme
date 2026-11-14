@@ -29,7 +29,9 @@
 // mode does not differentiate the loop body: its augmented forward pass and
 // its reverse pass are generated here, as calls into a driver that asks the
 // scheme for actions and runs the augmented forward and reverse passes of one
-// step at a time.
+// step at a time. Forward mode over those passes (Hessian-vector products)
+// runs the same driver on the tangents of the step and of its reverse
+// derivative, with the tangents of the regions in each snapshot.
 //
 //===----------------------------------------------------------------------===//
 
@@ -66,5 +68,17 @@ llvm::Function *createCheckpointGradient(EnzymeLogic &Logic,
                                          RequestContext context,
                                          const ReverseCacheKey &key,
                                          TypeAnalysis &TA);
+
+/// The forward-mode derivative of `pass`, a pass made by one of the above:
+/// the same schedule run on the tangents of the step and of its reverse
+/// derivative, with snapshots that hold the tangents of the regions too.
+/// It takes the arguments of the pass, each followed by its tangent (or
+/// `width` of them) if it is active, and returns the handle of an augmented
+/// pass if `returnUsed`.
+llvm::Function *createCheckpointForward(
+    EnzymeLogic &Logic, RequestContext context, llvm::Function *pass,
+    DIFFE_TYPE retType, llvm::ArrayRef<DIFFE_TYPE> constant_args,
+    TypeAnalysis &TA, bool returnUsed, bool runtimeActivity, bool strongZero,
+    unsigned width);
 
 #endif // ENZYME_CHECKPOINTING_H
