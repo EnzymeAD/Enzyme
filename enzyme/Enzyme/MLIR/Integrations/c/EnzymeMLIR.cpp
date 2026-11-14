@@ -22,18 +22,7 @@
 MLIR_DEFINE_CAPI_DIALECT_REGISTRATION(Enzyme, enzyme,
                                       mlir::enzyme::EnzymeDialect)
 
-void enzymeRegisterPasses(void) {
-  mlir::enzyme::registerDifferentiatePass();
-  mlir::enzyme::registerExpandImpulsePass();
-  mlir::enzyme::registerBatchPass();
-  mlir::enzyme::registerBatchDiffPass();
-  mlir::enzyme::registerDifferentiateWrapperPass();
-  mlir::enzyme::registerInlineEnzymeIntoRegionPass();
-  mlir::enzyme::registerOutlineEnzymeFromRegionPass();
-  mlir::enzyme::registerPrintActivityAnalysisPass();
-  mlir::enzyme::registerPrintAliasAnalysisPass();
-  mlir::enzyme::registerRemoveUnusedEnzymeOpsPass();
-}
+void enzymeRegisterPasses(void) { mlir::enzyme::registerenzymePasses(); }
 
 void enzymeRegisterDialectExtensions(MlirDialectRegistry registry) {
   mlir::enzyme::registerCoreDialectAutodiffInterfaces(*unwrap(registry));
