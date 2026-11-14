@@ -315,6 +315,8 @@ static void printCandidates(Session &S, FunctionFPState &st) {
 static void priceCandidates(FunctionFPState &st) {
   for (SiteUnit *unit : st.units)
     unit->price();
+  for (Subgraph &subgraph : st.subgraphs)
+    subgraph.samples.reset();
 }
 
 // Candidates are priced, and repriced by the solve, on scratch copies of the

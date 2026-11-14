@@ -122,6 +122,13 @@ public:
   double getAccCostDelta(size_t candidateIndex);
   double getAdjustedCompCostDelta(Session &S, size_t candidateIndex,
                                   llvm::ArrayRef<SolutionStep> steps);
+  // Memoizes the cost delta of each (candidate, steps) request.
+  void priceRequests(
+      Session &S,
+      llvm::ArrayRef<std::pair<size_t, llvm::ArrayRef<SolutionStep>>>
+          requests);
+  RepriceKey repriceKey(size_t candidateIndex,
+                        llvm::ArrayRef<SolutionStep> steps) const;
   double getAdjustedAccCostDelta(
       size_t candidateIndex, llvm::ArrayRef<SolutionStep> steps,
       std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>>
@@ -137,6 +144,7 @@ public:
   // Priced over the outputs the algebraic units of its subgraph leave.
   bool pricedAlone() const override { return false; }
   size_t memoizedPricings() const override { return compCostDeltaCache.size(); }
+  void priceAhead(llvm::ArrayRef<llvm::ArrayRef<SolutionStep>> priors) override;
   bool consumesFootprint() const override { return false; }
   bool pricedAgainst(const OptimizationUnit &earlier) const override;
   const llvm::SetVector<llvm::Instruction *> *footprint() const override;

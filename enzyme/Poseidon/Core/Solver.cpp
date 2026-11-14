@@ -334,21 +334,37 @@ void solveExact(ArrayRef<OptimizationUnit *> units, const CostScale &scale,
       for (const auto &[c, e] : bucket)
         insert(into, c, e.acc, e.steps);
     }
+    // Everything a unit reads is in the signature, so one entry stands for
+    // the bucket; the unit extends a bucket it is not excluded from, priced
+    // against the canonical units of that entry's steps.
+    SmallVector<std::optional<SmallVector<SolutionStep>>, 0> pricedFor;
+    SmallVector<ArrayRef<SolutionStep>, 0> priors;
     for (const auto &[sig, bucket] : table) {
+      std::optional<SmallVector<SolutionStep>> &priced =
+          pricedFor.emplace_back();
       if (unit.numCandidates() == 0)
-        break;
-      // Everything a unit reads is in the signature, so one entry stands for
-      // the bucket.
+        continue;
       const SmallVector<SolutionStep> &rep = bucket.begin()->second.steps;
       if (llvm::any_of(rep, [&](const SolutionStep &s) {
             return excludes(unit, *s.unit);
           }))
         continue;
-      SmallVector<SolutionStep> priced;
+      priced.emplace();
       for (const SolutionStep &s : rep) {
         int u = canon[unitIndex.find(s.unit)->second];
-        priced.push_back(SolutionStep(units[u], s.candidateIndex));
+        priced->push_back(SolutionStep(units[u], s.candidateIndex));
       }
+    }
+    for (const auto &priced : pricedFor)
+      if (priced)
+        priors.push_back(*priced);
+    if (!priors.empty())
+      unit.priceAhead(priors);
+    for (const auto &[entry, pricedSteps] : llvm::zip(table, pricedFor)) {
+      if (!pricedSteps)
+        continue;
+      const auto &[sig, bucket] = entry;
+      const SmallVector<SolutionStep> &priced = *pricedSteps;
       SmallVector<DPCost> dc;
       SmallVector<double> da;
       for (size_t i = 0; i < unit.numCandidates(); ++i) {

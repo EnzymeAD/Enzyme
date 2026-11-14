@@ -3,6 +3,7 @@
 // POSEIDON_ACCURACY_MODEL_FILES names (CMakeLists.txt), so they hold only what
 // decides the numbers it returns; storing and finding those numbers is
 // MatmulAccuracyMemo's.
+#include "Core/Parallel.h"
 #include "Core/UniformReal.h"
 #include "MatmulAccuracyMemo.h"
 #include "MatmulInternal.h"
@@ -14,8 +15,6 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/Format.h"
-#include "llvm/Support/Parallel.h"
-#include "llvm/Support/Threading.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
@@ -263,10 +262,8 @@ public:
       streams.push_back(rng);
       rng.discard(draws);
     }
-    // The executor llvm::parallelFor runs on takes its thread count when it
-    // starts, at the first parallel loop of the compile.
-    parallel::strategy = hardware_concurrency(O.Model.Threads);
-    parallelFor(0, numSamples, [this](size_t s) { runSample(s); });
+    forEachIndex(O.Model.Threads, numSamples,
+                 [this](size_t s) { runSample(s); });
   }
 
   // The error of parts[j], reduced over the samples in their order.
