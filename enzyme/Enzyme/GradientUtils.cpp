@@ -3812,6 +3812,7 @@ BasicBlock *GradientUtils::prepRematerializedLoopEntry(LoopContext &lc) {
                                             orig->getCalledOperand(), args,
                                             Defs, orig->getName() + "'mi");
                 cast<CallInst>(anti)->setAttributes(orig->getAttributes());
+                dropUninitializedAllocKind(cast<CallInst>(anti));
                 cast<CallInst>(anti)->setCallingConv(orig->getCallingConv());
                 cast<CallInst>(anti)->setDebugLoc(
                     getNewFromOriginal(I.getDebugLoc()));
@@ -3855,7 +3856,10 @@ BasicBlock *GradientUtils::prepRematerializedLoopEntry(LoopContext &lc) {
               applyChainRule(
                   NB,
                   [&](Value *anti) {
-                    zeroKnownAllocation(NB, anti, args, funcName, TLI, orig);
+                    // An alloca replacement above dropped the bundles.
+                    zeroKnownAllocation(NB, anti, args, funcName, TLI, orig,
+                                        /*skipJuliaGCPointers*/
+                                        !hasMetadata(orig, "enzyme_fromstack"));
                   },
                   anti);
             }
