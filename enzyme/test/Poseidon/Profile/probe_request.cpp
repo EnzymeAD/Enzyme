@@ -19,6 +19,9 @@
 // RUN: FileCheck --check-prefix=MEASURED %s < %t/tool/preprocess__Z4wavePKdPdi_poseidon_body.fpprofile
 // RUN: not %poseidon_probe 2>&1 | FileCheck --check-prefix=USAGE %s
 
+// RUN: env POSEIDON_PROBE=child POSEIDON_PROFILE_DIR=%t/child %t/gen %t/child.runs > /dev/null
+// RUN: ls %t/child | FileCheck --check-prefix=CHILD %s
+
 // RUN: not %poseidon_clangxx -O2 -g -poseidon-profile-use=%t/plain -poseidon-tau=1e-6 -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-enable-herbie=0 -poseidon-cache=%t/c -c %s -o %t/use.o 2> %t/use.err
 // RUN: FileCheck --check-prefix=USE %s < %t/use.err
 
@@ -34,7 +37,8 @@
 // Not asked, it runs once, says in one line what measuring would take, and
 // marks the profiles so that profile use stops on them rather than solving
 // them as if no metric had been declared. Declining with POSEIDON_PROBE=0 is
-// the way to have exactly that. The program counts its own runs.
+// the way to have exactly that. The program counts its own runs. A run of
+// the measurement writes the metric and no profile.
 // The host target has no perturbation hook, so what a measurement finds here
 // is not checked, only that it ran. The metric's name holds a space, which
 // the measurement runs have to read back.
@@ -91,6 +95,12 @@ int main(int argc, char **argv) {
 // MEASURE: [probe] measuring the condition numbers of metric "y sum" at 2 sites: 3 more runs of this program (run it without POSEIDON_PROBE=1 to skip)
 // MEASURE-NEXT: [probe] baseline run 2 -> noise floor
 // MEASURE-NOT: not measured
+// MEASURE: [probe] profile run: {{[0-9.]+}} s
+// MEASURE-NEXT: [probe] condition-number measurement: 3 runs, {{[0-9.]+}} s
+
+// CHILD-NOT: fpprofile
+// CHILD: metric.txt
+// CHILD-NOT: fpprofile
 
 // MEASURED: Kappa =
 // MEASURED-NOT: unmeasured

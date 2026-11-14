@@ -189,6 +189,8 @@ __device__ inline void atomicAddFinite(double *addr, double val) {
 // value probes use, so the geometry lands in the profiled function's own record
 // rather than in a module-global bucket shared with every other kernel.
 extern "C" __device__ POSEIDON_PROBE_ATTRS void poseidonProfileBlockDimsCUDA(const char *funcName) {
+  if (__poseidon_profile_table.metricOnly)
+    return;
   if (threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0) {
     const PoseidonCUDAProfileTable &T = __poseidon_profile_table;
     int fi = poseidonFuncIdx(funcName);
@@ -205,6 +207,8 @@ extern "C" __device__ POSEIDON_PROBE_ATTRS void poseidonProfileBlockDimsCUDA(con
 // first writer wins.
 extern "C" __device__ POSEIDON_PROBE_ATTRS void poseidonProfileStaticCUDA(const char *funcName,
                                                  const char *text) {
+  if (__poseidon_profile_table.metricOnly)
+    return;
   if (threadIdx.x != 0 || threadIdx.y != 0 || threadIdx.z != 0)
     return;
   if (!text || !text[0])
@@ -233,6 +237,8 @@ extern "C" __device__ POSEIDON_PROBE_ATTRS void poseidonLogValueCUDA(const char 
                                               double res, size_t numOperands,
                                               double *operands) {
   const PoseidonCUDAProfileTable &T = __poseidon_profile_table;
+  if (T.metricOnly)
+    return;
   if (T.funcReg && idx >= T.slotCount) {
     printf("Poseidon FPProfiler: probe idx %llu >= "
            "POSEIDON_PROFILE_MAX_SLOTS=%llu. "
@@ -269,6 +275,8 @@ extern "C" __device__ POSEIDON_PROBE_ATTRS void poseidonLogGradCUDA(const char *
                                              size_t idx, double value,
                                              double grad) {
   const PoseidonCUDAProfileTable &T = __poseidon_profile_table;
+  if (T.metricOnly)
+    return;
   if (T.funcReg && idx >= T.slotCount) {
     printf("Poseidon FPProfiler: probe idx %llu >= "
            "POSEIDON_PROFILE_MAX_SLOTS=%llu. "

@@ -351,44 +351,10 @@ static void poseidonBindModule(const void *table) {
   POSEIDON_CUDA_OK(cudaMemcpyToSymbol(table, &g_table, sizeof(g_table)));
 }
 
-// Called by the module constructor of every translation unit whose device
-// code was compiled for profile generation; a unit loaded after main started
-// is bound here, the others when main starts.
-extern "C" void __poseidon_profile_register_module(const void *table) {
-  poseidonModuleTables().push_back(table);
-  if (g_cudaInitDone)
-    poseidonBindModule(table);
-}
-
-extern "C" void __poseidon_profile_init_cuda() {
-  if (g_cudaInitDone)
-    return;
-  g_cudaInitDone = true;
-
-  if (const char *envPath = getenv("POSEIDON_PROFILE_DIR"))
-    profileDir = envPath;
-
-  size_t count = readPositiveEnv("POSEIDON_PROFILE_MAX_SLOTS",
-                                 POSEIDON_DEFAULT_MAX_SLOTS);
-  size_t nfuncs =
-      readPositiveEnv("POSEIDON_PROFILE_MAX_FUNCS", POSEIDON_DEFAULT_MAX_FUNCS);
-
-  // A profiled kernel's reverse pass caches what it cannot recompute in the
-  // device heap, which CUDA sizes at 8 MiB and an application sizes for its
-  // own kernels. It can only be resized before the first kernel that
-  // allocates, so it is raised here, and never lowered.
-  size_t heapBytes =
-      readPositiveEnv("POSEIDON_PROFILE_HEAP_MB", POSEIDON_DEFAULT_HEAP_MB)
-      << 20;
-  POSEIDON_CUDA_OK(cudaDeviceGetLimit(&g_heapBytes, cudaLimitMallocHeapSize));
-  if (g_heapBytes < heapBytes) {
-    POSEIDON_CUDA_OK(cudaDeviceSetLimit(cudaLimitMallocHeapSize, heapBytes));
-    g_heapBytes = heapBytes;
-  }
-
-  // Function registry: pointer keys, names, and per-function launch geometry.
-  // Allocated up front (device code cannot allocate) and zeroed, which is also
-  // the "unclaimed" state for every field.
+// The function registry (pointer keys, names, per-function launch geometry)
+// and the slots the probes record into. Allocated up front (device code cannot
+// allocate) and zeroed, which is also the "unclaimed" state for every field.
+static void allocateTables(size_t nfuncs, size_t count) {
   const size_t regBytes = nfuncs * sizeof(const char *);
   const size_t nameBytes = nfuncs * POSEIDON_FUNCNAME_MAXLEN;
   const size_t dimBytes = nfuncs * 3 * sizeof(uint32_t);
@@ -443,6 +409,53 @@ extern "C" void __poseidon_profile_init_cuda() {
   g_table.slots = g_devSlots;
   g_table.slotCount = count;
 
+  // Zero IS the initial state of every field (see doubleToOrderedUint64Min),
+  // so no init kernel is launched from this static initializer.
+  POSEIDON_CUDA_OK(cudaMemset(g_devSlots, 0, bytes));
+}
+
+// Called by the module constructor of every translation unit whose device
+// code was compiled for profile generation; a unit loaded after main started
+// is bound here, the others when main starts.
+extern "C" void __poseidon_profile_register_module(const void *table) {
+  poseidonModuleTables().push_back(table);
+  if (g_cudaInitDone)
+    poseidonBindModule(table);
+}
+
+extern "C" void __poseidon_profile_init_cuda() {
+  if (g_cudaInitDone)
+    return;
+  g_cudaInitDone = true;
+
+  if (const char *envPath = getenv("POSEIDON_PROFILE_DIR"))
+    profileDir = envPath;
+
+  size_t count = readPositiveEnv("POSEIDON_PROFILE_MAX_SLOTS",
+                                 POSEIDON_DEFAULT_MAX_SLOTS);
+  size_t nfuncs =
+      readPositiveEnv("POSEIDON_PROFILE_MAX_FUNCS", POSEIDON_DEFAULT_MAX_FUNCS);
+
+  // A profiled kernel's reverse pass caches what it cannot recompute in the
+  // device heap, which CUDA sizes at 8 MiB and an application sizes for its
+  // own kernels. It can only be resized before the first kernel that
+  // allocates, so it is raised here, and never lowered.
+  size_t heapBytes =
+      readPositiveEnv("POSEIDON_PROFILE_HEAP_MB", POSEIDON_DEFAULT_HEAP_MB)
+      << 20;
+  POSEIDON_CUDA_OK(cudaDeviceGetLimit(&g_heapBytes, cudaLimitMallocHeapSize));
+  if (g_heapBytes < heapBytes) {
+    POSEIDON_CUDA_OK(cudaDeviceSetLimit(cudaLimitMallocHeapSize, heapBytes));
+    g_heapBytes = heapBytes;
+  }
+
+  // A run of the condition-number measurement reports only the metric, and
+  // the tables would cost each of the runs sharing the device their memory.
+  const char *probeRequest = getenv("POSEIDON_PROBE");
+  g_table.metricOnly = probeRequest && !strcmp(probeRequest, "child");
+  if (!g_table.metricOnly)
+    allocateTables(nfuncs, count);
+
   // Condition-number probe (see poseidonProbePerturbCUDA): one site id per run;
   // eps == 0 (default) disables the hook.
   {
@@ -479,9 +492,6 @@ extern "C" void __poseidon_profile_init_cuda() {
     g_table.probeEps = probeEps;
   }
 
-  // Zero IS the initial state of every field (see doubleToOrderedUint64Min),
-  // so no init kernel is launched from this static initializer.
-  POSEIDON_CUDA_OK(cudaMemset(g_devSlots, 0, bytes));
   for (const void *table : poseidonModuleTables())
     poseidonBindModule(table);
   cudaDeviceSynchronize();
