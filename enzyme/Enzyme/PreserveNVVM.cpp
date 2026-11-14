@@ -1110,8 +1110,8 @@ bool preserveNVVM(bool Begin, Module &M,
 
       Implements[nvname] = std::make_pair(mathname, llname);
     }
-    // Metal AIR (air.<name>.f32 / air.<name>.f64 -- Metal has no long
-    // double, so there is no third T variant here).
+    // Metal AIR (air.<name>.f32 / air.<name>.f64, plus air.<name>.f16 when
+    // T == "f" -- Metal has no long double, so there is no third T variant).
     // tanh/cosh/sinh (and their fast_ forms) are deliberately excluded here:
     // CallPattern matching (see InstructionDerivatives.td) runs against this
     // same enzyme_math-substituted name, so tagging air.tanh.f32 here would
@@ -1119,14 +1119,21 @@ bool preserveNVVM(bool Begin, Module &M,
     // companion is hardcoded to the libm name "coshf", not "air.cosh.f32" --
     // rather than through the dedicated air.tanh.f32 CallPattern that exists
     // specifically to keep the companion AIR-native.
-    for (std::string name : {"sin", "cos", "tan", "asin", "acos", "atan",
-                             "atan2", "exp", "exp2", "log", "log2", "log10",
-                             "log1p", "expm1", "sqrt", "cbrt", "pow", "fma"}) {
+    for (std::string name :
+         {"sin",   "cos",   "tan",   "asin",  "acos",  "atan",
+          "atan2", "asinh", "acosh", "atanh", "sinpi", "cospi",
+          "exp",   "exp2",  "log",   "log2",  "log10", "log1p",
+          "expm1", "sqrt",  "rsqrt", "cbrt",  "pow",   "fma"}) {
       std::string airname = "air." + name + (T == "f" ? ".f32" : ".f64");
       std::string llname = "llvm." + name + "." + (T == "f" ? "f32" : "f64");
       std::string mathname = name + T;
 
       Implements[airname] = std::make_pair(mathname, llname);
+      if (T == "f") {
+        std::string air16 = "air." + name + ".f16";
+        std::string ll16 = "llvm." + name + ".f16";
+        Implements[air16] = std::make_pair(mathname, ll16);
+      }
     }
     // Metal AIR fast-math variants (air.fast_<name>.f32 -- Metal only
     // exposes fast math for float). These map to the same mathname/llname
@@ -1137,8 +1144,9 @@ bool preserveNVVM(bool Begin, Module &M,
     // their non-fast forms above.
     if (T == "f") {
       for (std::string name :
-           {"log", "exp", "sin", "cos", "tan", "sqrt", "asin", "acos", "atan",
-            "atan2", "acosh", "asinh"}) {
+           {"log",  "log2", "log10", "exp",   "exp2",  "pow",   "sin",
+            "cos",  "tan",  "sinpi", "cospi", "sqrt",  "rsqrt", "asin",
+            "acos", "atan", "atan2", "acosh", "asinh", "atanh"}) {
         std::string airname = "air.fast_" + name + ".f32";
         std::string llname = "llvm." + name + ".f32";
         std::string mathname = name + T;
@@ -1163,7 +1171,11 @@ bool preserveNVVM(bool Begin, Module &M,
         // As a side effect, enforces arguments
         // cannot be erased.
         F.addFnAttr("implements", found->second.second);
-        F.addFnAttr("implements2", found->second.first);
+        // Half-precision AIR functions share mathname with f32 for enzyme_math
+        // dispatch; omit implements2 so ReplaceFunctionImplementation never
+        // replaces float libm calls with half-precision AIR functions.
+        if (!endsWith(F.getName(), ".f16"))
+          F.addFnAttr("implements2", found->second.first);
         F.addFnAttr("enzyme_math", found->second.first);
         changed |= preserveLinkage(Begin, F);
       }

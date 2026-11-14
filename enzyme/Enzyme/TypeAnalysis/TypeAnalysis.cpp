@@ -102,6 +102,8 @@ const llvm::StringMap<llvm::Intrinsic::ID> LIBM_FUNCTIONS = {
     {"sincn", Intrinsic::not_intrinsic},
     {"cos", Intrinsic::cos},
     {"sin", Intrinsic::sin},
+    {"cospi", Intrinsic::not_intrinsic},
+    {"sinpi", Intrinsic::not_intrinsic},
 #if LLVM_VERSION_MAJOR >= 19
     {"tan", Intrinsic::tan},
     {"acos", Intrinsic::acos},
