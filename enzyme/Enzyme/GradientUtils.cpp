@@ -5923,12 +5923,13 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     subType = attr.getValueAsType();
 
     auto rule1 = [&]() {
-      AllocaInst *antialloca = bb.CreateAlloca(
-          subType, cast<PointerType>(oval->getType())->getPointerAddressSpace(),
-          nullptr, oval->getName() + "'ipa");
+      unsigned AS =
+          cast<PointerType>(oval->getType())->getPointerAddressSpace();
+      AllocaInst *antialloca =
+          bb.CreateAlloca(subType, AS, nullptr, oval->getName() + "'ipa");
 
       auto dst_arg =
-          bb.CreateBitCast(antialloca, getInt8PtrTy(oval->getContext()));
+          bb.CreateBitCast(antialloca, getInt8PtrTy(oval->getContext(), AS));
       auto val_arg = ConstantInt::get(Type::getInt8Ty(oval->getContext()), 0);
       auto len_arg = ConstantInt::get(
           Type::getInt64Ty(oval->getContext()),
@@ -6238,22 +6239,51 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     return shadow;
   } else if (auto arg = dyn_cast<ConstantExpr>(oval)) {
     IRBuilder<> bb(inversionAllocs);
-    if (arg->getOpcode() == Instruction::Add) {
-      if (isa<ConstantInt>(arg->getOperand(0))) {
-        auto rule = [&arg](Value *ip) {
-          Constant *invops[2] = {arg->getOperand(0), cast<Constant>(ip)};
-          return arg->getWithOperands(invops);
-        };
-        auto ip = invertPointerM(arg->getOperand(1), bb, TT);
-        return applyChainRule(arg->getType(), bb, rule, ip);
+    if (arg->getOpcode() == Instruction::Add ||
+        arg->getOpcode() == Instruction::Sub) {
+      bool isAdd = arg->getOpcode() == Instruction::Add;
+      Constant *op0 = arg->getOperand(0);
+      Constant *op1 = arg->getOperand(1);
+      bool const0 = isa<ConstantInt>(op0) ||
+                    (isAdd && isConstantValue(op0) && !isConstantValue(op1));
+      bool const1 = isa<ConstantInt>(op1) ||
+                    (!const0 && isConstantValue(op1) && !isConstantValue(op0));
+      if (isAdd && const0) {
+        auto ip = invertPointerM(op1, bb, TT);
+        if (isa<Constant>(ip)) {
+          auto rule = [&arg, op0](Value *ip) {
+            Constant *invops[2] = {op0, cast<Constant>(ip)};
+            return arg->getWithOperands(invops);
+          };
+          return applyChainRule(arg->getType(), bb, rule, ip);
+        } else {
+          auto rule = [&](Value *ip) {
+            return bb.CreateAdd(op0, ip, arg->getName() + "'ipa");
+          };
+          Value *shadow = applyChainRule(arg->getType(), bb, rule, ip);
+          invertedPointers.insert(std::make_pair(
+              (const Value *)oval, InvertedPointerVH(this, shadow)));
+          return shadow;
+        }
       }
-      if (isa<ConstantInt>(arg->getOperand(1))) {
-        auto rule = [&arg](Value *ip) {
-          Constant *invops[2] = {cast<Constant>(ip), arg->getOperand(1)};
-          return arg->getWithOperands(invops);
-        };
-        auto ip = invertPointerM(arg->getOperand(0), bb, TT);
-        return applyChainRule(arg->getType(), bb, rule, ip);
+      if (const1) {
+        auto ip = invertPointerM(op0, bb, TT);
+        if (isa<Constant>(ip)) {
+          auto rule = [&arg, op1](Value *ip) {
+            Constant *invops[2] = {cast<Constant>(ip), op1};
+            return arg->getWithOperands(invops);
+          };
+          return applyChainRule(arg->getType(), bb, rule, ip);
+        } else {
+          auto rule = [&](Value *ip) {
+            return isAdd ? bb.CreateAdd(ip, op1, arg->getName() + "'ipa")
+                         : bb.CreateSub(ip, op1, arg->getName() + "'ips");
+          };
+          Value *shadow = applyChainRule(arg->getType(), bb, rule, ip);
+          invertedPointers.insert(std::make_pair(
+              (const Value *)oval, InvertedPointerVH(this, shadow)));
+          return shadow;
+        }
       }
     }
     auto ip = invertPointerM(arg->getOperand(0), bb, TT);
@@ -6261,7 +6291,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     if (arg->isCast()) {
 #if LLVM_VERSION_MAJOR < 17
       if (auto PT = dyn_cast<PointerType>(arg->getType())) {
-        if (isConstantValue(arg->getOperand(0)) &&
+        if (PT->getContext().supportsTypedPointers() &&
+            isConstantValue(arg->getOperand(0)) &&
             PT->getPointerElementType()->isFunctionTy()) {
           goto end;
         }
@@ -6302,14 +6333,21 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       } else {
         SmallVector<Value *, 4> invertargs;
         for (unsigned i = 0; i < arg->getNumOperands() - 1; ++i) {
-          Value *b = getNewFromOriginal(arg->getOperand(1 + i));
+          Value *op = arg->getOperand(1 + i);
+          Value *b = (isa<Constant>(op) && !isa<BlockAddress>(op))
+                         ? op
+                         : getNewFromOriginal(op);
           invertargs.push_back(b);
         }
 
-        auto rule = [&bb, &arg, &invertargs](Value *ip) {
-          // TODO mark this the same inbounds as the original
-          return bb.CreateGEP(cast<GEPOperator>(ip)->getSourceElementType(), ip,
-                              invertargs, arg->getName() + "'ipg");
+        auto *gep = cast<GEPOperator>(arg);
+        Type *srcElemTy = gep->getSourceElementType();
+        bool inBounds = gep->isInBounds();
+        auto rule = [&bb, arg, srcElemTy, inBounds, &invertargs](Value *ip) {
+          return inBounds ? bb.CreateInBoundsGEP(srcElemTy, ip, invertargs,
+                                                 arg->getName() + "'ipg")
+                          : bb.CreateGEP(srcElemTy, ip, invertargs,
+                                         arg->getName() + "'ipg");
         };
 
         Value *shadow = applyChainRule(arg->getType(), bb, rule, ip);
@@ -6713,8 +6751,9 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     }
 
     auto rule2 = [&](Value *antialloca) {
-      auto dst_arg =
-          bb.CreateBitCast(antialloca, getInt8PtrTy(oval->getContext()));
+      auto dst_arg = bb.CreateBitCast(
+          antialloca, getInt8PtrTy(oval->getContext(),
+                                   inst->getType()->getPointerAddressSpace()));
       auto val_arg = ConstantInt::get(Type::getInt8Ty(oval->getContext()), 0);
       auto len_arg = bb.CreateMul(
           bb.CreateZExtOrTrunc(asize, Type::getInt64Ty(oval->getContext())),
