@@ -9,6 +9,7 @@
 
 #include "Interfaces/GradientUtilsReverse.h"
 #include "Dialect/Ops.h"
+#include "Interfaces/AutoDiffControlFlowInterface.h"
 #include "Interfaces/AutoDiffOpInterface.h"
 #include "Interfaces/AutoDiffTypeInterface.h"
 #include "mlir/IR/Matchers.h"
@@ -52,7 +53,8 @@ Type mlir::enzyme::MGradientUtilsReverse::getIndexCacheType() {
 }
 
 Type mlir::enzyme::MGradientUtilsReverse::getIndexType() {
-  return mlir::IntegerType::get(initializationBlock->begin()->getContext(), 32);
+  return getAutoDiffControlFlow(newFunc.getOperation())
+      .getBranchIndexType(newFunc.getContext());
 }
 
 Value mlir::enzyme::MGradientUtilsReverse::insertInit(Type t) {
