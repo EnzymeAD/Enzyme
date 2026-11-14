@@ -154,9 +154,8 @@ void forEachIndex(unsigned Threads, size_t N, function_ref<void(size_t)> Fn) {
 void forEachBlock(unsigned Threads, size_t N, size_t Grain,
                   function_ref<void(size_t, size_t)> Fn) {
   const size_t Blocks = (N + Grain - 1) / Grain;
-  forEachIndex(Threads, Blocks, [&](size_t B) {
-    Fn(B * Grain, std::min(N, (B + 1) * Grain));
-  });
+  forEachIndex(Threads, Blocks,
+               [&](size_t B) { Fn(B * Grain, std::min(N, (B + 1) * Grain)); });
 }
 
 } // namespace poseidon

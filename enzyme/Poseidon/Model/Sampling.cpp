@@ -276,8 +276,7 @@ void getSampledPoints(
     const double missing = numSamples - sampledPoints.size();
     const double kept = (sampledPoints.size() + 1.0) / (drawn + 1.0);
     const size_t n = std::min<size_t>(
-        budget - drawn,
-        std::max(64.0, std::ceil(1.25 * missing / kept)));
+        budget - drawn, std::max(64.0, std::ceil(1.25 * missing / kept)));
     leafValues.resize(n * numLeaves);
     for (size_t i = 0; i < n; ++i)
       for (auto [l, entry] : enumerate(leafBox))
@@ -331,8 +330,7 @@ SubgraphSamples::~SubgraphSamples() = default;
 ArrayRef<SubgraphSamples::Point> SubgraphSamples::points() {
   if (!sampled) {
     sampled = true;
-    CancellationPlan plan =
-        buildCancellationPlan(O, subgraph, valueToNodeMap);
+    CancellationPlan plan = buildCancellationPlan(O, subgraph, valueToNodeMap);
     getSampledPoints(O, subgraph.inputs.getArrayRef(), valueToNodeMap,
                      symbolToValueMap, base, &plan);
   }

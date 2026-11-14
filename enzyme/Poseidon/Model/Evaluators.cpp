@@ -109,7 +109,7 @@ bool FPEvaluator::evaluateExpansionNode(const FPNode *node, unsigned n) {
                    : expansionFma(operand(0), operand(1), operand(2));
   limbs[node] = r;
   cache.try_emplace(node, node->dtype == "f32" ? (double)expansionToF32(r)
-                                           : expansionToF64(r));
+                                               : expansionToF64(r));
   return true;
 }
 

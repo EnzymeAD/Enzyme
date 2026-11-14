@@ -482,7 +482,8 @@ void priceOnPoints(const Options &O, ElementPricing &E,
     double realVal = values[i];
     double goldVal = E.ref->gold[i];
     if (std::isfinite(goldVal) && goldVal != 0.0) {
-      double origRel = std::fabs(E.ref->value[i] - goldVal) / std::fabs(goldVal);
+      double origRel =
+          std::fabs(E.ref->value[i] - goldVal) / std::fabs(goldVal);
       double candRel = std::fabs(realVal - goldVal) / std::fabs(goldVal);
       if (origRel < 1.0 && !(candRel < 1.0))
         ++broken;
@@ -655,7 +656,8 @@ void chargeWorstArm(const Options &O, ElementPricing &E) {
                     .str();
         continue;
       }
-      worst = std::max(worst, E.origCost + (st.candSum - st.origSum) / st.count);
+      worst =
+          std::max(worst, E.origCost + (st.candSum - st.origSum) / st.count);
     }
   if (O.Diagnostics.Print)
     raw_string_ostream(E.diag)
@@ -773,8 +775,8 @@ void setUnifiedAccuracyCost(
   SmallVector<CandidatePricing, 4> pricings(CO.candidates.size());
   SmallVector<ElementPricing *, 0> allElements;
   for (auto [candidate, P] : llvm::zip(CO.candidates, pricings)) {
-    P.parsed = parseHerbieExpr(candidate.expr, valueToNodeMap,
-                               symbolToValueMap, nullptr, &CO.subgraph->inputs);
+    P.parsed = parseHerbieExpr(candidate.expr, valueToNodeMap, symbolToValueMap,
+                               nullptr, &CO.subgraph->inputs);
     SmallVector<std::shared_ptr<FPNode>, 1> elements;
     if (CO.isArray()) {
       if (P.parsed->op != "array" ||
@@ -856,11 +858,11 @@ void setUnifiedAccuracyCost(
                      << *P.strayElement
                      << " reads a value its output does not\n";
       discardCandidate = true;
-      CO.dropped.push_back({candidate.expr,
-                            formatv("its element {0} reads a value that "
-                                    "output does not",
-                                    *P.strayElement)
-                                .str()});
+      CO.dropped.push_back(
+          {candidate.expr, formatv("its element {0} reads a value that "
+                                   "output does not",
+                                   *P.strayElement)
+                               .str()});
     }
     if (CO.isArray() && O.Diagnostics.Print && !discardCandidate)
       llvm::errs() << "[poseidon] array candidate per element (cand/orig):"
