@@ -950,6 +950,18 @@ void callLasclHelper(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
                      llvm::ArrayRef<llvm::Value *> args,
                      llvm::ArrayRef<llvm::OperandBundleDef> bundles);
 
+/// Emit an inline helper computing Y += alpha * X on a general or triangular
+/// matrix via BLAS axpy calls, respecting CBLAS row/col major layout, Fortran
+/// by-ref, cuBLAS, and Julia calling conventions.
+void callAxpyMatHelper(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
+                       llvm::StringRef calledName, llvm::Type *fpType,
+                       llvm::IntegerType *intType, llvm::Type *blasIntType,
+                       llvm::Value *handle, llvm::Value *layout,
+                       llvm::Value *uplo, llvm::Value *m, llvm::Value *n,
+                       llvm::Value *alpha, llvm::Value *X, llvm::Value *ldx,
+                       llvm::Value *Y, llvm::Value *ldy, bool julia_decl,
+                       llvm::ArrayRef<llvm::OperandBundleDef> bundles);
+
 void callSPMVDiagUpdate(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
                         llvm::IntegerType *IT, llvm::Type *BlasCT,
                         llvm::Type *BlasFPT, llvm::Type *BlasPT,

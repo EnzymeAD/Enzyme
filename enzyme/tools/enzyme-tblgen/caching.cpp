@@ -99,7 +99,8 @@ void emit_input_caching(const TGPattern &pattern, raw_ostream &os) {
          << "  // since one rule uses input<" << toCache.getKey() << ">\n"
          << "  if (active_" << name << ") {\n"
          << "    need_" << toCache.getKey() << " = true;\n"
-         << "    cache_" << toCache.getKey() << " = true;\n"
+         << "    if (cacheMode)\n"
+         << "      cache_" << toCache.getKey() << " = true;\n"
          << "  }\n";
     }
 

@@ -1983,6 +1983,56 @@ void emit_dag(bool forward, Twine resultVarName, const DagInit *ruleDag,
     os << "        }\n";
     return;
   }
+  if (Def->isSubClassOf("AxpyMat")) {
+    if (ruleDag->getNumArgs() != 8)
+      PrintFatalError(pattern.getLoc(),
+                      "only 8-arg AxpyMat operands supported");
+    if (forward)
+      emit_if_rule_condition(pattern, ruleDag, "", "      ", os);
+    os << "        {\n";
+    os << "      // AxpyMat\n";
+    if (!forward && !runtimeChecked)
+      emit_runtime_condition(ruleDag, argName, "        ", "Builder2", false,
+                             os);
+    for (size_t i = 0; i < ruleDag->getNumArgs(); i++) {
+      os << "        SmallVector<Value *, 2> axpy_arg_" << i << ";\n";
+      os << "        for (auto v : ";
+      rev_call_arg(forward, ruleDag, pattern, i, os, vars);
+      os << ") axpy_arg_" << i << ".push_back(v);\n";
+    }
+    os << "        const auto Defs = gutils->getInvertedBundles(&call, {"
+       << ValueType_helper(pattern, actArg, ruleDag)
+       << "}, Builder2, /* lookup */ " << (!forward) << ");\n";
+    os << "        Value *axpy_handle = cublas ? "
+       << (forward ? "arg_handle" : "lookup(arg_handle, Builder2)")
+       << " : nullptr;\n";
+    os << "        Value *axpy_layout = cblas ? axpy_arg_0[0] : nullptr;\n";
+    os << "        Value *axpy_uplo = load_if_ref(Builder2, "
+          "cublas ? (Type *)cublasEnumType : (Type *)charType, "
+          "axpy_arg_1[0], byRef);\n";
+    os << "        Value *axpy_m = load_if_ref(Builder2, intType, "
+          "axpy_arg_2[0], byRef);\n";
+    os << "        Value *axpy_n = load_if_ref(Builder2, intType, "
+          "axpy_arg_3[0], byRef);\n";
+    os << "        Value *axpy_alpha = axpy_arg_4[0];\n";
+    os << "        Value *axpy_X = axpy_arg_5[0];\n";
+    os << "        Value *axpy_ldx = load_if_ref(Builder2, intType, "
+          "axpy_arg_6[0], byRef);\n";
+    os << "        Value *axpy_Y = axpy_arg_7[0];\n";
+    os << "        Value *axpy_ldy = load_if_ref(Builder2, intType, "
+          "axpy_arg_7[1], byRef);\n";
+    os << "        callAxpyMatHelper(Builder2, *gutils->oldFunc->getParent(), "
+          "blas, called->getName(), fpType, intType, blasIntType, "
+          "axpy_handle, axpy_layout, axpy_uplo, axpy_m, axpy_n, axpy_alpha, "
+          "axpy_X, axpy_ldx, axpy_Y, axpy_ldy, julia_decl, Defs);\n";
+    if (!forward && !runtimeChecked)
+      emit_runtime_continue(ruleDag, argName, "        ", "Builder2", false,
+                            os);
+    os << "        }\n";
+    if (forward)
+      os << "        }\n";
+    return;
+  }
   if (Def->isSubClassOf("MemcpyMatAdd")) {
 
     assert(!forward);

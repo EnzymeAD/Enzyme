@@ -2016,6 +2016,398 @@ void callLasclHelper(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
   }
 }
 
+void callAxpyMatHelper(llvm::IRBuilder<> &B, llvm::Module &M, BlasInfo blas,
+                       llvm::StringRef calledName, llvm::Type *fpType,
+                       llvm::IntegerType *intType, llvm::Type *blasIntType,
+                       llvm::Value *handle, llvm::Value *layout,
+                       llvm::Value *uplo, llvm::Value *m, llvm::Value *n,
+                       llvm::Value *alpha, llvm::Value *X, llvm::Value *ldx,
+                       llvm::Value *Y, llvm::Value *ldy, bool julia_decl,
+                       llvm::ArrayRef<llvm::OperandBundleDef> bundles) {
+  assert(fpType->isFPOrFPVectorTy() &&
+         "AxpyMat element type must be floating-point or complex vector");
+  const bool byRef = blas.prefix == "" || blas.prefix == "cublas_";
+  const bool cblas = blas.prefix == "cblas_";
+  const bool cublas = blas.prefix == "cublas_" || blas.prefix == "cublas";
+
+  uplo = B.CreateZExtOrTrunc(uplo, intType);
+  if (cblas) {
+    assert(layout && "CBLAS AxpyMat requires layout argument");
+    layout = B.CreateZExtOrTrunc(layout, intType);
+  }
+  if (cublas)
+    assert(handle && "cuBLAS AxpyMat requires handle argument");
+
+  unsigned xAS = 0;
+  unsigned yAS = 0;
+  unsigned alphaAS = 0;
+  bool alphaIsPtr = false;
+  if (!julia_decl) {
+    if (auto *PT = dyn_cast<PointerType>(X->getType())) {
+      xAS = PT->getAddressSpace();
+      PointerType *XPT = getPointerType(fpType, xAS);
+      if (X->getType() != XPT)
+        X = B.CreatePointerCast(X, XPT);
+    }
+    if (auto *PT = dyn_cast<PointerType>(Y->getType())) {
+      yAS = PT->getAddressSpace();
+      PointerType *YPT = getPointerType(fpType, yAS);
+      if (Y->getType() != YPT)
+        Y = B.CreatePointerCast(Y, YPT);
+    }
+  }
+  if (auto *PT = dyn_cast<PointerType>(alpha->getType())) {
+    alphaIsPtr = true;
+    alphaAS = PT->getAddressSpace();
+    PointerType *APT = getPointerType(fpType, alphaAS);
+    if (alpha->getType() != APT)
+      alpha = B.CreatePointerCast(alpha, APT);
+  }
+
+  std::string strAxpy = blas.prefix + blas.floatType + "axpy" + blas.suffix;
+  std::string axpyName = getRenamedPerCallingConv(calledName, strAxpy);
+
+  std::string name = "__enzyme_axpy_mat_" + axpyName + "_" +
+                     std::to_string(intType->getBitWidth());
+  if (cblas)
+    name += "_cblas";
+  if (cublas)
+    name += "_cublas";
+  if (julia_decl)
+    name += "_jl";
+  if (alphaIsPtr) {
+    name += "_ap";
+    if (alphaAS != 0)
+      name += std::to_string(alphaAS);
+  } else if (alpha->getType()->isIntegerTy()) {
+    name += "_ai" + std::to_string(alpha->getType()->getIntegerBitWidth());
+  }
+  if (xAS != 0)
+    name += "_xas" + std::to_string(xAS);
+  if (yAS != 0)
+    name += "_yas" + std::to_string(yAS);
+
+  SmallVector<Type *, 10> paramTys;
+  SmallVector<Value *, 10> callArgs;
+  if (cublas) {
+    paramTys.push_back(handle->getType());
+    callArgs.push_back(handle);
+  }
+  if (cblas) {
+    paramTys.push_back(intType);
+    callArgs.push_back(layout);
+  }
+  paramTys.push_back(intType);
+  callArgs.push_back(uplo);
+  paramTys.push_back(intType);
+  callArgs.push_back(m);
+  paramTys.push_back(intType);
+  callArgs.push_back(n);
+  paramTys.push_back(alpha->getType());
+  callArgs.push_back(alpha);
+  paramTys.push_back(X->getType());
+  callArgs.push_back(X);
+  paramTys.push_back(intType);
+  callArgs.push_back(ldx);
+  paramTys.push_back(Y->getType());
+  callArgs.push_back(Y);
+  paramTys.push_back(intType);
+  callArgs.push_back(ldy);
+
+  FunctionType *FT =
+      FunctionType::get(Type::getVoidTy(M.getContext()), paramTys, false);
+  FunctionCallee FC = M.getOrInsertFunction(name, FT);
+  Function *F = dyn_cast<Function>(FC.getCallee());
+  assert(F && "AxpyMat helper signature collision");
+
+  if (F->empty()) {
+    F->setLinkage(Function::LinkageTypes::InternalLinkage);
+    if (!cublas && !julia_decl) {
+#if LLVM_VERSION_MAJOR >= 16
+      F->setOnlyAccessesArgMemory();
+#else
+      F->addFnAttr(Attribute::ArgMemOnly);
+#endif
+    }
+    F->addFnAttr(Attribute::NoUnwind);
+    F->addFnAttr(Attribute::NoRecurse);
+    F->addFnAttr(Attribute::WillReturn);
+    F->addFnAttr(Attribute::NoFree);
+    F->addFnAttr(Attribute::NoSync);
+    F->addFnAttr(Attribute::AlwaysInline);
+
+    auto argIt = F->arg_begin();
+    Argument *argHandle = nullptr;
+    if (cublas) {
+      argHandle = &*argIt++;
+      argHandle->setName("handle");
+    }
+    Argument *argLayout = nullptr;
+    if (cblas) {
+      argLayout = &*argIt++;
+      argLayout->setName("layout");
+    }
+    Argument *argUplo = &*argIt++;
+    argUplo->setName("uplo");
+    Argument *argM = &*argIt++;
+    argM->setName("M");
+    Argument *argN = &*argIt++;
+    argN->setName("N");
+    Argument *argAlpha = &*argIt++;
+    argAlpha->setName("alpha");
+    Argument *argX = &*argIt++;
+    argX->setName("X");
+    Argument *argLdx = &*argIt++;
+    argLdx->setName("ldx");
+    Argument *argY = &*argIt++;
+    argY->setName("Y");
+    Argument *argLdy = &*argIt++;
+    argLdy->setName("ldy");
+
+    if (!julia_decl) {
+      if (argAlpha->getType()->isPointerTy()) {
+        addFunctionNoCapture(F, argAlpha->getArgNo());
+        F->addParamAttr(argAlpha->getArgNo(), Attribute::ReadOnly);
+      }
+      if (argX->getType()->isPointerTy()) {
+        addFunctionNoCapture(F, argX->getArgNo());
+        F->addParamAttr(argX->getArgNo(), Attribute::ReadOnly);
+      }
+      if (argY->getType()->isPointerTy()) {
+        addFunctionNoCapture(F, argY->getArgNo());
+      }
+    }
+
+    BasicBlock *entry = BasicBlock::Create(F->getContext(), "entry", F);
+    BasicBlock *swtch = BasicBlock::Create(F->getContext(), "swtch", F);
+    BasicBlock *Ginit = BasicBlock::Create(F->getContext(), "Ginit", F);
+    BasicBlock *Gfast = BasicBlock::Create(F->getContext(), "Gfast", F);
+    BasicBlock *Gloop = BasicBlock::Create(F->getContext(), "Gloop", F);
+    BasicBlock *Uinit = BasicBlock::Create(F->getContext(), "Uinit", F);
+    BasicBlock *Linit = BasicBlock::Create(F->getContext(), "Linit", F);
+    BasicBlock *Tinit = BasicBlock::Create(F->getContext(), "Tinit", F);
+    BasicBlock *Tloop = BasicBlock::Create(F->getContext(), "Tloop", F);
+    BasicBlock *end = BasicBlock::Create(F->getContext(), "for.end", F);
+
+    Value *zero = ConstantInt::get(intType, 0);
+    Value *one = ConstantInt::get(intType, 1);
+
+    IRBuilder<> EB(entry);
+    Value *blasOne = one;
+    Value *lenAlloca = nullptr;
+    Value *blasLenPtr = nullptr;
+    if (byRef) {
+      Value *oneAlloca = EB.CreateAlloca(intType, nullptr, "byref.one");
+      EB.CreateStore(one, oneAlloca);
+      lenAlloca = EB.CreateAlloca(intType, nullptr, "byref.len");
+      Type *targetIntArgTy = blasIntType ? blasIntType : getUnqual(intType);
+      auto castIntRef = [&](Value *p) -> Value * {
+        if (targetIntArgTy->isIntegerTy())
+          return EB.CreatePtrToInt(p, targetIntArgTy);
+        if (p->getType() != targetIntArgTy)
+          return EB.CreatePointerCast(p, targetIntArgTy);
+        return p;
+      };
+      blasOne = castIntRef(oneAlloca);
+      blasLenPtr = castIntRef(lenAlloca);
+    }
+
+    SmallVector<Type *, 7> axpyArgTys;
+    if (cublas)
+      axpyArgTys.push_back(argHandle->getType());
+    axpyArgTys.push_back(blasOne->getType());
+    axpyArgTys.push_back(argAlpha->getType());
+    axpyArgTys.push_back(argX->getType());
+    axpyArgTys.push_back(blasOne->getType());
+    axpyArgTys.push_back(argY->getType());
+    axpyArgTys.push_back(blasOne->getType());
+
+    FunctionType *FTaxpy =
+        FunctionType::get(Type::getVoidTy(M.getContext()), axpyArgTys, false);
+    FunctionCallee axpyFn = M.getOrInsertFunction(axpyName, FTaxpy);
+    if (auto *AF = dyn_cast<Function>(axpyFn.getCallee())) {
+      AF->addFnAttr("enzyme_math", strAxpy);
+      auto *newF = attribute_axpy(blas, AF);
+      axpyFn = FunctionCallee(axpyFn.getFunctionType(), newF);
+    }
+
+    auto emitAxpyCall = [&](IRBuilder<> &CB, Value *lenVal, Value *xPtr,
+                            Value *yPtr) {
+      Value *lenArg = lenVal;
+      if (byRef) {
+        CB.CreateStore(lenVal, lenAlloca);
+        lenArg = blasLenPtr;
+      }
+      SmallVector<Value *, 7> axpyArgs;
+      if (cublas)
+        axpyArgs.push_back(argHandle);
+      axpyArgs.push_back(lenArg);
+      axpyArgs.push_back(argAlpha);
+      axpyArgs.push_back(xPtr);
+      axpyArgs.push_back(blasOne);
+      axpyArgs.push_back(yPtr);
+      axpyArgs.push_back(blasOne);
+      CB.CreateCall(axpyFn, axpyArgs);
+    };
+
+    auto offsetPtr = [&](IRBuilder<> &CB, Value *base, Value *off) -> Value * {
+      Value *ptr = base;
+      if (base->getType()->isIntegerTy()) {
+        ptr = CB.CreateIntToPtr(ptr, getUnqual(fpType));
+      } else {
+        PointerType *desiredPT = getPointerType(
+            fpType, cast<PointerType>(ptr->getType())->getAddressSpace());
+        if (ptr->getType() != desiredPT)
+          ptr = CB.CreatePointerCast(ptr, desiredPT);
+      }
+      ptr = CB.CreateGEP(fpType, ptr, off);
+      if (base->getType()->isIntegerTy())
+        ptr = CB.CreatePtrToInt(ptr, base->getType());
+      else if (ptr->getType() != base->getType())
+        ptr = CB.CreatePointerCast(ptr, base->getType());
+      return ptr;
+    };
+
+    Value *m0 = EB.CreateICmpSLE(argM, zero);
+    Value *n0 = EB.CreateICmpSLE(argN, zero);
+    Value *empty = EB.CreateOr(m0, n0);
+    Value *isRowMajor =
+        argLayout ? EB.CreateICmpEQ(argLayout, ConstantInt::get(intType, 101),
+                                    "is.row.major")
+                  : EB.getFalse();
+    Value *outer = EB.CreateSelect(isRowMajor, argM, argN, "outer");
+    Value *inner = EB.CreateSelect(isRowMajor, argN, argM, "inner");
+    EB.CreateCondBr(empty, end, swtch);
+
+    {
+      IRBuilder<> SB(swtch);
+      auto *swtchT = SB.CreateSwitch(argUplo, Ginit);
+      if (cublas) {
+        swtchT->addCase(ConstantInt::get(intType, 0), Linit);
+        swtchT->addCase(ConstantInt::get(intType, 1), Uinit);
+      } else {
+        swtchT->addCase(ConstantInt::get(intType, 'U'), Uinit);
+        swtchT->addCase(ConstantInt::get(intType, 'u'), Uinit);
+        swtchT->addCase(ConstantInt::get(intType, 121), Uinit);
+        swtchT->addCase(ConstantInt::get(intType, 'L'), Linit);
+        swtchT->addCase(ConstantInt::get(intType, 'l'), Linit);
+        swtchT->addCase(ConstantInt::get(intType, 122), Linit);
+      }
+    }
+
+    IntegerType *idxTy =
+        intType->getBitWidth() < 64 ? EB.getInt64Ty() : intType;
+    auto toIdx = [&](IRBuilder<> &CB, Value *v) -> Value * {
+      return v->getType() == idxTy ? v : CB.CreateSExt(v, idxTy);
+    };
+
+    // General matrix: Y += alpha * X over all M x N elements.
+    {
+      IRBuilder<> GB(Ginit);
+      Value *xContig = GB.CreateICmpEQ(argLdx, inner);
+      Value *yContig = GB.CreateICmpEQ(argLdy, inner);
+      Value *canFast = GB.CreateAnd(xContig, yContig);
+      if (intType->getBitWidth() < 64) {
+        Value *totalWide =
+            GB.CreateMul(toIdx(GB, argM), toIdx(GB, argN), "total.wide");
+        Value *maxInt = ConstantInt::get(
+            idxTy, (uint64_t(1) << (intType->getBitWidth() - 1)) - 1);
+        Value *fitsInt = GB.CreateICmpSLE(totalWide, maxInt, "total.fits");
+        canFast = GB.CreateAnd(canFast, fitsInt);
+      }
+      GB.CreateCondBr(canFast, Gfast, Gloop);
+    }
+
+    {
+      IRBuilder<> GFB(Gfast);
+      Value *total = GFB.CreateMul(argM, argN, "total");
+      emitAxpyCall(GFB, total, argX, argY);
+      GFB.CreateBr(end);
+    }
+
+    {
+      IRBuilder<> GLB(Gloop);
+      PHINode *k = GLB.CreatePHI(intType, 2, "gk");
+      k->addIncoming(zero, Ginit);
+      Value *kIdx = toIdx(GLB, k);
+      Value *xOff = GLB.CreateMul(kIdx, toIdx(GLB, argLdx), "gx.off");
+      Value *yOff = GLB.CreateMul(kIdx, toIdx(GLB, argLdy), "gy.off");
+      Value *xPtr = offsetPtr(GLB, argX, xOff);
+      Value *yPtr = offsetPtr(GLB, argY, yOff);
+      emitAxpyCall(GLB, inner, xPtr, yPtr);
+      Value *kNext = GLB.CreateAdd(k, one, "gk.next", true, true);
+      k->addIncoming(kNext, Gloop);
+      Value *done = GLB.CreateICmpEQ(kNext, outer);
+      GLB.CreateCondBr(done, end, Gloop);
+    }
+
+    // Upper / lower triangular matrix:
+    // Col-major upper and row-major lower start at offset 0 of each slice with
+    // length min(k + 1, inner) ("leading"); col-major lower and row-major upper
+    // start at offset k of each slice with length inner - k ("trailing").
+    Value *notRowMajor = nullptr;
+    {
+      IRBuilder<> UB(Uinit);
+      notRowMajor = UB.CreateNot(isRowMajor, "not.row.major");
+      UB.CreateBr(Tinit);
+    }
+    {
+      IRBuilder<> LB(Linit);
+      LB.CreateBr(Tinit);
+    }
+
+    PHINode *isLeading = nullptr;
+    Value *kEnd = nullptr;
+    {
+      IRBuilder<> TIB(Tinit);
+      isLeading = TIB.CreatePHI(TIB.getInt1Ty(), 2, "is.leading");
+      isLeading->addIncoming(notRowMajor, Uinit);
+      isLeading->addIncoming(isRowMajor, Linit);
+      Value *outerLtInner = TIB.CreateICmpSLT(outer, inner);
+      Value *minDim = TIB.CreateSelect(outerLtInner, outer, inner, "min.dim");
+      kEnd = TIB.CreateSelect(isLeading, outer, minDim, "tk.end");
+      TIB.CreateBr(Tloop);
+    }
+
+    {
+      IRBuilder<> TLB(Tloop);
+      PHINode *k = TLB.CreatePHI(intType, 2, "tk");
+      k->addIncoming(zero, Tinit);
+      Value *kNext = TLB.CreateAdd(k, one, "tk.next", true, true);
+      Value *kNextLtInner = TLB.CreateICmpSLT(kNext, inner);
+      Value *leadLen = TLB.CreateSelect(kNextLtInner, kNext, inner, "lead.len");
+      Value *trailLen = TLB.CreateSub(inner, k, "trail.len");
+      Value *sliceLen =
+          TLB.CreateSelect(isLeading, leadLen, trailLen, "slice.len");
+      Value *diagOff =
+          toIdx(TLB, TLB.CreateSelect(isLeading, zero, k, "diag.off"));
+      Value *kIdx = toIdx(TLB, k);
+      Value *xBaseOff = TLB.CreateMul(kIdx, toIdx(TLB, argLdx), "tx.base");
+      Value *xOff = TLB.CreateAdd(xBaseOff, diagOff, "tx.off");
+      Value *yBaseOff = TLB.CreateMul(kIdx, toIdx(TLB, argLdy), "ty.base");
+      Value *yOff = TLB.CreateAdd(yBaseOff, diagOff, "ty.off");
+      Value *xPtr = offsetPtr(TLB, argX, xOff);
+      Value *yPtr = offsetPtr(TLB, argY, yOff);
+      emitAxpyCall(TLB, sliceLen, xPtr, yPtr);
+      k->addIncoming(kNext, Tloop);
+      Value *done = TLB.CreateICmpEQ(kNext, kEnd);
+      TLB.CreateCondBr(done, end, Tloop);
+    }
+
+    {
+      IRBuilder<> EndB(end);
+      EndB.CreateRetVoid();
+    }
+
+    if (llvm::verifyFunction(*F, &llvm::errs())) {
+      llvm::errs() << *F << "\n";
+      report_fatal_error("AxpyMat helper function failed verification");
+    }
+  }
+
+  B.CreateCall(F, callArgs, bundles);
+}
+
 void callSPMVDiagUpdate(IRBuilder<> &B, Module &M, BlasInfo blas,
                         IntegerType *IT, Type *BlasCT, Type *BlasFPT,
                         Type *BlasPT, Type *BlasIT, Type *fpTy,

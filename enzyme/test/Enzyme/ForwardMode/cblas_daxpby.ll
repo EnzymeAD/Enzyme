@@ -115,7 +115,7 @@ entry:
 
 ; CHECK-LABEL: define internal void @fwddiffetest_axpby(
 ; CHECK: call void @cblas_dscal(i32 %n, double %beta, ptr %[[DY:.+]], i32 %incy)
-; CHECK: call void @cblas_daxpy(i32 %n, double %[[DBETA:.+]], ptr %y, i32 {{1|%incy}}, ptr %[[DY]], i32 %incy)
+; CHECK: call void @cblas_daxpy(i32 %n, double %[[DBETA:.+]], ptr %y, i32 %incy, ptr %[[DY]], i32 %incy)
 ; CHECK: call void @cblas_daxpy(i32 %n, double %alpha, ptr %[[DX:.+]], i32 %incx, ptr %[[DY]], i32 %incy)
 ; CHECK: call void @cblas_daxpy(i32 %n, double %[[DALPHA:.+]], ptr %x, i32 %incx, ptr %[[DY]], i32 %incy)
 ; CHECK: call void @cblas_daxpby(i32 %n, double %alpha, ptr %x, i32 %incx, double %beta, ptr %y, i32 %incy)
