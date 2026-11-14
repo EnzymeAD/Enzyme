@@ -3319,111 +3319,111 @@ bool overwritesToMemoryReadByLoop(
 
   // The surrounding scope must contain the ancestor
   if (scope) {
-    assert(anc);
-    assert(scope == anc || scope->contains(anc));
+    assert(anc && "scope must contain common ancestor loop");
+    assert((scope == anc || scope->contains(anc)) &&
+           "scope must contain common ancestor loop");
   }
 
-  // Consider the case where the load and store don't share any common loops.
-  // That is to say, there's no loops in [scope, ancestor) we need to consider
-  // having a store in a  later iteration overwrite the load of a previous
-  // iteration.
-  //
-  // An example of this overwriting would be a "left shift"
-  //   for (int j = 1; j<N; j++) {
-  //      load A[j]
-  //      store A[j-1]
-  //    }
-  //
-  // Ignoring such ancestors, if we compare the two regions to have no direct
-  // overlap we can return that it doesn't overwrite memory if the regions
-  // don't overlap at any level of region expansion. That is to say, we can
-  // expand the start or end, for any loop to be the worst case scenario
-  // given the loop bounds.
-  //
-  // However, now let us consider the case where there are surrounding loops.
-  // If the storing boundary is represented by an induction variable of one
-  // of these common loops, we must conseratively expand it all the way to the
-  // end. We will also mark the loops we may expand. If we encounter all
-  // intervening loops in this fashion, and it is proven safe in these cases,
-  // the region does not overlap. However, if we don't encounter all surrounding
-  // loops in our induction expansion, we may simply be repeating the write
-  // which we should also ensure we say the region may overlap (due to the
-  // repetition).
-  //
-  // Since we also have a Loop scope, we can ignore any common loops at the
-  // scope level or above
+  // Collect all common loops strictly inside `scope`, ordered from innermost
+  // (`anc`) to outermost (the direct child of `scope`).
+  // For any execution of `maybeWriter` at iteration vector w >=_lex r of the
+  // common loop nest:
+  //   - For the single outermost common loop `outerCommon` (if any), we always
+  //     have w_outer >= r_outer.
+  //   - For every strictly inner common loop L_inner below `outerCommon`,
+  //     advancing an outer common loop resets L_inner, so w_inner < r_inner is
+  //     possible. Therefore both bounds must be loop-invariant in every
+  //     strictly inner common loop before subtracting them.
+  SmallVector<const Loop *, 4> commonLoops;
+  for (const Loop *L = anc; L != scope; L = L->getParentLoop()) {
+    commonLoops.push_back(L);
+  }
+  const Loop *outerCommon = commonLoops.empty() ? nullptr : commonLoops.back();
 
-  /// We force all ranges for all loops in range ... [scope, anc], .... cur
-  /// to expand the number of iterations
-
-  SmallPtrSet<const Loop *, 1> visitedAncestors;
-  auto skipLoop = [&](const Loop *L) {
-    assert(L);
-    if (scope && L->contains(scope))
-      return false;
-
-    if (anc && (anc == L || anc->contains(L))) {
-      visitedAncestors.insert(L);
-      return true;
-    }
-    return false;
+  auto hasIllegalAddRecComparison = [&](const SCEV *elim, const SCEV *slim) {
+    return SCEVExprContains(elim, [&](const SCEV *endExpr) {
+      const auto *endRec = dyn_cast<SCEVAddRecExpr>(endExpr);
+      if (!endRec)
+        return false;
+      const Loop *endLoop = endRec->getLoop();
+      const BasicBlock *endHeader = endLoop->getHeader();
+      return SCEVExprContains(slim, [&](const SCEV *startExpr) {
+        const auto *startRec = dyn_cast<SCEVAddRecExpr>(startExpr);
+        if (!startRec)
+          return false;
+        const Loop *startLoop = startRec->getLoop();
+        if (endLoop == startLoop) {
+          // A shared AddRec loop may only be cancelled by subtraction if it
+          // stays on the same iteration (at or enclosing `scope`) or is the
+          // single outermost common loop strictly inside `scope` (whose
+          // monotonicity was checked above). In particular, an AddRec from a
+          // non-common loop leaked via an uncomputable LCSSA exit value must
+          // never cancel against the loop's in-loop AddRec.
+          bool atOrAboveScope =
+              scope && (endLoop == scope || endLoop->contains(scope));
+          return !atOrAboveScope && endLoop != outerCommon;
+        }
+        const BasicBlock *startHeader = startLoop->getHeader();
+        return !DT.dominates(endHeader, startHeader) &&
+               !DT.dominates(startHeader, endHeader);
+      });
+    });
   };
 
-  // Check the boounds  of an [... endprev][startnext ...] for potential
-  // overlaps. The boolean EndIsStore is true of the EndPev represents
-  // the store and should have its loops expanded, or if that should
-  // apply to StartNed.
+  // Check the bounds of an [... EndPrev][StartNext ...] for potential
+  // overlaps. The boolean EndIsStore is true if EndPrev represents
+  // the store and StartNext represents the load, and false otherwise.
   auto hasOverlap = [&](const SCEV *EndPrev, const SCEV *StartNext,
                         bool EndIsStore) {
     for (auto slim = StartNext; slim != SE.getCouldNotCompute();) {
-      bool sskip = false;
-      if (!EndIsStore)
-        if (auto startL = dyn_cast<SCEVAddRecExpr>(slim))
-          if (skipLoop(startL->getLoop()) &&
-              SE.isKnownNonPositive(startL->getStepRecurrence(SE))) {
-            sskip = true;
+      bool slimValid = true;
+      for (size_t i = 0; i + 1 < commonLoops.size(); ++i) {
+        if (!SE.isLoopInvariant(slim, commonLoops[i])) {
+          slimValid = false;
+          break;
+        }
+      }
+      if (slimValid && !EndIsStore && outerCommon &&
+          !SE.isLoopInvariant(slim, outerCommon)) {
+        // Need LoadEnd(r) <= StoreStart(r) <= StoreStart(w) for w >= r, which
+        // requires StoreStart to be monotonically non-decreasing in
+        // outerCommon.
+        auto *startL = dyn_cast<SCEVAddRecExpr>(slim);
+        if (!startL || startL->getLoop() != outerCommon ||
+            !SE.isKnownNonNegative(startL->getStepRecurrence(SE))) {
+          slimValid = false;
+        }
+      }
+
+      if (slimValid)
+        for (auto elim = EndPrev; elim != SE.getCouldNotCompute();) {
+          bool elimValid = true;
+          for (size_t i = 0; i + 1 < commonLoops.size(); ++i) {
+            if (!SE.isLoopInvariant(elim, commonLoops[i])) {
+              elimValid = false;
+              break;
+            }
+          }
+          if (elimValid && EndIsStore && outerCommon &&
+              !SE.isLoopInvariant(elim, outerCommon)) {
+            // Need StoreEnd(w) <= StoreEnd(r) <= LoadStart(r) for w >= r, which
+            // requires StoreEnd to be monotonically non-increasing in
+            // outerCommon.
+            auto *endL = dyn_cast<SCEVAddRecExpr>(elim);
+            if (!endL || endL->getLoop() != outerCommon ||
+                !SE.isKnownNonPositive(endL->getStepRecurrence(SE))) {
+              elimValid = false;
+            }
           }
 
-      if (!sskip)
-        for (auto elim = EndPrev; elim != SE.getCouldNotCompute();) {
-          {
-
-            bool eskip = false;
-            if (EndIsStore)
-              if (auto endL = dyn_cast<SCEVAddRecExpr>(elim)) {
-                if (skipLoop(endL->getLoop()) &&
-                    SE.isKnownNonNegative(endL->getStepRecurrence(SE))) {
-                  eskip = true;
-                }
-              }
-
-            // Moreover because otherwise SE cannot "groupScevByComplexity"
-            // we need to ensure that if both slim/elim are AddRecv
-            // they must be in the same loop, or one loop must dominate
-            // the other.
-            if (!eskip) {
-              eskip = SCEVExprContains(elim, [&](const SCEV *endExpr) {
-                const auto *endRec = dyn_cast<SCEVAddRecExpr>(endExpr);
-                if (!endRec)
-                  return false;
-                const BasicBlock *endHeader = endRec->getLoop()->getHeader();
-                return SCEVExprContains(slim, [&](const SCEV *startExpr) {
-                  const auto *startRec = dyn_cast<SCEVAddRecExpr>(startExpr);
-                  if (!startRec)
-                    return false;
-                  const BasicBlock *startHeader =
-                      startRec->getLoop()->getHeader();
-                  return endHeader != startHeader &&
-                         !DT.dominates(endHeader, startHeader) &&
-                         !DT.dominates(startHeader, endHeader);
-                });
-              });
-            }
-            if (!eskip) {
-              auto sub = SE.getMinusSCEV(slim, elim);
-              if (sub != SE.getCouldNotCompute() && SE.isKnownNonNegative(sub))
-                return false;
-            }
+          // Moreover because otherwise SE cannot "groupScevByComplexity"
+          // we need to ensure that if both slim/elim contain AddRecs
+          // they must be in the same loop (legally comparable), or one loop
+          // must dominate the other.
+          if (elimValid && !hasIllegalAddRecComparison(elim, slim)) {
+            auto sub = SE.getMinusSCEV(slim, elim);
+            if (sub != SE.getCouldNotCompute() && SE.isKnownNonNegative(sub))
+              return false;
           }
 
           if (auto endL = dyn_cast<SCEVAddRecExpr>(elim)) {
@@ -3468,33 +3468,14 @@ bool overwritesToMemoryReadByLoop(
 
   // There is no overwrite if either the stores all occur before the loads
   // [S, S+Size][start load, L+Size]
-  visitedAncestors.clear();
-  if (!hasOverlap(StoreEnd, LoadStart, /*EndIsStore*/ true)) {
-    // We must have seen all common loops as induction variables
-    // to be legal, lest we have a repetition of the store.
-    bool legal = true;
-    for (const Loop *L = anc; L != scope; L = L->getParentLoop()) {
-      if (!visitedAncestors.count(L))
-        legal = false;
-    }
-    if (legal)
-      return false;
-  }
+  if (!hasOverlap(StoreEnd, LoadStart, /*EndIsStore*/ true))
+    return false;
 
-  // There is no overwrite if either the loads all occur before the stores
+  // There is no overwrite if the loads all occur before the stores
   // [start load, L+Size] [S, S+Size]
-  visitedAncestors.clear();
-  if (!hasOverlap(LoadEnd, StoreStart, /*EndIsStore*/ false)) {
-    // We must have seen all common loops as induction variables
-    // to be legal, lest we have a repetition of the store.
-    bool legal = true;
-    for (const Loop *L = anc; L != scope; L = L->getParentLoop()) {
-      if (!visitedAncestors.count(L))
-        legal = false;
-    }
-    if (legal)
-      return false;
-  }
+  if (!hasOverlap(LoadEnd, StoreStart, /*EndIsStore*/ false))
+    return false;
+
   return true;
 }
 
@@ -3505,7 +3486,7 @@ bool overwritesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
                               llvm::Instruction *maybeWriter,
                               llvm::Loop *scope) {
   using namespace llvm;
-  if (!writesToMemoryReadBy(TR, AA, TLI, maybeReader, maybeWriter))
+  if (!writesToMemoryReadBy(TR, AA, TLI, maybeReader, maybeWriter, &LI, scope))
     return false;
   const SCEV *LoadBegin = SE.getCouldNotCompute();
   const SCEV *LoadEnd = SE.getCouldNotCompute();
@@ -3513,11 +3494,20 @@ bool overwritesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
   const SCEV *StoreBegin = SE.getCouldNotCompute();
   const SCEV *StoreEnd = SE.getCouldNotCompute();
 
+  const Loop *readerLoop = LI.getLoopFor(maybeReader->getParent());
+  const Loop *writerLoop = LI.getLoopFor(maybeWriter->getParent());
+  auto getPtrSCEVAt = [&](Value *Ptr, const Loop *AtLoop) -> const SCEV * {
+    const SCEV *S = SE.getSCEV(Ptr);
+    if (S == SE.getCouldNotCompute())
+      return S;
+    return SE.getSCEVAtScope(S, AtLoop);
+  };
+
   Value *loadPtr = nullptr;
   Value *storePtr = nullptr;
-  if (auto LI = dyn_cast<LoadInst>(maybeReader)) {
-    loadPtr = LI->getPointerOperand();
-    LoadBegin = SE.getSCEV(LI->getPointerOperand());
+  if (auto LInst = dyn_cast<LoadInst>(maybeReader)) {
+    loadPtr = LInst->getPointerOperand();
+    LoadBegin = getPtrSCEVAt(loadPtr, readerLoop);
     if (LoadBegin != SE.getCouldNotCompute() &&
         !LoadBegin->getType()->isIntegerTy()) {
       auto &DL = maybeWriter->getModule()->getDataLayout();
@@ -3525,17 +3515,17 @@ bool overwritesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
                        ->getBitWidth();
 #if LLVM_VERSION_MAJOR >= 18
       auto TS = SE.getConstant(
-          APInt(width, (int64_t)DL.getTypeStoreSize(LI->getType())));
+          APInt(width, (int64_t)DL.getTypeStoreSize(LInst->getType())));
 #else
       auto TS = SE.getConstant(
-          APInt(width, DL.getTypeStoreSize(LI->getType()).getFixedSize()));
+          APInt(width, DL.getTypeStoreSize(LInst->getType()).getFixedSize()));
 #endif
       LoadEnd = SE.getAddExpr(LoadBegin, TS);
     }
   }
   if (auto SI = dyn_cast<StoreInst>(maybeWriter)) {
     storePtr = SI->getPointerOperand();
-    StoreBegin = SE.getSCEV(SI->getPointerOperand());
+    StoreBegin = getPtrSCEVAt(storePtr, writerLoop);
     if (StoreBegin != SE.getCouldNotCompute() &&
         !StoreBegin->getType()->isIntegerTy()) {
       auto &DL = maybeWriter->getModule()->getDataLayout();
@@ -3555,7 +3545,7 @@ bool overwritesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
   }
   if (auto MS = dyn_cast<MemSetInst>(maybeWriter)) {
     storePtr = MS->getArgOperand(0);
-    StoreBegin = SE.getSCEV(MS->getArgOperand(0));
+    StoreBegin = getPtrSCEVAt(storePtr, writerLoop);
     if (StoreBegin != SE.getCouldNotCompute() &&
         !StoreBegin->getType()->isIntegerTy()) {
       if (auto Len = dyn_cast<ConstantInt>(MS->getArgOperand(2))) {
@@ -3570,7 +3560,7 @@ bool overwritesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
   }
   if (auto MS = dyn_cast<MemTransferInst>(maybeWriter)) {
     storePtr = MS->getArgOperand(0);
-    StoreBegin = SE.getSCEV(MS->getArgOperand(0));
+    StoreBegin = getPtrSCEVAt(storePtr, writerLoop);
     if (StoreBegin != SE.getCouldNotCompute() &&
         !StoreBegin->getType()->isIntegerTy()) {
       if (auto Len = dyn_cast<ConstantInt>(MS->getArgOperand(2))) {
@@ -3585,7 +3575,7 @@ bool overwritesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
   }
   if (auto MS = dyn_cast<MemTransferInst>(maybeReader)) {
     loadPtr = MS->getArgOperand(1);
-    LoadBegin = SE.getSCEV(MS->getArgOperand(1));
+    LoadBegin = getPtrSCEVAt(loadPtr, readerLoop);
     if (LoadBegin != SE.getCouldNotCompute() &&
         !LoadBegin->getType()->isIntegerTy()) {
       if (auto Len = dyn_cast<ConstantInt>(MS->getArgOperand(2))) {
@@ -3612,14 +3602,232 @@ bool overwritesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
   return true;
 }
 
+struct LoopLocalScopeFilter {
+  llvm::ArrayRef<const llvm::Loop *> VaryingLoops;
+  bool Computed = false;
+  llvm::SmallPtrSet<const llvm::Metadata *, 8> LoopLocalScopes;
+
+  explicit LoopLocalScopeFilter(llvm::ArrayRef<const llvm::Loop *> VaryingLoops)
+      : VaryingLoops(VaryingLoops) {}
+
+  llvm::AAMDNodes strip(llvm::AAMDNodes Tags) {
+    using namespace llvm;
+    if (VaryingLoops.empty() || (!Tags.Scope && !Tags.NoAlias))
+      return Tags;
+#if LLVM_VERSION_MAJOR >= 13
+    if (!Computed) {
+      Computed = true;
+      for (const Loop *L : VaryingLoops) {
+        for (const BasicBlock *BB : L->blocks()) {
+          for (const Instruction &I : *BB) {
+            if (const auto *Decl = dyn_cast<NoAliasScopeDeclInst>(&I)) {
+              if (const MDNode *ScopeList = Decl->getScopeList()) {
+                for (const MDOperand &Op : ScopeList->operands()) {
+                  LoopLocalScopes.insert(Op.get());
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    if (LoopLocalScopes.empty())
+      return Tags;
+    auto filterScopeList = [&](MDNode *ScopeList) -> MDNode * {
+      if (!ScopeList)
+        return nullptr;
+      bool anyRemoved = false;
+      SmallVector<Metadata *, 4> Kept;
+      for (const MDOperand &Op : ScopeList->operands()) {
+        if (LoopLocalScopes.count(Op.get())) {
+          anyRemoved = true;
+        } else {
+          Kept.push_back(Op.get());
+        }
+      }
+      if (!anyRemoved)
+        return ScopeList;
+      if (Kept.empty())
+        return nullptr;
+      return MDNode::get(ScopeList->getContext(), Kept);
+    };
+    Tags.Scope = filterScopeList(Tags.Scope);
+    Tags.NoAlias = filterScopeList(Tags.NoAlias);
+#endif
+    return Tags;
+  }
+};
+
+static void
+collectVaryingLoops(const llvm::LoopInfo *LI, const llvm::Loop *scope,
+                    const llvm::Instruction *I1, const llvm::Instruction *I2,
+                    llvm::SmallVectorImpl<const llvm::Loop *> &VaryingLoops) {
+  if (!LI)
+    return;
+  auto addOutermostBelowScope = [&](const llvm::Instruction *I) {
+    if (!I)
+      return;
+    const llvm::Loop *L = LI->getLoopFor(I->getParent());
+    const llvm::Loop *Outermost = nullptr;
+    while (L && !(scope && (L == scope || L->contains(scope)))) {
+      Outermost = L;
+      L = L->getParentLoop();
+    }
+    if (Outermost && !llvm::is_contained(VaryingLoops, Outermost))
+      VaryingLoops.push_back(Outermost);
+  };
+  addOutermostBelowScope(I1);
+  addOutermostBelowScope(I2);
+}
+
+// Returns true if `V` may evaluate to different values across iterations of
+// any loop in `VaryingLoops`, or transitively depends on an instruction inside
+// such a loop (including through LCSSA PHIs).
+static bool dependsOnLoops(const llvm::Value *V,
+                           llvm::ArrayRef<const llvm::Loop *> VaryingLoops) {
+  if (VaryingLoops.empty() || !V)
+    return false;
+  SmallVector<const llvm::Value *, 16> Worklist;
+  SmallPtrSet<const llvm::Value *, 32> Visited;
+  Worklist.push_back(V);
+  Visited.insert(V);
+  while (!Worklist.empty()) {
+    const llvm::Value *Cur = Worklist.pop_back_val();
+    const auto *I = dyn_cast<llvm::Instruction>(Cur);
+    if (!I)
+      continue;
+    for (const llvm::Loop *L : VaryingLoops) {
+      if (L->contains(I))
+        return true;
+    }
+    // Loads and allocas outside all varying loops execute at most once per
+    // scope iteration and AA does not look through them to inner loop values.
+    if (isa<llvm::LoadInst, llvm::AllocaInst>(I))
+      continue;
+    if (Visited.size() >= 64)
+      return true;
+    for (const llvm::Value *Op : I->operands()) {
+      if (isa<llvm::Instruction>(Op) && Visited.insert(Op).second)
+        Worklist.push_back(Op);
+    }
+  }
+  return false;
+}
+
+static bool isWriterModOfLocation(llvm::AAResults &AA,
+                                  const llvm::Instruction *maybeWriter,
+                                  const llvm::MemoryLocation &Loc,
+                                  LoopLocalScopeFilter &ScopeFilter) {
+  using namespace llvm;
+  if (ScopeFilter.VaryingLoops.empty())
+    return isModSet(getModRefInfo(AA, maybeWriter, Loc));
+
+  if (!Loc.Ptr)
+    return true;
+
+  AAMDNodes SafeTags = ScopeFilter.strip(Loc.AATags);
+  if (!dependsOnLoops(Loc.Ptr, ScopeFilter.VaryingLoops)) {
+    MemoryLocation SafeLoc(Loc.Ptr, Loc.Size, SafeTags);
+    return isModSet(getModRefInfo(AA, maybeWriter, SafeLoc));
+  }
+
+  auto Bases =
+      getBaseObjects(const_cast<Value *>(Loc.Ptr), /*offsetAllowed=*/true);
+  if (Bases.empty())
+    return true;
+  for (Value *Base : Bases) {
+    if (!Base->getType()->isPointerTy())
+      return true;
+    if (isModSet(AA.getModRefInfo(
+            maybeWriter, MemoryLocation::getBeforeOrAfter(Base, SafeTags))))
+      return true;
+  }
+  return false;
+}
+
+static bool isReaderRefOfLocation(llvm::AAResults &AA,
+                                  const llvm::Instruction *maybeReader,
+                                  const llvm::MemoryLocation *maybeReaderLoc,
+                                  const llvm::Value *P, llvm::LocationSize Size,
+                                  llvm::AAMDNodes WriterTags,
+                                  LoopLocalScopeFilter &ScopeFilter) {
+  using namespace llvm;
+  if (ScopeFilter.VaryingLoops.empty())
+    return isRefSet(getModRefInfo(AA, maybeReader, maybeReaderLoc, P, Size));
+
+  if (!P)
+    return true;
+
+  AAMDNodes SafeWTags = ScopeFilter.strip(WriterTags);
+  SmallVector<MemoryLocation, 2> WLocs;
+  if (!dependsOnLoops(P, ScopeFilter.VaryingLoops)) {
+    WLocs.push_back(MemoryLocation(P, Size, SafeWTags));
+  } else {
+    auto WBases =
+        getBaseObjects(const_cast<Value *>(P), /*offsetAllowed=*/true);
+    if (WBases.empty())
+      return true;
+    for (Value *WBase : WBases) {
+      if (!WBase->getType()->isPointerTy())
+        return true;
+      WLocs.push_back(MemoryLocation::getBeforeOrAfter(WBase, SafeWTags));
+    }
+  }
+
+  if (maybeReader) {
+    for (const auto &WLoc : WLocs) {
+      if (isRefSet(getModRefInfo(AA, maybeReader, WLoc)))
+        return true;
+    }
+    return false;
+  }
+
+  assert(maybeReaderLoc && "maybeReaderLoc required when maybeReader is null");
+  if (!maybeReaderLoc->Ptr)
+    return true;
+
+  AAMDNodes SafeRTags = ScopeFilter.strip(maybeReaderLoc->AATags);
+  SmallVector<MemoryLocation, 2> RLocs;
+  if (!dependsOnLoops(maybeReaderLoc->Ptr, ScopeFilter.VaryingLoops)) {
+    RLocs.push_back(
+        MemoryLocation(maybeReaderLoc->Ptr, maybeReaderLoc->Size, SafeRTags));
+  } else {
+    auto RBases = getBaseObjects(const_cast<Value *>(maybeReaderLoc->Ptr),
+                                 /*offsetAllowed=*/true);
+    if (RBases.empty())
+      return true;
+    for (Value *RBase : RBases) {
+      if (!RBase->getType()->isPointerTy())
+        return true;
+      RLocs.push_back(MemoryLocation::getBeforeOrAfter(RBase, SafeRTags));
+    }
+  }
+
+  for (const auto &RLoc : RLocs) {
+    for (const auto &WLoc : WLocs) {
+      if (!AA.isNoAlias(RLoc, WLoc))
+        return true;
+    }
+  }
+  return false;
+}
+
 static bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
                                  llvm::TargetLibraryInfo &TLI,
                                  const llvm::MemoryLocation *maybeReaderLoc,
                                  llvm::Instruction *maybeReader,
-                                 llvm::Instruction *maybeWriter) {
+                                 llvm::Instruction *maybeWriter,
+                                 const llvm::LoopInfo *LI = nullptr,
+                                 const llvm::Instruction *readerCtx = nullptr,
+                                 const llvm::Loop *scope = nullptr) {
   assert(!maybeReader || maybeReader->getParent()->getParent() ==
                              maybeWriter->getParent()->getParent());
   using namespace llvm;
+  SmallVector<const Loop *, 2> VaryingLoops;
+  collectVaryingLoops(LI, scope, maybeReader ? maybeReader : readerCtx,
+                      maybeWriter, VaryingLoops);
+  LoopLocalScopeFilter ScopeFilter(VaryingLoops);
+
   if (isa_and_nonnull<StoreInst>(maybeReader))
     return false;
   if (isa_and_nonnull<FenceInst>(maybeReader)) {
@@ -3663,8 +3871,8 @@ static bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
         if (!arg->getType()->isPointerTy() || isReadOnly(call, i))
           continue;
         auto loc = MemoryLocation::getForArgument(call, i, TLI);
-        if (isRefSet(getModRefInfo(AA, maybeReader, maybeReaderLoc, loc.Ptr,
-                                   loc.Size))) {
+        if (isReaderRefOfLocation(AA, maybeReader, maybeReaderLoc, loc.Ptr,
+                                  loc.Size, loc.AATags, ScopeFilter)) {
           mayWrite = true;
           break;
         }
@@ -3706,11 +3914,13 @@ static bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
 #endif
       size_t off = (funcName == "MPI_Wait" || funcName == "PMPI_Wait") ? 0 : 1;
       // No alias with status
-      if (!isRefSet(getModRefInfo(AA, maybeReader, maybeReaderLoc,
-                                  call->getArgOperand(off + 1), loc))) {
+      if (!isReaderRefOfLocation(AA, maybeReader, maybeReaderLoc,
+                                 call->getArgOperand(off + 1), loc, AAMDNodes(),
+                                 ScopeFilter)) {
         // No alias with request
-        if (!isRefSet(getModRefInfo(AA, maybeReader, maybeReaderLoc,
-                                    call->getArgOperand(off + 0), loc)))
+        if (!isReaderRefOfLocation(AA, maybeReader, maybeReaderLoc,
+                                   call->getArgOperand(off + 0), loc,
+                                   AAMDNodes(), ScopeFilter))
           return false;
         auto R = parseTBAA(
             maybeReader ? maybeReader->getAAMetadata() : maybeReaderLoc->AATags,
@@ -3733,14 +3943,14 @@ static bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
           R != BaseType::Pointer)
         return false;
 #if LLVM_VERSION_MAJOR > 11
-      if (!isRefSet(getModRefInfo(AA, maybeReader, maybeReaderLoc,
-                                  call->getArgOperand(6),
-                                  LocationSize::afterPointer())))
+      if (!isReaderRefOfLocation(
+              AA, maybeReader, maybeReaderLoc, call->getArgOperand(6),
+              LocationSize::afterPointer(), AAMDNodes(), ScopeFilter))
         return false;
 #else
-      if (!isRefSet(getModRefInfo(AA, maybeReader, maybeReaderLoc,
-                                  call->getArgOperand(6),
-                                  MemoryLocation::UnknownSize)))
+      if (!isReaderRefOfLocation(
+              AA, maybeReader, maybeReaderLoc, call->getArgOperand(6),
+              MemoryLocation::UnknownSize, AAMDNodes(), ScopeFilter))
         return false;
 #endif
       return false;
@@ -3771,14 +3981,14 @@ static bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
               (R != BaseType::Anything && R != BaseType::Pointer))
             return false;
 #if LLVM_VERSION_MAJOR > 11
-          if (!isRefSet(getModRefInfo(AA, maybeReader, maybeReaderLoc,
-                                      call->getArgOperand(6),
-                                      LocationSize::afterPointer())))
+          if (!isReaderRefOfLocation(
+                  AA, maybeReader, maybeReaderLoc, call->getArgOperand(6),
+                  LocationSize::afterPointer(), AAMDNodes(), ScopeFilter))
             return false;
 #else
-          if (!isRefSet(getModRefInfo(AA, maybeReader, maybeReaderLoc,
-                                      call->getArgOperand(6),
-                                      MemoryLocation::UnknownSize)))
+          if (!isReaderRefOfLocation(
+                  AA, maybeReader, maybeReaderLoc, call->getArgOperand(6),
+                  MemoryLocation::UnknownSize, AAMDNodes(), ScopeFilter))
             return false;
 #endif
         }
@@ -3883,7 +4093,7 @@ static bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
   }
   assert(maybeWriter->mayWriteToMemory());
   if (maybeReaderLoc) {
-    if (!isModSet(getModRefInfo(AA, maybeWriter, *maybeReaderLoc)))
+    if (!isWriterModOfLocation(AA, maybeWriter, *maybeReaderLoc, ScopeFilter))
       return false;
   } else {
     assert(maybeReader->mayReadFromMemory());
@@ -3910,42 +4120,45 @@ static bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
         }
       }
     }
-    if (!isModSet(getModRefInfo(AA, maybeWriter, MemoryLocation::get(li))))
+    if (!isWriterModOfLocation(AA, maybeWriter, MemoryLocation::get(li),
+                               ScopeFilter))
       return false;
   }
   if (auto rmw = dyn_cast_or_null<AtomicRMWInst>(maybeReader)) {
-    if (!isModSet(getModRefInfo(AA, maybeWriter, MemoryLocation::get(rmw))))
+    if (!isWriterModOfLocation(AA, maybeWriter, MemoryLocation::get(rmw),
+                               ScopeFilter))
       return false;
   }
   if (auto xch = dyn_cast_or_null<AtomicCmpXchgInst>(maybeReader)) {
-    if (!isModSet(getModRefInfo(AA, maybeWriter, MemoryLocation::get(xch))))
+    if (!isWriterModOfLocation(AA, maybeWriter, MemoryLocation::get(xch),
+                               ScopeFilter))
       return false;
   }
   if (auto mti = dyn_cast_or_null<MemTransferInst>(maybeReader)) {
-    if (!isModSet(
-            getModRefInfo(AA, maybeWriter, MemoryLocation::getForSource(mti))))
+    if (!isWriterModOfLocation(AA, maybeWriter,
+                               MemoryLocation::getForSource(mti), ScopeFilter))
       return false;
   }
 
   if (auto si = dyn_cast<StoreInst>(maybeWriter)) {
     auto loc = MemoryLocation::get(si);
-    return isRefSet(
-        getModRefInfo(AA, maybeReader, maybeReaderLoc, loc.Ptr, loc.Size));
+    return isReaderRefOfLocation(AA, maybeReader, maybeReaderLoc, loc.Ptr,
+                                 loc.Size, loc.AATags, ScopeFilter);
   }
   if (auto rmw = dyn_cast<AtomicRMWInst>(maybeWriter)) {
     auto loc = MemoryLocation::get(rmw);
-    return isRefSet(
-        getModRefInfo(AA, maybeReader, maybeReaderLoc, loc.Ptr, loc.Size));
+    return isReaderRefOfLocation(AA, maybeReader, maybeReaderLoc, loc.Ptr,
+                                 loc.Size, loc.AATags, ScopeFilter);
   }
   if (auto xch = dyn_cast<AtomicCmpXchgInst>(maybeWriter)) {
     auto loc = MemoryLocation::get(xch);
-    return isRefSet(
-        getModRefInfo(AA, maybeReader, maybeReaderLoc, loc.Ptr, loc.Size));
+    return isReaderRefOfLocation(AA, maybeReader, maybeReaderLoc, loc.Ptr,
+                                 loc.Size, loc.AATags, ScopeFilter);
   }
   if (auto mti = dyn_cast<MemIntrinsic>(maybeWriter)) {
     auto loc = MemoryLocation::getForDest(mti);
-    return isRefSet(
-        getModRefInfo(AA, maybeReader, maybeReaderLoc, loc.Ptr, loc.Size));
+    return isReaderRefOfLocation(AA, maybeReader, maybeReaderLoc, loc.Ptr,
+                                 loc.Size, loc.AATags, ScopeFilter);
   }
 
   if (!maybeReader ||
@@ -3953,11 +4166,53 @@ static bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
           maybeReader))
     return true;
 
-  if (auto cb = dyn_cast<CallInst>(maybeReader)) {
-    return isModOrRefSet(AA.getModRefInfo(maybeWriter, cb));
-  }
-  if (auto cb = dyn_cast<InvokeInst>(maybeReader)) {
-    return isModOrRefSet(AA.getModRefInfo(maybeWriter, cb));
+  if (auto cb = dyn_cast<CallBase>(maybeReader)) {
+    if (VaryingLoops.empty())
+      return isModOrRefSet(AA.getModRefInfo(maybeWriter, cb));
+
+    bool onlyArgOrLocalReads = false;
+    if (!cb->hasOperandBundles()) {
+      auto F2 = getFunctionFromCall(cb);
+      if (!F2 || F2->getCallingConv() == cb->getCallingConv()) {
+#if LLVM_VERSION_MAJOR >= 16
+        auto allowed = MemoryEffects::writeOnly() |
+                       MemoryEffects::argMemOnly(ModRefInfo::ModRef) |
+                       MemoryEffects::inaccessibleMemOnly(ModRefInfo::ModRef);
+        onlyArgOrLocalReads =
+            (cb->getMemoryEffects() & allowed) == cb->getMemoryEffects();
+#else
+        onlyArgOrLocalReads = cb->onlyAccessesArgMemory() ||
+                              cb->onlyAccessesInaccessibleMemory() ||
+                              cb->onlyAccessesInaccessibleMemOrArgMem();
+#endif
+      }
+    }
+    if (onlyArgOrLocalReads) {
+#if LLVM_VERSION_MAJOR >= 16
+      if (auto wcb = dyn_cast<CallBase>(maybeWriter)) {
+        if (isRefSet(cb->getMemoryEffects().getModRef(
+                MemoryEffects::Location::InaccessibleMem)) &&
+            isModSet(wcb->getMemoryEffects().getModRef(
+                MemoryEffects::Location::InaccessibleMem)))
+          return true;
+      }
+#else
+      if (auto wcb = dyn_cast<CallBase>(maybeWriter)) {
+        if (!cb->onlyAccessesArgMemory() && !wcb->onlyAccessesArgMemory())
+          return true;
+      }
+#endif
+      for (unsigned i = 0; i < cb->arg_size(); ++i) {
+        auto arg = cb->getArgOperand(i);
+        if (!arg->getType()->isPointerTy() || isWriteOnly(cb, i))
+          continue;
+        auto loc = MemoryLocation::getForArgument(cb, i, TLI);
+        if (isWriterModOfLocation(AA, maybeWriter, loc, ScopeFilter))
+          return true;
+      }
+      return false;
+    }
+    return true;
   }
   llvm::errs() << " maybeReader: " << *maybeReader
                << " maybeWriter: " << *maybeWriter << "\n";
@@ -3967,9 +4222,13 @@ static bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
 /// Return whether maybeWriter can write to memory at maybeReader
 bool writesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
                           const llvm::MemoryLocation &maybeReader,
-                          llvm::Instruction *maybeWriter) {
+                          llvm::Instruction *maybeWriter,
+                          const llvm::LoopInfo *LI,
+                          const llvm::Instruction *maybeReaderInst,
+                          const llvm::Loop *scope) {
   if (!writesToMemoryReadBy(/*TR=*/nullptr, AA, TLI, &maybeReader,
-                            /*maybeReader=*/nullptr, maybeWriter))
+                            /*maybeReader=*/nullptr, maybeWriter, LI,
+                            maybeReaderInst, scope))
     return false;
   const llvm::Value *base =
       maybeReader.Ptr ? getBaseObject(maybeReader.Ptr) : nullptr;
@@ -3977,7 +4236,8 @@ bool writesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
     auto baseLoc =
         llvm::MemoryLocation::getBeforeOrAfter(base, maybeReader.AATags);
     if (!writesToMemoryReadBy(/*TR=*/nullptr, AA, TLI, &baseLoc,
-                              /*maybeReader=*/nullptr, maybeWriter))
+                              /*maybeReader=*/nullptr, maybeWriter, LI,
+                              maybeReaderInst, scope))
       return false;
   }
   return true;
@@ -3987,9 +4247,11 @@ bool writesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
 bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
                           llvm::TargetLibraryInfo &TLI,
                           llvm::Instruction *maybeReader,
-                          llvm::Instruction *maybeWriter) {
+                          llvm::Instruction *maybeWriter,
+                          const llvm::LoopInfo *LI, const llvm::Loop *scope) {
   return writesToMemoryReadBy(TR, AA, TLI, /*maybeReaderLoc=*/nullptr,
-                              maybeReader, maybeWriter);
+                              maybeReader, maybeWriter, LI,
+                              /*readerCtx=*/maybeReader, scope);
 }
 
 // Find the base pointer of ptr and the offset in bytes from the start of
@@ -5651,13 +5913,15 @@ areBaseObjectsGuaranteedNoAlias(TargetLibraryInfo &TLI, llvm::AAResults &AA,
         // merely must prove there is no way to dataflow start into end.
 
         bool alloc_written = false;
+        Loop *betweenScope = getAncestor(LI.getLoopFor(alloc_call->getParent()),
+                                         LI.getLoopFor(ld->getParent()));
         allInstructionsBetween(LI, alloc_call, ld, [&](Instruction *I) -> bool {
           if (!I->mayWriteToMemory())
             return /*earlyBreak*/ false;
 
           if (writesToMemoryReadBy(nullptr, AA, TLI,
                                    /*maybeReader*/ ld,
-                                   /*maybeWriter*/ I)) {
+                                   /*maybeWriter*/ I, &LI, betweenScope)) {
             alloc_written = true;
             return /*earlyBreak*/ true;
           }

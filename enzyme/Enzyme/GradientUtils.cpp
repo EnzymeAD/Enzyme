@@ -4289,7 +4289,7 @@ bool GradientUtils::legalRecompute(const Value *val,
                       writesToMemoryReadBy(
                           &TR, *OrigAA, TLI,
                           /*maybeReader*/ const_cast<Instruction *>(orig),
-                          /*maybeWriter*/ I)) {
+                          /*maybeWriter*/ I, OrigLI)) {
                     failed = true;
                     EmitWarning(
                         "UncacheableLoad", *orig, "Load must be recomputed ",
@@ -4312,6 +4312,9 @@ bool GradientUtils::legalRecompute(const Value *val,
             } while (true);
             if (OrigDT->dominates(origStart, const_cast<Instruction *>(orig))) {
               bool failed = false;
+              Loop *betweenScope =
+                  getAncestor(OrigLI->getLoopFor(origStart->getParent()),
+                              OrigLI->getLoopFor(orig->getParent()));
 
               allInstructionsBetween(
                   *OrigLI, origStart, const_cast<Instruction *>(orig),
@@ -4320,7 +4323,7 @@ bool GradientUtils::legalRecompute(const Value *val,
                         writesToMemoryReadBy(
                             &TR, *OrigAA, TLI,
                             /*maybeReader*/ const_cast<Instruction *>(orig),
-                            /*maybeWriter*/ I)) {
+                            /*maybeWriter*/ I, OrigLI, betweenScope)) {
                       failed = true;
                       EmitWarning("UncacheableLoad", *orig,
                                   "Load must be recomputed ", *orig, " in ",
@@ -7450,12 +7453,16 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
               // llvm::errs() << " scev1: " << *scev1 << " scev2: " << *scev2
               //             << "\n";
 
+              Loop *betweenScope =
+                  getAncestor(OrigLI->getLoopFor(orig2->getParent()),
+                              OrigLI->getLoopFor(origInst->getParent()));
               allInstructionsBetween(
                   *OrigLI, orig2, origInst, [&](Instruction *I) -> bool {
                     if (I->mayWriteToMemory() &&
                         writesToMemoryReadBy(&TR, *OrigAA, TLI,
                                              /*maybeReader*/ origInst,
-                                             /*maybeWriter*/ I)) {
+                                             /*maybeWriter*/ I, OrigLI,
+                                             betweenScope)) {
                       failed = true;
                       // llvm::errs() << "FAILED: " << *I << "\n";
                       return /*earlyBreak*/ true;
@@ -7526,12 +7533,16 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
 
               bool lastStore = true;
               bool interveningSync = false;
+              Loop *betweenScope =
+                  getAncestor(OrigLI->getLoopFor(SI->getParent()),
+                              OrigLI->getLoopFor(origInst->getParent()));
               allInstructionsBetween(
                   *OrigLI, SI, origInst, [&](Instruction *potentialAlias) {
                     if (!potentialAlias->mayWriteToMemory())
                       return false;
                     if (!writesToMemoryReadBy(&TR, *OrigAA, TLI, origInst,
-                                              potentialAlias))
+                                              potentialAlias, OrigLI,
+                                              betweenScope))
                       return false;
 
                     if (auto II = dyn_cast<IntrinsicInst>(potentialAlias)) {
@@ -7555,7 +7566,8 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                                 return false;
 
                               if (!writesToMemoryReadBy(&TR, *OrigAA, TLI,
-                                                        origInst, mid)) {
+                                                        origInst, mid,
+                                                        OrigLI)) {
                                 return false;
                               }
                               lastStore = false;
@@ -7750,13 +7762,17 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                   LoadInst *tmpload = OB.CreateLoad(AT, orig_liobj, "'tmpload");
 
                   bool failed = false;
+                  Loop *betweenScope =
+                      getAncestor(OrigLI->getLoopFor(origTerm->getParent()),
+                                  OrigLI->getLoopFor(origInst->getParent()));
                   allInstructionsBetween(
                       *OrigLI, &*origTerm, origInst,
                       [&](Instruction *I) -> bool {
                         if (I->mayWriteToMemory() &&
                             writesToMemoryReadBy(&TR, *OrigAA, TLI,
                                                  /*maybeReader*/ tmpload,
-                                                 /*maybeWriter*/ I)) {
+                                                 /*maybeWriter*/ I, OrigLI,
+                                                 betweenScope)) {
                           failed = true;
                           return /*earlyBreak*/ true;
                         }
@@ -7776,13 +7792,17 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                       break;
                     }
                     Instruction *origTerm = origPH->getTerminator();
+                    Loop *outerBetweenScope =
+                        getAncestor(OrigLI->getLoopFor(origTerm->getParent()),
+                                    OrigLI->getLoopFor(origInst->getParent()));
                     allInstructionsBetween(
                         *OrigLI, &*origTerm, origInst,
                         [&](Instruction *I) -> bool {
                           if (I->mayWriteToMemory() &&
                               writesToMemoryReadBy(&TR, *OrigAA, TLI,
                                                    /*maybeReader*/ tmpload,
-                                                   /*maybeWriter*/ I)) {
+                                                   /*maybeWriter*/ I, OrigLI,
+                                                   outerBetweenScope)) {
                             failed = true;
                             return /*earlyBreak*/ true;
                           }
@@ -8008,12 +8028,16 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
               Instruction *origTerm = origPH->getTerminator();
 
               bool failed = false;
+              Loop *betweenScope =
+                  getAncestor(OrigLI->getLoopFor(origTerm->getParent()),
+                              OrigLI->getLoopFor(origInst->getParent()));
               allInstructionsBetween(
                   *OrigLI, &*origTerm, origInst, [&](Instruction *I) -> bool {
                     if (I->mayWriteToMemory() &&
                         writesToMemoryReadBy(&TR, *OrigAA, TLI,
                                              /*maybeReader*/ origInst,
-                                             /*maybeWriter*/ I)) {
+                                             /*maybeWriter*/ I, OrigLI,
+                                             betweenScope)) {
                       failed = true;
                       return /*earlyBreak*/ true;
                     }
@@ -8037,12 +8061,16 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                 break;
               }
               Instruction *origTerm = origPH->getTerminator();
+              Loop *outerBetweenScope =
+                  getAncestor(OrigLI->getLoopFor(origTerm->getParent()),
+                              OrigLI->getLoopFor(origInst->getParent()));
               allInstructionsBetween(
                   *OrigLI, &*origTerm, origInst, [&](Instruction *I) -> bool {
                     if (I->mayWriteToMemory() &&
                         writesToMemoryReadBy(&TR, *OrigAA, TLI,
                                              /*maybeReader*/ origInst,
-                                             /*maybeWriter*/ I)) {
+                                             /*maybeWriter*/ I, OrigLI,
+                                             outerBetweenScope)) {
                       failed = true;
                       return /*earlyBreak*/ true;
                     }

@@ -485,7 +485,7 @@ struct CacheAnalysis {
                     return false;
                   }
 
-                  if (!writesToMemoryReadBy(&TR, AA, TLI, &li, mid)) {
+                  if (!writesToMemoryReadBy(&TR, AA, TLI, &li, mid, &OrigLI)) {
                     return false;
                   }
 
@@ -714,7 +714,7 @@ struct CacheAnalysis {
         if (!callsite_op->getArgOperand(i)->getType()->isPointerTy() ||
             writesToMemoryReadBy(
                 AA, TLI, MemoryLocation::getForArgument(callsite_op, i, TLI),
-                inst2)) {
+                inst2, &OrigLI, callsite_op)) {
           if (!isa<ConstantInt>(callsite_op->getArgOperand(i)) &&
               !isa<UndefValue>(callsite_op->getArgOperand(i)))
             EmitWarning("UncacheableArg", *callsite_op, "Callsite ",
@@ -1156,6 +1156,9 @@ void calculateUnusedValuesInFunction(
             newMemory = true;
           if (newMemory) {
             bool foundStore = false;
+            Loop *betweenScope = getAncestor(
+                gutils->OrigLI->getLoopFor(cast<Instruction>(at)->getParent()),
+                gutils->OrigLI->getLoopFor(mti->getParent()));
             allInstructionsBetween(
                 *gutils->OrigLI, cast<Instruction>(at),
                 const_cast<MemTransferInst *>(mti),
@@ -1172,7 +1175,7 @@ void calculateUnusedValuesInFunction(
                   if (writesToMemoryReadBy(
                           &gutils->TR, *gutils->OrigAA, TLI,
                           /*maybeReader*/ const_cast<MemTransferInst *>(mti),
-                          /*maybeWriter*/ I)) {
+                          /*maybeWriter*/ I, gutils->OrigLI, betweenScope)) {
                     foundStore = true;
                     return /*earlyBreak*/ true;
                   }
@@ -1321,6 +1324,9 @@ void calculateUnusedStoresInFunction(
         newMemory = true;
       if (newMemory) {
         bool foundStore = false;
+        Loop *betweenScope = getAncestor(
+            gutils->OrigLI->getLoopFor(cast<Instruction>(at)->getParent()),
+            gutils->OrigLI->getLoopFor(mti->getParent()));
         allInstructionsBetween(
             *gutils->OrigLI, cast<Instruction>(at),
             const_cast<MemTransferInst *>(mti), [&](Instruction *I) -> bool {
@@ -1333,7 +1339,7 @@ void calculateUnusedStoresInFunction(
               if (writesToMemoryReadBy(
                       &gutils->TR, *gutils->OrigAA, TLI,
                       /*maybeReader*/ const_cast<MemTransferInst *>(mti),
-                      /*maybeWriter*/ I)) {
+                      /*maybeWriter*/ I, gutils->OrigLI, betweenScope)) {
                 foundStore = true;
                 return /*earlyBreak*/ true;
               }
@@ -1705,7 +1711,7 @@ bool legalCombinedForwardReverse(
           return false;
         if (writesToMemoryReadBy(&gutils->TR, *gutils->OrigAA, gutils->TLI,
                                  /*maybeReader*/ user,
-                                 /*maybeWriter*/ inst)) {
+                                 /*maybeWriter*/ inst, gutils->OrigLI)) {
 
           propagate(user);
           // Fast return if not legal
@@ -1738,7 +1744,7 @@ bool legalCombinedForwardReverse(
         return false;
       if (writesToMemoryReadBy(&gutils->TR, *gutils->OrigAA, gutils->TLI,
                                /*maybeReader*/ inst,
-                               /*maybeWriter*/ post)) {
+                               /*maybeWriter*/ post, gutils->OrigLI)) {
         if (EnzymePrintPerf) {
           if (called)
             llvm::errs() << " [mem] failed to replace function "

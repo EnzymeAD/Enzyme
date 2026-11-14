@@ -1242,16 +1242,25 @@ void mayExecuteAfter(llvm::SmallVectorImpl<llvm::Instruction *> &results,
                      const llvm::SetVector<llvm::Instruction *> &stores,
                      const llvm::Loop *region);
 
-/// Return whether maybeWriter can write to memory at maybeReader
+/// Return whether maybeWriter can write to memory at maybeReader.
+/// When `LI` is non-null, accounts for cross-iteration aliasing across any loop
+/// strictly inside `scope` (or all loops when `scope` is null).
 bool writesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
                           const llvm::MemoryLocation &maybeReader,
-                          llvm::Instruction *maybeWriter);
+                          llvm::Instruction *maybeWriter,
+                          const llvm::LoopInfo *LI = nullptr,
+                          const llvm::Instruction *maybeReaderInst = nullptr,
+                          const llvm::Loop *scope = nullptr);
 
-/// Return whether maybeReader can read from memory written to by maybeWriter
+/// Return whether maybeReader can read from memory written to by maybeWriter.
+/// When `LI` is non-null, accounts for cross-iteration aliasing across any loop
+/// strictly inside `scope` (or all loops when `scope` is null).
 bool writesToMemoryReadBy(const TypeResults *TR, llvm::AAResults &AA,
                           llvm::TargetLibraryInfo &TLI,
                           llvm::Instruction *maybeReader,
-                          llvm::Instruction *maybeWriter);
+                          llvm::Instruction *maybeWriter,
+                          const llvm::LoopInfo *LI = nullptr,
+                          const llvm::Loop *scope = nullptr);
 
 // A more advanced version of writesToMemoryReadBy, where the writing
 // instruction comes after the reading function. Specifically, even if the two
