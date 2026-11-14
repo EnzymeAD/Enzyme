@@ -1,5 +1,6 @@
 #include "Analysis/DataFlowAliasAnalysis.h"
 #include "Dialect/Ops.h"
+#include "Interfaces/AutoDiffControlFlowInterface.h"
 #include "Interfaces/AutoDiffOpInterface.h"
 #include "Interfaces/AutoDiffTypeInterface.h"
 #include "mlir/IR/Matchers.h"
@@ -24,6 +25,12 @@
 using namespace mlir;
 using namespace mlir::enzyme;
 
+// Have the derivative's dialect spells the control flow.
+static const AutoDiffControlFlowInterface &
+controlFlow(MGradientUtilsReverse *gutils) {
+  return getAutoDiffControlFlow(gutils->newFunc.getOperation());
+}
+
 void handleReturns(Block *oBB, Block *newBB, Block *reverseBB,
                    MGradientUtilsReverse *gutils) {
   if (oBB->getNumSuccessors() == 0) {
@@ -32,7 +39,7 @@ void handleReturns(Block *oBB, Block *newBB, Block *reverseBB,
 
     OpBuilder forwardToBackwardBuilder(newBB, newBB->end());
 
-    Operation *newBranchOp = cf::BranchOp::create(
+    Operation *newBranchOp = controlFlow(gutils).createBranch(
         forwardToBackwardBuilder, oBB->getTerminator()->getLoc(), reverseBB);
 
     gutils->originalToNewFnOps[oBB->getTerminator()] = newBranchOp;
@@ -91,7 +98,7 @@ void MEnzymeLogic::handlePredecessors(
     buildReturnOp(revBuilder, oBB);
   } else {
     Location loc = oBB->rbegin()->getLoc();
-    // TODO remove dependency on CF dialect
+    const AutoDiffControlFlowInterface &flow = controlFlow(gutils);
 
     Value cache = gutils->insertInit(gutils->getIndexCacheType());
 
@@ -101,7 +108,7 @@ void MEnzymeLogic::handlePredecessors(
     Block *defaultBlock = nullptr;
 
     SmallVector<Block *> blocks;
-    SmallVector<APInt> indices;
+    SmallVector<int64_t> indices;
 
     OpBuilder newBuilder(newBB, newBB->begin());
 
@@ -123,15 +130,16 @@ void MEnzymeLogic::handlePredecessors(
 
       OpBuilder predecessorBuilder(newPred->getTerminator());
 
+      int64_t predIndex = static_cast<int64_t>(idx) - 1;
       Value pred_idx_c =
-          arith::ConstantIntOp::create(predecessorBuilder, loc, idx - 1, 32);
+          flow.createBranchIndex(predecessorBuilder, loc, predIndex);
       enzyme::PushOp::create(predecessorBuilder, loc, cache, pred_idx_c);
 
       if (idx == 0) {
         defaultBlock = reversePred;
 
       } else {
-        indices.push_back(APInt(32, idx - 1));
+        indices.push_back(predIndex);
         blocks.push_back(reversePred);
       }
 
@@ -142,19 +150,13 @@ void MEnzymeLogic::handlePredecessors(
                   iface.getSuccessorBlockArgument(op.getOperandNumber()))
             if (!gutils->isConstantValue(op.get()) &&
                 (*blk_idx).getOwner() == oBB) {
-              auto idx = (*blk_idx).getArgNumber();
-              if (diffes[idx]) {
-
-                Value rev_idx_c =
-                    arith::ConstantIntOp::create(revBuilder, loc, idx - 1, 32);
-
-                auto to_prop = arith::SelectOp::create(
-                    revBuilder, loc,
-                    arith::CmpIOp::create(revBuilder, loc,
-                                          arith::CmpIPredicate::eq, flag,
-                                          rev_idx_c),
-                    diffes[idx],
-                    cast<AutoDiffTypeInterface>(diffes[idx].getType())
+              auto argIdx = (*blk_idx).getArgNumber();
+              if (diffes[argIdx]) {
+                // The argument's adjoint flows back along this edge only
+                // when control came in along it.
+                Value to_prop = flow.createSelectOnBranchIndex(
+                    revBuilder, loc, flag, predIndex, diffes[argIdx],
+                    cast<AutoDiffTypeInterface>(diffes[argIdx].getType())
                         .createNullValue(revBuilder, loc));
 
                 gutils->addToDiffe(op.get(), to_prop, revBuilder);
@@ -165,9 +167,7 @@ void MEnzymeLogic::handlePredecessors(
       }
     }
 
-    cf::SwitchOp::create(revBuilder, loc, flag, defaultBlock, ArrayRef<Value>(),
-                         ArrayRef<APInt>(indices), ArrayRef<Block *>(blocks),
-                         SmallVector<ValueRange>(indices.size(), ValueRange()));
+    flow.createSwitch(revBuilder, loc, flag, defaultBlock, indices, blocks);
   }
 }
 

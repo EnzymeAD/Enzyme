@@ -12,6 +12,7 @@ add_mlir_library(
   OffsetViewInterface.cpp
   MemTransferOpInterface.cpp
   AutoDiffOpInterface.cpp
+  AutoDiffControlFlowInterface.cpp
   AutoDiffTypeInterface.cpp
   CloneFunction.cpp
   GradientUtils.cpp
