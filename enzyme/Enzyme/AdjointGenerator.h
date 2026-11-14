@@ -483,7 +483,10 @@ public:
 
     if (gutils->isConstantValue(&I)) {
       // A constant value may have a shadow cached by invertPointerM. It is a
-      // real shadow, not a placeholder, so leave it for reuse.
+      // real shadow, not a placeholder, so leave it for reuse; only resolve or
+      // erase a tracked 'dual_phi placeholder left over if activity was
+      // re-evaluated to constant after forceAugmentedReturns().
+      gutils->resolveOrEraseDualPlaceholder(&I);
       return;
     }
 
@@ -492,7 +495,8 @@ public:
     auto placeholder = cast<PHINode>(&*found->second);
     gutils->invertedPointers.erase(found);
 
-    if (!DifferentialUseAnalysis::is_value_needed_in_reverse<QueryType::Shadow>(
+    if (placeholder->use_empty() &&
+        !DifferentialUseAnalysis::is_value_needed_in_reverse<QueryType::Shadow>(
             gutils, &I, Mode, oldUnreachable)) {
       gutils->erase(placeholder);
       return;
@@ -642,13 +646,15 @@ public:
         gutils->invertedPointers.erase(found);
 
         // only make shadow where caching needed
-        if (!DifferentialUseAnalysis::is_value_needed_in_reverse<
+        if (placeholder->use_empty() &&
+            !DifferentialUseAnalysis::is_value_needed_in_reverse<
                 QueryType::Shadow>(gutils, &I, Mode, oldUnreachable)) {
           gutils->erase(placeholder);
           return;
         }
 
-        if (can_modref) {
+        if (can_modref &&
+            (vd[{-1}].isPossiblePointer() || placeholder->use_empty())) {
           if (vd[{-1}].isPossiblePointer()) {
             Value *newip = gutils->cacheForReverse(
                 BuilderZ, placeholder,
@@ -661,7 +667,8 @@ public:
           }
         } else {
           Value *newip = gutils->invertPointerM(&I, BuilderZ);
-          if (gutils->runtimeActivity && vd[{-1}].isFloat()) {
+          if (gutils->runtimeActivity && vd[{-1}].isFloat() &&
+              !gutils->isConstantValue(&I)) {
             // TODO handle mask
             assert(!mask);
 
@@ -677,12 +684,17 @@ public:
                 gutils->invertPointerM(I.getOperand(0), BuilderZ), newip);
           }
           assert(newip->getType() == type);
+          gutils->replaceAWithB(placeholder, newip);
           placeholder->replaceAllUsesWith(newip);
           gutils->erase(placeholder);
-          gutils->invertedPointers.erase(&I);
-          gutils->invertedPointers.insert(std::make_pair(
-              (const Value *)&I, InvertedPointerVH(gutils, newip)));
+          if (!gutils->isConstantValue(&I)) {
+            gutils->invertedPointers.erase(&I);
+            gutils->invertedPointers.insert(std::make_pair(
+                (const Value *)&I, InvertedPointerVH(gutils, newip)));
+          }
         }
+      } else {
+        gutils->resolveOrEraseDualPlaceholder(&I);
       }
       return;
     }
@@ -2373,8 +2385,14 @@ public:
     using namespace llvm;
 
     eraseIfUnused(IVI);
-    if (gutils->isConstantValue(&IVI))
+    if (gutils->isConstantValue(&IVI)) {
+      if (Mode == DerivativeMode::ForwardMode ||
+          Mode == DerivativeMode::ForwardModeSplit ||
+          Mode == DerivativeMode::ForwardModeError) {
+        gutils->resolveOrEraseDualPlaceholder(&IVI);
+      }
       return;
+    }
 
     if (Mode == DerivativeMode::ReverseModePrimal)
       return;

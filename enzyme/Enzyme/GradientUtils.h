@@ -117,6 +117,10 @@ struct InvertedPointerConfig : llvm::ValueMapConfig<const llvm::Value *> {
   static void onDelete(ExtraData gutils, const llvm::Value *old);
 };
 
+struct DualPlaceholderConfig : llvm::ValueMapConfig<const llvm::Value *> {
+  enum { FollowRAUW = false };
+};
+
 class InvertedPointerVH final : public llvm::CallbackVH {
 public:
   GradientUtils *gutils;
@@ -179,6 +183,9 @@ public:
   llvm::SmallPtrSet<llvm::Instruction *, 4> TapesToPreventRecomputation;
 
   llvm::ValueMap<llvm::PHINode *, llvm::WeakTrackingVH> fictiousPHIs;
+  llvm::ValueMap<const llvm::Value *, llvm::Instruction *,
+                 DualPlaceholderConfig>
+      dualPlaceholders;
   llvm::ValueMap<const llvm::Value *, AssertingReplacingVH> originalToNewFn;
   llvm::ValueMap<const llvm::Value *, AssertingReplacingVH> newToOriginalFn;
   llvm::SmallVector<llvm::CallInst *, 4> originalCalls;
@@ -525,6 +532,8 @@ public:
 
   llvm::SmallVector<llvm::Instruction *, 1>
       rematerializedPrimalOrShadowAllocations;
+
+  void resolveOrEraseDualPlaceholder(llvm::Instruction *orig);
 
   void eraseFictiousPHIs();
 

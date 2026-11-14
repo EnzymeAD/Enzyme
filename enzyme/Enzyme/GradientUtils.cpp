@@ -682,9 +682,12 @@ Value *GradientUtils::hasUninverted(const Value *inverted) const {
 
 bool GradientUtils::isPlaceholderForNonPHI(const PHINode *PN) const {
   auto Found = fictiousPHIs.find(const_cast<PHINode *>(PN));
-  if (Found == fictiousPHIs.end())
-    return false;
-  return !isa_and_nonnull<PHINode>((Value *)Found->second);
+  if (Found != fictiousPHIs.end())
+    return !isa_and_nonnull<PHINode>((Value *)Found->second);
+  auto DualFound = dualPlaceholders.find(PN);
+  if (DualFound != dualPlaceholders.end())
+    return !isa_and_nonnull<PHINode>(DualFound->second);
+  return false;
 }
 
 BasicBlock *GradientUtils::getOriginalFromNew(const BasicBlock *newinst) const {
@@ -6573,6 +6576,13 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     IRBuilder<> bb(getNewFromOriginal(arg));
     Value *op0 = arg->getOperand(0);
     Value *ip = invertPointerM(op0, bb);
+    // Activity re-evaluation during invertPointerM(op0) can prove this load
+    // constant, in which case `ip` is the primal pointer rather than a shadow
+    // pointer. Delegate back so float/mixed loads get zeroed shadows instead
+    // of reading primal values as derivatives.
+    if (isConstantValue(arg)) {
+      return invertPointerM(oval, BuilderM, TT);
+    }
 
     SmallVector<Metadata *, 1> prevScopes;
     if (auto prev = arg->getMetadata(LLVMContext::MD_alias_scope)) {
@@ -9230,7 +9240,48 @@ bool GradientUtils::isOriginalBlock(const BasicBlock &BB) const {
   return false;
 }
 
+void GradientUtils::resolveOrEraseDualPlaceholder(Instruction *orig) {
+  auto found = invertedPointers.find(orig);
+  if (found == invertedPointers.end())
+    return;
+  auto *placeholder = dyn_cast<PHINode>(&*found->second);
+  if (!placeholder)
+    return;
+  auto phIt = dualPlaceholders.find(placeholder);
+  if (phIt == dualPlaceholders.end())
+    return;
+  dualPlaceholders.erase(phIt);
+  invertedPointers.erase(found);
+
+  if (!placeholder->use_empty()) {
+    Value *toset = nullptr;
+    const DataLayout &DL = newFunc->getParent()->getDataLayout();
+    if (isConstantValue(orig) &&
+        (orig->getType()->isFPOrFPVectorTy() ||
+         TR.query(orig).allFloat(orig, DL, /*anythingIsFloat*/ true))) {
+      toset = Constant::getNullValue(getShadowType(orig->getType()));
+    } else {
+      IRBuilder<> Builder2(orig);
+      getForwardBuilder(Builder2);
+      toset = invertPointerM(orig, Builder2);
+    }
+    assert(toset != placeholder && "Dual placeholder resolved back to itself");
+    replaceAWithB(placeholder, toset);
+    placeholder->replaceAllUsesWith(toset);
+  }
+  erase(placeholder);
+}
+
 void GradientUtils::eraseFictiousPHIs() {
+  if (!dualPlaceholders.empty()) {
+    for (BasicBlock &oBB : *oldFunc) {
+      for (Instruction &I : oBB) {
+        if (isConstantValue(&I)) {
+          resolveOrEraseDualPlaceholder(&I);
+        }
+      }
+    }
+  }
   {
     for (auto P : rematerializedPrimalOrShadowAllocations) {
       Value *replacement =
@@ -9393,6 +9444,7 @@ void GradientUtils::forceAugmentedReturns() {
           Type *antiTy = getShadowType(inst->getType());
           PHINode *anti =
               BuilderZ.CreatePHI(antiTy, 1, inst->getName() + "'dual_phi");
+          dualPlaceholders[anti] = inst;
           invertedPointers.insert(std::make_pair(
               (const Value *)inst, InvertedPointerVH(this, anti)));
         }
