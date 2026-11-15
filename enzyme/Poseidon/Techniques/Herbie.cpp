@@ -692,8 +692,7 @@ void setUnifiedAccuracyCost(
     const Options &O, RewriteUnit &CO,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, Value *> &symbolToValueMap) {
-  SubgraphSamples &samples =
-      samplesOf(O, *CO.subgraph, valueToNodeMap, symbolToValueMap);
+  SubgraphSamples &samples = samplesOf(O, *CO.subgraph, valueToNodeMap);
   ArrayRef<SubgraphSamples::Point> sampledPoints = samples.points();
 
   // No usable sample means the output cannot be priced: drop its candidates and

@@ -124,7 +124,6 @@ static void collectLeaves(const FPNode *node,
 void getSampledPoints(
     const Options &O, ArrayRef<Value *> inputs,
     const std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-    const std::unordered_map<std::string, Value *> &symbolToValueMap,
     SmallVector<MapVector<Value *, double>, 4> &sampledPoints,
     const CancellationPlan *plan, size_t count, unsigned seedOffset) {
   const size_t numSamples = count ? count : O.Model.NumSamples;
@@ -313,10 +312,8 @@ struct SubgraphSamples::RoundReference {
 
 SubgraphSamples::SubgraphSamples(
     const Options &O, const Subgraph &subgraph,
-    const std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-    const std::unordered_map<std::string, Value *> &symbolToValueMap)
-    : O(O), subgraph(subgraph), valueToNodeMap(valueToNodeMap),
-      symbolToValueMap(symbolToValueMap) {}
+    const std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap)
+    : O(O), subgraph(subgraph), valueToNodeMap(valueToNodeMap) {}
 
 SubgraphSamples::~SubgraphSamples() = default;
 
@@ -324,8 +321,8 @@ ArrayRef<SubgraphSamples::Point> SubgraphSamples::points() {
   if (!sampled) {
     sampled = true;
     CancellationPlan plan = buildCancellationPlan(O, subgraph, valueToNodeMap);
-    getSampledPoints(O, subgraph.inputs.getArrayRef(), valueToNodeMap,
-                     symbolToValueMap, base, &plan);
+    getSampledPoints(O, subgraph.inputs.getArrayRef(), valueToNodeMap, base,
+                     &plan);
   }
   return base;
 }
@@ -335,7 +332,7 @@ ArrayRef<SubgraphSamples::Point> SubgraphSamples::points() {
 static void evaluateReference(FPNode *node, const SubgraphSamples::Point &point,
                               SubgraphSamples::Reference &R, size_t i) {
   SmallVector<double, 1> results;
-  getMPFRValues({node}, point, results, true, 53);
+  getMPFRValues({node}, point, results, 53);
   R.gold[i] = results[0];
   getFPValues({node}, point, results);
   R.value[i] = results[0];
@@ -364,8 +361,7 @@ ArrayRef<SubgraphSamples::Point> SubgraphSamples::round(unsigned round) {
   while (rounds.size() < round) {
     rounds.emplace_back();
     getSampledPoints(O, subgraph.inputs.getArrayRef(), valueToNodeMap,
-                     symbolToValueMap, rounds.back(), nullptr,
-                     O.Model.NumSamples, rounds.size());
+                     rounds.back(), nullptr, O.Model.NumSamples, rounds.size());
   }
   return rounds[round - 1];
 }
@@ -398,13 +394,13 @@ SubgraphSamples::roundReference(const FPNode *node, unsigned round,
   return RR.values;
 }
 
-SubgraphSamples &samplesOf(
-    const Options &O, Subgraph &subgraph,
-    const std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-    const std::unordered_map<std::string, Value *> &symbolToValueMap) {
+SubgraphSamples &
+samplesOf(const Options &O, Subgraph &subgraph,
+          const std::unordered_map<Value *, std::shared_ptr<FPNode>>
+              &valueToNodeMap) {
   if (!subgraph.samples)
-    subgraph.samples = std::make_shared<SubgraphSamples>(
-        O, subgraph, valueToNodeMap, symbolToValueMap);
+    subgraph.samples =
+        std::make_shared<SubgraphSamples>(O, subgraph, valueToNodeMap);
   return *subgraph.samples;
 }
 

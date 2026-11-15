@@ -20,6 +20,7 @@
 #include <unordered_map>
 
 #include "IR/Utils.h"
+#include "Instrument.h"
 #include "ProfileRead.h"
 #include "Targets/OffloadRuntime.h"
 #include "Targets/Target.h"
@@ -73,12 +74,6 @@ unsigned applySensitivityFloor(ProfileMap &profileMap,
   if (profileMap.empty())
     return 0;
 
-  // sumAbsGrad is used when the profile carries it: the signed sum understates
-  // a value whose adjoint alternates in sign across executions.
-  auto weightOf = [](const ProfileInfo &p) {
-    return p.sumAbsGrad >= 0.0 ? p.sumAbsGrad : std::fabs(p.sumGrad);
-  };
-
   double ref = 0.0;
   for (const auto &kv : profileMap) {
     if (kv.second.exec == 0)
@@ -114,7 +109,7 @@ unsigned applySensitivityFloor(ProfileMap &profileMap,
     // The weight multiplies an absolute error, so the gradient a sensitivity
     // floor implies scales with 1 / the value's magnitude.
     const double floorW = kSensFloorRatio * ref / mag * (double)p.exec;
-    if (weightOf(p) < floorW) {
+    if (p.weight() < floorW) {
       p.sumGrad = std::copysign(floorW, p.sumGrad == 0.0 ? 1.0 : p.sumGrad);
       if (p.sumAbsGrad >= 0.0)
         p.sumAbsGrad = floorW;
@@ -165,8 +160,7 @@ void mergeOutputProfiles(ProfileMap &profileMap, ArrayRef<std::string> dirs,
                " that the site's profile does not; both must come from the "
                "same profiling binary.");
       const ProfileInfo &p = kv.second;
-      double w = p.sumAbsGrad >= 0.0 ? p.sumAbsGrad : std::fabs(p.sumGrad);
-      grad[kv.first] = std::max(grad[kv.first], w / total);
+      grad[kv.first] = std::max(grad[kv.first], p.weight() / total);
       sens[kv.first] = std::max(sens[kv.first], p.sumSens / total);
     }
   }
@@ -456,30 +450,24 @@ void predeclareInactiveProfilerProbes(llvm::Module &M) {
   Type *PtrTy = PointerType::getUnqual(Ctx);
   Type *DoubleTy = Type::getDoubleTy(Ctx);
   Type *SizeTy = Type::getInt64Ty(Ctx);
-  auto declare = [&](StringRef name, FunctionType *FT) {
-    FunctionCallee fc = M.getOrInsertFunction(name, FT);
-    if (auto *fn = dyn_cast<Function>(fc.getCallee())) {
-      if (!fn->hasFnAttribute("enzyme_inactive"))
-        fn->addFnAttr("enzyme_inactive");
-      fn->addFnAttr(Attribute::NoFree);
-    }
-  };
-  declare(P.LogValue,
-          FunctionType::get(VoidTy,
-                            {PtrTy, SizeTy, DoubleTy,
-                             IntegerType::get(Ctx, P.OperandCountBits), PtrTy},
-                            false));
-  declare(
-      P.LogGradient,
+  getProfilerHook(
+      M, P.LogValue,
+      FunctionType::get(VoidTy,
+                        {PtrTy, SizeTy, DoubleTy,
+                         IntegerType::get(Ctx, P.OperandCountBits), PtrTy},
+                        false));
+  getProfilerHook(
+      M, P.LogGradient,
       FunctionType::get(VoidTy, {PtrTy, SizeTy, DoubleTy, DoubleTy}, false));
   // The perturbation hooks are inactive too: nothing reads a derivative of the
   // perturbation, and a second run of the pass would otherwise differentiate
   // the calls the first run injected.
   Type *FloatTy = Type::getFloatTy(Ctx);
   Type *Int32Ty = Type::getInt32Ty(Ctx);
-  declare(P.PerturbF64,
-          FunctionType::get(DoubleTy, {Int32Ty, DoubleTy}, false));
-  declare(P.PerturbF32, FunctionType::get(FloatTy, {Int32Ty, FloatTy}, false));
+  getProfilerHook(M, P.PerturbF64,
+                  FunctionType::get(DoubleTy, {Int32Ty, DoubleTy}, false));
+  getProfilerHook(M, P.PerturbF32,
+                  FunctionType::get(FloatTy, {Int32Ty, FloatTy}, false));
 }
 
 // A static constructor cannot make the call: the runtime publishes its device
@@ -503,13 +491,9 @@ bool injectHostProfilerInit(llvm::Module &M) {
   if (!mainF || mainF->isDeclaration())
     return false;
   LLVMContext &Ctx = M.getContext();
-  FunctionCallee initFn = M.getOrInsertFunction(
-      deviceProfilerInit(), FunctionType::get(Type::getVoidTy(Ctx), {}, false));
-  if (auto *Fn = dyn_cast<Function>(initFn.getCallee())) {
-    if (!Fn->hasFnAttribute("enzyme_inactive"))
-      Fn->addFnAttr("enzyme_inactive");
-    Fn->addFnAttr(Attribute::NoFree);
-  }
+  FunctionCallee initFn =
+      getProfilerHook(M, deviceProfilerInit(),
+                      FunctionType::get(Type::getVoidTy(Ctx), {}, false));
   // Idempotence: never place a second call.
   for (Instruction &I : instructions(*mainF))
     if (auto *CI = dyn_cast<CallInst>(&I))
@@ -535,13 +519,8 @@ void injectBlockDimProbes(llvm::Module &M) {
     return;
   LLVMContext &Ctx = M.getContext();
   Type *PtrTy = PointerType::getUnqual(Ctx);
-  FunctionCallee probeFn = M.getOrInsertFunction(
-      P.BlockDims, FunctionType::get(Type::getVoidTy(Ctx), {PtrTy}, false));
-  if (auto *Fn = dyn_cast<Function>(probeFn.getCallee())) {
-    if (!Fn->hasFnAttribute("enzyme_inactive"))
-      Fn->addFnAttr("enzyme_inactive");
-    Fn->addFnAttr(Attribute::NoFree);
-  }
+  FunctionCallee probeFn = getProfilerHook(
+      M, P.BlockDims, FunctionType::get(Type::getVoidTy(Ctx), {PtrTy}, false));
 
   unsigned placed = 0;
   for (Function &F : M) {

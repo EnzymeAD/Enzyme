@@ -55,7 +55,6 @@ inline unsigned expansionComponents(PrecisionChangeType t) {
     return 0;
   }
 }
-unsigned getMPFRPrec(PrecisionChangeType type);
 llvm::Type *getLLVMFPType(PrecisionChangeType type, llvm::LLVMContext &context);
 PrecisionChangeType getPrecisionChangeType(llvm::Type *type);
 llvm::StringRef getPrecisionChangeTypeString(PrecisionChangeType type);

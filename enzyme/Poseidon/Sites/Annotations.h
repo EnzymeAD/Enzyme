@@ -1,6 +1,17 @@
-//===- Annotations.h - functions and kernels marked POSEIDON_OPTIMIZE -----===//
+//=- Annotations.h - functions and kernels marked POSEIDON_OPTIMIZE ---------=//
+//
+// Part of the Poseidon Project, under the Apache License v2.0 with LLVM
+// Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+//
 // A module's annotated functions, the kernels that become sites through the
 // device functions they call, and the attributes a site is marked with.
+//
+//===----------------------------------------------------------------------===//
+
 #ifndef POSEIDON_ANNOTATIONS_H
 #define POSEIDON_ANNOTATIONS_H
 
@@ -42,6 +53,8 @@ constexpr llvm::StringLiteral kHostWrapper = "poseidon-site-wrapper";
 constexpr llvm::StringLiteral kSiteCallee = "poseidon-site-callee";
 
 std::string shortDouble(double v);
+// A double as a function attribute value that reads back to the same bits.
+std::string exactDouble(double v);
 std::string displayName(const llvm::Function &F);
 void diagnoseSite(llvm::Function &F, const llvm::Twine &message,
                   llvm::DiagnosticSeverity severity);

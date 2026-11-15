@@ -62,21 +62,17 @@ private:
     CachedValue &operator=(const CachedValue &) = delete;
     CachedValue(CachedValue &&other) noexcept;
     CachedValue &operator=(CachedValue &&other) noexcept;
-    virtual ~CachedValue();
+    ~CachedValue();
   };
 
   std::unordered_map<const FPNode *, CachedValue> cache;
   unsigned prec;
-  std::unordered_map<const FPNode *, unsigned> nodeToNewPrec;
 
 public:
-  MPFREvaluator(unsigned prec, llvm::ArrayRef<PrecisionChange> changes = {});
-  virtual ~MPFREvaluator() = default;
+  explicit MPFREvaluator(unsigned prec);
 
-  unsigned getNodePrecision(const FPNode *node, bool groundTruth) const;
   void evaluateNode(const FPNode *node,
-                    const llvm::MapVector<llvm::Value *, double> &inputValues,
-                    bool groundTruth);
+                    const llvm::MapVector<llvm::Value *, double> &inputValues);
   mpfr_t &getResult(FPNode *node);
 };
 
@@ -87,9 +83,8 @@ void getFPValues(llvm::ArrayRef<FPNode *> outputs,
 
 void getMPFRValues(llvm::ArrayRef<FPNode *> outputs,
                    const llvm::MapVector<llvm::Value *, double> &inputValues,
-                   llvm::SmallVectorImpl<double> &results, bool groundTruth,
-                   const unsigned groundTruthPrec = 53,
-                   llvm::ArrayRef<PrecisionChange> changes = {});
+                   llvm::SmallVectorImpl<double> &results,
+                   unsigned groundTruthPrec);
 
 } // namespace poseidon
 #endif // POSEIDON_EVALUATORS_H

@@ -20,6 +20,7 @@
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringRef.h"
 
+#include <cmath>
 #include <limits>
 #include <map>
 #include <string>
@@ -51,6 +52,12 @@ struct ProfileInfo {
       : minRes(std::numeric_limits<double>::max()),
         maxRes(std::numeric_limits<double>::lowest()), sumValue(0.0),
         sumSens(0.0), sumGrad(0.0), sumAbsGrad(-1.0), exec(0) {}
+
+  // The accuracy weight: sumAbsGrad when the profile records it, as the signed
+  // sum understates a value whose adjoint alternates in sign, else |sumGrad|.
+  double weight() const {
+    return sumAbsGrad >= 0.0 ? sumAbsGrad : std::fabs(sumGrad);
+  }
 };
 
 // A site's profile records by slot index, iterated in slot order: what is

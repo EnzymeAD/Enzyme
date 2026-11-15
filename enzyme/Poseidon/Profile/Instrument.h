@@ -1,7 +1,17 @@
+//=- Instrument.h - profiling probes on a site clone ------------------------=//
+//
+// Part of the Poseidon Project, under the Apache License v2.0 with LLVM
+// Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+
 #ifndef POSEIDON_INSTRUMENT_H
 #define POSEIDON_INSTRUMENT_H
 
 #include "llvm/ADT/StringRef.h"
+#include "llvm/IR/DerivedTypes.h"
 
 #include <cstddef>
 
@@ -11,6 +21,11 @@ class Module;
 } // namespace llvm
 
 namespace poseidon {
+
+// The profiler runtime function `name` of type `FT`, declared in `M` if absent,
+// marked enzyme_inactive and nofree so that AD never differentiates it.
+llvm::FunctionCallee getProfilerHook(llvm::Module &M, llvm::StringRef name,
+                                     llvm::FunctionType *FT);
 
 // Place the profiling probes on a canonicalized, slot-numbered site clone.
 // Every optimizable instruction gets its value logged in the primal and its

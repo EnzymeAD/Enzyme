@@ -24,7 +24,6 @@
 
 #include <deque>
 #include <memory>
-#include <string>
 #include <unordered_map>
 
 namespace poseidon {
@@ -54,7 +53,6 @@ void getSampledPoints(
     const Options &O, llvm::ArrayRef<llvm::Value *> inputs,
     const std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>>
         &valueToNodeMap,
-    const std::unordered_map<std::string, llvm::Value *> &symbolToValueMap,
     llvm::SmallVector<llvm::MapVector<llvm::Value *, double>, 4> &sampledPoints,
     const CancellationPlan *plan = nullptr, size_t count = 0,
     unsigned seedOffset = 0);
@@ -76,8 +74,7 @@ public:
   SubgraphSamples(
       const Options &O, const Subgraph &subgraph,
       const std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>>
-          &valueToNodeMap,
-      const std::unordered_map<std::string, llvm::Value *> &symbolToValueMap);
+          &valueToNodeMap);
   ~SubgraphSamples();
 
   // getSampledPoints over the subgraph's inputs with its cancellation plan;
@@ -101,7 +98,6 @@ private:
   const Subgraph &subgraph;
   const std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>>
       &valueToNodeMap;
-  const std::unordered_map<std::string, llvm::Value *> &symbolToValueMap;
   bool sampled = false;
   llvm::SmallVector<Point, 4> base;
   std::unordered_map<const FPNode *, Reference> references;
@@ -115,11 +111,10 @@ private:
 
 // The samples of `subgraph`, made on first use and kept in it until its
 // `samples` is reset.
-SubgraphSamples &samplesOf(
-    const Options &O, Subgraph &subgraph,
-    const std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>>
-        &valueToNodeMap,
-    const std::unordered_map<std::string, llvm::Value *> &symbolToValueMap);
+SubgraphSamples &
+samplesOf(const Options &O, Subgraph &subgraph,
+          const std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>>
+              &valueToNodeMap);
 
 } // namespace poseidon
 #endif // POSEIDON_SAMPLING_H

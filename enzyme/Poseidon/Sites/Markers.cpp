@@ -1,3 +1,12 @@
+//=- Markers.cpp - marker calls and the sites they defer --------------------=//
+//
+// Part of the Poseidon Project, under the Apache License v2.0 with LLVM
+// Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+
 #include "Markers.h"
 
 #include "Core/Options.h"
@@ -90,18 +99,16 @@ Function *markerTarget(CallInst *CI) {
 
 // Deferred sites: a marked body that is still an __enzyme_* request.
 
-namespace {
-
 // A marked body whose content is a derivative request holds no arithmetic
 // until Enzyme has lowered it, so at OptimizerEarly there is nothing to
 // profile and nothing to rewrite. Such a site is deferred: its marker call is
 // left in place and the body is marked for the late run, after Enzyme.
-constexpr StringLiteral kSiteDeferred = "poseidon-deferred";
+static constexpr StringLiteral kSiteDeferred = "poseidon-deferred";
 
 // The Enzyme requests whose result is the body's content. Matched as
 // substrings, as Enzyme matches them, because a C++ frontend mangles the
 // request's template instantiation.
-bool isEnzymeRequestName(StringRef name) {
+static bool isEnzymeRequestName(StringRef name) {
   static constexpr StringLiteral kRequests[] = {
       "__enzyme_autodiff",   "__enzyme_fwddiff",  "__enzyme_fwdsplit",
       "__enzyme_augmentfwd", "__enzyme_reverse",  "__enzyme_virtualreverse",
@@ -115,13 +122,34 @@ bool isEnzymeRequestName(StringRef name) {
 
 // Enzyme names what it generates after the function it differentiated, with
 // one of these prefixes.
-bool isEnzymeGeneratedName(StringRef name) {
+static bool isEnzymeGeneratedName(StringRef name) {
   return name.starts_with("fwddiffe") || name.starts_with("diffe") ||
          name.starts_with("augmented_") || name.starts_with("fwdsplit") ||
          name.starts_with("batch_");
 }
 
-} // namespace
+// Inlining a call can expose further calls to inline; the rounds are bounded
+// so that a recursive callee cannot keep the loop going.
+static constexpr unsigned kMaxInlineRounds = 8;
+
+unsigned inlineCallsWhile(Function &F, function_ref<bool(CallBase &)> pick) {
+  unsigned inlined = 0;
+  for (unsigned round = 0; round < kMaxInlineRounds; ++round) {
+    SmallVector<CallBase *, 4> todo;
+    for (Instruction &I : instructions(F))
+      if (auto *CB = dyn_cast<CallBase>(&I))
+        if (pick(*CB))
+          todo.push_back(CB);
+    if (todo.empty())
+      break;
+    for (CallBase *CB : todo) {
+      InlineFunctionInfo IFI;
+      if (InlineFunction(*CB, IFI).isSuccess())
+        ++inlined;
+    }
+  }
+  return inlined;
+}
 
 // Fold the code Enzyme generated for the request into the deferred body. What
 // Enzyme leaves behind is a body holding one call to the generated function,
@@ -130,24 +158,12 @@ bool isEnzymeGeneratedName(StringRef name) {
 // functions are folded; a libdevice call the body makes stays a call, so the
 // solve prices it exactly as it prices one in a primal site.
 unsigned foldEnzymeGenerated(Function &body) {
-  unsigned folded = 0;
-  for (unsigned round = 0; round < 8; ++round) {
-    SmallVector<CallInst *, 4> todo;
-    for (Instruction &I : instructions(body))
-      if (auto *CI = dyn_cast<CallInst>(&I))
-        if (Function *callee = calleeOf(CI))
-          if (!callee->isDeclaration() && callee != &body &&
-              isEnzymeGeneratedName(callee->getName()))
-            todo.push_back(CI);
-    if (todo.empty())
-      break;
-    for (CallInst *CI : todo) {
-      InlineFunctionInfo IFI;
-      if (InlineFunction(*CI, IFI).isSuccess())
-        ++folded;
-    }
-  }
-  return folded;
+  return inlineCallsWhile(body, [&](CallBase &CB) {
+    auto *CI = dyn_cast<CallInst>(&CB);
+    Function *callee = CI ? calleeOf(CI) : nullptr;
+    return callee && !callee->isDeclaration() && callee != &body &&
+           isEnzymeGeneratedName(callee->getName());
+  });
 }
 
 // A copy of a deferred body as the pipeline left it, with the functions Enzyme
@@ -265,12 +281,10 @@ void setNextSiteId(Module &M, unsigned next) {
                                   Type::getInt32Ty(M.getContext()), next))));
 }
 
-namespace {
-
 // The name an Enzyme activity marker carries, however the frontend spelled it:
 // a metadata string in hand-written IR, a load of the __device__ int global in
 // CUDA sources.
-std::optional<StringRef> activityMarkerName(Value *res) {
+static std::optional<StringRef> activityMarkerName(Value *res) {
   if (auto *av = dyn_cast<MetadataAsValue>(res))
     if (auto *ms = dyn_cast<MDString>(av->getMetadata()))
       return ms->getString();
@@ -284,9 +298,8 @@ std::optional<StringRef> activityMarkerName(Value *res) {
   return std::nullopt;
 }
 
-} // namespace
-
-bool parseMarker(CallInst *CI, Function *F, MarkerArgs &out) {
+std::optional<MarkerArgs> parseMarker(CallInst *CI, Function *F) {
+  MarkerArgs out;
   bool sret =
       CI->hasStructRetAttr() || F->hasParamAttribute(0, Attribute::StructRet);
   out.forward.assign(CI->arg_size(), true);
@@ -314,13 +327,13 @@ bool parseMarker(CallInst *CI, Function *F, MarkerArgs &out) {
         ++i;
         if (i == CI->arg_size()) {
           fail(CI, "poseidon_tau without a value");
-          return false;
+          return std::nullopt;
         }
         auto *CFP = dyn_cast<ConstantFP>(CI->getArgOperand(i));
         if (!CFP) {
           fail(CI, "the relative error tolerance must be a floating-point "
                    "constant");
-          return false;
+          return std::nullopt;
         }
         out.errTol = CFP->getValueAPF().convertToDouble();
         out.forward[i] = false;
@@ -340,12 +353,12 @@ bool parseMarker(CallInst *CI, Function *F, MarkerArgs &out) {
         break;
       } else {
         fail(CI, "unsupported Poseidon annotation argument " + *name);
-        return false;
+        return std::nullopt;
       }
       ++i;
       if (i == CI->arg_size()) {
         fail(CI, "activity marker without an argument");
-        return false;
+        return std::nullopt;
       }
       res = CI->getArgOperand(i);
     }
@@ -355,13 +368,13 @@ bool parseMarker(CallInst *CI, Function *F, MarkerArgs &out) {
     size_t param = out.primalArgs.size() + sret;
     if (param >= F->getFunctionType()->getNumParams()) {
       fail(CI, "more arguments than " + F->getName() + " has parameters");
-      return false;
+      return std::nullopt;
     }
     if (madeShadow) {
       if (!F->getFunctionType()->getParamType(param)->isPointerTy()) {
         fail(CI, "poseidon_shadow on parameter " + Twine(param) + " of " +
                      F->getName() + ", which is not a pointer");
-        return false;
+        return std::nullopt;
       }
       out.madeShadows.push_back({*madeShadow, (unsigned)i, (unsigned)param});
     }
@@ -374,7 +387,7 @@ bool parseMarker(CallInst *CI, Function *F, MarkerArgs &out) {
       else {
         fail(CI, "parameter " + Twine(param) + " of " + F->getName() +
                      " needs an explicit activity marker");
-        return false;
+        return std::nullopt;
       }
     }
     out.primalArgs.push_back(res);
@@ -386,9 +399,9 @@ bool parseMarker(CallInst *CI, Function *F, MarkerArgs &out) {
   if (out.primalArgs.size() != expected) {
     fail(CI, "decoded " + Twine(out.primalArgs.size()) + " argument(s) for " +
                  F->getName() + ", which takes " + Twine(expected));
-    return false;
+    return std::nullopt;
   }
-  return true;
+  return out;
 }
 
 } // namespace poseidon

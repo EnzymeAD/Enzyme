@@ -132,8 +132,7 @@ static void readSiteProfile(Session &S, Function &F, SiteProfileData &P) {
     // Before the floor below, which would hide the exact zeros.
     if (O.Solver.AggressiveDCE)
       for (const auto &kv : profileMap) {
-        const ProfileInfo &p = kv.second;
-        if ((p.sumAbsGrad >= 0.0 ? p.sumAbsGrad : p.sumGrad) == 0.0)
+        if (kv.second.weight() == 0.0)
           zeroGradIdx.insert(kv.first);
       }
     // Before anything reads a gradient: the floor is written back into the

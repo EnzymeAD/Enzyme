@@ -31,25 +31,6 @@ FPKind fpKindFromType(Type *T) {
   return FPKind::Invalid;
 }
 
-unsigned getMPFRPrec(PrecisionChangeType type) {
-  switch (type) {
-  case PrecisionChangeType::BF16:
-    return 8;
-  case PrecisionChangeType::FP16:
-    return 11;
-  case PrecisionChangeType::FP32:
-    return 24;
-  case PrecisionChangeType::FP64:
-    return 53;
-  case PrecisionChangeType::FP80:
-    return 64;
-  case PrecisionChangeType::FP128:
-    return 113;
-  default:
-    llvm_unreachable("Unsupported FP precision");
-  }
-}
-
 Type *getLLVMFPType(PrecisionChangeType type, LLVMContext &context) {
   switch (type) {
   case PrecisionChangeType::BF16:

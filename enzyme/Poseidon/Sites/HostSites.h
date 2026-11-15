@@ -1,6 +1,17 @@
-//===- HostSites.h - host functions and calls that are sites --------------===//
+//=- HostSites.h - host functions and calls that are sites ------------------=//
+//
+// Part of the Poseidon Project, under the Apache License v2.0 with LLVM
+// Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+//
 // POSEIDON_OPTIMIZE on a host function and __poseidon_optimize on a call: the
 // body each site gets, which the later stages find by its kHostBody mark.
+//
+//===----------------------------------------------------------------------===//
+
 #ifndef POSEIDON_HOST_SITES_H
 #define POSEIDON_HOST_SITES_H
 
@@ -23,7 +34,6 @@ struct Options;
 // empty when the annotation carried none.
 constexpr llvm::StringLiteral kHostBody = "poseidon-site-body";
 
-std::string exactDouble(double v);
 bool lowerPerCallSites(const Options &O, llvm::Module &M);
 bool outlineHostSites(const Options &O, llvm::Module &M);
 llvm::SmallVector<llvm::Function *, 4> hostSiteBodies(llvm::Module &M);

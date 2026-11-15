@@ -39,18 +39,16 @@ using namespace llvm;
 
 namespace poseidon {
 
-namespace {
-
-std::map<std::string, Recorded> &recorded(Session &S, LaunchKind kind) {
-  return S.RecordedLaunches[kind == LaunchKind::HostDispatch ? 0 : 1];
+static std::map<std::string, Recorded> &recorded(Session &S, LaunchKind kind) {
+  return S.RecordedLaunches[static_cast<unsigned>(kind)];
 }
 
-constexpr LaunchKind kKinds[] = {LaunchKind::HostDispatch,
-                                 LaunchKind::Profiling};
+static constexpr LaunchKind kKinds[] = {LaunchKind::HostDispatch,
+                                        LaunchKind::Profiling};
 
-constexpr StringLiteral kProfileHeaders = "profile headers";
+static constexpr StringLiteral kProfileHeaders = "profile headers";
 
-StringRef kindName(LaunchKind kind) {
+static StringRef kindName(LaunchKind kind) {
   return kind == LaunchKind::HostDispatch ? "host dispatch"
                                           : "profile generation";
 }
@@ -59,7 +57,7 @@ StringRef kindName(LaunchKind kind) {
 // -poseidon-unit gives, the id clang gives both halves of a HIP compile, or
 // else the values of every Poseidon flag, which a compile hands both halves
 // alike.
-std::string unitName(const Options &O, const Module &M) {
+static std::string unitName(const Options &O, const Module &M) {
   if (!O.Herbie.Unit.empty())
     return O.Herbie.Unit;
   if (std::optional<StringRef> cuid = compilationUnitId(M))
@@ -70,14 +68,18 @@ std::string unitName(const Options &O, const Module &M) {
   return options.digest();
 }
 
+namespace {
+
 struct Manifest {
   SmallString<256> path;
   CacheKey key;
 };
 
+} // namespace
+
 // The source file tells apart the units one compile writes into a cache, the
 // unit name the compiles of one source into it.
-Manifest manifestOf(const Options &O, const Module &M) {
+static Manifest manifestOf(const Options &O, const Module &M) {
   Manifest m;
   StringRef source = M.getSourceFileName();
   m.key.add("source file", source);
@@ -88,8 +90,6 @@ Manifest manifestOf(const Options &O, const Module &M) {
                   "_" + m.key.digest() + ".json");
   return m;
 }
-
-} // namespace
 
 bool handsOverLaunches(const Options &O) {
   return O.Profiling.ProfileGenerate ||

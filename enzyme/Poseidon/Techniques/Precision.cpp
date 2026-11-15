@@ -489,7 +489,7 @@ void setUnifiedAccuracyCost(
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, Value *> &symbolToValueMap) {
   ArrayRef<SubgraphSamples::Point> sampledPoints =
-      samplesOf(O, *CS.subgraph, valueToNodeMap, symbolToValueMap).points();
+      samplesOf(O, *CS.subgraph, valueToNodeMap).points();
 
   MapVector<FPNode *, SmallVector<double, 4>> goldVals;
   for (auto *output : CS.subgraph->outputs) {
@@ -516,7 +516,7 @@ void setUnifiedAccuracyCost(
   forEachBlock(O.Model.Threads, sampledPoints.size(), 8,
                [&](size_t begin, size_t end) {
                  for (size_t i = begin; i < end; ++i) {
-                   getMPFRValues(outputs, sampledPoints[i], exact[i], true, 53);
+                   getMPFRValues(outputs, sampledPoints[i], exact[i], 53);
                    getFPValues(outputs, sampledPoints[i], asWritten[i]);
                  }
                });

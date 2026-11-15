@@ -365,10 +365,10 @@ static bool optimizeSite(Session &S, CallInst *CI,
   if (!F)
     return false;
 
-  MarkerArgs marker;
-  if (!parseMarker(CI, F, marker))
+  std::optional<MarkerArgs> marker = parseMarker(CI, F);
+  if (!marker)
     return false;
-  optimizeSiteBody(S, CI, F, marker.primalArgs, marker.errTol, calls);
+  optimizeSiteBody(S, CI, F, marker->primalArgs, marker->errTol, calls);
   return true;
 }
 

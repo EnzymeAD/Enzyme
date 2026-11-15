@@ -71,7 +71,8 @@ std::shared_ptr<FPNode> parseHerbieExpr(
         llvm_unreachable(msg.c_str());
       }
       return std::make_shared<FPConst>(value, dtype);
-    } else if (std::regex_match(trimmedExpr, matches, plainConstantPattern)) {
+    }
+    if (std::regex_match(trimmedExpr, matches, plainConstantPattern)) {
       std::string value = matches[1].str();
       std::string dtype = "f64";
       return std::make_shared<FPConst>(value, dtype);
@@ -170,7 +171,8 @@ std::shared_ptr<FPNode> parseHerbieExpr(
   } else if (pos != std::string::npos) {
     op = fullOp.substr(0, pos);
     dtype = fullOp.substr(pos + 1);
-    assert(dtype == "f64" || dtype == "f32");
+    assert((dtype == "f64" || dtype == "f32") &&
+           "Herbie operators carry an f32 or f64 suffix");
   } else {
     op = fullOp;
   }
@@ -251,12 +253,14 @@ enum : int {
   kPrecPrimary
 };
 
-bool isFPDtype(StringRef d) {
+} // namespace
+
+static bool isFPDtype(StringRef d) {
   return d == "f16" || d == "bf16" || d == "f32" || d == "f64" || d == "f80" ||
          d == "f128";
 }
 
-StringRef cTypeName(StringRef d) {
+static StringRef cTypeName(StringRef d) {
   return StringSwitch<StringRef>(d)
       .Case("f16", "_Float16")
       .Case("bf16", "__bf16")
@@ -267,27 +271,33 @@ StringRef cTypeName(StringRef d) {
       .Default("double");
 }
 
-std::string cLiteral(double v, StringRef dtype) {
+// `v` printed with "%.*g" at `digits` significant digits.
+static std::string printG(int digits, double v) {
+  std::string s;
+  raw_string_ostream(s) << format("%.*g", digits, v);
+  return s;
+}
+
+static std::string cLiteral(double v, StringRef dtype) {
   if (std::isnan(v))
     return "NAN";
   if (std::isinf(v))
     return v > 0 ? "INFINITY" : "-INFINITY";
-  char buf[64];
+  std::string s;
   if (dtype == "f32") {
     float f = (float)v;
     for (int p = 1; p <= 9; ++p) {
-      snprintf(buf, sizeof(buf), "%.*g", p, (double)f);
-      if (strtof(buf, nullptr) == f)
+      s = printG(p, (double)f);
+      if (strtof(s.c_str(), nullptr) == f)
         break;
     }
   } else {
     for (int p = 1; p <= 17; ++p) {
-      snprintf(buf, sizeof(buf), "%.*g", p, v);
-      if (strtod(buf, nullptr) == v)
+      s = printG(p, v);
+      if (strtod(s.c_str(), nullptr) == v)
         break;
     }
   }
-  std::string s = buf;
   if (s.find_first_of(".e") == std::string::npos)
     s += ".0";
   if (dtype == "f32")
@@ -295,16 +305,18 @@ std::string cLiteral(double v, StringRef dtype) {
   return s;
 }
 
-std::string paren(const CExpr &e, int minPrec) {
+static std::string paren(const CExpr &e, int minPrec) {
   return e.prec < minPrec ? "(" + e.text + ")" : e.text;
 }
 
-CExpr castTo(const CExpr &e, StringRef dtype) {
+static CExpr castTo(const CExpr &e, StringRef dtype) {
   return {"(" + cTypeName(dtype).str() + ")" + paren(e, kPrecUnary), kPrecUnary,
           dtype.str()};
 }
 
-constexpr unsigned kMaxRenderedNodes = 512;
+static constexpr unsigned kMaxRenderedNodes = 512;
+
+namespace {
 
 class CRenderer {
   const CRendering &how;

@@ -21,17 +21,12 @@
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Intrinsics.h"
-#include "llvm/IR/Module.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/ErrorHandling.h"
-#include "llvm/Support/FileSystem.h"
-#include "llvm/Support/Path.h"
 #include "llvm/Support/raw_ostream.h"
 
-#include <cstdlib>
-#include <cstring>
-#include <fstream>
+#include <unordered_map>
 
 using namespace llvm;
 
@@ -381,10 +376,10 @@ const std::unordered_set<std::string> &getPTFuncs(CostModelState &CM,
   return *CM.PTFuncs;
 }
 
-double computeMaxCost(CostModelState &CM, BasicBlock *BB,
-                      std::unordered_map<BasicBlock *, double> &MaxCost,
-                      std::unordered_set<BasicBlock *> &Visited,
-                      InstWeight Weight) {
+static double computeMaxCost(CostModelState &CM, BasicBlock *BB,
+                             std::unordered_map<BasicBlock *, double> &MaxCost,
+                             std::unordered_set<BasicBlock *> &Visited,
+                             InstWeight Weight) {
   if (MaxCost.find(BB) != MaxCost.end())
     return MaxCost[BB];
 
@@ -434,7 +429,7 @@ double getCompCost(CostModelState &CM, const SmallVector<Value *> &outputs,
                    const SetVector<Value *> &inputs,
                    const DenseMap<const Instruction *, uint64_t> *opExec,
                    uint64_t normalizer) {
-  assert(!outputs.empty());
+  assert(!outputs.empty() && "a cost walk needs at least one output");
   SmallPtrSet<Value *, 8> seen;
   SmallVector<Value *, 8> todo;
   double cost = 0;

@@ -1,6 +1,17 @@
-//===- SiteProfile.h - profile generation for a site ----------------------===//
+//=- SiteProfile.h - profile generation for a site --------------------------=//
+//
+// Part of the Poseidon Project, under the Apache License v2.0 with LLVM
+// Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+//
 // Each site's body instrumented, and the call that reaches it made a
 // reverse-mode request over the instrumented clone with the shadows it needs.
+//
+//===----------------------------------------------------------------------===//
+
 #ifndef POSEIDON_SITE_PROFILE_H
 #define POSEIDON_SITE_PROFILE_H
 

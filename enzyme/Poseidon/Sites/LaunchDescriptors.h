@@ -28,6 +28,7 @@
 
 #include <cstdint>
 #include <map>
+#include <optional>
 #include <string>
 
 namespace poseidon {
@@ -40,12 +41,11 @@ class Session;
 template <class Note> class NoteMap {
 public:
   void note(const llvm::Function *body, const Note &n) { notes[body] = n; }
-  bool get(const llvm::Function *body, Note &out) const {
+  std::optional<Note> get(const llvm::Function *body) const {
     auto it = notes.find(body);
     if (it == notes.end() || !it->second.valid)
-      return false;
-    out = it->second;
-    return true;
+      return std::nullopt;
+    return it->second;
   }
 
 private:

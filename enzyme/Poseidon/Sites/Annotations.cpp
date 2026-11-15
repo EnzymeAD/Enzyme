@@ -1,8 +1,18 @@
+//=- Annotations.cpp - functions and kernels marked POSEIDON_OPTIMIZE -------=//
+//
+// Part of the Poseidon Project, under the Apache License v2.0 with LLVM
+// Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+
 #include "Annotations.h"
 
 #include "Canonicalize.h"
 #include "Core/Options.h"
 #include "IR/Utils.h"
+#include "Markers.h"
 #include "Targets/OffloadRuntime.h"
 #include "Targets/Target.h"
 
@@ -15,21 +25,26 @@
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Module.h"
+#include "llvm/Support/Format.h"
 #include "llvm/Support/Regex.h"
 #include "llvm/Support/raw_ostream.h"
-#include "llvm/Transforms/Utils/Cloning.h"
 
 #include <cmath>
-#include <cstdio>
 
 using namespace llvm;
 
 namespace poseidon {
 
 std::string shortDouble(double v) {
-  char buf[32];
-  std::snprintf(buf, sizeof(buf), "%g", v);
-  return buf;
+  std::string s;
+  raw_string_ostream(s) << format("%g", v);
+  return s;
+}
+
+std::string exactDouble(double v) {
+  std::string s;
+  raw_string_ostream(s) << format("%.17g", v);
+  return s;
 }
 
 // Attribute sites: a function or kernel carrying POSEIDON_OPTIMIZE
@@ -37,11 +52,7 @@ std::string shortDouble(double v) {
 // computation is its whole body. POSEIDON_OPTIMIZE_TAU(t) passes the site's
 // accuracy target as the annotation's one argument instead.
 
-namespace {
-
-constexpr StringLiteral kAnnotation = "poseidon";
-
-} // namespace
+static constexpr StringLiteral kAnnotation = "poseidon";
 
 std::string displayName(const Function &F) {
   return llvm::demangle(F.getName().str());
@@ -56,10 +67,8 @@ void diagnoseSite(Function &F, const Twine &message,
       F, "Poseidon: " + message.str(), F.getSubprogram(), severity));
 }
 
-namespace {
-
 // Whether an annotation's argument global is POSEIDON_OPTIMIZE's int 0.
-bool carriesNoTarget(Constant *args) {
+static bool carriesNoTarget(Constant *args) {
   auto *GV = dyn_cast<GlobalVariable>(args->stripPointerCasts());
   if (!GV || !GV->hasInitializer())
     return false;
@@ -70,7 +79,7 @@ bool carriesNoTarget(Constant *args) {
 }
 
 // The value of an annotation's argument global when it is one double.
-std::optional<double> annotationTarget(Constant *args) {
+static std::optional<double> annotationTarget(Constant *args) {
   auto *GV = dyn_cast<GlobalVariable>(args->stripPointerCasts());
   if (!GV || !GV->hasInitializer())
     return std::nullopt;
@@ -86,7 +95,7 @@ std::optional<double> annotationTarget(Constant *args) {
 
 // The C string an annotation entry's second field names; none when that is not
 // a global with a C-string initializer.
-std::optional<StringRef> annotationString(ConstantStruct &entry) {
+static std::optional<StringRef> annotationString(ConstantStruct &entry) {
   auto *text =
       dyn_cast<GlobalVariable>(entry.getOperand(1)->stripPointerCasts());
   auto *str = text && text->hasInitializer()
@@ -99,8 +108,8 @@ std::optional<StringRef> annotationString(ConstantStruct &entry) {
 
 // Replaces the module's llvm.global.annotations, `GA`, by an array of
 // `entries`.
-void replaceAnnotations(Module &M, GlobalVariable *GA,
-                        ArrayRef<Constant *> entries) {
+static void replaceAnnotations(Module &M, GlobalVariable *GA,
+                               ArrayRef<Constant *> entries) {
   auto *arr = cast<ConstantArray>(GA->getInitializer());
   auto *init = ConstantArray::get(
       ArrayType::get(arr->getType()->getElementType(), entries.size()),
@@ -113,7 +122,21 @@ void replaceAnnotations(Module &M, GlobalVariable *GA,
   GA->eraseFromParent();
 }
 
-} // namespace
+// The entries of the module's llvm.global.annotations, `GA`; null when the
+// module has none.
+static ConstantArray *globalAnnotations(Module &M, GlobalVariable *&GA) {
+  GA = M.getGlobalVariable("llvm.global.annotations");
+  return GA ? dyn_cast_or_null<ConstantArray>(GA->getInitializer()) : nullptr;
+}
+
+// The annotation string of an llvm.global.annotations entry: none unless the
+// entry is a struct of at least two fields whose second names a C string.
+static std::optional<StringRef> entryAnnotation(Value *op) {
+  auto *entry = dyn_cast<ConstantStruct>(op);
+  if (!entry || entry->getNumOperands() < 2)
+    return std::nullopt;
+  return annotationString(*entry);
+}
 
 // The annotated functions of this module with the accuracy target each
 // annotation carries, in module order so that the site numbering does not
@@ -121,21 +144,18 @@ void replaceAnnotations(Module &M, GlobalVariable *GA,
 // annotation that cannot be read as written is a compile error on its function
 // rather than a site without the target its source asked for.
 MapVector<Function *, std::optional<double>> annotatedFunctions(Module &M) {
-  auto *GA = M.getGlobalVariable("llvm.global.annotations");
-  auto *arr =
-      GA ? dyn_cast_or_null<ConstantArray>(GA->getInitializer()) : nullptr;
+  GlobalVariable *GA;
+  ConstantArray *arr = globalAnnotations(M, GA);
   if (!arr)
     return {};
   DenseMap<Function *, std::optional<double>> found;
   for (Value *op : arr->operands()) {
-    auto *entry = dyn_cast<ConstantStruct>(op);
-    if (!entry || entry->getNumOperands() < 2)
+    std::optional<StringRef> text = entryAnnotation(op);
+    if (!text)
       continue;
+    auto *entry = cast<ConstantStruct>(op);
     auto *fn = dyn_cast<Function>(entry->getOperand(0)->stripPointerCasts());
     if (!fn || fn->isDeclaration())
-      continue;
-    std::optional<StringRef> text = annotationString(*entry);
-    if (!text)
       continue;
     StringRef str = *text;
     if (str != kAnnotation) {
@@ -255,14 +275,13 @@ void collectAnnotatedSites(const Options &O, Module &M,
 // Device-function sites: POSEIDON_OPTIMIZE on a function a kernel calls (a
 // lambda a generic launch helper runs, say) makes that kernel a site.
 
-namespace {
-
 // What `K` reaches through direct calls of defined functions, not looking
 // inside annotated ones: `wrappers` is K and everything reached that way,
 // `reached` the annotated device functions it calls.
-void kernelCallees(
-    Function &K, const MapVector<Function *, std::optional<double>> &annotated,
-    SetVector<Function *> &wrappers, SetVector<Function *> &reached) {
+static void
+kernelCallees(Function &K,
+              const MapVector<Function *, std::optional<double>> &annotated,
+              SetVector<Function *> &wrappers, SetVector<Function *> &reached) {
   const Target &T = Target::of(K);
   wrappers.insert(&K);
   for (size_t w = 0; w < wrappers.size(); ++w)
@@ -283,7 +302,7 @@ void kernelCallees(
 // check, a loop over the call, further such wrappers); the whole kernel is what
 // gets profiled and rewritten, so floating-point work outside the annotated
 // function would be rewritten without having been marked.
-std::string deviceSiteRefusal(ArrayRef<Function *> wrappers) {
+static std::string deviceSiteRefusal(ArrayRef<Function *> wrappers) {
   for (Function *W : wrappers)
     for (Instruction &I : instructions(*W)) {
       if (isOptimizable(I))
@@ -298,21 +317,21 @@ std::string deviceSiteRefusal(ArrayRef<Function *> wrappers) {
 
 // Gives `K` the annotation `fn` carries, target included, so that every later
 // phase sees an annotated kernel.
-void annotateLike(Function &K, Function &fn) {
+static void annotateLike(Function &K, Function &fn) {
   Module &M = *K.getParent();
-  auto *GA = M.getGlobalVariable("llvm.global.annotations");
-  auto *arr = cast<ConstantArray>(GA->getInitializer());
+  GlobalVariable *GA;
+  ConstantArray *arr = globalAnnotations(M, GA);
+  assert(arr && "an annotated function has an llvm.global.annotations entry");
   SmallVector<Constant *, 8> entries;
   Constant *copy = nullptr;
   for (Value *op : arr->operands()) {
     auto *entry = cast<Constant>(op);
     entries.push_back(entry);
-    auto *ST = dyn_cast<ConstantStruct>(entry);
-    if (!ST || ST->getNumOperands() < 2 ||
-        ST->getOperand(0)->stripPointerCasts() != &fn)
-      continue;
-    std::optional<StringRef> str = annotationString(*ST);
+    std::optional<StringRef> str = entryAnnotation(entry);
     if (!str || *str != kAnnotation)
+      continue;
+    auto *ST = cast<ConstantStruct>(entry);
+    if (ST->getOperand(0)->stripPointerCasts() != &fn)
       continue;
     SmallVector<Constant *, 5> ops;
     for (Use &U : ST->operands())
@@ -325,8 +344,6 @@ void annotateLike(Function &K, Function &fn) {
   entries.push_back(copy);
   replaceAnnotations(M, GA, entries);
 }
-
-} // namespace
 
 // Before inlining, on the device: every kernel that calls an annotated device
 // function becomes a site with that function's target. A kernel that cannot be
@@ -414,21 +431,11 @@ bool foldDeviceSiteCallees(Module &M) {
   for (auto &[K, tau] : annotatedFunctions(M)) {
     if (!T.isKernel(*K) || K->hasFnAttribute(kSiteLowered))
       continue;
-    for (unsigned round = 0; round < 8; ++round) {
-      SmallVector<CallBase *, 4> calls;
-      for (Instruction &I : instructions(*K))
-        if (auto *CB = dyn_cast<CallBase>(&I))
-          if (Function *callee = CB->getCalledFunction();
-              callee && !callee->isDeclaration() &&
-              callee->hasFnAttribute(kSiteCallee))
-            calls.push_back(CB);
-      if (calls.empty())
-        break;
-      for (CallBase *CB : calls) {
-        InlineFunctionInfo IFI;
-        changed |= InlineFunction(*CB, IFI).isSuccess();
-      }
-    }
+    changed |= inlineCallsWhile(*K, [](CallBase &CB) {
+                 Function *callee = CB.getCalledFunction();
+                 return callee && !callee->isDeclaration() &&
+                        callee->hasFnAttribute(kSiteCallee);
+               }) != 0;
   }
   return changed;
 }
@@ -445,24 +452,20 @@ void warnWithoutProfile(Function &K) {
 // The module's POSEIDON_OPTIMIZE annotations removed, with what only they
 // referred to.
 bool dropSiteAnnotations(Module &M) {
-  auto *GA = M.getGlobalVariable("llvm.global.annotations");
-  auto *arr =
-      GA ? dyn_cast_or_null<ConstantArray>(GA->getInitializer()) : nullptr;
+  GlobalVariable *GA;
+  ConstantArray *arr = globalAnnotations(M, GA);
   if (!arr)
     return false;
   SmallVector<Constant *, 8> kept;
   SmallSetVector<GlobalVariable *, 8> maybeDead;
   for (Value *op : arr->operands()) {
     auto *entry = cast<Constant>(op);
-    auto *ST = dyn_cast<ConstantStruct>(entry);
-    std::optional<StringRef> str;
-    if (ST && ST->getNumOperands() > 1)
-      str = annotationString(*ST);
+    std::optional<StringRef> str = entryAnnotation(entry);
     if (!str || *str != kAnnotation) {
       kept.push_back(entry);
       continue;
     }
-    for (Use &U : ST->operands())
+    for (Use &U : cast<ConstantStruct>(entry)->operands())
       if (auto *G = dyn_cast<GlobalVariable>(U.get()->stripPointerCasts()))
         maybeDead.insert(G);
   }
