@@ -1,6 +1,4 @@
-// RUN: rm -rf %t && mkdir %t
-// RUN: %clang++ $(llvm-config --cxxflags) -I%S/../../../Poseidon %S/../../../Poseidon/Core/FPKind.cpp %s $(llvm-config --ldflags --libs support --system-libs) -o %t/matmul_scheme
-// RUN: %t/matmul_scheme | FileCheck %s
+// RUN: %poseidon_test_programs/poseidon-test-matmul-scheme | FileCheck %s
 
 // What a matrix-product candidate's scheme alone decides: the scheme and
 // num_moduli field the launch descriptor stores for each library call

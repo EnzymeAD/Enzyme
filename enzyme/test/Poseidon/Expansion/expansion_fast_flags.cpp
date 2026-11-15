@@ -1,6 +1,5 @@
 // RUN: rm -rf %t && mkdir %t
-// RUN: %clang++ $(llvm-config --cxxflags) -fPIC -shared -I%S/../../../Poseidon %S/../Inputs/expansion_fast_flags/apply_expansion.cpp -o %t/apply_expansion%shlibext
-// RUN: %opt %S/../Inputs/expansion_fast_flags/fast.ll %loadPoseidon -load-pass-plugin=%t/apply_expansion%shlibext -passes=apply-expansion -S -o %t/expanded.ll
+// RUN: %opt %S/../Inputs/expansion_fast_flags/fast.ll %loadPoseidon -load-pass-plugin=%poseidon_test_programs/poseidon-test-apply-expansion%shlibext -passes=apply-expansion -S -o %t/expanded.ll
 // RUN: FileCheck --check-prefix=IR --implicit-check-not='{{ (fast|contract|reassoc|nnan|ninf|nsz|arcp|afn) }}' %s < %t/expanded.ll
 // RUN: %clang++ -O2 -c %t/expanded.ll -o %t/expanded.o
 // RUN: %clang++ -std=c++17 -O2 -ffp-contract=off %S/../Inputs/expansion_fast_flags/harness.cpp %t/expanded.o -o %t/run

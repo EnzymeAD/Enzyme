@@ -9,7 +9,7 @@
 ; RUN:   | FileCheck --check-prefix=KEPT %s
 ; RUN: %python -c "print('tester' + 'x' * 250)" > %t/long.name
 ; RUN: sed "s/@tester\b/@$(cat %t/long.name)/" %s > %t/long.ll
-; RUN: mkdir -p %t/long.prof && cp %S/../Inputs/explain/precision/preprocess_tester.fpprofile %t/long.prof/$(%python -c "import functools, sys; n = 'preprocess_' + sys.argv[1]; print(n[:160] + '~' + format(functools.reduce(lambda h, c: (h ^ c) * 1099511628211 % 2**64, n.encode(), 14695981039346656037), '016x'))" $(cat %t/long.name)).fpprofile
+; RUN: mkdir -p %t/long.prof && cp %S/../Inputs/explain/precision/preprocess_tester.fpprofile %t/long.prof/$(%poseidon_test_programs/poseidon-test-profile-name-stem preprocess_$(cat %t/long.name)).fpprofile
 ; RUN: %{opt} < %t/long.ll -poseidon-profile-use=%t/long.prof -poseidon-cache=%t/c -poseidon-tau=1e-6 -poseidon-report-path=%t/long 2>&1 \
 ; RUN:   | FileCheck --check-prefix=LONG --implicit-check-not="Error writing" %s
 ; RUN: ls %t/long | FileCheck --check-prefix=LONGFILES %s

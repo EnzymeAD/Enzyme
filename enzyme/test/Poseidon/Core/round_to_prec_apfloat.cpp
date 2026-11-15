@@ -1,6 +1,4 @@
-// RUN: rm -rf %t && mkdir %t
-// RUN: %clang++ $(llvm-config --cxxflags) -I%S/../../../Poseidon %S/../../../Poseidon/Core/FPKind.cpp %s $(llvm-config --ldflags --libs support --system-libs) -o %t/round
-// RUN: %t/round | FileCheck %s
+// RUN: %poseidon_test_programs/poseidon-test-round-to-prec | FileCheck %s
 
 // roundToPrec rounds with integer arithmetic on the binary64 encoding; it has
 // to return APFloat's conversion to the format and back, bit for bit, for
@@ -35,7 +33,10 @@ int main() {
       {FPKind::TF32, &APFloat::FloatTF32()},
       {FPKind::F32, &APFloat::IEEEsingle()}};
   std::mt19937_64 rng(1);
-  for (const auto &[kind, sem] : kinds) {
+  for (const auto &kindAndSem : kinds) {
+    // A structured binding cannot be captured by the lambda below in C++17.
+    const FPKind kind = kindAndSem.first;
+    const fltSemantics *sem = kindAndSem.second;
     const int p = APFloat::semanticsPrecision(*sem);
     const int emin = APFloat::semanticsMinExponent(*sem);
     const int emax = APFloat::semanticsMaxExponent(*sem);

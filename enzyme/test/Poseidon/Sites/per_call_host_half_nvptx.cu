@@ -7,10 +7,10 @@
 // RUN: %{clang} --cuda-host-only %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/other_sites -mllvm -poseidon-cache=%t/u -o %t/use.ll 2>&1 \
 // RUN:   | FileCheck --allow-empty --check-prefix=HOST %s
 // RUN: diff %t/plain.ll %t/use.ll
-// RUN: %{clang} --cuda-host-only %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/g -o %t/gen.ll 2>&1 \
+// RUN: %{clang} --cuda-host-only %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/g -mllvm -poseidon-print -o %t/gen.ll 2>&1 \
 // RUN:   | FileCheck --check-prefix=GEN %s
 // RUN: FileCheck --check-prefix=GENIR %s < %t/gen.ll
-// RUN: %{clang} --cuda-device-only %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/d -o %t/dev.ll 2>&1 \
+// RUN: %{clang} --cuda-device-only %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/d -mllvm -poseidon-print -o %t/dev.ll 2>&1 \
 // RUN:   | FileCheck --check-prefix=DEV %s
 
 // In a CUDA or HIP compilation only the device half holds sites: one

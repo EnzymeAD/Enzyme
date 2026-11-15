@@ -3,7 +3,7 @@
 // RUN: %clang -x c++ -O2 -ffp-contract=on -I%poseidon_profile_inc %s -lstdc++ -lm -o %t/stock
 // RUN: %t/stock > %t/stock.out
 //
-// RUN: %poseidon_clangxx -O2 -poseidon-profile-generate -poseidon-cache=%t/cg %s -o %t/gen 2>&1 | FileCheck --check-prefix=GEN %s
+// RUN: %poseidon_clangxx -O2 -poseidon-profile-generate -poseidon-cache=%t/cg -poseidon-print %s -o %t/gen 2>&1 | FileCheck --check-prefix=GEN %s
 // RUN: env POSEIDON_PROFILE_DIR=%t/prof %t/gen > %t/gen.out
 // RUN: diff %t/stock.out %t/gen.out
 // RUN: ls %t/prof | FileCheck --check-prefix=PROFILES %s

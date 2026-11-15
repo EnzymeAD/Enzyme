@@ -1,6 +1,6 @@
 // REQUIRES: enzyme
 // RUN: rm -rf %t && mkdir %t
-// RUN: %poseidon_clangxx -O2 -g -poseidon-profile-generate -poseidon-cache=%t/c %s -o %t/gen 2>&1 | FileCheck --check-prefix=GEN %s
+// RUN: %poseidon_clangxx -O2 -g -poseidon-profile-generate -poseidon-cache=%t/c -poseidon-print %s -o %t/gen 2>&1 | FileCheck --check-prefix=GEN %s
 // RUN: llvm-nm %t/gen | FileCheck --check-prefix=SYM %s
 // RUN: env POSEIDON_PROFILE_DIR=%t/prof %t/gen | FileCheck --check-prefix=OUT %s
 // RUN: FileCheck --check-prefix=PROF %s < %t/prof/preprocess__Z5scalePKdPdi_poseidon_body.fpprofile

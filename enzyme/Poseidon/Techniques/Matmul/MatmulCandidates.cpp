@@ -576,10 +576,9 @@ void generateMatmulCandidates(Session &S, ArrayRef<AbstractMatmul> matmuls,
                           : m.hostGemm && m.hostGemm->cStore
                               ? m.hostGemm->cStore->getFunction()
                               : nullptr;
-      llvm::errs()
-          << "[poseidon] matmul[" << m.id << "] in '"
-          << (F ? F->getName() : "<unknown>")
-          << "' uncovered — skipping under -poseidon-loose-coverage.\n";
+      llvm::errs() << "[poseidon] matmul[" << m.id << "] in '"
+                   << (F ? F->getName() : "<unknown>")
+                   << "' uncovered; skipping under -poseidon-loose-coverage.\n";
       continue;
     }
 

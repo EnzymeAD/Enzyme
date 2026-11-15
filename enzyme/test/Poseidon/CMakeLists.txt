@@ -71,6 +71,58 @@ add_custom_command(
   COMMENT "Writing the cost models of the Poseidon tests")
 add_custom_target(poseidon-test-cost-models DEPENDS ${_outputs})
 
+# Programs tests run: drivers of pass sources, and opt plugins that call the
+# Poseidon plugin's functions, which they find in the opt process that loaded
+# both. What they print is checked against what clang computes from them by
+# default, so assertions stay on in every build type and floating-point
+# contraction is clang's default with any compiler.
+set(POSEIDON_TEST_PROGRAM_OPTIONS -UNDEBUG)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+  list(APPEND POSEIDON_TEST_PROGRAM_OPTIONS -ffp-contract=on)
+endif()
+set(POSEIDON_TEST_PROGRAM_DIR ${CMAKE_CURRENT_BINARY_DIR}/bin)
+llvm_map_components_to_libnames(POSEIDON_TEST_PROGRAM_LLVM_LIBS support)
+
+function(poseidon_add_test_program name)
+  add_executable(${name} ${ARGN})
+  target_include_directories(${name} PRIVATE ${POSEIDON_SOURCE_DIR})
+  target_compile_options(${name} PRIVATE ${POSEIDON_TEST_PROGRAM_OPTIONS})
+  target_link_libraries(${name} PRIVATE ${POSEIDON_TEST_PROGRAM_LLVM_LIBS})
+  set_target_properties(${name} PROPERTIES RUNTIME_OUTPUT_DIRECTORY
+                                           ${POSEIDON_TEST_PROGRAM_DIR})
+endfunction()
+
+function(poseidon_add_test_plugin name source)
+  add_llvm_library(${name} MODULE BUILDTREE_ONLY ${source} PLUGIN_TOOL opt)
+  target_include_directories(${name} PRIVATE ${POSEIDON_SOURCE_DIR})
+  target_compile_options(${name} PRIVATE ${POSEIDON_TEST_PROGRAM_OPTIONS})
+  set_target_properties(${name} PROPERTIES LIBRARY_OUTPUT_DIRECTORY
+                                           ${POSEIDON_TEST_PROGRAM_DIR})
+endfunction()
+
+poseidon_add_test_program(
+  poseidon-test-cache-key Core/cache_key_equivalents.cpp
+  ${POSEIDON_SOURCE_DIR}/Core/CacheKey.cpp)
+poseidon_add_test_program(
+  poseidon-test-round-to-prec Core/round_to_prec_apfloat.cpp
+  ${POSEIDON_SOURCE_DIR}/Core/FPKind.cpp)
+poseidon_add_test_program(
+  poseidon-test-matmul-scheme Matmul/matmul_scheme.cpp
+  ${POSEIDON_SOURCE_DIR}/Core/FPKind.cpp)
+poseidon_add_test_program(poseidon-test-profile-name-stem
+                          Inputs/explain/profile_name_stem.cpp)
+poseidon_add_test_plugin(poseidon-test-apply-expansion
+                         Inputs/expansion_fast_flags/apply_expansion.cpp)
+poseidon_add_test_plugin(poseidon-test-expansion-match
+                         Inputs/expansion_match/emit.cpp)
+set(POSEIDON_TEST_PROGRAMS
+    poseidon-test-cache-key
+    poseidon-test-round-to-prec
+    poseidon-test-matmul-scheme
+    poseidon-test-profile-name-stem
+    poseidon-test-apply-expansion
+    poseidon-test-expansion-match)
+
 # The Enzyme plugin comes in two builds: ClangEnzyme for -fpass-plugin and
 # LLVMEnzyme for opt's -load-pass-plugin.
 set(POSEIDON_ENZYME_CLANG_PLUGIN "")
@@ -143,6 +195,7 @@ set(POSEIDON_TEST_DEPS
     poseidon-calibrate
     poseidon-probe
     poseidon-test-cost-models
+    ${POSEIDON_TEST_PROGRAMS}
     LLVMEnzyme-${LLVM_VERSION_MAJOR})
 if(TARGET ClangEnzyme-${LLVM_VERSION_MAJOR})
   list(APPEND POSEIDON_TEST_DEPS ClangEnzyme-${LLVM_VERSION_MAJOR})

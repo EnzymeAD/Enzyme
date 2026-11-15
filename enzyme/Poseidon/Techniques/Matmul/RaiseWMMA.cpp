@@ -677,7 +677,7 @@ void ScalarLoopRaiseMaterializer::run() {
   unsigned cFragSize = mmaFTy->getNumParams() - aFragSize - bFragSize;
   if (cFragSize != dFragSize)
     report_fatal_error("ScalarLoopRaiseMaterializer: mma C/D fragment shapes "
-                       "differ — chained accumulation requires C precision == "
+                       "differ; chained accumulation requires C precision == "
                        "D precision");
   Type *cFragElemTy = mmaFTy->getParamType(aFragSize + bFragSize);
 
@@ -727,7 +727,7 @@ void ScalarLoopRaiseMaterializer::run() {
   {
     if (!h.aStartSCEV || !h.bStartSCEV || !h.SE)
       report_fatal_error("ScalarLoopRaiseMaterializer: missing aStartSCEV / "
-                         "bStartSCEV / SE — analyzer didn't populate them");
+                         "bStartSCEV / SE; analyzer didn't populate them");
 #if LLVM_VERSION_MAJOR >= 22 && !defined(ENZYME_LLVM22_PRERELEASE)
     SCEVExpander sex(*h.SE, "poseidon.raise");
 #else
