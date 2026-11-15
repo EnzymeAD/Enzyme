@@ -89,6 +89,8 @@ build-native/tools/enzyme-tblgen/enzyme-tblgen --version
 # 2. Cross-compile
 CMAKE_FLAGS=()
 CMAKE_FLAGS+=(-DENZYME_EXTERNAL_SHARED_LIB=ON)
+# Enzyme.jl only loads libEnzyme and libEnzymeBCLoad; skip the opt/LLD/Clang plugins.
+CMAKE_FLAGS+=(-DENZYME_ENABLE_PLUGINS=OFF)
 CMAKE_FLAGS+=(-DBC_LOAD_HEADER=`pwd`/build-native/BCLoad/gsl/blas_headers.h)
 CMAKE_FLAGS+=(-DEnzyme_TABLEGEN=`pwd`/build-native/tools/enzyme-tblgen/enzyme-tblgen)
 CMAKE_FLAGS+=(-DEnzyme_TABLEGEN_EXE=`pwd`/build-native/tools/enzyme-tblgen/enzyme-tblgen)
