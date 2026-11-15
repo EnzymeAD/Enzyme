@@ -12,15 +12,27 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "Precision.h"
+#include "Core/Parallel.h"
+#include "Expansion.h"
+#include "Herbie.h"
+#include "IR/Utils.h"
+#include "Model/CostModel.h"
+#include "Model/Evaluators.h"
+#include "Model/Sampling.h"
+#include "Pass/Session.h"
+#include "Profile/ProfileRead.h"
+#include "Sites/Canonicalize.h"
+#include "Staging.h"
+#include "Targets/DeviceMath.h"
+#include "Targets/Target.h"
+
 #include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallSet.h"
-#include "llvm/Analysis/AliasAnalysis.h"
-#include "llvm/Analysis/BasicAliasAnalysis.h"
 #include "llvm/Analysis/LoopInfo.h"
-#include "llvm/Analysis/TargetLibraryInfo.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Intrinsics.h"
@@ -30,13 +42,9 @@
 #include "llvm/Support/Format.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/raw_ostream.h"
-#include "llvm/Transforms/Scalar/EarlyCSE.h"
-#include "llvm/Transforms/Scalar/GVN.h"
 #include "llvm/Transforms/Utils/Cloning.h"
-#include "llvm/Transforms/Utils/Mem2Reg.h"
 
 #include <cmath>
-#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
@@ -45,30 +53,16 @@
 #include <unordered_set>
 #include <vector>
 
-#include "Core/Parallel.h"
-#include "Expansion.h"
-#include "Herbie.h"
-#include "IR/Utils.h"
-#include "Model/CostModel.h"
-#include "Model/Evaluators.h"
-#include "Model/Sampling.h"
-#include "Pass/Session.h"
-#include "Precision.h"
-#include "Profile/ProfileRead.h"
-#include "Sites/Canonicalize.h"
-#include "Staging.h"
-#include "Targets/DeviceMath.h"
-#include "Targets/Target.h"
-
 using namespace llvm;
 
 namespace poseidon {
 
-void changePrecision(Instruction *I, PrecisionChange &change,
-                     MapVector<Value *, Value *> &oldToNew) {
-  if (!isOptimizable(*I)) {
-    llvm_unreachable("Trying to tune an instruction is not isOptimizable");
-  }
+// Emits I in the precision of `change`, reading the operands already changed
+// from `oldToNew` and casting the others, and records the new value there.
+static void changePrecision(Instruction *I, PrecisionChange &change,
+                            MapVector<Value *, Value *> &oldToNew) {
+  assert(isOptimizable(*I) &&
+         "Trying to tune an instruction is not isOptimizable");
 
   IRBuilder<> Builder(I);
   Builder.setFastMathFlags(I->getFastMathFlags());
@@ -162,12 +156,7 @@ void changePrecision(Instruction *I, PrecisionChange &change,
       // semantics and are modelled: libdevice is linked before this pass, so
       // a fresh __nv_fmaxf declaration would reach ptxas undefined.
       {
-        std::string base = deviceMathName(funcName).str();
-        if (base.empty()) {
-          base = funcName.str();
-          if (!base.empty() && (base.back() == 'f' || base.back() == 'l'))
-            base.pop_back();
-        }
+        StringRef base = libmBaseName(funcName);
         if ((base == "fmax" || base == "fmin") && newArgs.size() == 2) {
           Intrinsic::ID id =
               (base == "fmax") ? Intrinsic::maxnum : Intrinsic::minnum;
@@ -238,7 +227,7 @@ void PTCandidate::apply(Session &S, Subgraph &subgraph, ValueToValueMapTy *VMap,
       clonedToOriginal; // Maps cloned outputs to old outputs
   if (VMap) {
     for (auto *I : subgraph.operations) {
-      assert(VMap->count(I));
+      assert(VMap->count(I) && "the clone maps every operation");
       if (Value *Mapped = VMap->lookup(I)) {
         if (auto *MappedI = dyn_cast<Instruction>(Mapped)) {
           operations.insert(MappedI);
@@ -264,10 +253,9 @@ void PTCandidate::apply(Session &S, Subgraph &subgraph, ValueToValueMapTy *VMap,
       if (!node || !node->value) {
         continue;
       }
-      assert(isa<Instruction>(node->value));
       auto *I = cast<Instruction>(node->value);
       if (VMap) {
-        assert(VMap->count(I));
+        assert(VMap->count(I) && "the clone maps every operation");
         if (Value *Mapped = VMap->lookup(I)) {
           if (auto *MappedI = dyn_cast<Instruction>(Mapped)) {
             I = MappedI;
@@ -343,7 +331,8 @@ void PTCandidate::apply(Session &S, Subgraph &subgraph, ValueToValueMapTy *VMap,
             newV, getLLVMFPType(change.oldType, builder.getContext()));
 
         if (VMap) {
-          assert(VMap->count(clonedToOriginal[oldV]));
+          assert(VMap->count(clonedToOriginal[oldV]) &&
+                 "a changed clone operation maps back to an operation");
           (*VMap)[clonedToOriginal[oldV]] = casted;
         } else if (graph) {
           graph->replaceErased(oldV, casted);
@@ -440,15 +429,6 @@ bool demoteFPCastPHIs(llvm::Function &F) {
   if (D.empty())
     return false;
 
-  // Confirm the closure invariant holds for every surviving PHI before mutating
-  // anything; bail cleanly rather than leave a half-rewritten function.
-  for (PHINode *P : D)
-    for (Value *IV : P->incoming_values()) {
-      Constant *c = nullptr;
-      if (!(inSet.count(IV) || floatExtSrc(IV) || floatReprConst(IV, c)))
-        return false;
-    }
-
   DenseMap<PHINode *, PHINode *> nmap;
   for (PHINode *P : D) {
     PHINode *NP = PHINode::Create(FloatTy, P->getNumIncomingValues(),
@@ -541,7 +521,8 @@ void setUnifiedAccuracyCost(
     CS.perOutputInitialAccCost[node] = red * std::fabs(node->grad);
     CS.initialAccCost += CS.perOutputInitialAccCost[node];
   }
-  assert(!std::isnan(CS.initialAccCost));
+  assert(!std::isnan(CS.initialAccCost) &&
+         "the subgraph as written has an accuracy cost");
 
   // Each candidate is scored on its own, concurrently.
   SmallVector<const SmallVector<double, 4> *, 4> goldOf;
@@ -590,7 +571,8 @@ void setUnifiedAccuracyCost(
         candidate.perOutputAccCost[node] = red * std::fabs(node->grad);
         candidate.accuracyCost += candidate.perOutputAccCost[node];
       }
-      assert(!std::isnan(candidate.accuracyCost));
+      assert(!std::isnan(candidate.accuracyCost) &&
+             "a kept candidate has an accuracy cost");
       newCandidates.push_back(std::move(candidate));
     } else {
       CS.dropped.push_back({candidate.desc,
@@ -641,7 +623,7 @@ CandidateClone::CandidateClone(Session &S, Subgraph &subgraph,
                                ArrayRef<Instruction *> outputs,
                                PTCandidate &pt) {
   const Options &O = S.Opts;
-  assert(!outputs.empty());
+  assert(!outputs.empty() && "a candidate is priced over some output");
 
   Function *F = outputs[0]->getFunction();
 
@@ -853,6 +835,8 @@ struct TierTriple {
   PrecisionChangeType lo;
 };
 
+} // namespace
+
 static const TierPair kCanonicalPairs[] = {
     {PrecisionChangeType::FP64, PrecisionChangeType::FP32},
     {PrecisionChangeType::FP64, PrecisionChangeType::Expansion2},
@@ -907,19 +891,13 @@ static bool precAllowed(const Options &O, PrecisionChangeType t, bool gpuMode,
   return true;
 }
 
-static bool tierPairAllowed(const Options &O, TierPair tp, bool gpuMode,
-                            bool expansionSafe,
-                            const std::unordered_set<std::string> &hwScalar) {
-  return precAllowed(O, tp.hi, gpuMode, expansionSafe, hwScalar) &&
-         precAllowed(O, tp.lo, gpuMode, expansionSafe, hwScalar);
-}
-
-static bool tierTripleAllowed(const Options &O, TierTriple tr, bool gpuMode,
-                              bool expansionSafe,
-                              const std::unordered_set<std::string> &hwScalar) {
-  return precAllowed(O, tr.hi, gpuMode, expansionSafe, hwScalar) &&
-         precAllowed(O, tr.mid, gpuMode, expansionSafe, hwScalar) &&
-         precAllowed(O, tr.lo, gpuMode, expansionSafe, hwScalar);
+// Whether every tier of a tier pair or triple is allowed.
+static bool tiersAllowed(const Options &O, ArrayRef<PrecisionChangeType> tiers,
+                         bool gpuMode, bool expansionSafe,
+                         const std::unordered_set<std::string> &hwScalar) {
+  return all_of(tiers, [&](PrecisionChangeType t) {
+    return precAllowed(O, t, gpuMode, expansionSafe, hwScalar);
+  });
 }
 
 static std::string fmtPrecPct(PrecisionChangeType t, int pct) {
@@ -930,7 +908,18 @@ static std::string fmtPrecPct(PrecisionChangeType t, int pct) {
   return s;
 }
 
-} // namespace
+// The tiers of a candidate with the percentage of the operations each takes,
+// as its description lists them: "FP64(20%) + FP32(80%)".
+static std::string
+fmtTiers(ArrayRef<std::pair<PrecisionChangeType, int>> tierPcts) {
+  std::string s;
+  for (const auto &[t, pct] : tierPcts) {
+    if (!s.empty())
+      s += " + ";
+    s += fmtPrecPct(t, pct);
+  }
+  return s;
+}
 
 void proposePrecisionCandidates(
     Session &S, Function &F, Subgraph &subgraph,
@@ -1059,18 +1048,16 @@ void proposePrecisionCandidates(
       SetVector<FPLLValue *> hiOps(sortedAsc.end() - k, sortedAsc.end());
       SetVector<FPLLValue *> loOps(sortedAsc.begin(), sortedAsc.end() - k);
 
+      const std::string tiers = fmtTiers({{tp.hi, pct}, {tp.lo, 100 - pct}});
       if (O.Diagnostics.Print) {
         llvm::errs() << "Created " << label
-                     << " two-tier PT candidate: " << fmtPrecPct(tp.hi, pct)
-                     << " + " << fmtPrecPct(tp.lo, 100 - pct) << " (N=" << N
+                     << " two-tier PT candidate: " << tiers << " (N=" << N
                      << ")\n";
       }
       std::string desc = label.str();
       if (!desc.empty())
         desc += " ";
-      desc += fmtPrecPct(tp.hi, pct);
-      desc += " + ";
-      desc += fmtPrecPct(tp.lo, 100 - pct);
+      desc += tiers;
 
       SmallVector<std::pair<PrecisionChangeType, SetVector<FPLLValue *>>, 2>
           assignment;
@@ -1097,21 +1084,18 @@ void proposePrecisionCandidates(
                                       sortedAsc.end() - k0);
         SetVector<FPLLValue *> loOps(sortedAsc.begin(), sortedAsc.end() - k1);
 
+        const std::string tiers = fmtTiers({{tr.hi, pctHi},
+                                            {tr.mid, pctHiMid - pctHi},
+                                            {tr.lo, 100 - pctHiMid}});
         if (O.Diagnostics.Print) {
-          llvm::errs() << "Created " << label << " three-tier PT candidate: "
-                       << fmtPrecPct(tr.hi, pctHi) << " + "
-                       << fmtPrecPct(tr.mid, pctHiMid - pctHi) << " + "
-                       << fmtPrecPct(tr.lo, 100 - pctHiMid) << " (N=" << N
+          llvm::errs() << "Created " << label
+                       << " three-tier PT candidate: " << tiers << " (N=" << N
                        << ")\n";
         }
         std::string desc = label.str();
         if (!desc.empty())
           desc += " ";
-        desc += fmtPrecPct(tr.hi, pctHi);
-        desc += " + ";
-        desc += fmtPrecPct(tr.mid, pctHiMid - pctHi);
-        desc += " + ";
-        desc += fmtPrecPct(tr.lo, 100 - pctHiMid);
+        desc += tiers;
 
         SmallVector<std::pair<PrecisionChangeType, SetVector<FPLLValue *>>, 3>
             assignment;
@@ -1124,7 +1108,7 @@ void proposePrecisionCandidates(
   };
 
   for (TierPair tp : kCanonicalPairs) {
-    if (!tierPairAllowed(O, tp, gpuMode, expansionSafe, hwScalar))
+    if (!tiersAllowed(O, {tp.hi, tp.lo}, gpuMode, expansionSafe, hwScalar))
       continue;
     sweepTwoTier(tp, sortedAllOps, "All");
     if (!sortedFuncs.empty())
@@ -1133,7 +1117,8 @@ void proposePrecisionCandidates(
 
   if (O.Candidates.EnableThreeTier) {
     for (TierTriple tr : kCanonicalTriples) {
-      if (!tierTripleAllowed(O, tr, gpuMode, expansionSafe, hwScalar))
+      if (!tiersAllowed(O, {tr.hi, tr.mid, tr.lo}, gpuMode, expansionSafe,
+                        hwScalar))
         continue;
       sweepThreeTier(tr, sortedAllOps, "All");
     }
@@ -1323,16 +1308,7 @@ double PrecisionUnit::getAdjustedAccCostDelta(
     size_t candidateIndex, ArrayRef<SolutionStep> steps,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, Value *> &symbolToValueMap) {
-  RewriteUnitSet RewriteUnits;
-  for (const auto &step : steps) {
-    if (auto *co = dyn_cast<RewriteUnit>(step.unit)) {
-      if (co->subgraph == subgraph) {
-        RewriteUnits.insert(co);
-      }
-    }
-  }
-
-  RepriceKey key{candidateIndex, RewriteUnits};
+  RepriceKey key = repriceKey(candidateIndex, steps);
 
   auto cacheIt = accCostDeltaCache.find(key);
   if (cacheIt != accCostDeltaCache.end()) {
@@ -1349,7 +1325,8 @@ double PrecisionUnit::getAdjustedAccCostDelta(
       if (CO.subgraph == subgraph) {
         for (Value *root : CO.roots) {
           auto it = valueToNodeMap.find(root);
-          assert(it != valueToNodeMap.end() && it->second);
+          assert(it != valueToNodeMap.end() && it->second &&
+                 "a rewritten output has a node");
           stepNodes.insert(it->second.get());
         }
       }
@@ -1516,8 +1493,7 @@ void PrecisionUnit::addCuratedRewrites(json::Array &rewrites) {
   for (size_t ci = 0; ci < candidates.size(); ++ci) {
     auto &pt = candidates[ci];
     double accDelta = getAccCostDelta(ci);
-    auto compDelta = getCompCostDelta(ci);
-    double compDeltaVal = compDelta;
+    double compDelta = getCompCostDelta(ci);
 
     if (std::isnan(accDelta))
       continue;
@@ -1527,7 +1503,7 @@ void PrecisionUnit::addCuratedRewrites(json::Array &rewrites) {
     std::string category = "dominated";
     double efficiency = 0.0;
     if (std::optional<Tradeoff> tradeoff =
-            classifyTradeoff(compDeltaVal, accDelta)) {
+            classifyTradeoff(compDelta, accDelta)) {
       category = tradeoff->category.str();
       efficiency = tradeoff->efficiency;
     }
@@ -1538,7 +1514,7 @@ void PrecisionUnit::addCuratedRewrites(json::Array &rewrites) {
     rw["description"] = pt.desc;
     rw["category"] = category;
     rw["efficiency"] = jsonFloat(efficiency);
-    rw["computation_cost_delta"] = compDeltaVal;
+    rw["computation_cost_delta"] = compDelta;
     rw["accuracy_cost_delta"] = jsonFloat(accDelta);
 
     SmallVector<Instruction *, 16> ptInsts;

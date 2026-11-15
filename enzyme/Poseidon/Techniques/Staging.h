@@ -24,23 +24,11 @@ namespace poseidon {
 struct Options;
 class Session;
 
-// Narrow addrspace(3) staging buffers whose FP64 values are only ever consumed
-// at FP32: stride K -> K/2, `load float` + fpext, fptrunc at the stores. Fires
-// only when every consumer of a staged load rounds to FP32 (fptrunc or fcmp),
-// which keeps the transform value-preserving.
-bool narrowSharedStaging(const Options &O, llvm::Function &F);
-
-// The df64 counterpart: when every staged load is consumed by an emitF64ToDS
-// Dekker split, store the {hi,lo} pair once at the staging store (hi@+0, lo@+4
-// in the same 8-byte slot) and turn each split into a pair load.
-bool narrowSharedStagingDS(const Options &O, llvm::Function &F);
-
-// The same two transforms for a buffer that reaches F as a pointer parameter,
-// which the two above do not see. `Proxy` is the function the site arguments
-// were recorded against: F at materialization, the site function when pricing
-// a clone.
-bool narrowSharedStagingParam(Session &S, llvm::Function &F,
-                              llvm::Function *Proxy = nullptr);
+// The df64 narrowing of a staging buffer that reaches F as a pointer
+// parameter, which the narrowing of addrspace(3) globals does not see: each
+// Dekker split of a staged load becomes a pair load and each store stores the
+// pair. `Proxy` is the function the site arguments were recorded against: F at
+// materialization, the site function when pricing a clone.
 bool narrowSharedStagingParamDS(Session &S, llvm::Function &F,
                                 llvm::Function *Proxy = nullptr);
 

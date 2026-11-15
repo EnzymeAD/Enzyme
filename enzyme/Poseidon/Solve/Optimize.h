@@ -1,7 +1,20 @@
+//=- Optimize.h - a site's candidates, solve and materialization ------------=//
+//
+// Part of the Poseidon Project, under the Apache License v2.0 with LLVM
+// Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+
 #ifndef POSEIDON_OPTIMIZE_H
 #define POSEIDON_OPTIMIZE_H
 
-#include <string>
+#include "Model/FPNode.h"
+#include "SiteTable.h"
+#include "Techniques/Herbie.h"
+#include "Techniques/Matmul/Matmul.h"
+#include "Techniques/Precision.h"
 
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
@@ -11,17 +24,9 @@
 #include "llvm/Analysis/TargetLibraryInfo.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/PassManager.h"
-#include "llvm/IR/Value.h"
-#include "llvm/Transforms/Utils/ValueMapper.h"
 
 #include <memory>
 #include <optional>
-
-#include "Model/FPNode.h"
-#include "SiteTable.h"
-#include "Techniques/Herbie.h"
-#include "Techniques/Matmul/Matmul.h"
-#include "Techniques/Precision.h"
 
 namespace poseidon {
 
@@ -64,17 +69,6 @@ struct FunctionFPState : FPGraph {
   // after its last proposal: no unit is added to COs, CSs or CMs after it.
   void sealUnits(Session &S);
 };
-
-// The units the DP solves: every unit of the site, or under an accuracy
-// target every unit but the matrix products, which errorBudgetSelector picks.
-llvm::SmallVector<SiteUnit *> solvedUnits(const FunctionFPState &st,
-                                          bool target);
-
-bool collectFPCandidates(Session &S, llvm::Function &F, double errorTol,
-                         unsigned sampleLogBits, FunctionFPState &st);
-
-bool materializeFPSolution(Session &S, llvm::Function &F, FunctionFPState &st,
-                           llvm::ArrayRef<SolutionStep> steps);
 
 // `errorTol` > 0 is the accuracy target written at the site; 0 means the site
 // wrote none and -poseidon-tau decides.

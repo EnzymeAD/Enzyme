@@ -14,6 +14,7 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringRef.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Value.h"
 
@@ -43,7 +44,10 @@ DSValue emitDSDiv(llvm::IRBuilder<> &B, DSValue x, DSValue y);
 DSValue emitDSSqrt(llvm::IRBuilder<> &B, DSValue x);
 DSValue emitDSNeg(llvm::IRBuilder<> &B, DSValue x);
 DSValue emitF64ToDS(llvm::IRBuilder<> &B, llvm::Value *f64val);
-llvm::Value *emitDSToF64(llvm::IRBuilder<> &B, DSValue ds);
+
+// The libm function a call to `name` computes, without the f or l suffix of
+// its float and long double variants: "fmax" for fmaxf and for __nv_fmax.
+llvm::StringRef libmBaseName(llvm::StringRef name);
 
 // Boundary converters: components are always F32, the source/target type may
 // be F32 or F64.

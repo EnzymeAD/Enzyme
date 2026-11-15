@@ -15,29 +15,17 @@
 #ifndef POSEIDON_SOLVERS_H
 #define POSEIDON_SOLVERS_H
 
+#include "Core/Solver.h"
+#include "Techniques/Herbie.h"
+#include "Techniques/Precision.h"
+
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
-#include "llvm/Analysis/AssumptionCache.h"
-#include "llvm/Analysis/LoopInfo.h"
-#include "llvm/Analysis/ScalarEvolution.h"
-#include "llvm/Analysis/TargetLibraryInfo.h"
-#include "llvm/IR/Dominators.h"
 #include "llvm/IR/Function.h"
-#include "llvm/IR/Value.h"
 
 #include <limits>
-#include <map>
-#include <memory>
 #include <optional>
-#include <set>
 #include <string>
-#include <unordered_map>
-#include <vector>
-
-#include "Core/CacheKey.h"
-#include "Techniques/Herbie.h"
-#include "Techniques/Matmul/Matmul.h"
-#include "Techniques/Precision.h"
 
 namespace poseidon {
 

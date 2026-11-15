@@ -15,9 +15,14 @@
 #ifndef POSEIDON_HERBIE_H
 #define POSEIDON_HERBIE_H
 
+#include "Core/CacheKey.h"
+#include "Model/CostModel.h"
+#include "Model/FPCore.h"
+#include "Model/FPNode.h"
+#include "Unit.h"
+
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SetVector.h"
-#include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/IR/Value.h"
@@ -25,18 +30,11 @@
 
 #include <cmath>
 #include <cstdint>
-#include <functional>
 #include <limits>
 #include <memory>
 #include <string>
 #include <unordered_map>
-#include <vector>
-
-#include "Core/CacheKey.h"
-#include "Model/CostModel.h"
-#include "Model/FPCore.h"
-#include "Model/FPNode.h"
-#include "Unit.h"
+#include <utility>
 
 namespace llvm {
 class LoopInfo;
@@ -61,7 +59,8 @@ struct RewriteCandidate {
   size_t ordinal = 0;
 
   RewriteCandidate(double cost, double accuracy, std::string expression)
-      : herbieCost(cost), herbieAccuracy(accuracy), expr(expression) {}
+      : herbieCost(cost), herbieAccuracy(accuracy),
+        expr(std::move(expression)) {}
 };
 
 // How often the conversions on the boundary of a rewrite in another precision
@@ -195,18 +194,6 @@ void addHerbieKeyParts(Session &S, const llvm::Function &F, CacheKey &key);
 // Prints how many Herbie answers the compile ran fresh, read from the cache
 // and replayed from -poseidon-import-herbie-answers.
 void reportHerbieAnswers(Session &S);
-
-// Collects Herbie's rewrites of `inputExprs`, cores of the site `F`, into
-// `COs`, unpriced.
-bool improveViaHerbie(Session &S, const std::vector<std::string> &inputExprs,
-                      std::vector<RewriteUnit> &COs, int subgraphIdx,
-                      const llvm::Function &F);
-
-std::string getPrecondition(
-    const Options &O, const llvm::SmallSet<std::string, 8> &args,
-    const std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>>
-        &valueToNodeMap,
-    const std::unordered_map<std::string, llvm::Value *> &symbolToValueMap);
 
 void setUnifiedAccuracyCost(
     const Options &O, RewriteUnit &CO,

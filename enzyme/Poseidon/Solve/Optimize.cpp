@@ -1,68 +1,22 @@
-#include <llvm/Config/llvm-config.h>
+//=- Optimize.cpp - a site's candidates, solve and materialization ----------=//
+//
+// Part of the Poseidon Project, under the Apache License v2.0 with LLVM
+// Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
 
-#include "llvm/ADT/STLExtras.h"
-#include "llvm/ADT/SetVector.h"
-#include "llvm/ADT/SmallPtrSet.h"
-#include "llvm/ADT/SmallSet.h"
-#include "llvm/ADT/SmallString.h"
-#include "llvm/ADT/SmallVector.h"
-#include "llvm/ADT/StringRef.h"
-#include "llvm/ADT/StringSet.h"
-
-#include "llvm/Analysis/AssumptionCache.h"
-#include "llvm/Analysis/LoopInfo.h"
-#include "llvm/Analysis/ScalarEvolution.h"
-#include "llvm/Analysis/TargetLibraryInfo.h"
-#include "llvm/Analysis/ValueTracking.h"
-#include "llvm/IR/Dominators.h"
-
-#include "llvm/Demangle/Demangle.h"
-#include "llvm/IR/Constants.h"
-#include "llvm/IR/DiagnosticInfo.h"
-#include "llvm/IR/Function.h"
-#include "llvm/IR/GlobalVariable.h"
-#include "llvm/IR/InstIterator.h"
-#include "llvm/IR/Instruction.h"
-#include "llvm/IR/Module.h"
-#include "llvm/IR/PatternMatch.h"
-#include "llvm/IR/Verifier.h"
-
-#include "llvm/Passes/PassBuilder.h"
-
-#include "llvm/Support/Casting.h"
-#include "llvm/Support/FileSystem.h"
-#include "llvm/Support/Path.h"
-#include "llvm/Support/raw_ostream.h"
-
-#include "llvm/Transforms/Utils.h"
-#include "llvm/Transforms/Utils/BasicBlockUtils.h"
-#include "llvm/Transforms/Utils/Cloning.h"
-
-#include <cerrno>
-#include <cmath>
-#include <cstring>
-#include <fstream>
-#include <functional>
-#include <memory>
-#include <optional>
-#include <string>
-#include <unordered_map>
-#include <unordered_set>
-#include <utility>
-#include <vector>
-
+#include "Optimize.h"
 #include "Explain.h"
 #include "IR/Utils.h"
 #include "Model/CostModel.h"
-#include "Model/Evaluators.h"
-#include "Optimize.h"
 #include "Pass/Session.h"
 #include "Profile/ProfileRead.h"
 #include "Sites/Canonicalize.h"
 #include "Sites/SiteIdentity.h"
 #include "Solvers.h"
 #include "Subgraphs.h"
-#include "Targets/DeviceMath.h"
 #include "Targets/Target.h"
 #include "Techniques/Expansion.h"
 #include "Techniques/Herbie.h"
@@ -71,6 +25,37 @@
 #include "Techniques/Matmul/RaiseWMMA.h"
 #include "Techniques/Precision.h"
 #include "Techniques/Staging.h"
+
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/SmallString.h"
+#include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringRef.h"
+#include "llvm/ADT/StringSet.h"
+#include "llvm/Analysis/AssumptionCache.h"
+#include "llvm/Analysis/LoopInfo.h"
+#include "llvm/Analysis/ScalarEvolution.h"
+#include "llvm/Analysis/TargetLibraryInfo.h"
+#include "llvm/Demangle/Demangle.h"
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/DiagnosticInfo.h"
+#include "llvm/IR/Dominators.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/Instruction.h"
+#include "llvm/IR/Module.h"
+#include "llvm/Passes/PassBuilder.h"
+#include "llvm/Support/Casting.h"
+#include "llvm/Support/FileSystem.h"
+#include "llvm/Support/Path.h"
+#include "llvm/Support/raw_ostream.h"
+
+#include <memory>
+#include <optional>
+#include <string>
+#include <unordered_map>
+#include <unordered_set>
+#include <utility>
+#include <vector>
 
 using namespace llvm;
 #ifdef DEBUG_TYPE
@@ -96,7 +81,8 @@ struct SiteProfileData {
 // numbered against.
 static void readSiteProfile(Session &S, Function &F, SiteProfileData &P) {
   const Options &O = S.Opts;
-  assert(!O.Profiling.ProfileUse.empty());
+  assert(!O.Profiling.ProfileUse.empty() &&
+         "a site is optimized only under profile use");
   SmallString<128> profilePathBuf(O.Profiling.ProfileUse);
   llvm::sys::path::append(profilePathBuf, siteProfileStem(S, F) + ".fpprofile");
   P.path = profilePathBuf.str().str();
@@ -119,37 +105,33 @@ static void readSiteProfile(Session &S, Function &F, SiteProfileData &P) {
   auto &profileMap = P.map;
   auto &profileHeader = P.header;
   auto &zeroGradIdx = P.zeroGradIdx;
-  if (!profilePath.empty()) {
-    parseProfileFile(profilePath, profileMap, &profileHeader);
-    if (profileMap.empty()) {
-      llvm::errs() << "Warning: No profile data found in " << profilePath
-                   << "\n";
+  parseProfileFile(profilePath, profileMap, &profileHeader);
+  if (profileMap.empty()) {
+    llvm::errs() << "Warning: No profile data found in " << profilePath << "\n";
+  }
+  if (!O.Profiling.OutputProfiles.empty())
+    mergeOutputProfiles(profileMap, O.Profiling.OutputProfiles,
+                        siteProfileStem(S, F) + ".fpprofile", canonicalHash, F);
+  // Before the floor below, which would hide the exact zeros.
+  if (O.Solver.AggressiveDCE)
+    for (const auto &kv : profileMap) {
+      if (kv.second.weight() == 0.0)
+        zeroGradIdx.insert(kv.first);
     }
-    if (!O.Profiling.OutputProfiles.empty())
-      mergeOutputProfiles(profileMap, O.Profiling.OutputProfiles,
-                          siteProfileStem(S, F) + ".fpprofile", canonicalHash,
-                          F);
-    // Before the floor below, which would hide the exact zeros.
-    if (O.Solver.AggressiveDCE)
-      for (const auto &kv : profileMap) {
-        if (kv.second.weight() == 0.0)
-          zeroGradIdx.insert(kv.first);
-      }
-    // Before anything reads a gradient: the floor is written back into the
-    // profile records so that every reader sees one weight.
-    applySensitivityFloor(profileMap, F.getName());
-    requireCanonicalHash(profileHeader, canonicalHash, profilePath, F);
-    // Per-output accounting weighs each output on its own scale and takes no
-    // condition number.
-    if (O.Profiling.OutputProfiles.empty())
-      requireMeasuredKappa(profileHeader, profilePath, F);
-    if (O.Diagnostics.Print && profileHeader.launchCount > 0) {
-      llvm::errs() << "[poseidon] profile header for " << F.getName()
-                   << ": MaxBlockDims=(" << profileHeader.maxBlockDim[0] << ","
-                   << profileHeader.maxBlockDim[1] << ","
-                   << profileHeader.maxBlockDim[2]
-                   << ") LaunchCount=" << profileHeader.launchCount << "\n";
-    }
+  // Before anything reads a gradient: the floor is written back into the
+  // profile records so that every reader sees one weight.
+  applySensitivityFloor(profileMap, F.getName());
+  requireCanonicalHash(profileHeader, canonicalHash, profilePath, F);
+  // Per-output accounting weighs each output on its own scale and takes no
+  // condition number.
+  if (O.Profiling.OutputProfiles.empty())
+    requireMeasuredKappa(profileHeader, profilePath, F);
+  if (O.Diagnostics.Print && profileHeader.launchCount > 0) {
+    llvm::errs() << "[poseidon] profile header for " << F.getName()
+                 << ": MaxBlockDims=(" << profileHeader.maxBlockDim[0] << ","
+                 << profileHeader.maxBlockDim[1] << ","
+                 << profileHeader.maxBlockDim[2]
+                 << ") LaunchCount=" << profileHeader.launchCount << "\n";
   }
 }
 
@@ -326,7 +308,10 @@ static void eraseScratchDeclarations(Module &M, const StringSet<> &before) {
       G.eraseFromParent();
 }
 
-SmallVector<SiteUnit *> solvedUnits(const FunctionFPState &st, bool target) {
+// The units the DP solves: every unit of the site, or under an accuracy
+// target every unit but the matrix products, which errorBudgetSelector picks.
+static SmallVector<SiteUnit *> solvedUnits(const FunctionFPState &st,
+                                           bool target) {
   SmallVector<SiteUnit *> units;
   for (SiteUnit *unit : st.units)
     if (!target || !isa<MatmulUnit>(unit))
@@ -370,8 +355,10 @@ static void priceUnlessCached(Session &S, FunctionFPState &st,
   priceCandidates(st);
 }
 
-bool collectFPCandidates(Session &S, Function &F, double errorTol,
-                         unsigned sampleLogBits, FunctionFPState &st) {
+// Collects the candidates of the site F into `st` and prices them unless its
+// DP table is cached; false when F has no FP subgraph and no matrix product.
+static bool collectFPCandidates(Session &S, Function &F, double errorTol,
+                                unsigned sampleLogBits, FunctionFPState &st) {
   const Options &O = S.Opts;
   st.F = &F;
   st.errTol = errorTol;
@@ -460,8 +447,8 @@ static bool applySolution(ArrayRef<SolutionStep> steps,
 }
 
 // Applies `steps` to F and cleans F up; true when a step was applied.
-bool materializeFPSolution(Session &S, Function &F, FunctionFPState &st,
-                           ArrayRef<SolutionStep> steps) {
+static bool materializeFPSolution(Session &S, Function &F, FunctionFPState &st,
+                                  ArrayRef<SolutionStep> steps) {
   const Options &O = S.Opts;
   auto &subgraphs = st.subgraphs;
   SmallVector<SolutionStep> applied;

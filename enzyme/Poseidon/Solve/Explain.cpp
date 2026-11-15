@@ -8,6 +8,16 @@
 //===----------------------------------------------------------------------===//
 
 #include "Explain.h"
+#include "FPProfileName.h"
+#include "Model/CostModel.h"
+#include "Model/FPCore.h"
+#include "Optimize.h"
+#include "Pass/Session.h"
+#include "Sites/SiteIdentity.h"
+#include "Solvers.h"
+#include "Techniques/Herbie.h"
+#include "Techniques/Matmul/Matmul.h"
+#include "Techniques/Precision.h"
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/MapVector.h"
@@ -26,7 +36,6 @@
 #include "llvm/IR/GetElementPtrTypeIterator.h"
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Instructions.h"
-#include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Operator.h"
 #include "llvm/Support/FileSystem.h"
@@ -35,18 +44,6 @@
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/raw_ostream.h"
-
-#include "FPProfileName.h"
-#include "IR/Utils.h"
-#include "Model/CostModel.h"
-#include "Model/FPCore.h"
-#include "Optimize.h"
-#include "Pass/Session.h"
-#include "Sites/SiteIdentity.h"
-#include "Solvers.h"
-#include "Techniques/Herbie.h"
-#include "Techniques/Matmul/Matmul.h"
-#include "Techniques/Precision.h"
 
 #include <cmath>
 #include <limits>
@@ -62,69 +59,41 @@ using namespace llvm;
 
 namespace poseidon {
 
-namespace {
+static constexpr const char *kPass = "poseidon";
+static constexpr size_t kMaxRejectedRemarks = 3;
+static constexpr size_t kRemarkExprChars = 160;
+static constexpr size_t kMaxListedOps = 6;
 
-constexpr const char *kPass = "poseidon";
-constexpr size_t kMaxRejectedRemarks = 3;
-constexpr size_t kRemarkExprChars = 160;
-constexpr size_t kMaxListedOps = 6;
-
-struct SourceLoc {
-  std::string file;
-  unsigned line = 0, col = 0;
-  bool valid() const { return line != 0; }
-};
-
-SourceLoc locOf(const DebugLoc &DL) {
-  if (!DL)
-    return {};
-  return {DL->getFilename().str(), DL.getLine(), DL.getCol()};
-}
-
-SourceLoc locOf(const Value *V) {
-  if (auto *I = dyn_cast_or_null<Instruction>(V))
-    return locOf(I->getDebugLoc());
-  return {};
-}
-
-json::Object locJSON(const SourceLoc &L) {
-  json::Object o;
-  o["file"] = L.file;
-  o["line"] = (int64_t)L.line;
-  o["col"] = (int64_t)L.col;
-  return o;
-}
-
-void putLoc(json::Object &o, StringRef key, const SourceLoc &L) {
+static void putLoc(json::Object &o, StringRef key, const SourceLoc &L) {
   if (L.valid())
     o[key] = locJSON(L);
 }
 
-void putNum(json::Object &o, StringRef key, double v) {
+static void putNum(json::Object &o, StringRef key, double v) {
   if (std::isfinite(v))
     o[key] = v;
 }
 
-std::string num(double v, int digits = 2) {
+static std::string num(double v, int digits = 2) {
   if (!std::isfinite(v))
     return "n/a";
   return formatv("{0}", format("%.*g", digits, v)).str();
 }
 
-std::string pctStr(int64_t before, int64_t after) {
+static std::string pctStr(int64_t before, int64_t after) {
   if (before == 0)
     return "";
   double pct = 100.0 * (double)(after - before) / (double)before;
   return formatv(" ({0}{1}%)", pct >= 0 ? "+" : "", format("%.0f", pct)).str();
 }
 
-std::string clip(const std::string &s, size_t n = kRemarkExprChars) {
+static std::string clip(const std::string &s, size_t n = kRemarkExprChars) {
   if (s.size() <= n)
     return s;
   return s.substr(0, n) + "...";
 }
 
-std::string typeName(Type *T) {
+static std::string typeName(Type *T) {
   if (T->isFloatTy())
     return "float";
   if (T->isDoubleTy())
@@ -143,7 +112,7 @@ std::string typeName(Type *T) {
   return s;
 }
 
-std::string dtypeOf(PrecisionChangeType t) {
+static std::string dtypeOf(PrecisionChangeType t) {
   switch (t) {
   case PrecisionChangeType::BF16:
     return "bf16";
@@ -162,7 +131,7 @@ std::string dtypeOf(PrecisionChangeType t) {
   }
 }
 
-std::string precisionWords(PrecisionChangeType t) {
+static std::string precisionWords(PrecisionChangeType t) {
   if (unsigned k = expansionComponents(t))
     return formatv("a {0}-component float expansion", k).str();
   switch (t) {
@@ -183,7 +152,7 @@ std::string precisionWords(PrecisionChangeType t) {
   }
 }
 
-std::string opWord(StringRef op) {
+static std::string opWord(StringRef op) {
   if (op == "+" || op == "-" || op == "*" || op == "/")
     return ("'" + op + "'").str();
   if (op == "neg")
@@ -191,7 +160,7 @@ std::string opWord(StringRef op) {
   return op.str();
 }
 
-std::string kindWords(StringRef kind) {
+static std::string kindWords(StringRef kind) {
   if (kind == "algebraic")
     return "the rewrite";
   if (kind == "precision")
@@ -201,7 +170,7 @@ std::string kindWords(StringRef kind) {
   return "the product candidate";
 }
 
-std::string joinWords(ArrayRef<std::string> items) {
+static std::string joinWords(ArrayRef<std::string> items) {
   std::string out;
   for (size_t k = 0; k < items.size(); ++k) {
     if (k)
@@ -210,6 +179,8 @@ std::string joinWords(ArrayRef<std::string> items) {
   }
   return out;
 }
+
+namespace {
 
 struct Linear {
   SmallVector<std::pair<std::string, int64_t>, 2> terms;
@@ -403,7 +374,9 @@ public:
   }
 };
 
-bool isPolynomial(StringRef expr) {
+} // namespace
+
+static bool isPolynomial(StringRef expr) {
   static const StringSet<> arith = {"+",   "-",   "*",       "/",     "neg",
                                     "fma", "pow", "literal", "approx"};
   bool head = false;
@@ -431,13 +404,15 @@ bool isPolynomial(StringRef expr) {
   return true;
 }
 
-const Instruction *firstInIROrder(Function &F,
-                                  const SmallPtrSetImpl<const Value *> &set) {
+static const Instruction *
+firstInIROrder(Function &F, const SmallPtrSetImpl<const Value *> &set) {
   for (Instruction &I : instructions(F))
     if (set.contains(&I))
       return &I;
   return nullptr;
 }
+
+namespace {
 
 struct Alt {
   std::string id, kind, summary, fpcore, precision, status, reason;
@@ -460,9 +435,6 @@ struct Alt {
   std::optional<int64_t> baseCost;
 };
 
-struct Unit;
-std::string exprWords(const Unit &U);
-
 struct Unit {
   std::string id, kind;
   const Subgraph *sg = nullptr;
@@ -479,13 +451,34 @@ struct Unit {
   bool applied = false;
 };
 
-std::string exprWords(const Unit &U) {
+} // namespace
+
+static std::string exprWords(const Unit &U) {
   if (!U.outC.empty() && !U.outC[0].empty())
     return clip(U.outC[0]);
   return formatv("the subgraph of {0} operations at {1}:{2}", U.ops.size(),
                  U.loc.line, U.loc.col)
       .str();
 }
+
+// The symbol of the function a site was cut from, without the suffixes the
+// site's clones carry.
+static std::string siteSymbol(const Session &S, const Function &F) {
+  const Function *origin = siteOriginOf(S, F);
+  StringRef symbol = origin ? origin->getName() : F.getName();
+  symbol.consume_back("_poseidon_body");
+  return symbol.split(".poseidon.").first.str();
+}
+
+// Where a remark about a site points: its call, else the site's function.
+static DiagnosticLocation siteLocation(const Session &S, const Function &F) {
+  auto site = S.SiteCalls.find(&F);
+  return site != S.SiteCalls.end() && site->second
+             ? DiagnosticLocation(site->second)
+             : DiagnosticLocation(F.getSubprogram());
+}
+
+namespace {
 
 class Explainer {
   Session &Sess;
@@ -575,6 +568,8 @@ class Explainer {
   void judge(Unit &U);
   std::string leftReason(const Unit &U, const Subgraph *sg);
   std::optional<int64_t> appliedDelta() const;
+  std::optional<int64_t> costBefore() const;
+  std::optional<double> selectedAcc() const;
 
 public:
   Explainer(Session &Sess, Function &F, FunctionFPState &st,
@@ -588,6 +583,8 @@ public:
   void emitRemarks();
   json::Object toJSON();
 };
+
+} // namespace
 
 void Explainer::markSteps() {
   SmallPtrSet<Value *, 8> rewritten;
@@ -1245,6 +1242,27 @@ std::optional<int64_t> Explainer::appliedDelta() const {
   return std::nullopt;
 }
 
+// What the units cost as written, when every unit's cost is known.
+std::optional<int64_t> Explainer::costBefore() const {
+  int64_t sum = 0;
+  for (const Unit &U : units) {
+    if (!U.baseCost)
+      return std::nullopt;
+    sum += *U.baseCost;
+  }
+  return sum;
+}
+
+// The accuracy cost of the frontier point the solve selected.
+std::optional<double> Explainer::selectedAcc() const {
+  if (!rec.selected)
+    return std::nullopt;
+  auto it = rec.table.find(*rec.selected);
+  if (it == rec.table.end())
+    return std::nullopt;
+  return it->second;
+}
+
 void Explainer::build() {
   markSteps();
   for (size_t s = 0; s < st.subgraphs.size(); ++s)
@@ -1259,11 +1277,9 @@ json::Object Explainer::toJSON() {
 
   json::Object fn;
   const Function *origin = siteOriginOf(Sess, F);
-  StringRef symbol = origin ? origin->getName() : F.getName();
-  symbol.consume_back("_poseidon_body");
-  symbol = symbol.split(".poseidon.").first;
-  fn["name"] = llvm::demangle(symbol.str());
-  fn["symbol"] = symbol.str();
+  std::string symbol = siteSymbol(Sess, F);
+  fn["name"] = llvm::demangle(symbol);
+  fn["symbol"] = symbol;
   fn["ir"] = F.getName().str();
   auto site = Sess.SiteCalls.find(&F);
   if (site != Sess.SiteCalls.end())
@@ -1287,17 +1303,7 @@ json::Object Explainer::toJSON() {
   root["target"] = std::move(target);
 
   json::Object result;
-  std::optional<int64_t> before;
-  int64_t sum = 0;
-  bool known = true;
-  for (const Unit &U : units) {
-    if (U.baseCost)
-      sum += *U.baseCost;
-    else
-      known = false;
-  }
-  if (known)
-    before = sum;
+  std::optional<int64_t> before = costBefore();
   if (before)
     result["cost_before"] = scale.share(*before);
   std::optional<int64_t> delta = appliedDelta();
@@ -1309,12 +1315,8 @@ json::Object Explainer::toJSON() {
     for (const Alt &A : U.alts)
       matmulApplied |= A.status == "applied" && A.kind == "matmul";
   if (!matmulApplied || rec.selector != "error-budget") {
-    double acc = steps.empty() ? 0.0 : std::numeric_limits<double>::quiet_NaN();
-    if (rec.selected) {
-      auto it = rec.table.find(*rec.selected);
-      if (it != rec.table.end())
-        acc = it->second;
-    }
+    double acc = selectedAcc().value_or(
+        steps.empty() ? 0.0 : std::numeric_limits<double>::quiet_NaN());
     putNum(result, "modelled_rel_error", relErr(acc));
   }
   json::Array appliedIds;
@@ -1454,26 +1456,12 @@ json::Object Explainer::toJSON() {
 
 void Explainer::emitRemarks() {
   OptimizationRemarkEmitter ORE(&F);
-  auto siteIt = Sess.SiteCalls.find(&F);
-  DiagnosticLocation siteLoc = siteIt != Sess.SiteCalls.end() && siteIt->second
-                                   ? DiagnosticLocation(siteIt->second)
-                                   : DiagnosticLocation(F.getSubprogram());
-  const Function *origin = siteOriginOf(Sess, F);
-  StringRef symbol = origin ? origin->getName() : F.getName();
-  symbol.consume_back("_poseidon_body");
-  symbol = symbol.split(".poseidon.").first;
-  std::string siteName = llvm::demangle(symbol.str());
+  DiagnosticLocation siteLoc = siteLocation(Sess, F);
+  std::string siteName = llvm::demangle(siteSymbol(Sess, F));
   if (auto paren = siteName.find('('); paren != std::string::npos)
     siteName = siteName.substr(0, paren);
 
-  int64_t before = 0;
-  bool known = true;
-  for (const Unit &U : units) {
-    if (U.baseCost)
-      before += *U.baseCost;
-    else
-      known = false;
-  }
+  std::optional<int64_t> before = costBefore();
   std::optional<int64_t> delta = appliedDelta();
   unsigned nApplied = 0;
   for (const Unit &U : units)
@@ -1496,21 +1484,17 @@ void Explainer::emitRemarks() {
     if (nApplied == 0) {
       R << "; left as written";
     } else {
-      double acc = std::numeric_limits<double>::quiet_NaN();
-      if (rec.selected) {
-        auto it = rec.table.find(*rec.selected);
-        if (it != rec.table.end())
-          acc = it->second;
-      }
+      double acc =
+          selectedAcc().value_or(std::numeric_limits<double>::quiet_NaN());
       if (std::isfinite(relErr(acc)))
         R << ", after " << ore::NV("Error", num(relErr(acc)));
       R << "; " << ore::NV("Rewrites", (unsigned)nApplied)
         << (nApplied == 1 ? " rewrite" : " rewrites");
-      if (known && delta)
+      if (before && delta)
         R << ", cost "
-          << ore::NV("Cost", costStr(before) + " -> " +
-                                 costStr(before + *delta) +
-                                 pctStr(before, before + *delta));
+          << ore::NV("Cost", costStr(*before) + " -> " +
+                                 costStr(*before + *delta) +
+                                 pctStr(*before, *before + *delta));
     }
     if (!rec.table.empty())
       R << "; " << ore::NV("ParetoPoints", (unsigned)rec.table.size())
@@ -1667,8 +1651,6 @@ void Explainer::emitRemarks() {
   }
 }
 
-} // namespace
-
 bool explainWanted(const Options &O, const Function &F) {
   return !O.Diagnostics.Explain.empty() || !O.Diagnostics.ReportPath.empty() ||
          OptimizationRemarkEmitter::allowExtraAnalysis(F, kPass);
@@ -1681,10 +1663,7 @@ void noteSiteCall(Session &S, const Function *body, const DebugLoc &loc) {
 void explainNothingToOptimize(Session &S, Function &F) {
   OptimizationRemarkEmitter ORE(&F);
   ORE.emit([&]() {
-    auto site = S.SiteCalls.find(&F);
-    DiagnosticLocation loc = site != S.SiteCalls.end() && site->second
-                                 ? DiagnosticLocation(site->second)
-                                 : DiagnosticLocation(F.getSubprogram());
+    DiagnosticLocation loc = siteLocation(S, F);
     OptimizationRemarkMissed R(kPass, "NothingToOptimize", loc,
                                &F.getEntryBlock());
     R << "Poseidon found no floating-point subgraph of two or more "
@@ -1696,10 +1675,7 @@ void explainNothingToOptimize(Session &S, Function &F) {
 void explainUnprofiled(Session &S, Function &F, StringRef cause) {
   OptimizationRemarkEmitter ORE(&F);
   ORE.emit([&]() {
-    auto site = S.SiteCalls.find(&F);
-    DiagnosticLocation loc = site != S.SiteCalls.end() && site->second
-                                 ? DiagnosticLocation(site->second)
-                                 : DiagnosticLocation(F.getSubprogram());
+    DiagnosticLocation loc = siteLocation(S, F);
     OptimizationRemarkMissed R(kPass, "Unprofiled", loc, &F.getEntryBlock());
     R << "Poseidon left the site unchanged: " << ore::NV("Cause", cause);
     return R;
