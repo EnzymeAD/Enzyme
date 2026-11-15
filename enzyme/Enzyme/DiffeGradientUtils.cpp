@@ -117,8 +117,6 @@ DiffeGradientUtils *DiffeGradientUtils::CreateFromClone(
          mode == DerivativeMode::ForwardModeSplit ||
          mode == DerivativeMode::ForwardModeError);
   ValueToValueMapTy invertedPointers;
-  SmallPtrSet<Instruction *, 4> constants;
-  SmallPtrSet<Instruction *, 20> nonconstant;
   SmallPtrSet<Value *, 2> returnvals;
   llvm::ValueMap<const llvm::Value *, AssertingReplacingVH> originalToNew;
 
@@ -513,8 +511,10 @@ SmallVector<SelectInst *, 4> DiffeGradientUtils::addToDiffe(
   else
     ss << " addingType: null\n";
   if (CustomErrorHandler) {
+    LLVMBuilderRef BR = startCallbackBuilder(BuilderM);
     CustomErrorHandler(ss.str().c_str(), wrap(val), ErrorType::NoAccumulate,
-                       nullptr, nullptr, wrap(&BuilderM));
+                       nullptr, nullptr, BR);
+    finishCallbackBuilder(BR, BuilderM);
   } else {
     DebugLoc loc;
     if (auto inst = dyn_cast<Instruction>(val))
@@ -679,7 +679,6 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
     if (!addingType) {
       std::string s;
       llvm::raw_string_ostream ss(s);
-      ss << "oldFunc: " << *oldFunc << "\n";
       ss << "Cannot deduce adding type of: " << *val << "\n";
       ss << " + idxs {";
       for (auto idx : idxs)
@@ -689,8 +688,10 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
         EmitNoTypeError(ss.str(), *inst, this, BuilderM);
         return addedSelects;
       } else if (CustomErrorHandler) {
+        LLVMBuilderRef BR = startCallbackBuilder(BuilderM);
         CustomErrorHandler(ss.str().c_str(), wrap(val), ErrorType::NoType,
-                           TR.analyzer, nullptr, wrap(&BuilderM));
+                           TR.analyzer, nullptr, BR);
+        finishCallbackBuilder(BR, BuilderM);
         return addedSelects;
       } else {
         TR.dump(ss);
@@ -715,15 +716,16 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
     } else {
       std::string s;
       llvm::raw_string_ostream ss(s);
-      ss << "oldFunc: " << *oldFunc << "\n";
       ss << "Illegal intermediate when adding to: " << *val
          << " with addingType: " << *addingType << "\n"
          << " old: " << *old << " dif: " << *dif << "\n"
          << " oldBitSize: " << oldBitSize << " newBitSize: " << newBitSize
          << "\n";
       if (CustomErrorHandler) {
+        LLVMBuilderRef BR = startCallbackBuilder(BuilderM);
         CustomErrorHandler(ss.str().c_str(), wrap(val), ErrorType::NoType,
-                           TR.analyzer, nullptr, wrap(&BuilderM));
+                           TR.analyzer, nullptr, BR);
+        finishCallbackBuilder(BR, BuilderM);
         return addedSelects;
       } else {
         DebugLoc loc;
@@ -1053,14 +1055,20 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
                        ArrayType::get(i8, prevSize - start - size)};
         auto ST = StructType::get(i8->getContext(), tys, /*isPacked*/ true);
         auto Al = A.CreateAlloca(ST, nullptr, "gep.alloca");
-        BuilderM.CreateStore(
+        auto SI = BuilderM.CreateStore(
             dif, BuilderM.CreatePointerCast(Al, getUnqual(dif->getType())));
+        if (align) {
+          Al->setAlignment(*align);
+          SI->setAlignment(*align);
+        }
         Value *idxs[] = {
             ConstantInt::get(Type::getInt64Ty(ptr->getContext()), 0),
             ConstantInt::get(Type::getInt32Ty(ptr->getContext()), 1)};
 
         auto difp = BuilderM.CreateInBoundsGEP(ST, Al, idxs, "gep.ptr");
-        dif = BuilderM.CreateLoad(addingType, difp, "gep.load");
+        auto LI = BuilderM.CreateLoad(addingType, difp, "gep.load");
+        LI->setAlignment(commonAlignment(Al->getAlign(), start));
+        dif = LI;
       }
       if (dif->getType() != addingType) {
         auto difSize = (DL.getTypeSizeInBits(dif->getType()) + 1) / 8;
@@ -1077,9 +1085,11 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
           IRBuilder<> A(inversionAllocs);
           auto Al = A.CreateAlloca(dif->getType(), nullptr, "cast.alloca");
           BuilderM.CreateStore(dif, Al);
-          dif = BuilderM.CreateLoad(
+          auto LI = BuilderM.CreateLoad(
               addingType, BuilderM.CreatePointerCast(Al, getUnqual(addingType)),
               "cast.load");
+          LI->setAlignment(Al->getAlign());
+          dif = LI;
         }
       }
       return dif;
@@ -1123,9 +1133,10 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
       ss << "Unimplemented masked atomic fadd for ptr:" << *ptr
          << " dif:" << *dif << " mask: " << *mask << " orig: " << *orig << "\n";
       if (CustomErrorHandler) {
+        LLVMBuilderRef BR = startCallbackBuilder(BuilderM);
         CustomErrorHandler(ss.str().c_str(), wrap(orig),
-                           ErrorType::NoDerivative, this, nullptr,
-                           wrap(&BuilderM));
+                           ErrorType::NoDerivative, this, nullptr, BR);
+        finishCallbackBuilder(BR, BuilderM);
         return;
       } else {
         EmitFailure("NoDerivative", orig->getDebugLoc(), orig, ss.str());

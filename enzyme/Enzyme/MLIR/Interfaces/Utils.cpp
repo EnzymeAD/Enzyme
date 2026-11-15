@@ -6,11 +6,12 @@
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
-
 #include "Interfaces/Utils.h"
 #include "Dialect/Ops.h"
+#include "Interfaces/AutoDiffOpInterface.h"
 #include "Interfaces/AutoDiffTypeInterface.h"
 #include "Interfaces/GradientUtils.h"
+#include "Interfaces/OffsetViewInterface.h"
 #include "Passes/Utils.h"
 #include "mlir/Analysis/AliasAnalysis.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
@@ -38,15 +39,14 @@ const std::set<std::string> &getNonCapturingFunctions() {
   return NonCapturingFunctions;
 }
 
-static bool isCaptured(Value v, Operation *potentialUser = nullptr,
-                       bool *seenuse = nullptr) {
+bool isCaptured(Value v, Operation *potentialUser, bool *seenuse) {
   SmallVector<Value> todo = {v};
   while (todo.size()) {
     Value v = todo.pop_back_val();
     for (auto u : v.getUsers()) {
       if (seenuse && u == potentialUser)
         *seenuse = true;
-      if (isa<memref::LoadOp, LLVM::LoadOp, affine::AffineLoadOp>(u))
+      if (isa<enzyme::LoadLikeInterface>(u))
         continue;
       if (auto s = dyn_cast<memref::StoreOp>(u)) {
         if (s.getValue() == v)
@@ -63,14 +63,11 @@ static bool isCaptured(Value v, Operation *potentialUser = nullptr,
           return true;
         continue;
       }
-      if (auto sub = dyn_cast<LLVM::GEPOp>(u)) {
-        todo.push_back(sub);
-      }
-      if (auto sub = dyn_cast<LLVM::BitcastOp>(u)) {
-        todo.push_back(sub);
-      }
-      if (auto sub = dyn_cast<LLVM::AddrSpaceCastOp>(u)) {
-        todo.push_back(sub);
+      if (auto view = dyn_cast<ViewLikeOpInterface>(u)) {
+        if (view.getViewSource() == v) {
+          todo.push_back(view.getViewDest());
+          continue;
+        }
       }
       if (auto sub = dyn_cast<func::ReturnOp>(u)) {
         continue;
@@ -83,9 +80,6 @@ static bool isCaptured(Value v, Operation *potentialUser = nullptr,
       }
       if (auto sub = dyn_cast<LLVM::MemmoveOp>(u)) {
         continue;
-      }
-      if (auto sub = dyn_cast<memref::CastOp>(u)) {
-        todo.push_back(sub);
       }
       if (auto sub = dyn_cast<memref::DeallocOp>(u)) {
         continue;
@@ -126,22 +120,15 @@ Value inactiveStoredValueShadow(Operation *orig, MGradientUtils &gutils,
   return getConcatValue(builder, orig->getLoc(), batched);
 }
 
-Value getBaseObject(Value v) {
+Value getBaseObject(Value v, bool offsetAllowed) {
   while (Operation *def = v.getDefiningOp()) {
     if (auto view = dyn_cast<ViewLikeOpInterface>(def)) {
+      if (!offsetAllowed) {
+        auto offsetView = dyn_cast<OffsetViewInterface>(def);
+        if (!offsetView || !offsetView.isZeroOffset())
+          break;
+      }
       v = view.getViewSource();
-      continue;
-    }
-    if (auto gep = dyn_cast<LLVM::GEPOp>(def)) {
-      v = gep.getBase();
-      continue;
-    }
-    if (auto bc = dyn_cast<LLVM::BitcastOp>(def)) {
-      v = bc.getArg();
-      continue;
-    }
-    if (auto asc = dyn_cast<LLVM::AddrSpaceCastOp>(def)) {
-      v = asc.getArg();
       continue;
     }
     break;
@@ -149,10 +136,9 @@ Value getBaseObject(Value v) {
   return v;
 }
 
-static bool isStackAlloca(Value v) {
-  return v.getDefiningOp<memref::AllocaOp>() ||
-         v.getDefiningOp<memref::AllocOp>() ||
-         v.getDefiningOp<LLVM::AllocaOp>();
+static bool isFreshAllocation(Value v) {
+  return v.getDefiningOp<enzyme::MallocLikeInterface>() ||
+         v.getDefiningOp<enzyme::AllocaLikeInterface>();
 }
 
 bool mayAlias(Value v1, Value v2) {
@@ -178,11 +164,11 @@ bool mayAlias(Value v1, Value v2) {
   bool isAlloca[2];
   bool isGlobal[2];
 
-  isAlloca[0] = isStackAlloca(v1);
+  isAlloca[0] = isFreshAllocation(v1);
   isGlobal[0] = v1.getDefiningOp<memref::GetGlobalOp>() ||
                 v1.getDefiningOp<LLVM::AddressOfOp>();
 
-  isAlloca[1] = isStackAlloca(v2);
+  isAlloca[1] = isFreshAllocation(v2);
 
   isGlobal[1] = v2.getDefiningOp<memref::GetGlobalOp>() ||
                 v2.getDefiningOp<LLVM::AddressOfOp>();

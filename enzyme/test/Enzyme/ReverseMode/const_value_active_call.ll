@@ -31,29 +31,28 @@ entry:
   ret double %0
 }
 
-; CHECK: define internal { { double*, double* }, double*, double* } @augmented_f(double** %a0, double** %"a0'")
-; CHECK-NEXT:   %1 = alloca { { double*, double* }, double*, double* }, align 8
-; CHECK-NEXT:   %2 = getelementptr inbounds { { double*, double* }, double*, double* }, { { double*, double* }, double*, double* }* %1, i32 0, i32 0
+; The load of %a3 is not taped: g only writes on paths that throw, so the
+; reverse pass reloads it from %a0 after the call.
+; CHECK: define internal { double*, double*, double* } @augmented_f(double** %a0, double** %"a0'")
+; CHECK-NEXT:   %1 = alloca { double*, double*, double* }, align 8
+; CHECK-NEXT:   %2 = getelementptr inbounds { double*, double*, double* }, { double*, double*, double* }* %1, i32 0, i32 0
 ; CHECK-NEXT:   %"a3'ipl" = load double*, double** %"a0'", align 8, !alias.scope !15, !noalias !18
 ; CHECK-NEXT:   %a3 = load double*, double** %a0, align 8, !alias.scope !18, !noalias !15
-; CHECK-NEXT:   %3 = getelementptr inbounds { double*, double* }, { double*, double* }* %2, i32 0, i32 1
-; CHECK-NEXT:   store double* %a3, double** %3, align 8
 ; CHECK-NEXT:   %a5_augmented = call { double*, double* } @augmented_g(double* %a3, double* %"a3'ipl")
 ; CHECK-NEXT:   %a5 = extractvalue { double*, double* } %a5_augmented, 0
 ; CHECK-NEXT:   %"a5'ac" = extractvalue { double*, double* } %a5_augmented, 1
-; CHECK-NEXT:   %4 = getelementptr inbounds { double*, double* }, { double*, double* }* %2, i32 0, i32 0
+; CHECK-NEXT:   store double* %"a5'ac", double** %2, align 8
+; CHECK-NEXT:   %3 = getelementptr inbounds { double*, double*, double* }, { double*, double*, double* }* %1, i32 0, i32 1
+; CHECK-NEXT:   store double* %a5, double** %3, align 8
+; CHECK-NEXT:   %4 = getelementptr inbounds { double*, double*, double* }, { double*, double*, double* }* %1, i32 0, i32 2
 ; CHECK-NEXT:   store double* %"a5'ac", double** %4, align 8
-; CHECK-NEXT:   %5 = getelementptr inbounds { { double*, double* }, double*, double* }, { { double*, double* }, double*, double* }* %1, i32 0, i32 1
-; CHECK-NEXT:   store double* %a5, double** %5, align 8
-; CHECK-NEXT:   %6 = getelementptr inbounds { { double*, double* }, double*, double* }, { { double*, double* }, double*, double* }* %1, i32 0, i32 2
-; CHECK-NEXT:   store double* %"a5'ac", double** %6, align 8
-; CHECK-NEXT:   %7 = load { { double*, double* }, double*, double* }, { { double*, double* }, double*, double* }* %1, align 8
-; CHECK-NEXT:   ret { { double*, double* }, double*, double* } %7
+; CHECK-NEXT:   %5 = load { double*, double*, double* }, { double*, double*, double* }* %1, align 8
+; CHECK-NEXT:   ret { double*, double*, double* } %5
 ; CHECK-NEXT: }
 
-; CHECK: define internal void @diffef(double** %a0, double** %"a0'", { double*, double* } %tapeArg)
+; CHECK: define internal void @diffef(double** %a0, double** %"a0'", double* %tapeArg)
 ; CHECK-NEXT: invert:
-; CHECK-NEXT:   %a3 = extractvalue { double*, double* } %tapeArg, 1
+; CHECK-NEXT:   %a3 = load double*, double** %a0, align 8
 ; CHECK-NEXT:   call void @diffeg(double* %a3, double* {{(undef|poison)}})
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

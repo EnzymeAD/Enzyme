@@ -27,8 +27,8 @@ module attributes {
   llvm.func @_Z10reduce_maxPdi(%arg0: f64 {enzyme.tag = "arg0"}) -> f64 {
     %0 = llvm.mlir.constant(1 : i64) : i64
     %1 = func.call @_ZNSt16allocator_traitsISaIdEE8allocateERS0_m(%0) {tag = "allocator"} : (i64) -> !llvm.ptr
-    llvm.store %arg0, %1 {alignment = 8 : i64} : f64, !llvm.ptr
-    %2 = llvm.load %1 {alignment = 8 : i64, tag = "loaded"} : !llvm.ptr -> f64
+    llvm.store %arg0, %1 <alignment = 8> : f64, !llvm.ptr
+    %2 = llvm.load %1 <alignment = 8> {tag = "loaded"} : !llvm.ptr -> f64
     llvm.return %2 : f64
   }
   llvm.func @_Z17__enzyme_autodiffPvPdS0_i(...) -> f64

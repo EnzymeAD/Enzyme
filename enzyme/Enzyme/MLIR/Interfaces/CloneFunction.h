@@ -33,14 +33,12 @@ getFunctionTypeForClone(mlir::FunctionType FTy, DerivativeMode mode,
                         llvm::ArrayRef<DIFFE_TYPE> ArgActivity);
 
 void cloneInto(Region *src, Region *dest, Region::iterator destPos,
-               IRMapping &mapper, std::map<Operation *, Operation *> &opMap);
+               IRMapping &mapper);
 
-void cloneInto(Region *src, Region *dest, IRMapping &mapper,
-               std::map<mlir::Operation *, mlir::Operation *> &opMap);
+void cloneInto(Region *src, Region *dest, IRMapping &mapper);
 
 Operation *clone(Operation *src, IRMapping &mapper,
-                 Operation::CloneOptions options,
-                 std::map<Operation *, Operation *> &opMap);
+                 Operation::CloneOptions options);
 
 FunctionOpInterface CloneFunctionWithReturns(
     DerivativeMode mode, unsigned width, FunctionOpInterface F,
@@ -50,5 +48,4 @@ FunctionOpInterface CloneFunctionWithReturns(
     SmallPtrSetImpl<mlir::Value> &returnvals,
     const std::vector<bool> &returnPrimals,
     const std::vector<bool> &returnShadows, ArrayRef<DIFFE_TYPE> ReturnActivity,
-    Twine name, IRMapping &VMap, std::map<Operation *, Operation *> &OpMap,
-    mlir::Type additionalArg);
+    Twine name, IRMapping &VMap, mlir::Type additionalArg);

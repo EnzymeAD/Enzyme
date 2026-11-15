@@ -12,11 +12,15 @@
 !       handle the different signature for __enzyme_batch used by ifx.
 
 module squareBatch
+  implicit none
+  public
   interface
     subroutine square__enzyme_batch(sr, width_desc, width, &
                                     vec_desc, x1, x2, x3, x4, y1, y2, y3, y4)
+      implicit none
       interface
         subroutine sr_decal(xx, yy)
+          implicit none
           real, intent(in)  :: xx
           real, intent(out) :: yy
         end subroutine sr_decal
@@ -36,8 +40,8 @@ contains
     real, intent(in)  :: x
     real, intent(out) :: y
     y = x ** 2
-  end subroutine
-end module
+  end subroutine square
+end module squareBatch
 
 program main
   use enzyme, only: enzyme_vector, enzyme_width
@@ -59,7 +63,7 @@ program main
   write(*,"(f0.4)") y2
   write(*,"(f0.4)") y3
   write(*,"(f0.4)") y4
-end program
+end program main
 
 ! CHECK: 533.6100
 ! CHECK-NEXT: 100.0000

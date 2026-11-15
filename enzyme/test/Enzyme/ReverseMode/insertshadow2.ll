@@ -22,7 +22,7 @@ entry:
   ret void
 }
 
-; CHECK: define internal { i8*, double } @augmented_square(double** %x, double* %y, double* %"y'", i1 %cond)
+; CHECK: define internal { i8*, double } @augmented_square(double** readonly %x, double* readonly %y, double* %"y'", i1 %cond)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = alloca { i8*, double }, align 8
 ; CHECK-NEXT:   %malloccall = tail call noalias nonnull dereferenceable(8) dereferenceable_or_null(8) i8* @malloc(i64 8)
@@ -39,7 +39,7 @@ entry:
 ; CHECK-NEXT:   ret { i8*, double } %3
 ; CHECK-NEXT: }
 
-; CHECK: define internal void @diffesquare(double** %x, double* %y, double* %"y'", i1 %cond, double %differeturn, i8* %tapeArg)
+; CHECK: define internal void @diffesquare(double** readonly %x, double* readonly %y, double* %"y'", i1 %cond, double %differeturn, i8* %tapeArg)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = bitcast i8* %tapeArg to double**
 ; CHECK-NEXT:   %ld0 = load double*, double** %0, align 8

@@ -148,6 +148,38 @@ def StoreLikeInterface : OpInterface<"StoreLikeInterface"> {
                      /*methodName=*/"getStoredPointer">];
 }
 
+def LoadLikeInterface : OpInterface<"LoadLikeInterface"> {
+  let description = [{
+    A load-like operation that reads through a pointer or reference.
+  }];
+
+  let cppNamespace = "::mlir::enzyme";
+  let methods = [InterfaceMethod<
+      /*desc=*/"Returns the base pointer/reference this load reads through "
+               "(before any potential offsets within the op are applied).",
+      /*retTy=*/"::mlir::Value",
+      /*methodName=*/"getLoadedPointer">];
+}
+
+def AllocaLikeInterface : OpInterface<"AllocaLikeInterface"> {
+  let description = [{
+    An operation that allocates stack memory and returns a single
+    pointer or reference to it.
+  }];
+  let cppNamespace = "::mlir::enzyme";
+
+  let methods = [];
+}
+
+def MallocLikeInterface : OpInterface<"MallocLikeInterface"> {
+  let description = [{
+    An operation that allocates fresh heap memory and returns a single
+    pointer or reference to it.
+  }];
+  let cppNamespace = "::mlir::enzyme";
+  let methods = [];
+}
+
 def ActivityOpInterface
     : OpInterface<"ActivityOpInterface"> {
   let cppNamespace = "::mlir::enzyme";
@@ -324,6 +356,13 @@ def AutoDiffFunctionInterface : OpInterface<"AutoDiffFunctionInterface"> {
     /*args=*/(ins "::mlir::OpBuilder &" : $builder, "::mlir::Location" : $loc, "::mlir::ValueRange" : $args)
     >
   ];
+}
+
+def FunctionReturnOpInterface : OpInterface<"FunctionReturnOpInterface"> {
+  let description = [{
+    Marks an operation that returns from its enclosing function.
+  }];
+  let cppNamespace = "::mlir::enzyme";
 }
 
 def MultidimensionalAllocInterface : OpInterface<"MultidimensionalAllocInterface"> {

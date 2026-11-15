@@ -41,9 +41,8 @@ declare dso_local double @_Z16__enzyme_fwdsplitz(...)
 ; CHECK-NEXT:   %0 = bitcast i8* %tapeArg to { { i8*, i8* }, double*, double }*
 ; CHECK-NEXT:   %truetape = load { { i8*, i8* }, double*, double }, { { i8*, i8* }, double*, double }* %0
 ; CHECK-NEXT:   %tapeArg1 = extractvalue { { i8*, i8* }, double*, double } %truetape, 0
-; CHECK-NEXT:   %[[i1:.+]] = call { double*, double* } @fwddiffe_Z6toHeapd(double %x, double %"x'", { i8*, i8* } %tapeArg1)
-; CHECK-NEXT:   %[[i2:.+]] = extractvalue { double*, double* } %[[i1]], 1
-; CHECK-NEXT:   %[[i4:.+]] = load double, double* %[[i2]], align 8
+; CHECK-NEXT:   %[[i1:.+]] = call double* @fwddiffe_Z6toHeapd(double %x, double %"x'", { i8*, i8* } %tapeArg1)
+; CHECK-NEXT:   %[[i4:.+]] = load double, double* %[[i1]], align 8
 ; CHECK-NEXT:   %[[i3:.+]] = extractvalue { { i8*, i8* }, double*, double } %truetape, 2
 ; CHECK-NEXT:   %[[i5:.+]] = fmul fast double %[[i4]], %x
 ; CHECK-NEXT:   %[[i6:.+]] = fmul fast double %"x'", %[[i3]]
@@ -51,14 +50,10 @@ declare dso_local double @_Z16__enzyme_fwdsplitz(...)
 ; CHECK-NEXT:   ret double %[[i7]]
 ; CHECK-NEXT: }
 
-; CHECK: define internal { double*, double* } @fwddiffe_Z6toHeapd(double %x, double %"x'", { i8*, i8* } %tapeArg) 
+; CHECK: define internal double* @fwddiffe_Z6toHeapd(double %x, double %"x'", { i8*, i8* } %tapeArg)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %call = extractvalue { i8*, i8* } %tapeArg, 1
 ; CHECK-NEXT:   %"call'mi" = extractvalue { i8*, i8* } %tapeArg, 0
 ; CHECK-NEXT:   %"'ipc" = bitcast i8* %"call'mi" to double*
-; CHECK-NEXT:   %0 = bitcast i8* %call to double*
 ; CHECK-NEXT:   store double %"x'", double* %"'ipc", align 8
-; CHECK-NEXT:   %1 = insertvalue { double*, double* } undef, double* %0, 0
-; CHECK-NEXT:   %2 = insertvalue { double*, double* } %1, double* %"'ipc", 1
-; CHECK-NEXT:   ret { double*, double* } %2
+; CHECK-NEXT:   ret double* %"'ipc"
 ; CHECK-NEXT: }

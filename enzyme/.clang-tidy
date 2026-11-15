@@ -1,0 +1,245 @@
+# Root clang-tidy configuration for Enzyme LLVM C++ coding standards.
+# Requires `clang-tidy --experimental-custom-checks` (LLVM 21+) for CustomChecks.
+#
+# Tier classification (for CI diff-scoping vs whole-tree enforcement):
+#   Whole-tree checks:
+#     - llvm-twine-local
+#     - custom-llvm-twine-field-or-return
+#     - portability-restrict-system-includes
+#     - performance-avoid-endl
+#     - custom-llvm-no-iostream
+#     - custom-llvm-no-rtti-exceptions
+#     - custom-llvm-std-sort
+#   Diff-scoped checks:
+#     - llvm-else-after-return
+#     - llvm-prefer-static-over-anonymous-namespace
+#     - portability-avoid-pragma-once
+#     - custom-llvm-vector-bool
+#     - custom-llvm-smallvector-param
+#     - custom-llvm-const-std-string-param
+#     - custom-llvm-ostream-string-newline
+
+Checks: >-
+  -*,
+  llvm-twine-local,
+  llvm-else-after-return,
+  llvm-prefer-static-over-anonymous-namespace,
+  portability-avoid-pragma-once,
+  portability-restrict-system-includes,
+  performance-avoid-endl,
+  custom-llvm-twine-field-or-return,
+  custom-llvm-no-iostream,
+  custom-llvm-no-rtti-exceptions,
+  custom-llvm-std-sort,
+  custom-llvm-vector-bool,
+  custom-llvm-smallvector-param,
+  custom-llvm-const-std-string-param,
+  custom-llvm-ostream-string-newline
+
+HeaderFilterRegex: '.*'
+ExcludeHeaderFilterRegex: '(^|/)(\.git|build|enzyme-build|bazel-[^/]*|llvm-project|third_party|external|SCEV|include/(llvm|llvm-c|clang|clang-c|mlir|mlir-c))(/|$)|\.inc$'
+SystemHeaders: false
+
+CheckOptions:
+  llvm-else-after-return.WarnOnConditionVariables: 'false'
+  llvm-else-after-return.WarnOnUnfixable: 'false'
+  llvm-prefer-static-over-anonymous-namespace.AllowMemberFunctionsInClass: 'true'
+  llvm-prefer-static-over-anonymous-namespace.AllowVariableDeclarations: 'true'
+  portability-restrict-system-includes.Includes: '*,-iostream'
+
+CustomChecks:
+  # 1. Complement built-in `llvm-twine-local` (which only checks non-param,
+  #    non-reference `VarDecl`s) by catching `Twine` fields, `Twine` return
+  #    types, and local/global `Twine &` / `const Twine &` variables.
+  - Name: llvm-twine-field-or-return
+    Query: |
+      let twineDecl cxxRecordDecl(hasName("::llvm::Twine"))
+      let twineOrRef qualType(anyOf(
+        hasCanonicalType(qualType(hasDeclaration(twineDecl))),
+        references(twineDecl)
+      ))
+      match decl(
+        unless(isImplicit()),
+        unless(isInstantiated()),
+        anyOf(
+          fieldDecl(hasType(twineOrRef)),
+          functionDecl(
+            returns(twineOrRef),
+            unless(cxxMethodDecl(ofClass(twineDecl))),
+            unless(hasOverloadedOperatorName("+"))
+          ),
+          varDecl(unless(parmVarDecl()), hasType(references(twineDecl)))
+        )
+      ).bind("diag")
+    Diagnostic:
+      - BindName: diag
+        Message: "do not store 'llvm::Twine' in a field or reference variable, or return it from a function; use 'Twine' only as a 'const Twine &' parameter"
+        Level: Warning
+
+  # 5. Forbid C++ iostream global stream objects (`std::cout`, `std::cerr`,
+  #    `std::clog`, and wide equivalents); complements
+  #    `portability-restrict-system-includes` and `performance-avoid-endl`.
+  - Name: llvm-no-iostream
+    Query: |
+      let inSpelledScope stmt(anyOf(
+        forCallable(decl(unless(isInstantiated()), unless(isImplicit()))),
+        unless(isInTemplateInstantiation())
+      ))
+      match declRefExpr(
+        inSpelledScope,
+        to(namedDecl(hasAnyName(
+          "::std::cout",
+          "::std::cerr",
+          "::std::clog",
+          "::std::wcout",
+          "::std::wcerr",
+          "::std::wclog"
+        )))
+      ).bind("diag")
+    Diagnostic:
+      - BindName: diag
+        Message: "do not use C++ iostream globals ('std::cout', 'std::cerr', 'std::clog'); use 'llvm::outs()' or 'llvm::errs()' from 'llvm/Support/raw_ostream.h'"
+        Level: Warning
+
+  # 6. Forbid C++ RTTI (`dynamic_cast`) and exceptions (`throw`, `try`/`catch`).
+  - Name: llvm-no-rtti-exceptions
+    Query: |
+      let inSpelledScope stmt(anyOf(
+        forCallable(decl(unless(isInstantiated()), unless(isImplicit()))),
+        unless(isInTemplateInstantiation())
+      ))
+      match stmt(
+        inSpelledScope,
+        anyOf(
+          cxxDynamicCastExpr(),
+          cxxThrowExpr(),
+          cxxTryStmt()
+        )
+      ).bind("diag")
+    Diagnostic:
+      - BindName: diag
+        Message: "do not use C++ RTTI ('dynamic_cast') or exceptions ('try'/'catch'/'throw'); use 'llvm::isa'/'cast'/'dyn_cast' and 'llvm::Error'"
+        Level: Warning
+
+  # 7. Prefer `llvm::sort` over `std::sort`. Ignores template instantiations so
+  #    calling `llvm::sort(...)` (which calls `std::sort` internally) is clean.
+  - Name: llvm-std-sort
+    Query: |
+      let inSpelledScope stmt(anyOf(
+        forCallable(decl(unless(isInstantiated()), unless(isImplicit()))),
+        unless(isInTemplateInstantiation())
+      ))
+      match callExpr(
+        inSpelledScope,
+        anyOf(
+          callee(functionDecl(hasName("::std::sort"))),
+          callee(unresolvedLookupExpr(hasAnyDeclaration(namedDecl(hasName("::std::sort")))))
+        )
+      ).bind("diag")
+    Diagnostic:
+      - BindName: diag
+        Message: "use 'llvm::sort' instead of 'std::sort'"
+        Level: Warning
+
+  # 8. Forbid `std::vector<bool>` in variables, fields, typedefs/type aliases,
+  #    and function return/parameter types.
+  - Name: llvm-vector-bool
+    Query: |
+      let vecBoolSpec classTemplateSpecializationDecl(
+        hasName("::std::vector"),
+        hasTemplateArgument(0, refersToType(booleanType()))
+      )
+      let vecBoolTST templateSpecializationType(
+        hasDeclaration(namedDecl(hasName("::std::vector"))),
+        hasTemplateArgument(0, refersToType(booleanType()))
+      )
+      let vecBoolVal qualType(hasCanonicalType(anyOf(
+        qualType(hasDeclaration(vecBoolSpec)),
+        qualType(vecBoolTST)
+      )))
+      let vecBoolType qualType(anyOf(
+        vecBoolVal,
+        references(vecBoolVal),
+        pointsTo(vecBoolVal)
+      ))
+      match decl(
+        unless(isImplicit()),
+        unless(isInstantiated()),
+        anyOf(
+          varDecl(hasType(vecBoolType)),
+          fieldDecl(hasType(vecBoolType)),
+          typedefNameDecl(hasType(vecBoolType)),
+          functionDecl(returns(vecBoolType))
+        )
+      ).bind("diag")
+    Diagnostic:
+      - BindName: diag
+        Message: "do not use 'std::vector<bool>'; use 'llvm::BitVector' or 'llvm::SmallBitVector'"
+        Level: Warning
+
+  # 9. Forbid lvalue references to `llvm::SmallVector<T, N>` (including default
+  #    `N`) in function parameters; allow `SmallVectorImpl<T> &`, `ArrayRef<T>`,
+  #    and rvalue move-sink `SmallVector<T, N> &&`.
+  - Name: llvm-smallvector-param
+    Query: |
+      match parmVarDecl(
+        unless(isImplicit()),
+        unless(isInstantiated()),
+        hasType(lValueReferenceType(
+          pointee(hasCanonicalType(
+            qualType(hasDeclaration(namedDecl(hasName("::llvm::SmallVector"))))
+          ))
+        )),
+        unless(hasAncestor(cxxRecordDecl(hasName("::llvm::SmallVector"))))
+      ).bind("diag")
+    Diagnostic:
+      - BindName: diag
+        Message: "do not pass 'llvm::SmallVector<T, N> &' as a function parameter; use 'llvm::SmallVectorImpl<T> &' (mutating) or 'llvm::ArrayRef<T>' (read-only)"
+        Level: Warning
+
+  # 10. Prefer `llvm::StringRef` (by value) over `const std::string &` in
+  #     function parameters, excluding copy ctors, assignment, and comparisons.
+  - Name: llvm-const-std-string-param
+    Query: |
+      let stdStringDecl classTemplateSpecializationDecl(
+        hasName("::std::basic_string"),
+        hasTemplateArgument(0, refersToType(qualType(asString("char"))))
+      )
+      match parmVarDecl(
+        unless(isImplicit()),
+        unless(isInstantiated()),
+        hasType(lValueReferenceType(
+          pointee(
+            isConstQualified(),
+            hasCanonicalType(qualType(hasDeclaration(stdStringDecl)))
+          )
+        )),
+        unless(hasDeclContext(functionDecl(anyOf(
+          cxxConstructorDecl(isCopyConstructor()),
+          cxxMethodDecl(isCopyAssignmentOperator()),
+          hasAnyOverloadedOperatorName("=", "==", "!=", "<", "<=", ">", ">=", "<=>")
+        ))))
+      ).bind("diag")
+    Diagnostic:
+      - BindName: diag
+        Message: "prefer 'llvm::StringRef' (by value) over 'const std::string &' in function parameters"
+        Level: Warning
+
+  # 11. Prefer single-quoted char literal (`'\n'`) over single-character string
+  #     literal (`"\n"`) when streaming to `llvm::raw_ostream`.
+  - Name: llvm-ostream-string-newline
+    Query: |
+      let inSpelledScope stmt(anyOf(
+        forCallable(decl(unless(isInstantiated()), unless(isImplicit()))),
+        unless(isInTemplateInstantiation())
+      ))
+      match cxxOperatorCallExpr(
+        inSpelledScope,
+        hasOverloadedOperatorName("<<"),
+        hasLHS(expr(hasType(cxxRecordDecl(isSameOrDerivedFrom("::llvm::raw_ostream"))))),
+        hasRHS(ignoringParenImpCasts(stringLiteral(hasSize(1)).bind("diag")))
+      )
+    Diagnostic:
+      - BindName: diag
+        Message: "prefer single-quoted character literal (e.g. '\\n') over single-character string literal (e.g. \"\\n\") when streaming to 'llvm::raw_ostream'"
+        Level: Warning

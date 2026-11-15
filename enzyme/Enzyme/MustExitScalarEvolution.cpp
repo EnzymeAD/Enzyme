@@ -30,6 +30,9 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/ScalarEvolution.h"
+#include "llvm/IR/PatternMatch.h"
+
+#include <type_traits>
 
 #ifdef __clang__
 #pragma clang diagnostic push
@@ -171,17 +174,21 @@ ScalarEvolution::ExitLimit
 MustExitScalarEvolution::computeExitLimitFromCondImpl(
     ExitLimitCacheTy &Cache, const Loop *L, Value *ExitCond, bool ExitIfTrue,
     bool ControlsExit, bool AllowPredicates) {
-  // Check if the controlling expression for this loop is an And or Or.
-  if (BinaryOperator *BO = dyn_cast<BinaryOperator>(ExitCond)) {
-    if (BO->getOpcode() == Instruction::And) {
+  // Check if the controlling expression for this loop is an And or Or, in
+  // either its binary operator or its select form.
+  {
+    using namespace llvm::PatternMatch;
+    Value *Operand0 = nullptr;
+    Value *Operand1 = nullptr;
+    if (match(ExitCond, m_LogicalAnd(m_Value(Operand0), m_Value(Operand1)))) {
       // Recurse on the operands of the and.
       bool EitherMayExit = !ExitIfTrue;
       ExitLimit EL0 = computeExitLimitFromCondCached(
-          Cache, L, BO->getOperand(0), ExitIfTrue,
-          ControlsExit && !EitherMayExit, AllowPredicates);
+          Cache, L, Operand0, ExitIfTrue, ControlsExit && !EitherMayExit,
+          AllowPredicates);
       ExitLimit EL1 = computeExitLimitFromCondCached(
-          Cache, L, BO->getOperand(1), ExitIfTrue,
-          ControlsExit && !EitherMayExit, AllowPredicates);
+          Cache, L, Operand1, ExitIfTrue, ControlsExit && !EitherMayExit,
+          AllowPredicates);
       const SCEV *BECount = getCouldNotCompute();
       const SCEV *MaxBECount = getCouldNotCompute();
       if (EitherMayExit) {
@@ -246,15 +253,15 @@ MustExitScalarEvolution::computeExitLimitFromCondImpl(
                          {&EL0.Predicates, &EL1.Predicates});
 #endif
     }
-    if (BO->getOpcode() == Instruction::Or) {
+    if (match(ExitCond, m_LogicalOr(m_Value(Operand0), m_Value(Operand1)))) {
       // Recurse on the operands of the or.
       bool EitherMayExit = ExitIfTrue;
       ExitLimit EL0 = computeExitLimitFromCondCached(
-          Cache, L, BO->getOperand(0), ExitIfTrue,
-          ControlsExit && !EitherMayExit, AllowPredicates);
+          Cache, L, Operand0, ExitIfTrue, ControlsExit && !EitherMayExit,
+          AllowPredicates);
       ExitLimit EL1 = computeExitLimitFromCondCached(
-          Cache, L, BO->getOperand(1), ExitIfTrue,
-          ControlsExit && !EitherMayExit, AllowPredicates);
+          Cache, L, Operand1, ExitIfTrue, ControlsExit && !EitherMayExit,
+          AllowPredicates);
       const SCEV *BECount = getCouldNotCompute();
       const SCEV *MaxBECount = getCouldNotCompute();
       if (EitherMayExit) {
@@ -465,7 +472,7 @@ ScalarEvolution::ExitLimit MustExitScalarEvolution::computeExitLimitFromICmp(
   case ICmpInst::ICMP_UGT:
   case ICmpInst::ICMP_SGE:
   case ICmpInst::ICMP_UGE: { // while (X > Y)
-    bool IsSigned = Pred == ICmpInst::ICMP_SGT || Pred == ICmpInst::ICMP_SLE;
+    bool IsSigned = Pred == ICmpInst::ICMP_SGT || Pred == ICmpInst::ICMP_SGE;
     if (Pred == ICmpInst::ICMP_SGE || Pred == ICmpInst::ICMP_UGE) {
       if (!isa<IntegerType>(RHS->getType()))
         break;
@@ -480,8 +487,13 @@ ScalarEvolution::ExitLimit MustExitScalarEvolution::computeExitLimitFromICmp(
       else
         RHS = getAddExpr(sv, SCEV::FlagNUW);
     }
+#if LLVM_VERSION_MAJOR >= 24
+    ExitLimit EL = ScalarEvolution::howManyLessThans(
+        LHS, RHS, L, IsSigned, /*Invert=*/true, ControlsExit, AllowPredicates);
+#else
     ExitLimit EL = howManyGreaterThans(LHS, RHS, L, IsSigned, ControlsExit,
                                        AllowPredicates);
+#endif
     if (EL.hasAnyInfo())
       return EL;
     break;
@@ -526,18 +538,29 @@ static const SCEV *getUnsignedOverflowLimitForStep(const SCEV *Step,
                          SE->getUnsignedRangeMax(Step));
 }
 
+// The type of SCEV's wrap flags: SCEVWrapFlags, SCEVNoWrapFlags or
+// SCEVFlags, depending on the LLVM version. Taken from a flag constant, which
+// all versions provide, rather than from an LLVM version check, as the type
+// was renamed several times during LLVM 24's development.
+using WrapFlagsTy = std::remove_cv_t<decltype(SCEV::FlagNSW)>;
+
 namespace {
 
 struct ExtendOpTraitsBase {
+#if LLVM_VERSION_MAJOR >= 24
+  typedef const SCEV *(ScalarEvolution::*GetExtendExprTy)(SCEVUse, Type *,
+                                                          unsigned);
+#else
   typedef const SCEV *(ScalarEvolution::*GetExtendExprTy)(const SCEV *, Type *,
                                                           unsigned);
+#endif
 };
 
 // Used to make code generic over signed and unsigned overflow.
 template <typename ExtendOp> struct ExtendOpTraits {
   // Members present:
   //
-  // static const SCEV::NoWrapFlags WrapType;
+  // static const WrapFlagsTy WrapType;
   //
   // static const ExtendOpTraitsBase::GetExtendExprTy GetExtendExpr;
   //
@@ -548,7 +571,7 @@ template <typename ExtendOp> struct ExtendOpTraits {
 
 template <>
 struct ExtendOpTraits<SCEVSignExtendExpr> : public ExtendOpTraitsBase {
-  static const SCEV::NoWrapFlags WrapType = SCEV::FlagNSW;
+  static const WrapFlagsTy WrapType = SCEV::FlagNSW;
 
   static const GetExtendExprTy GetExtendExpr;
 
@@ -565,7 +588,7 @@ const ExtendOpTraitsBase::GetExtendExprTy
 
 template <>
 struct ExtendOpTraits<SCEVZeroExtendExpr> : public ExtendOpTraitsBase {
-  static const SCEV::NoWrapFlags WrapType = SCEV::FlagNUW;
+  static const WrapFlagsTy WrapType = SCEV::FlagNUW;
 
   static const GetExtendExprTy GetExtendExpr;
 
@@ -582,7 +605,7 @@ const ExtendOpTraitsBase::GetExtendExprTy
 
 } // end anonymous namespace
 
-static bool hasFlags(SCEV::NoWrapFlags Flags, SCEV::NoWrapFlags TestFlags) {
+static bool hasFlags(WrapFlagsTy Flags, WrapFlagsTy TestFlags) {
   return TestFlags == ScalarEvolution::maskFlags(Flags, TestFlags);
 };
 
@@ -620,7 +643,11 @@ static const SCEV *getPreStartForExtend(const SCEVAddRecExpr *AR, Type *Ty,
       ScalarEvolution::maskFlags(SA->getNoWrapFlags(), SCEV::FlagNUW);
   const SCEV *PreStart = SE->getAddExpr(DiffOps, PreStartFlags);
   const SCEVAddRecExpr *PreAR = dyn_cast<SCEVAddRecExpr>(
+#if LLVM_VERSION_MAJOR >= 24
+      SE->getAddRecExpr(PreStart, Step, L, SCEV::FlagNone));
+#else
       SE->getAddRecExpr(PreStart, Step, L, SCEV::FlagAnyWrap));
+#endif
 
   // "{S,+,X} is <nsw>/<nuw>" and "the backedge is taken at least once" implies
   // "S+X does not sign/unsign-overflow".
@@ -684,10 +711,9 @@ static const SCEV *getExtendAddRecStart(const SCEVAddRecExpr *AR, Type *Ty,
       (SE->*GetExtendExpr)(PreStart, Ty, Depth));
 }
 
-static SCEV::NoWrapFlags StrengthenNoWrapFlags(ScalarEvolution *SE,
-                                               SCEVTypes Type,
-                                               const ArrayRef<const SCEV *> Ops,
-                                               SCEV::NoWrapFlags Flags) {
+static WrapFlagsTy StrengthenNoWrapFlags(ScalarEvolution *SE, SCEVTypes Type,
+                                         const ArrayRef<const SCEV *> Ops,
+                                         WrapFlagsTy Flags) {
   using namespace std::placeholders;
 
   using OBO = OverflowingBinaryOperator;
@@ -698,7 +724,7 @@ static SCEV::NoWrapFlags StrengthenNoWrapFlags(ScalarEvolution *SE,
   assert(CanAnalyze && "don't call from other places!");
 
   auto SignOrUnsignMask = SCEV::FlagNUW | SCEV::FlagNSW;
-  SCEV::NoWrapFlags SignOrUnsignWrap =
+  WrapFlagsTy SignOrUnsignWrap =
       ScalarEvolution::maskFlags(Flags, SignOrUnsignMask);
 
   // If FlagNSW is true and all the operands are non-negative, infer FlagNUW.
@@ -707,8 +733,7 @@ static SCEV::NoWrapFlags StrengthenNoWrapFlags(ScalarEvolution *SE,
   };
 
   if (SignOrUnsignWrap == SCEV::FlagNSW && all_of(Ops, IsKnownNonNegative))
-    Flags =
-        ScalarEvolution::setFlags(Flags, (SCEV::NoWrapFlags)SignOrUnsignMask);
+    Flags = ScalarEvolution::setFlags(Flags, (WrapFlagsTy)SignOrUnsignMask);
 
   SignOrUnsignWrap = ScalarEvolution::maskFlags(Flags, SignOrUnsignMask);
 
@@ -824,7 +849,7 @@ ScalarEvolution::ExitLimit MustExitScalarEvolution::howManyLessThans(
           // if we'd been able to infer the fact just above at that time.
           const SCEV *Step = AR->getStepRecurrence(*this);
           Type *Ty = ZExt->getType();
-          auto *S = getAddRecExpr(
+          auto S = getAddRecExpr(
               getExtendAddRecStart<SCEVZeroExtendExpr>(AR, Ty, this, 0),
               getZeroExtendExpr(Step, Ty, 0), L, AR->getNoWrapFlags());
           IV = dyn_cast<SCEVAddRecExpr>(S);
@@ -964,7 +989,7 @@ ScalarEvolution::ExitLimit MustExitScalarEvolution::howManyLessThans(
       return getCouldNotCompute();
   }
 
-  // On all paths just preceeding, we established the following invariant:
+  // On all paths just preceding, we established the following invariant:
   //   IV can be assumed not to overflow up to and including the exiting
   //   iteration.  We proved this in one of two ways:
   //   1) We can show overflow doesn't occur before the exiting iteration
@@ -1011,8 +1036,14 @@ ScalarEvolution::ExitLimit MustExitScalarEvolution::howManyLessThans(
   // bound of the loop (RHS), and the fact that IV does not overflow (which is
   // checked above).
   if (!isLoopInvariant(RHS, L)) {
+#if LLVM_VERSION_MAJOR >= 24
+    const SCEV *MaxBECount = computeMaxBECountForLT(
+        Start, Stride, RHS, getTypeSizeInBits(LHS->getType()), IsSigned,
+        /*Invert=*/false);
+#else
     const SCEV *MaxBECount = computeMaxBECountForLT(
         Start, Stride, RHS, getTypeSizeInBits(LHS->getType()), IsSigned);
+#endif
 #if LLVM_VERSION_MAJOR >= 16
     return ExitLimit(getCouldNotCompute() /* ExactNotTaken */, MaxBECount,
                      MaxBECount, false /*MaxOrZero*/, Predicates);
@@ -1075,7 +1106,7 @@ ScalarEvolution::ExitLimit MustExitScalarEvolution::howManyLessThans(
       //
       // FIXME: Should isLoopEntryGuardedByCond do this for us?
       auto CondGT = IsSigned ? ICmpInst::ICMP_SGT : ICmpInst::ICMP_UGT;
-      auto *StartMinusOne =
+      auto StartMinusOne =
           getAddExpr(OrigStart, getMinusOne(OrigStart->getType()));
       return isLoopEntryGuardedByCond(L, CondGT, OrigRHS, StartMinusOne);
     };
@@ -1195,8 +1226,14 @@ ScalarEvolution::ExitLimit MustExitScalarEvolution::howManyLessThans(
     MaxBECount = BECountIfBackedgeTaken;
     MaxOrZero = true;
   } else {
+#if LLVM_VERSION_MAJOR >= 24
+    MaxBECount = computeMaxBECountForLT(
+        Start, Stride, RHS, getTypeSizeInBits(LHS->getType()), IsSigned,
+        /*Invert=*/false);
+#else
     MaxBECount = computeMaxBECountForLT(
         Start, Stride, RHS, getTypeSizeInBits(LHS->getType()), IsSigned);
+#endif
   }
 
   if (isa<SCEVCouldNotCompute>(MaxBECount) &&

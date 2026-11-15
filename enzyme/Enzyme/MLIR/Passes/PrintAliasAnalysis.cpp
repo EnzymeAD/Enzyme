@@ -13,6 +13,7 @@
 
 #include "Analysis/DataFlowAliasAnalysis.h"
 #include "Dialect/Ops.h"
+#include "Interfaces/AutoDiffOpInterface.h"
 #include "Passes/PassDetails.h"
 #include "Passes/Passes.h"
 
@@ -115,7 +116,7 @@ struct PrintAliasAnalysisPass
                 return ChangeResult::NoChange;
               });
         }
-      } else if (op->hasTrait<OpTrait::ReturnLike>() &&
+      } else if (mlir::enzyme::isFunctionReturnLike(op) &&
                  isa<FunctionOpInterface>(op->getParentOp())) {
         os << "points-to-pointer sets for op @" << op->getLoc() << ":\n";
         if (auto *state = solver.lookupState<enzyme::PointsToSets>(

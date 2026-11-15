@@ -27,6 +27,7 @@
 #include "DataFlowActivityAnalysis.h"
 #include "DataFlowAliasAnalysis.h"
 #include "Dialect/Ops.h"
+#include "Interfaces/AutoDiffOpInterface.h"
 #include "Interfaces/AutoDiffTypeInterface.h"
 
 #include "mlir/Analysis/DataFlow/ConstantPropagationAnalysis.h"
@@ -569,7 +570,7 @@ LogicalResult enzyme::DenseBackwardActivityAnalysis::visitOperation(
   // }
 
   // Initialize the return activity of arguments.
-  if (op->hasTrait<OpTrait::ReturnLike>() && op->getParentOp() == parentOp) {
+  if (mlir::enzyme::isFunctionReturnLike(op) && op->getParentOp() == parentOp) {
     for (const auto &[arg, argActivity] : llvm::zip(
              parentOp->getRegions().front().getArguments(), argumentActivity)) {
       if (argActivity != enzyme::Activity::enzyme_dup &&
@@ -954,7 +955,7 @@ void enzyme::runDataFlowActivityAnalysis(
   // that have the ReturnLike trait.
   SmallPtrSet<Operation *, 2> returnOps;
   for (Operation &op : callee.getFunctionBody().getOps()) {
-    if (op.hasTrait<OpTrait::ReturnLike>()) {
+    if (mlir::enzyme::isFunctionReturnLike(&op)) {
       returnOps.insert(&op);
       for (Value operand : op.getOperands()) {
         auto *returnLattice =

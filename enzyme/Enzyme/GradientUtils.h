@@ -189,11 +189,23 @@ public:
   const std::map<llvm::CallInst *, std::pair<bool, const std::vector<bool>>>
       *overwritten_args_map_ptr;
   const llvm::SmallPtrSetImpl<const llvm::Value *> *unnecessaryValuesP;
+  //! In the reverse pass of split mode, the augmented pass's unnecessary values
+  //! and recompute decisions, to answer whether the primal pass used a value.
+  const std::set<const llvm::Value *> *primalUnnecessaryValuesP = nullptr;
+  const std::map<const llvm::Value *, bool> *primalKnownRecomputeHeuristicP =
+      nullptr;
 
   llvm::SmallVector<llvm::OperandBundleDef, 2> getInvertedBundles(
       llvm::CallInst *orig, llvm::ArrayRef<ValueType> types,
       llvm::IRBuilder<> &Builder2, bool lookup,
       const llvm::ValueToValueMapTy &available = llvm::ValueToValueMapTy());
+
+  /// The Julia allocation zeroing bundles (julia.gc_alloc_ptr_offsets,
+  /// julia.gc_alloc_zeroinit[_indirect]) of orig, for use on a shadow
+  /// allocation of the same size.
+  llvm::SmallVector<llvm::OperandBundleDef, 1>
+  getAllocationZeroingBundles(llvm::CallInst *orig, llvm::IRBuilder<> &Builder2,
+                              bool lookup);
 
   bool usedInRooting(const llvm::CallBase *orig,
                      llvm::ArrayRef<ValueType> types, const llvm::Value *val,
@@ -224,6 +236,8 @@ public:
   llvm::BasicBlock *getNewFromOriginal(const llvm::BasicBlock *newinst) const;
 
   llvm::Value *hasUninverted(const llvm::Value *inverted) const;
+
+  bool isPlaceholderForNonPHI(const llvm::PHINode *PN) const override;
 
   llvm::BasicBlock *getOriginalFromNew(const llvm::BasicBlock *newinst) const;
 
@@ -304,6 +318,15 @@ public:
   llvm::ValueMap<llvm::Value *, Rematerializer> rematerializableAllocations;
   llvm::SmallPtrSet<llvm::Value *, 4> allocationsToBeRematerialized;
 
+  /// Allocations which are cached in their entirety, but whose contents are
+  /// only valid for a single iteration of a loop which does not contain the
+  /// allocation itself (see getWholeAllocationCacheLoop). Maps the original
+  /// allocation to the (new function) value containing the pointer to the
+  /// snapshot of the allocation's contents at the end of a given iteration of
+  /// that loop. This is a vector to ensure a deterministic iteration order.
+  llvm::SmallVector<std::pair<llvm::Instruction *, llvm::Value *>, 1>
+      loopCachedAllocations;
+
   /// Only loaded from and stored to (not captured), mapped to the stores (and
   /// memset). Boolean denotes whether the primal initializes the shadow as well
   /// (for use) as a structure which carries data.
@@ -316,6 +339,10 @@ public:
 private:
   llvm::SmallVector<llvm::WeakTrackingVH, 4> addedTapeVals;
   unsigned tapeidx;
+  /// Most recently inserted `tapeIndices` slot during the augmented primal
+  /// pass, allowing `cacheForReverse` to rewrite the slot in place when no
+  /// physical tape storage is needed.
+  int *lastTapeIndex = nullptr;
   llvm::Value *tape;
 
   std::map<llvm::BasicBlock *,
@@ -430,6 +457,11 @@ public:
                                 bool *shadowReturnUsedP,
                                 DerivativeMode cmode) const;
 
+  //! Whether the augmented pass used the primal of \p orig. In the reverse pass
+  //! of split mode this is the augmented pass's answer rather than one from
+  //! this pass's own analysis, so it can rebuild how a call was augmented.
+  bool augmentedPrimalReturnUsed(llvm::Value *orig) const;
+
   DIFFE_TYPE getReturnDiffeType(llvm::Value *orig, bool *primalReturnUsedP,
                                 bool *shadowReturnUsedP) const;
 
@@ -482,6 +514,14 @@ private:
   //! the new block for the rematerialized loop entry to branch to, if created.
   //! Otherwise it will return nullptr.
   llvm::BasicBlock *prepRematerializedLoopEntry(LoopContext &lc);
+
+  //! Given a loop `lc` whose reverse is about to (re)enter an iteration by
+  //! branching to `resume`, restore the contents of any allocations cached
+  //! per iteration of that loop (see cacheWholeAllocationInLoop). This
+  //! function will return the block to branch to instead of `resume`, which
+  //! is `resume` itself if there is nothing to restore.
+  llvm::BasicBlock *restoreLoopCachedAllocations(LoopContext &lc,
+                                                 llvm::BasicBlock *resume);
 
 public:
   void forceContexts();
@@ -679,6 +719,35 @@ public:
   }
 
   bool needsCacheWholeAllocation(const llvm::Value *V) const;
+
+  /// If V is an allocation which is cached in its entirety (as determined by
+  /// needsCacheWholeAllocation), but whose contents are only known to be valid
+  /// for the duration of one iteration of a loop L that does not contain the
+  /// allocation (e.g. a stack allocation in the entry block whose
+  /// lifetime.start is within L), return L. As the same memory is overwritten
+  /// by each iteration of L, preserving the pointer alone is insufficient and
+  /// the contents of the allocation must be cached for every iteration of L.
+  /// Returns nullptr otherwise.
+  llvm::Loop *getWholeAllocationCacheLoop(const llvm::Value *V) const;
+
+  /// Given an original allocation, set Counts to the original values whose
+  /// product, multiplied by EltSize, is the number of bytes allocated, and set
+  /// Alignment to the known alignment of the allocation. Returns false if the
+  /// size of the allocation is not known.
+  bool getOrigAllocationSize(llvm::Instruction *orig,
+                             llvm::SmallVectorImpl<llvm::Value *> &Counts,
+                             uint64_t &EltSize,
+                             llvm::MaybeAlign &Alignment) const;
+
+  /// Given an original allocation `orig` for which
+  /// getWholeAllocationCacheLoop returns the loop `L`, cache the contents of
+  /// the allocation for each iteration of L. In the forward pass, this
+  /// snapshots the contents of the allocation whenever an iteration of L
+  /// completes. The snapshot is then restored prior to running the reverse of
+  /// the corresponding iteration (see restoreLoopCachedAllocations). `idx` is
+  /// the tape index to use for the snapshot (unused in combined mode).
+  void cacheWholeAllocationInLoop(llvm::Instruction *orig, llvm::Loop *L,
+                                  int idx);
 };
 
 void SubTransferHelper(GradientUtils *gutils, DerivativeMode Mode,

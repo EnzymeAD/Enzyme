@@ -181,6 +181,11 @@ public:
   /// contained loop and return true. If BB is not in a loop, return false
   bool getContext(llvm::BasicBlock *BB, LoopContext &loopContext,
                   bool ReverseLimit);
+  /// Compute the exact backedge-taken count of L (CouldNotCompute if it is
+  /// not statically known) and the maximum number of iterations.
+  std::pair<const llvm::SCEV *, const llvm::SCEV *>
+  computeLoopLimit(llvm::Loop *L);
+
   /// Return whether the given instruction is used as necessary as part of a
   /// loop context This includes as the canonical induction variable or
   /// increment
@@ -230,6 +235,37 @@ public:
   /// data-structures
   virtual void replaceAWithB(llvm::Value *A, llvm::Value *B,
                              bool storeInCache = false);
+
+  /// Whether PN is a placeholder standing in for a non-PHI instruction, and so
+  /// belongs to the body of its block rather than to its group of PHIs.
+  virtual bool isPlaceholderForNonPHI(const llvm::PHINode *PN) const {
+    return false;
+  }
+
+  /// The first instruction of BB that code may be inserted before without
+  /// splitting the block's PHIs: the first instruction that is neither a PHI,
+  /// an EH pad, nor a shadow PHI whose incoming values are still being filled
+  /// in. A placeholder for a non-PHI instruction ends the group, so that code
+  /// inserted here precedes whatever later replaces the placeholder.
+  llvm::Instruction *getFirstNonPHIOrPlaceholder(llvm::BasicBlock *BB) {
+    return getFirstNonPHIOrPlaceholder(&BB->front());
+  }
+
+  /// Like the BasicBlock overload, scanning forward from From itself. Returns
+  /// From unchanged when it is already outside the PHIs, and null for a null
+  /// From.
+  llvm::Instruction *getFirstNonPHIOrPlaceholder(llvm::Instruction *From) {
+    for (; From; From = From->getNextNode()) {
+      if (auto *PN = llvm::dyn_cast<llvm::PHINode>(From)) {
+        if (isPlaceholderForNonPHI(PN))
+          return From;
+        continue;
+      }
+      if (!From->isEHPad())
+        return From;
+    }
+    return nullptr;
+  }
 
   // Context information to request calculation of loop limit information
   struct LimitContext {
@@ -428,8 +464,8 @@ InsertNewCanonicalIV(llvm::Loop *L, llvm::Type *Ty,
 // Attempt to rewrite all phinode's in the loop in terms of the
 // induction variable
 void RemoveRedundantIVs(
-    llvm::BasicBlock *Header, llvm::PHINode *CanonicalIV,
-    llvm::Instruction *Increment, MustExitScalarEvolution &SE,
+    llvm::Loop *L, llvm::PHINode *CanonicalIV, llvm::Instruction *Increment,
+    MustExitScalarEvolution &SE,
     llvm::function_ref<void(llvm::Instruction *, llvm::Value *)> replacer,
     llvm::function_ref<void(llvm::Instruction *)> eraser);
 #endif

@@ -26,11 +26,89 @@
 #include <llvm/ADT/StringMap.h>
 #include <llvm/Analysis/AliasAnalysis.h>
 #include <llvm/Analysis/TargetLibraryInfo.h>
+#include <llvm/Demangle/Demangle.h>
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/InlineAsm.h>
 #include <llvm/IR/Instructions.h>
+#include <llvm/IR/Module.h>
 
 #include "Utils.h"
+
+/// Return whether Name refers to the Rust runtime symbol UnmangledName,
+/// either directly or under Rust v0 or legacy symbol mangling.
+static inline bool isRustRuntimeFunction(llvm::StringRef Name,
+                                         llvm::StringRef UnmangledName) {
+  if (!Name.contains(UnmangledName))
+    return false;
+  if (Name == UnmangledName)
+    return true;
+  std::string Demangled = llvm::demangle(Name.str());
+  llvm::StringRef DemangledRef(Demangled);
+  if (!DemangledRef.consume_front("__rustc::"))
+    return false;
+  if (!DemangledRef.consume_front(UnmangledName))
+    return false;
+  return DemangledRef.empty() || startsWith(DemangledRef, "::h");
+}
+
+/// Return whether Name is a Rust zero-initializing heap allocation shim.
+static inline bool isRustZeroedAllocationFunction(llvm::StringRef Name) {
+  return isRustRuntimeFunction(Name, "__rust_alloc_zeroed");
+}
+
+/// Return whether Name is a Rust heap allocation shim.
+static inline bool isRustAllocationFunction(llvm::StringRef Name) {
+  return isRustRuntimeFunction(Name, "__rust_alloc") ||
+         isRustZeroedAllocationFunction(Name);
+}
+
+/// Return whether Name is a Rust heap deallocation shim.
+static inline bool isRustDeallocationFunction(llvm::StringRef Name) {
+  return isRustRuntimeFunction(Name, "__rust_dealloc");
+}
+
+/// Return whether Name is a Rust allocator linkage marker shim.
+static inline bool isRustNoAllocShimFunction(llvm::StringRef Name) {
+  return isRustRuntimeFunction(Name, "__rust_no_alloc_shim_is_unstable") ||
+         isRustRuntimeFunction(Name, "__rust_no_alloc_shim_is_unstable_v2");
+}
+
+/// Return whether Name is an inactive, non-freeing Rust runtime support shim.
+static inline bool isRustInactiveRuntimeFunction(llvm::StringRef Name) {
+  return isRustNoAllocShimFunction(Name) ||
+         isRustRuntimeFunction(Name, "__rust_alloc_error_handler") ||
+         isRustRuntimeFunction(Name, "rust_panic") ||
+         isRustRuntimeFunction(Name, "__rust_start_panic") ||
+         isRustRuntimeFunction(Name, "rust_begin_unwind") ||
+         isRustRuntimeFunction(Name, "__rust_abort");
+}
+
+/// Return the Rust deallocation symbol corresponding to AllocationName in
+/// ModuleRef.
+static inline std::string
+getRustDeallocationFunctionName(llvm::StringRef AllocationName,
+                                llvm::Module &ModuleRef) {
+  if (startsWith(AllocationName, "_R")) {
+    std::string Mangled = AllocationName.str();
+    llvm::StringRef ZeroedToken = "19___rust_alloc_zeroed";
+    size_t ZeroedPos = Mangled.find(ZeroedToken.data());
+    if (ZeroedPos != std::string::npos) {
+      Mangled.replace(ZeroedPos, ZeroedToken.size(), "14___rust_dealloc");
+      return Mangled;
+    }
+    llvm::StringRef AllocToken = "12___rust_alloc";
+    size_t AllocPos = Mangled.find(AllocToken.data());
+    if (AllocPos != std::string::npos) {
+      Mangled.replace(AllocPos, AllocToken.size(), "14___rust_dealloc");
+      return Mangled;
+    }
+  }
+  for (llvm::Function &Candidate : ModuleRef) {
+    if (isRustDeallocationFunction(Candidate.getName()))
+      return Candidate.getName().str();
+  }
+  return "__rust_dealloc";
+}
 
 class GradientUtils;
 extern llvm::StringMap<std::function<llvm::Value *(
@@ -55,7 +133,7 @@ static inline bool isAllocationFunction(const llvm::StringRef name,
     return true;
   if (name == "__size_returning_new_experiment")
     return true;
-  if (name == "__rust_alloc" || name == "__rust_alloc_zeroed")
+  if (isRustAllocationFunction(name))
     return true;
   if (name == "julia.gc_alloc_obj" || name == "jl_gc_alloc_typed" ||
       name == "ijl_gc_alloc_typed")
@@ -65,12 +143,19 @@ static inline bool isAllocationFunction(const llvm::StringRef name,
 
   using namespace llvm;
   llvm::LibFunc libfunc;
+#if LLVM_VERSION_MAJOR >= 24
+  libfunc = TLI.getLibFunc(name);
+  if (libfunc == NotLibFunc)
+    return false;
+#else
   if (!TLI.getLibFunc(name, libfunc))
     return false;
+#endif
 
   switch (libfunc) {
-  case LibFunc_malloc: // malloc(unsigned int);
-  case LibFunc_valloc: // valloc(unsigned int);
+  case LibFunc_malloc:        // malloc(unsigned int);
+  case LibFunc_valloc:        // valloc(unsigned int);
+  case LibFunc_aligned_alloc: // aligned_alloc(size_t align, size_t size);
 
   case LibFunc_Znwj:                // new(unsigned int);
   case LibFunc_ZnwjRKSt9nothrow_t:  // new(unsigned int, nothrow);
@@ -135,12 +220,17 @@ static inline bool isDeallocationFunction(const llvm::StringRef name,
   llvm::LibFunc libfunc;
   if (name == "_ZdlPvmSt11align_val_t")
     return true;
+#if LLVM_VERSION_MAJOR >= 24
+  libfunc = TLI.getLibFunc(name);
+  if (libfunc == NotLibFunc) {
+#else
   if (!TLI.getLibFunc(name, libfunc)) {
+#endif
     if (name == "free")
       return true;
     if (name == "_mlir_memref_to_llvm_free")
       return true;
-    if (name == "__rust_dealloc")
+    if (isRustDeallocationFunction(name))
       return true;
     if (name == "swift_release")
       return true;
@@ -210,6 +300,46 @@ static inline bool isDeallocationFunction(const llvm::StringRef name,
   }
 }
 
+/// Given a call `orig` to the known allocation function `funcName`, return the
+/// indices of the arguments of the call whose product is the number of bytes
+/// being allocated.
+static inline llvm::SmallVector<unsigned, 2>
+getAllocationSizeArgIndices(const llvm::StringRef funcName,
+                            const llvm::TargetLibraryInfo &TLI,
+                            const llvm::CallBase *orig) {
+  assert(isAllocationFunction(funcName, TLI) &&
+         "can only compute the size of a known allocation function");
+  if (funcName == "calloc")
+    return {0, 1};
+  if (funcName == "julia.gc_alloc_obj" || funcName == "jl_gc_alloc_typed" ||
+      funcName == "ijl_gc_alloc_typed" || funcName == "aligned_alloc")
+    return {1};
+  if (funcName == "enzyme_allocator") {
+    auto index = getAllocationIndexFromCall(orig);
+    return {(unsigned)*index};
+  }
+  return {0};
+}
+
+/// Given a call `orig` to the known allocation function `funcName`, whose
+/// arguments are `argValues`, return the number of bytes being allocated as an
+/// i64, creating any instructions required to compute it with `bb`.
+static inline llvm::Value *getKnownAllocationSize(
+    llvm::IRBuilder<> &bb, llvm::ArrayRef<llvm::Value *> argValues,
+    const llvm::StringRef funcName, const llvm::TargetLibraryInfo &TLI,
+    const llvm::CallBase *orig) {
+  using namespace llvm;
+  auto i64 = Type::getInt64Ty(bb.getContext());
+  Value *allocSize = nullptr;
+  for (auto idx : getAllocationSizeArgIndices(funcName, TLI, orig)) {
+    Value *arg = bb.CreateZExtOrTrunc(argValues[idx], i64);
+    allocSize = allocSize ? bb.CreateMul(allocSize, arg, "", /*NUW*/ true,
+                                         /*NSW*/ true)
+                          : arg;
+  }
+  return allocSize;
+}
+
 static inline void zeroKnownAllocation(llvm::IRBuilder<> &bb,
                                        llvm::Value *toZero,
                                        llvm::ArrayRef<llvm::Value *> argValues,
@@ -220,18 +350,10 @@ static inline void zeroKnownAllocation(llvm::IRBuilder<> &bb,
   assert(isAllocationFunction(funcName, TLI));
 
   // Don't re-zero an already-zero buffer
-  if (funcName == "calloc" || funcName == "__rust_alloc_zeroed")
+  if (funcName == "calloc" || isRustZeroedAllocationFunction(funcName))
     return;
 
-  Value *allocSize = argValues[0];
-  if (funcName == "julia.gc_alloc_obj" || funcName == "jl_gc_alloc_typed" ||
-      funcName == "ijl_gc_alloc_typed") {
-    allocSize = argValues[1];
-  }
-  if (funcName == "enzyme_allocator") {
-    auto index = getAllocationIndexFromCall(orig);
-    allocSize = argValues[*index];
-  }
+  Value *allocSize = getKnownAllocationSize(bb, argValues, funcName, TLI, orig);
   Value *dst_arg = toZero;
 
   if (funcName == "__size_returning_new_experiment")
@@ -245,10 +367,7 @@ static inline void zeroKnownAllocation(llvm::IRBuilder<> &bb,
                               toZero->getType()->getPointerAddressSpace()));
 
   auto val_arg = ConstantInt::get(Type::getInt8Ty(toZero->getContext()), 0);
-  auto len_arg =
-      bb.CreateZExtOrTrunc(allocSize, Type::getInt64Ty(toZero->getContext()));
-
-  auto memset = bb.CreateMemSet(dst_arg, val_arg, len_arg, MaybeAlign());
+  auto memset = bb.CreateMemSet(dst_arg, val_arg, allocSize, MaybeAlign());
   memset->addParamAttr(0, Attribute::NonNull);
   if (auto CI = dyn_cast<ConstantInt>(allocSize)) {
     auto derefBytes = CI->getLimitedValue();

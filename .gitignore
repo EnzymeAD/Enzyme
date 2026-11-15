@@ -16,3 +16,5 @@ CMakeUserPresets.json
 _codeql_detected_source_root
 MODULE.bazel.lock
 bazel-*
+__pycache__/
+*.pyc

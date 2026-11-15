@@ -239,6 +239,11 @@ void EnzymeRegisterCallHandler(const char *Name,
 
 LLVMValueRef EnzymeGradientUtilsNewFromOriginal(GradientUtils *gutils,
                                                 LLVMValueRef val);
+LLVMValueRef EnzymeGradientUtilsLookup(GradientUtils *gutils, LLVMValueRef val,
+                                       LLVMBuilderRef builder);
+LLVMValueRef EnzymeGradientUtilsInvertPointer(GradientUtils *gutils,
+                                              LLVMValueRef val,
+                                              LLVMBuilderRef builder);
 
 // TODO: Other API functions that are defined in CApi.cpp for GradientUtils
 void *EnzymeGradientUtilsGetExternalContext(GradientUtils *gutils);
