@@ -1,5 +1,12 @@
 //===- FPProfileName.h - one profile filename rule, writer and reader -----===//
 //
+// Part of the Poseidon Project, under the Apache License v2.0 with LLVM
+// Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+//
 // The FP profiler runtime (FPProfiler.cpp, FPProfilerCUDA.cu) writes and the
 // Poseidon pass reads a file named after the profiled function; both derive
 // that name by this rule, a pure function of the name:
