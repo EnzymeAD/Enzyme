@@ -1,6 +1,17 @@
-//===- Twin.h - the module as written, compiled beside the rewritten one --===//
+//=- Twin.h - the module as written, compiled beside the rewritten one ------=//
+//
+// Part of the Poseidon Project, under the Apache License v2.0 with LLVM
+// Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+//
 // The twin is compiled as a build without a profile would compile it, and
 // takes from the rewritten module only the functions a rewrite reached.
+//
+//===----------------------------------------------------------------------===//
+
 #ifndef POSEIDON_TWIN_H
 #define POSEIDON_TWIN_H
 
@@ -39,10 +50,17 @@ struct LocalAnalysisManagers {
   }
 };
 
+// Runs the default pipeline of `Phase` on `twin` as a build without a profile,
+// the diagnostics already given for the module's sites silenced. False if it
+// reported an error.
 bool compileAsWritten(llvm::Module &twin, const Session &parent,
                       llvm::PassBuilder &PB, llvm::OptimizationLevel Level,
                       llvm::ThinOrFullLTOPhase Phase);
+// Into `T`, the module as written compiled, the functions in `rewritten`, each
+// in place of T's of the same name, with what they refer to. False if a
+// reference has no counterpart in T, which is then unusable.
 bool takeRewritten(llvm::Module &T, llvm::ArrayRef<llvm::Function *> rewritten);
+// The contents of `M` replaced by those of `from`, which is left empty.
 void adoptModule(llvm::Module &M, llvm::Module &from);
 
 } // namespace poseidon

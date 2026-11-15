@@ -503,9 +503,8 @@ bool injectHostProfilerInit(llvm::Module &M) {
   if (!mainF || mainF->isDeclaration())
     return false;
   LLVMContext &Ctx = M.getContext();
-  FunctionCallee initFn =
-      M.getOrInsertFunction(deviceProfilerInit(R),
-                            FunctionType::get(Type::getVoidTy(Ctx), {}, false));
+  FunctionCallee initFn = M.getOrInsertFunction(
+      deviceProfilerInit(), FunctionType::get(Type::getVoidTy(Ctx), {}, false));
   if (auto *Fn = dyn_cast<Function>(initFn.getCallee())) {
     if (!Fn->hasFnAttribute("enzyme_inactive"))
       Fn->addFnAttr("enzyme_inactive");
@@ -515,7 +514,7 @@ bool injectHostProfilerInit(llvm::Module &M) {
   for (Instruction &I : instructions(*mainF))
     if (auto *CI = dyn_cast<CallInst>(&I))
       if (auto *CF = CI->getCalledFunction())
-        if (CF->getName() == deviceProfilerInit(R))
+        if (CF->getName() == deviceProfilerInit())
           return false;
   IRBuilder<> B(&*mainF->getEntryBlock().getFirstInsertionPt());
   B.CreateCall(initFn, {})->setDoesNotThrow();

@@ -1,10 +1,19 @@
-//===- OffloadRuntime.h - the host half of a CUDA or HIP compilation -----===//
+//=- OffloadRuntime.h - the host half of a CUDA or HIP compilation ----------=//
+//
+// Part of the Poseidon Project, under the Apache License v2.0 with LLVM
+// Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
 //
 // What clang's offload lowering leaves in the host module of a CUDA or HIP
 // translation unit and Poseidon reads or extends: kernel launches through
 // stubs, device variable registration, and the names kernels are given. HIP
 // names CUDA's runtime functions with hip for cuda.
-//===---------------------------------------------------------------------===//
+//
+//===----------------------------------------------------------------------===//
+
 #ifndef POSEIDON_OFFLOAD_RUNTIME_H
 #define POSEIDON_OFFLOAD_RUNTIME_H
 
@@ -90,7 +99,7 @@ void registerDeviceVariable(llvm::Module &M, const VariableRegistration &R,
 
 // The device profiler's host library initialization a profile-generation build
 // calls from the top of main.
-llvm::StringRef deviceProfilerInit(OffloadRuntime R);
+llvm::StringRef deviceProfilerInit();
 
 } // namespace poseidon
 

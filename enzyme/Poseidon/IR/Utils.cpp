@@ -12,32 +12,18 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include <llvm/Config/llvm-config.h>
+#include "Utils.h"
 
-#include "llvm/ADT/ArrayRef.h"
-#include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
-#include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/SmallVector.h"
-#include "llvm/ADT/StringRef.h"
-#include "llvm/Analysis/ValueTracking.h"
-
 #include "llvm/IR/Function.h"
-#include "llvm/IR/Intrinsics.h"
-#include "llvm/IR/Module.h"
 #include "llvm/IR/Verifier.h"
-
 #include "llvm/Passes/PassBuilder.h"
-
 #include "llvm/Support/Casting.h"
+#include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/Signals.h"
 #include "llvm/Support/raw_ostream.h"
-
-#include "llvm/Pass.h"
-
-#include "llvm/Transforms/Utils/BasicBlockUtils.h"
-#include "llvm/Transforms/Utils/Cloning.h"
 
 #include <mpfr.h>
 
@@ -45,22 +31,9 @@
 #include <cerrno>
 #include <cmath>
 #include <cstdlib>
-#include <cstring>
-#include <fstream>
 #include <functional>
 #include <limits>
-#include <regex>
-#include <sstream>
 #include <string>
-#include <unordered_map>
-#include <unordered_set>
-#include <utility>
-
-#include "llvm/Support/Debug.h"
-
-#include "Utils.h"
-
-#define DEBUG_TYPE "poseidon"
 
 using namespace llvm;
 
@@ -107,7 +80,7 @@ void simplifyFunction(Function &F, OptimizationLevel Level) {
 
   if (verifyFunction(F, &llvm::errs())) {
     F.print(llvm::errs());
-    llvm_unreachable("Poseidon intermediate function failed verification");
+    report_fatal_error("Poseidon intermediate function failed verification");
   }
 
   FunctionPassManager FPM =
@@ -171,7 +144,7 @@ void topoSort(const SetVector<Instruction *> &insts,
         Instruction *oI = cast<Instruction>(op);
         if (insts.contains(oI)) {
           if (onStack.count(oI)) {
-            llvm_unreachable(
+            report_fatal_error(
                 "topoSort: Cycle detected in instruction dependencies!");
           }
           dfsVisit(oI);

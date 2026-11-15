@@ -17,22 +17,23 @@ using namespace llvm;
 
 namespace poseidon {
 
-namespace {
-
-std::string value(bool v) { return v ? "1" : "0"; }
-std::string value(double v) { return formatv("{0:e16}", v).str(); }
-std::string value(const std::string &v) { return v; }
-std::string value(const std::vector<std::string> &v) { return join(v, ","); }
-std::string value(const std::vector<unsigned> &v) {
+static std::string value(bool v) { return v ? "1" : "0"; }
+static std::string value(double v) { return formatv("{0:e16}", v).str(); }
+static std::string value(const std::string &v) { return v; }
+static std::string value(const std::vector<std::string> &v) {
+  return join(v, ",");
+}
+static std::string value(const std::vector<unsigned> &v) {
   return join(map_range(v, [](unsigned n) { return std::to_string(n); }), ",");
 }
-template <typename T> std::string value(T v) { return std::to_string(v); }
-
-template <typename T> void add(FlagValues &out, StringRef name, const T &v) {
-  out.emplace_back(name, value(v));
+template <typename T> static std::string value(T v) {
+  return std::to_string(v);
 }
 
-} // namespace
+template <typename T>
+static void add(FlagValues &out, StringRef name, const T &v) {
+  out.emplace_back(name, value(v));
+}
 
 void ProfilingOptions::appendSolveInputs(FlagValues &out) const {
   add(out, "poseidon-loose-coverage", LooseCoverage);

@@ -1,3 +1,12 @@
+//=- OffloadRuntime.cpp - the host half of a CUDA or HIP compilation --------=//
+//
+// Part of the Poseidon Project, under the Apache License v2.0 with LLVM
+// Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+
 #include "OffloadRuntime.h"
 
 #include "Target.h"
@@ -160,8 +169,6 @@ void registerDeviceVariable(Module &M, const VariableRegistration &R,
   }
 }
 
-StringRef deviceProfilerInit(OffloadRuntime) {
-  return "__poseidon_profile_init_cuda";
-}
+StringRef deviceProfilerInit() { return "__poseidon_profile_init_cuda"; }
 
 } // namespace poseidon

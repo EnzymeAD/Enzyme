@@ -44,9 +44,6 @@ struct SolutionStep {
 // in either order, or with a step displaced and charged back, has one key.
 using DPCost = int64_t;
 
-// a + b on the DP's axis; aborts when the sum leaves it.
-DPCost addDPCost(DPCost a, DPCost b);
-
 // The DP's axis of one solve: cost-model units over the profiled run, scaled
 // by the power of two that puts what the profiled run spent in the solve's
 // sites between 2^32 and 2^33 units of the axis. Relative to the solve, so
@@ -141,23 +138,14 @@ private:
 bool excludes(const OptimizationUnit &a, const OptimizationUnit &b);
 
 // Whether taking `later` is admitted or priced differently depending on
-// whether `earlier` was taken.
+// whether `earlier` was taken. Neither test reads which candidate `earlier`
+// took.
 bool reads(const OptimizationUnit &later, const OptimizationUnit &earlier);
 
 // Whether `step`, which does not consume its footprint, overlaps a step of
 // `chosen` that does.
 bool overlapsConsumed(const SolutionStep &step,
                       llvm::ArrayRef<SolutionStep> chosen);
-
-// The pruned DP's admission of `unit` into a strategy holding `prior`:
-// refused if a prior step rewrites one of its outputs; a unit that consumes
-// its footprint is refused by any prior step it overlaps; any other unit
-// displaces the prior steps that consume a footprint it overlaps, their
-// deltas taken off `cost` and `error`. `kept` receives the prior steps that
-// stay.
-bool admit(llvm::ArrayRef<SolutionStep> prior, const OptimizationUnit &unit,
-           const CostScale &scale, llvm::SmallVectorImpl<SolutionStep> &kept,
-           DPCost &cost, double &error);
 
 // In both orders below, `sites` lists each site's units in site order.
 

@@ -1,9 +1,18 @@
-//===- NVPTXTensorCore.h - the NVPTX instructions of an in-kernel raise ---===//
+//=- NVPTXTensorCore.h - the NVPTX instructions of an in-kernel raise -------=//
+//
+// Part of the Poseidon Project, under the Apache License v2.0 with LLVM
+// Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
 //
 // The only target with an in-kernel matrix raise (Target::
 // hasInKernelMatrixRaise): the WMMA fragment operations, the block barrier,
 // the TF32 rounding and the thread geometry the raised code is built from.
-//===---------------------------------------------------------------------===//
+//
+//===----------------------------------------------------------------------===//
+
 #ifndef POSEIDON_NVPTX_TENSOR_CORE_H
 #define POSEIDON_NVPTX_TENSOR_CORE_H
 

@@ -16,7 +16,7 @@
 #define POSEIDON_UTILS_H
 
 #include "llvm/ADT/SetVector.h"
-#include "llvm/ADT/SmallSet.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/Twine.h"
@@ -28,11 +28,7 @@
 #include "llvm/IR/Type.h"
 #include "llvm/Passes/OptimizationLevel.h"
 
-#include <cstdint>
-#include <map>
 #include <string>
-#include <unordered_map>
-#include <unordered_set>
 
 namespace poseidon {
 

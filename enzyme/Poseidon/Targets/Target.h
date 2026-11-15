@@ -1,10 +1,19 @@
-//===- Target.h - what the pass knows about the target of a module -------===//
+//=- Target.h - what the pass knows about the target of a module ------------=//
+//
+// Part of the Poseidon Project, under the Apache License v2.0 with LLVM
+// Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
 //
 // One Target per kind of module triple: the host CPU, NVPTX and AMDGPU. A
 // module whose triple is neither GPU target compiles for the host. The three
 // are stateless, so code asks the module's target directly; a question whose
 // answer depends on the processor takes the function.
-//===---------------------------------------------------------------------===//
+//
+//===----------------------------------------------------------------------===//
+
 #ifndef POSEIDON_TARGET_H
 #define POSEIDON_TARGET_H
 

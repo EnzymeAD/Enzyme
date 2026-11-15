@@ -1,3 +1,12 @@
+//=- Twin.cpp - the module as written, compiled beside the rewritten one ----=//
+//
+// Part of the Poseidon Project, under the Apache License v2.0 with LLVM
+// Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+
 #include "Twin.h"
 
 #include "Targets/Target.h"
@@ -24,9 +33,6 @@ using namespace llvm;
 
 namespace poseidon {
 
-// Runs the default pipeline of `Phase` on `twin` as a build without a profile,
-// the diagnostics already given for the module's sites silenced. False if it
-// reported an error.
 bool compileAsWritten(Module &twin, const Session &parent, PassBuilder &PB,
                       OptimizationLevel Level, ThinOrFullLTOPhase Phase) {
   struct Quiet : DiagnosticHandler {
@@ -119,7 +125,9 @@ struct RewrittenReferences final : ValueMaterializer {
   }
 };
 
-void collectReferences(Value *V, SmallVectorImpl<WeakVH> &out) {
+} // namespace
+
+static void collectReferences(Value *V, SmallVectorImpl<WeakVH> &out) {
   if (auto *G = dyn_cast<GlobalValue>(V))
     out.push_back(G);
   else if (auto *C = dyn_cast<Constant>(V))
@@ -127,18 +135,13 @@ void collectReferences(Value *V, SmallVectorImpl<WeakVH> &out) {
       collectReferences(op, out);
 }
 
-void collectReferences(Function &F, SmallVectorImpl<WeakVH> &out) {
+static void collectReferences(Function &F, SmallVectorImpl<WeakVH> &out) {
   for (Instruction &I : instructions(F))
     for (Value *op : I.operands())
       if (isa<Constant>(op))
         collectReferences(op, out);
 }
 
-} // namespace
-
-// Into `T`, the module as written compiled, the functions of `M` a rewrite
-// reached, each in place of T's of the same name, with what they refer to.
-// False if a reference has no counterpart in T, which is then unusable.
 bool takeRewritten(Module &T, ArrayRef<Function *> rewritten) {
   ValueToValueMapTy VMap;
   RewrittenReferences refs(T);
@@ -208,7 +211,6 @@ bool takeRewritten(Module &T, ArrayRef<Function *> rewritten) {
   return true;
 }
 
-// The contents of `M` replaced by those of `from`, which is left empty.
 void adoptModule(Module &M, Module &from) {
   M.dropAllReferences();
   for (GlobalValue &GV : make_early_inc_range(M.global_values()))

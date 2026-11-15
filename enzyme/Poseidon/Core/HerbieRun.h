@@ -17,15 +17,14 @@
 #ifndef POSEIDON_HERBIERUN_H
 #define POSEIDON_HERBIERUN_H
 
-#include "llvm/ADT/SmallVector.h"
+#include "CacheKey.h"
+
 #include "llvm/ADT/StringRef.h"
 
 #include <map>
 #include <optional>
 #include <string>
 #include <vector>
-
-#include "CacheKey.h"
 
 namespace poseidon {
 
@@ -82,10 +81,6 @@ std::string readFileDigest(llvm::StringRef Path);
 // The digests of the Herbie binaries a compile ran, by path.
 using HerbieBinaryDigests = std::map<std::string, std::string>;
 
-// The digest of the Herbie binary at `Program`, read once per compile.
-std::string herbieBinaryDigest(llvm::StringRef Program,
-                               HerbieBinaryDigests &Digests);
-
 // What a compile keeps between its Herbie runs: the platform Herbie searches
 // against, derived from the cost model once it is resolved, and the digest of
 // each Herbie binary run.
@@ -96,10 +91,6 @@ struct HerbieRunState {
   // The answers searches took, by origin, since they were last reported.
   unsigned Cached = 0, Imported = 0, Fresh = 0;
 };
-
-// The arguments that decide what Herbie returns for a core. Its timeouts and
-// worker count decide only whether and how soon it returns.
-llvm::SmallVector<std::string> herbieSearchArgs(const HerbieRunOptions &Opts);
 
 // The parts of a cache key that say which Herbie searched: its binary and the
 // platform it ranks candidates by.

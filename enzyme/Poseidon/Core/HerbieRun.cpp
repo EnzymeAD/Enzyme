@@ -10,6 +10,7 @@
 #include "HerbieRun.h"
 
 #include "llvm/ADT/SmallString.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/Support/Error.h"
@@ -40,18 +41,22 @@ std::string readFileDigest(StringRef Path) {
   return llvm::utohexstr(llvm::xxh3_64bits((*Buf)->getBuffer()));
 }
 
+// The digest of the Herbie binary at `Program`, read once per compile.
+//
 // A Herbie cache entry is stamped with the digest of the binary that produced
 // it: version strings do not change between upstream commits, and one
 // binary's rewrites must not be replayed as another's.
-std::string herbieBinaryDigest(StringRef Program,
-                               HerbieBinaryDigests &Digests) {
+static std::string herbieBinaryDigest(StringRef Program,
+                                      HerbieBinaryDigests &Digests) {
   auto It = Digests.find(Program.str());
   if (It == Digests.end())
     It = Digests.emplace(Program.str(), readFileDigest(Program)).first;
   return It->second;
 }
 
-SmallVector<std::string> herbieSearchArgs(const HerbieRunOptions &Opts) {
+// The arguments that decide what Herbie returns for a core. Its timeouts and
+// worker count decide only whether and how soon it returns.
+static SmallVector<std::string> herbieSearchArgs(const HerbieRunOptions &Opts) {
   // Herbie prunes alternatives by tree cost unless told otherwise, paying a
   // shared subterm once per occurrence; the emitted code computes it once.
   SmallVector<std::string> Args = {
@@ -472,7 +477,7 @@ HerbieRunResult runHerbie(const std::vector<std::string> &inputExprs,
                    << EC.message() << "\n";
     std::ofstream cacheFile(cacheFilePath);
     if (!cacheFile) {
-      llvm_unreachable("Failed to open cache file for writing");
+      report_fatal_error("Failed to open cache file for writing");
     } else {
       cacheFile << content;
       cacheFile.close();

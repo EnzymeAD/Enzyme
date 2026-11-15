@@ -1,3 +1,12 @@
+//=- Driver.cpp - the site actions of the Poseidon passes -------------------=//
+//
+// Part of the Poseidon Project, under the Apache License v2.0 with LLVM
+// Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+
 #include "Driver.h"
 
 #include "IR/Utils.h"
@@ -49,9 +58,7 @@ using namespace llvm;
 
 namespace poseidon {
 
-namespace {
-
-void noteRewritten(Session &S, Function &F) {
+static void noteRewritten(Session &S, Function &F) {
   SmallVector<Function *, 4> work{&F};
   SmallPtrSet<Function *, 4> seen;
   while (!work.empty()) {
@@ -67,9 +74,9 @@ void noteRewritten(Session &S, Function &F) {
 
 // Redirect the site's call to `F`: the rewritten clone, or the original body
 // when nothing was applied and the site has to stay bit-transparent.
-bool emitSiteCall(CallBase *CI, Function *F,
-                  SmallVectorImpl<Value *> &primalArgs,
-                  SmallVectorImpl<CallBase *> &calls) {
+static void emitSiteCall(CallBase *CI, Function *F,
+                         SmallVectorImpl<Value *> &primalArgs,
+                         SmallVectorImpl<CallBase *> &calls) {
   IRBuilder<> Builder(CI);
   auto *II = dyn_cast<InvokeInst>(CI);
   CallBase *optCall =
@@ -84,13 +91,12 @@ bool emitSiteCall(CallBase *CI, Function *F,
   CI->eraseFromParent();
 
   calls.push_back(optCall);
-
-  return true;
 }
 
 // A profile-use compile pointed at a directory no profiling run wrote into
 // would otherwise leave every site as written and succeed.
-void requireProfileDirectory(CallBase *CI, StringRef dir, StringRef flag) {
+static void requireProfileDirectory(CallBase *CI, StringRef dir,
+                                    StringRef flag) {
   const bool isDir = sys::fs::is_directory(dir);
   std::error_code EC;
   if (isDir)
@@ -106,6 +112,7 @@ void requireProfileDirectory(CallBase *CI, StringRef dir, StringRef flag) {
                       "first, or pass the directory it wrote");
 }
 
+namespace {
 // Why a site has no records to solve from, read from every directory that
 // holds a profile of it.
 struct Unprofiled {
@@ -115,9 +122,10 @@ struct Unprofiled {
   // it left no file for a site it never executed.
   bool mayNotHaveRun = false;
 };
+} // namespace
 
-std::optional<Unprofiled> unprofiledSite(Session &S, CallBase *CI,
-                                         Function &clone) {
+static std::optional<Unprofiled> unprofiledSite(Session &S, CallBase *CI,
+                                                Function &clone) {
   const std::string file = siteProfileStem(S, clone) + ".fpprofile";
   std::optional<Unprofiled> absent, neverExecuted;
   auto read = [&](StringRef dir, StringRef flag) {
@@ -143,8 +151,8 @@ std::optional<Unprofiled> unprofiledSite(Session &S, CallBase *CI,
   return absent ? absent : neverExecuted;
 }
 
-void reportUnprofiled(Session &S, CallBase *CI, const Function &body,
-                      Function &clone, const Unprofiled &site) {
+static void reportUnprofiled(Session &S, CallBase *CI, const Function &body,
+                             Function &clone, const Unprofiled &site) {
   if (site.neverExecuted) {
     const char *cause =
         "the profiling run instrumented this site and never executed it";
@@ -197,7 +205,7 @@ void reportUnprofiled(Session &S, CallBase *CI, const Function &body,
 }
 
 // A number flag holds NaN when it was given no number (Pass/Flags.cpp).
-[[noreturn]] void reportNoNumber(const CallBase &CI, StringRef flag) {
+[[noreturn]] static void reportNoNumber(const CallBase &CI, StringRef flag) {
   reportUserError(CI, "-" + flag +
                           " was given no number: its value is empty or nan. "
                           "Write a number after '=', or leave the flag out "
@@ -206,7 +214,7 @@ void reportUnprofiled(Session &S, CallBase *CI, const Function &body,
 
 // The number flags every solve reads; the budget is read only by a solve that
 // selects by it.
-void requireNumbers(const Options &O, const CallBase &CI) {
+static void requireNumbers(const Options &O, const CallBase &CI) {
   const std::pair<StringRef, double> numbers[] = {
       {"poseidon-tau", O.Solver.Tau},
       {"poseidon-min-cost-share", O.Profiling.MinCostShare},
@@ -221,7 +229,7 @@ void requireNumbers(const Options &O, const CallBase &CI) {
 // a mistake in the flag, not a solve that finds nothing. The DP's cost axis
 // puts the profiled cost below 2^33 of its units in 2^63, so it holds every
 // share up to 2^30.
-void requireCostBudget(const SolverOptions &O, const CallBase &CI) {
+static void requireCostBudget(const SolverOptions &O, const CallBase &CI) {
   if (std::isnan(O.CostBudget))
     reportNoNumber(CI, "poseidon-cost-budget");
   if (std::isfinite(O.CostBudget) && O.CostBudget > 0x1p30) {
@@ -253,9 +261,17 @@ void requireCostBudget(const SolverOptions &O, const CallBase &CI) {
 // body is reached through (the marker call, or the wrapper kernel's call of its
 // own outlined body), `F` the body and `primalArgs` the caller values its
 // parameters take.
-bool optimizeSiteBody(Session &S, CallBase *CI, Function *F,
-                      SmallVectorImpl<Value *> &primalArgs, double errTol,
-                      SmallVectorImpl<CallBase *> &calls) {
+static void writeGemmDescriptorOf(Session &S, CallBase *CI, Function *body,
+                                  ArrayRef<Value *> primalArgs) {
+  GemmBodyNote ozNote;
+  if (S.Opts.Matmul.OzakiHostDispatch && getGemmBody(S, body, ozNote))
+    writeGemmDescriptor(S, *CI->getFunction(), primalArgs, ozNote);
+}
+
+static void optimizeSiteBody(Session &S, CallBase *CI, Function *F,
+                             SmallVectorImpl<Value *> &primalArgs,
+                             double errTol,
+                             SmallVectorImpl<CallBase *> &calls) {
   const Options &O = S.Opts;
   const bool profileUse = O.Profiling.usesProfile();
   if (!profileUse) {
@@ -270,14 +286,13 @@ bool optimizeSiteBody(Session &S, CallBase *CI, Function *F,
       if (auto *done = dyn_cast_or_null<Function>(prior->second)) {
         if (done != F)
           noteRewritten(S, *CI->getFunction());
-        GemmBodyNote ozNote;
-        if (O.Matmul.OzakiHostDispatch && getGemmBody(S, done, ozNote))
-          writeGemmDescriptor(S, *CI->getFunction(), primalArgs, ozNote);
+        writeGemmDescriptorOf(S, CI, done, primalArgs);
         llvm::errs() << "[poseidon] " << F->getName()
                      << ": same body and target as an earlier site; reusing "
                         "its solve ("
                      << done->getName() << ")\n";
-        return emitSiteCall(CI, done, primalArgs, calls);
+        emitSiteCall(CI, done, primalArgs, calls);
+        return;
       }
 
     // A site the solve applies nothing to calls the original body: the
@@ -295,7 +310,8 @@ bool optimizeSiteBody(Session &S, CallBase *CI, Function *F,
     if (std::optional<Unprofiled> site = unprofiledSite(S, CI, *F)) {
       reportUnprofiled(S, CI, *sourceBody, *F, *site);
       markOutlineTransparent(sourceBody);
-      return emitSiteCall(CI, sourceBody, primalArgs, calls);
+      emitSiteCall(CI, sourceBody, primalArgs, calls);
+      return;
     }
 
     requireNumbers(O, *CI);
@@ -324,11 +340,7 @@ bool optimizeSiteBody(Session &S, CallBase *CI, Function *F,
         warn(CI,
              Twine("Poseidon returned false (no change) for ") + F->getName());
 
-      {
-        GemmBodyNote ozNote;
-        if (O.Matmul.OzakiHostDispatch && getGemmBody(S, F, ozNote))
-          writeGemmDescriptor(S, *CI->getFunction(), primalArgs, ozNote);
-      }
+      writeGemmDescriptorOf(S, CI, F, primalArgs);
 
       // The canonical clone's lowering may differ from the original body's at
       // ulp level, so a site with no rewrite calls the original body.
@@ -344,11 +356,11 @@ bool optimizeSiteBody(Session &S, CallBase *CI, Function *F,
 
   if (profileUse)
     markOutlineTransparent(F);
-  return emitSiteCall(CI, F, primalArgs, calls);
+  emitSiteCall(CI, F, primalArgs, calls);
 }
 
-bool optimizeSite(Session &S, CallInst *CI,
-                  SmallVectorImpl<CallBase *> &calls) {
+static bool optimizeSite(Session &S, CallInst *CI,
+                         SmallVectorImpl<CallBase *> &calls) {
   Function *F = markerTarget(CI);
   if (!F)
     return false;
@@ -356,14 +368,15 @@ bool optimizeSite(Session &S, CallInst *CI,
   MarkerArgs marker;
   if (!parseMarker(CI, F, marker))
     return false;
-  return optimizeSiteBody(S, CI, F, marker.primalArgs, marker.errTol, calls);
+  optimizeSiteBody(S, CI, F, marker.primalArgs, marker.errTol, calls);
+  return true;
 }
 
 // Profile use of a host site: the body is solved once, and every call of it,
 // the wrapper's and the ones the inliner placed in F's callers, is redirected
 // to what the solve chose; a caller redirected to a rewrite is a function the
 // rewrite reached.
-bool optimizeHostSite(Session &S, Function &B) {
+static bool optimizeHostSite(Session &S, Function &B) {
   double errTol = takeHostBody(B);
   markOutlineTransparent(&B);
   SmallVector<CallBase *, 4> calls = callsOf(B);
@@ -377,17 +390,15 @@ bool optimizeHostSite(Session &S, Function &B) {
   llvm::erase(calls, rep);
   SmallVector<Value *, 8> primalArgs(rep->args());
   SmallVector<CallBase *, 1> lowered;
-  bool changed = optimizeSiteBody(S, rep, &B, primalArgs, errTol, lowered);
+  optimizeSiteBody(S, rep, &B, primalArgs, errTol, lowered);
   Function *target = lowered.back()->getCalledFunction();
   for (CallBase *CB : calls) {
     CB->setCalledFunction(target);
     if (target != &B)
       noteRewritten(S, *CB->getFunction());
   }
-  return changed;
+  return true;
 }
-
-} // namespace
 
 bool lowerMarkers(Session &S, ArrayRef<CallInst *> markers,
                   SmallVectorImpl<CallBase *> &calls) {
@@ -463,7 +474,8 @@ bool optimizeAnnotatedSites(Session &Sess, Module &M) {
     noteSiteTarget(O, *kernel,
                    it != siteTau.end() ? std::optional<double>(errTol)
                                        : std::nullopt);
-    changed |= optimizeSiteBody(Sess, call, body, primalArgs, errTol, calls);
+    optimizeSiteBody(Sess, call, body, primalArgs, errTol, calls);
+    changed = true;
   };
 
   if (byRegex.empty() || O.Profiling.MinCostShare <= 0.0) {
