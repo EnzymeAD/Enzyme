@@ -5,10 +5,10 @@
 ! -mmlir. Loading FlangEnzymeMLIR as well loads it once.
 !
 ! REQUIRES: flang_enzyme_mlir, flangenzyme
-! RUN: %flang_fc1 %loadFlangEnzyme -O0 -emit-llvm %s -o - | FileCheck %s
-! RUN: %flang_fc1 %loadFlangEnzyme -mmlir -enzyme-fir-common-types=false -O0 -emit-llvm %s -o - | FileCheck %s --check-prefix=NOCOMMON
-! RUN: %flang_fc1 %loadFlangEnzyme -mmlir -enzyme-fir-type-annotations=false -O0 -emit-llvm %s -o - | FileCheck %s --check-prefix=OFF
-! RUN: %flang_enzyme %loadFlangEnzyme -O0 -emit-llvm %s -o - | FileCheck %s
+! RUN: %flang_fc1 %flangEnzymePassPlugin -O0 -emit-llvm %s -o - | FileCheck %s
+! RUN: %flang_fc1 %flangEnzymePassPlugin -mmlir -enzyme-fir-common-types=false -O0 -emit-llvm %s -o - | FileCheck %s --check-prefix=NOCOMMON
+! RUN: %flang_fc1 %flangEnzymePassPlugin -mmlir -enzyme-fir-type-annotations=false -O0 -emit-llvm %s -o - | FileCheck %s --check-prefix=OFF
+! RUN: %flang_enzyme %flangEnzymePassPlugin -O0 -emit-llvm %s -o - | FileCheck %s
 
 ! CHECK-DAG: @state_ = {{.*}}global [12 x i8] {{.*}}!enzyme_type ![[STATE:[0-9]+]]
 ! CHECK-DAG: ![[STATE]] = !{!"Unknown", i32 -1, ![[STATEP:[0-9]+]]}
