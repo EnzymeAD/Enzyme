@@ -1,21 +1,30 @@
-//===- HostDispatch.h - host-side GEMM library dispatch ------------------===//
+//=- HostDispatch.h - host-side GEMM library dispatch ---------------------=//
+//
+// Part of the Poseidon Project, under the Apache License v2.0 with LLVM
+// Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
 //
 // A raised GEMM materialized as a host library call: the device sub-compilation
 // records a descriptor in the manifest of its translation unit in the Poseidon
 // cache dir, and the host sub-compilation (a separate cc1 process) reads it and
 // rewrites the kernel launch into a call to the runtime helper.
-//===---------------------------------------------------------------------===//
+//
+//===----------------------------------------------------------------------===//
+
 #ifndef POSEIDON_HOST_DISPATCH_H
 #define POSEIDON_HOST_DISPATCH_H
+
+#include "IR/Utils.h"
+#include "Matmul.h"
+#include "runtime/ozaki/OzakiII.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/IR/PassManager.h"
-
-#include "IR/Utils.h"
-#include "Matmul.h"
-#include "runtime/ozaki/OzakiII.h"
 
 #include <string>
 #include <vector>

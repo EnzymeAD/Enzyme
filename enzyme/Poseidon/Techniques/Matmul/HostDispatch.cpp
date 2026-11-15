@@ -1,8 +1,17 @@
-//===- HostDispatch.cpp - host-side GEMM library dispatch ----------------===//
+//=- HostDispatch.cpp - host-side GEMM library dispatch -------------------=//
+//
+// Part of the Poseidon Project, under the Apache License v2.0 with LLVM
+// Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
 //
 // See HostDispatch.h. Suppressed during profile-gen and when no profile
 // is given.
-//===---------------------------------------------------------------------===//
+//
+//===----------------------------------------------------------------------===//
+
 #include "HostDispatch.h"
 #include "IR/Utils.h"
 #include "Matmul.h"
@@ -12,7 +21,6 @@
 #include "Targets/OffloadRuntime.h"
 #include "Targets/Target.h"
 
-#include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/SmallVector.h"
@@ -26,15 +34,12 @@
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/PassManager.h"
-#include "llvm/Support/FileSystem.h"
-#include "llvm/Support/MemoryBuffer.h"
-#include "llvm/Support/Path.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 
 #include <map>
+#include <optional>
 #include <string>
-#include <vector>
 
 using namespace llvm;
 
@@ -72,19 +77,6 @@ static bool valueReaches(const Value *v, const Value *target) {
     return false;
   }
   return false;
-}
-
-static int axisIndexOf(TidAxis a) {
-  switch (a) {
-  case TidAxis::TidX:
-    return 0;
-  case TidAxis::TidY:
-    return 1;
-  case TidAxis::TidZ:
-    return 2;
-  default:
-    return -1;
-  }
 }
 
 // `blockIdx.a * blockDim.a + threadIdx.a` on one axis, modulo casts and operand
@@ -180,10 +172,12 @@ static bool recoverGuardExtents(const Options &O, Function &F,
   const ScalarLoopHandle &h = m.scalarLoop;
   if (h.aRowSlowAxis != TidAxis::Unknown || h.bColSlowAxis != TidAxis::Unknown)
     return false; // fused index: its extent is a product of two axes
-  axM = axisIndexOf(h.aRowAxis);
-  axN = axisIndexOf(h.bColAxis);
-  if (axM < 0 || axN < 0 || axM == axN)
+  std::optional<unsigned> ixM = tidAxisIndex(h.aRowAxis);
+  std::optional<unsigned> ixN = tidAxisIndex(h.bColAxis);
+  if (!ixM || !ixN || *ixM == *ixN)
     return false;
+  axM = (int)*ixM;
+  axN = (int)*ixN;
 
   DominatorTree DT(F);
   const BasicBlock *SB = cStore->getParent();
@@ -582,26 +576,10 @@ void flushPendingGemmDispatches(Session &S) {
 }
 
 namespace {
-struct LaunchDesc {
+// A descriptor read back on the host side, its operand roles and dimension
+// factors naming launch arguments of `kernel`.
+struct LaunchDesc : GemmBodyNote {
   std::string kernel;
-  int cArg, aArg, bArg;
-  unsigned N;
-  bool standalone;
-  unsigned numModuli;
-  DispatchScheme scheme = DispatchScheme::OzakiII;
-  unsigned gM = 0, gNcols = 0, gK = 0;
-  unsigned lda = 0, ldb = 0, ldc = 0;
-  bool aColMajor = false, bColMajor = false, cColMajor = false;
-  // Runtime geometry (see GemmBodyNote::runtimeDims).
-  bool runtimeDims = false;
-  GemmBodyNote::RtDim rM, rNcols, rK, rlda, rldb, rldc;
-  double beta = 0.0;
-  // Launch-geometry intersection (see GemmBodyNote::launchCrop).
-  bool launchCrop = false;
-  int cropMAxis = -1, cropNAxis = -1;
-  // Fields of by-value aggregate arguments (see GemmBodyNote).
-  int64_t cOffset = -1, aOffset = -1, bOffset = -1;
-  SmallVector<std::pair<LaunchRef, LaunchRef>, 2> assumedEqual;
   // Whether anything is read from inside an aggregate argument, which only the
   // launch's own argument array holds in every host ABI.
   bool readsFields() const {
@@ -660,9 +638,9 @@ readOzDispatchDescriptors(const Options &O, Module &M,
           return;
         LaunchDesc d;
         d.kernel = toks[0].str();
-        (void)toks[1].getAsInteger(10, d.cArg);
-        (void)toks[2].getAsInteger(10, d.aArg);
-        (void)toks[3].getAsInteger(10, d.bArg);
+        (void)toks[1].getAsInteger(10, d.cParam);
+        (void)toks[2].getAsInteger(10, d.aParam);
+        (void)toks[3].getAsInteger(10, d.bParam);
         (void)toks[4].getAsInteger(10, d.N);
         int sa = 0;
         (void)toks[5].getAsInteger(10, sa);
@@ -904,9 +882,9 @@ static bool dispatchFromLaunchArgs(Module &M, Function &F, const LaunchDesc &d,
                           I32(cropConst));
   };
 
-  Value *Cp = value({d.cArg, d.cOffset}, ptr);
-  Value *Ap = value({d.aArg, d.aOffset}, ptr);
-  Value *Bp = value({d.bArg, d.bOffset}, ptr);
+  Value *Cp = value({d.cParam, d.cOffset}, ptr);
+  Value *Ap = value({d.aParam, d.aOffset}, ptr);
+  Value *Bp = value({d.bParam, d.bOffset}, ptr);
   Value *beta = ConstantFP::get(dbl, d.beta);
   Value *one = ConstantFP::get(dbl, 1.0);
   Value *stream = ConstantPointerNull::get(cast<PointerType>(ptr));
@@ -964,9 +942,9 @@ static bool dispatchFromLaunchArgs(Module &M, Function &F, const LaunchDesc &d,
   errs() << "[ozaki-host-dispatch] "
          << (d.standalone ? "replaced" : "prepended") << " the launch in stub "
          << F.getName() << " with " << dispatchSym(d.scheme, squareRM)
-         << " (C=" << launchArgString(d.cArg, d.cOffset)
-         << " A=" << launchArgString(d.aArg, d.aOffset)
-         << " B=" << launchArgString(d.bArg, d.bOffset) << ")";
+         << " (C=" << launchArgString(d.cParam, d.cOffset)
+         << " A=" << launchArgString(d.aParam, d.aOffset)
+         << " B=" << launchArgString(d.bParam, d.bOffset) << ")";
   for (const auto &[x, y] : d.assumedEqual)
     errs() << ", if " << launchArgString(x.param, x.offset)
            << " == " << launchArgString(y.param, y.offset);
@@ -993,17 +971,11 @@ bool rewriteGemmStubBodies(const Options &O, Module &M) {
     if (F.isDeclaration() || !F.getReturnType()->isVoidTy())
       continue;
     StringRef cn = F.getName();
-    const LaunchDesc *dp = nullptr;
-    for (auto &kv : descs) {
-      StringRef kname = kv.first;
-      if (isLaunchStubFor(F, kname)) {
-        dp = &kv.second;
-        break;
-      }
-    }
-    if (!dp)
+    auto dIt = llvm::find_if(
+        descs, [&](const auto &kv) { return isLaunchStubFor(F, kv.first); });
+    if (dIt == descs.end())
       continue;
-    const LaunchDesc &d = *dp;
+    const LaunchDesc &d = dIt->second;
     if (d.readsFields()) {
       changed |= dispatchFromLaunchArgs(M, F, d,
                                         takesSquareEntry(d)
@@ -1012,7 +984,7 @@ bool rewriteGemmStubBodies(const Options &O, Module &M) {
                                         takesSquareEntry(d));
       continue;
     }
-    unsigned need = (unsigned)std::max({d.cArg, d.aArg, d.bArg});
+    unsigned need = (unsigned)std::max({d.cParam, d.aParam, d.bParam});
     if (d.runtimeDims) {
       const GemmBodyNote::RtDim *dd[6] = {&d.rM,   &d.rNcols, &d.rK,
                                           &d.rlda, &d.rldb,   &d.rldc};
@@ -1023,23 +995,21 @@ bool rewriteGemmStubBodies(const Options &O, Module &M) {
     if (F.arg_size() <= need)
       continue;
     if (d.runtimeDims) {
-      bool ok = true;
       const GemmBodyNote::RtDim *dd[6] = {&d.rM,   &d.rNcols, &d.rK,
                                           &d.rlda, &d.rldb,   &d.rldc};
-      for (const GemmBodyNote::RtDim *x : dd)
-        if (!x->isConst() &&
-            !F.getArg(x->factors[0].param)->getType()->isIntegerTy())
-          ok = false;
-      if (!ok) {
+      if (llvm::any_of(dd, [&](const GemmBodyNote::RtDim *x) {
+            return !x->isConst() &&
+                   !F.getArg(x->factors[0].param)->getType()->isIntegerTy();
+          })) {
         errs() << "[ozaki-host-dispatch] " << cn
                << ": a runtime GEMM dimension references a non-integer launch "
                   "argument; skipping the dispatch rewrite\n";
         continue;
       }
     }
-    Value *Cp = F.getArg(d.cArg);
-    Value *Ap = F.getArg(d.aArg);
-    Value *Bp = F.getArg(d.bArg);
+    Value *Cp = F.getArg(d.cParam);
+    Value *Ap = F.getArg(d.aParam);
+    Value *Bp = F.getArg(d.bParam);
     Value *one_d = ConstantFP::get(dbl, 1.0);
     Value *beta_d = ConstantFP::get(dbl, d.beta);
     Value *nullStream = ConstantPointerNull::get(cast<PointerType>(ptr));
@@ -1125,8 +1095,8 @@ bool rewriteGemmStubBodies(const Options &O, Module &M) {
       B.CreateCall(callee, args);
       B.CreateRetVoid();
       errs() << "[ozaki-host-dispatch] replaced stub body " << cn << " -> "
-             << calleeName << " (C=arg" << d.cArg << " A=arg" << d.aArg
-             << " B=arg" << d.bArg << " " << d.gM << "x" << d.gNcols << "x"
+             << calleeName << " (C=arg" << d.cParam << " A=arg" << d.aParam
+             << " B=arg" << d.bParam << " " << d.gM << "x" << d.gNcols << "x"
              << d.gK << ")\n";
     } else {
       // Fused: prepend the dispatch (fills the output buffer) and keep the
@@ -1150,9 +1120,9 @@ bool rewriteGemmStubBodies(const Options &O, Module &M) {
       SmallVector<Value *, 16> args = buildArgs(B);
       B.CreateCall(callee, args);
       errs() << "[ozaki-host-dispatch] prepended dispatch to stub " << cn
-             << " -> " << calleeName << " (fused) (C=arg" << d.cArg << " A=arg"
-             << d.aArg << " B=arg" << d.bArg << " " << d.gM << "x" << d.gNcols
-             << "x" << d.gK << ")\n";
+             << " -> " << calleeName << " (fused) (C=arg" << d.cParam
+             << " A=arg" << d.aParam << " B=arg" << d.bParam << " " << d.gM
+             << "x" << d.gNcols << "x" << d.gK << ")\n";
     }
     changed = true;
   }
@@ -1249,23 +1219,18 @@ bool rewriteProfileStubBodies(const Options &O, Module &M) {
   for (Function &F : M) {
     if (F.isDeclaration() || !F.getReturnType()->isVoidTy())
       continue;
-    const ProfDesc *dp = nullptr;
-    for (auto &kv : descs)
-      if (isLaunchStubFor(F, kv.first)) {
-        dp = &kv.second;
-        break;
-      }
-    if (!dp)
+    auto dIt = llvm::find_if(
+        descs, [&](const auto &kv) { return isLaunchStubFor(F, kv.first); });
+    if (dIt == descs.end())
       continue;
-    const ProfDesc &d = *dp;
+    const ProfDesc &d = dIt->second;
     // The pass reaches the host module through more than one extension point;
     // a stub that already calls the helper must not be rewritten again.
-    bool done = false;
-    for (Instruction &I : instructions(F))
-      if (auto *CI = dyn_cast<CallInst>(&I))
-        if (const Function *cal = CI->getCalledFunction())
-          done |= cal->getName() == "__poseidon_launch_profiled";
-    if (done)
+    if (llvm::any_of(instructions(F), [](Instruction &I) {
+          auto *CI = dyn_cast<CallInst>(&I);
+          const Function *cal = CI ? CI->getCalledFunction() : nullptr;
+          return cal && cal->getName() == "__poseidon_launch_profiled";
+        }))
       continue;
     // The launch's own argument array and configuration: what the stub's
     // parameters look like depends on the host ABI (an aggregate argument

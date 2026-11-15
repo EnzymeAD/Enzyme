@@ -1,4 +1,12 @@
-// Declarations shared by the sources of the matrix-product pipeline.
+//=- MatmulInternal.h - declarations shared by the matmul sources ---------=//
+//
+// Part of the Poseidon Project, under the Apache License v2.0 with LLVM
+// Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+
 #ifndef POSEIDON_MATMUL_INTERNAL_H
 #define POSEIDON_MATMUL_INTERNAL_H
 
@@ -31,14 +39,25 @@ inline const llvm::Instruction &anchorOf(const AbstractMatmul &m) {
   return *m.footprint.front();
 }
 
+// A multiply-add: llvm.fma / llvm.fmuladd (`fmul` null), or a contractable
+// fadd of a contractable fmul; `acc` is the addend.
+struct FMAMatch {
+  llvm::Instruction *fma;
+  llvm::Instruction *fmul;
+  llvm::Value *a, *b, *acc;
+};
+std::optional<FMAMatch> matchFMA(llvm::Value *V);
+
+// Whether `fma` and `phi` are each other's only users inside `L`.
+bool isClosedFmaPhiCycle(const llvm::Loop *L, llvm::Instruction *fma,
+                         llvm::PHINode *phi);
+
 std::string mmaShapeSuffix(unsigned M, unsigned N, unsigned K);
 std::string inKernelCostClass(const SchemeVariant &v);
-bool priceInKernelRaiseFromMeasuredRow(Session &S, const AbstractMatmul &m,
-                                       const std::string &cls, unsigned tileM,
-                                       unsigned tileN, unsigned tileK,
-                                       double baselinePerMac,
-                                       const std::string &what,
-                                       double &costOut);
+std::optional<double> priceInKernelRaiseFromMeasuredRow(
+    Session &S, const AbstractMatmul &m, const std::string &cls, unsigned tileM,
+    unsigned tileN, unsigned tileK, double baselinePerMac,
+    const std::string &what);
 
 struct WmmaTarget {
   unsigned M, N, K;

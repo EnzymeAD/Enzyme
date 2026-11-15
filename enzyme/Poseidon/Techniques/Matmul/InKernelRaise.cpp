@@ -16,31 +16,29 @@
 #include "MatmulInternal.h"
 #include "Targets/NVPTXTensorCore.h"
 #include "WmmaUtils.h"
-#include <functional>
-#include <string>
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/IRBuilder.h"
-#include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Transforms/Utils/ScalarEvolutionExpander.h"
 
-#include <cmath>
+#include <string>
+#include <utility>
 
 using namespace llvm;
 
 namespace poseidon {
 
 namespace {
-
 enum class OzakiSliceKind { F16, BF16, TF32 };
+} // namespace
 
-OzakiSliceKind sliceFromFPKind(FPKind k) {
+static OzakiSliceKind sliceFromFPKind(FPKind k) {
   switch (k) {
   case FPKind::F16:
     return OzakiSliceKind::F16;
@@ -54,7 +52,7 @@ OzakiSliceKind sliceFromFPKind(FPKind k) {
   }
 }
 
-const char *sliceIntrinTag(OzakiSliceKind k) {
+static const char *sliceIntrinTag(OzakiSliceKind k) {
   switch (k) {
   case OzakiSliceKind::F16:
     return "f16";
@@ -66,7 +64,7 @@ const char *sliceIntrinTag(OzakiSliceKind k) {
   llvm_unreachable("unknown OzakiSliceKind");
 }
 
-Type *sliceScratchTy(LLVMContext &ctx, OzakiSliceKind k) {
+static Type *sliceScratchTy(LLVMContext &ctx, OzakiSliceKind k) {
   // The scratch element type matches the wmma fragment's element view; TF32
   // wmma loads bit-cast F32 storage into i32 fragments, so F32 is stored after
   // explicit f2tf32 quantization.
@@ -85,7 +83,7 @@ Type *sliceScratchTy(LLVMContext &ctx, OzakiSliceKind k) {
 // |hi| * 2^-(mant+1), so scaling by 2^(mant+1) brings it into slice range. F16
 // and TF32 both have 10 mantissa bits (2^11); BF16 uses 2^7, as the TCEC
 // reference does, not 2^8.
-double veltkampScale(OzakiSliceKind k) {
+static double veltkampScale(OzakiSliceKind k) {
   switch (k) {
   case OzakiSliceKind::F16:
     return 2048.0;
@@ -97,14 +95,16 @@ double veltkampScale(OzakiSliceKind k) {
   llvm_unreachable("unknown OzakiSliceKind");
 }
 
+namespace {
 struct OzakiVariant {
   unsigned N;           // slice count
   OzakiSliceKind slice; // F16 / BF16 / TF32
   FPKind accumKind;     // F32 (mma accumulator precision)
   unsigned tileM, tileN, tileK;
 };
+} // namespace
 
-OzakiVariant deriveOzakiVariant(const MatmulUnit::Option &opt) {
+static OzakiVariant deriveOzakiVariant(const MatmulUnit::Option &opt) {
   OzakiVariant v;
   v.N = sliceCount(opt.variant);
   v.slice = sliceFromFPKind(opt.variant.operand);
@@ -117,8 +117,8 @@ OzakiVariant deriveOzakiVariant(const MatmulUnit::Option &opt) {
 
 // Quantize an F32 value to slice precision (half for F16/BF16; float for TF32,
 // bit-identical to F32 with the bottom 13 mantissa bits zeroed).
-Value *emitSliceQuantize(IRBuilder<> &B, Module *mod, Value *vs_f32,
-                         OzakiSliceKind slice) {
+static Value *emitSliceQuantize(IRBuilder<> &B, Module *mod, Value *vs_f32,
+                                OzakiSliceKind slice) {
   LLVMContext &ctx = B.getContext();
   Type *sliceTy = sliceScratchTy(ctx, slice);
   if (slice == OzakiSliceKind::F16 || slice == OzakiSliceKind::BF16)
@@ -127,7 +127,8 @@ Value *emitSliceQuantize(IRBuilder<> &B, Module *mod, Value *vs_f32,
 }
 
 // Slice value back to F32 for the next residual; TF32 is already F32 storage.
-Value *emitSliceToF32(IRBuilder<> &B, Value *slice, OzakiSliceKind kind) {
+static Value *emitSliceToF32(IRBuilder<> &B, Value *slice,
+                             OzakiSliceKind kind) {
   Type *f32Ty = Type::getFloatTy(B.getContext());
   if (kind == OzakiSliceKind::TF32)
     return slice; // bit-pattern already in float
@@ -139,9 +140,10 @@ Value *emitSliceToF32(IRBuilder<> &B, Value *slice, OzakiSliceKind kind) {
 //   r[k]  = (r[k-1] - s[k-1]_f32) * SCALE ; s[k] = quantize(r[k])
 // Reconstruction: v ~ sum_k s[k] / SCALE^k. Each slice captures ~mant_bits of
 // v (10 for F16/TF32, 7 for BF16).
-SmallVector<Value *, 8> emitNwayVeltkampSplit(IRBuilder<> &B, Module *mod,
-                                              Value *vs_f32, unsigned N,
-                                              OzakiSliceKind slice) {
+static SmallVector<Value *, 8> emitNwayVeltkampSplit(IRBuilder<> &B,
+                                                     Module *mod, Value *vs_f32,
+                                                     unsigned N,
+                                                     OzakiSliceKind slice) {
   Type *f32Ty = Type::getFloatTy(B.getContext());
   Value *scale = ConstantFP::get(f32Ty, veltkampScale(slice));
   SmallVector<Value *, 8> slices;
@@ -159,6 +161,7 @@ SmallVector<Value *, 8> emitNwayVeltkampSplit(IRBuilder<> &B, Module *mod,
   return slices;
 }
 
+namespace {
 class OzakiIRaiseMaterializer {
 public:
   OzakiIRaiseMaterializer(const AbstractMatmul &m, const MatmulUnit::Option &t)
@@ -166,13 +169,9 @@ public:
   void run();
 
 private:
-  // FP (tcec) slice path: F16/BF16/TF32 Veltkamp split, F32 accumulator.
-  void runTcec();
-
   const AbstractMatmul &m;
   const MatmulUnit::Option &t;
 };
-
 } // namespace
 
 void OzakiIRaiseMaterializer::run() {
@@ -186,10 +185,6 @@ void OzakiIRaiseMaterializer::run() {
     report_fatal_error("OzakiIRaiseMaterializer: the slice count must be in "
                        "[2, 8] (got " +
                        Twine(n) + ")");
-  runTcec();
-}
-
-void OzakiIRaiseMaterializer::runTcec() {
   const FPKind operand = t.variant.operand;
   if (operand != FPKind::F16 && operand != FPKind::BF16 &&
       operand != FPKind::TF32)
@@ -359,8 +354,6 @@ void OzakiIRaiseMaterializer::runTcec() {
       B.CreateMul(colTidI64, ConstantInt::get(i64Ty, bColThreadStrideByte));
   Value *bBlockBase =
       B.CreateGEP(i8Ty, bPerThreadStart, B.CreateNeg(bColThreadOff));
-  (void)rowTidI64;
-  (void)colTidI64;
 
   int64_t bSrcKStepByte = bRowMajor ? h.bStrideByte : srcInputByte;
   int64_t bSrcNStrideByte = bRowMajor ? srcInputByte : h.bLeadingDimByte;
@@ -560,7 +553,6 @@ void OzakiIRaiseMaterializer::runTcec() {
                          validK, validN);
 
   bodyB.CreateCall(barrier.Fn, barrier.Args);
-  (void)bsz;
 
   // Warp-gate the mma chain when there is a single output tile per block, and
   // always when the block's thread count is not a multiple of 32: its last
@@ -689,8 +681,7 @@ void OzakiIRaiseMaterializer::runTcec() {
   IRBuilder<> afterB(afterLoopBB, afterLoopBB->getFirstNonPHIIt());
   BasicBlock *storeMergeBB = nullptr;
   if (useWarpGate) {
-    auto [aTlin, aBsz] = emitThreadLinAndBlockSize(afterB, mod, h.is2DBlock);
-    (void)aBsz;
+    Value *aTlin = emitThreadLinAndBlockSize(afterB, mod, h.is2DBlock).first;
     Value *aWarpId =
         afterB.CreateLShr(aTlin, ConstantInt::get(i32Ty, nvptx::kLog2WarpSize));
     Value *aIsWarp0 = afterB.CreateICmpEQ(aWarpId, ConstantInt::get(i32Ty, 0));

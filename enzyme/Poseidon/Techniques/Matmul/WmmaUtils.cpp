@@ -23,6 +23,7 @@
 #include "llvm/Support/Alignment.h"
 #include "llvm/Support/ErrorHandling.h"
 
+#include <optional>
 #include <string>
 
 using namespace llvm;
@@ -79,21 +80,10 @@ GlobalVariable *getOrCreateSharedScratch(Module *M, const Twine &name,
 }
 
 Value *emitTidIntrinsic(IRBuilder<> &B, Module *M, TidAxis axis) {
-  unsigned a;
-  switch (axis) {
-  case TidAxis::TidX:
-    a = 0;
-    break;
-  case TidAxis::TidY:
-    a = 1;
-    break;
-  case TidAxis::TidZ:
-    a = 2;
-    break;
-  default:
+  std::optional<unsigned> a = tidAxisIndex(axis);
+  if (!a)
     report_fatal_error("emitTidIntrinsic: axis not resolved (Unknown/Other)");
-  }
-  return nvptx::emitThreadIndex(B, M, a);
+  return nvptx::emitThreadIndex(B, M, *a);
 }
 
 Value *emitTidIndex(IRBuilder<> &B, Module *M, TidAxis fast, TidAxis slow,

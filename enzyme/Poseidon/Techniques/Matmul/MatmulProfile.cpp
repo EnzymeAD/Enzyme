@@ -1,16 +1,22 @@
-// Matmul profile loading from the scalar .fpprofile records.
+//=- MatmulProfile.cpp - matmul profiles from scalar records --------------=//
+//
+// Part of the Poseidon Project, under the Apache License v2.0 with LLVM
+// Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+
 #include "IR/Utils.h"
 #include "MatmulInternal.h"
 
 #include "llvm/ADT/Twine.h"
 #include "llvm/IR/Instruction.h"
 #include "llvm/Support/ErrorHandling.h"
-#include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
 #include <cmath>
 #include <limits>
-#include <string>
 #include <vector>
 
 using namespace llvm;
@@ -20,8 +26,6 @@ namespace poseidon {
 static void resizeCells(MatmulProfile &p) {
   p.a.assign((size_t)p.M * p.K, CellStat{});
   p.b.assign((size_t)p.K * p.N, CellStat{});
-  p.c.assign((size_t)p.M * p.N, CellStat{});
-  p.d.assign((size_t)p.M * p.N, CellStat{});
   p.gradD.assign((size_t)p.M * p.N, GradCellStat{});
 }
 
@@ -61,10 +65,6 @@ static MatmulProfile loadProfileRaise(const AbstractMatmul &m,
   out.M = m.M;
   out.N = m.N;
   out.K = m.K;
-  out.aType = m.aType;
-  out.bType = m.bType;
-  out.cType = m.accType;
-  out.dType = m.dType;
   resizeCells(out);
 
   size_t mkCells = (size_t)m.M * m.K;
@@ -147,10 +147,6 @@ static MatmulProfile loadProfileHostGemm(const AbstractMatmul &m,
   out.M = m.M;
   out.N = m.N;
   out.K = m.K;
-  out.aType = m.aType;
-  out.bType = m.bType;
-  out.cType = m.accType;
-  out.dType = m.dType;
   resizeCells(out);
   double aMag = std::max(std::fabs(aMin), std::fabs(aMax));
   double bMag = std::max(std::fabs(bMin), std::fabs(bMax));

@@ -1,3 +1,12 @@
+//=- RecognizeHostGemm.cpp - runtime-shape GEMM recognition ---------------=//
+//
+// Part of the Poseidon Project, under the Apache License v2.0 with LLVM
+// Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+//
 // Recognition of dense GEMMs with runtime dimensions
 // (Origin::HostGemmLoopNest): thread-parallel reduction nests whose extents
 // and leading dimensions are expressions over the kernel's launch values,
@@ -10,8 +19,10 @@
 // into integer polynomials over SCEV atoms (RgPoly) instead, on which such
 // comparisons are exact; every dimension is either derived or the site is
 // refused.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Core/Options.h"
-#include "HostDispatch.h"
 #include "IR/Utils.h"
 #include "MatmulInternal.h"
 #include "Profile/ProfileRead.h"
@@ -29,17 +40,14 @@
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/Function.h"
-#include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Instructions.h"
-#include "llvm/IR/IntrinsicInst.h"
-#include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/Module.h"
-#include "llvm/IR/Operator.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -119,6 +127,8 @@ struct RgPoly {
   }
   bool operator==(const RgPoly &o) const { return t == o.t; }
 };
+
+} // namespace
 
 static RgPoly rgAdd(const RgPoly &a, const RgPoly &b) {
   RgPoly r = a;
@@ -211,6 +221,8 @@ static LaunchRef rgLaunchValue(const Value *v) {
     return {(int)Arg->getArgNo(), -1};
   return launchFieldOf(v);
 }
+
+namespace {
 
 struct RgAtoms {
   SmallVector<const SCEV *, 16> byId; // null for synthetic loop-counter atoms
@@ -332,6 +344,8 @@ struct RgExpand {
   }
 };
 
+} // namespace
+
 // A GEMM dimension is usable only if it is one monomial over launch values of
 // the optimized body plus a constant, mul*v0*v1*... + add, which the host-side
 // stub rewrite evaluates from the launch arguments.
@@ -368,56 +382,17 @@ static bool rgToRuntimeDim(const RgPoly &p, const RgAtoms &A, RuntimeDim &out,
 }
 
 // The launch value `p` is, when it is exactly one (coefficient 1, no constant).
-static bool rgSingleLaunchValue(const RgPoly &p, const RgAtoms &A,
-                                LaunchRef &out) {
+static std::optional<LaunchRef> rgSingleLaunchValue(const RgPoly &p,
+                                                    const RgAtoms &A) {
   if (p.t.size() != 1 || p.t.begin()->first.size() != 1 ||
       p.t.begin()->second != 1)
-    return false;
+    return std::nullopt;
   const SCEV *S = A.byId[p.t.begin()->first[0]];
   auto *U = S ? dyn_cast<SCEVUnknown>(S) : nullptr;
-  out = U ? rgLaunchValue(U->getValue()) : LaunchRef{};
-  return out.param >= 0 && U->getType()->isIntegerTy();
-}
-
-// ---------------------------------------------------------------------------
-// fma matching, kept apart from the scalar-loop recognizer's so that either
-// can change without moving the other's decisions.
-// ---------------------------------------------------------------------------
-static bool rgMatchFMA(Value *V, Instruction *&fma, Instruction *&fmul,
-                       Value *&a, Value *&b, Value *&acc) {
-  auto *I = dyn_cast<Instruction>(V);
-  if (!I)
-    return false;
-  if (auto *II = dyn_cast<IntrinsicInst>(I)) {
-    Intrinsic::ID id = II->getIntrinsicID();
-    if (id == Intrinsic::fma || id == Intrinsic::fmuladd) {
-      fma = II;
-      fmul = nullptr;
-      a = II->getArgOperand(0);
-      b = II->getArgOperand(1);
-      acc = II->getArgOperand(2);
-      return true;
-    }
-  }
-  auto *fadd = dyn_cast<BinaryOperator>(I);
-  if (!fadd || fadd->getOpcode() != Instruction::FAdd)
-    return false;
-  if (!fadd->getFastMathFlags().allowContract())
-    return false;
-  for (unsigned side = 0; side < 2; ++side) {
-    auto *fmulI = dyn_cast<BinaryOperator>(fadd->getOperand(side));
-    if (!fmulI || fmulI->getOpcode() != Instruction::FMul)
-      continue;
-    if (!fmulI->getFastMathFlags().allowContract())
-      continue;
-    fma = fadd;
-    fmul = fmulI;
-    a = fmulI->getOperand(0);
-    b = fmulI->getOperand(1);
-    acc = fadd->getOperand(1 - side);
-    return true;
-  }
-  return false;
+  LaunchRef r = U ? rgLaunchValue(U->getValue()) : LaunchRef{};
+  if (r.param >= 0 && U->getType()->isIntegerTy())
+    return r;
+  return std::nullopt;
 }
 
 static int rgTidAxis(const Value *v) {
@@ -445,6 +420,8 @@ static bool rgMentionsLaunchReg(const SCEV *S) {
   });
 }
 
+namespace {
+
 // One recognized index source: a thread axis (optionally behind a
 // block-strided thread loop) or a CTA linearization.
 struct RgIndex {
@@ -455,10 +432,11 @@ struct RgIndex {
   // ctaid.a*ntid.b + tid.b it is {ntid.b}.
   SmallVector<unsigned, 2> sigMono;
   SmallVector<unsigned, 4> ownAtoms; // atoms that must not survive extraction
-  RgPoly extent;           // number of distinct values the index takes
-  unsigned profExtent = 0; // profile-scale extent, 0 when not fixed by geometry
+  RgPoly extent; // number of distinct values the index takes
   std::string name;
 };
+
+} // namespace
 
 // Peel the index `idx` out of an address polynomial:
 //     p == coef * idx.form + rest,  with rest free of every atom of `idx`.
@@ -486,6 +464,8 @@ static bool rgSplitIndex(const RgPoly &p, const RgIndex &idx, RgPoly &coef,
   return true;
 }
 
+namespace {
+
 // One member of the contraction chain. The operand addresses are kept as full
 // SCEVs: a two-level index arrives as an integer add-recurrence under a cast,
 // sext(i32 {{...}<i-loop>,+,1}<p-loop>), not as a pointer add-recurrence of
@@ -500,10 +480,11 @@ struct RgMember {
   LoadInst *aLoad = nullptr;
   LoadInst *bLoad = nullptr;
   const SCEV *aAddr = nullptr, *bAddr = nullptr;
-  int64_t aStep = 0, bStep = 0; // filled by rgAnalyzeChain
   const SCEV *trip = nullptr;
   Value *init = nullptr;
 };
+
+} // namespace
 
 // Can `target` reach `v` through phis and casts only?
 static bool rgReaches(Value *v, Value *target, unsigned depth = 0) {
@@ -535,10 +516,6 @@ static bool rgIsZeroSeed(Value *v, unsigned depth = 0) {
   }
   return false;
 }
-
-} // namespace
-
-namespace {
 
 static const SCEV *rgStripSCEVCasts(const SCEV *S) {
   while (auto *C = dyn_cast<SCEVCastExpr>(S))
@@ -652,69 +629,55 @@ static bool rgFinishIndex(RgIndex &idx, const RgAtoms &A) {
 }
 
 // Largest value the index can take at profile scale, from the launch geometry
-// in the profile header. Returns false when the form involves a quantity the
-// header does not fix (a loop counter, a runtime bound).
-static bool rgProfileExtent(const RgIndex &idx, const RgAtoms &A,
-                            const FunctionProfileHeader &hdr, unsigned &out) {
+// in the profile header. None when the form involves a quantity the header
+// does not fix (a loop counter, a runtime bound).
+static std::optional<unsigned>
+rgProfileExtent(const RgIndex &idx, const RgAtoms &A,
+                const FunctionProfileHeader &hdr) {
   int64_t c = 0;
-  if (idx.extent.isConstant(&c) && c > 0) {
-    out = (unsigned)c; // compile-time bound: exact at every scale
-    return true;
-  }
+  if (idx.extent.isConstant(&c) && c > 0)
+    return (unsigned)c; // compile-time bound: exact at every scale
   int64_t maxVal = 0;
   for (auto &kv : idx.form.t) {
     int64_t term = kv.second;
     if (term < 0)
-      return false;
+      return std::nullopt;
     for (unsigned a : kv.first) {
       const SCEV *S = A.byId[a];
       auto *U = S ? dyn_cast<SCEVUnknown>(S) : nullptr;
       if (!U)
-        return false; // loop counter or opaque runtime term
+        return std::nullopt; // loop counter or opaque runtime term
       Value *v = U->getValue();
       int ax;
       if ((ax = rgCtaidAxis(v)) >= 0) {
         if (!hdr.maxGridDim[ax])
-          return false;
+          return std::nullopt;
         term *= (int64_t)hdr.maxGridDim[ax] - 1;
       } else if ((ax = rgTidAxis(v)) >= 0) {
         if (!hdr.maxBlockDim[ax])
-          return false;
+          return std::nullopt;
         term *= (int64_t)hdr.maxBlockDim[ax] - 1;
       } else if ((ax = rgNtidAxis(v)) >= 0) {
         if (!hdr.maxBlockDim[ax])
-          return false;
+          return std::nullopt;
         term *= (int64_t)hdr.maxBlockDim[ax];
       } else {
-        return false;
+        return std::nullopt;
       }
     }
     maxVal += term;
   }
   if (maxVal < 0)
-    return false;
-  out = (unsigned)(maxVal + 1);
-  return true;
+    return std::nullopt;
+  return (unsigned)(maxVal + 1);
 }
-
-// Every fused-index reconstruction Poseidon can express: one index, or an
-// ordered pair (fast, slow) with stride(slow) == stride(fast) * extent(fast).
-// Anything wider is refused rather than guessed.
-struct RgFusedIndex {
-  SmallVector<unsigned, 2> order; // positions into the caller's index list,
-                                  // fastest first
-  RgPoly unitStride;              // byte stride of one step of the fused index
-  RgPoly extent;                  // total extent
-};
-
-} // namespace
 
 // Reconstruct one contraction chain into a RuntimeGemmHandle. Returns false
 // with `why` set on any non-match; the caller prints it under -poseidon-print.
 // Nothing is defaulted: every field below is either derived or the whole site
 // is refused.
-static bool rgAnalyzeChain(Function &F, ScalarEvolution &SE, LoopInfo &LI,
-                           DominatorTree &DT, const FunctionProfileHeader &hdr,
+static bool rgAnalyzeChain(Function &F, ScalarEvolution &SE, DominatorTree &DT,
+                           const FunctionProfileHeader &hdr,
                            const ProfileMap &prof, ArrayRef<RgMember> chain,
                            RuntimeGemmHandle &H, std::string &why) {
   const DataLayout &DL = F.getParent()->getDataLayout();
@@ -773,11 +736,10 @@ static bool rgAnalyzeChain(Function &F, ScalarEvolution &SE, LoopInfo &LI,
     RgIndex idx;
     if (!EX.expand(SX, idx.form))
       continue; // an unexpandable guard is simply not an index source
-    bool dup = false;
-    for (const RgIndex &prev : indices)
-      if (prev.form == idx.form || idx.form == RgPoly::atom(prev.sigAtom))
-        dup = true;
-    if (dup)
+    if (llvm::any_of(indices, [&](const RgIndex &prev) {
+          return prev.form == idx.form ||
+                 idx.form == RgPoly::atom(prev.sigAtom);
+        }))
       continue; // already covered by the strided-loop form it seeds
     if (!EX.expand(SE.getSCEV(cmp->getOperand(1)), idx.extent))
       continue;
@@ -813,8 +775,7 @@ static bool rgAnalyzeChain(Function &F, ScalarEvolution &SE, LoopInfo &LI,
     base = cur;
     return true;
   };
-  auto isBasePointer = [&](const RgPoly &b, LaunchRef &ref,
-                           Value *&val) -> bool {
+  auto isBasePointer = [&](const RgPoly &b, LaunchRef &ref) -> bool {
     if (b.t.size() != 1)
       return false;
     auto &kv = *b.t.begin();
@@ -824,8 +785,7 @@ static bool rgAnalyzeChain(Function &F, ScalarEvolution &SE, LoopInfo &LI,
     auto *U = S ? dyn_cast<SCEVUnknown>(S) : nullptr;
     if (!U || !U->getType()->isPointerTy())
       return false;
-    val = U->getValue();
-    ref = tracePointerRoot(val);
+    ref = tracePointerRoot(U->getValue());
     return ref.param >= 0;
   };
   // Exact equality, or two launch values the dense reading needs equal and
@@ -834,10 +794,13 @@ static bool rgAnalyzeChain(Function &F, ScalarEvolution &SE, LoopInfo &LI,
   auto sameOrAssumed = [&](const RgPoly &a, const RgPoly &b) -> bool {
     if (a == b)
       return true;
-    LaunchRef x, y;
-    if (!rgSingleLaunchValue(a, atoms, x) || !rgSingleLaunchValue(b, atoms, y))
+    std::optional<LaunchRef> x = rgSingleLaunchValue(a, atoms);
+    if (!x)
       return false;
-    std::pair<LaunchRef, LaunchRef> eq = std::minmax(x, y);
+    std::optional<LaunchRef> y = rgSingleLaunchValue(b, atoms);
+    if (!y)
+      return false;
+    std::pair<LaunchRef, LaunchRef> eq = std::minmax(*x, *y);
     if (!llvm::is_contained(H.assumedEqual, eq))
       H.assumedEqual.push_back(eq);
     return true;
@@ -976,7 +939,6 @@ static bool rgAnalyzeChain(Function &F, ScalarEvolution &SE, LoopInfo &LI,
     return false;
   }
   H.beta = 0.0;
-  H.cLoad = nullptr;
   if (epilogue) {
     Value *other = epilogue->getOperand(0);
     if (rgReaches(other, last))
@@ -987,7 +949,6 @@ static bool rgAnalyzeChain(Function &F, ScalarEvolution &SE, LoopInfo &LI,
             "(C = alpha*A*B + beta*C with beta != 1 is not representable)";
       return false;
     }
-    H.cLoad = ld;
     H.beta = 1.0;
   }
   RgPoly cPoly;
@@ -1139,16 +1100,11 @@ static bool rgAnalyzeChain(Function &F, ScalarEvolution &SE, LoopInfo &LI,
     return false;
   }
 
-  Value *aBaseVal = nullptr, *bBaseVal = nullptr, *cBaseVal = nullptr;
-  if (!isBasePointer(aBasePoly, H.aRef, aBaseVal) ||
-      !isBasePointer(bBasePoly, H.bRef, bBaseVal) ||
-      !isBasePointer(bC, H.cRef, cBaseVal)) {
+  if (!isBasePointer(aBasePoly, H.aRef) || !isBasePointer(bBasePoly, H.bRef) ||
+      !isBasePointer(bC, H.cRef)) {
     why = "an operand does not root in a parameter of the optimized body";
     return false;
   }
-  H.aBase = aBaseVal;
-  H.bBase = bBaseVal;
-  H.cBase = cBaseVal;
   H.cStore = cStore;
   H.epilogue = epilogue;
   H.alpha = 1.0;
@@ -1156,7 +1112,6 @@ static bool rgAnalyzeChain(Function &F, ScalarEvolution &SE, LoopInfo &LI,
     H.fmas.push_back(m.fma);
     H.fmuls.push_back(m.fmul);
     H.aLoads.push_back(aIsOp0 ? m.aLoad : m.bLoad);
-    H.bLoads.push_back(aIsOp0 ? m.bLoad : m.aLoad);
   }
 
   // Column extents must be fixed by the launch geometry (a CTA span, or a
@@ -1174,14 +1129,14 @@ static bool rgAnalyzeChain(Function &F, ScalarEvolution &SE, LoopInfo &LI,
 
   uint64_t profNcols = 1;
   for (unsigned i : colOrder) {
-    unsigned e = 0;
-    if (!rgProfileExtent(indices[i], atoms, hdr, e) || e == 0) {
+    std::optional<unsigned> e = rgProfileExtent(indices[i], atoms, hdr);
+    if (!e || *e == 0) {
       why = "the profile does not fix the extent of a column index (launch "
             "geometry gives no bound for " +
             indices[i].name + ")";
       return false;
     }
-    profNcols *= e;
+    profNcols *= *e;
   }
 
   uint64_t macs = 0;
@@ -1265,21 +1220,21 @@ static bool rgAnalyzeChain(Function &F, ScalarEvolution &SE, LoopInfo &LI,
     uint64_t colSpread = 1, rowSpread = 1;
     for (unsigned i : colOrder)
       if (hasCta(indices[i])) {
-        unsigned e = 0;
-        if (!rgProfileExtent(indices[i], atoms, hdr, e) || !e) {
+        std::optional<unsigned> e = rgProfileExtent(indices[i], atoms, hdr);
+        if (!e || !*e) {
           why = "cannot size the per-CTA column tile";
           return false;
         }
-        colSpread *= e;
+        colSpread *= *e;
       }
     for (unsigned i : rowOrder)
       if (hasCta(indices[i])) {
-        unsigned e = 0;
-        if (!rgProfileExtent(indices[i], atoms, hdr, e) || !e) {
+        std::optional<unsigned> e = rgProfileExtent(indices[i], atoms, hdr);
+        if (!e || !*e) {
           why = "cannot size the per-CTA row tile";
           return false;
         }
-        rowSpread *= e;
+        rowSpread *= *e;
       }
     if (!colSpread || !rowSpread || H.profN % colSpread ||
         H.profM % rowSpread) {
@@ -1307,7 +1262,6 @@ static bool rgAnalyzeChain(Function &F, ScalarEvolution &SE, LoopInfo &LI,
   return true;
 }
 
-namespace {
 // One reduction loop of a contraction chain: a closed fma/phi cycle over two
 // loads whose addresses are affine in the loop with constant byte steps. The
 // trip count may be a runtime value.
@@ -1327,24 +1281,13 @@ static bool rgMatchReductionPhi(const Options &O, Loop *L, PHINode &phi,
   Value *be = phi.getIncomingValueForBlock(latch);
   if (!be)
     RG_REJECT("no backedge value");
-  Instruction *fma = nullptr, *fmul = nullptr;
-  Value *a = nullptr, *b = nullptr, *acc = nullptr;
-  if (!rgMatchFMA(be, fma, fmul, a, b, acc) || acc != &phi)
+  std::optional<FMAMatch> fm = matchFMA(be);
+  if (!fm || fm->acc != &phi)
     RG_REJECT("backedge value is not an accumulating fma");
-  auto onlyInLoopUser = [&](Value *v, Instruction *expected) {
-    for (User *U : v->users()) {
-      auto *I = dyn_cast<Instruction>(U);
-      if (!I || !L->contains(I))
-        continue;
-      if (I != expected)
-        return false;
-    }
-    return true;
-  };
-  if (!onlyInLoopUser(fma, &phi) || !onlyInLoopUser(&phi, fma))
+  if (!isClosedFmaPhiCycle(L, fm->fma, &phi))
     RG_REJECT("fma/phi cycle is not closed");
-  auto *aL = dyn_cast<LoadInst>(a);
-  auto *bL = dyn_cast<LoadInst>(b);
+  auto *aL = dyn_cast<LoadInst>(fm->a);
+  auto *bL = dyn_cast<LoadInst>(fm->b);
   if (!aL || !bL)
     RG_REJECT("an fma multiplicand is not a load");
   if (aL->getType() != phi.getType() || bL->getType() != phi.getType())
@@ -1357,8 +1300,8 @@ static bool rgMatchReductionPhi(const Options &O, Loop *L, PHINode &phi,
     RG_REJECT("loop has no unique preheader");
   out.L = L;
   out.phi = &phi;
-  out.fma = fma;
-  out.fmul = fmul;
+  out.fma = fm->fma;
+  out.fmul = fm->fmul;
   out.aLoad = aL;
   out.bLoad = bL;
   out.aAddr = SE.getSCEV(aL->getPointerOperand());
@@ -1368,7 +1311,6 @@ static bool rgMatchReductionPhi(const Options &O, Loop *L, PHINode &phi,
   return out.init != nullptr;
 }
 #undef RG_REJECT
-} // namespace
 
 void findHostGemmLoopNests(const Options &O, Function &F, ScalarEvolution &SE,
                            LoopInfo &LI,
@@ -1488,16 +1430,13 @@ void findHostGemmLoopNests(const Options &O, Function &F, ScalarEvolution &SE,
     }
     if (bad)
       continue;
-    bool anyClaimed = false;
-    for (const RgMember &m : chain)
-      if (claimed.count(m.fma))
-        anyClaimed = true;
-    if (anyClaimed)
+    if (llvm::any_of(
+            chain, [&](const RgMember &m) { return claimed.contains(m.fma); }))
       continue;
 
     RuntimeGemmHandle H;
     std::string why;
-    if (!rgAnalyzeChain(F, SE, LI, DT, profileHeader, prof, chain, H, why)) {
+    if (!rgAnalyzeChain(F, SE, DT, profileHeader, prof, chain, H, why)) {
       if (O.Diagnostics.Print)
         llvm::errs() << "[hostgemm] " << F.getName() << ": reduction chain of "
                      << chain.size()
@@ -1519,12 +1458,6 @@ void findHostGemmLoopNests(const Options &O, Function &F, ScalarEvolution &SE,
     am.gridCTAs = H.ctaPerLaunch;
     FPKind k = fpKindFromType(chain[0].aLoad->getType());
     am.aType = am.bType = am.accType = am.dType = k;
-    am.aLayout = H.aColMajor ? AbstractMatmul::Layout::ColMajor
-                             : AbstractMatmul::Layout::RowMajor;
-    am.bLayout = H.bColMajor ? AbstractMatmul::Layout::ColMajor
-                             : AbstractMatmul::Layout::RowMajor;
-    am.dLayout = H.cColMajor ? AbstractMatmul::Layout::ColMajor
-                             : AbstractMatmul::Layout::RowMajor;
     am.origin = AbstractMatmul::Origin::HostGemmLoopNest;
     am.hostGemm = std::make_shared<RuntimeGemmHandle>(std::move(H));
     am.outputValue = chain.back().fma;
