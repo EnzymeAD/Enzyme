@@ -16,14 +16,11 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
-#include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringMap.h"
-#include "llvm/Config/llvm-config.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
-#include "llvm/IR/InstIterator.h"
 #include "llvm/IR/InstrTypes.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/Module.h"
@@ -33,7 +30,6 @@
 #include <cassert>
 #include <cmath>
 #include <functional>
-#include <optional>
 
 using namespace llvm;
 
@@ -200,12 +196,8 @@ Value *FPNode::getLLValue(IRBuilder<> &builder, const ValueToValueMapTy *VMap) {
           {"tan",
            [](IRBuilder<> &b, Module *M,
               const SmallVectorImpl<Value *> &ops) -> Value * {
-#if LLVM_VERSION_MAJOR > 16
              return b.CreateUnaryIntrinsic(Intrinsic::tan, ops[0], nullptr,
                                            "herbie.tan");
-#else
-             return mathLibraryCall(b, M, "tan", {ops[0]});
-#endif
            }},
           {"exp",
            [](IRBuilder<> &b, Module *M,
@@ -282,72 +274,44 @@ Value *FPNode::getLLValue(IRBuilder<> &builder, const ValueToValueMapTy *VMap) {
           {"asin",
            [](IRBuilder<> &b, Module *M,
               const SmallVectorImpl<Value *> &ops) -> Value * {
-#if LLVM_VERSION_MAJOR > 16
              return b.CreateUnaryIntrinsic(Intrinsic::asin, ops[0], nullptr,
                                            "herbie.asin");
-#else
-             return mathLibraryCall(b, M, "asin", {ops[0]});
-#endif
            }},
           {"acos",
            [](IRBuilder<> &b, Module *M,
               const SmallVectorImpl<Value *> &ops) -> Value * {
-#if LLVM_VERSION_MAJOR > 16
              return b.CreateUnaryIntrinsic(Intrinsic::acos, ops[0], nullptr,
                                            "herbie.acos");
-#else
-             return mathLibraryCall(b, M, "acos", {ops[0]});
-#endif
            }},
           {"atan",
            [](IRBuilder<> &b, Module *M,
               const SmallVectorImpl<Value *> &ops) -> Value * {
-#if LLVM_VERSION_MAJOR > 16
              return b.CreateUnaryIntrinsic(Intrinsic::atan, ops[0], nullptr,
                                            "herbie.atan");
-#else
-             return mathLibraryCall(b, M, "atan", {ops[0]});
-#endif
            }},
           {"atan2",
            [](IRBuilder<> &b, Module *M,
               const SmallVectorImpl<Value *> &ops) -> Value * {
-#if LLVM_VERSION_MAJOR > 16
              return b.CreateBinaryIntrinsic(Intrinsic::atan2, ops[0], ops[1],
                                             nullptr, "herbie.atan2");
-#else
-             return mathLibraryCall(b, M, "atan2", {ops[0], ops[1]});
-#endif
            }},
           {"sinh",
            [](IRBuilder<> &b, Module *M,
               const SmallVectorImpl<Value *> &ops) -> Value * {
-#if LLVM_VERSION_MAJOR > 16
              return b.CreateUnaryIntrinsic(Intrinsic::sinh, ops[0], nullptr,
                                            "herbie.sinh");
-#else
-             return mathLibraryCall(b, M, "sinh", {ops[0]});
-#endif
            }},
           {"cosh",
            [](IRBuilder<> &b, Module *M,
               const SmallVectorImpl<Value *> &ops) -> Value * {
-#if LLVM_VERSION_MAJOR > 16
              return b.CreateUnaryIntrinsic(Intrinsic::cosh, ops[0], nullptr,
                                            "herbie.cosh");
-#else
-             return mathLibraryCall(b, M, "cosh", {ops[0]});
-#endif
            }},
           {"tanh",
            [](IRBuilder<> &b, Module *M,
               const SmallVectorImpl<Value *> &ops) -> Value * {
-#if LLVM_VERSION_MAJOR > 16
              return b.CreateUnaryIntrinsic(Intrinsic::tanh, ops[0], nullptr,
                                            "herbie.tanh");
-#else
-             return mathLibraryCall(b, M, "tanh", {ops[0]});
-#endif
            }},
           {"copysign",
            [](IRBuilder<> &b, Module *M,

@@ -23,12 +23,6 @@ using namespace llvm;
 
 namespace poseidon {
 
-static void resizeCells(MatmulProfile &p) {
-  p.a.assign((size_t)p.M * p.K, CellStat{});
-  p.b.assign((size_t)p.K * p.N, CellStat{});
-  p.gradD.assign((size_t)p.M * p.N, GradCellStat{});
-}
-
 static MatmulProfile loadProfileRaise(const AbstractMatmul &m,
                                       const ProfileMap &profile) {
   const ScalarLoopHandle *h = &m.scalarLoop;
@@ -62,10 +56,6 @@ static MatmulProfile loadProfileRaise(const AbstractMatmul &m,
                         "re-run profile generation.");
 
   MatmulProfile out;
-  out.M = m.M;
-  out.N = m.N;
-  out.K = m.K;
-  resizeCells(out);
 
   size_t mkCells = (size_t)m.M * m.K;
   size_t knCells = (size_t)m.K * m.N;
@@ -74,16 +64,14 @@ static MatmulProfile loadProfileRaise(const AbstractMatmul &m,
   double aMin = abInfo->minOperands[0];
   double aMax = abInfo->maxOperands[0];
   double aMag = std::max(std::fabs(aMin), std::fabs(aMax));
-  double aMinMag =
-      abInfo->minMagOperands.size() > 0 ? abInfo->minMagOperands[0] : 0.0;
+  double aMinMag = abInfo->minMagOperands[0];
   out.a.assign(mkCells, CellStat{aMin, aMax, aMag * (double)abInfo->exec,
                                  abInfo->exec, aMinMag});
 
   double bMin = abInfo->minOperands[1];
   double bMax = abInfo->maxOperands[1];
   double bMag = std::max(std::fabs(bMin), std::fabs(bMax));
-  double bMinMag =
-      abInfo->minMagOperands.size() > 1 ? abInfo->minMagOperands[1] : 0.0;
+  double bMinMag = abInfo->minMagOperands[1];
   out.b.assign(knCells, CellStat{bMin, bMax, bMag * (double)abInfo->exec,
                                  abInfo->exec, bMinMag});
 
@@ -133,10 +121,10 @@ static MatmulProfile loadProfileHostGemm(const AbstractMatmul &m,
     aMax = std::max(aMax, ai.maxOperands[ao]);
     bMin = std::min(bMin, ai.minOperands[bo]);
     bMax = std::max(bMax, ai.maxOperands[bo]);
-    if (ai.minMagOperands.size() > ao && ai.minMagOperands[ao] > 0.0)
+    if (ai.minMagOperands[ao] > 0.0)
       aMinMag = aMinMag > 0.0 ? std::min(aMinMag, ai.minMagOperands[ao])
                               : ai.minMagOperands[ao];
-    if (ai.minMagOperands.size() > bo && ai.minMagOperands[bo] > 0.0)
+    if (ai.minMagOperands[bo] > 0.0)
       bMinMag = bMinMag > 0.0 ? std::min(bMinMag, ai.minMagOperands[bo])
                               : ai.minMagOperands[bo];
     sumGrad += fIt->second.sumGrad;
@@ -144,10 +132,6 @@ static MatmulProfile loadProfileHostGemm(const AbstractMatmul &m,
   }
 
   MatmulProfile out;
-  out.M = m.M;
-  out.N = m.N;
-  out.K = m.K;
-  resizeCells(out);
   double aMag = std::max(std::fabs(aMin), std::fabs(aMax));
   double bMag = std::max(std::fabs(bMin), std::fabs(bMax));
   out.a.assign((size_t)m.M * m.K,

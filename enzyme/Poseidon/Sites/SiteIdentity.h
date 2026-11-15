@@ -34,9 +34,11 @@ class Session;
 void noteSiteOrigin(Session &S, llvm::Function *clone, llvm::Function *orig);
 const llvm::Function *siteOriginOf(const Session &S,
                                    const llvm::Function &clone);
-// The ".fpprofile" stem of a site clone. The profiling run writes one record
-// per marked body, so every clone of one body reads the same file.
-std::string siteProfileStem(const Session &S, const llvm::Function &clone);
+// The ".fpprofile" stem of the site cut from `body`.
+std::string bodyProfileStem(const llvm::Function &body);
+// The ".fpprofile" file name of a site clone. The profiling run writes one
+// record per marked body, so every clone of one body reads the same file.
+std::string siteProfileFile(const Session &S, const llvm::Function &clone);
 // The name -poseidon-apply-rewrites gives a site by: the symbol its body was
 // cut from (an annotated kernel or host function, a marker's target, the copy
 // made for one __poseidon_optimize call), the one its profile is named after.

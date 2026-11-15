@@ -61,8 +61,6 @@ struct GradCellStat {
 };
 
 struct MatmulProfile {
-  unsigned M = 0, N = 0, K = 0;
-
   std::vector<CellStat> a;         // size M*K
   std::vector<CellStat> b;         // size K*N
   std::vector<GradCellStat> gradD; // size M*N
@@ -101,8 +99,6 @@ struct ScalarLoopHandle {
   llvm::SmallPtrSet<llvm::BasicBlock *, 4> blocks;
   llvm::Instruction *fma = nullptr;
   llvm::Instruction *fmul = nullptr;
-  llvm::LoadInst *aLoad = nullptr;
-  llvm::LoadInst *bLoad = nullptr;
   llvm::Value *aBase = nullptr;
   llvm::Value *bBase = nullptr;
 

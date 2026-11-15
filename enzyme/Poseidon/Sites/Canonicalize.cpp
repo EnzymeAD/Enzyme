@@ -9,6 +9,7 @@
 
 #include "Canonicalize.h"
 
+#include "FPProfileName.h"
 #include "Targets/DeviceMath.h"
 #include "Targets/MathFunctions.h"
 
@@ -190,18 +191,7 @@ std::string canonicalFormHash(const Function &F) {
     }
     os << "\n";
   }
-
-  uint64_t h = 14695981039346656037ULL; // FNV-1a 64 offset basis
-  for (char c : form) {
-    h ^= (uint64_t)(unsigned char)c;
-    h *= 1099511628211ULL; // FNV-1a 64 prime
-  }
-  std::string out(16, '0');
-  for (int i = 15; i >= 0; --i) {
-    out[(size_t)i] = "0123456789abcdef"[h & 0xFULL];
-    h >>= 4;
-  }
-  return out;
+  return profileNameHex16(profileNameHash(form.data(), form.size()));
 }
 
 namespace {

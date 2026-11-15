@@ -63,7 +63,6 @@ public:
   // stands for: fromShare(share(c)) == c.
   double share(DPCost cost) const;
   DPCost fromShare(double share) const;
-  double profiledCost() const { return ProfiledCost; }
 
 private:
   double ProfiledCost;

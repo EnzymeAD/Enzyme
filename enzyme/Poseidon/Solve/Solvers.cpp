@@ -17,6 +17,7 @@
 #include "Pass/Session.h"
 #include "Report.h"
 #include "SiteTable.h"
+#include "Sites/Annotations.h"
 #include "Techniques/Herbie.h"
 #include "Techniques/Matmul/Matmul.h"
 #include "Techniques/Precision.h"
@@ -24,7 +25,6 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/Support/Error.h"
-#include "llvm/Support/Format.h"
 #include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -130,7 +130,7 @@ static void writeBudgetsFile(const Options &O, const CostScale &scale,
   std::string budgetsStr;
   for (const auto &pair : costToAccuracyMap)
     if (selectable(O, pair.second))
-      budgetsStr += formatv("{0},", format("%.17g", scale.share(pair.first)));
+      budgetsStr += formatv("{0},", exactDouble(scale.share(pair.first)));
   if (!budgetsStr.empty())
     budgetsStr.pop_back();
   if (Error E = writeFileAtomically(budgetsFile, budgetsStr))

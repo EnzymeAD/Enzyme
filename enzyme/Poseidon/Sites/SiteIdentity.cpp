@@ -34,15 +34,23 @@ const Function *siteOriginOf(const Session &S, const Function &clone) {
   return it == S.SiteOrigins.end() ? nullptr : it->second;
 }
 
+std::string bodyProfileStem(const Function &body) {
+  return profileNameStem(("preprocess_" + body.getName()).str());
+}
+
 // Keyed on the source body, not on the per-call clone: profiling shares one
 // instrumented clone between a body's markers, so the run writes one record
 // per body, while here a body reached from several marker calls is cloned once
 // per call and LLVM uniques the second and later clone names.
-std::string siteProfileStem(const Session &S, const Function &clone) {
+static std::string siteProfileStem(const Session &S, const Function &clone) {
   auto it = S.SiteOrigins.find(&clone);
   if (it != S.SiteOrigins.end() && it->second)
-    return profileNameStem(("preprocess_" + it->second->getName()).str());
+    return bodyProfileStem(*it->second);
   return profileNameStem(clone.getName().str());
+}
+
+std::string siteProfileFile(const Session &S, const Function &clone) {
+  return siteProfileStem(S, clone) + ".fpprofile";
 }
 
 std::string siteKeyOfBody(const Function &body) {

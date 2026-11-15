@@ -25,9 +25,6 @@
 #include "Solve/Solvers.h"
 #include "Techniques/Herbie.h"
 #include "Techniques/Matmul/HostDispatch.h"
-// Shared with the profiler runtimes, so that a profile is looked for where
-// they write it.
-#include "FPProfileName.h"
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/MapVector.h"
@@ -126,7 +123,7 @@ struct Unprofiled {
 
 static std::optional<Unprofiled> unprofiledSite(Session &S, CallBase *CI,
                                                 Function &clone) {
-  const std::string file = siteProfileStem(S, clone) + ".fpprofile";
+  const std::string file = siteProfileFile(S, clone);
   std::optional<Unprofiled> absent, neverExecuted;
   auto read = [&](StringRef dir, StringRef flag) {
     SmallString<128> path(dir);
@@ -233,8 +230,7 @@ static void requireCostBudget(const SolverOptions &O, const CallBase &CI) {
   if (std::isnan(O.CostBudget))
     reportNoNumber(CI, "poseidon-cost-budget");
   if (std::isfinite(O.CostBudget) && O.CostBudget > 0x1p30) {
-    std::string value;
-    raw_string_ostream(value) << format("%.17g", O.CostBudget);
+    const std::string value = exactDouble(O.CostBudget);
     reportUserError(CI, "-poseidon-cost-budget=" + Twine(value) +
                             " lets a solution add more than 2^30 times the "
                             "profiled cost, which the DP's cost axis does not "
@@ -242,8 +238,7 @@ static void requireCostBudget(const SolverOptions &O, const CallBase &CI) {
   }
   if (std::isfinite(O.CostBudget) && O.CostBudget >= -1.0)
     return;
-  std::string value;
-  raw_string_ostream(value) << format("%.17g", O.CostBudget);
+  const std::string value = exactDouble(O.CostBudget);
   reportUserError(
       CI, "-poseidon-cost-budget=" + Twine(value) +
               (std::isfinite(O.CostBudget)
@@ -413,9 +408,7 @@ bool lowerMarkers(Session &S, ArrayRef<CallInst *> markers,
 // names. A site the run never reached has no records and costs nothing.
 static double profiledSiteCost(Session &S, Function &body) {
   SmallString<128> profilePath(S.Opts.Profiling.ProfileUse);
-  llvm::sys::path::append(
-      profilePath,
-      profileNameStem(("preprocess_" + body.getName()).str()) + ".fpprofile");
+  llvm::sys::path::append(profilePath, bodyProfileStem(body) + ".fpprofile");
   if (!llvm::sys::fs::exists(profilePath.str()))
     return 0.0;
 

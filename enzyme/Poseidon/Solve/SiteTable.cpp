@@ -122,7 +122,7 @@ CacheKey solveKey(Session &S, const FunctionFPState &st,
   SmallVector<std::string, 4> profilePaths = {profilePath.str()};
   for (const std::string &dir : O.Profiling.OutputProfiles) {
     SmallString<128> path(dir);
-    sys::path::append(path, siteProfileStem(S, F) + ".fpprofile");
+    sys::path::append(path, siteProfileFile(S, F));
     profilePaths.push_back(path.str().str());
   }
   std::string profiles;

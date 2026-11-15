@@ -58,10 +58,6 @@
 #include <vector>
 
 using namespace llvm;
-#ifdef DEBUG_TYPE
-#undef DEBUG_TYPE
-#endif
-#define DEBUG_TYPE "poseidon"
 
 namespace poseidon {
 
@@ -84,7 +80,7 @@ static void readSiteProfile(Session &S, Function &F, SiteProfileData &P) {
   assert(!O.Profiling.ProfileUse.empty() &&
          "a site is optimized only under profile use");
   SmallString<128> profilePathBuf(O.Profiling.ProfileUse);
-  llvm::sys::path::append(profilePathBuf, siteProfileStem(S, F) + ".fpprofile");
+  llvm::sys::path::append(profilePathBuf, siteProfileFile(S, F));
   P.path = profilePathBuf.str().str();
   const std::string &profilePath = P.path;
 
@@ -111,7 +107,7 @@ static void readSiteProfile(Session &S, Function &F, SiteProfileData &P) {
   }
   if (!O.Profiling.OutputProfiles.empty())
     mergeOutputProfiles(profileMap, O.Profiling.OutputProfiles,
-                        siteProfileStem(S, F) + ".fpprofile", canonicalHash, F);
+                        siteProfileFile(S, F), canonicalHash, F);
   // Before the floor below, which would hide the exact zeros.
   if (O.Solver.AggressiveDCE)
     for (const auto &kv : profileMap) {

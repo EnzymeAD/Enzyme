@@ -76,9 +76,6 @@ struct FunctionProfileHeader {
   // Digest of the canonical form the slots were numbered against; empty when
   // the profile carries no CanonicalHash line.
   std::string canonicalHash;
-  // Site id the perturbation probe is armed with, -1 when the profile carries
-  // no SiteId line.
-  int siteId = -1;
   // Measured relative condition number of the declared quantity of interest
   // with respect to this site's outputs, written by the profiling run; 1.0
   // when the profile carries no Kappa line.

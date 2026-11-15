@@ -55,7 +55,6 @@ struct PTCandidate {
   // RewriteCandidate::ordinal.
   size_t ordinal = 0;
   llvm::MapVector<FPNode *, double> perOutputAccCost;
-  std::unordered_map<FPNode *, llvm::SmallVector<double, 4>> errors;
 
   explicit PTCandidate(llvm::SmallVector<PrecisionChange> changes,
                        const std::string &desc)

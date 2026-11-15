@@ -341,8 +341,6 @@ static bool tryAnalyzeReductionPhi(Loop *L, PHINode &phi, ScalarEvolution &SE,
     outHandle.blocks.insert(BB);
   outHandle.fma = fm->fma;
   outHandle.fmul = fm->fmul;
-  outHandle.aLoad = aLoad;
-  outHandle.bLoad = bLoad;
   outHandle.aBase = gepRootBase(aLoad->getPointerOperand());
   outHandle.bBase = gepRootBase(bLoad->getPointerOperand());
   outHandle.aStartSCEV = aRec->getStart();
