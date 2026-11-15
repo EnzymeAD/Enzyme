@@ -12,9 +12,11 @@
 
 #include "Dialect/Dialect.h"
 #include "Dialect/Ops.h"
+#include "Interfaces/AutoDiffTypeInterface.h"
 #include "PassDetails.h"
 #include "Passes/Passes.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Arith/Utils/Utils.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
@@ -369,6 +371,40 @@ struct GetOpConversion : public OpConversionPattern<enzyme::GetOp> {
   }
 };
 
+/// Lowers `enzyme.fill_zero` to a loop nest storing the element type's null
+/// value to every element of the memref.
+struct FillZeroOpConversion : public OpConversionPattern<enzyme::FillZeroOp> {
+  using OpConversionPattern<enzyme::FillZeroOp>::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(enzyme::FillZeroOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    Location loc = op.getLoc();
+    Value memref = adaptor.getMemref();
+    auto memrefType = cast<MemRefType>(memref.getType());
+    auto elementType =
+        dyn_cast<enzyme::AutoDiffTypeInterface>(memrefType.getElementType());
+    if (!elementType)
+      return rewriter.notifyMatchFailure(op, "element type has no null value");
+
+    Value zero = elementType.createNullValue(rewriter, loc);
+    SmallVector<Value> ubs = getValueOrCreateConstantIndexOp(
+        rewriter, loc, memref::getMixedSizes(rewriter, loc, memref));
+    SmallVector<Value> lbs, steps;
+    if (!ubs.empty()) {
+      lbs.assign(ubs.size(), arith::ConstantIndexOp::create(rewriter, loc, 0));
+      steps.assign(ubs.size(),
+                   arith::ConstantIndexOp::create(rewriter, loc, 1));
+    }
+    scf::buildLoopNest(rewriter, loc, lbs, ubs, steps,
+                       [&](OpBuilder &b, Location loc, ValueRange ivs) {
+                         memref::StoreOp::create(b, loc, zero, memref, ivs);
+                       });
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
 struct EnzymeToMemRefPass
     : public enzyme::impl::EnzymeOpsToMemRefPassBase<EnzymeToMemRefPass> {
   void runOnOperation() override {
@@ -403,6 +439,7 @@ struct EnzymeToMemRefPass
     patterns.add<PopOpConversion>(typeConverter, context);
     patterns.add<SetOpConversion>(typeConverter, context);
     patterns.add<GetOpConversion>(typeConverter, context);
+    patterns.add<FillZeroOpConversion>(typeConverter, context);
 
     ConversionTarget target(*context);
     target.addLegalDialect<memref::MemRefDialect>();
