@@ -123,10 +123,9 @@ bool isOptimizable(const llvm::Value &V) {
 }
 
 void setSlotMetadata(Function &F) {
-  // The fpprofile idx must be invariant between the profile-generate and
-  // profile-use compiles, which differ in their non-optimizable instructions
-  // (profiler instrumentation shifts absolute positions). Index by rank among
-  // optimizable ops only, so the idx stays synchronized across both compiles.
+  // A slot is the rank among optimizable instructions, which the
+  // profile-generate and profile-use compiles share; the instrumentation shifts
+  // absolute positions.
   size_t slotIdx = 0;
   for (Instruction &I : instructions(F)) {
     if (isOptimizable(I)) {

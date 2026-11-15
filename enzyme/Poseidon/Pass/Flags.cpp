@@ -32,11 +32,9 @@ constexpr const char *kDefaultProfileDir = POSEIDON_DEFAULT_PROFILE_DIR;
 // Before the flags, which take their defaults from it.
 static const Options kDefaults;
 
-// LLVM's parser<double> reads an empty value as 0: strtod reads nothing and
-// stops at the end of the string. A Poseidon number flag reads it as NaN, no
-// number, which the solve that reads the flag refuses (Driver.cpp), so
-// `-poseidon-tau=` from a variable that was never set does not solve without
-// a target.
+// Reads an empty value as NaN, where cl::parser<double> reads 0, so that the
+// solve refuses `-poseidon-tau=` from a variable that was never set instead of
+// solving without a target.
 class NumberParser : public cl::parser<double> {
 public:
   using cl::parser<double>::parser;
@@ -316,8 +314,7 @@ cl::opt<int> HerbieNumEnodes(
     cl::Hidden,
     cl::desc("Number of equivalence graph nodes to use when doing algebraic "
              "reasoning in Herbie."));
-// Upstream Herbie caps a Taylor series at 2 terms since 7efa8b032 (4 before);
-// each count is its own search because a longer cap can lose a shorter
+// Each count is its own search because a longer cap can lose a shorter
 // series' answers.
 cl::list<unsigned> HerbieNumTaylorTerms(
     "poseidon-herbie-num-taylor-terms", cl::Hidden, cl::CommaSeparated,
@@ -326,11 +323,9 @@ cl::list<unsigned> HerbieNumTaylorTerms(
              "--num-taylor-terms <n>, and take the union of the answers, the "
              "fewest terms first; each search is cached on its own. Unset, "
              "Herbie keeps its own cap. Needs a Herbie that takes the option"));
-// Wall-clock budget for one subgraph's Herbie invocation, enforced twice on
-// purpose: Herbie's own per-core --timeout is clamped to it so a timed-out
-// core still writes results.json, and ExecuteAndWait's SecondsToWait backstops
-// a Herbie that cannot exit (a crashed worker place leaves the manager
-// waiting).
+// Enforced twice: Herbie's own per-core --timeout is clamped to it so that a
+// timed-out core still writes results.json, and the wait for the process
+// backstops a Herbie that cannot exit.
 cl::opt<unsigned> HerbieSubgraphTimeout(
     "poseidon-herbie-subgraph-timeout",
     cl::init(kDefaults.Herbie.HerbieSubgraphTimeout), cl::Hidden,
@@ -349,15 +344,12 @@ cl::opt<unsigned> HerbiePreFloorBits(
     cl::init(kDefaults.Herbie.HerbiePreFloorBits),
     cl::desc("For a profiled range [lo, hi] with lo < 0 < hi, exclude "
              "|x| < max(-lo, hi) * 2^-K from the Herbie :pre (0 = off)."));
-// Overrides the HERBIE_BINARY baked in at configure time. Herbie result caches
-// are generation-specific, so pair a new binary with a fresh -poseidon-cache.
 cl::opt<std::string> HerbieBinary(
     "poseidon-herbie-binary", cl::init(kDefaults.Herbie.HerbieBinary),
     cl::Hidden,
     cl::desc("Path to the Herbie executable to invoke (empty = the binary "
              "configured at build time)."));
-// Otherwise the platform is the one generated next to the resolved cost model
-// (<csv>.herbie.rkt, written by poseidon-calibrate --only herbie-platform).
+// Otherwise the platform is <csv>.herbie.rkt next to the resolved cost model.
 cl::opt<std::string> HerbiePlatform(
     "poseidon-herbie-platform", cl::init(kDefaults.Herbie.HerbiePlatform),
     cl::Hidden,
@@ -412,8 +404,8 @@ cl::opt<bool> NarrowParamStaging(
     cl::desc("Narrow addrspace(3) staging buffers that reach the annotated "
              "body as pointer parameters"));
 // A shared-memory kernel that uses one __shared__ array through views of
-// different shapes and constant offsets (MFEM's) has element GEPs of several
-// strides, which the global-rooted narrowing gives up on.
+// different shapes and constant offsets has element GEPs of several strides,
+// which the global-rooted narrowing gives up on.
 cl::opt<bool> NarrowMultiviewStaging(
     "poseidon-narrow-multiview-staging",
     cl::init(kDefaults.Materialization.NarrowMultiviewStaging), cl::Hidden,

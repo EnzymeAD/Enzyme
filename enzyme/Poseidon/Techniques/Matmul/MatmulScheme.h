@@ -85,13 +85,10 @@ inline unsigned modulusCount(const SchemeVariant &v) {
 }
 
 // Captured significand bits of the N-slice Veltkamp split
-// (emitNwayVeltkampSplit): slice 0 keeps p bits and each further slice adds p,
-// since the residual is rounded to p bits and rescaled by the same factor; the
-// SCALE only keeps the residual inside the slice format's exponent range,
-// which the accuracy model charges through the slice format. The fill narrows
-// F64 to F32 and the accumulator is F32, so the family is capped at 24 bits.
-// p = 8 for BF16, 11 for F16/TF32 (verified by a bit-level simulation of the
-// emitted split).
+// (emitNwayVeltkampSplit): each slice adds p bits, p = 8 for BF16 and 11 for
+// F16/TF32; the scale only keeps the residual inside the slice format's
+// exponent range. The fill narrows F64 to F32 and the accumulator is F32, so
+// the family is capped at 24 bits.
 inline unsigned splitCapturedBits(const SchemeVariant &v) {
   unsigned sliceSigBits = (v.operand == FPKind::BF16) ? 8u : 11u;
   return std::min(sliceSigBits * sliceCount(v), 24u);
@@ -179,9 +176,7 @@ inline unsigned descriptorModulusField(const SchemeVariant &v) {
   llvm_unreachable("unknown Scheme");
 }
 
-// Label fragments of the scheme; each realization composes them with its own
-// (matmulOptionLabel, ozakiIOptionLabel, the refusal messages, the cost-model
-// classes).
+// Label fragments of the scheme, shared by both realizations.
 inline std::string schemeFormats(const SchemeVariant &v, char separator) {
   return std::string(fpKindName(v.operand)) + separator +
          fpKindName(v.accumulator);

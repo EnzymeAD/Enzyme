@@ -7,13 +7,9 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// One field per -poseidon-* flag, with the flag's type and meaning, grouped as
-// Pass/Flags.cpp declares the flags. Pass/Flags.cpp reads the command line into
-// one Options per compile and is the only reader of a flag. A field's
-// initializer is its flag's default, the one place it is written (the flag
-// takes it from a default-constructed Options), so a default-constructed
-// Options is a compile given no flag. Changing a default changes the decisions
-// of every compile that does not give the flag.
+// One field per -poseidon-* flag, grouped as Pass/Flags.cpp declares the
+// flags. A field's initializer is its flag's default, so a default-constructed
+// Options is a compile given no flag.
 //
 //===----------------------------------------------------------------------===//
 

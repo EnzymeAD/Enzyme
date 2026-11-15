@@ -1,4 +1,4 @@
-//=- Precision.h - Precision change utilities for Poseidon ----------------=//
+//=- Precision.h - precision candidates of an FP subgraph -------------------=//
 //
 // Part of the Poseidon Project, under the Apache License v2.0 with LLVM
 // Exceptions.
@@ -7,8 +7,8 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file declares utilities for handling precision changes in the Poseidon
-// optimization pass.
+// The precision unit of an FP subgraph: assignments of its operations to
+// narrower or wider formats and to floating-point expansions.
 //
 //===----------------------------------------------------------------------===//
 

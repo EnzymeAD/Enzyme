@@ -80,8 +80,8 @@ static std::string entryPath(const Options &O, const CacheKey &key) {
   return p.str().str();
 }
 
-// The name the memo had while it was keyed on a hash of the inputs alone, kept
-// so -poseidon-import-accuracy-memo can bring its entries over.
+// The file name of an entry -poseidon-import-accuracy-memo reads: a hash of
+// the model's inputs alone.
 namespace {
 struct LegacyAccHash {
   uint64_t h = 1469598103934665603ULL;
@@ -114,7 +114,7 @@ struct LegacyAccHash {
     mix(O.Model.NumSamples);
     mix((uint64_t)O.Model.RandomSeed);
     mix((uint64_t)sampleLogBits);
-    mix(1); // the model generation every legacy entry was written under
+    mix(1); // constant in every imported entry's hash
   }
   std::string name() const { return "matmulacc_" + utohexstr(h) + ".txt"; }
 };
@@ -153,8 +153,7 @@ MatmulAccuracyMemo MatmulAccuracyMemo::matmul(
   return memo;
 }
 
-// No entry from before the memo kept its keys was computed by these two
-// models.
+// No imported entry holds a result of these two models.
 MatmulAccuracyMemo
 MatmulAccuracyMemo::ozakiII(const Options &O, const AbstractMatmul &m,
                             const MatmulProfile &prof, double confidence,
@@ -203,9 +202,8 @@ static bool parseAccNumber(const json::Object &value, StringRef name,
   return text && !text->getAsDouble(out);
 }
 
-// Results stored before entries carried their key are read only when
-// imported; a cache full of them is otherwise recomputed without a word, at
-// the cost they were kept to save.
+// Entries without a key (matmulacc_*.txt) are read only when imported; say
+// once that a cache holds them, so they are not recomputed without a word.
 static void noteLegacyEntries(Session &S) {
   const Options &O = S.Opts;
   if (S.Matmul.LegacyMemoEntriesNoted)

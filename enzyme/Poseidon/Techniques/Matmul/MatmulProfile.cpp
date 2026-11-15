@@ -93,12 +93,9 @@ static MatmulProfile loadProfileRaise(const AbstractMatmul &m,
   return out;
 }
 
-// Origin::HostGemmLoopNest. Same construction as loadProfileRaise, but the
-// contraction is spread over R fma sites (the unrolled outer contraction
-// level), so the operand ranges are the UNION over the members and the
-// execution counts are their sum. Taking one member's record instead would
-// under-report both the value range the accuracy model samples from and the
-// MAC count the cost model scales by.
+// Origin::HostGemmLoopNest: the contraction is spread over R fma sites (the
+// unrolled outer contraction level), so the operand ranges are the union over
+// the members and the execution counts their sum.
 static MatmulProfile loadProfileHostGemm(const AbstractMatmul &m,
                                          const ProfileMap &profile) {
   const RuntimeGemmHandle &h = *m.hostGemm;

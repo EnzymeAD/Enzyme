@@ -12,9 +12,7 @@
 // manifest of the translation unit in the cache directory, which holds one
 // single-line descriptor per wrapper kernel. The device compile writes it
 // whole once its sites are processed, and the host compile of the same source
-// and unit reads it and no other. Every feature that rewrites a launch stub
-// shares the note map, the manifest and the stub locator here and keeps only
-// its own payload and rewrite body.
+// and unit reads it and no other.
 //
 //===----------------------------------------------------------------------===//
 
@@ -37,9 +35,8 @@ namespace poseidon {
 struct Options;
 class Session;
 
-// A module compile's stash: the solve records a payload keyed by the
-// optimized body clone, and the marker handler retrieves it after the solve
-// returns. `Note` must have a `valid` member.
+// Payloads of one module compile keyed by the optimized body clone. `Note`
+// must have a `valid` member; an invalid note is not found.
 template <class Note> class NoteMap {
 public:
   void note(const llvm::Function *body, const Note &n) { notes[body] = n; }
@@ -66,8 +63,7 @@ struct ProfileHeader {
 };
 
 enum class LaunchKind {
-  // A raised GEMM the host stub dispatches to a library (the payload is
-  // written by HostDispatch.cpp).
+  // A raised GEMM the host stub dispatches to a library.
   HostDispatch,
   // An annotated kernel the host stub launches through the profiling helper:
   //   <kernel> <site id> <original arg count> <pointer arg count>
@@ -125,7 +121,7 @@ bool isLaunchStubFor(const llvm::Function &F, llvm::StringRef kernelName);
 
 // A value the host knows at the launch: a parameter of the optimized body, or a
 // field of an aggregate a parameter passes by value (the captures of a lambda a
-// kernel takes by value: DeviceTensor data pointers and sizes).
+// kernel takes by value).
 struct LaunchRef {
   int param = -1;
   int64_t offset = -1; // byte offset of the field; -1 = the parameter itself

@@ -27,10 +27,8 @@ using namespace llvm;
 
 namespace poseidon {
 
-// The CSV this compilation prices from, resolved once: the flag, the
-// environment, then this user's cache. No model ships with Poseidon: a model is
-// one device's measurement. Everything below reads it through costModelPath(),
-// never the flag.
+// Resolves the CSV the compile prices from to the flag, else
+// POSEIDON_COST_MODEL; false when neither names one.
 static bool resolveFromRequest(CostModelState &CM) {
   if (CM.IsResolved)
     return true;
@@ -195,7 +193,7 @@ uint64_t getCostModelFingerprint(CostModelState &CM) {
       mix((uint64_t)c);
     mix(0x5eULL);
   };
-  for (const auto &kv : Model) { // std::map => deterministic order
+  for (const auto &kv : Model) {
     mixStr(kv.first.first);
     mixStr(kv.first.second);
     uint64_t bits;

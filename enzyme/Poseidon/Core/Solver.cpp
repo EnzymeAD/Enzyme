@@ -97,10 +97,6 @@ DPCost addDPCost(DPCost a, DPCost b) {
                      " leaves the DP's integer cost axis");
 }
 
-// Whether `a` and `b` cannot be in one strategy: they rewrite one output, or
-// their footprints overlap and one of them consumes its footprint. Units that
-// edit one subgraph in place compose: the precision unit is priced over what
-// the algebraic units leave.
 bool excludes(const OptimizationUnit &a, const OptimizationUnit &b) {
   if (a.rewritesSameOutputAs(b))
     return true;
@@ -108,8 +104,7 @@ bool excludes(const OptimizationUnit &a, const OptimizationUnit &b) {
          a.footprintOverlaps(b);
 }
 
-// Whether taking `later` is admitted or priced differently depending on
-// whether `earlier` was taken. Neither reads which candidate `earlier` took.
+// Neither test reads which candidate `earlier` took.
 bool reads(const OptimizationUnit &later, const OptimizationUnit &earlier) {
   return excludes(later, earlier) || later.pricedAgainst(earlier);
 }
@@ -122,17 +117,15 @@ bool overlapsConsumed(const SolutionStep &step, ArrayRef<SolutionStep> chosen) {
   });
 }
 
-// A unit that does not consume its footprint displaces the prior steps that
-// consume a footprint it overlaps and charges their deltas back: exact,
-// because such a step is priced alone. A unit that consumes its footprint is
-// refused by any prior step it overlaps instead, since a prior step may be
-// priced against the steps before it. Without displacement the frontier keyed
-// by cost evicts equal-cost prefixes that later units would have extended.
+// Charging a displaced step back is exact because a step that consumes its
+// footprint is priced alone. A unit that consumes its footprint is refused
+// instead, since a prior step may be priced against the steps before it.
+// Without displacement the frontier keyed by cost evicts equal-cost prefixes
+// that later units would have extended.
 bool admit(ArrayRef<SolutionStep> prior, const OptimizationUnit &unit,
            const CostScale &scale, SmallVectorImpl<SolutionStep> &kept,
            DPCost &cost, double &error) {
-  // The binary64 and binary32 searches of one output are separate units, but
-  // only one rewrite of that output can be materialized.
+  // Only one rewrite of an output can be materialized.
   for (const SolutionStep &p : prior)
     if (p.unit->rewritesSameOutputAs(unit))
       return false;
@@ -257,13 +250,12 @@ prunedOrder(ArrayRef<ArrayRef<OptimizationUnit *>> sites) {
   return order;
 }
 
-// -poseidon-early-prune=false. A partial solution is keyed by its cost and by
-// its signature: the taken units some later unit still reads. Two with one
-// signature are admitted and priced alike by every later unit, so one that is
-// cheaper and no less accurate than the other stays so under every completion,
-// and only such a one is dropped. After the last unit every signature is
-// empty and the one remaining bucket is the frontier of all
-// footprint-compatible strategies.
+// A partial solution is keyed by its cost and by its signature: the taken
+// units some later unit still reads. Two with one signature are admitted and
+// priced alike by every later unit, so one that is cheaper and no less
+// accurate than the other stays so under every completion, and only such a
+// one is dropped. After the last unit every signature is empty and the one
+// remaining bucket is the frontier of all footprint-compatible strategies.
 void solveExact(ArrayRef<OptimizationUnit *> units, const CostScale &scale,
                 CostMap &cost, SolutionMap &sol) {
   const int n = units.size();

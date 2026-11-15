@@ -30,9 +30,7 @@ namespace poseidon {
 
 // The libm name behind a CUDA libdevice or ROCm ocml entry point Poseidon
 // handles, for both the f64 and the f32 form ("__nv_sqrt", "__nv_sqrtf" and
-// "__ocml_sqrt_f64" all give "sqrt"), or the empty string. Poseidon recognizes
-// these itself instead of reading the attribute an AD pass would have put on
-// them.
+// "__ocml_sqrt_f64" all give "sqrt"), or the empty string.
 llvm::StringRef deviceMathName(llvm::StringRef fnName);
 
 // `funcName`, a libm, libdevice or ocml function, at `newType`; empty if it is
@@ -40,8 +38,9 @@ llvm::StringRef deviceMathName(llvm::StringRef fnName);
 std::string getLibmFunctionForPrecision(llvm::StringRef funcName,
                                         llvm::Type *newType);
 
-// Before the inliner, in a device module with a site under profile generation
-// or use.
+// Keeps the modelled math functions of M out of line until releaseDeviceMath.
+// Runs before the inliner, in a device module with a site under profile
+// generation or use.
 bool keepDeviceMath(llvm::Module &M);
 
 // In any other device module before the inliner, and in a kept one once its

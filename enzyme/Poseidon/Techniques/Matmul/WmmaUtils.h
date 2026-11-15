@@ -7,8 +7,7 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// Low-level WMMA materialization helpers used by the scalar-loop raise
-// (RaiseWMMA).
+// Low-level WMMA materialization helpers for the in-kernel raises.
 //
 //===----------------------------------------------------------------------===//
 
@@ -51,7 +50,7 @@ llvm::Value *emitTidIntrinsic(llvm::IRBuilder<> &B, llvm::Module *M,
 
 // Emit a (possibly fused) matrix row/column index: tid[fast] when slow is
 // Unknown, otherwise tid[fast] + mult * tid[slow], where `mult` is the extent
-// of the fast axis (checked against the profile header by the recognizer).
+// of the fast axis.
 llvm::Value *emitTidIndex(llvm::IRBuilder<> &B, llvm::Module *M, TidAxis fast,
                           TidAxis slow, unsigned mult);
 

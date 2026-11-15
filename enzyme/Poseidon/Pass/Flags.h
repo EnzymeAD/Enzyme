@@ -7,11 +7,8 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// Poseidon's flags are defined in Flags.cpp, the one place a flag's name and
-// help live and the only reader of a flag; its default is the initializer of
-// its field in Core/Options.h. Every flag is spelled -poseidon-<name>, reaches
-// the pass as -mllvm -poseidon-<name>, and is supplied by poseidon-clang from
-// the -poseidon-<name> the user writes.
+// Every -poseidon-<name> flag is defined and read in Flags.cpp; its default is
+// the initializer of its field in Core/Options.h.
 //
 //===----------------------------------------------------------------------===//
 

@@ -19,12 +19,11 @@ class Module;
 
 namespace poseidon {
 
-// The analysis managers the plugin's own nested pipelines run against. They are
-// registered through the PassBuilder the surrounding pipeline was built with,
-// which is what makes another plugin's pipeline name (Enzyme's "enzyme")
-// resolvable from here; keeping them local means nothing the outer pipeline
-// cached is handed to a pass that runs out of order. The session of the module
-// they run on is registered first, so that it is the one they hand out.
+// The analysis managers the plugin's nested pipelines run against. They are
+// registered through the surrounding pipeline's PassBuilder, so that another
+// plugin's pipeline names resolve, and kept local, so that nothing the outer
+// pipeline cached reaches a pass that runs out of order. The session of the
+// module is registered first, so that it is the one they hand out.
 struct LocalAnalysisManagers {
   llvm::LoopAnalysisManager LAM;
   llvm::FunctionAnalysisManager FAM;

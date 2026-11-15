@@ -18,12 +18,11 @@
 // acknowledgment; upstream GEMMul8 can replace this runtime at link time
 // (same entry points via a shim) without changing any result.
 //
-// Exposes the host entry points the Poseidon host-module pass substitutes for
-// a raised FP64 GEMM kernel launch: row/column scaling shifts -> num_moduli
+// Host entry points for an FP64 GEMM: row/column scaling shifts -> num_moduli
 // int8 residue planes -> one strided-batched INT8 tensor-core GEMM ->
-// double-double CRT, at a solver-chosen num_moduli. The modulus table and the
-// scaling constant are shared with the compiler through OzakiII.h; the CRT
-// constants are recomputed per nm at runtime.
+// double-double CRT. The modulus table and the scaling constant are shared
+// with the compiler through OzakiII.h; the CRT constants are recomputed per nm
+// at runtime.
 //
 // Operand scaling (the published fast mode). For each row a of A and each
 // column b of B, s = ||a||_2^2 is accumulated in FP64 with every operation
@@ -50,11 +49,8 @@
 // square, row-major, leading-dim-N, no-transpose case; __poseidon_ozaki_dgemm_ex
 // handles general M x Ncols x K layout-aware shapes (rectangular arm, or the
 // square pipeline after padding). Scratch buffers (sized for the max 14
-// moduli) and the per-nm constants are cached across calls. Forward dispatch
-// only.
-//
-// num_moduli == 0 selects the native cuBLAS DGEMM path (no emulation), which
-// the solver routes to when the cost model prices it below every Ozaki rung.
+// moduli) and the per-nm constants are cached across calls. num_moduli == 0
+// selects native cuBLAS DGEMM.
 #include <cstdint>
 #include <cstdlib>
 #include <cmath>
@@ -112,8 +108,8 @@ constexpr int POZ_NRM_THREADS = 256; // contiguous vector: threads per vector
 constexpr int POZ_NRM_SPLIT_K = 1024; // strided vector: chunk K at or above
 constexpr int POZ_NRM_KCHUNK = 256;   // strided vector: chunk length
 
-// Lazily-created, process-lifetime cuBLAS handle (same caching convention as
-// the Ozaki scratch/constants); the stream is set on every dispatch.
+// Lazily created, process-lifetime cuBLAS handle; the stream is set on every
+// dispatch.
 cublasHandle_t poz_cublasHandle() {
   static cublasHandle_t h = nullptr;
   if (!h)
@@ -122,10 +118,7 @@ cublasHandle_t poz_cublasHandle() {
 }
 
 // n mod d for 32-bit n, using Lemire's fastmod magic M = 2^64/d + 1: two
-// multiplies instead of the ~70-instruction integer-division sequence NVCC
-// emits for a runtime divisor. (A double-reciprocal quotient would be shorter
-// still, but FP64 is exactly the pipeline these GPUs deprioritize, and it
-// measured slower than the division it replaced.)
+// multiplies instead of an integer division by a runtime divisor.
 __device__ __forceinline__ unsigned poz_fastmod(unsigned n,
                                                 unsigned long long M,
                                                 unsigned d) {
@@ -292,7 +285,7 @@ void poz_shifts(const double *src, size_t ld, int R, int K, bool contiguous,
 }
 
 // Scaled operand entry: trunc(2^sft * x), exact (scalbn only moves the
-// exponent and |result| < 2^55). scalbn(x, sft), NOT x * scalbn(1.0, sft): sft
+// exponent and |result| < 2^55). scalbn(x, sft), not x * scalbn(1.0, sft): sft
 // can exceed 1023 for a row whose norm is tiny, where scalbn(1.0, sft) is inf.
 __device__ __forceinline__ long poz_quant(double x, int sft) {
   return __double2ll_rz(scalbn(x, sft));
@@ -300,7 +293,7 @@ __device__ __forceinline__ long poz_quant(double x, int sft) {
 
 // Residue fill for the batched TN INT8 GEMM. A residues keep the row-major
 // (row, k) layout, so their column-major view with leading dimension Np is A^T
-// and CUBLAS_OP_N reproduces it. B residues are written TRANSPOSED, at
+// and CUBLAS_OP_N reproduces it. B residues are written transposed, at
 // (k_out * Np + k_contract), so their column-major view is B itself and
 // CUBLAS_OP_T reproduces B^T. Ozaki's operands are square after padding, so the
 // pad region {r >= N or k >= N} is closed under transposition: zeroing offA and
@@ -509,9 +502,9 @@ struct PozScratch {
   short *sA = nullptr, *sB = nullptr;
   // Strided-vector partial sums of squares: Np*ceil(Np/256) doubles.
   double *part = nullptr;
-  // Padded square F64 operand/result buffers for the non-square (_ex) path:
-  // a non-square M×Ncols×K source is repacked into As/Bs (S×S, S=pad of
-  // max(M,Ncols,K)) so the square pipeline can run, then Cs is cropped back.
+  // Padded square F64 operand/result buffers for the square arm of _ex: an
+  // M x Ncols x K source is repacked into As/Bs (S x S, S = pad of
+  // max(M,Ncols,K)) and the result cropped back out of Cs.
   double *As = nullptr, *Bs = nullptr, *Cs = nullptr;
 };
 PozScratch g_scratch;
@@ -519,10 +512,8 @@ PozConsts g_consts;
 int g_uploadedNm = 0;
 
 // INT8 tensor-core GEMM leading dimensions must be multiples of 4; the residue
-// planes are therefore held at Np = roundup(N, 16), which also keeps every
-// per-modulus plane base 16-byte aligned. For the sizes the solver dispatches
-// (multiples of 16 in ozp, and the _ex path's own S = roundup(.,16)) Np == N,
-// so the padding costs nothing.
+// planes are held at Np = roundup(N, 16), which also keeps every per-modulus
+// plane base 16-byte aligned.
 static inline int pozPad(int N) { return ((N + 15) / 16) * 16; }
 static inline size_t pozChunks(int K) {
   return (size_t)((K + POZ_NRM_KCHUNK - 1) / POZ_NRM_KCHUNK);
@@ -567,7 +558,7 @@ void poz_uploadConsts(int nm) {
   g_uploadedNm = nm;
 }
 
-// Repack a rows×cols (layout-aware) source into the top-left of an S×S
+// Repack a rows x cols (layout-aware) source into the top-left of an S x S
 // row-major buffer: dst[r*S+c] = src[r,c]. The padded region (r>=rows ||
 // c>=cols) is left as the caller's prior memset (0). colMajor selects the
 // source stride convention (transposed vs row-major).
@@ -581,8 +572,9 @@ __global__ void poz_pack(double *dst, const double *src, int rows, int cols,
       colMajor ? src[(size_t)c * ld + r] : src[(size_t)r * ld + c];
 }
 
-// Crop the M×Ncols top-left of an S×S row-major result back into a layout-aware
-// destination, applying C = alpha*Cs + beta*C only over the useful region.
+// Crop the M x Ncols top-left of an S x S row-major result back into a
+// layout-aware destination, applying C = alpha*Cs + beta*C only over the
+// useful region.
 __global__ void poz_crop(double *C, const double *Cs, int M, int Ncols, int ldc,
                          int cColMajor, int S, double alpha, double beta) {
   int i = blockIdx.y * blockDim.y + threadIdx.y;
@@ -620,8 +612,8 @@ static void poz_run_square(double *C, const double *A, const double *B, int N,
   poz_fillRes<<<gTile, tile, 0, stream>>>(A, B, g_scratch.sA, g_scratch.sB,
                                           g_scratch.Ar, g_scratch.Br, N, Np);
   // One strided-batched INT8 tensor-core GEMM over all num_moduli residue
-  // planes. Column-major C^T(Np×Np) = op(Br)^T · op(Ar) = B^T·A^T, so the int32
-  // result read row-major is the row-major product the CRT pass expects.
+  // planes. Column-major C^T(Np x Np) = op(Br)^T * op(Ar) = B^T*A^T, so the
+  // int32 result read row-major is the row-major product.
   cublasHandle_t h = poz_cublasHandle();
   POZ_CB(cublasSetStream(h, stream));
   const int32_t i_one = 1, i_zero = 0;
@@ -636,33 +628,26 @@ static void poz_run_square(double *C, const double *A, const double *B, int N,
 
 // Rectangular arm. The square pipeline pads every operand to
 // S = roundup(max(M,Ncols,K),16), so a skinny product pays
-// padWaste = S^3/(M*Ncols*K) times the useful work and the elementwise passes
-// over the padded plane dominate. This arm sizes every buffer to the real
-// M x K / K x Ncols / M x Ncols extents (rounded up by at most 15 columns for
-// the INT8 leading-dimension requirement) and repacks no operand.
+// padWaste = S^3/(M*Ncols*K) times the useful work. This arm sizes every
+// buffer to the real extents (rounded up to 16 for the INT8 leading dimension)
+// and repacks no operand.
 //
-// Residue layout: both operands are quantized into the same form, per modulus
-// a row-major (R x Kp) int8 plane whose row index is the operand's outer index
-// and whose column index is the contraction index k,
-//     A: R = M,     outer = the output row m
-//     B: R = Ncols, outer = the output column c
-// Read column-major with leading dimension Kp, A's plane is A^T (K x M) and
-// B's plane is B (K x Ncols), the TN form the batched INT8 entry needs, so the
-// same cublasGemmStridedBatchedEx(OP_T, OP_N) the square path issues produces
-// the column-major C^T(Ncols x M), i.e. row-major C with row stride Ncp. The
-// scaling shift is indexed by the destination row for both operands, so one
-// shift / fill path serves both; the only per-operand difference is whether
-// the source's contiguous axis is k ("direct", a contiguous vector) or the
-// destination row ("transposed", a strided vector), which is aColMajor for A
-// and !bColMajor for B. Shifts depend only on the vector and its layout, so
-// this arm gives the square arm's bits on an exactly square dispatch.
+// Both operands are quantized, per modulus, into a row-major (R x Kp) int8
+// plane whose row is the operand's outer index (A: the output row, B: the
+// output column) and whose column is the contraction index k. Read
+// column-major with leading dimension Kp these are A^T and B, the TN form of
+// the square path's batched GEMM, which yields row-major C with row stride
+// Ncp. Per operand only the source layout differs: contiguous in k ("direct")
+// or in the outer index ("transposed", aColMajor for A and !bColMajor for B).
+// Shifts depend only on the vector and its layout, so this arm gives the
+// square arm's bits on an exactly square dispatch.
 
 // Residue fill into the (Rp x Kp) planes. `transposed` selects the source
 // addressing:
 //   direct     (transposed==0): src(r,k) = src[r*ld + k]   (contiguous in k)
 //   transposed (transposed==1): src(r,k) = src[k*ld + r]   (contiguous in r)
 // In the transposed case the scaled integers are staged in shared and written
-// back with the tile transposed, so BOTH the source read and the int8 store
+// back with the tile transposed, so both the source read and the int8 store
 // stay coalesced. Every destination element with r >= R or k >= K is written
 // as an explicit zero: the k pad is inside the contraction range the batched
 // GEMM is issued over, so it must not carry garbage, and the r pad keeps the
@@ -762,7 +747,7 @@ __global__ void poz_crtRect(const int32_t *Cr, const short *sftA,
     return;
   }
   // Transposed write-out: stage (row, col) in shared, then re-linearize the
-  // block so a WARP walks 32 consecutive rows of one column. tid&31 is the row,
+  // block so a warp walks 32 consecutive rows of one column. tid&31 is the row,
   // so the 32 lanes of a warp write 32 consecutive doubles of C and read C back
   // (beta != 0) the same way.
 #pragma unroll
@@ -834,13 +819,9 @@ int poz_pathMode() {
   }
   return g_pathMode;
 }
-// Threshold on padWaste = S^3/(M*Ncols*K). 1.05 is "square up to the 16-column
-// alignment rounding": an exactly square dispatch has padWaste 1.0 and the
-// worst a square shape rounds up to is (S/N)^3 <= 1.05 for N >= 320, so every
-// genuinely square _ex call stays on the square arm. The rectangular arm is
-// faster even at padWaste 1.0 (it skips the poz_pack / poz_crop FP64
-// repacks), so the threshold buys conservatism, not speed;
-// POSEIDON_OZAKI_RECT_MIN_WASTE=1 recovers that.
+// Threshold on padWaste = S^3/(M*Ncols*K). The 16-column alignment rounds a
+// square shape up to at most (S/N)^3 <= 1.05 for N >= 320, so every square _ex
+// call stays on the square arm.
 static double poz_rectMinWaste() {
   static double v = poz_envDouble("POSEIDON_OZAKI_RECT_MIN_WASTE", 1.05);
   return v;
@@ -850,12 +831,10 @@ static size_t poz_rectCapBytes() {
   return v;
 }
 
-// Internal column chunking: the rectangular arm's cost is linear in the column
-// count, so the only reason to split is the residue scratch, POZ_MAXNM*(Kp +
-// 4*Mp) bytes per column plus the shift and its partial sums. Chunking is
-// numerically inert (A's shift is a per-row property of the whole operand and
-// B's a per-column property of one column, so every chunking returns the same
-// bits), which makes the split point a pure memory/launch-overhead trade.
+// Column chunking bounds the residue scratch, POZ_MAXNM*(Kp + 4*Mp) bytes per
+// column plus the shift and its partial sums. It is numerically inert: A's
+// shift is a per-row property of the whole operand and B's a per-column
+// property of one column, so every chunking returns the same bits.
 long g_rectChunk = -1; // <0 = not yet read from the environment
 static int poz_rectChunk(int Mp, int Kp, int Ncols) {
   if (g_rectChunk < 0)
@@ -915,8 +894,8 @@ static void poz_run_rect(double *C, const double *A, const double *B, int M,
                          int aColMajor, int bColMajor, int cColMajor,
                          double alpha, double beta, cudaStream_t stream,
                          int num_moduli) {
-  // s32 residue-GEMM accumulator: |Σ_k r_a·r_b| <= K·128·128 must stay under
-  // 2^31 (same bound the square path enforces, on the REAL K here).
+  // s32 residue-GEMM accumulator: |sum_k r_a*r_b| <= K*128*128 must stay under
+  // 2^31, here on the unpadded K.
   if (K >= 131072) {
     printf("poseidon_ozaki_rt: FATAL K=%d >= 131072 — the s32 residue-GEMM "
            "accumulator would overflow; needs an intermediate reduction.\n",
@@ -955,7 +934,7 @@ static void poz_run_rect(double *C, const double *A, const double *B, int M,
                         : dim3((Kp + 31) / 32, (ncp + 31) / 32);
     poz_fillRect<<<gB, tile, 0, stream>>>(Bc, g_rect.sB, g_rect.Br, nc, K, ldb,
                                           trB, ncp, Kp);
-    // Column-major C^T(ncp x Mp) = op_T(Br) · op_N(Ar) = B^T·A^T, so the int32
+    // Column-major C^T(ncp x Mp) = op_T(Br) * op_N(Ar) = B^T*A^T, so the int32
     // result read row-major with row stride ncp is the row-major product.
     POZ_CB(cublasGemmStridedBatchedEx(
         h, CUBLAS_OP_T, CUBLAS_OP_N, ncp, Mp, Kp, &i_one, g_rect.Br, CUDA_R_8I,
@@ -968,16 +947,12 @@ static void poz_run_rect(double *C, const double *A, const double *B, int M,
   }
 }
 
-// General layout-aware native DGEMM: logical C(M×Ncols) = alpha*(A@B) + beta*C
-// with A(M×K), B(K×Ncols). Each operand is either column-major (X[c*ld + r])
-// or row-major (X[r*ld + c]), the convention poz_pack/poz_crop use.
-// cuBLAS is column-major, and a row-major rows×cols matrix with row stride ld
-// is the column-major cols×rows TRANSPOSE with the same ld, so every layout
-// combination maps to one cublasDgemm:
-//   - column-major C: C = op(A)·op(B), op = N for col-major storage, T for
-//     row-major storage;
-//   - row-major C: compute the column-major C^T (Ncols×M) = op(B)·op(A) with
-//     the ops flipped (T for col-major storage, N for row-major storage).
+// General layout-aware native DGEMM: C(M x Ncols) = alpha*(A@B) + beta*C with
+// A(M x K), B(K x Ncols), each column-major (X[c*ld + r]) or row-major
+// (X[r*ld + c]). A row-major rows x cols matrix with row stride ld is the
+// column-major cols x rows transpose with the same ld, so every layout
+// combination maps to one cublasDgemm: for row-major C, the column-major
+// C^T = op(B)*op(A) with the ops flipped.
 static void poz_native_dgemm(double *C, const double *A, const double *B, int M,
                              int Ncols, int K, int lda, int ldb, int ldc,
                              int aColMajor, int bColMajor, int cColMajor,
@@ -997,9 +972,8 @@ static void poz_native_dgemm(double *C, const double *A, const double *B, int M,
   }
 }
 
-// Normalize num_moduli: 0 = native DGEMM; out of range (< 0 or > 14) = 14,
-// the full-precision rung; 1..kOzakiIIMinModuli-1 has no published scaling
-// constant and is refused.
+// Normalize num_moduli: 0 = native DGEMM; out of range (< 0 or > 14) = 14;
+// 1..kOzakiIIMinModuli-1 has no published scaling constant and is refused.
 int poz_checkNm(int num_moduli) {
   if (num_moduli < 0 || num_moduli > POZ_MAXNM)
     return POZ_MAXNM;
@@ -1015,8 +989,7 @@ int poz_checkNm(int num_moduli) {
 
 // Select the _ex shape arm in-process: 0 = auto (shape-driven, default),
 // 1 = force rectangular, 2 = force square-padded. Overrides
-// POSEIDON_OZAKI_PATH. Harness/diagnostic entry: the emission side never calls
-// it, and "auto" is what any real dispatch runs.
+// POSEIDON_OZAKI_PATH. A test and diagnostic entry.
 extern "C" void __poseidon_ozaki_set_path(int mode) {
   if (mode < 0 || mode > 2) {
     printf("poseidon_ozaki_rt: FATAL __poseidon_ozaki_set_path(%d): expected 0 "
@@ -1028,7 +1001,7 @@ extern "C" void __poseidon_ozaki_set_path(int mode) {
 }
 
 // Override the rectangular arm's internal column chunk (0 = size it from the
-// scratch budget, which is what a real dispatch does). Harness entry.
+// scratch budget). A test and diagnostic entry.
 extern "C" void __poseidon_ozaki_set_rect_chunk(int cols) {
   if (cols < 0) {
     printf("poseidon_ozaki_rt: FATAL __poseidon_ozaki_set_rect_chunk(%d): "
@@ -1056,7 +1029,7 @@ extern "C" void __poseidon_ozaki_dgemm(double *C, const double *A,
     return;
   }
   if (num_moduli == 0) {
-    // Row-major square NN GEMM == column-major C^T = alpha*B^T·A^T + beta*C^T.
+    // Row-major square NN GEMM == column-major C^T = alpha*B^T*A^T + beta*C^T.
     poz_native_dgemm(C, A, B, N, N, N, N, N, N, /*aColMajor=*/0,
                      /*bColMajor=*/0, /*cColMajor=*/0, alpha, beta, stream);
     return;
@@ -1064,16 +1037,12 @@ extern "C" void __poseidon_ozaki_dgemm(double *C, const double *A,
   poz_run_square(C, A, B, N, alpha, beta, stream, num_moduli);
 }
 
-// General M×Ncols×K entry. Two arms, selected internally by shape and never by
-// the caller (the emission side's argument list is fixed):
-//   RECTANGULAR (padWaste >= POSEIDON_OZAKI_RECT_MIN_WASTE): buffers sized
-//     M×K / K×Ncols / M×Ncols, columns chunked inside the runtime, A quantized
-//     once per dispatch. See poz_run_rect.
-//   SQUARE (square-ish shapes, and forced by POSEIDON_OZAKI_PATH=square):
-//     zero-pad to S=roundup(max(M,Ncols,K),16), repack A/B (layout-aware) into
-//     square row-major scratch, run the square pipeline, crop back. The padding
-//     waste (S^3 vs M·Ncols·K) is what the cost model charges for this arm.
-// {a,b,c}ColMajor select each operand's stride convention in both arms.
+// General M x Ncols x K entry. The arm is selected by shape, never by the
+// caller: rectangular (poz_run_rect) when padWaste >=
+// POSEIDON_OZAKI_RECT_MIN_WASTE, else square: zero-pad to
+// S = roundup(max(M,Ncols,K),16), repack A and B into square row-major
+// scratch, run the square pipeline and crop back. POSEIDON_OZAKI_PATH forces
+// either. {a,b,c}ColMajor select each operand's stride convention.
 extern "C" void __poseidon_ozaki_dgemm_ex(double *C, const double *A,
                                           const double *B, int M, int Ncols,
                                           int K, int lda, int ldb, int ldc,

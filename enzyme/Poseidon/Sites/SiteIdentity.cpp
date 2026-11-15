@@ -11,8 +11,7 @@
 
 #include <cstdlib>
 
-// The one filename rule, shared verbatim with both FP profiler runtimes that
-// write what this file reads.
+// The profile file name rule, shared with both FP profiler runtimes.
 #include "FPProfileName.h"
 
 using namespace llvm;
@@ -27,12 +26,10 @@ const Function *siteOriginOf(const Session &S, const Function &clone) {
   return it == S.SiteOrigins.end() ? nullptr : it->second;
 }
 
-// Keyed on the SOURCE body, not on the per-call clone: profileSite shares one
+// Keyed on the source body, not on the per-call clone: profiling shares one
 // instrumented clone between a body's markers, so the run writes one record
 // per body, while here a body reached from several marker calls is cloned once
-// per call and LLVM uniques the second and later clone names. dFEM inlines one
-// integrator's marker into every registered Q1D specialization, so a body with
-// many marker calls is the normal case.
+// per call and LLVM uniques the second and later clone names.
 std::string siteProfileStem(const Session &S, const Function &clone) {
   auto it = S.SiteOrigins.find(&clone);
   if (it != S.SiteOrigins.end() && it->second)

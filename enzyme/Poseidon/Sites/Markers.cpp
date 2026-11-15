@@ -47,10 +47,9 @@ Function *calleeOf(CallInst *CI) {
   return dyn_cast<Function>(callee);
 }
 
-// The same walk without the diagnostics, for the scans that only need to know
-// which body a marker names (a malformed marker is reported once, by the
-// handler that tries to lower it). An empty body is returned as found; only
-// markerTarget refuses it.
+// The body a marker names, or null, without diagnostics: a malformed marker
+// is reported once, by the handler that lowers it. An empty body is returned
+// as found; only markerTarget refuses it.
 Function *markerTargetOrNull(CallInst *CI) {
   Value *fn = CI->getArgOperand(CI->hasStructRetAttr() ? 1 : 0);
   while (!isa<Function>(fn)) {
@@ -89,24 +88,19 @@ Function *markerTarget(CallInst *CI) {
   return F;
 }
 
-// --------------------------------------------------------------------------
-// Deferred sites: a marked body that is still an __enzyme_* request
-// --------------------------------------------------------------------------
+// Deferred sites: a marked body that is still an __enzyme_* request.
 
 namespace {
 
 // A marked body whose content is a derivative request holds no arithmetic
 // until Enzyme has lowered it, so at OptimizerEarly there is nothing to
-// profile and nothing to rewrite. Such a site is DEFERRED: its marker call is
-// left in place and the body is marked, and the late run
-// (registerOptimizerLastEPCallback, after Enzyme) handles it.
+// profile and nothing to rewrite. Such a site is deferred: its marker call is
+// left in place and the body is marked for the late run, after Enzyme.
 constexpr StringLiteral kSiteDeferred = "poseidon-deferred";
 
-// The Enzyme requests whose result IS the body's content: until one of them is
-// lowered the body holds no arithmetic. Spelled as substrings and matched with
-// contains() because a C++ frontend mangles the request's template
-// instantiation, which is how Enzyme itself recognizes them
-// (Enzyme/Enzyme.cpp:2419-2468).
+// The Enzyme requests whose result is the body's content. Matched as
+// substrings, as Enzyme matches them, because a C++ frontend mangles the
+// request's template instantiation.
 bool isEnzymeRequestName(StringRef name) {
   static constexpr StringLiteral kRequests[] = {
       "__enzyme_autodiff",   "__enzyme_fwddiff",  "__enzyme_fwdsplit",
@@ -119,8 +113,8 @@ bool isEnzymeRequestName(StringRef name) {
   return false;
 }
 
-// Enzyme names what it generates after the function it differentiated, which
-// is the rule enzymeAlreadyRan below already relies on.
+// Enzyme names what it generates after the function it differentiated, with
+// one of these prefixes.
 bool isEnzymeGeneratedName(StringRef name) {
   return name.starts_with("fwddiffe") || name.starts_with("diffe") ||
          name.starts_with("augmented_") || name.starts_with("fwdsplit") ||
@@ -161,8 +155,8 @@ unsigned foldEnzymeGenerated(Function &body) {
 // Enzyme in a plugin-off build, so the always-inline functions Enzyme's code
 // calls (libdevice's __nv_*) stay calls there; in the copy those calls are
 // noinline, so that the late run's always-inliners leave them too and a
-// refused site is not optimized further than the code as written (the dFEM
-// JVP's primal and tangent sqrt would merge into one).
+// refused site is not optimized further than the code as written (a primal
+// and a tangent sqrt would merge into one).
 Function *asLeftByPipeline(Function &body,
                            DenseMap<Function *, Function *> &copies) {
   if (Function *copy = copies.lookup(&body))

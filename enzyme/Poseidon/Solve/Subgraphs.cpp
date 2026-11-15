@@ -440,8 +440,7 @@ void shapeSubgraphs(
                  << " subgraphs in " << F.getName() << "\n";
   }
 
-  // After splitting so a merged unit is never re-split, and before the
-  // frequency map below is built from the merged unit's instructions.
+  // After splitting, so that a merged unit is never split again.
   if (O.Candidates.MergeSharedStaging) {
     mergeSharedStagingSubgraphs(O, subgraphs, F);
     if (O.Diagnostics.Print)

@@ -1,4 +1,4 @@
-//=- Expansion.h - Double-single arithmetic for Poseidon ------------------=//
+//=- Expansion.h - floating-point expansions over FP32 ----------------------=//
 //
 // Part of the Poseidon Project, under the Apache License v2.0 with LLVM
 // Exceptions.
@@ -28,8 +28,7 @@ struct DSValue {
 };
 
 // The limbs the last two-component applyExpansion produced, and those every
-// wider one produced since resetExpLimbs, for getCompCost to re-root its cost
-// walk on.
+// wider one produced since resetExpLimbs.
 struct ExpansionState {
   llvm::SmallVector<llvm::Value *, 32> LastExpansionLimbs;
   llvm::SmallVector<llvm::Value *, 32> LastExpLimbs;
@@ -95,9 +94,8 @@ ExpansionValue emitToExpansion(llvm::IRBuilder<> &B, llvm::Value *fpval,
 llvm::Value *emitExpansionToFP(llvm::IRBuilder<> &B, const ExpansionValue &v,
                                llvm::Type *targetTy);
 
-// Materialize as an n-component expansion (n >= 3), erasing and reporting as
-// the two-component applyExpansion does, but never touching the df64 staging
-// machinery.
+// Materialize as an n-component expansion (n >= 3), as the two-component
+// applyExpansion does, without the staging narrowing.
 void applyExpansion(
     Session &S, unsigned n, llvm::ArrayRef<llvm::Instruction *> instsToChange,
     const llvm::SmallPtrSetImpl<llvm::Instruction *> &allChanged,
@@ -109,14 +107,13 @@ bool foldDSPairRoundtrip(llvm::Function &F,
                          llvm::SmallVectorImpl<llvm::Value *> *foldedLimbs,
                          bool print);
 
-// Drain the limbs the last applyExpansion produced, so getCompCost can re-root
-// its cost walk on them.
+// Moves the limbs the last two-component applyExpansion produced into `out`.
 void takeLastExpansionLimbs(Session &S,
                             llvm::SmallVectorImpl<llvm::Value *> &out);
 
-// Drain the limbs the last applyExpansion produced, so getCompCost can re-root
-// its cost walk on them; separate from takeLastExpansionLimbs because one
-// candidate can apply both kinds of change.
+// Moves the limbs the wider applyExpansions produced since resetExpLimbs into
+// `out`; kept apart from takeLastExpansionLimbs because one candidate can apply
+// both kinds of change.
 void takeLastExpLimbs(Session &S, llvm::SmallVectorImpl<llvm::Value *> &out);
 // Start a fresh limb record; one candidate may apply several expansion changes.
 void resetExpLimbs(Session &S);

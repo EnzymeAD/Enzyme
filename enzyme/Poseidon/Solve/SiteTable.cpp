@@ -208,8 +208,6 @@ bool readSiteTable(const Options &O, StringRef fnName, SiteTable &table,
       return std::nullopt;
     return c;
   };
-  // Steps name their candidates by key: pricing drops candidates and a hit
-  // prices nothing, so a solved table's positions are not the replay's.
   auto bind = [&](const StoredStep &s) -> std::optional<SolutionStep> {
     for (SiteUnit *unit : units) {
       if (unit->info().tag != s.itemType || unit->indexInKind() != s.itemIndex)
@@ -301,9 +299,8 @@ void writeSiteTable(const Options &O, StringRef fnName, const CacheKey &key,
     entryObj["baselineAccCost"] = baseline;
   entryObj["profiledCost"] = profiledCost;
 
-  // Read-modify-write: the file holds one table per function, so a later site
-  // in the same compilation unit must extend it rather than clobber the
-  // earlier sites' tables. A file that does not parse is replaced.
+  // The file holds one table per function, so a later site of the same
+  // compilation extends it. A file that does not parse is replaced.
   const std::string path = tablePath(O);
   json::Object functions;
   if (auto fileOrErr = MemoryBuffer::getFile(path)) {

@@ -27,8 +27,6 @@
 #include <utility>
 #include <vector>
 
-// The one filename rule, shared verbatim with the host runtime and with the
-// pass that reads what this file writes.
 #include "FPProfileName.h"
 #include "FPProfilerCUDA.h"
 #include "poseidon/poseidon.h"
@@ -36,9 +34,7 @@
 static std::string profileDir = POSEIDON_DEFAULT_PROFILE_DIR;
 static GPUProfileSlot *g_devSlots = nullptr;
 static size_t g_slotCount = 0;
-// Host-side handles on the device-allocated registry (the device side reaches
-// them through its module's PoseidonCUDAProfileTable; the host needs the raw
-// pointers to read them back at exit).
+// Host-side handles on the device-allocated registry, read back at exit.
 static int g_maxFuncs = 0;
 static const char **g_devFuncReg = nullptr;
 static char *g_devFuncNames = nullptr;
@@ -48,22 +44,19 @@ static unsigned long long *g_devLaunchByFunc = nullptr;
 static char *g_devStaticByFunc = nullptr;
 
 // What every profiled device module's table holds, and the host shadows of
-// those tables: one per translation unit, registered with the CUDA runtime by
-// that unit's own module constructor (the pass emits both), so each names the
-// copy in its own device module.
+// those tables: one per translation unit, registered by that unit's module
+// constructor, so each names the copy in its own device module.
 static PoseidonCUDAProfileTable g_table;
 static std::vector<const void *> &poseidonModuleTables() {
   static auto *v = new std::vector<const void *>();
   return *v;
 }
 
-// A device-side profiler abort (__trap) poisons the CUDA context but does not
-// by itself fail the process: the host would return 0 with a truncated
-// profile. Both atexit writers therefore check the context first and take the
-// process down with a nonzero status. Every CUDA call in the registration path
-// is checked: an ignored failure leaves a sticky error on the context that the
-// next component to call cudaGetLastError() reports as its own, on an
-// unrelated kernel launch in another translation unit.
+// A device-side profiler abort (__trap) poisons the CUDA context without
+// failing the process, so both atexit writers check the context first and exit
+// nonzero. Every CUDA call in the registration path is checked: an ignored
+// failure leaves a sticky error on the context that the next caller of
+// cudaGetLastError() reports as its own.
 #define POSEIDON_CUDA_OK(call)                                                 \
   do {                                                                         \
     cudaError_t _e = (call);                                                   \
@@ -138,9 +131,8 @@ static void poseidonProfileOpenFatal(const std::string &path,
   _exit(1);
 }
 
-// The host profiler (FPProfiler.cpp) writes a profile with no records for every
-// site registered with it that nothing wrote, kernels included; told here which
-// ones this writer wrote. Weak: a program without it registers no kernel.
+// Tells the host profiler which kernels this writer wrote a profile for. Weak:
+// a program without the host profiler registers no kernel.
 extern "C" void poseidonProfileWritten(const char *funcName)
     __attribute__((weak));
 
@@ -278,8 +270,7 @@ static void writeAllCUDAProfiles() {
     out << "MaxGridDims = " << h_gridByFunc[fi * 3 + 0] << " "
         << h_gridByFunc[fi * 3 + 1] << " " << h_gridByFunc[fi * 3 + 2] << "\n";
     out << "LaunchCount = " << h_launchByFunc[fi] << "\n";
-    // Compile-time static data, already formatted as newline-terminated
-    // header lines by the pass that embedded it.
+    // Compile-time static data, already newline-terminated header lines.
     out << (h_static + (size_t)fi * POSEIDON_PROFILE_STATIC_MAXLEN);
 
     for (size_t i = 0; i < g_slotCount; i++) {
@@ -336,14 +327,6 @@ static size_t readPositiveEnv(const char *name, size_t dflt) {
   return (size_t)parsed;
 }
 
-// The CUDA half of registration cannot run from a static constructor: it
-// writes the device-side __constant__ handles with cudaMemcpyToSymbol, and in
-// a multi-translation-unit binary a dynamic initializer can run before the
-// device module carrying those symbols is registered ("invalid device symbol",
-// reported later as a sticky context error by an unrelated component). So the
-// static initializer does only environment parsing and atexit registration,
-// and the CUDA work happens here, called from the top of main by the compiler
-// (injectHostProfilerInit). Idempotent and safe to call by hand as well.
 static bool g_cudaInitDone = false;
 static size_t g_heapBytes = 0;
 
@@ -409,8 +392,7 @@ static void allocateTables(size_t nfuncs, size_t count) {
   g_table.slots = g_devSlots;
   g_table.slotCount = count;
 
-  // Zero IS the initial state of every field (see doubleToOrderedUint64Min),
-  // so no init kernel is launched from this static initializer.
+  // Zero is the initial state of every field (see doubleToOrderedUint64Min).
   POSEIDON_CUDA_OK(cudaMemset(g_devSlots, 0, bytes));
 }
 
@@ -423,6 +405,10 @@ extern "C" void __poseidon_profile_register_module(const void *table) {
     poseidonBindModule(table);
 }
 
+// The CUDA half of registration, called from the top of main. It cannot run
+// from a static constructor: in a multi-translation-unit binary a dynamic
+// initializer can run before the device module carrying the __constant__
+// handles is registered. Idempotent.
 extern "C" void __poseidon_profile_init_cuda() {
   if (g_cudaInitDone)
     return;
@@ -456,8 +442,6 @@ extern "C" void __poseidon_profile_init_cuda() {
   if (!g_table.metricOnly)
     allocateTables(nfuncs, count);
 
-  // Condition-number probe (see poseidonProbePerturbCUDA): one site id per run;
-  // eps == 0 (default) disables the hook.
   {
     int probeSite = -1;
     double probeEps = 0.0;
@@ -495,20 +479,17 @@ extern "C" void __poseidon_profile_init_cuda() {
   for (const void *table : poseidonModuleTables())
     poseidonBindModule(table);
   cudaDeviceSynchronize();
-  // Registered HERE, not from the static constructor: atexit handlers run in
-  // reverse registration order, and the CUDA runtime registers its own teardown
-  // when it is first initialized -- which is the cudaMalloc above. Registering
-  // after that guarantees this dump runs BEFORE the driver shuts down.
+  // atexit handlers run in reverse registration order, and the CUDA runtime
+  // registers its own teardown when it is first initialized above, so this
+  // dump runs before the driver shuts down.
   std::atexit(writeAllCUDAProfiles);
 }
 
 // ---------------------------------------------------------------------------
 // Profile-generation launches
 //
-// A kernel annotated with POSEIDON_OPTIMIZE is compiled into its own reverse
-// pass, which takes one shadow buffer per pointer argument. The application
-// never sees them: the compiler rewrites the launch stub into a call of the
-// helper below, which sizes, allocates and seeds them.
+// A profiled kernel's reverse pass takes one shadow buffer per pointer
+// argument; __poseidon_launch_profiled sizes, allocates and seeds them.
 // ---------------------------------------------------------------------------
 
 __global__ void poseidonSeedShadowF64(double *p, size_t n) {
@@ -522,9 +503,8 @@ __global__ void poseidonSeedShadowF32(float *p, size_t n) {
     p[i] = 1.0f;
 }
 
-// The one seed rule. A zero adjoint propagates zero through the whole reverse
-// pass, so every recorded gradient would be zero and every candidate's accuracy
-// cost degenerate; the seed is one on the site's outputs.
+// A zero adjoint propagates zero through the whole reverse pass, so the seed is
+// one on the site's outputs.
 static void poseidonSeedShadow(void *p, size_t bytes, int width) {
   if (width == 8) {
     size_t n = bytes / sizeof(double);
@@ -605,14 +585,11 @@ struct PoseidonShadow {
 };
 } // namespace
 
-// Keyed by the base address of the device allocation, not by (site, argument):
-// the adjoint of a buffer is a property of the buffer, so every site and every
-// launch that passes a pointer into an allocation must see the same shadow, at
-// the same offset. Keying by argument gives a buffer that one site writes and
-// another reads two unrelated adjoints and breaks the chain between them. The
-// shadow is created zeroed on first sight and then accumulates for the rest of
-// the run: a per-launch reseed would report a different gradient for a site
-// that reads its own output.
+// Keyed by the base address of the device allocation: the adjoint is a
+// property of the buffer, so every site and launch that passes a pointer into
+// it must see the same shadow at the same offset. The shadow starts zeroed and
+// accumulates for the rest of the run: a per-launch reseed would report a
+// different gradient for a site that reads its own output.
 static std::map<void *, PoseidonShadow> &poseidonShadows() {
   // Never destroyed: the atexit handler that frees the buffers is registered
   // before the map is first touched, so it runs after the map's own destructor
@@ -699,8 +676,8 @@ __poseidon_launch_profiled(const void *func, int site, const unsigned *grid,
   }
 }
 
-// Static-constructor half: nothing to do; the symbol exists so that a
-// translation unit referencing it pulls this runtime in.
+// The symbol exists so that a translation unit referencing it pulls this
+// runtime in.
 static int RegisterFPProfileCUDARuntime() { return 0; }
 
 extern "C" {

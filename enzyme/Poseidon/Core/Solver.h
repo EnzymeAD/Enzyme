@@ -7,19 +7,12 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// Per optimization unit, a technique proposes candidates. A candidate has a
-// cost (cost model) and an error (accuracy model), both as changes against
-// the code as written; the unit has a footprint, the instructions its
-// candidates edit or consume. A strategy takes at most one candidate per
-// unit. Two units that rewrite one output, or whose footprints overlap while
-// one of them consumes its footprint, are not taken together. The DP keeps,
-// per cost, the strategy of least error.
-//
-// One FP subgraph contributes one unit per algebraic search and one precision
-// unit; they compose on the subgraph, the precision unit priced over what the
-// algebraic units leave. A matrix product is one unit.
-//
-// The solver asks units about each other; it never sees their instructions.
+// Optimization units and the DP over them. A unit offers candidates, each with
+// a cost and an error change against the code as written, and has a
+// footprint, the instructions its candidates edit or consume. A strategy takes
+// at most one candidate per unit; the DP keeps, per cost, the strategy of
+// least error. The solver asks units about each other and never sees their
+// instructions.
 //
 //===----------------------------------------------------------------------===//
 
@@ -143,8 +136,6 @@ private:
   unsigned kindId;
 };
 
-// ---- The rules ------------------------------------------------------------
-
 // Whether `a` and `b` cannot be in one strategy: they rewrite one output, or
 // their footprints overlap and one of them consumes its footprint.
 bool excludes(const OptimizationUnit &a, const OptimizationUnit &b);
@@ -168,9 +159,7 @@ bool admit(llvm::ArrayRef<SolutionStep> prior, const OptimizationUnit &unit,
            const CostScale &scale, llvm::SmallVectorImpl<SolutionStep> &kept,
            DPCost &cost, double &error);
 
-// ---- The order units enter the DP -----------------------------------------
-//
-// `sites` lists each site's units in site order.
+// In both orders below, `sites` lists each site's units in site order.
 
 // The exact DP's order. Per site: each unit priced against earlier choices,
 // right after the units it reads that are not yet placed; then the site's
@@ -187,9 +176,8 @@ exactOrder(llvm::ArrayRef<llvm::ArrayRef<OptimizationUnit *>> sites);
 llvm::SmallVector<OptimizationUnit *>
 prunedOrder(llvm::ArrayRef<llvm::ArrayRef<OptimizationUnit *>> sites);
 
-// ---- The frontier -----------------------------------------------------------
-//
-// On entry `cost` and `sol` hold the empty strategy, at cost 0 and error 0.
+// For both solvers below, `cost` and `sol` hold the empty strategy on entry, at
+// cost 0 and error 0.
 
 // The frontier of every footprint-compatible strategy over `units`, taken in
 // that order.

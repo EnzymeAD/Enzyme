@@ -311,10 +311,10 @@ private:
   F32 div(F32 a, F32 b) { return A.div(a, b, "mfx.d"); }
   F32 neg(F32 a) { return A.neg(a, "mfx.n"); }
   F32 fma(F32 a, F32 b, F32 c) { return A.fma(a, b, c, "mfx.f"); }
-  // Correctly-rounded F32 sqrt (sqrt.rn.f32 on NVPTX), NOT the MUFU
-  // approximation the lossy F32 tier uses: the expansion's Newton
-  // corrections only remove the seed's error to second/third order, so a
-  // 2-ulp seed would cap a triple-float at ~1e-14 instead of ~1e-21.
+  // Correctly-rounded F32 sqrt (sqrt.rn.f32 on NVPTX), not the MUFU
+  // approximation: the expansion's Newton corrections only remove the seed's
+  // error to second/third order, so a 2-ulp seed would cap a triple-float at
+  // ~1e-14 instead of ~1e-21.
   F32 sqrt(F32 a) { return A.sqrt(a, "mfx.q"); }
 
   // QxW's FastTwoSum, y = (a - x) + b. Not dsFastTwoSum's b - (s - a),

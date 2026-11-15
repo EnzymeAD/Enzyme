@@ -51,8 +51,8 @@ using namespace llvm;
 
 namespace {
 
-// A mistake in what the driver is given, in the form the pass reports one in
-// (README, "Errors"): `<driver>: error: Poseidon: <message>`, exit status 1.
+// A mistake in what the driver is given, in the form the pass reports one in:
+// `<driver>: error: Poseidon: <message>`, exit status 1.
 int userError(StringRef Prog, const Twine &Message) {
   errs() << Prog << ": error: Poseidon: " << Message << '\n';
   return 1;
@@ -129,12 +129,10 @@ bool isLanguageCXX(StringRef Lang) {
 }
 
 // How many argv entries after `A` are its value: clang's driver options whose
-// value can be the next entry (ClangSeparateOptions.def, as the clang the
-// plugin is built against has them, the MultiArg ones, and the
-// JoinedAndSeparate ones by their prefix). Such a value reaches clang paired
-// with its option and is never read as a flag or an input of its own: a value
-// that spells a Poseidon flag is not rewritten, and one that ends in .cu does
-// not make the compile CUDA.
+// value can be the next entry (ClangSeparateOptions.def, the MultiArg ones, and
+// the JoinedAndSeparate ones by their prefix). Such a value is never read as a
+// flag or an input of its own: one that spells a Poseidon flag is not
+// rewritten, and one that ends in .cu does not make the compile CUDA.
 unsigned separateValues(StringRef A) {
   static const StringSet<> One = {
 #define CLANG_SEPARATE_OPTION(Name) Name,

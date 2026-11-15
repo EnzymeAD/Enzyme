@@ -44,10 +44,9 @@ static MatmulAccuracyQuery accuracyQuery(const AbstractMatmul &m,
   MatmulAccuracyQuery q;
   switch (v.scheme) {
   case Scheme::Direct:
-    // Identity-format products (f64->f64 DMMA) are invisible to the rounding
-    // model, so charge the tensor tile's accumulation-order change
-    // (orderTileK) instead; otherwise the candidate prices as exactly zero
-    // error and can enter the budget-0 no-op solution.
+    // A product in the source formats is exact to the rounding model, so its
+    // tile's accumulation order is charged through orderTileK; otherwise it
+    // prices as zero error and enters the budget-0 solution.
     q.inputPrec = v.operand;
     q.accPrec = v.accumulator;
     if (v.operand == m.aType && v.accumulator == m.accType)
@@ -326,12 +325,9 @@ static MatmulUnit::Option libraryOption(const SchemeVariant &v, unsigned tileM,
 }
 
 // The rectangular row supersedes the square one when present: above padWaste
-// 1.05 the runtime takes its RECTANGULAR arm, whose cost is linear in the
-// column count, so charging S^3/(M*N*K) on top of a square-measured row
-// over-prices the candidate by the whole padding ratio; no ratio is applied on
-// top of the rectangular row. It is keyed by (M,K) only: with a rectangular
-// dispatch the per-MAC cost no longer depends on the column count, and the
-// column count is the one dimension that follows the mesh.
+// 1.05 the runtime takes its rectangular path, whose cost is linear in the
+// column count, so no padding ratio is applied on top of that row. It is keyed
+// by (M, K) only, since its per-MAC cost does not depend on the column count.
 static void proposeLibraryModular(const Product &P, const LibrarySite &L,
                                   MatmulUnit &cm) {
   if (!L.modularOffered)
@@ -425,10 +421,8 @@ static void proposeLibrarySplit(const Product &P, const LibrarySite &L,
 // proposed. The runtime repacks operands rather than padding to a square, so
 // no shape ratio is charged.
 //
-// f32/f32 is the one variant that does not run on tensor cores: it is cuBLAS's
-// SGEMM, the answer to "what does writing this product in single precision
-// buy", and it belongs here because the runtime reaches it by changing the
-// compute type alone. It has no MMA tile, so its tile triple is 0.
+// f32/f32 is cuBLAS's SGEMM, reached by changing the compute type alone; it
+// does not run on tensor cores and has no MMA tile, so its tile triple is 0.
 struct LibraryDirectVariant {
   SchemeVariant variant;
   unsigned tileM, tileN, tileK;
@@ -477,16 +471,11 @@ static void proposeLibraryDirect(const Product &P, const LibrarySite &L,
 
 // The native product through the modular entry with num_moduli = 0, which the
 // runtime maps onto one cublasDgemm on the real M x Ncols x K for every layout
-// combination. It takes no padding ratio: the square zero-padding that
-// ozaki_dispatch_rel is corrected for happens only on the emulated arms
-// (runtime/ozaki/ozaki_rt.cu, "Native path needs no padding"). Charging the
-// square ratio here priced a rectangular launch at up to two orders of
-// magnitude above what it runs at, which kept a bit-exact candidate out of
-// every solution. Its per-MAC rate still depends on the shape, a DGEMM with
-// few columns running far below the square one, so a call whose extents are
-// constants of this compile is priced from the row measured at those extents
-// when the model has one. A run-time extent leaves only the square row: the
-// surrogate's shape is not the one the call runs at.
+// combination. It takes no padding ratio: only the emulated paths pad to a
+// square. Its per-MAC rate still depends on the shape, so a call whose extents
+// are constants of this compile is priced from the row measured at those
+// extents when the model has one. A run-time extent leaves only the square
+// row: the surrogate's shape is not the one the call runs at.
 static void proposeLibraryNative(const Product &P, const LibrarySite &L,
                                  MatmulUnit &cm) {
   if (!L.dispatchable)

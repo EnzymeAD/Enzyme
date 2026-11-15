@@ -32,12 +32,10 @@ std::string shortDouble(double v) {
   return buf;
 }
 
-// --------------------------------------------------------------------------
 // Attribute sites: a function or kernel carrying POSEIDON_OPTIMIZE
 // (__attribute__((annotate("poseidon", 0)))) is a site whose annotated
 // computation is its whole body. POSEIDON_OPTIMIZE_TAU(t) passes the site's
 // accuracy target as the annotation's one argument instead.
-// --------------------------------------------------------------------------
 
 namespace {
 
@@ -198,9 +196,9 @@ void noteSiteTarget(const Options &O, const Function &F,
 }
 
 // The kernels of this module that are sites, in module order. `byRegex`, when
-// given, receives the sites -poseidon-kernels named and the attribute did not:
-// those are the ones the cost-share filter applies to. `tauOut`, when given,
-// receives the accuracy target of each site whose annotation carried one.
+// given, receives the sites -poseidon-kernels named and the attribute did not.
+// `tauOut`, when given, receives the accuracy target of each site whose
+// annotation carried one.
 void collectAnnotatedSites(const Options &O, Module &M,
                            SmallVectorImpl<Function *> &out,
                            SmallPtrSetImpl<Function *> *byRegex,
@@ -254,10 +252,8 @@ void collectAnnotatedSites(const Options &O, Module &M,
       out.push_back(&F);
 }
 
-// --------------------------------------------------------------------------
-// Device-function sites: POSEIDON_OPTIMIZE on a function a kernel calls (the
-// lambda an mfem::forall body is written as) makes that kernel a site.
-// --------------------------------------------------------------------------
+// Device-function sites: POSEIDON_OPTIMIZE on a function a kernel calls (a
+// lambda a generic launch helper runs, say) makes that kernel a site.
 
 namespace {
 

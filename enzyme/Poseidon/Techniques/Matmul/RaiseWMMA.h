@@ -31,10 +31,11 @@ void findScalarLoopMatmuls(const Options &O, llvm::Function &F,
                            const FunctionProfileHeader &profileHeader,
                            llvm::SmallVectorImpl<AbstractMatmul> &out);
 
-// Profile-gen only: collect one profiled clone's scalar-loop matmul reduction
-// trip counts (profile-scale) as (slot, trip) pairs, so the profuse solve can
-// price the Ozaki-II padding waste at one scale even under surrogate profiling.
-// Must run on the clean clone: the profiling probes break the reduction shape.
+// Profile generation only: the reduction trip counts (profile-scale) of the
+// scalar-loop matmuls of one profiled clone, as (fma probe index, trip) pairs
+// for the clone's profile header, so the profile-use compile sees the shape
+// at one scale. Must run on the clone without probes, which break the
+// reduction shape.
 void collectScalarLoopReductionTrips(
     const Options &O, llvm::Function &F,
     llvm::SmallVectorImpl<std::pair<size_t, unsigned>> &out);

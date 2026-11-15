@@ -42,8 +42,7 @@ enum class PrecisionChangeType {
   Expansion3,
   Expansion4
 };
-// Component count of an FP32 expansion type, or 0 if `t` is not one; the one
-// place the family's parameterization is written down.
+// Component count of an FP32 expansion type, or 0 if `t` is not one.
 inline unsigned expansionComponents(PrecisionChangeType t) {
   switch (t) {
   case PrecisionChangeType::Expansion2:

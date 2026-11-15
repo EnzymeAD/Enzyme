@@ -1,26 +1,15 @@
-// Runtime-dimension dense GEMM recognition (Origin::HostGemmLoopNest).
+// Recognition of dense GEMMs with runtime dimensions
+// (Origin::HostGemmLoopNest): thread-parallel reduction nests whose extents
+// and leading dimensions are expressions over the kernel's launch values,
+// whose contraction may be split across several reduction loops (an unrolled
+// constant-trip outer level), and whose row and column indices may run in
+// block-strided thread loops or combine a thread index with the block index.
 //
-// findScalarLoopMatmuls recognizes ONE innermost reduction loop whose trip
-// count is a compile-time constant, whose leading dimensions are compile-time
-// byte strides, and whose row/column indices are bare thread axes. A production
-// finite-element apply is none of those: MFEM's elasticity partial-assembly
-// reduce computes
-//
-//     y(i,q,e) += sum_{m<d} sum_{p<numPoints} Q(p,m,q,e) * G(p,m,i)
-//
-// which IS the dense product C = A^T B + C with M = nDofs, K = d*numPoints,
-// Ncols = d*NE, all three RUNTIME values, contracted over a two-level (m,p)
-// nest of which only the outer level is a compile-time constant (and is
-// therefore unrolled away before Poseidon runs), with the row index behind a
-// strided MFEM_FOREACH_THREAD loop and the column index threadIdx.x fused with
-// the CTA index.
-//
-// The dimensions are therefore EXPRESSIONS, not integers. Showing that the
-// (m,p) nest flattens needs (3i+1)*numPoints - 3i*numPoints == numPoints, and
-// SCEV does not distribute a non-constant multiplier over a sum, so
-// getMinusSCEV of those two never folds. Integer polynomials over SCEV atoms
-// (RgPoly below) make the comparison exact and total, and every dimension is
-// either derived or the whole site is refused.
+// SCEV does not distribute a non-constant multiplier over a sum, so a
+// difference such as (3i+1)*n - 3i*n does not fold. Addresses are expanded
+// into integer polynomials over SCEV atoms (RgPoly) instead, on which such
+// comparisons are exact; every dimension is either derived or the site is
+// refused.
 #include "Core/Options.h"
 #include "HostDispatch.h"
 #include "IR/Utils.h"
@@ -203,8 +192,8 @@ static bool rgDivideByAtom(const RgPoly &p, unsigned atom, RgPoly &q,
 // Atom table and SCEV -> polynomial expansion.
 //
 // Every AddRec is expanded as start + step * j<L>, with j<L> a synthetic atom
-// standing for the loop's iteration counter. That is what makes a strided
-// MFEM_FOREACH_THREAD index tractable: its contribution to an address becomes
+// standing for the loop's iteration counter. The contribution of a
+// block-strided thread loop index to an address then becomes
 // coef*(tid.k + ntid.k*j), and the two coefficients can be checked against
 // each other instead of assuming the loop runs once.
 // ---------------------------------------------------------------------------
@@ -295,10 +284,9 @@ struct RgExpand {
       return true;
     }
     if (auto *Cast = dyn_cast<SCEVCastExpr>(S)) {
-      // zext / sext / trunc are transparent. Each one here comes from index
+      // zext / sext / trunc are transparent: each one here comes from index
       // arithmetic LLVM proved non-wrapping (the nsw/nneg flags on the source
-      // adds and muls), so it is value preserving; refusing them would refuse
-      // every 32-bit-indexed CUDA kernel there is.
+      // adds and muls), so it preserves the value.
       return expand(Cast->getOperand(), out);
     }
     if (auto *Add = dyn_cast<SCEVAddExpr>(S)) {
@@ -345,10 +333,8 @@ struct RgExpand {
 };
 
 // A GEMM dimension is usable only if it is one monomial over launch values of
-// the optimized body plus a constant: mul*v0*v1*... + add. That is exactly what
-// the host-side stub rewrite can evaluate from the launch arguments, and
-// refusing anything wider is what keeps the emitted call honest rather than
-// approximately right.
+// the optimized body plus a constant, mul*v0*v1*... + add, which the host-side
+// stub rewrite evaluates from the launch arguments.
 static bool rgToRuntimeDim(const RgPoly &p, const RgAtoms &A, RuntimeDim &out,
                            std::string &why) {
   out = RuntimeDim{};
@@ -394,9 +380,8 @@ static bool rgSingleLaunchValue(const RgPoly &p, const RgAtoms &A,
 }
 
 // ---------------------------------------------------------------------------
-// fma matching. A deliberate second copy of PoseidonRaiseWMMA's predicate: the
-// two recognizers are parallel arms and this one must stay free to move
-// without perturbing the other.
+// fma matching, kept apart from the scalar-loop recognizer's so that either
+// can change without moving the other's decisions.
 // ---------------------------------------------------------------------------
 static bool rgMatchFMA(Value *V, Instruction *&fma, Instruction *&fmul,
                        Value *&a, Value *&b, Value *&acc) {
@@ -460,13 +445,13 @@ static bool rgMentionsLaunchReg(const SCEV *S) {
   });
 }
 
-// One recognized index source: a thread axis (optionally behind a strided
-// MFEM_FOREACH_THREAD loop) or the CuKernel CTA linearization.
+// One recognized index source: a thread axis (optionally behind a
+// block-strided thread loop) or a CTA linearization.
 struct RgIndex {
   RgPoly form;            // the index's symbolic value
   unsigned sigAtom = ~0u; // atom appearing in `form` and in no other index
   // The rest of the monomial the signature atom sits in (coefficient 1). For a
-  // thread index this is empty; for the CuKernel CTA linearization
+  // thread index this is empty; for a CTA linearization
   // ctaid.a*ntid.b + tid.b it is {ntid.b}.
   SmallVector<unsigned, 2> sigMono;
   SmallVector<unsigned, 4> ownAtoms; // atoms that must not survive extraction
@@ -477,8 +462,8 @@ struct RgIndex {
 
 // Peel the index `idx` out of an address polynomial:
 //     p == coef * idx.form + rest,  with rest free of every atom of `idx`.
-// Returns false when p is not of that form, which is the honest signal that
-// the address is not a matrix subscript in this index.
+// Returns false when p is not of that form: the address is not a matrix
+// subscript in this index.
 static bool rgSplitIndex(const RgPoly &p, const RgIndex &idx, RgPoly &coef,
                          RgPoly &rest) {
   RgPoly q, r;
@@ -501,13 +486,12 @@ static bool rgSplitIndex(const RgPoly &p, const RgIndex &idx, RgPoly &coef,
   return true;
 }
 
-// One member of the contraction chain. The operand addresses are kept as the
-// FULL SCEVs: a two-level index like G(p,m,i) reaches Poseidon as
-// sext(i32 {{...}<i-loop>,+,1}<p-loop>), i.e. an integer add-recurrence under a
-// cast, which is not a pointer add-recurrence of the reduction loop at all.
-// The reduction byte step is recovered from the polynomial expansion instead
-// (the coefficient of the reduction loop's iteration counter), which is exact
-// for every cast/trunc shape the front end produces.
+// One member of the contraction chain. The operand addresses are kept as full
+// SCEVs: a two-level index arrives as an integer add-recurrence under a cast,
+// sext(i32 {{...}<i-loop>,+,1}<p-loop>), not as a pointer add-recurrence of
+// the reduction loop. The reduction byte step is recovered from the
+// polynomial expansion instead (the coefficient of the reduction loop's
+// iteration counter), which is exact for every cast shape.
 struct RgMember {
   Loop *L = nullptr;
   PHINode *phi = nullptr;
@@ -562,8 +546,9 @@ static const SCEV *rgStripSCEVCasts(const SCEV *S) {
   return S;
 }
 
-// MFEM_FOREACH_THREAD(i,k,N) == for (int i = threadIdx.k; i < N; i +=
-// blockDim.k) Returns the index value, its upper bound, and the thread axis.
+// A block-strided thread loop,
+//     for (int i = threadIdx.k; i < N; i += blockDim.k)
+// Returns the index value, its upper bound N, and the thread axis k.
 static bool rgMatchStridedThreadLoop(Loop *L, ScalarEvolution &SE,
                                      Value *&idxVal, Value *&bound, int &axis) {
   BasicBlock *latch = L->getLoopLatch();
@@ -666,7 +651,7 @@ static bool rgFinishIndex(RgIndex &idx, const RgAtoms &A) {
   return true;
 }
 
-// Largest value the index can take at PROFILE scale, from the launch geometry
+// Largest value the index can take at profile scale, from the launch geometry
 // in the profile header. Returns false when the form involves a quantity the
 // header does not fix (a loop counter, a runtime bound).
 static bool rgProfileExtent(const RgIndex &idx, const RgAtoms &A,
@@ -737,7 +722,6 @@ static bool rgAnalyzeChain(Function &F, ScalarEvolution &SE, LoopInfo &LI,
   Type *eltTy = chain[0].aLoad->getType();
   const int64_t elemSize = (int64_t)DL.getTypeAllocSize(eltTy).getFixedValue();
 
-  // --- uniform member shape -------------------------------------------------
   for (const RgMember &m : chain) {
     if (m.aLoad->getType() != eltTy || m.bLoad->getType() != eltTy) {
       why = "chain members disagree on element type";
@@ -745,7 +729,6 @@ static bool rgAnalyzeChain(Function &F, ScalarEvolution &SE, LoopInfo &LI,
     }
   }
 
-  // --- index sources --------------------------------------------------------
   RgAtoms atoms;
   RgExpand EX{SE, atoms, {}};
   SmallVector<RgIndex, 4> indices;
@@ -816,7 +799,6 @@ static bool rgAnalyzeChain(Function &F, ScalarEvolution &SE, LoopInfo &LI,
         return false;
       }
 
-  // --- operand address polynomials -----------------------------------------
   auto splitAll = [&](const RgPoly &p, SmallVectorImpl<RgPoly> &coefs,
                       RgPoly &base) -> bool {
     coefs.assign(indices.size(), RgPoly{});
@@ -847,8 +829,8 @@ static bool rgAnalyzeChain(Function &F, ScalarEvolution &SE, LoopInfo &LI,
     return ref.param >= 0;
   };
   // Exact equality, or two launch values the dense reading needs equal and
-  // nothing here can prove so (a DeviceTensor's extent and the loop bound
-  // captured next to it): kept for the dispatch to check at the launch.
+  // nothing here can prove so (e.g. a captured tensor's extent and the loop
+  // bound next to it): kept for the dispatch to check at the launch.
   auto sameOrAssumed = [&](const RgPoly &a, const RgPoly &b) -> bool {
     if (a == b)
       return true;
@@ -912,7 +894,7 @@ static bool rgAnalyzeChain(Function &F, ScalarEvolution &SE, LoopInfo &LI,
     }
   }
 
-  // --- flattening: member r must start exactly r*trip elements along ---------
+  // Flattening: member r starts exactly r * trip elements after member 0.
   H.assumedEqual.clear();
   for (unsigned r = 1; r < R; ++r) {
     RgPoly along0, along1;
@@ -928,7 +910,6 @@ static bool rgAnalyzeChain(Function &F, ScalarEvolution &SE, LoopInfo &LI,
     }
   }
 
-  // --- role assignment: row operand vs column operand -----------------------
   SmallVector<RgPoly, 4> c0, c1, cC;
   RgPoly b0, b1, bC;
   if (!splitAll(op0Poly[0], c0, b0) || !splitAll(op1Poly[0], c1, b1)) {
@@ -1025,8 +1006,8 @@ static bool rgAnalyzeChain(Function &F, ScalarEvolution &SE, LoopInfo &LI,
   }
 
   // Partition the indices by which operand they move. Which group is "M" is
-  // NOT decided here: both assignments describe the same product (one is the
-  // transpose of the other), and picking by source order would be arbitrary.
+  // not decided here: both assignments describe the same product (one is the
+  // transpose of the other).
   SmallVector<unsigned, 2> g0, g1;
   for (unsigned i = 0; i < indices.size(); ++i) {
     bool in0 = !c0[i].isZero(), in1 = !c1[i].isZero(), inC = !cC[i].isZero();
@@ -1091,10 +1072,9 @@ static bool rgAnalyzeChain(Function &F, ScalarEvolution &SE, LoopInfo &LI,
     return false;
   }
 
-  // Canonical orientation: the index group that is CONTIGUOUS in the output is
-  // M. That is exactly what makes the output column-major with ldc = M, the
-  // form every host GEMM entry point here describes, and it makes the choice
-  // deterministic instead of source-order dependent.
+  // Canonical orientation: the index group that is contiguous in the output is
+  // M, which makes the output column-major with ldc = M, the form every host
+  // GEMM entry point takes, and makes the choice independent of source order.
   int64_t k0 = 0, k1 = 0;
   bool op0IsRow = sc0.isConstant(&k0) && k0 == elemSize;
   bool op1IsRow = sc1.isConstant(&k1) && k1 == elemSize;
@@ -1116,10 +1096,9 @@ static bool rgAnalyzeChain(Function &F, ScalarEvolution &SE, LoopInfo &LI,
   const int64_t aStep = aIsOp0 ? step0[0] : step1[0];
   const int64_t bStep = aIsOp0 ? step1[0] : step0[0];
 
-  // --- layouts --------------------------------------------------------------
   // A must be K-contiguous: the host runtimes read A as an M x K row-major
-  // block (aColMajor == 0). If the OTHER operand were the K-contiguous one the
-  // product would have to be emitted transposed, which this arm does not do.
+  // block (aColMajor == 0). If the other operand were the K-contiguous one the
+  // product would have to be emitted transposed, which is not implemented.
   if (aStep != elemSize) {
     why = "the operand carrying the output's contiguous index is not "
           "contiguous along the reduction axis; emitting this product would "
@@ -1130,7 +1109,7 @@ static bool rgAnalyzeChain(Function &F, ScalarEvolution &SE, LoopInfo &LI,
   H.cColMajor = true; // by construction of the orientation choice above
   H.bColMajor = (bStep == elemSize);
   if (!H.bColMajor) {
-    // K-strided B: the reduction step IS ldb and the column step must be one
+    // K-strided B: the reduction step is ldb and the column step must be one
     // element.
     int64_t cs = 0;
     if (!colStrideB.isConstant(&cs) || cs != elemSize) {
@@ -1140,7 +1119,7 @@ static bool rgAnalyzeChain(Function &F, ScalarEvolution &SE, LoopInfo &LI,
     colStrideB = RgPoly::constant(bStep);
   }
 
-  // --- dimensions in ELEMENTS ----------------------------------------------
+  // Dimensions, in elements.
   RgPoly kPoly = rgMul(RgPoly::constant((int64_t)R), tripPoly);
   RgPoly ldaElems, ldbElems, ldcElems;
   if (!rgDivExact(rowStride, elemSize, ldaElems) ||
@@ -1160,7 +1139,6 @@ static bool rgAnalyzeChain(Function &F, ScalarEvolution &SE, LoopInfo &LI,
     return false;
   }
 
-  // --- operand roles as body parameters ------------------------------------
   Value *aBaseVal = nullptr, *bBaseVal = nullptr, *cBaseVal = nullptr;
   if (!isBasePointer(aBasePoly, H.aRef, aBaseVal) ||
       !isBasePointer(bBasePoly, H.bRef, bBaseVal) ||
@@ -1181,10 +1159,9 @@ static bool rgAnalyzeChain(Function &F, ScalarEvolution &SE, LoopInfo &LI,
     H.bLoads.push_back(aIsOp0 ? m.bLoad : m.aLoad);
   }
 
-  // --- profile-scale shape --------------------------------------------------
   // Column extents must be fixed by the launch geometry (a CTA span, or a
-  // compile-time bound); the row extent then follows EXACTLY from the profiled
-  // execution counts. Nothing here is estimated: a missing count aborts.
+  // compile-time bound); the row extent then follows exactly from the
+  // profiled execution counts. A missing count refuses the site.
   unsigned ctaPerLaunch = std::max(1u, hdr.maxGridDim[0]) *
                           std::max(1u, hdr.maxGridDim[1]) *
                           std::max(1u, hdr.maxGridDim[2]);
@@ -1241,7 +1218,7 @@ static bool rgAnalyzeChain(Function &F, ScalarEvolution &SE, LoopInfo &LI,
     }
     rowsTimesCols = H.profEpilogue / H.launches;
   } else {
-    // beta == 0: no epilogue op to count. Fall back to a compile-time trip.
+    // beta == 0: no epilogue to count, so K must be a compile-time trip count.
     int64_t tripConst = 0;
     if (!tripPoly.isConstant(&tripConst) || tripConst <= 0) {
       why = "no accumulating epilogue and a runtime reduction length: the "
@@ -1273,7 +1250,7 @@ static bool rgAnalyzeChain(Function &F, ScalarEvolution &SE, LoopInfo &LI,
     why = "a reconstructed profile-scale extent is zero";
     return false;
   }
-  // Per-CTA tile: drop the index factors that are spread ACROSS blocks.
+  // Per-CTA tile: drop the index factors that are spread across blocks.
   {
     auto hasCta = [&](const RgIndex &ix) {
       for (auto &kv : ix.form.t)
@@ -1332,9 +1309,8 @@ static bool rgAnalyzeChain(Function &F, ScalarEvolution &SE, LoopInfo &LI,
 
 namespace {
 // One reduction loop of a contraction chain: a closed fma/phi cycle over two
-// loads whose addresses are affine in the loop with CONSTANT byte steps. The
-// trip count is deliberately NOT required to be a constant; that is the whole
-// point of this arm.
+// loads whose addresses are affine in the loop with constant byte steps. The
+// trip count may be a runtime value.
 #define RG_REJECT(msg)                                                         \
   do {                                                                         \
     if (O.Diagnostics.Print && phi.getType()->isFloatingPointTy())             \
@@ -1409,8 +1385,7 @@ void findHostGemmLoopNests(const Options &O, Function &F, ScalarEvolution &SE,
     return;
   }
 
-  // Loops findScalarLoopMatmuls already claimed keep their existing candidate
-  // set; this arm only looks at what that one left behind.
+  // Loops a scalar-loop matmul in `out` already claims are left to it.
   SmallPtrSet<const Instruction *, 8> claimed;
   for (const AbstractMatmul &am : out)
     if (am.origin == AbstractMatmul::Origin::ScalarLoopReduction &&
@@ -1444,7 +1419,7 @@ void findHostGemmLoopNests(const Options &O, Function &F, ScalarEvolution &SE,
   if (members.empty())
     return;
 
-  // Chain the members. Member j's initial accumulator reaches the fma of EVERY
+  // Chain the members. Member j's initial accumulator reaches the fma of every
   // earlier member (the guard phis the unroller leaves make the whole prefix
   // reachable), so the immediate predecessor is the reachable member with the
   // longest prefix of its own; requiring that prefix to be exactly one shorter
@@ -1533,8 +1508,8 @@ void findHostGemmLoopNests(const Options &O, Function &F, ScalarEvolution &SE,
 
     AbstractMatmul am;
     am.id = nextId++;
-    // M/N are the PER-CTA tile (accuracy-model simulation size); the full
-    // product lives in globalM/globalN/globalK.
+    // M/N are the per-CTA tile the accuracy model simulates; the full product
+    // is globalM/globalN/globalK.
     am.M = H.tileM;
     am.N = H.tileN;
     am.K = H.profK;

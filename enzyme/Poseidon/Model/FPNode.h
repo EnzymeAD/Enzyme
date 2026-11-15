@@ -78,11 +78,11 @@ public:
 };
 
 class FPLLValue;
-// Splitting makes values that depend on each other separate inputs of one
-// subgraph. An input whose definition is a few operations over the subgraph's
-// other inputs and constants is spelled as that definition in a Herbie core,
-// so Herbie sees the relation (log T next to T): the number of operations,
-// through inputs spelled out in turn, or 0 if the input stays a variable.
+// The number of operations input `V` is spelled as in a Herbie core, or 0 if
+// it stays a variable. An input whose definition is a few operations over the
+// subgraph's other inputs and constants is spelled as that definition, so
+// Herbie sees the relation (log T next to T); the count includes the inputs
+// spelled out in turn.
 unsigned inlinedOps(const FPLLValue &V,
                     const llvm::SetVector<llvm::Value *> &inputs);
 // The existing value a parsed rewrite node recomputes, if the node is one of
@@ -173,8 +173,8 @@ struct Subgraph {
   double outBoundaryFreqScale = 1.0;
 
   // Measured execution counts of this subgraph's instructions (`opExec`) and
-  // the same counts by loop depth (`depthExec`), the frequency class that
-  // survives materialization. Empty prices exactly as an unweighted walk.
+  // the same counts by loop depth (`depthExec`), which survive
+  // materialization. Empty prices exactly as an unweighted walk.
   llvm::DenseMap<const llvm::Instruction *, uint64_t> opExec;
   std::map<unsigned, uint64_t> depthExec;
   uint64_t execNormalizer = 0;
@@ -199,7 +199,7 @@ struct Subgraph {
 
 // The expression graph of one site: the function it is built over, a node per
 // value (the subgraphs' inputs and operations), and the value each symbol of a
-// Herbie expression names. A unit reaches its site's graph through this.
+// Herbie expression names.
 struct FPGraph {
   llvm::Function *F = nullptr;
   std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>> valueToNodeMap;

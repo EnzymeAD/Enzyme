@@ -128,7 +128,7 @@ public:
   virtual double approxSqrtF32Error() const { return 0; }
 
   // Whether a matrix product can be raised onto matrix instructions inside
-  // its kernel (Targets/NVPTXTensorCore.h).
+  // its kernel.
   virtual bool hasInKernelMatrixRaise() const { return false; }
 
   // The profiler runtime.

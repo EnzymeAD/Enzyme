@@ -73,7 +73,7 @@ std::shared_ptr<FPNode> parseHerbieExpr(
       return std::make_shared<FPConst>(value, dtype);
     } else if (std::regex_match(trimmedExpr, matches, plainConstantPattern)) {
       std::string value = matches[1].str();
-      std::string dtype = "f64"; // Assume f64 by default
+      std::string dtype = "f64";
       return std::make_shared<FPConst>(value, dtype);
     }
   }
@@ -175,10 +175,8 @@ std::shared_ptr<FPNode> parseHerbieExpr(
     op = fullOp;
   }
 
-  // Herbie's explicit conversions arrive without the ".f32"/".f64" suffix that
-  // gives every other operator its dtype; naming the result precision here
-  // makes a conversion node an identity operator carrying the destination
-  // precision, which every downstream stage rounds and coerces correctly.
+  // Herbie's conversions carry no ".f32"/".f64" suffix; the node takes the
+  // destination precision, which makes it an identity at that precision.
   if (dtype.empty()) {
     if (op == "binary64->binary32")
       dtype = "f32";

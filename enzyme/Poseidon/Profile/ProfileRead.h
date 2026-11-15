@@ -38,12 +38,9 @@ struct ProfileInfo {
   double sumValue; // Sum of values (not abs)
   double sumSens;  // Sum of sensitivity scores = |grad * value|
   double sumGrad;  // Sum of gradients (not abs); the accuracy weight
-  // Sum of |gradient|; negative means not recorded (older profiles) and
-  // consumers fall back to |sumGrad|, which cancels for an adjoint that
-  // alternates in sign.
+  // Sum of |gradient|; negative when the profile does not record it.
   double sumAbsGrad;
-  uint64_t exec; // 64-bit: a matmul site can exceed 2^32 execs, and a 32-bit
-                 // field landing on a multiple of 2^32 truncates to 0.
+  uint64_t exec; // 64-bit: a site can exceed 2^32 executions.
 
   llvm::SmallVector<double, 2> minOperands;
   llvm::SmallVector<double, 2> maxOperands;
@@ -69,16 +66,15 @@ struct FunctionProfileHeader {
   // Static facts the profile-gen compile knew and the profile-use compile
   // cannot recompute; slot -> profile-scale reduction trip count.
   std::map<size_t, unsigned> redTrip;
-  // Digest of the canonical form the slots were numbered against; empty in a
-  // profile written before the field existed.
+  // Digest of the canonical form the slots were numbered against; empty when
+  // the profile carries no CanonicalHash line.
   std::string canonicalHash;
   // Site id the perturbation probe is armed with, -1 when the profile carries
   // no SiteId line.
   int siteId = -1;
   // Measured relative condition number of the declared quantity of interest
-  // with respect to this site's outputs, written by the profiling run. 1.0
-  // when the profile carries no Kappa line, which is the
-  // no-cross-site-weighting case.
+  // with respect to this site's outputs, written by the profiling run; 1.0
+  // when the profile carries no Kappa line.
   double kappa = 1.0;
   // False when the profile carries no Kappa line: no declared quantity of
   // interest and so no cross-site weighting, or one left unmeasured.
@@ -95,9 +91,8 @@ void parseProfileFile(const std::string &profilePath, ProfileMap &profileMap,
                       FunctionProfileHeader *header = nullptr);
 
 // The static header of every instrumented site names the profile format in a
-// line `ProfileFormat = <n>`. Profiles without it are format 1, written before
-// the profiling runtime left a profile for a site it never executed; from
-// format 2 it does.
+// line `ProfileFormat = <n>`; a profile without it is format 1. From format 2
+// the profiling runtime writes a profile for a site it never executed.
 inline constexpr llvm::StringLiteral kProfileFormatKey = "ProfileFormat";
 inline constexpr unsigned kProfileFormat = 2;
 
@@ -124,20 +119,17 @@ void requireCanonicalHash(const FunctionProfileHeader &header,
 void requireMeasuredKappa(const FunctionProfileHeader &header,
                           llvm::StringRef profilePath, const llvm::Function &F);
 
-// Degenerate-adjoint guard. A candidate is priced as (local error) * |sum of
-// gradients|, so a value whose profiled gradient is ~0 is priced free; that
-// happens both when the value genuinely has no influence and when the adjoint
-// seed lies in the left null space of the site (an all-ones seed on any
-// partition-of-unity operator with a derivative). The floor is on the
-// sensitivity |gradient x value|: the gradients of values of very different
-// magnitude are not comparable, their sensitivities are. Per function:
+// Floors the accuracy weight (summed |gradient|) of every instruction, so that
+// a value whose profiled gradient is ~0 is not priced free; that happens both
+// when the value has no influence and when the adjoint seed lies in the left
+// null space of the site (an all-ones seed on any partition-of-unity operator
+// with a derivative). The floor is on the sensitivity |gradient x value|, as
+// the gradients of values of very different magnitude are not comparable:
 //   ref      = max over profiled instructions of sumSens / exec
 //   floor(v) = 1e-6 * ref * exec_v / max |v|
-// and an instruction whose summed |gradient| is below its floor is weighted at
-// the floor, written back into sumGrad so every consumer sees it. A
-// per-execution sensitivity below 1e-9 of ref is reported. A value that is
-// always zero is left as it is. Returns the number of instructions whose
-// weight was raised.
+// A raised weight is written back into sumGrad. A per-execution sensitivity
+// below 1e-9 of ref is reported. A value that is always zero is left as it is.
+// Returns the number of instructions whose weight was raised.
 unsigned applySensitivityFloor(ProfileMap &profileMap,
                                llvm::StringRef functionName);
 
@@ -158,14 +150,12 @@ size_t readProfIdxMetadata(const llvm::Instruction *I);
 // Non-aborting variant: false when I is null or lacks the metadata.
 bool tryReadProfIdxMetadata(const llvm::Instruction *I, size_t &out);
 
-// Profile-gen only: one poseidonProfileBlockDimsCUDA call per function carrying
-// value probes, so launch geometry is recorded per function rather than in a
-// module-global bucket.
+// Profile-gen only: one block-geometry probe at the entry of every function
+// carrying value probes, so launch geometry is recorded per function.
 void injectBlockDimProbes(llvm::Module &M);
 
 // Profile-gen only, host module only: call the FP profiler's CUDA registration
-// from the top of main (see the definition for why not a static constructor);
-// whether it placed the call.
+// from the top of main; whether it placed the call.
 bool injectHostProfilerInit(llvm::Module &M);
 
 // Profile-gen only, device module only: pre-declare the probes with

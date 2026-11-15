@@ -193,8 +193,7 @@ static TidAxis classifyTidIndex(const SCEV *S, TidAxis &slow, unsigned &mult,
   static const TidAxis kAxis[3] = {TidAxis::TidX, TidAxis::TidY, TidAxis::TidZ};
   if (n <= 1) {
     // Single axis: still report the per-index byte step, which is the operand's
-    // leading dimension by construction (see the aLdByte derivation in
-    // tryAnalyzeReductionPhi).
+    // leading dimension.
     for (int i = 0; i < 3; ++i)
       if (coefs.coef[i] != 0 && coefs.coef[i] > 0)
         unitByte = coefs.coef[i];
@@ -328,24 +327,21 @@ static bool tryAnalyzeReductionPhi(Loop *L, PHINode &phi, ScalarEvolution &SE,
   }
 
   // Leading dimensions: prefer the byte step SCEV reports per unit of the
-  // row/column index, which is exactly the leading dimension for any pointer
-  // shape; extractLeadingDimByte's fallback of srcByteSize * trip assumes the
-  // stored row is exactly K wide, which is false for a padded operand and
-  // yields plausible but wrong addresses.
+  // row/column index, which is the leading dimension for any pointer shape;
+  // the fallback srcByteSize * trip assumes an unpadded row of K elements.
   int64_t aLdByte = (aRowUnit > 0)
                         ? aRowUnit
                         : extractLeadingDimByte(DL, aLoad, srcByteSize * trip);
   int64_t bLdByte = extractLeadingDimByte(DL, bLoad, srcByteSize * trip);
 
   // A fused index steps the operand by `unitByte` per unit of the fused index;
-  // that must be the SAME stride the single-axis path would have used, or the
-  // materializer's block-base back-out (start - idx*stride) lands off the tile.
+  // that must be the stride the single-axis path uses, or the block-base
+  // back-out (start - idx*stride) lands off the tile.
   if (aRowSlow != TidAxis::Unknown && aRowUnit != aLdByte)
     return false;
   // B's per-column step is the element size when B is K-strided (row-major)
   // and its leading dimension when B is K-contiguous (col-major).
   bool bIsRowMajor = (bStrideByte != srcByteSize);
-  // Same derivation for B's per-column step when B is K-contiguous.
   if (!bIsRowMajor && bColUnit > 0)
     bLdByte = bColUnit;
   if (bColSlow != TidAxis::Unknown &&
@@ -425,8 +421,8 @@ static unsigned extentForIndex(const Options &O, const uint32_t (&dims)[3],
 }
 
 // Walk F's innermost scalar loops, invoking `cb` for each matmul-shaped
-// reduction phi. The profile header is deliberately not consulted, so this
-// also runs at profgen.
+// reduction phi. The profile header is not consulted, so this also runs at
+// profile generation.
 static void forEachScalarLoopReduction(
     const Options &O, Function &F, ScalarEvolution &SE, LoopInfo &LI,
     function_ref<void(Loop *, ScalarLoopHandle &, FPKind, unsigned)> cb) {
@@ -471,8 +467,6 @@ static void forEachScalarLoopReduction(
   }
 }
 
-// Profile-scale reduction-length handoff (profgen -> profuse), keyed by (clone
-// name, fma probe idx) and carried in the site's own profile header.
 void collectScalarLoopReductionTrips(
     const Options &O, Function &F,
     SmallVectorImpl<std::pair<size_t, unsigned>> &trips) {
@@ -520,8 +514,8 @@ void findScalarLoopMatmuls(const Options &O, Function &F, ScalarEvolution &SE,
 
   unsigned nextId = static_cast<unsigned>(out.size());
 
-  // Profile-scale reduction lengths recorded at profgen (see
-  // collectScalarLoopReductionTrips), keyed by the fma's scalar-probe idx.
+  // Profile-scale reduction lengths recorded at profile generation, keyed by
+  // the fma's probe index.
   const std::map<size_t, unsigned> &redTrip = profileHeader.redTrip;
 
   forEachScalarLoopReduction(
@@ -554,9 +548,9 @@ void findScalarLoopMatmuls(const Options &O, Function &F, ScalarEvolution &SE,
         am.M = profM;
         am.N = profN;
         am.K = h.tripCount;
-        // Global launch geometry for the occupancy / wave-fill correction:
         // gridDim x blockDim along the row/col axes is the full GEMM output,
-        // the product of gridDim the CTA count. 0 for pre-gridDim profiles.
+        // the product of gridDim the CTA count; 0 when the profile has no
+        // grid dimensions.
         {
           unsigned gM = dimForAxis(profileHeader.maxGridDim, h.aRowAxis);
           unsigned gN = dimForAxis(profileHeader.maxGridDim, h.bColAxis);
@@ -565,7 +559,7 @@ void findScalarLoopMatmuls(const Options &O, Function &F, ScalarEvolution &SE,
           // A fused index lives entirely inside the CTA, so a grid axis sharing
           // its fast thread axis is a batch dimension, not an extension of this
           // index; report the global shape as unknown (0) rather than fabricate
-          // one (the only consumer is the Ozaki-II padding-waste ratio).
+          // one.
           if (h.aRowSlowAxis != TidAxis::Unknown ||
               h.bColSlowAxis != TidAxis::Unknown) {
             am.globalM = 0;
@@ -583,8 +577,7 @@ void findScalarLoopMatmuls(const Options &O, Function &F, ScalarEvolution &SE,
         am.origin = AbstractMatmul::Origin::ScalarLoopReduction;
         am.scalarLoop = h;
         am.outputValue = h.fma;
-        // Profile-scale reduction length for the Ozaki-II padding-waste cost;
-        // downstream falls back to the compile-time trip (am.K) when absent.
+        // Profile-scale reduction length; 0 when the header has none.
         {
           size_t sidx;
           if (tryReadProfIdxMetadata(h.fma, sidx)) {
@@ -668,9 +661,8 @@ void ScalarLoopRaiseMaterializer::run() {
   const bool needAccCvt = (m.accType != t.variant.accumulator);
   const unsigned mPad = t.mChain * t.tileM;
   const unsigned nPad = t.nChain * t.tileN;
-  // A and B always route through scratch: a direct no-scratch path mishandled
-  // K-strided B, and for F64/F64 the fill is an identity copy at negligible
-  // cost.
+  // A and B always route through scratch, which also handles a K-strided B;
+  // for F64/F64 the fill is an identity copy.
   const bool useScratchA = true;
   const bool useScratchB = true;
   // When B goes through scratch we always lay it out row-major; otherwise the

@@ -9,11 +9,7 @@
 //
 // Given rectangular shapes MxK or MxNxK after N and reps, it measures the
 // rectangular rows of those shapes instead (rect_rows and full_row below).
-// Build: nvcc -O3 -arch=sm_120 ozaki_calibrate.cu <path>/ozaki_rt.cu \
-//        -lcublas -o ozaki_calibrate
-// Run:   ./ozaki_calibrate [N=2048] [reps=30]  >>  cm_sm_120_RTX5090.csv
-//        (strip any prior `ozaki_dispatch_rel,` rows from the CSV before appending)
-//        ./ozaki_calibrate N reps MxK|MxNxK...   (the rectangular rows instead)
+// Usage: ozaki_calibrate [N=2048] [reps=30] [MxK|MxNxK...]; rows on stdout.
 #include <cstdio>
 #include <cstdlib>
 #ifdef __HIP__
@@ -68,9 +64,9 @@ static float timeit(void (*fn)(), int reps) {
 // when padding it to a square would waste work: one ozaki_dispatch_rect_rel
 // row per modulus count, rel = (dispatch time / MAC) / (ref_gemm time / MAC).
 // The row is keyed by (M, K) alone because the arm's cost is linear in the
-// column count, the dimension that follows the mesh; the stderr lines at other
-// column counts check that. The operands are laid out as the recognizer
-// dispatches a reduce: A row-major M x K, B and C column-major, C accumulated.
+// column count; the stderr lines at other column counts check that. The
+// operands are laid out as the recognizer dispatches a reduce: A row-major
+// M x K, B and C column-major, C accumulated.
 static int RM, RN, RK;
 static double *rA, *rB, *rC;
 
@@ -163,10 +159,8 @@ int main(int argc, char **argv) {
     return 0;
   }
 
-  // Every modulus count the dispatch candidate generator can propose: a
-  // candidate whose `ozaki_dispatch_rel` row is missing would be priced from
-  // the analytic estimate. Re-measured in one session so the rungs are
-  // mutually consistent.
+  // Every modulus count the dispatch candidate generator can propose, measured
+  // in one session so the rows are mutually consistent.
   const int moduli[] = {8, 9, 10, 11, 12, 13, 14};
   const int nModuli = (int)(sizeof(moduli) / sizeof(moduli[0]));
   for (int mi = 0; mi < nModuli; ++mi) {
@@ -175,7 +169,6 @@ int main(int argc, char **argv) {
     double rel = (double)t_oz / (double)t_ref;
     fprintf(stderr, "[ozaki_calibrate] nm=%2d  dispatch = %.4f ms  rel = %.4f "
                     "(%.2fx vs FP64)\n", NM, t_oz, rel, t_ref/t_oz);
-    // Clean CSV row on stdout for appending to the cost model.
     printf("ozaki_dispatch_rel,nm%d,%.6f\n", NM, rel);
   }
 

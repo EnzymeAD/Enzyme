@@ -41,12 +41,8 @@ static bool isScalarTypeName(StringRef T) {
   return is_contained({"bf16", "half", "float", "double", "fp80", "fp128"}, T);
 }
 
-// The row families poseidon-calibrate writes (tools/calibrate/README.md),
-// read by a compile or not: the operations at a scalar type, the conversions
-// by their source type, the tensor-core tiles by shape and by input and
-// accumulator type, and one dimensionless family per matrix-product
-// realization. A new family is added here with the calibrator arm that writes
-// it.
+// Whether `Opcode,Type` is a row family poseidon-calibrate writes, read by a
+// compile or not; must agree with the calibrator.
 static bool isCostModelRow(StringRef Opcode, StringRef Type) {
   if (is_contained({"ozaki_dispatch_rel", "ozaki_dispatch_rect_rel",
                     "tcec_dispatch_rel", "direct_dispatch_rel",
@@ -69,7 +65,7 @@ static bool isCostModelRow(StringRef Opcode, StringRef Type) {
     }
   if (!isScalarTypeName(Type))
     return false;
-  // rsqrt is measured on GPUs and priced by no compile yet.
+  // rsqrt is measured on GPUs and priced by no compile.
   return is_contained({"fneg", "fadd", "fsub", "fmul", "fdiv", "fcmp",
                        "fmuladd", "maxnum", "minnum", "rsqrt"},
                       Opcode) ||
@@ -265,7 +261,7 @@ double getInstructionCompCost(CostModelState &CM, const Instruction *I) {
           OpcodeName = "copysign";
           break;
         default: {
-          // The square root precision tuning lowers an F32 one to.
+          // The approximate F32 square root, priced as sqrt.
           if (isApproxSqrtF32(CalledFunc->getIntrinsicID())) {
             OpcodeName = "sqrt";
             break;
@@ -276,9 +272,8 @@ double getInstructionCompCost(CostModelState &CM, const Instruction *I) {
       } else if (StringRef deviceMath = deviceMathName(CalledFunc->getName());
                  !deviceMath.empty()) {
         OpcodeName = deviceMath.str();
-        // PT materializes fmax/fmin as llvm.maxnum/llvm.minnum
-        // (lib/Precision.cpp), so the priced op and the emitted op are the
-        // same instruction and the same measured row serves both.
+        // fmax and fmin are priced by the rows of the intrinsics they lower
+        // to, llvm.maxnum and llvm.minnum.
         if (OpcodeName == "fmax")
           OpcodeName = "maxnum";
         else if (OpcodeName == "fmin")

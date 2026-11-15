@@ -135,7 +135,7 @@ struct ProbeBuilder {
     // The reverse pass must be free to re-evaluate the probe rather than cache
     // its result. Without this every profiled value inside a loop becomes a
     // cache, and on a GPU those caches are device mallocs that exhaust the
-    // 8 MiB device heap.
+    // device heap.
     probe->addFnAttr("enzyme_shouldrecompute");
     {
       IRBuilder<> B(BasicBlock::Create(Ctx, "entry", probe));

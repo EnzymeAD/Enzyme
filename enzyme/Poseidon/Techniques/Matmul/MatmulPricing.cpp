@@ -68,13 +68,12 @@ std::string matmulOptionLabel(const MatmulUnit::Option &opt) {
                    "realization");
 }
 
-// Optional measured pricing for in-kernel candidates: one row per class, in the
-// same unit and protocol as ozaki_dispatch_rel (candidate wall clock / scalar
-// FP64 baseline wall clock),
+// The class an in-kernel candidate's measured row is keyed by, in the same unit
+// as ozaki_dispatch_rel (candidate wall clock / scalar FP64 baseline wall
+// clock):
 //     wmma_inkernel_rel,<class>,<rel>
 // with <class> naming the candidate as the solver's table does ("f16_f32",
-// "tcec_n2_f16_f32"). Composing a price from per-MMA rows omits the cooperative
-// fill, the shared-memory staging and the accumulator traffic.
+// "tcec_n2_f16_f32").
 std::string inKernelCostClass(const SchemeVariant &v) {
   switch (v.scheme) {
   case Scheme::Direct:
@@ -104,11 +103,10 @@ static double lookupInKernelRel(CostModelState &CM, const std::string &cls,
   return queryCostModelOr(CM, "wmma_inkernel_rel", cls, -1.0);
 }
 
-// Price one in-kernel raise from its measured wmma_inkernel_rel row, or refuse
-// to propose it. There is deliberately no composed fallback: per-MMA rows model
-// only the mma chain and measure 3.5-64x optimistic against the realized rate,
-// and Poseidon does not substitute a model for a missing measurement anywhere
-// else.
+// Price one in-kernel raise from its measured wmma_inkernel_rel row into
+// `costOut`, or return false to refuse it. A price composed from per-MMA rows
+// would omit the cooperative fill, the shared-memory staging and the
+// accumulator traffic, so a missing row is never replaced by one.
 bool priceInKernelRaiseFromMeasuredRow(Session &S, const AbstractMatmul &m,
                                        const std::string &cls, unsigned tileM,
                                        unsigned tileN, unsigned tileK,
@@ -209,9 +207,8 @@ uint64_t enclosingKernelSharedBytes(Function &F) {
   const Target &T = Target::of(*mod);
   const DataLayout &DL = mod->getDataLayout();
   // Only the addrspace(3) globals co-resident with this raise count, so take
-  // the max over the enclosing kernels rather than a module-wide sum (a
-  // calibration harness holding a gold kernel next to the raised one would
-  // otherwise be charged twice).
+  // the max over the enclosing kernels rather than a module-wide sum: another
+  // kernel of the module does not share this one's shared memory.
   auto sharedBytesUsedBy = [&](Function *root,
                                SmallPtrSetImpl<GlobalVariable *> &out) {
     SmallVector<Function *, 8> work{root};

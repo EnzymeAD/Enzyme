@@ -11,9 +11,7 @@
 //     direct_dispatch_rel,f32_f32,<rel>   (cuBLAS SGEMM, no tensor cores)
 // Built as HIP it measures hipBLAS, which has no TF32 compute type, so that
 // class has no row there.
-// Build: nvcc -O3 -arch=sm_120 direct_calibrate.cu <path>/direct_rt.cu \
-//        -lcublas -o direct_calibrate
-// Run:   ./direct_calibrate [N=2048] [reps=30]   (CSV rows on stdout)
+// Usage: direct_calibrate [N=2048] [reps=30]; rows on stdout.
 #include <cstdio>
 #include <cstdlib>
 #ifdef __HIP__

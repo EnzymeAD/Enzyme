@@ -4,10 +4,7 @@
 // at a square reference shape, the same protocol as ozaki_calibrate.cu so the
 // families are priced in one unit. Emits one row:
 //     tcec_dispatch_rel,fp16tcec,<rel>
-// Build: nvcc -O3 -arch=sm_120 tcec_calibrate.cu <path>/tcec_rt.cu \
-//        -I<cuMpSGEMM>/include -L<cuMpSGEMM>/build -lcumpsgemm -lcublas \
-//        -o tcec_calibrate
-// Run:   ./tcec_calibrate [N=2048] [reps=30]   (CSV row on stdout)
+// Usage: tcec_calibrate [N=2048] [reps=30]; the row on stdout.
 #include <cstdio>
 #include <cstdlib>
 #include <cuda_runtime.h>

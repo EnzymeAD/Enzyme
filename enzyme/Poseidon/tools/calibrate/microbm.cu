@@ -6,8 +6,7 @@
 //      surface throughput throttling (e.g. F64 1:N pipeline on consumer parts)
 //   3. Time T(N) and T(2N) via cudaEvent
 //   4. cycles = ((T(2N) - T(N)) * 2 / chain_2N) * clock_rate_ghz * 2
-//      (the trailing *2 is the FMA factor that keeps numbers comparable in
-//       scale to the XLA-derived CSVs)
+//      (the trailing *2 is an FMA factor the CSV's unit includes)
 //
 // Output: cm_sm_<cc>.csv on stdout in Poseidon's loader format
 //   # native_arch=sm_<cc>
@@ -32,8 +31,8 @@
 
 using namespace nvcuda;
 
-// libdevice intrinsics, declared explicitly so we don't depend on math.h
-// fast-math lowering decisions. Each is the precise (libm-equivalent) form.
+// libdevice functions, declared explicitly so that no math.h fast-math
+// lowering applies. Each is the precise (libm-equivalent) form.
 extern "C" {
 __device__ float  __nv_sqrtf(float);
 __device__ double __nv_sqrt(double);
@@ -260,7 +259,7 @@ K_FCMP   (fcmp, float, "f", "f32",         "0f3F800000")
 K_FMA    (fma,  float, __nv_fmaf, 1.0001f, 0.0f)
 K_LIBM_UN(sqrt,   float, __nv_sqrtf)
 K_LIBM_UN(rsqrt,  float, __nv_rsqrtf)
-K_LIBM_UN_ILP(ilp_sqrt,  float, __nv_sqrtf)   // fix #9: materialized shape
+K_LIBM_UN_ILP(ilp_sqrt,  float, __nv_sqrtf)   // materialized shape
 K_LIBM_UN_ILP(ilp_rsqrt, float, __nv_rsqrtf)
 K_PTX_BIN_ILP(ilp_fdiv,  float, "f", "div.rn.f32", "0f3F800001")
 K_LIBM_UN(cbrt,   float, __nv_cbrtf)
@@ -311,7 +310,7 @@ K_FCMP   (fcmp, double, "d", "f64",         "0d3FF0000000000000")
 K_FMA    (fma,  double, __nv_fma, 1.0001, 0.0)
 K_LIBM_UN(sqrt,   double, __nv_sqrt)
 K_LIBM_UN(rsqrt,  double, __nv_rsqrt)
-K_LIBM_UN_ILP(ilp_sqrt,  double, __nv_sqrt)   // fix #9: materialized shape
+K_LIBM_UN_ILP(ilp_sqrt,  double, __nv_sqrt)   // materialized shape
 K_LIBM_UN_ILP(ilp_rsqrt, double, __nv_rsqrt)
 K_PTX_BIN_ILP(ilp_fdiv,  double, "d", "div.rn.f64", "0d3FF0000000000001")
 K_LIBM_UN(cbrt,   double, __nv_cbrt)
@@ -524,7 +523,7 @@ __global__ void wmma_loadc_f32(uint64_t *out_unused, float *c_dev) {
   fragment<accumulator, 16, 16, 16, float> fC;
   load_matrix_sync(fA, a_smem, 16);
   load_matrix_sync(fB, b_smem, 16);
-  // Per-block region to avoid 170-way contention on a single cache line.
+  // Per-block region to avoid contention on a single cache line.
   float *cb = c_dev + blockIdx.x * 256;
   #pragma unroll 1
   for (int i = 0; i < CHAIN_N; ++i) {
@@ -547,7 +546,7 @@ __global__ void wmma_stored_f32(uint64_t *out_unused, float *d_dev) {
   fill_fragment(fC, 0.0f);
   load_matrix_sync(fA, a_smem, 16);
   load_matrix_sync(fB, b_smem, 16);
-  // Per-block region to avoid 170-way write contention on a single line.
+  // Per-block region to avoid write contention on a single line.
   float *db = d_dev + blockIdx.x * 256;
   #pragma unroll 1
   for (int i = 0; i < CHAIN_N; ++i) {
@@ -559,15 +558,11 @@ __global__ void wmma_stored_f32(uint64_t *out_unused, float *d_dev) {
 }
 
 // Real-GEMM reality-check kernels. The isolated dependent-tile loops above
-// (wmma_mma_*) price MMA throughput with fragments resident and reused across
-// a whole chain, which flatters the tensor path relative to a real GEMM that
-// reloads fragments as it streams K; for a vestigial FP64 tensor path the
-// isolated cost would mint a zero-error, near-free candidate. The isolated
-// costs stay the primary source (they carry the inter-scheme compute spread
-// the DP solver needs); per scheme, a real WMMA GEMM and a scalar-FP64 GEMM of
-// the same shape are timed, and a scheme whose real dispatch is not faster
-// than scalar at all (rel = t_scheme / t_scalarFP64 >= 1.0) has its row
-// omitted (the loader tolerates absence).
+// (wmma_mma_*) price MMA throughput with fragments resident across a whole
+// chain, which flatters the tensor path relative to a real GEMM that reloads
+// fragments as it streams K. Per scheme, a real WMMA GEMM and a scalar-FP64
+// GEMM of the same shape are timed, and a scheme whose real GEMM is not faster
+// than scalar (rel = t_scheme / t_scalarFP64 >= 1.0) has its row omitted.
 //
 // tgemm: shared-memory tiled WMMA GEMM. Each block computes a BM x BN output
 // tile via a BWM x BWN warp grid; each warp computes WPT_M x WPT_N WMMA tiles,
@@ -652,8 +647,8 @@ __global__ void tgemm(const AB *__restrict__ A, const AB *__restrict__ B,
 
 // Scalar-FP64 tiled GEMM: the "scalar path" reference of the same shape. Block
 // computes BM x BN, each thread a TM x TN register tile with a shared-staged
-// BK slab. Represents the FP64 fma throughput the solver's scalar tile path
-// would actually deliver, so rel = t_tensor / t_scalar exposes vestigial DMMA.
+// BK slab, so rel = t_tensor / t_scalar exposes a tensor path that is slower
+// than scalar FP64.
 template <int BM, int BN, int BK, int TM, int TN>
 __global__ void sgemm(const double *__restrict__ A, const double *__restrict__ B,
                       double *__restrict__ C, int M, int N, int K) {
@@ -706,10 +701,11 @@ struct Config { int blocks; int threads; int N1; int N2; int reps; };
 static Config gCfg = {0, 1024, 512, 1024, 50};
 
 // Saturating launch config for the tensor-core (WMMA) measurements. The scalar
-// path runs blocks×1024 threads (≈32 warps/SM → throughput-saturated); the WMMA
-// path must likewise run many warps/SM, else a 1-warp/SM launch measures MMA
-// LATENCY rather than throughput and the two scales are incomparable.
-static int gWmmaBlocks = 0;          // set in main = #SMs × 8
+// path runs blocks x 1024 threads (about 32 warps/SM, throughput-saturated);
+// the WMMA path must likewise run many warps/SM, else a 1-warp/SM launch
+// measures MMA latency rather than throughput and the two scales are
+// incomparable.
+static int gWmmaBlocks = 0;          // set in main to #SMs x 8
 static int gWmmaThreads = 128;       // 4 warps/block (safe regs even for f64 DMMA)
 static inline double gWmmaWarps() {
   return (double)gWmmaBlocks * (gWmmaThreads / 32);
@@ -756,7 +752,7 @@ double diff_cycles(double t_n, double t_2n, int n1, int n2) {
 #define BENCH_SCALAR(stem, T, op_name, prec_name, sink) {                     \
   double t1 = timeit_ns([&](){ stem##_##T<512>  <<<gCfg.blocks, gCfg.threads>>>(sink); });   \
   double t2 = timeit_ns([&](){ stem##_##T<1024> <<<gCfg.blocks, gCfg.threads>>>(sink); });   \
-  /* reciprocal throughput PER OP: divide the saturated per-step wall by the */ \
+  /* reciprocal throughput per op: divide the saturated per-step wall by the */ \
   /* number of independent chains running in parallel (one per thread).      */ \
   double c = diff_cycles(t1, t2, 512, 1024)                                   \
              / ((double)gCfg.blocks * gCfg.threads);                          \
@@ -935,7 +931,7 @@ int main() {
   int clkKHz = 0; cudaDeviceGetAttribute(&clkKHz, cudaDevAttrClockRate, 0);
   gGhz = (double)clkKHz / 1e6;
   gCfg.blocks = prop.multiProcessorCount;
-  gWmmaBlocks = prop.multiProcessorCount * 8; // many warps/SM → saturate TCs
+  gWmmaBlocks = prop.multiProcessorCount * 8; // many warps/SM saturate TCs
 
   printf("# Generated by microbm.cu on %s\n", prop.name);
   printf("# native_arch=sm_%d%d\n", prop.major, prop.minor);
@@ -949,14 +945,14 @@ int main() {
     BENCH_SCALAR(fadd, float, "fadd", "float", fout);
   BENCH_SCALAR(fsub, float, "fsub", "float", fout);
   BENCH_SCALAR(fmul, float, "fmul", "float", fout);
-  BENCH_SCALAR(ilp_fdiv, float, "fdiv", "float", fout);   // fix #9 shape
+  BENCH_SCALAR(ilp_fdiv, float, "fdiv", "float", fout);   // ILP shape
   BENCH_SCALAR(fneg, float, "fneg", "float", fout);
   BENCH_SCALAR(fabs, float, "fabs", "float", fout);
   BENCH_SCALAR(fcmp, float, "fcmp", "float", fout);
   BENCH_SCALAR(fma,  float, "fma",  "float", fout);
   BENCH_SCALAR(fma,  float, "fmuladd", "float", fout);  // alias
-  BENCH_SCALAR(ilp_sqrt,  float, "sqrt",  "float", fout);  // fix #9 shape
-  BENCH_SCALAR(ilp_rsqrt, float, "rsqrt", "float", fout);  // fix #9 shape
+  BENCH_SCALAR(ilp_sqrt,  float, "sqrt",  "float", fout);  // ILP shape
+  BENCH_SCALAR(ilp_rsqrt, float, "rsqrt", "float", fout);  // ILP shape
   BENCH_SCALAR(cbrt,  float, "cbrt",  "float", fout);
   BENCH_SCALAR(exp,   float, "exp",   "float", fout);
   BENCH_SCALAR(expm1, float, "expm1", "float", fout);
@@ -999,14 +995,14 @@ int main() {
     BENCH_SCALAR(fadd, double, "fadd", "double", dout);
   BENCH_SCALAR(fsub, double, "fsub", "double", dout);
   BENCH_SCALAR(fmul, double, "fmul", "double", dout);
-  BENCH_SCALAR(ilp_fdiv, double, "fdiv", "double", dout);  // fix #9 shape
+  BENCH_SCALAR(ilp_fdiv, double, "fdiv", "double", dout);  // ILP shape
   BENCH_SCALAR(fneg, double, "fneg", "double", dout);
   BENCH_SCALAR(fabs, double, "fabs", "double", dout);
   BENCH_SCALAR(fcmp, double, "fcmp", "double", dout);
   BENCH_SCALAR(fma,  double, "fma",  "double", dout);
   BENCH_SCALAR(fma,  double, "fmuladd", "double", dout);
-  BENCH_SCALAR(ilp_sqrt,  double, "sqrt",  "double", dout); // fix #9 shape
-  BENCH_SCALAR(ilp_rsqrt, double, "rsqrt", "double", dout); // fix #9 shape
+  BENCH_SCALAR(ilp_sqrt,  double, "sqrt",  "double", dout); // ILP shape
+  BENCH_SCALAR(ilp_rsqrt, double, "rsqrt", "double", dout); // ILP shape
   BENCH_SCALAR(cbrt,  double, "cbrt",  "double", dout);
   BENCH_SCALAR(exp,   double, "exp",   "double", dout);
   BENCH_SCALAR(expm1, double, "expm1", "double", dout);
@@ -1062,12 +1058,10 @@ int main() {
   double mma_tf32f32 = bench_mma_chain_tf32f32();
   double ww = gWmmaWarps();
 
-  // Reality-check gate (see tgemm): time each scheme's real WMMA GEMM and a
-  // scalar-FP64 GEMM of the same shape; rel = t_scheme / t_scalar. The gate is
-  // strictly an existence check: a scheme is vestigial iff rel >= 1.0, and its
-  // row is omitted (the loader tolerates absence) because its isolated cost
-  // would mint a zero-error, near-free candidate. How much faster a scheme must
-  // be to win belongs to the DP's cost comparison, not to candidate deletion.
+  // Reality-check gate (see tgemm). It is an existence check only: a scheme
+  // with rel >= 1.0 is omitted because its isolated cost would make a
+  // near-free candidate; how much faster a scheme must be to win is the
+  // solver's cost comparison.
   const int GN = 2048;
   const double REL_OMIT = 1.0;
   double t_scalar = scalar_gemm_ns(GN);
@@ -1105,9 +1099,8 @@ int main() {
                        16, 16, 8, 2, 4, 4, 2, 32, true>(GN, &ok);
     emit_gated("wmma_mma_m16n16k8", "tf32_f32", mma_tf32f32, t, ok);
 
-    // f64 (m8n8k4 DMMA): isolated primary, gated by the real DMMA GEMM (omitted
-    // where rel >= 1, e.g. sm_120 and B300; kept on A100/H100). Only pay the
-    // isolated f64 bench when the DMMA path actually ran.
+    // f64 (m8n8k4 DMMA): the isolated bench runs only when the real DMMA GEMM
+    // ran.
     bool f64ok = false;
     t = tensor_gemm_ns<double, double, double,
                        8, 8, 4, 4, 4, 2, 2, 16, false>(GN, &f64ok);

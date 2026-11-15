@@ -33,10 +33,6 @@ using namespace llvm;
 
 namespace poseidon {
 
-// Narrow addrspace(3) staging buffers whose FP64 values are only ever consumed
-// at FP32: stride K -> K/2, `load float` + fpext, fptrunc at the stores. Fires
-// only when every consumer of a staged load rounds to FP32 (fptrunc or fcmp),
-// which keeps the transform value-preserving.
 bool narrowSharedStaging(const Options &O, llvm::Function &F) {
   using namespace llvm;
   Module *M = F.getParent();
@@ -113,9 +109,8 @@ bool narrowSharedStaging(const Options &O, llvm::Function &F) {
             bail = true;
             break;
           }
-          // Value-preserving only if every consumer rounds to FP32: admit
-          // fptrunc-to-float and fcmp guards; a genuine FP64 consumer means the
-          // solver kept FP64 -> bail this buffer.
+          // Value-preserving only if every consumer rounds to FP32; fcmp
+          // guards are tolerated.
           for (User *LU : L->users()) {
             if (auto *FT = dyn_cast<FPTruncInst>(LU))
               if (FT->getType()->isFloatTy())
@@ -151,8 +146,8 @@ bool narrowSharedStaging(const Options &O, llvm::Function &F) {
           if (seen.insert(CG).second)
             work.push_back(CG);
         } else if (auto *MC = dyn_cast<MemCpyInst>(U)) {
-          // tile-load `shared[tid] = global[tid]` lowered to a struct memcpy.
-          // Only handle: staging ptr is the DEST, constant length == strideK.
+          // A tile load lowered to a struct memcpy: the staging pointer is its
+          // destination and one slot its length.
           auto *Len = dyn_cast<ConstantInt>(MC->getLength());
           if (MC->getArgOperand(0) != P || !Len ||
               Len->getZExtValue() != (uint64_t)strideK || (strideK % 8) != 0) {
@@ -179,7 +174,6 @@ bool narrowSharedStaging(const Options &O, llvm::Function &F) {
     if (bail || (loads.empty() && stores.empty() && memcpyStores.empty()))
       continue;
 
-    // Rewrite. Order: elem GEPs, comp GEPs, loads, stores.
     for (auto *EG : elemGEPs) {
       IRBuilder<> B(EG);
       SmallVector<Value *, 2> idx(EG->idx_begin(), EG->idx_end());
@@ -240,9 +234,6 @@ bool narrowSharedStaging(const Options &O, llvm::Function &F) {
   return anyChange;
 }
 
-// df64 analog of narrowSharedStaging: when every staged load is consumed by an
-// emitF64ToDS Dekker split, store the {hi,lo} pair once at the staging store
-// (hi@+0, lo@+4 in the same 8-byte slot) and turn each split into a pair load.
 bool narrowSharedStagingDS(const Options &O, llvm::Function &F) {
   using namespace llvm;
   Module *M = F.getParent();
@@ -399,9 +390,8 @@ bool narrowSharedStagingDS(const Options &O, llvm::Function &F) {
       los->eraseFromParent();
       hib->eraseFromParent();
       hiT->eraseFromParent();
-      // Tolerated fcmp guards still read the original double; give them
-      // fpext(nhi), which O3 folds to a float compare. Sign-equivalent for
-      // realistic values.
+      // A tolerated fcmp guard reads fpext(nhi) in place of the double, which
+      // it orders the same for realistic values.
       if (!L->use_empty())
         L->replaceAllUsesWith(B.CreateFPExt(nhi, DoubleTy));
       L->eraseFromParent();
@@ -433,14 +423,9 @@ bool narrowSharedStagingDS(const Options &O, llvm::Function &F) {
 
 //===----------------------------------------------------------------------===//
 // Narrowing of addrspace(3) staging buffers that reach the rewritten function
-// as POINTER PARAMETERS.
-//
-// Two transforms, matching the two global-rooted arms above:
-//   FP32: the buffer is a flat array of doubles, so narrowing is exactly
-//         "halve every byte offset from the base and load/store float".
-//   DS:   the double slot already holds two floats, so the LAYOUT is unchanged
-//         and only the accesses move: store {hi@+0, lo@+4} once at the staging
-//         store and rewire each read's Dekker split to a direct pair load.
+// as pointer parameters. The FP32 transform halves every byte offset from the
+// base and loads and stores float. The DS transform keeps the layout, a double
+// slot holding the {hi, lo} pair, and moves only the accesses.
 //===----------------------------------------------------------------------===//
 namespace {
 
@@ -490,9 +475,9 @@ struct DekkerSplit {
   BinaryOperator *los;
 };
 
-// A staged load the expansion split once per use it converted (a value read
-// twice, as MFEM's stages read their shared inputs): every reader belongs to
-// one of the splits, or is a tolerated fcmp.
+// A staged load the expansion split once per use it converted, as for a value
+// read more than once: every reader belongs to one of the splits, or is a
+// tolerated fcmp.
 static bool matchDekkerSplits(LoadInst *L, SmallVectorImpl<DekkerSplit> &out) {
   SmallVector<FPTruncInst *, 4> his;
   SmallVector<BinaryOperator *, 4> loss;
@@ -550,7 +535,7 @@ static bool collectParamStaged(const Session &S, Function &F, Function *Proxy,
   if (casts.empty())
     return false;
   // Every use of every cast must be a call (the buffer is handed to a callee)
-  // or an instruction inside F; a GEP in a THIRD function would be missed.
+  // or an instruction inside F; a GEP in a third function would be missed.
   for (Value *C : casts)
     for (User *CU : C->users()) {
       if (isa<CallBase>(CU))
@@ -589,10 +574,10 @@ static bool collectParamStaged(const Session &S, Function &F, Function *Proxy,
 }
 
 // The buffer F accesses directly: each addrspacecast of G in F is a root once
-// the constant expressions F reaches G through (offset views such as MFEM's
-// `sm0 + 2`) are instructions. Shared memory lives for one launch, so only an
-// access in a function F calls could meet F's; one of those, or an access of
-// G that is not through a generic pointer, leaves the buffer alone.
+// the constant expressions F reaches G through (offset views into the buffer)
+// are instructions. Shared memory lives for one launch, so only an access in a
+// function F calls could meet F's; one of those, or an access of G that is not
+// through a generic pointer, leaves the buffer alone.
 static bool collectGlobalStaged(const Options &O, Function &F,
                                 GlobalVariable &G, bool dsMode,
                                 ParamStagedAccess &out) {

@@ -81,10 +81,10 @@ Type *sliceScratchTy(LLVMContext &ctx, OzakiSliceKind k) {
   llvm_unreachable("unknown OzakiSliceKind");
 }
 
-// Veltkamp scale: residual after split rounds is bounded by ulp(hi)/2 ≈
-// |hi|·2^-(mant+1), so scaling by 2^(mant+1) brings it into slice range. F16
-// and TF32 both have 10 mantissa bits (2^11); BF16 uses 2^7 (matches the TCEC
-// reference, not 2^8).
+// Veltkamp scale: the residual of a split is bounded by ulp(hi)/2 ~
+// |hi| * 2^-(mant+1), so scaling by 2^(mant+1) brings it into slice range. F16
+// and TF32 both have 10 mantissa bits (2^11); BF16 uses 2^7, as the TCEC
+// reference does, not 2^8.
 double veltkampScale(OzakiSliceKind k) {
   switch (k) {
   case OzakiSliceKind::F16:
@@ -137,8 +137,8 @@ Value *emitSliceToF32(IRBuilder<> &B, Value *slice, OzakiSliceKind kind) {
 // N-slice Veltkamp split:
 //   s[0]  = quantize(v)
 //   r[k]  = (r[k-1] - s[k-1]_f32) * SCALE ; s[k] = quantize(r[k])
-// Reconstruction: v ≈ Σ_k s[k] / SCALE^k. Each slice captures ~mant_bits of v
-// (10 for F16/TF32, 7 for BF16).
+// Reconstruction: v ~ sum_k s[k] / SCALE^k. Each slice captures ~mant_bits of
+// v (10 for F16/TF32, 7 for BF16).
 SmallVector<Value *, 8> emitNwayVeltkampSplit(IRBuilder<> &B, Module *mod,
                                               Value *vs_f32, unsigned N,
                                               OzakiSliceKind slice) {
@@ -207,11 +207,11 @@ void OzakiIRaiseMaterializer::runTcec() {
       t.nChain * t.tileN != m.N + t.padN || t.kChain * t.tileK != m.K + t.padK)
     report_fatal_error(
         "OzakiIRaiseMaterializer: chain*tile doesn't match source+padding");
-  // padM/padN/padK are all supported: the fill writes the full padded tile
-  // with an exact zero outside the real extent, and a zero slice contributes
-  // exactly 0 to every cross product. Guard-masking the mma would be wrong
-  // (the fragments are warp-collective), and an uninitialized pad feeds
-  // 0 * Inf = NaN into real outputs.
+  // Padding: the fill writes the full padded tile with an exact zero outside
+  // the real extent, and a zero slice contributes exactly 0 to every cross
+  // product. Guard-masking the mma would be wrong (the fragments are
+  // warp-collective), and an uninitialized pad feeds 0 * Inf = NaN into real
+  // outputs.
 
   const OzakiVariant variant = deriveOzakiVariant(t);
 
@@ -325,9 +325,8 @@ void OzakiIRaiseMaterializer::runTcec() {
   SCEVExpander sex(*h.SE, h.SE->getDataLayout(), "poseidon.ozaki");
 #endif
 
-  // Fused output indices: the per-thread iter-0 start the block-base back-out
-  // subtracts must use the same (possibly fused) index the recognizer used, not
-  // the bare fast axis; same helper and consistency check as the Direct raiser.
+  // The block-base back-out subtracts the same (possibly fused) index the
+  // recognizer matched, not the bare fast axis.
   Value *rowTid =
       emitTidIndex(B, mod, h.aRowAxis, h.aRowSlowAxis, h.aRowFuseMult);
   Value *colTid =
@@ -366,12 +365,11 @@ void OzakiIRaiseMaterializer::runTcec() {
   int64_t bSrcKStepByte = bRowMajor ? h.bStrideByte : srcInputByte;
   int64_t bSrcNStrideByte = bRowMajor ? srcInputByte : h.bLeadingDimByte;
 
-  // Capture the preheader terminator BEFORE the K-stream setup splits the BB.
+  // Taken before the K-stream setup splits the block.
   Instruction *origTerm = preheader->getTerminator();
 
-  // K-streamed main loop, structurally the Direct WMMA loop with a Veltkamp
-  // split + N-way stores in the fill, an N(N+1)/2-mma chain per K-tile and N
-  // PHI accumulator groups.
+  // K-streamed main loop: a Veltkamp split with N stores per element in the
+  // fill, an N(N+1)/2-mma chain per K-tile and N groups of accumulator PHIs.
   Constant *cZeroElt = Constant::getNullValue(cFragElemTy);
   int64_t ldaElts = t.tileK;
   int64_t ldbElts = nPad;
@@ -544,7 +542,7 @@ void OzakiIRaiseMaterializer::runTcec() {
   };
 
   // Valid source extents. K-streaming makes the last K-tile short whenever
-  // padK > 0, so the valid K count is a RUNTIME min(tileK, K - k_outer).
+  // padK > 0, so the valid K count is the runtime min(tileK, K - k_outer).
   Value *validK = ConstantInt::get(i32Ty, (int32_t)t.tileK);
   if (t.padK > 0)
     validK = bodyB.CreateBinaryIntrinsic(
@@ -732,7 +730,7 @@ void OzakiIRaiseMaterializer::runTcec() {
   }
   afterB.CreateCall(barrier.Fn, barrier.Args);
 
-  // Readback: Σ_k d[k] / SCALE^k, in F32 (F32-class).
+  // Readback: sum_k d[k] / SCALE^k, in F32.
   auto insertIt = exitBB->getFirstNonPHIIt();
   IRBuilder<> RB(exitBB, insertIt);
   Value *rRow =

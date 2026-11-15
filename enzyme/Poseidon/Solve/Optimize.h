@@ -39,7 +39,7 @@ struct FunctionFPState : FPGraph {
   double profiledCost = 0.0;
   llvm::SmallVector<Subgraph, 1> subgraphs;
   // Backing storage for the matmuls; MatmulUnit::matmul points into this,
-  // so it must outlive materialization (it does NOT live in a collect-local).
+  // so it must outlive materialization.
   llvm::SmallVector<AbstractMatmul, 4> abstractMatmuls;
   llvm::SmallVector<RewriteUnit, 4> COs;
   llvm::SmallVector<PrecisionUnit, 4> CSs;
@@ -50,11 +50,9 @@ struct FunctionFPState : FPGraph {
   // Set when the site is solved against the DP table cache.
   std::unique_ptr<SiteTable> table;
 
-  // WMMA-raise analyses. findScalarLoopMatmuls stashes a `ScalarEvolution *`
-  // (and SCEVs it owns) into each ScalarLoopHandle for the materializer's
-  // SCEVExpander, so they MUST outlive materialization and live here rather
-  // than in a collect-local. Declared SE-last so it is destroyed first (it
-  // references the others).
+  // Analyses for the loop raises. The matmuls found hold raiseSE and SCEVs it
+  // owns, so these outlive materialization. raiseSE is declared last so that
+  // it is destroyed first: it references the others.
   std::optional<llvm::DominatorTree> raiseDT;
   std::optional<llvm::LoopInfo> raiseLI;
   std::optional<llvm::AssumptionCache> raiseAC;
@@ -78,16 +76,15 @@ bool collectFPCandidates(Session &S, llvm::Function &F, double errorTol,
 bool materializeFPSolution(Session &S, llvm::Function &F, FunctionFPState &st,
                            llvm::ArrayRef<SolutionStep> steps);
 
-// `errorTol` > 0 is the accuracy target written AT the site; 0 means the site
+// `errorTol` > 0 is the accuracy target written at the site; 0 means the site
 // wrote none and -poseidon-tau decides.
 bool fpOptimize(Session &S, llvm::Function &F, double errorTol = 0.0);
 
-// The attribute optimizeSiteBody marks a site of the joint solve with, holding
-// the site's accuracy target.
+// The attribute that marks a site of the joint solve, holding the site's
+// accuracy target.
 constexpr llvm::StringLiteral kJointErrTol = "poseidon-joint-errtol";
 
-// Joint-DP entry: optimizeSiteBody marks each site with kJointErrTol instead
-// of optimizing it inline; this solves one DP over all marked sites.
+// Solves one DP over all sites of `M` marked with kJointErrTol.
 bool solveJointly(Session &S, llvm::Module &M,
                   llvm::FunctionAnalysisManager &FAM);
 

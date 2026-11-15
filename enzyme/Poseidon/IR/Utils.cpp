@@ -128,7 +128,7 @@ double stringToDouble(const std::string &str) {
     }
   }
 
-  return result; // Denormalized values are fine
+  return result;
 }
 
 // A Herbie literal is an exact rational whose numerator or denominator alone

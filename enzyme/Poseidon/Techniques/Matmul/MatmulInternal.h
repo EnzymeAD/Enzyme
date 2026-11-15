@@ -1,5 +1,4 @@
-// Declarations shared by the pieces of the matrix-product pipeline (the
-// Matmul*.cpp and RecognizeHostGemm.cpp sources).
+// Declarations shared by the sources of the matrix-product pipeline.
 #ifndef POSEIDON_MATMUL_INTERNAL_H
 #define POSEIDON_MATMUL_INTERNAL_H
 
@@ -50,8 +49,7 @@ const llvm::SmallVector<WmmaTarget, 16> &getAvailableWmmaTargets(Session &S);
 
 // What the matrix-product pipeline records over a compile.
 struct MatmulState {
-  // HostDispatch.cpp. fpOptimize records the note keyed by the optimized body
-  // clone; optimizeSiteBody retrieves it after fpOptimize returns.
+  // The GEMM note of each optimized body clone, keyed by the clone.
   NoteMap<GemmBodyNote> GemmBodies;
   // In the order the sites were split, so that of two sites of one wrapper the
   // same one is recorded last in every compile.

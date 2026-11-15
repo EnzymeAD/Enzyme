@@ -72,7 +72,6 @@ int main(int argc, char **argv) {
   CK(cudaMalloc(&B, NN * 8));
   CK(cudaMalloc(&C, NN * 8));
 
-  // Operands in [-1,1), the same range the dense-GEMM benchmark profiles over.
   double *h = (double *)malloc(NN * 8);
   srand(1);
   for (size_t i = 0; i < NN; ++i)

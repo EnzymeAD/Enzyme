@@ -1,4 +1,4 @@
-//=- Herbie.cpp - Herbie integration utilities ----------------------------=//
+//=- Herbie.cpp - algebraic rewrites from Herbie ----------------------------=//
 //
 // Part of the Poseidon Project, under the Apache License v2.0 with LLVM
 // Exceptions.
@@ -7,8 +7,8 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file implements utilities for integrating with the Herbie tool for
-// floating-point expression optimization.
+// The algebraic units of an FP subgraph: Herbie's rewrites of its outputs,
+// one output or an array of them per unit.
 //
 //===----------------------------------------------------------------------===//
 
@@ -394,7 +394,7 @@ void collectIfNodes(const FPNode *node, SmallPtrSetImpl<const FPNode *> &seen,
 }
 
 // The arms the candidate actually evaluates at `point`, following each `if` the
-// way the materialised select resolves it. `ev` evaluates at `point`.
+// way the materialized select resolves it. `ev` evaluates at `point`.
 void collectTakenArms(const FPNode *node,
                       const MapVector<Value *, double> &point, FPEvaluator &ev,
                       SmallPtrSetImpl<const FPNode *> &seen,

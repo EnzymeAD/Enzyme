@@ -41,8 +41,6 @@ double sampleError(double goldVal, double result) {
   return std::fabs(goldVal - result);
 }
 
-// The gate is workload-driven: only a profiled sqrt argument or denominator
-// within kCancellationThreshold of zero activates the plan.
 CancellationPlan
 buildCancellationPlan(const Options &O, const Subgraph &subgraph,
                       const std::unordered_map<Value *, std::shared_ptr<FPNode>>
@@ -69,10 +67,8 @@ buildCancellationPlan(const Options &O, const Subgraph &subgraph,
       continue;
     FPNode *node = it->second.get();
 
-    // FPNode ops use Herbie symbols ("-", "/", "sqrt"), not LLVM opcode names.
     if (node->op == "-" && node->operands.size() == 2) {
-      // A subtraction of two subgraph inputs is a cancellation site; one entry
-      // per unordered pair.
+      // One entry per unordered pair.
       auto *a = dyn_cast<FPLLValue>(node->operands[0].get());
       auto *b = dyn_cast<FPLLValue>(node->operands[1].get());
       if (a && b && a->value != b->value && inputs.count(a->value) &&
@@ -117,9 +113,9 @@ static void collectLeaves(const FPNode *node,
     collectLeaves(operand.get(), seen, leaves);
 }
 
-// A subgraph's inputs are often functions of the same few values (in a
-// thermochemistry kernel every intermediate is a function of T), so drawing
-// each in its own profiled range pairs values that never occur together: terms
+// A subgraph's inputs are often functions of the same few values (every
+// intermediate a function of a temperature T, say), so drawing each in its
+// own profiled range pairs values that never occur together: terms
 // that cancel in the data overflow an exp, and an input and its log disagree.
 // Each sample draws the leaves the inputs are computed from (loads, arguments,
 // globals) in their profiled ranges, evaluates each input from them as the
@@ -146,10 +142,8 @@ void getSampledPoints(
     double upper = node->getUpperBound();
 
     if (!std::isfinite(lower) || !std::isfinite(upper) || lower > upper) {
-      // [INF, -INF] are the FPLLValue initialisers: the profiler never observed
-      // this input (possible even with a non-zero gradient when the output
-      // shadow is degenerate). Refuse to sample rather than invent a bound; the
-      // caller leaves an unpriced subgraph alone.
+      // [INF, -INF] is the initial range: the profiler never observed this
+      // input. Refuse to sample rather than invent a bound.
       llvm::errs() << "Poseidon: input to sampled subgraph has unprofiled "
                       "bounds ["
                    << lower << ", " << upper
@@ -180,11 +174,10 @@ void getSampledPoints(
     leafBox.insert({leaf->value, {lower, upper}});
   }
 
-  // Close-encounter stratum: two leaves the subgraph subtracts are drawn
-  // independently and never come close, so in a share of the samples each
-  // such pair is moved to a common near-coincident value, with one log-uniform
-  // separation scale shared across all pairs so every subtracted difference is
-  // small together.
+  // Two leaves the subgraph subtracts, drawn independently, never come close,
+  // so in a share of the samples each such pair is moved to a common
+  // near-coincident value, with one log-uniform separation scale shared across
+  // all pairs so every subtracted difference is small together.
   SmallVector<std::pair<Value *, Value *>, 4> pairs;
   if (plan && plan->active)
     for (const auto &pr : plan->pairs)
@@ -337,8 +330,8 @@ ArrayRef<SubgraphSamples::Point> SubgraphSamples::points() {
   return base;
 }
 
-// The exact and the as-written value of `node` at `point`, as the accuracy
-// model scores every candidate against.
+// The exact and the as-written value of `node` at `point`, and the error of
+// the latter, into entry `i` of `R`.
 static void evaluateReference(FPNode *node, const SubgraphSamples::Point &point,
                               SubgraphSamples::Reference &R, size_t i) {
   SmallVector<double, 1> results;

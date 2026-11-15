@@ -56,7 +56,7 @@
 #define CUDA_R_8I HIP_R_8I
 
 // ROCm's hip_fp16.h and hip_bf16.h call device-library functions this clang
-// no longer declares. The runtimes need the two formats only as storage and as
+// does not declare. The runtimes need the two formats only as storage and as
 // the target of one conversion from double, which the language's own types
 // perform with a single rounding.
 #define __half _Float16
