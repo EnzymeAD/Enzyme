@@ -56,51 +56,52 @@
 
 using namespace llvm;
 
-namespace {
-
-cl::opt<std::string> GpuId("gpu", cl::init(""), cl::value_desc("id"),
-                           cl::desc("Device to measure (default: the first of "
-                                    "CUDA_VISIBLE_DEVICES, or of "
-                                    "HIP_VISIBLE_DEVICES on an AMD GPU, else "
-                                    "0)"));
-cl::opt<std::string>
+static cl::opt<std::string>
+    GpuId("gpu", cl::init(""), cl::value_desc("id"),
+          cl::desc("Device to measure (default: the first of "
+                   "CUDA_VISIBLE_DEVICES, or of "
+                   "HIP_VISIBLE_DEVICES on an AMD GPU, else "
+                   "0)"));
+static cl::opt<std::string>
     Out("out", cl::init(""), cl::value_desc("path"),
         cl::desc("Cost model to write; a directory takes cm_<arch>_<gpu>.csv "
                  "(default: $XDG_CACHE_HOME/poseidon)"));
-cl::opt<bool> Check("check",
-                    cl::desc("Validate the resolved cost model against this "
-                             "device instead of measuring"));
-cl::opt<bool> Force("force",
-                    cl::desc("Re-measure families that are already present"));
-cl::opt<std::string>
+static cl::opt<bool>
+    Check("check", cl::desc("Validate the resolved cost model against this "
+                            "device instead of measuring"));
+static cl::opt<bool>
+    Force("force", cl::desc("Re-measure families that are already present"));
+static cl::opt<std::string>
     Only("only", cl::init(""), cl::value_desc("arms"),
          cl::desc("Comma-separated subset of "
                   "microbm,ozaki,ozaki-rect,tcec,direct,inkernel,"
                   "herbie-platform"));
-cl::opt<std::string> ProfileDir(
+static cl::opt<std::string> ProfileDir(
     "profile", cl::init(""), cl::value_desc("dir"),
     cl::desc("Profile of a GEMM site the in-kernel arm enumerates its "
              "candidates from (required by that arm)"));
-cl::opt<std::string>
+static cl::opt<std::string>
     Herbie("herbie", cl::init(POSEIDON_CALIBRATE_HERBIE),
            cl::value_desc("path"),
            cl::desc("Herbie binary the generated platform must load into "
                     "(default: the one this build was configured with)"));
-cl::opt<std::string> OzakiRect(
+static cl::opt<std::string> OzakiRect(
     "ozaki-rect", cl::init(""), cl::value_desc("MxK|MxNxK,..."),
     cl::desc(
         "(M, K) of the M x Ncols x K host GEMMs whose rectangular "
         "Ozaki-II rows the ozaki-rect arm measures; MxNxK instead measures "
         "the native DGEMM row of a call with exactly those extents"));
-cl::opt<unsigned> RefN("n", cl::init(2048), cl::value_desc("N"),
-                       cl::desc("Square reference shape the dispatch arms and "
-                                "the in-kernel arm are timed at"));
-cl::opt<unsigned> Reps("reps", cl::init(30), cl::value_desc("count"),
-                       cl::desc("Timed repetitions per dispatch measurement"));
+static cl::opt<unsigned>
+    RefN("n", cl::init(2048), cl::value_desc("N"),
+         cl::desc("Square reference shape the dispatch arms and "
+                  "the in-kernel arm are timed at"));
+static cl::opt<unsigned>
+    Reps("reps", cl::init(30), cl::value_desc("count"),
+         cl::desc("Timed repetitions per dispatch measurement"));
 
-std::string ToolDir;
+static std::string ToolDir;
 
-std::string sibling(StringRef Name) {
+static std::string sibling(StringRef Name) {
   SmallString<256> P(ToolDir);
   sys::path::append(P, Name);
   return std::string(P);
@@ -109,7 +110,7 @@ std::string sibling(StringRef Name) {
 // share/poseidon of the installation this tool was started from, and the
 // source tree it was built from when it runs out of its build directory. The
 // two layouts carry the same names below that point.
-std::string shipped(StringRef Rel) {
+static std::string shipped(StringRef Rel) {
   SmallString<256> P(sys::path::parent_path(ToolDir));
   sys::path::append(P, "share/poseidon", Rel);
   if (sys::fs::exists(P))
@@ -119,20 +120,20 @@ std::string shipped(StringRef Rel) {
   return std::string(S);
 }
 
-std::string num(double V, const char *Fmt = "%.6f") {
+static std::string num(double V, const char *Fmt = "%.6f") {
   char B[64];
   snprintf(B, sizeof(B), Fmt, V);
   return std::string(B);
 }
 
-[[noreturn]] void fail(const Twine &Msg) {
+[[noreturn]] static void fail(const Twine &Msg) {
   errs() << "poseidon-calibrate: " << Msg << '\n';
   std::exit(1);
 }
 
 // Runs a program, optionally capturing its stdout into a file.
-int run(ArrayRef<StringRef> Argv, StringRef StdoutFile = "",
-        StringRef StderrFile = "") {
+static int run(ArrayRef<StringRef> Argv, StringRef StdoutFile = "",
+               StringRef StderrFile = "") {
   std::optional<StringRef> Redirects[3] = {std::nullopt, std::nullopt,
                                            std::nullopt};
   if (!StdoutFile.empty())
@@ -147,14 +148,14 @@ int run(ArrayRef<StringRef> Argv, StringRef StdoutFile = "",
   return RC;
 }
 
-std::string readFile(StringRef Path) {
+static std::string readFile(StringRef Path) {
   auto Buf = MemoryBuffer::getFile(Path);
   if (!Buf)
     fail("cannot read " + Path + ": " + Buf.getError().message());
   return (*Buf)->getBuffer().str();
 }
 
-void writeFile(StringRef Path, StringRef Content) {
+static void writeFile(StringRef Path, StringRef Content) {
   std::error_code EC;
   raw_fd_ostream OS(Path, EC);
   if (EC)
@@ -162,7 +163,7 @@ void writeFile(StringRef Path, StringRef Content) {
   OS << Content;
 }
 
-std::string capture(ArrayRef<StringRef> Argv) {
+static std::string capture(ArrayRef<StringRef> Argv) {
   SmallString<128> Tmp;
   if (sys::fs::createTemporaryFile("poseidon-calibrate", "out", Tmp))
     fail("cannot create a temporary file");
@@ -172,7 +173,7 @@ std::string capture(ArrayRef<StringRef> Argv) {
   return S;
 }
 
-bool hasFamily(StringRef Csv, StringRef Family) {
+static bool hasFamily(StringRef Csv, StringRef Family) {
   for (StringRef Line : llvm::split(Csv, '\n'))
     if (Line.starts_with(Family) &&
         Line.drop_front(Family.size()).starts_with(","))
@@ -182,7 +183,7 @@ bool hasFamily(StringRef Csv, StringRef Family) {
 
 // Replaces every row of the families the new rows belong to, so a re-measured
 // family never leaves a stale row behind.
-void mergeRows(std::string &Csv, StringRef Rows) {
+static void mergeRows(std::string &Csv, StringRef Rows) {
   SmallVector<StringRef, 4> Families;
   for (StringRef Line : llvm::split(Rows, '\n')) {
     Line = Line.trim();
@@ -212,16 +213,18 @@ void mergeRows(std::string &Csv, StringRef Rows) {
   Csv = Kept;
 }
 
+namespace {
 struct Device {
   std::string Id;
   std::string Name; // punctuation stripped, as it appears in the file name
   std::string Arch; // sm_<cc>, or gfx<NNN> on an AMD GPU
   bool Hip = false;
 };
+} // namespace
 
 // The HIP runtime names an AMD GPU itself, through the HIP microbenchmark run
 // on the device HIP_VISIBLE_DEVICES selects.
-Device queryHipDevice() {
+static Device queryHipDevice() {
   Device D;
   D.Hip = true;
   D.Id = GpuId;
@@ -254,7 +257,7 @@ Device queryHipDevice() {
   return D;
 }
 
-Device queryDevice() {
+static Device queryDevice() {
   const bool Hip = sys::fs::exists(sibling("poseidon-microbm-hip"));
   if (Hip && !sys::findProgramByName("nvidia-smi"))
     return queryHipDevice();
@@ -294,7 +297,7 @@ Device queryDevice() {
   return D;
 }
 
-std::string defaultOutDir() {
+static std::string defaultOutDir() {
   if (const char *X = ::getenv("XDG_CACHE_HOME"))
     if (*X)
       return (StringRef(X) + "/poseidon").str();
@@ -305,7 +308,7 @@ std::string defaultOutDir() {
   return std::string(Home);
 }
 
-std::string resolveCsv(const Device &D) {
+static std::string resolveCsv(const Device &D) {
   std::string Path = Out;
   if (Path.empty())
     Path = defaultOutDir();
@@ -321,7 +324,7 @@ std::string resolveCsv(const Device &D) {
   return Path;
 }
 
-bool wants(StringRef Arm) {
+static bool wants(StringRef Arm) {
   if (Only.empty())
     return true;
   SmallVector<StringRef, 8> Arms;
@@ -331,12 +334,12 @@ bool wants(StringRef Arm) {
 
 // The calibrator binary that measures this device: the HIP build of it on an
 // AMD GPU.
-std::string tool(const Device &D, StringRef Name) {
+static std::string tool(const Device &D, StringRef Name) {
   return sibling(D.Hip ? (Name + "-hip").str() : Name.str());
 }
 
 // The architectures of a GPU cost model; anything else is a host's.
-bool isGpuArch(StringRef Arch) {
+static bool isGpuArch(StringRef Arch) {
   return Arch.starts_with("sm_") || Arch.starts_with("gfx");
 }
 
@@ -345,12 +348,12 @@ bool isGpuArch(StringRef Arch) {
 // The Herbie platform generated from a CSV lives next to it, named after it:
 // one platform per cost model, so a directory holding two devices' models
 // cannot mix them up.
-std::string platformPathFor(StringRef Csv) {
+static std::string platformPathFor(StringRef Csv) {
   StringRef Stem = Csv.ends_with(".csv") ? Csv.drop_back(4) : Csv;
   return Stem.str() + ".herbie.rkt";
 }
 
-std::string csvNativeArch(const std::string &Csv) {
+static std::string csvNativeArch(const std::string &Csv) {
   StringRef Arch;
   for (StringRef Line : llvm::split(readFile(Csv), '\n'))
     if (Line.consume_front("# native_arch="))
@@ -362,7 +365,7 @@ std::string csvNativeArch(const std::string &Csv) {
 // arm writes that table from the same CSV the DP prices from, so a rewrite is
 // proposed and priced on one device's numbers. No GPU is touched: the CSV is
 // the only input.
-void armHerbiePlatform(const std::string &Csv) {
+static void armHerbiePlatform(const std::string &Csv) {
   std::string Arch = csvNativeArch(Csv);
   if (Arch.empty())
     fail(Csv + " carries no '# native_arch=' header, so no Herbie platform "
@@ -406,7 +409,7 @@ void armHerbiePlatform(const std::string &Csv) {
   outs() << "[calibrate] wrote " << Out << '\n';
 }
 
-void armMicrobm(const std::string &Csv, const Device &D) {
+static void armMicrobm(const std::string &Csv, const Device &D) {
   if (sys::fs::exists(Csv) && !Force) {
     outs() << "[calibrate] per-op throughputs already measured: " << Csv
            << '\n';
@@ -421,8 +424,8 @@ void armMicrobm(const std::string &Csv, const Device &D) {
   outs() << "[calibrate] wrote " << Csv << '\n';
 }
 
-void writeRows(const std::string &Csv, StringRef Arm, StringRef Family,
-               const std::string &Rows) {
+static void writeRows(const std::string &Csv, StringRef Arm, StringRef Family,
+                      const std::string &Rows) {
   if (!hasFamily(Rows, Family))
     fail(Arm + " calibration produced no " + Family + " row");
   std::string Content = readFile(Csv);
@@ -433,15 +436,16 @@ void writeRows(const std::string &Csv, StringRef Arm, StringRef Family,
       outs() << "  " << Line.trim() << '\n';
 }
 
-bool alreadyMeasured(const std::string &Csv, StringRef Arm, StringRef Family) {
+static bool alreadyMeasured(const std::string &Csv, StringRef Arm,
+                            StringRef Family) {
   if (Force || !hasFamily(readFile(Csv), Family))
     return false;
   outs() << "[calibrate] " << Arm << ": already measured\n";
   return true;
 }
 
-void armDispatch(const std::string &Csv, StringRef Arm, StringRef Family,
-                 StringRef Tool) {
+static void armDispatch(const std::string &Csv, StringRef Arm, StringRef Family,
+                        StringRef Tool) {
   if (alreadyMeasured(Csv, Arm, Family))
     return;
   outs() << "[calibrate] measuring " << Arm << " host dispatch\n";
@@ -453,7 +457,7 @@ void armDispatch(const std::string &Csv, StringRef Arm, StringRef Family,
 // at the calibrator's large column count, MxNxK the native DGEMM row of a call
 // with exactly those extents. Rows of shapes this run does not measure are
 // kept.
-void armOzakiRect(const std::string &Csv, const Device &D) {
+static void armOzakiRect(const std::string &Csv, const Device &D) {
   if (OzakiRect.empty()) {
     outs() << "[calibrate] ozaki-rect: no --ozaki-rect shapes, nothing to "
               "measure\n";
@@ -506,7 +510,7 @@ void armOzakiRect(const std::string &Csv, const Device &D) {
 
 // The error-corrected dispatch runs on cuMpSGEMM, so a build without it has no
 // such candidate for the row to price.
-void armTcec(const std::string &Csv, const Device &D) {
+static void armTcec(const std::string &Csv, const Device &D) {
   if (D.Hip) {
     outs() << "[calibrate] tcec: the error-corrected dispatch has no HIP "
               "runtime; its row stays absent\n";
@@ -527,7 +531,7 @@ void armTcec(const std::string &Csv, const Device &D) {
 // each is a rewrite the pass proposes, so the harness compiles its kernel once
 // per class through the plugin and times what a real solve would emit. A class
 // the pass cannot propose or build here is reported and left absent.
-void armInKernel(const std::string &Csv, const Device &D) {
+static void armInKernel(const std::string &Csv, const Device &D) {
   if (D.Hip) {
     outs() << "[calibrate] inkernel: tensor-core raises inside a kernel are "
               "NVPTX-only; their rows stay absent\n";
@@ -685,7 +689,7 @@ void armInKernel(const std::string &Csv, const Device &D) {
 
 // The same order the compiler resolves in, so --check answers the question a
 // compile would ask.
-std::string findExisting(const Device &D, const std::string &Preferred) {
+static std::string findExisting(const Device &D, const std::string &Preferred) {
   if (sys::fs::exists(Preferred))
     return Preferred;
   std::string Prefix = "cm_" + D.Arch + "_";
@@ -699,7 +703,7 @@ std::string findExisting(const Device &D, const std::string &Preferred) {
   return Preferred;
 }
 
-int checkModel(const std::string &Preferred, const Device &D) {
+static int checkModel(const std::string &Preferred, const Device &D) {
   std::string Csv = findExisting(D, Preferred);
   if (!sys::fs::exists(Csv)) {
     errs() << "poseidon-calibrate: no cost model for " << D.Arch << " in "
@@ -766,8 +770,6 @@ int checkModel(const std::string &Preferred, const Device &D) {
            << " problem(s); re-run poseidon-calibrate --force on this device\n";
   return Bad ? 1 : 0;
 }
-
-} // namespace
 
 int main(int argc, char **argv) {
   cl::ParseCommandLineOptions(

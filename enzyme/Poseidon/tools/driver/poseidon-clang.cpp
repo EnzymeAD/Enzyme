@@ -49,16 +49,14 @@
 
 using namespace llvm;
 
-namespace {
-
 // A mistake in what the driver is given, in the form the pass reports one in:
 // `<driver>: error: Poseidon: <message>`, exit status 1.
-int userError(StringRef Prog, const Twine &Message) {
+static int userError(StringRef Prog, const Twine &Message) {
   errs() << Prog << ": error: Poseidon: " << Message << '\n';
   return 1;
 }
 
-std::string envOr(const char *Name, StringRef Fallback) {
+static std::string envOr(const char *Name, StringRef Fallback) {
   if (const char *V = ::getenv(Name))
     if (*V)
       return std::string(V);
@@ -66,7 +64,7 @@ std::string envOr(const char *Name, StringRef Fallback) {
 }
 
 // `Rel` under the installation prefix `Prefix`.
-std::string underPrefix(StringRef Prefix, const Twine &Rel) {
+static std::string underPrefix(StringRef Prefix, const Twine &Rel) {
   SmallString<256> P(Prefix);
   sys::path::append(P, Rel);
   return std::string(P);
@@ -76,9 +74,10 @@ std::string underPrefix(StringRef Prefix, const Twine &Rel) {
 // Poseidon was built against (none if it was built without), which has to be
 // on this machine. `GivenBy` names the environment variable that gave it; a
 // path on the command line clang checks itself where it needs one.
-std::optional<std::string> toolkitRoot(StringRef Prog, StringRef Toolkit,
-                                       StringRef Given, StringRef GivenBy,
-                                       StringRef Built, StringRef How) {
+static std::optional<std::string> toolkitRoot(StringRef Prog, StringRef Toolkit,
+                                              StringRef Given,
+                                              StringRef GivenBy,
+                                              StringRef Built, StringRef How) {
   if (!Given.empty() && !GivenBy.empty() && !sys::fs::is_directory(Given)) {
     userError(Prog, GivenBy + "=" + Given + " names no directory; set it to " +
                         "the " + Toolkit + " installation or unset it");
@@ -91,7 +90,7 @@ std::optional<std::string> toolkitRoot(StringRef Prog, StringRef Toolkit,
   return std::nullopt;
 }
 
-void printHelp(StringRef Prog) {
+static void printHelp(StringRef Prog) {
   outs()
       << Prog
       << ": clang with the Poseidon pass plugins loaded.\n\n"
@@ -123,7 +122,7 @@ void printHelp(StringRef Prog) {
          "this driver runs.\n";
 }
 
-bool isLanguageCXX(StringRef Lang) {
+static bool isLanguageCXX(StringRef Lang) {
   return Lang == "cuda" || Lang == "c++" || Lang == "cu" ||
          Lang == "c++-header" || Lang == "cuda-cpp-output" || Lang == "hip";
 }
@@ -133,7 +132,7 @@ bool isLanguageCXX(StringRef Lang) {
 // the JoinedAndSeparate ones by their prefix). Such a value is never read as a
 // flag or an input of its own: one that spells a Poseidon flag is not
 // rewritten, and one that ends in .cu does not make the compile CUDA.
-unsigned separateValues(StringRef A) {
+static unsigned separateValues(StringRef A) {
   static const StringSet<> One = {
 #define CLANG_SEPARATE_OPTION(Name) Name,
 #define CLANG_SEPARATE_OPTION_IN(Name, First, Last)
@@ -164,7 +163,7 @@ unsigned separateValues(StringRef A) {
 
 // Whether clang stops before the link when given `A` (the options of
 // Driver::getFinalPhase), or the driver compiles one half of a GPU source.
-bool stopsBeforeLink(StringRef A) {
+static bool stopsBeforeLink(StringRef A) {
   static const StringSet<> Stops = {"-E",
                                     "--preprocess",
                                     "-M",
@@ -201,7 +200,7 @@ bool stopsBeforeLink(StringRef A) {
 
 // The name and value of a Poseidon flag, -poseidon-<flag>[=<value>] or
 // --poseidon-<flag>[=<value>].
-std::optional<StringRef> poseidonFlag(StringRef A) {
+static std::optional<StringRef> poseidonFlag(StringRef A) {
   if (A.consume_front("-") &&
       (A.consume_front("-poseidon-") || A.consume_front("poseidon-")))
     return A;
@@ -210,15 +209,13 @@ std::optional<StringRef> poseidonFlag(StringRef A) {
 
 // Whether the argument names the translation unit itself, written as a
 // Poseidon flag or as the value of an option that forwards it.
-bool namesUnit(StringRef A) {
+static bool namesUnit(StringRef A) {
   A.consume_front("-mllvm=");
   return A.consume_front("-") &&
          (A.consume_front("-poseidon-unit") ||
           A.consume_front("poseidon-unit")) &&
          (A.empty() || A.starts_with("="));
 }
-
-} // namespace
 
 int main(int argc, char **argv) {
   std::string Exe = sys::fs::getMainExecutable(argv[0], (void *)(intptr_t)main);

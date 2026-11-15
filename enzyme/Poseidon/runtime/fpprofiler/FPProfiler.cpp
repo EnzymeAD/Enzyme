@@ -1,7 +1,19 @@
+//===- FPProfiler.cpp - host half of the FP profiler runtime --------------===//
+//
+// Part of the Poseidon Project, under the Apache License v2.0 with LLVM
+// Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+
+#include "FPProfileName.h"
+#include "poseidon/poseidon.h"
+
 #include <algorithm>
-#include <cassert>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <dirent.h>
@@ -25,11 +37,6 @@
 #include <vector>
 
 extern char **environ;
-
-#include "FPProfileName.h"
-#include "poseidon/poseidon.h"
-
-#include <cstdio>
 
 class ProfileInfo {
 public:

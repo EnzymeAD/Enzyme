@@ -1,3 +1,12 @@
+//===- FPProfilerHost.cpp - shadows of host sites under profiling ---------===//
+//
+// Part of the Poseidon Project, under the Apache License v2.0 with LLVM
+// Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+//
 // Profile generation of POSEIDON_OPTIMIZE functions on the host.
 //
 // A host site's reverse pass takes one shadow per pointer argument, sized to
@@ -6,6 +15,8 @@
 // itself: every heap allocation of the process (malloc and its family are
 // replaced here), and the globals and stack objects the instrumented
 // translation units register.
+//
+//===----------------------------------------------------------------------===//
 
 #include <atomic>
 #include <cerrno>
@@ -40,9 +51,11 @@ struct Registry {
   std::map<uintptr_t, size_t> globals;
 };
 
+} // namespace
+
 // Never destroyed: allocations are freed during exit, after static destructors
 // would have run.
-Registry &registry() {
+static Registry &registry() {
   alignas(Registry) static unsigned char storage[sizeof(Registry)];
   static Registry *r = new (storage) Registry();
   return *r;
@@ -50,14 +63,15 @@ Registry &registry() {
 
 // Set while the registry itself allocates, so that its own nodes are not
 // recorded through the hooks below.
-__thread bool inRegistry __attribute__((tls_model("initial-exec")));
+static __thread bool inRegistry __attribute__((tls_model("initial-exec")));
 
 // The stack objects the calls in flight on this thread were passed, innermost
 // last.
-__thread std::vector<Extent> *stackArrays
+static __thread std::vector<Extent> *stackArrays
     __attribute__((tls_model("initial-exec")));
 
-bool findIn(const std::map<uintptr_t, size_t> &m, uintptr_t a, Extent &out) {
+static bool findIn(const std::map<uintptr_t, size_t> &m, uintptr_t a,
+                   Extent &out) {
   auto it = m.upper_bound(a);
   if (it == m.begin())
     return false;
@@ -69,7 +83,7 @@ bool findIn(const std::map<uintptr_t, size_t> &m, uintptr_t a, Extent &out) {
   return true;
 }
 
-bool findExtent(const void *p, Extent &out) {
+static bool findExtent(const void *p, Extent &out) {
   uintptr_t a = (uintptr_t)p;
   if (stackArrays)
     for (auto it = stackArrays->rbegin(); it != stackArrays->rend(); ++it)
@@ -82,7 +96,7 @@ bool findExtent(const void *p, Extent &out) {
   return findIn(r.globals, a, out) || findIn(r.heap, a, out);
 }
 
-void noteHeap(void *p, size_t bytes) {
+static void noteHeap(void *p, size_t bytes) {
   if (!p || inRegistry || !&__poseidon_host_sites_present)
     return;
   inRegistry = true;
@@ -94,7 +108,7 @@ void noteHeap(void *p, size_t bytes) {
   inRegistry = false;
 }
 
-void forgetHeap(void *p) {
+static void forgetHeap(void *p) {
   if (!p || inRegistry || !&__poseidon_host_sites_present)
     return;
   inRegistry = true;
@@ -108,7 +122,7 @@ void forgetHeap(void *p) {
 
 // A profiling run that runs out of memory says so once, before whatever the
 // program does with the null pointer.
-void noteFailure(size_t bytes) {
+static void noteFailure(size_t bytes) {
   static std::atomic<bool> said{false};
   if (!bytes || said.exchange(true))
     return;
@@ -120,8 +134,6 @@ void noteFailure(size_t bytes) {
   if (n > 0)
     (void)!write(2, msg, (size_t)n < sizeof msg ? (size_t)n : sizeof msg - 1);
 }
-
-} // namespace
 
 #if defined(__GLIBC__)
 extern "C" {
@@ -203,27 +215,29 @@ struct Shadow {
   std::set<int> seeded;
 };
 
-std::mutex shadowLock;
+} // namespace
 
-std::map<uintptr_t, Shadow> &shadows() {
+static std::mutex shadowLock;
+
+static std::map<uintptr_t, Shadow> &shadows() {
   static auto *m = new std::map<uintptr_t, Shadow>();
   return *m;
 }
 
-void freeShadows() {
+static void freeShadows() {
   for (auto &kv : shadows())
     free(kv.second.p);
   shadows().clear();
 }
 
-template <typename T> void fill(void *p, size_t bytes) {
+template <typename T> static void fill(void *p, size_t bytes) {
   T *e = (T *)p;
   for (size_t i = 0, n = bytes / sizeof(T); i < n; ++i)
     e[i] = T(1);
 }
 
 // The seed is one on the site's outputs, as for a kernel.
-void seed(void *p, size_t bytes, int width) {
+static void seed(void *p, size_t bytes, int width) {
   if (width == 8)
     fill<double>(p, bytes);
   else if (width == 4)
@@ -235,8 +249,6 @@ void seed(void *p, size_t bytes, int width) {
     abort();
   }
 }
-
-} // namespace
 
 extern "C" void __poseidon_stack_push(void *base, uint64_t bytes) {
   if (!stackArrays) {

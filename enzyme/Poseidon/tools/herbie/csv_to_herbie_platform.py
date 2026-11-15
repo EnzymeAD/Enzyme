@@ -138,14 +138,11 @@ def _fmt(n) -> str:
 PREC_CONFIG = {
     "float": dict(
         repr_name="<binary32>", herbie_prec="binary32", suffix="f32",
-        bits=32, round_fn="flsingle", use_libm=True, libm_suffix="f"),
+        bits=32, round_fn="flsingle", libm_suffix="f"),
     "double": dict(
         repr_name="<binary64>", herbie_prec="binary64", suffix="f64",
-        bits=64, round_fn=None, use_libm=True, libm_suffix=""),
+        bits=64, round_fn=None, libm_suffix=""),
 }
-
-CSV_TO_HERBIE = {"float": "binary32", "double": "binary64"}
-
 
 def emit_precision_block(costs: Dict[Tuple[str, str], float],
                          precision: str) -> List[str]:
@@ -155,7 +152,6 @@ def emit_precision_block(costs: Dict[Tuple[str, str], float],
     suffix = cfg["suffix"]
     bits = cfg["bits"]
     round_fn = cfg["round_fn"]
-    use_libm = cfg["use_libm"]
     libm_suffix = cfg["libm_suffix"]
     move_cost_var = f"{bits}bit-move-cost"
 
@@ -173,9 +169,8 @@ def emit_precision_block(costs: Dict[Tuple[str, str], float],
         pi_impl = "(const pi)"
         e_impl = "(const (exp 1))"
 
-    def _math_impl(herbie_name: str, libm_base: str) -> str:
-        effective_suffix = libm_suffix if use_libm else "f"
-        return f"(from-libm '{libm_base}{effective_suffix})"
+    def _math_impl(libm_base: str) -> str:
+        return f"(from-libm '{libm_base}{libm_suffix})"
 
     def c(op: str) -> str:
         return _fmt(cost(costs, op, precision))
@@ -234,7 +229,7 @@ def emit_precision_block(costs: Dict[Tuple[str, str], float],
     ]
     for herbie_name, poseidon_op, libm_base in UNARY_MATH:
         c_val = _fmt(cost(costs, poseidon_op, precision))
-        impl = _math_impl(herbie_name, libm_base)
+        impl = _math_impl(libm_base)
         unary_lines.append(
             f"  [{herbie_name}.{suffix} #:spec ({herbie_name} x) "
             f"#:impl {impl} #:cost {c_val}]"
@@ -247,7 +242,7 @@ def emit_precision_block(costs: Dict[Tuple[str, str], float],
     ]
     for herbie_name, poseidon_op, libm_base in BINARY_MATH:
         c_val = _fmt(cost(costs, poseidon_op, precision))
-        impl = _math_impl(herbie_name, libm_base)
+        impl = _math_impl(libm_base)
         binary_lines.append(
             f"  [{herbie_name}.{suffix} #:spec ({herbie_name} x y) "
             f"#:impl {impl} #:cost {c_val}]"
@@ -260,7 +255,7 @@ def emit_precision_block(costs: Dict[Tuple[str, str], float],
     ]
     for herbie_name, poseidon_op, spec, libm_base, fpcore_form in SPECIAL_UNARY:
         c_val = _fmt(cost(costs, poseidon_op, precision))
-        impl = _math_impl(herbie_name, libm_base)
+        impl = _math_impl(libm_base)
         special_lines.append(
             f"  [{herbie_name}.{suffix} #:spec {spec} "
             f"#:impl {impl} "
@@ -269,7 +264,7 @@ def emit_precision_block(costs: Dict[Tuple[str, str], float],
     special_lines[-1] = special_lines[-1][:-1] + "])"
     lines += special_lines + [""]
 
-    hypot_impl = _math_impl("hypot", "hypot")
+    hypot_impl = _math_impl("hypot")
     lines += [
         f"(define-operation (hypot.{suffix} [x {repr_name}] [y {repr_name}]) {repr_name}",
         f"  #:spec (sqrt (+ (* x x) (* y y))) #:impl {hypot_impl}",
@@ -277,7 +272,7 @@ def emit_precision_block(costs: Dict[Tuple[str, str], float],
         "",
     ]
 
-    fma_impl = _math_impl("fma", "fma")
+    fma_impl = _math_impl("fma")
     lines += [
         f"(define-operation (fma.{suffix} [x {repr_name}] [y {repr_name}] [z {repr_name}]) {repr_name}",
         f"  #:spec (+ (* x y) z) #:impl {fma_impl}",
