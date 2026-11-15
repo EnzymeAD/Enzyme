@@ -18,6 +18,7 @@
 #include "Sites/KernelSites.h"
 #include "Sites/LaunchDescriptors.h"
 #include "Sites/Markers.h"
+#include "Sites/SiteIdentity.h"
 #include "Targets/Target.h"
 #include "Techniques/Matmul/RaiseWMMA.h"
 
@@ -31,7 +32,6 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/Analysis/ValueTracking.h"
-#include "llvm/Demangle/Demangle.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DebugInfoMetadata.h"
 #include "llvm/IR/Function.h"
@@ -749,9 +749,7 @@ bool profileHostSite(Session &S, Function &B, unsigned &nextSiteId) {
     seed.push_back(ConstantInt::get(I32, seedWidth[A.getArgNo()]));
     names.push_back(cString(M, paramName(B, A)));
   }
-  StringRef symbol = B.getName();
-  symbol.consume_back("_poseidon_body");
-  std::string name = perCallSiteName(symbol);
+  std::string name = perCallSiteName(siteKeyOfBody(B));
   if (!D.ptrParams.empty()) {
     D.name = cString(M, name);
     D.param = constantArray(M, I32, param);

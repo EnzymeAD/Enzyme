@@ -99,7 +99,6 @@ namespace {
 struct OzakiVariant {
   unsigned N;           // slice count
   OzakiSliceKind slice; // F16 / BF16 / TF32
-  FPKind accumKind;     // F32 (mma accumulator precision)
   unsigned tileM, tileN, tileK;
 };
 } // namespace
@@ -108,7 +107,6 @@ static OzakiVariant deriveOzakiVariant(const MatmulUnit::Option &opt) {
   OzakiVariant v;
   v.N = sliceCount(opt.variant);
   v.slice = sliceFromFPKind(opt.variant.operand);
-  v.accumKind = opt.variant.accumulator;
   v.tileM = opt.tileM;
   v.tileN = opt.tileN;
   v.tileK = opt.tileK;

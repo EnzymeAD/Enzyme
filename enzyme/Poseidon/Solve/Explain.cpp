@@ -464,10 +464,8 @@ static std::string exprWords(const Unit &U) {
 // The symbol of the function a site was cut from, without the suffixes the
 // site's clones carry.
 static std::string siteSymbol(const Session &S, const Function &F) {
-  const Function *origin = siteOriginOf(S, F);
-  StringRef symbol = origin ? origin->getName() : F.getName();
-  symbol.consume_back("_poseidon_body");
-  return symbol.split(".poseidon.").first.str();
+  const std::string key = siteKey(S, F);
+  return StringRef(key).split(".poseidon.").first.str();
 }
 
 // Where a remark about a site points: its call, else the site's function.
@@ -1014,7 +1012,7 @@ std::string Explainer::leftReason(const Unit &U, const Subgraph *sg) {
     }
     if (why.empty())
       why.push_back("no candidate was generated");
-    std::sort(why.begin(), why.end());
+    llvm::sort(why);
     why.erase(std::unique(why.begin(), why.end()), why.end());
     return joinWords(why);
   }

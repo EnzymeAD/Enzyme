@@ -558,18 +558,10 @@ void registerPasses(PassBuilder &PB) {
     MPM.addPass(FinalizePass(fromSource ? PBp : nullptr, Level, Phase));
   };
 
-#if LLVM_VERSION_MAJOR >= 20
   PB.registerOptimizerEarlyEPCallback(
       [loadPoseidon](ModulePassManager &MPM, OptimizationLevel Level,
                      ThinOrFullLTOPhase) { loadPoseidon(MPM, Level); });
   PB.registerOptimizerLastEPCallback(loadFinalize);
-#else
-  PB.registerOptimizerEarlyEPCallback(loadPoseidon);
-  PB.registerOptimizerLastEPCallback(
-      [loadFinalize](ModulePassManager &MPM, OptimizationLevel Level) {
-        loadFinalize(MPM, Level, ThinOrFullLTOPhase::None);
-      });
-#endif
   PB.registerFullLinkTimeOptimizationEarlyEPCallback(
       [loadHostStub, loadPoseidon](ModulePassManager &MPM,
                                    OptimizationLevel Level) {

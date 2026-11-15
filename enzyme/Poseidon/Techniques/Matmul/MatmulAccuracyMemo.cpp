@@ -12,12 +12,12 @@
 #include "BuildIdentity.h"
 #include "Matmul.h"
 #include "Pass/Session.h"
+#include "Sites/Annotations.h"
 
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/FileSystem.h"
-#include "llvm/Support/Format.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
@@ -32,13 +32,6 @@
 using namespace llvm;
 
 namespace poseidon {
-
-// Exact, and readable back by StringRef::getAsDouble, infinity included.
-static std::string accNumber(double v) {
-  std::string s;
-  raw_string_ostream(s) << format("%.17g", v);
-  return s;
-}
 
 template <typename T> static void appendBytes(std::string &bytes, T v) {
   bytes.append(reinterpret_cast<const char *>(&v), sizeof(v));
@@ -70,8 +63,8 @@ static void addModelInputs(const Options &O, CacheKey &key,
   key.add("samples", std::to_string(numSamples));
   key.add("seed", std::to_string(O.Model.RandomSeed));
   key.add("sampling log bits", std::to_string(sampleLogBits));
-  key.add("exponent penalty", accNumber(O.Model.ExponentPenalty));
-  key.add("confidence", accNumber(confidence));
+  key.add("exponent penalty", exactDouble(O.Model.ExponentPenalty));
+  key.add("confidence", exactDouble(confidence));
 }
 
 static std::string entryPath(const Options &O, const CacheKey &key) {
@@ -189,8 +182,8 @@ void MatmulAccuracyMemo::store(const Options &O, double accuracyCost,
   (void)sys::fs::create_directories(O.Herbie.Cache, true);
   // As text: a domain error can be infinite, which JSON cannot hold.
   json::Object value;
-  value["accuracy cost"] = accNumber(accuracyCost);
-  value["domain error"] = accNumber(domainError);
+  value["accuracy cost"] = exactDouble(accuracyCost);
+  value["domain error"] = exactDouble(domainError);
   if (Error E = writeCacheEntry(path, key, std::move(value)))
     llvm::errs() << "[poseidon] could not write the accuracy memo " << path
                  << ": " << toString(std::move(E)) << "\n";

@@ -14,7 +14,6 @@
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLExtras.h"
-#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringSwitch.h"
@@ -618,7 +617,7 @@ std::string getHerbieOperator(const Instruction &I) {
           return "pow";
         return intrinsic;
       }
-      assert(0 && "getHerbieOperator: Unknown LLVM intrinsic");
+      llvm_unreachable("getHerbieOperator: Unknown LLVM intrinsic");
     } else {
       std::string name = funcName.str();
       if (!name.empty() && name.back() == 'f') {

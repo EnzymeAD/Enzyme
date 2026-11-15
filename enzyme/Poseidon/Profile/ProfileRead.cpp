@@ -25,7 +25,6 @@
 #include "Targets/OffloadRuntime.h"
 #include "Targets/Target.h"
 
-#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/IR/Constants.h"
@@ -249,8 +248,10 @@ void parseProfileFile(const std::string &profilePath, ProfileMap &profileMap,
       header->canonicalHash = match[1];
       continue;
     }
+    // The site id is the probe driver's; parsing it still refuses one out of
+    // int range.
     if (header && std::regex_search(line, match, siteIdPattern)) {
-      header->siteId = std::stoi(match[1]);
+      (void)std::stoi(match[1]);
       continue;
     }
     if (header && std::regex_search(line, match, kappaPattern)) {

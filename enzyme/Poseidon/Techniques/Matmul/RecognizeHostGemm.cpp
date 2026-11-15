@@ -230,7 +230,6 @@ struct RgAtoms {
   // Two loads of one field are one atom: the value is the launch's either way.
   std::map<LaunchRef, unsigned> idOfField;
   DenseMap<const Loop *, unsigned> counterOf;
-  SmallVector<std::string, 16> name;
 
   unsigned id(const SCEV *S) {
     auto it = idOf.find(S);
@@ -252,10 +251,6 @@ struct RgAtoms {
     idOf[S] = n;
     if (field.param >= 0)
       idOfField[field] = n;
-    std::string s;
-    raw_string_ostream os(s);
-    S->print(os);
-    name.push_back(os.str());
     return n;
   }
   unsigned counter(const Loop *L) {
@@ -265,23 +260,7 @@ struct RgAtoms {
     unsigned n = byId.size();
     byId.push_back(nullptr);
     counterOf[L] = n;
-    name.push_back(("j<" + L->getHeader()->getName() + ">").str());
     return n;
-  }
-  std::string str(const RgPoly &p) const {
-    if (p.t.empty())
-      return "0";
-    std::string s;
-    bool first = true;
-    for (auto &kv : p.t) {
-      if (!first)
-        s += " + ";
-      first = false;
-      s += std::to_string(kv.second);
-      for (unsigned a : kv.first)
-        s += "*" + (a < name.size() ? name[a] : std::string("?"));
-    }
-    return s;
   }
 };
 

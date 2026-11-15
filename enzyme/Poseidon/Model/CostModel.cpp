@@ -110,7 +110,6 @@ const std::unordered_set<std::string> &getScalarTypes(CostModelState &CM,
 }
 
 double getInstructionCompCost(CostModelState &CM, const Instruction *I) {
-#if LLVM_VERSION_MAJOR >= 20
   // O3 fuses sin(x) and cos(x) into llvm.sincos, whose struct result would
   // otherwise be priced as free.
   if (auto *II = dyn_cast<IntrinsicInst>(I))
@@ -124,7 +123,6 @@ double getInstructionCompCost(CostModelState &CM, const Instruction *I) {
         unpriced(I);
       return rowCost(CM, *I, "sin", P) + rowCost(CM, *I, "cos", P);
     }
-#endif
   // A regime split's condition is an fcmp, whose i1 result is not an FP type
   // but runs on the FP pipe of its operands.
   if (!I->getType()->isFPOrFPVectorTy() && !isa<FCmpInst>(I))
@@ -172,7 +170,6 @@ double getInstructionCompCost(CostModelState &CM, const Instruction *I) {
         case Intrinsic::cos:
           OpcodeName = "cos";
           break;
-#if LLVM_VERSION_MAJOR > 16
         case Intrinsic::tan:
           OpcodeName = "tan";
           break;
@@ -197,7 +194,6 @@ double getInstructionCompCost(CostModelState &CM, const Instruction *I) {
         case Intrinsic::tanh:
           OpcodeName = "tanh";
           break;
-#endif
         case Intrinsic::exp:
           OpcodeName = "exp";
           break;

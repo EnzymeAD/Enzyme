@@ -53,7 +53,7 @@ constexpr llvm::StringLiteral kHostWrapper = "poseidon-site-wrapper";
 constexpr llvm::StringLiteral kSiteCallee = "poseidon-site-callee";
 
 std::string shortDouble(double v);
-// A double as a function attribute value that reads back to the same bits.
+// A double as text that reads back to the same bits, infinity included.
 std::string exactDouble(double v);
 std::string displayName(const llvm::Function &F);
 void diagnoseSite(llvm::Function &F, const llvm::Twine &message,
