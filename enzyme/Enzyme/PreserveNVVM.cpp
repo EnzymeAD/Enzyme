@@ -191,6 +191,14 @@ bool preserveLinkage(bool Begin, Function &F, bool Inlining = true) {
     }
     F.addFnAttr("prev_linkage", std::to_string(F.getLinkage()));
     F.setLinkage(Function::LinkageTypes::ExternalLinkage);
+    // External linkage keeps a definition, but not a declaration: a rule
+    // defined in another unit is referenced here only from metadata, and
+    // StripDeadPrototypes would drop it before Enzyme runs. The end pass
+    // takes it out of llvm.compiler.used again.
+    if (F.isDeclaration() && !F.hasFnAttribute("prev_compiler_used")) {
+      F.addFnAttr("prev_compiler_used");
+      appendToCompilerUsed(*F.getParent(), {&F});
+    }
     return true;
   }
   return false;
