@@ -2215,7 +2215,13 @@ public:
       size_t l1 = count.getKnownMinValue();
       uint64_t instidx = 0;
 
-      for (size_t idx : SVI.getShuffleMask()) {
+      for (int maskIdx : SVI.getShuffleMask()) {
+        // A poison lane reads neither operand.
+        if (maskIdx < 0) {
+          ++instidx;
+          continue;
+        }
+        size_t idx = maskIdx;
         auto opnum = (idx < l1) ? 0 : 1;
         auto opidx = (idx < l1) ? idx : (idx - l1);
 

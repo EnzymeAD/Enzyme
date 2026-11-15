@@ -558,10 +558,12 @@ Value *GradientUtils::getOrInsertConditionalIndex(Value *val, LoopContext &lc,
   }
 
   IRBuilder<> lbuilder(lc.header, lc.header->begin());
-  auto PN = lbuilder.CreatePHI(lc.incvar->getType(), 2);
-  Constant *Zero =
-      Constant::getNullValue(lc.incvar->getType()->getScalarType());
-  PN->addIncoming(Zero, lc.preheader);
+  // A vector condition selects per lane, so the index is a vector too.
+  Type *IdxTy = lc.incvar->getType();
+  if (auto *VTy = dyn_cast<VectorType>(val->getType()))
+    IdxTy = VectorType::get(IdxTy, VTy->getElementCount());
+  auto PN = lbuilder.CreatePHI(IdxTy, 2);
+  PN->addIncoming(Constant::getNullValue(IdxTy), lc.preheader);
   lbuilder.SetInsertPoint(lc.incvar->getNextNode());
   Value *red = lc.incvar;
   if (VectorType *VTy = dyn_cast<VectorType>(val->getType())) {
@@ -1665,8 +1667,13 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
       auto inst = dyn_cast<Instruction>(val);
       if (!inst)
         continue;
+      // An incoming value in a block Enzyme added has no original loop to
+      // compare against, so do not recompute the phi.
       auto origInstParent = isOriginal(inst->getParent());
-      assert(origInstParent);
+      if (!origInstParent) {
+        assert(unwrapMode != UnwrapMode::LegalFullUnwrap);
+        goto endCheck;
+      }
       const llvm::Loop *InstLoop = OrigLI->getLoopFor(origInstParent);
       if (!InstLoop) {
         continue;
@@ -3137,7 +3144,10 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
             while (ops.size()) {
               auto z = dyn_cast_or_null<Instruction>(ops[0]);
               ops.pop_front();
-              if (z && z->getNumUses() == 0 && !z->isUsedByMetadata()) {
+              // The cache itself is still owned by scopeMap and is erased
+              // below.
+              if (z && z != found->first && z->getNumUses() == 0 &&
+                  !z->isUsedByMetadata()) {
                 for (unsigned i = 0; i < z->getNumOperands(); ++i) {
                   ops.push_back(z->getOperand(i));
                 }
@@ -5963,7 +5973,11 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         // known not to contain a pointer, which may be initialized
         // outside of this function to contain other memory which
         // will not have a shadow within the current function.
-        if (CT.isKnown() && CT != BaseType::Pointer) {
+        // With global activity, the derivative held in a global outlives
+        // this call: a caller, or a later call of this function, reads or
+        // writes the same shadow, so it must be the shadow global.
+        if (!EnzymeGlobalActivity && CT.isKnown() &&
+            CT != BaseType::Pointer) {
           bool seen = false;
           MemoryLocation
 #if LLVM_VERSION_MAJOR >= 12
