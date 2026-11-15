@@ -74,23 +74,24 @@ struct HostArith {
 };
 
 using Routines = ExpansionRoutines<HostArith>;
-Routines routines() { return Routines(HostArith()); }
 
-F2 pair(const ExpansionLimbs &a) { return {a.x[0], a.x[1]}; }
-ExpansionLimbs limbs2(F2 r) {
+} // namespace
+
+static Routines routines() { return Routines(HostArith()); }
+
+static F2 pair(const ExpansionLimbs &a) { return {a.x[0], a.x[1]}; }
+static ExpansionLimbs limbs2(F2 r) {
   ExpansionLimbs c;
   c.n = 2;
   c.x[0] = r.hi;
   c.x[1] = r.lo;
   return c;
 }
-ExpansionLimbs sized(unsigned n) {
+static ExpansionLimbs sized(unsigned n) {
   ExpansionLimbs c;
   c.n = n;
   return c;
 }
-
-} // namespace
 
 ExpansionLimbs ExpansionLimbs::of(const float *limbs, unsigned n) {
   ExpansionLimbs r;

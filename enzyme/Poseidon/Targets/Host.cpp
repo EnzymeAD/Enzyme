@@ -1,5 +1,17 @@
+//=- Host.cpp - the host CPU target -----------------------------------------=//
+//
+// Part of the Poseidon Project, under the Apache License v2.0 with LLVM
+// Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+//
 // The host CPU: no kernels, libm, and the host profiler
 // (runtime/fpprofiler/FPProfiler.cpp).
+//
+//===----------------------------------------------------------------------===//
+
 #include "Peers.h"
 
 #include "llvm/ADT/Twine.h"

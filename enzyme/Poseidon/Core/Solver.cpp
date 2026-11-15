@@ -90,7 +90,8 @@ DPCost CostScale::fromShare(double share) const {
   return onAxis(share * ProfiledCost, Exponent, "a budget of");
 }
 
-DPCost addDPCost(DPCost a, DPCost b) {
+// a + b on the DP's axis; aborts when the sum leaves it.
+static DPCost addDPCost(DPCost a, DPCost b) {
   if (std::optional<DPCost> sum = checkedAdd(a, b))
     return *sum;
   report_fatal_error("Poseidon: the cost " + Twine(a) + " + " + Twine(b) +
@@ -104,7 +105,6 @@ bool excludes(const OptimizationUnit &a, const OptimizationUnit &b) {
          a.footprintOverlaps(b);
 }
 
-// Neither test reads which candidate `earlier` took.
 bool reads(const OptimizationUnit &later, const OptimizationUnit &earlier) {
   return excludes(later, earlier) || later.pricedAgainst(earlier);
 }
@@ -117,14 +117,21 @@ bool overlapsConsumed(const SolutionStep &step, ArrayRef<SolutionStep> chosen) {
   });
 }
 
+// The pruned DP's admission of `unit` into a strategy holding `prior`:
+// refused if a prior step rewrites one of its outputs; a unit that consumes
+// its footprint is refused by any prior step it overlaps; any other unit
+// displaces the prior steps that consume a footprint it overlaps, their
+// deltas taken off `cost` and `error`. `kept` receives the prior steps that
+// stay.
+//
 // Charging a displaced step back is exact because a step that consumes its
 // footprint is priced alone. A unit that consumes its footprint is refused
 // instead, since a prior step may be priced against the steps before it.
 // Without displacement the frontier keyed by cost evicts equal-cost prefixes
 // that later units would have extended.
-bool admit(ArrayRef<SolutionStep> prior, const OptimizationUnit &unit,
-           const CostScale &scale, SmallVectorImpl<SolutionStep> &kept,
-           DPCost &cost, double &error) {
+static bool admit(ArrayRef<SolutionStep> prior, const OptimizationUnit &unit,
+                  const CostScale &scale, SmallVectorImpl<SolutionStep> &kept,
+                  DPCost &cost, double &error) {
   // Only one rewrite of an output can be materialized.
   for (const SolutionStep &p : prior)
     if (p.unit->rewritesSameOutputAs(unit))

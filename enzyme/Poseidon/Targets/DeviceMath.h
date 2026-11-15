@@ -1,4 +1,11 @@
-//===- DeviceMath.h - libdevice math of device modules with a site -------===//
+//=- DeviceMath.h - libdevice math of device modules with a site ------------=//
+//
+// Part of the Poseidon Project, under the Apache License v2.0 with LLVM
+// Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
 //
 // A device module whose sites are profiled or rewritten keeps the libdevice
 // (NVPTX) or ocml (AMDGPU) math functions Poseidon models as calls through the
@@ -6,7 +13,9 @@
 // Enzyme differentiates them by name, and keeps defined the ones poseidon.h
 // links for a rewrite or a derivative to call. Every other device module drops
 // what poseidon.h added and compiles as it does without the plugin.
-//===---------------------------------------------------------------------===//
+//
+//===----------------------------------------------------------------------===//
+
 #ifndef POSEIDON_DEVICE_MATH_H
 #define POSEIDON_DEVICE_MATH_H
 

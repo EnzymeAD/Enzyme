@@ -1,3 +1,12 @@
+//=- Pipeline.cpp - the Poseidon passes and where they run ------------------=//
+//
+// Part of the Poseidon Project, under the Apache License v2.0 with LLVM
+// Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+
 #include "Pipeline.h"
 
 #include "Driver.h"
@@ -22,6 +31,7 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/IR/Function.h"
@@ -43,13 +53,11 @@ using namespace llvm;
 
 namespace poseidon {
 
-namespace {
-
 // Whether Enzyme has already run on M: Enzyme removes its prev_fixup marks
 // before its run ends, so enzyme_math functions without any prev_fixup, or an
 // augmented_/diffe clone, mean it has. Extension-point callbacks run in
 // -fpass-plugin order, so a reversed plugin order shows here.
-bool enzymeAlreadyRan(Module &M) {
+static bool enzymeAlreadyRan(Module &M) {
   bool anyMath = false, anyPending = false;
   for (const Function &F : M) {
     anyMath |= F.hasFnAttribute("enzyme_math");
@@ -71,7 +79,7 @@ bool enzymeAlreadyRan(Module &M) {
 // Whether M holds a site. The host half of a CUDA or HIP compilation holds no
 // site of the annotation or the call form, whatever annotations and calls it
 // carries: the annotation of a kernel is its device half's.
-bool hasSite(const Options &O, Module &M) {
+static bool hasSite(const Options &O, Module &M) {
   const bool hostHalf = isOffloadHostHalf(M);
   if (!hostHalf &&
       (!O.Profiling.Kernels.empty() || !annotatedFunctions(M).empty()))
@@ -88,7 +96,7 @@ bool hasSite(const Options &O, Module &M) {
   return false;
 }
 
-void requirePluginOrder(const Options &O, Module &M) {
+static void requirePluginOrder(const Options &O, Module &M) {
   if (!hasSite(O, M) || !enzymeAlreadyRan(M))
     return;
   reportUserError(M.getContext(),
@@ -96,6 +104,14 @@ void requirePluginOrder(const Options &O, Module &M) {
                   "must be given in the order -fpass-plugin=<Poseidon>.so "
                   "-fpass-plugin=<ClangEnzyme>.so.");
 }
+
+static void runAlwaysInliner(Module &M, ModuleAnalysisManager &MAM) {
+  ModulePassManager Inline;
+  Inline.addPass(AlwaysInlinerPass());
+  Inline.run(M, MAM);
+}
+
+namespace {
 
 // One module pass for both phases, at OptimizerEarly so that profile
 // generation hands Enzyme the derivative requests it lowers later in the same
@@ -137,11 +153,13 @@ struct OptimizePass : PassParent<OptimizePass> {
   static bool isRequired() { return true; }
 };
 
+} // namespace
+
 // Whether Enzyme left the module's derivative requests to the LTO post-link
 // run: in these phases it does unless -enzyme-lto-prelink is given, and an
 // Enzyme without that option never does.
-bool enzymeDeferredToPostLink(ThinOrFullLTOPhase Phase,
-                              OptimizationLevel Level) {
+static bool enzymeDeferredToPostLink(ThinOrFullLTOPhase Phase,
+                                     OptimizationLevel Level) {
   if (Phase != ThinOrFullLTOPhase::FullLTOPreLink &&
       (Phase != ThinOrFullLTOPhase::ThinLTOPreLink ||
        Level == OptimizationLevel::O0))
@@ -154,8 +172,9 @@ bool enzymeDeferredToPostLink(ThinOrFullLTOPhase Phase,
 
 // Why a derivative request is still unlowered where the pass expects Enzyme to
 // have run. A pass run by pipeline name is not told which phase it runs in.
-std::string unloweredRequestReason(bool phaseKnown, ThinOrFullLTOPhase Phase,
-                                   OptimizationLevel Level) {
+static std::string unloweredRequestReason(bool phaseKnown,
+                                          ThinOrFullLTOPhase Phase,
+                                          OptimizationLevel Level) {
   if (phaseKnown && enzymeDeferredToPostLink(Phase, Level))
     return "This is an LTO pre-link compile, where Enzyme leaves derivative "
            "requests to the post-link run unless -enzyme-lto-prelink is "
@@ -169,6 +188,8 @@ std::string unloweredRequestReason(bool phaseKnown, ThinOrFullLTOPhase Phase,
               "given.";
   return reason;
 }
+
+namespace {
 
 // The site handler for deferred sites, at OptimizerLast, where the derivative
 // request a deferred body was made of has been lowered. A module without a
@@ -202,9 +223,7 @@ struct LatePass : PassParent<LatePass> {
     for (Function *F : bodies)
       Pre.run(*F, AMs.FAM);
 
-    ModulePassManager Inline;
-    Inline.addPass(AlwaysInlinerPass());
-    Inline.run(M, AMs.MAM);
+    runAlwaysInliner(M, AMs.MAM);
 
     FunctionPassManager Post;
     addCanonicalPostInline(Post);
@@ -317,15 +336,11 @@ struct LatePass : PassParent<LatePass> {
         }
     }
 
-    ModulePassManager Inline;
-    Inline.addPass(AlwaysInlinerPass());
-    Inline.run(M, AMs.MAM);
+    runAlwaysInliner(M, AMs.MAM);
 
     if (instrumented) {
       runEnzyme(M, AMs);
-      ModulePassManager Inline2;
-      Inline2.addPass(AlwaysInlinerPass());
-      Inline2.run(M, AMs.MAM);
+      runAlwaysInliner(M, AMs.MAM);
     }
 
     SmallVector<Function *, 4> live;
@@ -419,12 +434,11 @@ struct FinalizePass : PassParent<FinalizePass> {
     if (T.isDevice() && !S.IsTwin && handsOverLaunches(O))
       writeLaunchManifest(S, M);
     releaseDeviceMath(M);
-    SmallVector<Function *, 4> rewritten;
+    SmallSetVector<Function *, 4> rewritten;
     for (WeakVH &handle : S.RewrittenFunctions)
       if (auto *F = dyn_cast_or_null<Function>(handle);
-          F && F->getParent() == &M && !F->isDeclaration() &&
-          !is_contained(rewritten, F))
-        rewritten.push_back(F);
+          F && F->getParent() == &M && !F->isDeclaration())
+        rewritten.insert(F);
     erase_if(S.RewrittenFunctions, [&](WeakVH &handle) {
       auto *F = dyn_cast_or_null<Function>(handle);
       return !F || F->getParent() == &M;
@@ -433,7 +447,7 @@ struct FinalizePass : PassParent<FinalizePass> {
       inlineDeviceMath(*F);
     if (std::unique_ptr<Module> Twin = std::move(S.AsWrittenTwin)) {
       if (PB && compileAsWritten(*Twin, S, *PB, Level, Phase)) {
-        if (takeRewritten(*Twin, rewritten)) {
+        if (takeRewritten(*Twin, rewritten.getArrayRef())) {
           adoptModule(M, *Twin);
           if (O.Diagnostics.Print && rewritten.empty())
             llvm::errs() << "[poseidon] every site of " << M.getName()
@@ -481,10 +495,13 @@ struct IfSitePass : PassParent<IfSitePass> {
   static bool isRequired() { return true; }
 };
 
+} // namespace
+
 // The canonical prefix, which brings a site body to the form the profile is
 // numbered against. It matches the start of Enzyme's OptimizerEarly pipeline,
 // which runs after this plugin's callback.
-void addCanonicalPrefix(ModulePassManager &MPM, OptimizationLevel Level) {
+static void addCanonicalPrefix(ModulePassManager &MPM,
+                               OptimizationLevel Level) {
   if (Level != OptimizationLevel::O0) {
     FunctionPassManager OptimizePM;
     addCanonicalPreInline(OptimizePM, Level);
@@ -495,8 +512,6 @@ void addCanonicalPrefix(ModulePassManager &MPM, OptimizationLevel Level) {
   addCanonicalPostInline(FPM);
   MPM.addPass(createModuleToFunctionPassAdaptor(std::move(FPM)));
 }
-
-} // namespace
 
 void registerPasses(PassBuilder &PB) {
   // Every pass reads the options from the session of the module it runs on, so
@@ -567,8 +582,8 @@ void registerPasses(PassBuilder &PB) {
       });
 
   PB.registerPipelineParsingCallback(
-      [](StringRef Name, ModulePassManager &MPM,
-         ArrayRef<PassBuilder::PipelineElement>) {
+      [PBp](StringRef Name, ModulePassManager &MPM,
+            ArrayRef<PassBuilder::PipelineElement>) {
         if (Name == "poseidon") {
           MPM.addPass(OptimizePass());
           return true;
@@ -577,12 +592,6 @@ void registerPasses(PassBuilder &PB) {
           MPM.addPass(FinalizePass());
           return true;
         }
-        return false;
-      });
-
-  PB.registerPipelineParsingCallback(
-      [PBp](StringRef Name, ModulePassManager &MPM,
-            ArrayRef<PassBuilder::PipelineElement>) {
         if (Name == "poseidon-late") {
           MPM.addPass(LatePass(PBp, OptimizationLevel::O3));
           return true;

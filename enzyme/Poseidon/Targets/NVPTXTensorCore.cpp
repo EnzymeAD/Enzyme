@@ -1,3 +1,12 @@
+//=- NVPTXTensorCore.cpp - the NVPTX instructions of an in-kernel raise -----=//
+//
+// Part of the Poseidon Project, under the Apache License v2.0 with LLVM
+// Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+
 #include "NVPTXTensorCore.h"
 
 #include "llvm/ADT/Twine.h"
@@ -18,16 +27,12 @@ using namespace llvm;
 namespace poseidon {
 namespace nvptx {
 
-namespace {
-
-Intrinsic::ID resolveWmmaIntrinsic(const Twine &name) {
+static Intrinsic::ID resolveWmmaIntrinsic(const Twine &name) {
   Intrinsic::ID id = Intrinsic::lookupIntrinsicID(name.str());
   if (id == Intrinsic::not_intrinsic)
     report_fatal_error("resolveWmmaIntrinsic: intrinsic not found: " + name);
   return id;
 }
-
-} // namespace
 
 Value *emitThreadIndex(IRBuilderBase &B, Module *M, unsigned axis) {
   static constexpr Intrinsic::ID ids[3] = {Intrinsic::nvvm_read_ptx_sreg_tid_x,

@@ -1,6 +1,19 @@
+//=- NVPTX.cpp - the NVPTX target -------------------------------------------=//
+//
+// Part of the Poseidon Project, under the Apache License v2.0 with LLVM
+// Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+//
 // NVPTX: CUDA kernels, libdevice, tensor cores.
+//
+//===----------------------------------------------------------------------===//
+
 #include "Peers.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/IR/CallingConv.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IntrinsicInst.h"
@@ -29,9 +42,7 @@ public:
   StringRef name() const override { return "NVPTX"; }
   std::string herbiePlatform(StringRef processor) const override {
     std::string Stripped = processor.str();
-    size_t Pos;
-    while ((Pos = Stripped.find('_')) != std::string::npos)
-      Stripped.erase(Pos, 1);
+    llvm::erase(Stripped, '_');
     return "cuda-" + Stripped;
   }
 

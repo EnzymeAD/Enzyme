@@ -1,9 +1,19 @@
+//=- DeviceMath.cpp - libdevice math of device modules with a site ----------=//
+//
+// Part of the Poseidon Project, under the Apache License v2.0 with LLVM
+// Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+
 #include "DeviceMath.h"
 #include "MathFunctions.h"
 #include "Peers.h"
 
 #include "IR/Utils.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Demangle/Demangle.h"
 #include "llvm/IR/Constants.h"
@@ -35,7 +45,9 @@ constexpr StringLiteral kKeptAlwaysInline = "poseidon-kept-always-inline";
 
 constexpr StringLiteral kUndefinedCallee = "poseidon.undefined.callee";
 
-std::string includeAdvice(const Target &T) {
+} // namespace
+
+static std::string includeAdvice(const Target &T) {
   return (" poseidon/poseidon.h links the " + T.mathLibrary() +
           " functions a rewrite or a site's derivative may call: include it in "
           "this translation unit (with -poseidon-kernels, pass -include "
@@ -43,7 +55,7 @@ std::string includeAdvice(const Target &T) {
       .str();
 }
 
-void collectGlobals(Value *V, SmallVectorImpl<WeakVH> &out) {
+static void collectGlobals(Value *V, SmallVectorImpl<WeakVH> &out) {
   if (auto *G = dyn_cast<GlobalValue>(V)) {
     out.push_back(G);
     return;
@@ -52,8 +64,6 @@ void collectGlobals(Value *V, SmallVectorImpl<WeakVH> &out) {
     for (Value *op : C->operands())
       collectGlobals(op, out);
 }
-
-} // namespace
 
 const std::unordered_set<std::string> &mathBases() {
   static const std::unordered_set<std::string> Bases = [] {
@@ -82,11 +92,11 @@ std::string retypeLibmFunction(StringRef name, Type *newType) {
 }
 
 bool deviceCallsMathLibrary(StringRef op, Type *Ty) {
-  static const std::unordered_set<std::string> ops = {
-      "sin",  "cos",  "tan",   "asin",  "acos",  "atan", "atan2", "sinh",
-      "cosh", "tanh", "asinh", "acosh", "atanh", "exp",  "exp2",  "expm1",
-      "log",  "log2", "log10", "log1p", "pow",   "cbrt"};
-  return ops.count(op.str()) && (Ty->isFloatTy() || Ty->isDoubleTy());
+  return any_of(mathFunctions(),
+                [&](const MathFunction &F) {
+                  return F.DeviceCall && F.Name == op;
+                }) &&
+         (Ty->isFloatTy() || Ty->isDoubleTy());
 }
 
 StringRef deviceMathName(StringRef fnName) {

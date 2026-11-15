@@ -122,10 +122,12 @@ private:
   std::vector<std::thread> Workers;
 };
 
+} // namespace
+
 // The pool for a -poseidon-threads value, made on first use and kept for the
 // process, as the solve asks for many small batches; null when one thread is
 // all it allows.
-Pool *poolFor(unsigned Threads) {
+static Pool *poolFor(unsigned Threads) {
   static std::mutex Lock;
   static std::map<unsigned, std::unique_ptr<Pool>> Pools;
   std::lock_guard<std::mutex> Guard(Lock);
@@ -137,8 +139,6 @@ Pool *poolFor(unsigned Threads) {
   }
   return It->second.get();
 }
-
-} // namespace
 
 void forEachIndex(unsigned Threads, size_t N, function_ref<void(size_t)> Fn) {
   Pool *P = N > 1 ? poolFor(Threads) : nullptr;
