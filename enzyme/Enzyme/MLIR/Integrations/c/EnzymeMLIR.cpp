@@ -8,6 +8,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "EnzymeMLIR.h"
+#include "EnzymeMLIRPasses.h"
 
 #include "mlir/CAPI/IR.h"
 #include "mlir/CAPI/Pass.h"
@@ -23,6 +24,18 @@ MLIR_DEFINE_CAPI_DIALECT_REGISTRATION(Enzyme, enzyme,
                                       mlir::enzyme::EnzymeDialect)
 
 void enzymeRegisterPasses(void) { mlir::enzyme::registerenzymePasses(); }
+
+namespace mlir::enzyme {
+// The generated C API expects the group registration to be named after its
+// `--prefix`, but `-gen-pass-decls -name enzyme` names it registerenzymePasses.
+static void registerEnzymePasses() { registerenzymePasses(); }
+} // namespace mlir::enzyme
+
+using namespace mlir::enzyme;
+
+extern "C" {
+#include "Passes/Passes.capi.cpp.inc"
+}
 
 void enzymeRegisterDialectExtensions(MlirDialectRegistry registry) {
   mlir::enzyme::registerCoreDialectAutodiffInterfaces(*unwrap(registry));
