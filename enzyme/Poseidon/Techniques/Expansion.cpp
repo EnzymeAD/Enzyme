@@ -14,9 +14,11 @@
 #include "Staging.h"
 #include "Targets/DeviceMath.h"
 #include "Targets/Target.h"
+
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/MapVector.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Config/llvm-config.h"
@@ -94,9 +96,10 @@ struct IRArith {
 };
 
 using Routines = ExpansionRoutines<IRArith>;
-Routines routines(IRBuilder<> &B) { return Routines(IRArith{B}); }
 
 } // namespace
+
+static Routines routines(IRBuilder<> &B) { return Routines(IRArith{B}); }
 
 DSValue emitDSAdd(IRBuilder<> &B, DSValue x, DSValue y) {
   return routines(B).dsAdd(x, y);
@@ -127,7 +130,8 @@ DSValue emitF64ToDS(IRBuilder<> &B, Value *f64val) {
   return routines(B).dsFromF64(f64val);
 }
 
-Value *emitDSToF64(IRBuilder<> &B, DSValue ds) {
+// The f64 value of a normalized pair, tagged for foldDSPairRoundtrip.
+static Value *emitDSToF64(IRBuilder<> &B, DSValue ds) {
   Value *joined = routines(B).dsToF64(ds);
   // Tag the restore so foldDSPairRoundtrip can recover {hi,lo} exactly: every
   // DS value here is normalized, so a Dekker split of this restore returns the
@@ -292,13 +296,7 @@ static DSValue getOrSplitOperand(IRBuilder<> &B, Value *op, DSMap &dsMap,
 
   if (auto *phi = dyn_cast<PHINode>(op);
       phi && (phi->getType()->isFloatTy() || phi->getType()->isDoubleTy())) {
-    bool allReachable = true;
-    for (Value *in : phi->incoming_values())
-      if (!hasDSRepresentation(in)) {
-        allReachable = false;
-        break;
-      }
-    if (allReachable) {
+    if (all_of(phi->incoming_values(), hasDSRepresentation)) {
       IRBuilder<> phiB(phi);
       unsigned nIn = phi->getNumIncomingValues();
       auto *hiPhi = phiB.CreatePHI(f32Ty(B), nIn, "ds.phi.hi");
@@ -325,6 +323,33 @@ static DSValue getOrSplitOperand(IRBuilder<> &B, Value *op, DSMap &dsMap,
   }
 
   return emitToDS(B, op);
+}
+
+StringRef libmBaseName(StringRef name) {
+  if (StringRef device = deviceMathName(name); !device.empty())
+    return device;
+  if (!name.empty() && (name.back() == 'f' || name.back() == 'l'))
+    name = name.drop_back(1);
+  return name;
+}
+
+// The math function a call to `callee` computes: sqrt, fma or fmuladd for an
+// intrinsic, else the name its enzyme_math attribute gives, else its libm base
+// name.
+static StringRef mathNameOf(const Function &callee) {
+  if (callee.isIntrinsic()) {
+    Intrinsic::ID id = callee.getIntrinsicID();
+    if (id == Intrinsic::sqrt)
+      return "sqrt";
+    if (id == Intrinsic::fmuladd)
+      return "fmuladd";
+    if (id == Intrinsic::fma)
+      return "fma";
+    return StringRef();
+  }
+  if (callee.hasFnAttribute("enzyme_math"))
+    return callee.getFnAttribute("enzyme_math").getValueAsString();
+  return libmBaseName(callee.getName());
 }
 
 static DSValue emitDSForInstruction(IRBuilder<> &B, Instruction *I,
@@ -361,26 +386,7 @@ static DSValue emitDSForInstruction(IRBuilder<> &B, Instruction *I,
     if (!callee)
       return {nullptr, nullptr};
 
-    StringRef mathName;
-    if (callee->isIntrinsic()) {
-      Intrinsic::ID id = callee->getIntrinsicID();
-      if (id == Intrinsic::sqrt)
-        mathName = "sqrt";
-      else if (id == Intrinsic::fmuladd)
-        mathName = "fmuladd";
-      else if (id == Intrinsic::fma)
-        mathName = "fma";
-    } else if (callee->hasFnAttribute("enzyme_math")) {
-      mathName = callee->getFnAttribute("enzyme_math").getValueAsString();
-    } else if (StringRef device = deviceMathName(callee->getName());
-               !device.empty()) {
-      mathName = device;
-    } else {
-      StringRef name = callee->getName();
-      if (!name.empty() && (name.back() == 'f' || name.back() == 'l'))
-        name = name.drop_back(1);
-      mathName = name;
-    }
+    StringRef mathName = mathNameOf(*callee);
 
     if (mathName == "sqrt") {
       DSValue x = getOrSplitOperand(B, CI->getArgOperand(0), dsMap, deferred);
@@ -426,8 +432,7 @@ void applyExpansion(Session &S, ArrayRef<Instruction *> instsToChange,
     }
 
     dsMap[I] = ds;
-    if (ds.hi)
-      S.Expansion.LastExpansionLimbs.push_back(ds.hi);
+    S.Expansion.LastExpansionLimbs.push_back(ds.hi);
     if (ds.lo)
       S.Expansion.LastExpansionLimbs.push_back(ds.lo);
   }
@@ -520,18 +525,14 @@ void applyExpansion(Session &S, ArrayRef<Instruction *> instsToChange,
 // Core/ExpansionRoutines.h. A fused multiply-add is materialized as
 // multiply-then-add, as in the reference.
 
-namespace {
-
 // Only the component counts whose QxW routines are transcribed exist.
-void expansionCheckN(unsigned n) {
+static void expansionCheckN(unsigned n) {
   if (n != 3 && n != 4)
     report_fatal_error(
         "Poseidon expansion emitter: only 3- and 4-component FP32 expansions "
         "are implemented (2 components has its own DSValue path). Refusing to "
         "fabricate an unimplemented component count.");
 }
-
-} // namespace
 
 ExpansionValue emitExpansionNeg(IRBuilder<> &B, const ExpansionValue &a) {
   ExpansionValue r;
@@ -657,15 +658,7 @@ getOrSplitOperandExpansion(IRBuilder<> &B, Value *op, unsigned n,
 
   if (auto *phi = dyn_cast<PHINode>(op);
       phi && (phi->getType()->isFloatTy() || phi->getType()->isDoubleTy())) {
-    bool allReachable = true;
-    for (Value *in : phi->incoming_values()) {
-      Type *T = in->getType();
-      if (!T->isFloatTy() && !T->isDoubleTy()) {
-        allReachable = false;
-        break;
-      }
-    }
-    if (allReachable) {
+    if (all_of(phi->incoming_values(), hasDSRepresentation)) {
       IRBuilder<> phiB(phi);
       unsigned nIn = phi->getNumIncomingValues();
       ExpansionValue result;
@@ -737,26 +730,7 @@ emitExpansionForInstruction(IRBuilder<> &B, Instruction *I, unsigned n,
     if (!callee)
       return ExpansionValue{};
 
-    StringRef mathName;
-    if (callee->isIntrinsic()) {
-      Intrinsic::ID id = callee->getIntrinsicID();
-      if (id == Intrinsic::sqrt)
-        mathName = "sqrt";
-      else if (id == Intrinsic::fmuladd)
-        mathName = "fmuladd";
-      else if (id == Intrinsic::fma)
-        mathName = "fma";
-    } else if (callee->hasFnAttribute("enzyme_math")) {
-      mathName = callee->getFnAttribute("enzyme_math").getValueAsString();
-    } else if (StringRef device = deviceMathName(callee->getName());
-               !device.empty()) {
-      mathName = device;
-    } else {
-      StringRef name = callee->getName();
-      if (!name.empty() && (name.back() == 'f' || name.back() == 'l'))
-        name = name.drop_back(1);
-      mathName = name;
-    }
+    StringRef mathName = mathNameOf(*callee);
 
     if (mathName == "sqrt")
       return emitExpansionSqrt(

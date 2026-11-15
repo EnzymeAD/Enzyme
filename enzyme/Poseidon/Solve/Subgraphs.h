@@ -1,12 +1,24 @@
-//===- Subgraphs.h - the FP subgraphs of a site --------------------------===//
+//=- Subgraphs.h - the FP subgraphs of a site -------------------------------=//
+//
+// Part of the Poseidon Project, under the Apache License v2.0 with LLVM
+// Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
 //
 // The optimization units of a site: the connected components of its
 // optimizable floating-point instructions, with the profile attached to their
 // nodes, pruned, split at bottlenecks and merged where they share a staging
 // buffer.
-//===---------------------------------------------------------------------===//
+//
+//===----------------------------------------------------------------------===//
+
 #ifndef POSEIDON_SUBGRAPHS_H
 #define POSEIDON_SUBGRAPHS_H
+
+#include "Model/FPNode.h"
+#include "Profile/ProfileRead.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
@@ -15,9 +27,6 @@
 #include <memory>
 #include <unordered_map>
 #include <unordered_set>
-
-#include "Model/FPNode.h"
-#include "Profile/ProfileRead.h"
 
 namespace llvm {
 class Function;
@@ -51,16 +60,6 @@ void shapeSubgraphs(
     const llvm::SmallVectorImpl<AbstractMatmul> &abstractMatmuls,
     std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     llvm::SmallVectorImpl<Subgraph> &subgraphs);
-
-void splitSubgraphs(const Options &O,
-                    llvm::SmallVectorImpl<Subgraph> &subgraphs);
-
-// Merge every group of subgraphs that touch a common staging buffer (a pointer
-// argument or an addrspace(3) global reached by a load feeding the subgraph or
-// a store consuming it) into one unit, so the per-unit tier is the buffer's.
-void mergeSharedStagingSubgraphs(const Options &O,
-                                 llvm::SmallVectorImpl<Subgraph> &subgraphs,
-                                 llvm::Function &F);
 
 } // namespace poseidon
 #endif // POSEIDON_SUBGRAPHS_H

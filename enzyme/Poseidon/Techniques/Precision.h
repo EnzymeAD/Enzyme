@@ -15,17 +15,17 @@
 #ifndef POSEIDON_PRECISION_H
 #define POSEIDON_PRECISION_H
 
+#include "Model/CostModel.h"
+#include "Model/FPFormat.h"
+#include "Model/FPNode.h"
+#include "Unit.h"
+
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/IR/Type.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Transforms/Utils/ValueMapper.h"
-
-#include "Model/CostModel.h"
-#include "Model/FPFormat.h"
-#include "Model/FPNode.h"
-#include "Unit.h"
 
 #include <cstdint>
 #include <limits>
@@ -64,9 +64,6 @@ struct PTCandidate {
   void apply(Session &S, Subgraph &subgraph,
              llvm::ValueToValueMapTy *VMap = nullptr, FPGraph *graph = nullptr);
 };
-
-void changePrecision(llvm::Instruction *I, PrecisionChange &change,
-                     llvm::MapVector<llvm::Value *, llvm::Value *> &oldToNew);
 
 bool demoteFPCastPHIs(llvm::Function &F);
 

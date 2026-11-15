@@ -31,6 +31,7 @@
 #include <utility>
 
 namespace llvm {
+class DebugLoc;
 class Instruction;
 class Value;
 class raw_ostream;
@@ -174,6 +175,17 @@ struct Tradeoff {
   double efficiency;
 };
 std::optional<Tradeoff> classifyTradeoff(double compDelta, double accDelta);
+// A source position; line 0 when there is none.
+struct SourceLoc {
+  std::string file;
+  unsigned line = 0, col = 0;
+  bool valid() const { return line != 0; }
+};
+// The position of a debug location, or of an instruction's.
+SourceLoc locOf(const llvm::DebugLoc &DL);
+SourceLoc locOf(const llvm::Value *V);
+// A position as the reports write it: "file", "line" and "col".
+llvm::json::Object locJSON(const SourceLoc &L);
 // An instruction's source location: file, line and column; empty without one.
 llvm::json::Object getSourceLocationJSON(llvm::Value *V);
 // An instruction's source location as file:line:col; empty without one.

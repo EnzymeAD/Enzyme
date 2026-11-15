@@ -12,19 +12,23 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "Herbie.h"
+#include "Core/HerbieRun.h"
+#include "Core/Parallel.h"
+#include "IR/Utils.h"
+#include "Model/CostModel.h"
+#include "Model/Evaluators.h"
+#include "Model/Sampling.h"
+#include "Pass/Session.h"
+#include "Targets/Target.h"
+
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
-#include "llvm/ADT/StringExtras.h"
-#include "llvm/ADT/StringSet.h"
-#include "llvm/ADT/StringSwitch.h"
-#include "llvm/Analysis/AliasAnalysis.h"
-#include "llvm/Analysis/BasicAliasAnalysis.h"
+#include "llvm/ADT/SmallSet.h"
 #include "llvm/Analysis/LoopInfo.h"
-#include "llvm/Analysis/TargetLibraryInfo.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/InstIterator.h"
-#include "llvm/IR/IntrinsicInst.h"
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/Error.h"
@@ -33,24 +37,10 @@
 #include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/raw_ostream.h"
-#include "llvm/Transforms/Scalar/EarlyCSE.h"
-#include "llvm/Transforms/Utils/Mem2Reg.h"
-
-#include "Core/HerbieRun.h"
-#include "Core/Parallel.h"
-#include "Herbie.h"
-#include "IR/Utils.h"
-#include "Model/CostModel.h"
-#include "Model/Evaluators.h"
-#include "Model/Sampling.h"
-#include "Pass/Session.h"
-#include "Targets/DeviceMath.h"
-#include "Targets/Target.h"
 
 #include <iomanip>
 #include <map>
 #include <optional>
-#include <regex>
 #include <sstream>
 #include <string>
 #include <unordered_map>
@@ -63,8 +53,7 @@ namespace poseidon {
 
 // The Herbie platform this compile searches against. It is the device's, so it
 // is derived from the resolved cost model.
-namespace {
-const HerbiePlatform &getHerbiePlatform(Session &S, const Function &F) {
+static const HerbiePlatform &getHerbiePlatform(Session &S, const Function &F) {
   HerbiePlatform &P = S.Herbie.Platform;
   if (S.Herbie.PlatformResolved)
     return P;
@@ -112,7 +101,6 @@ const HerbiePlatform &getHerbiePlatform(Session &S, const Function &F) {
   }
   return P;
 }
-} // namespace
 
 // How this compile runs Herbie: its -poseidon-herbie-* flags.
 static HerbieRunOptions herbieRunOptions(Session &S, const Function &F) {
@@ -139,9 +127,12 @@ void addHerbieKeyParts(Session &S, const Function &F, CacheKey &key) {
   addHerbieKeyParts(key, herbieRunOptions(S, F), S.Herbie.HerbieDigests);
 }
 
-bool improveViaHerbie(Session &S, const std::vector<std::string> &inputExprs,
-                      std::vector<RewriteUnit> &COs, int subgraphIdx,
-                      const Function &F) {
+// Collects Herbie's rewrites of `inputExprs`, cores of the site `F`, into
+// `COs`, unpriced.
+static bool improveViaHerbie(Session &S,
+                             const std::vector<std::string> &inputExprs,
+                             std::vector<RewriteUnit> &COs, int subgraphIdx,
+                             const Function &F) {
   const Options &O = S.Opts;
   if (!O.Herbie.HerbieBinary.empty() && O.Diagnostics.Print)
     llvm::errs() << "Poseidon: using Herbie binary '" << O.Herbie.HerbieBinary
@@ -329,7 +320,7 @@ void reportHerbieAnswers(Session &S) {
   H.Cached = H.Imported = H.Fresh = 0;
 }
 
-std::string getPrecondition(
+static std::string getPrecondition(
     const Options &O, const SmallSet<std::string, 8> &args,
     const std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     const std::unordered_map<std::string, Value *> &symbolToValueMap) {
@@ -380,11 +371,12 @@ std::string getPrecondition(
 }
 
 namespace {
-
 using RegimeArm = std::pair<const FPNode *, bool>;
+} // namespace
 
-void collectIfNodes(const FPNode *node, SmallPtrSetImpl<const FPNode *> &seen,
-                    SmallVectorImpl<const FPNode *> &ifs) {
+static void collectIfNodes(const FPNode *node,
+                           SmallPtrSetImpl<const FPNode *> &seen,
+                           SmallVectorImpl<const FPNode *> &ifs) {
   if (!seen.insert(node).second)
     return;
   if (node->op == "if")
@@ -395,10 +387,11 @@ void collectIfNodes(const FPNode *node, SmallPtrSetImpl<const FPNode *> &seen,
 
 // The arms the candidate actually evaluates at `point`, following each `if` the
 // way the materialized select resolves it. `ev` evaluates at `point`.
-void collectTakenArms(const FPNode *node,
-                      const MapVector<Value *, double> &point, FPEvaluator &ev,
-                      SmallPtrSetImpl<const FPNode *> &seen,
-                      SmallVectorImpl<RegimeArm> &arms) {
+static void collectTakenArms(const FPNode *node,
+                             const MapVector<Value *, double> &point,
+                             FPEvaluator &ev,
+                             SmallPtrSetImpl<const FPNode *> &seen,
+                             SmallVectorImpl<RegimeArm> &arms) {
   if (!seen.insert(node).second)
     return;
   if (node->op != "if") {
@@ -414,14 +407,16 @@ void collectTakenArms(const FPNode *node,
   collectTakenArms(node->operands[taken ? 1 : 2].get(), point, ev, seen, arms);
 }
 
-SmallVector<RegimeArm, 4> takenArms(const FPNode *root,
-                                    const MapVector<Value *, double> &point,
-                                    FPEvaluator &ev) {
+static SmallVector<RegimeArm, 4>
+takenArms(const FPNode *root, const MapVector<Value *, double> &point,
+          FPEvaluator &ev) {
   SmallPtrSet<const FPNode *, 32> seen;
   SmallVector<RegimeArm, 4> arms;
   collectTakenArms(root, point, ev, seen, arms);
   return arms;
 }
+
+namespace {
 
 struct ArmStats {
   double candSum = 0.0;
@@ -459,9 +454,11 @@ struct ElementPricing {
   }
 };
 
+} // namespace
+
 // The element on the samples every candidate is priced on.
-void priceOnPoints(const Options &O, ElementPricing &E,
-                   ArrayRef<SubgraphSamples::Point> points) {
+static void priceOnPoints(const Options &O, ElementPricing &E,
+                          ArrayRef<SubgraphSamples::Point> points) {
   const size_t n = points.size();
   SmallVector<double, 0> values(n);
   SmallVector<SmallVector<RegimeArm, 4>, 0> arms(E.ifNodes.empty() ? 0 : n);
@@ -541,8 +538,8 @@ void priceOnPoints(const Options &O, ElementPricing &E,
 // is spent. An element takes the rounds in order and at each point reads only
 // its own counts, so the elements advance through the rounds together, each
 // round's evaluations running concurrently.
-void searchArms(const Options &O, SubgraphSamples &samples,
-                ArrayRef<ElementPricing *> elements) {
+static void searchArms(const Options &O, SubgraphSamples &samples,
+                       ArrayRef<ElementPricing *> elements) {
   const size_t budget =
       static_cast<size_t>(O.Model.ArmSearchFactor) * O.Model.NumSamples;
   for (unsigned round = 1;; ++round) {
@@ -635,7 +632,7 @@ void searchArms(const Options &O, SubgraphSamples &samples,
 }
 
 // Charges the element its worst arm's excess over the original.
-void chargeWorstArm(const Options &O, ElementPricing &E) {
+static void chargeWorstArm(const Options &O, ElementPricing &E) {
   if (E.discard || E.ifNodes.empty())
     return;
   double worst = E.cost;
@@ -672,9 +669,9 @@ void chargeWorstArm(const Options &O, ElementPricing &E) {
     E.cost = worst;
 }
 
-void collectInputs(const FPNode *node, const SetVector<Value *> &inputs,
-                   SmallPtrSetImpl<const FPNode *> &seen,
-                   SmallPtrSetImpl<Value *> &used) {
+static void collectInputs(const FPNode *node, const SetVector<Value *> &inputs,
+                          SmallPtrSetImpl<const FPNode *> &seen,
+                          SmallPtrSetImpl<Value *> &used) {
   if (!seen.insert(node).second)
     return;
   if (auto *LL = dyn_cast<FPLLValue>(node)) {
@@ -685,8 +682,6 @@ void collectInputs(const FPNode *node, const SetVector<Value *> &inputs,
   for (const auto &operand : node->operands)
     collectInputs(operand.get(), inputs, seen, used);
 }
-
-} // namespace
 
 void setUnifiedAccuracyCost(
     const Options &O, RewriteUnit &CO,
@@ -869,7 +864,8 @@ void setUnifiedAccuracyCost(
 
     if (!discardCandidate) {
       candidate.accuracyCost = total;
-      assert(!std::isnan(candidate.accuracyCost));
+      assert(!std::isnan(candidate.accuracyCost) &&
+             "a kept candidate has an accuracy cost");
       newCandidates.push_back(std::move(candidate));
     }
   }
@@ -1121,8 +1117,6 @@ BoundaryCastFreq RewriteUnit::boundaryCastFreq(
   return B;
 }
 
-namespace {
-
 // The outputs' expressions with every subterm used more than once bound by
 // let*, so Herbie reads the subgraph as the DAG it is rather than one tree per
 // output.
@@ -1189,8 +1183,6 @@ static std::string arrayCoreBody(
   body += ")";
   return bindings.empty() ? body : "(let* (" + bindings + ") " + body + ")";
 }
-
-} // namespace
 
 void proposeHerbieCandidates(
     Session &S, Function &F, Subgraph &subgraph, int subgraphCounter,
@@ -1287,7 +1279,7 @@ void proposeHerbieCandidates(
     }
 
     auto parenCount = std::count(expr.begin(), expr.end(), '(');
-    assert(parenCount > 0);
+    assert(parenCount > 0 && "an output expression is an FPCore operation");
     if (parenCount == 1) {
       if (O.Diagnostics.Print)
         llvm::errs() << "Skipping Herbie for simple expression: " << expr
@@ -1785,13 +1777,12 @@ void RewriteUnit::addCuratedRewrites(json::Array &rewrites) {
   for (size_t ci = 0; ci < candidates.size(); ++ci) {
     auto &cand = candidates[ci];
     double accDelta = getAccCostDelta(ci);
-    auto compDelta = getCompCostDelta(session().CostModel, ci);
-    double compDeltaVal = compDelta;
+    double compDelta = getCompCostDelta(session().CostModel, ci);
 
     if (std::isnan(accDelta))
       continue;
 
-    std::optional<Tradeoff> tradeoff = classifyTradeoff(compDeltaVal, accDelta);
+    std::optional<Tradeoff> tradeoff = classifyTradeoff(compDelta, accDelta);
     if (!tradeoff)
       continue;
     std::string category = tradeoff->category.str();
@@ -1803,7 +1794,7 @@ void RewriteUnit::addCuratedRewrites(json::Array &rewrites) {
     rw["rewritten_expr"] = cand.expr;
     rw["category"] = category;
     rw["efficiency"] = jsonFloat(efficiency);
-    rw["computation_cost_delta"] = compDeltaVal;
+    rw["computation_cost_delta"] = compDelta;
     rw["accuracy_cost_delta"] = jsonFloat(accDelta);
     rw["gradient"] = jsonFloat(grad);
     rw["executions"] = static_cast<int64_t>(executions);

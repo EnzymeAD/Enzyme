@@ -12,43 +12,21 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "llvm/ADT/STLExtras.h"
-#include "llvm/ADT/SmallPtrSet.h"
-#include "llvm/ADT/StringExtras.h"
-#include "llvm/Config/llvm-config.h"
-#include "llvm/Demangle/Demangle.h"
-#include "llvm/Support/Error.h"
-#include "llvm/Support/ErrorHandling.h"
-#include "llvm/Support/FileSystem.h"
-#include "llvm/Support/Format.h"
-#include "llvm/Support/FormatVariadic.h"
-#include "llvm/Support/JSON.h"
-#include "llvm/Support/MemoryBuffer.h"
-#include "llvm/Support/Path.h"
-#include "llvm/Support/raw_ostream.h"
-#include "llvm/Support/xxhash.h"
-
-#include "Model/CostModel.h"
+#include "Solvers.h"
 #include "Optimize.h"
 #include "Pass/Session.h"
 #include "Report.h"
 #include "SiteTable.h"
-#include "Sites/SiteIdentity.h"
-#include "Solvers.h"
-
-#include "IR/Utils.h"
 #include "Techniques/Herbie.h"
 #include "Techniques/Matmul/Matmul.h"
 #include "Techniques/Precision.h"
 
-#include "llvm/IR/DebugInfoMetadata.h"
-#include "llvm/IR/IRBuilder.h"
-#include "llvm/IR/InstIterator.h"
-#include "llvm/IR/StructuralHash.h"
-#include "llvm/Transforms/Utils/Cloning.h"
-
-#include <chrono>
-#include <set>
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/Support/Error.h"
+#include "llvm/Support/Format.h"
+#include "llvm/Support/FormatVariadic.h"
+#include "llvm/Support/raw_ostream.h"
 
 using namespace llvm;
 

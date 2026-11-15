@@ -100,30 +100,42 @@ std::optional<Tradeoff> classifyTradeoff(double compDelta, double accDelta) {
                                               ? std::abs(compDelta) / accDelta
                                               : std::abs(compDelta)};
   if (compDelta > 0 && accDelta <= 0)
-    return Tradeoff{"accuracy_for_speed", (compDelta > 0)
-                                              ? std::abs(accDelta) / compDelta
-                                              : std::abs(accDelta)};
+    return Tradeoff{"accuracy_for_speed", std::abs(accDelta) / compDelta};
   return std::nullopt;
 }
 
+SourceLoc locOf(const DebugLoc &DL) {
+  if (!DL)
+    return {};
+  return {DL->getFilename().str(), DL.getLine(), DL.getCol()};
+}
+
+SourceLoc locOf(const Value *V) {
+  if (auto *I = dyn_cast_or_null<Instruction>(V))
+    return locOf(I->getDebugLoc());
+  return {};
+}
+
+json::Object locJSON(const SourceLoc &L) {
+  json::Object o;
+  o["file"] = L.file;
+  o["line"] = (int64_t)L.line;
+  o["col"] = (int64_t)L.col;
+  return o;
+}
+
 json::Object getSourceLocationJSON(Value *V) {
-  json::Object loc;
-  if (auto *I = dyn_cast<Instruction>(V)) {
-    if (const auto &DL = I->getDebugLoc()) {
-      loc["file"] = DL->getFilename().str();
-      loc["line"] = static_cast<int64_t>(DL.getLine());
-      loc["col"] = static_cast<int64_t>(DL.getCol());
-    }
-  }
-  return loc;
+  if (auto *I = dyn_cast<Instruction>(V))
+    if (I->getDebugLoc())
+      return locJSON(locOf(I->getDebugLoc()));
+  return json::Object();
 }
 
 std::string getSourceLocationStr(Value *V) {
   if (auto *I = dyn_cast<Instruction>(V)) {
-    if (const auto &DL = I->getDebugLoc()) {
-      return (DL->getFilename() + ":" + Twine(DL.getLine()) + ":" +
-              Twine(DL.getCol()))
-          .str();
+    if (I->getDebugLoc()) {
+      SourceLoc L = locOf(I->getDebugLoc());
+      return (L.file + ":" + Twine(L.line) + ":" + Twine(L.col)).str();
     }
   }
   return "";

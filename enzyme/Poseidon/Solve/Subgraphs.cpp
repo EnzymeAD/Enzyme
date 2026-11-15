@@ -1,5 +1,19 @@
-//===- Subgraphs.cpp - the FP subgraphs of a site -------------------------===//
+//=- Subgraphs.cpp - the FP subgraphs of a site -----------------------------=//
+//
+// Part of the Poseidon Project, under the Apache License v2.0 with LLVM
+// Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+
 #include "Subgraphs.h"
+#include "Core/Options.h"
+#include "IR/Utils.h"
+#include "Model/FPCore.h"
+#include "Sites/Canonicalize.h"
+#include "Targets/Target.h"
+#include "Techniques/Matmul/Matmul.h"
 
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/STLExtras.h"
@@ -13,17 +27,10 @@
 #include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
 
-#include <functional>
 #include <string>
-
-#include "Core/Options.h"
-#include "IR/Utils.h"
-#include "Model/FPCore.h"
-#include "Sites/Canonicalize.h"
-#include "Targets/Target.h"
-#include "Techniques/Matmul/Matmul.h"
 
 using namespace llvm;
 
@@ -109,6 +116,16 @@ static void aggressiveDCE(
                  << " subgraphs in " << F.getName() << "\n";
 }
 
+// The dtype of a node of type T, which an optimizable instruction and its
+// operands only ever have as float or double.
+static std::string nodeDtype(Type *T, const char *unexpected) {
+  if (T->isFloatTy())
+    return "f32";
+  if (T->isDoubleTy())
+    return "f64";
+  llvm_unreachable(unexpected);
+}
+
 void buildSubgraphs(
     const Options &O, Function &F,
     const SmallVectorImpl<AbstractMatmul> &abstractMatmuls,
@@ -134,14 +151,8 @@ void buildSubgraphs(
         continue;
       }
 
-      std::string dtype;
-      if (I.getType()->isFloatTy()) {
-        dtype = "f32";
-      } else if (I.getType()->isDoubleTy()) {
-        dtype = "f64";
-      } else {
-        llvm_unreachable("Unexpected floating point type for instruction");
-      }
+      std::string dtype = nodeDtype(
+          I.getType(), "Unexpected floating point type for instruction");
       valueToNodeMap[&I] =
           std::make_shared<FPLLValue>(&I, getHerbieOperator(I), dtype);
     }
@@ -157,14 +168,8 @@ void buildSubgraphs(
       for (auto &operand : operands) {
         if (!valueToNodeMap.count(operand)) {
           if (auto Arg = dyn_cast<Argument>(operand)) {
-            std::string dtype;
-            if (Arg->getType()->isFloatTy()) {
-              dtype = "f32";
-            } else if (Arg->getType()->isDoubleTy()) {
-              dtype = "f64";
-            } else {
-              llvm_unreachable("Unexpected floating point type for argument");
-            }
+            std::string dtype = nodeDtype(
+                Arg->getType(), "Unexpected floating point type for argument");
             valueToNodeMap[operand] =
                 std::make_shared<FPLLValue>(Arg, "__arg", dtype);
             if (O.Diagnostics.Print)
@@ -173,14 +178,8 @@ void buildSubgraphs(
           } else if (auto C = dyn_cast<ConstantFP>(operand)) {
             SmallString<10> value;
             C->getValueAPF().toString(value);
-            std::string dtype;
-            if (C->getType()->isFloatTy()) {
-              dtype = "f32";
-            } else if (C->getType()->isDoubleTy()) {
-              dtype = "f64";
-            } else {
-              llvm_unreachable("Unexpected floating point type for constant");
-            }
+            std::string dtype = nodeDtype(
+                C->getType(), "Unexpected floating point type for constant");
             valueToNodeMap[operand] =
                 std::make_shared<FPConst>(value.c_str(), dtype);
             if (O.Diagnostics.Print)
@@ -202,15 +201,8 @@ void buildSubgraphs(
 
             assert(elemType->isFloatingPointTy() &&
                    "Global variable is not floating point type");
-            std::string dtype;
-            if (elemType->isFloatTy()) {
-              dtype = "f32";
-            } else if (elemType->isDoubleTy()) {
-              dtype = "f64";
-            } else {
-              llvm_unreachable(
-                  "Unexpected floating point type for global variable");
-            }
+            std::string dtype = nodeDtype(
+                elemType, "Unexpected floating point type for global variable");
             valueToNodeMap[operand] =
                 std::make_shared<FPLLValue>(GV, "__gv", dtype);
             if (O.Diagnostics.Print)
@@ -253,7 +245,6 @@ void buildSubgraphs(
         auto cur = todo.pop_back_val();
         assert(valueToNodeMap.count(cur) && "Node not found in valueToNodeMap");
 
-        assert(isa<Instruction>(cur));
         auto I2 = cast<Instruction>(cur);
 
         if (operation_seen.contains(I2)) {
@@ -263,7 +254,8 @@ void buildSubgraphs(
           continue;
         }
 
-        assert(!processed.contains(cur));
+        assert(!processed.contains(cur) &&
+               "an operation is flood-filled into one subgraph only");
 
         if (O.Diagnostics.Print)
           llvm::errs() << "Insert to operation_seen and processed: " << *I2
@@ -405,9 +397,9 @@ void attachProfile(
             if (!O.Profiling.LooseCoverage) {
               llvm::errs() << "FP Instruction " << *op
                            << " has no execution logged (idx=" << idx << ")!\n";
-              llvm_unreachable("Unexecuted instruction found; set "
-                               "-poseidon-loose-coverage "
-                               "to suppress this error\n");
+              report_fatal_error("Unexecuted instruction found; set "
+                                 "-poseidon-loose-coverage "
+                                 "to suppress this error\n");
             }
             auto node = valueToNodeMap[op];
             node->sens = 0;
@@ -423,86 +415,11 @@ void attachProfile(
   }
 }
 
-void shapeSubgraphs(
-    const Options &O, Function &F, const ProfileMap &profileMap,
-    const std::unordered_set<size_t> &zeroGradIdx,
-    const SmallVectorImpl<AbstractMatmul> &abstractMatmuls,
-    std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-    SmallVectorImpl<Subgraph> &subgraphs) {
-  if (O.Solver.AggressiveDCE)
-    aggressiveDCE(O, F, subgraphs, valueToNodeMap, profileMap, zeroGradIdx,
-                  abstractMatmuls);
-
-  splitSubgraphs(O, subgraphs);
-
-  if (O.Diagnostics.Print) {
-    llvm::errs() << "[poseidon] After splitting, have " << subgraphs.size()
-                 << " subgraphs in " << F.getName() << "\n";
-  }
-
-  // After splitting, so that a merged unit is never split again.
-  if (O.Candidates.MergeSharedStaging) {
-    mergeSharedStagingSubgraphs(O, subgraphs, F);
-    if (O.Diagnostics.Print)
-      llvm::errs() << "[poseidon] After staging-tier merge, have "
-                   << subgraphs.size() << " subgraphs in " << F.getName()
-                   << "\n";
-  }
-
-  if (O.Diagnostics.Print) {
-    llvm::errs() << "\n=== Function IR after Subgraph Splitting ===\n";
-
-    std::unordered_map<Instruction *, int> instToSubgraphIdx;
-    for (size_t idx = 0; idx < subgraphs.size(); ++idx) {
-      for (auto *inst : subgraphs[idx].operations) {
-        instToSubgraphIdx[inst] = idx;
-      }
-      for (auto *inst : subgraphs[idx].outputs) {
-        if (instToSubgraphIdx.find(inst) == instToSubgraphIdx.end()) {
-          instToSubgraphIdx[inst] = idx;
-        }
-      }
-    }
-
-    for (auto &BB : F) {
-      BB.printAsOperand(llvm::errs(), false);
-      llvm::errs() << ":\n";
-      for (auto &I : BB) {
-        llvm::errs() << "  ";
-        I.print(llvm::errs());
-
-        auto it = instToSubgraphIdx.find(&I);
-        if (it != instToSubgraphIdx.end()) {
-          llvm::errs() << " ; [SG" << it->second << "]";
-        }
-        llvm::errs() << "\n";
-      }
-    }
-    llvm::errs() << "=== End of Function IR ===\n\n";
-  }
-}
-
-bool isExpansionBottleneck(const Options &O, Instruction *I,
-                           const Subgraph &subgraph) {
-  if (subgraph.outputs.contains(I) && subgraph.outputs.size() <= 1) {
-    return false;
-  }
-  const bool forced = isa<CallInst>(I) && is_contained(O.Candidates.SplitCalls,
-                                                       getHerbieOperator(*I));
-
-  unsigned internalUses = 0;
-  for (auto *U : I->users()) {
-    if (auto *UI = dyn_cast<Instruction>(U)) {
-      if (subgraph.operations.contains(UI)) {
-        ++internalUses;
-      }
-    }
-  }
-
-  if (!forced && internalUses < O.Candidates.MinUsesSplit) {
-    return false;
-  }
-
+// The operations a split at I moves into a subgraph of their own: I and the
+// operations of its operand tree within `subgraph` that neither have a user
+// outside the tree nor feed one that has.
+static SetVector<Instruction *> movedOperations(const Subgraph &subgraph,
+                                                Instruction *I) {
   SetVector<Instruction *> relevantTree;
   SmallVector<Instruction *, 16> worklist;
   worklist.push_back(I);
@@ -575,6 +492,31 @@ bool isExpansionBottleneck(const Options &O, Instruction *I,
       }
     }
   }
+  return movedOps;
+}
+
+static bool isExpansionBottleneck(const Options &O, Instruction *I,
+                                  const Subgraph &subgraph) {
+  if (subgraph.outputs.contains(I) && subgraph.outputs.size() <= 1) {
+    return false;
+  }
+  const bool forced = isa<CallInst>(I) && is_contained(O.Candidates.SplitCalls,
+                                                       getHerbieOperator(*I));
+
+  unsigned internalUses = 0;
+  for (auto *U : I->users()) {
+    if (auto *UI = dyn_cast<Instruction>(U)) {
+      if (subgraph.operations.contains(UI)) {
+        ++internalUses;
+      }
+    }
+  }
+
+  if (!forced && internalUses < O.Candidates.MinUsesSplit) {
+    return false;
+  }
+
+  SetVector<Instruction *> movedOps = movedOperations(subgraph, I);
 
   bool isBottleneck = forced || movedOps.size() >= O.Candidates.MinOpsSplit;
   if (O.Diagnostics.Print && isBottleneck) {
@@ -591,7 +533,7 @@ bool isExpansionBottleneck(const Options &O, Instruction *I,
   return isBottleneck;
 }
 
-SetVector<Value *>
+static SetVector<Value *>
 findReachedInputs(const SetVector<Instruction *> &operations) {
   SetVector<Value *> reachedInputs;
 
@@ -612,83 +554,12 @@ findReachedInputs(const SetVector<Instruction *> &operations) {
   return reachedInputs;
 }
 
-void splitSubgraphAtBottleneck(Subgraph &currentSubgraph,
-                               Instruction *bottleneck, Subgraph &newSubgraph,
-                               Subgraph &remainingSubgraph) {
-
-  SetVector<Instruction *> relevantTree;
-  SmallVector<Instruction *, 16> worklist;
-  worklist.push_back(bottleneck);
-  relevantTree.insert(bottleneck);
-
-  while (!worklist.empty()) {
-    auto current = worklist.pop_back_val();
-    auto operands = isa<CallInst>(current) ? cast<CallInst>(current)->args()
-                                           : current->operands();
-    for (auto &op : operands) {
-      if (currentSubgraph.inputs.contains(op)) {
-        continue;
-      }
-      if (auto *OpI = dyn_cast<Instruction>(op)) {
-        if (currentSubgraph.operations.contains(OpI) &&
-            !relevantTree.contains(OpI)) {
-          worklist.push_back(OpI);
-          relevantTree.insert(OpI);
-        }
-      }
-    }
-  }
-
-  SetVector<Instruction *> movedOps;
-  SetVector<Instruction *> keptSubtreeRoots;
-
-  for (auto op : relevantTree) {
-    if (op == bottleneck) {
-      movedOps.insert(op);
-      continue;
-    }
-
-    bool hasExternalUse = false;
-    for (auto U : op->users()) {
-      if (auto UI = dyn_cast<Instruction>(U)) {
-        if (!relevantTree.contains(UI)) {
-          hasExternalUse = true;
-          break;
-        }
-      }
-    }
-
-    if (hasExternalUse) {
-      keptSubtreeRoots.insert(op);
-    } else {
-      movedOps.insert(op);
-    }
-  }
-
-  for (auto keptRoot : keptSubtreeRoots) {
-    SetVector<Instruction *> keptUpstream;
-    SmallVector<Instruction *, 16> keptWorklist;
-    keptWorklist.push_back(keptRoot);
-    keptUpstream.insert(keptRoot);
-
-    while (!keptWorklist.empty()) {
-      Instruction *current = keptWorklist.pop_back_val();
-      auto operands = isa<CallInst>(current) ? cast<CallInst>(current)->args()
-                                             : current->operands();
-      for (auto &op : operands) {
-        if (currentSubgraph.inputs.contains(op)) {
-          continue;
-        }
-        if (auto *OpI = dyn_cast<Instruction>(op)) {
-          if (relevantTree.contains(OpI) && !keptUpstream.contains(OpI)) {
-            keptWorklist.push_back(OpI);
-            keptUpstream.insert(OpI);
-            movedOps.remove(OpI);
-          }
-        }
-      }
-    }
-  }
+static void splitSubgraphAtBottleneck(const Subgraph &currentSubgraph,
+                                      Instruction *bottleneck,
+                                      Subgraph &newSubgraph,
+                                      Subgraph &remainingSubgraph) {
+  SetVector<Instruction *> movedOps =
+      movedOperations(currentSubgraph, bottleneck);
 
   newSubgraph.operations = movedOps;
   newSubgraph.outputs.insert(bottleneck);
@@ -706,7 +577,8 @@ void splitSubgraphAtBottleneck(Subgraph &currentSubgraph,
   }
 
   remainingSubgraph.inputs = findReachedInputs(remainingSubgraph.operations);
-  assert(remainingSubgraph.inputs.contains(bottleneck));
+  assert(remainingSubgraph.inputs.contains(bottleneck) &&
+         "the split-off bottleneck is an input of the remaining subgraph");
 }
 
 // The memory object a value is loaded from / stored to when that object is a
@@ -723,9 +595,13 @@ static const Value *stagingObjectOf(const Value *Ptr) {
   return nullptr;
 }
 
-void mergeSharedStagingSubgraphs(const Options &O,
-                                 SmallVectorImpl<Subgraph> &subgraphs,
-                                 Function &F) {
+// Merges every group of subgraphs that touch a common staging buffer (a
+// pointer argument or an addrspace(3) global reached by a load feeding the
+// subgraph or a store consuming it) into one unit, so the per-unit tier is the
+// buffer's.
+static void mergeSharedStagingSubgraphs(const Options &O,
+                                        SmallVectorImpl<Subgraph> &subgraphs,
+                                        Function &F) {
   if (subgraphs.size() < 2)
     return;
 
@@ -752,7 +628,7 @@ void mergeSharedStagingSubgraphs(const Options &O,
   SmallVector<unsigned, 8> parent(subgraphs.size());
   for (unsigned i = 0; i < parent.size(); ++i)
     parent[i] = i;
-  std::function<unsigned(unsigned)> find = [&](unsigned x) -> unsigned {
+  auto find = [&](unsigned x) -> unsigned {
     while (parent[x] != x) {
       parent[x] = parent[parent[x]];
       x = parent[x];
@@ -821,8 +697,8 @@ void mergeSharedStagingSubgraphs(const Options &O,
     subgraphs.push_back(std::move(M));
 }
 
-void splitSubgraphs(const Options &O, SmallVectorImpl<Subgraph> &subgraphs) {
-
+static void splitSubgraphs(const Options &O,
+                           SmallVectorImpl<Subgraph> &subgraphs) {
   SmallVector<Subgraph, 8> resultSubgraphs;
   SmallVector<Subgraph, 8> workQueue;
 
@@ -843,7 +719,8 @@ void splitSubgraphs(const Options &O, SmallVectorImpl<Subgraph> &subgraphs) {
 
     bool madeSplit = false;
     for (auto *I : sortedOps) {
-      assert(currentSubgraph.operations.contains(I));
+      assert(currentSubgraph.operations.contains(I) &&
+             "a split moves only operations upstream of the bottleneck");
 
       if (isExpansionBottleneck(O, I, currentSubgraph)) {
         if (O.Diagnostics.Print) {
@@ -932,6 +809,65 @@ void splitSubgraphs(const Options &O, SmallVectorImpl<Subgraph> &subgraphs) {
   }
 
   subgraphs = std::move(resultSubgraphs);
+}
+
+void shapeSubgraphs(
+    const Options &O, Function &F, const ProfileMap &profileMap,
+    const std::unordered_set<size_t> &zeroGradIdx,
+    const SmallVectorImpl<AbstractMatmul> &abstractMatmuls,
+    std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
+    SmallVectorImpl<Subgraph> &subgraphs) {
+  if (O.Solver.AggressiveDCE)
+    aggressiveDCE(O, F, subgraphs, valueToNodeMap, profileMap, zeroGradIdx,
+                  abstractMatmuls);
+
+  splitSubgraphs(O, subgraphs);
+
+  if (O.Diagnostics.Print) {
+    llvm::errs() << "[poseidon] After splitting, have " << subgraphs.size()
+                 << " subgraphs in " << F.getName() << "\n";
+  }
+
+  // After splitting, so that a merged unit is never split again.
+  if (O.Candidates.MergeSharedStaging) {
+    mergeSharedStagingSubgraphs(O, subgraphs, F);
+    if (O.Diagnostics.Print)
+      llvm::errs() << "[poseidon] After staging-tier merge, have "
+                   << subgraphs.size() << " subgraphs in " << F.getName()
+                   << "\n";
+  }
+
+  if (O.Diagnostics.Print) {
+    llvm::errs() << "\n=== Function IR after Subgraph Splitting ===\n";
+
+    std::unordered_map<Instruction *, int> instToSubgraphIdx;
+    for (size_t idx = 0; idx < subgraphs.size(); ++idx) {
+      for (auto *inst : subgraphs[idx].operations) {
+        instToSubgraphIdx[inst] = idx;
+      }
+      for (auto *inst : subgraphs[idx].outputs) {
+        if (instToSubgraphIdx.find(inst) == instToSubgraphIdx.end()) {
+          instToSubgraphIdx[inst] = idx;
+        }
+      }
+    }
+
+    for (auto &BB : F) {
+      BB.printAsOperand(llvm::errs(), false);
+      llvm::errs() << ":\n";
+      for (auto &I : BB) {
+        llvm::errs() << "  ";
+        I.print(llvm::errs());
+
+        auto it = instToSubgraphIdx.find(&I);
+        if (it != instToSubgraphIdx.end()) {
+          llvm::errs() << " ; [SG" << it->second << "]";
+        }
+        llvm::errs() << "\n";
+      }
+    }
+    llvm::errs() << "=== End of Function IR ===\n\n";
+  }
 }
 
 } // namespace poseidon
