@@ -1,7 +1,6 @@
 // RUN: rm -rf %t && mkdir %t
-// RUN: %clang++ $(llvm-config --cxxflags) -fPIC -shared -I%S/../../../Poseidon %S/../Inputs/expansion_match/emit.cpp -o %t/emit%shlibext
-// RUN: env EXPANSION_MATCH_OUT=%t %opt %S/../Inputs/expansion_match/module.ll %loadPoseidon -load-pass-plugin=%t/emit%shlibext -passes=expansion-match-model -S -o %t/model.ll
-// RUN: mkdir -p %t/again && env EXPANSION_MATCH_OUT=%t/again %opt %S/../Inputs/expansion_match/module.ll %loadPoseidon -load-pass-plugin=%t/emit%shlibext -passes=expansion-match-model -S -o %t/again/model.ll
+// RUN: env EXPANSION_MATCH_OUT=%t %opt %S/../Inputs/expansion_match/module.ll %loadPoseidon -load-pass-plugin=%poseidon_test_programs/poseidon-test-expansion-match%shlibext -passes=expansion-match-model -S -o %t/model.ll
+// RUN: mkdir -p %t/again && env EXPANSION_MATCH_OUT=%t/again %opt %S/../Inputs/expansion_match/module.ll %loadPoseidon -load-pass-plugin=%poseidon_test_programs/poseidon-test-expansion-match%shlibext -passes=expansion-match-model -S -o %t/again/model.ll
 // RUN: diff %t/model.ll %t/again/model.ll
 // RUN: %clang++ -O0 -c %t/model.ll -o %t/model.o
 // RUN: %clang++ -std=c++17 -O2 -ffp-contract=off -I%t %S/../Inputs/expansion_match/model_harness.cpp %t/model.o -o %t/run

@@ -3,9 +3,9 @@
 // RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-host-only -cuid=0 -O2 -S -emit-llvm -I%poseidon_profile_inc %s -o %t/plain.ll
 // RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-host-only -cuid=0 -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/other_sites -mllvm -poseidon-cache=%t/u %s -o %t/use.ll 2>&1 | FileCheck --allow-empty --check-prefix=HOST %s
 // RUN: diff %t/plain.ll %t/use.ll
-// RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-host-only -cuid=0 -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/g %s -o %t/gen.ll 2>&1 | FileCheck --check-prefix=GEN %s
+// RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-host-only -cuid=0 -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/g -mllvm -poseidon-print %s -o %t/gen.ll 2>&1 | FileCheck --check-prefix=GEN %s
 // RUN: FileCheck --check-prefix=GENIR %s < %t/gen.ll
-// RUN: %clang -x hip --offload-arch=%amdgpu_arch --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/d %s -o %t/dev.ll 2>&1 | FileCheck --check-prefix=DEV %s
+// RUN: %clang -x hip --offload-arch=%amdgpu_arch --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/d -mllvm -poseidon-print %s -o %t/dev.ll 2>&1 | FileCheck --check-prefix=DEV %s
 
 // per_call_host_half_nvptx.cu for HIP: the host half of a HIP compilation
 // holds no site of the call or the annotation form.

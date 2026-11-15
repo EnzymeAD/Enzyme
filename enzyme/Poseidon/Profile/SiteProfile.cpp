@@ -89,7 +89,7 @@ static Function *instrumentedClone(Session &S, Function &F, unsigned siteId,
 }
 
 static CallInst *withShadows(CallInst *CI, Function &clone,
-                             const MarkerArgs &marker);
+                             const MarkerArgs &marker, bool print);
 
 // Profile generation. The marker becomes an ordinary reverse-mode derivative
 // request over the instrumented clone: the custom derivative on each probe is
@@ -118,7 +118,7 @@ bool profileSite(Session &S, CallInst *CI,
     }
   }
   if (!marker->madeShadows.empty()) {
-    CI = withShadows(CI, *clone, *marker);
+    CI = withShadows(CI, *clone, *marker, S.Opts.Diagnostics.Print);
     if (!CI || !(marker = parseMarker(CI, F)))
       return false;
   }
@@ -473,16 +473,18 @@ bool profileAnnotatedKernel(Session &S, Function &K, unsigned &nextSiteId) {
   bool anyField =
       llvm::any_of(shadowed, [](const Shadowed &s) { return s.offset >= 0; });
   std::string message;
-  raw_string_ostream msg(message);
-  msg << "[poseidon-profgen] " << kernelName << ": site " << siteId << ", "
-      << shadowed.size() << " shadow buffer(s), output(s)";
-  for (const Shadowed &s : shadowed)
-    if (s.seed) {
-      msg << ' ' << s.param;
-      if (s.offset >= 0)
-        msg << "[+" << s.offset << "]";
-    }
-  msg << "\n";
+  if (S.Opts.Diagnostics.Print) {
+    raw_string_ostream msg(message);
+    msg << "[poseidon-profgen] " << kernelName << ": site " << siteId << ", "
+        << shadowed.size() << " shadow buffer(s), output(s)";
+    for (const Shadowed &s : shadowed)
+      if (s.seed) {
+        msg << ' ' << s.param;
+        if (s.offset >= 0)
+          msg << "[+" << s.offset << "]";
+      }
+    msg << "\n";
+  }
   recordDescriptor(
       S, LaunchKind::Profiling, kernelName,
       [&](raw_ostream &os) {
@@ -760,6 +762,8 @@ bool profileHostSite(Session &S, Function &B, unsigned &nextSiteId) {
   for (CallBase *CB : calls)
     emitProfiledHostCall(CB, D);
 
+  if (!S.Opts.Diagnostics.Print)
+    return true;
   errs() << "[poseidon-profgen] " << name << ": site " << D.siteId << ", "
          << D.ptrParams.size() << " shadow buffer(s), output(s)";
   for (unsigned p : D.ptrParams)
@@ -960,7 +964,7 @@ struct Region {
 // because the object the call sees is a new one each time: its storage is
 // reused, its value is not.
 static CallInst *withShadows(CallInst *CI, Function &clone,
-                             const MarkerArgs &marker) {
+                             const MarkerArgs &marker, bool print) {
   SmallVector<unsigned, 8> seedWidth;
   collectOutputParams(clone, seedWidth);
   SmallVector<bool, 8> holdsPointers;
@@ -1180,6 +1184,8 @@ static CallInst *withShadows(CallInst *CI, Function &clone,
   CI->replaceAllUsesWith(NC);
   CI->eraseFromParent();
 
+  if (!print)
+    return NC;
   errs() << "[poseidon-profgen] " << site << ": "
          << objects.size() + regions.size() << " shadow object(s), output(s)";
   for (const MarkerArgs::MadeShadow &S : marker.madeShadows)

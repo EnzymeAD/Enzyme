@@ -4,7 +4,7 @@
 // RUN: %clang -x c++ -O2 -ffp-contract=on -I%t/inc %s -x none %t/other.o -lstdc++ -lm -o %t/stock
 // RUN: %t/stock > %t/stock.out
 //
-// RUN: %poseidon_clangxx -O2 -g -poseidon-profile-generate -poseidon-cache=%t/c %s %t/other.o -o %t/gen 2>&1 | FileCheck --check-prefix=GEN %s
+// RUN: %poseidon_clangxx -O2 -g -poseidon-profile-generate -poseidon-cache=%t/c -poseidon-print %s %t/other.o -o %t/gen 2>&1 | FileCheck --check-prefix=GEN %s
 // RUN: env POSEIDON_PROFILE_DIR=%t/prof %t/gen > %t/gen.out
 // RUN: diff %t/stock.out %t/gen.out
 // RUN: %poseidon_clangxx -O2 -g -poseidon-profile-use=%t/prof -poseidon-tau=1e-6 -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-enable-herbie=0 -poseidon-cache=%t/c -poseidon-explain=%t/x -Rpass=poseidon %s %t/other.o -o %t/use 2> %t/use.err

@@ -1,5 +1,5 @@
 ; RUN: rm -rf %t && mkdir -p %t && cp %S/../Inputs/lambda_stub_hip/launches_*.json %t/
-; RUN: %clang -O0 -x ir %s %loadClangPoseidon -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t -mllvm -poseidon-unit=fixture -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=GEN %s
+; RUN: %clang -O0 -x ir %s %loadClangPoseidon -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t -mllvm -poseidon-print -mllvm -poseidon-unit=fixture -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=GEN %s
 ; RUN: %clang -O0 -x ir %s %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/lambda_stub_hip -mllvm -poseidon-cache=%t -mllvm -poseidon-unit=fixture -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=USE %s
 ; lambda_hoststub.ll for the HIP stub of the same kernel
 ; (Inputs/lambda_stub_hip/lambda_stub.hip): HIP pops the configuration with

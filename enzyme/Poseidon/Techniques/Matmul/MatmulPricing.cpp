@@ -199,7 +199,7 @@ const SmallVector<WmmaTarget, 16> &getAvailableWmmaTargets(Session &S) {
         llvm::errs() << "Poseidon: cost model missing row for known wmma "
                         "intrinsic "
                      << opcode << " " << prec
-                     << " — this target will not be considered.\n";
+                     << "; this target will not be considered.\n";
       }
     }
     S.Matmul.AvailableWmmaTargets = std::move(result);

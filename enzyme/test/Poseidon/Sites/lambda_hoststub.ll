@@ -1,5 +1,5 @@
 ; RUN: rm -rf %t && mkdir -p %t && cp %S/../Inputs/lambda_stub/launches_*.json %t/
-; RUN: %clang -O0 -x ir %s %loadClangPoseidon -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t -mllvm -poseidon-unit=fixture -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=GEN %s
+; RUN: %clang -O0 -x ir %s %loadClangPoseidon -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t -mllvm -poseidon-print -mllvm -poseidon-unit=fixture -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=GEN %s
 ; RUN: %clang -O0 -x ir %s %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/lambda_stub -mllvm -poseidon-cache=%t -mllvm -poseidon-unit=fixture -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=USE %s
 ; The launch stub of a kernel that takes a lambda by value
 ; (Inputs/lambda_stub/lambda_stub.cu, clang --cuda-host-only -O0): the

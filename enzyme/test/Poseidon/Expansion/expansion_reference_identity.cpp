@@ -1,10 +1,9 @@
 // RUN: rm -rf %t && mkdir %t
-// RUN: %clang++ $(llvm-config --cxxflags) -fPIC -shared -I%S/../../../Poseidon %S/../Inputs/expansion_match/emit.cpp -o %t/emit%shlibext
-// RUN: %opt %S/../Inputs/expansion_match/module.ll %loadPoseidon -load-pass-plugin=%t/emit%shlibext -passes=expansion-match-raw -S -o %t/raw.ll
+// RUN: %opt %S/../Inputs/expansion_match/module.ll %loadPoseidon -load-pass-plugin=%poseidon_test_programs/poseidon-test-expansion-match%shlibext -passes=expansion-match-raw -S -o %t/raw.ll
 // RUN: %clang++ -O2 -c %t/raw.ll -o %t/raw.o
 // RUN: %clang++ -std=c++17 -O2 -ffp-contract=off %S/../Inputs/expansion_match/reference_harness.cpp %t/raw.o -o %t/run
 // RUN: %t/run | FileCheck %s
-// RUN: %opt %S/../Inputs/expansion_match/module_nvptx.ll %loadPoseidon -load-pass-plugin=%t/emit%shlibext -passes=expansion-match-raw -S | FileCheck --check-prefix=NVPTX --implicit-check-not=nvvm.sqrt.approx %s
+// RUN: %opt %S/../Inputs/expansion_match/module_nvptx.ll %loadPoseidon -load-pass-plugin=%poseidon_test_programs/poseidon-test-expansion-match%shlibext -passes=expansion-match-raw -S | FileCheck --check-prefix=NVPTX --implicit-check-not=nvvm.sqrt.approx %s
 
 // The FP32 expansions the materializer emits equal, run on the host, the
 // external routines they reproduce, bit for bit with NaN payload and sign

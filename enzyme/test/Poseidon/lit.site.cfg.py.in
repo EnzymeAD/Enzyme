@@ -53,6 +53,10 @@ config.substitutions.append(('%poseidon_explain',
 config.substitutions.append(('%poseidon_rt_lib',
                              '@POSEIDON_BINARY_DIR@/lib/libposeidon_rt.a@POSEIDON_TEST_RT_LINK@'))
 
+# The directory of the programs and opt plugins built for the tests.
+config.substitutions.append(('%poseidon_test_programs',
+                             '@POSEIDON_TEST_PROGRAM_DIR@'))
+
 config.substitutions.append(('%shlibext', config.llvm_shlib_ext))
 config.substitutions.append(('%opt', config.llvm_tools_dir + "/opt"))
 # %clang++ is %clang followed by ++, as in Enzyme's suites.

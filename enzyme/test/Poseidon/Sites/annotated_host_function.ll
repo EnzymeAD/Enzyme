@@ -1,6 +1,6 @@
 ; REQUIRES: enzyme
 ; RUN: rm -rf %t && mkdir %t
-; RUN: %opt %s %loadPoseidonEnzyme -passes="poseidon,enzyme,poseidon-finalize,globaldce" -enzyme-preopt=false -poseidon-profile-generate -poseidon-cache=%t/gen -S -o %t/gen.ll 2>&1 | FileCheck --check-prefix=GEN-ERR %s
+; RUN: %opt %s %loadPoseidonEnzyme -passes="poseidon,enzyme,poseidon-finalize,globaldce" -enzyme-preopt=false -poseidon-profile-generate -poseidon-cache=%t/gen -poseidon-print -S -o %t/gen.ll 2>&1 | FileCheck --check-prefix=GEN-ERR %s
 ; RUN: FileCheck --check-prefix=GEN %s < %t/gen.ll
 ; RUN: %opt %s %loadPoseidon -passes="poseidon,always-inline,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/other_sites -poseidon-cache=%t/use -S -o %t/use.ll 2>&1 | FileCheck --check-prefix=USE-ERR %s
 ; RUN: FileCheck --check-prefix=USE %s < %t/use.ll

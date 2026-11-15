@@ -33,7 +33,7 @@
 ; RUN: %clang -O0 -Wno-override-module -x ir %t/write/host.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/raise_tcec -mllvm -poseidon-cache=%t/write/none -mllvm -poseidon-unit=u -S -emit-llvm -o %t/write/use.ll 2> %t/write/use.err
 ; RUN: count 0 < %t/write/use.err
 ; RUN: FileCheck --check-prefix=WRITE-LAUNCH --implicit-check-not=__poseidon %s < %t/write/use.ll
-; RUN: %clang -O0 -Wno-override-module -x ir %t/write/host.ll %loadClangPoseidon -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/write/none -mllvm -poseidon-unit=u -S -emit-llvm -o %t/write/gen.ll 2> %t/write/gen.err
+; RUN: %clang -O0 -Wno-override-module -x ir %t/write/host.ll %loadClangPoseidon -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/write/none -mllvm -poseidon-print -mllvm -poseidon-unit=u -S -emit-llvm -o %t/write/gen.ll 2> %t/write/gen.err
 ; RUN: count 0 < %t/write/gen.err
 ; RUN: FileCheck --check-prefix=WRITE-LAUNCH --implicit-check-not=__poseidon %s < %t/write/gen.ll
 ; RUN: not ls %t/write/none
@@ -145,7 +145,7 @@
 ; kernel needs Enzyme and the NVPTX device profiler.
 ; RUN: %if enzyme && nvptx-device-profiler %{ mkdir %t/unwritable && echo > %t/unwritable/file %}
 ; RUN: %if enzyme && nvptx-device-profiler %{ not %opt %{dev} %{pass} -poseidon-raise-wmma %{flags} -poseidon-cache=%t/unwritable/file/c 2>&1 | FileCheck --check-prefix=UNWRITABLE-DISPATCH -DCACHE=%t/unwritable/file/c %s %}
-; RUN: %if enzyme && nvptx-device-profiler %{ not %opt %S/../Inputs/stale_cache/matmul_annotated_device.ll %loadPoseidonEnzyme -passes="poseidon,enzyme,poseidon-finalize,globaldce" -enzyme-preopt=false -poseidon-profile-generate -poseidon-cache=%t/unwritable/file/c -S -o /dev/null 2>&1 | FileCheck --check-prefix=UNWRITABLE-PROFILE -DCACHE=%t/unwritable/file/c %s %}
+; RUN: %if enzyme && nvptx-device-profiler %{ not %opt %S/../Inputs/stale_cache/matmul_annotated_device.ll %loadPoseidonEnzyme -passes="poseidon,enzyme,poseidon-finalize,globaldce" -enzyme-preopt=false -poseidon-profile-generate -poseidon-cache=%t/unwritable/file/c -poseidon-print -S -o /dev/null 2>&1 | FileCheck --check-prefix=UNWRITABLE-PROFILE -DCACHE=%t/unwritable/file/c %s %}
 ; RUN: %if enzyme && nvptx-device-profiler %{ %opt %{dev} %{pass} -poseidon-raise-wmma=false %{flags} -poseidon-cache=%t/unwritable/file/c 2>&1 | FileCheck --check-prefix=UNWRITABLE-NONE %s %}
 
 ; UNWRITABLE-DISPATCH: Applying solution for matmul[0] -> ozaki-ii nm=12 wmma m16n16k16 s8/s32
