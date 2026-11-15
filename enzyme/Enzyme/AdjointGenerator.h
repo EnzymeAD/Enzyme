@@ -817,7 +817,10 @@ public:
     if (constantval)
       return;
 
-    if (nonmarkedglobals_inactiveloads) {
+    // Under global activity, activity analysis decides whether a global is
+    // active, and its shadow (and the enzyme_shadow metadata) is only created
+    // once it is first needed, which may be here.
+    if (nonmarkedglobals_inactiveloads && !EnzymeGlobalActivity) {
       // Assume that non enzyme_shadow globals are inactive
       //  If we ever store to a global variable, we will error if it doesn't
       //  have a shadow This allows functions who only read global memory to
