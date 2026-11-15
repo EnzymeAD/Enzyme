@@ -13,23 +13,24 @@
 // name, which the manifest's file name follows.
 //
 // REQUIRES: enzyme, hip-runtime
-// RUN: rm -rf %t.pcache && %poseidon_clangxx -x hip --offload-arch=%amdgpu_arch \
+// RUN: rm -rf %t && mkdir %t
+// RUN: %poseidon_clangxx -x hip --offload-arch=%amdgpu_arch \
 // RUN:     --rocm-path=%rocm_path -O2 -poseidon-profile-generate \
-// RUN:     -poseidon-cache=%t.pcache %s -o %t.exe
-// RUN: cat %t.pcache/launches_*.json | FileCheck --check-prefix=DESC %s
-// RUN: rm -rf %t.profile && POSEIDON_PROFILE_DIR=%t.profile %t.exe profile \
+// RUN:     -poseidon-cache=%t/pcache %s -o %t/exe
+// RUN: cat %t/pcache/launches_*.json | FileCheck --check-prefix=DESC %s
+// RUN: env POSEIDON_PROFILE_DIR=%t/profile %t/exe profile \
 // RUN:   | FileCheck --check-prefix=PRIMAL %s
-// RUN: cat %t.profile/*.fpprofile | FileCheck --check-prefix=PROF %s
+// RUN: cat %t/profile/*.fpprofile | FileCheck --check-prefix=PROF %s
 //
-// RUN: rm -rf %t.cache %t.src && mkdir %t.cache %t.src
-// RUN: cp %S/../Inputs/host_gemm_hip/launches_*.json %t.cache/
-// RUN: cp %s %t.src/annotated_lambda_host_gemm.hip
-// RUN: cd %t.src && %poseidon_clangxx -x hip --offload-arch=%amdgpu_arch \
+// RUN: mkdir %t/cache %t/src
+// RUN: cp %S/../Inputs/host_gemm_hip/launches_*.json %t/cache/
+// RUN: cp %s %t/src/annotated_lambda_host_gemm.hip
+// RUN: cd %t/src && %poseidon_clangxx -x hip --offload-arch=%amdgpu_arch \
 // RUN:     --rocm-path=%rocm_path -O2 -poseidon-profile-use=%S/../Inputs/other_sites \
-// RUN:     -poseidon-cache=%t.cache -Xarch_host -mllvm=-poseidon-unit=seeded \
+// RUN:     -poseidon-cache=%t/cache -Xarch_host -mllvm=-poseidon-unit=seeded \
 // RUN:     -poseidon-enable-herbie=0 annotated_lambda_host_gemm.hip \
-// RUN:     -o %t.opt.exe 2>&1 | FileCheck %s
-// RUN: %t.opt.exe run | FileCheck --check-prefix=OPT %s
+// RUN:     -o %t/opt.exe 2>&1 | FileCheck %s
+// RUN: %t/opt.exe run | FileCheck --check-prefix=OPT %s
 
 #include <cmath>
 #include <cstdio>

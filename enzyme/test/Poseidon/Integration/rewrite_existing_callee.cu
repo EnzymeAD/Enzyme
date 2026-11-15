@@ -5,16 +5,17 @@
 // would delete it and the rewritten site with it.
 //
 // REQUIRES: enzyme, cuda-runtime
+// RUN: rm -rf %t && mkdir %t
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 \
-// RUN:     -poseidon-kernels=waved -poseidon-profile-generate -poseidon-cache=%t.pcache %s -o %t.exe
-// RUN: rm -rf %t.profile && POSEIDON_PROFILE_DIR=%t.profile %t.exe \
+// RUN:     -poseidon-kernels=waved -poseidon-profile-generate -poseidon-cache=%t/pcache %s -o %t/exe
+// RUN: env POSEIDON_PROFILE_DIR=%t/profile %t/exe \
 // RUN:   | FileCheck --check-prefix=PRIMAL %s
-// RUN: rm -rf %t.cache && %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 \
-// RUN:     -poseidon-kernels=waved -poseidon-profile-use=%t.profile \
-// RUN:     -poseidon-cache=%t.cache -poseidon-cost-model=%gpu_cost_model \
+// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 \
+// RUN:     -poseidon-kernels=waved -poseidon-profile-use=%t/profile \
+// RUN:     -poseidon-cache=%t/cache -poseidon-cost-model=%gpu_cost_model \
 // RUN:     -poseidon-print -poseidon-enable-herbie=0 -poseidon-tau=1e-3 \
-// RUN:     %s -o %t.opt.exe 2>&1 | FileCheck --check-prefix=SOLVE %s
-// RUN: %t.opt.exe | FileCheck --check-prefix=PRIMAL %s
+// RUN:     %s -o %t/opt.exe 2>&1 | FileCheck --check-prefix=SOLVE %s
+// RUN: %t/opt.exe | FileCheck --check-prefix=PRIMAL %s
 
 #include <cmath>
 #include <cstdio>

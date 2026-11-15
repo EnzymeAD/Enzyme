@@ -6,13 +6,14 @@
 // REQUIRES: enzyme, cuda-runtime
 //
 // Single precision is cheapest at 1e-3, and nothing calls __nv_expf.
+// RUN: rm -rf %t && mkdir %t
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 \
-// RUN:     -poseidon-kernels=waved -poseidon-profile-generate -poseidon-cache=%t.pcache %s -o %t.exe
-// RUN: rm -rf %t.profile && POSEIDON_PROFILE_DIR=%t.profile %t.exe
-// RUN: rm -rf %t.cache && not %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 \
-// RUN:     -poseidon-kernels=waved -poseidon-profile-use=%t.profile \
-// RUN:     -poseidon-cache=%t.cache -poseidon-cost-model=%gpu_cost_model \
-// RUN:     -poseidon-enable-herbie=0 -poseidon-tau=1e-3 %s -o %t.opt.exe 2>&1 \
+// RUN:     -poseidon-kernels=waved -poseidon-profile-generate -poseidon-cache=%t/pcache %s -o %t/exe
+// RUN: env POSEIDON_PROFILE_DIR=%t/profile %t/exe
+// RUN: not %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 \
+// RUN:     -poseidon-kernels=waved -poseidon-profile-use=%t/profile \
+// RUN:     -poseidon-cache=%t/cache -poseidon-cost-model=%gpu_cost_model \
+// RUN:     -poseidon-enable-herbie=0 -poseidon-tau=1e-3 %s -o %t/opt.exe 2>&1 \
 // RUN:   | FileCheck --check-prefix=REWRITE --implicit-check-not=Unresolved %s
 
 #include <cmath>

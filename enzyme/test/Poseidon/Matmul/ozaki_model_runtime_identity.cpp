@@ -1,25 +1,23 @@
-// RUN: rm -rf %t && mkdir -p %t
+// RUN: rm -rf %t && mkdir %t
 // RUN: %clang++ -std=c++17 -O2 -ffp-contract=off -frounding-math \
 // RUN:     -I%S/../../../Poseidon -I%S/../../../Poseidon/Techniques/Matmul \
 // RUN:     %S/../../../Poseidon/Techniques/Matmul/MatmulSimulation.cpp %s \
 // RUN:     -o %t/model
 // RUN: sed -n 's|^// OZAKI\(.*digest=[0-9a-f]*\).*|// MODEL\1|p' \
 // RUN:     %S/../Inputs/dispatch_rt.cpp > %t/runtime.check
-// RUN: grep -c MODEL %t/runtime.check | FileCheck --check-prefix=CASES %s
+// RUN: FileCheck --check-prefix=CASES --implicit-check-not=MODEL %s < %t/runtime.check
 // RUN: %t/model | FileCheck --check-prefix=MODEL --match-full-lines \
 // RUN:     %t/runtime.check
 
 // The accuracy model's Ozaki-II product (simulateOzakiIIDgemm), run on the
-// host, returns the bits the runtime returned on an RTX 5090 for the cases
-// Integration/dispatch_rt_cuda.cu holds it to (Inputs/dispatch_rt.cpp, whose
-// operands are generated here the same way): the square entry at N = 256, the
+// host, returns the digests Inputs/dispatch_rt.cpp records for the runtime
+// (operands generated the same way): the square entry at N = 256, the
 // rectangular arm (A row-major, B and C column-major, beta = 1), and the
-// padded square arm, at 8, 10, 13 and 14 moduli. Each operand vector is given
-// with the layout in which the arm the runtime takes reads it, which decides
-// the order of its sum of squares; the epilogue is the runtime's
-// (poz_axpby).
+// padded square arm, at 8, 10, 13 and 14 moduli. Each operand is laid out as
+// the runtime's arm reads it, since that fixes the order of its sum of
+// squares.
 //
-// CASES: {{^8$}}
+// CASES-COUNT-8: // MODEL
 
 #include "MatmulSimulation.h"
 

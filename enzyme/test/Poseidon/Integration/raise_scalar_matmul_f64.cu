@@ -1,15 +1,16 @@
 // REQUIRES: enzyme, cuda-runtime
+// RUN: rm -rf %t && mkdir %t
 // RUN: %clang -x cuda --cuda-gpu-arch=%gpu_arch -fcuda-rdc -O2 \
 // RUN:     %loadClangPoseidonEnzyme -mllvm --poseidon-profile-generate \
 // RUN:     -I%poseidon_profile_inc %s -x none %poseidon_profile_cuda_lib %poseidon_profile_lib \
-// RUN:     -L%cuda_lib_dir -lcudart -lstdc++ -lm -o %t.exe
-// RUN: rm -rf %t.profiles && POSEIDON_PROFILE_DIR=%t.profiles %t.exe
+// RUN:     -L%cuda_lib_dir -lcudart -lstdc++ -lm -o %t/exe
+// RUN: env POSEIDON_PROFILE_DIR=%t/profiles %t/exe
 //
 // RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -O2 \
-// RUN:     -S -emit-llvm %s -o %t.dev.ll
-// RUN: %opt %t.dev.ll %loadPoseidon \
+// RUN:     -S -emit-llvm %s -o %t/dev.ll
+// RUN: %opt %t/dev.ll %loadPoseidon \
 // RUN:     -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" \
-// RUN:     -poseidon-profile-use=%t.profiles \
+// RUN:     -poseidon-profile-use=%t/profiles \
 // RUN:     -poseidon-enable-herbie=false -poseidon-enable-pt=false \
 // RUN:     -poseidon-cache= -poseidon-raise-wmma -poseidon-print \
 // RUN:     -poseidon-ozaki-host-dispatch=false \

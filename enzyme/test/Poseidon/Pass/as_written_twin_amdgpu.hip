@@ -1,13 +1,13 @@
 // REQUIRES: amdgpu-registered-target, rocm
-// RUN: rm -rf %t && mkdir -p %t
-// RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -ffp-contract=on -S -I%poseidon_profile_inc %loadClangPoseidon %s -o %t/plain.s
-// RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -ffp-contract=on -S -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/other_sites -mllvm -poseidon-print %s -o %t/use.s 2> %t/use.err
-// RUN: FileCheck --check-prefix=SOLVE %s < %t/use.err
+// DEFINE: %{clang} = %clang -x hip --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 \
+// DEFINE:   -ffp-contract=on -S -I%poseidon_profile_inc %loadClangPoseidon %s
+// RUN: rm -rf %t && mkdir %t
+// RUN: %{clang} --offload-arch=gfx942 -o %t/plain.s
+// RUN: %{clang} --offload-arch=gfx942 -mllvm -poseidon-profile-use=%S/../Inputs/other_sites -mllvm -poseidon-print -o %t/use.s 2>&1 | FileCheck --check-prefix=SOLVE %s
 // RUN: diff %t/plain.s %t/use.s
 // RUN: FileCheck %s < %t/use.s
-// RUN: %clang -x hip --offload-arch=gfx90a --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -ffp-contract=on -S -I%poseidon_profile_inc %loadClangPoseidon %s -o %t/plain.90a.s
-// RUN: %clang -x hip --offload-arch=gfx90a --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -ffp-contract=on -S -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/other_sites -mllvm -poseidon-print %s -o %t/use.90a.s 2> %t/use.90a.err
-// RUN: FileCheck --check-prefix=SOLVE %s < %t/use.90a.err
+// RUN: %{clang} --offload-arch=gfx90a -o %t/plain.90a.s
+// RUN: %{clang} --offload-arch=gfx90a -mllvm -poseidon-profile-use=%S/../Inputs/other_sites -mllvm -poseidon-print -o %t/use.90a.s 2>&1 | FileCheck --check-prefix=SOLVE %s
 // RUN: diff %t/plain.90a.s %t/use.90a.s
 // RUN: FileCheck %s < %t/use.90a.s
 

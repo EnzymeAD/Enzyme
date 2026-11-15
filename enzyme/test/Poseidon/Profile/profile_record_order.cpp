@@ -1,5 +1,5 @@
 // REQUIRES: enzyme
-// RUN: rm -rf %t && mkdir -p %t
+// RUN: rm -rf %t && mkdir %t
 // RUN: %poseidon_clangxx -O2 -poseidon-profile-generate -poseidon-cache=%t/c %s -o %t/gen
 // RUN: env POSEIDON_PROFILE_DIR=%t/prof %t/gen > /dev/null
 // RUN: grep -E '^[0-9]+$' %t/prof/preprocess__Z4wavePKdPdi_poseidon_body.fpprofile > %t/idx

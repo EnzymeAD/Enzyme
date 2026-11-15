@@ -1,5 +1,5 @@
 // REQUIRES: enzyme, nvptx-device-profiler
-// RUN: rm -rf %t && mkdir -p %t
+// RUN: rm -rf %t && mkdir %t
 // RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O2 -S -emit-llvm %loadClangPoseidonEnzyme %s -o %t/plain-dev.ll
 // RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O2 -S -emit-llvm %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c %s -o %t/gen-dev.ll
 // RUN: grep -v -e '^%[0-9]* = type' -e '^$' %t/plain-dev.ll > %t/plain-dev.cmp

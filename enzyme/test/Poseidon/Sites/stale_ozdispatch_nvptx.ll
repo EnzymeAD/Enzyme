@@ -16,7 +16,8 @@
 ; DEV1: [ozaki-host-dispatch] wrote descriptor for _Z13matmul_kernelPKdS0_PdS1_: C=arg2 A=arg0 B=arg1 16x16x16 nm=12 (standalone)
 
 ; HOST1: [ozaki-host-dispatch] replaced stub body _Z28__device_stub__matmul_kernelPKdS0_PdS1_ -> __poseidon_ozaki_dgemm
-; HOST1: call void @__poseidon_ozaki_dgemm(ptr %2, ptr %0, ptr %1, i32 16, {{.*}}, i32 12)
+; HOST1: define {{.*}} @_Z28__device_stub__matmul_kernelPKdS0_PdS1_(ptr noundef [[A:%.+]], ptr noundef [[B:%.+]], ptr noundef [[C:%.+]], ptr noundef %{{.+}})
+; HOST1-NEXT: call void @__poseidon_ozaki_dgemm(ptr [[C]], ptr [[A]], ptr [[B]], i32 16, {{.*}}, i32 12)
 
 ; DEV2-NOT: wrote descriptor
 ; DEV2: [poseidon] no rewrite applied for preprocess_matmul_body

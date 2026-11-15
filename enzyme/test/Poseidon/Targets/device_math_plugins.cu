@@ -1,5 +1,5 @@
 // REQUIRES: enzyme, cuda-runtime
-// RUN: rm -rf %t && mkdir -p %t
+// RUN: rm -rf %t && mkdir %t
 // RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -O2 -ffp-contract=on -S -DAS_WRITTEN -DNO_SITE %s -o %t/as_written.ptx
 // RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -O2 -ffp-contract=on -S -I%poseidon_profile_inc %loadClangPoseidon %s -o %t/plain.ptx
 // RUN: diff %t/as_written.ptx %t/plain.ptx
@@ -15,13 +15,11 @@
 // RUN: diff %t/as_written.ptx %t/use.profiled.ptx
 
 // Enzyme's plugin is loaded to generate a profile and not to use one, so the
-// form a site is profiled in must not depend on it: the libdevice math stays a
+// form a site is profiled in does not depend on it: the libdevice math stays a
 // call, which Enzyme differentiates by name, and the profile the run would
 // write for a site it never executed (the static header the generating compile
-// embeds) is accepted by a use compile with Poseidon's plugin alone. What
-// Poseidon's plugin does for that, the libdevice functions poseidon.h links
-// for a rewrite to call, and the annotation itself are gone from a compile
-// that profiles or rewrites nothing.
+// embeds) is accepted by a use compile with Poseidon's plugin alone. A compile
+// that profiles or rewrites nothing emits the PTX of the source as written.
 
 #ifdef AS_WRITTEN
 #define POSEIDON_OPTIMIZE __attribute__((annotate("poseidon")))

@@ -7,16 +7,13 @@
 // RUN: FileCheck --check-prefix=CUDA --implicit-check-not=enzyme-lto-prelink %s < %t/cuda.log
 
 // The action targets of this build tree's package for either GPU runtime,
-// without the runtime's toolchain: the HIP arm reads the package as a build
-// with the HIP runtimes would configure it. Every Poseidon option goes through
-// -Xclang, and with HIP the action that loads Enzyme, profile generation, also
-// tells Enzyme that a HIP compile is an LTO pre-link compile, as
-// poseidon-clang does. The package exports that option, as
-// Poseidon::EnzymeOptions and POSEIDON_ENZYME_OPTIONS, for a project that
-// loads Enzyme itself under Plain or ProfileUse, which do not carry it. With
-// CUDA no target and no variable holds it. Only the CUDA runtimes need the
-// CUDA toolkit; a project on the HIP runtimes is not made to find one. The
-// AMD GPU processor of the HIP builds is the project's to see.
+// without the runtime's toolchain (the HIP arm reads a copy of the package
+// configured as a build with the HIP runtimes would be). Every Poseidon option
+// goes through -Xclang. With HIP, profile generation also passes Enzyme
+// -enzyme-lto-prelink=1, which the package exports as Poseidon::EnzymeOptions
+// and POSEIDON_ENZYME_OPTIONS for a project that loads Enzyme itself; with CUDA
+// nothing holds it. Only the CUDA runtimes look for the CUDA toolkit, and the
+// HIP package names the AMD GPU processor of its builds.
 
 // HIP: -- HIP Plain: -fpass-plugin={{[^;]+}};{{(SHELL:-Xclang -load -Xclang [^;]+;)?}}-ffp-contract=on
 // HIP-NEXT: -- HIP ProfileGenerate: -fpass-plugin={{[^;]+}};{{(SHELL:-Xclang -load -Xclang [^;]+;)?}}-fpass-plugin={{[^;]+}};{{(SHELL:-Xclang -load -Xclang [^;]+;)?}}SHELL:-Xclang -mllvm -Xclang -poseidon-profile-generate;SHELL:-Xclang -mllvm -Xclang -enzyme-lto-prelink=1;-ffp-contract=on

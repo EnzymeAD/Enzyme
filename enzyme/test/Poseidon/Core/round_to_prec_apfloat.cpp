@@ -1,4 +1,4 @@
-// RUN: rm -rf %t && mkdir -p %t
+// RUN: rm -rf %t && mkdir %t
 // RUN: %clang++ $(llvm-config --cxxflags) -I%S/../../../Poseidon %S/../../../Poseidon/Core/FPKind.cpp %s $(llvm-config --ldflags --libs support --system-libs) -o %t/round
 // RUN: %t/round | FileCheck %s
 

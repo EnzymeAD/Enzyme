@@ -1,5 +1,5 @@
 ; REQUIRES: scev-trunc-iv-nowrap
-; RUN: rm -rf %t && mkdir -p %t
+; RUN: rm -rf %t && mkdir %t
 ; RUN: sed 's/ptr noundef %dd) #5/ptr noundef %dd, metadata !"poseidon_tau", double 1.000000e-04) #5/' %s > %t/site.ll
 ; RUN: %opt %t/site.ll %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/../Inputs/tau_one_meaning -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cache=%t/c1 -poseidon-explain=%t/x1 -S -o %t/site.out.ll 2> %t/site.err
 ; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/../Inputs/tau_one_meaning -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cache=%t/c2 -poseidon-explain=%t/x2 -poseidon-tau=1e-4 -S -o %t/flag.out.ll 2> %t/flag.err

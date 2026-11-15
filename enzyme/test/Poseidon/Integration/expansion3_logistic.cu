@@ -7,28 +7,29 @@
 // is selected and is the least accurate of the three.
 //
 // REQUIRES: enzyme, cuda-runtime
+// RUN: rm -rf %t && mkdir %t
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 \
-// RUN:     -poseidon-profile-generate -poseidon-cache=%t.pcache %s -o %t.exe
-// RUN: rm -rf %t.profile && POSEIDON_PROFILE_DIR=%t.profile %t.exe 1e-11 1e-8 \
+// RUN:     -poseidon-profile-generate -poseidon-cache=%t/pcache %s -o %t/exe
+// RUN: env POSEIDON_PROFILE_DIR=%t/profile %t/exe 1e-11 1e-8 \
 // RUN:   | FileCheck --check-prefix=EXEC %s
 //
-// RUN: rm -rf %t.c2 && %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 \
-// RUN:     -poseidon-profile-use=%t.profile -poseidon-cache=%t.c2 -poseidon-cost-model=%gpu_cost_model -poseidon-print -poseidon-enable-herbie=0 -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false \
+// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 \
+// RUN:     -poseidon-profile-use=%t/profile -poseidon-cache=%t/c2 -poseidon-cost-model=%gpu_cost_model -poseidon-print -poseidon-enable-herbie=0 -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false \
 // RUN:     -poseidon-expansion-components=2 -poseidon-tau=1e-16 \
-// RUN:     %s -o %t.two.exe 2>&1 | FileCheck --check-prefix=TWO %s
-// RUN: %t.two.exe 1e-11 1e-8 | FileCheck --check-prefix=EXEC %s
+// RUN:     %s -o %t/two.exe 2>&1 | FileCheck --check-prefix=TWO %s
+// RUN: %t/two.exe 1e-11 1e-8 | FileCheck --check-prefix=EXEC %s
 //
-// RUN: rm -rf %t.c3 && %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 \
-// RUN:     -poseidon-profile-use=%t.profile -poseidon-cache=%t.c3 -poseidon-cost-model=%gpu_cost_model -poseidon-print -poseidon-enable-herbie=0 -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false \
+// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 \
+// RUN:     -poseidon-profile-use=%t/profile -poseidon-cache=%t/c3 -poseidon-cost-model=%gpu_cost_model -poseidon-print -poseidon-enable-herbie=0 -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false \
 // RUN:     -poseidon-expansion-components=3 -poseidon-tau=1e-16 \
-// RUN:     %s -o %t.three.exe 2>&1 | FileCheck --check-prefix=THREE %s
-// RUN: %t.three.exe 0 1e-13 | FileCheck --check-prefix=EXEC %s
+// RUN:     %s -o %t/three.exe 2>&1 | FileCheck --check-prefix=THREE %s
+// RUN: %t/three.exe 0 1e-13 | FileCheck --check-prefix=EXEC %s
 //
-// RUN: rm -rf %t.cl && %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 \
-// RUN:     -poseidon-profile-use=%t.profile -poseidon-cache=%t.cl -poseidon-cost-model=%gpu_cost_model -poseidon-print -poseidon-enable-herbie=0 -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false \
+// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 \
+// RUN:     -poseidon-profile-use=%t/profile -poseidon-cache=%t/cl -poseidon-cost-model=%gpu_cost_model -poseidon-print -poseidon-enable-herbie=0 -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false \
 // RUN:     -poseidon-expansion-components=3 -poseidon-tau=1e-15 \
-// RUN:     %s -o %t.loose.exe 2>&1 | FileCheck --check-prefix=LOOSE %s
-// RUN: %t.loose.exe 1e-9 1e-6 | FileCheck --check-prefix=EXEC %s
+// RUN:     %s -o %t/loose.exe 2>&1 | FileCheck --check-prefix=LOOSE %s
+// RUN: %t/loose.exe 1e-9 1e-6 | FileCheck --check-prefix=EXEC %s
 
 #include <cmath>
 #include <cstdio>

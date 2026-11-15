@@ -1,17 +1,63 @@
 ; REQUIRES: enzyme
-; RUN: rm -rf %t && mkdir -p %t
-; RUN: %opt %s %loadPoseidonEnzyme -passes="poseidon,enzyme,poseidon-finalize,globaldce" -enzyme-preopt=false -poseidon-profile-generate -poseidon-cache=%t/gen -S -o %t/gen.ll 2> %t/gen.err
+; RUN: rm -rf %t && mkdir %t
+; RUN: %opt %s %loadPoseidonEnzyme -passes="poseidon,enzyme,poseidon-finalize,globaldce" -enzyme-preopt=false -poseidon-profile-generate -poseidon-cache=%t/gen -S -o %t/gen.ll 2>&1 | FileCheck --check-prefix=GEN-ERR %s
 ; RUN: FileCheck --check-prefix=GEN %s < %t/gen.ll
-; RUN: FileCheck --check-prefix=GEN-ERR %s < %t/gen.err
-; RUN: %opt %s %loadPoseidon -passes="poseidon,always-inline,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/other_sites -poseidon-cache=%t/use -S -o %t/use.ll 2> %t/use.err
+; RUN: %opt %s %loadPoseidon -passes="poseidon,always-inline,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/other_sites -poseidon-cache=%t/use -S -o %t/use.ll 2>&1 | FileCheck --check-prefix=USE-ERR %s
 ; RUN: FileCheck --check-prefix=USE %s < %t/use.ll
-; RUN: FileCheck --check-prefix=USE-ERR %s < %t/use.err
-; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -S -o %t/off.ll 2> %t/off.err
+; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -S -o %t/off.ll 2>&1 | FileCheck --check-prefix=OFF-ERR %s
 ; RUN: FileCheck --check-prefix=OFF %s < %t/off.ll
-; RUN: FileCheck --check-prefix=OFF-ERR %s < %t/off.err
 
-; POSEIDON_OPTIMIZE on a host function: the function becomes a wrapper around
-; its outlined body, so every call of it is the site. Under profile generation
+; GEN-LABEL: define void @scale(ptr %x, ptr %out)
+; GEN: call void @__poseidon_host_shadows(ptr @{{[^,]+}}, i32 0, i32 2, ptr %poseidon.ptrs, {{.*}}, ptr %poseidon.shadows)
+; GEN: call void @diffepreprocess_scale_poseidon_body(ptr %x, ptr %{{[0-9]+}}, ptr %out, ptr %{{[0-9]+}})
+; GEN-LABEL: define double @dot(ptr %x, double %s, i32 %n)
+; GEN: call void @__poseidon_host_shadows(ptr @{{[^,]+}}, i32 1, i32 1,
+; GEN: [[R:%[0-9]+]] = call {{.*}}{ double, double } @diffepreprocess_dot_poseidon_body(ptr %x, ptr %{{[0-9]+}}, double %s, i32 %n, double 1.000000e+00)
+; GEN: [[P:%[0-9]+]] = extractvalue { double, double } [[R]], 0
+; GEN: ret double [[P]]
+; GEN-LABEL: define { double, double } @pair(double %x)
+; GEN-NEXT: %m = fmul double %x, %x
+; GEN-LABEL: define double @caller(ptr %out)
+; GEN: call void @__poseidon_stack_push(ptr %buf, i64 32)
+; GEN-NEXT: call void @scale(ptr %buf, ptr %out)
+; GEN-NEXT: call void @__poseidon_stack_pop(i32 1)
+; GEN-NEXT: call void @scale(ptr @table, ptr %out)
+; GEN-NEXT: call void @__poseidon_stack_push(ptr %buf, i64 32)
+; GEN-NEXT: call double @dot(ptr %buf, double 2.000000e+00, i32 4)
+; GEN-NEXT: call void @__poseidon_stack_pop(i32 1)
+; GEN: call void @__poseidon_register_globals(ptr [[TABLE:@[^,]+]], i64 1)
+
+; GEN-ERR: warning: {{.*}}Poseidon: pair returns a value that is not a floating-point or integer scalar, so it is not a Poseidon site
+; GEN-ERR: warning: {{.*}}Poseidon: vec returns a value that is not a floating-point or integer scalar, so it is not a Poseidon site
+; GEN-ERR: warning: {{.*}}Poseidon: viasret returns its value through memory (sret), so it is not a Poseidon site
+; GEN-ERR: warning: {{.*}}Poseidon: variadic is variadic, so it is not a Poseidon site
+; GEN-ERR: warning: {{.*}}Poseidon: recur calls itself, so it is not a Poseidon site
+; GEN-ERR: [poseidon-profgen] scale: site 0, 2 shadow buffer(s), output(s) 1, 1 call(s)
+; GEN-ERR: [poseidon-profgen] dot: site 1, 1 shadow buffer(s), output(s) return, 1 call(s)
+
+; Without a profile the site keeps the body it was written with, folded back.
+; USE-LABEL: define void @scale(ptr %x, ptr %out)
+; USE-NEXT: entry:
+; USE-NEXT: [[V:%.+]] = load double, ptr %x
+; USE-NEXT: [[M:%.+]] = fmul double [[V]], 3.000000e+00
+; USE-NEXT: [[A:%.+]] = fadd double [[M]], 1.000000e+00
+; USE-NEXT: store double [[A]], ptr %out
+; USE-NEXT: ret void
+; USE-LABEL: define double @dot(ptr %x, double %s, i32 %n)
+; USE-NEXT: entry:
+; USE-NEXT: load double, ptr %x
+; USE-NOT: _poseidon_body
+; USE-ERR: scale_poseidon_body: the profiled program did not contain this site (no profile at {{.*}}); left unchanged
+; USE-ERR: dot_poseidon_body: the profiled program did not contain this site (no profile at {{.*}}); left unchanged
+
+; OFF: define void @scale(ptr %x, ptr %out)
+; OFF-NEXT: %v = load double, ptr %x
+; OFF-NOT: _poseidon_body
+; OFF-ERR: warning: {{.*}}in function scale {{.*}}compiled without -poseidon-profile-generate or -poseidon-profile-use=<dir>
+; OFF-ERR: warning: {{.*}}in function dot {{.*}}compiled without -poseidon-profile-generate or -poseidon-profile-use=<dir>
+
+; POSEIDON_OPTIMIZE on a host function makes the function a wrapper around its
+; outlined body, so every call of it is the site. Under profile generation
 ; each call of the body is a reverse-mode request whose shadows the runtime
 ; finds from the allocation each pointer argument points into; a stack object
 ; passed to a call is registered for that call, and the module's globals before
@@ -91,52 +137,3 @@ define double @caller(ptr %out) {
   %d = call double @dot(ptr %buf, double 2.0, i32 4)
   ret double %d
 }
-
-; GEN-LABEL: define void @scale(ptr %x, ptr %out)
-; GEN: call void @__poseidon_host_shadows(ptr @{{[^,]+}}, i32 0, i32 2, ptr %poseidon.ptrs, {{.*}}, ptr %poseidon.shadows)
-; GEN: call void @diffepreprocess_scale_poseidon_body(ptr %x, ptr %{{[0-9]+}}, ptr %out, ptr %{{[0-9]+}})
-; GEN-LABEL: define double @dot(ptr %x, double %s, i32 %n)
-; GEN: call void @__poseidon_host_shadows(ptr @{{[^,]+}}, i32 1, i32 1,
-; GEN: [[R:%[0-9]+]] = call {{.*}}{ double, double } @diffepreprocess_dot_poseidon_body(ptr %x, ptr %{{[0-9]+}}, double %s, i32 %n, double 1.000000e+00)
-; GEN: [[P:%[0-9]+]] = extractvalue { double, double } [[R]], 0
-; GEN: ret double [[P]]
-; GEN-LABEL: define { double, double } @pair(double %x)
-; GEN-NEXT: %m = fmul double %x, %x
-; GEN-LABEL: define double @caller(ptr %out)
-; GEN: call void @__poseidon_stack_push(ptr %buf, i64 32)
-; GEN-NEXT: call void @scale(ptr %buf, ptr %out)
-; GEN-NEXT: call void @__poseidon_stack_pop(i32 1)
-; GEN-NEXT: call void @scale(ptr @table, ptr %out)
-; GEN-NEXT: call void @__poseidon_stack_push(ptr %buf, i64 32)
-; GEN-NEXT: call double @dot(ptr %buf, double 2.000000e+00, i32 4)
-; GEN-NEXT: call void @__poseidon_stack_pop(i32 1)
-; GEN: call void @__poseidon_register_globals(ptr [[TABLE:@[^,]+]], i64 1)
-
-; GEN-ERR: warning: {{.*}}Poseidon: pair returns a value that is not a floating-point or integer scalar, so it is not a Poseidon site
-; GEN-ERR: warning: {{.*}}Poseidon: vec returns a value that is not a floating-point or integer scalar, so it is not a Poseidon site
-; GEN-ERR: warning: {{.*}}Poseidon: viasret returns its value through memory (sret), so it is not a Poseidon site
-; GEN-ERR: warning: {{.*}}Poseidon: variadic is variadic, so it is not a Poseidon site
-; GEN-ERR: warning: {{.*}}Poseidon: recur calls itself, so it is not a Poseidon site
-; GEN-ERR: [poseidon-profgen] scale: site 0, 2 shadow buffer(s), output(s) 1, 1 call(s)
-; GEN-ERR: [poseidon-profgen] dot: site 1, 1 shadow buffer(s), output(s) return, 1 call(s)
-
-; Without a profile the site keeps the body it was written with, folded back.
-; USE-LABEL: define void @scale(ptr %x, ptr %out)
-; USE-NEXT: entry:
-; USE-NEXT: [[V:%.+]] = load double, ptr %x
-; USE-NEXT: [[M:%.+]] = fmul double [[V]], 3.000000e+00
-; USE-NEXT: [[A:%.+]] = fadd double [[M]], 1.000000e+00
-; USE-NEXT: store double [[A]], ptr %out
-; USE-NEXT: ret void
-; USE-LABEL: define double @dot(ptr %x, double %s, i32 %n)
-; USE-NEXT: entry:
-; USE-NEXT: load double, ptr %x
-; USE-NOT: _poseidon_body
-; USE-ERR: scale_poseidon_body: the profiled program did not contain this site (no profile at {{.*}}); left unchanged
-; USE-ERR: dot_poseidon_body: the profiled program did not contain this site (no profile at {{.*}}); left unchanged
-
-; OFF: define void @scale(ptr %x, ptr %out)
-; OFF-NEXT: %v = load double, ptr %x
-; OFF-NOT: _poseidon_body
-; OFF-ERR: warning: {{.*}}in function scale {{.*}}compiled without -poseidon-profile-generate or -poseidon-profile-use=<dir>
-; OFF-ERR: warning: {{.*}}in function dot {{.*}}compiled without -poseidon-profile-generate or -poseidon-profile-use=<dir>

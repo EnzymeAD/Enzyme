@@ -2,25 +2,22 @@
 ; RUN: rm -rf %t && mkdir -p %t/prof
 ; RUN: cp %S/../Inputs/exact_dp/reprice/preprocess_matmul_body.fpprofile %t/prof/
 ; RUN: cp %S/../Inputs/exact_dp/reprice/preprocess_matmul_body.fpprofile %t/prof/preprocess_matmul_body_b.fpprofile
-; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/exact_dp/reprice_herbie %opt %s %loadPoseidon -passes=poseidon -poseidon-profile-use=%t/prof -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/exact_dp/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-pt=true -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-joint-dp -poseidon-cost-budget=-0.61 -poseidon-print -poseidon-explain=%t/ex_prune -poseidon-cache=%t/prune -S -o %t/prune.ll > %t/prune.log 2>&1
-; RUN: FileCheck --check-prefix=PRUNE %s < %t/prune.log
+; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/exact_dp/reprice_herbie %opt %s %loadPoseidon -passes=poseidon -poseidon-profile-use=%t/prof -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/exact_dp/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-pt=true -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-joint-dp -poseidon-cost-budget=-0.61 -poseidon-print -poseidon-explain=%t/ex_prune -poseidon-cache=%t/prune -S -o %t/prune.ll 2>&1 | FileCheck --check-prefix=PRUNE %s
 ; RUN: FileCheck --check-prefix=PRUNE-BUDGETS %s < %t/prune/budgets.txt
 ; RUN: cat %t/ex_prune/preprocess_matmul_body.explain.json | FileCheck --check-prefix=PRUNE-EXPLAIN %s
-; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/exact_dp/reprice_herbie %opt %s %loadPoseidon -passes=poseidon -poseidon-profile-use=%t/prof -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/exact_dp/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-pt=true -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-joint-dp -poseidon-early-prune=false -poseidon-cost-budget=-0.952 -poseidon-print -poseidon-explain=%t/ex_exact -poseidon-cache=%t/exact -S -o %t/exact.ll > %t/exact.log 2>&1
-; RUN: FileCheck --check-prefix=EXACT %s < %t/exact.log
+; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/exact_dp/reprice_herbie %opt %s %loadPoseidon -passes=poseidon -poseidon-profile-use=%t/prof -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/exact_dp/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-pt=true -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-joint-dp -poseidon-early-prune=false -poseidon-cost-budget=-0.952 -poseidon-print -poseidon-explain=%t/ex_exact -poseidon-cache=%t/exact -S -o %t/exact.ll 2>&1 | FileCheck --check-prefix=EXACT %s
 ; RUN: FileCheck --check-prefix=EXACT-BUDGETS %s < %t/exact/budgets.txt
 ; RUN: cat %t/ex_exact/preprocess_matmul_body_b.explain.json | FileCheck --check-prefix=EXACT-EXPLAIN %s
-; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/exact_dp/reprice_herbie %opt %s %loadPoseidon -passes=poseidon -poseidon-profile-use=%t/prof -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/exact_dp/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-pt=true -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-joint-dp -poseidon-cache=%t/pins -poseidon-explain=%t/ex_pins -poseidon-apply-rewrites='matmul_body:R0_1,matmul_body_b:M0_2,matmul_body:M0_0,matmul_body_b:PT0_3' -S -o %t/pins.ll > %t/pins.log 2>&1
-; RUN: FileCheck --check-prefix=PINS %s < %t/pins.log
+; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/exact_dp/reprice_herbie %opt %s %loadPoseidon -passes=poseidon -poseidon-profile-use=%t/prof -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/exact_dp/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-pt=true -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-joint-dp -poseidon-cache=%t/pins -poseidon-explain=%t/ex_pins -poseidon-apply-rewrites='matmul_body:R0_1,matmul_body_b:M0_2,matmul_body:M0_0,matmul_body_b:PT0_3' -S -o %t/pins.ll 2>&1 | FileCheck --check-prefix=PINS %s
 
 ; A joint solve over two sites that each hold algebraic, precision and product
-; units: the body of exact_dp_reprice_nvptx.ll twice, each with its profile.
+; units: the body of Inputs/exact_dp/reprice.ll twice, each with its profile.
 ; The pruned solve takes every site's algebraic units, then every site's
 ; products, then every site's precision units; the exact solve takes each
 ; site's precision units after the algebraic units they are priced against,
 ; and every product last. A budget at the cheapest point of each frontier
 ; selects a raise in both sites; pins can name units of both sites and every
-; kind. The poseidon pass runs alone, as in dp_cache_replay_all_kinds_nvptx.ll.
+; kind. The poseidon pass runs alone, as in dp_cache_replay_nvptx.ll.
 
 ; PRUNE: Poseidon JOINT: collecting candidates from 2 marked function(s)
 ; PRUNE: JOINT DP table contains 34 entries; cost range [-6.112571e-01, 1.454545e-01]

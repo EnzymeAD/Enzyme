@@ -1,4 +1,4 @@
-// RUN: rm -rf %t && mkdir -p %t
+// RUN: rm -rf %t && mkdir %t
 // RUN: %clang++ $(llvm-config --cxxflags) -fPIC -shared -I%S/../../../Poseidon %S/../Inputs/expansion_match/emit.cpp -o %t/emit%shlibext
 // RUN: %opt %S/../Inputs/expansion_match/module.ll %loadPoseidon -load-pass-plugin=%t/emit%shlibext -passes=expansion-match-raw -S -o %t/raw.ll
 // RUN: %clang++ -O2 -c %t/raw.ll -o %t/raw.o
@@ -6,21 +6,17 @@
 // RUN: %t/run | FileCheck %s
 // RUN: %opt %S/../Inputs/expansion_match/module_nvptx.ll %loadPoseidon -load-pass-plugin=%t/emit%shlibext -passes=expansion-match-raw -S | FileCheck --check-prefix=NVPTX --implicit-check-not=nvvm.sqrt.approx %s
 
-// The FP32 expansions the materializer emits, run on the host against the
+// The FP32 expansions the materializer emits equal, run on the host, the
 // external routines they reproduce, bit for bit with NaN payload and sign
-// excepted, on 80,000 operands per routine in eight classes (moderate, the
-// whole exponent range, near overflow, subnormal, exact values with signed
-// zero components, overlapping components, an infinity, NaN or signed zero in
-// one component, and zeros of every sign): three and four components against
-// mX_real's Sloppy types, whose routines are vendored in
-// Inputs/expansion_match/mx_real_subset.h, including the square of a value
-// (mX_real squares when both operands are one object) and the square root's
-// special cases; two components against MultiFloats.jl's addition,
-// subtraction, multiplication and square root, transcribed in
-// Inputs/expansion_match/multifloats_subset.h, and against mX_real's division.
-// Where mX_real and MultiFloats.jl agree on a two-component special value, the
-// emitted code gives the same: the square root of a zero is the zero, and an
-// exact quotient by a negative divisor has a +0 low component.
+// excepted, on 80,000 operands per routine in eight classes
+// (Inputs/expansion_match/gen.h): three and four components against mX_real's
+// Sloppy types (Inputs/expansion_match/mx_real_subset.h), squares and the
+// square root's special cases included; two components against MultiFloats.jl's
+// addition, subtraction, multiplication and square root
+// (Inputs/expansion_match/multifloats_subset.h) and mX_real's division. Where
+// both agree on a two-component special value the emitted code does too: the
+// square root of a zero is the zero, and an exact quotient by a negative
+// divisor has a +0 low component.
 
 // CHECK: n=3 add: 80000 cases, 0 differ
 // CHECK-NEXT: n=3 sub: 80000 cases, 0 differ

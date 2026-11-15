@@ -1,5 +1,5 @@
 // REQUIRES: enzyme, amdgpu-registered-target, rocm
-// RUN: rm -rf %t && mkdir -p %t
+// RUN: rm -rf %t && mkdir %t
 // RUN: %clang -x hip --offload-arch=%amdgpu_arch --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c %s -o %t/gen.ll 2>&1 | FileCheck --check-prefixes=GEN,REFUSED %s
 // RUN: FileCheck --check-prefix=IR %s < %t/gen.ll
 // RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/other_sites -mllvm -poseidon-cache=%t/u %s -o /dev/null 2>&1 | FileCheck --check-prefixes=USE,REFUSED %s
@@ -180,10 +180,11 @@ GLOBAL void k_refused(const double *x, double *y, int n) {
 // IR: call {{.*}} @diffe{{.*}}_Z2qfPKdPd.poseidon._Z8k_selectPKdPdi.0(
 // IR: ret void
 
-// IR-LABEL: define {{.*}} @_Z7run_refRK5qfuncPdi(ptr {{.*}}dereferenceable(8) %0,
+// IR-LABEL: define {{.*}} @_Z7run_refRK5qfuncPdi(
+// IR-SAME: ptr {{.*}}dereferenceable(8) [[REF:%[0-9]+]],
 // IR: alloca [8 x i8], align 8, addrspace(5)
-// IR-NOT: store {{.*}}, ptr %0
-// IR: call {{.*}} @diffe{{.*}}_Z4bodyPK5qfuncPKdPd.poseidon._Z7run_refRK5qfuncPdi.0(ptr %0,
+// IR-NOT: store {{.*}}, ptr [[REF]]
+// IR: call {{.*}} @diffe{{.*}}_Z4bodyPK5qfuncPKdPd.poseidon._Z7run_refRK5qfuncPdi.0(ptr [[REF]],
 // IR: ret void
 
 // IR-LABEL: define {{.*}}amdgpu_kernel void @_Z7k_alignPKdPd(

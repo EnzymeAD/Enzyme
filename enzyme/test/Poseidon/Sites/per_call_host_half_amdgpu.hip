@@ -1,5 +1,5 @@
 // REQUIRES: enzyme, amdgpu-registered-target, rocm
-// RUN: rm -rf %t && mkdir -p %t
+// RUN: rm -rf %t && mkdir %t
 // RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-host-only -cuid=0 -O2 -S -emit-llvm -I%poseidon_profile_inc %s -o %t/plain.ll
 // RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-host-only -cuid=0 -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/other_sites -mllvm -poseidon-cache=%t/u %s -o %t/use.ll 2>&1 | FileCheck --allow-empty --check-prefix=HOST %s
 // RUN: diff %t/plain.ll %t/use.ll

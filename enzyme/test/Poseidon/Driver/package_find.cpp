@@ -1,5 +1,5 @@
 // REQUIRES: enzyme
-// RUN: rm -rf %t && mkdir -p %t
+// RUN: rm -rf %t && mkdir %t
 // RUN: %cmake %cmake_generator -S %S/../Inputs/package -B %t/plain -DCMAKE_CXX_COMPILER=%clang++ -DPoseidon_DIR=%poseidon_package_dir -DPOSEIDON_MODE=plain > %t/plain.log
 // RUN: FileCheck --check-prefix=TREE -DDIR=%poseidon_package_dir %s < %t/plain.log
 // RUN: %cmake --build %t/plain -v > %t/plain.build.log
@@ -10,11 +10,9 @@
 // RUN: env POSEIDON_PROFILE_DIR=%t/prof %t/gen/host | FileCheck --check-prefix=OUT %s
 // RUN: ls %t/prof | FileCheck --check-prefix=PROF %s
 // RUN: %cmake %cmake_generator -S %S/../Inputs/package -B %t/use -DCMAKE_CXX_COMPILER=%clang++ -DPoseidon_DIR=%poseidon_package_dir -DPOSEIDON_MODE=optimize -DPOSEIDON_PROFILE=%t/prof "-DPOSEIDON_FLAGS=-poseidon-tau=1e-6 -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-enable-herbie=0 -poseidon-print" > /dev/null
-// RUN: %cmake --build %t/use > %t/use.log 2>&1
-// RUN: FileCheck --check-prefix=USE %s < %t/use.log
+// RUN: %cmake --build %t/use 2>&1 | FileCheck --check-prefix=USE %s
 // RUN: %t/use/host | FileCheck --check-prefix=OUT %s
-// RUN: not %cmake %cmake_generator -S %S/../Inputs/package -B %t/newer -DCMAKE_CXX_COMPILER=%clang++ -DPoseidon_DIR=%poseidon_package_dir -DPOSEIDON_MIN_VERSION=99 > %t/newer.log 2>&1
-// RUN: FileCheck --check-prefix=NEWER %s < %t/newer.log
+// RUN: not %cmake %cmake_generator -S %S/../Inputs/package -B %t/newer -DCMAKE_CXX_COMPILER=%clang++ -DPoseidon_DIR=%poseidon_package_dir -DPOSEIDON_MIN_VERSION=99 2>&1 | FileCheck --check-prefix=NEWER %s
 //
 // The same from an installation of this build tree.
 // RUN: %cmake --install %enzyme_binary_dir/Enzyme --prefix %t/inst > /dev/null

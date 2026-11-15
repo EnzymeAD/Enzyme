@@ -1,5 +1,5 @@
 // REQUIRES: enzyme, amdgpu-registered-target, rocm
-// RUN: rm -rf %t && mkdir -p %t
+// RUN: rm -rf %t && mkdir %t
 // RUN: %clang -x hip --offload-arch=%amdgpu_arch --rocm-path=%rocm_path --cuda-device-only --no-gpu-bundle-output -cuid=0 -O2 -c -I%poseidon_profile_inc %loadClangPoseidonEnzyme -Xclang -mllvm -Xclang -poseidon-profile-generate -Xclang -mllvm -Xclang -poseidon-cache=%t/c %s -o %t/gen.co 2>&1 | FileCheck --check-prefix=GEN %s
 // RUN: llvm-readelf --notes %t/gen.co | FileCheck %s
 

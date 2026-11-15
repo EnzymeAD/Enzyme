@@ -1,8 +1,8 @@
 // REQUIRES: enzyme
-// RUN: rm -rf %t && mkdir -p %t
+// RUN: rm -rf %t && mkdir %t
 // RUN: %clang -O2 -ffp-contract=on -I%poseidon_profile_inc %s -lm -o %t/stock
 // RUN: %t/stock > %t/stock.out
-// RUN: %poseidon_clang -O2 -poseidon-profile-generate -poseidon-cache=%t/cg %s -lstdc++ -lm -o %t/gen 2>/dev/null
+// RUN: %poseidon_clang -O2 -poseidon-profile-generate -poseidon-cache=%t/cg %s -lstdc++ -lm -o %t/gen
 // RUN: env POSEIDON_PROFILE_DIR=%t/prof %t/gen > %t/gen.out
 // RUN: diff %t/stock.out %t/gen.out
 // RUN: %poseidon_clang -O2 -poseidon-profile-use=%t/prof -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-enable-herbie=0 -poseidon-cache=%t/c %s -lstdc++ -lm -o %t/use 2>&1 | FileCheck %s

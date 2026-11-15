@@ -1,21 +1,3 @@
-; REQUIRES: scev-trunc-iv-nowrap
-; RUN: rm -rf %t && mkdir -p %t
-; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/exact_dp/reprice_herbie %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/exact_dp/reprice -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/exact_dp/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-pt=true -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cost-budget=-1 -poseidon-print -S -o /dev/null -poseidon-cache=%t/prune 2>&1 | FileCheck --check-prefix=PRUNE %s
-; RUN: FileCheck --check-prefix=PRUNE-BUDGETS %s < %t/prune/budgets.txt
-; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/exact_dp/reprice_herbie %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/exact_dp/reprice -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/exact_dp/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-pt=true -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cost-budget=-1 -poseidon-print -S -o /dev/null -poseidon-cache=%t/exact -poseidon-early-prune=false 2>&1 | FileCheck --check-prefix=EXACT %s
-; RUN: FileCheck --check-prefix=EXACT-BUDGETS %s < %t/exact/budgets.txt
-
-; A precision change priced against the rewrites taken. The kernel computes
-; the matrix product with its epilogue D = acc * alpha, then Y, an FP subgraph
-; the raise m does not touch. Herbie's cheaper answer x for Y
-; (Inputs/exact_dp/reprice_herbie) is cheaper and more accurate than m alone,
-; so pruning after the CM unit drops every strategy that raises m without
-; rewriting Y. Y has one output, so its precision changes u change nothing
-; once Y is rewritten, and u never meets m: the four cheapest points of the
-; exact frontier, {u, m}, are missing. IR and profile are written by hand, the
-; math functions as the libdevice calls the pass recognizes. A budget below
-; every frontier point selects nothing, so only the solve runs.
-;
 ;   Source:
 ;   extern "C" __device__ __attribute__((noinline)) void
 ;   matmul_body(const double *A, const double *B, double *D, const double *U,
@@ -114,10 +96,3 @@ attributes #2 = { convergent nounwind "uniform-work-group-size" }
 !0 = distinct !{!0, !1, !2}
 !1 = !{!"llvm.loop.mustprogress"}
 !2 = !{!"llvm.loop.unroll.disable"}
-
-; PRUNE: DP table contains 17 entries.
-; PRUNE-BUDGETS-NOT: -0.95376420454545452
-
-; EXACT: Exact DP: 21 frontier points
-; EXACT: DP table contains 21 entries.
-; EXACT-BUDGETS: {{^}}-0.95376420454545452,-0.94921875,-0.94467329545454548,-0.73458806818181821,-0.70823863636363638,-0.69236505681818183,-0.68103693181818181,-0.49815340909090911,-0.48227982954545456,-0.47095170454545454,-0.40106534090909091,-0.36573153409090908,-0.34985795454545454,-0.33852982954545452,-0.27727272727272728,-0.20738636363636365,-0.13750000000000001,-0.067613636363636362,0,0.13412642045454545,0.14545454545454545{{$}}

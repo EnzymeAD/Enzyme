@@ -5,10 +5,11 @@
 // heap before the first kernel runs.
 //
 // REQUIRES: enzyme, cuda-runtime
-// RUN: rm -rf %t.cache && %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 \
-// RUN:     -poseidon-profile-generate -poseidon-cache=%t.cache %s -o %t.exe
-// RUN: rm -rf %t.profile && POSEIDON_PROFILE_DIR=%t.profile %t.exe | FileCheck --check-prefix=PRIMAL %s
-// RUN: cat %t.profile/*.fpprofile | FileCheck %s
+// RUN: rm -rf %t && mkdir %t
+// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 \
+// RUN:     -poseidon-profile-generate -poseidon-cache=%t/cache %s -o %t/exe
+// RUN: env POSEIDON_PROFILE_DIR=%t/profile %t/exe | FileCheck --check-prefix=PRIMAL %s
+// RUN: cat %t/profile/*.fpprofile | FileCheck %s
 
 #include <cmath>
 #include <cstdio>

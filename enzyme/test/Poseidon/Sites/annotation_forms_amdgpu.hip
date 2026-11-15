@@ -1,5 +1,5 @@
 // REQUIRES: amdgpu-registered-target
-// RUN: rm -rf %t && mkdir -p %t
+// RUN: rm -rf %t && mkdir %t
 // RUN: %clang -x hip --offload-arch=gfx942 -nogpulib -nogpuinc -O2 -c -I%poseidon_profile_inc %s -o %t/plain.o
 // RUN: %clang -x hip --offload-arch=gfx942 -nogpulib -nogpuinc --cuda-device-only -O2 -S -emit-llvm -I%poseidon_profile_inc %s -o - | FileCheck --check-prefix=TYPE %s
 // RUN: %clang -x hip --offload-arch=gfx942 -nogpulib -nogpuinc --cuda-device-only -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidon -Xclang -mllvm -Xclang -poseidon-profile-use=%S/../Inputs/other_sites -Xclang -mllvm -Xclang -poseidon-cache=%t/c -Xclang -mllvm -Xclang -poseidon-print %s -o /dev/null 2>&1 | FileCheck --check-prefix=READ --implicit-check-not=error: %s

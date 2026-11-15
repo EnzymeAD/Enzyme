@@ -1,5 +1,5 @@
 ; REQUIRES: enzyme, nvptx-device-profiler
-; RUN: rm -rf %t && mkdir -p %t
+; RUN: rm -rf %t && mkdir %t
 ; RUN: sed 's/ozaki_stub\.cu/tcec_matmul.cu/g' %S/../Inputs/ozaki_dispatch/ozaki_stub_host.ll > %t/host.ll
 ; RUN: grep -v llvm.global.annotations %S/../Inputs/stale_cache/matmul_annotated_device.ll > %t/plain.ll
 ; RUN: %opt %S/../Inputs/stale_cache/matmul_annotated_device.ll %loadPoseidonEnzyme -passes="poseidon,enzyme,poseidon-finalize,globaldce" -enzyme-preopt=false -poseidon-profile-generate -poseidon-cache=%t/c -S -o /dev/null 2>&1 | FileCheck --check-prefix=DEV1 %s

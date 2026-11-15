@@ -1,7 +1,8 @@
-; RUN: rm -rf %t && mkdir -p %t && cp %S/../Inputs/fma_opt_cache/cachedHerbieOutput_* %t/
-; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/../Inputs/fma_opt_profiles -poseidon-enable-herbie=true -poseidon-herbie-binary=/nonexistent/herbie -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache=%t -S 2>&1 | FileCheck --check-prefixes=CHECK,CHEAPEST %s
-; RUN: rm -rf %t2 && mkdir -p %t2 && cp %S/../Inputs/fma_opt_cache/cachedHerbieOutput_* %t2/
-; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/../Inputs/fma_opt_profiles -poseidon-enable-herbie=true -poseidon-herbie-binary=/nonexistent/herbie -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache=%t2 -poseidon-tau-cheapest=false -S 2>&1 | FileCheck --check-prefixes=CHECK,ACCURATE %s
+; RUN: rm -rf %t && mkdir %t
+; RUN: mkdir -p %t/c && cp %S/../Inputs/fma_opt_cache/cachedHerbieOutput_* %t/c/
+; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/../Inputs/fma_opt_profiles -poseidon-enable-herbie=true -poseidon-herbie-binary=/nonexistent/herbie -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache=%t/c -S 2>&1 | FileCheck --check-prefixes=CHECK,CHEAPEST %s
+; RUN: mkdir -p %t/c2 && cp %S/../Inputs/fma_opt_cache/cachedHerbieOutput_* %t/c2/
+; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/../Inputs/fma_opt_profiles -poseidon-enable-herbie=true -poseidon-herbie-binary=/nonexistent/herbie -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache=%t/c2 -poseidon-tau-cheapest=false -S 2>&1 | FileCheck --check-prefixes=CHECK,ACCURATE %s
 
 ; Cached Herbie output replayed from Inputs/fma_opt_cache without invoking Herbie: (x + y) * z  -->  fma(x, z, y * z)
 ;

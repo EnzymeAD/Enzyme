@@ -1,4 +1,4 @@
-// RUN: rm -rf %t && mkdir -p %t
+// RUN: rm -rf %t && mkdir %t
 // RUN: %clang++ -std=c++17 -O2 -fno-fast-math -ffp-contract=off -I%S/../../../Poseidon %S/../../../Poseidon/Core/UniformReal.cpp %s -o %t/uniform_real
 // RUN: %t/uniform_real | FileCheck %s
 

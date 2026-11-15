@@ -9,18 +9,19 @@
 // tensor runs the kernel as written.
 //
 // REQUIRES: enzyme, cuda-runtime
-// RUN: rm -rf %t.pcache && %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 \
-// RUN:     -poseidon-profile-generate -poseidon-cache=%t.pcache %s -o %t.exe
-// RUN: cat %t.pcache/launches_*.json | FileCheck --check-prefix=DESC %s
-// RUN: rm -rf %t.profile && POSEIDON_PROFILE_DIR=%t.profile %t.exe profile \
+// RUN: rm -rf %t && mkdir %t
+// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 \
+// RUN:     -poseidon-profile-generate -poseidon-cache=%t/pcache %s -o %t/exe
+// RUN: cat %t/pcache/launches_*.json | FileCheck --check-prefix=DESC %s
+// RUN: env POSEIDON_PROFILE_DIR=%t/profile %t/exe profile \
 // RUN:   | FileCheck --check-prefix=PRIMAL %s
 //
-// RUN: rm -rf %t.cache && %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 \
-// RUN:     -poseidon-profile-use=%t.profile -poseidon-cache=%t.cache \
+// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 \
+// RUN:     -poseidon-profile-use=%t/profile -poseidon-cache=%t/cache \
 // RUN:     -poseidon-cost-model=%gpu_cost_model -poseidon-print \
 // RUN:     -poseidon-enable-herbie=0 -poseidon-enable-pt=0 -poseidon-raise-wmma \
-// RUN:     %s -o %t.opt.exe 2>&1 | FileCheck %s
-// RUN: %t.opt.exe run | FileCheck --check-prefix=OPT %s
+// RUN:     %s -o %t/opt.exe 2>&1 | FileCheck %s
+// RUN: %t/opt.exe run | FileCheck --check-prefix=OPT %s
 
 #include <cmath>
 #include <cstdio>

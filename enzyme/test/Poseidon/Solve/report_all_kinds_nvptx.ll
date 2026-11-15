@@ -1,21 +1,19 @@
 ; REQUIRES: scev-trunc-iv-nowrap
-; RUN: rm -rf %t && mkdir -p %t
-; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/exact_dp/reprice_herbie %opt %S/exact_dp_reprice_nvptx.ll %loadPoseidon -passes=poseidon -poseidon-profile-use=%S/../Inputs/exact_dp/reprice -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/exact_dp/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-pt=true -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-early-prune=false -poseidon-cost-budget=-0.9 -poseidon-print -poseidon-show-table -poseidon-report-path=%t/rep -poseidon-explain=%t/ex -poseidon-cache=%t/exact -S -o %t/exact.ll > %t/exact.log 2>&1
-; RUN: FileCheck --check-prefix=TABLE %s < %t/exact.log
+; RUN: rm -rf %t && mkdir %t
+; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/exact_dp/reprice_herbie %opt %S/../Inputs/exact_dp/reprice.ll %loadPoseidon -passes=poseidon -poseidon-profile-use=%S/../Inputs/exact_dp/reprice -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/exact_dp/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-pt=true -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-early-prune=false -poseidon-cost-budget=-0.9 -poseidon-print -poseidon-show-table -poseidon-report-path=%t/rep -poseidon-explain=%t/ex -poseidon-cache=%t/exact -S -o %t/exact.ll 2>&1 | FileCheck --check-prefix=TABLE %s
 ; RUN: FileCheck --check-prefix=TEXT %s < %t/rep/preprocess_matmul_body.txt
 ; RUN: FileCheck --check-prefix=JSON %s < %t/rep/preprocess_matmul_body.json
 ; RUN: FileCheck --check-prefix=CURATED %s < %t/rep/preprocess_matmul_body_rewrites.json
 ; RUN: cat %t/ex/preprocess_matmul_body.explain.json | FileCheck --check-prefix=EXPLAIN %s
-; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/exact_dp/reprice_herbie %opt %S/exact_dp_reprice_nvptx.ll %loadPoseidon -passes=poseidon -poseidon-profile-use=%S/../Inputs/exact_dp/reprice -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/exact_dp/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-pt=true -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-tau=1e-6 -poseidon-print -poseidon-cache=%t/tau -S -o %t/tau.ll > %t/tau.log 2>&1
-; RUN: FileCheck --check-prefix=TAU %s < %t/tau.log
+; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/exact_dp/reprice_herbie %opt %S/../Inputs/exact_dp/reprice.ll %loadPoseidon -passes=poseidon -poseidon-profile-use=%S/../Inputs/exact_dp/reprice -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/exact_dp/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-pt=true -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-tau=1e-6 -poseidon-print -poseidon-cache=%t/tau -S -o %t/tau.ll 2>&1 | FileCheck --check-prefix=TAU %s
 
 ; The table print, the reports of -poseidon-report-path and the explanation
-; of a site with algebraic, precision and product units
-; (exact_dp_reprice_nvptx.ll, solved exactly; the budget selects a precision
+; of a site with algebraic, precision and product units (the module of
+; Inputs/exact_dp/reprice.ll, solved exactly; the budget selects a precision
 ; change and a raise). Under a target the products are selected by their
 ; domain error apart from the DP, and a precision change of the product's
 ; epilogue that the DP selects is dropped against the raise. The poseidon pass
-; runs alone, as in dp_cache_replay_all_kinds_nvptx.ll.
+; runs alone.
 
 ; TABLE: *** DP Table ***
 ; TABLE-NEXT: Computation cost: -9.537642e-01, Accuracy cost: 5.593938e+09

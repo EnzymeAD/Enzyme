@@ -1,13 +1,20 @@
 ; REQUIRES: cuda-runtime
 ; From LLVM 22 an sm_120 compile needs the PTX version of a CUDA installation.
-; RUN: rm -rf %t && %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-kernels=.*_kernel -poseidon-profile-use=%S/../Inputs/min_cost_share -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-enable-multifloat=true -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cache=%t -poseidon-cost-budget=-1e-9 -poseidon-print -S > %t.out 2>&1
-; RUN: FileCheck %s < %t.out
-; RUN: rm -rf %t2 && %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-kernels=.*_kernel -poseidon-min-cost-share=0 -poseidon-profile-use=%S/../Inputs/min_cost_share -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-enable-multifloat=true -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cache=%t2 -poseidon-cost-budget=-1e-9 -poseidon-print -S > %t2.out 2>&1
-; RUN: FileCheck --check-prefix=NOFILTER %s < %t2.out
-; RUN: not grep "Optimizing preprocess_cold_kernel_poseidon_body" %t.out
+; DEFINE: %{use} = -poseidon-kernels=.*_kernel \
+; DEFINE:   -poseidon-profile-use=%S/../Inputs/min_cost_share \
+; DEFINE:   -poseidon-enable-herbie=false -poseidon-enable-pt=true \
+; DEFINE:   -poseidon-enable-multifloat=true -poseidon-two-tier-step=100 \
+; DEFINE:   -poseidon-enable-three-tier=false \
+; DEFINE:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv \
+; DEFINE:   -poseidon-cost-budget=-1e-9 -poseidon-print
+; RUN: rm -rf %t && mkdir %t %t/tmp
+; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" %{use} -poseidon-cache=%t/filter -S 2>&1 \
+; RUN:   | FileCheck --implicit-check-not="Optimizing preprocess_cold_kernel_poseidon_body" %s
+; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" %{use} -poseidon-min-cost-share=0 -poseidon-cache=%t/nofilter -S 2>&1 \
+; RUN:   | FileCheck --check-prefix=NOFILTER %s
 ; RUN: not %opt %s %loadPoseidon -passes=poseidon "-poseidon-kernels=(" -poseidon-profile-use=%S/../Inputs/min_cost_share -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cache= -S -o /dev/null 2>&1 | FileCheck --check-prefix=BADREGEX %s
-; RUN: mkdir -p %t3 && not env TMPDIR=%t3 %clang --target=nvptx64-nvidia-cuda -march=sm_120 -O2 -c -x ir %s %loadClangPoseidon -mllvm "-poseidon-kernels=(" -mllvm -poseidon-profile-use=%S/../Inputs/min_cost_share -mllvm -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -mllvm -poseidon-cache= -o %t3/k.o 2>&1 | FileCheck --check-prefix=BADREGEX --implicit-check-not="error in backend" --implicit-check-not="Stack dump" --implicit-check-not=PLEASE %s
-; RUN: ls %t3 | count 0
+; RUN: not env TMPDIR=%t/tmp %clang --target=nvptx64-nvidia-cuda -march=sm_120 -O2 -c -x ir %s %loadClangPoseidon -mllvm "-poseidon-kernels=(" -mllvm -poseidon-profile-use=%S/../Inputs/min_cost_share -mllvm -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -mllvm -poseidon-cache= -o %t/tmp/k.o 2>&1 | FileCheck --check-prefix=BADREGEX --implicit-check-not="error in backend" --implicit-check-not="Stack dump" --implicit-check-not=PLEASE %s
+; RUN: ls %t/tmp | count 0
 
 ; Two kernels reached by -poseidon-kernels, not by the attribute. cold_kernel
 ; ran once where hot_kernel ran 768 times over seven profiled operations, so it
@@ -27,9 +34,9 @@ define dso_local ptx_kernel void @hot_kernel(ptr noundef readonly captures(none)
   %8 = add i32 %6, %7
   %9 = zext i32 %8 to i64
   %10 = getelementptr inbounds nuw [8 x i8], ptr %0, i64 %9
-  %11 = load double, ptr %10, align 8, !tbaa !9
+  %11 = load double, ptr %10, align 8
   %12 = getelementptr inbounds nuw [8 x i8], ptr %1, i64 %9
-  %13 = load double, ptr %12, align 8, !tbaa !9
+  %13 = load double, ptr %12, align 8
   %14 = tail call double @llvm.fmuladd.f64(double %11, double %13, double %11)
   %15 = fneg double %13
   %16 = tail call double @llvm.fmuladd.f64(double %14, double %14, double %15)
@@ -38,7 +45,7 @@ define dso_local ptx_kernel void @hot_kernel(ptr noundef readonly captures(none)
   %19 = tail call double @llvm.fmuladd.f64(double %17, double %17, double %18)
   %20 = tail call double @llvm.fmuladd.f64(double %19, double %16, double %17)
   %21 = getelementptr inbounds nuw [8 x i8], ptr %2, i64 %9
-  store double %20, ptr %21, align 8, !tbaa !9
+  store double %20, ptr %21, align 8
   ret void
 }
 
@@ -50,25 +57,21 @@ define dso_local ptx_kernel void @cold_kernel(ptr noundef readonly captures(none
   %8 = add i32 %6, %7
   %9 = zext i32 %8 to i64
   %10 = getelementptr inbounds nuw [8 x i8], ptr %0, i64 %9
-  %11 = load double, ptr %10, align 8, !tbaa !9
+  %11 = load double, ptr %10, align 8
   %12 = getelementptr inbounds nuw [8 x i8], ptr %1, i64 %9
-  %13 = load double, ptr %12, align 8, !tbaa !9
+  %13 = load double, ptr %12, align 8
   %14 = tail call double @llvm.fmuladd.f64(double %11, double %13, double %11)
   %15 = getelementptr inbounds nuw [8 x i8], ptr %2, i64 %9
-  store double %14, ptr %15, align 8, !tbaa !9
+  store double %14, ptr %15, align 8
   ret void
 }
 
-; Function Attrs: mustprogress nocallback nofree nosync nounwind speculatable willreturn memory(none)
 declare double @llvm.fmuladd.f64(double, double, double) #1
 
-; Function Attrs: mustprogress nocallback nofree nosync nounwind speculatable willreturn memory(none)
 declare noundef range(i32 0, 2147483647) i32 @llvm.nvvm.read.ptx.sreg.ctaid.x() #4
 
-; Function Attrs: mustprogress nocallback nofree nosync nounwind speculatable willreturn memory(none)
 declare noundef range(i32 1, 1025) i32 @llvm.nvvm.read.ptx.sreg.ntid.x() #4
 
-; Function Attrs: mustprogress nocallback nofree nosync nounwind speculatable willreturn memory(none)
 declare noundef range(i32 0, 1024) i32 @llvm.nvvm.read.ptx.sreg.tid.x() #4
 
 attributes #0 = { mustprogress nofree noinline norecurse nosync nounwind willreturn memory(argmem: readwrite) "frame-pointer"="all" "no-trapping-math"="true" "stack-protector-buffer-size"="8" "target-cpu"="sm_120" "target-features"="+ptx88,+sm_120" "uniform-work-group-size" }
@@ -76,19 +79,10 @@ attributes #1 = { mustprogress nocallback nofree nosync nounwind speculatable wi
 attributes #4 = { mustprogress nocallback nofree nosync nounwind speculatable willreturn memory(none) }
 
 !llvm.module.flags = !{!0, !1, !2}
-!llvm.ident = !{!3}
-!llvm.errno.tbaa = !{!5}
 
 !0 = !{i32 2, !"SDK Version", [2 x i32] [i32 12, i32 9]}
 !1 = !{i32 4, !"nvvm-reflect-ftz", i32 0}
 !2 = !{i32 7, !"frame-pointer", i32 2}
-!3 = !{!"clang version 23.0.0git"}
-!5 = !{!6, !6, i64 0}
-!6 = !{!"int", !7, i64 0}
-!7 = !{!"omnipotent char", !8, i64 0}
-!8 = !{!"Simple C++ TBAA"}
-!9 = !{!10, !10, i64 0}
-!10 = !{!"double", !7, i64 0}
 
 ; CHECK: [poseidon] Optimizing preprocess_hot_kernel_poseidon_body
 ; CHECK: [poseidon] cold_kernel is 0.02599% of the profiled FP cost of the kernels -poseidon-kernels named, below -poseidon-min-cost-share=0.01; left unoptimized

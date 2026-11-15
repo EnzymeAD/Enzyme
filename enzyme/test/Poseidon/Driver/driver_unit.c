@@ -36,23 +36,22 @@
 // RUN:     -poseidon-unit=mine -x cuda --cuda-gpu-arch=%gpu_arch \
 // RUN:     --cuda-path=%t.cuda -nocudainc -nocudalib -### %s -o %t.o > %t.mine.jobs 2>&1
 // RUN: FileCheck --check-prefix=MINE %s < %t.mine.jobs
-// RUN: grep -o 'poseidon-unit=[^" ]*' %t.mine.jobs | count 3
+// RUN: FileCheck --check-prefix=MINE-UNITS --implicit-check-not=poseidon-unit= %s < %t.mine.jobs
 // RUN: env POSEIDON_ECHO=1 %poseidon_clangxx -poseidon-profile-use \
 // RUN:     -Xarch_host -mllvm=-poseidon-unit=mine -x hip --offload-arch=gfx942 \
 // RUN:     --rocm-path=%t.rocm -nogpuinc -nogpulib -### %s -o %t.o > %t.host.jobs 2>&1
 // RUN: FileCheck --check-prefix=HOST %s < %t.host.jobs
-// RUN: grep -o 'poseidon-unit=[^" ]*' %t.host.jobs | count 2
+// RUN: FileCheck --check-prefix=HOST-UNITS --implicit-check-not=poseidon-unit= %s < %t.host.jobs
 //
 // RUN: echo > %t.link.o
 // RUN: env POSEIDON_ECHO=1 %poseidon_clangxx -Werror %t.link.o -### -o %t.exe 2>&1 \
 // RUN:   | FileCheck --check-prefix=LINK %s
 //
-// With Enzyme loaded, to generate a profile, both compile jobs of a HIP
-// compile get -enzyme-lto-prelink=1, so that Enzyme differentiates in the
-// device compile, an LTO pre-link compile whose device link loads no plugin;
-// the device link does not get it, a HIP link is not warned about it, and a
-// CUDA compile, which has no LTO phase, does not get it. The plugin is named
-// only, never loaded.
+// With Enzyme loaded to generate a profile, both compile jobs of a HIP compile
+// get -enzyme-lto-prelink=1 (the device compile is an LTO pre-link compile
+// whose device link loads no plugin); the device link does not, a HIP link is
+// not warned about it, and a CUDA compile does not get it. The plugin is only
+// named, never loaded.
 // RUN: env POSEIDON_ECHO=1 ENZYME_PLUGIN=%t.enzyme/ClangEnzyme.so \
 // RUN:     %poseidon_clangxx -poseidon-profile-generate -x hip \
 // RUN:     --offload-arch=gfx942 --rocm-path=%t.rocm -nogpuinc -nogpulib -### %s \
@@ -83,11 +82,13 @@ int main(void) { return 0; }
 // MINE: "-cc1" "-triple" "nvptx64-nvidia-cuda"{{.*}} "-mllvm" "-poseidon-unit=mine"
 // MINE: "-cc1" "-triple" "x86_64-{{[^"]+}}"{{.*}} "-mllvm" "-poseidon-unit=mine"
 // MINE-NOT: poseidon-unit
+// MINE-UNITS-COUNT-3: poseidon-unit=
 
 // HOST: clang{{.*}} -Xarch_host -mllvm=-poseidon-unit=mine
 // HOST-NOT: poseidon-unit
 // HOST: "-cc1" "-triple" "x86_64-{{[^"]+}}"{{.*}} "-mllvm" "-poseidon-unit=mine"
 // HOST-NOT: poseidon-unit
+// HOST-UNITS-COUNT-2: poseidon-unit=
 
 // LINK: clang{{.*}} -Xclang -mllvm -Xclang -poseidon-unit={{[0-9A-F]+}}
 // LINK-NOT: -poseidon-unit=

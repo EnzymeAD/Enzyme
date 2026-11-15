@@ -1,4 +1,4 @@
-// RUN: rm -rf %t && mkdir -p %t
+// RUN: rm -rf %t && mkdir %t
 // RUN: %clang++ -O1 %s %poseidon_profile_lib -o %t/meet
 // RUN: env POSEIDON_PROFILE_DIR=%t/first MEET=device-first %t/meet | FileCheck --check-prefix=DEVICE-FIRST %s
 // RUN: diff %t/first.expected %t/first/k_ran.fpprofile

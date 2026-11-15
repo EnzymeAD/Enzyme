@@ -1,5 +1,5 @@
 // REQUIRES: enzyme, cuda-runtime
-// RUN: rm -rf %t && mkdir -p %t
+// RUN: rm -rf %t && mkdir %t
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O3 -poseidon-profile-generate -poseidon-cache=%t/c -I%S/../Inputs/two_tu -c %S/../Inputs/two_tu/a.cu -o %t/a.o
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O3 -poseidon-profile-generate -poseidon-cache=%t/c -I%S/../Inputs/two_tu -c %S/../Inputs/two_tu/b.cu -o %t/b.o
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O3 -poseidon-profile-generate -poseidon-cache=%t/c -I%S/../Inputs/two_tu -c %S/../Inputs/two_tu/main.cu -o %t/main.o

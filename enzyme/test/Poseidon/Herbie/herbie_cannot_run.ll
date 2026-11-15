@@ -1,4 +1,4 @@
-; RUN: rm -rf %t && mkdir -p %t
+; RUN: rm -rf %t && mkdir %t
 ; RUN: not %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/regime_split/profiles -poseidon-enable-herbie=true -poseidon-herbie-binary=%t/no-herbie -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cost-budget=1e9 -poseidon-cache=%t/c -S -o /dev/null 2>&1 | FileCheck --check-prefix=ENABLED %s
 ; RUN: mkdir -p %t/tmp && not env TMPDIR=%t/tmp %clang -O1 -c -x ir %s %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/regime_split/profiles -mllvm -poseidon-enable-herbie=true -mllvm -poseidon-herbie-binary=%t/no-herbie -mllvm -poseidon-enable-pt=false -mllvm -poseidon-cost-model=%cost_models/cm_cpu_native.csv -mllvm -poseidon-cost-budget=1e9 -mllvm -poseidon-cache=%t/c -o %t/site.o 2>&1 | FileCheck --check-prefix=ENABLED --implicit-check-not="error in backend" --implicit-check-not="Stack dump" --implicit-check-not=PLEASE %s
 ; RUN: not ls %t/site.o

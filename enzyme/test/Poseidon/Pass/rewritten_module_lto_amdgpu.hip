@@ -1,13 +1,10 @@
 // REQUIRES: amdgpu-registered-target, rocm
 // RUN: rm -rf %t && mkdir -p %t/fpc %t/use %t/refused %t/fpc.thin %t/use.thin
 // RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path -cuid=0 -O2 -ffp-contract=on -c -DNO_SITE %s -o %t/fpc/k.o
-// RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path -cuid=0 -O2 -ffp-contract=on -c -I%poseidon_profile_inc %loadClangPoseidon -Xclang -mllvm -Xclang -poseidon-profile-use=%S/../Inputs/rewritten_lto_hip -Xclang -mllvm -Xclang -poseidon-cost-model=%cost_models/cm_gfx942_synthetic.csv -Xclang -mllvm -Xclang -poseidon-enable-herbie=0 -Xclang -mllvm -Xclang -poseidon-cache=%t/c -Xclang -mllvm -Xclang -poseidon-print %s -o %t/use/k.o 2> %t/use.err
+// RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path -cuid=0 -O2 -ffp-contract=on -c -I%poseidon_profile_inc %loadClangPoseidon -Xclang -mllvm -Xclang -poseidon-profile-use=%S/../Inputs/rewritten_lto_hip -Xclang -mllvm -Xclang -poseidon-cost-model=%cost_models/cm_gfx942_synthetic.csv -Xclang -mllvm -Xclang -poseidon-enable-herbie=0 -Xclang -mllvm -Xclang -poseidon-cache=%t/c -Xclang -mllvm -Xclang -poseidon-print %s -o %t/use/k.o 2>&1 | FileCheck --check-prefix=SOLVE %s
 // RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path -cuid=0 -O2 -ffp-contract=on -foffload-lto=thin -c -DNO_SITE %s -o %t/fpc.thin/k.o
-// RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path -cuid=0 -O2 -ffp-contract=on -foffload-lto=thin -c -I%poseidon_profile_inc %loadClangPoseidon -Xclang -mllvm -Xclang -poseidon-profile-use=%S/../Inputs/rewritten_lto_hip -Xclang -mllvm -Xclang -poseidon-cost-model=%cost_models/cm_gfx942_synthetic.csv -Xclang -mllvm -Xclang -poseidon-enable-herbie=0 -Xclang -mllvm -Xclang -poseidon-cache=%t/c.thin -Xclang -mllvm -Xclang -poseidon-print %s -o %t/use.thin/k.o 2> %t/use.thin.err
-// RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path -cuid=0 -O2 -ffp-contract=on -c -DSITE_TAU=1e-18 -I%poseidon_profile_inc %loadClangPoseidon -Xclang -mllvm -Xclang -poseidon-profile-use=%S/../Inputs/rewritten_lto_hip -Xclang -mllvm -Xclang -poseidon-cost-model=%cost_models/cm_gfx942_synthetic.csv -Xclang -mllvm -Xclang -poseidon-enable-herbie=0 -Xclang -mllvm -Xclang -poseidon-cache=%t/c.refused -Xclang -mllvm -Xclang -poseidon-print %s -o %t/refused/k.o 2> %t/refused.err
-// RUN: FileCheck --check-prefix=SOLVE %s < %t/use.err
-// RUN: FileCheck --check-prefix=REFUSED %s < %t/refused.err
-// RUN: FileCheck --check-prefix=SOLVE %s < %t/use.thin.err
+// RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path -cuid=0 -O2 -ffp-contract=on -foffload-lto=thin -c -I%poseidon_profile_inc %loadClangPoseidon -Xclang -mllvm -Xclang -poseidon-profile-use=%S/../Inputs/rewritten_lto_hip -Xclang -mllvm -Xclang -poseidon-cost-model=%cost_models/cm_gfx942_synthetic.csv -Xclang -mllvm -Xclang -poseidon-enable-herbie=0 -Xclang -mllvm -Xclang -poseidon-cache=%t/c.thin -Xclang -mllvm -Xclang -poseidon-print %s -o %t/use.thin/k.o 2>&1 | FileCheck --check-prefix=SOLVE %s
+// RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path -cuid=0 -O2 -ffp-contract=on -c -DSITE_TAU=1e-18 -I%poseidon_profile_inc %loadClangPoseidon -Xclang -mllvm -Xclang -poseidon-profile-use=%S/../Inputs/rewritten_lto_hip -Xclang -mllvm -Xclang -poseidon-cost-model=%cost_models/cm_gfx942_synthetic.csv -Xclang -mllvm -Xclang -poseidon-enable-herbie=0 -Xclang -mllvm -Xclang -poseidon-cache=%t/c.refused -Xclang -mllvm -Xclang -poseidon-print %s -o %t/refused/k.o 2>&1 | FileCheck --check-prefix=REFUSED %s
 // RUN: cd %t/fpc && llvm-objdump --offloading k.o && llvm-objdump -d --no-leading-addr k.o.*gfx942 | sed -E 's#// [0-9A-F]+: #// #' > %t/fpc.isa
 // RUN: cd %t/use && llvm-objdump --offloading k.o && llvm-objdump -d --no-leading-addr k.o.*gfx942 | sed -E 's#// [0-9A-F]+: #// #' > %t/use.isa
 // RUN: cd %t/refused && llvm-objdump --offloading k.o && llvm-objdump -d --no-leading-addr k.o.*gfx942 | sed -E 's#// [0-9A-F]+: #// #' > %t/refused.isa
@@ -25,16 +22,13 @@
 // RUN: awk '/^<.*>:$/{p = $0 ~ /^<_Z4sitePKdPdi>:$/} p' %t/use.isa | FileCheck --check-prefix=USE-SITE --implicit-check-not=v_fma_f64 %s
 // RUN: awk '/^<.*>:$/{p = $0 ~ /^<_Z4sitePKdPdi>:$/} p' %t/use.thin.isa | FileCheck --check-prefix=USE-SITE --implicit-check-not=v_fma_f64 %s
 
-// HIP compiles device code through LTO: each -c writes device bitcode, from
-// which the device link generates the code object. There too every function
-// no rewrite reached is the one as written: in the code object of a module
-// whose site is rewritten, a kernel that is no site and a site the profile
-// does not cover are those of the unannotated source compiled without the
-// plugin, in the same order, and only the rewritten site differs, under full
-// and thin LTO; under a target no rewrite meets, the whole code object is the
-// one as written. The profile of `site` is the one its CUDA twin
-// Integration/rewritten_module_as_written.cu records on an RTX 5090; no gfx942
-// cost model is measured, so the compile prices from a synthetic one.
+// Under full and thin offload LTO, every function no rewrite reaches (a kernel
+// that is no site, a site the profile does not cover) is in the code object as
+// the unannotated source compiled without the plugin has it, in the same order;
+// only the rewritten site differs. Under a tolerance no rewrite meets, the whole
+// code object is the one as written. The profile of `site` is the one its CUDA
+// twin Integration/rewritten_module_as_written.cu records; no gfx942 cost model
+// is measured, so the compile prices from a synthetic one.
 
 #include <hip/hip_runtime.h>
 

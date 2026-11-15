@@ -1,5 +1,5 @@
 // REQUIRES: enzyme, cuda-runtime
-// RUN: rm -rf %t && mkdir -p %t
+// RUN: rm -rf %t && mkdir %t
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch --cuda-device-only -O2 -S -emit-llvm %loadClangEnzyme %s -o %t/plain.ll
 //
 // Every site left alone (no profile): the module is the one as written.

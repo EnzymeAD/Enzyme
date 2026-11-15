@@ -8,7 +8,7 @@
 // bit.
 //
 // REQUIRES: cuda-runtime
-// RUN: rm -rf %t && mkdir -p %t
+// RUN: rm -rf %t && mkdir %t
 // RUN: %clang++ -std=c++17 -O2 -ffp-contract=off -frounding-math \
 // RUN:     -I%S/../../../Poseidon -c \
 // RUN:     %S/../../../Poseidon/Techniques/Matmul/MatmulSimulation.cpp \

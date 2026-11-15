@@ -1,5 +1,5 @@
 // REQUIRES: enzyme, nvptx-device-profiler
-// RUN: rm -rf %t && mkdir -p %t
+// RUN: rm -rf %t && mkdir %t
 // RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c %s -o %t/gen.ll 2>&1 | FileCheck --check-prefix=GEN --implicit-check-not=warning: %s
 // RUN: FileCheck --check-prefix=IR %s < %t/gen.ll
 // RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/other_sites -mllvm -poseidon-cache=%t/u %s -o /dev/null 2>&1 | FileCheck --check-prefix=USE %s
@@ -89,29 +89,32 @@ GLOBAL void k_state(double *u) {
 // GEN-DAG: [poseidon-profgen] advance(state*) at call 0 in run(state): 1 shadow object(s), output(s) 0
 
 // The functor's shadow is a zero closure; the primal is the parameter itself.
-// IR-LABEL: define {{.*}} @_Z13forall_kernelI7closureEvT_i(ptr {{.*}}byval(%struct.closure) {{.*}}%0, i32
+// IR-LABEL: define {{.*}} @_Z13forall_kernelI7closureEvT_i(
+// IR-SAME: ptr {{.*}}byval(%struct.closure) {{.*}}[[CLOSURE:%[0-9]+]], i32
 // IR: %[[CS:[0-9]+]] = alloca %struct.closure
-// IR-NOT: store {{.*}}, ptr %0,
+// IR-NOT: store {{.*}}, ptr [[CLOSURE]],
 // IR: call void @llvm.memset.p0.i64(ptr {{.*}}%[[CS]], i8 0, i64 16
-// IR-NOT: store {{.*}}, ptr %0,
-// IR: call {{.*}} @diffe{{.*}}_Z4bodyI5qfuncEvPKT_PKdPd.poseidon._Z9call_siteI5qfuncEvRKT_PKdPd.0(ptr {{.*}}%0, ptr %[[CS]],
+// IR-NOT: store {{.*}}, ptr [[CLOSURE]],
+// IR: call {{.*}} @diffe{{.*}}_Z4bodyI5qfuncEvPKT_PKdPd.poseidon._Z9call_siteI5qfuncEvRKT_PKdPd.0(ptr {{.*}}[[CLOSURE]], ptr %[[CS]],
 // IR: ret void
 
 // The member eight bytes into the parameter, and as far into its shadow.
-// IR-LABEL: define {{.*}} @_Z6k_grid6data_ti(ptr {{.*}}byval(%struct.data_t) {{.*}}"nvvm.grid_constant" %0, i32
+// IR-LABEL: define {{.*}} @_Z6k_grid6data_ti(
+// IR-SAME: ptr {{.*}}byval(%struct.data_t) {{.*}}"nvvm.grid_constant" [[DATA:%[0-9]+]], i32
 // IR: %[[DS:[0-9]+]] = alloca %struct.data_t
-// IR: %[[QF:[0-9]+]] = getelementptr inbounds nuw i8, ptr %0, i64 8
+// IR: %[[QF:[0-9]+]] = getelementptr inbounds nuw i8, ptr [[DATA]], i64 8
 // IR: call void @llvm.memset.p0.i64(ptr {{.*}}%[[DS]], i8 0, i64 16
 // IR: %[[QFS:[0-9]+]] = getelementptr inbounds nuw i8, ptr %[[DS]], i64 8
 // IR: call {{.*}} @diffe{{.*}}_Z4bodyI5qfuncEvPKT_PKdPd.poseidon._Z6k_grid6data_ti.0(ptr {{.*}}%[[QF]], ptr %[[QFS]],
 // IR: ret void
 
-// IR-LABEL: define {{.*}} @_Z3run5state(ptr {{.*}}byval(%struct.state) {{.*}}%0)
+// IR-LABEL: define {{.*}} @_Z3run5state(
+// IR-SAME: ptr {{.*}}byval(%struct.state) {{.*}}[[STATE:%[0-9]+]])
 // IR: %[[SS:[0-9]+]] = alloca %struct.state
 // IR: store double 1.000000e+00, ptr %[[SS]]
 // IR: store double 1.000000e+00
 // IR-NOT: store
-// IR: call {{.*}} @diffe{{.*}}_Z7advanceP5state.poseidon._Z3run5state.0(ptr {{.*}}%0, ptr %[[SS]])
+// IR: call {{.*}} @diffe{{.*}}_Z7advanceP5state.poseidon._Z3run5state.0(ptr {{.*}}[[STATE]], ptr %[[SS]])
 // IR: ret double
 
 // USE-NOT: is not a Poseidon site
