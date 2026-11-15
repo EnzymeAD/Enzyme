@@ -63,8 +63,8 @@ constexpr MathFunction kMathFunctions[] = {
 ArrayRef<MathFunction> mathFunctions() { return kMathFunctions; }
 
 const std::unordered_set<std::string> &libmFuncs() {
-  // Built from the rows in their order, as the initializer list it replaces:
-  // getPTFuncs walks it and names the first function the cost model lacks.
+  // Inserted in row order, which decides the set's iteration order and so the
+  // function getPTFuncs names first when the cost model lacks several.
   static const std::unordered_set<std::string> LibmFuncs = [] {
     std::vector<std::string> Names;
     for (const MathFunction &F : kMathFunctions)

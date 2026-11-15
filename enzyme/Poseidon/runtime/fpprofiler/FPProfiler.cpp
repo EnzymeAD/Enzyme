@@ -26,8 +26,6 @@
 
 extern char **environ;
 
-// The one filename rule, shared verbatim with the CUDA runtime and with the
-// pass that reads what this file writes.
 #include "FPProfileName.h"
 #include "poseidon/poseidon.h"
 
@@ -100,10 +98,9 @@ static void mkdirP(const std::string &dir) {
   }
 }
 
-// Compile-time static data (the header lines the pass computed about a site
-// and cannot recompute at profile-use), registered before main by a constructor
-// the pass emits. A function-local static: a plain namespace-scope map could be
-// constructed after that constructor runs.
+// Compile-time static data of each site, registered before main. A
+// function-local static: a namespace-scope map could be constructed after the
+// constructor that registers into it runs.
 static std::unordered_map<std::string, std::string> &staticHeaders() {
   static std::unordered_map<std::string, std::string> m;
   return m;
@@ -211,11 +208,10 @@ static std::unordered_map<std::string, std::unique_ptr<FPProfiler>>
     profilerRegistry;
 static std::mutex registryMutex;
 
-// The registered sites whose profile the device profiler of this process wrote
-// (poseidonProfileWritten): a kernel's header is registered here too, and its
-// records are that writer's. Never destroyed: that writer first uses it during
-// exit, and a destructor registered then would run before this file's exit
-// handler reads it.
+// The registered sites whose profile the device profiler of this process
+// wrote. Never destroyed: that writer first uses it during exit, and a
+// destructor registered then would run before this file's exit handler reads
+// it.
 static std::set<std::string> &writtenElsewhere() {
   static auto *s = new std::set<std::string>();
   return *s;
@@ -245,18 +241,13 @@ static void writeMetric() {
 // ---------------------------------------------------------------------------
 // Per-site condition number of the declared quantity of interest
 //
-// The accuracy target bounds the number the application declares with
-// poseidon_metric. How far that number moves when one site is computed at a
-// relative precision eps is the site's condition number, and it is what puts
-// every site's accuracy cost on one application-level scale. Measuring it takes
-// the workload run again per (site, eps), so a profiling run asked to with
-// POSEIDON_PROBE=1 (poseidon-probe sets it) re-executes itself with the site
-// armed through the environment, once more unperturbed for the noise floor, and
-// folds the result into the profiles it just wrote. A run not asked to marks
-// the profiles as unmeasured instead, and profile use stops on them; a run
-// that declines with POSEIDON_PROBE=0 leaves them as a run without a metric
-// writes them. A child has POSEIDON_PROBE=child, never re-executes and
-// records nothing but the metric.
+// How far the metric moves when one site is computed at a relative precision
+// eps. With POSEIDON_PROBE=1 a profiling run re-executes itself once
+// unperturbed for the noise floor and once per (site, eps), and writes the
+// result into the profiles it just wrote; without, it marks them unmeasured;
+// with POSEIDON_PROBE=0 it leaves them as a run without a metric writes them. A
+// child has POSEIDON_PROBE=child, never re-executes and records nothing but the
+// metric.
 // ---------------------------------------------------------------------------
 
 // The children re-run the same GPU workload while this process is still inside
@@ -381,10 +372,10 @@ static int probeRun(const std::string &dir,
   return WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status);
 }
 
-// The ladder rule. A slope that holds across two neighbouring eps is a measured
-// derivative; a ladder with no such pair is a tolerance threshold rather than a
-// slope and is marked nonlinear; and an eps that diverges above a clean one
-// says where the site breaks without discarding the clean measurement.
+// A slope that holds across two neighbouring eps is a measured derivative; a
+// ladder with no such pair is marked nonlinear; an eps that diverges above a
+// clean one says where the site breaks without discarding the clean
+// measurement.
 static void probeDecide(const std::vector<ProbeRun> &ladder, double &kappa,
                         std::string &mark, double &divergesAbove,
                         bool &hasDiverge) {

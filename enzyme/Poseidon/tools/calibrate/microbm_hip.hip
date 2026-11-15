@@ -178,7 +178,7 @@ __device__ double __ocml_round_f64(double);
     out[threadIdx.x + blockIdx.x * blockDim.x] = a;                           \
   }
 
-// Expensive-op row shape (microbm.cu's fix #9): sqrt/rsqrt/div measured as 8
+// Expensive-op row shape (as in microbm.cu): sqrt/rsqrt/div measured as 8
 // independent lanes per thread, the shape Poseidon's materialized kernels
 // execute them in, with the same total op count, launch and cost arithmetic.
 #define K_LIBM_UN_ILP(name, T, libfn)                                          \
@@ -357,11 +357,9 @@ K_CVT(cvt_f64_f32, double, float, "v_cvt_f32_f64", "v_cvt_f64_f32")
 struct Config { int blocks; int threads; int N1; int N2; int reps; };
 static Config gCfg = {0, 1024, 512, 1024, 50};
 
-// MI300A's clock settles slowly after a change of load: a cheap chain timed
-// for about a millisecond right after expensive ones varied by up to 31%
-// across runs (fadd and fneg f64, the first cheap rows after the f32 libm
-// rows). Each kernel therefore runs for kWarmMs before it is timed, a batch
-// lasts at least kBatchMs, and the time is the median of kBatches batches.
+// The clock settles slowly after a change of load, so each kernel runs for
+// kWarmMs before it is timed, a batch lasts at least kBatchMs, and the time is
+// the median of kBatches batches.
 constexpr int kBatches = 7;
 constexpr double kWarmMs = 20.0, kBatchMs = 5.0;
 
@@ -401,7 +399,7 @@ double diff_cycles(double t_n, double t_2n, int n1, int n2) {
 #define BENCH_SCALAR(stem, T, op_name, prec_name, sink) {                     \
   double t1 = timeit_ns([&](){ stem##_##T<512>  <<<gCfg.blocks, gCfg.threads>>>(sink); });   \
   double t2 = timeit_ns([&](){ stem##_##T<1024> <<<gCfg.blocks, gCfg.threads>>>(sink); });   \
-  /* reciprocal throughput PER OP: divide the saturated per-step wall by the */ \
+  /* reciprocal throughput per op: divide the saturated per-step wall by the */ \
   /* number of independent chains running in parallel (one per thread).      */ \
   double c = diff_cycles(t1, t2, 512, 1024)                                   \
              / ((double)gCfg.blocks * gCfg.threads);                          \

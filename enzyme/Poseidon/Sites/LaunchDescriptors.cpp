@@ -212,7 +212,7 @@ void readProfileHeaders(const Options &O, const Module &M,
 StringRef mangledSuffix(StringRef mangled) {
   if (mangled.starts_with("_Z")) {
     mangled = mangled.drop_front(2);
-    // An internal-linkage name (a static kernel template, as MFEM's are).
+    // An internal-linkage name (a static kernel template).
     mangled.consume_front("L");
     while (!mangled.empty() && mangled[0] >= '0' && mangled[0] <= '9')
       mangled = mangled.drop_front(1);

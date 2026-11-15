@@ -1,4 +1,4 @@
-//=- Precision.cpp - Precision change utilities for Poseidon --------------=//
+//=- Precision.cpp - precision candidates of an FP subgraph -----------------=//
 //
 // Part of the Poseidon Project, under the Apache License v2.0 with LLVM
 // Exceptions.
@@ -7,8 +7,8 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file implements utilities for handling precision changes in the Poseidon
-// optimization pass.
+// The precision unit of an FP subgraph: assignments of its operations to
+// narrower or wider formats and to floating-point expansions.
 //
 //===----------------------------------------------------------------------===//
 
@@ -144,10 +144,9 @@ void changePrecision(Instruction *I, PrecisionChange &change,
       StringRef funcName = calledFunc->getName();
 
       // An F32-downcast sqrt becomes the target's approximate square root
-      // where it has one, instead of a correctly-rounded library call: a
-      // per-evaluation function call would dominate sqrt-heavy kernels, and
-      // the accuracy model charges the approximation's error
-      // (Target::approxSqrtF32Error).
+      // where it has one, instead of a correctly-rounded library call that
+      // would dominate sqrt-heavy kernels; the accuracy model charges the
+      // approximation's error.
       {
         Intrinsic::ID approxSqrt = approxSqrtF32Of(*CI);
         if (newType->isFloatTy() && approxSqrt != Intrinsic::not_intrinsic) {
@@ -159,14 +158,9 @@ void changePrecision(Instruction *I, PrecisionChange &change,
         }
       }
 
-      // fmax / fmin are not in libmFuncs(): getPTFuncs() prices every name in
-      // that list, so adding them there would abort every build whose cost
-      // model lacks the row. Retype them to the intrinsics clang lowers
-      // __builtin_fmax / __builtin_fmin to instead, which have the same
-      // IEEE-754 semantics, are already modelled, and need no declaration that
-      // ptxas would then have to resolve (libdevice is linked LinkOnlyNeeded
-      // before this pass runs, so a fresh __nv_fmaxf would reach ptxas
-      // undefined).
+      // fmax and fmin become maxnum and minnum, which have the same IEEE-754
+      // semantics and are modelled: libdevice is linked before this pass, so
+      // a fresh __nv_fmaxf declaration would reach ptxas undefined.
       {
         std::string base = deviceMathName(funcName).str();
         if (base.empty()) {
@@ -257,8 +251,7 @@ void PTCandidate::apply(Session &S, Subgraph &subgraph, ValueToValueMapTy *VMap,
   }
 
   // One limb record per candidate: the loop below may apply several expansion
-  // changes (e.g. a Expansion4 tier over a Expansion3 one) and getCompCost
-  // must see every root they produce.
+  // changes, and the cost walk is rooted on every limb they produce.
   resetExpLimbs(S);
 
   for (auto &change : changes) {
@@ -286,7 +279,7 @@ void PTCandidate::apply(Session &S, Subgraph &subgraph, ValueToValueMapTy *VMap,
         }
       }
       if (!operations.contains(I)) {
-        // Already erased by `CO.apply()`.
+        // Already erased by an algebraic rewrite.
         continue;
       }
       instsToChange.insert(I);
@@ -656,11 +649,9 @@ CandidateClone::CandidateClone(Session &S, Subgraph &subgraph,
   FClone = CloneFunction(F, VMap);
   FClone->setName(F->getName() + "_clone");
 
-  // Priced with the materializer's own carried-PHI elimination: the emitted
-  // loop carries the {hi,lo} pair across the back edge and collapses it once at
-  // the exit, so the df64 restore must not be billed per iteration.
-  // applyExpansion records the limbs it produced and the walk is re-rooted on
-  // them below.
+  // The clone gets the materializer's carried-PHI elimination, so the df64
+  // restore is not billed per iteration; the walk is re-rooted below on the
+  // limbs applyExpansion records.
   SmallVector<Value *, 32> expansionLimbs;
   bool ptHasExpansion = false;
   for (auto &ch : pt.changes)
@@ -677,12 +668,10 @@ CandidateClone::CandidateClone(Session &S, Subgraph &subgraph,
   // leaves no limbs, and the untouched FP64 outputs are still the right roots.
   const bool expansionMaterialized = !expansionLimbs.empty();
 
-  // Mirror the real materialization's cleanups so the price charges only the
-  // casts the materializer emits. demoteFPCastPHIs RAUWs each demoted PHI with
-  // fpext(new PHI) before erasing it, and the WeakTrackingVH handles follow.
-  // FClone has no call sites, so F supplies the parameter-to-global mapping
-  // (the arguments are positionally identical). A df64 candidate wants the pair
-  // layout and anything else the halved one, so exactly one parameter arm runs.
+  // Run the materializer's cleanups, so that the price charges only the casts
+  // the materializer emits. FClone has no call sites, so F, whose arguments are
+  // FClone's, supplies the parameter-to-global mapping. A df64 candidate wants
+  // the pair layout and any other the halved one, so one parameter arm runs.
   const bool wantsDS = [&] {
     for (auto &ch : pt.changes)
       if (ch.newType == PrecisionChangeType::Expansion2)
@@ -702,9 +691,7 @@ CandidateClone::CandidateClone(Session &S, Subgraph &subgraph,
   for (Value *L : limbHandles)
     if (L)
       expansionLimbs.push_back(L);
-  // Cancel the join/split roundtrip the df64 conversion leaves on an expansion
-  // restore, as applyExpansion does in the emitted code; no-op without the
-  // poseidon.ds.join tag.
+  // Cancel the join/split roundtrip, as the emitted code does.
   SmallVector<Value *, 8> dsFoldRoots;
   foldDSPairRoundtrip(*FClone, &dsFoldRoots, O.Diagnostics.Print);
 
@@ -717,10 +704,9 @@ CandidateClone::CandidateClone(Session &S, Subgraph &subgraph,
     trackedOutputs.emplace_back(VMap.count(output) ? VMap[output]
                                                    : WeakTrackingVH());
   numOutputs = trackedOutputs.size();
-  // Re-root on the df64 limbs from applyExpansion and from foldDSPairRoundtrip:
-  // they are the unit's outputs in the emitted code and the F64 handles above
-  // are dead, so without this the candidate walks an empty cone and prices as
-  // free.
+  // Re-root on the df64 limbs: they are the unit's outputs in the emitted code
+  // and the F64 handles above are dead, so without them the candidate walks an
+  // empty cone and prices as free.
   size_t liveExpansionRoots = 0;
   SmallVector<ArrayRef<Value *>, 2> limbLists = {
       ArrayRef<Value *>(expansionLimbs), ArrayRef<Value *>(dsFoldRoots)};
@@ -789,11 +775,6 @@ double CandidateClone::cost(Session &S, const Subgraph &subgraph,
       clonedOutputs.insert(V);
   }
 
-  // Boundary casts the O3'd clone hoists out of the cone's body loop execute at
-  // most once per thread per launch, so casts at a shallower loop depth than
-  // the body get outBoundaryFreqScale; casts inside the body keep full
-  // frequency.
-
   SmallPtrSet<Value *, 8> seen;
   SmallVector<Value *, 8> todo;
   SmallVector<Instruction *, 32> coneInsts;
@@ -818,7 +799,9 @@ double CandidateClone::cost(Session &S, const Subgraph &subgraph,
     }
   }
 
-  // Body-loop depth = the deepest loop hosting the cone's non-cast FP work.
+  // Boundary casts the simplified clone hoists out of the cone's body loop, the
+  // deepest loop of its other work, execute at most once per thread per
+  // launch, so a cast at a shallower depth is scaled by outBoundaryFreqScale.
   unsigned bodyDepth = 0;
   for (Instruction *I : coneInsts)
     if (!isa<FPExtInst>(I) && !isa<FPTruncInst>(I))
@@ -1205,7 +1188,7 @@ void PrecisionUnit::apply(Session &S, size_t candidateIndex) {
 
 // Lower is better
 double PrecisionUnit::getCompCostDelta(size_t candidateIndex) {
-  // TODO: adjust this based on erasured instructions
+  // TODO: adjust this based on erased instructions
   return (candidates[candidateIndex].CompCost - initialCompCost) *
          (double)executions;
 }
@@ -1309,9 +1292,7 @@ void PrecisionUnit::priceRequests(
       double candidateCompCost = clone.cost(S, *subgraph, R.which);
       double adjustedCostDelta =
           (candidateCompCost - initialCompCost) * (double)executions;
-      // Per-candidate pricing audit: with a one-point Pareto table these are
-      // the ONLY record of why each candidate lost (all-dominated frontiers
-      // must be auditable, not silent).
+      // With a one-point frontier these lines record why each candidate lost.
       if (S.Opts.Diagnostics.Print)
         llvm::errs() << "CS candidate '" << candidates[G.candidateIndex].desc
                      << "': initial=" << initialCompCost
@@ -1484,8 +1465,7 @@ void PrecisionUnit::scaleErrors(double factor) {
   }
 }
 
-// Top-N per-candidate deltas keep an all-dominated frontier auditable (the
-// table then collapses to the no-op point).
+// The candidates per unit a report lists, cheapest first.
 static constexpr size_t kMaxCandRows = 40;
 
 // The candidates' positions by cost change, cheapest first; equal changes keep

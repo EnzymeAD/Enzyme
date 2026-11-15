@@ -1,11 +1,7 @@
 # Resolves the Herbie executable the rewriting pass shells out to: a prebuilt
-# one, or an ExternalProject build.
-#
-# No platform is compiled into the binary. Herbie's algebraic search is ranked
-# by a per-device cost table, and the device is not known at build time, so the
-# platform is generated from each device's cost model CSV
-# (poseidon-calibrate --only herbie-platform) and passed to Herbie by path. The
-# Herbie tree is not patched.
+# one, or an ExternalProject build. No platform is compiled into the binary:
+# the device is not known at build time, so each device's platform is
+# generated from its cost model CSV and passed to Herbie by path.
 set(POSEIDON_HERBIE_BINARY ""
     CACHE
       FILEPATH

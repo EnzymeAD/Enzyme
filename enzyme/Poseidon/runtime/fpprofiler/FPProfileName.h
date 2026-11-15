@@ -7,13 +7,11 @@
 //   stem(n) = n                                      if |n| <= 200
 //           = n[0:160] + "~" + hex16(fnv1a64(n))     otherwise
 //
-// Identity at or below 200 characters keeps every cached profile filename
-// where it is; above it the 177-character stem leaves room for the longest
-// suffix appended (".wmma.fpprofile") under NAME_MAX = 255. The hash is over
-// the full name so instantiations sharing a 160-character prefix stay apart.
+// The 177-character stem leaves room for the longest suffix appended
+// (".wmma.fpprofile") under NAME_MAX = 255. The hash is over the full name so
+// instantiations sharing a 160-character prefix stay apart.
 //
-// Dependency-free on purpose: included by the LLVM pass, a host C++ runtime,
-// and a .cu that clang -include's into an application translation unit.
+// Dependency-free: included by the pass, the host runtime and device code.
 //
 //===----------------------------------------------------------------------===//
 

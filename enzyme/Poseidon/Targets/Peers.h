@@ -18,8 +18,8 @@ const Target &amdgpuTarget();
 // What the probes of either GPU target call: one device profiler serves both.
 const ProbeABI &deviceProbes();
 
-// libm's functions Poseidon handles, with fmin and fmax, which getLLValue
-// emits as llvm.minnum/llvm.maxnum and both GPU targets select.
+// libm's functions Poseidon handles, with fmin and fmax, which both GPU
+// targets select as llvm.minnum/llvm.maxnum.
 const std::unordered_set<std::string> &mathBases();
 
 // libm's `name` at `Ty`, empty if it is none Poseidon can retype.

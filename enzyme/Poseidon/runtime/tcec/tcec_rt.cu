@@ -10,15 +10,14 @@
 // kernel, so C = alpha*(A@B) + beta*C keeps FP64 scalar semantics.
 //
 // TCEC is not exact: the FP64->FP32 narrowing (~6e-8 relative) composes with
-// the FP16+correction product error, giving F32-class results (~2e-7 relL2 at
-// N=2048). Callers needing better must use the Ozaki-II entry.
+// the FP16+correction product error, giving F32-class results.
 //
-// mode mirrors the Ozaki entry's num_moduli slot so the two entries share one
+// mode takes the Ozaki entry's num_moduli slot so the two entries share one
 // calling convention:
-//   0 = native cuBLAS DGEMM (same escape hatch as __poseidon_ozaki_dgemm nm==0)
+//   0 = native cuBLAS DGEMM
 //   1 = FP16TCEC (default)
 //   2 = TF32TCEC
-//   3 = FP16TC  (no correction, ablation only)
+//   3 = FP16TC  (no correction)
 //   4 = TF32TC  (no correction)
 // Out-of-range values abort rather than silently substituting a precision.
 #include <cstdint>
@@ -104,13 +103,12 @@ ptc_warpMax(unsigned long long m) {
   return m;
 }
 
-// Layout-aware, so a caller passing a strided sub-matrix view (ld larger than
-// the packed extent) is measured over exactly the elements the GEMM will read,
-// not over whatever happens to lie in the gaps. Only magnitudes matter, so the
-// operand is walked in storage order: `inner` elements are contiguous and the
-// `outer` runs are ld apart. Each thread folds PTC_AM_RUN runs and each block
-// publishes one atomic: a 64-bit atomic per warp on the one slot costs more
-// than reading the operand.
+// Layout-aware, so a strided sub-matrix view (ld larger than the packed
+// extent) is measured over exactly the elements the GEMM reads. Only
+// magnitudes matter, so the operand is walked in storage order: `inner`
+// elements are contiguous and the `outer` runs are ld apart. Each thread folds
+// PTC_AM_RUN runs and each block publishes one atomic: a 64-bit atomic per warp
+// on the one slot costs more than reading the operand.
 #define PTC_AM_THREADS 256
 #define PTC_AM_RUN 16
 __global__ void ptc_absmax(const double *__restrict__ X,
@@ -228,7 +226,7 @@ void ptc_native_dgemm(double *C, const double *A, const double *B, int M,
   }
 }
 
-// The one real path: narrow -> cuMpSGEMM (alpha=1,beta=0) -> widen.
+// Narrow -> cuMpSGEMM (alpha=1,beta=0) -> widen.
 // Operands are packed column-major, so the library call is a plain NN GEMM.
 void ptc_run(double *C, const double *A, const double *B, int M, int Ncols,
              int K, int lda, int ldb, int ldc, int aColMajor, int bColMajor,

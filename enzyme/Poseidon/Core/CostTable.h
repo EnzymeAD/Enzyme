@@ -72,8 +72,6 @@ const std::string &getCostModelNativeArch(CostModelState &CM);
 const std::string &costModelPath(CostModelState &CM);
 
 // Content fingerprint of the loaded cost model (0 when none is configured).
-// Used to key the DP table cache so a changed model cannot silently replay the
-// previous model's picks.
 uint64_t getCostModelFingerprint(CostModelState &CM);
 
 // The (opcode,type) row, if the model has it.

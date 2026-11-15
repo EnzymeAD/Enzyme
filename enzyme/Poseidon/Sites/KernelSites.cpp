@@ -26,17 +26,12 @@ using namespace llvm;
 
 namespace poseidon {
 
-// The body a site's call targets is a device of this pass and must not reach
-// codegen as a call: under -fcuda-rdc a call that is not folded back is a real
-// ABI call, and the kernel entry then pays its register and frame budget
-// (measured: 148 registers and one resident block per SM against 70 and three
-// for the same drift kernel without the annotation, a 2x wall-clock gap on
-// GH200; and 91 registers against 62 for the elasticity reduce, which at 648
-// threads per block exceeds the 64K per-block register file and makes the
-// launch fail outright). Marked on the solve path for both annotation forms, so
-// that a site the solve leaves unchanged is inlined exactly like one it
-// rewrote; the AlwaysInlinerPass registerPasses schedules right after this pass
-// does the folding.
+// The body a site's call targets must not reach codegen as a call: under
+// -fcuda-rdc a call that is not folded back is a real ABI call, and the kernel
+// entry then pays its register and frame budget, which lowers occupancy or
+// makes a large block's launch fail. Marked on the solve path for both
+// annotation forms, so that a site the solve leaves unchanged is inlined
+// exactly like one it rewrote.
 void markOutlineTransparent(Function *body) {
   body->removeFnAttr(Attribute::NoInline);
   body->removeFnAttr(Attribute::OptimizeNone);
@@ -176,9 +171,7 @@ CallInst *outlineKernelBody(Function &K, Function *&bodyOut) {
   return call;
 }
 
-// --------------------------------------------------------------------------
-// Device call sites: __poseidon_optimize in device code
-// --------------------------------------------------------------------------
+// Device call sites: __poseidon_optimize in device code.
 
 // The object of `caller` that `p` points into, through the address arithmetic
 // its shadow can repeat, when the pass knows the object's whole extent: a

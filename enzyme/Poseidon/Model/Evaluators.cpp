@@ -56,9 +56,8 @@ FPEvaluator::FPEvaluator(ArrayRef<PrecisionChange> changes) {
 
 // The device's approximate root is known only to lie within `bound` of the
 // exact root, and its bits differ between GPU generations, so the model
-// cannot reproduce them as it does an expansion's. It returns the FP32 value
-// at least `bound` above the exact root instead: the worst error at the
-// operation, in a fixed direction. Downstream, where that error meets other
+// returns the FP32 value at least `bound` above the exact root: the worst
+// error at the operation, in a fixed direction. Where that error meets
 // rounding errors of opposite sign, an output can show less than the device's.
 static float approxSqrtModel(float x, double bound) {
   double far = std::sqrt((double)x) * (1 + bound);
@@ -66,12 +65,12 @@ static float approxSqrtModel(float x, double bound) {
   return r < far ? std::nextafter(r, INFINITY) : r;
 }
 
-// What the materializer emits for an operation of an expansion change: each
-// operand's components, kept from an operation of the same change (one
-// applyExpansion call keeps them in its map) and otherwise split from the
-// operand's value at its type; the result's components, kept for the
-// change's later operations; and the value its other users see, the restore
-// to the operation's own type.
+// Evaluates `node` as an operation of an `n`-component expansion change, as
+// it is materialized: an operand's components are kept from an operation of
+// the same change and otherwise split from the operand's value at its type;
+// the result's components are kept for the change's later operations, and the
+// node's value is the result restored to its own type. Returns false for an
+// operation with no expansion form.
 bool FPEvaluator::evaluateExpansionNode(const FPNode *node, unsigned n) {
   const std::string &op = node->op;
   const bool supported = op == "neg" || op == "+" || op == "-" || op == "*" ||
@@ -87,7 +86,7 @@ bool FPEvaluator::evaluateExpansionNode(const FPNode *node, unsigned n) {
     return o->dtype == "f32" ? expansionFromF32((float)v, n)
                              : expansionFromF64(v, n);
   };
-  // The materializer squares, rather than multiplies, a value by itself.
+  // A value multiplied by itself is materialized as a square.
   const bool sameFactor =
       node->operands.size() >= 2 && node->operands[0] == node->operands[1];
   ExpansionLimbs r;
@@ -126,9 +125,8 @@ PrecisionChangeType FPEvaluator::getNodePrecision(const FPNode *node) const {
     return PrecisionChangeType::FP32;
   if (node->dtype == "f64")
     return PrecisionChangeType::FP64;
-  // Herbie-dialect spellings, accepted so that a node reaching here straight
-  // from Herbie text (rather than through parseHerbieExpr, which normalizes
-  // them) degrades to the right precision instead of aborting the compile.
+  // Herbie's spellings, for a node built from Herbie text that was not
+  // normalized.
   if (node->dtype == "binary32")
     return PrecisionChangeType::FP32;
   if (node->dtype == "binary64")
@@ -434,9 +432,8 @@ void FPEvaluator::evaluateNode(const FPNode *node,
     res = NAN;
   } else if (node->op == "binary64->binary32" ||
              node->op == "binary32->binary64") {
-    // The value operation is the identity; the rounding is the node's own
-    // precision (set by parseHerbieExpr to the destination format), which
-    // evalUnary applies.
+    // Identity on the value; evalUnary rounds to the node's precision, the
+    // destination format.
     res = evalUnary([](double x) { return x; }, [](float x) { return x; });
   } else {
     std::string msg = "FPEvaluator: Unexpected operator " + node->op;
@@ -896,9 +893,9 @@ void MPFREvaluator::evaluateNode(const FPNode *node,
     mpfr_set_nan(res);
   } else if (node->op == "binary64->binary32" ||
              node->op == "binary32->binary64") {
-    // Identity on the value; mpfr_set into `res` at the node's precision
-    // performs the destination rounding, and the ground-truth path deliberately
-    // does not narrow.
+    // Identity on the value; mpfr_set at the node's precision rounds to the
+    // destination format, except on the ground-truth path, which does not
+    // narrow.
     evaluateNode(node->operands[0].get(), inputValues, groundTruth);
     mpfr_set_prec(res, nodePrec);
     mpfr_set(res, getResult(node->operands[0].get()), MPFR_RNDN);

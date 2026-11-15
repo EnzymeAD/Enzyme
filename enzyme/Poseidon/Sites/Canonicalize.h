@@ -22,7 +22,7 @@ llvm::Function *canonicalize(llvm::Function &F);
 // A 16-hex-digit digest of the canonicalized clone's optimizable instruction
 // sequence in slot order: opcode, result type, operand types, and the callee
 // name of a call. The profile carries the digest of the form its slots were
-// numbered against, and profile-use refuses a form that no longer matches.
+// numbered against, and profile-use refuses a form that does not match it.
 std::string canonicalFormHash(const llvm::Function &F);
 
 bool isOptimizable(const llvm::Value &V);

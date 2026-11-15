@@ -1,4 +1,4 @@
-//=- Herbie.h - Herbie integration utilities ------------------------------=//
+//=- Herbie.h - algebraic rewrites from Herbie ------------------------------=//
 //
 // Part of the Poseidon Project, under the Apache License v2.0 with LLVM
 // Exceptions.
@@ -7,8 +7,8 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file declares utilities for integrating with the Herbie tool for
-// floating-point expression optimization.
+// The algebraic units of an FP subgraph: Herbie's rewrites of its outputs,
+// one output or an array of them per unit.
 //
 //===----------------------------------------------------------------------===//
 

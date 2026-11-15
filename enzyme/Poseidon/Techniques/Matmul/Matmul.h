@@ -80,8 +80,7 @@ enum class TidAxis : uint8_t {
 };
 
 struct ScalarLoopHandle {
-  // Topology snapshot: the materializer must not depend on the LoopInfo that
-  // produced the detection (destroyed when detection's local scope unwinds).
+  // Copied out of the LoopInfo of the recognition, which does not outlive it.
   llvm::BasicBlock *preheader = nullptr;
   llvm::BasicBlock *exitBB = nullptr;
   llvm::SmallPtrSet<llvm::BasicBlock *, 4> blocks;
@@ -93,27 +92,22 @@ struct ScalarLoopHandle {
   llvm::Value *aBase = nullptr;
   llvm::Value *bBase = nullptr;
 
-  // Per-thread iter-0 addresses of A and B as SCEVs, including the blockIdx
-  // contribution. The materializer must SCEV-expand these instead of
-  // reconstructing `aBase + tid*ld`, which drops the blockIdx*blockDim term and
-  // misaddresses multi-block 2D-grid kernels.
+  // Per-thread addresses of A and B at the first iteration, including the
+  // blockIdx * blockDim term that `aBase + tid * ld` leaves out.
   const llvm::SCEV *aStartSCEV = nullptr;
   const llvm::SCEV *bStartSCEV = nullptr;
   llvm::ScalarEvolution *SE = nullptr;
 
-  // Profile header confirms blockDim.z == 1 (2D block): the materializer can
-  // skip tid.z / ntid.z reads and the (tz * ny) term. Only set when verified.
+  // Set only when the profile header shows blockDim.z == 1.
   bool is2DBlock = false;
 
   TidAxis aRowAxis = TidAxis::Unknown;
   TidAxis bColAxis = TidAxis::Unknown;
 
   // A matrix index may be fused from two thread axes,
-  // idx = tid[fastAxis] + fuseMult * tid[slowAxis] (sum-factorized FEM
-  // kernels);
-  // `*SlowAxis == Unknown` means not fused. `*FuseUnitByte` is the byte stride
-  // of one step of the fused index, which the materializer asserts against its
-  // own derivation.
+  // idx = tid[fastAxis] + fuseMult * tid[slowAxis]; `*SlowAxis == Unknown`
+  // means not fused. `*FuseUnitByte` is the byte stride of one step of the
+  // fused index.
   TidAxis aRowSlowAxis = TidAxis::Unknown;
   TidAxis bColSlowAxis = TidAxis::Unknown;
   unsigned aRowFuseMult = 0;
@@ -122,9 +116,8 @@ struct ScalarLoopHandle {
   int64_t bColFuseUnitByte = 0;
 
   // Threads per CTA from the profile header (0 = unknown). A block whose size
-  // is not a multiple of 32 has a PARTIALLY POPULATED last warp, in which the
-  // warp-collective wmma ops are undefined; the materializer must then confine
-  // the tensor chain to warp 0.
+  // is not a multiple of 32 has a partial last warp, in which the
+  // warp-collective wmma ops are undefined.
   unsigned blockThreads = 0;
 
   int64_t aStrideByte = 0;
@@ -135,19 +128,11 @@ struct ScalarLoopHandle {
   unsigned tripCount = 0;
 };
 
-// Runtime-dimension dense GEMM recognized from a thread-parallel reduction
-// nest: extents and leading dimensions are runtime expressions, carried
-// symbolically here and as launch-argument references in the host-dispatch
-// descriptor. Cost numbers come from the profile at profile scale (profM/N/K).
-
 // One GEMM dimension (extent or leading dimension) as a monomial over launch
 // values of the optimized body:
 //     value = mul * factors[0] * factors[1] * ... + add
-// (no factors => the constant `add`). That is the form the host-side stub
-// rewrite can evaluate from launch arguments alone, and it covers a
-// finite-element apply's geometry (M = nDofs, K = d*numPoints, Ncols = d*NE,
-// lda = ldb = d*numPoints, ldc = nDofs), whether the extents arrive as kernel
-// parameters or as the sizes of the DeviceTensors a lambda captured.
+// (no factors => the constant `add`), the form the host-side stub rewrite
+// evaluates from the launch arguments alone.
 struct RuntimeDim {
   llvm::SmallVector<LaunchRef, 2> factors;
   int64_t mul = 1;
@@ -164,6 +149,8 @@ struct RuntimeDim {
 
 std::string runtimeDimString(const RuntimeDim &d);
 
+// A dense GEMM recognized from a thread-parallel reduction nest, whose extents
+// and leading dimensions are runtime expressions.
 struct RuntimeGemmHandle {
   // Chain members: the R reduction loops the contraction was split across by
   // full unrolling of the outer contraction level (R = 1 when there was only
@@ -184,12 +171,12 @@ struct RuntimeGemmHandle {
 
   RuntimeDim M, Ncols, K, lda, ldb, ldc;
   // Launch values the dense reading of the nest takes to be equal, with no way
-  // to prove it here: a DeviceTensor's extent and the loop bound captured next
+  // to prove it here, e.g. a captured tensor's extent and the loop bound next
   // to it. The dispatch checks each pair at the launch and runs the kernel as
   // written when one fails.
   llvm::SmallVector<std::pair<LaunchRef, LaunchRef>, 2> assumedEqual;
   // Layout in the convention __poseidon_ozaki_dgemm_ex takes: "colMajor" means
-  // the operand's REDUCTION index (A, B) or ROW index (C) is the contiguous
+  // the operand's reduction index (A, B) or row index (C) is the contiguous
   // one.
   bool aColMajor = false, bColMajor = true, cColMajor = true;
   double alpha = 1.0, beta = 0.0;
@@ -197,9 +184,7 @@ struct RuntimeGemmHandle {
   // Profile-scale extents, reconstructed from the profile header's launch
   // geometry and the profiled execution counts.
   unsigned profM = 0, profN = 0, profK = 0;
-  // Per-CTA tile of the product. The accuracy model simulates an M x N x K
-  // product per sample, so it is handed the per-CTA tile; the GLOBAL shape
-  // stays in profM/profN/profK and in AbstractMatmul's globalM/globalN/globalK.
+  // Per-CTA tile of the product, the size the accuracy model simulates.
   unsigned tileM = 0, tileN = 0;
   uint64_t profMacs = 0; // total profiled MACs over all members
   uint64_t profEpilogue = 0;
@@ -212,14 +197,12 @@ struct AbstractMatmul {
 
   unsigned M = ~0u, N = ~0u, K = ~0u;
 
-  // Global launch geometry from the profiler for the occupancy / wave-fill
-  // correction; M/N above are the per-CTA tile. 0 = unknown (neutral).
+  // Global launch geometry from the profile; M/N above are the per-CTA tile.
+  // 0 = unknown.
   unsigned gridCTAs = 0;             // CTAs the in-kernel launch issues
   unsigned globalM = 0, globalN = 0; // full GEMM output extent
-  // Profile-scale reduction length recorded at profgen by
-  // recordScalarLoopReductionTrips; with globalM/globalN it gives a
-  // single-scale shape for the Ozaki-II padding-waste cost. 0 = unavailable
-  // (the cost path falls back to the compile-time trip).
+  // Profile-scale reduction length, so that with globalM/globalN the shape is
+  // at one scale. 0 = unavailable, and the compile-time trip count K is used.
   unsigned globalK = 0;
 
   FPKind aType = FPKind::Invalid, bType = FPKind::Invalid;
@@ -234,11 +217,10 @@ struct AbstractMatmul {
   enum class Origin {
     Invalid,
     ScalarLoopReduction,
-    // A dense GEMM whose M / Ncols / K and leading dimensions are RUNTIME
+    // A dense GEMM whose M / Ncols / K and leading dimensions are runtime
     // expressions over the kernel's arguments, contracted across one or more
-    // reduction loops (see RuntimeGemmHandle). Host-dispatch only: every
-    // in-kernel raise needs compile-time tile extents, which this shape by
-    // construction does not have.
+    // reduction loops (see RuntimeGemmHandle). Host dispatch only: an in-kernel
+    // raise needs compile-time tile extents.
     HostGemmLoopNest,
   };
   Origin origin = Origin::Invalid;
@@ -253,12 +235,11 @@ struct AbstractMatmul {
 MatmulProfile loadProfile(const AbstractMatmul &m,
                           const ProfileMap &scalarProfile);
 
-// Recognize dense GEMMs written as thread-parallel reduction NESTS with RUNTIME
-// dimensions (Origin::HostGemmLoopNest). Parallel arm to findScalarLoopMatmuls:
-// it looks at the loops the constant-trip recognizer rejects outright and
-// appends only matmuls whose whole descriptor (extents, leading dimensions,
-// layouts, alpha/beta and the profile-scale shape) could be reconstructed.
-// Everything else is skipped with a printed reason; no dimension is guessed.
+// Recognize dense GEMMs written as thread-parallel reduction nests with runtime
+// dimensions (Origin::HostGemmLoopNest) among the loops no matmul in `out`
+// already claims. Appends only matmuls whose whole descriptor (extents,
+// leading dimensions, layouts, alpha/beta and the profile-scale shape) could
+// be reconstructed; every other nest is skipped with a printed reason.
 void findHostGemmLoopNests(const Options &O, llvm::Function &F,
                            llvm::ScalarEvolution &SE, llvm::LoopInfo &LI,
                            const FunctionProfileHeader &profileHeader,
@@ -279,10 +260,9 @@ public:
     // the change over the profiled MACs on its axis.
     double compCost = -1.0;
     double accuracyCost = 0.0;
-    // Relative DOMAIN error (sensitivity-weighted, normalized) at the
-    // kDefaultConfidence percentile: a real relative error a domain
-    // tolerance can be compared to, unlike accuracyCost (an un-normalized SUM
-    // used only for compute-budget ranking).
+    // Relative domain error (sensitivity-weighted, normalized) at the
+    // confidence percentile, comparable to a domain tolerance; accuracyCost
+    // is an unnormalized sum that only ranks candidates.
     double domainError = 0.0;
   };
 
@@ -341,19 +321,19 @@ public:
 
 std::string matmulOptionLabel(const MatmulUnit::Option &opt);
 
-// Static shared-memory preconditions for the in-kernel raises: a kernel's
-// static shared allocation is capped (Target::maxStaticSharedBytes) and the
-// whole module is rejected above the cap, so the proposer refuses a candidate
-// whose scratch does not fit. The two entry points mirror, allocation for
-// allocation, what the in-kernel Direct and Split materializers create.
+// Static shared-memory preconditions for the in-kernel raises: a module whose
+// kernel exceeds Target::maxStaticSharedBytes is rejected whole, so a
+// candidate whose scratch does not fit is not proposed.
 //
 // Bytes of shared globals already live alongside a raise placed in `F`: the
-// max over the kernels that call F, falling back to the module-wide sum (the
-// conservative direction) when no enclosing kernel is found.
+// max over the kernels that call F, or the module-wide sum when no enclosing
+// kernel is found.
 uint64_t enclosingKernelSharedBytes(llvm::Function &F);
 
 // Bytes of new static shared scratch an in-kernel raise of `opt` allocates
-// (0 for a library call); `breakdown` receives the term list for the refusal.
+// (0 for a library call); must match, allocation for allocation, what the
+// Direct and Split materializers create. `breakdown` receives the term list
+// for the refusal.
 uint64_t inKernelRaiseSharedBytes(llvm::Module &M,
                                   const MatmulUnit::Option &opt,
                                   std::string *breakdown);

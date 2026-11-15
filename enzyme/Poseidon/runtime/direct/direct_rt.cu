@@ -4,29 +4,23 @@
 //
 // This runtime performs no operand scaling: each FP64 operand is rounded once
 // to the target input format, the product runs as one cublasGemmEx with an
-// FP32 accumulator, and the result is widened back to FP64. That is bit for
-// bit the numerics the in-kernel direct raise models (including FP16's
-// subnormal floor and 65504 ceiling), which is why the candidate borrows that
-// raise's accuracy evaluation; a range normalization here would make this
-// entry more accurate than the model that prices it. Operands that leave the
-// format's range belong to TCEC or Ozaki-II.
+// FP32 accumulator, and the result is widened back to FP64. These are bit for
+// bit the numerics of the in-kernel direct raise (including FP16's subnormal
+// floor and 65504 ceiling), whose accuracy model prices this entry.
 //
 // The GEMM runs with alpha=1, beta=0 into scratch and the FP64 alpha/beta are
 // applied in the widen kernel, so C = alpha*(A@B) + beta*C keeps FP64 scalar
 // semantics.
 //
-// mode mirrors the Ozaki entry's num_moduli slot so all three dispatch entries
+// mode takes the Ozaki entry's num_moduli slot so all three dispatch entries
 // share one calling convention:
-//   0 = native cuBLAS DGEMM (same escape hatch as __poseidon_ozaki_dgemm nm==0
-//       and __poseidon_tcec_dgemm mode==0)
+//   0 = native cuBLAS DGEMM
 //   1 = FP16 inputs, FP32 accumulator   (CUDA_R_16F,  CUBLAS_COMPUTE_32F)
 //   2 = BF16 inputs, FP32 accumulator   (CUDA_R_16BF, CUBLAS_COMPUTE_32F)
 //   3 = TF32 inputs, FP32 accumulator   (CUDA_R_32F,  CUBLAS_COMPUTE_32F_FAST_TF32)
 //   4 = FP32 inputs, FP32 accumulator   (CUDA_R_32F,  CUBLAS_COMPUTE_32F)
-// Mode 4 is the one entry that does not run on tensor cores: CUBLAS_COMPUTE_32F
-// over CUDA_R_32F operands is cuBLAS's SGEMM, kept beside the tensor-core modes
-// because the operand narrow, the FP32 accumulator and the widen-back are
-// identical and only the compute type differs.
+// Mode 4 is cuBLAS's SGEMM, not a tensor-core GEMM; it shares the narrow, the
+// FP32 accumulator and the widen with the other modes.
 // Out-of-range values abort rather than silently substituting a precision.
 //
 // Compiled as HIP (POSEIDON_ROCM_PATH) the same entries run on hipBLAS, every
@@ -75,7 +69,7 @@ cublasHandle_t pdr_cublas() {
 // Widest element the operand buffers ever hold is a float (the TF32 and FP32
 // modes), so one byte-capacity pair per operand serves every mode.
 struct PdrScratch {
-  size_t capA = 0, capB = 0, capC = 0; // capA/capB in BYTES, capC in floats
+  size_t capA = 0, capB = 0, capC = 0; // capA/capB in bytes, capC in floats
   void *A = nullptr, *B = nullptr;
   float *C = nullptr;
 };
@@ -153,10 +147,9 @@ __global__ void pdr_narrow_flat(T *__restrict__ dst,
 //
 // ACC is a template parameter rather than a runtime `beta == 0` test: written
 // as a ternary the accumulate arm's `C[d]` read is emitted as an unconditional
-// load, so the beta = 0 case pays a full extra read of the FP64 output buffer
-// (measured 1.82x the non-accumulating kernel on ozp at N = 2048). The
-// accumulate arm's fused multiply-add is written out so that its rounding does
-// not depend on the compiler's contraction.
+// load, so the beta = 0 case would pay an extra read of the FP64 output. The
+// fused multiply-add is written out so that its rounding does not depend on
+// the compiler's contraction.
 template <bool ACC>
 __global__ void pdr_widen(double *__restrict__ C, const float *__restrict__ src,
                           int rows, int cols, int ldc, int cColMajor,
@@ -244,7 +237,7 @@ void pdr_native_dgemm(double *C, const double *A, const double *B, int M,
   }
 }
 
-// The one real path: narrow -> one cublasGemmEx -> widen.
+// Narrow -> one cublasGemmEx -> widen.
 void pdr_run(double *C, const double *A, const double *B, int M, int Ncols,
              int K, int lda, int ldb, int ldc, int aColMajor, int bColMajor,
              int cColMajor, double alpha, double beta, cudaStream_t stream,

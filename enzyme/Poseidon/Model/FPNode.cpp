@@ -89,7 +89,7 @@ unsigned FPNode::getMPFRPrec() const {
     return 24;
   if (dtype == "f64")
     return 53;
-  // Herbie-dialect spellings (see FPEvaluator::getNodePrecision).
+  // Herbie's spellings.
   if (dtype == "binary32")
     return 24;
   if (dtype == "binary64")
@@ -615,11 +615,9 @@ Value *FPNode::getLLValue(IRBuilder<> &builder, const ValueToValueMapTy *VMap) {
           {"NaN",
            [](IRBuilder<> &b, Module *M, const SmallVectorImpl<Value *> &)
                -> Value * { return ConstantFP::getNaN(b.getDoubleTy()); }},
-          // Herbie may emit the explicit conversions the FPCores request via
-          // :herbie-conversions. CreateFPCast rather than FPTrunc/FPExt: the
-          // operand may already carry the destination type (operands are
-          // coerced to the node's dtype above), and FPCast is then the
-          // identity.
+          // CreateFPCast rather than FPTrunc/FPExt: the operand may already
+          // carry the destination type, coerced to the node's dtype above,
+          // and FPCast is then the identity.
           {"binary64->binary32",
            [](IRBuilder<> &b, Module *M,
               const SmallVectorImpl<Value *> &ops) -> Value * {
@@ -656,8 +654,8 @@ Value *FPNode::getLLValue(IRBuilder<> &builder, const ValueToValueMapTy *VMap) {
 bool FPLLValue::hasSymbol() const { return !symbol.empty(); }
 
 // Memoized: an input is consulted once per input defined over it, so a chain
-// of inputs one operation apart (T^2, T^3, ... from sympy CSE) would otherwise
-// be re-walked exponentially often.
+// of inputs one operation apart (T^2, T^3, ...) would otherwise be re-walked
+// exponentially often.
 static unsigned inlinedOps(const FPLLValue &V, const SetVector<Value *> &inputs,
                            DenseMap<const FPLLValue *, unsigned> &memo) {
   if (auto it = memo.find(&V); it != memo.end())

@@ -1,8 +1,7 @@
 // The device half of the CUDA profiler: the probes the pass places in a site's
-// instrumented clone. The plugin carries it as NVPTX bitcode and links it into
-// every device module it profiles (linkDeviceProfiler), so a program needs no
-// relocatable device code to be profiled and each module holds its own copy of
-// what is below.
+// instrumented clone. It is linked into every profiled device module, so a
+// program needs no relocatable device code to be profiled and each module holds
+// its own copy of what is below.
 #include <cstdint>
 #include <cstdio>
 
@@ -69,9 +68,7 @@ poseidonRegisterIdx(const char **reg, char *names, int cap, const char *fn,
         for (; k < POSEIDON_FUNCNAME_MAXLEN - 1 && fn[k]; ++k)
           dst[k] = fn[k];
         dst[k] = '\0';
-        // A clipped name is unrecoverable, not degraded: the dump lands under
-        // the prefix while the pass looks under the stem of the FULL name, so
-        // the site is silently left unoptimized. Refuse instead.
+        // A clipped name would put the profile where the pass never looks.
         if (fn[k]) {
           if (poseidonFirstFatal())
             printf("Poseidon FPProfiler: %s function name exceeds "
@@ -132,14 +129,10 @@ poseidonOverlappingArgumentsCUDA(const char *site, int a, int b) {
 #define POSEIDON_PROBE_ATTRS __attribute__((noinline))
 #endif
 
-// Condition-number probe (profile-gen only). The compiler wraps the value of
-// every store a site makes through its own pointer arguments with
-// poseidonProbePerturbCUDA and passes the site's id as an immediate; the driver
-// re-runs the profiling workload once per (site, eps) with
-// POSEIDON_PROBE_SITE=<id> and POSEIDON_PROBE_EPS=<eps> and reads the declared
-// quantity of interest back from metric.txt. With
-// no env set (eps == 0) the hook returns its input unchanged, so the baseline
-// is bit-identical to an uninstrumented run.
+// Condition-number probe on the value of a store a site makes through its own
+// pointer arguments: perturbs v by a relative eps when site is the probed site
+// (POSEIDON_PROBE_SITE, POSEIDON_PROBE_EPS). With eps == 0 it returns v
+// unchanged, so the baseline is bit-identical to an uninstrumented run.
 extern "C" __device__ __attribute__((noinline)) double
 poseidonProbePerturbCUDA(int site, double v) {
   double eps = __poseidon_profile_table.probeEps;
@@ -184,10 +177,9 @@ __device__ inline void atomicAddFinite(double *addr, double val) {
   atomicAdd(addr, val);
 }
 
-// Block-geometry probe, injected at the entry of every function that carries
-// value probes (injectBlockDimProbes) and keyed by the SAME funcName global the
-// value probes use, so the geometry lands in the profiled function's own record
-// rather than in a module-global bucket shared with every other kernel.
+// Block-geometry probe at the entry of a profiled function, keyed by the
+// funcName global its value probes use, so the geometry lands in that
+// function's own record.
 extern "C" __device__ POSEIDON_PROBE_ATTRS void poseidonProfileBlockDimsCUDA(const char *funcName) {
   if (__poseidon_profile_table.metricOnly)
     return;
@@ -201,10 +193,9 @@ extern "C" __device__ POSEIDON_PROBE_ATTRS void poseidonProfileBlockDimsCUDA(con
   }
 }
 
-// Compile-time static data probe, injected at the entry of the site clone
-// alongside the geometry probe and keyed by the same funcName global. The text
-// is a constant of the module, so every launch writes the same bytes and the
-// first writer wins.
+// Compile-time static data probe at the entry of a site clone, keyed by its
+// funcName global. The text is a constant of the module, so every launch writes
+// the same bytes and the first writer wins.
 extern "C" __device__ POSEIDON_PROBE_ATTRS void poseidonProfileStaticCUDA(const char *funcName,
                                                  const char *text) {
   if (__poseidon_profile_table.metricOnly)
@@ -250,8 +241,7 @@ extern "C" __device__ POSEIDON_PROBE_ATTRS void poseidonLogValueCUDA(const char 
   int fi = poseidonFuncIdx(funcName);
   GPUProfileSlot *slot = &T.slots[(size_t)fi * T.slotCount + idx];
 
-  // Record this function's launch grid (idempotent atomicMax; gridDim is fixed
-  // per launch). Keyed by the same fi as the slots.
+  // Idempotent: gridDim is fixed per launch.
   atomicMax(&T.gridDimByFunc[(size_t)fi * 3 + 0], gridDim.x);
   atomicMax(&T.gridDimByFunc[(size_t)fi * 3 + 1], gridDim.y);
   atomicMax(&T.gridDimByFunc[(size_t)fi * 3 + 2], gridDim.z);

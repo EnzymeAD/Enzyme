@@ -31,13 +31,12 @@
 //    are optimized.
 // 5. poseidon_metric(name, value), once at the end of the profiling run: the
 //    quantity of interest the target refers to. The profiler runtime writes it
-//    to <profile dir>/metric.txt. Run under `poseidon-probe -- <program>
-//    [args...]` (or with POSEIDON_PROBE=1), the program then runs itself again
-//    at exit to measure each site's condition number against it, after saying
-//    how many runs that takes; run without, it says what measuring would take,
-//    and profile use stops at the sites until they are measured. With
-//    POSEIDON_PROBE=0 nothing is measured and each site is solved against its
-//    own target. Optional.
+//    to <profile dir>/metric.txt. Under `poseidon-probe -- <program> [args...]`
+//    (or POSEIDON_PROBE=1) the program runs itself again at exit to measure
+//    each site's condition number against it; without, it says what measuring
+//    would take, and profile use stops at the sites until they are measured.
+//    With POSEIDON_PROBE=0 nothing is measured and each site is solved against
+//    its own target. Optional.
 // 6. __poseidon_fp_optimize(fn, args...): one call with Enzyme activity
 //    markers and shadows the caller provides, for pointers the profiler cannot
 //    size or a custom seed; poseidon_tau, t among the arguments sets that
@@ -62,7 +61,7 @@
 #ifndef POSEIDON_PROFILE_H
 #define POSEIDON_PROFILE_H
 
-// Both forms carry one argument, so that every Poseidon entry of
+// Both forms carry one argument so that every Poseidon entry of
 // llvm.global.annotations has one type: clang types the array after its first
 // entry, and on AMDGPU an entry without arguments has another. The int 0 is no
 // accuracy target.
@@ -115,13 +114,11 @@ __poseidon_site_tau(void *fn, double tau) {
 #endif
 
 // The libdevice (CUDA) or ocml (HIP) functions a rewrite or a derivative of a
-// device site may call, linked into every device module that includes this
-// header. The plugin keeps them while it profiles or rewrites a module's sites
-// and drops them from any other module, which then compiles as it does without
-// the header. Taking their addresses keeps them in the C calling convention the
-// calls a rewrite adds use; one only ever called directly may become fastcc.
-// Each address is stored by a statement of its own: C++20 deprecates using the
-// value of an assignment to a volatile object.
+// device site may call, kept in every device module that includes this header.
+// Taking their addresses keeps them in the C calling convention; one only ever
+// called directly may become fastcc. Each address is stored by a statement of
+// its own: C++20 deprecates using the value of an assignment to a volatile
+// object.
 #if defined(__CUDA_ARCH__) && defined(__CLANG_CUDA_LIBDEVICE_DECLARES_H__)
 #define POSEIDON_KEEP(fn)                                                      \
   keep = (void *)&__nv_##fn;                                                   \

@@ -115,8 +115,6 @@ unsigned applySensitivityFloor(ProfileMap &profileMap,
     // floor implies scales with 1 / the value's magnitude.
     const double floorW = kSensFloorRatio * ref / mag * (double)p.exec;
     if (weightOf(p) < floorW) {
-      // Write the floor back through sumGrad, which is what every consumer
-      // reads (FPNode::grad, RewriteUnit::grad, MatmulProfile::gradD).
       p.sumGrad = std::copysign(floorW, p.sumGrad == 0.0 ? 1.0 : p.sumGrad);
       if (p.sumAbsGrad >= 0.0)
         p.sumAbsGrad = floorW;
@@ -218,7 +216,7 @@ void parseProfileFile(const std::string &profilePath, ProfileMap &profileMap,
       R"(^\s*SumSens\s*=\s*([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?|inf|-inf|nan|-nan))");
   std::regex sumGradPattern(
       R"(^\s*SumGrad\s*=\s*([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?|inf|-inf|nan|-nan))");
-  // Optional: profiles written before the runtime accumulated it have no line.
+  // Optional line.
   std::regex sumAbsGradPattern(
       R"(^\s*SumAbsGrad\s*=\s*([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?|inf|-inf|nan|-nan))");
   std::regex execPattern(R"(^\s*Exec\s*=\s*(\d+))");
@@ -441,14 +439,12 @@ void requireMeasuredKappa(const FunctionProfileHeader &header,
           "against its own target.");
 }
 
-// Profile-gen only, device module only: pre-declare the probes with
-// enzyme_inactive before any AD runs. The tblgen-generated logging code creates
-// them on first use without the attribute, and with only a declaration in the
-// TU Enzyme demands a derivative ("No augmented forward pass found"). The
-// signatures must match the tblgen ones exactly. Annotating the runtime's own
-// definitions does not work: __has_attribute(enzyme_inactive) is false unless
-// the clang plugin is loaded, so under -fpass-plugin the attribute degrades
-// away.
+// The generated logging code declares the probes on first use without
+// enzyme_inactive, and with only a declaration in the TU Enzyme demands a
+// derivative ("No augmented forward pass found"); so they are declared first,
+// with signatures that match the generated ones exactly. The runtime's own
+// definitions cannot carry the attribute: __has_attribute(enzyme_inactive) is
+// false unless the clang plugin is loaded, so under -fpass-plugin it is lost.
 void predeclareInactiveProfilerProbes(llvm::Module &M) {
   using namespace llvm;
   const Target &T = Target::of(M);
@@ -477,9 +473,8 @@ void predeclareInactiveProfilerProbes(llvm::Module &M) {
       P.LogGradient,
       FunctionType::get(VoidTy, {PtrTy, SizeTy, DoubleTy, DoubleTy}, false));
   // The perturbation hooks are inactive too: nothing reads a derivative of the
-  // perturbation (the probe reads the declared metric back from the run), and a
-  // second run of the pass would otherwise differentiate the calls the first
-  // run injected.
+  // perturbation, and a second run of the pass would otherwise differentiate
+  // the calls the first run injected.
   Type *FloatTy = Type::getFloatTy(Ctx);
   Type *Int32Ty = Type::getInt32Ty(Ctx);
   declare(P.PerturbF64,
@@ -487,18 +482,14 @@ void predeclareInactiveProfilerProbes(llvm::Module &M) {
   declare(P.PerturbF32, FunctionType::get(FloatTy, {Int32Ty, FloatTy}, false));
 }
 
-// Profile-gen only, host module only: call the profiler's CUDA registration
-// from the top of main. A static constructor cannot do it: the runtime
-// publishes its device tables with cudaMemcpyToSymbol, and a dynamic
-// initializer can run before __cudaRegisterFatBinary has registered the device
-// module in a multi-TU binary ("invalid device symbol", surfacing later as a
-// sticky error on someone else's kernel). main runs after every static
-// constructor.
+// A static constructor cannot make the call: the runtime publishes its device
+// tables with cudaMemcpyToSymbol, and a dynamic initializer can run before
+// __cudaRegisterFatBinary has registered the device module in a multi-TU
+// binary ("invalid device symbol"). main runs after every static constructor.
 //
 // Only the host half of an offload unit, kernels or not, links the device
 // profiler. Erring towards injection is deliberate: a wrongly skipped
-// injection loses the profile silently, a wrongly kept one fails loudly at
-// link.
+// injection loses the profile silently, a wrongly kept one fails at link.
 bool injectHostProfilerInit(llvm::Module &M) {
   using namespace llvm;
   if (Target::of(M).isDevice())
@@ -532,9 +523,8 @@ bool injectHostProfilerInit(llvm::Module &M) {
   return true;
 }
 
-// Launch geometry is a per-function fact: the probe is keyed by the
-// poseidon_site_<name> global the value probes use (which exists only after AD)
-// and sits at the entry of the function owning those probes.
+// The probe is keyed by the poseidon_site_<name> global the value probes use,
+// which exists only after AD.
 void injectBlockDimProbes(llvm::Module &M) {
   using namespace llvm;
   const Target &T = Target::of(M);

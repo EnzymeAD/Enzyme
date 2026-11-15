@@ -45,11 +45,10 @@ namespace poseidon {
 
 namespace {
 
-// Enzyme's PreserveNVVM marks every function it must keep with prev_fixup at
-// the start of its OptimizerEarly pipeline and removes the mark at the end, so
-// a module that carries the enzyme_math side of that pass without the mark has
-// already been through Enzyme. LLVM runs extension-point callbacks in
-// -fpass-plugin order, which makes that the wrong order.
+// Whether Enzyme has already run on M: Enzyme removes its prev_fixup marks
+// before its run ends, so enzyme_math functions without any prev_fixup, or an
+// augmented_/diffe clone, mean it has. Extension-point callbacks run in
+// -fpass-plugin order, so a reversed plugin order shows here.
 bool enzymeAlreadyRan(Module &M) {
   bool anyMath = false, anyPending = false;
   for (const Function &F : M) {
@@ -69,9 +68,9 @@ bool enzymeAlreadyRan(Module &M) {
   return false;
 }
 
-// The host half of a CUDA or HIP compilation holds no site of the annotation
-// or the call form, whatever annotations and calls it carries
-// (lowerPerCallSites); the annotation of a kernel is its device half's.
+// Whether M holds a site. The host half of a CUDA or HIP compilation holds no
+// site of the annotation or the call form, whatever annotations and calls it
+// carries: the annotation of a kernel is its device half's.
 bool hasSite(const Options &O, Module &M) {
   const bool hostHalf = isOffloadHostHalf(M);
   if (!hostHalf &&
@@ -139,9 +138,8 @@ struct OptimizePass : PassParent<OptimizePass> {
 };
 
 // Whether Enzyme left the module's derivative requests to the LTO post-link
-// run: in these phases it does unless -enzyme-lto-prelink is given
-// (augmentPassBuilder in Enzyme.cpp), and an Enzyme without that option never
-// does.
+// run: in these phases it does unless -enzyme-lto-prelink is given, and an
+// Enzyme without that option never does.
 bool enzymeDeferredToPostLink(ThinOrFullLTOPhase Phase,
                               OptimizationLevel Level) {
   if (Phase != ThinOrFullLTOPhase::FullLTOPreLink &&
@@ -172,11 +170,9 @@ std::string unloweredRequestReason(bool phaseKnown, ThinOrFullLTOPhase Phase,
   return reason;
 }
 
-// The late run of the site handler, at OptimizerLast: by now Enzyme has
-// lowered the derivative request the deferred body was made of, so the body
-// carries the derivative arithmetic and is profiled and solved like any other
-// site. A module with no deferred site leaves here without touching anything,
-// so its output is byte for byte what it is without this pass.
+// The site handler for deferred sites, at OptimizerLast, where the derivative
+// request a deferred body was made of has been lowered. A module without a
+// deferred site is left untouched.
 struct LatePass : PassParent<LatePass> {
   PassBuilder *PB;
   OptimizationLevel Level;
@@ -187,11 +183,8 @@ struct LatePass : PassParent<LatePass> {
   LatePass(PassBuilder *PB, OptimizationLevel Level, ThinOrFullLTOPhase Phase)
       : PB(PB), Level(Level), Phase(Phase), PhaseKnown(true) {}
 
-  // The canonical prefix, applied to the deferred bodies only. At
-  // OptimizerEarly the same passes run over the whole module because the rest
-  // of the pipeline follows them; here nothing follows, so a module-wide run
-  // would be the only thing standing between a deferred-site build and the
-  // codegen it would otherwise have had.
+  // The canonical prefix, over the deferred bodies only: nothing follows this
+  // pass, so a module-wide run would change the code of every other function.
   void canonicalizeBodies(const Options &O, Module &M,
                           ArrayRef<Function *> bodies,
                           LocalAnalysisManagers &AMs,
@@ -219,11 +212,9 @@ struct LatePass : PassParent<LatePass> {
       Post.run(*F, AMs.FAM);
   }
 
-  // Nothing after this pass simplifies what it produced, and the marker held
-  // the site's argument storage in memory for the whole pipeline, so the
-  // kernels that carried one are put back through the function simplification
-  // pipeline. Only those kernels: the rest of the module keeps the code it
-  // already had.
+  // Re-runs the function simplification pipeline over the kernels that carried
+  // a marker: nothing later simplifies what this pass produced, and the marker
+  // held the site's argument storage in memory for the whole pipeline.
   void resimplify(ArrayRef<Function *> kernels, LocalAnalysisManagers &AMs) {
     if (Level == OptimizationLevel::O0 || kernels.empty())
       return;
@@ -233,10 +224,9 @@ struct LatePass : PassParent<LatePass> {
       FPM.run(*F, AMs.FAM);
   }
 
-  // Profile generation instruments the deferred clone and emits the
-  // reverse-mode request the probes record from; nothing later in the pipeline
-  // would lower it, so Enzyme is run once more, from its own registered
-  // pipeline name.
+  // Runs Enzyme once more, by its registered pipeline name, to lower the
+  // reverse-mode request profile generation emits for a deferred clone; nothing
+  // later in the pipeline would.
   void runEnzyme(Module &M, LocalAnalysisManagers &AMs) {
     ModulePassManager MPM;
     if (Error E = PB->parsePassPipeline(MPM, "enzyme")) {
@@ -304,8 +294,6 @@ struct LatePass : PassParent<LatePass> {
       collectDeferredMarkers(M, markers);
     }
 
-    // Whatever is left is lowered exactly as the early run lowers a site: the
-    // solve in profile-use mode, a call of the original body otherwise.
     SmallVector<CallBase *, 4> calls;
     if (!markers.empty())
       lowerMarkers(S, markers, calls);
@@ -328,9 +316,6 @@ struct LatePass : PassParent<LatePass> {
           erased = true;
         }
     }
-    // The body a site ends up calling is made always-inline by
-    // optimizeSiteBody, which both runs share, so the AlwaysInlinerPass below
-    // folds a refused site back exactly as it folds a rewritten one.
 
     ModulePassManager Inline;
     Inline.addPass(AlwaysInlinerPass());
@@ -377,18 +362,13 @@ struct HostSitePass : PassParent<HostSitePass> {
   static bool isRequired() { return true; }
 };
 
-// A module with a site is compiled for the solve otherwise than as written in
-// every function, not only the rewritten ones: the canonical prefix, a site's
-// body or per-call copy kept out of line until it is lowered (150 registers
-// against 134 for one finite-element kernel; a host loop over the call no
-// longer vectorized), and on a device libdevice math kept out of line through
-// the inliner. The module is compiled once more, from its state before any of
-// that and as a build without a profile compiles it, and every function no
-// rewrite reached is emitted from that compile. Not the host half of a CUDA or
-// HIP compilation, which holds no site of the call or the annotation form and
-// whose launch stubs are rewritten for its device half's sites at
-// PipelineStart, where no rewrite is recorded.
-// At PipelineStart, before HostSitePass.
+// Clones a module with a site in a profile-use compile, at PipelineStart and
+// before HostSitePass, so that every function no rewrite reaches is emitted
+// from a compile as written: the canonical prefix, site bodies kept out of
+// line and, on a device, libdevice math kept out of line change the code of
+// every function of the module. The host half of a CUDA or HIP compilation
+// holds no site, and its launch stubs are rewritten at PipelineStart, where no
+// rewrite is recorded.
 struct TwinSnapshotPass : PassParent<TwinSnapshotPass> {
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &MAM) {
     Session &S = sessionOf(M, MAM);
@@ -433,11 +413,9 @@ struct FinalizePass : PassParent<FinalizePass> {
       dropSiteAnnotations(M);
     linkDeviceProfiler(M, O.Profiling.ProfileGenerate);
     requireDeviceCallees(M, O.Profiling.ProfileGenerate);
-    // Every site of the module has been processed by now, in the early run or
-    // the late one, and every check that can stop the compile has passed, so
-    // a host half never reads the manifest of a device half that failed. A
-    // module without a descriptor removes the unit's manifest, so that what an
-    // earlier compile of the unit recorded is not applied.
+    // Written after every site is processed and every check that can stop the
+    // compile has passed, so a host half never reads the manifest of a device
+    // half that failed.
     if (T.isDevice() && !S.IsTwin && handsOverLaunches(O))
       writeLaunchManifest(S, M);
     releaseDeviceMath(M);
@@ -503,10 +481,9 @@ struct IfSitePass : PassParent<IfSitePass> {
   static bool isRequired() { return true; }
 };
 
-// The prefix of Enzyme's OptimizerEarly pipeline that a site body passes
-// through before Poseidon sees it. Poseidon owns a copy because its own
-// callback runs first, and the canonical form the profile is numbered against
-// is the form after these passes.
+// The canonical prefix, which brings a site body to the form the profile is
+// numbered against. It matches the start of Enzyme's OptimizerEarly pipeline,
+// which runs after this plugin's callback.
 void addCanonicalPrefix(ModulePassManager &MPM, OptimizationLevel Level) {
   if (Level != OptimizationLevel::O0) {
     FunctionPassManager OptimizePM;
@@ -532,9 +509,7 @@ void registerPasses(PassBuilder &PB) {
 
   auto loadHostStub = [](ModulePassManager &MPM, OptimizationLevel) {
     MPM.addPass(HostSitePass());
-    // Host-side GEMM dispatch must rewrite the launch stub BEFORE inlining, so
-    // it runs at PipelineStart. No-op unless -poseidon-ozaki-host-dispatch is
-    // set and the module is a host module.
+    // Host-side GEMM dispatch rewrites the launch stub before inlining.
     MPM.addPass(HostStubPass());
   };
   PB.registerPipelineStartEPCallback(
@@ -548,21 +523,17 @@ void registerPasses(PassBuilder &PB) {
     addCanonicalPrefix(Prefix, Level);
     ModulePassManager Sites;
     Sites.addPass(OptimizePass());
-    // Fold the outlined site bodies and the materialized clones back into
-    // their kernels here; nothing later in the pipeline inlines, and the
-    // AlwaysInlinerPass the Enzyme plugin adds is another plugin's business.
+    // Nothing later in the pipeline folds the outlined site bodies and the
+    // materialized clones back into their kernels.
     Sites.addPass(AlwaysInlinerPass());
     MPM.addPass(IfSitePass(std::move(Prefix), std::move(Sites)));
   };
-  // The late run owns the sites the early run deferred: the canonical prefix,
-  // the site handler, the always-inliner and, in profile-generate mode, a
-  // second Enzyme run, all inside LatePass because they must not happen at all
-  // in a module that deferred nothing. FinalizePass's "nothing lowered this
-  // request" check therefore runs after that second Enzyme run.
   PassBuilder *PBp = &PB;
-  // The module as written is compiled with the default pipeline of the phase
-  // the module is in: a compile from source, also one that writes LTO bitcode
-  // (every HIP device compile does). An LTO link has no module as written.
+  // LatePass precedes FinalizePass so that FinalizePass's check for unlowered
+  // requests sees the second Enzyme run of a deferred site. The module as
+  // written is compiled with the default pipeline of the phase the module is
+  // in: a compile from source, also one that writes LTO bitcode. An LTO link
+  // has no module as written.
   auto loadFinalize = [PBp](ModulePassManager &MPM, OptimizationLevel Level,
                             ThinOrFullLTOPhase Phase) {
     const bool fromSource = Phase == ThinOrFullLTOPhase::None ||

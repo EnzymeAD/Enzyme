@@ -49,10 +49,10 @@ namespace poseidon {
 
 namespace {
 
-// Canonicalize, slot-number and instrument one site body exactly as profile
-// use canonicalizes and slot-numbers it, so the profile is recorded against
-// the form the solve will later see. Null if the body holds nothing profilable.
-// `staticOut`, if given, receives the header the profile will carry.
+// Canonicalize, slot-number and instrument a clone of the site body `F`
+// exactly as profile use canonicalizes and slot-numbers it. Null if the body
+// holds nothing profilable. `staticOut`, if given, receives the header the
+// profile will carry.
 Function *instrumentedClone(Session &S, Function &F, unsigned siteId,
                             std::string *staticOut = nullptr) {
   Function *clone = canonicalize(F);
@@ -101,12 +101,10 @@ bool profileSite(Session &S, CallInst *CI,
     return false;
 
   // Two annotations on the same body share one instrumented clone, so their
-  // executions accumulate into one profile record, as they did when the clone
-  // came from the host's preprocessing cache.
+  // executions accumulate into one profile record under one site id.
   Function *&clone = clones[F];
   if (!clone) {
-    // Two markers on the same body share one profile record and therefore one
-    // site id; the id counts clones in marker order.
+    // The site id counts clones in marker order.
     clone = instrumentedClone(S, *F, nextSiteId++);
     if (!clone) {
       warn(CI, Twine("no profilable operation in ") + F->getName());

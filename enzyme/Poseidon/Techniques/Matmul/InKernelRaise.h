@@ -23,7 +23,7 @@ namespace poseidon {
 
 // Emit the Ozaki Scheme I N-slice rewrite for a scalar-loop matmul with an
 // F16/BF16/TF32 input slice and an F32 accumulator; aborts on any precondition
-// violation (callers filter to valid candidates upstream).
+// violation.
 void materializeOzakiIRaise(const AbstractMatmul &m,
                             const MatmulUnit::Option &opt);
 

@@ -20,10 +20,9 @@ class Session;
 bool lowerMarkers(Session &S, llvm::ArrayRef<llvm::CallInst *> markers,
                   llvm::SmallVectorImpl<llvm::CallBase *> &calls);
 
-// Runs before the host's own marker scan. Profile generation happens entirely
-// here: each site is canonicalized, instrumented with the profiling probes and
-// its marker rewritten into an ordinary __enzyme_autodiff request, which the
-// host then lowers like any other. True if it instrumented a site.
+// Profile generation: instruments every site of M that is not deferred with
+// the profiling probes and rewrites its marker into an __enzyme_autodiff
+// request. Returns true if it instrumented a site.
 bool prepareModule(Session &S, llvm::Module &M);
 
 // Profile use for the sites this module declares with POSEIDON_OPTIMIZE (or
@@ -36,7 +35,7 @@ bool solveDeferredSites(Session &S, llvm::Module &M,
                         llvm::FunctionAnalysisManager &FAM);
 
 // Drop the canonicalized clones nothing calls any more. Runs once per module,
-// after the host has finished lowering and inlining every site.
+// after every site is lowered and inlined.
 void finalizeModule(Session &S, llvm::Module &M);
 
 } // namespace poseidon

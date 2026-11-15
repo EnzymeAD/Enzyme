@@ -1,4 +1,4 @@
-//=- Solvers.cpp - Solver utilities for Poseidon --------------------------=//
+//=- Solvers.cpp - the DP over a solve's units ------------------------------=//
 //
 // Part of the Poseidon Project, under the Apache License v2.0 with LLVM
 // Exceptions.
@@ -7,8 +7,8 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file implements solver-related utilities for the Poseidon optimization
-// pass.
+// The DP over the units of one site or of several sites, and the selection
+// of a frontier point by budget or accuracy target.
 //
 //===----------------------------------------------------------------------===//
 
@@ -55,9 +55,8 @@ using namespace llvm;
 namespace poseidon {
 
 // A site tolerance is a per-operation relative rounding level, so everything
-// the ratio is built from has to be real and measured; a missing piece is an
-// upstream defect, never something to substitute a value for. `at` is the
-// site the error is reported at.
+// the ratio is built from has to be measured. `at` is the site the error is
+// reported at.
 static void checkToleranceInputs(const Function &at, StringRef siteName,
                                  double accScale, double baseline) {
   if (!(accScale > 0.0) || !std::isfinite(accScale)) {
@@ -84,14 +83,12 @@ static void checkToleranceInputs(const Function &at, StringRef siteName,
                         "generation if its profile is not of this program.");
 }
 
-// The DP table is anchored at the ORIGINAL program: costToAccuracyMap[0] == 0
-// and every entry is a sum of deltas. A tolerance is an ABSOLUTE level, so the
-// site's own modelled error has to be added back. Each subgraph contributes it
-// once: a PrecisionUnit's perOutputInitialAccCost already covers all of its
-// subgraph's outputs (getAdjustedAccCostDelta excludes the ones a
-// RewriteUnit claims), so the per-output RewriteUnit baselines are only
-// counted for subgraphs that have no PrecisionUnit at all. MatmulUnit
-// baselines are zero by construction.
+// The modelled error of the code as written. The DP table is relative to it
+// (costToAccuracyMap[0] == 0) while a tolerance is an absolute level. Each
+// subgraph counts once: a PrecisionUnit's initial cost covers every output of
+// its subgraph, so RewriteUnit baselines count only on subgraphs without one.
+// A MatmulUnit's baseline is zero. `unpricedOut` receives the number of
+// RewriteUnits left out for want of a candidate.
 double baselineAccCost(ArrayRef<RewriteUnit> COs, ArrayRef<PrecisionUnit> CSs,
                        unsigned *unpricedOut) {
   SmallPtrSet<const Subgraph *, 4> subgraphsWithCS;
@@ -105,10 +102,8 @@ double baselineAccCost(ArrayRef<RewriteUnit> COs, ArrayRef<PrecisionUnit> CSs,
   for (const auto &CO : COs) {
     if (subgraphsWithCS.count(CO.subgraph))
       continue;
-    // A RewriteUnit with no candidates was never priced (Herbie produced
-    // nothing for it), so its share of the baseline was never measured. It
-    // cannot appear in any solution either; the site's baseline is reported as
-    // the part that WAS measured, and the caller says so.
+    // A RewriteUnit with no candidates was never priced, so its share of the
+    // baseline is unknown; it cannot appear in a solution either.
     if (CO.candidates.empty()) {
       ++unpriced;
       continue;
@@ -146,10 +141,9 @@ static std::optional<DPCost> selectWithinBudget(const Options &O,
   return best;
 }
 
-// Write the shares of the selectable frontier points to <cache>/budgets.txt
-// for the Pareto-variant workflow, on every solve and replay. Parallel variant
-// builds reusing a cached table write the same shares, and the replace is
-// atomic, so none of them reads a partial file.
+// Writes the shares of the selectable frontier points, comma-separated, to
+// <cache>/budgets.txt on every solve and replay. The replace is atomic, so
+// parallel builds that reuse a cached table never read a partial file.
 static void writeBudgetsFile(const Options &O, const CostScale &scale,
                              const CostMap &costToAccuracyMap) {
   if (O.Herbie.Cache.empty())
@@ -333,10 +327,6 @@ accuracyDPSolver(Session &S, Function &F, FunctionFPState &st,
     std::optional<DPCost> best =
         selectWithinBudget(O, scale, costToAccuracyMap);
 
-    // A kept whole-kernel candidate has positive cost and worse model accuracy
-    // than the baseline, so min-accuracy selection can never choose it; an
-    // exact positive-budget match dispatches it directly.
-
     if (!best) {
       llvm::errs() << "No solution found within the computation cost budget!\n";
       return {};
@@ -376,8 +366,7 @@ jointAccuracyDPSolver(Session &S, ArrayRef<FunctionFPState *> states,
   costToAccuracyMap[0] = 0;
   costToSolutionMap[0] = {};
 
-  // Same integration order as accuracyDPSolver. The joint table is not cached
-  // (table.json is per candidate set); budgets.txt is still written.
+  // The joint table is not cached: table.json keys one site's candidate set.
   SmallVector<SmallVector<OptimizationUnit *>, 4> siteUnits;
   for (auto *st : states)
     siteUnits.emplace_back(st->units.begin(), st->units.end());

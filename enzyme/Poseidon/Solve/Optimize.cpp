@@ -136,10 +136,8 @@ static void readSiteProfile(Session &S, Function &F, SiteProfileData &P) {
         if ((p.sumAbsGrad >= 0.0 ? p.sumAbsGrad : p.sumGrad) == 0.0)
           zeroGradIdx.insert(kv.first);
       }
-    // Degenerate-adjoint guard, before anything reads a gradient: the floor is
-    // written back into the profile records so the node table, the Herbie
-    // candidate pricing, the precision-tuning per-output costs and the
-    // scalar-reduction matmul gradD cells all see one consistent weight.
+    // Before anything reads a gradient: the floor is written back into the
+    // profile records so that every reader sees one weight.
     applySensitivityFloor(profileMap, F.getName());
     requireCanonicalHash(profileHeader, canonicalHash, profilePath, F);
     // Per-output accounting weighs each output on its own scale and takes no
@@ -166,10 +164,6 @@ static void recognizeMatrixProducts(Session &S, Function &F,
   const auto &profileHeader = P.header;
   auto &abstractMatmuls = st.abstractMatmuls;
 
-  // These stash a ScalarEvolution* (and const SCEV* pointers it owns) into each
-  // ScalarLoopHandle for the materializer's SCEVExpander, dereferenced during
-  // materialization, so they must outlive it and live in `st`. Declared SE-last
-  // so it is destroyed first (it references the others).
   auto &raiseDT = st.raiseDT;
   auto &raiseLI = st.raiseLI;
   auto &raiseAC = st.raiseAC;
@@ -187,9 +181,9 @@ static void recognizeMatrixProducts(Session &S, Function &F,
     if (T.hasInKernelMatrixRaise())
       findScalarLoopMatmuls(O, F, *raiseSE, *raiseLI, profileHeader,
                             abstractMatmuls);
-    // Runtime-shape dense GEMMs (finite-element partial-assembly reduces). Runs
-    // after the constant-trip recognizer and skips whatever that one claimed,
-    // so a product both recognize keeps the constant-trip candidate set.
+    // Runtime-shape dense GEMMs. Runs after the constant-trip recognizer and
+    // skips whatever that one claimed, so a product both recognize keeps the
+    // constant-trip candidate set.
     findHostGemmLoopNests(O, F, *raiseSE, *raiseLI, profileHeader, profileMap,
                           abstractMatmuls);
   }
@@ -247,15 +241,13 @@ proposeSubgraphCandidates(Session &S, Function &F,
   }
 }
 
-// Put this site's error on the application's scale. kappa is the measured
-// response of the declared quantity of interest to computing this site with a
-// relative error eps on every operation, and the profile's own first-order
-// prediction for the same noise is eps times the site's total sensitivity, in
-// the units the accuracy costs are already in; dividing the two cancels the
-// within-site propagation that both carry and leaves the downstream condition
-// per unit of accuracy cost. A site whose probe run diverged gets a large
-// finite factor instead, so no candidate of it is ever traded against
-// precision.
+// Puts this site's error on the application's scale. kappa is the measured
+// response of the quantity of interest to a relative error eps on every
+// operation of the site; the profile predicts eps times the site's total
+// sensitivity for the same noise. Their ratio cancels the propagation within
+// the site and leaves the downstream condition per unit of accuracy cost. A
+// site whose probe run diverged gets a large finite factor, so none of its
+// candidates is traded against precision.
 static void putOnApplicationScale(Session &S, Function &F,
                                   const SiteProfileData &P,
                                   FunctionFPState &st) {
@@ -468,8 +460,7 @@ static bool applySolution(ArrayRef<SolutionStep> steps,
   return true;
 }
 
-// Split out of fpOptimize so the joint solver can collect across functions,
-// solve once, then materialize each function with its own steps.
+// Applies `steps` to F and cleans F up; true when a step was applied.
 bool materializeFPSolution(Session &S, Function &F, FunctionFPState &st,
                            ArrayRef<SolutionStep> steps) {
   const Options &O = S.Opts;
@@ -515,16 +506,10 @@ bool materializeFPSolution(Session &S, Function &F, FunctionFPState &st,
 
   simplifyFunction(F, OptimizationLevel::O3);
 
-  // Mark the Poseidon-transformed function `alwaysinline` so the downstream
-  // inliner folds it back into the caller. The source-level `noinline` on the
-  // user's matmul body is needed UPSTREAM so the function survives as a
-  // distinct symbol Poseidon can clone, but the call boundary on the
-  // transformed clone costs ~1.5x wallclock on GPU (NVPTX passes pointer args
-  // via per-thread R-regs across calls, forcing R2UR broadcasts and tanking
-  // uniformity analysis).
-  //
-  // The two `remove` calls are required by the IR verifier: `alwaysinline`
-  // conflicts with `noinline` / `optimizenone`.
+  // The rewritten site is inlined back into its caller: on a GPU a call passes
+  // pointer arguments in per-thread registers, which defeats uniformity
+  // analysis. The verifier rejects `alwaysinline` with `noinline` or
+  // `optnone`.
   if (changed) {
     F.removeFnAttr(Attribute::NoInline);
     F.removeFnAttr(Attribute::OptimizeNone);
@@ -541,17 +526,14 @@ bool materializeFPSolution(Session &S, Function &F, FunctionFPState &st,
 
 bool fpOptimize(Session &S, Function &F, double errorTol) {
   const Options &O = S.Opts;
-  // A target written AT THE SITE wins over -poseidon-tau, which is the target
-  // of every site that carries none. Either way the number means the same: one
-  // path below solves the site under it.
+  // A target written at the site wins over -poseidon-tau, the target of every
+  // site that carries none; both mean the same.
   const double target = errorTol > 0.0 ? errorTol : (double)O.Solver.Tau;
 
-  // Matrix-product selection is only trustworthy with dynamic-range-aware
-  // sampling (uniform [min,max] under-prices fixed-point Ozaki on
-  // wide-dynamic-range matrices), so a target defaults the sampling knob to a
-  // wide log-uniform range; an explicit -poseidon-sample-log-bits still
-  // overrides. Read only by the matmul accuracy model, so a site with no matrix
-  // product is unaffected.
+  // Uniform sampling over [min, max] under-prices fixed-point Ozaki on matrices
+  // of wide dynamic range, so a target defaults to a wide log-uniform range
+  // unless -poseidon-sample-log-bits is given. Only the matrix accuracy model
+  // reads it.
   unsigned sampleLogBits = O.Model.SampleLogBits;
   if (target > 0.0 && sampleLogBits == 0)
     sampleLogBits = 40;
@@ -579,19 +561,18 @@ bool fpOptimize(Session &S, Function &F, double errorTol) {
     steps = parseManualRewrites(S, st);
     record.selector = "manual";
   } else if (target > 0.0 && !st.CMs.empty()) {
-    // The target is a RELATIVE error, and for a matrix product that is what
-    // errorBudgetSelector compares against. Whatever elementwise work the
-    // products do not cover is then solved by the normalized DP under the same
-    // number.
+    // The target is a relative error, which is what errorBudgetSelector
+    // compares a matrix product against. The elementwise units are solved by
+    // the normalized DP under the same number.
     steps = errorBudgetSelector(O, st.CMs, target, kDefaultConfidence);
     if (!st.COs.empty() || !st.CSs.empty()) {
       SmallVector<SolutionStep> elem =
           accuracyDPSolver(S, F, st, solvedUnits(st, /*target=*/true), target,
                            st.accScale, rec, st.table.get());
       for (const SolutionStep &e : elem) {
-        // The two selectors ran independently, so the footprint rule the DP
-        // applies internally is applied between their results here. Never
-        // silent: dropping a rewrite the DP priced changes what the site emits.
+        // The two selectors run independently, so the DP's footprint rule is
+        // applied between their results here, loudly: dropping a priced
+        // rewrite changes what the site emits.
         if (overlapsConsumed(e, steps)) {
           llvm::errs() << "[poseidon] " << F.getName()
                        << ": an elementwise rewrite the DP selected edits "
@@ -706,9 +687,6 @@ bool solveJointly(Session &S, Module &M, FunctionAnalysisManager &FAM) {
   for (auto &step : steps)
     perState[&unitOf(step).site()].push_back(step);
 
-  // A site whose step list is empty gets its wrapper call restored to the
-  // original body: the preprocessed clone is not guaranteed to lower
-  // bit-identically, and an unrewritten site must be numerically transparent.
   if (explain)
     for (auto *st : raw)
       explainSolve(S, *st->F, *st, perState[st], record);
@@ -716,12 +694,14 @@ bool solveJointly(Session &S, Module &M, FunctionAnalysisManager &FAM) {
   bool changed = false;
   for (auto *st : raw) {
     bool ch = materializeFPSolution(S, *st->F, *st, perState[st]);
+    // An unrewritten site calls the original body again: the preprocessed
+    // clone need not lower bit-identically.
     if (!ch)
       redirectNoopSite(S, st->F);
     changed |= ch;
   }
-  // The joint materialize has stashed the host-dispatch notes; emit the
-  // deferred descriptors now.
+  // The host-dispatch descriptors of a joint solve are known only once every
+  // site is materialized.
   flushPendingGemmDispatches(S);
   return changed;
 }

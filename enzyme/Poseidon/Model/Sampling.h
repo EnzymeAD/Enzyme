@@ -7,11 +7,10 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// The accuracy model scores a candidate on sampled inputs, so what is sampled
-// decides what the score means: inputs evaluated from leaves drawn in their
-// profiled ranges, as the program relates them, inside the profiled per-input
-// box, plus a coincidence stratum for the cancellation regimes independent
-// leaf draws never reproduce.
+// The inputs the accuracy model scores a candidate on: inputs evaluated from
+// leaves drawn in their profiled ranges, as the program relates them, inside
+// the profiled per-input box, plus a coincidence stratum for the cancellation
+// regimes independent leaf draws never reproduce.
 //
 //===----------------------------------------------------------------------===//
 
@@ -62,9 +61,8 @@ void getSampledPoints(
 
 // The points one subgraph is priced at and what its original expressions
 // evaluate to there. They depend on the subgraph's inputs and the seed alone,
-// so every unit that prices a rewrite of the subgraph shares one copy instead
-// of drawing and evaluating them again. Not for concurrent use: each method
-// spreads its own work over -poseidon-threads.
+// so every unit that prices a rewrite of the subgraph shares one copy. Not for
+// concurrent use: each method spreads its own work over -poseidon-threads.
 class SubgraphSamples {
 public:
   using Point = llvm::MapVector<llvm::Value *, double>;
@@ -89,7 +87,7 @@ public:
   const Reference &reference(const FPNode *node);
 
   // getSampledPoints without a cancellation plan and with seed offset
-  // `round`, the further points the regime-arm search draws from round 1 on.
+  // `round`, for `round` >= 1.
   llvm::ArrayRef<Point> round(unsigned round);
   // `node` at the points of `round` listed in `which`; an entry at any other
   // point of the round is not computed.

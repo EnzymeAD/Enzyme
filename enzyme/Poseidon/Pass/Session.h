@@ -50,21 +50,19 @@ public:
   // build without a profile: it is not snapshotted and hands no launch over.
   const bool IsTwin;
 
-  // Driver.cpp and the stages it drives. The canonical clones of the module's
-  // site bodies, which finalizeModule drops once nothing calls them.
+  // The canonical clones of the module's site bodies.
   llvm::SmallVector<llvm::WeakVH, 4> SiteClones;
   // The functions a solve rewrote a site in, with every function that calls
   // them: what the module as written does not have.
   llvm::SmallVector<llvm::WeakVH, 4> RewrittenFunctions;
   // Markers on the same body with the same target share one solve, as they
-  // share one profile record: a body inlined at several call sites otherwise
-  // pays the whole solve once per copy.
+  // share one profile record.
   std::map<std::pair<const llvm::Function *, double>, llvm::WeakVH> SolvedSites;
   // The module before the pass changed it, for FinalizePass to compile as
   // written.
   std::unique_ptr<llvm::Module> AsWrittenTwin;
 
-  // Sites/SiteIdentity.cpp. The body each site clone was cut from.
+  // The body each site clone was cut from.
   std::map<const llvm::Function *, llvm::Function *> SiteOrigins;
   // The site clone has no callers while it is optimized, so the caller values
   // of its parameters are kept here for the parameter-staging arm to resolve a
@@ -72,32 +70,28 @@ public:
   std::map<const llvm::Function *, llvm::SmallVector<llvm::WeakTrackingVH, 12>>
       SiteArgs;
 
-  // Explain.cpp. Where each site is called from.
+  // Where each site is called from.
   std::map<const llvm::Function *, llvm::DebugLoc> SiteCalls;
 
-  // Pins.cpp. The items of -poseidon-apply-rewrites and the sites they name.
+  // The items of -poseidon-apply-rewrites and the sites they name.
   PinState Pins;
 
-  // Core/CostTable.cpp and Model/CostModel.cpp.
   CostModelState CostModel;
 
-  // Techniques/Herbie.cpp.
   HerbieRunState Herbie;
 
-  // Profile/ProfileRead.cpp. Whether each profile directory's profiles name
-  // their format, by directory.
+  // Whether each profile directory's profiles name their format, by
+  // directory.
   llvm::StringMap<bool> ProfileDirFormats;
 
-  // Sites/LaunchDescriptors.cpp. By kernel name, so that the manifest and its
-  // messages come out in one order whatever order the sites were solved in;
-  // host dispatch first, then profile generation.
+  // By kernel name, so that the manifest and its messages come out in one
+  // order whatever order the sites were solved in; host dispatch first, then
+  // profile generation.
   std::map<std::string, Recorded> RecordedLaunches[2];
   std::map<std::string, ProfileHeader> ProfileHeaders;
 
-  // Techniques/Matmul.
   MatmulState Matmul;
 
-  // Techniques/Expansion.cpp.
   ExpansionState Expansion;
 };
 

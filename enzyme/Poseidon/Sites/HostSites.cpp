@@ -39,10 +39,9 @@ std::string exactDouble(double v) {
 
 namespace {
 
-// The call operator of a lambda: what an annotated mfem::forall body is on the
-// host. A closure type demangles as 'lambda'(...), or as $_<n> where clang
-// needs no mangling number for it (a lambda in a function of a host-only
-// compile).
+// Whether `F` is the call operator of a lambda. A closure type demangles as
+// 'lambda'(...), or as $_<n> where clang needs no mangling number for it (a
+// lambda in a function of a host-only compile).
 bool isLambdaCallOperator(const Function &F) {
   // The demangler's nodes point into the name it was given.
   std::string mangled = F.getName().str();
@@ -59,9 +58,7 @@ bool isLambdaCallOperator(const Function &F) {
   return lambda;
 }
 
-// --------------------------------------------------------------------------
-// Host sites: a host function carrying POSEIDON_OPTIMIZE
-// --------------------------------------------------------------------------
+// Host sites: a host function carrying POSEIDON_OPTIMIZE.
 
 bool isHostScalar(Type *T) {
   return T->isIntegerTy() || T->isHalfTy() || T->isBFloatTy() ||
@@ -97,11 +94,11 @@ std::string hostSiteRefusal(Function &F) {
 }
 
 // The name of a caller with the accuracy targets of its per-call sites left
-// out. A target the caller takes as a template argument (dFEM's Numerics tag)
-// gives it one instantiation, and one name, per target, while the profile of a
-// call does not depend on its target. In an Itanium name a target is a
-// floating-point literal, L, the type, the hex of its bits, E; it becomes the
-// external name `tau`.
+// out. A target the caller takes as a template argument gives it one
+// instantiation, and one name, per target, while the profile of a call does
+// not depend on its target. In an Itanium name a target is a floating-point
+// literal, L, the type, the hex of its bits, E; it becomes the external name
+// `tau`.
 std::string targetFreeName(StringRef name, ArrayRef<double> targets) {
   std::string out = name.str();
   for (double t : targets) {
@@ -168,14 +165,11 @@ void outlineHostFunction(Function &F, std::optional<double> tau) {
 // a copy of the function made for that call alone, which is then a host site
 // like an outlined body. The copy is named after the caller, without the
 // targets (targetFreeName), and the call's position among the caller's per-call
-// sites, taken here, before inlining, so that the generate and use compiles
-// name it alike at any -O level and for any target: its profile, DP table and
-// rewritten copy are that call's own. In device code the copy becomes a marker
-// site instead (lowerDeviceCallSites). The host half of a CUDA or HIP
+// sites, taken before inlining, so that the generate and use compiles name it
+// alike at any -O level and for any target. The host half of a CUDA or HIP
 // compilation holds no site: the compilation has one device and one cost
 // model, and the call of a host-device function is the device half's site.
-// There the call through the identity is left for the inliner to fold, as
-// without the plugin.
+// There the call through the identity is left for the inliner to fold.
 bool lowerPerCallSites(const Options &O, Module &M) {
   if (isOffloadHostHalf(M))
     return false;
@@ -213,7 +207,7 @@ bool lowerPerCallSites(const Options &O, Module &M) {
     for (User *U : H->users())
       if (auto *CB = dyn_cast<CallBase>(U); CB && CB->getCalledOperand() == H)
         call = CB;
-    // Whatever the outcome, the call no longer goes through the helper, so a
+    // Whatever the outcome, the call stops going through the helper, so a
     // later run of the pass does not see it again.
     auto asWritten = [&](CallBase *site) {
       if (site && fn && site->getFunctionType() == fn->getFunctionType())

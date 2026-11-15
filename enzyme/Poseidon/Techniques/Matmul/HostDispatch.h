@@ -31,9 +31,9 @@ namespace poseidon {
 struct Options;
 class Session;
 
-// GemmBodyNote roles are the optimized body's parameter indices;
-// optimizeSiteBody maps them to the wrapper kernel's launch-arg indices before
-// writing the descriptor.
+// The host-dispatch descriptor of a GEMM in an optimized body. Operand roles
+// and runtime-dimension factors name parameters of the body until the
+// descriptor is written, and launch arguments of the wrapper kernel after.
 struct GemmBodyNote {
   int cParam = -1, aParam = -1, bParam = -1;
   // Byte offsets of the three operand pointers inside their parameter, when
@@ -49,7 +49,7 @@ struct GemmBodyNote {
   // elements) and layouts; a square row-major NN GEMM takes the square entry,
   // anything else the _ex entry.
   unsigned gM = 0, gNcols = 0, gK = 0;
-  unsigned lda = 0, ldb = 0, ldc = 0; // leading dims, in ELEMENTS
+  unsigned lda = 0, ldb = 0, ldc = 0; // leading dims, in elements
   bool aColMajor = false, bColMajor = false, cColMajor = false;
 
   // Deploy extents recovered from the launch geometry: a dimension that does
@@ -60,22 +60,11 @@ struct GemmBodyNote {
   bool launchCrop = false;
   int cropMAxis = -1, cropNAxis = -1; // 0/1/2 = thread axis x/y/z
 
-  // Runtime geometry (Origin::HostGemmLoopNest). A finite-element apply's
-  // product dimensions are kernel ARGUMENTS (M = nDofs, K = d*numPoints,
-  // Ncols = d*NE), not compile-time constants, so the six integers above cannot
-  // express them: baking the profile-scale numbers in would deploy the
-  // surrogate's mesh size, and baking the deploy-scale numbers in would require
-  // the compiler to know the mesh. With `runtimeDims` set the host-side stub
-  // rewrite EVALUATES each dimension from the launch arguments as
-  // `mul*arg[param] + add`, which is what makes profile-small/deploy-large hold
-  // for this class.
-  //
-  // `beta` is part of the descriptor for the same reason: a partial-assembly
-  // reduce accumulates into y (`y(i,q,e) += sum`), and a dispatch emitted with
-  // a hard-wired beta = 0 would drop the caller's accumulator. Descriptors
-  // written before these tokens existed carry neither and read back as false /
-  // 0.0. The factors name body parameters until the descriptor is written and
-  // WRAPPER launch arguments after.
+  // Runtime geometry (Origin::HostGemmLoopNest): with `runtimeDims` set the
+  // host stub evaluates each dimension from the launch arguments (RuntimeDim),
+  // so a build profiled at one problem size runs at another; the six integers
+  // above are then the profile-scale values. `beta` = 1 accumulates into C. A
+  // descriptor without these tokens reads back as false / 0.0.
   using RtDim = RuntimeDim;
   bool runtimeDims = false;
   RtDim rM, rNcols, rK, rlda, rldb, rldc;
@@ -90,8 +79,8 @@ struct GemmBodyNote {
 bool computeGemmBodyNote(const Options &O, llvm::Function &F,
                          const AbstractMatmul &m, GemmBodyNote &note);
 
-// The session's stash: fpOptimize records the note keyed by the
-// optimized body clone; optimizeSiteBody retrieves it after fpOptimize returns.
+// Record and retrieve the note of an optimized body clone; getGemmBody returns
+// false when none was recorded.
 void noteGemmBody(Session &S, const llvm::Function *body,
                   const GemmBodyNote &n);
 bool getGemmBody(const Session &S, const llvm::Function *body,
@@ -114,10 +103,10 @@ struct PendingGemm {
   std::vector<int> paramToArg; // body-param index -> wrapper launch-arg index
 };
 
-// Joint-DP path: the note is produced only in the post-Enzyme joint
-// materialize, so addPendingGemmDispatch captures the body-param to wrapper-arg
-// mapping at split time and flushPendingGemmDispatches records the descriptors
-// afterwards.
+// For a joint solve, whose notes exist only after materialization:
+// addPendingGemmDispatch records the body-parameter to wrapper-argument map
+// when the site is split, and flushPendingGemmDispatches writes the
+// descriptors afterwards.
 void addPendingGemmDispatch(Session &S, const llvm::Function *body,
                             llvm::Function &wrapper,
                             llvm::ArrayRef<llvm::Value *> primalArgs);

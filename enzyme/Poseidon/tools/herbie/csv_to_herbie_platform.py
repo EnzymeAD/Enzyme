@@ -450,8 +450,8 @@ def main() -> int:
                     help="Output path for the .rkt file (default: stdout)")
     # argparse %-formats a help string against its own parameter dict, and the
     # two defaults contain a literal `%e` ("#%embedded:"), so every `%` in them
-    # has to be doubled. Python 3.14 checks this when the argument is DECLARED,
-    # not when --help is printed, so an unescaped default aborts every run.
+    # is doubled. Python 3.14 checks this when the argument is declared, so an
+    # unescaped default aborts every run.
     ap.add_argument("--platform-language", default=DEFAULT_PLATFORM_LANGUAGE,
                     help="Module path the platform is written in, used verbatim "
                          f"(default: {pct(DEFAULT_PLATFORM_LANGUAGE)}, the name raco exe "

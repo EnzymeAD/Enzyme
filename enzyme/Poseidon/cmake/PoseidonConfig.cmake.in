@@ -19,19 +19,13 @@
 #                              POSEIDON_ENZYME_OPTIONS: for HIP
 #                              "SHELL:${POSEIDON_MLLVM} -enzyme-lto-prelink=1",
 #                              since every HIP device compile is an LTO
-#                              pre-link compile, in which Enzyme leaves a
-#                              derivative request to the post-link run unless
-#                              told otherwise, and the device link loads no
+#                              pre-link compile and the device link loads no
 #                              plugin; otherwise nothing. ProfileGenerate
 #                              carries it. A project that loads Enzyme itself
-#                              under Plain or ProfileUse (for derivatives of
-#                              its own, a site whose body is one among them)
-#                              links it to the targets that load Enzyme, and
-#                              to no other. The package's -enzyme-lto-prelink
-#                              wins over one the project gives a target
-#                              itself, since a target's own options come
-#                              before those of the targets it links (through
-#                              poseidon-clang a later one of the user's wins).
+#                              under Plain or ProfileUse links it to the
+#                              targets that load Enzyme, and to no other. The
+#                              package's -enzyme-lto-prelink wins over one the
+#                              project gives a target itself.
 #
 # Any other -poseidon-<flag> is passed as "SHELL:${POSEIDON_MLLVM}
 # -poseidon-<flag>". POSEIDON_MLLVM is -Xclang -mllvm -Xclang, which clang

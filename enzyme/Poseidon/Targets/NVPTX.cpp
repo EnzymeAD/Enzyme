@@ -1,4 +1,4 @@
-// NVPTX: CUDA kernels, libdevice, tensor cores (NVPTXTensorCore.h).
+// NVPTX: CUDA kernels, libdevice, tensor cores.
 #include "Peers.h"
 
 #include "llvm/IR/CallingConv.h"
@@ -38,10 +38,10 @@ public:
   bool isKernel(const Function &F) const override {
     return F.getCallingConv() == CallingConv::PTX_Kernel;
   }
-  // The launch a profiled kernel is given has a block shape nothing at
-  // compile time bounds below the device's limit; unbounded, ptxas sizes the
-  // reverse pass's registers for small blocks, and a launch the original makes
-  // (MFEM's 375-thread elasticity reduce at p = 4) runs out of registers.
+  // Nothing at compile time bounds the block shape of a profiled kernel's
+  // launch below the device's limit; unbounded, ptxas sizes the reverse pass's
+  // registers for small blocks, and a larger launch the original makes runs out
+  // of registers.
   void boundProfiledLaunch(Function &K) const override {
     if (!K.hasFnAttribute("nvvm.maxntid"))
       K.addFnAttr("nvvm.maxntid", "1024");

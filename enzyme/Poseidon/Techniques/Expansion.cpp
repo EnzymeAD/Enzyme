@@ -1,4 +1,4 @@
-//=- Expansion.cpp - Double-single arithmetic for Poseidon ----------------=//
+//=- Expansion.cpp - floating-point expansions over FP32 --------------------=//
 //
 // Part of the Poseidon Project, under the Apache License v2.0 with LLVM
 // Exceptions.
@@ -137,13 +137,9 @@ Value *emitDSToF64(IRBuilder<> &B, DSValue ds) {
   return joined;
 }
 
-// Cancel a Dekker split applied to a tagged df64 restore (the df64 staging
-// narrowing splits the stored value, and when that value is itself a restore
-// the join and split cancel). Exact for a normalized pair, bit for bit; gated
-// on the poseidon.ds.join tag. InstCombine will not do it because the split
-// reads the join twice. `foldedLimbs` collects the limbs that replace each
-// folded join, which the cost walk must re-root on (the old F64 output is
-// dead).
+// Exact for a normalized pair, bit for bit, so only joins tagged by
+// emitDSToF64 are folded. InstCombine does not fold the pair because the split
+// reads the join twice.
 bool foldDSPairRoundtrip(Function &F, SmallVectorImpl<Value *> *foldedLimbs,
                          bool print) {
   SmallVector<Instruction *, 32> joins;
@@ -320,8 +316,7 @@ static DSValue getOrSplitOperand(IRBuilder<> &B, Value *op, DSMap &dsMap,
           hiPhi->addIncoming(inDS.hi, inBB);
           loPhi->addIncoming(inDS.lo, inBB);
         } else {
-          // Not materialized yet (a loop back edge); defer to applyExpansion's
-          // drain.
+          // Not materialized yet: a loop back edge.
           deferred.push_back({hiPhi, loPhi, in, inBB});
         }
       }
@@ -402,8 +397,6 @@ static DSValue emitDSForInstruction(IRBuilder<> &B, Instruction *I,
   return {nullptr, nullptr};
 }
 
-// df64 limbs produced for the rewritten instructions; getCompCost re-roots its
-// cost walk on them because the original F64 roots are RAUW'd and DCE'd.
 void takeLastExpansionLimbs(Session &S, SmallVectorImpl<Value *> &out) {
   out.append(S.Expansion.LastExpansionLimbs.begin(),
              S.Expansion.LastExpansionLimbs.end());
@@ -494,10 +487,9 @@ void applyExpansion(Session &S, ArrayRef<Instruction *> instsToChange,
     I->eraseFromParent();
   }
 
-  // Eliminate the FP64 accumulator PHIs carried as df64 pairs: they are
-  // non-optimizable and survive the erase above, and the external-use restore
-  // would collapse the pair every iteration. Replace each with one restore of
-  // its carried pair; O3 sinks it to the loop exit.
+  // The FP64 accumulator PHIs carried as df64 pairs survive the erase above,
+  // and restoring them per use would collapse the pair every iteration, so
+  // each is replaced by one restore of its carried pair.
   SmallVector<PHINode *, 8> carriedPhis;
   for (auto &[val, ds] : dsMap)
     if (auto *phi = dyn_cast<PHINode>(val))
@@ -513,11 +505,11 @@ void applyExpansion(Session &S, ArrayRef<Instruction *> instsToChange,
   for (PHINode *phi : carriedPhis)
     phi->eraseFromParent();
 
-  // The df64 parameter narrowing is value-preserving only once every load of
-  // the buffer is a Dekker split, i.e. after the last unit over it, so it is
-  // tried after each unit and self-gates until then. Here, not in the
-  // post-pass, so foldDSPairRoundtrip sees the join/split pair it cancels. A
-  // pricing clone is not a registered site, so the lookup fails and it bails.
+  // The parameter narrowing preserves values only once every load of the
+  // buffer is a Dekker split, so it is tried after each unit and declines
+  // until then. It runs here so that foldDSPairRoundtrip sees the join/split
+  // pair it cancels. A pricing clone is not a registered site, and the
+  // narrowing declines on it.
   if (S.Opts.Materialization.NarrowParamStaging && parentF &&
       narrowSharedStagingParamDS(S, *parentF, parentF))
     foldDSPairRoundtrip(*parentF, /*foldedLimbs=*/nullptr,
@@ -627,8 +619,7 @@ Value *emitExpansionToFP(IRBuilder<> &B, const ExpansionValue &v,
   return routines(B).expansionToF64(v.n(), v.x.data());
 }
 
-// Materializer for n >= 3; mirrors applyExpansion without the two-component
-// df64 staging machinery.
+// The materializer for n >= 3.
 
 namespace {
 struct DeferredExpansionPhiIn {
@@ -790,15 +781,10 @@ emitExpansionForInstruction(IRBuilder<> &B, Instruction *I, unsigned n,
   return ExpansionValue{};
 }
 
-// Separate from LastExpansionLimbs: one candidate can apply both an expansion
-// change and a double-single change, and applyExpansion clears its list on
-// entry.
 void takeLastExpLimbs(Session &S, SmallVectorImpl<Value *> &out) {
   out.append(S.Expansion.LastExpLimbs.begin(), S.Expansion.LastExpLimbs.end());
   S.Expansion.LastExpLimbs.clear();
 }
-// Cleared once per candidate, not per change: a tier pair calls applyExpansion
-// twice.
 void resetExpLimbs(Session &S) { S.Expansion.LastExpLimbs.clear(); }
 
 void applyExpansion(Session &S, unsigned n,
@@ -874,9 +860,8 @@ void applyExpansion(Session &S, unsigned n,
     I->eraseFromParent();
   }
 
-  // Same reason as the df64 path: the FP64 accumulator PHIs carried as n
-  // parallel F32 PHIs would otherwise force a collapse-to-double every
-  // iteration just to feed them.
+  // As in the two-component path, each carried FP64 accumulator PHI is
+  // replaced by one restore.
   SmallVector<PHINode *, 8> carriedPhis;
   for (auto &[val, mf] : expansionMap)
     if (auto *phi = dyn_cast<PHINode>(val))

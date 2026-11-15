@@ -74,11 +74,6 @@ static bool valueReaches(const Value *v, const Value *target) {
   return false;
 }
 
-// Deploy-extent recovery: the deploy extents are statically present in the
-// kernel's own bounds check as the constants gating the C store, and the launch
-// geometry bounds them a second time; extent = min(crop, gridDim[axis] *
-// blockDim[axis]) is exact in both directions. The second half is taken in the
-// host stub rewrite, where the launch configuration lives.
 static int axisIndexOf(TidAxis a) {
   switch (a) {
   case TidAxis::TidX:
@@ -176,6 +171,8 @@ static bool collectIndexBounds(const Value *cond, bool holds, uint64_t bound[3],
 // True deploy extents of the product this body writes, from the constants that
 // gate its C store: every condition dominating the store (outside the reduction
 // loop) must bound a global thread index, and both matrix axes must be bounded.
+// The host stub bounds them again by the launch geometry, taking
+// min(crop, gridDim[axis] * blockDim[axis]).
 static bool recoverGuardExtents(const Options &O, Function &F,
                                 const AbstractMatmul &m,
                                 const StoreInst *cStore, unsigned &cropM,
@@ -252,8 +249,7 @@ bool computeGemmBodyNote(const Options &O, Function &F, const AbstractMatmul &m,
   if (note.aParam < 0 || note.bParam < 0)
     return false;
 
-  // Find the C store and count argument-rooted stores (standalone iff exactly
-  // one).
+  // The body is standalone iff it has exactly one argument-rooted store.
   int storeCount = 0;
   const StoreInst *cStore = nullptr;
   const StoreInst *lastArgStore = nullptr;
@@ -490,10 +486,9 @@ static void emitDescriptor(Session &S, StringRef wrapperName, int cArg,
           }
           os << ' ' << n.beta;
         }
-        // Keyword-tagged rather than positional: the extents
-        // the kernel's index guard gates its store with,
-        // intersected at the dispatch with the launch
-        // geometry.
+        // Keyword-tagged rather than positional: the extents the kernel's
+        // index guard gates its store with, intersected at the dispatch with
+        // the launch geometry.
         if (n.launchCrop)
           os << " lc " << n.cropMAxis << ' ' << n.cropNAxis;
         if (n.cOffset >= 0 || n.aOffset >= 0 || n.bOffset >= 0)
@@ -804,7 +799,7 @@ static void emitPopConfig(IRBuilder<> &B, Module &M, Value *&gridOut,
 }
 
 // The pop the fused stub already performs; its dim3 out-parameters are the
-// same geometry, and a second pop would consume the NEXT launch's.
+// same geometry, and a second pop would consume the next launch's.
 static CallInst *findPopConfig(Function &F) {
   for (Instruction &I : instructions(F))
     if (auto *CI = dyn_cast<CallInst>(&I))
@@ -1072,7 +1067,8 @@ bool rewriteGemmStubBodies(const Options &O, Module &M) {
     FunctionCallee callee =
         squareRM ? getOzakiDgemm(M, d.scheme) : getOzakiDgemmEx(M, d.scheme);
     // Runtime dimensions are materialized as `mul*arg + add` right before the
-    // dispatch call, so a build profiled at one mesh size deploys at another.
+    // dispatch call, so a build profiled at one problem size deploys at
+    // another.
     auto rtDim = [&](IRBuilder<> &B, const GemmBodyNote::RtDim &r,
                      unsigned constFallback) -> Value * {
       if (!d.runtimeDims)

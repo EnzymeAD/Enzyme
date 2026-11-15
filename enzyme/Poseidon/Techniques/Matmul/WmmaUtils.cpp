@@ -165,8 +165,8 @@ void emitCooperativeScratchFill(IRBuilder<> &B, Value *scratchBase, Type *dstTy,
     if (dstKind == FPKind::TF32) {
       // wmma.load.a/b.tf32 reads the float bit-pattern as-is and the MMA
       // truncates the low 13 mantissa bits, so an FPTrunc-only fill applies
-      // truncation (one-signed bias) instead of round-to-nearest. RN-quantize
-      // before the store, as the Ozaki slice path does.
+      // truncation (one-signed bias) instead of round-to-nearest, so round to
+      // nearest before the store.
       cvt = nvptx::emitRoundToTF32(bodyB, F->getParent(), cvt);
     }
     Value *dstRowOff =
@@ -276,7 +276,7 @@ void emitCooperativeScratchFillPadded(
     Value *srcVal = lB.CreateLoad(srcTy, srcPtr);
     Value *cvt = emitFPCast(lB, srcVal, dstTy);
     if (dstKind == FPKind::TF32) {
-      // Same RN quantization the unpadded fill applies (see there).
+      // Round to nearest, as in emitCooperativeScratchFill.
       cvt = nvptx::emitRoundToTF32(lB, F->getParent(), cvt);
     }
     BasicBlock *loadEndBB = lB.GetInsertBlock();

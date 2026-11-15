@@ -16,8 +16,8 @@
 #include "Solve/Solvers.h"
 #include "Techniques/Herbie.h"
 #include "Techniques/Matmul/HostDispatch.h"
-// The one profile-filename rule, shared verbatim with both FP profiler
-// runtimes; the existence check below must look where they wrote.
+// Shared with the profiler runtimes, so that a profile is looked for where
+// they write it.
 #include "FPProfileName.h"
 
 #include "llvm/ADT/DenseMap.h"
@@ -218,9 +218,9 @@ void requireNumbers(const Options &O, const CallBase &CI) {
 }
 
 // No solution saves more than the whole profiled cost, so a budget below -1 is
-// a mistake in the flag, most likely an integer budget of the cost axis that
-// came before, and not a solve that finds nothing. The axis puts the profiled
-// cost below 2^33 of its units in 2^63, so it holds every share up to 2^30.
+// a mistake in the flag, not a solve that finds nothing. The DP's cost axis
+// puts the profiled cost below 2^33 of its units in 2^63, so it holds every
+// share up to 2^30.
 void requireCostBudget(const SolverOptions &O, const CallBase &CI) {
   if (std::isnan(O.CostBudget))
     reportNoNumber(CI, "poseidon-cost-budget");
@@ -280,10 +280,8 @@ bool optimizeSiteBody(Session &S, CallBase *CI, Function *F,
         return emitSiteCall(CI, done, primalArgs, calls);
       }
 
-    // Kept for no-op transparency: if the solve ends up applying NOTHING to
-    // this site, the wrapper must call the ORIGINAL body, not the
-    // canonicalized clone (whose lowering is not guaranteed bit-identical to
-    // the original).
+    // A site the solve applies nothing to calls the original body: the
+    // canonical clone's lowering is not guaranteed bit-identical to it.
     Function *sourceBody = F;
     F = canonicalize(*F);
     S.SiteClones.push_back(F);
@@ -293,7 +291,7 @@ bool optimizeSiteBody(Session &S, CallBase *CI, Function *F,
     noteSiteCall(S, F, CI->getDebugLoc());
 
     // A site with nothing to solve from still has to build and run, so it keeps
-    // the ORIGINAL body rather than failing the compile.
+    // the original body rather than failing the compile.
     if (std::optional<Unprofiled> site = unprofiledSite(S, CI, *F)) {
       reportUnprofiled(S, CI, *sourceBody, *F, *site);
       markOutlineTransparent(sourceBody);
@@ -312,12 +310,9 @@ bool optimizeSiteBody(Session &S, CallBase *CI, Function *F,
     }
 
     if (O.Solver.JointDP) {
-      // Joint mode: defer; mark F with its tolerance so the joint solve takes
-      // it with the module's other sites under one shared budget.
       F->addFnAttr(kJointErrTol, exactDouble(errTol));
-      // Host-dispatch note is produced only by the later joint materialize;
-      // capture the body-param -> wrapper-arg mapping now (primalArgs valid
-      // here).
+      // The joint solve materializes F later; the wrapper's arguments are
+      // recorded now, while primalArgs holds them.
       if (O.Matmul.OzakiHostDispatch)
         addPendingGemmDispatch(S, F, *CI->getFunction(), primalArgs);
     } else {
@@ -329,19 +324,14 @@ bool optimizeSiteBody(Session &S, CallBase *CI, Function *F,
         warn(CI,
              Twine("Poseidon returned false (no change) for ") + F->getName());
 
-      // Host-side GEMM dispatch: if fpOptimize recorded this body as a raised
-      // GEMM to be dispatched host-side (-poseidon-ozaki-host-dispatch), record
-      // the launch descriptor (wrapper kernel + C/A/B launch-arg indices +
-      // geometry) for the host sub-compilation to consume.
       {
         GemmBodyNote ozNote;
         if (O.Matmul.OzakiHostDispatch && getGemmBody(S, F, ozNote))
           writeGemmDescriptor(S, *CI->getFunction(), primalArgs, ozNote);
       }
 
-      // No rewrite was applied: call the ORIGINAL body so the wrapped site is
-      // bit-transparent (the canonicalized clone's lowering may differ at ulp
-      // level).
+      // The canonical clone's lowering may differ from the original body's at
+      // ulp level, so a site with no rewrite calls the original body.
       if (!optimized) {
         llvm::errs() << "[poseidon] no rewrite applied for " << F->getName()
                      << "; calling original body " << sourceBody->getName()
@@ -352,8 +342,6 @@ bool optimizeSiteBody(Session &S, CallBase *CI, Function *F,
     }
   }
 
-  // Profile-generate leaves the marker call in place for the profiler, so this
-  // only ever fires on the solve path.
   if (profileUse)
     markOutlineTransparent(F);
   return emitSiteCall(CI, F, primalArgs, calls);
@@ -411,8 +399,7 @@ bool lowerMarkers(Session &S, ArrayRef<CallInst *> markers,
 
 // What the profiled run spent inside this site: over the slots the profile
 // records, the execution count times the CSV price of the operation the slot
-// names. A site the run never reached has no records and costs nothing, which
-// is what -poseidon-kernels=all over a whole library produces for most kernels.
+// names. A site the run never reached has no records and costs nothing.
 static double profiledSiteCost(Session &S, Function &body) {
   SmallString<128> profilePath(S.Opts.Profiling.ProfileUse);
   llvm::sys::path::append(
@@ -427,8 +414,8 @@ static double profiledSiteCost(Session &S, Function &body) {
     return 0.0;
 
   // The slots are numbered against the canonical form, so the prices have to be
-  // read off it too. Thrown away again: the site's real clone is made by
-  // optimizeSiteBody, under the same name.
+  // read off it too. The clone is erased before the site's own clone is made
+  // under the same name.
   Function *clone = canonicalize(body);
   requireCostModel(S.CostModel, *clone);
   size_t nextSlot = 0;
@@ -467,8 +454,8 @@ bool optimizeAnnotatedSites(Session &Sess, Module &M) {
   }
 
   SmallVector<CallBase *, 4> calls;
-  // Only a target the annotation carried is the site's own; fpOptimize falls
-  // back to -poseidon-tau for the others.
+  // Only a target the annotation carried is the site's own; the others are
+  // solved for -poseidon-tau.
   auto optimize = [&](CallInst *call, Function *body, Function *kernel) {
     SmallVector<Value *, 8> primalArgs(call->args());
     auto it = siteTau.find(kernel);
@@ -532,9 +519,6 @@ bool optimizeAnnotatedSites(Session &Sess, Module &M) {
 bool prepareModule(Session &S, Module &M) {
   if (!S.Opts.Profiling.ProfileGenerate)
     return false;
-  // The FP profiler's CUDA registration has to happen from main, not from a
-  // static constructor (see injectHostProfilerInit). No-op on the device module
-  // and in any translation unit without main.
   injectHostProfilerInit(M);
   predeclareInactiveProfilerProbes(M);
 
@@ -587,10 +571,9 @@ bool solveDeferredSites(Session &S, Module &M, FunctionAnalysisManager &FAM) {
   return solveJointly(S, M, FAM);
 }
 
-// The body a site's wrapper ended up inlining carries the function's debug
-// info: the subprogram most of its code is in goes back to the wrapper once
-// nothing else holds it, and the return outlineHostFunction located in the
-// source body follows it there.
+// Gives each host wrapper without a subprogram the one most of its inlined
+// code is in, when no other function holds it, and moves the wrapper's own
+// locations into that subprogram.
 static void restoreHostWrapperDebugInfo(Module &M, bool profileGenerate) {
   for (Function &F : M) {
     if (!F.hasFnAttribute(kHostWrapper))

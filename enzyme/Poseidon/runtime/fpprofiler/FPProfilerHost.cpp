@@ -1,12 +1,11 @@
 // Profile generation of POSEIDON_OPTIMIZE functions on the host.
 //
 // A host site's reverse pass takes one shadow per pointer argument, sized to
-// the allocation the argument points into, exactly as a profiled kernel launch
-// (__poseidon_launch_profiled). The device has cuMemGetAddressRange for that;
-// the host does not, so this runtime keeps the extents itself: every heap
-// allocation of the process (malloc and its family are replaced here, which
-// also covers operator new and every library), the globals and the stack
-// objects the instrumented translation units register.
+// the allocation the argument points into, as a profiled kernel launch does.
+// The host has no cuMemGetAddressRange, so this runtime keeps the extents
+// itself: every heap allocation of the process (malloc and its family are
+// replaced here), and the globals and stack objects the instrumented
+// translation units register.
 
 #include <atomic>
 #include <cerrno>
@@ -223,7 +222,7 @@ template <typename T> void fill(void *p, size_t bytes) {
     e[i] = T(1);
 }
 
-// The seed rule of the kernel path: one on the site's outputs.
+// The seed is one on the site's outputs, as for a kernel.
 void seed(void *p, size_t bytes, int width) {
   if (width == 8)
     fill<double>(p, bytes);

@@ -7,10 +7,8 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// Every price Poseidon uses comes from one CSV measured on the target device,
-// loaded once per compilation. The queries here are the only way to ask what
-// an operation costs, and the cost walks below turn them into the per-candidate
-// numbers the DP compares.
+// Prices from the cost-model CSV measured on the target device, and the cost
+// walks over IR built on them.
 //
 //===----------------------------------------------------------------------===//
 
@@ -39,10 +37,8 @@
 
 namespace poseidon {
 
-// Poseidon prices every candidate from the measured CSV; a site cannot be
-// optimized without one, and a CSV measured on another device is not a price
-// for this one. Stops the compile with an error at `F` unless the model is
-// present and its native_arch header names this function's target-cpu.
+// Stops the compile with an error at `F` unless the cost model is present and
+// its native_arch header names this function's target-cpu.
 void requireCostModel(CostModelState &CM, const llvm::Function &F);
 
 // The row that prices `I`; a model without that row is an error at `I`, and an
@@ -79,8 +75,8 @@ double getCompCost(CostModelState &CM, llvm::Function *F,
                    InstWeight Weight = nullptr);
 
 // With `opExec`, each priced instruction is weighted by its measured
-// execution count over `normalizer` (Subgraph::opExec); an instruction with no
-// count, or no map, weighs 1.
+// execution count over `normalizer`; an instruction with no count, or no map,
+// weighs 1.
 double getCompCost(
     CostModelState &CM, const llvm::SmallVector<llvm::Value *> &outputs,
     const llvm::SetVector<llvm::Value *> &inputs,

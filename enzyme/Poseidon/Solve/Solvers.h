@@ -1,4 +1,4 @@
-//=- Solvers.h - Solver utilities for Poseidon ----------------------------=//
+//=- Solvers.h - the DP over a solve's units --------------------------------=//
 //
 // Part of the Poseidon Project, under the Apache License v2.0 with LLVM
 // Exceptions.
@@ -7,8 +7,8 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file declares solver-related utilities for the Poseidon optimization
-// pass.
+// The DP over the units of one site or of several sites, and the selection
+// of a frontier point by budget or accuracy target.
 //
 //===----------------------------------------------------------------------===//
 
@@ -59,11 +59,6 @@ struct SolveRecord {
   std::optional<int64_t> selected;
 };
 
-// `accScale` is what a site tolerance is measured against: the site's total
-// profiled sensitivity, times whatever factor the accuracy costs were already
-// put on the application's scale by. Dividing an absolute accuracy cost by it
-// gives the per-operation relative rounding level that would produce the same
-// effect on the site's outputs, which is the unit `errorTol` is in.
 struct FunctionFPState;
 struct SiteTable;
 
@@ -71,7 +66,10 @@ double baselineAccCost(llvm::ArrayRef<RewriteUnit> COs,
                        llvm::ArrayRef<PrecisionUnit> CSs,
                        unsigned *unpricedOut = nullptr);
 
-// Solves `units`, units of the site `st`, in one DP.
+// Solves `units`, units of the site `st`, in one DP. `accScale` is what
+// `errorTol` is measured against: the site's total profiled sensitivity times
+// the factor that put the accuracy costs on the application's scale, so that
+// an accuracy cost divided by it is a per-operation relative rounding level.
 llvm::SmallVector<SolutionStep>
 accuracyDPSolver(Session &S, llvm::Function &F, FunctionFPState &st,
                  llvm::ArrayRef<SiteUnit *> units, double errorTol = 0.0,

@@ -33,8 +33,8 @@ namespace poseidon {
 // rewrite candidates by. It is part of the cache key: a rewrite Herbie
 // proposed against another device's costs is that device's answer.
 struct HerbiePlatform {
-  // Identity, and the cache-entry component. "cuda-sm120", "cuda-sm90",
-  // "hip-gfx942", "default" (Herbie's own platform, for a host cost model).
+  // The platform's name, part of the cache file name; "default" is Herbie's
+  // own platform, for a host cost model.
   std::string Name;
   // The .rkt handed to `--platform`; empty means pass Name instead.
   std::string Path;
@@ -43,7 +43,7 @@ struct HerbiePlatform {
   std::string Digest;
 };
 
-// How to run Herbie. The plugin fills it from its -poseidon-herbie-* flags.
+// How to run Herbie.
 struct HerbieRunOptions {
   std::string Program;
   HerbiePlatform Platform;
