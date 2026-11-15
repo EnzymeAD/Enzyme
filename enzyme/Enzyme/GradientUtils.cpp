@@ -3511,7 +3511,7 @@ BasicBlock *GradientUtils::prepRematerializedLoopEntry(LoopContext &lc) {
       // IV's of inner loop phi's
 
       for (auto &I : *B) {
-        // Only handle store, memset, and julia.write_barrier
+        // Only handle store, memset, and Julia write barriers
         if (loopRematerializations.count(&I)) {
           if (auto SI = dyn_cast<StoreInst>(&I)) {
             auto ts = NB.CreateStore(

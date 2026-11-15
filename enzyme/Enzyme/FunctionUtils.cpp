@@ -2737,7 +2737,7 @@ bool ReadOnlyOrThrowDetector::mayReachReturn(Value *Obj, bool Deep,
             isDebugFunction(CB->getCalledFunction()) ||
             isDeallocationCall(CB, TLI))
           continue;
-        if (getFuncNameFromCall(CB) == "julia.write_barrier")
+        if (isJuliaWriteBarrier(getFuncNameFromCall(CB)))
           continue;
         if (!mayHandBackPointer(CB))
           continue;
@@ -2841,7 +2841,7 @@ bool ReadOnlyOrThrowDetector::freshFieldMayReachReturn(Value *Base,
             isDeallocationCall(CB, TLI))
           continue;
         auto name = getFuncNameFromCall(CB);
-        if (name == "julia.write_barrier")
+        if (isJuliaWriteBarrier(name))
           continue;
         // julia.gc_loaded(obj, ptr) returns ptr, keeping obj alive: passing
         // Base as the object hands back nothing loaded from it (a load of the
