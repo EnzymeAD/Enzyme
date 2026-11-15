@@ -295,15 +295,20 @@ inline bool is_value_needed_in_reverse(
     }
 
     // Anything we may try to rematerialize requires its store operands for
-    // the reverse pass.
+    // the reverse pass. That includes the address a store writes to: an
+    // index into the allocation (e.g. a value loaded from memory) must be
+    // available to replay the store.
     if (!OneLevel) {
       bool isStored = false;
       if (auto SI = dyn_cast<StoreInst>(user))
-        isStored = inst == SI->getValueOperand();
+        isStored =
+            inst == SI->getValueOperand() || inst == SI->getPointerOperand();
       else if (auto MTI = dyn_cast<MemTransferInst>(user)) {
-        isStored = inst == MTI->getSource() || inst == MTI->getLength();
+        isStored = inst == MTI->getSource() || inst == MTI->getLength() ||
+                   inst == MTI->getDest();
       } else if (auto MS = dyn_cast<MemSetInst>(user)) {
-        isStored = inst == MS->getLength() || inst == MS->getValue();
+        isStored = inst == MS->getLength() || inst == MS->getValue() ||
+                   inst == MS->getDest();
       } else if (auto CB = dyn_cast<CallBase>(user)) {
         auto name = getFuncNameFromCall(CB);
         if (name == "julia.write_barrier" ||
