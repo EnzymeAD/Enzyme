@@ -7,6 +7,7 @@
 
 module m
   implicit none
+  private
   real :: v
   ! CHECK: [[@LINE+1]]:{{.*}}error: 'nosuch' is not declared
   !dir$ enzyme custom_rule(f, forward=nosuch)
@@ -14,7 +15,7 @@ module m
   !dir$ enzyme custom_rule(f, forward=v)
 contains
   subroutine f()
-  end subroutine
+  end subroutine f
   subroutine g()
-  end subroutine
-end module
+  end subroutine g
+end module m

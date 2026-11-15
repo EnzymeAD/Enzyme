@@ -7,6 +7,7 @@
 
 module m
   implicit none
+  private
   real :: v
   ! CHECK: [[@LINE+1]]:{{.*}}error: 'backward' is not an argument of 'custom_rule'
   !dir$ enzyme custom_rule(f, backward=g)
@@ -18,7 +19,7 @@ module m
   !dir$ enzyme custom_rule(f, augmented=g)
 contains
   subroutine f()
-  end subroutine
+  end subroutine f
   subroutine g()
-  end subroutine
-end module
+  end subroutine g
+end module m

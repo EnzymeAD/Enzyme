@@ -30,41 +30,42 @@ contains
     real, intent(in) :: x
     real, intent(out) :: y
     y = 2.0 * x
-  end subroutine
+  end subroutine double_value
   subroutine augment_double_value(x, dx, y, dy)
     real, intent(in) :: x, dx
     real, intent(out) :: y
     real, intent(inout) :: dy
     call double_value(x, y)
-  end subroutine
+  end subroutine augment_double_value
   subroutine reverse_double_value(x, dx, y, dy)
     real, intent(in) :: x, y
     real, intent(inout) :: dx, dy
     dx = dx + dy / (1.0 + x)
     dy = 0.0
-  end subroutine
-end module
+  end subroutine reverse_double_value
+end module private_rules
 #else
 module user
   use private_rules, only: double_value
   implicit none
+  public
 contains
   real function wrapper(x)
     real, intent(in) :: x
     call double_value(x, wrapper)
-  end function
-end module
+  end function wrapper
+end module user
 
 program main
   use enzyme, only: enzyme_autodiff
-  use user
+  use user, only: wrapper
   implicit none
   real :: x, dx
   x = 2.0
   dx = 0.0
   call enzyme_autodiff(wrapper, x, dx)
-  print '(F6.4)', dx
-end program
+  print "(F6.4)", dx
+end program main
 #endif
 
 ! CHECK: 0.3333
