@@ -23,8 +23,6 @@
 MLIR_DEFINE_CAPI_DIALECT_REGISTRATION(Enzyme, enzyme,
                                       mlir::enzyme::EnzymeDialect)
 
-void enzymeRegisterPasses(void) { mlir::enzyme::registerenzymePasses(); }
-
 namespace mlir::enzyme {
 // The generated C API expects the group registration to be named after its
 // `--prefix`, but `-gen-pass-decls -name enzyme` names it registerenzymePasses.
@@ -41,32 +39,12 @@ void enzymeRegisterDialectExtensions(MlirDialectRegistry registry) {
   mlir::enzyme::registerCoreDialectAutodiffInterfaces(*unwrap(registry));
 }
 
-MlirPass enzymeCreateDifferentiatePass(void) {
-  return wrap(mlir::enzyme::createDifferentiatePass().release());
-}
-
 MlirPass enzymeCreateDifferentiatePassWithOptions(MlirStringRef postpasses,
                                                   bool verifyPostPasses) {
   mlir::enzyme::DifferentiatePassOptions opts;
   opts.postpasses = std::string(postpasses.data, postpasses.length);
   opts.verifyPostPasses = verifyPostPasses;
   return wrap(mlir::enzyme::createDifferentiatePass(opts).release());
-}
-
-MlirPass enzymeCreateConvertEnzymeToMemRefPass(void) {
-  return wrap(mlir::enzyme::createEnzymeOpsToMemRefPass().release());
-}
-
-MlirPass enzymeCreateBatchPass(void) {
-  return wrap(mlir::enzyme::createBatchPass().release());
-}
-
-MlirPass enzymeCreateBatchDiffPass(void) {
-  return wrap(mlir::enzyme::createBatchDiffPass().release());
-}
-
-MlirPass enzymeCreateRemoveUnusedEnzymeOpsPass(void) {
-  return wrap(mlir::enzyme::createRemoveUnusedEnzymeOpsPass().release());
 }
 
 MlirAttribute enzymeActivityAttrGet(MlirContext ctx, uint32_t activity) {
