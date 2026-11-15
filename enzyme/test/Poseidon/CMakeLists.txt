@@ -75,7 +75,8 @@ add_custom_target(poseidon-test-cost-models DEPENDS ${_outputs})
 # Poseidon plugin's functions, which they find in the opt process that loaded
 # both. What they print is checked against what clang computes from them by
 # default, so assertions stay on in every build type and floating-point
-# contraction is clang's default with any compiler.
+# contraction is clang's default with any compiler. They are built for the
+# tests only (poseidon-test-programs), not with the compiler.
 set(POSEIDON_TEST_PROGRAM_OPTIONS -UNDEBUG)
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
   list(APPEND POSEIDON_TEST_PROGRAM_OPTIONS -ffp-contract=on)
@@ -83,21 +84,27 @@ endif()
 set(POSEIDON_TEST_PROGRAM_DIR ${CMAKE_CURRENT_BINARY_DIR}/bin)
 llvm_map_components_to_libnames(POSEIDON_TEST_PROGRAM_LLVM_LIBS support)
 
+# The pass headers include mpfr.h, from where the pass itself takes it.
+function(poseidon_configure_test_program name)
+  target_include_directories(${name} PRIVATE ${POSEIDON_SOURCE_DIR})
+  target_include_directories(${name} SYSTEM PRIVATE ${MPFR_INCLUDE_DIR})
+  target_compile_options(${name} PRIVATE ${POSEIDON_TEST_PROGRAM_OPTIONS})
+  set_target_properties(
+    ${name}
+    PROPERTIES EXCLUDE_FROM_ALL ON
+               RUNTIME_OUTPUT_DIRECTORY ${POSEIDON_TEST_PROGRAM_DIR}
+               LIBRARY_OUTPUT_DIRECTORY ${POSEIDON_TEST_PROGRAM_DIR})
+endfunction()
+
 function(poseidon_add_test_program name)
   add_executable(${name} ${ARGN})
-  target_include_directories(${name} PRIVATE ${POSEIDON_SOURCE_DIR})
-  target_compile_options(${name} PRIVATE ${POSEIDON_TEST_PROGRAM_OPTIONS})
+  poseidon_configure_test_program(${name})
   target_link_libraries(${name} PRIVATE ${POSEIDON_TEST_PROGRAM_LLVM_LIBS})
-  set_target_properties(${name} PROPERTIES RUNTIME_OUTPUT_DIRECTORY
-                                           ${POSEIDON_TEST_PROGRAM_DIR})
 endfunction()
 
 function(poseidon_add_test_plugin name source)
   add_llvm_library(${name} MODULE BUILDTREE_ONLY ${source} PLUGIN_TOOL opt)
-  target_include_directories(${name} PRIVATE ${POSEIDON_SOURCE_DIR})
-  target_compile_options(${name} PRIVATE ${POSEIDON_TEST_PROGRAM_OPTIONS})
-  set_target_properties(${name} PROPERTIES LIBRARY_OUTPUT_DIRECTORY
-                                           ${POSEIDON_TEST_PROGRAM_DIR})
+  poseidon_configure_test_program(${name})
 endfunction()
 
 poseidon_add_test_program(
@@ -122,6 +129,7 @@ set(POSEIDON_TEST_PROGRAMS
     poseidon-test-profile-name-stem
     poseidon-test-apply-expansion
     poseidon-test-expansion-match)
+add_custom_target(poseidon-test-programs DEPENDS ${POSEIDON_TEST_PROGRAMS})
 
 # The Enzyme plugin comes in two builds: ClangEnzyme for -fpass-plugin and
 # LLVMEnzyme for opt's -load-pass-plugin.
@@ -195,7 +203,7 @@ set(POSEIDON_TEST_DEPS
     poseidon-calibrate
     poseidon-probe
     poseidon-test-cost-models
-    ${POSEIDON_TEST_PROGRAMS}
+    poseidon-test-programs
     LLVMEnzyme-${LLVM_VERSION_MAJOR})
 if(TARGET ClangEnzyme-${LLVM_VERSION_MAJOR})
   list(APPEND POSEIDON_TEST_DEPS ClangEnzyme-${LLVM_VERSION_MAJOR})

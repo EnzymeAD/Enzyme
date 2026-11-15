@@ -60,9 +60,9 @@ jobs:
     - name: Build
       run: |
           cmake --build build
-          # The tests price from cost models that check-poseidon generates;
-          # lit run directly below does not.
-          cmake --build build --target poseidon-test-cost-models
+          # The tests price from cost models and run programs that
+          # check-poseidon builds; lit run directly below does not.
+          cmake --build build --target poseidon-test-cost-models poseidon-test-programs
 
     - name: lit features
       working-directory: build
