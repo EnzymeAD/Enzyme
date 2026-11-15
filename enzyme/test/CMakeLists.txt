@@ -3,6 +3,13 @@ if(ENZYME_FLANG)
 else()
   set(ENZYME_FLANG_ENABLED 0)
 endif()
+# FlangEnzymeMLIR claims the !DIR$ ENZYME directives if flang has plugin
+# directives (enzyme/Enzyme/MLIR/Implementations/CMakeLists.txt).
+if(ENZYME_FLANG_PLUGIN_DIRECTIVES)
+  set(ENZYME_FLANG_PLUGIN_DIRECTIVES_ENABLED 1)
+else()
+  set(ENZYME_FLANG_PLUGIN_DIRECTIVES_ENABLED 0)
+endif()
 
 # Locate an MPI implementation for the Fortran MPI regression tests
 # (enzyme/test/Fortran/mpi); the tests are marked unsupported if none is

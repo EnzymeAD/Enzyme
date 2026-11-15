@@ -218,6 +218,19 @@ if (int(config.llvm_ver) >= 24 and os.path.exists(flang)
         and os.path.exists(flang_enzyme_plugin)):
     config.available_features.add('flang_enzyme_mlir')
 
+# With a flang that has plugin directives, FlangEnzymeMLIR also claims the
+# !DIR$ ENZYME directives (enzyme/test/Fortran/Directives). %flangDirectives
+# loads it into the flang driver, %flangFc1Directives into `flang -fc1`
+# (not %fc...: lit substitutes %fc first, as a prefix). FlangEnzyme's loader
+# brings it in too, so %loadFlangEnzyme alone is enough where it is used.
+config.substitutions.append(('%flangDirectives',
+                             ' -Xflang -load -Xflang ' + flang_enzyme_plugin))
+config.substitutions.append(('%flangFc1Directives', ' -load ' + flang_enzyme_plugin))
+if ("@ENZYME_FLANG_PLUGIN_DIRECTIVES_ENABLED@" == "1"
+        and 'flang_enzyme_mlir' in config.available_features
+        and os.path.basename(config.fc).startswith("flang")):
+    config.available_features.add('flang_directives')
+
 # Let the main config do the real work.
 cfgfile = "@ENZYME_SOURCE_DIR@/test/lit.cfg.py"
 if len("@ENZYME_SOURCE_DIR@") == 0:
