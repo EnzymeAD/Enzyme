@@ -1,5 +1,17 @@
+//=- MatmulPricing.cpp - matmul candidate pricing -------------------------=//
+//
+// Part of the Poseidon Project, under the Apache License v2.0 with LLVM
+// Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+//
 // Matmul candidate pricing: option labels, measured in-kernel rows, the
 // WMMA target table and shared-memory capacity.
+//
+//===----------------------------------------------------------------------===//
+
 #include "IR/Utils.h"
 #include "InKernelRaise.h"
 #include "MatmulInternal.h"
@@ -19,6 +31,7 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
+#include <optional>
 #include <set>
 #include <string>
 
@@ -95,30 +108,26 @@ std::string inKernelCostClass(const SchemeVariant &v) {
 static double lookupInKernelRel(CostModelState &CM, const std::string &cls,
                                 unsigned tileM, unsigned tileN,
                                 unsigned tileK) {
-  double q =
-      queryCostModelOr(CM, "wmma_inkernel_rel",
-                       cls + "_" + mmaShapeSuffix(tileM, tileN, tileK), -1.0);
+  double q = lookupCost(CM, "wmma_inkernel_rel",
+                        cls + "_" + mmaShapeSuffix(tileM, tileN, tileK))
+                 .value_or(-1.0);
   if (q > 0.0)
     return q;
-  return queryCostModelOr(CM, "wmma_inkernel_rel", cls, -1.0);
+  return lookupCost(CM, "wmma_inkernel_rel", cls).value_or(-1.0);
 }
 
-// Price one in-kernel raise from its measured wmma_inkernel_rel row into
-// `costOut`, or return false to refuse it. A price composed from per-MMA rows
-// would omit the cooperative fill, the shared-memory staging and the
-// accumulator traffic, so a missing row is never replaced by one.
-bool priceInKernelRaiseFromMeasuredRow(Session &S, const AbstractMatmul &m,
-                                       const std::string &cls, unsigned tileM,
-                                       unsigned tileN, unsigned tileK,
-                                       double baselinePerMac,
-                                       const std::string &what,
-                                       double &costOut) {
+// Price one in-kernel raise from its measured wmma_inkernel_rel row, or return
+// none to refuse it. A price composed from per-MMA rows would omit the
+// cooperative fill, the shared-memory staging and the accumulator traffic, so
+// a missing row is never replaced by one.
+std::optional<double> priceInKernelRaiseFromMeasuredRow(
+    Session &S, const AbstractMatmul &m, const std::string &cls, unsigned tileM,
+    unsigned tileN, unsigned tileK, double baselinePerMac,
+    const std::string &what) {
   const Options &O = S.Opts;
   double rel = lookupInKernelRel(S.CostModel, cls, tileM, tileN, tileK);
-  if (rel > 0.0) {
-    costOut = baselinePerMac * rel;
-    return true;
-  }
+  if (rel > 0.0)
+    return baselinePerMac * rel;
 
   const std::string key = cls + "_" + mmaShapeSuffix(tileM, tileN, tileK);
   if (O.Matmul.InKernelCalibration) {
@@ -128,13 +137,12 @@ bool priceInKernelRaiseFromMeasuredRow(Session &S, const AbstractMatmul &m,
                       "-poseidon-apply-rewrites. Uncalibrated in-kernel "
                       "classes are proposed at a placeholder price under "
                       "that flag, and a DP solve must never see one.");
-    costOut = baselinePerMac;
     llvm::errs() << "[poseidon] CALIBRATION MODE: " << what
                  << " has no measured wmma_inkernel_rel," << key
                  << " row; proposing it at a PLACEHOLDER price (rel=1) so it "
                     "can be materialized and timed. Costs in this build are "
                     "not decisions.\n";
-    return true;
+    return baselinePerMac;
   }
 
   if (S.Matmul.ReportedInKernelRows.insert(key).second) {
@@ -158,7 +166,7 @@ bool priceInKernelRaiseFromMeasuredRow(Session &S, const AbstractMatmul &m,
                                      "in " +
                                      Twine(costModelPath(S.CostModel)) +
                                      "; measure it with poseidon-calibrate.");
-  return false;
+  return std::nullopt;
 }
 
 static constexpr WmmaTarget kExpectedWmmaTargets[] = {

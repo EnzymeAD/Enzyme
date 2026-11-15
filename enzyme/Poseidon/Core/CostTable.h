@@ -77,10 +77,6 @@ uint64_t getCostModelFingerprint(CostModelState &CM);
 // The (opcode,type) row, if the model has it.
 std::optional<double> lookupCost(CostModelState &CM, llvm::StringRef OpcodeName,
                                  llvm::StringRef TypeName);
-// The (opcode,type) row, or `fallback` when the model has none: for the rows a
-// candidate is proposed only with (such as "ozaki_dispatch_rel").
-double queryCostModelOr(CostModelState &CM, const std::string &OpcodeName,
-                        const std::string &TypeName, double fallback);
 
 } // namespace poseidon
 #endif // POSEIDON_CORE_COST_TABLE_H

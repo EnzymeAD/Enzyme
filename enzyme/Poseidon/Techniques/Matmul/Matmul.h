@@ -1,3 +1,12 @@
+//=- Matmul.h - matrix products and their candidates ----------------------=//
+//
+// Part of the Poseidon Project, under the Apache License v2.0 with LLVM
+// Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+
 #ifndef POSEIDON_MATMUL_H
 #define POSEIDON_MATMUL_H
 
@@ -53,21 +62,11 @@ struct GradCellStat {
 
 struct MatmulProfile {
   unsigned M = 0, N = 0, K = 0;
-  FPKind aType = FPKind::Invalid;
-  FPKind bType = FPKind::Invalid;
-  FPKind cType = FPKind::Invalid;
-  FPKind dType = FPKind::Invalid;
 
   std::vector<CellStat> a;         // size M*K
   std::vector<CellStat> b;         // size K*N
-  std::vector<CellStat> c;         // size M*N
-  std::vector<CellStat> d;         // size M*N
   std::vector<GradCellStat> gradD; // size M*N
 
-  uint64_t aInfNanCount = 0;
-  uint64_t bInfNanCount = 0;
-  uint64_t cInfNanCount = 0;
-  uint64_t dInfNanCount = 0;
   uint64_t totalCalls = 0;
 };
 
@@ -79,12 +78,27 @@ enum class TidAxis : uint8_t {
   Other,
 };
 
+// The index (0, 1, 2) of a thread axis; none for Unknown and Other.
+inline std::optional<unsigned> tidAxisIndex(TidAxis a) {
+  switch (a) {
+  case TidAxis::TidX:
+    return 0u;
+  case TidAxis::TidY:
+    return 1u;
+  case TidAxis::TidZ:
+    return 2u;
+  case TidAxis::Unknown:
+  case TidAxis::Other:
+    break;
+  }
+  return std::nullopt;
+}
+
 struct ScalarLoopHandle {
   // Copied out of the LoopInfo of the recognition, which does not outlive it.
   llvm::BasicBlock *preheader = nullptr;
   llvm::BasicBlock *exitBB = nullptr;
   llvm::SmallPtrSet<llvm::BasicBlock *, 4> blocks;
-  llvm::PHINode *accPhi = nullptr;
   llvm::Instruction *fma = nullptr;
   llvm::Instruction *fmul = nullptr;
   llvm::LoadInst *aLoad = nullptr;
@@ -159,14 +173,11 @@ struct RuntimeGemmHandle {
   llvm::SmallVector<llvm::Instruction *, 8> fmas;
   llvm::SmallVector<llvm::Instruction *, 8> fmuls;
   llvm::SmallVector<llvm::LoadInst *, 8> aLoads;
-  llvm::SmallVector<llvm::LoadInst *, 8> bLoads;
 
-  // Epilogue: `C[..] (+)= acc`. cLoad/epilogue are null for a beta=0 store.
+  // Epilogue: `C[..] (+)= acc`, null for a beta=0 store.
   llvm::Instruction *epilogue = nullptr;
-  llvm::LoadInst *cLoad = nullptr;
   llvm::StoreInst *cStore = nullptr;
 
-  llvm::Value *aBase = nullptr, *bBase = nullptr, *cBase = nullptr;
   LaunchRef aRef, bRef, cRef;
 
   RuntimeDim M, Ncols, K, lda, ldb, ldc;
@@ -208,11 +219,6 @@ struct AbstractMatmul {
   FPKind aType = FPKind::Invalid, bType = FPKind::Invalid;
   FPKind accType = FPKind::Invalid;
   FPKind dType = FPKind::Invalid;
-
-  enum class Layout { Invalid, RowMajor, ColMajor };
-  Layout aLayout = Layout::Invalid;
-  Layout bLayout = Layout::Invalid;
-  Layout dLayout = Layout::Invalid;
 
   enum class Origin {
     Invalid,

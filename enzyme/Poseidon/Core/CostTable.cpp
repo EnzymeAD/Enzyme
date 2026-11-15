@@ -239,9 +239,4 @@ std::optional<double> lookupCost(CostModelState &CM, StringRef OpcodeName,
   return It->second;
 }
 
-double queryCostModelOr(CostModelState &CM, const std::string &OpcodeName,
-                        const std::string &PrecisionName, double fallback) {
-  return lookupCost(CM, OpcodeName, PrecisionName).value_or(fallback);
-}
-
 } // namespace poseidon

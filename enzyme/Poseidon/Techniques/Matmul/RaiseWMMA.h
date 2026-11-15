@@ -10,10 +10,10 @@
 #ifndef POSEIDON_RAISE_WMMA_H
 #define POSEIDON_RAISE_WMMA_H
 
-#include "llvm/ADT/SmallVector.h"
-
 #include "Matmul.h"
 #include "Profile/ProfileRead.h"
+
+#include "llvm/ADT/SmallVector.h"
 
 namespace llvm {
 class Function;

@@ -1,5 +1,17 @@
+//=- MatmulCandidates.cpp - matmul candidate proposal ---------------------=//
+//
+// Part of the Poseidon Project, under the Apache License v2.0 with LLVM
+// Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+//
 // Matmul candidate proposal: one proposer per (scheme, realization), run in a
 // fixed order by generateMatmulCandidates.
+//
+//===----------------------------------------------------------------------===//
+
 #include "HostDispatch.h"
 #include "IR/Utils.h"
 #include "MatmulInternal.h"
@@ -80,11 +92,10 @@ static MatmulAccuracyQuery accuracyQuery(const AbstractMatmul &m,
 
 static bool wmmaTileAvailable(Session &S, unsigned M, unsigned N, unsigned K,
                               FPKind operand, FPKind accumulator) {
-  for (const WmmaTarget &wt : getAvailableWmmaTargets(S))
-    if (wt.M == M && wt.N == N && wt.K == K && wt.inputPrec == operand &&
-        wt.accPrec == accumulator)
-      return true;
-  return false;
+  return llvm::any_of(getAvailableWmmaTargets(S), [&](const WmmaTarget &wt) {
+    return wt.M == M && wt.N == N && wt.K == K && wt.inputPrec == operand &&
+           wt.accPrec == accumulator;
+  });
 }
 
 //===----------------------------------------------------------------------===//
@@ -149,10 +160,12 @@ static void proposeInKernel(const Product &P, const InKernelSite &K,
   if (!inKernelRaiseFits(P.S.Opts, K.raiseF, m, opt, K.existingShmem, what))
     return;
   // An uncalibrated class is refused, not estimated.
-  if (!priceInKernelRaiseFromMeasuredRow(P.S, m, inKernelCostClass(v), tileM,
-                                         tileN, tileK, P.baselinePerMac, what,
-                                         opt.compCost))
+  std::optional<double> cost =
+      priceInKernelRaiseFromMeasuredRow(P.S, m, inKernelCostClass(v), tileM,
+                                        tileN, tileK, P.baselinePerMac, what);
+  if (!cost)
     return;
+  opt.compCost = *cost;
   cm.candidates.push_back(opt);
 }
 
@@ -237,28 +250,27 @@ struct LibrarySite {
 };
 } // namespace
 
+// S^3 / (M*N*K) for the square side S = max(M, N, K); >= 1.
+static double cubePaddingRatio(double M, double N, double K) {
+  double S = std::max({M, N, K});
+  return (S * S * S) / (M * N * K);
+}
+
 static double squarePaddingRatio(const AbstractMatmul &m) {
   switch (m.origin) {
   case AbstractMatmul::Origin::ScalarLoopReduction: {
     // All three extents are profile-scale: mixing in the deploy-time m.K
     // gives a spurious r^2 waste under surrogate profiling.
     double redK = m.globalK ? (double)m.globalK : (double)m.K;
-    double padWaste = 1.0;
-    if (m.globalM && m.globalN && redK > 0.0) {
-      double S = std::max({(double)m.globalM, (double)m.globalN, redK});
-      double useful = (double)m.globalM * (double)m.globalN * redK;
-      padWaste = (S * S * S) / useful; // padding waste, >= 1
-    }
-    return padWaste;
+    if (m.globalM && m.globalN && redK > 0.0)
+      return cubePaddingRatio(m.globalM, m.globalN, redK);
+    return 1.0;
   }
   case AbstractMatmul::Origin::HostGemmLoopNest: {
-    double padWaste = 1.0;
-    double S =
-        std::max({(double)m.globalM, (double)m.globalN, (double)m.globalK});
     double useful = (double)m.globalM * (double)m.globalN * (double)m.globalK;
     if (useful > 0.0)
-      padWaste = (S * S * S) / useful;
-    return padWaste;
+      return cubePaddingRatio(m.globalM, m.globalN, m.globalK);
+    return 1.0;
   }
   case AbstractMatmul::Origin::Invalid:
     break;
@@ -338,12 +350,13 @@ static void proposeLibraryModular(const Product &P, const LibrarySite &L,
     const std::string rectKey = "nm" + std::to_string(nm) + "_m" +
                                 std::to_string(L.rectM) + "k" +
                                 std::to_string(L.rectK);
-    double relRect = queryCostModelOr(P.S.CostModel, "ozaki_dispatch_rect_rel",
-                                      rectKey, -1.0);
-    double rel = relRect > 0.0
-                     ? relRect
-                     : queryCostModelOr(P.S.CostModel, "ozaki_dispatch_rel",
-                                        "nm" + std::to_string(nm), -1.0);
+    double relRect =
+        lookupCost(P.S.CostModel, "ozaki_dispatch_rect_rel", rectKey)
+            .value_or(-1.0);
+    double rel = relRect > 0.0 ? relRect
+                               : lookupCost(P.S.CostModel, "ozaki_dispatch_rel",
+                                            "nm" + std::to_string(nm))
+                                     .value_or(-1.0);
     if (rel <= 0.0) {
       if (P.S.Opts.Diagnostics.Print)
         llvm::errs()
@@ -406,7 +419,7 @@ static void proposeLibrarySplit(const Product &P, const LibrarySite &L,
     return;
   }
   double rel =
-      queryCostModelOr(P.S.CostModel, "tcec_dispatch_rel", "fp16tcec", -1.0);
+      lookupCost(P.S.CostModel, "tcec_dispatch_rel", "fp16tcec").value_or(-1.0);
   if (rel <= 0.0)
     return;
   opt.compCost = P.baselinePerMac * rel;
@@ -442,7 +455,7 @@ static void proposeLibraryDirect(const Product &P, const LibrarySite &L,
   for (const LibraryDirectVariant &d : kLibraryDirectVariants) {
     const std::string cls = schemeFormats(d.variant, '_');
     double rel =
-        queryCostModelOr(P.S.CostModel, "direct_dispatch_rel", cls, -1.0);
+        lookupCost(P.S.CostModel, "direct_dispatch_rel", cls).value_or(-1.0);
     if (rel <= 0.0) {
       if (P.S.Matmul.ReportedDirectRows.insert(cls).second)
         llvm::errs()
@@ -488,22 +501,21 @@ static void proposeLibraryNative(const Product &P, const LibrarySite &L,
   const std::string key = "dgemm_m" + std::to_string(L.staticM) + "n" +
                           std::to_string(L.staticN) + "k" +
                           std::to_string(L.staticK);
-  double rel = isStatic ? queryCostModelOr(P.S.CostModel,
-                                           "ozaki_dispatch_rect_rel", key, -1.0)
-                        : -1.0;
+  double rel = isStatic
+                   ? lookupCost(P.S.CostModel, "ozaki_dispatch_rect_rel", key)
+                         .value_or(-1.0)
+                   : -1.0;
   if (rel <= 0.0) {
-    rel = queryCostModelOr(P.S.CostModel, "ozaki_dispatch_rel", "dgemm", -1.0);
+    rel =
+        lookupCost(P.S.CostModel, "ozaki_dispatch_rel", "dgemm").value_or(-1.0);
     if (rel <= 0.0)
       reportUserError(anchorOf(m),
                       "the cost model " + Twine(costModelPath(P.S.CostModel)) +
                           " has no 'ozaki_dispatch_rel,dgemm' row for the "
                           "native DGEMM candidate; measure it with "
                           "poseidon-calibrate.");
-    const double side = std::max({L.staticM, L.staticN, L.staticK});
     const double padWaste =
-        isStatic
-            ? side * side * side / ((double)L.staticM * L.staticN * L.staticK)
-            : 1.0;
+        isStatic ? cubePaddingRatio(L.staticM, L.staticN, L.staticK) : 1.0;
     if (padWaste >= 1.05 &&
         P.S.Matmul.WarnedSquareNativeRows.insert((const void *)&m).second)
       llvm::errs() << "[poseidon] WARNING: matmul[" << m.id << "] " << m.M
@@ -542,15 +554,10 @@ void generateMatmulCandidates(Session &S, ArrayRef<AbstractMatmul> matmuls,
     case AbstractMatmul::Origin::HostGemmLoopNest: {
       // Recognition already required every member's count (the profile-scale
       // shape is reconstructed from them), so this can only re-confirm.
-      profiled = true;
-      for (Instruction *f : m.hostGemm->fmas) {
-        size_t idx = readProfIdxMetadata(f);
-        auto it = scalarProfile.find(idx);
-        if (it == scalarProfile.end() || it->second.exec == 0) {
-          profiled = false;
-          break;
-        }
-      }
+      profiled = llvm::all_of(m.hostGemm->fmas, [&](Instruction *f) {
+        auto it = scalarProfile.find(readProfIdxMetadata(f));
+        return it != scalarProfile.end() && it->second.exec != 0;
+      });
       break;
     }
     case AbstractMatmul::Origin::Invalid:

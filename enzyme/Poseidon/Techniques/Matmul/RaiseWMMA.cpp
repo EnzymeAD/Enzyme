@@ -9,16 +9,13 @@
 
 #include "RaiseWMMA.h"
 #include "Core/Options.h"
-
+#include "MatmulInternal.h"
 #include "Model/FPFormat.h"
 #include "Targets/NVPTXTensorCore.h"
 #include "Targets/Target.h"
 #include "WmmaUtils.h"
 
 #include "llvm/ADT/STLFunctionalExtras.h"
-#include "llvm/Support/raw_ostream.h"
-
-#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Analysis/AssumptionCache.h"
 #include "llvm/Analysis/LoopInfo.h"
@@ -44,52 +41,59 @@
 #include "llvm/IR/Value.h"
 #include "llvm/Support/Alignment.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/raw_ostream.h"
 #include "llvm/TargetParser/Triple.h"
 #include "llvm/Transforms/Utils/ScalarEvolutionExpander.h"
 
 #include <map>
+#include <optional>
 #include <string>
 
 using namespace llvm;
 
 namespace poseidon {
 
-static bool matchFMA(Value *V, Instruction *&fma, Instruction *&fmul, Value *&a,
-                     Value *&b, Value *&acc) {
+std::optional<FMAMatch> matchFMA(Value *V) {
   auto *I = dyn_cast<Instruction>(V);
   if (!I)
-    return false;
+    return std::nullopt;
   if (auto *II = dyn_cast<IntrinsicInst>(I)) {
     Intrinsic::ID id = II->getIntrinsicID();
-    if (id == Intrinsic::fma || id == Intrinsic::fmuladd) {
-      fma = II;
-      fmul = nullptr;
-      a = II->getArgOperand(0);
-      b = II->getArgOperand(1);
-      acc = II->getArgOperand(2);
-      return true;
-    }
+    if (id == Intrinsic::fma || id == Intrinsic::fmuladd)
+      return FMAMatch{II, nullptr, II->getArgOperand(0), II->getArgOperand(1),
+                      II->getArgOperand(2)};
   }
   auto *fadd = dyn_cast<BinaryOperator>(I);
   if (!fadd || fadd->getOpcode() != Instruction::FAdd)
-    return false;
+    return std::nullopt;
   if (!fadd->getFastMathFlags().allowContract())
-    return false;
+    return std::nullopt;
   for (unsigned side = 0; side < 2; ++side) {
     auto *fmulI = dyn_cast<BinaryOperator>(fadd->getOperand(side));
-    Value *otherSide = fadd->getOperand(1 - side);
     if (!fmulI || fmulI->getOpcode() != Instruction::FMul)
       continue;
     if (!fmulI->getFastMathFlags().allowContract())
       continue;
-    fma = fadd;
-    fmul = fmulI;
-    a = fmulI->getOperand(0);
-    b = fmulI->getOperand(1);
-    acc = otherSide;
-    return true;
+    return FMAMatch{fadd, fmulI, fmulI->getOperand(0), fmulI->getOperand(1),
+                    fadd->getOperand(1 - side)};
   }
-  return false;
+  return std::nullopt;
+}
+
+// Whether every user of `v` inside `L` is `expected`.
+static bool hasOnlyInLoopUser(const Loop *L, Value *v, Instruction *expected) {
+  for (User *U : v->users()) {
+    auto *uI = dyn_cast<Instruction>(U);
+    if (!uI || !L->contains(uI))
+      continue;
+    if (uI != expected)
+      return false;
+  }
+  return true;
+}
+
+bool isClosedFmaPhiCycle(const Loop *L, Instruction *fma, PHINode *phi) {
+  return hasOnlyInLoopUser(L, fma, phi) && hasOnlyInLoopUser(L, phi, fma);
 }
 
 static int64_t outerGEPElementSize(const DataLayout &DL, Value *ptr) {
@@ -240,36 +244,18 @@ static bool tryAnalyzeReductionPhi(Loop *L, PHINode &phi, ScalarEvolution &SE,
   Value *backedgeVal = phi.getIncomingValueForBlock(latch);
   if (!backedgeVal)
     return false;
-  Instruction *fma = nullptr;
-  Instruction *fmul = nullptr;
-  Value *aOp = nullptr, *bOp = nullptr, *accOp = nullptr;
-  if (!matchFMA(backedgeVal, fma, fmul, aOp, bOp, accOp))
-    return false;
-  if (accOp != &phi)
+  std::optional<FMAMatch> fm = matchFMA(backedgeVal);
+  if (!fm || fm->acc != &phi)
     return false;
 
-  // The fma/phi pair must form a closed in-loop cycle (each one's only in-loop
-  // user is the other); otherwise the per-iteration intermediate is live and
-  // the chain can't collapse to a single wmma tile.
-  auto hasOnlyInLoopUser = [&](Value *v, Instruction *expected) -> bool {
-    for (User *U : v->users()) {
-      auto *uI = dyn_cast<Instruction>(U);
-      if (!uI)
-        continue;
-      if (!L->contains(uI))
-        continue;
-      if (uI != expected)
-        return false;
-    }
-    return true;
-  };
-  if (!hasOnlyInLoopUser(fma, &phi))
-    return false;
-  if (!hasOnlyInLoopUser(&phi, fma))
+  // The fma/phi pair must form a closed in-loop cycle; otherwise the
+  // per-iteration intermediate is live and the chain can't collapse to a
+  // single wmma tile.
+  if (!isClosedFmaPhiCycle(L, fm->fma, &phi))
     return false;
 
-  LoadInst *aLoad = dyn_cast<LoadInst>(aOp);
-  LoadInst *bLoad = dyn_cast<LoadInst>(bOp);
+  LoadInst *aLoad = dyn_cast<LoadInst>(fm->a);
+  LoadInst *bLoad = dyn_cast<LoadInst>(fm->b);
   if (!aLoad || !bLoad)
     return false;
 
@@ -353,9 +339,8 @@ static bool tryAnalyzeReductionPhi(Loop *L, PHINode &phi, ScalarEvolution &SE,
   outHandle.blocks.clear();
   for (BasicBlock *BB : L->blocks())
     outHandle.blocks.insert(BB);
-  outHandle.accPhi = &phi;
-  outHandle.fma = fma;
-  outHandle.fmul = fmul;
+  outHandle.fma = fm->fma;
+  outHandle.fmul = fm->fmul;
   outHandle.aLoad = aLoad;
   outHandle.bLoad = bLoad;
   outHandle.aBase = gepRootBase(aLoad->getPointerOperand());
@@ -381,16 +366,9 @@ static bool tryAnalyzeReductionPhi(Loop *L, PHINode &phi, ScalarEvolution &SE,
 }
 
 static unsigned dimForAxis(const uint32_t (&dims)[3], TidAxis axis) {
-  switch (axis) {
-  case TidAxis::TidX:
-    return dims[0];
-  case TidAxis::TidY:
-    return dims[1];
-  case TidAxis::TidZ:
-    return dims[2];
-  default:
-    return 0;
-  }
+  if (std::optional<unsigned> i = tidAxisIndex(axis))
+    return dims[*i];
+  return 0;
 }
 
 // Extent of a (possibly fused) matrix index: dim[fast], or dim[fast]*dim[slow]
@@ -662,12 +640,7 @@ void ScalarLoopRaiseMaterializer::run() {
   const unsigned mPad = t.mChain * t.tileM;
   const unsigned nPad = t.nChain * t.tileN;
   // A and B always route through scratch, which also handles a K-strided B;
-  // for F64/F64 the fill is an identity copy.
-  const bool useScratchA = true;
-  const bool useScratchB = true;
-  // When B goes through scratch we always lay it out row-major; otherwise the
-  // wmma's B-load layout follows the source.
-  const bool wmmaBRowMajor = useScratchB ? true : bRowMajor;
+  // for F64/F64 the fill is an identity copy. B is laid out row-major there.
 
   const std::string inputPrecStr = fpKindName(t.variant.operand);
   const std::string accPrecStr = fpKindName(t.variant.accumulator);
@@ -682,8 +655,9 @@ void ScalarLoopRaiseMaterializer::run() {
         "ScalarLoopRaiseMaterializer: unsupported input precision");
   }
 
-  const nvptx::Wmma wmma = nvptx::declareWmma(
-      mod, t.tileM, t.tileN, t.tileK, inputPrecStr, accPrecStr, wmmaBRowMajor);
+  const nvptx::Wmma wmma = nvptx::declareWmma(mod, t.tileM, t.tileN, t.tileK,
+                                              inputPrecStr, accPrecStr,
+                                              /*bRowMajor=*/true);
   Function *loadAFn = wmma.LoadA;
   Function *loadBFn = wmma.LoadB;
   Function *mmaFn = wmma.Mma;
@@ -727,29 +701,23 @@ void ScalarLoopRaiseMaterializer::run() {
                                tgtAccTy, (uint64_t)mPad * nPad);
   // K-streaming: scratch holds one K-tile chunk of A and B, refilled per outer
   // iteration, so shared memory stays bounded regardless of K.
-  GlobalVariable *aScratch = nullptr;
-  GlobalVariable *bScratch = nullptr;
-  if (useScratchA) {
-    aScratch = getOrCreateSharedScratch(
-        mod, scratchName("a", inputPrecStr, mPad, t.tileK), tgtInputTy,
-        (uint64_t)mPad * t.tileK);
-  }
-  if (useScratchB) {
-    bScratch = getOrCreateSharedScratch(
-        mod, scratchName("b", inputPrecStr, t.tileK, nPad), tgtInputTy,
-        (uint64_t)t.tileK * nPad);
-  }
+  GlobalVariable *aScratch = getOrCreateSharedScratch(
+      mod, scratchName("a", inputPrecStr, mPad, t.tileK), tgtInputTy,
+      (uint64_t)mPad * t.tileK);
+  GlobalVariable *bScratch = getOrCreateSharedScratch(
+      mod, scratchName("b", inputPrecStr, t.tileK, nPad), tgtInputTy,
+      (uint64_t)t.tileK * nPad);
 
   IRBuilder<> B(preheader->getTerminator());
 
   const nvptx::Barrier barrier = nvptx::declareBarrier(mod);
 
-  Value *aPtrGen = h.aBase->getType() == genPtrTy
-                       ? h.aBase
-                       : B.CreateAddrSpaceCast(h.aBase, genPtrTy);
-  Value *bPtrGen = h.bBase->getType() == genPtrTy
-                       ? h.bBase
-                       : B.CreateAddrSpaceCast(h.bBase, genPtrTy);
+  // Generic views of the source bases. Nothing reads them, since the fill
+  // addresses through the expanded per-thread starts, but they are emitted.
+  if (h.aBase->getType() != genPtrTy)
+    B.CreateAddrSpaceCast(h.aBase, genPtrTy);
+  if (h.bBase->getType() != genPtrTy)
+    B.CreateAddrSpaceCast(h.bBase, genPtrTy);
 
   Type *i64Ty = Type::getInt64Ty(ctx);
 
@@ -758,7 +726,7 @@ void ScalarLoopRaiseMaterializer::run() {
   // TODO: clamp the cvt writes to (rowTid < M && colTid < N) for blocks larger
   // than M x N; for now we assume runtime block dims match the profile.
   Value *aBlockBase = nullptr, *bBlockBase = nullptr;
-  if (useScratchA || useScratchB) {
+  {
     if (!h.aStartSCEV || !h.bStartSCEV || !h.SE)
       report_fatal_error("ScalarLoopRaiseMaterializer: missing aStartSCEV / "
                          "bStartSCEV / SE — analyzer didn't populate them");
@@ -806,24 +774,17 @@ void ScalarLoopRaiseMaterializer::run() {
                              B.CreateNeg(bColThreadOff));
   }
 
-  Value *aSrcBase =
-      useScratchA ? B.CreateAddrSpaceCast(aScratch, genPtrTy) : aPtrGen;
-  Value *bSrcBase =
-      useScratchB ? B.CreateAddrSpaceCast(bScratch, genPtrTy) : bPtrGen;
+  Value *aSrcBase = B.CreateAddrSpaceCast(aScratch, genPtrTy);
+  Value *bSrcBase = B.CreateAddrSpaceCast(bScratch, genPtrTy);
   Value *dSrcBase = B.CreateAddrSpaceCast(dScratch, genPtrTy);
 
-  // wmma load strides: the scratch path is tight-packed at (mPad x tileK) /
-  // (tileK x nPad); the direct path uses the source storage's strides.
-  int64_t aSrcRowByte =
-      useScratchA ? (int64_t)t.tileK * tgtInputByte : h.aLeadingDimByte;
-  int64_t aSrcKStepByte = useScratchA ? tgtInputByte : h.aStrideByte;
-  int64_t bSrcKStepByte =
-      useScratchB ? (int64_t)nPad * tgtInputByte : h.bStrideByte;
-  int64_t bSrcColStepByte = useScratchB ? tgtInputByte : srcInputByte;
-  int64_t ldaElts = aSrcRowByte / (useScratchA ? tgtInputByte : srcInputByte);
-  int64_t ldbElts = wmmaBRowMajor ? bSrcKStepByte / (useScratchB ? tgtInputByte
-                                                                 : srcInputByte)
-                                  : h.bLeadingDimByte / srcInputByte;
+  // wmma load strides: the scratch tiles are tight-packed at (mPad x tileK) /
+  // (tileK x nPad).
+  int64_t aSrcRowByte = (int64_t)t.tileK * tgtInputByte;
+  int64_t bSrcKStepByte = (int64_t)nPad * tgtInputByte;
+  int64_t bSrcColStepByte = tgtInputByte;
+  int64_t ldaElts = aSrcRowByte / tgtInputByte;
+  int64_t ldbElts = bSrcKStepByte / tgtInputByte;
   int64_t ldcElts = nPad;
   Value *ldaV = ConstantInt::get(i32Ty, ldaElts);
   Value *ldbV = ConstantInt::get(i32Ty, ldbElts);
@@ -877,7 +838,7 @@ void ScalarLoopRaiseMaterializer::run() {
   bodyB.SetInsertPoint(placeholderBr);
   Value *kOuter64 = bodyB.CreateZExt(kOuterPhi, i64Ty);
 
-  if (useScratchA || useScratchB) {
+  {
     auto [tlin, bsz] = emitThreadLinAndBlockSize(bodyB, mod, h.is2DBlock);
 
     // The per-iter fill covers the padded tile when padding is present, so the
@@ -902,60 +863,56 @@ void ScalarLoopRaiseMaterializer::run() {
     Value *validM = ConstantInt::get(i32Ty, (int32_t)m.M);
     Value *validN = ConstantInt::get(i32Ty, (int32_t)m.N);
 
-    if (useScratchA) {
-      Value *aScratchGen = bodyB.CreateAddrSpaceCast(aScratch, genPtrTy);
-      Value *aSrcForIter = bodyB.CreateGEP(
-          i8Ty, aBlockBase,
-          bodyB.CreateMul(kOuter64, ConstantInt::get(i64Ty, h.aStrideByte)));
-      if (padded)
-        emitCooperativeScratchFillPadded(
-            bodyB, aScratchGen, tgtInputTy, t.variant.operand, aSrcForIter,
-            srcInputTy, /*fillRows=*/aFillRows, /*fillCols=*/aFillCols,
-            /*validRows=*/validM, /*validCols=*/validK,
-            /*srcRowStrideByte=*/h.aLeadingDimByte,
-            /*srcColStrideByte=*/h.aStrideByte,
-            /*dstRowStrideByte=*/(int64_t)t.tileK * tgtInputByte,
-            /*dstColStrideByte=*/tgtInputByte, tlin, bsz,
-            /*assumeBlockCoversAll=*/aFillSingleShot);
-      else
-        emitCooperativeScratchFill(
-            bodyB, aScratchGen, tgtInputTy, t.variant.operand, aSrcForIter,
-            srcInputTy,
-            /*numRows=*/m.M, /*numCols=*/(uint64_t)t.tileK,
-            /*srcRowStrideByte=*/h.aLeadingDimByte,
-            /*srcColStrideByte=*/h.aStrideByte,
-            /*dstRowStrideByte=*/(int64_t)t.tileK * tgtInputByte,
-            /*dstColStrideByte=*/tgtInputByte, tlin, bsz,
-            /*assumeBlockCoversAll=*/aFillSingleShot);
-    }
+    Value *aScratchGen = bodyB.CreateAddrSpaceCast(aScratch, genPtrTy);
+    Value *aSrcForIter = bodyB.CreateGEP(
+        i8Ty, aBlockBase,
+        bodyB.CreateMul(kOuter64, ConstantInt::get(i64Ty, h.aStrideByte)));
+    if (padded)
+      emitCooperativeScratchFillPadded(
+          bodyB, aScratchGen, tgtInputTy, t.variant.operand, aSrcForIter,
+          srcInputTy, /*fillRows=*/aFillRows, /*fillCols=*/aFillCols,
+          /*validRows=*/validM, /*validCols=*/validK,
+          /*srcRowStrideByte=*/h.aLeadingDimByte,
+          /*srcColStrideByte=*/h.aStrideByte,
+          /*dstRowStrideByte=*/(int64_t)t.tileK * tgtInputByte,
+          /*dstColStrideByte=*/tgtInputByte, tlin, bsz,
+          /*assumeBlockCoversAll=*/aFillSingleShot);
+    else
+      emitCooperativeScratchFill(bodyB, aScratchGen, tgtInputTy,
+                                 t.variant.operand, aSrcForIter, srcInputTy,
+                                 /*numRows=*/m.M, /*numCols=*/(uint64_t)t.tileK,
+                                 /*srcRowStrideByte=*/h.aLeadingDimByte,
+                                 /*srcColStrideByte=*/h.aStrideByte,
+                                 /*dstRowStrideByte=*/(int64_t)t.tileK *
+                                     tgtInputByte,
+                                 /*dstColStrideByte=*/tgtInputByte, tlin, bsz,
+                                 /*assumeBlockCoversAll=*/aFillSingleShot);
 
-    if (useScratchB) {
-      Value *bScratchGen = bodyB.CreateAddrSpaceCast(bScratch, genPtrTy);
-      Value *bSrcForIter = bodyB.CreateGEP(
-          i8Ty, bBlockBase,
-          bodyB.CreateMul(kOuter64, ConstantInt::get(i64Ty, bKStrideByte)));
-      int64_t bNStrideByte = bRowMajor ? srcInputByte : h.bLeadingDimByte;
-      if (padded)
-        emitCooperativeScratchFillPadded(
-            bodyB, bScratchGen, tgtInputTy, t.variant.operand, bSrcForIter,
-            srcInputTy, /*fillRows=*/bFillRows, /*fillCols=*/bFillCols,
-            /*validRows=*/validK, /*validCols=*/validN,
-            /*srcRowStrideByte=*/bKStrideByte,
-            /*srcColStrideByte=*/bNStrideByte,
-            /*dstRowStrideByte=*/(int64_t)nPad * tgtInputByte,
-            /*dstColStrideByte=*/tgtInputByte, tlin, bsz,
-            /*assumeBlockCoversAll=*/bFillSingleShot);
-      else
-        emitCooperativeScratchFill(
-            bodyB, bScratchGen, tgtInputTy, t.variant.operand, bSrcForIter,
-            srcInputTy,
-            /*numRows=*/(uint64_t)t.tileK, /*numCols=*/m.N,
-            /*srcRowStrideByte=*/bKStrideByte,
-            /*srcColStrideByte=*/bNStrideByte,
-            /*dstRowStrideByte=*/(int64_t)nPad * tgtInputByte,
-            /*dstColStrideByte=*/tgtInputByte, tlin, bsz,
-            /*assumeBlockCoversAll=*/bFillSingleShot);
-    }
+    Value *bScratchGen = bodyB.CreateAddrSpaceCast(bScratch, genPtrTy);
+    Value *bSrcForIter = bodyB.CreateGEP(
+        i8Ty, bBlockBase,
+        bodyB.CreateMul(kOuter64, ConstantInt::get(i64Ty, bKStrideByte)));
+    int64_t bNStrideByte = bRowMajor ? srcInputByte : h.bLeadingDimByte;
+    if (padded)
+      emitCooperativeScratchFillPadded(
+          bodyB, bScratchGen, tgtInputTy, t.variant.operand, bSrcForIter,
+          srcInputTy, /*fillRows=*/bFillRows, /*fillCols=*/bFillCols,
+          /*validRows=*/validK, /*validCols=*/validN,
+          /*srcRowStrideByte=*/bKStrideByte,
+          /*srcColStrideByte=*/bNStrideByte,
+          /*dstRowStrideByte=*/(int64_t)nPad * tgtInputByte,
+          /*dstColStrideByte=*/tgtInputByte, tlin, bsz,
+          /*assumeBlockCoversAll=*/bFillSingleShot);
+    else
+      emitCooperativeScratchFill(bodyB, bScratchGen, tgtInputTy,
+                                 t.variant.operand, bSrcForIter, srcInputTy,
+                                 /*numRows=*/(uint64_t)t.tileK, /*numCols=*/m.N,
+                                 /*srcRowStrideByte=*/bKStrideByte,
+                                 /*srcColStrideByte=*/bNStrideByte,
+                                 /*dstRowStrideByte=*/(int64_t)nPad *
+                                     tgtInputByte,
+                                 /*dstColStrideByte=*/tgtInputByte, tlin, bsz,
+                                 /*assumeBlockCoversAll=*/bFillSingleShot);
     bodyB.CreateCall(barrier.Fn, barrier.Args);
   }
 
@@ -969,9 +926,7 @@ void ScalarLoopRaiseMaterializer::run() {
   BasicBlock *wmmaMergeBB = nullptr;
   BasicBlock *bodyPreGateBB = nullptr;
   if (useWarpGate) {
-    auto [bodyTlin, bodyBsz] =
-        emitThreadLinAndBlockSize(bodyB, mod, h.is2DBlock);
-    (void)bodyBsz;
+    Value *bodyTlin = emitThreadLinAndBlockSize(bodyB, mod, h.is2DBlock).first;
     Value *warpId = bodyB.CreateLShr(
         bodyTlin, ConstantInt::get(i32Ty, nvptx::kLog2WarpSize), "warp_id");
     Value *isWarp0 =
@@ -994,34 +949,14 @@ void ScalarLoopRaiseMaterializer::run() {
       Value *aRowBase = bodyB.CreatePtrAdd(
           aSrcBase,
           ConstantInt::get(i64Ty, (int64_t)mt * t.tileM * aSrcRowByte));
-      Value *bColBase;
-      if (wmmaBRowMajor) {
-        bColBase = bodyB.CreatePtrAdd(
-            bSrcBase,
-            ConstantInt::get(i64Ty, (int64_t)nt * t.tileN * bSrcColStepByte));
-      } else {
-        bColBase = bodyB.CreatePtrAdd(
-            bSrcBase,
-            ConstantInt::get(i64Ty, (int64_t)nt * t.tileN * h.bLeadingDimByte));
-      }
+      Value *bColBase = bodyB.CreatePtrAdd(
+          bSrcBase,
+          ConstantInt::get(i64Ty, (int64_t)nt * t.tileN * bSrcColStepByte));
 
-      // Per-iter K offset only for the direct (non-scratch) path; scratch is
-      // refilled at offset 0 per iter, so wmma reads from scratch base+0.
-      Value *aTilePtr = aRowBase;
-      Value *bTilePtr = bColBase;
-      if (!useScratchA) {
-        aTilePtr = bodyB.CreatePtrAdd(
-            aRowBase,
-            bodyB.CreateMul(kOuter64, ConstantInt::get(i64Ty, aSrcKStepByte)));
-      }
-      if (!useScratchB) {
-        bTilePtr = bodyB.CreatePtrAdd(
-            bColBase,
-            bodyB.CreateMul(kOuter64, ConstantInt::get(i64Ty, bSrcKStepByte)));
-      }
-
-      Value *aFragV = bodyB.CreateCall(loadAFn, {aTilePtr, ldaV});
-      Value *bFragV = bodyB.CreateCall(loadBFn, {bTilePtr, ldbV});
+      // Scratch is refilled at offset 0 per iteration, so the wmma loads read
+      // from the scratch base with no K offset.
+      Value *aFragV = bodyB.CreateCall(loadAFn, {aRowBase, ldaV});
+      Value *bFragV = bodyB.CreateCall(loadBFn, {bColBase, ldbV});
 
       SmallVector<Value *, 32> mmaArgs;
       mmaArgs.reserve(aFragSize + bFragSize + cFragSize);
@@ -1059,8 +994,7 @@ void ScalarLoopRaiseMaterializer::run() {
   }
 
   // Barrier after the wmma reads so the next iter's fill doesn't race them.
-  if (useScratchA || useScratchB)
-    bodyB.CreateCall(barrier.Fn, barrier.Args);
+  bodyB.CreateCall(barrier.Fn, barrier.Args);
 
   // Latch: k_next = k_outer + tileK. The placeholder branch is already the BB's
   // terminator; the latch is whatever BB it migrated into.
@@ -1078,9 +1012,8 @@ void ScalarLoopRaiseMaterializer::run() {
   IRBuilder<> afterB(afterLoopBB, afterLoopBB->getFirstNonPHIIt());
   BasicBlock *afterStoreMergeBB = nullptr;
   if (useWarpGate) {
-    auto [afterTlin, afterBsz] =
-        emitThreadLinAndBlockSize(afterB, mod, h.is2DBlock);
-    (void)afterBsz;
+    Value *afterTlin =
+        emitThreadLinAndBlockSize(afterB, mod, h.is2DBlock).first;
     Value *afterWarpId = afterB.CreateLShr(
         afterTlin, ConstantInt::get(i32Ty, nvptx::kLog2WarpSize), "warp_id");
     Value *afterIsWarp0 = afterB.CreateICmpEQ(
