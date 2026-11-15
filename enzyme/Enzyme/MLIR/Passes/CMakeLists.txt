@@ -23,6 +23,7 @@ add_mlir_dialect_library(
   PrintAliasAnalysis.cpp
   PrintBaseObject.cpp
   EnzymeToMemRef.cpp
+  EnzymeToCIR.cpp
   SimplifyMath.cpp
   SplitMultiResults.cpp
   AddToOpToIndexAndLoad.cpp
@@ -63,3 +64,7 @@ add_mlir_dialect_library(
   MLIRTransformUtils
   MLIREnzymeAutoDiffInterface
   MLIRImpulse)
+
+if(ENZYME_CLANG_HAS_CIR)
+  target_link_libraries(MLIREnzymeTransforms PUBLIC MLIRCIR)
+endif()

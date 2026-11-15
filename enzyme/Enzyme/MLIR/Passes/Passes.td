@@ -325,6 +325,16 @@ def EnzymeOpsToMemRefPass : Pass<"convert-enzyme-to-memref"> {
   ];
 }
 
+def EnzymeOpsToCIRPass : Pass<"convert-enzyme-to-cir", "ModuleOp"> {
+  let summary = "Lower custom Enzyme ops in ClangIR functions to ClangIR";
+  let description = [{
+    Lowers the gradients and caches the Enzyme AD procedure leaves in ClangIR
+    functions to ClangIR, so that the derivative lowers to LLVM with the rest
+    of the module. A gradient becomes a stack slot; a cache becomes a stack on
+    the heap, grown with realloc and freed before the function returns.
+  }];
+}
+
 def MathematicSimplificationPass : Pass<"enzyme-simplify-math"> {
   let summary = "Simplify basic mathematical operations";
 }
