@@ -1,4 +1,11 @@
-//===- DeviceProfile.h - profiling device code of any CUDA or HIP build --===//
+//=- DeviceProfile.h - profiling device code of any CUDA or HIP build -------=//
+//
+// Part of the Poseidon Project, under the Apache License v2.0 with LLVM
+// Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
 //
 // The probes the pass places in device code call the device half of the CUDA
 // profiler, which the plugin carries as bitcode and links into each device
@@ -6,7 +13,9 @@
 // the profiler's table, and the host half of the same translation unit
 // registers it, so a program is profiled from any number of translation units
 // with or without relocatable device code.
-//===---------------------------------------------------------------------===//
+//
+//===----------------------------------------------------------------------===//
+
 #ifndef POSEIDON_DEVICE_PROFILE_H
 #define POSEIDON_DEVICE_PROFILE_H
 

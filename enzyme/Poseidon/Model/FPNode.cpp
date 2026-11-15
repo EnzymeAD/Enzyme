@@ -58,6 +58,18 @@ static std::string libmFuncName(Module *M, Type *Ty, StringRef base) {
   return Target::of(*M).mathFunction(base, Ty);
 }
 
+// A call to the math library's `name` on `ops`, all of the type of `ops[0]`,
+// named "herbie.<name>".
+static Value *mathLibraryCall(IRBuilder<> &b, Module *M, StringRef name,
+                              ArrayRef<Value *> ops) {
+  Type *Ty = ops[0]->getType();
+  std::string funcName = libmFuncName(M, Ty, name);
+  SmallVector<Type *, 2> argTys(ops.size(), Ty);
+  FunctionCallee f =
+      M->getOrInsertFunction(funcName, FunctionType::get(Ty, argTys, false));
+  return createMathCall(b, f, ops, "herbie." + name);
+}
+
 FPNode::NodeType FPNode::getType() const { return ntype; }
 
 void FPNode::addOperand(std::shared_ptr<FPNode> operand) {
@@ -77,25 +89,6 @@ std::string FPNode::toFullExpression(
   std::string msg = "Unexpected invocation of `toFullExpression` on an "
                     "unmaterialized " +
                     op + " FPNode";
-  llvm_unreachable(msg.c_str());
-}
-
-unsigned FPNode::getMPFRPrec() const {
-  if (dtype == "f16")
-    return 11;
-  if (dtype == "bf16")
-    return 8;
-  if (dtype == "f32")
-    return 24;
-  if (dtype == "f64")
-    return 53;
-  // Herbie's spellings.
-  if (dtype == "binary32")
-    return 24;
-  if (dtype == "binary64")
-    return 53;
-  std::string msg =
-      "getMPFRPrec: operator " + op + " has unknown dtype " + dtype;
   llvm_unreachable(msg.c_str());
 }
 
@@ -211,11 +204,7 @@ Value *FPNode::getLLValue(IRBuilder<> &builder, const ValueToValueMapTy *VMap) {
              return b.CreateUnaryIntrinsic(Intrinsic::tan, ops[0], nullptr,
                                            "herbie.tan");
 #else
-             Type *Ty = ops[0]->getType();
-             std::string funcName = libmFuncName(M, Ty, "tan");
-             FunctionType *FT = FunctionType::get(Ty, {Ty}, false);
-             FunctionCallee tanFunc = M->getOrInsertFunction(funcName, FT);
-             return createMathCall(b, tanFunc, {ops[0]}, "herbie.tan");
+             return mathLibraryCall(b, M, "tan", {ops[0]});
 #endif
            }},
           {"exp",
@@ -225,14 +214,8 @@ Value *FPNode::getLLValue(IRBuilder<> &builder, const ValueToValueMapTy *VMap) {
                                            "herbie.exp");
            }},
           {"expm1",
-           [](IRBuilder<> &b, Module *M,
-              const SmallVectorImpl<Value *> &ops) -> Value * {
-             Type *Ty = ops[0]->getType();
-             std::string funcName = libmFuncName(M, Ty, "expm1");
-             FunctionType *FT = FunctionType::get(Ty, {Ty}, false);
-             FunctionCallee f = M->getOrInsertFunction(funcName, FT);
-             return createMathCall(b, f, {ops[0]}, "herbie.expm1");
-           }},
+           [](IRBuilder<> &b, Module *M, const SmallVectorImpl<Value *> &ops)
+               -> Value * { return mathLibraryCall(b, M, "expm1", {ops[0]}); }},
           {"log",
            [](IRBuilder<> &b, Module *M,
               const SmallVectorImpl<Value *> &ops) -> Value * {
@@ -240,14 +223,8 @@ Value *FPNode::getLLValue(IRBuilder<> &builder, const ValueToValueMapTy *VMap) {
                                            "herbie.log");
            }},
           {"log1p",
-           [](IRBuilder<> &b, Module *M,
-              const SmallVectorImpl<Value *> &ops) -> Value * {
-             Type *Ty = ops[0]->getType();
-             std::string funcName = libmFuncName(M, Ty, "log1p");
-             FunctionType *FT = FunctionType::get(Ty, {Ty}, false);
-             FunctionCallee f = M->getOrInsertFunction(funcName, FT);
-             return createMathCall(b, f, {ops[0]}, "herbie.log1p");
-           }},
+           [](IRBuilder<> &b, Module *M, const SmallVectorImpl<Value *> &ops)
+               -> Value * { return mathLibraryCall(b, M, "log1p", {ops[0]}); }},
           {"sqrt",
            [](IRBuilder<> &b, Module *M,
               const SmallVectorImpl<Value *> &ops) -> Value * {
@@ -255,14 +232,8 @@ Value *FPNode::getLLValue(IRBuilder<> &builder, const ValueToValueMapTy *VMap) {
                                            "herbie.sqrt");
            }},
           {"cbrt",
-           [](IRBuilder<> &b, Module *M,
-              const SmallVectorImpl<Value *> &ops) -> Value * {
-             Type *Ty = ops[0]->getType();
-             std::string funcName = libmFuncName(M, Ty, "cbrt");
-             FunctionType *FT = FunctionType::get(Ty, {Ty}, false);
-             FunctionCallee f = M->getOrInsertFunction(funcName, FT);
-             return createMathCall(b, f, {ops[0]}, "herbie.cbrt");
-           }},
+           [](IRBuilder<> &b, Module *M, const SmallVectorImpl<Value *> &ops)
+               -> Value * { return mathLibraryCall(b, M, "cbrt", {ops[0]}); }},
           {"pow",
            [](IRBuilder<> &b, Module *M,
               const SmallVectorImpl<Value *> &ops) -> Value * {
@@ -288,11 +259,7 @@ Value *FPNode::getLLValue(IRBuilder<> &builder, const ValueToValueMapTy *VMap) {
              if (!Target::of(*M).isDevice())
                return b.CreateBinaryIntrinsic(Intrinsic::pow, ops[0], ops[1],
                                               nullptr, "herbie.pow");
-             Type *Ty = ops[0]->getType();
-             std::string funcName = libmFuncName(M, Ty, "pow");
-             FunctionType *FT = FunctionType::get(Ty, {Ty, Ty}, false);
-             FunctionCallee f = M->getOrInsertFunction(funcName, FT);
-             return createMathCall(b, f, {ops[0], ops[1]}, "herbie.pow");
+             return mathLibraryCall(b, M, "pow", {ops[0], ops[1]});
            }},
           {"fma",
            [](IRBuilder<> &b, Module *M,
@@ -310,11 +277,7 @@ Value *FPNode::getLLValue(IRBuilder<> &builder, const ValueToValueMapTy *VMap) {
           {"hypot",
            [](IRBuilder<> &b, Module *M,
               const SmallVectorImpl<Value *> &ops) -> Value * {
-             Type *Ty = ops[0]->getType();
-             std::string funcName = libmFuncName(M, Ty, "hypot");
-             FunctionType *FT = FunctionType::get(Ty, {Ty, Ty}, false);
-             FunctionCallee f = M->getOrInsertFunction(funcName, FT);
-             return createMathCall(b, f, {ops[0], ops[1]}, "herbie.hypot");
+             return mathLibraryCall(b, M, "hypot", {ops[0], ops[1]});
            }},
           {"asin",
            [](IRBuilder<> &b, Module *M,
@@ -323,11 +286,7 @@ Value *FPNode::getLLValue(IRBuilder<> &builder, const ValueToValueMapTy *VMap) {
              return b.CreateUnaryIntrinsic(Intrinsic::asin, ops[0], nullptr,
                                            "herbie.asin");
 #else
-             Type *Ty = ops[0]->getType();
-             std::string funcName = libmFuncName(M, Ty, "asin");
-             FunctionType *FT = FunctionType::get(Ty, {Ty}, false);
-             FunctionCallee f = M->getOrInsertFunction(funcName, FT);
-             return createMathCall(b, f, {ops[0]}, "herbie.asin");
+             return mathLibraryCall(b, M, "asin", {ops[0]});
 #endif
            }},
           {"acos",
@@ -337,11 +296,7 @@ Value *FPNode::getLLValue(IRBuilder<> &builder, const ValueToValueMapTy *VMap) {
              return b.CreateUnaryIntrinsic(Intrinsic::acos, ops[0], nullptr,
                                            "herbie.acos");
 #else
-             Type *Ty = ops[0]->getType();
-             std::string funcName = libmFuncName(M, Ty, "acos");
-             FunctionType *FT = FunctionType::get(Ty, {Ty}, false);
-             FunctionCallee f = M->getOrInsertFunction(funcName, FT);
-             return createMathCall(b, f, {ops[0]}, "herbie.acos");
+             return mathLibraryCall(b, M, "acos", {ops[0]});
 #endif
            }},
           {"atan",
@@ -351,11 +306,7 @@ Value *FPNode::getLLValue(IRBuilder<> &builder, const ValueToValueMapTy *VMap) {
              return b.CreateUnaryIntrinsic(Intrinsic::atan, ops[0], nullptr,
                                            "herbie.atan");
 #else
-             Type *Ty = ops[0]->getType();
-             std::string funcName = libmFuncName(M, Ty, "atan");
-             FunctionType *FT = FunctionType::get(Ty, {Ty}, false);
-             FunctionCallee f = M->getOrInsertFunction(funcName, FT);
-             return createMathCall(b, f, {ops[0]}, "herbie.atan");
+             return mathLibraryCall(b, M, "atan", {ops[0]});
 #endif
            }},
           {"atan2",
@@ -365,11 +316,7 @@ Value *FPNode::getLLValue(IRBuilder<> &builder, const ValueToValueMapTy *VMap) {
              return b.CreateBinaryIntrinsic(Intrinsic::atan2, ops[0], ops[1],
                                             nullptr, "herbie.atan2");
 #else
-             Type *Ty = ops[0]->getType();
-             std::string funcName = libmFuncName(M, Ty, "atan2");
-             FunctionType *FT = FunctionType::get(Ty, {Ty, Ty}, false);
-             FunctionCallee f = M->getOrInsertFunction(funcName, FT);
-             return createMathCall(b, f, {ops[0], ops[1]}, "herbie.atan2");
+             return mathLibraryCall(b, M, "atan2", {ops[0], ops[1]});
 #endif
            }},
           {"sinh",
@@ -379,11 +326,7 @@ Value *FPNode::getLLValue(IRBuilder<> &builder, const ValueToValueMapTy *VMap) {
              return b.CreateUnaryIntrinsic(Intrinsic::sinh, ops[0], nullptr,
                                            "herbie.sinh");
 #else
-             Type *Ty = ops[0]->getType();
-             std::string funcName = libmFuncName(M, Ty, "sinh");
-             FunctionType *FT = FunctionType::get(Ty, {Ty}, false);
-             FunctionCallee f = M->getOrInsertFunction(funcName, FT);
-             return createMathCall(b, f, {ops[0]}, "herbie.sinh");
+             return mathLibraryCall(b, M, "sinh", {ops[0]});
 #endif
            }},
           {"cosh",
@@ -393,11 +336,7 @@ Value *FPNode::getLLValue(IRBuilder<> &builder, const ValueToValueMapTy *VMap) {
              return b.CreateUnaryIntrinsic(Intrinsic::cosh, ops[0], nullptr,
                                            "herbie.cosh");
 #else
-             Type *Ty = ops[0]->getType();
-             std::string funcName = libmFuncName(M, Ty, "cosh");
-             FunctionType *FT = FunctionType::get(Ty, {Ty}, false);
-             FunctionCallee f = M->getOrInsertFunction(funcName, FT);
-             return createMathCall(b, f, {ops[0]}, "herbie.cosh");
+             return mathLibraryCall(b, M, "cosh", {ops[0]});
 #endif
            }},
           {"tanh",
@@ -407,11 +346,7 @@ Value *FPNode::getLLValue(IRBuilder<> &builder, const ValueToValueMapTy *VMap) {
              return b.CreateUnaryIntrinsic(Intrinsic::tanh, ops[0], nullptr,
                                            "herbie.tanh");
 #else
-             Type *Ty = ops[0]->getType();
-             std::string funcName = libmFuncName(M, Ty, "tanh");
-             FunctionType *FT = FunctionType::get(Ty, {Ty}, false);
-             FunctionCallee f = M->getOrInsertFunction(funcName, FT);
-             return createMathCall(b, f, {ops[0]}, "herbie.tanh");
+             return mathLibraryCall(b, M, "tanh", {ops[0]});
 #endif
            }},
           {"copysign",
@@ -476,84 +411,40 @@ Value *FPNode::getLLValue(IRBuilder<> &builder, const ValueToValueMapTy *VMap) {
           {"fdim",
            [](IRBuilder<> &b, Module *M,
               const SmallVectorImpl<Value *> &ops) -> Value * {
-             Type *Ty = ops[0]->getType();
-             std::string funcName = libmFuncName(M, Ty, "fdim");
-             FunctionType *FT = FunctionType::get(Ty, {Ty, Ty}, false);
-             FunctionCallee f = M->getOrInsertFunction(funcName, FT);
-             return createMathCall(b, f, {ops[0], ops[1]}, "herbie.fdim");
+             return mathLibraryCall(b, M, "fdim", {ops[0], ops[1]});
            }},
           {"fmod",
            [](IRBuilder<> &b, Module *M,
               const SmallVectorImpl<Value *> &ops) -> Value * {
-             Type *Ty = ops[0]->getType();
-             std::string funcName = libmFuncName(M, Ty, "fmod");
-             FunctionType *FT = FunctionType::get(Ty, {Ty, Ty}, false);
-             FunctionCallee f = M->getOrInsertFunction(funcName, FT);
-             return createMathCall(b, f, {ops[0], ops[1]}, "herbie.fmod");
+             return mathLibraryCall(b, M, "fmod", {ops[0], ops[1]});
            }},
           {"remainder",
            [](IRBuilder<> &b, Module *M,
               const SmallVectorImpl<Value *> &ops) -> Value * {
-             Type *Ty = ops[0]->getType();
-             std::string funcName = libmFuncName(M, Ty, "remainder");
-             FunctionType *FT = FunctionType::get(Ty, {Ty, Ty}, false);
-             FunctionCallee f = M->getOrInsertFunction(funcName, FT);
-             return createMathCall(b, f, {ops[0], ops[1]}, "herbie.remainder");
+             return mathLibraryCall(b, M, "remainder", {ops[0], ops[1]});
            }},
           {"erf",
-           [](IRBuilder<> &b, Module *M,
-              const SmallVectorImpl<Value *> &ops) -> Value * {
-             Type *Ty = ops[0]->getType();
-             std::string funcName = libmFuncName(M, Ty, "erf");
-             FunctionType *FT = FunctionType::get(Ty, {Ty}, false);
-             FunctionCallee f = M->getOrInsertFunction(funcName, FT);
-             return createMathCall(b, f, {ops[0]}, "herbie.erf");
-           }},
+           [](IRBuilder<> &b, Module *M, const SmallVectorImpl<Value *> &ops)
+               -> Value * { return mathLibraryCall(b, M, "erf", {ops[0]}); }},
           {"lgamma",
            [](IRBuilder<> &b, Module *M,
               const SmallVectorImpl<Value *> &ops) -> Value * {
-             Type *Ty = ops[0]->getType();
-             std::string funcName = libmFuncName(M, Ty, "lgamma");
-             FunctionType *FT = FunctionType::get(Ty, {Ty}, false);
-             FunctionCallee f = M->getOrInsertFunction(funcName, FT);
-             return createMathCall(b, f, {ops[0]}, "herbie.lgamma");
+             return mathLibraryCall(b, M, "lgamma", {ops[0]});
            }},
           {"tgamma",
            [](IRBuilder<> &b, Module *M,
               const SmallVectorImpl<Value *> &ops) -> Value * {
-             Type *Ty = ops[0]->getType();
-             std::string funcName = libmFuncName(M, Ty, "tgamma");
-             FunctionType *FT = FunctionType::get(Ty, {Ty}, false);
-             FunctionCallee f = M->getOrInsertFunction(funcName, FT);
-             return createMathCall(b, f, {ops[0]}, "herbie.tgamma");
+             return mathLibraryCall(b, M, "tgamma", {ops[0]});
            }},
           {"asinh",
-           [](IRBuilder<> &b, Module *M,
-              const SmallVectorImpl<Value *> &ops) -> Value * {
-             Type *Ty = ops[0]->getType();
-             std::string funcName = libmFuncName(M, Ty, "asinh");
-             FunctionType *FT = FunctionType::get(Ty, {Ty}, false);
-             FunctionCallee f = M->getOrInsertFunction(funcName, FT);
-             return createMathCall(b, f, {ops[0]}, "herbie.asinh");
-           }},
+           [](IRBuilder<> &b, Module *M, const SmallVectorImpl<Value *> &ops)
+               -> Value * { return mathLibraryCall(b, M, "asinh", {ops[0]}); }},
           {"acosh",
-           [](IRBuilder<> &b, Module *M,
-              const SmallVectorImpl<Value *> &ops) -> Value * {
-             Type *Ty = ops[0]->getType();
-             std::string funcName = libmFuncName(M, Ty, "acosh");
-             FunctionType *FT = FunctionType::get(Ty, {Ty}, false);
-             FunctionCallee f = M->getOrInsertFunction(funcName, FT);
-             return createMathCall(b, f, {ops[0]}, "herbie.acosh");
-           }},
+           [](IRBuilder<> &b, Module *M, const SmallVectorImpl<Value *> &ops)
+               -> Value * { return mathLibraryCall(b, M, "acosh", {ops[0]}); }},
           {"atanh",
-           [](IRBuilder<> &b, Module *M,
-              const SmallVectorImpl<Value *> &ops) -> Value * {
-             Type *Ty = ops[0]->getType();
-             std::string funcName = libmFuncName(M, Ty, "atanh");
-             FunctionType *FT = FunctionType::get(Ty, {Ty}, false);
-             FunctionCallee f = M->getOrInsertFunction(funcName, FT);
-             return createMathCall(b, f, {ops[0]}, "herbie.atanh");
-           }},
+           [](IRBuilder<> &b, Module *M, const SmallVectorImpl<Value *> &ops)
+               -> Value * { return mathLibraryCall(b, M, "atanh", {ops[0]}); }},
           {"==",
            [](IRBuilder<> &b, Module *M,
               const SmallVectorImpl<Value *> &ops) -> Value * {
@@ -632,23 +523,15 @@ Value *FPNode::getLLValue(IRBuilder<> &builder, const ValueToValueMapTy *VMap) {
 
   // What the target's math library provides where its intrinsic would not
   // lower; the rest falls through to opMap.
-  if (const Target &T = Target::of(*M);
-      !operandValues.empty() &&
-      T.callsMathLibrary(op, operandValues[0]->getType())) {
-    Type *Ty = operandValues[0]->getType();
-    SmallVector<Type *, 2> argTys(operandValues.size(), Ty);
-    FunctionCallee fn = M->getOrInsertFunction(
-        T.mathFunction(op, Ty), FunctionType::get(Ty, argTys, false));
-    return createMathCall(builder, fn, operandValues, "herbie." + op);
-  }
+  if (!operandValues.empty() &&
+      Target::of(*M).callsMathLibrary(op, operandValues[0]->getType()))
+    return mathLibraryCall(builder, M, op, operandValues);
 
   auto it = opMap.find(op);
   if (it != opMap.end())
     return it->second(builder, M, operandValues);
-  else {
-    std::string msg = "FPNode getLLValue: Unexpected operator " + op;
-    llvm_unreachable(msg.c_str());
-  }
+  std::string msg = "FPNode getLLValue: Unexpected operator " + op;
+  llvm_unreachable(msg.c_str());
 }
 
 bool FPLLValue::hasSymbol() const { return !symbol.empty(); }
@@ -723,25 +606,24 @@ std::string FPLLValue::toFullExpression(
   if (subgraphInputs.contains(value) && !inlinedOps(*this, subgraphInputs)) {
     assert(hasSymbol() && "FPLLValue has no symbol!");
     return symbol;
-  } else {
-    assert(!operands.empty() && "FPNode has no operands!");
-
-    if (depth > kMaxExprDepth) {
-      std::string msg = "Expression depth exceeded maximum allowed depth of " +
-                        std::to_string(kMaxExprDepth) + " for " + op +
-                        "; consider disabling loop unrolling";
-
-      llvm_unreachable(msg.c_str());
-    }
-
-    std::string expr = "(" + (op == "neg" ? "-" : op);
-    for (auto operand : operands) {
-      expr += " " + operand->toFullExpression(valueToNodeMap, subgraphInputs,
-                                              depth + 1);
-    }
-    expr += ")";
-    return expr;
   }
+  assert(!operands.empty() && "FPNode has no operands!");
+
+  if (depth > kMaxExprDepth) {
+    std::string msg = "Expression depth exceeded maximum allowed depth of " +
+                      std::to_string(kMaxExprDepth) + " for " + op +
+                      "; consider disabling loop unrolling";
+
+    llvm_unreachable(msg.c_str());
+  }
+
+  std::string expr = "(" + (op == "neg" ? "-" : op);
+  for (auto operand : operands) {
+    expr += " " + operand->toFullExpression(valueToNodeMap, subgraphInputs,
+                                            depth + 1);
+  }
+  expr += ")";
+  return expr;
 }
 
 void FPLLValue::updateBounds(double lower, double upper, bool print) {
@@ -799,7 +681,8 @@ void FPConst::updateBounds(double lower, double upper, bool print) { return; }
 double FPConst::literalValue(const std::string &strValue) {
   if (strValue == "+inf.0") {
     return std::numeric_limits<double>::infinity();
-  } else if (strValue == "-inf.0") {
+  }
+  if (strValue == "-inf.0") {
     return -std::numeric_limits<double>::infinity();
   }
 
@@ -819,7 +702,8 @@ Value *FPConst::getLLValue(IRBuilder<> &builder,
   }
   if (strValue == "+inf.0") {
     return ConstantFP::getInfinity(Ty, false);
-  } else if (strValue == "-inf.0") {
+  }
+  if (strValue == "-inf.0") {
     return ConstantFP::getInfinity(Ty, true);
   }
 

@@ -1,13 +1,27 @@
-//===- Markers.h - marker calls and the sites they defer ------------------===//
+//=- Markers.h - marker calls and the sites they defer ----------------------=//
+//
+// Part of the Poseidon Project, under the Apache License v2.0 with LLVM
+// Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+//
 // A marker call names a site's body and the activity of its arguments; a body
 // that still holds an Enzyme request is deferred to the late run.
+//
+//===----------------------------------------------------------------------===//
+
 #ifndef POSEIDON_MARKERS_H
 #define POSEIDON_MARKERS_H
 
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/Twine.h"
+
+#include <optional>
 
 namespace llvm {
 class CallBase;
@@ -34,6 +48,11 @@ llvm::Function *markerTarget(llvm::CallInst *CI);
 // argument after it is, as enzyme_dup does.
 llvm::Value *activityArg(llvm::LLVMContext &C, llvm::StringRef name);
 
+// Inlines the calls of `F` that `pick` selects, in instruction order, and again
+// in what that inlined, for a bounded number of rounds; returns how many calls
+// it inlined.
+unsigned inlineCallsWhile(llvm::Function &F,
+                          llvm::function_ref<bool(llvm::CallBase &)> pick);
 unsigned foldEnzymeGenerated(llvm::Function &body);
 llvm::Function *
 asLeftByPipeline(llvm::Function &body,
@@ -70,7 +89,9 @@ struct MarkerArgs {
   double errTol = 0.0;
 };
 
-bool parseMarker(llvm::CallInst *CI, llvm::Function *F, MarkerArgs &out);
+// What the marker call `CI` of body `F` says; none, with an error at `CI`, if
+// the marker cannot be read.
+std::optional<MarkerArgs> parseMarker(llvm::CallInst *CI, llvm::Function *F);
 
 } // namespace poseidon
 

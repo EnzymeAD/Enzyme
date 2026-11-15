@@ -68,7 +68,6 @@ public:
                        &valueToNodeMap,
                    const llvm::SetVector<llvm::Value *> &subgraphInputs,
                    unsigned depth = 0);
-  unsigned getMPFRPrec() const;
   virtual void updateBounds(double lower, double upper, bool print);
   virtual double getLowerBound() const;
   virtual double getUpperBound() const;

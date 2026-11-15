@@ -1,3 +1,12 @@
+//=- KernelSites.cpp - site kernels and device call sites -------------------=//
+//
+// Part of the Poseidon Project, under the Apache License v2.0 with LLVM
+// Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+
 #include "KernelSites.h"
 
 #include "Annotations.h"
@@ -38,11 +47,9 @@ void markOutlineTransparent(Function *body) {
   body->addFnAttr(Attribute::AlwaysInline);
 }
 
-namespace {
-
 // Whether every use of `P`, a pointer to an aggregate, is one reroot can
 // rebuild over a pointer in another address space.
-bool reroots(const Value *P) {
+static bool reroots(const Value *P) {
   for (const Use &U : P->uses()) {
     const User *I = U.getUser();
     if (auto *GEP = dyn_cast<GetElementPtrInst>(I)) {
@@ -60,7 +67,7 @@ bool reroots(const Value *P) {
 
 // The uses of `from` rebuilt over `to`, which points to the same aggregate
 // through the generic address space.
-void reroot(Value *from, Value *to) {
+static void reroot(Value *from, Value *to) {
   for (Use &U : make_early_inc_range(from->uses())) {
     auto *I = cast<Instruction>(U.getUser());
     IRBuilder<> B(I);
@@ -89,8 +96,6 @@ void reroot(Value *from, Value *to) {
     }
   }
 }
-
-} // namespace
 
 // Make the kernel a wrapper around its own body so that both phases see the
 // structure they already handle: a function holding the annotated computation,

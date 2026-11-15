@@ -418,7 +418,11 @@ void noteGemmBody(Session &S, const Function *body, const GemmBodyNote &n) {
   S.Matmul.GemmBodies.note(body, n);
 }
 bool getGemmBody(const Session &S, const Function *body, GemmBodyNote &out) {
-  return S.Matmul.GemmBodies.get(body, out);
+  std::optional<GemmBodyNote> note = S.Matmul.GemmBodies.get(body);
+  if (!note)
+    return false;
+  out = *note;
+  return true;
 }
 
 static std::string launchArgString(int arg, int64_t offset) {

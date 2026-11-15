@@ -1,3 +1,12 @@
+//=- Instrument.cpp - profiling probes on a site clone ----------------------=//
+//
+// Part of the Poseidon Project, under the Apache License v2.0 with LLVM
+// Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+
 #include "Instrument.h"
 
 #include "ProfileRead.h"
@@ -26,9 +35,8 @@ using namespace llvm;
 
 namespace poseidon {
 
-namespace {
-
-Constant *getStringPointer(Module &M, StringRef gvName, StringRef contents) {
+static Constant *getStringPointer(Module &M, StringRef gvName,
+                                  StringRef contents) {
   LLVMContext &Ctx = M.getContext();
   Type *PtrTy = PointerType::getUnqual(Ctx);
   GlobalVariable *gv = M.getNamedGlobal(gvName);
@@ -52,7 +60,7 @@ Constant *getStringPointer(Module &M, StringRef gvName, StringRef contents) {
 
 // The profile record is keyed by this string, which both FP profiler runtimes
 // use as the registry key and as the .fpprofile stem.
-Constant *getProfileNamePointer(Module &M, StringRef cloneName) {
+static Constant *getProfileNamePointer(Module &M, StringRef cloneName) {
   return getStringPointer(M, ("poseidon_site_" + cloneName).str(), cloneName);
 }
 
@@ -65,6 +73,8 @@ FunctionCallee getProfilerHook(Module &M, StringRef name, FunctionType *FT) {
   }
   return fc;
 }
+
+namespace {
 
 struct ProbeBuilder {
   Module &M;
@@ -211,7 +221,7 @@ size_t instrumentForProfiling(Function &clone, unsigned siteId) {
       else if (origOp->getType()->isIntegerTy())
         operandValue = B.CreateSIToFP(origOp, DoubleTy);
       else
-        llvm_unreachable("Unsupported operand type");
+        report_fatal_error("Unsupported operand type");
       Value *ptr = B.CreateGEP(operandArrayType, operandArray,
                                {ConstantInt::get(Int32Ty, 0),
                                 ConstantInt::get(Int32Ty, operand.index())});

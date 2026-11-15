@@ -1,3 +1,12 @@
+//=- SiteProfile.cpp - profile generation for a site ------------------------=//
+//
+// Part of the Poseidon Project, under the Apache License v2.0 with LLVM
+// Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+
 #include "SiteProfile.h"
 
 #include "Instrument.h"
@@ -47,14 +56,12 @@ using namespace llvm;
 
 namespace poseidon {
 
-namespace {
-
 // Canonicalize, slot-number and instrument a clone of the site body `F`
 // exactly as profile use canonicalizes and slot-numbers it. Null if the body
 // holds nothing profilable. `staticOut`, if given, receives the header the
 // profile will carry.
-Function *instrumentedClone(Session &S, Function &F, unsigned siteId,
-                            std::string *staticOut = nullptr) {
+static Function *instrumentedClone(Session &S, Function &F, unsigned siteId,
+                                   std::string *staticOut = nullptr) {
   Function *clone = canonicalize(F);
   S.SiteClones.push_back(clone);
   setSlotMetadata(*clone);
@@ -81,9 +88,8 @@ Function *instrumentedClone(Session &S, Function &F, unsigned siteId,
   return clone;
 }
 
-CallInst *withShadows(CallInst *CI, Function &clone, const MarkerArgs &marker);
-
-} // namespace
+static CallInst *withShadows(CallInst *CI, Function &clone,
+                             const MarkerArgs &marker);
 
 // Profile generation. The marker becomes an ordinary reverse-mode derivative
 // request over the instrumented clone: the custom derivative on each probe is
@@ -96,8 +102,8 @@ bool profileSite(Session &S, CallInst *CI,
   if (!F)
     return false;
 
-  MarkerArgs marker;
-  if (!parseMarker(CI, F, marker))
+  std::optional<MarkerArgs> marker = parseMarker(CI, F);
+  if (!marker)
     return false;
 
   // Two annotations on the same body share one instrumented clone, so their
@@ -111,10 +117,9 @@ bool profileSite(Session &S, CallInst *CI,
       return false;
     }
   }
-  if (!marker.madeShadows.empty()) {
-    CI = withShadows(CI, *clone, marker);
-    marker = MarkerArgs();
-    if (!CI || !parseMarker(CI, F, marker))
+  if (!marker->madeShadows.empty()) {
+    CI = withShadows(CI, *clone, *marker);
+    if (!CI || !(marker = parseMarker(CI, F)))
       return false;
   }
 
@@ -129,7 +134,7 @@ bool profileSite(Session &S, CallInst *CI,
   bool sret =
       CI->hasStructRetAttr() || F->hasParamAttribute(0, Attribute::StructRet);
   for (size_t i = 0; i < CI->arg_size(); ++i) {
-    if (!marker.forward[i])
+    if (!marker->forward[i])
       continue;
     args.push_back(i == (size_t)sret ? clone : CI->getArgOperand(i));
     from.push_back(i);
@@ -152,27 +157,34 @@ bool profileSite(Session &S, CallInst *CI,
   return true;
 }
 
-namespace {
-
-// The width of the floating-point scalar a store writes, 0 if it writes none.
-unsigned fpStoreWidth(Type *T) {
-  if (auto *VT = dyn_cast<VectorType>(T))
-    T = VT->getElementType();
-  if (T->isFloatingPointTy())
-    return T->getScalarSizeInBits() / 8;
+// The first type `isLeaf` accepts among `T` and, through struct fields in
+// order and array elements, the types `T` is made of; null if there is none.
+static Type *findLeafType(Type *T, function_ref<bool(Type *)> isLeaf) {
+  if (isLeaf(T))
+    return T;
   if (auto *ST = dyn_cast<StructType>(T))
     for (Type *E : ST->elements())
-      if (unsigned w = fpStoreWidth(E))
-        return w;
+      if (Type *L = findLeafType(E, isLeaf))
+        return L;
   if (auto *AT = dyn_cast<ArrayType>(T))
-    return fpStoreWidth(AT->getElementType());
-  return 0;
+    return findLeafType(AT->getElementType(), isLeaf);
+  return nullptr;
+}
+
+static bool isFPLeaf(Type *T) { return T->isFPOrFPVectorTy(); }
+
+static bool isPointerLeaf(Type *T) { return T->isPointerTy(); }
+
+// The width of the floating-point scalar a store writes, 0 if it writes none.
+static unsigned fpStoreWidth(Type *T) {
+  Type *L = findLeafType(T, isFPLeaf);
+  return L ? L->getScalarSizeInBits() / 8 : 0;
 }
 
 // Every store and atomicrmw of `clone`: the pointer it writes through and the
 // width of the floating-point scalar it writes (fpStoreWidth).
-void forEachWrite(Function &clone,
-                  function_ref<void(Value *ptr, unsigned width)> mark) {
+static void forEachWrite(Function &clone,
+                         function_ref<void(Value *ptr, unsigned width)> mark) {
   for (Instruction &I : instructions(clone)) {
     if (auto *SI = dyn_cast<StoreInst>(&I))
       mark(SI->getPointerOperand(),
@@ -186,8 +198,8 @@ void forEachWrite(Function &clone,
 // Which parameters the site writes through, and in what element width. An
 // application does not say which of its buffers are outputs, and reverse mode
 // needs to know: the output shadows are the ones the seed goes into.
-void collectOutputParams(Function &clone,
-                         SmallVectorImpl<unsigned> &seedWidth) {
+static void collectOutputParams(Function &clone,
+                                SmallVectorImpl<unsigned> &seedWidth) {
   seedWidth.assign(clone.arg_size(), 0);
   auto mark = [&](Value *ptr, unsigned w) {
     int idx = traceToArgIndex(ptr);
@@ -197,15 +209,9 @@ void collectOutputParams(Function &clone,
   forEachWrite(clone, mark);
 }
 
-bool holdsPointer(Type *T) {
-  if (T->isPointerTy())
-    return true;
-  if (auto *ST = dyn_cast<StructType>(T))
-    return llvm::any_of(ST->elements(), holdsPointer);
-  if (auto *AT = dyn_cast<ArrayType>(T))
-    return holdsPointer(AT->getElementType());
-  return false;
-}
+static bool holdsPointer(Type *T) { return findLeafType(T, isPointerLeaf); }
+
+namespace {
 
 // Where an aggregate of type `T` holds pointers: the byte offset of each from
 // the aggregate's start and the insertvalue path that reaches it, in layout
@@ -214,9 +220,12 @@ struct PointerField {
   uint64_t offset;
   SmallVector<unsigned, 4> path;
 };
-void pointerFields(const DataLayout &DL, Type *T, uint64_t offset,
-                   SmallVectorImpl<unsigned> &path,
-                   SmallVectorImpl<PointerField> &out) {
+
+} // namespace
+
+static void pointerFields(const DataLayout &DL, Type *T, uint64_t offset,
+                          SmallVectorImpl<unsigned> &path,
+                          SmallVectorImpl<PointerField> &out) {
   if (T->isPointerTy()) {
     out.push_back({offset, SmallVector<unsigned, 4>(path.begin(), path.end())});
     return;
@@ -244,8 +253,8 @@ void pointerFields(const DataLayout &DL, Type *T, uint64_t offset,
 // The pointer fields of by-value aggregate parameters the site writes through,
 // in the element width it writes: collectOutputParams for the pointers a
 // kernel's lambda captured.
-void collectOutputFields(Function &clone,
-                         std::map<LaunchRef, unsigned> &seedWidth) {
+static void collectOutputFields(Function &clone,
+                                std::map<LaunchRef, unsigned> &seedWidth) {
   auto mark = [&](Value *ptr, unsigned w) {
     LaunchRef r = tracePointerRoot(ptr);
     if (w && r.isField())
@@ -254,19 +263,11 @@ void collectOutputFields(Function &clone,
   forEachWrite(clone, mark);
 }
 
-bool holdsFP(Type *T) {
-  if (T->isFPOrFPVectorTy())
-    return true;
-  if (auto *ST = dyn_cast<StructType>(T))
-    return llvm::any_of(ST->elements(), holdsFP);
-  if (auto *AT = dyn_cast<ArrayType>(T))
-    return holdsFP(AT->getElementType());
-  return false;
-}
+static bool holdsFP(Type *T) { return findLeafType(T, isFPLeaf); }
 
 // The static shared memory of `K` once profiled: the derivative it runs keeps
 // a shadow next to every shared buffer that holds floating-point data.
-uint64_t profiledSharedBytes(Function &K) {
+static uint64_t profiledSharedBytes(Function &K) {
   const Target &T = Target::of(K);
   const DataLayout &DL = K.getParent()->getDataLayout();
   SetVector<Function *> funcs;
@@ -296,8 +297,6 @@ uint64_t profiledSharedBytes(Function &K) {
   }
   return bytes;
 }
-
-} // namespace
 
 // Profile generation for an attribute site. The kernel keeps its name, its
 // launch handle and its original parameters and gains one shadow parameter per
@@ -505,9 +504,7 @@ bool profileAnnotatedKernel(Session &S, Function &K, unsigned &nextSiteId) {
   return true;
 }
 
-namespace {
-
-Constant *cString(Module &M, StringRef text) {
+static Constant *cString(Module &M, StringRef text) {
   auto *init = ConstantDataArray::getString(M.getContext(), text);
   auto *GV = new GlobalVariable(
       M, init->getType(), true, GlobalValue::PrivateLinkage, init,
@@ -518,7 +515,7 @@ Constant *cString(Module &M, StringRef text) {
       GV, PointerType::getUnqual(M.getContext()));
 }
 
-Constant *constantArray(Module &M, Type *T, ArrayRef<Constant *> elts) {
+static Constant *constantArray(Module &M, Type *T, ArrayRef<Constant *> elts) {
   auto *init = ConstantArray::get(ArrayType::get(T, elts.size()), elts);
   auto *GV =
       new GlobalVariable(M, init->getType(), true, GlobalValue::PrivateLinkage,
@@ -528,7 +525,7 @@ Constant *constantArray(Module &M, Type *T, ArrayRef<Constant *> elts) {
 }
 
 // The source name of a parameter, for the runtime's diagnostics.
-std::string paramName(Function &B, Argument &A) {
+static std::string paramName(Function &B, Argument &A) {
   if (A.hasName())
     return A.getName().str();
   if (DISubprogram *SP = B.getSubprogram())
@@ -542,7 +539,7 @@ std::string paramName(Function &B, Argument &A) {
 // Registers, for the duration of `CB`, the extent of every stack object a
 // pointer argument points into: the runtime has no other way to size one.
 // Returns how many it pushed.
-unsigned pushStackArrays(CallBase &CB, IRBuilder<> &B) {
+static unsigned pushStackArrays(CallBase &CB, IRBuilder<> &B) {
   Module &M = *CB.getModule();
   const DataLayout &DL = M.getDataLayout();
   FunctionCallee push = M.getOrInsertFunction(
@@ -565,7 +562,7 @@ unsigned pushStackArrays(CallBase &CB, IRBuilder<> &B) {
   return n;
 }
 
-void popStackArrays(CallBase &CB, unsigned n) {
+static void popStackArrays(CallBase &CB, unsigned n) {
   if (!n)
     return;
   Module &M = *CB.getModule();
@@ -584,8 +581,6 @@ void popStackArrays(CallBase &CB, unsigned n) {
       FunctionType::get(B.getVoidTy(), {B.getInt32Ty()}, false));
   B.CreateCall(pop, {B.getInt32(n)});
 }
-
-} // namespace
 
 // Every call in this module that passes a stack object to someone else; a
 // site may be reached through any of them.
@@ -663,11 +658,13 @@ struct HostSiteData {
   Constant *name, *param, *seed, *paramNames;
 };
 
+} // namespace
+
 // One call of a host site's body becomes the reverse-mode request over the
 // instrumented clone: the runtime finds the allocation each pointer argument
 // points into and hands back its shadow, and a floating-point return is seeded
 // by the request itself.
-void emitProfiledHostCall(CallBase *CB, const HostSiteData &D) {
+static void emitProfiledHostCall(CallBase *CB, const HostSiteData &D) {
   auto *CI = dyn_cast<CallInst>(CB);
   if (!CI)
     CI = changeToCall(cast<InvokeInst>(CB));
@@ -728,8 +725,6 @@ void emitProfiledHostCall(CallBase *CB, const HostSiteData &D) {
   CI->eraseFromParent();
 }
 
-} // namespace
-
 bool profileHostSite(Session &S, Function &B, unsigned &nextSiteId) {
   Module &M = *B.getParent();
   LLVMContext &C = M.getContext();
@@ -778,10 +773,9 @@ bool profileHostSite(Session &S, Function &B, unsigned &nextSiteId) {
   return true;
 }
 
-namespace {
-
 // `p` with the object it points into replaced by `shadow`.
-Value *intoShadow(Value *p, Value *obj, AllocaInst *shadow, IRBuilder<> &B) {
+static Value *intoShadow(Value *p, Value *obj, AllocaInst *shadow,
+                         IRBuilder<> &B) {
   if (p == obj)
     return shadow;
   auto *I = cast<Instruction>(p);
@@ -794,7 +788,7 @@ Value *intoShadow(Value *p, Value *obj, AllocaInst *shadow, IRBuilder<> &B) {
 // A local object like `obj` (localObject), for its shadow: next to an alloca,
 // in the entry block for an aggregate the function takes by value, which is
 // in the stack's address space as the parameter is.
-AllocaInst *shadowObject(Value *obj) {
+static AllocaInst *shadowObject(Value *obj) {
   if (auto *AI = dyn_cast<AllocaInst>(obj))
     return new AllocaInst(AI->getAllocatedType(), AI->getAddressSpace(),
                           AI->getArraySize(), AI->getAlign(),
@@ -811,7 +805,7 @@ AllocaInst *shadowObject(Value *obj) {
                         F.getEntryBlock().getFirstInsertionPt());
 }
 
-uint64_t objectBytes(Value *obj, const DataLayout &DL) {
+static uint64_t objectBytes(Value *obj, const DataLayout &DL) {
   if (auto *AI = dyn_cast<AllocaInst>(obj))
     return AI->getAllocationSize(DL)->getFixedValue();
   return DL.getTypeAllocSize(
@@ -821,7 +815,8 @@ uint64_t objectBytes(Value *obj, const DataLayout &DL) {
 // The parameters the site reads a pointer through. A shadow of such an object
 // would have to hold shadows of those pointers, and one of zeros hands the
 // reverse pass null ones, so the object is passed as a constant instead.
-void collectPointerHolders(Function &clone, SmallVectorImpl<bool> &holds) {
+static void collectPointerHolders(Function &clone,
+                                  SmallVectorImpl<bool> &holds) {
   holds.assign(clone.arg_size(), false);
   for (Instruction &I : instructions(clone))
     if (auto *LI = dyn_cast<LoadInst>(&I))
@@ -837,7 +832,7 @@ void collectPointerHolders(Function &clone, SmallVectorImpl<bool> &holds) {
 // site writes and nothing reads reaches no result of the program (a JVP that
 // writes the primal outputs next to the tangents it is called for), so it is
 // no output to seed.
-bool readAfterCall(Value *obj, CallInst *call) {
+static bool readAfterCall(Value *obj, CallInst *call) {
   SmallPtrSet<const Instruction *, 16> readers{call}, ends;
   SmallPtrSet<const Value *, 16> seen{obj};
   SmallVector<const Value *, 8> work{obj};
@@ -891,6 +886,8 @@ bool readAfterCall(Value *obj, CallInst *call) {
   return false;
 }
 
+namespace {
+
 // `p` as a root pointer, the variable index terms of its address arithmetic
 // (value and scale, in value order) and a constant byte offset, through every
 // GEP and pointer cast. Two pointers with the same root and terms lie a
@@ -900,7 +897,10 @@ struct Address {
   SmallVector<std::pair<const Value *, int64_t>, 2> terms;
   int64_t offset = 0;
 };
-Address addressOf(const Value *p, const DataLayout &DL) {
+
+} // namespace
+
+static Address addressOf(const Value *p, const DataLayout &DL) {
   Address a;
   MapVector<const Value *, int64_t> terms;
   for (;;) {
@@ -930,6 +930,8 @@ Address addressOf(const Value *p, const DataLayout &DL) {
   return a;
 }
 
+namespace {
+
 // The memory a call reaches through pointers of no object the pass knows
 // (accessedExtent) that lie at constant distances from one another
 // (addressOf), in bytes from their common root and terms: one shadow covers
@@ -948,6 +950,8 @@ struct Region {
   AllocaInst *shadow = nullptr;
 };
 
+} // namespace
+
 // The marker in the explicit form, with a shadow for every pointer marked
 // poseidon_shadow: a local object like the one the pointer points into, zero,
 // and seeded by the kernel path's rule when the site writes into it and the
@@ -957,7 +961,8 @@ struct Region {
 // writes outlives the caller. Either is made at every execution of the call,
 // because the object the call sees is a new one each time: its storage is
 // reused, its value is not.
-CallInst *withShadows(CallInst *CI, Function &clone, const MarkerArgs &marker) {
+static CallInst *withShadows(CallInst *CI, Function &clone,
+                             const MarkerArgs &marker) {
   SmallVector<unsigned, 8> seedWidth;
   collectOutputParams(clone, seedWidth);
   SmallVector<bool, 8> holdsPointers;
@@ -1192,7 +1197,5 @@ CallInst *withShadows(CallInst *CI, Function &clone, const MarkerArgs &marker) {
   errs() << "\n";
   return NC;
 }
-
-} // namespace
 
 } // namespace poseidon

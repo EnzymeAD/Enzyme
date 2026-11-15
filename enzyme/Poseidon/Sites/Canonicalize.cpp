@@ -1,3 +1,12 @@
+//=- Canonicalize.cpp - the canonical form of a site ------------------------=//
+//
+// Part of the Poseidon Project, under the Apache License v2.0 with LLVM
+// Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+
 #include "Canonicalize.h"
 
 #include "Targets/DeviceMath.h"
@@ -234,9 +243,11 @@ struct CanonicalizeAnalyses {
   }
 };
 
+} // namespace
+
 // A noreturn call marked willreturn is UB, which turns the guard in front of an
 // exit() into an assume in the clone that ships.
-void setFullWillReturn(Function *NewF) {
+static void setFullWillReturn(Function *NewF) {
   for (auto &BB : *NewF) {
     for (auto &I : BB) {
       auto *CB = dyn_cast<CallBase>(&I);
@@ -248,8 +259,8 @@ void setFullWillReturn(Function *NewF) {
   }
 }
 
-std::pair<PHINode *, Instruction *> insertNewCanonicalIV(Loop *L, Type *Ty,
-                                                         const Twine &Name) {
+static std::pair<PHINode *, Instruction *>
+insertNewCanonicalIV(Loop *L, Type *Ty, const Twine &Name) {
   BasicBlock *Header = L->getHeader();
   IRBuilder<> B(Header, Header->begin());
   PHINode *CanonicalIV = B.CreatePHI(Ty, 1, Name);
@@ -272,8 +283,8 @@ std::pair<PHINode *, Instruction *> insertNewCanonicalIV(Loop *L, Type *Ty,
   return {CanonicalIV, Inc};
 }
 
-void removeRedundantIVs(BasicBlock *Header, PHINode *CanonicalIV,
-                        Instruction *Increment, ScalarEvolution &SE) {
+static void removeRedundantIVs(BasicBlock *Header, PHINode *CanonicalIV,
+                               Instruction *Increment, ScalarEvolution &SE) {
   auto *CanonicalSCEV = SE.getSCEV(CanonicalIV);
 
   for (BasicBlock::iterator II = Header->begin(); isa<PHINode>(II);) {
@@ -343,7 +354,7 @@ void removeRedundantIVs(BasicBlock *Header, PHINode *CanonicalIV,
     BO->eraseFromParent();
 }
 
-void canonicalizeLoops(Function *F, FunctionAnalysisManager &FAM) {
+static void canonicalizeLoops(Function *F, FunctionAnalysisManager &FAM) {
   LoopSimplifyPass().run(*F, FAM);
   DominatorTree &DT = FAM.getResult<DominatorTreeAnalysis>(*F);
   LoopInfo &LI = FAM.getResult<LoopAnalysis>(*F);
@@ -367,7 +378,7 @@ void canonicalizeLoops(Function *F, FunctionAnalysisManager &FAM) {
   FAM.invalidate(*F, PA);
 }
 
-void removeRedundantPHI(Function *F, FunctionAnalysisManager &FAM) {
+static void removeRedundantPHI(Function *F, FunctionAnalysisManager &FAM) {
   DominatorTree &DT = FAM.getResult<DominatorTreeAnalysis>(*F);
   for (BasicBlock &BB : *F) {
     for (BasicBlock::iterator II = BB.begin(); isa<PHINode>(II);) {
@@ -412,7 +423,30 @@ void removeRedundantPHI(Function *F, FunctionAnalysisManager &FAM) {
   }
 }
 
-void preprocess(Function *F) {
+namespace {
+
+// The operand of a fused multiply-add that is negated before the fusion.
+enum class Negate { None, X, Z };
+
+} // namespace
+
+// Replaces `I` by fmuladd(X, Y, Z), with the operand `N` names negated first;
+// the negation and the fmuladd carry the fast-math flags of `I`.
+static void fuseMulAdd(BinaryOperator *I, Value *X, Value *Y, Value *Z,
+                       Negate N) {
+  IRBuilder<> B(I);
+  B.setFastMathFlags(I->getFastMathFlags());
+  if (N == Negate::X)
+    X = B.CreateFNeg(X);
+  if (N == Negate::Z)
+    Z = B.CreateFNeg(Z);
+  Value *FMulAdd =
+      B.CreateIntrinsic(Intrinsic::fmuladd, I->getType(), {X, Y, Z});
+  I->replaceAllUsesWith(FMulAdd);
+  I->eraseFromParent();
+}
+
+static void preprocess(Function *F) {
   using namespace llvm::PatternMatch;
 
   // fmul + fadd -> fmuladd
@@ -427,30 +461,12 @@ void preprocess(Function *F) {
         if (!isa<FPMathOperator>(FAdd) || !FAdd->hasAllowContract())
           continue;
 
-        // fadd (fmul X, Y), Z
+        // fadd (fmul X, Y), Z or fadd Z, (fmul X, Y)
         if (match(FAdd, m_FAdd(m_OneUse(m_FMul(m_Value(X), m_Value(Y))),
-                               m_Value(Z)))) {
-          IRBuilder<> B(FAdd);
-          B.setFastMathFlags(FAdd->getFastMathFlags());
-
-          Value *FMulAdd =
-              B.CreateIntrinsic(Intrinsic::fmuladd, FAdd->getType(), {X, Y, Z});
-          FAdd->replaceAllUsesWith(FMulAdd);
-          FAdd->eraseFromParent();
-        }
-        // fadd Z, (fmul X, Y)
-        else if (match(FAdd,
-                       m_FAdd(m_Value(Z),
-                              m_OneUse(m_FMul(m_Value(X), m_Value(Y)))))) {
-          IRBuilder<> B(FAdd);
-          B.setFastMathFlags(FAdd->getFastMathFlags());
-
-          Value *FMulAdd =
-              B.CreateIntrinsic(Intrinsic::fmuladd, FAdd->getType(), {X, Y, Z});
-          FAdd->replaceAllUsesWith(FMulAdd);
-
-          FAdd->eraseFromParent();
-        }
+                               m_Value(Z))) ||
+            match(FAdd,
+                  m_FAdd(m_Value(Z), m_OneUse(m_FMul(m_Value(X), m_Value(Y))))))
+          fuseMulAdd(FAdd, X, Y, Z, Negate::None);
       }
     }
   }
@@ -464,30 +480,13 @@ void preprocess(Function *F) {
           continue;
 
         // Pattern: fsub (fmul X, Y), Z -> fmuladd(X, Y, -Z)
-        if (match(FSub, m_FSub(m_OneUse(m_FMul(m_Value(X), m_Value(Y))),
-                               m_Value(Z)))) {
-          IRBuilder<> B(FSub);
-          B.setFastMathFlags(FSub->getFastMathFlags());
-
-          Value *NegZ = B.CreateFNeg(Z);
-          Value *FMulAdd = B.CreateIntrinsic(Intrinsic::fmuladd,
-                                             FSub->getType(), {X, Y, NegZ});
-          FSub->replaceAllUsesWith(FMulAdd);
-          FSub->eraseFromParent();
-        }
+        if (match(FSub,
+                  m_FSub(m_OneUse(m_FMul(m_Value(X), m_Value(Y))), m_Value(Z))))
+          fuseMulAdd(FSub, X, Y, Z, Negate::Z);
         // Pattern: fsub Z, (fmul X, Y) -> fmuladd(-X, Y, Z)
-        else if (match(FSub,
-                       m_FSub(m_Value(Z),
-                              m_OneUse(m_FMul(m_Value(X), m_Value(Y)))))) {
-          IRBuilder<> B(FSub);
-          B.setFastMathFlags(FSub->getFastMathFlags());
-
-          Value *NegX = B.CreateFNeg(X);
-          Value *FMulAdd = B.CreateIntrinsic(Intrinsic::fmuladd,
-                                             FSub->getType(), {NegX, Y, Z});
-          FSub->replaceAllUsesWith(FMulAdd);
-          FSub->eraseFromParent();
-        }
+        else if (match(FSub, m_FSub(m_Value(Z),
+                                    m_OneUse(m_FMul(m_Value(X), m_Value(Y))))))
+          fuseMulAdd(FSub, X, Y, Z, Negate::X);
       }
     }
   }
@@ -552,8 +551,6 @@ void preprocess(Function *F) {
     }
   }
 }
-
-} // namespace
 
 Function *canonicalize(Function &F) {
   Function *NewF = Function::Create(F.getFunctionType(), F.getLinkage(),

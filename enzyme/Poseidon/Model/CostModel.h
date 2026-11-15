@@ -22,18 +22,14 @@
 #include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallVector.h"
-#include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Instruction.h"
 #include "llvm/IR/Value.h"
 
 #include <cstdint>
-#include <map>
 #include <optional>
 #include <string>
-#include <unordered_map>
 #include <unordered_set>
-#include <utility>
 
 namespace poseidon {
 
@@ -65,11 +61,6 @@ const std::unordered_set<std::string> &getPTFuncs(CostModelState &CM,
 // `Weight`, when given, is how often an instruction executes per execution of
 // the function it is priced in.
 using InstWeight = llvm::function_ref<double(const llvm::Instruction &)>;
-
-double computeMaxCost(CostModelState &CM, llvm::BasicBlock *BB,
-                      std::unordered_map<llvm::BasicBlock *, double> &MaxCost,
-                      std::unordered_set<llvm::BasicBlock *> &Visited,
-                      InstWeight Weight = nullptr);
 
 double getCompCost(CostModelState &CM, llvm::Function *F,
                    InstWeight Weight = nullptr);

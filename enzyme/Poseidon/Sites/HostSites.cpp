@@ -1,3 +1,12 @@
+//=- HostSites.cpp - host functions and calls that are sites ----------------=//
+//
+// Part of the Poseidon Project, under the Apache License v2.0 with LLVM
+// Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+
 #include "HostSites.h"
 
 #include "Annotations.h"
@@ -23,26 +32,16 @@
 #include "llvm/Transforms/Utils/ModuleUtils.h"
 
 #include <cmath>
-#include <cstdio>
 #include <optional>
 
 using namespace llvm;
 
 namespace poseidon {
 
-// A double as a function attribute value that reads back to the same bits.
-std::string exactDouble(double v) {
-  char buf[32];
-  std::snprintf(buf, sizeof(buf), "%.17g", v);
-  return buf;
-}
-
-namespace {
-
 // Whether `F` is the call operator of a lambda. A closure type demangles as
 // 'lambda'(...), or as $_<n> where clang needs no mangling number for it (a
 // lambda in a function of a host-only compile).
-bool isLambdaCallOperator(const Function &F) {
+static bool isLambdaCallOperator(const Function &F) {
   // The demangler's nodes point into the name it was given.
   std::string mangled = F.getName().str();
   ItaniumPartialDemangler D;
@@ -60,7 +59,7 @@ bool isLambdaCallOperator(const Function &F) {
 
 // Host sites: a host function carrying POSEIDON_OPTIMIZE.
 
-bool isHostScalar(Type *T) {
+static bool isHostScalar(Type *T) {
   return T->isIntegerTy() || T->isHalfTy() || T->isBFloatTy() ||
          T->isFloatTy() || T->isDoubleTy();
 }
@@ -69,7 +68,7 @@ bool isHostScalar(Type *T) {
 // differentiated with one activity per parameter, which a pointer, a
 // floating-point scalar and an integer have, and its value comes back only as
 // one of the latter two.
-std::string hostSiteRefusal(Function &F) {
+static std::string hostSiteRefusal(Function &F) {
   if (F.isVarArg())
     return "is variadic";
   Type *R = F.getReturnType();
@@ -99,7 +98,7 @@ std::string hostSiteRefusal(Function &F) {
 // not depend on its target. In an Itanium name a target is a floating-point
 // literal, L, the type, the hex of its bits, E; it becomes the external name
 // `tau`.
-std::string targetFreeName(StringRef name, ArrayRef<double> targets) {
+static std::string targetFreeName(StringRef name, ArrayRef<double> targets) {
   std::string out = name.str();
   for (double t : targets) {
     SmallVector<std::string, 2> spellings{
@@ -120,7 +119,7 @@ std::string targetFreeName(StringRef name, ArrayRef<double> targets) {
 // inliner puts F into calls the body itself. Until the site is lowered the
 // body is kept from being inlined and from interprocedural rewriting, so that
 // it keeps the signature and the code F was written with.
-void outlineHostFunction(Function &F, std::optional<double> tau) {
+static void outlineHostFunction(Function &F, std::optional<double> tau) {
   Module &M = *F.getParent();
   Function *B =
       Function::Create(F.getFunctionType(), GlobalValue::InternalLinkage,
@@ -158,8 +157,6 @@ void outlineHostFunction(Function &F, std::optional<double> tau) {
   F.addFnAttr(kHostWrapper);
   appendToCompilerUsed(M, {B});
 }
-
-} // namespace
 
 // __poseidon_optimize: the call through the identity helper becomes a call of
 // a copy of the function made for that call alone, which is then a host site
@@ -373,8 +370,10 @@ SmallVector<CallBase *, 4> callsOf(Function &F) {
 double takeHostBody(Function &B) {
   double tau = 0.0;
   StringRef value = B.getFnAttribute(kHostBody).getValueAsString();
-  if (!value.empty())
-    value.getAsDouble(tau);
+  if (!value.empty() && value.getAsDouble(tau))
+    report_fatal_error("Poseidon: the body " + B.getName() +
+                       " carries the accuracy target '" + value +
+                       "', which is not a number");
   B.removeFnAttr(kHostBody);
   removeFromUsedLists(*B.getParent(), [&](Constant *C) {
     return C->stripPointerCasts() == &B;

@@ -1,9 +1,18 @@
-//===- SiteIdentity.h - what a site clone is and was cut from ------------===//
+//=- SiteIdentity.h - what a site clone is and was cut from -----------------=//
+//
+// Part of the Poseidon Project, under the Apache License v2.0 with LLVM
+// Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
 //
 // A site is solved on a clone of its body. Per clone, the body it was cut from
 // and the caller values of its parameters, and the names its profile and its
 // -poseidon-apply-rewrites items are found by.
-//===---------------------------------------------------------------------===//
+//
+//===----------------------------------------------------------------------===//
+
 #ifndef POSEIDON_SITE_IDENTITY_H
 #define POSEIDON_SITE_IDENTITY_H
 
