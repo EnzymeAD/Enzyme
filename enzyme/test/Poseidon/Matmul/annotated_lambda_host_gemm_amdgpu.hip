@@ -1,18 +1,17 @@
 // REQUIRES: amdgpu-registered-target, rocm
-// RUN: rm -rf %t && mkdir -p %t
+// RUN: rm -rf %t && mkdir %t
 // RUN: (env XDG_CACHE_HOME=%t/xdg %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-device-only --no-gpu-bundle-output -cuid=0 -O2 -c -fno-crash-diagnostics -I%poseidon_profile_inc %loadClangPoseidon -Xclang -mllvm -Xclang -poseidon-profile-use=%S/../Inputs/host_gemm_hip -Xclang -mllvm -Xclang -poseidon-cache=%t/c -Xclang -mllvm -Xclang -poseidon-unit=gfx942 -Xclang -mllvm -Xclang -poseidon-print -Xclang -mllvm -Xclang -poseidon-enable-herbie=0 %s -o %t/k.co 2>&1 || true) | FileCheck -DARCH=gfx942 %s
 // RUN: (env XDG_CACHE_HOME=%t/xdg %clang -x hip --offload-arch=gfx90a --rocm-path=%rocm_path --cuda-device-only --no-gpu-bundle-output -cuid=0 -O2 -c -fno-crash-diagnostics -I%poseidon_profile_inc %loadClangPoseidon -Xclang -mllvm -Xclang -poseidon-profile-use=%S/../Inputs/host_gemm_hip -Xclang -mllvm -Xclang -poseidon-cache=%t/c90a -Xclang -mllvm -Xclang -poseidon-unit=gfx90a -Xclang -mllvm -Xclang -poseidon-print -Xclang -mllvm -Xclang -poseidon-enable-herbie=0 %s -o %t/k90a.co 2>&1 || true) | FileCheck -DARCH=gfx90a %s
 // RUN: (%clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-device-only --no-gpu-bundle-output -cuid=0 -O2 -c -fno-crash-diagnostics -I%poseidon_profile_inc %loadClangPoseidon -Xclang -mllvm -Xclang -poseidon-profile-use=%S/../Inputs/host_gemm_hip -Xclang -mllvm -Xclang -poseidon-cache=%t/c -Xclang -mllvm -Xclang -poseidon-unit=gfx942-foreign -Xclang -mllvm -Xclang -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -Xclang -mllvm -Xclang -poseidon-enable-herbie=0 %s -o %t/k.co 2>&1 || true) | FileCheck --check-prefix=FOREIGN -DARCH=gfx942 %s
 // RUN: (%clang -x hip --offload-arch=gfx90a --rocm-path=%rocm_path --cuda-device-only --no-gpu-bundle-output -cuid=0 -O2 -c -fno-crash-diagnostics -I%poseidon_profile_inc %loadClangPoseidon -Xclang -mllvm -Xclang -poseidon-profile-use=%S/../Inputs/host_gemm_hip -Xclang -mllvm -Xclang -poseidon-cache=%t/c90a -Xclang -mllvm -Xclang -poseidon-unit=gfx90a-foreign -Xclang -mllvm -Xclang -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -Xclang -mllvm -Xclang -poseidon-enable-herbie=0 %s -o %t/k90a.co 2>&1 || true) | FileCheck --check-prefix=FOREIGN -DARCH=gfx90a %s
 
 // The device half of Integration/annotated_lambda_host_gemm.hip for gfx942,
-// the stage-3 reduce of MFEM's elasticity apply, with the profile its CUDA
-// twin records on an RTX 5090 (Inputs/host_gemm_hip): the gfx942 canonical
-// form hashes like the NVPTX one, and the reduce is recognized from HIP's
-// work-item and work-group ids and the work-group size in the implicit kernel
-// arguments, as the same product the NVPTX compile finds. No gfx942 cost model
-// is measured, so the compile then refuses, and refuses the RTX 5090's for
-// the processor the triple names. The same for gfx90a.
+// with the profile its CUDA twin records on an RTX 5090 (Inputs/host_gemm_hip):
+// the gfx942 canonical form hashes like the NVPTX one, and the reduce is
+// recognized from HIP's work-item and work-group ids and the work-group size in
+// the implicit kernel arguments as the product the NVPTX compile finds. With no
+// gfx942 cost model the compile refuses, and it refuses the RTX 5090's model
+// for the processor the triple names. The same for gfx90a.
 
 #include <hip/hip_runtime.h>
 

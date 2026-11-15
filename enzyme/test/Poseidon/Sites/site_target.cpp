@@ -1,4 +1,4 @@
-// RUN: rm -rf %t && mkdir -p %t
+// RUN: rm -rf %t && mkdir %t
 // RUN: %clang -x c++ -std=c++17 -O1 -S -emit-llvm -I%poseidon_profile_inc %s -o %t/plain.ll
 // RUN: FileCheck --check-prefix=PLAIN %s < %t/plain.ll
 // RUN: %clang -x c++ -std=c++17 -O1 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/other_sites -mllvm -poseidon-print %s -o /dev/null 2>&1 | FileCheck %s

@@ -1,4 +1,4 @@
-; RUN: rm -rf %t && mkdir -p %t
+; RUN: rm -rf %t && mkdir %t
 ; RUN: sed '/^target triple/d; s/"sm_120"/"x86-64"/' %s > %t/host.ll
 ; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/approx_sqrt -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-enable-multifloat=false -poseidon-enable-three-tier=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cache=%t/nvptx -poseidon-print "-poseidon-apply-rewrites=PT0=Funcs FP64(0%) + FP32(100%)" -S 2>&1 | FileCheck --check-prefix=NVPTX %s
 ; RUN: %opt < %t/host.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/approx_sqrt -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-enable-multifloat=false -poseidon-enable-three-tier=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache=%t/host -poseidon-print "-poseidon-apply-rewrites=PT0=Funcs FP64(0%) + FP32(100%)" -S 2>&1 | FileCheck --check-prefix=HOST %s

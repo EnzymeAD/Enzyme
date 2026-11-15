@@ -3,20 +3,21 @@
 // sources, no -mllvm.
 //
 // REQUIRES: enzyme, cuda-runtime
+// RUN: rm -rf %t && mkdir %t
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 \
-// RUN:     -poseidon-profile-generate %S/raise_scalar_matmul_f64.cu -o %t.exe
-// RUN: rm -rf %t.profile && POSEIDON_PROFILE_DIR=%t.profile %t.exe \
+// RUN:     -poseidon-profile-generate %S/raise_scalar_matmul_f64.cu -o %t/exe
+// RUN: env POSEIDON_PROFILE_DIR=%t/profile %t/exe \
 // RUN:   | FileCheck --check-prefix=PRIMAL %s
 // A GPU program has no host site, so its profiling run records no allocation.
-// RUN: llvm-nm --defined-only %t.exe | not grep __poseidon_host_sites_present
+// RUN: llvm-nm --defined-only %t/exe | not grep __poseidon_host_sites_present
 //
-// RUN: rm -rf %t.cache && %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 \
-// RUN:     -poseidon-profile-use=%t.profile -poseidon-cache=%t.cache \
+// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 \
+// RUN:     -poseidon-profile-use=%t/profile -poseidon-cache=%t/cache \
 // RUN:     -poseidon-cost-model=%gpu_cost_model -poseidon-print \
 // RUN:     -poseidon-enable-herbie=0 -poseidon-enable-pt=0 -poseidon-raise-wmma \
 // RUN:     -poseidon-ozaki-host-dispatch=0 \
-// RUN:     %S/raise_scalar_matmul_f64.cu -o %t.opt.exe 2>&1 | FileCheck %s
-// RUN: %t.opt.exe | FileCheck --check-prefix=PRIMAL %s
+// RUN:     %S/raise_scalar_matmul_f64.cu -o %t/opt.exe 2>&1 | FileCheck %s
+// RUN: %t/opt.exe | FileCheck --check-prefix=PRIMAL %s
 
 // PRIMAL: MATMUL-PASS
 

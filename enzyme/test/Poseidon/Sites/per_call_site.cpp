@@ -1,10 +1,9 @@
 // REQUIRES: enzyme
-// RUN: rm -rf %t && mkdir -p %t
+// RUN: rm -rf %t && mkdir %t
 // RUN: %clang -x c++ -O2 -ffp-contract=on -I%poseidon_profile_inc %s -lstdc++ -lm -o %t/stock
 // RUN: %t/stock > %t/stock.out
 //
-// RUN: %poseidon_clangxx -O2 -poseidon-profile-generate -poseidon-cache=%t/cg %s -o %t/gen 2> %t/gen.err
-// RUN: FileCheck --check-prefix=GEN %s < %t/gen.err
+// RUN: %poseidon_clangxx -O2 -poseidon-profile-generate -poseidon-cache=%t/cg %s -o %t/gen 2>&1 | FileCheck --check-prefix=GEN %s
 // RUN: env POSEIDON_PROFILE_DIR=%t/prof %t/gen > %t/gen.out
 // RUN: diff %t/stock.out %t/gen.out
 // RUN: ls %t/prof | FileCheck --check-prefix=PROFILES %s
@@ -19,7 +18,7 @@
 // RUN: %poseidon_clangxx -O0 -poseidon-profile-use=%t/prof -poseidon-tau=1e-6 -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-enable-herbie=0 -poseidon-cache=%t/c0 %s -o %t/use0 2>&1 | FileCheck --check-prefix=LEVEL %s
 // RUN: %poseidon_clangxx -O1 -poseidon-profile-use=%t/prof -poseidon-tau=1e-6 -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-enable-herbie=0 -poseidon-cache=%t/c1 %s -o %t/use1 2>&1 | FileCheck --check-prefix=LEVEL %s
 // RUN: %poseidon_clangxx -O3 -poseidon-profile-use=%t/prof -poseidon-tau=1e-6 -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-enable-herbie=0 -poseidon-cache=%t/c3 %s -o %t/use3 2>&1 | FileCheck --check-prefix=LEVEL %s
-// RUN: %poseidon_clangxx -O0 -poseidon-profile-generate -poseidon-cache=%t/cg0 %s -o %t/gen0 2>/dev/null
+// RUN: %poseidon_clangxx -O0 -poseidon-profile-generate -poseidon-cache=%t/cg0 %s -o %t/gen0
 // RUN: env POSEIDON_PROFILE_DIR=%t/prof0 %t/gen0 > /dev/null
 // RUN: %poseidon_clangxx -O2 -poseidon-profile-use=%t/prof0 -poseidon-tau=1e-6 -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-enable-herbie=0 -poseidon-cache=%t/c20 %s -o %t/use20 2>&1 | FileCheck --check-prefix=LEVEL %s
 // RUN: %t/use0 > %t/use0.out

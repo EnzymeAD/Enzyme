@@ -1,23 +1,24 @@
 // REQUIRES: enzyme, cuda-runtime
-// RUN: rm -rf %t.cache && %clang -x cuda --cuda-gpu-arch=%gpu_arch -fcuda-rdc -O2 -ffp-contract=on \
+// RUN: rm -rf %t && mkdir %t
+// RUN: %clang -x cuda --cuda-gpu-arch=%gpu_arch -fcuda-rdc -O2 -ffp-contract=on \
 // RUN:     %loadClangPoseidonEnzyme -mllvm --poseidon-profile-generate \
-// RUN:     -mllvm --poseidon-cache=%t.cache -mllvm --poseidon-print \
+// RUN:     -mllvm --poseidon-cache=%t/cache -mllvm --poseidon-print \
 // RUN:     -I%poseidon_profile_inc %s -x none %poseidon_profile_cuda_lib %poseidon_profile_lib \
-// RUN:     -L%cuda_lib_dir -lcudart -lstdc++ -lm -o %t.exe 2>&1 \
+// RUN:     -L%cuda_lib_dir -lcudart -lstdc++ -lm -o %t/exe 2>&1 \
 // RUN:   | FileCheck --check-prefix=DEFER %s
-// RUN: rm -rf %t.profiles && POSEIDON_PROFILE_DIR=%t.profiles %t.exe \
+// RUN: env POSEIDON_PROFILE_DIR=%t/profiles %t/exe \
 // RUN:   | FileCheck --check-prefix=PRIMAL %s
-// RUN: cat %t.profiles/preprocess_jvp_body.fpprofile \
+// RUN: cat %t/profiles/preprocess_jvp_body.fpprofile \
 // RUN:   | FileCheck --check-prefix=PROFILE %s
 //
-// RUN: rm -rf %t.solve && %clang -x cuda --cuda-gpu-arch=%gpu_arch -O2 -ffp-contract=on \
-// RUN:     %loadClangPoseidonEnzyme -mllvm --poseidon-profile-use=%t.profiles \
-// RUN:     -mllvm --poseidon-cache=%t.solve -mllvm --poseidon-print \
+// RUN: %clang -x cuda --cuda-gpu-arch=%gpu_arch -O2 -ffp-contract=on \
+// RUN:     %loadClangPoseidonEnzyme -mllvm --poseidon-profile-use=%t/profiles \
+// RUN:     -mllvm --poseidon-cache=%t/solve -mllvm --poseidon-print \
 // RUN:     -mllvm --poseidon-cost-model=%gpu_cost_model \
 // RUN:     -mllvm --poseidon-enable-herbie=0 \
-// RUN:     %s -L%cuda_lib_dir -lcudart -lstdc++ -lm -o %t.opt.exe 2>&1 \
+// RUN:     %s -L%cuda_lib_dir -lcudart -lstdc++ -lm -o %t/opt.exe 2>&1 \
 // RUN:   | FileCheck --check-prefix=SOLVE %s
-// RUN: %t.opt.exe | FileCheck --check-prefix=OPT %s
+// RUN: %t/opt.exe | FileCheck --check-prefix=OPT %s
 
 // A site whose marked body is nothing but a forward-mode derivative request.
 // Before Enzyme has run, that body holds no floating-point arithmetic at all,

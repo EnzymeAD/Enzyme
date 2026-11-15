@@ -1,23 +1,23 @@
 // REQUIRES: enzyme, nvptx-device-profiler
-// RUN: rm -rf %t && mkdir -p %t
+// RUN: rm -rf %t && mkdir %t
 // RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O2 -Xclang -disable-llvm-passes -S -emit-llvm -I%poseidon_profile_inc %s -o %t/dev.ll
 // RUN: (env TMPDIR=%t %clang --target=nvptx64-nvidia-cuda -march=%gpu_arch -O2 -flto -x ir %t/dev.ll %loadClangPoseidonEnzyme -S -emit-llvm -o /dev/null 2>&1; echo "exit status $?") | FileCheck --check-prefix=DEFERRED --implicit-check-not=REPRODUCER --implicit-check-not="exit code" %s
 // RUN: (env TMPDIR=%t %clang --target=nvptx64-nvidia-cuda -march=%gpu_arch -O2 -flto -x ir %t/dev.ll %loadClangPoseidonEnzyme -mllvm -poseidon-profile-use=%S/../Inputs/other_sites -mllvm -poseidon-cache=%t/use -S -emit-llvm -o /dev/null 2>&1; echo "exit status $?") | FileCheck --check-prefix=DEFERRED --implicit-check-not=REPRODUCER --implicit-check-not="exit code" %s
 // RUN: (env TMPDIR=%t %clang --target=nvptx64-nvidia-cuda -march=%gpu_arch -O2 -flto=thin -x ir %t/dev.ll %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/gen -S -emit-llvm -o /dev/null 2>&1; echo "exit status $?") | FileCheck --check-prefix=DEFERRED --implicit-check-not=REPRODUCER --implicit-check-not="exit code" %s
-// RUN: %clang --target=nvptx64-nvidia-cuda -march=%gpu_arch -O2 -flto -x ir %t/dev.ll %loadClangPoseidonEnzyme -mllvm -enzyme-lto-prelink=1 -S -emit-llvm -o - 2>/dev/null | FileCheck --check-prefix=LOWERED --implicit-check-not=__enzyme_fwddiff %s
-// RUN: %clang --target=nvptx64-nvidia-cuda -march=%gpu_arch -O2 -flto -x ir %t/dev.ll %loadClangPoseidonEnzyme -mllvm -enzyme-lto-prelink=1 -mllvm -poseidon-profile-use=%S/../Inputs/other_sites -mllvm -poseidon-cache=%t/use1 -S -emit-llvm -o - 2>/dev/null | FileCheck --check-prefix=LOWERED --implicit-check-not=__enzyme_fwddiff %s
-// RUN: %clang --target=nvptx64-nvidia-cuda -march=%gpu_arch -O2 -flto=thin -x ir %t/dev.ll %loadClangPoseidonEnzyme -mllvm -enzyme-lto-prelink=1 -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/gen1 -S -emit-llvm -o - 2>/dev/null | FileCheck --check-prefix=LOWERED --implicit-check-not=__enzyme_fwddiff %s
+// RUN: %clang --target=nvptx64-nvidia-cuda -march=%gpu_arch -O2 -flto -x ir %t/dev.ll %loadClangPoseidonEnzyme -mllvm -enzyme-lto-prelink=1 -S -emit-llvm -o - | FileCheck --check-prefix=LOWERED --implicit-check-not=__enzyme_fwddiff %s
+// RUN: %clang --target=nvptx64-nvidia-cuda -march=%gpu_arch -O2 -flto -x ir %t/dev.ll %loadClangPoseidonEnzyme -mllvm -enzyme-lto-prelink=1 -mllvm -poseidon-profile-use=%S/../Inputs/other_sites -mllvm -poseidon-cache=%t/use1 -S -emit-llvm -o - | FileCheck --check-prefix=LOWERED --implicit-check-not=__enzyme_fwddiff %s
+// RUN: %clang --target=nvptx64-nvidia-cuda -march=%gpu_arch -O2 -flto=thin -x ir %t/dev.ll %loadClangPoseidonEnzyme -mllvm -enzyme-lto-prelink=1 -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/gen1 -S -emit-llvm -o - | FileCheck --check-prefix=LOWERED --implicit-check-not=__enzyme_fwddiff %s
 // RUN: not %opt %t/dev.ll %loadPoseidon -passes="poseidon,poseidon-late" -S -o /dev/null 2>&1 | FileCheck --check-prefix=BYNAME %s
 
 // A site whose body is the user's own derivative request is handled after
-// Enzyme has lowered that request. In an LTO pre-link compile, the phase every
-// HIP device compile is in, Enzyme leaves the request to the post-link run
-// unless -enzyme-lto-prelink is given, and a HIP device link loads no plugin:
-// without the option the compile stops there and says why, without a profile,
-// with one and generating one, instead of leaving an undefined __enzyme_*
-// symbol to the link; with it the request is lowered. Run by pipeline name the
-// pass is not told its phase and names the deferral only as a possibility. The
-// source is that of deferred_left_copy_nvptx.cu.
+// Enzyme lowers that request. In an LTO pre-link compile, the phase of every
+// HIP device compile, Enzyme defers the request to the post-link run unless
+// -enzyme-lto-prelink is given, and a HIP device link loads no plugin: without
+// the option the compile stops there and says why (with no profile, with one,
+// and generating one) instead of leaving an undefined __enzyme_* symbol to the
+// link; with it the request is lowered. Run by pipeline name, the pass is not
+// told its phase and names the deferral only as a possibility. The source is
+// that of deferred_left_copy_nvptx.cu.
 
 #include "poseidon/poseidon.h"
 

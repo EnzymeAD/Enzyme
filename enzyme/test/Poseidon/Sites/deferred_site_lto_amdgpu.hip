@@ -10,19 +10,18 @@
 // RUN: llvm-offload-binary %t/rdc/k.o --image=file=%t/rdc/dev.bc,arch=gfx942
 // RUN: llvm-dis %t/rdc/dev.bc -o - | FileCheck --check-prefix=DEV --implicit-check-not=__enzyme %s
 
-// A HIP compile with -c, without ROCm (no device library, the few runtime
-// declarations a kernel stub needs written out): the device half is an LTO
-// pre-link compile, where Enzyme leaves derivative requests to a post-link run
-// unless -enzyme-lto-prelink is given, and the device link the same -c runs
-// loads no plugin. A site whose body is the user's own derivative request is
-// handled after Enzyme has lowered that request: with both plugins and without
-// the option the compile stops in the device compiler with the reason, not at
-// the device link with an undefined __enzyme_* symbol, and without a crash;
-// through poseidon-clang++, which loads Enzyme only to generate a profile, it
-// stops asking for Enzyme's plugin.
-// With the option, also through poseidon-clang++ given Enzyme's plugin and the
-// option as clang is, the code object and the relocatable device code hold no
-// request. The device code is that of deferred_left_copy_nvptx.cu.
+// A HIP compile with -c and no ROCm (no device library; the runtime
+// declarations a kernel stub needs are written out). Its device half is an LTO
+// pre-link compile, where Enzyme defers derivative requests to a post-link run
+// unless -enzyme-lto-prelink is given, and the device link of the same -c loads
+// no plugin. A site whose body is the user's own derivative request is handled
+// after Enzyme lowers that request: with both plugins and without the option,
+// the compile stops in the device compiler with the reason (no crash, no
+// undefined __enzyme_* symbol at the device link); through poseidon-clang++,
+// which loads Enzyme only to generate a profile, it stops asking for Enzyme's
+// plugin. With the option, given to clang or to poseidon-clang++ with Enzyme's
+// plugin, the code object and the relocatable device code hold no request. The
+// device code is that of deferred_left_copy_nvptx.cu.
 
 #include <cstddef>
 

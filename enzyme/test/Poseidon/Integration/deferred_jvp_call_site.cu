@@ -1,5 +1,5 @@
 // REQUIRES: enzyme, cuda-runtime
-// RUN: rm -rf %t && mkdir -p %t
+// RUN: rm -rf %t && mkdir %t
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 -poseidon-profile-generate -poseidon-cache=%t/cg -poseidon-print %s -o %t/gen 2>&1 \
 // RUN:   | FileCheck --check-prefix=DEFER %s
 // RUN: env POSEIDON_PROFILE_DIR=%t/prof %t/gen | FileCheck --check-prefix=PRIMAL %s

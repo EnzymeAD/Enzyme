@@ -1,10 +1,19 @@
-; RUN: rm -rf %t && mkdir -p %t
+; DEFINE: %{opt} = %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" \
+; DEFINE:   -poseidon-profile-use=%S/../Inputs/regime_split/profiles \
+; DEFINE:   -poseidon-enable-herbie=true -poseidon-enable-pt=false \
+; DEFINE:   -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cost-budget=1e9 \
+; DEFINE:   -poseidon-cache=%t/c -S -o /dev/null
+; RUN: rm -rf %t && mkdir %t
 ; RUN: printf '#!/bin/sh\nexec %S/../Inputs/fake-herbie.sh "$@"\n' > %t/other-herbie.sh && chmod +x %t/other-herbie.sh
-; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/dp_cache_keys %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/regime_split/profiles -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/fake-herbie.sh -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cost-budget=1e9 -poseidon-cache=%t/c -S -o /dev/null 2>&1 | FileCheck --check-prefix=FIRST %s
-; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/dp_cache_keys %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/regime_split/profiles -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/fake-herbie.sh -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cost-budget=1e9 -poseidon-cache=%t/c -poseidon-herbie-num-iters=2 -S -o /dev/null 2>&1 | FileCheck --check-prefix=OTHER %s
-; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/dp_cache_keys %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/regime_split/profiles -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/fake-herbie.sh -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cost-budget=1e9 -poseidon-cache=%t/c -S -o /dev/null 2>&1 | FileCheck --check-prefix=BACK %s
-; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/dp_cache_keys %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/regime_split/profiles -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/fake-herbie.sh -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cost-budget=1e9 -poseidon-cache=%t/c -poseidon-herbie-timeout=50 -poseidon-herbie-num-threads=2 -S -o /dev/null 2>&1 | FileCheck --check-prefix=HIT %s
-; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/dp_cache_keys %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/regime_split/profiles -poseidon-enable-herbie=true -poseidon-herbie-binary=%t/other-herbie.sh -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cost-budget=1e9 -poseidon-cache=%t/c -S -o /dev/null 2>&1 | FileCheck --check-prefix=BINARY %s
+; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/dp_cache_keys %{opt} -poseidon-herbie-binary=%S/../Inputs/fake-herbie.sh 2>&1 \
+; RUN:   | FileCheck --check-prefix=FIRST %s
+; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/dp_cache_keys %{opt} -poseidon-herbie-binary=%S/../Inputs/fake-herbie.sh -poseidon-herbie-num-iters=2 2>&1 \
+; RUN:   | FileCheck --check-prefix=OTHER %s
+; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/dp_cache_keys %{opt} -poseidon-herbie-binary=%S/../Inputs/fake-herbie.sh 2>&1 \
+; RUN:   | FileCheck --check-prefix=BACK %s
+; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/dp_cache_keys %{opt} -poseidon-herbie-binary=%S/../Inputs/fake-herbie.sh -poseidon-herbie-timeout=50 -poseidon-herbie-num-threads=2 2>&1 \
+; RUN:   | FileCheck --check-prefix=HIT %s
+; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/dp_cache_keys %{opt} -poseidon-herbie-binary=%t/other-herbie.sh 2>&1 | FileCheck --check-prefix=BINARY %s
 
 ; A Herbie result is cached under its cores, the binary, the search arguments
 ; and the platform, and a DP table records them. Changing a search argument

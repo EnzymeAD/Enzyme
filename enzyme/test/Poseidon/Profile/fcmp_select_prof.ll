@@ -69,7 +69,6 @@ entry:
   ret double %0
 }
 
-; Function Attrs: nounwind
 declare double @__poseidon_fp_optimize(...)
 
 ; CHECK: @POSEIDON_PROFILE_RUNTIME_VAR = external global i32

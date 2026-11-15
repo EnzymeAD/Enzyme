@@ -6,17 +6,18 @@
 // optimized binary is held to is tau itself.
 //
 // REQUIRES: enzyme, cuda-runtime
+// RUN: rm -rf %t && mkdir %t
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 \
-// RUN:     -poseidon-profile-generate -poseidon-cache=%t.pcache %s -o %t.exe -lcublas
-// RUN: rm -rf %t.profile && POSEIDON_PROFILE_DIR=%t.profile %t.exe 1e-13 \
+// RUN:     -poseidon-profile-generate -poseidon-cache=%t/pcache %s -o %t/exe -lcublas
+// RUN: env POSEIDON_PROFILE_DIR=%t/profile %t/exe 1e-13 \
 // RUN:   | FileCheck --check-prefix=PRIMAL %s
 //
-// RUN: rm -rf %t.cache && %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 \
-// RUN:     -poseidon-profile-use=%t.profile -poseidon-cache=%t.cache \
+// RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 \
+// RUN:     -poseidon-profile-use=%t/profile -poseidon-cache=%t/cache \
 // RUN:     -poseidon-cost-model=%gpu_cost_model -poseidon-print \
 // RUN:     -poseidon-enable-herbie=0 -poseidon-enable-pt=0 -poseidon-tau=1e-12 \
-// RUN:     %s -o %t.opt.exe -lcublas 2>&1 | FileCheck %s
-// RUN: %t.opt.exe 1e-12 | FileCheck --check-prefix=OPT %s
+// RUN:     %s -o %t/opt.exe -lcublas 2>&1 | FileCheck %s
+// RUN: %t/opt.exe 1e-12 | FileCheck --check-prefix=OPT %s
 
 #include <cmath>
 #include <cstdio>

@@ -1,5 +1,5 @@
 ; REQUIRES: scev-trunc-iv-nowrap
-; RUN: rm -rf %t && mkdir -p %t
+; RUN: rm -rf %t && mkdir %t
 ; RUN: %opt %S/../Inputs/stale_cache/matmul_device.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/fp16_range/matmul_tiny -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv -poseidon-cache=%t/site -poseidon-print -poseidon-show-table -S -o /dev/null 2>&1 | FileCheck --check-prefix=TABLE %s
 ; RUN: FileCheck --check-prefix=BUDGETS %s < %t/site/budgets.txt
 ; RUN: for b in $(tr , ' ' < %t/site/budgets.txt); do \

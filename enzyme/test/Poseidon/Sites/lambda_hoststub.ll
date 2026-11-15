@@ -5,11 +5,11 @@
 ; (Inputs/lambda_stub/lambda_stub.cu, clang --cuda-host-only -O0): the
 ; descriptors name pointers and sizes as fields of the lambda, which only the
 ; launch's own argument array holds in every host ABI. The profiling launch
-; hands the runtime that array and each pointer's offset; the kernel's
+; passes the runtime that array and each pointer's offset; the kernel's
 ; device-side name carries the -fgpu-rdc postfix of an internal kernel. The
 ; dispatch reads its operands and extents from the same array and runs only
-; when the extents the recognition assumed equal are, launching the kernel as
-; written otherwise.
+; when the extents the recognition assumed equal are equal; otherwise it
+; launches the kernel as written.
 
 ; GEN: [poseidon-profgen] launch of _ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT___intern__0123abcd now allocates and seeds 3 shadow buffer(s)
 ; GEN: @poseidon.off.{{.*}} = private unnamed_addr constant [3 x i32] [i32 16, i32 40, i32 64]

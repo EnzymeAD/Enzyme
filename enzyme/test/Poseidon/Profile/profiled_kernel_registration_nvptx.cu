@@ -1,16 +1,19 @@
 // REQUIRES: enzyme, nvptx-device-profiler
+// DEFINE: %{clang} = %clang -x cuda -nocudainc -nocudalib -S -emit-llvm \
+// DEFINE:   -I%poseidon_profile_inc %loadClangPoseidonEnzyme -mllvm -poseidon-cache=%t/c \
+// DEFINE:   %s
 // RUN: rm -rf %t && mkdir -p %t && echo fatbin > %t/k.fatbin
-// RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c -mllvm -poseidon-unit=u %s -o %t/dev.ll
+// RUN: %{clang} --cuda-device-only --cuda-gpu-arch=%gpu_arch -O2 -mllvm -poseidon-profile-generate -mllvm -poseidon-unit=u -o %t/dev.ll
 // RUN: cat %t/c/launches_*.json | FileCheck --check-prefix=MANIFEST %s
-// RUN: %clang -x cuda --cuda-host-only -nocudainc -nocudalib -O0 -S -emit-llvm -I%poseidon_profile_inc -Xclang -fcuda-include-gpubinary -Xclang %t/k.fatbin %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c -mllvm -poseidon-unit=u %s -o %t/host.ll
+// RUN: %{clang} --cuda-host-only -O0 -Xclang -fcuda-include-gpubinary -Xclang %t/k.fatbin -mllvm -poseidon-profile-generate -mllvm -poseidon-unit=u -o %t/host.ll
 // RUN: FileCheck --check-prefix=HOST %s < %t/host.ll
 // RUN: grep -o 'c"SiteId[^"]*"' %t/dev.ll | sort > %t/dev.headers
 // RUN: grep -o 'c"SiteId[^"]*"' %t/host.ll | sort > %t/host.headers
 // RUN: count 2 < %t/dev.headers
 // RUN: diff %t/dev.headers %t/host.headers
-// RUN: %clang -x cuda --cuda-host-only -nocudainc -nocudalib -O0 -S -emit-llvm -I%poseidon_profile_inc -Xclang -fcuda-include-gpubinary -Xclang %t/k.fatbin %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c -mllvm -poseidon-unit=other %s -o %t/other.ll
+// RUN: %{clang} --cuda-host-only -O0 -Xclang -fcuda-include-gpubinary -Xclang %t/k.fatbin -mllvm -poseidon-profile-generate -mllvm -poseidon-unit=other -o %t/other.ll
 // RUN: FileCheck --check-prefix=NONE --implicit-check-not=poseidonRegisterProfileStatic %s < %t/other.ll
-// RUN: %clang -x cuda --cuda-host-only -nocudainc -nocudalib -O0 -S -emit-llvm -I%poseidon_profile_inc -Xclang -fcuda-include-gpubinary -Xclang %t/k.fatbin %loadClangPoseidonEnzyme -mllvm -poseidon-cache=%t/c -mllvm -poseidon-unit=u %s -o %t/plain.ll
+// RUN: %{clang} --cuda-host-only -O0 -Xclang -fcuda-include-gpubinary -Xclang %t/k.fatbin -mllvm -poseidon-unit=u -o %t/plain.ll
 // RUN: FileCheck --check-prefix=PLAIN --implicit-check-not=poseidonRegisterProfileStatic %s < %t/plain.ll
 
 // The device profiler writes a kernel's profile only once the kernel has run,
@@ -44,11 +47,13 @@ POSEIDON_OPTIMIZE __global__ void norm2(const double *a, double *y) {
 }
 
 // MANIFEST: "profile headers": {
-// MANIFEST-DAG: "_Z5norm2PKdPd": {
-// MANIFEST-DAG: "profile": "preprocess__Z5norm2PKdPd_poseidon_body"
-// MANIFEST-DAG: "_Z5scalePdd": {
-// MANIFEST-DAG: "profile": "preprocess__Z5scalePdd_poseidon_body"
-// MANIFEST-DAG: "header": "SiteId = {{[0-9]+}}\nCanonicalHash = {{[0-9a-f]+}}\nProfileFormat = 2\n"
+// MANIFEST-NEXT: "_Z5norm2PKdPd": {
+// MANIFEST-NEXT: "header": "SiteId = {{[0-9]+}}\nCanonicalHash = {{[0-9a-f]+}}\nProfileFormat = 2\n",
+// MANIFEST-NEXT: "profile": "preprocess__Z5norm2PKdPd_poseidon_body"
+// MANIFEST-NEXT: },
+// MANIFEST-NEXT: "_Z5scalePdd": {
+// MANIFEST-NEXT: "header": "SiteId = {{[0-9]+}}\nCanonicalHash = {{[0-9a-f]+}}\nProfileFormat = 2\n",
+// MANIFEST-NEXT: "profile": "preprocess__Z5scalePdd_poseidon_body"
 
 // HOST: @llvm.global_ctors = {{.*}}{ i32 0, ptr @poseidon_register_static_preprocess__Z5norm2PKdPd_poseidon_body, ptr null }, { i32, ptr, ptr } { i32 0, ptr @poseidon_register_static_preprocess__Z5scalePdd_poseidon_body, ptr null }]
 // HOST-LABEL: define internal void @poseidon_register_static_preprocess__Z5norm2PKdPd_poseidon_body()

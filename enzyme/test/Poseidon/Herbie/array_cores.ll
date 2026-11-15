@@ -1,7 +1,14 @@
-; RUN: rm -rf %t && mkdir -p %t
-; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/array_cores/profiles -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/array_cores/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cost-budget=1e9 -poseidon-cache=%t/arrays -poseidon-herbie-arrays -S 2>&1 | FileCheck --check-prefix=ARRAY %s
-; RUN: env FAKE_HERBIE_ARRAY=timeout %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/array_cores/profiles -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/array_cores/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cost-budget=1e9 -poseidon-cache=%t/fallback -poseidon-herbie-arrays -S 2>&1 | FileCheck --check-prefix=FALLBACK %s
-; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/array_cores/profiles -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/array_cores/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cost-budget=1e9 -poseidon-cache=%t/off -poseidon-herbie-arrays=false -S 2>&1 | FileCheck --check-prefix=OFF %s
+; DEFINE: %{opt} = %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" \
+; DEFINE:   -poseidon-profile-use=%S/../Inputs/array_cores/profiles \
+; DEFINE:   -poseidon-enable-herbie=true \
+; DEFINE:   -poseidon-herbie-binary=%S/../Inputs/array_cores/fake-herbie.sh \
+; DEFINE:   -poseidon-herbie-processes=1 -poseidon-enable-pt=false \
+; DEFINE:   -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cost-budget=1e9 \
+; DEFINE:   -S
+; RUN: rm -rf %t && mkdir %t
+; RUN: %{opt} -poseidon-cache=%t/arrays -poseidon-herbie-arrays 2>&1 | FileCheck --check-prefix=ARRAY %s
+; RUN: env FAKE_HERBIE_ARRAY=timeout %{opt} -poseidon-cache=%t/fallback -poseidon-herbie-arrays 2>&1 | FileCheck --check-prefix=FALLBACK %s
+; RUN: %{opt} -poseidon-cache=%t/off -poseidon-herbie-arrays=false 2>&1 | FileCheck --check-prefix=OFF %s
 
 ; Both outputs read sqrt(x*x + y*y) - x. With -poseidon-herbie-arrays the
 ; subgraph goes to Herbie as one array core per precision, the shared subterm

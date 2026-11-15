@@ -1,4 +1,4 @@
-// RUN: rm -rf %t && mkdir -p %t
+// RUN: rm -rf %t && mkdir %t
 // RUN: %clang++ $(llvm-config --cxxflags) -fPIC -shared -I%S/../../../Poseidon %S/../Inputs/expansion_fast_flags/apply_expansion.cpp -o %t/apply_expansion%shlibext
 // RUN: %opt %S/../Inputs/expansion_fast_flags/fast_attributes.ll %loadPoseidon -load-pass-plugin=%t/apply_expansion%shlibext -passes=apply-expansion -S -o %t/expanded.ll
 // RUN: %clang++ -O2 -c %t/expanded.ll -o %t/expanded.o

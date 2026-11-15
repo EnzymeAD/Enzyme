@@ -1,21 +1,63 @@
-; RUN: rm -rf %t && mkdir -p %t
-; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/../Inputs/expansion3 -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-enable-multifloat=true -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-print -S -poseidon-expansion-components=2 -poseidon-tau=1e-16 -poseidon-cache=%t/two 2>&1 | FileCheck --check-prefix=TWO %s
-; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/../Inputs/expansion3 -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-enable-multifloat=true -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-print -S -poseidon-expansion-components=3 -poseidon-tau=1e-16 -poseidon-cache=%t/three 2>&1 | FileCheck --check-prefix=THREE %s
-; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/../Inputs/expansion3 -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-enable-multifloat=true -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-print -S -poseidon-expansion-components=3 -poseidon-tau=1e-15 -poseidon-cache=%t/loose 2>&1 | FileCheck --check-prefix=LOOSE %s
-; Three-component FP32 expansion (-poseidon-expansion-components=3, the N-limb arm of Techniques/Expansion.cpp). A
-; 24-step logistic map (72 FP64 operations on one input) under the site tolerance 1e-16: the two-component
-; expansion models 4.2e-16 and misses it, so with two components the cheapest point that clears it is the
-; FP64 body itself and nothing is rewritten; admitting three components adds an Expansion3 candidate that
-; clears it and is cheaper than FP64 on this cost model, and that is the pick. Its modelled error is below
-; the FP64 body's (a negative accuracy cost): the model keeps the three components between operations, as
-; the emitted code does. At 1e-15 the cheaper two-component point clears the tolerance and wins even with
-; three admitted. The materialized body splits the FP64 input into three FP32 components (mfx.split*),
-; computes in FP32, and restores FP64 as the sum of three widened components (mfx.tof64); the
-; double-single join tag is not used.
+; DEFINE: %{opt} = %opt %s %loadPoseidon \
+; DEFINE:   -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" \
+; DEFINE:   -poseidon-profile-use=%S/../Inputs/expansion3 -poseidon-enable-herbie=false \
+; DEFINE:   -poseidon-enable-pt=true -poseidon-enable-multifloat=true \
+; DEFINE:   -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false \
+; DEFINE:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-print -S
+; RUN: rm -rf %t && mkdir %t
+; RUN: %{opt} -poseidon-expansion-components=2 -poseidon-tau=1e-16 -poseidon-cache=%t/two 2>&1 | FileCheck --check-prefix=TWO %s
+; RUN: %{opt} -poseidon-expansion-components=3 -poseidon-tau=1e-16 -poseidon-cache=%t/three 2>&1 | FileCheck --check-prefix=THREE %s
+; RUN: %{opt} -poseidon-expansion-components=3 -poseidon-tau=1e-15 -poseidon-cache=%t/loose 2>&1 | FileCheck --check-prefix=LOOSE %s
+
+; TWO: 2.013455e-07		-8.835072e+06		All FP64(0%) + Expansion2(100%)
+; TWO-NOT: Expansion3
+; TWO: tau=1.000000e-16 S=4.913424e+08 A0=6.201450e-09 selected cost=0.000000e+00 accCost=0.000000e+00 rel=1.262144e-17
+; TWO: no rewrite applied for preprocess__Z15logistic_kernelPKdPd_poseidon_body
+; TWO-NOT: Applying solution
+
+; THREE: 2.013455e-07		-8.835072e+06		All FP64(0%) + Expansion2(100%)
+; THREE: -6.201441e-09		-8.142848e+06		All FP64(0%) + Expansion3(100%)
+; THREE: tau=1.000000e-16 S=4.913424e+08 A0=6.201450e-09 selected cost=-8.628472e-01 accCost=-6.201441e-09 rel=1.869795e-23
+; THREE: Applying solution for CS: All FP64(0%) + Expansion3(100%) (#3)
+; THREE-LABEL: define internal void @preprocess__Z15logistic_kernelPKdPd_poseidon_body(
+; THREE: %mfx.split = fptrunc double %{{.+}} to float
+; THREE-NEXT: %mfx.splitb = fpext float %mfx.split to double
+; THREE-NEXT: %mfx.splitr = fsub double %{{.+}}, %mfx.splitb
+; THREE-NEXT: %mfx.split1 = fptrunc double %mfx.splitr to float
+; THREE-NEXT: %mfx.splitb2 = fpext float %mfx.split1 to double
+; THREE-NEXT: %mfx.splitr3 = fsub double %mfx.splitr, %mfx.splitb2
+; THREE-NEXT: %mfx.split4 = fptrunc double %mfx.splitr3 to float
+; THREE-NOT: fmul double
+; THREE-NOT: poseidon.ds.join
+; THREE: %mfx.e = fpext float %{{.+}} to double
+; THREE-NEXT: %mfx.e{{[0-9]+}} = fpext float %{{.+}} to double
+; THREE-NEXT: %mfx.tof64 = fadd double
+; THREE-NEXT: %mfx.e{{[0-9]+}} = fpext float %{{.+}} to double
+; THREE-NEXT: %[[OUT:mfx.tof64[0-9]+]] = fadd double %mfx.tof64,
+; THREE-NEXT: getelementptr
+; THREE-NEXT: store double %[[OUT]], ptr
+; THREE-NEXT: ret void
+
+; LOOSE: -6.201441e-09		-8.142848e+06		All FP64(0%) + Expansion3(100%)
+; LOOSE: tau=1.000000e-15 S=4.913424e+08 A0=6.201450e-09 selected cost=-9.361979e-01 accCost=2.013455e-07 rel=4.224080e-16
+; LOOSE: Applying solution for CS: All FP64(0%) + Expansion2(100%) (#1)
+; LOOSE-LABEL: define internal void @preprocess__Z15logistic_kernelPKdPd_poseidon_body(
+; LOOSE: !poseidon.ds.join
+; LOOSE-NOT: mfx.split
+
+; -poseidon-expansion-components=3 admits a three-component FP32 expansion
+; (Techniques/Expansion.cpp). On a 24-step logistic map (72 FP64 operations on
+; one input) at tolerance 1e-16 the two-component expansion misses, so with two
+; components the body is left as written; with three, the three-component
+; expansion clears it, is cheaper than FP64 on this cost model, and models an
+; error below the FP64 body's (a negative accuracy cost). At 1e-15 the
+; two-component point clears and wins with three admitted. The three-component
+; body splits the input into three FP32 components and sums them back to FP64,
+; without the double-single join tag.
 ; IR: Inputs/expansion3/logistic.cu via clang -x cuda --cuda-device-only --cuda-gpu-arch=sm_120 -O2
 ; -ffp-contract=on -I<enzyme>/include -S -emit-llvm (LLVM 24; the LLVM-24-only nocreateundeforpoison
 ; intrinsic attribute removed). Profile: the same source through poseidon-clang++
-; -poseidon-profile-generate, run on an RTX 5090.
+; -poseidon-profile-generate, run on an sm_120 GPU.
 
 ; ModuleID = 'logistic.cu'
 source_filename = "logistic.cu"
@@ -26,7 +68,6 @@ target triple = "nvptx64-nvidia-cuda"
 @.str1 = private unnamed_addr constant [12 x i8] c"logistic.cu\00", section "llvm.metadata"
 @llvm.global.annotations = appending global [1 x { ptr, ptr, ptr, i32, ptr }] [{ ptr, ptr, ptr, i32, ptr } { ptr @_Z15logistic_kernelPKdPd, ptr @.str, ptr @.str1, i32 5, ptr null }], section "llvm.metadata"
 
-; Function Attrs: mustprogress nofree noinline norecurse nosync nounwind willreturn memory(argmem: readwrite)
 define dso_local ptx_kernel void @_Z15logistic_kernelPKdPd(ptr nofree noundef readonly captures(none) %0, ptr nofree noundef writeonly captures(none) %1) #0 {
   %3 = tail call noundef i32 @llvm.nvvm.read.ptx.sreg.ctaid.x()
   %4 = tail call noundef i32 @llvm.nvvm.read.ptx.sreg.ntid.x()
@@ -35,7 +76,7 @@ define dso_local ptx_kernel void @_Z15logistic_kernelPKdPd(ptr nofree noundef re
   %7 = add i32 %5, %6
   %8 = zext i32 %7 to i64
   %9 = getelementptr inbounds nuw [8 x i8], ptr %0, i64 %8
-  %10 = load double, ptr %9, align 8, !tbaa !10
+  %10 = load double, ptr %9, align 8
   %11 = fmul double %10, 3.900000e+00
   %12 = fsub double 1.000000e+00, %10
   %13 = fmul double %11, %12
@@ -109,71 +150,21 @@ define dso_local ptx_kernel void @_Z15logistic_kernelPKdPd(ptr nofree noundef re
   %81 = fsub double 1.000000e+00, %79
   %82 = fmul double %80, %81
   %83 = getelementptr inbounds nuw [8 x i8], ptr %1, i64 %8
-  store double %82, ptr %83, align 8, !tbaa !10
+  store double %82, ptr %83, align 8
   ret void
 }
 
-; Function Attrs: mustprogress nocallback nofree nosync nounwind speculatable willreturn memory(none)
 declare noundef range(i32 0, 2147483647) i32 @llvm.nvvm.read.ptx.sreg.ctaid.x() #1
 
-; Function Attrs: mustprogress nocallback nofree nosync nounwind speculatable willreturn memory(none)
 declare noundef range(i32 1, 1025) i32 @llvm.nvvm.read.ptx.sreg.ntid.x() #1
 
-; Function Attrs: mustprogress nocallback nofree nosync nounwind speculatable willreturn memory(none)
 declare noundef range(i32 0, 1024) i32 @llvm.nvvm.read.ptx.sreg.tid.x() #1
 
 attributes #0 = { mustprogress nofree noinline norecurse nosync nounwind willreturn memory(argmem: readwrite) "frame-pointer"="all" "no-trapping-math"="true" "stack-protector-buffer-size"="8" "target-cpu"="sm_120" "target-features"="+ptx88" "uniform-work-group-size" }
 attributes #1 = { mustprogress nocallback nofree nosync nounwind speculatable willreturn memory(none) }
 
 !llvm.module.flags = !{!0, !1, !2}
-!llvm.ident = !{!3, !4}
-!llvm.errno.tbaa = !{!5}
 
 !0 = !{i32 2, !"SDK Version", [2 x i32] [i32 12, i32 9]}
 !1 = !{i32 4, !"nvvm-reflect-ftz", i32 0}
 !2 = !{i32 7, !"frame-pointer", i32 2}
-!3 = !{!"clang version 24.0.0git (https://github.com/llvm/llvm-project.git e56c2cefc3e7978de4a2d799fa3abec77d75af21)"}
-!4 = !{!"clang version 3.8.0 (tags/RELEASE_380/final)"}
-!5 = !{!6, !7, i64 0}
-!6 = !{!"__libc_errno", !7, i64 0}
-!7 = !{!"int", !8, i64 0}
-!8 = !{!"omnipotent char", !9, i64 0}
-!9 = !{!"Simple C++ TBAA"}
-!10 = !{!11, !11, i64 0}
-!11 = !{!"double", !8, i64 0}
-
-; TWO: 2.013455e-07		-8.835072e+06		All FP64(0%) + Expansion2(100%)
-; TWO-NOT: Expansion3
-; TWO: tau=1.000000e-16 S=4.913424e+08 A0=6.201450e-09 selected cost=0.000000e+00 accCost=0.000000e+00 rel=1.262144e-17
-; TWO: no rewrite applied for preprocess__Z15logistic_kernelPKdPd_poseidon_body
-; TWO-NOT: Applying solution
-
-; THREE: 2.013455e-07		-8.835072e+06		All FP64(0%) + Expansion2(100%)
-; THREE: -6.201441e-09		-8.142848e+06		All FP64(0%) + Expansion3(100%)
-; THREE: tau=1.000000e-16 S=4.913424e+08 A0=6.201450e-09 selected cost=-8.628472e-01 accCost=-6.201441e-09 rel=1.869795e-23
-; THREE: Applying solution for CS: All FP64(0%) + Expansion3(100%) (#3)
-; THREE-LABEL: define internal void @preprocess__Z15logistic_kernelPKdPd_poseidon_body(
-; THREE: %mfx.split = fptrunc double %{{.+}} to float
-; THREE-NEXT: %mfx.splitb = fpext float %mfx.split to double
-; THREE-NEXT: %mfx.splitr = fsub double %{{.+}}, %mfx.splitb
-; THREE-NEXT: %mfx.split1 = fptrunc double %mfx.splitr to float
-; THREE-NEXT: %mfx.splitb2 = fpext float %mfx.split1 to double
-; THREE-NEXT: %mfx.splitr3 = fsub double %mfx.splitr, %mfx.splitb2
-; THREE-NEXT: %mfx.split4 = fptrunc double %mfx.splitr3 to float
-; THREE-NOT: fmul double
-; THREE-NOT: poseidon.ds.join
-; THREE: %mfx.e = fpext float %{{.+}} to double
-; THREE-NEXT: %mfx.e{{[0-9]+}} = fpext float %{{.+}} to double
-; THREE-NEXT: %mfx.tof64 = fadd double
-; THREE-NEXT: %mfx.e{{[0-9]+}} = fpext float %{{.+}} to double
-; THREE-NEXT: %[[OUT:mfx.tof64[0-9]+]] = fadd double %mfx.tof64,
-; THREE-NEXT: getelementptr
-; THREE-NEXT: store double %[[OUT]], ptr
-; THREE-NEXT: ret void
-
-; LOOSE: -6.201441e-09		-8.142848e+06		All FP64(0%) + Expansion3(100%)
-; LOOSE: tau=1.000000e-15 S=4.913424e+08 A0=6.201450e-09 selected cost=-9.361979e-01 accCost=2.013455e-07 rel=4.224080e-16
-; LOOSE: Applying solution for CS: All FP64(0%) + Expansion2(100%) (#1)
-; LOOSE-LABEL: define internal void @preprocess__Z15logistic_kernelPKdPd_poseidon_body(
-; LOOSE: !poseidon.ds.join
-; LOOSE-NOT: mfx.split

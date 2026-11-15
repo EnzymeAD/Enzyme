@@ -1,14 +1,25 @@
-; RUN: rm -rf %t && %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/../Inputs/joint_profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-print -S -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache=%t/native 2>&1 | FileCheck --check-prefix=NATIVE %s
-; RUN: not %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/../Inputs/joint_profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-print -S -poseidon-cost-model=%cost_models/cm_cpu_missing.csv -poseidon-cache=%t/missing 2>&1 | FileCheck --check-prefix=MISSING %s
-; RUN: not %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/../Inputs/joint_profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-print -S -poseidon-cost-model=%cost_models/cm_cpu_foreign.csv -poseidon-cache=%t/foreign 2>&1 | FileCheck --check-prefix=FOREIGN %s
-; RUN: not %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/../Inputs/joint_profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-print -S -poseidon-cost-model=%cost_models/cm_cpu_noarch.csv -poseidon-cache=%t/noarch 2>&1 | FileCheck --check-prefix=NOARCH %s
-; RUN: not %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/../Inputs/joint_profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-print -S -poseidon-cache=%t/none 2>&1 | FileCheck --check-prefix=NOMODEL %s
+; DEFINE: %{opt} = %opt %s %loadPoseidon -poseidon-profile-use=%S/../Inputs/joint_profiles \
+; DEFINE:   -poseidon-enable-herbie=false -poseidon-enable-pt=true -S
+; RUN: rm -rf %t && mkdir %t
+; RUN: %{opt} -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-print -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache=%t/native 2>&1 \
+; RUN:   | FileCheck --check-prefix=NATIVE %s
+; RUN: not %{opt} -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-print -poseidon-cost-model=%cost_models/cm_cpu_missing.csv -poseidon-cache=%t/missing 2>&1 \
+; RUN:   | FileCheck --check-prefix=MISSING %s
+; RUN: not %{opt} -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-print -poseidon-cost-model=%cost_models/cm_cpu_foreign.csv -poseidon-cache=%t/foreign 2>&1 \
+; RUN:   | FileCheck --check-prefix=FOREIGN %s
+; RUN: not %{opt} -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-print -poseidon-cost-model=%cost_models/cm_cpu_noarch.csv -poseidon-cache=%t/noarch 2>&1 \
+; RUN:   | FileCheck --check-prefix=NOARCH %s
+; RUN: not %{opt} -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-print -poseidon-cache=%t/none 2>&1 \
+; RUN:   | FileCheck --check-prefix=NOMODEL %s
 ; RUN: (cat %cost_models/cm_cpu_native.csv; echo 'fadd,float,1') > %t/twice.csv
-; RUN: not %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/joint_profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -S -poseidon-cost-model=%t/twice.csv -poseidon-cache=%t/twice 2>&1 | FileCheck --check-prefix=TWICE %s
+; RUN: not %{opt} -passes="poseidon,poseidon-finalize" -poseidon-cost-model=%t/twice.csv -poseidon-cache=%t/twice 2>&1 \
+; RUN:   | FileCheck --check-prefix=TWICE %s
 ; RUN: (cat %cost_models/cm_cpu_native.csv; echo 'fwibble,double,3') > %t/unknown.csv
-; RUN: not %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/joint_profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -S -poseidon-cost-model=%t/unknown.csv -poseidon-cache=%t/unknown 2>&1 | FileCheck --check-prefix=UNKNOWN %s
+; RUN: not %{opt} -passes="poseidon,poseidon-finalize" -poseidon-cost-model=%t/unknown.csv -poseidon-cache=%t/unknown 2>&1 \
+; RUN:   | FileCheck --check-prefix=UNKNOWN %s
 ; RUN: (cat %cost_models/cm_cpu_native.csv; echo 'fadd,float') > %t/short.csv
-; RUN: not %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/joint_profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -S -poseidon-cost-model=%t/short.csv -poseidon-cache=%t/short 2>&1 | FileCheck --check-prefix=SHORT %s
+; RUN: not %{opt} -passes="poseidon,poseidon-finalize" -poseidon-cost-model=%t/short.csv -poseidon-cache=%t/short 2>&1 \
+; RUN:   | FileCheck --check-prefix=SHORT %s
 ; The measured CSV is the only price source. A model whose native_arch matches the function's target-cpu is consumed as is (2 FP64 ops at 4 = 8); a model missing a required row, a model measured on another device, a model with no native_arch header, a model with a row twice, a line that is not a row or a row of no family Poseidon reads, and no model at all each stop the compile with an error instead of substituting a price.
 
 define double @tester_a(double %x, double %y) #0 {

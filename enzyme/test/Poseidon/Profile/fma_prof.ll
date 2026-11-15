@@ -1,7 +1,6 @@
 ; REQUIRES: enzyme
 ; RUN: %opt < %s %loadPoseidonEnzyme -passes="poseidon,enzyme,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -enzyme-preopt=false -poseidon-profile-generate -S | FileCheck %s
 
-; Function Attrs: noinline nounwind readnone uwtable
 define double @tester(double %x, double %y, double %z) {
 entry:
   %0 = fmul fast double %x, %y
@@ -15,7 +14,6 @@ entry:
   ret double %0
 }
 
-; Function Attrs: nounwind
 declare double @__poseidon_fp_optimize(double (double, double, double)*, ...)
 
 ; CHECK: @POSEIDON_PROFILE_RUNTIME_VAR = external global i32

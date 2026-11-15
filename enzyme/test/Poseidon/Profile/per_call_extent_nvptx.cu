@@ -1,15 +1,14 @@
 // REQUIRES: enzyme, nvptx-device-profiler
-// RUN: rm -rf %t && mkdir -p %t
+// RUN: rm -rf %t && mkdir %t
 // RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c %s -o %t/gen.ll 2>&1 | FileCheck --check-prefixes=GEN,REFUSED %s
 // RUN: FileCheck --check-prefix=IR %s < %t/gen.ll
 // RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/other_sites -mllvm -poseidon-cache=%t/u %s -o /dev/null 2>&1 | FileCheck --check-prefixes=USE,REFUSED %s
 
-// A pointer into no object the pass knows the extent of (into device memory,
-// or a reference parameter of the caller) has a shadow when the call reaches
-// a constant range of memory through it: a local object that covers the
-// range, zero, with 1.0 wherever the call writes, since the memory outlives
-// the call. Two such pointers at a constant distance from one base share one
-// shadow; pointers of distinct bases get shadows of their own, and the
+// A pointer into no object the pass knows the extent of (device memory, a
+// reference parameter of the caller) gets a shadow when the call reaches a
+// constant range of memory through it: a local object covering the range,
+// zero, with 1.0 wherever the call writes. Pointers at a constant distance from
+// one base share one shadow; pointers of distinct bases get their own, and the
 // profiling run stops at a call where the memory such a shadow stands for
 // overlaps another argument's and the call writes into one of the two. A
 // pointer the call indexes with a value, or passes where the pass cannot
@@ -164,11 +163,12 @@ GLOBAL void k_refused(const double *x, double *y, int n) {
 // Shadows of 16 bytes: zero for x + 2i, 1.0 in both doubles for y + 2i. The
 // two may overlap, y is written: the run stops if they do. Nothing but the
 // call's results is stored through the parameters.
-// IR-LABEL: define {{.*}} @_Z7k_inoutPKdPdi(ptr {{.*}}%0, ptr {{.*}}%1, i32
+// IR-LABEL: define {{.*}} @_Z7k_inoutPKdPdi(
+// IR-SAME: ptr {{.*}}[[XARG:%[0-9]+]], ptr {{.*}}[[YARG:%[0-9]+]], i32
 // IR-DAG: %[[XS:[0-9]+]] = alloca [16 x i8], align 8
 // IR-DAG: %[[YS:[0-9]+]] = alloca [16 x i8], align 8
-// IR-DAG: %[[Y:[0-9]+]] = getelementptr inbounds nuw [8 x i8], ptr %1,
-// IR-DAG: %[[X:[0-9]+]] = getelementptr inbounds nuw [8 x i8], ptr %0,
+// IR-DAG: %[[Y:[0-9]+]] = getelementptr inbounds nuw [8 x i8], ptr [[YARG]],
+// IR-DAG: %[[X:[0-9]+]] = getelementptr inbounds nuw [8 x i8], ptr [[XARG]],
 // IR-DAG: call void @llvm.memset.p0.i64(ptr {{.*}}%[[XS]], i8 0, i64 16,
 // IR-DAG: store double 1.000000e+00, ptr %[[YS]], align 8
 // IR-DAG: %[[YS1:[0-9]+]] = getelementptr inbounds nuw i8, ptr %[[YS]], i64 8
@@ -206,10 +206,11 @@ GLOBAL void k_refused(const double *x, double *y, int n) {
 // IR: ret void
 
 // The reference's shadow: 8 bytes, zero, nothing stored through it.
-// IR-LABEL: define {{.*}} @_Z7run_refRK5qfuncPdi(ptr {{.*}}dereferenceable(8) %0,
+// IR-LABEL: define {{.*}} @_Z7run_refRK5qfuncPdi(
+// IR-SAME: ptr {{.*}}dereferenceable(8) [[REF:%[0-9]+]],
 // IR: %[[FS:[0-9]+]] = alloca [8 x i8], align 8
-// IR-NOT: store {{.*}}, ptr %0
-// IR: call {{.*}} @diffe{{.*}}_Z4bodyPK5qfuncPKdPd.poseidon._Z7run_refRK5qfuncPdi.0(ptr %0, ptr %[[FS]],
+// IR-NOT: store {{.*}}, ptr [[REF]]
+// IR: call {{.*}} @diffe{{.*}}_Z4bodyPK5qfuncPKdPd.poseidon._Z7run_refRK5qfuncPdi.0(ptr [[REF]], ptr %[[FS]],
 // IR: ret void
 
 // IR-LABEL: define {{.*}} @_Z7k_alignPKdPd(

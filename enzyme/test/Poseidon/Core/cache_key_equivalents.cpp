@@ -1,4 +1,4 @@
-// RUN: rm -rf %t && mkdir -p %t
+// RUN: rm -rf %t && mkdir %t
 // RUN: %clang++ $(llvm-config --cxxflags) -I%S/../../../Poseidon %S/../../../Poseidon/Core/CacheKey.cpp %s $(llvm-config --ldflags --libs support --system-libs) -o %t/cache_key
 // RUN: %t/cache_key %t | FileCheck %s
 // RUN: FileCheck --check-prefix=ENTRY %s < %t/model.json

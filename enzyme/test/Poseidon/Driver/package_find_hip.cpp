@@ -1,5 +1,5 @@
 // REQUIRES: enzyme, amdgpu-registered-target, rocm
-// RUN: rm -rf %t && mkdir -p %t
+// RUN: rm -rf %t && mkdir %t
 // RUN: %cmake %cmake_generator -S %S/../Inputs/package -B %t/gen -DCMAKE_CXX_COMPILER=%clang++ -DPoseidon_DIR=%poseidon_package_dir -DPOSEIDON_GPU_RUNTIME=HIP -DPOSEIDON_MODE=instrument > /dev/null
 // RUN: %cmake --build %t/gen -v > %t/gen.build.log
 // RUN: FileCheck --check-prefix=GEN %s < %t/gen.build.log

@@ -1,11 +1,15 @@
 // REQUIRES: enzyme, amdgpu-registered-target, rocm
-// RUN: rm -rf %t && mkdir -p %t
-// RUN: %clang -x hip --offload-arch=%amdgpu_arch --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c -mllvm -poseidon-unit=scale %s -o %t/dev.ll
-// RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-host-only -cuid=0 -O0 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c -mllvm -poseidon-unit=scale %s -o %t/host.ll 2>&1 | FileCheck --check-prefix=MSG %s
+// DEFINE: %{clang} = %clang -S -emit-llvm -I%poseidon_profile_inc \
+// DEFINE:   %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate \
+// DEFINE:   -mllvm -poseidon-cache=%t/c
+// RUN: rm -rf %t && mkdir %t
+// RUN: %{clang} -x hip --offload-arch=%amdgpu_arch --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -mllvm -poseidon-unit=scale %s -o %t/dev.ll
+// RUN: %{clang} -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-host-only -cuid=0 -O0 -mllvm -poseidon-unit=scale %s -o %t/host.ll 2>&1 \
+// RUN:   | FileCheck --check-prefix=MSG %s
 // RUN: FileCheck --check-prefix=HOST %s < %t/host.ll
-// RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-host-only -cuid=0 -O0 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c -mllvm -poseidon-unit=main -DMAIN_ONLY %s -o %t/main.ll
+// RUN: %{clang} -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-host-only -cuid=0 -O0 -mllvm -poseidon-unit=main -DMAIN_ONLY %s -o %t/main.ll
 // RUN: FileCheck --check-prefix=INIT %s < %t/main.ll
-// RUN: %clang -x c++ -O0 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c -DMAIN_ONLY -DNO_HIP %s -o %t/cxx.ll
+// RUN: %{clang} -x c++ -O0 -DMAIN_ONLY -DNO_HIP %s -o %t/cxx.ll
 // RUN: FileCheck --check-prefix=CXX %s < %t/cxx.ll
 
 // The host half of a HIP profile generation: main binds the profiler before

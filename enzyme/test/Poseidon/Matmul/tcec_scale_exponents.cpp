@@ -1,4 +1,4 @@
-// RUN: rm -rf %t && mkdir -p %t
+// RUN: rm -rf %t && mkdir %t
 // RUN: %clang++ -std=c++17 -O2 -ffp-contract=off -I%poseidon_runtime_inc %s -o %t/tcec_scale
 // RUN: %t/tcec_scale | FileCheck %s
 
@@ -15,9 +15,9 @@
 // unscaling it gives 1.875 * 2^(eA + eB) rounded once: exact wherever that is
 // representable, zero or infinite where the true product is.
 //
-// before: wherever the formula the runtime used before was finite and nonzero
-// (scales exp2f(10 - ilogbf(max)) and the unscaling factor 1.f / (sA * sB) in
-// FP32), the exponents give the same scales and the same unscaling bit for bit.
+// before: wherever the FP32 formula (scales exp2f(10 - ilogbf(max)) and the
+// unscaling factor 1.f / (sA * sB)) is finite and nonzero, the exponents give
+// the same scales and the same unscaling bit for bit.
 
 #include "tcec/tcec_scale.h"
 

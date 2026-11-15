@@ -1,6 +1,6 @@
 // REQUIRES: enzyme
-// RUN: rm -rf %t && mkdir -p %t
-// RUN: %poseidon_clangxx -O2 -g -poseidon-profile-generate -poseidon-cache=%t/c %s -o %t/gen 2>/dev/null
+// RUN: rm -rf %t && mkdir %t
+// RUN: %poseidon_clangxx -O2 -g -poseidon-profile-generate -poseidon-cache=%t/c %s -o %t/gen
 
 // RUN: env POSEIDON_PROBE_LADDER=1e-6 POSEIDON_PROFILE_DIR=%t/plain %t/gen %t/plain.runs > /dev/null 2> %t/plain.err
 // RUN: FileCheck --check-prefix=ONCE %s < %t/plain.runs
@@ -22,8 +22,7 @@
 // RUN: env POSEIDON_PROBE=child POSEIDON_PROFILE_DIR=%t/child %t/gen %t/child.runs > /dev/null
 // RUN: ls %t/child | FileCheck --check-prefix=CHILD %s
 
-// RUN: not %poseidon_clangxx -O2 -g -poseidon-profile-use=%t/plain -poseidon-tau=1e-6 -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-enable-herbie=0 -poseidon-cache=%t/c -c %s -o %t/use.o 2> %t/use.err
-// RUN: FileCheck --check-prefix=USE %s < %t/use.err
+// RUN: not %poseidon_clangxx -O2 -g -poseidon-profile-use=%t/plain -poseidon-tau=1e-6 -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-enable-herbie=0 -poseidon-cache=%t/c -c %s -o %t/use.o 2>&1 | FileCheck --check-prefix=USE %s
 
 // RUN: env POSEIDON_PROBE=0 POSEIDON_PROFILE_DIR=%t/declined %t/gen %t/declined.runs > /dev/null 2> %t/declined.err
 // RUN: FileCheck --check-prefix=ONCE %s < %t/declined.runs
@@ -32,12 +31,11 @@
 // RUN: %poseidon_clangxx -O2 -g -poseidon-profile-use=%t/declined -poseidon-tau=1e-6 -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-enable-herbie=0 -poseidon-cache=%t/c -c %s -o %t/declined.o 2> %t/declined.use.err
 
 // A profiling run whose program declares a metric re-executes itself to
-// measure the condition numbers only when asked, by POSEIDON_PROBE=1 or by
-// running it under poseidon-probe, and says so before the first extra run.
-// Not asked, it runs once, says in one line what measuring would take, and
-// marks the profiles so that profile use stops on them rather than solving
-// them as if no metric had been declared. Declining with POSEIDON_PROBE=0 is
-// the way to have exactly that. The program counts its own runs. A run of
+// measure the condition numbers only when asked (POSEIDON_PROBE=1, or under
+// poseidon-probe), and says so before the first extra run. Not asked, it runs
+// once, says what measuring would take, and marks the profiles so that profile
+// use stops on them; POSEIDON_PROBE=0 declines, and profile use then solves
+// each site against its own target. The program counts its own runs. A run of
 // the measurement writes the metric and no profile.
 // The host target has no perturbation hook, so what a measurement finds here
 // is not checked, only that it ran. The metric's name holds a space, which

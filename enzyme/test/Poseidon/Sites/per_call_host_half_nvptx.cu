@@ -1,12 +1,17 @@
 // REQUIRES: enzyme, cuda-runtime
 // Without a CUDA installation clang emits the old cudaLaunch API in the host half.
-// RUN: rm -rf %t && mkdir -p %t
-// RUN: %clang -x cuda --cuda-host-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O2 -S -emit-llvm -I%poseidon_profile_inc %s -o %t/plain.ll
-// RUN: %clang -x cuda --cuda-host-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/other_sites -mllvm -poseidon-cache=%t/u %s -o %t/use.ll 2>&1 | FileCheck --allow-empty --check-prefix=HOST %s
+// DEFINE: %{clang} = %clang -x cuda --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O2 \
+// DEFINE:   -S -emit-llvm -I%poseidon_profile_inc %s
+// RUN: rm -rf %t && mkdir %t
+// RUN: %{clang} --cuda-host-only -o %t/plain.ll
+// RUN: %{clang} --cuda-host-only %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/other_sites -mllvm -poseidon-cache=%t/u -o %t/use.ll 2>&1 \
+// RUN:   | FileCheck --allow-empty --check-prefix=HOST %s
 // RUN: diff %t/plain.ll %t/use.ll
-// RUN: %clang -x cuda --cuda-host-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/g %s -o %t/gen.ll 2>&1 | FileCheck --check-prefix=GEN %s
+// RUN: %{clang} --cuda-host-only %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/g -o %t/gen.ll 2>&1 \
+// RUN:   | FileCheck --check-prefix=GEN %s
 // RUN: FileCheck --check-prefix=GENIR %s < %t/gen.ll
-// RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/d %s -o %t/dev.ll 2>&1 | FileCheck --check-prefix=DEV %s
+// RUN: %{clang} --cuda-device-only %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/d -o %t/dev.ll 2>&1 \
+// RUN:   | FileCheck --check-prefix=DEV %s
 
 // In a CUDA or HIP compilation only the device half holds sites: one
 // compilation has one device and one cost model. The host half of a

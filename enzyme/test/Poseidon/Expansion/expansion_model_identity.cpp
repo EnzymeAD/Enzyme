@@ -1,4 +1,4 @@
-// RUN: rm -rf %t && mkdir -p %t
+// RUN: rm -rf %t && mkdir %t
 // RUN: %clang++ $(llvm-config --cxxflags) -fPIC -shared -I%S/../../../Poseidon %S/../Inputs/expansion_match/emit.cpp -o %t/emit%shlibext
 // RUN: env EXPANSION_MATCH_OUT=%t %opt %S/../Inputs/expansion_match/module.ll %loadPoseidon -load-pass-plugin=%t/emit%shlibext -passes=expansion-match-model -S -o %t/model.ll
 // RUN: mkdir -p %t/again && env EXPANSION_MATCH_OUT=%t/again %opt %S/../Inputs/expansion_match/module.ll %loadPoseidon -load-pass-plugin=%t/emit%shlibext -passes=expansion-match-model -S -o %t/again/model.ll
@@ -8,21 +8,17 @@
 // RUN: %t/run %t | FileCheck %s
 
 // The accuracy model's emulation of the FP32 expansions computes what the
-// materializer emits, bit for bit with NaN payload and sign excepted, for
-// two, three and four components: every routine on 80,000 raw operands in
-// eight classes (Inputs/expansion_match/gen.h) and the boundary conversions;
-// and, through getFPValues with a precision candidate as the pass calls it,
-// FP64 functions of one operation and chains of three to six operations on
-// 4,000 points each. In a chain the model keeps an operation's components for
-// the later operations of the same change, as one applyExpansion call keeps
-// them; across two changes, and around an operation left in FP64, both split
-// the FP64 value again; an FP32 function is converted and restored in FP32.
-// The model is the plugin's own, as built, so a build of the compiler that
-// contracted the model's products and sums would fail here. Two runs emit the
-// same model.ll: the materializer emits in an order the source fixes. The
-// emitted code is compiled unoptimized: up to LLVM 22, InstCombine takes
-// fma(x, x, y) for never -0 and turns the -0 low component of some squares
-// into +0.
+// materializer emits, bit for bit with NaN payload and sign excepted, for two,
+// three and four components: every routine on 80,000 raw operands in eight
+// classes (Inputs/expansion_match/gen.h), the boundary conversions, and,
+// through getFPValues with a precision candidate, FP64 functions of one
+// operation and chains of three to six operations on 4,000 points each. Within
+// one change the model keeps an operation's components for later operations,
+// as applyExpansion does; across changes and around an FP64 operation both
+// split again; an FP32 function is converted and restored in FP32. The model is
+// the plugin's own, as built, and two runs emit the same model.ll. The emitted
+// code is compiled unoptimized because up to LLVM 22 InstCombine turns the -0
+// low component of some squares (fma(x, x, y)) into +0.
 
 // CHECK: n=2 FP32 chains: 16000 cases, 0 differ
 // CHECK-NEXT: n=2 a*a: 80000 cases, 0 differ

@@ -1,11 +1,17 @@
-; RUN: rm -rf %t && mkdir -p %t
-; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/explain/precision -poseidon-enable-herbie=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache=%t/a -poseidon-tau=1e-6 -pass-remarks=poseidon -pass-remarks-missed=poseidon -pass-remarks-analysis=poseidon -poseidon-explain=%t/a -disable-output 2>&1 | FileCheck --check-prefix=FLOAT %s
+; DEFINE: %{opt} = %opt %loadPoseidon -passes="poseidon,poseidon-finalize" \
+; DEFINE:   -poseidon-enable-herbie=false \
+; DEFINE:   -poseidon-cost-model=%cost_models/cm_cpu_native.csv -disable-output
+; RUN: rm -rf %t && mkdir %t
+; RUN: %{opt} < %s -poseidon-profile-use=%S/../Inputs/explain/precision -poseidon-cache=%t/a -poseidon-tau=1e-6 -pass-remarks=poseidon -pass-remarks-missed=poseidon -pass-remarks-analysis=poseidon -poseidon-explain=%t/a 2>&1 \
+; RUN:   | FileCheck --check-prefix=FLOAT %s
 ; RUN: FileCheck --check-prefix=JSON %s < %t/a/preprocess_tester.explain.json
-; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/explain/precision -poseidon-enable-herbie=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache=%t/b -poseidon-tau=1e-12 -pass-remarks-missed=poseidon -disable-output 2>&1 | FileCheck --check-prefix=KEPT %s
+; RUN: %{opt} < %s -poseidon-profile-use=%S/../Inputs/explain/precision -poseidon-cache=%t/b -poseidon-tau=1e-12 -pass-remarks-missed=poseidon 2>&1 \
+; RUN:   | FileCheck --check-prefix=KEPT %s
 ; RUN: %python -c "print('tester' + 'x' * 250)" > %t/long.name
 ; RUN: sed "s/@tester\b/@$(cat %t/long.name)/" %s > %t/long.ll
 ; RUN: mkdir -p %t/long.prof && cp %S/../Inputs/explain/precision/preprocess_tester.fpprofile %t/long.prof/$(%python -c "import functools, sys; n = 'preprocess_' + sys.argv[1]; print(n[:160] + '~' + format(functools.reduce(lambda h, c: (h ^ c) * 1099511628211 % 2**64, n.encode(), 14695981039346656037), '016x'))" $(cat %t/long.name)).fpprofile
-; RUN: %opt < %t/long.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%t/long.prof -poseidon-enable-herbie=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache=%t/c -poseidon-tau=1e-6 -poseidon-report-path=%t/long -disable-output 2>&1 | FileCheck --check-prefix=LONG --implicit-check-not="Error writing" %s
+; RUN: %{opt} < %t/long.ll -poseidon-profile-use=%t/long.prof -poseidon-cache=%t/c -poseidon-tau=1e-6 -poseidon-report-path=%t/long 2>&1 \
+; RUN:   | FileCheck --check-prefix=LONG --implicit-check-not="Error writing" %s
 ; RUN: ls %t/long | FileCheck --check-prefix=LONGFILES %s
 ; RUN: cat %t/long/*.explain.json | FileCheck --check-prefix=LONGJSON -DNAME=$(cat %t/long.name) %s
 

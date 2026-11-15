@@ -4,8 +4,8 @@
 // RUN: %cmake -DPASS_DIR=%t/pass -DACCURACY_FILES=MatmulAccuracy.cpp,FPKind.h,FPKind.cpp,UniformReal.h,UniformReal.cpp,MatmulSimulation.h,MatmulSimulation.cpp,OzakiII.h,tcec_scale.h -DEQUIVALENTS=%t/equivalents.txt -DOUT=%t/before.h -P %S/../../../Poseidon/cmake/BuildIdentity.cmake
 // RUN: mkdir -p %t/moved && cp %t/pass/MatmulAccuracy.cpp %t/moved/Model.cpp && cp %t/pass/FPKind.h %t/moved/Kinds.h && cp %t/pass/FPKind.cpp %t/moved/Kinds.cpp && cp %t/pass/UniformReal.h %t/moved/Uniform.h && cp %t/pass/UniformReal.cpp %t/moved/Uniform.cpp && cp %t/pass/MatmulSimulation.h %t/moved/Simulation.h && cp %t/pass/MatmulSimulation.cpp %t/moved/Simulation.cpp && cp %t/pass/OzakiII.h %t/moved/Moduli.h && cp %t/pass/tcec_scale.h %t/moved/Scale.h
 // RUN: %cmake -DPASS_DIR=%t/moved -DACCURACY_FILES=Kinds.cpp,Model.cpp,Uniform.cpp,Kinds.h,Uniform.h,Simulation.h,Simulation.cpp,Moduli.h,Scale.h -DEQUIVALENTS=%t/equivalents.txt -DOUT=%t/moved.h -P %S/../../../Poseidon/cmake/BuildIdentity.cmake
-// RUN: printf '#' | dd of=%t/moved/Kinds.cpp bs=1 seek=0 conv=notrunc 2> /dev/null
-// RUN: cmp -l %t/pass/FPKind.cpp %t/moved/Kinds.cpp > %t/onebyte.txt || true
+// RUN: printf '#' | dd of=%t/moved/Kinds.cpp bs=1 seek=0 conv=notrunc
+// RUN: not cmp -l %t/pass/FPKind.cpp %t/moved/Kinds.cpp > %t/onebyte.txt
 // RUN: FileCheck --check-prefix=ONEBYTE %s < %t/onebyte.txt
 // RUN: %cmake -DPASS_DIR=%t/moved -DACCURACY_FILES=Kinds.cpp,Model.cpp,Uniform.cpp,Kinds.h,Uniform.h,Simulation.h,Simulation.cpp,Moduli.h,Scale.h -DEQUIVALENTS=%t/equivalents.txt -DOUT=%t/moved_changed.h -P %S/../../../Poseidon/cmake/BuildIdentity.cmake
 // RUN: echo '// changed' >> %t/pass/Solvers.cpp
@@ -50,19 +50,16 @@
 // RUN: grep kPassIdentity %t/tree_runtime_changed.h > %t/tree_runtime_changed.pass && grep kPassIdentity %t/tree_ozaki.h > %t/tree_ozaki.pass
 // RUN: not diff %t/tree_runtime_changed.pass %t/tree_ozaki.pass
 
-// The pass identity is a digest of every source of the pass, the accuracy-model
-// identity of the model's own files alone: a change elsewhere in the pass, the
-// memo's own code included, leaves the accuracy memo valid, a change to the
-// model does not. The model's identity
-// is of their contents only: the same bytes under other names, in another
-// directory and listed in another order give the same identity, and one byte
-// changed gives another. Earlier model identities declared equivalent are read
-// from their list, comments and blank lines skipped. A source of the pass in a
-// subdirectory is one of its sources; a file under the runtimes, the tools, the
-// CMake scripts, a test or a build directory is not, nor one under the build
-// directory the build names, but the Ozaki-II header the pass shares with its
-// runtime is one. The model files named here are the build's: their identity
-// is the one the build computed (POSEIDON_ACCURACY_MODEL_FILES).
+// cmake/BuildIdentity.cmake digests two identities. The pass identity covers
+// every source of the pass, in subdirectories too, and the Ozaki-II header the
+// pass shares with its runtime; files under the runtimes, the tools, the CMake
+// scripts, a test or a build directory do not count. The accuracy-model
+// identity covers the model's files alone, by content: other names, another
+// directory or another listing order give the same identity, one changed byte
+// another. A change elsewhere in the pass, the memo's code included, keeps the
+// model identity. Equivalent model identities are read from their list,
+// comments and blank lines skipped. The build's model files give the identity
+// the build computed (POSEIDON_ACCURACY_MODEL_FILES).
 
 // ONEBYTE: {{^ *1 +57 +43$}}
 // ONEBYTE-NOT: {{.}}

@@ -1,13 +1,20 @@
+; DEFINE: %{opt} = %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" \
+; DEFINE:   -poseidon-profile-use=%S/../Inputs/regime_split/profiles \
+; DEFINE:   -poseidon-enable-herbie=true -poseidon-enable-pt=false \
+; DEFINE:   -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cost-budget=1e9 \
+; DEFINE:   -S -o /dev/null
 ; RUN: rm -rf %t && mkdir -p %t && touch %t/other.log
 ; RUN: printf '#!/bin/sh\nexec %S/../Inputs/herbie_taylor_terms/fake-herbie.sh "$@"\n' > %t/other-herbie.sh && chmod +x %t/other-herbie.sh
-; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/herbie_taylor_terms FAKE_HERBIE_LOG=%t/shipped.log %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/regime_split/profiles -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/herbie_taylor_terms/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-herbie-num-taylor-terms=2,4 -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cost-budget=1e9 -poseidon-cache=%t/shipped -poseidon-report-path=%t/r-shipped -S -o /dev/null > %t/fresh.log 2>&1
+; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/herbie_taylor_terms FAKE_HERBIE_LOG=%t/shipped.log %{opt} -poseidon-herbie-binary=%S/../Inputs/herbie_taylor_terms/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-herbie-num-taylor-terms=2,4 -poseidon-cache=%t/shipped -poseidon-report-path=%t/r-shipped > %t/fresh.log 2>&1
 ; RUN: ls %t/shipped | FileCheck --check-prefix=SHIPPED %s
-; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/regime_split/profiles -poseidon-enable-herbie=true -poseidon-herbie-binary=%t/no-herbie -poseidon-herbie-num-taylor-terms=2,4 -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cost-budget=1e9 -poseidon-cache=%t/mine -poseidon-import-herbie-answers=%t/shipped -poseidon-report-path=%t/r-mine -S -o /dev/null > %t/replay.log 2>&1
+; RUN: %{opt} -poseidon-herbie-binary=%t/no-herbie -poseidon-herbie-num-taylor-terms=2,4 -poseidon-cache=%t/mine -poseidon-import-herbie-answers=%t/shipped -poseidon-report-path=%t/r-mine > %t/replay.log 2>&1
 ; RUN: cat %t/fresh.log %t/replay.log | FileCheck --check-prefix=REPLAY %s
 ; RUN: diff %t/r-shipped/preprocess_tester.txt %t/r-mine/preprocess_tester.txt
 ; RUN: ls %t/mine | FileCheck --check-prefix=MINE %s
-; RUN: not %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/regime_split/profiles -poseidon-enable-herbie=true -poseidon-herbie-binary=%t/no-herbie -poseidon-herbie-num-taylor-terms=2,4 -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cost-budget=1e9 -poseidon-cache=%t/mine -S -o /dev/null 2>&1 | FileCheck --check-prefix=NOFLAG %s
-; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/herbie_taylor_terms FAKE_HERBIE_LOG=%t/other.log %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/regime_split/profiles -poseidon-enable-herbie=true -poseidon-herbie-binary=%t/other-herbie.sh -poseidon-herbie-processes=1 -poseidon-herbie-num-taylor-terms=2,4,6 -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cost-budget=1e9 -poseidon-cache=%t/other -poseidon-import-herbie-answers=%t/shipped -S -o /dev/null 2>&1 | FileCheck --check-prefix=MIXED %s
+; RUN: not %{opt} -poseidon-herbie-binary=%t/no-herbie -poseidon-herbie-num-taylor-terms=2,4 -poseidon-cache=%t/mine 2>&1 \
+; RUN:   | FileCheck --check-prefix=NOFLAG %s
+; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/herbie_taylor_terms FAKE_HERBIE_LOG=%t/other.log %{opt} -poseidon-herbie-binary=%t/other-herbie.sh -poseidon-herbie-processes=1 -poseidon-herbie-num-taylor-terms=2,4,6 -poseidon-cache=%t/other -poseidon-import-herbie-answers=%t/shipped 2>&1 \
+; RUN:   | FileCheck --check-prefix=MIXED %s
 ; RUN: FileCheck --check-prefix=OTHERCALLS %s < %t/other.log
 
 ; -poseidon-import-herbie-answers replays the answers another Herbie binary

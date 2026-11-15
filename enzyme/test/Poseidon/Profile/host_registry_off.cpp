@@ -1,6 +1,6 @@
 // REQUIRES: enzyme
-// RUN: rm -rf %t && mkdir -p %t
-// RUN: %poseidon_clangxx -O2 -poseidon-profile-generate -poseidon-cache=%t/c %s -o %t/gen 2>/dev/null
+// RUN: rm -rf %t && mkdir %t
+// RUN: %poseidon_clangxx -O2 -poseidon-profile-generate -poseidon-cache=%t/c %s -o %t/gen
 // RUN: llvm-nm %t/gen | FileCheck %s
 // RUN: env POSEIDON_PROFILE_DIR=%t/prof %t/gen
 // RUN: ls %t/prof/preprocess__Z5scalePKdPdi.fpprofile
@@ -33,5 +33,5 @@ int main() {
   return y[3] > 1.0;
 }
 
-// CHECK-DAG: {{^ +}}w __poseidon_host_sites_present
-// CHECK-DAG: T malloc
+// CHECK: {{^ +}}w __poseidon_host_sites_present
+// CHECK: T malloc

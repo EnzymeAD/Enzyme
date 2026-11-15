@@ -1,7 +1,6 @@
 ; REQUIRES: enzyme
-; RUN: %opt < %s %loadPoseidonEnzyme -passes="poseidon,enzyme,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -enzyme-preopt=false -poseidon-profile-generate -S | FileCheck %s -dump-input=always
+; RUN: %opt < %s %loadPoseidonEnzyme -passes="poseidon,enzyme,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -enzyme-preopt=false -poseidon-profile-generate -S | FileCheck %s
 
-; Function Attrs: noinline nounwind readnone uwtable
 define double @tester(double %x, double %y) {
 entry:
   %0 = fadd fast double %x, %y
@@ -14,7 +13,6 @@ entry:
   ret double %0
 }
 
-; Function Attrs: nounwind
 declare double @__poseidon_fp_optimize(double (double, double)*, ...)
 
 ; CHECK: @POSEIDON_PROFILE_RUNTIME_VAR = external global i32

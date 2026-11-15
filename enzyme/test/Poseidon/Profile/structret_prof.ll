@@ -5,7 +5,6 @@
 
 %struct.Gradients = type { double, double }
 
-; Function Attrs: noinline nounwind readnone uwtable
 define dso_local double @muldd(double %x, double %y) {
 entry:
   %mul = fmul fast double %x, %y
@@ -18,7 +17,6 @@ entry:
   ret %struct.Gradients %call
 }
 
-; Function Attrs: nounwind
 declare %struct.Gradients @__poseidon_fp_optimize(i8*, ...)
 
 ; CHECK: @POSEIDON_PROFILE_RUNTIME_VAR = external global i32

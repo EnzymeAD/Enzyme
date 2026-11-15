@@ -1,43 +1,37 @@
-; RUN: rm -rf %t && mkdir -p %t
-; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/pow_term/profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cost-budget=-0.04 -poseidon-print -poseidon-cache=%t/base -S -o /dev/null 2> %t/base.err
-; RUN: FileCheck --check-prefix=BASE %s < %t/base.err
-; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/pow_term/profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cost-budget=-0.04 -poseidon-print -poseidon-cache=%t/split -poseidon-split-calls=pow -S -o /dev/null 2> %t/split.err
-; RUN: FileCheck --check-prefix=SPLIT %s < %t/split.err
-; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/pow_term/profiles -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/pow_term/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cost-budget=-1e-9 -poseidon-print -poseidon-split-calls=pow -poseidon-cache=%t/herbie -S -o %t/herbie.ll 2> %t/herbie.err
-; RUN: FileCheck --check-prefix=HERBIE-CORE %s < %t/herbie.err
+; DEFINE: %{opt} = %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" \
+; DEFINE:   -poseidon-profile-use=%S/../Inputs/pow_term/profiles \
+; DEFINE:   -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-print -S
+; RUN: rm -rf %t && mkdir %t
+; RUN: %{opt} -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-budget=-0.04 -poseidon-cache=%t/base -o /dev/null 2>&1 | FileCheck --check-prefix=BASE %s
+; RUN: %{opt} -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-budget=-0.04 -poseidon-cache=%t/split -poseidon-split-calls=pow -o /dev/null 2>&1 | FileCheck --check-prefix=SPLIT %s
+; RUN: %{opt} -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/pow_term/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-pt=false -poseidon-cost-budget=-1e-9 -poseidon-split-calls=pow -poseidon-cache=%t/herbie -o %t/herbie.ll 2>&1 | FileCheck --check-prefix=HERBIE-CORE %s
 ; RUN: FileCheck --check-prefix=HERBIE %s < %t/herbie.ll
-; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/pow_term/profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cost-budget=-0.04 -poseidon-print -poseidon-cache=%t/po -poseidon-output-profiles=%S/../Inputs/pow_term/out0,%S/../Inputs/pow_term/out1 -S -o /dev/null 2> %t/po.err
-; RUN: FileCheck --check-prefix=PO %s < %t/po.err
-; RUN: not %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/pow_term/profiles -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cost-budget=-0.04 -poseidon-print -poseidon-cache=%t/pomissing -poseidon-output-profiles=%S/../Inputs/pow_term/out0,%t/none -S -o /dev/null 2>&1 | FileCheck --check-prefix=PO-MISSING %s
+; RUN: %{opt} -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-budget=-0.04 -poseidon-cache=%t/po -poseidon-output-profiles=%S/../Inputs/pow_term/out0,%S/../Inputs/pow_term/out1 -o /dev/null 2>&1 | FileCheck --check-prefix=PO %s
+; RUN: not %{opt} -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-budget=-0.04 -poseidon-cache=%t/pomissing -poseidon-output-profiles=%S/../Inputs/pow_term/out0,%t/none -o /dev/null 2>&1 \
+; RUN:   | FileCheck --check-prefix=PO-MISSING %s
 
-; A rate term as generated reacting-flow code writes it (Exasim's reacting-air
-; source has nine): pow(T, fma(-log T, a, b)), scaled to about 1e-25, with log T
-; also used by the second output.
+; A rate term pow(T, fma(-log T, a, b)), scaled to about 1e-25, with log T also
+; used by the second output.
 ;
 ; -poseidon-split-calls=pow gives the pow call its own FP subgraph with the
 ; operations only it uses (the fma and the fneg; log T stays with its other
 ; user), whatever -poseidon-min-uses-split/-poseidon-min-ops-split (99 here) say.
 ;
-; The accuracy model draws the leaves the inputs are computed from (T, and y)
-; and evaluates the inputs from them, so T and log T are drawn consistently; here
-; every draw lands inside the profiled input box.
+; The accuracy model draws T and y and evaluates log T from them, so every draw
+; lands inside the profiled input box.
 ;
-; The pow subgraph reads T and l = log T. Its Herbie core spells l as (log v0),
-; its definition over T, so Herbie can use pow(T, y) = exp(y log T). A (log v0)
-; in a returned rewrite maps back to %l: the fake Herbie's exact rewrite
+; The Herbie core of the pow subgraph spells l = log T as (log v0), and a
+; (log v0) in a returned rewrite maps back to %l: the exact rewrite
 ; exp(fma(-log T, a, b) log T) is priced without a second log (Delta CompCost
-; 256, not 768), and its pow(T, -1.62) is applied.
+; 256, not 768), and the rewrite pow(T, -1.62) is applied as llvm.pow.
 ;
-; A rewrite's pow is emitted as llvm.pow on the CPU, as clang emits it.
+; The accuracy weight of an instruction is floored at 1e-6 of the site's largest
+; sensitivity |gradient x value|: the r1 chain, about 1e-29 of r2, is lifted (5
+; of 8 instructions).
 ;
-; The accuracy weight of an instruction is floored so its sensitivity
-; |gradient x value| is at least 1e-6 of the site's largest: the r1 chain, about
-; 1e-29 of r2, is lifted (5 of 8 instructions).
-;
-; -poseidon-output-profiles reads one profile per output, each recorded with that
-; output seeded alone, and weights each instruction by the largest of its
-; gradients divided by that output's total sensitivity. Each output's chain is
-; then within 1e-6 of its own output, and no instruction is lifted.
+; -poseidon-output-profiles reads one profile per output, recorded with that
+; output seeded alone, and weights each instruction by its largest gradient
+; over that output's total sensitivity: no instruction is lifted.
 ;
 ; profiles: this module through the host profiler (opt
 ; -passes=poseidon,enzyme,poseidon-finalize -poseidon-profile-generate, linked with

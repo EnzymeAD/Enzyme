@@ -11,7 +11,6 @@ target triple = "x86_64-unknown-linux-gnu"
 
 $_ZN4dim3C2Ejjj = comdat any
 
-; Function Attrs: mustprogress noinline norecurse optnone uwtable
 define dso_local void @_Z26__device_stub__gemm_kernelPKdS0_Pd(ptr noundef %0, ptr noundef %1, ptr noundef %2) #0 {
   %4 = alloca ptr, align 8
   %5 = alloca ptr, align 8
@@ -56,10 +55,8 @@ declare i32 @__cudaPopCallConfiguration(ptr, ptr, ptr, ptr)
 
 declare i32 @cudaLaunchKernel(ptr, i64, i32, i64, i32, ptr, i64, ptr)
 
-; Function Attrs: nocallback nofree nounwind willreturn memory(argmem: readwrite)
 declare void @llvm.memcpy.p0.p0.i64(ptr noalias writeonly captures(none), ptr noalias readonly captures(none), i64, i1 immarg) #1
 
-; Function Attrs: mustprogress noinline norecurse optnone uwtable
 define dso_local void @_Z31__device_stub__gemm_tall_kernelPKdS0_Pdi(ptr noundef %0, ptr noundef %1, ptr noundef %2, i32 noundef %3) #0 {
   %5 = alloca ptr, align 8
   %6 = alloca ptr, align 8
@@ -104,7 +101,6 @@ define dso_local void @_Z31__device_stub__gemm_tall_kernelPKdS0_Pdi(ptr noundef 
   ret void
 }
 
-; Function Attrs: mustprogress noinline optnone uwtable
 define dso_local void @_Z6launchPKdS0_Pdi(ptr noundef %0, ptr noundef %1, ptr noundef %2, i32 noundef %3) #2 {
   %5 = alloca ptr, align 8
   %6 = alloca ptr, align 8
@@ -176,7 +172,6 @@ define dso_local void @_Z6launchPKdS0_Pdi(ptr noundef %0, ptr noundef %1, ptr no
 
 declare i32 @__cudaPushCallConfiguration(i64, i32, i64, i32, i64 noundef, ptr noundef) #3
 
-; Function Attrs: mustprogress noinline nounwind optnone uwtable
 define linkonce_odr dso_local void @_ZN4dim3C2Ejjj(ptr noundef nonnull align 4 dereferenceable(12) %0, i32 noundef %1, i32 noundef %2, i32 noundef %3) unnamed_addr #4 comdat align 2 {
   %5 = alloca ptr, align 8
   %6 = alloca i32, align 4
@@ -207,14 +202,12 @@ attributes #4 = { mustprogress noinline nounwind optnone uwtable "frame-pointer"
 attributes #5 = { "uniform-work-group-size" }
 
 !llvm.module.flags = !{!0, !1, !2, !3, !4}
-!llvm.ident = !{!5}
 
 !0 = !{i32 2, !"SDK Version", [2 x i32] [i32 12, i32 9]}
 !1 = !{i32 8, !"PIC Level", i32 2}
 !2 = !{i32 7, !"PIE Level", i32 2}
 !3 = !{i32 7, !"uwtable", i32 2}
 !4 = !{i32 7, !"frame-pointer", i32 2}
-!5 = !{!"clang version 23.0.0git (https://github.com/llvm/llvm-project.git a70419505471bd8240ef3451dcdd541f8676477c)"}
 
 ; CHECK: [ozaki-host-dispatch] replaced stub body _Z26__device_stub__gemm_kernelPKdS0_Pd -> __poseidon_direct_dgemm (C=arg2 A=arg0 B=arg1 512x512x512)
 ; CHECK: [ozaki-host-dispatch] replaced stub body _Z31__device_stub__gemm_tall_kernelPKdS0_Pdi -> __poseidon_tcec_dgemm_ex (C=arg2 A=arg0 B=arg1 128x512x256)

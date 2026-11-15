@@ -1,6 +1,5 @@
-; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -S | FileCheck %s -dump-input=always
+; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -S | FileCheck %s
 
-; Function Attrs: noinline nounwind readnone uwtable
 define double @tester(double %x, double %y) {
 entry:
   %0 = fadd fast double %x, %y
@@ -13,7 +12,6 @@ entry:
   ret double %0
 }
 
-; Function Attrs: nounwind
 declare double @__poseidon_fp_optimize(double (double, double)*, ...)
 
 ; CHECK: define double @test_profile(double %x, double %y)

@@ -5,7 +5,7 @@
 // does not name are kept, as is every other row.
 //
 // REQUIRES: cuda-runtime
-// RUN: rm -rf %t && mkdir -p %t
+// RUN: rm -rf %t && mkdir %t
 // RUN: cp %gpu_cost_model %t/cm.csv
 // RUN: %poseidon_calibrate --out %t/cm.csv --only ozaki-rect --ozaki-rect 125x648,216x1029 --n 512 --reps 3 | FileCheck --check-prefix=FIRST %s
 // RUN: %poseidon_calibrate --out %t/cm.csv --only ozaki-rect --ozaki-rect 125x648 --n 512 --reps 3 | FileCheck --check-prefix=AGAIN %s

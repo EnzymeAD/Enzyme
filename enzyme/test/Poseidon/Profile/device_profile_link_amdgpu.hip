@@ -1,40 +1,40 @@
 // REQUIRES: enzyme, amdgpu-registered-target, rocm
-// RUN: rm -rf %t && mkdir -p %t
-// RUN: %clang -x hip --offload-arch=%amdgpu_arch --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c -mllvm -poseidon-unit=scale %s -o %t/dev.ll
+// DEFINE: %{clang} = %clang -x hip --rocm-path=%rocm_path -cuid=0 -I%poseidon_profile_inc \
+// DEFINE:   %loadClangPoseidonEnzyme %s
+// RUN: rm -rf %t && mkdir %t
+// RUN: %{clang} --offload-arch=%amdgpu_arch --cuda-device-only -O2 -S -emit-llvm -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c -mllvm -poseidon-unit=scale -o %t/dev.ll
 // RUN: FileCheck --check-prefix=DEV %s < %t/dev.ll
 // RUN: mkdir -p %t/tmp && env TMPDIR=%t/tmp not %clang -x hip --offload-arch=gfx1100 --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c1100 -mllvm -poseidon-unit=scale %s -o %t/other.ll 2>&1 | FileCheck --check-prefix=ARCH --implicit-check-not=PLEASE %s
 // RUN: mkdir -p %t/tmpg && env TMPDIR=%t/tmpg not %clang -x hip --offload-arch=gfx1100 --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -g -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c1100g -mllvm -poseidon-unit=scale %s -o %t/other-g.ll 2>&1 | FileCheck --check-prefix=ARCH --implicit-check-not=PLEASE %s
 // RUN: ls %t/tmpg | count 0
 // RUN: not ls %t/c1100/launches_* %t/c1100g/launches_*
 // RUN: ls %t/tmp | count 0
-// RUN: %clang -x hip --offload-arch=%amdgpu_arch --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c -mllvm -poseidon-unit=nosite -DNO_SITE %s -o %t/nosite.ll
+// RUN: %{clang} --offload-arch=%amdgpu_arch --cuda-device-only -O2 -S -emit-llvm -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c -mllvm -poseidon-unit=nosite -DNO_SITE -o %t/nosite.ll
 // RUN: FileCheck --check-prefix=NOSITE %s < %t/nosite.ll
-// RUN: %clang -x hip --offload-arch=gfx1100 --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c1100 -mllvm -poseidon-unit=nosite -DNO_SITE %s -o %t/nosite1100.ll
+// RUN: %{clang} --offload-arch=gfx1100 --cuda-device-only -O2 -S -emit-llvm -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c1100 -mllvm -poseidon-unit=nosite -DNO_SITE -o %t/nosite1100.ll
 // RUN: FileCheck --check-prefix=NOSITE %s < %t/nosite1100.ll
-// RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-host-only -cuid=0 -O0 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c -mllvm -poseidon-unit=scale %s -o %t/host.ll
+// RUN: %{clang} --offload-arch=gfx942 --cuda-host-only -O0 -S -emit-llvm -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c -mllvm -poseidon-unit=scale -o %t/host.ll
 // RUN: FileCheck --check-prefix=HOST %s < %t/host.ll
-// RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-host-only -fgpu-rdc -cuid=0 -O0 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c -mllvm -poseidon-unit=scale %s -o %t/rdc.ll
+// RUN: %{clang} --offload-arch=gfx942 --cuda-host-only -fgpu-rdc -O0 -S -emit-llvm -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c -mllvm -poseidon-unit=scale -o %t/rdc.ll
 // RUN: FileCheck --check-prefix=RDC %s < %t/rdc.ll
-// RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidonEnzyme %s -o %t/plain-dev.ll
-// RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-host-only -cuid=0 -O0 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidonEnzyme %s -o %t/plain-host.ll
+// RUN: %{clang} --offload-arch=gfx942 --cuda-device-only -O2 -S -emit-llvm -o %t/plain-dev.ll
+// RUN: %{clang} --offload-arch=gfx942 --cuda-host-only -O0 -S -emit-llvm -o %t/plain-host.ll
 // RUN: cat %t/plain-dev.ll %t/plain-host.ll | FileCheck --check-prefix=PLAIN %s
-// RUN: %clang -x hip --offload-arch=%amdgpu_arch --rocm-path=%rocm_path --cuda-device-only --no-gpu-bundle-output -cuid=0 -O2 -c -I%poseidon_profile_inc %loadClangPoseidonEnzyme -Xclang -mllvm -Xclang -poseidon-profile-generate -Xclang -mllvm -Xclang -poseidon-cache=%t/c -Xclang -mllvm -Xclang -poseidon-unit=loop -DLOOP %s -o %t/loop.co
+// RUN: %{clang} --offload-arch=%amdgpu_arch --cuda-device-only --no-gpu-bundle-output -O2 -c -Xclang -mllvm -Xclang -poseidon-profile-generate -Xclang -mllvm -Xclang -poseidon-cache=%t/c -Xclang -mllvm -Xclang -poseidon-unit=loop -DLOOP -o %t/loop.co
 // RUN: llvm-readelf --dyn-syms %t/loop.co | FileCheck --check-prefix=CO %s
 
-// device_profile_link.cu for HIP: the AMDGPU device module of a profile
-// generation gets the device half of the profiler, linked from the AMDGPU
-// bitcode the plugin carries and local to the module, and a table every module
-// defines; the host half of the same unit registers that table with the HIP
-// runtime (__hipRegisterVar from __hip_register_globals) and with the profiler
-// runtime, or with relocatable device code leaves a HIP offloading entry. The
-// profiled code object links: the derivative of a loop whose trip count is
-// known only as it runs grows its cache with malloc and frees it, which the
-// profiler's bitcode defines. (-mllvm would also reach the device linker,
-// which knows no Poseidon flag.) The bitcode carries the ROCm device libraries
-// of the processor Poseidon was built for (POSEIDON_AMDGPU_ARCH), so a module
-// for another one (here gfx1100) whose probes call into it is refused with
-// an error at the user's kernel, not a crash, and leaves no launch manifest
-// a host half could read; one without probes takes the table alone.
+// The HIP form of device_profile_link.cu. The AMDGPU device module of a profile
+// generation gets the device half of the profiler, local to the module, and a
+// table every module defines; the host half registers the table with the HIP
+// runtime (__hipRegisterVar) and the profiler runtime or, with relocatable
+// device code, leaves a HIP offloading entry. The profiled code object links
+// with no undefined symbol, malloc included (the derivative of a loop with a
+// run-time trip count allocates its cache). The code object compile passes the
+// flags with -Xclang -mllvm because the device linker knows no Poseidon flag.
+// The profiler's bitcode is built for POSEIDON_AMDGPU_ARCH, so a module for
+// another processor (gfx1100) whose probes call into it is refused with an
+// error at the user's kernel and leaves no launch manifest and no temporary
+// file; one without probes takes the table alone.
 
 #include <hip/hip_runtime.h>
 

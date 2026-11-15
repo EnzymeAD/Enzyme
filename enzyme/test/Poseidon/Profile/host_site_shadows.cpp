@@ -1,21 +1,19 @@
 // REQUIRES: enzyme
-// RUN: rm -rf %t && mkdir -p %t
-// RUN: %poseidon_clangxx -O2 -g -poseidon-profile-generate -poseidon-cache=%t/c %s -o %t/gen 2> %t/gen.err
-// RUN: FileCheck --check-prefix=GEN %s < %t/gen.err
+// RUN: rm -rf %t && mkdir %t
+// RUN: %poseidon_clangxx -O2 -g -poseidon-profile-generate -poseidon-cache=%t/c %s -o %t/gen 2>&1 | FileCheck --check-prefix=GEN %s
 // RUN: llvm-nm %t/gen | FileCheck --check-prefix=SYM %s
 // RUN: env POSEIDON_PROFILE_DIR=%t/prof %t/gen | FileCheck --check-prefix=OUT %s
 // RUN: FileCheck --check-prefix=PROF %s < %t/prof/preprocess__Z5scalePKdPdi_poseidon_body.fpprofile
-// RUN: %poseidon_clangxx -O2 -g -poseidon-profile-generate -poseidon-cache=%t/c2 -DUNKNOWN %s -o %t/unknown 2>/dev/null
+// RUN: %poseidon_clangxx -O2 -g -poseidon-profile-generate -poseidon-cache=%t/c2 -DUNKNOWN %s -o %t/unknown
 // RUN: env POSEIDON_PROFILE_DIR=%t/prof2 not --crash %t/unknown 2>&1 | FileCheck --check-prefix=UNKNOWN %s
 
-// The shadows of a POSEIDON_OPTIMIZE function on the host, sized from the
+// The shadows of a POSEIDON_OPTIMIZE function on the host are sized from the
 // allocation each pointer argument points into: every heap allocator, a
 // file-scope and a function-local static array, stack arrays passed directly
 // and through a function that is not inlined, and interior pointers. Each call
-// writes a buffer no other call writes, so each output carries the seed once
-// and the gradient on the site's last operation counts every element written.
-// A pointer into memory the profiler did not see allocated stops the run,
-// naming the function and the argument.
+// writes its own buffer, so the gradient on the site's last operation counts
+// every element written once. A pointer into memory the profiler did not see
+// allocated stops the run, naming the function and the argument.
 
 #include "poseidon/poseidon.h"
 #include <cstdio>
