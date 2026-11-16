@@ -31,11 +31,12 @@
 #include <dlfcn.h>
 #endif
 
+#include <functional>
 #include <string>
 
 #if !defined(_WIN32)
 /// Where FlangEnzymeMLIR is, relative to this plugin: next to it once
-/// installed, under MLIR/Implementations in a build tree.
+/// installed, under MLIR/Flang in a build tree.
 static std::string findFlangEnzymeMLIR() {
   Dl_info info;
   if (!dladdr(reinterpret_cast<void *>(&findFlangEnzymeMLIR), &info) ||
@@ -43,7 +44,7 @@ static std::string findFlangEnzymeMLIR() {
     return "";
   llvm::SmallString<256> dir(info.dli_fname);
   llvm::sys::path::remove_filename(dir);
-  for (const char *sub : {"", "MLIR/Implementations"}) {
+  for (const char *sub : {"", "MLIR/Flang"}) {
     llvm::SmallString<256> path(dir);
     llvm::sys::path::append(path, sub, FLANG_ENZYME_MLIR_FILE);
     if (llvm::sys::fs::exists(path))
@@ -52,15 +53,20 @@ static std::string findFlangEnzymeMLIR() {
   return "";
 }
 
+struct MLIRToLLVMPassPipelineConfig;
+namespace fir {
+/// Defined by flang; null when FlangEnzyme is loaded by another host.
+__attribute__((weak)) void registerPassPipelineConfigCallback(
+    std::function<void(MLIRToLLVMPassPipelineConfig &)>);
+} // namespace fir
+
 namespace {
 struct LoadFlangEnzymeMLIR {
   LoadFlangEnzymeMLIR() {
     // Only in flang: FlangEnzymeMLIR registers itself with flang's pipeline
     // (fir::registerPassPipelineConfigCallback), which its static
     // initializer calls.
-    if (!dlsym(RTLD_DEFAULT,
-               "_ZN3fir34registerPassPipelineConfigCallbackESt8functionIFvR"
-               "28MLIRToLLVMPassPipelineConfigEE"))
+    if (!&fir::registerPassPipelineConfigCallback)
       return;
     std::string path = findFlangEnzymeMLIR();
     if (path.empty())

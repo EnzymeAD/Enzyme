@@ -210,9 +210,9 @@ if 'flangenzyme' in config.available_features:
 # %flang_enzyme is the frontend form (`flang -fc1 -load`). The
 # flang_enzyme_mlir feature needs a flang with the pass pipeline callbacks,
 # which are in no released LLVM (24+ only).
-flang_enzyme_plugin = '@ENZYME_BINARY_DIR@/Enzyme/MLIR/Implementations/FlangEnzymeMLIR-' + config.llvm_ver + config.llvm_shlib_ext
+flang_enzyme_plugin = '@ENZYME_BINARY_DIR@/Enzyme/MLIR/Flang/FlangEnzymeMLIR-' + config.llvm_ver + config.llvm_shlib_ext
 if len("@ENZYME_BINARY_DIR@") == 0:
-  flang_enzyme_plugin = os.path.dirname(os.path.abspath(__file__)) + "/../Enzyme/MLIR/Implementations/FlangEnzymeMLIR-" + config.llvm_ver + config.llvm_shlib_ext
+  flang_enzyme_plugin = os.path.dirname(os.path.abspath(__file__)) + "/../Enzyme/MLIR/Flang/FlangEnzymeMLIR-" + config.llvm_ver + config.llvm_shlib_ext
 config.substitutions.append(('%flang_enzyme',
   flang_fc1 + " -load " + flang_enzyme_plugin))
 if (int(config.llvm_ver) >= 24 and os.path.exists(flang)
