@@ -565,6 +565,20 @@ gentbl_cc_library(
             ],
             "Enzyme/MLIR/Passes/Passes.h.inc",
         ),
+        (
+            [
+                "-gen-pass-capi-header",
+                "--prefix=Enzyme",
+            ],
+            "Enzyme/MLIR/Passes/Passes.capi.h.inc",
+        ),
+        (
+            [
+                "-gen-pass-capi-impl",
+                "--prefix=Enzyme",
+            ],
+            "Enzyme/MLIR/Passes/Passes.capi.cpp.inc",
+        ),
     ],
     tblgen = "@llvm-project//mlir:mlir-tblgen",
     td_file = "Enzyme/MLIR/Passes/Passes.td",
@@ -1085,11 +1099,15 @@ cc_library(
 cc_library(
     name = "CInterface",
     srcs = ["Enzyme/MLIR/Integrations/c/EnzymeMLIR.cpp"],
-    hdrs = ["Enzyme/MLIR/Integrations/c/EnzymeMLIR.h"],
+    hdrs = [
+        "Enzyme/MLIR/Integrations/c/EnzymeMLIR.h",
+        "Enzyme/MLIR/Integrations/c/EnzymeMLIRPasses.h",
+    ],
     includes = ["Enzyme/MLIR"],
     visibility = ["//visibility:public"],
     deps = [
         ":EnzymeMLIR",
+        ":EnzymePassesIncGen",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:CAPIIRObjects",
         "@llvm-project//mlir:IR",

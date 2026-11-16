@@ -44,9 +44,6 @@ MLIR_CAPI_EXPORTED MlirAttribute enzymeActivityAttrGet(MlirContext ctx,
 // Pass registration
 //===----------------------------------------------------------------------===//
 
-/// Register all Enzyme MLIR passes with the global registry.
-MLIR_CAPI_EXPORTED void enzymeRegisterPasses(void);
-
 /// Register Enzyme's external model AD implementations for the core MLIR
 /// dialects (arith, func, scf, ...) into the given DialectRegistry.
 /// Must be called before appending the registry to an MLIRContext so that
@@ -54,32 +51,12 @@ MLIR_CAPI_EXPORTED void enzymeRegisterPasses(void);
 MLIR_CAPI_EXPORTED void
 enzymeRegisterDialectExtensions(MlirDialectRegistry registry);
 
-/// Create the core differentiation pass (`--enzyme`).
-MLIR_CAPI_EXPORTED MlirPass enzymeCreateDifferentiatePass(void);
-
 /// Create the core differentiation pass with options.
 /// postpasses: semicolon-separated list of passes to run after differentiation
 /// (may be NULL or empty). verifyPostPasses: run the verifier after each
 /// post-pass.
 MLIR_CAPI_EXPORTED MlirPass enzymeCreateDifferentiatePassWithOptions(
     MlirStringRef postpasses, bool verifyPostPasses);
-
-/// Create the `--enzyme-ops-to-memref` pass, which lowers `enzyme.init`,
-/// `enzyme.get`, and `enzyme.set` to `memref` + `scf.if`. Required before
-/// lowering to LLVM.
-MLIR_CAPI_EXPORTED MlirPass enzymeCreateConvertEnzymeToMemRefPass(void);
-
-/// Create the `--enzyme-batch` pass, which lowers `enzyme.batch` ops to
-/// calls to generated `@batched_*` functions.
-MLIR_CAPI_EXPORTED MlirPass enzymeCreateBatchPass(void);
-
-/// Create the `--enzyme-batch-diff` pass, which differentiates batched
-/// functions produced by `--enzyme-batch`.
-MLIR_CAPI_EXPORTED MlirPass enzymeCreateBatchDiffPass(void);
-
-/// Create the `--remove-unnecessary-enzyme-ops` pass, which removes dead
-/// `enzyme.*` ops after differentiation.
-MLIR_CAPI_EXPORTED MlirPass enzymeCreateRemoveUnusedEnzymeOpsPass(void);
 
 //===----------------------------------------------------------------------===//
 // Core AD ops
