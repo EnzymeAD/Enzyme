@@ -1493,7 +1493,13 @@ void rev_call_args(bool forward, Twine argName, const TGPattern &pattern,
   if (fncHasLayout) {
     // Fnc has a layout if cBLAS, that makes it more complex.
     // Distinguish later trough byRef if it is cblas (thus has layout)
-    os << "        if (cblas) " << argName << ".push_back(arg_layout);\n";
+    os << "        if (cblas) " << argName << ".push_back(";
+    if (!forward)
+      os << "lookup(";
+    os << "arg_layout";
+    if (!forward)
+      os << ", Builder2)";
+    os << ");\n";
   }
   os << "        if (cublas) " << argName << ".push_back(";
   if (!forward)
@@ -1850,7 +1856,8 @@ void emit_dag(bool forward, Twine resultVarName, const DagInit *ruleDag,
     return;
   }
   if (Def->isSubClassOf("DiagUpdateSPMV")) {
-    assert(ruleDag->getNumArgs() == 6);
+    assert(ruleDag->getNumArgs() == 7 &&
+           "DiagUpdateSPMV expects layout, uplo, n, alpha, x, dy, dAP");
     auto ty = ArgType::ap;
     if (forward)
       emit_if_rule_condition(pattern, ruleDag, "", "      ", os);
@@ -1871,7 +1878,7 @@ void emit_dag(bool forward, Twine resultVarName, const DagInit *ruleDag,
           "ArrayRef<Value *>("
        << argPrefix
        << "), "
-          "Defs, byRef, julia_decl);\n";
+          "Defs, byRef, julia_decl, cblas ? type_layout : nullptr);\n";
     if (!forward && !runtimeChecked)
       emit_runtime_continue(ruleDag, argName, "        ", "Builder2", true, os);
     os << "        }\n";

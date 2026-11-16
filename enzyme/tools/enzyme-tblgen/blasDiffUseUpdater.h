@@ -98,7 +98,8 @@ inline void emit_BLASDiffUse(TGPattern &pattern, llvm::raw_ostream &os) {
       os << "    if (shadow && byRefFloat && active_" << argname
          << ") return true;\n";
     } else if (typeMap[argPos] == ArgType::vincData ||
-               typeMap[argPos] == ArgType::mldData) {
+               typeMap[argPos] == ArgType::mldData ||
+               typeMap[argPos] == ArgType::ap) {
       for (auto derivOp : pattern.getRules()) {
         if (hasAdjoint(pattern, derivOp.getRuleDag(), argname)) {
           os << "    if (shadow && active_"
