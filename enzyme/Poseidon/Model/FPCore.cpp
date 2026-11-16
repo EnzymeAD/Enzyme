@@ -169,8 +169,9 @@ std::shared_ptr<FPNode> parseHerbieExpr(
   } else if (pos != std::string::npos) {
     op = fullOp.substr(0, pos);
     dtype = fullOp.substr(pos + 1);
-    assert((dtype == "f64" || dtype == "f32") &&
-           "Herbie operators carry an f32 or f64 suffix");
+    if (dtype != "f64" && dtype != "f32")
+      report_fatal_error("Herbie expr parser: Unexpected operator dtype: " +
+                         Twine(fullOp));
   } else {
     op = fullOp;
   }

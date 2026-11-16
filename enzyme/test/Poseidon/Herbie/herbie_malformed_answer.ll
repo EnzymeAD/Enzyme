@@ -23,6 +23,8 @@
 ; RUN: not --crash %{opt} 2>&1 | FileCheck --check-prefix=APPROX %s
 ; RUN: cp %S/../Inputs/herbie_malformed_answer/literal_binary16.json %t/c/cachedHerbieOutput_*
 ; RUN: not --crash %{opt} 2>&1 | FileCheck --check-prefix=LITERAL %s
+; RUN: cp %S/../Inputs/herbie_malformed_answer/operator_f16.json %t/c/cachedHerbieOutput_*
+; RUN: not --crash %{opt} 2>&1 | FileCheck --check-prefix=OPERATOR %s
 
 ; A cached answer that is not shaped as Herbie writes its results gives the
 ; subgraph no algebraic candidates, as a crash of Herbie does: the site is
@@ -71,3 +73,4 @@ attributes #0 = { "target-cpu"="x86-64" }
 
 ; APPROX: LLVM ERROR: Malformed approx expression: #s(approx v0)
 ; LITERAL: LLVM ERROR: Herbie expr parser: Unexpected constant dtype: binary16
+; OPERATOR: LLVM ERROR: Herbie expr parser: Unexpected operator dtype: +.f16
