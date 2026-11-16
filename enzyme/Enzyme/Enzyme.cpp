@@ -1288,17 +1288,23 @@ public:
     for (unsigned i = 1 + sret; i < CI->arg_size(); ++i) {
       Value *res = CI->getArgOperand(i);
 
+      BATCH_TYPE ty = width == 1 ? BATCH_TYPE::SCALAR : BATCH_TYPE::VECTOR;
+      auto metaString = getMetadataName(res);
+
+      if (metaString && *metaString == "enzyme_width") {
+        ++i;
+        continue;
+      }
+
       if (truei >= FT->getNumParams()) {
         EmitFailure("TooManyArgs", CI->getDebugLoc(), CI,
                     "Had too many arguments to __enzyme_batch", *CI,
                     " - extra arg - ", *res);
         return false;
       }
-      assert(truei < FT->getNumParams());
+      assert(truei < FT->getNumParams() &&
+             "Parameter index out of bounds in HandleBatch");
       auto PTy = FT->getParamType(truei);
-
-      BATCH_TYPE ty = width == 1 ? BATCH_TYPE::SCALAR : BATCH_TYPE::VECTOR;
-      auto metaString = getMetadataName(res);
 
       // handle metadata
       if (metaString && startsWith(*metaString, "enzyme_")) {
@@ -1308,6 +1314,11 @@ public:
           ty = BATCH_TYPE::VECTOR;
         } else if (*metaString == "enzyme_buffer") {
           ty = BATCH_TYPE::VECTOR;
+          if (i + 1 >= CI->arg_size()) {
+            EmitFailure("MissingVectorArg", CI->getDebugLoc(), CI,
+                        "enzyme_buffer missing offset argument in ", *CI);
+            return false;
+          }
           ++i;
           Value *offset_arg = CI->getArgOperand(i);
           if (offset_arg->getType()->isIntegerTy()) {
@@ -1320,13 +1331,16 @@ public:
             return false;
           }
           continue;
-        } else if (*metaString == "enzyme_width") {
-          ++i;
-          continue;
         } else {
           EmitFailure("IllegalDiffeType", CI->getDebugLoc(), CI,
                       "illegal enzyme metadata classification ", *CI,
                       *metaString);
+          return false;
+        }
+        if (i + 1 >= CI->arg_size()) {
+          EmitFailure("MissingVectorArg", CI->getDebugLoc(), CI,
+                      "__enzyme_batch missing argument after metadata in ",
+                      *CI);
           return false;
         }
         ++i;
@@ -1403,6 +1417,7 @@ public:
 
     CallInst *batchCall =
         Builder.CreateCall(newFunc->getFunctionType(), newFunc, args);
+    batchCall->setCallingConv(newFunc->getCallingConv());
     batchCall->setDebugLoc(CI->getDebugLoc());
     if (CI->hasFnAttr(Attribute::NoInline))
       batchCall->addFnAttr(Attribute::NoInline);

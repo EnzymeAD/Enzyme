@@ -6003,11 +6003,10 @@ llvm::Function *EnzymeLogic::CreateBatch(RequestContext context,
 
   FunctionType *orig_FTy = tobatch->getFunctionType();
   SmallVector<Type *, 4> params;
-  unsigned long numVecParams =
-      std::count(arg_types.begin(), arg_types.end(), BATCH_TYPE::VECTOR);
 
   for (unsigned i = 0; i < orig_FTy->getNumParams(); ++i) {
-    if (arg_types[i] == BATCH_TYPE::VECTOR) {
+    if (i < arg_types.size() && arg_types[i] == BATCH_TYPE::VECTOR &&
+        width > 1) {
       Type *ty = GradientUtils::getShadowType(orig_FTy->getParamType(i), width);
       params.push_back(ty);
     } else {
@@ -6015,7 +6014,10 @@ llvm::Function *EnzymeLogic::CreateBatch(RequestContext context,
     }
   }
 
-  Type *NewTy = GradientUtils::getShadowType(tobatch->getReturnType(), width);
+  Type *NewTy =
+      (ret_type == BATCH_TYPE::VECTOR && width > 1)
+          ? GradientUtils::getShadowType(tobatch->getReturnType(), width)
+          : tobatch->getReturnType();
 
   FunctionType *FTy = FunctionType::get(NewTy, params, tobatch->isVarArg());
   Function *NewF =
@@ -6054,6 +6056,30 @@ llvm::Function *EnzymeLogic::CreateBatch(RequestContext context,
 
   NewF->setLinkage(Function::LinkageTypes::InternalLinkage);
 
+  if (width == 1) {
+    ValueToValueMapTy vmap;
+    auto DestArg = NewF->arg_begin();
+    auto SrcArg = tobatch->arg_begin();
+    for (unsigned i = 0; i < orig_FTy->getNumParams(); ++i) {
+      vmap[SrcArg] = DestArg;
+      DestArg->setName(SrcArg->getName());
+      ++DestArg;
+      ++SrcArg;
+    }
+    SmallVector<ReturnInst *, 4> Returns;
+    CloneFunctionInto(NewF, tobatch, vmap,
+                      CloneFunctionChangeType::LocalChangesOnly, Returns, "",
+                      nullptr);
+    resetClonedGUID(NewF);
+    NewF->setLinkage(Function::LinkageTypes::InternalLinkage);
+    if (llvm::verifyFunction(*NewF, &llvm::errs())) {
+      llvm::errs() << *tobatch << "\n";
+      llvm::errs() << *NewF << "\n";
+      report_fatal_error("function failed verification (4)");
+    }
+    return BatchCachedFunctions[tup] = NewF;
+  }
+
   ValueToValueMapTy originalToNewFn;
 
   // Create placeholder for the old arguments
@@ -6068,7 +6094,7 @@ llvm::Function *EnzymeLogic::CreateBatch(RequestContext context,
 
   for (unsigned i = 0; i < orig_FTy->getNumParams(); ++i) {
     Argument *arg = SrcArg;
-    if (arg_types[i] == BATCH_TYPE::VECTOR) {
+    if (i < arg_types.size() && arg_types[i] == BATCH_TYPE::VECTOR) {
       auto placeholder = PlaceholderBuilder.CreatePHI(
           arg->getType(), 0, "placeholder." + arg->getName());
       vmap[arg] = placeholder;
@@ -6087,13 +6113,14 @@ llvm::Function *EnzymeLogic::CreateBatch(RequestContext context,
   resetClonedGUID(NewF);
 
   NewF->setLinkage(Function::LinkageTypes::InternalLinkage);
+  clearFunctionAttributes(NewF);
 
   // find instructions to vectorize (going up / overestimation)
   SmallPtrSet<Value *, 32> toVectorize;
   SetVector<llvm::Value *, std::deque<llvm::Value *>> refinelist;
 
   for (unsigned i = 0; i < tobatch->getFunctionType()->getNumParams(); i++) {
-    if (arg_types[i] == BATCH_TYPE::VECTOR) {
+    if (i < arg_types.size() && arg_types[i] == BATCH_TYPE::VECTOR) {
       Argument *arg = tobatch->arg_begin() + i;
       toVectorize.insert(arg);
     }
@@ -6148,7 +6175,8 @@ llvm::Function *EnzymeLogic::CreateBatch(RequestContext context,
           continue;
 
         if (Instruction *cur_inst = dyn_cast<Instruction>(cur)) {
-          if (!isa<CallInst>(cur_inst) && !cur_inst->mayReadOrWriteMemory()) {
+          if (!isa<CallBase>(cur_inst) && !isa<AllocaInst>(cur_inst) &&
+              !cur_inst->mayReadOrWriteMemory()) {
             for (auto &op : cur_inst->operands())
               toCheck.insert(op);
             continue;
@@ -6175,7 +6203,7 @@ llvm::Function *EnzymeLogic::CreateBatch(RequestContext context,
     Argument *orig_arg = tobatch->arg_begin() + i;
     Argument *arg = NewF->arg_begin() + i;
 
-    if (arg_types[i] == BATCH_TYPE::SCALAR) {
+    if (i >= arg_types.size() || arg_types[i] == BATCH_TYPE::SCALAR) {
       originalToNewFn[tobatch->arg_begin() + i] = arg;
       continue;
     }
@@ -6199,24 +6227,17 @@ llvm::Function *EnzymeLogic::CreateBatch(RequestContext context,
 
   placeholderBB->eraseFromParent();
 
-  // update mapping with cloned basic blocks
-  for (auto i = tobatch->begin(), j = NewF->begin();
-       i != tobatch->end() && j != NewF->end(); ++i, ++j) {
-    originalToNewFn[&*i] = &*j;
-  }
-
-  // update mapping with cloned scalar values and the first vectorized values
-  auto J = inst_begin(NewF);
-  // skip the unwrapped vector params
-  std::advance(J, width * numVecParams);
-  for (auto I = inst_begin(tobatch);
-       I != inst_end(tobatch) && J != inst_end(NewF); ++I) {
-    if (toVectorize.count(&*I) != 0) {
-      vectorizedValues[&*I].push_back(&*J);
-      ++J;
-    } else {
-      originalToNewFn[&*I] = &*J;
-      ++J;
+  // update mapping with cloned basic blocks and cloned scalar/first vectorized
+  // values directly from CloneFunctionInto's vmap
+  for (BasicBlock &BB : *tobatch) {
+    originalToNewFn[&BB] = cast<BasicBlock>(&*vmap[&BB]);
+    for (Instruction &I : BB) {
+      Instruction *NewI = cast<Instruction>(&*vmap[&I]);
+      if (toVectorize.count(&I) != 0) {
+        vectorizedValues[&I].push_back(NewI);
+      } else {
+        originalToNewFn[&I] = NewI;
+      }
     }
   }
 
@@ -6250,20 +6271,30 @@ llvm::Function *EnzymeLogic::CreateBatch(RequestContext context,
     }
   }
 
+  // Register NewF before visiting so direct and mutual recursion reuse NewF
+  // instead of recursing infinitely.
+  BatchCachedFunctions[tup] = NewF;
+
   InstructionBatcher *batcher =
       new InstructionBatcher(tobatch, NewF, width, vectorizedValues,
                              originalToNewFn, toVectorize, *this);
 
-  for (auto val : toVectorize) {
-    if (auto inst = dyn_cast<Instruction>(val)) {
-      batcher->visit(inst);
+  for (BasicBlock &BB : *tobatch) {
+    for (Instruction &I : BB) {
+      if (toVectorize.count(&I) == 0)
+        continue;
+      batcher->visit(&I);
       if (batcher->hasError)
         break;
     }
+    if (batcher->hasError)
+      break;
   }
 
   if (batcher->hasError) {
     delete batcher;
+    NewF->deleteBody();
+    NewF->replaceAllUsesWith(UndefValue::get(NewF->getType()));
     NewF->eraseFromParent();
     return BatchCachedFunctions[tup] = nullptr;
   }
