@@ -2703,6 +2703,18 @@ public:
       InformationCache InfoCache(*F.getParent(), AG, Allocator,
                                  /* CGSCC */ nullptr);
 
+#if LLVM_VERSION_MAJOR >= 24
+      static constexpr AAKindSet Allowed =
+          AAKindSet::get<&AAHeapToStack::ID, &AANoCapture::ID,
+                         &AAMemoryBehavior::ID, &AAMemoryLocation::ID,
+                         &AANoUnwind::ID, &AANoSync::ID, &AANoRecurse::ID,
+                         &AAWillReturn::ID, &AANoReturn::ID, &AANonNull::ID,
+                         &AANoAlias::ID, &AADereferenceable::ID, &AAAlign::ID,
+                         &AANoFree::ID, &AANoUndef::ID>();
+
+      AttributorConfig aconfig(CGUpdater);
+      aconfig.Allowed = Allowed;
+#else
       DenseSet<const char *> Allowed = {
         &AAHeapToStack::ID,
         &AANoCapture::ID,
@@ -2733,6 +2745,7 @@ public:
 
       AttributorConfig aconfig(CGUpdater);
       aconfig.Allowed = &Allowed;
+#endif
       aconfig.DeleteFns = false;
       Attributor A(Functions, InfoCache, aconfig);
       for (Function *F : Functions) {

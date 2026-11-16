@@ -646,8 +646,7 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
         ConstantInt::get(Type::getInt32Ty(val->getContext()), 0)};
     for (auto i : idxs)
       sv.push_back(i);
-    ptr = BuilderM.CreateGEP(getShadowType(val->getType()), ptr, sv);
-    cast<GetElementPtrInst>(ptr)->setIsInBounds(true);
+    ptr = BuilderM.CreateInBoundsGEP(getShadowType(val->getType()), ptr, sv);
     old = BuilderM.CreateLoad(
         GetElementPtrInst::getIndexedType(getShadowType(val->getType()), sv),
         ptr);

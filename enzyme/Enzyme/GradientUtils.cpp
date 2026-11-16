@@ -7895,9 +7895,8 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                                            tryLegalRecomputeCheck, scope));
                   }
 
-                  auto cptr = BuilderM.CreateGEP(GEP->getSourceElementType(),
-                                                 outer, idxs);
-                  cast<GetElementPtrInst>(cptr)->setIsInBounds(true);
+                  auto cptr = BuilderM.CreateInBoundsGEP(
+                      GEP->getSourceElementType(), outer, idxs);
 
                   // Retrieve the actual result
                   auto result = loadFromCachePointer(val->getType(), BuilderM,

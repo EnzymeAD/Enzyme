@@ -3073,8 +3073,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       assert(ret);
       Value *gep = ret;
       if (!removeStruct) {
-        gep = ib.CreateGEP(RetType, ret, Idxs, "");
-        cast<GetElementPtrInst>(gep)->setIsInBounds(true);
+        gep = ib.CreateInBoundsGEP(RetType, ret, Idxs, "");
       }
       auto storeinst = ib.CreateStore(memory, gep);
       PostCacheStore(storeinst, ib);
@@ -3092,8 +3091,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       };
       tapeMemory = ret;
       if (!removeStruct) {
-        tapeMemory = ib.CreateGEP(RetType, ret, Idxs, "");
-        cast<GetElementPtrInst>(tapeMemory)->setIsInBounds(true);
+        tapeMemory = ib.CreateInBoundsGEP(RetType, ret, Idxs, "");
       }
       if (EnzymeZeroCache) {
         ZeroMemory(ib, tapeType, tapeMemory,
@@ -3115,8 +3113,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
         Value *Idxs[] = {ib.getInt32(0), ib.getInt32(i)};
         Value *gep = tapeMemory;
         if (!removeTapeStruct) {
-          gep = ib.CreateGEP(tapeType, tapeMemory, Idxs, "");
-          cast<GetElementPtrInst>(gep)->setIsInBounds(true);
+          gep = ib.CreateInBoundsGEP(tapeType, tapeMemory, Idxs, "");
         }
         auto storeinst = ib.CreateStore(VMap[v], gep);
         PostCacheStore(storeinst, ib);
