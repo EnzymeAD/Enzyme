@@ -200,8 +200,11 @@ void setUnifiedAccuracyCost(
     std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, llvm::Value *> &symbolToValueMap);
 
+// The cost of the Herbie expression `expr` that replaces `Site`, priced in a
+// scratch function of its module; a missing cost-model row is an error at
+// `Site`.
 double getCompCost(
-    CostModelState &CM, const std::string &expr, llvm::Module *M,
+    CostModelState &CM, const std::string &expr, llvm::Instruction &Site,
     std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, llvm::Value *> &symbolToValueMap,
     const llvm::FastMathFlags &FMF,
