@@ -24,8 +24,7 @@ module {
 // CHECK-DAG: %[[C10:.+]] = arith.constant 10 : index
 // CHECK: %[[LOOP:.+]]:2 = scf.for %[[IV:.+]] = %[[C0]] to %[[C10]] step %[[C1]] iter_args(%[[ACC:.+]] = %{{.+}}, %[[DACC:.+]] = %{{.+}}) -> (f64, f64) {
 // CHECK-NEXT:   scf.yield %[[ARG0:.+]], %[[ARG1:.+]] : f64, f64
-// CHECK-NEXT: }
-// CHECK-NEXT: return %[[LOOP]]#1 : f64
+// CHECK: return %[[LOOP]]#1 : f64
 
 // -----
 
@@ -47,5 +46,4 @@ module {
 // CHECK-LABEL: func.func private @fwddiffecarry_mismatch_affine(
 // CHECK: %[[ALOOP:.+]]:2 = affine.for %[[AIV:.+]] = 0 to 10 iter_args(%[[AACC:.+]] = %{{.+}}, %[[ADACC:.+]] = %{{.+}}) -> (f64, f64) {
 // CHECK-NEXT:   affine.yield %[[ARG0:.+]], %[[ARG1:.+]] : f64, f64
-// CHECK-NEXT: }
-// CHECK-NEXT: return %[[ALOOP]]#1 : f64
+// CHECK: return %[[ALOOP]]#1 : f64
