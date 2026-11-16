@@ -95,18 +95,43 @@ using namespace llvm;
 
 namespace {
 
+static bool getFixedTypeStoreSize(const DataLayout &DL, Type *Ty,
+                                  uint64_t &Size) {
+  TypeSize TS = DL.getTypeStoreSize(Ty);
+  if (TS.isScalable())
+    return false;
+  Size = TS.getKnownMinValue();
+  return true;
+}
+
+static bool coversRange(const APInt &SourceOffset, uint64_t SourceSize,
+                        const APInt &TargetOffset, uint64_t TargetSize,
+                        uint64_t &RelativeOffsetOut) {
+  unsigned W = std::max<unsigned>({SourceOffset.getBitWidth(),
+                                   TargetOffset.getBitWidth(), 64}) +
+               2;
+  APInt Diff = TargetOffset.sext(W) - SourceOffset.sext(W);
+  if (Diff.isNegative())
+    return false;
+  if ((Diff + APInt(W, TargetSize)).sgt(APInt(W, SourceSize)))
+    return false;
+  RelativeOffsetOut = Diff.getZExtValue();
+  return true;
+}
+
 // Extract a value with potential type conversion
 Value *extractValue(IRBuilder<> &Builder, Value *StoredVal, Type *LoadType,
                     const DataLayout &DL, APInt LoadOffset, APInt StoreOffset,
                     uint64_t LoadSize) {
   Type *StoreType = StoredVal->getType();
-  uint64_t StoreSize = DL.getTypeStoreSize(StoreType);
-
-  // Calculate relative offset
-  int64_t RelativeOffset = (LoadOffset - StoreOffset).getSExtValue();
+  uint64_t StoreSize = 0;
+  if (!getFixedTypeStoreSize(DL, StoreType, StoreSize))
+    return nullptr;
 
   // Check if the load is completely within the stored value
-  if (RelativeOffset < 0 || (uint64_t)RelativeOffset + LoadSize > StoreSize) {
+  uint64_t RelativeOffset = 0;
+  if (!coversRange(StoreOffset, StoreSize, LoadOffset, LoadSize,
+                   RelativeOffset)) {
     return nullptr;
   }
 
@@ -119,7 +144,8 @@ Value *extractValue(IRBuilder<> &Builder, Value *StoredVal, Type *LoadType,
       isa<PointerType>(StoreType)) {
     auto FromAS = cast<PointerType>(StoreType)->getAddressSpace();
     auto ToAS = cast<PointerType>(LoadType)->getAddressSpace();
-    if (FromAS == 10 && ToAS == 0) {
+    if (FromAS == 10 && ToAS == 0 && StoreSize == LoadSize &&
+        DL.getPointerSize(0) == LoadSize) {
       Module *mod = Builder.GetInsertBlock()->getModule();
       Function *F = mod->getFunction("julia.pointer_from_objref");
       if (!F) {
@@ -137,41 +163,82 @@ Value *extractValue(IRBuilder<> &Builder, Value *StoredVal, Type *LoadType,
       Value *RawPtr = Builder.CreateCall(F, {TrackedVal});
       return Builder.CreatePointerCast(RawPtr, LoadType);
     }
-    return Builder.CreatePointerCast(StoredVal, LoadType);
+    if (FromAS == ToAS)
+      return Builder.CreatePointerCast(StoredVal, LoadType);
+    return nullptr;
   }
 
   if (RelativeOffset == 0 && StoreSize >= LoadSize &&
       StoreType->isAggregateType()) {
-    auto first = Builder.CreateExtractValue(StoredVal, 0);
-    auto res = extractValue(Builder, first, LoadType, DL, LoadOffset,
-                            StoreOffset, LoadSize);
-    if (res) {
-      return res;
-    } else {
-      if (auto I = dyn_cast<Instruction>(first))
-        I->eraseFromParent();
+    bool HasFirst = false;
+    if (auto *ST = dyn_cast<StructType>(StoreType))
+      HasFirst = ST->getNumElements() > 0;
+    else if (auto *AT = dyn_cast<ArrayType>(StoreType))
+      HasFirst = AT->getNumElements() > 0;
+    if (HasFirst) {
+      auto first = Builder.CreateExtractValue(StoredVal, 0);
+      auto res = extractValue(Builder, first, LoadType, DL, LoadOffset,
+                              StoreOffset, LoadSize);
+      if (res) {
+        return res;
+      } else {
+        if (auto I = dyn_cast<Instruction>(first))
+          I->eraseFromParent();
+      }
+    }
+  }
+
+  // Cannot synthesize zero-bit integer conversions
+  if (LoadSize == 0 || StoreSize == 0) {
+    return nullptr;
+  }
+
+  // Validate all conversions before emitting any IR so failed extractions
+  // never leave dead instructions behind.
+  IntegerType *StoreIntTy = StoreType->isIntegerTy()
+                                ? cast<IntegerType>(StoreType)
+                                : Builder.getIntNTy(StoreSize * 8);
+  if (!StoreType->isIntegerTy() &&
+      !CastInst::castIsValid(Instruction::BitCast, StoreType, StoreIntTy)) {
+    return nullptr;
+  }
+
+  uint64_t ShiftBits = DL.isBigEndian()
+                           ? (StoreSize - RelativeOffset - LoadSize) * 8
+                           : RelativeOffset * 8;
+  if (ShiftBits > 0 && ShiftBits >= StoreIntTy->getIntegerBitWidth()) {
+    return nullptr;
+  }
+
+  IntegerType *LoadIntTy = Builder.getIntNTy(LoadSize * 8);
+  if (LoadIntTy != LoadType) {
+    if (LoadType->isPointerTy()) {
+      if (cast<PointerType>(LoadType)->getAddressSpace() == 10) {
+        if (DL.isNonIntegralAddressSpace(0) ||
+            DL.getPointerSize(0) != LoadSize) {
+          return nullptr;
+        }
+      } else if (DL.isNonIntegralPointerType(LoadType)) {
+        return nullptr;
+      }
+    } else if (!CastInst::castIsValid(Instruction::BitCast, LoadIntTy,
+                                      LoadType)) {
+      return nullptr;
     }
   }
 
   // Handle extraction with offset or type mismatch
   // First, bitcast to an integer type if needed
   if (!StoreType->isIntegerTy()) {
-    IntegerType *IntTy = Builder.getIntNTy(StoreSize * 8);
-    if (!CastInst::castIsValid(Instruction::BitCast, StoredVal->getType(),
-                               IntTy)) {
-      return nullptr;
-    }
-    StoredVal = Builder.CreateBitCast(StoredVal, IntTy);
+    StoredVal = Builder.CreateBitCast(StoredVal, StoreIntTy);
   }
 
-  // Extract the relevant bits if there's an offset
-  if (RelativeOffset > 0) {
-    uint64_t ShiftBits = RelativeOffset * 8;
+  // Extract the relevant bits if there's an offset (or big-endian high bytes)
+  if (ShiftBits > 0) {
     StoredVal = Builder.CreateLShr(StoredVal, ShiftBits);
   }
 
   // Truncate or extend to the load size if needed
-  IntegerType *LoadIntTy = Builder.getIntNTy(LoadSize * 8);
   if (StoredVal->getType() != LoadIntTy) {
     unsigned StoredWidth = StoredVal->getType()->getIntegerBitWidth();
     unsigned LoadWidth = LoadIntTy->getIntegerBitWidth();
@@ -194,10 +261,6 @@ Value *extractValue(IRBuilder<> &Builder, Value *StoredVal, Type *LoadType,
         StoredVal = Builder.CreateIntToPtr(StoredVal, LoadType);
       }
     } else {
-      if (!CastInst::castIsValid(Instruction::BitCast, StoredVal->getType(),
-                                 LoadType)) {
-        return nullptr;
-      }
       StoredVal = Builder.CreateBitCast(StoredVal, LoadType);
     }
   }
@@ -217,17 +280,21 @@ static bool dominatesAndCovers(Instruction *Source, Instruction *Target,
     return false;
 
   // Get the size of the source memory access
-  uint64_t SourceSize;
+  uint64_t SourceSize = 0;
   if (auto *SI = dyn_cast<StoreInst>(Source)) {
-    SourceSize = DL.getTypeStoreSize(SI->getValueOperand()->getType());
+    if (!getFixedTypeStoreSize(DL, SI->getValueOperand()->getType(),
+                               SourceSize))
+      return false;
   } else if (auto *LI = dyn_cast<LoadInst>(Source)) {
-    SourceSize = DL.getTypeStoreSize(LI->getType());
+    if (!getFixedTypeStoreSize(DL, LI->getType(), SourceSize))
+      return false;
   } else {
     return false;
   }
 
-  int64_t RelOffset = (TargetOffset - SourceOffset).getSExtValue();
-  return RelOffset >= 0 && (uint64_t)RelOffset + TargetSize <= SourceSize;
+  uint64_t RelOffset = 0;
+  return coversRange(SourceOffset, SourceSize, TargetOffset, TargetSize,
+                     RelOffset);
 }
 
 // Helper to check if two memory ranges alias
@@ -235,12 +302,20 @@ static bool dominatesAndCovers(Instruction *Source, Instruction *Target,
 // Range2: [Offset2, Offset2 + Size2)
 static bool memoryRangesAlias(const APInt &Offset1, uint64_t Size1,
                               const APInt &Offset2, uint64_t Size2) {
+  unsigned W =
+      std::max<unsigned>({Offset1.getBitWidth(), Offset2.getBitWidth(), 64}) +
+      2;
+  APInt Start1 = Offset1.sext(W);
+  APInt End1 = Start1 + APInt(W, Size1);
+  APInt Start2 = Offset2.sext(W);
+  APInt End2 = Start2 + APInt(W, Size2);
+
   // Check if range2 ends before range1 begins
-  if ((Offset2 + Size2).sle(Offset1))
+  if (End2.sle(Start1))
     return false;
 
   // Check if range1 ends before range2 begins
-  if ((Offset1 + Size1).sle(Offset2))
+  if (End1.sle(Start2))
     return false;
 
   // Otherwise, they may alias
@@ -273,32 +348,62 @@ collectMemoryOps(Value *Arg, const DataLayout &DL,
     for (Use &U : V->uses()) {
       User *Usr = U.getUser();
       if (auto *LI = dyn_cast<LoadInst>(Usr)) {
-        Loads.push_back({LI, CurrentOffset});
-      } else if (auto *SI = dyn_cast<StoreInst>(Usr)) {
-        // Check if this is a store TO the pointer (not storing the pointer
-        // value)
-        if (SI->getPointerOperand() == V) {
-          Stores.push_back({SI, CurrentOffset});
-        } else {
-          // Pointer value is being stored somewhere - reject this argument
+        if (!LI->isSimple()) {
+          // Volatile/atomic loads cannot be eliminated or reordered across.
           return false;
         }
+        uint64_t LoadSize = 0;
+        if (getFixedTypeStoreSize(DL, LI->getType(), LoadSize))
+          Loads.push_back({LI, CurrentOffset});
+      } else if (auto *SI = dyn_cast<StoreInst>(Usr)) {
+        // Reject storing the pointer value itself (including self-stores
+        // `store ptr %p, ptr %p`, which escape `%p` into memory).
+        if (SI->getValueOperand() == V) {
+          return false;
+        }
+        if (!SI->isSimple()) {
+          // Volatile/atomic stores cannot be forwarded or reordered across.
+          return false;
+        }
+        uint64_t StoreSize = 0;
+        if (!getFixedTypeStoreSize(DL, SI->getValueOperand()->getType(),
+                                   StoreSize)) {
+          // Scalable store has unknown byte extent and could alias any offset.
+          return false;
+        }
+        Stores.push_back({SI, CurrentOffset});
       } else if (auto *GEP = dyn_cast<GetElementPtrInst>(Usr)) {
+        if (GEP->getPointerOperand() != V || !GEP->getType()->isPointerTy()) {
+          return false;
+        }
         // Compute the offset for this GEP
         APInt GEPOffset(DL.getIndexTypeSizeInBits(GEP->getType()), 0);
         if (!GEP->accumulateConstantOffset(DL, GEPOffset)) {
           // Cannot compute constant offset - reject this argument
           return false;
         }
+        if (GEPOffset.getBitWidth() != CurrentOffset.getBitWidth()) {
+          return false;
+        }
 
         APInt NewOffset = CurrentOffset + GEPOffset;
         ToProcess.push_back({GEP, NewOffset});
       } else if (auto *CI = dyn_cast<CastInst>(Usr)) {
-        // Casts don't change offset
+        // Only pointer-preserving casts maintain the same address/offset.
+        // Reject ptrtoint/etc., which can truncate bits or escape the pointer.
+        if (!isa<BitCastInst, AddrSpaceCastInst>(CI) ||
+            !CI->getType()->isPointerTy() ||
+            DL.getIndexTypeSizeInBits(CI->getType()) !=
+                CurrentOffset.getBitWidth()) {
+          return false;
+        }
         ToProcess.push_back({CI, CurrentOffset});
       } else if (auto *Call = dyn_cast<CallInst>(Usr)) {
-        // Get the argument index from the Use
-        unsigned ArgIdx = U.getOperandNo();
+        // Only check nocapture on actual call arguments, not callee or bundles.
+        if (!Call->isArgOperand(&U)) {
+          return false;
+        }
+        unsigned ArgIdx = Call->getArgOperandNo(&U);
         if (isNoCapture(Call, ArgIdx)) {
           Calls.push_back({Call, CurrentOffset});
         } else {
@@ -318,8 +423,14 @@ collectMemoryOps(Value *Arg, const DataLayout &DL,
 static bool hasInterveningMod(Instruction *Start, Instruction *End,
                               LoadInst *LI, AAResults &AA,
                               TargetLibraryInfo &TLI) {
-  assert(Start->getParent() == End->getParent());
+  assert(Start->getParent() == End->getParent() &&
+         "Start and End must be in the same BasicBlock");
   for (Instruction *I = Start->getNextNode(); I != End; I = I->getNextNode()) {
+    if (auto *OtherLI = dyn_cast<LoadInst>(I)) {
+      if (!OtherLI->isSimple()) {
+        return true;
+      }
+    }
     if (I->mayWriteToMemory()) {
       if (writesToMemoryReadBy(nullptr, AA, TLI, LI, I)) {
         return true;
@@ -367,8 +478,7 @@ bool simplifyGVN(Function &F, DominatorTree &DT, const DataLayout &DL,
     SmallVector<std::pair<LoadInst *, APInt>, 8> Loads;
     SmallVector<std::pair<CallInst *, APInt>, 8> Calls;
 
-    // First pass: strict collection (no nocapture calls) for store-load
-    // forwarding (pass empty Calls to reject nocapture calls)
+    // Collect memory operations; reject candidate if pointer can escape.
     if (!collectMemoryOps(Arg, DL, Stores, Loads, Calls)) {
       // Argument has uses that prevent optimization
       continue;
@@ -379,13 +489,20 @@ bool simplifyGVN(Function &F, DominatorTree &DT, const DataLayout &DL,
     // Try to forward {stores, previous loads} to loads using simplified
     // algorithm
     for (auto &[LI, LoadOffset] : Loads) {
-      uint64_t LoadSize = DL.getTypeStoreSize(LI->getType());
+      if (!LI || !DT.isReachableFromEntry(LI->getParent()))
+        continue;
+
+      uint64_t LoadSize = 0;
+      if (!getFixedTypeStoreSize(DL, LI->getType(), LoadSize))
+        continue;
 
       // Step 1: Find all stores that may alias with this load
       SmallVector<std::tuple<Instruction *, APInt, uint64_t>, 8> AliasingStores;
       for (auto &[SI, StoreOffset] : Stores) {
-        uint64_t StoreSize =
-            DL.getTypeStoreSize(SI->getValueOperand()->getType());
+        uint64_t StoreSize = 0;
+        if (!getFixedTypeStoreSize(DL, SI->getValueOperand()->getType(),
+                                   StoreSize))
+          continue;
         if (memoryRangesAlias(LoadOffset, LoadSize, StoreOffset, StoreSize)) {
           AliasingStores.push_back({SI, StoreOffset, StoreSize});
         }
@@ -417,22 +534,22 @@ bool simplifyGVN(Function &F, DominatorTree &DT, const DataLayout &DL,
         Instruction *SI = std::get<0>(DominatingCoveringStores[0]);
         APInt StoreOffset = std::get<1>(DominatingCoveringStores[0]);
 
-        IRBuilder<> Builder(LI);
-        Value *StoredVal = std::get<2>(DominatingCoveringStores[0]);
-        Value *ExtractedVal =
-            extractValue(Builder, StoredVal, LI->getType(), DL, LoadOffset,
-                         StoreOffset, LoadSize);
-
-        if (ExtractedVal) {
-          bool Safe = true;
-          if (!isNoAlias) {
-            if (SI->getParent() != LI->getParent()) {
-              Safe = false;
-            } else {
-              Safe = !hasInterveningMod(SI, LI, LI, AA, TLI);
-            }
+        bool Safe = true;
+        if (!isNoAlias) {
+          if (SI->getParent() != LI->getParent()) {
+            Safe = false;
+          } else {
+            Safe = !hasInterveningMod(SI, LI, LI, AA, TLI);
           }
-          if (Safe) {
+        }
+        if (Safe) {
+          IRBuilder<> Builder(LI);
+          Value *StoredVal = std::get<2>(DominatingCoveringStores[0]);
+          Value *ExtractedVal =
+              extractValue(Builder, StoredVal, LI->getType(), DL, LoadOffset,
+                           StoreOffset, LoadSize);
+
+          if (ExtractedVal) {
             LLVM_DEBUG(dbgs() << "SimpleGVN: Forwarding (single alias)\n"
                               << "  Store: " << *SI << "\n"
                               << "  Load:  " << *LI << "\n");
@@ -460,37 +577,39 @@ bool simplifyGVN(Function &F, DominatorTree &DT, const DataLayout &DL,
         continue;
       }
 
-      // Step 5: Build map of last store in each block before LI
+      // Step 5: Track the last aliasing store/call before LI in LI's block (for
+      // same-block forwarding) AND the last aliasing store/call in every block
+      // including LI's own block (for backward BFS across loop backedges).
+      BasicBlock *LIBlock = LI->getParent();
+      Instruction *LastStoreBeforeLI = nullptr;
       DenseMap<BasicBlock *, std::tuple<Instruction *, APInt, uint64_t>>
-          LastStoreInBlockBeforeLI;
+          LastStoreInBlock;
       for (auto &[SI, StoreOffset, Size] : AliasingStores) {
         BasicBlock *BB = SI->getParent();
-        if (BB == LI->getParent()) {
-          // Only consider stores before LI in the same block
-          if (SI->comesBefore(LI)) {
-            auto &Entry = LastStoreInBlockBeforeLI[BB];
-            if (!std::get<0>(Entry) || std::get<0>(Entry)->comesBefore(SI)) {
-              Entry = {SI, StoreOffset, Size};
-            }
+        if (BB == LIBlock && SI->comesBefore(LI)) {
+          if (!LastStoreBeforeLI || LastStoreBeforeLI->comesBefore(SI)) {
+            LastStoreBeforeLI = SI;
           }
-        } else {
-          // For other blocks, take the last store in the block
-          auto &Entry = LastStoreInBlockBeforeLI[BB];
-          if (!std::get<0>(Entry) || std::get<0>(Entry)->comesBefore(SI)) {
-            Entry = {SI, StoreOffset, Size};
-          }
+        }
+        auto &Entry = LastStoreInBlock[BB];
+        if (!std::get<0>(Entry) || std::get<0>(Entry)->comesBefore(SI)) {
+          Entry = {SI, StoreOffset, Size};
         }
       }
 
-      // Step 6: Check if LI's parent block has a dominating+covering store
-      BasicBlock *LIBlock = LI->getParent();
-      auto It = LastStoreInBlockBeforeLI.find(LIBlock);
-      if (It != LastStoreInBlockBeforeLI.end()) {
-        Instruction *SI = std::get<0>(It->second);
+      // Step 6: Check if LI's parent block has a dominating+covering store/load
+      if (LastStoreBeforeLI) {
+        Instruction *SI = LastStoreBeforeLI;
 
         for (auto &&[DCS, StoreOffset, StoredVal] : DominatingCoveringStores) {
           if (SI == DCS ||
               (DCS->getParent() == LI->getParent() && SI->comesBefore(DCS))) {
+            bool Safe = true;
+            if (!isNoAlias) {
+              Safe = !hasInterveningMod(DCS, LI, LI, AA, TLI);
+            }
+            if (!Safe)
+              continue;
 
             IRBuilder<> Builder(LI);
             Value *ExtractedVal =
@@ -498,20 +617,14 @@ bool simplifyGVN(Function &F, DominatorTree &DT, const DataLayout &DL,
                              StoreOffset, LoadSize);
 
             if (ExtractedVal) {
-              bool Safe = true;
-              if (!isNoAlias) {
-                Safe = !hasInterveningMod(DCS, LI, LI, AA, TLI);
-              }
-              if (Safe) {
-                LLVM_DEBUG(dbgs() << "SimpleGVN: Forwarding (same block)\n"
-                                  << "  Store: " << *DCS << "\n"
-                                  << "  Load:  " << *LI << "\n");
-                LI->replaceAllUsesWith(ExtractedVal);
-                LI->eraseFromParent();
-                LI = nullptr;
-                Changed = true;
-                break;
-              }
+              LLVM_DEBUG(dbgs() << "SimpleGVN: Forwarding (same block)\n"
+                                << "  Store: " << *DCS << "\n"
+                                << "  Load:  " << *LI << "\n");
+              LI->replaceAllUsesWith(ExtractedVal);
+              LI->eraseFromParent();
+              LI = nullptr;
+              Changed = true;
+              break;
             }
           }
         }
@@ -519,6 +632,12 @@ bool simplifyGVN(Function &F, DominatorTree &DT, const DataLayout &DL,
       } else {
         for (auto &&[DCS, StoreOffset, StoredVal] : DominatingCoveringStores) {
           if (DCS->getParent() == LI->getParent()) {
+            bool Safe = true;
+            if (!isNoAlias) {
+              Safe = !hasInterveningMod(DCS, LI, LI, AA, TLI);
+            }
+            if (!Safe)
+              continue;
 
             IRBuilder<> Builder(LI);
             Value *ExtractedVal =
@@ -526,20 +645,14 @@ bool simplifyGVN(Function &F, DominatorTree &DT, const DataLayout &DL,
                              StoreOffset, LoadSize);
 
             if (ExtractedVal) {
-              bool Safe = true;
-              if (!isNoAlias) {
-                Safe = !hasInterveningMod(DCS, LI, LI, AA, TLI);
-              }
-              if (Safe) {
-                LLVM_DEBUG(dbgs() << "SimpleGVN: Forwarding (same block)\n"
-                                  << "  Store: " << *DCS << "\n"
-                                  << "  Load:  " << *LI << "\n");
-                LI->replaceAllUsesWith(ExtractedVal);
-                LI->eraseFromParent();
-                LI = nullptr;
-                Changed = true;
-                break;
-              }
+              LLVM_DEBUG(dbgs() << "SimpleGVN: Forwarding (same block)\n"
+                                << "  Store: " << *DCS << "\n"
+                                << "  Load:  " << *LI << "\n");
+              LI->replaceAllUsesWith(ExtractedVal);
+              LI->eraseFromParent();
+              LI = nullptr;
+              Changed = true;
+              break;
             }
           }
         }
@@ -549,7 +662,9 @@ bool simplifyGVN(Function &F, DominatorTree &DT, const DataLayout &DL,
       }
 
       if (isNoAlias) {
-        // Step 7: BFS backwards from LI's parent block
+        // Step 7: BFS backwards from LI's parent block. Using LastStoreInBlock
+        // ensures any store/call occurring after LI in LIBlock is observed if
+        // LIBlock is reachable along a loop backedge.
         SmallPtrSet<BasicBlock *, 32> Visited;
         SmallVector<BasicBlock *, 16> Worklist;
         StoreInst *Candidate = nullptr;
@@ -564,19 +679,20 @@ bool simplifyGVN(Function &F, DominatorTree &DT, const DataLayout &DL,
         while (!Worklist.empty()) {
           BasicBlock *BB = Worklist.pop_back_val();
 
-          auto It = LastStoreInBlockBeforeLI.find(BB);
-          if (It != LastStoreInBlockBeforeLI.end()) {
+          auto It = LastStoreInBlock.find(BB);
+          if (It != LastStoreInBlock.end()) {
             StoreInst *SI = dyn_cast<StoreInst>(std::get<0>(It->second));
             APInt StoreOffset = std::get<1>(It->second);
 
             if (!SI || !dominatesAndCovers(SI, LI, StoreOffset, LoadOffset,
                                            LoadSize, DL, DT)) {
-              // Non-dominating+covering store on path, bail
+              // Non-dominating+covering store or call on path, bail
               Candidate = nullptr;
               break;
             }
 
-            // Found dominating+covering store
+            // Found dominating+covering store; since it is the last aliasing
+            // store in BB and covers LI, stop searching past BB.
             if (!Candidate) {
               Candidate = SI;
               CandidateOffset = StoreOffset;
@@ -585,6 +701,7 @@ bool simplifyGVN(Function &F, DominatorTree &DT, const DataLayout &DL,
               Candidate = nullptr;
               break;
             }
+            continue;
           }
 
           // Continue BFS
