@@ -1,0 +1,68 @@
+; DEFINE: %{opt} = %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" \
+; DEFINE:   -poseidon-profile-use=%S/../Inputs/fmod_operator -poseidon-print -S
+; RUN: rm -rf %t && mkdir %t
+; RUN: %{opt} -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cost-budget=-0.5 -poseidon-cache=%t/pt -o %t/pt.ll 2>&1 | FileCheck --check-prefix=PT %s
+; RUN: FileCheck --check-prefix=PT-IR %s < %t/pt.ll
+; RUN: %{opt} -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/fmod_operator/fake-herbie.sh -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cost-budget=1e9 -poseidon-cache=%t/herbie -o %t/herbie.ll 2>&1 | FileCheck --check-prefix=HERBIE %s
+; RUN: FileCheck --check-prefix=HERBIE-IR %s < %t/herbie.ll
+; RUN: grep -v '^fmod,' %cost_models/cm_cpu_native.csv > %t/nofmod.csv
+; RUN: not %{opt} -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-cost-model=%t/nofmod.csv -poseidon-cache=%t/nofmod -o /dev/null 2>&1 | FileCheck --check-prefix=NOFMOD %s
+
+; An frem is the operator fmod: Herbie is given (fmod a b), the accuracy model
+; evaluates it as fmod, and the cost model prices it, and an frem that a fmod
+; of a Herbie rewrite becomes, by the fmod row of its type. A cost model
+; without that row stops the compile naming the row.
+;
+; Profiles: this module through the host profiler with
+; Inputs/fmod_operator/driver.c.
+
+define void @tester_frem(double %x, double %y, ptr %o) #0 {
+entry:
+  %m = fmul nnan double %x, %y
+  %r = frem nnan double %m, 2.500000e+00
+  %s = fadd nnan double %r, %x
+  store double %s, ptr %o, align 8
+  ret void
+}
+
+define void @tester_fma(double %x, double %y, ptr %o) #0 {
+entry:
+  %m = fmul nnan double %x, %y
+  %s = fadd nnan double %m, %x
+  store double %s, ptr %o, align 8
+  ret void
+}
+
+define void @site_frem(double %x, double %y, ptr %o, ptr %do) #0 {
+entry:
+  tail call void (ptr, ...) @__poseidon_fp_optimize(ptr nonnull @tester_frem, double %x, double %y, metadata !"enzyme_dup", ptr %o, ptr %do)
+  ret void
+}
+
+define void @site_fma(double %x, double %y, ptr %o, ptr %do) #0 {
+entry:
+  tail call void (ptr, ...) @__poseidon_fp_optimize(ptr nonnull @tester_fma, double %x, double %y, metadata !"enzyme_dup", ptr %o, ptr %do)
+  ret void
+}
+
+declare void @__poseidon_fp_optimize(ptr, ...)
+
+attributes #0 = { "target-cpu"="x86-64" }
+
+; fmul 4 + fmod 8 + fadd 4 in double; 1 + 2 + 1 and three casts in float.
+; PT: [poseidon] Optimizing preprocess_tester_frem
+; PT: Initial ComputationCost: 1.600000e+01
+; PT: CS candidate 'All FP64(0%) + FP32(100%)': initial=1.600000e+01 cand=7.000000e+00
+; PT-IR-LABEL: define void @preprocess_tester_frem(
+; PT-IR: frem nnan float
+
+; HERBIE: :name "0" (+ (fmod (* v0 v1) 2.5) v0))
+; The rewrite of tester_fma costs fma 4 + fmod 8 over fmul 4 + fadd 4.
+; HERBIE: [poseidon] Optimizing preprocess_tester_fma
+; HERBIE: {{.*}}2.560000e+02{{.*}}(fmod.f64 (fma.f64 v0 v1 v0) #s(literal 1000 binary64))
+; HERBIE: Applying solution for (+ (* v0 v1) v0) --(0)-> (fmod.f64 (fma.f64 v0 v1 v0) #s(literal 1000 binary64))
+; HERBIE-IR-LABEL: define void @preprocess_tester_fma(
+; HERBIE-IR: [[FMA:%.+]] = tail call nnan double @llvm.fma.f64(double %x, double %y, double %x)
+; HERBIE-IR-NEXT: frem nnan double [[FMA]], 1.000000e+03
+
+; NOFMOD: error: {{.*}}preprocess_tester_frem{{.*}}Poseidon: cost model {{.*}}nofmod.csv has no row 'fmod,double'; measure it with poseidon-calibrate

@@ -485,7 +485,7 @@ public:
     }
     SmallVector<CExpr, 3> es = operands(N, want);
     std::string rdt = want.empty() ? firstFP(es) : want;
-    std::string name = op == "rem" ? "fmod" : op;
+    std::string name = op;
     if (hasFloatSuffixInC(name) && rdt == "f32")
       name += "f";
     std::string t = name + "(";
@@ -590,6 +590,8 @@ std::string getHerbieOperator(const Instruction &I) {
     return "*";
   case Instruction::FDiv:
     return "/";
+  case Instruction::FRem:
+    return "fmod";
   case Instruction::Call: {
     const CallInst *CI = dyn_cast<CallInst>(&I);
     assert(CI && CI->getCalledFunction() &&
