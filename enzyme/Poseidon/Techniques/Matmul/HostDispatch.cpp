@@ -211,6 +211,19 @@ static bool recoverGuardExtents(const Options &O, Function &F,
   return true;
 }
 
+// The store the host dispatch takes the place of: the first in F into an
+// argument whose value is the product m computes. The dispatch writes the
+// product where it stores, and fissionGemmForDispatch reads it back there for
+// the stores and other uses that follow. Null if F has none.
+static StoreInst *productStore(Function &F, const AbstractMatmul &m) {
+  for (Instruction &I : instructions(F))
+    if (auto *S = dyn_cast<StoreInst>(&I);
+        S && tracePointerRoot(S->getPointerOperand()).param >= 0 &&
+        valueReaches(S->getValueOperand(), m.outputValue))
+      return S;
+  return nullptr;
+}
+
 bool computeGemmBodyNote(const Options &O, Function &F, const AbstractMatmul &m,
                          GemmBodyNote &note) {
   note = GemmBodyNote{};
@@ -246,20 +259,14 @@ bool computeGemmBodyNote(const Options &O, Function &F, const AbstractMatmul &m,
 
   // The body is standalone iff it has exactly one argument-rooted store.
   int storeCount = 0;
-  const StoreInst *cStore = nullptr;
   const StoreInst *lastArgStore = nullptr;
-  for (Instruction &I : instructions(F)) {
-    auto *S = dyn_cast<StoreInst>(&I);
-    if (!S)
-      continue;
-    int dst = tracePointerRoot(S->getPointerOperand()).param;
-    if (dst < 0)
-      continue;
-    storeCount++;
-    lastArgStore = S;
-    if (valueReaches(S->getValueOperand(), m.outputValue))
-      cStore = S;
-  }
+  for (Instruction &I : instructions(F))
+    if (auto *S = dyn_cast<StoreInst>(&I);
+        S && tracePointerRoot(S->getPointerOperand()).param >= 0) {
+      storeCount++;
+      lastArgStore = S;
+    }
+  const StoreInst *cStore = productStore(F, m);
   // A fused body's stored value reaches the matmul result only through the
   // loop's lcssa accumulator, which valueReaches may miss; with exactly one
   // argument-rooted store, that store is the C store.
@@ -376,17 +383,7 @@ bool computeGemmBodyNote(const Options &O, Function &F, const AbstractMatmul &m,
 }
 
 void fissionGemmForDispatch(Function &F, const AbstractMatmul &m) {
-  StoreInst *cStore = nullptr;
-  for (Instruction &I : instructions(F)) {
-    auto *S = dyn_cast<StoreInst>(&I);
-    if (!S)
-      continue;
-    if (tracePointerRoot(S->getPointerOperand()).param >= 0 &&
-        valueReaches(S->getValueOperand(), m.outputValue)) {
-      cStore = S;
-      break;
-    }
-  }
+  StoreInst *cStore = productStore(F, m);
   assert(cStore &&
          "a body with a fused note stores the product to an argument");
 
