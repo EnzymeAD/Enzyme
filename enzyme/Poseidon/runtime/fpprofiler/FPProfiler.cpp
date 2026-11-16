@@ -128,6 +128,15 @@ static bool g_metricOnly = false;
 // When the runtime was registered, before main: the start of the profile run.
 static std::chrono::steady_clock::time_point g_runtimeStart;
 
+// The file names of the profiles this process wrote, the sites of this run
+// the condition-number probe may measure. Never destroyed: a ProfilerWrite
+// call during main would otherwise register its destructor after the exit
+// handler that reads it, which then runs first.
+static std::set<std::string> &writtenThisRun() {
+  static auto *s = new std::set<std::string>();
+  return *s;
+}
+
 class FPProfiler {
 private:
   std::string functionName;
@@ -206,6 +215,8 @@ public:
 
     out << "\n";
     out.close();
+    writtenThisRun().insert(poseidon::profileNameStem(functionName) +
+                            ".fpprofile");
   }
 };
 
@@ -486,6 +497,10 @@ static void poseidonProbeDriver() {
     return;
 
   const std::string pdir = FPProfiler::outputDir();
+  // A profile in the directory that this run did not write is another
+  // program's: perturbing its site cannot move this run's metric.
+  for (const std::string &name : writtenElsewhere())
+    writtenThisRun().insert(poseidon::profileNameStem(name) + ".fpprofile");
   std::map<int, std::string> sites;
   if (DIR *d = opendir(pdir.c_str())) {
     std::vector<std::string> names;
@@ -494,7 +509,8 @@ static void poseidonProbeDriver() {
     closedir(d);
     std::sort(names.begin(), names.end());
     for (const std::string &n : names) {
-      if (n.size() < 10 || n.compare(n.size() - 10, 10, ".fpprofile"))
+      if (n.size() < 10 || n.compare(n.size() - 10, 10, ".fpprofile") ||
+          !writtenThisRun().count(n))
         continue;
       // A site this run never executed cannot move the metric, and perturbing
       // it would cost a run of the workload per ladder step.
@@ -667,10 +683,24 @@ static void poseidonProbeDriver() {
   rmdir(tmp);
 }
 
+// Whether the profile at `path` holds a record, which only a run that executed
+// its site writes: a line that is a slot index.
+static bool holdsRecords(const std::string &path) {
+  std::ifstream in(path);
+  std::string line;
+  while (std::getline(in, line))
+    if (!line.empty() &&
+        line.find_first_not_of("0123456789") == std::string::npos)
+      return true;
+  return false;
+}
+
 // A site that logged nothing has no profiler; it is written from its
-// registered header alone. The device profiler's exit handler may run before
-// or after this one: before, the kernels it wrote are skipped here; after, it
-// replaces what was written here for them.
+// registered header alone, unless the directory already holds a profile of
+// its executions, which another program sharing the site and the directory
+// wrote. The device profiler's exit handler may run before or after this one:
+// before, the kernels it wrote are skipped here; after, it replaces what was
+// written here for them.
 static void writeAllProfiles() {
   if (g_metricOnly) {
     writeMetric();
@@ -680,8 +710,11 @@ static void writeAllProfiles() {
     pair.second->write();
   for (const auto &pair : staticHeaders())
     if (!profilerRegistry.count(pair.first) &&
-        !writtenElsewhere().count(pair.first))
-      FPProfiler(pair.first).write();
+        !writtenElsewhere().count(pair.first)) {
+      FPProfiler neverExecuted(pair.first);
+      if (!holdsRecords(neverExecuted.getOutputPath()))
+        neverExecuted.write();
+    }
   writeMetric();
 }
 
