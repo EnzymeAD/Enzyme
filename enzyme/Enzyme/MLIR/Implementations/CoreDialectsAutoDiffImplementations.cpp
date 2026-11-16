@@ -577,9 +577,9 @@ LogicalResult mlir::enzyme::detail::controlFlowForwardHandler(
       if (!gutils->isConstantValue(operand.get())) {
         shadowValue = gutils->invertPointerM(operand.get(), builder);
       } else if (regionBranchOp) {
-        auto Ty = operand.get().getType();
+        Type type = operand.get().getType();
         auto shadowType =
-            cast<AutoDiffTypeInterface>(Ty).getShadowType(gutils->width);
+            cast<AutoDiffTypeInterface>(type).getShadowType(gutils->width);
         shadowValue = cast<AutoDiffTypeInterface>(shadowType)
                           .createNullValue(builder, operand.get().getLoc());
 
