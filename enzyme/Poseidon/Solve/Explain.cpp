@@ -996,6 +996,10 @@ std::string Explainer::leftReason(const Unit &U, const Subgraph *sg) {
             why.push_back("Herbie returned no alternative (" + CO.herbieStatus +
                           ")");
         }
+      for (const PrecisionUnit &CS : st.CSs)
+        if (CS.subgraph == sg && !CS.unpricedReason.empty())
+          why.push_back("its candidates could not be priced: " +
+                        CS.unpricedReason);
       if (!hadCO) {
         if (!Sess.Opts.Candidates.EnableHerbie)
           why.push_back("the algebraic search is disabled");

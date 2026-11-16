@@ -90,6 +90,8 @@ public:
   uint64_t executions = 0;
   llvm::MapVector<FPNode *, double> perOutputInitialAccCost;
   llvm::SmallVector<PTCandidate, 8> candidates;
+  // Why the subgraph could not be priced; empty when it was.
+  std::string unpricedReason;
   llvm::SmallVector<std::pair<std::string, std::string>, 1> dropped;
 
   using RewriteUnitSet = std::set<RewriteUnit *>;

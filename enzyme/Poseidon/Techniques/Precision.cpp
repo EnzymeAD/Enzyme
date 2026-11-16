@@ -473,6 +473,22 @@ void setUnifiedAccuracyCost(
   ArrayRef<SubgraphSamples::Point> sampledPoints =
       samplesOf(O, *CS.subgraph, valueToNodeMap).points();
 
+  // No usable sample means the subgraph cannot be priced: drop its candidates
+  // and keep the original body, without inventing a bound or an accuracy
+  // number.
+  auto unpriceable = [&](const char *why) {
+    CS.unpricedReason = why;
+    llvm::errs() << "[poseidon] subgraph cannot be priced (" << why
+                 << "); discarding its " << CS.candidates.size()
+                 << " precision candidate(s) and keeping the original body.\n";
+    CS.candidates.clear();
+    CS.initialAccCost = 0.0;
+  };
+  if (sampledPoints.empty()) {
+    unpriceable("the profiled input box is empty or unbounded");
+    return;
+  }
+
   MapVector<FPNode *, SmallVector<double, 4>> goldVals;
   for (auto *output : CS.subgraph->outputs) {
     auto *node = valueToNodeMap[output].get();
@@ -515,10 +531,14 @@ void setUnifiedAccuracyCost(
       }
     }
   }
+  if (llvm::any_of(outputs,
+                   [&](FPNode *node) { return runAcc[node].count == 0; })) {
+    unpriceable("every sample of the original expression scored NaN");
+    return;
+  }
   CS.initialAccCost = 0.0;
   for (auto *node : outputs) {
     auto &ra = runAcc[node];
-    assert(ra.count != 0 && "No valid sample found for original subgraph");
     double red = ra.sum / ra.count;
     CS.perOutputInitialAccCost[node] = red * std::fabs(node->grad);
     CS.initialAccCost += CS.perOutputInitialAccCost[node];
