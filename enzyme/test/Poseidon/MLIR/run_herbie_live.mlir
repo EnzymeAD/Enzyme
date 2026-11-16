@@ -1,17 +1,18 @@
 // REQUIRES: poseidon-mlir, herbie
 // RUN: rm -rf %t && mkdir -p %t
-// RUN: %poseidon_mlir_opt --mlir-disable-threading \
-// RUN:   --poseidon-rewrite="dump-fpcore run-herbie herbie-cache=%t/c" \
+// RUN: %poseidon_mlir_opt \
+// RUN:   --poseidon-rewrite="remark-fpcore run-herbie herbie-cache=%t/c" \
 // RUN:   %s 2>&1 | FileCheck %s
 
 // The Herbie configured at build time, run for real. Which candidate is
-// chosen depends on what this Herbie returns, so only its answer is checked:
-// that it improved the core, with expm1 among its candidates.
+// chosen depends on what this Herbie returns, so only this is checked: the
+// core it was asked about, that the runner got an answer for it and saved it,
+// and that a function comes back.
 
-// CHECK:     (FPCore (x0) :name "sqrt_expm1/0" :precision binary64 (sqrt (- (exp x0) 1)))
-// CHECK:     herbie: imp-start, {{[1-9][0-9]*}} candidate(s)
-// CHECK:     expm1
-// CHECK:     chose
+// CHECK-NOT: warning:
+// CHECK:     remark: (FPCore (x0) :name "sqrt_expm1/0" :precision binary64 (sqrt (- (exp x0) 1)))
+// CHECK:     [poseidon] Herbie @sqrt_expm1: 1 FPCore(s)
+// CHECK:     Saved Herbie output to cache file
 // CHECK:     func.func @sqrt_expm1
 // CHECK:     return
 func.func @sqrt_expm1(%x: tensor<16xf64>) -> tensor<16xf64> {

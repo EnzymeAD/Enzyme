@@ -25,8 +25,8 @@ def PoseidonRewritePass : Pass<"poseidon-rewrite", "func::FuncOp"> {
   }];
   let dependentDialects = ["arith::ArithDialect", "math::MathDialect"];
   let options = [
-    Option<"dumpFPCore", "dump-fpcore", "bool", /*default=*/"false",
-           "Print each chain's inputs and FPCore expressions to stderr">,
+    Option<"remarkFPCore", "remark-fpcore", "bool", /*default=*/"false",
+           "Emit a remark on each chain output with its FPCore expression">,
     Option<"herbieResults", "herbie-results", "std::string",
            /*default=*/"\"\"",
            "A results.json from an earlier Herbie run, read instead of "

@@ -31,13 +31,13 @@
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringMap.h"
+#include "llvm/Support/Debug.h"
 #include "llvm/Support/Format.h"
 #include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/xxhash.h"
 
 #include <algorithm>
-#include <memory>
 #include <mutex>
 #include <random>
 #include <string>
@@ -49,6 +49,8 @@ namespace mlir::poseidon {
 } // namespace mlir::poseidon
 
 using namespace mlir;
+
+#define DEBUG_TYPE "poseidon-rewrite"
 
 namespace {
 
@@ -482,42 +484,33 @@ struct PoseidonRewrite
 
   using Answers = llvm::StringMap<poseidon::HerbieAnswer>;
 
-  // The chain ops, as this pass's context names them.
-  std::shared_ptr<const ChainOpTable> chainOpTable;
+  // Nothing below is kept in the pass between functions: a pass in a pipeline
+  // that another pass builds and runs may be set up from several threads at
+  // once, so each run reads the options and builds what it needs itself.
 
-  // Herbie's answers by core name, read from herbie-results and shared by the
-  // copies of the pass that run on different functions at once. Null without
-  // herbie-results.
-  std::shared_ptr<const Answers> answers;
-  // How to run Herbie, when run-herbie asks for it and herbie-results does
-  // not answer instead. Null otherwise.
-  std::shared_ptr<const herbie::HerbieRunOptions> herbieRun;
-
-  // Runs once, before the pass runs on any function.
-  LogicalResult initialize(MLIRContext *context) override {
-    chainOpTable = std::make_shared<const ChainOpTable>(context);
-    if (!herbieResults.empty()) {
-      std::string error;
-      std::optional<std::string> json =
-          poseidon::readHerbieResults(herbieResults, error);
-      std::optional<Answers> parsed;
-      if (json)
-        parsed = poseidon::parseHerbieResults(*json, error);
-      if (!parsed)
-        return emitError(UnknownLoc::get(context))
-               << "poseidon-rewrite: herbie-results " << herbieResults << ": "
-               << error;
-      answers = std::make_shared<const Answers>(std::move(*parsed));
-      return success();
+  // Herbie's answers by core name, read from herbie-results.
+  FailureOr<Answers> readAnswers(func::FuncOp func) const {
+    std::string error;
+    std::optional<std::string> json =
+        poseidon::readHerbieResults(herbieResults, error);
+    std::optional<Answers> parsed;
+    if (json)
+      parsed = poseidon::parseHerbieResults(*json, error);
+    if (!parsed) {
+      func.emitError() << "poseidon-rewrite: herbie-results " << herbieResults
+                       << ": " << error;
+      return failure();
     }
-    if (!runHerbie)
-      return success();
+    return std::move(*parsed);
+  }
 
+  // How run-herbie runs Herbie.
+  FailureOr<herbie::HerbieRunOptions> herbieOptions(func::FuncOp func) const {
     herbie::HerbieRunOptions opts;
     opts.Program = herbieBinary.empty() ? std::string(HERBIE_BINARY)
                                         : herbieBinary.getValue();
     if (opts.Program.empty())
-      return emitError(UnknownLoc::get(context))
+      return func.emitError()
              << "poseidon-rewrite: run-herbie without herbie-binary, and no "
                 "Herbie was configured at build time";
     // A platform given as a file is passed as its path, and its contents are
@@ -528,9 +521,8 @@ struct PoseidonRewrite
       opts.Platform.Path = platform.str();
       opts.Platform.Digest = herbie::readFileDigest(platform);
       if (opts.Platform.Digest.empty())
-        return emitError(UnknownLoc::get(context))
-               << "poseidon-rewrite: herbie-platform " << platform
-               << ": cannot read";
+        return func.emitError() << "poseidon-rewrite: herbie-platform "
+                                << platform << ": cannot read";
     } else if (!platform.empty()) {
       opts.Platform.Name = platform.str();
     }
@@ -546,14 +538,14 @@ struct PoseidonRewrite
     opts.NumThreads = herbieThreads;
     opts.Processes = 0;
     opts.CacheDir = herbieCache;
-    herbieRun = std::make_shared<const herbie::HerbieRunOptions>(opts);
-    return success();
+    return opts;
   }
 
   // Runs Herbie on one function's cores. Its answers by core name; none when
   // it ran out of time; failure when it could not run.
   FailureOr<Answers> askHerbie(func::FuncOp func,
-                               const std::vector<std::string> &cores) const {
+                               const std::vector<std::string> &cores,
+                               const herbie::HerbieRunOptions &opts) const {
     herbie::HerbieRunResult run;
     {
       // One function at a time: Herbie already spreads one function's cores
@@ -561,8 +553,7 @@ struct PoseidonRewrite
       // digests is not safe to fill from two threads at once.
       static std::mutex herbieLock;
       std::lock_guard<std::mutex> guard(herbieLock);
-      run =
-          herbie::runHerbie(cores, *herbieRun, ("@" + func.getSymName()).str());
+      run = herbie::runHerbie(cores, opts, ("@" + func.getSymName()).str());
     }
     switch (run.Result) {
     case herbie::HerbieRunResult::Outcome::Ok:
@@ -573,7 +564,7 @@ struct PoseidonRewrite
       return Answers();
     case herbie::HerbieRunResult::Outcome::Failed:
       func.emitError() << "poseidon-rewrite: could not run Herbie ("
-                       << herbieRun->Program << ")";
+                       << opts.Program << ")";
       return failure();
     }
     std::string error;
@@ -593,28 +584,27 @@ struct PoseidonRewrite
     SmallVector<Value> inputs;
   };
 
-  // Prints Herbie's answer for core `name` (when dumping), and chooses one of
-  // its candidates that can be built, at random.
-  std::optional<Rewrite> choose(const Answers &known, StringRef name,
-                                const Chain &chain, Value output) const {
+  // Chooses one of the candidates Herbie returned for core `name` that can be
+  // built, at random. None when Herbie has no answer or none can be built.
+  std::optional<Rewrite> choose(const ChainOpTable &table, const Answers &known,
+                                StringRef name, const Chain &chain,
+                                Value output) const {
     auto it = known.find(name);
     if (it == known.end()) {
-      if (dumpFPCore)
-        llvm::errs() << "    herbie: no result\n";
+      LLVM_DEBUG(llvm::dbgs() << name << ": Herbie has no result\n");
       return std::nullopt;
     }
     const poseidon::HerbieAnswer &answer = it->second;
-    if (dumpFPCore)
-      llvm::errs() << "    herbie: " << answer.status << ", "
-                   << answer.candidates.size()
-                   << " candidate(s), original error "
-                   << llvm::format("%g", answer.initialErrorBits) << " bits\n";
+    LLVM_DEBUG(llvm::dbgs()
+               << name << ": Herbie's status " << answer.status << ", "
+               << answer.candidates.size() << " candidate(s), original error "
+               << llvm::format("%g", answer.initialErrorBits) << " bits\n");
 
     SmallVector<Value> inputs = usableInputs(chain, output);
-    ExprBuilder builder(*chainOpTable, cast<RankedTensorType>(output.getType()),
+    ExprBuilder builder(table, cast<RankedTensorType>(output.getType()),
                         inputs);
     SmallVector<poseidon::HerbieExpr> buildable;
-    for (auto [i, candidate] : llvm::enumerate(answer.candidates)) {
+    for (const poseidon::HerbieCandidate &candidate : answer.candidates) {
       // Why the candidate cannot be built, when it cannot: unparseable, or no
       // ops for it.
       std::string why;
@@ -622,25 +612,19 @@ struct PoseidonRewrite
           poseidon::parseHerbieExpr(candidate.expr, why);
       llvm::raw_string_ostream whyOS(why);
       bool canBuild = expr && succeeded(builder.canBuild(*expr, whyOS));
-      if (dumpFPCore) {
-        llvm::errs() << "      " << i << ": "
-                     << llvm::format("%g", candidate.errorBits)
+      LLVM_DEBUG({
+        llvm::dbgs() << "  " << llvm::format("%g", candidate.errorBits)
                      << " bits, cost " << llvm::format("%g", candidate.cost)
-                     << ": ";
-        if (expr)
-          expr->print(llvm::errs());
-        else
-          llvm::errs() << "unparseable: " << candidate.expr;
+                     << ": " << candidate.expr;
         if (!canBuild)
-          llvm::errs() << " [cannot build: " << why << "]";
-        llvm::errs() << "\n";
-      }
+          llvm::dbgs() << " [cannot build: " << why << "]";
+        llvm::dbgs() << "\n";
+      });
       if (canBuild)
         buildable.push_back(std::move(*expr));
     }
     if (buildable.empty()) {
-      if (dumpFPCore)
-        llvm::errs() << "    no candidate can be built; left as is\n";
+      LLVM_DEBUG(llvm::dbgs() << "  no candidate can be built; left as is\n");
       return std::nullopt;
     }
 
@@ -651,19 +635,21 @@ struct PoseidonRewrite
     // the choice is the same with any standard library.
     std::mt19937_64 rng(seed ^ llvm::xxh3_64bits(name));
     size_t pick = rng() % buildable.size();
-    if (dumpFPCore) {
-      llvm::errs() << "    chose ";
-      buildable[pick].print(llvm::errs());
-      llvm::errs() << "\n";
-    }
+    LLVM_DEBUG({
+      llvm::dbgs() << "  chose ";
+      buildable[pick].print(llvm::dbgs());
+      llvm::dbgs() << "\n";
+    });
     return Rewrite{output, std::move(buildable[pick]), std::move(inputs)};
   }
 
   void runOnOperation() override {
     func::FuncOp func = getOperation();
+    // The chain ops, as this function's context names them.
+    ChainOpTable table(&getContext());
     SmallVector<Chain> chains;
     func.walk([&](Block *block) {
-      for (Chain &chain : findChains(*block, *chainOpTable))
+      for (Chain &chain : findChains(*block, table))
         // One op alone is a single rounding, which no rewrite improves.
         if (chain.ops.size() >= 2 && !chain.outputs.empty())
           chains.push_back(std::move(chain));
@@ -676,47 +662,42 @@ struct PoseidonRewrite
       for (Value output : chain.outputs) {
         names.push_back(
             llvm::formatv("{0}/{1}", func.getSymName(), names.size()).str());
-        cores.push_back(
-            renderFPCore(output, chain, *chainOpTable, names.back()));
+        cores.push_back(renderFPCore(output, chain, table, names.back()));
+        if (remarkFPCore)
+          emitRemark(output.getLoc()) << cores.back();
       }
 
-    // Herbie's answers: read from herbie-results, or Herbie run now.
-    const Answers *found = answers.get();
-    std::optional<Answers> ran;
-    if (!found && herbieRun && !cores.empty()) {
-      FailureOr<Answers> asked = askHerbie(func, cores);
-      if (failed(asked))
+    // Herbie's answers: read from herbie-results, or Herbie run now. Neither
+    // asked for, the chains are only found.
+    std::optional<Answers> answers;
+    if (!herbieResults.empty()) {
+      FailureOr<Answers> read = readAnswers(func);
+      if (failed(read))
         return signalPassFailure();
-      ran = std::move(*asked);
-      found = &*ran;
+      answers = std::move(*read);
+    } else if (runHerbie) {
+      FailureOr<herbie::HerbieRunOptions> opts = herbieOptions(func);
+      if (failed(opts))
+        return signalPassFailure();
+      if (!cores.empty()) {
+        FailureOr<Answers> asked = askHerbie(func, cores, *opts);
+        if (failed(asked))
+          return signalPassFailure();
+        answers = std::move(*asked);
+      }
     }
+    if (!answers)
+      return;
 
     // First decide every rewrite, then change the IR, so that what is
-    // printed and decided is about the function as it came in.
+    // decided is about the function as it came in.
     SmallVector<Rewrite> rewrites;
     unsigned core = 0;
-    for (auto [index, chain] : llvm::enumerate(chains)) {
-      if (dumpFPCore) {
-        llvm::errs() << "poseidon-rewrite: @" << func.getSymName() << " chain "
-                     << index << ": " << chain.ops.size() << " ops, "
-                     << chain.outputs.size() << " output(s)\n";
-        for (auto [input, i] : chain.inputs) {
-          llvm::errs() << "  x" << i << " = ";
-          input.printAsOperand(llvm::errs(), OpPrintingFlags());
-          llvm::errs() << "\n";
-        }
-      }
-      for (Value output : chain.outputs) {
-        const std::string &name = names[core];
-        if (dumpFPCore)
-          llvm::errs() << "  " << cores[core] << "\n";
-        ++core;
-        if (found)
-          if (std::optional<Rewrite> rewrite =
-                  choose(*found, name, chain, output))
-            rewrites.push_back(std::move(*rewrite));
-      }
-    }
+    for (Chain &chain : chains)
+      for (Value output : chain.outputs)
+        if (std::optional<Rewrite> rewrite =
+                choose(table, *answers, names[core++], chain, output))
+          rewrites.push_back(std::move(*rewrite));
     if (rewrites.empty())
       return;
 
@@ -727,7 +708,7 @@ struct PoseidonRewrite
     for (Rewrite &rewrite : rewrites) {
       Operation *old = rewrite.output.getDefiningOp();
       rewriter.setInsertionPoint(old);
-      ExprBuilder builder(*chainOpTable,
+      ExprBuilder builder(table,
                           cast<RankedTensorType>(rewrite.output.getType()),
                           rewrite.inputs);
       Value replacement = builder.build(rewriter, old->getLoc(), rewrite.expr);

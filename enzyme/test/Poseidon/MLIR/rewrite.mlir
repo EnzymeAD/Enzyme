@@ -2,9 +2,6 @@
 // RUN: %poseidon_mlir_opt \
 // RUN:   --poseidon-rewrite="herbie-results=%S/Inputs/rewrite_results.json" \
 // RUN:   %s | FileCheck %s
-// RUN: %poseidon_mlir_opt --mlir-disable-threading \
-// RUN:   --poseidon-rewrite="dump-fpcore herbie-results=%S/Inputs/rewrite_results.json" \
-// RUN:   %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=WHY
 // RUN: %poseidon_mlir_opt \
 // RUN:   --poseidon-rewrite="seed=1 herbie-results=%S/Inputs/rewrite_results.json" \
 // RUN:   %s | FileCheck %s --check-prefix=SEED1
@@ -41,9 +38,6 @@ func.func @two_outputs(%x: tensor<4xf64>) -> (tensor<4xf64>, tensor<4xf64>) {
 }
 
 // hypot has no MLIR op, so the other candidate is the only choice.
-// WHY-LABEL: :name "hypot/0"
-// WHY:         (hypot x0 x1) [cannot build: no MLIR op computes 'hypot']
-// WHY:         chose (sqrt (fma x0 x0 (* x1 x1)))
 // CHECK-LABEL: func.func @hypot
 // CHECK:         %[[Y2:.*]] = arith.mulf %arg1, %arg1
 // CHECK-NEXT:    %[[F:.*]] = math.fma %arg0, %arg0, %[[Y2]]
@@ -58,9 +52,6 @@ func.func @hypot(%x: tensor<4xf64>, %y: tensor<4xf64>) -> tensor<4xf64> {
 }
 
 // A candidate in another precision than the tensor's is not built.
-// WHY-LABEL: :name "precision/0"
-// WHY:         [cannot build: computes in f64, not f32]
-// WHY:         no candidate can be built; left as is
 // CHECK-LABEL: func.func @precision
 // CHECK-NEXT:    %[[M:.*]] = arith.mulf %arg0, %arg0 : tensor<4xf32>
 // CHECK-NEXT:    %[[A:.*]] = arith.addf %[[M]], %arg0 : tensor<4xf32>
@@ -73,9 +64,6 @@ func.func @precision(%x: tensor<4xf32>) -> tensor<4xf32> {
 
 // The rewrite of an output goes where the output was computed, so it can only
 // use the inputs defined before that: here x1 (the rsqrt) comes later.
-// WHY-LABEL: :name "late_input/0"
-// WHY:         [cannot build: x1 is defined after the chain's output]
-// WHY:         chose (exp x0)
 // CHECK-LABEL: func.func @late_input
 // CHECK:         %[[E:.*]] = math.exp %arg0
 // CHECK-NEXT:    %[[Q:.*]] = math.rsqrt %arg0
