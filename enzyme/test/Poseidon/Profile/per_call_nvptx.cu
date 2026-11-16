@@ -45,7 +45,7 @@ __attribute__((global)) void k(double *x) {
 // CHECK-DAG: [poseidon] _Z5scalePKdPd.poseidon._Z1kPd.1: the profiled program did not contain this site (no profile at {{.*}}); left unchanged
 // CHECK-DAG: [poseidon] _Z5weighRK6holderPKdPd.poseidon._Z1kPd.3: the profiled program did not contain this site (no profile at {{.*}}); left unchanged
 // CHECK-DAG: [poseidon] _Z5scalePKdPd.poseidon._Z1kPd.2: the profiled program did not contain this site (no profile at {{.*}}); left unchanged
-// CHECK-NOT: is not a Poseidon site
+// CHECK-NOT: cannot be a Poseidon site
 // IR-LABEL: define {{.*}} @_Z1kPd(
 // IR-NOT: call
 // IR: ret void

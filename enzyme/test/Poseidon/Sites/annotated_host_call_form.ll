@@ -2,7 +2,8 @@
 ; RUN: not %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/other_sites -poseidon-cache=%t -S -o /dev/null 2>&1 | FileCheck %s
 
 ; A function that carries POSEIDON_OPTIMIZE is a site at every call, so naming
-; it in __poseidon_fp_optimize as well is a compile error at that call.
+; it in the call form as well, here under the marker's name, is a compile
+; error at that call.
 
 target triple = "x86_64-unknown-linux-gnu"
 
@@ -23,4 +24,4 @@ define double @site(double %x, double %y) {
 
 declare double @__poseidon_fp_optimize(ptr, ...)
 
-; CHECK: error: {{.*}}in function site {{.*}}Poseidon: tester carries POSEIDON_OPTIMIZE, so every call of it is already a site; remove this __poseidon_fp_optimize or the annotation
+; CHECK: error: {{.*}}in function site {{.*}}Poseidon: tester carries POSEIDON_OPTIMIZE, so every call of it is already a site; remove this __poseidon_optimize or the annotation

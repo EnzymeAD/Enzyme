@@ -36,7 +36,8 @@ namespace poseidon {
 
 struct Options;
 
-// Whether a called function is the Poseidon annotation.
+// Whether a called function is the Poseidon annotation, under either of its
+// names, __poseidon_fp_optimize and __enzyme_fp_optimize.
 bool isMarkerCall(llvm::StringRef calleeName);
 
 void warn(llvm::CallBase *CI, const llvm::Twine &message);
@@ -47,6 +48,41 @@ llvm::Function *markerTarget(llvm::CallInst *CI);
 // The argument of a marker call or an Enzyme request that says what the
 // argument after it is, as enzyme_dup does.
 llvm::Value *activityArg(llvm::LLVMContext &C, llvm::StringRef name);
+
+// Whether `V`, an argument of a marker call or of a call through an identity,
+// is the activity marker `name`.
+bool isActivityMarker(llvm::Value *V, llvm::StringRef name);
+
+// The identity of poseidon.h a call of __poseidon_optimize goes through: the
+// plain one when fn takes the arguments as written, the explicit one when it
+// does not. A marker call goes through none.
+enum class Identity { Plain, Explicit, None };
+
+// The names of the identities, without and with an accuracy target. The
+// explicit ones are declared and never defined, so that a build without the
+// plugin does not link a call fn does not take.
+constexpr llvm::StringLiteral kPlainIdentity = "__poseidon_site";
+constexpr llvm::StringLiteral kPlainIdentityTau = "__poseidon_site_tau";
+constexpr llvm::StringLiteral kExplicitIdentity = "__poseidon_site_explicit";
+constexpr llvm::StringLiteral kExplicitIdentityTau =
+    "__poseidon_site_explicit_tau";
+
+// How the arguments of a call of `fn` are read: as fn's own (automatic), or
+// with activity markers and shadows, as the marker reads them (explicit).
+enum class ArgumentList { Automatic, Explicit };
+
+// The one rule for every call form: the arguments `call` passes for the
+// parameters of `fn` (all of a call through an identity, those after the
+// function of a marker call) are an explicit list when one of them is an
+// activity marker (enzyme_dup, enzyme_const, poseidon_tau and every other
+// enzyme_* or poseidon_* name parseMarker reads), and an automatic list
+// otherwise. None, with an error at `call`, when the list is both or neither:
+// a list `identity` says fn takes as written that carries a marker, a list it
+// says fn does not take that carries none, or an automatic list of a marker
+// call whose length is not fn's number of parameters.
+std::optional<ArgumentList> readArgumentList(llvm::CallBase *call,
+                                             const llvm::Function &fn,
+                                             Identity identity);
 
 // Inlines the calls of `F` that `pick` selects, in instruction order, and again
 // in what that inlined, for a bounded number of rounds; returns how many calls

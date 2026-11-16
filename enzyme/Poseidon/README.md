@@ -145,7 +145,9 @@ The ways to opt in, simplest first:
    one function can be rewritten differently, and other calls of `fn` run it as
    written; no shadows are needed. `fn` names a function defined in the same
    translation unit, on the host or in device code, and `t` is a compile-time
-   constant.
+   constant. The arguments may instead be an explicit list with the shadows of
+   the caller's choosing; see [Advanced: one call with
+   shadows](#advanced-one-call-with-shadows).
 4. `-poseidon-kernels=<regex>|all`: GPU kernels opted in without editing the
    source (library code); only the ones above `-poseidon-min-cost-share` of the
    profiled cost are optimized.
@@ -164,17 +166,20 @@ The ways to opt in, simplest first:
    profile use stops at its sites until they are measured. With
    `POSEIDON_PROBE=0` nothing is measured and each site is solved against its
    own target. Optional.
-6. `__poseidon_fp_optimize(fn, args...)`: one call with explicit Enzyme
-   activities and shadows; see [Advanced: one call with shadows](#advanced-one-call-with-shadows).
 
 ```c
 double e = __poseidon_optimize(energy, x, n);       /* this call is a site */
 __poseidon_optimize_tau(1e-12, kick, v, a, dt, n);  /* with its own target */
 ```
 
+```cpp
+__poseidon_optimize(kick, enzyme_dup, v, dv, enzyme_const, a, dt, n); // shadows
+```
+
 Precedence: the site's own target (`POSEIDON_OPTIMIZE_TAU`,
-`__poseidon_optimize_tau`, or `poseidon_tau` in the call) > `-poseidon-tau` >
-none. The target is the same number wherever
+`__poseidon_optimize_tau`, or `poseidon_tau` in an explicit list) >
+`-poseidon-tau` > none; a call that gives its own target both ways is an
+error. The target is the same number wherever
 it is written: moving it from the flag into the source never changes what a
 site emits, and changing it needs no new profile, also when a template argument
 carries it to the call. A site with no target is solved against
@@ -191,8 +196,9 @@ point a budget selects: passed back as the budget, each selects that point.
 
 A marked host function, or one called through `__poseidon_optimize`, returns
 nothing, a floating-point scalar or an integer, and takes pointers,
-floating-point scalars and integers; any other signature is left as written
-with a warning. Its profiling build sizes the shadow of every pointer argument
+floating-point scalars and integers; any other signature is an error in a
+compile that generates or uses a profile, and runs as written with a warning in
+any other. Its profiling build sizes the shadow of every pointer argument
 from the allocation it points into: any heap allocation in the process (the
 driver links a profiling runtime that records them), and the globals and stack
 arrays of the translation units that hold a site. A pointer into anything else
@@ -229,11 +235,10 @@ writes into one of the two. The call itself reads and writes through the
 pointers it is given, and nothing else is stored through them. An object that
 holds pointers, and the address of an object the call never reads (an empty
 functor's), are passed as constants. A call that passes a pointer whose range is
-not constant (a loop over a length the call is given) runs as written, with a
-warning that names every such argument: copy it into a local object, or write
-the call with `__poseidon_fp_optimize` and shadows of your own. A `fn` whose
-body is an Enzyme request (`__enzyme_fwddiff` and the like) is profiled and
-rewritten in the code Enzyme generates for it.
+not constant (a loop over a length the call is given) is an error that names
+every such argument: copy it into a local object, or give its shadow in an
+explicit list. A `fn` whose body is an Enzyme request (`__enzyme_fwddiff` and
+the like) is profiled and rewritten in the code Enzyme generates for it.
 
 A profile-use compile of a module that holds a site, device code or a C or
 C++ translation unit, compiles the module once more as a build without a
@@ -252,24 +257,35 @@ outside what was modelled.
 
 ### Advanced: one call with shadows
 
-`__poseidon_fp_optimize(fn, args...)` makes one call the site like
-`__poseidon_optimize`, for pointers the profiler cannot size or a custom seed.
-The arguments are `fn`'s, each pointer followed by a shadow of the same size
-that the caller allocates, zeroed for inputs and filled with 1.0 for outputs,
-as Enzyme's `enzyme_dup` takes them; `poseidon_tau, t` among them sets that
-call's target:
+`__poseidon_optimize` also takes the explicit list Enzyme's `__enzyme_autodiff`
+takes, for pointers the profiler cannot size or a seed of the caller's
+choosing: `enzyme_dup` before a pointer and its shadow after it, of the same
+size, zeroed for an input and filled with 1.0 for an output; `enzyme_const`
+before a pointer that needs no shadow; a scalar as it is. `poseidon_tau, t`
+among them sets the call's target, as `__poseidon_optimize_tau` does. A list is
+explicit when it holds an activity marker (`poseidon_tau` is one), and then
+every pointer in it carries one; a list that is neither `fn`'s own arguments
+nor such a list is a compile error at the call. The call is a site over `fn`
+itself, with one profile for every explicit call of `fn`, and returns `fn`'s
+value. A build without the plugin does not link it.
 
 ```cpp
-template <typename R, typename... T> R __poseidon_fp_optimize(void *, T...);
-extern int enzyme_dup, poseidon_tau;
+int enzyme_dup, enzyme_const, poseidon_tau;
 
-__poseidon_fp_optimize<void>((void *)kernel, poseidon_tau, 1e-10,
-                             enzyme_dup, x, dx, enzyme_dup, out, dout, n);
+__poseidon_optimize(kernel, poseidon_tau, 1e-10, enzyme_const, x, enzyme_dup,
+                    out, dout, n);
+double e = __poseidon_optimize_tau(1e-6, energy, enzyme_dup, x, dx, n);
 ```
 
+C has no overloading, so there `__poseidon_optimize` takes `fn`'s own arguments
+only, and an explicit list is a call of `__poseidon_fp_optimize`, which the
+program declares with `fn`'s return type, as in `double
+__poseidon_fp_optimize(void *, ...)`. `__poseidon_fp_optimize` and
+`__enzyme_fp_optimize` are accepted as other names of the call, read by the same
+rule.
+
 A function that carries `POSEIDON_OPTIMIZE` is a site at every call already,
-and naming it in `__poseidon_optimize` or `__poseidon_fp_optimize` as well is
-a compile error.
+and naming it in `__poseidon_optimize` as well is a compile error.
 
 ### CMake
 
@@ -371,9 +387,10 @@ AST to find the expression), `diff`, `remarks` (`file:line:col: note:` lines),
 A mistake in what a compile is given (a flag value, a file that is missing or
 unreadable, a cost model or a profile that does not fit the compile) is an
 error, `error: Poseidon: ...`, that says what to do, at the source location of
-the site concerned where there is one. The compile exits with status 1 and
-writes no output, without clang's crash report (no request for a bug report,
-stack dump or reproducer files). Where the site can be left as written the
+the site concerned where there is one. So is a site the source asks for that a
+compile generating or using a profile cannot make. The compile exits with
+status 1 and writes no output, without clang's crash report (no request for a
+bug report, stack dump or reproducer files). Where the site can be left as written the
 compile goes on and reports the other sites' errors too; a mistake that leaves
 nothing to compile with, such as a flag value, a missing profile directory or a
 cost model that cannot price the compile, ends it at once. A broken internal

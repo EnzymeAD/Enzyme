@@ -158,7 +158,214 @@ static void outlineHostFunction(Function &F, std::optional<double> tau) {
   appendToCompilerUsed(M, {B});
 }
 
-// __poseidon_optimize: the call through the identity helper becomes a call of
+// The call that calls through `H`, a call of an identity, or null.
+static CallBase *callThrough(CallInst *H) {
+  CallBase *call = nullptr;
+  for (User *U : H->users())
+    if (auto *CB = dyn_cast<CallBase>(U); CB && CB->getCalledOperand() == H)
+      call = CB;
+  return call;
+}
+
+// The accuracy target the identity call `H` carries for `call`, 0 when it
+// carries none; none, with an error at `call`, when it is not a positive
+// finite constant.
+static std::optional<double> identityTarget(CallInst *H, CallBase *call,
+                                            StringRef name) {
+  if (H->arg_size() < 2)
+    return 0.0;
+  auto *C = dyn_cast<ConstantFP>(H->getArgOperand(1));
+  if (!C) {
+    fail(call, "the accuracy target of __poseidon_optimize_tau for " + name +
+                   " must be a compile-time constant (a literal, a macro or "
+                   "a constant expression)");
+    return std::nullopt;
+  }
+  double tau = C->getValueAPF().convertToDouble();
+  if (!(tau > 0.0) || !std::isfinite(tau)) {
+    fail(call, "the accuracy target " + shortDouble(tau) + " of " + name +
+                   " is not a positive finite number");
+    return std::nullopt;
+  }
+  return tau;
+}
+
+static void reportAnnotated(CallBase *call, StringRef name) {
+  fail(call, name + " carries POSEIDON_OPTIMIZE, so every call of it is "
+                    "already a site; remove this __poseidon_optimize or the "
+                    "annotation");
+}
+
+// `call`, a call of `fn` with an explicit list, made the marker call that
+// means the same, with `tau`, unless 0, as its poseidon_tau. The call's value
+// is fn's, in the profiling run as well.
+static CallInst *asMarker(CallBase *call, Function *fn, double tau) {
+  LLVMContext &C = call->getContext();
+  SmallVector<Value *, 16> args{fn};
+  if (tau > 0.0) {
+    args.push_back(activityArg(C, "poseidon_tau"));
+    args.push_back(ConstantFP::get(Type::getDoubleTy(C), tau));
+  }
+  if (!call->getType()->isVoidTy())
+    args.push_back(activityArg(C, "enzyme_primal_return"));
+  const unsigned before = args.size();
+  args.append(call->arg_begin(), call->arg_end());
+  auto *FT = FunctionType::get(call->getType(), {PointerType::getUnqual(C)},
+                               /*isVarArg=*/true);
+  FunctionCallee marker =
+      call->getModule()->getOrInsertFunction("__poseidon_fp_optimize", FT);
+  IRBuilder<> Builder(call);
+  CallInst *CI = Builder.CreateCall(FT, marker.getCallee(), args);
+  CI->setDebugLoc(call->getDebugLoc());
+  AttributeList old = call->getAttributes();
+  SmallVector<AttributeSet, 16> params(before);
+  for (unsigned i = 0; i < call->arg_size(); ++i)
+    params.push_back(old.getParamAttrs(i));
+  CI->setAttributes(
+      AttributeList::get(C, old.getFnAttrs(), old.getRetAttrs(), params));
+  call->replaceAllUsesWith(CI);
+  call->eraseFromParent();
+  return CI;
+}
+
+// `marker`, a marker call of `fn`, made the call of fn with the primal values
+// of its arguments, or erased when its list cannot be read.
+static void callAsWritten(CallInst *marker, Function *fn) {
+  if (std::optional<MarkerArgs> parsed = parseMarker(marker, fn)) {
+    IRBuilder<> Builder(marker);
+    CallInst *direct =
+        Builder.CreateCall(fn->getFunctionType(), fn, parsed->primalArgs);
+    direct->setCallingConv(fn->getCallingConv());
+    direct->setDebugLoc(marker->getDebugLoc());
+    marker->replaceAllUsesWith(direct);
+  } else if (!marker->use_empty()) {
+    marker->replaceAllUsesWith(PoisonValue::get(marker->getType()));
+  }
+  marker->eraseFromParent();
+}
+
+// The calls of the module's functions named `names`, in module order.
+static SmallVector<CallInst *, 4> callsOfAny(Module &M,
+                                             ArrayRef<StringRef> names) {
+  SmallVector<Function *, 2> callees;
+  for (StringRef name : names)
+    if (Function *F = M.getFunction(name))
+      callees.push_back(F);
+  SmallVector<CallInst *, 4> out;
+  if (callees.empty())
+    return out;
+  for (Function &F : M)
+    for (Instruction &I : instructions(F))
+      if (auto *CI = dyn_cast<CallInst>(&I))
+        if (is_contained(callees, CI->getCalledFunction()))
+          out.push_back(CI);
+  return out;
+}
+
+// __poseidon_optimize with an explicit list: the call through the explicit
+// identity is the marker call over fn, and the marker's lowering makes it the
+// site. The host half of a CUDA or HIP compilation holds no site, so there the
+// call runs fn with the primal values of its arguments.
+static bool lowerExplicitCalls(Module &M) {
+  SmallVector<CallInst *, 4> identities =
+      callsOfAny(M, {kExplicitIdentity, kExplicitIdentityTau});
+  if (identities.empty())
+    return false;
+  const bool hostHalf = isOffloadHostHalf(M);
+  auto annotated = annotatedFunctions(M);
+  for (CallInst *H : identities) {
+    auto *fn = dyn_cast<Function>(H->getArgOperand(0)->stripPointerCasts());
+    CallBase *call = callThrough(H);
+    if (!fn || !call || !H->hasOneUse()) {
+      fail(H, "__poseidon_optimize needs a function name and a call of it");
+      H->replaceAllUsesWith(PoisonValue::get(H->getType()));
+      H->eraseFromParent();
+      continue;
+    }
+    const std::string name = displayName(*fn);
+    std::optional<double> tau = identityTarget(H, call, name);
+    // Whatever the outcome, the call stops going through the identity, which
+    // nothing defines.
+    call->setCalledOperand(fn);
+    H->eraseFromParent();
+    if (!tau || !readArgumentList(call, *fn, Identity::Explicit))
+      continue;
+    if (*tau > 0.0 && llvm::any_of(call->args(), [](Value *A) {
+          return isActivityMarker(A, "poseidon_tau");
+        })) {
+      fail(call, "this call of " + name +
+                     " gives its accuracy target twice, as the first "
+                     "argument of __poseidon_optimize_tau and after "
+                     "poseidon_tau; give it once");
+      continue;
+    }
+    if (annotated.count(fn)) {
+      reportAnnotated(call, name);
+      continue;
+    }
+    CallInst *marker = asMarker(call, fn, *tau);
+    if (hostHalf)
+      callAsWritten(marker, fn);
+  }
+  return true;
+}
+
+// A marker call whose list is automatic and passes a pointer is the call form
+// of __poseidon_optimize, through the plain identity, so that the pass makes
+// its shadows as it makes that form's. One whose list passes no pointer needs
+// no shadow and stays the marker call it is. In the host half of a CUDA or HIP
+// compilation, which holds no site, the call runs fn as written.
+static bool routeAutomaticMarkers(Module &M) {
+  SmallVector<CallInst *, 4> markers;
+  collectMarkerCalls(M, markers);
+  bool changed = false;
+  for (CallInst *CI : markers) {
+    Function *fn = markerTargetOrNull(CI);
+    if (!fn)
+      continue;
+    std::optional<ArgumentList> list =
+        readArgumentList(CI, *fn, Identity::None);
+    if (list == ArgumentList::Explicit)
+      continue;
+    SmallVector<Value *, 8> args(drop_begin(CI->args()));
+    if (list && llvm::none_of(
+                    args, [](Value *A) { return A->getType()->isPointerTy(); }))
+      continue;
+    changed = true;
+    auto types = map_range(args, [](Value *A) { return A->getType(); });
+    if (list && (CI->hasStructRetAttr() ||
+                 !llvm::equal(fn->getFunctionType()->params(), types))) {
+      fail(CI, "this call passes " + displayName(*fn) +
+                   " arguments of other types than it takes, and none of "
+                   "them is an activity marker; pass its own arguments");
+      list = std::nullopt;
+    }
+    if (!list) {
+      if (!CI->use_empty())
+        CI->replaceAllUsesWith(PoisonValue::get(CI->getType()));
+      CI->eraseFromParent();
+      continue;
+    }
+    IRBuilder<> Builder(CI);
+    Value *callee = fn;
+    if (!isOffloadHostHalf(M)) {
+      LLVMContext &C = M.getContext();
+      Type *Ptr = PointerType::getUnqual(C);
+      FunctionCallee identity = M.getOrInsertFunction(
+          kPlainIdentity, FunctionType::get(Ptr, {Ptr}, false));
+      callee = Builder.CreateCall(identity, {fn});
+      cast<CallInst>(callee)->setDebugLoc(CI->getDebugLoc());
+    }
+    CallInst *call = Builder.CreateCall(fn->getFunctionType(), callee, args);
+    call->setCallingConv(fn->getCallingConv());
+    call->setDebugLoc(CI->getDebugLoc());
+    CI->replaceAllUsesWith(call);
+    CI->eraseFromParent();
+  }
+  return changed;
+}
+
+// __poseidon_optimize: the call through the plain identity becomes a call of
 // a copy of the function made for that call alone, which is then a host site
 // like an outlined body. The copy is named after the caller, without the
 // targets (targetFreeName), and the call's position among the caller's per-call
@@ -166,30 +373,26 @@ static void outlineHostFunction(Function &F, std::optional<double> tau) {
 // alike at any -O level and for any target. The host half of a CUDA or HIP
 // compilation holds no site: the compilation has one device and one cost
 // model, and the call of a host-device function is the device half's site.
-// There the call through the identity is left for the inliner to fold.
+// There the call through the identity is left for the inliner to fold. The
+// calls through the explicit identity and the marker calls are read first
+// (lowerExplicitCalls, routeAutomaticMarkers).
 bool lowerPerCallSites(const Options &O, Module &M) {
+  // The targets of the explicit calls are left out of their callers' names
+  // too, so they are read before those calls become marker calls.
+  DenseMap<Function *, SmallVector<double, 2>> targets;
+  for (CallInst *H : callsOfAny(M, {kPlainIdentityTau, kExplicitIdentityTau}))
+    if (auto *C = dyn_cast<ConstantFP>(H->getArgOperand(1)))
+      targets[H->getFunction()].push_back(C->getValueAPF().convertToDouble());
+  bool changed = lowerExplicitCalls(M);
+  changed |= routeAutomaticMarkers(M);
   if (isOffloadHostHalf(M))
-    return false;
-  Function *site = M.getFunction("__poseidon_site");
-  Function *siteTau = M.getFunction("__poseidon_site_tau");
-  if (!site && !siteTau)
-    return false;
-  SmallVector<CallInst *, 4> helpers;
-  for (Function &F : M)
-    for (Instruction &I : instructions(F))
-      if (auto *CI = dyn_cast<CallInst>(&I))
-        if (Function *callee = CI->getCalledFunction();
-            callee && (callee == site || callee == siteTau))
-          helpers.push_back(CI);
+    return changed;
+  SmallVector<CallInst *, 4> helpers =
+      callsOfAny(M, {kPlainIdentity, kPlainIdentityTau});
   if (helpers.empty())
-    return false;
+    return changed;
   const bool active = O.Profiling.profileAction();
   auto annotated = annotatedFunctions(M);
-  DenseMap<Function *, SmallVector<double, 2>> targets;
-  for (CallInst *H : helpers)
-    if (H->arg_size() > 1)
-      if (auto *C = dyn_cast<ConstantFP>(H->getArgOperand(1)))
-        targets[H->getFunction()].push_back(C->getValueAPF().convertToDouble());
   // Two callers whose names differ in targets alone number their calls on
   // from each other, so that they stay two sites.
   StringMap<unsigned> ordinal;
@@ -200,10 +403,7 @@ bool lowerPerCallSites(const Options &O, Module &M) {
         targetFreeName(caller->getName(), targets.lookup(caller));
     unsigned k = ordinal[callerKey]++;
     auto *fn = dyn_cast<Function>(H->getArgOperand(0)->stripPointerCasts());
-    CallBase *call = nullptr;
-    for (User *U : H->users())
-      if (auto *CB = dyn_cast<CallBase>(U); CB && CB->getCalledOperand() == H)
-        call = CB;
+    CallBase *call = callThrough(H);
     // Whatever the outcome, the call stops going through the helper, so a
     // later run of the pass does not see it again.
     auto asWritten = [&](CallBase *site) {
@@ -213,37 +413,22 @@ bool lowerPerCallSites(const Options &O, Module &M) {
         H->eraseFromParent();
     };
     if (!fn || !call || !H->hasOneUse()) {
-      warn(H, "__poseidon_optimize needs a function name and a call of it; "
-              "the call runs as written");
+      if (active)
+        fail(H, "__poseidon_optimize needs a function name and a call of it");
+      else
+        warn(H, "__poseidon_optimize needs a function name and a call of it; "
+                "the call runs as written");
       asWritten(call);
       continue;
     }
     const std::string name = displayName(*fn);
-    const bool hasTau = H->arg_size() > 1;
-    double tau = 0.0;
-    if (hasTau) {
-      auto *C = dyn_cast<ConstantFP>(H->getArgOperand(1));
-      if (!C) {
-        fail(call, "the accuracy target of __poseidon_optimize_tau for " +
-                       name +
-                       " must be a compile-time constant (a literal, a macro "
-                       "or a constant expression)");
-        asWritten(call);
-        continue;
-      }
-      tau = C->getValueAPF().convertToDouble();
-      if (!(tau > 0.0) || !std::isfinite(tau)) {
-        fail(call, "the accuracy target " + shortDouble(tau) + " of " + name +
-                       " is not a positive finite number");
-        asWritten(call);
-        continue;
-      }
+    std::optional<double> tau = identityTarget(H, call, name);
+    if (!tau || !readArgumentList(call, *fn, Identity::Plain)) {
+      asWritten(call);
+      continue;
     }
     if (annotated.count(fn)) {
-      fail(call, name +
-                     " carries POSEIDON_OPTIMIZE, so every call of it is "
-                     "already a site; remove this __poseidon_optimize or the "
-                     "annotation");
+      reportAnnotated(call, name);
       asWritten(call);
       continue;
     }
@@ -252,15 +437,17 @@ bool lowerPerCallSites(const Options &O, Module &M) {
                           : hostSiteRefusal(*fn);
     if (call->getFunctionType() != fn->getFunctionType())
       why = "is called with another signature";
+    if (!why.empty() && active)
+      fail(call, name + " " + why + ", so this call cannot be a Poseidon site");
+    else if (!why.empty())
+      warn(call, name + " " + why +
+                     ", so this call is not a Poseidon site. The call runs as "
+                     "written.");
+    else if (!active)
+      warn(call, "a Poseidon site was compiled without "
+                 "-poseidon-profile-generate or -poseidon-profile-use=<dir>. "
+                 "The call runs as written.");
     if (!why.empty() || !active) {
-      warn(call, !why.empty()
-                     ? name + " " + why +
-                           ", so this call is not a Poseidon site. The call "
-                           "runs as written."
-                     : std::string("a Poseidon site was compiled without "
-                                   "-poseidon-profile-generate or "
-                                   "-poseidon-profile-use=<dir>. The call "
-                                   "runs as written."));
       asWritten(call);
       continue;
     }
@@ -274,14 +461,14 @@ bool lowerPerCallSites(const Options &O, Module &M) {
     B->removeFnAttr(Attribute::AlwaysInline);
     B->removeFnAttr(Attribute::InlineHint);
     B->addFnAttr(Attribute::NoInline);
-    B->addFnAttr(kHostBody, hasTau ? exactDouble(tau) : "");
+    B->addFnAttr(kHostBody, *tau > 0.0 ? exactDouble(*tau) : "");
     appendToCompilerUsed(M, {B});
     call->setCalledOperand(B);
     H->eraseFromParent();
-    if (O.Diagnostics.Print && hasTau)
+    if (O.Diagnostics.Print && *tau > 0.0)
       llvm::errs() << "[poseidon] site " << name << " at its call in "
                    << displayName(*caller) << ": accuracy target "
-                   << shortDouble(tau) << '\n';
+                   << shortDouble(*tau) << '\n';
   }
   return true;
 }
@@ -326,20 +513,15 @@ bool outlineHostSites(const Options &O, Module &M) {
     auto both = llvm::find_if(
         markers, [F = F](CallInst *CI) { return markerTargetOrNull(CI) == F; });
     if (both != markers.end()) {
-      fail(*both, displayName(*F) +
-                      " carries POSEIDON_OPTIMIZE, so every call of it is "
-                      "already a site; remove this __poseidon_fp_optimize "
-                      "or the annotation");
+      reportAnnotated(*both, displayName(*F));
       F->addFnAttr(kNotASite);
       continue;
     }
     std::string why = hostSiteRefusal(*F);
     if (!why.empty()) {
-      diagnoseSite(*F,
-                   displayName(*F) + " " + why +
-                       ", so it is not a Poseidon site. Emitting the original "
-                       "computation.",
-                   DS_Warning);
+      diagnoseSite(
+          *F, displayName(*F) + " " + why + ", so it cannot be a Poseidon site",
+          DS_Error);
       continue;
     }
     noteSiteTarget(O, *F, tau);

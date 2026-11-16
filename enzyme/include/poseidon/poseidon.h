@@ -26,6 +26,16 @@
 //    object or a by-value aggregate of the caller, or the call reaches a
 //    constant range of memory through it. Without the plugin the call runs as
 //    written.
+//    The arguments may instead be an explicit list, as Enzyme takes them:
+//    enzyme_dup before a pointer and its shadow after it, enzyme_const before
+//    one that needs none, poseidon_tau, t for the call's target. The caller
+//    then provides the shadows, for pointers the pass cannot size or a seed of
+//    its own, and the site is fn itself. In C++ compiled by clang the same
+//    macros take either list; in C an explicit list is a call of
+//    __poseidon_fp_optimize(void *, ...), which the program declares. Without
+//    the plugin a call with an explicit list does not link.
+//    __poseidon_fp_optimize and __enzyme_fp_optimize are accepted as other
+//    names of this call.
 // 4. -poseidon-kernels=<regex>|all: GPU kernels opted in without editing their
 //    source; only those above -poseidon-min-cost-share of the profiled cost
 //    are optimized.
@@ -37,10 +47,6 @@
 //    would take, and profile use stops at the sites until they are measured.
 //    With POSEIDON_PROBE=0 nothing is measured and each site is solved against
 //    its own target. Optional.
-// 6. __poseidon_fp_optimize(fn, args...): one call with Enzyme activity
-//    markers and shadows the caller provides, for pointers the profiler cannot
-//    size or a custom seed; poseidon_tau, t among the arguments sets that
-//    call's target. Advanced.
 //
 // The target is the per-operation relative rounding level a site is allowed to
 // behave at, so 1e-16 is FP64, 6e-8 is FP32 and 1e-15 is a two-component
@@ -50,7 +56,7 @@
 //
 // Precedence for a site's accuracy target:
 //   its own (POSEIDON_OPTIMIZE_TAU, __poseidon_optimize_tau, or poseidon_tau
-//   in the call) > -poseidon-tau > none
+//   in an explicit list, not both) > -poseidon-tau > none
 // The target is the same number wherever it is written. A site with none is
 // solved against -poseidon-cost-budget instead, a share of the site's profiled
 // cost; at its default of 0 that is the most accurate rewrite costing no more
@@ -70,12 +76,33 @@
   __attribute__((annotate("poseidon", (double)(t))))
 
 // The call through an identity the pass recognizes: the argument list is the
-// call's own, so conversions apply and the return value comes back.
+// call's own, so conversions apply and the return value comes back. In C++ the
+// list chooses the identity: the plain one when fn takes the arguments as
+// written; else the explicit one, which nothing defines, and the call has fn's
+// return type and the arguments as given.
+#if defined(__cplusplus) && defined(__clang__)
+#define __POSEIDON_CALLEE(fn, ...)                                             \
+  decltype(__poseidon_callee_of(0, fn __VA_OPT__(, ) __VA_ARGS__))
+#define __poseidon_optimize(fn, ...)                                           \
+  __builtin_choose_expr(                                                       \
+      __POSEIDON_CALLEE(fn, __VA_ARGS__)::__is_explicit,                       \
+      ((typename __POSEIDON_CALLEE(                                            \
+          fn, __VA_ARGS__)::__type)__poseidon_site_explicit((void *)(fn))),    \
+      ((__typeof__(fn) *)__poseidon_site((void *)(fn))))(__VA_ARGS__)
+#define __poseidon_optimize_tau(t, fn, ...)                                    \
+  __builtin_choose_expr(                                                       \
+      __POSEIDON_CALLEE(fn, __VA_ARGS__)::__is_explicit,                       \
+      ((typename __POSEIDON_CALLEE(fn, __VA_ARGS__)::__type)                   \
+           __poseidon_site_explicit_tau((void *)(fn), (double)(t))),           \
+      ((__typeof__(fn) *)__poseidon_site_tau((void *)(fn), (double)(t))))(     \
+      __VA_ARGS__)
+#else
 #define __poseidon_optimize(fn, ...)                                           \
   ((__typeof__(fn) *)__poseidon_site((void *)(fn)))(__VA_ARGS__)
 #define __poseidon_optimize_tau(t, fn, ...)                                    \
   ((__typeof__(fn) *)__poseidon_site_tau((void *)(fn), (double)(t)))(          \
       __VA_ARGS__)
+#endif
 
 // The identity keeps its plain name in C and C++ alike, never throws, and is
 // callable from device code.
@@ -110,6 +137,32 @@ __poseidon_site_tau(void *fn, double tau) {
 }
 
 #ifdef __cplusplus
+}
+#endif
+
+#if defined(__cplusplus) && defined(__clang__)
+extern "C" POSEIDON_SITE_TARGETS __attribute__((nothrow)) void *
+__poseidon_site_explicit(void *);
+extern "C" POSEIDON_SITE_TARGETS __attribute__((nothrow)) void *
+__poseidon_site_explicit_tau(void *, double);
+
+// The callee type of a call of __poseidon_optimize, and which identity it goes
+// through, by overload resolution in an unevaluated operand: the first
+// overload is the better match whenever fn takes the arguments as written.
+extern "C++" {
+template <typename _Tp, bool _Explicit> struct __poseidon_callee {
+  typedef _Tp __type;
+  static const bool __is_explicit = _Explicit;
+};
+template <typename _Fn, typename... _Args>
+POSEIDON_SITE_TARGETS auto __poseidon_callee_of(int, _Fn *__fn,
+                                                _Args &&...__args)
+    -> decltype((void)__fn(static_cast<_Args &&>(__args)...),
+                __poseidon_callee<_Fn *, false>());
+template <typename _Ret, typename... _Params, typename... _Args>
+POSEIDON_SITE_TARGETS auto __poseidon_callee_of(long, _Ret (*)(_Params...),
+                                                _Args...)
+    -> __poseidon_callee<_Ret (*)(_Args...), true>;
 }
 #endif
 

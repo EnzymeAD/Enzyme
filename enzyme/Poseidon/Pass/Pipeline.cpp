@@ -89,8 +89,9 @@ static bool hasSite(const Options &O, Module &M) {
       return true;
     if (!F.use_empty() &&
         ((F.isDeclaration() && isMarkerCall(F.getName())) ||
-         (!hostHalf && (F.getName() == "__poseidon_site" ||
-                        F.getName() == "__poseidon_site_tau"))))
+         (!hostHalf && is_contained({kPlainIdentity, kPlainIdentityTau,
+                                     kExplicitIdentity, kExplicitIdentityTau},
+                                    F.getName()))))
       return true;
   }
   return false;
@@ -367,7 +368,7 @@ struct HostSitePass : PassParent<HostSitePass> {
                     ? keepDeviceMath(M)
                     : releaseDeviceMath(M);
     changed |= lowerPerCallSites(O, M);
-    changed |= propagateDeviceSites(M);
+    changed |= propagateDeviceSites(O, M);
     changed |= outlineHostSites(O, M);
     changed |= registerDeviceProfileTable(M, O.Profiling.ProfileGenerate);
     if (!O.Profiling.profileAction())

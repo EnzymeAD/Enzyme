@@ -999,11 +999,13 @@ static CallInst *withShadows(CallInst *CI, Function &clone,
     std::optional<PointerExtent> ext =
         accessedExtent(*clone.getArg(S.param), why);
     if (!ext) {
-      warn(CI, site +
+      fail(CI, site +
                    " no longer reaches a constant range of memory through "
                    "argument " +
                    Twine(S.param + 1) + " (a pointer the call " + why +
-                   "); the call is not profiled");
+                   "), so it cannot be a Poseidon site. Copy the argument "
+                   "into a local object, or pass its shadow in the call: "
+                   "enzyme_dup before the pointer and the shadow after it.");
       return nullptr;
     }
     if (!ext->accessed()) {

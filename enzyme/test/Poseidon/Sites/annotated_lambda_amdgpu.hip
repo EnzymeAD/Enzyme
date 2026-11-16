@@ -4,6 +4,8 @@
 // RUN: cat %t/cache/launches_*.json | FileCheck --check-prefix=DESC %s
 // RUN: FileCheck --check-prefix=GENIR %s < %t/gen.ll
 // RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/other_sites -mllvm -poseidon-print %s -o %t/use.ll 2>&1 | FileCheck --check-prefix=USE %s
+// RUN: not %clang -x hip --offload-arch=%amdgpu_arch --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/wrapper -DNOT_A_WRAPPER %s -o /dev/null 2>&1 | FileCheck --check-prefix=WRAPPER %s
+// RUN: not %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/other_sites -DNOT_A_WRAPPER %s -o /dev/null 2>&1 | FileCheck --check-prefix=WRAPPER %s
 
 // annotated_lambda_nvptx.cu for HIP: POSEIDON_OPTIMIZE on the lambda an
 // mfem::forall body is written as makes every AMDGPU kernel that calls it a
@@ -31,7 +33,8 @@ template <typename BODY> __global__ static void HipKernel2D(int N, BODY body) {
   body(k);
 }
 
-// A kernel that computes more than the lambda is not its site.
+// A kernel that computes more than the lambda cannot be its site.
+// WRAPPER: error: {{.*}}Poseidon: void Scaled<{{.*}}>(int, double*, {{.*}}) calls reduce({{.*}})::'lambda'(int)::operator()(int) const, which carry POSEIDON_OPTIMIZE, and does floating-point work outside them (in void Scaled<{{.*}}); a kernel is the site of an annotated function only when it is a wrapper around the call. Move that work out of the kernel, or annotate the kernel instead.
 template <typename BODY>
 __global__ static void Scaled(int N, double *s, BODY body) {
   int k = blockIdx.x;
@@ -54,15 +57,16 @@ void reduce(int nq, int ne, int nd, double *Q, double *G, double *y) {
     }
   };
   void *k1 = (void *)HipKernel2D<decltype(body)>;
-  void *k2 = (void *)Scaled<decltype(body)>;
   (void)k1;
+#ifdef NOT_A_WRAPPER
+  void *k2 = (void *)Scaled<decltype(body)>;
   (void)k2;
+#endif
 }
 
 // An annotated device function no kernel calls is not a site.
 POSEIDON_OPTIMIZE __device__ double unused(double x) { return x * x; }
 
-// GEN: warning: {{.*}}Poseidon: void Scaled<{{.*}}>(int, double*, {{.*}}) calls reduce({{.*}})::'lambda'(int)::operator()(int) const, which carry POSEIDON_OPTIMIZE, and does floating-point work outside them (in void Scaled<{{.*}}); a kernel is the site of an annotated function only when it is a wrapper around the call. Emitting the original computation.
 // GEN: warning: {{.*}}Poseidon: unused(double) is a device function no kernel of this translation unit calls; on the device, POSEIDON_OPTIMIZE marks a kernel or a function a kernel calls. Emitting the original computation.
 // GEN: [poseidon-profgen] _ZL11HipKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_: site 0, 3 shadow buffer(s), output(s) 1[+64]
 // GEN-NOT: [poseidon-profgen] {{.*}}Scaled

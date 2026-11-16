@@ -347,9 +347,10 @@ static void annotateLike(Function &K, Function &fn) {
 
 // Before inlining, on the device: every kernel that calls an annotated device
 // function becomes a site with that function's target. A kernel that cannot be
-// the site is left as written with a warning; an annotated kernel keeps its own
-// annotation.
-bool propagateDeviceSites(Module &M) {
+// the site is an error in a compile that generates or uses a profile, and is
+// left as written with a warning in any other; an annotated kernel keeps its
+// own annotation.
+bool propagateDeviceSites(const Options &O, Module &M) {
   const Target &T = Target::of(M);
   if (!T.isDevice())
     return false;
@@ -395,13 +396,16 @@ bool propagateDeviceSites(Module &M) {
       continue;
     }
     if (!why.empty()) {
+      const bool active = O.Profiling.profileAction();
       diagnoseSite(K,
                    displayName(K) + " calls " + names +
                        ", which carry POSEIDON_OPTIMIZE, and " + why +
                        "; a kernel is the site of an annotated function only "
-                       "when it is a wrapper around the call. Emitting the "
-                       "original computation.",
-                   DS_Warning);
+                       "when it is a wrapper around the call" +
+                       (active ? ". Move that work out of the kernel, or "
+                                 "annotate the kernel instead."
+                               : ". Emitting the original computation."),
+                   active ? DS_Error : DS_Warning);
       continue;
     }
     for (Function *W : wrappers)
