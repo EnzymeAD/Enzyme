@@ -17,6 +17,7 @@
 #include "Matmul.h"
 #include "Pass/Session.h"
 #include "Profile/Instrument.h"
+#include "Sites/Annotations.h"
 #include "Sites/LaunchDescriptors.h"
 #include "Targets/OffloadRuntime.h"
 #include "Targets/Target.h"
@@ -1242,10 +1243,17 @@ bool rewriteProfileStubBodies(const Options &O, Module &M) {
     // launch is handed does not.
     CallInst *launch = findLaunchCall(F);
     CallInst *pop = findPopConfig(F);
+    // Launched as written, the profiled kernel would read shadows nobody
+    // passed it.
     if (!launch || !pop) {
-      errs() << "[poseidon-profgen] " << F.getName()
-             << " does not end in __cuda/__hipPopCallConfiguration and "
-                "cuda/hipLaunchKernel; not rewriting this launch\n";
+      diagnoseSite(F,
+                   "the launch stub " + F.getName() +
+                       " does not end in __cuda/__hipPopCallConfiguration "
+                       "and cuda/hipLaunchKernel, so the profiling run cannot "
+                       "pass its kernel the shadows it is profiled with. "
+                       "Compile against the CUDA or ROCm headers, which "
+                       "declare that launch API.",
+                   DS_Error);
       continue;
     }
 

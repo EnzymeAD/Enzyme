@@ -1,8 +1,10 @@
 // REQUIRES: enzyme, amdgpu-registered-target, rocm
 // RUN: rm -rf %t && mkdir %t
-// RUN: %clang -x hip --offload-arch=%amdgpu_arch --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c -mllvm -poseidon-print %s -o %t/gen.ll 2>&1 | FileCheck --check-prefixes=GEN,REFUSED %s
+// RUN: %clang -x hip --offload-arch=%amdgpu_arch --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c -mllvm -poseidon-print %s -o %t/gen.ll 2>&1 | FileCheck --check-prefix=GEN %s
 // RUN: FileCheck --check-prefix=IR %s < %t/gen.ll
-// RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/other_sites -mllvm -poseidon-cache=%t/u %s -o /dev/null 2>&1 | FileCheck --check-prefixes=USE,REFUSED %s
+// RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/other_sites -mllvm -poseidon-cache=%t/u %s -o /dev/null 2>&1 | FileCheck --check-prefix=USE %s
+// RUN: not %clang -x hip --offload-arch=%amdgpu_arch --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/rc -DREFUSED %s -o /dev/null 2>&1 | FileCheck --check-prefix=REFUSED %s
+// RUN: not %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/other_sites -mllvm -poseidon-cache=%t/ru -DREFUSED %s -o /dev/null 2>&1 | FileCheck --check-prefix=REFUSED %s
 
 // per_call_extent_nvptx.cu for HIP: the shadow of a pointer into device
 // memory, or of a reference parameter, is a local object in the stack's
@@ -96,6 +98,7 @@ GLOBAL void k_align(const double *x, double *y) {
                       y + i);
 }
 
+#ifdef REFUSED
 // Refused: a loop over a length the call is given, a pointer passed to a
 // function the pass cannot see, and both at once.
 DEVICE void sum(const double *x, double *y, int n) {
@@ -126,6 +129,7 @@ GLOBAL void k_refused(const double *x, double *y, int n) {
   y[i + 1] = s;
   __poseidon_optimize(scan, x + 8 * i, y + 8 * i, n);
 }
+#endif
 
 // GEN-DAG: [poseidon-profgen] qf(double const*, double*) at call 0 in k_inout(double const*, double*, int): 2 shadow object(s), output(s) 1
 // GEN-DAG: [poseidon-profgen] qf(double const*, double*) at call 0 in k_out(double const*, double*, int): 2 shadow object(s), output(s) 1
@@ -134,11 +138,11 @@ GLOBAL void k_refused(const double *x, double *y, int n) {
 // GEN-DAG: [poseidon-profgen] body(qfunc const*, double const*, double*) at call 0 in run_ref(qfunc const&, double*, int): 3 shadow object(s), output(s) 2
 // GEN-DAG: [poseidon-profgen] lean(pair const*, double*) at call 0 in k_align(double const*, double*): 2 shadow object(s), output(s) 1
 
-// REFUSED-DAG: warning: {{.*}}Poseidon: sum(double const*, double*, int) at call 0 in k_refused(double const*, double*, int) is not a Poseidon site: argument 1 is a pointer the call indexes with a value that is not a constant. The pass makes
-// REFUSED-DAG: warning: {{.*}}Poseidon: leak(double const*, double*) at call 1 in k_refused(double const*, double*, int) is not a Poseidon site: argument 1 is a pointer the call passes to sink(double const*), whose body the pass cannot see. The pass makes
-// REFUSED-DAG: warning: {{.*}}Poseidon: scan(double const*, double*, int) at call 2 in k_refused(double const*, double*, int) is not a Poseidon site: argument 1 is a pointer the call indexes with a value that is not a constant; argument 2 is a pointer the call indexes with a value that is not a constant. The pass makes
+// REFUSED-DAG: error: {{.*}}Poseidon: sum(double const*, double*, int) at call 0 in k_refused(double const*, double*, int) cannot be a Poseidon site: argument 1 is a pointer the call indexes with a value that is not a constant. The pass makes
+// REFUSED-DAG: error: {{.*}}Poseidon: leak(double const*, double*) at call 1 in k_refused(double const*, double*, int) cannot be a Poseidon site: argument 1 is a pointer the call passes to sink(double const*), whose body the pass cannot see. The pass makes
+// REFUSED-DAG: error: {{.*}}Poseidon: scan(double const*, double*, int) at call 2 in k_refused(double const*, double*, int) cannot be a Poseidon site: argument 1 is a pointer the call indexes with a value that is not a constant; argument 2 is a pointer the call indexes with a value that is not a constant. The pass makes
 
-// USE-NOT: {{qf|body|lean}}({{.*}}) at call 0 in {{.*}} is not a Poseidon site
+// USE-NOT: {{qf|body|lean}}({{.*}}) at call 0 in {{.*}} cannot be a Poseidon site
 // USE-DAG: [poseidon] _Z2qfPKdPd.poseidon._Z7k_inoutPKdPdi.0: the profiled program did not contain this site (no profile at {{.*}}); left unchanged
 // USE-DAG: [poseidon] _Z2qfPKdPd.poseidon._Z5k_outPKdPdi.0: the profiled program did not contain this site (no profile at {{.*}}); left unchanged
 // USE-DAG: [poseidon] _Z2qfPKdPd.poseidon._Z9k_inplacePdi.0: the profiled program did not contain this site (no profile at {{.*}}); left unchanged

@@ -80,7 +80,7 @@ __global__ void k_data(const data_t data, int n) {
 // IR: call {{.*}} @diffe{{.*}}_Z4bodyI5qfuncEvPKT_PKdPd.poseidon._Z6k_data6data_ti.0(ptr {{.*}}, ptr {{.*}}%[[QFS]],
 // IR: ret void
 
-// USE-NOT: is not a Poseidon site
+// USE-NOT: cannot be a Poseidon site
 // USE-DAG: [poseidon] _Z4bodyI5qfuncEvPKT_PKdPd.poseidon._Z9call_siteI5qfuncEvRKT_PKdPd.0: the profiled program did not contain this site (no profile at {{.*}}); left unchanged
 // USE-DAG: [poseidon] _Z4bodyI5qfuncEvPKT_PKdPd.poseidon._Z6k_data6data_ti.0: the profiled program did not contain this site (no profile at {{.*}}); left unchanged
-// USE-NOT: is not a Poseidon site
+// USE-NOT: cannot be a Poseidon site

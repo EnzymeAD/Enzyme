@@ -67,7 +67,7 @@ void collectAnnotatedSites(
     llvm::SmallVectorImpl<llvm::Function *> &out,
     llvm::SmallPtrSetImpl<llvm::Function *> *byRegex = nullptr,
     llvm::DenseMap<llvm::Function *, double> *tauOut = nullptr);
-bool propagateDeviceSites(llvm::Module &M);
+bool propagateDeviceSites(const Options &O, llvm::Module &M);
 bool foldDeviceSiteCallees(llvm::Module &M);
 void warnWithoutProfile(llvm::Function &K);
 bool dropSiteAnnotations(llvm::Module &M);

@@ -103,11 +103,8 @@ static void reroot(Value *from, Value *to) {
 // call, or null if the kernel cannot be a site.
 CallInst *outlineKernelBody(Function &K, Function *&bodyOut) {
   if (K.isVarArg() || !K.getReturnType()->isVoidTy()) {
-    K.getContext().diagnose(DiagnosticInfoUnsupported(
-        K,
-        "Poseidon: an annotated kernel must be a void, non-variadic "
-        "function",
-        K.getSubprogram(), DS_Warning));
+    diagnoseSite(K, "an annotated kernel must be a void, non-variadic function",
+                 DS_Error);
     return nullptr;
   }
   Module &M = *K.getParent();
@@ -118,13 +115,13 @@ CallInst *outlineKernelBody(Function &K, Function *&bodyOut) {
   for (Argument &A : K.args())
     if (A.hasByRefAttr()) {
       if (!reroots(&A)) {
-        K.getContext().diagnose(DiagnosticInfoUnsupported(
-            K,
-            "Poseidon: " + displayName(K) + " uses its aggregate parameter " +
-                Twine(A.getArgNo() + 1) +
-                " otherwise than by loading or copying from it; the kernel "
-                "is not a site",
-            K.getSubprogram(), DS_Warning));
+        diagnoseSite(K,
+                     displayName(K) + " uses its aggregate parameter " +
+                         Twine(A.getArgNo() + 1) +
+                         " otherwise than by loading or copying from it, so "
+                         "it cannot be a Poseidon site; copy the parameter "
+                         "into a local object first",
+                     DS_Error);
         return nullptr;
       }
       params[A.getArgNo()] = PointerType::getUnqual(M.getContext());
@@ -397,9 +394,9 @@ bool lowerDeviceCallSites(Module &M) {
     double tau = takeHostBody(*B);
     for (CallBase *CB : callsOf(*B)) {
       if (!isa<CallInst>(CB)) {
-        warn(CB, perCallSiteName(B->getName()) +
-                     " is reached through an invoke, so this call is not a "
-                     "Poseidon site. The call runs as written.");
+        fail(CB, perCallSiteName(B->getName()) +
+                     " is reached through an invoke, so this call cannot be a "
+                     "Poseidon site");
         markOutlineTransparent(B);
         continue;
       }
@@ -416,15 +413,14 @@ bool lowerDeviceCallSites(Module &M) {
                 .str();
       }
       if (!why.empty()) {
-        warn(CB, perCallSiteName(B->getName()) +
-                     " is not a Poseidon site: " + why +
+        fail(CB, perCallSiteName(B->getName()) +
+                     " cannot be a Poseidon site: " + why +
                      ". The pass makes the shadow of a pointer into a local "
                      "object of the caller or an aggregate it takes by value, "
                      "or else of the constant range of memory the call "
                      "reaches through the pointer. Copy such an argument into "
-                     "a local object, or write the call with "
-                     "__poseidon_fp_optimize and shadows of your own. The "
-                     "call runs as written.");
+                     "a local object, or pass its shadow in the call: "
+                     "enzyme_dup before the pointer and the shadow after it.");
         markOutlineTransparent(B);
         continue;
       }

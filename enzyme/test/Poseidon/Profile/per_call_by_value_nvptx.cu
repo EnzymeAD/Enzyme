@@ -117,8 +117,8 @@ GLOBAL void k_state(double *u) {
 // IR: call {{.*}} @diffe{{.*}}_Z7advanceP5state.poseidon._Z3run5state.0(ptr {{.*}}[[STATE]], ptr %[[SS]])
 // IR: ret double
 
-// USE-NOT: is not a Poseidon site
+// USE-NOT: cannot be a Poseidon site
 // USE-DAG: [poseidon] _Z4bodyI5qfuncEvPKT_PKdPd.poseidon._Z9call_siteI5qfuncEvRKT_PKdPd.0: the profiled program did not contain this site (no profile at {{.*}}); left unchanged
 // USE-DAG: [poseidon] _Z4bodyI5qfuncEvPKT_PKdPd.poseidon._Z6k_grid6data_ti.0: the profiled program did not contain this site (no profile at {{.*}}); left unchanged
 // USE-DAG: [poseidon] _Z7advanceP5state.poseidon._Z3run5state.0: the profiled program did not contain this site (no profile at {{.*}}); left unchanged
-// USE-NOT: is not a Poseidon site
+// USE-NOT: cannot be a Poseidon site

@@ -9,6 +9,7 @@
 
 #include "Markers.h"
 
+#include "Annotations.h"
 #include "Core/Options.h"
 
 #include "llvm/ADT/SmallPtrSet.h"
@@ -30,8 +31,11 @@ using namespace llvm;
 
 namespace poseidon {
 
+// Matched as substrings, as Enzyme matches its requests, because a C++
+// frontend mangles the marker's template instantiation.
 bool isMarkerCall(StringRef calleeName) {
-  return calleeName.contains("__poseidon_fp_optimize");
+  return calleeName.contains("__poseidon_fp_optimize") ||
+         calleeName.contains("__enzyme_fp_optimize");
 }
 
 void warn(CallBase *CI, const Twine &message) {
@@ -298,6 +302,67 @@ static std::optional<StringRef> activityMarkerName(Value *res) {
   return std::nullopt;
 }
 
+// Everything forwarded to the derivative request is spelled enzyme_*, as Enzyme
+// reads its own requests; poseidon_* is Poseidon's own.
+static bool isMarkerName(StringRef name) {
+  return name.starts_with("enzyme_") || name.starts_with("poseidon_");
+}
+
+bool isActivityMarker(Value *V, StringRef name) {
+  return activityMarkerName(V) == name;
+}
+
+// What a mistaken argument list is to become, said after what is wrong with it.
+static std::string listRemedy(StringRef name) {
+  return ("; pass " + name +
+          "'s own arguments, or an explicit list that puts enzyme_dup "
+          "before each pointer and its shadow after it, or enzyme_const "
+          "before it")
+      .str();
+}
+
+std::optional<ArgumentList> readArgumentList(CallBase *call, const Function &fn,
+                                             Identity identity) {
+  const bool marker = identity == Identity::None;
+  const bool sret = marker && (call->hasStructRetAttr() ||
+                               fn.hasParamAttribute(0, Attribute::StructRet));
+  auto args = drop_begin(call->args(), marker ? 1 + sret : 0);
+  std::optional<StringRef> activity;
+  for (Value *A : args)
+    if (std::optional<StringRef> name = activityMarkerName(A);
+        name && isMarkerName(*name)) {
+      activity = name;
+      break;
+    }
+  const std::string name = displayName(fn);
+  if (activity && identity == Identity::Plain) {
+    fail(call, name + " takes the arguments of this call as written, but " +
+                   *activity + " among them is an activity marker, which " +
+                   "makes them an explicit list" + listRemedy(name));
+    return std::nullopt;
+  }
+  if (activity)
+    return ArgumentList::Explicit;
+  if (identity == Identity::Explicit) {
+    fail(call, name +
+                   " does not take the arguments of this call as written, "
+                   "and none of them is an activity marker" +
+                   listRemedy(name));
+    return std::nullopt;
+  }
+  // A call through the plain identity is checked against fn's signature where
+  // it is lowered, the same with and without a profile.
+  const size_t passed = size(args), params = fn.arg_size() - sret;
+  if (identity == Identity::None && passed != params) {
+    fail(call, "this call passes " + Twine(passed) + " argument(s) to " + name +
+                   ", which takes " + Twine(params) +
+                   ", and none of them is an activity marker" +
+                   listRemedy(name));
+    return std::nullopt;
+  }
+  return ArgumentList::Automatic;
+}
+
 std::optional<MarkerArgs> parseMarker(CallInst *CI, Function *F) {
   MarkerArgs out;
   bool sret =
@@ -311,9 +376,7 @@ std::optional<MarkerArgs> parseMarker(CallInst *CI, Function *F) {
     bool skipArg = false;
 
     while (auto name = activityMarkerName(res)) {
-      // Everything forwarded to the derivative request is spelled enzyme_*;
-      // poseidon_* is Poseidon's own and is consumed here.
-      if (!name->starts_with("enzyme_") && !name->starts_with("poseidon_"))
+      if (!isMarkerName(*name))
         break;
       if (*name == "enzyme_dup" || *name == "enzyme_dupnoneed") {
         dup = true;
@@ -379,10 +442,17 @@ std::optional<MarkerArgs> parseMarker(CallInst *CI, Function *F) {
       out.madeShadows.push_back({*madeShadow, (unsigned)i, (unsigned)param});
     }
     if (!dup) {
+      // Whether a pointer without a marker is followed by its shadow or not is
+      // what the markers of an explicit list say, so it needs one.
       Type *PTy = F->getFunctionType()->getParamType(param);
-      if (PTy->isPointerTy())
-        dup = true;
-      else if (PTy->isFloatingPointTy() || PTy->isIntegerTy())
+      if (PTy->isPointerTy()) {
+        fail(CI, "parameter " + Twine(param) + " of " + F->getName() +
+                     " is a pointer without an activity marker in an "
+                     "explicit list; put enzyme_dup before it and its shadow "
+                     "after it, or enzyme_const before it");
+        return std::nullopt;
+      }
+      if (PTy->isFloatingPointTy() || PTy->isIntegerTy())
         dup = false;
       else {
         fail(CI, "parameter " + Twine(param) + " of " + F->getName() +
