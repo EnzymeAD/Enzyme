@@ -51,7 +51,7 @@ Type *getLLVMFPType(PrecisionChangeType type, LLVMContext &context) {
 }
 
 PrecisionChangeType getPrecisionChangeType(Type *type) {
-  if (type->isHalfTy())
+  if (type->isBFloatTy())
     return PrecisionChangeType::BF16;
   if (type->isHalfTy())
     return PrecisionChangeType::FP16;
