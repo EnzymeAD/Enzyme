@@ -145,6 +145,10 @@ double getInstructionCompCost(CostModelState &CM, const Instruction *I) {
   case Instruction::FDiv:
     OpcodeName = "fdiv";
     break;
+  // frem computes C's fmod and is priced by its row.
+  case Instruction::FRem:
+    OpcodeName = "fmod";
+    break;
   case Instruction::FCmp:
     OpcodeName = "fcmp";
     break;

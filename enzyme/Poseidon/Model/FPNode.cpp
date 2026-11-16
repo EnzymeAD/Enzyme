@@ -319,11 +319,6 @@ Value *FPNode::getLLValue(IRBuilder<> &builder, const ValueToValueMapTy *VMap) {
              return b.CreateBinaryIntrinsic(Intrinsic::copysign, ops[0], ops[1],
                                             nullptr, "herbie.copysign");
            }},
-          {"rem",
-           [](IRBuilder<> &b, Module *M,
-              const SmallVectorImpl<Value *> &ops) -> Value * {
-             return b.CreateFRem(ops[0], ops[1], "herbie.rem");
-           }},
           {"ceil",
            [](IRBuilder<> &b, Module *M,
               const SmallVectorImpl<Value *> &ops) -> Value * {
