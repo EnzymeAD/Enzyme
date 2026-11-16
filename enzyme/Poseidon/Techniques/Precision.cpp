@@ -135,6 +135,7 @@ static void changePrecision(Instruction *I, PrecisionChange &change,
         llvm_unreachable("changePrecision: Unknown intrinsic call to change");
       }
     } else {
+      assert(calledFunc && "isOptimizable admits only calls of a known callee");
       StringRef funcName = calledFunc->getName();
 
       // An F32-downcast sqrt becomes the target's approximate square root
