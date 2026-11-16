@@ -300,8 +300,9 @@ inline bool is_value_needed_in_reverse(
       bool isStored = false;
       // The address a store writes to (e.g. an index into the allocation
       // loaded from memory) is only needed when the store is replayed in the
-      // reverse pass, i.e. when the allocation, or its shadow, is
-      // rematerialized there.
+      // reverse pass, i.e. when the allocation is rematerialized there.
+      // Stores into a backwards-only shadow rebuild their address from the
+      // shadow (is_use_directly_needed_in_reverse).
       bool isStoredAddress = false;
       if (auto SI = dyn_cast<StoreInst>(user)) {
         isStored = inst == SI->getValueOperand();
@@ -320,18 +321,6 @@ inline bool is_value_needed_in_reverse(
           // First pointer is the destination
           for (size_t i = 1; i < sz; i++)
             isStored |= inst == CB->getArgOperand(i);
-        }
-      }
-      if (isStoredAddress) {
-        for (auto pair : gutils->backwardsOnlyShadows) {
-          if (pair.second.stores.count(user) &&
-              !gutils->isConstantValue(pair.first)) {
-            if (EnzymePrintDiffUse)
-              llvm::errs() << " Need: " << to_string(VT) << " of " << *inst
-                           << " in reverse as address of a store to "
-                           << "rematerialized shadow " << *pair.first << "\n";
-            return seen[idx] = true;
-          }
         }
       }
       if (isStored || isStoredAddress) {
