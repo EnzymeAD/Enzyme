@@ -375,7 +375,7 @@ bool computeGemmBodyNote(const Options &O, Function &F, const AbstractMatmul &m,
   return true;
 }
 
-bool fissionGemmForDispatch(Function &F, const AbstractMatmul &m) {
+void fissionGemmForDispatch(Function &F, const AbstractMatmul &m) {
   StoreInst *cStore = nullptr;
   for (Instruction &I : instructions(F)) {
     auto *S = dyn_cast<StoreInst>(&I);
@@ -387,8 +387,8 @@ bool fissionGemmForDispatch(Function &F, const AbstractMatmul &m) {
       break;
     }
   }
-  if (!cStore)
-    return false;
+  assert(cStore &&
+         "a body with a fused note stores the product to an argument");
 
   // Replace the GEMM result where the epilogue consumes it with a load from the
   // output buffer (filled by the prepended host dispatch); the reduction loop
@@ -412,7 +412,6 @@ bool fissionGemmForDispatch(Function &F, const AbstractMatmul &m) {
   cStore->eraseFromParent(); // dispatch already wrote the output buffer
   errs() << "[ozaki-host-dispatch] fissioned GEMM in " << F.getName()
          << " (epilogue reads dispatched output; reduction loop will DCE)\n";
-  return true;
 }
 
 void noteGemmBody(Session &S, const Function *body, const GemmBodyNote &n) {

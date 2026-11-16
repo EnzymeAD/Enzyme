@@ -98,8 +98,9 @@ bool getGemmBody(const Session &S, const llvm::Function *body,
 // Fused-case device transform: replace the GEMM result where the epilogue
 // consumes it with a load from the output buffer filled by the prepended host
 // dispatch, so the reduction loop dies. Paired with the fused host-side
-// prepend.
-bool fissionGemmForDispatch(llvm::Function &F, const AbstractMatmul &m);
+// prepend. F stores a value that reaches the product to an argument, as it
+// does when computeGemmBodyNote gave it a valid note that is not standalone.
+void fissionGemmForDispatch(llvm::Function &F, const AbstractMatmul &m);
 
 // Map body params to wrapper launch-arg indices via primalArgs and record the
 // wrapper's host dispatch descriptor.
