@@ -16,6 +16,7 @@
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/Threading.h"
+#include "llvm/Support/thread.h"
 
 #include <algorithm>
 #include <atomic>
@@ -24,7 +25,6 @@
 #include <map>
 #include <memory>
 #include <mutex>
-#include <thread>
 #include <vector>
 
 using namespace llvm;
@@ -69,7 +69,7 @@ public:
       Stop = true;
     }
     WorkAvailable.notify_all();
-    for (std::thread &T : Workers)
+    for (llvm::thread &T : Workers)
       T.join();
   }
 
@@ -119,7 +119,7 @@ private:
   std::condition_variable WorkAvailable, BatchDone;
   std::deque<Batch *> Open;
   bool Stop = false;
-  std::vector<std::thread> Workers;
+  std::vector<llvm::thread> Workers;
 };
 
 } // namespace
