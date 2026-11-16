@@ -71,6 +71,7 @@
 #include "llvm/Analysis/ScopedNoAliasAA.h"
 #include "llvm/Analysis/TargetTransformInfo.h"
 
+#include "llvm/Support/KnownBits.h"
 #include "llvm/Support/TimeProfiler.h"
 
 #include "llvm/Transforms/IPO/FunctionAttrs.h"
@@ -10252,6 +10253,7 @@ void replaceToDense(llvm::CallBase *CI, bool replaceAll, llvm::Function *F,
     return B.CreateZExtOrTrunc(V, intTy);
   };
   SmallVector<Instruction *, 1> toErase;
+  SetVector<Instruction *> memOps;
 
   ValueToValueMapTy replacements;
   replacements[CI] = Constant::getNullValue(CI->getType());
@@ -10261,6 +10263,29 @@ void replaceToDense(llvm::CallBase *CI, bool replaceAll, llvm::Function *F,
     users.pop_back();
     auto U = pair.first;
     auto val = pair.second;
+    if (auto SI = dyn_cast<SelectInst>(U)) {
+      if (replacements.count(SI)) {
+        auto *RepSI = cast<SelectInst>(replacements[SI]);
+        if (SI->getTrueValue() == val)
+          RepSI->setTrueValue(replacements[val]);
+        if (SI->getFalseValue() == val)
+          RepSI->setFalseValue(replacements[val]);
+        continue;
+      }
+      for (auto U : SI->users()) {
+        users.push_back(std::make_pair(cast<Instruction>(U), SI));
+      }
+      auto tval = SI->getTrueValue();
+      auto fval = SI->getFalseValue();
+      auto *rep = SelectInst::Create(
+          SI->getCondition(),
+          replacements.count(tval) ? (Value *)replacements[tval] : tval,
+          replacements.count(fval) ? (Value *)replacements[fval] : fval, "",
+          SI);
+      rep->setDebugLoc(SI->getDebugLoc());
+      replacements[SI] = rep;
+      continue;
+    }
     if (replacements.count(U))
       continue;
 
@@ -10274,21 +10299,6 @@ void replaceToDense(llvm::CallBase *CI, bool replaceAll, llvm::Function *F,
       if (auto I = dyn_cast<Instruction>(rep))
         I->setDebugLoc(CI->getDebugLoc());
       replacements[CI] = rep;
-      continue;
-    }
-    if (auto SI = dyn_cast<SelectInst>(U)) {
-      for (auto U : SI->users()) {
-        users.push_back(std::make_pair(cast<Instruction>(U), SI));
-      }
-      auto tval = SI->getTrueValue();
-      auto fval = SI->getFalseValue();
-      auto rep = B.CreateSelect(
-          SI->getCondition(),
-          replacements.count(tval) ? (Value *)replacements[tval] : tval,
-          replacements.count(fval) ? (Value *)replacements[fval] : fval);
-      if (auto I = dyn_cast<Instruction>(rep))
-        I->setDebugLoc(SI->getDebugLoc());
-      replacements[SI] = rep;
       continue;
     }
     /*
@@ -10333,30 +10343,51 @@ void replaceToDense(llvm::CallBase *CI, bool replaceAll, llvm::Function *F,
         inds.push_back(ind);
       }
       Value *gep;
+      auto elemSize = DL.getTypeAllocSize(CI->getSourceElementType());
 
-      if (inds.size() == 1) {
-        gep = ConstantInt::get(
-            intTy, (DL.getTypeSizeInBits(CI->getSourceElementType()) + 7) / 8);
-        gep = B.CreateMul(intTy == inds[0]->getType()
-                              ? inds[0]
-                              : B.CreateZExtOrTrunc(inds[0], intTy),
-                          gep, "", true, true);
+      if (inds.size() == 1 && !inds[0]->getType()->isVectorTy() &&
+          !elemSize.isScalable()) {
+        Value *idx = intTy == inds[0]->getType()
+                         ? inds[0]
+                         : B.CreateSExtOrTrunc(inds[0], intTy);
+        bool hasNSW = CI->isInBounds();
+        bool hasNUW = hasNSW && llvm::computeKnownBits(idx, DL).isNonNegative();
+        gep = ConstantInt::get(intTy, elemSize.getFixedValue());
+        gep = B.CreateMul(idx, gep, "", hasNUW, hasNSW);
         gep = B.CreateAdd(B.CreatePtrToInt(replacements[val], intTy), gep);
         gep = B.CreateIntToPtr(gep, CI->getType());
-      } else if (!allconst) {
-        gep = B.CreateGEP(CI->getSourceElementType(), replacements[val], inds);
-        if (auto ge = cast<GetElementPtrInst>(gep))
-          ge->setIsInBounds(CI->isInBounds());
+      } else if (allconst && !elemSize.isScalable()) {
+        APInt ai(DL.getIndexTypeSizeInBits(CI->getType()), 0);
+        if (CI->accumulateConstantOffset(DL, ai)) {
+          gep = B.CreateAdd(B.CreatePtrToInt(replacements[val], intTy),
+                            ConstantInt::get(intTy, ai.sextOrTrunc(64)));
+          gep = B.CreateIntToPtr(gep, CI->getType());
+        } else {
+          gep =
+              B.CreateGEP(CI->getSourceElementType(), replacements[val], inds);
+        }
       } else {
-        APInt ai(64, 0);
-        CI->accumulateConstantOffset(DL, ai);
-        gep = B.CreateIntToPtr(ConstantInt::get(intTy, ai), CI->getType());
+        gep = B.CreateGEP(CI->getSourceElementType(), replacements[val], inds);
       }
       if (auto I = dyn_cast<Instruction>(gep))
         I->setDebugLoc(CI->getDebugLoc());
       replacements[CI] = gep;
       continue;
     }
+    if (isa<LoadInst>(U)) {
+      memOps.insert(U);
+      continue;
+    }
+    if (auto SI = dyn_cast<StoreInst>(U)) {
+      if (SI->getPointerOperand() == val && SI->getValueOperand() != val) {
+        memOps.insert(SI);
+        continue;
+      }
+    }
+    remaining = U;
+  }
+  for (auto *U : memOps) {
+    IRBuilder B(U);
     if (auto LI = dyn_cast<LoadInst>(U)) {
       auto diff = toInt(B, replacements[LI->getPointerOperand()]);
       SmallVector<Value *, 2> args;
@@ -10416,7 +10447,6 @@ void replaceToDense(llvm::CallBase *CI, bool replaceAll, llvm::Function *F,
       continue;
     }
     if (auto SI = dyn_cast<StoreInst>(U)) {
-      assert(SI->getValueOperand() != val);
       auto diff = toInt(B, replacements[SI->getPointerOperand()]);
       SmallVector<Value *, 2> args;
       args.push_back(SI->getValueOperand());
@@ -10473,7 +10503,6 @@ void replaceToDense(llvm::CallBase *CI, bool replaceAll, llvm::Function *F,
       toErase.push_back(SI);
       continue;
     }
-    remaining = U;
   }
   for (auto U : toErase)
     U->eraseFromParent();
