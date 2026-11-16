@@ -122,13 +122,15 @@ poseidon_add_test_plugin(poseidon-test-apply-expansion
                          Inputs/expansion_fast_flags/apply_expansion.cpp)
 poseidon_add_test_plugin(poseidon-test-expansion-match
                          Inputs/expansion_match/emit.cpp)
+poseidon_add_test_plugin(poseidon-test-model Inputs/model/plugin.cpp)
 set(POSEIDON_TEST_PROGRAMS
     poseidon-test-cache-key
     poseidon-test-round-to-prec
     poseidon-test-matmul-scheme
     poseidon-test-profile-name-stem
     poseidon-test-apply-expansion
-    poseidon-test-expansion-match)
+    poseidon-test-expansion-match
+    poseidon-test-model)
 add_custom_target(poseidon-test-programs DEPENDS ${POSEIDON_TEST_PROGRAMS})
 
 # The Enzyme plugin comes in two builds: ClangEnzyme for -fpass-plugin and

@@ -866,7 +866,8 @@ void MPFREvaluator::evaluateNode(
   } else if (node->op == "PI") {
     mpfr_const_pi(res, MPFR_RNDN);
   } else if (node->op == "E") {
-    mpfr_const_euler(res, MPFR_RNDN);
+    mpfr_set_ui(res, 1, MPFR_RNDN);
+    mpfr_exp(res, res, MPFR_RNDN);
   } else if (node->op == "INFINITY") {
     mpfr_set_inf(res, 1);
   } else if (node->op == "NAN") {
