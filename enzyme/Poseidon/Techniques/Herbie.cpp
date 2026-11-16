@@ -127,6 +127,129 @@ void addHerbieKeyParts(Session &S, const Function &F, CacheKey &key) {
   addHerbieKeyParts(key, herbieRunOptions(S, F), S.Herbie.HerbieDigests);
 }
 
+namespace {
+// A point of a core's cost-accuracy curve: [cost, error in bits].
+struct HerbiePoint {
+  double Cost = 0, ErrorBits = 0;
+};
+
+// An alternative Herbie lists for a core: [cost, error in bits, expression].
+// An entry without the expression is no candidate.
+struct HerbieAlternative {
+  HerbiePoint Point;
+  std::optional<std::string> Expr;
+};
+
+// A core's cost-accuracy list: [initial, best, alternatives].
+struct HerbieCostAccuracy {
+  HerbiePoint Initial, Best;
+  std::vector<HerbieAlternative> Alternatives;
+};
+
+// What Herbie found for a core it has an expression for.
+struct HerbieRewrites {
+  std::string BestExpr;
+  // The bits of the core's precision, which the errors are out of.
+  double Bits = 0;
+  HerbieCostAccuracy CostAccuracy;
+};
+
+// One test of a Herbie results file: the answer for the core it names.
+struct HerbieCoreAnswer {
+  std::string Name;
+  // The core's index, which is its name.
+  size_t Core = 0;
+  // What Herbie reports about its search, printed when present.
+  std::optional<std::string> Status;
+  std::optional<double> Time, Start, End;
+  // None when Herbie's output is "#f".
+  std::optional<HerbieRewrites> Rewrites;
+};
+
+bool fromJSON(const json::Value &V, HerbiePoint &Point, json::Path P) {
+  const json::Array *A = V.getAsArray();
+  if (!A || A->size() < 2) {
+    P.report("expected [cost, error]");
+    return false;
+  }
+  return fromJSON((*A)[0], Point.Cost, P.index(0)) &&
+         fromJSON((*A)[1], Point.ErrorBits, P.index(1));
+}
+
+bool fromJSON(const json::Value &V, HerbieAlternative &Alt, json::Path P) {
+  if (!fromJSON(V, Alt.Point, P))
+    return false;
+  const json::Array &A = *V.getAsArray();
+  if (A.size() < 3)
+    return true;
+  return fromJSON(A[2], Alt.Expr.emplace(), P.index(2));
+}
+
+bool fromJSON(const json::Value &V, HerbieCostAccuracy &CA, json::Path P) {
+  const json::Array *A = V.getAsArray();
+  if (!A || A->size() < 3) {
+    P.report("expected [initial, best, alternatives]");
+    return false;
+  }
+  return fromJSON((*A)[0], CA.Initial, P.index(0)) &&
+         fromJSON((*A)[1], CA.Best, P.index(1)) &&
+         fromJSON((*A)[2], CA.Alternatives, P.index(2));
+}
+
+bool fromJSON(const json::Value &V, HerbieCoreAnswer &Answer, json::Path P) {
+  json::ObjectMapper O(V, P);
+  std::string Output;
+  if (!O || !O.map("name", Answer.Name) || !O.map("output", Output))
+    return false;
+  const json::Object &Test = *V.getAsObject();
+  if (std::optional<StringRef> Status = Test.getString("status"))
+    Answer.Status = Status->str();
+  Answer.Time = Test.getNumber("time");
+  Answer.Start = Test.getNumber("start");
+  Answer.End = Test.getNumber("end");
+  if (Output == "#f")
+    return true;
+  HerbieRewrites &R = Answer.Rewrites.emplace();
+  R.BestExpr = std::move(Output);
+  return O.map("bits", R.Bits) && O.map("cost-accuracy", R.CostAccuracy);
+}
+} // namespace
+
+// Reads the Herbie results file `Contents`, the answers for `NumCores` cores
+// named by their index.
+static Expected<std::vector<HerbieCoreAnswer>>
+readHerbieResults(StringRef Contents, size_t NumCores) {
+  Expected<json::Value> Results = json::parse(Contents);
+  if (!Results)
+    return Results.takeError();
+  const json::Object *Top = Results->getAsObject();
+  const json::Array *Tests = Top ? Top->getArray("tests") : nullptr;
+  if (!Tests)
+    return createStringError(
+        inconvertibleErrorCode(),
+        "expected an object with a \"tests\" array at the top level");
+  std::vector<HerbieCoreAnswer> Answers(Tests->size());
+  for (auto [I, Test] : enumerate(*Tests)) {
+    HerbieCoreAnswer &Answer = Answers[I];
+    std::string Where = formatv("tests[{0}]", I);
+    json::Path::Root Root(Where);
+    if (!fromJSON(Test, Answer, Root)) {
+      std::string Why = toString(Root.getError());
+      if (!Answer.Name.empty())
+        Why += ", core \"" + Answer.Name + "\"";
+      return createStringError(inconvertibleErrorCode(), Why);
+    }
+    if (StringRef(Answer.Name).getAsInteger(10, Answer.Core) ||
+        Answer.Core >= NumCores)
+      return createStringError(
+          inconvertibleErrorCode(),
+          formatv("{0} names core \"{1}\", and the cores asked about are 0 "
+                  "to {2}",
+                  Where, Answer.Name, NumCores - 1));
+  }
+  return Answers;
+}
+
 // Collects Herbie's rewrites of `inputExprs`, cores of the site `F`, into
 // `COs`, unpriced.
 static bool improveViaHerbie(Session &S,
@@ -148,6 +271,7 @@ static bool improveViaHerbie(Session &S,
   if (TermCounts.empty())
     TermCounts.push_back(std::nullopt);
   SmallVector<HerbieRunResult, 2> Runs;
+  SmallVector<std::vector<HerbieCoreAnswer>, 2> Answers;
   for (std::optional<unsigned> Terms : TermCounts) {
     Opts.TaylorTerms = Terms;
     const std::string RunLabel =
@@ -176,125 +300,114 @@ static bool improveViaHerbie(Session &S,
                           Runs.back().Crash + ") on " + RunLabel +
                           ". Without -poseidon-strict-mode the subgraph is "
                           "left as written.");
-    if (Runs.back().Result == HerbieRunResult::Outcome::Ok)
-      switch (Runs.back().From) {
-      case HerbieRunResult::Origin::Cache:
-        ++S.Herbie.Cached;
-        break;
-      case HerbieRunResult::Origin::Imported:
-        ++S.Herbie.Imported;
-        break;
-      case HerbieRunResult::Origin::Fresh:
-        ++S.Herbie.Fresh;
-        break;
-      }
+    if (Runs.back().Result != HerbieRunResult::Outcome::Ok)
+      continue;
+    StringRef Origin;
+    unsigned *Taken = nullptr;
+    switch (Runs.back().From) {
+    case HerbieRunResult::Origin::Cache:
+      Origin = "the cached answer";
+      Taken = &S.Herbie.Cached;
+      break;
+    case HerbieRunResult::Origin::Imported:
+      Origin = "the replayed answer";
+      Taken = &S.Herbie.Imported;
+      break;
+    case HerbieRunResult::Origin::Fresh:
+      Origin = "Herbie's answer";
+      Taken = &S.Herbie.Fresh;
+      break;
+    }
+    // An answer that cannot be read is no answer, as a crash of Herbie is.
+    Expected<std::vector<HerbieCoreAnswer>> Read =
+        readHerbieResults(Runs.back().ResultsJson, COs.size());
+    if (!Read) {
+      std::string Why = toString(Read.takeError());
+      if (O.Model.StrictMode)
+        reportUserError(F, F.getSubprogram(),
+                        "strict mode: " + Origin + " for " + RunLabel +
+                            " is not a Herbie results file (" + Why +
+                            "). Without -poseidon-strict-mode the subgraph is "
+                            "left as written.");
+      llvm::errs() << "[poseidon] Herbie " << RunLabel << ": " << Origin
+                   << " is not a Herbie results file (" << Why
+                   << "). No algebraic candidates for this subgraph from it.\n";
+      continue;
+    }
+    Answers.push_back(std::move(*Read));
+    ++*Taken;
   }
 
   std::vector<std::unordered_set<std::string>> seenExprs(COs.size());
 
-  auto processHerbieOutput = [&](StringRef content) -> bool {
-    Expected<json::Value> parsed = json::parse(content);
-    if (!parsed) {
-      llvm::errs() << "Failed to parse Herbie result!\n";
-      return false;
-    }
-
-    json::Object *obj = parsed->getAsObject();
-    json::Array &tests = *obj->getArray("tests");
-
-    for (size_t testIndex = 0; testIndex < tests.size(); ++testIndex) {
-      auto &test = *tests[testIndex].getAsObject();
-
-      StringRef testName = test.getString("name").value_or(StringRef("?"));
-      StringRef status = test.getString("status").value_or(StringRef("?"));
+  auto processHerbieOutput = [&](ArrayRef<HerbieCoreAnswer> answers) {
+    for (const HerbieCoreAnswer &answer : answers) {
+      StringRef testName = answer.Name;
+      StringRef status = answer.Status ? StringRef(*answer.Status) : "?";
       llvm::errs() << "[poseidon] Herbie core \"" << testName << "\" (subgraph "
                    << subgraphIdx << " of " << F.getName()
                    << "): status=" << status;
-      if (auto t = test.getNumber("time"))
-        llvm::errs() << " time=" << (*t / 1000.0) << 's';
-      if (auto s = test.getNumber("start"))
-        llvm::errs() << " start-err-bits=" << *s;
-      if (auto e = test.getNumber("end"))
-        llvm::errs() << " end-err-bits=" << *e;
+      if (answer.Time)
+        llvm::errs() << " time=" << (*answer.Time / 1000.0) << 's';
+      if (answer.Start)
+        llvm::errs() << " start-err-bits=" << *answer.Start;
+      if (answer.End)
+        llvm::errs() << " end-err-bits=" << *answer.End;
       llvm::errs() << '\n';
 
-      StringRef bestExpr = test.getString("output").value();
-      if (bestExpr == "#f") {
+      RewriteUnit &CO = COs[answer.Core];
+      if (!answer.Rewrites) {
         llvm::errs() << "[poseidon] Herbie core \"" << testName
                      << "\": no output expression (status " << status
                      << ") -- no algebraic candidate from this core.\n";
-        size_t noOutput;
-        if (!testName.getAsInteger(10, noOutput) && noOutput < COs.size() &&
-            !COs[noOutput].herbieAnswered)
-          COs[noOutput].herbieStatus = status.str();
+        if (!CO.herbieAnswered)
+          CO.herbieStatus = status.str();
         continue;
       }
 
-      StringRef ID = test.getString("name").value();
-      size_t index = std::stoul(ID.str());
-      if (index >= COs.size()) {
-        llvm::errs() << "Invalid CO index: " << index << '\n';
-        continue;
-      }
-
-      RewriteUnit &CO = COs[index];
       if (!CO.herbieAnswered)
         CO.herbieStatus = status.str();
       CO.herbieAnswered = true;
-      auto &seenExprSet = seenExprs[index];
+      auto &seenExprSet = seenExprs[answer.Core];
 
-      double bits = test.getNumber("bits").value();
+      const HerbieRewrites &rewrites = *answer.Rewrites;
+      const HerbieCostAccuracy &costAccuracy = rewrites.CostAccuracy;
+      double bits = rewrites.Bits;
       CO.herbieBits = bits;
-      json::Array &costAccuracy = *test.getArray("cost-accuracy");
 
-      json::Array &initial = *costAccuracy[0].getAsArray();
-      double initialCostVal = initial[0].getAsNumber().value();
-      double initialAccuracy = 1.0 - initial[1].getAsNumber().value() / bits;
+      double initialCostVal = costAccuracy.Initial.Cost;
+      double initialAccuracy = 1.0 - costAccuracy.Initial.ErrorBits / bits;
       double initialCost = 1.0;
 
       CO.initialHerbieCost = initialCost;
       CO.initialHerbieAccuracy = initialAccuracy;
 
-      if (seenExprSet.count(bestExpr.str()) == 0) {
-        seenExprSet.insert(bestExpr.str());
+      if (seenExprSet.insert(rewrites.BestExpr).second) {
+        double bestCost = costAccuracy.Best.Cost / initialCostVal;
+        double bestAccuracy = 1.0 - costAccuracy.Best.ErrorBits / bits;
 
-        json::Array &best = *costAccuracy[1].getAsArray();
-        double bestCost = best[0].getAsNumber().value() / initialCostVal;
-        double bestAccuracy = 1.0 - best[1].getAsNumber().value() / bits;
-
-        RewriteCandidate bestCandidate(bestCost, bestAccuracy, bestExpr.str());
+        RewriteCandidate bestCandidate(bestCost, bestAccuracy,
+                                       rewrites.BestExpr);
         bestCandidate.ordinal = CO.candidates.size();
         CO.candidates.push_back(bestCandidate);
       }
 
-      json::Array &alternatives = *costAccuracy[2].getAsArray();
-
-      for (size_t j = 0; j < alternatives.size(); ++j) {
-        json::Array &entry = *alternatives[j].getAsArray();
-        if (entry.size() < 3)
+      for (const HerbieAlternative &alternative : costAccuracy.Alternatives) {
+        if (!alternative.Expr || !seenExprSet.insert(*alternative.Expr).second)
           continue;
-        StringRef expr = entry[2].getAsString().value();
 
-        if (seenExprSet.count(expr.str()) != 0) {
-          continue;
-        }
-        seenExprSet.insert(expr.str());
+        double cost = alternative.Point.Cost / initialCostVal;
+        double accuracy = 1.0 - alternative.Point.ErrorBits / bits;
 
-        double cost = entry[0].getAsNumber().value() / initialCostVal;
-        double accuracy = 1.0 - entry[1].getAsNumber().value() / bits;
-
-        RewriteCandidate candidate(cost, accuracy, expr.str());
+        RewriteCandidate candidate(cost, accuracy, *alternative.Expr);
         candidate.ordinal = CO.candidates.size();
         CO.candidates.push_back(candidate);
       }
     }
-    return true;
   };
 
-  bool answered = false;
-  for (const HerbieRunResult &Run : Runs)
-    if (Run.Result == HerbieRunResult::Outcome::Ok)
-      answered |= processHerbieOutput(Run.ResultsJson);
+  for (ArrayRef<HerbieCoreAnswer> answers : Answers)
+    processHerbieOutput(answers);
   for (const HerbieRunResult &Run : Runs) {
     if (Run.Result != HerbieRunResult::Outcome::Timeout &&
         Run.Result != HerbieRunResult::Outcome::Crashed)
@@ -305,7 +418,7 @@ static bool improveViaHerbie(Session &S,
                               ? "timeout"
                               : "crashed";
   }
-  return answered;
+  return !Answers.empty();
 }
 
 void reportHerbieAnswers(Session &S) {

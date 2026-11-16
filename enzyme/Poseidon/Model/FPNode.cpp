@@ -573,13 +573,11 @@ std::string FPLLValue::toFullExpression(
   }
   assert(!operands.empty() && "FPNode has no operands!");
 
-  if (depth > kMaxExprDepth) {
-    std::string msg = "Expression depth exceeded maximum allowed depth of " +
-                      std::to_string(kMaxExprDepth) + " for " + op +
-                      "; consider disabling loop unrolling";
-
-    llvm_unreachable(msg.c_str());
-  }
+  if (depth > kMaxExprDepth)
+    reportUserError(*cast<Instruction>(value),
+                    "Expression depth exceeded maximum allowed depth of " +
+                        Twine(kMaxExprDepth) + " for " + op +
+                        "; consider disabling loop unrolling");
 
   std::string expr = "(" + (op == "neg" ? "-" : op);
   for (auto operand : operands) {
