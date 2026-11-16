@@ -430,8 +430,8 @@ void solvePruned(ArrayRef<OptimizationUnit *> units, const CostScale &scale,
       continue;
     auto &[done, total] = counts[unit->kindName()];
     llvm::errs() << "##### Finished processing " << ++done << " of " << total
-                 << " " << unit->kindName() << "s #####\n";
-    llvm::errs() << "Current DP table sizes: " << cost.size() << "\n";
+                 << ' ' << unit->kindName() << "s #####\n";
+    llvm::errs() << "Current DP table sizes: " << cost.size() << '\n';
   }
 }
 

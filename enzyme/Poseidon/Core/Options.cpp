@@ -31,15 +31,17 @@ template <typename T> static std::string value(T v) {
 }
 
 template <typename T>
-static void add(FlagValues &out, StringRef name, const T &v) {
+static void add(SmallVectorImpl<FlagValue> &out, StringRef name, const T &v) {
   out.emplace_back(name, value(v));
 }
 
-void ProfilingOptions::appendSolveInputs(FlagValues &out) const {
+void ProfilingOptions::appendSolveInputs(
+    SmallVectorImpl<FlagValue> &out) const {
   add(out, "poseidon-loose-coverage", LooseCoverage);
 }
 
-void ProfilingOptions::appendOtherValues(FlagValues &out) const {
+void ProfilingOptions::appendOtherValues(
+    SmallVectorImpl<FlagValue> &out) const {
   add(out, "poseidon-profile-generate", ProfileGenerate);
   add(out, "poseidon-profile-use", ProfileUse);
   add(out, "poseidon-output-profiles", OutputProfiles);
@@ -47,7 +49,8 @@ void ProfilingOptions::appendOtherValues(FlagValues &out) const {
   add(out, "poseidon-min-cost-share", MinCostShare);
 }
 
-void CandidateOptions::appendSolveInputs(FlagValues &out) const {
+void CandidateOptions::appendSolveInputs(
+    SmallVectorImpl<FlagValue> &out) const {
   add(out, "poseidon-enable-herbie", EnableHerbie);
   add(out, "poseidon-enable-pt", EnablePT);
   add(out, "poseidon-enable-multifloat", EnableMultifloat);
@@ -61,17 +64,18 @@ void CandidateOptions::appendSolveInputs(FlagValues &out) const {
   add(out, "poseidon-split-calls", SplitCalls);
 }
 
-void CandidateOptions::appendLaterSolveInputs(FlagValues &out) const {
+void CandidateOptions::appendLaterSolveInputs(
+    SmallVectorImpl<FlagValue> &out) const {
   add(out, "poseidon-reduction-subgraphs", ReductionSubgraphs);
   add(out, "poseidon-merge-shared-staging", MergeSharedStaging);
 }
 
-void SolverOptions::appendSolveInputs(FlagValues &out) const {
+void SolverOptions::appendSolveInputs(SmallVectorImpl<FlagValue> &out) const {
   add(out, "poseidon-early-prune", EarlyPrune);
   add(out, "poseidon-aggressive-dce", AggressiveDCE);
 }
 
-void SolverOptions::appendOtherValues(FlagValues &out) const {
+void SolverOptions::appendOtherValues(SmallVectorImpl<FlagValue> &out) const {
   add(out, "poseidon-cost-budget", CostBudget);
   add(out, "poseidon-tau", Tau);
   add(out, "poseidon-tau-cheapest", TauCheapest);
@@ -79,7 +83,7 @@ void SolverOptions::appendOtherValues(FlagValues &out) const {
   add(out, "poseidon-apply-rewrites", ApplyRewrites);
 }
 
-void ModelOptions::appendSolveInputs(FlagValues &out) const {
+void ModelOptions::appendSolveInputs(SmallVectorImpl<FlagValue> &out) const {
   add(out, "poseidon-num-samples", NumSamples);
   add(out, "poseidon-random-seed", RandomSeed);
   add(out, "poseidon-sample-log-bits", SampleLogBits);
@@ -90,16 +94,17 @@ void ModelOptions::appendSolveInputs(FlagValues &out) const {
   add(out, "poseidon-exponent-penalty", ExponentPenalty);
 }
 
-void ModelOptions::appendLaterSolveInputs(FlagValues &out) const {
+void ModelOptions::appendLaterSolveInputs(
+    SmallVectorImpl<FlagValue> &out) const {
   add(out, "poseidon-freq-weighted-pricing", FreqWeightedPricing);
 }
 
-void ModelOptions::appendOtherValues(FlagValues &out) const {
+void ModelOptions::appendOtherValues(SmallVectorImpl<FlagValue> &out) const {
   add(out, "poseidon-cost-model", CostModel);
   add(out, "poseidon-threads", Threads);
 }
 
-void HerbieOptions::appendSolveInputs(FlagValues &out) const {
+void HerbieOptions::appendSolveInputs(SmallVectorImpl<FlagValue> &out) const {
   add(out, "poseidon-herbie-num-pts", HerbieNumPts);
   add(out, "poseidon-herbie-num-iters", HerbieNumIters);
   add(out, "poseidon-herbie-num-enodes", HerbieNumEnodes);
@@ -110,7 +115,7 @@ void HerbieOptions::appendSolveInputs(FlagValues &out) const {
   add(out, "poseidon-herbie-array-weights", HerbieArrayWeights);
 }
 
-void HerbieOptions::appendOtherValues(FlagValues &out) const {
+void HerbieOptions::appendOtherValues(SmallVectorImpl<FlagValue> &out) const {
   add(out, "poseidon-cache", Cache);
   add(out, "poseidon-unit", Unit);
   add(out, "poseidon-import-accuracy-memo", ImportAccuracyMemo);
@@ -123,17 +128,19 @@ void HerbieOptions::appendOtherValues(FlagValues &out) const {
   add(out, "poseidon-herbie-platform", HerbiePlatform);
 }
 
-void MatmulOptions::appendSolveInputs(FlagValues &out) const {
+void MatmulOptions::appendSolveInputs(SmallVectorImpl<FlagValue> &out) const {
   add(out, "poseidon-ozaki-host-dispatch", OzakiHostDispatch);
   add(out, "poseidon-inkernel-calibration", InKernelCalibration);
 }
 
-void MaterializationOptions::appendSolveInputs(FlagValues &out) const {
+void MaterializationOptions::appendSolveInputs(
+    SmallVectorImpl<FlagValue> &out) const {
   add(out, "poseidon-narrow-param-staging", NarrowParamStaging);
   add(out, "poseidon-narrow-multiview-staging", NarrowMultiviewStaging);
 }
 
-void DiagnosticOptions::appendOtherValues(FlagValues &out) const {
+void DiagnosticOptions::appendOtherValues(
+    SmallVectorImpl<FlagValue> &out) const {
   add(out, "poseidon-print", Print);
   add(out, "poseidon-show-table", ShowTable);
   add(out, "poseidon-report-path", ReportPath);

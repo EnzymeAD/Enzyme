@@ -51,21 +51,19 @@ Type *getLLVMFPType(PrecisionChangeType type, LLVMContext &context) {
 }
 
 PrecisionChangeType getPrecisionChangeType(Type *type) {
-  if (type->isHalfTy()) {
+  if (type->isHalfTy())
     return PrecisionChangeType::BF16;
-  } else if (type->isHalfTy()) {
+  if (type->isHalfTy())
     return PrecisionChangeType::FP16;
-  } else if (type->isFloatTy()) {
+  if (type->isFloatTy())
     return PrecisionChangeType::FP32;
-  } else if (type->isDoubleTy()) {
+  if (type->isDoubleTy())
     return PrecisionChangeType::FP64;
-  } else if (type->isX86_FP80Ty()) {
+  if (type->isX86_FP80Ty())
     return PrecisionChangeType::FP80;
-  } else if (type->isFP128Ty()) {
+  if (type->isFP128Ty())
     return PrecisionChangeType::FP128;
-  } else {
-    llvm_unreachable("Unsupported FP precision");
-  }
+  llvm_unreachable("Unsupported FP precision");
 }
 
 StringRef getPrecisionChangeTypeString(PrecisionChangeType type) {

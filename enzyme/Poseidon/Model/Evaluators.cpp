@@ -13,6 +13,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/ADT/APFloat.h"
+#include "llvm/ADT/BitVector.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Module.h"
@@ -918,7 +919,7 @@ void getMPFRValues(ArrayRef<FPNode *> outputs,
   std::vector<mpfr_exp_t> prevResExp(outputs.size(), 0);
   std::vector<char *> prevResStr(outputs.size(), nullptr);
   std::vector<int> prevResSign(outputs.size(), 0);
-  std::vector<bool> converged(outputs.size(), false);
+  BitVector converged(outputs.size());
   size_t numConverged = 0;
 
   while (true) {

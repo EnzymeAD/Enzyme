@@ -122,7 +122,7 @@ static void collectLeaves(const FPNode *node,
 void getSampledPoints(
     const Options &O, ArrayRef<Value *> inputs,
     const std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-    SmallVector<MapVector<Value *, double>, 4> &sampledPoints,
+    SmallVectorImpl<MapVector<Value *, double>> &sampledPoints,
     const CancellationPlan *plan, size_t count, unsigned seedOffset) {
   const size_t numSamples = count ? count : O.Model.NumSamples;
   std::minstd_rand0 gen(O.Model.RandomSeed + seedOffset);
@@ -146,7 +146,7 @@ void getSampledPoints(
                    << lower << ", " << upper
                    << "]; refusing to sample it. This subgraph cannot be "
                       "priced and will keep its original body. Input value: "
-                   << *input << "\n";
+                   << *input << '\n';
       return;
     }
 
@@ -165,7 +165,7 @@ void getSampledPoints(
                    << lower << ", " << upper
                    << "]; refusing to sample the subgraph. It cannot be priced "
                       "and will keep its original body. Value: "
-                   << *leaf->value << "\n";
+                   << *leaf->value << '\n';
       return;
     }
     leafBox.insert({leaf->value, {lower, upper}});

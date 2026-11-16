@@ -186,7 +186,7 @@ void MatmulAccuracyMemo::store(const Options &O, double accuracyCost,
   value["domain error"] = exactDouble(domainError);
   if (Error E = writeCacheEntry(path, key, std::move(value)))
     llvm::errs() << "[poseidon] could not write the accuracy memo " << path
-                 << ": " << toString(std::move(E)) << "\n";
+                 << ": " << toString(std::move(E)) << '\n';
 }
 
 static bool parseAccNumber(const json::Object &value, StringRef name,
@@ -260,7 +260,7 @@ bool MatmulAccuracyMemo::lookup(Session &S, double &accuracyCost,
   domainError = d;
   store(O, accuracyCost, domainError);
   llvm::errs() << "[poseidon] imported accuracy memo " << legacy << " as "
-               << path << "\n";
+               << path << '\n';
   return true;
 }
 

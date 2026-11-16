@@ -122,8 +122,7 @@ static double lookupInKernelRel(CostModelState &CM, const std::string &cls,
 // a missing row is never replaced by one.
 std::optional<double> priceInKernelRaiseFromMeasuredRow(
     Session &S, const AbstractMatmul &m, const std::string &cls, unsigned tileM,
-    unsigned tileN, unsigned tileK, double baselinePerMac,
-    const std::string &what) {
+    unsigned tileN, unsigned tileK, double baselinePerMac, StringRef what) {
   const Options &O = S.Opts;
   double rel = lookupInKernelRel(S.CostModel, cls, tileM, tileN, tileK);
   if (rel > 0.0)
@@ -147,8 +146,8 @@ std::optional<double> priceInKernelRaiseFromMeasuredRow(
 
   if (S.Matmul.ReportedInKernelRows.insert(key).second) {
     llvm::errs()
-        << "[poseidon] WARNING: matmul[" << m.id << "] " << m.M << "x" << m.N
-        << "x" << m.K << ": " << what
+        << "[poseidon] WARNING: matmul[" << m.id << "] " << m.M << 'x' << m.N
+        << 'x' << m.K << ": " << what
         << " NOT PROPOSED -- this device's cost model carries no measured "
            "wmma_inkernel_rel,"
         << key << " (or wmma_inkernel_rel," << cls
@@ -198,7 +197,7 @@ const SmallVector<WmmaTarget, 16> &getAvailableWmmaTargets(Session &S) {
       } else {
         llvm::errs() << "Poseidon: cost model missing row for known wmma "
                         "intrinsic "
-                     << opcode << " " << prec
+                     << opcode << ' ' << prec
                      << "; this target will not be considered.\n";
       }
     }
@@ -342,7 +341,7 @@ bool inKernelRaiseFits(const Options &O, Function *F, const AbstractMatmul &m,
     return true;
   if (O.Diagnostics.Print)
     llvm::errs()
-        << "  Matmul[" << m.id << "] " << m.M << "x" << m.N << "x" << m.K
+        << "  Matmul[" << m.id << "] " << m.M << 'x' << m.N << 'x' << m.K
         << ": " << className << " NOT PROPOSED -- it needs " << total
         << " B of static shared memory against a " << cap << " B cap ("
         << existingBytes << " B already live in the enclosing kernel + "

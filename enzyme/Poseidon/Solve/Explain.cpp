@@ -1694,7 +1694,7 @@ void explainSolve(Session &S, Function &F, FunctionFPState &st,
   if (dir.empty())
     return;
   if (auto EC = sys::fs::create_directories(dir)) {
-    errs() << "Error creating explanation directory: " << EC.message() << "\n";
+    errs() << "Error creating explanation directory: " << EC.message() << '\n';
     return;
   }
   SmallString<128> path(dir);
@@ -1702,11 +1702,11 @@ void explainSolve(Session &S, Function &F, FunctionFPState &st,
   std::error_code EC;
   raw_fd_ostream out(path, EC, sys::fs::OF_Text);
   if (EC) {
-    errs() << "Error writing explanation: " << EC.message() << "\n";
+    errs() << "Error writing explanation: " << EC.message() << '\n';
     return;
   }
-  out << formatv("{0:2}", json::Value(E.toJSON())) << "\n";
-  errs() << "Poseidon explanation written to " << path << "\n";
+  out << formatv("{0:2}", json::Value(E.toJSON())) << '\n';
+  errs() << "Poseidon explanation written to " << path << '\n';
 }
 
 } // namespace poseidon

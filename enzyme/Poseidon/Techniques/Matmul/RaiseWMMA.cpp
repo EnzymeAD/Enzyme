@@ -9,6 +9,7 @@
 
 #include "RaiseWMMA.h"
 #include "Core/Options.h"
+#include "IR/Utils.h"
 #include "MatmulInternal.h"
 #include "Model/FPFormat.h"
 #include "Targets/NVPTXTensorCore.h"
@@ -466,7 +467,7 @@ void collectScalarLoopReductionTrips(
       });
   if (O.Diagnostics.Print && !trips.empty())
     llvm::errs() << "[raise-wmma] recorded " << trips.size()
-                 << " reduction trip(s) for " << F.getName() << "\n";
+                 << " reduction trip(s) for " << F.getName() << '\n';
 }
 
 void findScalarLoopMatmuls(const Options &O, Function &F, ScalarEvolution &SE,
@@ -687,8 +688,8 @@ void ScalarLoopRaiseMaterializer::run() {
   // raised regions are sequential and bracketed by block barriers; the extents
   // in the key prevent reuse at another size. Names are materialized to
   // std::string because a Twine over temporaries would dangle.
-  auto scratchName = [&](const std::string &op, const std::string &prec,
-                         uint64_t rows, uint64_t cols) -> std::string {
+  auto scratchName = [&](StringRef op, StringRef prec, uint64_t rows,
+                         uint64_t cols) -> std::string {
     return ("__poseidon_raise_" + F->getName() + "_" + op + "_" + prec + "_" +
             Twine(rows) + "x" + Twine(cols))
         .str();
@@ -981,14 +982,15 @@ void ScalarLoopRaiseMaterializer::run() {
     BasicBlock *wmmaEndBB = bodyB.GetInsertBlock();
     bodyB.CreateBr(wmmaMergeBB);
 
-    IRBuilder<> mergeB(wmmaMergeBB, wmmaMergeBB->getFirstInsertionPt());
+    IRBuilder<> mergeB =
+        builderAt(wmmaMergeBB, wmmaMergeBB->getFirstInsertionPt());
     for (unsigned i = 0; i < numCFragPhis; ++i) {
       PHINode *phi = mergeB.CreatePHI(cFragElemTy, 2, "cFrag.merge");
       phi->addIncoming(cFragLoop[i], wmmaEndBB);
       phi->addIncoming(cFragPhis[i], bodyPreGateBB);
       cFragLoop[i] = phi;
     }
-    bodyB.SetInsertPoint(wmmaMergeBB, wmmaMergeBB->getFirstInsertionPt());
+    setInsertPoint(bodyB, wmmaMergeBB, wmmaMergeBB->getFirstInsertionPt());
   }
 
   // Barrier after the wmma reads so the next iter's fill doesn't race them.
@@ -1007,7 +1009,7 @@ void ScalarLoopRaiseMaterializer::run() {
   // Store the final accumulators to D-scratch, warp-gated too: only warp 0's
   // PHIs hold the result, and the barrier after makes the store visible to the
   // readback in exitBB.
-  IRBuilder<> afterB(afterLoopBB, afterLoopBB->getFirstNonPHIIt());
+  IRBuilder<> afterB = builderAt(afterLoopBB, afterLoopBB->getFirstNonPHIIt());
   BasicBlock *afterStoreMergeBB = nullptr;
   if (useWarpGate) {
     Value *afterTlin =
@@ -1048,15 +1050,15 @@ void ScalarLoopRaiseMaterializer::run() {
 
   if (useWarpGate) {
     afterB.CreateBr(afterStoreMergeBB);
-    afterB.SetInsertPoint(afterStoreMergeBB,
-                          afterStoreMergeBB->getFirstInsertionPt());
+    setInsertPoint(afterB, afterStoreMergeBB,
+                   afterStoreMergeBB->getFirstInsertionPt());
   }
   afterB.CreateCall(barrier.Fn, barrier.Args);
 
   B.SetInsertPoint(&*afterLoopBB->getFirstInsertionPt());
 
   auto insertIt = exitBB->getFirstNonPHIIt();
-  IRBuilder<> RB(exitBB, insertIt);
+  IRBuilder<> RB = builderAt(exitBB, insertIt);
 
   // TODO: clamp readback to (tid_row < M && tid_col < N) for blocks larger than
   // the M x N output tile. The dScratch row stride is N_pad.

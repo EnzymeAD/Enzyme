@@ -135,7 +135,7 @@ static void writeBudgetsFile(const Options &O, const CostScale &scale,
     budgetsStr.pop_back();
   if (Error E = writeFileAtomically(budgetsFile, budgetsStr))
     llvm::errs() << "Error writing " << budgetsFile << ": "
-                 << toString(std::move(E)) << "\n";
+                 << toString(std::move(E)) << '\n';
 }
 
 SmallVector<SolutionStep>
@@ -149,7 +149,7 @@ accuracyDPSolver(Session &S, Function &F, FunctionFPState &st,
                << O.Solver.CostBudget << " of the site's profiled cost\n";
   if (errorTol > 0.0) {
     llvm::errs() << "Per-operation relative error tolerance: " << errorTol
-                 << "\n";
+                 << '\n';
   }
 
   const CostScale scale(st.profiledCost);
@@ -238,7 +238,7 @@ accuracyDPSolver(Session &S, Function &F, FunctionFPState &st,
       // +1 for the "do nothing" possibility
       totalCandidateCompositions *= unit->numCandidates() + 1;
   llvm::errs() << "Total candidate compositions: " << totalCandidateCompositions
-               << "\n";
+               << '\n';
 
   if (costToSolutionMap.find(0) != costToSolutionMap.end()) {
     if (costToSolutionMap[0].empty()) {
@@ -293,14 +293,14 @@ accuracyDPSolver(Session &S, Function &F, FunctionFPState &st,
       llvm::errs() << "No solution found that meets accuracy tolerance "
                    << errorTol << "!\n";
       llvm::errs() << "Best achievable relative accuracy in DP table: "
-                   << (baseline + bestAchievable) / accScale << "\n";
+                   << (baseline + bestAchievable) / accScale << '\n';
       return {};
     }
 
     llvm::errs() << "[poseidon] " << F.getName() << ": tau=" << errorTol
                  << " S=" << accScale << " A0=" << baseline
                  << " selected cost=" << scale.share(bestCompCost)
-                 << " accCost=" << minAccCost << " rel=" << bestRel << "\n";
+                 << " accCost=" << minAccCost << " rel=" << bestRel << '\n';
   } else {
     std::optional<DPCost> best =
         selectWithinBudget(O, scale, costToAccuracyMap);
@@ -313,9 +313,9 @@ accuracyDPSolver(Session &S, Function &F, FunctionFPState &st,
     minAccCost = costToAccuracyMap.at(*best);
 
     llvm::errs() << "Minimum accuracy cost within budget: " << minAccCost
-                 << "\n";
+                 << '\n';
     llvm::errs() << "Computation cost budget used: "
-                 << scale.share(bestCompCost) << "\n";
+                 << scale.share(bestCompCost) << '\n';
   }
 
   assert(costToSolutionMap.find(bestCompCost) != costToSolutionMap.end() &&
@@ -435,13 +435,13 @@ jointAccuracyDPSolver(Session &S, ArrayRef<FunctionFPState *> states,
         bestAchievable = std::min(bestAchievable, pair.second);
       llvm::errs() << "JOINT: no solution meets accuracy tolerance " << errorTol
                    << "; best achievable relative accuracy "
-                   << (baseline + bestAchievable) / accScale << "\n";
+                   << (baseline + bestAchievable) / accScale << '\n';
       return {};
     }
     llvm::errs() << "[poseidon] " << names << ": tau=" << errorTol
                  << " S=" << accScale << " A0=" << baseline
                  << " selected cost=" << scale.share(bestCompCost)
-                 << " accCost=" << minAccCost << " rel=" << bestRel << "\n";
+                 << " accCost=" << minAccCost << " rel=" << bestRel << '\n';
   } else {
     std::optional<DPCost> best =
         selectWithinBudget(O, scale, costToAccuracyMap);
@@ -455,7 +455,7 @@ jointAccuracyDPSolver(Session &S, ArrayRef<FunctionFPState *> states,
   }
   llvm::errs() << "JOINT: minimum accuracy cost within budget: " << minAccCost
                << "; computation cost used: " << scale.share(bestCompCost)
-               << "\n";
+               << '\n';
 
   assert(costToSolutionMap.find(bestCompCost) != costToSolutionMap.end() &&
          "joint DP solver: expected a solution!");

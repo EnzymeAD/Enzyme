@@ -188,7 +188,7 @@ uint64_t getCostModelFingerprint(CostModelState &CM) {
   auto mix = [&](uint64_t v) {
     h ^= v + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
   };
-  auto mixStr = [&](const std::string &s) {
+  auto mixStr = [&](StringRef s) {
     for (unsigned char c : s)
       mix((uint64_t)c);
     mix(0x5eULL);

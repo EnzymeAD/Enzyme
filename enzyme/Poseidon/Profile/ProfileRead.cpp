@@ -182,7 +182,7 @@ void parseProfileFile(const std::string &profilePath, ProfileMap &profileMap,
   std::ifstream file(profilePath);
   if (!file.is_open()) {
     llvm::errs() << "Warning: Could not open profile file: " << profilePath
-                 << "\n";
+                 << '\n';
     return;
   }
 
@@ -344,11 +344,11 @@ void parseProfileFile(const std::string &profilePath, ProfileMap &profileMap,
           profileMap[idx] = info;
         } else {
           llvm::errs() << "Warning: Failed to parse profile fields for index "
-                       << idx << "\n";
+                       << idx << '\n';
         }
       } else {
         llvm::errs() << "Warning: Incomplete profile entry for index " << idx
-                     << "\n";
+                     << '\n';
       }
     }
   }

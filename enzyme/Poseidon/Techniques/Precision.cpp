@@ -131,7 +131,7 @@ static void changePrecision(Instruction *I, PrecisionChange &change,
           newI = Builder.CreateCall(newFunc, newArgs);
         }
       } else {
-        llvm::errs() << "PT: Unknown intrinsic: " << *CI << "\n";
+        llvm::errs() << "PT: Unknown intrinsic: " << *CI << '\n';
         llvm_unreachable("changePrecision: Unknown intrinsic call to change");
       }
     } else {
@@ -200,17 +200,17 @@ static void changePrecision(Instruction *I, PrecisionChange &change,
         } else {
           llvm::errs() << "PT: Failed to get "
                        << getPrecisionChangeTypeString(change.newType)
-                       << " libm function for: " << *CI << "\n";
+                       << " libm function for: " << *CI << '\n';
           llvm_unreachable("changePrecision: Failed to get libm function");
         }
       } else {
-        llvm::errs() << "PT: Unknown function call: " << *CI << "\n";
+        llvm::errs() << "PT: Unknown function call: " << *CI << '\n';
         llvm_unreachable("changePrecision: Unknown function call to change");
       }
     }
 
   } else {
-    llvm::errs() << "Unexpectedly isOptimizable instruction: " << *I << "\n";
+    llvm::errs() << "Unexpectedly isOptimizable instruction: " << *I << '\n';
     llvm_unreachable("Unexpectedly isOptimizable instruction");
   }
 
@@ -325,8 +325,9 @@ void PTCandidate::apply(Session &S, Subgraph &subgraph, ValueToValueMapTy *VMap,
 
       Value *casted = nullptr;
       if (!users.empty()) {
-        IRBuilder<> builder(cast<Instruction>(oldV)->getParent(),
-                            ++BasicBlock::iterator(cast<Instruction>(oldV)));
+        IRBuilder<> builder =
+            builderAt(cast<Instruction>(oldV)->getParent(),
+                      ++BasicBlock::iterator(cast<Instruction>(oldV)));
         casted = builder.CreateFPCast(
             newV, getLLVMFPType(change.oldType, builder.getContext()));
 
@@ -456,7 +457,7 @@ bool demoteFPCastPHIs(llvm::Function &F) {
   for (PHINode *P : D) {
     PHINode *NP = nmap[P];
     BasicBlock *BB = NP->getParent();
-    IRBuilder<> B(BB, BB->getFirstInsertionPt());
+    IRBuilder<> B = builderAt(BB, BB->getFirstInsertionPt());
     P->replaceAllUsesWith(B.CreateFPExt(NP, DoubleTy));
   }
   for (PHINode *P : D)
@@ -969,7 +970,7 @@ void proposePrecisionCandidates(
                       "(normalizer "
                    << o0Exec << ", measured depth:exec";
       for (auto &kv : subgraph.depthExec)
-        llvm::errs() << " " << kv.first << ":" << kv.second;
+        llvm::errs() << ' ' << kv.first << ':' << kv.second;
       llvm::errs() << "); pricing each instruction at its own measured "
                       "frequency\n";
     }
@@ -1000,7 +1001,7 @@ void proposePrecisionCandidates(
     allSet.insert(node);
     if (PTFuncs.count(node->op) != 0) {
       funcsSet.insert(node);
-      llvm::errs() << "[poseidon] PT Function identified: " << *I << "\n";
+      llvm::errs() << "[poseidon] PT Function identified: " << *I << '\n';
     }
   }
   SmallVector<FPLLValue *> sortedFuncs(funcsSet.begin(), funcsSet.end());
@@ -1283,7 +1284,7 @@ void PrecisionUnit::priceRequests(
                      << "': initial=" << initialCompCost
                      << " cand=" << candidateCompCost << " exec=" << executions
                      << " Δcost=" << adjustedCostDelta
-                     << " Δacc=" << getAccCostDelta(G.candidateIndex) << "\n";
+                     << " Δacc=" << getAccCostDelta(G.candidateIndex) << '\n';
       compCostDeltaCache[R.key] = adjustedCostDelta;
     }
   }
@@ -1416,7 +1417,7 @@ void PrecisionUnit::writeReportStep(raw_ostream &OS, size_t i, StringRef pad) {
       if (auto *I = dyn_cast<Instruction>(node->value)) {
         auto loc = getSourceLocationStr(I);
         if (!loc.empty() && seen.insert(loc).second)
-          OS << pad << "    Source: " << loc << "\n";
+          OS << pad << "    Source: " << loc << '\n';
       }
     }
   }
@@ -1485,7 +1486,7 @@ void PrecisionUnit::writeReportSummary(raw_ostream &textOut) {
     size_t ci = order[k];
     textOut << "  [" << candidateId(ci) << "] " << candidates[ci].desc
             << ": Δcost=" << getCompCostDelta(ci)
-            << " Δacc=" << format("%.6e", getAccCostDelta(ci)) << "\n";
+            << " Δacc=" << format("%.6e", getAccCostDelta(ci)) << '\n';
   }
 }
 
@@ -1536,8 +1537,8 @@ void PrecisionUnit::addCuratedRewrites(json::Array &rewrites) {
 
 void PrecisionUnit::printPriced(raw_ostream &OS) {
   OS << "\n################################\n";
-  OS << "Initial AccuracyCost: " << initialAccCost << "\n";
-  OS << "Initial ComputationCost: " << initialCompCost << "\n";
+  OS << "Initial AccuracyCost: " << initialAccCost << '\n';
+  OS << "Initial ComputationCost: " << initialCompCost << '\n';
   OS << "Candidates:\n";
   OS << "Δ AccCost\t\tΔ CompCost\t\tDescription\n"
      << "---------------------------\n";
@@ -1548,7 +1549,7 @@ void PrecisionUnit::printPriced(raw_ostream &OS) {
       OS << "unpriced";
     else
       OS << getCompCostDelta(i);
-    OS << "\t\t" << candidate.desc << "\n";
+    OS << "\t\t" << candidate.desc << '\n';
   }
   OS << "################################\n\n";
 }

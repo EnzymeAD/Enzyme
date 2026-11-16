@@ -317,7 +317,7 @@ static void optimizeSiteBody(Session &S, CallBase *CI, Function *F,
     if (O.Diagnostics.Print) {
       llvm::errs() << "[poseidon] Optimizing " << F->getName()
                    << " with relative error tolerance: "
-                   << (errTol > 0.0 ? errTol : (double)O.Solver.Tau) << "\n";
+                   << (errTol > 0.0 ? errTol : (double)O.Solver.Tau) << '\n';
     }
 
     if (O.Solver.JointDP) {

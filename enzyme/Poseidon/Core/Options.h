@@ -27,7 +27,8 @@
 namespace poseidon {
 
 // Option values by flag name, the name without its leading dash.
-using FlagValues = llvm::SmallVector<std::pair<llvm::StringRef, std::string>>;
+using FlagValue = std::pair<llvm::StringRef, std::string>;
+using FlagValues = llvm::SmallVector<FlagValue>;
 
 // Each group appends the name and value of every option a DP table depends on
 // (appendSolveInputs) and of every other option (appendOtherValues).
@@ -48,8 +49,8 @@ struct ProfilingOptions {
   // every site as written.
   bool profileAction() const { return ProfileGenerate || usesProfile(); }
 
-  void appendSolveInputs(FlagValues &out) const;
-  void appendOtherValues(FlagValues &out) const;
+  void appendSolveInputs(llvm::SmallVectorImpl<FlagValue> &out) const;
+  void appendOtherValues(llvm::SmallVectorImpl<FlagValue> &out) const;
 };
 
 struct CandidateOptions {
@@ -67,10 +68,10 @@ struct CandidateOptions {
   bool MergeSharedStaging = false;
   std::vector<std::string> SplitCalls;
 
-  void appendSolveInputs(FlagValues &out) const;
+  void appendSolveInputs(llvm::SmallVectorImpl<FlagValue> &out) const;
   // ReductionSubgraphs and MergeSharedStaging, which the DP key lists after
   // the matrix options.
-  void appendLaterSolveInputs(FlagValues &out) const;
+  void appendLaterSolveInputs(llvm::SmallVectorImpl<FlagValue> &out) const;
 };
 
 struct SolverOptions {
@@ -84,8 +85,8 @@ struct SolverOptions {
   bool AggressiveDCE = false;
   std::string ApplyRewrites;
 
-  void appendSolveInputs(FlagValues &out) const;
-  void appendOtherValues(FlagValues &out) const;
+  void appendSolveInputs(llvm::SmallVectorImpl<FlagValue> &out) const;
+  void appendOtherValues(llvm::SmallVectorImpl<FlagValue> &out) const;
 };
 
 // The cost and accuracy model.
@@ -102,10 +103,10 @@ struct ModelOptions {
   bool FreqWeightedPricing = false;
   unsigned Threads = 0;
 
-  void appendSolveInputs(FlagValues &out) const;
+  void appendSolveInputs(llvm::SmallVectorImpl<FlagValue> &out) const;
   // FreqWeightedPricing, which the DP key lists after the matrix options.
-  void appendLaterSolveInputs(FlagValues &out) const;
-  void appendOtherValues(FlagValues &out) const;
+  void appendLaterSolveInputs(llvm::SmallVectorImpl<FlagValue> &out) const;
+  void appendOtherValues(llvm::SmallVectorImpl<FlagValue> &out) const;
 };
 
 // Herbie and the result cache.
@@ -130,8 +131,8 @@ struct HerbieOptions {
   std::string HerbieArrayWeights = "sensitivity";
   std::string HerbieArrayGrouping = "inputs";
 
-  void appendSolveInputs(FlagValues &out) const;
-  void appendOtherValues(FlagValues &out) const;
+  void appendSolveInputs(llvm::SmallVectorImpl<FlagValue> &out) const;
+  void appendOtherValues(llvm::SmallVectorImpl<FlagValue> &out) const;
 };
 
 // Matrix raising and host dispatch.
@@ -139,14 +140,14 @@ struct MatmulOptions {
   bool OzakiHostDispatch = true;
   bool InKernelCalibration = false;
 
-  void appendSolveInputs(FlagValues &out) const;
+  void appendSolveInputs(llvm::SmallVectorImpl<FlagValue> &out) const;
 };
 
 struct MaterializationOptions {
   bool NarrowParamStaging = false;
   bool NarrowMultiviewStaging = false;
 
-  void appendSolveInputs(FlagValues &out) const;
+  void appendSolveInputs(llvm::SmallVectorImpl<FlagValue> &out) const;
 };
 
 struct DiagnosticOptions {
@@ -155,7 +156,7 @@ struct DiagnosticOptions {
   std::string ReportPath;
   std::string Explain;
 
-  void appendOtherValues(FlagValues &out) const;
+  void appendOtherValues(llvm::SmallVectorImpl<FlagValue> &out) const;
 };
 
 struct Options {

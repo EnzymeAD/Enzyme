@@ -421,7 +421,7 @@ double getCompCost(CostModelState &CM, Function *F, InstWeight Weight) {
   return TotalCost;
 }
 
-double getCompCost(CostModelState &CM, const SmallVector<Value *> &outputs,
+double getCompCost(CostModelState &CM, ArrayRef<Value *> outputs,
                    const SetVector<Value *> &inputs,
                    const DenseMap<const Instruction *, uint64_t> *opExec,
                    uint64_t normalizer) {
