@@ -209,7 +209,7 @@ void buildSubgraphs(
               llvm::errs() << "Registered FPNode for global variable: " << *GV
                            << '\n';
           } else {
-            report_fatal_error("Unknown operand");
+            llvm_unreachable("isOptimizable admits no other operand");
           }
         }
         node->addOperand(valueToNodeMap[operand]);

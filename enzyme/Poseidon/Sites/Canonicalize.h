@@ -34,6 +34,9 @@ llvm::Function *canonicalize(llvm::Function &F);
 // numbered against, and profile-use refuses a form that does not match it.
 std::string canonicalFormHash(const llvm::Function &F);
 
+// Whether V is a floating-point operation the pass profiles and rewrites: an
+// instruction it can model, whose operands are arguments, instructions,
+// literals or global variables.
 bool isOptimizable(const llvm::Value &V);
 
 void setSlotMetadata(llvm::Function &F);

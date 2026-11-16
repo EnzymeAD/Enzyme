@@ -61,11 +61,7 @@ using namespace llvm;
 
 namespace poseidon {
 
-bool isOptimizable(const llvm::Value &V) {
-  const Instruction *I = dyn_cast<Instruction>(&V);
-  if (!I)
-    return false;
-
+static bool isOptimizableOperation(const Instruction *I) {
   switch (I->getOpcode()) {
   case Instruction::FNeg:
   case Instruction::FAdd:
@@ -131,6 +127,22 @@ bool isOptimizable(const llvm::Value &V) {
   default:
     return false;
   }
+}
+
+// Whether the accuracy model has a node for the operand V. An undef or poison
+// value has no value to sample and may take a different one at each use; a
+// constant expression has no literal.
+static bool isModelledOperand(const Value *V) {
+  return isa<Argument, Instruction, ConstantFP, ConstantInt, GlobalVariable>(V);
+}
+
+bool isOptimizable(const llvm::Value &V) {
+  const auto *I = dyn_cast<Instruction>(&V);
+  if (!I || !isOptimizableOperation(I))
+    return false;
+  const auto *CI = dyn_cast<CallInst>(I);
+  return all_of(CI ? CI->args() : I->operands(),
+                [](const Use &U) { return isModelledOperand(U.get()); });
 }
 
 void setSlotMetadata(Function &F) {
