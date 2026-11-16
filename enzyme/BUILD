@@ -1056,6 +1056,7 @@ cc_library(
         "@llvm-project//mlir:Analysis",
         "@llvm-project//mlir:ArithDialect",
         "@llvm-project//mlir:ArithUtils",
+        "@llvm-project//mlir:ArithValueBoundsOpInterfaceImpl",
         "@llvm-project//mlir:AsyncDialect",
         "@llvm-project//mlir:BytecodeOpInterface",
         "@llvm-project//mlir:CallOpInterfaces",
@@ -1092,6 +1093,7 @@ cc_library(
         "@llvm-project//mlir:TensorDialect",
         "@llvm-project//mlir:TransformUtils",
         "@llvm-project//mlir:Transforms",
+        "@llvm-project//mlir:ValueBoundsOpInterface",
         "@llvm-project//mlir:ViewLikeInterface",
     ],
 )

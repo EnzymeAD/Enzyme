@@ -169,3 +169,212 @@ module attributes {enzyme.disable_loop_invariant_cache} {
 // CHECK:            %[[CACHE_MOD:.*]] = memref.alloc(%{{.*}}, %{{.*}}) : memref<?x?xf32>
 // CHECK:            memref.dealloc %[[CACHE_MOD]] : memref<?x?xf32>
 // CHECK:            return
+
+// -----
+
+// Affine load on a large memref.alloc with bounded affine map (%jv mod 8 + 4)
+// caches only the 8-element slice [4, 12) and shifts the reverse affine.load.
+func.func private @affine_load_offset_cache(%ub0: index, %x: memref<?x100xf32> {llvm.noalias}, %y: memref<?x100xf32> {llvm.noalias}) {
+  %c0 = arith.constant 0 : index
+  %zero = arith.constant 0.0 : f32
+  %alloc = memref.alloc() : memref<1024xf32>
+
+  affine.for %iv = 0 to %ub0 {
+    affine.for %jv = 0 to 100 {
+      %xval = memref.load %x[%iv, %jv] : memref<?x100xf32>
+      %aval = affine.load %alloc[%jv mod 8 + 4] : memref<1024xf32>
+      %mul = arith.mulf %aval, %xval : f32
+      memref.store %mul, %y[%iv, %jv] : memref<?x100xf32>
+    }
+  }
+  memref.store %zero, %alloc[%c0] : memref<1024xf32>
+  memref.dealloc %alloc : memref<1024xf32>
+  return
+}
+
+func.func @daffine_load_offset_cache(%ub0: index, %x: memref<?x100xf32>, %dx: memref<?x100xf32>, %y: memref<?x100xf32>, %dy: memref<?x100xf32>) {
+  enzyme.autodiff @affine_load_offset_cache(%ub0, %x, %dx, %y, %dy) <{
+    activity = [#enzyme.activity<enzyme_const>, #enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_dup>],
+    ret_activity = []
+  }> : (index, memref<?x100xf32>, memref<?x100xf32>, memref<?x100xf32>, memref<?x100xf32>) -> ()
+  return
+}
+
+// CHECK-LABEL:   func.func private @diffeaffine_load_offset_cache(
+// CHECK-SAME:      %[[UB0:.*]]: index,
+// CHECK-DAG:       %[[C8:.*]] = arith.constant 8 : index
+// CHECK-DAG:       %[[C4:.*]] = arith.constant 4 : index
+// CHECK-DAG:       %[[C1:.*]] = arith.constant 1 : index
+// CHECK-DAG:       %[[C0:.*]] = arith.constant 0 : index
+// CHECK:           %[[SRC:.*]] = memref.alloc() : memref<1024xf32>
+// CHECK:           %[[CACHE:.*]] = memref.alloc(%[[UB0]]) : memref<?x8xf32>
+// CHECK:           affine.for %[[IV:.*]] = 0 to %[[UB0]] {
+// CHECK:             %[[SV:.*]] = memref.subview %[[CACHE]][%[[IV]], 0] [1, 8] [1, 1] : memref<?x8xf32> to memref<8xf32, strided<[1], offset: ?>>
+// CHECK:             scf.for %[[CI:.*]] = %[[C0]] to %[[C8]] step %[[C1]] {
+// CHECK:               %[[SRC_IDX:.*]] = arith.addi %[[CI]], %[[C4]] : index
+// CHECK:               %[[LD:.*]] = memref.load %[[SRC]][%[[SRC_IDX]]] : memref<1024xf32>
+// CHECK:               memref.store %[[LD]], %[[SV]][%[[CI]]] : memref<8xf32, strided<[1], offset: ?>>
+// CHECK:             }
+// CHECK:             affine.for %{{.*}} = 0 to 100 {
+// CHECK:               affine.load %[[SRC]]
+// CHECK:             }
+// CHECK:           }
+// CHECK:           affine.for %[[RIV:.*]] = 0 to %[[UB0]] {
+// CHECK:             %[[RSV:.*]] = memref.subview %[[CACHE]][%{{.*}}, 0] [1, 8] [1, 1] : memref<?x8xf32> to memref<8xf32, strided<[1], offset: ?>>
+// CHECK:             affine.for %{{.*}} = 0 to 100 {
+// CHECK:               affine.load %[[RSV]][%{{.*}} mod 8] : memref<8xf32, strided<[1], offset: ?>>
+// CHECK:             }
+// CHECK:           }
+// CHECK:           memref.dealloc %[[CACHE]] : memref<?x8xf32>
+// CHECK:           return
+
+// -----
+
+// Large static memref (1024 > threshold) with bounded non-zero slice [4, 12)
+// accessed via arith.remsi + arith.addi caches only the 8-element slice.
+func.func private @bounded_slice_offset(%ub0: index, %ub1: index, %x: memref<?x?xf32> {llvm.noalias}, %y: memref<?x?xf32> {llvm.noalias}) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c4 = arith.constant 4 : index
+  %c8 = arith.constant 8 : index
+  %zero = arith.constant 0.0 : f32
+  %buf = memref.alloc() : memref<1024xf32>
+
+  scf.for %iv = %c0 to %ub0 step %c1 {
+    scf.for %jv = %c0 to %ub1 step %c1 {
+      %xval = memref.load %x[%iv, %jv] : memref<?x?xf32>
+      %rem = arith.remsi %jv, %c8 : index
+      %idx = arith.addi %rem, %c4 : index
+      %bval = memref.load %buf[%idx] : memref<1024xf32>
+      %mul = arith.mulf %bval, %xval : f32
+      memref.store %mul, %y[%iv, %jv] : memref<?x?xf32>
+    }
+  }
+  memref.store %zero, %buf[%c4] : memref<1024xf32>
+  memref.dealloc %buf : memref<1024xf32>
+  return
+}
+
+func.func @dbounded_slice_offset(%ub0: index, %ub1: index, %x: memref<?x?xf32>, %dx: memref<?x?xf32>, %y: memref<?x?xf32>, %dy: memref<?x?xf32>) {
+  enzyme.autodiff @bounded_slice_offset(%ub0, %ub1, %x, %dx, %y, %dy) <{
+    activity = [#enzyme.activity<enzyme_const>, #enzyme.activity<enzyme_const>, #enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_dup>],
+    ret_activity = []
+  }> : (index, index, memref<?x?xf32>, memref<?x?xf32>, memref<?x?xf32>, memref<?x?xf32>) -> ()
+  return
+}
+
+// CHECK-LABEL:   func.func private @diffebounded_slice_offset(
+// CHECK-SAME:      %[[UB0:.*]]: index, %[[UB1:.*]]: index,
+// CHECK-DAG:       %[[C8:.*]] = arith.constant 8 : index
+// CHECK-DAG:       %[[C4:.*]] = arith.constant 4 : index
+// CHECK-DAG:       %[[C1:.*]] = arith.constant 1 : index
+// CHECK-DAG:       %[[C0:.*]] = arith.constant 0 : index
+// CHECK:           %[[BUF:.*]] = memref.alloc() : memref<1024xf32>
+// CHECK:           %[[CACHE:.*]] = memref.alloc(%[[UB0]]) : memref<?x8xf32>
+// CHECK:           scf.for %[[IV:.*]] = %[[C0]] to %[[UB0]] step %[[C1]] {
+// CHECK:             %[[SV:.*]] = memref.subview %[[CACHE]][%[[IV]], 0] [1, 8] [1, 1] : memref<?x8xf32> to memref<8xf32, strided<[1], offset: ?>>
+// CHECK:             scf.for %[[CI:.*]] = %[[C0]] to %[[C8]] step %[[C1]] {
+// CHECK:               %[[SRC_IDX:.*]] = arith.addi %[[CI]], %[[C4]] : index
+// CHECK:               %[[LD:.*]] = memref.load %[[BUF]][%[[SRC_IDX]]] : memref<1024xf32>
+// CHECK:               memref.store %[[LD]], %[[SV]][%[[CI]]] : memref<8xf32, strided<[1], offset: ?>>
+// CHECK:             }
+// CHECK:             scf.for %{{.*}} = %[[C0]] to %[[UB1]] step %[[C1]] {
+// CHECK:           scf.for %{{.*}} = %[[C0]] to %[[UB0]] step %[[C1]] {
+// CHECK:             %[[RSV:.*]] = memref.subview %[[CACHE]][%{{.*}}, 0] [1, 8] [1, 1] : memref<?x8xf32> to memref<8xf32, strided<[1], offset: ?>>
+// CHECK:             scf.for %{{.*}} = %[[C0]] to %[[UB1]] step %[[C1]] {
+// CHECK:               %[[RREM:.*]] = arith.remsi %{{.*}}, %[[C8]] : index
+// CHECK:               memref.load %[[RSV]][%[[RREM]]] : memref<8xf32, strided<[1], offset: ?>>
+// CHECK:           memref.dealloc %[[CACHE]] : memref<?x8xf32>
+// CHECK:           return
+
+// -----
+
+// Dynamic 2D memref function argument with loop-invariant outer dim (%iv) and
+// bounded inner dim ([0, 8)) caches a clamped 1x8 slice per outer iteration.
+func.func private @dynamic_arg_slice(%ub0: index, %ub1: index, %w: memref<?x?xf32> {llvm.noalias}, %x: memref<?x?xf32> {llvm.noalias}, %y: memref<?x?xf32> {llvm.noalias}) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c8 = arith.constant 8 : index
+  %zero = arith.constant 0.0 : f32
+
+  scf.for %iv = %c0 to %ub0 step %c1 {
+    scf.for %jv = %c0 to %ub1 step %c1 {
+      %xval = memref.load %x[%iv, %jv] : memref<?x?xf32>
+      %rem = arith.remsi %jv, %c8 : index
+      %wval = memref.load %w[%iv, %rem] : memref<?x?xf32>
+      %mul = arith.mulf %wval, %xval : f32
+      memref.store %mul, %y[%iv, %jv] : memref<?x?xf32>
+    }
+  }
+  memref.store %zero, %w[%c0, %c0] : memref<?x?xf32>
+  return
+}
+
+func.func @ddynamic_arg_slice(%ub0: index, %ub1: index, %w: memref<?x?xf32>, %x: memref<?x?xf32>, %dx: memref<?x?xf32>, %y: memref<?x?xf32>, %dy: memref<?x?xf32>) {
+  enzyme.autodiff @dynamic_arg_slice(%ub0, %ub1, %w, %x, %dx, %y, %dy) <{
+    activity = [#enzyme.activity<enzyme_const>, #enzyme.activity<enzyme_const>, #enzyme.activity<enzyme_const>, #enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_dup>],
+    ret_activity = []
+  }> : (index, index, memref<?x?xf32>, memref<?x?xf32>, memref<?x?xf32>, memref<?x?xf32>, memref<?x?xf32>) -> ()
+  return
+}
+
+// CHECK-LABEL:   func.func private @diffedynamic_arg_slice(
+// CHECK-SAME:      %[[UB0:[^:]+]]: index, %[[UB1:[^:]+]]: index, %[[W:[^:]+]]: memref<?x?xf32> {llvm.noalias},
+// CHECK-DAG:       %[[C8:.*]] = arith.constant 8 : index
+// CHECK-DAG:       %[[C1:.*]] = arith.constant 1 : index
+// CHECK-DAG:       %[[C0:.*]] = arith.constant 0 : index
+// CHECK:           %[[ALLOC:.*]] = memref.alloc(%[[UB0]]) : memref<?x1x8xf32>
+// CHECK:           scf.for %[[IV:.*]] = %[[C0]] to %[[UB0]] step %[[C1]] {
+// CHECK:             %[[SV:.*]] = memref.subview %[[ALLOC]][%[[IV]], 0, 0] [1, 1, 8] [1, 1, 1] : memref<?x1x8xf32> to memref<1x8xf32, strided<[8, 1], offset: ?>>
+// CHECK:             scf.for %{{.*}} = %{{.*}} to %{{.*}} step %[[C1]] {
+// CHECK:               scf.for %{{.*}} = %[[C0]] to %{{.*}} step %[[C1]] {
+// CHECK:                 %[[WLD:.*]] = memref.load %[[W]]
+// CHECK:                 memref.store %[[WLD]], %[[SV]]
+// CHECK:           scf.for %{{.*}} = %[[C0]] to %[[UB0]] step %[[C1]] {
+// CHECK:             %[[RSV:.*]] = memref.subview %[[ALLOC]][%{{.*}}, 0, 0] [1, 1, 8] [1, 1, 1] : memref<?x1x8xf32> to memref<1x8xf32, strided<[8, 1], offset: ?>>
+// CHECK:             scf.for %{{.*}} = %[[C0]] to %[[UB1]] step %[[C1]] {
+// CHECK:               %[[RREM:.*]] = arith.remsi %{{.*}}, %[[C8]] : index
+// CHECK:               memref.load %[[RSV]][%[[C0]], %[[RREM]]] : memref<1x8xf32, strided<[8, 1], offset: ?>>
+// CHECK:           memref.dealloc %[[ALLOC]] : memref<?x1x8xf32>
+// CHECK:           return
+
+// -----
+
+// Aliasing write through a memref.subview inside the loop prevents loop-invariant caching.
+func.func private @subview_alias_no_cache(%ub0: index, %ub1: index, %x: memref<?x?xf32> {llvm.noalias}, %y: memref<?x?xf32> {llvm.noalias}) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c4 = arith.constant 4 : index
+  %c8 = arith.constant 8 : index
+  %zero = arith.constant 0.0 : f32
+  %buf = memref.alloc() : memref<8xf32>
+  %sv = memref.subview %buf[2] [4] [1] : memref<8xf32> to memref<4xf32, strided<[1], offset: 2>>
+
+  scf.for %iv = %c0 to %ub0 step %c1 {
+    scf.for %jv = %c0 to %ub1 step %c1 {
+      %xval = memref.load %x[%iv, %jv] : memref<?x?xf32>
+      %idx = arith.remsi %jv, %c8 : index
+      %bval = memref.load %buf[%idx] : memref<8xf32>
+      %mul = arith.mulf %bval, %xval : f32
+      memref.store %mul, %y[%iv, %jv] : memref<?x?xf32>
+      %sidx = arith.remsi %jv, %c4 : index
+      memref.store %zero, %sv[%sidx] : memref<4xf32, strided<[1], offset: 2>>
+    }
+  }
+  memref.dealloc %buf : memref<8xf32>
+  return
+}
+
+func.func @dsubview_alias_no_cache(%ub0: index, %ub1: index, %x: memref<?x?xf32>, %dx: memref<?x?xf32>, %y: memref<?x?xf32>, %dy: memref<?x?xf32>) {
+  enzyme.autodiff @subview_alias_no_cache(%ub0, %ub1, %x, %dx, %y, %dy) <{
+    activity = [#enzyme.activity<enzyme_const>, #enzyme.activity<enzyme_const>, #enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_dup>],
+    ret_activity = []
+  }> : (index, index, memref<?x?xf32>, memref<?x?xf32>, memref<?x?xf32>, memref<?x?xf32>) -> ()
+  return
+}
+
+// CHECK-LABEL:   func.func private @diffesubview_alias_no_cache(
+// CHECK-NOT:       memref<?x8xf32>
+// CHECK:           %[[CACHE_ALIAS:.*]] = memref.alloc(%{{.*}}, %{{.*}}) : memref<?x?xf32>
+// CHECK:           memref.dealloc %[[CACHE_ALIAS]] : memref<?x?xf32>
+// CHECK:           return
