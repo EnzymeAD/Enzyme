@@ -2354,10 +2354,1561 @@ classifyAtomicModifyOp(llvm::Function *op, unsigned &opArgNo, llvm::Type *&FT) {
   return AtomicRMWInst::BAD_BINOP;
 }
 
+static bool isKokkosThreadsStaticForTask(Function *Task) {
+  if (!Task || Task->empty() || Task->getFunctionType()->getNumParams() != 2)
+    return false;
+  if (Task->getName().contains("10TeamPolicy"))
+    return false;
+  const DataLayout &DL = Task->getParent()->getDataLayout();
+  for (BasicBlock &BB : *Task) {
+    for (Instruction &I : BB) {
+      if (isa<AtomicCmpXchgInst>(&I))
+        return false;
+      if (auto *CB = dyn_cast<CallBase>(&I)) {
+        StringRef cn = getFuncNameFromCall(CB);
+        if (enzyme_kokkos::mayBeKokkosRelevantSymbol(cn)) {
+          std::string nd = ENZYME_KOKKOS_DEMANGLE(cn);
+          if (enzyme_kokkos::isKokkosThreadsGetThread(cn, nd) ||
+              enzyme_kokkos::isKokkosThreadsResizeScratch(cn, nd) ||
+              enzyme_kokkos::isKokkosThreadsRootReduceScratch(cn, nd) ||
+              nd.find("get_work_index") != std::string::npos ||
+              nd.find("barrier") != std::string::npos)
+            return false;
+        }
+      }
+    }
+  }
+  Argument *InstArg = Task->getArg(0);
+  SmallVector<Value *, 16> Worklist = {InstArg};
+  SmallPtrSet<Value *, 16> Visited;
+  while (!Worklist.empty()) {
+    Value *V = Worklist.pop_back_val();
+    if (!Visited.insert(V).second)
+      continue;
+    for (Use &U : V->uses()) {
+      User *Usr = U.getUser();
+      if (auto *BC = dyn_cast<BitCastInst>(Usr)) {
+        Worklist.push_back(BC);
+        continue;
+      }
+      if (auto *GEP = dyn_cast<GetElementPtrInst>(Usr)) {
+        APInt Offset(DL.getIndexTypeSizeInBits(GEP->getType()), 0);
+        if (!GEP->accumulateConstantOffset(DL, Offset))
+          return false;
+        int64_t Off = Offset.getSExtValue();
+        // Static ParallelFor only touches m_pool_base (0) and
+        // m_pool_rank..m_pool_state (32..48). Scratch (8..24) or dynamic
+        // work-stealing/team fields (>= 52) require single-thread scratch path.
+        if ((Off >= 8 && Off < 32) || Off >= 52 || Off < 0)
+          return false;
+        Worklist.push_back(GEP);
+        continue;
+      }
+      if (isa<LoadInst>(Usr))
+        continue;
+      return false;
+    }
+  }
+  return true;
+}
+
+static GlobalVariable *
+getOrCreateKokkosInternalPtrGlobal(Module &M, StringRef Name, Type *ValTy,
+                                   bool WithShadow = false) {
+  GlobalVariable *GV = M.getGlobalVariable(Name, /*AllowInternal*/ true);
+  if (!GV) {
+    GV = new GlobalVariable(M, ValTy, /*isConstant*/ false,
+                            GlobalValue::InternalLinkage,
+                            Constant::getNullValue(ValTy), Name);
+  }
+  if (WithShadow && !hasMetadata(GV, "enzyme_shadow")) {
+    std::string ShadowName = (Name + "_shadow").str();
+    GlobalVariable *SGV =
+        M.getGlobalVariable(ShadowName, /*AllowInternal*/ true);
+    if (!SGV) {
+      SGV = new GlobalVariable(M, ValTy, /*isConstant*/ false,
+                               GlobalValue::InternalLinkage,
+                               Constant::getNullValue(ValTy), ShadowName);
+    }
+    GV->setMetadata(
+        "enzyme_shadow",
+        MDTuple::get(M.getContext(), {ConstantAsMetadata::get(SGV)}));
+  }
+  return GV;
+}
+
+static void markKokkosInternalHelper(Function *F) {
+  F->addFnAttr(Attribute::NoUnwind);
+  F->addFnAttr(Attribute::NoFree);
+  F->addFnAttr("enzyme_inactive");
+  F->addFnAttr("enzyme_ta_norecur");
+}
+
+static void emitKokkosThreadsFanIn(IRBuilder<> &B, Value *InstPtr) {
+  LLVMContext &Ctx = B.getContext();
+  Type *I8 = Type::getInt8Ty(Ctx);
+  Type *I32 = Type::getInt32Ty(Ctx);
+  Type *PtrTy = getUnqual(I8);
+  Function *F = B.GetInsertBlock()->getParent();
+
+  Value *PoolBase = B.CreateLoad(getUnqual(PtrTy), InstPtr, "kokkos.pool_base");
+  Value *PoolRank = B.CreateLoad(
+      I32, B.CreateConstInBoundsGEP1_64(I8, InstPtr, 32), "kokkos.pool_rank");
+  Value *PoolSize = B.CreateLoad(
+      I32, B.CreateConstInBoundsGEP1_64(I8, InstPtr, 40), "kokkos.pool_size");
+  Value *FanSize = B.CreateLoad(
+      I32, B.CreateConstInBoundsGEP1_64(I8, InstPtr, 44), "kokkos.fan_size");
+  Value *RevRank = B.CreateSub(
+      PoolSize, B.CreateAdd(PoolRank, ConstantInt::get(I32, 1)), "rev_rank");
+
+  BasicBlock *PreBB = B.GetInsertBlock();
+  BasicBlock *CondBB = BasicBlock::Create(Ctx, "fan_in.cond", F);
+  BasicBlock *SpinHeaderBB = BasicBlock::Create(Ctx, "fan_in.spin.hdr", F);
+  BasicBlock *SpinLatchBB = BasicBlock::Create(Ctx, "fan_in.spin", F);
+  BasicBlock *NextBB = BasicBlock::Create(Ctx, "fan_in.next", F);
+  BasicBlock *ExitBB = BasicBlock::Create(Ctx, "fan_in.exit", F);
+
+  B.CreateBr(CondBB);
+
+  B.SetInsertPoint(CondBB);
+  PHINode *Idx = B.CreatePHI(I32, 2, "fan_in.i");
+  Idx->addIncoming(ConstantInt::get(I32, 0), PreBB);
+  Value *HasMore = B.CreateICmpSLT(Idx, FanSize);
+  B.CreateCondBr(HasMore, SpinHeaderBB, ExitBB);
+
+  B.SetInsertPoint(SpinHeaderBB);
+  Value *ChildIdx =
+      B.CreateAdd(RevRank, B.CreateShl(ConstantInt::get(I32, 1), Idx));
+  Value *ChildPtrAddr = B.CreateInBoundsGEP(PtrTy, PoolBase, ChildIdx);
+  Value *ChildPtr = B.CreateLoad(PtrTy, ChildPtrAddr, "fan_in.child");
+  Value *ChildStatePtr = B.CreateConstInBoundsGEP1_64(I8, ChildPtr, 48);
+  B.CreateBr(SpinLatchBB);
+
+  B.SetInsertPoint(SpinLatchBB);
+  LoadInst *State = B.CreateLoad(I32, ChildStatePtr, /*isVolatile*/ true);
+  State->setAlignment(Align(4));
+  State->setOrdering(AtomicOrdering::Acquire);
+  // ThreadState::Active == 2
+  Value *StillActive = B.CreateICmpEQ(State, ConstantInt::get(I32, 2));
+  B.CreateCondBr(StillActive, SpinLatchBB, NextBB);
+
+  B.SetInsertPoint(NextBB);
+  Value *NextIdx = B.CreateAdd(Idx, ConstantInt::get(I32, 1));
+  Idx->addIncoming(NextIdx, NextBB);
+  B.CreateBr(CondBB);
+
+  B.SetInsertPoint(ExitBB);
+  B.CreateFence(AtomicOrdering::SequentiallyConsistent);
+}
+
+/// The IR type of the tape value produced by the augmented primal \p SubData
+/// (the element of its return struct at the tape index). `tapeType` is only
+/// recorded by EnzymeLogic for recursive / OpenMP augmentations.
+static Type *kokkosSubTapeValueType(const AugmentedReturn *SubData) {
+  auto found = SubData->returns.find(AugmentedStruct::Tape);
+  if (found == SubData->returns.end())
+    return nullptr;
+  Type *RetTy = SubData->fn->getReturnType();
+  if (found->second == -1)
+    return RetTy;
+  return cast<StructType>(RetTy)->getElementType(found->second);
+}
+
+/// If \p Task is a `Kokkos::TeamPolicy<..., Kokkos::Threads>` kernel, returns
+/// the byte offset of `TeamPolicyInternal<Kokkos::Threads, ...> m_policy`
+/// inside `Task`'s closure parameter (`arg 1`), or `-1` if \p Task is not a
+/// TeamPolicy kernel. Solo-thread AD execution has `m_pool_size == 1`, so
+/// `m_team_size` and `m_team_alloc` in the closure's `m_policy` copy must be
+/// clamped to `1` (otherwise `pool_size / team_alloc == 0` marks the solo
+/// thread invalid on hyperthreaded or multi-thread-per-team configurations).
+static int64_t findKokkosThreadsTeamPolicyOffset(Function *Task) {
+  if (!Task || Task->empty() || Task->arg_size() < 2 ||
+      !Task->getName().contains("10TeamPolicy"))
+    return -1;
+  const DataLayout &DL = Task->getParent()->getDataLayout();
+  Argument *ClosureArg = Task->getArg(1);
+
+  auto isClosureArgBase = [&](Value *Base) -> bool {
+    Base = Base->stripPointerCasts();
+    if (Base == ClosureArg)
+      return true;
+    if (auto *LI = dyn_cast<LoadInst>(Base)) {
+      Value *Ptr = LI->getPointerOperand()->stripPointerCasts();
+      if (auto *AI = dyn_cast<AllocaInst>(Ptr)) {
+        for (User *U : AI->users()) {
+          if (auto *SI = dyn_cast<StoreInst>(U)) {
+            if (SI->getPointerOperand()->stripPointerCasts() == AI &&
+                SI->getValueOperand()->stripPointerCasts() == ClosureArg)
+              return true;
+          }
+        }
+      }
+    }
+    return false;
+  };
+
+  for (BasicBlock &BB : *Task) {
+    for (Instruction &I : BB) {
+      if (auto *CB = dyn_cast<CallBase>(&I)) {
+        StringRef cn = getFuncNameFromCall(CB);
+        if (cn.contains("21ThreadsExecTeamMemberC") && CB->arg_size() >= 3) {
+          Value *TeamArg = CB->getArgOperand(2);
+          if (TeamArg->getType()->isPointerTy()) {
+            APInt Off(DL.getIndexTypeSizeInBits(TeamArg->getType()), 0);
+            Value *Base = TeamArg->stripAndAccumulateConstantOffsets(
+                DL, Off, /*AllowNonInbounds=*/true);
+            if (isClosureArgBase(Base) && Off.getSExtValue() >= 0)
+              return Off.getSExtValue();
+          }
+        }
+      }
+    }
+  }
+
+  // Fallback when ThreadsExecTeamMember's constructor was inlined into Task:
+  // `m_instance->pool_size() / team.team_alloc()` divides by the i32 loaded at
+  // `m_policy + 8`.
+  for (BasicBlock &BB : *Task) {
+    for (Instruction &I : BB) {
+      if (I.getOpcode() == Instruction::UDiv ||
+          I.getOpcode() == Instruction::URem ||
+          I.getOpcode() == Instruction::SDiv ||
+          I.getOpcode() == Instruction::SRem) {
+        Value *Divisor = I.getOperand(1);
+        while (isa<ZExtInst>(Divisor) || isa<SExtInst>(Divisor))
+          Divisor = cast<Instruction>(Divisor)->getOperand(0);
+        if (auto *LI = dyn_cast<LoadInst>(Divisor)) {
+          if (LI->getType()->isIntegerTy(32)) {
+            Value *LPtr = LI->getPointerOperand();
+            APInt Off(DL.getIndexTypeSizeInBits(LPtr->getType()), 0);
+            Value *Base = LPtr->stripAndAccumulateConstantOffsets(
+                DL, Off, /*AllowNonInbounds=*/true);
+            if (isClosureArgBase(Base) && Off.getSExtValue() >= 8)
+              return Off.getSExtValue() - 8;
+          }
+        }
+      }
+    }
+  }
+  return -1;
+}
+
+void AdjointGenerator::visitKokkosThreadsCall(CallInst &call) {
+  Function *StartFn = call.getCalledFunction();
+  LLVMContext &Ctx = call.getContext();
+  Module &M = *gutils->newFunc->getParent();
+  Type *VoidTy = Type::getVoidTy(Ctx);
+  Type *I8 = Type::getInt8Ty(Ctx);
+  Type *I32 = Type::getInt32Ty(Ctx);
+  Type *I64 = Type::getInt64Ty(Ctx);
+  Type *PtrTy = getUnqual(I8);
+
+  CallInst *const newCall = cast<CallInst>(gutils->getNewFromOriginal(&call));
+  IRBuilder<> BuilderZ(newCall);
+  BuilderZ.setFastMathFlags(getFast());
+
+  Function *Task =
+      dyn_cast<Function>(call.getArgOperand(0)->stripPointerCasts());
+  if (!Task || Task->empty()) {
+    EmitNoDerivativeError(
+        "Could not resolve body of Kokkos::Impl::ThreadsInternal::start task",
+        call, gutils, BuilderZ);
+    return;
+  }
+
+  bool subsequent_calls_may_write = false;
+  bool TaskOverwritten1 = false;
+  if (Mode != DerivativeMode::ForwardMode &&
+      Mode != DerivativeMode::ForwardModeError) {
+    auto found_ow = overwritten_args_map.find(&call);
+    assert(found_ow != overwritten_args_map.end() &&
+           "Missing overwritten_args entry for Kokkos::Threads call");
+    subsequent_calls_may_write = found_ow->second.first;
+    if (found_ow->second.second.size() >= 2)
+      TaskOverwritten1 = found_ow->second.second[1];
+  }
+
+  Value *OrigClosure = call.getArgOperand(1);
+  DIFFE_TYPE ClosureTy =
+      gutils->getDiffeType(OrigClosure, /*foreignFunction*/ false);
+
+  bool ClosureNoWriteShadow = false;
+  if (ClosureTy == DIFFE_TYPE::DUP_ARG || ClosureTy == DIFFE_TYPE::DUP_NONEED) {
+    Value *BaseOp = getBaseObject(OrigClosure);
+    if (auto *Arg = dyn_cast<Argument>(BaseOp)) {
+      if (Arg->getArgNo() < gutils->nowrite_shadows.size() &&
+          gutils->nowrite_shadows[Arg->getArgNo()])
+        ClosureNoWriteShadow = true;
+    }
+  }
+
+  FnTypeInfo NextTypeInfo(Task);
+  {
+    TypeTree InstTT;
+    InstTT.insert({-1}, BaseType::Pointer);
+    InstTT.insert({-1, 0}, BaseType::Pointer);
+    InstTT.insert({-1, 8}, BaseType::Pointer);
+    for (int off = 16; off < 96; ++off)
+      InstTT.insert({-1, off}, BaseType::Integer);
+    auto argIt = Task->arg_begin();
+    Argument *InstParam = &*argIt++;
+    Argument *ClosureParam = &*argIt;
+    NextTypeInfo.Arguments.insert({InstParam, InstTT});
+    NextTypeInfo.KnownValues.insert({InstParam, {}});
+    NextTypeInfo.Arguments.insert({ClosureParam, TR.query(OrigClosure)});
+    NextTypeInfo.KnownValues.insert(
+        {ClosureParam, TR.knownIntegralValues(OrigClosure)});
+    NextTypeInfo.Return = TypeTree();
+  }
+
+  FunctionCallee InternalFence = M.getOrInsertFunction(
+      "_ZN6Kokkos4Impl15ThreadsInternal14internal_fenceEv",
+      FunctionType::get(VoidTy, {}, false));
+
+  bool UseParallel =
+      isKokkosThreadsStaticForTask(Task) && gutils->getWidth() == 1;
+
+  if (UseParallel) {
+    std::vector<DIFFE_TYPE> ArgsInverted = {DIFFE_TYPE::CONSTANT, ClosureTy};
+    FunctionType *WorkerFT =
+        StartFn->getFunctionType()->getParamType(0)->isPointerTy()
+            ? Task->getFunctionType()
+            : FunctionType::get(VoidTy, {PtrTy, PtrTy}, false);
+
+    if (Mode == DerivativeMode::ForwardMode ||
+        Mode == DerivativeMode::ForwardModeError) {
+      Function *FwdTask = gutils->Logic.CreateForwardDiff(
+          RequestContext(&call, &BuilderZ), Task, DIFFE_TYPE::CONSTANT,
+          ArgsInverted, TR.analyzer->interprocedural, /*returnValue*/ false,
+          Mode, /*freeMemory*/ true, gutils->runtimeActivity,
+          gutils->strongZero, gutils->getWidth(), /*additionalArg*/ nullptr,
+          NextTypeInfo, false, {false, false}, nullptr, /*omp*/ false);
+
+      Value *NewClosure = gutils->getNewFromOriginal(OrigClosure);
+      Value *DClosure = (ClosureTy == DIFFE_TYPE::DUP_ARG ||
+                         ClosureTy == DIFFE_TYPE::DUP_NONEED)
+                            ? gutils->invertPointerM(OrigClosure, BuilderZ)
+                            : nullptr;
+      SmallVector<Type *, 2> PackTys = {NewClosure->getType()};
+      if (DClosure)
+        PackTys.push_back(DClosure->getType());
+      StructType *PackST = StructType::get(Ctx, PackTys);
+      AllocaInst *Pack =
+          IRBuilder<>(gutils->inversionAllocs).CreateAlloca(PackST);
+      BuilderZ.CreateStore(NewClosure,
+                           BuilderZ.CreateStructGEP(PackST, Pack, 0));
+      if (DClosure)
+        BuilderZ.CreateStore(DClosure,
+                             BuilderZ.CreateStructGEP(PackST, Pack, 1));
+
+      Function *Wrapper =
+          Function::Create(WorkerFT, GlobalValue::InternalLinkage,
+                           Task->getName() + ".kokkos_threads_fwd", &M);
+      BasicBlock *Entry = BasicBlock::Create(Ctx, "entry", Wrapper);
+      IRBuilder<> WB(Entry);
+      Value *WInst = Wrapper->getArg(0);
+      Value *WPack = Wrapper->getArg(1);
+      SmallVector<Value *, 3> SubArgs = {
+          WB.CreatePointerCast(WInst,
+                               FwdTask->getFunctionType()->getParamType(0)),
+          WB.CreateLoad(NewClosure->getType(),
+                        WB.CreateStructGEP(PackST, WPack, 0))};
+      if (DClosure)
+        SubArgs.push_back(WB.CreateLoad(DClosure->getType(),
+                                        WB.CreateStructGEP(PackST, WPack, 1)));
+      WB.CreateCall(FwdTask, SubArgs);
+      WB.CreateRetVoid();
+
+      Value *StartArgs[] = {
+          BuilderZ.CreatePointerCast(
+              Wrapper, StartFn->getFunctionType()->getParamType(0)),
+          BuilderZ.CreatePointerCast(
+              Pack, StartFn->getFunctionType()->getParamType(1))};
+      CallInst *FwdCall =
+          BuilderZ.CreateCall(StartFn->getFunctionType(), StartFn, StartArgs);
+      FwdCall->setCallingConv(call.getCallingConv());
+      FwdCall->setDebugLoc(gutils->getNewFromOriginal(call.getDebugLoc()));
+      gutils->erase(newCall);
+      return;
+    }
+
+    const AugmentedReturn *SubData = nullptr;
+    if (Mode == DerivativeMode::ReverseModeGradient) {
+      assert(augmentedReturn &&
+             "Expected augmentedReturn in ReverseModeGradient");
+      auto fd = augmentedReturn->subaugmentations.find(&call);
+      if (fd != augmentedReturn->subaugmentations.end())
+        SubData = fd->second;
+    }
+
+    Value *TapeBufPtr = nullptr;
+    if (Mode == DerivativeMode::ReverseModePrimal ||
+        Mode == DerivativeMode::ReverseModeCombined) {
+      SubData = &gutils->Logic.CreateAugmentedPrimal(
+          RequestContext(&call, &BuilderZ), Task, DIFFE_TYPE::CONSTANT,
+          ArgsInverted, TR.analyzer->interprocedural, /*returnUsed*/ false,
+          /*shadowReturnUsed*/ false, NextTypeInfo, subsequent_calls_may_write,
+          {false, TaskOverwritten1}, {false, ClosureNoWriteShadow},
+          /*forceAnonymousTape*/ false, gutils->runtimeActivity,
+          gutils->strongZero, gutils->getWidth(),
+          /*AtomicAdd*/ true, /*omp*/ false);
+      if (Mode == DerivativeMode::ReverseModePrimal) {
+        auto *subaug =
+            (std::map<const CallInst *, AugmentedReturn *> *)&augmentedReturn
+                ->subaugmentations;
+        insert_or_assign2<const CallInst *, AugmentedReturn *>(
+            *subaug, &call, (AugmentedReturn *)SubData);
+      }
+
+      bool HasTape = SubData->returns.find(AugmentedStruct::Tape) !=
+                     SubData->returns.end();
+      Type *ClosureIRTy = gutils->getNewFromOriginal(OrigClosure)->getType();
+      Value *NewClosure = gutils->getNewFromOriginal(OrigClosure);
+      Value *DClosure = (ClosureTy == DIFFE_TYPE::DUP_ARG ||
+                         ClosureTy == DIFFE_TYPE::DUP_NONEED)
+                            ? gutils->invertPointerM(OrigClosure, BuilderZ)
+                            : nullptr;
+
+      if (HasTape) {
+        uint64_t ElemBytes =
+            std::max<uint64_t>(1, (M.getDataLayout().getTypeAllocSize(
+                                      kokkosSubTapeValueType(SubData))));
+        FunctionCallee CallocFn = M.getOrInsertFunction(
+            "calloc", FunctionType::get(PtrTy, {I64, I64}, false));
+        // ThreadsInternal::MAX_THREAD_COUNT is <= 4096
+        TapeBufPtr = BuilderZ.CreateCall(
+            CallocFn,
+            {ConstantInt::get(I64, 4096), ConstantInt::get(I64, ElemBytes)},
+            "kokkos.threads_tapes");
+        gutils->cacheForReverse(BuilderZ, TapeBufPtr,
+                                getIndex(&call, CacheType::Tape, BuilderZ));
+      }
+
+      SmallVector<Type *, 3> PackTys = {ClosureIRTy};
+      if (DClosure)
+        PackTys.push_back(DClosure->getType());
+      if (HasTape)
+        PackTys.push_back(PtrTy);
+      StructType *PackST = StructType::get(Ctx, PackTys);
+      AllocaInst *Pack =
+          IRBuilder<>(gutils->inversionAllocs).CreateAlloca(PackST);
+      unsigned fi = 0;
+      BuilderZ.CreateStore(NewClosure,
+                           BuilderZ.CreateStructGEP(PackST, Pack, fi++));
+      if (DClosure)
+        BuilderZ.CreateStore(DClosure,
+                             BuilderZ.CreateStructGEP(PackST, Pack, fi++));
+      if (HasTape)
+        BuilderZ.CreateStore(TapeBufPtr,
+                             BuilderZ.CreateStructGEP(PackST, Pack, fi++));
+
+      Function *AugWrapper =
+          Function::Create(WorkerFT, GlobalValue::InternalLinkage,
+                           Task->getName() + ".kokkos_threads_aug", &M);
+      BasicBlock *Entry = BasicBlock::Create(Ctx, "entry", AugWrapper);
+      IRBuilder<> WB(Entry);
+      Value *WInst = AugWrapper->getArg(0);
+      Value *WPack = AugWrapper->getArg(1);
+      unsigned wfi = 0;
+      SmallVector<Value *, 3> SubArgs = {
+          WB.CreatePointerCast(WInst,
+                               SubData->fn->getFunctionType()->getParamType(0)),
+          WB.CreateLoad(ClosureIRTy, WB.CreateStructGEP(PackST, WPack, wfi++))};
+      if (DClosure)
+        SubArgs.push_back(WB.CreateLoad(
+            DClosure->getType(), WB.CreateStructGEP(PackST, WPack, wfi++)));
+      CallInst *AugRes = WB.CreateCall(SubData->fn, SubArgs);
+      if (HasTape) {
+        Value *WTapeArr =
+            WB.CreateLoad(PtrTy, WB.CreateStructGEP(PackST, WPack, wfi++));
+        int TapeIdx = SubData->returns.find(AugmentedStruct::Tape)->second;
+        Value *TapeVal =
+            (TapeIdx == -1)
+                ? (Value *)AugRes
+                : WB.CreateExtractValue(AugRes, {(unsigned)TapeIdx});
+        Value *Rank = WB.CreateLoad(
+            I32, WB.CreateConstInBoundsGEP1_64(I8, WInst, 32), "pool_rank");
+        Value *Slot = WB.CreateInBoundsGEP(kokkosSubTapeValueType(SubData),
+                                           WTapeArr, Rank);
+        WB.CreateStore(TapeVal, Slot);
+      }
+      WB.CreateRetVoid();
+
+      Value *StartArgs[] = {
+          BuilderZ.CreatePointerCast(
+              AugWrapper, StartFn->getFunctionType()->getParamType(0)),
+          BuilderZ.CreatePointerCast(
+              Pack, StartFn->getFunctionType()->getParamType(1))};
+      CallInst *AugStart =
+          BuilderZ.CreateCall(StartFn->getFunctionType(), StartFn, StartArgs);
+      AugStart->setCallingConv(call.getCallingConv());
+      AugStart->setDebugLoc(gutils->getNewFromOriginal(call.getDebugLoc()));
+      gutils->erase(newCall);
+    }
+
+    if (Mode == DerivativeMode::ReverseModeGradient ||
+        Mode == DerivativeMode::ReverseModeCombined) {
+      IRBuilder<> Builder2(&call);
+      getReverseBuilder(Builder2);
+
+      assert(SubData && "Expected SubData for Kokkos::Threads reverse pass");
+      bool HasTape = SubData->returns.find(AugmentedStruct::Tape) !=
+                     SubData->returns.end();
+      if (HasTape) {
+        if (Mode == DerivativeMode::ReverseModeGradient) {
+          // The placeholder must be created while BuilderZ (positioned at
+          // the primal call) is still valid, i.e. before the primal call is
+          // erased below.
+#if LLVM_VERSION_MAJOR >= 18
+          auto It = BuilderZ.GetInsertPoint();
+          It.setHeadBit(true);
+          BuilderZ.SetInsertPoint(It);
+#endif
+          PHINode *PN = BuilderZ.CreatePHI(PtrTy, 0, "kokkos_tapes_phi");
+          TapeBufPtr = gutils->cacheForReverse(
+              BuilderZ, PN, getIndex(&call, CacheType::Tape, BuilderZ),
+              /*ignoreType*/ true);
+        }
+        TapeBufPtr = lookup(TapeBufPtr, Builder2);
+      }
+      if (Mode == DerivativeMode::ReverseModeGradient)
+        eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+
+      std::vector<DIFFE_TYPE> RevArgsInverted = ArgsInverted;
+      for (size_t i = 0; i < RevArgsInverted.size(); ++i) {
+        if (SubData->constant_args[i] != RevArgsInverted[i])
+          RevArgsInverted[i] = SubData->constant_args[i];
+      }
+
+      Function *RevTask = gutils->Logic.CreatePrimalAndGradient(
+          RequestContext(&call, &Builder2),
+          (ReverseCacheKey){
+              .todiff = Task,
+              .retType = DIFFE_TYPE::CONSTANT,
+              .constant_args = RevArgsInverted,
+              .subsequent_calls_may_write = subsequent_calls_may_write,
+              .overwritten_args = {false, TaskOverwritten1},
+              .returnUsed = false,
+              .shadowReturnUsed = false,
+              .mode = DerivativeMode::ReverseModeGradient,
+              .width = gutils->getWidth(),
+              .freeMemory = true,
+              .AtomicAdd = true,
+              .additionalType =
+                  HasTape
+                      ? (SubData->tapeType ? SubData->tapeType
+                                           : kokkosSubTapeValueType(SubData))
+                      : nullptr,
+              .forceAnonymousTape = false,
+              .typeInfo = NextTypeInfo,
+              .runtimeActivity = gutils->runtimeActivity,
+              .strongZero = gutils->strongZero},
+          TR.analyzer->interprocedural, SubData, /*omp*/ false);
+
+      Value *RevClosure =
+          lookup(gutils->getNewFromOriginal(OrigClosure), Builder2);
+      Value *RevDClosure =
+          (RevArgsInverted[1] == DIFFE_TYPE::DUP_ARG ||
+           RevArgsInverted[1] == DIFFE_TYPE::DUP_NONEED)
+              ? lookup(gutils->invertPointerM(OrigClosure, Builder2), Builder2)
+              : nullptr;
+
+      SmallVector<Type *, 3> PackTys = {RevClosure->getType()};
+      if (RevDClosure)
+        PackTys.push_back(RevDClosure->getType());
+      if (HasTape)
+        PackTys.push_back(PtrTy);
+      StructType *PackST = StructType::get(Ctx, PackTys);
+      AllocaInst *Pack =
+          IRBuilder<>(gutils->inversionAllocs).CreateAlloca(PackST);
+      unsigned fi = 0;
+      Builder2.CreateStore(RevClosure,
+                           Builder2.CreateStructGEP(PackST, Pack, fi++));
+      if (RevDClosure)
+        Builder2.CreateStore(RevDClosure,
+                             Builder2.CreateStructGEP(PackST, Pack, fi++));
+      if (HasTape)
+        Builder2.CreateStore(TapeBufPtr,
+                             Builder2.CreateStructGEP(PackST, Pack, fi++));
+
+      Function *RevWrapper =
+          Function::Create(WorkerFT, GlobalValue::InternalLinkage,
+                           Task->getName() + ".kokkos_threads_rev", &M);
+      BasicBlock *Entry = BasicBlock::Create(Ctx, "entry", RevWrapper);
+      IRBuilder<> WB(Entry);
+      Value *WInst = RevWrapper->getArg(0);
+      Value *WPack = RevWrapper->getArg(1);
+      unsigned wfi = 0;
+      SmallVector<Value *, 4> SubArgs = {
+          WB.CreatePointerCast(WInst,
+                               RevTask->getFunctionType()->getParamType(0)),
+          WB.CreateLoad(RevClosure->getType(),
+                        WB.CreateStructGEP(PackST, WPack, wfi++))};
+      if (RevDClosure)
+        SubArgs.push_back(WB.CreateLoad(
+            RevDClosure->getType(), WB.CreateStructGEP(PackST, WPack, wfi++)));
+      if (HasTape) {
+        Value *WTapeArr =
+            WB.CreateLoad(PtrTy, WB.CreateStructGEP(PackST, WPack, wfi++));
+        Value *Rank = WB.CreateLoad(
+            I32, WB.CreateConstInBoundsGEP1_64(I8, WInst, 32), "pool_rank");
+        Value *Slot = WB.CreateInBoundsGEP(kokkosSubTapeValueType(SubData),
+                                           WTapeArr, Rank);
+        SubArgs.push_back(WB.CreateLoad(kokkosSubTapeValueType(SubData), Slot));
+      }
+      WB.CreateCall(RevTask, SubArgs);
+      emitKokkosThreadsFanIn(WB, WInst);
+      WB.CreateRetVoid();
+
+      Value *StartArgs[] = {
+          Builder2.CreatePointerCast(
+              RevWrapper, StartFn->getFunctionType()->getParamType(0)),
+          Builder2.CreatePointerCast(
+              Pack, StartFn->getFunctionType()->getParamType(1))};
+      CallInst *RevStart =
+          Builder2.CreateCall(StartFn->getFunctionType(), StartFn, StartArgs);
+      RevStart->setCallingConv(call.getCallingConv());
+      RevStart->setDebugLoc(gutils->getNewFromOriginal(call.getDebugLoc()));
+      Builder2.CreateCall(InternalFence);
+
+      if (HasTape && shouldFree()) {
+        FunctionCallee FreeFn = M.getOrInsertFunction(
+            "free", FunctionType::get(VoidTy, {PtrTy}, false));
+        Builder2.CreateCall(FreeFn, {TapeBufPtr});
+      }
+    }
+    return;
+  }
+
+  // Single-thread scratch-shadowed execution path for ParallelReduce,
+  // ParallelScan, TeamPolicy, Dynamic schedule, and vector-mode AD:
+  // Executes Task on the master thread with a 16-byte aligned solo
+  // ThreadsInternal (m_pool_size = 1, m_pool_fan_size = 0) and shadow
+  // ThreadsInternal whose m_scratch points to
+  // @__enzyme_kokkos_threads_d_scratch.
+  bool IsFwdMode = Mode == DerivativeMode::ForwardMode ||
+                   Mode == DerivativeMode::ForwardModeError ||
+                   Mode == DerivativeMode::ForwardModeSplit;
+  unsigned Width = gutils->getWidth();
+  Type *ActiveDInstStorageTy =
+      Width == 1 ? (Type *)PtrTy : (Type *)ArrayType::get(PtrTy, Width);
+  std::string ActiveDInstGVName =
+      Width == 1 ? "__enzyme_kokkos_threads_d_inst"
+                 : ("__enzyme_kokkos_threads_d_inst_" + std::to_string(Width));
+  GlobalVariable *DScratchGV = getOrCreateKokkosInternalPtrGlobal(
+      M,
+      IsFwdMode ? "__enzyme_kokkos_threads_fwd_d_scratch"
+                : "__enzyme_kokkos_threads_rev_d_scratch",
+      PtrTy, /*WithShadow*/ !IsFwdMode && Width == 1);
+  GlobalVariable *ActiveInstGV = getOrCreateKokkosInternalPtrGlobal(
+      M, "__enzyme_kokkos_threads_active_inst", PtrTy);
+  GlobalVariable *ActiveDInstGV = getOrCreateKokkosInternalPtrGlobal(
+      M, ActiveDInstGVName, ActiveDInstStorageTy,
+      /*WithShadow*/ Width == 1);
+
+  FunctionCallee RootReduceScratchFn = M.getOrInsertFunction(
+      "_ZN6Kokkos4Impl15ThreadsInternal19root_reduce_scratchEv",
+      FunctionType::get(PtrTy, {}, false));
+  FunctionCallee GetThreadFn =
+      M.getOrInsertFunction("_ZN6Kokkos4Impl15ThreadsInternal10get_threadEi",
+                            FunctionType::get(PtrTy, {I32}, false));
+
+  // Helper to populate a 128-byte solo ThreadsInternal buffer.
+  auto initSoloThreadsInstance = [&](IRBuilder<> &B, Value *InstBuf,
+                                     Value *SelfPtrSlot, Value *ScratchPtr,
+                                     Value *ReduceEnd, Value *ThreadEnd) {
+    B.CreateMemSet(InstBuf, ConstantInt::get(I8, 0), 128, Align(8));
+    B.CreateStore(InstBuf, SelfPtrSlot);
+    B.CreateStore(SelfPtrSlot, InstBuf);
+    B.CreateStore(ScratchPtr, B.CreateConstInBoundsGEP1_64(I8, InstBuf, 8));
+    B.CreateStore(ReduceEnd, B.CreateConstInBoundsGEP1_64(I8, InstBuf, 16));
+    B.CreateStore(ThreadEnd, B.CreateConstInBoundsGEP1_64(I8, InstBuf, 24));
+    // m_pool_rank = 0 (32), m_pool_rank_rev = 0 (36), m_pool_size = 1 (40),
+    // m_pool_fan_size = 0 (44), m_pool_state = Active (2) (48)
+    B.CreateStore(ConstantInt::get(I32, 1),
+                  B.CreateConstInBoundsGEP1_64(I8, InstBuf, 40));
+    B.CreateStore(ConstantInt::get(I32, 2),
+                  B.CreateConstInBoundsGEP1_64(I8, InstBuf, 48));
+  };
+
+  std::vector<DIFFE_TYPE> ArgsInverted = {DIFFE_TYPE::DUP_ARG, ClosureTy};
+  ArrayType *InstByteArrTy = ArrayType::get(I8, 128);
+  const int64_t TeamPolicyOffset = findKokkosThreadsTeamPolicyOffset(Task);
+
+  auto clampSoloTeamPolicy = [&](IRBuilder<> &B, Value *ClosureVal) {
+    if (TeamPolicyOffset < 0)
+      return;
+    Value *ClosureBytes = B.CreatePointerCast(ClosureVal, PtrTy);
+    Value *LeagueSz = B.CreateLoad(
+        I32, B.CreateConstInBoundsGEP1_64(I8, ClosureBytes, TeamPolicyOffset));
+    Value *One = ConstantInt::get(I32, 1);
+    B.CreateStore(One, B.CreateConstInBoundsGEP1_64(I8, ClosureBytes,
+                                                    TeamPolicyOffset + 4));
+    B.CreateStore(One, B.CreateConstInBoundsGEP1_64(I8, ClosureBytes,
+                                                    TeamPolicyOffset + 8));
+    Value *TeamIter =
+        B.CreateSelect(B.CreateICmpSGT(LeagueSz, One), LeagueSz, One);
+    B.CreateStore(TeamIter, B.CreateConstInBoundsGEP1_64(
+                                I8, ClosureBytes, TeamPolicyOffset + 12));
+  };
+
+  auto computeLaneScratch = [&](IRBuilder<> &B, Value *Base, Value *ThrEndVal,
+                                unsigned w) -> Value * {
+    if (w == 0)
+      return Base;
+    PointerType *RawPtrTy = cast<PointerType>(PtrTy);
+    Value *NullPtr = ConstantPointerNull::get(RawPtrTy);
+    Value *NonNull = B.CreateICmpNE(Base, NullPtr);
+    Value *Stride = B.CreateAdd(ThrEndVal, ConstantInt::get(I64, 128));
+    Value *Gep = B.CreateInBoundsGEP(
+        I8, Base, B.CreateMul(Stride, ConstantInt::get(I64, w)));
+    return B.CreateSelect(NonNull, Gep, NullPtr);
+  };
+
+  if (Mode == DerivativeMode::ForwardMode ||
+      Mode == DerivativeMode::ForwardModeError) {
+    Function *FwdTask = gutils->Logic.CreateForwardDiff(
+        RequestContext(&call, &BuilderZ), Task, DIFFE_TYPE::CONSTANT,
+        ArgsInverted, TR.analyzer->interprocedural, /*returnValue*/ false, Mode,
+        /*freeMemory*/ true, gutils->runtimeActivity, gutils->strongZero, Width,
+        /*additionalArg*/ nullptr, NextTypeInfo, false, {false, false}, nullptr,
+        /*omp*/ false);
+
+    BuilderZ.CreateCall(InternalFence);
+    Value *Th0 = BuilderZ.CreateCall(GetThreadFn, {ConstantInt::get(I32, 0)});
+    Value *RedEnd = BuilderZ.CreateLoad(
+        I32, BuilderZ.CreateConstInBoundsGEP1_64(I8, Th0, 16));
+    Value *ThrEnd = BuilderZ.CreateLoad(
+        I64, BuilderZ.CreateConstInBoundsGEP1_64(I8, Th0, 24));
+    Value *PScratch = BuilderZ.CreateCall(RootReduceScratchFn, {});
+    Value *DScratchBase = BuilderZ.CreateLoad(PtrTy, DScratchGV);
+
+    IRBuilder<> AllocaB(gutils->inversionAllocs);
+    AllocaInst *PInst = AllocaB.CreateAlloca(InstByteArrTy);
+    PInst->setAlignment(Align(16));
+    AllocaInst *PSelfSlot = AllocaB.CreateAlloca(PtrTy);
+    initSoloThreadsInstance(BuilderZ, PInst, PSelfSlot, PScratch, RedEnd,
+                            ThrEnd);
+
+    Type *Param0Ty = Task->getFunctionType()->getParamType(0);
+    Value *DInstArg = nullptr;
+    for (unsigned w = 0; w < Width; ++w) {
+      AllocaInst *DInst = AllocaB.CreateAlloca(InstByteArrTy);
+      DInst->setAlignment(Align(16));
+      AllocaInst *DSelfSlot = AllocaB.CreateAlloca(PtrTy);
+      Value *LaneScratch =
+          computeLaneScratch(BuilderZ, DScratchBase, ThrEnd, w);
+      initSoloThreadsInstance(BuilderZ, DInst, DSelfSlot, LaneScratch, RedEnd,
+                              ThrEnd);
+      if (Width == 1) {
+        BuilderZ.CreateStore(DInst, ActiveDInstGV);
+      } else {
+        BuilderZ.CreateStore(
+            DInst, BuilderZ.CreateConstInBoundsGEP2_64(ActiveDInstStorageTy,
+                                                       ActiveDInstGV, 0, w));
+      }
+      Value *Casted = BuilderZ.CreatePointerCast(DInst, Param0Ty);
+      if (Width == 1) {
+        DInstArg = Casted;
+      } else {
+        DInstArg = DInstArg
+                       ? BuilderZ.CreateInsertValue(DInstArg, Casted, {w})
+                       : BuilderZ.CreateInsertValue(
+                             UndefValue::get(ArrayType::get(Param0Ty, Width)),
+                             Casted, {w});
+      }
+    }
+
+    BuilderZ.CreateStore(PInst, ActiveInstGV);
+
+    Value *FwdClosure = gutils->getNewFromOriginal(OrigClosure);
+    clampSoloTeamPolicy(BuilderZ, FwdClosure);
+    SmallVector<Value *, 4> SubArgs = {
+        BuilderZ.CreatePointerCast(PInst, Param0Ty), DInstArg, FwdClosure};
+    if (ClosureTy == DIFFE_TYPE::DUP_ARG || ClosureTy == DIFFE_TYPE::DUP_NONEED)
+      SubArgs.push_back(gutils->invertPointerM(OrigClosure, BuilderZ));
+
+    BuilderZ.CreateCall(FwdTask, SubArgs);
+    BuilderZ.CreateStore(ConstantPointerNull::get(cast<PointerType>(PtrTy)),
+                         ActiveInstGV);
+    BuilderZ.CreateStore(Constant::getNullValue(ActiveDInstStorageTy),
+                         ActiveDInstGV);
+    gutils->erase(newCall);
+    return;
+  }
+
+  // ReverseMode (Primal, Combined, Gradient)
+  const AugmentedReturn *SubData = nullptr;
+  if (Mode == DerivativeMode::ReverseModeGradient) {
+    assert(augmentedReturn &&
+           "Expected augmentedReturn in ReverseModeGradient");
+    auto fd = augmentedReturn->subaugmentations.find(&call);
+    if (fd != augmentedReturn->subaugmentations.end())
+      SubData = fd->second;
+  }
+
+  // We cache { solo_inst_buf, d_scratch_ptr, reduce_end_i32, thread_end_i64,
+  // [sub_tape] } so PInst, DInst[w], and their self-pointer slots keep the
+  // exact same live heap addresses across ReverseModePrimal and
+  // ReverseModeGradient.
+  Value *SavedSoloBuf = nullptr;
+  Value *SavedDScratch = nullptr;
+  Value *SavedRedEnd = nullptr;
+  Value *SavedThrEnd = nullptr;
+  Value *SavedSubTape = nullptr;
+
+  if (Mode == DerivativeMode::ReverseModePrimal ||
+      Mode == DerivativeMode::ReverseModeCombined) {
+    SubData = &gutils->Logic.CreateAugmentedPrimal(
+        RequestContext(&call, &BuilderZ), Task, DIFFE_TYPE::CONSTANT,
+        ArgsInverted, TR.analyzer->interprocedural, /*returnUsed*/ false,
+        /*shadowReturnUsed*/ false, NextTypeInfo, subsequent_calls_may_write,
+        {false, TaskOverwritten1}, {false, ClosureNoWriteShadow},
+        /*forceAnonymousTape*/ false, gutils->runtimeActivity,
+        gutils->strongZero, Width,
+        /*AtomicAdd*/ false, /*omp*/ false);
+    if (Mode == DerivativeMode::ReverseModePrimal) {
+      auto *subaug =
+          (std::map<const CallInst *, AugmentedReturn *> *)&augmentedReturn
+              ->subaugmentations;
+      insert_or_assign2<const CallInst *, AugmentedReturn *>(
+          *subaug, &call, (AugmentedReturn *)SubData);
+    }
+
+    BuilderZ.CreateCall(InternalFence);
+    Value *Th0 = BuilderZ.CreateCall(GetThreadFn, {ConstantInt::get(I32, 0)});
+    SavedRedEnd = BuilderZ.CreateLoad(
+        I32, BuilderZ.CreateConstInBoundsGEP1_64(I8, Th0, 16));
+    SavedThrEnd = BuilderZ.CreateLoad(
+        I64, BuilderZ.CreateConstInBoundsGEP1_64(I8, Th0, 24));
+    Value *PScratch = BuilderZ.CreateCall(RootReduceScratchFn, {});
+    SavedDScratch = BuilderZ.CreateLoad(PtrTy, DScratchGV);
+
+    FunctionCallee CallocFn = M.getOrInsertFunction(
+        "calloc", FunctionType::get(PtrTy, {I64, I64}, false));
+    SavedSoloBuf = BuilderZ.CreateCall(
+        CallocFn,
+        {ConstantInt::get(I64, 1),
+         ConstantInt::get(I64, uint64_t(128) * (2 + Width))},
+        "kokkos.solo_inst_buf");
+    Value *PInst = SavedSoloBuf;
+    Value *PSelfSlot = BuilderZ.CreateConstInBoundsGEP1_64(
+        I8, SavedSoloBuf, uint64_t(128) * (1 + Width));
+    initSoloThreadsInstance(BuilderZ, PInst, PSelfSlot, PScratch, SavedRedEnd,
+                            SavedThrEnd);
+
+    Type *Param0Ty = Task->getFunctionType()->getParamType(0);
+    Value *DInstArg = nullptr;
+    for (unsigned w = 0; w < Width; ++w) {
+      Value *DInst = BuilderZ.CreateConstInBoundsGEP1_64(
+          I8, SavedSoloBuf, uint64_t(128) * (1 + w));
+      Value *DSelfSlot = BuilderZ.CreateConstInBoundsGEP1_64(
+          I8, SavedSoloBuf, uint64_t(128) * (1 + Width) + 8 * (1 + w));
+      Value *LaneScratch =
+          computeLaneScratch(BuilderZ, SavedDScratch, SavedThrEnd, w);
+      initSoloThreadsInstance(BuilderZ, DInst, DSelfSlot, LaneScratch,
+                              SavedRedEnd, SavedThrEnd);
+      if (Width == 1) {
+        BuilderZ.CreateStore(DInst, ActiveDInstGV);
+      } else {
+        BuilderZ.CreateStore(
+            DInst, BuilderZ.CreateConstInBoundsGEP2_64(ActiveDInstStorageTy,
+                                                       ActiveDInstGV, 0, w));
+      }
+      Value *Casted = BuilderZ.CreatePointerCast(DInst, Param0Ty);
+      if (Width == 1) {
+        DInstArg = Casted;
+      } else {
+        DInstArg = DInstArg
+                       ? BuilderZ.CreateInsertValue(DInstArg, Casted, {w})
+                       : BuilderZ.CreateInsertValue(
+                             UndefValue::get(ArrayType::get(Param0Ty, Width)),
+                             Casted, {w});
+      }
+    }
+
+    BuilderZ.CreateStore(PInst, ActiveInstGV);
+
+    Value *AugClosure = gutils->getNewFromOriginal(OrigClosure);
+    clampSoloTeamPolicy(BuilderZ, AugClosure);
+    SmallVector<Value *, 4> SubArgs = {
+        BuilderZ.CreatePointerCast(PInst, Param0Ty), DInstArg, AugClosure};
+    if (ClosureTy == DIFFE_TYPE::DUP_ARG || ClosureTy == DIFFE_TYPE::DUP_NONEED)
+      SubArgs.push_back(gutils->invertPointerM(OrigClosure, BuilderZ));
+
+    CallInst *AugRes = BuilderZ.CreateCall(SubData->fn, SubArgs);
+    BuilderZ.CreateStore(ConstantPointerNull::get(cast<PointerType>(PtrTy)),
+                         ActiveInstGV);
+    BuilderZ.CreateStore(Constant::getNullValue(ActiveDInstStorageTy),
+                         ActiveDInstGV);
+
+    bool HasSubTape =
+        SubData->returns.find(AugmentedStruct::Tape) != SubData->returns.end();
+    if (HasSubTape) {
+      int TapeIdx = SubData->returns.find(AugmentedStruct::Tape)->second;
+      SavedSubTape =
+          (TapeIdx == -1)
+              ? (Value *)AugRes
+              : BuilderZ.CreateExtractValue(AugRes, {(unsigned)TapeIdx});
+    }
+
+    SmallVector<Type *, 5> StateTys = {PtrTy, PtrTy, I32, I64};
+    if (HasSubTape)
+      StateTys.push_back(kokkosSubTapeValueType(SubData));
+    StructType *StateST = StructType::get(Ctx, StateTys);
+    Value *StateVal = UndefValue::get(StateST);
+    StateVal = BuilderZ.CreateInsertValue(StateVal, SavedSoloBuf, {0});
+    StateVal = BuilderZ.CreateInsertValue(StateVal, SavedDScratch, {1});
+    StateVal = BuilderZ.CreateInsertValue(StateVal, SavedRedEnd, {2});
+    StateVal = BuilderZ.CreateInsertValue(StateVal, SavedThrEnd, {3});
+    if (HasSubTape)
+      StateVal = BuilderZ.CreateInsertValue(StateVal, SavedSubTape, {4});
+    gutils->TapesToPreventRecomputation.insert(&call);
+    gutils->cacheForReverse(BuilderZ, StateVal,
+                            getIndex(&call, CacheType::Tape, BuilderZ));
+    gutils->erase(newCall);
+  }
+
+  if (Mode == DerivativeMode::ReverseModeGradient ||
+      Mode == DerivativeMode::ReverseModeCombined) {
+    IRBuilder<> Builder2(&call);
+    getReverseBuilder(Builder2);
+
+    assert(SubData && "Expected SubData for Kokkos::Threads reverse pass");
+    bool HasSubTape =
+        SubData->returns.find(AugmentedStruct::Tape) != SubData->returns.end();
+    SmallVector<Type *, 5> StateTys = {PtrTy, PtrTy, I32, I64};
+    if (HasSubTape)
+      StateTys.push_back(kokkosSubTapeValueType(SubData));
+    StructType *StateST = StructType::get(Ctx, StateTys);
+
+    if (Mode == DerivativeMode::ReverseModeGradient) {
+#if LLVM_VERSION_MAJOR >= 18
+      auto It = BuilderZ.GetInsertPoint();
+      It.setHeadBit(true);
+      BuilderZ.SetInsertPoint(It);
+#endif
+      PHINode *PN = BuilderZ.CreatePHI(StateST, 0, "kokkos_solo_state");
+      Value *CachedState = gutils->cacheForReverse(
+          BuilderZ, PN, getIndex(&call, CacheType::Tape, BuilderZ),
+          /*ignoreType*/ true);
+      Value *RevState = lookup(CachedState, Builder2);
+      SavedSoloBuf = Builder2.CreateExtractValue(RevState, {0});
+      SavedDScratch = Builder2.CreateExtractValue(RevState, {1});
+      SavedRedEnd = Builder2.CreateExtractValue(RevState, {2});
+      SavedThrEnd = Builder2.CreateExtractValue(RevState, {3});
+      if (HasSubTape)
+        SavedSubTape = Builder2.CreateExtractValue(RevState, {4});
+      // Only now (placeholder created at the still-valid BuilderZ position)
+      // may the primal call be erased.
+      eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+    } else {
+      SavedSoloBuf = lookup(SavedSoloBuf, Builder2);
+      SavedDScratch = lookup(SavedDScratch, Builder2);
+      SavedRedEnd = lookup(SavedRedEnd, Builder2);
+      SavedThrEnd = lookup(SavedThrEnd, Builder2);
+      if (HasSubTape)
+        SavedSubTape = lookup(SavedSubTape, Builder2);
+    }
+
+    std::vector<DIFFE_TYPE> RevArgsInverted = ArgsInverted;
+    for (size_t i = 0; i < RevArgsInverted.size(); ++i) {
+      if (SubData->constant_args[i] != RevArgsInverted[i])
+        RevArgsInverted[i] = SubData->constant_args[i];
+    }
+
+    Function *RevTask = gutils->Logic.CreatePrimalAndGradient(
+        RequestContext(&call, &Builder2),
+        (ReverseCacheKey){
+            .todiff = Task,
+            .retType = DIFFE_TYPE::CONSTANT,
+            .constant_args = RevArgsInverted,
+            .subsequent_calls_may_write = subsequent_calls_may_write,
+            .overwritten_args = {false, TaskOverwritten1},
+            .returnUsed = false,
+            .shadowReturnUsed = false,
+            .mode = DerivativeMode::ReverseModeGradient,
+            .width = Width,
+            .freeMemory = true,
+            .AtomicAdd = false,
+            .additionalType =
+                HasSubTape
+                    ? (SubData->tapeType ? SubData->tapeType
+                                         : kokkosSubTapeValueType(SubData))
+                    : nullptr,
+            .forceAnonymousTape = false,
+            .typeInfo = NextTypeInfo,
+            .runtimeActivity = gutils->runtimeActivity,
+            .strongZero = gutils->strongZero},
+        TR.analyzer->interprocedural, SubData, /*omp*/ false);
+
+    Value *PScratch = Builder2.CreateCall(RootReduceScratchFn, {});
+    Value *PInst = SavedSoloBuf;
+    Value *PSelfSlot = Builder2.CreateConstInBoundsGEP1_64(
+        I8, SavedSoloBuf, uint64_t(128) * (1 + Width));
+    initSoloThreadsInstance(Builder2, PInst, PSelfSlot, PScratch, SavedRedEnd,
+                            SavedThrEnd);
+
+    Type *Param0Ty = Task->getFunctionType()->getParamType(0);
+    Value *DInstArg = nullptr;
+    for (unsigned w = 0; w < Width; ++w) {
+      Value *DInst = Builder2.CreateConstInBoundsGEP1_64(
+          I8, SavedSoloBuf, uint64_t(128) * (1 + w));
+      Value *DSelfSlot = Builder2.CreateConstInBoundsGEP1_64(
+          I8, SavedSoloBuf, uint64_t(128) * (1 + Width) + 8 * (1 + w));
+      Value *LaneScratch =
+          computeLaneScratch(Builder2, SavedDScratch, SavedThrEnd, w);
+      initSoloThreadsInstance(Builder2, DInst, DSelfSlot, LaneScratch,
+                              SavedRedEnd, SavedThrEnd);
+      if (Width == 1) {
+        Builder2.CreateStore(DInst, ActiveDInstGV);
+      } else {
+        Builder2.CreateStore(
+            DInst, Builder2.CreateConstInBoundsGEP2_64(ActiveDInstStorageTy,
+                                                       ActiveDInstGV, 0, w));
+      }
+      Value *Casted = Builder2.CreatePointerCast(DInst, Param0Ty);
+      if (Width == 1) {
+        DInstArg = Casted;
+      } else {
+        DInstArg = DInstArg
+                       ? Builder2.CreateInsertValue(DInstArg, Casted, {w})
+                       : Builder2.CreateInsertValue(
+                             UndefValue::get(ArrayType::get(Param0Ty, Width)),
+                             Casted, {w});
+      }
+    }
+
+    Builder2.CreateStore(PInst, ActiveInstGV);
+
+    Value *RevClosure =
+        lookup(gutils->getNewFromOriginal(OrigClosure), Builder2);
+    clampSoloTeamPolicy(Builder2, RevClosure);
+    SmallVector<Value *, 5> SubArgs = {
+        Builder2.CreatePointerCast(PInst, Param0Ty), DInstArg, RevClosure};
+    if (RevArgsInverted[1] == DIFFE_TYPE::DUP_ARG ||
+        RevArgsInverted[1] == DIFFE_TYPE::DUP_NONEED)
+      SubArgs.push_back(
+          lookup(gutils->invertPointerM(OrigClosure, Builder2), Builder2));
+    if (HasSubTape)
+      SubArgs.push_back(SavedSubTape);
+
+    Builder2.CreateCall(RevTask, SubArgs);
+    Builder2.CreateStore(ConstantPointerNull::get(cast<PointerType>(PtrTy)),
+                         ActiveInstGV);
+    Builder2.CreateStore(Constant::getNullValue(ActiveDInstStorageTy),
+                         ActiveDInstGV);
+    if (shouldFree()) {
+      FunctionCallee FreeFn = M.getOrInsertFunction(
+          "free", FunctionType::get(VoidTy, {PtrTy}, false));
+      Builder2.CreateCall(FreeFn, {SavedSoloBuf});
+    }
+  }
+}
+
+bool AdjointGenerator::handleKokkosCallDerivatives(CallInst &call,
+                                                   Function *called,
+                                                   StringRef funcName,
+                                                   CallInst *const newCall) {
+  SmallVector<Instruction *, 2> DeferredErase;
+  bool Res = handleKokkosCallDerivativesImpl(call, called, funcName, newCall,
+                                             DeferredErase);
+  for (Instruction *I : DeferredErase) {
+    assert(I->use_empty() && "Deferred shadow placeholder must have no uses");
+    gutils->erase(I);
+  }
+  return Res;
+}
+
+bool AdjointGenerator::handleKokkosCallDerivativesImpl(
+    CallInst &call, Function *called, StringRef funcName,
+    CallInst *const newCall, SmallVectorImpl<Instruction *> &DeferredErase) {
+  bool subretused = false;
+  bool shadowReturnUsed = false;
+  gutils->getReturnDiffeType(&call, &subretused, &shadowReturnUsed);
+
+  IRBuilder<> BuilderZ(newCall);
+  BuilderZ.setFastMathFlags(getFast());
+  LLVMContext &Ctx = call.getContext();
+  Module &M = *gutils->newFunc->getParent();
+  Type *VoidTy = Type::getVoidTy(Ctx);
+  Type *I8 = Type::getInt8Ty(Ctx);
+  Type *I32 = Type::getInt32Ty(Ctx);
+  Type *I64 = Type::getInt64Ty(Ctx);
+  Type *PtrTy = getUnqual(I8);
+  unsigned Width = gutils->getWidth();
+
+  // The shadow placeholder of `call` (if any) is the instruction immediately
+  // following `newCall`, which is exactly where the `AfterB` builders below
+  // insert. Erasing it eagerly would invalidate those builders, so defer.
+  auto resolveShadowPlaceholder = [&](Instruction &I, Value *shadow = nullptr) {
+    auto ifound = gutils->invertedPointers.find(&I);
+    if (ifound == gutils->invertedPointers.end())
+      return;
+    if (!shadow)
+      shadow = Constant::getNullValue(gutils->getShadowType(I.getType()));
+    auto placeholder = cast<PHINode>(&*ifound->second);
+    gutils->invertedPointers.erase(ifound);
+    gutils->replaceAWithB(placeholder, shadow);
+    DeferredErase.push_back(placeholder);
+    gutils->invertedPointers.insert(
+        std::make_pair((const Value *)&I, InvertedPointerVH(gutils, shadow)));
+  };
+
+  // Keep side-effecting primal call in forward pass; cache return if needed in
+  // reverse; erase duplicate primal from ReverseModeGradient /
+  // ForwardModeSplit.
+  auto keepPrimalInForwardOnly = [&](Value *valToCache = nullptr) {
+    bool shouldCache = false;
+    if ((Mode == DerivativeMode::ReverseModeGradient ||
+         Mode == DerivativeMode::ForwardModeSplit) &&
+        augmentedReturn) {
+      shouldCache = augmentedReturn->tapeIndices.find(std::make_pair(
+                        (Instruction *)&call, CacheType::Self)) !=
+                    augmentedReturn->tapeIndices.end();
+    } else if (Mode == DerivativeMode::ReverseModePrimal) {
+      bool primalNeededInReverse = subretused;
+      if (!primalNeededInReverse) {
+        auto found = gutils->knownRecomputeHeuristic.find(&call);
+        if (found != gutils->knownRecomputeHeuristic.end())
+          primalNeededInReverse = !found->second;
+      }
+      shouldCache = primalNeededInReverse && !call.getType()->isVoidTy() &&
+                    !gutils->unnecessaryIntermediates.count(&call);
+    }
+    if (shouldCache && !call.getType()->isVoidTy()) {
+      Value *V = valToCache ? valToCache : (Value *)newCall;
+      Instruction *InsertAfter =
+          isa<Instruction>(V) ? cast<Instruction>(V) : (Instruction *)newCall;
+      IRBuilder<> AfterB(InsertAfter->getNextNode());
+      gutils->cacheForReverse(AfterB, V,
+                              getIndex(&call, CacheType::Self, AfterB));
+    } else if (Mode == DerivativeMode::ReverseModeGradient ||
+               Mode == DerivativeMode::ForwardModeSplit) {
+      eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+    }
+  };
+
+  // Replace invertedPointers placeholder on &call (and cache shadow if needed).
+  auto assignShadowPointerResult = [&](Value *ShadowRes) {
+    auto ifound = gutils->invertedPointers.find(&call);
+    if (ifound == gutils->invertedPointers.end())
+      return;
+    PHINode *Placeholder = cast<PHINode>(&*ifound->second);
+    gutils->invertedPointers.erase(ifound);
+    bool cachedShadowInTape = (Mode == DerivativeMode::ReverseModeGradient ||
+                               Mode == DerivativeMode::ForwardModeSplit) &&
+                              augmentedReturn &&
+                              augmentedReturn->tapeIndices.find(std::make_pair(
+                                  (Instruction *)&call, CacheType::Shadow)) !=
+                                  augmentedReturn->tapeIndices.end();
+    if ((!shadowReturnUsed && !cachedShadowInTape) || !ShadowRes) {
+      gutils->replaceAWithB(
+          Placeholder,
+          Constant::getNullValue(gutils->getShadowType(call.getType())));
+      DeferredErase.push_back(Placeholder);
+      return;
+    }
+    if (Mode == DerivativeMode::ReverseModePrimal || cachedShadowInTape) {
+      ShadowRes = gutils->cacheForReverse(
+          BuilderZ, ShadowRes, getIndex(&call, CacheType::Shadow, BuilderZ));
+    }
+    gutils->replaceAWithB(Placeholder, ShadowRes);
+    DeferredErase.push_back(Placeholder);
+    gutils->invertedPointers.insert(std::make_pair(
+        (const Value *)&call, InvertedPointerVH(gutils, ShadowRes)));
+  };
+
+  auto unpackShadowPointerResultInReverse = [&](Type *ShTy, const Twine &Name) {
+    bool cachedShadowInTape =
+        augmentedReturn && augmentedReturn->tapeIndices.find(std::make_pair(
+                               (Instruction *)&call, CacheType::Shadow)) !=
+                               augmentedReturn->tapeIndices.end();
+    if (cachedShadowInTape) {
+#if LLVM_VERSION_MAJOR >= 18
+      auto It = BuilderZ.GetInsertPoint();
+      It.setHeadBit(true);
+      BuilderZ.SetInsertPoint(It);
+#endif
+      PHINode *ShPN = BuilderZ.CreatePHI(ShTy, 0, Name);
+      assignShadowPointerResult(ShPN);
+    } else {
+      resolveShadowPlaceholder(call);
+    }
+  };
+
+  if (!enzyme_kokkos::mayBeKokkosRelevantSymbol(funcName))
+    return false;
+
+  std::string normDem = ENZYME_KOKKOS_DEMANGLE(funcName);
+
+  // 3. Kokkos::Threads pool-size queries: keep concurrency() / depth == 0
+  // queries intact outside TeamPolicy so containers like ScatterView /
+  // UniqueToken allocate full per-thread slots, while returning 1 for
+  // TeamPolicy sizing queries (depth != 0 or inside TeamPolicy) so solo team
+  // execution configures team_size = 1 cleanly.
+  if (enzyme_kokkos::isKokkosThreadsPoolSizeQuery(funcName, normDem)) {
+    resolveShadowPlaceholder(call);
+    std::string callerDem = ENZYME_KOKKOS_DEMANGLE(gutils->oldFunc->getName());
+    if (callerDem.find("TeamPolicy") == std::string::npos) {
+      if (call.arg_size() == 0 ||
+          !call.getArgOperand(0)->getType()->isIntegerTy()) {
+        keepPrimalInForwardOnly();
+        return true;
+      }
+      if (auto *CI = dyn_cast<ConstantInt>(call.getArgOperand(0))) {
+        if (CI->isZero()) {
+          keepPrimalInForwardOnly();
+          return true;
+        }
+      } else {
+        Value *NewDepth = gutils->getNewFromOriginal(call.getArgOperand(0));
+        Value *Zero = ConstantInt::get(NewDepth->getType(), 0);
+        Value *One = ConstantInt::get(call.getType(), 1);
+        IRBuilder<> AfterB(newCall->getNextNode());
+        Value *Cond = AfterB.CreateICmpNE(NewDepth, Zero);
+        Value *Sel =
+            AfterB.CreateSelect(Cond, One, UndefValue::get(call.getType()));
+        gutils->replaceAWithB(newCall, Sel);
+        cast<SelectInst>(Sel)->setFalseValue(newCall);
+        return true;
+      }
+    }
+    Value *One = ConstantInt::get(call.getType(), 1);
+    // Replace the primal query by the constant directly. `newToOriginalFn`
+    // follows RAUW, so routing a (shared) constant through replaceAWithB would
+    // make the constant the "new" value of every such query; drop the mapping
+    // of the primal call first and point the original at the constant.
+    {
+      auto found = gutils->newToOriginalFn.find(newCall);
+      if (found != gutils->newToOriginalFn.end())
+        gutils->newToOriginalFn.erase(found);
+      newCall->replaceAllUsesWith(One);
+      gutils->originalToNewFn[&call] = One;
+    }
+    gutils->erase(newCall);
+    return true;
+  }
+
+  // 4. Kokkos::Impl::ThreadsInternal::{fence,internal_fence}
+  if (enzyme_kokkos::isKokkosThreadsFenceCall(funcName, normDem)) {
+    resolveShadowPlaceholder(call);
+    keepPrimalInForwardOnly();
+    return true;
+  }
+
+  // 4b. Team barriers: replay the same barrier (same team member / team data)
+  // in the reverse pass so reverse team loops stay synchronized.
+  if (enzyme_kokkos::isKokkosTeamBarrierCall(funcName, normDem)) {
+    resolveShadowPlaceholder(call);
+    if ((Mode == DerivativeMode::ReverseModeCombined ||
+         Mode == DerivativeMode::ReverseModeGradient) &&
+        called) {
+      IRBuilder<> Builder2(&call);
+      getReverseBuilder(Builder2);
+      SmallVector<Value *, 2> RevArgs;
+      for (unsigned i = 0; i < call.arg_size(); ++i)
+        RevArgs.push_back(lookup(
+            gutils->getNewFromOriginal(call.getArgOperand(i)), Builder2));
+      Builder2.CreateCall(call.getFunctionType(), called, RevArgs);
+    }
+    keepPrimalInForwardOnly();
+    return true;
+  }
+
+  // 5. Synchronization / fence calls across Kokkos, Desul, CUDA, and HIP.
+  // Never pass primal std::string temporaries in the reverse pass because
+  // temporary label strings are destroyed immediately after the forward fence.
+  if (enzyme_kokkos::isKokkosFenceCall(funcName, normDem)) {
+    resolveShadowPlaceholder(call);
+    if (Mode == DerivativeMode::ReverseModeCombined ||
+        Mode == DerivativeMode::ReverseModeGradient) {
+      IRBuilder<> Builder2(&call);
+      getReverseBuilder(Builder2);
+      if (funcName == "cudaDeviceSynchronize" ||
+          normDem.find("Kokkos::Cuda::") != std::string::npos ||
+          normDem.find("Kokkos::Impl::CudaInternal::") != std::string::npos) {
+        FunctionCallee Sync = M.getOrInsertFunction(
+            "cudaDeviceSynchronize", FunctionType::get(I32, {}, false));
+        Builder2.CreateCall(Sync);
+      } else if (funcName == "cudaStreamSynchronize" && call.arg_size() >= 1) {
+        Value *St =
+            lookup(gutils->getNewFromOriginal(call.getArgOperand(0)), Builder2);
+        FunctionCallee Sync = M.getOrInsertFunction(
+            "cudaStreamSynchronize",
+            FunctionType::get(I32, {St->getType()}, false));
+        Builder2.CreateCall(Sync, {St});
+      } else if (funcName == "hipDeviceSynchronize" ||
+                 normDem.find("Kokkos::HIP::") != std::string::npos ||
+                 normDem.find("Kokkos::Impl::HIPInternal::") !=
+                     std::string::npos) {
+        FunctionCallee Sync = M.getOrInsertFunction(
+            "hipDeviceSynchronize", FunctionType::get(I32, {}, false));
+        Builder2.CreateCall(Sync);
+      } else if (funcName == "hipStreamSynchronize" && call.arg_size() >= 1) {
+        Value *St =
+            lookup(gutils->getNewFromOriginal(call.getArgOperand(0)), Builder2);
+        FunctionCallee Sync = M.getOrInsertFunction(
+            "hipStreamSynchronize",
+            FunctionType::get(I32, {St->getType()}, false));
+        Builder2.CreateCall(Sync, {St});
+      } else if (normDem.find("Threads") != std::string::npos) {
+        FunctionCallee Sync = M.getOrInsertFunction(
+            "_ZN6Kokkos4Impl15ThreadsInternal14internal_fenceEv",
+            FunctionType::get(VoidTy, {}, false));
+        Builder2.CreateCall(Sync);
+      } else {
+        Builder2.CreateFence(AtomicOrdering::SequentiallyConsistent);
+      }
+    }
+    keepPrimalInForwardOnly();
+    return true;
+  }
+
+  // 8. Remaining inactive Kokkos / runtime / Tools / mutex functions
+  if (enzyme_kokkos::isKokkosInactiveCall(funcName, normDem)) {
+    resolveShadowPlaceholder(call);
+    keepPrimalInForwardOnly();
+    return true;
+  }
+
+  // 10. Kokkos::Threads scratch & thread-lookup helpers
+  if (enzyme_kokkos::isKokkosThreadsResizeScratch(funcName, normDem) &&
+      call.arg_size() == 2) {
+    bool IsFwdMode = Mode == DerivativeMode::ForwardMode ||
+                     Mode == DerivativeMode::ForwardModeError ||
+                     Mode == DerivativeMode::ForwardModeSplit;
+    GlobalVariable *DScratchGV = getOrCreateKokkosInternalPtrGlobal(
+        M,
+        IsFwdMode ? "__enzyme_kokkos_threads_fwd_d_scratch"
+                  : "__enzyme_kokkos_threads_rev_d_scratch",
+        PtrTy, /*WithShadow*/ !IsFwdMode && Width == 1);
+    FunctionCallee CallocFn = M.getOrInsertFunction(
+        "calloc", FunctionType::get(PtrTy, {I64, I64}, false));
+    FunctionCallee FreeFn = M.getOrInsertFunction(
+        "free", FunctionType::get(VoidTy, {PtrTy}, false));
+
+    FunctionCallee GetThreadFn =
+        M.getOrInsertFunction("_ZN6Kokkos4Impl15ThreadsInternal10get_threadEi",
+                              FunctionType::get(PtrTy, {I32}, false));
+
+    auto computeScratchBytes = [&](IRBuilder<> &B) -> Value * {
+      Value *R = B.CreateZExtOrTrunc(
+          gutils->getNewFromOriginal(call.getArgOperand(0)), I64);
+      Value *T = B.CreateZExtOrTrunc(
+          gutils->getNewFromOriginal(call.getArgOperand(1)), I64);
+      // Align each section to 64 bytes and bound below by the live primal
+      // m_scratch_thread_end (*(Th0 + 24)) so multi-lane Stride = ThrEnd + 128
+      // always fits strictly inside every lane's allocation.
+      Value *RA = B.CreateAnd(B.CreateAdd(R, ConstantInt::get(I64, 63)),
+                              ConstantInt::get(I64, ~uint64_t(63)));
+      Value *TA = B.CreateAnd(B.CreateAdd(T, ConstantInt::get(I64, 63)),
+                              ConstantInt::get(I64, ~uint64_t(63)));
+      Value *ReqEnd = B.CreateAdd(RA, TA);
+      Value *Th0 = B.CreateCall(GetThreadFn, {ConstantInt::get(I32, 0)});
+      Value *ThrEnd =
+          B.CreateLoad(I64, B.CreateConstInBoundsGEP1_64(I8, Th0, 24));
+      Value *MaxEnd =
+          B.CreateSelect(B.CreateICmpUGT(ThrEnd, ReqEnd), ThrEnd, ReqEnd);
+      Value *PerLane = B.CreateAdd(MaxEnd, ConstantInt::get(I64, 256));
+      return Width == 1 ? PerLane
+                        : B.CreateMul(PerLane, ConstantInt::get(I64, Width));
+    };
+
+    if (Mode == DerivativeMode::ForwardMode ||
+        Mode == DerivativeMode::ForwardModeError) {
+      IRBuilder<> AfterB(newCall->getNextNode());
+      Value *Prev = AfterB.CreateLoad(PtrTy, DScratchGV);
+      // Free previous forward scratch buffer if non-null
+      AfterB.CreateCall(FreeFn, {Prev});
+      Value *Bytes = computeScratchBytes(AfterB);
+      Value *DBuf = AfterB.CreateCall(
+          CallocFn, {ConstantInt::get(I64, 1), Bytes}, "kokkos.threads_d_scr");
+      AfterB.CreateStore(DBuf, DScratchGV);
+      resolveShadowPlaceholder(call);
+      return true;
+    }
+
+    StructType *ScratchStateST = StructType::get(Ctx, {PtrTy, PtrTy});
+    Value *SavedDScrState = nullptr;
+    if (Mode == DerivativeMode::ReverseModePrimal ||
+        Mode == DerivativeMode::ReverseModeCombined) {
+      IRBuilder<> AfterB(newCall->getNextNode());
+      Value *PrevDBuf = AfterB.CreateLoad(PtrTy, DScratchGV);
+      Value *Bytes = computeScratchBytes(AfterB);
+      Value *SavedDBuf = AfterB.CreateCall(
+          CallocFn, {ConstantInt::get(I64, 1), Bytes}, "kokkos.threads_d_scr");
+      AfterB.CreateStore(SavedDBuf, DScratchGV);
+      SavedDScrState = UndefValue::get(ScratchStateST);
+      SavedDScrState = AfterB.CreateInsertValue(SavedDScrState, SavedDBuf, {0});
+      SavedDScrState = AfterB.CreateInsertValue(SavedDScrState, PrevDBuf, {1});
+      gutils->cacheForReverse(AfterB, SavedDScrState,
+                              getIndex(&call, CacheType::Tape, AfterB));
+      resolveShadowPlaceholder(call);
+      if (Mode == DerivativeMode::ReverseModePrimal)
+        keepPrimalInForwardOnly();
+    }
+    if (Mode == DerivativeMode::ReverseModeGradient ||
+        Mode == DerivativeMode::ReverseModeCombined) {
+      IRBuilder<> Builder2(&call);
+      getReverseBuilder(Builder2);
+      if (Mode == DerivativeMode::ReverseModeGradient) {
+        resolveShadowPlaceholder(call);
+#if LLVM_VERSION_MAJOR >= 18
+        auto It = BuilderZ.GetInsertPoint();
+        It.setHeadBit(true);
+        BuilderZ.SetInsertPoint(It);
+#endif
+        PHINode *PN =
+            BuilderZ.CreatePHI(ScratchStateST, 0, "kokkos_dscr_state_phi");
+        SavedDScrState = gutils->cacheForReverse(
+            BuilderZ, PN, getIndex(&call, CacheType::Tape, BuilderZ),
+            /*ignoreType*/ true);
+        keepPrimalInForwardOnly();
+      }
+      SavedDScrState = lookup(SavedDScrState, Builder2);
+      Value *SavedDBuf = Builder2.CreateExtractValue(SavedDScrState, {0});
+      Value *PrevDBuf = Builder2.CreateExtractValue(SavedDScrState, {1});
+      Builder2.CreateStore(PrevDBuf, DScratchGV);
+      if (shouldFree()) {
+        Builder2.CreateCall(FreeFn, {SavedDBuf});
+      }
+    }
+    return true;
+  }
+
+  if (enzyme_kokkos::isKokkosThreadsRootReduceScratch(funcName, normDem)) {
+    bool IsFwdMode = Mode == DerivativeMode::ForwardMode ||
+                     Mode == DerivativeMode::ForwardModeError ||
+                     Mode == DerivativeMode::ForwardModeSplit;
+    GlobalVariable *DScratchGV = getOrCreateKokkosInternalPtrGlobal(
+        M,
+        IsFwdMode ? "__enzyme_kokkos_threads_fwd_d_scratch"
+                  : "__enzyme_kokkos_threads_rev_d_scratch",
+        PtrTy, /*WithShadow*/ !IsFwdMode && Width == 1);
+    Type *RetPtrTy = call.getType();
+    gutils->TapesToPreventRecomputation.insert(&call);
+
+    auto buildShadowScratch = [&](IRBuilder<> &B) -> Value * {
+      Value *Base = B.CreateLoad(PtrTy, DScratchGV, "kokkos.d_root_scratch");
+      if (Width == 1)
+        return B.CreatePointerCast(Base, RetPtrTy);
+      FunctionCallee GetThreadFn = M.getOrInsertFunction(
+          "_ZN6Kokkos4Impl15ThreadsInternal10get_threadEi",
+          FunctionType::get(PtrTy, {I32}, false));
+      Value *Th0 = B.CreateCall(GetThreadFn, {ConstantInt::get(I32, 0)});
+      Value *ThrEnd =
+          B.CreateLoad(I64, B.CreateConstInBoundsGEP1_64(I8, Th0, 24));
+      Value *Stride = B.CreateAdd(ThrEnd, ConstantInt::get(I64, 128));
+      Value *Agg = UndefValue::get(ArrayType::get(RetPtrTy, Width));
+      for (unsigned w = 0; w < Width; ++w) {
+        Value *LP = w == 0 ? Base
+                           : B.CreateInBoundsGEP(
+                                 I8, Base,
+                                 B.CreateMul(Stride, ConstantInt::get(I64, w)));
+        Agg = B.CreateInsertValue(Agg, B.CreatePointerCast(LP, RetPtrTy), {w});
+      }
+      return Agg;
+    };
+
+    if (Mode == DerivativeMode::ForwardMode ||
+        Mode == DerivativeMode::ForwardModeError) {
+      if (!gutils->isConstantValue(&call))
+        assignShadowPointerResult(buildShadowScratch(BuilderZ));
+      else
+        resolveShadowPlaceholder(call);
+      return true;
+    }
+    if (Mode == DerivativeMode::ReverseModePrimal ||
+        Mode == DerivativeMode::ReverseModeCombined) {
+      if (!gutils->isConstantValue(&call))
+        assignShadowPointerResult(buildShadowScratch(BuilderZ));
+      else
+        resolveShadowPlaceholder(call);
+      keepPrimalInForwardOnly();
+      return true;
+    }
+    if (Mode == DerivativeMode::ReverseModeGradient) {
+      unpackShadowPointerResultInReverse(gutils->getShadowType(RetPtrTy),
+                                         "kokkos_d_root_scr_phi");
+      keepPrimalInForwardOnly();
+      return true;
+    }
+  }
+
+  if (enzyme_kokkos::isKokkosThreadsGetThread(funcName, normDem)) {
+    Type *ActiveDInstStorageTy =
+        Width == 1 ? (Type *)PtrTy : (Type *)ArrayType::get(PtrTy, Width);
+    std::string ActiveDInstGVName =
+        Width == 1
+            ? "__enzyme_kokkos_threads_d_inst"
+            : ("__enzyme_kokkos_threads_d_inst_" + std::to_string(Width));
+    GlobalVariable *ActiveInstGV = getOrCreateKokkosInternalPtrGlobal(
+        M, "__enzyme_kokkos_threads_active_inst", PtrTy);
+    GlobalVariable *ActiveDInstGV = getOrCreateKokkosInternalPtrGlobal(
+        M, ActiveDInstGVName, ActiveDInstStorageTy,
+        /*WithShadow*/ Width == 1);
+    Type *RetPtrTy = call.getType();
+    gutils->TapesToPreventRecomputation.insert(&call);
+
+    if (Mode != DerivativeMode::ReverseModeGradient &&
+        Mode != DerivativeMode::ForwardModeSplit) {
+      IRBuilder<> AfterB(newCall->getNextNode());
+      PointerType *RawPtrTy = cast<PointerType>(PtrTy);
+      Value *NullPtr = ConstantPointerNull::get(RawPtrTy);
+      Value *Act = AfterB.CreateLoad(PtrTy, ActiveInstGV);
+      Value *UseAct = AfterB.CreateICmpNE(Act, NullPtr);
+      Value *Sel =
+          AfterB.CreateSelect(UseAct, AfterB.CreatePointerCast(Act, RetPtrTy),
+                              UndefValue::get(RetPtrTy));
+      gutils->replaceAWithB(newCall, Sel);
+      cast<SelectInst>(Sel)->setFalseValue(newCall);
+      if (!gutils->isConstantValue(&call)) {
+        Value *Sh = nullptr;
+        if (Width == 1) {
+          Value *RawD = AfterB.CreateLoad(PtrTy, ActiveDInstGV);
+          Value *HasD = AfterB.CreateICmpNE(RawD, NullPtr);
+          Sh = AfterB.CreateSelect(
+              HasD, AfterB.CreatePointerCast(RawD, RetPtrTy), Sel);
+        } else {
+          Sh = UndefValue::get(ArrayType::get(RetPtrTy, Width));
+          for (unsigned w = 0; w < Width; ++w) {
+            Value *LaneSlot = AfterB.CreateConstInBoundsGEP2_64(
+                ActiveDInstStorageTy, ActiveDInstGV, 0, w);
+            Value *RawD = AfterB.CreateLoad(PtrTy, LaneSlot);
+            Value *HasD = AfterB.CreateICmpNE(RawD, NullPtr);
+            Value *LanePtr = AfterB.CreateSelect(
+                HasD, AfterB.CreatePointerCast(RawD, RetPtrTy), Sel);
+            Sh = AfterB.CreateInsertValue(Sh, LanePtr, {w});
+          }
+        }
+        BuilderZ.SetInsertPoint(AfterB.GetInsertBlock(),
+                                AfterB.GetInsertPoint());
+        assignShadowPointerResult(Sh);
+      } else {
+        resolveShadowPlaceholder(call);
+      }
+      if (Mode == DerivativeMode::ReverseModePrimal)
+        keepPrimalInForwardOnly(Sel);
+      return true;
+    }
+    if (Mode == DerivativeMode::ReverseModeGradient) {
+      unpackShadowPointerResultInReverse(gutils->getShadowType(RetPtrTy),
+                                         "kokkos_d_get_thread_phi");
+      keepPrimalInForwardOnly();
+      return true;
+    }
+  }
+
+  return false;
+}
+
 bool AdjointGenerator::handleKnownCallDerivatives(
     CallInst &call, Function *called, StringRef funcName,
     bool subsequent_calls_may_write, const std::vector<bool> &overwritten_args,
     CallInst *const newCall) {
+  if (handleKokkosCallDerivatives(call, called, funcName, newCall))
+    return true;
   bool subretused = false;
   bool shadowReturnUsed = false;
   DIFFE_TYPE subretType =
