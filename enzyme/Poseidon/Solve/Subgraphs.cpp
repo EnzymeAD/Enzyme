@@ -196,18 +196,6 @@ void buildSubgraphs(
               llvm::errs() << "Registered FPNode for " << dtype
                            << " constant (casted from integer): " << doubleStr
                            << '\n';
-          } else if (auto GV = dyn_cast<GlobalVariable>(operand)) {
-            Type *elemType = GV->getValueType();
-
-            assert(elemType->isFloatingPointTy() &&
-                   "Global variable is not floating point type");
-            std::string dtype = nodeDtype(
-                elemType, "Unexpected floating point type for global variable");
-            valueToNodeMap[operand] =
-                std::make_shared<FPLLValue>(GV, "__gv", dtype);
-            if (O.Diagnostics.Print)
-              llvm::errs() << "Registered FPNode for global variable: " << *GV
-                           << '\n';
           } else {
             llvm_unreachable("isOptimizable admits no other operand");
           }

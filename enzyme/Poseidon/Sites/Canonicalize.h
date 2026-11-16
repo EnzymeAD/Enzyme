@@ -35,8 +35,9 @@ llvm::Function *canonicalize(llvm::Function &F);
 std::string canonicalFormHash(const llvm::Function &F);
 
 // Whether V is a floating-point operation the pass profiles and rewrites: an
-// instruction it can model, whose operands are arguments, instructions,
-// literals or global variables.
+// instruction it can model, whose operands are float or double arguments and
+// literals, integer literals, or scalar floating-point or integer
+// instructions.
 bool isOptimizable(const llvm::Value &V);
 
 void setSlotMetadata(llvm::Function &F);
