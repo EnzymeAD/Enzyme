@@ -54,10 +54,11 @@ bool isClosedFmaPhiCycle(const llvm::Loop *L, llvm::Instruction *fma,
 
 std::string mmaShapeSuffix(unsigned M, unsigned N, unsigned K);
 std::string inKernelCostClass(const SchemeVariant &v);
-std::optional<double> priceInKernelRaiseFromMeasuredRow(
-    Session &S, const AbstractMatmul &m, const std::string &cls, unsigned tileM,
-    unsigned tileN, unsigned tileK, double baselinePerMac,
-    const std::string &what);
+std::optional<double>
+priceInKernelRaiseFromMeasuredRow(Session &S, const AbstractMatmul &m,
+                                  const std::string &cls, unsigned tileM,
+                                  unsigned tileN, unsigned tileK,
+                                  double baselinePerMac, llvm::StringRef what);
 
 struct WmmaTarget {
   unsigned M, N, K;

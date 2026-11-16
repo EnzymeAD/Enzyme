@@ -355,7 +355,7 @@ void generateMatmulCandidates(Session &S,
 // baseline in this mode. `confidence` is the level those errors were computed
 // at; the selector only reports it, since it is already in the numbers.
 llvm::SmallVector<SolutionStep>
-errorBudgetSelector(const Options &O, llvm::SmallVector<MatmulUnit, 4> &CMs,
+errorBudgetSelector(const Options &O, llvm::SmallVectorImpl<MatmulUnit> &CMs,
                     double budget, double confidence);
 
 } // namespace poseidon

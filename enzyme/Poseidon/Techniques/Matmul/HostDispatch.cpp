@@ -316,11 +316,11 @@ bool computeGemmBodyNote(const Options &O, Function &F, const AbstractMatmul &m,
         recovered = true;
         llvm::errs() << "[ozaki-host-dispatch] recovered deploy geometry for "
                      << F.getName() << ": M=" << cropM << " Ncols=" << cropN
-                     << " K=" << K << " (profile M/N/K = " << m.globalM << "/"
-                     << m.globalN << "/" << m.globalK
+                     << " K=" << K << " (profile M/N/K = " << m.globalM << '/'
+                     << m.globalN << '/' << m.globalK
                      << " does not track matrix order; extents taken from the "
                         "kernel's own index guard on thread axes "
-                     << axM << "/" << axN
+                     << axM << '/' << axN
                      << " and bounded again by the launch geometry at the "
                         "dispatch)\n";
       }
@@ -334,7 +334,7 @@ bool computeGemmBodyNote(const Options &O, Function &F, const AbstractMatmul &m,
           << "[ozaki-host-dispatch] REFUSING host dispatch for " << F.getName()
           << ": non-square geometry under a changed deploy scale (profile "
              "M/N/K = "
-          << m.globalM << "/" << m.globalN << "/" << m.globalK
+          << m.globalM << '/' << m.globalN << '/' << m.globalK
           << ", deploy K = " << K
           << "). A dimension that does not track matrix order cannot be "
              "rescaled by K/globalK, and its true deploy extent is not "
@@ -443,13 +443,13 @@ static void emitDescriptor(Session &S, StringRef wrapperName, int cArg,
   msg << "[ozaki-host-dispatch] wrote descriptor for " << wrapperName
       << ": C=" << launchArgString(cArg, n.cOffset)
       << " A=" << launchArgString(aArg, n.aOffset)
-      << " B=" << launchArgString(bArg, n.bOffset) << " " << n.gM << "x"
-      << n.gNcols << "x" << n.gK << " nm=" << n.numModuli
+      << " B=" << launchArgString(bArg, n.bOffset) << ' ' << n.gM << 'x'
+      << n.gNcols << 'x' << n.gK << " nm=" << n.numModuli
       << (n.standalone ? " (standalone)" : " (fused)");
   for (const auto &[x, y] : n.assumedEqual)
     msg << ", if " << launchArgString(x.param, x.offset)
         << " == " << launchArgString(y.param, y.offset);
-  msg << "\n";
+  msg << '\n';
   // cArg aArg bArg N standalone numModuli gM gNcols gK lda ldb ldc aCol bCol
   // cCol scheme, then the keyword-tagged blocks.
   recordDescriptor(
@@ -948,11 +948,11 @@ static bool dispatchFromLaunchArgs(Module &M, Function &F, const LaunchDesc &d,
          << F.getName() << " with " << dispatchSym(d.scheme, squareRM)
          << " (C=" << launchArgString(d.cParam, d.cOffset)
          << " A=" << launchArgString(d.aParam, d.aOffset)
-         << " B=" << launchArgString(d.bParam, d.bOffset) << ")";
+         << " B=" << launchArgString(d.bParam, d.bOffset) << ')';
   for (const auto &[x, y] : d.assumedEqual)
     errs() << ", if " << launchArgString(x.param, x.offset)
            << " == " << launchArgString(y.param, y.offset);
-  errs() << "\n";
+  errs() << '\n';
   return true;
 }
 
@@ -1100,7 +1100,7 @@ bool rewriteGemmStubBodies(const Options &O, Module &M) {
       B.CreateRetVoid();
       errs() << "[ozaki-host-dispatch] replaced stub body " << cn << " -> "
              << calleeName << " (C=arg" << d.cParam << " A=arg" << d.aParam
-             << " B=arg" << d.bParam << " " << d.gM << "x" << d.gNcols << "x"
+             << " B=arg" << d.bParam << ' ' << d.gM << 'x' << d.gNcols << 'x'
              << d.gK << ")\n";
     } else {
       // Fused: prepend the dispatch (fills the output buffer) and keep the
@@ -1125,8 +1125,8 @@ bool rewriteGemmStubBodies(const Options &O, Module &M) {
       B.CreateCall(callee, args);
       errs() << "[ozaki-host-dispatch] prepended dispatch to stub " << cn
              << " -> " << calleeName << " (fused) (C=arg" << d.cParam
-             << " A=arg" << d.aParam << " B=arg" << d.bParam << " " << d.gM
-             << "x" << d.gNcols << "x" << d.gK << ")\n";
+             << " A=arg" << d.aParam << " B=arg" << d.bParam << ' ' << d.gM
+             << 'x' << d.gNcols << 'x' << d.gK << ")\n";
     }
     changed = true;
   }

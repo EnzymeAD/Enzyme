@@ -353,7 +353,7 @@ static std::string platformPathFor(StringRef Csv) {
   return Stem.str() + ".herbie.rkt";
 }
 
-static std::string csvNativeArch(const std::string &Csv) {
+static std::string csvNativeArch(StringRef Csv) {
   StringRef Arch;
   for (StringRef Line : llvm::split(readFile(Csv), '\n'))
     if (Line.consume_front("# native_arch="))
@@ -365,7 +365,7 @@ static std::string csvNativeArch(const std::string &Csv) {
 // arm writes that table from the same CSV the DP prices from, so a rewrite is
 // proposed and priced on one device's numbers. No GPU is touched: the CSV is
 // the only input.
-static void armHerbiePlatform(const std::string &Csv) {
+static void armHerbiePlatform(StringRef Csv) {
   std::string Arch = csvNativeArch(Csv);
   if (Arch.empty())
     fail(Csv + " carries no '# native_arch=' header, so no Herbie platform "
@@ -409,7 +409,7 @@ static void armHerbiePlatform(const std::string &Csv) {
   outs() << "[calibrate] wrote " << Out << '\n';
 }
 
-static void armMicrobm(const std::string &Csv, const Device &D) {
+static void armMicrobm(StringRef Csv, const Device &D) {
   if (sys::fs::exists(Csv) && !Force) {
     outs() << "[calibrate] per-op throughputs already measured: " << Csv
            << '\n';
@@ -424,8 +424,8 @@ static void armMicrobm(const std::string &Csv, const Device &D) {
   outs() << "[calibrate] wrote " << Csv << '\n';
 }
 
-static void writeRows(const std::string &Csv, StringRef Arm, StringRef Family,
-                      const std::string &Rows) {
+static void writeRows(StringRef Csv, StringRef Arm, StringRef Family,
+                      StringRef Rows) {
   if (!hasFamily(Rows, Family))
     fail(Arm + " calibration produced no " + Family + " row");
   std::string Content = readFile(Csv);
@@ -436,15 +436,14 @@ static void writeRows(const std::string &Csv, StringRef Arm, StringRef Family,
       outs() << "  " << Line.trim() << '\n';
 }
 
-static bool alreadyMeasured(const std::string &Csv, StringRef Arm,
-                            StringRef Family) {
+static bool alreadyMeasured(StringRef Csv, StringRef Arm, StringRef Family) {
   if (Force || !hasFamily(readFile(Csv), Family))
     return false;
   outs() << "[calibrate] " << Arm << ": already measured\n";
   return true;
 }
 
-static void armDispatch(const std::string &Csv, StringRef Arm, StringRef Family,
+static void armDispatch(StringRef Csv, StringRef Arm, StringRef Family,
                         StringRef Tool) {
   if (alreadyMeasured(Csv, Arm, Family))
     return;
@@ -457,7 +456,7 @@ static void armDispatch(const std::string &Csv, StringRef Arm, StringRef Family,
 // at the calibrator's large column count, MxNxK the native DGEMM row of a call
 // with exactly those extents. Rows of shapes this run does not measure are
 // kept.
-static void armOzakiRect(const std::string &Csv, const Device &D) {
+static void armOzakiRect(StringRef Csv, const Device &D) {
   if (OzakiRect.empty()) {
     outs() << "[calibrate] ozaki-rect: no --ozaki-rect shapes, nothing to "
               "measure\n";
@@ -502,15 +501,14 @@ static void armOzakiRect(const std::string &Csv, const Device &D) {
     fail("ozaki-rect calibration produced no ozaki_dispatch_rect_rel row");
   for (StringRef Line : llvm::split(Content, '\n'))
     if (Line.starts_with("ozaki_dispatch_rect_rel,") &&
-        llvm::none_of(Keys,
-                      [&](const std::string &K) { return Line.contains(K); }))
+        llvm::none_of(Keys, [&](StringRef K) { return Line.contains(K); }))
       Rows += (Line + "\n").str();
   writeRows(Csv, "ozaki-rect", "ozaki_dispatch_rect_rel", Rows);
 }
 
 // The error-corrected dispatch runs on cuMpSGEMM, so a build without it has no
 // such candidate for the row to price.
-static void armTcec(const std::string &Csv, const Device &D) {
+static void armTcec(StringRef Csv, const Device &D) {
   if (D.Hip) {
     outs() << "[calibrate] tcec: the error-corrected dispatch has no HIP "
               "runtime; its row stays absent\n";
@@ -611,8 +609,7 @@ static void armInKernel(const std::string &Csv, const Device &D) {
                                          "-poseidon-raise-wmma",
                                          "-poseidon-print",
                                          "-poseidon-inkernel-calibration"};
-  auto compile = [&](const std::string &Apply, const std::string &Exe,
-                     const std::string &Log) {
+  auto compile = [&](StringRef Apply, StringRef Exe, StringRef Log) {
     SmallVector<StringRef, 32> Argv(Common.begin(), Common.end());
     Argv.push_back(Apply);
     Argv.push_back(Src);

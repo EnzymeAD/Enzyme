@@ -54,9 +54,7 @@ void reportUserError(const Instruction &I, const Twine &Message) {
 }
 
 void reportUserError(LLVMContext &Ctx, const Twine &Message) {
-  const std::string Text = "Poseidon: " + Message.str();
-  const Twine T(Text);
-  Ctx.diagnose(DiagnosticInfoGeneric(T, DS_Error));
+  Ctx.diagnose(DiagnosticInfoGeneric("Poseidon: " + Message, DS_Error));
   sys::RunInterruptHandlers();
   exit(1);
 }

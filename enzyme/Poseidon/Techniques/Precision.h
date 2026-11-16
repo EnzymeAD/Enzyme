@@ -109,7 +109,9 @@ public:
   explicit PrecisionUnit(CostModelState &CM, Subgraph &subgraph)
       : SiteUnit(UnitKind::PT), subgraph(&subgraph) {
     initialCompCost =
-        getCompCost(CM, {subgraph.outputs.begin(), subgraph.outputs.end()},
+        getCompCost(CM,
+                    llvm::SmallVector<llvm::Value *>(subgraph.outputs.begin(),
+                                                     subgraph.outputs.end()),
                     subgraph.inputs, &subgraph.opExec, subgraph.execNormalizer);
   }
 

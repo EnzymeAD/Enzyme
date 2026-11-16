@@ -18,6 +18,7 @@
 #include "Core/CostTable.h"
 #include "Profile/ProfileRead.h"
 
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/SetVector.h"
@@ -69,7 +70,7 @@ double getCompCost(CostModelState &CM, llvm::Function *F,
 // execution count over `normalizer`; an instruction with no count, or no map,
 // weighs 1.
 double getCompCost(
-    CostModelState &CM, const llvm::SmallVector<llvm::Value *> &outputs,
+    CostModelState &CM, llvm::ArrayRef<llvm::Value *> outputs,
     const llvm::SetVector<llvm::Value *> &inputs,
     const llvm::DenseMap<const llvm::Instruction *, uint64_t> *opExec = nullptr,
     uint64_t normalizer = 0);

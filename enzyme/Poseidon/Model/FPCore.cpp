@@ -111,8 +111,8 @@ std::shared_ptr<FPNode> parseHerbieExpr(
   }
 
   if (trimmedExpr.front() != '(' || trimmedExpr.back() != ')') {
-    llvm::errs() << "Unexpected subexpression: " << trimmedExpr << "\n";
-    assert(0 && "Failed to parse Herbie expression");
+    llvm::errs() << "Unexpected subexpression: " << trimmedExpr << '\n';
+    report_fatal_error("Failed to parse Herbie expression");
   }
 
   trimmedExpr = trimmedExpr.substr(1, trimmedExpr.size() - 2);
@@ -158,8 +158,8 @@ std::shared_ptr<FPNode> parseHerbieExpr(
         return node;
       }
     }
-    llvm::errs() << "Unexpected array projection: " << trimmedExpr << "\n";
-    assert(0 && "Failed to parse Herbie expression");
+    llvm::errs() << "Unexpected array projection: " << trimmedExpr << '\n';
+    report_fatal_error("Failed to parse Herbie expression");
   }
 
   size_t pos = fullOp.find('.');
@@ -627,7 +627,7 @@ std::string getHerbieOperator(const Instruction &I) {
     }
   }
   default:
-    assert(0 && "getHerbieOperator: Unknown operator");
+    report_fatal_error("getHerbieOperator: Unknown operator");
   }
 }
 

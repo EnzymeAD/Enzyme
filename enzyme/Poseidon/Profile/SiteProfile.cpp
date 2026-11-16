@@ -76,11 +76,11 @@ static Function *instrumentedClone(Session &S, Function &F, unsigned siteId,
   std::string staticData;
   {
     raw_string_ostream os(staticData);
-    os << "SiteId = " << siteId << "\n";
+    os << "SiteId = " << siteId << '\n';
     for (const auto &kv : trips)
-      os << "RedTrip = " << kv.first << " " << kv.second << "\n";
-    os << "CanonicalHash = " << canonicalFormHash(*clone) << "\n";
-    os << kProfileFormatKey << " = " << kProfileFormat << "\n";
+      os << "RedTrip = " << kv.first << ' ' << kv.second << '\n';
+    os << "CanonicalHash = " << canonicalFormHash(*clone) << '\n';
+    os << kProfileFormatKey << " = " << kProfileFormat << '\n';
   }
   emitProfileStaticData(*clone, staticData);
   if (staticOut)
@@ -481,9 +481,9 @@ bool profileAnnotatedKernel(Session &S, Function &K, unsigned &nextSiteId) {
       if (s.seed) {
         msg << ' ' << s.param;
         if (s.offset >= 0)
-          msg << "[+" << s.offset << "]";
+          msg << "[+" << s.offset << ']';
       }
-    msg << "\n";
+    msg << '\n';
   }
   recordDescriptor(
       S, LaunchKind::Profiling, kernelName,
@@ -1198,7 +1198,7 @@ static CallInst *withShadows(CallInst *CI, Function &clone,
       if (unread.count(objectOf.lookup(S.arg)))
         errs() << ' ' << S.param;
   }
-  errs() << "\n";
+  errs() << '\n';
   return NC;
 }
 

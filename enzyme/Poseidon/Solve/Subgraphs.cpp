@@ -77,7 +77,7 @@ static void aggressiveDCE(
   if (O.Diagnostics.Print) {
     llvm::errs() << "Critical values:\n";
     for (Value *V : critical)
-      llvm::errs() << "\t" << *V << "\n";
+      llvm::errs() << '\t' << *V << '\n';
   }
 
   auto zeroGrad = [&](Instruction *op) {
@@ -95,7 +95,7 @@ static void aggressiveDCE(
     for (Instruction *op : toRemove) {
       if (O.Diagnostics.Print)
         llvm::errs() << "Aggressive DCE: eliminating zero-gradient "
-                     << "non-critical instruction: " << *op << "\n";
+                     << "non-critical instruction: " << *op << '\n';
       op->replaceAllUsesWith(UndefValue::get(op->getType()));
       nodes.erase(op);
       it->operations.remove(op);
@@ -113,7 +113,7 @@ static void aggressiveDCE(
 
   if (O.Diagnostics.Print)
     llvm::errs() << "[poseidon] After aggressive DCE, have " << subgraphs.size()
-                 << " subgraphs in " << F.getName() << "\n";
+                 << " subgraphs in " << F.getName() << '\n';
 }
 
 // The dtype of a node of type T, which an optimizable instruction and its
@@ -138,7 +138,7 @@ void buildSubgraphs(
           am.scalarLoop.fma)
         reductionFMAs.insert(am.scalarLoop.fma);
 
-  llvm::errs() << "[poseidon] Starting Floodfill for " << F.getName() << "\n";
+  llvm::errs() << "[poseidon] Starting Floodfill for " << F.getName() << '\n';
 
   for (auto &BB : F) {
     for (auto &I : BB) {
@@ -147,7 +147,7 @@ void buildSubgraphs(
         if (O.Diagnostics.Print)
           llvm::errs()
               << "Registered FPLLValue for non-isOptimizable instruction: " << I
-              << "\n";
+              << '\n';
         continue;
       }
 
@@ -174,7 +174,7 @@ void buildSubgraphs(
                 std::make_shared<FPLLValue>(Arg, "__arg", dtype);
             if (O.Diagnostics.Print)
               llvm::errs() << "Registered FPNode for argument: " << *Arg
-                           << "\n";
+                           << '\n';
           } else if (auto C = dyn_cast<ConstantFP>(operand)) {
             SmallString<10> value;
             C->getValueAPF().toString(value);
@@ -184,7 +184,7 @@ void buildSubgraphs(
                 std::make_shared<FPConst>(value.c_str(), dtype);
             if (O.Diagnostics.Print)
               llvm::errs() << "Registered FPNode for " << dtype
-                           << " constant: " << value << "\n";
+                           << " constant: " << value << '\n';
           } else if (auto CI = dyn_cast<ConstantInt>(operand)) {
             // e.g., powi intrinsic has a constant int as its exponent
             double exponent = static_cast<double>(CI->getSExtValue());
@@ -195,7 +195,7 @@ void buildSubgraphs(
             if (O.Diagnostics.Print)
               llvm::errs() << "Registered FPNode for " << dtype
                            << " constant (casted from integer): " << doubleStr
-                           << "\n";
+                           << '\n';
           } else if (auto GV = dyn_cast<GlobalVariable>(operand)) {
             Type *elemType = GV->getValueType();
 
@@ -207,9 +207,9 @@ void buildSubgraphs(
                 std::make_shared<FPLLValue>(GV, "__gv", dtype);
             if (O.Diagnostics.Print)
               llvm::errs() << "Registered FPNode for global variable: " << *GV
-                           << "\n";
+                           << '\n';
           } else {
-            assert(0 && "Unknown operand");
+            report_fatal_error("Unknown operand");
           }
         }
         node->addOperand(valueToNodeMap[operand]);
@@ -223,18 +223,18 @@ void buildSubgraphs(
       if (!isOptimizable(I)) {
         if (O.Diagnostics.Print)
           llvm::errs() << "Skipping non-isOptimizable instruction: " << I
-                       << "\n";
+                       << '\n';
         continue;
       }
 
       if (processed.contains(&I)) {
         if (O.Diagnostics.Print)
-          llvm::errs() << "Skipping already seen instruction: " << I << "\n";
+          llvm::errs() << "Skipping already seen instruction: " << I << '\n';
         continue;
       }
 
       if (O.Diagnostics.Print)
-        llvm::errs() << "Starting floodfill from: " << I << "\n";
+        llvm::errs() << "Starting floodfill from: " << I << '\n';
 
       SmallVector<Value *, 8> todo;
       SetVector<Value *> input_seen;
@@ -250,7 +250,7 @@ void buildSubgraphs(
         if (operation_seen.contains(I2)) {
           if (O.Diagnostics.Print)
             llvm::errs() << "Skipping already seen instruction: " << *I2
-                         << "\n";
+                         << '\n';
           continue;
         }
 
@@ -259,7 +259,7 @@ void buildSubgraphs(
 
         if (O.Diagnostics.Print)
           llvm::errs() << "Insert to operation_seen and processed: " << *I2
-                       << "\n";
+                       << '\n';
         operation_seen.insert(I2);
         processed.insert(cur);
 
@@ -270,14 +270,14 @@ void buildSubgraphs(
           if (!isOptimizable(*operand)) {
             if (O.Diagnostics.Print)
               llvm::errs() << "Non-isOptimizable input found: " << *operand
-                           << "\n";
+                           << '\n';
 
             if (!isa<ConstantFP>(operand))
               input_seen.insert(operand);
           } else {
             if (O.Diagnostics.Print)
               llvm::errs() << "Adding operand to todo list: " << *operand
-                           << "\n";
+                           << '\n';
             todo.push_back(operand);
           }
         }
@@ -286,11 +286,11 @@ void buildSubgraphs(
           if (auto I3 = dyn_cast<Instruction>(U)) {
             if (!isOptimizable(*I3)) {
               if (O.Diagnostics.Print)
-                llvm::errs() << "Output instruction found: " << *I2 << "\n";
+                llvm::errs() << "Output instruction found: " << *I2 << '\n';
               output_seen.insert(I2);
             } else {
               if (O.Diagnostics.Print)
-                llvm::errs() << "Adding user to todo list: " << *I3 << "\n";
+                llvm::errs() << "Adding user to todo list: " << *I3 << '\n';
               todo.push_back(I3);
             }
           }
@@ -306,17 +306,17 @@ void buildSubgraphs(
           llvm::errs() << "Inputs:\n";
 
           for (auto &input : input_seen) {
-            llvm::errs() << *input << "\n";
+            llvm::errs() << *input << '\n';
           }
 
           llvm::errs() << "Outputs:\n";
           for (auto &output : output_seen) {
-            llvm::errs() << *output << "\n";
+            llvm::errs() << *output << '\n';
           }
 
           llvm::errs() << "Operations:\n";
           for (auto &operation : operation_seen) {
-            llvm::errs() << *operation << "\n";
+            llvm::errs() << *operation << '\n';
           }
         }
 
@@ -328,7 +328,7 @@ void buildSubgraphs(
         }
         if (operation_seen.size() == 1 && O.Diagnostics.Print)
           llvm::errs() << "Keeping 1-op reduction subgraph: "
-                       << **operation_seen.begin() << "\n";
+                       << **operation_seen.begin() << '\n';
 
         subgraphs.emplace_back(input_seen, output_seen, operation_seen);
       }
@@ -337,7 +337,7 @@ void buildSubgraphs(
 
   if (O.Diagnostics.Print) {
     llvm::errs() << "[poseidon] Found " << subgraphs.size()
-                 << " initial subgraphs in " << F.getName() << "\n";
+                 << " initial subgraphs in " << F.getName() << '\n';
   }
 }
 
@@ -367,11 +367,11 @@ void attachProfile(
                            << node->getLowerBound() << ", "
                            << node->getUpperBound() << "]\n";
               llvm::errs() << "Sensitivity score of " << *op
-                           << " is: " << node->sens << "\n"
+                           << " is: " << node->sens << '\n'
                            << "Gradient sum of " << *op << " is: " << node->grad
-                           << "\n"
+                           << '\n'
                            << "Execution count of " << *op
-                           << " is: " << node->executions << "\n";
+                           << " is: " << node->executions << '\n';
             }
 
             auto operands =
@@ -520,14 +520,14 @@ static bool isExpansionBottleneck(const Options &O, Instruction *I,
 
   bool isBottleneck = forced || movedOps.size() >= O.Candidates.MinOpsSplit;
   if (O.Diagnostics.Print && isBottleneck) {
-    llvm::errs() << "Bottleneck: " << *I << "\n";
+    llvm::errs() << "Bottleneck: " << *I << '\n';
     llvm::errs() << "Num of operations that would be moved: " << movedOps.size()
                  << " (>=" << O.Candidates.MinOpsSplit << ")\n";
     llvm::errs() << "Num of internal uses: " << internalUses
                  << " (>=" << O.Candidates.MinUsesSplit << ")\n";
     llvm::errs() << "Operations that would be moved:\n";
     for (auto *op : movedOps) {
-      llvm::errs() << "\t" << *op << "\n";
+      llvm::errs() << '\t' << *op << '\n';
     }
   }
   return isBottleneck;
@@ -687,7 +687,7 @@ static void mergeSharedStagingSubgraphs(const Options &O,
                    << " staging buffer(s) into one optimization unit ("
                    << M.operations.size() << " operations, " << M.inputs.size()
                    << " inputs, " << M.outputs.size() << " outputs) in "
-                   << F.getName() << "\n";
+                   << F.getName() << '\n';
     }
     merged.push_back(std::move(M));
   }
@@ -724,25 +724,25 @@ static void splitSubgraphs(const Options &O,
 
       if (isExpansionBottleneck(O, I, currentSubgraph)) {
         if (O.Diagnostics.Print) {
-          llvm::errs() << "Bottleneck: " << *I << "\n";
+          llvm::errs() << "Bottleneck: " << *I << '\n';
           llvm::errs() << "currentSubgraph.inputs ("
                        << currentSubgraph.inputs.size() << "): ";
           for (auto *input : currentSubgraph.inputs) {
-            llvm::errs() << "\t" << *input << "\n";
+            llvm::errs() << '\t' << *input << '\n';
           }
-          llvm::errs() << "\n";
+          llvm::errs() << '\n';
           llvm::errs() << "currentSubgraph.operations ("
                        << currentSubgraph.operations.size() << "): ";
           for (auto *op : currentSubgraph.operations) {
-            llvm::errs() << "\t" << *op << "\n";
+            llvm::errs() << '\t' << *op << '\n';
           }
-          llvm::errs() << "\n";
+          llvm::errs() << '\n';
           llvm::errs() << "currentSubgraph.outputs ("
                        << currentSubgraph.outputs.size() << "): ";
           for (auto *output : currentSubgraph.outputs) {
-            llvm::errs() << "\t" << *output << "\n";
+            llvm::errs() << '\t' << *output << '\n';
           }
-          llvm::errs() << "\n";
+          llvm::errs() << '\n';
         }
 
         Subgraph newSubgraph, remainingSubgraph;
@@ -756,17 +756,17 @@ static void splitSubgraphs(const Options &O,
           llvm::errs() << "  New subgraph:\n";
           llvm::errs() << "    Inputs (" << newSubgraph.inputs.size() << "):\n";
           for (auto *input : newSubgraph.inputs) {
-            llvm::errs() << "      " << *input << "\n";
+            llvm::errs() << "      " << *input << '\n';
           }
           llvm::errs() << "    Operations (" << newSubgraph.operations.size()
                        << "):\n";
           for (auto *op : newSubgraph.operations) {
-            llvm::errs() << "      " << *op << "\n";
+            llvm::errs() << "      " << *op << '\n';
           }
           llvm::errs() << "    Outputs (" << newSubgraph.outputs.size()
                        << "):\n";
           for (auto *output : newSubgraph.outputs) {
-            llvm::errs() << "      " << *output << "\n";
+            llvm::errs() << "      " << *output << '\n';
           }
 
           llvm::errs() << "  Remaining subgraph:\n";
@@ -774,17 +774,17 @@ static void splitSubgraphs(const Options &O,
           llvm::errs() << "    Inputs (" << remainingSubgraph.inputs.size()
                        << "):\n";
           for (auto *input : remainingSubgraph.inputs) {
-            llvm::errs() << "      " << *input << "\n";
+            llvm::errs() << "      " << *input << '\n';
           }
           llvm::errs() << "    Operations ("
                        << remainingSubgraph.operations.size() << "):\n";
           for (auto *op : remainingSubgraph.operations) {
-            llvm::errs() << "      " << *op << "\n";
+            llvm::errs() << "      " << *op << '\n';
           }
           llvm::errs() << "    Outputs (" << remainingSubgraph.outputs.size()
                        << "):\n";
           for (auto *output : remainingSubgraph.outputs) {
-            llvm::errs() << "      " << *output << "\n";
+            llvm::errs() << "      " << *output << '\n';
           }
         }
 
@@ -803,9 +803,9 @@ static void splitSubgraphs(const Options &O,
 
   if (O.Diagnostics.Print) {
     llvm::errs() << "=== Subgraph splitting complete ===\n";
-    llvm::errs() << "  Original subgraphs: " << subgraphs.size() << "\n";
+    llvm::errs() << "  Original subgraphs: " << subgraphs.size() << '\n';
     llvm::errs() << "  Final subgraphs after splitting: "
-                 << resultSubgraphs.size() << "\n";
+                 << resultSubgraphs.size() << '\n';
   }
 
   subgraphs = std::move(resultSubgraphs);
@@ -825,7 +825,7 @@ void shapeSubgraphs(
 
   if (O.Diagnostics.Print) {
     llvm::errs() << "[poseidon] After splitting, have " << subgraphs.size()
-                 << " subgraphs in " << F.getName() << "\n";
+                 << " subgraphs in " << F.getName() << '\n';
   }
 
   // After splitting, so that a merged unit is never split again.
@@ -834,7 +834,7 @@ void shapeSubgraphs(
     if (O.Diagnostics.Print)
       llvm::errs() << "[poseidon] After staging-tier merge, have "
                    << subgraphs.size() << " subgraphs in " << F.getName()
-                   << "\n";
+                   << '\n';
   }
 
   if (O.Diagnostics.Print) {
@@ -861,9 +861,9 @@ void shapeSubgraphs(
 
         auto it = instToSubgraphIdx.find(&I);
         if (it != instToSubgraphIdx.end()) {
-          llvm::errs() << " ; [SG" << it->second << "]";
+          llvm::errs() << " ; [SG" << it->second << ']';
         }
-        llvm::errs() << "\n";
+        llvm::errs() << '\n';
       }
     }
     llvm::errs() << "=== End of Function IR ===\n\n";

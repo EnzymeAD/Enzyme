@@ -146,7 +146,7 @@ static bool narrowSharedStaging(const Options &O, llvm::Function &F) {
     if (O.Diagnostics.Print)
       llvm::errs() << "[narrow] G=@" << G.getName() << " casts=" << casts.size()
                    << " elemGEPs=" << elemGEPs.size() << " strideK=" << strideK
-                   << " bail=" << bail << "\n";
+                   << " bail=" << bail << '\n';
     if (bail || elemGEPs.empty())
       continue;
 
@@ -158,7 +158,7 @@ static bool narrowSharedStaging(const Options &O, llvm::Function &F) {
         if (auto *L = dyn_cast<LoadInst>(U)) {
           if (L->getType() != DoubleTy || L->getPointerOperand() != P) {
             if (O.Diagnostics.Print)
-              llvm::errs() << "[narrow] bail: load " << *L << "\n";
+              llvm::errs() << "[narrow] bail: load " << *L << '\n';
             bail = true;
             break;
           }
@@ -172,7 +172,7 @@ static bool narrowSharedStaging(const Options &O, llvm::Function &F) {
               continue;
             if (O.Diagnostics.Print)
               llvm::errs() << "[narrow] bail: FP64 consumer of staged load: "
-                           << *LU << "\n";
+                           << *LU << '\n';
             bail = true;
             break;
           }
@@ -191,7 +191,7 @@ static bool narrowSharedStaging(const Options &O, llvm::Function &F) {
               CG->getNumIndices() != 1 ||
               !isa<ConstantInt>(CG->getOperand(1))) {
             if (O.Diagnostics.Print)
-              llvm::errs() << "[narrow] bail: comp GEP " << *CG << "\n";
+              llvm::errs() << "[narrow] bail: comp GEP " << *CG << '\n';
             bail = true;
             break;
           }
@@ -205,7 +205,7 @@ static bool narrowSharedStaging(const Options &O, llvm::Function &F) {
           if (MC->getArgOperand(0) != P || !Len ||
               Len->getZExtValue() != (uint64_t)strideK || (strideK % 8) != 0) {
             if (O.Diagnostics.Print)
-              llvm::errs() << "[narrow] bail: memcpy " << *MC << "\n";
+              llvm::errs() << "[narrow] bail: memcpy " << *MC << '\n';
             bail = true;
             break;
           }
@@ -213,7 +213,7 @@ static bool narrowSharedStaging(const Options &O, llvm::Function &F) {
         } else {
           if (O.Diagnostics.Print)
             llvm::errs() << "[narrow] bail: unexpected user of staging ptr: "
-                         << *U << "\n";
+                         << *U << '\n';
           bail = true;
           break;
         }
@@ -223,7 +223,7 @@ static bool narrowSharedStaging(const Options &O, llvm::Function &F) {
       llvm::errs() << "[narrow]   loads=" << loads.size()
                    << " stores=" << stores.size()
                    << " compGEPs=" << compGEPs.size() << " bail=" << bail
-                   << "\n";
+                   << '\n';
     if (bail || (loads.empty() && stores.empty() && memcpyStores.empty()))
       continue;
 
@@ -621,7 +621,7 @@ static bool walkStaged(const Options &O, Function &F, ArrayRef<Value *> roots,
           if (!AT->getElementType()->isIntegerTy(8) ||
               (AT->getNumElements() % 2) != 0 || GEP->getNumIndices() != 1) {
             if (O.Diagnostics.Print)
-              llvm::errs() << "[narrow-param] bail: array GEP " << *GEP << "\n";
+              llvm::errs() << "[narrow-param] bail: array GEP " << *GEP << '\n';
             return false;
           }
           out.arrSet.insert(GEP);
@@ -640,7 +640,7 @@ static bool walkStaged(const Options &O, Function &F, ArrayRef<Value *> roots,
           }
           if (!ok) {
             if (O.Diagnostics.Print)
-              llvm::errs() << "[narrow-param] bail: byte GEP " << *GEP << "\n";
+              llvm::errs() << "[narrow-param] bail: byte GEP " << *GEP << '\n';
             return false;
           }
           out.byteSet.insert(GEP);
@@ -650,7 +650,7 @@ static bool walkStaged(const Options &O, Function &F, ArrayRef<Value *> roots,
           out.dblSet.insert(GEP);
         } else {
           if (O.Diagnostics.Print)
-            llvm::errs() << "[narrow-param] bail: GEP " << *GEP << "\n";
+            llvm::errs() << "[narrow-param] bail: GEP " << *GEP << '\n';
           return false;
         }
         if (seen.insert(GEP).second) {
@@ -660,7 +660,7 @@ static bool walkStaged(const Options &O, Function &F, ArrayRef<Value *> roots,
       } else if (auto *L = dyn_cast<LoadInst>(U)) {
         if (L->getType() != DoubleTy || L->getPointerOperand() != P) {
           if (O.Diagnostics.Print)
-            llvm::errs() << "[narrow-param] bail: load " << *L << "\n";
+            llvm::errs() << "[narrow-param] bail: load " << *L << '\n';
           return false;
         }
         FPTruncInst *hiT, *loT;
@@ -675,7 +675,7 @@ static bool walkStaged(const Options &O, Function &F, ArrayRef<Value *> roots,
             if (O.Diagnostics.Print)
               llvm::errs() << "[narrow-param] bail: non-split reader of "
                               "staged load: "
-                           << *L << "\n";
+                           << *L << '\n';
             return false;
           }
         } else {
@@ -686,7 +686,7 @@ static bool walkStaged(const Options &O, Function &F, ArrayRef<Value *> roots,
             if (O.Diagnostics.Print)
               llvm::errs() << "[narrow-param] bail: Dekker-split reader (DS "
                               "arm's buffer): "
-                           << *L << "\n";
+                           << *L << '\n';
             return false;
           }
           for (User *LU : L->users()) {
@@ -698,7 +698,7 @@ static bool walkStaged(const Options &O, Function &F, ArrayRef<Value *> roots,
             if (O.Diagnostics.Print)
               llvm::errs()
                   << "[narrow-param] bail: FP64 consumer of staged load: "
-                  << *LU << "\n";
+                  << *LU << '\n';
             return false;
           }
         }
@@ -707,13 +707,13 @@ static bool walkStaged(const Options &O, Function &F, ArrayRef<Value *> roots,
         if (S->getValueOperand()->getType() != DoubleTy ||
             S->getPointerOperand() != P) {
           if (O.Diagnostics.Print)
-            llvm::errs() << "[narrow-param] bail: store " << *S << "\n";
+            llvm::errs() << "[narrow-param] bail: store " << *S << '\n';
           return false;
         }
         out.stores.push_back(S);
       } else {
         if (O.Diagnostics.Print)
-          llvm::errs() << "[narrow-param] bail: unexpected user " << *U << "\n";
+          llvm::errs() << "[narrow-param] bail: unexpected user " << *U << '\n';
         return false;
       }
     }
@@ -738,10 +738,10 @@ static bool collectStaged(Session &S, Function &F, Function *Proxy,
     llvm::errs() << "[narrow-param " << (dsMode ? "df64" : "fp32") << "] G=@"
                  << G.getName() << " args=";
     for (unsigned i : acc.argIdx)
-      llvm::errs() << i << " ";
+      llvm::errs() << i << ' ';
     llvm::errs() << " geps=" << acc.order.size()
                  << " loads=" << acc.loads.size()
-                 << " stores=" << acc.stores.size() << "\n";
+                 << " stores=" << acc.stores.size() << '\n';
   }
   return true;
 }
@@ -903,27 +903,27 @@ bool applyStagingNarrowing(Session &S, Function &F, bool announce,
   bool changed = narrowSharedStaging(O, F);
   if (changed && announce && O.Diagnostics.Print)
     llvm::errs() << "[poseidon] applied shared-staging narrowing in "
-                 << F.getName() << "\n";
+                 << F.getName() << '\n';
   Function *proxy = paramProxy ? paramProxy : &F;
   if (param == ParamArm::Both || param == ParamArm::FP32)
     if (narrowSharedStagingParam(S, F, proxy)) {
       changed = true;
       if (announce && O.Diagnostics.Print)
         llvm::errs() << "[poseidon] applied param-staged shared narrowing in "
-                     << F.getName() << "\n";
+                     << F.getName() << '\n';
     }
   if (param == ParamArm::Both || param == ParamArm::DS)
     if (narrowSharedStagingParamDS(S, F, proxy)) {
       changed = true;
       if (announce && O.Diagnostics.Print)
         llvm::errs() << "[poseidon] applied param-staged df64 narrowing in "
-                     << F.getName() << "\n";
+                     << F.getName() << '\n';
     }
   if (narrowSharedStagingDS(O, F)) {
     changed = true;
     if (announce && O.Diagnostics.Print)
       llvm::errs() << "[poseidon] applied shared-staging df64 narrowing in "
-                   << F.getName() << "\n";
+                   << F.getName() << '\n';
   }
   return changed;
 }

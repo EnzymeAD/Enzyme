@@ -13,6 +13,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "InKernelRaise.h"
+#include "IR/Utils.h"
 #include "MatmulInternal.h"
 #include "Targets/NVPTXTensorCore.h"
 #include "WmmaUtils.h"
@@ -286,7 +287,7 @@ void OzakiIRaiseMaterializer::run() {
   // because the raised regions are sequential and bracketed by block barriers;
   // the extents in the key prevent reuse at another size.
   const std::string sliceTag = sliceIntrinTag(variant.slice);
-  auto scratchName = [&](const char *op, unsigned k, const std::string &prec,
+  auto scratchName = [&](const char *op, unsigned k, StringRef prec,
                          uint64_t rows, uint64_t cols) -> std::string {
     return ("__poseidon_ozaki_" + F->getName() + "_" + op + Twine(k) + "_" +
             prec + "_" + Twine(rows) + "x" + Twine(cols))
@@ -653,7 +654,8 @@ void OzakiIRaiseMaterializer::run() {
   if (useWarpGate) {
     BasicBlock *gateEndBB = bodyB.GetInsertBlock();
     bodyB.CreateBr(gateMergeBB);
-    IRBuilder<> mergeB(gateMergeBB, gateMergeBB->getFirstInsertionPt());
+    IRBuilder<> mergeB =
+        builderAt(gateMergeBB, gateMergeBB->getFirstInsertionPt());
     for (unsigned k = 0; k < N; ++k) {
       for (unsigned i = 0; i < numPhisPerGroup; ++i) {
         PHINode *p = mergeB.CreatePHI(cFragElemTy, 2,
@@ -663,7 +665,7 @@ void OzakiIRaiseMaterializer::run() {
         cAccLoop[k][i] = p;
       }
     }
-    bodyB.SetInsertPoint(gateMergeBB, gateMergeBB->getFirstInsertionPt());
+    setInsertPoint(bodyB, gateMergeBB, gateMergeBB->getFirstInsertionPt());
   }
 
   bodyB.CreateCall(barrier.Fn, barrier.Args);
@@ -676,7 +678,7 @@ void OzakiIRaiseMaterializer::run() {
     for (unsigned i = 0; i < numPhisPerGroup; ++i)
       cAccPhis[k][i]->addIncoming(cAccLoop[k][i], latchBB);
 
-  IRBuilder<> afterB(afterLoopBB, afterLoopBB->getFirstNonPHIIt());
+  IRBuilder<> afterB = builderAt(afterLoopBB, afterLoopBB->getFirstNonPHIIt());
   BasicBlock *storeMergeBB = nullptr;
   if (useWarpGate) {
     Value *aTlin = emitThreadLinAndBlockSize(afterB, mod, h.is2DBlock).first;
@@ -715,13 +717,13 @@ void OzakiIRaiseMaterializer::run() {
   }
   if (useWarpGate) {
     afterB.CreateBr(storeMergeBB);
-    afterB.SetInsertPoint(storeMergeBB, storeMergeBB->getFirstInsertionPt());
+    setInsertPoint(afterB, storeMergeBB, storeMergeBB->getFirstInsertionPt());
   }
   afterB.CreateCall(barrier.Fn, barrier.Args);
 
   // Readback: sum_k d[k] / SCALE^k, in F32.
   auto insertIt = exitBB->getFirstNonPHIIt();
-  IRBuilder<> RB(exitBB, insertIt);
+  IRBuilder<> RB = builderAt(exitBB, insertIt);
   Value *rRow =
       emitTidIndex(RB, mod, h.aRowAxis, h.aRowSlowAxis, h.aRowFuseMult);
   Value *rCol =

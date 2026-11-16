@@ -1248,7 +1248,7 @@ static bool rgAnalyzeChain(Function &F, ScalarEvolution &SE, DominatorTree &DT,
   do {                                                                         \
     if (O.Diagnostics.Print && phi.getType()->isFloatingPointTy())             \
       llvm::errs() << "[hostgemm]   reject phi in "                            \
-                   << L->getHeader()->getName() << ": " << (msg) << "\n";      \
+                   << L->getHeader()->getName() << ": " << (msg) << '\n';      \
     return false;                                                              \
   } while (0)
 
@@ -1420,7 +1420,7 @@ void findHostGemmLoopNests(const Options &O, Function &F, ScalarEvolution &SE,
         llvm::errs() << "[hostgemm] " << F.getName() << ": reduction chain of "
                      << chain.size()
                      << " loop(s) is not a dispatchable runtime-shape GEMM: "
-                     << why << "\n";
+                     << why << '\n';
       continue;
     }
 
@@ -1452,25 +1452,25 @@ void findHostGemmLoopNests(const Options &O, Function &F, ScalarEvolution &SE,
       llvm::errs() << "[hostgemm] " << F.getName() << ": recognized GEMM from "
                    << chain.size() << " reduction loop(s)\n"
                    << "[hostgemm]   C = alpha*A^T*B + beta*C  alpha=" << g.alpha
-                   << " beta=" << g.beta << "\n"
+                   << " beta=" << g.beta << '\n'
                    << "[hostgemm]   M=" << runtimeDimString(g.M)
                    << "  Ncols=" << runtimeDimString(g.Ncols)
-                   << "  K=" << runtimeDimString(g.K) << "\n"
+                   << "  K=" << runtimeDimString(g.K) << '\n'
                    << "[hostgemm]   lda=" << runtimeDimString(g.lda)
                    << "  ldb=" << runtimeDimString(g.ldb)
-                   << "  ldc=" << runtimeDimString(g.ldc) << "\n"
+                   << "  ldc=" << runtimeDimString(g.ldc) << '\n'
                    << "[hostgemm]   aColMajor=" << (g.aColMajor ? 1 : 0)
                    << " bColMajor=" << (g.bColMajor ? 1 : 0)
                    << " cColMajor=" << (g.cColMajor ? 1 : 0) << "  C=param"
                    << rgRefString(g.cRef) << " A=param" << rgRefString(g.aRef)
-                   << " B=param" << rgRefString(g.bRef) << "\n";
+                   << " B=param" << rgRefString(g.bRef) << '\n';
       for (const auto &[x, y] : g.assumedEqual)
         llvm::errs() << "[hostgemm]   dense only if param" << rgRefString(x)
                      << " == param" << rgRefString(y)
                      << " (checked at the launch)\n";
       llvm::errs() << "[hostgemm]   profile shape M=" << g.profM
                    << " Ncols=" << g.profN << " K=" << g.profK
-                   << " (per-CTA tile " << g.tileM << "x" << g.tileN
+                   << " (per-CTA tile " << g.tileM << 'x' << g.tileN
                    << ", launches=" << g.launches
                    << " CTAs/launch=" << g.ctaPerLaunch
                    << " MACs=" << g.profMacs << ")\n";

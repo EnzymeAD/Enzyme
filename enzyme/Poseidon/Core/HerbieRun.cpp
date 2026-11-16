@@ -190,12 +190,12 @@ HerbieRunResult runHerbie(const std::vector<std::string> &inputExprs,
     BaseArgs.push_back(Platform.Path.empty() ? Platform.Name : Platform.Path);
     if (Opts.Print)
       llvm::errs() << "Poseidon: using Herbie platform '" << Platform.Name
-                   << "'"
+                   << '\''
                    << (Platform.Path.empty()
                            ? std::string()
                            : " from " + Platform.Path + " (digest " +
                                  Platform.Digest + ")")
-                   << "\n";
+                   << '\n';
   }
 
   HerbieRunResult Run;
@@ -230,8 +230,8 @@ HerbieRunResult runHerbie(const std::vector<std::string> &inputExprs,
                      std::istreambuf_iterator<char>());
       cacheFile.close();
       llvm::errs() << "Using cached Herbie output from " << cacheFilePath
-                   << "\n";
-      llvm::errs() << "Herbie output: " << content << "\n";
+                   << '\n';
+      llvm::errs() << "Herbie output: " << content << '\n';
       Run.Result = Outcome::Ok;
       Run.From = HerbieRunResult::Origin::Cache;
       return Run;
@@ -251,7 +251,7 @@ HerbieRunResult runHerbie(const std::vector<std::string> &inputExprs,
                    << ": replayed the answer of the Herbie with digest "
                    << answer->Binary << " from " << answer->Path
                    << " (-poseidon-import-herbie-answers)\n";
-      llvm::errs() << "Herbie output: " << content << "\n";
+      llvm::errs() << "Herbie output: " << content << '\n';
       Run.Result = Outcome::Ok;
       Run.From = HerbieRunResult::Origin::Imported;
       return Run;
@@ -285,7 +285,7 @@ HerbieRunResult runHerbie(const std::vector<std::string> &inputExprs,
         if (auto EC = llvm::sys::fs::remove_directories(shardOut[s]))
           llvm::errs()
               << "Warning: Failed to remove temporary output directory: "
-              << EC.message() << "\n";
+              << EC.message() << '\n';
     }
   };
   bool setupFailed = false;
@@ -316,8 +316,8 @@ HerbieRunResult runHerbie(const std::vector<std::string> &inputExprs,
                  << " process(es), one input file and output directory "
                     "each) with arguments: ";
     for (const auto &arg : BaseArgs)
-      llvm::errs() << arg << " ";
-    llvm::errs() << "\n";
+      llvm::errs() << arg << ' ';
+    llvm::errs() << '\n';
   }
   llvm::errs() << "[poseidon] Herbie " << Label << ": " << inputExprs.size()
                << " FPCore(s) in " << shards << " process(es) of "
@@ -325,7 +325,7 @@ HerbieRunResult runHerbie(const std::vector<std::string> &inputExprs,
                << coreTimeout << " s, wall budget "
                << (wallBudget ? std::to_string(wallBudget) + " s"
                               : std::string("unbounded"))
-               << ", key " << keyDigest << "\n";
+               << ", key " << keyDigest << '\n';
 
   auto herbieStart = std::chrono::steady_clock::now();
   std::string ErrMsg;
@@ -403,12 +403,12 @@ HerbieRunResult runHerbie(const std::vector<std::string> &inputExprs,
     if (!timeoutMarkerPath.empty()) {
       if (auto EC = llvm::sys::fs::create_directories(Opts.CacheDir, true))
         llvm::errs() << "Warning: Could not create cache directory: "
-                     << EC.message() << "\n";
+                     << EC.message() << '\n';
       std::ofstream markerFile(timeoutMarkerPath);
       if (markerFile) {
         markerFile << wallBudget << "\n";
         markerFile.close();
-        llvm::errs() << "Recorded the timeout in " << timeoutMarkerPath << "\n";
+        llvm::errs() << "Recorded the timeout in " << timeoutMarkerPath << '\n';
       }
     }
     Run.Result = Outcome::Timeout;
@@ -468,12 +468,12 @@ HerbieRunResult runHerbie(const std::vector<std::string> &inputExprs,
                  << " exited with status " << RC
                  << " but wrote a usable results.json; using it.\n";
 
-  llvm::errs() << "Herbie output: " << content << "\n";
+  llvm::errs() << "Herbie output: " << content << '\n';
 
   if (!Opts.CacheDir.empty()) {
     if (auto EC = llvm::sys::fs::create_directories(Opts.CacheDir, true))
       llvm::errs() << "Warning: Could not create cache directory: "
-                   << EC.message() << "\n";
+                   << EC.message() << '\n';
     std::ofstream cacheFile(cacheFilePath);
     if (!cacheFile) {
       report_fatal_error("Failed to open cache file for writing");
@@ -481,7 +481,7 @@ HerbieRunResult runHerbie(const std::vector<std::string> &inputExprs,
       cacheFile << content;
       cacheFile.close();
       llvm::errs() << "Saved Herbie output to cache file " << cacheFilePath
-                   << "\n";
+                   << '\n';
     }
     json::Object record;
     record["Herbie binary"] = herbieBinaryDigest(Program, Digests);
@@ -490,13 +490,13 @@ HerbieRunResult runHerbie(const std::vector<std::string> &inputExprs,
         questionRecordPath(Opts.CacheDir, Platform.Name, question);
     if (Error E = writeCacheEntry(recordPath, question, std::move(record)))
       llvm::errs() << "Warning: could not write " << recordPath << ": "
-                   << toString(std::move(E)) << "\n";
+                   << toString(std::move(E)) << '\n';
     // A stale timeout marker under this key is left in place: the read path
     // consults it only when the output file is absent.
   }
   llvm::errs() << "[poseidon] Herbie " << Label << ": completed in "
                << herbieSecs << " s, a fresh answer of the Herbie with digest "
-               << herbieBinaryDigest(Program, Digests) << "\n";
+               << herbieBinaryDigest(Program, Digests) << '\n';
 
   Run.Result = Outcome::Ok;
   return Run;

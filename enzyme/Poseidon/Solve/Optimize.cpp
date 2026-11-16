@@ -87,7 +87,7 @@ static void readSiteProfile(Session &S, Function &F, SiteProfileData &P) {
   if (!O.Herbie.Cache.empty()) {
     if (auto EC = llvm::sys::fs::create_directories(O.Herbie.Cache, true))
       llvm::errs() << "Warning: Could not create cache directory: "
-                   << EC.message() << "\n";
+                   << EC.message() << '\n';
   }
 
   // Names the site by what it computes, not by the kernel it was cut from: the
@@ -96,14 +96,14 @@ static void readSiteProfile(Session &S, Function &F, SiteProfileData &P) {
   const std::string canonicalHash = poseidon::canonicalFormHash(F);
   if (O.Diagnostics.Print)
     llvm::errs() << "[poseidon] canonical form hash of " << F.getName()
-                 << " is " << canonicalHash << "\n";
+                 << " is " << canonicalHash << '\n';
 
   auto &profileMap = P.map;
   auto &profileHeader = P.header;
   auto &zeroGradIdx = P.zeroGradIdx;
   parseProfileFile(profilePath, profileMap, &profileHeader);
   if (profileMap.empty()) {
-    llvm::errs() << "Warning: No profile data found in " << profilePath << "\n";
+    llvm::errs() << "Warning: No profile data found in " << profilePath << '\n';
   }
   if (!O.Profiling.OutputProfiles.empty())
     mergeOutputProfiles(profileMap, O.Profiling.OutputProfiles,
@@ -124,10 +124,10 @@ static void readSiteProfile(Session &S, Function &F, SiteProfileData &P) {
     requireMeasuredKappa(profileHeader, profilePath, F);
   if (O.Diagnostics.Print && profileHeader.launchCount > 0) {
     llvm::errs() << "[poseidon] profile header for " << F.getName()
-                 << ": MaxBlockDims=(" << profileHeader.maxBlockDim[0] << ","
-                 << profileHeader.maxBlockDim[1] << ","
+                 << ": MaxBlockDims=(" << profileHeader.maxBlockDim[0] << ','
+                 << profileHeader.maxBlockDim[1] << ','
                  << profileHeader.maxBlockDim[2]
-                 << ") LaunchCount=" << profileHeader.launchCount << "\n";
+                 << ") LaunchCount=" << profileHeader.launchCount << '\n';
   }
 }
 
@@ -167,13 +167,13 @@ static void recognizeMatrixProducts(Session &S, Function &F,
 
   if (O.Diagnostics.Print && !abstractMatmuls.empty()) {
     llvm::errs() << "[poseidon] Found " << abstractMatmuls.size()
-                 << " AbstractMatmul(s) for " << F.getName() << "\n";
+                 << " AbstractMatmul(s) for " << F.getName() << '\n';
     auto dimStr = [](unsigned d) -> std::string {
       return d == ~0u ? std::string("?") : std::to_string(d);
     };
     for (const auto &m : abstractMatmuls) {
-      llvm::errs() << "  Matmul[" << m.id << "]: " << dimStr(m.M) << "x"
-                   << dimStr(m.N) << "x" << dimStr(m.K)
+      llvm::errs() << "  Matmul[" << m.id << "]: " << dimStr(m.M) << 'x'
+                   << dimStr(m.N) << 'x' << dimStr(m.K)
                    << " a=" << fpKindName(m.aType)
                    << " b=" << fpKindName(m.bType)
                    << " acc=" << fpKindName(m.accType)
@@ -181,7 +181,7 @@ static void recognizeMatrixProducts(Session &S, Function &F,
                    << (m.origin == AbstractMatmul::Origin::HostGemmLoopNest
                            ? "HostGemmLoopNest"
                            : "ScalarLoopReduction")
-                   << "\n";
+                   << '\n';
       if (m.origin == AbstractMatmul::Origin::HostGemmLoopNest)
         llvm::errs() << "    (profile-scale shape; runtime descriptor printed "
                         "by the [hostgemm] recognizer above)\n";
@@ -263,7 +263,7 @@ static void putOnApplicationScale(Session &S, Function &F,
     llvm::errs() << "[poseidon] site " << F.getName()
                  << ": kappa=" << profileHeader.kappa << " ("
                  << profileHeader.kappaMark << ") sumsens=" << sumSens
-                 << " factor=" << factor << "\n";
+                 << " factor=" << factor << '\n';
   }
   // The accuracy costs below are scaled by `factor`, so the level a tolerance
   // is compared against has to be scaled the same way; with a kappa this
@@ -362,7 +362,7 @@ static bool collectFPCandidates(Session &S, Function &F, double errorTol,
 
   const Target &T = Target::of(F);
   if (T.isDevice())
-    llvm::errs() << "[poseidon] GPU mode active for " << F.getName() << "\n";
+    llvm::errs() << "[poseidon] GPU mode active for " << F.getName() << '\n';
 
   SiteProfileData profile;
   readSiteProfile(S, F, profile);
@@ -426,7 +426,7 @@ static bool applySolution(ArrayRef<SolutionStep> steps,
   for (const auto &step : steps) {
     SiteUnit &unit = unitOf(step);
     llvm::errs() << "Applying solution for "
-                 << unit.choiceText(step.candidateIndex) << "\n";
+                 << unit.choiceText(step.candidateIndex) << '\n';
     ArrayRef<Value *> outputs = unit.rewrittenOutputs();
     if (llvm::any_of(outputs,
                      [&](Value *V) { return rewrittenOutputs.contains(V); })) {
@@ -451,7 +451,7 @@ static bool materializeFPSolution(Session &S, Function &F, FunctionFPState &st,
   bool changed = applySolution(steps, applied);
   printPin(S, st, applied);
 
-  llvm::errs() << "[poseidon] Finished optimizing " << F.getName() << "\n";
+  llvm::errs() << "[poseidon] Finished optimizing " << F.getName() << '\n';
 
   if (changed) {
     for (auto &subgraph : subgraphs) {
@@ -464,7 +464,7 @@ static bool materializeFPSolution(Session &S, Function &F, FunctionFPState &st,
       }
       for (auto *I : subgraph.operations) {
         if (O.Diagnostics.Print)
-          llvm::errs() << "Erasing: " << *I << "\n";
+          llvm::errs() << "Erasing: " << *I << '\n';
         if (!I->use_empty()) {
           I->replaceAllUsesWith(UndefValue::get(I->getType()));
         }
@@ -472,7 +472,7 @@ static bool materializeFPSolution(Session &S, Function &F, FunctionFPState &st,
       }
     }
 
-    llvm::errs() << "[poseidon] Finished cleaning up " << F.getName() << "\n";
+    llvm::errs() << "[poseidon] Finished cleaning up " << F.getName() << '\n';
   }
 
   if (changed)
@@ -483,7 +483,7 @@ static bool materializeFPSolution(Session &S, Function &F, FunctionFPState &st,
   if (changed && demoteFPCastPHIs(F)) {
     if (O.Diagnostics.Print)
       llvm::errs() << "[poseidon] demoted fpcast-sandwiched FP64 PHIs in "
-                   << F.getName() << "\n";
+                   << F.getName() << '\n';
   }
 
   simplifyFunction(F, OptimizationLevel::O3);
@@ -530,7 +530,7 @@ bool fpOptimize(Session &S, Function &F, double errorTol) {
   if (errorTol > 0.0 && O.Solver.Tau > 0.0)
     llvm::errs() << "[poseidon] " << F.getName()
                  << ": the site's own accuracy target " << errorTol
-                 << " overrides -poseidon-tau=" << O.Solver.Tau << "\n";
+                 << " overrides -poseidon-tau=" << O.Solver.Tau << '\n';
 
   SolveRecord record;
   SolveRecord *rec = explainWanted(O, F) ? &record : nullptr;
@@ -610,14 +610,14 @@ bool solveJointly(Session &S, Module &M, FunctionAnalysisManager &FAM) {
           "accuracy targets:";
     for (auto &[F, t] : targets) {
       const Function *origin = siteOriginOf(S, *F);
-      os << " "
+      os << ' '
          << llvm::demangle((origin ? origin->getName() : F->getName()).str())
          << " (";
       if (t > 0.0)
         os << t;
       else
         os << "none";
-      os << ")";
+      os << ')';
     }
     os << "; give them one target";
     M.getContext().diagnose(DiagnosticInfoUnsupported(
@@ -635,7 +635,7 @@ bool solveJointly(Session &S, Module &M, FunctionAnalysisManager &FAM) {
       states.push_back(std::move(st));
     } else {
       llvm::errs() << "Poseidon JOINT: nothing to optimize in " << F->getName()
-                   << "\n";
+                   << '\n';
       redirectNoopSite(S, F);
     }
   }

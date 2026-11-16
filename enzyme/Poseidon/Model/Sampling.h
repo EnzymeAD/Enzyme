@@ -53,7 +53,8 @@ void getSampledPoints(
     const Options &O, llvm::ArrayRef<llvm::Value *> inputs,
     const std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>>
         &valueToNodeMap,
-    llvm::SmallVector<llvm::MapVector<llvm::Value *, double>, 4> &sampledPoints,
+    llvm::SmallVectorImpl<llvm::MapVector<llvm::Value *, double>>
+        &sampledPoints,
     const CancellationPlan *plan = nullptr, size_t count = 0,
     unsigned seedOffset = 0);
 

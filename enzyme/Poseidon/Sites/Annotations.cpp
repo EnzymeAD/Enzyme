@@ -212,7 +212,7 @@ void noteSiteTarget(const Options &O, const Function &F,
                     std::optional<double> tau) {
   if (O.Diagnostics.Print && tau)
     llvm::errs() << "[poseidon] site " << displayName(F) << ": accuracy target "
-                 << shortDouble(*tau) << "\n";
+                 << shortDouble(*tau) << '\n';
 }
 
 // The kernels of this module that are sites, in module order. `byRegex`, when

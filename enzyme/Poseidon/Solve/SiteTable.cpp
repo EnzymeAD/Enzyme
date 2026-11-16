@@ -148,9 +148,9 @@ CacheKey solveKey(Session &S, const FunctionFPState &st,
   std::string candidates;
   raw_string_ostream os(candidates);
   for (const SiteUnit *unit : units) {
-    os << unit->keyHeader() << "\n";
+    os << unit->keyHeader() << '\n';
     for (size_t i = 0; i < unit->numCandidates(); ++i)
-      os << "  " << unit->candidateName(i) << "\n";
+      os << "  " << unit->candidateName(i) << '\n';
   }
   key.addContent("candidate set", candidates);
   return key;
@@ -163,8 +163,8 @@ bool readSiteTable(const Options &O, StringRef fnName, SiteTable &table,
   const std::string path = tablePath(O);
   if (!sys::fs::exists(path))
     return false;
-  auto miss = [&](const std::string &why) {
-    llvm::errs() << "[poseidon] DP cache entry for " << fnName << " " << why
+  auto miss = [&](StringRef why) {
+    llvm::errs() << "[poseidon] DP cache entry for " << fnName << ' ' << why
                  << "; re-solving.\n";
     return false;
   };
@@ -318,7 +318,7 @@ void writeSiteTable(const Options &O, StringRef fnName, const CacheKey &key,
           path,
           formatv("{0:2}", json::Value(std::move(jsonObj))).str() + "\n")) {
     llvm::errs() << "Error writing cache file: " << toString(std::move(E))
-                 << "\n";
+                 << '\n';
     return;
   }
   llvm::errs() << "DP table for " << fnName << " cached to file.\n";

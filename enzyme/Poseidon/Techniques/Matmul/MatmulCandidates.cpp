@@ -289,7 +289,7 @@ static LibrarySite librarySite(Session &S, const AbstractMatmul &m) {
     GemmBodyNote probe;
     L.dispatchable = F && computeGemmBodyNote(S.Opts, *F, m, probe);
     if (S.Opts.Diagnostics.Print && s8TileAvailable && !L.dispatchable)
-      llvm::errs() << "  Matmul[" << m.id << "] " << m.M << "x" << m.N << "x"
+      llvm::errs() << "  Matmul[" << m.id << "] " << m.M << 'x' << m.N << 'x'
                    << m.K
                    << ": host-dispatched Ozaki-II NOT PROPOSED -- body is "
                       "not a host-dispatchable GEMM (computeGemmBodyNote "
@@ -360,7 +360,7 @@ static void proposeLibraryModular(const Product &P, const LibrarySite &L,
     if (rel <= 0.0) {
       if (P.S.Opts.Diagnostics.Print)
         llvm::errs()
-            << "  Matmul[" << m.id << "] " << schemeTag(v) << " "
+            << "  Matmul[" << m.id << "] " << schemeTag(v) << ' '
             << schemeParameter(v)
             << " NOT PROPOSED -- neither 'ozaki_dispatch_rect_rel," << rectKey
             << "' nor 'ozaki_dispatch_rel,nm" << nm
@@ -374,8 +374,8 @@ static void proposeLibraryModular(const Product &P, const LibrarySite &L,
     } else if (L.padWaste >= 1.05) {
       if (P.S.Matmul.WarnedRectangularRows.insert((const void *)&m).second)
         llvm::errs()
-            << "[poseidon] WARNING: matmul[" << m.id << "] " << m.M << "x"
-            << m.N << "x" << m.K << ": padWaste=" << L.padWaste
+            << "[poseidon] WARNING: matmul[" << m.id << "] " << m.M << 'x'
+            << m.N << 'x' << m.K << ": padWaste=" << L.padWaste
             << " >= 1.05, so __poseidon_ozaki_dgemm_ex will take its "
                "RECTANGULAR arm, whose cost is linear in the column count -- "
                "but the cost model has no measured 'ozaki_dispatch_rect_rel,"
@@ -459,8 +459,8 @@ static void proposeLibraryDirect(const Product &P, const LibrarySite &L,
     if (rel <= 0.0) {
       if (P.S.Matmul.ReportedDirectRows.insert(cls).second)
         llvm::errs()
-            << "[poseidon] WARNING: matmul[" << m.id << "] " << m.M << "x"
-            << m.N << "x" << m.K << ": " << schemeTag(d.variant) << " " << cls
+            << "[poseidon] WARNING: matmul[" << m.id << "] " << m.M << 'x'
+            << m.N << 'x' << m.K << ": " << schemeTag(d.variant) << ' ' << cls
             << " host dispatch NOT PROPOSED -- this device's cost model "
                "carries no measured 'direct_dispatch_rel,"
             << cls
@@ -519,7 +519,7 @@ static void proposeLibraryNative(const Product &P, const LibrarySite &L,
     if (padWaste >= 1.05 &&
         P.S.Matmul.WarnedSquareNativeRows.insert((const void *)&m).second)
       llvm::errs() << "[poseidon] WARNING: matmul[" << m.id << "] " << m.M
-                   << "x" << m.N << "x" << m.K << ": the native DGEMM runs at "
+                   << 'x' << m.N << 'x' << m.K << ": the native DGEMM runs at "
                    << shape << " (padWaste=" << padWaste
                    << "), but the cost model has no measured "
                       "'ozaki_dispatch_rect_rel,"
@@ -653,27 +653,27 @@ void generateMatmulCandidates(Session &S, ArrayRef<AbstractMatmul> matmuls,
                       "padWaste below is the ratio AT PROFILE SCALE only and "
                       "under-states the deploy cost. The rectangular "
                       "measured row 'ozaki_dispatch_rect_rel,nm<NM>_m"
-                   << m.globalM << "k" << m.globalK
+                   << m.globalM << 'k' << m.globalK
                    << "' is column-count independent and supersedes it when "
                       "present.\n"
                    << "[hostgemm] matmul[" << m.id
                    << "] baseline: composed/MAC=" << baselinePerMac
-                   << "; padWaste(S^3/MNK)=" << squarePaddingRatio(m) << "\n";
+                   << "; padWaste(S^3/MNK)=" << squarePaddingRatio(m) << '\n';
 
     // compCost is per-MAC reciprocal throughput; rel is it divided by the naive
     // per-MAC baseline, the unit the measured *_dispatch_rel rows use.
     if (S.Opts.Diagnostics.Print) {
       llvm::errs() << "[poseidon] matmul[" << cm.matmul->id
                    << "] pricing: baseline/MAC=" << cm.initialCompCost
-                   << " executions=" << cm.executions << "\n";
+                   << " executions=" << cm.executions << '\n';
       for (size_t ci = 0; ci < cm.candidates.size(); ++ci) {
         const auto &o = cm.candidates[ci];
-        llvm::errs() << "[poseidon]   #" << ci << " " << matmulOptionLabel(o)
+        llvm::errs() << "[poseidon]   #" << ci << ' ' << matmulOptionLabel(o)
                      << "  compCost/MAC=" << o.compCost << "  rel="
                      << (cm.initialCompCost > 0
                              ? o.compCost / cm.initialCompCost
                              : -1.0)
-                     << "  domainError=" << o.domainError << "\n";
+                     << "  domainError=" << o.domainError << '\n';
       }
     }
 
@@ -726,7 +726,7 @@ void MatmulUnit::printPriced(raw_ostream &OS) {
   for (size_t i = 0; i < candidates.size(); ++i)
     OS << "  " << matmulOptionLabel(candidates[i])
        << ": Δcost=" << getCompCostDelta(i)
-       << " ΔaccCost=" << getAccCostDelta(i) << "\n";
+       << " ΔaccCost=" << getAccCostDelta(i) << '\n';
 }
 
 void MatmulUnit::writeReportStep(raw_ostream &OS, size_t i, StringRef pad) {
@@ -739,7 +739,7 @@ void MatmulUnit::writeReportStep(raw_ostream &OS, size_t i, StringRef pad) {
 static constexpr double kCostTieBandRel = 0.006;
 
 SmallVector<SolutionStep> errorBudgetSelector(const Options &O,
-                                              SmallVector<MatmulUnit, 4> &CMs,
+                                              SmallVectorImpl<MatmulUnit> &CMs,
                                               double budget,
                                               double confidence) {
   SmallVector<SolutionStep> steps;

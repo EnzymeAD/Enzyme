@@ -137,7 +137,7 @@ static bool improveViaHerbie(Session &S,
   if (!O.Herbie.HerbieBinary.empty() && O.Diagnostics.Print)
     llvm::errs() << "Poseidon: using Herbie binary '" << O.Herbie.HerbieBinary
                  << "'\n";
-  llvm::errs() << "random seed: " << std::to_string(O.Model.RandomSeed) << "\n";
+  llvm::errs() << "random seed: " << std::to_string(O.Model.RandomSeed) << '\n';
   HerbieRunOptions Opts = herbieRunOptions(S, F);
 
   const std::string Label =
@@ -192,7 +192,7 @@ static bool improveViaHerbie(Session &S,
 
   std::vector<std::unordered_set<std::string>> seenExprs(COs.size());
 
-  auto processHerbieOutput = [&](const std::string &content) -> bool {
+  auto processHerbieOutput = [&](StringRef content) -> bool {
     Expected<json::Value> parsed = json::parse(content);
     if (!parsed) {
       llvm::errs() << "Failed to parse Herbie result!\n";
@@ -211,12 +211,12 @@ static bool improveViaHerbie(Session &S,
                    << subgraphIdx << " of " << F.getName()
                    << "): status=" << status;
       if (auto t = test.getNumber("time"))
-        llvm::errs() << " time=" << (*t / 1000.0) << "s";
+        llvm::errs() << " time=" << (*t / 1000.0) << 's';
       if (auto s = test.getNumber("start"))
         llvm::errs() << " start-err-bits=" << *s;
       if (auto e = test.getNumber("end"))
         llvm::errs() << " end-err-bits=" << *e;
-      llvm::errs() << "\n";
+      llvm::errs() << '\n';
 
       StringRef bestExpr = test.getString("output").value();
       if (bestExpr == "#f") {
@@ -233,7 +233,7 @@ static bool improveViaHerbie(Session &S,
       StringRef ID = test.getString("name").value();
       size_t index = std::stoul(ID.str());
       if (index >= COs.size()) {
-        llvm::errs() << "Invalid CO index: " << index << "\n";
+        llvm::errs() << "Invalid CO index: " << index << '\n';
         continue;
       }
 
@@ -316,7 +316,7 @@ void reportHerbieAnswers(Session &S) {
                << H.Cached << " from the cache, " << H.Imported << " replayed";
   if (!S.Opts.Herbie.ImportHerbieAnswers.empty())
     llvm::errs() << " from " << S.Opts.Herbie.ImportHerbieAnswers;
-  llvm::errs() << "\n";
+  llvm::errs() << '\n';
   H.Cached = H.Imported = H.Fresh = 0;
 }
 
@@ -521,7 +521,7 @@ static void priceOnPoints(const Options &O, ElementPricing &E,
       raw_string_ostream(E.diag)
           << "[poseidon] dropping candidate: relative error >= 1 on " << broken
           << " of " << n << " samples: " << E.exprForLog->substr(0, 120)
-          << "\n";
+          << '\n';
     E.discard = true;
     E.why = formatv("its relative error is 1 or more on {0} of {1} samples",
                     broken, n)
@@ -641,9 +641,9 @@ static void chargeWorstArm(const Options &O, ElementPricing &E) {
   for (const FPNode *ifNode : E.ifNodes)
     for (bool taken : {false, true}) {
       const ArmStats &st = E.armStats[{ifNode, taken}];
-      os << " " << (taken ? "then" : "else") << ":" << st.count;
+      os << ' ' << (taken ? "then" : "else") << ':' << st.count;
       if (st.count)
-        os << ":" << format("%.3e", st.candSum / st.count) << "/"
+        os << ':' << format("%.3e", st.candSum / st.count) << '/'
            << format("%.3e", st.origSum / st.count);
       if (st.count < O.Model.MinArmSamples) {
         E.discard = true;
@@ -664,7 +664,7 @@ static void chargeWorstArm(const Options &O, ElementPricing &E) {
         << format("%.3e", E.cost) << " -> "
         << (E.discard ? std::string("dropped (unpriced arm)")
                       : formatv("{0:e}", worst).str())
-        << "; " << E.exprForLog->substr(0, 120) << "\n";
+        << "; " << E.exprForLog->substr(0, 120) << '\n';
   if (!E.discard)
     E.cost = worst;
 }
@@ -738,7 +738,7 @@ void setUnifiedAccuracyCost(
     // silently fall back to the no-op; drop the candidates and say so instead.
     for (const RootSamples &R : rootSamples)
       llvm::errs() << "  origCost = " << R.origCost << ", grad = " << R.grad
-                   << "\n";
+                   << '\n';
     unpriceable("the baseline accuracy cost is not finite; the site's profile "
                 "is degenerate (a zero or null-space output shadow gives a "
                 "gradient that cannot weight anything)");
@@ -786,8 +786,9 @@ void setUnifiedAccuracyCost(
       SmallPtrSet<const FPNode *, 32> seen;
       SmallPtrSet<Value *, 8> used;
       collectInputs(element.get(), CO.subgraph->inputs, seen, used);
+      const auto &elementInputs = rootInputs[k];
       if (!llvm::all_of(used,
-                        [&](Value *V) { return rootInputs[k].contains(V); })) {
+                        [&](Value *V) { return elementInputs.contains(V); })) {
         P.strayElement = k;
         break;
       }
@@ -860,7 +861,7 @@ void setUnifiedAccuracyCost(
     }
     if (CO.isArray() && O.Diagnostics.Print && !discardCandidate)
       llvm::errs() << "[poseidon] array candidate per element (cand/orig):"
-                   << perElement << "\n";
+                   << perElement << '\n';
 
     if (!discardCandidate) {
       candidate.accuracyCost = total;
@@ -1207,7 +1208,7 @@ void proposeHerbieCandidates(
     symbolToValueMap[node->symbol] = input;
     if (O.Diagnostics.Print)
       llvm::errs() << "assigning symbol: " << node->symbol << " to " << *input
-                   << "\n";
+                   << '\n';
   }
 
   std::vector<std::string> herbieInputs;
@@ -1250,7 +1251,7 @@ void proposeHerbieCandidates(
       std::string herbieInput =
           "(FPCore (" + argStr + ") " + properties + " " + E.expr + ")";
       if (O.Diagnostics.Print)
-        llvm::errs() << "Herbie input:\n" << herbieInput << "\n";
+        llvm::errs() << "Herbie input:\n" << herbieInput << '\n';
 
       inputs.push_back(herbieInput);
       cos.push_back(CO);
@@ -1263,7 +1264,7 @@ void proposeHerbieCandidates(
     uint64_t executions = valueToNodeMap[output]->executions;
 
     if (grad == 0.) {
-      llvm::errs() << "Skipping zero gradient instruction: " << *output << "\n";
+      llvm::errs() << "Skipping zero gradient instruction: " << *output << '\n';
       continue;
     }
 
@@ -1274,7 +1275,7 @@ void proposeHerbieCandidates(
       llvm::errs() << "WARNING: Skipping Herbie optimization for " << *output
                    << " since expression length " << expr.length()
                    << " exceeds limit of " << O.Candidates.MaxExprLength
-                   << "\n";
+                   << '\n';
       continue;
     }
 
@@ -1283,7 +1284,7 @@ void proposeHerbieCandidates(
     if (parenCount == 1) {
       if (O.Diagnostics.Print)
         llvm::errs() << "Skipping Herbie for simple expression: " << expr
-                     << "\n";
+                     << '\n';
       continue;
     }
 
@@ -1404,7 +1405,7 @@ void proposeHerbieCandidates(
           " :pre " + precondition + weights + " :name \"" +
           std::to_string(arrayCOs.size()) + "\" " + body + ")";
       if (O.Diagnostics.Print)
-        llvm::errs() << "Herbie array input:\n" << herbieInput << "\n";
+        llvm::errs() << "Herbie array input:\n" << herbieInput << '\n';
       arrayInputs.push_back(herbieInput);
       arrayCOs.emplace_back(S.CostModel, subgraph, ArrayRef<Value *>(roots),
                             grads, body, G.front()->executions);
@@ -1508,7 +1509,8 @@ void RewriteUnit::apply(
 
   for (auto [k, root, element] : llvm::enumerate(roots, elements)) {
     auto *oldInst = cast<Instruction>(root);
-    IRBuilder<> builder(oldInst->getParent(), ++BasicBlock::iterator(oldInst));
+    IRBuilder<> builder =
+        builderAt(oldInst->getParent(), ++BasicBlock::iterator(oldInst));
     builder.setFastMathFlags(oldInst->getFastMathFlags());
 
     Value *newOutput = isArray() ? newOutputs[k] : element->getLLValue(builder);
@@ -1659,17 +1661,17 @@ json::Object RewriteUnit::stepJSON(size_t i) {
 
 void RewriteUnit::writeReportStep(raw_ostream &OS, size_t i, StringRef pad) {
   auto &cand = candidates[i];
-  OS << pad << "[Rewrite] " << expr << "  -->  " << cand.expr << "\n";
+  OS << pad << "[Rewrite] " << expr << "  -->  " << cand.expr << '\n';
   if (!std::isnan(initialHerbieAccuracy) && !std::isnan(cand.herbieAccuracy))
     OS << pad << "  Herbie accuracy: " << initialHerbieAccuracy << " -> "
        << cand.herbieAccuracy << " bits\n";
-  OS << pad << "  Gradient: " << grad << ", Executions: " << executions << "\n";
+  OS << pad << "  Gradient: " << grad << ", Executions: " << executions << '\n';
 
   SmallSet<std::string, 4> seen;
   auto printLoc = [&](Instruction *I) {
     auto loc = getSourceLocationStr(I);
     if (!loc.empty() && seen.insert(loc).second)
-      OS << pad << "  Source: " << loc << "\n";
+      OS << pad << "  Source: " << loc << '\n';
   };
   if (auto *I = dyn_cast<Instruction>(oldOutput))
     printLoc(I);
@@ -1678,10 +1680,10 @@ void RewriteUnit::writeReportStep(raw_ostream &OS, size_t i, StringRef pad) {
 
   OS << pad << "  Affected IR:\n";
   if (auto *I = dyn_cast<Instruction>(oldOutput))
-    OS << pad << "    " << *I << "\n";
+    OS << pad << "    " << *I << '\n';
   for (auto *I : erasableInsts) {
     if (I != oldOutput)
-      OS << pad << "    " << *I << "\n";
+      OS << pad << "    " << *I << '\n';
   }
 }
 
@@ -1715,11 +1717,11 @@ void RewriteUnit::scaleErrors(double factor) {
 
 void RewriteUnit::printPriced(raw_ostream &OS) {
   OS << "\n################################\n";
-  OS << "Initial AccuracyCost: " << initialAccCost << "\n";
-  OS << "Initial ComputationCost: " << initialCompCost << "\n";
-  OS << "Initial HerbieCost: " << initialHerbieCost << "\n";
-  OS << "Initial HerbieAccuracy: " << initialHerbieAccuracy << "\n";
-  OS << "Initial Expression: " << expr << "\n";
+  OS << "Initial AccuracyCost: " << initialAccCost << '\n';
+  OS << "Initial ComputationCost: " << initialCompCost << '\n';
+  OS << "Initial HerbieCost: " << initialHerbieCost << '\n';
+  OS << "Initial HerbieAccuracy: " << initialHerbieAccuracy << '\n';
+  OS << "Initial Expression: " << expr << '\n';
   OS << "Grad: " << grad << "\n\n";
   OS << "Candidates:\n";
   OS << "Δ AccCost\t\tΔ "
@@ -1734,7 +1736,7 @@ void RewriteUnit::printPriced(raw_ostream &OS) {
     else
       OS << getCompCostDelta(session().CostModel, i);
     OS << "\t\t" << candidate.herbieCost << "\t\t" << candidate.herbieAccuracy
-       << "\t\t" << candidate.expr << "\n";
+       << "\t\t" << candidate.expr << '\n';
   }
   OS << "################################\n\n";
 }
@@ -1756,20 +1758,20 @@ void RewriteUnit::addReportSummary(json::Array &summary) {
 }
 
 void RewriteUnit::writeReportSummary(raw_ostream &textOut) {
-  textOut << "Expression #" << indexInKind() << ": " << expr << "\n";
-  textOut << "  Gradient: " << grad << ", Executions: " << executions << "\n";
+  textOut << "Expression #" << indexInKind() << ": " << expr << '\n';
+  textOut << "  Gradient: " << grad << ", Executions: " << executions << '\n';
   if (auto *I = dyn_cast<Instruction>(oldOutput)) {
     auto loc = getSourceLocationStr(I);
     if (!loc.empty())
-      textOut << "  Source: " << loc << "\n";
+      textOut << "  Source: " << loc << '\n';
   }
-  textOut << "  Candidates: " << candidates.size() << "\n";
+  textOut << "  Candidates: " << candidates.size() << '\n';
   for (size_t j = 0; j < candidates.size(); ++j) {
     auto &cand = candidates[j];
     textOut << "    [" << cand.ordinal << "] " << cand.expr;
     if (!std::isnan(cand.herbieAccuracy))
       textOut << "  (accuracy: " << cand.herbieAccuracy << " bits)";
-    textOut << "\n";
+    textOut << '\n';
   }
 }
 

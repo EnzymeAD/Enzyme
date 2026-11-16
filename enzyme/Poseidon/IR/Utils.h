@@ -22,6 +22,7 @@
 #include "llvm/ADT/Twine.h"
 #include "llvm/Config/llvm-config.h"
 #include "llvm/IR/DiagnosticInfo.h"
+#include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/InstrTypes.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/PassManager.h"
@@ -54,6 +55,26 @@ inline llvm::Value *branchCondition(llvm::Value *V) {
   return llvm::cast<llvm::CondBrInst>(V)->getCondition();
 #else
   return llvm::cast<llvm::BranchInst>(V)->getCondition();
+#endif
+}
+
+// A builder inserting at `IP` in `BB`; `IP` may be `BB->end()`. LLVM 24 takes
+// the position alone and deprecates the form that also names the block.
+inline llvm::IRBuilder<> builderAt(llvm::BasicBlock *BB,
+                                   llvm::BasicBlock::iterator IP) {
+#if LLVM_VERSION_MAJOR >= 24
+  return llvm::IRBuilder<>(IP);
+#else
+  return llvm::IRBuilder<>(BB, IP);
+#endif
+}
+
+inline void setInsertPoint(llvm::IRBuilderBase &B, llvm::BasicBlock *BB,
+                           llvm::BasicBlock::iterator IP) {
+#if LLVM_VERSION_MAJOR >= 24
+  B.SetInsertPoint(IP);
+#else
+  B.SetInsertPoint(BB, IP);
 #endif
 }
 

@@ -10,6 +10,7 @@
 #include "Canonicalize.h"
 
 #include "FPProfileName.h"
+#include "IR/Utils.h"
 #include "Targets/DeviceMath.h"
 #include "Targets/MathFunctions.h"
 
@@ -174,22 +175,22 @@ std::string canonicalFormHash(const Function &F) {
   for (const Instruction &I : instructions(F)) {
     if (!isOptimizable(I))
       continue;
-    os << slot++ << "|" << I.getOpcodeName() << "|";
+    os << slot++ << '|' << I.getOpcodeName() << '|';
     I.getType()->print(os);
     if (const auto *CI = dyn_cast<CallInst>(&I)) {
       for (const Value *arg : CI->args()) {
-        os << "|";
+        os << '|';
         arg->getType()->print(os);
       }
       const Function *callee = CI->getCalledFunction();
-      os << "|" << (callee ? callee->getName() : StringRef("<indirect>"));
+      os << '|' << (callee ? callee->getName() : StringRef("<indirect>"));
     } else {
       for (const Use &op : I.operands()) {
-        os << "|";
+        os << '|';
         op->getType()->print(os);
       }
     }
-    os << "\n";
+    os << '\n';
   }
   return profileNameHex16(profileNameHash(form.data(), form.size()));
 }
@@ -252,7 +253,7 @@ static void setFullWillReturn(Function *NewF) {
 static std::pair<PHINode *, Instruction *>
 insertNewCanonicalIV(Loop *L, Type *Ty, const Twine &Name) {
   BasicBlock *Header = L->getHeader();
-  IRBuilder<> B(Header, Header->begin());
+  IRBuilder<> B = builderAt(Header, Header->begin());
   PHINode *CanonicalIV = B.CreatePHI(Ty, 1, Name);
 
 #if LLVM_VERSION_MAJOR >= 24
@@ -627,7 +628,7 @@ Function *canonicalize(Function &F) {
   }
 
   if (verifyFunction(*NewF, &llvm::errs())) {
-    llvm::errs() << *NewF << "\n";
+    llvm::errs() << *NewF << '\n';
     report_fatal_error("Poseidon canonicalized function failed verification");
   }
   return NewF;

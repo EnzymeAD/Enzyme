@@ -281,7 +281,7 @@ bool lowerPerCallSites(const Options &O, Module &M) {
     if (O.Diagnostics.Print && hasTau)
       llvm::errs() << "[poseidon] site " << name << " at its call in "
                    << displayName(*caller) << ": accuracy target "
-                   << shortDouble(tau) << "\n";
+                   << shortDouble(tau) << '\n';
   }
   return true;
 }

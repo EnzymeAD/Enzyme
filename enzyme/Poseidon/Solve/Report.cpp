@@ -31,14 +31,14 @@ void printDPTable(const CostScale &scale, const CostMap &costToAccuracyMap,
   for (const auto &pair : costToAccuracyMap) {
 
     llvm::errs() << "Computation cost: " << scale.share(pair.first)
-                 << ", Accuracy cost: " << pair.second << "\n";
+                 << ", Accuracy cost: " << pair.second << '\n';
     llvm::errs() << "\tSolution steps: \n";
     auto it = costToSolutionMap.find(pair.first);
     if (it == costToSolutionMap.end())
       continue;
     for (const auto &step : it->second)
       llvm::errs() << "\t\t" << unitOf(step).choiceText(step.candidateIndex)
-                   << "\n";
+                   << '\n';
   }
   llvm::errs() << "*** End of DP Table ***\n\n";
 }
@@ -56,7 +56,7 @@ void emitReport(Session &S, StringRef funcName, const CostScale &scale,
     EC = llvm::sys::fs::create_directories(O.Diagnostics.ReportPath);
     if (EC) {
       llvm::errs() << "Error creating report directory: " << EC.message()
-                   << "\n";
+                   << '\n';
       return;
     }
   }
@@ -105,17 +105,17 @@ void emitReport(Session &S, StringRef funcName, const CostScale &scale,
       (Twine(O.Diagnostics.ReportPath) + "/" + stem + ".json").str();
   raw_fd_ostream jsonOut(jsonFile, EC, sys::fs::OF_Text);
   if (EC) {
-    llvm::errs() << "Error writing JSON report: " << EC.message() << "\n";
+    llvm::errs() << "Error writing JSON report: " << EC.message() << '\n';
   } else {
-    jsonOut << formatv("{0:2}", json::Value(std::move(report))) << "\n";
-    llvm::errs() << "Poseidon JSON report written to " << jsonFile << "\n";
+    jsonOut << formatv("{0:2}", json::Value(std::move(report))) << '\n';
+    llvm::errs() << "Poseidon JSON report written to " << jsonFile << '\n';
   }
 
   std::string textFile =
       (Twine(O.Diagnostics.ReportPath) + "/" + stem + ".txt").str();
   raw_fd_ostream textOut(textFile, EC, sys::fs::OF_Text);
   if (EC) {
-    llvm::errs() << "Error writing text report: " << EC.message() << "\n";
+    llvm::errs() << "Error writing text report: " << EC.message() << '\n';
     return;
   }
 
@@ -123,9 +123,9 @@ void emitReport(Session &S, StringRef funcName, const CostScale &scale,
   textOut << "Pareto table: " << costToAccuracyMap.size() << " points";
   if (!costToAccuracyMap.empty()) {
     textOut << ", cost range [" << scale.share(costToAccuracyMap.begin()->first)
-            << ", " << scale.share(costToAccuracyMap.rbegin()->first) << "]";
+            << ", " << scale.share(costToAccuracyMap.rbegin()->first) << ']';
   }
-  textOut << "\n";
+  textOut << '\n';
   bool first = true;
   for (const UnitKindInfo &kind : unitKinds()) {
     if (kind.reportSection.empty())
@@ -143,7 +143,7 @@ void emitReport(Session &S, StringRef funcName, const CostScale &scale,
     for (SiteUnit *unit : units)
       if (unit->unitKind() == kind.kind)
         unit->writeReportSummary(textOut);
-    textOut << "\n";
+    textOut << '\n';
   }
 
   unsigned pointIdx = 0;
@@ -159,10 +159,10 @@ void emitReport(Session &S, StringRef funcName, const CostScale &scale,
     } else {
       textOut << "  (no changes)\n";
     }
-    textOut << "\n";
+    textOut << '\n';
   }
 
-  llvm::errs() << "Poseidon text report written to " << textFile << "\n";
+  llvm::errs() << "Poseidon text report written to " << textFile << '\n';
 
   {
     std::string configFile =
@@ -184,9 +184,9 @@ void emitReport(Session &S, StringRef funcName, const CostScale &scale,
       raw_fd_ostream cfgOut(configFile, EC, sys::fs::OF_Text);
       if (EC) {
         llvm::errs() << "Error writing validate config: " << EC.message()
-                     << "\n";
+                     << '\n';
       } else {
-        cfgOut << formatv("{0:2}", json::Value(std::move(cfg))) << "\n";
+        cfgOut << formatv("{0:2}", json::Value(std::move(cfg))) << '\n';
       }
     }
   }
@@ -228,15 +228,15 @@ void emitReport(Session &S, StringRef funcName, const CostScale &scale,
         (Twine(O.Diagnostics.ReportPath) + "/" + stem + "_rewrites.json").str();
     raw_fd_ostream rwOut(rewritesFile, EC, sys::fs::OF_Text);
     if (EC) {
-      llvm::errs() << "Error writing rewrites report: " << EC.message() << "\n";
+      llvm::errs() << "Error writing rewrites report: " << EC.message() << '\n';
     } else {
       json::Object root;
       root["function"] = funcName.str();
       root["total_rewrites"] = static_cast<int64_t>(sortedRewrites.size());
       root["rewrites"] = std::move(sortedRewrites);
-      rwOut << formatv("{0:2}", json::Value(std::move(root))) << "\n";
+      rwOut << formatv("{0:2}", json::Value(std::move(root))) << '\n';
       llvm::errs() << "Poseidon curated rewrites written to " << rewritesFile
-                   << "\n";
+                   << '\n';
     }
   }
 }

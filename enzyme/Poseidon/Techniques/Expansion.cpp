@@ -219,7 +219,7 @@ bool foldDSPairRoundtrip(Function &F, SmallVectorImpl<Value *> *foldedLimbs,
     llvm::errs()
         << "[poseidon] folded df64 join/split roundtrips at the staging "
            "boundary in "
-        << F.getName() << "\n";
+        << F.getName() << '\n';
   return changed;
 }
 
@@ -277,7 +277,7 @@ using DeferredDSPhiIns = SmallVector<DeferredDSPhiIn, 16>;
 using DSMap = MapVector<Value *, DSValue>;
 
 static DSValue getOrSplitOperand(IRBuilder<> &B, Value *op, DSMap &dsMap,
-                                 DeferredDSPhiIns &deferred);
+                                 SmallVectorImpl<DeferredDSPhiIn> &deferred);
 
 // Any scalar f32/f64 value has a DS representation (materialized op, split
 // constant, carried phi, or boundary emitToDS).
@@ -287,7 +287,7 @@ static bool hasDSRepresentation(Value *op) {
 }
 
 static DSValue getOrSplitOperand(IRBuilder<> &B, Value *op, DSMap &dsMap,
-                                 DeferredDSPhiIns &deferred) {
+                                 SmallVectorImpl<DeferredDSPhiIn> &deferred) {
   if (auto it = dsMap.find(op); it != dsMap.end())
     return it->second;
 
@@ -352,8 +352,9 @@ static StringRef mathNameOf(const Function &callee) {
   return libmBaseName(callee.getName());
 }
 
-static DSValue emitDSForInstruction(IRBuilder<> &B, Instruction *I,
-                                    DSMap &dsMap, DeferredDSPhiIns &deferred) {
+static DSValue
+emitDSForInstruction(IRBuilder<> &B, Instruction *I, DSMap &dsMap,
+                     SmallVectorImpl<DeferredDSPhiIn> &deferred) {
   unsigned opcode = I->getOpcode();
 
   if (auto *BO = dyn_cast<BinaryOperator>(I)) {
@@ -427,7 +428,7 @@ void applyExpansion(Session &S, ArrayRef<Instruction *> instsToChange,
     DSValue ds = emitDSForInstruction(B, I, dsMap, deferred);
     if (!ds.hi) {
       errs() << "[poseidon] expansion: unsupported instruction, skipping: "
-             << *I << "\n";
+             << *I << '\n';
       continue;
     }
 
@@ -462,7 +463,7 @@ void applyExpansion(Session &S, ArrayRef<Instruction *> instsToChange,
       BasicBlock::iterator restorePos =
           isa<PHINode>(I) ? I->getParent()->getFirstNonPHIIt()
                           : std::next(BasicBlock::iterator(I));
-      IRBuilder<> RestoreB(I->getParent(), restorePos);
+      IRBuilder<> RestoreB = builderAt(I->getParent(), restorePos);
       Value *restored = emitDSToFP(RestoreB, ds, I->getType());
       assert(restored->getType() == I->getType() &&
              "unexpected restored value type");
@@ -483,9 +484,9 @@ void applyExpansion(Session &S, ArrayRef<Instruction *> instsToChange,
       else {
         errs()
             << "[poseidon] expansion: replacing with undef (remaining uses): "
-            << *I << "\n";
+            << *I << '\n';
         for (auto &U : I->uses())
-          errs() << "  used by: " << *U.getUser() << "\n";
+          errs() << "  used by: " << *U.getUser() << '\n';
         I->replaceAllUsesWith(UndefValue::get(I->getType()));
       }
     }
@@ -501,7 +502,8 @@ void applyExpansion(Session &S, ArrayRef<Instruction *> instsToChange,
       if (ds.hi && phi->getType()->isDoubleTy())
         carriedPhis.push_back(phi);
   for (PHINode *phi : carriedPhis) {
-    IRBuilder<> RB(phi->getParent(), phi->getParent()->getFirstNonPHIIt());
+    IRBuilder<> RB =
+        builderAt(phi->getParent(), phi->getParent()->getFirstNonPHIIt());
     Value *restored = emitDSToFP(RB, dsMap[phi], phi->getType());
     phi->replaceAllUsesWith(restored);
     if (restoredValues)
@@ -649,7 +651,7 @@ static ExpansionValue splitConstantFPExpansion(IRBuilder<> &B, ConstantFP *CFP,
 static ExpansionValue
 getOrSplitOperandExpansion(IRBuilder<> &B, Value *op, unsigned n,
                            ExpansionMap &expansionMap,
-                           DeferredExpansionPhiIns &deferred) {
+                           SmallVectorImpl<DeferredExpansionPhiIn> &deferred) {
   if (auto it = expansionMap.find(op); it != expansionMap.end())
     return it->second;
 
@@ -693,7 +695,7 @@ getOrSplitOperandExpansion(IRBuilder<> &B, Value *op, unsigned n,
 static ExpansionValue
 emitExpansionForInstruction(IRBuilder<> &B, Instruction *I, unsigned n,
                             ExpansionMap &expansionMap,
-                            DeferredExpansionPhiIns &deferred) {
+                            SmallVectorImpl<DeferredExpansionPhiIn> &deferred) {
   unsigned opcode = I->getOpcode();
 
   if (auto *BO = dyn_cast<BinaryOperator>(I)) {
@@ -776,7 +778,7 @@ void applyExpansion(Session &S, unsigned n,
         emitExpansionForInstruction(B, I, n, expansionMap, deferred);
     if (mf.x.empty()) {
       errs() << "Expansion(" << n
-             << "): unsupported instruction, skipping: " << *I << "\n";
+             << "): unsupported instruction, skipping: " << *I << '\n';
       continue;
     }
     expansionMap[I] = mf;
@@ -807,7 +809,7 @@ void applyExpansion(Session &S, unsigned n,
       BasicBlock::iterator restorePos =
           isa<PHINode>(I) ? I->getParent()->getFirstNonPHIIt()
                           : std::next(BasicBlock::iterator(I));
-      IRBuilder<> RestoreB(I->getParent(), restorePos);
+      IRBuilder<> RestoreB = builderAt(I->getParent(), restorePos);
       Value *restored = emitExpansionToFP(RestoreB, mf, I->getType());
       assert(restored->getType() == I->getType() &&
              "unexpected restored value type");
@@ -827,7 +829,7 @@ void applyExpansion(Session &S, unsigned n,
         I->replaceAllUsesWith((*restoredValues)[I]);
       else {
         errs() << "Expansion(" << n
-               << "): replacing with undef (remaining uses): " << *I << "\n";
+               << "): replacing with undef (remaining uses): " << *I << '\n';
         I->replaceAllUsesWith(UndefValue::get(I->getType()));
       }
     }
@@ -842,7 +844,8 @@ void applyExpansion(Session &S, unsigned n,
       if (!mf.x.empty() && phi->getType()->isDoubleTy())
         carriedPhis.push_back(phi);
   for (PHINode *phi : carriedPhis) {
-    IRBuilder<> RB(phi->getParent(), phi->getParent()->getFirstNonPHIIt());
+    IRBuilder<> RB =
+        builderAt(phi->getParent(), phi->getParent()->getFirstNonPHIIt());
     Value *restored = emitExpansionToFP(RB, expansionMap[phi], phi->getType());
     phi->replaceAllUsesWith(restored);
     if (restoredValues)

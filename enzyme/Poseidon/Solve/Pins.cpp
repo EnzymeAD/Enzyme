@@ -252,7 +252,7 @@ SmallVector<SolutionStep> parseManualRewrites(Session &S, FunctionFPState &st) {
                             "them replaces them; give one of the two");
     }
     llvm::errs() << "[poseidon] Selecting " << id << ": "
-                 << unit->selectionText(pos) << "\n";
+                 << unit->selectionText(pos) << '\n';
     steps.emplace_back(unit, pos);
   }
   return steps;
@@ -273,7 +273,7 @@ void printPin(Session &S, const FunctionFPState &st,
   }
   if (!value.empty() && !S.Pins.printed.insert(value).second)
     return;
-  llvm::errs() << "[poseidon] pin: " << value << "\n";
+  llvm::errs() << "[poseidon] pin: " << value << '\n';
 }
 
 } // namespace poseidon
