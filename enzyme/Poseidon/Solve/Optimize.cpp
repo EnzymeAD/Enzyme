@@ -101,7 +101,7 @@ static void readSiteProfile(Session &S, Function &F, SiteProfileData &P) {
   auto &profileMap = P.map;
   auto &profileHeader = P.header;
   auto &zeroGradIdx = P.zeroGradIdx;
-  parseProfileFile(profilePath, profileMap, &profileHeader);
+  parseProfileFile(profilePath, F, profileMap, &profileHeader);
   if (profileMap.empty()) {
     llvm::errs() << "Warning: No profile data found in " << profilePath << '\n';
   }

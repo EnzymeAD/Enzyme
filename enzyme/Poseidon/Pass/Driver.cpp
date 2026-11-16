@@ -136,7 +136,7 @@ static std::optional<Unprofiled> unprofiledSite(Session &S, CallBase *CI,
     } else if (isNeverExecutedProfile(path.str().str(), clone)) {
       ProfileMap records;
       FunctionProfileHeader header;
-      parseProfileFile(path.str().str(), records, &header);
+      parseProfileFile(path.str().str(), clone, records, &header);
       requireCanonicalHash(header, canonicalFormHash(clone), path, clone);
       if (!neverExecuted)
         neverExecuted = Unprofiled{true, path.str().str()};
@@ -413,7 +413,7 @@ static double profiledSiteCost(Session &S, Function &body) {
     return 0.0;
 
   ProfileMap profileMap;
-  parseProfileFile(profilePath.str().str(), profileMap);
+  parseProfileFile(profilePath.str().str(), body, profileMap);
   if (profileMap.empty())
     return 0.0;
 

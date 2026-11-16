@@ -13,7 +13,9 @@
 //===----------------------------------------------------------------------===//
 
 #include <algorithm>
+#include <cerrno>
 #include <cmath>
+#include <cstdlib>
 #include <fstream>
 #include <regex>
 #include <system_error>
@@ -136,7 +138,7 @@ void mergeOutputProfiles(ProfileMap &profileMap, ArrayRef<std::string> dirs,
     sys::path::append(path, fileName);
     ProfileMap out;
     FunctionProfileHeader header;
-    parseProfileFile(path.str().str(), out, &header);
+    parseProfileFile(path.str().str(), F, out, &header);
     double total = 0.0;
     for (const auto &kv : out)
       total += kv.second.sumSens;
@@ -174,8 +176,8 @@ void mergeOutputProfiles(ProfileMap &profileMap, ArrayRef<std::string> dirs,
          << dirs.size() << " output profiles)\n";
 }
 
-void parseProfileFile(const std::string &profilePath, ProfileMap &profileMap,
-                      FunctionProfileHeader *header) {
+void parseProfileFile(const std::string &profilePath, const Function &F,
+                      ProfileMap &profileMap, FunctionProfileHeader *header) {
   profileMap.clear();
   if (header)
     *header = FunctionProfileHeader{};
@@ -186,7 +188,6 @@ void parseProfileFile(const std::string &profilePath, ProfileMap &profileMap,
     return;
   }
 
-  std::string line;
   std::regex indexPattern(R"(^(\d+)$)");
   std::regex blockDimsPattern(
       R"(^\s*MaxBlockDims\s*=\s*(\d+)\s+(\d+)\s+(\d+))");
@@ -217,31 +218,47 @@ void parseProfileFile(const std::string &profilePath, ProfileMap &profileMap,
   std::regex operandPattern(
       R"(^\s*Operand\[(\d+)\]\s*=\s*\[([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?|inf|-inf|nan|-nan),\s*([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?|inf|-inf|nan|-nan)(?:,\s*([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?|inf|-inf|nan|-nan))?\])");
 
-  while (std::getline(file, line)) {
-    if (!line.empty() && line.back() == '\r') {
-      line.pop_back();
-    }
+  unsigned lineNo = 0;
+  auto nextLine = [&](std::string &text) {
+    if (!std::getline(file, text))
+      return false;
+    ++lineNo;
+    if (!text.empty() && text.back() == '\r')
+      text.pop_back();
+    return true;
+  };
+  auto refuse = [&](const Twine &what) {
+    reportUserError(F, F.getSubprogram(),
+                    Twine(profilePath) + ":" + Twine(lineNo) + ": " + what +
+                        "; re-run profile generation.");
+  };
+  // A decimal number of the profile, which must fit the field it is read into.
+  auto integer = [&](auto &out, const std::string &digits, StringRef field) {
+    if (StringRef(digits).getAsInteger(10, out))
+      refuse(Twine(field) + " " + digits + " is out of range");
+  };
 
+  std::string line;
+  while (nextLine(line)) {
     std::smatch match;
     if (header && std::regex_search(line, match, blockDimsPattern)) {
-      header->maxBlockDim[0] = static_cast<uint32_t>(std::stoul(match[1]));
-      header->maxBlockDim[1] = static_cast<uint32_t>(std::stoul(match[2]));
-      header->maxBlockDim[2] = static_cast<uint32_t>(std::stoul(match[3]));
+      for (unsigned i = 0; i < 3; ++i)
+        integer(header->maxBlockDim[i], match[i + 1], "MaxBlockDims");
       continue;
     }
     if (header && std::regex_search(line, match, gridDimsPattern)) {
-      header->maxGridDim[0] = static_cast<uint32_t>(std::stoul(match[1]));
-      header->maxGridDim[1] = static_cast<uint32_t>(std::stoul(match[2]));
-      header->maxGridDim[2] = static_cast<uint32_t>(std::stoul(match[3]));
+      for (unsigned i = 0; i < 3; ++i)
+        integer(header->maxGridDim[i], match[i + 1], "MaxGridDims");
       continue;
     }
     if (header && std::regex_search(line, match, launchCountPattern)) {
-      header->launchCount = std::stoull(match[1]);
+      integer(header->launchCount, match[1], "LaunchCount");
       continue;
     }
     if (header && std::regex_search(line, match, redTripPattern)) {
-      header->redTrip[std::stoull(match[1])] =
-          static_cast<unsigned>(std::stoul(match[2]));
+      size_t slot;
+      integer(slot, match[1], "RedTrip slot");
+      integer(header->redTrip[slot], match[2], "RedTrip trip count");
       continue;
     }
     if (header && std::regex_search(line, match, canonicalHashPattern)) {
@@ -251,11 +268,15 @@ void parseProfileFile(const std::string &profilePath, ProfileMap &profileMap,
     // The site id is the probe driver's; parsing it still refuses one out of
     // int range.
     if (header && std::regex_search(line, match, siteIdPattern)) {
-      (void)std::stoi(match[1]);
+      int siteId;
+      integer(siteId, match[1], "SiteId");
       continue;
     }
     if (header && std::regex_search(line, match, kappaPattern)) {
-      header->kappa = std::stod(match[1]);
+      errno = 0;
+      header->kappa = std::strtod(match[1].str().c_str(), nullptr);
+      if (errno == ERANGE)
+        refuse("Kappa " + match[1].str() + " is out of range");
       header->hasKappa = true;
       continue;
     }
@@ -263,94 +284,78 @@ void parseProfileFile(const std::string &profilePath, ProfileMap &profileMap,
       header->kappaMark = match[1];
       continue;
     }
-    if (std::regex_match(line, match, indexPattern)) {
-      size_t idx = std::stoull(match[1]);
-      ProfileInfo info;
+    if (!std::regex_match(line, match, indexPattern))
+      continue;
 
-      std::string minResLine, maxResLine, sumValueLine, sumSensLine,
-          sumGradLine, sumAbsGradLine, execLine, numOperandsLine;
-
-      if (std::getline(file, minResLine) && std::getline(file, maxResLine) &&
-          std::getline(file, sumValueLine) && std::getline(file, sumSensLine) &&
-          std::getline(file, sumGradLine) && std::getline(file, execLine) &&
-          (execLine.find("SumAbsGrad") == std::string::npos ||
-           (sumAbsGradLine = execLine, std::getline(file, execLine))) &&
-          std::getline(file, numOperandsLine)) {
-
-        auto stripCR = [](std::string &s) {
-          if (!s.empty() && s.back() == '\r')
-            s.pop_back();
-        };
-        stripCR(minResLine);
-        stripCR(maxResLine);
-        stripCR(sumValueLine);
-        stripCR(sumSensLine);
-        stripCR(sumGradLine);
-        stripCR(sumAbsGradLine);
-        stripCR(execLine);
-        stripCR(numOperandsLine);
-
-        std::smatch mMinRes, mMaxRes, mSumValue, mSumSens, mSumGrad, mExec,
-            mNumOperands;
-        if (std::regex_search(minResLine, mMinRes, minResPattern) &&
-            std::regex_search(maxResLine, mMaxRes, maxResPattern) &&
-            std::regex_search(sumValueLine, mSumValue, sumValuePattern) &&
-            std::regex_search(sumSensLine, mSumSens, sumSensPattern) &&
-            std::regex_search(sumGradLine, mSumGrad, sumGradPattern) &&
-            std::regex_search(execLine, mExec, execPattern) &&
-            std::regex_search(numOperandsLine, mNumOperands,
-                              numOperandsPattern)) {
-
-          info.minRes = stringToDouble(mMinRes[1]);
-          info.maxRes = stringToDouble(mMaxRes[1]);
-          info.sumValue = stringToDouble(mSumValue[1]);
-          info.sumSens = stringToDouble(mSumSens[1]);
-          info.sumGrad = stringToDouble(mSumGrad[1]);
-          std::smatch mSumAbsGrad;
-          if (!sumAbsGradLine.empty() &&
-              std::regex_search(sumAbsGradLine, mSumAbsGrad, sumAbsGradPattern))
-            info.sumAbsGrad = stringToDouble(mSumAbsGrad[1]);
-          info.exec = static_cast<uint64_t>(std::stoull(mExec[1]));
-          unsigned numOperands =
-              static_cast<unsigned>(std::stoul(mNumOperands[1]));
-
-          info.minOperands.resize(numOperands, 0.0);
-          info.maxOperands.resize(numOperands, 0.0);
-          info.minMagOperands.resize(numOperands, 0.0);
-
-          for (unsigned i = 0; i < numOperands; ++i) {
-            if (std::getline(file, line)) {
-              if (!line.empty() && line.back() == '\r')
-                line.pop_back();
-
-              std::smatch operandMatch;
-              if (std::regex_search(line, operandMatch, operandPattern)) {
-                unsigned opIdx =
-                    static_cast<unsigned>(std::stoul(operandMatch[1]));
-                double minVal = stringToDouble(operandMatch[2]);
-                double maxVal = stringToDouble(operandMatch[3]);
-
-                if (opIdx < numOperands) {
-                  info.minOperands[opIdx] = minVal;
-                  info.maxOperands[opIdx] = maxVal;
-                  if (operandMatch[4].matched)
-                    info.minMagOperands[opIdx] =
-                        stringToDouble(operandMatch[4]);
-                }
-              }
-            }
-          }
-
-          profileMap[idx] = info;
-        } else {
-          llvm::errs() << "Warning: Failed to parse profile fields for index "
-                       << idx << '\n';
-        }
-      } else {
-        llvm::errs() << "Warning: Incomplete profile entry for index " << idx
-                     << '\n';
-      }
+    size_t idx;
+    integer(idx, match[1], "slot");
+    // The next line of the record of slot idx, which `pattern` must match.
+    auto field = [&](std::string &text, std::smatch &fieldMatch,
+                     const std::regex &pattern, StringRef name) {
+      if (!nextLine(text))
+        refuse("the record of slot " + Twine(idx) + " ends before its " + name +
+               " line");
+      if (!std::regex_search(text, fieldMatch, pattern))
+        refuse("expected the " + name + " line of slot " + Twine(idx));
+    };
+    auto real = [&](const std::regex &pattern, StringRef name) {
+      std::string text;
+      std::smatch fieldMatch;
+      field(text, fieldMatch, pattern, name);
+      return stringToDouble(fieldMatch[1]);
+    };
+    ProfileInfo info;
+    info.minRes = real(minResPattern, "MinRes");
+    info.maxRes = real(maxResPattern, "MaxRes");
+    info.sumValue = real(sumValuePattern, "SumValue");
+    info.sumSens = real(sumSensPattern, "SumSens");
+    info.sumGrad = real(sumGradPattern, "SumGrad");
+    // SumAbsGrad comes before Exec when the profile records it.
+    std::string text;
+    std::smatch fieldMatch;
+    if (!nextLine(text))
+      refuse("the record of slot " + Twine(idx) + " ends before its Exec line");
+    if (text.find("SumAbsGrad") != std::string::npos) {
+      if (!std::regex_search(text, fieldMatch, sumAbsGradPattern))
+        refuse("expected the SumAbsGrad line of slot " + Twine(idx));
+      info.sumAbsGrad = stringToDouble(fieldMatch[1]);
+      field(text, fieldMatch, execPattern, "Exec");
+    } else if (!std::regex_search(text, fieldMatch, execPattern)) {
+      refuse("expected the Exec line of slot " + Twine(idx));
     }
+    integer(info.exec, fieldMatch[1], "Exec");
+    unsigned numOperands;
+    field(text, fieldMatch, numOperandsPattern, "NumOperands");
+    integer(numOperands, fieldMatch[1], "NumOperands");
+
+    // The operands are read before the profile's vectors are sized, so that a
+    // count the file does not hold is refused rather than allocated.
+    struct OperandRange {
+      unsigned index;
+      double min, max, minMag;
+    };
+    SmallVector<OperandRange, 2> operands;
+    for (unsigned i = 0; i < numOperands; ++i) {
+      field(text, fieldMatch, operandPattern, "Operand");
+      OperandRange &R = operands.emplace_back();
+      integer(R.index, fieldMatch[1], "Operand index");
+      if (R.index >= numOperands)
+        refuse("Operand[" + Twine(R.index) + "] of slot " + Twine(idx) +
+               " is beyond its NumOperands " + Twine(numOperands));
+      R.min = stringToDouble(fieldMatch[2]);
+      R.max = stringToDouble(fieldMatch[3]);
+      R.minMag = fieldMatch[4].matched ? stringToDouble(fieldMatch[4]) : 0.0;
+    }
+    info.minOperands.resize(numOperands, 0.0);
+    info.maxOperands.resize(numOperands, 0.0);
+    info.minMagOperands.resize(numOperands, 0.0);
+    for (const OperandRange &R : operands) {
+      info.minOperands[R.index] = R.min;
+      info.maxOperands[R.index] = R.max;
+      info.minMagOperands[R.index] = R.minMag;
+    }
+
+    profileMap[idx] = info;
   }
 }
 
