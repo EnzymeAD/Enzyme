@@ -38,9 +38,10 @@ namespace poseidon {
 // its native_arch header names this function's target-cpu.
 void requireCostModel(CostModelState &CM, const llvm::Function &F);
 
-// The row that prices `I`; a model without that row is an error at `I`, and an
-// instruction no row family prices aborts.
-double getInstructionCompCost(CostModelState &CM, const llvm::Instruction *I);
+// The row that prices `I`; a model without that row is an error at `At`, by
+// default `I`, and an instruction no row family prices aborts.
+double getInstructionCompCost(CostModelState &CM, const llvm::Instruction *I,
+                              const llvm::Instruction *At = nullptr);
 
 // The scalar formats the device of `F` has hardware for, from the CSV header;
 // a model without the "# scalar_types=" header is an error at `F`.
@@ -63,8 +64,11 @@ const std::unordered_set<std::string> &getPTFuncs(CostModelState &CM,
 // the function it is priced in.
 using InstWeight = llvm::function_ref<double(const llvm::Instruction &)>;
 
+// `At`, when given, is where a missing row is reported: the instruction a
+// scratch function `F` is priced for.
 double getCompCost(CostModelState &CM, llvm::Function *F,
-                   InstWeight Weight = nullptr);
+                   InstWeight Weight = nullptr,
+                   const llvm::Instruction *At = nullptr);
 
 // With `opExec`, each priced instruction is weighted by its measured
 // execution count over `normalizer`; an instruction with no count, or no map,

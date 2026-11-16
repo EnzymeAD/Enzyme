@@ -7,11 +7,14 @@
 ; RUN: FileCheck --check-prefix=HERBIE-IR %s < %t/herbie.ll
 ; RUN: grep -v '^fmod,' %cost_models/cm_cpu_native.csv > %t/nofmod.csv
 ; RUN: not %{opt} -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-cost-model=%t/nofmod.csv -poseidon-cache=%t/nofmod -o /dev/null 2>&1 | FileCheck --check-prefix=NOFMOD %s
+; RUN: grep -v '^fma,' %cost_models/cm_cpu_native.csv > %t/nofma.csv
+; RUN: not %{opt} -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/fmod_operator/fake-herbie.sh -poseidon-enable-pt=false -poseidon-cost-model=%t/nofma.csv -poseidon-cost-budget=1e9 -poseidon-cache=%t/nofma -o /dev/null 2>&1 | FileCheck --check-prefix=NOFMA %s
 
 ; An frem is the operator fmod: Herbie is given (fmod a b), the accuracy model
 ; evaluates it as fmod, and the cost model prices it, and an frem that a fmod
 ; of a Herbie rewrite becomes, by the fmod row of its type. A cost model
-; without that row stops the compile naming the row.
+; without that row stops the compile naming the row, at the site whose rewrite
+; needs it.
 ;
 ; Profiles: this module through the host profiler with
 ; Inputs/fmod_operator/driver.c.
@@ -66,3 +69,5 @@ attributes #0 = { "target-cpu"="x86-64" }
 ; HERBIE-IR-NEXT: frem nnan double [[FMA]], 1.000000e+03
 
 ; NOFMOD: error: {{.*}}preprocess_tester_frem{{.*}}Poseidon: cost model {{.*}}nofmod.csv has no row 'fmod,double'; measure it with poseidon-calibrate
+
+; NOFMA: error: <unknown>:0:0: in function preprocess_tester_fma {{.*}}: Poseidon: cost model {{.*}}nofma.csv has no row 'fma,double'; measure it with poseidon-calibrate

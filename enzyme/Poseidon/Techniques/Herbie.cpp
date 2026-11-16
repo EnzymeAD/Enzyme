@@ -987,11 +987,12 @@ void setUnifiedAccuracyCost(
 }
 
 double getCompCost(
-    CostModelState &CM, const std::string &expr, Module *M,
+    CostModelState &CM, const std::string &expr, Instruction &Site,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, Value *> &symbolToValueMap,
     const FastMathFlags &FMF, const SetVector<Value *> *subgraphInputs,
     const BoundaryCastFreq *Boundary) {
+  Module *M = Site.getModule();
   SmallSet<std::string, 8> argStrSet;
   getUniqueArgs(expr, argStrSet);
 
@@ -1144,8 +1145,8 @@ double getCompCost(
     }
     return carriesConverted && returned.contains(&I) ? Boundary->output : 1.0;
   };
-  double cost = Boundary ? getCompCost(CM, tempFunction, weight)
-                         : getCompCost(CM, tempFunction);
+  double cost = getCompCost(CM, tempFunction,
+                            Boundary ? InstWeight(weight) : nullptr, &Site);
 
   tempFunction->eraseFromParent();
   return cost;
@@ -1809,14 +1810,14 @@ void RewriteUnit::price() {
   if (!herbieAnswered)
     return;
   FPGraph &st = graph();
-  Module *M = st.F->getParent();
-  const FastMathFlags FMF = cast<Instruction>(oldOutput)->getFastMathFlags();
+  auto *output = cast<Instruction>(oldOutput);
+  const FastMathFlags FMF = output->getFastMathFlags();
   DominatorTree DT(*st.F);
   LoopInfo LI(DT);
   const BoundaryCastFreq Boundary = boundaryCastFreq(LI, st.valueToNodeMap);
   for (RewriteCandidate &c : candidates)
     c.CompCost =
-        getCompCost(session().CostModel, c.expr, M, st.valueToNodeMap,
+        getCompCost(session().CostModel, c.expr, *output, st.valueToNodeMap,
                     st.symbolToValueMap, FMF, &subgraph->inputs, &Boundary);
   setUnifiedAccuracyCost(session().Opts, *this, st.valueToNodeMap,
                          st.symbolToValueMap);

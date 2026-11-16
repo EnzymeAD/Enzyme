@@ -84,11 +84,12 @@ void requireCostModel(CostModelState &CM, const Function &F) {
                       "'; measure it with poseidon-calibrate");
 }
 
-static double rowCost(CostModelState &CM, const Instruction &I,
+// The row `Opcode,Type`; a model without it is an error at `At`.
+static double rowCost(CostModelState &CM, const Instruction &At,
                       StringRef Opcode, StringRef Type) {
   if (std::optional<double> cost = lookupCost(CM, Opcode, Type))
     return *cost;
-  missingRow(CM, *I.getFunction(), I.getDebugLoc(), Opcode, Type);
+  missingRow(CM, *At.getFunction(), At.getDebugLoc(), Opcode, Type);
 }
 
 const std::unordered_set<std::string> &getScalarTypes(CostModelState &CM,
@@ -109,7 +110,9 @@ const std::unordered_set<std::string> &getScalarTypes(CostModelState &CM,
                      Twine(Text));
 }
 
-double getInstructionCompCost(CostModelState &CM, const Instruction *I) {
+double getInstructionCompCost(CostModelState &CM, const Instruction *I,
+                              const Instruction *At) {
+  const Instruction &RowAt = At ? *At : *I;
   // O3 fuses sin(x) and cos(x) into llvm.sincos, whose struct result would
   // otherwise be priced as free.
   if (auto *II = dyn_cast<IntrinsicInst>(I))
@@ -121,7 +124,7 @@ double getInstructionCompCost(CostModelState &CM, const Instruction *I) {
                                           : "";
       if (P.empty())
         unpriced(I);
-      return rowCost(CM, *I, "sin", P) + rowCost(CM, *I, "cos", P);
+      return rowCost(CM, RowAt, "sin", P) + rowCost(CM, RowAt, "cos", P);
     }
   // A regime split's condition is an fcmp, whose i1 result is not an FP type
   // but runs on the FP pipe of its operands.
@@ -335,7 +338,7 @@ double getInstructionCompCost(CostModelState &CM, const Instruction *I) {
     PrecisionName = SrcPrecisionName;
   }
 
-  return rowCost(CM, *I, OpcodeName, PrecisionName);
+  return rowCost(CM, RowAt, OpcodeName, PrecisionName);
 }
 
 double profiledCost(CostModelState &CM, const Function &F,
@@ -379,7 +382,7 @@ const std::unordered_set<std::string> &getPTFuncs(CostModelState &CM,
 static double computeMaxCost(CostModelState &CM, BasicBlock *BB,
                              std::unordered_map<BasicBlock *, double> &MaxCost,
                              std::unordered_set<BasicBlock *> &Visited,
-                             InstWeight Weight) {
+                             InstWeight Weight, const Instruction *At) {
   if (MaxCost.find(BB) != MaxCost.end())
     return MaxCost[BB];
 
@@ -391,7 +394,7 @@ static double computeMaxCost(CostModelState &CM, BasicBlock *BB,
     if (I.isTerminator())
       continue;
 
-    auto instCost = getInstructionCompCost(CM, &I);
+    auto instCost = getInstructionCompCost(CM, &I, At);
     if (Weight)
       instCost *= Weight(I);
 
@@ -403,7 +406,8 @@ static double computeMaxCost(CostModelState &CM, BasicBlock *BB,
   if (!succ_empty(BB)) {
     double maxSuccCost = 0;
     for (BasicBlock *Succ : successors(BB)) {
-      double succBBCost = computeMaxCost(CM, Succ, MaxCost, Visited, Weight);
+      double succBBCost =
+          computeMaxCost(CM, Succ, MaxCost, Visited, Weight, At);
       if (succBBCost > maxSuccCost)
         maxSuccCost = succBBCost;
     }
@@ -416,12 +420,13 @@ static double computeMaxCost(CostModelState &CM, BasicBlock *BB,
   return totalCost;
 }
 
-double getCompCost(CostModelState &CM, Function *F, InstWeight Weight) {
+double getCompCost(CostModelState &CM, Function *F, InstWeight Weight,
+                   const Instruction *At) {
   std::unordered_map<BasicBlock *, double> MaxCost;
   std::unordered_set<BasicBlock *> Visited;
 
   BasicBlock *EntryBB = &F->getEntryBlock();
-  double TotalCost = computeMaxCost(CM, EntryBB, MaxCost, Visited, Weight);
+  double TotalCost = computeMaxCost(CM, EntryBB, MaxCost, Visited, Weight, At);
   return TotalCost;
 }
 
