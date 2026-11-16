@@ -232,3 +232,43 @@ func.func @dpowi(%x: complex<f32>, %n: i32, %dr: complex<f32>) -> complex<f32> {
 // CHECK-NEXT:    %[[res:.+]] = complex.conj %[[g]] : complex<f32>
 // CHECK-NEXT:    return %[[res]] : complex<f32>
 // CHECK-NEXT:  }
+
+// -----
+
+func.func @log(%x: complex<f64>) -> complex<f64> {
+  %res = complex.log %x : complex<f64>
+  return %res : complex<f64>
+}
+
+func.func @dlog(%x: complex<f64>, %dr: complex<f64>) -> complex<f64> {
+  %0 = enzyme.autodiff @log(%x, %dr) <{ activity=[#enzyme.activity<enzyme_active>], ret_activity=[#enzyme.activity<enzyme_activenoneed>] }> : (complex<f64>, complex<f64>) -> complex<f64>
+  return %0 : complex<f64>
+}
+
+// CHECK: func.func private @diffelog(%[[x:.+]]: complex<f64>, %[[dr:.+]]: complex<f64>) -> complex<f64> {
+// CHECK-NEXT:    %[[cdr:.+]] = complex.conj %[[dr]] : complex<f64>
+// CHECK-NEXT:    %[[g:.+]] = complex.div %[[cdr]], %[[x]] fastmath<fast> : complex<f64>
+// CHECK-NEXT:    %[[res:.+]] = complex.conj %[[g]] : complex<f64>
+// CHECK-NEXT:    return %[[res]] : complex<f64>
+// CHECK-NEXT:  }
+
+// -----
+
+func.func @log1p(%x: complex<f64>) -> complex<f64> {
+  %res = complex.log1p %x : complex<f64>
+  return %res : complex<f64>
+}
+
+func.func @dlog1p(%x: complex<f64>, %dr: complex<f64>) -> complex<f64> {
+  %0 = enzyme.autodiff @log1p(%x, %dr) <{ activity=[#enzyme.activity<enzyme_active>], ret_activity=[#enzyme.activity<enzyme_activenoneed>] }> : (complex<f64>, complex<f64>) -> complex<f64>
+  return %0 : complex<f64>
+}
+
+// CHECK: func.func private @diffelog1p(%[[x:.+]]: complex<f64>, %[[dr:.+]]: complex<f64>) -> complex<f64> {
+// CHECK-NEXT:    %[[one:.+]] = complex.constant [1.000000e+00, 0.000000e+00] : complex<f64>
+// CHECK-NEXT:    %[[cdr:.+]] = complex.conj %[[dr]] : complex<f64>
+// CHECK-NEXT:    %[[xp1:.+]] = complex.add %[[x]], %[[one]] fastmath<fast> : complex<f64>
+// CHECK-NEXT:    %[[g:.+]] = complex.div %[[cdr]], %[[xp1]] fastmath<fast> : complex<f64>
+// CHECK-NEXT:    %[[res:.+]] = complex.conj %[[g]] : complex<f64>
+// CHECK-NEXT:    return %[[res]] : complex<f64>
+// CHECK-NEXT:  }
