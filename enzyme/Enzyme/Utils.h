@@ -1753,8 +1753,11 @@ static inline llvm::Value *getBaseObject(llvm::Value *V,
                                          bool offsetAllowed = true) {
   while (true) {
     if (auto CI = llvm::dyn_cast<llvm::CastInst>(V)) {
-      V = CI->getOperand(0);
-      continue;
+      if (offsetAllowed || llvm::isa<llvm::BitCastInst>(CI) ||
+          llvm::isa<llvm::AddrSpaceCastInst>(CI)) {
+        V = CI->getOperand(0);
+        continue;
+      }
     } else if (auto CI = llvm::dyn_cast<llvm::GetElementPtrInst>(V)) {
       if (offsetAllowed || CI->hasAllZeroIndices()) {
         V = CI->getOperand(0);
@@ -1777,9 +1780,18 @@ static inline llvm::Value *getBaseObject(llvm::Value *V,
       V = GA->getAliasee();
       continue;
     } else if (auto CE = llvm::dyn_cast<llvm::ConstantExpr>(V)) {
-      if (CE->isCast() || CE->getOpcode() == llvm::Instruction::GetElementPtr) {
-        V = CE->getOperand(0);
-        continue;
+      if (CE->getOpcode() == llvm::Instruction::GetElementPtr) {
+        if (offsetAllowed ||
+            llvm::cast<llvm::GEPOperator>(CE)->hasAllZeroIndices()) {
+          V = CE->getOperand(0);
+          continue;
+        }
+      } else if (CE->isCast()) {
+        if (offsetAllowed || CE->getOpcode() == llvm::Instruction::BitCast ||
+            CE->getOpcode() == llvm::Instruction::AddrSpaceCast) {
+          V = CE->getOperand(0);
+          continue;
+        }
       }
     } else if (auto *Call = llvm::dyn_cast<llvm::CallInst>(V)) {
       auto funcName = getFuncNameFromCall(Call);
@@ -1812,7 +1824,8 @@ static inline llvm::Value *getBaseObject(llvm::Value *V,
         }
       }
 #endif
-      if (funcName == "jl_reshape_array" || funcName == "ijl_reshape_array") {
+      if (offsetAllowed &&
+          (funcName == "jl_reshape_array" || funcName == "ijl_reshape_array")) {
         V = Call->getArgOperand(1);
         continue;
       }
@@ -2852,7 +2865,8 @@ llvm::Optional<bool>
 arePointersGuaranteedNoAlias(llvm::TargetLibraryInfo &TLI, llvm::AAResults &AA,
                              llvm::DominatorTree &DT, llvm::LoopInfo &LI,
                              llvm::Value *op0, llvm::Value *op1,
-                             bool offsetAllowed = false);
+                             bool offsetAllowed = false,
+                             bool forPointerEquality = false);
 
 /// MPI routines recognized by Enzyme, keyed by their lowercase,
 /// underscore-free base name and mapped to the canonical C name (without the
