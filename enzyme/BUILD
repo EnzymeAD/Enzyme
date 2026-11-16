@@ -996,6 +996,7 @@ cc_library(
         "Enzyme/MLIR/Interfaces/*.cpp",
         "Enzyme/MLIR/Analysis/*.cpp",
         "Enzyme/MLIR/Implementations/*.cpp",
+        "Enzyme/MLIR/Target/*.cpp",
     ]),
     hdrs = glob([
         "Enzyme/MLIR/Dialect/*.h",
@@ -1004,6 +1005,7 @@ cc_library(
         "Enzyme/MLIR/Interfaces/*.h",
         "Enzyme/MLIR/Analysis/*.h",
         "Enzyme/MLIR/Implementations/*.h",
+        "Enzyme/MLIR/Target/*.h",
         "Enzyme/EnzymeCallMarkers.h",
         "Enzyme/PassUtils.h",
         "Enzyme/Utils.h",
@@ -1090,6 +1092,7 @@ cc_library(
         "@llvm-project//mlir:SideEffectInterfaces",
         "@llvm-project//mlir:Support",
         "@llvm-project//mlir:TensorDialect",
+        "@llvm-project//mlir:ToLLVMIRTranslation",
         "@llvm-project//mlir:TransformUtils",
         "@llvm-project//mlir:Transforms",
         "@llvm-project//mlir:ViewLikeInterface",

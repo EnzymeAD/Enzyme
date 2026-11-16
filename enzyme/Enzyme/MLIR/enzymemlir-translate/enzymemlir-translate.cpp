@@ -12,6 +12,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "Dialect/Dialect.h"
+#include "Target/EnzymeToLLVMIRTranslation.h"
 
 #include "mlir/Dialect/DLTI/DLTI.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -100,6 +101,25 @@ int main(int argc, char **argv) {
             +[](MLIRContext *ctx, enzyme::EnzymeDialect *dialect) {
               dialect->addInterfaces<ActivityToMetadataTranslation>();
             });
+      });
+
+  // The enzyme dialect's own translation (its type trees), separate from the
+  // activity annotations above: a dialect has one translation interface.
+  mlir::TranslateFromMLIRRegistration enzymeToLLVMIR(
+      "enzyme-to-llvmir", "Translate MLIR with enzyme attributes to LLVM IR",
+      [](mlir::Operation *op, llvm::raw_ostream &output) {
+        llvm::LLVMContext llvmContext;
+        auto llvmModule = translateModuleToLLVMIR(op, llvmContext);
+        if (!llvmModule)
+          return failure();
+
+        llvmModule->print(output, nullptr);
+        return success();
+      },
+      [](mlir::DialectRegistry &registry) {
+        registry.insert<DLTIDialect, func::FuncDialect>();
+        registerAllToLLVMIRTranslations(registry);
+        enzyme::registerEnzymeDialectTranslation(registry);
       });
 
   return failed(mlir::mlirTranslateMain(

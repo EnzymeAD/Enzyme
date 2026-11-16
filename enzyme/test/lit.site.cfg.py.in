@@ -66,6 +66,11 @@ if len("@ENZYME_BINARY_DIR@") == 0:
   eclang += "-I " + os.path.dirname(os.path.abspath(__file__)) + "/Integration" 
 
 config.substitutions.append(('%eopt', emopt))
+# enzymemlir-translate is built by CMake only (Bazel has no target for it).
+etranslate = os.path.dirname(emopt) + '/enzymemlir-translate/enzymemlir-translate'
+config.substitutions.append(('%etranslate', etranslate))
+if len("@ENZYME_BINARY_DIR@") != 0 and os.path.exists(etranslate):
+  config.available_features.add('enzymemlir-translate')
 config.substitutions.append(('%llvmver', config.llvm_ver))
 config.substitutions.append(('%FileCheck', config.llvm_tools_dir + "/FileCheck"))
 config.substitutions.append(('%clang', eclang))

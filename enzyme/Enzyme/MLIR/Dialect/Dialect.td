@@ -36,6 +36,15 @@ def Enzyme_Dialect : Dialect {
     static StringRef getAliasSummaryAttrName() { return "enzyme.alias"; }
     static StringRef getDenseActivityAnnotationAttrName() { return "enzyme.denseactive"; }
     static StringRef getSparseActivityAnnotationAttrName() { return "enzyme.sparseactive"; }
+
+    /// Names of the type trees (#enzyme.type_tree) that the translation to
+    /// LLVM IR hands to LLVM Enzyme's type analysis: of a value or global, of
+    /// each argument of a call (or unit), of the result of a function, and
+    /// of the local variables of a function by name ([type tree, bytes]).
+    static StringRef getTypeTreeAttrName() { return "enzyme.type"; }
+    static StringRef getArgTypeTreesAttrName() { return "enzyme.arg_types"; }
+    static StringRef getRetTypeTreeAttrName() { return "enzyme.ret_type"; }
+    static StringRef getLocalTypeTreesAttrName() { return "enzyme.local_types"; }
   }];
 }
 

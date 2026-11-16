@@ -90,6 +90,50 @@ def ReturnOriginAttr : Enzyme_Attr<"ReturnOrigin", "retorigin", [OriginAttrInter
   let assemblyFormat = "`<` $function `(` $returnNumber `)` `>`";
 }
 
+def TypeTreeEntryAttr : Enzyme_Attr<"TypeTreeEntry", "type_tree_entry"> {
+  let summary = "The concrete type at one offset path of a type tree";
+  let description = [{
+    One entry of a `#enzyme.type_tree`: `path` is a list of byte offsets,
+    each into the memory that the previous offset points to, where -1 means
+    every offset. `kind` is the concrete type there; a floating-point entry
+    also carries its type.
+
+    ```mlir
+    #enzyme.type_tree_entry<[-1, 0]: f64>
+    #enzyme.type_tree_entry<[-1]: pointer>
+    ```
+  }];
+
+  let parameters = (ins
+    ArrayRefParameter<"int64_t">:$path,
+    "::BaseType":$kind,
+    OptionalParameter<"::mlir::Type">:$floatType
+  );
+
+  let hasCustomAssemblyFormat = 1;
+  let genVerifyDecl = 1;
+}
+
+def TypeTreeAttr : Enzyme_Attr<"TypeTree", "type_tree"> {
+  let summary = "Enzyme's type tree of a value";
+  let description = [{
+    The type tree that Enzyme's LLVM type analysis reads from `!enzyme_type`
+    metadata and `"enzyme_type"` attributes: the concrete type at each offset
+    path, ordered by path.
+
+    ```mlir
+    #enzyme.type_tree<[-1]: pointer, [-1, 0]: f64, [-1, 8]: integer>
+    ```
+  }];
+
+  let parameters = (ins
+    ArrayRefParameter<"::mlir::enzyme::TypeTreeEntryAttr">:$entries
+  );
+
+  let hasCustomAssemblyFormat = 1;
+  let genVerifyDecl = 1;
+}
+
 def ActivityArrayAttr : TypedArrayAttrBase<
     ActivityAttr, "Array of argument activity states">;
 
