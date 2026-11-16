@@ -553,7 +553,9 @@ static void armInKernel(const std::string &Csv, const Device &D) {
          "--profile <dir>");
 
   SmallString<256> WorkBuf;
-  sys::fs::createUniqueDirectory("poseidon-inkernel", WorkBuf);
+  if (std::error_code EC =
+          sys::fs::createUniqueDirectory("poseidon-inkernel", WorkBuf))
+    fail("cannot create " + WorkBuf + ": " + EC.message());
   std::string Work(WorkBuf);
   outs() << "[calibrate] in-kernel workdir " << Work << '\n';
 
