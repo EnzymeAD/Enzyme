@@ -53,6 +53,9 @@ option(ENZYME_ENABLE_REACTANT "Build support library for Reactant C++ frontend"
        OFF)
 option(ENZYME_POSEIDON
        "Build the Poseidon numerical optimizer plugin and driver" OFF)
+option(
+  POSEIDON_MLIR
+  "With ENZYME_POSEIDON, build poseidon-mlir-opt, Poseidon's MLIR tool" OFF)
 set(ENZYME_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 set(ENZYME_BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR})
 set(Fortran_COMPILER ${CMAKE_Fortran_COMPILER})
@@ -168,7 +171,9 @@ if(ENZYME_CLANG)
 else()
 endif()
 
-if(ENZYME_MLIR)
+# Enzyme's MLIR plugin and Poseidon's MLIR tool are built against the same
+# MLIR, found here once.
+if(ENZYME_MLIR OR (ENZYME_POSEIDON AND POSEIDON_MLIR))
   if(DEFINED MLIR_DIR)
     get_filename_component(
       MLIR_ABSOLUTE_DIR "${MLIR_DIR}"

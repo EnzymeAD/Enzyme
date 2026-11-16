@@ -1,0 +1,58 @@
+{
+ "tests": [
+  {
+   "name": "log_one_plus/0",
+   "status": "imp-start",
+   "prec": "binary64",
+   "bits": 64,
+   "output": "(log1p.f64 x0)",
+   "cost-accuracy": [
+    [
+     1.0,
+     10.0
+    ],
+    [
+     0.8,
+     0.5
+    ],
+    []
+   ]
+  },
+  {
+   "name": "two_outputs/0",
+   "status": "imp-start",
+   "prec": "binary64",
+   "bits": 64,
+   "output": "(exp.f64 x0)",
+   "cost-accuracy": [
+    [
+     1.0,
+     10.0
+    ],
+    [
+     0.8,
+     0.5
+    ],
+    []
+   ]
+  },
+  {
+   "name": "two_outputs/1",
+   "status": "imp-start",
+   "prec": "binary64",
+   "bits": 64,
+   "output": "(sqrt.f64 (expm1.f64 x0))",
+   "cost-accuracy": [
+    [
+     1.0,
+     10.0
+    ],
+    [
+     0.8,
+     0.5
+    ],
+    []
+   ]
+  }
+ ]
+}
