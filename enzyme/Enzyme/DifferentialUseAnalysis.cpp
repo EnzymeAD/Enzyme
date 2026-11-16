@@ -547,6 +547,25 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
     if (shadow && isAllocationFunction(funcName, gutils->TLI))
       return false;
 
+    if (isIfxAllocationFunction(funcName)) {
+      if (shadow)
+        return !gutils->isConstantInstruction(
+                   const_cast<Instruction *>(user)) &&
+               CI->arg_size() >= 2 && val == CI->getArgOperand(1) &&
+               mode != DerivativeMode::ReverseModeGradient;
+      if ((mode == DerivativeMode::ReverseModeCombined ||
+           !gutils->isConstantInstruction(const_cast<Instruction *>(user))) &&
+          mode != DerivativeMode::ForwardMode &&
+          mode != DerivativeMode::ForwardModeError &&
+          ((CI->arg_size() >= 3 && val == CI->getArgOperand(2)) ||
+           (CI->arg_size() >= 4 && val == CI->getArgOperand(3)))) {
+        if (EnzymePrintDiffUse)
+          llvm::errs() << " Need: primal of " << *val
+                       << " in reverse for ifx dealloc " << *CI << "\n";
+        return true;
+      }
+    }
+
     // Even though inactive, keep the shadow pointer around in forward mode
     // to perform the same memory free behavior on the shadow.
     if (shadow &&

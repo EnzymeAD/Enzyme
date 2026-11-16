@@ -780,6 +780,11 @@ bool ActivityAnalyzer::isFunctionArgumentConstant(CallInst *CI, Value *val) {
   if (isAllocationFunction(Name, TLI) || isDeallocationFunction(Name, TLI))
     return true;
 
+  // Only the indirect output pointer (arg 1) of ifx allocators receives the
+  // newly allocated buffer.
+  if (isIfxAllocationFunction(Name))
+    return CI->arg_size() < 2 || val != CI->getArgOperand(1);
+
   /// Only the first argument (magnitude) of copysign is active
   if (F->getIntrinsicID() == Intrinsic::copysign &&
       CI->getArgOperand(0) != val) {
@@ -885,6 +890,13 @@ static inline void propagateArgumentInformation(
   // Only the 1-th arg impacts activity
   if (Name == "jl_reshape_array" || Name == "ijl_reshape_array") {
     propagateFromOperand(CI.getArgOperand(1));
+    return;
+  }
+
+  // Only the output pointer (arg 1) impacts activity for ifx allocators
+  if (isIfxAllocationFunction(Name)) {
+    if (CI.arg_size() >= 2)
+      propagateFromOperand(CI.getArgOperand(1));
     return;
   }
 
@@ -2280,7 +2292,8 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
             funcName == "cuMemAllocAsync" || funcName == "cuMemAlloc" ||
             funcName == "cuMemAlloc_v2" || funcName == "cudaMallocAsync" ||
             funcName == "cudaMallocHost" ||
-            funcName == "cudaMallocFromPoolAsync") {
+            funcName == "cudaMallocFromPoolAsync" ||
+            isIfxAllocationFunction(funcName)) {
           return false;
         }
       }
@@ -3494,6 +3507,9 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
       }
 
       if (F) {
+        if (isIfxAllocationFunction(F->getName()) &&
+            UA == UseActivity::OnlyLoads)
+          continue;
         if (F->getName() == "julia.write_barrier" ||
             F->getName() == "julia.write_barrier_binding")
           continue;

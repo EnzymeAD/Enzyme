@@ -202,6 +202,28 @@ static inline bool isAllocationFunction(const llvm::StringRef name,
   }
 }
 
+/// Return whether a given function is an Intel Fortran (ifx) runtime
+/// allocation function with an indirect output pointer:
+/// - `i32 @for_alloc_allocatable_handle(i64 size, ptr out, i32 flags, ptr co)`
+/// - `i32 @for_alloc_allocatable(i64 size, ptr out, i32 flags)`
+/// - `i32 @for_allocate_handle(i64 size, ptr out, i32 flags, ptr co)`
+/// - `i32 @for_allocate(i64 size, ptr out, i32 flags)`
+static inline bool isIfxAllocationFunction(const llvm::StringRef name) {
+  return name == "for_alloc_allocatable_handle" ||
+         name == "for_alloc_allocatable" || name == "for_allocate_handle" ||
+         name == "for_allocate";
+}
+
+/// Return whether a given function is an Intel Fortran (ifx) runtime
+/// deallocation function:
+///   i32 @for_dealloc_allocatable_handle(i8* ptr, i32 flags, i8* coarray)
+///   i32 @for_dealloc_allocatable(i8* ptr, i32 flags)
+///   i32 @for_deallocate(i8* ptr, i32 flags)
+static inline bool isIfxDeallocationFunction(const llvm::StringRef name) {
+  return name == "for_dealloc_allocatable_handle" ||
+         name == "for_dealloc_allocatable" || name == "for_deallocate";
+}
+
 /// Return whether a given function frees a CUDA allocation. Their first
 /// argument is the allocation being freed, which for the driver API is a
 /// CUdeviceptr -- an integer at the LLVM level rather than a pointer.
@@ -237,6 +259,10 @@ static inline bool isDeallocationFunction(const llvm::StringRef name,
     // Counterparts of the CUDA allocations recognized in
     // AdjointGenerator::handleKnownCallDerivatives.
     if (isCudaDeallocationFunction(name))
+      return true;
+    // Counterparts of the Intel Fortran (ifx) allocations recognized in
+    // AdjointGenerator::handleKnownCallDerivatives.
+    if (isIfxDeallocationFunction(name))
       return true;
     return false;
   }
