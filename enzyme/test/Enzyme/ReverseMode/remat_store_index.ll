@@ -63,7 +63,7 @@ attributes #0 = { "enzyme_inactive" }
 ; The augmented forward pass keeps %ip and hands it to the reverse pass.
 ; CHECK: define internal { ptr, double } @augmented_f(
 ; CHECK:   %ip = call noalias nonnull dereferenceable(4) ptr @malloc(i64 4)
-; CHECK-NEXT:   store ptr %ip, ptr %0
+; CHECK-NEXT:   store ptr %ip, ptr %[[TAPE:.+]]
 ; CHECK:   %ok = call i1 @_FortranAioInputInteger(ptr %cookie, ptr %ip, i32 4)
 ; CHECK-NOT: call void @free(ptr %ip)
 ; CHECK: ret { ptr, double }
