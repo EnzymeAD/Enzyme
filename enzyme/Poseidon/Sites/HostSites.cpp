@@ -313,11 +313,13 @@ static bool lowerExplicitCalls(Module &M) {
 // A marker call whose list is automatic and passes a pointer is the call form
 // of __poseidon_optimize, through the plain identity, so that the pass makes
 // its shadows as it makes that form's. One whose list passes no pointer needs
-// no shadow and stays the marker call it is. In the host half of a CUDA or HIP
-// compilation, which holds no site, the call runs fn as written.
+// no shadow and stays the marker call it is, as does one with an explicit
+// list. In the host half of a CUDA or HIP compilation, which holds no site,
+// every marker call runs fn with the primal values of its arguments.
 static bool routeAutomaticMarkers(Module &M) {
   SmallVector<CallInst *, 4> markers;
   collectMarkerCalls(M, markers);
+  const bool hostHalf = isOffloadHostHalf(M);
   bool changed = false;
   for (CallInst *CI : markers) {
     Function *fn = markerTargetOrNull(CI);
@@ -325,11 +327,17 @@ static bool routeAutomaticMarkers(Module &M) {
       continue;
     std::optional<ArgumentList> list =
         readArgumentList(CI, *fn, Identity::None);
-    if (list == ArgumentList::Explicit)
+    if (list == ArgumentList::Explicit) {
+      if (hostHalf) {
+        callAsWritten(CI, fn);
+        changed = true;
+      }
       continue;
+    }
     SmallVector<Value *, 8> args(drop_begin(CI->args()));
-    if (list && llvm::none_of(
-                    args, [](Value *A) { return A->getType()->isPointerTy(); }))
+    if (list && !hostHalf && llvm::none_of(args, [](Value *A) {
+          return A->getType()->isPointerTy();
+        }))
       continue;
     changed = true;
     auto types = map_range(args, [](Value *A) { return A->getType(); });
@@ -348,7 +356,7 @@ static bool routeAutomaticMarkers(Module &M) {
     }
     IRBuilder<> Builder(CI);
     Value *callee = fn;
-    if (!isOffloadHostHalf(M)) {
+    if (!hostHalf) {
       LLVMContext &C = M.getContext();
       Type *Ptr = PointerType::getUnqual(C);
       FunctionCallee identity = M.getOrInsertFunction(
