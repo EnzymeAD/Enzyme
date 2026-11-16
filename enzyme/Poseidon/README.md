@@ -385,9 +385,8 @@ invariant of Poseidon stops the compile as a crash, to be reported as a bug.
 compiler it calls: it builds the program with profiling, runs it once, and
 compiles it again under `-poseidon-tau` (default 1e-6); every other
 `-poseidon-<flag>` reaches the pass. The `Dockerfile` builds a standalone
-explorer from the release tarball the `Poseidon Explorer` workflow publishes
-(`nightly-poseidon`), with C++ only, the example `examples/c++/` and plain
-clang next to Poseidon for comparison.
+explorer from the `nightly-poseidon` release tarball, with C++ only, the
+example `examples/c++/` and plain clang next to Poseidon for comparison.
 
 The tarball carries no cost model: the machine that runs the explorer measures
 its own once, with `calibrate/microbm_cpu.py` from the tarball (or
