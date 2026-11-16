@@ -143,9 +143,30 @@ static std::optional<RecordedAnswer> recordedAnswer(StringRef Dir,
   return std::nullopt;
 }
 
-HerbieRunResult runHerbie(const std::vector<std::string> &inputExprs,
-                          const HerbieRunOptions &Opts, StringRef Label,
-                          HerbieBinaryDigests &Digests) {
+// Writes `contents` to the cache file `path`, creating the cache directory.
+static Error writeCacheFile(StringRef cacheDir, StringRef path,
+                            StringRef contents) {
+  if (std::error_code EC = sys::fs::create_directories(cacheDir, true))
+    return createStringError(EC, "cannot create the Herbie cache directory " +
+                                     cacheDir + ": " + EC.message());
+  std::error_code EC;
+  raw_fd_ostream out(path, EC);
+  if (!EC) {
+    out << contents;
+    out.close();
+    EC = out.error();
+    out.clear_error();
+  }
+  if (EC)
+    return createStringError(EC, "cannot write the Herbie cache file " + path +
+                                     ": " + EC.message());
+  return Error::success();
+}
+
+Expected<HerbieRunResult> runHerbie(const std::vector<std::string> &inputExprs,
+                                    const HerbieRunOptions &Opts,
+                                    StringRef Label,
+                                    HerbieBinaryDigests &Digests) {
   using Outcome = HerbieRunResult::Outcome;
   const std::string &Program = Opts.Program;
   const HerbiePlatform &Platform = Opts.Platform;
@@ -401,15 +422,10 @@ HerbieRunResult runHerbie(const std::vector<std::string> &inputExprs,
                     "it to 0 for the historical unbounded behaviour.\n";
     removeShardFiles();
     if (!timeoutMarkerPath.empty()) {
-      if (auto EC = llvm::sys::fs::create_directories(Opts.CacheDir, true))
-        llvm::errs() << "Warning: Could not create cache directory: "
-                     << EC.message() << '\n';
-      std::ofstream markerFile(timeoutMarkerPath);
-      if (markerFile) {
-        markerFile << wallBudget << "\n";
-        markerFile.close();
-        llvm::errs() << "Recorded the timeout in " << timeoutMarkerPath << '\n';
-      }
+      if (Error E = writeCacheFile(Opts.CacheDir, timeoutMarkerPath,
+                                   std::to_string(wallBudget) + "\n"))
+        return std::move(E);
+      llvm::errs() << "Recorded the timeout in " << timeoutMarkerPath << '\n';
     }
     Run.Result = Outcome::Timeout;
     return Run;
@@ -471,26 +487,19 @@ HerbieRunResult runHerbie(const std::vector<std::string> &inputExprs,
   llvm::errs() << "Herbie output: " << content << '\n';
 
   if (!Opts.CacheDir.empty()) {
-    if (auto EC = llvm::sys::fs::create_directories(Opts.CacheDir, true))
-      llvm::errs() << "Warning: Could not create cache directory: "
-                   << EC.message() << '\n';
-    std::ofstream cacheFile(cacheFilePath);
-    if (!cacheFile) {
-      report_fatal_error("Failed to open cache file for writing");
-    } else {
-      cacheFile << content;
-      cacheFile.close();
-      llvm::errs() << "Saved Herbie output to cache file " << cacheFilePath
-                   << '\n';
-    }
+    if (Error E = writeCacheFile(Opts.CacheDir, cacheFilePath, content))
+      return std::move(E);
+    llvm::errs() << "Saved Herbie output to cache file " << cacheFilePath
+                 << '\n';
     json::Object record;
     record["Herbie binary"] = herbieBinaryDigest(Program, Digests);
     record["answer"] = sys::path::filename(cacheFilePath);
     std::string recordPath =
         questionRecordPath(Opts.CacheDir, Platform.Name, question);
     if (Error E = writeCacheEntry(recordPath, question, std::move(record)))
-      llvm::errs() << "Warning: could not write " << recordPath << ": "
-                   << toString(std::move(E)) << '\n';
+      return createStringError(inconvertibleErrorCode(),
+                               "cannot write the Herbie cache file " +
+                                   toString(std::move(E)));
     // A stale timeout marker under this key is left in place: the read path
     // consults it only when the output file is absent.
   }

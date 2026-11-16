@@ -20,6 +20,7 @@
 #include "CacheKey.h"
 
 #include "llvm/ADT/StringRef.h"
+#include "llvm/Support/Error.h"
 
 #include <map>
 #include <optional>
@@ -124,9 +125,11 @@ struct HerbieRunResult {
 // the answer this binary gave, else the answer ImportDir records for the
 // same question, else a run, whose answer is cached with a record of the
 // question. `Label` names the cores in diagnostics, e.g. "subgraph 0 of foo".
-HerbieRunResult runHerbie(const std::vector<std::string> &Cores,
-                          const HerbieRunOptions &Opts, llvm::StringRef Label,
-                          HerbieBinaryDigests &Digests);
+// A cache that cannot be written is an error that names the path.
+llvm::Expected<HerbieRunResult> runHerbie(const std::vector<std::string> &Cores,
+                                          const HerbieRunOptions &Opts,
+                                          llvm::StringRef Label,
+                                          HerbieBinaryDigests &Digests);
 
 } // namespace poseidon
 #endif // POSEIDON_HERBIERUN_H

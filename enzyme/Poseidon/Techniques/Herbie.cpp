@@ -277,8 +277,14 @@ static bool improveViaHerbie(Session &S,
     const std::string RunLabel =
         Terms ? Label + " at " + std::to_string(*Terms) + " Taylor terms"
               : Label;
-    Runs.push_back(
-        runHerbie(inputExprs, Opts, RunLabel, S.Herbie.HerbieDigests));
+    Expected<HerbieRunResult> Run =
+        runHerbie(inputExprs, Opts, RunLabel, S.Herbie.HerbieDigests);
+    if (!Run)
+      reportUserError(F, F.getSubprogram(),
+                      toString(Run.takeError()) +
+                          ". Herbie's answers are kept in the -poseidon-cache "
+                          "directory, which has to be writable.");
+    Runs.push_back(std::move(*Run));
     // A timeout is Herbie's answer for these cores; a Herbie that does not
     // start gives none.
     if (Runs.back().Result == HerbieRunResult::Outcome::Failed)
