@@ -239,7 +239,6 @@ func.func @dlog(%x: complex<f64>, %dx: complex<f64>) -> complex<f64> {
 // CHECK-NEXT:    %[[res:.+]] = complex.div %[[dx]], %[[x]] fastmath<fast> : complex<f64>
 // CHECK-NEXT:    %{{.+}} = complex.log %[[x]] : complex<f64>
 // CHECK-NEXT:    return %[[res]] : complex<f64>
-// CHECK-NEXT:  }
 
 // -----
 
@@ -259,4 +258,3 @@ func.func @dlog1p(%x: complex<f64>, %dx: complex<f64>) -> complex<f64> {
 // CHECK-NEXT:    %[[res:.+]] = complex.div %[[dx]], %[[xp1]] fastmath<fast> : complex<f64>
 // CHECK-NEXT:    %{{.+}} = complex.log1p %[[x]] : complex<f64>
 // CHECK-NEXT:    return %[[res]] : complex<f64>
-// CHECK-NEXT:  }
