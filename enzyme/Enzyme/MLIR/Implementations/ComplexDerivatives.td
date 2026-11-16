@@ -201,3 +201,17 @@ def : MLIRDerivative<"complex", "PowiOp", (Op $x, $y),
                       (InactiveArg)
                     ]
                   >;
+
+def : MLIRDerivative<"complex", "LogOp", (Op $x), 
+                    [
+                      (CheckedComplexDiv (DiffeRet), $x)
+                    ]
+                  >;
+
+def : MLIRDerivative<"complex", "Log1pOp", (Op $x),
+                    [
+                      (CheckedComplexDiv
+                        (DiffeRet),
+                        (ComplexAdd $x, (ComplexConstant<"1"> $x)))
+                    ]
+                  >;

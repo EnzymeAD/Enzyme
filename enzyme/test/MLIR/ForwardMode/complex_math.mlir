@@ -222,3 +222,39 @@ func.func @dpowi(%x: complex<f32>, %dx: complex<f32>, %n: i32) -> complex<f32> {
 // CHECK-NEXT:    %{{.+}} = complex.powi %[[x]], %[[n]] : complex<f32>, i32
 // CHECK-NEXT:    return %[[res]] : complex<f32>
 // CHECK-NEXT:  }
+
+// -----
+
+func.func @log(%x: complex<f64>) -> complex<f64> {
+  %res = complex.log %x : complex<f64>
+  return %res : complex<f64>
+}
+
+func.func @dlog(%x: complex<f64>, %dx: complex<f64>) -> complex<f64> {
+  %0 = enzyme.fwddiff @log(%x, %dx) <{ activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] }> : (complex<f64>, complex<f64>) -> complex<f64>
+  return %0 : complex<f64>
+}
+
+// CHECK: func.func private @fwddiffelog(%[[x:.+]]: complex<f64>, %[[dx:.+]]: complex<f64>) -> complex<f64> {
+// CHECK-NEXT:    %[[res:.+]] = complex.div %[[dx]], %[[x]] fastmath<fast> : complex<f64>
+// CHECK-NEXT:    %{{.+}} = complex.log %[[x]] : complex<f64>
+// CHECK-NEXT:    return %[[res]] : complex<f64>
+
+// -----
+
+func.func @log1p(%x: complex<f64>) -> complex<f64> {
+  %res = complex.log1p %x : complex<f64>
+  return %res : complex<f64>
+}
+
+func.func @dlog1p(%x: complex<f64>, %dx: complex<f64>) -> complex<f64> {
+  %0 = enzyme.fwddiff @log1p(%x, %dx) <{ activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] }> : (complex<f64>, complex<f64>) -> complex<f64>
+  return %0 : complex<f64>
+}
+
+// CHECK: func.func private @fwddiffelog1p(%[[x:.+]]: complex<f64>, %[[dx:.+]]: complex<f64>) -> complex<f64> {
+// CHECK-NEXT:    %[[one:.+]] = complex.constant [1.000000e+00, 0.000000e+00] : complex<f64>
+// CHECK-NEXT:    %[[xp1:.+]] = complex.add %[[x]], %[[one]] fastmath<fast> : complex<f64>
+// CHECK-NEXT:    %[[res:.+]] = complex.div %[[dx]], %[[xp1]] fastmath<fast> : complex<f64>
+// CHECK-NEXT:    %{{.+}} = complex.log1p %[[x]] : complex<f64>
+// CHECK-NEXT:    return %[[res]] : complex<f64>
