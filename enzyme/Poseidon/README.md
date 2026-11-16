@@ -1,0 +1,406 @@
+# Poseidon
+
+Accelerators concentrate their arithmetic throughput in reduced-precision
+units. On an RTX 5090 an FP64 multiply-add runs at 1/64 of the FP32 rate and a
+fraction of what the tensor cores deliver, so a scientific kernel written
+CPU-first in FP64 and ported as a parallel loop realizes a small share of the
+machine. Poseidon is an LLVM pass that takes such a program together with an
+accuracy target and rewrites it to run as fast as that target allows: it
+profiles the program once on the accelerator to learn each floating-point
+instruction's value range, execution count and gradient-weighted sensitivity,
+then searches per-instruction precision changes, algebraic rewrites from
+Herbie, floating-point expansions, tensor-core raises of scalar reduction
+loops, and emulated high-accuracy matrix products (error correction, Ozaki-II),
+prices every candidate against a cost model measured on the target device, and
+solves for the cheapest assignment whose modelled error stays inside the target.
+
+## Layout
+
+Poseidon is a subproject of the Enzyme repository, built from the same CMake
+tree with `-DENZYME_POSEIDON=ON`:
+
+```
+enzyme/Poseidon/            the pass: Core/, IR/, Targets/, Sites/, Profile/,
+                            Model/, Techniques/, Solve/ and Pass/ (the plugin
+                            entry Pass/Plugin.cpp), lowest layer first
+  runtime/                  profiler and GEMM dispatch runtimes the driver links
+  tools/                    poseidon-clang driver, poseidon-calibrate, poseidon-probe,
+                            poseidon-explain, Herbie platform
+enzyme/include/poseidon/    the one public header
+enzyme/test/Poseidon/       lit suite: check-poseidon (a folder per part of the
+                            pass, fixtures in Inputs/) and
+                            check-poseidon-integration (Integration/)
+```
+
+## Requirements
+
+- **LLVM**, with its clang. The plugin is built against one LLVM and loaded by
+  that LLVM's clang. This tree is built and tested against LLVM 24
+  (`9d618fc02431`, the commit Enzyme's MLIR CI pins), and the apt packages of
+  LLVM 21 and 22 build it and run the tests that need no GPU toolchain
+  (`.github/workflows/poseidon.yml`).
+- **Enzyme**: the one in this tree. Enzyme differentiates the probes the
+  profiler places, so profile generation needs its plugin, and
+  `poseidon-clang++` loads it there and nowhere else. Profile use and plain
+  compiles load Poseidon's plugin alone, and with it a file with nothing to
+  profile or rewrite compiles as with plain clang. A program that asks Enzyme
+  for derivatives of its own (a site whose body is an Enzyme request among
+  them) passes `-fpass-plugin=<ClangEnzyme>.so` as it would to clang;
+  `poseidon-clang++` puts Poseidon's plugin ahead of the user's arguments,
+  and Poseidon's has to come first. For HIP such a program also passes
+  `-Xclang -mllvm -Xclang -enzyme-lto-prelink=1`, which `poseidon-clang++`
+  adds only where it loads Enzyme itself: every HIP device compile is an LTO
+  pre-link compile, where Enzyme otherwise leaves a derivative request to a
+  post-link run that loads no plugin.
+- **MPFR** (with GMP): the accuracy model evaluates candidates against an
+  arbitrary-precision reference.
+- **CUDA** 12.x or 13.x for the GPU path (cuBLAS). Poseidon builds and runs
+  its CPU tests without CUDA; without a CUDA compiler at configure time it has
+  no device profiler for NVIDIA GPUs. The runtimes are compiled for the GPU
+  that configuration finds; where none is visible, configuration stops unless
+  `-DCMAKE_CUDA_ARCHITECTURES` names the architecture (such as `120-real`).
+- **ROCm**, for HIP, optional: `-DPOSEIDON_ROCM_PATH=<rocm>` with an LLVM that
+  builds the AMDGPU target adds the AMDGPU device profiler, the HIP runtimes
+  and calibrators, for the one processor `-DPOSEIDON_AMDGPU_ARCH` names
+  (default `gfx942`). `poseidon-clang` links the HIP runtime of the ROCm
+  installation `--hip-path`, `HIP_PATH`, `--rocm-path` or `ROCM_PATH` names,
+  else of this one, not of the one clang alone would look for; a variable that
+  names no directory is an error.
+- **cuMpSGEMM**, optional: `-DPOSEIDON_TCEC_USE_CUMPSGEMM=ON
+  -DPOSEIDON_CUMPSGEMM_ROOT=<checkout>` adds the error-corrected FP16
+  tensor-core GEMM (FP16TCEC) as a host-dispatched candidate, run by that build
+  of cuMpSGEMM, the published implementation of the scheme. A compiler built
+  without it does not offer that candidate, and a pin that names it is an
+  error.
+- **Herbie**, for the algebraic rewrites. The build compiles upstream
+  [herbie-fp/herbie](https://github.com/herbie-fp/herbie) at the commit
+  `cmake/Herbie.cmake` pins (Racket 8.15 and Rust are then needed);
+  `-DPOSEIDON_HERBIE_BINARY=<path>` reuses an existing one instead, and
+  `-poseidon-herbie-binary=<path>` names one for a compile. Herbie results are
+  cached under the digest of the binary that produced them and are searched
+  again under any other, unless `-poseidon-import-herbie-answers=<dir>` names a
+  cache directory whose answers are then replayed whichever binary gave them.
+  `-poseidon-herbie-num-taylor-terms=<n,...>` searches every expression once
+  per series length and takes the union of the answers; it needs a Herbie
+  that takes `--num-taylor-terms`, which the pinned commit does not, and a
+  compile given the flag with a Herbie that does not stops with an error.
+
+## Build
+
+```sh
+cmake -G Ninja -S enzyme -B build \
+    -DCMAKE_C_COMPILER=<llvm-build>/bin/clang \
+    -DCMAKE_CXX_COMPILER=<llvm-build>/bin/clang++ \
+    -DLLVM_DIR=<llvm-build>/lib/cmake/llvm \
+    -DENZYME_POSEIDON=ON
+ninja -C build
+```
+
+This builds Enzyme's plugins, `build/Poseidon/lib/Poseidon-<ver>.so`, the
+runtimes and the tools under `build/Poseidon/{lib,bin}`. The driver finds the
+Enzyme plugin of the same build tree. `ninja -C build check-poseidon` runs the
+regression tests and `check-poseidon-integration` the ones that compile and
+run CUDA.
+
+## Use
+
+Three actions, modelled on clang's PGO. Mark the computation to optimize,
+profile it once on a small problem, then compile with a target. A function on
+the host and a kernel on the GPU are marked the same way:
+
+```c
+#include "poseidon/poseidon.h"
+
+POSEIDON_OPTIMIZE void kick(double *v, const double *a, double dt, int n) { ... }
+POSEIDON_OPTIMIZE __global__ void force(double *a, const double *x, int n) { ... }
+POSEIDON_OPTIMIZE_TAU(1e-12) __global__ void advance(double *x, const double *v, int n) { ... }
+
+int main() { ...; poseidon_metric("energy drift", drift); }
+```
+
+```sh
+poseidon-clang++ -poseidon-profile-generate app.cu -o app
+poseidon-probe -- ./app small_problem # writes ./poseidon.profile
+poseidon-clang++ -poseidon-profile-use -poseidon-tau=1e-7 app.cu -o app_opt
+```
+
+A CUDA program is profiled as it is built otherwise, one translation unit at a
+time or several at once, with or without relocatable device code, and its
+units may sit in static libraries: the plugin links the device half of the
+profiler into every device module it compiles for profile generation, and
+the link takes the host half from `libposeidon_profile_cuda`.
+
+The ways to opt in, simplest first:
+
+1. `POSEIDON_OPTIMIZE` on a function or kernel, and `-poseidon-tau=<t>` on the
+   optimizing compile. Every call of the function is the site: its whole body
+   is profiled and rewritten, and nothing else in the application changes.
+   Start here.
+2. `POSEIDON_OPTIMIZE_TAU(t)`: the same with that site's own target, which wins
+   over `-poseidon-tau`. For sites that need different accuracy. `t` may be a
+   literal, a macro or a constant expression.
+3. `__poseidon_optimize(fn, args...)`, or `__poseidon_optimize_tau(t, fn,
+   args...)` with that call's own target: one call instead of every call. The
+   call has its own profile, target and rewritten copy of `fn`, so two calls of
+   one function can be rewritten differently, and other calls of `fn` run it as
+   written; no shadows are needed. `fn` names a function defined in the same
+   translation unit, on the host or in device code, and `t` is a compile-time
+   constant. The arguments may instead be an explicit list with the shadows of
+   the caller's choosing; see [Advanced: one call with
+   shadows](#advanced-one-call-with-shadows).
+4. `-poseidon-kernels=<regex>|all`: GPU kernels opted in without editing the
+   source (library code); only the ones above `-poseidon-min-cost-share` of the
+   profiled cost are optimized.
+5. `poseidon_metric(name, value)`, once at the end of the profiling run: the
+   quantity the target refers to, so the solver can spend error where it does
+   not reach that quantity. How far it moves when each site is perturbed is
+   measured by running the profiling build as `poseidon-probe -- <program>
+   [args...]` (or with `POSEIDON_PROBE=1` in its environment): at exit the
+   program says how many more runs of itself the measurement takes and runs
+   itself that many times, once for a noise floor and once per site and
+   perturbation size, repeating whatever else it does on each run; those
+   runs record nothing but the metric. It ends by printing how long its own
+   run and the measurement took (`[probe] profile run:` and `[probe]
+   condition-number measurement:`). Run without the request, a program that
+   declares a metric runs once and says what measuring would take, and
+   profile use stops at its sites until they are measured. With
+   `POSEIDON_PROBE=0` nothing is measured and each site is solved against its
+   own target. Optional.
+
+```c
+double e = __poseidon_optimize(energy, x, n);       /* this call is a site */
+__poseidon_optimize_tau(1e-12, kick, v, a, dt, n);  /* with its own target */
+```
+
+```cpp
+__poseidon_optimize(kick, enzyme_dup, v, dv, enzyme_const, a, dt, n); // shadows
+```
+
+Precedence: the site's own target (`POSEIDON_OPTIMIZE_TAU`,
+`__poseidon_optimize_tau`, or `poseidon_tau` in an explicit list) >
+`-poseidon-tau` > none; a call that gives its own target both ways is an
+error. The target is the same number wherever
+it is written: moving it from the flag into the source never changes what a
+site emits, and changing it needs no new profile, also when a template argument
+carries it to the call. A site with no target is solved against
+`-poseidon-cost-budget` instead, the share of what the profiled run spent in
+the site that a solution may add (a negative share, down to -1, is one it has
+to save: -0.25 requires saving a quarter); at its default of 0 that is the most
+accurate rewrite costing no more than the code as written, which may be the
+code as written. A share below -1 or one that is not finite stops the compile,
+as does a number flag given no number (`-poseidon-tau=`), and a solve writes
+to `budgets.txt` in its `-poseidon-cache` directory the share of each frontier
+point a budget selects: passed back as the budget, each selects that point.
+`poseidon-clang++ -poseidon-help` lists the user flags, and any other
+`-poseidon-<flag>` reaches the pass.
+
+A marked host function, or one called through `__poseidon_optimize`, returns
+nothing, a floating-point scalar or an integer, and takes pointers,
+floating-point scalars and integers; any other signature is an error in a
+compile that generates or uses a profile, and runs as written with a warning in
+any other. Its profiling build sizes the shadow of every pointer argument
+from the allocation it points into: any heap allocation in the process (the
+driver links a profiling runtime that records them), and the globals and stack
+arrays of the translation units that hold a site. A pointer into anything else
+stops the profiling run, naming the function and the argument. A profile is
+read back by a compile at any -O level as long as the site's code has the same
+canonical form there; when it does not (for example `std::sqrt` is a libm call
+at -O1 and an intrinsic at -O2), the compile says so and asks for a new
+profile.
+
+In a CUDA or HIP compilation only device code holds sites: the compilation has
+one device and one cost model. The host half of a `__host__ __device__`
+function that calls `__poseidon_optimize` or carries `POSEIDON_OPTIMIZE`
+compiles as written, in profile generation and profile use alike, and so does
+a host function of that compilation, without a warning: the host half cannot
+tell the two apart. A host site belongs in a C or C++ translation unit.
+
+In device code the profiling build makes the shadow of every pointer a call made
+through `__poseidon_optimize` passes, at every execution of the call. A pointer
+into a local object of the calling kernel or device function (a
+`tensor<real_t, 3, 3> &` input, a `real_t *` output) or into an aggregate it
+takes by value (a kernel's closure, a `__grid_constant__` parameter) gets a
+local object of that object's type, zero, with 1.0 in what the call writes when
+the program may read it after the call. Any other pointer (into device memory,
+or a reference parameter of the caller) gets a local object that covers the
+bytes the call reaches through it, zero, with 1.0 wherever the call writes;
+those bytes have to be a constant range: every access at a constant offset from
+the pointer, in `fn` or in a function it passes the pointer to, and the pointer
+never stored, converted or passed where the pass cannot see. Pointers that lie a
+constant distance apart (one pointer and the same variable indices, through any
+casts) share one shadow, overlapping where they overlap; other pointers get
+shadows of their own, and the profiling run stops with a message at a call where
+the memory such a shadow stands for overlaps another argument's and the call
+writes into one of the two. The call itself reads and writes through the
+pointers it is given, and nothing else is stored through them. An object that
+holds pointers, and the address of an object the call never reads (an empty
+functor's), are passed as constants. A call that passes a pointer whose range is
+not constant (a loop over a length the call is given) is an error that names
+every such argument: copy it into a local object, or give its shadow in an
+explicit list. A `fn` whose body is an Enzyme request (`__enzyme_fwddiff` and
+the like) is profiled and rewritten in the code Enzyme generates for it.
+
+A profile-use compile of a module that holds a site, device code or a C or
+C++ translation unit, compiles the module once more as a build without a
+profile does (except in an LTO link and under `-poseidon-joint-dp`), and
+emits every function no rewrite reached from that compile: when the solve
+leaves every site alone, the compilation emits the code as written. The cost
+is one more run of the optimization pipeline over such a module.
+
+The accuracy target is empirical, not a formally verified bound.
+`-poseidon-tau` is compared against an error the accuracy model estimates by
+sampling inputs inside the profiled ranges and comparing the candidate against
+a high-precision reference, weighted by the profiled sensitivity. It is an
+estimate over a sampled domain on a profiled workload, not a certified bound
+over all inputs, and a deployment whose inputs leave the profiled ranges is
+outside what was modelled.
+
+### Advanced: one call with shadows
+
+`__poseidon_optimize` also takes the explicit list Enzyme's `__enzyme_autodiff`
+takes, for pointers the profiler cannot size or a seed of the caller's
+choosing: `enzyme_dup` before a pointer and its shadow after it, of the same
+size, zeroed for an input and filled with 1.0 for an output; `enzyme_const`
+before a pointer that needs no shadow; a scalar as it is. `poseidon_tau, t`
+among them sets the call's target, as `__poseidon_optimize_tau` does. A list is
+explicit when it holds an activity marker (`poseidon_tau` is one), and then
+every pointer in it carries one; a list that is neither `fn`'s own arguments
+nor such a list is a compile error at the call. The call is a site over `fn`
+itself, with one profile for every explicit call of `fn`, and returns `fn`'s
+value. A build without the plugin does not link it.
+
+```cpp
+int enzyme_dup, enzyme_const, poseidon_tau;
+
+__poseidon_optimize(kernel, poseidon_tau, 1e-10, enzyme_const, x, enzyme_dup,
+                    out, dout, n);
+double e = __poseidon_optimize_tau(1e-6, energy, enzyme_dup, x, dx, n);
+```
+
+C has no overloading, so there `__poseidon_optimize` takes `fn`'s own arguments
+only, and an explicit list is a call of `__poseidon_fp_optimize`, which the
+program declares with `fn`'s return type, as in `double
+__poseidon_fp_optimize(void *, ...)`. `__poseidon_fp_optimize` and
+`__enzyme_fp_optimize` are accepted as other names of the call, read by the same
+rule.
+
+A function that carries `POSEIDON_OPTIMIZE` is a site at every call already,
+and naming it in `__poseidon_optimize` as well is a compile error.
+
+### CMake
+
+A project compiled with the clang Poseidon is built against uses it through
+`find_package(Poseidon CONFIG)`, from the build tree (`Poseidon_DIR` is
+`build/Poseidon`) or an installation. One interface target per action carries
+what `poseidon-clang++` adds for it (`cmake/PoseidonConfig.cmake.in` lists
+where the two differ):
+
+```cmake
+find_package(Poseidon 0.1 CONFIG REQUIRED)
+target_link_libraries(app PRIVATE Poseidon::ProfileGenerate)  # or Poseidon::Plain
+# or: Poseidon::ProfileUse, with the profile it reads
+target_compile_options(app PRIVATE "SHELL:${POSEIDON_MLLVM} -poseidon-profile-use=${PROFILE}")
+```
+
+Any other `-poseidon-<flag>` is passed as `"SHELL:${POSEIDON_MLLVM}
+-poseidon-<flag>"`, that is `-Xclang -mllvm -Xclang -poseidon-<flag>`, which
+clang hands to its compilers and to no linker; `poseidon-clang++` passes every
+Poseidon flag so.
+
+## The cost model
+
+Poseidon prices every candidate from a CSV measured on the device the code will
+run on; a model measured elsewhere reproduces that device's decisions. No model
+ships with Poseidon. `poseidon-calibrate` measures one, the way `llvm-profdata`
+prepares a profile:
+
+```sh
+poseidon-calibrate --gpu 0            # writes ~/.cache/poseidon/cm_<arch>_<gpu>.csv
+poseidon-calibrate --gpu 0 --check    # validate the resolved model against this device
+```
+
+A CPU is measured by `tools/calibrate/microbm_cpu.py --native-arch
+<target-cpu> --out cm_<target-cpu>_<name>.csv` (Python 3 with `numpy` and
+`llvmlite`). A compile that is not given `-poseidon-cost-model=<csv>` (or
+`POSEIDON_COST_MODEL`) looks one up by the module's target-cpu in
+`$XDG_CACHE_HOME/poseidon`, by default `~/.cache/poseidon`, where
+`poseidon-calibrate` writes; no match stops the compile naming the tool, and
+several stop it naming the files. `tools/calibrate/README.md` describes the
+row families and what each calibration arm measures.
+
+## What a compile decided
+
+Poseidon reports through LLVM's optimization remarks under the pass name
+`poseidon`, at the source location of the code concerned:
+
+- `-Rpass=poseidon`: each applied rewrite, as C, with the technique (series
+  approximation and the profiled range it was validated on, regime split,
+  operations moved to another precision, matrix-product scheme), the change of
+  the modelled error and of the modelled cost, and its id.
+- `-Rpass-missed=poseidon`: each subgraph left as written and why, and at most
+  three rejected alternatives per subgraph with the reason (modelled error
+  above the target, dominated, not cheaper, Herbie returned nothing, ...).
+- `-Rpass-analysis=poseidon`: the site's target, modelled error and cost
+  before and after, and each subgraph's profile (input ranges, executions,
+  sensitivity).
+
+`-fsave-optimization-record` writes the same remarks as YAML, with the
+expression, rewrite, error and cost as separate arguments.
+
+`-poseidon-explain=<dir>` (also implied by `-poseidon-report-path`) writes
+`<func>.explain.json` per site, schema `poseidon-explain/1`; a name over 200
+characters is cut to its first 160 and a hash of the whole, as a profile's file
+name is. Every number in it is the solver's own; a field the solve did not compute (for example a modelled
+error when the DP table came from the cache) is omitted.
+
+| field | content |
+|---|---|
+| `function` | `name` (demangled), `symbol`, `ir` (the solved clone), `site` and `loc` locations |
+| `target` | `tau` and `tau_from` (`site` or `flag`), or `budget`; `cost_model`, `selector` |
+| `result` | `cost_before`, `cost_after`, `modelled_rel_error_as_written`, `modelled_rel_error`, `applied` (ids) |
+| `subgraphs[]` | `id`, `kind` (`subgraph` or `matmul`), `loc`, `cost`, `executions`, `ops[]` (`opcode`, `type`, `loc`, `executions`, `sensitivity`, `gradient`, `min`, `max`), `inputs[]` (`var`, `name`, `loc`, `type`, `min`, `max`), `outputs[]` (`name`, `loc`, `fpcore`, `c`, the `ops` and `inputs` it depends on), `original` (`fpcore`, `c`), `herbie[]` (per core: precision, status), `left_as_written` |
+| `subgraphs[].alternatives[]` | `id` (what `-poseidon-apply-rewrites` takes), `kind` (`algebraic`, `precision`, `expansion`, `matmul`), `summary`, `fpcore`, `c`, `approx`, `approx_note`, `changes`, `cost_delta`, `modelled_error`, `herbie_error_bits` (`before`, `after`), `status` (`applied`, `pareto`, `rejected`), `reason` |
+| `pareto[]` | `budget` (what `-poseidon-cost-budget` takes to select the point; absent on a point no budget selects), `cost`, `modelled_rel_error`, `applied`, `selected` |
+
+Locations are `{file, line, col}`; modelled errors are relative and in the
+unit `-poseidon-tau` is given in; costs and budgets are shares of what the
+profiled run spent in the solved sites. An applied algebraic alternative reads
+
+```json
+{"id": "R0_1", "kind": "algebraic", "precision": "binary64", "status": "applied",
+ "fpcore": "#s(approx (/ (- 1 (cos v0)) (* v0 v0)) #s(literal 1/2 binary64))",
+ "c": "0.5", "approx": true,
+ "approx_note": "series approximation of (1.0 - cos(x[i])) / (x[i] * x[i])",
+ "cost_delta": -3576832, "modelled_error": 1.16e-16,
+ "reason": "part of the cheapest solution that meets the target"}
+```
+
+`tools/explain/poseidon-explain <file|dir> --format F` (Python 3, installed in
+`bin/`) presents these files: `report` (a table per source location with the
+alternatives, the profile and the Pareto points with the flag that selects
+each), `source` (the source with each rewrite spliced in as C, using clang's
+AST to find the expression), `diff`, `remarks` (`file:line:col: note:` lines),
+`fpcore` (before and after, for Herbie) and `json`.
+
+## Errors
+
+A mistake in what a compile is given (a flag value, a file that is missing or
+unreadable, a cost model or a profile that does not fit the compile) is an
+error, `error: Poseidon: ...`, that says what to do, at the source location of
+the site concerned where there is one. So is a site the source asks for that a
+compile generating or using a profile cannot make. The compile exits with
+status 1 and writes no output, without clang's crash report (no request for a
+bug report, stack dump or reproducer files). Where the site can be left as written the
+compile goes on and reports the other sites' errors too; a mistake that leaves
+nothing to compile with, such as a flag value, a missing profile directory or a
+cost model that cannot price the compile, ends it at once. A broken internal
+invariant of Poseidon stops the compile as a crash, to be reported as a bug.
+
+## Citation
+
+Poseidon extends the CPU optimizer of "Thinking Fast and Correct: Automated
+Rewriting of Numerical Code through Compiler Augmentation" (CGO 2026).
+
+## License
+
+Apache License v2.0 with LLVM Exceptions, the repository's `LICENSE`.

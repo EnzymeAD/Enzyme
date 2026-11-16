@@ -1,0 +1,92 @@
+; REQUIRES: enzyme
+; RUN: rm -rf %t && mkdir %t
+; RUN: %opt %s %loadPoseidonEnzyme -passes="poseidon,enzyme,poseidon-finalize,globaldce" -enzyme-preopt=false -poseidon-profile-generate -poseidon-cache=%t/gen -poseidon-print -S -o %t/gen.ll 2>&1 | FileCheck --check-prefix=GEN-ERR %s
+; RUN: FileCheck --check-prefix=GEN %s < %t/gen.ll
+; RUN: %opt %s %loadPoseidon -passes="poseidon,always-inline,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/other_sites -poseidon-cache=%t/use -S -o %t/use.ll 2>&1 | FileCheck --check-prefix=USE-ERR %s
+; RUN: FileCheck --check-prefix=USE %s < %t/use.ll
+; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -S -o %t/off.ll 2>&1 | FileCheck --check-prefix=OFF-ERR %s
+; RUN: FileCheck --check-prefix=OFF %s < %t/off.ll
+
+; GEN-LABEL: define void @scale(ptr %x, ptr %out)
+; GEN: call void @__poseidon_host_shadows(ptr @{{[^,]+}}, i32 0, i32 2, ptr %poseidon.ptrs, {{.*}}, ptr %poseidon.shadows)
+; GEN: call void @diffepreprocess_scale_poseidon_body(ptr %x, ptr %{{[0-9]+}}, ptr %out, ptr %{{[0-9]+}})
+; GEN-LABEL: define double @dot(ptr %x, double %s, i32 %n)
+; GEN: call void @__poseidon_host_shadows(ptr @{{[^,]+}}, i32 1, i32 1,
+; GEN: [[R:%[0-9]+]] = call {{.*}}{ double, double } @diffepreprocess_dot_poseidon_body(ptr %x, ptr %{{[0-9]+}}, double %s, i32 %n, double 1.000000e+00)
+; GEN: [[P:%[0-9]+]] = extractvalue { double, double } [[R]], 0
+; GEN: ret double [[P]]
+; GEN-LABEL: define double @caller(ptr %out)
+; GEN: call void @__poseidon_stack_push(ptr %buf, i64 32)
+; GEN-NEXT: call void @scale(ptr %buf, ptr %out)
+; GEN-NEXT: call void @__poseidon_stack_pop(i32 1)
+; GEN-NEXT: call void @scale(ptr @table, ptr %out)
+; GEN-NEXT: call void @__poseidon_stack_push(ptr %buf, i64 32)
+; GEN-NEXT: call double @dot(ptr %buf, double 2.000000e+00, i32 4)
+; GEN-NEXT: call void @__poseidon_stack_pop(i32 1)
+; GEN: call void @__poseidon_register_globals(ptr [[TABLE:@[^,]+]], i64 1)
+
+; GEN-ERR: [poseidon-profgen] scale: site 0, 2 shadow buffer(s), output(s) 1, 1 call(s)
+; GEN-ERR: [poseidon-profgen] dot: site 1, 1 shadow buffer(s), output(s) return, 1 call(s)
+
+; Without a profile the site keeps the body it was written with, folded back.
+; USE-LABEL: define void @scale(ptr %x, ptr %out)
+; USE-NEXT: entry:
+; USE-NEXT: [[V:%.+]] = load double, ptr %x
+; USE-NEXT: [[M:%.+]] = fmul double [[V]], 3.000000e+00
+; USE-NEXT: [[A:%.+]] = fadd double [[M]], 1.000000e+00
+; USE-NEXT: store double [[A]], ptr %out
+; USE-NEXT: ret void
+; USE-LABEL: define double @dot(ptr %x, double %s, i32 %n)
+; USE-NEXT: entry:
+; USE-NEXT: load double, ptr %x
+; USE-NOT: _poseidon_body
+; USE-ERR: scale_poseidon_body: the profiled program did not contain this site (no profile at {{.*}}); left unchanged
+; USE-ERR: dot_poseidon_body: the profiled program did not contain this site (no profile at {{.*}}); left unchanged
+
+; OFF: define void @scale(ptr %x, ptr %out)
+; OFF-NEXT: %v = load double, ptr %x
+; OFF-NOT: _poseidon_body
+; OFF-ERR: warning: {{.*}}in function scale {{.*}}compiled without -poseidon-profile-generate or -poseidon-profile-use=<dir>
+; OFF-ERR: warning: {{.*}}in function dot {{.*}}compiled without -poseidon-profile-generate or -poseidon-profile-use=<dir>
+
+; POSEIDON_OPTIMIZE on a host function makes the function a wrapper around its
+; outlined body, so every call of it is the site. Under profile generation
+; each call of the body is a reverse-mode request whose shadows the runtime
+; finds from the allocation each pointer argument points into; a stack object
+; passed to a call is registered for that call, and the module's globals before
+; main. A floating-point return is seeded by the request, a floating-point
+; scalar parameter is active and an integer one constant.
+
+target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128"
+target triple = "x86_64-unknown-linux-gnu"
+
+@.str = private unnamed_addr constant [9 x i8] c"poseidon\00", section "llvm.metadata"
+@.str.1 = private unnamed_addr constant [9 x i8] c"host.cpp\00", section "llvm.metadata"
+@.args = private unnamed_addr constant { double } { double 1.000000e-07 }, section "llvm.metadata"
+@table = internal global [4 x double] zeroinitializer
+@llvm.global.annotations = appending global [2 x { ptr, ptr, ptr, i32, ptr }] [
+  { ptr, ptr, ptr, i32, ptr } { ptr @scale, ptr @.str, ptr @.str.1, i32 3, ptr null },
+  { ptr, ptr, ptr, i32, ptr } { ptr @dot, ptr @.str, ptr @.str.1, i32 9, ptr @.args }], section "llvm.metadata"
+
+define void @scale(ptr %x, ptr %out) {
+  %v = load double, ptr %x
+  %m = fmul double %v, 3.000000e+00
+  %a = fadd double %m, 1.000000e+00
+  store double %a, ptr %out
+  ret void
+}
+
+define double @dot(ptr %x, double %s, i32 %n) {
+  %v = load double, ptr %x
+  %m = fmul double %v, %s
+  %a = fadd double %m, %s
+  ret double %a
+}
+
+define double @caller(ptr %out) {
+  %buf = alloca [4 x double]
+  call void @scale(ptr %buf, ptr %out)
+  call void @scale(ptr @table, ptr %out)
+  %d = call double @dot(ptr %buf, double 2.0, i32 4)
+  ret double %d
+}
