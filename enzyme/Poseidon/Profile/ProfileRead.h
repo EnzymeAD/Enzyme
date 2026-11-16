@@ -91,7 +91,10 @@ struct FunctionProfileHeader {
 
 inline constexpr llvm::StringLiteral kKappaUnmeasured = "unmeasured";
 
-void parseProfileFile(const std::string &profilePath, ProfileMap &profileMap,
+// The records of the profile at `profilePath`, and with `header` its header
+// lines. A profile that does not parse is an error at the site `F`.
+void parseProfileFile(const std::string &profilePath, const llvm::Function &F,
+                      ProfileMap &profileMap,
                       FunctionProfileHeader *header = nullptr);
 
 // The static header of every instrumented site names the profile format in a
