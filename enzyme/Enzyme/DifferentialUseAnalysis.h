@@ -295,20 +295,23 @@ inline bool is_value_needed_in_reverse(
     }
 
     // Anything we may try to rematerialize requires its store operands for
-    // the reverse pass. That includes the address a store writes to: an
-    // index into the allocation (e.g. a value loaded from memory) must be
-    // available to replay the store.
+    // the reverse pass.
     if (!OneLevel) {
       bool isStored = false;
-      if (auto SI = dyn_cast<StoreInst>(user))
-        isStored =
-            inst == SI->getValueOperand() || inst == SI->getPointerOperand();
-      else if (auto MTI = dyn_cast<MemTransferInst>(user)) {
-        isStored = inst == MTI->getSource() || inst == MTI->getLength() ||
-                   inst == MTI->getDest();
+      // The address a store writes to (e.g. an index into the allocation
+      // loaded from memory) is only needed when the store is replayed in the
+      // reverse pass, i.e. when the allocation, or its shadow, is
+      // rematerialized there.
+      bool isStoredAddress = false;
+      if (auto SI = dyn_cast<StoreInst>(user)) {
+        isStored = inst == SI->getValueOperand();
+        isStoredAddress = inst == SI->getPointerOperand();
+      } else if (auto MTI = dyn_cast<MemTransferInst>(user)) {
+        isStored = inst == MTI->getSource() || inst == MTI->getLength();
+        isStoredAddress = inst == MTI->getDest();
       } else if (auto MS = dyn_cast<MemSetInst>(user)) {
-        isStored = inst == MS->getLength() || inst == MS->getValue() ||
-                   inst == MS->getDest();
+        isStored = inst == MS->getLength() || inst == MS->getValue();
+        isStoredAddress = inst == MS->getDest();
       } else if (auto CB = dyn_cast<CallBase>(user)) {
         auto name = getFuncNameFromCall(CB);
         if (name == "julia.write_barrier" ||
@@ -319,7 +322,19 @@ inline bool is_value_needed_in_reverse(
             isStored |= inst == CB->getArgOperand(i);
         }
       }
-      if (isStored) {
+      if (isStoredAddress) {
+        for (auto pair : gutils->backwardsOnlyShadows) {
+          if (pair.second.stores.count(user) &&
+              !gutils->isConstantValue(pair.first)) {
+            if (EnzymePrintDiffUse)
+              llvm::errs() << " Need: " << to_string(VT) << " of " << *inst
+                           << " in reverse as address of a store to "
+                           << "rematerialized shadow " << *pair.first << "\n";
+            return seen[idx] = true;
+          }
+        }
+      }
+      if (isStored || isStoredAddress) {
         for (auto pair : gutils->rematerializableAllocations) {
           // If already decided to cache the whole allocation, ignore
           if (gutils->needsCacheWholeAllocation(pair.first)) {
@@ -350,6 +365,10 @@ inline bool is_value_needed_in_reverse(
                              << *pair.first << "\n";
               return seen[idx] = true;
             }
+            // The store is not replayed if the allocation is not
+            // rematerialized, so its address is not needed.
+            if (!isStored)
+              continue;
             for (LoadInst *L : pair.second.loads)
               if (is_value_needed_in_reverse<VT>(gutils, L, mode, seen,
                                                  oldUnreachable)) {
