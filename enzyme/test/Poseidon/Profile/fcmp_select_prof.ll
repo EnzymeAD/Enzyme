@@ -108,7 +108,7 @@ declare double @__poseidon_fp_optimize(...)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   call void @poseidonLogGrad(ptr @poseidon_site_preprocess_test_combined, i64 2, double %[[v6]], double %[[d6]])
 
-; CHECK: define internal { double } @diffepreprocess_test_maxnum_zero(double %x, double %[[differet:.+]]) #{{[0-9]+}} {
+; CHECK: define internal { double, double } @diffepreprocess_test_maxnum_zero(double %x, double %[[differet:.+]]) #{{[0-9]+}} {
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %[[alloca:.+]] = alloca [2 x double], align 8
 ; CHECK-NEXT:   %[[maxnum:.+]] = call double @llvm.maxnum.f64(double %x, double 0.000000e+00){{.*}}, !enzyme_active !{{[0-9]+}}, !poseidon.prof.idx ![[idx0:[0-9]+]]
@@ -121,11 +121,12 @@ declare double @__poseidon_fp_optimize(...)
 ; CHECK-NEXT:   %[[grad:.+]] = extractvalue { double } %[[gradcall]], 0
 ; CHECK-NEXT:   %[[cmp:.+]] = fcmp fast olt double %x, 0.000000e+00
 ; CHECK-NEXT:   %[[sel:.+]] = select fast i1 %[[cmp]], double 0.000000e+00, double %[[grad]]
-; CHECK-NEXT:   %[[ins:.+]] = insertvalue { double } undef, double %[[sel]], 0
-; CHECK-NEXT:   ret { double } %[[ins]]
+; CHECK-NEXT:   %[[primal:.+]] = insertvalue { double, double } undef, double %[[probed]], 0
+; CHECK-NEXT:   %[[ins:.+]] = insertvalue { double, double } %[[primal]], double %[[sel]], 1
+; CHECK-NEXT:   ret { double, double } %[[ins]]
 ; CHECK-NEXT: }
 
-; CHECK: define internal { double } @diffepreprocess_test_maxnum_zero_reversed(double %x, double %[[differet:.+]]) #{{[0-9]+}} {
+; CHECK: define internal { double, double } @diffepreprocess_test_maxnum_zero_reversed(double %x, double %[[differet:.+]]) #{{[0-9]+}} {
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %[[alloca:.+]] = alloca [2 x double], align 8
 ; CHECK-NEXT:   %[[maxnum:.+]] = call double @llvm.maxnum.f64(double %x, double 0.000000e+00){{.*}}, !enzyme_active !{{[0-9]+}}, !poseidon.prof.idx ![[idx0]]
@@ -138,11 +139,12 @@ declare double @__poseidon_fp_optimize(...)
 ; CHECK-NEXT:   %[[grad:.+]] = extractvalue { double } %[[gradcall]], 0
 ; CHECK-NEXT:   %[[cmp:.+]] = fcmp fast olt double %x, 0.000000e+00
 ; CHECK-NEXT:   %[[sel:.+]] = select fast i1 %[[cmp]], double 0.000000e+00, double %[[grad]]
-; CHECK-NEXT:   %[[ins:.+]] = insertvalue { double } undef, double %[[sel]], 0
-; CHECK-NEXT:   ret { double } %[[ins]]
+; CHECK-NEXT:   %[[primal:.+]] = insertvalue { double, double } undef, double %[[probed]], 0
+; CHECK-NEXT:   %[[ins:.+]] = insertvalue { double, double } %[[primal]], double %[[sel]], 1
+; CHECK-NEXT:   ret { double, double } %[[ins]]
 ; CHECK-NEXT: }
 
-; CHECK: define internal { double, double } @diffepreprocess_test_maxnum_general(double %x, double %y, double %[[differet:.+]]) #{{[0-9]+}} {
+; CHECK: define internal { double, double, double } @diffepreprocess_test_maxnum_general(double %x, double %y, double %[[differet:.+]]) #{{[0-9]+}} {
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %[[alloca:.+]] = alloca [2 x double], align 8
 ; CHECK-NEXT:   %[[maxnum:.+]] = call double @llvm.maxnum.f64(double %x, double %y){{.*}}, !enzyme_active !{{[0-9]+}}, !poseidon.prof.idx ![[idx0]]
@@ -157,12 +159,13 @@ declare double @__poseidon_fp_optimize(...)
 ; CHECK-NEXT:   %[[sel1:.+]] = select fast i1 %[[cmp]], double 0.000000e+00, double %[[grad]]
 ; CHECK-NEXT:   %[[cmp2:.+]] = fcmp fast olt double %x, %y
 ; CHECK-NEXT:   %[[sel2:.+]] = select fast i1 %[[cmp2]], double %[[grad]], double 0.000000e+00
-; CHECK-NEXT:   %[[ins1:.+]] = insertvalue { double, double } undef, double %[[sel1]], 0
-; CHECK-NEXT:   %[[ins2:.+]] = insertvalue { double, double } %[[ins1]], double %[[sel2]], 1
-; CHECK-NEXT:   ret { double, double } %[[ins2]]
+; CHECK-NEXT:   %[[primal:.+]] = insertvalue { double, double, double } undef, double %[[probed]], 0
+; CHECK-NEXT:   %[[ins1:.+]] = insertvalue { double, double, double } %[[primal]], double %[[sel1]], 1
+; CHECK-NEXT:   %[[ins2:.+]] = insertvalue { double, double, double } %[[ins1]], double %[[sel2]], 2
+; CHECK-NEXT:   ret { double, double, double } %[[ins2]]
 ; CHECK-NEXT: }
 
-; CHECK: define internal { double, double } @diffepreprocess_test_minnum_general(double %x, double %y, double %[[differet:.+]]) #{{[0-9]+}} {
+; CHECK: define internal { double, double, double } @diffepreprocess_test_minnum_general(double %x, double %y, double %[[differet:.+]]) #{{[0-9]+}} {
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %[[alloca:.+]] = alloca [2 x double], align 8
 ; CHECK-NEXT:   %[[minnum:.+]] = call double @llvm.minnum.f64(double %x, double %y){{.*}}, !enzyme_active !{{[0-9]+}}, !poseidon.prof.idx ![[idx0]]
@@ -177,14 +180,15 @@ declare double @__poseidon_fp_optimize(...)
 ; CHECK-NEXT:   %[[sel1:.+]] = select fast i1 %[[cmp]], double %[[grad]], double 0.000000e+00
 ; CHECK-NEXT:   %[[cmp2:.+]] = fcmp fast olt double %x, %y
 ; CHECK-NEXT:   %[[sel2:.+]] = select fast i1 %[[cmp2]], double 0.000000e+00, double %[[grad]]
-; CHECK-NEXT:   %[[ins1:.+]] = insertvalue { double, double } undef, double %[[sel1]], 0
-; CHECK-NEXT:   %[[ins2:.+]] = insertvalue { double, double } %[[ins1]], double %[[sel2]], 1
-; CHECK-NEXT:   ret { double, double } %[[ins2]]
+; CHECK-NEXT:   %[[primal:.+]] = insertvalue { double, double, double } undef, double %[[probed]], 0
+; CHECK-NEXT:   %[[ins1:.+]] = insertvalue { double, double, double } %[[primal]], double %[[sel1]], 1
+; CHECK-NEXT:   %[[ins2:.+]] = insertvalue { double, double, double } %[[ins1]], double %[[sel2]], 2
+; CHECK-NEXT:   ret { double, double, double } %[[ins2]]
 ; CHECK-NEXT: }
 
 ; Three profiled values in one site: each is logged under its own slot and each
 ; operand array records the probed (not the raw) value of its producer.
-; CHECK: define internal { double, double, double } @diffepreprocess_test_combined(double %x, double %y, double %z, double %[[differet:.+]]) #{{[0-9]+}} {
+; CHECK: define internal { double, double, double, double } @diffepreprocess_test_combined(double %x, double %y, double %z, double %[[differet:.+]]) #{{[0-9]+}} {
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %[[alloca0:.+]] = alloca [2 x double], align 8
 ; CHECK-NEXT:   %[[alloca1:.+]] = alloca [2 x double], align 8

@@ -27,7 +27,7 @@ declare double @__poseidon_fp_optimize(double (double, double)*, ...)
 
 ; CHECK: define internal double @__poseidon_probe_preprocess_tester_0(double %{{.+}}) #{{[0-9]+}} !enzyme_augment !{{[0-9]+}} !enzyme_gradient !{{[0-9]+}} {
 
-; CHECK: define internal { double, double } @diffepreprocess_tester(double %x, double %y, double %[[differet:.+]]) #{{[0-9]+}} {
+; CHECK: define internal { double, double, double } @diffepreprocess_tester(double %x, double %y, double %[[differet:.+]]) #{{[0-9]+}} {
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %[[alloca:.+]] = alloca [2 x double], align 8
 ; CHECK-NEXT:   %[[fadd:.+]] = fadd fast double %x, %y, !enzyme_active !{{[0-9]+}}, !poseidon.prof.idx ![[idx0:[0-9]+]]
@@ -38,9 +38,10 @@ declare double @__poseidon_fp_optimize(double (double, double)*, ...)
 ; CHECK-NEXT:   call void @poseidonLogValue(ptr @poseidon_site_preprocess_tester, i64 0, double %[[probed]], i32 2, ptr %[[alloca]])
 ; CHECK-NEXT:   %[[gradcall:.+]] = call fast { double } @fixgradient___poseidon_probe_preprocess_tester_0(double %[[fadd]], double %[[differet]])
 ; CHECK-NEXT:   %[[grad:.+]] = extractvalue { double } %[[gradcall]], 0
-; CHECK-NEXT:   %[[ins1:.+]] = insertvalue { double, double } undef, double %[[grad]], 0
-; CHECK-NEXT:   %[[ins2:.+]] = insertvalue { double, double } %[[ins1]], double %[[grad]], 1
-; CHECK-NEXT:   ret { double, double } %[[ins2]]
+; CHECK-NEXT:   %[[primal:.+]] = insertvalue { double, double, double } undef, double %[[probed]], 0
+; CHECK-NEXT:   %[[ins1:.+]] = insertvalue { double, double, double } %[[primal]], double %[[grad]], 1
+; CHECK-NEXT:   %[[ins2:.+]] = insertvalue { double, double, double } %[[ins1]], double %[[grad]], 2
+; CHECK-NEXT:   ret { double, double, double } %[[ins2]]
 ; CHECK-NEXT: }
 
 ; CHECK: ![[idx0]] = !{i64 0}

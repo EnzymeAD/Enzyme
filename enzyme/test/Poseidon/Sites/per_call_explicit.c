@@ -11,7 +11,8 @@
 // and an explicit list there does not compile. An explicit list is a call of
 // the marker the program declares, under either of its names, and reads as
 // it reads in C++: with activity markers it is a site over the function, and
-// an automatic list with a pointer is a per-call site.
+// an automatic list with a pointer is a per-call site. Its value is the
+// function's, in the profiling run too.
 
 #include "poseidon/poseidon.h"
 #include <math.h>
@@ -19,7 +20,7 @@
 
 int enzyme_dup, enzyme_const;
 void __poseidon_fp_optimize(void *, ...);
-void __enzyme_fp_optimize(void *, ...);
+double __enzyme_fp_optimize(void *, ...);
 
 void wave(const double *x, double *y, int n) {
   for (int i = 0; i < n; ++i)
@@ -30,6 +31,8 @@ void scale(const double *x, double *y, int n) {
   for (int i = 0; i < n; ++i)
     y[i] = sqrt(x[i] * x[i] + 1.0);
 }
+
+double sq(double x, double y) { return x * x + y * y; }
 
 int main(void) {
   enum { n = 256 };
@@ -42,17 +45,21 @@ int main(void) {
   wave(x, y2, n);
   __enzyme_fp_optimize((void *)scale, x, y3, n);
   scale(x, y4, n);
+  double s = __enzyme_fp_optimize((void *)sq, x[3], x[7]);
 #ifdef MACRO
   // MACRO: error: too many arguments to function call
   __poseidon_optimize(wave, enzyme_const, x, enzyme_dup, y1, dy, n);
 #endif
-  printf("%d %d\n", y1[100] == y2[100], y3[100] == y4[100]);
+  printf("%d %d %d\n", y1[100] == y2[100], y3[100] == y4[100],
+         s == sq(x[3], x[7]));
   return 0;
 }
 
-// SAME: 1 1
+// SAME: 1 1 1
 // PROFILES: preprocess_scale.poseidon.main.0.fpprofile
+// PROFILES-NEXT: preprocess_sq.fpprofile
 // PROFILES-NEXT: preprocess_wave.fpprofile
 // USE-DAG: [poseidon] preprocess_wave: tau=1.000000e-06
 // USE-DAG: [poseidon] preprocess_scale.poseidon.main.0: tau=1.000000e-06
-// RUNS: {{[01] [01]}}
+// USE-DAG: [poseidon] preprocess_sq: tau=1.000000e-06
+// RUNS: {{[01] [01] [01]}}

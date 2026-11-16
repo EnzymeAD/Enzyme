@@ -124,33 +124,47 @@ bool profileSite(Session &S, CallInst *CI,
   }
 
   Module &M = *CI->getModule();
-  FunctionType *FT = CI->getFunctionType();
-  Function *autodiff = Function::Create(FT, GlobalValue::ExternalLinkage,
-                                        "__enzyme_autodiff_poseidon", &M);
-  autodiff->setCallingConv(CI->getCallingConv());
-
+  // A request returns the gradient unless asked for the primal, and the
+  // program goes on computing with the value of a marker call of F's type.
+  const bool returnPrimal =
+      !CI->use_empty() && CI->getType() == F->getReturnType() &&
+      llvm::none_of(CI->args(), [](Value *A) {
+        return isActivityMarker(A, "enzyme_primal_return");
+      });
+  LLVMContext &C = M.getContext();
+  AttributeList old = CI->getAttributes();
   SmallVector<Value *, 16> args;
-  SmallVector<size_t, 16> from;
+  SmallVector<AttributeSet, 16> argAttrs;
   bool sret =
       CI->hasStructRetAttr() || F->hasParamAttribute(0, Attribute::StructRet);
   for (size_t i = 0; i < CI->arg_size(); ++i) {
     if (!marker->forward[i])
       continue;
     args.push_back(i == (size_t)sret ? clone : CI->getArgOperand(i));
-    from.push_back(i);
+    argAttrs.push_back(old.getParamAttrs(i));
+    if (i == (size_t)sret && returnPrimal) {
+      args.push_back(activityArg(C, "enzyme_primal_return"));
+      argAttrs.emplace_back();
+    }
   }
+
+  // The request takes the marker's type. A marker with a fixed list of
+  // parameters (a C++ instantiation) has none for enzyme_primal_return, which
+  // only a variadic one can pass.
+  FunctionType *FT = CI->getFunctionType();
+  if (returnPrimal && !FT->isVarArg())
+    FT = FunctionType::get(CI->getType(), {clone->getType()},
+                           /*isVarArg=*/true);
+  Function *autodiff = Function::Create(FT, GlobalValue::ExternalLinkage,
+                                        "__enzyme_autodiff_poseidon", &M);
+  autodiff->setCallingConv(CI->getCallingConv());
 
   IRBuilder<> Builder(CI);
   CallInst *adCall = Builder.CreateCall(FT, autodiff, args);
   adCall->setCallingConv(CI->getCallingConv());
   adCall->setDebugLoc(CI->getDebugLoc());
-  AttributeList old = CI->getAttributes();
-  adCall->setAttributes(AttributeList::get(M.getContext(), old.getFnAttrs(),
-                                           old.getRetAttrs(), {}));
-  for (size_t j = 0; j < from.size(); ++j)
-    adCall->setAttributes(adCall->getAttributes().addParamAttributes(
-        M.getContext(), j,
-        AttrBuilder(M.getContext(), old.getParamAttrs(from[j]))));
+  adCall->setAttributes(
+      AttributeList::get(C, old.getFnAttrs(), old.getRetAttrs(), argAttrs));
 
   CI->replaceAllUsesWith(adCall);
   CI->eraseFromParent();

@@ -71,8 +71,9 @@ int main() {
   __enzyme_fp_optimize<void>((void *)wave, enzyme_const, x, enzyme_dup, y5, dy,
                              n);
   double s = __poseidon_fp_optimize<double>((void *)sq, x[3], x[7]);
-  printf("%d %d %d %d %d\n", y1[100] == y2[100], e == energy(x, n),
-         d == damp(x, 2.0), y3[100] == y4[100], y5[100] == y2[100]);
+  printf("%d %d %d %d %d %d\n", y1[100] == y2[100], e == energy(x, n),
+         d == damp(x, 2.0), y3[100] == y4[100], y5[100] == y2[100],
+         s == sq(x[3], x[7]));
   printf("%.6g %.6g %.6g %.6g %.6g\n", y1[100], e, d, y3[100], s);
 
 #ifdef LISTS
@@ -92,7 +93,7 @@ int main() {
 #endif
 }
 
-// SAME: 1 1 1 1 1
+// SAME: 1 1 1 1 1 1
 
 // The explicit calls are sites over the functions themselves, the two of wave
 // one site with one profile; the automatic call with a pointer is a per-call
@@ -109,7 +110,7 @@ int main() {
 // USE-DAG: preprocess__Z5scalePKdPdi.poseidon.main.0: tau=1.000000e-06
 // USE-DAG: preprocess__Z2sqdd: tau=1.000000e-06
 
-// RUNS: {{[01] [01] [01] [01] [01]}}
+// RUNS: {{[01] [01] [01] [01] [01] [01]}}
 
 // LINK: undefined reference to `__poseidon_site_explicit'
 // LINK: undefined reference to `__poseidon_site_explicit_tau'
