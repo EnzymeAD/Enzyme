@@ -66,16 +66,19 @@ static void checkToleranceInputs(const Function &at, StringRef siteName,
 // subgraph counts once: a PrecisionUnit's initial cost covers every output of
 // its subgraph, so RewriteUnit baselines count only on subgraphs without one.
 // A MatmulUnit's baseline is zero. `unpricedOut` receives the number of
-// RewriteUnits left out for want of a candidate.
+// RewriteUnits, and of outputs of PrecisionUnits, left out for want of a
+// price.
 double baselineAccCost(ArrayRef<RewriteUnit> COs, ArrayRef<PrecisionUnit> CSs,
                        unsigned *unpricedOut) {
   SmallPtrSet<const Subgraph *, 4> subgraphsWithCS;
   double baseline = 0.0;
+  unsigned unpriced = 0;
   for (const auto &CS : CSs) {
     baseline += CS.initialAccCost;
     subgraphsWithCS.insert(CS.subgraph);
+    if (!CS.unpricedReason.empty())
+      unpriced += CS.subgraph->outputs.size();
   }
-  unsigned unpriced = 0;
   SmallPtrSet<const Value *, 8> arrayPriced;
   for (const auto &CO : COs) {
     if (subgraphsWithCS.count(CO.subgraph))
