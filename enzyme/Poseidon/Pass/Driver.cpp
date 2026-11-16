@@ -405,7 +405,8 @@ bool lowerMarkers(Session &S, ArrayRef<CallInst *> markers,
 
 // What the profiled run spent inside this site: over the slots the profile
 // records, the execution count times the CSV price of the operation the slot
-// names. A site the run never reached has no records and costs nothing.
+// names. A site the run never reached has no records and costs nothing; a
+// profile recorded against another canonical form is an error at the site.
 static double profiledSiteCost(Session &S, Function &body) {
   SmallString<128> profilePath(S.Opts.Profiling.ProfileUse);
   llvm::sys::path::append(profilePath, bodyProfileStem(body) + ".fpprofile");
@@ -413,7 +414,8 @@ static double profiledSiteCost(Session &S, Function &body) {
     return 0.0;
 
   ProfileMap profileMap;
-  parseProfileFile(profilePath.str().str(), body, profileMap);
+  FunctionProfileHeader header;
+  parseProfileFile(profilePath.str().str(), body, profileMap, &header);
   if (profileMap.empty())
     return 0.0;
 
@@ -421,6 +423,7 @@ static double profiledSiteCost(Session &S, Function &body) {
   // read off it too. The clone is erased before the site's own clone is made
   // under the same name.
   Function *clone = canonicalize(body);
+  requireCanonicalHash(header, canonicalFormHash(*clone), profilePath, *clone);
   requireCostModel(S.CostModel, *clone);
   size_t nextSlot = 0;
   double cost = profiledCost(S.CostModel, *clone, profileMap,

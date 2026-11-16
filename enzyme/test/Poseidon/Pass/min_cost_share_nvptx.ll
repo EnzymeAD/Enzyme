@@ -7,11 +7,15 @@
 ; DEFINE:   -poseidon-enable-three-tier=false \
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv \
 ; DEFINE:   -poseidon-cost-budget=-1e-9 -poseidon-print
-; RUN: rm -rf %t && mkdir %t %t/tmp
+; RUN: rm -rf %t && mkdir %t %t/tmp %t/stale
 ; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" %{use} -poseidon-cache=%t/filter -S 2>&1 \
 ; RUN:   | FileCheck --implicit-check-not="Optimizing preprocess_cold_kernel_poseidon_body" %s
 ; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" %{use} -poseidon-min-cost-share=0 -poseidon-cache=%t/nofilter -S 2>&1 \
 ; RUN:   | FileCheck --check-prefix=NOFILTER %s
+; RUN: cp %S/../Inputs/min_cost_share/*.fpprofile %t/stale/
+; RUN: sed -i 's/^CanonicalHash = .*/CanonicalHash = 0123456789abcdef/' %t/stale/preprocess_cold_kernel_poseidon_body.fpprofile
+; RUN: not %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" %{use} -poseidon-profile-use=%t/stale -poseidon-cache=%t/stale -S -o /dev/null 2>&1 \
+; RUN:   | FileCheck --check-prefix=STALE %s
 ; RUN: not %opt %s %loadPoseidon -passes=poseidon "-poseidon-kernels=(" -poseidon-profile-use=%S/../Inputs/min_cost_share -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cache= -S -o /dev/null 2>&1 | FileCheck --check-prefix=BADREGEX %s
 ; RUN: not env TMPDIR=%t/tmp %clang --target=nvptx64-nvidia-cuda -march=sm_120 -O2 -c -x ir %s %loadClangPoseidon -mllvm "-poseidon-kernels=(" -mllvm -poseidon-profile-use=%S/../Inputs/min_cost_share -mllvm -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -mllvm -poseidon-cache= -o %t/tmp/k.o 2>&1 | FileCheck --check-prefix=BADREGEX --implicit-check-not="error in backend" --implicit-check-not="Stack dump" --implicit-check-not=PLEASE %s
 ; RUN: ls %t/tmp | count 0
@@ -95,6 +99,10 @@ attributes #4 = { mustprogress nocallback nofree nosync nounwind speculatable wi
 ; NOFILTER-NOT: left unoptimized
 ; NOFILTER: [poseidon] Optimizing preprocess_hot_kernel_poseidon_body
 ; NOFILTER: [poseidon] Optimizing preprocess_cold_kernel_poseidon_body
+
+; The share of a kernel is read from its profile, which has to be of the
+; canonical form the compile numbers.
+; STALE: error: {{.*}}preprocess_cold_kernel_poseidon_body{{.*}}: Poseidon: the profile of preprocess_cold_kernel_poseidon_body was recorded against a different canonical form (profile CanonicalHash 0123456789abcdef, this compile fea337c617ef94c9)
 
 ; A -poseidon-kernels value that is no regular expression is an error of the
 ; compile, under opt and under clang, without clang's crash reporting.
