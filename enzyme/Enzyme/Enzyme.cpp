@@ -1854,16 +1854,34 @@ public:
     auto likelihood = opt->likelihood;
     auto dlikelihood = opt->diffeLikelihood;
 
+    if (mode == ProbProgMode::Condition && !observations) {
+      EmitFailure("MissingObservations", CI->getDebugLoc(), CI,
+                  "__enzyme_condition requires an enzyme_observations argument",
+                  *CI);
+      return false;
+    }
+
+    if ((mode == ProbProgMode::Trace || mode == ProbProgMode::Condition) &&
+        !trace) {
+      EmitFailure("MissingTrace", CI->getDebugLoc(), CI,
+                  "__enzyme_trace/__enzyme_condition requires an enzyme_trace "
+                  "argument",
+                  *CI);
+      return false;
+    }
+
     // Interface
     bool has_dynamic_interface = dynamic_interface != nullptr;
     bool needs_interface =
         mode == ProbProgMode::Trace || mode == ProbProgMode::Condition;
     std::unique_ptr<TraceInterface> interface;
-    if (has_dynamic_interface) {
-      interface = std::make_unique<DynamicTraceInterface>(dynamic_interface,
-                                                          CI->getFunction());
-    } else if (needs_interface) {
-      interface = std::make_unique<StaticTraceInterface>(F->getParent());
+    if (needs_interface) {
+      if (has_dynamic_interface) {
+        interface = std::make_unique<DynamicTraceInterface>(
+            dynamic_interface, CI->getFunction(), CI);
+      } else {
+        interface = std::make_unique<StaticTraceInterface>(F->getParent());
+      }
     }
 
     // Find sample function
@@ -1871,18 +1889,17 @@ public:
     SmallPtrSet<Function *, 4> observeFunctions;
     for (auto &func : F->getParent()->functions()) {
       if (func.getName().contains("__enzyme_sample")) {
-        assert(func.getFunctionType()->getNumParams() >= 3);
-        sampleFunctions.insert(&func);
+        if (func.isVarArg() || func.getFunctionType()->getNumParams() >= 3)
+          sampleFunctions.insert(&func);
       } else if (func.getName().contains("__enzyme_observe")) {
-        assert(func.getFunctionType()->getNumParams() >= 3);
-        observeFunctions.insert(&func);
+        if (func.isVarArg() || func.getFunctionType()->getNumParams() >= 3)
+          observeFunctions.insert(&func);
       }
     }
 
-    assert(!sampleFunctions.empty() || !observeFunctions.empty());
-
     bool autodiff = dtrace || dlikelihood;
-    IRBuilder<> AllocaBuilder(getFirstNonPHI(CI->getParent()));
+    IRBuilder<> AllocaBuilder(
+        getFirstNonPHIOrDbgOrLifetime(&CI->getFunction()->getEntryBlock()));
 
     if (!likelihood) {
       likelihood = AllocaBuilder.CreateAlloca(AllocaBuilder.getDoubleTy(),
@@ -1926,9 +1943,13 @@ public:
     auto newFunc = Logic.CreateTrace(
         RequestContext(CI, &Builder), F, sampleFunctions, observeFunctions,
         opt->ActiveRandomVariables, mode, autodiff, interface.get());
+    if (!newFunc)
+      return false;
 
     if (!autodiff) {
       auto call = CallInst::Create(newFunc->getFunctionType(), newFunc, args);
+      call->setCallingConv(newFunc->getCallingConv());
+      call->setDebugLoc(CI->getDebugLoc());
       ReplaceInstWithInst(CI, call);
       return true;
     }
@@ -1942,9 +1963,10 @@ public:
               .getValueAsType();
     }
 
-    bool status = HandleAutoDiff(
-        CI, CI->getCallingConv(), ret, retElemType, dargs, byVal, constants,
-        newFunc, DerivativeMode::ReverseModeCombined, *opt, false, calls);
+    bool status =
+        HandleAutoDiff(CI, newFunc->getCallingConv(), ret, retElemType, dargs,
+                       byVal, constants, newFunc,
+                       DerivativeMode::ReverseModeCombined, *opt, false, calls);
 
     return status;
   }

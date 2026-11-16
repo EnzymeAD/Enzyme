@@ -133,6 +133,29 @@ TraceUtils::FromClone(ProbProgMode mode,
 
   newFunc->setLinkage(Function::LinkageTypes::InternalLinkage);
 
+  // Traced functions write to the likelihood accumulator and call trace
+  // interface routines, so cloned read-only / speculatable attributes are
+  // no longer sound.
+  Attribute::AttrKind staleFnAttrs[] = {
+#if LLVM_VERSION_MAJOR >= 16
+      Attribute::Memory,
+#else
+      Attribute::ArgMemOnly,
+      Attribute::InaccessibleMemOnly,
+      Attribute::InaccessibleMemOrArgMemOnly,
+#endif
+      Attribute::ReadOnly,  Attribute::ReadNone,
+      Attribute::WriteOnly, Attribute::Speculatable,
+  };
+  for (auto attr : staleFnAttrs) {
+    if (newFunc->hasFnAttribute(attr))
+      newFunc->removeFnAttr(attr);
+  }
+  if (newFunc->hasFnAttribute("enzyme_ReadOnlyOrThrow"))
+    newFunc->removeFnAttr("enzyme_ReadOnlyOrThrow");
+  if (newFunc->hasFnAttribute("enzyme_LocalReadOnlyOrThrow"))
+    newFunc->removeFnAttr("enzyme_LocalReadOnlyOrThrow");
+
   Argument *trace = nullptr;
   Argument *observations = nullptr;
   Argument *likelihood = nullptr;
@@ -175,34 +198,47 @@ Value *TraceUtils::getLikelihood() { return likelihood; }
 std::pair<Value *, Constant *>
 TraceUtils::ValueToVoidPtrAndSize(IRBuilder<> &Builder, Value *val,
                                   Type *size_type) {
-  auto valsize = val->getType()->getPrimitiveSizeInBits();
+  Type *Ty = val->getType();
 
-  if (val->getType()->isPointerTy()) {
+  if (Ty->isPointerTy()) {
     Value *retval =
         Builder.CreatePointerCast(val, getInt8PtrTy(val->getContext()));
-    return {retval, ConstantInt::get(size_type, valsize / 8)};
+    return {retval, ConstantInt::get(size_type, 0)};
   }
 
   auto M = Builder.GetInsertBlock()->getModule();
   auto &DL = M->getDataLayout();
   auto pointersize = DL.getPointerSizeInBits();
+  uint64_t storeSize = DL.getTypeStoreSize(Ty);
 
-  if (valsize <= pointersize) {
+  bool canBitCastToInt = !isa<ScalableVectorType>(Ty) &&
+                         (Ty->isIntOrIntVectorTy() || Ty->isFPOrFPVectorTy());
+  uint64_t bitSize =
+      canBitCastToInt ? uint64_t(Ty->getPrimitiveSizeInBits()) : 0;
+
+  if (canBitCastToInt && bitSize > 0 && bitSize <= pointersize) {
     auto cast =
-        Builder.CreateBitCast(val, IntegerType::get(M->getContext(), valsize));
-    if (valsize != pointersize)
+        Builder.CreateBitCast(val, IntegerType::get(M->getContext(), bitSize));
+    if (bitSize != pointersize)
       cast = Builder.CreateZExt(cast, Builder.getIntPtrTy(DL));
 
     Value *retval =
         Builder.CreateIntToPtr(cast, getInt8PtrTy(cast->getContext()));
-    return {retval, ConstantInt::get(size_type, valsize / 8)};
+    return {retval, ConstantInt::get(size_type, storeSize)};
   } else {
-    IRBuilder<> AllocaBuilder(getFirstNonPHIOrDbgOrLifetime(
-        &Builder.GetInsertBlock()->getParent()->getEntryBlock()));
-    auto alloca = AllocaBuilder.CreateAlloca(val->getType(), nullptr,
-                                             val->getName() + ".ptr");
+    BasicBlock &EntryBB =
+        Builder.GetInsertBlock()->getParent()->getEntryBlock();
+    IRBuilder<> AllocaBuilder(Builder.getContext());
+    if (Instruction *IP = getFirstNonPHIOrDbgOrLifetime(&EntryBB))
+      AllocaBuilder.SetInsertPoint(IP);
+    else
+      AllocaBuilder.SetInsertPoint(&EntryBB);
+    auto alloca =
+        AllocaBuilder.CreateAlloca(Ty, nullptr, val->getName() + ".ptr");
     Builder.CreateStore(val, alloca);
-    return {alloca, ConstantInt::get(size_type, valsize / 8)};
+    Value *retval =
+        Builder.CreatePointerCast(alloca, getInt8PtrTy(M->getContext()));
+    return {retval, ConstantInt::get(size_type, storeSize)};
   }
 }
 
@@ -298,9 +334,9 @@ CallInst *TraceUtils::InsertReturn(IRBuilder<> &Builder, Value *val) {
 }
 
 CallInst *TraceUtils::InsertFunction(IRBuilder<> &Builder, Function *function) {
-  assert(!function->isIntrinsic());
+  assert(!function->isIntrinsic() && "Cannot insert intrinsic into trace");
   auto FunctionPtr =
-      Builder.CreateBitCast(function, getInt8PtrTy(function->getContext()));
+      Builder.CreatePointerCast(function, getInt8PtrTy(function->getContext()));
 
   Value *args[] = {trace, FunctionPtr};
 
@@ -357,11 +393,17 @@ CallInst *TraceUtils::GetTrace(IRBuilder<> &Builder, Value *address,
 
 Instruction *TraceUtils::GetChoice(IRBuilder<> &Builder, Value *address,
                                    Type *choiceType, const Twine &Name) {
-  IRBuilder<> AllocaBuilder(getFirstNonPHIOrDbgOrLifetime(
-      &Builder.GetInsertBlock()->getParent()->getEntryBlock()));
+  auto M = Builder.GetInsertBlock()->getModule();
+  auto &DL = M->getDataLayout();
+  BasicBlock &EntryBB = Builder.GetInsertBlock()->getParent()->getEntryBlock();
+  IRBuilder<> AllocaBuilder(Builder.getContext());
+  if (Instruction *IP = getFirstNonPHIOrDbgOrLifetime(&EntryBB))
+    AllocaBuilder.SetInsertPoint(IP);
+  else
+    AllocaBuilder.SetInsertPoint(&EntryBB);
   AllocaInst *store_dest =
       AllocaBuilder.CreateAlloca(choiceType, nullptr, Name + ".ptr");
-  auto preallocated_size = choiceType->getPrimitiveSizeInBits() / 8;
+  uint64_t preallocated_size = DL.getTypeStoreSize(choiceType);
   Type *size_type = interface->getChoiceTy()->getParamType(3);
 
   Value *args[] = {observations, address,
@@ -420,6 +462,7 @@ Instruction *TraceUtils::SampleOrCondition(IRBuilder<> &Builder,
   case ProbProgMode::Trace: {
     auto sample_call = Builder.CreateCall(sample_fn->getFunctionType(),
                                           sample_fn, sample_args);
+    sample_call->setCallingConv(sample_fn->getCallingConv());
     return sample_call;
   }
   case ProbProgMode::Condition: {
@@ -438,8 +481,10 @@ Instruction *TraceUtils::SampleOrCondition(IRBuilder<> &Builder,
     Builder.CreateBr(EndBlock);
 
     Builder.SetInsertPoint(ElseBlock);
-    ElseChoice = Builder.CreateCall(sample_fn->getFunctionType(), sample_fn,
-                                    sample_args, "sample." + Name);
+    auto *ElseCall = Builder.CreateCall(sample_fn->getFunctionType(), sample_fn,
+                                        sample_args, "sample." + Name);
+    ElseCall->setCallingConv(sample_fn->getCallingConv());
+    ElseChoice = ElseCall;
     Builder.CreateBr(EndBlock);
 
     Builder.SetInsertPoint(EndBlock);

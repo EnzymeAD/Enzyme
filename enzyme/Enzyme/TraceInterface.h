@@ -27,6 +27,8 @@
 #ifndef TraceInterface_h
 #define TraceInterface_h
 
+#include <array>
+
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
@@ -40,6 +42,11 @@ public:
   TraceInterface(llvm::LLVMContext &C);
 
   virtual ~TraceInterface() = default;
+
+  virtual std::array<llvm::Value *, 13> getInterfaceFunctions() const {
+    return {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+            nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
+  }
 
 public:
   // user implemented
@@ -132,6 +139,22 @@ public:
 
   ~StaticTraceInterface() = default;
 
+  std::array<llvm::Value *, 13> getInterfaceFunctions() const override {
+    return {getTraceFunction,
+            getChoiceFunction,
+            insertCallFunction,
+            insertChoiceFunction,
+            insertArgumentFunction,
+            insertReturnFunction,
+            insertFunctionFunction,
+            insertChoiceGradientFunction,
+            insertArgumentGradientFunction,
+            newTraceFunction,
+            freeTraceFunction,
+            hasCallFunction,
+            hasChoiceFunction};
+  }
+
 public:
   // user implemented
   llvm::Value *getTrace(llvm::IRBuilder<> &Builder);
@@ -166,9 +189,26 @@ private:
   llvm::Function *hasChoiceFunction;
 
 public:
-  DynamicTraceInterface(llvm::Value *dynamicInterface, llvm::Function *F);
+  DynamicTraceInterface(llvm::Value *dynamicInterface, llvm::Function *F,
+                        llvm::Instruction *insertBefore = nullptr);
 
   ~DynamicTraceInterface() = default;
+
+  std::array<llvm::Value *, 13> getInterfaceFunctions() const override {
+    return {getTraceFunction,
+            getChoiceFunction,
+            insertCallFunction,
+            insertChoiceFunction,
+            insertArgumentFunction,
+            insertReturnFunction,
+            insertFunctionFunction,
+            insertChoiceGradientFunction,
+            insertArgumentGradientFunction,
+            newTraceFunction,
+            freeTraceFunction,
+            hasCallFunction,
+            hasChoiceFunction};
+  }
 
 private:
   llvm::Function *MaterializeInterfaceFunction(llvm::IRBuilder<> &Builder,

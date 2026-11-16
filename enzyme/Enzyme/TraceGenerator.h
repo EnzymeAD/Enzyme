@@ -44,6 +44,8 @@ private:
   const llvm::StringSet<> &activeRandomVariables;
 
 public:
+  bool hasError = false;
+
   TraceGenerator(
       EnzymeLogic &Logic, TraceUtils *tutils, bool autodiff,
       llvm::ValueMap<const llvm::Value *, llvm::WeakTrackingVH>
