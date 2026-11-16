@@ -65,9 +65,8 @@ std::shared_ptr<FPNode> parseHerbieExpr(
       } else if (dtype == "binary32") {
         dtype = "f32";
       } else {
-        std::string msg =
-            "Herbie expr parser: Unexpected constant dtype: " + dtype;
-        llvm_unreachable(msg.c_str());
+        report_fatal_error("Herbie expr parser: Unexpected constant dtype: " +
+                           Twine(dtype));
       }
       return std::make_shared<FPConst>(value, dtype);
     }
@@ -80,7 +79,7 @@ std::shared_ptr<FPNode> parseHerbieExpr(
 
   if (trimmedExpr.substr(0, 9) == "#s(approx") {
     if (trimmedExpr.back() != ')') {
-      llvm_unreachable(("Malformed approx expression: " + trimmedExpr).c_str());
+      report_fatal_error("Malformed approx expression: " + Twine(trimmedExpr));
     }
     std::string inner = trimmedExpr.substr(9, trimmedExpr.size() - 9 - 1);
     inner.erase(0, inner.find_first_not_of(" "));
@@ -99,7 +98,7 @@ std::shared_ptr<FPNode> parseHerbieExpr(
       }
     }
     if (splitPos == std::string::npos) {
-      llvm_unreachable(("Malformed approx expression: " + trimmedExpr).c_str());
+      report_fatal_error("Malformed approx expression: " + Twine(trimmedExpr));
     }
     std::string resultPart = inner.substr(splitPos + 1);
     resultPart.erase(0, resultPart.find_first_not_of(" "));
