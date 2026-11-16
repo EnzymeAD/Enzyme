@@ -633,124 +633,166 @@ static FunctionCallee getOzakiDgemmEx(Module &M, DispatchScheme scheme) {
   return M.getOrInsertFunction(dispatchSym(scheme, /*square=*/false), FT);
 }
 
+namespace {
+// The tokens of a descriptor after the kernel name, read in order. The first
+// token that is missing or does not parse stops the reading: every later read
+// gives a default value, and takeError says what was wrong.
+class DescriptorCursor {
+public:
+  explicit DescriptorCursor(ArrayRef<StringRef> toks) : toks(toks) {}
+
+  bool ok() const { return why.empty(); }
+  bool atEnd() const { return !ok() || at == toks.size(); }
+  // Takes the next token when it is `keyword`.
+  bool consume(StringRef keyword) {
+    if (atEnd() || toks[at] != keyword)
+      return false;
+    ++at;
+    return true;
+  }
+  template <typename T> T integer(StringRef what) {
+    T value{};
+    if (StringRef tok = next(what); ok() && tok.getAsInteger(10, value))
+      fail("its " + what + " '" + tok + "' is not an integer of its range");
+    return value;
+  }
+  double real(StringRef what) {
+    double value = 0.0;
+    if (StringRef tok = next(what); ok() && tok.getAsDouble(value))
+      fail("its " + what + " '" + tok + "' is not a number");
+    return value;
+  }
+  StringRef peek() const { return atEnd() ? StringRef() : toks[at]; }
+  void fail(const Twine &reason) {
+    if (ok())
+      why = reason.str();
+  }
+  Error takeError() {
+    if (ok() && at != toks.size())
+      fail("it has the unexpected token '" + toks[at] + "'");
+    return ok() ? Error::success()
+                : createStringError(inconvertibleErrorCode(), why);
+  }
+
+private:
+  StringRef next(StringRef what) {
+    if (!atEnd())
+      return toks[at++];
+    fail("it ends before its " + what);
+    return StringRef();
+  }
+
+  ArrayRef<StringRef> toks;
+  size_t at = 1;
+  std::string why;
+};
+} // namespace
+
 static bool
 readOzDispatchDescriptors(const Options &O, Module &M,
                           std::map<std::string, LaunchDesc> &descs) {
   readDescriptors(
-      O, M, LaunchKind::HostDispatch, [&](ArrayRef<StringRef> toks) {
-        if (toks.size() < 17)
-          return;
+      O, M, LaunchKind::HostDispatch, [&](ArrayRef<StringRef> toks) -> Error {
+        DescriptorCursor C(toks);
         LaunchDesc d;
         d.kernel = toks[0].str();
-        (void)toks[1].getAsInteger(10, d.cParam);
-        (void)toks[2].getAsInteger(10, d.aParam);
-        (void)toks[3].getAsInteger(10, d.bParam);
-        (void)toks[4].getAsInteger(10, d.N);
-        int sa = 0;
-        (void)toks[5].getAsInteger(10, sa);
-        d.standalone = sa != 0;
-        d.numModuli = kOzakiIIMaxModuli;
-        int nm = (int)kOzakiIIMaxModuli;
-        (void)toks[6].getAsInteger(10, nm);
-        if (nm >= 0 && nm <= (int)kOzakiIIMaxModuli)
-          d.numModuli = (unsigned)nm;
-        int sc = 0;
-        (void)toks[16].getAsInteger(10, sc);
-        d.scheme = sc == 1   ? DispatchScheme::Tcec
-                   : sc == 2 ? DispatchScheme::Direct
-                             : DispatchScheme::OzakiII;
-        (void)toks[7].getAsInteger(10, d.gM);
-        (void)toks[8].getAsInteger(10, d.gNcols);
-        (void)toks[9].getAsInteger(10, d.gK);
-        (void)toks[10].getAsInteger(10, d.lda);
-        (void)toks[11].getAsInteger(10, d.ldb);
-        (void)toks[12].getAsInteger(10, d.ldc);
-        int ac = 0, bc = 0, cc = 0;
-        (void)toks[13].getAsInteger(10, ac);
-        (void)toks[14].getAsInteger(10, bc);
-        (void)toks[15].getAsInteger(10, cc);
-        d.aColMajor = ac != 0;
-        d.bColMajor = bc != 0;
-        d.cColMajor = cc != 0;
-        // Trailing runtime-geometry block: flag + 6 x (param mul add) + beta.
-        if (toks.size() >= 36) {
-          int rt = 0;
-          (void)toks[17].getAsInteger(10, rt);
-          if (rt == 1) {
-            GemmBodyNote::RtDim *dd[6] = {&d.rM,   &d.rNcols, &d.rK,
-                                          &d.rlda, &d.rldb,   &d.rldc};
-            for (unsigned i = 0; i < 6; ++i) {
-              int param = -1;
-              (void)toks[18 + 3 * i + 0].getAsInteger(10, param);
-              if (param >= 0)
-                dd[i]->factors.push_back({param, -1});
-              (void)toks[18 + 3 * i + 1].getAsInteger(10, dd[i]->mul);
-              (void)toks[18 + 3 * i + 2].getAsInteger(10, dd[i]->add);
-            }
-            d.runtimeDims = true;
-            if (toks.size() >= 37)
-              (void)toks[36].getAsDouble(d.beta);
-          }
+        d.cParam = C.integer<int>("C argument");
+        d.aParam = C.integer<int>("A argument");
+        d.bParam = C.integer<int>("B argument");
+        d.N = C.integer<unsigned>("N");
+        d.standalone = C.integer<int>("standalone flag") != 0;
+        d.numModuli = C.integer<unsigned>("modulus field");
+        if (d.numModuli > kOzakiIIMaxModuli)
+          C.fail("its modulus field " + Twine(d.numModuli) + " is above " +
+                 Twine(kOzakiIIMaxModuli));
+        d.gM = C.integer<unsigned>("M");
+        d.gNcols = C.integer<unsigned>("column count");
+        d.gK = C.integer<unsigned>("K");
+        d.lda = C.integer<unsigned>("lda");
+        d.ldb = C.integer<unsigned>("ldb");
+        d.ldc = C.integer<unsigned>("ldc");
+        d.aColMajor = C.integer<int>("A layout") != 0;
+        d.bColMajor = C.integer<int>("B layout") != 0;
+        d.cColMajor = C.integer<int>("C layout") != 0;
+        switch (C.integer<int>("scheme")) {
+        case 0:
+          d.scheme = DispatchScheme::OzakiII;
+          break;
+        case 1:
+          d.scheme = DispatchScheme::Tcec;
+          break;
+        case 2:
+          d.scheme = DispatchScheme::Direct;
+          break;
+        default:
+          C.fail("its scheme is not 0, 1 or 2");
         }
-        // Keyword blocks of fields and products (see emitDescriptor). A
-        // malformed block drops the descriptor: the kernel then runs as
-        // written.
-        for (unsigned i = 17; i < toks.size(); ++i) {
-          size_t at = i + 1;
-          auto next = [&](auto &v) {
-            return at < toks.size() && !toks[at++].getAsInteger(10, v);
-          };
-          if (toks[i] == "rd") {
-            GemmBodyNote::RtDim *dd[6] = {&d.rM,   &d.rNcols, &d.rK,
-                                          &d.rlda, &d.rldb,   &d.rldc};
+        GemmBodyNote::RtDim *dd[6] = {&d.rM,   &d.rNcols, &d.rK,
+                                      &d.rlda, &d.rldb,   &d.rldc};
+        // Positional runtime-geometry block: flag + 6 x (param mul add), then
+        // beta, which a descriptor followed by a keyword block may lack.
+        if (C.consume("1")) {
+          for (GemmBodyNote::RtDim *x : dd) {
+            int param = C.integer<int>("runtime dimension argument");
+            if (param >= 0)
+              x->factors.push_back({param, -1});
+            x->mul = C.integer<int64_t>("runtime dimension factor");
+            x->add = C.integer<int64_t>("runtime dimension term");
+          }
+          if (!C.atEnd() && !is_contained({"rd", "pf", "eq", "lc"}, C.peek()))
+            d.beta = C.real("beta");
+          d.runtimeDims = true;
+        }
+        // Keyword blocks of fields and products, and of the launch geometry
+        // (see emitDescriptor).
+        while (!C.atEnd()) {
+          if (C.consume("rd")) {
             for (GemmBodyNote::RtDim *x : dd) {
-              unsigned nf = 0;
-              if (!next(nf) || nf > 8)
-                return;
-              for (unsigned f = 0; f < nf; ++f) {
+              unsigned nf = C.integer<unsigned>("factor count");
+              if (nf > 8)
+                C.fail("its factor count " + Twine(nf) + " is above 8");
+              for (unsigned f = 0; f < nf && C.ok(); ++f) {
                 LaunchRef r;
-                if (!next(r.param) || !next(r.offset))
-                  return;
+                r.param = C.integer<int>("factor argument");
+                r.offset = C.integer<int64_t>("factor offset");
                 x->factors.push_back(r);
               }
-              if (!next(x->mul) || !next(x->add))
-                return;
+              x->mul = C.integer<int64_t>("runtime dimension factor");
+              x->add = C.integer<int64_t>("runtime dimension term");
             }
-            if (at >= toks.size() || toks[at].getAsDouble(d.beta))
-              return;
+            d.beta = C.real("beta");
             d.runtimeDims = true;
-          } else if (toks[i] == "pf") {
-            if (!next(d.cOffset) || !next(d.aOffset) || !next(d.bOffset))
-              return;
-          } else if (toks[i] == "eq") {
-            unsigned ne = 0;
-            if (!next(ne) || ne > 16)
-              return;
-            for (unsigned e = 0; e < ne; ++e) {
+          } else if (C.consume("pf")) {
+            d.cOffset = C.integer<int64_t>("C offset");
+            d.aOffset = C.integer<int64_t>("A offset");
+            d.bOffset = C.integer<int64_t>("B offset");
+          } else if (C.consume("eq")) {
+            unsigned ne = C.integer<unsigned>("equality count");
+            if (ne > 16)
+              C.fail("its equality count " + Twine(ne) + " is above 16");
+            for (unsigned e = 0; e < ne && C.ok(); ++e) {
               LaunchRef x, y;
-              if (!next(x.param) || !next(x.offset) || !next(y.param) ||
-                  !next(y.offset))
-                return;
+              x.param = C.integer<int>("equality argument");
+              x.offset = C.integer<int64_t>("equality offset");
+              y.param = C.integer<int>("equality argument");
+              y.offset = C.integer<int64_t>("equality offset");
               d.assumedEqual.push_back({x, y});
             }
-          }
-        }
-        // Keyword-tagged launch-geometry block (every other token is an
-        // integer, so the keyword cannot collide with one).
-        for (unsigned i = 0; i + 2 < toks.size(); ++i) {
-          if (toks[i] != "lc")
-            continue;
-          int am = -1, an = -1;
-          if (!toks[i + 1].getAsInteger(10, am) &&
-              !toks[i + 2].getAsInteger(10, an) && am >= 0 && am < 3 &&
-              an >= 0 && an < 3 && am != an) {
+          } else if (C.consume("lc")) {
+            d.cropMAxis = C.integer<int>("M axis");
+            d.cropNAxis = C.integer<int>("column axis");
+            if (d.cropMAxis < 0 || d.cropMAxis > 2 || d.cropNAxis < 0 ||
+                d.cropNAxis > 2 || d.cropMAxis == d.cropNAxis)
+              C.fail("its launch axes are not two distinct axes of x, y, z");
             d.launchCrop = true;
-            d.cropMAxis = am;
-            d.cropNAxis = an;
+          } else {
+            break;
           }
-          break;
         }
+        if (Error E = C.takeError())
+          return E;
         descs[d.kernel] = d;
+        return Error::success();
       });
   return !descs.empty();
 }
@@ -1148,40 +1190,30 @@ struct ProfDesc {
 
 static bool readProfDescriptors(const Options &O, Module &M,
                                 std::map<std::string, ProfDesc> &out) {
-  readDescriptors(O, M, LaunchKind::Profiling, [&](ArrayRef<StringRef> toks) {
-    if (toks.size() < 4)
-      return;
-    ProfDesc d;
-    d.kernel = toks[0].str();
-    unsigned np = 0;
-    if (toks[1].getAsInteger(10, d.siteId) ||
-        toks[2].getAsInteger(10, d.nargs) || toks[3].getAsInteger(10, np))
-      return;
-    if (toks.size() < 4 + 2 * (size_t)np)
-      return;
-    for (unsigned i = 0; i < np; ++i) {
-      int v = 0;
-      if (toks[4 + i].getAsInteger(10, v))
-        return;
-      d.ptrIdx.push_back(v);
-    }
-    for (unsigned i = 0; i < np; ++i) {
-      int v = 0;
-      if (toks[4 + np + i].getAsInteger(10, v))
-        return;
-      d.seedWidth.push_back(v);
-    }
-    d.ptrOff.assign(np, 0);
-    size_t at = 4 + 2 * (size_t)np;
-    if (at < toks.size() && toks[at] == "off") {
-      if (toks.size() < at + 1 + np)
-        return;
-      for (unsigned i = 0; i < np; ++i)
-        if (toks[at + 1 + i].getAsInteger(10, d.ptrOff[i]) || d.ptrOff[i] < 0)
-          return;
-    }
-    out[d.kernel] = d;
-  });
+  readDescriptors(
+      O, M, LaunchKind::Profiling, [&](ArrayRef<StringRef> toks) -> Error {
+        DescriptorCursor C(toks);
+        ProfDesc d;
+        d.kernel = toks[0].str();
+        d.siteId = C.integer<int>("site id");
+        d.nargs = C.integer<unsigned>("argument count");
+        unsigned np = C.integer<unsigned>("pointer count");
+        for (unsigned i = 0; i < np && C.ok(); ++i)
+          d.ptrIdx.push_back(C.integer<int>("pointer argument"));
+        for (unsigned i = 0; i < np && C.ok(); ++i)
+          d.seedWidth.push_back(C.integer<int>("seed width"));
+        d.ptrOff.assign(d.ptrIdx.size(), 0);
+        if (C.consume("off"))
+          for (int &off : d.ptrOff) {
+            off = C.integer<int>("pointer offset");
+            if (off < 0)
+              C.fail("its pointer offset " + Twine(off) + " is negative");
+          }
+        if (Error E = C.takeError())
+          return E;
+        out[d.kernel] = d;
+        return Error::success();
+      });
   return !out.empty();
 }
 

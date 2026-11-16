@@ -162,7 +162,7 @@ void writeLaunchManifest(Session &S, const Module &M) {
 }
 
 void readDescriptors(const Options &O, const Module &M, LaunchKind kind,
-                     function_ref<void(ArrayRef<StringRef>)> parse) {
+                     function_ref<Error(ArrayRef<StringRef>)> parse) {
   Manifest m = manifestOf(O, M);
   CacheEntryRead read = readCacheEntry(m.path, m.key);
   const json::Object *value = read.value ? read.value->getAsObject() : nullptr;
@@ -184,7 +184,14 @@ void readDescriptors(const Options &O, const Module &M, LaunchKind kind,
       continue;
     SmallVector<StringRef, 8> toks;
     line->trim().split(toks, ' ');
-    parse(toks);
+    if (Error E = parse(toks))
+      reportUserError(M.getContext(),
+                      "the launch manifest " + m.path + " holds the " +
+                          kindName(kind) + " descriptor '" + *line +
+                          "', which does not parse: " + toString(std::move(E)) +
+                          ". The device compile of this unit writes it into "
+                          "the -poseidon-cache directory; remove that "
+                          "directory and compile the unit again.");
   }
 }
 

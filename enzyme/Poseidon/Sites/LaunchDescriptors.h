@@ -24,6 +24,7 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Module.h"
+#include "llvm/Support/Error.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <cstdint>
@@ -99,10 +100,11 @@ void writeLaunchManifest(Session &S, const llvm::Module &M);
 
 // Hands `parse` the space-separated tokens of every `kind` descriptor in the
 // manifest of host module M; token 0 is always the wrapper kernel name. A unit
-// without a manifest has none.
+// without a manifest has none. A descriptor `parse` refuses stops the compile,
+// naming the manifest, the descriptor and the error.
 void readDescriptors(
     const Options &O, const llvm::Module &M, LaunchKind kind,
-    llvm::function_ref<void(llvm::ArrayRef<llvm::StringRef>)> parse);
+    llvm::function_ref<llvm::Error(llvm::ArrayRef<llvm::StringRef>)> parse);
 
 // Hands `use` the profile name and header of every profiled kernel in the
 // manifest of host module M. A unit without a manifest has none; one that
