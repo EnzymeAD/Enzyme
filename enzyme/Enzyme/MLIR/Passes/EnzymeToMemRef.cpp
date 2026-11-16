@@ -385,7 +385,9 @@ struct FillZeroOpConversion : public OpConversionPattern<enzyme::FillZeroOp> {
     auto elementType =
         dyn_cast<enzyme::AutoDiffTypeInterface>(memrefType.getElementType());
     if (!elementType)
-      return rewriter.notifyMatchFailure(op, "element type has no null value");
+      return rewriter.notifyMatchFailure(op,
+                                         "expected the memref element type to "
+                                         "implement AutoDiffTypeInterface");
 
     Value zero = elementType.createNullValue(rewriter, loc);
     SmallVector<Value> ubs = getValueOrCreateConstantIndexOp(
