@@ -13,7 +13,7 @@ module {
   }
 
   func.func @dcarry_mismatch_scf(%x : f64, %dx : f64) -> f64 {
-    %r = enzyme.fwddiff @carry_mismatch_scf(%x, %dx) { activity=[#enzyme<activity enzyme_dup>], ret_activity=[#enzyme<activity enzyme_dupnoneed>] } : (f64, f64) -> (f64)
+    %r = enzyme.fwddiff @carry_mismatch_scf(%x, %dx) <{activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>]}> : (f64, f64) -> (f64)
     return %r : f64
   }
 }
@@ -39,7 +39,7 @@ module {
   }
 
   func.func @dcarry_mismatch_affine(%x : f64, %dx : f64) -> f64 {
-    %r = enzyme.fwddiff @carry_mismatch_affine(%x, %dx) { activity=[#enzyme<activity enzyme_dup>], ret_activity=[#enzyme<activity enzyme_dupnoneed>] } : (f64, f64) -> (f64)
+    %r = enzyme.fwddiff @carry_mismatch_affine(%x, %dx) <{activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>]}> : (f64, f64) -> (f64)
     return %r : f64
   }
 }
