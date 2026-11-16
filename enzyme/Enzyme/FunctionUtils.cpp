@@ -10345,7 +10345,7 @@ void replaceToDense(llvm::CallBase *CI, bool replaceAll, llvm::Function *F,
         gep = B.CreateIntToPtr(gep, CI->getType());
       } else if (!allconst) {
         gep = B.CreateGEP(CI->getSourceElementType(), replacements[val], inds);
-        if (auto ge = cast<GetElementPtrInst>(gep))
+        if (auto ge = dyn_cast<GetElementPtrInst>(gep))
           ge->setIsInBounds(CI->isInBounds());
       } else {
         APInt ai(64, 0);

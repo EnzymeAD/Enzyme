@@ -687,7 +687,6 @@ void extract_mat_or_vec(StringRef name, raw_ostream &os) {
 void emit_extract_calls(const TGPattern &pattern, raw_ostream &os) {
   const auto typeMap = pattern.getArgTypeMap();
   const auto nameVec = pattern.getArgNames();
-  const auto argUsers = pattern.getArgUsers();
   const auto activeArgs = pattern.getActiveArgs();
   auto rules = pattern.getRules();
 

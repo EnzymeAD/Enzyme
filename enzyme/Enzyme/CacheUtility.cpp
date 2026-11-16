@@ -1410,8 +1410,7 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
 
       storeInto = v.CreateLoad(types[i + 1], storeInto);
       cast<LoadInst>(storeInto)->setAlignment(Align(alignSize));
-      storeInto = v.CreateGEP(types[i], storeInto, idx);
-      cast<GetElementPtrInst>(storeInto)->setIsInBounds(true);
+      storeInto = v.CreateInBoundsGEP(types[i], storeInto, idx);
     }
   }
   return alloc;
@@ -1980,8 +1979,7 @@ Value *CacheUtility::getCachePointer(llvm::Type *T, bool inForwardPass,
         assert(es);
         idx = BuilderM.CreateMul(idx, es, "", /*NUW*/ true, /*NSW*/ true);
       }
-      next = BuilderM.CreateGEP(types[i], next, idx);
-      cast<GetElementPtrInst>(next)->setIsInBounds(true);
+      next = BuilderM.CreateInBoundsGEP(types[i], next, idx);
       if (storeInInstructionsMap && isa<AllocaInst>(cache))
         scopeInstructions[cast<AllocaInst>(cache)].push_back(
             cast<Instruction>(next));
@@ -2032,8 +2030,7 @@ Value *CacheUtility::lookupValueFromCache(
 
   // Optionally apply the additional offset
   if (extraOffset) {
-    cptr = BuilderM.CreateGEP(T, cptr, extraOffset);
-    cast<GetElementPtrInst>(cptr)->setIsInBounds(true);
+    cptr = BuilderM.CreateInBoundsGEP(T, cptr, extraOffset);
   }
 
   Value *result = loadFromCachePointer(T, BuilderM, cptr, cache);
