@@ -305,8 +305,9 @@ extern "C" void __poseidon_host_shadows(const char *fn, int site, int nptr,
               "shadows from heap allocations, and from the globals and the "
               "stack objects passed directly to a call in a translation unit "
               "that defines a POSEIDON_OPTIMIZE function. Allocate this array "
-              "on the heap, or profile the call with __poseidon_fp_optimize "
-              "and a shadow of your own.\n",
+              "on the heap, or give its shadow in an explicit list of "
+              "__poseidon_optimize: enzyme_dup before the pointer and the "
+              "shadow after it.\n",
               param[k], paramName[k][0] ? " ('" : "", paramName[k],
               paramName[k][0] ? "')" : "", fn, ptrs[k]);
       fflush(stderr);
