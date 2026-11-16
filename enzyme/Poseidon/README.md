@@ -25,7 +25,7 @@ enzyme/Poseidon/            the pass: Core/, IR/, Targets/, Sites/, Profile/,
                             entry Pass/Plugin.cpp), lowest layer first
   runtime/                  profiler and GEMM dispatch runtimes the driver links
   tools/                    poseidon-clang driver, poseidon-calibrate, poseidon-probe,
-                            poseidon-explain, Herbie platform, Compiler Explorer
+                            poseidon-explain, Herbie platform
 enzyme/include/poseidon/    the one public header
 enzyme/test/Poseidon/       lit suite: check-poseidon (a folder per part of the
                             pass, fixtures in Inputs/) and
@@ -378,73 +378,6 @@ compile goes on and reports the other sites' errors too; a mistake that leaves
 nothing to compile with, such as a flag value, a missing profile directory or a
 cost model that cannot price the compile, ends it at once. A broken internal
 invariant of Poseidon stops the compile as a crash, to be reported as a bug.
-
-## Compiler Explorer
-
-`tools/explorer/` puts Poseidon in Compiler Explorer. `poseidon-ce.sh` is the
-compiler it calls: it builds the program with profiling, runs it once, and
-compiles it again under `-poseidon-tau` (default 1e-6); every other
-`-poseidon-<flag>` reaches the pass. The `Dockerfile` builds a standalone
-explorer from the `nightly-poseidon` release tarball, with C++ only, the
-example `examples/c++/` and plain clang next to Poseidon for comparison.
-
-The tarball carries no cost model: the machine that runs the explorer measures
-its own once, with `calibrate/microbm_cpu.py` from the tarball (or
-`tools/calibrate/`; it needs `numpy` and `llvmlite` and runs for hours), and
-the explorer is given it explicitly:
-
-```sh
-python3 microbm_cpu.py --native-arch x86-64 --out cm_x86-64_explorer.csv
-cd enzyme/Poseidon/tools/explorer
-POSEIDON_COST_MODEL=<dir>/cm_x86-64_explorer.csv docker compose up -d --build   # http://localhost:10240
-```
-
-`--build-arg POSEIDON_TARBALL=<url>` takes another tarball. To run a local
-build instead, lay it out with `package.sh <build> <cost-model.csv|-> <dir>`
-and mount it over the downloaded one; its LLVM must be one the image has a
-clang for (`LLVM_VERSION`, default 21):
-
-```sh
-docker run -d -p 10240:10240 -v <dir>:/opt/compiler-explorer/poseidon:ro \
-  -v <csv>:/opt/compiler-explorer/poseidon/cost_models/cm_x86-64_explorer.csv:ro poseidon-explorer
-```
-
-Without a cost model every Poseidon compile stops with an error that names
-the missing file; none is substituted.
-
-The explorer compiles for a
-generic x86-64 CPU with a cost model measured for one, so it shows host
-functions marked `POSEIDON_OPTIMIZE` and calls made through
-`__poseidon_optimize`; GPU kernels need a local build. The examples cover the
-marker, per-function targets, per-call sites and a regime split, and each
-prints the values of an unmarked copy next to Poseidon's. Compile with `-O1` or
-higher. Herbie results are kept in `POSEIDON_CE_CACHE`
-(default `$TMPDIR/poseidon-ce-cache`, `/tmp` without `TMPDIR`) and reused by
-later compiles; `package.sh` ships the examples' results so their first
-compile does not search. The
-defaults suit a shared machine: at most `POSEIDON_CE_MAX_SEARCHES` (2)
-compiles profile and search at once, and one that finds both slots taken for
-3 seconds is compiled as written with a note to try again; a search gets
-`POSEIDON_CE_SOLVE_SECONDS` (60), two Herbie workers and
-`POSEIDON_CE_SOLVE_MEMORY_MB` (4096) of address space per process, and past
-either limit the program is compiled as written. The profiling run, which is
-the user's program outside the explorer's sandbox, gets
-`POSEIDON_CE_PROFILE_SECONDS` (10) and `POSEIDON_CE_PROFILE_MEMORY_MB` (1024).
-`test-explorer.py --url http://localhost:10240` checks a running explorer
-through its REST API.
-
-The explorer calls the wrapper as `clang++`, so the Poseidon compiler has every
-view plain clang has: LLVM IR, optimization remarks, the optimization pipeline
-(Poseidon's own passes included), control flow graph, AST, preprocessor output,
-stack usage and the linked binary. Flags that only shape that output reach the
-final compile, not the profiling build. The compiler output keeps the solver's
-decisions and the remarks (`-Rpass=poseidon -Rpass-analysis=poseidon` are on),
-which the editor marks as notes; `-poseidon-print` shows everything. The
-wrapper leaves the compile's `<func>.explain.json` next to its output (unless
-`POSEIDON_CE_EXPLAIN=0`), and the tools Poseidon report, Poseidon source,
-Poseidon diff and Poseidon FPCore show it through `poseidon-explain`.
-`llvm-mca` and `nm` are available for both compilers, and the Templates menu has
-an assembly diff of plain clang against clang + Poseidon.
 
 ## Citation
 
