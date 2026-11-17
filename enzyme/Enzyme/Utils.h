@@ -1515,6 +1515,37 @@ static inline llvm::StringRef getFuncNameFromCall(const llvm::CallBase *op) {
   return "";
 }
 
+/// Match the arguments of a call to `FT`, the type of the function it calls,
+/// when the call's own function type may differ from it (e.g. Julia passes
+/// `ptr addrspace(10)` objects to the `ptr` parameters of a `jlcapi_`
+/// cfunction wrapper). A pointer in another address space is passed unchanged,
+/// like in the original call, and the returned function type takes its type;
+/// casting it to the parameter's address space would lose that it is a Julia
+/// object. Any other mismatched argument is bitcast.
+static inline llvm::FunctionType *
+matchCallArgs(llvm::IRBuilder<> &B, llvm::FunctionType *FT,
+              llvm::SmallVectorImpl<llvm::Value *> &args) {
+  llvm::SmallVector<llvm::Type *, 8> types;
+  bool changed = false;
+  for (unsigned i = 0; i < args.size(); ++i) {
+    llvm::Type *T = FT->getParamType(i);
+    if (args[i]->getType() != T) {
+      if (args[i]->getType()->isPtrOrPtrVectorTy() && T->isPtrOrPtrVectorTy() &&
+          args[i]->getType()->getScalarType()->getPointerAddressSpace() !=
+              T->getScalarType()->getPointerAddressSpace()) {
+        T = args[i]->getType();
+        changed = true;
+      } else {
+        args[i] = B.CreateBitCast(args[i], T);
+      }
+    }
+    types.push_back(T);
+  }
+  if (!changed)
+    return FT;
+  return llvm::FunctionType::get(FT->getReturnType(), types, FT->isVarArg());
+}
+
 /// Julia write barriers. Before julia#62737 these are
 /// `julia.write_barrier(parent, children...)` (and
 /// `julia.write_barrier_binding`); since then codegen emits
