@@ -515,6 +515,9 @@ bool attributeKnownFunctions(llvm::Function &F) {
       "open64",
       "close",
       "sched_getaffinity",
+      "gettimeofday",
+      "clock_gettime",
+      "time",
   };
   if (llvm::is_contained(SystemAndStringCalls, name)) {
     changed = true;

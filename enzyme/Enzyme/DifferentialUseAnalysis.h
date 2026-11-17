@@ -298,12 +298,21 @@ inline bool is_value_needed_in_reverse(
     // the reverse pass.
     if (!OneLevel) {
       bool isStored = false;
-      if (auto SI = dyn_cast<StoreInst>(user))
+      // The address a store writes to (e.g. an index into the allocation
+      // loaded from memory) is only needed when the store is replayed in the
+      // reverse pass, i.e. when the allocation is rematerialized there.
+      // Stores into a backwards-only shadow rebuild their address from the
+      // shadow (is_use_directly_needed_in_reverse).
+      bool isStoredAddress = false;
+      if (auto SI = dyn_cast<StoreInst>(user)) {
         isStored = inst == SI->getValueOperand();
-      else if (auto MTI = dyn_cast<MemTransferInst>(user)) {
+        isStoredAddress = inst == SI->getPointerOperand();
+      } else if (auto MTI = dyn_cast<MemTransferInst>(user)) {
         isStored = inst == MTI->getSource() || inst == MTI->getLength();
+        isStoredAddress = inst == MTI->getDest();
       } else if (auto MS = dyn_cast<MemSetInst>(user)) {
         isStored = inst == MS->getLength() || inst == MS->getValue();
+        isStoredAddress = inst == MS->getDest();
       } else if (auto CB = dyn_cast<CallBase>(user)) {
         auto name = getFuncNameFromCall(CB);
         if (name == "julia.write_barrier" ||
@@ -314,7 +323,7 @@ inline bool is_value_needed_in_reverse(
             isStored |= inst == CB->getArgOperand(i);
         }
       }
-      if (isStored) {
+      if (isStored || isStoredAddress) {
         for (auto pair : gutils->rematerializableAllocations) {
           // If already decided to cache the whole allocation, ignore
           if (gutils->needsCacheWholeAllocation(pair.first)) {
@@ -345,6 +354,10 @@ inline bool is_value_needed_in_reverse(
                              << *pair.first << "\n";
               return seen[idx] = true;
             }
+            // The store is not replayed if the allocation is not
+            // rematerialized, so its address is not needed.
+            if (!isStored)
+              continue;
             for (LoadInst *L : pair.second.loads)
               if (is_value_needed_in_reverse<VT>(gutils, L, mode, seen,
                                                  oldUnreachable)) {
