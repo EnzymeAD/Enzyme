@@ -8,15 +8,17 @@ add_llvm_library(
   # FlangEnzymeMLIRLoader.cpp is built into FlangEnzyme instead.
   PARTIAL_SOURCES_INTENDED
   DISABLE_LLVM_LINK_LLVM_DYLIB)
-add_dependencies(FlangEnzymeMLIR-${LLVM_VERSION_MAJOR} MLIREnzyme)
+add_dependencies(FlangEnzymeMLIR-${LLVM_VERSION_MAJOR} MLIREnzyme
+                 MLIREnzymeToLLVMIRTranslation)
 target_include_directories(
   FlangEnzymeMLIR-${LLVM_VERSION_MAJOR}
   PRIVATE ${FLANG_INCLUDE_DIRS})
-# The enzyme dialect carries the type annotations to LLVM IR; bundle it by
-# file, so that its MLIR dependencies resolve from the host.
+# The enzyme dialect and its translation carry the type annotations to LLVM
+# IR; bundle them by file, so that their MLIR dependencies resolve from the
+# host.
 target_link_libraries(
   FlangEnzymeMLIR-${LLVM_VERSION_MAJOR}
-  PRIVATE $<TARGET_FILE:MLIREnzyme>)
+  PRIVATE $<TARGET_FILE:MLIREnzymeToLLVMIRTranslation> $<TARGET_FILE:MLIREnzyme>)
 target_link_options(
   FlangEnzymeMLIR-${LLVM_VERSION_MAJOR}
   PRIVATE -Wl,--allow-shlib-undefined)

@@ -11,15 +11,15 @@
 //   - `!enzyme_type` metadata on globals (the layout of their memory) and on
 //     instructions (the type of the value), and
 //   - `"enzyme_type"` string attributes on function and call parameters,
-// in the TypeTree syntax `{[-1]:Pointer, [-1,0]:Float@double, ...}`.
+// both encodings of its type trees.
 //
 // The enzyme-fir-type-annotations pass runs at flang's FIROptLast extension
 // point, while FIR still knows the Fortran types (and the declares still name
-// the COMMON storage of each variable), and attaches `enzyme.type` (a TypeTree
-// string) to the operations that survive code generation. An LLVM IR
-// translation interface that the pass attaches to the enzyme dialect turns
-// them into the metadata and attributes above when flang translates to LLVM
-// IR. FlangEnzymeMLIR runs it in flang (FlangEnzymeMLIRPlugin.cpp).
+// the COMMON storage of each variable), and attaches `enzyme.type` (an
+// #enzyme.type_tree) to the operations that survive code generation. The
+// translation of the enzyme dialect (Target/EnzymeToLLVMIRTranslation.cpp)
+// turns them into the metadata and attributes above when flang translates to
+// LLVM IR. FlangEnzymeMLIR runs it in flang (FlangEnzymeMLIRPlugin.cpp).
 // Nothing here needs a change to flang.
 //
 // Annotated so far:
@@ -28,12 +28,19 @@
 //     This types, e.g., a memset that memcpyopt fused from the stores to
 //     adjacent members.
 //   - Character literals (_QQcl*): character data.
+//   - Local variables. flang's conversion of fir.alloca to LLVM keeps only
+//     its name, so `enzyme.type` cannot go on it: the function lists the
+//     types of its locals by name instead (`flang_enzyme.local_types`), and
+//     the translation of that attribute hands each one to the translation of
+//     `enzyme.type` on the alloca of that name.
 //
 //===----------------------------------------------------------------------===//
 
 #include "Flang/FIRTypeAnnotations.h"
 
 #include "Dialect/Dialect.h"
+#include "Dialect/Ops.h"
+#include "Target/EnzymeToLLVMIRTranslation.h"
 
 #include "flang/Optimizer/Dialect/FIRDialect.h"
 #include "flang/Optimizer/Dialect/FIROps.h"
@@ -42,6 +49,7 @@
 #include "flang/Optimizer/Support/InternalNames.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
@@ -50,242 +58,182 @@
 #include "mlir/Target/LLVMIR/ModuleTranslation.h"
 
 #include "llvm/ADT/StringSet.h"
-#include "llvm/IR/Constants.h"
-#include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/Instructions.h"
-#include "llvm/IR/Metadata.h"
 #include "llvm/Support/CommandLine.h"
 
 #include <map>
 #include <optional>
-#include <set>
 
 using namespace mlir;
 
 namespace {
 
 //===----------------------------------------------------------------------===//
-// TypeTree strings
+// Type trees
 //===----------------------------------------------------------------------===//
 
-// A TypeTree as Enzyme writes it: a map from an offset path to a base type
-// name ("Pointer", "Integer", "Float@double", ...).
-using TypePaths = std::map<std::vector<int>, std::string>;
+// A concrete type of Enzyme's type trees: Integer, Pointer, Anything, or a
+// floating-point type.
+struct Scalar {
+  enzyme::TypeTreeKind kind;
+  Type floatType;
 
-static std::string printTypeTree(const TypePaths &tree) {
-  std::string out = "{";
-  bool first = true;
-  for (const auto &[path, type] : tree) {
-    if (!first)
-      out += ", ";
-    first = false;
-    out += "[";
-    for (size_t i = 0; i < path.size(); ++i)
-      out += (i ? "," : "") + std::to_string(path[i]);
-    out += "]:" + type;
+  static Scalar integer() { return {enzyme::TypeTreeKind::Integer, {}}; }
+  static Scalar pointer() { return {enzyme::TypeTreeKind::Pointer, {}}; }
+  static Scalar floating(FloatType ty) {
+    return {enzyme::TypeTreeKind::Float, ty};
   }
-  return out + "}";
+
+  bool operator==(const Scalar &other) const {
+    return kind == other.kind && floatType == other.floatType;
+  }
+  bool operator!=(const Scalar &other) const { return !(*this == other); }
+};
+
+// A type tree under construction: the concrete type at each offset path.
+using TypePaths = std::map<std::vector<int>, Scalar>;
+
+/// Builds the node of the paths in [begin, end), which share their first
+/// `depth` offsets: its type is that of the path of exactly `depth` offsets, if
+/// any, and its subtrees group the longer paths by their next offset.
+static enzyme::TypeTreeAttr buildTypeTree(MLIRContext *context,
+                                          TypePaths::const_iterator begin,
+                                          TypePaths::const_iterator end,
+                                          size_t depth) {
+  enzyme::TypeTreeKind kind = enzyme::TypeTreeKind::Unknown;
+  Type floatType;
+  // The map orders a path before its extensions.
+  if (begin != end && begin->first.size() == depth) {
+    kind = begin->second.kind;
+    floatType = begin->second.floatType;
+    ++begin;
+  }
+  SmallVector<int64_t> offsets;
+  SmallVector<enzyme::TypeTreeAttr> subtrees;
+  while (begin != end) {
+    int offset = begin->first[depth];
+    auto groupEnd = std::find_if(begin, end, [&](const auto &entry) {
+      return entry.first[depth] != offset;
+    });
+    offsets.push_back(offset);
+    subtrees.push_back(buildTypeTree(context, begin, groupEnd, depth + 1));
+    begin = groupEnd;
+  }
+  return enzyme::TypeTreeAttr::get(context, kind, floatType, offsets,
+                                   subtrees);
 }
 
-// Parse `{[-1]:Pointer, [-1,0]:Float@double}`.
-static std::optional<TypePaths> parseTypeTree(StringRef str) {
-  TypePaths tree;
-  str = str.trim();
-  if (!str.consume_front("{") || !str.consume_back("}"))
-    return std::nullopt;
-  while (!(str = str.trim()).empty()) {
-    if (!str.consume_front("["))
-      return std::nullopt;
-    auto [pathStr, rest] = str.split(']');
-    std::vector<int> path;
-    for (StringRef p = pathStr; !p.empty();) {
-      auto [off, tail] = p.split(',');
-      int v;
-      if (off.trim().getAsInteger(10, v))
-        return std::nullopt;
-      path.push_back(v);
-      p = tail;
-    }
-    if (!rest.consume_front(":"))
-      return std::nullopt;
-    auto [type, tail] = rest.split(',');
-    // "Float@double" contains no comma; the next entry starts with '['.
-    tree[path] = type.trim().str();
-    str = tail;
-  }
-  return tree;
-}
-
-// The metadata encoding of TypeTree::toMD: !{!"<type at []>", i32 off,
-// <subtree>, ...}, grouped by the first offset of each path.
-static llvm::MDNode *typeTreeToMD(const TypePaths &tree,
-                                  llvm::LLVMContext &ctx) {
-  std::string base = "Unknown";
-  std::map<int, TypePaths> children;
-  for (const auto &[path, type] : tree) {
-    if (path.empty()) {
-      base = type;
-      continue;
-    }
-    children[path.front()][std::vector<int>(path.begin() + 1, path.end())] =
-        type;
-  }
-  SmallVector<llvm::Metadata *> ops{llvm::MDString::get(ctx, base)};
-  for (const auto &[off, sub] : children) {
-    ops.push_back(llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(
-        llvm::IntegerType::get(ctx, 32), off, /*IsSigned=*/true)));
-    ops.push_back(typeTreeToMD(sub, ctx));
-  }
-  return llvm::MDNode::get(ctx, ops);
+static enzyme::TypeTreeAttr buildTypeTree(MLIRContext *context,
+                                          const TypePaths &tree) {
+  return buildTypeTree(context, tree.begin(), tree.end(), /*depth=*/0);
 }
 
 //===----------------------------------------------------------------------===//
-// Translation to LLVM IR
+// Local variables
 //===----------------------------------------------------------------------===//
 
-constexpr StringLiteral kTypeAttr = "enzyme.type";
-constexpr StringLiteral kArgTypesAttr = "enzyme.arg_types";
-constexpr StringLiteral kRetTypeAttr = "enzyme.ret_type";
-// On a function: the types of its local variables, by name.
-constexpr StringLiteral kLocalTypesAttr = "enzyme.local_types";
+/// Holds `flang_enzyme.local_types`, the attribute of a function that types
+/// its local variables by name, and its translation to LLVM IR.
+class FlangEnzymeDialect : public Dialect {
+public:
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(FlangEnzymeDialect)
 
-struct EnzymeLLVMIRTranslation : public LLVMTranslationDialectInterface {
+  explicit FlangEnzymeDialect(MLIRContext *ctx);
+  static StringRef getDialectNamespace() { return "flang_enzyme"; }
+  /// {name = [type tree, size in bytes or -1 if not constant]}.
+  static StringRef getLocalTypesAttrName() {
+    return "flang_enzyme.local_types";
+  }
+};
+
+struct LocalTypesTranslation : public LLVMTranslationDialectInterface {
   using LLVMTranslationDialectInterface::LLVMTranslationDialectInterface;
 
-  // enzyme.type on a global: the layout of its memory. On another op: the
-  // type of the value of each instruction it became.
-  // enzyme.arg_types on a call: the "enzyme_type" of each argument.
+  /// Translates `enzyme.type` on each alloca of the function that is a listed
+  /// local of the listed size. Amended after the body of the function is
+  /// translated, so the allocas are mapped.
   LogicalResult
   amendOperation(Operation *op, ArrayRef<llvm::Instruction *> instructions,
                  NamedAttribute attribute,
                  LLVM::ModuleTranslation &moduleTranslation) const final {
-    if (attribute.getName() == kArgTypesAttr) {
-      auto types = dyn_cast<ArrayAttr>(attribute.getValue());
-      if (!types)
-        return op->emitError() << kArgTypesAttr << " must be an array";
-      for (llvm::Instruction *inst : instructions)
-        if (auto *call = dyn_cast<llvm::CallBase>(inst))
-          for (auto [i, t] : llvm::enumerate(types))
-            if (auto s = dyn_cast<StringAttr>(t);
-                s && !s.empty() && i < call->arg_size())
-              call->addParamAttr(i, llvm::Attribute::get(call->getContext(),
-                                                         "enzyme_type",
-                                                         s.getValue()));
+    if (attribute.getName() != FlangEnzymeDialect::getLocalTypesAttrName())
       return success();
-    }
-    if (attribute.getName() == kRetTypeAttr) {
-      auto str = dyn_cast<StringAttr>(attribute.getValue());
-      auto fn = dyn_cast<LLVM::LLVMFuncOp>(op);
-      if (!str || !fn)
-        return op->emitError() << kRetTypeAttr << " must be a string on a "
-                               << "function";
-      if (llvm::Function *f = moduleTranslation.lookupFunction(fn.getName()))
-        if (!f->getReturnType()->isVoidTy())
-          f->addRetAttr(llvm::Attribute::get(f->getContext(), "enzyme_type",
-                                             str.getValue()));
-      return success();
-    }
-    if (attribute.getName() == kLocalTypesAttr) {
-      // Converted after the body of the function: its values are mapped.
-      auto types = dyn_cast<DictionaryAttr>(attribute.getValue());
-      if (!types)
-        return success();
-      op->walk([&](LLVM::AllocaOp alloca) {
-        auto name = alloca->getAttrOfType<StringAttr>("bindc_name");
-        auto entry = name ? types.getAs<ArrayAttr>(name) : ArrayAttr();
-        if (!entry || entry.size() != 2)
-          return;
-        auto t = dyn_cast<StringAttr>(entry[0]);
-        auto bytes = dyn_cast<IntegerAttr>(entry[1]);
-        std::optional<TypePaths> tree =
-            t ? parseTypeTree(t.getValue()) : std::nullopt;
-        auto *inst = dyn_cast_or_null<llvm::AllocaInst>(
-            moduleTranslation.lookupValue(alloca.getResult()));
-        if (!tree || !bytes || !inst)
-          return;
-        // Only on an alloca of the size of the variable (or of a size known
-        // only at run time, if the variable's is).
-        std::optional<llvm::TypeSize> size =
-            inst->getAllocationSize(inst->getDataLayout());
-        int64_t expected = bytes.getInt();
-        if (expected >= 0 ? (!size || size->isScalable() ||
-                             (int64_t)size->getFixedValue() != expected)
-                          : size.has_value())
-          return;
-        inst->setMetadata("enzyme_type",
-                          typeTreeToMD(*tree, inst->getContext()));
-      });
-      return success();
-    }
-    if (attribute.getName() != kTypeAttr)
-      return success();
-    auto str = dyn_cast<StringAttr>(attribute.getValue());
-    std::optional<TypePaths> tree =
-        str ? parseTypeTree(str.getValue()) : std::nullopt;
-    if (!tree)
-      return op->emitError()
-             << "malformed " << kTypeAttr << ": " << attribute.getValue();
-    if (isa<LLVM::GlobalOp>(op)) {
-      if (auto *gv = dyn_cast_or_null<llvm::GlobalVariable>(
-              moduleTranslation.lookupGlobal(op)))
-        gv->setMetadata("enzyme_type", typeTreeToMD(*tree, gv->getContext()));
-      return success();
-    }
-    for (llvm::Instruction *inst : instructions)
-      inst->setMetadata("enzyme_type", typeTreeToMD(*tree, inst->getContext()));
-    return success();
-  }
-
-  // enzyme.type on a function argument: its "enzyme_type" attribute.
-  LogicalResult
-  convertParameterAttr(LLVM::LLVMFuncOp function, int argIdx,
-                       NamedAttribute attribute,
-                       LLVM::ModuleTranslation &moduleTranslation) const final {
-    if (attribute.getName() != kTypeAttr)
-      return success();
-    auto str = dyn_cast<StringAttr>(attribute.getValue());
-    llvm::Function *fn = moduleTranslation.lookupFunction(function.getName());
-    if (!str || !fn)
-      return success();
-    fn->addParamAttr(
-        argIdx,
-        llvm::Attribute::get(fn->getContext(), "enzyme_type", str.getValue()));
-    return success();
+    auto locals = dyn_cast<DictionaryAttr>(attribute.getValue());
+    if (!locals)
+      return op->emitError() << attribute.getName() << " must be a dictionary";
+    MLIRContext *ctx = op->getContext();
+    auto *enzymeDialect = ctx->getLoadedDialect<enzyme::EnzymeDialect>();
+    auto *enzymeTranslation =
+        enzymeDialect
+            ? enzymeDialect
+                  ->getRegisteredInterface<LLVMTranslationDialectInterface>()
+            : nullptr;
+    if (!enzymeTranslation)
+      return op->emitError() << attribute.getName()
+                             << " needs the translation of the enzyme dialect";
+    auto typeName =
+        StringAttr::get(ctx, enzyme::EnzymeDialect::getTypeTreeAttrName());
+    WalkResult result = op->walk([&](LLVM::AllocaOp alloca) {
+      auto name = alloca->getAttrOfType<StringAttr>("bindc_name");
+      auto entry = name ? locals.getAs<ArrayAttr>(name) : ArrayAttr();
+      if (!entry || entry.size() != 2)
+        return WalkResult::advance();
+      auto tree = dyn_cast<enzyme::TypeTreeAttr>(entry[0]);
+      auto bytes = dyn_cast<IntegerAttr>(entry[1]);
+      auto *inst = dyn_cast_or_null<llvm::AllocaInst>(
+          moduleTranslation.lookupValue(alloca.getResult()));
+      if (!tree || !bytes || !inst)
+        return WalkResult::advance();
+      // A local of another type may have the same name (e.g. after
+      // inlining): only one of the listed size is the listed local.
+      std::optional<llvm::TypeSize> size =
+          inst->getAllocationSize(inst->getDataLayout());
+      int64_t expected = bytes.getInt();
+      if (expected >= 0 ? (!size || size->isScalable() ||
+                           (int64_t)size->getFixedValue() != expected)
+                        : size.has_value())
+        return WalkResult::advance();
+      if (failed(enzymeTranslation->amendOperation(
+              alloca, {inst}, NamedAttribute(typeName, tree),
+              moduleTranslation)))
+        return WalkResult::interrupt();
+      return WalkResult::advance();
+    });
+    return failure(result.wasInterrupted());
   }
 };
+
+FlangEnzymeDialect::FlangEnzymeDialect(MLIRContext *ctx)
+    : Dialect(getDialectNamespace(), ctx, TypeID::get<FlangEnzymeDialect>()) {
+  addInterfaces<LocalTypesTranslation>();
+}
 
 //===----------------------------------------------------------------------===//
 // FIR types
 //===----------------------------------------------------------------------===//
 
-// The TypeTree name and size in bytes of a scalar Fortran type, if it has
+// The concrete type and size in bytes of a scalar Fortran type, if it has
 // one. The size is the distance between two array elements.
-static std::optional<std::pair<std::string, int64_t>>
+static std::optional<std::pair<Scalar, int64_t>>
 scalarType(Type ty, const DataLayout &dl) {
-  // REAL(2), REAL(3), REAL(4), REAL(8) and REAL(16): the names of
-  // ConcreteType(StringRef). REAL(10) (x87 extended precision) is left
-  // alone: its 10 bytes are padded to a size that depends on the target.
+  // REAL(2), REAL(3), REAL(4), REAL(8) and REAL(16). REAL(10) (x87 extended
+  // precision) is left alone: its 10 bytes are padded to a size that depends
+  // on the target.
   if (auto ft = dyn_cast<FloatType>(ty)) {
-    std::string name = ft.isF16()    ? "half"
-                       : ft.isBF16() ? "bf16"
-                       : ft.isF32()  ? "float"
-                       : ft.isF64()  ? "double"
-                       : ft.isF128() ? "fp128"
-                                     : "";
-    if (name.empty())
+    if (!(ft.isF16() || ft.isBF16() || ft.isF32() || ft.isF64() || ft.isF128()))
       return std::nullopt;
-    return std::make_pair("Float@" + name, (int64_t)ft.getWidth() / 8);
+    return std::make_pair(Scalar::floating(ft), (int64_t)ft.getWidth() / 8);
   }
   // INTEGER of any kind is an iN of the kind's bytes. Enzyme's Integer has
   // no width: it says that the bytes it covers are not a floating-point
   // value or a pointer, so the width is only the size.
   if (auto it = dyn_cast<IntegerType>(ty))
-    return std::make_pair(std::string("Integer"), (int64_t)it.getWidth() / 8);
+    return std::make_pair(Scalar::integer(), (int64_t)it.getWidth() / 8);
   // Enzyme's TypeTree has no boolean type: its concrete types are Integer,
   // Float, Pointer and Anything. A LOGICAL is stored as an integer of its
   // kind's bytes, and as such it is Integer.
   if (auto lt = dyn_cast<fir::LogicalType>(ty))
-    return std::make_pair(std::string("Integer"), (int64_t)lt.getFKind());
+    return std::make_pair(Scalar::integer(), (int64_t)lt.getFKind());
   return std::nullopt;
 }
 
@@ -317,10 +265,10 @@ static std::optional<int64_t> sizeOf(Type ty, const DataLayout &dl) {
 // The one scalar type of all of a value of type `ty`, if it has one: of a
 // scalar, of an array of scalars, Integer for CHARACTER data. COMPLEX has
 // one too (both parts are the same).
-static std::optional<std::string> uniformType(Type ty, const DataLayout &dl) {
+static std::optional<Scalar> uniformType(Type ty, const DataLayout &dl) {
   ty = fir::unwrapSequenceType(ty);
   if (isa<fir::CharacterType>(ty))
-    return std::string("Integer");
+    return Scalar::integer();
   if (auto ct = dyn_cast<mlir::ComplexType>(ty))
     ty = ct.getElementType();
   if (auto sc = scalarType(ty, dl))
@@ -331,7 +279,7 @@ static std::optional<std::string> uniformType(Type ty, const DataLayout &dl) {
 // Add the scalar types of a value of type `ty` at `offset` to `layout`.
 // Arrays are expanded element by element up to `budget` entries.
 static bool addLayout(Type ty, int64_t offset, const DataLayout &dl,
-                      std::map<int64_t, std::string> &layout, int64_t &budget) {
+                      std::map<int64_t, Scalar> &layout, int64_t &budget) {
   if (auto ct = dyn_cast<mlir::ComplexType>(ty)) {
     auto part = scalarType(ct.getElementType(), dl);
     if (!part)
@@ -347,7 +295,7 @@ static bool addLayout(Type ty, int64_t offset, const DataLayout &dl,
       return false;
     int64_t n = ch.getLen() * ch.getFKind();
     for (int64_t i = 0; i < n; i += ch.getFKind())
-      layout[offset + i] = "Integer";
+      layout[offset + i] = Scalar::integer();
     budget -= n;
     return budget >= 0;
   }
@@ -388,15 +336,15 @@ static fir::GlobalOp getStorageGlobal(Value v, SymbolTable &symbols) {
   return {};
 }
 
-// The scalar TypeTree name of the data of a FIR entity type: the element
-// type of an array, box, or address; Integer for character and logical data.
-static std::optional<std::string> dataType(Type ty, const DataLayout &dl) {
+// The concrete type of the data of a FIR entity type: the element type of an
+// array, box, or address; Integer for character and logical data.
+static std::optional<Scalar> dataType(Type ty, const DataLayout &dl) {
   ty = fir::unwrapPassByRefType(fir::unwrapRefType(ty));
   if (auto box = dyn_cast<fir::BaseBoxType>(ty))
     ty = box.getEleTy();
   ty = fir::unwrapSequenceType(fir::unwrapRefType(ty));
   if (isa<fir::CharacterType>(ty))
-    return std::string("Integer");
+    return Scalar::integer();
   if (auto ct = dyn_cast<mlir::ComplexType>(ty))
     ty = ct.getElementType();
   if (auto s = scalarType(ty, dl))
@@ -421,36 +369,38 @@ static constexpr int kDescDims = 24;
 static constexpr int kDescDimFieldSize = 8;
 static constexpr int kDescDimFields = 3;
 
-// The TypeTree of a pointer argument whose FIR type (before the conversions
-// for the call) is `ty`, or "" if there is nothing to add to the LLVM type.
+// The type tree of a pointer argument whose FIR type (before the conversions
+// for the call) is `ty`, or null if there is nothing to add to the LLVM type.
 // A descriptor is typed field by field (all of them Integer but the base
 // address), with the type of the data its base address points to.
-static std::string pointerArgType(Type ty, const DataLayout &dl,
-                                  bool descriptorData = true) {
+static enzyme::TypeTreeAttr pointerArgType(Type ty, const DataLayout &dl,
+                                           bool descriptorData = true) {
+  MLIRContext *ctx = ty.getContext();
   Type pointee = fir::unwrapRefType(ty);
-  TypePaths tree{{{-1}, "Pointer"}};
+  TypePaths tree{{{-1}, Scalar::pointer()}};
   if (auto box = dyn_cast<fir::BaseBoxType>(pointee)) {
-    tree[{-1, kDescBaseAddr}] = "Pointer";
+    tree[{-1, kDescBaseAddr}] = Scalar::pointer();
     if (auto data = dataType(box, dl); data && descriptorData)
       tree[{-1, kDescBaseAddr, -1}] = *data;
     for (int off : {kDescElemLen, kDescVersion, kDescRank, kDescType,
                     kDescAttribute, kDescExtra})
-      tree[{-1, off}] = "Integer";
+      tree[{-1, off}] = Scalar::integer();
     // The dims, if the rank is known.
     if (auto seq =
             dyn_cast<fir::SequenceType>(fir::unwrapRefType(box.getEleTy())))
       if (!seq.hasUnknownShape())
         for (unsigned i = 0; i < kDescDimFields * seq.getDimension(); ++i)
-          tree[{-1, (int)(kDescDims + kDescDimFieldSize * i)}] = "Integer";
-    return printTypeTree(tree);
+          tree[{-1, (int)(kDescDims + kDescDimFieldSize * i)}] =
+              Scalar::integer();
+    return buildTypeTree(ctx, tree);
   }
   if (!fir::isa_ref_type(ty))
-    return "";
+    return {};
   if (auto data = dataType(pointee, dl)) {
     tree[{-1, -1}] = *data;
-    return printTypeTree(tree);
+    return buildTypeTree(ctx, tree);
   }
-  return "";
+  return {};
 }
 
 // The FIR type a call operand had before flang converted it for the call
@@ -483,7 +433,7 @@ static llvm::cl::opt<bool> annotateUnbounded(
 // Type the data of `bytes` bytes (if known) of scalars `t` of `eleSize`
 // bytes, under `path`, of something that may be part of a larger object.
 static void addBoundedData(TypePaths &tree, std::vector<int> path,
-                           const std::string &t, int64_t eleSize,
+                           const Scalar &t, int64_t eleSize,
                            std::optional<int64_t> bytes, bool unbounded) {
   if (unbounded) {
     path.push_back(-1);
@@ -561,45 +511,46 @@ static llvm::cl::opt<bool> annotateDescriptorData(
                    "the data that descriptor arguments point to (a caller "
                    "may reuse one descriptor temporary for several types)"));
 
-// The TypeTree of a value of FIR type `ty` passed to or returned from a
-// procedure, in the encoding Enzyme.jl uses for its arguments, or "" if
+// The type tree of a value of FIR type `ty` passed to or returned from a
+// procedure, in the encoding Enzyme.jl uses for its arguments, or null if
 // there is nothing certain to say. By reference, the pointee is laid out from
 // offset 0 ({[-1]:Pointer, [-1,0]:Float@double} for a REAL*8 scalar), an
 // array of scalars at every offset ([-1,-1]), a descriptor field by field
 // (as for runtime calls). Polymorphic and assumed-type/-rank entities, and
 // derived types, are left alone.
-static std::string procArgType(Type ty, const DataLayout &dl) {
+static enzyme::TypeTreeAttr procArgType(Type ty, const DataLayout &dl) {
+  MLIRContext *ctx = ty.getContext();
   // By value: a scalar.
   if (!fir::isa_ref_type(ty) && !isa<fir::BaseBoxType>(ty)) {
     if (auto ct = dyn_cast<mlir::ComplexType>(ty))
       ty = ct.getElementType();
     if (auto sc = scalarType(ty, dl))
-      return printTypeTree({{{-1}, sc->first}});
-    return "";
+      return buildTypeTree(ctx, {{{-1}, sc->first}});
+    return {};
   }
   Type pointee = fir::unwrapRefType(ty);
   if (auto box = dyn_cast<fir::BaseBoxType>(pointee)) {
     Type ele = fir::unwrapPassByRefType(box.getEleTy());
     if (isa<fir::ClassType>(box) || fir::isAssumedType(ty) ||
         isa<NoneType>(fir::unwrapSequenceType(ele)))
-      return "";
+      return {};
     if (auto seq = dyn_cast<fir::SequenceType>(ele);
         seq && seq.hasUnknownShape())
-      return ""; // assumed rank
+      return {}; // assumed rank
     if (!dataType(box, dl))
-      return "";
+      return {};
     // The data of a descriptor dummy may be a component (or section of one).
     return pointerArgType(ty, dl, annotateDescriptorData && annotateUnbounded);
   }
   if (!fir::isa_ref_type(ty))
-    return "";
-  TypePaths tree{{{-1}, "Pointer"}};
+    return {};
+  TypePaths tree{{{-1}, Scalar::pointer()}};
   // An array or CHARACTER dummy: its actual may be part of a larger object.
   if (isa<fir::SequenceType, fir::CharacterType>(pointee)) {
     Type ele = fir::unwrapSequenceType(pointee);
-    std::optional<std::string> t = uniformType(ele, dl);
+    std::optional<Scalar> t = uniformType(ele, dl);
     if (!t)
-      return "";
+      return {};
     int64_t eleSize = 1;
     if (!isa<fir::CharacterType>(ele)) {
       if (auto ct = dyn_cast<mlir::ComplexType>(ele))
@@ -608,15 +559,15 @@ static std::string procArgType(Type ty, const DataLayout &dl) {
     }
     addBoundedData(tree, {-1}, *t, eleSize, sizeOf(pointee, dl),
                    annotateUnbounded);
-    return printTypeTree(tree);
+    return buildTypeTree(ctx, tree);
   }
-  std::map<int64_t, std::string> layout;
+  std::map<int64_t, Scalar> layout;
   int64_t budget = kMaxTypeOffsetForArgs;
   if (!addLayout(pointee, 0, dl, layout, budget))
-    return "";
+    return {};
   for (auto &[off, t] : layout)
     tree[{-1, (int)off}] = t;
-  return printTypeTree(tree);
+  return buildTypeTree(ctx, tree);
 }
 
 // How many layout entries one COMMON block may get; a block of large arrays
@@ -631,21 +582,22 @@ static llvm::cl::opt<bool> annotateLocalNumbers(
                    "INTEGER, LOGICAL and COMPLEX variables (not only "
                    "CHARACTER ones)"));
 
-// The TypeTree of a local variable of FIR type `ty` (its alloca: Pointer to
+// The type tree of a local variable of FIR type `ty` (its alloca: Pointer to
 // the data) and its size in bytes (-1 if not constant), if it has one type.
-static std::optional<std::pair<std::string, int64_t>>
+static std::optional<std::pair<enzyme::TypeTreeAttr, int64_t>>
 localType(Type ty, const DataLayout &dl) {
+  MLIRContext *ctx = ty.getContext();
   Type ele = fir::unwrapSequenceType(ty);
-  std::optional<std::string> t = uniformType(ele, dl);
+  std::optional<Scalar> t = uniformType(ele, dl);
   if (!t)
     return std::nullopt;
   std::optional<int64_t> size = sizeOf(ty, dl);
-  TypePaths tree{{{-1}, "Pointer"}};
+  TypePaths tree{{{-1}, Scalar::pointer()}};
   if (isa<fir::CharacterType>(ele) || !annotateLocalNumbers) {
     if (!isa<fir::CharacterType>(ele))
       return std::nullopt;
-    tree[{-1, -1}] = "Integer";
-    return std::make_pair(printTypeTree(tree), size ? *size : -1);
+    tree[{-1, -1}] = Scalar::integer();
+    return std::make_pair(buildTypeTree(ctx, tree), size ? *size : -1);
   }
   if (auto ct = dyn_cast<mlir::ComplexType>(ele))
     ele = ct.getElementType();
@@ -654,7 +606,7 @@ localType(Type ty, const DataLayout &dl) {
     addBoundedData(tree, {-1}, *t, eleSize, size, /*unbounded=*/false);
   else
     tree[{-1, -1}] = *t; // a whole object: nothing follows
-  return std::make_pair(printTypeTree(tree), size ? *size : -1);
+  return std::make_pair(buildTypeTree(ctx, tree), size ? *size : -1);
 }
 
 static llvm::cl::opt<bool> annotateProcArgs(
@@ -689,14 +641,10 @@ struct FIRTypeAnnotationsPass
   }
 
   void getDependentDialects(DialectRegistry &registry) const override {
-    // Loading the enzyme dialect with this translation interface makes the
-    // later translation to LLVM IR turn the enzyme.* attributes above into
-    // Enzyme's metadata and attributes (and leave the others alone).
-    registry.insert<enzyme::EnzymeDialect, fir::FIROpsDialect>();
-    registry.addExtension(+[](MLIRContext *, enzyme::EnzymeDialect *dialect) {
-      if (!dialect->getRegisteredInterface<LLVMTranslationDialectInterface>())
-        dialect->addInterfaces<EnzymeLLVMIRTranslation>();
-    });
+    // The translation of the enzyme dialect turns the type trees into
+    // Enzyme's metadata and attributes when flang translates to LLVM IR.
+    registry.insert<fir::FIROpsDialect, FlangEnzymeDialect>();
+    enzyme::registerEnzymeDialectTranslation(registry);
   }
 
   void runOnOperation() override {
@@ -714,11 +662,11 @@ struct FIRTypeAnnotationsPass
     // size, if all of its members have the same scalar type (e.g. a block
     // of CHARACTER data, Integer bytes), as that type at every offset.
     struct Layout {
-      std::map<int64_t, std::string> types;
+      std::map<int64_t, Scalar> types;
       // The one scalar type of all members, if they have one (e.g. Integer
       // for CHARACTER members): a block of it can be annotated whatever its
       // size, as that type at every offset.
-      std::optional<std::string> uniform;
+      std::optional<Scalar> uniform;
       bool mixed = false;
       // [begin, end) of the bytes the declares lay out
       std::map<int64_t, int64_t> covered;
@@ -735,7 +683,7 @@ struct FIRTypeAnnotationsPass
       if (!global)
         return;
       Layout &layout = layouts[global];
-      std::map<int64_t, std::string> member;
+      std::map<int64_t, Scalar> member;
       int64_t budget = kLayoutBudget;
       Type ty = fir::unwrapRefType(decl->getResult(0).getType());
       int64_t offset = decl.getStorageOffset();
@@ -746,7 +694,7 @@ struct FIRTypeAnnotationsPass
       }
       int64_t &end = layout.covered[offset];
       end = std::max(end, offset + *size);
-      std::optional<std::string> uniform = uniformType(ty, dl);
+      std::optional<Scalar> uniform = uniformType(ty, dl);
       if (!uniform || (layout.uniform && *layout.uniform != *uniform))
         layout.mixed = true;
       else
@@ -777,19 +725,19 @@ struct FIRTypeAnnotationsPass
       if (!globalSize || reached < *globalSize)
         continue;
       if (!layout.mixed && layout.uniform) {
-        op->setAttr(
-            kTypeAttr,
-            StringAttr::get(ctx, printTypeTree({{{-1}, "Pointer"},
-                                                {{-1, -1}, *layout.uniform}})));
+        op->setAttr(enzyme::EnzymeDialect::getTypeTreeAttrName(),
+                    buildTypeTree(ctx, {{{-1}, Scalar::pointer()},
+                                        {{-1, -1}, *layout.uniform}}));
         continue;
       }
       if (layout.unknown || *globalSize > kMaxTypeOffset)
         continue;
-      TypePaths tree{{{-1}, "Pointer"}};
+      TypePaths tree{{{-1}, Scalar::pointer()}};
       for (auto &[off, t] : layout.types)
         tree[{-1, (int)off}] = t;
       if (tree.size() > 1)
-        op->setAttr(kTypeAttr, StringAttr::get(ctx, printTypeTree(tree)));
+        op->setAttr(enzyme::EnzymeDialect::getTypeTreeAttrName(),
+                    buildTypeTree(ctx, tree));
     }
 
     // Calls to the flang runtime: the types of their pointer arguments (data,
@@ -807,18 +755,19 @@ struct FIRTypeAnnotationsPass
         Type original = originalType(arg);
         bool erased = original != arg.getType() ||
                       isa<fir::BaseBoxType>(fir::unwrapRefType(original));
-        std::string t;
+        enzyme::TypeTreeAttr t;
         if (erased && wholeObject(arg))
           t = pointerArgType(original, dl);
         else if (erased && isa<fir::BaseBoxType>(fir::unwrapRefType(original)))
           // Possibly part of a larger object: the layout of the descriptor,
           // but not the type of its data.
           t = pointerArgType(original, dl, /*descriptorData=*/false);
-        any |= !t.empty();
-        types.push_back(StringAttr::get(ctx, t));
+        any |= static_cast<bool>(t);
+        types.push_back(t ? Attribute(t) : UnitAttr::get(ctx));
       }
       if (any)
-        call->setAttr(kArgTypesAttr, ArrayAttr::get(ctx, types));
+        call->setAttr(enzyme::EnzymeDialect::getArgTypeTreesAttrName(),
+                      ArrayAttr::get(ctx, types));
     });
 
     // Procedures: the types of their dummy arguments and results. Module
@@ -843,19 +792,22 @@ struct FIRTypeAnnotationsPass
           // last nonblank character), which it took for a possibly
           // floating-point operation. Untyped, the analysis infers Integer
           // from how the length is used.
-          std::string t =
-              isa<fir::BoxCharType>(ty)
-                  ? (annotateUnbounded
-                         ? std::string("{[-1]:Pointer, [-1,-1]:Integer}")
-                         : std::string("{[-1]:Pointer}"))
-                  : procArgType(ty, dl);
-          if (!t.empty() && !fn.getArgAttr(i, kTypeAttr))
-            fn.setArgAttr(i, kTypeAttr, StringAttr::get(ctx, t));
+          enzyme::TypeTreeAttr t;
+          if (!isa<fir::BoxCharType>(ty))
+            t = procArgType(ty, dl);
+          else if (annotateUnbounded)
+            t = buildTypeTree(ctx, {{{-1}, Scalar::pointer()},
+                                    {{-1, -1}, Scalar::integer()}});
+          else
+            t = buildTypeTree(ctx, {{{-1}, Scalar::pointer()}});
+          if (t &&
+              !fn.getArgAttr(i, enzyme::EnzymeDialect::getTypeTreeAttrName()))
+            fn.setArgAttr(i, enzyme::EnzymeDialect::getTypeTreeAttrName(), t);
         }
         if (fty.getNumResults() == 1) {
-          std::string t = procArgType(fty.getResult(0), dl);
-          if (!t.empty())
-            fn->setAttr(kRetTypeAttr, StringAttr::get(ctx, t));
+          if (enzyme::TypeTreeAttr t = procArgType(fty.getResult(0), dl))
+            fn->setAttr(enzyme::EnzymeDialect::getRetTypeTreesAttrName(),
+                        ArrayAttr::get(ctx, {t}));
         }
       }
 
@@ -873,16 +825,16 @@ struct FIRTypeAnnotationsPass
         // Names are not unique in a function (e.g. after inlining, ICON's
         // nwp_nh_interface has a CHARACTER and a TYPE(t_wtr_prog) local of
         // the same name): a name with locals of different types is left out.
-        llvm::StringMap<std::pair<std::string, int64_t>> types;
+        llvm::StringMap<std::pair<enzyme::TypeTreeAttr, int64_t>> types;
         llvm::StringSet<> ambiguous;
         fn.walk([&](fir::AllocaOp alloca) {
           auto name = alloca.getBindcName();
           if (!name)
             return;
-          std::optional<std::pair<std::string, int64_t>> t =
+          std::optional<std::pair<enzyme::TypeTreeAttr, int64_t>> t =
               localType(alloca.getInType(), dl);
           auto [it, inserted] = types.try_emplace(
-              *name, t ? *t : std::pair<std::string, int64_t>{"", 0});
+              *name, t ? *t : std::pair<enzyme::TypeTreeAttr, int64_t>{{}, 0});
           if (!t || (!inserted && it->second != *t))
             ambiguous.insert(*name);
         });
@@ -892,7 +844,7 @@ struct FIRTypeAnnotationsPass
             locals.push_back(NamedAttribute(
                 StringAttr::get(ctx, entry.getKey()),
                 ArrayAttr::get(ctx,
-                               {StringAttr::get(ctx, entry.getValue().first),
+                               {entry.getValue().first,
                                 IntegerAttr::get(IntegerType::get(ctx, 64),
                                                  entry.getValue().second)})));
         llvm::sort(locals,
@@ -900,15 +852,17 @@ struct FIRTypeAnnotationsPass
                      return a.getName().strref() < b.getName().strref();
                    });
         if (!locals.empty())
-          fn->setAttr(kLocalTypesAttr, DictionaryAttr::get(ctx, locals));
+          fn->setAttr(FlangEnzymeDialect::getLocalTypesAttrName(),
+                      DictionaryAttr::get(ctx, locals));
       }
 
     // Character literals: character data throughout.
     for (fir::GlobalOp global : module.getOps<fir::GlobalOp>())
       if (annotateLiterals && isa<fir::CharacterType>(global.getType()) &&
-          !global->hasAttr(kTypeAttr))
-        global->setAttr(
-            kTypeAttr, StringAttr::get(ctx, "{[-1]:Pointer, [-1,-1]:Integer}"));
+          !global->hasAttr(enzyme::EnzymeDialect::getTypeTreeAttrName()))
+        global->setAttr(enzyme::EnzymeDialect::getTypeTreeAttrName(),
+                        buildTypeTree(ctx, {{{-1}, Scalar::pointer()},
+                                            {{-1, -1}, Scalar::integer()}}));
   }
 };
 
