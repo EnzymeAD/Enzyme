@@ -119,8 +119,7 @@ static enzyme::TypeTreeAttr buildTypeTree(MLIRContext *context,
     subtrees.push_back(buildTypeTree(context, begin, groupEnd, depth + 1));
     begin = groupEnd;
   }
-  return enzyme::TypeTreeAttr::get(context, kind, floatType, offsets,
-                                   subtrees);
+  return enzyme::TypeTreeAttr::get(context, kind, floatType, offsets, subtrees);
 }
 
 static enzyme::TypeTreeAttr buildTypeTree(MLIRContext *context,
