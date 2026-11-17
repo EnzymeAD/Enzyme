@@ -48,6 +48,11 @@ LogicalResult controlFlowForwardHandler(
 void branchingForwardHandler(Operation *op, OpBuilder &builder,
                              MGradientUtils *gutils);
 
+// Implements the forward pass of reverse mode for branching operations: a
+// branch into a block with pointer arguments also passes their shadows.
+LogicalResult branchingShadowHandler(Operation *op, OpBuilder &builder,
+                                     MGradientUtilsReverse *gutils);
+
 // Implements forward-mode differentiation of region-terminator operations.
 // Assumes that successive shadows are legal
 void regionTerminatorForwardHandler(Operation *op, OpBuilder &builder,
@@ -128,6 +133,29 @@ public:
   LogicalResult createShadowValues(Operation *op, OpBuilder &builder,
                                    MGradientUtilsReverse *gutils) const {
     return success();
+  }
+};
+
+// A branch has no adjoint of its own, but in the forward pass of reverse mode
+// it has to pass the shadow of every pointer its successors take.
+template <typename OpTy>
+class AutoDiffUsingBranchRev : public ReverseAutoDiffOpInterface::ExternalModel<
+                                   AutoDiffUsingBranchRev<OpTy>, OpTy> {
+public:
+  LogicalResult createReverseModeAdjoint(Operation *op, OpBuilder &builder,
+                                         MGradientUtilsReverse *gutils,
+                                         SmallVector<Value> caches) const {
+    return success();
+  }
+
+  SmallVector<Value> cacheValues(Operation *op,
+                                 MGradientUtilsReverse *gutils) const {
+    return SmallVector<Value>();
+  }
+
+  LogicalResult createShadowValues(Operation *op, OpBuilder &builder,
+                                   MGradientUtilsReverse *gutils) const {
+    return branchingShadowHandler(op, builder, gutils);
   }
 };
 
@@ -275,8 +303,7 @@ void registerAutoDiffUsingControlFlowInterface(MLIRContext &context) {
 template <typename OpTy>
 void registerAutoDiffUsingBranchInterface(MLIRContext &context) {
   OpTy::template attachInterface<detail::AutoDiffUsingBranch<OpTy>>(context);
-  OpTy::template attachInterface<detail::NoopRevAutoDiffInterface<OpTy>>(
-      context);
+  OpTy::template attachInterface<detail::AutoDiffUsingBranchRev<OpTy>>(context);
 }
 // Registers AutoDiffUsingRegionTerminator for the given op.
 template <typename OpTy>

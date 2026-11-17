@@ -130,7 +130,7 @@ void mlir::enzyme::detail::branchingForwardHandler(Operation *inst,
       auto arg =
           *binst.getSuccessorBlockArgument(ops.getBeginOperandIndex() + idx);
       newVals.push_back(gutils->getNewFromOriginal(op));
-      if (!gutils->isConstantValue(arg)) {
+      if (gutils->hasShadowArgument(arg)) {
         if (!gutils->isConstantValue(op)) {
           newVals.push_back(gutils->invertPointerM(op, builder));
         } else {
@@ -171,13 +171,30 @@ void mlir::enzyme::detail::branchingForwardHandler(Operation *inst,
     }
   }
 
-  gutils->getNewFromOriginal(inst->getBlock())
-      ->push_back(newInst->create(newInst->getLoc(), newInst->getName(),
-                                  TypeRange(), newVals, attrs,
-                                  mlir::PropertyRef(), newInst->getSuccessors(),
-                                  newInst->getNumRegions()));
+  Operation *newBranch = newInst->create(
+      newInst->getLoc(), newInst->getName(), TypeRange(), newVals, attrs,
+      mlir::PropertyRef(), newInst->getSuccessors(), newInst->getNumRegions());
+  gutils->getNewFromOriginal(inst->getBlock())->push_back(newBranch);
+  gutils->originalToNewFnOps[inst] = newBranch;
   gutils->erase(newInst);
   return;
+}
+
+LogicalResult mlir::enzyme::detail::branchingShadowHandler(
+    Operation *inst, OpBuilder &builder, MGradientUtilsReverse *gutils) {
+  // Rebuild the branch only when one of its successors takes a shadow.
+  auto binst = cast<BranchOpInterface>(inst);
+  for (unsigned i = 0, e = inst->getNumSuccessors(); i < e; ++i) {
+    auto ops = binst.getSuccessorOperands(i).getForwardedOperands();
+    for (unsigned idx = 0, n = ops.size(); idx < n; ++idx) {
+      if (gutils->hasShadowArgument(*binst.getSuccessorBlockArgument(
+              ops.getBeginOperandIndex() + idx))) {
+        branchingForwardHandler(inst, builder, gutils);
+        return success();
+      }
+    }
+  }
+  return success();
 }
 
 static bool contains(ArrayRef<int> ar, int v) {

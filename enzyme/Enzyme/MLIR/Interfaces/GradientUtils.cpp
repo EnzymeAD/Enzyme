@@ -131,6 +131,14 @@ bool mlir::enzyme::MGradientUtils::isConstantValue(Value v) const {
   return activityAnalyzer->isConstantValue(TR, v);
 }
 
+bool mlir::enzyme::MGradientUtils::hasShadowArgument(BlockArgument arg) const {
+  if (isConstantValue(arg))
+    return false;
+  return mode == DerivativeMode::ForwardMode ||
+         mode == DerivativeMode::ForwardModeSplit ||
+         cast<AutoDiffTypeInterface>(arg.getType()).isMutable();
+}
+
 mlir::Value mlir::enzyme::MGradientUtils::invertPointerM(mlir::Value v,
                                                          OpBuilder &Builder2) {
   // TODO
@@ -283,22 +291,13 @@ void mlir::enzyme::MGradientUtils::forceAugmentedReturns() {
       return;
     auto nblk = getNewFromOriginal(blk);
     for (auto val : llvm::reverse(blk->getArguments())) {
-      if (isConstantValue(val))
+      if (!hasShadowArgument(val))
         continue;
-      auto i = val.getArgNumber();
-      if (mode == DerivativeMode::ForwardMode ||
-          mode == DerivativeMode::ForwardModeSplit ||
-          cast<AutoDiffTypeInterface>(val.getType()).isMutable()) {
-        mlir::Value dval;
-        if (i == blk->getArguments().size() - 1)
-          dval = nblk->addArgument(getShadowType(val.getType()), val.getLoc());
-        else
-          dval =
-              nblk->insertArgument(nblk->args_begin() + i + 1,
-                                   getShadowType(val.getType()), val.getLoc());
-
-        invertedPointers.map(val, dval);
-      }
+      // Predecessor unchecked override of insertArgument as we fixed all
+      // predecessors later.
+      mlir::Value dval = nblk->insertArgument(
+          val.getArgNumber() + 1, getShadowType(val.getType()), val.getLoc());
+      invertedPointers.map(val, dval);
     }
   });
 

@@ -88,6 +88,10 @@ public:
   bool isConstantInstruction(mlir::Operation *v) const;
   bool isConstantValue(mlir::Value v) const;
 
+  /// Whether a block argument gets a shadow argument right after it: every
+  /// active one in forward mode, only the pointer-like ones in reverse mode.
+  bool hasShadowArgument(mlir::BlockArgument arg) const;
+
   /// The base allocation a pointer-like value views: view-like ops and LLVM
   /// geps and casts peeled away, the way LLVM's getUnderlyingObject does.
   static mlir::Value getBaseObject(mlir::Value v);
