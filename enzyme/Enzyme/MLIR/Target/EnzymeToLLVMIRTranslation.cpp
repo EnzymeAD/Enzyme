@@ -20,6 +20,7 @@
 
 #include "Dialect/Dialect.h"
 #include "Dialect/Ops.h"
+#include "TypeAnalysis/ConcreteType.h"
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/BuiltinAttributes.h"
@@ -27,84 +28,96 @@
 #include "mlir/Target/LLVMIR/LLVMTranslationInterface.h"
 #include "mlir/Target/LLVMIR/ModuleTranslation.h"
 
+#include "llvm/ADT/SmallString.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Metadata.h"
 
-#include "../../TypeAnalysis/ConcreteType.h"
-
-#include <map>
-
 using namespace mlir;
 using namespace mlir::enzyme;
 
-/// The name LLVM Enzyme gives the concrete type of `entry`
-/// (ConcreteType::str, e.g. "Float@double").
-static std::string
-concreteTypeName(TypeTreeEntryAttr entry,
-                 LLVM::ModuleTranslation &moduleTranslation) {
-  if (entry.getKind() != BaseType::Float)
-    return ConcreteType(entry.getKind()).str();
-  return ConcreteType(moduleTranslation.convertType(entry.getFloatType()))
-      .str();
+/// Print the concrete type of `node` as ConcreteType::str does, e.g.
+/// "Float@double".
+static void printConcreteType(raw_ostream &os, TypeTreeAttr node,
+                              LLVM::ModuleTranslation &moduleTranslation) {
+  switch (node.getKind()) {
+  case TypeTreeKind::Unknown:
+    os << ConcreteType(BaseType::Unknown).str();
+    return;
+  case TypeTreeKind::Integer:
+    os << ConcreteType(BaseType::Integer).str();
+    return;
+  case TypeTreeKind::Pointer:
+    os << ConcreteType(BaseType::Pointer).str();
+    return;
+  case TypeTreeKind::Anything:
+    os << ConcreteType(BaseType::Anything).str();
+    return;
+  case TypeTreeKind::Float:
+    os << ConcreteType(moduleTranslation.convertType(node.getFloatType()))
+              .str();
+    return;
+  }
+  llvm_unreachable("unknown type tree kind");
 }
 
-/// The type tree as TypeTree::str prints it, which TypeTree::parse reads from
-/// "enzyme_type" attributes: `{[-1]:Pointer, [-1,0]:Float@double}`.
-static std::string
-typeTreeToString(TypeTreeAttr tree,
-                 LLVM::ModuleTranslation &moduleTranslation) {
-  std::string out = "{";
-  llvm::raw_string_ostream os(out);
-  llvm::interleave(
-      tree.getEntries(), os,
-      [&](TypeTreeEntryAttr entry) {
-        os << '[';
-        llvm::interleave(entry.getPath(), os, ",");
-        os << "]:" << concreteTypeName(entry, moduleTranslation);
-      },
-      ", ");
-  os << '}';
-  return out;
-}
-
-/// The entries of `entries` (all with paths of at least `depth` offsets and
-/// the same first `depth` ones) in the encoding of TypeTree::toMD:
-/// !{!"<type at depth>", i32 <offset>, <subtree>, ...}, by ascending offset.
-static llvm::MDNode *typeTreeToMD(ArrayRef<TypeTreeEntryAttr> entries,
-                                  size_t depth,
+/// Convert `tree` to `!enzyme_type` metadata, in the encoding of
+/// TypeTree::toMD: !{!"<type>", i32 <offset>, <subtree>, ...}.
+static llvm::MDNode *typeTreeToMD(TypeTreeAttr tree,
                                   LLVM::ModuleTranslation &moduleTranslation) {
   llvm::LLVMContext &ctx = moduleTranslation.getLLVMContext();
-  std::string base = ConcreteType(BaseType::Unknown).str();
-  std::map<int64_t, SmallVector<TypeTreeEntryAttr>> children;
-  for (TypeTreeEntryAttr entry : entries) {
-    if (entry.getPath().size() == depth)
-      base = concreteTypeName(entry, moduleTranslation);
-    else
-      children[entry.getPath()[depth]].push_back(entry);
-  }
-  SmallVector<llvm::Metadata *> ops{llvm::MDString::get(ctx, base)};
-  for (const auto &[offset, sub] : children) {
+  SmallString<16> type;
+  llvm::raw_svector_ostream os(type);
+  printConcreteType(os, tree, moduleTranslation);
+  SmallVector<llvm::Metadata *> ops{llvm::MDString::get(ctx, type)};
+  for (auto [offset, subtree] :
+       llvm::zip(tree.getOffsets(), tree.getSubtrees())) {
     ops.push_back(llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(
         llvm::IntegerType::get(ctx, 32), offset, /*IsSigned=*/true)));
-    ops.push_back(typeTreeToMD(sub, depth + 1, moduleTranslation));
+    ops.push_back(typeTreeToMD(subtree, moduleTranslation));
   }
   return llvm::MDNode::get(ctx, ops);
 }
 
-static llvm::MDNode *typeTreeToMD(TypeTreeAttr tree,
-                                  LLVM::ModuleTranslation &moduleTranslation) {
-  return typeTreeToMD(tree.getEntries(), 0, moduleTranslation);
+/// Print `[<path>]:<type>` for each node of `tree` with a known type, where
+/// `path` holds the offsets leading to `tree`.
+static void printTypeTreeEntries(raw_ostream &os, TypeTreeAttr tree,
+                                 SmallVectorImpl<int64_t> &path,
+                                 llvm::ListSeparator &separator,
+                                 LLVM::ModuleTranslation &moduleTranslation) {
+  if (tree.getKind() != TypeTreeKind::Unknown) {
+    os << separator << '[';
+    llvm::interleave(path, os, ",");
+    os << "]:";
+    printConcreteType(os, tree, moduleTranslation);
+  }
+  for (auto [offset, subtree] :
+       llvm::zip(tree.getOffsets(), tree.getSubtrees())) {
+    path.push_back(offset);
+    printTypeTreeEntries(os, subtree, path, separator, moduleTranslation);
+    path.pop_back();
+  }
 }
 
+/// Convert `tree` to an "enzyme_type" attribute, in the syntax of
+/// TypeTree::str: `{[-1]:Pointer, [-1,0]:Float@double}`.
 static llvm::Attribute
 typeTreeToAttr(TypeTreeAttr tree, LLVM::ModuleTranslation &moduleTranslation) {
+  SmallString<64> str;
+  llvm::raw_svector_ostream os(str);
+  SmallVector<int64_t> path;
+  llvm::ListSeparator separator;
+  os << '{';
+  printTypeTreeEntries(os, tree, path, separator, moduleTranslation);
+  os << '}';
   return llvm::Attribute::get(moduleTranslation.getLLVMContext(), "enzyme_type",
-                              typeTreeToString(tree, moduleTranslation));
+                              str);
 }
 
 namespace {
+/// Translates the type tree attributes, which EnzymeDialect verifies.
 struct EnzymeDialectLLVMIRTranslationInterface
     : public LLVMTranslationDialectInterface {
   using LLVMTranslationDialectInterface::LLVMTranslationDialectInterface;
@@ -115,41 +128,36 @@ struct EnzymeDialectLLVMIRTranslationInterface
                  LLVM::ModuleTranslation &moduleTranslation) const final {
     StringRef name = attribute.getName();
     if (name == EnzymeDialect::getArgTypeTreesAttrName()) {
-      auto trees = dyn_cast<ArrayAttr>(attribute.getValue());
-      if (!trees)
-        return op->emitError() << name << " must be an array";
-      for (llvm::Instruction *inst : instructions)
-        if (auto *call = dyn_cast<llvm::CallBase>(inst))
-          for (auto [i, attr] : llvm::enumerate(trees))
-            if (auto tree = dyn_cast<TypeTreeAttr>(attr);
-                tree && i < call->arg_size())
-              call->addParamAttr(i, typeTreeToAttr(tree, moduleTranslation));
+      auto trees = cast<ArrayAttr>(attribute.getValue());
+      for (llvm::Instruction *inst : instructions) {
+        auto *call = dyn_cast<llvm::CallBase>(inst);
+        if (!call)
+          continue;
+        assert(trees.size() <= call->arg_size() &&
+               "more type trees than arguments");
+        for (auto [i, attr] : llvm::enumerate(trees))
+          if (auto tree = dyn_cast<TypeTreeAttr>(attr))
+            call->addParamAttr(i, typeTreeToAttr(tree, moduleTranslation));
+      }
       return success();
     }
     if (name == EnzymeDialect::getRetTypeTreesAttrName()) {
-      auto trees = dyn_cast<ArrayAttr>(attribute.getValue());
-      auto fn = dyn_cast<LLVM::LLVMFuncOp>(op);
-      if (!trees || !fn)
-        return op->emitError() << name << " must be an array on a function";
+      auto trees = cast<ArrayAttr>(attribute.getValue());
+      llvm::Function *fn = moduleTranslation.lookupFunction(
+          cast<LLVM::LLVMFuncOp>(op).getName());
+      assert(fn && "expected the function to be translated");
       // An LLVM function has at most one result.
-      if (trees.size() > 1)
-        return op->emitError() << name << " has more than one result";
-      llvm::Function *f = moduleTranslation.lookupFunction(fn.getName());
       if (auto tree =
-              trees.empty() ? TypeTreeAttr() : dyn_cast<TypeTreeAttr>(trees[0]);
-          tree && f && !f->getReturnType()->isVoidTy())
-        f->addRetAttr(typeTreeToAttr(tree, moduleTranslation));
+              trees.empty() ? TypeTreeAttr() : dyn_cast<TypeTreeAttr>(trees[0]))
+        fn->addRetAttr(typeTreeToAttr(tree, moduleTranslation));
       return success();
     }
     if (name != EnzymeDialect::getTypeTreeAttrName())
       return success();
-    auto tree = dyn_cast<TypeTreeAttr>(attribute.getValue());
-    if (!tree)
-      return op->emitError() << name << " must be a type tree";
+    auto tree = cast<TypeTreeAttr>(attribute.getValue());
     if (isa<LLVM::GlobalOp>(op)) {
-      if (auto *gv = dyn_cast_or_null<llvm::GlobalVariable>(
-              moduleTranslation.lookupGlobal(op)))
-        gv->setMetadata("enzyme_type", typeTreeToMD(tree, moduleTranslation));
+      cast<llvm::GlobalVariable>(moduleTranslation.lookupGlobal(op))
+          ->setMetadata("enzyme_type", typeTreeToMD(tree, moduleTranslation));
       return success();
     }
     for (llvm::Instruction *inst : instructions)
@@ -163,13 +171,11 @@ struct EnzymeDialectLLVMIRTranslationInterface
                        LLVM::ModuleTranslation &moduleTranslation) const final {
     if (attribute.getName() != EnzymeDialect::getTypeTreeAttrName())
       return success();
-    auto tree = dyn_cast<TypeTreeAttr>(attribute.getValue());
-    if (!tree)
-      return function.emitError()
-             << attribute.getName() << " must be a type tree";
-    if (llvm::Function *fn =
-            moduleTranslation.lookupFunction(function.getName()))
-      fn->addParamAttr(argIdx, typeTreeToAttr(tree, moduleTranslation));
+    llvm::Function *fn = moduleTranslation.lookupFunction(function.getName());
+    assert(fn && "expected the function to be translated");
+    fn->addParamAttr(argIdx,
+                     typeTreeToAttr(cast<TypeTreeAttr>(attribute.getValue()),
+                                    moduleTranslation));
     return success();
   }
 };

@@ -37,6 +37,19 @@ def ActivityAttr : EnumAttr<Enzyme_Dialect, Activity, "activity">{
   }];
 }
 
+def TypeTreeKind : I32EnumAttr<"TypeTreeKind",
+    "Concrete type of a type tree node",
+    [
+      I32EnumAttrCase<"Unknown", 0, "unknown">,
+      I32EnumAttrCase<"Integer", 1, "integer">,
+      I32EnumAttrCase<"Float", 2, "float">,
+      I32EnumAttrCase<"Pointer", 3, "pointer">,
+      I32EnumAttrCase<"Anything", 4, "anything">,
+    ]> {
+  let genSpecializedAttr = 0;
+  let cppNamespace = "::mlir::enzyme";
+}
+
 def AtomicOrdering : I32EnumAttr<"Ordering",
     "Atomic ordering for LLVM's memory model",
     [

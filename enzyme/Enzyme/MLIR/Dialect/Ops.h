@@ -23,17 +23,16 @@
 
 #include "mlir/Bytecode/BytecodeOpInterface.h"
 
-#include "../../TypeAnalysis/BaseType.h"
-
 #include "Dialect/EnzymeAttributeInterfaces.h.inc"
 #include "Dialect/EnzymeEnums.h.inc"
 
 namespace mlir {
 namespace enzyme {
-class TypeTreeEntryAttr;
+class TypeTreeAttr;
 namespace detail {
-/// Sort the entries of a type tree by path, as TypeTreeAttr keeps them.
-void sortTypeTreeEntries(llvm::SmallVectorImpl<TypeTreeEntryAttr> &entries);
+/// Sort the subtrees of a type tree node by offset, as TypeTreeAttr keeps them.
+void sortTypeTreeSubtrees(llvm::SmallVectorImpl<int64_t> &offsets,
+                          llvm::SmallVectorImpl<TypeTreeAttr> &subtrees);
 } // namespace detail
 } // namespace enzyme
 } // namespace mlir

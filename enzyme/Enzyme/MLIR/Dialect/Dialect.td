@@ -22,6 +22,8 @@ def Enzyme_Dialect : Dialect {
   let cppNamespace = "::mlir::enzyme";
   let useDefaultAttributePrinterParser = 1;
   let useDefaultTypePrinterParser = 1;
+  let hasOperationAttrVerify = 1;
+  let hasRegionArgAttrVerify = 1;
 
   // Canonicalizing an atomic accumulation of zero away leaves a plain load
   // behind, in whichever of these dialects the op was addressing memory in.

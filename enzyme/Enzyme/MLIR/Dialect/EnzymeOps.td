@@ -90,52 +90,38 @@ def ReturnOriginAttr : Enzyme_Attr<"ReturnOrigin", "retorigin", [OriginAttrInter
   let assemblyFormat = "`<` $function `(` $returnNumber `)` `>`";
 }
 
-// Storage for one entry of a #enzyme.type_tree: it has no syntax of its own
-// and only appears inside a type tree.
-def TypeTreeEntryAttr : AttrDef<Enzyme_Dialect, "TypeTreeEntry"> {
-  // No mnemonic: the entry has no syntax of its own.
-  let attrName = "enzyme.type_tree_entry";
-  let summary = "The concrete type at one offset path of a type tree";
-  let description = [{
-    `path` is a list of byte offsets, each into the memory that the previous
-    offset points to, where -1 means every offset. `kind` is the concrete type
-    there; for floats, `floatType` says which one (f32, f64, ...).
-  }];
-
-  let parameters = (ins
-    ArrayRefParameter<"int64_t">:$path,
-    "::BaseType":$kind,
-    OptionalParameter<"::mlir::Type">:$floatType
-  );
-
-  let genVerifyDecl = 1;
-}
-
 def TypeTreeAttr : Enzyme_Attr<"TypeTree", "type_tree"> {
   let summary = "Enzyme's type tree of a value";
   let description = [{
     The type tree that Enzyme's LLVM type analysis reads from `!enzyme_type`
-    metadata and `"enzyme_type"` attributes: the concrete type at each offset
-    path. Each entry is an offset path (byte offsets, each into the memory
-    that the previous offset points to, -1 for every offset) and the concrete
-    type there: `integer`, `pointer`, `anything`, or a floating-point type.
-    The entries are kept sorted by path; a path may appear only once.
+    metadata and `"enzyme_type"` attributes. A node has the concrete type of
+    the value, if known: `integer`, `pointer`, `anything`, or a floating-point
+    type. Its subtrees are the type trees of the memory that the value points
+    to, each at a byte offset, where -1 means every offset. The subtrees are
+    kept sorted by offset; an offset may appear only once.
 
     ```mlir
-    #enzyme.type_tree<[-1]: pointer, [-1, 0]: f64, [-1, 8]: integer>
+    #enzyme.type_tree<{-1: pointer {0: f64, 8: integer}}>
     ```
   }];
 
   let parameters = (ins
-    ArrayRefParameter<"::mlir::enzyme::TypeTreeEntryAttr">:$entries
+    "::mlir::enzyme::TypeTreeKind":$kind,
+    OptionalParameter<"::mlir::Type">:$floatType,
+    ArrayRefParameter<"int64_t">:$offsets,
+    ArrayRefParameter<"::mlir::enzyme::TypeTreeAttr">:$subtrees
   );
 
   let skipDefaultBuilders = 1;
   let builders = [
-    AttrBuilder<(ins "::llvm::ArrayRef<::mlir::enzyme::TypeTreeEntryAttr>":$entries), [{
-      ::llvm::SmallVector<::mlir::enzyme::TypeTreeEntryAttr> sorted(entries);
-      ::mlir::enzyme::detail::sortTypeTreeEntries(sorted);
-      return $_get($_ctxt, sorted);
+    AttrBuilder<(ins "::mlir::enzyme::TypeTreeKind":$kind,
+                     "::mlir::Type":$floatType,
+                     "::llvm::ArrayRef<int64_t>":$offsets,
+                     "::llvm::ArrayRef<::mlir::enzyme::TypeTreeAttr>":$subtrees), [{
+      ::llvm::SmallVector<int64_t> sortedOffsets(offsets);
+      ::llvm::SmallVector<::mlir::enzyme::TypeTreeAttr> sortedSubtrees(subtrees);
+      ::mlir::enzyme::detail::sortTypeTreeSubtrees(sortedOffsets, sortedSubtrees);
+      return $_get($_ctxt, kind, floatType, sortedOffsets, sortedSubtrees);
     }]>
   ];
 

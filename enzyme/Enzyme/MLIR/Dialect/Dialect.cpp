@@ -13,8 +13,9 @@
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/Interfaces/CallInterfaces.h"
+#include "mlir/Interfaces/FunctionInterfaces.h"
 #include "mlir/Transforms/InliningUtils.h"
-#include "llvm/ADT/StringSwitch.h"
 #include "llvm/ADT/TypeSwitch.h"
 
 #include "Dialect/EnzymeEnums.cpp.inc"
@@ -72,15 +73,70 @@ void EnzymeDialect::initialize() {
       >();
 }
 
-static bool typeTreePathLess(enzyme::TypeTreeEntryAttr a,
-                             enzyme::TypeTreeEntryAttr b) {
-  return std::lexicographical_compare(a.getPath().begin(), a.getPath().end(),
-                                      b.getPath().begin(), b.getPath().end());
+/// Verify that `attr` is an array with one type tree or `unit` for each of the
+/// `expected` arguments or results (`what`) of `op`.
+static LogicalResult verifyTypeTreeArray(Operation *op, NamedAttribute attr,
+                                         size_t expected, StringRef what) {
+  auto trees = dyn_cast<ArrayAttr>(attr.getValue());
+  if (!trees || !llvm::all_of(trees, [](Attribute tree) {
+        return isa<enzyme::TypeTreeAttr, UnitAttr>(tree);
+      }))
+    return op->emitError() << attr.getName().getValue()
+                           << " must be an array of type trees or unit";
+  if (trees.size() != expected)
+    return op->emitError() << attr.getName().getValue() << " has "
+                           << trees.size() << " entries for " << expected << ' '
+                           << what;
+  return success();
 }
 
-void enzyme::detail::sortTypeTreeEntries(
-    SmallVectorImpl<TypeTreeEntryAttr> &entries) {
-  llvm::stable_sort(entries, typeTreePathLess);
+LogicalResult EnzymeDialect::verifyOperationAttribute(Operation *op,
+                                                      NamedAttribute attr) {
+  StringRef name = attr.getName();
+  if (name == getTypeTreeAttrName()) {
+    if (!isa<TypeTreeAttr>(attr.getValue()))
+      return op->emitError() << name << " must be a type tree";
+    return success();
+  }
+  if (name == getArgTypeTreesAttrName()) {
+    auto call = dyn_cast<CallOpInterface>(op);
+    if (!call)
+      return op->emitError() << name << " only applies to calls";
+    return verifyTypeTreeArray(op, attr, call.getArgOperands().size(),
+                               "arguments");
+  }
+  if (name == getRetTypeTreesAttrName()) {
+    auto function = dyn_cast<FunctionOpInterface>(op);
+    if (!function)
+      return op->emitError() << name << " only applies to functions";
+    return verifyTypeTreeArray(op, attr, function.getNumResults(), "results");
+  }
+  return success();
+}
+
+LogicalResult EnzymeDialect::verifyRegionArgAttribute(Operation *op,
+                                                      unsigned /*regionIndex*/,
+                                                      unsigned /*argIndex*/,
+                                                      NamedAttribute attr) {
+  if (attr.getName() == getTypeTreeAttrName() &&
+      !isa<TypeTreeAttr>(attr.getValue()))
+    return op->emitError() << attr.getName().getValue()
+                           << " must be a type tree";
+  return success();
+}
+
+void enzyme::detail::sortTypeTreeSubtrees(
+    SmallVectorImpl<int64_t> &offsets,
+    SmallVectorImpl<TypeTreeAttr> &subtrees) {
+  assert(offsets.size() == subtrees.size() && "expected an offset per subtree");
+  SmallVector<std::pair<int64_t, TypeTreeAttr>> children;
+  for (auto [offset, subtree] : llvm::zip(offsets, subtrees))
+    children.emplace_back(offset, subtree);
+  llvm::stable_sort(children, llvm::less_first());
+  for (auto [i, child] : llvm::enumerate(children)) {
+    offsets[i] = child.first;
+    subtrees[i] = child.second;
+  }
 }
 
 #define GET_ATTRDEF_CLASSES
@@ -91,103 +147,98 @@ void enzyme::detail::sortTypeTreeEntries(
 //===----------------------------------------------------------------------===//
 
 LogicalResult
-enzyme::TypeTreeEntryAttr::verify(function_ref<InFlightDiagnostic()> emitError,
-                                  ArrayRef<int64_t> path, BaseType kind,
-                                  Type floatType) {
-  if (kind == BaseType::Unknown)
-    return emitError() << "a type tree entry must have a known type";
-  if ((kind == BaseType::Float) != isa_and_nonnull<FloatType>(floatType))
-    return emitError() << "a type tree entry has a floating-point type "
-                          "exactly if it is a float";
-  for (int64_t off : path)
-    if (off < -1)
-      return emitError() << "type tree offset " << off << " is below -1";
-  return success();
-}
-
-LogicalResult
 enzyme::TypeTreeAttr::verify(function_ref<InFlightDiagnostic()> emitError,
-                             ArrayRef<TypeTreeEntryAttr> entries) {
-  if (entries.empty())
-    return success();
-  for (auto [prev, next] : llvm::zip(entries, entries.drop_front())) {
-    if (typeTreePathLess(next, prev))
-      return emitError() << "type tree entries must be sorted by path";
-    if (!typeTreePathLess(prev, next))
-      return emitError() << "type tree path [" << prev.getPath()
-                         << "] appears more than once";
+                             TypeTreeKind kind, Type floatType,
+                             ArrayRef<int64_t> offsets,
+                             ArrayRef<TypeTreeAttr> subtrees) {
+  assert(offsets.size() == subtrees.size() && "expected an offset per subtree");
+  assert(llvm::is_sorted(offsets) &&
+         "expected the builder or parser to sort the subtrees");
+  if ((kind == TypeTreeKind::Float) != isa_and_nonnull<FloatType>(floatType))
+    return emitError() << "a type tree node has a floating-point type "
+                          "exactly if it is a float";
+  for (auto [offset, subtree] : llvm::zip(offsets, subtrees)) {
+    if (offset < -1)
+      return emitError() << "type tree offset " << offset << " is below -1";
+    if (subtree.getKind() == TypeTreeKind::Unknown &&
+        subtree.getSubtrees().empty())
+      return emitError() << "type tree is empty at offset " << offset;
   }
+  const int64_t *duplicate = std::adjacent_find(offsets.begin(), offsets.end());
+  if (duplicate != offsets.end())
+    return emitError() << "type tree offset " << *duplicate
+                       << " appears more than once";
   return success();
 }
 
-/// `[<offset>, ...]: <type>`, where <type> is integer, pointer, anything, or
-/// a floating-point type.
-static ParseResult parseTypeTreeEntry(AsmParser &parser,
-                                      enzyme::TypeTreeEntryAttr &entry) {
+/// Parse a type tree node `[<type>] [{<offset>: <node>, ...}]`, where <type>
+/// is integer, pointer, anything, or a floating-point type.
+static enzyme::TypeTreeAttr parseTypeTreeNode(AsmParser &parser) {
   SMLoc loc = parser.getCurrentLocation();
-  SmallVector<int64_t> path;
-  if (parser.parseCommaSeparatedList(
-          AsmParser::Delimiter::Square,
-          [&]() { return parser.parseInteger(path.emplace_back()); }) ||
-      parser.parseColon())
-    return failure();
-  BaseType kind = BaseType::Float;
+  TypeTreeKind kind = TypeTreeKind::Unknown;
   Type floatType;
   StringRef keyword;
   if (succeeded(parser.parseOptionalKeyword(
-          &keyword, {"integer", "pointer", "anything"})))
-    kind = llvm::StringSwitch<BaseType>(keyword)
-               .Case("integer", BaseType::Integer)
-               .Case("pointer", BaseType::Pointer)
-               .Default(BaseType::Anything);
-  else if (parser.parseType(floatType))
-    return failure();
-  entry = enzyme::TypeTreeEntryAttr::getChecked(
-      [&]() { return parser.emitError(loc); }, parser.getContext(), path, kind,
-      floatType);
-  return success(static_cast<bool>(entry));
+          &keyword, {"integer", "pointer", "anything"}))) {
+    kind = *symbolizeTypeTreeKind(keyword);
+  } else {
+    OptionalParseResult result = parser.parseOptionalType(floatType);
+    if (result.has_value()) {
+      if (failed(*result))
+        return {};
+      kind = TypeTreeKind::Float;
+    }
+  }
+  SmallVector<int64_t> offsets;
+  SmallVector<enzyme::TypeTreeAttr> subtrees;
+  if (parser.parseCommaSeparatedList(
+          AsmParser::Delimiter::OptionalBraces, [&]() -> ParseResult {
+            if (parser.parseInteger(offsets.emplace_back()) ||
+                parser.parseColon())
+              return failure();
+            enzyme::TypeTreeAttr subtree = parseTypeTreeNode(parser);
+            if (!subtree)
+              return failure();
+            subtrees.push_back(subtree);
+            return success();
+          }))
+    return {};
+  enzyme::detail::sortTypeTreeSubtrees(offsets, subtrees);
+  return enzyme::TypeTreeAttr::getChecked(
+      [&]() { return parser.emitError(loc); }, parser.getContext(), kind,
+      floatType, offsets, subtrees);
 }
 
-static void printTypeTreeEntry(AsmPrinter &printer,
-                               enzyme::TypeTreeEntryAttr entry) {
-  printer << "[";
-  llvm::interleaveComma(entry.getPath(), printer);
-  printer << "]: ";
-  switch (entry.getKind()) {
-  case BaseType::Integer:
-    printer << "integer";
-    break;
-  case BaseType::Pointer:
-    printer << "pointer";
-    break;
-  case BaseType::Anything:
-    printer << "anything";
-    break;
-  case BaseType::Float:
-    printer << entry.getFloatType();
-    break;
-  case BaseType::Unknown:
-    llvm_unreachable("verified to be known");
-  }
+/// Print a type tree node in the syntax that parseTypeTreeNode reads.
+static void printTypeTreeNode(AsmPrinter &printer, enzyme::TypeTreeAttr node) {
+  if (node.getKind() == TypeTreeKind::Float)
+    printer << node.getFloatType();
+  else if (node.getKind() != TypeTreeKind::Unknown)
+    printer << stringifyTypeTreeKind(node.getKind());
+  if (node.getSubtrees().empty())
+    return;
+  if (node.getKind() != TypeTreeKind::Unknown)
+    printer << ' ';
+  printer << '{';
+  llvm::interleaveComma(llvm::zip(node.getOffsets(), node.getSubtrees()),
+                        printer, [&](auto child) {
+                          printer << std::get<0>(child) << ": ";
+                          printTypeTreeNode(printer, std::get<1>(child));
+                        });
+  printer << '}';
 }
 
 Attribute enzyme::TypeTreeAttr::parse(AsmParser &parser, Type) {
-  SMLoc loc = parser.getCurrentLocation();
-  SmallVector<TypeTreeEntryAttr> entries;
-  if (parser.parseCommaSeparatedList(AsmParser::Delimiter::LessGreater, [&]() {
-        return parseTypeTreeEntry(parser, entries.emplace_back());
-      }))
+  if (parser.parseLess())
     return {};
-  // getChecked does not go through the sorting builder.
-  detail::sortTypeTreeEntries(entries);
-  return TypeTreeAttr::getChecked([&]() { return parser.emitError(loc); },
-                                  parser.getContext(), entries);
+  TypeTreeAttr tree = parseTypeTreeNode(parser);
+  if (!tree || parser.parseGreater())
+    return {};
+  return tree;
 }
 
 void enzyme::TypeTreeAttr::print(AsmPrinter &printer) const {
-  printer << "<";
-  llvm::interleaveComma(getEntries(), printer, [&](TypeTreeEntryAttr entry) {
-    printTypeTreeEntry(printer, entry);
-  });
-  printer << ">";
+  printer << '<';
+  printTypeTreeNode(printer, *this);
+  printer << '>';
 }

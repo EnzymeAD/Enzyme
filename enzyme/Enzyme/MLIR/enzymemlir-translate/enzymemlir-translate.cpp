@@ -103,8 +103,8 @@ int main(int argc, char **argv) {
             });
       });
 
-  // The enzyme dialect's own translation (its type trees), separate from the
-  // activity annotations above: a dialect has one translation interface.
+  // Not part of activity-to-llvm: a dialect can only have one LLVM translation
+  // interface.
   mlir::TranslateFromMLIRRegistration enzymeToLLVMIR(
       "enzyme-to-llvmir", "Translate MLIR with enzyme attributes to LLVM IR",
       [](mlir::Operation *op, llvm::raw_ostream &output) {
@@ -117,7 +117,7 @@ int main(int argc, char **argv) {
         return success();
       },
       [](mlir::DialectRegistry &registry) {
-        registry.insert<DLTIDialect, func::FuncDialect>();
+        registry.insert<DLTIDialect>();
         registerAllToLLVMIRTranslations(registry);
         enzyme::registerEnzymeDialectTranslation(registry);
       });
