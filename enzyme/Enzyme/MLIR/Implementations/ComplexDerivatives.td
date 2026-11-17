@@ -7,6 +7,19 @@ def : MLIRDerivative<"complex", "AddOp", (Op $x, $y),
                     ]
                   >;
 
+def : MLIRDerivative<"complex", "SubOp", (Op $x, $y),
+                    [
+                      (DiffeRet),
+                      (ComplexNeg(DiffeRet)),
+                    ]
+                  >;
+
+def : MLIRDerivative<"complex", "NegOp", (Op $x),
+                    [
+                      (ComplexNeg (DiffeRet))
+                    ]
+                  >;
+
 def : MLIRDerivative<"complex", "MulOp", (Op $x, $y),
                     [
                       (CheckedComplexMul (DiffeRet), $y),

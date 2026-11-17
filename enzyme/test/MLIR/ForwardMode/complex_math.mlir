@@ -283,3 +283,39 @@ func.func @dabs(%x: complex<f64>, %dx: complex<f64>) -> f64 {
 // CHECK-NEXT:    %{{.+}} = complex.abs %[[x]] : complex<f64>
 // CHECK-NEXT:    return %[[res]] : f64
 // CHECK-NEXT:  }
+
+// -----
+
+func.func @neg(%x: complex<f64>) -> complex<f64> {
+  %res = complex.neg %x : complex<f64>
+  return %res : complex<f64>
+}
+
+func.func @dneg(%x: complex<f64>, %dx: complex<f64>) -> complex<f64> {
+  %0 = enzyme.fwddiff @neg(%x, %dx) <{ activity=[#enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] }> : (complex<f64>, complex<f64>) -> complex<f64>
+  return %0 : complex<f64>
+}
+
+
+// CHECK: func.func private @fwddiffeneg(%[[x:.+]]: complex<f64>, %[[dx:.+]]: complex<f64>) -> complex<f64> {
+// CHECK-NEXT:    %[[res:.+]] = complex.neg %[[dx]] fastmath<fast> : complex<f64>
+// CHECK-NEXT:    %{{.+}} = complex.neg %[[x]] : complex<f64>
+// CHECK-NEXT:    return %[[res]] : complex<f64>
+
+// -----
+
+func.func @sub(%x: complex<f64>, %y: complex<f64>) -> complex<f64> {
+  %res = complex.sub %x, %y : complex<f64>
+  return %res : complex<f64>
+}
+
+func.func @dsub(%x: complex<f64>, %dx: complex<f64>, %y: complex<f64>, %dy: complex<f64>) -> complex<f64> {
+  %0 = enzyme.fwddiff @sub(%x, %dx, %y, %dy) <{ activity=[#enzyme.activity<enzyme_dup>, #enzyme.activity<enzyme_dup>], ret_activity=[#enzyme.activity<enzyme_dupnoneed>] }> : (complex<f64>, complex<f64>, complex<f64>, complex<f64>) -> complex<f64>
+  return %0 : complex<f64>
+}
+
+// CHECK: func.func private @fwddiffesub(%[[x:.+]]: complex<f64>, %[[dx:.+]]: complex<f64>, %[[y:.+]]: complex<f64>, %[[dy:.+]]: complex<f64>) -> complex<f64> {
+// CHECK-NEXT:    %[[negdy:.+]] = complex.neg %[[dy]] fastmath<fast> : complex<f64>
+// CHECK-NEXT:    %[[res:.+]] = complex.add %[[dx]], %[[negdy]] fastmath<fast> : complex<f64>
+// CHECK-NEXT:    %{{.+}} = complex.sub %[[x]], %[[y]] : complex<f64>
+// CHECK-NEXT:    return %[[res]] : complex<f64>

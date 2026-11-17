@@ -293,3 +293,40 @@ func.func @dabs(%x: complex<f64>, %dr: f64) -> complex<f64> {
 // CHECK-NEXT:    %[[g:.+]] = complex.create %[[re]], %[[im]] : complex<f64>
 // CHECK-NEXT:    %[[res:.+]] = complex.conj %[[g]] : complex<f64>
 // CHECK-NEXT:    return %[[res]] : complex<f64>
+
+// -----
+
+func.func @neg(%x: complex<f64>) -> complex<f64> {
+  %res = complex.neg %x : complex<f64>
+  return %res : complex<f64>
+}
+
+func.func @dneg(%x: complex<f64>, %dr: complex<f64>) -> complex<f64> {
+  %0 = enzyme.autodiff @neg(%x, %dr) <{ activity=[#enzyme.activity<enzyme_active>], ret_activity=[#enzyme.activity<enzyme_activenoneed>] }> : (complex<f64>, complex<f64>) -> complex<f64>
+  return %0 : complex<f64>
+}
+
+
+// CHECK: func.func private @diffeneg(%[[x:.+]]: complex<f64>, %[[dr:.+]]: complex<f64>) -> complex<f64> {
+// CHECK-NEXT:    %[[cdr:.+]] = complex.conj %[[dr]] : complex<f64>
+// CHECK-NEXT:    %[[g:.+]] = complex.neg %[[cdr]] fastmath<fast> : complex<f64>
+// CHECK-NEXT:    %[[res:.+]] = complex.conj %[[g]] : complex<f64>
+// CHECK-NEXT:    return %[[res]] : complex<f64>
+
+// -----
+
+func.func @sub(%x: complex<f64>, %y: complex<f64>) -> complex<f64> {
+  %res = complex.sub %x, %y : complex<f64>
+  return %res : complex<f64>
+}
+
+func.func @dsub(%x: complex<f64>, %y: complex<f64>, %dr: complex<f64>) -> (complex<f64>, complex<f64>) {
+  %0:2 = enzyme.autodiff @sub(%x, %y, %dr) <{ activity=[#enzyme.activity<enzyme_active>, #enzyme.activity<enzyme_active>], ret_activity=[#enzyme.activity<enzyme_activenoneed>] }> : (complex<f64>, complex<f64>, complex<f64>) -> (complex<f64>, complex<f64>)
+  return %0#0, %0#1 : complex<f64>, complex<f64>
+}
+
+// CHECK: func.func private @diffesub(%[[x:.+]]: complex<f64>, %[[y:.+]]: complex<f64>, %[[dr:.+]]: complex<f64>) -> (complex<f64>, complex<f64>) {
+// CHECK-NEXT:    %[[cdr:.+]] = complex.conj %[[dr]] : complex<f64>
+// CHECK-NEXT:    %[[g:.+]] = complex.neg %[[cdr]] fastmath<fast> : complex<f64>
+// CHECK-NEXT:    %[[dy:.+]] = complex.conj %[[g]] : complex<f64>
+// CHECK-NEXT:    return %[[dr]], %[[dy]] : complex<f64>, complex<f64>
