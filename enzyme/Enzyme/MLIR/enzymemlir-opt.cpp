@@ -89,6 +89,24 @@ int main(int argc, char **argv) {
   mlir::registerCIRCanonicalize();
   mlir::registerCIRFlattenCFG();
   mlir::registerCIRSimplify();
+
+  // What `clang -fclangir -emit-cir` gives, to ClangIR with every
+  // __enzyme_autodiff/__enzyme_fwddiff call differentiated, for cir-translate.
+  // The calls are raised first, so that canonicalize sees the enzyme ops and
+  // drops the results the program never uses.
+  mlir::PassPipelineRegistration<>(
+      "cir-autodiff-pipeline",
+      "Differentiate the __enzyme_* calls of a ClangIR module and lower the "
+      "result back to ClangIR",
+      [](OpPassManager &pm) {
+        std::string error;
+        llvm::raw_string_ostream os(error);
+        if (failed(parsePassPipeline(
+                "cir-flatten-cfg,cir-raise-enzyme-calls,mem2reg,canonicalize,"
+                "enzyme,mem2reg,canonicalize,convert-enzyme-to-cir",
+                pm, os)))
+          llvm::report_fatal_error(llvm::Twine(error));
+      });
 #endif
 
   mlir::enzyme::registerenzymePasses();
