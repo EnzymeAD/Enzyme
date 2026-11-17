@@ -2420,6 +2420,24 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantValue(MTypeResults const &TR,
       // through cast operations.
       bool mayRead = mayReadFromMemory(op);
       bool mayWrite = mayWriteToMemory(op);
+
+      // Basic AA.getModRefInfo
+      auto memOp = dyn_cast<MemoryEffectOpInterface>(op);
+      auto valTy = dyn_cast<AutoDiffTypeInterface>(Val.getType());
+      if (memOp && valTy && valTy.isMutable() &&
+          !op->hasTrait<OpTrait::HasRecursiveMemoryEffects>()) {
+        SmallVector<MemoryEffects::EffectInstance> effects;
+        memOp.getEffects(effects);
+        bool readsVal = false, writesVal = false;
+        for (MemoryEffects::EffectInstance &effect : effects) {
+          if (!oputils::mayAlias(effect, Val))
+            continue;
+          readsVal |= isa<MemoryEffects::Read>(effect.getEffect());
+          writesVal |= isa<MemoryEffects::Write>(effect.getEffect());
+        }
+        mayRead &= readsVal;
+        mayWrite &= writesVal;
+      }
       llvm::ModRefInfo modRef =
           mayRead
               ? (mayWrite ? llvm::ModRefInfo::ModRef : llvm::ModRefInfo::Ref)

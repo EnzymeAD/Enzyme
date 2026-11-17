@@ -55,15 +55,15 @@ func.func @integer_stack(%x: i64) -> i64 {
 
 // -----
 
-// Keep a constant store inactive alongside an active store. The legacy activity
-// analysis conservatively keeps both floating-point slots and loads active.
+// Keep a constant store inactive alongside an active store. The active store
+// cannot reach the other stack slot, so that slot and its load stay constant.
 // CHECK-LABEL: func.func @independent_stack_slots(
 // CHECK: memref.alloca() {enzyme.ici = true, enzyme.res_icv0 = false}
-// CHECK: memref.alloca() {enzyme.ici = true, enzyme.res_icv0 = false}
+// CHECK: memref.alloca() {enzyme.ici = true, enzyme.res_icv0 = true}
 // CHECK: memref.store {{.*}}enzyme.ici = false
 // CHECK: memref.store {{.*}}enzyme.ici = true
 // CHECK: memref.load {{.*}}enzyme.ici = false, enzyme.res_icv0 = false
-// CHECK: memref.load {{.*}}enzyme.ici = false, enzyme.res_icv0 = false
+// CHECK: memref.load {{.*}}enzyme.ici = true, enzyme.res_icv0 = true
 // DATAFLOW-LABEL: @independent_stack_slots:
 // DATAFLOW: "active_load": Active
 // DATAFLOW: "constant_load": Constant
