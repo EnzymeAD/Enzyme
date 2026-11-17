@@ -14,7 +14,6 @@
 #include "Interfaces/OffsetViewInterface.h"
 #include "Passes/Utils.h"
 #include "mlir/Analysis/AliasAnalysis.h"
-#include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
@@ -53,18 +52,8 @@ bool isCaptured(Value v, Operation *potentialUser, bool *seenuse) {
         *seenuse = true;
       if (isa<enzyme::LoadLikeInterface>(u))
         continue;
-      if (auto s = dyn_cast<memref::StoreOp>(u)) {
-        if (s.getValue() == v)
-          return true;
-        continue;
-      }
-      if (auto s = dyn_cast<affine::AffineStoreOp>(u)) {
-        if (s.getValue() == v)
-          return true;
-        continue;
-      }
-      if (auto s = dyn_cast<LLVM::StoreOp>(u)) {
-        if (s.getValue() == v)
+      if (auto s = dyn_cast<enzyme::StoreLikeInterface>(u)) {
+        if (s.getStoredValue() == v)
           return true;
         continue;
       }
