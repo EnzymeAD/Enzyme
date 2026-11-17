@@ -178,6 +178,8 @@ Attribute enzyme::TypeTreeAttr::parse(AsmParser &parser, Type) {
         return parseTypeTreeEntry(parser, entries.emplace_back());
       }))
     return {};
+  // getChecked does not go through the sorting builder.
+  detail::sortTypeTreeEntries(entries);
   return TypeTreeAttr::getChecked([&]() { return parser.emitError(loc); },
                                   parser.getContext(), entries);
 }
