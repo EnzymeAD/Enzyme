@@ -3451,7 +3451,7 @@ bool mlir::enzyme::ActivityAnalyzer::isValueInactiveFromUsers(
 
       if (Operation *F = getFunctionFromCall(call)) {
         if (UA == UseActivity::AllStores &&
-            cast<SymbolOpInterface>(F).getName() == "julia.write_barrier")
+            isJuliaWriteBarrier(cast<SymbolOpInterface>(F).getName()))
           continue;
 
       } else if (PUA == UseActivity::None || PUA == UseActivity::OnlyStores) {

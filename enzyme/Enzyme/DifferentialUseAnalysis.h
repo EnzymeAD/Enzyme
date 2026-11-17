@@ -315,8 +315,7 @@ inline bool is_value_needed_in_reverse(
         isStoredAddress = inst == MS->getDest();
       } else if (auto CB = dyn_cast<CallBase>(user)) {
         auto name = getFuncNameFromCall(CB);
-        if (name == "julia.write_barrier" ||
-            name == "julia.write_barrier_binding") {
+        if (isJuliaWriteBarrier(name)) {
           auto sz = CB->arg_size();
           // First pointer is the destination
           for (size_t i = 1; i < sz; i++)

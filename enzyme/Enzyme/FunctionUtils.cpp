@@ -512,10 +512,8 @@ void RecursivelyReplaceAddressSpace(
                 getPointerType(StructType::get(SI->getContext(), {}), 10);
             auto FT = FunctionType::get(Type::getVoidTy(rep->getContext()),
                                         {JLT}, true);
-            auto wb = B.GetInsertBlock()
-                          ->getParent()
-                          ->getParent()
-                          ->getOrInsertFunction("julia.write_barrier", FT);
+            auto wb = getJuliaObjectWriteBarrier(
+                *B.GetInsertBlock()->getParent()->getParent(), FT);
             auto obj = getBaseObject(rep);
             assert(obj->getType() == JLT);
             subvals.insert(subvals.begin(), obj);
@@ -567,12 +565,7 @@ void RecursivelyReplaceAddressSpace(
     }
     if (auto CI = dyn_cast<CallInst>(inst)) {
       if (auto F = CI->getCalledFunction()) {
-        if (F->getName() == "julia.write_barrier" && legal) {
-          assert(CI);
-          toErase.push_back(CI);
-          continue;
-        }
-        if (F->getName() == "julia.write_barrier_binding" && legal) {
+        if (isJuliaWriteBarrier(F->getName()) && legal) {
           assert(CI);
           toErase.push_back(CI);
           continue;
@@ -1988,7 +1981,7 @@ bool DetectPointerArgOfFn(llvm::Function &F,
 
           auto name = getFuncNameFromCall(CB);
 
-          if (name == "julia.write_barrier") {
+          if (isJuliaWriteBarrier(name)) {
             continue;
           }
 
@@ -2419,7 +2412,7 @@ bool ReadOnlyOrThrowDetector::fieldOnlyHoldsFreshData(Instruction *Obj,
       }
       if (auto CB = dyn_cast<CallBase>(I)) {
         auto name = getFuncNameFromCall(CB);
-        if (name == "julia.write_barrier")
+        if (isJuliaWriteBarrier(name))
           continue;
         if (CB->isLifetimeStartOrEnd() ||
             isDebugFunction(CB->getCalledFunction()))
@@ -2744,7 +2737,7 @@ bool ReadOnlyOrThrowDetector::mayReachReturn(Value *Obj, bool Deep,
             isDebugFunction(CB->getCalledFunction()) ||
             isDeallocationCall(CB, TLI))
           continue;
-        if (getFuncNameFromCall(CB) == "julia.write_barrier")
+        if (isJuliaWriteBarrier(getFuncNameFromCall(CB)))
           continue;
         if (!mayHandBackPointer(CB))
           continue;
@@ -2848,7 +2841,7 @@ bool ReadOnlyOrThrowDetector::freshFieldMayReachReturn(Value *Base,
             isDeallocationCall(CB, TLI))
           continue;
         auto name = getFuncNameFromCall(CB);
-        if (name == "julia.write_barrier")
+        if (isJuliaWriteBarrier(name))
           continue;
         // julia.gc_loaded(obj, ptr) returns ptr, keeping obj alive: passing
         // Base as the object hands back nothing loaded from it (a load of the
@@ -3090,7 +3083,7 @@ bool ReadOnlyOrThrowDetector::run() {
             continue;
           if (isMemFreeLibMFunction(getFuncNameFromCall(CI)))
             continue;
-          if (F2->getName() == "julia.write_barrier" ||
+          if (isJuliaWriteBarrier(F2->getName()) ||
               isRustNoAllocShimFunction(F2->getName()))
             continue;
           if (F2->getCallingConv() == CI->getCallingConv()) {
