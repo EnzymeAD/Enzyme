@@ -72,6 +72,17 @@ void EnzymeDialect::initialize() {
       >();
 }
 
+static bool typeTreePathLess(enzyme::TypeTreeEntryAttr a,
+                             enzyme::TypeTreeEntryAttr b) {
+  return std::lexicographical_compare(a.getPath().begin(), a.getPath().end(),
+                                      b.getPath().begin(), b.getPath().end());
+}
+
+void enzyme::detail::sortTypeTreeEntries(
+    SmallVectorImpl<TypeTreeEntryAttr> &entries) {
+  llvm::stable_sort(entries, typeTreePathLess);
+}
+
 #define GET_ATTRDEF_CLASSES
 #include "Dialect/EnzymeAttributes.cpp.inc"
 
@@ -99,11 +110,13 @@ enzyme::TypeTreeAttr::verify(function_ref<InFlightDiagnostic()> emitError,
                              ArrayRef<TypeTreeEntryAttr> entries) {
   if (entries.empty())
     return success();
-  for (auto [prev, next] : llvm::zip(entries, entries.drop_front()))
-    if (!std::lexicographical_compare(
-            prev.getPath().begin(), prev.getPath().end(),
-            next.getPath().begin(), next.getPath().end()))
-      return emitError() << "type tree paths must be unique and ordered";
+  for (auto [prev, next] : llvm::zip(entries, entries.drop_front())) {
+    if (typeTreePathLess(next, prev))
+      return emitError() << "type tree entries must be sorted by path";
+    if (!typeTreePathLess(prev, next))
+      return emitError() << "type tree path [" << prev.getPath()
+                         << "] appears more than once";
+  }
   return success();
 }
 
@@ -156,20 +169,6 @@ static void printTypeTreeEntry(AsmPrinter &printer,
   case BaseType::Unknown:
     llvm_unreachable("verified to be known");
   }
-}
-
-Attribute enzyme::TypeTreeEntryAttr::parse(AsmParser &parser, Type) {
-  TypeTreeEntryAttr entry;
-  if (parser.parseLess() || parseTypeTreeEntry(parser, entry) ||
-      parser.parseGreater())
-    return {};
-  return entry;
-}
-
-void enzyme::TypeTreeEntryAttr::print(AsmPrinter &printer) const {
-  printer << "<";
-  printTypeTreeEntry(printer, *this);
-  printer << ">";
 }
 
 Attribute enzyme::TypeTreeAttr::parse(AsmParser &parser, Type) {

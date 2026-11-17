@@ -28,6 +28,16 @@
 #include "Dialect/EnzymeAttributeInterfaces.h.inc"
 #include "Dialect/EnzymeEnums.h.inc"
 
+namespace mlir {
+namespace enzyme {
+class TypeTreeEntryAttr;
+namespace detail {
+/// Sort the entries of a type tree by path, as TypeTreeAttr keeps them.
+void sortTypeTreeEntries(llvm::SmallVectorImpl<TypeTreeEntryAttr> &entries);
+} // namespace detail
+} // namespace enzyme
+} // namespace mlir
+
 #define GET_ATTRDEF_CLASSES
 #include "Dialect/EnzymeAttributes.h.inc"
 

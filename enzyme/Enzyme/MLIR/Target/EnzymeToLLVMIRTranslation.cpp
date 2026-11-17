@@ -12,9 +12,7 @@
 //     memory; on another op: `!enzyme_type` on each instruction it became;
 //     on a function argument: its `"enzyme_type"` attribute.
 //   - enzyme.arg_types on a call: the `"enzyme_type"` of each argument.
-//   - enzyme.ret_type on a function: the `"enzyme_type"` of its result.
-//   - enzyme.local_types on a function: `!enzyme_type` on the alloca of each
-//     local variable, by name, if its size matches.
+//   - enzyme.ret_types on a function: the `"enzyme_type"` of its result.
 //
 //===----------------------------------------------------------------------===//
 
@@ -106,33 +104,6 @@ typeTreeToAttr(TypeTreeAttr tree, LLVM::ModuleTranslation &moduleTranslation) {
                               typeTreeToString(tree, moduleTranslation));
 }
 
-/// Mark each alloca of `function` that is a local variable listed in `locals`
-/// (name -> [type tree, size in bytes or -1 if not constant]), if its size is
-/// that of the variable.
-static void annotateLocals(Operation *function, DictionaryAttr locals,
-                           LLVM::ModuleTranslation &moduleTranslation) {
-  function->walk([&](LLVM::AllocaOp alloca) {
-    auto name = alloca->getAttrOfType<StringAttr>("bindc_name");
-    auto entry = name ? locals.getAs<ArrayAttr>(name) : ArrayAttr();
-    if (!entry || entry.size() != 2)
-      return;
-    auto tree = dyn_cast<TypeTreeAttr>(entry[0]);
-    auto bytes = dyn_cast<IntegerAttr>(entry[1]);
-    auto *inst = dyn_cast_or_null<llvm::AllocaInst>(
-        moduleTranslation.lookupValue(alloca.getResult()));
-    if (!tree || !bytes || !inst)
-      return;
-    std::optional<llvm::TypeSize> size =
-        inst->getAllocationSize(inst->getDataLayout());
-    int64_t expected = bytes.getInt();
-    if (expected >= 0 ? (!size || size->isScalable() ||
-                         (int64_t)size->getFixedValue() != expected)
-                      : size.has_value())
-      return;
-    inst->setMetadata("enzyme_type", typeTreeToMD(tree, moduleTranslation));
-  });
-}
-
 namespace {
 struct EnzymeDialectLLVMIRTranslationInterface
     : public LLVMTranslationDialectInterface {
@@ -155,23 +126,19 @@ struct EnzymeDialectLLVMIRTranslationInterface
               call->addParamAttr(i, typeTreeToAttr(tree, moduleTranslation));
       return success();
     }
-    if (name == EnzymeDialect::getRetTypeTreeAttrName()) {
-      auto tree = dyn_cast<TypeTreeAttr>(attribute.getValue());
+    if (name == EnzymeDialect::getRetTypeTreesAttrName()) {
+      auto trees = dyn_cast<ArrayAttr>(attribute.getValue());
       auto fn = dyn_cast<LLVM::LLVMFuncOp>(op);
-      if (!tree || !fn)
-        return op->emitError() << name << " must be a type tree on a function";
-      if (llvm::Function *f = moduleTranslation.lookupFunction(fn.getName()))
-        if (!f->getReturnType()->isVoidTy())
-          f->addRetAttr(typeTreeToAttr(tree, moduleTranslation));
-      return success();
-    }
-    if (name == EnzymeDialect::getLocalTypeTreesAttrName()) {
-      // Amended after the body of the function is translated, so its values
-      // are mapped.
-      auto locals = dyn_cast<DictionaryAttr>(attribute.getValue());
-      if (!locals)
-        return op->emitError() << name << " must be a dictionary";
-      annotateLocals(op, locals, moduleTranslation);
+      if (!trees || !fn)
+        return op->emitError() << name << " must be an array on a function";
+      // An LLVM function has at most one result.
+      if (trees.size() > 1)
+        return op->emitError() << name << " has more than one result";
+      llvm::Function *f = moduleTranslation.lookupFunction(fn.getName());
+      if (auto tree =
+              trees.empty() ? TypeTreeAttr() : dyn_cast<TypeTreeAttr>(trees[0]);
+          tree && f && !f->getReturnType()->isVoidTy())
+        f->addRetAttr(typeTreeToAttr(tree, moduleTranslation));
       return success();
     }
     if (name != EnzymeDialect::getTypeTreeAttrName())

@@ -12,16 +12,11 @@ llvm.func @g(!llvm.ptr, !llvm.ptr)
 // CHECK: load float, ptr %[[P]], align 4, !enzyme_type ![[VAL:[0-9]+]]
 // CHECK: call void @g(ptr "enzyme_type"="{[-1]:Pointer, [-1,-1]:Float@float}" %[[P]], ptr %[[X]])
 llvm.func @f(%p: !llvm.ptr {enzyme.type = #enzyme.type_tree<[-1]: pointer, [-1, 0]: f32>}) -> f64 attributes {
-    enzyme.ret_type = #enzyme.type_tree<[-1]: f64>,
-    enzyme.local_types = {
-      x = [#enzyme.type_tree<[-1]: pointer, [-1, 0]: integer>, 4 : i64],
-      y = [#enzyme.type_tree<[-1]: pointer, [-1, 0]: integer>, 4 : i64]
-    }} {
+    enzyme.ret_types = [#enzyme.type_tree<[-1]: f64>]} {
   %c1 = llvm.mlir.constant(1 : i64) : i64
   %c2 = llvm.mlir.constant(2 : i64) : i64
-  %x = llvm.alloca %c1 x i32 {alignment = 4 : i64, bindc_name = "x"} : (i64) -> !llvm.ptr
-  // Not the size of y: left alone.
-  %y = llvm.alloca %c2 x i32 {alignment = 4 : i64, bindc_name = "y"} : (i64) -> !llvm.ptr
+  %x = llvm.alloca %c1 x i32 {alignment = 4 : i64, enzyme.type = #enzyme.type_tree<[-1]: pointer, [-1, 0]: integer>} : (i64) -> !llvm.ptr
+  %y = llvm.alloca %c2 x i32 {alignment = 4 : i64} : (i64) -> !llvm.ptr
   %v = llvm.load %p {enzyme.type = #enzyme.type_tree<[-1]: f32>} : !llvm.ptr -> f32
   llvm.call @g(%p, %x) {enzyme.arg_types = [#enzyme.type_tree<[-1]: pointer, [-1, -1]: f32>, unit]} : (!llvm.ptr, !llvm.ptr) -> ()
   %r = llvm.fpext %v : f32 to f64

@@ -1,28 +1,37 @@
 // RUN: %eopt %s -split-input-file -verify-diagnostics | FileCheck %s
 
-// CHECK-LABEL: func.func private @f
-// CHECK-SAME: enzyme.arg_types = [#enzyme.type_tree<>, unit, #enzyme.type_tree<[]: bf16>]
+// CHECK-LABEL: llvm.mlir.global external @glob()
 // CHECK-SAME: enzyme.type = #enzyme.type_tree<[-1]: pointer, [-1, 0]: f64, [-1, 8]: integer, [-1, 16]: anything>
-// CHECK-SAME: test.type_tree_entry = #enzyme.type_tree_entry<[-1, -1]: f32>
-// An entry of a type tree also round-trips as an attribute of its own (under
-// an arbitrary name).
-func.func private @f() attributes {
-  enzyme.type = #enzyme.type_tree<[-1]: pointer, [-1, 0]: f64, [-1, 8]: integer, [-1, 16]: anything>,
-  enzyme.arg_types = [#enzyme.type_tree<>, unit, #enzyme.type_tree<[]: bf16>],
-  test.type_tree_entry = #enzyme.type_tree_entry<[-1, -1]: f32>
+llvm.mlir.global external @glob() {enzyme.type = #enzyme.type_tree<[-1]: pointer, [-1, 0]: f64, [-1, 8]: integer, [-1, 16]: anything>} : !llvm.array<24 x i8>
+
+// Entries are sorted by path.
+// CHECK-LABEL: llvm.mlir.global external @unsorted()
+// CHECK-SAME: enzyme.type = #enzyme.type_tree<[-1]: pointer, [-1, 0]: f32, [-1, 4]: integer>
+llvm.mlir.global external @unsorted() {enzyme.type = #enzyme.type_tree<[-1, 4]: integer, [-1]: pointer, [-1, 0]: f32>} : !llvm.array<8 x i8>
+
+llvm.func @g(!llvm.ptr, !llvm.ptr)
+
+// CHECK-LABEL: llvm.func @f
+// CHECK-SAME: enzyme.ret_types = [#enzyme.type_tree<[]: bf16>]
+// CHECK: llvm.call @g
+// CHECK-SAME: enzyme.arg_types = [#enzyme.type_tree<>, unit]
+llvm.func @f(%p: !llvm.ptr) -> bf16 attributes {enzyme.ret_types = [#enzyme.type_tree<[]: bf16>]} {
+  llvm.call @g(%p, %p) {enzyme.arg_types = [#enzyme.type_tree<>, unit]} : (!llvm.ptr, !llvm.ptr) -> ()
+  %v = llvm.load %p : !llvm.ptr -> bf16
+  llvm.return %v : bf16
 }
 
 // -----
 
-// expected-error @below {{type tree paths must be unique and ordered}}
-func.func private @unordered() attributes {enzyme.type = #enzyme.type_tree<[-1, 8]: integer, [-1]: pointer>}
+// expected-error @below {{type tree path [-1, 8] appears more than once}}
+llvm.mlir.global external @duplicate() {enzyme.type = #enzyme.type_tree<[-1, 8]: integer, [-1]: pointer, [-1, 8]: f32>} : !llvm.array<16 x i8>
 
 // -----
 
 // expected-error @below {{a type tree entry has a floating-point type exactly if it is a float}}
-func.func private @not_float() attributes {enzyme.type = #enzyme.type_tree<[-1]: i32>}
+llvm.mlir.global external @not_float() {enzyme.type = #enzyme.type_tree<[-1]: i32>} : !llvm.array<4 x i8>
 
 // -----
 
 // expected-error @below {{type tree offset -2 is below -1}}
-func.func private @bad_offset() attributes {enzyme.type = #enzyme.type_tree<[-2]: pointer>}
+llvm.mlir.global external @bad_offset() {enzyme.type = #enzyme.type_tree<[-2]: pointer>} : !llvm.array<4 x i8>
