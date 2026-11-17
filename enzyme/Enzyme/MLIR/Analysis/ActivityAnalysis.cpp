@@ -1186,10 +1186,10 @@ getPotentialTerminatorUsers(Operation *op, Value parent) {
     for (auto &operand : op->getOpOperands())
       if (operand.get() == parent)
         if (auto blk =
-                iface.getSuccessorBlockArgument(operand.getOperandNumber())) {
+                iface.getSuccessorBlockArgument(operand.getOperandNumber()))
           results.push_back(*blk);
-          return std::move(results);
-        }
+    if (!results.empty())
+      return std::move(results);
   }
 
   // assume all terminator operands potentially flow into all op results
