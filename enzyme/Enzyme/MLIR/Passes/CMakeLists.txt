@@ -45,6 +45,7 @@ add_mlir_dialect_library(
   PUBLIC
   MLIRAffineDialect
   MLIRArithDialect
+  MLIRArithUtils
   MLIRAsyncDialect
   MLIRAffineUtils
   MLIRFuncDialect
