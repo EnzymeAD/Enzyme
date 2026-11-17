@@ -24,8 +24,7 @@ foreach(dir ${FLANG_INCLUDE_DIRS})
 endforeach()
 if(ENZYME_FLANG_PLUGIN_DIRECTIVES)
   message(
-    STATUS
-      "FlangEnzymeMLIR: flang has plugin directives; building !DIR$ ENZYME")
+    STATUS "FlangEnzymeMLIR: flang has plugin directives; building !DIR$ ENZYME")
   target_sources(
     FlangEnzymeMLIR-${LLVM_VERSION_MAJOR}
     PRIVATE FlangEnzymeDirectives.cpp FortranDirectives.cpp)
