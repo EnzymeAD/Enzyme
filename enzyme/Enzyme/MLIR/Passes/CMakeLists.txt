@@ -24,6 +24,7 @@ add_mlir_dialect_library(
   PrintBaseObject.cpp
   EnzymeToMemRef.cpp
   EnzymeToCIR.cpp
+  CIRRaiseEnzymeCalls.cpp
   SimplifyMath.cpp
   SplitMultiResults.cpp
   AddToOpToIndexAndLoad.cpp

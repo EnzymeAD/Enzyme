@@ -335,6 +335,19 @@ def EnzymeOpsToCIRPass : Pass<"convert-enzyme-to-cir", "ModuleOp"> {
   }];
 }
 
+def CIRRaiseEnzymeCallsPass : Pass<"cir-raise-enzyme-calls", "ModuleOp"> {
+  let summary = "Raise __enzyme_autodiff/__enzyme_fwddiff calls in ClangIR";
+  let description = [{
+    Raises the `__enzyme_autodiff` and `__enzyme_fwddiff` calls clang emits in
+    ClangIR to enzyme.autodiff and enzyme.fwddiff ops. The marker arguments
+    (`enzyme_dup`, `enzyme_const`, `enzyme_out`, ...) are read as the LLVM
+    plugin reads them, and an argument without one gets the activity the
+    plugin would give it: a float is active, a pointer is duplicated, and an
+    integer is constant. A float return is seeded with 1.0 in reverse mode.
+  }];
+  let dependentDialects = ["enzyme::EnzymeDialect", ];
+}
+
 def MathematicSimplificationPass : Pass<"enzyme-simplify-math"> {
   let summary = "Simplify basic mathematical operations";
 }
