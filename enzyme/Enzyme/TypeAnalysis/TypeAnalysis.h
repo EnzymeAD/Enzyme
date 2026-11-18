@@ -292,6 +292,9 @@ public:
   /// Intermediate conservative, but correct Type analysis results
   std::map<llvm::Value *, TypeTree> analysis;
 
+  /// Values whose current TypeTree already includes Julia GC pointer offsets
+  llvm::DenseSet<llvm::Value *> juliaAugmented;
+
   llvm::TargetLibraryInfo &TLI;
   llvm::DominatorTree &DT;
   llvm::PostDominatorTree &PDT;
@@ -438,6 +441,14 @@ public:
                          llvm::ArrayRef<std::set<int64_t>> /*knownValues*/,
                          llvm::CallBase * /*call*/, TypeAnalyzer *)>>
       CustomRules;
+
+  struct JuliaTypeOffsets {
+    bool allJulia = false;
+    llvm::SmallVector<int, 8> ptrOffsets;
+  };
+  llvm::DenseMap<llvm::Type *, JuliaTypeOffsets> juliaTypeCache;
+  const JuliaTypeOffsets &getJuliaTypeOffsets(llvm::Type *T,
+                                              const llvm::DataLayout &DL);
 
   /// Map of possible query states to TypeAnalyzer intermediate results
   std::map<FnTypeInfo, std::shared_ptr<TypeAnalyzer>> analyzedFunctions;
