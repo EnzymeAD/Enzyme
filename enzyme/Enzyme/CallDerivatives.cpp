@@ -26,6 +26,7 @@
 
 #include "AdjointGenerator.h"
 #include "FlangRuntime.h"
+#include "llvm/ADT/StringSwitch.h"
 
 using namespace llvm;
 
@@ -2354,6 +2355,660 @@ classifyAtomicModifyOp(llvm::Function *op, unsigned &opArgNo, llvm::Type *&FT) {
   return AtomicRMWInst::BAD_BINOP;
 }
 
+namespace {
+
+enum class C99ComplexOp {
+  None,
+  Cexp,
+  Csin,
+  Ccos,
+  Ctan,
+  Casin,
+  Cacos,
+  Catan,
+  Csinh,
+  Ccosh,
+  Ctanh,
+  Casinh,
+  Cacosh,
+  Catanh,
+  Clog,
+  Clog10,
+  Csqrt,
+  Cpow,
+  Cabs,
+  Carg,
+  Creal,
+  Cimag,
+  Conj,
+  Cproj,
+};
+
+C99ComplexOp parseC99ComplexBaseName(StringRef Name) {
+  return StringSwitch<C99ComplexOp>(Name)
+      .Case("cexp", C99ComplexOp::Cexp)
+      .Case("csin", C99ComplexOp::Csin)
+      .Case("ccos", C99ComplexOp::Ccos)
+      .Case("ctan", C99ComplexOp::Ctan)
+      .Case("casin", C99ComplexOp::Casin)
+      .Case("cacos", C99ComplexOp::Cacos)
+      .Case("catan", C99ComplexOp::Catan)
+      .Case("csinh", C99ComplexOp::Csinh)
+      .Case("ccosh", C99ComplexOp::Ccosh)
+      .Case("ctanh", C99ComplexOp::Ctanh)
+      .Case("casinh", C99ComplexOp::Casinh)
+      .Case("cacosh", C99ComplexOp::Cacosh)
+      .Case("catanh", C99ComplexOp::Catanh)
+      .Case("clog", C99ComplexOp::Clog)
+      .Case("clog10", C99ComplexOp::Clog10)
+      .Case("csqrt", C99ComplexOp::Csqrt)
+      .Case("cpow", C99ComplexOp::Cpow)
+      .Case("cabs", C99ComplexOp::Cabs)
+      .Case("carg", C99ComplexOp::Carg)
+      .Case("creal", C99ComplexOp::Creal)
+      .Case("cimag", C99ComplexOp::Cimag)
+      .Case("conj", C99ComplexOp::Conj)
+      .Case("cproj", C99ComplexOp::Cproj)
+      .Default(C99ComplexOp::None);
+}
+
+std::pair<C99ComplexOp, StringRef> parseC99ComplexFuncName(StringRef Name) {
+  C99ComplexOp Op = parseC99ComplexBaseName(Name);
+  if (Op != C99ComplexOp::None)
+    return {Op, StringRef()};
+  if (endsWith(Name, "f") || endsWith(Name, "l")) {
+    Op = parseC99ComplexBaseName(Name.drop_back(1));
+    if (Op != C99ComplexOp::None)
+      return {Op, Name.take_back(1)};
+  }
+  return {C99ComplexOp::None, StringRef()};
+}
+
+Type *getPackedComplexScalarType(Type *Ty) {
+  if (auto *ST = dyn_cast<StructType>(Ty)) {
+    if (ST->getNumElements() == 2 &&
+        ST->getElementType(0) == ST->getElementType(1) &&
+        ST->getElementType(0)->isFloatingPointTy())
+      return ST->getElementType(0);
+    return nullptr;
+  }
+  if (auto *AT = dyn_cast<ArrayType>(Ty)) {
+    if (AT->getNumElements() == 2 && AT->getElementType()->isFloatingPointTy())
+      return AT->getElementType();
+    return nullptr;
+  }
+  if (auto *VT = dyn_cast<FixedVectorType>(Ty)) {
+    if (VT->getNumElements() == 2 && VT->getElementType()->isFloatingPointTy())
+      return VT->getElementType();
+    return nullptr;
+  }
+  return nullptr;
+}
+
+using ComplexVal = std::pair<Value *, Value *>;
+
+ComplexVal unpackComplex(IRBuilder<> &Builder, Value *Val) {
+  if (Val->getType()->isVectorTy()) {
+    return {Builder.CreateExtractElement(Val, (uint64_t)0),
+            Builder.CreateExtractElement(Val, (uint64_t)1)};
+  }
+  return {Builder.CreateExtractValue(Val, ArrayRef<unsigned>{0}),
+          Builder.CreateExtractValue(Val, ArrayRef<unsigned>{1})};
+}
+
+Value *packComplex(IRBuilder<> &Builder, Type *TargetTy, ComplexVal Val) {
+  Value *Res = UndefValue::get(TargetTy);
+  if (TargetTy->isVectorTy()) {
+    Res = Builder.CreateInsertElement(Res, Val.first, (uint64_t)0);
+    return Builder.CreateInsertElement(Res, Val.second, (uint64_t)1);
+  }
+  Res = Builder.CreateInsertValue(Res, Val.first, ArrayRef<unsigned>{0});
+  return Builder.CreateInsertValue(Res, Val.second, ArrayRef<unsigned>{1});
+}
+
+void markReadNoneNoUnwind(CallInst *CI) {
+#if LLVM_VERSION_MAJOR >= 16
+  CI->setOnlyReadsMemory();
+  CI->setOnlyWritesMemory();
+#elif LLVM_VERSION_MAJOR >= 14
+  CI->addAttributeAtIndex(AttributeList::FunctionIndex, Attribute::ReadNone);
+#else
+  CI->addAttribute(AttributeList::FunctionIndex, Attribute::ReadNone);
+#endif
+#if LLVM_VERSION_MAJOR >= 14
+  CI->addAttributeAtIndex(AttributeList::FunctionIndex, Attribute::NoUnwind);
+#else
+  CI->addAttribute(AttributeList::FunctionIndex, Attribute::NoUnwind);
+#endif
+}
+
+} // namespace
+
+bool AdjointGenerator::handleC99ComplexMathCall(CallInst &call,
+                                                StringRef funcName,
+                                                CallInst *const newCall,
+                                                IRBuilder<> &BuilderZ) {
+  auto [Op, Suffix] = parseC99ComplexFuncName(funcName);
+  if (Op == C99ComplexOp::None)
+    return false;
+
+  // Keep existing TableGen rules for scalar-pair and aggregate cabs calls;
+  // handle vector-packed cabsf(<2 x float>) here.
+  if (Op == C99ComplexOp::Cabs &&
+      !(call.arg_size() == 1 && call.getArgOperand(0)->getType()->isVectorTy()))
+    return false;
+
+  const bool IsBinary = (Op == C99ComplexOp::Cpow);
+  const bool IsRealReturn =
+      (Op == C99ComplexOp::Cabs || Op == C99ComplexOp::Carg ||
+       Op == C99ComplexOp::Creal || Op == C99ComplexOp::Cimag);
+  const unsigned NumComplexInputs = IsBinary ? 2 : 1;
+
+  bool IsScalarPair = false;
+  Type *ScalarTy = nullptr;
+  Type *PackedArgTy = nullptr;
+  if (call.arg_size() == 2 * NumComplexInputs) {
+    Type *FirstTy = call.getArgOperand(0)->getType();
+    if (!FirstTy->isFloatingPointTy())
+      return false;
+    for (unsigned I = 1; I < call.arg_size(); ++I)
+      if (call.getArgOperand(I)->getType() != FirstTy)
+        return false;
+    IsScalarPair = true;
+    ScalarTy = FirstTy;
+  } else if (call.arg_size() == NumComplexInputs) {
+    PackedArgTy = call.getArgOperand(0)->getType();
+    ScalarTy = getPackedComplexScalarType(PackedArgTy);
+    if (!ScalarTy)
+      return false;
+    for (unsigned I = 1; I < call.arg_size(); ++I)
+      if (call.getArgOperand(I)->getType() != PackedArgTy)
+        return false;
+  } else {
+    return false;
+  }
+
+  Type *RetTy = call.getType();
+  if (IsRealReturn) {
+    if (RetTy != ScalarTy)
+      return false;
+  } else {
+    if (getPackedComplexScalarType(RetTy) != ScalarTy)
+      return false;
+  }
+
+  if (Mode == DerivativeMode::ForwardModeError)
+    return false;
+
+  if (gutils->knownRecomputeHeuristic.find(&call) !=
+      gutils->knownRecomputeHeuristic.end()) {
+    if (!gutils->knownRecomputeHeuristic[&call]) {
+      gutils->cacheForReverse(BuilderZ, newCall,
+                              getIndex(&call, CacheType::Self, BuilderZ));
+    }
+  }
+  eraseIfUnused(call);
+  if (gutils->isConstantInstruction(&call) && gutils->isConstantValue(&call))
+    return true;
+
+  auto eraseInvertedPlaceholder = [&]() {
+    auto Found = gutils->invertedPointers.find(&call);
+    if (Found != gutils->invertedPointers.end() &&
+        !isa<PointerType>(call.getType())) {
+      PHINode *PN = dyn_cast<PHINode>(&*Found->second);
+      assert(PN && "Expected PHINode for inverted placeholder");
+      gutils->invertedPointers.erase(Found);
+      gutils->erase(PN);
+    }
+  };
+
+  if (Mode == DerivativeMode::ReverseModePrimal) {
+    eraseInvertedPlaceholder();
+    return true;
+  }
+
+  Module *Mod = call.getParent()->getParent()->getParent();
+  const unsigned Width = gutils->getWidth();
+  Value *Zero = ConstantFP::get(ScalarTy, 0.0);
+  Value *One = ConstantFP::get(ScalarTy, 1.0);
+  Value *Two = ConstantFP::get(ScalarTy, 2.0);
+
+  auto cAdd = [](IRBuilder<> &B, ComplexVal A, ComplexVal C) -> ComplexVal {
+    Value *Re = B.CreateFAdd(A.first, C.first);
+    Value *Im = B.CreateFAdd(A.second, C.second);
+    return {Re, Im};
+  };
+  auto cSub = [](IRBuilder<> &B, ComplexVal A, ComplexVal C) -> ComplexVal {
+    Value *Re = B.CreateFSub(A.first, C.first);
+    Value *Im = B.CreateFSub(A.second, C.second);
+    return {Re, Im};
+  };
+  auto cNeg = [](IRBuilder<> &B, ComplexVal A) -> ComplexVal {
+    Value *Re = B.CreateFNeg(A.first);
+    Value *Im = B.CreateFNeg(A.second);
+    return {Re, Im};
+  };
+  auto cMul = [](IRBuilder<> &B, ComplexVal A, ComplexVal C) -> ComplexVal {
+    Value *AC = B.CreateFMul(A.first, C.first);
+    Value *BD = B.CreateFMul(A.second, C.second);
+    Value *Re = B.CreateFSub(AC, BD);
+    Value *AD = B.CreateFMul(A.first, C.second);
+    Value *BC = B.CreateFMul(A.second, C.first);
+    Value *Im = B.CreateFAdd(AD, BC);
+    return {Re, Im};
+  };
+  // Wirtinger reverse-mode pullback for holomorphic derivative Df = a + i*b
+  // and upstream cotangent Dret = u + i*v: conj(Df) * Dret.
+  auto cRevMul = [](IRBuilder<> &B, ComplexVal Df,
+                    ComplexVal Dret) -> ComplexVal {
+    Value *AU = B.CreateFMul(Df.first, Dret.first);
+    Value *BV = B.CreateFMul(Df.second, Dret.second);
+    Value *Re = B.CreateFAdd(AU, BV);
+    Value *AV = B.CreateFMul(Df.first, Dret.second);
+    Value *BU = B.CreateFMul(Df.second, Dret.first);
+    Value *Im = B.CreateFSub(AV, BU);
+    return {Re, Im};
+  };
+  auto cRecip = [](IRBuilder<> &B, ComplexVal Z) -> ComplexVal {
+    Value *XX = B.CreateFMul(Z.first, Z.first);
+    Value *YY = B.CreateFMul(Z.second, Z.second);
+    Value *Norm2 = B.CreateFAdd(XX, YY);
+    Value *Re = B.CreateFDiv(Z.first, Norm2);
+    Value *NegY = B.CreateFNeg(Z.second);
+    Value *Im = B.CreateFDiv(NegY, Norm2);
+    return {Re, Im};
+  };
+
+  auto emitSameFuncCall = [&](IRBuilder<> &B,
+                              ArrayRef<ComplexVal> Inputs) -> CallInst * {
+    SmallVector<Value *, 4> Args;
+    for (const ComplexVal &Z : Inputs) {
+      if (IsScalarPair) {
+        Args.push_back(Z.first);
+        Args.push_back(Z.second);
+      } else {
+        Args.push_back(packComplex(B, PackedArgTy, Z));
+      }
+    }
+    CallInst *CI =
+        B.CreateCall(call.getFunctionType(), call.getCalledOperand(), Args);
+    CI->setDebugLoc(gutils->getNewFromOriginal(call.getDebugLoc()));
+    CI->setCallingConv(call.getCallingConv());
+    markReadNoneNoUnwind(CI);
+    return CI;
+  };
+
+  auto emitCompanionUnaryCall = [&](IRBuilder<> &B, StringRef BaseName,
+                                    ComplexVal Z) -> ComplexVal {
+    SmallVector<Type *, 2> ParamTys;
+    SmallVector<Value *, 2> Args;
+    if (IsScalarPair) {
+      ParamTys.push_back(ScalarTy);
+      ParamTys.push_back(ScalarTy);
+      Args.push_back(Z.first);
+      Args.push_back(Z.second);
+    } else {
+      ParamTys.push_back(PackedArgTy);
+      Args.push_back(packComplex(B, PackedArgTy, Z));
+    }
+    FunctionType *FT = FunctionType::get(RetTy, ParamTys, false);
+    FunctionCallee FC = Mod->getOrInsertFunction((BaseName + Suffix).str(), FT);
+    CallInst *CI = B.CreateCall(FC, Args);
+    CI->setDebugLoc(gutils->getNewFromOriginal(call.getDebugLoc()));
+    CI->setCallingConv(call.getCallingConv());
+    markReadNoneNoUnwind(CI);
+    return unpackComplex(B, CI);
+  };
+
+  auto getPrimalInput = [&](IRBuilder<> &B, unsigned InputIdx,
+                            bool DoLookup) -> ComplexVal {
+    auto resolve = [&](Value *Orig) -> Value * {
+      Value *NewV = gutils->getNewFromOriginal(Orig);
+      return DoLookup ? lookup(NewV, B) : NewV;
+    };
+    if (IsScalarPair) {
+      return {resolve(call.getArgOperand(2 * InputIdx)),
+              resolve(call.getArgOperand(2 * InputIdx + 1))};
+    }
+    return unpackComplex(B, resolve(call.getArgOperand(InputIdx)));
+  };
+
+  auto isComplexInputActive = [&](unsigned InputIdx) -> bool {
+    if (IsScalarPair) {
+      return !gutils->isConstantValue(call.getArgOperand(2 * InputIdx)) ||
+             !gutils->isConstantValue(call.getArgOperand(2 * InputIdx + 1));
+    }
+    return !gutils->isConstantValue(call.getArgOperand(InputIdx));
+  };
+
+  auto getLane = [&](IRBuilder<> &B, Value *Val, unsigned Lane) -> Value * {
+    return Width == 1 ? Val
+                      : B.CreateExtractValue(Val, ArrayRef<unsigned>{Lane});
+  };
+
+  auto computeHolomorphicUnaryDeriv = [&](IRBuilder<> &B,
+                                          ComplexVal Z) -> ComplexVal {
+    switch (Op) {
+    case C99ComplexOp::Cexp:
+      return unpackComplex(B, emitSameFuncCall(B, {Z}));
+    case C99ComplexOp::Csin:
+      return emitCompanionUnaryCall(B, "ccos", Z);
+    case C99ComplexOp::Ccos:
+      return cNeg(B, emitCompanionUnaryCall(B, "csin", Z));
+    case C99ComplexOp::Ctan: {
+      ComplexVal C = emitCompanionUnaryCall(B, "ccos", Z);
+      return cRecip(B, cMul(B, C, C));
+    }
+    case C99ComplexOp::Csinh:
+      return emitCompanionUnaryCall(B, "ccosh", Z);
+    case C99ComplexOp::Ccosh:
+      return emitCompanionUnaryCall(B, "csinh", Z);
+    case C99ComplexOp::Ctanh: {
+      ComplexVal T = unpackComplex(B, emitSameFuncCall(B, {Z}));
+      return cSub(B, {One, Zero}, cMul(B, T, T));
+    }
+    case C99ComplexOp::Clog:
+      return cRecip(B, Z);
+    case C99ComplexOp::Clog10: {
+      ComplexVal Recip = cRecip(B, Z);
+      Value *InvLn10 = ConstantFP::get(
+          ScalarTy,
+          "0.4342944819032518276511289189166050822943970058036665661144537832");
+      return {B.CreateFMul(Recip.first, InvLn10),
+              B.CreateFMul(Recip.second, InvLn10)};
+    }
+    case C99ComplexOp::Csqrt: {
+      ComplexVal S = unpackComplex(B, emitSameFuncCall(B, {Z}));
+      ComplexVal TwoS = {B.CreateFMul(Two, S.first),
+                         B.CreateFMul(Two, S.second)};
+      ComplexVal D = cRecip(B, TwoS);
+      Value *ReZero = B.CreateFCmpOEQ(Z.first, Zero);
+      Value *ImZero = B.CreateFCmpOEQ(Z.second, Zero);
+      Value *IsZero = B.CreateAnd(ReZero, ImZero);
+      return {B.CreateSelect(IsZero, Zero, D.first),
+              B.CreateSelect(IsZero, Zero, D.second)};
+    }
+    case C99ComplexOp::Casin: {
+      ComplexVal Arg = cSub(B, {One, Zero}, cMul(B, Z, Z));
+      return cRecip(B, emitCompanionUnaryCall(B, "csqrt", Arg));
+    }
+    case C99ComplexOp::Cacos: {
+      ComplexVal Arg = cSub(B, {One, Zero}, cMul(B, Z, Z));
+      return cNeg(B, cRecip(B, emitCompanionUnaryCall(B, "csqrt", Arg)));
+    }
+    case C99ComplexOp::Catan:
+      return cRecip(B, cAdd(B, {One, Zero}, cMul(B, Z, Z)));
+    case C99ComplexOp::Casinh: {
+      ComplexVal Arg = cAdd(B, cMul(B, Z, Z), {One, Zero});
+      return cRecip(B, emitCompanionUnaryCall(B, "csqrt", Arg));
+    }
+    case C99ComplexOp::Cacosh: {
+      // Use csqrt(z - 1) * csqrt(z + 1) to match the C99 principal branch cut.
+      ComplexVal Zm1 =
+          emitCompanionUnaryCall(B, "csqrt", cSub(B, Z, {One, Zero}));
+      ComplexVal Zp1 =
+          emitCompanionUnaryCall(B, "csqrt", cAdd(B, Z, {One, Zero}));
+      return cRecip(B, cMul(B, Zm1, Zp1));
+    }
+    case C99ComplexOp::Catanh:
+      return cRecip(B, cSub(B, {One, Zero}, cMul(B, Z, Z)));
+    default:
+      llvm_unreachable("unexpected non-holomorphic complex op");
+    }
+  };
+
+  auto needsPrimalInput = [&]() -> bool {
+    return Op != C99ComplexOp::Conj && Op != C99ComplexOp::Cproj &&
+           Op != C99ComplexOp::Creal && Op != C99ComplexOp::Cimag;
+  };
+
+  auto computePartials = [&](IRBuilder<> &B, bool DoLookup, bool NeedA,
+                             bool NeedB, ComplexVal &DfA, ComplexVal &DfB) {
+    if (!needsPrimalInput())
+      return;
+    ComplexVal A = getPrimalInput(B, 0, DoLookup);
+    if (Op == C99ComplexOp::Cpow) {
+      ComplexVal Exp = getPrimalInput(B, 1, DoLookup);
+      if (NeedA) {
+        ComplexVal ExpM1 = cSub(B, Exp, {One, Zero});
+        ComplexVal PowM1 = unpackComplex(B, emitSameFuncCall(B, {A, ExpM1}));
+        ComplexVal RawDa = cMul(B, Exp, PowM1);
+        Value *ExpReZero = B.CreateFCmpOEQ(Exp.first, Zero);
+        Value *ExpImZero = B.CreateFCmpOEQ(Exp.second, Zero);
+        Value *ExpIsZero = B.CreateAnd(ExpReZero, ExpImZero);
+        DfA = {B.CreateSelect(ExpIsZero, Zero, RawDa.first),
+               B.CreateSelect(ExpIsZero, Zero, RawDa.second)};
+      }
+      if (NeedB) {
+        ComplexVal PowAB = unpackComplex(B, emitSameFuncCall(B, {A, Exp}));
+        ComplexVal LogA = emitCompanionUnaryCall(B, "clog", A);
+        ComplexVal RawDb = cMul(B, PowAB, LogA);
+        Value *BaseReZero = B.CreateFCmpOEQ(A.first, Zero);
+        Value *BaseImZero = B.CreateFCmpOEQ(A.second, Zero);
+        Value *BaseIsZero = B.CreateAnd(BaseReZero, BaseImZero);
+        DfB = {B.CreateSelect(BaseIsZero, Zero, RawDb.first),
+               B.CreateSelect(BaseIsZero, Zero, RawDb.second)};
+      }
+      return;
+    }
+    if (Op == C99ComplexOp::Carg) {
+      Value *XX = B.CreateFMul(A.first, A.first);
+      Value *YY = B.CreateFMul(A.second, A.second);
+      Value *Norm2 = B.CreateFAdd(XX, YY);
+      Value *NegY = B.CreateFNeg(A.second);
+      Value *Ddx = B.CreateFDiv(NegY, Norm2);
+      Value *Ddy = B.CreateFDiv(A.first, Norm2);
+      DfA = {Ddx, Ddy};
+      return;
+    }
+    if (Op == C99ComplexOp::Cabs) {
+      Value *R = emitSameFuncCall(B, {A});
+      Value *Ddx = B.CreateFDiv(A.first, R);
+      Value *Ddy = B.CreateFDiv(A.second, R);
+      DfA = {Ddx, Ddy};
+      return;
+    }
+    DfA = computeHolomorphicUnaryDeriv(B, A);
+  };
+
+  if (Mode == DerivativeMode::ForwardMode ||
+      Mode == DerivativeMode::ForwardModeSplit) {
+    if (gutils->isConstantValue(&call))
+      return true;
+
+    IRBuilder<> Builder2(&call);
+    getForwardBuilder(Builder2);
+
+    bool NeedA = isComplexInputActive(0);
+    bool NeedB = IsBinary && isComplexInputActive(1);
+    ComplexVal DfA{nullptr, nullptr};
+    ComplexVal DfB{nullptr, nullptr};
+    computePartials(Builder2, /*DoLookup=*/false, NeedA, NeedB, DfA, DfB);
+
+    SmallVector<Value *, 4> ArgTangents(call.arg_size(), nullptr);
+    for (unsigned I = 0; I < call.arg_size(); ++I) {
+      Value *Arg = call.getArgOperand(I);
+      if (!gutils->isConstantValue(Arg))
+        ArgTangents[I] = gutils->invertPointerM(Arg, Builder2, TR.query(&call));
+    }
+
+    auto getInputTangentLane = [&](unsigned InputIdx,
+                                   unsigned Lane) -> ComplexVal {
+      if (IsScalarPair) {
+        Value *DRe = ArgTangents[2 * InputIdx]
+                         ? getLane(Builder2, ArgTangents[2 * InputIdx], Lane)
+                         : Zero;
+        Value *DIm =
+            ArgTangents[2 * InputIdx + 1]
+                ? getLane(Builder2, ArgTangents[2 * InputIdx + 1], Lane)
+                : Zero;
+        return {DRe, DIm};
+      }
+      if (!ArgTangents[InputIdx])
+        return {Zero, Zero};
+      return unpackComplex(Builder2,
+                           getLane(Builder2, ArgTangents[InputIdx], Lane));
+    };
+
+    Value *Res =
+        Width == 1 ? nullptr : UndefValue::get(gutils->getShadowType(RetTy));
+    for (unsigned Lane = 0; Lane < Width; ++Lane) {
+      ComplexVal DA =
+          NeedA ? getInputTangentLane(0, Lane) : ComplexVal{Zero, Zero};
+      Value *LaneRes = nullptr;
+      if (IsRealReturn) {
+        if (Op == C99ComplexOp::Creal) {
+          LaneRes = DA.first;
+        } else if (Op == C99ComplexOp::Cimag) {
+          LaneRes = DA.second;
+        } else {
+          // cabs / carg: df/dx * dx + df/dy * dy
+          Value *TermX = Builder2.CreateFMul(DfA.first, DA.first);
+          Value *TermY = Builder2.CreateFMul(DfA.second, DA.second);
+          LaneRes = Builder2.CreateFAdd(TermX, TermY);
+        }
+      } else {
+        ComplexVal Out{Zero, Zero};
+        if (Op == C99ComplexOp::Conj) {
+          Out = {DA.first, Builder2.CreateFNeg(DA.second)};
+        } else if (Op == C99ComplexOp::Cproj) {
+          Out = DA;
+        } else if (Op == C99ComplexOp::Cpow) {
+          bool HaveOut = false;
+          if (NeedA) {
+            Out = cMul(Builder2, DfA, DA);
+            HaveOut = true;
+          }
+          if (NeedB) {
+            ComplexVal DB = getInputTangentLane(1, Lane);
+            ComplexVal TermB = cMul(Builder2, DfB, DB);
+            Out = HaveOut ? cAdd(Builder2, Out, TermB) : TermB;
+          }
+        } else {
+          Out = cMul(Builder2, DfA, DA);
+        }
+        LaneRes = packComplex(Builder2, RetTy, Out);
+      }
+
+      if (Width == 1)
+        Res = LaneRes;
+      else
+        Res =
+            Builder2.CreateInsertValue(Res, LaneRes, ArrayRef<unsigned>{Lane});
+    }
+
+    setDiffe(&call, Res, Builder2);
+    return true;
+  }
+
+  // ReverseModeGradient / ReverseModeCombined
+  if (!gutils->isConstantInstruction(&call)) {
+    bool NeedA = isComplexInputActive(0);
+    bool NeedB = IsBinary && isComplexInputActive(1);
+    if (NeedA || NeedB) {
+      IRBuilder<> Builder2(&call);
+      getReverseBuilder(Builder2);
+
+      Value *Dif = diffe(&call, Builder2);
+      setDiffe(&call, Constant::getNullValue(gutils->getShadowType(RetTy)),
+               Builder2);
+
+      ComplexVal DfA{nullptr, nullptr};
+      ComplexVal DfB{nullptr, nullptr};
+      computePartials(Builder2, /*DoLookup=*/true, NeedA, NeedB, DfA, DfB);
+
+      auto accumulateComplexInput =
+          [&](unsigned InputIdx,
+              function_ref<ComplexVal(unsigned)> ComputeLaneAdj) {
+            if (IsScalarPair) {
+              Value *ReArg = call.getArgOperand(2 * InputIdx);
+              Value *ImArg = call.getArgOperand(2 * InputIdx + 1);
+              bool ActiveRe = !gutils->isConstantValue(ReArg);
+              bool ActiveIm = !gutils->isConstantValue(ImArg);
+              if (!ActiveRe && !ActiveIm)
+                return;
+              Value *AddRe =
+                  Width == 1 ? nullptr
+                             : UndefValue::get(gutils->getShadowType(ScalarTy));
+              Value *AddIm =
+                  Width == 1 ? nullptr
+                             : UndefValue::get(gutils->getShadowType(ScalarTy));
+              for (unsigned Lane = 0; Lane < Width; ++Lane) {
+                ComplexVal Adj = ComputeLaneAdj(Lane);
+                if (Width == 1) {
+                  AddRe = Adj.first;
+                  AddIm = Adj.second;
+                } else {
+                  if (ActiveRe)
+                    AddRe = Builder2.CreateInsertValue(
+                        AddRe, Adj.first, ArrayRef<unsigned>{Lane});
+                  if (ActiveIm)
+                    AddIm = Builder2.CreateInsertValue(
+                        AddIm, Adj.second, ArrayRef<unsigned>{Lane});
+                }
+              }
+              if (ActiveRe)
+                addToDiffe(ReArg, AddRe, Builder2, ScalarTy);
+              if (ActiveIm)
+                addToDiffe(ImArg, AddIm, Builder2, ScalarTy);
+            } else {
+              Value *ZArg = call.getArgOperand(InputIdx);
+              if (gutils->isConstantValue(ZArg))
+                return;
+              Value *AddZ =
+                  Width == 1
+                      ? nullptr
+                      : UndefValue::get(gutils->getShadowType(PackedArgTy));
+              for (unsigned Lane = 0; Lane < Width; ++Lane) {
+                Value *PackedLane =
+                    packComplex(Builder2, PackedArgTy, ComputeLaneAdj(Lane));
+                if (Width == 1)
+                  AddZ = PackedLane;
+                else
+                  AddZ = Builder2.CreateInsertValue(AddZ, PackedLane,
+                                                    ArrayRef<unsigned>{Lane});
+              }
+              Type *AddingTy =
+                  PackedArgTy->isFPOrFPVectorTy() ? PackedArgTy : ScalarTy;
+              addToDiffe(ZArg, AddZ, Builder2, AddingTy);
+            }
+          };
+
+      if (NeedA) {
+        accumulateComplexInput(0, [&](unsigned Lane) -> ComplexVal {
+          Value *LaneDif = getLane(Builder2, Dif, Lane);
+          if (IsRealReturn) {
+            if (Op == C99ComplexOp::Creal)
+              return {LaneDif, Zero};
+            if (Op == C99ComplexOp::Cimag)
+              return {Zero, LaneDif};
+            // cabs / carg
+            return {Builder2.CreateFMul(LaneDif, DfA.first),
+                    Builder2.CreateFMul(LaneDif, DfA.second)};
+          }
+          ComplexVal Dret = unpackComplex(Builder2, LaneDif);
+          if (Op == C99ComplexOp::Conj)
+            return {Dret.first, Builder2.CreateFNeg(Dret.second)};
+          if (Op == C99ComplexOp::Cproj)
+            return Dret;
+          return cRevMul(Builder2, DfA, Dret);
+        });
+      }
+
+      if (NeedB) {
+        accumulateComplexInput(1, [&](unsigned Lane) -> ComplexVal {
+          ComplexVal Dret =
+              unpackComplex(Builder2, getLane(Builder2, Dif, Lane));
+          return cRevMul(Builder2, DfB, Dret);
+        });
+      }
+    }
+  }
+
+  eraseInvertedPlaceholder();
+  return true;
+}
+
 bool AdjointGenerator::handleKnownCallDerivatives(
     CallInst &call, Function *called, StringRef funcName,
     bool subsequent_calls_may_write, const std::vector<bool> &overwritten_args,
@@ -2777,6 +3432,9 @@ bool AdjointGenerator::handleKnownCallDerivatives(
       EmitNoDerivativeError(ss.str(), call, gutils, BuilderZ);
       return true;
     }
+
+    if (handleC99ComplexMathCall(call, funcName, newCall, BuilderZ))
+      return true;
 
     auto mod = call.getParent()->getParent()->getParent();
 #include "CallDerivatives.inc"
