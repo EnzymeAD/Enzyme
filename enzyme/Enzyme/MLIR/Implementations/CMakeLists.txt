@@ -71,6 +71,7 @@ add_mlir_library(
   EnzymeAutoDiffOpInterfaceImpl.cpp
   DEPENDS
   MLIRAutoDiffOpInterfaceIncGen
+  MLIRMemTransferOpInterfaceIncGen
   AffineDerivativesIncGen
   ArithDerivativesIncGen
   ComplexDerivativesIncGen
