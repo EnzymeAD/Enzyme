@@ -501,6 +501,148 @@ public:
     bool subsequent_calls_may_write;
   };
 
+  /// Return the byte offset immediately after the last non-padding element of
+  /// `Ty`, so ABI unpacking stops before trailing struct alignment padding.
+  static uint64_t getUnpaddedTypeSizeInBytes(const DataLayout &DL, Type *Ty) {
+    if (auto *ST = dyn_cast<StructType>(Ty)) {
+      if (ST->getNumElements() == 0)
+        return 0;
+      const StructLayout *Layout = DL.getStructLayout(ST);
+      unsigned LastElement = ST->getNumElements() - 1;
+      return Layout->getElementOffset(LastElement) +
+             getUnpaddedTypeSizeInBytes(DL, ST->getElementType(LastElement));
+    }
+    if (auto *AT = dyn_cast<ArrayType>(Ty)) {
+      if (AT->getNumElements() == 0)
+        return 0;
+      Type *ElementType = AT->getElementType();
+      return (AT->getNumElements() - 1) * DL.getTypeAllocSize(ElementType) +
+             getUnpaddedTypeSizeInBytes(DL, ElementType);
+    }
+    return DL.getTypeStoreSize(Ty);
+  }
+
+  /// Return whether a caller `byval(ByValType)` argument maps cleanly onto one
+  /// or more consecutive register-lowered parameters of `TargetFunction`
+  /// starting at `StartParameterIndex`, storing the unpadded byte size in
+  /// `UnpaddedSizeInBytes` on success.
+  static bool canUnpackByValToParameters(const DataLayout &DL, Type *ByValType,
+                                         Function *TargetFunction,
+                                         unsigned StartParameterIndex,
+                                         uint64_t &UnpaddedSizeInBytes) {
+    uint64_t UnpaddedBytes = getUnpaddedTypeSizeInBytes(DL, ByValType);
+    uint64_t AllocBytes = DL.getTypeAllocSize(ByValType);
+    if (UnpaddedBytes == 0)
+      return false;
+    FunctionType *FT = TargetFunction->getFunctionType();
+    uint64_t CurrentOffset = 0;
+    unsigned ParameterIndex = StartParameterIndex;
+    while (CurrentOffset < UnpaddedBytes &&
+           ParameterIndex < FT->getNumParams()) {
+      if (TargetFunction->hasParamAttribute(ParameterIndex, Attribute::ByVal) ||
+          TargetFunction->hasParamAttribute(ParameterIndex,
+                                            Attribute::StructRet))
+        return false;
+      Type *PieceType = FT->getParamType(ParameterIndex);
+      CurrentOffset = alignTo(CurrentOffset, DL.getABITypeAlign(PieceType));
+      uint64_t PieceBytes = DL.getTypeStoreSize(PieceType);
+      if (PieceBytes == 0 || CurrentOffset + PieceBytes > AllocBytes)
+        return false;
+      CurrentOffset += PieceBytes;
+      ++ParameterIndex;
+    }
+    if (CurrentOffset < UnpaddedBytes)
+      return false;
+    UnpaddedSizeInBytes = UnpaddedBytes;
+    return true;
+  }
+
+  /// Load `PieceType` from `BasePointer` at the ABI-aligned `ByteOffset` and
+  /// advance `ByteOffset` past the loaded bytes.
+  static Value *loadByValPiece(IRBuilder<> &Builder, const DataLayout &DL,
+                               Value *BasePointer, Align BaseAlignment,
+                               uint64_t &ByteOffset, Type *PieceType) {
+    ByteOffset = alignTo(ByteOffset, DL.getABITypeAlign(PieceType));
+    unsigned AddressSpace =
+        cast<PointerType>(BasePointer->getType())->getAddressSpace();
+    Value *BytePointer = Builder.CreateBitCast(
+        BasePointer, getPointerType(Builder.getInt8Ty(), AddressSpace));
+    if (ByteOffset != 0)
+      BytePointer = Builder.CreateConstInBoundsGEP1_64(Builder.getInt8Ty(),
+                                                       BytePointer, ByteOffset);
+    Value *TypedPointer = Builder.CreateBitCast(
+        BytePointer, getPointerType(PieceType, AddressSpace));
+    Align LoadAlignment = commonAlignment(BaseAlignment, ByteOffset);
+    ByteOffset += DL.getTypeStoreSize(PieceType);
+    return Builder.CreateAlignedLoad(PieceType, TypedPointer, LoadAlignment);
+  }
+
+  /// Materialize a stack slot of `ByValType` populated from register-coerced
+  /// call arguments starting at `ArgumentIndex`, advancing `ArgumentIndex` to
+  /// the last consumed operand, or return nullptr if the operand layout does
+  /// not match.
+  static AllocaInst *packCoercedByValArgument(
+      IRBuilder<> &Builder, CallInst *CI, const DataLayout &DL, Type *ByValType,
+      Value *FirstPiece, ssize_t &ArgumentIndex, size_t MaxArgumentIndex) {
+    uint64_t UnpaddedBytes = getUnpaddedTypeSizeInBytes(DL, ByValType);
+    uint64_t AllocBytes = DL.getTypeAllocSize(ByValType);
+    if (UnpaddedBytes == 0)
+      return nullptr;
+
+    SmallVector<std::pair<uint64_t, Value *>> Pieces;
+    uint64_t CurrentOffset = 0;
+    ssize_t CurrentIndex = ArgumentIndex;
+    Value *CurrentPiece = FirstPiece;
+    Align RequiredAlignment = DL.getPrefTypeAlign(ByValType);
+
+    while (true) {
+      if (isa<MetadataAsValue>(CurrentPiece))
+        return nullptr;
+      Align PieceAlignment = DL.getABITypeAlign(CurrentPiece->getType());
+      CurrentOffset = alignTo(CurrentOffset, PieceAlignment);
+      uint64_t PieceBytes = DL.getTypeStoreSize(CurrentPiece->getType());
+      if (PieceBytes == 0 || CurrentOffset + PieceBytes > AllocBytes)
+        return nullptr;
+      RequiredAlignment = std::max(RequiredAlignment, PieceAlignment);
+      Pieces.emplace_back(CurrentOffset, CurrentPiece);
+      CurrentOffset += PieceBytes;
+      if (CurrentOffset >= UnpaddedBytes)
+        break;
+      if (static_cast<size_t>(CurrentIndex + 1) >= MaxArgumentIndex ||
+          CI->isByValArgument(CurrentIndex + 1))
+        return nullptr;
+      Value *NextOperand = CI->getArgOperand(CurrentIndex + 1);
+      auto MetadataName = getMetadataName(NextOperand);
+      if (MetadataName && startsWith(*MetadataName, "enzyme_"))
+        return nullptr;
+      ++CurrentIndex;
+      CurrentPiece = NextOperand;
+    }
+
+    BasicBlock &EntryBlock = CI->getFunction()->getEntryBlock();
+    IRBuilder<> AllocaBuilder(&EntryBlock, EntryBlock.begin());
+    AllocaInst *PackedAlloca = AllocaBuilder.CreateAlloca(ByValType);
+    PackedAlloca->setAlignment(RequiredAlignment);
+
+    unsigned AddressSpace = PackedAlloca->getAddressSpace();
+    Value *BaseBytePointer = Builder.CreateBitCast(
+        PackedAlloca, getPointerType(Builder.getInt8Ty(), AddressSpace));
+    for (const auto &[PieceOffset, PieceValue] : Pieces) {
+      Value *BytePointer = BaseBytePointer;
+      if (PieceOffset != 0)
+        BytePointer = Builder.CreateConstInBoundsGEP1_64(
+            Builder.getInt8Ty(), BaseBytePointer, PieceOffset);
+      Value *TypedPointer = Builder.CreateBitCast(
+          BytePointer, getPointerType(PieceValue->getType(), AddressSpace));
+      Builder.CreateAlignedStore(
+          PieceValue, TypedPointer,
+          commonAlignment(RequiredAlignment, PieceOffset));
+    }
+
+    ArgumentIndex = CurrentIndex;
+    return PackedAlloca;
+  }
+
 #if LLVM_VERSION_MAJOR > 16
   static std::optional<Options>
   handleArguments(IRBuilder<> &Builder, CallInst *CI, Function *fn,
@@ -698,10 +840,41 @@ public:
     }
 
     DIFFE_TYPE last_ty = DIFFE_TYPE::DUP_ARG;
+    const DataLayout &DL = fn->getParent()->getDataLayout();
+
+    // Cursor for unpacking a single caller `byval` struct across consecutive
+    // register-lowered callee parameters.
+    struct ByValUnpackCursor {
+      /// Pointer to the caller's `byval` struct storage, or nullptr if idle.
+      Value *BasePointer = nullptr;
+      /// Unpadded byte size of the `byval` struct being unpacked.
+      uint64_t UnpaddedSizeInBytes = 0;
+      /// Known alignment of `BasePointer`.
+      Align BaseAlignment;
+      /// Next byte offset within `BasePointer` to unpack from.
+      uint64_t ByteOffset = 0;
+#if LLVM_VERSION_MAJOR > 16
+      /// Explicit activity marker bound to the `byval` argument, if any.
+      std::optional<DIFFE_TYPE> ExplicitActivity;
+#else
+      /// Explicit activity marker bound to the `byval` argument, if any.
+      Optional<DIFFE_TYPE> ExplicitActivity;
+#endif
+      /// Whether `enzyme_not_overwritten` left this argument marked
+      /// overwritten.
+      bool Overwritten = false;
+      /// Stride operand from `enzyme_batch`, or nullptr if unbatched.
+      Value *BatchOffset = nullptr;
+    };
+    ByValUnpackCursor PrimalUnpack;
+    SmallVector<ByValUnpackCursor> ShadowUnpack;
 
     for (ssize_t i = 1 + sret; (size_t)i < maxsize; ++i) {
-      Value *res = CI->getArgOperand(i);
-      auto metaString = getMetadataName(res);
+      bool ContinuingPrimalUnpack = PrimalUnpack.BasePointer != nullptr;
+      Value *res = ContinuingPrimalUnpack ? nullptr : CI->getArgOperand(i);
+      auto metaString = ContinuingPrimalUnpack
+                            ? decltype(getMetadataName(res))()
+                            : getMetadataName(res);
 #if LLVM_VERSION_MAJOR > 16
       std::optional<Value *> batchOffset;
       std::optional<DIFFE_TYPE> opt_ty;
@@ -714,8 +887,16 @@ public:
 
       bool skipArg = false;
 
+      if (ContinuingPrimalUnpack) {
+        overwritten = PrimalUnpack.Overwritten;
+        opt_ty = PrimalUnpack.ExplicitActivity;
+        if (PrimalUnpack.BatchOffset)
+          batchOffset = PrimalUnpack.BatchOffset;
+      }
+
       // handle metadata
-      while (metaString && startsWith(*metaString, "enzyme_")) {
+      while (!ContinuingPrimalUnpack && metaString &&
+             startsWith(*metaString, "enzyme_")) {
         // What a marker names and what it takes for itself are described once,
         // in EnzymeCallMarkers.h, so that the MLIR raising of the same call
         // reads it the same way. Only what a marker then does with what it
@@ -839,7 +1020,7 @@ public:
       if (skipArg)
         continue;
 
-      if (byRefSize) {
+      if (!ContinuingPrimalUnpack && byRefSize) {
         Type *subTy = nullptr;
         if (truei < FT->getNumParams()) {
           subTy = FT->getParamType(i);
@@ -872,7 +1053,7 @@ public:
         byRefSize = 0;
       }
 
-      if (truei >= FT->getNumParams()) {
+      if (!ContinuingPrimalUnpack && truei >= FT->getNumParams()) {
         if (!isa<MetadataAsValue>(res) &&
             (mode == DerivativeMode::ReverseModeGradient ||
              mode == DerivativeMode::ForwardModeSplit)) {
@@ -920,10 +1101,37 @@ public:
                     " - extra arg - ", *res);
         return {};
       }
-      assert(truei < FT->getNumParams());
+      assert(truei < FT->getNumParams() &&
+             "callee parameter index out of bounds");
       overwritten_args[truei] = overwritten;
 
       auto PTy = FT->getParamType(truei);
+      if (PrimalUnpack.BasePointer == nullptr && CI->isByValArgument(i) &&
+          !fn->hasParamAttribute(truei, Attribute::ByVal)) {
+        Type *CallerByValType = CI->getParamByValType(i);
+        uint64_t UnpaddedSizeInBytes = 0;
+        if (canUnpackByValToParameters(DL, CallerByValType, fn, truei,
+                                       UnpaddedSizeInBytes)) {
+          PrimalUnpack.BasePointer = res;
+          PrimalUnpack.UnpaddedSizeInBytes = UnpaddedSizeInBytes;
+          PrimalUnpack.BaseAlignment = CI->getParamAlign(i).value_or(
+              DL.getABITypeAlign(CallerByValType));
+          PrimalUnpack.ByteOffset = 0;
+          PrimalUnpack.ExplicitActivity = opt_ty;
+          PrimalUnpack.Overwritten = overwritten;
+          if (batchOffset)
+            PrimalUnpack.BatchOffset = *batchOffset;
+        }
+      }
+      bool UnpackedFromCallerByVal = PrimalUnpack.BasePointer != nullptr;
+      if (UnpackedFromCallerByVal) {
+        res = loadByValPiece(Builder, DL, PrimalUnpack.BasePointer,
+                             PrimalUnpack.BaseAlignment,
+                             PrimalUnpack.ByteOffset, PTy);
+        if (PrimalUnpack.ByteOffset >= PrimalUnpack.UnpaddedSizeInBytes)
+          PrimalUnpack = ByValUnpackCursor();
+      }
+
       DIFFE_TYPE ty =
           opt_ty ? *opt_ty
                  : ((interleaved == -1) ? whatType(PTy, mode) : last_ty);
@@ -949,6 +1157,18 @@ public:
       }
 
       constants.push_back(ty);
+
+      bool PackedIntoCalleeByVal = false;
+      if (!UnpackedFromCallerByVal &&
+          fn->hasParamAttribute(truei, Attribute::ByVal) &&
+          !CI->isByValArgument(i) && !res->getType()->isPointerTy()) {
+        Type *CalleeByValType = fn->getParamByValType(truei);
+        if (AllocaInst *PackedAlloca = packCoercedByValArgument(
+                Builder, CI, DL, CalleeByValType, res, i, maxsize)) {
+          res = PackedAlloca;
+          PackedIntoCalleeByVal = true;
+        }
+      }
 
       assert(truei < FT->getNumParams());
       // cast primal
@@ -1000,13 +1220,17 @@ public:
           return {};
         }
       }
-      if (CI->isByValArgument(i)) {
+      if (PackedIntoCalleeByVal) {
+        byVal[args.size()] = fn->getParamByValType(truei);
+      } else if (!UnpackedFromCallerByVal && CI->isByValArgument(i)) {
         byVal[args.size()] = CI->getParamByValType(i);
       }
 
       args.push_back(res);
       if (ty == DIFFE_TYPE::DUP_ARG || ty == DIFFE_TYPE::DUP_NONEED) {
-        if (interleaved == -1)
+        if (ShadowUnpack.size() < width)
+          ShadowUnpack.resize(width);
+        if (interleaved == -1 && ShadowUnpack[0].BasePointer == nullptr)
           ++i;
 
         Value *res = nullptr;
@@ -1017,38 +1241,88 @@ public:
 #endif
 
         for (unsigned v = 0; v < width; ++v) {
-          if ((size_t)((interleaved == -1) ? i : interleaved) >= num_args) {
-            EmitFailure("MissingArgShadow", CI->getDebugLoc(), CI,
-                        "__enzyme_autodiff missing argument shadow at index ",
-                        *((interleaved == -1) ? &i : &interleaved),
-                        ", need shadow of type ", *PTy,
-                        " to shadow primal argument ", *args.back(),
-                        " at call ", *CI);
-            return {};
-          }
-
-          // cast diffe
-          Value *element =
-              CI->getArgOperand((interleaved == -1) ? i : interleaved);
-          if (batch) {
-            if (auto elementPtrTy = dyn_cast<PointerType>(element->getType())) {
-              element = Builder.CreateBitCast(
-                  element, getPointerType(Type::getInt8Ty(CI->getContext()),
-                                          elementPtrTy->getAddressSpace()));
-              element = Builder.CreateGEP(
-                  Type::getInt8Ty(CI->getContext()), element,
-                  Builder.CreateMul(
-                      *batchOffset,
-                      ConstantInt::get((*batchOffset)->getType(), v)));
-              element = Builder.CreateBitCast(element, elementPtrTy);
-            } else {
-              EmitFailure(
-                  "NonPointerBatch", CI->getDebugLoc(), CI,
-                  "Batched argument at index ",
-                  *((interleaved == -1) ? &i : &interleaved),
-                  " must be of pointer type, found: ", *element->getType());
+          Value *element = nullptr;
+          bool ContinuingLaneUnpack = ShadowUnpack[v].BasePointer != nullptr;
+          ssize_t ShadowArgumentIndex =
+              (interleaved == -1) ? i : static_cast<ssize_t>(interleaved);
+          if (ContinuingLaneUnpack) {
+            element = loadByValPiece(Builder, DL, ShadowUnpack[v].BasePointer,
+                                     ShadowUnpack[v].BaseAlignment,
+                                     ShadowUnpack[v].ByteOffset, PTy);
+          } else {
+            if ((size_t)ShadowArgumentIndex >= num_args) {
+              EmitFailure("MissingArgShadow", CI->getDebugLoc(), CI,
+                          "__enzyme_autodiff missing argument shadow at index ",
+                          *((interleaved == -1) ? &i : &interleaved),
+                          ", need shadow of type ", *PTy,
+                          " to shadow primal argument ", *args.back(),
+                          " at call ", *CI);
               return {};
             }
+
+            // cast diffe
+            element = CI->getArgOperand(ShadowArgumentIndex);
+            if (batch) {
+              if (auto elementPtrTy =
+                      dyn_cast<PointerType>(element->getType())) {
+                element = Builder.CreateBitCast(
+                    element, getPointerType(Type::getInt8Ty(CI->getContext()),
+                                            elementPtrTy->getAddressSpace()));
+                element = Builder.CreateGEP(
+                    Type::getInt8Ty(CI->getContext()), element,
+                    Builder.CreateMul(
+                        *batchOffset,
+                        ConstantInt::get((*batchOffset)->getType(), v)));
+                element = Builder.CreateBitCast(element, elementPtrTy);
+              } else {
+                EmitFailure(
+                    "NonPointerBatch", CI->getDebugLoc(), CI,
+                    "Batched argument at index ",
+                    *((interleaved == -1) ? &i : &interleaved),
+                    " must be of pointer type, found: ", *element->getType());
+                return {};
+              }
+            } else if (CI->isByValArgument(ShadowArgumentIndex) &&
+                       !fn->hasParamAttribute(truei, Attribute::ByVal)) {
+              Type *ShadowByValType =
+                  CI->getParamByValType(ShadowArgumentIndex);
+              uint64_t UnpaddedSizeInBytes = 0;
+              if (canUnpackByValToParameters(DL, ShadowByValType, fn, truei,
+                                             UnpaddedSizeInBytes)) {
+                ShadowUnpack[v].BasePointer = element;
+                ShadowUnpack[v].UnpaddedSizeInBytes = UnpaddedSizeInBytes;
+                ShadowUnpack[v].BaseAlignment =
+                    CI->getParamAlign(ShadowArgumentIndex)
+                        .value_or(DL.getABITypeAlign(ShadowByValType));
+                ShadowUnpack[v].ByteOffset = 0;
+                element =
+                    loadByValPiece(Builder, DL, ShadowUnpack[v].BasePointer,
+                                   ShadowUnpack[v].BaseAlignment,
+                                   ShadowUnpack[v].ByteOffset, PTy);
+              }
+            } else if ((mode == DerivativeMode::ForwardMode ||
+                        mode == DerivativeMode::ForwardModeError ||
+                        mode == DerivativeMode::ForwardModeSplit) &&
+                       fn->hasParamAttribute(truei, Attribute::ByVal) &&
+                       !CI->isByValArgument(ShadowArgumentIndex) &&
+                       !element->getType()->isPointerTy()) {
+              Type *CalleeByValType = fn->getParamByValType(truei);
+              ssize_t ConsumedEndIndex = ShadowArgumentIndex;
+              if (AllocaInst *PackedShadow = packCoercedByValArgument(
+                      Builder, CI, DL, CalleeByValType, element,
+                      ConsumedEndIndex, num_args)) {
+                element = PackedShadow;
+                if (interleaved == -1)
+                  i = ConsumedEndIndex;
+                else
+                  interleaved = ConsumedEndIndex;
+              }
+            }
+          }
+          if (ShadowUnpack[v].BasePointer != nullptr &&
+              ShadowUnpack[v].ByteOffset >=
+                  ShadowUnpack[v].UnpaddedSizeInBytes) {
+            ShadowUnpack[v] = ByValUnpackCursor();
           }
           if (PTy != element->getType()) {
             element = castToDiffeFunctionArgType(
@@ -1066,7 +1340,8 @@ public:
                                                     element->getType(), width)),
                                                 element, {v});
 
-            if (v < width - 1 && !batch && (interleaved == -1)) {
+            if (v < width - 1 && !batch && (interleaved == -1) &&
+                ShadowUnpack[v + 1].BasePointer == nullptr) {
               ++i;
             }
 
@@ -1074,7 +1349,7 @@ public:
             res = element;
           }
 
-          if (interleaved != -1)
+          if (!ContinuingLaneUnpack && interleaved != -1)
             interleaved++;
         }
 
@@ -1082,6 +1357,8 @@ public:
       }
 
       ++truei;
+      if (PrimalUnpack.BasePointer != nullptr)
+        --i;
     }
     if (truei < FT->getNumParams()) {
       auto numParams = FT->getNumParams();
