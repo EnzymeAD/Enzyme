@@ -66,6 +66,12 @@ if len("@ENZYME_BINARY_DIR@") == 0:
   eclang += "-I " + os.path.dirname(os.path.abspath(__file__)) + "/Integration" 
 
 config.substitutions.append(('%eopt', emopt))
+etranslate = config.enzyme_obj_root + "/Enzyme/MLIR/enzymemlir-translate/enzymemlir-translate"
+if len("@ENZYME_BINARY_DIR@") == 0:
+  etranslate = os.path.dirname(os.path.abspath(__file__)) + "/../enzymemlir-translate"
+config.substitutions.append(('%etranslate', etranslate))
+if os.path.exists(etranslate):
+  config.available_features.add('enzymemlir-translate')
 config.substitutions.append(('%llvmver', config.llvm_ver))
 config.substitutions.append(('%FileCheck', config.llvm_tools_dir + "/FileCheck"))
 config.substitutions.append(('%clang', eclang))

@@ -27,6 +27,8 @@ add_mlir_dialect_library(
   MLIRAutoDiffTypeInterfaceIncGen
   LINK_LIBS
   PUBLIC
+  MLIRCallInterfaces
+  MLIRFunctionInterfaces
   MLIRIR
   MLIRMemRefDialect)
 
