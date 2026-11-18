@@ -477,7 +477,8 @@ static void symvTests() {
         inputs[4] = BlasInfo(tmp, N, 1);
         cblas_dcopy(N, dA, lda + 1, tmp, 1);
         cblas_dsyr2(layout, uplo, N, alpha, B, incB, dC, incC, dA, lda);
-        cblas_dcopy(N, tmp, 1, dA, lda + 1);
+        cblas_daxpy(N, -1, dA, lda + 1, tmp, 1);
+        cblas_daxpy(N, 0.5, tmp, 1, dA, lda + 1);
 
         // dY = beta * dY
         cblas_dscal(N, beta, dC, incC);
@@ -521,7 +522,8 @@ static void symvTests() {
             inputs[4] = BlasInfo(tmp, N, 1);
             cblas_dcopy(N, dA, lda + 1, tmp, 1);
             cblas_dsyr2(layout, uplo, N, alpha, B, incB, dC, incC, dA, lda);
-            cblas_dcopy(N, tmp, 1, dA, lda + 1);
+            cblas_daxpy(N, -1, dA, lda + 1, tmp, 1);
+            cblas_daxpy(N, 0.5, tmp, 1, dA, lda + 1);
 
             cblas_dsymv(layout, uplo, N, alpha, A, lda, dC, incC, 1.0, dB, incB);
     
@@ -577,7 +579,8 @@ static void symvTests() {
             inputs[3] = BlasInfo(tmp, N, 1);
             cblas_dcopy(N, dA, lda + 1, tmp, 1);
             cblas_dsyr2(layout, uplo, N, alpha, B_cache, 1, dC, incC, dA, lda);
-            cblas_dcopy(N, tmp, 1, dA, lda + 1);
+            cblas_daxpy(N, -1, dA, lda + 1, tmp, 1);
+            cblas_daxpy(N, 0.5, tmp, 1, dA, lda + 1);
 
             cblas_dsymv(layout, uplo, N, alpha, A_cache, N, dC, incC, 1.0, dB, incB);
     
