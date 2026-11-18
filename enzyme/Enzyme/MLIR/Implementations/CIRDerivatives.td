@@ -407,7 +407,6 @@ def : CirInactiveOp<"VTableGetVPtrOp">;
 
 // Control flow
 def : ReturnOp<"cir", "ReturnOp">;
-def : CallOp<"cir", "CallOp">;
 def : BranchOp<"cir", "BrOp">;
 def : BranchOp<"cir", "BrCondOp">;
 def : BranchOp<"cir", "SwitchFlatOp">;

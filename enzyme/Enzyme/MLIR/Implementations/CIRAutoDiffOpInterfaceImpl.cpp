@@ -26,6 +26,9 @@
 #include "mlir/Support/LogicalResult.h"
 #include "clang/CIR/Dialect/Builder/CIRBaseBuilder.h"
 #include "clang/CIR/Dialect/IR/CIRDialect.h"
+#include "llvm/ADT/StringSwitch.h"
+
+#include <set>
 
 #include "Dialect/Ops.h"
 
@@ -716,6 +719,494 @@ struct CIRMemCpyOpReverse
   }
 };
 
+// The C and C++ allocators have no body to differentiate. An active
+// allocation gets a shadow allocation of the same size, zeroed, which lives
+// as long as the primal does and is freed the way the primal is.
+enum class AllocatorFn { None, Alloc, ZeroedAlloc, Realloc, Free };
+
+static AllocatorFn getAllocatorFn(cir::CallOp call) {
+  FlatSymbolRefAttr callee = call.getCalleeAttr();
+  if (!callee)
+    return AllocatorFn::None;
+  auto fn = SymbolTable::lookupNearestSymbolFrom<cir::FuncOp>(call, callee);
+  if (!fn || !fn.isDeclaration())
+    return AllocatorFn::None;
+  return llvm::StringSwitch<AllocatorFn>(fn.getSymName())
+      .Cases({"malloc", "_Znwm", "_Znam", "_Znwj", "_Znaj"}, AllocatorFn::Alloc)
+      .Cases({"_ZnwmRKSt9nothrow_t", "_ZnamRKSt9nothrow_t",
+              "_ZnwjRKSt9nothrow_t", "_ZnajRKSt9nothrow_t"},
+             AllocatorFn::Alloc)
+      .Cases({"_ZnwmSt11align_val_t", "_ZnamSt11align_val_t",
+              "_ZnwjSt11align_val_t", "_ZnajSt11align_val_t"},
+             AllocatorFn::Alloc)
+      .Cases({"_ZnwmSt11align_val_tRKSt9nothrow_t",
+              "_ZnamSt11align_val_tRKSt9nothrow_t",
+              "_ZnwjSt11align_val_tRKSt9nothrow_t",
+              "_ZnajSt11align_val_tRKSt9nothrow_t"},
+             AllocatorFn::Alloc)
+      .Case("calloc", AllocatorFn::ZeroedAlloc)
+      .Case("realloc", AllocatorFn::Realloc)
+      .Cases({"free", "_ZdlPv", "_ZdaPv", "_ZdlPvm", "_ZdaPvm", "_ZdlPvj",
+              "_ZdaPvj"},
+             AllocatorFn::Free)
+      .Cases({"_ZdlPvSt11align_val_t", "_ZdaPvSt11align_val_t",
+              "_ZdlPvmSt11align_val_t", "_ZdaPvmSt11align_val_t",
+              "_ZdlPvjSt11align_val_t", "_ZdaPvjSt11align_val_t"},
+             AllocatorFn::Free)
+      .Cases({"_ZdlPvRKSt9nothrow_t", "_ZdaPvRKSt9nothrow_t",
+              "_ZdlPvSt11align_val_tRKSt9nothrow_t",
+              "_ZdaPvSt11align_val_tRKSt9nothrow_t"},
+             AllocatorFn::Free)
+      .Default(AllocatorFn::None);
+}
+
+static bool isAllocation(AllocatorFn fn) {
+  return fn == AllocatorFn::Alloc || fn == AllocatorFn::ZeroedAlloc;
+}
+
+// Allocates the shadow of primal.
+static Value createShadowAllocation(cir::CallOp primal, AllocatorFn fn,
+                                    OpBuilder &builder) {
+  Location loc = primal.getLoc();
+  Value shadow = builder.clone(*primal)->getResult(0);
+  // calloc's memory is zero already.
+  if (fn == AllocatorFn::Alloc) {
+    MLIRContext *ctx = builder.getContext();
+    auto voidPtr = cir::PointerType::get(cir::VoidType::get(ctx));
+    Value dst = shadow.getType() == voidPtr
+                    ? shadow
+                    : cir::CastOp::create(builder, loc, voidPtr,
+                                          cir::CastKind::bitcast, shadow)
+                          .getResult();
+    auto u8 = cir::IntType::get(ctx, 8, /*isSigned=*/false);
+    Value zero =
+        cir::ConstantOp::create(builder, loc, cir::IntAttr::get(u8, 0));
+    cir::MemSetOp::create(builder, loc, dst, /*alignment=*/nullptr, zero,
+                          primal.getArgOperands().front());
+  }
+  return shadow;
+}
+
+static bool isBitcast(cir::CastOp cast) {
+  return cast && cast.getKind() == cir::CastKind::bitcast;
+}
+
+static bool isNullPointer(Value v) {
+  auto c = v.getDefiningOp<cir::ConstantOp>();
+  auto attr = c ? dyn_cast<cir::ConstPtrAttr>(c.getValue()) : nullptr;
+  return attr && attr.isNullValue();
+}
+
+// Whether v is one of held, or a bitcast of one.
+static bool isHeld(Value v, const DenseSet<Value> &held) {
+  while (!held.contains(v)) {
+    auto cast = v.getDefiningOp<cir::CastOp>();
+    if (!isBitcast(cast))
+      return false;
+    v = cast.getSrc();
+  }
+  return true;
+}
+
+// C++ requires `delete` be called non null. Find the null path and return
+// directly.
+static Block *nullSuccessor(Block *block, const DenseSet<Value> &held) {
+  auto br = dyn_cast<cir::BrCondOp>(block->getTerminator());
+  if (!br)
+    return nullptr;
+  auto cmp = br.getCond().getDefiningOp<cir::CmpOp>();
+  if (!cmp || (cmp.getKind() != cir::CmpOpKind::eq &&
+               cmp.getKind() != cir::CmpOpKind::ne))
+    return nullptr;
+  if (!((isHeld(cmp.getLhs(), held) && isNullPointer(cmp.getRhs())) ||
+        (isHeld(cmp.getRhs(), held) && isNullPointer(cmp.getLhs()))))
+    return nullptr;
+  return cmp.getKind() == cir::CmpOpKind::eq ? br.getDestTrue()
+                                             : br.getDestFalse();
+}
+
+// Check whether a alloc is actually freed in all BB used it.
+// This go through all BB contains the transformation of allocated SSA value
+// (from cast or itself).
+static cir::CallOp getGuaranteedFree(cir::CallOp alloc) {
+  // The first free in `block` of a pointer `held` there, up to and
+  // including `last`.
+  auto freeIn = [](Block *block, const DenseSet<Value> &held,
+                   Operation *last = nullptr) {
+    for (Operation &op : *block) {
+      if (auto call = dyn_cast<cir::CallOp>(op)) {
+        AllocatorFn fn = getAllocatorFn(call);
+        bool frees =
+            fn == AllocatorFn::Realloc ||
+            (fn == AllocatorFn::Free &&
+             llvm::all_of(call.getArgOperands().drop_front(), [](Value arg) {
+               return arg.getDefiningOp<cir::ConstantOp>();
+             }));
+        if (frees && isHeld(call.getArgOperands().front(), held))
+          return call;
+      }
+      if (&op == last)
+        break;
+    }
+    return cir::CallOp();
+  };
+
+  // Bounds the paths looked at; past it the shadow is just not freed.
+  constexpr unsigned maxStates = 256;
+  Block *start = alloc->getBlock();
+  using State = std::pair<Block *, DenseSet<Value>>;
+  SmallVector<State> todo;
+  std::set<std::pair<Block *, std::vector<void *>>> visited;
+  cir::CallOp found;
+  DenseSet<Value> init{alloc->getResult(0)};
+  if (cir::CallOp free = freeIn(start, init))
+    return free;
+  todo.push_back({start, init});
+  while (!todo.empty()) {
+    auto [block, held] = todo.pop_back_val();
+    if (block != start) {
+      std::vector<void *> key;
+      for (Value v : held)
+        key.push_back(v.getAsOpaquePointer());
+      llvm::sort(key);
+      if (!visited.insert({block, std::move(key)}).second)
+        continue;
+      if (visited.size() > maxStates)
+        return nullptr;
+      if (cir::CallOp free = freeIn(block, held)) {
+        found = found ? found : free;
+        continue;
+      }
+    }
+    if (block->getNumSuccessors() == 0)
+      return nullptr;
+    auto br = dyn_cast<BranchOpInterface>(block->getTerminator());
+    if (!br)
+      return nullptr;
+    Block *ifNull = nullSuccessor(block, held);
+    for (unsigned i = 0, e = block->getNumSuccessors(); i < e; ++i) {
+      // Skip nullptr check branch
+      Block *succ = block->getSuccessor(i);
+      if (succ == ifNull)
+        continue;
+      SuccessorOperands operands = br.getSuccessorOperands(i);
+      unsigned produced = operands.getProducedOperandCount();
+      DenseSet<Value> next = held;
+      for (BlockArgument arg : succ->getArguments()) {
+        unsigned n = arg.getArgNumber();
+        if (n >= produced &&
+            isHeld(operands.getForwardedOperands()[n - produced], held))
+          next.insert(arg);
+        else
+          next.erase(arg);
+      }
+      // Back where it allocates: fine if it frees the pointer first, as
+      // `b = realloc(b, n)` in a loop does.
+      if (succ == start) {
+        cir::CallOp free = freeIn(start, next, alloc);
+        if (!free)
+          return nullptr;
+        found = found ? found : free;
+        continue;
+      }
+      todo.push_back({succ, std::move(next)});
+    }
+  }
+  return found;
+}
+
+static cir::FuncOp getFreeFunction(Operation *from) {
+  auto module = from->getParentOfType<ModuleOp>();
+  if (auto fn = module.lookupSymbol<cir::FuncOp>("free"))
+    return fn;
+  MLIRContext *ctx = from->getContext();
+  OpBuilder builder = OpBuilder::atBlockBegin(module.getBody());
+  auto fn = cir::FuncOp::create(
+      builder, from->getLoc(), "free",
+      cir::FuncType::get({cir::PointerType::get(cir::VoidType::get(ctx))},
+                         cir::VoidType::get(ctx)));
+  fn.setPrivate();
+  return fn;
+}
+
+static Value bitcastTo(OpBuilder &builder, Location loc, Value v, Type ty) {
+  if (v.getType() == ty)
+    return v;
+  return cir::CastOp::create(builder, loc, ty, cir::CastKind::bitcast, v);
+}
+
+// Free shadow in the reverse path as the same as free in primal space.
+static void createShadowFree(cir::CallOp free, Value shadow, OpBuilder &builder,
+                             MGradientUtilsReverse *gutils) {
+  Location loc = free.getLoc();
+  if (getAllocatorFn(free) == AllocatorFn::Realloc) {
+    cir::FuncOp fn = getFreeFunction(free);
+    cir::CallOp::create(
+        builder, loc, SymbolRefAttr::get(fn), Type(),
+        ValueRange{bitcastTo(builder, loc, shadow,
+                             fn.getFunctionType().getInputs().front())});
+    return;
+  }
+  SmallVector<Value> args{
+      bitcastTo(builder, loc, shadow, free.getArgOperands().front().getType())};
+  for (Value arg : free.getArgOperands().drop_front())
+    args.push_back(builder.clone(*arg.getDefiningOp())->getResult(0));
+  builder.clone(*gutils->getNewFromOriginal(free))->setOperands(args);
+}
+
+// Create stack allocation and store the orignal size inside from every source.
+static LogicalResult storeAllocationSize(Value ptr, Operation *at, Value slot,
+                                         Type sizeTy, MGradientUtils *gutils) {
+  SmallVector<std::pair<Value, Operation *>> todo{{ptr, at}};
+  DenseSet<std::pair<Value, Operation *>> seen;
+  while (!todo.empty()) {
+    auto [v, where] = todo.pop_back_val();
+    if (!seen.insert({v, where}).second)
+      continue;
+    OpBuilder builder(gutils->getNewFromOriginal(where));
+    Location loc = where->getLoc();
+    auto store = [&](Value size) {
+      if (size.getType() != sizeTy)
+        return false;
+      cir::StoreOp::create(builder, loc, size, slot);
+      return true;
+    };
+    if (auto cast = v.getDefiningOp<cir::CastOp>(); isBitcast(cast)) {
+      todo.push_back({cast.getSrc(), where});
+      continue;
+    }
+    // Realloc on nullptr, previous size always == 0.
+    if (isNullPointer(v)) {
+      store(cir::ConstantOp::create(
+          builder, loc, cir::IntAttr::get(cast<cir::IntType>(sizeTy), 0)));
+      continue;
+    }
+    // Store the source.
+    if (auto call = v.getDefiningOp<cir::CallOp>()) {
+      auto args = call.getArgOperands();
+      bool stored = false;
+      switch (getAllocatorFn(call)) {
+      case AllocatorFn::Alloc:
+        stored = store(gutils->getNewFromOriginal(args[0]));
+        break;
+      case AllocatorFn::ZeroedAlloc:
+        stored = store(cir::MulOp::create(builder, loc,
+                                          gutils->getNewFromOriginal(args[0]),
+                                          gutils->getNewFromOriginal(args[1])));
+        break;
+      case AllocatorFn::Realloc:
+        stored = store(gutils->getNewFromOriginal(args[1]));
+        break;
+      default:
+        break;
+      }
+      if (!stored)
+        return failure();
+      continue;
+    }
+    auto arg = dyn_cast<BlockArgument>(v);
+    if (!arg || arg.getOwner()->isEntryBlock())
+      return failure();
+    Block *owner = arg.getOwner();
+    for (auto it = owner->pred_begin(), e = owner->pred_end(); it != e; ++it) {
+      // A block nothing branches to never passes anything.
+      if (!(*it)->isEntryBlock() && (*it)->hasNoPredecessors())
+        continue;
+      auto br = dyn_cast<BranchOpInterface>((*it)->getTerminator());
+      if (!br)
+        return failure();
+      SuccessorOperands operands =
+          br.getSuccessorOperands(it.getSuccessorIndex());
+      unsigned produced = operands.getProducedOperandCount();
+      if (arg.getArgNumber() < produced)
+        return failure();
+      todo.push_back(
+          {operands.getForwardedOperands()[arg.getArgNumber() - produced], br});
+    }
+  }
+  return success();
+}
+
+// The type the memory realloc resizes holds, from the casts of the new
+// pointer or of the old one, or null.
+static Type reallocElementType(cir::CallOp realloc) {
+  auto pointee = [](Value v) -> Type {
+    Type t = cast<cir::PointerType>(v.getType()).getPointee();
+    return isa<cir::VoidType>(t) ? Type() : t;
+  };
+  for (Operation *user : realloc->getResult(0).getUsers())
+    if (auto cast = dyn_cast<cir::CastOp>(user); isBitcast(cast))
+      if (Type t = pointee(cast.getResult()))
+        return t;
+  if (auto cast = realloc.getArgOperands().front().getDefiningOp<cir::CastOp>();
+      isBitcast(cast))
+    return pointee(cast.getSrc());
+  return Type();
+}
+
+// Realloc a data need to copy as the shadow space value extend its lifetime
+// until the reverse space. We have no choice but allocate a new one so that
+// previous address is fine.
+static LogicalResult reallocReverse(cir::CallOp call, OpBuilder &builder,
+                                    MGradientUtilsReverse *gutils) {
+  Location loc = call.getLoc();
+  Value p = call.getArgOperands()[0], n = call.getArgOperands()[1];
+  Type elemTy = reallocElementType(call);
+  FailureOr<Type> floatTy =
+      elemTy ? uniformFloatType(elemTy) : FailureOr<Type>(failure());
+  if (failed(floatTy))
+    return call.emitError()
+           << "cannot differentiate a realloc in reverse mode without knowing "
+              "whether it holds floats or other data";
+
+  auto newCall = cast<cir::CallOp>(gutils->getNewFromOriginal(call));
+  OpBuilder fwd(newCall);
+  Type sizeTy = n.getType();
+  OpBuilder entry =
+      OpBuilder::atBlockBegin(&gutils->newFunc.getFunctionBody().front());
+  DataLayout layout = DataLayout::closest(newCall);
+  Value slot = cir::AllocaOp::create(
+      entry, loc, cir::PointerType::get(sizeTy), "realloc.size",
+      entry.getI64IntegerAttr(layout.getTypeABIAlignment(sizeTy)));
+  if (failed(storeAllocationSize(p, call, slot, sizeTy, gutils)))
+    return call.emitError()
+           << "cannot differentiate a realloc in reverse mode unless what it "
+              "resizes comes from malloc, calloc, realloc or null in this "
+              "function";
+  Value old = cir::LoadOp::create(fwd, loc, sizeTy, slot);
+  Value size = newCall.getArgOperands()[1];
+  Value smaller = cir::CmpOp::create(fwd, loc, cir::CmpOpKind::lt, old, size);
+  Value copied = cir::SelectOp::create(fwd, loc, smaller, old, size);
+
+  Value oldShadow = gutils->invertPointerM(p, fwd);
+  // realloc(NULL, n) allocates like malloc(n).
+  Value null =
+      cast<AutoDiffTypeInterface>(p.getType()).createNullValue(fwd, loc);
+  auto shadowCall = cast<cir::CallOp>(fwd.clone(*newCall));
+  shadowCall->setOperand(0, null);
+  Value shadow = shadowCall->getResult(0);
+
+  MLIRContext *ctx = fwd.getContext();
+  auto voidPtr = cir::PointerType::get(cir::VoidType::get(ctx));
+  zeroBytes(fwd, loc, bitcastTo(fwd, loc, shadow, voidPtr), size);
+  if (!*floatTy)
+    cir::MemCpyOp::create(fwd, loc, bitcastTo(fwd, loc, shadow, voidPtr),
+                          bitcastTo(fwd, loc, oldShadow, voidPtr), copied,
+                          /*dst_alignment=*/nullptr,
+                          /*src_alignment=*/nullptr);
+  gutils->setInvertedPointer(call->getResult(0), shadow);
+
+  Value shadowCache = gutils->initAndPushCache(shadow, fwd);
+  Value oldShadowCache = gutils->initAndPushCache(oldShadow, fwd);
+  Value copiedCache = gutils->initAndPushCache(copied, fwd);
+  Value revShadow = gutils->popCache(shadowCache, builder);
+  Value revOldShadow = gutils->popCache(oldShadowCache, builder);
+  Value revCopied = gutils->popCache(copiedCache, builder);
+  if (*floatTy)
+    accumulateAndZero(builder, loc, *floatTy, revShadow, revOldShadow,
+                      revCopied);
+  if (cir::CallOp free = getGuaranteedFree(call))
+    createShadowFree(free, revShadow, builder, gutils);
+  return success();
+}
+
+struct CIRCallOpForward
+    : public AutoDiffOpInterface::ExternalModel<CIRCallOpForward, cir::CallOp> {
+  LogicalResult createForwardModeTangent(Operation *op, OpBuilder &builder,
+                                         MGradientUtils *gutils) const {
+    auto call = cast<cir::CallOp>(op);
+    AllocatorFn fn = getAllocatorFn(call);
+    switch (fn) {
+    case AllocatorFn::None:
+      return enzyme::detail::callForwardHandler(op, builder, gutils);
+    case AllocatorFn::Alloc:
+    case AllocatorFn::ZeroedAlloc:
+      if (!gutils->isConstantValue(call->getResult(0)))
+        gutils->setInvertedPointer(
+            call->getResult(0),
+            createShadowAllocation(
+                cast<cir::CallOp>(gutils->getNewFromOriginal(op)), fn,
+                builder));
+      return success();
+    case AllocatorFn::Realloc: {
+      // The shadow is resized with the primal. Like a fresh malloc's, the
+      // grown part is only read once the primal has written it, and the
+      // tangent of that write fills it in.
+      if (gutils->isConstantValue(call->getResult(0)))
+        return success();
+      Operation *shadow = builder.clone(*gutils->getNewFromOriginal(op));
+      shadow->setOperand(
+          0, gutils->invertPointerM(call.getArgOperands().front(), builder));
+      gutils->setInvertedPointer(call->getResult(0), shadow->getResult(0));
+      return success();
+    }
+    case AllocatorFn::Free: {
+      Value ptr = call.getArgOperands().front();
+      if (gutils->isConstantValue(ptr))
+        return success();
+      Operation *shadowFree = builder.clone(*gutils->getNewFromOriginal(op));
+      shadowFree->setOperand(0, gutils->invertPointerM(ptr, builder));
+      return success();
+    }
+    }
+    llvm_unreachable("unknown allocator function");
+  }
+};
+
+struct CIRCallOpReverse
+    : public ReverseAutoDiffOpInterface::ExternalModel<CIRCallOpReverse,
+                                                       cir::CallOp> {
+  LogicalResult createReverseModeAdjoint(Operation *op, OpBuilder &builder,
+                                         MGradientUtilsReverse *gutils,
+                                         SmallVector<Value> caches) const {
+    auto call = cast<cir::CallOp>(op);
+    switch (getAllocatorFn(call)) {
+    case AllocatorFn::None:
+      return enzyme::detail::callReverseHandler(op, builder, gutils, caches);
+    case AllocatorFn::Alloc:
+    case AllocatorFn::ZeroedAlloc: {
+      if (gutils->isConstantValue(call->getResult(0)))
+        return success();
+      cir::CallOp free = getGuaranteedFree(call);
+      if (!free)
+        return success();
+      OpBuilder cacheBuilder(gutils->getNewFromOriginal(op));
+      Value cache = gutils->initAndPushCache(
+          gutils->invertedPointers.lookupOrNull(call->getResult(0)),
+          cacheBuilder);
+      createShadowFree(free, gutils->popCache(cache, builder), builder, gutils);
+      return success();
+    }
+    case AllocatorFn::Realloc:
+      if (gutils->isConstantValue(call->getResult(0)))
+        return success();
+      return reallocReverse(call, builder, gutils);
+    case AllocatorFn::Free:
+      return success();
+    }
+    llvm_unreachable("unknown allocator function");
+  }
+
+  SmallVector<Value> cacheValues(Operation *op,
+                                 MGradientUtilsReverse *gutils) const {
+    if (getAllocatorFn(cast<cir::CallOp>(op)) == AllocatorFn::None)
+      return enzyme::detail::callCacheValues(op, gutils);
+    return {};
+  }
+
+  LogicalResult createShadowValues(Operation *op, OpBuilder &builder,
+                                   MGradientUtilsReverse *gutils) const {
+    auto call = cast<cir::CallOp>(op);
+    AllocatorFn fn = getAllocatorFn(call);
+    if (isAllocation(fn) && !gutils->isConstantValue(call->getResult(0)))
+      gutils->setInvertedPointer(
+          call->getResult(0),
+          createShadowAllocation(
+              cast<cir::CallOp>(gutils->getNewFromOriginal(op)), fn, builder));
+    return success();
+  }
+};
+
 } // namespace
 
 class AutoDiffCIRFuncOpFunctionInterface
@@ -913,6 +1404,8 @@ void mlir::enzyme::registerCIRDialectAutoDiffInterface(
     cir::LoadOp::attachInterface<CIRLoadLike>(*context);
     cir::LoadOp::attachInterface<CIRLoadOpInterfaceReverse>(*context);
     cir::AllocaOp::attachInterface<CIRAllocaLike>(*context);
+    cir::CallOp::attachInterface<CIRCallOpForward>(*context);
+    cir::CallOp::attachInterface<CIRCallOpReverse>(*context);
     cir::CastOp::attachInterface<CIRCastOpActivity>(*context);
     cir::CastOp::attachInterface<CIRCastOpForward>(*context);
     cir::CastOp::attachInterface<CIRCastOpReverse>(*context);
