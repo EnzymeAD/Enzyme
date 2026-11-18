@@ -613,6 +613,73 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
         if (val != CI->getArgOperand(0) || val != CI->getOperand(1))
           return false;
 
+      // Linear GSL FFT and mean routines only need stride, n (and sign for
+      // complex *_transform) as primals in the derivative pass; primal data,
+      // wavetable, and workspace pointers are not used.
+      if (funcName == "gsl_stats_mean" || funcName == "gsl_stats_float_mean" ||
+          funcName == "gsl_fft_real_transform" ||
+          funcName == "gsl_fft_real_float_transform" ||
+          funcName == "gsl_fft_halfcomplex_backward" ||
+          funcName == "gsl_fft_halfcomplex_inverse" ||
+          funcName == "gsl_fft_halfcomplex_transform" ||
+          funcName == "gsl_fft_halfcomplex_float_backward" ||
+          funcName == "gsl_fft_halfcomplex_float_inverse" ||
+          funcName == "gsl_fft_halfcomplex_float_transform" ||
+          funcName == "gsl_fft_real_radix2_transform" ||
+          funcName == "gsl_fft_real_float_radix2_transform" ||
+          funcName == "gsl_fft_halfcomplex_radix2_backward" ||
+          funcName == "gsl_fft_halfcomplex_radix2_inverse" ||
+          funcName == "gsl_fft_halfcomplex_radix2_transform" ||
+          funcName == "gsl_fft_halfcomplex_float_radix2_backward" ||
+          funcName == "gsl_fft_halfcomplex_float_radix2_inverse" ||
+          funcName == "gsl_fft_halfcomplex_float_radix2_transform" ||
+          funcName == "gsl_fft_complex_forward" ||
+          funcName == "gsl_fft_complex_backward" ||
+          funcName == "gsl_fft_complex_inverse" ||
+          funcName == "gsl_fft_complex_float_forward" ||
+          funcName == "gsl_fft_complex_float_backward" ||
+          funcName == "gsl_fft_complex_float_inverse" ||
+          funcName == "gsl_fft_complex_radix2_forward" ||
+          funcName == "gsl_fft_complex_radix2_backward" ||
+          funcName == "gsl_fft_complex_radix2_inverse" ||
+          funcName == "gsl_fft_complex_radix2_dif_forward" ||
+          funcName == "gsl_fft_complex_radix2_dif_backward" ||
+          funcName == "gsl_fft_complex_radix2_dif_inverse" ||
+          funcName == "gsl_fft_complex_float_radix2_forward" ||
+          funcName == "gsl_fft_complex_float_radix2_backward" ||
+          funcName == "gsl_fft_complex_float_radix2_inverse" ||
+          funcName == "gsl_fft_complex_float_radix2_dif_forward" ||
+          funcName == "gsl_fft_complex_float_radix2_dif_backward" ||
+          funcName == "gsl_fft_complex_float_radix2_dif_inverse") {
+        if (CI->arg_size() >= 3 && val != CI->getArgOperand(1) &&
+            val != CI->getArgOperand(2))
+          return false;
+      }
+      if (funcName == "gsl_fft_complex_transform" ||
+          funcName == "gsl_fft_complex_float_transform") {
+        if (CI->arg_size() >= 6 && val != CI->getArgOperand(1) &&
+            val != CI->getArgOperand(2) && val != CI->getArgOperand(5))
+          return false;
+      }
+      if (funcName == "gsl_fft_complex_radix2_transform" ||
+          funcName == "gsl_fft_complex_radix2_dif_transform" ||
+          funcName == "gsl_fft_complex_float_radix2_transform" ||
+          funcName == "gsl_fft_complex_float_radix2_dif_transform") {
+        if (CI->arg_size() >= 4 && val != CI->getArgOperand(1) &&
+            val != CI->getArgOperand(2) && val != CI->getArgOperand(3))
+          return false;
+      }
+      if (funcName == "gsl_fft_halfcomplex_unpack" ||
+          funcName == "gsl_fft_halfcomplex_radix2_unpack" ||
+          funcName == "gsl_fft_real_unpack" ||
+          funcName == "gsl_fft_halfcomplex_float_unpack" ||
+          funcName == "gsl_fft_halfcomplex_float_radix2_unpack" ||
+          funcName == "gsl_fft_real_float_unpack") {
+        if (CI->arg_size() >= 4 && val != CI->getArgOperand(2) &&
+            val != CI->getArgOperand(3))
+          return false;
+      }
+
     } else {
       // Don't need shadow of anything (all via cache for reverse),
       // but need shadow of request for primal.
