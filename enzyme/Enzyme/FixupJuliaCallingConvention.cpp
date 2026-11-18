@@ -453,6 +453,27 @@ bool needsReReturning(llvm::Argument *arg, size_t &sret_idx,
   return true;
 }
 
+/// Erase the lifetime markers on \p AI, including those reached through
+/// pointer casts. Call it before replacing \p AI with a value that is not an
+/// alloca: since LLVM 22 the operand of a lifetime marker must be an alloca.
+static void eraseLifetimeMarkers(Instruction *AI) {
+  for (User *U : make_early_inc_range(AI->users())) {
+    if (auto II = dyn_cast<IntrinsicInst>(U)) {
+      if (II->getIntrinsicID() == Intrinsic::lifetime_start ||
+          II->getIntrinsicID() == Intrinsic::lifetime_end)
+        II->eraseFromParent();
+      continue;
+    }
+    if (auto CI = dyn_cast<CastInst>(U)) {
+      if (!CI->getType()->isPointerTy())
+        continue;
+      eraseLifetimeMarkers(CI);
+      if (CI->use_empty())
+        CI->eraseFromParent();
+    }
+  }
+}
+
 static bool isOpaque(llvm::Type *T) {
 #if LLVM_VERSION_MAJOR >= 20
   return T->isPointerTy();
@@ -1221,6 +1242,7 @@ void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
                 (isOpaque(AI->getType()) &&
                  DL.getTypeSizeInBits(AI->getAllocatedType()) ==
                      DL.getTypeSizeInBits(Types[sretCount]))) {
+              eraseLifetimeMarkers(AI);
               AI->replaceAllUsesWith(gep);
               AI->eraseFromParent();
               handled = true;
@@ -1328,6 +1350,7 @@ void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
           if (auto AI = dyn_cast<AllocaInst>(getBaseObject(val, false))) {
             if (AI->getAllocatedType() ==
                 ArrayType::get(T_prjlvalue, subCount)) {
+              eraseLifetimeMarkers(AI);
               AI->replaceAllUsesWith(gep);
               AI->eraseFromParent();
               handled = true;
