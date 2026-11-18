@@ -559,6 +559,22 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
       return true;
     }
 
+    if (isStdListNodeBaseCall(*CI, funcName)) {
+      if (!shadow || qtype != QueryType::Shadow ||
+          mode == DerivativeMode::ReverseModeGradient ||
+          mode == DerivativeMode::ForwardModeSplit)
+        return false;
+      if (!llvm::is_contained(CI->args(), val))
+        return false;
+      bool Needed = llvm::none_of(CI->args(), [&](const Value *Arg) {
+        return gutils->isConstantValue(const_cast<Value *>(Arg));
+      });
+      if (Needed && EnzymePrintDiffUse)
+        llvm::errs() << " Need: shadow of " << *val
+                     << " in forward as shadow list_node_base " << *CI << '\n';
+      return Needed;
+    }
+
     // Only need primal (and shadow) request for reverse, or shadow buffer
     if (funcName == "MPI_Isend" || funcName == "MPI_Irecv" ||
         funcName == "PMPI_Isend" || funcName == "PMPI_Irecv") {
