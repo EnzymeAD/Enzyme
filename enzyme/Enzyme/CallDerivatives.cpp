@@ -113,9 +113,12 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
     return;
   }
 
+  llvm::StringRef canonMPIName = canonicalizeMPIName(funcName);
+
   // MPI send / recv can only send float/integers
-  if (funcName == "PMPI_Isend" || funcName == "MPI_Isend" ||
-      funcName == "PMPI_Irecv" || funcName == "MPI_Irecv") {
+  if (canonMPIName == "MPI_Isend" || canonMPIName == "MPI_Irecv") {
+    bool fortranABI = isFortranMPICall(called->getName());
+    Type *i32Ty = Type::getInt32Ty(call.getContext());
     if (!gutils->isConstantInstruction(&call)) {
       if (Mode == DerivativeMode::ReverseModePrimal ||
           Mode == DerivativeMode::ReverseModeCombined) {
@@ -142,14 +145,17 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
             getMPIMemberPtr<MPI_Elem::Old>(BuilderZ, impialloc, impi));
         BuilderZ.CreateStore(impialloc, d_req);
 
-        if (funcName == "MPI_Isend" || funcName == "PMPI_Isend") {
+        Value *count = gutils->getNewFromOriginal(call.getOperand(1));
+        if (fortranABI)
+          count = BuilderZ.CreateLoad(i32Ty, count);
+
+        if (canonMPIName == "MPI_Isend") {
           Value *tysize =
               MPI_TYPE_SIZE(gutils->getNewFromOriginal(call.getOperand(2)),
                             BuilderZ, call.getType(), called);
 
           auto len_arg = BuilderZ.CreateZExtOrTrunc(
-              gutils->getNewFromOriginal(call.getOperand(1)),
-              Type::getInt64Ty(call.getContext()));
+              count, Type::getInt64Ty(call.getContext()));
           len_arg = BuilderZ.CreateMul(
               len_arg,
               BuilderZ.CreateZExtOrTrunc(tysize,
@@ -168,12 +174,12 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
             ibuf =
                 BuilderZ.CreateIntToPtr(ibuf, getInt8PtrTy(call.getContext()));
           BuilderZ.CreateStore(
-              ibuf, getMPIMemberPtr<MPI_Elem::Buf>(BuilderZ, impialloc, impi));
+              BuilderZ.CreatePointerCast(ibuf, getInt8PtrTy(call.getContext())),
+              getMPIMemberPtr<MPI_Elem::Buf>(BuilderZ, impialloc, impi));
         }
 
         BuilderZ.CreateStore(
-            BuilderZ.CreateZExtOrTrunc(
-                gutils->getNewFromOriginal(call.getOperand(1)), i64),
+            BuilderZ.CreateZExtOrTrunc(count, i64),
             getMPIMemberPtr<MPI_Elem::Count>(BuilderZ, impialloc, impi));
 
         Value *dataType = gutils->getNewFromOriginal(call.getOperand(2));
@@ -185,14 +191,18 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
                                        getInt8PtrTy(call.getContext())),
             getMPIMemberPtr<MPI_Elem::DataType>(BuilderZ, impialloc, impi));
 
+        Value *src = gutils->getNewFromOriginal(call.getOperand(3));
+        if (fortranABI)
+          src = BuilderZ.CreateLoad(i32Ty, src);
         BuilderZ.CreateStore(
-            BuilderZ.CreateZExtOrTrunc(
-                gutils->getNewFromOriginal(call.getOperand(3)), i64),
+            BuilderZ.CreateZExtOrTrunc(src, i64),
             getMPIMemberPtr<MPI_Elem::Src>(BuilderZ, impialloc, impi));
 
+        Value *tag = gutils->getNewFromOriginal(call.getOperand(4));
+        if (fortranABI)
+          tag = BuilderZ.CreateLoad(i32Ty, tag);
         BuilderZ.CreateStore(
-            BuilderZ.CreateZExtOrTrunc(
-                gutils->getNewFromOriginal(call.getOperand(4)), i64),
+            BuilderZ.CreateZExtOrTrunc(tag, i64),
             getMPIMemberPtr<MPI_Elem::Tag>(BuilderZ, impialloc, impi));
 
         Value *comm = gutils->getNewFromOriginal(call.getOperand(5));
@@ -204,11 +214,10 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
             getMPIMemberPtr<MPI_Elem::Comm>(BuilderZ, impialloc, impi));
 
         BuilderZ.CreateStore(
-            ConstantInt::get(
-                Type::getInt8Ty(impialloc->getContext()),
-                (funcName == "MPI_Isend" || funcName == "PMPI_Isend")
-                    ? (int)MPI_CallType::ISEND
-                    : (int)MPI_CallType::IRECV),
+            ConstantInt::get(Type::getInt8Ty(impialloc->getContext()),
+                             canonMPIName == "MPI_Isend"
+                                 ? (int)MPI_CallType::ISEND
+                                 : (int)MPI_CallType::IRECV),
             getMPIMemberPtr<MPI_Elem::Call>(BuilderZ, impialloc, impi));
         // TODO old
       }
@@ -221,10 +230,10 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
 #if LLVM_VERSION_MAJOR < 17
         if (Function *recvfn = called->getParent()->getFunction(
                 getRenamedPerCallingConv(called->getName(), "MPI_Wait"))) {
-          auto statusArg = recvfn->arg_end();
-          statusArg--;
+          auto statusArg = recvfn->arg_begin() + 1;
           if (auto PT = dyn_cast<PointerType>(statusArg->getType()))
-            statusType = PT->getPointerElementType();
+            if (!fortranABI || !PT->getPointerElementType()->isIntegerTy())
+              statusType = PT->getPointerElementType();
         }
 #endif
         if (statusType == nullptr) {
@@ -252,10 +261,13 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
             getInt8PtrTy(call.getContext()),
             getMPIMemberPtr<MPI_Elem::Buf>(Builder2, helper, impi));
         Value *len_arg = nullptr;
-        if (auto C = dyn_cast<Constant>(
-                gutils->getNewFromOriginal(call.getOperand(1)))) {
-          len_arg = Builder2.CreateZExtOrTrunc(C, i64);
-        } else {
+        if (!fortranABI) {
+          if (auto C = dyn_cast<Constant>(
+                  gutils->getNewFromOriginal(call.getOperand(1)))) {
+            len_arg = Builder2.CreateZExtOrTrunc(C, i64);
+          }
+        }
+        if (!len_arg) {
           len_arg = Builder2.CreateLoad(
               i64, getMPIMemberPtr<MPI_Elem::Count>(Builder2, helper, impi));
         }
@@ -282,28 +294,36 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
         assert(tysize);
         tysize = MPI_TYPE_SIZE(tysize, Builder2, call.getType(), called);
 
-        Value *args[] = {/*req*/ req,
-                         /*status*/ IRBuilder<>(gutils->inversionAllocs)
-                             .CreateAlloca(statusType)};
+        SmallVector<Value *, 3> args = {
+            /*req*/ req,
+            /*status*/ IRBuilder<>(gutils->inversionAllocs)
+                .CreateAlloca(statusType)};
+        if (fortranABI) {
+          args.push_back(IRBuilder<>(gutils->inversionAllocs)
+                             .CreateAlloca(i32Ty, nullptr, "enzyme_mpi_ierr"));
+        }
         FunctionCallee waitFunc = nullptr;
         for (auto name : {
                  "MPI_Wait",
              })
           if (Function *recvfn = called->getParent()->getFunction(
                   getRenamedPerCallingConv(called->getName(), name))) {
-            auto statusArg = recvfn->arg_end();
-            statusArg--;
-            if (statusArg->getType()->isIntegerTy())
-              args[1] = Builder2.CreatePtrToInt(args[1], statusArg->getType());
-            else
-              args[1] = Builder2.CreateBitCast(args[1], statusArg->getType());
+            assert(recvfn->arg_size() == args.size() &&
+                   "Unexpected MPI_Wait argument count");
+            for (size_t i = 0; i < args.size(); i++) {
+              auto argIt = recvfn->arg_begin() + i;
+              if (argIt->getType()->isIntegerTy())
+                args[i] = Builder2.CreatePtrToInt(args[i], argIt->getType());
+              else if (args[i]->getType() != argIt->getType())
+                args[i] = Builder2.CreateBitCast(args[i], argIt->getType());
+            }
             waitFunc = recvfn;
             break;
           }
         if (!waitFunc) {
-          Type *types[sizeof(args) / sizeof(*args)];
-          for (size_t i = 0; i < sizeof(args) / sizeof(*args); i++)
-            types[i] = args[i]->getType();
+          SmallVector<Type *, 3> types;
+          for (size_t i = 0; i < args.size(); i++)
+            types.push_back(args[i]->getType());
           FunctionType *FT = FunctionType::get(call.getType(), types, false);
           waitFunc = called->getParent()->getOrInsertFunction(
               getRenamedPerCallingConv(called->getName(), "MPI_Wait"), FT);
@@ -312,18 +332,16 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
 
         // Need to preserve the shadow Request (operand 6 in isend/irecv),
         // which becomes operand 0 for iwait.
-        auto ReqDefs = gutils->getInvertedBundles(
-            &call,
-            {ValueType::None, ValueType::None, ValueType::None, ValueType::None,
-             ValueType::None, ValueType::None, ValueType::Shadow},
-            Builder2, /*lookup*/ true);
+        std::vector<ValueType> ReqBundleTypes(call.arg_size(), ValueType::None);
+        ReqBundleTypes[6] = ValueType::Shadow;
+        auto ReqDefs = gutils->getInvertedBundles(&call, ReqBundleTypes,
+                                                  Builder2, /*lookup*/ true);
 
-        auto BufferDefs = gutils->getInvertedBundles(
-            &call,
-            {ValueType::Shadow, ValueType::None, ValueType::None,
-             ValueType::None, ValueType::None, ValueType::None,
-             ValueType::None},
-            Builder2, /*lookup*/ true);
+        std::vector<ValueType> BufferBundleTypes(call.arg_size(),
+                                                 ValueType::None);
+        BufferBundleTypes[0] = ValueType::Shadow;
+        auto BufferDefs = gutils->getInvertedBundles(&call, BufferBundleTypes,
+                                                     Builder2, /*lookup*/ true);
 
         auto fcall = Builder2.CreateCall(waitFunc, args, ReqDefs);
         fcall->setDebugLoc(gutils->getNewFromOriginal(call.getDebugLoc()));
@@ -334,7 +352,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
             Builder2.CreateZExtOrTrunc(tysize,
                                        Type::getInt64Ty(Builder2.getContext())),
             "", true, true);
-        if (funcName == "MPI_Irecv" || funcName == "PMPI_Irecv") {
+        if (canonMPIName == "MPI_Irecv") {
           auto val_arg =
               ConstantInt::get(Type::getInt8Ty(Builder2.getContext()), 0);
           auto volatile_arg = ConstantInt::getFalse(Builder2.getContext());
@@ -348,7 +366,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
                                       tys),
               nargs, BufferDefs));
           memset->addParamAttr(0, Attribute::NonNull);
-        } else if (funcName == "MPI_Isend" || funcName == "PMPI_Isend") {
+        } else if (canonMPIName == "MPI_Isend") {
           assert(!gutils->isConstantValue(call.getOperand(0)));
           Value *shadow = lookup(
               gutils->invertPointerM(call.getOperand(0), Builder2), Builder2);
@@ -383,7 +401,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
     return;
   }
 
-  if (funcName == "MPI_Wait" || funcName == "PMPI_Wait") {
+  if (canonMPIName == "MPI_Wait") {
     Value *d_reqp = nullptr;
     auto impi = getMPIHelper(call.getContext());
     if (Mode == DerivativeMode::ReverseModePrimal ||
@@ -472,11 +490,12 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
       // Need to preserve the shadow Request (operand 0 in wait).
       // However, this doesn't end up preserving
       // the underlying buffers for the adjoint. To rememdy, force inline.
-      auto cal =
-          Builder2.CreateCall(dwait, args,
-                              gutils->getInvertedBundles(
-                                  &call, {ValueType::Shadow, ValueType::None},
-                                  Builder2, /*lookup*/ true));
+      std::vector<ValueType> BundleTypes(call.arg_size(), ValueType::None);
+      BundleTypes[0] = ValueType::Shadow;
+      auto cal = Builder2.CreateCall(
+          dwait, args,
+          gutils->getInvertedBundles(&call, BundleTypes, Builder2,
+                                     /*lookup*/ true));
       cal->setCallingConv(dwait->getCallingConv());
       cal->setDebugLoc(gutils->getNewFromOriginal(call.getDebugLoc()));
       cal->addFnAttr(Attribute::AlwaysInline);
@@ -1071,8 +1090,6 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
   // int MPI_Reduce(const void *sendbuf, void *recvbuf, int count,
   // MPI_Datatype datatype,
   //                      MPI_Op op, int root, MPI_Comm comm)
-
-  llvm::StringRef canonMPIName = canonicalizeMPIName(funcName);
 
   if (canonMPIName == "MPI_Reduce") {
     if (Mode == DerivativeMode::ReverseModeGradient ||
