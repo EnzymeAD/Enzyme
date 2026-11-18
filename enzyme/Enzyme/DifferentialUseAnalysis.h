@@ -285,6 +285,26 @@ inline bool is_value_needed_in_reverse(
       }
     }
 
+    // Rebuilding the shadow of a getelementptr in the reverse pass applies the
+    // primal indices to the shadow base, so an index is directly needed
+    // whenever that shadow is, even if the primal getelementptr is cached.
+    // The shadow query runs on its own memo so that an enclosing query on
+    // the same getelementptr, provisionally recorded as not needed, cannot
+    // answer it.
+    if (auto GEP = dyn_cast<GetElementPtrInst>(user))
+      if (GEP->getPointerOperand() != inst &&
+          !gutils->isConstantValue(const_cast<GetElementPtrInst *>(GEP))) {
+        std::map<UsageKey, bool> ShadowSeen;
+        if (is_value_needed_in_reverse<QueryType::Shadow>(
+                gutils, GEP, mode, ShadowSeen, oldUnreachable)) {
+          if (EnzymePrintDiffUse)
+            llvm::errs() << " Need: " << to_string(VT) << "(" << mode << ") of "
+                         << *inst << " in reverse as index of shadowed gep "
+                         << *user << "\n";
+          return seen[idx] = true;
+        }
+      }
+
     // If a sub user needs, we need
     if (!OneLevel && is_value_needed_in_reverse<VT>(gutils, user, mode, seen,
                                                     oldUnreachable)) {
