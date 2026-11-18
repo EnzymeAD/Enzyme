@@ -181,6 +181,8 @@ private:
                      llvm::Value *Orig, llvm::Value *Orig2 = nullptr) {
     insertConstantsFrom(TR, Hypothesis);
     for (auto I : Hypothesis.ActiveInstructions) {
+      if (ConstantInstructions.count(I))
+        continue;
       bool inserted = ActiveInstructions.insert(I).second;
       if (inserted && directions == 3 && EnzymeEnableRecursiveHypotheses) {
         ReEvaluateInstIfInactiveValue[Orig].insert(I);
@@ -189,6 +191,8 @@ private:
       }
     }
     for (auto V : Hypothesis.ActiveValues) {
+      if (ConstantValues.count(V))
+        continue;
       bool inserted = ActiveValues.insert(V).second;
       if (inserted && directions == 3 && EnzymeEnableRecursiveHypotheses) {
         ReEvaluateValueIfInactiveValue[Orig].insert(V);
