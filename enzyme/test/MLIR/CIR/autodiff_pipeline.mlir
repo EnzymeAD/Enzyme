@@ -11,7 +11,6 @@
 // PIPELINE-NEXT:   mem2reg
 // PIPELINE-NEXT:   canonicalize
 // PIPELINE-NEXT:   enzyme
-// PIPELINE-NEXT:   mem2reg
 // PIPELINE-NEXT:   canonicalize
 // PIPELINE-NEXT:   convert-enzyme-to-cir
 
@@ -75,8 +74,10 @@ module {
 // CHECK-SAME:      %{{.+}}: !cir.double, %[[DY:.+]]: !cir.double, %[[SEED:.+]]: !cir.double)
 // CHECK:         cir.call @__enzyme_cir_push(%{{.+}}, %{{.+}}, %{{.+}}, %[[DY]])
 // CHECK:         %[[G:.+]] = cir.fadd %{{.+}}, %[[SEED]]
+// CHECK-NEXT:    cir.store %[[G]], %[[SLOT:.+]] : !cir.double
+// CHECK-NEXT:    %[[GL:.+]] = cir.load %[[SLOT]]
 // CHECK:         %[[YP:.+]] = cir.call @__enzyme_cir_pop(
-// CHECK:         cir.fmul %[[G]], %[[YP]]
+// CHECK:         cir.fmul %[[GL]], %[[YP]]
 // CHECK:       cir.func private @[[IGN]](
 // CHECK-NEXT:    cir.return
 // CHECK-NEXT:  }

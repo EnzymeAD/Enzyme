@@ -306,10 +306,21 @@ public:
   void
   initializeShadowValues(SmallVector<mlir::Block *> &dominatorToposortBlocks,
                          MGradientUtilsReverse *gutils);
-  void
-  handlePredecessors(Block *oBB, Block *newBB, Block *reverseBB,
-                     MGradientUtilsReverse *gutils,
-                     llvm::function_ref<buildReturnFunction> buildReturnOp);
+  // A block entered along more than one edge whose index cannot be pushed in
+  // front of the branch: each edge passes its index, which the block pushes.
+  struct EdgeIndexCache {
+    Block *block;
+    Value cache;
+    // The original predecessor and the index of the successor that is the
+    // block, for each edge.
+    SmallVector<std::pair<Block *, unsigned>> edges;
+  };
+  void handlePredecessors(Block *oBB, Block *newBB, Block *reverseBB,
+                          MGradientUtilsReverse *gutils,
+                          llvm::function_ref<buildReturnFunction> buildReturnOp,
+                          SmallVectorImpl<EdgeIndexCache> &edgeCaches);
+  void pushEdgeIndices(MGradientUtilsReverse *gutils,
+                       ArrayRef<EdgeIndexCache> edgeCaches);
   LogicalResult visitChildren(Block *oBB, Block *reverseBB,
                               MGradientUtilsReverse *gutils);
   LogicalResult visitChild(Operation *op, OpBuilder &builder,

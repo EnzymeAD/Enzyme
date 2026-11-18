@@ -14,8 +14,8 @@ module {
 }
 
 //      CHECK:  func.func @main(%[[X:.+]]: f32, %[[DIFFE:.+]]: f32) -> f32 {
-// CHECK-NEXT:    %[[CST0:.+]] = arith.constant 0 : i32
 // CHECK-NEXT:    %[[CST1:.+]] = arith.constant -1 : i32
+// CHECK-NEXT:    %[[CST0:.+]] = arith.constant 0 : i32
 // CHECK-NEXT:    %[[ZERO:.+]] = arith.constant 0.000000e+00 : f32
 // CHECK-NEXT:    %[[CACHE:.+]] = "enzyme.init"() : () -> !enzyme.Cache<i32>
 //      CHECK:    %[[COND:.+]] = arith.cmpf ogt, %[[X]], %[[ZERO]] : f32

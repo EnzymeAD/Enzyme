@@ -25,28 +25,20 @@ module {
 // CHECK-NEXT:    %cst = arith.constant 1.000000e+00 : f64
 // CHECK-NEXT:    %cst_0 = arith.constant 0.000000e+00 : f64
 // CHECK-NEXT:    %0 = "enzyme.init"() : () -> !enzyme.Cache<i32>
-// CHECK-NEXT:    %1 = "enzyme.init"() : () -> !enzyme.Cache<i32>
-// CHECK-NEXT:    %2 = arith.addf %arg0, %cst : f64
-// CHECK-NEXT:    "enzyme.push"(%1, %c0_i32) : (!enzyme.Cache<i32>, i32) -> ()
-// CHECK-NEXT:    cf.br ^bb1(%2 : f64)
-// CHECK-NEXT:  ^bb1(%3: f64):  // 2 preds: ^bb0, ^bb1
-// CHECK-NEXT:    %4 = arith.cmpf ult, %3, %cst_0 : f64
-// CHECK-NEXT:    "enzyme.push"(%1, %c-1_i32) : (!enzyme.Cache<i32>, i32) -> ()
-// CHECK-NEXT:    "enzyme.push"(%0, %c-1_i32) : (!enzyme.Cache<i32>, i32) -> ()
-// CHECK-NEXT:    cf.cond_br %4, ^bb1(%3 : f64), ^bb2
-// CHECK-NEXT:  ^bb2:  // pred: ^bb1
+// CHECK-NEXT:    %1 = arith.addf %arg0, %cst : f64
+// CHECK-NEXT:    cf.br ^bb1(%1, %c0_i32 : f64, i32)
+// CHECK-NEXT:  ^bb1(%2: f64, %3: i32):  // 2 preds: ^bb0, ^bb1
+// CHECK-NEXT:    "enzyme.push"(%0, %3) : (!enzyme.Cache<i32>, i32) -> ()
+// CHECK-NEXT:    %4 = arith.cmpf ult, %2, %cst_0 : f64
+// CHECK-NEXT:    cf.cond_br %4, ^bb1(%2, %c-1_i32 : f64, i32), ^bb2
+// CHECK-NEXT:  ^bb2:  // 2 preds: ^bb1, ^bb2
 // CHECK-NEXT:    %5 = "enzyme.pop"(%0) : (!enzyme.Cache<i32>) -> i32
-// CHECK-NEXT:    %6 = arith.cmpi eq, %5, %c-1_i32 : i32
-// CHECK-NEXT:    %7 = arith.select %6, %arg1, %cst_0 : f64
-// CHECK-NEXT:    cf.br ^bb3
-// CHECK-NEXT:  ^bb3:  // 2 preds: ^bb2, ^bb3
-// CHECK-NEXT:    %8 = "enzyme.pop"(%1) : (!enzyme.Cache<i32>) -> i32
-// CHECK-NEXT:    %[[CMP:.+]] = arith.cmpi eq, %8, %c0_i32 : i32
-// CHECK-NEXT:    %[[GRAD:.+]] = arith.select %[[CMP]], %7, %cst_0 : f64
-// CHECK-NEXT:    cf.switch %8 : i32, [
-// CHECK-NEXT:      default: ^bb3,
-// CHECK-NEXT:      0: ^bb4
+// CHECK-NEXT:    %[[CMP:.+]] = arith.cmpi eq, %5, %c0_i32 : i32
+// CHECK-NEXT:    %[[GRAD:.+]] = arith.select %[[CMP]], %arg1, %cst_0 : f64
+// CHECK-NEXT:    cf.switch %5 : i32, [
+// CHECK-NEXT:      default: ^bb2,
+// CHECK-NEXT:      0: ^bb3
 // CHECK-NEXT:    ]
-// CHECK-NEXT:  ^bb4:  // pred: ^bb3
+// CHECK-NEXT:  ^bb3:  // pred: ^bb2
 // CHECK-NEXT:    return %[[GRAD]] : f64
 // CHECK-NEXT:  }

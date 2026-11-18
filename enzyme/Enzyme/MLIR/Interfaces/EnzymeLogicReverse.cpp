@@ -92,82 +92,129 @@ LogicalResult MEnzymeLogic::visitChildren(Block *oBB, Block *reverseBB,
 
 void MEnzymeLogic::handlePredecessors(
     Block *oBB, Block *newBB, Block *reverseBB, MGradientUtilsReverse *gutils,
-    llvm::function_ref<buildReturnFunction> buildReturnOp) {
+    llvm::function_ref<buildReturnFunction> buildReturnOp,
+    SmallVectorImpl<EdgeIndexCache> &edgeCaches) {
   OpBuilder revBuilder(reverseBB, reverseBB->end());
-  if (oBB->hasNoPredecessors()) {
+  const AutoDiffControlFlowInterface &flow = controlFlow(gutils);
+
+  if (oBB->isEntryBlock()) {
     buildReturnOp(revBuilder, oBB);
-  } else {
-    Location loc = oBB->rbegin()->getLoc();
-    const AutoDiffControlFlowInterface &flow = controlFlow(gutils);
+    return;
+  }
 
-    Value cache = gutils->insertInit(gutils->getIndexCacheType());
+  SmallVector<std::pair<Block *, unsigned>> edges;
+  for (auto it = oBB->pred_begin(), e = oBB->pred_end(); it != e; ++it)
+    if ((*it)->isEntryBlock() || !(*it)->hasNoPredecessors())
+      edges.push_back({*it, it.getSuccessorIndex()});
 
-    Value flag =
+  if (edges.empty()) {
+    // An unreachable block never runs, so neither does its reverse. It still
+    // needs a terminator; the entry's reverse block ends in the return.
+    Block *entry = &oBB->getParent()->front();
+    flow.createBranch(revBuilder, oBB->getParent()->getLoc(),
+                      gutils->mapReverseModeBlocks.lookupOrNull(entry));
+    return;
+  }
+
+  Location loc = oBB->rbegin()->getLoc();
+
+  bool single = edges.size() == 1;
+  Value cache, flag;
+  if (!single) {
+    cache = gutils->insertInit(gutils->getIndexCacheType());
+    flag =
         enzyme::PopOp::create(revBuilder, loc, gutils->getIndexType(), cache);
+    // If all of the edge only have 1 sucessors. Directly push and pop.
+    // Otherwise, record the branches and cache value here for later build push.
+    if (llvm::all_of(edges, [](auto edge) {
+          return edge.first->getTerminator()->getNumSuccessors() == 1;
+        })) {
+      for (auto [idx, edge] : llvm::enumerate(edges)) {
+        OpBuilder predBuilder(
+            gutils->getNewFromOriginal(edge.first)->getTerminator());
+        Value index =
+            flow.createBranchIndex(predBuilder, loc, int64_t(idx) - 1);
+        enzyme::PushOp::create(predBuilder, loc, cache, index);
+      }
+    } else {
+      edgeCaches.push_back({oBB, cache, edges});
+    }
+  }
 
-    Block *defaultBlock = nullptr;
+  SmallVector<Value, 1> diffes;
+  for (auto arg : oBB->getArguments()) {
+    if (!gutils->isConstantValue(arg) &&
+        !cast<AutoDiffTypeInterface>(arg.getType()).isMutable()) {
+      diffes.push_back(gutils->diffe(arg, revBuilder));
+      gutils->zeroDiffe(arg, revBuilder);
+      continue;
+    }
+    diffes.push_back(nullptr);
+  }
 
-    SmallVector<Block *> blocks;
-    SmallVector<int64_t> indices;
+  Block *defaultBlock = nullptr;
+  SmallVector<Block *> blocks;
+  SmallVector<int64_t> indices;
+  for (auto [idx, edge] : llvm::enumerate(edges)) {
+    auto [pred, succ] = edge;
+    Block *reversePred = gutils->mapReverseModeBlocks.lookupOrNull(pred);
+    int64_t predIndex = static_cast<int64_t>(idx) - 1;
+    if (idx == 0) {
+      defaultBlock = reversePred;
+    } else {
+      indices.push_back(predIndex);
+      blocks.push_back(reversePred);
+    }
 
-    OpBuilder newBuilder(newBB, newBB->begin());
-
-    SmallVector<Value, 1> diffes;
-    for (auto arg : oBB->getArguments()) {
-      if (!gutils->isConstantValue(arg) &&
-          !cast<AutoDiffTypeInterface>(arg.getType()).isMutable()) {
-        diffes.push_back(gutils->diffe(arg, revBuilder));
-        gutils->zeroDiffe(arg, revBuilder);
+    auto iface = dyn_cast<BranchOpInterface>(pred->getTerminator());
+    assert(iface && "predecessor did not implement branch op interface");
+    // Unpack the parameter from predecessor based on the poped value
+    SuccessorOperands succOperands = iface.getSuccessorOperands(succ);
+    unsigned produced = succOperands.getProducedOperandCount();
+    for (auto [i, operand] :
+         llvm::enumerate(succOperands.getForwardedOperands())) {
+      Value diffe = diffes[produced + i];
+      if (!diffe || gutils->isConstantValue(operand))
         continue;
-      }
-      diffes.push_back(nullptr);
+      // The argument's adjoint flows back along this edge only when control
+      // came in along it.
+      Value to_prop = single ? diffe
+                             : flow.createSelectOnBranchIndex(
+                                   revBuilder, loc, flag, predIndex, diffe,
+                                   cast<AutoDiffTypeInterface>(diffe.getType())
+                                       .createNullValue(revBuilder, loc));
+      gutils->addToDiffe(operand, to_prop, revBuilder);
     }
+  }
 
-    for (auto [idx, pred] : llvm::enumerate(oBB->getPredecessors())) {
-      auto reversePred = gutils->mapReverseModeBlocks.lookupOrNull(pred);
-
-      Block *newPred = gutils->getNewFromOriginal(pred);
-
-      OpBuilder predecessorBuilder(newPred->getTerminator());
-
-      int64_t predIndex = static_cast<int64_t>(idx) - 1;
-      Value pred_idx_c =
-          flow.createBranchIndex(predecessorBuilder, loc, predIndex);
-      enzyme::PushOp::create(predecessorBuilder, loc, cache, pred_idx_c);
-
-      if (idx == 0) {
-        defaultBlock = reversePred;
-
-      } else {
-        indices.push_back(predIndex);
-        blocks.push_back(reversePred);
-      }
-
-      auto term = pred->getTerminator();
-      if (auto iface = dyn_cast<BranchOpInterface>(term)) {
-        for (auto &op : term->getOpOperands())
-          if (auto blk_idx =
-                  iface.getSuccessorBlockArgument(op.getOperandNumber()))
-            if (!gutils->isConstantValue(op.get()) &&
-                (*blk_idx).getOwner() == oBB) {
-              auto argIdx = (*blk_idx).getArgNumber();
-              if (diffes[argIdx]) {
-                // The argument's adjoint flows back along this edge only
-                // when control came in along it.
-                Value to_prop = flow.createSelectOnBranchIndex(
-                    revBuilder, loc, flag, predIndex, diffes[argIdx],
-                    cast<AutoDiffTypeInterface>(diffes[argIdx].getType())
-                        .createNullValue(revBuilder, loc));
-
-                gutils->addToDiffe(op.get(), to_prop, revBuilder);
-              }
-            }
-      } else {
-        assert(0 && "predecessor did not implement branch op interface");
-      }
-    }
-
+  // Attach reverse mode terminator
+  if (single)
+    flow.createBranch(revBuilder, loc, defaultBlock);
+  else
     flow.createSwitch(revBuilder, loc, flag, defaultBlock, indices, blocks);
+}
+
+void MEnzymeLogic::pushEdgeIndices(MGradientUtilsReverse *gutils,
+                                   ArrayRef<EdgeIndexCache> edgeCaches) {
+  const AutoDiffControlFlowInterface &flow = controlFlow(gutils);
+
+  // For those branch has multiple distances, we append a parameter to indicate
+  // its source. And push in the destinations. The reverse mode destination is
+  // rewritten into brining the index it has.
+  for (const EdgeIndexCache &edgeCache : edgeCaches) {
+    Block *newBB = gutils->getNewFromOriginal(edgeCache.block);
+    Location loc = edgeCache.block->getParent()->getLoc();
+    BlockArgument index = newBB->addArgument(
+        flow.getBranchIndexType(newBB->getParentOp()->getContext()), loc);
+    OpBuilder blockBuilder = OpBuilder::atBlockBegin(newBB);
+    enzyme::PushOp::create(blockBuilder, loc, edgeCache.cache, index);
+    for (auto [idx, edge] : llvm::enumerate(edgeCache.edges)) {
+      Operation *term = gutils->getNewFromOriginal(edge.first)->getTerminator();
+      OpBuilder termBuilder(term);
+      cast<BranchOpInterface>(term)
+          .getSuccessorOperands(edge.second)
+          .append(flow.createBranchIndex(termBuilder, loc, int64_t(idx) - 1));
+    }
   }
 }
 
@@ -180,13 +227,17 @@ LogicalResult MEnzymeLogic::differentiate(
   gutils->createReverseModeBlocks(oldRegion, newRegion);
 
   bool valid = true;
+  SmallVector<EdgeIndexCache> edgeCaches;
   for (auto &oBB : oldRegion) {
     Block *newBB = gutils->getNewFromOriginal(&oBB);
     Block *reverseBB = gutils->mapReverseModeBlocks.lookupOrNull(&oBB);
     handleReturns(&oBB, newBB, reverseBB, gutils);
     valid &= visitChildren(&oBB, reverseBB, gutils).succeeded();
-    handlePredecessors(&oBB, newBB, reverseBB, gutils, buildFuncReturnOp);
+    handlePredecessors(&oBB, newBB, reverseBB, gutils, buildFuncReturnOp,
+                       edgeCaches);
   }
+  // Every branch has its final operands now.
+  pushEdgeIndices(gutils, edgeCaches);
 
   gutils->deregisterCacheCreatorHook(cacheCreator);
   return success(valid);
