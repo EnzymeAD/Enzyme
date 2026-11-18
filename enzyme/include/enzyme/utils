@@ -228,6 +228,16 @@ namespace enzyme {
         >;
     };
 
+    template < typename ... T >
+    struct autodiff_return<ReverseMode<true>, Const<void>, T...>
+    {
+        using type = tuple<typename concatenated< tuple< >,
+            typename grad_out_type<
+                typename remove_cvref< T >::type
+            >::type ...
+        >::type>;
+    };
+
     template < typename T0, typename ... T >
     struct autodiff_return<ForwardMode, Const<T0>, T...>
     {
@@ -488,6 +498,11 @@ namespace enzyme {
         template<typename RetAct>
         struct ret_used<ReverseMode<true>, RetAct> {
           static constexpr int* value = &enzyme_primal_return;
+        };
+
+        template<>
+        struct ret_used<ReverseMode<true>, Const<void>> {
+          static constexpr int* value = &enzyme_noret;
         };
 
         template<typename RetAct>

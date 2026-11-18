@@ -1466,16 +1466,24 @@ public:
         EmitFailure("PrimalRetOfVoid", CI->getDebugLoc(), CI,
                     "Requested primal result of void-returning function type ",
                     *fn->getFunctionType(), " ", fnname, " ", *CI);
-      } else
-        newFunc = Logic.CreateForwardDiff(
-            context, fn, retType, constants, TA,
-            /*should return*/ primalReturn, mode, freeMemory,
-            options.runtimeActivity, options.strongZero, width,
-            /*addedType*/ nullptr, type_args, subsequent_calls_may_write,
-            overwritten_args,
-            /*augmented*/ nullptr);
+        return false;
+      }
+      newFunc = Logic.CreateForwardDiff(
+          context, fn, retType, constants, TA,
+          /*should return*/ primalReturn, mode, freeMemory,
+          options.runtimeActivity, options.strongZero, width,
+          /*addedType*/ nullptr, type_args, subsequent_calls_may_write,
+          overwritten_args,
+          /*augmented*/ nullptr);
       break;
     case DerivativeMode::ForwardModeSplit: {
+      if (primalReturn && fn->getReturnType()->isVoidTy()) {
+        auto fnname = fn->getName();
+        EmitFailure("PrimalRetOfVoid", CI->getDebugLoc(), CI,
+                    "Requested primal result of void-returning function type ",
+                    *fn->getFunctionType(), " ", fnname, " ", *CI);
+        return false;
+      }
       bool forceAnonymousTape = !sizeOnly && allocatedTapeSize == -1;
       aug = &Logic.CreateAugmentedPrimal(
           context, fn, retType, constants, TA,
@@ -1525,6 +1533,13 @@ public:
     }
     case DerivativeMode::ReverseModeCombined:
       assert(freeMemory);
+      if (primalReturn && fn->getReturnType()->isVoidTy()) {
+        auto fnname = fn->getName();
+        EmitFailure("PrimalRetOfVoid", CI->getDebugLoc(), CI,
+                    "Requested primal result of void-returning function type ",
+                    *fn->getFunctionType(), " ", fnname, " ", *CI);
+        return false;
+      }
       newFunc = Logic.CreatePrimalAndGradient(
           context,
           (ReverseCacheKey){.todiff = fn,
