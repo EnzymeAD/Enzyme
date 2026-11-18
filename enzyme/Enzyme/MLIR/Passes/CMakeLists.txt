@@ -24,6 +24,7 @@ add_mlir_dialect_library(
   PrintActivityAnalysis.cpp
   PrintAliasAnalysis.cpp
   PrintBaseObject.cpp
+  RegisterForwardCallHandlers.cpp
   EnzymeToMemRef.cpp
   SimplifyMath.cpp
   SplitMultiResults.cpp
@@ -60,6 +61,7 @@ add_mlir_dialect_library(
   MLIRNVVMDialect
   MLIRPass
   MLIREnzymeAnalysis
+  MLIREnzymeImplementations
   MLIRSideEffectInterfaces
   MLIRControlFlowInterfaces
   MLIRSCFToControlFlow

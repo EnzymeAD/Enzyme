@@ -32,6 +32,11 @@ namespace enzyme {
 class MGradientUtils;
 class MGradientUtilsReverse;
 
+/// Replaces the results of `orig` with `values` and erases its clone. A builder
+/// must not insert before the clone afterwards.
+void replaceForwardCall(Operation *orig, ValueRange values,
+                        MGradientUtils *gutils);
+
 namespace detail {
 // Non-template implementation of
 // AutoDiffUsingControlFlow::createForwardModeTangent.
