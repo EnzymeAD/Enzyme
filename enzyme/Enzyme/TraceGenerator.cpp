@@ -378,13 +378,15 @@ void TraceGenerator::handleArbitraryCall(CallInst &call, CallInst *new_call) {
                              args_and_null, "trace." + called->getName());
     }
 
-    Builder.SetInsertPoint(new_call);
+    Builder.SetInsertPoint(new_call->getParent(),
+                           getFirstNonPHIIt(new_call->getParent()));
     auto phi = Builder.CreatePHI(samplefn->getFunctionType()->getReturnType(),
                                  2, call.getName());
     phi->addIncoming(ThenTracecall, ThenTerm->getParent());
     phi->addIncoming(ElseTracecall, ElseTerm->getParent());
     replacement = phi;
 
+    Builder.SetInsertPoint(new_call);
     tutils->InsertCall(Builder, address, trace);
     break;
   }
