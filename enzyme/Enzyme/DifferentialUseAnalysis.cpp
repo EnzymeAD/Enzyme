@@ -447,7 +447,7 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
     ID = II->getIntrinsicID();
   } else if (auto CI = dyn_cast<CallInst>(user)) {
     StringRef funcName = getFuncNameFromCall(const_cast<CallInst *>(CI));
-    isMemFreeLibMFunction(funcName, &ID);
+    isMemFreeLibMFunction(funcName, &ID, CI->getFunctionType());
   }
 
   if (ID != Intrinsic::not_intrinsic) {
@@ -546,6 +546,30 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
     // Don't need shadow inputs for alloc function
     if (shadow && isAllocationFunction(funcName, gutils->TLI))
       return false;
+
+    PointerSinCosInfo SinCosInfo;
+    if (classifyPointerSinCos(funcName, CI->getFunctionType(), &SinCosInfo)) {
+      if (shadow) {
+        if ((!SinCosInfo.sinReturned &&
+             val == CI->getArgOperand(SinCosInfo.sinPtrArg)) ||
+            val == CI->getArgOperand(SinCosInfo.cosPtrArg)) {
+          return !gutils->isConstantValue(const_cast<Value *>(val));
+        }
+        return false;
+      } else {
+        if (val == CI->getArgOperand(0)) {
+          bool activeOut =
+              !gutils->isConstantValue(
+                  CI->getArgOperand(SinCosInfo.cosPtrArg)) ||
+              (SinCosInfo.sinReturned
+                   ? !gutils->isConstantValue(const_cast<CallInst *>(CI))
+                   : !gutils->isConstantValue(
+                         CI->getArgOperand(SinCosInfo.sinPtrArg)));
+          return !gutils->isConstantValue(CI->getArgOperand(0)) && activeOut;
+        }
+        return false;
+      }
+    }
 
     // Even though inactive, keep the shadow pointer around in forward mode
     // to perform the same memory free behavior on the shadow.

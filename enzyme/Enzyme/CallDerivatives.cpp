@@ -2778,6 +2778,240 @@ bool AdjointGenerator::handleKnownCallDerivatives(
       return true;
     }
 
+    PointerSinCosInfo SinCosInfo;
+    if (classifyPointerSinCos(funcName, call.getFunctionType(), &SinCosInfo)) {
+      if (gutils->knownRecomputeHeuristic.find(&call) !=
+          gutils->knownRecomputeHeuristic.end()) {
+        if (!gutils->knownRecomputeHeuristic[&call]) {
+          gutils->cacheForReverse(BuilderZ, newCall,
+                                  getIndex(&call, CacheType::Self, BuilderZ));
+        }
+      }
+      auto doErase = [&]() {
+        if (Mode == DerivativeMode::ForwardModeSplit ||
+            Mode == DerivativeMode::ReverseModeGradient)
+          eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+        else
+          eraseIfUnused(call);
+      };
+
+      Value *orig_x = call.getArgOperand(0);
+      Value *orig_cosp = call.getArgOperand(SinCosInfo.cosPtrArg);
+      Value *orig_sinp = SinCosInfo.sinReturned
+                             ? nullptr
+                             : call.getArgOperand(SinCosInfo.sinPtrArg);
+      bool activeX = !gutils->isConstantValue(orig_x);
+      bool activeSin = SinCosInfo.sinReturned
+                           ? !gutils->isConstantValue(&call)
+                           : !gutils->isConstantValue(orig_sinp);
+      bool activeCos = !gutils->isConstantValue(orig_cosp);
+      Type *valTy = orig_x->getType();
+
+      if (Mode == DerivativeMode::ForwardMode ||
+          Mode == DerivativeMode::ForwardModeError ||
+          Mode == DerivativeMode::ForwardModeSplit) {
+        IRBuilder<> Builder2(&call);
+        getForwardBuilder(Builder2);
+
+        Value *dcosp =
+            activeCos ? gutils->invertPointerM(orig_cosp, Builder2) : nullptr;
+        Value *dsinp = (!SinCosInfo.sinReturned && activeSin)
+                           ? gutils->invertPointerM(orig_sinp, Builder2)
+                           : nullptr;
+
+        if (!activeX) {
+          Value *zero = Constant::getNullValue(valTy);
+          if (SinCosInfo.sinReturned && activeSin) {
+            setDiffe(&call,
+                     Constant::getNullValue(gutils->getShadowType(valTy)),
+                     Builder2);
+          }
+          if (dsinp || dcosp) {
+            for (unsigned idx = 0, W = gutils->getWidth(); idx < W; ++idx) {
+              if (dsinp) {
+                Value *sptr = (W == 1)
+                                  ? dsinp
+                                  : gutils->extractMeta(Builder2, dsinp, idx);
+                Builder2.CreateStore(zero, sptr);
+              }
+              if (dcosp) {
+                Value *cptr = (W == 1)
+                                  ? dcosp
+                                  : gutils->extractMeta(Builder2, dcosp, idx);
+                Builder2.CreateStore(zero, cptr);
+              }
+            }
+          }
+          doErase();
+          return true;
+        }
+
+        Value *x = gutils->getNewFromOriginal(orig_x);
+        if (Mode == DerivativeMode::ForwardModeSplit)
+          x = lookup(x, Builder2);
+        Value *dx = diffe(orig_x, Builder2);
+
+        Value *arg = x;
+        Value *piVal = nullptr;
+        if (SinCosInfo.isPi) {
+          piVal = ConstantFP::get(valTy,
+                                  "3.14159265358979323846264338327950288");
+          arg = Builder2.CreateFMul(x, piVal);
+        }
+        Value *sin_val = activeCos
+                             ? Builder2.CreateUnaryIntrinsic(Intrinsic::sin, arg)
+                             : nullptr;
+        Value *cos_val = activeSin
+                             ? Builder2.CreateUnaryIntrinsic(Intrinsic::cos, arg)
+                             : nullptr;
+        if (SinCosInfo.isPi) {
+          if (sin_val)
+            sin_val = Builder2.CreateFMul(sin_val, piVal);
+          if (cos_val)
+            cos_val = Builder2.CreateFMul(cos_val, piVal);
+        }
+
+        Value *dret = SinCosInfo.sinReturned && activeSin
+                          ? UndefValue::get(gutils->getShadowType(valTy))
+                          : nullptr;
+        for (unsigned idx = 0, W = gutils->getWidth(); idx < W; ++idx) {
+          Value *dx_i =
+              (W == 1) ? dx : gutils->extractMeta(Builder2, dx, idx);
+          if (activeSin) {
+            Value *ds = Builder2.CreateFMul(cos_val, dx_i);
+            if (SinCosInfo.sinReturned) {
+              dret =
+                  (W == 1) ? ds : Builder2.CreateInsertValue(dret, ds, {idx});
+            } else {
+              Value *sptr = (W == 1)
+                                ? dsinp
+                                : gutils->extractMeta(Builder2, dsinp, idx);
+              Builder2.CreateStore(ds, sptr);
+            }
+          }
+          if (activeCos) {
+            Value *dc = Builder2.CreateFNeg(Builder2.CreateFMul(sin_val, dx_i));
+            Value *cptr = (W == 1) ? dcosp
+                                   : gutils->extractMeta(Builder2, dcosp, idx);
+            Builder2.CreateStore(dc, cptr);
+          }
+        }
+        if (dret)
+          setDiffe(&call, dret, Builder2);
+        doErase();
+        return true;
+      }
+
+      doErase();
+      if (Mode == DerivativeMode::ReverseModePrimal) {
+        if (SinCosInfo.sinReturned) {
+          auto found = gutils->invertedPointers.find(&call);
+          if (found != gutils->invertedPointers.end()) {
+            PHINode *PN = cast<PHINode>(&*found->second);
+            gutils->invertedPointers.erase(found);
+            gutils->erase(PN);
+          }
+        }
+        return true;
+      }
+
+      if (Mode == DerivativeMode::ReverseModeGradient ||
+          Mode == DerivativeMode::ReverseModeCombined) {
+        IRBuilder<> Builder2(&call);
+        getReverseBuilder(Builder2);
+
+        Value *dcos = nullptr;
+        if (activeCos) {
+          Value *dcosp =
+              lookup(gutils->invertPointerM(orig_cosp, Builder2), Builder2);
+          Value *zero = Constant::getNullValue(valTy);
+          dcos = UndefValue::get(gutils->getShadowType(valTy));
+          for (unsigned idx = 0, W = gutils->getWidth(); idx < W; ++idx) {
+            Value *cptr = (W == 1) ? dcosp
+                                   : gutils->extractMeta(Builder2, dcosp, idx);
+            Value *ld = Builder2.CreateLoad(valTy, cptr);
+            Builder2.CreateStore(zero, cptr);
+            dcos = (W == 1) ? ld : Builder2.CreateInsertValue(dcos, ld, {idx});
+          }
+        }
+
+        Value *dsin = nullptr;
+        if (activeSin) {
+          if (SinCosInfo.sinReturned) {
+            dsin = diffe(&call, Builder2);
+            setDiffe(&call,
+                     Constant::getNullValue(gutils->getShadowType(valTy)),
+                     Builder2);
+          } else {
+            Value *dsinp =
+                lookup(gutils->invertPointerM(orig_sinp, Builder2), Builder2);
+            Value *zero = Constant::getNullValue(valTy);
+            dsin = UndefValue::get(gutils->getShadowType(valTy));
+            for (unsigned idx = 0, W = gutils->getWidth(); idx < W; ++idx) {
+              Value *sptr = (W == 1)
+                                ? dsinp
+                                : gutils->extractMeta(Builder2, dsinp, idx);
+              Value *ld = Builder2.CreateLoad(valTy, sptr);
+              Builder2.CreateStore(zero, sptr);
+              dsin =
+                  (W == 1) ? ld : Builder2.CreateInsertValue(dsin, ld, {idx});
+            }
+          }
+        }
+
+        if (activeX && (activeSin || activeCos)) {
+          Value *x = lookup(gutils->getNewFromOriginal(orig_x), Builder2);
+          Value *arg = x;
+          Value *piVal = nullptr;
+          if (SinCosInfo.isPi) {
+            piVal = ConstantFP::get(
+                valTy, "3.14159265358979323846264338327950288");
+            arg = Builder2.CreateFMul(x, piVal);
+          }
+          Value *sin_val = activeCos ? Builder2.CreateUnaryIntrinsic(
+                                           Intrinsic::sin, arg)
+                                     : nullptr;
+          Value *cos_val = activeSin ? Builder2.CreateUnaryIntrinsic(
+                                           Intrinsic::cos, arg)
+                                     : nullptr;
+          if (SinCosInfo.isPi) {
+            if (sin_val)
+              sin_val = Builder2.CreateFMul(sin_val, piVal);
+            if (cos_val)
+              cos_val = Builder2.CreateFMul(cos_val, piVal);
+          }
+
+          Value *dx = UndefValue::get(gutils->getShadowType(valTy));
+          for (unsigned idx = 0, W = gutils->getWidth(); idx < W; ++idx) {
+            Value *acc = nullptr;
+            if (activeSin) {
+              Value *ds_i = (W == 1) ? dsin
+                                     : gutils->extractMeta(Builder2, dsin, idx);
+              acc = Builder2.CreateFMul(ds_i, cos_val);
+            }
+            if (activeCos) {
+              Value *dc_i = (W == 1) ? dcos
+                                     : gutils->extractMeta(Builder2, dcos, idx);
+              Value *term =
+                  Builder2.CreateFNeg(Builder2.CreateFMul(dc_i, sin_val));
+              acc = acc ? Builder2.CreateFAdd(acc, term) : term;
+            }
+            dx = (W == 1) ? acc : Builder2.CreateInsertValue(dx, acc, {idx});
+          }
+          addToDiffe(orig_x, dx, Builder2, valTy);
+        }
+        if (SinCosInfo.sinReturned) {
+          auto found = gutils->invertedPointers.find(&call);
+          if (found != gutils->invertedPointers.end()) {
+            PHINode *PN = cast<PHINode>(&*found->second);
+            gutils->invertedPointers.erase(found);
+            gutils->erase(PN);
+          }
+        }
+        return true;
+      }
+    }
+
     auto mod = call.getParent()->getParent()->getParent();
 #include "CallDerivatives.inc"
 
