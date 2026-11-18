@@ -37,23 +37,26 @@ struct ArithConstantOpBatchInterface
   mlir::LogicalResult createBatch(Operation *src, OpBuilder &builder,
                                   IRMapping &mapper,
                                   ArrayRef<int64_t> batchSizes) const {
+    auto constOp = cast<arith::ConstantOp>(src);
+    auto T = dyn_cast<TensorType>(constOp.getType());
+    if (!T)
+      return failure();
+    auto eattr = dyn_cast<DenseElementsAttr>(constOp.getValue());
+    if (!eattr || !eattr.isSplat())
+      return failure();
 
-    SmallVector<Type> resultTypes(src->getResultTypes().begin(),
-                                  src->getResultTypes().end());
-    for (auto &Ty : resultTypes) {
-      auto T = cast<TensorType>(Ty);
-      SmallVector<int64_t> shape(batchSizes.begin(), batchSizes.end());
-      shape.append(T.getShape().begin(), T.getShape().end());
-      Ty = T.clone(shape);
-    }
+    SmallVector<int64_t> shape(batchSizes.begin(), batchSizes.end());
+    shape.append(T.getShape().begin(), T.getShape().end());
+    Type resultType = T.clone(shape);
+
     mlir::NamedAttrList attrs;
     for (auto attr : src->getAttrs()) {
-      auto eattr = cast<DenseElementsAttr>(attr.getValue());
-      attr.setValue(eattr.resizeSplat(cast<ShapedType>(resultTypes[0])));
+      if (attr.getName() == constOp.getValueAttrName())
+        attr.setValue(eattr.resizeSplat(cast<ShapedType>(resultType)));
       attrs.append(attr);
     }
     auto cop = mlir::Operation::create(
-        src->getLoc(), src->getName(), resultTypes, {}, std::move(attrs),
+        src->getLoc(), src->getName(), {resultType}, {}, std::move(attrs),
         mlir::PropertyRef(), mlir::BlockRange(), 0);
     builder.insert(cop);
     mapper.map(src->getResult(0), cop->getResult(0));

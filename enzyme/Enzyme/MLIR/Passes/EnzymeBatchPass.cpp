@@ -102,6 +102,57 @@ LogicalResult handleCallOp(
                           batchedFunctionCache);
 }
 
+namespace {
+
+template <typename DenseIntArrayAttrT, typename IntT>
+Attribute offsetDenseIntArray(DenseIntArrayAttrT denseAttr, int64_t offset) {
+  SmallVector<IntT> newDims;
+  newDims.reserve(denseAttr.size());
+  for (IntT d : denseAttr.asArrayRef())
+    newDims.push_back(d + static_cast<IntT>(offset));
+  return DenseIntArrayAttrT::get(denseAttr.getContext(), newDims);
+}
+
+NamedAttrList offsetDimensionAttrs(Operation &src, OpBuilder &builder,
+                                   int64_t offset) {
+  NamedAttrList attrs;
+  for (NamedAttribute attr : src.getAttrs()) {
+    StringRef name = attr.getName().strref();
+    Attribute val = attr.getValue();
+    if (name.contains("dimensions")) {
+      if (auto dense = dyn_cast<DenseI64ArrayAttr>(val)) {
+        val = offsetDenseIntArray<DenseI64ArrayAttr, int64_t>(dense, offset);
+      } else if (auto dense = dyn_cast<DenseI32ArrayAttr>(val)) {
+        val = offsetDenseIntArray<DenseI32ArrayAttr, int32_t>(dense, offset);
+      } else if (auto dense = dyn_cast<DenseI16ArrayAttr>(val)) {
+        val = offsetDenseIntArray<DenseI16ArrayAttr, int16_t>(dense, offset);
+      } else if (auto dense = dyn_cast<DenseI8ArrayAttr>(val)) {
+        val = offsetDenseIntArray<DenseI8ArrayAttr, int8_t>(dense, offset);
+      } else if (auto arrAttr = dyn_cast<ArrayAttr>(val)) {
+        if (llvm::all_of(arrAttr,
+                         [](Attribute el) { return isa<IntegerAttr>(el); })) {
+          SmallVector<Attribute> newDims;
+          newDims.reserve(arrAttr.size());
+          for (Attribute el : arrAttr) {
+            auto intAttr = cast<IntegerAttr>(el);
+            newDims.push_back(IntegerAttr::get(intAttr.getType(),
+                                               intAttr.getValue() + offset));
+          }
+          val = builder.getArrayAttr(newDims);
+        }
+      }
+    } else if (name.contains("dimension")) {
+      if (auto intAttr = dyn_cast<IntegerAttr>(val)) {
+        val = IntegerAttr::get(intAttr.getType(), intAttr.getValue() + offset);
+      }
+    }
+    attrs.append(attr.getName(), val);
+  }
+  return attrs;
+}
+
+} // namespace
+
 void batchCloneBlock(
     OpBuilder &builder, Block *blk, IRMapping &mapper,
     llvm::ArrayRef<int64_t> batchSizes,
@@ -146,15 +197,44 @@ void batchCloneBlock(
     for (Block *successor : src.getSuccessors())
       successors.push_back(mapper.lookup(successor));
 
+    if (src.getNumOperands() == 0) {
+      Operation *newOp = Operation::create(
+          src.getLoc(), src.getName(), src.getResultTypes(), operands,
+          src.getDiscardableAttrDictionary(), src.getPropertiesStorage(),
+          successors, src.getNumRegions());
+
+      // Clone the regions.
+      for (auto &&[oldReg, newReg] :
+           llvm::zip(src.getRegions(), newOp->getRegions())) {
+        batchCloneRegion(builder, &oldReg, &newReg, mapper, batchSizes,
+                         batchedFunctionCache);
+      }
+
+      builder.insert(newOp);
+
+      // Broadcast each result across the batch dimensions.
+      for (unsigned i = 0, e = src.getNumResults(); i != e; ++i) {
+        Value newRes = newOp->getResult(i);
+        Value bcast = enzyme::BroadcastOp::create(
+            builder, src.getLoc(),
+            applyBatchSizes(newRes.getType(), batchSizes), newRes,
+            builder.getDenseI64ArrayAttr(batchSizes));
+        mapper.map(src.getResult(i), bcast);
+      }
+      continue;
+    }
+
     SmallVector<Type> resultTypes(src.getResultTypes().begin(),
                                   src.getResultTypes().end());
     for (auto &Ty : resultTypes) {
       Ty = applyBatchSizes(Ty, batchSizes);
     }
 
+    NamedAttrList attrs = offsetDimensionAttrs(src, builder, batchSizes.size());
+
     Operation *newOp = Operation::create(
-        src.getLoc(), src.getName(), resultTypes, operands, src.getAttrs(),
-        mlir::PropertyRef(), successors, src.getNumRegions());
+        src.getLoc(), src.getName(), resultTypes, operands, std::move(attrs),
+        src.getPropertiesStorage(), successors, src.getNumRegions());
 
     // Clone the regions.
     for (auto &&[oldReg, newReg] :
