@@ -6638,14 +6638,12 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
 #endif
       {
         Type *T = call.getArgOperand(i)->getType();
-        if (T->isFloatingPointTy()) {
+        if (T->isFPOrFPVectorTy()) {
           updateAnalysis(
               call.getArgOperand(i),
-              TypeTree(ConcreteType(
-                           call.getArgOperand(i)->getType()->getScalarType()))
-                  .Only(-1, &call),
+              TypeTree(ConcreteType(T->getScalarType())).Only(-1, &call),
               &call);
-        } else if (T->isIntegerTy()) {
+        } else if (T->isIntOrIntVectorTy()) {
           updateAnalysis(call.getArgOperand(i),
                          TypeTree(BaseType::Integer).Only(-1, &call), &call);
         } else if (auto ST = dyn_cast<StructType>(T)) {
@@ -6653,14 +6651,14 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
           for (size_t i = 1; i < ST->getNumElements(); ++i) {
             assert(ST->getTypeAtIndex((unsigned)0) == ST->getTypeAtIndex(i));
           }
-          if (ST->getTypeAtIndex((unsigned)0)->isFloatingPointTy())
+          if (ST->getTypeAtIndex((unsigned)0)->isFPOrFPVectorTy())
             updateAnalysis(
                 call.getArgOperand(i),
                 TypeTree(ConcreteType(
                              ST->getTypeAtIndex((unsigned)0)->getScalarType()))
                     .Only(-1, &call),
                 &call);
-          else if (ST->getTypeAtIndex((unsigned)0)->isIntegerTy()) {
+          else if (ST->getTypeAtIndex((unsigned)0)->isIntOrIntVectorTy()) {
             updateAnalysis(call.getArgOperand(i),
                            TypeTree(BaseType::Integer).Only(-1, &call), &call);
           } else {
@@ -6669,13 +6667,13 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
           }
         } else if (auto AT = dyn_cast<ArrayType>(T)) {
           assert(AT->getNumElements() >= 1);
-          if (AT->getElementType()->isFloatingPointTy())
+          if (AT->getElementType()->isFPOrFPVectorTy())
             updateAnalysis(
                 call.getArgOperand(i),
                 TypeTree(ConcreteType(AT->getElementType()->getScalarType()))
                     .Only(-1, &call),
                 &call);
-          else if (AT->getElementType()->isIntegerTy()) {
+          else if (AT->getElementType()->isIntOrIntVectorTy()) {
             updateAnalysis(call.getArgOperand(i),
                            TypeTree(BaseType::Integer).Only(-1, &call), &call);
           } else {
@@ -6688,12 +6686,11 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
         }
       }
       Type *T = call.getType();
-      if (T->isFloatingPointTy()) {
-        updateAnalysis(&call,
-                       TypeTree(ConcreteType(call.getType()->getScalarType()))
-                           .Only(-1, &call),
-                       &call);
-      } else if (T->isIntegerTy()) {
+      if (T->isFPOrFPVectorTy()) {
+        updateAnalysis(
+            &call, TypeTree(ConcreteType(T->getScalarType())).Only(-1, &call),
+            &call);
+      } else if (T->isIntOrIntVectorTy()) {
         updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call),
                        &call);
       } else if (T->isVoidTy()) {
@@ -6713,9 +6710,9 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
           else
             nextOffset = getAggregateElementOffset(DL, ST, i + 1);
 
-          if (T->isFloatingPointTy()) {
-            CT = T;
-          } else if (T->isIntegerTy()) {
+          if (T->isFPOrFPVectorTy()) {
+            CT = T->getScalarType();
+          } else if (T->isIntOrIntVectorTy()) {
             CT = BaseType::Integer;
           }
           if (CT != BaseType::Unknown) {
@@ -6730,13 +6727,16 @@ void TypeAnalyzer::visitCallBase(CallBase &call) {
         updateAnalysis(&call, TT, &call);
       } else if (auto AT = dyn_cast<ArrayType>(T)) {
         assert(AT->getNumElements() >= 1);
-        if (AT->getElementType()->isFloatingPointTy())
+        if (AT->getElementType()->isFPOrFPVectorTy())
           updateAnalysis(
               &call,
               TypeTree(ConcreteType(AT->getElementType()->getScalarType()))
                   .Only(-1, &call),
               &call);
-        else {
+        else if (AT->getElementType()->isIntOrIntVectorTy()) {
+          updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call),
+                         &call);
+        } else {
           llvm::errs() << *T << " - " << call << "\n";
           llvm_unreachable("Unknown type for libm");
         }
