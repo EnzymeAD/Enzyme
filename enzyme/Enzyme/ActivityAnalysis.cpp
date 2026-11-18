@@ -2562,15 +2562,29 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
     }
     if (potentiallyActiveLoad && potentiallyActiveStore) {
       if (EnzymeEnableRecursiveHypotheses) {
-        ReEvaluateValueIfInactiveInst[potentiallyActiveLoad].insert(Val);
+        if (isa<LoadInst>(potentiallyActiveLoad) ||
+            isNVLoad(potentiallyActiveLoad) ||
+            isa<AtomicRMWInst>(potentiallyActiveLoad) ||
+            isa<AtomicCmpXchgInst>(potentiallyActiveLoad)) {
+          ReEvaluateValueIfInactiveValue[potentiallyActiveLoad].insert(Val);
+          if (TmpOrig != Val)
+            ReEvaluateValueIfInactiveValue[potentiallyActiveLoad].insert(
+                TmpOrig);
+        } else {
+          ReEvaluateValueIfInactiveInst[potentiallyActiveLoad].insert(Val);
+          if (TmpOrig != Val)
+            ReEvaluateValueIfInactiveInst[potentiallyActiveLoad].insert(
+                TmpOrig);
+        }
         ReEvaluateValueIfInactiveInst[potentiallyActiveStore].insert(Val);
+        if (TmpOrig != Val) {
+          ReEvaluateValueIfInactiveValue[TmpOrig].insert(Val);
+          ReEvaluateValueIfInactiveInst[potentiallyActiveStore].insert(TmpOrig);
+        }
       }
       insertAllFrom(TR, *Hypothesis, Val, TmpOrig);
-      if (TmpOrig != Val && EnzymeEnableRecursiveHypotheses) {
-        ReEvaluateValueIfInactiveValue[TmpOrig].insert(Val);
-        ReEvaluateValueIfInactiveInst[potentiallyActiveLoad].insert(TmpOrig);
-        ReEvaluateValueIfInactiveInst[potentiallyActiveStore].insert(TmpOrig);
-      }
+      if (ConstantValues.count(Val))
+        return true;
       return false;
     } else {
       // We now know that there isn't a matching active load/store pair in this
@@ -2675,9 +2689,11 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
         ActiveValues.insert(Val);
         assert(Hypothesis->directions == directions);
         assert(Hypothesis->ActiveValues.count(Val));
-        insertAllFrom(TR, *Hypothesis, Val, TmpOrig);
         if (TmpOrig != Val && EnzymeEnableRecursiveHypotheses)
           ReEvaluateValueIfInactiveValue[TmpOrig].insert(Val);
+        insertAllFrom(TR, *Hypothesis, Val, TmpOrig);
+        if (ConstantValues.count(Val))
+          return true;
         return false;
       } else {
         InsertConstantValue(TR, Val);
