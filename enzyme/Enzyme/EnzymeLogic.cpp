@@ -2252,6 +2252,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       Function *NewF = Function::Create(
           FTy, Function::LinkageTypes::InternalLinkage,
           "fixaugment_" + todiff->getName(), todiff->getParent());
+      PPC.recordCloneOrigin(NewF, todiff, /*InheritDirectOrigin=*/false);
 
       BasicBlock *BB = BasicBlock::Create(NewF->getContext(), "entry", NewF);
       IRBuilder<> bb(BB);
@@ -2319,6 +2320,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       Function *NewF = Function::Create(
           FTy, Function::LinkageTypes::InternalLinkage,
           "fixaugment_" + foundcalled->getName(), foundcalled->getParent());
+      PPC.recordCloneOrigin(NewF, todiff, /*InheritDirectOrigin=*/false);
 
       BasicBlock *BB = BasicBlock::Create(NewF->getContext(), "entry", NewF);
       IRBuilder<> bb(BB);
@@ -2399,6 +2401,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
           Function *NewF = Function::Create(
               FTy, Function::LinkageTypes::InternalLinkage,
               "fixaugment_" + foundcalled->getName(), foundcalled->getParent());
+          PPC.recordCloneOrigin(NewF, todiff, /*InheritDirectOrigin=*/false);
 
           BasicBlock *BB =
               BasicBlock::Create(NewF->getContext(), "entry", NewF);
@@ -2479,6 +2482,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
           Function *NewF = Function::Create(
               FTy, Function::LinkageTypes::InternalLinkage,
               "fixaugment_" + foundcalled->getName(), foundcalled->getParent());
+          PPC.recordCloneOrigin(NewF, todiff, /*InheritDirectOrigin=*/false);
 
           BasicBlock *BB =
               BasicBlock::Create(NewF->getContext(), "entry", NewF);
@@ -2972,6 +2976,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
   // Create the new function...
   Function *NewF = Function::Create(
       FTy, nf->getLinkage(), "augmented_" + todiff->getName(), nf->getParent());
+  PPC.recordCloneOrigin(NewF, nf, /*InheritDirectOrigin=*/true);
 
   unsigned attrIndex = 0;
   auto i = nf->arg_begin(), j = NewF->arg_begin();
@@ -3928,6 +3933,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
       Function *NewF = Function::Create(
           FTy, Function::LinkageTypes::InternalLinkage,
           "fixgradient_" + key.todiff->getName(), key.todiff->getParent());
+      PPC.recordCloneOrigin(NewF, key.todiff, /*InheritDirectOrigin=*/false);
 
       size_t argnum = 0;
       for (Argument &Arg : NewF->args()) {
@@ -4123,6 +4129,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
       Function *NewF = Function::Create(
           FTy, Function::LinkageTypes::InternalLinkage,
           "fixgradient_" + key.todiff->getName(), key.todiff->getParent());
+      PPC.recordCloneOrigin(NewF, key.todiff, /*InheritDirectOrigin=*/false);
 
       BasicBlock *BB = BasicBlock::Create(NewF->getContext(), "entry", NewF);
       IRBuilder<> bb(BB);
@@ -4246,6 +4253,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
         Function *NewF = Function::Create(
             FTy, Function::LinkageTypes::InternalLinkage,
             "badgradient_" + key.todiff->getName(), key.todiff->getParent());
+        PPC.recordCloneOrigin(NewF, key.todiff, /*InheritDirectOrigin=*/false);
 
         BasicBlock *BB = BasicBlock::Create(NewF->getContext(), "entry", NewF);
         IRBuilder<> bb(BB);
@@ -4288,6 +4296,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
         Function *NewF = Function::Create(
             FTy, Function::LinkageTypes::InternalLinkage,
             "fixgradient_" + key.todiff->getName(), key.todiff->getParent());
+        PPC.recordCloneOrigin(NewF, key.todiff, /*InheritDirectOrigin=*/false);
         NewF->setAttributes(foundcalled->getAttributes());
         if (NewF->hasFnAttribute(Attribute::NoInline)) {
           NewF->removeFnAttr(Attribute::NoInline);
@@ -4936,6 +4945,7 @@ Function *EnzymeLogic::CreateForwardDiff(
         Function *NewF = Function::Create(
             FTy, Function::LinkageTypes::InternalLinkage,
             "fixderivative_" + todiff->getName(), todiff->getParent());
+        PPC.recordCloneOrigin(NewF, todiff, /*InheritDirectOrigin=*/false);
         for (auto pair : llvm::zip(NewF->args(), foundcalled->args())) {
           std::get<0>(pair).setName(std::get<1>(pair).getName());
         }
@@ -4997,6 +5007,7 @@ Function *EnzymeLogic::CreateForwardDiff(
       Function *NewF = Function::Create(
           FTy, Function::LinkageTypes::InternalLinkage,
           "fixderivative_" + todiff->getName(), todiff->getParent());
+      PPC.recordCloneOrigin(NewF, todiff, /*InheritDirectOrigin=*/false);
 
       auto foundArg = NewF->arg_begin();
       SmallVector<Value *, 2> nextArgs;
@@ -5916,6 +5927,7 @@ llvm::Function *EnzymeLogic::CreateTruncateFunc(RequestContext context,
       "_func_" + truncation.mangleTruncation() + "_" + totrunc->getName().str();
   Function *NewF = Function::Create(FTy, totrunc->getLinkage(), truncName,
                                     totrunc->getParent());
+  PPC.recordCloneOrigin(NewF, totrunc, /*InheritDirectOrigin=*/false);
 
   if (mode != TruncOpFullModuleMode)
     NewF->setLinkage(Function::LinkageTypes::InternalLinkage);
@@ -6014,6 +6026,7 @@ llvm::Function *EnzymeLogic::CreateBatch(RequestContext context,
   Function *NewF =
       Function::Create(FTy, tobatch->getLinkage(),
                        "batch_" + tobatch->getName(), tobatch->getParent());
+  PPC.recordCloneOrigin(NewF, tobatch, /*InheritDirectOrigin=*/false);
 
   if (tobatch->empty()) {
     std::string s;
@@ -6310,6 +6323,8 @@ EnzymeLogic::CreateTrace(RequestContext context, llvm::Function *totrace,
   TraceUtils *tutils =
       TraceUtils::FromClone(mode, sampleFunctions, observeFunctions, interface,
                             totrace, originalToNewFn);
+  PPC.recordCloneOrigin(tutils->newFunc, totrace,
+                        /*InheritDirectOrigin=*/false);
   TraceGenerator *tracer =
       new TraceGenerator(*this, tutils, autodiff, originalToNewFn,
                          GenerativeFunctions, ActiveRandomVariables);
@@ -6927,6 +6942,7 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
 
   Function *NewF = Function::Create(F->getFunctionType(), F->getLinkage(),
                                     "nofree_" + F->getName(), F->getParent());
+  PPC.recordCloneOrigin(NewF, F, /*InheritDirectOrigin=*/false);
   NewF->setAttributes(F->getAttributes());
   NewF->addAttribute(AttributeList::FunctionIndex,
                      Attribute::get(NewF->getContext(), Attribute::NoFree));
