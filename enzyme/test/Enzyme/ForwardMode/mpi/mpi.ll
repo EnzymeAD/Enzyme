@@ -132,14 +132,17 @@ attributes #4 = { nounwind }
 
 ; CHECK: define internal void @fwddiffemsg1(float* %val1, float* %"val1'", float* %val2, float* %"val2'", i32 %numprocprec, i32 %numprocsuiv, i32 %etiquette)
 ; CHECK-NEXT: entry:
+; CHECK-NEXT:   %[[TAN_ST:.+]] = alloca [8 x i32], align 8
 ; CHECK-NEXT:   %statut = alloca %struct.ompi_status_public_t, align 8
 ; CHECK-NEXT:   %"'ipc" = bitcast float* %"val1'" to i8*
-; CHECK-NEXT:   %0 = bitcast float* %val1 to i8*
-; CHECK-NEXT:   %call = call i32 @MPI_Send(i8* %0, i32 1, %struct.ompi_datatype_t* bitcast (%struct.ompi_predefined_datatype_t* @ompi_mpi_real to %struct.ompi_datatype_t*), i32 %numprocsuiv, i32 %etiquette, %struct.ompi_communicator_t* bitcast (%struct.ompi_predefined_communicator_t* @ompi_mpi_comm_world to %struct.ompi_communicator_t*))
-; CHECK-NEXT:   %1 = call i32 @MPI_Send(i8* %"'ipc", i32 1, %struct.ompi_datatype_t* bitcast (%struct.ompi_predefined_datatype_t* @ompi_mpi_real to %struct.ompi_datatype_t*), i32 %numprocsuiv, i32 %etiquette, %struct.ompi_communicator_t* bitcast (%struct.ompi_predefined_communicator_t* @ompi_mpi_comm_world to %struct.ompi_communicator_t*))
+; CHECK-NEXT:   %[[BC1:.+]] = bitcast float* %val1 to i8*
+; CHECK-NEXT:   %call = call i32 @MPI_Send(i8* %[[BC1]], i32 1, %struct.ompi_datatype_t* bitcast (%struct.ompi_predefined_datatype_t* @ompi_mpi_real to %struct.ompi_datatype_t*), i32 %numprocsuiv, i32 %etiquette, %struct.ompi_communicator_t* bitcast (%struct.ompi_predefined_communicator_t* @ompi_mpi_comm_world to %struct.ompi_communicator_t*))
+; CHECK-NEXT:   %[[SCALL:.+]] = call i32 @MPI_Send(i8* %"'ipc", i32 1, %struct.ompi_datatype_t* bitcast (%struct.ompi_predefined_datatype_t* @ompi_mpi_real to %struct.ompi_datatype_t*), i32 %numprocsuiv, i32 %etiquette, %struct.ompi_communicator_t* bitcast (%struct.ompi_predefined_communicator_t* @ompi_mpi_comm_world to %struct.ompi_communicator_t*))
 ; CHECK-NEXT:   %"'ipc2" = bitcast float* %"val2'" to i8*
-; CHECK-NEXT:   %2 = bitcast float* %val2 to i8*
-; CHECK-NEXT:   %call1 = call i32 @MPI_Recv(i8* %2, i32 1, %struct.ompi_datatype_t* bitcast (%struct.ompi_predefined_datatype_t* @ompi_mpi_real to %struct.ompi_datatype_t*), i32 %numprocprec, i32 %etiquette, %struct.ompi_communicator_t* bitcast (%struct.ompi_predefined_communicator_t* @ompi_mpi_comm_world to %struct.ompi_communicator_t*), %struct.ompi_status_public_t* nonnull %statut)
-; CHECK-NEXT:   %3 = call i32 @MPI_Recv(i8* %"'ipc2", i32 1, %struct.ompi_datatype_t* bitcast (%struct.ompi_predefined_datatype_t* @ompi_mpi_real to %struct.ompi_datatype_t*), i32 %numprocprec, i32 %etiquette, %struct.ompi_communicator_t* bitcast (%struct.ompi_predefined_communicator_t* @ompi_mpi_comm_world to %struct.ompi_communicator_t*), %struct.ompi_status_public_t* %statut)
+; CHECK-NEXT:   %[[BC2:.+]] = bitcast float* %val2 to i8*
+; CHECK-NEXT:   %call1 = call i32 @MPI_Recv(i8* %[[BC2]], i32 1, %struct.ompi_datatype_t* bitcast (%struct.ompi_predefined_datatype_t* @ompi_mpi_real to %struct.ompi_datatype_t*), i32 %numprocprec, i32 %etiquette, %struct.ompi_communicator_t* bitcast (%struct.ompi_predefined_communicator_t* @ompi_mpi_comm_world to %struct.ompi_communicator_t*), %struct.ompi_status_public_t* nonnull %statut)
+; CHECK:   %[[SRC:.+]] = load i32, i32* %[[WORDS:.+]], align 4
+; CHECK-NEXT:   %[[TAG:.+]] = load i32, i32* %[[TAG_PTR:.+]], align 4
+; CHECK-NEXT:   %[[RCALL:.+]] = call i32 @MPI_Recv(i8* %"'ipc2", i32 1, %struct.ompi_datatype_t* bitcast (%struct.ompi_predefined_datatype_t* @ompi_mpi_real to %struct.ompi_datatype_t*), i32 %[[SRC]], i32 %[[TAG]], %struct.ompi_communicator_t* bitcast (%struct.ompi_predefined_communicator_t* @ompi_mpi_comm_world to %struct.ompi_communicator_t*), %struct.ompi_status_public_t* %[[TAN_ST_CAST:.+]])
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
