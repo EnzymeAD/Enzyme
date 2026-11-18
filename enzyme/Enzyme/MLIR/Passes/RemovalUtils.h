@@ -1056,172 +1056,100 @@ void removalBlockExplore(Block *block, IRMapping &mapping,
                          llvm::SetVector<Value> &gradients,
                          llvm::MapVector<Value, CacheInfo> &caches);
 
-// ReverseOpName is the type of the if-like op generated for the reverse pass
-// corresponding to this OpName. It usually is the same as OpName, but need
-// not be (e.g. the reverse of an affine.if is an scf.if).
+/// Hoists Enzyme gradient and cache ops out of a region-bearing operation with
+/// one or more mutually exclusive single-block regions.
+LogicalResult removeEnzymeOpsFromRegionLikeOp(
+    Operation *op, PatternRewriter &rewriter, ArrayRef<Block *> fwdBlocks,
+    llvm::function_ref<bool(Operation *)> isReverseOp,
+    llvm::function_ref<SmallVector<Block *, 2>(Operation *)> getReverseBlocks,
+    llvm::function_ref<Value(Location, Type)> getDummyValue,
+    llvm::function_ref<Operation *(TypeRange)> replaceOp);
+
+/// Base ExternalModel for EnzymeOpsRemoverOpInterface on operations with one or
+/// more mutually exclusive single-block regions (e.g., `scf.if`, `affine.if`,
+/// `memref.alloca_scope`, `scf.execute_region`).
 template <typename FinalClass, typename OpName, typename ReverseOpName = OpName>
-struct IfLikeEnzymeOpsRemover
+struct RegionLikeEnzymeOpsRemover
     : public EnzymeOpsRemoverOpInterface::ExternalModel<FinalClass, OpName> {
+  static Value getDummyValue(OpBuilder &builder, Location loc, Type dummyType) {
+    return cast<AutoDiffTypeInterface>(dummyType).createNullValue(builder, loc);
+  }
+
   LogicalResult removeEnzymeOps(Operation *op,
                                 PatternRewriter &rewriter) const {
-    auto ifOp = cast<OpName>(op);
-    // Gradients:
-    //
-    //  For each set in a branch, we instead set after the if by using the
-    //  return value.
-    //
-    //  if %pred {
-    //    enzyme.set %grad, %2
-    //  } else {
-    //  }
-    //
-    //  %0 = enzyme.get %grad
-    //  %1 = if %pred {
-    //    return %2
-    //  } else {
-    //    return %0
-    //  }
-    //  enzyme.set %grad, %1
-    //
-    //  For each get in a branch, we get before and use that instead of the
-    //  get.
+    auto typedOp = cast<OpName>(op);
+    SmallVector<Block *, 2> fwdBlocks =
+        FinalClass::getBlocks(typedOp, rewriter);
+    return removeEnzymeOpsFromRegionLikeOp(
+        op, rewriter, fwdBlocks,
+        [](Operation *candidate) { return isa<ReverseOpName>(candidate); },
+        [&rewriter](Operation *revOp) {
+          return FinalClass::getBlocks(cast<ReverseOpName>(revOp), rewriter);
+        },
+        [&rewriter](Location loc, Type ty) {
+          return FinalClass::getDummyValue(rewriter, loc, ty);
+        },
+        [&rewriter, typedOp](TypeRange resultTypes) -> Operation * {
+          return FinalClass::replace(rewriter, typedOp, resultTypes);
+        });
+  }
+};
 
-    // Caches:
-    //
-    // For each push, push after the if instead add a dummy value in the other
-    // branch.
-    //
-    // For each pop in the reverse if, pop before the if instead of inside a
-    // branch.
+/// ReverseOpName is the type of the if-like op generated for the reverse pass
+/// corresponding to this OpName. It usually is the same as OpName, but need
+/// not be (e.g. the reverse of an affine.if is an scf.if).
+template <typename FinalClass, typename OpName, typename ReverseOpName = OpName>
+struct IfLikeEnzymeOpsRemover
+    : public RegionLikeEnzymeOpsRemover<FinalClass, OpName, ReverseOpName> {
+  static SmallVector<Block *, 2> getBlocks(OpName ifOp, OpBuilder &builder) {
+    return {FinalClass::getThenBlock(ifOp, builder),
+            FinalClass::getElseBlock(ifOp, builder)};
+  }
 
-    Block *trueBlock = FinalClass::getThenBlock(ifOp, rewriter),
-          *falseBlock = FinalClass::getElseBlock(ifOp, rewriter);
+  template <typename RevOp = ReverseOpName,
+            std::enable_if_t<!std::is_same_v<RevOp, OpName>, int> = 0>
+  static SmallVector<Block *, 2> getBlocks(RevOp ifOp, OpBuilder &builder) {
+    return {FinalClass::getThenBlock(ifOp, builder),
+            FinalClass::getElseBlock(ifOp, builder)};
+  }
+};
 
-    // Gradients whose value is set in either branches.
-    llvm::SetVector<Value> gradients;
+/// EnzymeOpsRemoverOpInterface ExternalModel for single-region, zero-operand
+/// ops whose results correspond directly to their region terminator operands
+/// (e.g., `memref.alloca_scope`, `scf.execute_region`).
+template <typename OpName, typename ReverseOpName = OpName,
+          typename FinalClass = void>
+struct SingleRegionEnzymeOpsRemover
+    : public RegionLikeEnzymeOpsRemover<
+          std::conditional_t<
+              std::is_void_v<FinalClass>,
+              SingleRegionEnzymeOpsRemover<OpName, ReverseOpName>, FinalClass>,
+          OpName, ReverseOpName> {
+  static SmallVector<Block *, 2> getBlocks(OpName op, OpBuilder &builder) {
+    Region &region = op->getRegion(0);
+    if (!region.hasOneBlock())
+      return {};
+    return {&region.front()};
+  }
 
-    // We assume pushes are exclusive.
-    llvm::MapVector<Value, CacheInfo> truePushedCaches, falsePushedCaches;
+  template <typename RevOp = ReverseOpName,
+            std::enable_if_t<!std::is_same_v<RevOp, OpName>, int> = 0>
+  static SmallVector<Block *, 2> getBlocks(RevOp op, OpBuilder &builder) {
+    Region &region = op->getRegion(0);
+    if (!region.hasOneBlock())
+      return {};
+    return {&region.front()};
+  }
 
-    // Grad to value
-    IRMapping trueMapping, falseMapping;
-
-    removalBlockExplore(trueBlock, trueMapping, rewriter, gradients,
-                        truePushedCaches);
-    removalBlockExplore(falseBlock, falseMapping, rewriter, gradients,
-                        falsePushedCaches);
-
-    bool cachesEmpty = truePushedCaches.empty() && falsePushedCaches.empty();
-    if (gradients.empty() && cachesEmpty)
-      return success();
-    bool removeCaches = !op->hasAttr(kPreserveCacheAttrName) && !cachesEmpty;
-    SmallVector<CacheInfo> trueCaches = llvm::map_to_vector(
-        truePushedCaches, [](auto pair) { return std::get<1>(pair); });
-    SmallVector<CacheInfo> falseCaches = llvm::map_to_vector(
-        falsePushedCaches, [](auto pair) { return std::get<1>(pair); });
-
-    if (removeCaches && hasMinCut(ifOp)) {
-      // Find the reverse if op
-      ReverseOpName reverseIfOp = nullptr;
-      auto findReverseIf = [&](Operation *parent) {
-        if (isa<ReverseOpName>(parent) &&
-            (reverseIfOp == nullptr || parent->isProperAncestor(reverseIfOp))) {
-          reverseIfOp = cast<ReverseOpName>(parent);
-        }
-      };
-      for (auto &[_, info] : truePushedCaches)
-        findReverseIf(info.popOp->getParentOp());
-      for (auto &[_, info] : falsePushedCaches)
-        findReverseIf(info.popOp->getParentOp());
-
-      assert(reverseIfOp && "unable to find reverse if op");
-
-      Block *reverseTrueBlock = FinalClass::getThenBlock(reverseIfOp, rewriter),
-            *reverseFalseBlock =
-                FinalClass::getElseBlock(reverseIfOp, rewriter);
-
-      OpBuilder::InsertionGuard guard(rewriter);
-      rewriter.setInsertionPointToStart(reverseTrueBlock);
-      enzyme::minCutCache(trueBlock, reverseTrueBlock, trueCaches, rewriter,
-                          trueMapping);
-      rewriter.setInsertionPointToStart(reverseFalseBlock);
-      enzyme::minCutCache(falseBlock, reverseFalseBlock, falseCaches, rewriter,
-                          falseMapping);
-    }
-
-    Operation *trueTerm = trueBlock->getTerminator();
-    Operation *falseTerm = falseBlock->getTerminator();
-
-    for (auto grad : gradients) {
-      auto trueValue = trueMapping.lookupOrNull(grad);
-      if (!trueValue) {
-        trueValue = enzyme::GetOp::create(
-            rewriter, grad.getLoc(),
-            cast<enzyme::GradientType>(grad.getType()).getBasetype(), grad);
-      }
-      trueTerm->insertOperands(trueTerm->getNumOperands(),
-                               ValueRange(trueValue));
-
-      auto falseValue = falseMapping.lookupOrNull(grad);
-      if (!falseValue) {
-        falseValue = enzyme::GetOp::create(
-            rewriter, grad.getLoc(),
-            cast<enzyme::GradientType>(grad.getType()).getBasetype(), grad);
-      }
-      falseTerm->insertOperands(falseTerm->getNumOperands(),
-                                ValueRange(falseValue));
-    }
-
-    SmallVector<CacheInfo> allCaches;
-    allCaches.append(trueCaches);
-    allCaches.append(falseCaches);
-    if (removeCaches) {
-      for (auto &info : allCaches) {
-        Value pushedValue = info.pushedValue();
-        Value dummy = FinalClass::getDummyValue(rewriter, pushedValue.getLoc(),
-                                                pushedValue.getType());
-
-        Value trueValue =
-            pushedValue.getParentBlock() == trueBlock ? pushedValue : dummy;
-        Value falseValue =
-            pushedValue.getParentBlock() == falseBlock ? pushedValue : dummy;
-
-        trueTerm->insertOperands(trueTerm->getNumOperands(),
-                                 ValueRange(trueValue));
-        falseTerm->insertOperands(falseTerm->getNumOperands(),
-                                  ValueRange(falseValue));
-      }
-    }
-
-    size_t idx = ifOp->getNumResults();
-    ifOp = FinalClass::replace(rewriter, ifOp, trueTerm->getOperandTypes());
-
-    for (auto grad : gradients) {
-      enzyme::SetOp::create(rewriter, grad.getLoc(), grad,
-                            ifOp->getResult(idx));
-      idx++;
-    }
-
-    if (removeCaches) {
-      for (auto &info : allCaches) {
-        enzyme::PushOp::create(rewriter, info.pushOp->getLoc(),
-                               info.initOp.getResult(), ifOp->getResult(idx));
-        rewriter.eraseOp(info.pushOp);
-
-        OpBuilder::InsertionGuard guard(rewriter);
-        rewriter.setInsertionPoint(info.popOp->getParentOp());
-
-        auto newPop = enzyme::PopOp::create(rewriter, info.popOp->getLoc(),
-                                            info.popOp.getResult().getType(),
-                                            info.popOp.getCache());
-        rewriter.replaceAllUsesWith(info.popOp.getResult(), newPop);
-        rewriter.eraseOp(info.popOp);
-
-        idx++;
-      }
-    }
-
-    return success();
+  static OpName replace(PatternRewriter &rewriter, OpName op,
+                        TypeRange resultTypes) {
+    auto newOp = OpName::create(rewriter, op->getLoc(), resultTypes,
+                                ValueRange{}, op->getAttrs());
+    newOp->getRegion(0).takeBody(op->getRegion(0));
+    rewriter.replaceAllUsesWith(
+        op->getResults(), newOp->getResults().slice(0, op->getNumResults()));
+    rewriter.eraseOp(op);
+    return newOp;
   }
 };
 

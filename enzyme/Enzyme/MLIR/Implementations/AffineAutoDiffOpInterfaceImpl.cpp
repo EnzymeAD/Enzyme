@@ -243,10 +243,6 @@ struct AffineIfOpEnzymeOpsRemover
     return ifOp.elseBlock();
   }
 
-  static Value getDummyValue(OpBuilder &builder, Location loc, Type dummyType) {
-    return cast<AutoDiffTypeInterface>(dummyType).createNullValue(builder, loc);
-  }
-
   static affine::AffineIfOp replace(PatternRewriter &rewriter,
                                     affine::AffineIfOp otherIfOp,
                                     TypeRange resultTypes) {
