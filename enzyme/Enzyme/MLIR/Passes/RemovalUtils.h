@@ -20,6 +20,8 @@
 #include "mlir/Interfaces/LoopLikeInterface.h"
 #include "mlir/Transforms/LoopInvariantCodeMotionUtils.h"
 
+#include "mlir/Interfaces/CallInterfaces.h"
+#include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
 
 #include "mlir/IR/Matchers.h"
@@ -1004,11 +1006,73 @@ public:
               /*static_sizes*/ rewriter.getDenseI64ArrayAttr(sizes),
               /*static_strides*/ rewriter.getDenseI64ArrayAttr(strides));
 
+          // A rank-reduced subview has a strided layout with dynamic offset,
+          // which ops requiring an exact MemRefType (e.g., func.call, branches)
+          // reject. Materialize a contiguous copy matching the original type
+          // whenever any remaining non-dealloc user requires the exact type.
+          bool needsExactType = false;
+          if (popValue.getType() != info.popOp.getType()) {
+            for (Operation *user : info.popOp.getResult().getUsers()) {
+              if (allocOp ? allocOp.isDeallocation(user)
+                          : isa<memref::DeallocOp>(user))
+                continue;
+              if (isa<CallOpInterface, BranchOpInterface,
+                      RegionBranchTerminatorOpInterface>(user) ||
+                  user->hasTrait<OpTrait::ReturnLike>()) {
+                needsExactType = true;
+                break;
+              }
+            }
+          }
+
+          Value materializedAlloc;
+          if (needsExactType) {
+            materializedAlloc =
+                allocOp ? allocOp.allocate(rewriter, info.popOp->getLoc(), MT,
+                                           dynSizes)
+                        : memref::AllocOp::create(
+                              rewriter, info.popOp->getLoc(), MT, dynSizes)
+                              .getResult();
+            memref::CopyOp::create(rewriter, info.popOp->getLoc(), popValue,
+                                   materializedAlloc);
+            popValue = materializedAlloc;
+            if (popValue.getType() != info.popOp.getType()) {
+              popValue = memref::CastOp::create(rewriter, info.popOp->getLoc(),
+                                                info.popOp.getType(), popValue);
+            }
+          }
+
+          bool hasDeallocUser = false;
           for (auto user :
                llvm::make_early_inc_range(info.popOp.getResult().getUsers())) {
             if (allocOp ? allocOp.isDeallocation(user)
-                        : isa<memref::DeallocOp>(user))
-              rewriter.eraseOp(user);
+                        : isa<memref::DeallocOp>(user)) {
+              if (materializedAlloc) {
+                hasDeallocUser = true;
+              } else {
+                rewriter.eraseOp(user);
+              }
+            }
+          }
+          if (materializedAlloc && !hasDeallocUser) {
+            Operation *lastUser = nullptr;
+            Block *popBlock = info.popOp->getBlock();
+            for (Operation *user : info.popOp.getResult().getUsers()) {
+              Operation *inBlock = popBlock->findAncestorOpInBlock(*user);
+              if (inBlock && (!lastUser || lastUser->isBeforeInBlock(inBlock)))
+                lastUser = inBlock;
+            }
+            OpBuilder::InsertionGuard guard(rewriter);
+            if (lastUser)
+              rewriter.setInsertionPointAfter(lastUser);
+            else
+              rewriter.setInsertionPointAfter(popValue.getDefiningOp());
+            if (allocOp)
+              allocOp.deallocate(rewriter, info.popOp->getLoc(),
+                                 materializedAlloc);
+            else
+              memref::DeallocOp::create(rewriter, info.popOp->getLoc(),
+                                        materializedAlloc);
           }
         } else {
           if (dynamicDims.empty()) {

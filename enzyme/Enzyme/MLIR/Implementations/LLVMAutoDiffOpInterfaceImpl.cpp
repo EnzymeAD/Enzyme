@@ -851,6 +851,16 @@ static Value normalizeToI64(OpBuilder &builder, Location loc, Value val) {
 struct PointerClonableTypeInterface
     : public ClonableTypeInterface::ExternalModel<PointerClonableTypeInterface,
                                                   LLVM::LLVMPointerType> {
+  bool canCloneValue(Type self, Value value) const {
+    if (findPtrExtent(value).size)
+      return true;
+    if (auto alloca = value.getDefiningOp<LLVM::AllocaOp>()) {
+      Type szTy = alloca.getArraySize().getType();
+      return szTy.isIndex() || isa<IntegerType>(szTy);
+    }
+    return false;
+  }
+
   mlir::Value cloneValue(Type self, OpBuilder &builder, Value value) const {
     PtrExtent extent = findPtrExtent(value, &builder);
     if (!extent.size) {
