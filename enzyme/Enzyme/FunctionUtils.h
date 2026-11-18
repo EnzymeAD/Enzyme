@@ -430,7 +430,8 @@ bool isReturnLikeParam(const llvm::CallBase &CB, unsigned argno);
 llvm::FunctionType *getFunctionTypeForClone(
     llvm::FunctionType *FTy, DerivativeMode mode, unsigned width,
     llvm::Type *additionalArg, llvm::ArrayRef<DIFFE_TYPE> constant_args,
-    bool diffeReturnArg, bool returnTape, bool returnPrimal, bool returnShadow);
+    bool diffeReturnArg, bool returnTape, bool returnPrimal, bool returnShadow,
+    llvm::AttributeList Attrs = llvm::AttributeList());
 
 /// Lower __enzyme_todense, returning if changed.
 bool LowerSparsification(llvm::Function *F, bool replaceAll = true);
