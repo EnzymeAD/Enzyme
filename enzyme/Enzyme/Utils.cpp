@@ -483,6 +483,10 @@ bool attributeKnownFunctions(llvm::Function &F) {
   // free memory of the program nor hand an allocation to it.
   const char *OpenMPRuntimeCalls[] = {
       "__kmpc_global_thread_num",
+      "__kmpc_reduce",
+      "__kmpc_reduce_nowait",
+      "__kmpc_end_reduce",
+      "__kmpc_end_reduce_nowait",
       "__kmpc_for_static_init_4",
       "__kmpc_for_static_init_4u",
       "__kmpc_for_static_init_8",
@@ -501,6 +505,11 @@ bool attributeKnownFunctions(llvm::Function &F) {
     F.addAttribute(
         AttributeList::FunctionIndex,
         Attribute::get(F.getContext(), "enzyme_no_escaping_allocation"));
+    FunctionType *fnType = F.getFunctionType();
+    for (unsigned paramIdx = 0; paramIdx < fnType->getNumParams(); ++paramIdx) {
+      if (fnType->getParamType(paramIdx)->isPointerTy())
+        addFunctionNoCapture(&F, paramIdx);
+    }
   }
   const char *SystemAndStringCalls[] = {
       "strtol",
