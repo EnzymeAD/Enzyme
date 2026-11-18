@@ -852,33 +852,27 @@ public:
       return nullptr;
 
     size_t size = (dl.getTypeSizeInBits(type) + 7) / 8;
+    if (size == 0)
+      return nullptr;
 
-    auto m0 = GenericTypeTree::operator[]({0});
-
-    llvm::Type *flt = m0.isFloat();
-    if (!flt) {
-      if (!(anythingIsFloat && m0 == BaseType::Anything)) {
-        return nullptr;
-      }
-    }
-    // If offset 0 is Anything (and anythingIsFloat), flt is still null here;
-    // walk bytewise until a concrete float type is found.
-    size_t chunk = flt ? dl.getTypeSizeInBits(flt) / 8 : 1;
-    for (size_t i = chunk; i < size; i += chunk) {
+    llvm::Type *flt = nullptr;
+    for (size_t i = 0; i < size;) {
       auto mx = GenericTypeTree::operator[]({(int)i});
       if (auto f2 = mx.isFloat()) {
-        if (f2 != flt) {
-          if (anythingIsFloat && !flt) {
-            flt = f2;
-            chunk = dl.getTypeSizeInBits(flt) / 8;
-            continue;
-          }
+        if (!flt) {
+          flt = f2;
+        } else if (f2 != flt) {
           return nullptr;
         }
+        size_t chunk = (dl.getTypeSizeInBits(f2) + 7) / 8;
+        if (i + chunk > size)
+          return nullptr;
+        i += chunk;
       } else if (anythingIsFloat && mx == BaseType::Anything) {
-        continue;
-      } else
+        i += 1;
+      } else {
         return nullptr;
+      }
     }
 
     if (!flt && anythingIsFloat) {
