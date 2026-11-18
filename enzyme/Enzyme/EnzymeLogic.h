@@ -122,6 +122,7 @@ public:
   const std::vector<DIFFE_TYPE> constant_args;
 
   bool shadowReturnUsed;
+  bool diffeReturnUsed;
 
   //! The augmented pass's unnecessary values and recompute decisions, which
   //! determine whether it used the primal of a value. The reverse pass of
@@ -139,11 +140,13 @@ public:
       std::map<llvm::CallInst *, std::pair<bool, const std::vector<bool>>>
           overwritten_args_map,
       std::map<llvm::Instruction *, bool> can_modref_map,
-      const std::vector<DIFFE_TYPE> &constant_args, bool shadowReturnUsed)
+      const std::vector<DIFFE_TYPE> &constant_args, bool shadowReturnUsed,
+      bool diffeReturnUsed = false)
       : fn(fn), tapeType(tapeType), tapeIndices(tapeIndices), returns(returns),
         overwritten_args_map(overwritten_args_map),
         can_modref_map(can_modref_map), constant_args(constant_args),
-        shadowReturnUsed(shadowReturnUsed), isComplete(false) {}
+        shadowReturnUsed(shadowReturnUsed), diffeReturnUsed(diffeReturnUsed),
+        isComplete(false) {}
 };
 
 ///  \p todiff is the function to differentiate
@@ -172,6 +175,7 @@ struct ReverseCacheKey {
   std::vector<bool> overwritten_args;
   bool returnUsed;
   bool shadowReturnUsed;
+  bool diffeReturnUsed = false;
   DerivativeMode mode;
   unsigned width;
   bool freeMemory;
@@ -190,6 +194,7 @@ struct ReverseCacheKey {
             overwritten_args,
             returnUsed,
             shadowReturnUsed,
+            diffeReturnUsed,
             mode,
             width,
             freeMemory,
@@ -258,6 +263,14 @@ struct ReverseCacheKey {
     if (shadowReturnUsed < rhs.shadowReturnUsed)
       return true;
     if (rhs.shadowReturnUsed < shadowReturnUsed)
+      return false;
+
+    bool lhsDiffeRet = (retType == DIFFE_TYPE::OUT_DIFF) || diffeReturnUsed;
+    bool rhsDiffeRet =
+        (rhs.retType == DIFFE_TYPE::OUT_DIFF) || rhs.diffeReturnUsed;
+    if (lhsDiffeRet < rhsDiffeRet)
+      return true;
+    if (rhsDiffeRet < lhsDiffeRet)
       return false;
 
     if (mode < rhs.mode)
@@ -475,6 +488,7 @@ public:
     std::vector<bool> nowrite_shadows;
     bool returnUsed;
     bool shadowReturnUsed;
+    bool diffeReturnUsed;
     const FnTypeInfo typeInfo;
     bool freeMemory;
     bool AtomicAdd;
@@ -534,6 +548,11 @@ public:
       if (shadowReturnUsed < rhs.shadowReturnUsed)
         return true;
       if (rhs.shadowReturnUsed < shadowReturnUsed)
+        return false;
+
+      if (diffeReturnUsed < rhs.diffeReturnUsed)
+        return true;
+      if (rhs.diffeReturnUsed < diffeReturnUsed)
         return false;
 
       if (freeMemory < rhs.freeMemory)
@@ -606,7 +625,7 @@ public:
       const std::vector<bool> _overwritten_args,
       const std::vector<bool> &nowrite_shadows, bool forceAnonymousTape,
       bool runtimeActivity, bool strongZero, unsigned width, bool AtomicAdd,
-      bool omp = false);
+      bool omp = false, bool diffeReturnUsed = false);
 
   std::map<ReverseCacheKey, llvm::Function *> ReverseCachedFunctions;
 

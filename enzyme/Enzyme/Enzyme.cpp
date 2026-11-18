@@ -1527,23 +1527,24 @@ public:
       assert(freeMemory);
       newFunc = Logic.CreatePrimalAndGradient(
           context,
-          (ReverseCacheKey){.todiff = fn,
-                            .retType = retType,
-                            .constant_args = constants,
-                            .subsequent_calls_may_write =
-                                subsequent_calls_may_write,
-                            .overwritten_args = overwritten_args,
-                            .returnUsed = primalReturn,
-                            .shadowReturnUsed = false,
-                            .mode = mode,
-                            .width = width,
-                            .freeMemory = freeMemory,
-                            .AtomicAdd = AtomicAdd,
-                            .additionalType = nullptr,
-                            .forceAnonymousTape = false,
-                            .typeInfo = type_args,
-                            .runtimeActivity = options.runtimeActivity,
-                            .strongZero = options.strongZero},
+          (ReverseCacheKey){
+              .todiff = fn,
+              .retType = retType,
+              .constant_args = constants,
+              .subsequent_calls_may_write = subsequent_calls_may_write,
+              .overwritten_args = overwritten_args,
+              .returnUsed = primalReturn,
+              .shadowReturnUsed = false,
+              .diffeReturnUsed = (retType == DIFFE_TYPE::OUT_DIFF),
+              .mode = mode,
+              .width = width,
+              .freeMemory = freeMemory,
+              .AtomicAdd = AtomicAdd,
+              .additionalType = nullptr,
+              .forceAnonymousTape = false,
+              .typeInfo = type_args,
+              .runtimeActivity = options.runtimeActivity,
+              .strongZero = options.strongZero},
           TA, /*augmented*/ nullptr);
       break;
     case DerivativeMode::ReverseModePrimal:
@@ -1598,23 +1599,24 @@ public:
       else
         newFunc = Logic.CreatePrimalAndGradient(
             context,
-            (ReverseCacheKey){.todiff = fn,
-                              .retType = retType,
-                              .constant_args = constants,
-                              .subsequent_calls_may_write =
-                                  subsequent_calls_may_write,
-                              .overwritten_args = overwritten_args,
-                              .returnUsed = false,
-                              .shadowReturnUsed = false,
-                              .mode = mode,
-                              .width = width,
-                              .freeMemory = freeMemory,
-                              .AtomicAdd = AtomicAdd,
-                              .additionalType = tapeType,
-                              .forceAnonymousTape = forceAnonymousTape,
-                              .typeInfo = type_args,
-                              .runtimeActivity = options.runtimeActivity,
-                              .strongZero = options.strongZero},
+            (ReverseCacheKey){
+                .todiff = fn,
+                .retType = retType,
+                .constant_args = constants,
+                .subsequent_calls_may_write = subsequent_calls_may_write,
+                .overwritten_args = overwritten_args,
+                .returnUsed = false,
+                .shadowReturnUsed = false,
+                .diffeReturnUsed = (retType == DIFFE_TYPE::OUT_DIFF),
+                .mode = mode,
+                .width = width,
+                .freeMemory = freeMemory,
+                .AtomicAdd = AtomicAdd,
+                .additionalType = tapeType,
+                .forceAnonymousTape = forceAnonymousTape,
+                .typeInfo = type_args,
+                .runtimeActivity = options.runtimeActivity,
+                .strongZero = options.strongZero},
             TA, aug);
     }
     }

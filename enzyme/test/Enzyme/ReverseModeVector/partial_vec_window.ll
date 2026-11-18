@@ -56,5 +56,5 @@ entry:
 ; CHECK:   %[[LANE0:.+]] = extractelement <2 x float> %[[LANE0V]], i32 0
 ; CHECK:   %[[LANE1V:.+]] = extractvalue [2 x <2 x float>] %[[PACK]], 1
 ; CHECK:   %[[LANE1:.+]] = extractelement <2 x float> %[[LANE1V]], i32 0
-; CHECK:   %[[MAKE:.+]] = call { [2 x float] } @diffe2make(float %x)
+; CHECK:   %[[MAKE:.+]] = call { [2 x float] } @diffe2make(float %x, [2 x %ret2v] %{{.+}})
 ; CHECK:   ret { [2 x float] }
