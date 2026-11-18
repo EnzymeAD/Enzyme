@@ -30,6 +30,7 @@
 #include <set>
 
 #include "DifferentialUseAnalysis.h"
+#include "Locks.h"
 #include "Utils.h"
 
 #include "llvm/IR/BasicBlock.h"
@@ -634,7 +635,8 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
     // Since adjoint of barrier is another barrier in reverse
     // we still need even if instruction is inactive
     if (!shadow)
-      if (funcName == "__kmpc_barrier" || funcName == "MPI_Barrier") {
+      if (funcName == "__kmpc_barrier" || funcName == "MPI_Barrier" ||
+          locks::classifyLockCall(funcName)) {
         if (EnzymePrintDiffUse)
           llvm::errs() << " Need direct primal of " << *val
                        << " in reverse from barrier " << *user << "\n";
