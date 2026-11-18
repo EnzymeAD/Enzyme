@@ -14,13 +14,19 @@
 #define ENZYME_MLIR_IMPLEMENTATIONS_LOOPCHECKPOINTING_H
 
 #include "Dialect/Ops.h"
+#include "Interfaces/AutoDiffOpInterface.h"
 #include "Interfaces/AutoDiffTypeInterface.h"
 #include "Interfaces/GradientUtilsReverse.h"
+#include "Interfaces/Utils.h"
 #include "Passes/RemovalUtils.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/IR/Dominance.h"
 #include "mlir/IR/IRMapping.h"
+#include "mlir/Interfaces/ControlFlowInterfaces.h"
+#include "mlir/Interfaces/LoopLikeInterface.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Transforms/RegionUtils.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/ScopeExit.h"
@@ -357,6 +363,365 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
       gutils->originalToNewFn.map(oldOp, newOp);
   }
 
+  /// Reverse-demand slice of a checkpointed loop's body: only loop-carried
+  /// iter_args (and primal body ops) reachable backward from values needed by
+  /// the reverse pass or side-effecting ops need to be checkpointed and
+  /// replayed.
+  struct CheckpointSlice {
+    SmallVector<bool> neededIterArgs;
+    SmallVector<size_t> ckptIterIndices;
+    DenseSet<Value> neededValues;
+    DenseSet<Operation *> neededPrimalOps;
+  };
+
+  struct ReplayCleanup {
+    SmallVector<std::pair<Operation *, Operation *>> deadClonedOps;
+    SmallVector<Operation *> dummyOps;
+
+    void cleanup(MGradientUtilsReverse *gutils) {
+      for (auto it = deadClonedOps.rbegin(), e = deadClonedOps.rend(); it != e;
+           ++it) {
+        auto [origOp, clonedOp] = *it;
+        if (clonedOp->use_empty()) {
+          gutils->originalToNewFn.erase(origOp);
+          for (Value r : origOp->getResults())
+            gutils->originalToNewFn.erase(r);
+          clonedOp->erase();
+        }
+      }
+      for (auto it = dummyOps.rbegin(), e = dummyOps.rend(); it != e; ++it) {
+        Operation *dummyOp = *it;
+        if (dummyOp->use_empty())
+          dummyOp->erase();
+      }
+    }
+  };
+
+  /// Returns true only when `op` (including all nested ops in its regions) is
+  /// provably memory-effect-free or read-only. Unlike oputils::isReadOnly, ops
+  /// lacking MemoryEffectOpInterface are conservatively treated as
+  /// side-effecting.
+  static bool isSafeReadOnlyOrPure(Operation *op) {
+    if (isMemoryEffectFree(op))
+      return true;
+    if (auto mem = dyn_cast<MemoryEffectOpInterface>(op)) {
+      SmallVector<MemoryEffects::EffectInstance> effects;
+      mem.getEffects(effects);
+      if (!llvm::all_of(effects, [](const MemoryEffects::EffectInstance &e) {
+            return isa<MemoryEffects::Read>(e.getEffect());
+          }))
+        return false;
+      for (Region &r : op->getRegions())
+        for (Block &b : r)
+          for (Operation &nested : b)
+            if (!isSafeReadOnlyOrPure(&nested))
+              return false;
+      return true;
+    }
+    if (op->hasTrait<OpTrait::HasRecursiveMemoryEffects>()) {
+      for (Region &r : op->getRegions())
+        for (Block &b : r)
+          for (Operation &nested : b)
+            if (!isSafeReadOnlyOrPure(&nested))
+              return false;
+      return true;
+    }
+    return false;
+  }
+
+  static bool isBodyOpFullyInactive(Operation *op,
+                                    MGradientUtilsReverse *gutils) {
+    if (!isSafeReadOnlyOrPure(op))
+      return false;
+    if (!gutils->isConstantInstruction(op))
+      return false;
+    return llvm::all_of(op->getResults(),
+                        [&](Value v) { return gutils->isConstantValue(v); });
+  }
+
+  static bool canCreateSafeNullValue(Type ty) {
+    auto iface = dyn_cast<AutoDiffTypeInterface>(ty);
+    if (!iface || iface.isMutable())
+      return false;
+    if (auto shaped = dyn_cast<ShapedType>(ty))
+      return shaped.hasStaticShape();
+    return true;
+  }
+
+  static CheckpointSlice computeCheckpointSlice(OpName forOp,
+                                                MGradientUtilsReverse *gutils) {
+    CheckpointSlice slice;
+    size_t numIterArgs = FinalClass::getNumRegionIterArgs(forOp);
+    slice.neededIterArgs.assign(numIterArgs, false);
+
+    Block *origBody = FinalClass::getBodyBlock(forOp);
+    if (!gutils) {
+      slice.neededIterArgs.assign(numIterArgs, true);
+      for (size_t i = 0; i < numIterArgs; ++i)
+        slice.ckptIterIndices.push_back(i);
+      for (Operation &op : origBody->without_terminator())
+        slice.neededPrimalOps.insert(&op);
+      return slice;
+    }
+
+    auto origIterArgs = origBody->getArguments().drop_front();
+    auto origYields =
+        FinalClass::getCarriedTerminatorOperands(origBody->getTerminator());
+
+    DenseMap<Value, size_t> iterArgIndex;
+    for (auto &&[i, arg] : llvm::enumerate(origIterArgs))
+      iterArgIndex[arg] = i;
+
+    SmallVector<Value> worklist;
+    auto markValueNeeded = [&](Value v) {
+      if (slice.neededValues.insert(v).second)
+        worklist.push_back(v);
+    };
+    auto markAllInputs = [&](Operation *op) {
+      for (Value opnd : op->getOperands())
+        markValueNeeded(opnd);
+      if (op->getNumRegions() > 0) {
+        SetVector<Value> captured;
+        getUsedValuesDefinedAbove(op->getRegions(), captured);
+        for (Value c : captured)
+          markValueNeeded(c);
+      }
+    };
+
+    for (Operation &op : origBody->without_terminator()) {
+      bool hasActiveMutableResult = llvm::any_of(op.getResults(), [&](Value r) {
+        if (gutils->isConstantValue(r))
+          return false;
+        auto iface = dyn_cast<AutoDiffTypeInterface>(r.getType());
+        return iface && iface.isMutable();
+      });
+
+      if (!isSafeReadOnlyOrPure(&op) || hasActiveMutableResult) {
+        slice.neededPrimalOps.insert(&op);
+        markAllInputs(&op);
+        continue;
+      }
+
+      if (isBodyOpFullyInactive(&op, gutils))
+        continue;
+
+      if (op.getNumRegions() > 0) {
+        slice.neededPrimalOps.insert(&op);
+        markAllInputs(&op);
+        continue;
+      }
+
+      if (auto revIface = dyn_cast<ReverseAutoDiffOpInterface>(&op)) {
+        SmallVector<bool> req = revIface.cachedArguments(gutils);
+        for (size_t i = 0, e = op.getNumOperands(); i < e; ++i) {
+          Value opnd = op.getOperand(i);
+          bool needsOpnd = (i >= req.size()) || req[i] ||
+                           !canCreateSafeNullValue(opnd.getType());
+          if (needsOpnd)
+            markValueNeeded(opnd);
+        }
+      } else {
+        slice.neededPrimalOps.insert(&op);
+        markAllInputs(&op);
+      }
+    }
+
+    while (!worklist.empty()) {
+      Value v = worklist.pop_back_val();
+      if (auto it = iterArgIndex.find(v); it != iterArgIndex.end()) {
+        size_t idx = it->second;
+        if (!slice.neededIterArgs[idx]) {
+          slice.neededIterArgs[idx] = true;
+          markValueNeeded(origYields[idx]);
+        }
+        continue;
+      }
+      if (Operation *defOp = v.getDefiningOp()) {
+        if (defOp->getBlock() == origBody &&
+            slice.neededPrimalOps.insert(defOp).second)
+          markAllInputs(defOp);
+      }
+    }
+
+    for (size_t i = 0; i < numIterArgs; ++i)
+      if (slice.neededIterArgs[i])
+        slice.ckptIterIndices.push_back(i);
+
+    return slice;
+  }
+
+  static void copyReplayBlockWithoutTerminator(
+      OpBuilder &builder, Block *b, MGradientUtilsReverse *gutils,
+      IRMapping &mapping, const CheckpointSlice &slice, bool forDifferentiation,
+      ReplayCleanup *cleanup = nullptr) {
+    for (Operation &it : b->without_terminator()) {
+      bool inSlice = slice.neededPrimalOps.contains(&it);
+      if (!inSlice) {
+        if (!forDifferentiation || isBodyOpFullyInactive(&it, gutils))
+          continue;
+        IRMapping localMapping = mapping;
+        for (Value operand : it.getOperands()) {
+          if (!localMapping.contains(operand)) {
+            auto iface = cast<AutoDiffTypeInterface>(operand.getType());
+            Value dummy = iface.createNullValue(builder, it.getLoc());
+            localMapping.map(operand, dummy);
+            if (cleanup && dummy.getDefiningOp())
+              cleanup->dummyOps.push_back(dummy.getDefiningOp());
+          }
+        }
+        OpBuilder::InsertionGuard g(builder);
+        FinalClass::cloneOp(builder, it, localMapping);
+        if (Operation *cloned = localMapping.lookupOrNull(&it)) {
+          mapping.map(&it, cloned);
+          for (auto [oldR, newR] :
+               llvm::zip_equal(it.getResults(), cloned->getResults()))
+            mapping.map(oldR, newR);
+          if (cleanup)
+            cleanup->deadClonedOps.emplace_back(&it, cloned);
+        }
+        continue;
+      }
+      OpBuilder::InsertionGuard g(builder);
+      FinalClass::cloneOp(builder, it, mapping);
+    }
+
+    for (auto [oldVal, newVal] : mapping.getValueMap())
+      if (FinalClass::publishesCopiedSeeds() || isDefinedInBlock(b, oldVal))
+        gutils->originalToNewFn.map(oldVal, newVal);
+
+    for (auto [oldBlock, newBlock] : mapping.getBlockMap()) {
+      gutils->originalToNewFn.map(oldBlock, newBlock);
+      for (auto [oldArg, newArg] :
+           llvm::zip(oldBlock->getArguments(), newBlock->getArguments()))
+        gutils->originalToNewFn.map(oldArg, newArg);
+    }
+
+    for (auto [oldOp, newOp] : mapping.getOperationMap())
+      gutils->originalToNewFn.map(oldOp, newOp);
+  }
+
+  static bool opMayModifyRef(Operation *rootOp, Value ref) {
+    bool modified = false;
+    rootOp->walk([&](Operation *op) -> WalkResult {
+      if (auto mem = dyn_cast<MemoryEffectOpInterface>(op)) {
+        SmallVector<MemoryEffects::EffectInstance> effects;
+        mem.getEffects(effects);
+        for (const auto &effect : effects) {
+          if (isa<MemoryEffects::Write, MemoryEffects::Free>(
+                  effect.getEffect())) {
+            Value target = effect.getValue();
+            if (!target || oputils::mayAlias(target, ref)) {
+              modified = true;
+              return WalkResult::interrupt();
+            }
+          }
+        }
+        return WalkResult::advance();
+      }
+      if (op->hasTrait<OpTrait::HasRecursiveMemoryEffects>() ||
+          isMemoryEffectFree(op))
+        return WalkResult::advance();
+      modified = true;
+      return WalkResult::interrupt();
+    });
+    return modified;
+  }
+
+  /// Returns true if `ref` (a ClonableTypeInterface value defined outside
+  /// `forOp`) dominates both primal and reverse locations of `forOp` and cannot
+  /// be written to or freed during `forOp` or between `forOp` and its reverse.
+  static bool isMutableRefStable(OpName forOp, Value ref,
+                                 MGradientUtilsReverse *gutils) {
+    if (!gutils || gutils->mode != DerivativeMode::ReverseModeCombined)
+      return false;
+    FunctionOpInterface fn = gutils->oldFunc;
+    if (!fn || fn.getFunctionBody().empty())
+      return false;
+    Region &fnBody = fn.getFunctionBody();
+    if (!fnBody.isAncestor(forOp->getParentRegion()))
+      return false;
+
+    Block *defBB = isa<BlockArgument>(ref) ? cast<BlockArgument>(ref).getOwner()
+                                           : ref.getDefiningOp()->getBlock();
+    if (defBB->getParent() != &fnBody)
+      return false;
+
+    Operation *topOp = forOp.getOperation();
+    while (topOp->getBlock()->getParent() != &fnBody) {
+      topOp = topOp->getParentOp();
+      if (!topOp)
+        return false;
+    }
+    Block *topBB = topOp->getBlock();
+
+    // `ref` dominates both the primal and reverse of `topBB` when `defBB`
+    // dominates every block reachable forward from `topBB` (including `topBB`
+    // itself and every return block from which reverse control flow can reach
+    // the reverse of `topBB`).
+    SmallPtrSet<Block *, 8> reachable;
+    SmallVector<Block *, 8> domWorklist;
+    reachable.insert(topBB);
+    domWorklist.push_back(topBB);
+    while (!domWorklist.empty()) {
+      Block *b = domWorklist.pop_back_val();
+      for (Block *succ : b->getSuccessors())
+        if (reachable.insert(succ).second)
+          domWorklist.push_back(succ);
+    }
+
+    DominanceInfo domInfo(fn.getOperation());
+    for (Block *b : reachable)
+      if (!domInfo.dominates(defBB, b))
+        return false;
+
+    // 1. Check `forOp` itself.
+    if (opMayModifyRef(forOp.getOperation(), ref))
+      return false;
+
+    // 2. Check operations after `forOp` in enclosing regions and any enclosing
+    //    region ops that may execute repeatedly (e.g. outer loops).
+    Operation *curr = forOp.getOperation();
+    while (curr != topOp) {
+      Block *parentBlock = curr->getBlock();
+      for (auto it = std::next(curr->getIterator()), e = parentBlock->end();
+           it != e; ++it)
+        if (opMayModifyRef(&*it, ref))
+          return false;
+
+      Operation *parentOp = curr->getParentOp();
+      if (!isa<scf::IfOp, scf::IndexSwitchOp>(parentOp)) {
+        if (opMayModifyRef(parentOp, ref))
+          return false;
+      }
+      curr = parentOp;
+    }
+
+    // 3. Check operations strictly after `topOp` in `topBB`.
+    for (auto it = std::next(topOp->getIterator()), e = topBB->end(); it != e;
+         ++it)
+      if (opMayModifyRef(&*it, ref))
+        return false;
+
+    // 4. Check all blocks reachable from `topBB`'s successors (which includes
+    //    `topBB` itself if `topBB` is inside a CFG loop).
+    SmallPtrSet<Block *, 8> afterBlocks;
+    SmallVector<Block *, 8> succWorklist;
+    for (Block *succ : topBB->getSuccessors())
+      if (afterBlocks.insert(succ).second)
+        succWorklist.push_back(succ);
+    while (!succWorklist.empty()) {
+      Block *b = succWorklist.pop_back_val();
+      for (Operation &op : *b)
+        if (opMayModifyRef(&op, ref))
+          return false;
+      for (Block *succ : b->getSuccessors())
+        if (afterBlocks.insert(succ).second)
+          succWorklist.push_back(succ);
+    }
+
+    return true;
+  }
+
   // Splits the values `forOp` reads from above into the ones holding mutable
   // memory, which has to be snapshotted for a replay, and the ones that can
   // just be forwarded. cacheBinomial and reverseBinomial must produce the
@@ -364,21 +729,29 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
   // a fixed IR and both walk the *original* forOp.
   static void splitOutsideRefs(OpName forOp,
                                SmallVectorImpl<Value> &mutableRefs,
-                               SmallVectorImpl<Value> &immutableRefs) {
+                               SmallVectorImpl<Value> &immutableRefs,
+                               MGradientUtilsReverse *gutils = nullptr,
+                               const CheckpointSlice *slice = nullptr) {
     SetVector<Value> outsideRefs;
     getUsedValuesDefinedAbove(forOp->getRegions(), outsideRefs);
     for (auto ref : outsideRefs) {
-      if (isa<ClonableTypeInterface>(ref.getType()))
-        mutableRefs.push_back(ref);
-      else
+      if (slice && !slice->neededValues.contains(ref))
+        continue;
+      if (isa<ClonableTypeInterface>(ref.getType())) {
+        if (isMutableRefStable(forOp, ref, gutils))
+          immutableRefs.push_back(ref);
+        else
+          mutableRefs.push_back(ref);
+      } else {
         immutableRefs.push_back(ref);
+      }
     }
   }
 
   // Index layout of the `caches` vector handed from cacheBinomial to
   // reverseBinomial:
   //
-  //   [ ckptBufs (one per iter arg) | idxBuf
+  //   [ ckptBufs (one per checkpointed iter arg) | idxBuf
   //   | per mutable ref: clone buffer, + shadow if the ref is active
   //   | immutableRefs
   //   | numIters, start, step -- only when the loop bounds are dynamic ]
@@ -392,12 +765,13 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
     size_t numImmutable = 0;
     bool isDynamic = false;
 
-    static BinomialCacheLayout get(OpName forOp, ArrayRef<Value> mutableRefs,
+    static BinomialCacheLayout get(size_t numCkptIterArgs,
+                                   ArrayRef<Value> mutableRefs,
                                    ArrayRef<Value> immutableRefs,
                                    bool isDynamic,
                                    MGradientUtilsReverse *gutils) {
       BinomialCacheLayout l;
-      l.numIterArgs = FinalClass::getNumRegionIterArgs(forOp);
+      l.numIterArgs = numCkptIterArgs;
       for (auto ref : mutableRefs)
         l.mutableActive.push_back(!gutils->isConstantValue(ref));
       l.numImmutable = immutableRefs.size();
@@ -697,22 +1071,28 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
     Value budgetV = FinalClass::emitMin(
         builder, loc, FinalClass::emitConst(builder, loc, budget), numItersV);
 
+    CheckpointSlice slice = computeCheckpointSlice(forOp, gutils);
+    size_t numCkptIterArgs = slice.ckptIterIndices.size();
+
     SmallVector<Value> immutableRefs, mutableRefs;
-    FinalClass::splitOutsideRefs(forOp, mutableRefs, immutableRefs);
-    auto layout = BinomialCacheLayout::get(forOp, mutableRefs, immutableRefs,
-                                           isDynamic, gutils);
+    FinalClass::splitOutsideRefs(forOp, mutableRefs, immutableRefs, gutils,
+                                 &slice);
+    auto layout = BinomialCacheLayout::get(numCkptIterArgs, mutableRefs,
+                                           immutableRefs, isDynamic, gutils);
 
     IRMapping mapping;
     SmallVector<Value> caches;
 
-    // One checkpoint store per iter arg, plus one holding the forward step each
-    // checkpoint was taken at. Kept in a single list, since they are carried,
-    // updated and transported together; the index store is the last entry.
+    // One checkpoint store per needed iter arg, plus one holding the forward
+    // step each checkpoint was taken at. Kept in a single list, since they are
+    // carried, updated and transported together; the index store is the last
+    // entry.
     size_t numIterArgs = FinalClass::getNumRegionIterArgs(forOp);
+    auto newForOpInits = FinalClass::getInits(newForOp);
     SmallVector<Value> stores;
-    for (auto arg : FinalClass::getInits(newForOp))
-      stores.push_back(
-          FinalClass::createStore(builder, loc, budget, arg.getType()));
+    for (size_t idx : slice.ckptIterIndices)
+      stores.push_back(FinalClass::createStore(builder, loc, budget,
+                                               newForOpInits[idx].getType()));
     stores.push_back(FinalClass::createStore(builder, loc, budget, idxTy));
     const size_t idxStore = stores.size() - 1;
     const bool carriedStores = FinalClass::storesAreLoopCarried();
@@ -734,7 +1114,6 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
     // (stepCtr, state..., [stores...]).
     SmallVector<Value> outerInit;
     outerInit.push_back(c0);
-    auto newForOpInits = FinalClass::getInits(newForOp);
     outerInit.append(newForOpInits.begin(), newForOpInits.end());
     if (carriedStores)
       outerInit.append(stores.begin(), stores.end());
@@ -756,9 +1135,9 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
            llvm::enumerate(outerArgs.slice(1 + numIterArgs, stores.size())))
         liveStores[i] = arg;
 
-    for (auto &&[i, val] : llvm::enumerate(state))
-      liveStores[i] =
-          FinalClass::storeSlot(builder, loc, liveStores[i], k, val);
+    for (auto &&[slotIdx, origIdx] : llvm::enumerate(slice.ckptIterIndices))
+      liveStores[slotIdx] = FinalClass::storeSlot(
+          builder, loc, liveStores[slotIdx], k, state[origIdx]);
     liveStores[idxStore] =
         FinalClass::storeSlot(builder, loc, liveStores[idxStore], k, stepCtr);
 
@@ -901,12 +1280,15 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
     Location loc = forOp.getLoc();
     bool isDynamic =
         !FinalClass::getConstantNumberOfIterations(forOp).has_value();
-    auto numIterArgs = FinalClass::getNumRegionIterArgs(forOp);
+
+    CheckpointSlice slice = computeCheckpointSlice(forOp, gutils);
+    size_t numCkptIterArgs = slice.ckptIterIndices.size();
 
     SmallVector<Value> immutableRefs, mutableRefs;
-    FinalClass::splitOutsideRefs(forOp, mutableRefs, immutableRefs);
-    auto layout = BinomialCacheLayout::get(forOp, mutableRefs, immutableRefs,
-                                           isDynamic, gutils);
+    FinalClass::splitOutsideRefs(forOp, mutableRefs, immutableRefs, gutils,
+                                 &slice);
+    auto layout = BinomialCacheLayout::get(numCkptIterArgs, mutableRefs,
+                                           immutableRefs, isDynamic, gutils);
     assert(caches.size() == layout.size() && "binomial cache layout mismatch");
 
     IRMapping mapping;
@@ -931,7 +1313,7 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
     // Pop the checkpoint stores (indices from the shared layout); the index
     // store is the last of them, same as in cacheBinomial.
     SmallVector<Value> stores;
-    for (size_t j = 0; j < numIterArgs; ++j)
+    for (size_t j = 0; j < numCkptIterArgs; ++j)
       stores.push_back(gutils->popCache(caches[layout.ckptBuf(j)], builder));
     stores.push_back(gutils->popCache(caches[layout.idxBuf()], builder));
     const size_t idxStore = stores.size() - 1;
@@ -1016,12 +1398,13 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
     Value currentRevStep = FinalClass::emitSub(builder, loc, numItersV, ivO);
 
     // Load the top checkpoint state + its forward step.
+    auto origIterArgs =
+        FinalClass::getBodyBlock(forOp)->getArguments().drop_front();
     SmallVector<Value> ckptState;
-    for (auto &&[store, arg] : llvm::zip_equal(
-             ArrayRef<Value>(liveStores).drop_back(),
-             FinalClass::getBodyBlock(forOp)->getArguments().drop_front()))
+    for (auto &&[slotIdx, origIdx] : llvm::enumerate(slice.ckptIterIndices))
       ckptState.push_back(
-          FinalClass::loadSlot(builder, loc, store, capo, arg.getType()));
+          FinalClass::loadSlot(builder, loc, liveStores[slotIdx], capo,
+                               origIterArgs[origIdx].getType()));
     Value ckptStep =
         FinalClass::loadSlot(builder, loc, liveStores[idxStore], capo,
                              FinalClass::getIndexLikeType(builder));
@@ -1056,12 +1439,12 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
       auto wargs = revWhile.args();
       Value pos = wargs[0];
       Value acapo = wargs[1];
-      auto astate = wargs.slice(2, numIterArgs);
+      auto astate = wargs.slice(2, numCkptIterArgs);
 
       SmallVector<Value> wStores(liveStores);
       if (carriedStores)
         for (auto &&[i, arg] :
-             llvm::enumerate(wargs.slice(2 + numIterArgs, stores.size())))
+             llvm::enumerate(wargs.slice(2 + numCkptIterArgs, stores.size())))
           wStores[i] = arg;
 
       Value remaining = FinalClass::emitSub(builder, loc, currentRevStep, pos);
@@ -1115,17 +1498,19 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
                                 FinalClass::emitMul(builder, loc, stepV, idx));
 
         Block *origBodyBlock = FinalClass::getBodyBlock(forOp);
-        for (auto &&[oldArg, newArg] : llvm::zip_equal(
-                 origBodyBlock->getArguments().drop_front(), innerRemat.args()))
-          mapping.map(oldArg, newArg);
+        for (auto &&[slotIdx, origIdx] : llvm::enumerate(slice.ckptIterIndices))
+          mapping.map(origIterArgs[origIdx], innerRemat.args()[slotIdx]);
         mapping.map(FinalClass::getInductionVar(forOp), iv);
 
-        copyBlockWithoutTerminator(builder, origBodyBlock, gutils, mapping);
+        copyReplayBlockWithoutTerminator(builder, origBodyBlock, gutils,
+                                         mapping, slice,
+                                         /*forDifferentiation=*/false);
 
         SmallVector<Value> yields;
-        for (auto operand : FinalClass::getCarriedTerminatorOperands(
-                 origBodyBlock->getTerminator()))
-          yields.push_back(mapping.lookupOrDefault(operand));
+        auto origYields = FinalClass::getCarriedTerminatorOperands(
+            origBodyBlock->getTerminator());
+        for (size_t origIdx : slice.ckptIterIndices)
+          yields.push_back(mapping.lookupOrDefault(origYields[origIdx]));
         FinalClass::finalizeScaffoldLoop(builder, loc, innerRemat, yields);
       }
 
@@ -1143,10 +1528,10 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
     FinalClass::setInsertionPointToBodyEnd(builder, revOuter.body);
     auto whileResults = revWhile.results();
     Value newSp = whileResults[1];
-    auto reconState = whileResults.slice(2, numIterArgs);
+    auto reconState = whileResults.slice(2, numCkptIterArgs);
     if (carriedStores)
-      for (auto &&[i, res] :
-           llvm::enumerate(whileResults.slice(2 + numIterArgs, stores.size())))
+      for (auto &&[i, res] : llvm::enumerate(
+               whileResults.slice(2 + numCkptIterArgs, stores.size())))
         liveStores[i] = res;
 
     // Adjoint of a single body step at (currentRevStep - 1).
@@ -1168,15 +1553,15 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
     for (auto &&[r, ref] : llvm::enumerate(mutableRefs))
       mapping.map(ref, workClones[r]);
 
-    for (auto &&[oldArg, newArg] : llvm::zip_equal(
-             FinalClass::getBodyBlock(forOp)->getArguments().drop_front(),
-             reconState))
-      mapping.map(oldArg, newArg);
+    for (auto &&[slotIdx, origIdx] : llvm::enumerate(slice.ckptIterIndices))
+      mapping.map(origIterArgs[origIdx], reconState[slotIdx]);
     mapping.map(FinalClass::getInductionVar(forOp), ivAdj);
 
     // Re-materialize primal ops of this step for the reverse visitor.
-    copyBlockWithoutTerminator(builder, FinalClass::getBodyBlock(forOp), gutils,
-                               mapping);
+    ReplayCleanup stepCleanup;
+    copyReplayBlockWithoutTerminator(builder, FinalClass::getBodyBlock(forOp),
+                                     gutils, mapping, slice,
+                                     /*forDifferentiation=*/true, &stepCleanup);
 
     // forceAugmentedReturns() seeded invertedPointers with one PlaceholderOp
     // per active mutable value, positioned in the single augmented primal --
@@ -1267,6 +1652,7 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
         ph->erase();
       }
     }
+    stepCleanup.cleanup(gutils);
 
     SmallVector<Value> newAdjoints;
     for (auto &&[active, arg] : llvm::zip_equal(
@@ -1534,8 +1920,11 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
     else
       FinalClass::materializeSegmentValues(cacheBuilder, loc, sched);
 
+    CheckpointSlice slice = computeCheckpointSlice(forOp, gutils);
+
     SmallVector<Value> immutableRefs, mutableRefs;
-    FinalClass::splitOutsideRefs(forOp, mutableRefs, immutableRefs);
+    FinalClass::splitOutsideRefs(forOp, mutableRefs, immutableRefs, gutils,
+                                 &slice);
 
     SmallVector<Value> caches;
 
@@ -1601,8 +1990,10 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
     FinalClass::createScaffoldYield(cacheBuilder, fwdTerm->getLoc(), fwdYields);
 
     FinalClass::setInsertionPointToBodyEnd(cacheBuilder, outerFwdBody);
-    for (auto initArg : FinalClass::getInits(innerFwd))
-      caches.push_back(gutils->initAndPushCache(initArg, cacheBuilder));
+    auto innerFwdInits = FinalClass::getInits(innerFwd);
+    for (size_t origIdx : slice.ckptIterIndices)
+      caches.push_back(
+          gutils->initAndPushCache(innerFwdInits[origIdx], cacheBuilder));
 
     FinalClass::createScaffoldYield(
         cacheBuilder,
@@ -1649,24 +2040,27 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
                                        SmallVector<Value> caches,
                                        ArrayRef<bool> operandsActive,
                                        ArrayRef<Value> incomingGradients) {
-    auto numIterArgs = FinalClass::getNumRegionIterArgs(forOp);
     Location loc = forOp.getLoc();
 
     PeriodicSchedule sched = FinalClass::getStaticPeriodicSchedule(forOp);
 
+    CheckpointSlice slice = computeCheckpointSlice(forOp, gutils);
+    size_t numCkptIterArgs = slice.ckptIterIndices.size();
+
     SmallVector<Value> immutableRefs, mutableRefs;
-    FinalClass::splitOutsideRefs(forOp, mutableRefs, immutableRefs);
+    FinalClass::splitOutsideRefs(forOp, mutableRefs, immutableRefs, gutils,
+                                 &slice);
 
     IRMapping mapping;
 
     assert(caches.size() ==
-               numIterArgs + mutableRefs.size() + immutableRefs.size() +
+               numCkptIterArgs + mutableRefs.size() + immutableRefs.size() +
                    (FinalClass::getConstantNumberOfIterations(forOp) ? 0 : 3) &&
            "periodic cache layout mismatch");
 
     for (auto [i, ref] : llvm::enumerate(immutableRefs)) {
       Value refVal = gutils->popCache(
-          caches[numIterArgs + mutableRefs.size() + i], builder);
+          caches[numCkptIterArgs + mutableRefs.size() + i], builder);
       mapping.map(ref, refVal);
     }
 
@@ -1674,7 +2068,7 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
     // from constants; the segment count is recomputed from them here rather
     // than transported, since it is a pure function of the trip count.
     if (!FinalClass::getConstantNumberOfIterations(forOp).has_value()) {
-      size_t base = numIterArgs + mutableRefs.size() + immutableRefs.size();
+      size_t base = numCkptIterArgs + mutableRefs.size() + immutableRefs.size();
       sched.numItersV = gutils->popCache(caches[base], builder);
       sched.startV = gutils->popCache(caches[base + 1], builder);
       sched.stepV = gutils->popCache(caches[base + 2], builder);
@@ -1695,7 +2089,7 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
 
     SmallVector<Value> cachedOutsideRefs;
     for (auto [i, ref] : llvm::enumerate(mutableRefs)) {
-      Value refVal = gutils->popCache(caches[numIterArgs + i], builder);
+      Value refVal = gutils->popCache(caches[numCkptIterArgs + i], builder);
       cachedOutsideRefs.push_back(refVal);
       mapping.map(ref, refVal);
     }
@@ -1708,8 +2102,8 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
     SmallVector<Value> revHint =
         FinalClass::computeReverseSegmentHint(builder, loc, revOuterIV, sched);
 
-    SmallVector<Value> initArgs(numIterArgs, nullptr);
-    for (size_t i = 0; i < numIterArgs; ++i) {
+    SmallVector<Value> initArgs(numCkptIterArgs, nullptr);
+    for (size_t i = 0; i < numCkptIterArgs; ++i) {
       initArgs[i] = gutils->popCache(caches[i], builder);
     }
 
@@ -1725,17 +2119,22 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
         sched, revHint);
 
     Block *origBodyBlock = FinalClass::getBodyBlock(forOp);
-    for (auto [oldArg, newArg] : llvm::zip_equal(origBodyBlock->getArguments(),
-                                                 revInnerBody->getArguments()))
-      mapping.map(oldArg, newArg);
+    auto origIterArgs = origBodyBlock->getArguments().drop_front();
+    auto revInnerIterArgs = revInnerBody->getArguments().drop_front();
+    for (auto &&[slotIdx, origIdx] : llvm::enumerate(slice.ckptIterIndices))
+      mapping.map(origIterArgs[origIdx], revInnerIterArgs[slotIdx]);
 
     mapping.map(FinalClass::getInductionVar(forOp), currentIV);
 
-    copyBlockWithoutTerminator(builder, origBodyBlock, gutils, mapping);
+    ReplayCleanup segCleanup;
+    copyReplayBlockWithoutTerminator(builder, origBodyBlock, gutils, mapping,
+                                     slice, /*forDifferentiation=*/true,
+                                     &segCleanup);
     Operation *segTerm = origBodyBlock->getTerminator();
+    auto origYields = FinalClass::getCarriedTerminatorOperands(segTerm);
     SmallVector<Value> segYields;
-    for (auto operand : FinalClass::getCarriedTerminatorOperands(segTerm))
-      segYields.push_back(mapping.lookupOrDefault(operand));
+    for (size_t origIdx : slice.ckptIterIndices)
+      segYields.push_back(mapping.lookupOrDefault(origYields[origIdx]));
     FinalClass::createScaffoldYield(builder, segTerm->getLoc(), segYields);
 
     FinalClass::setInsertionPointToBodyEnd(builder, revOuterBody);
@@ -1785,6 +2184,7 @@ template <typename FinalClass, typename OpName> struct LoopCheckpointing {
         valid &= gutils->Logic.visitChild(o, builder, gutils).succeeded();
       }
     }
+    segCleanup.cleanup(gutils);
 
     SmallVector<Value> newResults;
     for (auto &&[active, arg] : llvm::zip_equal(

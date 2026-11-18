@@ -19,54 +19,50 @@ module {
 
 }
 
-// CHECK:  func.func @main(%arg0: memref<f32>, %arg1: memref<f32>, %arg2: f32) {
-// CHECK-NEXT:    %c2 = arith.constant 2 : index
-// CHECK-NEXT:    %c3 = arith.constant 3 : index
-// CHECK-NEXT:    %c1 = arith.constant 1 : index
-// CHECK-NEXT:    %c0 = arith.constant 0 : index
-// CHECK-NEXT:    %cst = arith.constant 0.000000e+00 : f32
-// CHECK-NEXT:    %alloc = memref.alloc() : memref<3xf32>
-// CHECK-NEXT:    %alloc_0 = memref.alloc() : memref<3xf32>
-// CHECK-NEXT:    %0 = scf.for %arg3 = %c0 to %c3 step %c1 iter_args(%arg4 = %cst) -> (f32) {
-// CHECK-NEXT:      memref.store %arg4, %alloc_0[%arg3] : memref<3xf32>
-// CHECK-NEXT:      %subview = memref.subview %alloc[%arg3] [1] [1] : memref<3xf32> to memref<f32, strided<[], offset: ?>>
-// CHECK-NEXT:      memref.copy %arg0, %subview : memref<f32> to memref<f32, strided<[], offset: ?>>
-// CHECK-NEXT:      %2 = scf.for %arg5 = %c0 to %c3 step %c1 iter_args(%arg6 = %arg4) -> (f32) {
-// CHECK-NEXT:        %3 = memref.load %arg0[] : memref<f32>
-// CHECK-NEXT:        %4 = arith.mulf %3, %arg6 : f32
-// CHECK-NEXT:        scf.yield %4 : f32
+// CHECK-LABEL: func.func @main(
+// CHECK-SAME:    %[[ARG0:.+]]: memref<f32>, %[[ARG1:.+]]: memref<f32>, %[[ARG2:.+]]: f32) {
+// CHECK-NEXT:    %[[C2:.+]] = arith.constant 2 : index
+// CHECK-NEXT:    %[[C3:.+]] = arith.constant 3 : index
+// CHECK-NEXT:    %[[C1:.+]] = arith.constant 1 : index
+// CHECK-NEXT:    %[[C0:.+]] = arith.constant 0 : index
+// CHECK-NEXT:    %[[CST:.+]] = arith.constant 0.000000e+00 : f32
+// CHECK-NEXT:    %[[ALLOC:.+]] = memref.alloc() : memref<3xf32>
+// CHECK-NEXT:    %{{.+}} = scf.for %[[OUT_IV:.+]] = %[[C0]] to %[[C3]] step %[[C1]] iter_args(%[[OUT_IT:.+]] = %[[CST]]) -> (f32) {
+// CHECK-NEXT:      memref.store %[[OUT_IT]], %[[ALLOC]][%[[OUT_IV]]] : memref<3xf32>
+// CHECK-NEXT:      %[[FWD_INNER:.+]] = scf.for %{{.+}} = %[[C0]] to %[[C3]] step %[[C1]] iter_args(%[[IN_IT:.+]] = %[[OUT_IT]]) -> (f32) {
+// CHECK-NEXT:        %[[VAL:.+]] = memref.load %[[ARG0]][] : memref<f32>
+// CHECK-NEXT:        %[[MUL:.+]] = arith.mulf %[[VAL]], %[[IN_IT]] : f32
+// CHECK-NEXT:        scf.yield %[[MUL]] : f32
 // CHECK-NEXT:      }
-// CHECK-NEXT:      scf.yield %2 : f32
+// CHECK-NEXT:      scf.yield %[[FWD_INNER]] : f32
 // CHECK-NEXT:    }
-// CHECK-NEXT:    %1 = scf.for %arg3 = %c0 to %c3 step %c1 iter_args(%arg4 = %arg2) -> (f32) {
-// CHECK-NEXT:      %2 = arith.subi %c2, %arg3 : index
-// CHECK-NEXT:      %subview = memref.subview %alloc[%2] [1] [1] : memref<3xf32> to memref<f32, strided<[], offset: ?>>
-// CHECK-NEXT:      %3 = memref.load %alloc_0[%2] : memref<3xf32>
-// CHECK-NEXT:      %alloc_1 = memref.alloc() : memref<3xf32>
-// CHECK-NEXT:      %alloc_2 = memref.alloc() : memref<3xf32>
-// CHECK-NEXT:      %4 = scf.for %arg5 = %c0 to %c3 step %c1 iter_args(%arg6 = %3) -> (f32) {
-// CHECK-NEXT:        memref.store %arg6, %alloc_2[%arg5] : memref<3xf32>
-// CHECK-NEXT:        %6 = memref.load %subview[] : memref<f32, strided<[], offset: ?>>
-// CHECK-NEXT:        memref.store %6, %alloc_1[%arg5] : memref<3xf32>
-// CHECK-NEXT:        %7 = arith.mulf %6, %arg6 : f32
-// CHECK-NEXT:        scf.yield %7 : f32
+// CHECK-NEXT:    %{{.+}} = scf.for %[[REV_IV:.+]] = %[[C0]] to %[[C3]] step %[[C1]] iter_args(%[[REV_OUT_ADJ:.+]] = %[[ARG2]]) -> (f32) {
+// CHECK-NEXT:      %[[SEG:.+]] = arith.subi %[[C2]], %[[REV_IV]] : index
+// CHECK-NEXT:      %[[CKPT_VAL:.+]] = memref.load %[[ALLOC]][%[[SEG]]] : memref<3xf32>
+// CHECK-NEXT:      %[[CACHED_VAL:.+]] = memref.alloc() : memref<3xf32>
+// CHECK-NEXT:      %[[CACHED_IT:.+]] = memref.alloc() : memref<3xf32>
+// CHECK-NEXT:      %{{.+}} = scf.for %[[REP_IV:.+]] = %[[C0]] to %[[C3]] step %[[C1]] iter_args(%[[REP_IT:.+]] = %[[CKPT_VAL]]) -> (f32) {
+// CHECK-NEXT:        memref.store %[[REP_IT]], %[[CACHED_IT]][%[[REP_IV]]] : memref<3xf32>
+// CHECK-NEXT:        %[[RVAL:.+]] = memref.load %[[ARG0]][] : memref<f32>
+// CHECK-NEXT:        memref.store %[[RVAL]], %[[CACHED_VAL]][%[[REP_IV]]] : memref<3xf32>
+// CHECK-NEXT:        %[[RMUL:.+]] = arith.mulf %[[RVAL]], %[[REP_IT]] : f32
+// CHECK-NEXT:        scf.yield %[[RMUL]] : f32
 // CHECK-NEXT:      }
-// CHECK-NEXT:      %5 = scf.for %arg5 = %c0 to %c3 step %c1 iter_args(%arg6 = %arg4) -> (f32) {
-// CHECK-NEXT:        %6 = arith.subi %c2, %arg5 : index
-// CHECK-NEXT:        %7 = memref.load %alloc_1[%6] : memref<3xf32>
-// CHECK-NEXT:        %8 = memref.load %alloc_2[%6] : memref<3xf32>
-// CHECK-NEXT:        %9 = arith.mulf %arg6, %8 fastmath<fast> : f32
-// CHECK-NEXT:        %10 = arith.mulf %arg6, %7 fastmath<fast> : f32
-// CHECK-NEXT:        %11 = memref.load %arg1[] : memref<f32>
-// CHECK-NEXT:        %12 = arith.addf %11, %9 fastmath<fast> : f32
-// CHECK-NEXT:        memref.store %12, %arg1[] : memref<f32>
-// CHECK-NEXT:        scf.yield %10 : f32
+// CHECK-NEXT:      %[[REV_INNER:.+]] = scf.for %[[ADJ_IV:.+]] = %[[C0]] to %[[C3]] step %[[C1]] iter_args(%[[ADJ_IT:.+]] = %[[REV_OUT_ADJ]]) -> (f32) {
+// CHECK-NEXT:        %[[REV_STEP:.+]] = arith.subi %[[C2]], %[[ADJ_IV]] : index
+// CHECK-NEXT:        %[[LV:.+]] = memref.load %[[CACHED_VAL]][%[[REV_STEP]]] : memref<3xf32>
+// CHECK-NEXT:        %[[LI:.+]] = memref.load %[[CACHED_IT]][%[[REV_STEP]]] : memref<3xf32>
+// CHECK-NEXT:        %[[DMUL_V:.+]] = arith.mulf %[[ADJ_IT]], %[[LI]] fastmath<fast> : f32
+// CHECK-NEXT:        %[[DMUL_I:.+]] = arith.mulf %[[ADJ_IT]], %[[LV]] fastmath<fast> : f32
+// CHECK-NEXT:        %[[DARG1:.+]] = memref.load %[[ARG1]][] : memref<f32>
+// CHECK-NEXT:        %[[DARG1_NEXT:.+]] = arith.addf %[[DARG1]], %[[DMUL_V]] fastmath<fast> : f32
+// CHECK-NEXT:        memref.store %[[DARG1_NEXT]], %[[ARG1]][] : memref<f32>
+// CHECK-NEXT:        scf.yield %[[DMUL_I]] : f32
 // CHECK-NEXT:      }
-// CHECK-NEXT:      memref.dealloc %alloc_2 : memref<3xf32>
-// CHECK-NEXT:      memref.dealloc %alloc_1 : memref<3xf32>
-// CHECK-NEXT:      scf.yield %5 : f32
+// CHECK-NEXT:      memref.dealloc %[[CACHED_IT]] : memref<3xf32>
+// CHECK-NEXT:      memref.dealloc %[[CACHED_VAL]] : memref<3xf32>
+// CHECK-NEXT:      scf.yield %[[REV_INNER]] : f32
 // CHECK-NEXT:    }
-// CHECK-NEXT:    memref.dealloc %alloc_0 : memref<3xf32>
-// CHECK-NEXT:    memref.dealloc %alloc : memref<3xf32>
+// CHECK-NEXT:    memref.dealloc %[[ALLOC]] : memref<3xf32>
 // CHECK-NEXT:    return
 // CHECK-NEXT:  }

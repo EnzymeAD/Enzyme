@@ -185,6 +185,20 @@ struct SelectOpInterfaceReverse
     return success();
   }
 
+  SmallVector<bool> cachedArguments(Operation *op,
+                                    MGradientUtilsReverse *gutils) const {
+    auto selectOp = cast<arith::SelectOp>(op);
+    SmallVector<bool> needed(op->getNumOperands(), false);
+    if (gutils->isConstantValue(selectOp.getResult()))
+      return needed;
+    auto iface =
+        dyn_cast<AutoDiffTypeInterface>(selectOp.getResult().getType());
+    if (iface && iface.isMutable())
+      return SmallVector<bool>(op->getNumOperands(), true);
+    needed[0] = true;
+    return needed;
+  }
+
   SmallVector<Value> cacheValues(Operation *op,
                                  MGradientUtilsReverse *gutils) const {
     auto selectOp = cast<arith::SelectOp>(op);
