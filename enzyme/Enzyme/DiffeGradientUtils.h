@@ -114,6 +114,42 @@ public:
                             llvm::Value *storeInto,
                             llvm::MDNode *InvariantMD) override;
 
+  /// Schedule a function-scoped allocation to be freed before each reachable
+  /// return in split forward mode.
+  void addForwardReturnFree(llvm::Value *allocationToFree,
+                            llvm::StringRef allocationFunctionName,
+                            const llvm::DebugLoc &debugLocation,
+                            llvm::CallInst *originalCall, bool isShadow,
+                            bool markLocalCacheAlloc);
+
+  /// Materialize deferred loop-exit cache frees and function-return allocation
+  /// frees in split forward mode once all forward PHIs and terminators exist.
+  void finalizeForwardFrees();
+
+private:
+  struct PendingForwardLoopFree {
+    llvm::WeakTrackingVH cacheAlloca;
+    llvm::BasicBlock *loopHeader;
+    llvm::Type *loadType;
+    llvm::ConstantInt *byteSizeOfType;
+    llvm::WeakTrackingVH storeInto;
+    llvm::MDNode *invariantMetadata;
+    llvm::WeakTrackingVH staticMallocCall;
+  };
+
+  struct PendingForwardReturnFree {
+    llvm::WeakTrackingVH allocationToFree;
+    std::string allocationFunctionName;
+    llvm::DebugLoc debugLocation;
+    llvm::CallInst *originalCall;
+    bool isShadow;
+    bool markLocalCacheAlloc;
+  };
+
+  llvm::SmallVector<PendingForwardLoopFree, 4> pendingForwardLoopFrees;
+  llvm::SmallVector<PendingForwardReturnFree, 4> pendingForwardReturnFrees;
+
+public:
   /// align is the alignment that should be specified for load/store to pointer
   void addToInvertedPtrDiffe(llvm::Instruction *orig, llvm::Value *origVal,
                              llvm::Type *addingType, unsigned start,

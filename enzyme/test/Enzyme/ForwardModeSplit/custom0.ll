@@ -42,10 +42,13 @@ attributes #0 = { norecurse nounwind readnone }
 ; CHECK-NEXT:   ret i8* %malloccall
 ; CHECK-NEXT: }
 
-; CHECK: define internal double @fwddiffef(double %x, double %"x'", i8* %tapeArg1)
+; CHECK: define internal double @fwddiffef(double %x, double %"x'", i8* %tapeArg)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = call fast double @fixderivative_add(double %x, double %"x'", double %x, double %"x'", i8* %tapeArg1)
-; CHECK-NEXT:   ret double %0
+; CHECK-NEXT:   %[[TAPEP:.+]] = bitcast i8* %tapeArg to i8**
+; CHECK-NEXT:   %tapeArg1 = load i8*, i8** %[[TAPEP]]{{(, align 8)?}}, !enzyme_mustcache !{{[0-9]+}}
+; CHECK-NEXT:   {{(tail )?}}call void @free(i8* {{(nonnull )?}}%tapeArg)
+; CHECK-NEXT:   %[[RES:.+]] = call fast double @fixderivative_add(double %x, double %"x'", double %x, double %"x'", i8* %tapeArg1)
+; CHECK-NEXT:   ret double %[[RES]]
 ; CHECK-NEXT: }
 
 ; CHECK: define internal double @fixderivative_add(double %v1, double %v1err, double %v2, double %v2err, i8* %tape)

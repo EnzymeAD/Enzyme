@@ -145,10 +145,11 @@ public:
       if (pair.second.stores.count(&I)) {
         backwardsShadow = true;
         forwardsShadow = pair.second.primalInitialize;
-        if (auto inst = llvm::dyn_cast<llvm::Instruction>(pair.first))
-          if (!forwardsShadow && pair.second.LI &&
-              pair.second.LI->contains(inst->getParent()))
-            backwardsShadow = false;
+        if (Mode != DerivativeMode::ForwardModeSplit)
+          if (auto inst = llvm::dyn_cast<llvm::Instruction>(pair.first))
+            if (!forwardsShadow && pair.second.LI &&
+                pair.second.LI->contains(inst->getParent()))
+              backwardsShadow = false;
       }
     }
 

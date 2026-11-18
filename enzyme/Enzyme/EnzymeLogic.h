@@ -623,6 +623,7 @@ public:
     const FnTypeInfo typeInfo;
     bool runtimeActivity;
     bool strongZero;
+    bool freeMemory;
 
     inline bool operator<(const ForwardCacheKey &rhs) const {
       if (todiff < rhs.todiff)
@@ -691,6 +692,11 @@ public:
       if (strongZero < rhs.strongZero)
         return true;
       if (rhs.strongZero < strongZero)
+        return false;
+
+      if (freeMemory < rhs.freeMemory)
+        return true;
+      if (rhs.freeMemory < freeMemory)
         return false;
 
       // equal
