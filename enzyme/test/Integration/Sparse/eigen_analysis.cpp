@@ -101,7 +101,7 @@ static T eigenstuffM(const T *__restrict__ pos0, size_t n, const int *__restrict
 // Calculate total energy for all faces in 3D
 template<typename T>
 __attribute__((always_inline))
-static T eigenstuffL(const T *__restrict__ x, size_t num_faces, const int *__restrict__ faces, const T *__restrict__ pos0) {
+static T eigenstuffL(const T *__restrict__ pos0, size_t num_faces, const int *__restrict__ faces, const T *__restrict__ x) {
     T sum = 0;
     __builtin_assume(num_faces != 0);
     for (size_t idx=0; idx<num_faces; idx++) {
