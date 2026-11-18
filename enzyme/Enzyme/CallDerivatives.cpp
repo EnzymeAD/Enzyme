@@ -2198,6 +2198,500 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
     return;
   }
 
+  // Approximate algo:
+  // 1. malloc intermediate buffer of size sendcount * sizeof(sendtype) *
+  // comm_size
+  // 2. MPI_Alltoall(diff(recvbuf), recvcount, recvtype, buf, sendcount,
+  // sendtype, comm)
+  // 3. Zero diff(recvbuf) [memset to 0]
+  // 4. diff(sendbuf) += buf (DifferentiableMemCopyFloats)
+  // 5. free intermediate buffer
+  //
+  // int MPI_Alltoall(const void *sendbuf, int sendcount, MPI_Datatype sendtype,
+  //                  void *recvbuf, int recvcount, MPI_Datatype recvtype,
+  //                  MPI_Comm comm)
+  if (canonMPIName == "MPI_Alltoall") {
+    if (Mode == DerivativeMode::ReverseModeGradient ||
+        Mode == DerivativeMode::ReverseModeCombined ||
+        Mode == DerivativeMode::ForwardMode ||
+        Mode == DerivativeMode::ForwardModeError) {
+      bool forwardMode = Mode == DerivativeMode::ForwardMode ||
+                         Mode == DerivativeMode::ForwardModeError;
+
+      IRBuilder<> Builder2 =
+          forwardMode ? IRBuilder<>(&call) : IRBuilder<>(call.getParent());
+      if (forwardMode) {
+        getForwardBuilder(Builder2);
+      } else {
+        getReverseBuilder(Builder2);
+      }
+
+      if (forwardMode) {
+        createMPIForwardCall(call, {/*sendbuf*/ 0, /*recvbuf*/ 3}, gutils,
+                             Builder2);
+        return;
+      }
+
+      Value *orig_sendbuf = call.getOperand(0);
+      Value *orig_sendcount = call.getOperand(1);
+      Value *orig_sendtype = call.getOperand(2);
+      Value *orig_recvbuf = call.getOperand(3);
+      Value *orig_recvcount = call.getOperand(4);
+      Value *orig_recvtype = call.getOperand(5);
+      Value *orig_comm = call.getOperand(6);
+
+      Value *shadow_recvbuf =
+          lookup(gutils->invertPointerM(orig_recvbuf, Builder2), Builder2);
+      if (shadow_recvbuf->getType()->isIntegerTy())
+        shadow_recvbuf = Builder2.CreateIntToPtr(
+            shadow_recvbuf, getInt8PtrTy(call.getContext()));
+
+      Value *shadow_sendbuf =
+          lookup(gutils->invertPointerM(orig_sendbuf, Builder2), Builder2);
+      if (shadow_sendbuf->getType()->isIntegerTy())
+        shadow_sendbuf = Builder2.CreateIntToPtr(
+            shadow_sendbuf, getInt8PtrTy(call.getContext()));
+
+      Value *sendcount =
+          lookup(gutils->getNewFromOriginal(orig_sendcount), Builder2);
+      Value *sendtype =
+          lookup(gutils->getNewFromOriginal(orig_sendtype), Builder2);
+      Value *recvcount =
+          lookup(gutils->getNewFromOriginal(orig_recvcount), Builder2);
+      Value *recvtype =
+          lookup(gutils->getNewFromOriginal(orig_recvtype), Builder2);
+      Value *comm = lookup(gutils->getNewFromOriginal(orig_comm), Builder2);
+
+      bool fortranABI = isFortranMPICall(called->getName());
+      Type *i32Ty = Type::getInt32Ty(call.getContext());
+      Type *i64Ty = Type::getInt64Ty(call.getContext());
+      Type *i8Ty = Type::getInt8Ty(call.getContext());
+      Type *intType = fortranABI ? i32Ty : call.getType();
+
+      Value *sendcountVal =
+          fortranABI ? Builder2.CreateLoad(i32Ty, sendcount) : sendcount;
+      Value *recvcountVal =
+          fortranABI ? Builder2.CreateLoad(i32Ty, recvcount) : recvcount;
+
+      Value *sendTysize = MPI_TYPE_SIZE(sendtype, Builder2, intType, called);
+      Value *recvTysize =
+          (recvtype == sendtype)
+              ? sendTysize
+              : MPI_TYPE_SIZE(recvtype, Builder2, intType, called);
+      Value *commSize = MPI_COMM_SIZE(comm, Builder2, intType, called);
+      Value *commSize64 = Builder2.CreateZExtOrTrunc(commSize, i64Ty);
+
+      Value *sendlen_arg = Builder2.CreateZExtOrTrunc(sendcountVal, i64Ty);
+      sendlen_arg = Builder2.CreateMul(
+          sendlen_arg, Builder2.CreateZExtOrTrunc(sendTysize, i64Ty), "", true,
+          true);
+      sendlen_arg = Builder2.CreateMul(sendlen_arg, commSize64, "", true, true);
+
+      Value *recvlen_arg = Builder2.CreateZExtOrTrunc(recvcountVal, i64Ty);
+      recvlen_arg = Builder2.CreateMul(
+          recvlen_arg, Builder2.CreateZExtOrTrunc(recvTysize, i64Ty), "", true,
+          true);
+      recvlen_arg = Builder2.CreateMul(recvlen_arg, commSize64, "", true, true);
+
+      std::vector<ValueType> BufferBundleTypes(call.arg_size(),
+                                               ValueType::Primal);
+      BufferBundleTypes[0] = ValueType::Shadow;
+      BufferBundleTypes[3] = ValueType::Shadow;
+      auto BufferDefs = gutils->getInvertedBundles(&call, BufferBundleTypes,
+                                                   Builder2, /*lookup*/ true);
+
+      // 1. Alloc intermediate buffer
+      Value *buf = CreateAllocation(Builder2, i8Ty, sendlen_arg,
+                                    "mpialltoall_malloccache");
+
+      // 2. Adjoint MPI_Alltoall from diff(recvbuf) into intermediate buffer
+      {
+        SmallVector<Value *, 8> args = {
+            Builder2.CreatePointerCast(shadow_recvbuf,
+                                       call.getArgOperand(0)->getType()),
+            recvcount,
+            recvtype,
+            Builder2.CreatePointerCast(buf, call.getArgOperand(3)->getType()),
+            sendcount,
+            sendtype,
+            comm,
+        };
+        if (fortranABI) {
+          args.push_back(IRBuilder<>(gutils->inversionAllocs)
+                             .CreateAlloca(i32Ty, nullptr, "enzyme_mpi_ierr"));
+        }
+        SmallVector<Type *, 8> types;
+        for (auto *arg : args)
+          types.push_back(arg->getType());
+        FunctionType *FT = FunctionType::get(call.getType(), types, false);
+        Builder2.CreateCall(
+            called->getParent()->getOrInsertFunction(
+                getRenamedPerCallingConv(called->getName(), "MPI_Alltoall"),
+                FT),
+            args, BufferDefs);
+      }
+
+      // 3. Zero diff(recvbuf)
+      {
+        auto val_arg = ConstantInt::get(i8Ty, 0);
+        auto volatile_arg = ConstantInt::getFalse(call.getContext());
+        Value *args[] = {shadow_recvbuf, val_arg, recvlen_arg, volatile_arg};
+        Type *tys[] = {args[0]->getType(), args[2]->getType()};
+        auto memset = cast<CallInst>(Builder2.CreateCall(
+            getIntrinsicDeclaration(gutils->newFunc->getParent(),
+                                    Intrinsic::memset, tys),
+            args, BufferDefs));
+        memset->addParamAttr(0, Attribute::NonNull);
+      }
+
+      // 4. diff(sendbuf) += intermediate buffer
+      DifferentiableMemCopyFloats(call, orig_sendbuf, buf, shadow_sendbuf,
+                                  sendlen_arg, Builder2, BufferDefs);
+
+      // 5. Free intermediate buffer
+      if (shouldFree()) {
+        CreateDealloc(Builder2, buf);
+      }
+    }
+    if (Mode == DerivativeMode::ReverseModeGradient)
+      eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+    return;
+  }
+
+  // Adjoint of MPI_Alltoallv / MPI_Alltoallw:
+  // 1. Allocate packed temporary recv displacements `tmp_displs[0..commSize-1]`
+  //    (in elements for Alltoallv, in bytes for Alltoallw) and sum total send
+  //    bytes. Packing avoids aliasing if `sdispls` contains overlapping slices.
+  // 2. Allocate intermediate buffer `buf` of `totalSendBytes`.
+  // 3. Call MPI_Alltoallv/MPI_Alltoallw with (diff(recvbuf), recvcounts,
+  //    rdispls, recvtype(s)) as send and (buf, sendcounts, tmp_displs,
+  //    sendtype(s)) as recv.
+  // 4. Zero each slice of diff(recvbuf).
+  // 5. Accumulate each slice of `buf` into diff(sendbuf).
+  // 6. Free `buf` and `tmp_displs`.
+  if (canonMPIName == "MPI_Alltoallv" || canonMPIName == "MPI_Alltoallw") {
+    bool isW = (canonMPIName == "MPI_Alltoallw");
+    if (Mode == DerivativeMode::ReverseModeGradient ||
+        Mode == DerivativeMode::ReverseModeCombined ||
+        Mode == DerivativeMode::ForwardMode ||
+        Mode == DerivativeMode::ForwardModeError) {
+      bool forwardMode = Mode == DerivativeMode::ForwardMode ||
+                         Mode == DerivativeMode::ForwardModeError;
+
+      IRBuilder<> Builder2 =
+          forwardMode ? IRBuilder<>(&call) : IRBuilder<>(call.getParent());
+      if (forwardMode) {
+        getForwardBuilder(Builder2);
+      } else {
+        getReverseBuilder(Builder2);
+      }
+
+      if (forwardMode) {
+        createMPIForwardCall(call, {/*sendbuf*/ 0, /*recvbuf*/ 4}, gutils,
+                             Builder2);
+        return;
+      }
+
+      Value *orig_sendbuf = call.getOperand(0);
+      Value *orig_sendcounts = call.getOperand(1);
+      Value *orig_sdispls = call.getOperand(2);
+      Value *orig_sendtype = call.getOperand(3);
+      Value *orig_recvbuf = call.getOperand(4);
+      Value *orig_recvcounts = call.getOperand(5);
+      Value *orig_rdispls = call.getOperand(6);
+      Value *orig_recvtype = call.getOperand(7);
+      Value *orig_comm = call.getOperand(8);
+
+      Value *shadow_recvbuf =
+          lookup(gutils->invertPointerM(orig_recvbuf, Builder2), Builder2);
+      if (shadow_recvbuf->getType()->isIntegerTy())
+        shadow_recvbuf = Builder2.CreateIntToPtr(
+            shadow_recvbuf, getInt8PtrTy(call.getContext()));
+
+      Value *shadow_sendbuf =
+          lookup(gutils->invertPointerM(orig_sendbuf, Builder2), Builder2);
+      if (shadow_sendbuf->getType()->isIntegerTy())
+        shadow_sendbuf = Builder2.CreateIntToPtr(
+            shadow_sendbuf, getInt8PtrTy(call.getContext()));
+
+      Value *sendcounts =
+          lookup(gutils->getNewFromOriginal(orig_sendcounts), Builder2);
+      Value *sdispls =
+          lookup(gutils->getNewFromOriginal(orig_sdispls), Builder2);
+      Value *sendtype =
+          lookup(gutils->getNewFromOriginal(orig_sendtype), Builder2);
+      Value *recvcounts =
+          lookup(gutils->getNewFromOriginal(orig_recvcounts), Builder2);
+      Value *rdispls =
+          lookup(gutils->getNewFromOriginal(orig_rdispls), Builder2);
+      Value *recvtype =
+          lookup(gutils->getNewFromOriginal(orig_recvtype), Builder2);
+      Value *comm = lookup(gutils->getNewFromOriginal(orig_comm), Builder2);
+
+      bool fortranABI = isFortranMPICall(called->getName());
+      LLVMContext &ctx = call.getContext();
+      Type *i32Ty = Type::getInt32Ty(ctx);
+      Type *i64Ty = Type::getInt64Ty(ctx);
+      Type *i8Ty = Type::getInt8Ty(ctx);
+      Type *intType = fortranABI ? i32Ty : call.getType();
+
+      Value *commSize = MPI_COMM_SIZE(comm, Builder2, intType, called);
+      Value *commSize64 = Builder2.CreateZExtOrTrunc(commSize, i64Ty);
+
+      Type *mpiDatatypeTy = fortranABI
+                                ? static_cast<Type *>(i32Ty)
+                                : (comm->getType()->isPointerTy()
+                                       ? static_cast<Type *>(getInt8PtrTy(ctx))
+                                       : comm->getType());
+
+      Value *sendTysize64 = nullptr;
+      Value *recvTysize64 = nullptr;
+      if (!isW) {
+        Value *sendTysize = MPI_TYPE_SIZE(sendtype, Builder2, intType, called);
+        Value *recvTysize =
+            (recvtype == sendtype)
+                ? sendTysize
+                : MPI_TYPE_SIZE(recvtype, Builder2, intType, called);
+        sendTysize64 = Builder2.CreateZExtOrTrunc(sendTysize, i64Ty);
+        recvTysize64 = Builder2.CreateZExtOrTrunc(recvTysize, i64Ty);
+      }
+
+      std::vector<ValueType> BufferBundleTypes(call.arg_size(),
+                                               ValueType::Primal);
+      BufferBundleTypes[0] = ValueType::Shadow;
+      BufferBundleTypes[4] = ValueType::Shadow;
+      auto BufferDefs = gutils->getInvertedBundles(&call, BufferBundleTypes,
+                                                   Builder2, /*lookup*/ true);
+
+      auto getTypeSize64At = [&](Value *typesArr, Value *idx) -> Value * {
+        Value *dtVal;
+        if (fortranABI) {
+          dtVal = Builder2.CreateInBoundsGEP(
+              i32Ty, Builder2.CreatePointerCast(typesArr, getUnqual(i32Ty)),
+              idx);
+        } else {
+          Value *dtPtr = Builder2.CreateInBoundsGEP(
+              mpiDatatypeTy,
+              Builder2.CreatePointerCast(typesArr, getUnqual(mpiDatatypeTy)),
+              idx);
+          dtVal = Builder2.CreateLoad(mpiDatatypeTy, dtPtr);
+        }
+        return Builder2.CreateZExtOrTrunc(
+            MPI_TYPE_SIZE(dtVal, Builder2, intType, called), i64Ty);
+      };
+
+      // 1. Compute packed tmp_displs and total send size
+      Value *tmp_displs =
+          CreateAllocation(Builder2, i32Ty, commSize64,
+                           isW ? "mpialltoallw_displs" : "mpialltoallv_displs");
+
+      BasicBlock *preCountBlock = Builder2.GetInsertBlock();
+      BasicBlock *countHdr = gutils->addReverseBlock(
+          preCountBlock, preCountBlock->getName() + "_count_hdr",
+          gutils->newFunc);
+      BasicBlock *countBody = gutils->addReverseBlock(
+          countHdr, preCountBlock->getName() + "_count_body", gutils->newFunc);
+      BasicBlock *countExit = gutils->addReverseBlock(
+          countBody, preCountBlock->getName() + "_count_exit", gutils->newFunc);
+      Builder2.CreateBr(countHdr);
+
+      Builder2.SetInsertPoint(countHdr);
+      PHINode *cIdx = Builder2.CreatePHI(i64Ty, 2, "idx");
+      cIdx->addIncoming(ConstantInt::get(i64Ty, 0), preCountBlock);
+      PHINode *total = Builder2.CreatePHI(i64Ty, 2, "total");
+      total->addIncoming(ConstantInt::get(i64Ty, 0), preCountBlock);
+      Builder2.CreateCondBr(Builder2.CreateICmpSLT(cIdx, commSize64), countBody,
+                            countExit);
+
+      Builder2.SetInsertPoint(countBody);
+      Value *displPtr = Builder2.CreateInBoundsGEP(i32Ty, tmp_displs, cIdx);
+      Builder2.CreateStore(Builder2.CreateTrunc(total, i32Ty), displPtr);
+      Value *scPtr = Builder2.CreateInBoundsGEP(
+          i32Ty, Builder2.CreatePointerCast(sendcounts, getUnqual(i32Ty)),
+          cIdx);
+      Value *sc64 =
+          Builder2.CreateZExtOrTrunc(Builder2.CreateLoad(i32Ty, scPtr), i64Ty);
+      Value *step =
+          isW ? Builder2.CreateMul(sc64, getTypeSize64At(sendtype, cIdx), "",
+                                   true, true)
+              : sc64;
+      Value *nextTotal = Builder2.CreateAdd(total, step);
+      Value *nextCIdx =
+          Builder2.CreateAdd(cIdx, ConstantInt::get(i64Ty, 1), "", true, true);
+      BasicBlock *countBodyEnd = Builder2.GetInsertBlock();
+      cIdx->addIncoming(nextCIdx, countBodyEnd);
+      total->addIncoming(nextTotal, countBodyEnd);
+      Builder2.CreateBr(countHdr);
+
+      Builder2.SetInsertPoint(countExit);
+
+      // 2. Alloc intermediate buffer
+      Value *totalSendBytes =
+          isW ? static_cast<Value *>(total)
+              : Builder2.CreateMul(total, sendTysize64, "", true, true);
+      Value *buf = CreateAllocation(Builder2, i8Ty, totalSendBytes,
+                                    isW ? "mpialltoallw_malloccache"
+                                        : "mpialltoallv_malloccache");
+
+      // 3. Adjoint MPI_Alltoallv / MPI_Alltoallw from diff(recvbuf) into buf
+      {
+        SmallVector<Value *, 10> args = {
+            Builder2.CreatePointerCast(shadow_recvbuf,
+                                       call.getArgOperand(0)->getType()),
+            Builder2.CreatePointerCast(recvcounts,
+                                       call.getArgOperand(1)->getType()),
+            Builder2.CreatePointerCast(rdispls,
+                                       call.getArgOperand(2)->getType()),
+            isW ? Builder2.CreatePointerCast(recvtype,
+                                             call.getArgOperand(3)->getType())
+                : recvtype,
+            Builder2.CreatePointerCast(buf, call.getArgOperand(4)->getType()),
+            Builder2.CreatePointerCast(sendcounts,
+                                       call.getArgOperand(5)->getType()),
+            Builder2.CreatePointerCast(tmp_displs,
+                                       call.getArgOperand(6)->getType()),
+            isW ? Builder2.CreatePointerCast(sendtype,
+                                             call.getArgOperand(7)->getType())
+                : sendtype,
+            comm,
+        };
+        if (fortranABI) {
+          args.push_back(IRBuilder<>(gutils->inversionAllocs)
+                             .CreateAlloca(i32Ty, nullptr, "enzyme_mpi_ierr"));
+        }
+        SmallVector<Type *, 10> types;
+        for (auto *arg : args)
+          types.push_back(arg->getType());
+        FunctionType *FT = FunctionType::get(call.getType(), types, false);
+        Builder2.CreateCall(
+            called->getParent()->getOrInsertFunction(
+                getRenamedPerCallingConv(
+                    called->getName(), isW ? "MPI_Alltoallw" : "MPI_Alltoallv"),
+                FT),
+            args, BufferDefs);
+      }
+
+      unsigned recvAS =
+          cast<PointerType>(shadow_recvbuf->getType())->getAddressSpace();
+      Value *shadow_recvbuf_i8 =
+          Builder2.CreatePointerCast(shadow_recvbuf, getInt8PtrTy(ctx, recvAS));
+      unsigned sendAS =
+          cast<PointerType>(shadow_sendbuf->getType())->getAddressSpace();
+      Value *shadow_sendbuf_i8 =
+          Builder2.CreatePointerCast(shadow_sendbuf, getInt8PtrTy(ctx, sendAS));
+
+      // 4. Zero each slice of diff(recvbuf)
+      {
+        BasicBlock *preZero = Builder2.GetInsertBlock();
+        BasicBlock *zeroHdr = gutils->addReverseBlock(
+            preZero, preCountBlock->getName() + "_zero_hdr", gutils->newFunc);
+        BasicBlock *zeroBody = gutils->addReverseBlock(
+            zeroHdr, preCountBlock->getName() + "_zero_body", gutils->newFunc);
+        BasicBlock *zeroExit = gutils->addReverseBlock(
+            zeroBody, preCountBlock->getName() + "_zero_exit", gutils->newFunc);
+        Builder2.CreateBr(zeroHdr);
+
+        Builder2.SetInsertPoint(zeroHdr);
+        PHINode *zIdx = Builder2.CreatePHI(i64Ty, 2, "zidx");
+        zIdx->addIncoming(ConstantInt::get(i64Ty, 0), preZero);
+        Builder2.CreateCondBr(Builder2.CreateICmpSLT(zIdx, commSize64),
+                              zeroBody, zeroExit);
+
+        Builder2.SetInsertPoint(zeroBody);
+        Value *rcPtr = Builder2.CreateInBoundsGEP(
+            i32Ty, Builder2.CreatePointerCast(recvcounts, getUnqual(i32Ty)),
+            zIdx);
+        Value *rdPtr = Builder2.CreateInBoundsGEP(
+            i32Ty, Builder2.CreatePointerCast(rdispls, getUnqual(i32Ty)), zIdx);
+        Value *rc64 = Builder2.CreateZExtOrTrunc(
+            Builder2.CreateLoad(i32Ty, rcPtr), i64Ty);
+        Value *rd64 = Builder2.CreateSExtOrTrunc(
+            Builder2.CreateLoad(i32Ty, rdPtr), i64Ty);
+        Value *rtSz64 = isW ? getTypeSize64At(recvtype, zIdx) : recvTysize64;
+        Value *rByteOff =
+            isW ? rd64 : Builder2.CreateMul(rd64, rtSz64, "", false, true);
+        Value *rByteLen = Builder2.CreateMul(rc64, rtSz64, "", true, true);
+        Value *dstSlice = Builder2.CreateGEP(i8Ty, shadow_recvbuf_i8, rByteOff);
+        auto val_arg = ConstantInt::get(i8Ty, 0);
+        auto volatile_arg = ConstantInt::getFalse(ctx);
+        Value *margs[] = {dstSlice, val_arg, rByteLen, volatile_arg};
+        Type *mtys[] = {margs[0]->getType(), margs[2]->getType()};
+        Builder2.CreateCall(
+            getIntrinsicDeclaration(gutils->newFunc->getParent(),
+                                    Intrinsic::memset, mtys),
+            margs, BufferDefs);
+
+        Value *nextZIdx = Builder2.CreateAdd(zIdx, ConstantInt::get(i64Ty, 1),
+                                             "", true, true);
+        BasicBlock *zeroBodyEnd = Builder2.GetInsertBlock();
+        zIdx->addIncoming(nextZIdx, zeroBodyEnd);
+        Builder2.CreateBr(zeroHdr);
+
+        Builder2.SetInsertPoint(zeroExit);
+      }
+
+      // 5. Accumulate each slice of intermediate buffer into diff(sendbuf)
+      {
+        BasicBlock *preAcc = Builder2.GetInsertBlock();
+        BasicBlock *accHdr = gutils->addReverseBlock(
+            preAcc, preCountBlock->getName() + "_acc_hdr", gutils->newFunc);
+        BasicBlock *accBody = gutils->addReverseBlock(
+            accHdr, preCountBlock->getName() + "_acc_body", gutils->newFunc);
+        BasicBlock *accExit = gutils->addReverseBlock(
+            accBody, preCountBlock->getName() + "_acc_exit", gutils->newFunc);
+        Builder2.CreateBr(accHdr);
+
+        Builder2.SetInsertPoint(accHdr);
+        PHINode *aIdx = Builder2.CreatePHI(i64Ty, 2, "aidx");
+        aIdx->addIncoming(ConstantInt::get(i64Ty, 0), preAcc);
+        Builder2.CreateCondBr(Builder2.CreateICmpSLT(aIdx, commSize64), accBody,
+                              accExit);
+
+        Builder2.SetInsertPoint(accBody);
+        Value *ascPtr = Builder2.CreateInBoundsGEP(
+            i32Ty, Builder2.CreatePointerCast(sendcounts, getUnqual(i32Ty)),
+            aIdx);
+        Value *sdPtr = Builder2.CreateInBoundsGEP(
+            i32Ty, Builder2.CreatePointerCast(sdispls, getUnqual(i32Ty)), aIdx);
+        Value *tdPtr = Builder2.CreateInBoundsGEP(i32Ty, tmp_displs, aIdx);
+        Value *asc64 = Builder2.CreateZExtOrTrunc(
+            Builder2.CreateLoad(i32Ty, ascPtr), i64Ty);
+        Value *sd64 = Builder2.CreateSExtOrTrunc(
+            Builder2.CreateLoad(i32Ty, sdPtr), i64Ty);
+        Value *td64 = Builder2.CreateZExtOrTrunc(
+            Builder2.CreateLoad(i32Ty, tdPtr), i64Ty);
+        Value *stSz64 = isW ? getTypeSize64At(sendtype, aIdx) : sendTysize64;
+        Value *sByteOff =
+            isW ? sd64 : Builder2.CreateMul(sd64, stSz64, "", false, true);
+        Value *tByteOff =
+            isW ? td64 : Builder2.CreateMul(td64, stSz64, "", true, true);
+        Value *sByteLen = Builder2.CreateMul(asc64, stSz64, "", true, true);
+
+        Value *srcTmp = Builder2.CreateGEP(i8Ty, buf, tByteOff);
+        Value *dstSh = Builder2.CreateGEP(i8Ty, shadow_sendbuf_i8, sByteOff);
+        DifferentiableMemCopyFloats(call, orig_sendbuf, srcTmp, dstSh, sByteLen,
+                                    Builder2, BufferDefs);
+
+        Value *nextAIdx = Builder2.CreateAdd(aIdx, ConstantInt::get(i64Ty, 1),
+                                             "", true, true);
+        BasicBlock *accBodyEnd = Builder2.GetInsertBlock();
+        aIdx->addIncoming(nextAIdx, accBodyEnd);
+        Builder2.CreateBr(accHdr);
+
+        Builder2.SetInsertPoint(accExit);
+      }
+
+      // 6. Free intermediate buffer and temporary displacements
+      if (shouldFree()) {
+        CreateDealloc(Builder2, buf);
+        CreateDealloc(Builder2, tmp_displs);
+      }
+    }
+    if (Mode == DerivativeMode::ReverseModeGradient)
+      eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+    return;
+  }
+
   // Adjoint of barrier is to place a barrier at the corresponding
   // location in the reverse.
   if (funcName == "MPI_Barrier" || funcName == "PMPI_Barrier") {
@@ -2219,10 +2713,51 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
     return;
   }
 
-  // Remove free's in forward pass so the comm can be used in the reverse
-  // pass
+  // Remove free's in forward pass so the comm/datatype can be used in the
+  // reverse pass
   if (funcName == "MPI_Comm_free" || funcName == "MPI_Comm_disconnect") {
     eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+    return;
+  }
+
+  if (canonMPIName == "MPI_Type_free") {
+    if (Mode == DerivativeMode::ReverseModeGradient ||
+        Mode == DerivativeMode::ReverseModeCombined ||
+        Mode == DerivativeMode::ReverseModePrimal)
+      eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+    return;
+  }
+
+  // Adjoint of MPI_Type_create_subarray (which allocates a datatype in operand
+  // 6) is to free the created datatype at the corresponding place in the
+  // reverse pass.
+  if (canonMPIName == "MPI_Type_create_subarray") {
+    if ((Mode == DerivativeMode::ReverseModeCombined ||
+         (Mode == DerivativeMode::ReverseModeGradient &&
+          !isa<AllocaInst>(getBaseObject(call.getArgOperand(6))))) &&
+        shouldFree()) {
+      IRBuilder<> Builder2(&call);
+      getReverseBuilder(Builder2);
+      bool fortranABI = isFortranMPICall(called->getName());
+      SmallVector<Value *, 2> args;
+      args.push_back(
+          lookup(gutils->getNewFromOriginal(call.getArgOperand(6)), Builder2));
+      if (fortranABI) {
+        Type *i32Ty = Type::getInt32Ty(call.getContext());
+        args.push_back(IRBuilder<>(gutils->inversionAllocs)
+                           .CreateAlloca(i32Ty, nullptr, "enzyme_mpi_ierr"));
+      }
+      SmallVector<Type *, 2> types;
+      for (auto *arg : args)
+        types.push_back(arg->getType());
+      FunctionType *FT = FunctionType::get(call.getType(), types, false);
+      Builder2.CreateCall(
+          called->getParent()->getOrInsertFunction(
+              getRenamedPerCallingConv(called->getName(), "MPI_Type_free"), FT),
+          args);
+    }
+    if (Mode == DerivativeMode::ReverseModeGradient)
+      eraseIfUnused(call, /*erase*/ true, /*check*/ false);
     return;
   }
 
@@ -2664,9 +3199,12 @@ bool AdjointGenerator::handleKnownCallDerivatives(
   if (!canonMPIName.empty() &&
       (!gutils->isConstantInstruction(&call) || canonMPIName == "MPI_Barrier" ||
        canonMPIName == "MPI_Comm_free" ||
-       canonMPIName == "MPI_Comm_disconnect" || canonMPIName == "MPI_Init" ||
-       canonMPIName == "MPI_Init_thread" || canonMPIName == "MPI_Finalize" ||
-       canonMPIName == "MPI_Test" || canonMPIName == "MPI_Probe" ||
+       canonMPIName == "MPI_Comm_disconnect" ||
+       canonMPIName == "MPI_Type_free" ||
+       canonMPIName == "MPI_Type_create_subarray" ||
+       canonMPIName == "MPI_Init" || canonMPIName == "MPI_Init_thread" ||
+       canonMPIName == "MPI_Finalize" || canonMPIName == "MPI_Test" ||
+       canonMPIName == "MPI_Probe" ||
        MPIInactiveCommAllocators.find(canonMPIName) !=
            MPIInactiveCommAllocators.end())) {
     handleMPI(call, called, canonMPIName);

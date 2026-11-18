@@ -352,10 +352,12 @@ public:
     auto &context = comm->getContext();
     auto alloc = IRBuilder<>(gutils->inversionAllocs).CreateAlloca(rankTy);
     AttributeList AL;
-    AL = AL.addParamAttribute(context, 0, Attribute::AttrKind::ReadOnly);
-    AL = addFunctionNoCapture(context, AL, 0);
-    AL = AL.addParamAttribute(context, 0, Attribute::AttrKind::NoAlias);
-    AL = AL.addParamAttribute(context, 0, Attribute::AttrKind::NonNull);
+    if (comm->getType()->isPointerTy()) {
+      AL = AL.addParamAttribute(context, 0, Attribute::AttrKind::ReadOnly);
+      AL = addFunctionNoCapture(context, AL, 0);
+      AL = AL.addParamAttribute(context, 0, Attribute::AttrKind::NoAlias);
+      AL = AL.addParamAttribute(context, 0, Attribute::AttrKind::NonNull);
+    }
     AL = AL.addParamAttribute(context, 1, Attribute::AttrKind::WriteOnly);
     AL = addFunctionNoCapture(context, AL, 1);
     AL = AL.addParamAttribute(context, 1, Attribute::AttrKind::NoAlias);
@@ -407,10 +409,12 @@ public:
     auto &context = comm->getContext();
     auto alloc = IRBuilder<>(gutils->inversionAllocs).CreateAlloca(rankTy);
     AttributeList AL;
-    AL = AL.addParamAttribute(context, 0, Attribute::AttrKind::ReadOnly);
-    AL = addFunctionNoCapture(context, AL, 0);
-    AL = AL.addParamAttribute(context, 0, Attribute::AttrKind::NoAlias);
-    AL = AL.addParamAttribute(context, 0, Attribute::AttrKind::NonNull);
+    if (comm->getType()->isPointerTy()) {
+      AL = AL.addParamAttribute(context, 0, Attribute::AttrKind::ReadOnly);
+      AL = addFunctionNoCapture(context, AL, 0);
+      AL = AL.addParamAttribute(context, 0, Attribute::AttrKind::NoAlias);
+      AL = AL.addParamAttribute(context, 0, Attribute::AttrKind::NonNull);
+    }
     AL = AL.addParamAttribute(context, 1, Attribute::AttrKind::WriteOnly);
     AL = addFunctionNoCapture(context, AL, 1);
     AL = AL.addParamAttribute(context, 1, Attribute::AttrKind::NoAlias);

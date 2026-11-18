@@ -373,6 +373,7 @@ static const StringSet<> KnownInactiveFunctions = {
     "MPI_Comm_get_parent",
     "MPI_Comm_get_name",
     "MPI_Comm_get_info",
+    "MPI_Comm_group",
     "MPI_Comm_remote_size",
     "MPI_Comm_set_info",
     "MPI_Comm_set_name",
@@ -380,6 +381,14 @@ static const StringSet<> KnownInactiveFunctions = {
     "MPI_Comm_call_errhandler",
     "MPI_Comm_create_errhandler",
     "MPI_Comm_disconnect",
+    "MPI_Group_incl",
+    "MPI_Info_create",
+    "MPI_Info_set",
+    "MPI_Initialized",
+    "MPI_Type_commit",
+    "MPI_Type_create_subarray",
+    "MPI_Type_free",
+    "MPI_Wtick",
     "MPI_Wtime",
     "_msize",
     "ftnio_fmt_write64",
@@ -822,6 +831,20 @@ bool ActivityAnalyzer::isFunctionArgumentConstant(CallInst *CI, Value *val) {
         CanonicalMPIName == "MPI_Allreduce" ||
         CanonicalMPIName == "MPI_Reduce_scatter_block") {
       return val != CI->getOperand(0) && val != CI->getOperand(1);
+    }
+
+    // only the send/recv buffers are active for mpi gather/scatter/allgather/
+    // alltoall
+    if (CanonicalMPIName == "MPI_Gather" || CanonicalMPIName == "MPI_Scatter" ||
+        CanonicalMPIName == "MPI_Allgather" ||
+        CanonicalMPIName == "MPI_Alltoall") {
+      return val != CI->getOperand(0) && val != CI->getOperand(3);
+    }
+
+    // only the send/recv buffers are active for mpi alltoallv/alltoallw
+    if (CanonicalMPIName == "MPI_Alltoallv" ||
+        CanonicalMPIName == "MPI_Alltoallw") {
+      return val != CI->getOperand(0) && val != CI->getOperand(4);
     }
 
     // only the buffer is active for mpi bcast
