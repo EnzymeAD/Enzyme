@@ -78,9 +78,8 @@ void EnzymeDialect::initialize() {
 static LogicalResult verifyTypeTreeArray(Operation *op, NamedAttribute attr,
                                          size_t expected, StringRef what) {
   auto trees = dyn_cast<ArrayAttr>(attr.getValue());
-  if (!trees || !llvm::all_of(trees, [](Attribute tree) {
-        return isa<enzyme::TypeTreeAttr, UnitAttr>(tree);
-      }))
+  if (!trees ||
+      !llvm::all_of(trees, llvm::IsaPred<enzyme::TypeTreeAttr, UnitAttr>))
     return op->emitError() << attr.getName().getValue()
                            << " must be an array of type trees or unit";
   if (trees.size() != expected)

@@ -118,10 +118,18 @@ def TypeTreeAttr : Enzyme_Attr<"TypeTree", "type_tree"> {
                      "::mlir::Type":$floatType,
                      "::llvm::ArrayRef<int64_t>":$offsets,
                      "::llvm::ArrayRef<::mlir::enzyme::TypeTreeAttr>":$subtrees), [{
+      assert((!floatType || kind == ::mlir::enzyme::TypeTreeKind::Float) &&
+             "only a float node has a floating-point type");
       ::llvm::SmallVector<int64_t> sortedOffsets(offsets);
       ::llvm::SmallVector<::mlir::enzyme::TypeTreeAttr> sortedSubtrees(subtrees);
       ::mlir::enzyme::detail::sortTypeTreeSubtrees(sortedOffsets, sortedSubtrees);
       return $_get($_ctxt, kind, floatType, sortedOffsets, sortedSubtrees);
+    }]>,
+    AttrBuilder<(ins "::mlir::FloatType":$floatType,
+                     CArg<"::llvm::ArrayRef<int64_t>", "{}">:$offsets,
+                     CArg<"::llvm::ArrayRef<::mlir::enzyme::TypeTreeAttr>", "{}">:$subtrees), [{
+      return get($_ctxt, ::mlir::enzyme::TypeTreeKind::Float, floatType,
+                 offsets, subtrees);
     }]>
   ];
 
