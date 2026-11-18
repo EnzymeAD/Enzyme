@@ -52,12 +52,28 @@ template <typename... T>
 __attribute__((always_inline))
 tuple(T ...) -> tuple<T...>;
 
+template <int i, typename Tuple>
+struct tuple_element;
+
+template <int i, typename T, typename... Rest>
+struct tuple_element<i, tuple<T, Rest...>>
+    : tuple_element<i - 1, tuple<Rest...>> {};
+
+template <typename T, typename... Rest>
+struct tuple_element<0, tuple<T, Rest...>> {
+  using type = T;
+};
+
+template <int i, typename Tuple>
+using tuple_element_t =
+    typename tuple_element<i, remove_cvref_t<Tuple>>::type;
+
 template < int i, typename Tuple >
 __attribute__((always_inline))
 decltype(auto) get(Tuple && tup) {
   constexpr bool is_lvalue = std::is_lvalue_reference_v<Tuple>;
   constexpr bool is_const = std::is_const_v<std::remove_reference_t<Tuple>>;
-  using T = remove_cvref_t< decltype(tup[Index<i>{ } ]) >;
+  using T = tuple_element_t<i, Tuple>;
   if constexpr ( is_lvalue &&  is_const) { return static_cast<const T&>(tup[Index<i>{} ]); }
   if constexpr ( is_lvalue && !is_const) { return static_cast<T&>(tup[Index<i>{} ]); }
   if constexpr (!is_lvalue &&  is_const) { return static_cast<const T&&>(tup[Index<i>{} ]); }

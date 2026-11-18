@@ -8,8 +8,8 @@ namespace enzyme {
 template < typename T >
 struct remove_cvref {
     using type =
-        typename std::remove_reference<
-            typename std::remove_cv<
+        typename std::remove_cv<
+            typename std::remove_reference<
                 T
             >::type
         >::type;
