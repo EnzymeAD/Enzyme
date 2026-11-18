@@ -193,10 +193,12 @@ bool attributeKnownFunctions(llvm::Function &F) {
       }
   }
 
-  if (F.getName() ==
-      "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE9_M_createERmm") {
+  if (isStdCharStringOrAllocSymbol(F.getName())) {
     changed = true;
     F.addFnAttr(Attribute::NoFree);
+    F.addAttribute(
+        AttributeList::FunctionIndex,
+        Attribute::get(F.getContext(), "enzyme_no_escaping_allocation"));
   }
   // Canonical MPI name across calling conventions (C "MPI_Recv", "PMPI_Recv"
   // and Fortran "mpi_recv_" etc.). Parameter indices are shared between the
