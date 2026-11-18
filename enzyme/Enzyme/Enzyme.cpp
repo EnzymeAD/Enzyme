@@ -163,6 +163,16 @@ castToDiffeFunctionArgType(IRBuilder<> &Builder, llvm::CallInst *CI,
     }
   }
 
+  const DataLayout &DL = CI->getModule()->getDataLayout();
+  if (res->getType()->isIntegerTy() && destType->isPointerTy() &&
+      DL.getTypeSizeInBits(res->getType()) ==
+          DL.getPointerTypeSizeInBits(destType))
+    return Builder.CreateIntToPtr(res, destType);
+  if (res->getType()->isPointerTy() && destType->isIntegerTy() &&
+      DL.getPointerTypeSizeInBits(res->getType()) ==
+          DL.getTypeSizeInBits(destType))
+    return Builder.CreatePtrToInt(res, destType);
+
   if (!res->getType()->canLosslesslyBitCastTo(destType)) {
     assert(value);
     assert(value->getType());
@@ -375,6 +385,18 @@ static bool ReplaceOriginalCall(IRBuilder<> &Builder, Value *ret,
       CI->eraseFromParent();
       return true;
     }
+  }
+
+  if (mode == DerivativeMode::ReverseModeCombined &&
+      DL.getTypeSizeInBits(retType) >= DL.getTypeSizeInBits(diffretType)) {
+    IRBuilder<> EB(getFirstNonPHI(&CI->getFunction()->getEntryBlock()));
+    auto AL = EB.CreateAlloca(retType);
+    Builder.CreateStore(diffret,
+                        Builder.CreatePointerCast(AL, getUnqual(diffretType)));
+    Value *cload = Builder.CreateLoad(retType, AL);
+    CI->replaceAllUsesWith(cload);
+    CI->eraseFromParent();
+    return true;
   }
 
   auto diffretsize = DL.getTypeSizeInBits(diffretType);
@@ -948,6 +970,181 @@ public:
         return {};
       }
 
+      auto canMatchParam = [&](Type *ArgTy, Type *ParamTy) -> bool {
+        if (ArgTy == ParamTy || ArgTy->canLosslesslyBitCastTo(ParamTy))
+          return true;
+        if (isa<PointerType>(ArgTy) && isa<PointerType>(ParamTy))
+          return true;
+        if (ArgTy->isIntegerTy() && ParamTy->isIntegerTy(1))
+          return true;
+        auto &DL = fn->getParent()->getDataLayout();
+        if (ArgTy->isIntegerTy() && ParamTy->isPointerTy() &&
+            DL.getTypeSizeInBits(ArgTy) == DL.getPointerTypeSizeInBits(ParamTy))
+          return true;
+        if (ArgTy->isPointerTy() && ParamTy->isIntegerTy() &&
+            DL.getPointerTypeSizeInBits(ArgTy) == DL.getTypeSizeInBits(ParamTy))
+          return true;
+        return false;
+      };
+
+      // When Clang's C++ ABI runs out of argument registers on the Enzyme call
+      // (because of leading fn / metadata / tag arguments), small trivially
+      // copyable view/span structs spill to `ptr byval(StructTy)` in `CI` even
+      // though `fn` ABI-coerced the same struct into `K >= 1` non-byval
+      // register parameters starting at `truei`.
+      auto inferByValStructAlign = [&](Type *ByValTy,
+                                       MaybeAlign ParamAlign) -> uint64_t {
+        auto &DL = fn->getParent()->getDataLayout();
+        uint64_t byValSize = DL.getTypeAllocSize(ByValTy);
+        uint64_t align = DL.getABITypeAlign(ByValTy).value();
+        if (auto *ST = dyn_cast<StructType>(ByValTy)) {
+          if (ST->isPacked()) {
+            for (Type *ElTy : ST->elements())
+              align =
+                  std::max<uint64_t>(align, DL.getABITypeAlign(ElTy).value());
+          }
+        }
+        if (ParamAlign)
+          align = std::max<uint64_t>(align, ParamAlign->value());
+        if (byValSize > 0)
+          align = MinAlign(byValSize, align);
+        return std::max<uint64_t>(1, align);
+      };
+
+      auto matchCoercedByVal =
+          [&](unsigned startParam, unsigned byValArgIdx, Type *ByValTy,
+              SmallVectorImpl<uint64_t> &byteOffsets) -> size_t {
+        byteOffsets.clear();
+        auto &DL = fn->getParent()->getDataLayout();
+        uint64_t byValSize = DL.getTypeAllocSize(ByValTy);
+        if (byValSize == 0)
+          return 0;
+        uint64_t structAlign =
+            inferByValStructAlign(ByValTy, CI->getParamAlign(byValArgIdx));
+        uint64_t offset = 0;
+        size_t maxK = std::min<size_t>(FT->getNumParams() - startParam, 8);
+        for (size_t f = 0; f < maxK; ++f) {
+          if (fn->hasParamAttribute(startParam + f, Attribute::ByVal) ||
+              fn->hasParamAttribute(startParam + f, Attribute::StructRet))
+            return 0;
+          Type *fPTy = FT->getParamType(startParam + f);
+          if (!fPTy->isFirstClassType() || fPTy->isVoidTy() ||
+              fPTy->isMetadataTy())
+            return 0;
+          uint64_t fAlign =
+              std::min<uint64_t>(DL.getABITypeAlign(fPTy).value(), structAlign);
+          offset = alignTo(offset, fAlign);
+          uint64_t fSize = DL.getTypeStoreSize(fPTy);
+          if (offset + fSize > byValSize)
+            return 0;
+          byteOffsets.push_back(offset);
+          offset += fSize;
+          if (alignTo(offset, structAlign) >= byValSize)
+            return f + 1;
+        }
+        return 0;
+      };
+
+      auto loadCoercedField = [&](Value *byValPtr, unsigned byValArgIdx,
+                                  Type *ByValTy, uint64_t byteOff,
+                                  Type *targetTy) -> Value * {
+        auto &DL = fn->getParent()->getDataLayout();
+        unsigned addrSpace =
+            cast<PointerType>(byValPtr->getType())->getAddressSpace();
+        Value *fieldPtr = byValPtr;
+        if (byteOff != 0) {
+          Value *i8Ptr = Builder.CreateBitCast(
+              byValPtr,
+              getPointerType(Type::getInt8Ty(CI->getContext()), addrSpace));
+          fieldPtr = Builder.CreateInBoundsGEP(
+              Type::getInt8Ty(CI->getContext()), i8Ptr,
+              ConstantInt::get(Type::getInt64Ty(CI->getContext()), byteOff));
+        }
+        fieldPtr = Builder.CreateBitCast(fieldPtr,
+                                         getPointerType(targetTy, addrSpace));
+        MaybeAlign paramAlign = CI->getParamAlign(byValArgIdx);
+        uint64_t baseAlign =
+            std::max<uint64_t>(DL.getABITypeAlign(ByValTy).value(),
+                               paramAlign ? paramAlign->value() : 1);
+        uint64_t effAlign = MinAlign(baseAlign, byteOff);
+        return Builder.CreateAlignedLoad(targetTy, fieldPtr,
+                                         MaybeAlign(effAlign));
+      };
+
+      if (CI->isByValArgument(i) &&
+          !fn->hasParamAttribute(truei, Attribute::ByVal)) {
+        Type *ByValTy = CI->getParamByValType(i);
+        SmallVector<uint64_t, 4> byteOffsets;
+        size_t coercedK = matchCoercedByVal(truei, i, ByValTy, byteOffsets);
+        if (coercedK >= 1) {
+          if (ty != DIFFE_TYPE::DUP_ARG && ty != DIFFE_TYPE::DUP_NONEED) {
+            for (size_t f = 0; f < coercedK; ++f) {
+              Type *fPTy = FT->getParamType(truei + f);
+              overwritten_args[truei + f] = overwritten;
+              DIFFE_TYPE fTy = ty;
+              if (fTy == DIFFE_TYPE::OUT_DIFF && !fPTy->isFPOrFPVectorTy())
+                fTy = DIFFE_TYPE::CONSTANT;
+              constants.push_back(fTy);
+              args.push_back(
+                  loadCoercedField(res, i, ByValTy, byteOffsets[f], fPTy));
+            }
+            truei += coercedK;
+            continue;
+          }
+#if LLVM_VERSION_MAJOR >= 16
+          bool isBatch = batchOffset.has_value();
+#else
+          bool isBatch = batchOffset.hasValue();
+#endif
+          if (!isBatch) {
+            size_t shStart =
+                (interleaved == -1) ? (size_t)(i + 1) : (size_t)interleaved;
+            auto &DL = fn->getParent()->getDataLayout();
+            uint64_t byValSize = DL.getTypeAllocSize(ByValTy);
+            bool shByValOk = (shStart + width <= num_args);
+            for (unsigned v = 0; v < width && shByValOk; ++v) {
+              if (!CI->isByValArgument(shStart + v) ||
+                  DL.getTypeAllocSize(CI->getParamByValType(shStart + v)) !=
+                      byValSize)
+                shByValOk = false;
+            }
+            if (shByValOk) {
+              for (size_t f = 0; f < coercedK; ++f) {
+                Type *fPTy = FT->getParamType(truei + f);
+                overwritten_args[truei + f] = overwritten;
+                constants.push_back(ty);
+                args.push_back(
+                    loadCoercedField(res, i, ByValTy, byteOffsets[f], fPTy));
+                Value *shPacked = nullptr;
+                for (unsigned v = 0; v < width; ++v) {
+                  size_t shIdx = shStart + v;
+                  Value *el = loadCoercedField(CI->getArgOperand(shIdx), shIdx,
+                                               CI->getParamByValType(shIdx),
+                                               byteOffsets[f], fPTy);
+                  if (width > 1) {
+                    shPacked =
+                        shPacked
+                            ? Builder.CreateInsertValue(shPacked, el, {v})
+                            : Builder.CreateInsertValue(
+                                  UndefValue::get(ArrayType::get(fPTy, width)),
+                                  el, {v});
+                  } else {
+                    shPacked = el;
+                  }
+                }
+                args.push_back(shPacked);
+              }
+              if (interleaved == -1)
+                i += width;
+              else
+                interleaved += width;
+              truei += coercedK;
+              continue;
+            }
+          }
+        }
+      }
+
       constants.push_back(ty);
 
       assert(truei < FT->getNumParams());
@@ -985,6 +1182,18 @@ public:
           res = Builder.CreateTrunc(res, PTy);
         }
         if (res->getType() != PTy) {
+          const DataLayout &DL = fn->getParent()->getDataLayout();
+          if (res->getType()->isIntegerTy() && PTy->isPointerTy() &&
+              DL.getTypeSizeInBits(res->getType()) ==
+                  DL.getPointerTypeSizeInBits(PTy)) {
+            res = Builder.CreateIntToPtr(res, PTy);
+          } else if (res->getType()->isPointerTy() && PTy->isIntegerTy() &&
+                     DL.getPointerTypeSizeInBits(res->getType()) ==
+                         DL.getTypeSizeInBits(PTy)) {
+            res = Builder.CreatePtrToInt(res, PTy);
+          }
+        }
+        if (res->getType() != PTy) {
           auto loc = CI->getDebugLoc();
           if (auto arg = dyn_cast<Instruction>(res)) {
             loc = arg->getDebugLoc();
@@ -1006,15 +1215,146 @@ public:
 
       args.push_back(res);
       if (ty == DIFFE_TYPE::DUP_ARG || ty == DIFFE_TYPE::DUP_NONEED) {
-        if (interleaved == -1)
-          ++i;
-
-        Value *res = nullptr;
 #if LLVM_VERSION_MAJOR >= 16
         bool batch = batchOffset.has_value();
 #else
         bool batch = batchOffset.hasValue();
 #endif
+        // Handle primal passed in `K >= 1` coerced registers while its shadow
+        // spilled to `ptr byval(StructTy)` in `CI` due to register exhaustion.
+        if (!batch && !CI->isByValArgument(i) &&
+            !fn->hasParamAttribute(truei, Attribute::ByVal)) {
+          auto &DL = fn->getParent()->getDataLayout();
+          size_t matchedK = 0;
+          size_t shStart = 0;
+          SmallVector<uint64_t, 4> byteOffsets;
+          if (interleaved != -1) {
+            if ((size_t)interleaved + width <= num_args &&
+                CI->isByValArgument(interleaved)) {
+              Type *ShByValTy = CI->getParamByValType(interleaved);
+              uint64_t shSize = DL.getTypeAllocSize(ShByValTy);
+              size_t candK =
+                  matchCoercedByVal(truei, interleaved, ShByValTy, byteOffsets);
+              if (candK >= 1 && (size_t)i + candK <= maxsize) {
+                bool ok = true;
+                for (unsigned v = 0; v < width && ok; ++v) {
+                  if (!CI->isByValArgument(interleaved + v) ||
+                      DL.getTypeAllocSize(
+                          CI->getParamByValType(interleaved + v)) != shSize)
+                    ok = false;
+                }
+                for (size_t f = 1; f < candK && ok; ++f) {
+                  Value *pArg = CI->getArgOperand(i + f);
+                  if (isa<MetadataAsValue>(pArg) || getMetadataName(pArg) ||
+                      CI->isByValArgument(i + f) ||
+                      !canMatchParam(pArg->getType(),
+                                     FT->getParamType(truei + f)))
+                    ok = false;
+                }
+                if (ok) {
+                  matchedK = candK;
+                  shStart = (size_t)interleaved;
+                }
+              }
+            }
+          } else {
+            size_t maxK = std::min<size_t>(FT->getNumParams() - truei, 8);
+            for (size_t candK = 1; candK <= maxK; ++candK) {
+              if ((size_t)i + candK + width > maxsize)
+                break;
+              if (!CI->isByValArgument(i + candK))
+                continue;
+              Type *ShByValTy = CI->getParamByValType(i + candK);
+              uint64_t shSize = DL.getTypeAllocSize(ShByValTy);
+              if (matchCoercedByVal(truei, i + candK, ShByValTy, byteOffsets) !=
+                  candK)
+                continue;
+              bool ok = true;
+              for (unsigned v = 0; v < width && ok; ++v) {
+                if (!CI->isByValArgument(i + candK + v) ||
+                    DL.getTypeAllocSize(CI->getParamByValType(i + candK + v)) !=
+                        shSize)
+                  ok = false;
+              }
+              for (size_t f = 1; f < candK && ok; ++f) {
+                Value *pArg = CI->getArgOperand(i + f);
+                if (isa<MetadataAsValue>(pArg) || getMetadataName(pArg) ||
+                    CI->isByValArgument(i + f) ||
+                    !canMatchParam(pArg->getType(),
+                                   FT->getParamType(truei + f)))
+                  ok = false;
+              }
+              if (ok) {
+                matchedK = candK;
+                shStart = (size_t)i + candK;
+                break;
+              }
+            }
+          }
+          if (matchedK >= 1) {
+            auto emitByValShadowField = [&](size_t f) -> Value * {
+              Type *fPTy = FT->getParamType(truei + f);
+              Value *shPacked = nullptr;
+              for (unsigned v = 0; v < width; ++v) {
+                size_t shIdx = shStart + v;
+                Value *el = loadCoercedField(CI->getArgOperand(shIdx), shIdx,
+                                             CI->getParamByValType(shIdx),
+                                             byteOffsets[f], fPTy);
+                if (width > 1) {
+                  shPacked =
+                      shPacked
+                          ? Builder.CreateInsertValue(shPacked, el, {v})
+                          : Builder.CreateInsertValue(
+                                UndefValue::get(ArrayType::get(fPTy, width)),
+                                el, {v});
+                } else {
+                  shPacked = el;
+                }
+              }
+              return shPacked;
+            };
+            args.push_back(emitByValShadowField(0));
+            for (size_t f = 1; f < matchedK; ++f) {
+              Type *fPTy = FT->getParamType(truei + f);
+              overwritten_args[truei + f] = overwritten;
+              constants.push_back(ty);
+              Value *pVal = CI->getArgOperand(i + f);
+              if (fPTy != pVal->getType()) {
+                if (pVal->getType()->canLosslesslyBitCastTo(fPTy))
+                  pVal = Builder.CreateBitCast(pVal, fPTy);
+                else if (isa<PointerType>(pVal->getType()) &&
+                         isa<PointerType>(fPTy))
+                  pVal = Builder.CreateAddrSpaceCast(pVal, fPTy);
+                else if (pVal->getType()->isIntegerTy() && fPTy->isIntegerTy(1))
+                  pVal = Builder.CreateTrunc(pVal, fPTy);
+                else if (pVal->getType()->isIntegerTy() &&
+                         fPTy->isPointerTy() &&
+                         DL.getTypeSizeInBits(pVal->getType()) ==
+                             DL.getPointerTypeSizeInBits(fPTy))
+                  pVal = Builder.CreateIntToPtr(pVal, fPTy);
+                else if (pVal->getType()->isPointerTy() &&
+                         fPTy->isIntegerTy() &&
+                         DL.getPointerTypeSizeInBits(pVal->getType()) ==
+                             DL.getTypeSizeInBits(fPTy))
+                  pVal = Builder.CreatePtrToInt(pVal, fPTy);
+              }
+              args.push_back(pVal);
+              args.push_back(emitByValShadowField(f));
+            }
+            if (interleaved == -1) {
+              i += matchedK + width - 1;
+            } else {
+              i += matchedK - 1;
+              interleaved += width;
+            }
+            truei += matchedK;
+            continue;
+          }
+        }
+        if (interleaved == -1)
+          ++i;
+
+        Value *res = nullptr;
 
         for (unsigned v = 0; v < width; ++v) {
           if ((size_t)((interleaved == -1) ? i : interleaved) >= num_args) {
