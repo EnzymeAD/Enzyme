@@ -17,6 +17,8 @@ namespace batchutils {
 struct BatchCacheKey {
   FunctionOpInterface function;
   SmallVector<int64_t> batchSizes;
+  SmallVector<bool> batchedArgs;
+  SmallVector<bool> batchedResults;
 
   bool operator<(const BatchCacheKey &other) const {
     Operation *thisSymbolTable = SymbolTable::getNearestSymbolTable(function),
@@ -31,18 +33,48 @@ struct BatchCacheKey {
     if (thisName != otherName)
       return thisName < otherName;
 
-    return std::lexicographical_compare(batchSizes.begin(), batchSizes.end(),
-                                        other.batchSizes.begin(),
-                                        other.batchSizes.end());
+    if (batchSizes != other.batchSizes)
+      return std::lexicographical_compare(batchSizes.begin(), batchSizes.end(),
+                                          other.batchSizes.begin(),
+                                          other.batchSizes.end());
+
+    if (batchedArgs != other.batchedArgs)
+      return std::lexicographical_compare(
+          batchedArgs.begin(), batchedArgs.end(), other.batchedArgs.begin(),
+          other.batchedArgs.end());
+
+    return std::lexicographical_compare(
+        batchedResults.begin(), batchedResults.end(),
+        other.batchedResults.begin(), other.batchedResults.end());
   }
 };
 
 mlir::TensorType applyBatchSizes(mlir::Type Ty,
                                  llvm::ArrayRef<int64_t> batchSizes);
 
+/// Compute the set of values inside \p F that depend on the batched entry
+/// arguments specified by \p batchedArgs.
+void computeBatchedValues(FunctionOpInterface F,
+                          llvm::ArrayRef<bool> batchedArgs,
+                          llvm::DenseSet<Value> &batchedValues);
+
+/// Return a batched version of \p origVal, inserting and caching a broadcast or
+/// batched constant when \p origVal is unbatched.
+Value getBatchedValue(Value origVal, OpBuilder &builder, IRMapping &mapper,
+                      llvm::ArrayRef<int64_t> batchSizes,
+                      const llvm::DenseSet<Value> &batchedValues,
+                      llvm::DenseMap<Value, Value> &broadcastCache,
+                      bool insertAtCurrentPoint = false);
+
 FunctionOpInterface batchCloneFunction(
     OpBuilder &builder, FunctionOpInterface F, Twine name,
     llvm::ArrayRef<int64_t> batchSizes,
+    std::map<BatchCacheKey, FunctionOpInterface> &batchedFunctionCache);
+
+FunctionOpInterface batchCloneFunction(
+    OpBuilder &builder, FunctionOpInterface F, Twine name,
+    llvm::ArrayRef<int64_t> batchSizes, llvm::ArrayRef<bool> batchedArgs,
+    llvm::ArrayRef<bool> batchedResults,
     std::map<BatchCacheKey, FunctionOpInterface> &batchedFunctionCache);
 
 void batchCloneBlock(
@@ -51,15 +83,39 @@ void batchCloneBlock(
     std::map<BatchCacheKey, FunctionOpInterface> &batchedFunctionCache,
     bool withoutTerminator);
 
+void batchCloneBlock(
+    OpBuilder &builder, Block *blk, IRMapping &mapper,
+    llvm::ArrayRef<int64_t> batchSizes,
+    std::map<BatchCacheKey, FunctionOpInterface> &batchedFunctionCache,
+    bool withoutTerminator, const llvm::DenseSet<Value> &batchedValues,
+    llvm::ArrayRef<bool> batchedResults,
+    llvm::DenseMap<Value, Value> &broadcastCache, Region *funcBody = nullptr,
+    bool insertBroadcastsLocally = false);
+
 void batchCloneRegion(
     OpBuilder &builder, Region *src, Region *dest, IRMapping &mapper,
     llvm::ArrayRef<int64_t> batchSizes,
     std::map<BatchCacheKey, FunctionOpInterface> &batchedFunctionCache);
 
+void batchCloneRegion(
+    OpBuilder &builder, Region *src, Region *dest, IRMapping &mapper,
+    llvm::ArrayRef<int64_t> batchSizes,
+    std::map<BatchCacheKey, FunctionOpInterface> &batchedFunctionCache,
+    const llvm::DenseSet<Value> &batchedValues,
+    llvm::ArrayRef<bool> batchedResults,
+    llvm::DenseMap<Value, Value> &broadcastCache, Region *funcBody = nullptr);
+
 LogicalResult handleCallOp(
     func::CallOp callOp, OpBuilder &builder, IRMapping &mapper,
     llvm::ArrayRef<int64_t> batchSizes,
     std::map<BatchCacheKey, FunctionOpInterface> &batchedFunctionCache);
+
+LogicalResult
+handleCallOp(func::CallOp callOp, OpBuilder &builder, IRMapping &mapper,
+             llvm::ArrayRef<int64_t> batchSizes,
+             std::map<BatchCacheKey, FunctionOpInterface> &batchedFunctionCache,
+             const llvm::DenseSet<Value> &batchedValues,
+             llvm::DenseMap<Value, Value> &broadcastCache);
 
 template <typename T>
 FunctionOpInterface batchOperationWithoutInsertingCallOp(
@@ -125,27 +181,50 @@ LogicalResult batchOperation(
   return success();
 }
 
-// instead of inserting a call op, we will inline each operation directly
-// into the caller
+/// Inline each operation directly into the caller instead of inserting a call.
 inline void batchOperationInline(PatternRewriter &rewriter,
                                  enzyme::BatchOp batchOp,
                                  FunctionOpInterface func) {
   auto &origRegion = func.getFunctionBody();
   auto &origBlock = origRegion.front();
 
+  SmallVector<bool> batchedArgs;
+  auto origArgTypes = func.getArgumentTypes();
+  batchedArgs.reserve(batchOp->getNumOperands());
+  for (auto [actualVal, origTy] :
+       llvm::zip_equal(batchOp.getInputs(), origArgTypes))
+    batchedArgs.push_back(actualVal.getType() != origTy);
+
+  SmallVector<bool> batchedResults;
+  auto origResTypes = func.getResultTypes();
+  batchedResults.reserve(batchOp->getNumResults());
+  for (auto [actualRes, origTy] :
+       llvm::zip_equal(batchOp.getOutputs(), origResTypes))
+    batchedResults.push_back(actualRes.getType() != origTy);
+
   IRMapping mapper;
-  for (int i = 0; i < batchOp->getNumOperands(); i++) {
+  for (unsigned i = 0; i < batchOp->getNumOperands(); i++) {
     mapper.map(origBlock.getArguments()[i], batchOp->getOperand(i));
   }
 
   rewriter.setInsertionPoint(batchOp);
   std::map<BatchCacheKey, FunctionOpInterface> batchedFunctionCache;
+  DenseSet<Value> batchedValues;
+  computeBatchedValues(func, batchedArgs, batchedValues);
+  DenseMap<Value, Value> broadcastCache;
   batchCloneBlock(rewriter, &origBlock, mapper, batchOp.getBatchShape(),
-                  batchedFunctionCache, true);
+                  batchedFunctionCache, true, batchedValues, batchedResults,
+                  broadcastCache, &origRegion,
+                  /*insertBroadcastsLocally=*/true);
 
   auto origTerm = origBlock.getTerminator();
   for (auto [i, operand] : llvm::enumerate(origTerm->getOperands())) {
-    auto mappedOperand = mapper.lookup(operand);
+    Value mappedOperand =
+        batchedResults[i]
+            ? getBatchedValue(operand, rewriter, mapper,
+                              batchOp.getBatchShape(), batchedValues,
+                              broadcastCache, /*insertAtCurrentPoint=*/true)
+            : mapper.lookup(operand);
     rewriter.replaceAllUsesWith(batchOp->getResult(i), mappedOperand);
   }
   rewriter.eraseOp(batchOp);

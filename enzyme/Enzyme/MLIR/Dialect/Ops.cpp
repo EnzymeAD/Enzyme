@@ -672,13 +672,61 @@ LogicalResult AutoDiffOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 }
 
 LogicalResult BatchOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
-  // TODO: Verify that the result type is same as the type of the referenced
-  // func.func op.
   auto global = symbolTable.lookupNearestSymbolFrom<FunctionOpInterface>(
       *this, getFnAttr());
   if (!global)
     return emitOpError("'")
            << getFn() << "' does not reference a valid global funcOp";
+
+  auto argTypes = global.getArgumentTypes();
+  auto resTypes = global.getResultTypes();
+  if (getInputs().size() != argTypes.size())
+    return emitOpError("expected ")
+           << argTypes.size() << " operands for callee '" << getFn()
+           << "', got " << getInputs().size();
+  if (getOutputs().size() != resTypes.size())
+    return emitOpError("expected ")
+           << resTypes.size() << " results for callee '" << getFn() << "', got "
+           << getOutputs().size();
+
+  auto batchShape = getBatchShape();
+  auto isValidType = [&](Type actualTy, Type origTy) -> bool {
+    if (actualTy == origTy)
+      return true;
+    if (isa<UnrankedTensorType>(origTy))
+      return false;
+    Type batchedTy;
+    if (auto tensorTy = dyn_cast<TensorType>(origTy)) {
+      SmallVector<int64_t> shape(batchShape.begin(), batchShape.end());
+      shape.append(tensorTy.getShape().begin(), tensorTy.getShape().end());
+      batchedTy = tensorTy.clone(shape);
+    } else if (RankedTensorType::isValidElementType(origTy)) {
+      batchedTy = RankedTensorType::get(batchShape, origTy);
+    } else {
+      return false;
+    }
+    return actualTy == batchedTy;
+  };
+
+  for (auto [i, pair] : llvm::enumerate(llvm::zip(getInputs(), argTypes))) {
+    Type actualTy = std::get<0>(pair).getType();
+    Type origTy = std::get<1>(pair);
+    if (!isValidType(actualTy, origTy))
+      return emitOpError("operand #")
+             << i << " type " << actualTy
+             << " does not match unbatched or batched callee argument type "
+             << origTy;
+  }
+
+  for (auto [i, pair] : llvm::enumerate(llvm::zip(getOutputs(), resTypes))) {
+    Type actualTy = std::get<0>(pair).getType();
+    Type origTy = std::get<1>(pair);
+    if (!isValidType(actualTy, origTy))
+      return emitOpError("result #")
+             << i << " type " << actualTy
+             << " does not match unbatched or batched callee result type "
+             << origTy;
+  }
 
   return success();
 }
