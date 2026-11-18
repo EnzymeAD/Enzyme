@@ -6,20 +6,10 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// Built into FlangEnzyme-<v> (the LLVM pass plugin, `flang -fpass-plugin=`)
-// when FlangEnzymeMLIR-<v> is built too: when flang loads FlangEnzyme, this
-// loads FlangEnzymeMLIR next to it, as `flang -fc1 -load` would, so that the
-// one -fpass-plugin also brings in Enzyme's passes for flang's MLIR pipeline
-// (see FlangEnzymeMLIRPlugin.cpp). flang loads pass plugins before it parses
-// -mllvm and -mmlir and before it builds its MLIR pipeline, so
-// FlangEnzymeMLIR's options and pipeline callbacks are registered in time.
-//
-// FlangEnzymeMLIR is loaded rather than linked in, so that loading both
-// plugins (-fpass-plugin=FlangEnzyme and -load FlangEnzymeMLIR) still loads
-// one copy of it: its options would be registered twice otherwise, which
-// LLVM rejects. Outside flang (e.g. `opt -load-pass-plugin`), FlangEnzymeMLIR
-// does not load, as the FIR and flang symbols it needs are missing; nothing
-// changes there.
+// Loads FlangEnzymeMLIR when flang loads the FlangEnzyme pass plugin, so that
+// `flang -fpass-plugin=FlangEnzyme-<v>.so` alone also adds Enzyme's passes to
+// flang's MLIR pipeline. The library is loaded rather than linked in so that
+// an additional `-load` of it shares one copy and registers its options once.
 //
 //===----------------------------------------------------------------------===//
 
@@ -35,8 +25,8 @@
 #include <string>
 
 #if !defined(_WIN32)
-/// Where FlangEnzymeMLIR is, relative to this plugin: next to it once
-/// installed, under MLIR/Flang in a build tree.
+/// Returns the path of FlangEnzymeMLIR next to this plugin (install tree) or
+/// under MLIR/Flang (build tree), or an empty string if it is in neither.
 static std::string findFlangEnzymeMLIR() {
   Dl_info info;
   if (!dladdr(reinterpret_cast<void *>(&findFlangEnzymeMLIR), &info) ||
@@ -63,26 +53,22 @@ __attribute__((weak)) void registerPassPipelineConfigCallback(
 namespace {
 struct LoadFlangEnzymeMLIR {
   LoadFlangEnzymeMLIR() {
-    // Only in flang: FlangEnzymeMLIR registers itself with flang's pipeline
-    // (fir::registerPassPipelineConfigCallback), which its static
-    // initializer calls.
+    // FlangEnzymeMLIR cannot load into a host without flang's pipeline.
     if (!&fir::registerPassPipelineConfigCallback)
       return;
     std::string path = findFlangEnzymeMLIR();
     if (path.empty())
       return;
-    // Loaded by a -load already.
+    // An earlier `-load` already registered its passes and options.
     if (void *loaded = dlopen(path.c_str(), RTLD_LAZY | RTLD_NOLOAD)) {
       dlclose(loaded);
       return;
     }
     std::string error;
-    // As flang loads a -load plugin.
     llvm::sys::DynamicLibrary::getPermanentLibrary(path.c_str(), &error);
   }
 };
 } // namespace
 
-// Runs when flang loads FlangEnzyme as a pass plugin.
 static LoadFlangEnzymeMLIR loadFlangEnzymeMLIR;
 #endif

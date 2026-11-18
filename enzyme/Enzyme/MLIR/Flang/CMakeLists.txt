@@ -1,7 +1,5 @@
-# FlangEnzymeMLIR: a plugin for `flang -fc1 -load` that adds Enzyme's passes to
-# flang's MLIR pipeline (fir::registerPassPipelineConfigCallback) from its
-# static initializer. Its MLIR/FIR/flang symbols are left undefined and resolve
-# from the host `flang -fc1` at load, so no second copy of LLVM is pulled in.
+# A plugin for `flang -fc1 -load`. MLIR, FIR and flang symbols stay undefined
+# and resolve from the host, so the plugin carries no second copy of LLVM.
 add_llvm_library(
   FlangEnzymeMLIR-${LLVM_VERSION_MAJOR} MODULE FlangEnzymeMLIRPlugin.cpp
   # FlangEnzymeMLIRLoader.cpp is built into FlangEnzyme instead.
@@ -16,9 +14,7 @@ install(
   TARGETS FlangEnzymeMLIR-${LLVM_VERSION_MAJOR}
   LIBRARY DESTINATION lib COMPONENT shlib)
 
-# The LLVM pass plugin for flang loads FlangEnzymeMLIR when flang loads it,
-# so that `flang -fpass-plugin=FlangEnzyme-<v>.so` (or FlangEnzyme-<v>.cfg)
-# alone brings in Enzyme's MLIR passes too. See FlangEnzymeMLIRLoader.cpp.
+# Make `flang -fpass-plugin=FlangEnzyme-<v>.so` load FlangEnzymeMLIR as well.
 if(ENZYME_FLANG_MLIR_LOADER
    AND TARGET FlangEnzyme-${LLVM_VERSION_MAJOR} AND NOT WIN32)
   target_sources(

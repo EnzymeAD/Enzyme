@@ -6,12 +6,8 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// FlangEnzymeMLIR is loaded into `flang -fc1`, with -load or by the LLVM pass
-// plugin FlangEnzyme (see FlangEnzymeMLIRLoader.cpp). Static initializers in
-// it add Enzyme's passes to flang's MLIR pipeline through
-// fir::registerPassPipelineConfigCallback.
-//
-// Only the Enzyme code is carried here; MLIR, FIR and flang symbols resolve
-// from the host at load time.
+// A plugin for `flang -fc1` that adds Enzyme's passes to flang's MLIR pipeline
+// through fir::registerPassPipelineConfigCallback. It is loaded with `-load`
+// or by FlangEnzyme. MLIR, FIR and flang symbols resolve from the host.
 //
 //===----------------------------------------------------------------------===//

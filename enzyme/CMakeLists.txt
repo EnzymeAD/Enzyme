@@ -250,11 +250,8 @@ else()
 endif()
 message("found MLIR ${MLIR_FOUND}")
 
-# Flang is discovered the same way as Clang: FlangConfig.cmake exports the
-# FIR/HLFIR dialect targets and sets FLANG_INCLUDE_DIRS, which the flang plugin
-# FlangEnzymeMLIR (ENZYME_FLANG_MLIR) needs. It references MLIR imported
-# targets, so it must come after the MLIR find_package above, or Flang_FOUND
-# ends up FALSE.
+# FlangConfig.cmake references MLIR's imported targets, so Flang must be found
+# after MLIR or Flang_FOUND is false.
 if(DEFINED Flang_DIR)
   find_package(Flang CONFIG PATHS ${Flang_DIR} NO_DEFAULT_PATH)
   if(${Flang_FOUND})

@@ -1,9 +1,6 @@
 include_directories(${CMAKE_CURRENT_BINARY_DIR})
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 
-# Resolve Flang up front, so Flang/ can define the flang plugin.
-# FlangConfig references clang targets, so import Clang first.
-# Pass -DFlang_DIR=<llvm>/lib/cmake/flang and likewise -DClang_DIR.
 option(
   ENZYME_FLANG_MLIR
   "Build FlangEnzymeMLIR, Enzyme's plugin for flang's MLIR pipeline (needs Flang)"
@@ -13,6 +10,7 @@ cmake_dependent_option(
   ENZYME_FLANG_MLIR_LOADER
   "Make FlangEnzyme load FlangEnzymeMLIR when flang loads it" ON
   "ENZYME_FLANG_MLIR" OFF)
+# FlangConfig references Clang's targets, so find Clang first.
 if(ENZYME_FLANG_MLIR)
   find_package(Clang REQUIRED CONFIG)
   find_package(Flang REQUIRED CONFIG)
