@@ -2,11 +2,15 @@
 // RUN: %clang++ -std=c++17 -O1 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -S | %lli -
 // RUN: %clang++ -std=c++17 -O2 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -S | %lli -
 // RUN: %clang++ -std=c++17 -O3 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -S | %lli -
+// RUN: if [ %llvmver -ge 16 ]; then %clang++ -std=c++17 -O2 %s -S -emit-llvm -o - %loadClangEnzyme | %lli - ; fi
+// RUN: if [ %llvmver -ge 16 ]; then %clang++ -std=c++17 -O3 %s -S -emit-llvm -o - %loadClangEnzyme | %lli - ; fi
 
 // Reduced from MFEM dFEM: strided views captured by value in forall lambdas,
 // with an __enzyme_integer hint on the stride. Until Enzyme lowers the hint
 // it is an opaque call, so the lambda's closure stays in memory, and the
-// first loop copies x into scratch through pointers loaded from it.
+// first loop copies x into scratch through pointers loaded from it. Through
+// the Clang plugin, the hints are moved onto the loaded strides once the
+// lambdas are inlined, and the closures are promoted before Enzyme runs.
 
 #include "../test_utils.h"
 #include <stddef.h>
