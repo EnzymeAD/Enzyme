@@ -7233,7 +7233,7 @@ bool TypeResults::anyFloat(Value *val, bool anythingIsFloat) const {
   assert(val);
   assert(val->getType());
   const auto &q = query(val);
-  auto dt = q[{-1}];
+  auto dt = q.firstLevelType(-1);
   if (!anythingIsFloat && dt == BaseType::Anything)
     return false;
   if (dt != BaseType::Anything && dt != BaseType::Unknown)
@@ -7246,7 +7246,7 @@ bool TypeResults::anyFloat(Value *val, bool anythingIsFloat) const {
   size_t ObjSize = skippedBytes(offs, val->getType(), dl);
 
   for (size_t i = 0; i < ObjSize;) {
-    dt = q[{(int)i}];
+    dt = q.firstLevelType((int)i);
     if (dt == BaseType::Integer) {
       i++;
       continue;
@@ -7272,7 +7272,7 @@ bool TypeResults::anyPointer(Value *val) const {
   assert(val);
   assert(val->getType());
   const auto &q = query(val);
-  auto dt = q[{-1}];
+  auto dt = q.firstLevelType(-1);
   if (dt != BaseType::Anything && dt != BaseType::Unknown)
     return dt == BaseType::Pointer;
   if (val->getType()->isTokenTy() || val->getType()->isVoidTy())
@@ -7283,7 +7283,7 @@ bool TypeResults::anyPointer(Value *val) const {
   size_t ObjSize = skippedBytes(offs, val->getType(), dl);
 
   for (size_t i = 0; i < ObjSize;) {
-    dt = q[{(int)i}];
+    dt = q.firstLevelType((int)i);
     if (dt == BaseType::Integer) {
       i++;
       continue;
