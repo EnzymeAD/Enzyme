@@ -917,7 +917,7 @@ void rev_call_arg(bool forward, const DagInit *ruleDag,
     }
     if (Def->isSubClassOf("MagicInst")) {
       if (Def->getName() == "Rows" || Def->isSubClassOf("Rows")) {
-        os << "({";
+        os << "[&]() {";
         for (size_t i = Dag->getNumArgs() - 1;; i--) {
           os << "auto brow_" << i << " = ";
           rev_call_arg(forward, Dag, pattern, i, os, vars);
@@ -927,6 +927,8 @@ void rev_call_arg(bool forward, const DagInit *ruleDag,
         }
         if (Dag->getNumArgs() == 1)
           os << "SmallVector<Value*, 1> vals = {to_blas_callconv(Builder2, ";
+        else
+          os << "return ";
         os << "get_blas_row(Builder2, ";
         for (size_t i = 0; i < Dag->getNumArgs(); i++) {
           os << "brow_" << i;
@@ -935,18 +937,18 @@ void rev_call_arg(bool forward, const DagInit *ruleDag,
         os << "byRef, cublas)";
         if (Dag->getNumArgs() == 1)
           os << "[0], byRef, cublas, julia_decl_type, allocationBuilder, "
-                "\"\")}; vals";
-        os << ";})";
+                "\"\")}; return vals";
+        os << ";}()";
         return;
       }
       if (Def->getName() == "Concat") {
-        os << "({";
+        os << "[&]() {";
         for (size_t i = 0; i < Dag->getNumArgs(); i++) {
           os << "auto concat_" << i << " = ";
           rev_call_arg(forward, Dag, pattern, i, os, vars);
           os << "; ";
         }
-        os << "concat_values<";
+        os << "return concat_values<";
         for (size_t i = 0; i < Dag->getNumArgs(); i++) {
           if (i != 0)
             os << ", ";
@@ -958,7 +960,7 @@ void rev_call_arg(bool forward, const DagInit *ruleDag,
             os << ", ";
           os << "concat_" << i;
         }
-        os << "); })";
+        os << "); }()";
         return;
       }
       if (Def->getName() == "ld") {
@@ -979,13 +981,13 @@ void rev_call_arg(bool forward, const DagInit *ruleDag,
         if (Dag->getNumArgs() != 1)
           PrintFatalError(pattern.getLoc(), "only 1-arg ld operands supported");
         const auto name = Dag->getArgNameStr(0);
-        os << "    ({ auto V = load_if_ref(Builder2, intType, arg_" << name
+        os << "    [&]() { auto V = load_if_ref(Builder2, intType, arg_" << name
            << ", byRef);\n";
         os << "    SmallVector<Value*, 1> vs = {to_blas_callconv(Builder2, "
               "Builder2.CreateICmpEQ(V, ConstantInt::get(V->getType(), 0)), "
               "byRef, cublas, julia_decl_type, allocationBuilder, "
               "\"is_zero\")};\n";
-        os << "    vs; })";
+        os << "    return vs; }()";
         return;
       }
 
@@ -1050,7 +1052,7 @@ void rev_call_arg(bool forward, const DagInit *ruleDag,
     if (Def->getName() == "InactiveArgSpec" ||
         Def->isSubClassOf("InactiveArgSpec")) {
       if (Def->getValueAsBit("asserting")) {
-        os << "            ({std::string s;\n";
+        os << "            [&]() {std::string s;\n";
         os << "            llvm::raw_string_ostream ss(s);\n";
         os << "            ss << \"in Mode: \" << to_string(Mode) << "
               "\"\\n\";\n";
@@ -1058,7 +1060,7 @@ void rev_call_arg(bool forward, const DagInit *ruleDag,
            << pattern.getName() << " of \" << call;\n";
         os << "            EmitNoDerivativeError(ss.str(), call, gutils, "
               "Builder2);\n";
-        os << "            ArrayRef<Value*>(); })";
+        os << "            return ArrayRef<Value*>(); }()";
       }
       return;
     }
@@ -1074,7 +1076,7 @@ void rev_call_arg(bool forward, const DagInit *ruleDag,
       const auto after = Def->getValueAsListOfStrings("after");
       auto inty = Def->getValueAsString("inty");
       auto outty = Def->getValueAsString("outty");
-      os << "({";
+      os << "[&]() {";
       os << "    auto V = arg_" << name << ";\n";
       os << "    if (byRef) V = Builder2.CreateLoad(" << inty << ", V, \"ld."
          << name << "\");\n";
@@ -1088,12 +1090,12 @@ void rev_call_arg(bool forward, const DagInit *ruleDag,
       }
       os << "SmallVector<Value *, 1>vs = { to_blas_callconv(Builder2, res, "
             "byRef, cublas, julia_decl_type, allocationBuilder, \""
-         << Def->getName() << "." << name << "\") }; vs; })";
+         << Def->getName() << "." << name << "\") }; return vs; }()";
       return;
     }
     if (Def->isSubClassOf("Binop")) {
       auto op = Def->getValueAsString("s");
-      os << "({";
+      os << "[&]() {";
       for (size_t i = 0; i < Dag->getNumArgs(); i++) {
         os << "SmallVector<Value*, 1> marg_" << i << ";\n";
         os << " for (auto tmp : ";
@@ -1127,7 +1129,7 @@ void rev_call_arg(bool forward, const DagInit *ruleDag,
               "ConstantFP::get(subarg_1->getType(), 0.0)), "
               "ConstantFP::get(quot->getType(), 0.0), quot), byRef, cublas, "
               "julia_decl_type, allocationBuilder, \"FDivOrZero\"));\n"
-              " }\n vals; })";
+              " }\n return vals; }()";
         return;
       }
       os << "  vals.push_back(";
@@ -1149,12 +1151,12 @@ void rev_call_arg(bool forward, const DagInit *ruleDag,
            << Def->getValueAsString("s") << "\" )";
       else
         os << ")";
-      os << ");\n }\n vals; })";
+      os << ");\n }\n return vals; }()";
       return;
     }
     if (Def->isSubClassOf("BIntrinsic")) {
       auto op = Def->getValueAsString("s");
-      os << "({";
+      os << "[&]() {";
       for (size_t i = 0; i < Dag->getNumArgs(); i++) {
         os << "SmallVector<Value*, 1> marg_" << i << ";\n";
         os << " for (auto tmp : ";
@@ -1185,13 +1187,13 @@ void rev_call_arg(bool forward, const DagInit *ruleDag,
       os << ", byRef, cublas, julia_decl_type, "
             "allocationBuilder, \""
          << Def->getValueAsString("s") << "\" )";
-      os << ");\n vals; })";
+      os << ");\n return vals; }()";
       return;
     }
     if (Def->isSubClassOf("BlasCall")) {
       const auto dfnc_name = Def->getValueAsString("s");
       assert(get_blas_ret_ty(dfnc_name) == "fpType");
-      os << "({";
+      os << "[&]() {";
       os << "      // BlasCall " << dfnc_name << " (Arg)\n";
 
       rev_call_args(forward, "marg", pattern, Dag, os, dfnc_name, ArgType::fp,
@@ -1235,12 +1237,12 @@ void rev_call_arg(bool forward, const DagInit *ruleDag,
             "(Value*)cubcall);\n"
          << "         resvec[0] = to_blas_fp_callconv(Builder2, resvec[0], "
             "byRefFloat, blasFPType, allocationBuilder, \"blascall\");\n"
-         << "         resvec;\n";
-      os << " })\n";
+         << "         return resvec;\n";
+      os << " }()\n";
       return;
     }
     if (Def->getName() == "FirstUse" || Def->isSubClassOf("FirstUse")) {
-      os << "({";
+      os << "[&]() {";
       for (size_t i = 0; i < Dag->getNumArgs(); i++) {
         os << "SmallVector<Value*, 1> farg_" << i << ";\n";
         os << " for (auto tmp : ";
@@ -1254,22 +1256,22 @@ void rev_call_arg(bool forward, const DagInit *ruleDag,
       os << "first_use_" << Def->getValueAsString("var")
          << " = Builder2.getFalse();\n";
 
-      os << " vals; })";
+      os << " return vals; }()";
       return;
     }
     if (Def->getName() == "First") {
-      os << "({";
+      os << "[&]() {";
       for (size_t i = 0; i < Dag->getNumArgs(); i++) {
         os << "SmallVector<Value*, 1> sarg;\n";
         os << " for (auto tmp : ";
         rev_call_arg(forward, Dag, pattern, 0, os, vars);
         os << " ) { sarg.push_back(tmp); break; }\n";
       }
-      os << " sarg; })";
+      os << " return sarg; }()";
       return;
     }
     if (Def->getName() == "Lookup" || Def->getName() == "LoadLookup") {
-      os << "({";
+      os << "[&]() {";
       for (size_t i = 0; i < Dag->getNumArgs(); i++) {
         os << "SmallVector<Value*, 1> larg_" << i << ";\n";
         os << " for (auto tmp : ";
@@ -1317,7 +1319,7 @@ void rev_call_arg(bool forward, const DagInit *ruleDag,
       } else {
         os << "  SmallVector<Value*, 1> vals = { ptr, larg_1[1] };\n";
       }
-      os << "vals; })";
+      os << "return vals; }()";
       return;
     }
 

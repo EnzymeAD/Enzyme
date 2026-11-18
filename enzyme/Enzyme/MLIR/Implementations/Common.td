@@ -135,7 +135,7 @@ def SelectIfActive : StaticSelect<"!gutils->isConstantValue(imVal)">;
 
 def SelectIfComplex : StaticSelect<[{
   auto ty = imVal.getType();
-  isa<ComplexType>(ty) ||
+  return isa<ComplexType>(ty) ||
     (isa<TensorType>(ty) &&
       isa<ComplexType>(cast<TensorType>(ty).getElementType()));
 }]>;
@@ -166,7 +166,7 @@ def ResultShadowTypes : GlobalExpr</*needsprimal*/0, /*needsshadow*/0, [{
   SmallVector<Type> shadowTypes(op->getResultTypes());
   for (Type &ty : shadowTypes)
     ty = cast<AutoDiffTypeInterface>(ty).getShadowType(gutils->width);
-  shadowTypes;
+  return shadowTypes;
 }]>;
 
 def TypeOf : Operation</*primal*/0, /*shadow*/0> {
