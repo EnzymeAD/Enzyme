@@ -307,6 +307,9 @@ public:
   // solver may be null, in which case the older inductive hypothesis activity
   // analysis will be used.
   std::unique_ptr<DataFlowSolver> solver;
+  // Whether derivatives check at run time if a shadow is its primal (see the
+  // enzyme pass's runtimeActivity option).
+  bool runtimeActivity = false;
   MEnzymeLogic(bool dataflowActivity);
 
   FunctionOpInterface

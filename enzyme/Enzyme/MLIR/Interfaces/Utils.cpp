@@ -103,10 +103,11 @@ Value inactiveStoredValueShadow(Operation *orig, MGradientUtils &gutils,
   if (!iface.isMutable())
     return cast<AutoDiffTypeInterface>(gutils.getShadowType(stored.getType()))
         .createNullValue(builder, orig->getLoc());
-  orig->emitWarning()
-      << "storing an inactive value into differentiated memory; the shadow "
-         "holds the primal value, which runtime activity would be needed to "
-         "check";
+  if (!gutils.Logic.runtimeActivity)
+    orig->emitWarning()
+        << "storing an inactive value into differentiated memory; the shadow "
+           "holds the primal value, which runtime activity would be needed to "
+           "check";
   Value primal = gutils.getNewFromOriginal(stored);
   if (gutils.width == 1)
     return primal;

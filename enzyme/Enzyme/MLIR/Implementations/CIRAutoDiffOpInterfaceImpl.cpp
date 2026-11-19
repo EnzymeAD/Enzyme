@@ -84,6 +84,135 @@ struct CIRAllocaLike
     : public AllocaLikeInterface::ExternalModel<CIRAllocaLike, cir::AllocaOp> {
 };
 
+static bool returnsFreshAllocation(cir::CallOp call);
+static Value forwardedTo(BranchOpInterface br, unsigned succIndex,
+                         BlockArgument arg);
+
+// Whether the shadow of `ptr` can be `ptr` itself, as far as the derivative
+// checks: only with runtime activity on.
+static bool shadowMayBePrimal(Value ptr, MGradientUtils *gutils) {
+  if (!gutils->Logic.runtimeActivity)
+    return false;
+  SmallVector<Value> todo{ptr};
+  DenseSet<Value> seen;
+  while (!todo.empty()) {
+    Value v = todo.pop_back_val();
+    if (!seen.insert(v).second)
+      continue;
+    Operation *def = v.getDefiningOp();
+    if (!def) {
+      auto arg = cast<BlockArgument>(v);
+      Block *owner = arg.getOwner();
+      if (owner->isEntryBlock())
+        return true;
+      for (auto it = owner->pred_begin(), e = owner->pred_end(); it != e;
+           ++it) {
+        auto br = dyn_cast<BranchOpInterface>((*it)->getTerminator());
+        Value in = br ? forwardedTo(br, it.getSuccessorIndex(), arg) : Value();
+        if (!in)
+          return true;
+        todo.push_back(in);
+      }
+      continue;
+    }
+    if (isa<cir::AllocaOp>(def) || def->hasTrait<OpTrait::ConstantLike>())
+      continue;
+    if (auto call = dyn_cast<cir::CallOp>(def)) {
+      if (!returnsFreshAllocation(call))
+        return true;
+      continue;
+    }
+    if (auto cast = dyn_cast<cir::CastOp>(def);
+        cast && isa<cir::PointerType>(cast.getSrc().getType())) {
+      todo.push_back(cast.getSrc());
+      continue;
+    }
+    if (auto stride = dyn_cast<cir::PtrStrideOp>(def)) {
+      todo.push_back(stride.getBase());
+      continue;
+    }
+    if (auto member = dyn_cast<cir::GetMemberOp>(def)) {
+      todo.push_back(member.getAddr());
+      continue;
+    }
+    if (auto element = dyn_cast<cir::GetElementOp>(def)) {
+      todo.push_back(element.getBase());
+      continue;
+    }
+    if (auto select = dyn_cast<cir::SelectOp>(def)) {
+      todo.push_back(select.getTrueValue());
+      todo.push_back(select.getFalseValue());
+      continue;
+    }
+    return true;
+  }
+  return false;
+}
+
+// Memory holding a `ty`, which nothing reads, served as a garbage can for any write
+static Value getScratch(OpBuilder &builder, Location loc, Type ty) {
+  auto module =
+      builder.getInsertionBlock()->getParentOp()->getParentOfType<ModuleOp>();
+  auto ptrTy = cir::PointerType::get(ty);
+  constexpr StringLiteral prefix = "__enzyme_cir_scratch";
+  unsigned count = 0;
+  for (auto global : module.getOps<cir::GlobalOp>()) {
+    if (!global.getSymName().starts_with(prefix))
+      continue;
+    if (global.getSymType() == ty)
+      return cir::GetGlobalOp::create(builder, loc, ptrTy, global.getSymName());
+    ++count;
+  }
+  OpBuilder moduleBuilder = OpBuilder::atBlockBegin(module.getBody());
+  std::string name = (prefix + Twine(count)).str();
+  auto global = cir::GlobalOp::create(moduleBuilder, loc, name, ty,
+                                      /*isConstant=*/false, /*addrSpace=*/{},
+                                      cir::GlobalLinkageKind::InternalLinkage);
+  global.setInitialValueAttr(cast<AutoDiffTypeInterface>(ty).createNullAttr());
+  global.setPrivate();
+  return cir::GetGlobalOp::create(builder, loc, ptrTy, name);
+}
+
+static void cachePrimalAddress(Value addr, OpBuilder &cacheBuilder,
+                               MGradientUtilsReverse *gutils,
+                               SmallVectorImpl<Value> &caches) {
+  if (shadowMayBePrimal(addr, gutils))
+    caches.push_back(gutils->initAndPushCache(gutils->getNewFromOriginal(addr),
+                                              cacheBuilder));
+}
+
+// Whether `shadow` is `primal`, at run time, or null when it cannot be.
+static Value shadowIsPrimal(OpBuilder &builder, Location loc, Value shadow,
+                            Value primal) {
+  if (!primal)
+    return Value();
+  if (primal.getType() != shadow.getType())
+    primal = cir::CastOp::create(builder, loc, shadow.getType(),
+                                 cir::CastKind::bitcast, primal);
+  return cir::CmpOp::create(builder, loc, cir::CmpOpKind::eq, shadow, primal);
+}
+
+// Where to write the adjoint `shadow` holds: `shadow`, or scratch memory
+// when it is the primal.
+static Value adjointAddress(OpBuilder &builder, Location loc, Value same,
+                            Value shadow) {
+  if (!same)
+    return shadow;
+  Type ty = cast<cir::PointerType>(shadow.getType()).getPointee();
+  return cir::SelectOp::create(builder, loc, same, getScratch(builder, loc, ty),
+                               shadow);
+}
+
+// The adjoint `loaded` is read from a shadow: zero when that is the primal.
+static Value adjointValue(OpBuilder &builder, Location loc, Value same,
+                          Value loaded) {
+  if (!same)
+    return loaded;
+  Value zero = cast<AutoDiffTypeInterface>(loaded.getType())
+                   .createNullValue(builder, loc);
+  return cir::SelectOp::create(builder, loc, same, zero, loaded);
+}
+
 struct CIRLoadOpInterfaceReverse
     : public ReverseAutoDiffOpInterface::ExternalModel<
           CIRLoadOpInterfaceReverse, cir::LoadOp> {
@@ -100,6 +229,13 @@ struct CIRLoadOpInterfaceReverse
     Value gradient = gutils->diffe(loadOp, builder);
     gutils->zeroDiffe(loadOp, builder);
     Value addrGradient = gutils->popCache(caches.front(), builder);
+    // Do a write, if it is inactive, go to trash can.
+    if (caches.size() > 1)
+      addrGradient =
+          adjointAddress(builder, loadOp.getLoc(),
+                         shadowIsPrimal(builder, loadOp.getLoc(), addrGradient,
+                                        gutils->popCache(caches[1], builder)),
+                         addrGradient);
     if (gutils->AtomicAdd) {
       // cir.atomic.fetch add accepts floating-point values and lowers to
       // atomicrmw fadd, like the llvm.load model's accumulation.
@@ -124,8 +260,11 @@ struct CIRLoadOpInterfaceReverse
         gutils->isConstantValue(loadOp) || gutils->isConstantValue(addr))
       return {};
     OpBuilder cacheBuilder(gutils->getNewFromOriginal(op));
-    return {gutils->initAndPushCache(gutils->invertPointerM(addr, cacheBuilder),
-                                     cacheBuilder)};
+    SmallVector<Value> caches{gutils->initAndPushCache(
+        gutils->invertPointerM(addr, cacheBuilder), cacheBuilder)};
+    if (!cast<AutoDiffTypeInterface>(loadOp.getType()).isMutable())
+      cachePrimalAddress(addr, cacheBuilder, gutils, caches);
+    return caches;
   }
 
   LogicalResult createShadowValues(Operation *op, OpBuilder &builder,
@@ -166,15 +305,22 @@ struct CIRStoreOpInterfaceReverse
     if (!gutils->isConstantValue(addr)) {
       Value addrGradient = gutils->popCache(caches.front(), builder);
       if (!iface.isMutable()) {
+        Location loc = storeOp.getLoc();
+        Value same = caches.size() > 1
+                         ? shadowIsPrimal(builder, loc, addrGradient,
+                                          gutils->popCache(caches[1], builder))
+                         : Value();
         if (!gutils->isConstantValue(val)) {
-          Value loaded = cir::LoadOp::create(builder, storeOp.getLoc(),
-                                             val.getType(), addrGradient);
-          gutils->addToDiffe(val, loaded, builder);
+          Value loaded =
+              cir::LoadOp::create(builder, loc, val.getType(), addrGradient);
+          gutils->addToDiffe(val, adjointValue(builder, loc, same, loaded),
+                             builder);
         }
         Value zero =
             cast<AutoDiffTypeInterface>(gutils->getShadowType(val.getType()))
                 .createNullValue(builder, op->getLoc());
-        cir::StoreOp::create(builder, storeOp.getLoc(), zero, addrGradient);
+        cir::StoreOp::create(builder, loc, zero,
+                             adjointAddress(builder, loc, same, addrGradient));
       }
     }
     // A store into memory the caller declared unneeded (enzyme_dupnoneed)
@@ -191,8 +337,12 @@ struct CIRStoreOpInterfaceReverse
     if (gutils->isConstantValue(addr))
       return {};
     OpBuilder cacheBuilder(gutils->getNewFromOriginal(op));
-    return {gutils->initAndPushCache(gutils->invertPointerM(addr, cacheBuilder),
-                                     cacheBuilder)};
+    SmallVector<Value> caches{gutils->initAndPushCache(
+        gutils->invertPointerM(addr, cacheBuilder), cacheBuilder)};
+    auto iface = dyn_cast<AutoDiffTypeInterface>(storeOp.getValue().getType());
+    if (iface && !iface.isMutable())
+      cachePrimalAddress(addr, cacheBuilder, gutils, caches);
+    return caches;
   }
 
   LogicalResult createShadowValues(Operation *op, OpBuilder &builder,
@@ -208,6 +358,14 @@ struct CIRStoreOpInterfaceReverse
     if (gutils->isConstantValue(addr) || !iface.isMutable())
       return success();
     Value addrShadow = gutils->invertPointerM(addr, builder);
+    // A shadow store through a shadow that is the primal would overwrite the
+    // primal.
+    if (shadowMayBePrimal(addr, gutils))
+      addrShadow =
+          adjointAddress(builder, op->getLoc(),
+                         shadowIsPrimal(builder, op->getLoc(), addrShadow,
+                                        gutils->getNewFromOriginal(addr)),
+                         addrShadow);
     Value valShadow =
         gutils->isConstantValue(val)
             ? oputils::inactiveStoredValueShadow(op, *gutils, val, builder)
@@ -476,11 +634,13 @@ static void accumulateAndZero(OpBuilder &builder, Location loc, Type floatTy,
         b, loc, lenTy, cir::IntAttr::get(lenTy, APInt(lenTy.getWidth(), v)));
   };
   DataLayout layout =
-      DataLayout::closest(builder.getInsertionBlock()->getParentOp());
+      DataLayout::closest(dstShadow.getParentBlock()->getParentOp());
   Value count = cir::DivOp::create(
       builder, loc, len, constLen(builder, layout.getTypeSize(floatTy)));
 
-  Operation *fn = builder.getInsertionBlock()->getParentOp();
+  // The builder may be filling a region whose op is not built yet; the
+  // shadow is defined in the function already.
+  Operation *fn = dstShadow.getParentBlock()->getParentOp();
   if (!isa<FunctionOpInterface>(fn))
     fn = fn->getParentOfType<FunctionOpInterface>();
   OpBuilder entryBuilder = OpBuilder::atBlockBegin(&fn->getRegion(0).front());
@@ -564,16 +724,30 @@ struct CIRCopyOpReverse
       return op->emitError() << "could not compute the adjoint of a copy of "
                              << elemTy << " " << *op;
     Location loc = op->getLoc();
+    bool srcActive = !gutils->isConstantValue(src);
     Value dstShadow = gutils->popCache(caches[0], builder);
-    Value dstAdj = cir::LoadOp::create(builder, loc, elemTy, dstShadow);
-    if (!gutils->isConstantValue(src)) {
-      Value srcShadow = gutils->popCache(caches[1], builder);
-      Value srcAdj = cir::LoadOp::create(builder, loc, elemTy, srcShadow);
+    Value srcShadow =
+        srcActive ? gutils->popCache(caches[1], builder) : Value();
+    unsigned next = srcActive ? 2 : 1;
+    Value dstSame, srcSame;
+    if (shadowMayBePrimal(dst, gutils))
+      dstSame = shadowIsPrimal(builder, loc, dstShadow,
+                               gutils->popCache(caches[next++], builder));
+    if (srcActive && shadowMayBePrimal(src, gutils))
+      srcSame = shadowIsPrimal(builder, loc, srcShadow,
+                               gutils->popCache(caches[next++], builder));
+    Value dstAdj =
+        adjointValue(builder, loc, dstSame,
+                     cir::LoadOp::create(builder, loc, elemTy, dstShadow));
+    if (srcActive) {
+      Value srcAddr = adjointAddress(builder, loc, srcSame, srcShadow);
+      Value srcAdj = cir::LoadOp::create(builder, loc, elemTy, srcAddr);
       Value sum = iface.createAddOp(builder, loc, srcAdj, dstAdj);
-      cir::StoreOp::create(builder, loc, sum, srcShadow);
+      cir::StoreOp::create(builder, loc, sum, srcAddr);
     }
     Value zero = iface.createNullValue(builder, loc);
-    cir::StoreOp::create(builder, loc, zero, dstShadow);
+    cir::StoreOp::create(builder, loc, zero,
+                         adjointAddress(builder, loc, dstSame, dstShadow));
     if (gutils->primalStoreElidable(dst))
       gutils->erase(gutils->getNewFromOriginal(op));
     return success();
@@ -592,6 +766,9 @@ struct CIRCopyOpReverse
     if (!gutils->isConstantValue(src))
       caches.push_back(gutils->initAndPushCache(
           gutils->invertPointerM(src, cacheBuilder), cacheBuilder));
+    cachePrimalAddress(dst, cacheBuilder, gutils, caches);
+    if (!gutils->isConstantValue(src))
+      cachePrimalAddress(src, cacheBuilder, gutils, caches);
     return caches;
   }
 
@@ -665,13 +842,51 @@ struct CIRMemCpyOpReverse
                              << *op;
     if (*floatTy) {
       Location loc = op->getLoc();
+      bool srcActive = !gutils->isConstantValue(memcpy.getSrc());
       Value dstShadow = gutils->popCache(caches[0], builder);
       Value len = gutils->popCache(caches[1], builder);
-      if (gutils->isConstantValue(memcpy.getSrc()))
-        zeroBytes(builder, loc, dstShadow, len);
+      Value srcShadow =
+          srcActive ? gutils->popCache(caches[2], builder) : Value();
+      unsigned next = srcActive ? 3 : 2;
+      Value dstSame, srcSame;
+      if (shadowMayBePrimal(memcpy.getDst(), gutils))
+        dstSame = shadowIsPrimal(builder, loc, dstShadow,
+                                 gutils->popCache(caches[next++], builder));
+      if (srcActive && shadowMayBePrimal(memcpy.getSrc(), gutils))
+        srcSame = shadowIsPrimal(builder, loc, srcShadow,
+                                 gutils->popCache(caches[next++], builder));
+      // Nothing is done when the destination's shadow is its primal, and
+      // nothing is added up when the source's is.
+      auto adjoint = [&](OpBuilder &b) {
+        if (!srcActive) {
+          zeroBytes(b, loc, dstShadow, len);
+          return;
+        }
+        if (!srcSame) {
+          accumulateAndZero(b, loc, *floatTy, dstShadow, srcShadow, len);
+          return;
+        }
+        cir::IfOp::create(
+            b, loc, srcSame, /*withElseRegion=*/true,
+            [&](OpBuilder &tb, Location l) {
+              zeroBytes(tb, l, dstShadow, len);
+              cir::YieldOp::create(tb, l);
+            },
+            [&](OpBuilder &eb, Location l) {
+              accumulateAndZero(eb, l, *floatTy, dstShadow, srcShadow, len);
+              cir::YieldOp::create(eb, l);
+            });
+      };
+      if (!dstSame)
+        adjoint(builder);
       else
-        accumulateAndZero(builder, loc, *floatTy, dstShadow,
-                          gutils->popCache(caches[2], builder), len);
+        cir::IfOp::create(
+            builder, loc, dstSame, /*withElseRegion=*/true,
+            [&](OpBuilder &tb, Location l) { cir::YieldOp::create(tb, l); },
+            [&](OpBuilder &eb, Location l) {
+              adjoint(eb);
+              cir::YieldOp::create(eb, l);
+            });
     }
     if (gutils->primalStoreElidable(memcpy.getDst()))
       gutils->erase(gutils->getNewFromOriginal(op));
@@ -696,6 +911,9 @@ struct CIRMemCpyOpReverse
     if (!gutils->isConstantValue(memcpy.getSrc()))
       caches.push_back(gutils->initAndPushCache(
           gutils->invertPointerM(memcpy.getSrc(), cacheBuilder), cacheBuilder));
+    cachePrimalAddress(memcpy.getDst(), cacheBuilder, gutils, caches);
+    if (!gutils->isConstantValue(memcpy.getSrc()))
+      cachePrimalAddress(memcpy.getSrc(), cacheBuilder, gutils, caches);
     return caches;
   }
 
@@ -709,12 +927,31 @@ struct CIRMemCpyOpReverse
     if (failed(floatTy) || *floatTy)
       return success();
     auto newOp = cast<cir::MemCpyOp>(gutils->getNewFromOriginal(op));
-    auto shadowOp = cast<cir::MemCpyOp>(builder.clone(*newOp));
-    shadowOp.getDstMutable().assign(
-        gutils->invertPointerM(memcpy.getDst(), builder));
-    if (!gutils->isConstantValue(memcpy.getSrc()))
-      shadowOp.getSrcMutable().assign(
-          gutils->invertPointerM(memcpy.getSrc(), builder));
+    Value dstShadow = gutils->invertPointerM(memcpy.getDst(), builder);
+    Value srcShadow = gutils->isConstantValue(memcpy.getSrc())
+                          ? Value()
+                          : gutils->invertPointerM(memcpy.getSrc(), builder);
+    auto copyShadows = [&](OpBuilder &b) {
+      auto shadowOp = cast<cir::MemCpyOp>(b.clone(*newOp));
+      shadowOp.getDstMutable().assign(dstShadow);
+      if (srcShadow)
+        shadowOp.getSrcMutable().assign(srcShadow);
+    };
+    // Copying shadows over a destination whose shadow is its primal would
+    // overwrite the primal.
+    if (!shadowMayBePrimal(memcpy.getDst(), gutils)) {
+      copyShadows(builder);
+      return success();
+    }
+    Value same = shadowIsPrimal(builder, op->getLoc(), dstShadow,
+                                gutils->getNewFromOriginal(memcpy.getDst()));
+    cir::IfOp::create(
+        builder, op->getLoc(), same, /*withElseRegion=*/true,
+        [&](OpBuilder &tb, Location l) { cir::YieldOp::create(tb, l); },
+        [&](OpBuilder &eb, Location l) {
+          copyShadows(eb);
+          cir::YieldOp::create(eb, l);
+        });
     return success();
   }
 };
