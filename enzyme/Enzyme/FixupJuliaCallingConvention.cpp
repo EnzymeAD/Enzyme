@@ -453,25 +453,39 @@ bool needsReReturning(llvm::Argument *arg, size_t &sret_idx,
   return true;
 }
 
-/// Erase the lifetime markers on \p AI, including those reached through
-/// pointer casts. Call it before replacing \p AI with a value that is not an
-/// alloca: since LLVM 22 the operand of a lifetime marker must be an alloca.
-static void eraseLifetimeMarkers(Instruction *AI) {
-  for (User *U : make_early_inc_range(AI->users())) {
-    if (auto II = dyn_cast<IntrinsicInst>(U)) {
-      if (II->getIntrinsicID() == Intrinsic::lifetime_start ||
-          II->getIntrinsicID() == Intrinsic::lifetime_end)
-        II->eraseFromParent();
+/// Replace the lifetime markers on \p V, including those reached through
+/// pointer casts, with calls to llvm.enzyme.lifetime_start/end. Call it before
+/// replacing an alloca with a value that is not an alloca: since LLVM 22 the
+/// operand of a lifetime marker must be an alloca.
+static void convertLifetimeMarkers(Value *V) {
+#if LLVM_VERSION_MAJOR >= 22
+  for (User *U : make_early_inc_range(V->users())) {
+    if (auto CI = dyn_cast<CastInst>(U)) {
+      if (CI->getType()->isPointerTy())
+        convertLifetimeMarkers(CI);
       continue;
     }
-    if (auto CI = dyn_cast<CastInst>(U)) {
-      if (!CI->getType()->isPointerTy())
-        continue;
-      eraseLifetimeMarkers(CI);
-      if (CI->use_empty())
-        CI->eraseFromParent();
-    }
+    auto II = dyn_cast<IntrinsicInst>(U);
+    if (!II)
+      continue;
+    StringRef Name;
+    if (II->getIntrinsicID() == Intrinsic::lifetime_start)
+      Name = "llvm.enzyme.lifetime_start";
+    else if (II->getIntrinsicID() == Intrinsic::lifetime_end)
+      Name = "llvm.enzyme.lifetime_end";
+    else
+      continue;
+    Module *M = II->getModule();
+    FunctionCallee Marker = M->getOrInsertFunction(
+        Name, FunctionType::get(Type::getVoidTy(M->getContext()), {}, true));
+    IRBuilder<> B(II);
+    SmallVector<Value *, 2> Args(II->args());
+    auto NewI = B.CreateCall(Marker, Args);
+    NewI->takeName(II);
+    NewI->setDebugLoc(II->getDebugLoc());
+    II->eraseFromParent();
   }
+#endif
 }
 
 static bool isOpaque(llvm::Type *T) {
@@ -1242,7 +1256,7 @@ void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
                 (isOpaque(AI->getType()) &&
                  DL.getTypeSizeInBits(AI->getAllocatedType()) ==
                      DL.getTypeSizeInBits(Types[sretCount]))) {
-              eraseLifetimeMarkers(AI);
+              convertLifetimeMarkers(AI);
               AI->replaceAllUsesWith(gep);
               AI->eraseFromParent();
               handled = true;
@@ -1350,7 +1364,7 @@ void EnzymeFixupJuliaCallingConvention(Function *F, bool sret_jlvalue) {
           if (auto AI = dyn_cast<AllocaInst>(getBaseObject(val, false))) {
             if (AI->getAllocatedType() ==
                 ArrayType::get(T_prjlvalue, subCount)) {
-              eraseLifetimeMarkers(AI);
+              convertLifetimeMarkers(AI);
               AI->replaceAllUsesWith(gep);
               AI->eraseFromParent();
               handled = true;
