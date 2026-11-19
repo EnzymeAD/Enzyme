@@ -19,6 +19,7 @@
 
 #include <functional>
 #include <optional>
+#include <vector>
 
 #include "GradientUtils.h"
 
@@ -89,8 +90,71 @@ public:
 
   Value popCache(Value cache, OpBuilder &builder);
 
+  // With optimizeCaches, what initAndPushCache returns is a handle on how
+  // the reverse sweep gets the value back, which popCache follows:
+  //  - Available: it uses the value as it is. A function argument is
+  //    available, and so is a value defined outside any loop in a block that
+  //    dominates every return, which runs once before the reverse sweep.
+  //  - Recompute: it computes the value again, as a pure op from what it
+  //    gets back of the op's operands, when that needs at most one value
+  //    cached, as a shadow address does: from the loop counter.
+  //  - Shared: the value is pushed once, where it is defined, rather than by
+  //    each op that needs it; popCache reads the top, and the reverse sweep
+  //    pops it once it gets back to the definition.
+  struct ReverseValue {
+    enum Kind { Available, Recompute, Shared } kind;
+    // Available, Shared: the original value, if there is one, or the one
+    // whose shadow it is.
+    Value orig;
+    bool shadow = false;
+    // Available without an original value: the value itself.
+    Value fwd;
+    // Recompute: the forward op, and the handles of its operands.
+    Operation *def = nullptr;
+    SmallVector<Value> operands;
+  };
+  DenseMap<Value, ReverseValue> reverseValues;
+  // The Shared cache of each original value, and of each one's shadow.
+  DenseMap<std::pair<Value, unsigned>, Value> sharedCaches;
+  // Records where the reverse sweep, built up to here in `reverseBB`, gets
+  // back to where `origValues` are defined: where their Shared caches are
+  // popped. A value can be cached after that point is built, by an op the
+  // reverse sweep reaches before it, so the pops wait for the end.
+  void recordReverseDefinitions(ValueRange origValues, Block *reverseBB);
+  // Pops each Shared cache where its value's definition was recorded, and
+  // erases the handles nothing was popped from.
+  void finishReverseValues();
+
   void createReverseModeBlocks(Region &oldFunc, Region &newFunc);
 
+private:
+  struct ReversePlan {
+    ReverseValue::Kind kind;
+    Value orig;
+    bool shadow;
+    Value fwd;
+    Operation *def = nullptr;
+    std::vector<ReversePlan> operands;
+  };
+  FailureOr<ReversePlan> planReverseValue(Value v, unsigned depth,
+                                          unsigned &newCaches);
+  FailureOr<ReversePlan> planOriginal(Value orig, bool shadow, unsigned depth,
+                                      unsigned &newCaches, unsigned loopDepth);
+  unsigned loopDepthOf(Block *origBlock);
+  std::optional<DenseMap<Block *, unsigned>> loopDepths;
+  Value commitReversePlan(const ReversePlan &plan, Type type);
+  Value materializeReverseValue(Value handle, OpBuilder &builder);
+  Value originalOf(Value v);
+  Value shadowedOriginalOf(Value v);
+  bool isOnceBeforeReverse(Block *origBlock);
+  DenseMap<Value, Value> newToOriginal;
+  // Where each original value's definition is in the reverse sweep: after
+  // the op, or at the start of the block if there is none.
+  DenseMap<Value, std::pair<Block *, Operation *>> reverseDefinitions;
+  size_t newToOriginalSize = 0;
+  std::optional<DenseSet<Block *>> onceBeforeReverse;
+
+public:
   static MGradientUtilsReverse *CreateFromClone(
       MEnzymeLogic &Logic, DerivativeMode mode_, unsigned width,
       FunctionOpInterface todiff, MTypeAnalysis &TA, MFnTypeInfo &oldTypeInfo,

@@ -54,6 +54,13 @@ def DifferentiatePass : Pass<"enzyme"> {
       /*description=*/"If using dataflow analysis, this will annotate loads from pointers that are never modified in the function"
     >,
     Option<
+      /*C++ variable name=*/"optimizeCaches",
+      /*CLI argument=*/"optimizeCaches",
+      /*type=*/"bool",
+      /*default=*/"false",
+      /*description=*/"Cache a value the reverse sweep needs once, not once per use; and compute a cheap one again"
+    >,
+    Option<
       /*C++ variable name=*/"runtimeActivity",
       /*CLI argument=*/"runtimeActivity",
       /*type=*/"bool",

@@ -441,6 +441,7 @@ struct DifferentiatePass
 void DifferentiatePass::runOnOperation() {
   MEnzymeLogic Logic(dataflowActivity);
   Logic.runtimeActivity = runtimeActivity;
+  Logic.optimizeCaches = optimizeCaches;
   SymbolTableCollection symbolTable;
   symbolTable.getSymbolTable(getOperation());
   getOperation()->walk([&](FunctionOpInterface op) {

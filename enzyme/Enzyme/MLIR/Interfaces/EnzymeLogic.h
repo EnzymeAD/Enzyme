@@ -310,6 +310,9 @@ public:
   // Whether derivatives check at run time if a shadow is its primal (see the
   // enzyme pass's runtimeActivity option).
   bool runtimeActivity = false;
+  // Whether reverse-mode caches are shared and avoided where they can be (see
+  // the enzyme pass's optimizeCaches option).
+  bool optimizeCaches = false;
   MEnzymeLogic(bool dataflowActivity);
 
   FunctionOpInterface

@@ -100,6 +100,7 @@ LogicalResult MEnzymeLogic::visitChildren(Block *oBB, Block *reverseBB,
     for (auto it = first; it != last; ++it) {
       Operation *op = &*it;
       valid &= visitChild(op, revBuilder, gutils).succeeded();
+      gutils->recordReverseDefinitions(op->getResults(), reverseBB);
     }
   }
   return success(valid);
@@ -109,6 +110,8 @@ void MEnzymeLogic::handlePredecessors(
     Block *oBB, Block *newBB, Block *reverseBB, MGradientUtilsReverse *gutils,
     llvm::function_ref<buildReturnFunction> buildReturnOp,
     SmallVectorImpl<EdgeIndexCache> &edgeCaches) {
+  gutils->recordReverseDefinitions(oBB->getArguments(), reverseBB);
+
   OpBuilder revBuilder(reverseBB, reverseBB->end());
   const AutoDiffControlFlowInterface &flow = controlFlow(gutils);
 
@@ -345,6 +348,7 @@ FunctionOpInterface MEnzymeLogic::CreateReverseDiff(
 
   auto res =
       differentiate(gutils, oldRegion, newRegion, buildFuncReturnOp, nullptr);
+  gutils->finishReverseValues();
 
   // Record all places in forward pass splitted
   if (entries && res.succeeded())

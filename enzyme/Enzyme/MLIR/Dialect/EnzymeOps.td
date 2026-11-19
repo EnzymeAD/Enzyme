@@ -409,8 +409,10 @@ def GetOp : Enzyme_Op<"get",
      DeclareOpInterfaceMethods<SafeMemorySlotAccessOpInterface>,
      TypesMatchWith<"type of 'result' matches element type of 'gradient'",
                     "gradient", "result",
+                    "::llvm::isa<enzyme::CacheType>($_self) ? "
+                    "::llvm::cast<enzyme::CacheType>($_self).getType() : "
                     "::llvm::cast<enzyme::GradientType>($_self).getBasetype()">]> {
-  let summary = "Load current value of gradient";
+  let summary = "Load current value of gradient, or the top of a cache";
   let arguments = (ins Arg<AnyType, "the reference to load from",
                            [MemRead]>:$gradient);
   let results = (outs AnyType:$result);
