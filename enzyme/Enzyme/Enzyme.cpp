@@ -2705,12 +2705,10 @@ public:
 
 #if LLVM_VERSION_MAJOR >= 24
       static constexpr AAKindSet Allowed =
-          AAKindSet::get<&AAHeapToStack::ID, &AANoCapture::ID,
-                         &AAMemoryBehavior::ID, &AAMemoryLocation::ID,
-                         &AANoUnwind::ID, &AANoSync::ID, &AANoRecurse::ID,
-                         &AAWillReturn::ID, &AANoReturn::ID, &AANonNull::ID,
-                         &AANoAlias::ID, &AADereferenceable::ID, &AAAlign::ID,
-                         &AANoFree::ID, &AANoUndef::ID>();
+          AAKindSet::get<AAHeapToStack, AANoCapture, AAMemoryBehavior,
+                         AAMemoryLocation, AANoUnwind, AANoSync, AANoRecurse,
+                         AAWillReturn, AANoReturn, AANonNull, AANoAlias,
+                         AADereferenceable, AAAlign, AANoFree, AANoUndef>();
 
       AttributorConfig aconfig(CGUpdater);
       aconfig.Allowed = Allowed;
