@@ -342,6 +342,19 @@ def EnzymeOpsToCIRPass : Pass<"convert-enzyme-to-cir", "ModuleOp"> {
   }];
 }
 
+def InlineCalleesPass : Pass<"enzyme-inline-callees", "ModuleOp"> {
+  let summary = "Inline the callees of the functions that are differentiated";
+  let description = [{
+    Inlines the calls in each function an enzyme.autodiff or enzyme.fwddiff
+    differentiates, and in what is inlined into it, so that it is
+    differentiated as one function.
+  }];
+  let options =
+      [Option<"maxSize", "max-size", "unsigned", /*default=*/"100000",
+              "How many operations a function inlining stops growing at">,
+  ];
+}
+
 def CIRRaiseEnzymeCallsPass : Pass<"cir-raise-enzyme-calls", "ModuleOp"> {
   let summary = "Raise __enzyme_autodiff/__enzyme_fwddiff calls in ClangIR";
   let description = [{

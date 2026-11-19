@@ -354,6 +354,8 @@ void registerTensorDialectAutoDiffInterface(DialectRegistry &registry);
 void registerGPUDialectAutoDiffInterface(DialectRegistry &registry);
 void registerEnzymeDialectAutoDiffInterface(DialectRegistry &registry);
 void registerCIRDialectAutoDiffInterface(DialectRegistry &registry);
+// Lets the inline pass inline ClangIR calls.
+void registerCIRInlinerInterface(DialectRegistry &registry);
 void registerCIRAutoDiffTypeInterfaces(MLIRContext *context);
 
 void registerCoreDialectAutodiffInterfaces(DialectRegistry &registry);
