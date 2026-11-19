@@ -1,10 +1,16 @@
 include_directories(${CMAKE_CURRENT_BINARY_DIR})
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 
+# On by default with FlangEnzyme, where flang has the pipeline callbacks.
+if(ENZYME_FLANG AND LLVM_VERSION_MAJOR GREATER_EQUAL 24)
+  set(ENZYME_FLANG_MLIR_DEFAULT ON)
+else()
+  set(ENZYME_FLANG_MLIR_DEFAULT OFF)
+endif()
 option(
   ENZYME_FLANG_MLIR
   "Build FlangEnzymeMLIR, Enzyme's plugin for flang's MLIR pipeline (needs Flang)"
-  OFF)
+  ${ENZYME_FLANG_MLIR_DEFAULT})
 include(CMakeDependentOption)
 cmake_dependent_option(
   ENZYME_FLANG_MLIR_LOADER
