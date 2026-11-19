@@ -159,6 +159,16 @@ static const StringSet<> InactiveGlobals = {
     "_ZTVN10__cxxabiv121__vmi_class_type_infoE"
 };
 
+static bool isKnownInactiveGlobal(const GlobalVariable *GV) {
+  StringRef Name = GV->getName();
+  if (Name.contains("enzyme_const") || InactiveGlobals.count(Name))
+    return true;
+  if (startsWith(Name, "_ZZN5Eigen8internal20manage_caching_sizes") ||
+      startsWith(Name, "_ZGVZN5Eigen8internal20manage_caching_sizes"))
+    return true;
+  return false;
+}
+
 const llvm::StringMap<size_t> MPIInactiveCommAllocators = {
     {"MPI_Graph_create", 5},
     {"MPI_Comm_split", 2},
@@ -593,6 +603,10 @@ static const char *DemangledKnownInactiveFunctionsStartingWith[] = {
 
     // RAJA
     "RAJA::util::Registry<RAJA::util::PluginStrategy>",
+
+    // Eigen CPU cache-size configuration (integers only)
+    "Eigen::internal::manage_caching_sizes",
+    "Eigen::internal::queryCacheSizes",
 
     // mfem
     "mfem::mfem_cuda_error",
@@ -1477,8 +1491,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
         return true;
       }
 
-      if (GI->getName().contains("enzyme_const") ||
-          InactiveGlobals.count(GI->getName())) {
+      if (isKnownInactiveGlobal(GI)) {
         InsertConstantValue(TR, Val);
         return true;
       }
@@ -3211,8 +3224,7 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
               if (hasMetadata(GV, "enzyme_inactive")) {
                 continue;
               }
-              if (GV->getName().contains("enzyme_const") ||
-                  InactiveGlobals.count(GV->getName())) {
+              if (isKnownInactiveGlobal(GV)) {
                 continue;
               }
             }
