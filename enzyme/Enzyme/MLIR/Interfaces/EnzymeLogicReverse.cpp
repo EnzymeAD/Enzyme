@@ -38,7 +38,7 @@ controlFlow(MGradientUtilsReverse *gutils) {
 
 void handleReturns(Block *oBB, Block *newBB, Block *reverseBB,
                    MGradientUtilsReverse *gutils) {
-  if (oBB->getNumSuccessors() == 0) {
+  if (isFunctionReturnLike(oBB->getTerminator())) {
     Operation *returnStatement = newBB->getTerminator();
     gutils->erase(returnStatement);
 
@@ -338,16 +338,22 @@ FunctionOpInterface MEnzymeLogic::CreateReverseDiff(
   // Record all places in forward pass splitted
   if (entries && res.succeeded())
     for (Block &oBB : oldRegion)
-      if (oBB.getNumSuccessors() == 0) {
+      if (isFunctionReturnLike(oBB.getTerminator())) {
         Operation *ret = oBB.getTerminator();
         Operation *exit = gutils->originalToNewFnOps[ret];
         SmallVector<Value> returned;
         for (Value v : ret->getOperands())
           returned.push_back(gutils->getNewFromOriginal(v));
         OpBuilder builder(exit);
+        // A pointer the caller wants the shadow of but that is inactive here
+        // has itself for its shadow, as one stored into differentiated
+        // memory does (see oputils::inactiveStoredValueShadow): not null,
+        // which the caller would read through.
         for (auto [v, act] : llvm::zip(ret->getOperands(), retType))
           if (act == DIFFE_TYPE::DUP_ARG || act == DIFFE_TYPE::DUP_NONEED)
-            returned.push_back(gutils->invertPointerM(v, builder));
+            returned.push_back(gutils->isConstantValue(v)
+                                   ? gutils->getNewFromOriginal(v)
+                                   : gutils->invertPointerM(v, builder));
         entries->exits.push_back({exit, std::move(returned)});
       }
 
@@ -491,6 +497,22 @@ FailureOr<MEnzymeLogic::SplitReverseDiff> MEnzymeLogic::CreateSplitReverseDiff(
       llvm::append_range(todo, block->getSuccessors());
   }
   auto inReverse = [&](Block *block) { return reverse.contains(block); };
+
+  // The reverse of a path that never returns, as one ending in cir.trap, is
+  // reached from neither sweep; it would otherwise be left in the forward
+  // one.
+  SmallPtrSet<Block *, 16> live(reverse.begin(), reverse.end());
+  todo.push_back(entry);
+  while (!todo.empty()) {
+    Block *block = todo.pop_back_val();
+    if (live.insert(block).second)
+      llvm::append_range(todo, block->getSuccessors());
+  }
+  SmallVector<Block *> dead;
+  for (Block &block : body)
+    if (!live.contains(&block))
+      dead.push_back(&block);
+  eraseBlocks(dead);
 
   // The gradients belong to the reverse sweep and the caches to the tape; both
   // are made at the top of the entry block.

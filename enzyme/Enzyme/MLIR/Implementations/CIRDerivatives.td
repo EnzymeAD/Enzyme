@@ -402,6 +402,7 @@ def : CirInactiveOp<"StackRestoreOp">;
 def : CirInactiveOp<"LifetimeStartOp">;
 def : CirInactiveOp<"LifetimeEndOp">;
 def : CirInactiveOp<"UnreachableOp">;
+def : CirInactiveOp<"TrapOp">;
 def : CirInactiveOp<"VTableAddrPointOp">;
 def : CirInactiveOp<"VTableGetVPtrOp">;
 

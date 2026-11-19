@@ -1426,11 +1426,13 @@ void mlir::enzyme::registerCIRDialectAutoDiffInterface(
         CIRLifetimeForward<cir::LifetimeStartOp>>(*context);
     cir::LifetimeEndOp::attachInterface<CIRLifetimeForward<cir::LifetimeEndOp>>(
         *context);
-    // Control never reaches cir.unreachable, so there is nothing to undo; the
-    // reverse sweep still has to be told so for a terminator, which the
-    // activity tables alone do not cover.
+    // Control never gets past cir.unreachable or cir.trap, so there is
+    // nothing to undo; the reverse sweep still has to be told so for a
+    // terminator, which the activity tables alone do not cover.
     cir::UnreachableOp::attachInterface<
         detail::NoopRevAutoDiffInterface<cir::UnreachableOp>>(*context);
+    cir::TrapOp::attachInterface<detail::NoopRevAutoDiffInterface<cir::TrapOp>>(
+        *context);
     registerCIRAddressView<cir::GetElementOp>(*context);
     registerCIRAddressView<cir::GetMemberOp>(*context);
     registerCIRAddressView<cir::PtrStrideOp>(*context);
@@ -1470,5 +1472,6 @@ void mlir::enzyme::registerCIRDialectAutoDiffInterface(
         *context);
     cir::UnreachableOp::attachInterface<CIRNoMemoryEffect<cir::UnreachableOp>>(
         *context);
+    cir::TrapOp::attachInterface<CIRNoMemoryEffect<cir::TrapOp>>(*context);
   });
 }

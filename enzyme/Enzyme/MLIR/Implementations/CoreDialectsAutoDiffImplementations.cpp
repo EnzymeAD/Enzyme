@@ -939,8 +939,8 @@ LogicalResult edetail::callReverseHandler(Operation *orig, OpBuilder &builder,
       continue;
 
     if (act == DIFFE_TYPE::DUP_ARG || act == DIFFE_TYPE::DUP_NONEED) {
-      cast<ClonableTypeInterface>(arg.getType())
-          .freeClonedValue(builder, revArguments[fwdIndex - 1]);
+      if (auto iface = dyn_cast<ClonableTypeInterface>(arg.getType()))
+        iface.freeClonedValue(builder, revArguments[fwdIndex - 1]);
       fwdIndex++;
     } else {
       auto diffe = revResults[revIndex];

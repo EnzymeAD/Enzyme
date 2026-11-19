@@ -6,8 +6,9 @@
 //   double poly(double x, double y) { double t = x * y + 2.0; return sin(t) / x; }
 // At -O1 the cleanup-dest switch keeps a default case that only holds
 // cir.unreachable, and the local `t` carries cir.lifetime.start/end markers.
-// Reverse mode: cir.unreachable has no adjoint, so its block only branches
-// into the reverse sweep of its predecessor.
+// Reverse mode: cir.unreachable has no adjoint, and control never gets past
+// it, so its block stays cir.unreachable rather than entering the reverse
+// sweep, which only the returns lead to.
 
 !s32i = !cir.int<s, 32>
 !rec = !cir.struct<{data !cir.double, data !cir.double}>
@@ -133,7 +134,7 @@ module {
 // CHECK:           cir.store %[[FADD_3]], %[[ALLOCA_5]] : !cir.double, !cir.ptr<!cir.double>
 // CHECK:           cir.br ^bb4
 // CHECK:         ^bb3:
-// CHECK:           cir.br ^bb4
+// CHECK:           cir.unreachable
 // CHECK:         ^bb4:
 // CHECK:           %[[VAL_13:.*]] = "enzyme.pop"(%[[VAL_12]]) : (!enzyme.Cache<!cir.ptr<!cir.double>>) -> !cir.ptr<!cir.double>
 // CHECK:           %[[LOAD_7:.*]] = cir.load %[[VAL_13]] : !cir.ptr<!cir.double>, !cir.double
