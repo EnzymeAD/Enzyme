@@ -19,7 +19,7 @@ cmake_dependent_option(
 # FlangConfig references Clang's targets, so find Clang first.
 if(ENZYME_FLANG_MLIR)
   find_package(Clang REQUIRED CONFIG)
-  find_package(Flang REQUIRED CONFIG)
+  find_package(Flang REQUIRED CONFIG HINTS "${LLVM_DIR}/../flang")
 endif()
 add_subdirectory(Analysis)
 add_subdirectory(Dialect)

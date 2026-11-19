@@ -167,6 +167,11 @@ if(ENZYME_CLANG)
 else()
 endif()
 
+# FlangEnzyme brings FlangEnzymeMLIR, which needs flang's pipeline callbacks.
+if(ENZYME_FLANG AND LLVM_VERSION_MAJOR GREATER_EQUAL 24)
+  set(ENZYME_MLIR ON CACHE BOOL "Build enzyme mlir plugin" FORCE)
+endif()
+
 if(ENZYME_MLIR)
   if(DEFINED MLIR_DIR)
     get_filename_component(
