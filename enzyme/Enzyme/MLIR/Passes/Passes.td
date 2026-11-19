@@ -53,6 +53,13 @@ def DifferentiatePass : Pass<"enzyme"> {
       /*default=*/"false",
       /*description=*/"If using dataflow analysis, this will annotate loads from pointers that are never modified in the function"
     >,
+    Option<
+      /*C++ variable name=*/"runtimeActivity",
+      /*CLI argument=*/"runtimeActivity",
+      /*type=*/"bool",
+      /*default=*/"false",
+      /*description=*/"Check at run time, where a shadow can be its primal, whether it is, and leave the primal alone then. An inactive pointer stored into differentiated memory has itself for its shadow."
+    >,
   ];
 }
 
