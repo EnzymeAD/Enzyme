@@ -88,10 +88,10 @@ module {
 // LOWER-LABEL: cir.func private @diffef(
 // LOWER:         %[[REC:.+]] = cir.alloca "enzyme.cache" align(8) : !cir.ptr<![[RT:.+]]>
 // LOWER:         cir.get_member %[[REC]][0] {name = "enzyme.cache.data"}
-// LOWER:         cir.call @free(
+// LOWER:         cir.call @__enzyme_cir_release(
 // LOWER-LABEL: cir.func private @diffescale(
 // LOWER-SAME:      %arg3: !cir.ptr<!void>
 // LOWER:         %[[T:.+]] = cir.cast bitcast %arg3 : !cir.ptr<!void> -> !cir.ptr<!
 // LOWER-NEXT:    cir.get_member %[[T]][0] {name = "enzyme.cache.data"}
-// LOWER-NOT:     cir.call @free(
+// LOWER-NOT:     cir.call @__enzyme_cir_release(
 // LOWER:         cir.return

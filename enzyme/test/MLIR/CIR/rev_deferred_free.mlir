@@ -91,9 +91,7 @@ module {
 // LOWER:         cir.call @free(
 // LOWER-LABEL: cir.func private @diffef(
 // LOWER:         cir.call @__enzyme_cir_free_each(%[[D:[^,]+]], %[[S:[^,]+]], %[[C:[^)]+]])
-// LOWER-NEXT:    %[[B:.+]] = cir.load %[[D]]
-// LOWER-NEXT:    %[[V:.+]] = cir.cast bitcast %[[B]]
-// LOWER-NEXT:    cir.call @free(%[[V]])
+// LOWER-NEXT:    cir.call @__enzyme_cir_release{{.*}}(%[[D]], %{{.+}})
 // LOWER-NEXT:    cir.return
 // LOWER-LABEL: cir.func private @augmented_consume(
 // LOWER-NOT:     @__enzyme_cir_free_each

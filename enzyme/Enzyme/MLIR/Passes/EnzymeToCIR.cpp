@@ -80,28 +80,34 @@ public:
     return fn;
   }
 
-  // push(data, size, capacity, value)
+  // push(data, size, capacity, inline, value)
   FailureOr<cir::FuncOp> pushFunction(Location loc, Type elemTy) {
     if (auto fn = pushFns.lookup(elemTy))
       return fn;
     MLIRContext *ctx = module.getContext();
     auto voidPtr = cir::PointerType::get(cir::VoidType::get(ctx));
+    FailureOr<cir::FuncOp> malloc = libraryFunction(
+        loc, "malloc", cir::FuncType::get({sizeType(ctx)}, voidPtr));
     FailureOr<cir::FuncOp> realloc = libraryFunction(
         loc, "realloc", cir::FuncType::get({voidPtr, sizeType(ctx)}, voidPtr));
-    if (failed(realloc))
+    if (failed(malloc) || failed(realloc))
       return failure();
 
+    SmallVector<Type, 5> params = slotTypes(elemTy);
+    params.push_back(elemTy);
     auto fn = buildFunctionInModule(
         loc, "__enzyme_cir_push",
-        cir::FuncType::get({slotTypes(elemTy)[0], slotTypes(elemTy)[1],
-                            slotTypes(elemTy)[2], elemTy},
-                           cir::VoidType::get(ctx)));
+        cir::FuncType::get(params, cir::VoidType::get(ctx)));
     Block *entry = fn.addEntryBlock();
-    Block *grow = new Block(), *store = new Block();
+    Block *grow = new Block(), *leaveInline = new Block(),
+          *regrow = new Block(), *store = new Block();
     fn.getBody().push_back(grow);
+    fn.getBody().push_back(leaveInline);
+    fn.getBody().push_back(regrow);
     fn.getBody().push_back(store);
     Value data = entry->getArgument(0), size = entry->getArgument(1),
-          capacity = entry->getArgument(2), value = entry->getArgument(3);
+          capacity = entry->getArgument(2), inlineBuf = entry->getArgument(3),
+          value = entry->getArgument(4);
 
     OpBuilder b = OpBuilder::atBlockBegin(entry);
 
@@ -116,30 +122,52 @@ public:
     cir::BrCondOp::create(b, loc, full, grow, store);
 
     // grow:
-    // newCapacity = capacity == 0 ? kInitialCapacity ? capacity * 2
+    // newCapacity = capacity == 0 ? kInlineCapacity : capacity * 2
     // bytes = sizeof(Ty) * newCapacity
-    // *data = realloc(bytes)
-    // capacity = cap
-    // goto store;
+    // capacity = newCapacity
+    // if (*data == inline) goto leaveInline; else goto regrow;
     b.setInsertionPointToStart(grow);
     Value empty = cir::CmpOp::create(b, loc, cir::CmpOpKind::eq, capacityVal,
                                      constSize(b, loc, 0));
     Value newCapacity = cir::SelectOp::create(
-        b, loc, empty, constSize(b, loc, kInitialCapacity),
+        b, loc, empty, constSize(b, loc, kInlineCapacity),
         cir::MulOp::create(b, loc, capacityVal, constSize(b, loc, 2)));
     uint64_t elemSize =
         DataLayout::closest(fn).getTypeSize(elemTy).getFixedValue();
     Value bytes =
         cir::MulOp::create(b, loc, newCapacity, constSize(b, loc, elemSize));
+    cir::StoreOp::create(b, loc, newCapacity, capacity);
+    Value old = load(b, loc, data);
+    Value inInline =
+        cir::CmpOp::create(b, loc, cir::CmpOpKind::eq, old, inlineBuf);
+    cir::BrCondOp::create(b, loc, inInline, leaveInline, regrow);
+
+    // leaveInline:
+    // *data = malloc(bytes), with what the inline buffer holds
+    // goto store;
     // TODO: DO null checking
+    b.setInsertionPointToStart(leaveInline);
+    Value buffer = cir::CallOp::create(b, loc, SymbolRefAttr::get(*malloc),
+                                       voidPtr, ValueRange{bytes})
+                       .getResult();
+    cir::MemCpyOp::create(
+        b, loc, buffer, bitcast(b, loc, old, voidPtr),
+        cir::MulOp::create(b, loc, sizeVal, constSize(b, loc, elemSize)),
+        /*dst_alignment=*/nullptr, /*src_alignment=*/nullptr);
+    cir::StoreOp::create(
+        b, loc, bitcast(b, loc, buffer, cir::PointerType::get(elemTy)), data);
+    cir::BrOp::create(b, loc, store);
+
+    // regrow:
+    // *data = realloc(*data, bytes)
+    // goto store;
+    b.setInsertionPointToStart(regrow);
     Value grown =
-        cir::CallOp::create(
-            b, loc, SymbolRefAttr::get(*realloc), voidPtr,
-            ValueRange{bitcast(b, loc, load(b, loc, data), voidPtr), bytes})
+        cir::CallOp::create(b, loc, SymbolRefAttr::get(*realloc), voidPtr,
+                            ValueRange{bitcast(b, loc, old, voidPtr), bytes})
             .getResult();
     cir::StoreOp::create(
         b, loc, bitcast(b, loc, grown, cir::PointerType::get(elemTy)), data);
-    cir::StoreOp::create(b, loc, newCapacity, capacity);
     cir::BrOp::create(b, loc, store);
 
     // store:
@@ -166,7 +194,8 @@ public:
     auto &fns = remove ? popFns : getFns;
     if (auto fn = fns.lookup(elemTy))
       return fn;
-    SmallVector<Type, 3> slots = slotTypes(elemTy);
+    SmallVector<Type, 4> slots = slotTypes(elemTy);
+    slots.pop_back();
     auto fn = buildFunctionInModule(
         loc, remove ? "__enzyme_cir_pop" : "__enzyme_cir_get",
         cir::FuncType::get(slots, elemTy));
@@ -212,9 +241,11 @@ public:
                   cir::FuncType::get(params, cir::VoidType::get(ctx)));
     if (failed(deallocFn))
       return failure();
+    SmallVector<Type, 4> slots = slotTypes(elemTy);
+    slots.pop_back();
     auto fn = buildFunctionInModule(
         loc, "__enzyme_cir_free_each",
-        cir::FuncType::get(slotTypes(elemTy), cir::VoidType::get(ctx)));
+        cir::FuncType::get(slots, cir::VoidType::get(ctx)));
     Block *entry = fn.addEntryBlock();
     Block *cond = new Block(), *body = new Block(), *done = new Block();
     fn.getBody().push_back(cond);
@@ -266,16 +297,52 @@ public:
         loc, "free", cir::FuncType::get({voidPtr}, cir::VoidType::get(ctx)));
   }
 
-  // The stack slots of a cache: the buffer, its size, and its capacity.
-  static SmallVector<Type, 3> slotTypes(Type elemTy) {
+  // release(data, inline) frees the buffer, unless it is the inline one.
+  FailureOr<cir::FuncOp> releaseFunction(Location loc, Type elemTy) {
+    if (auto fn = releaseFns.lookup(elemTy))
+      return fn;
+    MLIRContext *ctx = module.getContext();
+    auto voidPtr = cir::PointerType::get(cir::VoidType::get(ctx));
+    FailureOr<cir::FuncOp> free = freeFunction(loc);
+    if (failed(free))
+      return failure();
+    SmallVector<Type, 4> slots = slotTypes(elemTy);
+    auto fn = buildFunctionInModule(
+        loc, "__enzyme_cir_release",
+        cir::FuncType::get({slots[0], slots[3]}, cir::VoidType::get(ctx)));
+    Block *entry = fn.addEntryBlock();
+    Block *release = new Block(), *done = new Block();
+    fn.getBody().push_back(release);
+    fn.getBody().push_back(done);
+    OpBuilder b = OpBuilder::atBlockBegin(entry);
+    Value data = load(b, loc, entry->getArgument(0));
+    Value onHeap = cir::CmpOp::create(b, loc, cir::CmpOpKind::ne, data,
+                                      entry->getArgument(1));
+    cir::BrCondOp::create(b, loc, onHeap, release, done);
+    b.setInsertionPointToStart(release);
+    cir::CallOp::create(b, loc, SymbolRefAttr::get(*free), Type(),
+                        ValueRange{bitcast(b, loc, data, voidPtr)});
+    cir::BrOp::create(b, loc, done);
+    b.setInsertionPointToStart(done);
+    cir::ReturnOp::create(b, loc, ValueRange());
+    releaseFns[elemTy] = fn;
+    return fn;
+  }
+
+  // What a cache is passed around as: where its buffer is, its size, its
+  // capacity, and its inline buffer, which it starts in.
+  static SmallVector<Type, 4> slotTypes(Type elemTy) {
     MLIRContext *ctx = elemTy.getContext();
     return {cir::PointerType::get(cir::PointerType::get(elemTy)),
             cir::PointerType::get(sizeType(ctx)),
-            cir::PointerType::get(sizeType(ctx))};
+            cir::PointerType::get(sizeType(ctx)),
+            cir::PointerType::get(elemTy)};
   }
 
+  // Maximum stack size for a cache.
+  static constexpr uint64_t kInlineCapacity = 8;
+
 private:
-  static constexpr uint64_t kInitialCapacity = 8;
 
   cir::FuncOp buildFunctionInModule(Location loc, StringRef name,
                                     cir::FuncType type) {
@@ -290,7 +357,7 @@ private:
 
   ModuleOp module;
   SymbolTable symbols;
-  DenseMap<Type, cir::FuncOp> pushFns, popFns, getFns;
+  DenseMap<Type, cir::FuncOp> pushFns, popFns, getFns, releaseFns;
   llvm::StringMap<cir::FuncOp> freeEachFns;
 };
 
@@ -315,28 +382,50 @@ LogicalResult lowerGradient(enzyme::InitOp init, Block *entry,
 }
 
 static constexpr StringLiteral cacheSlotNames[] = {
-    "enzyme.cache.data", "enzyme.cache.size", "enzyme.cache.capacity"};
+    "enzyme.cache.data", "enzyme.cache.size", "enzyme.cache.capacity",
+    "enzyme.cache.inline"};
+
+cir::ArrayType inlineBufferType(Type elemTy) {
+  return cir::ArrayType::get(elemTy, CacheRuntime::kInlineCapacity);
+}
+
+// The first element of the inline buffer at `buffer`.
+Value inlineBufferStart(OpBuilder &b, Location loc, Value buffer, Type elemTy) {
+  return cir::CastOp::create(b, loc, cir::PointerType::get(elemTy),
+                             cir::CastKind::array_to_ptrdecay, buffer);
+}
 
 cir::StructType cacheRecordType(Type elemTy) {
   MLIRContext *ctx = elemTy.getContext();
-  SmallVector<Type, 3> members;
-  for (Type slot : CacheRuntime::slotTypes(elemTy))
+  SmallVector<Type, 4> slots = CacheRuntime::slotTypes(elemTy);
+  SmallVector<Type, 4> members;
+  for (Type slot : ArrayRef(slots).take_front(3))
     members.push_back(cast<cir::PointerType>(slot).getPointee());
-  SmallVector<cir::RecordMemberKind, 3> kinds(members.size(),
+  members.push_back(inlineBufferType(elemTy));
+  SmallVector<cir::RecordMemberKind, 4> kinds(members.size(),
                                               cir::RecordMemberKind::Data);
   return cir::StructType::get(ctx, members, /*packed=*/false,
                               /*is_class=*/false, kinds);
 }
 
-SmallVector<Value, 3> recordSlots(OpBuilder &b, Location loc, Value record,
+// The address of each field of the cache record at `record`, and the start
+// of its inline buffer.
+SmallVector<Value, 4> recordSlots(OpBuilder &b, Location loc, Value record,
                                   Type elemTy) {
-  SmallVector<Value, 3> slots;
-  for (auto [i, ty] : llvm::enumerate(CacheRuntime::slotTypes(elemTy)))
-    slots.push_back(
-        cir::GetMemberOp::create(b, loc, ty, record, cacheSlotNames[i], i));
+  SmallVector<Value, 4> slots;
+  SmallVector<Type, 4> types = CacheRuntime::slotTypes(elemTy);
+  for (unsigned i = 0; i < 3; ++i)
+    slots.push_back(cir::GetMemberOp::create(b, loc, types[i], record,
+                                             cacheSlotNames[i], i));
+  Value buffer = cir::GetMemberOp::create(
+      b, loc, cir::PointerType::get(inlineBufferType(elemTy)), record,
+      cacheSlotNames[3], 3);
+  slots.push_back(inlineBufferStart(b, loc, buffer, elemTy));
   return slots;
 }
 
+// Lowers what is done with `cache`, whose fields are at `slots`: its pushes
+// and pops, and its conversions to `handle`, the pointer a call is passed.
 LogicalResult lowerCacheUses(Value cache, Type elemTy, ArrayRef<Value> slots,
                              Value handle, CacheRuntime &runtime) {
   OpBuilder b(cache.getContext());
@@ -353,9 +442,9 @@ LogicalResult lowerCacheUses(Value cache, Type elemTy, ArrayRef<Value> slots,
     } else if (isa<enzyme::PopOp, enzyme::GetOp>(user)) {
       cir::FuncOp popFn =
           runtime.popFunction(loc, elemTy, /*remove=*/isa<enzyme::PopOp>(user));
-      Value v =
-          cir::CallOp::create(b, loc, SymbolRefAttr::get(popFn), elemTy, slots)
-              .getResult();
+      Value v = cir::CallOp::create(b, loc, SymbolRefAttr::get(popFn), elemTy,
+                                    slots.take_front(3))
+                    .getResult();
       user->getResult(0).replaceAllUsesWith(v);
     } else if (isa<UnrealizedConversionCastOp>(user) && handle) {
       user->getResult(0).replaceAllUsesWith(handle);
@@ -372,13 +461,13 @@ LogicalResult lowerCache(enzyme::InitOp init, cir::FuncOp fn,
                          const DataLayout &dl, CacheRuntime &runtime) {
   Location loc = init.getLoc();
   Type elemTy = cast<enzyme::CacheType>(init.getType()).getType();
-  SmallVector<Type, 3> slotTypes = CacheRuntime::slotTypes(elemTy);
+  SmallVector<Type, 4> slotTypes = CacheRuntime::slotTypes(elemTy);
   bool passed = llvm::any_of(init->getUsers(), [](Operation *user) {
     return isa<UnrealizedConversionCastOp>(user);
   });
 
   OpBuilder b = OpBuilder::atBlockBegin(&fn.getBody().front());
-  SmallVector<Value, 3> slots;
+  SmallVector<Value, 4> slots;
   Value handle;
   if (passed) {
     Value record = alloca(b, loc, cacheRecordType(elemTy), "enzyme.cache", dl);
@@ -387,21 +476,21 @@ LogicalResult lowerCache(enzyme::InitOp init, cir::FuncOp fn,
         bitcast(b, loc, record,
                 cir::PointerType::get(cir::VoidType::get(fn.getContext())));
   } else {
-    for (auto &&[ty, name] : llvm::zip_equal(slotTypes, cacheSlotNames))
-      slots.push_back(
-          alloca(b, loc, cast<cir::PointerType>(ty).getPointee(), name, dl));
+    for (unsigned i = 0; i < 3; ++i)
+      slots.push_back(alloca(b, loc,
+                             cast<cir::PointerType>(slotTypes[i]).getPointee(),
+                             cacheSlotNames[i], dl));
+    Value buffer =
+        alloca(b, loc, inlineBufferType(elemTy), cacheSlotNames[3], dl);
+    slots.push_back(inlineBufferStart(b, loc, buffer, elemTy));
   }
 
-  // An empty cache: a null buffer, which realloc allocates on the first push.
+  // An empty cache, in its inline buffer.
   b.setInsertionPoint(init);
-  cir::StoreOp::create(b, loc,
-                       cir::ConstantOp::create(
-                           b, loc,
-                           cir::ConstPtrAttr::get(cir::PointerType::get(elemTy),
-                                                  b.getI64IntegerAttr(0))),
-                       slots[0]);
+  cir::StoreOp::create(b, loc, slots[3], slots[0]);
   cir::StoreOp::create(b, loc, constSize(b, loc, 0), slots[1]);
-  cir::StoreOp::create(b, loc, constSize(b, loc, 0), slots[2]);
+  cir::StoreOp::create(b, loc, constSize(b, loc, CacheRuntime::kInlineCapacity),
+                       slots[2]);
 
   // A list of deferred frees: its owner frees what is on it, then the list.
   cir::FuncOp freeEach;
@@ -417,17 +506,16 @@ LogicalResult lowerCache(enzyme::InitOp init, cir::FuncOp fn,
     return failure();
   init.erase();
 
-  FailureOr<cir::FuncOp> freeFn = runtime.freeFunction(loc);
-  if (failed(freeFn))
+  FailureOr<cir::FuncOp> releaseFn = runtime.releaseFunction(loc, elemTy);
+  if (failed(releaseFn))
     return failure();
-  auto voidPtr = cir::PointerType::get(cir::VoidType::get(fn.getContext()));
   fn.walk([&](cir::ReturnOp ret) {
     OpBuilder rb(ret);
     if (freeEach)
-      cir::CallOp::create(rb, loc, SymbolRefAttr::get(freeEach), Type(), slots);
-    cir::CallOp::create(
-        rb, loc, SymbolRefAttr::get(*freeFn), Type(),
-        ValueRange{bitcast(rb, loc, load(rb, loc, slots[0]), voidPtr)});
+      cir::CallOp::create(rb, loc, SymbolRefAttr::get(freeEach), Type(),
+                          ArrayRef(slots).take_front(3));
+    cir::CallOp::create(rb, loc, SymbolRefAttr::get(*releaseFn), Type(),
+                        ValueRange{slots[0], slots[3]});
   });
   return success();
 }
@@ -443,7 +531,7 @@ LogicalResult lowerPassedCache(UnrealizedConversionCastOp cast,
   OpBuilder b(cast);
   Value record =
       bitcast(b, loc, handle, cir::PointerType::get(cacheRecordType(elemTy)));
-  SmallVector<Value, 3> slots = recordSlots(b, loc, record, elemTy);
+  SmallVector<Value, 4> slots = recordSlots(b, loc, record, elemTy);
   if (failed(lowerCacheUses(cast.getResult(0), elemTy, slots, handle, runtime)))
     return failure();
   cast.erase();
