@@ -72,6 +72,25 @@ if len("@ENZYME_BINARY_DIR@") == 0:
 config.substitutions.append(('%etranslate', etranslate))
 if os.path.exists(etranslate):
   config.available_features.add('enzymemlir-translate')
+
+# flang -fc1 has no search path for the intrinsic modules when they live in the
+# driver's resource directory, so pass the driver's. A flang that rejects
+# -print-file-name, or prints a bare name, needs no path.
+# TODO: Revisit once flang's intrinsic module layout has settled upstream.
+flang = config.llvm_tools_dir + "/flang"
+flang_fc1 = flang + " -fc1"
+if os.path.exists(flang):
+  import subprocess
+  try:
+    builtins_mod = subprocess.check_output(
+        [flang, "-print-file-name=__fortran_builtins.mod"], text=True,
+        stderr=subprocess.DEVNULL).strip()
+    if os.path.isabs(builtins_mod):
+      flang_fc1 += " -fintrinsic-modules-path=" + os.path.dirname(builtins_mod)
+  except subprocess.CalledProcessError:
+    pass
+config.substitutions.append(('%flang_fc1', flang_fc1))
+
 config.substitutions.append(('%llvmver', config.llvm_ver))
 config.substitutions.append(('%FileCheck', config.llvm_tools_dir + "/FileCheck"))
 config.substitutions.append(('%clang', eclang))
@@ -184,6 +203,17 @@ if 'flangenzyme' in config.available_features:
     if (os.path.exists(os.path.join(fc_dir, 'ld.lld'))
             or shutil.which('ld.lld') is not None):
         config.available_features.add('flangenzyme_lld')
+
+# %flang_enzyme runs `flang -fc1` with FlangEnzymeMLIR loaded. The
+# flang_enzyme_mlir feature needs flang's pass pipeline callbacks (LLVM 24+).
+flang_enzyme_plugin = '@ENZYME_BINARY_DIR@/Enzyme/MLIR/Flang/FlangEnzymeMLIR-' + config.llvm_ver + config.llvm_shlib_ext
+if len("@ENZYME_BINARY_DIR@") == 0:
+  flang_enzyme_plugin = os.path.dirname(os.path.abspath(__file__)) + "/../Enzyme/MLIR/Flang/FlangEnzymeMLIR-" + config.llvm_ver + config.llvm_shlib_ext
+config.substitutions.append(('%flang_enzyme',
+  flang_fc1 + " -load " + flang_enzyme_plugin))
+if (int(config.llvm_ver) >= 24 and os.path.exists(flang)
+        and os.path.exists(flang_enzyme_plugin)):
+    config.available_features.add('flang_enzyme_mlir')
 
 # Let the main config do the real work.
 cfgfile = "@ENZYME_SOURCE_DIR@/test/lit.cfg.py"

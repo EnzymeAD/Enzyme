@@ -167,6 +167,11 @@ if(ENZYME_CLANG)
 else()
 endif()
 
+# FlangEnzyme brings FlangEnzymeMLIR, which needs flang's pipeline callbacks.
+if(ENZYME_FLANG AND LLVM_VERSION_MAJOR GREATER_EQUAL 24)
+  set(ENZYME_MLIR ON CACHE BOOL "Build enzyme mlir plugin" FORCE)
+endif()
+
 if(ENZYME_MLIR)
   if(DEFINED MLIR_DIR)
     get_filename_component(
@@ -249,6 +254,19 @@ else()
   set(MLIR_FOUND 0)
 endif()
 message("found MLIR ${MLIR_FOUND}")
+
+# FlangConfig.cmake references MLIR's imported targets, so Flang must be found
+# after MLIR or Flang_FOUND is false.
+if(DEFINED Flang_DIR)
+  find_package(Flang CONFIG PATHS ${Flang_DIR} NO_DEFAULT_PATH)
+  if(${Flang_FOUND})
+    include_directories(${FLANG_INCLUDE_DIRS})
+    message("flang inc dir ${FLANG_INCLUDE_DIRS}")
+  endif()
+else()
+  set(Flang_FOUND 0)
+endif()
+message("found Flang ${Flang_FOUND}")
 # include(AddClang)
 
 # LLVM_DEFINITIONS is a single space-separated string; split it so each flag is
