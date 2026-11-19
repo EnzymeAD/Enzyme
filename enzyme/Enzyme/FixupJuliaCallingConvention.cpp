@@ -453,16 +453,12 @@ bool needsReReturning(llvm::Argument *arg, size_t &sret_idx,
   return true;
 }
 
-/// Replace the lifetime markers on \p V, including those reached through
-/// pointer casts, with calls to llvm.enzyme.lifetime_start/end. Call it before
-/// replacing an alloca with a value that is not an alloca: since LLVM 22 the
-/// operand of a lifetime marker must be an alloca.
-static void convertLifetimeMarkers(Value *V) {
 #if LLVM_VERSION_MAJOR >= 22
+static void convertLifetimeMarkers(Value *V, ConstantInt *Size) {
   for (User *U : make_early_inc_range(V->users())) {
     if (auto CI = dyn_cast<CastInst>(U)) {
       if (CI->getType()->isPointerTy())
-        convertLifetimeMarkers(CI);
+        convertLifetimeMarkers(CI, Size);
       continue;
     }
     auto II = dyn_cast<IntrinsicInst>(U);
@@ -479,12 +475,31 @@ static void convertLifetimeMarkers(Value *V) {
     FunctionCallee Marker = M->getOrInsertFunction(
         Name, FunctionType::get(Type::getVoidTy(M->getContext()), {}, true));
     IRBuilder<> B(II);
-    SmallVector<Value *, 2> Args(II->args());
-    auto NewI = B.CreateCall(Marker, Args);
+    auto NewI =
+        B.CreateCall(Marker, {Size, II->getArgOperand(II->arg_size() - 1)});
     NewI->takeName(II);
     NewI->setDebugLoc(II->getDebugLoc());
     II->eraseFromParent();
   }
+}
+#endif
+
+/// Replace the lifetime markers on \p AI, including those reached through
+/// pointer casts, with calls to llvm.enzyme.lifetime_start/end(size, ptr). Call
+/// it before replacing \p AI with a value that is not an alloca: since LLVM 22
+/// the operand of a lifetime marker must be an alloca.
+static void convertLifetimeMarkers(AllocaInst *AI) {
+#if LLVM_VERSION_MAJOR >= 22
+  // Enzyme reads the size from the first argument of these calls, as on the
+  // markers before LLVM 22. Since LLVM 22 the markers have no size: the alloca
+  // implies it.
+  auto &DL = AI->getModule()->getDataLayout();
+  int64_t Size = -1;
+  if (auto AllocSize = AI->getAllocationSize(DL))
+    if (!AllocSize->isScalable())
+      Size = AllocSize->getFixedValue();
+  convertLifetimeMarkers(
+      AI, ConstantInt::getSigned(Type::getInt64Ty(AI->getContext()), Size));
 #endif
 }
 

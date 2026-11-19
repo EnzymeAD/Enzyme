@@ -25,8 +25,8 @@ top:
 
 ; CHECK-LABEL: define double @caller(double %arg)
 ; CHECK-NOT: @llvm.lifetime
-; CHECK: call void (...) @llvm.enzyme.lifetime_start(ptr
+; CHECK: call void (...) @llvm.enzyme.lifetime_start(i64 32, ptr
 ; CHECK: call void @full_write_callee(
-; CHECK: call void (...) @llvm.enzyme.lifetime_end(ptr
+; CHECK: call void (...) @llvm.enzyme.lifetime_end(i64 32, ptr
 ; CHECK-NOT: @llvm.lifetime
 ; CHECK: ret double
