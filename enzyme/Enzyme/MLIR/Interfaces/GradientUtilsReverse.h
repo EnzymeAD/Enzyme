@@ -43,6 +43,12 @@ public:
 
   IRMapping mapReverseModeBlocks;
 
+  // Set when the derivative is built to be split into an augmented forward
+  // function and a reverse function. The forward sweep's stack is then gone
+  // by the time the reverse sweep runs, so what lives on it and is used again
+  // in the reverse sweep has to live elsewhere.
+  bool splitting = false;
+
   void addToDiffe(mlir::Value oldGradient, mlir::Value addedGradient,
                   OpBuilder &builder);
 

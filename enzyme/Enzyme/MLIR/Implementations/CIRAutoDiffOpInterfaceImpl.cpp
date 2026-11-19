@@ -915,18 +915,31 @@ static cir::CallOp getGuaranteedFree(cir::CallOp alloc) {
   return found;
 }
 
-static cir::FuncOp getFreeFunction(Operation *from) {
+static cir::FuncOp getLibraryFunction(Operation *from, StringRef name,
+                                      cir::FuncType type) {
   auto module = from->getParentOfType<ModuleOp>();
-  if (auto fn = module.lookupSymbol<cir::FuncOp>("free"))
+  if (auto fn = module.lookupSymbol<cir::FuncOp>(name))
     return fn;
-  MLIRContext *ctx = from->getContext();
   OpBuilder builder = OpBuilder::atBlockBegin(module.getBody());
-  auto fn = cir::FuncOp::create(
-      builder, from->getLoc(), "free",
-      cir::FuncType::get({cir::PointerType::get(cir::VoidType::get(ctx))},
-                         cir::VoidType::get(ctx)));
+  auto fn = cir::FuncOp::create(builder, from->getLoc(), name, type);
   fn.setPrivate();
   return fn;
+}
+
+static cir::FuncOp getFreeFunction(Operation *from) {
+  MLIRContext *ctx = from->getContext();
+  return getLibraryFunction(
+      from, "free",
+      cir::FuncType::get({cir::PointerType::get(cir::VoidType::get(ctx))},
+                         cir::VoidType::get(ctx)));
+}
+
+static cir::FuncOp getMallocFunction(Operation *from) {
+  MLIRContext *ctx = from->getContext();
+  return getLibraryFunction(
+      from, "malloc",
+      cir::FuncType::get({cir::IntType::get(ctx, 64, /*isSigned=*/false)},
+                         cir::PointerType::get(cir::VoidType::get(ctx))));
 }
 
 static Value bitcastTo(OpBuilder &builder, Location loc, Value v, Type ty) {
@@ -1109,6 +1122,88 @@ static LogicalResult reallocReverse(cir::CallOp call, OpBuilder &builder,
     createShadowFree(free, revShadow, builder, gutils);
   return success();
 }
+
+// The forward sweep of a derivative that is split runs in the augmented
+// function, whose frame is gone by the time the reverse function runs. We
+// switch to heap allocated value so that both forward sweep and backward sweep
+// can share it.
+struct CIRAllocaOpReverse
+    : public ReverseAutoDiffOpInterface::ExternalModel<CIRAllocaOpReverse,
+                                                       cir::AllocaOp> {
+  LogicalResult createReverseModeAdjoint(Operation *op, OpBuilder &builder,
+                                         MGradientUtilsReverse *gutils,
+                                         SmallVector<Value> caches) const {
+    if (caches.empty())
+      return success();
+    cir::FuncOp free = getFreeFunction(op);
+    for (Value cache : caches)
+      cir::CallOp::create(builder, op->getLoc(), SymbolRefAttr::get(free),
+                          Type(), ValueRange{gutils->popCache(cache, builder)});
+    return success();
+  }
+
+  SmallVector<Value> cacheValues(Operation *op,
+                                 MGradientUtilsReverse *gutils) const {
+    if (!gutils->splitting)
+      return {};
+    auto alloca = cast<cir::AllocaOp>(op);
+    auto newAlloca = cast<cir::AllocaOp>(gutils->getNewFromOriginal(op));
+    OpBuilder builder(newAlloca);
+    Location loc = op->getLoc();
+    MLIRContext *ctx = op->getContext();
+    auto u64 = cir::IntType::get(ctx, 64, /*isSigned=*/false);
+    uint64_t bytes =
+        DataLayout::closest(newAlloca).getTypeSize(alloca.getAllocaType());
+    Value size =
+        cir::ConstantOp::create(builder, loc, cir::IntAttr::get(u64, bytes));
+    if (Value count = newAlloca.getDynAllocSize()) {
+      if (count.getType() != u64)
+        count = cir::CastOp::create(builder, loc, u64, cir::CastKind::integral,
+                                    count);
+      size = cir::MulOp::create(builder, loc, size, count);
+    }
+    cir::FuncOp malloc = getMallocFunction(op);
+    auto allocate = [&] {
+      return cir::CallOp::create(builder, loc, SymbolRefAttr::get(malloc),
+                                 malloc.getFunctionType().getReturnType(),
+                                 ValueRange{size})
+          ->getResult(0);
+    };
+
+    SmallVector<Value> caches;
+    Value primal = allocate();
+    Value typed = bitcastTo(builder, loc, primal, alloca.getType());
+    // Lifetime markers only apply to stack slots. The slot itself stays,
+    // unused, until it is cleaned up: the derivative still maps the original
+    // op to it.
+    for (Operation *user : llvm::make_early_inc_range(newAlloca->getUsers()))
+      if (isa<cir::LifetimeStartOp, cir::LifetimeEndOp>(user))
+        gutils->erase(user);
+    newAlloca->replaceAllUsesWith(ValueRange{typed});
+    gutils->originalToNewFn.map(alloca.getResult(), typed);
+    caches.push_back(gutils->initAndPushCache(primal, builder));
+
+    if (!gutils->isConstantValue(alloca.getResult())) {
+      Value shadow = allocate();
+      zeroBytes(builder, loc, shadow, size);
+      gutils->setInvertedPointer(
+          alloca.getResult(),
+          bitcastTo(builder, loc, shadow, alloca.getType()));
+      caches.push_back(gutils->initAndPushCache(shadow, builder));
+    }
+    return caches;
+  }
+
+  LogicalResult createShadowValues(Operation *op, OpBuilder &builder,
+                                   MGradientUtilsReverse *gutils) const {
+    // A split derivative's shadow is made in cacheValues, with the primal.
+    if (gutils->splitting)
+      return success();
+    (void)enzyme::detail::allocationForwardHandler(
+        op, builder, (MGradientUtils *)gutils, /*zero*/ true);
+    return success();
+  }
+};
 
 struct CIRCallOpForward
     : public AutoDiffOpInterface::ExternalModel<CIRCallOpForward, cir::CallOp> {
@@ -1408,6 +1503,9 @@ void mlir::enzyme::registerCIRDialectAutoDiffInterface(
     cir::LoadOp::attachInterface<CIRLoadLike>(*context);
     cir::LoadOp::attachInterface<CIRLoadOpInterfaceReverse>(*context);
     cir::AllocaOp::attachInterface<CIRAllocaLike>(*context);
+    cir::AllocaOp::attachInterface<
+        detail::AutoDiffUsingAllocationFwd<cir::AllocaOp>>(*context);
+    cir::AllocaOp::attachInterface<CIRAllocaOpReverse>(*context);
     cir::CallOp::attachInterface<CIRCallOpForward>(*context);
     cir::CallOp::attachInterface<CIRCallOpReverse>(*context);
     cir::CastOp::attachInterface<CIRCastOpActivity>(*context);

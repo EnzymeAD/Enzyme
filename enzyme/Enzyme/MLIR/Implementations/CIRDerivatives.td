@@ -310,7 +310,8 @@ def : MLIRDerivative<"cir", "Log10Op", (Op $x),
 // Memory
 def : MemoryIdentityOp<"cir", "StoreOp", [1], [0]>;
 def : ReadOnlyIdentityOp<"cir", "LoadOp", [0]>;
-def : AllocationOp<"cir", "AllocaOp">;
+// cir.alloca: registered in CIRAutoDiffOpInterfaceImpl.cpp, whose reverse
+// model moves a split derivative's stack slots to the heap.
 
 // Complex
 def CirComplexCreate : CirInst<"ComplexCreateOp">;

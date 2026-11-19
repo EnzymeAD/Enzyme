@@ -300,6 +300,7 @@ FunctionOpInterface MEnzymeLogic::CreateReverseDiff(
     });
   }
   gutils->AtomicAdd = atomicAdd;
+  gutils->splitting = entries != nullptr;
 
   if (!entries)
     ReverseCachedFunctions[tup] = gutils->newFunc;
@@ -551,6 +552,14 @@ FailureOr<MEnzymeLogic::SplitReverseDiff> MEnzymeLogic::CreateSplitReverseDiff(
     if (!def)
       return false;
     if (def->hasTrait<OpTrait::ConstantLike>() && def->getNumOperands() == 0)
+      return true;
+    // A stack slot only the reverse sweep uses, as one the derivative makes
+    // for a loop of its own, is made again in the reverse function's frame:
+    // the augmented function's is gone by then.
+    if (isa<AllocaLikeInterface>(def) && def->getNumOperands() == 0 &&
+        llvm::all_of(def->getUsers(), [&](Operation *user) {
+          return inReverse(topLevelBlock(body, user));
+        }))
       return true;
     if (auto cast = dyn_cast<UnrealizedConversionCastOp>(def))
       if (cast->getNumOperands() == 1)
