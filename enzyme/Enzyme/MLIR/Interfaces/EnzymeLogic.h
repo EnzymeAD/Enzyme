@@ -275,8 +275,33 @@ public:
     }
   };
 
+  // A reverse-mode derivative in two halves, for a call whose callee touches
+  // memory and so cannot run its primal again in the reverse sweep. The
+  // augmented forward function runs the primal and the forward sweep and
+  // returns the primal results, followed by the shadows of the pointers among
+  // them; the reverse function runs the reverse sweep and returns the
+  // gradients. They share a tape: caches the caller owns and
+  // passes to both, after the arguments of each. The augmented function takes
+  // the derivative's arguments but not the result adjoints; the reverse
+  // function takes all of them.
+  struct SplitReverseDiff {
+    FunctionOpInterface augmented;
+    FunctionOpInterface reverse;
+    SmallVector<Type> tapeTypes;
+  };
+
+  // What splitting a derivative needs to know about it: where the forward
+  // sweep enters the reverse sweep, and what the function returned there,
+  // followed by the shadows of the pointers it returned.
+  struct ReverseSweepEntries {
+    SmallVector<std::pair<Operation *, SmallVector<Value>>> exits;
+  };
+
   std::map<MForwardCacheKey, FunctionOpInterface> ForwardCachedFunctions;
   std::map<MReverseCacheKey, FunctionOpInterface> ReverseCachedFunctions;
+  std::map<MReverseCacheKey, SplitReverseDiff> SplitCachedFunctions;
+  // The functions being split, to refuse recursion.
+  SmallPtrSet<Operation *, 4> splitting;
 
   // solver may be null, in which case the older inductive hypothesis activity
   // analysis will be used.
@@ -292,16 +317,21 @@ public:
                     void *augmented, bool omp, llvm::StringRef postpasses,
                     bool verifyPostPasses, bool strongZero);
 
-  FunctionOpInterface
-  CreateReverseDiff(FunctionOpInterface fn, std::vector<DIFFE_TYPE> retType,
-                    std::vector<DIFFE_TYPE> constants, MTypeAnalysis &TA,
-                    std::vector<bool> returnPrimals,
-                    std::vector<bool> returnShadows, DerivativeMode mode,
-                    bool freeMemory, bool atomicAdd, size_t width,
-                    mlir::Type addedType, MFnTypeInfo type_args,
-                    std::vector<bool> overwritten_args, void *augmented,
-                    bool omp, llvm::StringRef postpasses, bool verifyPostPasses,
-                    bool strongZero, bool markReadonly);
+  FunctionOpInterface CreateReverseDiff(
+      FunctionOpInterface fn, std::vector<DIFFE_TYPE> retType,
+      std::vector<DIFFE_TYPE> constants, MTypeAnalysis &TA,
+      std::vector<bool> returnPrimals, std::vector<bool> returnShadows,
+      DerivativeMode mode, bool freeMemory, bool atomicAdd, size_t width,
+      mlir::Type addedType, MFnTypeInfo type_args,
+      std::vector<bool> overwritten_args, void *augmented, bool omp,
+      llvm::StringRef postpasses, bool verifyPostPasses, bool strongZero,
+      bool markReadonly, ReverseSweepEntries *entries = nullptr);
+
+  FailureOr<SplitReverseDiff> CreateSplitReverseDiff(
+      FunctionOpInterface fn, std::vector<DIFFE_TYPE> retType,
+      std::vector<DIFFE_TYPE> constants, MTypeAnalysis &TA, size_t width,
+      MFnTypeInfo type_args, bool omp, llvm::StringRef postpasses,
+      bool verifyPostPasses, bool strongZero);
 
   void
   initializeShadowValues(SmallVector<mlir::Block *> &dominatorToposortBlocks,

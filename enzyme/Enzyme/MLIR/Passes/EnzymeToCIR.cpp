@@ -239,20 +239,83 @@ LogicalResult lowerGradient(enzyme::InitOp init, Block *entry,
   return success();
 }
 
+static constexpr StringLiteral cacheSlotNames[] = {
+    "enzyme.cache.data", "enzyme.cache.size", "enzyme.cache.capacity"};
+
+cir::StructType cacheRecordType(Type elemTy) {
+  MLIRContext *ctx = elemTy.getContext();
+  SmallVector<Type, 3> members;
+  for (Type slot : CacheRuntime::slotTypes(elemTy))
+    members.push_back(cast<cir::PointerType>(slot).getPointee());
+  SmallVector<cir::RecordMemberKind, 3> kinds(members.size(),
+                                              cir::RecordMemberKind::Data);
+  return cir::StructType::get(ctx, members, /*packed=*/false,
+                              /*is_class=*/false, kinds);
+}
+
+SmallVector<Value, 3> recordSlots(OpBuilder &b, Location loc, Value record,
+                                  Type elemTy) {
+  SmallVector<Value, 3> slots;
+  for (auto [i, ty] : llvm::enumerate(CacheRuntime::slotTypes(elemTy)))
+    slots.push_back(
+        cir::GetMemberOp::create(b, loc, ty, record, cacheSlotNames[i], i));
+  return slots;
+}
+
+LogicalResult lowerCacheUses(Value cache, Type elemTy, ArrayRef<Value> slots,
+                             Value handle, CacheRuntime &runtime) {
+  OpBuilder b(cache.getContext());
+  for (Operation *user : llvm::make_early_inc_range(cache.getUsers())) {
+    b.setInsertionPoint(user);
+    Location loc = user->getLoc();
+    if (auto push = dyn_cast<enzyme::PushOp>(user)) {
+      FailureOr<cir::FuncOp> pushFn = runtime.pushFunction(loc, elemTy);
+      if (failed(pushFn))
+        return failure();
+      SmallVector<Value, 4> args(slots.begin(), slots.end());
+      args.push_back(push.getValue());
+      cir::CallOp::create(b, loc, SymbolRefAttr::get(*pushFn), Type(), args);
+    } else if (isa<enzyme::PopOp, enzyme::GetOp>(user)) {
+      cir::FuncOp popFn =
+          runtime.popFunction(loc, elemTy, /*remove=*/isa<enzyme::PopOp>(user));
+      Value v =
+          cir::CallOp::create(b, loc, SymbolRefAttr::get(popFn), elemTy, slots)
+              .getResult();
+      user->getResult(0).replaceAllUsesWith(v);
+    } else if (isa<UnrealizedConversionCastOp>(user) && handle) {
+      user->getResult(0).replaceAllUsesWith(handle);
+    } else {
+      return user->emitError() << "cannot lower this use of an enzyme cache";
+    }
+    user->erase();
+  }
+  return success();
+}
+
 // Enumlate the enzyme.cache type with stack push and pop
 LogicalResult lowerCache(enzyme::InitOp init, cir::FuncOp fn,
                          const DataLayout &dl, CacheRuntime &runtime) {
   Location loc = init.getLoc();
   Type elemTy = cast<enzyme::CacheType>(init.getType()).getType();
   SmallVector<Type, 3> slotTypes = CacheRuntime::slotTypes(elemTy);
+  bool passed = llvm::any_of(init->getUsers(), [](Operation *user) {
+    return isa<UnrealizedConversionCastOp>(user);
+  });
 
-  static constexpr StringLiteral slotNames[] = {
-      "enzyme.cache.data", "enzyme.cache.size", "enzyme.cache.capacity"};
   OpBuilder b = OpBuilder::atBlockBegin(&fn.getBody().front());
   SmallVector<Value, 3> slots;
-  for (auto &&[ty, name] : llvm::zip_equal(slotTypes, slotNames))
-    slots.push_back(
-        alloca(b, loc, cast<cir::PointerType>(ty).getPointee(), name, dl));
+  Value handle;
+  if (passed) {
+    Value record = alloca(b, loc, cacheRecordType(elemTy), "enzyme.cache", dl);
+    slots = recordSlots(b, loc, record, elemTy);
+    handle =
+        bitcast(b, loc, record,
+                cir::PointerType::get(cir::VoidType::get(fn.getContext())));
+  } else {
+    for (auto &&[ty, name] : llvm::zip_equal(slotTypes, cacheSlotNames))
+      slots.push_back(
+          alloca(b, loc, cast<cir::PointerType>(ty).getPointee(), name, dl));
+  }
 
   // An empty cache: a null buffer, which realloc allocates on the first push.
   b.setInsertionPoint(init);
@@ -265,28 +328,8 @@ LogicalResult lowerCache(enzyme::InitOp init, cir::FuncOp fn,
   cir::StoreOp::create(b, loc, constSize(b, loc, 0), slots[1]);
   cir::StoreOp::create(b, loc, constSize(b, loc, 0), slots[2]);
 
-  for (Operation *user : llvm::make_early_inc_range(init->getUsers())) {
-    b.setInsertionPoint(user);
-    if (auto push = dyn_cast<enzyme::PushOp>(user)) {
-      FailureOr<cir::FuncOp> pushFn = runtime.pushFunction(loc, elemTy);
-      if (failed(pushFn))
-        return failure();
-      SmallVector<Value, 4> args(slots.begin(), slots.end());
-      args.push_back(push.getValue());
-      cir::CallOp::create(b, push.getLoc(), SymbolRefAttr::get(*pushFn), Type(),
-                          args);
-    } else if (isa<enzyme::PopOp, enzyme::GetOp>(user)) {
-      cir::FuncOp popFn =
-          runtime.popFunction(loc, elemTy, /*remove=*/isa<enzyme::PopOp>(user));
-      Value v = cir::CallOp::create(b, user->getLoc(),
-                                    SymbolRefAttr::get(popFn), elemTy, slots)
-                    .getResult();
-      user->getResult(0).replaceAllUsesWith(v);
-    } else {
-      return user->emitError() << "cannot lower this use of an enzyme cache";
-    }
-    user->erase();
-  }
+  if (failed(lowerCacheUses(init.getResult(), elemTy, slots, handle, runtime)))
+    return failure();
   init.erase();
 
   FailureOr<cir::FuncOp> freeFn = runtime.freeFunction(loc);
@@ -299,6 +342,24 @@ LogicalResult lowerCache(enzyme::InitOp init, cir::FuncOp fn,
         rb, loc, SymbolRefAttr::get(*freeFn), Type(),
         ValueRange{bitcast(rb, loc, load(rb, loc, slots[0]), voidPtr)});
   });
+  return success();
+}
+
+// A cache the function was passed, as a pointer to its record; its owner
+// frees it.
+LogicalResult lowerPassedCache(UnrealizedConversionCastOp cast,
+                               CacheRuntime &runtime) {
+  Location loc = cast.getLoc();
+  Value handle = cast.getOperand(0);
+  Type elemTy =
+      llvm::cast<enzyme::CacheType>(cast.getResult(0).getType()).getType();
+  OpBuilder b(cast);
+  Value record =
+      bitcast(b, loc, handle, cir::PointerType::get(cacheRecordType(elemTy)));
+  SmallVector<Value, 3> slots = recordSlots(b, loc, record, elemTy);
+  if (failed(lowerCacheUses(cast.getResult(0), elemTy, slots, handle, runtime)))
+    return failure();
+  cast.erase();
   return success();
 }
 
@@ -320,6 +381,16 @@ struct EnzymeToCIRPass
       if (fn.isDeclaration())
         continue;
       DataLayout dl = DataLayout::closest(fn);
+      SmallVector<UnrealizedConversionCastOp> passed;
+      fn.walk([&](UnrealizedConversionCastOp cast) {
+        if (cast->getNumOperands() == 1 && cast->getNumResults() == 1 &&
+            isa<cir::PointerType>(cast.getOperand(0).getType()) &&
+            isa<enzyme::CacheType>(cast.getResult(0).getType()))
+          passed.push_back(cast);
+      });
+      for (UnrealizedConversionCastOp cast : passed)
+        if (failed(lowerPassedCache(cast, runtime)))
+          return signalPassFailure();
       SmallVector<enzyme::InitOp> inits;
       fn.walk([&](enzyme::InitOp init) { inits.push_back(init); });
       for (enzyme::InitOp init : inits) {

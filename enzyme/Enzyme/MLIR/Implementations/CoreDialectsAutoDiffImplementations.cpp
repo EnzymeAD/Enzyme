@@ -720,15 +720,105 @@ static bool splitReverseMemoryOk(Operation *orig, FunctionOpInterface fn) {
   return splitReverseMemoryOkImpl(orig, fn, visited);
 }
 
-static LogicalResult checkSplitReverseMemory(Operation *orig,
-                                             FunctionOpInterface fn) {
-  if (splitReverseMemoryOk(orig, fn))
-    return success();
-  return orig->emitError()
-         << "cannot differentiate a call in reverse mode whose callee "
-            "touches memory; caching of overwritten arguments is not yet "
-            "implemented here: "
-         << fn.getNameAttr() << "\n";
+// Whether a tape can be passed to a call of `fn`, so that it can be split.
+static bool canPassTape(FunctionOpInterface fn) {
+  auto iface = dyn_cast<AutoDiffFunctionInterface>(fn.getOperation());
+  MLIRContext *ctx = fn.getContext();
+  return iface &&
+         iface.getTapeType(enzyme::CacheType::get(ctx, Float64Type::get(ctx)));
+}
+
+// The adjoint of a call to a callee that touches memory, which cannot run
+// its primal again in the reverse sweep: the call becomes a call to the
+// callee's augmented forward function, and the reverse sweep calls its
+// reverse function. The callee's tape is made here, so that each call in a
+// loop pushes onto it and the reverse calls pop it in turn.
+static LogicalResult
+callSplitReverseHandler(Operation *orig, OpBuilder &builder,
+                        MGradientUtilsReverse *gutils,
+                        SmallVector<Value> caches, FunctionOpInterface fn,
+                        const std::vector<DIFFE_TYPE> &RetActivity,
+                        const std::vector<DIFFE_TYPE> &ArgActivity) {
+  FailureOr<MEnzymeLogic::SplitReverseDiff> split =
+      gutils->Logic.CreateSplitReverseDiff(
+          fn, RetActivity, ArgActivity, gutils->TA, gutils->width,
+          gutils->TA.getAnalyzedTypeInfo(fn), gutils->omp, gutils->postpasses,
+          gutils->verifyPostPasses, gutils->strongZero);
+  if (failed(split))
+    return orig->emitError() << "failed to split the reverse-mode adjoint of "
+                             << fn.getNameAttr();
+
+  auto augIface =
+      cast<AutoDiffFunctionInterface>(split->augmented.getOperation());
+  SmallVector<Value> tape;
+  for (Type t : split->tapeTypes) {
+    Value cache = gutils->insertInit(t);
+    Type tapeType = augIface.getTapeType(t);
+    if (tapeType != t) {
+      OpBuilder after(cache.getDefiningOp()->getBlock(),
+                      ++Block::iterator(cache.getDefiningOp()));
+      cache = UnrealizedConversionCastOp::create(after, cache.getLoc(),
+                                                 tapeType, ValueRange{cache})
+                  .getResult(0);
+    }
+    tape.push_back(cache);
+  }
+
+  Operation *newOp = gutils->getNewFromOriginal(orig);
+  OpBuilder fwd(newOp);
+  SmallVector<Value> augArguments;
+  for (auto [arg, act] : llvm::zip_equal(orig->getOperands(), ArgActivity)) {
+    augArguments.push_back(gutils->getNewFromOriginal(arg));
+    if (act == DIFFE_TYPE::DUP_ARG || act == DIFFE_TYPE::DUP_NONEED)
+      augArguments.push_back(gutils->invertPointerM(arg, fwd));
+  }
+  llvm::append_range(augArguments, tape);
+  // It returns the primal results, then the shadows of the pointers among
+  // them.
+  Operation *augCall = augIface.createCall(fwd, orig->getLoc(), augArguments);
+  unsigned numShadows = llvm::count_if(RetActivity, [](DIFFE_TYPE act) {
+    return act == DIFFE_TYPE::DUP_ARG || act == DIFFE_TYPE::DUP_NONEED;
+  });
+  SmallVector<Value> results = augIface.unpackCallResults(
+      fwd, augCall, orig->getNumResults() + numShadows);
+  ArrayRef<Value> shadows = ArrayRef(results).drop_front(orig->getNumResults());
+  gutils->replaceOrigOpWith(
+      orig, ArrayRef(results).take_front(orig->getNumResults()));
+  gutils->erase(newOp);
+  gutils->originalToNewFnOps[orig] = augCall;
+  for (auto [result, act] : llvm::zip(orig->getResults(), RetActivity))
+    if (act == DIFFE_TYPE::DUP_ARG || act == DIFFE_TYPE::DUP_NONEED) {
+      gutils->setInvertedPointer(result, shadows.front());
+      shadows = shadows.drop_front();
+    }
+
+  SmallVector<Value> revArguments;
+  size_t cacheIdx = 0;
+  for (auto act : ArgActivity) {
+    revArguments.push_back(gutils->popCache(caches[cacheIdx++], builder));
+    if (act == DIFFE_TYPE::DUP_ARG || act == DIFFE_TYPE::DUP_NONEED)
+      revArguments.push_back(gutils->popCache(caches[cacheIdx++], builder));
+  }
+  assert(cacheIdx == caches.size());
+  for (auto [result, act] : llvm::zip(orig->getResults(), RetActivity)) {
+    if (act != DIFFE_TYPE::OUT_DIFF)
+      continue;
+    revArguments.push_back(gutils->diffe(result, builder));
+    gutils->zeroDiffe(result, builder);
+  }
+  llvm::append_range(revArguments, tape);
+
+  auto revIface =
+      cast<AutoDiffFunctionInterface>(split->reverse.getOperation());
+  Operation *revCall =
+      revIface.createCall(builder, orig->getLoc(), revArguments);
+  SmallVector<Value> gradients = revIface.unpackCallResults(
+      builder, revCall, llvm::count(ArgActivity, DIFFE_TYPE::OUT_DIFF));
+  unsigned next = 0;
+  for (auto [arg, act] : llvm::zip_equal(orig->getOperands(), ArgActivity))
+    if (act == DIFFE_TYPE::OUT_DIFF)
+      gutils->addToDiffe(arg, gradients[next++], builder);
+  return success();
 }
 
 LogicalResult edetail::callReverseHandler(Operation *orig, OpBuilder &builder,
@@ -747,8 +837,15 @@ LogicalResult edetail::callReverseHandler(Operation *orig, OpBuilder &builder,
               "without a registered derivative: "
            << fn.getNameAttr() << "\n";
   }
-  if (failed(checkSplitReverseMemory(orig, fn)))
-    return failure();
+  // A callee that touches memory cannot run its primal again in the reverse
+  // sweep; it is split, where its kind of function can pass a tape.
+  bool split = !splitReverseMemoryOk(orig, fn);
+  if (split && !canPassTape(fn))
+    return orig->emitError()
+           << "cannot differentiate a call in reverse mode whose callee "
+              "touches memory; caching of overwritten arguments is not yet "
+              "implemented here: "
+           << fn.getNameAttr() << "\n";
 
   auto narg = orig->getNumOperands();
   auto nret = orig->getNumResults();
@@ -781,6 +878,9 @@ LogicalResult edetail::callReverseHandler(Operation *orig, OpBuilder &builder,
     ArgActivity.push_back(DIFFE_TYPE::OUT_DIFF);
   }
 
+  if (split)
+    return callSplitReverseHandler(orig, builder, gutils, std::move(caches), fn,
+                                   RetActivity, ArgActivity);
   if (llvm::any_of(RetActivity,
                    [&](auto act) { return act == DIFFE_TYPE::DUP_ARG; })) {
     return orig->emitError()
@@ -856,11 +956,14 @@ SmallVector<Value> edetail::callCacheValues(Operation *orig,
                                             MGradientUtilsReverse *gutils) {
   SmallVector<Value> cachedArguments;
 
-  // A callee the adjoint will refuse gets nothing cached: the caching of
-  // pointer arguments would already need the sizes and copies that the
-  // refusal is about.
   auto fn = getDirectCallee(orig);
-  if (!fn || fn.getFunctionBody().empty() || !splitReverseMemoryOk(orig, fn))
+  if (!fn || fn.getFunctionBody().empty())
+    return cachedArguments;
+  // A callee that touches memory is split, and its reverse half never runs
+  // its primal again, so its arguments need no copies. One that cannot be
+  // split is refused, and gets nothing cached.
+  bool split = !splitReverseMemoryOk(orig, fn);
+  if (split && !canPassTape(fn))
     return cachedArguments;
 
   Operation *newOp = gutils->getNewFromOriginal(orig);
@@ -868,7 +971,8 @@ SmallVector<Value> edetail::callCacheValues(Operation *orig,
 
   for (auto arg : orig->getOperands()) {
     Value toCache = gutils->getNewFromOriginal(arg);
-    if (auto iface = dyn_cast<ClonableTypeInterface>(arg.getType())) {
+    if (auto iface = dyn_cast<ClonableTypeInterface>(arg.getType());
+        iface && !split) {
       toCache = iface.cloneValue(cacheBuilder, toCache);
     }
     Value cache = gutils->initAndPushCache(toCache, cacheBuilder);
@@ -877,8 +981,7 @@ SmallVector<Value> edetail::callCacheValues(Operation *orig,
     // pointer derived inside a loop body, say -- and the reverse pass
     // cannot always rebuild it. Cache it beside its primal; the shadow
     // buffer itself is shared, so it is the pointer that is put by, not a
-    // copy. (Groundwork: a memory-touching callee is refused until
-    // overwritten-args support lands, so this does not fire yet.)
+    // copy.
     if (!gutils->isConstantValue(arg) &&
         cast<AutoDiffTypeInterface>(arg.getType()).isMutable()) {
       Value shadow = gutils->invertPointerM(arg, cacheBuilder);

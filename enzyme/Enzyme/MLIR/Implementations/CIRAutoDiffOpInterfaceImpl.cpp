@@ -1254,6 +1254,10 @@ public:
           cir::ExtractMemberOp::create(b, call->getLoc(), packed, i));
     return results;
   }
+  Type getTapeType(Operation *self, Type cacheType) const {
+    MLIRContext *ctx = self->getContext();
+    return cir::PointerType::get(cir::VoidType::get(ctx));
+  }
   Operation *createReturn(Operation *, OpBuilder &b, Location loc,
                           ValueRange args) const {
     if (args.size() <= 1)

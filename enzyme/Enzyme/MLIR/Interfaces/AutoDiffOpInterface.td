@@ -367,6 +367,20 @@ def AutoDiffFunctionInterface : OpInterface<"AutoDiffFunctionInterface"> {
     /*retTy=*/"::mlir::Operation *",
     /*methodName=*/"createReturn",
     /*args=*/(ins "::mlir::OpBuilder &" : $builder, "::mlir::Location" : $loc, "::mlir::ValueRange" : $args)
+    >,
+    InterfaceMethod<
+    /*desc=*/[{
+      The type a function of this kind takes or a call passes an
+      !enzyme.Cache as, for a tape that crosses from one function to
+      another.
+    }],
+    /*retTy=*/"::mlir::Type",
+    /*methodName=*/"getTapeType",
+    /*args=*/(ins "::mlir::Type" : $cacheType),
+    /*methodBody=*/"",
+    /*defaultImplementation=*/[{
+      return ::mlir::Type();
+    }]
     >
   ];
 }

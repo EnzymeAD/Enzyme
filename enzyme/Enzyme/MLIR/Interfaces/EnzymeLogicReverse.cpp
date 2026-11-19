@@ -3,6 +3,7 @@
 #include "Interfaces/AutoDiffControlFlowInterface.h"
 #include "Interfaces/AutoDiffOpInterface.h"
 #include "Interfaces/AutoDiffTypeInterface.h"
+#include "mlir/IR/Dominance.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
@@ -21,6 +22,10 @@
 #include "Interfaces/GradientUtilsReverse.h"
 #include "Interfaces/Utils.h"
 #include "llvm/ADT/ScopeExit.h"
+
+#ifdef ENZYME_CLANG_HAS_CIR
+#include "clang/CIR/Dialect/IR/CIRDialect.h"
+#endif
 
 using namespace mlir;
 using namespace mlir::enzyme;
@@ -251,7 +256,7 @@ FunctionOpInterface MEnzymeLogic::CreateReverseDiff(
     mlir::Type addedType, MFnTypeInfo type_args,
     std::vector<bool> overwritten_args, void *augmented, bool omp,
     llvm::StringRef postpasses, bool verifyPostPasses, bool strongZero,
-    bool markReadonly) {
+    bool markReadonly, ReverseSweepEntries *entries) {
 
   if (fn.getFunctionBody().empty()) {
     fn.emitError() << "cannot differentiate a function without a body: "
@@ -273,7 +278,9 @@ FunctionOpInterface MEnzymeLogic::CreateReverseDiff(
                           overwritten_args,
                           omp};
 
-  {
+  // A derivative made to be split is taken apart, so it is neither shared
+  // nor kept.
+  if (!entries) {
     auto cachedFn = ReverseCachedFunctions.find(tup);
     if (cachedFn != ReverseCachedFunctions.end())
       return cachedFn->second;
@@ -294,7 +301,8 @@ FunctionOpInterface MEnzymeLogic::CreateReverseDiff(
   }
   gutils->AtomicAdd = atomicAdd;
 
-  ReverseCachedFunctions[tup] = gutils->newFunc;
+  if (!entries)
+    ReverseCachedFunctions[tup] = gutils->newFunc;
 
   Region &oldRegion = gutils->oldFunc.getFunctionBody();
   Region &newRegion = gutils->newFunc.getFunctionBody();
@@ -327,6 +335,22 @@ FunctionOpInterface MEnzymeLogic::CreateReverseDiff(
   auto res =
       differentiate(gutils, oldRegion, newRegion, buildFuncReturnOp, nullptr);
 
+  // Record all places in forward pass splitted
+  if (entries && res.succeeded())
+    for (Block &oBB : oldRegion)
+      if (oBB.getNumSuccessors() == 0) {
+        Operation *ret = oBB.getTerminator();
+        Operation *exit = gutils->originalToNewFnOps[ret];
+        SmallVector<Value> returned;
+        for (Value v : ret->getOperands())
+          returned.push_back(gutils->getNewFromOriginal(v));
+        OpBuilder builder(exit);
+        for (auto [v, act] : llvm::zip(ret->getOperands(), retType))
+          if (act == DIFFE_TYPE::DUP_ARG || act == DIFFE_TYPE::DUP_NONEED)
+            returned.push_back(gutils->invertPointerM(v, builder));
+        entries->exits.push_back({exit, std::move(returned)});
+      }
+
   auto nf = gutils->newFunc;
 
   delete gutils;
@@ -350,4 +374,365 @@ FunctionOpInterface MEnzymeLogic::CreateReverseDiff(
   }
 
   return nf;
+}
+
+// Gives `f` the arguments `inputs` and results `results`, keeping the
+// attributes of the first `keptArgs` arguments.
+static void setSignature(FunctionOpInterface f, TypeRange inputs,
+                         TypeRange results, unsigned keptArgs) {
+  SmallVector<DictionaryAttr> argAttrs;
+  f.getAllArgAttrs(argAttrs);
+  argAttrs.resize(keptArgs);
+  argAttrs.resize(inputs.size(), DictionaryAttr::get(f.getContext()));
+  Type type;
+#ifdef ENZYME_CLANG_HAS_CIR
+  // cir.func has one optional result, null for void, which cloneTypeWith cannot
+  // express.
+  if (auto cirTy = dyn_cast<cir::FuncType>(f.getFunctionType())) {
+    assert(results.size() <= 1 && "cir.func returns at most one value");
+    type = cir::FuncType::get(f.getContext(), llvm::to_vector(inputs),
+                              results.empty() ? Type() : results.front(),
+                              cirTy.isVarArg());
+  } else
+#endif
+    type = f.cloneTypeWith(inputs, results);
+  f.setType(type);
+  f.setAllArgAttrs(argAttrs);
+  f.setAllResultAttrs(SmallVector<DictionaryAttr>(
+      results.size(), DictionaryAttr::get(f.getContext())));
+}
+
+// Erases `blocks` of a region, which may refer to each other; nothing outside
+// them may still use what they define.
+static void eraseBlocks(ArrayRef<Block *> blocks) {
+  for (Block *block : blocks)
+    block->dropAllReferences();
+  for (Block *block : blocks) {
+    assert(llvm::all_of(block->getOperations(),
+                        [](Operation &op) { return op.use_empty(); }));
+    block->dropAllDefinedValueUses();
+    block->erase();
+  }
+}
+
+// The block of `region` that holds `op`, perhaps in a nested region.
+static Block *topLevelBlock(Region &region, Operation *op) {
+  return region.findAncestorOpInRegion(*op)->getBlock();
+}
+
+static Block *topLevelBlock(Region &region, Value v) {
+  if (auto arg = dyn_cast<BlockArgument>(v)) {
+    Operation *owner = arg.getOwner()->getParentOp();
+    if (arg.getOwner()->getParent() == &region)
+      return arg.getOwner();
+    return topLevelBlock(region, owner);
+  }
+  return topLevelBlock(region, v.getDefiningOp());
+}
+
+FailureOr<MEnzymeLogic::SplitReverseDiff> MEnzymeLogic::CreateSplitReverseDiff(
+    FunctionOpInterface fn, std::vector<DIFFE_TYPE> retType,
+    std::vector<DIFFE_TYPE> constants, MTypeAnalysis &TA, size_t width,
+    MFnTypeInfo type_args, bool omp, llvm::StringRef postpasses,
+    bool verifyPostPasses, bool strongZero) {
+  MReverseCacheKey key = {fn,
+                          retType,
+                          constants,
+                          {},
+                          {},
+                          DerivativeMode::ReverseModePrimal,
+                          /*freeMemory*/ true,
+                          /*atomicAdd*/ false,
+                          static_cast<unsigned>(width),
+                          Type(),
+                          type_args,
+                          {},
+                          omp,
+                          strongZero};
+  if (auto found = SplitCachedFunctions.find(key);
+      found != SplitCachedFunctions.end())
+    return found->second;
+  if (!splitting.insert(fn).second)
+    return fn.emitError()
+           << "cannot differentiate a recursive call to a function that "
+              "touches memory in reverse mode";
+  llvm::scope_exit unmark([&] { splitting.erase(fn); });
+
+  // The combined derivative, taken apart below.
+  ReverseSweepEntries entries;
+  std::vector<bool> returnPrimals(fn.getNumResults(), false);
+  std::vector<bool> returnShadows(fn.getNumResults(), false);
+  FunctionOpInterface combined = CreateReverseDiff(
+      fn, retType, constants, TA, returnPrimals, returnShadows,
+      DerivativeMode::ReverseModeGradient, /*freeMemory*/ true,
+      /*atomicAdd*/ false, width, Type(), type_args,
+      std::vector<bool>(constants.size(), true), /*augmented*/ nullptr, omp,
+      /*postpasses*/ "", verifyPostPasses, strongZero,
+      /*markReadonly*/ false, &entries);
+  if (!combined)
+    return failure();
+  llvm::scope_exit eraseCombined([&] { combined->erase(); });
+
+  Region &body = combined.getFunctionBody();
+  Block *entry = &body.front();
+  MLIRContext *ctx = fn.getContext();
+  const AutoDiffControlFlowInterface &flow =
+      getAutoDiffControlFlow(combined.getOperation());
+
+  // The reverse sweep is what the forward sweep's exits reach.
+  SmallPtrSet<Block *, 16> reverse;
+  SmallVector<Block *> todo;
+  // The start of each reverse sweep region.
+  for (auto &[exit, returned] : entries.exits)
+    todo.push_back(exit->getSuccessor(0));
+  while (!todo.empty()) {
+    Block *block = todo.pop_back_val();
+    if (reverse.insert(block).second)
+      llvm::append_range(todo, block->getSuccessors());
+  }
+  auto inReverse = [&](Block *block) { return reverse.contains(block); };
+
+  // The gradients belong to the reverse sweep and the caches to the tape; both
+  // are made at the top of the entry block.
+  SmallVector<enzyme::InitOp> gradients, caches;
+  for (auto init : entry->getOps<enzyme::InitOp>()) {
+    if (isa<enzyme::GradientType>(init.getType()))
+      gradients.push_back(init);
+    else if (isa<enzyme::CacheType>(init.getType()))
+      caches.push_back(init);
+  }
+  for (enzyme::InitOp gradient : gradients)
+    for (Operation *user : gradient->getUsers())
+      if (!inReverse(topLevelBlock(body, user)) &&
+          !(isa<enzyme::SetOp>(user) && user->getBlock() == entry))
+        return user->emitError()
+               << "cannot split a derivative whose forward sweep uses a "
+                  "gradient";
+
+  // Collect tapes cross sweep.
+  llvm::SetVector<Value> crossing;
+  for (Block *block : reverse)
+    block->walk([&](Operation *op) {
+      for (Value v : op->getOperands()) {
+        if (auto arg = dyn_cast<BlockArgument>(v);
+            arg && arg.getOwner() == entry)
+          continue;
+        if (auto init = v.getDefiningOp<enzyme::InitOp>();
+            init && init->getBlock() == entry)
+          continue;
+        if (!inReverse(topLevelBlock(body, v)))
+          crossing.insert(v);
+      }
+    });
+
+  auto rematerializable = [&](Operation *def) {
+    if (!def)
+      return false;
+    if (def->hasTrait<OpTrait::ConstantLike>() && def->getNumOperands() == 0)
+      return true;
+    if (auto cast = dyn_cast<UnrealizedConversionCastOp>(def))
+      if (cast->getNumOperands() == 1)
+        if (auto init = cast->getOperand(0).getDefiningOp<enzyme::InitOp>())
+          return init->getBlock() == entry &&
+                 isa<enzyme::CacheType>(init.getType());
+    return false;
+  };
+  SmallVector<Value> rematerialized, taped;
+  for (Value v : crossing) {
+    if (rematerializable(v.getDefiningOp()))
+      rematerialized.push_back(v);
+    else
+      taped.push_back(v);
+  }
+
+  SmallVector<Type> tapeTypes;
+  for (enzyme::InitOp cache : caches)
+    tapeTypes.push_back(cache.getType());
+  for (Value v : taped)
+    tapeTypes.push_back(enzyme::CacheType::get(ctx, v.getType()));
+  bool manyExits = entries.exits.size() > 1;
+  Type indexType = flow.getBranchIndexType(ctx);
+  if (manyExits)
+    tapeTypes.push_back(enzyme::CacheType::get(ctx, indexType));
+
+  unsigned numResultAdjoints = llvm::count(retType, DIFFE_TYPE::OUT_DIFF);
+  unsigned numArgs = combined.getNumArguments();
+  auto fnIface = cast<AutoDiffFunctionInterface>(combined.getOperation());
+  SmallVector<Type> tapeArgTypes;
+  for (Type t : tapeTypes)
+    tapeArgTypes.push_back(fnIface.getTapeType(t));
+  // Appended to the entry block; the signature is set once it is final.
+  auto addTapeArguments = [&](FunctionOpInterface f) {
+    Block &fEntry = f.getFunctionBody().front();
+    unsigned at = fEntry.getNumArguments();
+    for (Type t : tapeArgTypes)
+      fEntry.addArgument(t, f.getLoc());
+    OpBuilder builder = OpBuilder::atBlockBegin(&fEntry);
+    SmallVector<Value> tape;
+    for (auto [arg, t] :
+         llvm::zip(fEntry.getArguments().drop_front(at), tapeTypes))
+      tape.push_back(arg.getType() == t
+                         ? Value(arg)
+                         : UnrealizedConversionCastOp::create(
+                               builder, f.getLoc(), t, ValueRange{arg})
+                               .getResult(0));
+    return tape;
+  };
+  auto symbols = SymbolTable(SymbolTable::getNearestSymbolTable(fn));
+
+  // The augmented function returns the primal results and the shadows of
+  // the pointers among them, packed as its kind of function packs results.
+  SmallVector<Type> augResults(fn.getResultTypes());
+  for (auto [t, act] : llvm::zip(fn.getResultTypes(), retType))
+    if (act == DIFFE_TYPE::DUP_ARG || act == DIFFE_TYPE::DUP_NONEED)
+      augResults.push_back(cast<AutoDiffTypeInterface>(t).getShadowType(width));
+  fnIface.transformResultTypes(augResults);
+
+  IRMapping toAug;
+  auto augmented = cast<FunctionOpInterface>(combined->clone(toAug));
+  {
+    SmallVector<Value> tape = addTapeArguments(augmented);
+    for (auto [cache, arg] : llvm::zip(caches, tape))
+      toAug.lookup(cache.getResult()).replaceAllUsesWith(arg);
+    ArrayRef<Value> tapedCaches =
+        ArrayRef(tape).slice(caches.size(), taped.size());
+    DominanceInfo dom(combined);
+    for (auto [index, exitAndReturned] : llvm::enumerate(entries.exits)) {
+      auto &[exit, returned] = exitAndReturned;
+      Operation *augExit = toAug.lookup(exit);
+      OpBuilder builder(augExit);
+      Location loc = augExit->getLoc();
+      for (auto [v, cache] : llvm::zip(taped, tapedCaches)) {
+        Value value = toAug.lookup(v);
+        // On a way out it does not reach, nothing reads it.
+        if (!dom.properlyDominates(v, exit)) {
+          auto iface = dyn_cast<AutoDiffTypeInterface>(v.getType());
+          if (!iface)
+            return exit->emitError()
+                   << "cannot split a derivative that needs a value of "
+                   << v.getType() << " on one of its ways out only";
+          value = iface.createNullValue(builder, loc);
+        }
+        enzyme::PushOp::create(builder, loc, cache, value);
+      }
+      if (manyExits)
+        enzyme::PushOp::create(builder, loc, tape.back(),
+                               flow.createBranchIndex(builder, loc, index));
+      SmallVector<Value> results;
+      for (Value v : returned)
+        results.push_back(toAug.lookup(v));
+      cast<AutoDiffFunctionInterface>(augmented.getOperation())
+          .createReturn(builder, loc, results);
+      augExit->erase();
+    }
+    SmallVector<Block *> dead;
+    for (Block *block : reverse)
+      dead.push_back(toAug.lookup(block));
+    eraseBlocks(dead);
+    for (enzyme::InitOp init :
+         llvm::concat<enzyme::InitOp>(gradients, caches)) {
+      Operation *augInit = toAug.lookup(init.getOperation());
+      for (Operation *user : llvm::make_early_inc_range(augInit->getUsers()))
+        user->erase();
+      augInit->erase();
+    }
+
+    // Remove adjoints there
+    Block &augEntry = augmented.getFunctionBody().front();
+    llvm::BitVector adjoints(augEntry.getNumArguments());
+    adjoints.set(numArgs - numResultAdjoints, numArgs);
+    augEntry.eraseArguments(adjoints);
+    setSignature(augmented, augEntry.getArgumentTypes(), augResults,
+                 numArgs - numResultAdjoints);
+    augmented.setName(("augmented_" + fn.getName()).str());
+    symbols.insert(augmented);
+  }
+
+  IRMapping toRev;
+  auto reverseFn = cast<FunctionOpInterface>(combined->clone(toRev));
+  {
+    Region &revBody = reverseFn.getFunctionBody();
+    Block *revEntry = &revBody.front();
+    Block *forwardEntry = new Block();
+    revBody.getBlocks().insertAfter(Region::iterator(revEntry), forwardEntry);
+    forwardEntry->getOperations().splice(forwardEntry->end(),
+                                         revEntry->getOperations());
+    SmallVector<Value> tape = addTapeArguments(reverseFn);
+    OpBuilder builder = OpBuilder::atBlockEnd(revEntry);
+    Location loc = reverseFn.getLoc();
+    // Value belongs to forward only is removed later.
+    for (enzyme::InitOp gradient : gradients) {
+      Operation *init = toRev.lookup(gradient.getOperation());
+      init->moveBefore(revEntry, revEntry->end());
+      for (Operation *user : llvm::make_early_inc_range(init->getUsers()))
+        if (user->getBlock() == forwardEntry) {
+          Operation *zero = user->getOperand(1).getDefiningOp();
+          if (zero && zero->getBlock() == forwardEntry)
+            user->setOperand(1, builder.clone(*zero)->getResult(0));
+          user->moveBefore(revEntry, revEntry->end());
+        }
+    }
+    for (auto [cache, arg] : llvm::zip(caches, tape))
+      toRev.lookup(cache.getResult()).replaceAllUsesWith(arg);
+    SmallPtrSet<Block *, 16> revReverse;
+    for (Block *block : reverse)
+      revReverse.insert(toRev.lookup(block));
+    auto usedInReverse = [&](OpOperand &use) {
+      return revReverse.contains(topLevelBlock(revBody, use.getOwner()));
+    };
+    for (Value v : rematerialized) {
+      Value copy =
+          builder.clone(*toRev.lookup(v).getDefiningOp())->getResult(0);
+      toRev.lookup(v).replaceUsesWithIf(copy, usedInReverse);
+    }
+    for (auto [v, cache] :
+         llvm::zip(taped, ArrayRef(tape).slice(caches.size(), taped.size()))) {
+      Value popped = enzyme::PopOp::create(builder, loc, v.getType(), cache);
+      toRev.lookup(v).replaceUsesWithIf(popped, usedInReverse);
+    }
+
+    // Make those new entries as a switch function from different source.
+    SmallVector<Block *> exitTargets;
+    for (auto &[exit, returned] : entries.exits)
+      exitTargets.push_back(toRev.lookup(exit->getSuccessor(0)));
+    if (manyExits) {
+      Value flag = enzyme::PopOp::create(builder, loc, indexType, tape.back());
+      SmallVector<int64_t> indices;
+      for (int64_t i = 1, e = exitTargets.size(); i < e; ++i)
+        indices.push_back(i);
+      flow.createSwitch(builder, loc, flag, exitTargets.front(), indices,
+                        ArrayRef(exitTargets).drop_front());
+    } else {
+      flow.createBranch(builder, loc, exitTargets.front());
+    }
+
+    SmallVector<Block *> dead;
+    for (Block &block : revBody)
+      if (&block != revEntry && !revReverse.contains(&block))
+        dead.push_back(&block);
+    eraseBlocks(dead);
+    setSignature(reverseFn, revEntry->getArgumentTypes(),
+                 combined.getResultTypes(), numArgs);
+    symbols.insert(reverseFn);
+  }
+
+  // The combined derivative goes; the reverse function takes its name.
+  StringAttr name = combined.getNameAttr();
+  eraseCombined.release();
+  symbols.erase(combined);
+  if (failed(symbols.rename(reverseFn, name)))
+    return failure();
+
+  if (postpasses != "")
+    for (FunctionOpInterface f : {augmented, reverseFn}) {
+      PassManager pm(ctx);
+      pm.enableVerifier(verifyPostPasses);
+      if (failed(parsePassPipeline(postpasses, pm)) ||
+          failed(pm.run(f.getOperation())))
+        return failure();
+    }
+
+  SplitReverseDiff split{augmented, reverseFn, tapeTypes};
+  SplitCachedFunctions[key] = split;
+  return split;
 }
