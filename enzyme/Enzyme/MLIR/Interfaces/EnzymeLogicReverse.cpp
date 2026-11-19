@@ -54,7 +54,17 @@ void handleReturns(Block *oBB, Block *newBB, Block *reverseBB,
 // Returns true iff the operation:
 //    1. Produces no active data nor active pointers
 //    2. Does not propagate active data nor pointers (via side effects)
+//    3. Caller doesn't pass active and inactive value.
 static bool isFullyInactive(Operation *op, MGradientUtils *gutils) {
+  // A call whose memory effects are unknown may free or write through an
+  // active pointer it is passed, which its shadow has to follow, even when
+  // nothing about it is active itself.
+  if (isa<CallOpInterface>(op) && !isa<MemoryEffectOpInterface>(op) &&
+      llvm::any_of(op->getOperands(), [gutils](Value v) {
+        auto iface = dyn_cast<AutoDiffTypeInterface>(v.getType());
+        return iface && iface.isMutable() && !gutils->isConstantValue(v);
+      }))
+    return false;
   return llvm::all_of(
              op->getResults(),
              [gutils](Value v) { return gutils->isConstantValue(v); }) &&
@@ -577,8 +587,13 @@ FailureOr<MEnzymeLogic::SplitReverseDiff> MEnzymeLogic::CreateSplitReverseDiff(
   }
 
   SmallVector<Type> tapeTypes;
-  for (enzyme::InitOp cache : caches)
+  SmallVector<std::pair<unsigned, std::string>> deferredFrees;
+  for (enzyme::InitOp cache : caches) {
+    if (auto dealloc = cache->getAttrOfType<StringAttr>(
+            MGradientUtilsReverse::deferredFreeAttrName))
+      deferredFrees.push_back({tapeTypes.size(), dealloc.str()});
     tapeTypes.push_back(cache.getType());
+  }
   for (Value v : taped)
     tapeTypes.push_back(enzyme::CacheType::get(ctx, v.getType()));
   bool manyExits = entries.exits.size() > 1;
@@ -763,7 +778,7 @@ FailureOr<MEnzymeLogic::SplitReverseDiff> MEnzymeLogic::CreateSplitReverseDiff(
         return failure();
     }
 
-  SplitReverseDiff split{augmented, reverseFn, tapeTypes};
+  SplitReverseDiff split{augmented, reverseFn, tapeTypes, deferredFrees};
   SplitCachedFunctions[key] = split;
   return split;
 }

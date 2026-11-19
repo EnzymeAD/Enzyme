@@ -185,6 +185,80 @@ public:
     return fn;
   }
 
+  // free_each(data, size, capacity) frees each value in a cache of pointers
+  // as `dealloc` says: by calling the function it names, and passing it the
+  // alignment after a `:`, for an aligned operator delete.
+  FailureOr<cir::FuncOp> freeEachFunction(Location loc, Type elemTy,
+                                          StringRef dealloc) {
+    if (auto fn = freeEachFns.lookup(dealloc))
+      return fn;
+    MLIRContext *ctx = module.getContext();
+    auto [name, alignText] = dealloc.split(':');
+    uint64_t alignment = 0;
+    if (!alignText.empty() && alignText.getAsInteger(10, alignment))
+      return emitError(loc)
+             << "cannot lower enzyme caches: bad alignment in " << dealloc;
+    SmallVector<Type, 2> params{elemTy};
+    if (!alignText.empty())
+      params.push_back(sizeType(ctx));
+    // An aligned operator delete the module declares already takes the
+    // alignment as whatever type it declares.
+    auto declared = symbols.lookup<cir::FuncOp>(name);
+    FailureOr<cir::FuncOp> deallocFn =
+        declared && !alignText.empty()
+            ? FailureOr<cir::FuncOp>(declared)
+            : libraryFunction(
+                  loc, name,
+                  cir::FuncType::get(params, cir::VoidType::get(ctx)));
+    if (failed(deallocFn))
+      return failure();
+    auto fn = buildFunctionInModule(
+        loc, "__enzyme_cir_free_each",
+        cir::FuncType::get(slotTypes(elemTy), cir::VoidType::get(ctx)));
+    Block *entry = fn.addEntryBlock();
+    Block *cond = new Block(), *body = new Block(), *done = new Block();
+    fn.getBody().push_back(cond);
+    fn.getBody().push_back(body);
+    fn.getBody().push_back(done);
+    Value data = entry->getArgument(0), size = entry->getArgument(1);
+
+    // for (i = 0; i < size; i++) dealloc(data[i]);
+    OpBuilder b = OpBuilder::atBlockBegin(entry);
+    Value i = alloca(b, loc, sizeType(ctx), "i", DataLayout::closest(fn));
+    cir::StoreOp::create(b, loc, constSize(b, loc, 0), i);
+    cir::BrOp::create(b, loc, cond);
+
+    b.setInsertionPointToStart(cond);
+    Value iVal = load(b, loc, i);
+    Value more = cir::CmpOp::create(b, loc, cir::CmpOpKind::lt, iVal,
+                                    load(b, loc, size));
+    cir::BrCondOp::create(b, loc, more, body, done);
+
+    b.setInsertionPointToStart(body);
+    Value slot = cir::PtrStrideOp::create(b, loc, cir::PointerType::get(elemTy),
+                                          load(b, loc, data), iVal);
+    SmallVector<Value, 2> args{load(b, loc, slot)};
+    if (!alignText.empty()) {
+      auto alignTy = dyn_cast<cir::IntType>(
+          deallocFn->getFunctionType().getInputs().back());
+      if (!alignTy)
+        return emitError(loc) << "cannot lower enzyme caches: @" << name
+                              << " does not take its alignment as an integer";
+      args.push_back(cir::ConstantOp::create(
+          b, loc, cir::IntAttr::get(alignTy, alignment)));
+    }
+    cir::CallOp::create(b, loc, SymbolRefAttr::get(*deallocFn), Type(), args);
+    cir::StoreOp::create(
+        b, loc, cir::AddOp::create(b, loc, iVal, constSize(b, loc, 1)), i);
+    cir::BrOp::create(b, loc, cond);
+
+    b.setInsertionPointToStart(done);
+    cir::ReturnOp::create(b, loc, ValueRange());
+
+    freeEachFns[dealloc] = fn;
+    return fn;
+  }
+
   FailureOr<cir::FuncOp> freeFunction(Location loc) {
     MLIRContext *ctx = module.getContext();
     auto voidPtr = cir::PointerType::get(cir::VoidType::get(ctx));
@@ -217,6 +291,7 @@ private:
   ModuleOp module;
   SymbolTable symbols;
   DenseMap<Type, cir::FuncOp> pushFns, popFns, getFns;
+  llvm::StringMap<cir::FuncOp> freeEachFns;
 };
 
 LogicalResult lowerGradient(enzyme::InitOp init, Block *entry,
@@ -328,6 +403,16 @@ LogicalResult lowerCache(enzyme::InitOp init, cir::FuncOp fn,
   cir::StoreOp::create(b, loc, constSize(b, loc, 0), slots[1]);
   cir::StoreOp::create(b, loc, constSize(b, loc, 0), slots[2]);
 
+  // A list of deferred frees: its owner frees what is on it, then the list.
+  cir::FuncOp freeEach;
+  if (auto dealloc = init->getAttrOfType<StringAttr>("enzyme.deferred_free")) {
+    FailureOr<cir::FuncOp> fe =
+        runtime.freeEachFunction(loc, elemTy, dealloc.getValue());
+    if (failed(fe))
+      return failure();
+    freeEach = *fe;
+  }
+
   if (failed(lowerCacheUses(init.getResult(), elemTy, slots, handle, runtime)))
     return failure();
   init.erase();
@@ -338,6 +423,8 @@ LogicalResult lowerCache(enzyme::InitOp init, cir::FuncOp fn,
   auto voidPtr = cir::PointerType::get(cir::VoidType::get(fn.getContext()));
   fn.walk([&](cir::ReturnOp ret) {
     OpBuilder rb(ret);
+    if (freeEach)
+      cir::CallOp::create(rb, loc, SymbolRefAttr::get(freeEach), Type(), slots);
     cir::CallOp::create(
         rb, loc, SymbolRefAttr::get(*freeFn), Type(),
         ValueRange{bitcast(rb, loc, load(rb, loc, slots[0]), voidPtr)});

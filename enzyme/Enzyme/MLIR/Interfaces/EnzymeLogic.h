@@ -288,6 +288,7 @@ public:
     FunctionOpInterface augmented;
     FunctionOpInterface reverse;
     SmallVector<Type> tapeTypes;
+    SmallVector<std::pair<unsigned, std::string>> deferredFrees;
   };
 
   // What splitting a derivative needs to know about it: where the forward

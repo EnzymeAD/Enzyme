@@ -764,6 +764,11 @@ static bool isAllocation(AllocatorFn fn) {
   return fn == AllocatorFn::Alloc || fn == AllocatorFn::ZeroedAlloc;
 }
 
+static bool returnsFreshAllocation(cir::CallOp call) {
+  AllocatorFn fn = getAllocatorFn(call);
+  return isAllocation(fn) || fn == AllocatorFn::Realloc;
+}
+
 // Allocates the shadow of primal.
 static Value createShadowAllocation(cir::CallOp primal, AllocatorFn fn,
                                     OpBuilder &builder) {
@@ -797,15 +802,27 @@ static bool isNullPointer(Value v) {
   return attr && attr.isNullValue();
 }
 
+static Value stripBitcasts(Value v) {
+  for (auto cast = v.getDefiningOp<cir::CastOp>(); isBitcast(cast);
+       cast = v.getDefiningOp<cir::CastOp>())
+    v = cast.getSrc();
+  return v;
+}
+
 // Whether v is one of held, or a bitcast of one.
 static bool isHeld(Value v, const DenseSet<Value> &held) {
-  while (!held.contains(v)) {
-    auto cast = v.getDefiningOp<cir::CastOp>();
-    if (!isBitcast(cast))
-      return false;
-    v = cast.getSrc();
-  }
-  return true;
+  return held.contains(stripBitcasts(v));
+}
+
+// What `br` passes to `arg` when it branches to its successor `succIndex`, or
+// null when `br` produces that operand itself.
+static Value forwardedTo(BranchOpInterface br, unsigned succIndex,
+                         BlockArgument arg) {
+  SuccessorOperands operands = br.getSuccessorOperands(succIndex);
+  unsigned produced = operands.getProducedOperandCount();
+  if (arg.getArgNumber() < produced)
+    return Value();
+  return operands.getForwardedOperands()[arg.getArgNumber() - produced];
 }
 
 // C++ requires `delete` be called non null. Find the null path and return
@@ -827,8 +844,9 @@ static Block *nullSuccessor(Block *block, const DenseSet<Value> &held) {
 
 // Check whether a alloc is actually freed in all BB used it.
 // This go through all BB contains the transformation of allocated SSA value
-// (from cast or itself).
-static cir::CallOp getGuaranteedFree(cir::CallOp alloc) {
+// (from cast or itself). Returns every free found, or none if some path does
+// not free it.
+static SmallVector<cir::CallOp> getGuaranteedFrees(cir::CallOp alloc) {
   // The first free in `block` of a pointer `held` there, up to and
   // including `last`.
   auto freeIn = [](Block *block, const DenseSet<Value> &held,
@@ -857,10 +875,14 @@ static cir::CallOp getGuaranteedFree(cir::CallOp alloc) {
   using State = std::pair<Block *, DenseSet<Value>>;
   SmallVector<State> todo;
   std::set<std::pair<Block *, std::vector<void *>>> visited;
-  cir::CallOp found;
+  SmallVector<cir::CallOp> found;
+  auto add = [&](cir::CallOp free) {
+    if (!llvm::is_contained(found, free))
+      found.push_back(free);
+  };
   DenseSet<Value> init{alloc->getResult(0)};
   if (cir::CallOp free = freeIn(start, init))
-    return free;
+    return {free};
   todo.push_back({start, init});
   while (!todo.empty()) {
     auto [block, held] = todo.pop_back_val();
@@ -872,30 +894,27 @@ static cir::CallOp getGuaranteedFree(cir::CallOp alloc) {
       if (!visited.insert({block, std::move(key)}).second)
         continue;
       if (visited.size() > maxStates)
-        return nullptr;
+        return {};
       if (cir::CallOp free = freeIn(block, held)) {
-        found = found ? found : free;
+        add(free);
         continue;
       }
     }
     if (block->getNumSuccessors() == 0)
-      return nullptr;
+      return {};
     auto br = dyn_cast<BranchOpInterface>(block->getTerminator());
     if (!br)
-      return nullptr;
+      return {};
     Block *ifNull = nullSuccessor(block, held);
     for (unsigned i = 0, e = block->getNumSuccessors(); i < e; ++i) {
       // Skip nullptr check branch
       Block *succ = block->getSuccessor(i);
       if (succ == ifNull)
         continue;
-      SuccessorOperands operands = br.getSuccessorOperands(i);
-      unsigned produced = operands.getProducedOperandCount();
       DenseSet<Value> next = held;
       for (BlockArgument arg : succ->getArguments()) {
-        unsigned n = arg.getArgNumber();
-        if (n >= produced &&
-            isHeld(operands.getForwardedOperands()[n - produced], held))
+        Value in = forwardedTo(br, i, arg);
+        if (in && isHeld(in, held))
           next.insert(arg);
         else
           next.erase(arg);
@@ -905,14 +924,40 @@ static cir::CallOp getGuaranteedFree(cir::CallOp alloc) {
       if (succ == start) {
         cir::CallOp free = freeIn(start, next, alloc);
         if (!free)
-          return nullptr;
-        found = found ? found : free;
+          return {};
+        add(free);
         continue;
       }
       todo.push_back({succ, std::move(next)});
     }
   }
   return found;
+}
+
+// getGuaranteedFrees for every allocation of the function being
+// differentiated, found once for all.
+static const MGradientUtilsReverse::GuaranteedFrees &
+guaranteedFrees(MGradientUtilsReverse *gutils) {
+  if (!gutils->guaranteedFrees) {
+    auto &found = gutils->guaranteedFrees.emplace();
+    gutils->oldFunc.walk([&](cir::CallOp call) {
+      if (!returnsFreshAllocation(call))
+        return;
+      SmallVector<cir::CallOp> frees = getGuaranteedFrees(call);
+      if (frees.empty())
+        return;
+      found.byAllocation[call] = frees.front();
+      for (cir::CallOp free : frees)
+        found.frees.insert(free);
+    });
+  }
+  return *gutils->guaranteedFrees;
+}
+
+static cir::CallOp getGuaranteedFree(cir::CallOp alloc,
+                                     MGradientUtilsReverse *gutils) {
+  return cast_if_present<cir::CallOp>(
+      guaranteedFrees(gutils).byAllocation.lookup(alloc));
 }
 
 static cir::FuncOp getLibraryFunction(Operation *from, StringRef name,
@@ -1118,7 +1163,7 @@ static LogicalResult reallocReverse(cir::CallOp call, OpBuilder &builder,
   if (*floatTy)
     accumulateAndZero(builder, loc, *floatTy, revShadow, revOldShadow,
                       revCopied);
-  if (cir::CallOp free = getGuaranteedFree(call))
+  if (cir::CallOp free = getGuaranteedFree(call, gutils))
     createShadowFree(free, revShadow, builder, gutils);
   return success();
 }
@@ -1248,6 +1293,71 @@ struct CIRCallOpForward
   }
 };
 
+// Allocation can be aligned, get the orignal parameter of alignment and return
+// the mangled name
+static std::string deferredDeallocation(cir::CallOp free) {
+  StringRef callee = free.getCallee().value_or("");
+  StringRef unaligned =
+      llvm::StringSwitch<StringRef>(callee)
+          .Case("free", "free")
+          .Cases({"_ZdlPv", "_ZdlPvm", "_ZdlPvj", "_ZdlPvRKSt9nothrow_t"},
+                 "_ZdlPv")
+          .Cases({"_ZdaPv", "_ZdaPvm", "_ZdaPvj", "_ZdaPvRKSt9nothrow_t"},
+                 "_ZdaPv")
+          .Default("");
+  if (!unaligned.empty())
+    return unaligned.str();
+  // The alignment is the operand after the pointer, and the size if any.
+  auto [aligned, alignOperand] =
+      llvm::StringSwitch<std::pair<StringRef, unsigned>>(callee)
+          .Cases(
+              {"_ZdlPvSt11align_val_t", "_ZdlPvSt11align_val_tRKSt9nothrow_t"},
+              {"_ZdlPvSt11align_val_t", 1})
+          .Cases({"_ZdlPvmSt11align_val_t", "_ZdlPvjSt11align_val_t"},
+                 {"_ZdlPvSt11align_val_t", 2})
+          .Cases(
+              {"_ZdaPvSt11align_val_t", "_ZdaPvSt11align_val_tRKSt9nothrow_t"},
+              {"_ZdaPvSt11align_val_t", 1})
+          .Cases({"_ZdaPvmSt11align_val_t", "_ZdaPvjSt11align_val_t"},
+                 {"_ZdaPvSt11align_val_t", 2})
+          .Default({"", 0});
+  if (aligned.empty() || free.getArgOperands().size() <= alignOperand)
+    return "";
+  auto constant =
+      free.getArgOperands()[alignOperand].getDefiningOp<cir::ConstantOp>();
+  auto alignment =
+      constant ? dyn_cast<cir::IntAttr>(constant.getValue()) : cir::IntAttr();
+  if (!alignment)
+    return "";
+  return (aligned + ":" + Twine(alignment.getUInt())).str();
+}
+
+// Create deferred shadow. Function name is in compile time, set to the
+// attribute directly. Only object is different.
+static void deferShadowFree(cir::CallOp free, OpBuilder &builder,
+                            MGradientUtilsReverse *gutils) {
+  Value ptr = free.getArgOperands().front();
+  if (gutils->isConstantValue(ptr) ||
+      guaranteedFrees(gutils).frees.contains(free))
+    return;
+  std::string dealloc = deferredDeallocation(free);
+  if (dealloc.empty())
+    return;
+  Location loc = free.getLoc();
+  auto voidPtr = cir::PointerType::get(cir::VoidType::get(free.getContext()));
+  Value shadow =
+      bitcastTo(builder, loc, gutils->invertPointerM(ptr, builder), voidPtr);
+  Value primal =
+      bitcastTo(builder, loc, gutils->getNewFromOriginal(ptr), voidPtr);
+  Value same =
+      cir::CmpOp::create(builder, loc, cir::CmpOpKind::eq, shadow, primal);
+  Value null =
+      cast<AutoDiffTypeInterface>(voidPtr).createNullValue(builder, loc);
+  Value toFree = cir::SelectOp::create(builder, loc, same, null, shadow);
+  enzyme::PushOp::create(builder, loc,
+                         gutils->getDeferredFrees(voidPtr, dealloc), toFree);
+}
+
 struct CIRCallOpReverse
     : public ReverseAutoDiffOpInterface::ExternalModel<CIRCallOpReverse,
                                                        cir::CallOp> {
@@ -1262,7 +1372,7 @@ struct CIRCallOpReverse
     case AllocatorFn::ZeroedAlloc: {
       if (gutils->isConstantValue(call->getResult(0)))
         return success();
-      cir::CallOp free = getGuaranteedFree(call);
+      cir::CallOp free = getGuaranteedFree(call, gutils);
       if (!free)
         return success();
       OpBuilder cacheBuilder(gutils->getNewFromOriginal(op));
@@ -1298,6 +1408,8 @@ struct CIRCallOpReverse
           call->getResult(0),
           createShadowAllocation(
               cast<cir::CallOp>(gutils->getNewFromOriginal(op)), fn, builder));
+    if (fn == AllocatorFn::Free)
+      deferShadowFree(call, builder, gutils);
     return success();
   }
 };

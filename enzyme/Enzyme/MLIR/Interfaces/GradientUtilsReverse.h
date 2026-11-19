@@ -18,6 +18,7 @@
 #include "EnzymeLogic.h"
 
 #include <functional>
+#include <optional>
 
 #include "GradientUtils.h"
 
@@ -49,11 +50,28 @@ public:
   // in the reverse sweep has to live elsewhere.
   bool splitting = false;
 
+  // Cache for the Deferred free so that every queries from free knows whether
+  // it is guaranteedfrees or not
+  struct GuaranteedFrees {
+    DenseMap<Operation *, Operation *> byAllocation;
+    DenseSet<Operation *> frees;
+  };
+  std::optional<GuaranteedFrees> guaranteedFrees;
+
   void addToDiffe(mlir::Value oldGradient, mlir::Value addedGradient,
                   OpBuilder &builder);
 
   Type getIndexType();
   Value insertInit(Type t);
+
+  // The shadows whose primals the forward sweep frees, by calling `dealloc`,
+  // in a way the reverse sweep cannot match to their allocation. The reverse
+  // sweep may still use them, so they are freed with `dealloc` once the
+  // outermost derivative is done, and not before: a split derivative is
+  // handed its caller's list, as one of its tape's caches. `elemType` is the
+  // pointer type the list holds.
+  Value getDeferredFrees(Type elemType, StringRef dealloc);
+  static constexpr StringLiteral deferredFreeAttrName = "enzyme.deferred_free";
 
   SmallVector<std::function<std::pair<Value, Value>(Type)>> cacheCreatorHook;
   void

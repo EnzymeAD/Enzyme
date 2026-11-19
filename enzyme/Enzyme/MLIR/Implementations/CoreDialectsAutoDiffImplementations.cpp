@@ -728,6 +728,23 @@ static bool canPassTape(FunctionOpInterface fn) {
          iface.getTapeType(enzyme::CacheType::get(ctx, Float64Type::get(ctx)));
 }
 
+// A call that neither computes nor stores anything active, and that has
+// nothing to do with an active pointer it is passed either: there is nothing
+// to differentiate, as when it is not visited at all.
+static bool isInactiveCall(Operation *orig, FunctionOpInterface fn,
+                           MGradientUtilsReverse *gutils) {
+  if (!gutils->isConstantInstruction(orig) ||
+      !llvm::all_of(orig->getResults(),
+                    [&](Value v) { return gutils->isConstantValue(v); }))
+    return false;
+  if (!fn || fn.getFunctionBody().empty())
+    return true;
+  return llvm::none_of(orig->getOperands(), [&](Value v) {
+    auto iface = dyn_cast<AutoDiffTypeInterface>(v.getType());
+    return iface && iface.isMutable() && !gutils->isConstantValue(v);
+  });
+}
+
 // A callee that touches memory cannot run its primal again in the reverse
 // sweep, and a pointer it returns has a shadow only the forward sweep can hand
 // back; either way it is split, where its kind of function can pass a tape.
@@ -769,8 +786,15 @@ callSplitReverseHandler(Operation *orig, OpBuilder &builder,
   auto augIface =
       cast<AutoDiffFunctionInterface>(split->augmented.getOperation());
   SmallVector<Value> tape;
-  for (Type t : split->tapeTypes) {
-    Value cache = gutils->insertInit(t);
+  for (auto [i, t] : llvm::enumerate(split->tapeTypes)) {
+    // The callee's deferred frees go on this derivative's own list.
+    auto deferred = llvm::find_if(split->deferredFrees,
+                                  [&](auto &slot) { return slot.first == i; });
+    Value cache =
+        deferred != split->deferredFrees.end()
+            ? gutils->getDeferredFrees(cast<enzyme::CacheType>(t).getType(),
+                                       deferred->second)
+            : gutils->insertInit(t);
     Type tapeType = augIface.getTapeType(t);
     if (tapeType != t) {
       OpBuilder after(cache.getDefiningOp()->getBlock(),
@@ -845,6 +869,8 @@ LogicalResult edetail::callReverseHandler(Operation *orig, OpBuilder &builder,
   DerivativeMode mode = DerivativeMode::ReverseModeGradient;
 
   auto fn = getDirectCallee(orig);
+  if (isInactiveCall(orig, fn, gutils))
+    return success();
   if (!fn) {
     return orig->emitError()
            << "could not find the callee of: " << *orig << "\n";
@@ -975,6 +1001,8 @@ SmallVector<Value> edetail::callCacheValues(Operation *orig,
   SmallVector<Value> cachedArguments;
 
   auto fn = getDirectCallee(orig);
+  if (isInactiveCall(orig, fn, gutils))
+    return cachedArguments;
   if (!fn || fn.getFunctionBody().empty())
     return cachedArguments;
   // A split callee's reverse half never runs its primal again, so its

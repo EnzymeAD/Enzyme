@@ -57,6 +57,18 @@ Type mlir::enzyme::MGradientUtilsReverse::getIndexType() {
       .getBranchIndexType(newFunc.getContext());
 }
 
+Value mlir::enzyme::MGradientUtilsReverse::getDeferredFrees(Type elemType,
+                                                            StringRef dealloc) {
+  for (auto init : initializationBlock->getOps<enzyme::InitOp>())
+    if (auto attr = init->getAttrOfType<StringAttr>(deferredFreeAttrName);
+        attr && attr.getValue() == dealloc)
+      return init;
+  Value cache = insertInit(getCacheType(elemType));
+  cache.getDefiningOp()->setAttr(deferredFreeAttrName,
+                                 StringAttr::get(cache.getContext(), dealloc));
+  return cache;
+}
+
 Value mlir::enzyme::MGradientUtilsReverse::insertInit(Type t) {
   OpBuilder builder(initializationBlock, initializationBlock->begin());
   // The block is where the init goes, not where a location comes from: asking
