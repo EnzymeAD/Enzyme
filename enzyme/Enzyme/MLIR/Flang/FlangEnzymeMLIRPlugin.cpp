@@ -6,8 +6,8 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// A plugin for `flang -fc1` that adds Enzyme's passes to flang's MLIR pipeline
-// through fir::registerPassPipelineConfigCallback. It is loaded with `-load`
-// or by FlangEnzyme. MLIR, FIR and flang symbols resolve from the host.
+// The plugin through which Enzyme adds passes to flang's MLIR pipeline. It is
+// loaded with `flang -fc1 -load` or by FlangEnzyme, and resolves MLIR, FIR and
+// flang symbols from the host. It registers no passes yet.
 //
 //===----------------------------------------------------------------------===//

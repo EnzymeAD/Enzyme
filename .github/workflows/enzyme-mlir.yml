@@ -74,7 +74,8 @@ jobs:
       uses: wsmoses/gcp-cache@main
       with:
         path: ${{ env.BASE_DIR }}/llvm-project/mlir-build
-        key: ${{ matrix.llbuild }}-${{ matrix.os }}-mlir-flang-tidy-${{ steps.mlir-commit.outputs.sha_short }}
+        # "-flang" keeps builds cached before flang was enabled from being reused.
+        key: ${{ matrix.llbuild }}-${{ matrix.os }}-mlir-tidy-flang-${{ steps.mlir-commit.outputs.sha_short }}
         gcp-bucket: enzyme-ci-transient
         gcp-prefix: enzyme-mlir/
 

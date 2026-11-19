@@ -76,6 +76,7 @@ if os.path.exists(etranslate):
 # flang -fc1 has no search path for the intrinsic modules when they live in the
 # driver's resource directory, so pass the driver's. A flang that rejects
 # -print-file-name, or prints a bare name, needs no path.
+# TODO: Revisit once flang's intrinsic module layout has settled upstream.
 flang = config.llvm_tools_dir + "/flang"
 flang_fc1 = flang + " -fc1"
 if os.path.exists(flang):
