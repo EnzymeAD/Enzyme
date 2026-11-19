@@ -536,7 +536,9 @@ public:
     for (auto &&[i, elemTy] : llvm::enumerate(recTy.getMembers())) {
       Value aElem = cir::ExtractMemberOp::create(builder, loc, a, i);
       Value sum = aElem;
-      if (auto elemIface = dyn_cast<AutoDiffTypeInterface>(elemTy)) {
+      // Skip pointer
+      if (auto elemIface = dyn_cast<AutoDiffTypeInterface>(elemTy);
+          elemIface && !elemIface.isMutable()) {
         Value bElem = cir::ExtractMemberOp::create(builder, loc, b, i);
         sum = elemIface.createAddOp(builder, loc, aElem, bElem);
       }
@@ -556,7 +558,21 @@ public:
     llvm_unreachable("batched shadows of CIR records are not supported");
   }
 
-  bool isMutable(Type self) const { return false; }
+  // A record of pointers, and perhaps integers, is a pointer to its shadow
+  // much as each of its pointers is: its shadow holds their shadows, which the
+  // forward sweep carries along rather than the reverse sweep adding up.
+  bool isMutable(Type self) const {
+    bool pointers = false;
+    for (Type elemTy : cast<cir::RecordType>(self).getMembers()) {
+      auto elemIface = dyn_cast<AutoDiffTypeInterface>(elemTy);
+      if (!elemIface || isa<cir::IntType, cir::BoolType>(elemTy))
+        continue;
+      if (!elemIface.isMutable())
+        return false;
+      pointers = true;
+    }
+    return pointers;
+  }
 
   LogicalResult zeroInPlace(Type self, OpBuilder &builder, Location loc,
                             Value val) const {

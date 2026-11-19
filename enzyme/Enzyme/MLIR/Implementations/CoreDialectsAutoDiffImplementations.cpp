@@ -728,6 +728,24 @@ static bool canPassTape(FunctionOpInterface fn) {
          iface.getTapeType(enzyme::CacheType::get(ctx, Float64Type::get(ctx)));
 }
 
+// A callee that touches memory cannot run its primal again in the reverse
+// sweep, and a pointer it returns has a shadow only the forward sweep can hand
+// back; either way it is split, where its kind of function can pass a tape.
+struct CallSplit {
+  bool touchesMemory;
+  bool split;
+};
+
+static CallSplit getCallSplit(Operation *orig, FunctionOpInterface fn,
+                              MGradientUtilsReverse *gutils) {
+  bool touchesMemory = !splitReverseMemoryOk(orig, fn);
+  bool returnsShadow = llvm::any_of(orig->getResults(), [&](Value res) {
+    return !gutils->isConstantValue(res) &&
+           cast<AutoDiffTypeInterface>(res.getType()).isMutable();
+  });
+  return {touchesMemory, (touchesMemory || returnsShadow) && canPassTape(fn)};
+}
+
 // The adjoint of a call to a callee that touches memory, which cannot run
 // its primal again in the reverse sweep: the call becomes a call to the
 // callee's augmented forward function, and the reverse sweep calls its
@@ -837,10 +855,10 @@ LogicalResult edetail::callReverseHandler(Operation *orig, OpBuilder &builder,
               "without a registered derivative: "
            << fn.getNameAttr() << "\n";
   }
-  // A callee that touches memory cannot run its primal again in the reverse
-  // sweep; it is split, where its kind of function can pass a tape.
-  bool split = !splitReverseMemoryOk(orig, fn);
-  if (split && !canPassTape(fn))
+  // See getCallSplit; a callee that touches memory and cannot be split is
+  // refused.
+  auto [touchesMemory, split] = getCallSplit(orig, fn, gutils);
+  if (touchesMemory && !split)
     return orig->emitError()
            << "cannot differentiate a call in reverse mode whose callee "
               "touches memory; caching of overwritten arguments is not yet "
@@ -959,11 +977,11 @@ SmallVector<Value> edetail::callCacheValues(Operation *orig,
   auto fn = getDirectCallee(orig);
   if (!fn || fn.getFunctionBody().empty())
     return cachedArguments;
-  // A callee that touches memory is split, and its reverse half never runs
-  // its primal again, so its arguments need no copies. One that cannot be
-  // split is refused, and gets nothing cached.
-  bool split = !splitReverseMemoryOk(orig, fn);
-  if (split && !canPassTape(fn))
+  // A split callee's reverse half never runs its primal again, so its
+  // arguments need no copies. One that touches memory and cannot be split is
+  // refused, and gets nothing cached.
+  auto [touchesMemory, split] = getCallSplit(orig, fn, gutils);
+  if (touchesMemory && !split)
     return cachedArguments;
 
   Operation *newOp = gutils->getNewFromOriginal(orig);

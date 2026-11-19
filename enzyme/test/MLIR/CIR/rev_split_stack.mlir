@@ -5,6 +5,9 @@
 // still used then: the reverse sweep accumulates into the shadow through the
 // pointer it cached. Both are allocated on the heap instead, and freed when
 // the reverse sweep gets back to the slot.
+//
+// @id touches no memory but returns a pointer, whose shadow only its forward
+// sweep can hand back, so it is split too.
 
 module {
   cir.func @sq(%x: !cir.ptr<!cir.double>, %out: !cir.ptr<!cir.double>) {
@@ -16,10 +19,14 @@ module {
     cir.store %r, %out : !cir.double, !cir.ptr<!cir.double>
     cir.return
   }
+  cir.func @id(%p: !cir.ptr<!cir.double>) -> !cir.ptr<!cir.double> {
+    cir.return %p : !cir.ptr<!cir.double>
+  }
   cir.func @f(%x: !cir.ptr<!cir.double>) -> !cir.double {
     %o = cir.alloca "o" align(8) : !cir.ptr<!cir.double>
     cir.call @sq(%x, %o) : (!cir.ptr<!cir.double>, !cir.ptr<!cir.double>) -> ()
-    %r = cir.load %o : !cir.ptr<!cir.double>, !cir.double
+    %p = cir.call @id(%o) : (!cir.ptr<!cir.double>) -> !cir.ptr<!cir.double>
+    %r = cir.load %p : !cir.ptr<!cir.double>, !cir.double
     cir.return %r : !cir.double
   }
   cir.func @rev(%x: !cir.ptr<!cir.double>, %dx: !cir.ptr<!cir.double>, %seed: !cir.double) {
@@ -27,6 +34,12 @@ module {
     cir.return
   }
 }
+
+// @id hands back the shadow of what it returns.
+// CHECK-LABEL: cir.func private @augmented_id(
+// CHECK-SAME:    %[[P:[^:]+]]: !cir.ptr<!cir.double>, %[[DP:[^:]+]]: !cir.ptr<!cir.double>
+// CHECK:         cir.insert_member %{{.+}}[0], %[[P]]
+// CHECK:         cir.insert_member %{{.+}}[1], %[[DP]]
 
 // The slot and its shadow, zeroed, come from malloc; both go on the tape.
 // CHECK-LABEL: cir.func private @augmented_sq(
