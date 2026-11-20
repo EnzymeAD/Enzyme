@@ -191,6 +191,14 @@ bool preserveLinkage(bool Begin, Function &F, bool Inlining = true) {
     }
     F.addFnAttr("prev_linkage", std::to_string(F.getLinkage()));
     F.setLinkage(Function::LinkageTypes::ExternalLinkage);
+    // External linkage keeps a definition, but not a declaration: a rule
+    // defined in another unit is referenced here only from metadata, and
+    // StripDeadPrototypes would drop it before Enzyme runs. The end pass
+    // takes it out of llvm.compiler.used again.
+    if (F.isDeclaration() && !F.hasFnAttribute("prev_compiler_used")) {
+      F.addFnAttr("prev_compiler_used");
+      appendToCompilerUsed(*F.getParent(), {&F});
+    }
     return true;
   }
   return false;
@@ -717,6 +725,7 @@ bool preserveNVVM(bool Begin, Module &M,
     }
   }
   SmallVector<GlobalVariable *, 1> toErase;
+  SmallVector<GlobalValue *> DeclaredShadowGlobals;
   for (GlobalVariable &g : M.globals()) {
     if (g.getName().contains(gradient_handler_name)) {
       handleCustomDerivative<gradient_handler_name,
@@ -732,6 +741,30 @@ bool preserveNVVM(bool Begin, Module &M,
       handleCustomDerivative<splitderivative_handler_name,
                              DerivativeMode::ForwardModeSplit, 3>(
           M, g, toErase, PreserveCustomRuleLinkage);
+      changed = true;
+    }
+    if (g.getName().contains("__enzyme_shadow_global") && g.hasInitializer()) {
+      // Attach enzyme_shadow metadata from a {&global, &shadow} pair.
+      auto *CA = dyn_cast<ConstantAggregate>(g.getInitializer());
+      GlobalVariable *GV = nullptr;
+      GlobalVariable *Shadow = nullptr;
+      if (CA && CA->getNumOperands() == 2) {
+        GV = dyn_cast<GlobalVariable>(CA->getOperand(0)->stripPointerCasts());
+        Shadow =
+            dyn_cast<GlobalVariable>(CA->getOperand(1)->stripPointerCasts());
+      }
+      if (!GV || !Shadow) {
+        llvm::errs() << "__enzyme_shadow_global requires a {&global, &shadow} "
+                        "global variable pair: "
+                     << g << '\n';
+        llvm_unreachable("invalid __enzyme_shadow_global initializer");
+      }
+      GV->setMetadata(
+          "enzyme_shadow",
+          MDTuple::get(g.getContext(), {ConstantAsMetadata::get(Shadow)}));
+      DeclaredShadowGlobals.push_back(Shadow);
+      DeclaredShadowGlobals.push_back(GV);
+      toErase.push_back(&g);
       changed = true;
     }
     if (g.getName().contains("__enzyme_inactive_global")) {
@@ -987,6 +1020,12 @@ bool preserveNVVM(bool Begin, Module &M,
       }
     }
   }
+
+  // Keep paired globals and shadows alive once the registration globals are
+  // erased: otherwise write-only shadows can be dropped before AD reads them,
+  // and global SRA can split globals into pieces lacking enzyme_shadow.
+  if (!DeclaredShadowGlobals.empty())
+    appendToCompilerUsed(M, DeclaredShadowGlobals);
 
   for (auto G : toErase) {
     for (auto name : {"llvm.used", "llvm.compiler.used"}) {

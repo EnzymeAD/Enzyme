@@ -4,3 +4,5 @@
 #   C003: 'implicit none' missing 'external' - this is a Fortran 2013 feature and we support older standards
 #   C091: external procedure - this is crucial to the way the Fortran bindings are set up
 ignore = ["S001", "C003", "C091"]
+# Fixed-form source (compiled with -ffixed-form), which fortitude cannot parse.
+extend-exclude = ["enzyme/test/Fortran/Directives/fortran_directives_sentinel_fixed.f90"]

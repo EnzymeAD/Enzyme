@@ -13,6 +13,25 @@ add_dependencies(FlangEnzymeMLIR-${LLVM_VERSION_MAJOR} MLIREnzyme
 target_include_directories(
   FlangEnzymeMLIR-${LLVM_VERSION_MAJOR}
   PRIVATE ${FLANG_INCLUDE_DIRS})
+# The !DIR$ ENZYME directives need a flang with plugin directives
+# (flang/Support/PluginDirectives.h).
+# The tests (enzyme/test/lit.site.cfg.py.in) read the result.
+set(ENZYME_FLANG_PLUGIN_DIRECTIVES OFF CACHE INTERNAL "")
+foreach(dir ${FLANG_INCLUDE_DIRS})
+  if(EXISTS "${dir}/flang/Support/PluginDirectives.h")
+    set(ENZYME_FLANG_PLUGIN_DIRECTIVES ON CACHE INTERNAL "")
+  endif()
+endforeach()
+if(ENZYME_FLANG_PLUGIN_DIRECTIVES)
+  message(
+    STATUS "FlangEnzymeMLIR: flang has plugin directives; building !DIR$ ENZYME")
+  target_sources(
+    FlangEnzymeMLIR-${LLVM_VERSION_MAJOR}
+    PRIVATE FlangEnzymeDirectives.cpp FortranDirectives.cpp)
+  target_compile_definitions(
+    FlangEnzymeMLIR-${LLVM_VERSION_MAJOR}
+    PRIVATE ENZYME_FLANG_PLUGIN_DIRECTIVES)
+endif()
 # The enzyme dialect and its translation carry the type annotations to LLVM
 # IR; bundle them by file, so that their MLIR dependencies resolve from the
 # host.
