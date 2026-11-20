@@ -63,6 +63,17 @@ module {
         : (f32, f32, f32, f32) -> (f32, f32)
     return %p, %dx : f32, f32
   }
+
+  func.func @rev_used_active_arg(%x: f32, %y: f32, %dp: f32)
+      -> (f32, f32, f32) {
+    %p, %dx, %dy = enzyme.autodiff @square2(%x, %y, %dp)
+        <{activity = [#enzyme.activity<enzyme_active>,
+                     #enzyme.activity<enzyme_active>],
+         ret_activity = [#enzyme.activity<enzyme_active>,
+                         #enzyme.activity<enzyme_constnoneed>]}>
+        : (f32, f32, f32) -> (f32, f32, f32)
+    return %p, %dx, %dy : f32, f32, f32
+  }
 }
 
 // CLASSIC-LABEL: func.func @rev_return_activity
@@ -70,3 +81,51 @@ module {
 
 // DATAFLOW-LABEL: func.func @rev_return_activity
 // DATAFLOW: enzyme.autodiff @square2(%arg0, %arg1, %arg2) {{.*}}activity = [#enzyme.activity<enzyme_active>, #enzyme.activity<enzyme_const>]{{.*}}ret_activity = [#enzyme.activity<enzyme_active>, #enzyme.activity<enzyme_constnoneed>]
+
+// DATAFLOW-LABEL: func.func @rev_used_active_arg
+// DATAFLOW-DAG: %[[R:.*]]:2 = enzyme.autodiff @square2(%arg0, %arg1, %arg2) {{.*}}activity = [#enzyme.activity<enzyme_active>, #enzyme.activity<enzyme_const>], ret_activity = [#enzyme.activity<enzyme_active>, #enzyme.activity<enzyme_constnoneed>]{{.*}} : (f32, f32, f32) -> (f32, f32)
+// DATAFLOW-DAG: %[[RZERO:.*]] = arith.constant 0.000000e+00 : f32
+// DATAFLOW: return %[[R]]#0, %[[R]]#1, %[[RZERO]] : f32, f32, f32
+
+// -----
+
+module {
+  func.func @identity(%c: f64) -> f64 {
+    return %c : f64
+  }
+  func.func @fwd_used_dupnoneed(%c: f64) -> f64 {
+    %dc = enzyme.fwddiff @identity(%c) <{
+      activity = [#enzyme.activity<enzyme_const>],
+      ret_activity = [#enzyme.activity<enzyme_dupnoneed>]
+    }> : (f64) -> f64
+    return %dc : f64
+  }
+  func.func @fwd_used_dup(%c: f64) -> (f64, f64) {
+    %p, %dc = enzyme.fwddiff @identity(%c) <{
+      activity = [#enzyme.activity<enzyme_const>],
+      ret_activity = [#enzyme.activity<enzyme_dup>]
+    }> : (f64) -> (f64, f64)
+    return %p, %dc : f64, f64
+  }
+}
+
+// CLASSIC-LABEL: func.func @fwd_used_dupnoneed
+// CLASSIC-DAG: %[[ZERO:.*]] = arith.constant 0.000000e+00 : f64
+// CLASSIC-DAG: enzyme.fwddiff @identity(%arg0) {{.*}}activity = [#enzyme.activity<enzyme_const>], ret_activity = [#enzyme.activity<enzyme_constnoneed>]{{.*}} : (f64) -> ()
+// CLASSIC: return %[[ZERO]] : f64
+
+// CLASSIC-LABEL: func.func @fwd_used_dup
+// CLASSIC-DAG: %[[P:.*]] = enzyme.fwddiff @identity(%arg0) {{.*}}activity = [#enzyme.activity<enzyme_const>], ret_activity = [#enzyme.activity<enzyme_const>]{{.*}} : (f64) -> f64
+// CLASSIC-DAG: %[[ZERO2:.*]] = arith.constant 0.000000e+00 : f64
+// CLASSIC: return %[[P]], %[[ZERO2]] : f64, f64
+
+// DATAFLOW-LABEL: func.func @fwd_used_dupnoneed
+// DATAFLOW-DAG: %[[ZERO:.*]] = arith.constant 0.000000e+00 : f64
+// DATAFLOW-DAG: enzyme.fwddiff @identity(%arg0) {{.*}}activity = [#enzyme.activity<enzyme_const>], ret_activity = [#enzyme.activity<enzyme_constnoneed>]{{.*}} : (f64) -> ()
+// DATAFLOW: return %[[ZERO]] : f64
+
+// DATAFLOW-LABEL: func.func @fwd_used_dup
+// DATAFLOW-DAG: %[[P:.*]] = enzyme.fwddiff @identity(%arg0) {{.*}}activity = [#enzyme.activity<enzyme_const>], ret_activity = [#enzyme.activity<enzyme_const>]{{.*}} : (f64) -> f64
+// DATAFLOW-DAG: %[[ZERO2:.*]] = arith.constant 0.000000e+00 : f64
+// DATAFLOW: return %[[P]], %[[ZERO2]] : f64, f64
+
