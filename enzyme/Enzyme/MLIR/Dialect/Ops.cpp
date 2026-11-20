@@ -884,13 +884,14 @@ public:
           if (dres_type_intf && !isMutable(dres_type) &&
               dres_type_intf.isZero(dres)) {
             // constnoneed
+            changed = true;
             new_act = ActivityAttr::get(rewriter.getContext(),
                                         Activity::enzyme_constnoneed);
           } else {
             in_args.push_back(dres);
             in_ty.push_back(dres_type);
           }
-          newRetActivityArgs.push_back(iattr);
+          newRetActivityArgs.push_back(new_act);
           break;
         }
       case Activity::enzyme_const:
