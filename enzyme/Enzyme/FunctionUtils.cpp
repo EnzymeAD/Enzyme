@@ -756,51 +756,47 @@ UpgradeAllocasToMallocs(Function *NewF, DerivativeMode mode,
     AI->setName("");
 
 #if LLVM_VERSION_MAJOR >= 22
+    // Enzyme reads llvm.enzyme.lifetime_start/end as (size, ptr), like the
+    // lifetime markers before LLVM 22. Since LLVM 22 the markers have no size:
+    // the alloca implies it.
+    ConstantInt *Size = nullptr;
     for (auto U : llvm::make_early_inc_range(AI->users())) {
-      if (auto II = dyn_cast<IntrinsicInst>(U)) {
-        if (II->getIntrinsicID() == Intrinsic::lifetime_start) {
-          if (!start_lifetime) {
-            start_lifetime = cast<Function>(
-                NewF->getParent()
-                    ->getOrInsertFunction(
-                        "llvm.enzyme.lifetime_start",
-                        FunctionType::get(Type::getVoidTy(NewF->getContext()),
-                                          {}, true))
-                    .getCallee());
-          }
-          IRBuilder<> B(II);
-          SmallVector<Value *, 2> args(II->arg_size());
-          for (unsigned i = 0; i < II->arg_size(); ++i) {
-            args[i] = II->getArgOperand(i);
-          }
-          auto newI = B.CreateCall(start_lifetime, args);
-          newI->takeName(II);
-          newI->setDebugLoc(II->getDebugLoc());
-          II->eraseFromParent();
-          continue;
-        }
-        if (II->getIntrinsicID() == Intrinsic::lifetime_end) {
-          if (!end_lifetime) {
-            end_lifetime = cast<Function>(
-                NewF->getParent()
-                    ->getOrInsertFunction(
-                        "llvm.enzyme.lifetime_end",
-                        FunctionType::get(Type::getVoidTy(NewF->getContext()),
-                                          {}, true))
-                    .getCallee());
-          }
-          IRBuilder<> B(II);
-          SmallVector<Value *, 2> args(II->arg_size());
-          for (unsigned i = 0; i < II->arg_size(); ++i) {
-            args[i] = II->getArgOperand(i);
-          }
-          auto newI = B.CreateCall(end_lifetime, args);
-          newI->takeName(II);
-          newI->setDebugLoc(II->getDebugLoc());
-          II->eraseFromParent();
-          continue;
-        }
+      auto II = dyn_cast<IntrinsicInst>(U);
+      if (!II || (II->getIntrinsicID() != Intrinsic::lifetime_start &&
+                  II->getIntrinsicID() != Intrinsic::lifetime_end))
+        continue;
+      bool IsStart = II->getIntrinsicID() == Intrinsic::lifetime_start;
+      Function *&Marker = IsStart ? start_lifetime : end_lifetime;
+      if (!Marker) {
+        Marker = cast<Function>(
+            NewF->getParent()
+                ->getOrInsertFunction(
+                    IsStart ? "llvm.enzyme.lifetime_start"
+                            : "llvm.enzyme.lifetime_end",
+                    FunctionType::get(Type::getVoidTy(NewF->getContext()), {},
+                                      true))
+                .getCallee());
       }
+      Value *SizeArg;
+      if (II->arg_size() == 2) {
+        SizeArg = II->getArgOperand(0);
+      } else {
+        if (!Size) {
+          int64_t Bytes = -1;
+          if (auto AllocSize = AI->getAllocationSize(NewF->getDataLayout()))
+            if (!AllocSize->isScalable())
+              Bytes = AllocSize->getFixedValue();
+          Size = ConstantInt::getSigned(Type::getInt64Ty(NewF->getContext()),
+                                        Bytes);
+        }
+        SizeArg = Size;
+      }
+      IRBuilder<> B(II);
+      auto newI = B.CreateCall(
+          Marker, {SizeArg, II->getArgOperand(II->arg_size() - 1)});
+      newI->takeName(II);
+      newI->setDebugLoc(II->getDebugLoc());
+      II->eraseFromParent();
     }
 #endif
 
@@ -1198,15 +1194,17 @@ void PreProcessCache::LowerAllocAddr(Function *NewF) {
     }
 
     for (auto CB : Todo) {
-      if (!isa<AllocaInst>(CB->getArgOperand(1))) {
+      // The pointer is the last argument of a (size, ptr) call.
+      Value *Ptr = CB->getArgOperand(CB->arg_size() - 1);
+      if (!isa<AllocaInst>(Ptr)) {
         CB->eraseFromParent();
         continue;
       }
       IRBuilder<> B(CB);
       if (CB->getCalledFunction() == start_lifetime) {
-        B.CreateLifetimeStart(cast<ConstantInt>(CB->getArgOperand(0)));
+        B.CreateLifetimeStart(Ptr);
       } else {
-        B.CreateLifetimeEnd(cast<ConstantInt>(CB->getArgOperand(0)));
+        B.CreateLifetimeEnd(Ptr);
       }
       CB->eraseFromParent();
     }
