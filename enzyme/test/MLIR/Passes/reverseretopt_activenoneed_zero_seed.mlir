@@ -20,5 +20,5 @@ module {
   }
 }
 
-// CHECK-LABEL: func.func @zero_seed
-// CHECK: enzyme.autodiff @square2(%arg0, %arg1, %arg2){{.*}}activity = [#enzyme.activity<enzyme_const>, #enzyme.activity<enzyme_active>]{{.*}}ret_activity = [#enzyme.activity<enzyme_constnoneed>, #enzyme.activity<enzyme_activenoneed>]
+// CHECK-LABEL: func.func @zero_seed(%[[X:.+]]: f32, %[[Y:.+]]: f32, %[[DR1:.+]]: f32)
+// CHECK: enzyme.autodiff @square2(%[[X]], %[[Y]], %[[DR1]]){{.*}}activity = [#enzyme.activity<enzyme_const>, #enzyme.activity<enzyme_active>]{{.*}}ret_activity = [#enzyme.activity<enzyme_constnoneed>, #enzyme.activity<enzyme_activenoneed>]
