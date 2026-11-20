@@ -1,12 +1,24 @@
 # A plugin for `flang -fc1 -load`. MLIR, FIR and flang symbols stay undefined
 # and resolve from the host, so the plugin carries no second copy of LLVM.
 add_llvm_library(
-  FlangEnzymeMLIR-${LLVM_VERSION_MAJOR} MODULE FlangEnzymeMLIRPlugin.cpp
+  FlangEnzymeMLIR-${LLVM_VERSION_MAJOR}
+  MODULE
+  FlangEnzymeMLIRPlugin.cpp
+  FIRTypeAnnotations.cpp
   # FlangEnzymeMLIRLoader.cpp is built into FlangEnzyme instead.
-  PARTIAL_SOURCES_INTENDED DISABLE_LLVM_LINK_LLVM_DYLIB)
+  PARTIAL_SOURCES_INTENDED
+  DISABLE_LLVM_LINK_LLVM_DYLIB)
+add_dependencies(FlangEnzymeMLIR-${LLVM_VERSION_MAJOR} MLIREnzyme
+                 MLIREnzymeToLLVMIRTranslation)
 target_include_directories(
   FlangEnzymeMLIR-${LLVM_VERSION_MAJOR}
   PRIVATE ${FLANG_INCLUDE_DIRS})
+# The enzyme dialect and its translation carry the type annotations to LLVM
+# IR; bundle them by file, so that their MLIR dependencies resolve from the
+# host.
+target_link_libraries(
+  FlangEnzymeMLIR-${LLVM_VERSION_MAJOR}
+  PRIVATE $<TARGET_FILE:MLIREnzymeToLLVMIRTranslation> $<TARGET_FILE:MLIREnzyme>)
 target_link_options(
   FlangEnzymeMLIR-${LLVM_VERSION_MAJOR}
   PRIVATE -Wl,--allow-shlib-undefined)
