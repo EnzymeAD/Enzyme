@@ -23,12 +23,6 @@
 MLIR_DEFINE_CAPI_DIALECT_REGISTRATION(Enzyme, enzyme,
                                       mlir::enzyme::EnzymeDialect)
 
-namespace mlir::enzyme {
-// The generated C API expects the group registration to be named after its
-// `--prefix`, but `-gen-pass-decls -name enzyme` names it registerenzymePasses.
-static void registerEnzymePasses() { registerenzymePasses(); }
-} // namespace mlir::enzyme
-
 using namespace mlir::enzyme;
 
 extern "C" {
