@@ -1198,15 +1198,20 @@ void PreProcessCache::LowerAllocAddr(Function *NewF) {
     }
 
     for (auto CB : Todo) {
-      if (!isa<AllocaInst>(CB->getArgOperand(1))) {
+      // Since LLVM 22 the lifetime intrinsics take only the pointer, which
+      // must be an alloca. The placeholders copied the operands of the
+      // original intrinsic, so the pointer is operand 0. Drop the marker if
+      // the pointer is not an alloca (e.g. a malloc or an addrspacecast).
+      Value *Ptr = CB->getArgOperand(0);
+      if (!isa<AllocaInst>(Ptr)) {
         CB->eraseFromParent();
         continue;
       }
       IRBuilder<> B(CB);
       if (CB->getCalledFunction() == start_lifetime) {
-        B.CreateLifetimeStart(cast<ConstantInt>(CB->getArgOperand(0)));
+        B.CreateLifetimeStart(Ptr);
       } else {
-        B.CreateLifetimeEnd(cast<ConstantInt>(CB->getArgOperand(0)));
+        B.CreateLifetimeEnd(Ptr);
       }
       CB->eraseFromParent();
     }
