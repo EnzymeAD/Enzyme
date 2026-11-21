@@ -340,18 +340,97 @@ static inline llvm::Value *getKnownAllocationSize(
   return allocSize;
 }
 
+/// A shadow allocation copies the attributes of its primal, but not the stores
+/// that initialize the primal, so drop allockind("uninitialized") from it (as
+/// Julia's codegen sets on fully initialized objects). Otherwise LLVM and
+/// Julia's AllocOpt may take bytes of the shadow that are only zeroed later,
+/// by Enzyme's memset or Julia's late-gc-lowering, to be undef. It must not be
+/// marked "zeroed" either: neither the allocation nor late-gc-lowering zeroes
+/// all of it, and LLVM would then drop Enzyme's memset as redundant.
+static inline void dropUninitializedAllocKind(llvm::CallBase *alloc) {
+  using namespace llvm;
+  Attribute kind = alloc->getFnAttr(Attribute::AllocKind);
+  if (!kind.isValid() || (kind.getAllocKind() & AllocFnKind::Uninitialized) ==
+                             AllocFnKind::Unknown)
+    return;
+  alloc->removeFnAttr(Attribute::AllocKind);
+  alloc->addFnAttr(Attribute::get(
+      alloc->getContext(), Attribute::AllocKind,
+      uint64_t(kind.getAllocKind() & ~AllocFnKind::Uninitialized)));
+}
+
+/// Julia (julia#60924) attaches julia.gc_alloc_ptr_offsets(i64 off, ...) to a
+/// julia.gc_alloc_obj call to have late-gc-lowering null the GC pointer fields
+/// at those byte offsets right after the allocation. For an allocation `orig`
+/// of constant size that carries this bundle with constant offsets, append to
+/// `ranges` the [begin, end) byte ranges that are not GC pointer fields, which
+/// Julia does not zero, and return true. Otherwise return false.
+static inline bool getJuliaNonGCPointerRanges(
+    const llvm::CallBase *orig,
+    llvm::SmallVectorImpl<std::pair<uint64_t, uint64_t>> &ranges) {
+  using namespace llvm;
+  if (!orig || getFuncNameFromCall(orig) != "julia.gc_alloc_obj")
+    return false;
+  auto bundle = orig->getOperandBundle("julia.gc_alloc_ptr_offsets");
+  if (!bundle)
+    return false;
+  auto sizeC = dyn_cast<ConstantInt>(orig->getArgOperand(1));
+  if (!sizeC)
+    return false;
+  uint64_t size = sizeC->getZExtValue();
+  // Julia's GC pointer fields are sizeof(void*), the address space 0 size.
+  uint64_t ptrSize = orig->getModule()->getDataLayout().getPointerSize();
+  SmallVector<uint64_t, 4> offsets;
+  for (auto &off : bundle->Inputs) {
+    auto C = dyn_cast<ConstantInt>(off);
+    if (!C || C->getZExtValue() + ptrSize > size)
+      return false;
+    offsets.push_back(C->getZExtValue());
+  }
+  llvm::sort(offsets);
+  uint64_t start = 0;
+  for (auto off : offsets) {
+    if (off > start)
+      ranges.emplace_back(start, off);
+    start = std::max(start, off + ptrSize);
+  }
+  if (size > start)
+    ranges.emplace_back(start, size);
+  return true;
+}
+
+/// Zero the newly allocated `toZero`, made by the allocation function
+/// `funcName` with arguments `argValues`, mirroring the original allocation
+/// `orig`. If `skipJuliaGCPointers`, `toZero` is a fresh shadow that carries
+/// the julia.gc_alloc_ptr_offsets bundle of `orig`, so Julia nulls its GC
+/// pointer fields and only the bytes between them are zeroed here.
 static inline void zeroKnownAllocation(llvm::IRBuilder<> &bb,
                                        llvm::Value *toZero,
                                        llvm::ArrayRef<llvm::Value *> argValues,
                                        const llvm::StringRef funcName,
                                        const llvm::TargetLibraryInfo &TLI,
-                                       llvm::CallInst *orig) {
+                                       llvm::CallInst *orig,
+                                       bool skipJuliaGCPointers = false) {
   using namespace llvm;
   assert(isAllocationFunction(funcName, TLI));
 
   // Don't re-zero an already-zero buffer
   if (funcName == "calloc" || isRustZeroedAllocationFunction(funcName))
     return;
+
+  SmallVector<std::pair<uint64_t, uint64_t>, 4> ranges;
+  if (skipJuliaGCPointers && getJuliaNonGCPointerRanges(orig, ranges)) {
+    auto i8 = Type::getInt8Ty(toZero->getContext());
+    for (auto &range : ranges) {
+      Value *dst = toZero;
+      if (range.first != 0)
+        dst = bb.CreateInBoundsGEP(i8, dst, bb.getInt64(range.first));
+      auto memset = bb.CreateMemSet(dst, ConstantInt::get(i8, 0),
+                                    range.second - range.first, MaybeAlign());
+      memset->addParamAttr(0, Attribute::NonNull);
+    }
+    return;
+  }
 
   Value *allocSize = getKnownAllocationSize(bb, argValues, funcName, TLI, orig);
   Value *dst_arg = toZero;

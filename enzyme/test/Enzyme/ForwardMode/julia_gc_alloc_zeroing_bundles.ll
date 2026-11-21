@@ -14,7 +14,7 @@ entry:
 
 define double @f(double %x) {
 entry:
-  %obj = call noalias nonnull ptr addrspace(10) @julia.gc_alloc_obj(ptr null, i64 16, ptr addrspace(10) null) [ "julia.gc_alloc_ptr_offsets"(i64 0) ]
+  %obj = call noalias nonnull ptr addrspace(10) @julia.gc_alloc_obj(ptr null, i64 16, ptr addrspace(10) null) #0 [ "julia.gc_alloc_ptr_offsets"(i64 0) ]
   %fld = getelementptr inbounds i8, ptr addrspace(10) %obj, i64 8
   store double %x, ptr addrspace(10) %fld, align 8
   call void @use(ptr addrspace(10) %obj)
@@ -30,7 +30,14 @@ entry:
 
 declare noalias nonnull ptr addrspace(10) @julia.gc_alloc_obj(ptr, i64, ptr addrspace(10)) inaccessiblememonly allocsize(1)
 
+; Codegen marks a fully initialized object allockind("alloc,uninitialized"). The
+; shadow is not initialized by the primal's stores, so it must not keep that.
+attributes #0 = { allockind("alloc,uninitialized") }
+
 ; CHECK: define internal double @fwddiffef(double %x, double %"x'")
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %obj = call noalias nonnull ptr addrspace(10) @julia.gc_alloc_obj(ptr null, i64 16, ptr addrspace(10) null) #{{[0-9]+}} [ "julia.gc_alloc_ptr_offsets"(i64 0) ]
-; CHECK-NEXT:   %{{.+}} = call noalias nonnull ptr addrspace(10) @julia.gc_alloc_obj(ptr null, i64 16, ptr addrspace(10) null) #{{[0-9]+}} [ "julia.gc_alloc_ptr_offsets"(i64 0) ]
+; CHECK-NEXT:   %obj = call noalias nonnull ptr addrspace(10) @julia.gc_alloc_obj(ptr null, i64 16, ptr addrspace(10) null) #[[primalattrs:[0-9]+]] [ "julia.gc_alloc_ptr_offsets"(i64 0) ]
+; CHECK-NEXT:   %{{.+}} = call noalias nonnull ptr addrspace(10) @julia.gc_alloc_obj(ptr null, i64 16, ptr addrspace(10) null) #[[shadowattrs:[0-9]+]] [ "julia.gc_alloc_ptr_offsets"(i64 0) ]
+
+; CHECK-DAG: attributes #[[primalattrs]] = { {{.*}}allockind("alloc,uninitialized") }
+; CHECK-DAG: attributes #[[shadowattrs]] = { {{.*}}allockind("alloc") }

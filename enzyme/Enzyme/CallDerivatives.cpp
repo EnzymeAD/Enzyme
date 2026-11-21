@@ -3694,6 +3694,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
                   bb.CreateCall(call.getFunctionType(), call.getCalledOperand(),
                                 args, Defs, call.getName() + "'mi");
               cast<CallInst>(anti)->setAttributes(call.getAttributes());
+              dropUninitializedAllocKind(cast<CallInst>(anti));
               cast<CallInst>(anti)->setCallingConv(call.getCallingConv());
               cast<CallInst>(anti)->setTailCallKind(call.getTailCallKind());
               cast<CallInst>(anti)->setDebugLoc(dbgLoc);
@@ -3749,8 +3750,14 @@ bool AdjointGenerator::handleKnownCallDerivatives(
                   (Mode == DerivativeMode::ForwardModeSplit &&
                    backwardsShadow)) {
                 if (!inLoop) {
+                  // The shadow carries the primal's GC pointer zeroing bundle,
+                  // so only zero the other bytes. An allocation that may be
+                  // turned back into an alloca has no such bundle, but zero
+                  // all of it anyway as the alloca would drop the bundle.
                   zeroKnownAllocation(bb, anti, args, funcName, gutils->TLI,
-                                      &call);
+                                      &call,
+                                      /*skipJuliaGCPointers*/
+                                      !hasMetadata(&call, "enzyme_fromstack"));
                   zeroed = true;
                 }
               }
@@ -3943,6 +3950,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
           CallInst *CI = Builder2.CreateCall(
               call.getFunctionType(), call.getCalledFunction(), args, Defs);
           CI->setAttributes(call.getAttributes());
+          dropUninitializedAllocKind(CI);
           CI->setCallingConv(call.getCallingConv());
           CI->setTailCallKind(call.getTailCallKind());
           CI->setDebugLoc(dbgLoc);
