@@ -47,6 +47,12 @@ Value inactiveStoredValueShadow(Operation *orig, MGradientUtils &gutils,
 // false, only follow operations known to preserve the starting address.
 Value getBaseObject(Value v, bool offsetAllowed = true);
 
+Operation *getGlobalForAddress(Value v);
+
+bool isConstantGlobal(Operation *global);
+
+bool isLocalGlobal(Operation *global);
+
 // Checks if 2 values v1 and v2 may alias with each other locally
 bool mayAlias(Value v1, Value v2);
 
