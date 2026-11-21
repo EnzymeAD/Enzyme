@@ -451,6 +451,8 @@ public:
 
 TypeTree defaultTypeTreeForLLVM(llvm::Type *ET, llvm::Instruction *I,
                                 bool intIsPointer = true);
+bool isUnknownNarrowIntegerOp(const llvm::Instruction &I,
+                              const TypeResults &TR);
 FnTypeInfo preventTypeAnalysisLoops(const FnTypeInfo &oldTypeInfo_,
                                     llvm::Function *todiff);
 #endif
