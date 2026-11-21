@@ -429,6 +429,55 @@ getTypeFromTBAAString(std::string TypeName, llvm::Instruction &I,
       llvm::errs() << " " << TypeName << "\n";
     }
     return llvm::Type::getDoubleTy(I.getContext());
+  } else if (TypeName == "any data access" ||
+             llvm::StringRef(TypeName).starts_with("global data") ||
+             llvm::StringRef(TypeName).starts_with("dummy arg data") ||
+             llvm::StringRef(TypeName).starts_with("allocated data") ||
+             llvm::StringRef(TypeName).starts_with("direct data") ||
+             llvm::StringRef(TypeName).starts_with("target data")) {
+    // flang tags accesses to Fortran data with these types. Fortran does
+    // not reinterpret memory (short of EQUIVALENCE and TRANSFER), so a
+    // floating-point load or store accesses floating-point data. Integer
+    // accesses are not trusted: optimizations copy reals as integers.
+    llvm::Type *AccessTy = nullptr;
+    if (auto LI = llvm::dyn_cast<llvm::LoadInst>(&I))
+      AccessTy = LI->getType();
+    else if (auto SI = llvm::dyn_cast<llvm::StoreInst>(&I))
+      AccessTy = SI->getValueOperand()->getType();
+    if (AccessTy && AccessTy->isFPOrFPVectorTy()) {
+      if (EnzymePrintType) {
+        llvm::errs() << "known tbaa ";
+        if (MST)
+          I.print(llvm::errs(), *MST);
+        else
+          llvm::errs() << I;
+        llvm::errs() << " " << TypeName << "\n";
+      }
+      return ConcreteType(AccessTy->getScalarType());
+    }
+  } else if (TypeName == "descriptor member") {
+    // flang tags accesses to the fields of Fortran descriptors (CFI_cdesc_t:
+    // base address, element length, version, rank, type, attribute, bounds,
+    // extents, strides, addendum) with this type. None of them holds
+    // floating-point data, so a field is a pointer or an integer, as loaded
+    // or stored.
+    llvm::Type *AccessTy = nullptr;
+    if (auto LI = llvm::dyn_cast<llvm::LoadInst>(&I))
+      AccessTy = LI->getType();
+    else if (auto SI = llvm::dyn_cast<llvm::StoreInst>(&I))
+      AccessTy = SI->getValueOperand()->getType();
+    if (AccessTy && (AccessTy->isIntegerTy() || AccessTy->isPointerTy())) {
+      if (EnzymePrintType) {
+        llvm::errs() << "known tbaa ";
+        if (MST)
+          I.print(llvm::errs(), *MST);
+        else
+          llvm::errs() << I;
+        llvm::errs() << " " << TypeName << "\n";
+      }
+      return ConcreteType(AccessTy->isPointerTy() ? BaseType::Pointer
+                                                  : BaseType::Integer);
+    }
   }
   return ConcreteType(BaseType::Unknown);
 }
