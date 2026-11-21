@@ -1,0 +1,40 @@
+CanonicalHash = 0290406eb4712885
+0
+	MinRes = 1.0
+	MaxRes = 4.0
+	SumValue = 233.0
+	SumSens = 58.0
+	SumGrad = 25.0
+	Exec = 100
+	NumOperands = 2
+	Operand[0] = [1.0, 2.0]
+	Operand[1] = [1.0, 2.0]
+1
+	MinRes = 1.0
+	MaxRes = 4.0
+	SumValue = 233.0
+	SumSens = 58.0
+	SumGrad = 25.0
+	Exec = 100
+	NumOperands = 2
+	Operand[0] = [1.0, 2.0]
+	Operand[1] = [1.0, 2.0]
+2
+	MinRes = 2.0
+	MaxRes = 8.0
+	SumValue = 466.0
+	SumSens = 116.0
+	SumGrad = 25.0
+	Exec = 100
+	NumOperands = 2
+	Operand[0] = [1.0, 4.0]
+	Operand[1] = [1.0, 4.0]
+3
+	MinRes = 1.4142135623730951
+	MaxRes = 2.8284271247461903
+	SumValue = 213.0
+	SumSens = 213.0
+	SumGrad = 100.0
+	Exec = 100
+	NumOperands = 1
+	Operand[0] = [2.0, 8.0]

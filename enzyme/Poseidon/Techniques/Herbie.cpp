@@ -1,0 +1,1936 @@
+//=- Herbie.cpp - algebraic rewrites from Herbie ----------------------------=//
+//
+// Part of the Poseidon Project, under the Apache License v2.0 with LLVM
+// Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+//
+// The algebraic units of an FP subgraph: Herbie's rewrites of its outputs,
+// one output or an array of them per unit.
+//
+//===----------------------------------------------------------------------===//
+
+#include "Herbie.h"
+#include "Core/HerbieRun.h"
+#include "Core/Parallel.h"
+#include "IR/Utils.h"
+#include "Model/CostModel.h"
+#include "Model/Evaluators.h"
+#include "Model/Sampling.h"
+#include "Pass/Session.h"
+#include "Targets/Target.h"
+
+#include "llvm/ADT/MapVector.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/SmallSet.h"
+#include "llvm/Analysis/LoopInfo.h"
+#include "llvm/IR/Dominators.h"
+#include "llvm/IR/InstIterator.h"
+#include "llvm/Passes/PassBuilder.h"
+#include "llvm/Support/Casting.h"
+#include "llvm/Support/Error.h"
+#include "llvm/Support/FileSystem.h"
+#include "llvm/Support/Format.h"
+#include "llvm/Support/FormatVariadic.h"
+#include "llvm/Support/JSON.h"
+#include "llvm/Support/raw_ostream.h"
+
+#include <iomanip>
+#include <map>
+#include <optional>
+#include <sstream>
+#include <string>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
+
+using namespace llvm;
+
+namespace poseidon {
+
+// The Herbie platform this compile searches against. It is the device's, so it
+// is derived from the resolved cost model.
+static const HerbiePlatform &getHerbiePlatform(Session &S, const Function &F) {
+  HerbiePlatform &P = S.Herbie.Platform;
+  if (S.Herbie.PlatformResolved)
+    return P;
+  S.Herbie.PlatformResolved = true;
+
+  const std::string &NativeArch = getCostModelNativeArch(S.CostModel);
+  const Target &T = Target::measuredOn(NativeArch);
+  P.Name = T.herbiePlatform(NativeArch);
+
+  if (!S.Opts.Herbie.HerbiePlatform.empty()) {
+    // A value that looks like a file is the platform itself; anything else is
+    // a platform name compiled into the Herbie binary. The name keeps naming
+    // the device family either way, and the digest below distinguishes files.
+    StringRef V(S.Opts.Herbie.HerbiePlatform);
+    if (V.contains('/') || V.ends_with(".rkt"))
+      P.Path = V.str();
+    else
+      P.Name = V.str();
+  } else if (T.isDevice()) {
+    // Generated next to the CSV it was priced from, by
+    // `poseidon-calibrate --only herbie-platform`.
+    StringRef Csv(costModelPath(S.CostModel));
+    P.Path =
+        (Csv.ends_with(".csv") ? Csv.drop_back(4) : Csv).str() + ".herbie.rkt";
+    if (!sys::fs::exists(P.Path))
+      reportUserError(
+          F, F.getSubprogram(),
+          Twine("the Herbie algebraic search needs the platform generated "
+                "from this device's cost model, and ") +
+              P.Path +
+              " does not exist. Generate it with 'poseidon-calibrate --only "
+              "herbie-platform --out " +
+              costModelPath(S.CostModel) +
+              "'. Another architecture's platform is that architecture's "
+              "prices and is never substituted.");
+  }
+
+  if (!P.Path.empty()) {
+    P.Digest = readFileDigest(P.Path);
+    if (P.Digest.empty())
+      reportUserError(F, F.getSubprogram(),
+                      Twine("cannot read the Herbie platform ") + P.Path +
+                          "; -poseidon-herbie-platform names a platform file "
+                          "or a platform compiled into Herbie.");
+  }
+  return P;
+}
+
+// How this compile runs Herbie: its -poseidon-herbie-* flags.
+static HerbieRunOptions herbieRunOptions(Session &S, const Function &F) {
+  const Options &O = S.Opts;
+  HerbieRunOptions Opts;
+  Opts.Program = O.Herbie.HerbieBinary.empty() ? std::string(HERBIE_BINARY)
+                                               : O.Herbie.HerbieBinary;
+  Opts.Platform = getHerbiePlatform(S, F);
+  Opts.Seed = O.Model.RandomSeed;
+  Opts.NumPoints = O.Herbie.HerbieNumPts;
+  Opts.NumIters = O.Herbie.HerbieNumIters;
+  Opts.NumEnodes = O.Herbie.HerbieNumEnodes;
+  Opts.CoreTimeout = O.Herbie.HerbieTimeout;
+  Opts.NumThreads = O.Herbie.HerbieNumThreads;
+  Opts.Processes = O.Herbie.HerbieProcesses;
+  Opts.SubgraphTimeout = O.Herbie.HerbieSubgraphTimeout;
+  Opts.CacheDir = O.Herbie.Cache;
+  Opts.ImportDir = O.Herbie.ImportHerbieAnswers;
+  Opts.Print = O.Diagnostics.Print;
+  return Opts;
+}
+
+void addHerbieKeyParts(Session &S, const Function &F, CacheKey &key) {
+  addHerbieKeyParts(key, herbieRunOptions(S, F), S.Herbie.HerbieDigests);
+}
+
+namespace {
+// A point of a core's cost-accuracy curve: [cost, error in bits].
+struct HerbiePoint {
+  double Cost = 0, ErrorBits = 0;
+};
+
+// An alternative Herbie lists for a core: [cost, error in bits, expression].
+// An entry without the expression is no candidate.
+struct HerbieAlternative {
+  HerbiePoint Point;
+  std::optional<std::string> Expr;
+};
+
+// A core's cost-accuracy list: [initial, best, alternatives].
+struct HerbieCostAccuracy {
+  HerbiePoint Initial, Best;
+  std::vector<HerbieAlternative> Alternatives;
+};
+
+// What Herbie found for a core it has an expression for.
+struct HerbieRewrites {
+  std::string BestExpr;
+  // The bits of the core's precision, which the errors are out of.
+  double Bits = 0;
+  HerbieCostAccuracy CostAccuracy;
+};
+
+// One test of a Herbie results file: the answer for the core it names.
+struct HerbieCoreAnswer {
+  std::string Name;
+  // The core's index, which is its name.
+  size_t Core = 0;
+  // What Herbie reports about its search, printed when present.
+  std::optional<std::string> Status;
+  std::optional<double> Time, Start, End;
+  // None when Herbie's output is "#f".
+  std::optional<HerbieRewrites> Rewrites;
+};
+
+bool fromJSON(const json::Value &V, HerbiePoint &Point, json::Path P) {
+  const json::Array *A = V.getAsArray();
+  if (!A || A->size() < 2) {
+    P.report("expected [cost, error]");
+    return false;
+  }
+  return fromJSON((*A)[0], Point.Cost, P.index(0)) &&
+         fromJSON((*A)[1], Point.ErrorBits, P.index(1));
+}
+
+bool fromJSON(const json::Value &V, HerbieAlternative &Alt, json::Path P) {
+  if (!fromJSON(V, Alt.Point, P))
+    return false;
+  const json::Array &A = *V.getAsArray();
+  if (A.size() < 3)
+    return true;
+  return fromJSON(A[2], Alt.Expr.emplace(), P.index(2));
+}
+
+bool fromJSON(const json::Value &V, HerbieCostAccuracy &CA, json::Path P) {
+  const json::Array *A = V.getAsArray();
+  if (!A || A->size() < 3) {
+    P.report("expected [initial, best, alternatives]");
+    return false;
+  }
+  return fromJSON((*A)[0], CA.Initial, P.index(0)) &&
+         fromJSON((*A)[1], CA.Best, P.index(1)) &&
+         fromJSON((*A)[2], CA.Alternatives, P.index(2));
+}
+
+bool fromJSON(const json::Value &V, HerbieCoreAnswer &Answer, json::Path P) {
+  json::ObjectMapper O(V, P);
+  std::string Output;
+  if (!O || !O.map("name", Answer.Name) || !O.map("output", Output))
+    return false;
+  const json::Object &Test = *V.getAsObject();
+  if (std::optional<StringRef> Status = Test.getString("status"))
+    Answer.Status = Status->str();
+  Answer.Time = Test.getNumber("time");
+  Answer.Start = Test.getNumber("start");
+  Answer.End = Test.getNumber("end");
+  if (Output == "#f")
+    return true;
+  HerbieRewrites &R = Answer.Rewrites.emplace();
+  R.BestExpr = std::move(Output);
+  return O.map("bits", R.Bits) && O.map("cost-accuracy", R.CostAccuracy);
+}
+} // namespace
+
+// Reads the Herbie results file `Contents`, the answers for `NumCores` cores
+// named by their index.
+static Expected<std::vector<HerbieCoreAnswer>>
+readHerbieResults(StringRef Contents, size_t NumCores) {
+  Expected<json::Value> Results = json::parse(Contents);
+  if (!Results)
+    return Results.takeError();
+  const json::Object *Top = Results->getAsObject();
+  const json::Array *Tests = Top ? Top->getArray("tests") : nullptr;
+  if (!Tests)
+    return createStringError(
+        inconvertibleErrorCode(),
+        "expected an object with a \"tests\" array at the top level");
+  std::vector<HerbieCoreAnswer> Answers(Tests->size());
+  for (auto [I, Test] : enumerate(*Tests)) {
+    HerbieCoreAnswer &Answer = Answers[I];
+    std::string Where = formatv("tests[{0}]", I);
+    json::Path::Root Root(Where);
+    if (!fromJSON(Test, Answer, Root)) {
+      std::string Why = toString(Root.getError());
+      if (!Answer.Name.empty())
+        Why += ", core \"" + Answer.Name + "\"";
+      return createStringError(inconvertibleErrorCode(), Why);
+    }
+    if (StringRef(Answer.Name).getAsInteger(10, Answer.Core) ||
+        Answer.Core >= NumCores)
+      return createStringError(
+          inconvertibleErrorCode(),
+          formatv("{0} names core \"{1}\", and the cores asked about are 0 "
+                  "to {2}",
+                  Where, Answer.Name, NumCores - 1));
+  }
+  return Answers;
+}
+
+// Collects Herbie's rewrites of `inputExprs`, cores of the site `F`, into
+// `COs`, unpriced.
+static bool improveViaHerbie(Session &S,
+                             const std::vector<std::string> &inputExprs,
+                             std::vector<RewriteUnit> &COs, int subgraphIdx,
+                             const Function &F) {
+  const Options &O = S.Opts;
+  if (!O.Herbie.HerbieBinary.empty() && O.Diagnostics.Print)
+    llvm::errs() << "Poseidon: using Herbie binary '" << O.Herbie.HerbieBinary
+                 << "'\n";
+  llvm::errs() << "random seed: " << std::to_string(O.Model.RandomSeed) << '\n';
+  HerbieRunOptions Opts = herbieRunOptions(S, F);
+
+  const std::string Label =
+      "subgraph " + std::to_string(subgraphIdx) + " of " + F.getName().str();
+  SmallVector<std::optional<unsigned>, 2> TermCounts(
+      O.Herbie.HerbieNumTaylorTerms.begin(),
+      O.Herbie.HerbieNumTaylorTerms.end());
+  if (TermCounts.empty())
+    TermCounts.push_back(std::nullopt);
+  SmallVector<HerbieRunResult, 2> Runs;
+  SmallVector<std::vector<HerbieCoreAnswer>, 2> Answers;
+  for (std::optional<unsigned> Terms : TermCounts) {
+    Opts.TaylorTerms = Terms;
+    const std::string RunLabel =
+        Terms ? Label + " at " + std::to_string(*Terms) + " Taylor terms"
+              : Label;
+    Expected<HerbieRunResult> Run =
+        runHerbie(inputExprs, Opts, RunLabel, S.Herbie.HerbieDigests);
+    if (!Run)
+      reportUserError(F, F.getSubprogram(),
+                      toString(Run.takeError()) +
+                          ". Herbie's answers are kept in the -poseidon-cache "
+                          "directory, which has to be writable.");
+    Runs.push_back(std::move(*Run));
+    // A timeout is Herbie's answer for these cores; a Herbie that does not
+    // start gives none.
+    if (Runs.back().Result == HerbieRunResult::Outcome::Failed)
+      reportUserError(
+          F, F.getSubprogram(),
+          Twine(Opts.CacheDir.empty() ? "no cache is kept"
+                                      : "the cache " + Opts.CacheDir +
+                                            " holds no Herbie answer") +
+              " for " + RunLabel + ", and the Herbie at " + Opts.Program +
+              " cannot run (" + Runs.back().Failure +
+              "). Point -poseidon-herbie-binary at a Herbie, replay the "
+              "answers another Herbie gave with "
+              "-poseidon-import-herbie-answers, or turn algebraic rewriting "
+              "off with -poseidon-enable-herbie=0.");
+    if (Runs.back().Result == HerbieRunResult::Outcome::Crashed &&
+        O.Model.StrictMode)
+      reportUserError(F, F.getSubprogram(),
+                      Twine("strict mode: Herbie crashed (") +
+                          Runs.back().Crash + ") on " + RunLabel +
+                          ". Without -poseidon-strict-mode the subgraph is "
+                          "left as written.");
+    if (Runs.back().Result != HerbieRunResult::Outcome::Ok)
+      continue;
+    StringRef Origin;
+    unsigned *Taken = nullptr;
+    switch (Runs.back().From) {
+    case HerbieRunResult::Origin::Cache:
+      Origin = "the cached answer";
+      Taken = &S.Herbie.Cached;
+      break;
+    case HerbieRunResult::Origin::Imported:
+      Origin = "the replayed answer";
+      Taken = &S.Herbie.Imported;
+      break;
+    case HerbieRunResult::Origin::Fresh:
+      Origin = "Herbie's answer";
+      Taken = &S.Herbie.Fresh;
+      break;
+    }
+    // An answer that cannot be read is no answer, as a crash of Herbie is.
+    Expected<std::vector<HerbieCoreAnswer>> Read =
+        readHerbieResults(Runs.back().ResultsJson, COs.size());
+    if (!Read) {
+      std::string Why = toString(Read.takeError());
+      if (O.Model.StrictMode)
+        reportUserError(F, F.getSubprogram(),
+                        "strict mode: " + Origin + " for " + RunLabel +
+                            " is not a Herbie results file (" + Why +
+                            "). Without -poseidon-strict-mode the subgraph is "
+                            "left as written.");
+      llvm::errs() << "[poseidon] Herbie " << RunLabel << ": " << Origin
+                   << " is not a Herbie results file (" << Why
+                   << "). No algebraic candidates for this subgraph from it.\n";
+      continue;
+    }
+    Answers.push_back(std::move(*Read));
+    ++*Taken;
+  }
+
+  std::vector<std::unordered_set<std::string>> seenExprs(COs.size());
+
+  auto processHerbieOutput = [&](ArrayRef<HerbieCoreAnswer> answers) {
+    for (const HerbieCoreAnswer &answer : answers) {
+      StringRef testName = answer.Name;
+      StringRef status = answer.Status ? StringRef(*answer.Status) : "?";
+      llvm::errs() << "[poseidon] Herbie core \"" << testName << "\" (subgraph "
+                   << subgraphIdx << " of " << F.getName()
+                   << "): status=" << status;
+      if (answer.Time)
+        llvm::errs() << " time=" << (*answer.Time / 1000.0) << 's';
+      if (answer.Start)
+        llvm::errs() << " start-err-bits=" << *answer.Start;
+      if (answer.End)
+        llvm::errs() << " end-err-bits=" << *answer.End;
+      llvm::errs() << '\n';
+
+      RewriteUnit &CO = COs[answer.Core];
+      if (!answer.Rewrites) {
+        llvm::errs() << "[poseidon] Herbie core \"" << testName
+                     << "\": no output expression (status " << status
+                     << ") -- no algebraic candidate from this core.\n";
+        if (!CO.herbieAnswered)
+          CO.herbieStatus = status.str();
+        continue;
+      }
+
+      if (!CO.herbieAnswered)
+        CO.herbieStatus = status.str();
+      CO.herbieAnswered = true;
+      auto &seenExprSet = seenExprs[answer.Core];
+
+      const HerbieRewrites &rewrites = *answer.Rewrites;
+      const HerbieCostAccuracy &costAccuracy = rewrites.CostAccuracy;
+      double bits = rewrites.Bits;
+      CO.herbieBits = bits;
+
+      double initialCostVal = costAccuracy.Initial.Cost;
+      double initialAccuracy = 1.0 - costAccuracy.Initial.ErrorBits / bits;
+      double initialCost = 1.0;
+
+      CO.initialHerbieCost = initialCost;
+      CO.initialHerbieAccuracy = initialAccuracy;
+
+      if (seenExprSet.insert(rewrites.BestExpr).second) {
+        double bestCost = costAccuracy.Best.Cost / initialCostVal;
+        double bestAccuracy = 1.0 - costAccuracy.Best.ErrorBits / bits;
+
+        RewriteCandidate bestCandidate(bestCost, bestAccuracy,
+                                       rewrites.BestExpr);
+        bestCandidate.ordinal = CO.candidates.size();
+        CO.candidates.push_back(bestCandidate);
+      }
+
+      for (const HerbieAlternative &alternative : costAccuracy.Alternatives) {
+        if (!alternative.Expr || !seenExprSet.insert(*alternative.Expr).second)
+          continue;
+
+        double cost = alternative.Point.Cost / initialCostVal;
+        double accuracy = 1.0 - alternative.Point.ErrorBits / bits;
+
+        RewriteCandidate candidate(cost, accuracy, *alternative.Expr);
+        candidate.ordinal = CO.candidates.size();
+        CO.candidates.push_back(candidate);
+      }
+    }
+  };
+
+  for (ArrayRef<HerbieCoreAnswer> answers : Answers)
+    processHerbieOutput(answers);
+  for (const HerbieRunResult &Run : Runs) {
+    if (Run.Result != HerbieRunResult::Outcome::Timeout &&
+        Run.Result != HerbieRunResult::Outcome::Crashed)
+      continue;
+    for (RewriteUnit &CO : COs)
+      if (!CO.herbieAnswered)
+        CO.herbieStatus = Run.Result == HerbieRunResult::Outcome::Timeout
+                              ? "timeout"
+                              : "crashed";
+  }
+  return !Answers.empty();
+}
+
+void reportHerbieAnswers(Session &S) {
+  HerbieRunState &H = S.Herbie;
+  if (!H.Cached && !H.Imported && !H.Fresh)
+    return;
+  llvm::errs() << "[poseidon] Herbie answers: " << H.Fresh << " fresh, "
+               << H.Cached << " from the cache, " << H.Imported << " replayed";
+  if (!S.Opts.Herbie.ImportHerbieAnswers.empty())
+    llvm::errs() << " from " << S.Opts.Herbie.ImportHerbieAnswers;
+  llvm::errs() << '\n';
+  H.Cached = H.Imported = H.Fresh = 0;
+}
+
+static std::string getPrecondition(
+    const Options &O, const SmallSet<std::string, 8> &args,
+    const std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
+    const std::unordered_map<std::string, Value *> &symbolToValueMap) {
+  std::string preconditions;
+
+  for (const auto &arg : args) {
+    const auto node = valueToNodeMap.at(symbolToValueMap.at(arg));
+    double lower = node->getLowerBound();
+    double upper = node->getUpperBound();
+
+    if (upper - lower < 1e-10 && !std::isinf(lower) && !std::isinf(upper)) {
+      double midpoint = (lower + upper) / 2.0;
+      double tolerance = std::max(1e-10, std::abs(midpoint) * 1e-6);
+      lower = midpoint - tolerance;
+      upper = midpoint + tolerance;
+    }
+
+    std::ostringstream lowerStr, upperStr;
+    lowerStr << std::setprecision(std::numeric_limits<double>::max_digits10)
+             << std::scientific << lower;
+    upperStr << std::setprecision(std::numeric_limits<double>::max_digits10)
+             << std::scientific << upper;
+
+    if (O.Herbie.HerbiePreFloorBits > 0 && lower < 0 && upper > 0 &&
+        std::isfinite(lower) && std::isfinite(upper)) {
+      double floorMag = std::ldexp(std::max(-lower, upper),
+                                   -(int)O.Herbie.HerbiePreFloorBits);
+      std::ostringstream floorStr;
+      floorStr << std::setprecision(std::numeric_limits<double>::max_digits10)
+               << std::scientific << floorMag;
+      preconditions += " (or (<= " + lowerStr.str() + " " + arg + " -" +
+                       floorStr.str() + ") (<= " + floorStr.str() + " " + arg +
+                       " " + upperStr.str() + "))";
+      continue;
+    }
+
+    preconditions +=
+        " (<=" +
+        (std::isinf(lower) ? (lower > 0 ? " INFINITY" : " (- INFINITY)")
+                           : (" " + lowerStr.str())) +
+        " " + arg +
+        (std::isinf(upper) ? (upper > 0 ? " INFINITY" : " (- INFINITY)")
+                           : (" " + upperStr.str())) +
+        ")";
+  }
+
+  return preconditions.empty() ? "TRUE" : "(and" + preconditions + ")";
+}
+
+namespace {
+using RegimeArm = std::pair<const FPNode *, bool>;
+} // namespace
+
+static void collectIfNodes(const FPNode *node,
+                           SmallPtrSetImpl<const FPNode *> &seen,
+                           SmallVectorImpl<const FPNode *> &ifs) {
+  if (!seen.insert(node).second)
+    return;
+  if (node->op == "if")
+    ifs.push_back(node);
+  for (const auto &operand : node->operands)
+    collectIfNodes(operand.get(), seen, ifs);
+}
+
+// The arms the candidate actually evaluates at `point`, following each `if` the
+// way the materialized select resolves it. `ev` evaluates at `point`.
+static void collectTakenArms(const FPNode *node,
+                             const MapVector<Value *, double> &point,
+                             FPEvaluator &ev,
+                             SmallPtrSetImpl<const FPNode *> &seen,
+                             SmallVectorImpl<RegimeArm> &arms) {
+  if (!seen.insert(node).second)
+    return;
+  if (node->op != "if") {
+    for (const auto &operand : node->operands)
+      collectTakenArms(operand.get(), point, ev, seen, arms);
+    return;
+  }
+  const FPNode *cond = node->operands[0].get();
+  ev.evaluateNode(cond, point);
+  bool taken = ev.getResult(cond) == 1.0;
+  arms.push_back({node, taken});
+  collectTakenArms(cond, point, ev, seen, arms);
+  collectTakenArms(node->operands[taken ? 1 : 2].get(), point, ev, seen, arms);
+}
+
+static SmallVector<RegimeArm, 4>
+takenArms(const FPNode *root, const MapVector<Value *, double> &point,
+          FPEvaluator &ev) {
+  SmallPtrSet<const FPNode *, 32> seen;
+  SmallVector<RegimeArm, 4> arms;
+  collectTakenArms(root, point, ev, seen, arms);
+  return arms;
+}
+
+namespace {
+
+struct ArmStats {
+  double candSum = 0.0;
+  double origSum = 0.0;
+  unsigned count = 0;
+};
+
+// One element of a candidate, priced against its output's original on the
+// subgraph's samples. The pricing of an element reads nothing another element
+// writes, so the elements of a unit are priced concurrently.
+struct ElementPricing {
+  std::shared_ptr<FPNode> node;
+  // The output's original expression, its values at the samples, and its
+  // mean error there.
+  const FPNode *orig = nullptr;
+  const SubgraphSamples::Reference *ref = nullptr;
+  double origCost = 0.0;
+  const std::string *exprForLog = nullptr;
+  SmallVector<const FPNode *, 2> ifNodes;
+
+  std::map<RegimeArm, ArmStats> armStats;
+  bool discard = false;
+  std::string why;
+  double cost = 0.0;
+  size_t drawn = 0;
+  bool searching = false;
+  // Its -poseidon-print lines, printed in candidate order.
+  std::string diag;
+
+  bool starved(const Options &O) const {
+    for (const auto &kv : armStats)
+      if (kv.second.count < O.Model.MinArmSamples)
+        return true;
+    return false;
+  }
+};
+
+} // namespace
+
+// The element on the samples every candidate is priced on.
+static void priceOnPoints(const Options &O, ElementPricing &E,
+                          ArrayRef<SubgraphSamples::Point> points) {
+  const size_t n = points.size();
+  SmallVector<double, 0> values(n);
+  SmallVector<SmallVector<RegimeArm, 4>, 0> arms(E.ifNodes.empty() ? 0 : n);
+  forEachBlock(O.Model.Threads, n, 64, [&](size_t begin, size_t end) {
+    for (size_t i = begin; i < end; ++i) {
+      FPEvaluator ev;
+      ev.evaluateNode(E.node.get(), points[i]);
+      values[i] = ev.getResult(E.node.get());
+      if (!E.ifNodes.empty())
+        arms[i] = takenArms(E.node.get(), points[i], ev);
+    }
+  });
+
+  double sum = 0.0;
+  unsigned count = 0;
+  unsigned broken = 0;
+  for (size_t i = 0; i < n; ++i) {
+    double realVal = values[i];
+    double goldVal = E.ref->gold[i];
+    if (std::isfinite(goldVal) && goldVal != 0.0) {
+      double origRel =
+          std::fabs(E.ref->value[i] - goldVal) / std::fabs(goldVal);
+      double candRel = std::fabs(realVal - goldVal) / std::fabs(goldVal);
+      if (origRel < 1.0 && !(candRel < 1.0))
+        ++broken;
+    }
+
+    if (std::isfinite(goldVal) && !std::isfinite(realVal)) {
+      E.discard = true;
+      E.why = "it returns a non-finite value at a sampled input where the "
+              "exact result is finite";
+      break;
+    }
+
+    double error = sampleError(goldVal, realVal);
+    if (!std::isnan(error)) {
+      sum += error;
+      ++count;
+      double origError = E.ref->error[i];
+      if (!E.ifNodes.empty() && !std::isnan(origError))
+        for (const RegimeArm &arm : arms[i]) {
+          ArmStats &st = E.armStats[arm];
+          st.candSum += error;
+          st.origSum += origError;
+          ++st.count;
+        }
+    }
+  }
+  if (!E.discard) {
+    if (count == 0) {
+      E.discard = true;
+      E.why = "every sample of it scored NaN";
+    } else {
+      E.cost = sum / count;
+    }
+  }
+  if (!E.discard && O.Model.MaxBrokenShare >= 0.0 &&
+      broken > O.Model.MaxBrokenShare * n) {
+    if (O.Diagnostics.Print)
+      raw_string_ostream(E.diag)
+          << "[poseidon] dropping candidate: relative error >= 1 on " << broken
+          << " of " << n << " samples: " << E.exprForLog->substr(0, 120)
+          << '\n';
+    E.discard = true;
+    E.why = formatv("its relative error is 1 or more on {0} of {1} samples",
+                    broken, n)
+                .str();
+  }
+  E.searching = !E.discard && !E.ifNodes.empty() && E.starved(O) &&
+                O.Model.ArmSearchFactor > 0 && O.Model.NumSamples > 0;
+}
+
+// Uniform marginal sampling weights each regime by its share of the profiled
+// box, which need not be its share of the workload: correlated inputs can put
+// most of the run in an arm the box almost never reaches. Every arm is priced
+// on its own samples, drawn round by round until it has enough or the budget
+// is spent. An element takes the rounds in order and at each point reads only
+// its own counts, so the elements advance through the rounds together, each
+// round's evaluations running concurrently.
+static void searchArms(const Options &O, SubgraphSamples &samples,
+                       ArrayRef<ElementPricing *> elements) {
+  const size_t budget =
+      static_cast<size_t>(O.Model.ArmSearchFactor) * O.Model.NumSamples;
+  for (unsigned round = 1;; ++round) {
+    SmallVector<ElementPricing *, 0> active;
+    for (ElementPricing *E : elements)
+      if (E->searching)
+        active.push_back(E);
+    if (active.empty())
+      return;
+    ArrayRef<SubgraphSamples::Point> points = samples.round(round);
+    const size_t n = points.size();
+    if (n == 0) {
+      for (ElementPricing *E : active)
+        E->searching = false;
+      return;
+    }
+
+    // A point an element can still take has an arm that is starved now, as
+    // counts only grow; the values it needs there are computed ahead.
+    struct RoundWork {
+      SmallVector<SmallVector<RegimeArm, 4>, 0> arms;
+      SmallVector<size_t, 0> wanted;
+      SmallVector<double, 0> values;
+      const SubgraphSamples::Reference *ref = nullptr;
+    };
+    SmallVector<RoundWork, 0> work(active.size());
+    forEachIndex(O.Model.Threads, active.size(), [&](size_t a) {
+      ElementPricing &E = *active[a];
+      RoundWork &W = work[a];
+      W.arms.resize(n);
+      forEachBlock(O.Model.Threads, n, 64, [&](size_t begin, size_t end) {
+        for (size_t p = begin; p < end; ++p) {
+          FPEvaluator ev;
+          W.arms[p] = takenArms(E.node.get(), points[p], ev);
+        }
+      });
+      for (size_t p = 0; p < n; ++p)
+        if (any_of(W.arms[p], [&](const RegimeArm &arm) {
+              return E.armStats[arm].count < O.Model.MinArmSamples;
+            }))
+          W.wanted.push_back(p);
+      W.values.resize(n);
+      forEachBlock(O.Model.Threads, W.wanted.size(), 16,
+                   [&](size_t begin, size_t end) {
+                     SmallVector<double, 1> r;
+                     for (size_t i = begin; i < end; ++i) {
+                       getFPValues({E.node.get()}, points[W.wanted[i]], r);
+                       W.values[W.wanted[i]] = r[0];
+                     }
+                   });
+    });
+    std::map<const FPNode *, SmallVector<size_t, 0>> byOrig;
+    for (auto [E, W] : zip(active, work))
+      llvm::append_range(byOrig[E->orig], W.wanted);
+    for (auto &[orig, which] : byOrig) {
+      const SubgraphSamples::Reference &ref =
+          samples.roundReference(orig, round, which);
+      for (auto [E, W] : zip(active, work))
+        if (E->orig == orig)
+          W.ref = &ref;
+    }
+
+    forEachIndex(O.Model.Threads, active.size(), [&](size_t a) {
+      ElementPricing &E = *active[a];
+      const RoundWork &W = work[a];
+      E.drawn += n;
+      for (size_t p : W.wanted) {
+        bool wantedHere = false;
+        for (const RegimeArm &arm : W.arms[p])
+          if (E.armStats[arm].count < O.Model.MinArmSamples)
+            wantedHere = true;
+        if (!wantedHere)
+          continue;
+        double origError = W.ref->error[p];
+        double error = sampleError(W.ref->gold[p], W.values[p]);
+        if (std::isnan(error) || std::isnan(origError))
+          continue;
+        for (const RegimeArm &arm : W.arms[p]) {
+          ArmStats &st = E.armStats[arm];
+          if (st.count >= O.Model.MinArmSamples)
+            continue;
+          st.candSum += error;
+          st.origSum += origError;
+          ++st.count;
+        }
+      }
+      E.searching = E.starved(O) && E.drawn < budget;
+    });
+  }
+}
+
+// Charges the element its worst arm's excess over the original.
+static void chargeWorstArm(const Options &O, ElementPricing &E) {
+  if (E.discard || E.ifNodes.empty())
+    return;
+  double worst = E.cost;
+  std::string armReport;
+  raw_string_ostream os(armReport);
+  for (const FPNode *ifNode : E.ifNodes)
+    for (bool taken : {false, true}) {
+      const ArmStats &st = E.armStats[{ifNode, taken}];
+      os << ' ' << (taken ? "then" : "else") << ':' << st.count;
+      if (st.count)
+        os << ':' << format("%.3e", st.candSum / st.count) << '/'
+           << format("%.3e", st.origSum / st.count);
+      if (st.count < O.Model.MinArmSamples) {
+        E.discard = true;
+        E.why = formatv("a regime-split arm is reached by fewer than {0} "
+                        "samples",
+                        (unsigned)O.Model.MinArmSamples)
+                    .str();
+        continue;
+      }
+      worst =
+          std::max(worst, E.origCost + (st.candSum - st.origSum) / st.count);
+    }
+  if (O.Diagnostics.Print)
+    raw_string_ostream(E.diag)
+        << "[poseidon] regime-split candidate: arms (samples:cand/"
+           "orig mean error)"
+        << os.str() << "; " << E.drawn << " extra draws; box cost "
+        << format("%.3e", E.cost) << " -> "
+        << (E.discard ? std::string("dropped (unpriced arm)")
+                      : formatv("{0:e}", worst).str())
+        << "; " << E.exprForLog->substr(0, 120) << '\n';
+  if (!E.discard)
+    E.cost = worst;
+}
+
+static void collectInputs(const FPNode *node, const SetVector<Value *> &inputs,
+                          SmallPtrSetImpl<const FPNode *> &seen,
+                          SmallPtrSetImpl<Value *> &used) {
+  if (!seen.insert(node).second)
+    return;
+  if (auto *LL = dyn_cast<FPLLValue>(node)) {
+    used.insert(LL->value);
+    if (inputs.contains(LL->value) && !inlinedOps(*LL, inputs))
+      return;
+  }
+  for (const auto &operand : node->operands)
+    collectInputs(operand.get(), inputs, seen, used);
+}
+
+void setUnifiedAccuracyCost(
+    const Options &O, RewriteUnit &CO,
+    std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
+    std::unordered_map<std::string, Value *> &symbolToValueMap) {
+  SubgraphSamples &samples = samplesOf(O, *CO.subgraph, valueToNodeMap);
+  ArrayRef<SubgraphSamples::Point> sampledPoints = samples.points();
+
+  // No usable sample means the output cannot be priced: drop its candidates and
+  // keep the original body, without inventing a bound or an accuracy number.
+  auto unpriceable = [&](const char *why) {
+    CO.unpricedReason = why;
+    llvm::errs() << "[poseidon] subgraph output cannot be priced (" << why
+                 << "); discarding its " << CO.candidates.size()
+                 << " Herbie candidate(s) and keeping the original body. "
+                    "A rewrite may still exist here: this is an un-priced "
+                    "site, not a rejected one.\n";
+    CO.candidates.clear();
+    CO.initialAccCost = 0.0;
+  };
+  if (sampledPoints.empty()) {
+    unpriceable("the profiled input box is empty or unbounded");
+    return;
+  }
+
+  struct RootSamples {
+    const FPNode *node;
+    const SubgraphSamples::Reference *ref;
+    double origCost;
+    double grad;
+  };
+  SmallVector<RootSamples, 1> rootSamples;
+  double initialAccCost = 0.0;
+  for (auto [root, grad] : llvm::zip(CO.roots, CO.rootGrads)) {
+    const FPNode *node = valueToNodeMap[root].get();
+    const SubgraphSamples::Reference &ref = samples.reference(node);
+    double sum = 0.0;
+    unsigned count = 0;
+    for (double error : ref.error)
+      if (!std::isnan(error)) {
+        sum += error;
+        ++count;
+      }
+    if (count == 0) {
+      unpriceable("every sample of the original expression scored NaN");
+      return;
+    }
+    rootSamples.push_back({node, &ref, sum / count, grad});
+    initialAccCost += rootSamples.back().origCost * std::fabs(grad);
+  }
+  CO.initialAccCost = initialAccCost;
+  if (!std::isfinite(CO.initialAccCost)) {
+    // A non-finite baseline makes every candidate delta nan and the DP would
+    // silently fall back to the no-op; drop the candidates and say so instead.
+    for (const RootSamples &R : rootSamples)
+      llvm::errs() << "  origCost = " << R.origCost << ", grad = " << R.grad
+                   << '\n';
+    unpriceable("the baseline accuracy cost is not finite; the site's profile "
+                "is degenerate (a zero or null-space output shadow gives a "
+                "gradient that cannot weight anything)");
+    return;
+  }
+
+  // An element is spliced in at its own output, so it may only read the values
+  // that output's original expression read: inputs, and what an input spelled
+  // as its definition is computed from.
+  SmallVector<SmallPtrSet<Value *, 8>, 1> rootInputs;
+  for (Value *root : CO.roots) {
+    SmallPtrSet<const FPNode *, 32> seen;
+    SmallPtrSet<Value *, 8> used;
+    collectInputs(valueToNodeMap[root].get(), CO.subgraph->inputs, seen, used);
+    rootInputs.push_back(std::move(used));
+  }
+
+  // Parsing extends the site's maps, so the candidates are read in order and
+  // only their elements are priced concurrently.
+  struct CandidatePricing {
+    std::shared_ptr<FPNode> parsed;
+    bool wrongShape = false;
+    // The elements in order up to the first that reads a value its output
+    // does not, whose index is `strayElement`.
+    SmallVector<ElementPricing, 1> elements;
+    std::optional<size_t> strayElement;
+  };
+  SmallVector<CandidatePricing, 4> pricings(CO.candidates.size());
+  SmallVector<ElementPricing *, 0> allElements;
+  for (auto [candidate, P] : llvm::zip(CO.candidates, pricings)) {
+    P.parsed = parseHerbieExpr(candidate.expr, valueToNodeMap, symbolToValueMap,
+                               nullptr, &CO.subgraph->inputs);
+    SmallVector<std::shared_ptr<FPNode>, 1> elements;
+    if (CO.isArray()) {
+      if (P.parsed->op != "array" ||
+          P.parsed->operands.size() != CO.roots.size()) {
+        P.wrongShape = true;
+        continue;
+      }
+      elements.append(P.parsed->operands.begin(), P.parsed->operands.end());
+    } else {
+      elements.push_back(P.parsed);
+    }
+    for (auto [k, element] : llvm::enumerate(elements)) {
+      SmallPtrSet<const FPNode *, 32> seen;
+      SmallPtrSet<Value *, 8> used;
+      collectInputs(element.get(), CO.subgraph->inputs, seen, used);
+      const auto &elementInputs = rootInputs[k];
+      if (!llvm::all_of(used,
+                        [&](Value *V) { return elementInputs.contains(V); })) {
+        P.strayElement = k;
+        break;
+      }
+      ElementPricing &E = P.elements.emplace_back();
+      E.node = element;
+      E.orig = rootSamples[k].node;
+      E.ref = rootSamples[k].ref;
+      E.origCost = rootSamples[k].origCost;
+      E.exprForLog = &candidate.expr;
+      if (O.Model.MinArmSamples > 0) {
+        SmallPtrSet<const FPNode *, 32> seenIfs;
+        collectIfNodes(element.get(), seenIfs, E.ifNodes);
+      }
+      for (const FPNode *ifNode : E.ifNodes) {
+        E.armStats[{ifNode, true}];
+        E.armStats[{ifNode, false}];
+      }
+    }
+  }
+  for (CandidatePricing &P : pricings)
+    for (ElementPricing &E : P.elements)
+      allElements.push_back(&E);
+
+  forEachIndex(O.Model.Threads, allElements.size(), [&](size_t i) {
+    priceOnPoints(O, *allElements[i], sampledPoints);
+  });
+  searchArms(O, samples, allElements);
+  for (ElementPricing *E : allElements)
+    chargeWorstArm(O, *E);
+
+  SmallVector<RewriteCandidate, 4> newCandidates;
+  for (auto [candidate, P] : llvm::zip(CO.candidates, pricings)) {
+    if (P.wrongShape) {
+      llvm::errs() << "[poseidon] dropping array candidate with "
+                   << P.parsed->operands.size() << " element(s) for "
+                   << CO.roots.size() << " outputs\n";
+      CO.dropped.push_back(
+          {candidate.expr, "it does not have one element per output"});
+      continue;
+    }
+
+    bool discardCandidate = false;
+    double total = 0.0;
+    std::string perElement;
+    for (auto [k, E] : llvm::enumerate(P.elements)) {
+      llvm::errs() << E.diag;
+      if (E.discard) {
+        discardCandidate = true;
+        CO.dropped.push_back({candidate.expr, E.why});
+        break;
+      }
+      total += E.cost * std::fabs(rootSamples[k].grad);
+      if (CO.isArray() && O.Diagnostics.Print)
+        perElement +=
+            formatv(" {0:e}/{1:e}", E.cost * std::fabs(rootSamples[k].grad),
+                    rootSamples[k].origCost * std::fabs(rootSamples[k].grad))
+                .str();
+    }
+    if (!discardCandidate && P.strayElement) {
+      if (O.Diagnostics.Print)
+        llvm::errs() << "[poseidon] dropping candidate: element "
+                     << *P.strayElement
+                     << " reads a value its output does not\n";
+      discardCandidate = true;
+      CO.dropped.push_back(
+          {candidate.expr, formatv("its element {0} reads a value that "
+                                   "output does not",
+                                   *P.strayElement)
+                               .str()});
+    }
+    if (CO.isArray() && O.Diagnostics.Print && !discardCandidate)
+      llvm::errs() << "[poseidon] array candidate per element (cand/orig):"
+                   << perElement << '\n';
+
+    if (!discardCandidate) {
+      candidate.accuracyCost = total;
+      assert(!std::isnan(candidate.accuracyCost) &&
+             "a kept candidate has an accuracy cost");
+      newCandidates.push_back(std::move(candidate));
+    }
+  }
+  CO.candidates = std::move(newCandidates);
+}
+
+double getCompCost(
+    CostModelState &CM, const std::string &expr, Instruction &Site,
+    std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
+    std::unordered_map<std::string, Value *> &symbolToValueMap,
+    const FastMathFlags &FMF, const SetVector<Value *> *subgraphInputs,
+    const BoundaryCastFreq *Boundary) {
+  Module *M = Site.getModule();
+  SmallSet<std::string, 8> argStrSet;
+  getUniqueArgs(expr, argStrSet);
+
+  SetVector<Value *> args;
+  SmallVector<Type *, 8> argTypes;
+  SmallVector<std::string, 8> argNames;
+  for (const auto &argStr : argStrSet) {
+    Value *argValue = symbolToValueMap[argStr];
+    args.insert(argValue);
+    argTypes.push_back(argValue->getType());
+    argNames.push_back(argStr);
+  }
+
+  auto parsedNode = parseHerbieExpr(expr, valueToNodeMap, symbolToValueMap,
+                                    nullptr, subgraphInputs);
+  // An existing value a node was mapped back to is an argument no symbol names.
+  SmallVector<Value *, 2> mappedArgs;
+  if (subgraphInputs) {
+    SmallVector<FPNode *, 16> stack{parsedNode.get()};
+    SmallPtrSet<FPNode *, 16> seen;
+    while (!stack.empty()) {
+      FPNode *N = stack.pop_back_val();
+      if (!seen.insert(N).second)
+        continue;
+      if (auto *L = dyn_cast<FPLLValue>(N)) {
+        if (args.insert(L->value)) {
+          argTypes.push_back(L->value->getType());
+          mappedArgs.push_back(L->value);
+        }
+        continue;
+      }
+      for (auto &op : N->operands)
+        stack.push_back(op.get());
+    }
+  }
+
+  Type *ReturnType = nullptr;
+  for (Type *ArgTy : argTypes) {
+    if (ArgTy->isFloatingPointTy()) {
+      ReturnType = ArgTy;
+      break;
+    }
+    if (ArgTy->isVectorTy()) {
+      if (auto *VT = dyn_cast<VectorType>(ArgTy)) {
+        if (VT->getElementType()->isFloatingPointTy()) {
+          ReturnType = ArgTy;
+          break;
+        }
+      }
+    }
+  }
+  if (!ReturnType) {
+    if (parsedNode->dtype == "f32")
+      ReturnType = Type::getFloatTy(M->getContext());
+    else if (parsedNode->dtype == "f16")
+      ReturnType = Type::getHalfTy(M->getContext());
+    else
+      ReturnType = Type::getDoubleTy(M->getContext());
+  }
+
+  // An array candidate returns all of its elements, so none is dead and the
+  // subterms they share are simplified into one computation before costing.
+  const bool isArray = parsedNode->op == "array";
+  Type *FuncRetType = ReturnType;
+  if (isArray)
+    FuncRetType = StructType::get(
+        M->getContext(),
+        SmallVector<Type *>(parsedNode->operands.size(), ReturnType));
+
+  FunctionType *FT = FunctionType::get(FuncRetType, argTypes, false);
+  Function *tempFunction =
+      Function::Create(FT, Function::InternalLinkage, "tempFunc", M);
+
+  ValueToValueMapTy VMap;
+  Function::arg_iterator AI = tempFunction->arg_begin();
+  for (const auto &argStr : argNames) {
+    VMap[symbolToValueMap[argStr]] = &*AI;
+    ++AI;
+  }
+  for (Value *arg : mappedArgs) {
+    VMap[arg] = &*AI;
+    ++AI;
+  }
+
+  BasicBlock *entry =
+      BasicBlock::Create(M->getContext(), "entry", tempFunction);
+
+  IRBuilder<> builder(entry);
+
+  builder.setFastMathFlags(FMF);
+  if (isArray) {
+    SmallVector<Value *, 4> elements = emitSharedElements(
+        parsedNode->operands, [&](size_t) -> IRBuilder<> & { return builder; },
+        &VMap, nullptr);
+    Value *Agg = UndefValue::get(FuncRetType);
+    for (auto [i, V] : llvm::enumerate(elements)) {
+      if (V->getType() != ReturnType)
+        V = builder.CreateFPCast(V, ReturnType);
+      Agg = builder.CreateInsertValue(Agg, V, i);
+    }
+    builder.CreateRet(Agg);
+  } else {
+    Value *RetVal = parsedNode->getLLValue(builder, &VMap);
+    assert(RetVal && "Parsed node did not produce a value");
+    if (RetVal->getType() != ReturnType)
+      RetVal = builder.CreateFPCast(RetVal, ReturnType);
+    builder.CreateRet(RetVal);
+  }
+
+  simplifyFunction(*tempFunction, OptimizationLevel::O3);
+
+  // A conversion of an argument or of a returned value is on the boundary of
+  // the rewrite and costs what it executes in the emitted code.
+  auto leafOf = [&](const Argument *A) -> const Value * {
+    return A->getArgNo() < argNames.size()
+               ? symbolToValueMap[argNames[A->getArgNo()]]
+               : mappedArgs[A->getArgNo() - argNames.size()];
+  };
+  SmallPtrSet<const Value *, 4> returned;
+  bool carriesConverted = Boundary && !Boundary->carried.empty();
+  if (Boundary) {
+    for (BasicBlock &BB : *tempFunction)
+      if (auto *RI = dyn_cast<ReturnInst>(BB.getTerminator())) {
+        Value *RV = RI->getReturnValue();
+        while (auto *IV = dyn_cast_or_null<InsertValueInst>(RV)) {
+          returned.insert(IV->getInsertedValueOperand());
+          RV = IV->getAggregateOperand();
+        }
+        if (RV && !isa<UndefValue>(RV))
+          returned.insert(RV);
+      }
+    for (const Value *RV : returned)
+      carriesConverted &= isa<FPExtInst>(RV) || isa<FPTruncInst>(RV);
+    for (const Argument &A : tempFunction->args())
+      if (Boundary->carried.count(leafOf(&A)))
+        for (const User *U : A.users())
+          carriesConverted &= isa<FPExtInst>(U) || isa<FPTruncInst>(U);
+  }
+  auto weight = [&](const Instruction &I) {
+    if (!isa<FPExtInst>(I) && !isa<FPTruncInst>(I))
+      return 1.0;
+    if (auto *A = dyn_cast<Argument>(I.getOperand(0))) {
+      const Value *Leaf = leafOf(A);
+      if (auto It = Boundary->hoisted.find(Leaf); It != Boundary->hoisted.end())
+        return It->second;
+      if (auto It = Boundary->carried.find(Leaf);
+          carriesConverted && It != Boundary->carried.end())
+        return It->second;
+      return 1.0;
+    }
+    return carriesConverted && returned.contains(&I) ? Boundary->output : 1.0;
+  };
+  double cost = getCompCost(CM, tempFunction,
+                            Boundary ? InstWeight(weight) : nullptr, &Site);
+
+  tempFunction->eraseFromParent();
+  return cost;
+}
+
+BoundaryCastFreq RewriteUnit::boundaryCastFreq(
+    const LoopInfo &LI,
+    const std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap)
+    const {
+  BoundaryCastFreq B;
+  const Loop *L = LI.getLoopFor(cast<Instruction>(oldOutput)->getParent());
+  if (!L || executions == 0)
+    return B;
+  for (Value *Root : roots)
+    if (LI.getLoopFor(cast<Instruction>(Root)->getParent()) != L)
+      return B;
+
+  // The measured executions of a value computed outside the loop, per
+  // execution of the outputs.
+  auto outside = [&](const Value *V) -> std::optional<double> {
+    auto *I = dyn_cast<Instruction>(V);
+    if (!I || L->contains(I))
+      return std::nullopt;
+    auto It = valueToNodeMap.find(const_cast<Value *>(V));
+    if (It == valueToNodeMap.end() || !It->second || !It->second->executions)
+      return std::nullopt;
+    return std::min(1.0, (double)It->second->executions / (double)executions);
+  };
+
+  double carried = 0.0;
+  SmallPtrSet<const PHINode *, 2> carriedPHIs;
+  for (Value *In : subgraph->inputs) {
+    if (auto Freq = outside(In)) {
+      B.hoisted[In] = *Freq;
+      continue;
+    }
+    // A header PHI whose value on every back edge is an output of this rewrite
+    // and that nothing else in the loop reads: the loop carries the value in
+    // the rewrite's precision, converted where the loop is entered.
+    auto *PN = dyn_cast<PHINode>(In);
+    if (!PN || PN->getParent() != L->getHeader())
+      continue;
+    double entry = 0.0;
+    bool isCarried = true;
+    for (unsigned i = 0, e = PN->getNumIncomingValues(); i != e; ++i) {
+      Value *V = PN->getIncomingValue(i);
+      if (L->contains(PN->getIncomingBlock(i)))
+        isCarried &= is_contained(roots, V);
+      else if (auto Freq = outside(V))
+        entry += *Freq;
+      else
+        isCarried &= isa<Constant>(V);
+    }
+    for (const User *U : PN->users()) {
+      auto *UI = dyn_cast<Instruction>(U);
+      isCarried &=
+          UI && (!L->contains(UI) ||
+                 erasableInsts.contains(const_cast<Instruction *>(UI)));
+    }
+    if (!isCarried || entry == 0.0)
+      continue;
+    B.carried[In] = std::min(1.0, entry);
+    carried = std::max(carried, B.carried[In]);
+    carriedPHIs.insert(PN);
+  }
+
+  // The outputs are converted back only where the loop is left when every
+  // reader inside it is such a PHI; otherwise nothing is carried converted.
+  bool leavesConverted = !carriedPHIs.empty();
+  for (Value *Root : roots)
+    for (const User *U : Root->users()) {
+      auto *UI = dyn_cast<Instruction>(U);
+      if (UI && (!L->contains(UI) ||
+                 erasableInsts.contains(const_cast<Instruction *>(UI))))
+        continue;
+      auto *PN = dyn_cast_or_null<PHINode>(UI);
+      leavesConverted &= PN && carriedPHIs.contains(PN);
+    }
+  if (leavesConverted)
+    B.output = carried;
+  else
+    B.carried.clear();
+  return B;
+}
+
+// The outputs' expressions with every subterm used more than once bound by
+// let*, so Herbie reads the subgraph as the DAG it is rather than one tree per
+// output.
+static std::string arrayCoreBody(
+    ArrayRef<Instruction *> outputs,
+    std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
+    const SetVector<Value *> &inputs) {
+  auto isLeaf = [&](FPNode *N) {
+    if (isa<FPConst>(N))
+      return true;
+    auto *LL = cast<FPLLValue>(N);
+    return inputs.contains(LL->value);
+  };
+  DenseMap<FPNode *, unsigned> uses;
+  SmallVector<FPNode *, 32> order;
+  SmallPtrSet<FPNode *, 32> visited;
+  std::function<void(FPNode *)> walk = [&](FPNode *N) {
+    if (!visited.insert(N).second || isLeaf(N))
+      return;
+    for (auto &operand : N->operands) {
+      if (!isLeaf(operand.get()))
+        ++uses[operand.get()];
+      walk(operand.get());
+    }
+    order.push_back(N);
+  };
+  for (Instruction *output : outputs) {
+    FPNode *N = valueToNodeMap[output].get();
+    ++uses[N];
+    walk(N);
+  }
+
+  DenseMap<FPNode *, std::string> names;
+  std::function<std::string(FPNode *)> ref;
+  auto define = [&](FPNode *N) {
+    std::string expr = "(" + (N->op == "neg" ? std::string("-") : N->op);
+    for (auto &operand : N->operands)
+      expr += " " + ref(operand.get());
+    return expr + ")";
+  };
+  ref = [&](FPNode *N) -> std::string {
+    if (isLeaf(N))
+      return N->toFullExpression(valueToNodeMap, inputs);
+    auto It = names.find(N);
+    if (It != names.end())
+      return It->second;
+    return define(N);
+  };
+
+  std::string bindings;
+  for (FPNode *N : order) {
+    if (uses[N] < 2)
+      continue;
+    std::string def = define(N);
+    std::string name = "t" + std::to_string(names.size() + 1);
+    if (!bindings.empty())
+      bindings += " ";
+    bindings += "(" + name + " " + def + ")";
+    names[N] = name;
+  }
+  std::string body = "(array";
+  for (Instruction *output : outputs)
+    body += " " + ref(valueToNodeMap[output].get());
+  body += ")";
+  return bindings.empty() ? body : "(let* (" + bindings + ") " + body + ")";
+}
+
+void proposeHerbieCandidates(
+    Session &S, Function &F, Subgraph &subgraph, int subgraphCounter,
+    int &symbolCounter,
+    std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
+    std::unordered_map<std::string, Value *> &symbolToValueMap,
+    SmallVectorImpl<RewriteUnit> &COs) {
+  const Options &O = S.Opts;
+  auto getNextSymbol = [&symbolCounter]() -> std::string {
+    return "v" + std::to_string(symbolCounter++);
+  };
+
+  for (const auto &input : subgraph.inputs) {
+    auto node = valueToNodeMap[input];
+    if (node->op == "__const") {
+      continue;
+    }
+
+    if (!node->hasSymbol()) {
+      node->symbol = getNextSymbol();
+    }
+    symbolToValueMap[node->symbol] = input;
+    if (O.Diagnostics.Print)
+      llvm::errs() << "assigning symbol: " << node->symbol << " to " << *input
+                   << '\n';
+  }
+
+  std::vector<std::string> herbieInputs;
+  std::vector<RewriteUnit> newCOs;
+
+  struct Eligible {
+    Instruction *output;
+    std::string expr;
+    double grad;
+    uint64_t executions;
+  };
+  SmallVector<Eligible, 8> eligible;
+
+  auto emitPerOutput = [&](const Eligible &E, ArrayRef<const char *> precs,
+                           std::vector<std::string> &inputs,
+                           std::vector<RewriteUnit> &cos) {
+    SmallSet<std::string, 8> args;
+    getUniqueArgs(E.expr, args);
+
+    std::string precondition =
+        getPrecondition(O, args, valueToNodeMap, symbolToValueMap);
+
+    std::string argStr;
+    for (const auto &arg : args) {
+      if (!argStr.empty())
+        argStr += " ";
+      argStr += arg;
+    }
+
+    for (const char *prec : precs) {
+      std::string properties = ":herbie-conversions ([binary64 binary32])";
+      properties += std::string(" :precision ") + prec;
+      properties += " :pre " + precondition;
+
+      RewriteUnit CO(S.CostModel, subgraph, E.output, E.expr, E.grad,
+                     E.executions);
+      CO.herbiePrecision = prec;
+      properties += " :name \"" + std::to_string(cos.size()) + "\"";
+
+      std::string herbieInput =
+          "(FPCore (" + argStr + ") " + properties + " " + E.expr + ")";
+      if (O.Diagnostics.Print)
+        llvm::errs() << "Herbie input:\n" << herbieInput << '\n';
+
+      inputs.push_back(herbieInput);
+      cos.push_back(CO);
+    }
+  };
+
+  assert(subgraph.outputs.size() > 0 && "No outputs found for subgraph");
+  for (auto &output : subgraph.outputs) {
+    double grad = valueToNodeMap[output]->grad;
+    uint64_t executions = valueToNodeMap[output]->executions;
+
+    if (grad == 0.) {
+      llvm::errs() << "Skipping zero gradient instruction: " << *output << '\n';
+      continue;
+    }
+
+    std::string expr = valueToNodeMap[output]->toFullExpression(
+        valueToNodeMap, subgraph.inputs);
+
+    if (expr.length() > O.Candidates.MaxExprLength) {
+      llvm::errs() << "WARNING: Skipping Herbie optimization for " << *output
+                   << " since expression length " << expr.length()
+                   << " exceeds limit of " << O.Candidates.MaxExprLength
+                   << '\n';
+      continue;
+    }
+
+    auto parenCount = std::count(expr.begin(), expr.end(), '(');
+    assert(parenCount > 0 && "an output expression is an FPCore operation");
+    if (parenCount == 1) {
+      if (O.Diagnostics.Print)
+        llvm::errs() << "Skipping Herbie for simple expression: " << expr
+                     << '\n';
+      continue;
+    }
+
+    Eligible E{output, expr, grad, executions};
+    if (O.Herbie.HerbieArrays)
+      eligible.push_back(std::move(E));
+    else
+      emitPerOutput(E, {"binary64", "binary32"}, herbieInputs, newCOs);
+  }
+
+  if (O.Herbie.HerbieArrays &&
+      (!StringRef(O.Herbie.HerbieArrayGrouping).equals_insensitive("inputs") &&
+       !StringRef(O.Herbie.HerbieArrayGrouping)
+            .equals_insensitive("executions")))
+    reportUserError(F, F.getSubprogram(),
+                    "-poseidon-herbie-array-grouping=" +
+                        Twine(O.Herbie.HerbieArrayGrouping) +
+                        " is not 'inputs' or 'executions'.");
+  if (O.Herbie.HerbieArrays && O.Herbie.HerbieArrayWeights != "sensitivity" &&
+      O.Herbie.HerbieArrayWeights != "gradient" &&
+      O.Herbie.HerbieArrayWeights != "none")
+    reportUserError(
+        F, F.getSubprogram(),
+        "-poseidon-herbie-array-weights=" + Twine(O.Herbie.HerbieArrayWeights) +
+            " is not 'sensitivity', 'gradient' or 'none'.");
+
+  // Outputs that read the same inputs (hence the same precondition) and
+  // execute equally often form one array core; the joint rewrite is priced
+  // at that count.
+  auto groupKey = [&](const Eligible &E) {
+    std::string key = std::to_string(E.executions);
+    if (O.Herbie.HerbieArrayGrouping == "inputs") {
+      SmallSet<std::string, 8> args;
+      getUniqueArgs(E.expr, args);
+      std::vector<std::string> sorted(args.begin(), args.end());
+      llvm::sort(sorted);
+      for (const auto &arg : sorted)
+        key += " " + arg;
+    }
+    return key;
+  };
+  SmallVector<std::pair<std::string, SmallVector<const Eligible *, 8>>, 2>
+      groups;
+  for (const Eligible &E : eligible) {
+    std::string key = groupKey(E);
+    auto It =
+        llvm::find_if(groups, [&](const auto &G) { return G.first == key; });
+    if (It == groups.end())
+      groups.emplace_back(key, SmallVector<const Eligible *, 8>{&E});
+    else
+      It->second.push_back(&E);
+  }
+
+  std::vector<std::string> arrayInputs;
+  std::vector<RewriteUnit> arrayCOs;
+  SmallVector<const SmallVector<const Eligible *, 8> *, 4> arrayGroups;
+  const char *precs[] = {"binary64", "binary32"};
+  for (const auto &[key, G] : groups) {
+    if (G.size() < 2)
+      continue;
+    SmallVector<Instruction *, 8> outputs;
+    SmallVector<Value *, 8> roots;
+    SmallVector<double, 8> grads;
+    for (const Eligible *E : G) {
+      outputs.push_back(E->output);
+      roots.push_back(E->output);
+      grads.push_back(E->grad);
+    }
+    std::string body = arrayCoreBody(outputs, valueToNodeMap, subgraph.inputs);
+    SmallSet<std::string, 8> args;
+    getUniqueArgs(body, args);
+    std::string precondition =
+        getPrecondition(O, args, valueToNodeMap, symbolToValueMap);
+    std::string argStr;
+    for (const auto &arg : args) {
+      if (!argStr.empty())
+        argStr += " ";
+      argStr += arg;
+    }
+    std::string weights;
+    if (O.Herbie.HerbieArrayWeights != "none") {
+      SmallVector<double, 8> sens;
+      for (Instruction *output : outputs) {
+        FPNode *N = valueToNodeMap[output].get();
+        if (O.Herbie.HerbieArrayWeights == "gradient") {
+          double lo = N->getLowerBound(), hi = N->getUpperBound();
+          double meanMag = lo >= 0 || hi <= 0
+                               ? (std::fabs(lo) + std::fabs(hi)) / 2
+                               : (lo * lo + hi * hi) / (2 * (hi - lo));
+          sens.push_back(std::fabs(N->grad) * meanMag);
+        } else {
+          sens.push_back(N->sens);
+        }
+      }
+      double total = 0.0;
+      for (double v : sens)
+        total += v;
+      if (total > 0.0 && std::isfinite(total) &&
+          llvm::all_of(sens, [](double v) { return v >= 0.0; })) {
+        weights = " :herbie-weights (";
+        for (auto [k, v] : llvm::enumerate(sens)) {
+          char buf[32];
+          snprintf(buf, sizeof(buf), "%.6e", v * sens.size() / total);
+          weights += (k ? " " : "") + std::string(buf);
+        }
+        weights += ")";
+      } else {
+        llvm::errs() << "[poseidon] an array core of subgraph "
+                     << subgraphCounter
+                     << " is sent unweighted: its outputs' profiled "
+                        "sensitivities do not sum to a positive value\n";
+      }
+    }
+    for (const char *prec : precs) {
+      std::string herbieInput =
+          "(FPCore (" + argStr +
+          ") :herbie-conversions ([binary64 binary32]) :precision " + prec +
+          " :pre " + precondition + weights + " :name \"" +
+          std::to_string(arrayCOs.size()) + "\" " + body + ")";
+      if (O.Diagnostics.Print)
+        llvm::errs() << "Herbie array input:\n" << herbieInput << '\n';
+      arrayInputs.push_back(herbieInput);
+      arrayCOs.emplace_back(S.CostModel, subgraph, ArrayRef<Value *>(roots),
+                            grads, body, G.front()->executions);
+      arrayCOs.back().herbiePrecision = prec;
+      arrayGroups.push_back(&G);
+    }
+  }
+
+  // The outputs no array covers are searched in the same invocation as the
+  // arrays; per-output cores stand in for an array core that returned
+  // nothing, in a second one.
+  auto inArray = [&](const Eligible &E) {
+    return llvm::any_of(
+        arrayGroups, [&](const auto *G) { return llvm::is_contained(*G, &E); });
+  };
+  const size_t numArrayCores = arrayCOs.size();
+  for (const Eligible &E : eligible)
+    if (!inArray(E))
+      emitPerOutput(E, precs, numArrayCores ? arrayInputs : herbieInputs,
+                    numArrayCores ? arrayCOs : newCOs);
+  if (numArrayCores &&
+      !improveViaHerbie(S, arrayInputs, arrayCOs, subgraphCounter, F)) {
+    if (O.Diagnostics.Print)
+      llvm::errs() << "Failed to optimize expressions using Herbie!\n";
+  }
+  for (const Eligible &E : eligible) {
+    SmallVector<const char *, 2> sendAt;
+    for (size_t k = 0; k < numArrayCores; ++k)
+      if (llvm::is_contained(*arrayGroups[k], &E) &&
+          !arrayCOs[k].herbieAnswered)
+        sendAt.push_back(precs[k % 2]);
+    if (sendAt.empty())
+      continue;
+    llvm::errs() << "[poseidon] Herbie subgraph " << subgraphCounter
+                 << ": array core returned nothing for " << *E.output
+                 << "; sending it separately\n";
+    emitPerOutput(E, sendAt, herbieInputs, newCOs);
+  }
+  COs.insert(COs.end(), arrayCOs.begin(), arrayCOs.end());
+
+  if (!herbieInputs.empty()) {
+    if (!improveViaHerbie(S, herbieInputs, newCOs, subgraphCounter, F)) {
+      if (O.Diagnostics.Print)
+        llvm::errs() << "Failed to optimize expressions using Herbie!\n";
+    }
+
+    COs.insert(COs.end(), newCOs.begin(), newCOs.end());
+  }
+}
+
+void RewriteUnit::apply(
+    size_t candidateIndex,
+    std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
+    std::unordered_map<std::string, Value *> &symbolToValueMap, bool print) {
+  if (candidateIndex >= candidates.size()) {
+    if (print)
+      llvm::errs() << "RewriteUnit::apply: candidateIndex " << candidateIndex
+                   << " out of range (size " << candidates.size()
+                   << "), skipping\n";
+    return;
+  }
+  for (Value *root : roots) {
+    auto *oldInst = dyn_cast<Instruction>(root);
+    if (!oldInst || !oldInst->getParent()) {
+      if (print)
+        llvm::errs() << "RewriteUnit::apply: oldOutput "
+                     << "is not in a basic block (already erased?), skipping\n";
+      return;
+    }
+  }
+
+  auto parsedNode =
+      parseHerbieExpr(candidates[candidateIndex].expr, valueToNodeMap,
+                      symbolToValueMap, nullptr, &subgraph->inputs);
+  SmallVector<std::shared_ptr<FPNode>, 1> elements;
+  if (isArray()) {
+    if (parsedNode->op != "array" ||
+        parsedNode->operands.size() != roots.size())
+      report_fatal_error("Poseidon: an array rewrite does not have one element "
+                         "per output of its subgraph");
+    elements.append(parsedNode->operands.begin(), parsedNode->operands.end());
+  } else {
+    elements.push_back(parsedNode);
+  }
+
+  SmallVector<Value *, 4> newOutputs;
+  if (isArray()) {
+    DominatorTree DT(*cast<Instruction>(oldOutput)->getFunction());
+    std::optional<IRBuilder<>> builder;
+    newOutputs = emitSharedElements(
+        elements,
+        [&](size_t k) -> IRBuilder<> & {
+          auto *oldInst = cast<Instruction>(roots[k]);
+          builder.emplace(oldInst->getParent(),
+                          ++BasicBlock::iterator(oldInst));
+          builder->setFastMathFlags(oldInst->getFastMathFlags());
+          return *builder;
+        },
+        nullptr, &DT);
+  }
+
+  for (auto [k, root, element] : llvm::enumerate(roots, elements)) {
+    auto *oldInst = cast<Instruction>(root);
+    IRBuilder<> builder =
+        builderAt(oldInst->getParent(), ++BasicBlock::iterator(oldInst));
+    builder.setFastMathFlags(oldInst->getFastMathFlags());
+
+    Value *newOutput = isArray() ? newOutputs[k] : element->getLLValue(builder);
+    assert(newOutput && "Failed to get value from parsed node");
+    if (isArray() && isa<Instruction>(newOutput))
+      builder.SetInsertPoint(cast<Instruction>(newOutput)->getNextNode());
+
+    if (newOutput->getType() != root->getType())
+      newOutput =
+          builder.CreateFPCast(newOutput, root->getType(), "herbie.fpcast");
+
+    root->replaceAllUsesWith(newOutput);
+    symbolToValueMap[valueToNodeMap[root]->symbol] = newOutput;
+    valueToNodeMap[newOutput] = std::make_shared<FPLLValue>(
+        newOutput, "__no", valueToNodeMap[root]->dtype);
+  }
+
+  for (auto *I : erasableInsts) {
+    if (!I->use_empty())
+      I->replaceAllUsesWith(UndefValue::get(I->getType()));
+    I->eraseFromParent();
+    subgraph->operations.remove(I); // Avoid a second removal
+    cast<FPLLValue>(valueToNodeMap[I].get())->value = nullptr;
+  }
+
+  subgraph->outputs_rewritten += roots.size();
+}
+
+// Lower is better
+double RewriteUnit::getCompCostDelta(CostModelState &CM,
+                                     size_t candidateIndex) {
+  double erasableCost = 0.0;
+
+  for (auto *I : erasableInsts) {
+    erasableCost += getInstructionCompCost(CM, I);
+  }
+
+  return (candidates[candidateIndex].CompCost - erasableCost) *
+         (double)executions;
+}
+
+void RewriteUnit::findErasableInstructions() {
+  SmallPtrSet<Value *, 8> visited;
+  SmallPtrSet<Instruction *, 8> exprInsts;
+  for (Value *root : roots)
+    collectExprInsts(root, subgraph->inputs, exprInsts, visited);
+  visited.clear();
+
+  // Seeded in IR order, not in the order the pointers happened to hash: the
+  // topological sort below is stable, so its input order decides the order the
+  // report lists these instructions in and the order their costs are summed.
+  SetVector<Instruction *> instsToProcess;
+  for (Instruction &I :
+       instructions(*cast<Instruction>(oldOutput)->getFunction()))
+    if (exprInsts.contains(&I))
+      instsToProcess.insert(&I);
+
+  SmallVector<Instruction *, 8> instsToProcessSorted;
+  reverseTopoSort(instsToProcess, instsToProcessSorted);
+
+  erasableInsts.clear();
+  for (Value *root : roots)
+    erasableInsts.insert(cast<Instruction>(root));
+
+  for (auto *I : instsToProcessSorted) {
+    if (erasableInsts.contains(I))
+      continue;
+
+    bool usedOutside = false;
+    for (auto user : I->users()) {
+      if (auto *userI = dyn_cast<Instruction>(user)) {
+        if (erasableInsts.contains(userI)) {
+          continue;
+        }
+      }
+      usedOutside = true;
+      break;
+    }
+
+    if (!usedOutside) {
+      erasableInsts.insert(I);
+    }
+  }
+}
+
+// Lower is better
+double RewriteUnit::getAccCostDelta(size_t candidateIndex) {
+  return candidates[candidateIndex].accuracyCost - initialAccCost;
+}
+
+double RewriteUnit::costDelta(size_t i, ArrayRef<SolutionStep>) {
+  return getCompCostDelta(session().CostModel, i);
+}
+
+double RewriteUnit::errorDelta(size_t i, ArrayRef<SolutionStep>) {
+  return getAccCostDelta(i);
+}
+
+bool RewriteUnit::sameRewriteTargetAs(const OptimizationUnit &earlier) const {
+  const auto *other = dyn_cast<RewriteUnit>(&earlier);
+  return other && other->subgraph == subgraph &&
+         other->roots.size() == roots.size() &&
+         llvm::all_of(other->roots,
+                      [&](Value *r) { return llvm::is_contained(roots, r); });
+}
+
+const SetVector<Instruction *> *RewriteUnit::footprint() const {
+  return subgraph ? &subgraph->operations : nullptr;
+}
+
+std::string RewriteUnit::choiceText(size_t i) const {
+  const RewriteCandidate &cand = candidates[i];
+  return expr + " --(" + std::to_string(cand.ordinal) + ")-> " + cand.expr;
+}
+
+json::Object RewriteUnit::stepJSON(size_t i) {
+  json::Object stepObj;
+  stepObj["type"] = "rewrite";
+  stepObj["original_expr"] = expr;
+  auto &cand = candidates[i];
+  stepObj["rewritten_expr"] = cand.expr;
+  stepObj["herbie_cost"] = jsonFloat(cand.herbieCost);
+  stepObj["herbie_accuracy"] = jsonFloat(cand.herbieAccuracy);
+  stepObj["initial_herbie_cost"] = jsonFloat(initialHerbieCost);
+  stepObj["initial_herbie_accuracy"] = jsonFloat(initialHerbieAccuracy);
+  stepObj["computation_cost_delta"] = getCompCostDelta(session().CostModel, i);
+  stepObj["accuracy_cost_delta"] = jsonFloat(getAccCostDelta(i));
+  stepObj["gradient"] = jsonFloat(grad);
+  stepObj["executions"] = static_cast<int64_t>(executions);
+
+  SmallVector<Instruction *, 8> insts;
+  if (auto *I = dyn_cast<Instruction>(oldOutput))
+    insts.push_back(I);
+  for (auto *I : erasableInsts)
+    insts.push_back(I);
+  stepObj["source_locations"] = getSourceLocationsJSON(insts);
+
+  json::Array affectedIR;
+  if (auto *I = dyn_cast<Instruction>(oldOutput))
+    affectedIR.push_back(getValueStr(I));
+  for (auto *I : erasableInsts) {
+    if (I != oldOutput)
+      affectedIR.push_back(getValueStr(I));
+  }
+  stepObj["affected_instructions"] = std::move(affectedIR);
+  return stepObj;
+}
+
+void RewriteUnit::writeReportStep(raw_ostream &OS, size_t i, StringRef pad) {
+  auto &cand = candidates[i];
+  OS << pad << "[Rewrite] " << expr << "  -->  " << cand.expr << '\n';
+  if (!std::isnan(initialHerbieAccuracy) && !std::isnan(cand.herbieAccuracy))
+    OS << pad << "  Herbie accuracy: " << initialHerbieAccuracy << " -> "
+       << cand.herbieAccuracy << " bits\n";
+  OS << pad << "  Gradient: " << grad << ", Executions: " << executions << '\n';
+
+  SmallSet<std::string, 4> seen;
+  auto printLoc = [&](Instruction *I) {
+    auto loc = getSourceLocationStr(I);
+    if (!loc.empty() && seen.insert(loc).second)
+      OS << pad << "  Source: " << loc << '\n';
+  };
+  if (auto *I = dyn_cast<Instruction>(oldOutput))
+    printLoc(I);
+  for (auto *I : erasableInsts)
+    printLoc(I);
+
+  OS << pad << "  Affected IR:\n";
+  if (auto *I = dyn_cast<Instruction>(oldOutput))
+    OS << pad << "    " << *I << '\n';
+  for (auto *I : erasableInsts) {
+    if (I != oldOutput)
+      OS << pad << "    " << *I << '\n';
+  }
+}
+
+void RewriteUnit::materialize(size_t i) {
+  apply(i, graph().valueToNodeMap, graph().symbolToValueMap,
+        session().Opts.Diagnostics.Print);
+}
+
+void RewriteUnit::price() {
+  if (!herbieAnswered)
+    return;
+  FPGraph &st = graph();
+  auto *output = cast<Instruction>(oldOutput);
+  const FastMathFlags FMF = output->getFastMathFlags();
+  DominatorTree DT(*st.F);
+  LoopInfo LI(DT);
+  const BoundaryCastFreq Boundary = boundaryCastFreq(LI, st.valueToNodeMap);
+  for (RewriteCandidate &c : candidates)
+    c.CompCost =
+        getCompCost(session().CostModel, c.expr, *output, st.valueToNodeMap,
+                    st.symbolToValueMap, FMF, &subgraph->inputs, &Boundary);
+  setUnifiedAccuracyCost(session().Opts, *this, st.valueToNodeMap,
+                         st.symbolToValueMap);
+}
+
+void RewriteUnit::scaleErrors(double factor) {
+  initialAccCost *= factor;
+  for (auto &cand : candidates)
+    cand.accuracyCost *= factor;
+}
+
+void RewriteUnit::printPriced(raw_ostream &OS) {
+  OS << "\n################################\n";
+  OS << "Initial AccuracyCost: " << initialAccCost << '\n';
+  OS << "Initial ComputationCost: " << initialCompCost << '\n';
+  OS << "Initial HerbieCost: " << initialHerbieCost << '\n';
+  OS << "Initial HerbieAccuracy: " << initialHerbieAccuracy << '\n';
+  OS << "Initial Expression: " << expr << '\n';
+  OS << "Grad: " << grad << "\n\n";
+  OS << "Candidates:\n";
+  OS << "Δ AccCost\t\tΔ "
+        "CompCost\t\tHerbieCost\t\tAccuracy\t\tExpression\n";
+  OS << "--------------------------------\n";
+  for (size_t i = 0; i < candidates.size(); ++i) {
+    auto &candidate = candidates[i];
+    OS << getAccCostDelta(i) << "\t\t";
+    // A compile that reads its DP table from the cache prices no candidate.
+    if (candidate.CompCost == std::numeric_limits<double>::max())
+      OS << "unpriced";
+    else
+      OS << getCompCostDelta(session().CostModel, i);
+    OS << "\t\t" << candidate.herbieCost << "\t\t" << candidate.herbieAccuracy
+       << "\t\t" << candidate.expr << '\n';
+  }
+  OS << "################################\n\n";
+}
+
+void RewriteUnit::addReportSummary(json::Array &summary) {
+  json::Object co;
+  co["original_expr"] = expr;
+  co["num_candidates"] = static_cast<int64_t>(candidates.size());
+  co["gradient"] = jsonFloat(grad);
+  co["executions"] = static_cast<int64_t>(executions);
+  co["initial_accuracy_cost"] = jsonFloat(initialAccCost);
+  co["initial_computation_cost"] = initialCompCost;
+  if (auto *I = dyn_cast<Instruction>(oldOutput)) {
+    auto loc = getSourceLocationJSON(I);
+    if (!loc.empty())
+      co["source_location"] = std::move(loc);
+  }
+  summary.push_back(std::move(co));
+}
+
+void RewriteUnit::writeReportSummary(raw_ostream &textOut) {
+  textOut << "Expression #" << indexInKind() << ": " << expr << '\n';
+  textOut << "  Gradient: " << grad << ", Executions: " << executions << '\n';
+  if (auto *I = dyn_cast<Instruction>(oldOutput)) {
+    auto loc = getSourceLocationStr(I);
+    if (!loc.empty())
+      textOut << "  Source: " << loc << '\n';
+  }
+  textOut << "  Candidates: " << candidates.size() << '\n';
+  for (size_t j = 0; j < candidates.size(); ++j) {
+    auto &cand = candidates[j];
+    textOut << "    [" << cand.ordinal << "] " << cand.expr;
+    if (!std::isnan(cand.herbieAccuracy))
+      textOut << "  (accuracy: " << cand.herbieAccuracy << " bits)";
+    textOut << '\n';
+  }
+}
+
+void RewriteUnit::addCuratedRewrites(json::Array &rewrites) {
+  for (size_t ci = 0; ci < candidates.size(); ++ci) {
+    auto &cand = candidates[ci];
+    double accDelta = getAccCostDelta(ci);
+    double compDelta = getCompCostDelta(session().CostModel, ci);
+
+    if (std::isnan(accDelta))
+      continue;
+
+    std::optional<Tradeoff> tradeoff = classifyTradeoff(compDelta, accDelta);
+    if (!tradeoff)
+      continue;
+    std::string category = tradeoff->category.str();
+    double efficiency = tradeoff->efficiency;
+
+    json::Object rw;
+    rw["id"] = candidateId(ci);
+    rw["original_expr"] = expr;
+    rw["rewritten_expr"] = cand.expr;
+    rw["category"] = category;
+    rw["efficiency"] = jsonFloat(efficiency);
+    rw["computation_cost_delta"] = compDelta;
+    rw["accuracy_cost_delta"] = jsonFloat(accDelta);
+    rw["gradient"] = jsonFloat(grad);
+    rw["executions"] = static_cast<int64_t>(executions);
+    rw["herbie_accuracy"] = jsonFloat(cand.herbieAccuracy);
+    rw["initial_herbie_accuracy"] = jsonFloat(initialHerbieAccuracy);
+
+    if (auto *I = dyn_cast<Instruction>(oldOutput)) {
+      auto loc = getSourceLocationJSON(I);
+      if (!loc.empty())
+        rw["source_location"] = std::move(loc);
+    }
+
+    rewrites.push_back(std::move(rw));
+  }
+}
+
+} // namespace poseidon

@@ -1,0 +1,15 @@
+{
+  "key": {
+    "format": "1",
+    "source file": "lambda_stub.cu",
+    "unit": "fixture"
+  },
+  "value": {
+    "host dispatch": [
+      "_ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_ 1 1 1 8 1 13 3 2 8 8 8 3 0 1 1 0 rd 1 1 0 1 0 1 0 -1 1 0 1 1 4 3 0 1 1 48 1 0 1 1 24 1 0 1 1 72 1 0 1.000000e+00 pf 64 40 16 eq 2 1 4 1 24 1 4 1 48"
+    ],
+    "profile generation": [
+      "_ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT___intern__0123abcd 0 2 3 1 1 1 0 0 8 off 16 40 64"
+    ]
+  }
+}
