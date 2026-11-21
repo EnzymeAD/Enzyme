@@ -683,6 +683,28 @@ LogicalResult BatchOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   return success();
 }
 
+LogicalResult BatchRegionOp::verify() {
+  if (getBody().empty())
+    return emitOpError("body region must not be empty");
+
+  if (getBody().getNumArguments() != getInputs().size())
+    return emitOpError("expected ")
+           << getInputs().size() << " block arguments, got "
+           << getBody().getNumArguments();
+
+  for (Block &block : getBody()) {
+    if (block.empty())
+      continue;
+    if (auto yieldOp = dyn_cast<enzyme::YieldOp>(block.getTerminator())) {
+      if (yieldOp.getNumOperands() != getNumResults())
+        return emitOpError("expected ")
+               << getNumResults() << " yielded values, got "
+               << yieldOp.getNumOperands();
+    }
+  }
+  return success();
+}
+
 //===----------------------------------------------------------------------===//
 // BroadcastOp
 //===----------------------------------------------------------------------===//
