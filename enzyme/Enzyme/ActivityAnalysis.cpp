@@ -989,11 +989,14 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
     if (EnzymePrintActivity)
       llvm::errs() << "[activity] forced instruction to be active: " << *I
                    << "\n";
+    ActiveInstructions.insert(I);
     return false;
   } else if (hasMetadata(I, "enzyme_inactive") ||
              hasMetadata(I, "enzyme_inactive_inst")) {
     if (EnzymePrintActivity)
-      llvm::errs() << "[activity] forced value to be constant: " << *I << "\n";
+      llvm::errs() << "[activity] forced instruction to be constant: " << *I
+                   << "\n";
+    InsertConstantInstruction(TR, I);
     return true;
   }
 
@@ -1363,27 +1366,23 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
   if (!EnzymeDisableActivityAnalysis) {
 
     if (auto CD = dyn_cast<ConstantDataSequential>(Val)) {
-      // inductively assume inactive
-      ConstantValues.insert(CD);
       for (size_t i = 0, len = CD->getNumElements(); i < len; i++) {
         if (!isConstantValue(TR, CD->getElementAsConstant(i))) {
-          ConstantValues.erase(CD);
           ActiveValues.insert(CD);
           return false;
         }
       }
+      ConstantValues.insert(CD);
       return true;
     }
     if (auto CD = dyn_cast<ConstantAggregate>(Val)) {
-      // inductively assume inactive
-      ConstantValues.insert(CD);
       for (size_t i = 0, len = CD->getNumOperands(); i < len; i++) {
         if (!isConstantValue(TR, CD->getOperand(i))) {
-          ConstantValues.erase(CD);
           ActiveValues.insert(CD);
           return false;
         }
       }
+      ConstantValues.insert(CD);
       return true;
     }
 
@@ -1401,23 +1400,14 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
       assert(0 && "must've put arguments in constant/nonconstant");
     }
 
-    // This value is certainly an integer (and only and integer, not a pointer
-    // or float). Therefore its value is constant
-    if (TR.query(Val)[{-1}] == BaseType::Integer) {
-      if (EnzymePrintActivity)
-        llvm::errs() << " Value const as integral " << (int)directions << " "
-                     << *Val << " " << TR.query(Val).str() << "\n";
-      InsertConstantValue(TR, Val);
-      return true;
-    }
-
-    // Overwrite activity using metadata
+    // Overwrite activity using metadata before inferred type checks.
     if (auto *I = dyn_cast<Instruction>(Val)) {
       if (hasMetadata(I, "enzyme_active") ||
           hasMetadata(I, "enzyme_active_val")) {
         if (EnzymePrintActivity)
           llvm::errs() << "[activity] forced value to be active: " << *Val
                        << "\n";
+        ActiveValues.insert(Val);
         return false;
       } else if (hasMetadata(I, "enzyme_inactive") ||
                  hasMetadata(I, "enzyme_inactive_val")) {
@@ -1429,225 +1419,6 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
       }
     }
 
-    // Overwrite activity using metadata
-    if (auto *I = dyn_cast<Instruction>(Val)) {
-      if (hasMetadata(I, "enzyme_active") ||
-          hasMetadata(I, "enzyme_active_val")) {
-        if (EnzymePrintActivity)
-          llvm::errs() << "[activity] forced value to be active: " << *Val
-                       << "\n";
-        return false;
-      } else if (hasMetadata(I, "enzyme_inactive") ||
-                 hasMetadata(I, "enzyme_inactive_val")) {
-        if (EnzymePrintActivity)
-          llvm::errs() << "[activity] forced value to be constant: " << *Val
-                       << "\n";
-        InsertConstantValue(TR, Val);
-        return true;
-      }
-    }
-
-#if 0
-  // This value is certainly a pointer to an integer (and only and integer, not
-  // a pointer or float). Therefore its value is constant
-  // TODO use typeInfo for more aggressive activity analysis
-  if (val->getType()->isPointerTy() &&
-      cast<PointerType>(val->getType())->isIntOrIntVectorTy() &&
-      TR.firstPointer(1, val, /*I*/nullptr, /*gutils*/nullptr, /*errifnotfound*/ nullptr).isIntegral()) {
-    if (EnzymePrintActivity)
-      llvm::errs() << " Value const as integral pointer" << (int)directions
-                   << " " << *val << "\n";
-    InsertConstantValue(TR, Val);
-    return true;
-  }
-#endif
-
-    if (auto GA = dyn_cast<GlobalAlias>(Val))
-      return isConstantValue(TR, GA->getAliasee());
-
-    if (auto GI = dyn_cast<GlobalVariable>(Val)) {
-      // If operating under the assumption globals are inactive unless
-      // explicitly marked as active, this is inactive
-      if (!hasMetadata(GI, "enzyme_shadow") && EnzymeNonmarkedGlobalsInactive) {
-        InsertConstantValue(TR, Val);
-        return true;
-      }
-      if (hasMetadata(GI, "enzyme_inactive")) {
-        InsertConstantValue(TR, Val);
-        return true;
-      }
-
-      if (GI->getName().contains("enzyme_const") ||
-          InactiveGlobals.count(GI->getName())) {
-        InsertConstantValue(TR, Val);
-        return true;
-      }
-
-      // If this global is unchanging and the internal constant data
-      // is inactive, the global is inactive
-      if (GI->isConstant() && GI->hasInitializer() &&
-          isConstantValue(TR, GI->getInitializer())) {
-        InsertConstantValue(TR, Val);
-        if (EnzymePrintActivity)
-          llvm::errs() << " VALUE const global " << *Val
-                       << " init: " << *GI->getInitializer() << "\n";
-        return true;
-      }
-
-      // If this global is a pointer to an integer, it is inactive
-      // TODO note this may need updating to consider the size
-      // of the global
-      auto res = TR.query(GI).Data0();
-      auto dt = res[{-1}];
-      if (dt.isIntegral()) {
-        if (EnzymePrintActivity)
-          llvm::errs() << " VALUE const as global int pointer " << *Val
-                       << " type - " << res.str() << "\n";
-        InsertConstantValue(TR, Val);
-        return true;
-      }
-
-      // If this is a global local to this translation unit with inactive
-      // initializer and no active uses, it is definitionally inactive
-      bool usedJustInThisModule =
-          GI->hasInternalLinkage() || GI->hasPrivateLinkage();
-
-      if (EnzymePrintActivity)
-        llvm::errs() << "pre attempting(" << (int)directions
-                     << ") just used in module for: " << *GI << " dir"
-                     << (int)directions
-                     << " justusedin:" << usedJustInThisModule << "\n";
-
-      if (directions == 3 && usedJustInThisModule) {
-        // TODO this assumes global initializer cannot refer to itself (lest
-        // infinite loop)
-        if (!GI->hasInitializer() ||
-            isConstantValue(TR, GI->getInitializer())) {
-
-          if (EnzymePrintActivity)
-            llvm::errs() << "attempting just used in module for: " << *GI
-                         << "\n";
-          // Not looking at users to prove inactive (definition of down)
-          // If all users are inactive, this is therefore inactive.
-          // Since we won't look at origins to prove, we can inductively assume
-          // this is inactive
-
-          // As an optimization if we are going down already
-          // and we won't use ourselves (done by PHI's), we
-          // dont need to inductively assume we're true
-          // and can instead use this object!
-          // This pointer is inactive if it is either not actively stored to or
-          // not actively loaded from
-          // See alloca logic to explain why OnlyStores is insufficient here
-          if (directions == DOWN) {
-            if (isValueInactiveFromUsers(TR, Val, UseActivity::OnlyLoads)) {
-              InsertConstantValue(TR, Val);
-              return true;
-            }
-          } else {
-            Instruction *LoadReval = nullptr;
-            Instruction *StoreReval = nullptr;
-            Value *ValLoadReval = nullptr;
-            Value *ValStoreReval = nullptr;
-            auto DownHypothesis = std::unique_ptr<ActivityAnalyzer>(
-                new ActivityAnalyzer(*this, DOWN));
-            DownHypothesis->ConstantValues.insert(Val);
-            if (DownHypothesis->isValueInactiveFromUsers(
-                    TR, Val, UseActivity::OnlyLoads, &LoadReval,
-                    &ValLoadReval) ||
-                (TR.query(GI)[{-1, -1}].isFloat() &&
-                 DownHypothesis->isValueInactiveFromUsers(
-                     TR, Val, UseActivity::OnlyStores, &StoreReval,
-                     &ValStoreReval))) {
-              insertConstantsFrom(TR, *DownHypothesis);
-              InsertConstantValue(TR, Val);
-              return true;
-            } else {
-              if (LoadReval && EnzymeEnableRecursiveHypotheses) {
-                if (EnzymePrintActivity)
-                  llvm::errs() << " global activity of " << *Val
-                               << " dependant on " << *LoadReval << "\n";
-                ReEvaluateValueIfInactiveInst[LoadReval].insert(Val);
-              }
-              if (StoreReval && EnzymeEnableRecursiveHypotheses) {
-                if (EnzymePrintActivity)
-                  llvm::errs() << " global activity of " << *Val
-                               << " dependant on " << *StoreReval << "\n";
-                ReEvaluateValueIfInactiveInst[StoreReval].insert(Val);
-              }
-              if (ValLoadReval && EnzymeEnableRecursiveHypotheses) {
-                if (EnzymePrintActivity)
-                  llvm::errs() << " global activity of " << *Val
-                               << " dependant on " << *ValLoadReval << "\n";
-                ReEvaluateValueIfInactiveValue[ValLoadReval].insert(Val);
-              }
-              if (ValStoreReval && EnzymeEnableRecursiveHypotheses) {
-                if (EnzymePrintActivity)
-                  llvm::errs() << " global activity of " << *Val
-                               << " dependant on " << *ValStoreReval << "\n";
-                ReEvaluateValueIfInactiveValue[ValStoreReval].insert(Val);
-              }
-            }
-          }
-        }
-      }
-
-      // Otherwise we have to assume this global is active since it can
-      // be arbitrarily used in an active way
-      // TODO we can be more aggressive here in the future
-      if (EnzymePrintActivity)
-        llvm::errs() << " VALUE nonconst unknown global " << *Val << " type - "
-                     << res.str() << "\n";
-      ActiveValues.insert(Val);
-      return false;
-    }
-
-    // ConstantExpr's are inactive if their arguments are inactive
-    // Note that since there can't be a recursive constant this shouldn't
-    // infinite loop
-    if (auto ce = dyn_cast<ConstantExpr>(Val)) {
-      if (ce->isCast()) {
-        if (isConstantValue(TR, ce->getOperand(0))) {
-          if (EnzymePrintActivity)
-            llvm::errs() << " VALUE const cast from from operand " << *Val
-                         << "\n";
-          InsertConstantValue(TR, Val);
-          return true;
-        }
-      }
-      if (ce->getOpcode() == Instruction::GetElementPtr &&
-          llvm::all_of(ce->operand_values(),
-                       [&](Value *v) { return isConstantValue(TR, v); })) {
-        if (isConstantValue(TR, ce->getOperand(0))) {
-          if (EnzymePrintActivity)
-            llvm::errs() << " VALUE const cast from gep operand " << *Val
-                         << "\n";
-          InsertConstantValue(TR, Val);
-          return true;
-        }
-      }
-      if (EnzymePrintActivity)
-        llvm::errs() << " VALUE nonconst unknown expr " << *Val << "\n";
-      ActiveValues.insert(Val);
-      return false;
-    }
-
-    if (auto I = dyn_cast<Instruction>(Val)) {
-      if (hasMetadata(I, "enzyme_active") ||
-          hasMetadata(I, "enzyme_active_val")) {
-        if (EnzymePrintActivity)
-          llvm::errs() << "forced active val (MD)" << *Val << "\n";
-        InsertConstantValue(TR, Val);
-        return true;
-      }
-      if (hasMetadata(I, "enzyme_inactive") ||
-          hasMetadata(I, "enzyme_inactive_val")) {
-        if (EnzymePrintActivity)
-          llvm::errs() << "forced inactive val (MD)" << *Val << "\n";
-        InsertConstantValue(TR, Val);
-        return true;
-      }
-    }
     if (auto CI = dyn_cast<CallInst>(Val)) {
       if (CI->hasFnAttr("enzyme_active") ||
           CI->hasFnAttr("enzyme_active_val") ||
@@ -1695,6 +1466,228 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
         InsertConstantValue(TR, Val);
         return true;
       }
+    }
+
+    // This value is certainly an integer (and only and integer, not a pointer
+    // or float). Therefore its value is constant
+    if (TR.query(Val)[{-1}] == BaseType::Integer) {
+      if (EnzymePrintActivity)
+        llvm::errs() << " Value const as integral " << (int)directions << " "
+                     << *Val << " " << TR.query(Val).str() << "\n";
+      InsertConstantValue(TR, Val);
+      return true;
+    }
+
+#if 0
+  // This value is certainly a pointer to an integer (and only and integer, not
+  // a pointer or float). Therefore its value is constant
+  // TODO use typeInfo for more aggressive activity analysis
+  if (val->getType()->isPointerTy() &&
+      cast<PointerType>(val->getType())->isIntOrIntVectorTy() &&
+      TR.firstPointer(1, val, /*I*/nullptr, /*gutils*/nullptr, /*errifnotfound*/ nullptr).isIntegral()) {
+    if (EnzymePrintActivity)
+      llvm::errs() << " Value const as integral pointer" << (int)directions
+                   << " " << *val << "\n";
+    InsertConstantValue(TR, Val);
+    return true;
+  }
+#endif
+
+    if (auto GA = dyn_cast<GlobalAlias>(Val))
+      return isConstantValue(TR, GA->getAliasee());
+
+    if (auto GI = dyn_cast<GlobalVariable>(Val)) {
+      // If operating under the assumption globals are inactive unless
+      // explicitly marked as active, this is inactive
+      if (!hasMetadata(GI, "enzyme_shadow") && EnzymeNonmarkedGlobalsInactive) {
+        InsertConstantValue(TR, Val);
+        return true;
+      }
+      if (hasMetadata(GI, "enzyme_inactive")) {
+        InsertConstantValue(TR, Val);
+        return true;
+      }
+
+      if (GI->getName().contains("enzyme_const") ||
+          InactiveGlobals.count(GI->getName())) {
+        InsertConstantValue(TR, Val);
+        return true;
+      }
+
+      // If this global is a pointer to an integer, it is inactive
+      // TODO note this may need updating to consider the size
+      // of the global
+      auto res = TR.query(GI).Data0();
+      auto dt = res[{-1}];
+      if (dt.isIntegral()) {
+        if (EnzymePrintActivity)
+          llvm::errs() << " VALUE const as global int pointer " << *Val
+                       << " type - " << res.str() << "\n";
+        InsertConstantValue(TR, Val);
+        return true;
+      }
+
+      // If this global is unchanging and the internal constant data
+      // is inactive, the global is inactive. Use a speculative hypothesis
+      // to break cycles in self-referential or mutually recursive global
+      // initializers without poisoning ConstantValues if any reachable
+      // global is active.
+      if (GI->isConstant() && GI->hasInitializer()) {
+        Constant *Init = GI->getInitializer();
+        bool initConst = false;
+        if (isa<ConstantData>(Init) || isa<UndefValue>(Init)) {
+          initConst = true;
+        } else if (SpeculatingGlobalInit) {
+          ConstantValues.insert(Val);
+          initConst = isConstantValue(TR, Init);
+          if (!initConst)
+            ConstantValues.erase(Val);
+        } else {
+          auto Hypothesis = std::unique_ptr<ActivityAnalyzer>(
+              new ActivityAnalyzer(*this, directions));
+          Hypothesis->SpeculatingGlobalInit = true;
+          Hypothesis->ConstantValues.insert(Val);
+          initConst = Hypothesis->isConstantValue(TR, Init);
+          if (initConst)
+            insertConstantsFrom(TR, *Hypothesis);
+        }
+        if (initConst) {
+          InsertConstantValue(TR, Val);
+          if (EnzymePrintActivity)
+            llvm::errs() << " VALUE const global " << *Val << " init: " << *Init
+                         << "\n";
+          return true;
+        }
+        if (EnzymePrintActivity)
+          llvm::errs() << " VALUE nonconst global with active init " << *Val
+                       << " type - " << res.str() << "\n";
+        ActiveValues.insert(Val);
+        return false;
+      }
+
+      // If this is a global local to this translation unit with inactive
+      // initializer and no active uses, it is definitionally inactive
+      bool usedJustInThisModule =
+          GI->hasInternalLinkage() || GI->hasPrivateLinkage();
+
+      if (EnzymePrintActivity)
+        llvm::errs() << "pre attempting(" << (int)directions
+                     << ") just used in module for: " << *GI << " dir"
+                     << (int)directions
+                     << " justusedin:" << usedJustInThisModule << "\n";
+
+      if (directions == 3 && usedJustInThisModule) {
+        bool initConst = false;
+        std::unique_ptr<ActivityAnalyzer> InitHypothesis;
+        if (!GI->hasInitializer() || isa<ConstantData>(GI->getInitializer()) ||
+            isa<UndefValue>(GI->getInitializer())) {
+          initConst = true;
+        } else if (SpeculatingGlobalInit) {
+          // A mutable global reached from another global's initializer has a
+          // non-instruction user, so isValueInactiveFromUsers cannot prove it
+          // inactive.
+          initConst = false;
+        } else {
+          InitHypothesis = std::unique_ptr<ActivityAnalyzer>(
+              new ActivityAnalyzer(*this, directions));
+          InitHypothesis->SpeculatingGlobalInit = true;
+          InitHypothesis->ConstantValues.insert(Val);
+          initConst = InitHypothesis->isConstantValue(TR, GI->getInitializer());
+        }
+        if (initConst) {
+
+          if (EnzymePrintActivity)
+            llvm::errs() << "attempting just used in module for: " << *GI
+                         << "\n";
+          // Not looking at users to prove inactive (definition of down)
+          // If all users are inactive, this is therefore inactive.
+          // Since we won't look at origins to prove, we can inductively assume
+          // this is inactive
+          // This pointer is inactive if it is either not actively stored to or
+          // not actively loaded from
+          // See alloca logic to explain why OnlyStores is insufficient here
+          Instruction *LoadReval = nullptr;
+          Instruction *StoreReval = nullptr;
+          Value *ValLoadReval = nullptr;
+          Value *ValStoreReval = nullptr;
+          auto DownHypothesis = std::unique_ptr<ActivityAnalyzer>(
+              new ActivityAnalyzer(*this, DOWN));
+          DownHypothesis->ConstantValues.insert(Val);
+          if (DownHypothesis->isValueInactiveFromUsers(
+                  TR, Val, UseActivity::OnlyLoads, &LoadReval, &ValLoadReval) ||
+              (TR.query(GI)[{-1, -1}].isFloat() &&
+               DownHypothesis->isValueInactiveFromUsers(
+                   TR, Val, UseActivity::OnlyStores, &StoreReval,
+                   &ValStoreReval))) {
+            if (InitHypothesis)
+              insertConstantsFrom(TR, *InitHypothesis);
+            insertConstantsFrom(TR, *DownHypothesis);
+            InsertConstantValue(TR, Val);
+            return true;
+          } else {
+            if (LoadReval && EnzymeEnableRecursiveHypotheses) {
+              if (EnzymePrintActivity)
+                llvm::errs() << " global activity of " << *Val
+                             << " dependant on " << *LoadReval << "\n";
+              ReEvaluateValueIfInactiveInst[LoadReval].insert(Val);
+            }
+            if (StoreReval && EnzymeEnableRecursiveHypotheses) {
+              if (EnzymePrintActivity)
+                llvm::errs() << " global activity of " << *Val
+                             << " dependant on " << *StoreReval << "\n";
+              ReEvaluateValueIfInactiveInst[StoreReval].insert(Val);
+            }
+            if (ValLoadReval && EnzymeEnableRecursiveHypotheses) {
+              if (EnzymePrintActivity)
+                llvm::errs() << " global activity of " << *Val
+                             << " dependant on " << *ValLoadReval << "\n";
+              ReEvaluateValueIfInactiveValue[ValLoadReval].insert(Val);
+            }
+            if (ValStoreReval && EnzymeEnableRecursiveHypotheses) {
+              if (EnzymePrintActivity)
+                llvm::errs() << " global activity of " << *Val
+                             << " dependant on " << *ValStoreReval << "\n";
+              ReEvaluateValueIfInactiveValue[ValStoreReval].insert(Val);
+            }
+          }
+        }
+      }
+
+      // Otherwise we have to assume this global is active since it can
+      // be arbitrarily used in an active way
+      // TODO we can be more aggressive here in the future
+      if (EnzymePrintActivity)
+        llvm::errs() << " VALUE nonconst unknown global " << *Val << " type - "
+                     << res.str() << "\n";
+      ActiveValues.insert(Val);
+      return false;
+    }
+
+    // ConstantExpr's are inactive if their arguments are inactive
+    // Note that since there can't be a recursive constant this shouldn't
+    // infinite loop
+    if (auto ce = dyn_cast<ConstantExpr>(Val)) {
+      if (ce->isCast()) {
+        if (isConstantValue(TR, ce->getOperand(0))) {
+          if (EnzymePrintActivity)
+            llvm::errs() << " VALUE const cast from from operand " << *Val
+                         << "\n";
+          InsertConstantValue(TR, Val);
+          return true;
+        }
+      }
+      if (ce->getOpcode() == Instruction::GetElementPtr &&
+          llvm::all_of(ce->operand_values(),
+                       [&](Value *v) { return isConstantValue(TR, v); })) {
+        if (EnzymePrintActivity)
+          llvm::errs() << " VALUE const cast from gep operand " << *Val << "\n";
+        InsertConstantValue(TR, Val);
+        return true;
+      }
+      if (EnzymePrintActivity)
+        llvm::errs() << " VALUE nonconst unknown expr " << *Val << "\n";
+      ActiveValues.insert(Val);
+      return false;
     }
     if (auto BO = dyn_cast<BinaryOperator>(Val)) {
       // x & 0b100000 is definitionally inactive
