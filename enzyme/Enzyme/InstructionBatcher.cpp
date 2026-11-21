@@ -62,30 +62,37 @@ Value *InstructionBatcher::getNewOperand(unsigned int i, llvm::Value *op) {
       return MetadataAsValue::get(
           op->getContext(),
           ValueAsMetadata::get(getNewOperand(i, val->getValue())));
+    return meta;
   }
 
-  if (isa<ConstantData>(op)) {
+  if (auto *BA = dyn_cast<BlockAddress>(op)) {
+    auto found = originalToNewFn.find(BA->getBasicBlock());
+    if (found != originalToNewFn.end()) {
+      auto *NewBB = cast<BasicBlock>(&*found->second);
+      return BlockAddress::get(NewBB->getParent(), NewBB);
+    }
+    return BA;
+  }
+
+  if (isa<Constant>(op)) {
     return op;
-  } else if (isa<Function>(op)) {
-    return op;
-  } else if (isa<GlobalValue>(op)) {
-    llvm::errs() << "unimplelemented GlobalValue!\n";
-    llvm_unreachable("unimplelemented GlobalValue!");
-    // TODO: !!!
   } else if (toVectorize.count(op) != 0) {
     auto found = vectorizedValues.find(op);
-    assert(found != vectorizedValues.end());
+    assert(found != vectorizedValues.end() &&
+           "Expected vectorized operand in mapping");
     return found->second[i];
   } else {
     auto found = originalToNewFn.find(op);
-    assert(found != originalToNewFn.end());
+    assert(found != originalToNewFn.end() &&
+           "Expected scalar operand in originalToNewFn mapping");
     return found->second;
   }
 }
 
 void InstructionBatcher::visitInstruction(llvm::Instruction &inst) {
   auto found = vectorizedValues.find(&inst);
-  assert(found != vectorizedValues.end());
+  assert(found != vectorizedValues.end() &&
+         "Expected vectorized instruction in mapping");
   auto placeholders = found->second;
   Instruction *placeholder = cast<Instruction>(placeholders[0]);
 
@@ -96,17 +103,6 @@ void InstructionBatcher::visitInstruction(llvm::Instruction &inst) {
 
     for (unsigned j = 0; j < inst.getNumOperands(); ++j) {
       Value *op = inst.getOperand(j);
-
-      // Don't allow writing vectors to global memory, loading and splatting a
-      // global is fine though.
-      if (isa<GlobalValue>(op) && !isa<ConstantData>(op) &&
-          inst.mayWriteToMemory() && toVectorize.count(op) != 0) {
-        // TODO: handle buffer access
-        hasError = true;
-        EmitFailure("GlobalValueCannotBeVectorized", inst.getDebugLoc(), &inst,
-                    "global variables have to be scalar values", inst);
-        return;
-      }
 
       if (auto meta = dyn_cast<MetadataAsValue>(op))
         if (!isa<ValueAsMetadata>(meta->getMetadata()))
@@ -119,17 +115,20 @@ void InstructionBatcher::visitInstruction(llvm::Instruction &inst) {
     if (placeholders.size() == width) {
       // Instructions which return a value
       Instruction *placeholder = cast<Instruction>(placeholders[i]);
-      assert(!placeholder->getType()->isVoidTy());
+      assert(!placeholder->getType()->isVoidTy() &&
+             "Expected non-void placeholder for multi-lane instruction");
 
       ReplaceInstWithInst(placeholder, new_inst);
       vectorizedValues[&inst][i] = new_inst;
     } else if (placeholders.size() == 1) {
       // Instructions which don't return a value
-      assert(placeholder->getType()->isVoidTy());
+      assert(placeholder->getType()->isVoidTy() &&
+             "Expected void instruction for single placeholder");
 
-      Instruction *insertionPoint =
-          placeholder->getNextNode() ? placeholder->getNextNode() : placeholder;
-      IRBuilder<> Builder2(insertionPoint);
+      Instruction *prev = cast<Instruction>(vectorizedValues[&inst].back());
+      IRBuilder<> Builder2 = prev->getNextNode()
+                                 ? IRBuilder<>(prev->getNextNode())
+                                 : IRBuilder<>(prev->getParent());
       Builder2.SetCurrentDebugLocation(DebugLoc());
       Builder2.Insert(new_inst);
       vectorizedValues[&inst].push_back(new_inst);
@@ -214,6 +213,14 @@ void InstructionBatcher::visitReturnInst(llvm::ReturnInst &ret) {
   }
 
   if (ret.getNumOperands() != 0) {
+    if (nBB->getParent()->getReturnType() == ret.getOperand(0)->getType()) {
+      hasError = true;
+      EmitFailure("ReturnValueCannotBeVectorized", ret.getDebugLoc(), &ret,
+                  "return value cannot be vectorized when scalar return is "
+                  "requested",
+                  ret);
+      return;
+    }
 #if LLVM_VERSION_MAJOR > 22
     auto ret = Builder2.CreateAggregateRet(rets);
 #else
@@ -226,16 +233,20 @@ void InstructionBatcher::visitReturnInst(llvm::ReturnInst &ret) {
 
 void InstructionBatcher::visitCallInst(llvm::CallInst &call) {
   auto found = vectorizedValues.find(&call);
-  assert(found != vectorizedValues.end());
+  assert(found != vectorizedValues.end() &&
+         "Expected vectorized call in mapping");
   auto placeholders = found->second;
   Instruction *placeholder = cast<Instruction>(placeholders[0]);
   IRBuilder<> Builder2(placeholder);
   Builder2.SetCurrentDebugLocation(DebugLoc());
   auto orig_func = getFunctionFromCall(&call);
 
-  bool isDefined = !orig_func->isDeclaration();
+  bool canBatchCallee =
+      orig_func && !orig_func->isDeclaration() && !orig_func->isVarArg() &&
+      call.getFunctionType() == orig_func->getFunctionType() &&
+      !call.hasOperandBundles();
 
-  if (!isDefined)
+  if (!canBatchCallee)
     return visitInstruction(call);
 
   SmallVector<Value *, 4> args;
@@ -252,20 +263,15 @@ void InstructionBatcher::visitCallInst(llvm::CallInst &call) {
       Value *agg = UndefValue::get(aggTy);
       for (unsigned i = 0; i < width; i++) {
         auto found = vectorizedValues.find(op);
-        assert(found != vectorizedValues.end());
+        assert(found != vectorizedValues.end() &&
+               "Expected vectorized call operand in mapping");
         Value *new_op = found->second[i];
         agg = Builder2.CreateInsertValue(agg, new_op, {i});
       }
       args.push_back(agg);
       arg_types.push_back(BATCH_TYPE::VECTOR);
-    } else if (isa<ConstantData>(op)) {
-      args.push_back(op);
-      arg_types.push_back(BATCH_TYPE::SCALAR);
     } else {
-      auto found = originalToNewFn.find(op);
-      assert(found != originalToNewFn.end());
-      Value *arg = found->second;
-      args.push_back(arg);
+      args.push_back(getNewOperand(0, op));
       arg_types.push_back(BATCH_TYPE::SCALAR);
     }
   }
@@ -276,9 +282,13 @@ void InstructionBatcher::visitCallInst(llvm::CallInst &call) {
 
   Function *new_func = Logic.CreateBatch(RequestContext(&call, &Builder2),
                                          orig_func, width, arg_types, ret_type);
+  if (!new_func) {
+    hasError = true;
+    return;
+  }
   CallInst *new_call = Builder2.CreateCall(new_func->getFunctionType(),
                                            new_func, args, call.getName());
-
+  new_call->setCallingConv(new_func->getCallingConv());
   new_call->setDebugLoc(placeholder->getDebugLoc());
 
   if (!call.getType()->isVoidTy()) {
@@ -291,6 +301,7 @@ void InstructionBatcher::visitCallInst(llvm::CallInst &call) {
       vectorizedValues[&call][i] = ret;
     }
   } else {
+    vectorizedValues[&call][0] = new_call;
     placeholder->replaceAllUsesWith(new_call);
     placeholder->eraseFromParent();
   }

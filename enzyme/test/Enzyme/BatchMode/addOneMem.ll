@@ -33,8 +33,8 @@ declare void @__enzyme_batch(...)
 ; CHECK-NEXT:   %add2 = fadd fast double %2, 1.000000e+00
 ; CHECK-NEXT:   %add3 = fadd fast double %3, 1.000000e+00
 ; CHECK-NEXT:   store double %add0, double* %unwrap.x0, align 8
-; CHECK-NEXT:   store double %add3, double* %unwrap.x3, align 8
-; CHECK-NEXT:   store double %add2, double* %unwrap.x2, align 8
 ; CHECK-NEXT:   store double %add1, double* %unwrap.x1, align 8
+; CHECK-NEXT:   store double %add2, double* %unwrap.x2, align 8
+; CHECK-NEXT:   store double %add3, double* %unwrap.x3, align 8
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
