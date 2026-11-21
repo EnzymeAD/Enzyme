@@ -6,6 +6,7 @@ add_lit_testsuite(
   DEPENDS
   ${ENZYME_TEST_DEPS}
   ClangEnzyme-${LLVM_VERSION_MAJOR}
+  LLDEnzyme-${LLVM_VERSION_MAJOR}
   ARGS
   -v)
 
