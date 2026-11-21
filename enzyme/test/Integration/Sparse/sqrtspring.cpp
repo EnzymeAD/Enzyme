@@ -83,5 +83,6 @@ int main(int argc, char** argv) {
       printf("%ld, %ld = %f\n", tup.row, tup.col, tup.val);
   }
 
+  CHECK_SPARSE_HESSIAN(res, grad_f<double>, N, x, N, N, 0);
   return 0;
 }
