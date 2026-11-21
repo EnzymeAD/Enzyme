@@ -219,12 +219,14 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
 
         Type *statusType = nullptr;
 #if LLVM_VERSION_MAJOR < 17
-        if (Function *recvfn = called->getParent()->getFunction(
-                getRenamedPerCallingConv(called->getName(), "MPI_Wait"))) {
-          auto statusArg = recvfn->arg_end();
-          statusArg--;
-          if (auto PT = dyn_cast<PointerType>(statusArg->getType()))
-            statusType = PT->getPointerElementType();
+        if (called->getContext().supportsTypedPointers()) {
+          if (Function *recvfn = called->getParent()->getFunction(
+                  getRenamedPerCallingConv(called->getName(), "MPI_Wait"))) {
+            auto statusArg = recvfn->arg_end();
+            statusArg--;
+            if (auto PT = dyn_cast<PointerType>(statusArg->getType()))
+              statusType = PT->getPointerElementType();
+          }
         }
 #endif
         if (statusType == nullptr) {
@@ -547,6 +549,10 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
           lookup(gutils->getNewFromOriginal(call.getOperand(0)), Builder2);
       Value *req_orig =
           lookup(gutils->getNewFromOriginal(call.getOperand(1)), Builder2);
+      if (req_orig->getType()->isIntegerTy()) {
+        req_orig = Builder2.CreateIntToPtr(
+            req_orig, getUnqual(getInt8PtrTy(call.getContext())));
+      }
 
       if (Mode != DerivativeMode::ReverseModeCombined) {
         d_reqp = BuilderZ.CreatePHI(getUnqual(reqType), 0);
@@ -610,18 +616,14 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
         types[i] = args[i]->getType();
       Function *dwait = getOrInsertDifferentialMPI_Wait(
           *called->getParent(), types, req->getType(), called->getName());
-      // Need to preserve the shadow Request (operand 6 in isend/irecv), which
-      // becomes operand 0 for iwait. However, this doesn't end up preserving
-      // the underlying buffers for the adjoint. To remedy, force inline the
-      // function.
+      // Need to preserve the shadow Requests (operand 1 in waitall). However,
+      // this doesn't end up preserving the underlying buffers for the adjoint.
+      // To remedy, force inline the function.
       auto cal = Builder2.CreateCall(
           dwait, args,
-          gutils->getInvertedBundles(&call,
-                                     {ValueType::None, ValueType::None,
-                                      ValueType::None, ValueType::None,
-                                      ValueType::None, ValueType::None,
-                                      ValueType::Shadow},
-                                     Builder2, /*lookup*/ true));
+          gutils->getInvertedBundles(
+              &call, {ValueType::None, ValueType::Shadow, ValueType::None},
+              Builder2, /*lookup*/ true));
       cal->setCallingConv(dwait->getCallingConv());
       cal->setDebugLoc(gutils->getNewFromOriginal(call.getDebugLoc()));
       cal->addFnAttr(Attribute::AlwaysInline);
@@ -845,8 +847,16 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
           args, Defs);
       fcall->setCallingConv(call.getCallingConv());
 
-      auto dst_arg =
-          Builder2.CreateBitCast(args[0], getInt8PtrTy(call.getContext()));
+      Value *dst_arg = args[0];
+      if (dst_arg->getType()->isIntegerTy())
+        dst_arg =
+            Builder2.CreateIntToPtr(dst_arg, getInt8PtrTy(call.getContext()));
+      else
+        dst_arg = Builder2.CreateBitCast(
+            dst_arg,
+            getInt8PtrTy(
+                call.getContext(),
+                cast<PointerType>(dst_arg->getType())->getAddressSpace()));
       auto val_arg = ConstantInt::get(Type::getInt8Ty(call.getContext()), 0);
       auto len_arg = Builder2.CreateZExtOrTrunc(
           args[1], Type::getInt64Ty(call.getContext()));
@@ -869,7 +879,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
       auto memset = cast<CallInst>(Builder2.CreateCall(
           getIntrinsicDeclaration(gutils->newFunc->getParent(),
                                   Intrinsic::memset, tys),
-          nargs));
+          nargs, MemsetDefs));
       memset->addParamAttr(0, Attribute::NonNull);
     }
     if (Mode == DerivativeMode::ReverseModeGradient)
@@ -1638,7 +1648,7 @@ void AdjointGenerator::handleMPI(llvm::CallInst &call, llvm::Function *called,
         recvtype = lookup(recvtype, Builder2);
 
       Value *sendcount = gutils->getNewFromOriginal(orig_sendcount);
-      if (!sendcount)
+      if (!forwardMode)
         sendcount = lookup(sendcount, Builder2);
 
       Value *sendtype = gutils->getNewFromOriginal(orig_sendtype);

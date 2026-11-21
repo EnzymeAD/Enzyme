@@ -589,6 +589,16 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
         }
       }
 
+      if (!shadow && gutils->runtimeActivity &&
+          (funcName == "MPI_Isend" || funcName == "PMPI_Isend") &&
+          val == CI->getArgOperand(0)) {
+        if (EnzymePrintDiffUse)
+          llvm::errs() << " Need: primal(" << to_string(qtype) << ") of "
+                       << *val << " in reverse for runtime-active MPI_Isend "
+                       << *CI << "\n";
+        return true;
+      }
+
       return false;
     }
 
@@ -608,9 +618,9 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
         if (val != CI->getArgOperand(0))
           return false;
 
-      // Only need element count for reverse of waitall
+      // Only need element count and requests for reverse of waitall
       if (funcName == "MPI_Waitall" || funcName == "PMPI_Waitall")
-        if (val != CI->getArgOperand(0) || val != CI->getOperand(1))
+        if (val != CI->getArgOperand(0) && val != CI->getArgOperand(1))
           return false;
 
     } else {
