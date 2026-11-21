@@ -270,27 +270,105 @@ Optional<StringRef> getMetadataName(llvm::Value *res)
   return {};
 }
 
-static Value *adaptReturnedVector(Value *ret, Value *diffret,
-                                  IRBuilder<> &Builder, unsigned width) {
-  Type *returnType = ret->getType();
+static bool canAdaptReturnedVector(Type *returnType, Type *diffretType,
+                                   unsigned width) {
+  if (diffretType == returnType)
+    return false;
 
-  if (StructType *sty = dyn_cast<StructType>(returnType)) {
-    Value *agg = ConstantAggregateZero::get(sty);
+  StructType *sty = dyn_cast<StructType>(returnType);
+  if (!sty)
+    return false;
 
-    for (unsigned int i = 0; i < width; i++) {
-      Value *elem = Builder.CreateExtractValue(diffret, {i});
-      if (auto vty = dyn_cast<FixedVectorType>(elem->getType())) {
-        for (unsigned j = 0; j < vty->getNumElements(); ++j) {
-          Value *vecelem = Builder.CreateExtractElement(elem, j);
-          agg = Builder.CreateInsertValue(agg, vecelem, {i * j});
-        }
-      } else {
-        agg = Builder.CreateInsertValue(agg, elem, {i});
+  if (auto *diffST = dyn_cast<StructType>(diffretType)) {
+    if (diffST->getNumElements() != sty->getNumElements() ||
+        sty->isLayoutIdentical(diffST))
+      return false;
+    bool anyAdapted = false;
+    for (unsigned i = 0; i < sty->getNumElements(); ++i) {
+      Type *retElem = sty->getElementType(i);
+      Type *diffElem = diffST->getElementType(i);
+      if (retElem == diffElem)
+        continue;
+      if (!canAdaptReturnedVector(retElem, diffElem, width))
+        return false;
+      anyAdapted = true;
+    }
+    return anyAdapted;
+  }
+
+  auto *arrTy = dyn_cast<ArrayType>(diffretType);
+  if (!arrTy || arrTy->getNumElements() != width)
+    return false;
+
+  Type *elemTy = arrTy->getElementType();
+  if (sty->getNumElements() == width) {
+    bool allMatch = true;
+    for (unsigned int i = 0; i < width; ++i) {
+      if (sty->getElementType(i) != elemTy) {
+        allMatch = false;
+        break;
       }
     }
-    diffret = agg;
+    if (allMatch)
+      return true;
   }
-  return diffret;
+
+  if (auto *vty = dyn_cast<FixedVectorType>(elemTy)) {
+    unsigned vecLen = vty->getNumElements();
+    Type *scalarTy = vty->getElementType();
+    if (sty->getNumElements() == width * vecLen) {
+      for (unsigned int k = 0; k < width * vecLen; ++k) {
+        if (sty->getElementType(k) != scalarTy)
+          return false;
+      }
+      return true;
+    }
+  }
+
+  return false;
+}
+
+static Value *adaptReturnedVector(Type *returnType, Value *diffret,
+                                  IRBuilder<> &Builder, unsigned width) {
+  if (!canAdaptReturnedVector(returnType, diffret->getType(), width))
+    return diffret;
+
+  StructType *sty = cast<StructType>(returnType);
+  Type *diffretType = diffret->getType();
+
+  if (isa<StructType>(diffretType)) {
+    Value *agg = ConstantAggregateZero::get(sty);
+    for (unsigned i = 0; i < sty->getNumElements(); ++i) {
+      Value *elem = Builder.CreateExtractValue(diffret, {i});
+      Value *adapted =
+          adaptReturnedVector(sty->getElementType(i), elem, Builder, width);
+      agg = Builder.CreateInsertValue(agg, adapted, {i});
+    }
+    return agg;
+  }
+
+  auto *arrTy = cast<ArrayType>(diffretType);
+  Type *elemTy = arrTy->getElementType();
+  Value *agg = ConstantAggregateZero::get(sty);
+
+  if (sty->getNumElements() == width && sty->getElementType(0) == elemTy) {
+    for (unsigned int i = 0; i < width; ++i) {
+      Value *elem = Builder.CreateExtractValue(diffret, {i});
+      agg = Builder.CreateInsertValue(agg, elem, {i});
+    }
+    return agg;
+  }
+
+  auto *vty = cast<FixedVectorType>(elemTy);
+  unsigned vecLen = vty->getNumElements();
+  for (unsigned int i = 0; i < width; ++i) {
+    Value *elem = Builder.CreateExtractValue(diffret, {i});
+    for (unsigned int j = 0; j < vecLen; ++j) {
+      Value *vecelem = Builder.CreateExtractElement(elem, j);
+      agg = Builder.CreateInsertValue(agg, vecelem, {i * vecLen + j});
+    }
+  }
+  return agg;
 }
 
 static bool ReplaceOriginalCall(IRBuilder<> &Builder, Value *ret,
@@ -301,10 +379,50 @@ static bool ReplaceOriginalCall(IRBuilder<> &Builder, Value *ret,
   auto &DL = CI->getModule()->getDataLayout();
 
   if (diffretType->isEmptyTy() || diffretType->isVoidTy() ||
-      retType->isEmptyTy() || retType->isVoidTy()) {
-    CI->replaceAllUsesWith(UndefValue::get(CI->getType()));
+      retType->isEmptyTy() || retType->isVoidTy() ||
+      (retElemType && retElemType->isEmptyTy())) {
+    if (!CI->getType()->isVoidTy())
+      CI->replaceAllUsesWith(UndefValue::get(CI->getType()));
     CI->eraseFromParent();
     return true;
+  }
+
+  if (retElemType) {
+    assert(isa<PointerType>(retType) && "sret return must have pointer type");
+    unsigned AS = cast<PointerType>(retType)->getPointerAddressSpace();
+    retType = retElemType;
+
+    if (retType == diffretType) {
+      Builder.CreateStore(diffret, ret);
+      CI->eraseFromParent();
+      return true;
+    }
+
+    if (auto sretType = dyn_cast<StructType>(retType),
+        diffsretType = dyn_cast<StructType>(diffretType);
+        sretType && diffsretType && sretType->isLayoutIdentical(diffsretType)) {
+      for (unsigned int i = 0; i < sretType->getStructNumElements(); i++) {
+        Value *sgep = Builder.CreateStructGEP(retType, ret, i);
+        Builder.CreateStore(Builder.CreateExtractValue(diffret, {i}), sgep);
+      }
+      CI->eraseFromParent();
+      return true;
+    }
+
+    if (DL.getTypeSizeInBits(retType) >= DL.getTypeSizeInBits(diffretType)) {
+      Builder.CreateStore(diffret, Builder.CreatePointerCast(
+                                       ret, getPointerType(diffretType, AS)));
+      CI->eraseFromParent();
+      return true;
+    }
+
+    auto diffretsize = DL.getTypeSizeInBits(diffretType);
+    auto retsize = DL.getTypeSizeInBits(retType);
+    EmitFailure("IllegalReturnCast", CI->getDebugLoc(), CI,
+                "Cannot cast return type of gradient ", *diffretType, *diffret,
+                " of size ", diffretsize, " bits ", ", to desired type ",
+                *retType, " of size ", retsize, " bits");
+    return false;
   }
 
   if (retType == diffretType) {
@@ -326,28 +444,6 @@ static bool ReplaceOriginalCall(IRBuilder<> &Builder, Value *ret,
     return true;
   }
 
-  if (isa<PointerType>(retType)) {
-    retType = retElemType;
-
-    if (auto sretType = dyn_cast<StructType>(retType),
-        diffsretType = dyn_cast<StructType>(diffretType);
-        sretType && diffsretType && sretType->isLayoutIdentical(diffsretType)) {
-      for (unsigned int i = 0; i < sretType->getStructNumElements(); i++) {
-        Value *sgep = Builder.CreateStructGEP(retType, ret, i);
-        Builder.CreateStore(Builder.CreateExtractValue(diffret, {i}), sgep);
-      }
-      CI->eraseFromParent();
-      return true;
-    }
-
-    if (DL.getTypeSizeInBits(retType) >= DL.getTypeSizeInBits(diffretType)) {
-      Builder.CreateStore(
-          diffret, Builder.CreatePointerCast(ret, getUnqual(diffretType)));
-      CI->eraseFromParent();
-      return true;
-    }
-  }
-
   if ((mode == DerivativeMode::ReverseModePrimal &&
        DL.getTypeSizeInBits(retType) >= DL.getTypeSizeInBits(diffretType)) ||
       ((mode == DerivativeMode::ForwardMode ||
@@ -355,8 +451,9 @@ static bool ReplaceOriginalCall(IRBuilder<> &Builder, Value *ret,
        DL.getTypeSizeInBits(retType) == DL.getTypeSizeInBits(diffretType))) {
     IRBuilder<> EB(getFirstNonPHI(&CI->getFunction()->getEntryBlock()));
     auto AL = EB.CreateAlloca(retType);
-    Builder.CreateStore(diffret,
-                        Builder.CreatePointerCast(AL, getUnqual(diffretType)));
+    Builder.CreateStore(
+        diffret, Builder.CreatePointerCast(
+                     AL, getPointerType(diffretType, AL->getAddressSpace())));
     Value *cload = Builder.CreateLoad(retType, AL);
     CI->replaceAllUsesWith(cload);
     CI->eraseFromParent();
@@ -364,17 +461,12 @@ static bool ReplaceOriginalCall(IRBuilder<> &Builder, Value *ret,
   }
 
   if (mode != DerivativeMode::ReverseModePrimal &&
-      diffret->getType()->isAggregateType()) {
+      diffretType->isAggregateType() &&
+      ExtractValueInst::getIndexedType(diffretType, {0}) == retType) {
     auto diffreti = Builder.CreateExtractValue(diffret, {0});
-    if (diffreti->getType() == retType) {
-      CI->replaceAllUsesWith(diffreti);
-      CI->eraseFromParent();
-      return true;
-    } else if (diffretType == retType) {
-      CI->replaceAllUsesWith(diffret);
-      CI->eraseFromParent();
-      return true;
-    }
+    CI->replaceAllUsesWith(diffreti);
+    CI->eraseFromParent();
+    return true;
   }
 
   auto diffretsize = DL.getTypeSizeInBits(diffretType);
@@ -1408,8 +1500,6 @@ public:
       batchCall->addFnAttr(Attribute::NoInline);
     Value *batch = batchCall;
 
-    batch = adaptReturnedVector(CI, batch, Builder, width);
-
     Value *ret = CI;
     Type *retElemType = nullptr;
     if (CI->hasStructRetAttr()) {
@@ -1418,10 +1508,10 @@ public:
           CI->getAttribute(AttributeList::FirstArgIndex, Attribute::StructRet)
               .getValueAsType();
     }
-    ReplaceOriginalCall(Builder, ret, retElemType, batch, CI,
-                        DerivativeMode::ForwardMode);
-
-    return true;
+    batch = adaptReturnedVector(retElemType ? retElemType : ret->getType(),
+                                batch, Builder, width);
+    return ReplaceOriginalCall(Builder, ret, retElemType, batch, CI,
+                               DerivativeMode::ForwardMode);
   }
 
   bool HandleAutoDiff(Instruction *CI, CallingConv::ID CallingConv, Value *ret,
@@ -1772,12 +1862,14 @@ public:
         (mode == DerivativeMode::ForwardMode ||
          mode == DerivativeMode::ForwardModeSplit)) {
 
-      diffret = adaptReturnedVector(ret, diffret, Builder, width);
+      diffret = adaptReturnedVector(retElemType ? retElemType : ret->getType(),
+                                    diffret, Builder, width);
     }
 
-    ReplaceOriginalCall(Builder, ret, retElemType, diffret, CI, mode);
+    if (!ReplaceOriginalCall(Builder, ret, retElemType, diffret, CI, mode))
+      return false;
     calls.push_back(diffretc);
-    return diffret;
+    return true;
   }
 
   /// Return whether successful
