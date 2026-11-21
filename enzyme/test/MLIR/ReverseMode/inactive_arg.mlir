@@ -28,7 +28,7 @@ module {
 // CHECK-NEXT:    cf.br ^bb3
 //      CHECK:  ^bb3: // 2 preds: ^bb1, ^bb2
 //      CHECK:    %[[INCOMING:.+]] = "enzyme.pop"(%[[CACHE]]) : (!enzyme.Cache<i32>) -> i32
-// CHECK-NEXT:    %[[COND2:.+]] = arith.cmpi eq, %[[INCOMING]], %[[CST1]] : i32
+// CHECK-NEXT:    %[[COND2:.+]] = arith.cmpi eq, %[[INCOMING]], %[[CST0]] : i32
 // CHECK-NEXT:    %[[GRAD:.+]] = arith.select %[[COND2]], %[[DIFFE]], %[[ZERO]] : f32
 //      CHECK:    return %[[GRAD]] : f32
 // CHECK-NEXT:  }
