@@ -2024,19 +2024,46 @@ void callSPMVDiagUpdate(IRBuilder<> &B, Module &M, BlasInfo blas,
                         Type *BlasPT, Type *BlasIT, Type *fpTy,
                         ArrayRef<Value *> args,
                         ArrayRef<OperandBundleDef> bundles, bool byRef,
-                        bool julia_decl) {
+                        bool julia_decl, Type *BlasLayoutT) {
   // add spmv diag update call if not already present
-  auto fnc_name = "__enzyme_spmv_diag" + blas.floatType + blas.suffix;
+  auto fnc_name =
+      "__enzyme_spmv_diag" + blas.prefix + blas.floatType + blas.suffix;
 
-  //  spmvDiagHelper(uplo, n, alpha, x, incx, ya, incy, APa)
-  auto FDiagUpdateT = FunctionType::get(
-      B.getVoidTy(),
-      {BlasCT, BlasIT, BlasFPT, BlasPT, BlasIT, BlasPT, BlasIT, BlasPT}, false);
-  Function *F =
-      cast<Function>(M.getOrInsertFunction(fnc_name, FDiagUpdateT).getCallee());
+  // spmvDiagHelper([layout,] uplo, n, alpha, x, incx, ya, incy, APa)
+  SmallVector<Type *, 9> paramTypes;
+  if (BlasLayoutT)
+    paramTypes.push_back(BlasLayoutT);
+  paramTypes.append(
+      {BlasCT, BlasIT, BlasFPT, BlasPT, BlasIT, BlasPT, BlasIT, BlasPT});
+  assert(args.size() == paramTypes.size() &&
+         "Unexpected argument count in callSPMVDiagUpdate");
+
+  auto FDiagUpdateT = FunctionType::get(B.getVoidTy(), paramTypes, false);
+  Function *F = M.getFunction(fnc_name);
+  if (!F)
+    F = cast<Function>(
+        M.getOrInsertFunction(fnc_name, FDiagUpdateT).getCallee());
+
+  auto buildCallArgs = [&](Function *Callee) {
+    SmallVector<Value *, 9> callArgs(args.begin(), args.end());
+    auto *FT = Callee->getFunctionType();
+    for (size_t i = 0; i < callArgs.size(); i++) {
+      Type *paramTy = FT->getParamType(i);
+      if (callArgs[i]->getType() != paramTy) {
+        if (callArgs[i]->getType()->isPointerTy() && paramTy->isIntegerTy())
+          callArgs[i] = B.CreatePtrToInt(callArgs[i], paramTy);
+        else if (callArgs[i]->getType()->isIntegerTy() &&
+                 paramTy->isPointerTy())
+          callArgs[i] = B.CreateIntToPtr(callArgs[i], paramTy);
+        else
+          callArgs[i] = B.CreatePointerCast(callArgs[i], paramTy);
+      }
+    }
+    return callArgs;
+  };
 
   if (!F->empty()) {
-    B.CreateCall(F, args, bundles);
+    B.CreateCall(F, buildCallArgs(F), bundles);
     return;
   }
 
@@ -2050,18 +2077,19 @@ void callSPMVDiagUpdate(IRBuilder<> &B, Module &M, BlasInfo blas,
   F->addFnAttr(Attribute::NoUnwind);
   F->addFnAttr(Attribute::AlwaysInline);
   if (!julia_decl) {
-    addFunctionNoCapture(F, 3);
-    addFunctionNoCapture(F, 5);
-    addFunctionNoCapture(F, 7);
-    F->addParamAttr(3, Attribute::NoAlias);
-    F->addParamAttr(5, Attribute::NoAlias);
-    F->addParamAttr(7, Attribute::NoAlias);
-    F->addParamAttr(3, Attribute::ReadOnly);
-    F->addParamAttr(5, Attribute::ReadOnly);
+    unsigned off = BlasLayoutT ? 1 : 0;
+    addFunctionNoCapture(F, off + 3);
+    addFunctionNoCapture(F, off + 5);
+    addFunctionNoCapture(F, off + 7);
+    F->addParamAttr(off + 3, Attribute::NoAlias);
+    F->addParamAttr(off + 5, Attribute::NoAlias);
+    F->addParamAttr(off + 7, Attribute::NoAlias);
+    F->addParamAttr(off + 3, Attribute::ReadOnly);
+    F->addParamAttr(off + 5, Attribute::ReadOnly);
     if (byRef) {
-      addFunctionNoCapture(F, 2);
-      F->addParamAttr(2, Attribute::NoAlias);
-      F->addParamAttr(2, Attribute::ReadOnly);
+      addFunctionNoCapture(F, off + 2);
+      F->addParamAttr(off + 2, Attribute::NoAlias);
+      F->addParamAttr(off + 2, Attribute::ReadOnly);
     }
   }
 
@@ -2071,89 +2099,118 @@ void callSPMVDiagUpdate(IRBuilder<> &B, Module &M, BlasInfo blas,
   BasicBlock *lower_code = BasicBlock::Create(M.getContext(), "lower", F);
   BasicBlock *end = BasicBlock::Create(M.getContext(), "for.end", F);
 
-  //  spmvDiagHelper(uplo, n, alpha, x, incx, ya, incy, APa)
-  auto blasuplo = F->arg_begin();
+  // spmvDiagHelper([layout,] uplo, n, alpha, x, incx, ya, incy, APa)
+  auto argIt = F->arg_begin();
+  Argument *blaslayout = nullptr;
+  if (BlasLayoutT) {
+    blaslayout = &*(argIt++);
+    blaslayout->setName("blaslayout");
+  }
+  auto blasuplo = argIt++;
   blasuplo->setName("blasuplo");
-  auto blasn = blasuplo + 1;
+  auto blasn = argIt++;
   blasn->setName("blasn");
-  auto blasalpha = blasn + 1;
+  auto blasalpha = argIt++;
   blasalpha->setName("blasalpha");
-  auto blasx = blasalpha + 1;
+  auto blasx = argIt++;
   blasx->setName("blasx");
-  auto blasincx = blasx + 1;
+  auto blasincx = argIt++;
   blasincx->setName("blasincx");
-  auto blasdy = blasx + 1;
+  auto blasdy = argIt++;
   blasdy->setName("blasdy");
-  auto blasincy = blasdy + 1;
+  auto blasincy = argIt++;
   blasincy->setName("blasincy");
-  auto blasdAP = blasincy + 1;
+  auto blasdAP = argIt++;
   blasdAP->setName("blasdAP");
-
-  // TODO: consider cblas_layout
+  assert(argIt == F->arg_end() && "Unconsumed args in callSPMVDiagUpdate");
 
   // https://dl.acm.org/doi/pdf/10.1145/3382191
-  // Following example is Fortran based, thus 1 indexed
-  // if(uplo == 'u' .or. uplo == 'U') then
+  // Following example is Fortran (ColMajor) based, thus 1 indexed:
+  // if (uplo == 'u' .or. uplo == 'U') then
   //   k = 0
-  //   do i = 1,n
-  //     k = k+i
-  //     APa(k) = APa(k) - alpha*x(1 + (i-1)*incx)*ya(1 + (i-1)*incy)
+  //   do i = 1, n
+  //     k = k + i
+  //     APa(k) = APa(k) - alpha * x(kx + (i-1)*incx) * ya(ky + (i-1)*incy)
   //   end do
   // else
   //   k = 1
-  //   do i = 1,n
-  //     APa(k) = APa(k) - alpha*x(1 + (i-1)*incx)*ya(1 + (i-1)*incy)
-  //     k = k+n-i+1
+  //   do i = 1, n
+  //     APa(k) = APa(k) - alpha * x(kx + (i-1)*incx) * ya(ky + (i-1)*incy)
+  //     k = k + n - i + 1
   //   end do
   // end if
+  // For CblasRowMajor (101), upper-packed storage has the same diagonal
+  // offsets as ColMajor lower-packed storage, and vice versa.
   {
+    auto toFloatPtr = [&](IRBuilder<> &Builder, Value *V) -> Value * {
+      if (V->getType()->isIntegerTy())
+        return Builder.CreateIntToPtr(V, getUnqual(fpTy));
+      return Builder.CreatePointerCast(
+          V, getPointerType(
+                 fpTy, cast<PointerType>(V->getType())->getAddressSpace()));
+    };
+
     IRBuilder<> B1(entry);
     Value *n = load_if_ref(B1, IT, blasn, byRef);
     Value *incx = load_if_ref(B1, IT, blasincx, byRef);
     Value *incy = load_if_ref(B1, IT, blasincy, byRef);
-    Value *alpha = blasalpha;
-    if (byRef) {
-      auto VP = B1.CreatePointerCast(
-          blasalpha,
-          getPointerType(
-              fpTy,
-              cast<PointerType>(blasalpha->getType())->getAddressSpace()));
-      alpha = B1.CreateLoad(fpTy, VP);
+    Value *alpha = load_if_ref(B1, fpTy, blasalpha, byRef);
+    Value *uploVal = blasuplo;
+    if (byRef && uploVal->getType()->isIntegerTy())
+      uploVal = B1.CreateIntToPtr(uploVal, getUnqual(B1.getInt8Ty()));
+    Value *is_l = is_lower(B1, uploVal, byRef, /*cublas*/ false);
+    if (blaslayout) {
+      Value *is_row_major = B1.CreateICmpEQ(
+          blaslayout, ConstantInt::get(blaslayout->getType(), 101));
+      is_l = B1.CreateXor(is_l, is_row_major);
     }
-    Value *is_l = is_lower(B1, blasuplo, byRef, /*cublas*/ false);
-    B1.CreateCondBr(B1.CreateICmpEQ(n, ConstantInt::get(IT, 0)), end, init);
+    B1.CreateCondBr(B1.CreateICmpSLE(n, ConstantInt::get(IT, 0)), end, init);
 
     IRBuilder<> B2(init);
-    Value *xfloat = B2.CreatePointerCast(
-        blasx,
-        getPointerType(fpTy,
-                       cast<PointerType>(blasx->getType())->getAddressSpace()));
-    Value *dyfloat = B2.CreatePointerCast(
-        blasdy,
-        getPointerType(
-            fpTy, cast<PointerType>(blasdy->getType())->getAddressSpace()));
-    Value *dAPfloat = B2.CreatePointerCast(
-        blasdAP,
-        getPointerType(
-            fpTy, cast<PointerType>(blasdAP->getType())->getAddressSpace()));
+    Value *xfloat = toFloatPtr(B2, blasx);
+    Value *dyfloat = toFloatPtr(B2, blasdy);
+    Value *dAPfloat = toFloatPtr(B2, blasdAP);
+
+    auto *PtrIdxTy =
+        cast<IntegerType>(M.getDataLayout().getIntPtrType(M.getContext(), 0));
+    IntegerType *IdxTy =
+        IT->getBitWidth() >= PtrIdxTy->getBitWidth() ? IT : PtrIdxTy;
+    Value *zero = ConstantInt::get(IdxTy, 0);
+    Value *one = ConstantInt::get(IdxTy, 1);
+    Value *n_idx = B2.CreateSExt(n, IdxTy);
+    Value *incx_idx = B2.CreateSExt(incx, IdxTy);
+    Value *incy_idx = B2.CreateSExt(incy, IdxTy);
+    Value *oneMinusN = B2.CreateSub(one, n_idx, "one.minus.n");
+    Value *xstart =
+        B2.CreateSelect(B2.CreateICmpSLT(incx_idx, zero),
+                        B2.CreateMul(oneMinusN, incx_idx), zero, "x.start");
+    Value *ystart =
+        B2.CreateSelect(B2.CreateICmpSLT(incy_idx, zero),
+                        B2.CreateMul(oneMinusN, incy_idx), zero, "y.start");
     B2.CreateCondBr(is_l, lower_code, uper_code);
 
     IRBuilder<> B3(uper_code);
     B3.setFastMathFlags(getFast());
     {
-      PHINode *iter = B3.CreatePHI(IT, 2, "iteration");
-      PHINode *kval = B3.CreatePHI(IT, 2, "k");
-      iter->addIncoming(ConstantInt::get(IT, 0), init);
-      kval->addIncoming(ConstantInt::get(IT, 0), init);
-      Value *iternext =
-          B3.CreateAdd(iter, ConstantInt::get(IT, 1), "iter.next");
+      PHINode *iter = B3.CreatePHI(IdxTy, 2, "iteration");
+      PHINode *kval = B3.CreatePHI(IdxTy, 2, "k");
+      PHINode *xidx = B3.CreatePHI(IdxTy, 2, "x.idx");
+      PHINode *yidx = B3.CreatePHI(IdxTy, 2, "y.idx");
+      iter->addIncoming(zero, init);
+      kval->addIncoming(zero, init);
+      xidx->addIncoming(xstart, init);
+      yidx->addIncoming(ystart, init);
+      Value *iternext = B3.CreateAdd(iter, one, "iter.next");
       // 0, 2, 5, 9, 14, 20, 27, 35, 44, 54, ... are diag elements
-      Value *kvalnext = B3.CreateAdd(kval, iternext, "k.next");
+      Value *kstep = B3.CreateAdd(iternext, one, "k.step");
+      Value *kvalnext = B3.CreateAdd(kval, kstep, "k.next");
+      Value *xnext = B3.CreateAdd(xidx, incx_idx, "x.next");
+      Value *ynext = B3.CreateAdd(yidx, incy_idx, "y.next");
       iter->addIncoming(iternext, uper_code);
       kval->addIncoming(kvalnext, uper_code);
+      xidx->addIncoming(xnext, uper_code);
+      yidx->addIncoming(ynext, uper_code);
 
-      Value *xidx = B3.CreateNUWMul(iter, incx, "x.idx");
-      Value *yidx = B3.CreateNUWMul(iter, incy, "y.idx");
       Value *x = B3.CreateInBoundsGEP(fpTy, xfloat, xidx, "x.ptr");
       Value *y = B3.CreateInBoundsGEP(fpTy, dyfloat, yidx, "y.ptr");
       Value *xval = B3.CreateLoad(fpTy, x, "x.val");
@@ -2165,26 +2222,30 @@ void callSPMVDiagUpdate(IRBuilder<> &B, Module &M, BlasInfo blas,
       Value *kvalnew = B3.CreateFSub(kvalloaded, xyalpha, "k.val.new");
       B3.CreateStore(kvalnew, kptr);
 
-      B3.CreateCondBr(B3.CreateICmpEQ(iternext, n), end, uper_code);
+      B3.CreateCondBr(B3.CreateICmpEQ(iternext, n_idx), end, uper_code);
     }
 
     IRBuilder<> B4(lower_code);
     B4.setFastMathFlags(getFast());
     {
-      PHINode *iter = B4.CreatePHI(IT, 2, "iteration");
-      PHINode *kval = B4.CreatePHI(IT, 2, "k");
-      iter->addIncoming(ConstantInt::get(IT, 0), init);
-      kval->addIncoming(ConstantInt::get(IT, 0), init);
-      Value *iternext =
-          B4.CreateAdd(iter, ConstantInt::get(IT, 1), "iter.next");
-      Value *ktmp = B4.CreateAdd(n, ConstantInt::get(IT, 1), "tmp.val");
-      Value *ktmp2 = B4.CreateSub(ktmp, iternext, "tmp.val.other");
-      Value *kvalnext = B4.CreateAdd(kval, ktmp2, "k.next");
+      PHINode *iter = B4.CreatePHI(IdxTy, 2, "iteration");
+      PHINode *kval = B4.CreatePHI(IdxTy, 2, "k");
+      PHINode *xidx = B4.CreatePHI(IdxTy, 2, "x.idx");
+      PHINode *yidx = B4.CreatePHI(IdxTy, 2, "y.idx");
+      iter->addIncoming(zero, init);
+      kval->addIncoming(zero, init);
+      xidx->addIncoming(xstart, init);
+      yidx->addIncoming(ystart, init);
+      Value *iternext = B4.CreateAdd(iter, one, "iter.next");
+      Value *kstep = B4.CreateSub(n_idx, iter, "k.step");
+      Value *kvalnext = B4.CreateAdd(kval, kstep, "k.next");
+      Value *xnext = B4.CreateAdd(xidx, incx_idx, "x.next");
+      Value *ynext = B4.CreateAdd(yidx, incy_idx, "y.next");
       iter->addIncoming(iternext, lower_code);
       kval->addIncoming(kvalnext, lower_code);
+      xidx->addIncoming(xnext, lower_code);
+      yidx->addIncoming(ynext, lower_code);
 
-      Value *xidx = B4.CreateNUWMul(iter, incx, "x.idx");
-      Value *yidx = B4.CreateNUWMul(iter, incy, "y.idx");
       Value *x = B4.CreateInBoundsGEP(fpTy, xfloat, xidx, "x.ptr");
       Value *y = B4.CreateInBoundsGEP(fpTy, dyfloat, yidx, "y.ptr");
       Value *xval = B4.CreateLoad(fpTy, x, "x.val");
@@ -2196,13 +2257,13 @@ void callSPMVDiagUpdate(IRBuilder<> &B, Module &M, BlasInfo blas,
       Value *kvalnew = B4.CreateFSub(kvalloaded, xyalpha, "k.val.new");
       B4.CreateStore(kvalnew, kptr);
 
-      B4.CreateCondBr(B4.CreateICmpEQ(iternext, n), end, lower_code);
+      B4.CreateCondBr(B4.CreateICmpEQ(iternext, n_idx), end, lower_code);
     }
 
     IRBuilder<> B5(end);
     B5.CreateRetVoid();
   }
-  B.CreateCall(F, args, bundles);
+  B.CreateCall(F, buildCallArgs(F), bundles);
   return;
 }
 
