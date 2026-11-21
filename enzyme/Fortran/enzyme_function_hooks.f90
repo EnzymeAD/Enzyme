@@ -35,7 +35,11 @@ module enzyme_function_hooks
   public :: f__enzyme_autodiff
   public :: f__enzyme_fwddiff
   public :: f__enzyme_function_like
+  public :: f__enzyme_augmentfwd
+  public :: f__enzyme_reverse
   external :: f__enzyme_autodiff
   external :: f__enzyme_fwddiff
   external :: f__enzyme_function_like
+  external :: f__enzyme_augmentfwd
+  external :: f__enzyme_reverse
 end module enzyme_function_hooks
