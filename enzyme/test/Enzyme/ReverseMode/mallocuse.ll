@@ -54,6 +54,7 @@ define double @_take(ptr %a0, i1 %a1) {
 ; CHECK-NEXT: }
 
 ; CHECK: define internal void @diffe_take(ptr %a0, ptr %"a0'", i1 %a1, double %differeturn, ptr %tapeArg)
+; CHECK-NEXT:   %a4 = load ptr, ptr %tapeArg, align 8
 ; CHECK-NEXT:   tail call void @free(ptr nonnull %tapeArg)
 ; CHECK-NEXT:   br i1 %a1, label %.lr.ph, label %invert.lr.ph1.peel.next
 
@@ -62,5 +63,6 @@ define double @_take(ptr %a0, i1 %a1) {
 
 ; CHECK: invert.lr.ph1.peel.next:                          ; preds = %0
 ; CHECK-NEXT:   store double 0.000000e+00, ptr %"a0'", align 8
+; CHECK-NEXT:   call void @free(ptr %a4)
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

@@ -87,10 +87,19 @@ bool jlInstSimplify(llvm::Function &F, TargetLibraryInfo &TLI,
         continue;
 
       bool legal = false;
+      bool isICmp = false;
       ICmpInst::Predicate pred;
+      Value *op0 = nullptr;
+      Value *op1 = nullptr;
       if (auto cmp = dyn_cast<ICmpInst>(&I)) {
-        pred = cmp->getPredicate();
-        legal = true;
+        if (isa<PointerType>(cmp->getOperand(0)->getType()) &&
+            isa<PointerType>(cmp->getOperand(1)->getType())) {
+          pred = cmp->getPredicate();
+          op0 = cmp->getOperand(0);
+          op1 = cmp->getOperand(1);
+          legal = true;
+          isICmp = true;
+        }
       } else if (auto CI = dyn_cast<CallBase>(&I)) {
         if (getFuncNameFromCall(CI) == "jl_mightalias") {
 #if LLVM_VERSION_MAJOR >= 14
@@ -98,19 +107,27 @@ bool jlInstSimplify(llvm::Function &F, TargetLibraryInfo &TLI,
 #else
           size_t numargs = CI->getNumArgOperands();
 #endif
-          if (numargs == 2 && isa<PointerType>(I.getOperand(0)->getType()) &&
-              isa<PointerType>(I.getOperand(0)->getType())) {
+          if (numargs == 2 && I.getType()->isIntegerTy() &&
+              isa<PointerType>(CI->getArgOperand(0)->getType()) &&
+              isa<PointerType>(CI->getArgOperand(1)->getType())) {
             legal = true;
             pred = ICmpInst::Predicate::ICMP_EQ;
+            op0 = CI->getArgOperand(0);
+            op1 = CI->getArgOperand(1);
           }
         }
       }
 
       if (legal) {
         if (auto alias = arePointersGuaranteedNoAlias(
-                TLI, AA, DT, LI, I.getOperand(0), I.getOperand(1), false)) {
+                TLI, AA, DT, LI, op0, op1, /*offsetAllowed=*/false,
+                /*forPointerEquality=*/isICmp)) {
 
           bool val = *alias;
+          // Guaranteed inequality does not determine ordered pointer
+          // comparisons (ult, ugt, ule, uge, slt, sgt, sle, sge).
+          if (val && !ICmpInst::isEquality(pred))
+            continue;
           auto repval = ICmpInst::isTrueWhenEqual(pred)
                             ? ConstantInt::get(I.getType(), 1 - val)
                             : ConstantInt::get(I.getType(), val);
