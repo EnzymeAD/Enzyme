@@ -1,4 +1,4 @@
-// RUN: %eopt --enzyme %s | FileCheck %s
+// RUN: %eopt --enzyme --canonicalize --remove-unnecessary-enzyme-ops --lower-enzyme-custom-rules-to-func --enzyme-simplify-math %s | FileCheck %s
 
 module {
   func.func private @helper(%x: f64) -> f64 {
@@ -51,4 +51,5 @@ module {
 // CHECK: func.func @test
 // CHECK: call @diffeouter_to_diff
 // CHECK: func.func private @diffeouter_to_diff
-// CHECK: func.func private @diffeinner_1arg_4ret({{.+}}: f64, {{.+}}: f64, {{.+}}: f64, {{.+}}: f64, {{.+}}: f64) -> f64
+// CHECK: func.func private @inner_1arg_4ret_reverse_rule_primal(%{{.+}}: f64) -> (f64, f64, f64, f64)
+// CHECK: func.func private @inner_1arg_4ret_reverse_rule_reverse(%{{.+}}: f64, %{{.+}}: f64, %{{.+}}: f64, %{{.+}}: f64) -> f64
