@@ -176,8 +176,8 @@ __poseidon_optimize(kick, enzyme_dup, v, dv, enzyme_const, a, dt, n); // shadows
 ```
 
 Precedence: the site's own target (`POSEIDON_OPTIMIZE_TAU`,
-`__poseidon_optimize_tau`, or `poseidon_tau` in an explicit list) >
-`-poseidon-tau` > none; a call that gives its own target both ways is an
+`__poseidon_optimize_tau`, or `poseidon_tau, t` among the call's arguments) >
+`-poseidon-tau` > none; a call that gives its own target twice is an
 error. The target is the same number wherever
 it is written: moving it from the flag into the source never changes what a
 site emits, and changing it needs no new profile, also when a template argument
@@ -260,13 +260,19 @@ outside what was modelled.
 takes, for pointers the profiler cannot size or a seed of the caller's
 choosing: `enzyme_dup` before a pointer and its shadow after it, of the same
 size, zeroed for an input and filled with 1.0 for an output; `enzyme_const`
-before a pointer that needs no shadow; a scalar as it is. `poseidon_tau, t`
-among them sets the call's target, as `__poseidon_optimize_tau` does. A list is
-explicit when it holds an activity marker (`poseidon_tau` is one), and then
-every pointer in it carries one; a list that is neither `fn`'s own arguments
-nor such a list is a compile error at the call. The call is a site over `fn`
-itself, with one profile for every explicit call of `fn`, and returns `fn`'s
-value. A build without the plugin does not link it.
+before a pointer that needs no shadow; a scalar as it is. A list is explicit
+when it holds an activity marker, an `enzyme_*` name or a `poseidon_*` name
+other than `poseidon_tau`, and then every pointer in it carries one; a list
+that is neither `fn`'s own arguments nor such a list is a compile error at the
+call. The call is a site over `fn` itself, with one profile for every explicit
+call of `fn`, and returns `fn`'s value. A build without the plugin does not
+link it.
+
+`poseidon_tau, t` gives the call's target in either list, as
+`__poseidon_optimize_tau` does. With `fn`'s own arguments the call is the one
+`__poseidon_optimize_tau(t, fn, args...)` writes, with the arguments passed as
+given rather than converted to `fn`'s parameter types; like a call with an
+explicit list, it does not link without the plugin.
 
 ```cpp
 int enzyme_dup, enzyme_const, poseidon_tau;
@@ -274,6 +280,7 @@ int enzyme_dup, enzyme_const, poseidon_tau;
 __poseidon_optimize(kernel, poseidon_tau, 1e-10, enzyme_const, x, enzyme_dup,
                     out, dout, n);
 double e = __poseidon_optimize_tau(1e-6, energy, enzyme_dup, x, dx, n);
+double f = __poseidon_optimize(energy, poseidon_tau, 1e-6, x, n);
 ```
 
 C has no overloading, so there `__poseidon_optimize` takes `fn`'s own arguments

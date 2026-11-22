@@ -27,12 +27,16 @@
 //    written.
 //    The arguments may instead be an explicit list, as Enzyme takes them:
 //    enzyme_dup before a pointer and its shadow after it, enzyme_const before
-//    one that needs none, poseidon_tau, t for the call's target. The caller
-//    then provides the shadows, for pointers the pass cannot size or a seed of
-//    its own, and the site is fn itself. In C++ compiled by clang the same
-//    macros take either list; in C an explicit list is a call of
-//    __poseidon_fp_optimize(void *, ...), which the program declares. Without
-//    the plugin a call with an explicit list does not link.
+//    one that needs none. The caller then provides the shadows, for pointers
+//    the pass cannot size or a seed of its own, and the site is fn itself. A
+//    list is explicit when it holds an enzyme_* or poseidon_* name other than
+//    poseidon_tau. poseidon_tau, t among the arguments of either list gives
+//    the call's target; with fn's own arguments that is the call
+//    __poseidon_optimize_tau(t, fn, args...) with the arguments as given. In
+//    C++ compiled by clang the same macros take either list; in C an explicit
+//    list is a call of __poseidon_fp_optimize(void *, ...), which the program
+//    declares. Without the plugin a call fn does not take as written does
+//    not link.
 //    __poseidon_fp_optimize and __enzyme_fp_optimize are accepted as other
 //    names of this call.
 // 4. -poseidon-kernels=<regex>|all: GPU kernels opted in without editing their
@@ -55,7 +59,7 @@
 //
 // Precedence for a site's accuracy target:
 //   its own (POSEIDON_OPTIMIZE_TAU, __poseidon_optimize_tau, or poseidon_tau
-//   in an explicit list, not both) > -poseidon-tau > none
+//   among the call's arguments, given once) > -poseidon-tau > none
 // The target is the same number wherever it is written. A site with none is
 // solved against -poseidon-cost-budget instead, a share of the site's profiled
 // cost; at its default of 0 that is the most accurate rewrite costing no more

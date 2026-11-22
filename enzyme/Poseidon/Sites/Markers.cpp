@@ -320,16 +320,38 @@ static std::string listRemedy(StringRef name) {
       .str();
 }
 
-std::optional<ArgumentList> readArgumentList(CallBase *call, const Function &fn,
-                                             Identity identity) {
+// The accuracy target `value`, the argument after a poseidon_tau of `call`
+// (null when there is none), gives; none, with an error at `call`, when it is
+// not a floating-point constant.
+static std::optional<double> tauValue(CallBase *call, Value *value) {
+  if (!value) {
+    fail(call, "poseidon_tau without a value");
+    return std::nullopt;
+  }
+  auto *CFP = dyn_cast<ConstantFP>(value);
+  if (!CFP) {
+    fail(call, "the relative error tolerance must be a floating-point "
+               "constant");
+    return std::nullopt;
+  }
+  return CFP->getValueAPF().convertToDouble();
+}
+
+std::optional<CallArguments>
+readArgumentList(CallBase *call, const Function &fn, Identity identity) {
   const bool marker = identity == Identity::None;
   const bool sret = marker && (call->hasStructRetAttr() ||
                                fn.hasParamAttribute(0, Attribute::StructRet));
-  auto args = drop_begin(call->args(), marker ? 1 + sret : 0);
+  SmallVector<Value *, 8> args(drop_begin(call->args(), marker ? 1 + sret : 0));
   std::optional<StringRef> activity;
+  bool hasTau = false;
   for (Value *A : args)
     if (std::optional<StringRef> name = activityMarkerName(A);
         name && isMarkerName(*name)) {
+      if (*name == "poseidon_tau") {
+        hasTau = true;
+        continue;
+      }
       activity = name;
       break;
     }
@@ -340,26 +362,56 @@ std::optional<ArgumentList> readArgumentList(CallBase *call, const Function &fn,
                    "makes them an explicit list" + listRemedy(name));
     return std::nullopt;
   }
+  if (hasTau && identity == Identity::Plain) {
+    fail(call, name + " takes the arguments of this call as written, but " +
+                   "poseidon_tau among them gives the call's accuracy "
+                   "target; give the target as the first argument of "
+                   "__poseidon_optimize_tau");
+    return std::nullopt;
+  }
   if (activity)
-    return ArgumentList::Explicit;
-  if (identity == Identity::Explicit) {
+    return CallArguments{ArgumentList::Explicit, {}, std::nullopt};
+  if (identity == Identity::Explicit && !hasTau) {
     fail(call, name +
                    " does not take the arguments of this call as written, "
                    "and none of them is an activity marker" +
                    listRemedy(name));
     return std::nullopt;
   }
+  CallArguments out{ArgumentList::Automatic, {}, std::nullopt};
+  // A marker call without sret passes fn's sret pointer before the list.
+  const bool resultPointer =
+      sret && !call->hasStructRetAttr() && call->arg_size() > 1;
+  if (resultPointer)
+    out.own.push_back(call->getArgOperand(1));
+  for (size_t i = 0; i < args.size(); ++i) {
+    if (!isActivityMarker(args[i], "poseidon_tau")) {
+      out.own.push_back(args[i]);
+      continue;
+    }
+    if (out.tau) {
+      fail(call, "this call of " + name +
+                     " gives its accuracy target twice, each time after "
+                     "poseidon_tau; give it once");
+      return std::nullopt;
+    }
+    ++i;
+    out.tau = tauValue(call, i < args.size() ? args[i] : nullptr);
+    if (!out.tau)
+      return std::nullopt;
+  }
   // A call through the plain identity is checked against fn's signature where
   // it is lowered, the same with and without a profile.
-  const size_t passed = size(args), params = fn.arg_size() - sret;
-  if (identity == Identity::None && passed != params) {
+  const size_t passed = out.own.size() - resultPointer,
+               params = fn.arg_size() - sret;
+  if (identity != Identity::Plain && passed != params) {
     fail(call, "this call passes " + Twine(passed) + " argument(s) to " + name +
                    ", which takes " + Twine(params) +
                    ", and none of them is an activity marker" +
                    listRemedy(name));
     return std::nullopt;
   }
-  return ArgumentList::Automatic;
+  return out;
 }
 
 std::optional<MarkerArgs> parseMarker(CallInst *CI, Function *F) {
@@ -387,17 +439,11 @@ std::optional<MarkerArgs> parseMarker(CallInst *CI, Function *F) {
       } else if (*name == "poseidon_tau") {
         out.forward[i] = false;
         ++i;
-        if (i == CI->arg_size()) {
-          fail(CI, "poseidon_tau without a value");
+        std::optional<double> tau =
+            tauValue(CI, i < CI->arg_size() ? CI->getArgOperand(i) : nullptr);
+        if (!tau)
           return std::nullopt;
-        }
-        auto *CFP = dyn_cast<ConstantFP>(CI->getArgOperand(i));
-        if (!CFP) {
-          fail(CI, "the relative error tolerance must be a floating-point "
-                   "constant");
-          return std::nullopt;
-        }
-        out.errTol = CFP->getValueAPF().convertToDouble();
+        out.errTol = *tau;
         out.forward[i] = false;
         skipArg = true;
         break;

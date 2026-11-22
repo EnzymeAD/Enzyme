@@ -19,9 +19,12 @@
 // the function itself, as the marker does: its profile is named after the
 // function, its value comes back, also in the profiling run, and its target
 // is the first argument of __poseidon_optimize_tau or follows poseidon_tau.
-// __poseidon_fp_optimize and __enzyme_fp_optimize are other names of the
-// call, with the same reading of their lists: an automatic list with a
-// pointer is a per-call site like one written with __poseidon_optimize.
+// poseidon_tau is no activity marker: followed by the function's own
+// arguments it gives the target of a call that is the one
+// __poseidon_optimize_tau writes. __poseidon_fp_optimize and
+// __enzyme_fp_optimize are other names of the call, with the same reading of
+// their lists: an automatic list with a pointer is a per-call site like one
+// written with __poseidon_optimize.
 
 #include "poseidon/poseidon.h"
 #include <cmath>
@@ -52,11 +55,17 @@ void scale(const double *x, double *y, int n) {
 
 double sq(double x, double y) { return x * x + y * y; }
 
+void shift(const double *x, double *y, int n) {
+  for (int i = 0; i < n; ++i)
+    y[i] = std::log1p(x[i] * x[i]) - 0.25 * x[i];
+}
+
 int pick(int mode, int n) { return mode + n; }
 
 int main() {
   const int n = 256;
   static double x[n], dx[n], y1[n], y2[n], y3[n], y4[n], y5[n], dy[n];
+  static double y6[n], y7[n], y8[n];
   for (int i = 0; i < n; ++i) {
     x[i] = -2.0 + 4.0 * i / (n - 1);
     dy[i] = 1.0;
@@ -71,9 +80,12 @@ int main() {
   __enzyme_fp_optimize<void>((void *)wave, enzyme_const, x, enzyme_dup, y5, dy,
                              n);
   double s = __poseidon_fp_optimize<double>((void *)sq, x[3], x[7]);
-  printf("%d %d %d %d %d %d\n", y1[100] == y2[100], e == energy(x, n),
+  __poseidon_optimize(shift, poseidon_tau, 1e-9, x, y6, n);
+  __poseidon_fp_optimize<void>((void *)shift, poseidon_tau, 1e-8, x, y7, n);
+  shift(x, y8, n);
+  printf("%d %d %d %d %d %d %d %d\n", y1[100] == y2[100], e == energy(x, n),
          d == damp(x, 2.0), y3[100] == y4[100], y5[100] == y2[100],
-         s == sq(x[3], x[7]));
+         s == sq(x[3], x[7]), y6[100] == y8[100], y7[100] == y8[100]);
   printf("%.6g %.6g %.6g %.6g %.6g\n", y1[100], e, d, y3[100], s);
 
 #ifdef LISTS
@@ -89,19 +101,34 @@ int main() {
   __poseidon_optimize(wave, enzyme_const, x, y1, dy, n);
   // LISTS-DAG: per_call_explicit.cpp:[[@LINE+1]]:{{[0-9]+}}: error: Poseidon: activity marker without an argument
   __poseidon_optimize(wave, enzyme_const, x, enzyme_dup, y1, dy, enzyme_const);
+  // LISTS-DAG: per_call_explicit.cpp:[[@LINE+1]]:{{[0-9]+}}: error: Poseidon: pick(int, int) takes the arguments of this call as written, but poseidon_tau among them gives the call's accuracy target; give the target as the first argument of __poseidon_optimize_tau
+  p += __poseidon_optimize(pick, poseidon_tau, n);
+  // LISTS-DAG: per_call_explicit.cpp:[[@LINE+1]]:{{[0-9]+}}: error: Poseidon: this call passes 2 argument(s) to shift(double const*, double*, int), which takes 3, and none of them is an activity marker; pass
+  __poseidon_optimize(shift, poseidon_tau, 1e-6, x, y6);
+  // LISTS-DAG: per_call_explicit.cpp:[[@LINE+1]]:{{[0-9]+}}: error: Poseidon: this call passes 2 argument(s) to shift(double const*, double*, int), which takes 3, and none of them is an activity marker; pass
+  __poseidon_fp_optimize<void>((void *)shift, poseidon_tau, 1e-6, x, y6);
+  // LISTS-DAG: per_call_explicit.cpp:[[@LINE+1]]:{{[0-9]+}}: error: Poseidon: the relative error tolerance must be a floating-point constant
+  __poseidon_optimize(shift, poseidon_tau, d, x, y6, n);
+  // LISTS-DAG: per_call_explicit.cpp:[[@LINE+1]]:{{[0-9]+}}: error: Poseidon: poseidon_tau without a value
+  __poseidon_optimize(shift, x, y6, n, poseidon_tau);
+  // LISTS-DAG: per_call_explicit.cpp:[[@LINE+1]]:{{[0-9]+}}: error: Poseidon: this call of shift(double const*, double*, int) gives its accuracy target twice, each time after poseidon_tau; give it once
+  __poseidon_optimize(shift, poseidon_tau, 1e-6, poseidon_tau, 1e-7, x, y6, n);
   printf("%d %g\n", p, d);
 #endif
 }
 
-// SAME: 1 1 1 1 1 1
+// SAME: 1 1 1 1 1 1 1 1
 
 // The explicit calls are sites over the functions themselves, the two of wave
-// one site with one profile; the automatic call with a pointer is a per-call
-// site, and the automatic call with scalars alone stays a marker site.
+// one site with one profile; the automatic calls with a pointer are per-call
+// sites, also with poseidon_tau, and the automatic call with scalars alone
+// stays a marker site.
 // PROFILES: preprocess__Z2sqdd.fpprofile
 // PROFILES-NEXT: preprocess__Z4dampPKdd.fpprofile
 // PROFILES-NEXT: preprocess__Z4wavePKdPdi.fpprofile
 // PROFILES-NEXT: preprocess__Z5scalePKdPdi.poseidon.main.0.fpprofile
+// PROFILES-NEXT: preprocess__Z5shiftPKdPdi.poseidon.main.1.fpprofile
+// PROFILES-NEXT: preprocess__Z5shiftPKdPdi.poseidon.main.2.fpprofile
 // PROFILES-NEXT: preprocess__Z6energyPKdi.fpprofile
 
 // USE-DAG: preprocess__Z4wavePKdPdi: tau=1.000000e-06
@@ -109,8 +136,10 @@ int main() {
 // USE-DAG: preprocess__Z4dampPKdd: the site's own accuracy target 1.000000e-12 overrides -poseidon-tau=1.000000e-06
 // USE-DAG: preprocess__Z5scalePKdPdi.poseidon.main.0: tau=1.000000e-06
 // USE-DAG: preprocess__Z2sqdd: tau=1.000000e-06
+// USE-DAG: preprocess__Z5shiftPKdPdi.poseidon.main.1: the site's own accuracy target 1.000000e-09 overrides -poseidon-tau=1.000000e-06
+// USE-DAG: preprocess__Z5shiftPKdPdi.poseidon.main.2: the site's own accuracy target 1.000000e-08 overrides -poseidon-tau=1.000000e-06
 
-// RUNS: {{[01] [01] [01] [01] [01] [01]}}
+// RUNS: {{[01] [01] [01] [01] [01] [01] [01] [01]}}
 
 // LINK: undefined reference to `__poseidon_site_explicit'
 // LINK: undefined reference to `__poseidon_site_explicit_tau'

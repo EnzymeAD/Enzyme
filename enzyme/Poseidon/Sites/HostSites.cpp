@@ -247,6 +247,57 @@ static void callAsWritten(CallInst *marker, Function *fn) {
   marker->eraseFromParent();
 }
 
+// `call`, a call of `fn` whose list `list` reads as automatic (a marker call or
+// a call through the explicit identity), made the call __poseidon_optimize or,
+// with the list's target, __poseidon_optimize_tau writes: fn's own arguments,
+// as given, through the plain identity, whose target is added to the caller's
+// `targets`. The host half of a CUDA or HIP compilation holds no site, so there
+// it is the call of fn. Erased, with an error at `call`, when the arguments are
+// not of fn's parameter types.
+static void asPlainCall(CallBase *call, Function *fn, const CallArguments &list,
+                        bool hostHalf,
+                        DenseMap<Function *, SmallVector<double, 2>> &targets) {
+  auto types = map_range(list.own, [](Value *A) { return A->getType(); });
+  if (call->hasStructRetAttr() ||
+      !llvm::equal(fn->getFunctionType()->params(), types)) {
+    fail(call, "this call passes " + displayName(*fn) +
+                   " arguments of other types than it takes, and none of "
+                   "them is an activity marker; pass its own arguments");
+    if (!call->use_empty())
+      call->replaceAllUsesWith(PoisonValue::get(call->getType()));
+    call->eraseFromParent();
+    return;
+  }
+  Module &M = *call->getModule();
+  IRBuilder<> Builder(call);
+  Value *callee = fn;
+  if (!hostHalf) {
+    LLVMContext &C = M.getContext();
+    Type *Ptr = PointerType::getUnqual(C);
+    CallInst *identity;
+    if (list.tau) {
+      Type *Double = Type::getDoubleTy(C);
+      FunctionCallee F = M.getOrInsertFunction(
+          kPlainIdentityTau, FunctionType::get(Ptr, {Ptr, Double}, false));
+      identity =
+          Builder.CreateCall(F, {fn, ConstantFP::get(Double, *list.tau)});
+      targets[call->getFunction()].push_back(*list.tau);
+    } else {
+      FunctionCallee F = M.getOrInsertFunction(
+          kPlainIdentity, FunctionType::get(Ptr, {Ptr}, false));
+      identity = Builder.CreateCall(F, {fn});
+    }
+    identity->setDebugLoc(call->getDebugLoc());
+    callee = identity;
+  }
+  CallInst *direct =
+      Builder.CreateCall(fn->getFunctionType(), callee, list.own);
+  direct->setCallingConv(fn->getCallingConv());
+  direct->setDebugLoc(call->getDebugLoc());
+  call->replaceAllUsesWith(direct);
+  call->eraseFromParent();
+}
+
 // The calls of the module's functions named `names`, in module order.
 static SmallVector<CallInst *, 4> callsOfAny(Module &M,
                                              ArrayRef<StringRef> names) {
@@ -268,8 +319,12 @@ static SmallVector<CallInst *, 4> callsOfAny(Module &M,
 // __poseidon_optimize with an explicit list: the call through the explicit
 // identity is the marker call over fn, and the marker's lowering makes it the
 // site. The host half of a CUDA or HIP compilation holds no site, so there the
-// call runs fn with the primal values of its arguments.
-static bool lowerExplicitCalls(Module &M) {
+// call runs fn with the primal values of its arguments. A call through the
+// explicit identity whose list is automatic, fn's own arguments and
+// poseidon_tau, is the call through the plain identity (asPlainCall).
+static bool
+lowerExplicitCalls(Module &M,
+                   DenseMap<Function *, SmallVector<double, 2>> &targets) {
   SmallVector<CallInst *, 4> identities =
       callsOfAny(M, {kExplicitIdentity, kExplicitIdentityTau});
   if (identities.empty())
@@ -291,7 +346,11 @@ static bool lowerExplicitCalls(Module &M) {
     // nothing defines.
     call->setCalledOperand(fn);
     H->eraseFromParent();
-    if (!tau || !readArgumentList(call, *fn, Identity::Explicit))
+    if (!tau)
+      continue;
+    std::optional<CallArguments> list =
+        readArgumentList(call, *fn, Identity::Explicit);
+    if (!list)
       continue;
     if (*tau > 0.0 && llvm::any_of(call->args(), [](Value *A) {
           return isActivityMarker(A, "poseidon_tau");
@@ -300,6 +359,10 @@ static bool lowerExplicitCalls(Module &M) {
                      " gives its accuracy target twice, as the first "
                      "argument of __poseidon_optimize_tau and after "
                      "poseidon_tau; give it once");
+      continue;
+    }
+    if (list->kind == ArgumentList::Automatic) {
+      asPlainCall(call, fn, *list, hostHalf, targets);
       continue;
     }
     if (annotated.count(fn)) {
@@ -313,13 +376,16 @@ static bool lowerExplicitCalls(Module &M) {
   return true;
 }
 
-// A marker call whose list is automatic and passes a pointer is the call form
-// of __poseidon_optimize, through the plain identity, so that the pass makes
-// its shadows as it makes that form's. One whose list passes no pointer needs
-// no shadow and stays the marker call it is, as does one with an explicit
-// list. In the host half of a CUDA or HIP compilation, which holds no site,
-// every marker call runs fn with the primal values of its arguments.
-static bool routeAutomaticMarkers(Module &M) {
+// A marker call whose list is automatic and passes a pointer among fn's own
+// arguments is the call form of __poseidon_optimize, through the plain
+// identity, so that the pass makes its shadows as it makes that form's. One
+// whose own arguments hold no pointer needs no shadow and stays the marker call
+// it is, as does one with an explicit list. In the host half of a CUDA or HIP
+// compilation, which holds no site, every marker call runs fn with the primal
+// values of its arguments.
+static bool
+routeAutomaticMarkers(Module &M,
+                      DenseMap<Function *, SmallVector<double, 2>> &targets) {
   SmallVector<CallInst *, 4> markers;
   collectMarkerCalls(M, markers);
   const bool hostHalf = isOffloadHostHalf(M);
@@ -328,50 +394,27 @@ static bool routeAutomaticMarkers(Module &M) {
     Function *fn = markerTargetOrNull(CI);
     if (!fn)
       continue;
-    std::optional<ArgumentList> list =
+    std::optional<CallArguments> list =
         readArgumentList(CI, *fn, Identity::None);
-    if (list == ArgumentList::Explicit) {
+    if (list && list->kind == ArgumentList::Explicit) {
       if (hostHalf) {
         callAsWritten(CI, fn);
         changed = true;
       }
       continue;
     }
-    SmallVector<Value *, 8> args(drop_begin(CI->args()));
-    if (list && !hostHalf && llvm::none_of(args, [](Value *A) {
-          return A->getType()->isPointerTy();
-        }))
+    if (list && !hostHalf && !CI->hasStructRetAttr() &&
+        llvm::none_of(list->own,
+                      [](Value *A) { return A->getType()->isPointerTy(); }))
       continue;
     changed = true;
-    auto types = map_range(args, [](Value *A) { return A->getType(); });
-    if (list && (CI->hasStructRetAttr() ||
-                 !llvm::equal(fn->getFunctionType()->params(), types))) {
-      fail(CI, "this call passes " + displayName(*fn) +
-                   " arguments of other types than it takes, and none of "
-                   "them is an activity marker; pass its own arguments");
-      list = std::nullopt;
-    }
     if (!list) {
       if (!CI->use_empty())
         CI->replaceAllUsesWith(PoisonValue::get(CI->getType()));
       CI->eraseFromParent();
       continue;
     }
-    IRBuilder<> Builder(CI);
-    Value *callee = fn;
-    if (!hostHalf) {
-      LLVMContext &C = M.getContext();
-      Type *Ptr = PointerType::getUnqual(C);
-      FunctionCallee identity = M.getOrInsertFunction(
-          kPlainIdentity, FunctionType::get(Ptr, {Ptr}, false));
-      callee = Builder.CreateCall(identity, {fn});
-      cast<CallInst>(callee)->setDebugLoc(CI->getDebugLoc());
-    }
-    CallInst *call = Builder.CreateCall(fn->getFunctionType(), callee, args);
-    call->setCallingConv(fn->getCallingConv());
-    call->setDebugLoc(CI->getDebugLoc());
-    CI->replaceAllUsesWith(call);
-    CI->eraseFromParent();
+    asPlainCall(CI, fn, *list, hostHalf, targets);
   }
   return changed;
 }
@@ -389,14 +432,16 @@ static bool routeAutomaticMarkers(Module &M) {
 // (lowerExplicitCalls, routeAutomaticMarkers).
 bool lowerPerCallSites(const Options &O, Module &M) {
   // The targets of the explicit calls are left out of their callers' names
-  // too, so they are read before those calls become marker calls.
+  // too, so they are read before those calls become marker calls; the
+  // targets poseidon_tau gives in automatic lists are added as those calls
+  // are routed through the plain identity.
   DenseMap<Function *, SmallVector<double, 2>> targets;
   for (CallInst *H : callsOfAny(M, {kPlainIdentityTau, kExplicitIdentityTau}))
     if (H->arg_size() > 1)
       if (auto *C = dyn_cast<ConstantFP>(H->getArgOperand(1)))
         targets[H->getFunction()].push_back(C->getValueAPF().convertToDouble());
-  bool changed = lowerExplicitCalls(M);
-  changed |= routeAutomaticMarkers(M);
+  bool changed = lowerExplicitCalls(M, targets);
+  changed |= routeAutomaticMarkers(M, targets);
   if (isOffloadHostHalf(M))
     return changed;
   SmallVector<CallInst *, 4> helpers =

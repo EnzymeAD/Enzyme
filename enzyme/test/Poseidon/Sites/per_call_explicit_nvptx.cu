@@ -12,9 +12,11 @@
 // In device code an explicit list through __poseidon_optimize makes the call
 // a site over the function itself, with the shadows the caller gives: here
 // sum reaches no constant range of memory through x, which the pass could not
-// make the shadow of. Without the plugin the call goes through an identity
-// nothing defines. The host half of a host-device function holds no site:
-// there the call runs the function with the primal values, silently.
+// make the shadow of. poseidon_tau followed by the function's own arguments
+// is no explicit list: that call is a per-call site, as the call
+// __poseidon_optimize_tau writes. Without the plugin the call goes through an
+// identity nothing defines. The host half of a host-device function holds no
+// site: there the call runs the function with the primal values, silently.
 
 #include "poseidon/poseidon.h"
 
@@ -54,6 +56,14 @@ HD double twice(const double *x, double *dx) {
   return 2.0 * __poseidon_optimize(norm2, enzyme_dup, x, dx);
 }
 
+HD __attribute__((noinline)) double spread(const double *x) {
+  return x[0] * x[1] - x[1] * x[1];
+}
+
+HD double third(const double *x) {
+  return __poseidon_optimize(spread, poseidon_tau, 1e-7, x);
+}
+
 __attribute__((global)) void k(const double *x, double *dx, double *y,
                                double *dy, int n) {
   y[0] = __poseidon_optimize(sum, enzyme_dup, x, dx, n);
@@ -61,24 +71,31 @@ __attribute__((global)) void k(const double *x, double *dx, double *y,
   __poseidon_optimize_tau(1e-6, scale, enzyme_const, x, enzyme_dup, y + 1, dy,
                           n);
   y[2] = __poseidon_optimize(sum, poseidon_tau, 1e-9, enzyme_const, x, n);
+  y[4] = third(x);
 }
 
 // GEN-DAG: @poseidon_site_preprocess__Z3sumPKdi =
 // GEN-DAG: @poseidon_site_preprocess__Z5scalePKdPdi =
 // GEN-DAG: @poseidon_site_preprocess__Z5norm2PKd =
+// GEN-DAG: @poseidon_site_preprocess__Z6spreadPKd.poseidon._Z5thirdPKd.0 =
 
 // USE-DAG: [poseidon] _Z3sumPKdi: the profiled program did not contain this site (no profile at {{.*}}/preprocess__Z3sumPKdi.fpprofile); left unchanged
 // USE-DAG: [poseidon] _Z5scalePKdPdi: the profiled program did not contain this site (no profile at {{.*}}/preprocess__Z5scalePKdPdi.fpprofile); left unchanged
 // USE-DAG: [poseidon] _Z5norm2PKd: the profiled program did not contain this site (no profile at {{.*}}/preprocess__Z5norm2PKd.fpprofile); left unchanged
+// USE-DAG: [poseidon] _Z6spreadPKd.poseidon._Z5thirdPKd.0: the profiled program did not contain this site (no profile at {{.*}}/preprocess__Z6spreadPKd.poseidon._Z5thirdPKd.0.fpprofile); left unchanged
 // IR-LABEL: define {{.*}} @_Z1kPKdPdS1_S1_i(
 // IR: call double @_Z3sumPKdi(
 // IR: call void @_Z5scalePKdPdi(
 // IR: call double @_Z3sumPKdi(
+// IR: call {{.*}}double @_Z6spreadPKd(
 
 // PLAIN-DAG: call ptr @__poseidon_site_explicit(ptr {{.*}}@_Z3sumPKdi)
+// PLAIN-DAG: call ptr @__poseidon_site_explicit(ptr {{.*}}@_Z6spreadPKd)
 // PLAIN-DAG: call ptr @__poseidon_site_explicit_tau(ptr {{.*}}@_Z5scalePKdPdi, double
 // PLAIN-DAG: declare {{.*}}ptr @__poseidon_site_explicit(ptr
 
 // QUIET-NOT: {{.}}
 // HOST-LABEL: define {{.*}} @_Z5twicePKdPd(
 // HOST: call {{.*}}double @_Z5norm2PKd(ptr
+// HOST-LABEL: define {{.*}} @_Z5thirdPKd(
+// HOST: call {{.*}}double @_Z6spreadPKd(ptr
