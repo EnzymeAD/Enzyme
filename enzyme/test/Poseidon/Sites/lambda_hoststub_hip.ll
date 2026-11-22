@@ -18,7 +18,7 @@
 ; USE: [ozaki-host-dispatch] replaced the launch in stub _ZL25__device_stub__CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_ with __poseidon_ozaki_dgemm_ex (C=arg1[+64] A=arg1[+40] B=arg1[+16]), if arg1[+4] == arg1[+24], if arg1[+4] == arg1[+48]
 ; USE-LABEL: define void @_ZL25__device_stub__CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_(
 ; USE: %[[ARGS:[0-9]+]] = alloca ptr, i64 2
-; USE: %[[S:[0-9]+]] = getelementptr inbounds ptr, ptr %[[ARGS]], i32 1
+; USE: %[[S:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 1|i64 8}}
 ; USE-NEXT: %[[L:[0-9]+]] = load ptr, ptr %[[S]]
 ; USE-NEXT: %[[F:[0-9]+]] = getelementptr inbounds i8, ptr %[[L]], i64 64
 ; USE-NEXT: %[[C:[0-9]+]] = load ptr, ptr %[[F]]

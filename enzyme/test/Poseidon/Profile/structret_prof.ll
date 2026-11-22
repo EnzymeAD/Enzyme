@@ -33,7 +33,7 @@ declare %struct.Gradients @__poseidon_fp_optimize(i8*, ...)
 ; CHECK-NEXT:   %[[mul:.+]] = fmul fast double %x, %y, !enzyme_active !{{[0-9]+}}, !poseidon.prof.idx ![[idx0:[0-9]+]]
 ; CHECK-NEXT:   %[[probed:.+]] = call fast double @__poseidon_probe_preprocess_muldd_0_aug(double %[[mul]])
 ; CHECK-NEXT:   store double %x, ptr %[[alloca]], align 8
-; CHECK-NEXT:   %[[gep:.+]] = getelementptr [2 x double], ptr %[[alloca]], i32 0, i32 1
+; CHECK-NEXT:   %[[gep:.+]] = getelementptr {{\[2 x double\]|i8}}, ptr %[[alloca]], {{i32 0, i32 1|i64 8}}
 ; CHECK-NEXT:   store double %y, ptr %[[gep]], align 8
 ; CHECK-NEXT:   call void @poseidonLogValue(ptr @poseidon_site_preprocess_muldd, i64 0, double %[[probed]], i32 2, ptr %[[alloca]])
 ; CHECK-NEXT:   %[[gradcall:.+]] = call fast { double } @fixgradient___poseidon_probe_preprocess_muldd_0(double %[[mul]], double %[[differet]])
