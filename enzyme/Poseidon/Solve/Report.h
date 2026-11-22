@@ -1,8 +1,7 @@
-//=- Report.h - the DP table print and the report files ---------------------=//
+//===- Report.h - the DP table print and the report files -----------------===//
 //
 // Part of the Poseidon Project, under the Apache License v2.0 with LLVM
-// Exceptions.
-// See https://llvm.org/LICENSE.txt for license information.
+// Exceptions. See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//

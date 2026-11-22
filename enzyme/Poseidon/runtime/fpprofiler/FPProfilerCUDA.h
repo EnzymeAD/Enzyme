@@ -1,6 +1,17 @@
+//===- FPProfilerCUDA.h - state the CUDA profiler's halves share ----------===//
+//
+// Part of the Poseidon Project, under the Apache License v2.0 with LLVM
+// Exceptions. See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+//
 // The state the two halves of the CUDA profiler share: the device half
 // (FPProfilerDevice.cu) updates it, the host half (FPProfilerCUDA.cu) allocates
 // it and writes the profile from it.
+//
+//===----------------------------------------------------------------------===//
+
 #ifndef POSEIDON_FPPROFILER_CUDA_H
 #define POSEIDON_FPPROFILER_CUDA_H
 

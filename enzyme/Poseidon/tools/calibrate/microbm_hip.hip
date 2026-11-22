@@ -1,3 +1,11 @@
+//===- microbm_hip.hip - per-operation costs on AMD GPUs ------------------===//
+//
+// Part of the Poseidon Project, under the Apache License v2.0 with LLVM
+// Exceptions. See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+//
 // Poseidon GPU cost-model profiler for AMD GPUs: the per-op rows microbm.cu
 // measures on NVIDIA, under the same names, in the same unit, by the same
 // protocol.
@@ -30,6 +38,8 @@
 //
 // Run by poseidon-calibrate; standalone: poseidon-microbm-hip > <csv>
 //   poseidon-microbm-hip --device    prints "<name>\t<gcnArchName>" and exits
+//
+//===----------------------------------------------------------------------===//
 
 #include <algorithm>
 #include <cmath>

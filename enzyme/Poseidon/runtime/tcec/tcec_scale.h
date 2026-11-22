@@ -1,6 +1,17 @@
+//===- tcec_scale.h - power-of-two operand scaling of TCEC ----------------===//
+//
+// Part of the Poseidon Project, under the Apache License v2.0 with LLVM
+// Exceptions. See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+//
 // tcec_scale.h: the TCEC runtime's power-of-two operand scaling, carried as
 // integer exponents. Compiles for the host as well, so that the whole exponent
 // range can be checked without a device.
+//
+//===----------------------------------------------------------------------===//
+
 #ifndef POSEIDON_TCEC_SCALE_H
 #define POSEIDON_TCEC_SCALE_H
 

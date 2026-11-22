@@ -1,3 +1,11 @@
+//===- tcec_calibrate.cu - price the TCEC GEMM dispatch -------------------===//
+//
+// Part of the Poseidon Project, under the Apache License v2.0 with LLVM
+// Exceptions. See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+//
 // tcec_calibrate: measure the TCEC host-dispatch cost relative to the naive
 // scalar-FP64 GEMM, for the cost model:
 //     rel = (dispatch time) / (scalar-FP64 GEMM time)
@@ -5,6 +13,9 @@
 // families are priced in one unit. Emits one row:
 //     tcec_dispatch_rel,fp16tcec,<rel>
 // Usage: poseidon-tcec-calibrate [N=2048] [reps=30]; the row on stdout.
+//
+//===----------------------------------------------------------------------===//
+
 #include <cstdio>
 #include <cstdlib>
 #include <cuda_runtime.h>

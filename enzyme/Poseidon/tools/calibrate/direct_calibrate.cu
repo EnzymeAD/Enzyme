@@ -1,3 +1,11 @@
+//===- direct_calibrate.cu - price the direct GEMM dispatch ---------------===//
+//
+// Part of the Poseidon Project, under the Apache License v2.0 with LLVM
+// Exceptions. See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+//
 // direct_calibrate: measure the direct reduced-precision GEMM host-dispatch
 // cost relative to the naive scalar-FP64 GEMM, for the cost model:
 //     rel = (dispatch time) / (scalar-FP64 GEMM time)
@@ -12,6 +20,9 @@
 // Built as HIP it measures hipBLAS, which has no TF32 compute type, so that
 // class has no row there.
 // Usage: poseidon-direct-calibrate [N=2048] [reps=30]; rows on stdout.
+//
+//===----------------------------------------------------------------------===//
+
 #include <cstdio>
 #include <cstdlib>
 #ifdef __HIP__

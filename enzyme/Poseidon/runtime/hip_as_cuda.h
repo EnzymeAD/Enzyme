@@ -1,7 +1,18 @@
+//===- hip_as_cuda.h - CUDA and cuBLAS names for the HIP builds -----------===//
+//
+// Part of the Poseidon Project, under the Apache License v2.0 with LLVM
+// Exceptions. See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+//
 // The CUDA runtime and cuBLAS names the Poseidon runtimes are written in, for
 // their HIP builds (POSEIDON_ROCM_PATH): HIP and hipBLAS keep CUDA's calling
 // conventions, so each name maps to its HIP counterpart one for one. Only the
 // names the runtimes, their tests and their calibrators use are mapped.
+//
+//===----------------------------------------------------------------------===//
+
 #ifndef POSEIDON_HIP_AS_CUDA_H
 #define POSEIDON_HIP_AS_CUDA_H
 

@@ -1,3 +1,11 @@
+//===- direct_rt.cu - direct reduced-precision GEMM runtime ---------------===//
+//
+// Part of the Poseidon Project, under the Apache License v2.0 with LLVM
+// Exceptions. See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+//
 // direct_rt.cu: Poseidon host-dispatch runtime for the direct
 // reduced-precision GEMM, the library realization of the in-kernel direct
 // tensor-core raise.
@@ -26,6 +34,9 @@
 //
 // Compiled as HIP (POSEIDON_ROCM_PATH) the same entries run on hipBLAS, every
 // mode but TF32, which has no hipBLAS compute type.
+//
+//===----------------------------------------------------------------------===//
+
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>

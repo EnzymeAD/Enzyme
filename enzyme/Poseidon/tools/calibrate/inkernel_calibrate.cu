@@ -1,3 +1,11 @@
+//===- inkernel_calibrate.cu - price the in-kernel raises -----------------===//
+//
+// Part of the Poseidon Project, under the Apache License v2.0 with LLVM
+// Exceptions. See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+//
 // inkernel_calibrate: measure every in-kernel tensor-core raise class relative
 // to the naive scalar-FP64 GEMM, for the cost model:
 //     rel = (candidate wall clock) / (scalar-FP64 wall clock)
@@ -11,6 +19,9 @@
 //
 // Run:  ./bin [reps=5]        ("time_ms = <ms>" on stdout)
 //       ./bin --profiling     (a launch of the site, for a profile run)
+//
+//===----------------------------------------------------------------------===//
+
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>

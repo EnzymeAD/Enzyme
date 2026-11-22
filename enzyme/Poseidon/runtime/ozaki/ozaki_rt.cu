@@ -1,3 +1,11 @@
+//===- ozaki_rt.cu - Ozaki-II GEMM runtime --------------------------------===//
+//
+// Part of the Poseidon Project, under the Apache License v2.0 with LLVM
+// Exceptions. See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+//
 // ozaki_rt.cu: Poseidon host-dispatch runtime for Ozaki Scheme II.
 //
 // Provenance: this file is an independent implementation of the published
@@ -51,6 +59,9 @@
 // (rectangular arm, or the square pipeline after padding). Scratch buffers
 // (sized for the max 14 moduli) and the per-nm constants are cached across
 // calls. num_moduli == 0 selects native cuBLAS DGEMM.
+//
+//===----------------------------------------------------------------------===//
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>

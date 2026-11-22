@@ -1,3 +1,11 @@
+//===- tcec_rt.cu - error-corrected GEMM runtime --------------------------===//
+//
+// Part of the Poseidon Project, under the Apache License v2.0 with LLVM
+// Exceptions. See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+//
 // tcec_rt.cu: Poseidon host-dispatch runtime for tensor-core error
 // correction (TCEC), the F32-accuracy-class sibling of ozaki_rt.cu. The
 // product is cuMpSGEMM's, the published implementation of the scheme
@@ -20,6 +28,9 @@
 //   3 = FP16TC  (no correction)
 //   4 = TF32TC  (no correction)
 // Out-of-range values abort rather than silently substituting a precision.
+//
+//===----------------------------------------------------------------------===//
+
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>

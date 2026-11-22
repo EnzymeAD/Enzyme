@@ -1,3 +1,11 @@
+//===- ozaki_calibrate.cu - price the Ozaki-II GEMM dispatch --------------===//
+//
+// Part of the Poseidon Project, under the Apache License v2.0 with LLVM
+// Exceptions. See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+//
 // ozaki_calibrate: measure the Ozaki-II host-dispatch cost relative to the
 // naive scalar-FP64 GEMM, for the cost model, which prices a host-dispatch
 // candidate as
@@ -11,6 +19,9 @@
 // rectangular rows of those shapes instead (rect_rows and full_row below).
 // Usage: poseidon-ozaki-calibrate [N=2048] [reps=30] [MxK|MxNxK...]; rows on
 // stdout.
+//
+//===----------------------------------------------------------------------===//
+
 #include <cstdio>
 #include <cstdlib>
 #ifdef __HIP__

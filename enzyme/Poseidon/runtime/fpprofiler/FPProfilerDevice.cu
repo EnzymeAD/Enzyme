@@ -1,7 +1,18 @@
+//===- FPProfilerDevice.cu - device half of the CUDA profiler -------------===//
+//
+// Part of the Poseidon Project, under the Apache License v2.0 with LLVM
+// Exceptions. See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+//
 // The device half of the CUDA profiler: the probes the pass places in a site's
 // instrumented clone. It is linked into every profiled device module, so a
 // program needs no relocatable device code to be profiled and each module holds
 // its own copy of what is below.
+//
+//===----------------------------------------------------------------------===//
+
 #include <cstdint>
 #include <cstdio>
 

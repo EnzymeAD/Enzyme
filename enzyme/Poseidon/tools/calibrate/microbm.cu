@@ -1,3 +1,11 @@
+//===- microbm.cu - per-operation costs on NVIDIA GPUs --------------------===//
+//
+// Part of the Poseidon Project, under the Apache License v2.0 with LLVM
+// Exceptions. See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+//
 // Unified Poseidon GPU cost-model profiler.
 //
 // Methodology:
@@ -21,6 +29,8 @@
 //   tile_cost = load_a + load_b + load_c + K x mma + store_d.
 //
 // Run by poseidon-calibrate; standalone: poseidon-microbm > <csv>
+//
+//===----------------------------------------------------------------------===//
 
 #include <cstdint>
 #include <cstdio>
