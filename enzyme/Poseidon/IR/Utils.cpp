@@ -28,11 +28,9 @@
 #include <mpfr.h>
 
 #include <algorithm>
-#include <cerrno>
 #include <cmath>
 #include <cstdlib>
 #include <functional>
-#include <limits>
 #include <string>
 
 using namespace llvm;

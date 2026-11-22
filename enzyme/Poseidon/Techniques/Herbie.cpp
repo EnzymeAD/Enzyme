@@ -1619,8 +1619,9 @@ void RewriteUnit::apply(
         elements,
         [&](size_t k) -> IRBuilder<> & {
           auto *oldInst = cast<Instruction>(roots[k]);
-          builder.emplace(oldInst->getParent(),
-                          ++BasicBlock::iterator(oldInst));
+          builder.emplace(oldInst->getParent());
+          setInsertPoint(*builder, oldInst->getParent(),
+                         ++BasicBlock::iterator(oldInst));
           builder->setFastMathFlags(oldInst->getFastMathFlags());
           return *builder;
         },
