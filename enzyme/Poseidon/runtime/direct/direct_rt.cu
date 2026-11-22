@@ -17,7 +17,8 @@
 //   0 = native cuBLAS DGEMM
 //   1 = FP16 inputs, FP32 accumulator   (CUDA_R_16F,  CUBLAS_COMPUTE_32F)
 //   2 = BF16 inputs, FP32 accumulator   (CUDA_R_16BF, CUBLAS_COMPUTE_32F)
-//   3 = TF32 inputs, FP32 accumulator   (CUDA_R_32F,  CUBLAS_COMPUTE_32F_FAST_TF32)
+//   3 = TF32 inputs, FP32 accumulator   (CUDA_R_32F,
+//                                        CUBLAS_COMPUTE_32F_FAST_TF32)
 //   4 = FP32 inputs, FP32 accumulator   (CUDA_R_32F,  CUBLAS_COMPUTE_32F)
 // Mode 4 is cuBLAS's SGEMM, not a tensor-core GEMM; it shares the narrow, the
 // FP32 accumulator and the widen with the other modes.
@@ -346,10 +347,11 @@ extern "C" void __poseidon_direct_dgemm(double *C, const double *A,
     return;
   if (transA || transB || (lda && lda != N) || (ldb && ldb != N) ||
       (ldc && ldc != N)) {
-    fprintf(stderr,
-            "poseidon_direct_rt FATAL: unsupported square GEMM shape (transA=%d "
-            "transB=%d lda=%d ldb=%d ldc=%d N=%d)\n",
-            transA, transB, lda, ldb, ldc, N);
+    fprintf(
+        stderr,
+        "poseidon_direct_rt FATAL: unsupported square GEMM shape (transA=%d "
+        "transB=%d lda=%d ldb=%d ldc=%d N=%d)\n",
+        transA, transB, lda, ldb, ldc, N);
     abort();
   }
   if (mode == 0) {
@@ -364,13 +366,10 @@ extern "C" void __poseidon_direct_dgemm(double *C, const double *A,
 // General M x Ncols x K entry: the operands are repacked during the narrow, so
 // any shape and layout combination is one library call, without the Ozaki _ex
 // path's square padding.
-extern "C" void __poseidon_direct_dgemm_ex(double *C, const double *A,
-                                           const double *B, int M, int Ncols,
-                                           int K, int lda, int ldb, int ldc,
-                                           int aColMajor, int bColMajor,
-                                           int cColMajor, double alpha,
-                                           double beta, cudaStream_t stream,
-                                           int mode) {
+extern "C" void __poseidon_direct_dgemm_ex(
+    double *C, const double *A, const double *B, int M, int Ncols, int K,
+    int lda, int ldb, int ldc, int aColMajor, int bColMajor, int cColMajor,
+    double alpha, double beta, cudaStream_t stream, int mode) {
   if (M <= 0 || Ncols <= 0 || K <= 0)
     return;
   if (mode == 0) {

@@ -180,7 +180,8 @@ __device__ inline void atomicAddFinite(double *addr, double val) {
 // Block-geometry probe at the entry of a profiled function, keyed by the
 // funcName global its value probes use, so the geometry lands in that
 // function's own record.
-extern "C" __device__ POSEIDON_PROBE_ATTRS void poseidonProfileBlockDimsCUDA(const char *funcName) {
+extern "C" __device__ POSEIDON_PROBE_ATTRS void
+poseidonProfileBlockDimsCUDA(const char *funcName) {
   if (__poseidon_profile_table.metricOnly)
     return;
   if (threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0) {
@@ -196,8 +197,8 @@ extern "C" __device__ POSEIDON_PROBE_ATTRS void poseidonProfileBlockDimsCUDA(con
 // Compile-time static data probe at the entry of a site clone, keyed by its
 // funcName global. The text is a constant of the module, so every launch writes
 // the same bytes and the first writer wins.
-extern "C" __device__ POSEIDON_PROBE_ATTRS void poseidonProfileStaticCUDA(const char *funcName,
-                                                 const char *text) {
+extern "C" __device__ POSEIDON_PROBE_ATTRS void
+poseidonProfileStaticCUDA(const char *funcName, const char *text) {
   if (__poseidon_profile_table.metricOnly)
     return;
   if (threadIdx.x != 0 || threadIdx.y != 0 || threadIdx.z != 0)
@@ -224,9 +225,9 @@ extern "C" __device__ POSEIDON_PROBE_ATTRS void poseidonProfileStaticCUDA(const 
   __threadfence();
 }
 
-extern "C" __device__ POSEIDON_PROBE_ATTRS void poseidonLogValueCUDA(const char *funcName, size_t idx,
-                                              double res, size_t numOperands,
-                                              double *operands) {
+extern "C" __device__ POSEIDON_PROBE_ATTRS void
+poseidonLogValueCUDA(const char *funcName, size_t idx, double res,
+                     size_t numOperands, double *operands) {
   const PoseidonCUDAProfileTable &T = __poseidon_profile_table;
   if (T.metricOnly)
     return;
@@ -261,9 +262,9 @@ extern "C" __device__ POSEIDON_PROBE_ATTRS void poseidonLogValueCUDA(const char 
   }
 }
 
-extern "C" __device__ POSEIDON_PROBE_ATTRS void poseidonLogGradCUDA(const char *funcName,
-                                             size_t idx, double value,
-                                             double grad) {
+extern "C" __device__ POSEIDON_PROBE_ATTRS void
+poseidonLogGradCUDA(const char *funcName, size_t idx, double value,
+                    double grad) {
   const PoseidonCUDAProfileTable &T = __poseidon_profile_table;
   if (T.metricOnly)
     return;

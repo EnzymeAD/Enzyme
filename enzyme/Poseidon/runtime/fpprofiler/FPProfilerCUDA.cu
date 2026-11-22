@@ -61,13 +61,14 @@ static std::vector<const void *> &poseidonModuleTables() {
   do {                                                                         \
     cudaError_t _e = (call);                                                   \
     if (_e != cudaSuccess) {                                                   \
-      fprintf(stderr,                                                          \
-              "Poseidon FPProfiler: %s failed during registration (%s).\n"     \
-              "  The profiler registers from a static constructor, so this is  \
-the\n"                                                                         \
-              "  usual symptom of the device module not being registered yet " \
-              "in a\n  multi-translation-unit binary.\n",                      \
-              #call, cudaGetErrorString(_e));                                  \
+      fprintf(                                                                 \
+          stderr,                                                              \
+          "Poseidon FPProfiler: %s failed during registration (%s).\n"         \
+          "  The profiler registers from a static constructor, so this is  \
+the\n"   \
+          "  usual symptom of the device module not being registered yet "     \
+          "in a\n  multi-translation-unit binary.\n",                          \
+          #call, cudaGetErrorString(_e));                                      \
       abort();                                                                 \
     }                                                                          \
   } while (0)
@@ -253,10 +254,10 @@ static void writeAllCUDAProfiles() {
       continue;
     GPUProfileSlot *base = h_slots + (size_t)fi * g_slotCount;
 
-    std::string path = profileDir + "/" +
-                       poseidon::profileNameStem(
-                           h_funcName, strlen(h_funcName)) +
-                       ".fpprofile";
+    std::string path =
+        profileDir + "/" +
+        poseidon::profileNameStem(h_funcName, strlen(h_funcName)) +
+        ".fpprofile";
     errno = 0;
     std::ofstream out(path);
     if (!out.is_open())
@@ -319,9 +320,8 @@ static size_t readPositiveEnv(const char *name, size_t dflt) {
   char *end = nullptr;
   unsigned long long parsed = strtoull(v, &end, 10);
   if (end == v || *end != '\0' || parsed == 0) {
-    fprintf(stderr,
-            "Poseidon FPProfiler: %s='%s' is not a positive integer.\n", name,
-            v);
+    fprintf(stderr, "Poseidon FPProfiler: %s='%s' is not a positive integer.\n",
+            name, v);
     abort();
   }
   return (size_t)parsed;
@@ -417,8 +417,8 @@ extern "C" void __poseidon_profile_init_cuda() {
   if (const char *envPath = getenv("POSEIDON_PROFILE_DIR"))
     profileDir = envPath;
 
-  size_t count = readPositiveEnv("POSEIDON_PROFILE_MAX_SLOTS",
-                                 POSEIDON_DEFAULT_MAX_SLOTS);
+  size_t count =
+      readPositiveEnv("POSEIDON_PROFILE_MAX_SLOTS", POSEIDON_DEFAULT_MAX_SLOTS);
   size_t nfuncs =
       readPositiveEnv("POSEIDON_PROFILE_MAX_FUNCS", POSEIDON_DEFAULT_MAX_FUNCS);
 

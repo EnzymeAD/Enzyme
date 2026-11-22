@@ -163,8 +163,9 @@ __global__ void ptc_scales(const unsigned long long *absmax, int *scaleExp) {
 // onto a single NN library call.
 //   src element (r, c) lives at c*ld + r when colMajor, else r*ld + c.
 //   dst is rows x cols column-major with leading dimension rows.
-__global__ void ptc_narrow(float *__restrict__ dst, const double *__restrict__ src,
-                           int rows, int cols, int ld, int colMajor,
+__global__ void ptc_narrow(float *__restrict__ dst,
+                           const double *__restrict__ src, int rows, int cols,
+                           int ld, int colMajor,
                            const int *__restrict__ scaleExp, int which) {
   int r = blockIdx.y * blockDim.y + threadIdx.y;
   int c = blockIdx.x * blockDim.x + threadIdx.x;
@@ -194,10 +195,14 @@ __global__ void ptc_widen(double *__restrict__ C, const float *__restrict__ src,
 
 cuMpSGEMM_compute_mode_t ptc_mode(int mode) {
   switch (mode) {
-  case 1: return CUMPSGEMM_FP16TCEC;
-  case 2: return CUMPSGEMM_TF32TCEC;
-  case 3: return CUMPSGEMM_FP16TC;
-  case 4: return CUMPSGEMM_TF32TC;
+  case 1:
+    return CUMPSGEMM_FP16TCEC;
+  case 2:
+    return CUMPSGEMM_TF32TCEC;
+  case 3:
+    return CUMPSGEMM_FP16TC;
+  case 4:
+    return CUMPSGEMM_TF32TC;
   }
   fprintf(stderr,
           "poseidon_tcec_rt FATAL: unsupported mode %d (0=dgemm, 1=FP16TCEC, "
@@ -296,13 +301,10 @@ extern "C" void __poseidon_tcec_dgemm(double *C, const double *A,
 // General M x Ncols x K entry: operands are repacked column-major during the
 // narrow, so any shape and layout combination is one library call, without
 // the Ozaki _ex path's square padding.
-extern "C" void __poseidon_tcec_dgemm_ex(double *C, const double *A,
-                                         const double *B, int M, int Ncols,
-                                         int K, int lda, int ldb, int ldc,
-                                         int aColMajor, int bColMajor,
-                                         int cColMajor, double alpha,
-                                         double beta, cudaStream_t stream,
-                                         int mode) {
+extern "C" void __poseidon_tcec_dgemm_ex(
+    double *C, const double *A, const double *B, int M, int Ncols, int K,
+    int lda, int ldb, int ldc, int aColMajor, int bColMajor, int cColMajor,
+    double alpha, double beta, cudaStream_t stream, int mode) {
   if (M <= 0 || Ncols <= 0 || K <= 0)
     return;
   if (mode == 0) {

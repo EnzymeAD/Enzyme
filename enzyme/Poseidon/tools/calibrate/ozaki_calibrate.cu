@@ -9,7 +9,8 @@
 //
 // Given rectangular shapes MxK or MxNxK after N and reps, it measures the
 // rectangular rows of those shapes instead (rect_rows and full_row below).
-// Usage: ozaki_calibrate [N=2048] [reps=30] [MxK|MxNxK...]; rows on stdout.
+// Usage: poseidon-ozaki-calibrate [N=2048] [reps=30] [MxK|MxNxK...]; rows on
+// stdout.
 #include <cstdio>
 #include <cstdlib>
 #ifdef __HIP__
@@ -25,39 +26,61 @@ extern "C" void __poseidon_ozaki_dgemm(double *C, const double *A,
                                        double alpha, double beta,
                                        cudaStream_t stream, int num_moduli);
 // Rectangular host dispatch (the entry the host-GEMM recognizer emits).
-extern "C" void __poseidon_ozaki_dgemm_ex(double *C, const double *A,
-                                          const double *B, int M, int Ncols,
-                                          int K, int lda, int ldb, int ldc,
-                                          int aColMajor, int bColMajor,
-                                          int cColMajor, double alpha,
-                                          double beta, cudaStream_t stream,
-                                          int num_moduli);
+extern "C" void __poseidon_ozaki_dgemm_ex(
+    double *C, const double *A, const double *B, int M, int Ncols, int K,
+    int lda, int ldb, int ldc, int aColMajor, int bColMajor, int cColMajor,
+    double alpha, double beta, cudaStream_t stream, int num_moduli);
 
-#define CK(x) do{cudaError_t e=(x); if(e){fprintf(stderr,"CUDA %s:%d %s\n",__FILE__,__LINE__,cudaGetErrorString(e));exit(1);} }while(0)
+#define CK(x)                                                                  \
+  do {                                                                         \
+    cudaError_t e = (x);                                                       \
+    if (e) {                                                                   \
+      fprintf(stderr, "CUDA %s:%d %s\n", __FILE__, __LINE__,                   \
+              cudaGetErrorString(e));                                          \
+      exit(1);                                                                 \
+    }                                                                          \
+  } while (0)
 
 // Naive scalar-FP64 GEMM = the cost model's FP64 baseline (per-MAC throughput
 // of a triple-loop reduction); this is the denominator rel is measured against.
 __global__ void ref_gemm(double *C, const double *A, const double *B, int N) {
   int row = blockIdx.x * blockDim.x + threadIdx.x;
   int col = blockIdx.y * blockDim.y + threadIdx.y;
-  if (row >= N || col >= N) return;
+  if (row >= N || col >= N)
+    return;
   double s = 0.0;
-  for (int l = 0; l < N; ++l) s += A[(size_t)row * N + l] * B[(size_t)col * N + l];
+  for (int l = 0; l < N; ++l)
+    s += A[(size_t)row * N + l] * B[(size_t)col * N + l];
   C[(size_t)col * N + row] = s;
 }
 
 static int N = 2048, REPS = 30, NM = 14;
 static double *dA, *dB, *dC;
 
-static void run_ref() { dim3 b(16,16), g((N+15)/16,(N+15)/16); ref_gemm<<<g,b>>>(dC,dA,dB,N); }
-static void run_oz()  { __poseidon_ozaki_dgemm(dC,dA,dB,N,N,N,N,0,0,1.0,0.0,0,NM); }
+static void run_ref() {
+  dim3 b(16, 16), g((N + 15) / 16, (N + 15) / 16);
+  ref_gemm<<<g, b>>>(dC, dA, dB, N);
+}
+static void run_oz() {
+  __poseidon_ozaki_dgemm(dC, dA, dB, N, N, N, N, 0, 0, 1.0, 0.0, 0, NM);
+}
 
 static float timeit(void (*fn)(), int reps) {
-  cudaEvent_t a, b; cudaEventCreate(&a); cudaEventCreate(&b);
-  fn(); CK(cudaDeviceSynchronize());                       // warmup
-  cudaEventRecord(a); for (int i=0;i<reps;i++) fn(); cudaEventRecord(b);
-  cudaEventSynchronize(b); float ms; cudaEventElapsedTime(&ms,a,b);
-  cudaEventDestroy(a); cudaEventDestroy(b); return ms/reps;
+  cudaEvent_t a, b;
+  cudaEventCreate(&a);
+  cudaEventCreate(&b);
+  fn();
+  CK(cudaDeviceSynchronize()); // warmup
+  cudaEventRecord(a);
+  for (int i = 0; i < reps; i++)
+    fn();
+  cudaEventRecord(b);
+  cudaEventSynchronize(b);
+  float ms;
+  cudaEventElapsedTime(&ms, a, b);
+  cudaEventDestroy(a);
+  cudaEventDestroy(b);
+  return ms / reps;
 }
 
 // The rectangular arm of __poseidon_ozaki_dgemm_ex, which a host GEMM takes
@@ -77,36 +100,46 @@ static void run_rect() {
 }
 
 static double *rand_dev(size_t n) {
-  double *h = (double*)malloc(n*8), *d;
-  for (size_t i=0;i<n;i++) h[i]=((double)rand()/RAND_MAX)*2-1;
-  CK(cudaMalloc(&d,n*8)); CK(cudaMemcpy(d,h,n*8,cudaMemcpyHostToDevice));
-  free(h); return d;
+  double *h = (double *)malloc(n * 8), *d;
+  for (size_t i = 0; i < n; i++)
+    h[i] = ((double)rand() / RAND_MAX) * 2 - 1;
+  CK(cudaMalloc(&d, n * 8));
+  CK(cudaMemcpy(d, h, n * 8, cudaMemcpyHostToDevice));
+  free(h);
+  return d;
 }
 
 // Dispatch time per MAC at `cols` columns and the current NM.
 static double rect_per_mac(int cols) {
   RN = cols;
   rB = rand_dev((size_t)RK * cols);
-  CK(cudaMalloc(&rC,(size_t)RM*cols*8)); CK(cudaMemset(rC,0,(size_t)RM*cols*8));
+  CK(cudaMalloc(&rC, (size_t)RM * cols * 8));
+  CK(cudaMemset(rC, 0, (size_t)RM * cols * 8));
   float t = timeit(run_rect, REPS);
-  CK(cudaFree(rB)); CK(cudaFree(rC));
+  CK(cudaFree(rB));
+  CK(cudaFree(rC));
   return (double)t / ((double)RM * cols * RK);
 }
 
 static void rect_rows(int M, int K, float t_ref) {
   const double ref_per_mac = (double)t_ref / ((double)N * N * N);
-  RM = M; RK = K;
+  RM = M;
+  RK = K;
   rA = rand_dev((size_t)M * K);
   for (NM = 8; NM <= 14; ++NM) {
     double rel = rect_per_mac(12288) / ref_per_mac;
-    fprintf(stderr, "[ozaki_calibrate] rect nm=%2d M=%d Ncols=12288 K=%d  rel = "
-                    "%.6f\n", NM, M, K, rel);
+    fprintf(stderr,
+            "[ozaki_calibrate] rect nm=%2d M=%d Ncols=12288 K=%d  rel = "
+            "%.6f\n",
+            NM, M, K, rel);
     printf("ozaki_dispatch_rect_rel,nm%d_m%dk%d,%.6f\n", NM, M, K, rel);
   }
   NM = 13;
   for (int cols : {4096, 32768})
-    fprintf(stderr, "[ozaki_calibrate] rect nm=13 M=%d Ncols=%-6d K=%d  rel = "
-                    "%.6f\n", M, cols, K, rect_per_mac(cols) / ref_per_mac);
+    fprintf(stderr,
+            "[ozaki_calibrate] rect nm=13 M=%d Ncols=%-6d K=%d  rel = "
+            "%.6f\n",
+            M, cols, K, rect_per_mac(cols) / ref_per_mac);
   CK(cudaFree(rA));
 }
 
@@ -115,26 +148,36 @@ static void rect_rows(int M, int K, float t_ref) {
 // extents are constants of its compile is priced from this row, keyed by them.
 static void full_row(int M, int Ncols, int K, float t_ref) {
   const double ref_per_mac = (double)t_ref / ((double)N * N * N);
-  RM = M; RK = K;
+  RM = M;
+  RK = K;
   rA = rand_dev((size_t)M * K);
   NM = 0;
   double rel = rect_per_mac(Ncols) / ref_per_mac;
-  fprintf(stderr, "[ozaki_calibrate] rect dgemm M=%d Ncols=%d K=%d  rel = "
-                  "%.6f\n", M, Ncols, K, rel);
+  fprintf(stderr,
+          "[ozaki_calibrate] rect dgemm M=%d Ncols=%d K=%d  rel = "
+          "%.6f\n",
+          M, Ncols, K, rel);
   printf("ozaki_dispatch_rect_rel,dgemm_m%dn%dk%d,%.6f\n", M, Ncols, K, rel);
   CK(cudaFree(rA));
 }
 
 int main(int argc, char **argv) {
-  if (argc > 1) N = atoi(argv[1]);
-  if (argc > 2) REPS = atoi(argv[2]);
+  if (argc > 1)
+    N = atoi(argv[1]);
+  if (argc > 2)
+    REPS = atoi(argv[2]);
   size_t sz = (size_t)N * N;
-  double *hA = (double*)malloc(sz*8), *hB = (double*)malloc(sz*8);
+  double *hA = (double *)malloc(sz * 8), *hB = (double *)malloc(sz * 8);
   srand(1);
-  for (size_t i=0;i<sz;i++) { hA[i]=((double)rand()/RAND_MAX)*2-1; hB[i]=((double)rand()/RAND_MAX)*2-1; }
-  CK(cudaMalloc(&dA,sz*8)); CK(cudaMalloc(&dB,sz*8)); CK(cudaMalloc(&dC,sz*8));
-  CK(cudaMemcpy(dA,hA,sz*8,cudaMemcpyHostToDevice));
-  CK(cudaMemcpy(dB,hB,sz*8,cudaMemcpyHostToDevice));
+  for (size_t i = 0; i < sz; i++) {
+    hA[i] = ((double)rand() / RAND_MAX) * 2 - 1;
+    hB[i] = ((double)rand() / RAND_MAX) * 2 - 1;
+  }
+  CK(cudaMalloc(&dA, sz * 8));
+  CK(cudaMalloc(&dB, sz * 8));
+  CK(cudaMalloc(&dC, sz * 8));
+  CK(cudaMemcpy(dA, hA, sz * 8, cudaMemcpyHostToDevice));
+  CK(cudaMemcpy(dB, hB, sz * 8, cudaMemcpyHostToDevice));
 
   float t_ref = timeit(run_ref, REPS);
   fprintf(stderr, "[ozaki_calibrate] N=%d reps=%d  scalar-FP64 ref = %.4f ms\n",
@@ -167,8 +210,10 @@ int main(int argc, char **argv) {
     NM = moduli[mi];
     float t_oz = timeit(run_oz, REPS);
     double rel = (double)t_oz / (double)t_ref;
-    fprintf(stderr, "[ozaki_calibrate] nm=%2d  dispatch = %.4f ms  rel = %.4f "
-                    "(%.2fx vs FP64)\n", NM, t_oz, rel, t_ref/t_oz);
+    fprintf(stderr,
+            "[ozaki_calibrate] nm=%2d  dispatch = %.4f ms  rel = %.4f "
+            "(%.2fx vs FP64)\n",
+            NM, t_oz, rel, t_ref / t_oz);
     printf("ozaki_dispatch_rel,nm%d,%.6f\n", NM, rel);
   }
 
@@ -178,8 +223,10 @@ int main(int argc, char **argv) {
   NM = 0;
   float t_dg = timeit(run_oz, REPS);
   double rel_dg = (double)t_dg / (double)t_ref;
-  fprintf(stderr, "[ozaki_calibrate] dgemm  dispatch = %.4f ms  rel = %.4f "
-                  "(%.2fx vs FP64)\n", t_dg, rel_dg, t_ref/t_dg);
+  fprintf(stderr,
+          "[ozaki_calibrate] dgemm  dispatch = %.4f ms  rel = %.4f "
+          "(%.2fx vs FP64)\n",
+          t_dg, rel_dg, t_ref / t_dg);
   printf("ozaki_dispatch_rel,dgemm,%.6f\n", rel_dg);
   return 0;
 }

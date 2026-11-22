@@ -46,17 +46,17 @@
 // K < 2^17, the result is bit-identical to any other correct INT8 GEMM engine.
 //
 // Semantics: C = alpha*(A@B) + beta*C. __poseidon_ozaki_dgemm handles the
-// square, row-major, leading-dim-N, no-transpose case; __poseidon_ozaki_dgemm_ex
-// handles general M x Ncols x K layout-aware shapes (rectangular arm, or the
-// square pipeline after padding). Scratch buffers (sized for the max 14
-// moduli) and the per-nm constants are cached across calls. num_moduli == 0
-// selects native cuBLAS DGEMM.
-#include <cstdint>
-#include <cstdlib>
-#include <cmath>
-#include <cstdio>
-#include <cstring>
+// square, row-major, leading-dim-N, no-transpose case;
+// __poseidon_ozaki_dgemm_ex handles general M x Ncols x K layout-aware shapes
+// (rectangular arm, or the square pipeline after padding). Scratch buffers
+// (sized for the max 14 moduli) and the per-nm constants are cached across
+// calls. num_moduli == 0 selects native cuBLAS DGEMM.
 #include <algorithm>
+#include <cmath>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #ifdef __HIP__
 #include "../hip_as_cuda.h"
 // Every shuffle below is a step of a 32-lane tree over threadIdx.x of a 32-wide
@@ -104,7 +104,7 @@ __constant__ double poz_InvP;
 __constant__ float poz_log2P;
 
 // Sum-of-squares reduction geometry (fixed: it decides the shifts' bits).
-constexpr int POZ_NRM_THREADS = 256; // contiguous vector: threads per vector
+constexpr int POZ_NRM_THREADS = 256;  // contiguous vector: threads per vector
 constexpr int POZ_NRM_SPLIT_K = 1024; // strided vector: chunk K at or above
 constexpr int POZ_NRM_KCHUNK = 256;   // strided vector: chunk length
 
@@ -119,9 +119,8 @@ cublasHandle_t poz_cublasHandle() {
 
 // n mod d for 32-bit n, using Lemire's fastmod magic M = 2^64/d + 1: two
 // multiplies instead of an integer division by a runtime divisor.
-__device__ __forceinline__ unsigned poz_fastmod(unsigned n,
-                                                unsigned long long M,
-                                                unsigned d) {
+__device__ __forceinline__ unsigned
+poz_fastmod(unsigned n, unsigned long long M, unsigned d) {
   return (unsigned)__umul64hi(M * (unsigned long long)n, (unsigned long long)d);
 }
 
@@ -150,7 +149,8 @@ __device__ __forceinline__ int8_t poz_modI8(long a, int p, unsigned long long M,
 
 // Residue of an INT32 product entry, same representatives as poz_modI8 (the
 // CRT constants and the quotient below assume them).
-__device__ __forceinline__ int poz_modI32(int raw, int p, unsigned long long M) {
+__device__ __forceinline__ int poz_modI32(int raw, int p,
+                                          unsigned long long M) {
   unsigned ur = (unsigned)(raw < 0 ? -raw : raw);
   int r = (int)poz_fastmod(ur, M, (unsigned)p);
   if (raw < 0)
@@ -193,8 +193,7 @@ __device__ __forceinline__ short poz_shiftOf(double s) {
 // Contiguous vectors (vector r is src[r*ld + k], k < K): one block per vector,
 // thread t folds k = t, t+256, ..., then a warp tree and a tree over the
 // eight warp sums.
-__global__ void poz_sftContig(const double *src, size_t ld, int K,
-                              short *sft) {
+__global__ void poz_sftContig(const double *src, size_t ld, int K, short *sft) {
   __shared__ double sh[POZ_NRM_THREADS / 32];
   const double *v = src + (size_t)blockIdx.x * ld;
   double s = 0.0;
@@ -278,10 +277,10 @@ void poz_shifts(const double *src, size_t ld, int R, int K, bool contiguous,
     return;
   }
   const int nChunk = (K + POZ_NRM_KCHUNK - 1) / POZ_NRM_KCHUNK;
-  poz_sumStridedPart<<<dim3(gx, nChunk), dim3(32, 32), 0, stream>>>(
-      src, ld, R, K, part);
-  poz_sftStridedReduce<<<(R + 7) / 8, dim3(32, 8), 0, stream>>>(part, R,
-                                                                 nChunk, sft);
+  poz_sumStridedPart<<<dim3(gx, nChunk), dim3(32, 32), 0, stream>>>(src, ld, R,
+                                                                    K, part);
+  poz_sftStridedReduce<<<(R + 7) / 8, dim3(32, 8), 0, stream>>>(part, R, nChunk,
+                                                                sft);
 }
 
 // Scaled operand entry: trunc(2^sft * x), exact (scalbn only moves the
@@ -421,14 +420,21 @@ static long pozModInv(long a, long m) {
   long o_r = ((a % m) + m) % m, r = m, o_s = 1, s = 0;
   while (r) {
     long q = o_r / r, t;
-    t = o_r - q * r; o_r = r; r = t;
-    t = o_s - q * s; o_s = s; s = t;
+    t = o_r - q * r;
+    o_r = r;
+    r = t;
+    t = o_s - q * s;
+    o_s = s;
+    s = t;
   }
   return ((o_s % m) + m) % m;
 }
 static int pozBitLen(__int128 v) {
   int n = 0;
-  while (v) { ++n; v >>= 1; }
+  while (v) {
+    ++n;
+    v >>= 1;
+  }
   return n;
 }
 // 1/P rounded to nearest-even, by exact long division (P < 2^112, so the
@@ -436,11 +442,17 @@ static int pozBitLen(__int128 v) {
 static double pozRecipRN(__int128 P) {
   __int128 r = 1;
   int e = 0;
-  while (r < P) { r <<= 1; ++e; } // 2^e / P in [1, 2)
-  unsigned long long q = 0;       // floor(2^(e+53) / P), 54 bits
+  while (r < P) {
+    r <<= 1;
+    ++e;
+  }                         // 2^e / P in [1, 2)
+  unsigned long long q = 0; // floor(2^(e+53) / P), 54 bits
   for (int i = 0; i < 54; i++) {
     q <<= 1;
-    if (r >= P) { r -= P; q |= 1; }
+    if (r >= P) {
+      r -= P;
+      q |= 1;
+    }
     r <<= 1;
   }
   const bool rnd = q & 1, sticky = r != 0;
@@ -524,9 +536,15 @@ void poz_ensure(int N) {
   if (g_scratch.Np == Np)
     return;
   if (g_scratch.Ar) {
-    cudaFree(g_scratch.Ar); cudaFree(g_scratch.Br); cudaFree(g_scratch.Cr);
-    cudaFree(g_scratch.sA); cudaFree(g_scratch.sB); cudaFree(g_scratch.part);
-    cudaFree(g_scratch.As); cudaFree(g_scratch.Bs); cudaFree(g_scratch.Cs);
+    cudaFree(g_scratch.Ar);
+    cudaFree(g_scratch.Br);
+    cudaFree(g_scratch.Cr);
+    cudaFree(g_scratch.sA);
+    cudaFree(g_scratch.sB);
+    cudaFree(g_scratch.part);
+    cudaFree(g_scratch.As);
+    cudaFree(g_scratch.Bs);
+    cudaFree(g_scratch.Cs);
   }
   size_t plane = (size_t)Np * Np;
   POZ_CK(cudaMalloc(&g_scratch.Ar, POZ_MAXNM * plane));
@@ -534,7 +552,8 @@ void poz_ensure(int N) {
   POZ_CK(cudaMalloc(&g_scratch.Cr, POZ_MAXNM * plane * 4));
   POZ_CK(cudaMalloc(&g_scratch.sA, Np * 2));
   POZ_CK(cudaMalloc(&g_scratch.sB, Np * 2));
-  POZ_CK(cudaMalloc(&g_scratch.part, (size_t)Np * pozChunks(Np) * sizeof(double)));
+  POZ_CK(
+      cudaMalloc(&g_scratch.part, (size_t)Np * pozChunks(Np) * sizeof(double)));
   POZ_CK(cudaMalloc(&g_scratch.As, plane * sizeof(double)));
   POZ_CK(cudaMalloc(&g_scratch.Bs, plane * sizeof(double)));
   POZ_CK(cudaMalloc(&g_scratch.Cs, plane * sizeof(double)));
@@ -827,7 +846,8 @@ static double poz_rectMinWaste() {
   return v;
 }
 static size_t poz_rectCapBytes() {
-  static size_t v = (size_t)poz_envLong("POSEIDON_OZAKI_RECT_CAP_MB", 512) << 20;
+  static size_t v = (size_t)poz_envLong("POSEIDON_OZAKI_RECT_CAP_MB", 512)
+                    << 20;
   return v;
 }
 
@@ -871,18 +891,25 @@ static void poz_ensureRect(int Mp, int Kp, int Ncp) {
   Kp = std::max(Kp, g_rect.Kp);
   Ncp = std::max(Ncp, g_rect.Ncp);
   if (g_rect.Ar) {
-    cudaFree(g_rect.Ar); cudaFree(g_rect.Br); cudaFree(g_rect.Cr);
-    cudaFree(g_rect.sA); cudaFree(g_rect.sB); cudaFree(g_rect.part);
+    cudaFree(g_rect.Ar);
+    cudaFree(g_rect.Br);
+    cudaFree(g_rect.Cr);
+    cudaFree(g_rect.sA);
+    cudaFree(g_rect.sB);
+    cudaFree(g_rect.part);
     g_rect = PozRectScratch();
   }
   POZ_CK(cudaMalloc(&g_rect.Ar, (size_t)POZ_MAXNM * Mp * Kp));
   POZ_CK(cudaMalloc(&g_rect.Br, (size_t)POZ_MAXNM * Ncp * Kp));
-  POZ_CK(cudaMalloc(&g_rect.Cr, (size_t)POZ_MAXNM * Ncp * Mp * sizeof(int32_t)));
+  POZ_CK(
+      cudaMalloc(&g_rect.Cr, (size_t)POZ_MAXNM * Ncp * Mp * sizeof(int32_t)));
   POZ_CK(cudaMalloc(&g_rect.sA, (size_t)Mp * sizeof(short)));
   POZ_CK(cudaMalloc(&g_rect.sB, (size_t)Ncp * sizeof(short)));
-  POZ_CK(cudaMalloc(&g_rect.part,
-                    (size_t)std::max(Mp, Ncp) * pozChunks(Kp) * sizeof(double)));
-  g_rect.Mp = Mp; g_rect.Kp = Kp; g_rect.Ncp = Ncp;
+  POZ_CK(cudaMalloc(&g_rect.part, (size_t)std::max(Mp, Ncp) * pozChunks(Kp) *
+                                      sizeof(double)));
+  g_rect.Mp = Mp;
+  g_rect.Kp = Kp;
+  g_rect.Ncp = Ncp;
 }
 
 // Rectangular Ozaki-II: C(M x Ncols) = alpha*(A@B) + beta*C, A(M x K),
@@ -941,9 +968,9 @@ static void poz_run_rect(double *C, const double *A, const double *B, int M,
         Kp, (long long)ncp * Kp, g_rect.Ar, CUDA_R_8I, Kp, (long long)Mp * Kp,
         &i_zero, g_rect.Cr, CUDA_R_32I, ncp, (long long)ncp * Mp, num_moduli,
         CUBLAS_COMPUTE_32I, CUBLAS_GEMM_DEFAULT));
-    poz_crtRect<<<dim3((nc + 31) / 32, (M + 31) / 32), dim3(8, 32), 0, stream>>>(
-        g_rect.Cr, g_rect.sA, g_rect.sB, Cc, M, nc, Mp, ncp, ldc, cColMajor,
-        alpha, beta);
+    poz_crtRect<<<dim3((nc + 31) / 32, (M + 31) / 32), dim3(8, 32), 0,
+                  stream>>>(g_rect.Cr, g_rect.sA, g_rect.sB, Cc, M, nc, Mp, ncp,
+                            ldc, cColMajor, alpha, beta);
   }
 }
 
@@ -1043,13 +1070,10 @@ extern "C" void __poseidon_ozaki_dgemm(double *C, const double *A,
 // S = roundup(max(M,Ncols,K),16), repack A and B into square row-major
 // scratch, run the square pipeline and crop back. POSEIDON_OZAKI_PATH forces
 // either. {a,b,c}ColMajor select each operand's stride convention.
-extern "C" void __poseidon_ozaki_dgemm_ex(double *C, const double *A,
-                                          const double *B, int M, int Ncols,
-                                          int K, int lda, int ldb, int ldc,
-                                          int aColMajor, int bColMajor,
-                                          int cColMajor, double alpha,
-                                          double beta, cudaStream_t stream,
-                                          int num_moduli) {
+extern "C" void __poseidon_ozaki_dgemm_ex(
+    double *C, const double *A, const double *B, int M, int Ncols, int K,
+    int lda, int ldb, int ldc, int aColMajor, int bColMajor, int cColMajor,
+    double alpha, double beta, cudaStream_t stream, int num_moduli) {
   if (M <= 0 || Ncols <= 0 || K <= 0)
     return;
   num_moduli = poz_checkNm(num_moduli);
@@ -1061,7 +1085,8 @@ extern "C" void __poseidon_ozaki_dgemm_ex(double *C, const double *A,
     return;
   }
   int mx = M > Ncols ? M : Ncols;
-  if (K > mx) mx = K;
+  if (K > mx)
+    mx = K;
   int S = ((mx + 15) / 16) * 16;
   {
     const double padWaste = (double)S * (double)S * (double)S /
