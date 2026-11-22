@@ -1074,8 +1074,9 @@ int main() {
     }
     double rel = (t_scalar > 0) ? t_scheme / t_scalar : 0.0;
     if (rel >= REL_OMIT) {
-      fprintf(stderr, "[microbm] %s,%s: real GEMM rel=%.3f >= %.2f — not faster "
-                      "than scalar FP64; vestigial tensor path, omitting row\n",
+      fprintf(stderr,
+              "[microbm] %s,%s: real GEMM rel=%.3f >= %.2f: not faster "
+              "than scalar FP64; vestigial tensor path, omitting row\n",
               name, prec, rel, REL_OMIT);
       return;
     }

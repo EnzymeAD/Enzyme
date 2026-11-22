@@ -419,7 +419,7 @@ Expected<HerbieRunResult> runHerbie(const std::vector<std::string> &inputExprs,
                  << " s). No algebraic candidates for this subgraph; the "
                     "other candidate families are unaffected. Raise "
                     "-poseidon-herbie-subgraph-timeout to spend more, or set "
-                    "it to 0 for the historical unbounded behaviour.\n";
+                    "it to 0 to wait for as long as Herbie takes.\n";
     removeShardFiles();
     if (!timeoutMarkerPath.empty()) {
       if (Error E = writeCacheFile(Opts.CacheDir, timeoutMarkerPath,

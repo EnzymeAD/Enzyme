@@ -594,7 +594,7 @@ static void poz_run_square(double *C, const double *A, const double *B, int N,
   // s32 residue-GEMM accumulator: |sum_k r_a*r_b| <= K*128*128 = K*2^14 must
   // stay under 2^31, i.e. K < 131072.
   if (N >= 131072) { // 2^31 / 2^14, written out: 1<<31 overflows a signed int
-    printf("poseidon_ozaki_rt: FATAL K=%d >= 131072 — the s32 residue-GEMM "
+    printf("poseidon_ozaki_rt: FATAL K=%d >= 131072: the s32 residue-GEMM "
            "accumulator would overflow; needs an intermediate reduction.\n",
            N);
     abort();
@@ -897,7 +897,7 @@ static void poz_run_rect(double *C, const double *A, const double *B, int M,
   // s32 residue-GEMM accumulator: |sum_k r_a*r_b| <= K*128*128 must stay under
   // 2^31, here on the unpadded K.
   if (K >= 131072) {
-    printf("poseidon_ozaki_rt: FATAL K=%d >= 131072 — the s32 residue-GEMM "
+    printf("poseidon_ozaki_rt: FATAL K=%d >= 131072: the s32 residue-GEMM "
            "accumulator would overflow; needs an intermediate reduction.\n",
            K);
     abort();
