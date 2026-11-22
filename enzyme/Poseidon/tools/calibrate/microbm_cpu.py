@@ -1,3 +1,6 @@
+#!/usr/bin/env python3
+"""Measure the host CPU cost model Poseidon prices CPU candidates from."""
+
 import time
 import csv
 import struct

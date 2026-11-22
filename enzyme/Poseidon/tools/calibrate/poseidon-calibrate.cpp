@@ -12,27 +12,8 @@
 // to clang PGO: run it once per GPU, and every later compile finds the model by
 // the module's target-cpu.
 //
-// Six arms write disjoint row families into the same CSV:
-//   microbm    per-op saturated reciprocal throughputs and the WMMA tile rows,
-//              plus the "# native_arch=" header the compiler matches on
-//   ozaki      ozaki_dispatch_rel,nm*   host-dispatched Ozaki-II GEMM
-//   ozaki-rect ozaki_dispatch_rect_rel  its rectangular arm at given (M, K),
-//                                       the native DGEMM at given MxNxK
-//   tcec       tcec_dispatch_rel        host-dispatched error-corrected GEMM
-//   direct     direct_dispatch_rel      host-dispatched reduced-precision GEMM
-//   inkernel   wmma_inkernel_rel        tensor-core raises inside a kernel
-// Each dispatch row is the candidate's wall clock over the scalar-FP64 GEMM's
-// on this device, so all five families are comparable in one unit.
-//
-// An AMD GPU is measured by the HIP builds of the same calibrators. It has no
-// error-corrected runtime and no in-kernel raises, so those families and the
-// WMMA tile rows stay absent from its model. A build without cuMpSGEMM has no
-// error-corrected runtime for any GPU.
-//
-// A seventh arm, herbie-platform, measures nothing: it translates the CSV into
-// the Herbie platform file (<csv>.herbie.rkt) that the algebraic search ranks
-// its rewrites by, so Herbie and the DP price the same device. It needs no
-// GPU, so `--only herbie-platform --out <csv>` runs anywhere.
+// Measures the cost model of one GPU, family by family (--only), into one CSV;
+// see tools/calibrate/README.md for the families.
 //
 //===----------------------------------------------------------------------===//
 
@@ -43,6 +24,7 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/FileSystem.h"
+#include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/Program.h"
@@ -120,11 +102,7 @@ static std::string shipped(StringRef Rel) {
   return std::string(S);
 }
 
-static std::string num(double V, const char *Fmt = "%.6f") {
-  char B[64];
-  snprintf(B, sizeof(B), Fmt, V);
-  return std::string(B);
-}
+static std::string num(double V) { return formatv("{0:F6}", V).str(); }
 
 [[noreturn]] static void fail(const Twine &Msg) {
   errs() << "poseidon-calibrate: " << Msg << '\n';
@@ -547,10 +525,10 @@ static void armInKernel(const std::string &Csv, const Device &D) {
   sys::path::append(
       KernelProf, "preprocess__Z10matmul_optPdPKdS1__poseidon_body.fpprofile");
   if (!sys::fs::exists(KernelProf))
-    fail("the in-kernel arm needs the surrogate profile carrying " +
-         Twine(sys::path::filename(KernelProf)) +
-         "; profile a GEMM site with -poseidon-profile-generate and pass "
-         "--profile <dir>");
+    fail("the in-kernel arm needs " + Twine(sys::path::filename(KernelProf)) +
+         ": build tools/calibrate/inkernel_calibrate.cu at a small -DCAL_N "
+         "with -poseidon-profile-generate, run it with --profiling, and pass "
+         "its profile directory as --profile <dir>");
 
   SmallString<256> WorkBuf;
   if (std::error_code EC =
@@ -589,7 +567,7 @@ static void armInKernel(const std::string &Csv, const Device &D) {
   double BaseMs = timeOf(BaseExe);
   if (BaseMs <= 0)
     fail("the scalar-FP64 baseline produced no time");
-  outs() << "[calibrate] scalar-FP64 baseline " << num(BaseMs, "%.4f")
+  outs() << "[calibrate] scalar-FP64 baseline " << formatv("{0:F4}", BaseMs)
          << " ms\n";
 
   // One compile prints the candidate table; -poseidon-apply-rewrites is
@@ -667,7 +645,7 @@ static void armInKernel(const std::string &Csv, const Device &D) {
       continue;
     }
     Rows += "wmma_inkernel_rel," + Cls + "," + num(Ms / BaseMs) + "\n";
-    outs() << "  + " << Cls << ' ' << num(Ms, "%.4f") << " ms  rel "
+    outs() << "  + " << Cls << ' ' << formatv("{0:F4}", Ms) << " ms  rel "
            << num(Ms / BaseMs) << '\n';
   }
   if (Rows.empty()) {

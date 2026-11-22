@@ -24,10 +24,10 @@
 #include <unistd.h>
 
 int main(int argc, char **argv) {
-  int first = 1;
-  if (first < argc && !strcmp(argv[first], "--"))
-    ++first;
-  if (first >= argc || argv[first][0] == '-') {
+  int First = 1;
+  if (First < argc && !strcmp(argv[First], "--"))
+    ++First;
+  if (First >= argc || argv[First][0] == '-') {
     fprintf(stderr,
             "usage: poseidon-probe -- <program> [args...]\n"
             "Runs a profile-generation build with POSEIDON_PROBE=1: at exit it "
@@ -37,8 +37,8 @@ int main(int argc, char **argv) {
     return 2;
   }
   setenv("POSEIDON_PROBE", "1", 1);
-  execvp(argv[first], argv + first);
-  fprintf(stderr, "poseidon-probe: cannot run %s: %s\n", argv[first],
+  execvp(argv[First], argv + First);
+  fprintf(stderr, "poseidon-probe: cannot run %s: %s\n", argv[First],
           strerror(errno));
   return 127;
 }

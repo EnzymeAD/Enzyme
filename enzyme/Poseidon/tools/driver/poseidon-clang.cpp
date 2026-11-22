@@ -10,7 +10,7 @@
 // Three user actions, modelled on clang's PGO:
 //
 //   poseidon-clang++ -poseidon-profile-generate app.cu -o app
-//   ./app small_problem
+//   poseidon-probe -- ./app small_problem
 //   poseidon-clang++ -poseidon-profile-use -poseidon-tau=1e-7 app.cu -o app_opt
 //
 // The driver execs the clang the plugins were built against with Poseidon's
@@ -101,6 +101,9 @@ static void printHelp(StringRef Prog) {
          "(default " POSEIDON_DEFAULT_PROFILE_DIR ")\n"
          "  -poseidon-tau=<rel>           accuracy target of every site that\n"
          "                                does not carry its own\n"
+         "  -poseidon-cost-budget=<share> share of its profiled cost a site\n"
+         "                                with no target may add (negative:\n"
+         "                                has to save)\n"
          "  -poseidon-cost-model=<csv>    cost model to price candidates "
          "with;\n"
          "                                without it the model for the target\n"
@@ -109,6 +112,8 @@ static void printHelp(StringRef Prog) {
          "  -poseidon-kernels=<regex>     treat matching kernels as "
          "optimization\n"
          "                                sites ('all' matches every kernel)\n"
+         "  -poseidon-min-cost-share=<f>  skip -poseidon-kernels sites below\n"
+         "                                this share of the profiled FP cost\n"
          "  -poseidon-cache=<dir>         Herbie results, DP tables, "
          "descriptors\n"
          "  -poseidon-report-path=<dir>   write the per-site reports\n"
@@ -123,8 +128,9 @@ static void printHelp(StringRef Prog) {
 }
 
 static bool isLanguageCXX(StringRef Lang) {
-  return Lang == "cuda" || Lang == "c++" || Lang == "cu" ||
-         Lang == "c++-header" || Lang == "cuda-cpp-output" || Lang == "hip";
+  return Lang == "c++" || Lang == "c++-header" || Lang == "c++-cpp-output" ||
+         Lang == "cuda" || Lang == "cu" || Lang == "cuda-cpp-output" ||
+         Lang == "hip" || Lang == "hip-cpp-output";
 }
 
 // How many argv entries after `A` are its value: clang's driver options whose
@@ -381,8 +387,8 @@ int main(int argc, char **argv) {
     Enzyme = Given;
   } else if (Enzyme.empty()) {
     return userError(Prog, "-poseidon-profile-generate needs Enzyme to "
-                           "differentiate the probes; set ENZYME_PLUGIN to "
-                           "the pinned ClangEnzyme-*.so");
+                           "differentiate the probes, and this build has no "
+                           "ClangEnzyme plugin; set ENZYME_PLUGIN to one");
   } else if (!sys::fs::exists(Enzyme)) {
     return userError(Prog, "Enzyme plugin not found at " + Enzyme +
                                "; install Enzyme to the same prefix or set "
@@ -464,7 +470,7 @@ int main(int argc, char **argv) {
     // poseidon_metric, and the profiler the instrumented code calls into.
     Cmd.push_back("-lposeidon_profile");
     if (ProfileUse && IsCUDA) {
-      // A rewrite may dispatch a matrix product to any of the three GEMM
+      // A rewrite may dispatch a matrix product to any of the GEMM
       // runtimes; they export disjoint symbols and only the chosen one runs.
       Cmd.push_back("-lposeidon_rt");
       Cmd.push_back("-lcublas");

@@ -428,7 +428,7 @@ cl::opt<std::string> ReportPath(
              "Emits <func>.json (Pareto table with source locations),\n"
              "<func>.txt (human-readable), <func>_rewrites.json\n"
              "(curated per-rewrite analysis with IDs), and\n"
-             "validate_config.json + validate.py (validation script)."));
+             "validate_config.json."));
 cl::opt<std::string> Explain(
     "poseidon-explain", cl::init(kDefaults.Diagnostics.Explain), cl::Hidden,
     cl::desc("Directory to write <func>.explain.json, what each site's solve\n"
