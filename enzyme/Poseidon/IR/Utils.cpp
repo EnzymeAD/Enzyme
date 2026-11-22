@@ -87,19 +87,7 @@ void simplifyFunction(Function &F, OptimizationLevel Level) {
 }
 
 double stringToDouble(const std::string &str) {
-  char *end;
-  errno = 0;
-  double result = std::strtod(str.c_str(), &end);
-
-  if (errno == ERANGE) {
-    if (result == HUGE_VAL) {
-      result = std::numeric_limits<double>::infinity();
-    } else if (result == -HUGE_VAL) {
-      result = -std::numeric_limits<double>::infinity();
-    }
-  }
-
-  return result;
+  return std::strtod(str.c_str(), nullptr);
 }
 
 // A Herbie literal is an exact rational whose numerator or denominator alone
@@ -138,8 +126,7 @@ void topoSort(const SetVector<Instruction *> &insts,
     auto operands =
         isa<CallInst>(I) ? cast<CallInst>(I)->args() : I->operands();
     for (auto &op : operands) {
-      if (isa<Instruction>(op)) {
-        Instruction *oI = cast<Instruction>(op);
+      if (auto *oI = dyn_cast<Instruction>(op)) {
         if (insts.contains(oI)) {
           if (onStack.count(oI)) {
             report_fatal_error(

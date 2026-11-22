@@ -271,7 +271,7 @@ static bool improveViaHerbie(Session &S,
   if (TermCounts.empty())
     TermCounts.push_back(std::nullopt);
   SmallVector<HerbieRunResult, 2> Runs;
-  SmallVector<std::vector<HerbieCoreAnswer>, 2> Answers;
+  SmallVector<std::vector<HerbieCoreAnswer>, 2> RunAnswers;
   for (std::optional<unsigned> Terms : TermCounts) {
     Opts.TaylorTerms = Terms;
     const std::string RunLabel =
@@ -340,7 +340,7 @@ static bool improveViaHerbie(Session &S,
                    << "). No algebraic candidates for this subgraph from it.\n";
       continue;
     }
-    Answers.push_back(std::move(*Read));
+    RunAnswers.push_back(std::move(*Read));
     ++*Taken;
   }
 
@@ -412,7 +412,7 @@ static bool improveViaHerbie(Session &S,
     }
   };
 
-  for (ArrayRef<HerbieCoreAnswer> answers : Answers)
+  for (ArrayRef<HerbieCoreAnswer> answers : RunAnswers)
     processHerbieOutput(answers);
   for (const HerbieRunResult &Run : Runs) {
     if (Run.Result != HerbieRunResult::Outcome::Timeout &&
@@ -424,7 +424,7 @@ static bool improveViaHerbie(Session &S,
                               ? "timeout"
                               : "crashed";
   }
-  return !Answers.empty();
+  return !RunAnswers.empty();
 }
 
 void reportHerbieAnswers(Session &S) {
@@ -810,9 +810,9 @@ void setUnifiedAccuracyCost(
   ArrayRef<SubgraphSamples::Point> sampledPoints = samples.points();
 
   // No usable sample means the output cannot be priced: drop its candidates and
-  // keep the original body, without inventing a bound or an accuracy number.
-  auto unpriceable = [&](const char *why) {
-    CO.unpricedReason = why;
+  // keep the original body.
+  auto unpriceable = [&](StringRef why) {
+    CO.unpricedReason = why.str();
     llvm::errs() << "[poseidon] subgraph output cannot be priced (" << why
                  << "); discarding its " << CO.candidates.size()
                  << " Herbie candidate(s) and keeping the original body. "

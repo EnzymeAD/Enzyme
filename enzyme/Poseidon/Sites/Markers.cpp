@@ -31,10 +31,10 @@ using namespace llvm;
 
 namespace poseidon {
 
-// Matched as substrings, as Enzyme matches its requests, because a C++
-// frontend mangles the marker's template instantiation.
+// A substring match, because a C++ frontend mangles the marker's template
+// instantiation.
 bool isMarkerCall(StringRef calleeName) {
-  return calleeName.contains("__poseidon_fp_optimize") ||
+  return calleeName.contains(kMarkerName) ||
          calleeName.contains("__enzyme_fp_optimize");
 }
 

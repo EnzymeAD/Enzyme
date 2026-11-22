@@ -94,7 +94,7 @@ void simplifyFunction(llvm::Function &F, llvm::OptimizationLevel Level);
 
 // A mistake in what the compile was given that leaves nothing to compile with:
 // an error diagnostic at `Loc` in `F`, then the compile ends with exit status 1
-// and without crash diagnostics (README, "Errors").
+// and without crash diagnostics.
 [[noreturn]] void reportUserError(const llvm::Function &F,
                                   const llvm::DiagnosticLocation &Loc,
                                   const llvm::Twine &Message);

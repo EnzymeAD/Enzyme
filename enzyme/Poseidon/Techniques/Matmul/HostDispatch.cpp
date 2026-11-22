@@ -690,28 +690,28 @@ readOzDispatchDescriptors(const Options &O, Module &M,
                           std::map<std::string, LaunchDesc> &descs) {
   readDescriptors(
       O, M, LaunchKind::HostDispatch, [&](ArrayRef<StringRef> toks) -> Error {
-        DescriptorCursor C(toks);
+        DescriptorCursor Cursor(toks);
         LaunchDesc d;
         d.kernel = toks[0].str();
-        d.cParam = C.integer<int>("C argument");
-        d.aParam = C.integer<int>("A argument");
-        d.bParam = C.integer<int>("B argument");
-        d.N = C.integer<unsigned>("N");
-        d.standalone = C.integer<int>("standalone flag") != 0;
-        d.numModuli = C.integer<unsigned>("modulus field");
+        d.cParam = Cursor.integer<int>("C argument");
+        d.aParam = Cursor.integer<int>("A argument");
+        d.bParam = Cursor.integer<int>("B argument");
+        d.N = Cursor.integer<unsigned>("N");
+        d.standalone = Cursor.integer<int>("standalone flag") != 0;
+        d.numModuli = Cursor.integer<unsigned>("modulus field");
         if (d.numModuli > kOzakiIIMaxModuli)
-          C.fail("its modulus field " + Twine(d.numModuli) + " is above " +
-                 Twine(kOzakiIIMaxModuli));
-        d.gM = C.integer<unsigned>("M");
-        d.gNcols = C.integer<unsigned>("column count");
-        d.gK = C.integer<unsigned>("K");
-        d.lda = C.integer<unsigned>("lda");
-        d.ldb = C.integer<unsigned>("ldb");
-        d.ldc = C.integer<unsigned>("ldc");
-        d.aColMajor = C.integer<int>("A layout") != 0;
-        d.bColMajor = C.integer<int>("B layout") != 0;
-        d.cColMajor = C.integer<int>("C layout") != 0;
-        switch (C.integer<int>("scheme")) {
+          Cursor.fail("its modulus field " + Twine(d.numModuli) + " is above " +
+                      Twine(kOzakiIIMaxModuli));
+        d.gM = Cursor.integer<unsigned>("M");
+        d.gNcols = Cursor.integer<unsigned>("column count");
+        d.gK = Cursor.integer<unsigned>("K");
+        d.lda = Cursor.integer<unsigned>("lda");
+        d.ldb = Cursor.integer<unsigned>("ldb");
+        d.ldc = Cursor.integer<unsigned>("ldc");
+        d.aColMajor = Cursor.integer<int>("A layout") != 0;
+        d.bColMajor = Cursor.integer<int>("B layout") != 0;
+        d.cColMajor = Cursor.integer<int>("C layout") != 0;
+        switch (Cursor.integer<int>("scheme")) {
         case 0:
           d.scheme = DispatchScheme::OzakiII;
           break;
@@ -722,71 +722,73 @@ readOzDispatchDescriptors(const Options &O, Module &M,
           d.scheme = DispatchScheme::Direct;
           break;
         default:
-          C.fail("its scheme is not 0, 1 or 2");
+          Cursor.fail("its scheme is not 0, 1 or 2");
         }
         GemmBodyNote::RtDim *dd[6] = {&d.rM,   &d.rNcols, &d.rK,
                                       &d.rlda, &d.rldb,   &d.rldc};
         // Positional runtime-geometry block: flag + 6 x (param mul add), then
         // beta, which a descriptor followed by a keyword block may lack.
-        if (C.consume("1")) {
+        if (Cursor.consume("1")) {
           for (GemmBodyNote::RtDim *x : dd) {
-            int param = C.integer<int>("runtime dimension argument");
+            int param = Cursor.integer<int>("runtime dimension argument");
             if (param >= 0)
               x->factors.push_back({param, -1});
-            x->mul = C.integer<int64_t>("runtime dimension factor");
-            x->add = C.integer<int64_t>("runtime dimension term");
+            x->mul = Cursor.integer<int64_t>("runtime dimension factor");
+            x->add = Cursor.integer<int64_t>("runtime dimension term");
           }
-          if (!C.atEnd() && !is_contained({"rd", "pf", "eq", "lc"}, C.peek()))
-            d.beta = C.real("beta");
+          if (!Cursor.atEnd() &&
+              !is_contained({"rd", "pf", "eq", "lc"}, Cursor.peek()))
+            d.beta = Cursor.real("beta");
           d.runtimeDims = true;
         }
         // Keyword blocks of fields and products, and of the launch geometry
         // (see emitDescriptor).
-        while (!C.atEnd()) {
-          if (C.consume("rd")) {
+        while (!Cursor.atEnd()) {
+          if (Cursor.consume("rd")) {
             for (GemmBodyNote::RtDim *x : dd) {
-              unsigned nf = C.integer<unsigned>("factor count");
+              unsigned nf = Cursor.integer<unsigned>("factor count");
               if (nf > 8)
-                C.fail("its factor count " + Twine(nf) + " is above 8");
-              for (unsigned f = 0; f < nf && C.ok(); ++f) {
+                Cursor.fail("its factor count " + Twine(nf) + " is above 8");
+              for (unsigned f = 0; f < nf && Cursor.ok(); ++f) {
                 LaunchRef r;
-                r.param = C.integer<int>("factor argument");
-                r.offset = C.integer<int64_t>("factor offset");
+                r.param = Cursor.integer<int>("factor argument");
+                r.offset = Cursor.integer<int64_t>("factor offset");
                 x->factors.push_back(r);
               }
-              x->mul = C.integer<int64_t>("runtime dimension factor");
-              x->add = C.integer<int64_t>("runtime dimension term");
+              x->mul = Cursor.integer<int64_t>("runtime dimension factor");
+              x->add = Cursor.integer<int64_t>("runtime dimension term");
             }
-            d.beta = C.real("beta");
+            d.beta = Cursor.real("beta");
             d.runtimeDims = true;
-          } else if (C.consume("pf")) {
-            d.cOffset = C.integer<int64_t>("C offset");
-            d.aOffset = C.integer<int64_t>("A offset");
-            d.bOffset = C.integer<int64_t>("B offset");
-          } else if (C.consume("eq")) {
-            unsigned ne = C.integer<unsigned>("equality count");
+          } else if (Cursor.consume("pf")) {
+            d.cOffset = Cursor.integer<int64_t>("C offset");
+            d.aOffset = Cursor.integer<int64_t>("A offset");
+            d.bOffset = Cursor.integer<int64_t>("B offset");
+          } else if (Cursor.consume("eq")) {
+            unsigned ne = Cursor.integer<unsigned>("equality count");
             if (ne > 16)
-              C.fail("its equality count " + Twine(ne) + " is above 16");
-            for (unsigned e = 0; e < ne && C.ok(); ++e) {
+              Cursor.fail("its equality count " + Twine(ne) + " is above 16");
+            for (unsigned e = 0; e < ne && Cursor.ok(); ++e) {
               LaunchRef x, y;
-              x.param = C.integer<int>("equality argument");
-              x.offset = C.integer<int64_t>("equality offset");
-              y.param = C.integer<int>("equality argument");
-              y.offset = C.integer<int64_t>("equality offset");
+              x.param = Cursor.integer<int>("equality argument");
+              x.offset = Cursor.integer<int64_t>("equality offset");
+              y.param = Cursor.integer<int>("equality argument");
+              y.offset = Cursor.integer<int64_t>("equality offset");
               d.assumedEqual.push_back({x, y});
             }
-          } else if (C.consume("lc")) {
-            d.cropMAxis = C.integer<int>("M axis");
-            d.cropNAxis = C.integer<int>("column axis");
+          } else if (Cursor.consume("lc")) {
+            d.cropMAxis = Cursor.integer<int>("M axis");
+            d.cropNAxis = Cursor.integer<int>("column axis");
             if (d.cropMAxis < 0 || d.cropMAxis > 2 || d.cropNAxis < 0 ||
                 d.cropNAxis > 2 || d.cropMAxis == d.cropNAxis)
-              C.fail("its launch axes are not two distinct axes of x, y, z");
+              Cursor.fail(
+                  "its launch axes are not two distinct axes of x, y, z");
             d.launchCrop = true;
           } else {
             break;
           }
         }
-        if (Error E = C.takeError())
+        if (Error E = Cursor.takeError())
           return E;
         descs[d.kernel] = d;
         return Error::success();
@@ -1189,24 +1191,24 @@ static bool readProfDescriptors(const Options &O, Module &M,
                                 std::map<std::string, ProfDesc> &out) {
   readDescriptors(
       O, M, LaunchKind::Profiling, [&](ArrayRef<StringRef> toks) -> Error {
-        DescriptorCursor C(toks);
+        DescriptorCursor Cursor(toks);
         ProfDesc d;
         d.kernel = toks[0].str();
-        d.siteId = C.integer<int>("site id");
-        d.nargs = C.integer<unsigned>("argument count");
-        unsigned np = C.integer<unsigned>("pointer count");
-        for (unsigned i = 0; i < np && C.ok(); ++i)
-          d.ptrIdx.push_back(C.integer<int>("pointer argument"));
-        for (unsigned i = 0; i < np && C.ok(); ++i)
-          d.seedWidth.push_back(C.integer<int>("seed width"));
+        d.siteId = Cursor.integer<int>("site id");
+        d.nargs = Cursor.integer<unsigned>("argument count");
+        unsigned np = Cursor.integer<unsigned>("pointer count");
+        for (unsigned i = 0; i < np && Cursor.ok(); ++i)
+          d.ptrIdx.push_back(Cursor.integer<int>("pointer argument"));
+        for (unsigned i = 0; i < np && Cursor.ok(); ++i)
+          d.seedWidth.push_back(Cursor.integer<int>("seed width"));
         d.ptrOff.assign(d.ptrIdx.size(), 0);
-        if (C.consume("off"))
+        if (Cursor.consume("off"))
           for (int &off : d.ptrOff) {
-            off = C.integer<int>("pointer offset");
+            off = Cursor.integer<int>("pointer offset");
             if (off < 0)
-              C.fail("its pointer offset " + Twine(off) + " is negative");
+              Cursor.fail("its pointer offset " + Twine(off) + " is negative");
           }
-        if (Error E = C.takeError())
+        if (Error E = Cursor.takeError())
           return E;
         out[d.kernel] = d;
         return Error::success();

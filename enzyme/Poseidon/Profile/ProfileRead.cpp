@@ -12,18 +12,9 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include <algorithm>
-#include <cerrno>
-#include <cmath>
-#include <cstdlib>
-#include <fstream>
-#include <regex>
-#include <system_error>
-#include <unordered_map>
-
+#include "ProfileRead.h"
 #include "IR/Utils.h"
 #include "Instrument.h"
-#include "ProfileRead.h"
 #include "Targets/OffloadRuntime.h"
 #include "Targets/Target.h"
 
@@ -40,6 +31,15 @@
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/raw_ostream.h"
+
+#include <algorithm>
+#include <cerrno>
+#include <cmath>
+#include <cstdlib>
+#include <fstream>
+#include <regex>
+#include <system_error>
+#include <unordered_map>
 
 using namespace llvm;
 
@@ -196,27 +196,23 @@ void parseProfileFile(const std::string &profilePath, const Function &F,
   std::regex redTripPattern(R"(^\s*RedTrip\s*=\s*(\d+)\s+(\d+))");
   std::regex canonicalHashPattern(R"(^\s*CanonicalHash\s*=\s*([0-9a-fA-F]+))");
   std::regex siteIdPattern(R"(^\s*SiteId\s*=\s*(\d+))");
-  std::regex kappaPattern(
-      R"(^\s*Kappa\s*=\s*([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?|inf|-inf|nan|-nan))");
+  static const std::string kReal =
+      R"(([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?|inf|-inf|nan|-nan))";
+  std::regex kappaPattern(R"(^\s*Kappa\s*=\s*)" + kReal);
   std::regex kappaMarkPattern(R"(^\s*KappaMark\s*=\s*(\S+))");
 
-  std::regex minResPattern(
-      R"(^\s*MinRes\s*=\s*([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?|inf|-inf|nan|-nan))");
-  std::regex maxResPattern(
-      R"(^\s*MaxRes\s*=\s*([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?|inf|-inf|nan|-nan))");
-  std::regex sumValuePattern(
-      R"(^\s*SumValue\s*=\s*([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?|inf|-inf|nan|-nan))");
-  std::regex sumSensPattern(
-      R"(^\s*SumSens\s*=\s*([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?|inf|-inf|nan|-nan))");
-  std::regex sumGradPattern(
-      R"(^\s*SumGrad\s*=\s*([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?|inf|-inf|nan|-nan))");
+  std::regex minResPattern(R"(^\s*MinRes\s*=\s*)" + kReal);
+  std::regex maxResPattern(R"(^\s*MaxRes\s*=\s*)" + kReal);
+  std::regex sumValuePattern(R"(^\s*SumValue\s*=\s*)" + kReal);
+  std::regex sumSensPattern(R"(^\s*SumSens\s*=\s*)" + kReal);
+  std::regex sumGradPattern(R"(^\s*SumGrad\s*=\s*)" + kReal);
   // Optional line.
-  std::regex sumAbsGradPattern(
-      R"(^\s*SumAbsGrad\s*=\s*([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?|inf|-inf|nan|-nan))");
+  std::regex sumAbsGradPattern(R"(^\s*SumAbsGrad\s*=\s*)" + kReal);
   std::regex execPattern(R"(^\s*Exec\s*=\s*(\d+))");
   std::regex numOperandsPattern(R"(^\s*NumOperands\s*=\s*(\d+))");
-  std::regex operandPattern(
-      R"(^\s*Operand\[(\d+)\]\s*=\s*\[([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?|inf|-inf|nan|-nan),\s*([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?|inf|-inf|nan|-nan)(?:,\s*([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?|inf|-inf|nan|-nan))?\])");
+  std::regex operandPattern(R"(^\s*Operand\[(\d+)\]\s*=\s*\[)" + kReal +
+                            R"(,\s*)" + kReal + R"((?:,\s*)" + kReal +
+                            R"()?\])");
 
   unsigned lineNo = 0;
   auto nextLine = [&](std::string &text) {

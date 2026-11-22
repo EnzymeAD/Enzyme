@@ -129,11 +129,8 @@ static bool isOptimizableOperation(const Instruction *I) {
   }
 }
 
-// Whether the accuracy model has a node for the operand V: a float or double
-// argument or literal, an integer literal (the exponent of powi), or an
-// instruction of a scalar floating-point or integer type, the values the
-// profiler records. An undef or poison value has no value to sample and may
-// take a different one at each use; a constant expression has no literal.
+// An undef or poison operand has no value to sample and may take a different
+// one at each use; a constant expression has no literal.
 static bool isModelledOperand(const Value *V) {
   Type *T = V->getType();
   if (isa<Argument, ConstantFP>(V))

@@ -217,7 +217,7 @@ static CallInst *asMarker(CallBase *call, Function *fn, double tau) {
   auto *FT = FunctionType::get(call->getType(), {PointerType::getUnqual(C)},
                                /*isVarArg=*/true);
   FunctionCallee marker =
-      call->getModule()->getOrInsertFunction("__poseidon_fp_optimize", FT);
+      call->getModule()->getOrInsertFunction(kMarkerName, FT);
   IRBuilder<> Builder(call);
   CallInst *CI = Builder.CreateCall(FT, marker.getCallee(), args);
   CI->setDebugLoc(call->getDebugLoc());

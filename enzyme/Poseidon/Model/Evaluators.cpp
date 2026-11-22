@@ -12,6 +12,12 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "Evaluators.h"
+#include "FPFormat.h"
+#include "FPNode.h"
+#include "Sampling.h"
+#include "Targets/Target.h"
+
 #include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/BitVector.h"
 #include "llvm/ADT/STLExtras.h"
@@ -19,18 +25,11 @@
 #include "llvm/IR/Module.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <cmath>
 #include <cstring>
 #include <limits>
 #include <string>
-
-#include <cmath>
 #include <vector>
-
-#include "Evaluators.h"
-#include "FPFormat.h"
-#include "FPNode.h"
-#include "Sampling.h"
-#include "Targets/Target.h"
 
 using namespace llvm;
 

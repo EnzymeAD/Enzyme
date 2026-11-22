@@ -67,6 +67,8 @@ constexpr llvm::StringLiteral kExplicitIdentity = "__poseidon_site_explicit";
 constexpr llvm::StringLiteral kExplicitIdentityTau =
     "__poseidon_site_explicit_tau";
 
+constexpr llvm::StringLiteral kMarkerName = "__poseidon_fp_optimize";
+
 // How the arguments of a call of `fn` are read: as fn's own (automatic), or
 // with activity markers and shadows, as the marker reads them (explicit).
 enum class ArgumentList { Automatic, Explicit };
@@ -74,8 +76,7 @@ enum class ArgumentList { Automatic, Explicit };
 // The one rule for every call form: the arguments `call` passes for the
 // parameters of `fn` (all of a call through an identity, those after the
 // function of a marker call) are an explicit list when one of them is an
-// activity marker (enzyme_dup, enzyme_const, poseidon_tau and every other
-// enzyme_* or poseidon_* name parseMarker reads), and an automatic list
+// activity marker (an enzyme_* or poseidon_* name), and an automatic list
 // otherwise. None, with an error at `call`, when the list is both or neither:
 // a list `identity` says fn takes as written that carries a marker, a list it
 // says fn does not take that carries none, or an automatic list of a marker

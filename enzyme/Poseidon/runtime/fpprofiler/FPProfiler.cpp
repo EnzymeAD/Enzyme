@@ -497,8 +497,7 @@ static void poseidonProbeDriver() {
     return;
 
   const std::string pdir = FPProfiler::outputDir();
-  // A profile in the directory that this run did not write is another
-  // program's: perturbing its site cannot move this run's metric.
+  // The device profiler's profiles are this run's too.
   for (const std::string &name : writtenElsewhere())
     writtenThisRun().insert(poseidon::profileNameStem(name) + ".fpprofile");
   std::map<int, std::string> sites;
@@ -509,8 +508,9 @@ static void poseidonProbeDriver() {
     closedir(d);
     std::sort(names.begin(), names.end());
     for (const std::string &n : names) {
-      if (n.size() < 10 || n.compare(n.size() - 10, 10, ".fpprofile") ||
-          !writtenThisRun().count(n))
+      // A profile this run did not write is another program's: perturbing its
+      // site cannot move this run's metric.
+      if (!writtenThisRun().count(n))
         continue;
       // A site this run never executed cannot move the metric, and perturbing
       // it would cost a run of the workload per ladder step.

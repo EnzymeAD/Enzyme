@@ -163,7 +163,7 @@ static Error writeCacheFile(StringRef cacheDir, StringRef path,
   return Error::success();
 }
 
-Expected<HerbieRunResult> runHerbie(const std::vector<std::string> &inputExprs,
+Expected<HerbieRunResult> runHerbie(const std::vector<std::string> &Cores,
                                     const HerbieRunOptions &Opts,
                                     StringRef Label,
                                     HerbieBinaryDigests &Digests) {
@@ -178,16 +178,16 @@ Expected<HerbieRunResult> runHerbie(const std::vector<std::string> &inputExprs,
   const unsigned numThreads = std::max(1, Opts.NumThreads);
   const unsigned shards = (unsigned)std::max<size_t>(
       1, std::min<size_t>(Opts.Processes ? Opts.Processes : numThreads,
-                          inputExprs.size()));
+                          Cores.size()));
   const unsigned threadsPerShard = std::max<unsigned>(
       1, std::min<size_t>((numThreads + shards - 1) / shards,
-                          (inputExprs.size() + shards - 1) / shards));
+                          (Cores.size() + shards - 1) / shards));
   unsigned coreTimeout = (unsigned)Opts.CoreTimeout;
   unsigned wallBudget = 0; // 0 = wait forever
   if (subgraphBudget > 0) {
     coreTimeout =
         std::min<unsigned>((unsigned)Opts.CoreTimeout, subgraphBudget);
-    unsigned perShard = (unsigned)((inputExprs.size() + shards - 1) / shards);
+    unsigned perShard = (unsigned)((Cores.size() + shards - 1) / shards);
     unsigned rounds = (perShard + threadsPerShard - 1) / threadsPerShard;
     if (rounds == 0)
       rounds = 1;
@@ -228,7 +228,7 @@ Expected<HerbieRunResult> runHerbie(const std::vector<std::string> &inputExprs,
   // The platform name leads the file name so that one device's results are
   // told apart from another's at a glance.
   std::string joinedCores;
-  for (const auto &expr : inputExprs) {
+  for (const auto &expr : Cores) {
     joinedCores += expr;
     joinedCores += '\n';
   }
@@ -320,8 +320,8 @@ Expected<HerbieRunResult> runHerbie(const std::vector<std::string> &inputExprs,
       break;
     }
     std::ofstream input(shardIn[s].c_str());
-    for (size_t k = s; k < inputExprs.size(); k += shards)
-      input << inputExprs[k] << "\n";
+    for (size_t k = s; k < Cores.size(); k += shards)
+      input << Cores[k] << "\n";
     input.close();
     if (!input)
       setupFailed = true;
@@ -340,7 +340,7 @@ Expected<HerbieRunResult> runHerbie(const std::vector<std::string> &inputExprs,
       llvm::errs() << arg << ' ';
     llvm::errs() << '\n';
   }
-  llvm::errs() << "[poseidon] Herbie " << Label << ": " << inputExprs.size()
+  llvm::errs() << "[poseidon] Herbie " << Label << ": " << Cores.size()
                << " FPCore(s) in " << shards << " process(es) of "
                << threadsPerShard << " worker(s), per-core timeout "
                << coreTimeout << " s, wall budget "

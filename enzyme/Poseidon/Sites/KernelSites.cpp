@@ -441,7 +441,7 @@ bool lowerDeviceCallSites(Module &M) {
       }
       auto *FT = FunctionType::get(CB->getType(), {PointerType::getUnqual(C)},
                                    /*isVarArg=*/true);
-      FunctionCallee fn = M.getOrInsertFunction("__poseidon_fp_optimize", FT);
+      FunctionCallee fn = M.getOrInsertFunction(kMarkerName, FT);
       IRBuilder<> Builder(CB);
       CallInst *CI = Builder.CreateCall(FT, fn.getCallee(), args);
       CI->setDebugLoc(CB->getDebugLoc());

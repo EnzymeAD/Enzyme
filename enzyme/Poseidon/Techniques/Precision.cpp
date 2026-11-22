@@ -472,10 +472,9 @@ void setUnifiedAccuracyCost(
       samplesOf(O, *CS.subgraph, valueToNodeMap).points();
 
   // No usable sample means the subgraph cannot be priced: drop its candidates
-  // and keep the original body, without inventing a bound or an accuracy
-  // number.
-  auto unpriceable = [&](const char *why) {
-    CS.unpricedReason = why;
+  // and keep the original body.
+  auto unpriceable = [&](StringRef why) {
+    CS.unpricedReason = why.str();
     llvm::errs() << "[poseidon] subgraph cannot be priced (" << why
                  << "); discarding its " << CS.candidates.size()
                  << " precision candidate(s) and keeping the original body.\n";
