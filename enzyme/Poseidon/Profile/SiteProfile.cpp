@@ -147,11 +147,13 @@ bool profileSite(Session &S, CallInst *CI,
     }
   }
 
-  // The request takes the marker's type. A marker with a fixed list of
-  // parameters (a C++ instantiation) has none for enzyme_primal_return, which
-  // only a variadic one can pass.
+  // The request takes the marker's type when its arguments are that type's
+  // parameters. A marker with a fixed list of parameters (a C++
+  // instantiation) has none for enzyme_primal_return, and has two for a
+  // poseidon_tau and its target, which the request leaves out; the request
+  // then takes a variadic type.
   FunctionType *FT = CI->getFunctionType();
-  if (returnPrimal && !FT->isVarArg())
+  if (!FT->isVarArg() && args.size() != FT->getNumParams())
     FT = FunctionType::get(CI->getType(), {clone->getType()},
                            /*isVarArg=*/true);
   Function *autodiff = Function::Create(FT, GlobalValue::ExternalLinkage,
