@@ -4,6 +4,9 @@
 if(NOT ENZYME_ENABLE_PLUGINS)
   message(FATAL_ERROR "ENZYME_POSEIDON needs ENZYME_ENABLE_PLUGINS")
 endif()
+if(LLVM_VERSION_MAJOR LESS 20)
+  message(FATAL_ERROR "ENZYME_POSEIDON needs LLVM 20 or newer")
+endif()
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
@@ -115,11 +118,25 @@ set(POSEIDON_SRC
 
 set(POSEIDON_PLUGIN_TARGET Poseidon-${LLVM_VERSION_MAJOR})
 if(Clang_FOUND)
-  add_llvm_library(${POSEIDON_PLUGIN_TARGET} ${POSEIDON_SRC} MODULE
-                   PARTIAL_SOURCES_INTENDED PLUGIN_TOOL clang)
+  add_llvm_library(
+    ${POSEIDON_PLUGIN_TARGET}
+    ${POSEIDON_SRC}
+    MODULE
+    PARTIAL_SOURCES_INTENDED
+    PLUGIN_TOOL
+    clang
+    DEPENDS
+    intrinsics_gen)
 else()
-  add_llvm_library(${POSEIDON_PLUGIN_TARGET} ${POSEIDON_SRC} MODULE
-                   PARTIAL_SOURCES_INTENDED PLUGIN_TOOL opt)
+  add_llvm_library(
+    ${POSEIDON_PLUGIN_TARGET}
+    ${POSEIDON_SRC}
+    MODULE
+    PARTIAL_SOURCES_INTENDED
+    PLUGIN_TOOL
+    opt
+    DEPENDS
+    intrinsics_gen)
 endif()
 target_include_directories(
   ${POSEIDON_PLUGIN_TARGET}
@@ -180,7 +197,9 @@ target_include_directories(
 
 set_source_files_properties(
   Techniques/Herbie.cpp
-  PROPERTIES COMPILE_DEFINITIONS HERBIE_BINARY="${POSEIDON_HERBIE_BINARY_PATH}")
+  PROPERTIES
+    COMPILE_DEFINITIONS
+    POSEIDON_HERBIE_DEFAULT_BINARY="${POSEIDON_HERBIE_BINARY_PATH}")
 # The accuracy model emulates the emitted FP32 expansions and the GEMM
 # runtimes bit for bit, and the sampler reproduces the standard library's
 # uniform reals bit for bit; each holds only if every operation is rounded as
@@ -345,10 +364,7 @@ target_compile_features(poseidon_profile_host PRIVATE cxx_std_17)
 option(POSEIDON_TCEC_USE_CUMPSGEMM
        "Build the error-corrected GEMM dispatch, which runs on cuMpSGEMM" OFF)
 set(POSEIDON_CUMPSGEMM_ROOT ""
-    CACHE
-      PATH
-      "cuMpSGEMM checkout the TCEC runtime is built against and applications link
-     against; required by POSEIDON_TCEC_USE_CUMPSGEMM")
+    CACHE PATH "cuMpSGEMM checkout for POSEIDON_TCEC_USE_CUMPSGEMM")
 if(POSEIDON_TCEC_USE_CUMPSGEMM)
   if(NOT CMAKE_CUDA_COMPILER OR NOT POSEIDON_CUMPSGEMM_ROOT)
     message(
@@ -630,7 +646,6 @@ if(TARGET ClangEnzyme-${LLVM_VERSION_MAJOR})
   add_dependencies(poseidon-clang ClangEnzyme-${LLVM_VERSION_MAJOR})
 endif()
 
-# poseidon-clang++ is the same binary; the driver reads its own name.
 add_custom_command(
   TARGET poseidon-clang
   POST_BUILD

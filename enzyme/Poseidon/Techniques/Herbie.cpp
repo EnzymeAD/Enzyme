@@ -106,8 +106,9 @@ static const HerbiePlatform &getHerbiePlatform(Session &S, const Function &F) {
 static HerbieRunOptions herbieRunOptions(Session &S, const Function &F) {
   const Options &O = S.Opts;
   HerbieRunOptions Opts;
-  Opts.Program = O.Herbie.HerbieBinary.empty() ? std::string(HERBIE_BINARY)
-                                               : O.Herbie.HerbieBinary;
+  Opts.Program = O.Herbie.HerbieBinary.empty()
+                     ? std::string(POSEIDON_HERBIE_DEFAULT_BINARY)
+                     : O.Herbie.HerbieBinary;
   Opts.Platform = getHerbiePlatform(S, F);
   Opts.Seed = O.Model.RandomSeed;
   Opts.NumPoints = O.Herbie.HerbieNumPts;
