@@ -1,6 +1,6 @@
 ; REQUIRES: scev-trunc-iv-nowrap
 ; DEFINE: %{opt} = %opt %s %loadPoseidon \
-; DEFINE:   -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" \
+; DEFINE:   -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" \
 ; DEFINE:   -poseidon-profile-use=%S/../Inputs/raise_tcec -poseidon-enable-herbie=false \
 ; DEFINE:   -poseidon-enable-pt=false -poseidon-raise-wmma \
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv \
@@ -13,7 +13,7 @@
 ; RUN: %{opt} -poseidon-cache=%t/tau7 -poseidon-tau=1e-7 -o /dev/null 2>&1 | FileCheck --check-prefix=TAU7 %s
 ; RUN: %{opt} -poseidon-cache=%t/tau10 -poseidon-tau=1e-10 -o /dev/null 2>&1 | FileCheck --check-prefix=TAU10 %s
 ; RUN: %{opt} -poseidon-cache=%t/tau16 -poseidon-unit=tcec -poseidon-tau=1e-16 -o /dev/null 2>&1 | FileCheck --check-prefix=TAU16 %s
-; RUN: %clang -O0 -x ir %t/host.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/raise_tcec -mllvm -poseidon-cache=%t/tau16 -mllvm -poseidon-unit=tcec -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=HOST16 %s
+; RUN: %clang -O0 -x ir -fno-discard-value-names %t/host.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/raise_tcec -mllvm -poseidon-cache=%t/tau16 -mllvm -poseidon-unit=tcec -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=HOST16 %s
 ; RUN: %{opt} -poseidon-cache=%t/off -poseidon-tau=1e-12 -poseidon-ozaki-host-dispatch=false -o /dev/null 2>&1 \
 ; RUN:   | FileCheck --check-prefix=OFF %s
 
@@ -59,6 +59,7 @@
 ; TAU16: wrote descriptor for _Z13matmul_kernelPKdS0_PdS1_: C=arg2 A=arg0 B=arg1 16x16x16 nm=0 (standalone)
 
 ; HOST16: define {{.*}} @_Z28__device_stub__matmul_kernelPKdS0_PdS1_(ptr noundef [[A:%.+]], ptr noundef [[B:%.+]], ptr noundef [[C:%.+]], ptr noundef %{{.+}})
+; HOST16-NEXT: entry:
 ; HOST16-NEXT: call void @__poseidon_ozaki_dgemm(ptr [[C]], ptr [[A]], ptr [[B]], i32 16, i32 16, i32 16, i32 16, i32 0, i32 0, double 1.000000e+00, double 0.000000e+00, ptr null, i32 0)
 
 ; OFF-NOT: ozaki-ii
@@ -77,8 +78,6 @@
 ; --cuda-host-only -O0 -S -emit-llvm, renamed to this module's source and
 ; compiled as the same unit) calls __poseidon_ozaki_dgemm with that nm; nm = 0
 ; is the native cuBLAS DGEMM arm.
-
-; Scalar FMA reduction loop raised in-kernel: direct and TCEC classes priced from the wmma_inkernel_rel fixture rows, the most accurate cost-reducing one (TCEC n=3) materialized; IR and profile from Inputs/raise_tcec/tcec_matmul.cu (clang -O2 -ffp-contract=on --cuda-gpu-arch=sm_120, profiled on an sm_120 GPU).
 
 ; ModuleID = 'tcec_matmul.cu'
 source_filename = "tcec_matmul.cu"

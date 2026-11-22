@@ -1,12 +1,11 @@
 ; REQUIRES: scev-trunc-iv-nowrap
-; DEFINE: %{clang} = %clang -O0 -x ir %loadClangPoseidon \
-; DEFINE:   -mllvm -poseidon-profile-use=%t/prof -mllvm -poseidon-cache=%t/c -S -emit-llvm \
-; DEFINE:   -o -
-; RUN: rm -rf %t && mkdir -p %t/prof
-; RUN: sed '1i CanonicalHash = fea337c617ef94c9' %S/../Inputs/raise_tcec/preprocess_matmul_body.fpprofile > %t/prof/preprocess_matmul_body.fpprofile
+; DEFINE: %{clang} = %clang -O0 -x ir -fno-discard-value-names %loadClangPoseidon \
+; DEFINE:   -mllvm -poseidon-profile-use=%S/../Inputs/raise_tcec \
+; DEFINE:   -mllvm -poseidon-cache=%t/c -S -emit-llvm -o -
+; RUN: rm -rf %t && mkdir %t
 ; RUN: sed 's/ozaki_stub\.cu/tcec_matmul.cu/g' %S/../Inputs/ozaki_dispatch/ozaki_stub_host.ll > %t/same.ll
 ; RUN: sed 's/ozaki_stub\.cu/other_matmul.cu/g' %S/../Inputs/ozaki_dispatch/ozaki_stub_host.ll > %t/other.ll
-; RUN: %opt %S/../Inputs/stale_cache/matmul_device.ll %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%t/prof -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv -poseidon-tau=1e-12 -poseidon-cache=%t/c -poseidon-unit=u -S -o /dev/null 2>&1 | FileCheck --check-prefix=DEV %s
+; RUN: %opt %S/../Inputs/stale_cache/matmul_device.ll %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-profile-use=%S/../Inputs/raise_tcec -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv -poseidon-tau=1e-12 -poseidon-cache=%t/c -poseidon-unit=u -S -o /dev/null 2>&1 | FileCheck --check-prefix=DEV %s
 ; RUN: %{clang} %t/same.ll -mllvm -poseidon-unit=u 2>&1 | FileCheck --check-prefix=SAME %s
 ; RUN: %{clang} %t/other.ll -mllvm -poseidon-unit=u 2>&1 | FileCheck --check-prefix=OTHER --implicit-check-not=__poseidon_ozaki_dgemm %s
 ; RUN: %{clang} %t/same.ll -mllvm -poseidon-unit=v 2>&1 | FileCheck --check-prefix=OTHERUNIT --implicit-check-not=__poseidon_ozaki_dgemm %s
@@ -22,6 +21,7 @@
 
 ; SAME: [ozaki-host-dispatch] replaced stub body _Z28__device_stub__matmul_kernelPKdS0_PdS1_ -> __poseidon_ozaki_dgemm
 ; SAME: define {{.*}} @_Z28__device_stub__matmul_kernelPKdS0_PdS1_(ptr noundef [[A:%.+]], ptr noundef [[B:%.+]], ptr noundef [[C:%.+]], ptr noundef %{{.+}})
+; SAME-NEXT: entry:
 ; SAME-NEXT: call void @__poseidon_ozaki_dgemm(ptr [[C]], ptr [[A]], ptr [[B]], i32 16, {{.*}}, i32 12)
 
 ; OTHER: source_filename = "other_matmul.cu"

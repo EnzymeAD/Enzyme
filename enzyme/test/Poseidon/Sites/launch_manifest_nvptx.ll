@@ -74,14 +74,14 @@
 ; RUN: sed '/^target triple/a @__hip_cuid_0123abcd = global i8 0' %t/unit/host.ll > %t/unit/host_cuid.ll
 ; RUN: sed '/^target triple/a @__hip_cuid_89abcdef = global i8 0' %t/unit/host.ll > %t/unit/host_other_cuid.ll
 ; RUN: %opt %{dev} %{pass} -poseidon-raise-wmma %{flags} -poseidon-cache=%t/unit/options 2>&1 | FileCheck --check-prefix=UNIT-WROTE %s
-; RUN: %clang -O0 -x ir %t/unit/host.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/raise_tcec -mllvm -poseidon-enable-herbie=false -mllvm -poseidon-enable-pt=false -mllvm -poseidon-raise-wmma -mllvm -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv -mllvm -poseidon-tau=1e-12 -mllvm -poseidon-cache=%t/unit/options -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=UNIT-DISPATCH %s
+; RUN: %clang -O0 -x ir -fno-discard-value-names %t/unit/host.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/raise_tcec -mllvm -poseidon-enable-herbie=false -mllvm -poseidon-enable-pt=false -mllvm -poseidon-raise-wmma -mllvm -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv -mllvm -poseidon-tau=1e-12 -mllvm -poseidon-cache=%t/unit/options -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=UNIT-DISPATCH %s
 ; RUN: %clang -O0 -x ir %t/unit/host.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/raise_tcec -mllvm -poseidon-enable-herbie=false -mllvm -poseidon-enable-pt=false -mllvm -poseidon-raise-wmma -mllvm -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv -mllvm -poseidon-tau=1e-7 -mllvm -poseidon-cache=%t/unit/options -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=UNIT-LAUNCH --implicit-check-not=__poseidon_ozaki_dgemm %s
 ; RUN: %opt %t/unit/dev_cuid.ll %{pass} -poseidon-raise-wmma %{flags} -poseidon-cache=%t/unit/cuid 2>&1 | FileCheck --check-prefix=UNIT-WROTE %s
 ; RUN: cat %t/unit/cuid/launches_*.json | FileCheck --check-prefix=UNIT-CUID %s
-; RUN: %clang -O0 -x ir %t/unit/host_cuid.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/raise_tcec -mllvm -poseidon-cache=%t/unit/cuid -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=UNIT-DISPATCH %s
+; RUN: %clang -O0 -x ir -fno-discard-value-names %t/unit/host_cuid.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/raise_tcec -mllvm -poseidon-cache=%t/unit/cuid -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=UNIT-DISPATCH %s
 ; RUN: %clang -O0 -x ir %t/unit/host_other_cuid.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/raise_tcec -mllvm -poseidon-cache=%t/unit/cuid -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=UNIT-LAUNCH --implicit-check-not=__poseidon_ozaki_dgemm %s
 ; RUN: %opt %t/unit/dev_cuid.ll %{pass} -poseidon-raise-wmma %{flags} -poseidon-cache=%t/unit/named -poseidon-unit=u 2>&1 | FileCheck --check-prefix=UNIT-WROTE %s
-; RUN: %clang -O0 -x ir %t/unit/host_other_cuid.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/raise_tcec -mllvm -poseidon-cache=%t/unit/named -mllvm -poseidon-unit=u -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=UNIT-DISPATCH %s
+; RUN: %clang -O0 -x ir -fno-discard-value-names %t/unit/host_other_cuid.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/raise_tcec -mllvm -poseidon-cache=%t/unit/named -mllvm -poseidon-unit=u -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=UNIT-DISPATCH %s
 ; RUN: %clang -O0 -x ir %t/unit/host_cuid.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/raise_tcec -mllvm -poseidon-cache=%t/unit/named -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=UNIT-LAUNCH --implicit-check-not=__poseidon_ozaki_dgemm %s
 
 ; UNIT-WROTE: [ozaki-host-dispatch] wrote descriptor for _Z13matmul_kernelPKdS0_PdS1_: C=arg2 A=arg0 B=arg1 16x16x16 nm=12 (standalone)
@@ -90,6 +90,7 @@
 
 ; UNIT-DISPATCH: [ozaki-host-dispatch] replaced stub body _Z28__device_stub__matmul_kernelPKdS0_PdS1_ -> __poseidon_ozaki_dgemm
 ; UNIT-DISPATCH: define {{.*}} @_Z28__device_stub__matmul_kernelPKdS0_PdS1_(ptr noundef [[A:%.+]], ptr noundef [[B:%.+]], ptr noundef [[C:%.+]], ptr noundef %{{.+}})
+; UNIT-DISPATCH-NEXT: entry:
 ; UNIT-DISPATCH-NEXT: call void @__poseidon_ozaki_dgemm(ptr [[C]], ptr [[A]], ptr [[B]], i32 16, {{.*}}, i32 12)
 
 ; UNIT-LAUNCH: define {{.*}} @_Z28__device_stub__matmul_kernelPKdS0_PdS1_(

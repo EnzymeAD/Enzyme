@@ -1,12 +1,14 @@
 ; RUN: rm -rf %t && mkdir %t
-; RUN: not %opt %s %loadPoseidon -passes=poseidon -poseidon-profile-generate -poseidon-cache=%t/gen -disable-output 2>&1 | FileCheck --check-prefix=ERR %s
-; RUN: not %opt %s %loadPoseidon -passes=poseidon -poseidon-profile-use=%S/../Inputs/other_sites -poseidon-cache=%t/use -disable-output 2>&1 | FileCheck --check-prefix=ERR %s
+; RUN: not %clang -O0 -x ir -Wno-override-module %s %loadClangPoseidon -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/gen -S -emit-llvm -o /dev/null 2>&1 | FileCheck --check-prefix=ERR %s
+; RUN: not %clang -O0 -x ir -Wno-override-module %s %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/other_sites -mllvm -poseidon-cache=%t/use -S -emit-llvm -o /dev/null 2>&1 | FileCheck --check-prefix=ERR %s
 ; RUN: %opt %s %loadPoseidon -passes=poseidon -disable-output 2>&1 | FileCheck --check-prefix=OFF %s
 
 ; A host function carrying POSEIDON_OPTIMIZE whose signature has no activity
 ; for every parameter and its value (annotated_host_function.ll) cannot be a
 ; site: in a compile that generates or uses a profile that is an error, every
 ; such function reported. Without either the function compiles as written.
+; The opt of LLVM 21 and 22 exits at its first error, so the refusing compiles
+; run through clang, which reports every error of a compile.
 
 ; ERR: error: {{.*}}Poseidon: pair returns a value that is not a floating-point or integer scalar, so it cannot be a Poseidon site
 ; ERR: error: {{.*}}Poseidon: vec returns a value that is not a floating-point or integer scalar, so it cannot be a Poseidon site

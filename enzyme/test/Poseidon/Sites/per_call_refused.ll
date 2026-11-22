@@ -1,5 +1,5 @@
 ; RUN: rm -rf %t && split-file %s %t
-; RUN: not %opt %t/host.ll %loadPoseidon -passes=poseidon -poseidon-profile-use=%S/../Inputs/other_sites -poseidon-cache=%t/c -disable-output 2>&1 | FileCheck --check-prefix=ERR %s
+; RUN: not %clang -O0 -x ir -Wno-override-module %t/host.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/other_sites -mllvm -poseidon-cache=%t/c -S -emit-llvm -o /dev/null 2>&1 | FileCheck --check-prefix=ERR %s
 ; RUN: %opt %t/host.ll %loadPoseidon -passes=poseidon -disable-output 2>&1 | FileCheck --check-prefix=OFF %s
 ; RUN: not %opt %t/invoke_nvptx.ll %loadPoseidon -passes=poseidon -poseidon-profile-use=%S/../Inputs/other_sites -poseidon-cache=%t/c -disable-output 2>&1 | FileCheck --check-prefix=INVOKE %s
 
@@ -8,6 +8,9 @@
 ; a warning in any other: the identity's argument is no function, or the
 ; function is variadic, has no body here or is called with another signature.
 ; In device code the copy made for the call is reached through an invoke.
+; The opt of LLVM 21 and 22 exits at its first error, so the compile with
+; several refused calls runs through clang, which reports every error of a
+; compile.
 
 ; INVOKE: error: {{.*}}in function k {{.*}}Poseidon: vol at call 0 in k is reached through an invoke, so this call cannot be a Poseidon site
 
