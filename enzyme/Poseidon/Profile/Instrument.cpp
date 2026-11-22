@@ -49,10 +49,7 @@ static Constant *getStringPointer(Module &M, StringRef gvName,
     gv->setUnnamedAddr(GlobalValue::UnnamedAddr::Global);
     gv->setAlignment(Align(1));
   }
-  Constant *ptr = ConstantExpr::getInBoundsGetElementPtr(
-      gv->getValueType(), gv,
-      ArrayRef<Constant *>{ConstantInt::get(Type::getInt32Ty(Ctx), 0),
-                           ConstantInt::get(Type::getInt32Ty(Ctx), 0)});
+  Constant *ptr = gv;
   if (ptr->getType() != PtrTy)
     ptr = ConstantExpr::getAddrSpaceCast(ptr, PtrTy);
   return ptr;
