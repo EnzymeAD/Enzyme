@@ -456,6 +456,7 @@ if(POSEIDON_ROCM_PATH AND "AMDGPU" IN_LIST LLVM_TARGETS_TO_BUILD)
       ${CMAKE_CURRENT_SOURCE_DIR}/runtime/fpprofiler/FPProfilerCUDA.h
       ${CMAKE_CURRENT_SOURCE_DIR}/runtime/fpprofiler/FPProfileName.h
       ${CMAKE_CURRENT_SOURCE_DIR}/runtime/ozaki/OzakiII.h
+      ${CMAKE_CURRENT_SOURCE_DIR}/runtime/ozaki/ozaki_residue.h
       ${ENZYME_SOURCE_DIR}/include/poseidon/poseidon.h)
   function(poseidon_add_hip_library name)
     set(_objs)
