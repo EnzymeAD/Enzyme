@@ -64,8 +64,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef POSEIDON_PROFILE_H
-#define POSEIDON_PROFILE_H
+#ifndef POSEIDON_POSEIDON_H
+#define POSEIDON_POSEIDON_H
 
 // Both forms carry one argument so that every Poseidon entry of
 // llvm.global.annotations has one type: clang types the array after its first
@@ -271,4 +271,7 @@ __poseidon_device_math(void) {
 #undef POSEIDON_KEEP
 #endif
 
-#endif // POSEIDON_PROFILE_H
+#undef POSEIDON_SITE_HELPER
+#undef POSEIDON_SITE_TARGETS
+
+#endif // POSEIDON_POSEIDON_H
