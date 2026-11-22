@@ -393,8 +393,9 @@ bool lowerPerCallSites(const Options &O, Module &M) {
   // too, so they are read before those calls become marker calls.
   DenseMap<Function *, SmallVector<double, 2>> targets;
   for (CallInst *H : callsOfAny(M, {kPlainIdentityTau, kExplicitIdentityTau}))
-    if (auto *C = dyn_cast<ConstantFP>(H->getArgOperand(1)))
-      targets[H->getFunction()].push_back(C->getValueAPF().convertToDouble());
+    if (H->arg_size() > 1)
+      if (auto *C = dyn_cast<ConstantFP>(H->getArgOperand(1)))
+        targets[H->getFunction()].push_back(C->getValueAPF().convertToDouble());
   bool changed = lowerExplicitCalls(M);
   changed |= routeAutomaticMarkers(M);
   if (isOffloadHostHalf(M))
