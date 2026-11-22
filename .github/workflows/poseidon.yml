@@ -9,7 +9,6 @@ on:
   push:
     branches:
       - main
-      - poseidon
   pull_request:
   merge_group:
 
@@ -84,7 +83,7 @@ jobs:
           # each is UNSUPPORTED and the check above passes while testing
           # nothing that involves a derivative. Tests that also need the GPU
           # toolchains this job does not install are left out.
-          for t in $(grep -rl 'REQUIRES:.*enzyme' "$GITHUB_WORKSPACE"/enzyme/test/Poseidon --include='*.ll' --include='*.c'); do
+          for t in $(grep -rl 'REQUIRES:.*enzyme' "$GITHUB_WORKSPACE"/enzyme/test/Poseidon --include='*.ll' --include='*.c' --include='*.cpp'); do
             case "$t" in */Integration/*) continue ;; esac
             grep -qE 'REQUIRES:.*(nvptx-device-profiler|cuda-runtime|rocm|hip-runtime)' "$t" && continue
             name=${t#"$GITHUB_WORKSPACE"/enzyme/test/Poseidon/}
