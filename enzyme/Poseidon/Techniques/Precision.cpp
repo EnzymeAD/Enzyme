@@ -245,8 +245,6 @@ void PTCandidate::apply(Session &S, Subgraph &subgraph, ValueToValueMapTy *VMap,
   resetExpLimbs(S);
 
   for (auto &change : changes) {
-    SmallPtrSet<Instruction *, 8> seen;
-    SmallVector<Instruction *, 8> todo;
     MapVector<Value *, Value *> oldToNew;
 
     SetVector<Instruction *> instsToChange;
