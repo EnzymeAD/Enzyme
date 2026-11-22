@@ -113,6 +113,8 @@ int main() {
   __poseidon_optimize(shift, x, y6, n, poseidon_tau);
   // LISTS-DAG: per_call_explicit.cpp:[[@LINE+1]]:{{[0-9]+}}: error: Poseidon: this call of shift(double const*, double*, int) gives its accuracy target twice, each time after poseidon_tau; give it once
   __poseidon_optimize(shift, poseidon_tau, 1e-6, poseidon_tau, 1e-7, x, y6, n);
+  // LISTS-DAG: per_call_explicit.cpp:[[@LINE+1]]:{{[0-9]+}}: error: Poseidon: this call uses the value of shift(double const*, double*, int) as another type than it returns; give the call shift(double const*, double*, int)'s return type
+  d += __poseidon_fp_optimize<double>((void *)shift, x, y6, n);
   printf("%d %g\n", p, d);
 #endif
 }

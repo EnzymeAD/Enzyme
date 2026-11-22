@@ -253,16 +253,25 @@ static void callAsWritten(CallInst *marker, Function *fn) {
 // as given, through the plain identity, whose target is added to the caller's
 // `targets`. The host half of a CUDA or HIP compilation holds no site, so there
 // it is the call of fn. Erased, with an error at `call`, when the arguments are
-// not of fn's parameter types.
+// not of fn's parameter types or the call's value is used as another type than
+// fn returns.
 static void asPlainCall(CallBase *call, Function *fn, const CallArguments &list,
                         bool hostHalf,
                         DenseMap<Function *, SmallVector<double, 2>> &targets) {
+  const std::string name = displayName(*fn);
   auto types = map_range(list.own, [](Value *A) { return A->getType(); });
+  std::string why;
   if (call->hasStructRetAttr() ||
-      !llvm::equal(fn->getFunctionType()->params(), types)) {
-    fail(call, "this call passes " + displayName(*fn) +
-                   " arguments of other types than it takes, and none of "
-                   "them is an activity marker; pass its own arguments");
+      !llvm::equal(fn->getFunctionType()->params(), types))
+    why = "this call passes " + name +
+          " arguments of other types than it takes, and none of them is an "
+          "activity marker; pass its own arguments";
+  else if (!call->use_empty() && call->getType() != fn->getReturnType())
+    why = "this call uses the value of " + name +
+          " as another type than it returns; give the call " + name +
+          "'s return type";
+  if (!why.empty()) {
+    fail(call, why);
     if (!call->use_empty())
       call->replaceAllUsesWith(PoisonValue::get(call->getType()));
     call->eraseFromParent();
@@ -294,7 +303,8 @@ static void asPlainCall(CallBase *call, Function *fn, const CallArguments &list,
       Builder.CreateCall(fn->getFunctionType(), callee, list.own);
   direct->setCallingConv(fn->getCallingConv());
   direct->setDebugLoc(call->getDebugLoc());
-  call->replaceAllUsesWith(direct);
+  if (!call->use_empty())
+    call->replaceAllUsesWith(direct);
   call->eraseFromParent();
 }
 
