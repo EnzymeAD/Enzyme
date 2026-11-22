@@ -95,14 +95,18 @@ static std::string hostSiteRefusal(Function &F) {
 // The name of a caller with the accuracy targets of its per-call sites left
 // out. A target the caller takes as a template argument gives it one
 // instantiation, and one name, per target, while the profile of a call does
-// not depend on its target. In an Itanium name a target is a floating-point
-// literal, L, the type, the hex of its bits, E; it becomes the external name
-// `tau`.
+// not depend on its target. In an Itanium name a target is a literal, L, the
+// type, the value, E: a floating-point literal spells the hex of its bits, and
+// a 64-bit unsigned integer that carries the bits of the double, the form a
+// C++17 program uses, spells them in decimal. A spelling runs from its L to its
+// E, so it matches whole literals only; it becomes the external name `tau`.
 static std::string targetFreeName(StringRef name, ArrayRef<double> targets) {
   std::string out = name.str();
   for (double t : targets) {
-    SmallVector<std::string, 2> spellings{
-        "Ld" + utohexstr(bit_cast<uint64_t>(t), /*LowerCase=*/true, 16) + "E"};
+    const uint64_t bits = bit_cast<uint64_t>(t);
+    SmallVector<std::string, 4> spellings{
+        "Ld" + utohexstr(bits, /*LowerCase=*/true, 16) + "E",
+        "Lm" + utostr(bits) + "E", "Ly" + utostr(bits) + "E"};
     if (float f = (float)t; (double)f == t)
       spellings.push_back(
           "Lf" + utohexstr(bit_cast<uint32_t>(f), /*LowerCase=*/true, 8) + "E");
