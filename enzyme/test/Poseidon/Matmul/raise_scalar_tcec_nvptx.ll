@@ -1,6 +1,6 @@
 ; REQUIRES: scev-trunc-iv-nowrap
 ; DEFINE: %{opt} = %opt %loadPoseidon \
-; DEFINE:   -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" \
+; DEFINE:   -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" \
 ; DEFINE:   -poseidon-profile-use=%S/../Inputs/raise_tcec -poseidon-enable-herbie=false \
 ; DEFINE:   -poseidon-enable-pt=false -poseidon-raise-wmma \
 ; DEFINE:   -poseidon-ozaki-host-dispatch=false \

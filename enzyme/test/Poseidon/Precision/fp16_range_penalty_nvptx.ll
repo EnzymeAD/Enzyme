@@ -1,5 +1,5 @@
 ; DEFINE: %{opt} = %opt %s %loadPoseidon \
-; DEFINE:   -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" \
+; DEFINE:   -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" \
 ; DEFINE:   -poseidon-enable-herbie=false -poseidon-enable-pt=true \
 ; DEFINE:   -poseidon-enable-multifloat=false -poseidon-two-tier-step=100 \
 ; DEFINE:   -poseidon-enable-three-tier=false \
@@ -54,8 +54,9 @@
 ; accuracy cost is non-finite and the DP never selects it: at a budget only FP16
 ; reaches, the in_range solve applies it and the out_of_range solve applies
 ; nothing; at a budget FP32 reaches, both take FP32.
-; IR: Inputs/fp16_range/fp16_range.cu via clang -x cuda --cuda-device-only
-; --cuda-gpu-arch=sm_120 -O2 -ffp-contract=on -I<enzyme>/include -S -emit-llvm.
+; The IR is from Inputs/fp16_range/fp16_range.cu via clang -x cuda
+; --cuda-device-only --cuda-gpu-arch=sm_120 -O2 -ffp-contract=on
+; -I<enzyme>/include -S -emit-llvm.
 ; Profiles: the same source through poseidon-clang++ -poseidon-profile-generate,
 ; run with argument 1 (in_range) and 1000 (out_of_range). The cost model prices
 ; half at half the float price (Inputs/make_cost_models.py).

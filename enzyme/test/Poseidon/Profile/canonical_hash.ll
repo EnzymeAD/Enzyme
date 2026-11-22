@@ -1,9 +1,8 @@
-; REQUIRES: enzyme
-; RUN: %opt < %s %loadPoseidonEnzyme -passes="poseidon,enzyme,poseidon-finalize" -enzyme-preopt=false -poseidon-profile-generate -S | FileCheck %s --check-prefix=GEN
-; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/canonical_hash -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache= -S 2>&1 | FileCheck %s --check-prefix=MATCH
+; RUN: %if enzyme %{ %opt < %s %loadPoseidonEnzyme -passes="poseidon,enzyme,poseidon-finalize" -enzyme-preopt=false -poseidon-profile-generate -S | FileCheck %s --check-prefix=GEN %}
+; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/fma_opt_profiles -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache= -S 2>&1 | FileCheck %s --check-prefix=MATCH
 ; RUN: not %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/canonical_hash_missing -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache= -S 2>&1 | FileCheck %s --check-prefix=NOFIELD
 ; RUN: sed '/^define double @tester/,/^}/s|%mul = fmul fast double %add, %z|%extra = fmul fast double %add, %add\n  %mul = fmul fast double %extra, %z|' %s > %t.drift.ll
-; RUN: not %opt < %t.drift.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/canonical_hash -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache= -S 2>&1 | FileCheck %s --check-prefix=DRIFT
+; RUN: not %opt < %t.drift.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/fma_opt_profiles -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache= -S 2>&1 | FileCheck %s --check-prefix=DRIFT
 
 ; The profile's slot indices are positions in the canonicalized clone's
 ; optimizable instruction sequence, so the profile carries a digest of that
@@ -34,5 +33,6 @@ attributes #0 = { "target-cpu"="x86-64" }
 ; MATCH-NOT: recorded against a different canonical form
 
 ; NOFIELD: Poseidon: {{.*}}canonical_hash_missing{{.*}} has no CanonicalHash field, so its slot indices cannot be checked against the canonical form of preprocess_tester; re-run profile generation.
+; NOFIELD-NOT: is not verified against the profile
 
 ; DRIFT: Poseidon: the profile of preprocess_tester was recorded against a different canonical form (profile CanonicalHash f9f2bd660c90d989, this compile {{[0-9a-f]+}})

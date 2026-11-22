@@ -11,7 +11,7 @@
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv -poseidon-early-prune=false \
 ; DEFINE:   -poseidon-cost-budget=-0.99 -poseidon-print -poseidon-show-table -S
 ; DEFINE: %{fms} = %opt %S/../Expansion/ds_expansion_nvptx.ll %loadPoseidon \
-; DEFINE:   -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" \
+; DEFINE:   -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" \
 ; DEFINE:   -poseidon-profile-use=%S/../Inputs/ds_expansion -poseidon-enable-herbie=false \
 ; DEFINE:   -poseidon-enable-pt=true -poseidon-enable-multifloat=true -poseidon-two-tier-step=100 \
 ; DEFINE:   -poseidon-enable-three-tier=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv \

@@ -7,13 +7,13 @@
 // RUN: diff %t/last.expected %t/last/k_ran.fpprofile
 // RUN: FileCheck --check-prefix=NEVER %s < %t/last/k_never.fpprofile
 
-// The two exit writers of a profile-generate CUDA or HIP program, without a
-// GPU: the device profiler's is played by deviceWriter, which writes what it
-// writes for a kernel that ran and reports it as the device profiler does. Both
-// kernels' headers are registered with the host profiler, as the host half of
-// their unit registers them. Whichever exit handler runs first, the kernel that
-// ran keeps exactly the device writer's profile and the one that never ran
-// gets its header and `Executed = 0`.
+// The two exit writers of a profile-generate CUDA or HIP program, without
+// a GPU: the device profiler's is played by deviceWriter, which writes what
+// it writes for a kernel that ran and reports it as the device profiler does.
+// Both kernels' headers are registered with the host profiler, as the host
+// half of their unit registers them. Whichever exit handler runs first, the
+// kernel that ran keeps exactly the device writer's profile and the one that
+// never ran gets its header and `Executed = 0`.
 
 #include <cstdio>
 #include <cstdlib>

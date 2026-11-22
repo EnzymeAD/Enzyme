@@ -11,7 +11,8 @@
 // RUN: cp %cost_models/cm_sm_120_synthetic_dispatch.csv %t/cm/cm.csv
 // RUN: env PATH=%t/bin %t/bin/poseidon-calibrate --gpu 0 --only tcec --out %t/cm/cm.csv | FileCheck --check-prefix=ARM %s
 // RUN: diff %cost_models/cm_sm_120_synthetic_dispatch.csv %t/cm/cm.csv
-// RUN: (env PATH=%t/bin %t/bin/poseidon-calibrate --gpu 0 --check --out %t/cm/cm.csv || true) | FileCheck --check-prefix=CHECK %s
+// RUN: not env PATH=%t/bin %t/bin/poseidon-calibrate --gpu 0 --check --out %t/cm/cm.csv | FileCheck --check-prefix=CHECK %s
 
 // ARM: [calibrate] tcec: this build has no error-corrected dispatch, which needs cuMpSGEMM (configure with -DPOSEIDON_TCEC_USE_CUMPSGEMM=ON -DPOSEIDON_CUMPSGEMM_ROOT=<checkout>); its row stays absent
+// CHECK-NOT: MISSING {{.*}}tcec_dispatch_rel
 // CHECK: n/a         tcec_dispatch_rel  (error-corrected host dispatch: none in a build without cuMpSGEMM)

@@ -19,7 +19,7 @@
 ; RUN: sed "s/sm_120/sm_90/" %s > %t/nv/sm90.ll
 ; RUN: cp %cost_models/cm_sm_120_synthetic.csv %t/nv/nocm/
 ; RUN: cp %cost_models/cm_sm_120_synthetic.csv %cost_models/cm_sm_120_synthetic.herbie.rkt %t/nv/recal/ && echo ";; recalibrated" >> %t/nv/recal/cm_sm_120_synthetic.herbie.rkt
-; RUN: %opt < %s %{opt} -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cache=%t/nv/cache 2>&1 | FileCheck --check-prefix=NV-MATCH %s
+; RUN: %opt < %s %{opt} -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cache=%t/nv/cache 2>&1 | FileCheck --check-prefix=NV-MATCH %s
 ; RUN: not %opt < %t/nv/sm90.ll %{opt} -passes="poseidon,poseidon-finalize" -poseidon-cost-model=%cost_models/cm_sm_90_synthetic.csv -poseidon-cache=%t/nv/cache 2>&1 | FileCheck --check-prefix=NV-OTHERARCH %s
 ; RUN: not %opt < %s %{opt} -passes="poseidon,poseidon-finalize" -poseidon-cost-model=%t/nv/nocm/cm_sm_120_synthetic.csv -poseidon-cache=%t/nv/nocm-cache 2>&1 | FileCheck --check-prefix=NV-NOPLATFORM %s
 ; RUN: not %opt < %s %{opt} -passes="poseidon,poseidon-finalize" -poseidon-cost-model=%t/nv/recal/cm_sm_120_synthetic.csv -poseidon-cache=%t/nv/cache 2>&1 | FileCheck --check-prefix=NV-RECALIBRATED %s
@@ -54,7 +54,7 @@
 ; RUN: %if amdgpu-registered-target %{ %poseidon_calibrate --only herbie-platform --out %t/amd/cm/cm_gfx90a_Fixture.csv > /dev/null %}
 ; RUN: %if amdgpu-registered-target %{ FileCheck --check-prefix=AMD-PLATFORM90A %s < %t/amd/cm/cm_gfx90a_Fixture.herbie.rkt %}
 ; RUN: %if amdgpu-registered-target %{ cp %S/../Inputs/fma_opt_cache/cachedHerbieOutput_default_06F0ECDBFA1A458D.txt %t/amd/cache/cachedHerbieOutput_hip-gfx942_70805211AE06B2CB.txt %}
-; RUN: %if amdgpu-registered-target %{ %opt < %t/amd/k.ll %{opt} -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-cost-model=%t/amd/cm/cm_gfx942_Fixture.csv -poseidon-cache=%t/amd/cache 2>&1 | FileCheck --check-prefix=AMD-MATCH %s %}
+; RUN: %if amdgpu-registered-target %{ %opt < %t/amd/k.ll %{opt} -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-cost-model=%t/amd/cm/cm_gfx942_Fixture.csv -poseidon-cache=%t/amd/cache 2>&1 | FileCheck --check-prefix=AMD-MATCH %s %}
 ; RUN: %if amdgpu-registered-target %{ not %opt < %t/amd/k.ll %{opt} -passes="poseidon,poseidon-finalize" -poseidon-cost-model=%t/amd/nocm/cm_gfx942_Fixture.csv -poseidon-cache=%t/amd/nocm-cache 2>&1 | FileCheck --check-prefix=AMD-NOPLATFORM %s %}
 
 ; AMD-CALIBRATE: [calibrate] wrote {{.*}}cm_gfx942_Fixture.herbie.rkt

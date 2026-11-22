@@ -1,6 +1,6 @@
 ; REQUIRES: scev-trunc-iv-nowrap
 ; DEFINE: %{opt} = %opt %s %loadPoseidon \
-; DEFINE:   -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" \
+; DEFINE:   -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" \
 ; DEFINE:   -poseidon-enable-herbie=false -poseidon-raise-wmma \
 ; DEFINE:   -poseidon-ozaki-host-dispatch=false \
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv \

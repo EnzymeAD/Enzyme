@@ -1,6 +1,6 @@
 ; REQUIRES: scev-trunc-iv-nowrap, tcec-cumpsgemm
 ; DEFINE: %{opt} = %opt %S/../Inputs/stale_cache/matmul_device.ll %loadPoseidon \
-; DEFINE:   -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" \
+; DEFINE:   -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" \
 ; DEFINE:   -poseidon-profile-use=%S/../Inputs/fp16_range/matmul_tiny \
 ; DEFINE:   -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma \
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_tcec.csv -S -o /dev/null

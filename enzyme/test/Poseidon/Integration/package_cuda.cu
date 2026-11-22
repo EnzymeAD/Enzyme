@@ -1,7 +1,7 @@
 // REQUIRES: enzyme, cuda-runtime
 // RUN: rm -rf %t && mkdir %t
 // RUN: %cmake %cmake_generator -S %S/../Inputs/package -B %t/gen -DCMAKE_CXX_COMPILER=%clang++ -DCMAKE_CUDA_COMPILER=%clang++ -DCMAKE_CUDA_ARCHITECTURES=OFF "-DCMAKE_CUDA_FLAGS=--cuda-gpu-arch=%gpu_arch -O3" -DCUDAToolkit_ROOT=/usr/local/cuda -DWITH_CUDA=ON -DTWO_TU=%S/../Inputs/two_tu -DPoseidon_DIR=%poseidon_package_dir -DPOSEIDON_MODE=instrument > /dev/null
-// RUN: %cmake --build %t/gen > %t/gen.log 2>&1
+// RUN: %cmake --build %t/gen
 // RUN: env POSEIDON_PROFILE_DIR=%t/prof %t/gen/app | FileCheck --check-prefix=OUT %s
 // RUN: ls %t/prof | FileCheck --check-prefix=PROF %s
 // RUN: cat %t/prof/preprocess__Z9hooke_volRK4mat3fPf.poseidon._Z6vol_atPKffi.0.fpprofile | FileCheck --check-prefix=MERGED %s

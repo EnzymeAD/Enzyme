@@ -2,19 +2,19 @@
 // RUN: rm -rf %t && mkdir %t
 // RUN: %poseidon_clangxx -O2 -poseidon-profile-generate -poseidon-cache=%t/c %s -o %t/a
 // RUN: %poseidon_clangxx -O2 -poseidon-profile-generate -poseidon-cache=%t/c -DPROGRAM_B %s -o %t/b
-// RUN: env POSEIDON_PROBE=1 POSEIDON_PROBE_LADDER=1e-6 POSEIDON_PROFILE_DIR=%t/prof %t/a > /dev/null 2> %t/a.err
+// RUN: env POSEIDON_PROBE=1 POSEIDON_PROBE_LADDER=1e-6 POSEIDON_PROFILE_DIR=%t/prof %t/a > /dev/null
 // RUN: cp %t/prof/preprocess__Z1fPKdPdi_poseidon_body.fpprofile %t/f.a
 // RUN: env POSEIDON_PROBE=1 POSEIDON_PROBE_LADDER=1e-6 POSEIDON_PROFILE_DIR=%t/prof %t/b > /dev/null 2> %t/b.err
 // RUN: cmp %t/f.a %t/prof/preprocess__Z1fPKdPdi_poseidon_body.fpprofile
 // RUN: FileCheck --check-prefix=MEASURED %s < %t/prof/preprocess__Z1fPKdPdi_poseidon_body.fpprofile
 // RUN: FileCheck --check-prefix=MEASURED %s < %t/prof/preprocess__Z1gPKdPdi_poseidon_body.fpprofile
 // RUN: FileCheck --check-prefix=PROBE %s < %t/b.err
-// RUN: env POSEIDON_PROBE=0 POSEIDON_PROFILE_DIR=%t/declined %t/a > /dev/null 2>&1
-// RUN: env POSEIDON_PROBE=1 POSEIDON_PROBE_LADDER=1e-6 POSEIDON_PROFILE_DIR=%t/declined %t/b > /dev/null 2>&1
+// RUN: env POSEIDON_PROBE=0 POSEIDON_PROFILE_DIR=%t/declined %t/a > /dev/null
+// RUN: env POSEIDON_PROBE=1 POSEIDON_PROBE_LADDER=1e-6 POSEIDON_PROFILE_DIR=%t/declined %t/b > /dev/null
 // RUN: FileCheck --check-prefix=NOKAPPA %s < %t/declined/preprocess__Z1fPKdPdi_poseidon_body.fpprofile
 // RUN: FileCheck --check-prefix=MEASURED %s < %t/declined/preprocess__Z1gPKdPdi_poseidon_body.fpprofile
-// RUN: env POSEIDON_PROFILE_DIR=%t/only %t/b > /dev/null 2>&1
-// RUN: env POSEIDON_PROFILE_DIR=%t/only %t/b > /dev/null 2>&1
+// RUN: env POSEIDON_PROFILE_DIR=%t/only %t/b > /dev/null
+// RUN: env POSEIDON_PROFILE_DIR=%t/only %t/b > /dev/null
 // RUN: FileCheck --check-prefix=NEVER %s < %t/only/preprocess__Z1fPKdPdi_poseidon_body.fpprofile
 
 // Two programs share the sites f, g and h and write one profile directory:

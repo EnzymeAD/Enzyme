@@ -1,4 +1,4 @@
-; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -S | FileCheck %s
+; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -S | FileCheck %s
 
 define double @tester(double %x, double %y) {
 entry:

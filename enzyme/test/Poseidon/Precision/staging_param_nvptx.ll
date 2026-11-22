@@ -1,5 +1,5 @@
 ; DEFINE: %{opt} = %opt %s %loadPoseidon \
-; DEFINE:   -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" \
+; DEFINE:   -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" \
 ; DEFINE:   -poseidon-profile-use=%S/../Inputs/staging_param -poseidon-enable-herbie=false \
 ; DEFINE:   -poseidon-enable-pt=true -poseidon-two-tier-step=100 \
 ; DEFINE:   -poseidon-enable-three-tier=false -poseidon-ozaki-host-dispatch=false \

@@ -1,5 +1,5 @@
 ; RUN: rm -rf %t && mkdir %t
-; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-use=%S/../Inputs/ds_expansion -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-enable-multifloat=true -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cache=%t/c -poseidon-cost-budget=-1e-9 -poseidon-print -S > %t/out 2>&1
+; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-profile-use=%S/../Inputs/ds_expansion -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-enable-multifloat=true -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cache=%t/c -poseidon-cost-budget=-1e-9 -poseidon-print -S > %t/out 2>&1
 ; RUN: FileCheck %s < %t/out
 ; RUN: FileCheck --check-prefix=CLEAN %s < %t/out
 ; RUN: mkdir -p %t/noscalar && grep -v '^# scalar_types=' %cost_models/cm_sm_120_synthetic.csv > %t/noscalar/cm.csv

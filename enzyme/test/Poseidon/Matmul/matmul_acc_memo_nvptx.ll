@@ -1,6 +1,6 @@
 ; REQUIRES: scev-trunc-iv-nowrap
 ; DEFINE: %{opt} = %opt %S/../Inputs/stale_cache/matmul_device.ll %loadPoseidon \
-; DEFINE:   -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" \
+; DEFINE:   -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" \
 ; DEFINE:   -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma \
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv \
 ; DEFINE:   -poseidon-tau=1e-12 -poseidon-print -S -o /dev/null
@@ -45,12 +45,11 @@
 ; same name with the numbers 0 0 (an FP16 product accurate to every tolerance),
 ; is a miss because it does not carry its key: the second compile computes the
 ; same domain errors and pick as the first.
-; RUN: mkdir %t/key %t/key/prof %t/key/seeded
-; RUN: sed '1i CanonicalHash = fea337c617ef94c9' %S/../Inputs/raise_tcec/preprocess_matmul_body.fpprofile > %t/key/prof/preprocess_matmul_body.fpprofile
-; RUN: %{opt} -poseidon-profile-use=%t/key/prof -poseidon-cache=%t/key/first 2>&1 | FileCheck --check-prefixes=KEY-FIRST,KEY-PRICED %s
+; RUN: mkdir %t/key %t/key/seeded
+; RUN: %{opt} %{prof} -poseidon-cache=%t/key/first 2>&1 | FileCheck --check-prefixes=KEY-FIRST,KEY-PRICED %s
 ; RUN: ls %t/key/first | FileCheck --check-prefix=KEY-MEMO %s
 ; RUN: for f in %t/key/first/matmulacc_*; do echo '0 0' > %t/key/seeded/$(basename $f); done
-; RUN: %{opt} -poseidon-profile-use=%t/key/prof -poseidon-cache=%t/key/seeded 2>&1 | FileCheck --check-prefix=KEY-PRICED %s
+; RUN: %{opt} %{prof} -poseidon-cache=%t/key/seeded 2>&1 | FileCheck --check-prefix=KEY-PRICED %s
 
 ; KEY-FIRST: DOMERR matmul in=f16 acc=f32 p95_relErr=3.137966e-04
 

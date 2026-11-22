@@ -39,10 +39,9 @@
 
 ; With the same module and answer, the rewrite id the solve's _rewrites.json
 ; gives the applied rewrite is the id both compiles' explain reports give it.
-; RUN: mkdir %t/ids %t/ids/prof
-; RUN: sed '1i CanonicalHash = 1fa032681b79bf6d' %S/../Inputs/regime_split/profiles/preprocess_tester.fpprofile > %t/ids/prof/preprocess_tester.fpprofile
-; RUN: %{keys} -poseidon-profile-use=%t/ids/prof -poseidon-cache=%t/ids/c -poseidon-report-path=%t/ids/solve -S -o /dev/null 2>&1 | FileCheck --check-prefix=IDS-SOLVE %s
-; RUN: %{keys} -poseidon-profile-use=%t/ids/prof -poseidon-cache=%t/ids/c -poseidon-report-path=%t/ids/hit -S -o /dev/null 2>&1 | FileCheck --check-prefix=IDS-HIT %s
+; RUN: mkdir %t/ids
+; RUN: %{keys} -poseidon-profile-use=%S/../Inputs/regime_split/profiles -poseidon-cache=%t/ids/c -poseidon-report-path=%t/ids/solve -S -o /dev/null 2>&1 | FileCheck --check-prefix=IDS-SOLVE %s
+; RUN: %{keys} -poseidon-profile-use=%S/../Inputs/regime_split/profiles -poseidon-cache=%t/ids/c -poseidon-report-path=%t/ids/hit -S -o /dev/null 2>&1 | FileCheck --check-prefix=IDS-HIT %s
 ; RUN: FileCheck --check-prefix=IDS-REWRITES %s < %t/ids/solve/preprocess_tester_rewrites.json
 ; RUN: sed -n 's/^ *"id": "\(R[0-9]*_[0-9]*\)",$/\1/p' %t/ids/solve/preprocess_tester_rewrites.json > %t/ids/solve.id
 ; RUN: FileCheck --check-prefix=IDS-EXPLAIN -DID=$(cat %t/ids/solve.id) %s < %t/ids/solve/preprocess_tester.explain.json

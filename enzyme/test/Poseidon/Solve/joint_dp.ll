@@ -1,5 +1,5 @@
 ; DEFINE: %{pass} = %loadPoseidon -passes="poseidon,poseidon-finalize"
-; DEFINE: %{passfn} = %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)"
+; DEFINE: %{passfn} = %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)"
 ; DEFINE: %{prof} = -poseidon-profile-use=%S/../Inputs/joint_profiles
 ; DEFINE: %{cm} = -poseidon-cost-model=%cost_models/cm_cpu_native.csv
 ; RUN: rm -rf %t && mkdir %t

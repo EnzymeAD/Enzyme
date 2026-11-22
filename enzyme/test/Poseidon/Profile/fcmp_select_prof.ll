@@ -1,5 +1,5 @@
 ; REQUIRES: enzyme
-; RUN: %opt < %s %loadPoseidonEnzyme -passes="poseidon,enzyme,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-profile-generate -S | FileCheck %s
+; RUN: %opt < %s %loadPoseidonEnzyme -passes="poseidon,enzyme,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-profile-generate -S | FileCheck %s
 
 define double @test_maxnum_zero(double %x) {
 entry:

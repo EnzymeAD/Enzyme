@@ -7,5 +7,3 @@
 // the entry names), and every option this clang offers for completion that
 // takes one is in the table or among the JoinedAndSeparate ones matched by
 // prefix. The script queries the clang binary, so no clang sources are needed.
-
-int main(void) { return 0; }

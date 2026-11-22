@@ -1,15 +1,15 @@
 ; DEFINE: %{opt} = %opt %s %loadPoseidon -poseidon-profile-use=%S/../Inputs/joint_profiles \
 ; DEFINE:   -poseidon-enable-herbie=false -poseidon-enable-pt=true -S
 ; RUN: rm -rf %t && mkdir %t
-; RUN: %{opt} -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-print -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache=%t/native 2>&1 \
+; RUN: %{opt} -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-print -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache=%t/native 2>&1 \
 ; RUN:   | FileCheck --check-prefix=NATIVE %s
-; RUN: not %{opt} -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-print -poseidon-cost-model=%cost_models/cm_cpu_missing.csv -poseidon-cache=%t/missing 2>&1 \
+; RUN: not %{opt} -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-print -poseidon-cost-model=%cost_models/cm_cpu_missing.csv -poseidon-cache=%t/missing 2>&1 \
 ; RUN:   | FileCheck --check-prefix=MISSING %s
-; RUN: not %{opt} -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-print -poseidon-cost-model=%cost_models/cm_cpu_foreign.csv -poseidon-cache=%t/foreign 2>&1 \
+; RUN: not %{opt} -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-print -poseidon-cost-model=%cost_models/cm_cpu_foreign.csv -poseidon-cache=%t/foreign 2>&1 \
 ; RUN:   | FileCheck --check-prefix=FOREIGN %s
-; RUN: not %{opt} -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-print -poseidon-cost-model=%cost_models/cm_cpu_noarch.csv -poseidon-cache=%t/noarch 2>&1 \
+; RUN: not %{opt} -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-print -poseidon-cost-model=%cost_models/cm_cpu_noarch.csv -poseidon-cache=%t/noarch 2>&1 \
 ; RUN:   | FileCheck --check-prefix=NOARCH %s
-; RUN: not %{opt} -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-print -poseidon-cache=%t/none 2>&1 \
+; RUN: not %{opt} -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-print -poseidon-cache=%t/none 2>&1 \
 ; RUN:   | FileCheck --check-prefix=NOMODEL %s
 ; RUN: (cat %cost_models/cm_cpu_native.csv; echo 'fadd,float,1') > %t/twice.csv
 ; RUN: not %{opt} -passes="poseidon,poseidon-finalize" -poseidon-cost-model=%t/twice.csv -poseidon-cache=%t/twice 2>&1 \

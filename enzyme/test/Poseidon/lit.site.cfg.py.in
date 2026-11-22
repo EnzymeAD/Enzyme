@@ -14,14 +14,14 @@ poseidon_plugin = "@POSEIDON_BINARY_DIR@/lib/Poseidon-@LLVM_VERSION_MAJOR@" + co
 enzyme_clang_plugin = "@POSEIDON_ENZYME_CLANG_PLUGIN@"
 enzyme_opt_plugin = "@POSEIDON_ENZYME_OPT_PLUGIN@"
 
-# Longest name first: lit applies substitutions in list order, so a shorter
-# name that is a prefix of a longer one has to come after it.
 # Before LLVM 22 clang parses -mllvm before loading -fpass-plugin, so the
 # plugin's options exist only if it is also loaded with -load.
 def clang_load(plugin):
     if int(config.llvm_ver) < 22:
         return '-fpass-plugin=' + plugin + ' -Xclang -load -Xclang ' + plugin
     return '-fpass-plugin=' + plugin
+# Longest name first: lit applies substitutions in list order, so a shorter
+# name that is a prefix of a longer one has to come after it.
 config.substitutions.append(('%loadClangPoseidonEnzyme',
                              clang_load(poseidon_plugin) + ' ' +
                              clang_load(enzyme_clang_plugin)))
@@ -61,7 +61,6 @@ config.substitutions.append(('%shlibext', config.llvm_shlib_ext))
 config.substitutions.append(('%opt', config.llvm_tools_dir + "/opt"))
 # %clang++ is %clang followed by ++, as in Enzyme's suites.
 config.substitutions.append(('%clang', config.llvm_tools_dir + "/clang"))
-config.substitutions.append(('%simplifycfg', 'simplifycfg'))
 
 config.substitutions.append(('%poseidon_profile_cuda_lib', '@POSEIDON_BINARY_DIR@/lib/libposeidon_profile_cuda.a'))
 config.substitutions.append(('%poseidon_profile_lib', '@POSEIDON_BINARY_DIR@/lib/libposeidon_profile.a'))

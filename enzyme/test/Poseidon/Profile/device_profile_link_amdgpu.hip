@@ -4,8 +4,8 @@
 // RUN: rm -rf %t && mkdir %t
 // RUN: %{clang} --offload-arch=%amdgpu_arch --cuda-device-only -O2 -S -emit-llvm -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c -mllvm -poseidon-unit=scale -o %t/dev.ll
 // RUN: FileCheck --check-prefix=DEV %s < %t/dev.ll
-// RUN: mkdir -p %t/tmp && env TMPDIR=%t/tmp not %clang -x hip --offload-arch=gfx1100 --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c1100 -mllvm -poseidon-unit=scale %s -o %t/other.ll 2>&1 | FileCheck --check-prefix=ARCH --implicit-check-not=PLEASE %s
-// RUN: mkdir -p %t/tmpg && env TMPDIR=%t/tmpg not %clang -x hip --offload-arch=gfx1100 --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -g -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c1100g -mllvm -poseidon-unit=scale %s -o %t/other-g.ll 2>&1 | FileCheck --check-prefix=ARCH --implicit-check-not=PLEASE %s
+// RUN: mkdir -p %t/tmp && not env TMPDIR=%t/tmp %clang -x hip --offload-arch=gfx1100 --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c1100 -mllvm -poseidon-unit=scale %s -o %t/other.ll 2>&1 | FileCheck --check-prefix=ARCH --implicit-check-not=PLEASE %s
+// RUN: mkdir -p %t/tmpg && not env TMPDIR=%t/tmpg %clang -x hip --offload-arch=gfx1100 --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -g -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c1100g -mllvm -poseidon-unit=scale %s -o %t/other-g.ll 2>&1 | FileCheck --check-prefix=ARCH --implicit-check-not=PLEASE %s
 // RUN: ls %t/tmpg | count 0
 // RUN: not ls %t/c1100/launches_* %t/c1100g/launches_*
 // RUN: ls %t/tmp | count 0

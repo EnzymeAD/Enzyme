@@ -1,5 +1,5 @@
 ; REQUIRES: enzyme
-; RUN: %opt < %s %loadPoseidonEnzyme -passes="poseidon,enzyme,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -enzyme-preopt=false -poseidon-profile-generate -S | FileCheck %s
+; RUN: %opt < %s %loadPoseidonEnzyme -passes="poseidon,enzyme,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -enzyme-preopt=false -poseidon-profile-generate -S | FileCheck %s
 
 define double @tester(double %x, double %y) {
 entry:

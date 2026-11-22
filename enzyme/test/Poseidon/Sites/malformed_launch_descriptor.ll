@@ -1,15 +1,15 @@
-; DEFINE: %{clang} = not %clang -O0 -x ir -mllvm -poseidon-cache=%t -mllvm -poseidon-unit=fixture -S -emit-llvm -o /dev/null %loadClangPoseidon
+; DEFINE: %{clang} = %clang -O0 -x ir -mllvm -poseidon-cache=%t -mllvm -poseidon-unit=fixture -S -emit-llvm -o /dev/null %loadClangPoseidon
 ; RUN: rm -rf %t && mkdir -p %t
 ; RUN: cp %S/../Inputs/hoststub_cache/launches_*.json %S/../Inputs/lambda_stub/launches_*.json %t/
 ; RUN: sed -i 's/ 0 0 0 2"/ 0 0 0"/' %t/launches_hoststub.cu_*.json
-; RUN: %{clang} %s -mllvm -poseidon-profile-use=%S/../Inputs/hoststub_cache 2>&1 | FileCheck --check-prefix=SHORT %s
+; RUN: not %{clang} %s -mllvm -poseidon-profile-use=%S/../Inputs/hoststub_cache 2>&1 | FileCheck --check-prefix=SHORT %s
 ; RUN: sed -i 's/ 0 0 0"/ 0 0 0 2"/; s/2 0 1 0 1 3 128/2 0 1 0 1 99 128/' %t/launches_hoststub.cu_*.json
-; RUN: %{clang} %s -mllvm -poseidon-profile-use=%S/../Inputs/hoststub_cache 2>&1 | FileCheck --check-prefix=MODULI %s
+; RUN: not %{clang} %s -mllvm -poseidon-profile-use=%S/../Inputs/hoststub_cache 2>&1 | FileCheck --check-prefix=MODULI %s
 ; RUN: sed 's/hoststub\.cu/lambda_stub.cu/' %s > %t/lambda.ll
 ; RUN: sed -i 's/ off 16 40 64"/ off 16 40"/' %t/launches_lambda_stub.cu_*.json
-; RUN: %{clang} %t/lambda.ll -mllvm -poseidon-profile-generate 2>&1 | FileCheck --check-prefix=OFFSETS %s
+; RUN: not %{clang} %t/lambda.ll -mllvm -poseidon-profile-generate 2>&1 | FileCheck --check-prefix=OFFSETS %s
 ; RUN: sed -i 's/"_Z11gemm_kernelPKdS0_Pd [^"]*"/7/' %t/launches_hoststub.cu_*.json
-; RUN: %{clang} %s -mllvm -poseidon-profile-use=%S/../Inputs/hoststub_cache 2>&1 | FileCheck --check-prefix=NOTSTRING %s
+; RUN: not %{clang} %s -mllvm -poseidon-profile-use=%S/../Inputs/hoststub_cache 2>&1 | FileCheck --check-prefix=NOTSTRING %s
 
 ; A descriptor of the launch manifest the device compile wrote into the cache
 ; that does not parse stops the host compile, naming the manifest and the

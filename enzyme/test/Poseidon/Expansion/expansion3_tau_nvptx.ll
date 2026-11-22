@@ -1,5 +1,5 @@
 ; DEFINE: %{opt} = %opt %s %loadPoseidon \
-; DEFINE:   -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" \
+; DEFINE:   -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" \
 ; DEFINE:   -poseidon-profile-use=%S/../Inputs/expansion3 -poseidon-enable-herbie=false \
 ; DEFINE:   -poseidon-enable-pt=true -poseidon-enable-multifloat=true \
 ; DEFINE:   -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false \
@@ -54,10 +54,10 @@
 ; two-component point clears and wins with three admitted. The three-component
 ; body splits the input into three FP32 components and sums them back to FP64,
 ; without the double-single join tag.
-; IR: Inputs/expansion3/logistic.cu via clang -x cuda --cuda-device-only --cuda-gpu-arch=sm_120 -O2
-; -ffp-contract=on -I<enzyme>/include -S -emit-llvm (LLVM 24; the LLVM-24-only nocreateundeforpoison
-; intrinsic attribute removed). Profile: the same source through poseidon-clang++
-; -poseidon-profile-generate, run on an sm_120 GPU.
+; The IR is from Inputs/expansion3/logistic.cu via clang -x cuda --cuda-device-only
+; --cuda-gpu-arch=sm_120 -O2 -ffp-contract=on -I<enzyme>/include -S -emit-llvm (LLVM 24; the
+; LLVM-24-only nocreateundeforpoison intrinsic attribute removed). Profile: the same source
+; through poseidon-clang++ -poseidon-profile-generate, run on an sm_120 GPU.
 
 ; ModuleID = 'logistic.cu'
 source_filename = "logistic.cu"

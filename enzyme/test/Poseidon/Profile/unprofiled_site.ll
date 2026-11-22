@@ -29,22 +29,22 @@
 ; RUN: not %{opt} < %s -poseidon-profile-use=%S/../Inputs/other_sites_format1 -poseidon-strict-mode -o /dev/null 2>&1 \
 ; RUN:   | FileCheck --check-prefix=FORMAT1-STRICT %s
 ;
-; RUN: %{opt} < %s -poseidon-profile-use=%S/../Inputs/canonical_hash -poseidon-output-profiles=%S/../Inputs/never_executed -o %t/out_never.ll 2>&1 \
+; RUN: %{opt} < %s -poseidon-profile-use=%S/../Inputs/fma_opt_profiles -poseidon-output-profiles=%S/../Inputs/never_executed -o %t/out_never.ll 2>&1 \
 ; RUN:   | FileCheck --check-prefix=OUT-NEVER --implicit-check-not=warning --implicit-check-not=Warning %s
 ; RUN: FileCheck --check-prefix=LEFT %s < %t/out_never.ll
-; RUN: not %{opt} < %s -poseidon-profile-use=%S/../Inputs/canonical_hash -poseidon-output-profiles=%S/../Inputs/canonical_hash,%t/missing -o /dev/null 2>&1 \
+; RUN: not %{opt} < %s -poseidon-profile-use=%S/../Inputs/fma_opt_profiles -poseidon-output-profiles=%S/../Inputs/fma_opt_profiles,%t/missing -o /dev/null 2>&1 \
 ; RUN:   | FileCheck --check-prefix=OUT-NODIR %s
-; RUN: not %{opt} < %s -poseidon-profile-use=%S/../Inputs/canonical_hash -poseidon-output-profiles=%t/empty -o /dev/null 2>&1 \
+; RUN: not %{opt} < %s -poseidon-profile-use=%S/../Inputs/fma_opt_profiles -poseidon-output-profiles=%t/empty -o /dev/null 2>&1 \
 ; RUN:   | FileCheck --check-prefix=OUT-EMPTY %s
-; RUN: %{opt} < %s -poseidon-profile-use=%S/../Inputs/canonical_hash -poseidon-output-profiles=%S/../Inputs/other_sites -o %t/out_absent.ll 2>&1 \
+; RUN: %{opt} < %s -poseidon-profile-use=%S/../Inputs/fma_opt_profiles -poseidon-output-profiles=%S/../Inputs/other_sites -o %t/out_absent.ll 2>&1 \
 ; RUN:   | FileCheck --check-prefix=OUT-ABSENT %s
 ; RUN: FileCheck --check-prefix=LEFT %s < %t/out_absent.ll
-; RUN: not %{opt} < %s -poseidon-profile-use=%S/../Inputs/canonical_hash -poseidon-output-profiles=%S/../Inputs/other_sites -poseidon-strict-mode -o /dev/null 2>&1 \
+; RUN: not %{opt} < %s -poseidon-profile-use=%S/../Inputs/fma_opt_profiles -poseidon-output-profiles=%S/../Inputs/other_sites -poseidon-strict-mode -o /dev/null 2>&1 \
 ; RUN:   | FileCheck --check-prefix=OUT-STRICT %s
-; RUN: %{opt} < %s -poseidon-profile-use=%S/../Inputs/canonical_hash -poseidon-output-profiles=%S/../Inputs/other_sites_format1 -o %t/out_format1.ll 2>&1 \
+; RUN: %{opt} < %s -poseidon-profile-use=%S/../Inputs/fma_opt_profiles -poseidon-output-profiles=%S/../Inputs/other_sites_format1 -o %t/out_format1.ll 2>&1 \
 ; RUN:   | FileCheck --check-prefix=OUT-FORMAT1 %s
 ; RUN: FileCheck --check-prefix=LEFT %s < %t/out_format1.ll
-; RUN: not %{opt} < %s -poseidon-profile-use=%S/../Inputs/canonical_hash -poseidon-output-profiles=%S/../Inputs/other_sites_format1 -poseidon-strict-mode -o /dev/null 2>&1 \
+; RUN: not %{opt} < %s -poseidon-profile-use=%S/../Inputs/fma_opt_profiles -poseidon-output-profiles=%S/../Inputs/other_sites_format1 -poseidon-strict-mode -o /dev/null 2>&1 \
 ; RUN:   | FileCheck --check-prefix=OUT-FORMAT1-STRICT %s
 
 ; Why a site has no profile to solve from decides what profile use does. A

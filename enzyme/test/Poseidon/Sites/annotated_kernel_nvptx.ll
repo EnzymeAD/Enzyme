@@ -4,7 +4,9 @@
 ; DEFINE:   -poseidon-enable-three-tier=false \
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv
 ; RUN: rm -rf %t && mkdir %t
-; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" %{use} -poseidon-cache=%t/attr -poseidon-cost-budget=-1e-9 -poseidon-print -S 2>&1 | FileCheck %s
+; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" %{use} -poseidon-cache=%t/attr -poseidon-cost-budget=-1e-9 -poseidon-print -S > %t/attr.out 2>&1
+; RUN: FileCheck %s < %t/attr.out
+; RUN: FileCheck --check-prefix=CLEAN %s < %t/attr.out
 ; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-kernels=fms.* %{use} -poseidon-cache=%t/regex -poseidon-cost-budget=-1e-9 -poseidon-print -S 2>&1 | FileCheck --check-prefix=REGEX %s
 ; RUN: %opt %s %loadPoseidon -passes="poseidon,always-inline,poseidon-finalize" -S 2> %t/noprofile.err | FileCheck --check-prefix=NOPROFILE %s
 ; RUN: FileCheck --check-prefix=NOPROFILE-WARN %s < %t/noprofile.err

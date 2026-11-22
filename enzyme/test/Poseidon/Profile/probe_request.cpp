@@ -28,7 +28,7 @@
 // RUN: FileCheck --check-prefix=ONCE %s < %t/declined.runs
 // RUN: FileCheck --check-prefix=DECLINED %s < %t/declined.err
 // RUN: FileCheck --check-prefix=NOKAPPA %s < %t/declined/preprocess__Z5gaussPKdPdi_poseidon_body.fpprofile
-// RUN: %poseidon_clangxx -O2 -g -poseidon-profile-use=%t/declined -poseidon-tau=1e-6 -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-enable-herbie=0 -poseidon-cache=%t/c -c %s -o %t/declined.o 2> %t/declined.use.err
+// RUN: %poseidon_clangxx -O2 -g -poseidon-profile-use=%t/declined -poseidon-tau=1e-6 -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-enable-herbie=0 -poseidon-cache=%t/c -c %s -o %t/declined.o
 
 // A profiling run whose program declares a metric re-executes itself to
 // measure the condition numbers only when asked (POSEIDON_PROBE=1, or under

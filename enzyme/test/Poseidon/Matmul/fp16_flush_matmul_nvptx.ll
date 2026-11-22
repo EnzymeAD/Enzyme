@@ -1,7 +1,7 @@
 ; REQUIRES: scev-trunc-iv-nowrap
 ; RUN: rm -rf %t && mkdir %t
-; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-tau=1e-3 -poseidon-print -S -o /dev/null -poseidon-profile-use=%S/../Inputs/raise_tcec -poseidon-cache=%t/normal 2>&1 | FileCheck --check-prefix=NORMAL %s
-; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)" -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-tau=1e-3 -poseidon-print -S -o /dev/null -poseidon-profile-use=%S/../Inputs/fp16_range/matmul_tiny -poseidon-cache=%t/tiny 2>&1 | FileCheck --check-prefix=TINY %s
+; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-tau=1e-3 -poseidon-print -S -o /dev/null -poseidon-profile-use=%S/../Inputs/raise_tcec -poseidon-cache=%t/normal 2>&1 | FileCheck --check-prefix=NORMAL %s
+; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-tau=1e-3 -poseidon-print -S -o /dev/null -poseidon-profile-use=%S/../Inputs/fp16_range/matmul_tiny -poseidon-cache=%t/tiny 2>&1 | FileCheck --check-prefix=TINY %s
 
 ; {{[^ -~]+}} stands for the Greek capital delta the log prints.
 ; NORMAL: DOMERR matmul in=f16 acc=f32 p95_relErr=3.137966e-04
@@ -31,8 +31,6 @@
 ; matmul_tiny profile: Inputs/raise_tcec/tcec_matmul.cu with hA[i] = 1e-9 * (1.0 + 0.001 * i), built with
 ; the RUN lines of Integration/raise_scalar_matmul_f64.cu (Poseidon + Enzyme plugins,
 ; -poseidon-profile-generate, FPProfilerCUDA.cu, libposeidon_profile.a) and run on an sm_120 GPU.
-
-; Scalar FMA reduction loop raised in-kernel: direct and TCEC classes priced from the wmma_inkernel_rel fixture rows, the most accurate cost-reducing one (TCEC n=3) materialized; IR and profile from Inputs/raise_tcec/tcec_matmul.cu (clang -O2 -ffp-contract=on --cuda-gpu-arch=sm_120, profiled on an sm_120 GPU).
 
 ; ModuleID = 'tcec_matmul.cu'
 source_filename = "tcec_matmul.cu"

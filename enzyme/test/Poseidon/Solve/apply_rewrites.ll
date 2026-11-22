@@ -4,7 +4,7 @@
 ; DEFINE:   -poseidon-herbie-binary=%S/../Inputs/fake-herbie.sh -poseidon-enable-pt=false \
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_cpu_native.csv
 ; DEFINE: %{pass} = %loadPoseidon -passes="poseidon,poseidon-finalize"
-; DEFINE: %{passfn} = %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,%simplifycfg)"
+; DEFINE: %{passfn} = %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)"
 ; DEFINE: %{joint} = -poseidon-profile-use=%S/../Inputs/joint_profiles
 ; DEFINE: %{pt} = -poseidon-enable-herbie=false -poseidon-enable-pt=true
 ; DEFINE: %{cm} = -poseidon-cost-model=%cost_models/cm_cpu_native.csv

@@ -91,9 +91,9 @@ function(poseidon_configure_test_program name)
   target_compile_options(${name} PRIVATE ${POSEIDON_TEST_PROGRAM_OPTIONS})
   set_target_properties(
     ${name}
-    PROPERTIES EXCLUDE_FROM_ALL ON
-               RUNTIME_OUTPUT_DIRECTORY ${POSEIDON_TEST_PROGRAM_DIR}
-               LIBRARY_OUTPUT_DIRECTORY ${POSEIDON_TEST_PROGRAM_DIR})
+    PROPERTIES
+      EXCLUDE_FROM_ALL ON RUNTIME_OUTPUT_DIRECTORY ${POSEIDON_TEST_PROGRAM_DIR}
+      LIBRARY_OUTPUT_DIRECTORY ${POSEIDON_TEST_PROGRAM_DIR})
 endfunction()
 
 function(poseidon_add_test_program name)
@@ -107,15 +107,13 @@ function(poseidon_add_test_plugin name source)
   poseidon_configure_test_program(${name})
 endfunction()
 
-poseidon_add_test_program(
-  poseidon-test-cache-key Core/cache_key_equivalents.cpp
-  ${POSEIDON_SOURCE_DIR}/Core/CacheKey.cpp)
+poseidon_add_test_program(poseidon-test-cache-key Core/cache_key_equivalents.cpp
+                          ${POSEIDON_SOURCE_DIR}/Core/CacheKey.cpp)
 poseidon_add_test_program(
   poseidon-test-round-to-prec Core/round_to_prec_apfloat.cpp
   ${POSEIDON_SOURCE_DIR}/Core/FPKind.cpp)
-poseidon_add_test_program(
-  poseidon-test-matmul-scheme Matmul/matmul_scheme.cpp
-  ${POSEIDON_SOURCE_DIR}/Core/FPKind.cpp)
+poseidon_add_test_program(poseidon-test-matmul-scheme Matmul/matmul_scheme.cpp
+                          ${POSEIDON_SOURCE_DIR}/Core/FPKind.cpp)
 poseidon_add_test_program(poseidon-test-profile-name-stem
                           Inputs/explain/profile_name_stem.cpp)
 poseidon_add_test_plugin(poseidon-test-apply-expansion
