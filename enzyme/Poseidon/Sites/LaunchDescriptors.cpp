@@ -181,7 +181,12 @@ void readDescriptors(const Options &O, const Module &M, LaunchKind kind,
   for (const json::Value &entry : *lines) {
     std::optional<StringRef> line = entry.getAsString();
     if (!line)
-      continue;
+      reportUserError(M.getContext(),
+                      "the launch manifest " + m.path + " holds a " +
+                          kindName(kind) +
+                          " entry that is not a string; remove the "
+                          "-poseidon-cache directory and compile the unit "
+                          "again");
     SmallVector<StringRef, 8> toks;
     line->trim().split(toks, ' ');
     if (Error E = parse(toks))
