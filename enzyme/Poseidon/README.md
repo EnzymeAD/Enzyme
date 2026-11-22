@@ -35,9 +35,8 @@ enzyme/test/Poseidon/       lit suite: check-poseidon (a folder per part of the
 ## Requirements
 
 - **LLVM**, with its clang. The plugin is built against one LLVM and loaded by
-  that LLVM's clang. This tree is built and tested against LLVM 24
-  (`9d618fc02431`, the commit Enzyme's MLIR CI pins), and the apt packages of
-  LLVM 21 and 22 build it and run the tests that need no GPU toolchain
+  that LLVM's clang. LLVM 20 or newer; the apt packages of LLVM 21 and 22
+  build it and run the tests that need no GPU toolchain
   (`.github/workflows/poseidon.yml`).
 - **Enzyme**: the one in this tree. Enzyme differentiates the probes the
   profiler places, so profile generation needs its plugin, and

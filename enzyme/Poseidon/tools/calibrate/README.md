@@ -23,11 +23,11 @@ A compile passes the platform that sits next to the CSV it prices from
 
 ## Measuring a device
 
-    poseidon-calibrate --gpu 1                 # writes ~/.cache/poseidon/cm_<arch>_<gpu>.csv
-    poseidon-calibrate --gpu 1 --out <dir>     # or somewhere else
-    poseidon-calibrate --gpu 1 --check         # is the resolved model this device's?
-    poseidon-calibrate --gpu 1 --ozaki-rect 343x1536   # plus the rectangular rows of an M x Ncols x K GEMM
-    poseidon-calibrate --gpu 1 --ozaki-rect 112x112x2048  # the native DGEMM row of an M x Ncols x K call
+    poseidon-calibrate --gpu 0                 # writes ~/.cache/poseidon/cm_<arch>_<gpu>.csv
+    poseidon-calibrate --gpu 0 --out <dir>     # or somewhere else
+    poseidon-calibrate --gpu 0 --check         # is the resolved model this device's?
+    poseidon-calibrate --gpu 0 --ozaki-rect 343x1536   # plus the rectangular rows of an M x Ncols x K GEMM
+    poseidon-calibrate --gpu 0 --ozaki-rect 112x112x2048  # the native DGEMM row of an M x Ncols x K call
 
 Six arms write disjoint row families into the same file; `--only` runs a
 subset, `--force` re-measures a family that is already there. A seventh,
@@ -66,11 +66,9 @@ profile of the kernel it raises to know which candidates the pass proposes
 (`--profile <dir>`); the profile decides which candidates exist, never what they
 measure.
 
-A class with no measured row is not proposed. The pass refuses to compose a
-price for it out of per-MMA rows: that composition is an arithmetic ceiling that
-ran 3.5x to 64x optimistic, because a materialized raise also pays a scratch
-fill, shared-memory staging and accumulator traffic that no per-MMA row
-contains.
+A class with no measured row is not proposed. The pass does not compose a price
+for it out of per-MMA rows: a materialized raise also pays a scratch fill,
+shared-memory staging and accumulator traffic that no per-MMA row contains.
 
 ## Format
 

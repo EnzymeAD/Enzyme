@@ -21,16 +21,6 @@ Enzyme is highly-efficient and its ability to perform AD on optimized code allow
 
 Detailed information on installing and using Enzyme can be found on our website: [https://enzyme.mit.edu](https://enzyme.mit.edu).
 
-## Poseidon
-
-This tree also carries Poseidon, a profile-guided numerical optimizer built as
-a second pass plugin on top of Enzyme: it profiles a program's floating-point
-instructions (Enzyme differentiates the probes), then rewrites the program to
-run as fast as a user accuracy target allows, on CPUs, NVIDIA GPUs (CUDA) and
-AMD GPUs (HIP).
-Configure with `-DENZYME_POSEIDON=ON`; `enzyme/Poseidon/README.md` has the
-build and the usage.
-
 A short example of how to install Enzyme is below:
 ```
 cd /path/to/Enzyme/enzyme
@@ -101,3 +91,13 @@ series = {SC '22}
 ```
 
 [Julia bindings](https://github.com/EnzymeAD/Enzyme.jl#readme), [Rust bindings](https://github.com/EnzymeAD/rust#readme), and [Fortran bindings](https://github.com/EnzymeAD/Enzyme/tree/main/enzyme/Fortran) are available for Enzyme.
+
+## Poseidon
+
+This tree also carries Poseidon, a profile-guided numerical optimizer built as
+a second pass plugin on top of Enzyme: it profiles a program's floating-point
+instructions (Enzyme differentiates the probes), then rewrites the program to
+run as fast as a user accuracy target allows, on CPUs, NVIDIA GPUs (CUDA) and
+AMD GPUs (HIP).
+Configure with `-DENZYME_POSEIDON=ON`; `enzyme/Poseidon/README.md` has the
+build and the usage.
