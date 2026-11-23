@@ -1,6 +1,6 @@
 ; RUN: rm -rf %t && mkdir -p %t && cp %S/../Inputs/lambda_stub_hip/launches_*.json %t/
-; RUN: %clang -O0 -x ir %s %loadClangPoseidon -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t -mllvm -poseidon-print -mllvm -poseidon-unit=fixture -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=GEN %s
-; RUN: %clang -O0 -x ir %s %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/lambda_stub_hip -mllvm -poseidon-cache=%t -mllvm -poseidon-unit=fixture -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=USE %s
+; RUN: %clang -O0 -x ir %s %loadClangPoseidon -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t -mllvm -poseidon-print -mllvm -poseidon-unit=fixture -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=GEN --implicit-check-not='call {{.*}}@hipLaunchKernel(' %s
+; RUN: %clang -O0 -x ir %s %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/lambda_stub_hip -mllvm -poseidon-cache=%t -mllvm -poseidon-unit=fixture -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=USE --implicit-check-not='call {{.*}}@hipLaunchKernel(' --implicit-check-not='call void @__poseidon_ozaki_dgemm_ex' %s
 ; lambda_hoststub.ll for the HIP stub of the same kernel
 ; (Inputs/lambda_stub_hip/lambda_stub.hip): HIP pops the configuration with
 ; __hipPopCallConfiguration and launches with hipLaunchKernel, whose first
@@ -8,29 +8,97 @@
 ; HIP's -fgpu-rdc postfix of an internal kernel.
 
 ; GEN: [poseidon-profgen] launch of _ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_.intern.0123abcd now allocates and seeds 3 shadow buffer(s)
-; GEN: @poseidon.off.{{.*}} = private unnamed_addr constant [3 x i32] [i32 16, i32 40, i32 64]
+; GEN: @poseidon.ptr._ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_.intern.0123abcd = private unnamed_addr constant [3 x i32] [i32 1, i32 1, i32 1]
+; GEN-NEXT: @poseidon.off._ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_.intern.0123abcd = private unnamed_addr constant [3 x i32] [i32 16, i32 40, i32 64]
+; GEN-NEXT: @poseidon.seed._ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_.intern.0123abcd = private unnamed_addr constant [3 x i32] [i32 0, i32 0, i32 8]
 ; GEN-LABEL: define void @_ZL25__device_stub__CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_(
 ; GEN: %[[ARGS:[0-9]+]] = alloca ptr, i64 2
-; GEN: call i32 @__hipPopCallConfiguration(ptr %[[GRID:[0-9]+]], ptr %[[BLOCK:[0-9]+]], ptr %[[SHMEM:[0-9]+]], ptr %[[STREAM:[0-9]+]])
-; GEN: call void @__poseidon_launch_profiled(ptr @_ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_, i32 0, ptr %[[GRID]], ptr %[[BLOCK]], i64 %{{[0-9]+}}, ptr %{{[0-9]+}}, i32 2, ptr %[[ARGS]], i32 3, ptr @poseidon.ptr.{{.*}}, ptr @poseidon.off.{{.*}}, ptr @poseidon.seed.{{.*}})
+; GEN: call i32 @__hipPopCallConfiguration(ptr %[[GRID:[0-9]+]], ptr %[[BLOCK:[0-9]+]], ptr %[[SHMEMP:[0-9]+]], ptr %[[STREAMP:[0-9]+]])
+; GEN-NEXT: %[[SHMEM:[0-9]+]] = load i64, ptr %[[SHMEMP]], align 8
+; GEN-NEXT: %[[STREAM:[0-9]+]] = load ptr, ptr %[[STREAMP]], align 8
+; GEN: call void @__poseidon_launch_profiled(ptr @_ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_, i32 0, ptr %[[GRID]], ptr %[[BLOCK]], i64 %[[SHMEM]], ptr %[[STREAM]], i32 2, ptr %[[ARGS]], i32 3, ptr @poseidon.ptr._ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_.intern.0123abcd, ptr @poseidon.off._ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_.intern.0123abcd, ptr @poseidon.seed._ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_.intern.0123abcd)
 ; GEN-NOT: call {{.*}}@hipLaunchKernel(
 
 ; USE: [ozaki-host-dispatch] replaced the launch in stub _ZL25__device_stub__CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_ with __poseidon_ozaki_dgemm_ex (C=arg1[+64] A=arg1[+40] B=arg1[+16]), if arg1[+4] == arg1[+24], if arg1[+4] == arg1[+48]
 ; USE-LABEL: define void @_ZL25__device_stub__CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_(
 ; USE: %[[ARGS:[0-9]+]] = alloca ptr, i64 2
-; USE: %[[S:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 1|i64 8}}
-; USE-NEXT: %[[L:[0-9]+]] = load ptr, ptr %[[S]]
-; USE-NEXT: %[[F:[0-9]+]] = getelementptr inbounds i8, ptr %[[L]], i64 64
-; USE-NEXT: %[[C:[0-9]+]] = load ptr, ptr %[[F]]
-; USE: %[[K:[0-9]+]] = mul i32 %{{[0-9]+}}, 3
-; USE: %[[EQ0:[0-9]+]] = icmp eq i32
-; USE: %[[EQ1:[0-9]+]] = icmp eq i32
-; USE: %[[OK:[0-9]+]] = and i1 %[[EQ0]], %[[EQ1]]
+; USE: call i32 @__hipPopCallConfiguration(ptr %[[GRID:[0-9]+]], ptr %[[BLOCK:[0-9]+]], ptr %[[SHMEMP:[0-9]+]], ptr %[[STREAMP:[0-9]+]])
+; USE-NEXT: %[[SHMEM:[0-9]+]] = load i64, ptr %[[SHMEMP]], align 8
+; USE-NEXT: %[[STREAM:[0-9]+]] = load ptr, ptr %[[STREAMP]], align 8
+; USE-NEXT: call void @llvm.memcpy.p0.p0.i64(ptr align 8 %[[GC:[0-9]+]], ptr align 8 %[[GRID]], i64 12, i1 false)
+; USE-NEXT: %[[GXYP:[0-9]+]] = getelementptr {{.*}}ptr %[[GC]], i32 0, i32 0
+; USE-NEXT: %[[GXY:[0-9]+]] = load i64, ptr %[[GXYP]], align 8
+; USE-NEXT: %[[GZP:[0-9]+]] = getelementptr {{.*}}ptr %[[GC]], i32 0, i32 1
+; USE-NEXT: %[[GZ:[0-9]+]] = load i32, ptr %[[GZP]], align 8
+; USE-NEXT: call void @llvm.memcpy.p0.p0.i64(ptr align 8 %[[BC:[0-9]+]], ptr align 8 %[[BLOCK]], i64 12, i1 false)
+; USE-NEXT: %[[BXYP:[0-9]+]] = getelementptr {{.*}}ptr %[[BC]], i32 0, i32 0
+; USE-NEXT: %[[BXY:[0-9]+]] = load i64, ptr %[[BXYP]], align 8
+; USE-NEXT: %[[BZP:[0-9]+]] = getelementptr {{.*}}ptr %[[BC]], i32 0, i32 1
+; USE-NEXT: %[[BZ:[0-9]+]] = load i32, ptr %[[BZP]], align 8
+; USE-NEXT: %[[S:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 1|i64 8}}{{$}}
+; USE-NEXT: %[[L:[0-9]+]] = load ptr, ptr %[[S]], align 8
+; USE-NEXT: %[[F:[0-9]+]] = getelementptr inbounds i8, ptr %[[L]], i64 64{{$}}
+; USE-NEXT: %[[C:[0-9]+]] = load ptr, ptr %[[F]], align 8
+; USE-NEXT: %[[AS:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 1|i64 8}}{{$}}
+; USE-NEXT: %[[AL:[0-9]+]] = load ptr, ptr %[[AS]], align 8
+; USE-NEXT: %[[AF:[0-9]+]] = getelementptr inbounds i8, ptr %[[AL]], i64 40{{$}}
+; USE-NEXT: %[[A:[0-9]+]] = load ptr, ptr %[[AF]], align 8
+; USE-NEXT: %[[BS:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 1|i64 8}}{{$}}
+; USE-NEXT: %[[BL:[0-9]+]] = load ptr, ptr %[[BS]], align 8
+; USE-NEXT: %[[BF:[0-9]+]] = getelementptr inbounds i8, ptr %[[BL]], i64 16{{$}}
+; USE-NEXT: %[[B:[0-9]+]] = load ptr, ptr %[[BF]], align 8
+; USE-NEXT: %[[MS:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 1|i64 8}}{{$}}
+; USE-NEXT: %[[ML:[0-9]+]] = load ptr, ptr %[[MS]], align 8
+; USE-NEXT: %[[M:[0-9]+]] = load i32, ptr %[[ML]], align 4
+; USE-NEXT: %[[NS:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 0|i64 0}}{{$}}
+; USE-NEXT: %[[NL:[0-9]+]] = load ptr, ptr %[[NS]], align 8
+; USE-NEXT: %[[N:[0-9]+]] = load i32, ptr %[[NL]], align 4
+; USE-NEXT: %[[KS:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 1|i64 8}}{{$}}
+; USE-NEXT: %[[KL:[0-9]+]] = load ptr, ptr %[[KS]], align 8
+; USE-NEXT: %[[KF:[0-9]+]] = getelementptr inbounds i8, ptr %[[KL]], i64 4{{$}}
+; USE-NEXT: %[[K4:[0-9]+]] = load i32, ptr %[[KF]], align 4
+; USE-NEXT: %[[K:[0-9]+]] = mul i32 %[[K4]], 3
+; USE-NEXT: %[[LDAS:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 1|i64 8}}{{$}}
+; USE-NEXT: %[[LDAL:[0-9]+]] = load ptr, ptr %[[LDAS]], align 8
+; USE-NEXT: %[[LDAF:[0-9]+]] = getelementptr inbounds i8, ptr %[[LDAL]], i64 48{{$}}
+; USE-NEXT: %[[LDA:[0-9]+]] = load i32, ptr %[[LDAF]], align 4
+; USE-NEXT: %[[LDBS:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 1|i64 8}}{{$}}
+; USE-NEXT: %[[LDBL:[0-9]+]] = load ptr, ptr %[[LDBS]], align 8
+; USE-NEXT: %[[LDBF:[0-9]+]] = getelementptr inbounds i8, ptr %[[LDBL]], i64 24{{$}}
+; USE-NEXT: %[[LDB:[0-9]+]] = load i32, ptr %[[LDBF]], align 4
+; USE-NEXT: %[[LDCS:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 1|i64 8}}{{$}}
+; USE-NEXT: %[[LDCL:[0-9]+]] = load ptr, ptr %[[LDCS]], align 8
+; USE-NEXT: %[[LDCF:[0-9]+]] = getelementptr inbounds i8, ptr %[[LDCL]], i64 72{{$}}
+; USE-NEXT: %[[LDC:[0-9]+]] = load i32, ptr %[[LDCF]], align 4
+; The two operands of each equality are loaded in either order.
+; USE-DAG: %[[X0F:[0-9]+]] = getelementptr inbounds i8, ptr %[[X0L:[0-9]+]], i64 4{{$}}
+; USE-DAG: %[[X0L]] = load ptr, ptr %[[X0S:[0-9]+]], align 8
+; USE-DAG: %[[X0S]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 1|i64 8}}{{$}}
+; USE-DAG: %[[X0:[0-9]+]] = load i32, ptr %[[X0F]], align 4
+; USE-DAG: %[[Y0F:[0-9]+]] = getelementptr inbounds i8, ptr %[[Y0L:[0-9]+]], i64 24{{$}}
+; USE-DAG: %[[Y0L]] = load ptr, ptr %[[Y0S:[0-9]+]], align 8
+; USE-DAG: %[[Y0S]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 1|i64 8}}{{$}}
+; USE-DAG: %[[Y0:[0-9]+]] = load i32, ptr %[[Y0F]], align 4
+; USE-NEXT: %[[EQ0:[0-9]+]] = icmp eq i32 %[[X0]], %[[Y0]]
+; USE-DAG: %[[X1F:[0-9]+]] = getelementptr inbounds i8, ptr %[[X1L:[0-9]+]], i64 4{{$}}
+; USE-DAG: %[[X1L]] = load ptr, ptr %[[X1S:[0-9]+]], align 8
+; USE-DAG: %[[X1S]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 1|i64 8}}{{$}}
+; USE-DAG: %[[X1:[0-9]+]] = load i32, ptr %[[X1F]], align 4
+; USE-DAG: %[[Y1F:[0-9]+]] = getelementptr inbounds i8, ptr %[[Y1L:[0-9]+]], i64 48{{$}}
+; USE-DAG: %[[Y1L]] = load ptr, ptr %[[Y1S:[0-9]+]], align 8
+; USE-DAG: %[[Y1S]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 1|i64 8}}{{$}}
+; USE-DAG: %[[Y1:[0-9]+]] = load i32, ptr %[[Y1F]], align 4
+; USE-NEXT: %[[EQ1:[0-9]+]] = icmp eq i32 %[[X1]], %[[Y1]]
+; USE-NEXT: %[[OK:[0-9]+]] = and i1 %[[EQ0]], %[[EQ1]]
 ; USE-NEXT: br i1 %[[OK]], label %[[DISPATCH:[0-9]+]], label %[[LAUNCH:[0-9]+]]
 ; USE: [[DISPATCH]]:
-; USE-NEXT: call void @__poseidon_ozaki_dgemm_ex(ptr %[[C]], ptr %{{[0-9]+}}, ptr %{{[0-9]+}}, i32 %{{[0-9]+}}, i32 %{{[0-9]+}}, i32 %[[K]], i32 %{{[0-9]+}}, i32 %{{[0-9]+}}, i32 %{{[0-9]+}}, i32 0, i32 1, i32 1, double 1.000000e+00, double 1.000000e+00, ptr null, i32 13)
+; USE-NEXT: call void @__poseidon_ozaki_dgemm_ex(ptr %[[C]], ptr %[[A]], ptr %[[B]], i32 %[[M]], i32 %[[N]], i32 %[[K]], i32 %[[LDA]], i32 %[[LDB]], i32 %[[LDC]], i32 0, i32 1, i32 1, double 1.000000e+00, double 1.000000e+00, ptr null, i32 13)
+; USE-NEXT: br label %[[JOIN:[0-9]+]]
 ; USE: [[LAUNCH]]:
-; USE-NEXT: call noundef i32 @hipLaunchKernel(ptr noundef @_ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_,
+; USE-NEXT: %{{[0-9]+}} = call noundef i32 @hipLaunchKernel(ptr noundef @_ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_, i64 %[[GXY]], i32 %[[GZ]], i64 %[[BXY]], i32 %[[BZ]], ptr noundef %[[ARGS]], i64 noundef %[[SHMEM]], ptr noundef %[[STREAM]])
+; USE-NEXT: br label %[[JOIN]]
+; USE: [[JOIN]]:
+; USE: ret void
 
 ; ModuleID = 'lambda_stub.hip'
 source_filename = "lambda_stub.hip"

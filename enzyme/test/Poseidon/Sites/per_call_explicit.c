@@ -47,8 +47,10 @@ int main(void) {
   scale(x, y4, n);
   double s = __enzyme_fp_optimize((void *)sq, x[3], x[7]);
 #ifdef MACRO
-  // MACRO: error: too many arguments to function call
+  // MACRO: per_call_explicit.c:[[@LINE+2]]:{{[0-9]+}}: error: too many arguments to function call, expected 3, have 6
+  // MACRO: poseidon.h:{{[0-9]+}}:{{[0-9]+}}: note: expanded from macro '__poseidon_optimize'
   __poseidon_optimize(wave, enzyme_const, x, enzyme_dup, y1, dy, n);
+  // MACRO: 1 error generated.
 #endif
   printf("%d %d %d\n", y1[100] == y2[100], y3[100] == y4[100],
          s == sq(x[3], x[7]));
@@ -59,7 +61,12 @@ int main(void) {
 // PROFILES: preprocess_scale.poseidon.main.0.fpprofile
 // PROFILES-NEXT: preprocess_sq.fpprofile
 // PROFILES-NEXT: preprocess_wave.fpprofile
+// Each site is rewritten, and the rewritten calls differ from the functions run
+// as written.
 // USE-DAG: [poseidon] preprocess_wave: tau=1.000000e-06
+// USE-DAG: [poseidon] pin: wave:PT0=All FP64(0%) + FP32(100%)
 // USE-DAG: [poseidon] preprocess_scale.poseidon.main.0: tau=1.000000e-06
+// USE-DAG: [poseidon] pin: scale.poseidon.main.0:PT0=All FP64(0%) + FP32(100%)
 // USE-DAG: [poseidon] preprocess_sq: tau=1.000000e-06
-// RUNS: {{[01] [01] [01]}}
+// USE-DAG: [poseidon] pin: sq:PT0=All FP64(0%) + FP32(100%)
+// RUNS: 0 0 0

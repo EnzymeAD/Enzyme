@@ -1,9 +1,9 @@
 // REQUIRES: enzyme, amdgpu-registered-target, offload-new-driver
 // RUN: rm -rf %t && mkdir -p %t/drv %t/opt %t/rdc
-// RUN: (env TMPDIR=%t %clang -x hip --offload-arch=gfx942 -nogpulib -nogpuinc -O2 -c -I%poseidon_profile_inc %loadClangPoseidonEnzyme %s -o %t/plain.o 2>&1; echo "exit status $?") | FileCheck --check-prefix=DEFERRED --implicit-check-not=REPRODUCER --implicit-check-not="exit code" --implicit-check-not=ld.lld %s
+// RUN: (env TMPDIR=%t %clang -x hip --offload-arch=gfx942 -nogpulib -nogpuinc -O2 -c -I%poseidon_profile_inc %loadClangPoseidonEnzyme %s -o %t/plain.o 2>&1; echo "exit status $?") | FileCheck --check-prefix=DEFERRED --implicit-check-not=error: --implicit-check-not=REPRODUCER --implicit-check-not="exit code" --implicit-check-not=ld.lld %s
 // RUN: %clang -x hip --offload-arch=gfx942 -nogpulib -nogpuinc -O2 -c -I%poseidon_profile_inc %loadClangPoseidonEnzyme -Xclang -mllvm -Xclang -enzyme-lto-prelink=1 %s -o %t/opt/k.o
 // RUN: cd %t/opt && llvm-objdump --offloading k.o > /dev/null && llvm-readelf --dyn-syms k.o.*gfx942 | FileCheck --check-prefix=CO --implicit-check-not=__enzyme %s
-// RUN: (env TMPDIR=%t %poseidon_clangxx -x hip --offload-arch=gfx942 -nogpulib -nogpuinc -O2 -c %s -o %t/drv/none.o 2>&1; echo "exit status $?") | FileCheck --check-prefix=NOENZYME --implicit-check-not=REPRODUCER --implicit-check-not="exit code" --implicit-check-not=ld.lld %s
+// RUN: (env TMPDIR=%t %poseidon_clangxx -x hip --offload-arch=gfx942 -nogpulib -nogpuinc -O2 -c %s -o %t/drv/none.o 2>&1; echo "exit status $?") | FileCheck --check-prefix=NOENZYME --implicit-check-not=error: --implicit-check-not=REPRODUCER --implicit-check-not="exit code" --implicit-check-not=ld.lld %s
 // RUN: %poseidon_clangxx -x hip --offload-arch=gfx942 -nogpulib -nogpuinc -O2 -c %loadClangEnzyme -Xclang -mllvm -Xclang -enzyme-lto-prelink=1 %s -o %t/drv/k.o
 // RUN: cd %t/drv && llvm-objdump --offloading k.o > /dev/null && llvm-readelf --dyn-syms k.o.*gfx942 | FileCheck --check-prefix=CO --implicit-check-not=__enzyme %s
 // RUN: %poseidon_clangxx -x hip --offload-arch=gfx942 -nogpulib -nogpuinc -fgpu-rdc -O2 -c %loadClangEnzyme -Xclang -mllvm -Xclang -enzyme-lto-prelink=1 %s -o %t/rdc/k.o
@@ -66,15 +66,39 @@ __global__ void jvp(const double *x, const double *dx, double *y, double *dy) {
   dy[0] = dyl;
 }
 
-// DEFERRED: Poseidon: the marked body jvp_body still holds an __enzyme_* request that nothing lowered. This is an LTO pre-link compile, where Enzyme leaves derivative requests to the post-link run unless -enzyme-lto-prelink is given; pass -mllvm -enzyme-lto-prelink=1
+// DEFERRED: deferred_site_lto_amdgpu.hip:[[@LINE-16]]:{{[0-9]+}}: error: Poseidon: the marked body jvp_body still holds an __enzyme_* request that nothing lowered. This is an LTO pre-link compile, where Enzyme leaves derivative requests to the post-link run unless -enzyme-lto-prelink is given; pass -mllvm -enzyme-lto-prelink=1 (for HIP as -Xclang -mllvm -Xclang -enzyme-lto-prelink=1).{{$}}
 // DEFERRED: exit status 1
 
-// NOENZYME: Poseidon: the marked body jvp_body still holds an __enzyme_* request that nothing lowered. Add -fpass-plugin=<ClangEnzyme>.so after the Poseidon plugin.
+// NOENZYME: deferred_site_lto_amdgpu.hip:[[@LINE-19]]:{{[0-9]+}}: error: Poseidon: the marked body jvp_body still holds an __enzyme_* request that nothing lowered. Add -fpass-plugin=<ClangEnzyme>.so after the Poseidon plugin.{{$}}
 // NOENZYME: exit status 1
 
 // CO-NOT: UND {{[_a-zA-Z]}}
-// CO: _Z3jvpPKdS0_PdS1_
+// CO: FUNC GLOBAL PROTECTED {{[0-9]+}} _Z3jvpPKdS0_PdS1_{{$}}
 // CO-NOT: UND {{[_a-zA-Z]}}
 
-// DEV: define protected amdgpu_kernel void @_Z3jvpPKdS0_PdS1_(
-// DEV: call {{.*}}@fwddiffeqf
+// The kernel passes its locals to the module's copy of the lowered tangent,
+// which computes y = x * x + 1 and dy = 2 * dx * x.
+// DEV: define protected amdgpu_kernel void @_Z3jvpPKdS0_PdS1_(ptr addrspace(1) {{.*}}[[X:%[0-9]+]], ptr addrspace(1) {{.*}}[[DX:%[0-9]+]], ptr addrspace(1) {{.*}}[[Y:%[0-9]+]], ptr addrspace(1) {{.*}}[[DY:%[0-9]+]])
+// DEV-DAG: call {{.*}}void @fwddiffeqf.left(ptr {{.*}}[[XP:%[0-9]+]], ptr {{.*}}[[DXP:%[0-9]+]], ptr {{.*}}[[YP:%[0-9]+]], ptr {{.*}}[[DYP:%[0-9]+]])
+// DEV-DAG: [[XP]] = addrspacecast ptr addrspace(5) [[XA:%[0-9]+]] to ptr
+// DEV-DAG: [[DXP]] = addrspacecast ptr addrspace(5) [[DXA:%[0-9]+]] to ptr
+// DEV-DAG: [[YP]] = addrspacecast ptr addrspace(5) [[YA:%[0-9]+]] to ptr
+// DEV-DAG: [[DYP]] = addrspacecast ptr addrspace(5) [[DYA:%[0-9]+]] to ptr
+// DEV-DAG: [[XV:%[0-9]+]] = load double, ptr addrspace(1) [[X]]
+// DEV-DAG: store double [[XV]], ptr addrspace(5) [[XA]]
+// DEV-DAG: [[DXV:%[0-9]+]] = load double, ptr addrspace(1) [[DX]]
+// DEV-DAG: store double [[DXV]], ptr addrspace(5) [[DXA]]
+// DEV-DAG: [[YV:%[0-9]+]] = load double, ptr addrspace(5) [[YA]]
+// DEV-DAG: store double [[YV]], ptr addrspace(1) [[Y]]
+// DEV-DAG: [[DYV:%[0-9]+]] = load double, ptr addrspace(5) [[DYA]]
+// DEV-DAG: store double [[DYV]], ptr addrspace(1) [[DY]]
+// DEV: {{^}}}
+// DEV: define internal {{.*}}void @fwddiffeqf.left(ptr {{.*}}[[QX:%[0-9]+]], ptr {{.*}}[[QDX:%[0-9]+]], ptr {{.*}}[[QY:%[0-9]+]], ptr {{.*}}[[QDY:%[0-9]+]])
+// DEV-DAG: [[QDXV:%[0-9]+]] = load double, ptr [[QDX]]
+// DEV-DAG: [[QXV:%[0-9]+]] = load double, ptr [[QX]]
+// DEV-DAG: [[QYV:%[0-9]+]] = {{.*}}call {{.*}}double @llvm.fmuladd.f64(double [[QXV]], double [[QXV]], double 1.000000e+00)
+// DEV-DAG: [[T:%[0-9]+]] = fmul {{.*}}double [[QDXV]], 2.000000e+00
+// DEV-DAG: [[QDYV:%[0-9]+]] = fmul {{.*}}double [[T]], [[QXV]]
+// DEV-DAG: store double [[QDYV]], ptr [[QDY]]
+// DEV-DAG: store double [[QYV]], ptr [[QY]]
+// DEV: {{^}}}

@@ -9,7 +9,7 @@
 // RUN: diff %t/stock.out %t/gen.out
 // RUN: %poseidon_clangxx -O2 -g -poseidon-profile-use=%t/prof -poseidon-tau=1e-6 -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-enable-herbie=0 -poseidon-cache=%t/c -poseidon-explain=%t/x -Rpass=poseidon %s %t/other.o -o %t/use 2> %t/use.err
 // RUN: FileCheck --check-prefix=USE %s < %t/use.err
-// RUN: FileCheck --check-prefix=REMARK %s < %t/use.err
+// RUN: FileCheck --check-prefix=REMARK --implicit-check-not=remark: %s < %t/use.err
 // RUN: %t/use > %t/use.out
 // RUN: FileCheck --check-prefix=OUT %s < %t/use.out
 // RUN: not diff %t/stock.out %t/use.out
@@ -46,7 +46,7 @@ void wave_elsewhere(const double *x, double *y, int n) { wave(x, y, n); }
 
 POSEIDON_OPTIMIZE void wave(const double *x, double *y, int n) {
   for (int i = 0; i < n; ++i)
-    // REMARK: host_site_flow.cpp:[[@LINE+1]]:{{[0-9]+}}: remark: Poseidon runs
+    // REMARK: host_site_flow.cpp:[[@LINE+1]]:26: remark: Poseidon runs all 6 operations in float: (double)(expf((float)x[i] * ((float)x[i] * -0.5f)) * cosf((float)x[i] * 4.0f)); modelled error 7.1e-18 -> 1.2e-08, cost 1 -> 0.3125 (-69%) [PT0_0] [-Rpass=poseidon]
     y[i] = std::exp(-0.5 * x[i] * x[i]) * std::cos(4.0 * x[i]);
 }
 
@@ -96,17 +96,36 @@ int main(int argc, char **argv) {
 }
 #endif
 
-// GEN-DAG: [poseidon-profgen] wave(double const*, double*, int): site {{[0-9]}}, 2 shadow buffer(s), output(s) 1, 1 call(s)
-// GEN-DAG: [poseidon-profgen] energy(double const*, int): site {{[0-9]}}, 1 shadow buffer(s), output(s) return
-// GEN-DAG: [poseidon-profgen] Integrator::step(double*, double const*, int): site {{[0-9]}}, 3 shadow buffer(s), output(s) 1
-// GEN-DAG: [poseidon-profgen] double poly<double>(double): site {{[0-9]}}, 0 shadow buffer(s), output(s) return
-// GEN-DAG: [poseidon-profgen] clip(double const*, double*, int): site {{[0-9]}}, 2 shadow buffer(s), output(s) 1 return
+// GEN: [poseidon] site energy(double const*, int): accuracy target 1e-06
+// GEN-NEXT: [poseidon-profgen] wave(double const*, double*, int): site 0, 2 shadow buffer(s), output(s) 1, 1 call(s)
+// GEN-NEXT: [poseidon-profgen] energy(double const*, int): site 1, 1 shadow buffer(s), output(s) return, 2 call(s)
+// GEN-NEXT: [poseidon-profgen] Integrator::step(double*, double const*, int): site 2, 3 shadow buffer(s), output(s) 1, 2 call(s)
+// GEN-NEXT: [poseidon-profgen] clip(double const*, double*, int): site 3, 2 shadow buffer(s), output(s) 1 return, 2 call(s)
+// GEN-NEXT: [poseidon-profgen] double poly<double>(double): site 4, 0 shadow buffer(s), output(s) return, 3 call(s)
+// GEN-NOT: {{.}}
 
-// USE-DAG: preprocess__Z4wavePKdPdi_poseidon_body: tau=1.000000e-06
-// USE-DAG: preprocess__Z6energyPKdi_poseidon_body: the site's own accuracy target 1.000000e-06 overrides -poseidon-tau=1.000000e-06
-// USE-DAG: preprocess__ZN10Integrator4stepEPdPKdi_poseidon_body: tau=1.000000e-06
-// USE-DAG: preprocess__Z4polyIdET_S0__poseidon_body: tau=1.000000e-06
-// USE-DAG: preprocess__Z4clipPKdPdi_poseidon_body: tau=1.000000e-06
+// USE: [poseidon] preprocess__Z4wavePKdPdi_poseidon_body: tau=1.000000e-06
+// USE: Applying solution for CS: All FP64(0%) + FP32(100%)
+// USE: [poseidon] pin: _Z4wavePKdPdi:PT0=All FP64(0%) + FP32(100%)
+// USE: [poseidon] preprocess__Z6energyPKdi_poseidon_body: the site's own accuracy target 1.000000e-06 overrides -poseidon-tau=1.000000e-06
+// USE: Applying solution for CS: All FP64(0%) + FP32(100%)
+// USE: [poseidon] pin: _Z6energyPKdi:PT0=All FP64(0%) + FP32(100%)
+// USE: [poseidon] preprocess__ZN10Integrator4stepEPdPKdi_poseidon_body: tau=1.000000e-06
+// USE: Applying solution for CS: All FP64(0%) + FP32(100%)
+// USE: [poseidon] pin: _ZN10Integrator4stepEPdPKdi:PT0=All FP64(0%) + FP32(100%)
+// USE: [poseidon] preprocess__Z4clipPKdPdi_poseidon_body: tau=1.000000e-06
+// USE: Applying solution for CS: All FP64(0%) + FP32(100%)
+// USE: [poseidon] pin: _Z4clipPKdPdi:PT0=All FP64(0%) + FP32(100%)
+// USE: [poseidon] preprocess__Z4polyIdET_S0__poseidon_body: tau=1.000000e-06
+// USE: Applying solution for CS: All FP64(0%) + FP32(100%)
+// USE: [poseidon] pin: _Z4polyIdET_S0_:PT0=All FP64(0%) + FP32(100%)
+// USE-NOT: Applying solution
+
+// REMARK: host_site_flow.cpp:[[@LINE-68]]:14: remark: Poseidon runs all 4 operations in float: (double)((float)? + ((float)x[i] * 0.5f * (float)x[i] + sinf((float)x[i]))); modelled error 8.3e-19 -> 7.4e-08, cost 1 -> 0.3 (-70%) [PT0_0] [-Rpass=poseidon]
+// REMARK: host_site_flow.cpp:[[@LINE-59]]:40: remark: Poseidon runs all 3 operations in float: (double)((float)? * sqrtf((float)p[i] * (float)p[i] + 1.0f) + (float)q[i]); modelled error 0 -> 2.9e-08, cost 1 -> 0.583333 (-42%) [PT0_0] [-Rpass=poseidon]
+// REMARK: host_site_flow.cpp:[[@LINE-52]]:12: remark: Poseidon runs all 2 operations in float: (double)((float)x[i] * cosf((float)x[i])); modelled error 1.8e-17 -> 3.7e-08, cost 1 -> 0.416667 (-58%) [PT0_0] [-Rpass=poseidon]
+// REMARK: host_site_flow.cpp:[[@LINE-58]]:62: remark: Poseidon runs all 4 operations in float: (double)(expf((float)x) * (float)x + (float)x * -2.0f + 1.0f); modelled error 1.1e-17 -> 8.2e-09, cost 1 -> 0.35 (-65%) [PT0_0] [-Rpass=poseidon]
+// REMARK-NOT: remark:
 
 // The call through the pointer and the one from the other translation unit
 // run the same rewritten body.
@@ -114,4 +133,16 @@ int main(int argc, char **argv) {
 
 // SOURCE: (float)
 
-// LEVEL-COUNT-5: Applying solution for CS:
+// At every level each site is rewritten; which mix of FP32 and FP64 a site
+// gets depends on the profile of that level's program.
+// LEVEL: Applying solution for CS:
+// LEVEL: [poseidon] pin: _Z4wavePKdPdi:PT0=All FP64({{[0-9]+}}%) + FP32({{[0-9]+}}%)
+// LEVEL: Applying solution for CS:
+// LEVEL: [poseidon] pin: _Z6energyPKdi:PT0=All FP64({{[0-9]+}}%) + FP32({{[0-9]+}}%)
+// LEVEL: Applying solution for CS:
+// LEVEL: [poseidon] pin: _ZN10Integrator4stepEPdPKdi:PT0=All FP64({{[0-9]+}}%) + FP32({{[0-9]+}}%)
+// LEVEL: Applying solution for CS:
+// LEVEL: [poseidon] pin: _Z4clipPKdPdi:PT0=All FP64({{[0-9]+}}%) + FP32({{[0-9]+}}%)
+// LEVEL: Applying solution for CS:
+// LEVEL: [poseidon] pin: _Z4polyIdET_S0_:PT0=All FP64({{[0-9]+}}%) + FP32({{[0-9]+}}%)
+// LEVEL-NOT: Applying solution

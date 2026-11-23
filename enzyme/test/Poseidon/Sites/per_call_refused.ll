@@ -1,7 +1,9 @@
 ; RUN: rm -rf %t && split-file %s %t
-; RUN: not %clang -O0 -x ir -Wno-override-module %t/host.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/other_sites -mllvm -poseidon-cache=%t/c -S -emit-llvm -o /dev/null 2>&1 | FileCheck --check-prefix=ERR %s
-; RUN: %opt %t/host.ll %loadPoseidon -passes=poseidon -disable-output 2>&1 | FileCheck --check-prefix=OFF %s
-; RUN: not %opt %t/invoke_nvptx.ll %loadPoseidon -passes=poseidon -poseidon-profile-use=%S/../Inputs/other_sites -poseidon-cache=%t/c -disable-output 2>&1 | FileCheck --check-prefix=INVOKE %s
+; RUN: not %clang -O0 -x ir -Wno-override-module %t/host.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/other_sites -mllvm -poseidon-cache=%t/c -S -emit-llvm -o /dev/null 2>&1 | FileCheck --check-prefix=ERR --implicit-check-not=error: %s
+; RUN: %if enzyme %{ not %clang -O0 -x ir -Wno-override-module %t/host.ll %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/g -S -emit-llvm -o /dev/null 2>&1 | FileCheck --check-prefix=ERR --implicit-check-not=error: %s %}
+; RUN: %opt %t/host.ll %loadPoseidon -passes=poseidon -S -o %t/off.ll 2>&1 | FileCheck --check-prefix=OFF --implicit-check-not=warning: %s
+; RUN: FileCheck --check-prefix=OFFIR %s < %t/off.ll
+; RUN: not %opt %t/invoke_nvptx.ll %loadPoseidon -passes=poseidon -poseidon-profile-use=%S/../Inputs/other_sites -poseidon-cache=%t/c -disable-output 2>&1 | FileCheck --check-prefix=INVOKE --implicit-check-not=error: %s
 
 ; A call through __poseidon_optimize that cannot be a site is an error in a
 ; compile that generates or uses a profile, and the call runs as written with
@@ -10,9 +12,10 @@
 ; In device code the copy made for the call is reached through an invoke.
 ; The opt of LLVM 21 and 22 exits at its first error, so the compile with
 ; several refused calls runs through clang, which reports every error of a
-; compile.
+; compile; it reports the refusals left in the module as written twice, as
+; the module as written is compiled again.
 
-; INVOKE: error: {{.*}}in function k {{.*}}Poseidon: vol at call 0 in k is reached through an invoke, so this call cannot be a Poseidon site
+; INVOKE: error: <unknown>:0:0: in function k void (ptr): Poseidon: vol at call 0 in k is reached through an invoke, so this call cannot be a Poseidon site
 
 ;--- host.ll
 target triple = "x86_64-unknown-linux-gnu"
@@ -29,20 +32,36 @@ define double @sq(double %x) {
   ret double %m
 }
 
-; ERR: error: {{.*}}in function indirect {{.*}}Poseidon: __poseidon_optimize needs a function name and a call of it
-; OFF: warning: {{.*}}in function indirect {{.*}}Poseidon: __poseidon_optimize needs a function name and a call of it; the call runs as written
+; ERR: error: <unknown>:0:0: in function indirect double (ptr, double): Poseidon: __poseidon_optimize needs a function name and a call of it
+; OFF: warning: <unknown>:0:0: in function indirect double (ptr, double): Poseidon: __poseidon_optimize needs a function name and a call of it; the call runs as written
+; Without a profile action a call of a named function with its own signature
+; calls the function, and the others keep the identity.
+; OFFIR-LABEL: define double @indirect(ptr %fp, double %x)
+; OFFIR-NEXT: %h = call ptr @__poseidon_site(ptr %fp)
+; OFFIR-NEXT: %r = call double %h(double %x)
+; OFFIR-NEXT: ret double %r
+; OFFIR-LABEL: define double @refused(double %x)
+; OFFIR-NEXT: %r0 = call double (double, ...) @variadic(double %x)
+; OFFIR-NEXT: %r1 = call double @elsewhere(double %r0)
+; OFFIR-NEXT: %h2 = call ptr @__poseidon_site(ptr @sq)
+; OFFIR-NEXT: %r2 = call double %h2(float 1.000000e+00)
+; OFFIR-NEXT: %s = fadd double %r1, %r2
+; OFFIR-NEXT: ret double %s
 define double @indirect(ptr %fp, double %x) {
   %h = call ptr @__poseidon_site(ptr %fp)
   %r = call double %h(double %x)
   ret double %r
 }
 
-; ERR: error: {{.*}}in function refused {{.*}}Poseidon: variadic is variadic, so this call cannot be a Poseidon site
-; ERR: error: {{.*}}in function refused {{.*}}Poseidon: elsewhere has no body in this translation unit, so this call cannot be a Poseidon site
-; ERR: error: {{.*}}in function refused {{.*}}Poseidon: sq is called with another signature, so this call cannot be a Poseidon site
-; OFF: warning: {{.*}}in function refused {{.*}}Poseidon: variadic is variadic, so this call is not a Poseidon site. The call runs as written.
-; OFF: warning: {{.*}}in function refused {{.*}}Poseidon: elsewhere has no body in this translation unit, so this call is not a Poseidon site. The call runs as written.
-; OFF: warning: {{.*}}in function refused {{.*}}Poseidon: sq is called with another signature, so this call is not a Poseidon site. The call runs as written.
+; ERR: error: <unknown>:0:0: in function refused double (double): Poseidon: variadic is variadic, so this call cannot be a Poseidon site
+; ERR: error: <unknown>:0:0: in function refused double (double): Poseidon: elsewhere has no body in this translation unit, so this call cannot be a Poseidon site
+; ERR: error: <unknown>:0:0: in function refused double (double): Poseidon: sq is called with another signature, so this call cannot be a Poseidon site
+; ERR: error: <unknown>:0:0: in function indirect double (ptr, double): Poseidon: __poseidon_optimize needs a function name and a call of it
+; ERR: error: <unknown>:0:0: in function refused double (double): Poseidon: sq is called with another signature, so this call cannot be a Poseidon site
+; ERR: 6 errors generated.
+; OFF: warning: <unknown>:0:0: in function refused double (double): Poseidon: variadic is variadic, so this call is not a Poseidon site. The call runs as written.
+; OFF: warning: <unknown>:0:0: in function refused double (double): Poseidon: elsewhere has no body in this translation unit, so this call is not a Poseidon site. The call runs as written.
+; OFF: warning: <unknown>:0:0: in function refused double (double): Poseidon: sq is called with another signature, so this call is not a Poseidon site. The call runs as written.
 define double @refused(double %x) {
   %h0 = call ptr @__poseidon_site(ptr @variadic)
   %r0 = call double (double, ...) %h0(double %x)

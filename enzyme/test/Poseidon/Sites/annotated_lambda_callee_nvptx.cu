@@ -9,10 +9,11 @@
 // A site is everything its kernel runs on the device. The annotated lambda
 // only calls `element`, which stays a call at -O3 (here because of noinline;
 // in an application because of its size), and the arithmetic in it is the
-// site's: it is folded into the kernel, profiled and solved. A recursive
-// callee cannot be folded in, which is reported, and a site with no
-// floating-point operation says so instead of being dropped silently, also
-// when it is the module's only one.
+// site's: it is folded into the kernel and profiled there, and profile use
+// looks the site up under the kernel's name. A recursive callee cannot be
+// folded in, which is reported, and a site with no floating-point operation
+// says so instead of being dropped silently, also when it is the module's
+// only one.
 
 #include "poseidon/poseidon.h"
 
@@ -53,15 +54,37 @@ POSEIDON_OPTIMIZE __attribute__((global)) void copy(double *y,
   y[__nvvm_read_ptx_sreg_tid_x()] = x[__nvvm_read_ptx_sreg_tid_x()];
 }
 
-// GEN-DAG: warning: {{.*}}Poseidon: deep(double*, int) calls series(int, double), which the pass cannot fold into the site; the floating-point work it does is neither profiled nor rewritten
-// GEN-DAG: warning: {{.*}}Poseidon: copy(double*, double const*) holds no floating-point operation the pass profiles; the kernel is not profiled and stays as written
-// GEN-DAG: [poseidon-profgen] _ZL13forall_kernelIZ5applyiPKdPdEUliE_EviT_: site {{[0-9]+}}, 2 shadow buffer(s), output(s) 1[+8]
+// GEN: annotated_lambda_callee_nvptx.cu:[[@LINE-10]]:{{[0-9]+}}: warning: Poseidon: deep(double*, int) calls series(int, double), which the pass cannot fold into the site; the floating-point work it does is neither profiled nor rewritten
+// GEN: annotated_lambda_callee_nvptx.cu:[[@LINE-6]]:{{[0-9]+}}: warning: Poseidon: copy(double*, double const*) holds no floating-point operation the pass profiles; the kernel is not profiled and stays as written
+// GEN: [poseidon] block-geometry probe placed in 2 profiled function(s)
+// GEN: [poseidon-profgen] _Z4deepPdi: site 0, 1 shadow buffer(s), output(s) 0
+// GEN-NEXT: [poseidon-profgen] _ZL13forall_kernelIZ5applyiPKdPdEUliE_EviT_: site 1, 2 shadow buffer(s), output(s) 1[+8]
+// GEN-NEXT: 2 warnings generated when compiling for {{.*}}
 
-// The four operations of `element` (two of them fused multiply-adds), each
-// logged by the profiled kernel.
-// PROBES-COUNT-4: call void @poseidonLogValueCUDA({{.*}}@poseidon_site_preprocess__ZL13forall_kernelIZ5applyiPKdPdEUliE_EviT__poseidon_body to ptr), i64 {{[0-3]}},
+// The four operations of `element` (two of them fused multiply-adds, which
+// log three operands), each logged by the profiled kernel's body, which calls
+// `element` no more.
+// PROBES: define internal fastcc void @diffepreprocess__ZL13forall_kernelIZ5applyiPKdPdEUliE_EviT__poseidon_body(
+// PROBES-NOT: call {{.*}}@_Z7elementiPKdPd(
+// PROBES: call void @poseidonLogValueCUDA(ptr addrspacecast (ptr addrspace(1) @poseidon_site_preprocess__ZL13forall_kernelIZ5applyiPKdPdEUliE_EviT__poseidon_body to ptr), i64 0, double %{{[0-9]+}}, i64 3,
+// PROBES-NOT: call {{.*}}@_Z7elementiPKdPd(
+// PROBES: call void @poseidonLogValueCUDA(ptr addrspacecast (ptr addrspace(1) @poseidon_site_preprocess__ZL13forall_kernelIZ5applyiPKdPdEUliE_EviT__poseidon_body to ptr), i64 1, double %{{[0-9]+}}, i64 2,
+// PROBES-NOT: call {{.*}}@_Z7elementiPKdPd(
+// PROBES: call void @poseidonLogValueCUDA(ptr addrspacecast (ptr addrspace(1) @poseidon_site_preprocess__ZL13forall_kernelIZ5applyiPKdPdEUliE_EviT__poseidon_body to ptr), i64 2, double %{{[0-9]+}}, i64 2,
+// PROBES-NOT: call {{.*}}@_Z7elementiPKdPd(
+// PROBES: call void @poseidonLogValueCUDA(ptr addrspacecast (ptr addrspace(1) @poseidon_site_preprocess__ZL13forall_kernelIZ5applyiPKdPdEUliE_EviT__poseidon_body to ptr), i64 3, double %{{[0-9]+}}, i64 3,
+// PROBES-NOT: call {{.*}}@_Z7elementiPKdPd(
+// PROBES-NOT: @poseidon_site_preprocess__ZL13forall_kernelIZ5applyiPKdPdEUliE_EviT__poseidon_body to ptr), i64 4,
+// PROBES: {{^}}}
 // PROBES-NOT: @poseidon_site_preprocess__ZL13forall_kernelIZ5applyiPKdPdEUliE_EviT__poseidon_body to ptr), i64 4,
 
-// EMPTY: warning: {{.*}}Poseidon: copy(double*, double const*) holds no floating-point operation the pass profiles
+// EMPTY: annotated_lambda_callee_nvptx.cu:[[@LINE-29]]:{{[0-9]+}}: warning: Poseidon: copy(double*, double const*) holds no floating-point operation the pass profiles; the kernel is not profiled and stays as written
+// EMPTY: 1 warning generated when compiling for {{.*}}
 
-// USE: warning: {{.*}}Poseidon: _Z4copyPdPKd_poseidon_body holds no floating-point operation the pass rewrites; leaving the site unchanged
+// USE: annotated_lambda_callee_nvptx.cu:[[@LINE-37]]:{{[0-9]+}}: warning: Poseidon: deep(double*, int) calls series(int, double), which the pass cannot fold into the site; the floating-point work it does is neither profiled nor rewritten
+// USE: annotated_lambda_callee_nvptx.cu:[[@LINE-38]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/Inputs/other_sites/preprocess__Z4deepPdi_poseidon_body.fpprofile: the profiled program did not contain this site (it was annotated after the profiling run, is in a translation unit the profiled program did not link, or was renamed); leaving the site unchanged
+// USE-NEXT: [poseidon] _Z4deepPdi_poseidon_body: the profiled program did not contain this site (no profile at {{.*}}/Inputs/other_sites/preprocess__Z4deepPdi_poseidon_body.fpprofile); left unchanged
+// USE-NEXT: annotated_lambda_callee_nvptx.cu:[[@LINE-35]]:{{[0-9]+}}: warning: Poseidon: _Z4copyPdPKd_poseidon_body holds no floating-point operation the pass rewrites; leaving the site unchanged
+// USE: annotated_lambda_callee_nvptx.cu:[[@LINE-64]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/Inputs/other_sites/preprocess__ZL13forall_kernelIZ5applyiPKdPdEUliE_EviT__poseidon_body.fpprofile: the profiled program did not contain this site (it was annotated after the profiling run, is in a translation unit the profiled program did not link, or was renamed); leaving the site unchanged
+// USE: [poseidon] _ZL13forall_kernelIZ5applyiPKdPdEUliE_EviT__poseidon_body: the profiled program did not contain this site (no profile at {{.*}}/Inputs/other_sites/preprocess__ZL13forall_kernelIZ5applyiPKdPdEUliE_EviT__poseidon_body.fpprofile); left unchanged
+// USE-NEXT: 4 warnings generated when compiling for {{.*}}

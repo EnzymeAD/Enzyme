@@ -5,13 +5,20 @@
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv
 ; RUN: rm -rf %t && mkdir %t
 ; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" %{use} -poseidon-cache=%t/attr -poseidon-cost-budget=-1e-9 -poseidon-print -S > %t/attr.out 2>&1
-; RUN: FileCheck %s < %t/attr.out
+; RUN: FileCheck --check-prefixes=CHECK,BODY %s < %t/attr.out
 ; RUN: FileCheck --check-prefix=CLEAN %s < %t/attr.out
-; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-kernels=fms.* %{use} -poseidon-cache=%t/regex -poseidon-cost-budget=-1e-9 -poseidon-print -S 2>&1 | FileCheck --check-prefix=REGEX %s
-; RUN: %opt %s %loadPoseidon -passes="poseidon,always-inline,poseidon-finalize" -S 2> %t/noprofile.err | FileCheck --check-prefix=NOPROFILE %s
+; RUN: sed -n '/^; ModuleID/,$p' %t/attr.out > %t/attr.ll
+; RUN: FileCheck --check-prefixes=MODULE,BODY %s < %t/attr.ll
+; RUN: grep -B3 -A4 '%ds.hi64[^ ]* = fpext' %t/attr.ll | FileCheck --check-prefix=JOIN %s
+; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-kernels=fms.* %{use} -poseidon-cache=%t/regex -poseidon-cost-budget=-1e-9 -poseidon-print -S 2>&1 | tee %t/regex.out | FileCheck --check-prefix=REGEX %s
+; RUN: sed -n '/^; ModuleID/,$p' %t/regex.out > %t/regex.ll
+; RUN: FileCheck --check-prefixes=MODULE,BODY %s < %t/regex.ll
+; RUN: grep -B3 -A4 '%ds.hi64[^ ]* = fpext' %t/regex.ll | FileCheck --check-prefix=JOIN %s
+; RUN: %opt %s %loadPoseidon -passes="poseidon,always-inline,poseidon-finalize" -S 2> %t/noprofile.err | FileCheck --check-prefixes=NOPROFILE,FP64 %s
 ; RUN: FileCheck --check-prefix=NOPROFILE-WARN %s < %t/noprofile.err
-; RUN: %opt %s %loadPoseidon -passes="poseidon,always-inline,poseidon-finalize" %{use} -poseidon-cache=%t/noop -poseidon-cost-budget=0 -S | FileCheck --check-prefix=NOOP %s
-; RUN: %opt %s %loadPoseidon -passes="poseidon,always-inline,poseidon-finalize" %{use} -poseidon-cache=%t/inlined -poseidon-cost-budget=-1e-9 -S | FileCheck --check-prefix=INLINED %s
+; RUN: %opt %s %loadPoseidon -passes="poseidon,always-inline,poseidon-finalize" %{use} -poseidon-cache=%t/noop -poseidon-cost-budget=0 -S | FileCheck --check-prefixes=NOOP,FP64 %s
+; RUN: %opt %s %loadPoseidon -passes="poseidon,always-inline,poseidon-finalize" %{use} -poseidon-cache=%t/inlined -poseidon-cost-budget=-1e-9 -S | tee %t/inlined.ll | FileCheck --check-prefix=INLINED %s
+; RUN: grep -B3 -A4 '%ds.hi64[^ ]* = fpext' %t/inlined.ll | FileCheck --check-prefix=JOIN %s
 
 ; A kernel carrying POSEIDON_OPTIMIZE is a site whose annotated computation is
 ; its whole body: same code and same profile as ds_expansion_nvptx.ll, with no
@@ -75,37 +82,63 @@ attributes #5 = { convergent nounwind "uniform-work-group-size" }
 ; CHECK: All FP64(0%) + FP32(100%)
 ; CHECK: All FP64(0%) + Expansion2(100%)
 ; CHECK: Applying solution for CS: All FP64(0%) + Expansion2(100%)
-; CHECK-LABEL: define {{.*}} @preprocess_fms_kernel_poseidon_body(
-; CHECK: %[[X:.+]] = load double, ptr
-; CHECK: %[[Y:.+]] = load double, ptr
-; CHECK: %[[XHI:ds.hi[0-9]*]] = fptrunc double %[[X]] to float
-; CHECK-NEXT: %[[XHIB:ds.hib[0-9]*]] = fpext float %[[XHI]] to double
-; CHECK-NEXT: %[[XLOS:ds.los[0-9]*]] = fsub double %[[X]], %[[XHIB]]
-; CHECK-NEXT: %[[XLO:ds.lo[0-9]*]] = fptrunc double %[[XLOS]] to float
-; CHECK-NEXT: %[[YHI:ds.hi[0-9]*]] = fptrunc double %[[Y]] to float
-; CHECK-NEXT: %[[YHIB:ds.hib[0-9]*]] = fpext float %[[YHI]] to double
-; CHECK-NEXT: %[[YLOS:ds.los[0-9]*]] = fsub double %[[Y]], %[[YHIB]]
-; CHECK-NEXT: %[[YLO:ds.lo[0-9]*]] = fptrunc double %[[YLOS]] to float
-; CHECK-NEXT: %[[P:dsf.p[0-9]*]] = fmul float %[[XHI]], %[[YHI]]
-; CHECK-NEXT: %[[NP:dsf.np[0-9]*]] = fneg float %[[P]]
-; CHECK-NEXT: %[[E:dsf.e[0-9]*]] = {{.*}}call float @llvm.fma.f32(float %[[XHI]], float %[[YHI]], float %[[NP]])
-; CHECK-NEXT: %[[E1:dsf.e1[0-9]*]] = {{.*}}call float @llvm.fma.f32(float %[[XHI]], float %[[YLO]], float %[[E]])
-; CHECK-NEXT: %[[E2:dsf.e2[0-9]*]] = {{.*}}call float @llvm.fma.f32(float %[[XLO]], float %[[YHI]], float %[[E1]])
-; CHECK-NEXT: %[[S:ts.s[0-9]*]] = fadd float %[[P]], %[[XHI]]
-; CHECK-NEXT: %[[AP:ts.ap[0-9]*]] = fsub float %[[S]], %[[XHI]]
-; CHECK-NEXT: %[[BP:ts.bp[0-9]*]] = fsub float %[[S]], %[[AP]]
-; CHECK-NEXT: %[[DA:ts.da[0-9]*]] = fsub float %[[P]], %[[AP]]
-; CHECK-NEXT: %[[DB:ts.db[0-9]*]] = fsub float %[[XHI]], %[[BP]]
-; CHECK-NEXT: %[[TE:ts.e[0-9]*]] = fadd float %[[DA]], %[[DB]]
-; CHECK-NEXT: %[[T0:dsf.t0[0-9]*]] = fadd float %[[E2]], %[[XLO]]
-; CHECK-NEXT: %[[T1:dsf.t1[0-9]*]] = fadd float %[[T0]], %[[TE]]
-; CHECK-NEXT: %[[FS:fts.s[0-9]*]] = fadd float %[[S]], %[[T1]]
-; CHECK-NEXT: %[[FBP:fts.bp[0-9]*]] = fsub float %[[FS]], %[[S]]
-; CHECK-NEXT: %[[FE:fts.e[0-9]*]] = fsub float %[[T1]], %[[FBP]]
-; CHECK: %[[HI64:ds.hi64[0-9]*]] = fpext float %{{.+}} to double
-; CHECK-NEXT: %[[LO64:ds.lo64[0-9]*]] = fpext float %{{.+}} to double
-; CHECK-NEXT: %[[J:ds.f64[0-9]*]] = fadd double %[[HI64]], %[[LO64]], !poseidon.ds.join
-; CHECK: store double %[[J]], ptr
+; CHECK: [poseidon] pin: fms_kernel:PT0=All FP64(0%) + Expansion2(100%)
+
+; Without inlining the kernel calls the rewritten body with its own arguments.
+; MODULE-LABEL: define {{.*}} @fms_kernel(
+; MODULE-SAME: ptr {{.*}}%[[KA:[0-9]+]], ptr {{.*}}%[[KB:[0-9]+]], ptr {{.*}}%[[KOUT:[0-9]+]])
+; MODULE-NEXT: entry:
+; MODULE-NEXT: call void @preprocess_fms_kernel_poseidon_body(ptr %[[KA]], ptr %[[KB]], ptr %[[KOUT]])
+; MODULE-NEXT: ret void
+
+; BODY-LABEL: define {{.*}} @preprocess_fms_kernel_poseidon_body(
+; BODY-SAME: ptr {{.*}}%[[A:[0-9]+]], ptr {{.*}}%[[B:[0-9]+]], ptr {{.*}}%[[OUT:[0-9]+]])
+; BODY: %[[I:[0-9]+]] = zext i32 %{{[0-9]+}} to i64
+; BODY-NEXT: %[[XP:[0-9]+]] = getelementptr inbounds {{.*}}ptr %[[A]], i64 %[[I]]
+; BODY-NEXT: %[[X:[0-9]+]] = load double, ptr %[[XP]]
+; BODY-NEXT: %[[YP:[0-9]+]] = getelementptr inbounds {{.*}}ptr %[[B]], i64 %[[I]]
+; BODY-NEXT: %[[Y:[0-9]+]] = load double, ptr %[[YP]]
+; BODY-NEXT: %[[XHI:ds.hi[0-9]*]] = fptrunc double %[[X]] to float
+; BODY-NEXT: %[[XHIB:ds.hib[0-9]*]] = fpext float %[[XHI]] to double
+; BODY-NEXT: %[[XLOS:ds.los[0-9]*]] = fsub double %[[X]], %[[XHIB]]
+; BODY-NEXT: %[[XLO:ds.lo[0-9]*]] = fptrunc double %[[XLOS]] to float
+; BODY-NEXT: %[[YHI:ds.hi[0-9]*]] = fptrunc double %[[Y]] to float
+; BODY-NEXT: %[[YHIB:ds.hib[0-9]*]] = fpext float %[[YHI]] to double
+; BODY-NEXT: %[[YLOS:ds.los[0-9]*]] = fsub double %[[Y]], %[[YHIB]]
+; BODY-NEXT: %[[YLO:ds.lo[0-9]*]] = fptrunc double %[[YLOS]] to float
+; BODY-NEXT: %[[P:dsf.p[0-9]*]] = fmul float %[[XHI]], %[[YHI]]
+; BODY-NEXT: %[[NP:dsf.np[0-9]*]] = fneg float %[[P]]
+; BODY-NEXT: %[[E:dsf.e[0-9]*]] = {{.*}}call float @llvm.fma.f32(float %[[XHI]], float %[[YHI]], float %[[NP]])
+; BODY-NEXT: %[[E1:dsf.e1[0-9]*]] = {{.*}}call float @llvm.fma.f32(float %[[XHI]], float %[[YLO]], float %[[E]])
+; BODY-NEXT: %[[E2:dsf.e2[0-9]*]] = {{.*}}call float @llvm.fma.f32(float %[[XLO]], float %[[YHI]], float %[[E1]])
+; BODY-NEXT: %[[S:ts.s[0-9]*]] = fadd float %[[P]], %[[XHI]]
+; BODY-NEXT: %[[AP:ts.ap[0-9]*]] = fsub float %[[S]], %[[XHI]]
+; BODY-NEXT: %[[BP:ts.bp[0-9]*]] = fsub float %[[S]], %[[AP]]
+; BODY-NEXT: %[[DA:ts.da[0-9]*]] = fsub float %[[P]], %[[AP]]
+; BODY-NEXT: %[[DB:ts.db[0-9]*]] = fsub float %[[XHI]], %[[BP]]
+; BODY-NEXT: %[[TE:ts.e[0-9]*]] = fadd float %[[DA]], %[[DB]]
+; BODY-NEXT: %[[T0:dsf.t0[0-9]*]] = fadd float %[[E2]], %[[XLO]]
+; BODY-NEXT: %[[T1:dsf.t1[0-9]*]] = fadd float %[[T0]], %[[TE]]
+; BODY-NEXT: %[[FS:fts.s[0-9]*]] = fadd float %[[S]], %[[T1]]
+; BODY-NEXT: %[[FBP:fts.bp[0-9]*]] = fsub float %[[FS]], %[[S]]
+; BODY-NEXT: %[[FE:fts.e[0-9]*]] = fsub float %[[T1]], %[[FBP]]
+; BODY-NOT: double
+; BODY: %[[HI64:ds.hi64[0-9]*]] = fpext float %{{.+}} to double
+; BODY-NEXT: %[[LO64:ds.lo64[0-9]*]] = fpext float %{{.+}} to double
+; BODY-NEXT: %[[J:ds.f64[0-9]*]] = fadd double %[[HI64]], %[[LO64]], !poseidon.ds.join
+; BODY-NEXT: %[[OP:[0-9]+]] = getelementptr inbounds {{.*}}ptr %[[OUT]], i64 %[[I]]
+; BODY-NEXT: store double %[[J]], ptr %[[OP]]
+; BODY-NEXT: ret void
+
+; The joined pair is the last fast two-sum of the expansion.
+; JOIN: [[S:%[^ ]+]] = fadd float [[X:%[^ ,]+]], [[Y:%[^ ,]+]]{{$}}
+; JOIN-NEXT: [[BP:%[^ ]+]] = fsub float [[S]], [[X]]{{$}}
+; JOIN-NEXT: [[E:%[^ ]+]] = fsub float [[Y]], [[BP]]{{$}}
+; JOIN-NEXT: [[HI:%[^ ]+]] = fpext float [[S]] to double
+; JOIN-NEXT: [[LO:%[^ ]+]] = fpext float [[E]] to double
+; JOIN-NEXT: [[J:%[^ ]+]] = fadd double [[HI]], [[LO]], !poseidon.ds.join !{{[0-9]+}}
+; JOIN-NEXT: [[OP:%[0-9]+]] = getelementptr inbounds {{.*}}, i64 %{{[0-9]+}}
+; JOIN-NEXT: store double [[J]], ptr [[OP]]
 
 ; CLEAN-LABEL: define {{.*}} @preprocess_fms_kernel_poseidon_body(
 ; CLEAN-NOT: call double @llvm.fmuladd.f64
@@ -114,6 +147,7 @@ attributes #5 = { convergent nounwind "uniform-work-group-size" }
 ; CLEAN: ret void
 
 ; REGEX: Applying solution for CS: All FP64(0%) + Expansion2(100%)
+; REGEX: [poseidon] pin: fms_kernel:PT0=All FP64(0%) + Expansion2(100%)
 ; REGEX-LABEL: define {{.*}} @fms_kernel(
 ; REGEX: call void @preprocess_fms_kernel_poseidon_body(
 
@@ -122,22 +156,57 @@ attributes #5 = { convergent nounwind "uniform-work-group-size" }
 ; nothing the outline is folded back. With a rewrite applied the materialized
 ; body is folded back the same way. In every case the kernel is one entry
 ; function with the arithmetic inline and no _poseidon_body symbol survives.
-; NOPROFILE-WARN: warning: {{.*}}compiled without -poseidon-profile-generate or -poseidon-profile-use
+; NOPROFILE-WARN: warning: <unknown>:0:0: in function fms_kernel void (ptr, ptr, ptr): Poseidon: a Poseidon site was compiled without -poseidon-profile-generate or -poseidon-profile-use=<dir>. Emitting the original computation.
+; NOPROFILE-WARN-NOT: warning
 ; NOPROFILE-LABEL: define {{.*}} @fms_kernel(
-; NOPROFILE-NOT: call void @
-; NOPROFILE: call double @llvm.fmuladd.f64
-; NOPROFILE: ret void
-; NOPROFILE-NOT: _poseidon_body
-
 ; NOOP-LABEL: define {{.*}} @fms_kernel(
+; FP64-SAME: ptr {{.*}}%[[A:[0-9]+]], ptr {{.*}}%[[B:[0-9]+]], ptr {{.*}}%[[OUT:[0-9]+]])
+; NOPROFILE-NOT: call void @
 ; NOOP-NOT: call void @
-; NOOP: call double @llvm.fmuladd.f64
-; NOOP: ret void
+; FP64: %[[I:[0-9]+]] = zext i32 %{{[0-9]+}} to i64
+; FP64-NEXT: %[[XP:[0-9]+]] = getelementptr inbounds {{.*}}ptr %[[A]], i64 %[[I]]
+; FP64-NEXT: %[[X:[0-9]+]] = load double, ptr %[[XP]]
+; FP64-NEXT: %[[YP:[0-9]+]] = getelementptr inbounds {{.*}}ptr %[[B]], i64 %[[I]]
+; FP64-NEXT: %[[Y:[0-9]+]] = load double, ptr %[[YP]]
+; FP64-NEXT: %[[T0:[0-9]+]] = {{(tail )?}}call double @llvm.fmuladd.f64(double %[[X]], double %[[Y]], double %[[X]])
+; FP64-NEXT: %[[NY:[0-9]+]] = fneg double %[[Y]]
+; FP64-NEXT: %[[T1:[0-9]+]] = {{(tail )?}}call double @llvm.fmuladd.f64(double %[[T0]], double %[[T0]], double %[[NY]])
+; FP64-NEXT: %[[T2:[0-9]+]] = {{(tail )?}}call double @llvm.fmuladd.f64(double %[[T1]], double %[[Y]], double %[[T0]])
+; FP64-NEXT: %[[NX:[0-9]+]] = fneg double %[[X]]
+; FP64-NEXT: %[[T3:[0-9]+]] = {{(tail )?}}call double @llvm.fmuladd.f64(double %[[T2]], double %[[T2]], double %[[NX]])
+; FP64-NEXT: %[[T4:[0-9]+]] = {{(tail )?}}call double @llvm.fmuladd.f64(double %[[T3]], double %[[T1]], double %[[T2]])
+; FP64-NEXT: %[[OP:[0-9]+]] = getelementptr inbounds {{.*}}ptr %[[OUT]], i64 %[[I]]
+; FP64-NEXT: store double %[[T4]], ptr %[[OP]]
+; FP64-NEXT: ret void
+; NOPROFILE-NOT: _poseidon_body
 ; NOOP-NOT: _poseidon_body
 
 ; INLINED-LABEL: define {{.*}} @fms_kernel(
+; INLINED-SAME: ptr {{.*}}%[[A:[0-9]+]], ptr {{.*}}%[[B:[0-9]+]], ptr {{.*}}%[[OUT:[0-9]+]])
 ; INLINED-NOT: call void @
-; INLINED: fptrunc double
-; INLINED: !poseidon.ds.join
-; INLINED: ret void
+; INLINED: %[[I:[0-9]+]] = zext i32 %{{[0-9]+}} to i64
+; INLINED-NEXT: %[[XP:[0-9]+]] = getelementptr inbounds {{.*}}ptr %[[A]], i64 %[[I]]
+; INLINED-NEXT: %[[X:[0-9]+]] = load double, ptr %[[XP]]
+; INLINED-NEXT: %[[YP:[0-9]+]] = getelementptr inbounds {{.*}}ptr %[[B]], i64 %[[I]]
+; INLINED-NEXT: %[[Y:[0-9]+]] = load double, ptr %[[YP]]
+; INLINED-NEXT: [[XHI:%[^ ]+]] = fptrunc double %[[X]] to float
+; INLINED-NEXT: [[XHIB:%[^ ]+]] = fpext float [[XHI]] to double
+; INLINED-NEXT: [[XLOS:%[^ ]+]] = fsub double %[[X]], [[XHIB]]
+; INLINED-NEXT: [[XLO:%[^ ]+]] = fptrunc double [[XLOS]] to float
+; INLINED-NEXT: [[YHI:%[^ ]+]] = fptrunc double %[[Y]] to float
+; INLINED-NEXT: [[YHIB:%[^ ]+]] = fpext float [[YHI]] to double
+; INLINED-NEXT: [[YLOS:%[^ ]+]] = fsub double %[[Y]], [[YHIB]]
+; INLINED-NEXT: [[YLO:%[^ ]+]] = fptrunc double [[YLOS]] to float
+; INLINED-NEXT: [[P:%[^ ]+]] = fmul float [[XHI]], [[YHI]]
+; INLINED-NEXT: [[NP:%[^ ]+]] = fneg float [[P]]
+; INLINED-NEXT: [[E:%[^ ]+]] = {{.*}}call float @llvm.fma.f32(float [[XHI]], float [[YHI]], float [[NP]])
+; INLINED-NEXT: [[E1:%[^ ]+]] = {{.*}}call float @llvm.fma.f32(float [[XHI]], float [[YLO]], float [[E]])
+; INLINED-NEXT: {{.*}}call float @llvm.fma.f32(float [[XLO]], float [[YHI]], float [[E1]])
+; INLINED-NOT: double
+; INLINED: [[HI64:%[^ ]+]] = fpext float %{{[^ ]+}} to double
+; INLINED-NEXT: [[LO64:%[^ ]+]] = fpext float %{{[^ ]+}} to double
+; INLINED-NEXT: [[J:%[^ ]+]] = fadd double [[HI64]], [[LO64]], !poseidon.ds.join !{{[0-9]+}}
+; INLINED-NEXT: %[[OP:[0-9]+]] = getelementptr inbounds {{.*}}ptr %[[OUT]], i64 %[[I]]
+; INLINED-NEXT: store double [[J]], ptr %[[OP]]
+; INLINED-NEXT: ret void
 ; INLINED-NOT: _poseidon_body

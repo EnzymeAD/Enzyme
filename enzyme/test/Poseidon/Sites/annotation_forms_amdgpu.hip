@@ -33,8 +33,17 @@ POSEIDON_OPTIMIZE_TAU(1e-9) __attribute__((global)) void tight(double *x) {
   x[1] = x[1] * x[1] + 2.0;
 }
 
-// TYPE: @llvm.global.annotations = {{.*}} global [2 x { ptr addrspace(1), ptr addrspace(4), ptr addrspace(4), i32, ptr addrspace(1) }]
+// TYPE: [[ANN:@[^ ]+]] = private unnamed_addr addrspace(4) constant [9 x i8] c"poseidon\00", section "llvm.metadata"
+// TYPE: [[FILE:@[^ ]+]] = private unnamed_addr addrspace(4) constant [{{[0-9]+}} x i8] c"{{.*}}annotation_forms_amdgpu.hip\00", section "llvm.metadata"
+// TYPE: [[NOARGS:@[^ ]+]] = private unnamed_addr addrspace(1) constant { i32 } zeroinitializer, section "llvm.metadata"
+// TYPE: [[TAU:@[^ ]+]] = private unnamed_addr addrspace(1) constant { double } { double 1.000000e-09 }, section "llvm.metadata"
+// TYPE: @llvm.global.annotations = appending addrspace(1) global [2 x { ptr addrspace(1), ptr addrspace(4), ptr addrspace(4), i32, ptr addrspace(1) }] [{ ptr addrspace(1), ptr addrspace(4), ptr addrspace(4), i32, ptr addrspace(1) } { ptr addrspace(1) addrspacecast (ptr @_Z5plainPd to ptr addrspace(1)), ptr addrspace(4) [[ANN]], ptr addrspace(4) [[FILE]], i32 [[@LINE-12]], ptr addrspace(1) [[NOARGS]] }, { ptr addrspace(1), ptr addrspace(4), ptr addrspace(4), i32, ptr addrspace(1) } { ptr addrspace(1) addrspacecast (ptr @_Z5tightPd to ptr addrspace(1)), ptr addrspace(4) [[ANN]], ptr addrspace(4) [[FILE]], i32 [[@LINE-8]], ptr addrspace(1) [[TAU]] }], section "llvm.metadata"
 
-// READ: no profile at {{.*}}/preprocess__Z5plainPd_poseidon_body.fpprofile
+// READ-NOT: plain(double*): accuracy target
+// READ: annotation_forms_amdgpu.hip:[[@LINE-15]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/Inputs/other_sites/preprocess__Z5plainPd_poseidon_body.fpprofile: the profiled program did not contain this site (it was annotated after the profiling run, is in a translation unit the profiled program did not link, or was renamed); leaving the site unchanged
+// READ: [poseidon] _Z5plainPd_poseidon_body: the profiled program did not contain this site (no profile at {{.*}}/Inputs/other_sites/preprocess__Z5plainPd_poseidon_body.fpprofile); left unchanged
 // READ-NOT: plain(double*): accuracy target
 // READ: [poseidon] site tight(double*): accuracy target 1e-09
+// READ-NEXT: annotation_forms_amdgpu.hip:[[@LINE-15]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/Inputs/other_sites/preprocess__Z5tightPd_poseidon_body.fpprofile: the profiled program did not contain this site (it was annotated after the profiling run, is in a translation unit the profiled program did not link, or was renamed); leaving the site unchanged
+// READ: [poseidon] _Z5tightPd_poseidon_body: the profiled program did not contain this site (no profile at {{.*}}/Inputs/other_sites/preprocess__Z5tightPd_poseidon_body.fpprofile); left unchanged
+// READ-NEXT: [poseidon] every site of {{.*}}annotation_forms_amdgpu.hip was left alone; emitting the module as written

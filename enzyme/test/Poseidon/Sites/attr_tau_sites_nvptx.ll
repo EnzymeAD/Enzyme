@@ -4,6 +4,7 @@
 ; RUN: %opt %s %loadPoseidon -passes="poseidon,always-inline,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-profile-use=%t/prof -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-enable-multifloat=true -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cache=%t/cache -S > %t/out.ll 2> %t/err.txt
 ; RUN: FileCheck --check-prefix=ERR %s < %t/err.txt
 ; RUN: FileCheck --check-prefix=IR %s < %t/out.ll
+; RUN: grep -B3 -A4 '%ds.hi64[^ ]* = fpext' %t/out.ll | FileCheck --check-prefix=JOIN %s
 
 ; Three sites in one module, same body and same profile, differing only in what
 ; the annotation asks for: POSEIDON_OPTIMIZE_TAU(1e-7) takes FP32,
@@ -123,23 +124,95 @@ attributes #5 = { convergent nounwind "uniform-work-group-size" }
 
 ; ERR: [poseidon] preprocess_fms_loose_poseidon_body: tau=1.000000e-07 {{.*}} rel=1.428768e-08
 ; ERR: Applying solution for CS: All FP64(0%) + FP32(100%)
+; ERR: [poseidon] pin: fms_loose:PT0=All FP64(0%) + FP32(100%)
 ; ERR: [poseidon] preprocess_fms_tight_poseidon_body: tau=1.000000e-12 {{.*}} rel=7.011882e-16
 ; ERR: Applying solution for CS: All FP64(0%) + Expansion2(100%)
-; ERR: fms_bare_poseidon_body: the profile directory was written before the profiling runtime recorded sites that never ran, so this site may simply not have run (or the profiled program did not contain it) (no profile at {{.*}}preprocess_fms_bare_poseidon_body.fpprofile); left unchanged
+; ERR: [poseidon] pin: fms_tight:PT0=All FP64(0%) + Expansion2(100%)
+; ERR: warning: <unknown>:0:0: in function fms_bare void (ptr, ptr, ptr): Poseidon: no profile at {{.*}}preprocess_fms_bare_poseidon_body.fpprofile: the profile directory was written before the profiling runtime recorded sites that never ran, so this site may simply not have run (or the profiled program did not contain it); leaving the site unchanged
+; ERR: [poseidon] fms_bare_poseidon_body: the profile directory was written before the profiling runtime recorded sites that never ran, so this site may simply not have run (or the profiled program did not contain it) (no profile at {{.*}}preprocess_fms_bare_poseidon_body.fpprofile); left unchanged
+; ERR-NOT: Applying solution
 
+; The loose site runs the body in FP32 between one narrowing of each input and
+; one widening of the result.
 ; IR-LABEL: define {{.*}} @fms_loose(
-; IR: fptrunc double
-; IR-NOT: !poseidon.ds.join
-; IR: ret void
+; IR-SAME: ptr {{.*}}[[A:%[0-9]+]], ptr {{.*}}[[B:%[0-9]+]], ptr {{.*}}[[OUT:%[0-9]+]])
+; IR: [[I:%[0-9]+]] = zext i32 %{{[0-9]+}} to i64
+; IR-NEXT: [[AP:%[0-9]+]] = getelementptr inbounds {{.*}}ptr [[A]], i64 [[I]]
+; IR-NEXT: [[AV:%[0-9]+]] = load double, ptr [[AP]]
+; IR-NEXT: [[BP:%[0-9]+]] = getelementptr inbounds {{.*}}ptr [[B]], i64 [[I]]
+; IR-NEXT: [[BV:%[0-9]+]] = load double, ptr [[BP]]
+; IR-NEXT: [[AF:%[^ ]+]] = fptrunc double [[AV]] to float
+; IR-NEXT: [[BF:%[^ ]+]] = fptrunc double [[BV]] to float
+; IR-NEXT: [[T0:%[0-9]+]] = call float @llvm.fmuladd.f32(float [[AF]], float [[BF]], float [[AF]])
+; IR-NEXT: [[NB:%[0-9]+]] = fneg float [[BF]]
+; IR-NEXT: [[T1:%[0-9]+]] = call float @llvm.fmuladd.f32(float [[T0]], float [[T0]], float [[NB]])
+; IR-NEXT: [[T2:%[0-9]+]] = call float @llvm.fmuladd.f32(float [[T1]], float [[BF]], float [[T0]])
+; IR-NEXT: [[NA:%[0-9]+]] = fneg float [[AF]]
+; IR-NEXT: [[T3:%[0-9]+]] = call float @llvm.fmuladd.f32(float [[T2]], float [[T2]], float [[NA]])
+; IR-NEXT: [[T4:%[0-9]+]] = call float @llvm.fmuladd.f32(float [[T3]], float [[T1]], float [[T2]])
+; IR-NEXT: [[R:%[0-9]+]] = fpext float [[T4]] to double
+; IR-NEXT: [[OP:%[0-9]+]] = getelementptr inbounds {{.*}}ptr [[OUT]], i64 [[I]]
+; IR-NEXT: store double [[R]], ptr [[OP]]
+; IR-NEXT: ret void
 
+; The tight site splits each input into a float pair, carries pairs through
+; float arithmetic alone, and stores the sum of the last pair.
 ; IR-LABEL: define {{.*}} @fms_tight(
-; IR: !poseidon.ds.join
-; IR: ret void
+; IR-SAME: ptr {{.*}}[[A:%[0-9]+]], ptr {{.*}}[[B:%[0-9]+]], ptr {{.*}}[[OUT:%[0-9]+]])
+; IR: [[I:%[0-9]+]] = zext i32 %{{[0-9]+}} to i64
+; IR-NEXT: [[AP:%[0-9]+]] = getelementptr inbounds {{.*}}ptr [[A]], i64 [[I]]
+; IR-NEXT: [[AV:%[0-9]+]] = load double, ptr [[AP]]
+; IR-NEXT: [[BP:%[0-9]+]] = getelementptr inbounds {{.*}}ptr [[B]], i64 [[I]]
+; IR-NEXT: [[BV:%[0-9]+]] = load double, ptr [[BP]]
+; IR-NEXT: [[AHI:%[^ ]+]] = fptrunc double [[AV]] to float
+; IR-NEXT: [[AHID:%[^ ]+]] = fpext float [[AHI]] to double
+; IR-NEXT: [[ALOD:%[^ ]+]] = fsub double [[AV]], [[AHID]]
+; IR-NEXT: [[ALO:%[^ ]+]] = fptrunc double [[ALOD]] to float
+; IR-NEXT: [[BHI:%[^ ]+]] = fptrunc double [[BV]] to float
+; IR-NEXT: [[BHID:%[^ ]+]] = fpext float [[BHI]] to double
+; IR-NEXT: [[BLOD:%[^ ]+]] = fsub double [[BV]], [[BHID]]
+; IR-NEXT: [[BLO:%[^ ]+]] = fptrunc double [[BLOD]] to float
+; IR-NEXT: [[P:%[^ ]+]] = fmul float [[AHI]], [[BHI]]
+; IR-NEXT: [[NP:%[^ ]+]] = fneg float [[P]]
+; IR-NEXT: [[E0:%[^ ]+]] = call float @llvm.fma.f32(float [[AHI]], float [[BHI]], float [[NP]])
+; IR-NEXT: [[E1:%[^ ]+]] = call float @llvm.fma.f32(float [[AHI]], float [[BLO]], float [[E0]])
+; IR-NEXT: call float @llvm.fma.f32(float [[ALO]], float [[BHI]], float [[E1]])
+; IR-NOT: double
+; IR: [[HI:%[^ ]+]] = fpext float %{{[^ ]+}} to double
+; IR-NEXT: [[LO:%[^ ]+]] = fpext float %{{[^ ]+}} to double
+; IR-NEXT: [[J:%[^ ]+]] = fadd double [[HI]], [[LO]], !poseidon.ds.join !{{[0-9]+}}
+; IR-NEXT: [[OP:%[0-9]+]] = getelementptr inbounds {{.*}}ptr [[OUT]], i64 [[I]]
+; IR-NEXT: store double [[J]], ptr [[OP]]
+; IR-NEXT: ret void
+
+; The joined pair is the last fast two-sum of the expansion.
+; JOIN: [[S:%[^ ]+]] = fadd float [[X:%[^ ,]+]], [[Y:%[^ ,]+]]{{$}}
+; JOIN-NEXT: [[BP:%[^ ]+]] = fsub float [[S]], [[X]]{{$}}
+; JOIN-NEXT: [[E:%[^ ]+]] = fsub float [[Y]], [[BP]]{{$}}
+; JOIN-NEXT: [[HI:%[^ ]+]] = fpext float [[S]] to double
+; JOIN-NEXT: [[LO:%[^ ]+]] = fpext float [[E]] to double
+; JOIN-NEXT: [[J:%[^ ]+]] = fadd double [[HI]], [[LO]], !poseidon.ds.join !{{[0-9]+}}
+; JOIN-NEXT: [[OP:%[0-9]+]] = getelementptr inbounds {{.*}}, i64 %{{[0-9]+}}
+; JOIN-NEXT: store double [[J]], ptr [[OP]]
 
 ; An unprofiled site keeps its FP64 arithmetic and leaves no outlined body
 ; behind.
 ; IR-LABEL: define {{.*}} @fms_bare(
+; IR-SAME: ptr {{.*}}[[A:%[0-9]+]], ptr {{.*}}[[B:%[0-9]+]], ptr {{.*}}[[OUT:%[0-9]+]])
 ; IR-NOT: call void @
-; IR: call double @llvm.fmuladd.f64
-; IR: ret void
+; IR: [[I:%[0-9]+]] = zext i32 %{{[0-9]+}} to i64
+; IR-NEXT: [[AP:%[0-9]+]] = getelementptr inbounds {{.*}}ptr [[A]], i64 [[I]]
+; IR-NEXT: [[AV:%[0-9]+]] = load double, ptr [[AP]]
+; IR-NEXT: [[BP:%[0-9]+]] = getelementptr inbounds {{.*}}ptr [[B]], i64 [[I]]
+; IR-NEXT: [[BV:%[0-9]+]] = load double, ptr [[BP]]
+; IR-NEXT: [[T0:%[0-9]+]] = call double @llvm.fmuladd.f64(double [[AV]], double [[BV]], double [[AV]])
+; IR-NEXT: [[NB:%[0-9]+]] = fneg double [[BV]]
+; IR-NEXT: [[T1:%[0-9]+]] = call double @llvm.fmuladd.f64(double [[T0]], double [[T0]], double [[NB]])
+; IR-NEXT: [[T2:%[0-9]+]] = call double @llvm.fmuladd.f64(double [[T1]], double [[BV]], double [[T0]])
+; IR-NEXT: [[NA:%[0-9]+]] = fneg double [[AV]]
+; IR-NEXT: [[T3:%[0-9]+]] = call double @llvm.fmuladd.f64(double [[T2]], double [[T2]], double [[NA]])
+; IR-NEXT: [[T4:%[0-9]+]] = call double @llvm.fmuladd.f64(double [[T3]], double [[T1]], double [[T2]])
+; IR-NEXT: [[OP:%[0-9]+]] = getelementptr inbounds {{.*}}ptr [[OUT]], i64 [[I]]
+; IR-NEXT: store double [[T4]], ptr [[OP]]
+; IR-NEXT: ret void
 ; IR-NOT: _poseidon_body
