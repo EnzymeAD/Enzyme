@@ -486,6 +486,12 @@ static bool materializeFPSolution(Session &S, Function &F, FunctionFPState &st,
                    << F.getName() << '\n';
   }
 
+  // The emitted site is cleaned up without the target, which versions a loop
+  // on a loop-invariant condition: that keeps a comparison of an operand left
+  // in FP64 out of the loop of a rewrite to FP32, where the target's pipeline
+  // leaves one per iteration on the FP64 pipe. Pricing walks the target's
+  // clean-up of the site instead, which keeps one copy of each loop; a thread
+  // runs one version of a versioned loop.
   simplifyFunction(F, OptimizationLevel::O3);
 
   // The rewritten site is inlined back into its caller: on a GPU a call passes

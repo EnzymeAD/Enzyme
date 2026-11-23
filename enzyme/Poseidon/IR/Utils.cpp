@@ -56,8 +56,14 @@ void reportUserError(LLVMContext &Ctx, const Twine &Message) {
   exit(1);
 }
 
-void simplifyFunction(Function &F, OptimizationLevel Level,
+void simplifyFunction(Function &F, PassBuilder &PB, OptimizationLevel Level,
                       function_ref<void()> afterPass) {
+  LoopAnalysisManager LAM;
+  FunctionAnalysisManager FAM;
+  CGSCCAnalysisManager CGAM;
+  ModuleAnalysisManager MAM;
+  // The compile's pass instrumentation (printing, bisection, timing) stays
+  // out of these runs; registered first, this analysis is the one kept.
   PassInstrumentationCallbacks PIC;
   if (afterPass) {
     PIC.registerAfterPassCallback(
@@ -65,17 +71,10 @@ void simplifyFunction(Function &F, OptimizationLevel Level,
     PIC.registerAfterPassInvalidatedCallback(
         [&](StringRef, const PreservedAnalyses &) { afterPass(); });
   }
-  PassInstrumentationCallbacks *PICOrNull = afterPass ? &PIC : nullptr;
-#if LLVM_VERSION_MAJOR >= 24
-  PassBuilder PB(F.getContext(), nullptr, std::nullopt, std::nullopt,
-                 PICOrNull);
-#else
-  PassBuilder PB(nullptr, PipelineTuningOptions(), std::nullopt, PICOrNull);
-#endif
-  LoopAnalysisManager LAM;
-  FunctionAnalysisManager FAM;
-  CGSCCAnalysisManager CGAM;
-  ModuleAnalysisManager MAM;
+  LAM.registerPass([&] { return PassInstrumentationAnalysis(&PIC); });
+  FAM.registerPass([&] { return PassInstrumentationAnalysis(&PIC); });
+  CGAM.registerPass([&] { return PassInstrumentationAnalysis(&PIC); });
+  MAM.registerPass([&] { return PassInstrumentationAnalysis(&PIC); });
   PB.registerModuleAnalyses(MAM);
   PB.registerCGSCCAnalyses(CGAM);
   PB.registerFunctionAnalyses(FAM);
@@ -90,6 +89,15 @@ void simplifyFunction(Function &F, OptimizationLevel Level,
   FunctionPassManager FPM =
       PB.buildFunctionSimplificationPipeline(Level, ThinOrFullLTOPhase::None);
   (void)FPM.run(F, FAM);
+}
+
+void simplifyFunction(Function &F, OptimizationLevel Level) {
+#if LLVM_VERSION_MAJOR >= 24
+  PassBuilder PB(F.getContext());
+#else
+  PassBuilder PB;
+#endif
+  simplifyFunction(F, PB, Level);
 }
 
 double stringToDouble(const std::string &str) {

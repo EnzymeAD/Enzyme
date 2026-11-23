@@ -38,13 +38,21 @@
 #include <utility>
 #include <vector>
 
+namespace llvm {
+class PassBuilder;
+} // namespace llvm
+
 namespace poseidon {
 
 class Session {
 public:
-  explicit Session(Options O, bool IsTwin = false);
+  Session(Options O, llvm::PassBuilder &PB, bool IsTwin = false);
 
   const Options Opts;
+  // The pass builder of the compile, which knows its target: what a rewrite
+  // leaves behind is cleaned up with this builder's function simplification
+  // pipeline, as the rest of the module was.
+  llvm::PassBuilder &PB;
   // The session of the module as written, which FinalizePass compiles as a
   // build without a profile: it is not snapshotted and hands no launch over.
   const bool IsTwin;
@@ -111,7 +119,7 @@ public:
     }
   };
 
-  explicit SessionAnalysis(Options O);
+  SessionAnalysis(Options O, llvm::PassBuilder &PB);
   explicit SessionAnalysis(Session &S);
   Result run(llvm::Module &M, llvm::ModuleAnalysisManager &);
 
@@ -119,6 +127,7 @@ private:
   friend llvm::AnalysisInfoMixin<SessionAnalysis>;
   static llvm::AnalysisKey Key;
   std::optional<Options> Opts;
+  llvm::PassBuilder *PB = nullptr;
   Session *Given = nullptr;
 };
 

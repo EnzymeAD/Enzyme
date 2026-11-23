@@ -993,7 +993,8 @@ void setUnifiedAccuracyCost(
 }
 
 double getCompCost(
-    CostModelState &CM, const std::string &expr, Instruction &Site,
+    CostModelState &CM, PassBuilder &PB, const std::string &expr,
+    Instruction &Site,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, Value *> &symbolToValueMap,
     const FastMathFlags &FMF, const SetVector<Value *> *subgraphInputs,
@@ -1108,7 +1109,7 @@ double getCompCost(
     builder.CreateRet(RetVal);
   }
 
-  simplifyFunction(*tempFunction, OptimizationLevel::O3);
+  simplifyFunction(*tempFunction, PB, OptimizationLevel::O3);
 
   // A conversion of an argument or of a returned value is on the boundary of
   // the rewrite and costs what it executes in the emitted code.
@@ -1824,8 +1825,9 @@ void RewriteUnit::price() {
   const BoundaryCastFreq Boundary = boundaryCastFreq(LI, st.valueToNodeMap);
   for (RewriteCandidate &c : candidates)
     c.CompCost =
-        getCompCost(session().CostModel, c.expr, *output, st.valueToNodeMap,
-                    st.symbolToValueMap, FMF, &subgraph->inputs, &Boundary);
+        getCompCost(session().CostModel, session().PB, c.expr, *output,
+                    st.valueToNodeMap, st.symbolToValueMap, FMF,
+                    &subgraph->inputs, &Boundary);
   setUnifiedAccuracyCost(session().Opts, *this, st.valueToNodeMap,
                          st.symbolToValueMap);
 }

@@ -37,6 +37,7 @@
 
 namespace llvm {
 class LoopInfo;
+class PassBuilder;
 } // namespace llvm
 
 namespace poseidon {
@@ -200,10 +201,11 @@ void setUnifiedAccuracyCost(
     std::unordered_map<std::string, llvm::Value *> &symbolToValueMap);
 
 // The cost of the Herbie expression `expr` that replaces `Site`, priced in a
-// scratch function of its module; a missing cost-model row is an error at
-// `Site`.
+// scratch function of its module simplified by `PB`'s pipeline; a missing
+// cost-model row is an error at `Site`.
 double getCompCost(
-    CostModelState &CM, const std::string &expr, llvm::Instruction &Site,
+    CostModelState &CM, llvm::PassBuilder &PB, const std::string &expr,
+    llvm::Instruction &Site,
     std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     std::unordered_map<std::string, llvm::Value *> &symbolToValueMap,
     const llvm::FastMathFlags &FMF,

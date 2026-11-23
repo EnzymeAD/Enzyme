@@ -750,9 +750,9 @@ CandidateClone::CandidateClone(Session &S, Subgraph &subgraph,
       if (auto *FE = dyn_cast_or_null<FPExtInst>((Value *)trackedOutputs[i]))
         trackedOutputFallbacks[i] = FE->getOperand(0);
 
-  // The simplification can unswitch a loop on a condition it does not vary
-  // in, such as a thread-index guard, and delete the body of the version that
-  // never runs it: a handle on that body then holds poison, and the walk would
+  // On a target without divergent branches the simplification can unswitch
+  // a loop on a condition it does not vary in, and delete the body of the
+  // version that never runs it: a handle on that body then holds poison, and the walk would
   // price an empty cone. The version that runs the body copies its
   // instructions with their metadata. So after each pass the instruction of
   // each handle is tagged, and a handle left on a constant moves to the one
@@ -816,7 +816,7 @@ CandidateClone::CandidateClone(Session &S, Subgraph &subgraph,
     }
   };
   trackHandles();
-  simplifyFunction(*FClone, OptimizationLevel::O3, trackHandles);
+  simplifyFunction(*FClone, S.PB, OptimizationLevel::O3, trackHandles);
 
   // A root left on a constant has no single copy: its cost is unknown.
   for (size_t i = 0; i < trackedOutputs.size(); ++i) {

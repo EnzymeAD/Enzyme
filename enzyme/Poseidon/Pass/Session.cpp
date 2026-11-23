@@ -12,12 +12,14 @@ using namespace llvm;
 
 namespace poseidon {
 
-Session::Session(Options O, bool IsTwin)
-    : Opts(std::move(O)), IsTwin(IsTwin), CostModel(Opts.Model.CostModel) {}
+Session::Session(Options O, PassBuilder &PB, bool IsTwin)
+    : Opts(std::move(O)), PB(PB), IsTwin(IsTwin),
+      CostModel(Opts.Model.CostModel) {}
 
 AnalysisKey SessionAnalysis::Key;
 
-SessionAnalysis::SessionAnalysis(Options O) : Opts(std::move(O)) {}
+SessionAnalysis::SessionAnalysis(Options O, PassBuilder &PB)
+    : Opts(std::move(O)), PB(&PB) {}
 
 SessionAnalysis::SessionAnalysis(Session &S) : Given(&S) {}
 
@@ -27,7 +29,7 @@ SessionAnalysis::Result SessionAnalysis::run(Module &,
   if (Given) {
     R.S = Given;
   } else {
-    R.Owned = std::make_unique<Session>(*Opts);
+    R.Owned = std::make_unique<Session>(*Opts, *PB);
     R.S = R.Owned.get();
   }
   return R;

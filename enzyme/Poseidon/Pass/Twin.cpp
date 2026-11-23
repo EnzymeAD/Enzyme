@@ -49,7 +49,7 @@ bool compileAsWritten(Module &twin, const Session &parent, PassBuilder &PB,
   Options asWritten = parent.Opts;
   asWritten.Profiling.ProfileUse.clear();
   asWritten.Diagnostics.Print = false;
-  Session S(std::move(asWritten), /*IsTwin=*/true);
+  Session S(std::move(asWritten), PB, /*IsTwin=*/true);
   {
     LocalAnalysisManagers AMs(PB, S);
     ModulePassManager MPM =

@@ -518,8 +518,8 @@ void registerPasses(PassBuilder &PB) {
   // the module compiled as written, whose session carries its own, runs the
   // same pipeline.
   PB.registerAnalysisRegistrationCallback(
-      [O = readOptions()](ModuleAnalysisManager &MAM) {
-        MAM.registerPass([&] { return SessionAnalysis(O); });
+      [O = readOptions(), &PB](ModuleAnalysisManager &MAM) {
+        MAM.registerPass([&] { return SessionAnalysis(O, PB); });
       });
 
   auto loadHostStub = [](ModulePassManager &MPM, OptimizationLevel) {

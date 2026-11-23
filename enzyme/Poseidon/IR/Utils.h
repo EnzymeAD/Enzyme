@@ -31,6 +31,10 @@
 
 #include <string>
 
+namespace llvm {
+class PassBuilder;
+} // namespace llvm
+
 namespace poseidon {
 
 #if LLVM_VERSION_MAJOR >= 23
@@ -90,10 +94,18 @@ void collectExprInsts(llvm::Value *V,
                       llvm::SmallPtrSetImpl<llvm::Instruction *> &exprInsts,
                       llvm::SmallPtrSetImpl<llvm::Value *> &visited);
 
-// Runs the function simplification pipeline of `Level` on F, calling
-// `afterPass`, when given, after each pass.
-void simplifyFunction(llvm::Function &F, llvm::OptimizationLevel Level,
+// Runs the function simplification pipeline of `Level` that `PB` builds on F,
+// calling `afterPass`, when given, after each pass: the compile's own
+// pipeline, whose passes ask the compile's target, for instance whether a
+// branch on a loop-invariant condition may diverge.
+void simplifyFunction(llvm::Function &F, llvm::PassBuilder &PB,
+                      llvm::OptimizationLevel Level,
                       llvm::function_ref<void()> afterPass = nullptr);
+
+// Runs the target-independent function simplification pipeline of `Level` on
+// F. Without a target no branch diverges, so a loop may be versioned on a
+// loop-invariant condition.
+void simplifyFunction(llvm::Function &F, llvm::OptimizationLevel Level);
 
 // A mistake in what the compile was given that leaves nothing to compile with:
 // an error diagnostic at `Loc` in `F`, then the compile ends with exit status 1
