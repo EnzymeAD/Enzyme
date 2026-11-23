@@ -15,12 +15,20 @@
 ; told its phase and names the deferral only as a possibility. The kernel is
 ; the one of annotated_kernel_nvptx.ll.
 
-; DEFERRED: Poseidon: profile generation emitted a derivative request that nothing lowered. This is an LTO pre-link compile, where Enzyme leaves derivative requests to the post-link run unless -enzyme-lto-prelink is given; pass -mllvm -enzyme-lto-prelink=1
-; DEFERRED: exit status 1
+; DEFERRED: {{^}}error: Poseidon: profile generation emitted a derivative request that nothing lowered. This is an LTO pre-link compile, where Enzyme leaves derivative requests to the post-link run unless -enzyme-lto-prelink is given; pass -mllvm -enzyme-lto-prelink=1 (for HIP as -Xclang -mllvm -Xclang -enzyme-lto-prelink=1).{{$}}
+; DEFERRED-NEXT: exit status 1
 
+; The kernel calls the derivative with each pointer's shadow next to it, and the
+; derivative carries the probes.
+; LOWERED-LABEL: define ptx_kernel void @fms_kernel(
+; LOWERED-SAME: ptr {{[^,]*}}[[A:%[0-9]+]], ptr {{[^,]*}}[[B:%[0-9]+]], ptr {{[^,]*}}[[C:%[0-9]+]], ptr {{[^,]*}}[[DA:%[0-9]+]], ptr {{[^,]*}}[[DB:%[0-9]+]], ptr {{[^,]*}}[[DC:%[0-9]+]])
+; LOWERED-NEXT: call {{.*}}void @diffepreprocess_fms_kernel_poseidon_body(ptr [[A]], ptr [[DA]], ptr [[B]], ptr [[DB]], ptr [[C]], ptr [[DC]])
+; LOWERED-NEXT: ret void
 ; LOWERED: define {{.*}}@diffepreprocess_fms_kernel_poseidon_body(
+; LOWERED: call void @poseidonLogValueCUDA(ptr addrspacecast (ptr addrspace(1) @poseidon_site_preprocess_fms_kernel_poseidon_body to ptr), i64 0,
+; LOWERED: call void @poseidonLogValueCUDA(ptr addrspacecast (ptr addrspace(1) @poseidon_site_preprocess_fms_kernel_poseidon_body to ptr), i64 6,
 
-; BYNAME: Poseidon: profile generation emitted a derivative request that nothing lowered. Add -fpass-plugin=<ClangEnzyme>.so after the Poseidon plugin. In an LTO pre-link pipeline Enzyme also leaves derivative requests to the post-link run unless -enzyme-lto-prelink is given.
+; BYNAME: {{^}}error: Poseidon: profile generation emitted a derivative request that nothing lowered. Add -fpass-plugin=<ClangEnzyme>.so after the Poseidon plugin. In an LTO pre-link pipeline Enzyme also leaves derivative requests to the post-link run unless -enzyme-lto-prelink is given.{{$}}
 
 source_filename = "lto_prelink_profgen.cu"
 target datalayout = "e-p6:32:32-i64:64-i128:128-i256:256-v16:16-v32:32-n16:32:64"

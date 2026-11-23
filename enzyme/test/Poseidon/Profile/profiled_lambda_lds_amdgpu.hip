@@ -2,13 +2,15 @@
 // RUN: rm -rf %t && mkdir %t
 // RUN: %clang -x hip --offload-arch=%amdgpu_arch --rocm-path=%rocm_path --cuda-device-only --no-gpu-bundle-output -cuid=0 -O2 -c -I%poseidon_profile_inc %loadClangPoseidonEnzyme -Xclang -mllvm -Xclang -poseidon-profile-generate -Xclang -mllvm -Xclang -poseidon-cache=%t/c -Xclang -mllvm -Xclang -poseidon-print %s -o %t/gen.co 2>&1 | FileCheck --check-prefix=GEN %s
 // RUN: llvm-readelf --notes %t/gen.co | FileCheck %s
+// RUN: llvm-readelf --symbols %t/gen.co | FileCheck --check-prefix=SYM --implicit-check-not=clEi %s
 
 // A profiled AMDGPU kernel calls the probes, and AMDGPU allocates the shared
 // memory of every function whose address is taken in each kernel that may
 // make an unknown call. An annotation takes the address of the lambda it
 // names, which inlining has otherwise left dead: kept, every profiled kernel
 // below would allocate all four lambdas' buffers and exceed the 64 KiB a
-// workgroup addresses. Each allocates its own buffer and its shadow.
+// workgroup addresses. The code object keeps no lambda body, and each kernel
+// allocates its own buffer and its shadow, 2 x 16 KiB.
 
 #include <hip/hip_runtime.h>
 
@@ -34,7 +36,26 @@ template void stage<2>(int, const double *, double *);
 template void stage<3>(int, const double *, double *);
 template void stage<4>(int, const double *, double *);
 
-// GEN-COUNT-4: [poseidon-profgen] {{.*}}forall{{.*}}: site {{[0-3]}}, 2 shadow buffer(s)
+// GEN-NOT: error
+// GEN: {{^}}[poseidon] block-geometry probe placed in 4 profiled function(s){{$}}
+// GEN-NOT: error
+// GEN: {{^}}[poseidon-profgen] _Z6forallIZ5stageILi1EEviPKdPdEUliE_EviT_: site 0, 2 shadow buffer(s), output(s) 1[+8]{{$}}
+// GEN: {{^}}[poseidon-profgen] _Z6forallIZ5stageILi2EEviPKdPdEUliE_EviT_: site 1, 2 shadow buffer(s), output(s) 1[+8]{{$}}
+// GEN: {{^}}[poseidon-profgen] _Z6forallIZ5stageILi3EEviPKdPdEUliE_EviT_: site 2, 2 shadow buffer(s), output(s) 1[+8]{{$}}
+// GEN: {{^}}[poseidon-profgen] _Z6forallIZ5stageILi4EEviPKdPdEUliE_EviT_: site 3, 2 shadow buffer(s), output(s) 1[+8]{{$}}
 // GEN-NOT: error
 
-// CHECK-COUNT-4: .group_segment_fixed_size: 32768
+// CHECK: amdhsa.kernels:
+// CHECK: .group_segment_fixed_size: 32768{{$}}
+// CHECK: .name: _Z6forallIZ5stageILi1EEviPKdPdEUliE_EviT_{{$}}
+// CHECK: .group_segment_fixed_size: 32768{{$}}
+// CHECK: .name: _Z6forallIZ5stageILi2EEviPKdPdEUliE_EviT_{{$}}
+// CHECK: .group_segment_fixed_size: 32768{{$}}
+// CHECK: .name: _Z6forallIZ5stageILi3EEviPKdPdEUliE_EviT_{{$}}
+// CHECK: .group_segment_fixed_size: 32768{{$}}
+// CHECK: .name: _Z6forallIZ5stageILi4EEviPKdPdEUliE_EviT_{{$}}
+// CHECK-NOT: .group_segment_fixed_size:
+
+// The probes the kernels call are linked into the code object.
+// SYM-DAG: FUNC LOCAL DEFAULT {{[0-9]+}} poseidonLogValueCUDA{{$}}
+// SYM-DAG: FUNC LOCAL DEFAULT {{[0-9]+}} poseidonLogGradCUDA{{$}}

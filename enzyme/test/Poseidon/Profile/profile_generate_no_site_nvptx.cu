@@ -1,5 +1,5 @@
 // REQUIRES: enzyme, nvptx-device-profiler
-// RUN: rm -rf %t && mkdir %t
+// RUN: rm -rf %t && mkdir %t && echo fatbin > %t/k.fatbin
 // RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O2 -S -emit-llvm %loadClangPoseidonEnzyme %s -o %t/plain-dev.ll
 // RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O2 -S -emit-llvm %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c %s -o %t/gen-dev.ll
 // RUN: grep -v -e '^%[0-9]* = type' -e '^$' %t/plain-dev.ll > %t/plain-dev.cmp
@@ -10,6 +10,8 @@
 // RUN: %clang -x cuda --cuda-host-only -nocudainc -nocudalib -O2 -S -emit-llvm %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c %s -o %t/gen-host.ll
 // RUN: not diff %t/plain-host.ll %t/gen-host.ll > %t/host.diff
 // RUN: FileCheck --check-prefix=HOST %s < %t/host.diff
+// RUN: %clang -x cuda --cuda-host-only -nocudainc -nocudalib -O0 -S -emit-llvm %loadClangPoseidonEnzyme -Xclang -fcuda-include-gpubinary -Xclang %t/k.fatbin -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c %s -o %t/gen-host-bin.ll
+// RUN: FileCheck --check-prefix=REG %s < %t/gen-host-bin.ll
 
 // Profile generation compiles a unit without a site as a plain build does,
 // but for what the program's other units need of it: main calls the
@@ -50,8 +52,21 @@ __global__ void mass(const double *B, const double *D, double *Y) {
 
 int main() { return 0; }
 
-// DEV: @__poseidon_profile_table = weak_odr dso_local addrspace(4)
+// DEV: @llvm.compiler.used = appending global [1 x ptr] [ptr addrspacecast (ptr addrspace(4) @__poseidon_profile_table to ptr)], section "llvm.metadata"
+// DEV-NEXT: @__poseidon_profile_table = weak_odr dso_local addrspace(4) externally_initialized constant %struct.PoseidonCUDAProfileTable zeroinitializer, align 8
 
 // HOST: > {{.*}}call void @__poseidon_profile_init_cuda()
 // HOST: > declare void @__poseidon_profile_init_cuda()
 // HOST-NOT: <
+
+// REG: @__poseidon_profile_table = internal global [[[N:[0-9]+]] x i8] zeroinitializer, align 8
+// REG-NEXT: @[[NAME:[0-9]+]] = private unnamed_addr constant [25 x i8] c"__poseidon_profile_table\00"
+// REG-NEXT: @llvm.global_ctors = appending global [2 x { i32, ptr, ptr }] [{ i32, ptr, ptr } { i32 65535, ptr @__cuda_module_ctor, ptr null }, { i32, ptr, ptr } { i32 65535, ptr @__poseidon_profile_register_module_table, ptr null }]
+// REG-LABEL: define dso_local noundef i32 @main()
+// REG-NEXT: call void @__poseidon_profile_init_cuda()
+// REG: define internal {{.*}}void @__cuda_register_globals(ptr %[[H:[0-9]+]])
+// REG: call void @__cudaRegisterVar(ptr %[[H]], ptr @__poseidon_profile_table, ptr @[[NAME]], ptr @[[NAME]], i32 0, i64 [[N]], i32 1, i32 0)
+// REG-NEXT: ret void
+// REG-LABEL: define internal void @__poseidon_profile_register_module_table()
+// REG-NEXT: call void @__poseidon_profile_register_module(ptr @__poseidon_profile_table)
+// REG-NEXT: ret void

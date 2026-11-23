@@ -30,6 +30,20 @@ __attribute__((global)) void k(double *x) {
 // CHECK-NOT: warning
 // CHECK: [poseidon-profgen] void apply<square>(square const*, double const*, double*) at call 0 in k(double*): 2 shadow object(s), output(s) 2
 // CHECK-NOT: warning
+// The call passes a and b with their shadows, zero and seeded, and no functor
+// operand.
 // IR-LABEL: define {{.*}} @_Z1kPd(
-// IR: call {{.*}} @diffe{{.*}}_Z5applyI6squareEvPKT_PKdPd.poseidon._Z1kPd.0(
+// IR-SAME: ptr {{.*}}%[[X:[0-9]+]])
+// IR: %[[A:[0-9]+]] = alloca double, align {{[0-9]+}}
+// IR-NEXT: %[[DA:[0-9]+]] = alloca double, align {{[0-9]+}}
+// IR-NEXT: %[[B:[0-9]+]] = alloca double, align {{[0-9]+}}
+// IR-NEXT: %[[DB:[0-9]+]] = alloca double, align {{[0-9]+}}
+// IR-NOT: alloca
+// IR: %[[AV:[0-9]+]] = load double, ptr %[[X]],
+// IR: store double %[[AV]], ptr %[[A]],
+// IR: store i64 0, ptr %[[DA]],
+// IR-NEXT: store double 1.000000e+00, ptr %[[DB]],
+// IR-NEXT: call {{.*}} @diffe{{.*}}_Z5applyI6squareEvPKT_PKdPd.poseidon._Z1kPd.0(ptr %[[A]], ptr %[[DA]], ptr %[[B]], ptr %[[DB]])
+// IR: %[[BV:[0-9]+]] = load double, ptr %[[B]],
+// IR: fmul {{.*}}double %[[BV]], 2.000000e+00
 // IR: ret void

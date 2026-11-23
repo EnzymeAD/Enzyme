@@ -27,8 +27,10 @@
 // RUN: env POSEIDON_PROBE=0 POSEIDON_PROFILE_DIR=%t/declined %t/gen %t/declined.runs > /dev/null 2> %t/declined.err
 // RUN: FileCheck --check-prefix=ONCE %s < %t/declined.runs
 // RUN: FileCheck --check-prefix=DECLINED %s < %t/declined.err
-// RUN: FileCheck --check-prefix=NOKAPPA %s < %t/declined/preprocess__Z5gaussPKdPdi_poseidon_body.fpprofile
-// RUN: %poseidon_clangxx -O2 -g -poseidon-profile-use=%t/declined -poseidon-tau=1e-6 -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-enable-herbie=0 -poseidon-cache=%t/c -c %s -o %t/declined.o
+// RUN: FileCheck --check-prefix=NOKAPPA -DID=0 %s < %t/declined/preprocess__Z5gaussPKdPdi_poseidon_body.fpprofile
+// RUN: FileCheck --check-prefix=NOKAPPA -DID=1 %s < %t/declined/preprocess__Z4wavePKdPdi_poseidon_body.fpprofile
+// RUN: %poseidon_clangxx -O2 -g -poseidon-profile-use=%t/declined -poseidon-tau=1e-6 -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-enable-herbie=0 -poseidon-cache=%t/c -c %s -o %t/declined.o 2>&1 \
+// RUN:   | FileCheck --check-prefix=DECLINED-USE --implicit-check-not=error: %s
 
 // A profiling run whose program declares a metric re-executes itself to
 // measure the condition numbers only when asked (POSEIDON_PROBE=1, or under
@@ -83,10 +85,21 @@ int main(int argc, char **argv) {
 // DECLINED: [probe] metric "y sum" was declared and its condition numbers at 2 sites are not measured (POSEIDON_PROBE=0): each site is solved against its own target
 // DECLINED-NOT: [probe]
 
+// NOKAPPA: SiteId = [[ID]]
+// NOKAPPA-NEXT: CanonicalHash = {{[0-9a-f]+}}
+// NOKAPPA-NEXT: ProfileFormat = 2
 // NOKAPPA-NOT: Kappa
+
+// Each site is solved at the compile's target, with no condition number.
+// DECLINED-USE-NOT: kappa=
+// DECLINED-USE: [poseidon] preprocess__Z5gaussPKdPdi_poseidon_body: tau=1.000000e-06 S=
+// DECLINED-USE-NOT: kappa=
+// DECLINED-USE: [poseidon] preprocess__Z4wavePKdPdi_poseidon_body: tau=1.000000e-06 S=
+// DECLINED-USE-NOT: kappa=
 
 // UNMEASURED: CanonicalHash =
 // UNMEASURED-NEXT: KappaMark = unmeasured
+// UNMEASURED-NEXT: ProfileFormat = 2
 // UNMEASURED-NOT: Kappa
 
 // MEASURE-NOT: [probe]
@@ -105,5 +118,5 @@ int main(int argc, char **argv) {
 
 // USAGE: usage: poseidon-probe -- <program> [args...]
 
-// USE: probe_request.cpp:{{[0-9]+}}:1: error: {{.*}}Poseidon: the profiling run declared a quantity of interest with poseidon_metric and did not measure the condition number of {{.*}} against it ({{.*}}/plain/preprocess__Z{{.*}}.fpprofile). Run the profiling build again as 'poseidon-probe -- <program> [args...]', the command the profiling run printed, to measure it, or with POSEIDON_PROBE=0 in its environment to solve each site against its own target.
-// USE-NEXT: POSEIDON_OPTIMIZE void {{gauss|wave}}(
+// USE: probe_request.cpp:[[#@LINE-70]]:1: error: Poseidon: the profiling run declared a quantity of interest with poseidon_metric and did not measure the condition number of preprocess__Z5gaussPKdPdi_poseidon_body against it ({{.*}}/plain/preprocess__Z5gaussPKdPdi_poseidon_body.fpprofile). Run the profiling build again as 'poseidon-probe -- <program> [args...]', the command the profiling run printed, to measure it, or with POSEIDON_PROBE=0 in its environment to solve each site against its own target.
+// USE-NEXT: POSEIDON_OPTIMIZE void gauss(const double *x, double *y, int n) {

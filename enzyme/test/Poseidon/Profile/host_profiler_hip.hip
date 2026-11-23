@@ -15,8 +15,9 @@
 // The host half of a HIP profile generation: main binds the profiler before
 // anything else runs, in a unit with kernels or without, and the launch of a
 // profiled kernel goes through the runtime helper that supplies its shadows,
-// handed the kernel's handle, the configuration HIP popped and the launch's
-// argument array. A C++ unit links no GPU profiler and gets no call.
+// handed the kernel's handle, the configuration HIP popped, the launch's
+// argument array and its one pointer argument (index 0, offset 0), an output
+// seeded as double. A C++ unit links no GPU profiler and gets no call.
 
 #ifndef NO_HIP
 #include <hip/hip_runtime.h>
@@ -37,9 +38,16 @@ int main() { return 0; }
 // MSG: [poseidon-profgen] launch of _Z5scalePdd now allocates and seeds 1 shadow buffer(s)
 // MSG: [poseidon] FP profiler CUDA registration injected at main
 
+// HOST: @_Z5scalePdd = {{.*}}constant ptr @_Z20__device_stub__scalePdd, align 8
+// HOST: @poseidon.ptr._Z5scalePdd = private unnamed_addr constant [1 x i32] zeroinitializer
+// HOST: @poseidon.off._Z5scalePdd = private unnamed_addr constant [1 x i32] zeroinitializer
+// HOST: @poseidon.seed._Z5scalePdd = private unnamed_addr constant [1 x i32] [i32 8]
 // HOST-LABEL: define {{.*}}void @_Z20__device_stub__scalePdd(
-// HOST: call i32 @__hipPopCallConfiguration(ptr %[[GRID:[0-9]+]], ptr %[[BLOCK:[0-9]+]], ptr %{{[0-9]+}}, ptr %{{[0-9]+}})
-// HOST: call void @__poseidon_launch_profiled(ptr @_Z5scalePdd, i32 0, ptr %[[GRID]], ptr %[[BLOCK]], i64 %{{[0-9]+}}, ptr %{{[0-9]+}}, i32 2, ptr %{{[0-9]+}}, i32 1,
+// HOST: %[[ARGS:[0-9]+]] = alloca ptr, i64 2
+// HOST: call i32 @__hipPopCallConfiguration(ptr %[[GRID:[0-9]+]], ptr %[[BLOCK:[0-9]+]], ptr %[[SHMEMP:[0-9]+]], ptr %[[STREAMP:[0-9]+]])
+// HOST: %[[SHMEM:[0-9]+]] = load i64, ptr %[[SHMEMP]],
+// HOST: %[[STREAM:[0-9]+]] = load ptr, ptr %[[STREAMP]],
+// HOST: call void @__poseidon_launch_profiled(ptr @_Z5scalePdd, i32 0, ptr %[[GRID]], ptr %[[BLOCK]], i64 %[[SHMEM]], ptr %[[STREAM]], i32 2, ptr %[[ARGS]], i32 1, ptr @poseidon.ptr._Z5scalePdd, ptr @poseidon.off._Z5scalePdd, ptr @poseidon.seed._Z5scalePdd)
 // HOST-NOT: call {{.*}}@hipLaunchKernel(
 // HOST-LABEL: define {{.*}}i32 @main(
 // HOST-NEXT: call void @__poseidon_profile_init_cuda()
