@@ -47,8 +47,7 @@ constexpr llvm::StringLiteral kNotASite = "poseidon-not-a-site";
 constexpr llvm::StringLiteral kHostWrapper = "poseidon-site-wrapper";
 
 // The annotated device functions whose kernels are sites, and the wrappers on
-// the way to them: what foldDeviceSiteCallees folds into a site kernel the
-// inliner left calling them.
+// the way to them.
 constexpr llvm::StringLiteral kSiteCallee = "poseidon-site-callee";
 
 std::string shortDouble(double v);
@@ -67,7 +66,7 @@ void collectAnnotatedSites(
     llvm::SmallPtrSetImpl<llvm::Function *> *byRegex = nullptr,
     llvm::DenseMap<llvm::Function *, double> *tauOut = nullptr);
 bool propagateDeviceSites(const Options &O, llvm::Module &M);
-bool foldDeviceSiteCallees(llvm::Module &M);
+bool foldDeviceSiteCallees(const Options &O, llvm::Module &M);
 void warnWithoutProfile(llvm::Function &K);
 bool dropSiteAnnotations(llvm::Module &M);
 bool leaveSitesAsWritten(const Options &O, llvm::Module &M);

@@ -125,7 +125,7 @@ struct OptimizePass : PassParent<OptimizePass> {
     bool changed = lowerPerCallSites(O, M);
     changed |= lowerDeviceCallSites(M);
     changed |= outlineHostSites(O, M);
-    changed |= foldDeviceSiteCallees(M);
+    changed |= foldDeviceSiteCallees(O, M);
     changed |= prepareModule(S, M);
     changed |= optimizeAnnotatedSites(S, M);
 

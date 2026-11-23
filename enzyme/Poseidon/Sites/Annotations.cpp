@@ -12,6 +12,7 @@
 #include "Core/Options.h"
 #include "IR/Utils.h"
 #include "Markers.h"
+#include "Targets/DeviceMath.h"
 #include "Targets/OffloadRuntime.h"
 #include "Targets/Target.h"
 
@@ -422,23 +423,42 @@ bool propagateDeviceSites(const Options &O, Module &M) {
   return !called.empty();
 }
 
+// Whether `CB` calls code a device site folds in: a site's computation is
+// everything its kernel runs on the device, whatever the inliner decided, but
+// the math library, whose calls the solve prices as operations.
+static bool foldsIntoSite(const Target &T, CallBase &CB) {
+  Function *callee = CB.getCalledFunction();
+  return callee && !callee->isDeclaration() && !T.isKernel(*callee) &&
+         deviceMathName(callee->getName()).empty();
+}
+
 // At OptimizerEarly: the kernel is the site, so what the inliner left of the
-// call to the annotated function is folded into it here. Inlining is not forced
-// earlier: a site the solve leaves alone has to compile exactly as the kernel
-// would without the annotation.
-bool foldDeviceSiteCallees(Module &M) {
+// calls it makes (to the annotated function, the wrappers on the way to it, and
+// what those call) is folded into it here. Inlining is not forced earlier: a
+// site the solve leaves alone has to compile exactly as the kernel would
+// without the annotation.
+bool foldDeviceSiteCallees(const Options &O, Module &M) {
   const Target &T = Target::of(M);
   if (!T.isDevice())
     return false;
+  SmallVector<Function *, 4> sites;
+  collectAnnotatedSites(O, M, sites);
   bool changed = false;
-  for (auto &[K, tau] : annotatedFunctions(M)) {
-    if (!T.isKernel(*K) || K->hasFnAttribute(kSiteLowered))
-      continue;
-    changed |= inlineCallsWhile(*K, [](CallBase &CB) {
-                 Function *callee = CB.getCalledFunction();
-                 return callee && !callee->isDeclaration() &&
-                        callee->hasFnAttribute(kSiteCallee);
-               }) != 0;
+  for (Function *K : sites) {
+    changed |= inlineCallsWhile(
+                   *K, [&](CallBase &CB) { return foldsIntoSite(T, CB); }) != 0;
+    // A recursive callee is still called after the bounded rounds; what it
+    // computes is outside the site.
+    for (Instruction &I : instructions(*K))
+      if (auto *CB = dyn_cast<CallBase>(&I); CB && foldsIntoSite(T, *CB))
+        K->getContext().diagnose(DiagnosticInfoUnsupported(
+            *K,
+            "Poseidon: " + displayName(*K) + " calls " +
+                displayName(*CB->getCalledFunction()) +
+                ", which the pass cannot fold into the site; the "
+                "floating-point work it does is neither profiled nor "
+                "rewritten",
+            CB->getDebugLoc(), DS_Warning));
   }
   return changed;
 }

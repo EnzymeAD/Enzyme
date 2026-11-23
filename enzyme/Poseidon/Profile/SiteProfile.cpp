@@ -347,10 +347,17 @@ bool profileAnnotatedKernel(Session &S, Function &K, unsigned &nextSiteId) {
   std::string header;
   Function *clone = instrumentedClone(S, *body, nextSiteId, &header);
   if (!clone) {
+    K.getContext().diagnose(DiagnosticInfoUnsupported(
+        K,
+        "Poseidon: " + displayName(K) +
+            " holds no floating-point operation the pass profiles; the kernel "
+            "is not profiled and stays as written",
+        body->getSubprogram(), DS_Warning));
     InlineFunctionInfo IFI;
     (void)InlineFunction(*call, IFI);
     body->eraseFromParent();
-    return false;
+    // Outlined and folded back, the kernel is new code to the analyses.
+    return true;
   }
   unsigned siteId = nextSiteId++;
   const std::string profileName = clone->getName().str();

@@ -299,6 +299,18 @@ static void optimizeSiteBody(Session &S, CallBase *CI, Function *F,
     noteSiteArgs(S, F, primalArgs);
     noteSiteCall(S, F, CI->getDebugLoc());
 
+    // Profile generation recorded nothing for a site without an operation to
+    // rewrite, so the absent profile says nothing about whether it ran.
+    if (none_of(instructions(*F),
+                [](const Instruction &I) { return isOptimizable(I); })) {
+      warn(CI, Twine(sourceBody->getName()) +
+                   " holds no floating-point operation the pass rewrites; "
+                   "leaving the site unchanged");
+      markOutlineTransparent(sourceBody);
+      emitSiteCall(CI, sourceBody, primalArgs, calls);
+      return;
+    }
+
     // A site with nothing to solve from still has to build and run, so it keeps
     // the original body rather than failing the compile.
     if (std::optional<Unprofiled> site = unprofiledSite(S, CI, *F)) {

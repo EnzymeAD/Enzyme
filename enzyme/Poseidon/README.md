@@ -214,6 +214,15 @@ compiles as written, in profile generation and profile use alike, and so does
 a host function of that compilation, without a warning: the host half cannot
 tell the two apart. A host site belongs in a C or C++ translation unit.
 
+On the device, `POSEIDON_OPTIMIZE` on a function a kernel calls (the lambda
+of a generic launch helper) makes that kernel the site, when the rest of the
+kernel only wraps the call. A kernel site is everything the kernel runs on the
+device: the device functions it calls are profiled and rewritten with it,
+whether or not the inliner inlined them, except the math library's, whose
+calls are priced as operations. A call that cannot be folded into the site (a
+recursive one) is reported and stays outside it, and a site without a
+floating-point operation is reported and compiles as written.
+
 In device code the profiling build makes the shadow of every pointer a call made
 through `__poseidon_optimize` passes, at every execution of the call. A pointer
 into a local object of the calling kernel or device function (a
