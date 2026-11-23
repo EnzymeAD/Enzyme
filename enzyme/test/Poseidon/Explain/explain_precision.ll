@@ -21,33 +21,62 @@
 ; name may be keeps its first 160 characters and a hash of the whole, and the
 ; files hold the whole name.
 
-; FLOAT: wave.c:4:3: Poseidon site tester: target 1e-06
-; FLOAT: wave.c:4:41: Poseidon profile of exp(x[i] * (x[i] * -0.5)) * cos(x[i] * 4.0): x[i] in [-2, 2]; 1024 executions
-; FLOAT: remark: wave.c:{{[0-9]+}}:{{[0-9]+}}: Poseidon runs {{.*}} in float: {{.*}}; modelled error {{.*}} -> {{.*}}, cost {{[0-9.e+-]+}} -> {{[0-9.e+-]+}} {{.*}}[PT0_{{[0-9]+}}]
+; FLOAT: remark: wave.c:4:3: Poseidon site tester: target 1e-06; modelled error as written 7.1e-18, after 1.2e-08; 1 rewrite, cost 1 -> 0.3125 (-69%); 6 Pareto points{{$}}
+; FLOAT-NEXT: remark: wave.c:4:41: Poseidon profile of exp(x[i] * (x[i] * -0.5)) * cos(x[i] * 4.0): x[i] in [-2, 2]; 1024 executions, sensitivity 3.9e+02{{$}}
+; FLOAT-NEXT: remark: wave.c:4:26: Poseidon runs all 6 operations in float: (double)(expf((float)x[i] * ((float)x[i] * -0.5f)) * cosf((float)x[i] * 4.0f)); modelled error 7.1e-18 -> 1.2e-08, cost 1 -> 0.3125 (-69%) [PT0_0]{{$}}
+; FLOAT: Applying solution for CS: All FP64(0%) + FP32(100%) (#0)
+; FLOAT: [poseidon] pin: tester:PT0=All FP64(0%) + FP32(100%){{$}}
 
-; JSON: "kind": "precision",
-; JSON: "status": "applied",
+; JSON: "pareto": [
+; JSON-NEXT: {
+; JSON-NEXT: "applied": [
+; JSON-NEXT: "PT0_0"
+; JSON-NEXT: ],
+; JSON-NEXT: "budget": -0.6875,
+; JSON-NEXT: "cost": 0.3125,
+; JSON-NEXT: "modelled_rel_error": 1.24440{{[0-9]*}}e-08,
+; JSON-NEXT: "selected": true
+; JSON: "result": {
+; JSON-NEXT: "applied": [
+; JSON-NEXT: "PT0_0"
+; JSON-NEXT: ],
+; JSON-NEXT: "cost_after": 0.3125,
+; JSON-NEXT: "cost_before": 1,
+; JSON: "alternatives": [
+; JSON-NEXT: {
+; JSON-NEXT: "c": "(double)(expf((float)x[i] * ((float)x[i] * -0.5f)) * cosf((float)x[i] * 4.0f))",
+; JSON: "cost_delta": -0.6875,
+; JSON-NEXT: "id": "PT0_0",
+; JSON-NEXT: "kind": "precision",
+; JSON-NEXT: "modelled_error": 1.24440{{[0-9]*}}e-08,
+; JSON: "reason": "part of the cheapest solution that meets the target",
+; JSON-NEXT: "status": "applied",
+; JSON-NEXT: "summary": "All FP64(0%) + FP32(100%): '*' (4:26), '*' (4:33), exp (4:12), '*' (4:41), cos (4:43) and '*' (4:56) in float (6 of 6 operations)"
 ; JSON: "inputs": [
 ; JSON: "name": "x[i]",
 ; JSON-NOT: "var"
 ; JSON: "ops": [
 ; JSON: "opcode": "*",
 ; JSON: "opcode": "exp",
+; JSON: "opcode": "cos",
 ; JSON: "original": {
 ; JSON-NEXT: "c": "exp(x[i] * (x[i] * -0.5)) * cos(x[i] * 4.0)"
-; JSON: "tau": {{[0-9.e+-]+}},
+; JSON: "tau": 9.9999999999999995e-07,
+; JSON-NEXT: "tau_from": "flag"
 
-; KEPT: wave.c:4:41: Poseidon left exp(x[i] * (x[i] * -0.5)) * cos(x[i] * 4.0) as written: every alternative's modelled error is above the target 1e-12 (best: PT0_{{[0-9]+}}, {{.*}})
-; KEPT: Poseidon rejected the precision change PT0_{{[0-9]+}} to {{.*}}: modelled error {{.*}} is above the target 1e-12
+; KEPT: remark: wave.c:4:41: Poseidon left exp(x[i] * (x[i] * -0.5)) * cos(x[i] * 4.0) as written: every alternative's modelled error is above the target 1e-12 (best: PT0_5, 1.1e-09){{$}}
+; KEPT-NEXT: remark: wave.c:4:26: Poseidon rejected the precision change PT0_5 to exp(x[i] * (double)((float)x[i] * -0.5f)) * cos(x[i] * 4.0): modelled error 1.1e-09 is above the target 1e-12 (cost change -0.03125){{$}}
+; KEPT: [poseidon] no rewrite applied for preprocess_tester; calling original body tester (bit-transparent no-op)
 
-; LONG: Poseidon explanation written to {{.*}}/long/preprocess_testerxxx{{x+}}~{{[0-9a-f]+}}.explain.json
+; LONG: Poseidon explanation written to {{.*}}/long/preprocess_tester{{x{143}~}}91b7951de3c44a27.explain.json{{$}}
 
-; LONGFILES-DAG: preprocess_testerxxx{{x+}}~{{[0-9a-f]+}}.explain.json
-; LONGFILES-DAG: preprocess_testerxxx{{x+}}~{{[0-9a-f]+}}.json
-; LONGFILES-DAG: preprocess_testerxxx{{x+}}~{{[0-9a-f]+}}_rewrites.json
-; LONGFILES-DAG: preprocess_testerxxx{{x+}}~{{[0-9a-f]+}}.txt
+; LONGFILES-DAG: {{^}}preprocess_tester{{x{143}~}}91b7951de3c44a27.explain.json{{$}}
+; LONGFILES-DAG: {{^}}preprocess_tester{{x{143}~}}91b7951de3c44a27.json{{$}}
+; LONGFILES-DAG: {{^}}preprocess_tester{{x{143}~}}91b7951de3c44a27_rewrites.json{{$}}
+; LONGFILES-DAG: {{^}}preprocess_tester{{x{143}~}}91b7951de3c44a27.txt{{$}}
 
-; LONGJSON: "ir": "preprocess_[[NAME]]"
+; LONGJSON: "ir": "preprocess_[[NAME]]",
+; LONGJSON: "name": "[[NAME]]",
 
 target triple = "x86_64-unknown-linux-gnu"
 
