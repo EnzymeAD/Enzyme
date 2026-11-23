@@ -70,7 +70,8 @@ jobs:
           build/Enzyme/LLVMEnzyme-${{ matrix.llvm }}* \
           build/Enzyme/ClangEnzyme-${{ matrix.llvm }}* \
           build/Enzyme/LLDEnzyme-${{ matrix.llvm }}* \
-          build/Enzyme/FlangEnzyme-${{ matrix.llvm }}*; do
+          build/Enzyme/FlangEnzyme-${{ matrix.llvm }}* \
+          build/Enzyme/FlangEnzymeMLIR-${{ matrix.llvm }}*; do
           for artifact in $pattern; do
             [ -e "$artifact" ] && artifacts+=("$artifact")
           done
