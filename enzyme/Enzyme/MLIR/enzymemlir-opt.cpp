@@ -80,7 +80,7 @@ int main(int argc, char **argv) {
   registry.insert<mlir::impulse::ImpulseDialect>();
   registry.insert<mlir::enzyme::llvm_ext::LLVMExtDialect>();
 
-  mlir::enzyme::registerenzymePasses();
+  mlir::enzyme::registerEnzymePasses();
 
   mlir::func::registerInlinerExtension(registry);
   mlir::LLVM::registerInlinerInterface(registry);

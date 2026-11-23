@@ -561,7 +561,7 @@ gentbl_cc_library(
         (
             [
                 "-gen-pass-decls",
-                "-name=enzyme",
+                "-name=Enzyme",
             ],
             "Enzyme/MLIR/Passes/Passes.h.inc",
         ),
