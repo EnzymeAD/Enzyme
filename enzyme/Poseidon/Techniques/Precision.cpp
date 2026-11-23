@@ -628,6 +628,9 @@ public:
   double cost(Session &S, const Subgraph &subgraph, ArrayRef<size_t> which);
 
 private:
+  // The instruction root i resolves to, if any.
+  Instruction *rootAt(size_t i) const;
+
   Function *FClone = nullptr;
   SmallVector<WeakTrackingVH, 8> trackedInputs;
   // A handle per output, then one per expansion root; each with the FP32
@@ -835,9 +838,24 @@ CandidateClone::CandidateClone(Session &S, Subgraph &subgraph,
                      std::to_string(n) + " copies of it instead of one";
     break;
   }
+  // A fold can also rebuild a root's computation in new instructions and
+  // erase the root unreplaced, as narrowing fptrunc(op(fpext a, fpext b)) to
+  // op(a, b) does. With every root gone so, the work is still there but no
+  // handle reaches it.
+  if (unpricedReason.empty() && !any_of(seq<size_t>(0, trackedOutputs.size()),
+                                        [&](size_t i) { return rootAt(i); }))
+    unpricedReason = "the simplified clone of the site erased every output "
+                     "of the candidate while computing it in other "
+                     "instructions";
 
   cloneDT.emplace(*FClone);
   cloneLI.emplace(*cloneDT);
+}
+
+Instruction *CandidateClone::rootAt(size_t i) const {
+  if (auto *I = dyn_cast_or_null<Instruction>((Value *)trackedOutputs[i]))
+    return I;
+  return dyn_cast_or_null<Instruction>((Value *)trackedOutputFallbacks[i]);
 }
 
 double CandidateClone::cost(Session &S, const Subgraph &subgraph,
@@ -860,16 +878,14 @@ double CandidateClone::cost(Session &S, const Subgraph &subgraph,
   for (size_t i = numOutputs; i < trackedOutputs.size(); ++i)
     roots.push_back(i);
   SmallSetVector<Value *, 8> clonedOutputs;
-  for (size_t i : roots) {
-    Value *V = nullptr;
-    if (trackedOutputs[i].pointsToAliveValue())
-      V = trackedOutputs[i];
-    if (!isa_and_nonnull<Instruction>(V) &&
-        trackedOutputFallbacks[i].pointsToAliveValue())
-      V = trackedOutputFallbacks[i];
-    if (V)
-      clonedOutputs.insert(V);
-  }
+  for (size_t i : roots)
+    if (Instruction *I = rootAt(i))
+      clonedOutputs.insert(I);
+  // price() kept only clones with a root; a subset of outputs left none.
+  if (clonedOutputs.empty())
+    report_fatal_error("Poseidon: none of the outputs a precision candidate is "
+                       "priced over is left in its simplified clone. Refusing "
+                       "to fabricate a cost.");
 
   SmallPtrSet<Value *, 8> seen;
   SmallVector<Value *, 8> todo;
