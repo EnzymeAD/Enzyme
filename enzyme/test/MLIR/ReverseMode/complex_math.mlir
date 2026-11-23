@@ -270,3 +270,26 @@ func.func @dlog1p(%x: complex<f64>, %dr: complex<f64>) -> complex<f64> {
 // CHECK-NEXT:    %[[g:.+]] = complex.div %[[cdr]], %[[xp1]] fastmath<fast> : complex<f64>
 // CHECK-NEXT:    %[[res:.+]] = complex.conj %[[g]] : complex<f64>
 // CHECK-NEXT:    return %[[res]] : complex<f64>
+
+// -----
+
+func.func @abs(%x: complex<f64>) -> f64 {
+  %res = complex.abs %x : complex<f64>
+  return %res : f64
+}
+
+func.func @dabs(%x: complex<f64>, %dr: f64) -> complex<f64> {
+  %0 = enzyme.autodiff @abs(%x, %dr) <{ activity=[#enzyme.activity<enzyme_active>], ret_activity=[#enzyme.activity<enzyme_activenoneed>] }> : (complex<f64>, f64) -> complex<f64>
+  return %0 : complex<f64>
+}
+
+// CHECK: func.func private @diffeabs(%[[x:.+]]: complex<f64>, %[[dr:.+]]: f64) -> complex<f64> {
+// CHECK-NEXT:    %[[s:.+]] = complex.sign %[[x]] fastmath<fast> : complex<f64>
+// CHECK-NEXT:    %[[sre:.+]] = complex.re %[[s]] fastmath<fast> : complex<f64>
+// CHECK-NEXT:    %[[re:.+]] = arith.mulf %[[dr]], %[[sre]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[sim:.+]] = complex.im %[[s]] fastmath<fast> : complex<f64>
+// CHECK-NEXT:    %[[t:.+]] = arith.mulf %[[dr]], %[[sim]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[im:.+]] = arith.negf %[[t]] fastmath<fast> : f64
+// CHECK-NEXT:    %[[g:.+]] = complex.create %[[re]], %[[im]] : complex<f64>
+// CHECK-NEXT:    %[[res:.+]] = complex.conj %[[g]] : complex<f64>
+// CHECK-NEXT:    return %[[res]] : complex<f64>

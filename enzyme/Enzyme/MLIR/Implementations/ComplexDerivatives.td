@@ -215,3 +215,17 @@ def : MLIRDerivative<"complex", "Log1pOp", (Op $x),
                         (ComplexAdd $x, (ComplexConstant<"1"> $x)))
                     ]
                   >;
+
+def : MLIRDerivative<"complex", "AbsOp", (Op $x),
+                    [
+                      (ComplexCreate
+                        (TypeOf $x),
+                        (MulF (DiffeRet), (ComplexRe (ComplexSign $x):$s)),
+                        (NegF (MulF (DiffeRet), (ComplexIm $s)))
+                      )
+                    ],
+                    (AddF
+                      (MulF (ComplexRe (Shadow $x)), (ComplexRe (ComplexSign $x):$s)),
+                      (MulF (ComplexIm (Shadow $x)), (ComplexIm $s))
+                    )
+                  >;

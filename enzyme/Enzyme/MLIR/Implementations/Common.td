@@ -243,6 +243,7 @@ def ComplexPowi : ComplexInst<"PowiOp">;
 // so it has to be passed explicitly as the last argument of ComplexPowi.
 def NoFastMathAttr : GlobalExpr</*needsprimal*/0, /*needsshadow*/0, "arith::FastMathFlagsAttr()">;
 def ComplexLog : ComplexInst<"LogOp">;
+def ComplexSign : ComplexInst<"SignOp">;
 
 
 def CheckedComplexMul : SubRoutine<(Op $diffret, $x),
