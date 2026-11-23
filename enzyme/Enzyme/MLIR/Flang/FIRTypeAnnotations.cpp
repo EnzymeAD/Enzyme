@@ -66,12 +66,11 @@
 
 using namespace mlir;
 
-namespace {
-
 //===----------------------------------------------------------------------===//
 // Type trees
 //===----------------------------------------------------------------------===//
 
+namespace {
 // A concrete type of Enzyme's type trees: Integer, Pointer, Anything, or a
 // floating-point type.
 struct Scalar {
@@ -89,6 +88,7 @@ struct Scalar {
   }
   bool operator!=(const Scalar &other) const { return !(*this == other); }
 };
+} // namespace
 
 // A type tree under construction: the concrete type at each offset path.
 using TypePaths = std::map<std::vector<int>, Scalar>;
@@ -131,6 +131,7 @@ static enzyme::TypeTreeAttr buildTypeTree(MLIRContext *context,
 // Local variables
 //===----------------------------------------------------------------------===//
 
+namespace {
 /// Holds `flang_enzyme.local_types`, the attribute of a function that types
 /// its local variables by name, and its translation to LLVM IR.
 class FlangEnzymeDialect : public Dialect {
@@ -201,6 +202,7 @@ struct LocalTypesTranslation : public LLVMTranslationDialectInterface {
     return failure(result.wasInterrupted());
   }
 };
+} // namespace
 
 FlangEnzymeDialect::FlangEnzymeDialect(MLIRContext *ctx)
     : Dialect(getDialectNamespace(), ctx, TypeID::get<FlangEnzymeDialect>()) {
@@ -629,6 +631,7 @@ static llvm::cl::opt<bool> annotateLiterals(
     llvm::cl::desc("Annotate character literals as character data for LLVM "
                    "Enzyme (!enzyme_type)"));
 
+namespace {
 struct FIRTypeAnnotationsPass
     : public PassWrapper<FIRTypeAnnotationsPass, OperationPass<ModuleOp>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(FIRTypeAnnotationsPass)
@@ -864,7 +867,6 @@ struct FIRTypeAnnotationsPass
                                             {{-1, -1}, Scalar::integer()}}));
   }
 };
-
 } // namespace
 
 std::unique_ptr<Pass> mlir::enzyme::createFIRTypeAnnotationsPass() {
