@@ -16,27 +16,48 @@
 ; RUN: grep '^CS candidate' %t/log | sed 's/ [^ ]*acc=.*//' > %t/priced
 ; RUN: grep '^CS candidate' %t/kept.log | sed 's/ [^ ]*acc=.*//' > %t/priced-kept
 ; RUN: diff %t/priced %t/priced-kept
+; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" \
+; RUN:   -poseidon-profile-use=%S/../Inputs/unswitched_loop -poseidon-cache=%t/f \
+; RUN:   -poseidon-enable-herbie=false -poseidon-enable-pt=true \
+; RUN:   -poseidon-enable-multifloat=true -poseidon-tau=1e-6 \
+; RUN:   -poseidon-cost-model=%cost_models/cm_gpu_synthetic.csv -poseidon-print \
+; RUN:   -enable-nontrivial-unswitch -S -o /dev/null 2> %t/forced.log
+; RUN: grep '^CS candidate' %t/forced.log | sed 's/ [^ ]*acc=.*//' > %t/priced-forced
+; RUN: diff %t/priced %t/priced-forced
 
 ; CHECK-NOT: cand=0.000000e+00
-; CHECK: CS candidate 'All FP64(0%) + FP32(100%)': initial=6.658000e+03 cand=3.980000e+02
+; CHECK: CS candidate 'All FP64(0%) + FP32(100%)': initial=6.658000e+03 cand=3.980000e+02 exec=1024
+; CHECK-NOT: cand=0.000000e+00
 ; CHECK: CS candidate 'All FP64(0%) + Expansion2(100%)': initial=6.658000e+03 cand={{[1-9]}}
 ; CHECK-NOT: cand=0.000000e+00
 ; CHECK: Applying solution for CS: All FP64(0%) + FP32(100%) (#0)
 ; IR-LABEL: define {{.*}} @_Z12setup_kerneliPKdS0_Pd(
-; IR: fdiv float
+; IR: call void @preprocess__Z12setup_kerneliPKdS0_Pd_poseidon_body(i32 %0, ptr %1, ptr %2, ptr %3)
+; IR-LABEL: define internal void @preprocess__Z12setup_kerneliPKdS0_Pd_poseidon_body(
+; IR: [[TIDX:%[0-9]+]] = tail call {{.*}}i32 @llvm.nvvm.read.ptx.sreg.tid.x()
+; IR: [[GUARD:%[0-9]+]] = icmp {{.*}}ult i32 [[TIDX]], %0
+; IR: br i1 [[GUARD]], label %[[US:[^ ,]+]], label %[[EXIT:[^ ,]+]]
+; IR-EMPTY:
+; IR-NEXT: {{^}}[[US]]:
+; IR-NOT: [[GUARD]]{{[^0-9]}}
+; IR: [[DET:%[0-9]+]] = {{.*}}call float @llvm.fmuladd.f32(
+; IR: [[Q:%[0-9]+]] = fdiv float %{{[0-9]+}}, [[DET]]
+; IR-NEXT: fpext float [[Q]] to double
+; IR-NOT: [[GUARD]]{{[^0-9]}}
+; IR: {{^}}[[EXIT]]:
+; IR-NEXT: ret void
 
 ; Precision candidates of a kernel whose loops are strided by thread index up
-; to a bound the kernel is given. Each candidate is priced on a clone of the
-; site that the O3 simplification pipeline cleans up as the materializer's
-; output is. In that pipeline, which has no target, the guard of the inner loop
-; (threadIdx.x < Q) is loop invariant in the outer loop, so non-trivial
-; unswitching versions the outer loop and deletes the body from the version
-; that never enters the inner loop; the version that does runs a copy of it.
-; Every candidate is priced on that copy, at the price it has when the loop is
-; not unswitched (the second run, -unswitch-threshold=0), and at 1e-6 the
-; cheapest candidate that meets the target, FP32, is applied. Pricing the
-; handles left on the deleted body priced every candidate at 0, a saving of the
-; whole site, and the most accurate candidate was applied.
+; to a bound the kernel is given. The guard of the inner loop (threadIdx.x < Q)
+; is loop invariant in the outer loop. The emitted site is cleaned up by the O3
+; simplification pipeline without a target, where non-trivial unswitching
+; versions the outer loop on the guard and deletes the version that never
+; enters the inner loop (IR). The clone each candidate is priced on keeps the
+; guard; forced to unswitch it too (-enable-nontrivial-unswitch), the walk
+; starts from the copy of the body the other version keeps, and every
+; candidate has the price it has when no loop is unswitched
+; (-unswitch-threshold=0): none at 0, and at 1e-6 the cheapest candidate that
+; meets the target, FP32, is applied.
 ; The IR is the kernel of Inputs/unswitched_loop/unswitched_loop.cu via clang
 ; -x cuda --cuda-device-only --cuda-gpu-arch=sm_120 -O2 -ffp-contract=on
 ; -I<enzyme>/include -S -emit-llvm. Profile: the same source through

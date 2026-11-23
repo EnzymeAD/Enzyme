@@ -6,7 +6,8 @@
 ; DEFINE:   -poseidon-reduction-subgraphs -poseidon-merge-shared-staging \
 ; DEFINE:   -poseidon-freq-weighted-pricing -poseidon-narrow-param-staging -S
 ; RUN: rm -rf %t && mkdir %t
-; RUN: %{opt} -poseidon-cache=%t/off -poseidon-apply-rewrites=PT0_0 -poseidon-print 2>&1 | FileCheck --check-prefix=OFF %s
+; RUN: %{opt} -poseidon-cache=%t/off -poseidon-apply-rewrites=PT0_0 -poseidon-print 2>&1 \
+; RUN:   | FileCheck --check-prefix=OFF --implicit-check-not="narrowed multiview" %s
 ; RUN: %{opt} -poseidon-narrow-multiview-staging -poseidon-cache=%t/f32 -poseidon-apply-rewrites=PT0_0 -poseidon-print 2>&1 \
 ; RUN:   | FileCheck --check-prefix=F32 %s
 ; RUN: %{opt} -poseidon-narrow-multiview-staging -poseidon-cache=%t/ds -poseidon-apply-rewrites=PT0_2 -poseidon-print 2>&1 \
@@ -22,22 +23,77 @@
 ; -ffp-contract=on --cuda-gpu-arch=sm_120).
 
 ; OFF: [narrow] G=@_ZZ9multiviewPKdS0_PdE2sm casts=1 elemGEPs=3 strideK=8 bail=1
-; OFF: Applying solution for CS: All FP64(0%) + FP32(100%)
+; OFF: Applying solution for CS: All FP64(0%) + FP32(100%) (#0)
 ; OFF-NOT: narrowed multiview shared buffer
+; OFF-LABEL: ; ModuleID =
+; OFF-LABEL: define internal void @preprocess__Z9multiviewPKdS0_Pd_poseidon_body(
+; OFF: [[X:%[0-9]+]] = load double, ptr
+; OFF: [[ROW:%[0-9]+]] = getelementptr {{.*}}@_ZZ9multiviewPKdS0_PdE2sm{{.*}}, i64 512), i64
+; OFF-NEXT: [[TID:%[0-9]+]] = zext {{.*}} to i64
+; OFF-NEXT: [[SLOT:%[0-9]+]] = getelementptr {{.*}}ptr [[ROW]], i64 [[TID]]
+; OFF-NEXT: store double [[X]], ptr [[SLOT]], align 8
+; OFF-NEXT: tail call void @llvm.nvvm.barrier.cta.sync.aligned.all(i32 0)
+; OFF-NEXT: [[V:%[0-9]+]] = load double, ptr [[ROW]], align 8
+; OFF: fptrunc double [[V]] to float
 
-; F32: Applying solution for CS: All FP64(0%) + FP32(100%)
+; F32: Applying solution for CS: All FP64(0%) + FP32(100%) (#0)
 ; F32: [poseidon] narrowed multiview shared buffer @_ZZ9multiviewPKdS0_PdE2sm to fp32 (12 loads, 3 stores)
+; F32-NEXT: [poseidon] applied param-staged shared narrowing in preprocess__Z9multiviewPKdS0_Pd_poseidon_body
+; F32-LABEL: ; ModuleID =
+; F32-LABEL: define internal void @preprocess__Z9multiviewPKdS0_Pd_poseidon_body(
+; F32: [[X:%[0-9]+]] = load double, ptr
+; F32: [[ROW:%[0-9]+]] = getelementptr {{.*}}@_ZZ9multiviewPKdS0_PdE2sm{{.*}}, i64 256), i64
+; F32-NEXT: [[TID:%[0-9]+]] = zext {{.*}} to i64
+; F32-NEXT: [[SLOT:%[0-9]+]] = getelementptr {{.*}}ptr [[ROW]], i64 [[TID]]
+; F32-NEXT: [[XF:%[0-9]+]] = fptrunc double [[X]] to float
+; F32-NEXT: store float [[XF]], ptr [[SLOT]], align 4
+; F32-NEXT: tail call void @llvm.nvvm.barrier.cta.sync.aligned.all(i32 0)
+; F32-NEXT: [[V:%[0-9]+]] = load float, ptr [[ROW]], align 4
+; F32: call float @llvm.fmuladd.f32(float [[V]], float
+; F32: call float @llvm.fmuladd.f32(float [[V]], float
+; F32: [[OUT:%[0-9]+]] = getelementptr {{.*}}ptr addrspacecast (ptr addrspace(3) @_ZZ9multiviewPKdS0_PdE2sm to ptr), i64
+; F32-NEXT: [[OUT0:%[0-9]+]] = getelementptr {{.*}}ptr [[OUT]], i64 [[TID]]
+; F32-NEXT: store float {{%[0-9]+}}, ptr [[OUT0]], align 4
+; F32-NEXT: [[OUT1:%[0-9]+]] = getelementptr {{.*}}ptr [[OUT]], i64
+; F32-NEXT: store float {{%[0-9]+}}, ptr [[OUT1]], align 4
+; F32-NEXT: tail call void @llvm.nvvm.barrier.cta.sync.aligned.all(i32 0)
+; F32-NEXT: [[R0:%[0-9]+]] = getelementptr {{.*}}ptr addrspacecast (ptr addrspace(3) @_ZZ9multiviewPKdS0_PdE2sm to ptr), i64 [[TID]]
+; F32-NEXT: load float, ptr [[R0]], align 4
+; F32-NOT: @_ZZ9multiviewPKdS0_PdE2sm to ptr), i64 {{[0-9]+}}), i64
+; F32: [[R1:%[0-9]+]] = getelementptr {{.*}}ptr getelementptr {{.*}}@_ZZ9multiviewPKdS0_PdE2sm to ptr), i64 32), i64 [[TID]]
+; F32-NEXT: load float, ptr [[R1]], align 4
 
-; DS: Applying solution for CS: All FP64(0%) + Expansion2(100%)
-; DS: [poseidon] narrowed multiview shared buffer @_ZZ9multiviewPKdS0_PdE2sm to df64 (12 loads, 3 stores)
+; DS: Applying solution for CS: All FP64(0%) + Expansion2(100%) (#2)
+; DS-NEXT: [narrow-param df64] G=@_ZZ9multiviewPKdS0_PdE2sm args= geps={{20|23}} loads=12 stores=3
+; DS-NEXT: [poseidon] narrowed multiview shared buffer @_ZZ9multiviewPKdS0_PdE2sm to df64 (12 loads, 3 stores)
+; DS-NEXT: [poseidon] folded df64 join/split roundtrips at the staging boundary in preprocess__Z9multiviewPKdS0_Pd_poseidon_body
 
 ; IR-LABEL: define internal void @preprocess__Z9multiviewPKdS0_Pd_poseidon_body(
-; IR: store float
-; IR-NEXT: [[LO:%[0-9]+]] = getelementptr i8, ptr [[SLOT:%[0-9]+]], i64 4
-; IR-NEXT: store float {{%[0-9]+}}, ptr [[LO]], align 4
-; IR: load float
-; IR-NEXT: getelementptr i8, ptr {{%[0-9]+}}, i64 4
-; IR-NEXT: load float
+; IR: [[X:%[0-9]+]] = load double, ptr
+; IR: [[ROW:%[0-9]+]] = getelementptr {{.*}}@_ZZ9multiviewPKdS0_PdE2sm{{.*}}, i64 512), i64
+; IR-NEXT: [[TID:%[0-9]+]] = zext {{.*}} to i64
+; IR-NEXT: [[SLOT:%[0-9]+]] = getelementptr {{.*}}ptr [[ROW]], i64 [[TID]]
+; IR-NEXT: [[HI:%[0-9]+]] = fptrunc double [[X]] to float
+; IR-NEXT: [[HIX:%[0-9]+]] = fpext float [[HI]] to double
+; IR-NEXT: [[LOX:%[0-9]+]] = fsub double [[X]], [[HIX]]
+; IR-NEXT: [[LO:%[0-9]+]] = fptrunc double [[LOX]] to float
+; IR-NEXT: store float [[HI]], ptr [[SLOT]], align 4
+; IR-NEXT: [[SLOTLO:%[0-9]+]] = getelementptr i8, ptr [[SLOT]], i64 4
+; IR-NEXT: store float [[LO]], ptr [[SLOTLO]], align 4
+; IR-NEXT: tail call void @llvm.nvvm.barrier.cta.sync.aligned.all(i32 0)
+; IR-NEXT: [[VHI:%[0-9]+]] = load float, ptr [[ROW]], align 4
+; IR-NEXT: [[VLOP:%[0-9]+]] = getelementptr i8, ptr [[ROW]], i64 4
+; IR-NEXT: [[VLO:%[0-9]+]] = load float, ptr [[VLOP]], align 4
+; IR-NOT: ptr [[ROW]], align
+; IR: {{%[^ ]+}} = fmul float [[VHI]], [[B1:%[^ ]+]]
+; IR: call float @llvm.fma.f32(float [[VHI]], float [[B1]], float
+; IR-NEXT: call float @llvm.fma.f32(float [[VHI]], float {{%[^,]+}}, float
+; IR-NEXT: call float @llvm.fma.f32(float [[VLO]], float [[B1]], float
+; IR-NOT: ptr [[ROW]], align
+; IR: {{%[^ ]+}} = fmul float [[VHI]], [[B2:%[^ ]+]]
+; IR: call float @llvm.fma.f32(float [[VHI]], float [[B2]], float
+; IR-NEXT: call float @llvm.fma.f32(float [[VHI]], float {{%[^,]+}}, float
+; IR-NEXT: call float @llvm.fma.f32(float [[VLO]], float [[B2]], float
 
 ; ModuleID = 'Inputs/staging_multiview/multiview_kernel.cu'
 source_filename = "Inputs/staging_multiview/multiview_kernel.cu"

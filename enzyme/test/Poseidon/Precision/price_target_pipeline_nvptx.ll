@@ -6,21 +6,33 @@
 ; RUN:   -poseidon-cost-model=%cost_models/cm_gpu_synthetic.csv -poseidon-print \
 ; RUN:   -S -o /dev/null 2> %t/log
 ; RUN: FileCheck %s < %t/log
+; RUN: %opt %s -passes='default<O3>' -S \
+; RUN:   | FileCheck --check-prefix=KEPT --implicit-check-not=.us %s
 
 ; Each precision candidate is priced on a clone of the site cleaned up by the
 ; function simplification pipeline of the compile, whose target has divergent
-; branches: the guard of the inner loop (threadIdx.x < Q), invariant in the
-; outer loop, stays in it and the clone keeps one copy of the body for the
-; walk. A pipeline without the target versions the outer loop on the guard
-; and deletes the body of the version that never enters the inner loop; the
-; handles the walk starts from were left there and priced every candidate at
-; 0, a saving of the whole site.
+; branches and so is not unswitched: the guard of the inner loop
+; (threadIdx.x < Q), invariant in the outer loop, stays in it (KEPT, the
+; compile's O3 pipeline on the kernel) and the clone keeps one copy of the body
+; for the walk. Every candidate is priced above zero, and at 1e-6 the cheapest
+; candidate that meets the target, FP32, is applied.
 ; The IR and profile are those of Precision/unswitched_loop_cost_nvptx.ll.
 
 ; CHECK-NOT: cand=0.000000e+00
-; CHECK: CS candidate 'All FP64(0%) + FP32(100%)': initial=6.658000e+03 cand=3.980000e+02
+; CHECK: CS candidate 'All FP64(0%) + FP32(100%)': initial=6.658000e+03 cand=3.980000e+02 exec=1024
+; CHECK-NOT: cand=0.000000e+00
+; CHECK: CS candidate 'All FP64(0%) + Expansion2(100%)': initial=6.658000e+03 cand={{[1-9]}}
 ; CHECK-NOT: cand=0.000000e+00
 ; CHECK: Applying solution for CS: All FP64(0%) + FP32(100%) (#0)
+
+; KEPT-LABEL: define {{.*}} @_Z12setup_kerneliPKdS0_Pd(
+; KEPT: [[TIDX:%[0-9]+]] = tail call {{.*}}i32 @llvm.nvvm.read.ptx.sreg.tid.x()
+; KEPT: [[GUARD:%[0-9]+]] = icmp {{.*}}ult i32 [[TIDX]], %0
+; KEPT: br label %[[OUTER:[0-9]+]]
+; KEPT: {{^}}[[OUTER]]:
+; KEPT-NEXT: phi i32
+; KEPT-NEXT: br i1 [[GUARD]], label %[[INNER:[0-9]+]], label
+; KEPT: fdiv double
 
 ; ModuleID = 'unswitched_loop/unswitched_loop.cu'
 source_filename = "unswitched_loop/unswitched_loop.cu"

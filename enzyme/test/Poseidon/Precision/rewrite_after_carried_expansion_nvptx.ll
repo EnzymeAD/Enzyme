@@ -1,22 +1,38 @@
 ; RUN: rm -rf %t && mkdir %t
 ; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/rewrite_after_carried_expansion %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/rewrite_after_carried_expansion -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/rewrite_after_carried_expansion/fake-herbie.sh -poseidon-enable-pt=true -poseidon-enable-multifloat=true -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv "-poseidon-apply-rewrites=PT0=All FP64(0%%) + Expansion2(100%%),R2=(-.f64 (*.f64 v1 v1) (*.f64 v2 v2))" -poseidon-cache=%t/expansion-first -S -o %t/expansion-first.ll 2>&1 | FileCheck --check-prefix=APPLY %s
 ; RUN: FileCheck --check-prefix=IR %s < %t/expansion-first.ll
-; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/rewrite_after_carried_expansion %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/rewrite_after_carried_expansion -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/rewrite_after_carried_expansion/fake-herbie.sh -poseidon-enable-pt=true -poseidon-enable-multifloat=true -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv "-poseidon-apply-rewrites=R2=(-.f64 (*.f64 v1 v1) (*.f64 v2 v2)),PT0=All FP64(0%%) + Expansion2(100%%)" -poseidon-cache=%t/rewrite-first -S -o %t/rewrite-first.ll
+; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/rewrite_after_carried_expansion %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/rewrite_after_carried_expansion -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/rewrite_after_carried_expansion/fake-herbie.sh -poseidon-enable-pt=true -poseidon-enable-multifloat=true -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv "-poseidon-apply-rewrites=R2=(-.f64 (*.f64 v1 v1) (*.f64 v2 v2)),PT0=All FP64(0%%) + Expansion2(100%%)" -poseidon-cache=%t/rewrite-first -S -o %t/rewrite-first.ll 2>&1 | FileCheck --check-prefix=APPLY2 %s
 ; RUN: FileCheck --check-prefix=IR %s < %t/rewrite-first.ll
 
-; APPLY: Applying solution for CS: All FP64(0%) + Expansion2(100%)
+; APPLY: !!! Applying solution (2 step(s)) ... !!!
+; APPLY-NEXT: Applying solution for CS: All FP64(0%) + Expansion2(100%) (#3)
 ; APPLY-NEXT: Applying solution for (* (- v1 v2) (+ v2 v1)) --(0)-> (-.f64 (*.f64 v1 v1) (*.f64 v2 v2))
 
+; APPLY2: !!! Applying solution (2 step(s)) ... !!!
+; APPLY2-NEXT: Applying solution for (* (- v1 v2) (+ v2 v1)) --(0)-> (-.f64 (*.f64 v1 v1) (*.f64 v2 v2))
+; APPLY2-NEXT: Applying solution for CS: All FP64(0%) + Expansion2(100%) (#3)
+
 ; IR-LABEL: define dso_local void @preprocess_carried_body(
+; IR-SAME: ptr {{.*}}%0, double noundef %[[V2:[0-9]+]], ptr {{.*}}%[[OUT:[0-9]+]])
 ; IR-NOT: phi double
-; IR: %ds.phi.hi = phi float
-; IR-NEXT: %ds.phi.lo = phi float
+; IR: %[[V2SQ:[^ ]+]] = fmul double %[[V2]], %[[V2]]
+; IR-NOT: phi double
+; IR: %ds.phi.hi = phi float [ %[[NHI:[^ ]+]], %{{[0-9]+}} ], [ 0.000000e+00, %{{[0-9]+}} ]
+; IR-NEXT: %ds.phi.lo = phi float [ %[[NLO:[^ ]+]], %{{[0-9]+}} ], [ 0.000000e+00, %{{[0-9]+}} ]
 ; IR-NEXT: %[[HI:.+]] = fpext float %ds.phi.hi to double
 ; IR-NEXT: %[[LO:.+]] = fpext float %ds.phi.lo to double
 ; IR-NEXT: %[[ACC:.+]] = fadd double %[[HI]], %[[LO]]
 ; IR-NOT: phi double
 ; IR: %herbie.mul = fmul double %[[ACC]], %[[ACC]]
-; IR-NEXT: %herbie.sub = fsub double %herbie.mul, %herbie.mul{{[0-9]+}}
+; IR-NEXT: %herbie.sub = fsub double %herbie.mul, %[[V2SQ]]
+; IR-NEXT: %[[IDX:[0-9]+]] = add {{.*}}i64
+; IR-NEXT: %[[P:[0-9]+]] = getelementptr {{.*}}ptr %[[OUT]], i64 %[[IDX]]
+; IR-NEXT: store double %herbie.sub, ptr %[[P]], align 8
+; IR: %[[PH:[^ ]+]] = fmul float %ds.phi.hi, 5.000000e-01
+; IR: call float @llvm.fma.f32(float %ds.phi.lo, float 5.000000e-01, float
+; IR: %[[NHI]] = fadd float %[[TS:[^ ]+]], %[[T1:[^ ]+]]
+; IR-NEXT: %[[D:[0-9]+]] = fsub float %[[TS]], %[[NHI]]
+; IR-NEXT: %[[NLO]] = fadd float %[[T1]], %[[D]]
 ; IR-NOT: phi double
 ; IR: {{^}}}{{$}}
 
