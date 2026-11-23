@@ -64,19 +64,42 @@ POSEIDON_OPTIMIZE __global__ void unprofiled(const double *x, double *y,
     y[i] = sqrt(x[i]) * y[i];
 }
 
-// SOLVE: [poseidon] {{.*}}: 1 function(s) a rewrite reached; every other function as written
+// SOLVE: [poseidon] site site(double const*, double*, int): accuracy target 1e-06
+// SOLVE: [poseidon] pin: _Z4sitePKdPdi:PT0=All FP64(0%) + FP32(100%)
+// SOLVE: rewritten_module_lto_amdgpu.hip:[[@LINE-9]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/Inputs/rewritten_lto_hip/preprocess__Z10unprofiledPKdPdi_poseidon_body.fpprofile: the profile directory was written before the profiling runtime recorded sites that never ran, so this site may simply not have run (or the profiled program did not contain it); leaving the site unchanged
+// SOLVE: [poseidon] _Z10unprofiledPKdPdi_poseidon_body: the profile directory was written before the profiling runtime recorded sites that never ran, so this site may simply not have run (or the profiled program did not contain it) (no profile at {{.*}}/Inputs/rewritten_lto_hip/preprocess__Z10unprofiledPKdPdi_poseidon_body.fpprofile); left unchanged
+// SOLVE-NEXT: [poseidon] {{.*}}rewritten_module_lto_amdgpu.hip: 1 function(s) a rewrite reached; every other function as written
 
-// REFUSED: [poseidon] every site of {{.*}} was left alone; emitting the module as written
+// REFUSED: [poseidon] site site(double const*, double*, int): accuracy target 1e-18
+// REFUSED: No solution found that meets accuracy tolerance 1.000000e-18!
+// REFUSED: [poseidon] pin: {{$}}
+// REFUSED: rewritten_module_lto_amdgpu.hip:[[@LINE-30]]:{{[0-9]+}}: warning: Poseidon: Poseidon returned false (no change) for preprocess__Z4sitePKdPdi_poseidon_body
+// REFUSED: [poseidon] no rewrite applied for preprocess__Z4sitePKdPdi_poseidon_body; calling original body _Z4sitePKdPdi_poseidon_body (bit-transparent no-op)
+// REFUSED-NEXT: rewritten_module_lto_amdgpu.hip:[[@LINE-18]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/Inputs/rewritten_lto_hip/preprocess__Z10unprofiledPKdPdi_poseidon_body.fpprofile: the profile directory was written before the profiling runtime recorded sites that never ran, so this site may simply not have run (or the profiled program did not contain it); leaving the site unchanged
+// REFUSED: [poseidon] _Z10unprofiledPKdPdi_poseidon_body: the profile directory was written before the profiling runtime recorded sites that never ran, so this site may simply not have run (or the profiled program did not contain it) (no profile at {{.*}}/Inputs/rewritten_lto_hip/preprocess__Z10unprofiledPKdPdi_poseidon_body.fpprofile); left unchanged
+// REFUSED-NEXT: [poseidon] every site of {{.*}}rewritten_module_lto_amdgpu.hip was left alone; emitting the module as written
 
 // FNS: NAME <_Z4sitePKdPdi>:
 // FNS-NEXT: NAME <_Z5otherPKdPdi>:
+// FNS-NOT: s_swappc
 // FNS: v_rsq_f64
+// FNS-NOT: s_swappc
 // FNS: NAME <_Z10unprofiledPKdPdi>:
+// FNS-NOT: s_swappc
 // FNS: v_rsq_f64
+// FNS-NOT: s_swappc
 
-// FPC-SITE: v_fma_f64
-// FPC-SITE: v_fma_f64
+// As written, y = (3 x + 0.5) x + 1 in two FP64 fmas; rewritten, the same two
+// fmas in FP32 between a narrowing of x and a widening of the result.
+// FPC-SITE: global_load_dwordx2 [[X:v\[[0-9]+:[0-9]+\]]], v{{\[[0-9]+:[0-9]+\]}}, off
+// FPC-SITE: v_fma_f64 [[T:v\[[0-9]+:[0-9]+\]]], [[X]], s{{\[[0-9]+:[0-9]+\]}}, 0.5
+// FPC-SITE-NEXT: v_fma_f64 [[R:v\[[0-9]+:[0-9]+\]]], [[T]], [[X]], 1.0
+// FPC-SITE-NEXT: global_store_dwordx2 v{{\[[0-9]+:[0-9]+\]}}, [[R]], off
 
-// USE-SITE: v_cvt_f32_f64
-// USE-SITE: v_fma_f32
-// USE-SITE: v_cvt_f64_f32
+// USE-SITE: global_load_dwordx2 [[X:v\[[0-9]+:[0-9]+\]]], v{{\[[0-9]+:[0-9]+\]}}, off
+// USE-SITE-DAG: v_cvt_f32_f64_e32 [[XF:v[0-9]+]], [[X]]
+// USE-SITE-DAG: v_mov_b32_e32 [[H:v[0-9]+]], 0.5
+// USE-SITE: v_fmamk_f32 [[T:v[0-9]+]], [[XF]], 0x40400000, [[H]]
+// USE-SITE-NEXT: v_fma_f32 [[R:v[0-9]+]], [[T]], [[XF]], 1.0
+// USE-SITE-NEXT: v_cvt_f64_f32_e32 [[RD:v\[[0-9]+:[0-9]+\]]], [[R]]
+// USE-SITE-NEXT: global_store_dwordx2 v{{\[[0-9]+:[0-9]+\]}}, [[RD]], off

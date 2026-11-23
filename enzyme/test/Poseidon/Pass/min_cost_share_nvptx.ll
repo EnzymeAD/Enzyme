@@ -22,8 +22,9 @@
 
 ; Two kernels reached by -poseidon-kernels, not by the attribute. cold_kernel
 ; ran once where hot_kernel ran 768 times over seven profiled operations, so it
-; is 0.026% of the profiled FP cost of the two and is left exactly as it was
-; found. The second run, with the share set to 0, optimizes both.
+; is 0.026% of the profiled FP cost of the two and is left unoptimized, with
+; the computation it was found with. The second run, with the share set to 0,
+; hands both to the optimizer.
 
 ; ModuleID = 'min_cost_share.cu'
 source_filename = "min_cost_share.cu"
@@ -88,22 +89,41 @@ attributes #4 = { mustprogress nocallback nofree nosync nounwind speculatable wi
 !1 = !{i32 4, !"nvvm-reflect-ftz", i32 0}
 !2 = !{i32 7, !"frame-pointer", i32 2}
 
-; CHECK: [poseidon] Optimizing preprocess_hot_kernel_poseidon_body
-; CHECK: [poseidon] cold_kernel is 0.02599% of the profiled FP cost of the kernels -poseidon-kernels named, below -poseidon-min-cost-share=0.01; left unoptimized
+; CHECK: [poseidon] Optimizing preprocess_hot_kernel_poseidon_body with relative error tolerance: 0.000000e+00{{$}}
+; CHECK: [poseidon] cold_kernel is 0.02599% of the profiled FP cost of the kernels -poseidon-kernels named, below -poseidon-min-cost-share=0.01; left unoptimized{{$}}
 ; CHECK-LABEL: define {{.*}} @hot_kernel(
-; CHECK: call void @preprocess_hot_kernel_poseidon_body(
+; CHECK-SAME: ptr {{.*}}[[HA:%[0-9]+]], ptr {{.*}}[[HB:%[0-9]+]], ptr {{.*}}[[HC:%[0-9]+]])
+; CHECK-NEXT: entry:
+; CHECK-NEXT: call void @preprocess_hot_kernel_poseidon_body(ptr [[HA]], ptr [[HB]], ptr [[HC]])
+; CHECK-NEXT: ret void
 ; CHECK-LABEL: define {{.*}} @cold_kernel(
+; CHECK-SAME: ptr {{.*}}[[A:%[0-9]+]], ptr {{.*}}[[B:%[0-9]+]], ptr {{.*}}[[C:%[0-9]+]])
 ; CHECK-NOT: _poseidon_body
-; CHECK: call double @llvm.fmuladd.f64(
+; CHECK-NEXT: entry:
+; CHECK-NEXT: [[BID:%[0-9]+]] = {{(tail )?}}call noundef i32 @llvm.nvvm.read.ptx.sreg.ctaid.x()
+; CHECK-NEXT: [[BDIM:%[0-9]+]] = {{(tail )?}}call noundef i32 @llvm.nvvm.read.ptx.sreg.ntid.x()
+; CHECK-NEXT: [[BOFF:%[0-9]+]] = mul i32 [[BID]], [[BDIM]]{{$}}
+; CHECK-NEXT: [[TID:%[0-9]+]] = {{(tail )?}}call noundef i32 @llvm.nvvm.read.ptx.sreg.tid.x()
+; CHECK-NEXT: [[GID:%[0-9]+]] = add i32 [[BOFF]], [[TID]]{{$}}
+; CHECK-NEXT: [[I:%[0-9]+]] = zext i32 [[GID]] to i64
+; CHECK-NEXT: [[AP:%[0-9]+]] = getelementptr inbounds {{.*}}ptr [[A]], i64 [[I]]{{$}}
+; CHECK-NEXT: [[AV:%[0-9]+]] = load double, ptr [[AP]], align 8
+; CHECK-NEXT: [[BP:%[0-9]+]] = getelementptr inbounds {{.*}}ptr [[B]], i64 [[I]]{{$}}
+; CHECK-NEXT: [[BV:%[0-9]+]] = load double, ptr [[BP]], align 8
+; CHECK-NEXT: [[R:%[0-9]+]] = {{(tail )?}}call double @llvm.fmuladd.f64(double [[AV]], double [[BV]], double [[AV]])
+; CHECK-NEXT: [[CP:%[0-9]+]] = getelementptr inbounds {{.*}}ptr [[C]], i64 [[I]]{{$}}
+; CHECK-NEXT: store double [[R]], ptr [[CP]], align 8
+; CHECK-NEXT: ret void
+; CHECK-NEXT: }
 
 ; NOFILTER-NOT: left unoptimized
-; NOFILTER: [poseidon] Optimizing preprocess_hot_kernel_poseidon_body
-; NOFILTER: [poseidon] Optimizing preprocess_cold_kernel_poseidon_body
+; NOFILTER: [poseidon] Optimizing preprocess_hot_kernel_poseidon_body with relative error tolerance: 0.000000e+00{{$}}
+; NOFILTER: [poseidon] Optimizing preprocess_cold_kernel_poseidon_body with relative error tolerance: 0.000000e+00{{$}}
 
 ; The share of a kernel is read from its profile, which has to be of the
 ; canonical form the compile numbers.
-; STALE: error: {{.*}}preprocess_cold_kernel_poseidon_body{{.*}}: Poseidon: the profile of preprocess_cold_kernel_poseidon_body was recorded against a different canonical form (profile CanonicalHash 0123456789abcdef, this compile fea337c617ef94c9)
+; STALE: {{^}}error: <unknown>:0:0: in function preprocess_cold_kernel_poseidon_body void (ptr, ptr, ptr): Poseidon: the profile of preprocess_cold_kernel_poseidon_body was recorded against a different canonical form (profile CanonicalHash 0123456789abcdef, this compile fea337c617ef94c9). Its slot indices do not name the same instructions; re-run profile generation.{{$}}
 
 ; A -poseidon-kernels value that is no regular expression is an error of the
 ; compile, under opt and under clang, without clang's crash reporting.
-; BADREGEX: error: Poseidon: -poseidon-kernels=( is not a valid regular expression: {{.+}}. Give a regular expression of kernel names, or 'all'.
+; BADREGEX: {{^}}error: Poseidon: -poseidon-kernels=( is not a valid regular expression: parentheses not balanced. Give a regular expression of kernel names, or 'all'.{{$}}

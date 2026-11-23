@@ -35,12 +35,19 @@ __global__ void other(const double *x, double *y, int n) {
     y[i] = sin(x[i]) + y[i];
 }
 
-// SOLVE: [poseidon] _Z4sitePKdPdi_poseidon_body: the profiled program did not contain this site (no profile at {{.*}}); left unchanged
-// SOLVE: [poseidon] every site of {{.*}} was left alone; emitting the module as written
+// SOLVE: [poseidon] site site(double const*, double*, int): accuracy target 1e-06
+// SOLVE-NEXT: as_written_twin_amdgpu.hip:[[@LINE-15]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/Inputs/other_sites/preprocess__Z4sitePKdPdi_poseidon_body.fpprofile: the profiled program did not contain this site (it was annotated after the profiling run, is in a translation unit the profiled program did not link, or was renamed); leaving the site unchanged
+// SOLVE: [poseidon] _Z4sitePKdPdi_poseidon_body: the profiled program did not contain this site (no profile at {{.*}}/Inputs/other_sites/preprocess__Z4sitePKdPdi_poseidon_body.fpprofile); left unchanged
+// SOLVE-NEXT: [poseidon] every site of {{.*}}as_written_twin_amdgpu.hip was left alone; emitting the module as written
 
+// Both kernels compute ocml's sine inline and call nothing.
 // CHECK-LABEL: _Z4sitePKdPdi:
+// CHECK-NOT: s_swappc
+// CHECK: v_trig_preop_f64
 // CHECK-NOT: s_swappc
 // CHECK: s_endpgm
 // CHECK-LABEL: _Z5otherPKdPdi:
+// CHECK-NOT: s_swappc
+// CHECK: v_trig_preop_f64
 // CHECK-NOT: s_swappc
 // CHECK: s_endpgm
