@@ -55,19 +55,32 @@ attributes #0 = { "target-cpu"="x86-64" }
 ; fmul 4 + fmod 8 + fadd 4 in double; 1 + 2 + 1 and three casts in float.
 ; PT: [poseidon] Optimizing preprocess_tester_frem
 ; PT: Initial ComputationCost: 1.600000e+01
-; PT: CS candidate 'All FP64(0%) + FP32(100%)': initial=1.600000e+01 cand=7.000000e+00
+; PT: CS candidate 'All FP64(0%) + FP32(100%)': initial=1.600000e+01 cand=7.000000e+00 exec=64 {{[^ -~]+}}cost=-5.760000e+02 {{[^ -~]+}}acc=3.098434e-05{{$}}
+; PT: Applying solution for CS: All FP64(0%) + FP32(100%) (#0)
+; PT: [poseidon] pin: tester_frem:PT0=All FP64(0%) + FP32(100%)
 ; PT-IR-LABEL: define void @preprocess_tester_frem(
-; PT-IR: frem nnan float
+; PT-IR-NEXT: entry:
+; PT-IR-NEXT: [[XF:%.+]] = fptrunc {{.*}}double %x to float
+; PT-IR-NEXT: [[YF:%.+]] = fptrunc {{.*}}double %y to float
+; PT-IR-NEXT: [[M:%.+]] = fmul nnan float [[XF]], [[YF]]{{$}}
+; PT-IR-NEXT: [[R:%.+]] = frem nnan float [[M]], 2.500000e+00
+; PT-IR-NEXT: [[S:%.+]] = fadd nnan float [[R]], [[XF]]{{$}}
+; PT-IR-NEXT: [[SD:%.+]] = fpext float [[S]] to double
+; PT-IR-NEXT: store double [[SD]], ptr %o,
+; PT-IR-NEXT: ret void
 
 ; HERBIE: :name "0" (+ (fmod (* v0 v1) 2.5) v0))
 ; The rewrite of tester_fma costs fma 4 + fmod 8 over fmul 4 + fadd 4.
 ; HERBIE: [poseidon] Optimizing preprocess_tester_fma
-; HERBIE: {{.*}}2.560000e+02{{.*}}(fmod.f64 (fma.f64 v0 v1 v0) #s(literal 1000 binary64))
-; HERBIE: Applying solution for (+ (* v0 v1) v0) --(0)-> (fmod.f64 (fma.f64 v0 v1 v0) #s(literal 1000 binary64))
+; HERBIE: {{^}}-3.731043e-14 2.560000e+02 1.500000e+00 9.843750e-01 (fmod.f64 (fma.f64 v0 v1 v0) #s(literal 1000 binary64)){{$}}
+; HERBIE: Applying solution for (+ (* v0 v1) v0) --(0)-> (fmod.f64 (fma.f64 v0 v1 v0) #s(literal 1000 binary64)){{$}}
+; HERBIE: [poseidon] pin: tester_fma:R0=(fmod.f64 (fma.f64 v0 v1 v0) #s(literal 1000 binary64)){{$}}
 ; HERBIE-IR-LABEL: define void @preprocess_tester_fma(
 ; HERBIE-IR: [[FMA:%.+]] = tail call nnan double @llvm.fma.f64(double %x, double %y, double %x)
-; HERBIE-IR-NEXT: frem nnan double [[FMA]], 1.000000e+03
+; HERBIE-IR-NEXT: [[FMOD:%.+]] = frem nnan double [[FMA]], 1.000000e+03
+; HERBIE-IR-NEXT: store double [[FMOD]], ptr %o,
+; HERBIE-IR-NEXT: ret void
 
-; NOFMOD: error: {{.*}}preprocess_tester_frem{{.*}}Poseidon: cost model {{.*}}nofmod.csv has no row 'fmod,double'; measure it with poseidon-calibrate
+; NOFMOD: error: {{.*}}preprocess_tester_frem{{.*}}Poseidon: cost model {{.*}}nofmod.csv has no row 'fmod,double'; measure it with poseidon-calibrate{{$}}
 
-; NOFMA: error: <unknown>:0:0: in function preprocess_tester_fma {{.*}}: Poseidon: cost model {{.*}}nofma.csv has no row 'fma,double'; measure it with poseidon-calibrate
+; NOFMA: error: <unknown>:0:0: in function preprocess_tester_fma {{.*}}: Poseidon: cost model {{.*}}nofma.csv has no row 'fma,double'; measure it with poseidon-calibrate{{$}}

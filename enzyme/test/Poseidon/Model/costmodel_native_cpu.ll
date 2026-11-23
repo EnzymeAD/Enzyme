@@ -16,10 +16,10 @@
 ; RUN:   | FileCheck --check-prefix=TWICE %s
 ; RUN: (cat %cost_models/cm_cpu_native.csv; echo 'fwibble,double,3') > %t/unknown.csv
 ; RUN: not %{opt} -passes="poseidon,poseidon-finalize" -poseidon-cost-model=%t/unknown.csv -poseidon-cache=%t/unknown 2>&1 \
-; RUN:   | FileCheck --check-prefix=UNKNOWN %s
+; RUN:   | FileCheck --check-prefix=UNKNOWN -DLINE=$(wc -l < %t/unknown.csv) %s
 ; RUN: (cat %cost_models/cm_cpu_native.csv; echo 'fadd,float') > %t/short.csv
 ; RUN: not %{opt} -passes="poseidon,poseidon-finalize" -poseidon-cost-model=%t/short.csv -poseidon-cache=%t/short 2>&1 \
-; RUN:   | FileCheck --check-prefix=SHORT %s
+; RUN:   | FileCheck --check-prefix=SHORT -DLINE=$(wc -l < %t/short.csv) %s
 ; The measured CSV is the only price source. A model whose native_arch matches the function's target-cpu is consumed as is (2 FP64 ops at 4 = 8); a model missing a required row, a model measured on another device, a model with no native_arch header, a model with a row twice, a line that is not a row or a row of no family Poseidon reads, and no model at all each stop the compile with an error instead of substituting a price.
 
 define double @tester_a(double %x, double %y) #0 {
@@ -40,30 +40,30 @@ declare double @__poseidon_fp_optimize(double (double, double)*, ...)
 attributes #0 = { "target-cpu"="x86-64" }
 
 ; NATIVE: Initial ComputationCost: 8.000000e+00
-; NATIVE: {{^[-+.0-9e]+}} -1.920000e+02 All FP64(0%) + FP32(100%)
+; NATIVE: {{^}}1.132287e-04 -1.920000e+02 All FP64(0%) + FP32(100%){{$}}
 ; NATIVE: [poseidon] Finished Optimization
 
-; MISSING: error: {{.*}}Poseidon: cost model {{.*}}cm_cpu_missing.csv has no row 'fmul,double'; measure it with poseidon-calibrate
+; MISSING: error: {{.*}}Poseidon: cost model {{.*}}cm_cpu_missing.csv has no row 'fmul,double'; measure it with poseidon-calibrate{{$}}
 ; MISSING-NOT: Initial ComputationCost
 ; MISSING-NOT: [poseidon] Finished Optimization
 
-; FOREIGN: was measured on native_arch 'sm_120' but preprocess_tester_a compiles for target-cpu 'x86-64'
+; FOREIGN: error: {{.*}}Poseidon: cost model {{.*}}cm_cpu_foreign.csv was measured on native_arch 'sm_120' but preprocess_tester_a compiles for target-cpu 'x86-64'{{$}}
 ; FOREIGN-NOT: Initial ComputationCost
 ; FOREIGN-NOT: [poseidon] Finished Optimization
 
-; NOARCH: carries no '# native_arch=' header
+; NOARCH: error: {{.*}}Poseidon: cost model {{.*}}cm_cpu_noarch.csv carries no '# native_arch=' header, so it cannot be matched against the compile target{{$}}
 ; NOARCH-NOT: Initial ComputationCost
 ; NOARCH-NOT: [poseidon] Finished Optimization
 
-; NOMODEL: no cost model for target-cpu 'x86-64' in {{.*}}; measure this device with poseidon-calibrate, or pass -poseidon-cost-model=<csv>
+; NOMODEL: error: {{.*}}Poseidon: no cost model for target-cpu 'x86-64' in {{.*}}xdg-cache{{.}}poseidon; measure this device with poseidon-calibrate, or pass -poseidon-cost-model=<csv>{{$}}
 ; NOMODEL-NOT: Initial ComputationCost
 ; NOMODEL-NOT: [poseidon] Finished Optimization
 
-; TWICE: error: {{.*}}Poseidon: cost model {{.*}}twice.csv has the row 'fadd,float' twice
+; TWICE: error: {{.*}}Poseidon: cost model {{.*}}twice.csv has the row 'fadd,float' twice{{$}}
 ; TWICE-NOT: [poseidon] Finished Optimization
 
-; UNKNOWN: error: {{.*}}Poseidon: cost model {{.*}}unknown.csv line {{[0-9]+}} has the row 'fwibble,double', of no row family Poseidon reads
+; UNKNOWN: error: {{.*}}Poseidon: cost model {{.*}}unknown.csv line [[LINE]] has the row 'fwibble,double', of no row family Poseidon reads (the calibrator's README lists them); remove the line, or compile with the Poseidon whose poseidon-calibrate wrote it{{$}}
 ; UNKNOWN-NOT: [poseidon] Finished Optimization
 
-; SHORT: error: {{.*}}Poseidon: cost model {{.*}}short.csv line {{[0-9]+}} is not '<opcode>,<type>,<cost>': fadd,float
+; SHORT: error: {{.*}}Poseidon: cost model {{.*}}short.csv line [[LINE]] is not '<opcode>,<type>,<cost>': fadd,float{{$}}
 ; SHORT-NOT: [poseidon] Finished Optimization
