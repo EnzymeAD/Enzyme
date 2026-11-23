@@ -911,9 +911,10 @@ double CandidateClone::cost(Session &S, const Subgraph &subgraph,
     }
   }
 
-  // Boundary casts the simplified clone hoists out of the cone's body loop, the
-  // deepest loop of its other work, execute at most once per thread per
-  // launch, so a cast at a shallower depth is scaled by outBoundaryFreqScale.
+  // A conversion the simplified clone hoists out of every loop runs at most
+  // once per thread per launch, so it is scaled by outBoundaryFreqScale when
+  // the cone's other work is in a loop. One left in a loop runs at least once
+  // per iteration of it and counts as the walk's other instructions do.
   unsigned bodyDepth = 0;
   for (Instruction *I : coneInsts)
     if (!isa<FPExtInst>(I) && !isa<FPTruncInst>(I))
@@ -934,7 +935,7 @@ double CandidateClone::cost(Session &S, const Subgraph &subgraph,
       // df64 boundary conversion lives.
       c *= subgraph.freqWeightAtDepth(d);
     } else if ((isa<FPExtInst>(I) || isa<FPTruncInst>(I)) && bodyDepth > 0 &&
-               d < bodyDepth) {
+               d == 0) {
       c *= subgraph.outBoundaryFreqScale;
     }
     cost += c;
