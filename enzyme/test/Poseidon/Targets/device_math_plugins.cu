@@ -40,9 +40,44 @@ POSEIDON_OPTIMIZE __global__ void wave(float *o, const float *a, int n) {
   }
 }
 
-// CALLS-DAG: call {{.*}}float @__nv_expf(
-// CALLS-DAG: call {{.*}}float @__nv_cosf(
-// CALLS-DAG: call {{.*}}float @__nv_powf(
-// CALLS-DAG: call {{.*}}float @__nv_sinf(
+// The kernel runs the derivative of its body. Each libdevice call there is
+// profiled, and the derivative calls the derivative of each by name and adds
+// into the shadow of a.
+// CALLS-LABEL: define ptx_kernel void @_Z4wavePfPKfi(
+// CALLS-SAME: ptr {{[^,]*}}[[O:%[0-9]+]], ptr {{[^,]*}}[[A:%[0-9]+]], i32 {{[^,]*}}[[N:%[0-9]+]], ptr {{[^,]*}}[[DO:%[0-9]+]], ptr {{[^,]*}}[[DA:%[0-9]+]])
+// CALLS-NEXT: call {{.*}}void @diffepreprocess__Z4wavePfPKfi_poseidon_body(ptr [[O]], ptr [[DO]], ptr [[A]], ptr [[DA]], i32 [[N]])
+// CALLS-NEXT: ret void
+// CALLS-LABEL: define internal {{.*}}void @diffepreprocess__Z4wavePfPKfi_poseidon_body(
+// CALLS-SAME: ptr {{[^,]*}}%{{[0-9]+}}, ptr {{[^,]*}}%{{[0-9]+}}, ptr {{[^,]*}}[[PA:%[0-9]+]], ptr {{[^,]*}}[[PDA:%[0-9]+]], i32
+// CALLS: [[XP:%[0-9]+]] = getelementptr inbounds {{.*}}ptr [[PA]], i64 [[I:%[0-9]+]]
+// CALLS-NEXT: [[X:%[0-9]+]] = load float, ptr [[XP]],
+// CALLS: [[NEG:%[0-9]+]] = fneg float [[X]],
+// CALLS-NEXT: [[NEGP:%[0-9]+]] = call {{.*}}float @__poseidon_probe_preprocess__Z4wavePfPKfi_poseidon_body_1_aug(float [[NEG]])
+// CALLS-NEXT: [[NEGD:%[0-9]+]] = fpext float [[NEGP]] to double
+// CALLS: call void @poseidonLogValueCUDA(ptr addrspacecast (ptr addrspace(1) @poseidon_site_preprocess__Z4wavePfPKfi_poseidon_body to ptr), i64 1, double [[NEGD]], i64 1,
+// CALLS: [[EXP:%[0-9]+]] = {{(tail )?}}call {{.*}}float @__nv_expf(float {{(noundef )?}}[[NEGP]])
+// CALLS-NEXT: [[EXPP:%[0-9]+]] = call {{.*}}float @__poseidon_probe_preprocess__Z4wavePfPKfi_poseidon_body_2_aug(float [[EXP]])
+// CALLS-NEXT: [[EXPD:%[0-9]+]] = fpext float [[EXPP]] to double
+// CALLS: call void @poseidonLogValueCUDA(ptr addrspacecast (ptr addrspace(1) @poseidon_site_preprocess__Z4wavePfPKfi_poseidon_body to ptr), i64 2, double [[EXPD]], i64 1,
+// CALLS: [[COS:%[0-9]+]] = {{(tail )?}}call {{.*}}float @__nv_cosf(float {{(noundef )?}}[[X]])
+// CALLS-NEXT: [[COSP:%[0-9]+]] = call {{.*}}float @__poseidon_probe_preprocess__Z4wavePfPKfi_poseidon_body_3_aug(float [[COS]])
+// CALLS-NEXT: [[COSD:%[0-9]+]] = fpext float [[COSP]] to double
+// CALLS: call void @poseidonLogValueCUDA(ptr addrspacecast (ptr addrspace(1) @poseidon_site_preprocess__Z4wavePfPKfi_poseidon_body to ptr), i64 3, double [[COSD]], i64 1,
+// CALLS: [[POW:%[0-9]+]] = {{(tail )?}}call {{.*}}float @__nv_powf(float {{(noundef )?}}[[X]], float {{(noundef )?}}1.500000e+00)
+// CALLS-NEXT: [[POWP:%[0-9]+]] = call {{.*}}float @__poseidon_probe_preprocess__Z4wavePfPKfi_poseidon_body_8_aug(float [[POW]])
+// CALLS-NEXT: [[POWD:%[0-9]+]] = fpext float [[POWP]] to double
+// CALLS: call void @poseidonLogValueCUDA(ptr addrspacecast (ptr addrspace(1) @poseidon_site_preprocess__Z4wavePfPKfi_poseidon_body to ptr), i64 8, double [[POWD]], i64 2,
+// CALLS: [[SIN:%[0-9]+]] = {{(tail )?}}call {{.*}}float @__nv_sinf(float {{(noundef )?}}[[X]])
+// CALLS-NEXT: [[SINP:%[0-9]+]] = call {{.*}}float @__poseidon_probe_preprocess__Z4wavePfPKfi_poseidon_body_9_aug(float [[SIN]])
+// CALLS-NEXT: [[SIND:%[0-9]+]] = fpext float [[SINP]] to double
+// CALLS: call void @poseidonLogValueCUDA(ptr addrspacecast (ptr addrspace(1) @poseidon_site_preprocess__Z4wavePfPKfi_poseidon_body to ptr), i64 9, double [[SIND]], i64 1,
+// CALLS: call {{.*}}float @__nv_cosf(float [[X]])
+// CALLS: call {{.*}}float @__nv_powf(float [[X]], float 5.000000e-01)
+// CALLS: call {{.*}}float @__nv_sinf(float [[X]])
+// CALLS: call {{.*}}float @__nv_expf(float [[NEG]])
+// CALLS: [[DXP:%[0-9]+]] = getelementptr inbounds {{.*}}ptr [[PDA]], i64 [[I]]
+// CALLS-NEXT: atomicrmw fadd ptr [[DXP]], float %{{[0-9]+}} monotonic
+// CALLS: {{^}}}
 
-// PROFILED: preprocess__Z4wavePfPKfi_poseidon_body.fpprofile); left unchanged
+// PROFILED: {{^}}[poseidon] _Z4wavePfPKfi_poseidon_body: the profiling run instrumented this site and never executed it ({{.*}}/prof/preprocess__Z4wavePfPKfi_poseidon_body.fpprofile); left unchanged{{$}}
+// PROFILED: {{^}}[poseidon] every site of {{.*}}device_math_plugins.cu was left alone; emitting the module as written{{$}}
