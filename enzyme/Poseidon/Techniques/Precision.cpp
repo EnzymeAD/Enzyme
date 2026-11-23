@@ -34,10 +34,12 @@
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/Function.h"
+#include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/ValueHandle.h"
 #include "llvm/Passes/PassBuilder.h"
+#include "llvm/Support/Error.h"
 #include "llvm/Support/Format.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/raw_ostream.h"
@@ -594,8 +596,9 @@ void setUnifiedAccuracyCost(
       newCandidates.push_back(std::move(candidate));
     } else {
       CS.dropped.push_back({candidate.desc,
-                            "it returns a non-finite value at a sampled input "
-                            "where the exact result is finite"});
+                            "the accuracy model found that it returns a "
+                            "non-finite value at a sampled input where the "
+                            "exact result is finite"});
     }
   }
   CS.candidates = std::move(newCandidates);
@@ -617,8 +620,11 @@ public:
     FClone->eraseFromParent();
   }
 
+  // Why the clone cannot be priced; empty when it can.
+  const std::string &unpriceable() const { return unpricedReason; }
+
   // The cost of the cone of outputs[i] for each i in `which`, in that order,
-  // and of the expansion roots.
+  // and of the expansion roots. Only for a clone that can be priced.
   double cost(Session &S, const Subgraph &subgraph, ArrayRef<size_t> which);
 
 private:
@@ -633,6 +639,7 @@ private:
   std::optional<LoopInfo> cloneLI;
   // The cost-model price of each instruction walked so far.
   DenseMap<const Instruction *, double> prices;
+  std::string unpricedReason;
 };
 
 } // namespace
@@ -740,7 +747,94 @@ CandidateClone::CandidateClone(Session &S, Subgraph &subgraph,
       if (auto *FE = dyn_cast_or_null<FPExtInst>((Value *)trackedOutputs[i]))
         trackedOutputFallbacks[i] = FE->getOperand(0);
 
-  simplifyFunction(*FClone, OptimizationLevel::O3);
+  // The simplification can unswitch a loop on a condition it does not vary
+  // in, such as a thread-index guard, and delete the body of the version that
+  // never runs it: a handle on that body then holds poison, and the walk would
+  // price an empty cone. The version that runs the body copies its
+  // instructions with their metadata. So after each pass the instruction of
+  // each handle is tagged, and a handle left on a constant moves to the one
+  // copy of its tag, where later passes' replacements carry it.
+  LLVMContext &Ctx = FClone->getContext();
+  const unsigned TagKind = Ctx.getMDKindID("poseidon.cost.handle");
+  SmallVector<MDNode *, 16> inputTags(trackedInputs.size());
+  SmallVector<MDNode *, 16> rootTags(trackedOutputs.size());
+  SmallVector<MDNode *, 16> fallbackTags(trackedOutputs.size());
+  auto tag = [&](WeakTrackingVH &VH, MDNode *&Tag) {
+    auto *I = dyn_cast_or_null<Instruction>((Value *)VH);
+    if (!I)
+      return;
+    if (MDNode *Has = I->getMetadata(TagKind)) {
+      Tag = Has;
+      return;
+    }
+    if (!Tag)
+      Tag = MDNode::getDistinct(Ctx, {});
+    I->setMetadata(TagKind, Tag);
+  };
+  auto lost = [](const WeakTrackingVH &VH) {
+    return VH.pointsToAliveValue() && !isa<Instruction>((Value *)VH);
+  };
+  // The walk stops at every copy of an input, but a root moves only to a
+  // single copy: two are two loop versions, of which a thread runs one.
+  auto trackHandles = [&] {
+    for (auto [VH, Tag] : zip(trackedInputs, inputTags))
+      tag(VH, Tag);
+    for (auto [VH, Tag] : zip(trackedOutputs, rootTags))
+      tag(VH, Tag);
+    for (auto [VH, Tag] : zip(trackedOutputFallbacks, fallbackTags))
+      tag(VH, Tag);
+    if (none_of(trackedInputs, lost) && none_of(trackedOutputs, lost) &&
+        none_of(trackedOutputFallbacks, lost))
+      return;
+    DenseMap<MDNode *, SmallVector<Instruction *, 1>> copies;
+    for (Instruction &I : instructions(*FClone))
+      if (MDNode *Tag = I.getMetadata(TagKind))
+        copies[Tag].push_back(&I);
+    for (size_t j = 0, e = trackedInputs.size(); j < e; ++j)
+      if (inputTags[j] && lost(trackedInputs[j]))
+        for (auto [k, I] : enumerate(copies.lookup(inputTags[j]))) {
+          if (k == 0) {
+            trackedInputs[j] = I;
+            continue;
+          }
+          trackedInputs.emplace_back(I);
+          inputTags.push_back(inputTags[j]);
+        }
+    auto moveRoot = [&](WeakTrackingVH &VH, MDNode *Tag) {
+      if (!Tag || !lost(VH))
+        return;
+      SmallVector<Instruction *, 1> found = copies.lookup(Tag);
+      if (found.size() == 1)
+        VH = found.front();
+    };
+    for (size_t i = 0; i < trackedOutputs.size(); ++i) {
+      moveRoot(trackedOutputs[i], rootTags[i]);
+      moveRoot(trackedOutputFallbacks[i], fallbackTags[i]);
+    }
+  };
+  trackHandles();
+  simplifyFunction(*FClone, OptimizationLevel::O3, trackHandles);
+
+  // A root left on a constant has no single copy: its cost is unknown.
+  for (size_t i = 0; i < trackedOutputs.size(); ++i) {
+    if (isa_and_nonnull<Instruction>((Value *)trackedOutputs[i]) ||
+        isa_and_nonnull<Instruction>((Value *)trackedOutputFallbacks[i]) ||
+        (!lost(trackedOutputs[i]) && !lost(trackedOutputFallbacks[i])))
+      continue;
+    std::string what = "an expansion root of the candidate";
+    if (i < outputs.size()) {
+      std::string loc = getSourceLocationStr(outputs[i]);
+      what = "the output " + (loc.empty() ? getValueStr(outputs[i]) : loc);
+    }
+    size_t n = 0;
+    for (Instruction &I : instructions(*FClone))
+      if (MDNode *Tag = I.getMetadata(TagKind))
+        n += Tag == rootTags[i] || Tag == fallbackTags[i];
+    unpricedReason = "the simplified clone of the site replaced " + what +
+                     " by a constant while it was still used, and has " +
+                     std::to_string(n) + " copies of it instead of one";
+    break;
+  }
 
   cloneDT.emplace(*FClone);
   cloneLI.emplace(*cloneDT);
@@ -748,6 +842,7 @@ CandidateClone::CandidateClone(Session &S, Subgraph &subgraph,
 
 double CandidateClone::cost(Session &S, const Subgraph &subgraph,
                             ArrayRef<size_t> which) {
+  assert(unpricedReason.empty() && "the clone cannot be priced");
   const Options &O = S.Opts;
 
   SmallPtrSet<Value *, 8> clonedInputs;
@@ -769,7 +864,8 @@ double CandidateClone::cost(Session &S, const Subgraph &subgraph,
     Value *V = nullptr;
     if (trackedOutputs[i].pointsToAliveValue())
       V = trackedOutputs[i];
-    else if (trackedOutputFallbacks[i].pointsToAliveValue())
+    if (!isa_and_nonnull<Instruction>(V) &&
+        trackedOutputFallbacks[i].pointsToAliveValue())
       V = trackedOutputFallbacks[i];
     if (V)
       clonedOutputs.insert(V);
@@ -830,8 +926,10 @@ double CandidateClone::cost(Session &S, const Subgraph &subgraph,
   return cost;
 }
 
-double getCompCost(Session &S, Subgraph &subgraph, PTCandidate &pt) {
+Expected<double> getCompCost(Session &S, Subgraph &subgraph, PTCandidate &pt) {
   CandidateClone clone(S, subgraph, subgraph.outputs.getArrayRef(), pt);
+  if (!clone.unpriceable().empty())
+    return createStringError(clone.unpriceable());
   SmallVector<size_t, 8> all;
   for (size_t i = 0; i < subgraph.outputs.size(); ++i)
     all.push_back(i);
@@ -1285,6 +1383,14 @@ void PrecisionUnit::priceRequests(
   for (Group &G : groups) {
     CandidateClone clone(S, G.subgraph, subgraph->outputs.getArrayRef(),
                          candidates[G.candidateIndex]);
+    // price() kept only candidates priced over the whole subgraph.
+    if (!clone.unpriceable().empty())
+      report_fatal_error("Poseidon: precision candidate '" +
+                         Twine(candidates[G.candidateIndex].desc) +
+                         "' is priced over its whole subgraph but not over "
+                         "what a rewrite leaves of it: " +
+                         clone.unpriceable() +
+                         ". Refusing to fabricate a cost.");
     for (Request &R : G.requests) {
       auto [initial, fresh] = initialCompCosts.try_emplace(R.outputs);
       if (fresh)
@@ -1443,8 +1549,29 @@ void PrecisionUnit::writeReportStep(raw_ostream &OS, size_t i, StringRef pad) {
 void PrecisionUnit::materialize(size_t i) { apply(session(), i); }
 
 void PrecisionUnit::price() {
-  for (PTCandidate &c : candidates)
-    c.CompCost = getCompCost(session(), *subgraph, c);
+  SmallVector<PTCandidate, 8> priced;
+  std::string firstWhy;
+  for (PTCandidate &c : candidates) {
+    Expected<double> cost = getCompCost(session(), *subgraph, c);
+    if (cost) {
+      c.CompCost = *cost;
+      priced.push_back(std::move(c));
+      continue;
+    }
+    std::string why =
+        "its cost cannot be computed: " + toString(cost.takeError());
+    if (firstWhy.empty())
+      firstWhy = why;
+    dropped.push_back({c.desc, std::move(why)});
+  }
+  if (!firstWhy.empty())
+    llvm::errs() << "[poseidon] "
+                 << subgraph->outputs[0]->getFunction()->getName() << ": "
+                 << (candidates.size() - priced.size()) << " of "
+                 << candidates.size()
+                 << " precision candidate(s) dropped, first because "
+                 << firstWhy << '\n';
+  candidates = std::move(priced);
   setUnifiedAccuracyCost(session().Opts, *this, graph().valueToNodeMap,
                          graph().symbolToValueMap);
 }

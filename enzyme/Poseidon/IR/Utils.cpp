@@ -56,12 +56,21 @@ void reportUserError(LLVMContext &Ctx, const Twine &Message) {
   exit(1);
 }
 
-void simplifyFunction(Function &F, OptimizationLevel Level) {
-
+void simplifyFunction(Function &F, OptimizationLevel Level,
+                      function_ref<void()> afterPass) {
+  PassInstrumentationCallbacks PIC;
+  if (afterPass) {
+    PIC.registerAfterPassCallback(
+        [&](StringRef, auto, const PreservedAnalyses &) { afterPass(); });
+    PIC.registerAfterPassInvalidatedCallback(
+        [&](StringRef, const PreservedAnalyses &) { afterPass(); });
+  }
+  PassInstrumentationCallbacks *PICOrNull = afterPass ? &PIC : nullptr;
 #if LLVM_VERSION_MAJOR >= 24
-  PassBuilder PB(F.getContext());
+  PassBuilder PB(F.getContext(), nullptr, std::nullopt, std::nullopt,
+                 PICOrNull);
 #else
-  PassBuilder PB;
+  PassBuilder PB(nullptr, PipelineTuningOptions(), std::nullopt, PICOrNull);
 #endif
   LoopAnalysisManager LAM;
   FunctionAnalysisManager FAM;

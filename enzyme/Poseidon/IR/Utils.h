@@ -14,6 +14,7 @@
 #ifndef POSEIDON_UTILS_H
 #define POSEIDON_UTILS_H
 
+#include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
@@ -89,7 +90,10 @@ void collectExprInsts(llvm::Value *V,
                       llvm::SmallPtrSetImpl<llvm::Instruction *> &exprInsts,
                       llvm::SmallPtrSetImpl<llvm::Value *> &visited);
 
-void simplifyFunction(llvm::Function &F, llvm::OptimizationLevel Level);
+// Runs the function simplification pipeline of `Level` on F, calling
+// `afterPass`, when given, after each pass.
+void simplifyFunction(llvm::Function &F, llvm::OptimizationLevel Level,
+                      llvm::function_ref<void()> afterPass = nullptr);
 
 // A mistake in what the compile was given that leaves nothing to compile with:
 // an error diagnostic at `Loc` in `F`, then the compile ends with exit status 1

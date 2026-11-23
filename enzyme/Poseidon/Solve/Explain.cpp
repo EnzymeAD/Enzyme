@@ -851,7 +851,7 @@ void Explainer::addCSAlternatives(Unit &U, const Subgraph &sg) {
       A.summary = desc;
       A.at = sg.outputs[0];
       A.status = "rejected";
-      A.reason = "the accuracy model dropped it: " + why;
+      A.reason = "pricing dropped it: " + why;
       A.rank = 4;
       U.alts.push_back(std::move(A));
     }

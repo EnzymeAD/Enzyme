@@ -23,6 +23,7 @@
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/IR/Type.h"
+#include "llvm/Support/Error.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Transforms/Utils/ValueMapper.h"
 
@@ -65,7 +66,9 @@ struct PTCandidate {
 
 bool demoteFPCastPHIs(llvm::Function &F);
 
-double getCompCost(Session &S, Subgraph &subgraph, PTCandidate &pt);
+// The cost of `pt` per execution of `subgraph`, or why it cannot be computed.
+llvm::Expected<double> getCompCost(Session &S, Subgraph &subgraph,
+                                   PTCandidate &pt);
 
 void setUnifiedAccuracyCost(
     const Options &O, PrecisionUnit &CS,
