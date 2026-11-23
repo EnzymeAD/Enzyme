@@ -73,9 +73,12 @@ attributes #5 = { convergent nounwind "uniform-work-group-size" }
 ; CHECK: All FP64(0%) + Expansion2(100%)
 ; CHECK: Applying solution for CS: All FP64(0%) + Expansion2(100%)
 ; CHECK-LABEL: define {{.*}} @preprocess_fms_body(
-; CHECK: %[[X:.+]] = load double, ptr
-; CHECK: %[[Y:.+]] = load double, ptr
-; CHECK: %[[XHI:ds.hi[0-9]*]] = fptrunc double %[[X]] to float
+; CHECK: %[[IDX:[0-9]+]] = zext i32 %{{[0-9]+}} to i64
+; CHECK-NEXT: %[[XP:[0-9]+]] = getelementptr {{.*}}ptr %0, i64 %[[IDX]]
+; CHECK-NEXT: %[[X:[0-9]+]] = load double, ptr %[[XP]], align 8
+; CHECK-NEXT: %[[YP:[0-9]+]] = getelementptr {{.*}}ptr %1, i64 %[[IDX]]
+; CHECK-NEXT: %[[Y:[0-9]+]] = load double, ptr %[[YP]], align 8
+; CHECK-NEXT: %[[XHI:ds.hi[0-9]*]] = fptrunc double %[[X]] to float
 ; CHECK-NEXT: %[[XHIB:ds.hib[0-9]*]] = fpext float %[[XHI]] to double
 ; CHECK-NEXT: %[[XLOS:ds.los[0-9]*]] = fsub double %[[X]], %[[XHIB]]
 ; CHECK-NEXT: %[[XLO:ds.lo[0-9]*]] = fptrunc double %[[XLOS]] to float
@@ -99,10 +102,78 @@ attributes #5 = { convergent nounwind "uniform-work-group-size" }
 ; CHECK-NEXT: %[[FS:fts.s[0-9]*]] = fadd float %[[S]], %[[T1]]
 ; CHECK-NEXT: %[[FBP:fts.bp[0-9]*]] = fsub float %[[FS]], %[[S]]
 ; CHECK-NEXT: %[[FE:fts.e[0-9]*]] = fsub float %[[T1]], %[[FBP]]
-; CHECK: %[[HI64:ds.hi64[0-9]*]] = fpext float %{{.+}} to double
-; CHECK-NEXT: %[[LO64:ds.lo64[0-9]*]] = fpext float %{{.+}} to double
+; CHECK-NEXT: %[[NYHI:[^ ]+]] = fneg float %[[YHI]]
+; CHECK-NEXT: %[[P2:[^ ]+]] = fmul float %[[FS]], %[[FS]]
+; CHECK-NEXT: %[[NP2:[^ ]+]] = fneg float %[[P2]]
+; CHECK-NEXT: %[[E2A:[^ ]+]] = {{.*}}call float @llvm.fma.f32(float %[[FS]], float %[[FS]], float %[[NP2]])
+; CHECK-NEXT: %[[E2B:[^ ]+]] = {{.*}}call float @llvm.fma.f32(float %[[FS]], float %[[FE]], float %[[E2A]])
+; CHECK-NEXT: %[[E2C:[^ ]+]] = {{.*}}call float @llvm.fma.f32(float %[[FE]], float %[[FS]], float %[[E2B]])
+; CHECK-NEXT: %[[S2:[^ ]+]] = fsub float %[[P2]], %[[YHI]]
+; CHECK-NEXT: %[[AP2:[^ ]+]] = fadd float %[[S2]], %[[YHI]]
+; CHECK-NEXT: %[[BP2:[^ ]+]] = fsub float %[[S2]], %[[AP2]]
+; CHECK-NEXT: %[[DA2:[^ ]+]] = fsub float %[[P2]], %[[AP2]]
+; CHECK-NEXT: %[[DB2:[^ ]+]] = fsub float %[[NYHI]], %[[BP2]]
+; CHECK-NEXT: %[[TE2:[^ ]+]] = fadd float %[[DA2]], %[[DB2]]
+; CHECK-NEXT: %[[T02:[^ ]+]] = fsub float %[[E2C]], %[[YLO]]
+; CHECK-NEXT: %[[T12:[^ ]+]] = fadd float %[[T02]], %[[TE2]]
+; CHECK-NEXT: %[[FS2:[^ ]+]] = fadd float %[[S2]], %[[T12]]
+; CHECK-NEXT: %[[D2:[^ ]+]] = fsub float %[[S2]], %[[FS2]]
+; CHECK-NEXT: %[[FE2:[^ ]+]] = fadd float %[[T12]], %[[D2]]
+; CHECK-NEXT: %[[P3:[^ ]+]] = fmul float %[[FS2]], %[[YHI]]
+; CHECK-NEXT: %[[NP3:[^ ]+]] = fneg float %[[P3]]
+; CHECK-NEXT: %[[E3A:[^ ]+]] = {{.*}}call float @llvm.fma.f32(float %[[FS2]], float %[[YHI]], float %[[NP3]])
+; CHECK-NEXT: %[[E3B:[^ ]+]] = {{.*}}call float @llvm.fma.f32(float %[[FS2]], float %[[YLO]], float %[[E3A]])
+; CHECK-NEXT: %[[E3C:[^ ]+]] = {{.*}}call float @llvm.fma.f32(float %[[FE2]], float %[[YHI]], float %[[E3B]])
+; CHECK-NEXT: %[[S3:[^ ]+]] = fadd float %[[FS]], %[[P3]]
+; CHECK-NEXT: %[[AP3:[^ ]+]] = fsub float %[[S3]], %[[FS]]
+; CHECK-NEXT: %[[BP3:[^ ]+]] = fsub float %[[S3]], %[[AP3]]
+; CHECK-NEXT: %[[DA3:[^ ]+]] = fsub float %[[P3]], %[[AP3]]
+; CHECK-NEXT: %[[DB3:[^ ]+]] = fsub float %[[FS]], %[[BP3]]
+; CHECK-NEXT: %[[TE3:[^ ]+]] = fadd float %[[DA3]], %[[DB3]]
+; CHECK-NEXT: %[[T03:[^ ]+]] = fadd float %[[FE]], %[[E3C]]
+; CHECK-NEXT: %[[T13:[^ ]+]] = fadd float %[[T03]], %[[TE3]]
+; CHECK-NEXT: %[[FS3:[^ ]+]] = fadd float %[[S3]], %[[T13]]
+; CHECK-NEXT: %[[FBP3:[^ ]+]] = fsub float %[[FS3]], %[[S3]]
+; CHECK-NEXT: %[[FE3:[^ ]+]] = fsub float %[[T13]], %[[FBP3]]
+; CHECK-NEXT: %[[NXHI:[^ ]+]] = fneg float %[[XHI]]
+; CHECK-NEXT: %[[P4:[^ ]+]] = fmul float %[[FS3]], %[[FS3]]
+; CHECK-NEXT: %[[NP4:[^ ]+]] = fneg float %[[P4]]
+; CHECK-NEXT: %[[E4A:[^ ]+]] = {{.*}}call float @llvm.fma.f32(float %[[FS3]], float %[[FS3]], float %[[NP4]])
+; CHECK-NEXT: %[[E4B:[^ ]+]] = {{.*}}call float @llvm.fma.f32(float %[[FS3]], float %[[FE3]], float %[[E4A]])
+; CHECK-NEXT: %[[E4C:[^ ]+]] = {{.*}}call float @llvm.fma.f32(float %[[FE3]], float %[[FS3]], float %[[E4B]])
+; CHECK-NEXT: %[[S4:[^ ]+]] = fsub float %[[P4]], %[[XHI]]
+; CHECK-NEXT: %[[AP4:[^ ]+]] = fadd float %[[S4]], %[[XHI]]
+; CHECK-NEXT: %[[BP4:[^ ]+]] = fsub float %[[S4]], %[[AP4]]
+; CHECK-NEXT: %[[DA4:[^ ]+]] = fsub float %[[P4]], %[[AP4]]
+; CHECK-NEXT: %[[DB4:[^ ]+]] = fsub float %[[NXHI]], %[[BP4]]
+; CHECK-NEXT: %[[TE4:[^ ]+]] = fadd float %[[DA4]], %[[DB4]]
+; CHECK-NEXT: %[[T04:[^ ]+]] = fsub float %[[E4C]], %[[XLO]]
+; CHECK-NEXT: %[[T14:[^ ]+]] = fadd float %[[T04]], %[[TE4]]
+; CHECK-NEXT: %[[FS4:[^ ]+]] = fadd float %[[S4]], %[[T14]]
+; CHECK-NEXT: %[[D4:[^ ]+]] = fsub float %[[S4]], %[[FS4]]
+; CHECK-NEXT: %[[FE4:[^ ]+]] = fadd float %[[T14]], %[[D4]]
+; CHECK-NEXT: %[[P5:[^ ]+]] = fmul float %[[FS2]], %[[FS4]]
+; CHECK-NEXT: %[[NP5:[^ ]+]] = fneg float %[[P5]]
+; CHECK-NEXT: %[[E5A:[^ ]+]] = {{.*}}call float @llvm.fma.f32(float %[[FS4]], float %[[FS2]], float %[[NP5]])
+; CHECK-NEXT: %[[E5B:[^ ]+]] = {{.*}}call float @llvm.fma.f32(float %[[FS4]], float %[[FE2]], float %[[E5A]])
+; CHECK-NEXT: %[[E5C:[^ ]+]] = {{.*}}call float @llvm.fma.f32(float %[[FE4]], float %[[FS2]], float %[[E5B]])
+; CHECK-NEXT: %[[S5:[^ ]+]] = fadd float %[[FS3]], %[[P5]]
+; CHECK-NEXT: %[[AP5:[^ ]+]] = fsub float %[[S5]], %[[FS3]]
+; CHECK-NEXT: %[[BP5:[^ ]+]] = fsub float %[[S5]], %[[AP5]]
+; CHECK-NEXT: %[[DA5:[^ ]+]] = fsub float %[[P5]], %[[AP5]]
+; CHECK-NEXT: %[[DB5:[^ ]+]] = fsub float %[[FS3]], %[[BP5]]
+; CHECK-NEXT: %[[TE5:[^ ]+]] = fadd float %[[DA5]], %[[DB5]]
+; CHECK-NEXT: %[[T05:[^ ]+]] = fadd float %[[FE3]], %[[E5C]]
+; CHECK-NEXT: %[[T15:[^ ]+]] = fadd float %[[T05]], %[[TE5]]
+; CHECK-NEXT: %[[FS5:[^ ]+]] = fadd float %[[S5]], %[[T15]]
+; CHECK-NEXT: %[[FBP5:[^ ]+]] = fsub float %[[FS5]], %[[S5]]
+; CHECK-NEXT: %[[FE5:[^ ]+]] = fsub float %[[T15]], %[[FBP5]]
+; CHECK-NEXT: %[[HI64:ds.hi64[0-9]*]] = fpext float %[[FS5]] to double
+; CHECK-NEXT: %[[LO64:ds.lo64[0-9]*]] = fpext float %[[FE5]] to double
 ; CHECK-NEXT: %[[J:ds.f64[0-9]*]] = fadd double %[[HI64]], %[[LO64]], !poseidon.ds.join
-; CHECK: store double %[[J]], ptr
+; CHECK-NEXT: %[[OP:[0-9]+]] = getelementptr {{.*}}ptr %2, i64 %[[IDX]]
+; CHECK-NEXT: store double %[[J]], ptr %[[OP]], align 8
+; CHECK-NEXT: ret void
 
 ; CLEAN-LABEL: define {{.*}} @preprocess_fms_body(
 ; CLEAN-NOT: call double @llvm.fmuladd.f64
@@ -112,4 +183,4 @@ attributes #5 = { convergent nounwind "uniform-work-group-size" }
 
 ; A device model that does not name the formats it has hardware for stops the
 ; compile.
-; NOSCALAR: error: {{.*}}Poseidon: cost model {{.*}}cm.csv carries no '# scalar_types=' header
+; NOSCALAR: error: <unknown>:0:0: in function preprocess_fms_body void (ptr, ptr, ptr): Poseidon: cost model {{.*}}noscalar/cm.csv carries no '# scalar_types=' header, so the formats the device has hardware for are unknown

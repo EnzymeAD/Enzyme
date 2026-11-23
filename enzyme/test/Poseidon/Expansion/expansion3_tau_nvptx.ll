@@ -5,45 +5,115 @@
 ; DEFINE:   -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false \
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-print -S
 ; RUN: rm -rf %t && mkdir %t
-; RUN: %{opt} -poseidon-expansion-components=2 -poseidon-tau=1e-16 -poseidon-cache=%t/two 2>&1 | FileCheck --check-prefix=TWO %s
-; RUN: %{opt} -poseidon-expansion-components=3 -poseidon-tau=1e-16 -poseidon-cache=%t/three 2>&1 | FileCheck --check-prefix=THREE %s
-; RUN: %{opt} -poseidon-expansion-components=3 -poseidon-tau=1e-15 -poseidon-cache=%t/loose 2>&1 | FileCheck --check-prefix=LOOSE %s
+; RUN: %{opt} -poseidon-expansion-components=2 -poseidon-tau=1e-16 -poseidon-cache=%t/two 2>&1 \
+; RUN:   | FileCheck --check-prefix=TWO --implicit-check-not="Applying solution" %s
+; RUN: %{opt} -poseidon-expansion-components=3 -poseidon-tau=1e-16 -poseidon-cache=%t/three 2>&1 \
+; RUN:   | FileCheck --check-prefix=THREE --implicit-check-not=poseidon.ds.join %s
+; RUN: %{opt} -poseidon-expansion-components=3 -poseidon-tau=1e-15 -poseidon-cache=%t/loose 2>&1 \
+; RUN:   | FileCheck --check-prefix=LOOSE --implicit-check-not=mfx. %s
 
 ; TWO: 2.013455e-07		-8.835072e+06		All FP64(0%) + Expansion2(100%)
 ; TWO-NOT: Expansion3
 ; TWO: tau=1.000000e-16 S=4.913424e+08 A0=6.201450e-09 selected cost=0.000000e+00 accCost=0.000000e+00 rel=1.262144e-17
-; TWO: no rewrite applied for preprocess__Z15logistic_kernelPKdPd_poseidon_body
+; TWO: no rewrite applied for preprocess__Z15logistic_kernelPKdPd_poseidon_body; calling original body _Z15logistic_kernelPKdPd_poseidon_body (bit-transparent no-op)
 ; TWO-NOT: Applying solution
+; TWO-LABEL: define dso_local ptx_kernel void @_Z15logistic_kernelPKdPd(
+; TWO-NEXT: entry:
+; TWO-NEXT: call void @_Z15logistic_kernelPKdPd_poseidon_body(ptr %0, ptr %1)
+; TWO-NEXT: ret void
+; TWO-LABEL: define internal void @_Z15logistic_kernelPKdPd_poseidon_body(
+; TWO: %[[IDX:[0-9]+]] = zext i32 %{{[0-9]+}} to i64
+; TWO-NEXT: %[[IN:[0-9]+]] = getelementptr {{.*}}ptr %0, i64 %[[IDX]]
+; TWO-NEXT: %[[X:[0-9]+]] = load double, ptr %[[IN]], align 8
+; TWO-NEXT: %[[A:[0-9]+]] = fmul double %[[X]], 3.900000e+00
+; TWO-NEXT: %[[B:[0-9]+]] = fsub double 1.000000e+00, %[[X]]
+; TWO-NEXT: %{{[0-9]+}} = fmul double %[[A]], %[[B]]
+; TWO-NOT: float
+; TWO: %[[OP:[0-9]+]] = getelementptr {{.*}}ptr %1, i64 %[[IDX]]
+; TWO-NEXT: store double %{{[0-9]+}}, ptr %[[OP]], align 8
+; TWO-NEXT: ret void
 
 ; THREE: 2.013455e-07		-8.835072e+06		All FP64(0%) + Expansion2(100%)
 ; THREE: -6.201441e-09		-8.142848e+06		All FP64(0%) + Expansion3(100%)
 ; THREE: tau=1.000000e-16 S=4.913424e+08 A0=6.201450e-09 selected cost=-8.628472e-01 accCost=-6.201441e-09 rel=1.869795e-23
 ; THREE: Applying solution for CS: All FP64(0%) + Expansion3(100%) (#3)
 ; THREE-LABEL: define internal void @preprocess__Z15logistic_kernelPKdPd_poseidon_body(
-; THREE: %mfx.split = fptrunc double %{{.+}} to float
+; THREE: %[[IDX:[0-9]+]] = zext i32 %{{[0-9]+}} to i64
+; THREE-NEXT: %[[IN:[0-9]+]] = getelementptr {{.*}}ptr %0, i64 %[[IDX]]
+; THREE-NEXT: %[[X:[0-9]+]] = load double, ptr %[[IN]], align 8
+; THREE-NEXT: %mfx.split = fptrunc double %[[X]] to float
 ; THREE-NEXT: %mfx.splitb = fpext float %mfx.split to double
-; THREE-NEXT: %mfx.splitr = fsub double %{{.+}}, %mfx.splitb
+; THREE-NEXT: %mfx.splitr = fsub double %[[X]], %mfx.splitb
 ; THREE-NEXT: %mfx.split1 = fptrunc double %mfx.splitr to float
 ; THREE-NEXT: %mfx.splitb2 = fpext float %mfx.split1 to double
 ; THREE-NEXT: %mfx.splitr3 = fsub double %mfx.splitr, %mfx.splitb2
 ; THREE-NEXT: %mfx.split4 = fptrunc double %mfx.splitr3 to float
+; THREE-NEXT: %tp.p = fmul float %mfx.split, [[K39:3\.900000e\+00|0x400F333340000000]]
+; THREE-NEXT: %tp.np = fneg float %tp.p
+; THREE-NEXT: %tp.e = {{.*}}call float @llvm.fma.f32(float %mfx.split, float [[K39]], float %tp.np)
+; THREE-NOT: double
+; THREE: call float @llvm.fma.f32(float %mfx.split1, float [[K39]],
+; THREE-NOT: double
+; THREE: call float @llvm.fma.f32(float %mfx.split4, float [[K39]],
+; THREE-NOT: double
 ; THREE-NOT: fmul double
 ; THREE-NOT: poseidon.ds.join
-; THREE: %mfx.e = fpext float %{{.+}} to double
-; THREE-NEXT: %mfx.e{{[0-9]+}} = fpext float %{{.+}} to double
-; THREE-NEXT: %mfx.tof64 = fadd double
-; THREE-NEXT: %mfx.e{{[0-9]+}} = fpext float %{{.+}} to double
-; THREE-NEXT: %[[OUT:mfx.tof64[0-9]+]] = fadd double %mfx.tof64,
-; THREE-NEXT: getelementptr
-; THREE-NEXT: store double %[[OUT]], ptr
+; THREE: %mfx.e = fpext float %[[C2:mfx.a[0-9]+]] to double
+; THREE-NEXT: %[[E1:mfx.e[0-9]+]] = fpext float %[[C1:mfx.a[0-9]+]] to double
+; THREE-NEXT: %mfx.tof64 = fadd double %[[E1]], %mfx.e
+; THREE-NEXT: %[[E2:mfx.e[0-9]+]] = fpext float %[[C0:mfx.a[0-9]+]] to double
+; THREE-NEXT: %[[OUT:mfx.tof64[0-9]+]] = fadd double %mfx.tof64, %[[E2]]
+; THREE-NEXT: %[[OP:[0-9]+]] = getelementptr {{.*}}ptr %1, i64 %[[IDX]]
+; THREE-NEXT: store double %[[OUT]], ptr %[[OP]], align 8
+; THREE-NEXT: ret void
+; THREE-LABEL: ; ModuleID =
+; THREE-LABEL: define internal void @preprocess__Z15logistic_kernelPKdPd_poseidon_body(
+; THREE: %[[C0]] = fadd float %{{[^,]+}}, %[[T:[^ ]+]]
+; THREE-NEXT: %[[S0:[^ ]+]] = fsub float %{{[^,]+}}, %[[C0]]
+; THREE-NEXT: %[[U:[^ ]+]] = fadd float %[[T]], %[[S0]]
+; THREE-NEXT: %[[C1]] = fadd float %[[V:[^,]+]], %[[U]]
+; THREE-NEXT: %[[S1:[^ ]+]] = fsub float %[[U]], %[[C1]]
+; THREE-NEXT: %[[C2]] = fadd float %[[V]], %[[S1]]
+; THREE-NEXT: %mfx.e = fpext float %[[C2]] to double
+; THREE-NEXT: %[[E1]] = fpext float %[[C1]] to double
+; THREE-NEXT: %mfx.tof64 = fadd double %[[E1]], %mfx.e
+; THREE-NEXT: %[[E2]] = fpext float %[[C0]] to double
+; THREE-NEXT: %[[OUT]] = fadd double %mfx.tof64, %[[E2]]
+; THREE-NEXT: %[[OP2:[0-9]+]] = getelementptr {{.*}}ptr %1, i64 %{{[0-9]+}}
+; THREE-NEXT: store double %[[OUT]], ptr %[[OP2]], align 8
 ; THREE-NEXT: ret void
 
 ; LOOSE: -6.201441e-09		-8.142848e+06		All FP64(0%) + Expansion3(100%)
 ; LOOSE: tau=1.000000e-15 S=4.913424e+08 A0=6.201450e-09 selected cost=-9.361979e-01 accCost=2.013455e-07 rel=4.224080e-16
 ; LOOSE: Applying solution for CS: All FP64(0%) + Expansion2(100%) (#1)
 ; LOOSE-LABEL: define internal void @preprocess__Z15logistic_kernelPKdPd_poseidon_body(
-; LOOSE: !poseidon.ds.join
+; LOOSE: %[[IDX:[0-9]+]] = zext i32 %{{[0-9]+}} to i64
+; LOOSE-NEXT: %[[IN:[0-9]+]] = getelementptr {{.*}}ptr %0, i64 %[[IDX]]
+; LOOSE-NEXT: %[[X:[0-9]+]] = load double, ptr %[[IN]], align 8
+; LOOSE-NEXT: %ds.hi = fptrunc double %[[X]] to float
+; LOOSE-NEXT: %ds.hib = fpext float %ds.hi to double
+; LOOSE-NEXT: %ds.los = fsub double %[[X]], %ds.hib
+; LOOSE-NEXT: %ds.lo = fptrunc double %ds.los to float
+; LOOSE-NEXT: %tp.p = fmul float %ds.hi, [[K39:3\.900000e\+00|0x400F333340000000]]
+; LOOSE-NOT: double
+; LOOSE: %ds.hi64 = fpext float %[[HI:[^ ]+]] to double
+; LOOSE-NEXT: %ds.lo64 = fpext float %[[LO:[^ ]+]] to double
+; LOOSE-NEXT: %ds.f64 = fadd double %ds.hi64, %ds.lo64, !poseidon.ds.join
+; LOOSE-NEXT: %[[OP:[0-9]+]] = getelementptr {{.*}}ptr %1, i64 %[[IDX]]
+; LOOSE-NEXT: store double %ds.f64, ptr %[[OP]], align 8
+; LOOSE-NEXT: ret void
 ; LOOSE-NOT: mfx.split
+; LOOSE-LABEL: ; ModuleID =
+; LOOSE-LABEL: define internal void @preprocess__Z15logistic_kernelPKdPd_poseidon_body(
+; LOOSE: %[[HI]] = fadd float %[[P:[^,]+]], %[[E:[^ ]+]]
+; LOOSE-NEXT: %[[BP:[^ ]+]] = fsub float %[[HI]], %[[P]]
+; LOOSE-NEXT: %[[LO]] = fsub float %[[E]], %[[BP]]
+; LOOSE-NEXT: %ds.hi64 = fpext float %[[HI]] to double
+; LOOSE-NEXT: %ds.lo64 = fpext float %[[LO]] to double
+; LOOSE-NEXT: %ds.f64 = fadd double %ds.hi64, %ds.lo64, !poseidon.ds.join
+; LOOSE-NEXT: %[[OP2:[0-9]+]] = getelementptr {{.*}}ptr %1, i64 %{{[0-9]+}}
+; LOOSE-NEXT: store double %ds.f64, ptr %[[OP2]], align 8
+; LOOSE-NEXT: ret void
 
 ; -poseidon-expansion-components=3 admits a three-component FP32 expansion
 ; (Techniques/Expansion.cpp). On a 24-step logistic map (72 FP64 operations on
