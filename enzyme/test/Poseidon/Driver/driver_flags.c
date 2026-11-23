@@ -89,13 +89,23 @@ int main(void) { return 0; }
 
 // USE: clang{{.*}} -fpass-plugin={{.*}}Poseidon-{{[0-9]+}}.so {{(-Xclang -load -Xclang [^ ]+ )?}}-isystem {{.*}}/include -ffp-contract=on
 // USE-SAME: -Xclang -mllvm -Xclang -poseidon-profile-use -Xclang -mllvm -Xclang -poseidon-tau=1e-7 -Xclang -mllvm -Xclang -poseidon-cache=
-// USE-SAME: -lposeidon_profile -lposeidon_rt -lcublas
+// USE-SAME: -### {{[^ ]+}} -o {{[^ ]+}} -L{{[^ ]+}}.cuda/lib64 -lcudart -L{{[^ ]+}} -lposeidon_profile -lposeidon_rt -lcublas{{ ?$}}
+// USE: "-cc1" "-triple" "nvptx64-nvidia-cuda"{{.*}} "-fpass-plugin={{[^"]*}}Poseidon-{{[0-9]+}}.so"{{.*}} "-mllvm" "-poseidon-profile-use" "-mllvm" "-poseidon-tau=1e-7" "-mllvm" "-poseidon-cache={{[^"]+}}.cache"
+// USE-NOT: {{[="]}}-poseidon-
+// USE: "-cc1" "-triple" "x86_64-{{[^"]+}}"{{.*}} "-fpass-plugin={{[^"]*}}Poseidon-{{[0-9]+}}.so"{{.*}} "-mllvm" "-poseidon-profile-use" "-mllvm" "-poseidon-tau=1e-7" "-mllvm" "-poseidon-cache={{[^"]+}}.cache"
+// USE-NOT: {{[="]}}-poseidon-
+// USE: "-lcudart" "-lposeidon_profile" "-lposeidon_rt" "-lcublas"
 
 // GEN: clang{{.*}} -fpass-plugin={{.*}}Poseidon-{{[0-9]+}}.so -fpass-plugin={{.*}}Enzyme-{{[0-9]+}}.so
 // GEN-SAME: -Xclang -mllvm -Xclang -poseidon-profile-generate
 // No relocatable device code and no runtime source: the user's arguments are
 // followed by the runtimes alone.
-// GEN-SAME: -### {{[^ ]+}} -o {{[^ ]+}} -L{{[^ ]+}} -lcudart -L{{[^ ]+}} -lposeidon_profile_host{{( -lposeidon_profile_cuda)?}} -lposeidon_profile{{ ?$}}
+// GEN-SAME: -### {{[^ ]+}} -o {{[^ ]+}} -L{{[^ ]+}}.cuda/lib64 -lcudart -L{{[^ ]+}} -lposeidon_profile_host{{( -lposeidon_profile_cuda)?}} -lposeidon_profile{{ ?$}}
+// GEN: "-cc1" "-triple" "nvptx64-nvidia-cuda"{{.*}} "-fpass-plugin={{[^"]*}}Poseidon-{{[0-9]+}}.so" "-fpass-plugin={{[^"]*}}Enzyme-{{[0-9]+}}.so"{{.*}} "-mllvm" "-poseidon-profile-generate"
+// GEN-NOT: {{[="]}}-poseidon-
+// GEN: "-cc1" "-triple" "x86_64-{{[^"]+}}"{{.*}} "-fpass-plugin={{[^"]*}}Poseidon-{{[0-9]+}}.so" "-fpass-plugin={{[^"]*}}Enzyme-{{[0-9]+}}.so"{{.*}} "-mllvm" "-poseidon-profile-generate"
+// GEN-NOT: {{[="]}}-poseidon-
+// GEN: "-lcudart" "-lposeidon_profile_host"{{( "-lposeidon_profile_cuda")?}} "-lposeidon_profile"
 
 // XHIP: clang{{.*}} -Xclang -mllvm -Xclang -enzyme-lto-prelink=1
 // XHIP-SAME: -xhip --cuda-gpu-arch=gfx90a
@@ -144,9 +154,24 @@ int main(void) { return 0; }
 // HIPUSE-NOT: -mllvm -poseidon-
 // HIPUSE-SAME: -L{{[^ ]+}}.rocm/lib -lamdhip64
 // HIPUSE-SAME: -lposeidon_profile -lposeidon_rt_hip -lhipblas{{ ?$}}
+// HIPUSE: "-cc1" {{.*}}"-fcuda-is-device"{{.*}} "-fpass-plugin={{[^"]*}}Poseidon-{{[0-9]+}}.so"{{.*}} "-mllvm" "-poseidon-profile-use" "-mllvm" "-poseidon-tau=1e-7"
+// HIPUSE-NOT: {{[="]}}-poseidon-
+// HIPUSE: {{(clang-linker-wrapper|[/"]lld)}}"
+// HIPUSE-NOT: {{[="]}}-poseidon-
+// HIPUSE: "-cc1" "-triple" "x86_64-{{[^"]+}}"{{.*}} "-fpass-plugin={{[^"]*}}Poseidon-{{[0-9]+}}.so"{{.*}} "-mllvm" "-poseidon-profile-use" "-mllvm" "-poseidon-tau=1e-7"
+// HIPUSE-NOT: {{[="]}}-poseidon-
+// HIPUSE: "-lamdhip64" "-lposeidon_profile" "-lposeidon_rt_hip" "-lhipblas"
 
-// HIPGEN: clang{{.*}} -Xclang -mllvm -Xclang -poseidon-profile-generate
+// HIPGEN: clang{{.*}} -fpass-plugin={{[^ ]*}}Poseidon-{{[0-9]+}}.so {{(-Xclang -load -Xclang [^ ]+ )?}}-fpass-plugin={{[^ ]*}}Enzyme-{{[0-9]+}}.so {{(-Xclang -load -Xclang [^ ]+ )?}}-Xclang -mllvm -Xclang -enzyme-lto-prelink=1 -isystem {{[^ ]*}}/include -ffp-contract=on
+// HIPGEN-SAME: -Xclang -mllvm -Xclang -poseidon-profile-generate
 // HIPGEN-SAME: -### {{[^ ]+}} -o {{[^ ]+}} -L{{[^ ]+}}.rocm/lib -lamdhip64 -L{{[^ ]+}} -lposeidon_profile_host{{( -lposeidon_profile_hip)?}} -lposeidon_profile{{ ?$}}
+// HIPGEN: "-cc1" {{.*}}"-fcuda-is-device"{{.*}} "-fpass-plugin={{[^"]*}}Poseidon-{{[0-9]+}}.so" "-fpass-plugin={{[^"]*}}Enzyme-{{[0-9]+}}.so"{{.*}} "-mllvm" "-enzyme-lto-prelink=1"{{.*}} "-mllvm" "-poseidon-profile-generate"
+// HIPGEN-NOT: {{[="]}}-poseidon-
+// HIPGEN: {{(clang-linker-wrapper|[/"]lld)}}"
+// HIPGEN-NOT: {{[="]}}-poseidon-
+// HIPGEN: "-cc1" "-triple" "x86_64-{{[^"]+}}"{{.*}} "-fpass-plugin={{[^"]*}}Poseidon-{{[0-9]+}}.so" "-fpass-plugin={{[^"]*}}Enzyme-{{[0-9]+}}.so"{{.*}} "-mllvm" "-enzyme-lto-prelink=1"{{.*}} "-mllvm" "-poseidon-profile-generate"
+// HIPGEN-NOT: {{[="]}}-poseidon-
+// HIPGEN: "-lamdhip64" "-lposeidon_profile_host"{{( "-lposeidon_profile_hip")?}} "-lposeidon_profile"
 
 // HIPPATH: clang{{.*}} -L{{[^ ]+}}.hippath/lib -lamdhip64
 
