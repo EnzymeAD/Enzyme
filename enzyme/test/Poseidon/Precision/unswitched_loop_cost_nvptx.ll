@@ -13,8 +13,8 @@
 ; RUN:   -poseidon-enable-multifloat=true -poseidon-tau=1e-6 \
 ; RUN:   -poseidon-cost-model=%cost_models/cm_gpu_synthetic.csv -poseidon-print \
 ; RUN:   -unswitch-threshold=0 -S -o /dev/null 2> %t/kept.log
-; RUN: grep '^CS candidate' %t/log | sed 's/ Δacc=.*//' > %t/priced
-; RUN: grep '^CS candidate' %t/kept.log | sed 's/ Δacc=.*//' > %t/priced-kept
+; RUN: grep '^CS candidate' %t/log | sed 's/ [^ ]*acc=.*//' > %t/priced
+; RUN: grep '^CS candidate' %t/kept.log | sed 's/ [^ ]*acc=.*//' > %t/priced-kept
 ; RUN: diff %t/priced %t/priced-kept
 
 ; CHECK-NOT: cand=0.000000e+00

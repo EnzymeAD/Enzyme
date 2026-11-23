@@ -172,9 +172,8 @@ void buildSubgraphs(
   // reads was computed on the way to it, so an unexecuted one only ever ends a
   // subgraph as the user of its outputs.
   auto inSubgraph = [&](const Value &V) {
-    return isOptimizable(V) &&
-           (!O.Profiling.LooseCoverage ||
-            executed(cast<Instruction>(V), profileMap));
+    return isOptimizable(V) && (!O.Profiling.LooseCoverage ||
+                                executed(cast<Instruction>(V), profileMap));
   };
   SmallVector<const Instruction *, 8> unexecuted;
   SmallPtrSet<Instruction *, 32> reductionFMAs;

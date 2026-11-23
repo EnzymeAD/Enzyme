@@ -752,9 +752,9 @@ CandidateClone::CandidateClone(Session &S, Subgraph &subgraph,
 
   // On a target without divergent branches the simplification can unswitch
   // a loop on a condition it does not vary in, and delete the body of the
-  // version that never runs it: a handle on that body then holds poison, and the walk would
-  // price an empty cone. The version that runs the body copies its
-  // instructions with their metadata. So after each pass the instruction of
+  // version that never runs it: a handle on that body then holds poison, and
+  // the walk would price an empty cone. The version that runs the body copies
+  // its instructions with their metadata. So after each pass the instruction of
   // each handle is tagged, and a handle left on a constant moves to the one
   // copy of its tag, where later passes' replacements carry it.
   LLVMContext &Ctx = FClone->getContext();

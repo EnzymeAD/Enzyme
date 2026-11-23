@@ -1824,10 +1824,9 @@ void RewriteUnit::price() {
   LoopInfo LI(DT);
   const BoundaryCastFreq Boundary = boundaryCastFreq(LI, st.valueToNodeMap);
   for (RewriteCandidate &c : candidates)
-    c.CompCost =
-        getCompCost(session().CostModel, session().PB, c.expr, *output,
-                    st.valueToNodeMap, st.symbolToValueMap, FMF,
-                    &subgraph->inputs, &Boundary);
+    c.CompCost = getCompCost(session().CostModel, session().PB, c.expr, *output,
+                             st.valueToNodeMap, st.symbolToValueMap, FMF,
+                             &subgraph->inputs, &Boundary);
   setUnifiedAccuracyCost(session().Opts, *this, st.valueToNodeMap,
                          st.symbolToValueMap);
 }
