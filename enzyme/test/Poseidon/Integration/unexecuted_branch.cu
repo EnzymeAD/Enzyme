@@ -69,6 +69,41 @@ int main(int argc, char **argv) {
 
 // FP64: as FP64
 
-// USE: [poseidon] {{.*}}setup{{.*}}: 3 floating-point operation(s) the profiling run never executed are left as written (unexecuted_branch.cu:34): no profile gives their ranges, cost or error
-// USE: [poseidon] pin: _Z5setupPKdS0_iPdi:PT0=
+// USE: [poseidon] Optimizing [[BODY:preprocess__Z5setupPKdS0_iPdi_poseidon_body]] with relative error tolerance: 1.000000e-06
+// USE: [poseidon] [[BODY]]: 3 floating-point operation(s) the profiling run never executed are left as written (unexecuted_branch.cu:34): no profile gives their ranges, cost or error, so the subgraphs of the executed operations end at them and the error a rewrite of those passes on to them is not modelled{{$}}
+// USE: [poseidon] [[BODY]]: tau=1.000000e-06 S={{[^ ]+}} A0={{[^ ]+}} selected cost={{[^ ]+}} accCost={{[^ ]+}} rel={{[^ ]+}}{{$}}
+// USE: Applying solution for CS: All FP64(0%) + FP32(100%) (#0)
+// USE: [poseidon] pin: _Z5setupPKdS0_iPdi:PT0=All FP64(0%) + FP32(100%){{$}}
+
+// The determinant, the adjugate and the scalar branch are computed in FP32;
+// the matrix branch takes them widened and computes in FP64 as written.
+// USE: define internal void @[[BODY]](ptr {{[^,]*}}[[J:%[0-9]+]], ptr {{[^,]*}}[[M:%[0-9]+]], i32 {{[^,]*}}[[MAT:%[0-9]+]], ptr {{[^,]*}}[[D:%[0-9]+]], i32 {{[^,]*}}%{{[0-9]+}})
+// USE: [[PA:%[0-9]+]] = getelementptr {{.*}}ptr [[J]], i64 {{%[0-9]+}}
+// USE-NEXT: [[A:%[0-9]+]] = load double, ptr [[PA]]
+// USE-NEXT: [[PB:%[0-9]+]] = getelementptr {{.*}}ptr [[PA]], i64 8
+// USE-NEXT: [[B:%[0-9]+]] = load double, ptr [[PB]]
+// USE-NEXT: [[BF:%[0-9]+]] = fptrunc double [[B]] to float
+// USE-NEXT: [[NB:%[0-9]+]] = fneg float [[BF]]
+// USE-NEXT: [[BB:%[0-9]+]] = fmul float [[BF]], [[NB]]
+// USE-NEXT: [[AF:%[0-9]+]] = fptrunc double [[A]] to float
+// USE-NEXT: [[AA:%[0-9]+]] = {{(tail )?}}call float @llvm.fmuladd.f32(float [[AF]], float [[AF]], float [[BB]])
+// USE-NEXT: [[DET:%[0-9]+]] = fadd float [[AA]], 3.000000e+00
+// USE-NEXT: [[ADJ:%[0-9]+]] = {{(tail )?}}call float @llvm.fmuladd.f32(float [[DET]], float [[AF]], float [[BF]])
+// USE-NEXT: [[SCALAR:%[0-9]+]] = icmp eq i32 [[MAT]], 0
+// USE: br i1 [[SCALAR]], label %[[SB:[0-9]+]], label %[[MB:[0-9]+]]
+// USE: {{^}}[[MB]]:
+// USE-NEXT: [[ADJD:%[0-9]+]] = fpext float [[ADJ]] to double
+// USE-NEXT: [[DETD:%[0-9]+]] = fpext float [[DET]] to double
+// USE-NEXT: [[PM:%[0-9]+]] = getelementptr {{.*}}ptr [[M]], i64 [[I:%[0-9]+]]
+// USE-NEXT: [[MV:%[0-9]+]] = load double, ptr [[PM]]
+// USE-NEXT: [[DM:%[0-9]+]] = fmul double [[MV]], [[DETD]]
+// USE-NEXT: [[DMM:%[0-9]+]] = fmul double [[MV]], [[DM]]
+// USE-NEXT: [[RM:%[0-9]+]] = {{(tail )?}}call double @llvm.fmuladd.f64(double [[ADJD]], double [[MV]], double [[DMM]])
+// USE: {{^}}[[SB]]:
+// USE-NEXT: [[RS:%[0-9]+]] = {{(tail )?}}call float @llvm.fmuladd.f32(float [[ADJ]], float 5.000000e-01, float [[DET]])
+// USE-NEXT: [[RSD:%[0-9]+]] = fpext float [[RS]] to double
+// USE: [[R:%[0-9]+]] = phi double [ [[RM]], %[[MB]] ], [ [[RSD]], %[[SB]] ]
+// USE-NEXT: [[PD:%[0-9]+]] = getelementptr {{.*}}ptr [[D]], i64 [[I]]
+// USE-NEXT: store double [[R]], ptr [[PD]]
+// USE: [poseidon] {{.*}}unexecuted_branch.cu: 1 function(s) a rewrite reached; every other function as written
 // OUT: within 1e-6

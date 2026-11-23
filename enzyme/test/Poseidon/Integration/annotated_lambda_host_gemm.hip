@@ -164,7 +164,7 @@ int main(int argc, char **argv) {
   return failed;
 }
 
-// DESC: HipKernel2D{{.*}} 0 2 3 1 1 1 0 0 8 off 16 48 80
+// DESC: "_ZL11HipKernel2D{{[^ ]*}} 0 2 3 1 1 1 0 0 8 off 16 48 80"
 
 // PRIMAL: DENSE: rel err ok
 
@@ -181,7 +181,10 @@ int main(int argc, char **argv) {
 // PROF: SumGrad = 2.35929600000000000e+06
 // PROF: Exec = 2359296
 
-// CHECK: [ozaki-host-dispatch] replaced the launch in stub {{.*}}HipKernel2D{{.*}} with __poseidon_ozaki_dgemm_ex (C=arg1[+80] A=arg1[+48] B=arg1[+16]), if arg1[+4] == arg1[+24], if arg1[+4] == arg1[+56]
+// The device half has no profile and keeps the kernel as written; the host
+// half dispatches its launch.
+// CHECK: [poseidon] _ZL11HipKernel2D{{[^ ]*}}_poseidon_body: the profiled program did not contain this site (no profile at {{.*}}/Inputs/other_sites/preprocess__ZL11HipKernel2D{{[^ ]*}}_poseidon_body.fpprofile); left unchanged
+// CHECK: [ozaki-host-dispatch] replaced the launch in stub _ZL26__device_stub__HipKernel2D{{[^ ]*}} with __poseidon_ozaki_dgemm_ex (C=arg1[+80] A=arg1[+48] B=arg1[+16]), if arg1[+4] == arg1[+24], if arg1[+4] == arg1[+56]{{$}}
 
 // OPT: DENSE: rel err ok
 // OPT: PADDED: rel err ok

@@ -1,10 +1,19 @@
+// A scalar 8x8x8 FP64 reduction loop, profiled with both plugins loaded into
+// clang and solved by opt, is raised onto the tensor cores. The three pointers
+// are passed enzyme_const, so the profile records no gradient and no candidate
+// costs modelled accuracy: with no target the solve takes the cheapest, an f16
+// WMMA tile, and the body stages A and B as f16 tiles in shared memory,
+// multiplies them in one mma and widens the product into D, with no FP
+// arithmetic of its own left.
+//
 // REQUIRES: enzyme, cuda-runtime
 // RUN: rm -rf %t && mkdir %t
 // RUN: %clang -x cuda --cuda-gpu-arch=%gpu_arch -fcuda-rdc -O2 \
 // RUN:     %loadClangPoseidonEnzyme -mllvm --poseidon-profile-generate -mllvm -poseidon-cache=%t/cg \
 // RUN:     -I%poseidon_profile_inc %s -x none %poseidon_profile_cuda_lib %poseidon_profile_lib \
 // RUN:     -L%cuda_lib_dir -lcudart -lstdc++ -lm -o %t/exe
-// RUN: env POSEIDON_PROFILE_DIR=%t/profiles %t/exe
+// RUN: env POSEIDON_PROFILE_DIR=%t/profiles %t/exe | FileCheck --check-prefix=PRIMAL %s
+// RUN: FileCheck --check-prefix=PROF %s < %t/profiles/preprocess_scalar_matmul_body_f64.fpprofile
 //
 // RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -O2 \
 // RUN:     -S -emit-llvm %s -o %t/dev.ll
@@ -15,7 +24,8 @@
 // RUN:     -poseidon-cache= -poseidon-raise-wmma -poseidon-print \
 // RUN:     -poseidon-ozaki-host-dispatch=false \
 // RUN:     -poseidon-cost-model=%gpu_cost_model \
-// RUN:     -S 2>&1 | FileCheck %s
+// RUN:     -S 2>&1 | tee %t/use.out | FileCheck %s
+// RUN: FileCheck --check-prefix=NOFP %s < %t/use.out
 
 #include <cmath>
 #include <cstdio>
@@ -95,6 +105,74 @@ int main(void) {
   return 0;
 }
 
-// CHECK: [poseidon] Found 1 AbstractMatmul(s) for preprocess_scalar_matmul_body_f64
+// PRIMAL: MATMUL-PASS
+
+// PROF: MaxBlockDims = 8 8 1
+// PROF-NEXT: MaxGridDims = 1 1 1
+// PROF-NEXT: LaunchCount = 1
+// PROF-NEXT: SiteId = 0
+// PROF-NEXT: RedTrip = 0 8
+// PROF-NEXT: CanonicalHash = fea337c617ef94c9
+// PROF-NEXT: ProfileFormat = 2
+// PROF-NEXT: {{^0$}}
+// PROF: SumGrad = 0.00000000000000000e+00
+// PROF-NEXT: SumAbsGrad = 0.00000000000000000e+00
+// PROF-NEXT: Exec = 512
+// PROF-NOT: {{^[0-9]+$}}
+
+// CHECK: [poseidon] Optimizing [[BODY:preprocess_scalar_matmul_body_f64]] with relative error tolerance: 0.000000e+00
+// CHECK-NEXT: [poseidon] GPU mode active for [[BODY]]
+// CHECK-NEXT: [poseidon] canonical form hash of [[BODY]] is fea337c617ef94c9
+// CHECK-NEXT: [poseidon] profile header for [[BODY]]: MaxBlockDims=(8,8,1) LaunchCount=1
+// CHECK-NEXT: [hostgemm] [[BODY]]: 1 candidate reduction loop(s)
+// CHECK-NEXT: [poseidon] Found 1 AbstractMatmul(s) for preprocess_scalar_matmul_body_f64
 // CHECK-NEXT: Matmul[0]: 8x8x8 a=f64 b=f64 acc=f64 d=f64 origin=ScalarLoopReduction
 // CHECK-NOT: Matmul[1]:
+// CHECK: Starting accuracy DP solver with cost budget: 0.000000e+00 of the site's profiled cost
+// CHECK: Applying solution for matmul[0] -> wmma m16n16k16 f16/f16 (#0)
+// CHECK: [poseidon] pin: scalar_matmul_body_f64:M0=wmma m16n16k16 f16/f16{{$}}
+
+// The kernel calls the raised body.
+// CHECK-LABEL: ; ModuleID =
+// CHECK-LABEL: define dso_local ptx_kernel void @_Z20scalar_matmul_kernelPKdS0_Pd(
+// CHECK-SAME: ptr {{[^,]*}}[[A:%[0-9]+]], ptr {{[^,]*}}[[B:%[0-9]+]], ptr {{[^,]*}}[[D:%[0-9]+]])
+// CHECK-NEXT: call void @[[BODY]](ptr [[A]], ptr [[B]], ptr [[D]])
+// CHECK-NEXT: ret void
+
+// The raised body: one warp loads the A and B tiles, multiplies them, and
+// stores the product tile; every thread widens its element of it into D. A and
+// B reach their tiles narrowed to f16, padded with zeros to 16x16.
+// CHECK-LABEL: define dso_local void @preprocess_scalar_matmul_body_f64(
+// CHECK-SAME: ptr {{[^,]*}}[[PA:%[0-9]+]], ptr {{[^,]*}}[[PB:%[0-9]+]], ptr {{[^,]*}}[[PD:%[0-9]+]])
+// CHECK: [[FA:%[0-9]+]] = {{.*}}call {{.*}} @llvm.nvvm.wmma.m16n16k16.load.a.row.stride.f16.p0(ptr addrspacecast (ptr addrspace(3) [[TA:@__poseidon_raise_preprocess_scalar_matmul_body_f64_a_f16_16x16]] to ptr), i32 16)
+// CHECK-NEXT: [[FB:%[0-9]+]] = {{.*}}call {{.*}} @llvm.nvvm.wmma.m16n16k16.load.b.row.stride.f16.p0(ptr addrspacecast (ptr addrspace(3) [[TB:@__poseidon_raise_preprocess_scalar_matmul_body_f64_b_f16_16x16]] to ptr), i32 16)
+// CHECK-NEXT: [[A0:%[0-9]+]] = extractvalue {{.*}} [[FA]], 0
+// CHECK: [[B0:%[0-9]+]] = extractvalue {{.*}} [[FB]], 0
+// CHECK: [[C:%[0-9]+]] = {{.*}}call {{.*}} @llvm.nvvm.wmma.m16n16k16.mma.row.row.f16.f16(<2 x half> [[A0]], {{.*}}, <2 x half> [[B0]], {{.*}}, <2 x half> zeroinitializer, <2 x half> zeroinitializer, <2 x half> zeroinitializer, <2 x half> zeroinitializer)
+// CHECK-NEXT: [[C0:%[0-9]+]] = extractvalue {{.*}} [[C]], 0
+// CHECK: [[M0:%[^ ]+]] = phi <2 x half> [ [[C0]], {{%[^ ]+}} ], [ zeroinitializer, {{%[^ ]+}} ]
+// CHECK: call void @llvm.nvvm.wmma.m16n16k16.store.d.row.stride.f16.p0(ptr addrspacecast (ptr addrspace(3) [[TD:@__poseidon_raise_preprocess_scalar_matmul_body_f64_d_f16_16x16]] to ptr), <2 x half> [[M0]], {{.*}}, i32 16)
+// CHECK: [[DP:%[0-9]+]] = getelementptr {{.*}}ptr addrspacecast (ptr addrspace(3) [[TD]] to ptr), i64 {{%[0-9]+}}
+// CHECK-NEXT: [[DH:%[0-9]+]] = load half, ptr [[DP]]
+// CHECK-NEXT: [[DD:%[0-9]+]] = fpext half [[DH]] to double
+// CHECK: [[OP:%[0-9]+]] = getelementptr {{.*}}ptr [[PD]], i64 {{%[0-9]+}}
+// CHECK-NEXT: store double [[DD]], ptr [[OP]]
+// CHECK-NEXT: ret void
+// CHECK: [[AP:%[0-9]+]] = getelementptr {{.*}}ptr [[PA]], i64 {{%[0-9]+}}
+// CHECK-NEXT: [[AV:%[0-9]+]] = load double, ptr [[AP]]
+// CHECK-NEXT: [[AH:%[0-9]+]] = fptrunc double [[AV]] to half
+// CHECK: [[AF:%[^ ]+]] = phi half [ [[AH]], {{%[^ ]+}} ], [ 0.000000e+00, {{%[^ ]+}} ]
+// CHECK: [[AT:%[0-9]+]] = getelementptr {{.*}}ptr addrspacecast (ptr addrspace(3) [[TA]] to ptr), i64 {{%[0-9]+}}
+// CHECK-NEXT: store half [[AF]], ptr [[AT]]
+// CHECK: [[BP:%[0-9]+]] = getelementptr {{.*}}ptr [[PB]], i64 {{%[0-9]+}}
+// CHECK-NEXT: [[BV:%[0-9]+]] = load double, ptr [[BP]]
+// CHECK-NEXT: [[BH:%[0-9]+]] = fptrunc double [[BV]] to half
+// CHECK: [[BF:%[^ ]+]] = phi half [ [[BH]], {{%[^ ]+}} ], [ 0.000000e+00, {{%[^ ]+}} ]
+// CHECK: [[BT:%[0-9]+]] = getelementptr {{.*}}ptr addrspacecast (ptr addrspace(3) [[TB]] to ptr), i64 {{%[0-9]+}}
+// CHECK-NEXT: store half [[BF]], ptr [[BT]]
+// CHECK: {{^}$}}
+
+// NOFP-LABEL: ; ModuleID =
+// NOFP-LABEL: define dso_local void @preprocess_scalar_matmul_body_f64(
+// NOFP-NOT: {{fadd|fsub|fmul|fma|fdiv}}
+// NOFP: {{^}$}}

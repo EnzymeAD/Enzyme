@@ -5,7 +5,9 @@
 // accumulating epilogue. findScalarLoopMatmuls rejects it (no constant trip);
 // findHostGemmLoopNests must recognize it and report every dimension
 // symbolically, and the host dispatch must evaluate those dimensions from the
-// launch arguments.
+// launch arguments. With no target the solve takes the most accurate candidate
+// that costs no more than the loop nest, cuBLAS's DGEMM, which replaces the
+// launch.
 //
 // Both phases go through poseidon-clang++ so the body is canonicalized the same
 // way in each; a device-only -emit-llvm + opt use phase canonicalizes this loop
@@ -24,6 +26,8 @@
 // RUN:     -poseidon-cost-model=%gpu_cost_model -poseidon-print \
 // RUN:     -poseidon-enable-herbie=0 -poseidon-enable-pt=0 -poseidon-raise-wmma \
 // RUN:     %s -o %t/opt.exe 2>&1 | FileCheck %s
+// RUN: cat %t/cache/launches_*.json | FileCheck --check-prefix=DESC %s
+// RUN: %t/opt.exe | FileCheck --check-prefix=PRIMAL %s
 
 #include <cmath>
 #include <cstdio>
@@ -138,9 +142,30 @@ int main(void) {
 
 // The dimensions are EXPRESSIONS over the body's parameters, not integers:
 // M = nDofs (arg2), Ncols = 3*numEls (arg1), K = 3*numPoints (arg0).
-// CHECK: [hostgemm] {{.*}}: recognized GEMM from 3 reduction loop(s)
-// CHECK-NEXT: [hostgemm]   C = alpha*A^T*B + beta*C  alpha=1{{.*}} beta=1{{.*}}
-// CHECK-NEXT: [hostgemm]   M=arg2  Ncols=3*arg1  K=3*arg0
-// CHECK-NEXT: [hostgemm]   lda=3*arg0  ldb=3*arg0  ldc=arg2
-// CHECK-NEXT: [hostgemm]   aColMajor=0 bColMajor=1 cColMajor=1  C=param5 A=param4 B=param3
-// CHECK: origin=HostGemmLoopNest
+// CHECK: [poseidon] Optimizing [[BODY:preprocess_rt_gemm_body]] with relative error tolerance: 0.000000e+00
+// CHECK-NEXT: [poseidon] GPU mode active for [[BODY]]
+// CHECK-NEXT: [poseidon] canonical form hash of [[BODY]] is ec8a91ad004ef65f
+// CHECK-NEXT: [poseidon] profile header for [[BODY]]: MaxBlockDims=(3,3,1) LaunchCount=2
+// CHECK-NEXT: [hostgemm] [[BODY]]: 3 candidate reduction loop(s)
+// CHECK-NEXT: [hostgemm] [[BODY]]: recognized GEMM from 3 reduction loop(s)
+// CHECK-NEXT: [hostgemm]   C = alpha*A^T*B + beta*C  alpha=1.000000e+00 beta=1.000000e+00
+// CHECK-NEXT: [hostgemm]   M=arg2  Ncols=3*arg1  K=3*arg0{{$}}
+// CHECK-NEXT: [hostgemm]   lda=3*arg0  ldb=3*arg0  ldc=arg2{{$}}
+// CHECK-NEXT: [hostgemm]   aColMajor=0 bColMajor=1 cColMajor=1  C=param5 A=param4 B=param3{{$}}
+// CHECK-NEXT: [hostgemm]   profile shape M=3 Ncols=6 K=12 (per-CTA tile 3x3, launches=1 CTAs/launch=2 MACs=216)
+// CHECK-NEXT: [poseidon] Found 1 AbstractMatmul(s) for [[BODY]]
+// CHECK-NEXT: Matmul[0]: 3x3x12 a=f64 b=f64 acc=f64 d=f64 origin=HostGemmLoopNest
+// CHECK: Starting accuracy DP solver with cost budget: 0.000000e+00 of the site's profiled cost
+// CHECK: Applying solution for matmul[0] -> native-dgemm cublas f64/f64 (#10)
+// CHECK: [poseidon] pin: rt_gemm_body:M0=native-dgemm cublas f64/f64{{$}}
+// CHECK: [ozaki-host-dispatch] wrote descriptor for _Z14rt_gemm_kerneliiiPdS_S_S_S_S_: C=arg7 A=arg5 B=arg3 3x6x12 nm=0 (standalone){{$}}
+// CHECK-NEXT: [poseidon] {{.*}}raise_host_gemm_runtime_k.cu: 1 function(s) a rewrite reached; every other function as written
+// CHECK: [ozaki-host-dispatch] replaced stub body _Z29__device_stub__rt_gemm_kerneliiiPdS_S_S_S_S_ -> __poseidon_ozaki_dgemm_ex (C=arg7 A=arg5 B=arg3 3x6x12){{$}}
+
+// The descriptor the stub is built from: C, A, B are launch arguments 7, 5 and
+// 3, and after the profile shape 3x6x12 the runtime block gives M, Ncols, K,
+// lda, ldb and ldc each as (argument, multiplier, addend): nDofs, 3 numEls,
+// 3 numPoints for K, lda and ldb, and nDofs; beta is 1.
+// DESC: "host dispatch": [
+// DESC-NEXT: "_Z14rt_gemm_kerneliiiPdS_S_S_S_S_ 7 5 3 12 1 0 3 6 12 12 12 3 0 1 1 0 1 2 1 0 1 3 0 0 3 0 0 3 0 0 3 0 2 1 0 1.000000e+00"{{$}}
+// DESC-NEXT: ],

@@ -15,6 +15,7 @@
 // RUN: cat %t/pcache/launches_*.json | FileCheck --check-prefix=DESC %s
 // RUN: env POSEIDON_PROFILE_DIR=%t/profile %t/exe profile \
 // RUN:   | FileCheck --check-prefix=PRIMAL %s
+// RUN: cat %t/profile/*.fpprofile | FileCheck --check-prefix=PROF %s
 //
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 \
 // RUN:     -poseidon-profile-use=%t/profile -poseidon-cache=%t/cache \
@@ -155,24 +156,71 @@ int main(int argc, char **argv) {
   return failed;
 }
 
-// The kernel, its two launch arguments, and its three pointers, all fields of
-// the lambda (argument 1); only the output's is seeded.
-// DESC: CuKernel2D{{.*}} 0 2 3 1 1 1 0 0 8 off {{[0-9]+ [0-9]+ [0-9]+}}"
+// The lambda (argument 1) holds nd at +0, np at +4, and the DeviceTensors of Q,
+// G and y with their data pointers at +16, +48, +80 and their sizes from +24,
+// +56, +88. The kernel, its two launch arguments, and the three pointers, all
+// fields of the lambda; only the output's is seeded.
+// DESC: "profile generation": [
+// DESC-NEXT: "_ZL10CuKernel2DIZ6reduceiiiiPdS0_S0_iEUliE_EviT_ 0 2 3 1 1 1 0 0 8 off 16 48 80"{{$}}
+// DESC-NEXT: ],
 
 // PRIMAL: DENSE: rel err ok
 
+// Each of the three FMAs the m loop unrolls into runs nd ne np times and the
+// accumulation into y nd ne times, each with a gradient of one.
+// PROF: MaxBlockDims = 1 64 1
+// PROF-NEXT: MaxGridDims = 192 1 1
+// PROF-NEXT: LaunchCount = 192
+// PROF-NEXT: SiteId = 0
+// PROF-NEXT: CanonicalHash = ec8a91ad004ef65f
+// PROF-NEXT: ProfileFormat = 2
+// PROF-NEXT: {{^0$}}
+// PROF: SumGrad = 2.35929600000000000e+06
+// PROF-NEXT: SumAbsGrad = 2.35929600000000000e+06
+// PROF-NEXT: Exec = 2359296
+// PROF-NEXT: NumOperands = 3
+// PROF: {{^1$}}
+// PROF: SumGrad = 2.35929600000000000e+06
+// PROF-NEXT: SumAbsGrad = 2.35929600000000000e+06
+// PROF-NEXT: Exec = 2359296
+// PROF-NEXT: NumOperands = 3
+// PROF: {{^2$}}
+// PROF: SumGrad = 3.68640000000000000e+04
+// PROF-NEXT: SumAbsGrad = 3.68640000000000000e+04
+// PROF-NEXT: Exec = 36864
+// PROF-NEXT: NumOperands = 2
+// PROF: {{^3$}}
+// PROF: SumGrad = 2.35929600000000000e+06
+// PROF-NEXT: SumAbsGrad = 2.35929600000000000e+06
+// PROF-NEXT: Exec = 2359296
+// PROF-NEXT: NumOperands = 3
+// PROF-NOT: {{^[0-9]+$}}
+
 // M = nd, Ncols = the kernel's N, K = 3 np, every leading dimension the product
 // of a DeviceTensor's sizes, and each DeviceTensor's leading extent assumed to
-// be np.
-// CHECK: [hostgemm] {{.*}}: recognized GEMM from 3 reduction loop(s)
-// CHECK-NEXT: [hostgemm]   C = alpha*A^T*B + beta*C  alpha=1{{.*}} beta=1{{.*}}
-// CHECK-NEXT: [hostgemm]   M=arg1[+{{[0-9]+}}]  Ncols=arg0  K=3*arg1[+[[NP:[0-9]+]]]
-// CHECK-NEXT: [hostgemm]   lda=arg1[+[[G0:[0-9]+]]]*arg1[+{{[0-9]+}}]  ldb=arg1[+[[Q0:[0-9]+]]]*arg1[+{{[0-9]+}}]*arg1[+{{[0-9]+}}]  ldc=arg1[+{{[0-9]+}}]*arg1[+{{[0-9]+}}]
-// CHECK-NEXT: [hostgemm]   aColMajor=0 bColMajor=1 cColMajor=1  C=param1[+{{[0-9]+}}] A=param1[+{{[0-9]+}}] B=param1[+{{[0-9]+}}]
-// CHECK-DAG: [hostgemm]   dense only if param1[+[[NP]]] == param1[+[[Q0]]] (checked at the launch)
-// CHECK-DAG: [hostgemm]   dense only if param1[+[[NP]]] == param1[+[[G0]]] (checked at the launch)
-// CHECK: Poseidon error-budget: matmul -> ozaki-ii
-// CHECK: [ozaki-host-dispatch] replaced the launch in stub {{.*}}CuKernel2D{{.*}} with __poseidon_ozaki_dgemm_ex
+// be np, which the stub checks before it dispatches the product at nm = 12.
+// CHECK: [poseidon] site void CuKernel2D<reduce(int, int, int, int, double*, double*, double*, int)::'lambda'(int)>(int, reduce(int, int, int, int, double*, double*, double*, int)::'lambda'(int)): accuracy target 1e-12
+// CHECK-NEXT: [poseidon] Optimizing [[BODY:preprocess__ZL10CuKernel2DIZ6reduceiiiiPdS0_S0_iEUliE_EviT__poseidon_body]] with relative error tolerance: 1.000000e-12
+// CHECK-NEXT: [poseidon] GPU mode active for [[BODY]]
+// CHECK-NEXT: [poseidon] canonical form hash of [[BODY]] is ec8a91ad004ef65f
+// CHECK-NEXT: [poseidon] profile header for [[BODY]]: MaxBlockDims=(1,64,1) LaunchCount=192
+// CHECK-NEXT: [hostgemm] [[BODY]]: 3 candidate reduction loop(s)
+// CHECK-NEXT: [hostgemm] [[BODY]]: recognized GEMM from 3 reduction loop(s)
+// CHECK-NEXT: [hostgemm]   C = alpha*A^T*B + beta*C  alpha=1.000000e+00 beta=1.000000e+00
+// CHECK-NEXT: [hostgemm]   M=arg1[+0]  Ncols=arg0  K=3*arg1[+4]
+// CHECK-NEXT: [hostgemm]   lda=arg1[+56]*arg1[+60]  ldb=arg1[+24]*arg1[+28]*arg1[+32]  ldc=arg1[+88]*arg1[+92]
+// CHECK-NEXT: [hostgemm]   aColMajor=0 bColMajor=1 cColMajor=1  C=param1[+80] A=param1[+48] B=param1[+16]
+// CHECK-NEXT: [hostgemm]   dense only if param1[+4] == param1[+24] (checked at the launch)
+// CHECK-NEXT: [hostgemm]   dense only if param1[+4] == param1[+56] (checked at the launch)
+// CHECK-NEXT: [hostgemm]   profile shape M=192 Ncols=192 K=192 (per-CTA tile 192x1, launches=1 CTAs/launch=192 MACs=7077888)
+// CHECK-NEXT: [poseidon] Found 1 AbstractMatmul(s) for [[BODY]]
+// CHECK-NEXT: Matmul[0]: 192x1x192 a=f64 b=f64 acc=f64 d=f64 origin=HostGemmLoopNest
+// CHECK: Poseidon error-budget: matmul -> ozaki-ii nm=12 wmma m16n16k16 s8/s32 (domain err {{[0-9.]+e-[0-9]+}} <= 1.000000e-12 at confidence 9.500000e-01)
+// CHECK: Applying solution for matmul[0] -> ozaki-ii nm=12 wmma m16n16k16 s8/s32 (#4)
+// CHECK: [poseidon] pin: [[KERNEL:_ZL10CuKernel2DIZ6reduceiiiiPdS0_S0_iEUliE_EviT_]]:M0=ozaki-ii nm=12 wmma m16n16k16 s8/s32{{$}}
+// CHECK: [ozaki-host-dispatch] wrote descriptor for [[KERNEL]]: C=arg1[+80] A=arg1[+48] B=arg1[+16] 192x192x192 nm=12 (standalone), if arg1[+4] == arg1[+24], if arg1[+4] == arg1[+56]{{$}}
+// CHECK-NEXT: [poseidon] {{.*}}annotated_lambda_host_gemm.cu: 1 function(s) a rewrite reached; every other function as written
+// CHECK: [ozaki-host-dispatch] replaced the launch in stub _ZL25__device_stub__CuKernel2DIZ6reduceiiiiPdS0_S0_iEUliE_EviT_ with __poseidon_ozaki_dgemm_ex (C=arg1[+80] A=arg1[+48] B=arg1[+16]), if arg1[+4] == arg1[+24], if arg1[+4] == arg1[+56]{{$}}
 
 // OPT: DENSE: rel err ok
-// OPT: PADDED: rel err ok
+// OPT-NEXT: PADDED: rel err ok

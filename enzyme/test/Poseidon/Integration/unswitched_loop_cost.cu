@@ -1,10 +1,12 @@
 // Precision candidates of a kernel whose loops are strided by thread index up
 // to a bound the kernel is given, priced and applied end to end. The guard of
-// the inner loop is invariant in the outer one, so the simplified clone each
-// candidate is priced on unswitches the outer loop and keeps the body in one
-// version only; every candidate is priced there, none at zero, and at 1e-6 the
-// cheapest candidate meeting the target, FP32, is applied and runs within
-// FP32's error of the binary64 result.
+// the inner loop is invariant in the outer one. Each candidate is priced on a
+// clone cleaned up by the compile's pipeline for the GPU, which does not
+// unswitch on a condition that may diverge, so the clone keeps its one copy of
+// the body; every candidate is priced, none at zero, and at 1e-6 the cheapest
+// candidate meeting the target, FP32, is applied. The emitted site, cleaned up
+// without the target, is unswitched: it tests the guard once, before the outer
+// loop, computes in FP32, and runs within FP32's error of the binary64 result.
 //
 // REQUIRES: enzyme, cuda-runtime
 // RUN: rm -rf %t && mkdir %t
@@ -16,7 +18,7 @@
 // RUN:     -poseidon-profile-use=%t/profile -poseidon-cache=%t/c \
 // RUN:     -poseidon-cost-model=%gpu_cost_model -poseidon-print \
 // RUN:     -poseidon-enable-herbie=0 -poseidon-tau=1e-6 %s -o %t/opt.exe 2>&1 \
-// RUN:   | FileCheck --check-prefix=SOLVE %s
+// RUN:   | FileCheck --check-prefix=SOLVE --implicit-check-not=cand=0.000000e+00 %s
 // RUN: %t/opt.exe 1e-9 1e-5 | FileCheck --check-prefix=EXEC %s
 
 #include <cmath>
@@ -78,7 +80,47 @@ int main(int argc, char **argv) {
 // EXEC: max relative error vs binary64
 // EXEC-NEXT: SETUP-PASS
 
+// SOLVE: [poseidon] Optimizing [[BODY:preprocess__Z12setup_kerneliPKdS0_Pd_poseidon_body]] with relative error tolerance: 1.000000e-06
 // SOLVE-NOT: cand=0.000000e+00
-// SOLVE: CS candidate 'All FP64(0%) + FP32(100%)'
+// SOLVE: CS candidate 'All FP64(0%) + FP32(100%)': initial=6.658000e+03 cand=3.980000e+02 exec=1024
 // SOLVE-NOT: cand=0.000000e+00
+// SOLVE: [poseidon] [[BODY]]: tau=1.000000e-06 S={{[^ ]+}} A0={{[^ ]+}} selected cost={{[^ ]+}} accCost={{[^ ]+}} rel={{[^ ]+}}{{$}}
 // SOLVE: Applying solution for CS: All FP64(0%) + FP32(100%) (#0)
+// SOLVE: [poseidon] pin: _Z12setup_kerneliPKdS0_Pd:PT0=All FP64(0%) + FP32(100%){{$}}
+
+// The emitted site: D = W (j0 j0 + j1 j1) / (j0 j3 - j1 j2) in FP32, under a
+// guard tested once before the loops.
+// SOLVE: define internal void @[[BODY]](i32 {{[^,]*}}[[Q:%[0-9]+]], ptr {{[^,]*}}[[W:%[0-9]+]], ptr {{[^,]*}}[[J:%[0-9]+]], ptr {{[^,]*}}[[D:%[0-9]+]])
+// SOLVE: [[TX:%[0-9]+]] = {{.*}}call {{.*}}i32 @llvm.nvvm.read.ptx.sreg.tid.x()
+// SOLVE: [[GUARD:%[0-9]+]] = icmp {{.*}}ult i32 [[TX]], [[Q]]
+// SOLVE: br i1 [[GUARD]], label %[[OUTER:[0-9]+]], label %[[EXIT:[0-9]+]]
+// SOLVE: {{^}}[[OUTER]]:
+// SOLVE-NOT: br i1 [[GUARD]],
+// SOLVE: [[J0P:%[0-9]+]] = getelementptr {{.*}}ptr [[J]], i64 {{%[0-9]+}}
+// SOLVE-DAG: [[J0:%[0-9]+]] = load double, ptr [[J0P]]
+// SOLVE-DAG: [[J1P:%[0-9]+]] = getelementptr {{.*}}ptr [[J0P]], i64 8
+// SOLVE-DAG: [[J1:%[0-9]+]] = load double, ptr [[J1P]]
+// SOLVE-DAG: [[J2P:%[0-9]+]] = getelementptr {{.*}}ptr [[J0P]], i64 16
+// SOLVE-DAG: [[J2:%[0-9]+]] = load double, ptr [[J2P]]
+// SOLVE-DAG: [[J3P:%[0-9]+]] = getelementptr {{.*}}ptr [[J0P]], i64 24
+// SOLVE-DAG: [[J3:%[0-9]+]] = load double, ptr [[J3P]]
+// SOLVE-DAG: [[J0F:%[0-9]+]] = fptrunc double [[J0]] to float
+// SOLVE-DAG: [[J1F:%[0-9]+]] = fptrunc double [[J1]] to float
+// SOLVE-DAG: [[J2F:%[0-9]+]] = fptrunc double [[J2]] to float
+// SOLVE-DAG: [[J3F:%[0-9]+]] = fptrunc double [[J3]] to float
+// SOLVE-DAG: [[NJ2:%[0-9]+]] = fneg float [[J2F]]
+// SOLVE-DAG: [[P12:%[0-9]+]] = fmul float [[J1F]], [[NJ2]]
+// SOLVE-DAG: [[DET:%[0-9]+]] = {{(tail )?}}call float @llvm.fmuladd.f32(float [[J0F]], float [[J3F]], float [[P12]])
+// SOLVE: [[WP:%[0-9]+]] = getelementptr {{.*}}ptr [[W]], i64 {{%[0-9]+}}
+// SOLVE-NEXT: [[WV:%[0-9]+]] = load double, ptr [[WP]]
+// SOLVE-DAG: [[SQ1:%[0-9]+]] = fmul float [[J1F]], [[J1F]]
+// SOLVE-DAG: [[SQ:%[0-9]+]] = {{(tail )?}}call float @llvm.fmuladd.f32(float [[J0F]], float [[J0F]], float [[SQ1]])
+// SOLVE-DAG: [[WF:%[0-9]+]] = fptrunc double [[WV]] to float
+// SOLVE: [[NUM:%[0-9]+]] = fmul float [[SQ]], [[WF]]
+// SOLVE-NEXT: [[QT:%[0-9]+]] = fdiv float [[NUM]], [[DET]]
+// SOLVE-NEXT: [[R:%[0-9]+]] = fpext float [[QT]] to double
+// SOLVE: [[DP:%[0-9]+]] = getelementptr {{.*}}ptr [[D]], i64 {{%[0-9]+}}
+// SOLVE-NEXT: store double [[R]], ptr [[DP]]
+// SOLVE-NOT: br i1 [[GUARD]],
+// SOLVE: {{^}}[[EXIT]]:
+// SOLVE-NEXT: ret void

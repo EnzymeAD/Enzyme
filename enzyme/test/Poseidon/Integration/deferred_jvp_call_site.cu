@@ -148,21 +148,40 @@ int main() {
 }
 
 // DEFER: [poseidon] site jvp_body at its call in jvp_call(double const*, double const*, double*, double*): accuracy target 1e-06
-// DEFER-DAG: [poseidon] jvp_body.poseidon._Z8jvp_callPKdS0_PdS1_.0: marked body still holds an __enzyme_* request; deferred to the late run
-// DEFER-DAG: [poseidon] jvp_body: marked body still holds an __enzyme_* request; deferred to the late run
-// DEFER-DAG: [poseidon] jvp_body.poseidon._Z8jvp_callPKdS0_PdS1_.0: folded 1 Enzyme-generated call(s) into the deferred body
-// DEFER-DAG: [poseidon-profgen] jvp_body at call 0 in jvp_call(double const*, double const*, double*, double*): 4 shadow object(s), output(s) 2 3
+// DEFER-NEXT: [poseidon] jvp_body.poseidon._Z8jvp_callPKdS0_PdS1_.0: marked body still holds an __enzyme_* request; deferred to the late run
+// DEFER-NEXT: [poseidon] jvp_body: marked body still holds an __enzyme_* request; deferred to the late run
+// DEFER-NEXT: [poseidon] jvp_body.poseidon._Z8jvp_callPKdS0_PdS1_.0: folded 1 Enzyme-generated call(s) into the deferred body
+// DEFER-NEXT: [poseidon] jvp_body: folded 1 Enzyme-generated call(s) into the deferred body
+// DEFER-NEXT: [poseidon-profgen] jvp_body at call 0 in jvp_call(double const*, double const*, double*, double*): 4 shadow object(s), output(s) 2 3
+// DEFER-NEXT: [poseidon] block-geometry probe placed in 2 profiled function(s)
 
 // PRIMAL: call: y = 0.7949 0.0631 dy = 1.1347 0.5354 jvp_rel_l2 = {{[0-9.]+e-1[5-9]}}
 // PRIMAL-NEXT: explicit: y = 0.7949 0.0631 dy = 1.1347 0.5354 jvp_rel_l2 = {{[0-9.]+e-1[5-9]}}
 
+// PROFILE: MaxBlockDims = 64 1 1
+// PROFILE-NEXT: MaxGridDims = 64 1 1
+// PROFILE-NEXT: LaunchCount = 64
+// PROFILE-NEXT: SiteId = 0
+// PROFILE-NEXT: CanonicalHash = 40a829f17ecbcd5a
 // PROFILE: Exec = 4096
 
 // SUMS: SUMS SAME
 
-// SOLVE-DAG: [poseidon] jvp_body.poseidon._Z8jvp_callPKdS0_PdS1_.0: folded 1 Enzyme-generated call(s) into the deferred body
-// SOLVE-DAG: [poseidon] Optimizing preprocess_jvp_body.poseidon._Z8jvp_callPKdS0_PdS1_.0 with relative error tolerance: 1.000000e-06
-// SOLVE-DAG: [poseidon] Optimizing preprocess_jvp_body with relative error tolerance: 1.000000e-06
+// Each form is solved under the call's target and rewritten to FP32.
+// SOLVE: [poseidon] site jvp_body at its call in jvp_call(double const*, double const*, double*, double*): accuracy target 1e-06
+// SOLVE-NEXT: [poseidon] jvp_body.poseidon._Z8jvp_callPKdS0_PdS1_.0: marked body still holds an __enzyme_* request; deferred to the late run
+// SOLVE-NEXT: [poseidon] jvp_body: marked body still holds an __enzyme_* request; deferred to the late run
+// SOLVE-NEXT: [poseidon] jvp_body.poseidon._Z8jvp_callPKdS0_PdS1_.0: folded 1 Enzyme-generated call(s) into the deferred body
+// SOLVE-NEXT: [poseidon] jvp_body: folded 1 Enzyme-generated call(s) into the deferred body
+// SOLVE-NEXT: [poseidon] Optimizing preprocess_jvp_body.poseidon._Z8jvp_callPKdS0_PdS1_.0 with relative error tolerance: 1.000000e-06
+// SOLVE: [poseidon] preprocess_jvp_body.poseidon._Z8jvp_callPKdS0_PdS1_.0: tau=1.000000e-06 S={{[^ ]+}} A0={{[^ ]+}} selected cost={{[^ ]+}} accCost={{[^ ]+}} rel={{[^ ]+}}{{$}}
+// SOLVE: Applying solution for CS: All FP64(0%) + FP32(100%) (#0)
+// SOLVE: [poseidon] pin: jvp_body.poseidon._Z8jvp_callPKdS0_PdS1_.0:PT0=All FP64(0%) + FP32(100%){{$}}
+// SOLVE: [poseidon] Optimizing preprocess_jvp_body with relative error tolerance: 1.000000e-06
+// SOLVE: [poseidon] preprocess_jvp_body: tau=1.000000e-06 S={{[^ ]+}} A0={{[^ ]+}} selected cost={{[^ ]+}} accCost={{[^ ]+}} rel={{[^ ]+}}{{$}}
+// SOLVE: Applying solution for CS: All FP64(0%) + FP32(100%) (#0)
+// SOLVE: [poseidon] pin: jvp_body:PT0=All FP64(0%) + FP32(100%){{$}}
+// SOLVE: [poseidon] {{.*}}deferred_jvp_call_site.cu: 2 function(s) a rewrite reached; every other function as written
 
 // OPT: call: {{.*}} jvp_rel_l2 = {{[0-9.]+e-0[6789]}}
 // OPT-NEXT: explicit: {{.*}} jvp_rel_l2 = {{[0-9.]+e-0[6789]}}
