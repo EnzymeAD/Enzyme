@@ -3281,7 +3281,7 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
   // TODO need for perf reasons to move Enzyme pass to the pre vectorization.
   PB.registerOptimizerEarlyEPCallback(loadPass);
 
-  auto loadNVVM = [](ModulePassManager &MPM, OptimizationLevel) {
+  auto loadNVVM = [](ModulePassManager &MPM, OptimizationLevel, auto...) {
     MPM.addPass(PreserveNVVMNewPM(/*Begin*/ true));
   };
 
@@ -3289,6 +3289,7 @@ void augmentPassBuilder(llvm::PassBuilder &PB) {
   // that requires a functionpass, and we have a modulepass.
   // PB.registerVectorizerStartEPCallback(loadPass);
   PB.registerPipelineStartEPCallback(loadNVVM);
+  PB.registerPipelineEarlySimplificationEPCallback(loadNVVM);
   PB.registerFullLinkTimeOptimizationEarlyEPCallback(loadNVVM);
 
   auto preLTOPass = [&PB](ModulePassManager &MPM, OptimizationLevel Level) {
