@@ -68,8 +68,13 @@ void reduce(int np, int ldq, int ne, int nd, double *Q, double *Gp, double *y,
             });
 }
 
-// CHECK: [poseidon] canonical form hash of preprocess__ZL11HipKernel2D{{.*}}_poseidon_body is ec8a91ad004ef65f
-// CHECK: [hostgemm] preprocess__ZL11HipKernel2D{{.*}}: recognized GEMM from 3 reduction loop(s)
+// CHECK: [poseidon] site void HipKernel2D<reduce(int, int, int, int, double*, double*, double*, int)::'lambda'(int)>(int, reduce(int, int, int, int, double*, double*, double*, int)::'lambda'(int)): accuracy target 1e-12
+// CHECK-NEXT: [poseidon] Optimizing [[BODY:preprocess__ZL11HipKernel2D[^ ]+_poseidon_body]] with relative error tolerance: 1.000000e-12
+// CHECK-NEXT: [poseidon] GPU mode active for [[BODY]]
+// CHECK-NEXT: [poseidon] canonical form hash of [[BODY]] is ec8a91ad004ef65f
+// CHECK-NEXT: [poseidon] profile header for [[BODY]]: MaxBlockDims=(1,64,1) LaunchCount=192
+// CHECK-NEXT: [hostgemm] [[BODY]]: 3 candidate reduction loop(s)
+// CHECK-NEXT: [hostgemm] [[BODY]]: recognized GEMM from 3 reduction loop(s)
 // CHECK-NEXT: [hostgemm]   C = alpha*A^T*B + beta*C  alpha=1.000000e+00 beta=1.000000e+00
 // CHECK-NEXT: [hostgemm]   M=arg1[+0]  Ncols=arg0  K=3*arg1[+4]
 // CHECK-NEXT: [hostgemm]   lda=arg1[+56]*arg1[+60]  ldb=arg1[+24]*arg1[+28]*arg1[+32]  ldc=arg1[+88]*arg1[+92]
@@ -77,7 +82,10 @@ void reduce(int np, int ldq, int ne, int nd, double *Q, double *Gp, double *y,
 // CHECK-NEXT: [hostgemm]   dense only if param1[+4] == param1[+24] (checked at the launch)
 // CHECK-NEXT: [hostgemm]   dense only if param1[+4] == param1[+56] (checked at the launch)
 // CHECK-NEXT: [hostgemm]   profile shape M=192 Ncols=192 K=192 (per-CTA tile 192x1, launches=1 CTAs/launch=192 MACs=7077888)
-// CHECK: Matmul[0]: 192x1x192 a=f64 b=f64 acc=f64 d=f64 origin=HostGemmLoopNest
-// CHECK: Poseidon: no cost model for target-cpu '[[ARCH]]'
+// CHECK-NEXT: [poseidon] Found 1 AbstractMatmul(s) for [[BODY]]
+// CHECK-NEXT: Matmul[0]: 192x1x192 a=f64 b=f64 acc=f64 d=f64 origin=HostGemmLoopNest
+// CHECK-NEXT: (profile-scale shape; runtime descriptor printed by the [hostgemm] recognizer above)
+// CHECK-NEXT: error: Poseidon: no cost model for target-cpu '[[ARCH]]' in {{.*}}/poseidon; measure this device with poseidon-calibrate, or pass -poseidon-cost-model=<csv>
 
-// FOREIGN: was measured on native_arch 'sm_120' but preprocess__ZL11HipKernel2D{{.*}} compiles for target-cpu '[[ARCH]]'
+// FOREIGN: [poseidon] GPU mode active for [[BODY:preprocess__ZL11HipKernel2D[^ ]+_poseidon_body]]
+// FOREIGN-NEXT: error: Poseidon: cost model {{.*}}/cm_sm_120_synthetic.csv was measured on native_arch 'sm_120' but [[BODY]] compiles for target-cpu '[[ARCH]]'{{$}}

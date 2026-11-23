@@ -168,8 +168,8 @@ int main() {
   return failed;
 }
 
-// CHECK: ldexp {{[0-9]+}} cases, 0 mismatches
-// CHECK: pairs 4395312, representable 3294261, exact 3294261; not representable 1101051, rounded once 1101051
-// CHECK: before: scales 735, differing 0; unscalings 415071, differing 0
-// CHECK: unscaled: 0 0 0
-// CHECK: PASS
+// CHECK: ldexp 4053014 cases, 0 mismatches
+// CHECK-NEXT: pairs 4395312, representable 3294261, exact 3294261; not representable 1101051, rounded once 1101051
+// CHECK-NEXT: before: scales 735, differing 0; unscalings 415071, differing 0
+// CHECK-NEXT: unscaled: 0 0 0
+// CHECK-NEXT: PASS

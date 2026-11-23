@@ -48,19 +48,22 @@
 
 ; TAU7: Poseidon error-budget: matmul -> ozaki-ii nm=8 wmma m16n16k16 s8/s32 (domain err 7.986923e-09 <= 1.000000e-07 at confidence 9.500000e-01)
 ; TAU7: Applying solution for matmul[0] -> ozaki-ii nm=8 wmma m16n16k16 s8/s32 (#3)
-; TAU7: wrote descriptor for _Z13matmul_kernelPKdS0_PdS1_: C=arg2 A=arg0 B=arg1 16x16x16 nm=8 (standalone)
+; TAU7: [ozaki-host-dispatch] wrote descriptor for _Z13matmul_kernelPKdS0_PdS1_: C=arg2 A=arg0 B=arg1 16x16x16 nm=8 (standalone)
 
 ; TAU10: Poseidon error-budget: matmul -> ozaki-ii nm=10 wmma m16n16k16 s8/s32 (domain err 4.205447e-11 <= 1.000000e-10 at confidence 9.500000e-01)
 ; TAU10: Applying solution for matmul[0] -> ozaki-ii nm=10 wmma m16n16k16 s8/s32 (#5)
-; TAU10: wrote descriptor for _Z13matmul_kernelPKdS0_PdS1_: C=arg2 A=arg0 B=arg1 16x16x16 nm=10 (standalone)
+; TAU10: [ozaki-host-dispatch] wrote descriptor for _Z13matmul_kernelPKdS0_PdS1_: C=arg2 A=arg0 B=arg1 16x16x16 nm=10 (standalone)
 
 ; TAU16: Poseidon error-budget: matmul -> native-dgemm cublas f64/f64 (domain err 0.000000e+00 <= 1.000000e-16 at confidence 9.500000e-01)
 ; TAU16: Applying solution for matmul[0] -> native-dgemm cublas f64/f64 (#13)
-; TAU16: wrote descriptor for _Z13matmul_kernelPKdS0_PdS1_: C=arg2 A=arg0 B=arg1 16x16x16 nm=0 (standalone)
+; TAU16: [ozaki-host-dispatch] wrote descriptor for _Z13matmul_kernelPKdS0_PdS1_: C=arg2 A=arg0 B=arg1 16x16x16 nm=0 (standalone)
 
+; HOST16: [ozaki-host-dispatch] replaced stub body _Z28__device_stub__matmul_kernelPKdS0_PdS1_ -> __poseidon_ozaki_dgemm (C=arg2 A=arg0 B=arg1 16x16x16)
 ; HOST16: define {{.*}} @_Z28__device_stub__matmul_kernelPKdS0_PdS1_(ptr noundef [[A:%.+]], ptr noundef [[B:%.+]], ptr noundef [[C:%.+]], ptr noundef %{{.+}})
 ; HOST16-NEXT: entry:
 ; HOST16-NEXT: call void @__poseidon_ozaki_dgemm(ptr [[C]], ptr [[A]], ptr [[B]], i32 16, i32 16, i32 16, i32 16, i32 0, i32 0, double 1.000000e+00, double 0.000000e+00, ptr null, i32 0)
+; HOST16-NEXT: ret void
+; HOST16-NOT: cudaLaunchKernel(ptr {{.*}}@_Z28__device_stub__matmul_kernel
 
 ; OFF-NOT: ozaki-ii
 ; OFF: Poseidon error-budget: matmul -> baseline F64 (no rewrite clears 1.000000e-12 at confidence 9.500000e-01 faster than F64)

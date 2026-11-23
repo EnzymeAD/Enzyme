@@ -65,6 +65,8 @@ void reduce(int np, int ldq, int ne, int nd, double *Q, double *Gp, double *y,
   (void)k;
 }
 
-// CHECK: [hostgemm]   profile shape M=24 Ncols=1536 K=192
-// CHECK: native-dgemm cublas f64/f64  compCost/MAC={{.*}}  rel=5.000000e-01
-// CHECK: Poseidon error-budget: matmul -> native-dgemm cublas f64/f64
+// CHECK: [hostgemm]   profile shape M=24 Ncols=1536 K=192 (per-CTA tile 24x1, launches=1 CTAs/launch=1536 MACs=7077888)
+// CHECK: [poseidon] matmul[0] pricing: baseline/MAC=5.146667e+02 executions=7077888
+// CHECK: [poseidon]   #10 native-dgemm cublas f64/f64  compCost/MAC=2.573333e+02  rel=5.000000e-01  domainError=5.102214e-16
+// CHECK: Poseidon error-budget: matmul -> native-dgemm cublas f64/f64 (domain err 5.102214e-16 <= 1.000000e-12 at confidence 9.500000e-01)
+// CHECK: Applying solution for matmul[0] -> native-dgemm cublas f64/f64 (#10)
