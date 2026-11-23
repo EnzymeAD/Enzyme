@@ -27,8 +27,21 @@ declare double @__poseidon_fp_optimize(double (double, double)*, ...)
 
 attributes #0 = { "target-cpu"="x86-64" }
 
-; CHECK: Applying solution for (- (sqrt (+ (* v0 v0) (* v1 v1))) v0) --(0)-> (/.f64 (*.f64 v1 v1) (+.f64 (hypot.f64 v0 v1) v0))
+; CHECK: !!! Applying solution (1 step(s)) ... !!!
+; CHECK-NEXT: Applying solution for (- (sqrt (+ (* v0 v0) (* v1 v1))) v0) --(0)-> (/.f64 (*.f64 v1 v1) (+.f64 (hypot.f64 v0 v1) v0)){{$}}
 ; CHECK-NOT: Applying solution for
 ; CHECK: !!! Solution applied !!!
-; CHECK: define double @preprocess_tester
-; CHECK: hypot
+; CHECK: [poseidon] pin: tester:R0=(/.f64 (*.f64 v1 v1) (+.f64 (hypot.f64 v0 v1) v0)){{$}}
+; CHECK: define double @test_opt(
+; CHECK-NEXT: entry:
+; CHECK-NEXT: [[R:%.+]] = call double @preprocess_tester(double %x, double %y)
+; CHECK-NEXT: ret double [[R]]{{$}}
+; CHECK: define double @preprocess_tester(double %x, double %y)
+; CHECK-NEXT: entry:
+; CHECK-NEXT: [[YY:%.+]] = fmul double %y, %y
+; CHECK-NEXT: [[H:%.+]] = tail call double @hypot(double %x, double %y)
+; CHECK-NEXT: [[S:%.+]] = fadd double %x, [[H]]{{$}}
+; CHECK-NEXT: [[D:%.+]] = fdiv double [[YY]], [[S]]{{$}}
+; CHECK-NEXT: ret double [[D]]{{$}}
+; CHECK-NEXT: }
+; CHECK-NOT: call {{.*}}@hypot

@@ -18,10 +18,12 @@
 
 ; SITES-BOTH: Poseidon JOINT: collecting candidates from 2 marked function(s)
 ; SITES-BOTH: JOINT DP table contains 4 entries; cost range [-4.500000e-01, 0.000000e+00]
-; SITES-BOTH: JOINT: minimum accuracy cost within budget: {{.*}}; computation cost used: -4.500000e-01
-; SITES-BOTH: Applying solution for CS: All FP64(0%) + FP32(100%)
+; SITES-BOTH: JOINT: minimum accuracy cost within budget: 1.154131e-04; computation cost used: -4.500000e-01
+; SITES-BOTH: Applying solution for CS: All FP64(0%) + FP32(100%) (#0)
+; SITES-BOTH: [poseidon] pin: tester_a:PT0=All FP64(0%) + FP32(100%)
 ; SITES-BOTH: [poseidon] Finished optimizing preprocess_tester_a
-; SITES-BOTH: Applying solution for CS: All FP64(0%) + FP32(100%)
+; SITES-BOTH: Applying solution for CS: All FP64(0%) + FP32(100%) (#0)
+; SITES-BOTH: [poseidon] pin: tester_b:PT0=All FP64(0%) + FP32(100%)
 ; SITES-BOTH: [poseidon] Finished optimizing preprocess_tester_b
 ; SITES-BOTH-LABEL: define double @site_a(
 ; SITES-BOTH-NEXT: entry:
@@ -30,24 +32,32 @@
 ; SITES-BOTH-NEXT: entry:
 ; SITES-BOTH-NEXT: call double @preprocess_tester_b(double %x, double %y)
 ; SITES-BOTH-LABEL: define double @preprocess_tester_a(
-; SITES-BOTH: fptrunc fast double %x to float
-; SITES-BOTH: fadd fast float
-; SITES-BOTH: fmul fast float
-; SITES-BOTH: fpext float
+; SITES-BOTH-NEXT: entry:
+; SITES-BOTH-NEXT: [[XF:%.+]] = fptrunc fast double %x to float
+; SITES-BOTH-NEXT: [[YF:%.+]] = fptrunc fast double %y to float
+; SITES-BOTH-NEXT: [[ADD:%.+]] = fadd fast float [[YF]], [[XF]]{{$}}
+; SITES-BOTH-NEXT: [[MUL:%.+]] = fmul fast float [[ADD]], [[XF]]{{$}}
+; SITES-BOTH-NEXT: [[R:%.+]] = fpext float [[MUL]] to double
+; SITES-BOTH-NEXT: ret double [[R]]{{$}}
 ; SITES-BOTH-LABEL: define double @preprocess_tester_b(
-; SITES-BOTH: fptrunc fast double %y to float
-; SITES-BOTH: fneg fast float
-; SITES-BOTH: call fast float @llvm.fmuladd.f32(
-; SITES-BOTH: fdiv fast float
-; SITES-BOTH: fpext float
+; SITES-BOTH-NEXT: entry:
+; SITES-BOTH-NEXT: [[BYF:%.+]] = fptrunc fast double %y to float
+; SITES-BOTH-NEXT: [[BNY:%.+]] = fneg fast float [[BYF]]{{$}}
+; SITES-BOTH-NEXT: [[BXF:%.+]] = fptrunc fast double %x to float
+; SITES-BOTH-NEXT: [[BFMA:%.+]] = {{.*}}call fast float @llvm.fmuladd.f32(float [[BXF]], float [[BYF]], float [[BNY]])
+; SITES-BOTH-NEXT: [[BDIV:%.+]] = fdiv fast float [[BFMA]], [[BXF]]{{$}}
+; SITES-BOTH-NEXT: [[BR:%.+]] = fpext float [[BDIV]] to double
+; SITES-BOTH-NEXT: ret double [[BR]]{{$}}
 
 ; SITES-BUDGETS: -0.45000000000000001,-0.29999999999999999,-0.050000000000000003,0
 
 ; SITES-ONE: JOINT DP table contains 4 entries; cost range [-4.500000e-01, 0.000000e+00]
-; SITES-ONE: JOINT: minimum accuracy cost within budget: {{.*}}; computation cost used: -3.000000e-01
+; SITES-ONE: JOINT: minimum accuracy cost within budget: 2.184370e-06; computation cost used: -3.000000e-01
+; SITES-ONE-NEXT: [poseidon] pin: {{$}}
 ; SITES-ONE: [poseidon] Finished optimizing preprocess_tester_a
-; SITES-ONE: [poseidon] no rewrite applied for preprocess_tester_a; wrapper call restored to original body tester_a
-; SITES-ONE: Applying solution for CS: All FP64(0%) + FP32(100%)
+; SITES-ONE: [poseidon] no rewrite applied for preprocess_tester_a; wrapper call restored to original body tester_a (bit-transparent no-op)
+; SITES-ONE: Applying solution for CS: All FP64(0%) + FP32(100%) (#0)
+; SITES-ONE: [poseidon] pin: tester_b:PT0=All FP64(0%) + FP32(100%)
 ; SITES-ONE: [poseidon] Finished optimizing preprocess_tester_b
 ; SITES-ONE-LABEL: define double @site_a(
 ; SITES-ONE-NEXT: entry:
@@ -83,7 +93,7 @@
 ; SITES-STALE: error: {{.*}}Poseidon: -poseidon-cost-budget=-400 asks a solution to save more than the whole profiled cost. It takes the share of a site's profiled cost a solution may add, negative for one it has to save (-0.25 requires saving a quarter), not a cost. A solve writes to budgets.txt in its -poseidon-cache directory the share of each frontier point a budget selects.
 ; SITES-HUGE: error: {{.*}}Poseidon: -poseidon-cost-budget=1.0000000000000001e+300 lets a solution add more than 2^30 times the profiled cost, which the DP's cost axis does not hold; give a share of at most 1073741824.
 ; SITES-NONFINITE-NOT: Starting accuracy DP solver
-; SITES-NONFINITE: error: {{.*}}Poseidon: -poseidon-cost-budget=inf is not a finite number. It takes the share of a site's profiled cost
+; SITES-NONFINITE: error: {{.*}}Poseidon: -poseidon-cost-budget=inf is not a finite number. It takes the share of a site's profiled cost a solution may add, negative for one it has to save (-0.25 requires saving a quarter), not a cost. A solve writes to budgets.txt in its -poseidon-cache directory the share of each frontier point a budget selects.
 ; SITES-UNUSED-NOT: error:
 ; SITES-UNUSED-NOT: -poseidon-cost-budget
 
@@ -111,7 +121,7 @@
 
 ; TARGETS-NONE: error: {{.*}}Poseidon: the sites of one -poseidon-joint-dp solve have different accuracy targets: tester_a (1.000000e-02) tester_b (none); give them one target
 ; TARGETS-DIFF: error: {{.*}}Poseidon: the sites of one -poseidon-joint-dp solve have different accuracy targets: tester_a (1.000000e-02) tester_b (1.000000e-03); give them one target
-; TARGETS-SOLVE: [poseidon] preprocess_tester_a,preprocess_tester_b: tau=1.000000e-02
+; TARGETS-SOLVE: [poseidon] preprocess_tester_a,preprocess_tester_b: tau=1.000000e-02 S=4.732407e+03 A0=1.003014e-13 selected cost=-4.500000e-01 accCost=1.154131e-04 rel=2.438782e-08
 
 define double @tester_a(double %x, double %y) #0 {
 entry:

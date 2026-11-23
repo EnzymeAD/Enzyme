@@ -18,12 +18,13 @@
 ; {{[^ -~]+}} stands for the Greek capital delta the log prints.
 ; KAPPA: [poseidon] site preprocess_fms_body: kappa=1.000000e-03 (ok) sumsens=1.187943e+04 factor=8.417909e-08
 ; KAPPA: Initial AccuracyCost: 2.164332e-20
+; KAPPA-NEXT: Initial ComputationCost: 2.564000e+03
 ; KAPPA: {{[^ -~]+}} AccCost
 ; KAPPA-NEXT: ---
-; KAPPA-NEXT: 1.428768e-11{{.*}}All FP64(0%) + FP32(100%)
-; KAPPA: 6.795448e-19{{.*}}All FP64(0%) + Expansion2(100%)
+; KAPPA-NEXT: {{^}}1.428768e-11 -1.816320e+06 All FP64(0%) + FP32(100%){{$}}
+; KAPPA: {{^}}6.795448e-19 -3.333120e+05 All FP64(0%) + Expansion2(100%){{$}}
 ; KAPPA: [poseidon] site preprocess_matmul_body: kappa=1.000000e+03 (ok) sumsens=4.903078e+04 factor=2.039535e-02
-; KAPPA: Matmul[0] candidates (initial cost=5.120000e+02
+; KAPPA-NEXT: Matmul[0] candidates (initial cost=5.120000e+02, executions=8192, globalM=16, globalN=16, globalK=0, K=16, gridCTAs=1):
 ; KAPPA-NEXT: wmma m16n16k16 f16/f32: {{[^ -~]+}}cost=-3.932160e+06 {{[^ -~]+}}accCost=3.332236e+01
 ; KAPPA-NEXT: tcec n=2 wmma m16n16k16 f16/f32: {{[^ -~]+}}cost=-3.866624e+06 {{[^ -~]+}}accCost=2.978463e-02
 ; KAPPA-NEXT: tcec n=3 wmma m16n16k16 f16/f32: {{[^ -~]+}}cost=-3.801088e+06 {{[^ -~]+}}accCost=2.540700e-02
@@ -32,11 +33,12 @@
 ; unscaled one, and the computation costs are untouched in both runs.
 ; PLAIN-NOT: kappa=
 ; PLAIN: Initial AccuracyCost: 2.571104e-13
+; PLAIN-NEXT: Initial ComputationCost: 2.564000e+03
 ; PLAIN: {{[^ -~]+}} AccCost
 ; PLAIN-NEXT: ---
-; PLAIN-NEXT: 1.697296e-04{{.*}}All FP64(0%) + FP32(100%)
-; PLAIN: 8.072609e-12{{.*}}All FP64(0%) + Expansion2(100%)
-; PLAIN: Matmul[0] candidates (initial cost=5.120000e+02
+; PLAIN-NEXT: {{^}}1.697296e-04 -1.816320e+06 All FP64(0%) + FP32(100%){{$}}
+; PLAIN: {{^}}8.072609e-12 -3.333120e+05 All FP64(0%) + Expansion2(100%){{$}}
+; PLAIN: Matmul[0] candidates (initial cost=5.120000e+02, executions=8192, globalM=16, globalN=16, globalK=0, K=16, gridCTAs=1):
 ; PLAIN-NEXT: wmma m16n16k16 f16/f32: {{[^ -~]+}}cost=-3.932160e+06 {{[^ -~]+}}accCost=1.633821e+03
 ; PLAIN-NEXT: tcec n=2 wmma m16n16k16 f16/f32: {{[^ -~]+}}cost=-3.866624e+06 {{[^ -~]+}}accCost=1.460363e+00
 ; PLAIN-NEXT: tcec n=3 wmma m16n16k16 f16/f32: {{[^ -~]+}}cost=-3.801088e+06 {{[^ -~]+}}accCost=1.245725e+00
@@ -45,7 +47,7 @@
 ; priced at 1e30, the order of the exponent penalty, so a joint budget is spent
 ; on any other site before this one's precision is traded away.
 ; DIVERGED: [poseidon] site preprocess_matmul_body: kappa=1.000000e+03 (diverged) sumsens=4.903078e+04 factor=1.000000e+30
-; DIVERGED: Matmul[0] candidates (initial cost=5.120000e+02
+; DIVERGED-NEXT: Matmul[0] candidates (initial cost=5.120000e+02, executions=8192, globalM=16, globalN=16, globalK=0, K=16, gridCTAs=1):
 ; DIVERGED-NEXT: wmma m16n16k16 f16/f32: {{[^ -~]+}}cost=-3.932160e+06 {{[^ -~]+}}accCost=1.633821e+33
 ; DIVERGED-NEXT: tcec n=2 wmma m16n16k16 f16/f32: {{[^ -~]+}}cost=-3.866624e+06 {{[^ -~]+}}accCost=1.460363e+30
 ; DIVERGED-NEXT: tcec n=3 wmma m16n16k16 f16/f32: {{[^ -~]+}}cost=-3.801088e+06 {{[^ -~]+}}accCost=1.245725e+30

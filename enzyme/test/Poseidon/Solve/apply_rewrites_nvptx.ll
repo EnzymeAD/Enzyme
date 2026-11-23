@@ -37,13 +37,13 @@
 ; RUN: not %{reprice} -poseidon-cache=%t/kinds/overlap -poseidon-apply-rewrites='PT1_0,M0_2' -S -o /dev/null 2>&1 | FileCheck --check-prefix=KINDS-OVERLAP %s
 ; RUN: not %{reprice} -poseidon-cache=%t/kinds/name_m -poseidon-apply-rewrites='M0=nothing' -S -o /dev/null 2>&1 | FileCheck --check-prefix=KINDS-NAME-M %s
 
-; KINDS-ORD: [poseidon] Selecting R0_1: (+ (- (sqrt (+ v0 1)) (sqrt v0)) (+ (+ (+ (sinh v1) (asinh v1)) (tan v1)) (asin v1))) -> (+.f64 (-.f64 (sqrt.f64
+; KINDS-ORD: [poseidon] Selecting R0_1: (+ (- (sqrt (+ v0 1)) (sqrt v0)) (+ (+ (+ (sinh v1) (asinh v1)) (tan v1)) (asin v1))) -> (+.f64 (-.f64 (sqrt.f64 (+.f64 v0 #s(literal 1 binary64))) (sqrt.f64 v0)) (binary32->binary64 (+.f32 (+.f32 (+.f32 (sinh.f32 (binary64->binary32 v1)) (asinh.f32 (binary64->binary32 v1))) (tan.f32 (binary64->binary32 v1))) (asin.f32 (binary64->binary32 v1))))){{$}}
 ; KINDS-ORD-NEXT: [poseidon] Selecting PT0_0: All FP64(0%) + FP32(100%)
 ; KINDS-ORD-NEXT: [poseidon] Selecting M0_2: matmul[0] -> tcec n=3 wmma m16n16k16 f16/f32
-; KINDS-ORD: Applying solution for (+ (- (sqrt (+ v0 1)) (sqrt v0)) (+ (+ (+ (sinh v1) (asinh v1)) (tan v1)) (asin v1))) --(1)->
+; KINDS-ORD: Applying solution for (+ (- (sqrt (+ v0 1)) (sqrt v0)) (+ (+ (+ (sinh v1) (asinh v1)) (tan v1)) (asin v1))) --(1)-> (+.f64 (-.f64 (sqrt.f64 (+.f64 v0 #s(literal 1 binary64))) (sqrt.f64 v0)) (binary32->binary64 (+.f32 (+.f32 (+.f32 (sinh.f32 (binary64->binary32 v1)) (asinh.f32 (binary64->binary32 v1))) (tan.f32 (binary64->binary32 v1))) (asin.f32 (binary64->binary32 v1))))){{$}}
 ; KINDS-ORD-NEXT: Applying solution for CS: All FP64(0%) + FP32(100%) (#0)
 ; KINDS-ORD-NEXT: Applying solution for matmul[0] -> tcec n=3 wmma m16n16k16 f16/f32 (#2)
-; KINDS-ORD: [poseidon] pin: matmul_body:R0=(+.f64 (-.f64 (sqrt.f64 {{.*}}),matmul_body:PT0=All FP64(0%) + FP32(100%),matmul_body:M0=tcec n=3 wmma m16n16k16 f16/f32
+; KINDS-ORD: [poseidon] pin: matmul_body:R0=(+.f64 (-.f64 (sqrt.f64 (+.f64 v0 #s(literal 1 binary64))) (sqrt.f64 v0)) (binary32->binary64 (+.f32 (+.f32 (+.f32 (sinh.f32 (binary64->binary32 v1)) (asinh.f32 (binary64->binary32 v1))) (tan.f32 (binary64->binary32 v1))) (asin.f32 (binary64->binary32 v1))))),matmul_body:PT0=All FP64(0%) + FP32(100%),matmul_body:M0=tcec n=3 wmma m16n16k16 f16/f32{{$}}
 ; KINDS-EXPLAIN: "result": {
 ; KINDS-EXPLAIN-NEXT: "applied": [
 ; KINDS-EXPLAIN-NEXT: "R0_1",
@@ -51,7 +51,7 @@
 ; KINDS-EXPLAIN-NEXT: "M0_2"
 ; KINDS-EXPLAIN-NEXT: ]
 ; KINDS-EXPLAIN: "selector": "manual"
-; KINDS-NAME: [poseidon] Selecting matmul_body:R0=
+; KINDS-NAME: [poseidon] Selecting matmul_body:R0=(+.f64 (-.f64 (sqrt.f64 (+.f64 v0 #s(literal 1 binary64))) (sqrt.f64 v0)) (binary32->binary64 (+.f32 (+.f32 (+.f32 (sinh.f32 (binary64->binary32 v1)) (asinh.f32 (binary64->binary32 v1))) (tan.f32 (binary64->binary32 v1))) (asin.f32 (binary64->binary32 v1))))): (+ (- (sqrt (+ v0 1)) (sqrt v0)) (+ (+ (+ (sinh v1) (asinh v1)) (tan v1)) (asin v1))) -> (+.f64 (-.f64 (sqrt.f64 (+.f64 v0 #s(literal 1 binary64))) (sqrt.f64 v0)) (binary32->binary64 (+.f32 (+.f32 (+.f32 (sinh.f32 (binary64->binary32 v1)) (asinh.f32 (binary64->binary32 v1))) (tan.f32 (binary64->binary32 v1))) (asin.f32 (binary64->binary32 v1))))){{$}}
 ; KINDS-NAME-NEXT: [poseidon] Selecting matmul_body:PT0=All FP64(0%) + FP32(100%): All FP64(0%) + FP32(100%)
 ; KINDS-NAME-NEXT: [poseidon] Selecting matmul_body:M0=tcec n=3 wmma m16n16k16 f16/f32: matmul[0] -> tcec n=3 wmma m16n16k16 f16/f32
 ; KINDS-RANGE-R: error: {{.*}}Poseidon: -poseidon-apply-rewrites item 'R9_0': CO index 9 out of range (4 COs)
@@ -65,9 +65,10 @@
 ; KINDS-DUP-M: error: {{.*}}Poseidon: -poseidon-apply-rewrites item 'M0_1': CM 0 already has a rewrite applied; give one item per unit
 ; KINDS-OVERLAP: error: {{.*}}Poseidon: -poseidon-apply-rewrites item 'M0_2': CM 0 and CS 1 change the same instructions, and one of them replaces them; give one of the two
 ; KINDS-NAME-M: error: {{.*}}Poseidon: -poseidon-apply-rewrites: matmul_body: M0 has no candidate named 'nothing'. Its candidates are:
-; KINDS-NAME-M-NEXT: wmma m16n16k16 f16/f32
-; KINDS-NAME-M-NEXT: tcec n=2 wmma m16n16k16 f16/f32
-; KINDS-NAME-M-NEXT: tcec n=3 wmma m16n16k16 f16/f32
+; KINDS-NAME-M-NEXT: {{^}}  wmma m16n16k16 f16/f32{{$}}
+; KINDS-NAME-M-NEXT: {{^}}  tcec n=2 wmma m16n16k16 f16/f32{{$}}
+; KINDS-NAME-M-NEXT: {{^}}  tcec n=3 wmma m16n16k16 f16/f32{{$}}
+; KINDS-NAME-M-EMPTY:
 
 ; A matrix-product candidate is named by its label. The native DGEMM is
 ; candidate 13 of the product of Inputs/stale_cache/matmul_device.ll under the

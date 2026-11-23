@@ -55,17 +55,27 @@ attributes #0 = { "target-cpu"="x86-64" }
 !3 = !{!"Simple C/C++ TBAA"}
 
 ; LOOSE: [poseidon] preprocess_tester: 2 floating-point operation(s) the profiling run never executed are left as written (no source location): no profile gives their ranges, cost or error, so the subgraphs of the executed operations end at them and the error a rewrite of those passes on to them is not modelled
-; LOOSE: remark: <unknown>:0:0: Poseidon runs all 4 operations in float;
+; LOOSE: [poseidon] preprocess_tester: tau=1.000000e-04 S=3.818938e+03 A0=2.850360e-11 selected cost=-4.375000e-01 accCost=2.794345e-02 rel=7.317073e-06
+; LOOSE-NEXT: remark: <unknown>:0:0: Poseidon runs all 4 operations in float; modelled error 7.5e-15 -> 7.3e-06, cost 1 -> 0.5625 (-44%) [PT0_0]
 ; LOOSE: [poseidon] pin: tester:PT0=All FP64(0%) + FP32(100%)
 
 ; IR-LABEL: define void @preprocess_tester(
-; IR: fmul float
-; IR: fadd float
+; IR-NEXT: entry:
+; IR-NEXT: [[XF:%.+]] = fptrunc double %x to float
+; IR-NEXT: [[YF:%.+]] = fptrunc double %y to float
+; IR-NEXT: [[A:%.+]] = fmul float [[XF]], [[YF]]{{$}}
+; IR-NEXT: [[B:%.+]] = fadd float [[A]], [[XF]]{{$}}
+; IR: [[R:%.+]] = phi double [ [[ZD:%.+]], %scal ], [ %v, %mat ]
+; IR-NEXT: store double [[R]], ptr %o
 ; IR: mat:
-; IR: %u = fmul double
-; IR-NEXT: %v = fadd double
+; IR-NEXT: [[BD:%.+]] = fpext float [[B]] to double
+; IR-NEXT: [[AD:%.+]] = fpext float [[A]] to double
+; IR-NEXT: %mv = load double, ptr %m
+; IR-NEXT: %u = fmul double %mv, [[BD]],
+; IR-NEXT: %v = fadd double %u, [[AD]],
 ; IR: scal:
-; IR-NEXT: fmul float
-; IR-NEXT: fadd float
+; IR-NEXT: [[W:%.+]] = fmul float [[B]], [[YF]]{{$}}
+; IR-NEXT: [[Z:%.+]] = fadd float [[W]], [[XF]]{{$}}
+; IR-NEXT: [[ZD]] = fpext float [[Z]] to double
 
 ; STRICT: error: {{.*}}Poseidon: the profile does not cover this operation: the profiling run never executed it. Profile an input that runs it, or pass -poseidon-loose-coverage to leave it as written.

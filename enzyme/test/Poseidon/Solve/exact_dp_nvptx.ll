@@ -35,10 +35,14 @@
 ; ONE-PRUNE: DP table contains 1 entries.
 ; ONE-PRUNE: No solution found within the computation cost budget!
 ; ONE-PRUNE-NOT: Applying solution
+; ONE-PRUNE: [poseidon] no rewrite applied for preprocess_tester; calling original body tester (bit-transparent no-op)
 ; ONE-PRUNE-BUDGETS: {{^}}-0.05859375{{$}}
-; ONE-EXACT: Exact DP: 2 frontier points
+; ONE-EXACT: Exact DP: 2 frontier points; peak 2 entries in 2 signatures; 0 precision changes priced; {{.*}} s
 ; ONE-EXACT: DP table contains 2 entries.
+; ONE-EXACT: Minimum accuracy cost within budget: 7.671461e-05
+; ONE-EXACT-NEXT: Computation cost budget used: -7.480469e-01
 ; ONE-EXACT: Applying solution for (* (+ v0 v1) v2) --(0)-> (fma.f32 v1 v2 (*.f32 v2 v0))
+; ONE-EXACT: [poseidon] pin: tester:R1=(fma.f32 v1 v2 (*.f32 v2 v0))
 ; ONE-EXACT-BUDGETS: {{^}}-0.748046875,-0.05859375{{$}}
 ; ONE-TO-EXACT: DP cache entry for preprocess_tester was solved for a different -poseidon-early-prune; re-solving.
 ; ONE-TO-EXACT: DP table contains 2 entries.
@@ -66,10 +70,12 @@
 
 ; JOINT-PRUNE: JOINT DP table contains 1 entries
 ; JOINT-PRUNE: JOINT: no solution within the computation cost budget!
+; JOINT-PRUNE: [poseidon] no rewrite applied for preprocess_tester_a; wrapper call restored to original body tester_a (bit-transparent no-op)
+; JOINT-PRUNE: [poseidon] no rewrite applied for preprocess_tester_b; wrapper call restored to original body tester_b (bit-transparent no-op)
 ; JOINT-PRUNE-BUDGETS: {{^}}-0.05859375{{$}}
-; JOINT-EXACT: Exact DP: 3 frontier points
-; JOINT-EXACT: JOINT DP table contains 3 entries
-; JOINT-EXACT: JOINT: minimum accuracy cost within budget: {{.*}}; computation cost used: -7.480469e-01
+; JOINT-EXACT: Exact DP: 3 frontier points; peak 4 entries in 2 signatures; 0 precision changes priced; {{.*}} s
+; JOINT-EXACT: JOINT DP table contains 3 entries; cost range [-7.480469e-01, -5.859375e-02]
+; JOINT-EXACT: JOINT: minimum accuracy cost within budget: 1.534292e-04; computation cost used: -7.480469e-01
 ; JOINT-EXACT-COUNT-2: Applying solution for (* (+ v0 v1) v2) --(0)-> (fma.f32 v1 v2 (*.f32 v2 v0))
 ; JOINT-EXACT-BUDGETS: {{^}}-0.748046875,-0.4033203125,-0.05859375{{$}}
 
@@ -114,6 +120,7 @@
 
 ; REPRICE-PRUNE: DP table contains 17 entries.
 ; REPRICE-PRUNE-BUDGETS-NOT: -0.95376420454545452
+; REPRICE-PRUNE-BUDGETS: {{^}}-0.70823863636363638,-0.69236505681818183,-0.68103693181818181,-0.49815340909090911,-0.48227982954545456,-0.47095170454545454,-0.40106534090909091,-0.36573153409090908,-0.34985795454545454,-0.33852982954545452,-0.27727272727272728,-0.20738636363636365,-0.13750000000000001,-0.067613636363636362,0,0.13412642045454545,0.14545454545454545{{$}}
 ; REPRICE-EXACT: Exact DP: 21 frontier points
 ; REPRICE-EXACT: DP table contains 21 entries.
 ; REPRICE-EXACT-BUDGETS: {{^}}-0.95376420454545452,-0.94921875,-0.94467329545454548,-0.73458806818181821,-0.70823863636363638,-0.69236505681818183,-0.68103693181818181,-0.49815340909090911,-0.48227982954545456,-0.47095170454545454,-0.40106534090909091,-0.36573153409090908,-0.34985795454545454,-0.33852982954545452,-0.27727272727272728,-0.20738636363636365,-0.13750000000000001,-0.067613636363636362,0,0.13412642045454545,0.14545454545454545{{$}}
