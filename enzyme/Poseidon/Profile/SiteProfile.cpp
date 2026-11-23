@@ -196,17 +196,26 @@ static unsigned fpStoreWidth(Type *T) {
   return L ? L->getScalarSizeInBits() / 8 : 0;
 }
 
-// Every store and atomicrmw of `clone`: the pointer it writes through and the
-// width of the floating-point scalar it writes (fpStoreWidth).
-static void forEachWrite(Function &clone,
-                         function_ref<void(Value *ptr, unsigned width)> mark) {
+// Every store and atomicrmw of `clone`: each object the pointer it writes
+// through may point into and the width of the floating-point scalar it writes
+// (fpStoreWidth). The pointer may choose between objects, or between an object
+// and null: a view that holds null when it is empty (MFEM's DeviceTensor)
+// writes into the object it was made from.
+static void
+forEachWrite(Function &clone,
+             function_ref<void(const Value *obj, unsigned width)> mark) {
+  auto write = [&](Value *ptr, Type *T) {
+    SmallVector<const Value *, 4> objs;
+    getUnderlyingObjects(ptr, objs, /*LI=*/nullptr, /*MaxLookup=*/0);
+    for (const Value *obj : objs)
+      if (!isa<ConstantPointerNull>(obj))
+        mark(obj, fpStoreWidth(T));
+  };
   for (Instruction &I : instructions(clone)) {
     if (auto *SI = dyn_cast<StoreInst>(&I))
-      mark(SI->getPointerOperand(),
-           fpStoreWidth(SI->getValueOperand()->getType()));
+      write(SI->getPointerOperand(), SI->getValueOperand()->getType());
     else if (auto *RMW = dyn_cast<AtomicRMWInst>(&I))
-      mark(RMW->getPointerOperand(),
-           fpStoreWidth(RMW->getValOperand()->getType()));
+      write(RMW->getPointerOperand(), RMW->getValOperand()->getType());
   }
 }
 
@@ -216,8 +225,8 @@ static void forEachWrite(Function &clone,
 static void collectOutputParams(Function &clone,
                                 SmallVectorImpl<unsigned> &seedWidth) {
   seedWidth.assign(clone.arg_size(), 0);
-  auto mark = [&](Value *ptr, unsigned w) {
-    int idx = traceToArgIndex(ptr);
+  auto mark = [&](const Value *obj, unsigned w) {
+    int idx = traceToArgIndex(obj);
     if (w && idx >= 0 && (size_t)idx < seedWidth.size())
       seedWidth[idx] = std::max(seedWidth[idx], w);
   };
@@ -270,8 +279,8 @@ static void pointerFields(const DataLayout &DL, Type *T, uint64_t offset,
 // kernel's lambda captured.
 static void collectOutputFields(Function &clone,
                                 std::map<LaunchRef, unsigned> &seedWidth) {
-  auto mark = [&](Value *ptr, unsigned w) {
-    LaunchRef r = tracePointerRoot(ptr);
+  auto mark = [&](const Value *obj, unsigned w) {
+    LaunchRef r = tracePointerRoot(obj);
     if (w && r.isField())
       seedWidth[r] = std::max(seedWidth[r], w);
   };
