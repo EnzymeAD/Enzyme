@@ -2,6 +2,9 @@
 ; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-profile-use=%S/../Inputs/expm1div_profiles -poseidon-enable-herbie=true -poseidon-herbie-binary=%herbie_binary -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache= -poseidon-print -S 2>&1 | FileCheck %s
 
 ; Live Herbie on (exp(x) - 1) / x: verifies expm1 candidate is produced.
+; The expm1 rewrite of the binary64 search is pinned with its price and
+; modelled error; the other candidates Herbie returns, and so the one the solve
+; takes, depend on the Herbie release.
 
 declare double @llvm.exp.f64(double)
 
@@ -23,8 +26,10 @@ declare double @__poseidon_fp_optimize(double (double)*, ...)
 
 attributes #0 = { "target-cpu"="x86-64" }
 
+; CHECK: Initial Expression: (/ (+ (exp v0) -1) v0)
 ; CHECK: Candidates:
-; CHECK: expm1
-; CHECK: Finished
+; CHECK: {{^}}-4.857226e-15 -4.000000e+02 {{[0-9.e+-]+}} {{[0-9.e+-]+}} (/.f64 #s(approx (+ (exp v0) -1) (expm1.f64 v0)) v0){{$}}
+; CHECK: [poseidon] Finished optimizing preprocess_tester
 ; CHECK: define double @preprocess_tester(double %x)
 ; CHECK: ret double
+; CHECK: [poseidon] Herbie answers: 1 fresh, 0 from the cache, 0 replayed

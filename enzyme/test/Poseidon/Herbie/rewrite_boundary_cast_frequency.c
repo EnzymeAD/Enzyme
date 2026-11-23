@@ -38,13 +38,21 @@ int main(void) {
 }
 
 // PRICE: Initial ComputationCost: 1.200000e+01
-// PRICE: -2.944000e+03{{.*}}(*.f32 (*.f32 v0 v1) (+.f32 v3 (+.f32 v0 v1)))
-// PRICE: [poseidon] pin: iterate.poseidon.main.0:R3=(*.f32 (*.f32 v0 v1) (+.f32 v3 (+.f32 v0 v1)))
+// PRICE: {{^}}1.113646e-06 -2.944000e+03 7.500000e-01 9.921875e-01 (*.f32 (*.f32 v0 v1) (+.f32 v3 (+.f32 v0 v1))){{$}}
+// PRICE: [poseidon] pin: iterate.poseidon.main.0:R3=(*.f32 (*.f32 v0 v1) (+.f32 v3 (+.f32 v0 v1))){{$}}
 
 // IR-LABEL: define {{.*}} @main(
-// IR: fptrunc double
-// IR: phi float
+// IR: [[X:%.+]] = fdiv double
+// IR: [[XF:%.+]] = fptrunc double [[X]] to float
+// IR: [[XPHI:%.+]] = phi float {{.*}}[ [[XF]], %
+// IR-NOT: fptrunc
+// IR-NOT: fpext
+// IR: [[S:%.+]] = fadd float {{.*}}[[XPHI]]{{(,|$)}}
+// IR-NOT: fptrunc
+// IR-NOT: fpext
+// IR: [[XN:%.+]] = fmul float {{.*}}[[S]]{{(,|$)}}
 // IR-NOT: fptrunc
 // IR-NOT: fpext
 // IR: br i1 {{.*}} !llvm.loop
-// IR: fpext float
+// IR-NOT: fptrunc
+// IR: fpext float [[XN]] to double
