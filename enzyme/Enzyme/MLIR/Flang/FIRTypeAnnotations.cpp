@@ -238,7 +238,7 @@ scalarType(Type ty, const DataLayout &dl) {
   return std::nullopt;
 }
 
-// The size in bytes of the types addLayout handles.
+/// The size in bytes of the types addLayout handles.
 static std::optional<int64_t> sizeOf(Type ty, const DataLayout &dl) {
   if (auto ct = dyn_cast<mlir::ComplexType>(ty)) {
     auto part = scalarType(ct.getElementType(), dl);
@@ -263,9 +263,9 @@ static std::optional<int64_t> sizeOf(Type ty, const DataLayout &dl) {
   return s ? std::optional<int64_t>(s->second) : std::nullopt;
 }
 
-// The one scalar type of all of a value of type `ty`, if it has one: of a
-// scalar, of an array of scalars, Integer for CHARACTER data. COMPLEX has
-// one too (both parts are the same).
+/// The one scalar type of all of a value of type `ty`, if it has one: of a
+/// scalar, of an array of scalars, Integer for CHARACTER data. COMPLEX has
+/// one too (both parts are the same).
 static std::optional<Scalar> uniformType(Type ty, const DataLayout &dl) {
   ty = fir::unwrapSequenceType(ty);
   if (isa<fir::CharacterType>(ty))
@@ -277,8 +277,8 @@ static std::optional<Scalar> uniformType(Type ty, const DataLayout &dl) {
   return std::nullopt;
 }
 
-// Add the scalar types of a value of type `ty` at `offset` to `layout`.
-// Arrays are expanded element by element up to `budget` entries.
+/// Add the scalar types of a value of type `ty` at `offset` to `layout`.
+/// Arrays are expanded element by element up to `budget` entries.
 static bool addLayout(Type ty, int64_t offset, const DataLayout &dl,
                       std::map<int64_t, Scalar> &layout, int64_t &budget) {
   if (auto ct = dyn_cast<mlir::ComplexType>(ty)) {
@@ -323,7 +323,7 @@ static bool addLayout(Type ty, int64_t offset, const DataLayout &dl,
   return --budget >= 0;
 }
 
-// The fir.global that `v` addresses, through converts and coordinates.
+/// The fir.global that `v` addresses, through converts and coordinates.
 static fir::GlobalOp getStorageGlobal(Value v, SymbolTable &symbols) {
   while (Operation *def = v.getDefiningOp()) {
     if (auto addr = dyn_cast<fir::AddrOfOp>(def))
@@ -337,8 +337,8 @@ static fir::GlobalOp getStorageGlobal(Value v, SymbolTable &symbols) {
   return {};
 }
 
-// The concrete type of the data of a FIR entity type: the element type of an
-// array, box, or address; Integer for character and logical data.
+/// The concrete type of the data of a FIR entity type: the element type of an
+/// array, box, or address; Integer for character and logical data.
 static std::optional<Scalar> dataType(Type ty, const DataLayout &dl) {
   ty = fir::unwrapPassByRefType(fir::unwrapRefType(ty));
   if (auto box = dyn_cast<fir::BaseBoxType>(ty))
@@ -370,10 +370,10 @@ static constexpr int kDescDims = 24;
 static constexpr int kDescDimFieldSize = 8;
 static constexpr int kDescDimFields = 3;
 
-// The type tree of a pointer argument whose FIR type (before the conversions
-// for the call) is `ty`, or null if there is nothing to add to the LLVM type.
-// A descriptor is typed field by field (all of them Integer but the base
-// address), with the type of the data its base address points to.
+/// The type tree of a pointer argument whose FIR type (before the conversions
+/// for the call) is `ty`, or null if there is nothing to add to the LLVM type.
+/// A descriptor is typed field by field (all of them Integer but the base
+/// address), with the type of the data its base address points to.
 static enzyme::TypeTreeAttr pointerArgType(Type ty, const DataLayout &dl,
                                            bool descriptorData = true) {
   MLIRContext *ctx = ty.getContext();
@@ -417,13 +417,13 @@ static constexpr int64_t kMaxTypeOffset = 500;
 // all) stay unannotated, which keeps the attributes short.
 static constexpr int64_t kMaxTypeOffsetForArgs = 16;
 
-// Enzyme's TypeTree has no extent: a type at offset -1 of what a pointer
-// points to holds at every offset from it, also beyond the object it is
-// meant for. Data that may be part of a larger object of other types (a
-// component of a derived type, a member of a COMMON block or EQUIVALENCE
-// group, a dummy argument, whose actual may be any of these) is therefore
-// typed at its offsets one by one, if its size is known and within Enzyme's
-// type offsets, and not at all otherwise.
+/// Enzyme's TypeTree has no extent: a type at offset -1 of what a pointer
+/// points to holds at every offset from it, also beyond the object it is
+/// meant for. Data that may be part of a larger object of other types (a
+/// component of a derived type, a member of a COMMON block or EQUIVALENCE
+/// group, a dummy argument, whose actual may be any of these) is therefore
+/// typed at its offsets one by one, if its size is known and within Enzyme's
+/// type offsets, and not at all otherwise.
 static llvm::cl::opt<bool> annotateUnbounded(
     "enzyme-fir-arg-unbounded-types", llvm::cl::init(false),
     llvm::cl::desc("Type the data of array, CHARACTER and descriptor dummy "
@@ -431,8 +431,8 @@ static llvm::cl::opt<bool> annotateUnbounded(
                    "known (unsound if the actual argument is a component or "
                    "storage associated)"));
 
-// Type the data of `bytes` bytes (if known) of scalars `t` of `eleSize`
-// bytes, under `path`, of something that may be part of a larger object.
+/// Type the data of `bytes` bytes (if known) of scalars `t` of `eleSize`
+/// bytes, under `path`, of something that may be part of a larger object.
 static void addBoundedData(TypePaths &tree, std::vector<int> path,
                            const Scalar &t, int64_t eleSize,
                            std::optional<int64_t> bytes, bool unbounded) {
@@ -456,13 +456,13 @@ static Type originalType(Value v) {
   return v.getType();
 }
 
-// Whether the data that `v` (an address or a descriptor) refers to is a whole
-// object: a local or global variable, or an ALLOCATABLE's allocation, of
-// which no other data follows. Otherwise (a component, a member of a COMMON
-// block or EQUIVALENCE group, a dummy argument, a POINTER's target, ...) the
-// data may be part of a larger object of other types: MITgcm's
-// /EE_BUFFERS_GLOBAL/ holds a REAL*8 and a REAL*4 buffer, ICON's
-// phyProcGroup%grpName is a CHARACTER component followed by a descriptor.
+/// Whether the data that `v` (an address or a descriptor) refers to is a whole
+/// object: a local or global variable, or an ALLOCATABLE's allocation, of
+/// which no other data follows. Otherwise (a component, a member of a COMMON
+/// block or EQUIVALENCE group, a dummy argument, a POINTER's target, ...) the
+/// data may be part of a larger object of other types: MITgcm's
+/// /EE_BUFFERS_GLOBAL/ holds a REAL*8 and a REAL*4 buffer, ICON's
+/// phyProcGroup%grpName is a CHARACTER component followed by a descriptor.
 static bool wholeObject(Value v) {
   for (int depth = 0; v && depth < 64; ++depth) {
     Operation *def = v.getDefiningOp();
@@ -512,13 +512,13 @@ static llvm::cl::opt<bool> annotateDescriptorData(
                    "the data that descriptor arguments point to (a caller "
                    "may reuse one descriptor temporary for several types)"));
 
-// The type tree of a value of FIR type `ty` passed to or returned from a
-// procedure, in the encoding Enzyme.jl uses for its arguments, or null if
-// there is nothing certain to say. By reference, the pointee is laid out from
-// offset 0 ({[-1]:Pointer, [-1,0]:Float@double} for a REAL*8 scalar), an
-// array of scalars at every offset ([-1,-1]), a descriptor field by field
-// (as for runtime calls). Polymorphic and assumed-type/-rank entities, and
-// derived types, are left alone.
+/// The type tree of a value of FIR type `ty` passed to or returned from a
+/// procedure, in the encoding Enzyme.jl uses for its arguments, or null if
+/// there is nothing certain to say. By reference, the pointee is laid out from
+/// offset 0 ({[-1]:Pointer, [-1,0]:Float@double} for a REAL*8 scalar), an
+/// array of scalars at every offset ([-1,-1]), a descriptor field by field
+/// (as for runtime calls). Polymorphic and assumed-type/-rank entities, and
+/// derived types, are left alone.
 static enzyme::TypeTreeAttr procArgType(Type ty, const DataLayout &dl) {
   MLIRContext *ctx = ty.getContext();
   // By value: a scalar.
@@ -575,8 +575,8 @@ static enzyme::TypeTreeAttr procArgType(Type ty, const DataLayout &dl) {
 // stays unannotated rather than blowing up the metadata.
 static constexpr int64_t kLayoutBudget = 1 << 14;
 
-// What to annotate, each on its own (all of it with
-// -enzyme-fir-type-annotations, see FlangEnzymeMLIRPlugin.cpp).
+/// What to annotate, each on its own (all of it with
+/// -enzyme-fir-type-annotations, see FlangEnzymeMLIRPlugin.cpp).
 static llvm::cl::opt<bool> annotateLocalNumbers(
     "enzyme-fir-local-number-types", llvm::cl::init(true),
     llvm::cl::desc("With -enzyme-fir-local-types, also annotate local REAL, "
