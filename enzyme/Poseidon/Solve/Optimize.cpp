@@ -375,7 +375,8 @@ static bool collectFPCandidates(Session &S, Function &F, double errorTol,
                                    return tryReadProfIdxMetadata(&I, slot);
                                  });
 
-  buildSubgraphs(O, F, st.abstractMatmuls, st.valueToNodeMap, st.subgraphs);
+  buildSubgraphs(O, F, profile.map, st.abstractMatmuls, st.valueToNodeMap,
+                 st.subgraphs);
 
   // Profile read must happen before aggressive DCE as it requires gradients
   attachProfile(O, profile.map, st.valueToNodeMap, st.subgraphs);

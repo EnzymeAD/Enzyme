@@ -20,15 +20,19 @@
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/SmallString.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/IR/Constants.h"
+#include "llvm/IR/DebugInfoMetadata.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/Path.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <set>
 #include <string>
 
 using namespace llvm;
@@ -125,11 +129,54 @@ static std::string nodeDtype(Type *T, const char *unexpected) {
   llvm_unreachable(unexpected);
 }
 
+// Whether the profiling run executed `I`, an optimizable instruction of the
+// canonical clone.
+static bool executed(const Instruction &I, const ProfileMap &profileMap) {
+  size_t idx;
+  if (!tryReadProfIdxMetadata(&I, idx))
+    return true;
+  auto it = profileMap.find(idx);
+  return it != profileMap.end() && it->second.exec != 0;
+}
+
+// Names the operations of F the profiling run never executed, which are left
+// as written, by their source lines.
+static void reportUnexecuted(const Function &F,
+                             ArrayRef<const Instruction *> unexecuted) {
+  std::set<std::pair<std::string, unsigned>> lines;
+  for (const Instruction *I : unexecuted)
+    if (const DebugLoc &DL = I->getDebugLoc())
+      lines.insert({DL->getFilename().str(), DL.getLine()});
+  llvm::errs() << "[poseidon] " << F.getName() << ": " << unexecuted.size()
+               << " floating-point operation(s) the profiling run never "
+                  "executed are left as written (";
+  if (lines.empty())
+    llvm::errs() << "no source location";
+  ListSeparator sep;
+  for (const auto &[file, line] : lines)
+    llvm::errs() << sep << sys::path::filename(file) << ':' << line;
+  llvm::errs() << "): no profile gives their ranges, cost or error, so the "
+                  "subgraphs of the executed operations end at them and the "
+                  "error a rewrite of those passes on to them is not "
+                  "modelled\n";
+}
+
 void buildSubgraphs(
-    const Options &O, Function &F,
+    const Options &O, Function &F, const ProfileMap &profileMap,
     const SmallVectorImpl<AbstractMatmul> &abstractMatmuls,
     std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     SmallVectorImpl<Subgraph> &subgraphs) {
+  // Under loose coverage an operation the run never executed is left as
+  // written, as an unexecuted matrix product is: the profile gives it no range,
+  // which would leave its whole subgraph unpriced. What an executed operation
+  // reads was computed on the way to it, so an unexecuted one only ever ends a
+  // subgraph as the user of its outputs.
+  auto inSubgraph = [&](const Value &V) {
+    return isOptimizable(V) &&
+           (!O.Profiling.LooseCoverage ||
+            executed(cast<Instruction>(V), profileMap));
+  };
+  SmallVector<const Instruction *, 8> unexecuted;
   SmallPtrSet<Instruction *, 32> reductionFMAs;
   if (O.Candidates.ReductionSubgraphs)
     for (const auto &am : abstractMatmuls)
@@ -207,8 +254,10 @@ void buildSubgraphs(
   SmallSet<Value *, 8> processed;
   for (auto &BB : F) {
     for (auto &I : BB) {
-      if (!isOptimizable(I)) {
-        if (O.Diagnostics.Print)
+      if (!inSubgraph(I)) {
+        if (isOptimizable(I))
+          unexecuted.push_back(&I);
+        else if (O.Diagnostics.Print)
           llvm::errs() << "Skipping non-isOptimizable instruction: " << I
                        << '\n';
         continue;
@@ -254,7 +303,7 @@ void buildSubgraphs(
             isa<CallInst>(I2) ? cast<CallInst>(I2)->args() : I2->operands();
 
         for (const auto &operand : operands) {
-          if (!isOptimizable(*operand)) {
+          if (!inSubgraph(*operand)) {
             if (O.Diagnostics.Print)
               llvm::errs() << "Non-isOptimizable input found: " << *operand
                            << '\n';
@@ -271,7 +320,7 @@ void buildSubgraphs(
 
         for (auto U : I2->users()) {
           if (auto I3 = dyn_cast<Instruction>(U)) {
-            if (!isOptimizable(*I3)) {
+            if (!inSubgraph(*I3)) {
               if (O.Diagnostics.Print)
                 llvm::errs() << "Output instruction found: " << *I2 << '\n';
               output_seen.insert(I2);
@@ -321,6 +370,9 @@ void buildSubgraphs(
       }
     }
   }
+
+  if (!unexecuted.empty())
+    reportUnexecuted(F, unexecuted);
 
   if (O.Diagnostics.Print) {
     llvm::errs() << "[poseidon] Found " << subgraphs.size()
@@ -381,20 +433,12 @@ void attachProfile(
               }
             }
           } else {
-            if (!O.Profiling.LooseCoverage) {
-              llvm::errs() << "FP Instruction " << *op
-                           << " has no execution logged (idx=" << idx << ")!\n";
-              report_fatal_error("Unexecuted instruction found; set "
-                                 "-poseidon-loose-coverage "
-                                 "to suppress this error\n");
-            }
-            auto node = valueToNodeMap[op];
-            node->sens = 0;
-            node->grad = 0;
-            node->executions = 0;
-            if (O.Diagnostics.Print)
-              llvm::errs() << "Sensitivity/gradient/executions of " << *op
-                           << " not found in the log; using 0 for all\n";
+            // Under loose coverage buildSubgraphs left the operation out.
+            reportUserError(*op, "the profile does not cover this operation: "
+                                 "the profiling run never executed it. "
+                                 "Profile an input that runs it, or pass "
+                                 "-poseidon-loose-coverage to leave it as "
+                                 "written.");
           }
         }
       }

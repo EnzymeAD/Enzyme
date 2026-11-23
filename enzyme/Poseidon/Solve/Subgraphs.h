@@ -37,9 +37,10 @@ struct Options;
 struct AbstractMatmul;
 
 // The FP subgraphs of F, flood-filled over its optimizable instructions, and
-// a node for every value they read or compute.
+// a node for every value they read or compute. Under loose coverage the
+// instructions `profileMap` records no execution of are in no subgraph.
 void buildSubgraphs(
-    const Options &O, llvm::Function &F,
+    const Options &O, llvm::Function &F, const ProfileMap &profileMap,
     const llvm::SmallVectorImpl<AbstractMatmul> &abstractMatmuls,
     std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
     llvm::SmallVectorImpl<Subgraph> &subgraphs);
