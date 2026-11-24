@@ -51,6 +51,8 @@ namespace mlir::poseidon {
 using namespace mlir;
 
 #define DEBUG_TYPE "poseidon-rewrite"
+// Debug output, each line marked as this pass's.
+#define DBGS() (llvm::dbgs() << "[" DEBUG_TYPE "] ")
 
 namespace {
 
@@ -591,12 +593,12 @@ struct PoseidonRewrite
                                 Value output) const {
     auto it = known.find(name);
     if (it == known.end()) {
-      LLVM_DEBUG(llvm::dbgs() << name << ": Herbie has no result\n");
+      LLVM_DEBUG(DBGS() << name << ": Herbie has no result\n");
       return std::nullopt;
     }
     const poseidon::HerbieAnswer &answer = it->second;
-    LLVM_DEBUG(llvm::dbgs()
-               << name << ": Herbie's status " << answer.status << ", "
+    LLVM_DEBUG(
+        DBGS() << name << ": Herbie's status " << answer.status << ", "
                << answer.candidates.size() << " candidate(s), original error "
                << llvm::format("%g", answer.initialErrorBits) << " bits\n");
 
@@ -612,19 +614,16 @@ struct PoseidonRewrite
           poseidon::parseHerbieExpr(candidate.expr, why);
       llvm::raw_string_ostream whyOS(why);
       bool canBuild = expr && succeeded(builder.canBuild(*expr, whyOS));
-      LLVM_DEBUG({
-        llvm::dbgs() << "  " << llvm::format("%g", candidate.errorBits)
-                     << " bits, cost " << llvm::format("%g", candidate.cost)
-                     << ": " << candidate.expr;
-        if (!canBuild)
-          llvm::dbgs() << " [cannot build: " << why << "]";
-        llvm::dbgs() << "\n";
-      });
+      LLVM_DEBUG(DBGS() << "  " << llvm::format("%g", candidate.errorBits)
+                        << " bits, cost " << llvm::format("%g", candidate.cost)
+                        << ": " << candidate.expr
+                        << (canBuild ? "" : " [cannot build: " + why + "]")
+                        << "\n");
       if (canBuild)
         buildable.push_back(std::move(*expr));
     }
     if (buildable.empty()) {
-      LLVM_DEBUG(llvm::dbgs() << "  no candidate can be built; left as is\n");
+      LLVM_DEBUG(DBGS() << "  no candidate can be built; left as is\n");
       return std::nullopt;
     }
 
@@ -635,11 +634,8 @@ struct PoseidonRewrite
     // the choice is the same with any standard library.
     std::mt19937_64 rng(seed ^ llvm::xxh3_64bits(name));
     size_t pick = rng() % buildable.size();
-    LLVM_DEBUG({
-      llvm::dbgs() << "  chose ";
-      buildable[pick].print(llvm::dbgs());
-      llvm::dbgs() << "\n";
-    });
+    LLVM_DEBUG(buildable[pick].print(DBGS() << "  chose "));
+    LLVM_DEBUG(llvm::dbgs() << "\n");
     return Rewrite{output, std::move(buildable[pick]), std::move(inputs)};
   }
 
