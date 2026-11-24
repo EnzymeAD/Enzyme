@@ -575,9 +575,9 @@ Function *canonicalize(Function &F) {
     CloneFunctionInto(NewF, &F, VMap, CloneFunctionChangeType::LocalChangesOnly,
                       Returns, "", nullptr);
 
+  // The clone ships, so it may promise no more than the original: a body that
+  // can call exit() or spin forever is neither willreturn nor mustprogress.
   NewF->setAttributes(F.getAttributes());
-  NewF->addFnAttr(Attribute::WillReturn);
-  NewF->addFnAttr(Attribute::MustProgress);
   setFullWillReturn(NewF);
 
   CanonicalizeAnalyses A(NewF->getContext());
