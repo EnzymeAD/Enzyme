@@ -4895,6 +4895,9 @@ Constant *GradientUtils::GetOrCreateShadowConstant(
     if (arg->isConstant() || arg->hasInternalLinkage() ||
         arg->hasPrivateLinkage() ||
         (arg->hasExternalLinkage() && arg->hasInitializer())) {
+      if (width != 1)
+        report_fatal_error("cannot create the shadow global of a constant "
+                           "at vector width greater than 1");
       Type *type = arg->getValueType();
       auto shadow = new GlobalVariable(
           *arg->getParent(), type, arg->isConstant(), arg->getLinkage(),
@@ -4910,8 +4913,7 @@ Constant *GradientUtils::GetOrCreateShadowConstant(
         shadow->setInitializer(GetOrCreateShadowConstant(
             context, Logic, TLI, TA, cast<Constant>(arg->getOperand(0)), mode,
             runtimeActivity, strongZero, width, AtomicAdd));
-      if (width == 1)
-        Logic.replaceLocalGlobalShadows(arg, {shadow});
+      Logic.replaceLocalGlobalShadows(arg, {shadow});
       return shadow;
     }
   }
