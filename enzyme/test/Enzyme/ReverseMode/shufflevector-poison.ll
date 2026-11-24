@@ -8,7 +8,7 @@ declare { <2 x double>, <2 x double> } @__enzyme_autodiff(...)
 
 define double @tester(<2 x double> %x, <2 x double> %y) {
 entry:
-  %r = shufflevector <2 x double> %x, <2 x double> %y, <3 x i32> <i32 0, i32 poison, i32 3>
+  %r = shufflevector <2 x double> %x, <2 x double> %y, <3 x i32> <i32 1, i32 poison, i32 3>
   %a = extractelement <3 x double> %r, i32 0
   %b = extractelement <3 x double> %r, i32 2
   %s = fadd double %a, %b
@@ -24,10 +24,13 @@ entry:
 ; CHECK-LABEL: define internal { <2 x double>, <2 x double> } @diffetester(<2 x double> %x, <2 x double> %y, double %differeturn)
 ; CHECK:         %[[dr:.+]] = load <3 x double>, {{.*}}%"r'de"
 ; CHECK-NEXT:    %[[d0:.+]] = extractelement <3 x double> %[[dr]], i64 0
-; CHECK-NOT:     extractelement <3 x double> %[[dr]], i64 1
-; CHECK-NOT:     i32 -3
-; CHECK:         %[[d2:.+]] = extractelement <3 x double> %[[dr]], i64 2
+; CHECK-NEXT:    %[[xp:.+]] = getelementptr inbounds <2 x double>, {{.*}}%"x'de", i32 0, i32 1
+; CHECK-NEXT:    %[[xv:.+]] = load double, {{.*}}%[[xp]]
+; CHECK-NEXT:    %[[xa:.+]] = fadd fast double %[[xv]], %[[d0]]
+; CHECK-NEXT:    store double %[[xa]], {{.*}}%[[xp]]
+; CHECK-NEXT:    %[[d2:.+]] = extractelement <3 x double> %[[dr]], i64 2
 ; CHECK-NEXT:    %[[yp:.+]] = getelementptr inbounds <2 x double>, {{.*}}%"y'de", i32 0, i32 1
 ; CHECK-NEXT:    %[[yv:.+]] = load double, {{.*}}%[[yp]]
 ; CHECK-NEXT:    %[[ya:.+]] = fadd fast double %[[yv]], %[[d2]]
 ; CHECK-NEXT:    store double %[[ya]], {{.*}}%[[yp]]
+; CHECK-NEXT:    store <3 x double> zeroinitializer, {{.*}}%"r'de"
