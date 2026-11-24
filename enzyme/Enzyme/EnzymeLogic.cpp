@@ -6999,8 +6999,35 @@ llvm::Function *EnzymeLogic::CreateNoFree(RequestContext context, Function *F) {
   return NewF;
 }
 
+void EnzymeLogic::replaceLocalGlobalShadows(GlobalVariable *Global,
+                                            ArrayRef<Constant *> Shadows) {
+  auto Found = LocalGlobalShadows.find(Global);
+  if (Found == LocalGlobalShadows.end())
+    return;
+  for (LocalGlobalShadow &Local : Found->second) {
+    assert(Local.Lane < Shadows.size());
+    // The shadow global accumulates derivatives across functions and calls,
+    // so it must not be zeroed where the local shadow was.
+    if (auto *Init =
+            dyn_cast_or_null<CallInst>(static_cast<Value *>(Local.Init))) {
+      Value *Dest = Init->getArgOperand(0);
+      Init->eraseFromParent();
+      if (auto *Cast = dyn_cast<BitCastInst>(Dest))
+        if (Cast->use_empty())
+          Cast->eraseFromParent();
+    }
+    // The alloca itself is left for later cleanup, since its function may
+    // still be being differentiated.
+    if (auto *Alloca =
+            dyn_cast_or_null<AllocaInst>(static_cast<Value *>(Local.Shadow)))
+      Alloca->replaceAllUsesWith(Shadows[Local.Lane]);
+  }
+  LocalGlobalShadows.erase(Found);
+}
+
 void EnzymeLogic::clear() {
   PPC.clear();
+  LocalGlobalShadows.clear();
   AugmentedCachedFunctions.clear();
   ReverseCachedFunctions.clear();
   NoFreeCachedFunctions.clear();
