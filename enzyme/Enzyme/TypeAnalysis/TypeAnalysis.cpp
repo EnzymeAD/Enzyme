@@ -964,6 +964,24 @@ void getConstantAnalysis(Constant *Val, TypeAnalyzer &TA,
       analysis[Val] = T;
       return;
     }
+
+    // LLVM flang gives each variable of a single floating-point type
+    // (@_QM<module>E<name>, @_QF<procedure>E<name>) a global of that type or
+    // of (nested) arrays of it. Storage that may hold several types, such as an
+    // EQUIVALENCE group or a COMMON block, is a byte array instead.
+    if (startsWith(GV->getName(), "_Q") && !startsWith(GV->getName(), "_QQ")) {
+      Type *ElementType = GV->getValueType();
+      while (auto AT = dyn_cast<ArrayType>(ElementType))
+        ElementType = AT->getElementType();
+      if (ElementType->isFloatingPointTy()) {
+        TypeTree T;
+        T.insert({-1}, BaseType::Pointer);
+        T.insert({-1, -1}, ConcreteType(ElementType));
+        analysis[Val] = T;
+        return;
+      }
+    }
+
     // A fixed constant global is a pointer to its initializer
     if (GV->isConstant() && GV->hasInitializer()) {
       // Record that this global is a pointer before analyzing its initializer.
