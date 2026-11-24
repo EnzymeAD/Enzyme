@@ -12,11 +12,11 @@ module {
   func.func @hmc(%rng : tensor<2xui64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> (tensor<10x1xf64>, tensor<10x2xi1>, tensor<10xf64>, tensor<2xui64>) {
     %init_trace = arith.constant dense<[[0.0]]> : tensor<1x1xf64>
     %step_size = arith.constant dense<0.1> : tensor<f64>
-    %res:9 = impulse.infer @test(%rng, %mean, %stddev) given %init_trace
-      step_size = %step_size
+    %res:4 = impulse.infer @test(%rng, %mean, %stddev) given %init_trace
+      init_step_size = %step_size
       <{ hmc_config = #impulse.hmc_config<trajectory_length = 1.0>,
         name = "hmc", selection = [[#impulse.symbol<1>]], all_addresses = [[#impulse.symbol<1>]], num_warmup = 0, num_samples = 10 }>
-      : (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<1x1xf64>, tensor<f64>) -> (tensor<10x1xf64>, tensor<10x2xi1>, tensor<10xf64>, tensor<2xui64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<f64>, tensor<1x1xf64>)
+      : (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<1x1xf64>, tensor<f64>) -> (tensor<10x1xf64>, tensor<10x2xi1>, tensor<10xf64>, tensor<2xui64>)
     return %res#0, %res#1, %res#2, %res#3 : tensor<10x1xf64>, tensor<10x2xi1>, tensor<10xf64>, tensor<2xui64>
   }
 }
@@ -39,8 +39,8 @@ module {
 // CHECK-DAG: %[[INIT_TRACE:.+]] = arith.constant dense<0.000000e+00> : tensor<1x1xf64>
 //
 // --- RNG splits ---
-// CHECK: %[[SPLIT1:.+]]:2 = impulse.randomSplit %[[RNG]] : (tensor<2xui64>) -> (tensor<2xui64>, tensor<2xui64>)
-// CHECK-NEXT: %[[SPLIT2:.+]]:3 = impulse.randomSplit %[[SPLIT1]]#0 : (tensor<2xui64>) -> (tensor<2xui64>, tensor<2xui64>, tensor<2xui64>)
+// CHECK: %[[SPLIT1:.+]]:2 = impulse.random_split %[[RNG]] : (tensor<2xui64>) -> (tensor<2xui64>, tensor<2xui64>)
+// CHECK-NEXT: %[[SPLIT2:.+]]:3 = impulse.random_split %[[SPLIT1]]#0 : (tensor<2xui64>) -> (tensor<2xui64>, tensor<2xui64>, tensor<2xui64>)
 //
 // --- Extract initial position from trace tensor ---
 // CHECK-NEXT: %[[Q0_SLICE:.+]] = impulse.dynamic_slice %[[INIT_TRACE]], %[[C0]], %[[C0]] <slice_sizes = [1, 1]> : (tensor<1x1xf64>, tensor<i64>, tensor<i64>) -> tensor<1x1xf64>
@@ -67,8 +67,8 @@ module {
 // CHECK-NEXT: ^bb0(%[[ITER:.+]]: tensor<i64>, %[[Q:.+]]: tensor<1x1xf64>, %[[GRAD:.+]]: tensor<1x1xf64>, %[[U:.+]]: tensor<f64>, %[[RNG_I:.+]]: tensor<2xui64>, %[[SAMP_BUF:.+]]: tensor<10x1xf64>, %[[DIAG_BUF:.+]]: tensor<10x2xi1>, %[[LD_BUF:.+]]: tensor<10xf64>):
 //
 // --- Sample momentum p ~ N(0, I) ---
-// CHECK-NEXT: %[[RNG_S:.+]]:3 = impulse.randomSplit %[[RNG_I]] : (tensor<2xui64>) -> (tensor<2xui64>, tensor<2xui64>, tensor<2xui64>)
-// CHECK-NEXT: %[[RNG_M:.+]]:2 = impulse.randomSplit %[[RNG_S]]#1 : (tensor<2xui64>) -> (tensor<2xui64>, tensor<2xui64>)
+// CHECK-NEXT: %[[RNG_S:.+]]:3 = impulse.random_split %[[RNG_I]] : (tensor<2xui64>) -> (tensor<2xui64>, tensor<2xui64>, tensor<2xui64>)
+// CHECK-NEXT: %[[RNG_M:.+]]:2 = impulse.random_split %[[RNG_S]]#1 : (tensor<2xui64>) -> (tensor<2xui64>, tensor<2xui64>)
 // CHECK-NEXT: %[[RNG_P:.+]], %[[P:.+]] = impulse.random %[[RNG_M]]#0, %[[ZERO_F]], %[[ONE]] <rng_distribution = NORMAL> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<1x1xf64>)
 //
 // --- Transform momentum by mass matrix sqrt: p_transformed = massMatrixSqrt @ p ---

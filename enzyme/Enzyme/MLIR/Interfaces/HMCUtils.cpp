@@ -12,9 +12,11 @@
 
 #include "Dialect/Impulse/Impulse.h"
 #include "Dialect/Ops.h"
+#include "Interfaces/DistBuilder.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Math/IR/Math.h"
+#include "mlir/IR/IRMapping.h"
 
 #include <cmath>
 #include <limits>
@@ -130,16 +132,14 @@ static Value reverseRowsAndColumns(OpBuilder &builder, Location loc,
   auto P = createPermutationMatrix(builder, loc, matrixType);
 
   // PA = P @ A
-  auto PA = impulse::DotOp::create(
-      builder, loc, matrixType, P, matrix, builder.getDenseI64ArrayAttr({}),
-      builder.getDenseI64ArrayAttr({}), builder.getDenseI64ArrayAttr({1}),
-      builder.getDenseI64ArrayAttr({0}));
+  auto PA = impulse::DotOp::create(builder, loc, matrixType, P, matrix,
+                                   builder.getDenseI64ArrayAttr({1}),
+                                   builder.getDenseI64ArrayAttr({0}));
 
   // PAP = PA @ P
-  return impulse::DotOp::create(
-      builder, loc, matrixType, PA, P, builder.getDenseI64ArrayAttr({}),
-      builder.getDenseI64ArrayAttr({}), builder.getDenseI64ArrayAttr({1}),
-      builder.getDenseI64ArrayAttr({0}));
+  return impulse::DotOp::create(builder, loc, matrixType, PA, P,
+                                builder.getDenseI64ArrayAttr({1}),
+                                builder.getDenseI64ArrayAttr({0}));
 }
 
 Value impulse::applyInverseMassMatrix(OpBuilder &builder, Location loc,
@@ -158,10 +158,9 @@ Value impulse::applyInverseMassMatrix(OpBuilder &builder, Location loc,
     return arith::MulFOp::create(builder, loc, diagMass, momentum);
   } else if (invMassType.getRank() == 2) {
     // Dense: v = invMass @ p
-    return impulse::DotOp::create(
-        builder, loc, positionType, momentum, invMass,
-        builder.getDenseI64ArrayAttr({}), builder.getDenseI64ArrayAttr({}),
-        builder.getDenseI64ArrayAttr({1}), builder.getDenseI64ArrayAttr({0}));
+    return impulse::DotOp::create(builder, loc, positionType, momentum, invMass,
+                                  builder.getDenseI64ArrayAttr({1}),
+                                  builder.getDenseI64ArrayAttr({0}));
   }
 
   emitError(loc, "ProbProg: Provided invMass must have rank 1 or 2, got rank " +
@@ -185,10 +184,9 @@ Value impulse::computeKineticEnergy(OpBuilder &builder, Location loc,
 
   // K = 0.5 * p^T @ v
   // For 2D tensors [1, N], contract over both dimensions to get scalar
-  auto pDotV = impulse::DotOp::create(
-      builder, loc, scalarType, momentum, v, builder.getDenseI64ArrayAttr({}),
-      builder.getDenseI64ArrayAttr({}), builder.getDenseI64ArrayAttr({0, 1}),
-      builder.getDenseI64ArrayAttr({0, 1}));
+  auto pDotV = impulse::DotOp::create(builder, loc, scalarType, momentum, v,
+                                      builder.getDenseI64ArrayAttr({0, 1}),
+                                      builder.getDenseI64ArrayAttr({0, 1}));
 
   return arith::MulFOp::create(builder, loc, halfConst, pDotV);
 }
@@ -278,7 +276,6 @@ impulse::sampleMomentum(OpBuilder &builder, Location loc, Value rng,
     // Dense: p = massMatrixSqrt @ eps
     auto p = impulse::DotOp::create(
         builder, loc, positionType, eps, massMatrixSqrt,
-        builder.getDenseI64ArrayAttr({}), builder.getDenseI64ArrayAttr({}),
         builder.getDenseI64ArrayAttr({1}), builder.getDenseI64ArrayAttr({1}));
     return {p, rngOut};
   }
@@ -322,7 +319,11 @@ static Value gatherPositionFromTrace(OpBuilder &builder, Location loc,
                                      Value fullTrace, const HMCContext &ctx) {
   auto elemType =
       cast<RankedTensorType>(ctx.stepSize.getType()).getElementType();
-  auto positionType2d = RankedTensorType::get({1, ctx.positionSize}, elemType);
+  // Constrained width, which differs from positionSize for SIMPLEX.
+  int64_t constrainedSize = 0;
+  for (const auto &info : ctx.supports)
+    constrainedSize += info.size;
+  auto positionType2d = RankedTensorType::get({1, constrainedSize}, elemType);
   auto i64TensorType = RankedTensorType::get({}, builder.getI64Type());
   auto c0 = arith::ConstantOp::create(
       builder, loc, i64TensorType,
@@ -355,6 +356,54 @@ static Value gatherPositionFromTrace(OpBuilder &builder, Location loc,
   return result;
 }
 
+/// Values captured from above the `infer_region` op are sample-invariant.
+static Value cloneLogpdfRegionAt(OpBuilder &builder, Location loc,
+                                 Value qConstrained, const HMCContext &ctx) {
+  Block &lpBlock = ctx.logpdfRegion->front();
+  auto elemType = ctx.getElementType();
+
+  IRMapping mapping;
+  int64_t offset = 0;
+  for (BlockArgument arg : lpBlock.getArguments()) {
+    auto argType = cast<RankedTensorType>(arg.getType());
+    int64_t numElements = argType.getNumElements();
+    auto sliceType = RankedTensorType::get({1, numElements}, elemType);
+    Value slice = impulse::SliceOp::create(
+        builder, loc, sliceType, qConstrained,
+        builder.getDenseI64ArrayAttr({0, offset}),
+        builder.getDenseI64ArrayAttr({1, offset + numElements}),
+        builder.getDenseI64ArrayAttr({1, 1}));
+    Value component = impulse::ReshapeOp::create(builder, loc, argType, slice);
+    mapping.map(arg, component);
+    offset += numElements;
+  }
+
+  for (Operation &op : lpBlock.without_terminator())
+    builder.clone(op, mapping);
+  return mapping.lookupOrDefault(lpBlock.getTerminator()->getOperand(0));
+}
+
+/// Inlined: Enzyme's func.call adjoint re-runs the callee's forward pass.
+static Value emitLogpdfFnInAutodiff(OpBuilder &builder, Location loc,
+                                    Value position, const HMCContext &ctx) {
+  SmallVector<Value> args{position};
+  args.append(ctx.fnInputs.begin(), ctx.fnInputs.end());
+  auto fn = SymbolTable::lookupNearestSymbolFrom<FunctionOpInterface>(
+      builder.getInsertionBlock()->getParentOp(), ctx.logpdfFn);
+  if (!fn || !llvm::hasSingleElement(fn.getFunctionBody())) {
+    auto callOp = func::CallOp::create(builder, loc, ctx.logpdfFn,
+                                       TypeRange{ctx.getScalarType()}, args);
+    return callOp.getResult(0);
+  }
+
+  Block &entry = fn.getFunctionBody().front();
+  IRMapping mapping;
+  mapping.map(entry.getArguments(), args);
+  for (Operation &op : entry.without_terminator())
+    builder.clone(op, mapping);
+  return mapping.lookupOrDefault(entry.getTerminator()->getOperand(0));
+}
+
 GradientResult impulse::computePotentialAndGradient(OpBuilder &builder,
                                                     Location loc,
                                                     Value position, Value rng,
@@ -368,11 +417,12 @@ GradientResult impulse::computePotentialAndGradient(OpBuilder &builder,
       DenseElementsAttr::get(scalarType, builder.getFloatAttr(elemType, 1.0)));
 
   bool isCustomLogpdf = ctx.hasCustomLogpdf();
+  bool useSymbol = isCustomLogpdf && !ctx.hasLogpdfRegion();
   auto flatType = RankedTensorType::get({ctx.positionSize}, elemType);
   Value autodiffPosition = position;
   auto autodiffPositionType = positionType;
   auto autodiffGradType = positionType;
-  if (isCustomLogpdf) {
+  if (useSymbol) {
     autodiffPosition =
         impulse::ReshapeOp::create(builder, loc, flatType, position);
     autodiffPositionType = flatType;
@@ -407,13 +457,19 @@ GradientResult impulse::computePotentialAndGradient(OpBuilder &builder,
   builder.setInsertionPointToStart(autodiffBlock);
   Value qArg = autodiffBlock->getArgument(0);
 
-  if (isCustomLogpdf) {
-    SmallVector<Value> callArgs;
-    callArgs.push_back(qArg);
-    callArgs.append(ctx.fnInputs.begin(), ctx.fnInputs.end());
-    auto callOp = func::CallOp::create(builder, loc, ctx.logpdfFn,
-                                       TypeRange{scalarType}, callArgs);
-    Value U = arith::NegFOp::create(builder, loc, callOp.getResult(0));
+  if (ctx.hasLogpdfRegion()) {
+    // `supports` is empty in logpdf mode; that logpdf has its own Jacobians.
+    Value q_constrained = constrainPosition(builder, loc, qArg, ctx.supports);
+    Value logDensity = cloneLogpdfRegionAt(builder, loc, q_constrained, ctx);
+    Value negWeight = arith::NegFOp::create(builder, loc, logDensity);
+    Value jacobianCorrection =
+        computeTotalJacobianCorrection(builder, loc, qArg, ctx.supports);
+    Value U =
+        arith::SubFOp::create(builder, loc, negWeight, jacobianCorrection);
+    enzyme::YieldOp::create(builder, loc, ValueRange{U, rng});
+  } else if (isCustomLogpdf) {
+    Value logDensity = emitLogpdfFnInAutodiff(builder, loc, qArg, ctx);
+    Value U = arith::NegFOp::create(builder, loc, logDensity);
     // TODO(#2695): handle hybrid case
     enzyme::YieldOp::create(builder, loc, {U, rng});
   } else {
@@ -452,7 +508,7 @@ GradientResult impulse::computePotentialAndGradient(OpBuilder &builder,
   builder.setInsertionPointAfter(autodiffOp);
 
   Value grad = autodiffOp.getResult(2);
-  if (isCustomLogpdf) {
+  if (useSymbol) {
     grad = impulse::ReshapeOp::create(builder, loc, positionType, grad);
   }
 
@@ -540,16 +596,14 @@ Value impulse::checkTurning(OpBuilder &builder, Location loc, Value pLeft,
       arith::MulFOp::create(builder, loc, halfBroadcast, pLeftPlusPRight);
   Value pSumCentered = arith::SubFOp::create(builder, loc, pSum, halfSum);
 
-  auto leftAngle = impulse::DotOp::create(
-      builder, loc, scalarType, vLeft, pSumCentered,
-      builder.getDenseI64ArrayAttr({}), builder.getDenseI64ArrayAttr({}),
-      builder.getDenseI64ArrayAttr({0, 1}),
-      builder.getDenseI64ArrayAttr({0, 1}));
-  auto rightAngle = impulse::DotOp::create(
-      builder, loc, scalarType, vRight, pSumCentered,
-      builder.getDenseI64ArrayAttr({}), builder.getDenseI64ArrayAttr({}),
-      builder.getDenseI64ArrayAttr({0, 1}),
-      builder.getDenseI64ArrayAttr({0, 1}));
+  auto leftAngle =
+      impulse::DotOp::create(builder, loc, scalarType, vLeft, pSumCentered,
+                             builder.getDenseI64ArrayAttr({0, 1}),
+                             builder.getDenseI64ArrayAttr({0, 1}));
+  auto rightAngle =
+      impulse::DotOp::create(builder, loc, scalarType, vRight, pSumCentered,
+                             builder.getDenseI64ArrayAttr({0, 1}),
+                             builder.getDenseI64ArrayAttr({0, 1}));
 
   // turning = (left_angle <= 0) OR (right_angle <= 0)
   auto leftNeg = arith::CmpFOp::create(builder, loc, arith::CmpFPredicate::OLE,
@@ -624,8 +678,8 @@ NUTSTreeState impulse::combineTrees(OpBuilder &builder, Location loc,
       impulse::SelectOp::create(builder, loc, positionType, direction,
                                 subTree.grad_right, tree.grad_right);
 
-  auto combinedWeight = impulse::LogAddExpOp::create(
-      builder, loc, scalarType, tree.weight, subTree.weight);
+  auto combinedWeight =
+      impulse::emitLogAddExp(builder, loc, tree.weight, subTree.weight);
 
   // Compute transition probability
   Value transitionProb;
@@ -724,18 +778,24 @@ InitialHMCState impulse::InitHMC(OpBuilder &builder, Location loc, Value rng,
 
   if (ctx.hasCustomLogpdf()) {
     q0 = initialPosition;
-    auto flatType = RankedTensorType::get({ctx.positionSize}, elemType);
-    auto q0Flat = impulse::ReshapeOp::create(builder, loc, flatType, q0);
-    SmallVector<Value> callArgs;
-    callArgs.push_back(q0Flat);
-    callArgs.append(ctx.fnInputs.begin(), ctx.fnInputs.end());
-    auto callOp = func::CallOp::create(builder, loc, ctx.logpdfFn,
-                                       TypeRange{scalarType}, callArgs);
-    U0 = arith::NegFOp::create(builder, loc, callOp.getResult(0));
+    if (ctx.hasLogpdfRegion()) {
+      Value q0_constrained = constrainPosition(builder, loc, q0, ctx.supports);
+      Value weight0 = cloneLogpdfRegionAt(builder, loc, q0_constrained, ctx);
+      Value negWeight0 = arith::NegFOp::create(builder, loc, weight0);
+      Value jacobian0 =
+          computeTotalJacobianCorrection(builder, loc, q0, ctx.supports);
+      U0 = arith::SubFOp::create(builder, loc, negWeight0, jacobian0);
+    } else {
+      auto flatType = RankedTensorType::get({ctx.positionSize}, elemType);
+      auto q0Flat = impulse::ReshapeOp::create(builder, loc, flatType, q0);
+      SmallVector<Value> callArgs;
+      callArgs.push_back(q0Flat);
+      callArgs.append(ctx.fnInputs.begin(), ctx.fnInputs.end());
+      auto callOp = func::CallOp::create(builder, loc, ctx.logpdfFn,
+                                         TypeRange{scalarType}, callArgs);
+      U0 = arith::NegFOp::create(builder, loc, callOp.getResult(0));
+    }
   } else {
-    auto fullTraceType =
-        RankedTensorType::get({1, ctx.getFullTraceSize()}, elemType);
-
     // 1. Extract initial position vector (constrained)
     auto q0_constrained =
         gatherPositionFromTrace(builder, loc, ctx.originalTrace, ctx);
@@ -744,25 +804,32 @@ InitialHMCState impulse::InitHMC(OpBuilder &builder, Location loc, Value rng,
     q0 = unconstrainPosition(builder, loc, q0_constrained, ctx.supports);
 
     // 3. Compute initial potential energy: U0 = -weight + correction
-    Value fullTraceInit = scatterPositionToTrace(builder, loc, q0_constrained,
-                                                 ctx.originalTrace, ctx);
+    Value weight0;
+    if (ctx.hasLogpdfRegion()) {
+      weight0 = cloneLogpdfRegionAt(builder, loc, q0_constrained, ctx);
+    } else {
+      auto fullTraceType =
+          RankedTensorType::get({1, ctx.getFullTraceSize()}, elemType);
+      Value fullTraceInit = scatterPositionToTrace(builder, loc, q0_constrained,
+                                                   ctx.originalTrace, ctx);
 
-    SmallVector<Value> generateInputsInit;
-    generateInputsInit.push_back(rngForAutodiff);
-    generateInputsInit.append(ctx.fnInputs.begin(), ctx.fnInputs.end());
+      SmallVector<Value> generateInputsInit;
+      generateInputsInit.push_back(rngForAutodiff);
+      generateInputsInit.append(ctx.fnInputs.begin(), ctx.fnInputs.end());
 
-    SmallVector<Type> generateResultTypesInit;
-    generateResultTypesInit.push_back(fullTraceType);
-    generateResultTypesInit.push_back(scalarType);
-    generateResultTypesInit.append(ctx.fnResultTypes.begin(),
-                                   ctx.fnResultTypes.end());
+      SmallVector<Type> generateResultTypesInit;
+      generateResultTypesInit.push_back(fullTraceType);
+      generateResultTypesInit.push_back(scalarType);
+      generateResultTypesInit.append(ctx.fnResultTypes.begin(),
+                                     ctx.fnResultTypes.end());
 
-    auto generateOpInit = impulse::GenerateOp::create(
-        builder, loc, generateResultTypesInit, ctx.fn, generateInputsInit,
-        fullTraceInit, ctx.allAddresses, ctx.allAddresses,
-        builder.getStringAttr(""));
+      auto generateOpInit = impulse::GenerateOp::create(
+          builder, loc, generateResultTypesInit, ctx.fn, generateInputsInit,
+          fullTraceInit, ctx.allAddresses, ctx.allAddresses,
+          builder.getStringAttr(""));
 
-    auto weight0 = generateOpInit.getWeight();
+      weight0 = generateOpInit.getWeight();
+    }
     auto negWeight0 = arith::NegFOp::create(builder, loc, weight0);
     auto jacobian0 =
         computeTotalJacobianCorrection(builder, loc, q0, ctx.supports);
@@ -771,11 +838,12 @@ InitialHMCState impulse::InitHMC(OpBuilder &builder, Location loc, Value rng,
 
   // 4. Compute initial gradient at q0
   bool isCustomLogpdf = ctx.hasCustomLogpdf();
+  bool useSymbol = isCustomLogpdf && !ctx.hasLogpdfRegion();
   auto flatType = RankedTensorType::get({ctx.positionSize}, elemType);
   Value autodiffQ0 = q0;
   auto autodiffQ0Type = positionType;
   auto autodiffGradType = positionType;
-  if (isCustomLogpdf) {
+  if (useSymbol) {
     autodiffQ0 = impulse::ReshapeOp::create(builder, loc, flatType, q0);
     autodiffQ0Type = flatType;
     autodiffGradType = flatType;
@@ -813,14 +881,20 @@ InitialHMCState impulse::InitHMC(OpBuilder &builder, Location loc, Value rng,
   builder.setInsertionPointToStart(autodiffInitBlock);
   auto q0Arg = autodiffInitBlock->getArgument(0);
 
-  if (isCustomLogpdf) {
-    SmallVector<Value> callArgs;
-    callArgs.push_back(q0Arg);
-    callArgs.append(ctx.fnInputs.begin(), ctx.fnInputs.end());
-    auto callOpInner = func::CallOp::create(builder, loc, ctx.logpdfFn,
-                                            TypeRange{scalarType}, callArgs);
+  if (ctx.hasLogpdfRegion()) {
+    auto q0Arg_constrained =
+        constrainPosition(builder, loc, q0Arg, ctx.supports);
+    Value logDensityInit =
+        cloneLogpdfRegionAt(builder, loc, q0Arg_constrained, ctx);
+    auto negWeightInit = arith::NegFOp::create(builder, loc, logDensityInit);
+    auto jacobianInit =
+        computeTotalJacobianCorrection(builder, loc, q0Arg, ctx.supports);
     auto U0_init =
-        arith::NegFOp::create(builder, loc, callOpInner.getResult(0));
+        arith::SubFOp::create(builder, loc, negWeightInit, jacobianInit);
+    enzyme::YieldOp::create(builder, loc, ValueRange{U0_init, rngForAutodiff});
+  } else if (isCustomLogpdf) {
+    Value logDensityInit = emitLogpdfFnInAutodiff(builder, loc, q0Arg, ctx);
+    auto U0_init = arith::NegFOp::create(builder, loc, logDensityInit);
     enzyme::YieldOp::create(builder, loc, {U0_init, rngForAutodiff});
   } else {
     auto fullTraceType =
@@ -858,7 +932,7 @@ InitialHMCState impulse::InitHMC(OpBuilder &builder, Location loc, Value rng,
   builder.setInsertionPointAfter(autodiffInit);
 
   Value grad0 = autodiffInit.getResult(2);
-  if (isCustomLogpdf) {
+  if (useSymbol) {
     grad0 = impulse::ReshapeOp::create(builder, loc, positionType, grad0);
   }
 
@@ -877,13 +951,22 @@ MCMCKernelResult impulse::SampleHMC(OpBuilder &builder, Location loc, Value q,
   // 0. Compute num_steps and adjusted step_size
   // num_steps = ceil(trajectory_length / step_size)
   // adjusted_step_size = trajectory_length / num_steps
-  auto trajDivStep =
-      arith::DivFOp::create(builder, loc, ctx.trajectoryLength, ctx.stepSize);
-  auto numStepsF64 = math::CeilOp::create(builder, loc, trajDivStep);
-  auto numSteps =
-      arith::FPToSIOp::create(builder, loc, i64TensorType, numStepsF64);
-  auto adjustedStepSize =
-      arith::DivFOp::create(builder, loc, ctx.trajectoryLength, numStepsF64);
+  Value numSteps, adjustedStepSize;
+  if (ctx.numSteps > 0) {
+    numSteps = arith::ConstantOp::create(
+        builder, loc, i64TensorType,
+        DenseElementsAttr::get(i64TensorType,
+                               builder.getI64IntegerAttr(ctx.numSteps)));
+    adjustedStepSize = ctx.stepSize;
+  } else {
+    auto trajDivStep =
+        arith::DivFOp::create(builder, loc, ctx.trajectoryLength, ctx.stepSize);
+    auto numStepsF64 = math::CeilOp::create(builder, loc, trajDivStep);
+    numSteps =
+        arith::FPToSIOp::create(builder, loc, i64TensorType, numStepsF64);
+    adjustedStepSize =
+        arith::DivFOp::create(builder, loc, ctx.trajectoryLength, numStepsF64);
+  }
 
   auto adjustedCtx = ctx.withStepSize(adjustedStepSize);
 
@@ -897,6 +980,7 @@ MCMCKernelResult impulse::SampleHMC(OpBuilder &builder, Location loc, Value q,
 
   // 2. Sample fresh momentum p ~ N(0, M)
   Value rngForMomentum = rngMomentum;
+  // Logpdf mode skips this split for NumPyro RNG parity.
   if (!ctx.hasCustomLogpdf()) {
     auto momSplit = impulse::RandomSplitOp::create(
         builder, loc, TypeRange{rng.getType(), rng.getType()}, rngMomentum);
@@ -1026,6 +1110,7 @@ MCMCKernelResult impulse::SampleNUTS(OpBuilder &builder, Location loc, Value q,
 
   // 2. Sample fresh momentum p ~ N(0, M)
   Value rngForMomentum = rngMomentum;
+  // Logpdf mode skips this split for NumPyro RNG parity.
   if (!ctx.hasCustomLogpdf()) {
     auto momSplit = impulse::RandomSplitOp::create(
         builder, loc, TypeRange{rng.getType(), rng.getType()}, rngMomentum);
@@ -1492,8 +1577,7 @@ std::pair<Value, Value> impulse::leafIdxToCheckpointIdxs(OpBuilder &builder,
 
   // idx_max = popcount(leafIdx >> 1)
   auto shiftedIdx = arith::ShRUIOp::create(builder, loc, leafIdx, oneConst);
-  auto idxMax =
-      impulse::PopcountOp::create(builder, loc, i64TensorType, shiftedIdx);
+  auto idxMax = math::CtPopOp::create(builder, loc, shiftedIdx);
 
   // num_subtrees = popcount((~leafIdx & (leafIdx + 1)) - 1)
   auto leafIdxPlusOne = arith::AddIOp::create(builder, loc, leafIdx, oneConst);
@@ -1506,8 +1590,7 @@ std::pair<Value, Value> impulse::leafIdxToCheckpointIdxs(OpBuilder &builder,
   Value andResult =
       arith::AndIOp::create(builder, loc, notLeafIdx, leafIdxPlusOne);
   Value andMinusOne = arith::SubIOp::create(builder, loc, andResult, oneConst);
-  Value numSubtrees =
-      impulse::PopcountOp::create(builder, loc, i64TensorType, andMinusOne);
+  Value numSubtrees = math::CtPopOp::create(builder, loc, andMinusOne);
 
   // idx_min = idx_max - num_subtrees + 1
   Value idxMaxMinusNumSubtrees =
@@ -1645,8 +1728,7 @@ DualAveragingState impulse::initDualAveraging(OpBuilder &builder, Location loc,
   auto scalarType = RankedTensorType::get({}, elemType);
   auto i64TensorType = RankedTensorType::get({}, builder.getI64Type());
 
-  // prox_center: log(10 * step_size) at warmup start, or log(10) +
-  // log(step_size) at window-end re-inits
+  // The two forms round differently; each call site matches NumPyro bitwise.
   Value proxCenter;
   if (logOfProduct) {
     auto tenConst = arith::ConstantOp::create(
@@ -1854,8 +1936,6 @@ WelfordState impulse::updateWelford(OpBuilder &builder, Location loc,
     auto m2Type = cast<RankedTensorType>(state.m2.getType());
     Value outerProduct = impulse::DotOp::create(
         builder, loc, m2Type, deltaPost, deltaPre,
-        /*lhs_batching_dimensions=*/builder.getDenseI64ArrayAttr({}),
-        /*rhs_batching_dimensions=*/builder.getDenseI64ArrayAttr({}),
         /*lhs_contracting_dimensions=*/builder.getDenseI64ArrayAttr({}),
         /*rhs_contracting_dimensions=*/builder.getDenseI64ArrayAttr({}));
     m2New = arith::AddFOp::create(builder, loc, state.m2, outerProduct);
@@ -1994,9 +2074,12 @@ Value impulse::unconstrainPosition(OpBuilder &builder, Location loc,
 
   auto inputType = cast<RankedTensorType>(constrained.getType());
   auto elemType = inputType.getElementType();
-  int64_t positionSize = inputType.getShape()[1];
+  int64_t inSize = inputType.getShape()[1];
+  int64_t outSize = 0;
+  for (const auto &info : supports)
+    outSize += transforms::getUnconstrainedSize(info.size, info.support);
 
-  auto positionType1D = RankedTensorType::get({positionSize}, elemType);
+  auto positionType1D = RankedTensorType::get({inSize}, elemType);
   Value constrained1D =
       impulse::ReshapeOp::create(builder, loc, positionType1D, constrained);
 
@@ -2023,48 +2106,32 @@ Value impulse::unconstrainPosition(OpBuilder &builder, Location loc,
   if (slices.size() == 1) {
     result1D = slices[0];
   } else {
-    auto resultType1D = RankedTensorType::get({positionSize}, elemType);
+    auto resultType1D = RankedTensorType::get({outSize}, elemType);
     result1D = arith::ConstantOp::create(
         builder, loc, resultType1D,
         DenseElementsAttr::get(resultType1D,
                                builder.getFloatAttr(elemType, 0.0)));
 
+    // The slices tile [0, outSize) exactly, so the zero init is never read.
     auto i64ScalarType = RankedTensorType::get({}, builder.getI64Type());
-    auto elemType1DSlice = RankedTensorType::get({1}, elemType);
-    auto elemType0D = RankedTensorType::get({}, elemType);
     int64_t offset = 0;
     for (size_t i = 0; i < slices.size(); ++i) {
       auto sliceType = cast<RankedTensorType>(slices[i].getType());
       int64_t sliceSize = sliceType.getShape()[0];
 
-      for (int64_t j = 0; j < sliceSize; ++j) {
-        auto elemIdx = arith::ConstantOp::create(
-            builder, loc, i64ScalarType,
-            DenseElementsAttr::get(i64ScalarType,
-                                   builder.getI64IntegerAttr(j)));
-        auto resultIdx = arith::ConstantOp::create(
-            builder, loc, i64ScalarType,
-            DenseElementsAttr::get(i64ScalarType,
-                                   builder.getI64IntegerAttr(offset + j)));
-
-        auto elemSliced = impulse::DynamicSliceOp::create(
-            builder, loc, elemType1DSlice, slices[i], ValueRange{elemIdx},
-            builder.getDenseI64ArrayAttr({1}));
-        auto elem =
-            impulse::ReshapeOp::create(builder, loc, elemType0D, elemSliced);
-
-        auto resultSliced = impulse::ReshapeOp::create(
-            builder, loc, RankedTensorType::get({1}, elemType), elem);
-        result1D = impulse::DynamicUpdateSliceOp::create(
-            builder, loc, resultType1D, result1D, resultSliced,
-            ValueRange{resultIdx});
-      }
+      auto resultIdx = arith::ConstantOp::create(
+          builder, loc, i64ScalarType,
+          DenseElementsAttr::get(i64ScalarType,
+                                 builder.getI64IntegerAttr(offset)));
+      result1D = impulse::DynamicUpdateSliceOp::create(
+          builder, loc, resultType1D, result1D, slices[i],
+          ValueRange{resultIdx});
 
       offset += sliceSize;
     }
   }
 
-  auto resultType2D = RankedTensorType::get({1, positionSize}, elemType);
+  auto resultType2D = RankedTensorType::get({1, outSize}, elemType);
   return impulse::ReshapeOp::create(builder, loc, resultType2D, result1D);
 }
 
@@ -2083,19 +2150,23 @@ Value impulse::constrainPosition(OpBuilder &builder, Location loc,
 
   auto inputType = cast<RankedTensorType>(unconstrained.getType());
   auto elemType = inputType.getElementType();
-  int64_t positionSize = inputType.getShape()[1];
+  int64_t inSize = inputType.getShape()[1];
+  int64_t outSize = 0;
+  for (const auto &info : supports)
+    outSize += info.size;
 
-  auto positionType1D = RankedTensorType::get({positionSize}, elemType);
+  auto positionType1D = RankedTensorType::get({inSize}, elemType);
   Value unconstrained1D =
       impulse::ReshapeOp::create(builder, loc, positionType1D, unconstrained);
 
   SmallVector<Value> slices;
   for (const auto &info : supports) {
-    auto sliceType = RankedTensorType::get({info.size}, elemType);
+    auto sliceType = RankedTensorType::get({info.unconstrainedSize}, elemType);
     auto slice = impulse::SliceOp::create(
         builder, loc, sliceType, unconstrained1D,
-        builder.getDenseI64ArrayAttr({info.offset}),
-        builder.getDenseI64ArrayAttr({info.offset + info.size}),
+        builder.getDenseI64ArrayAttr({info.unconstrainedOffset}),
+        builder.getDenseI64ArrayAttr(
+            {info.unconstrainedOffset + info.unconstrainedSize}),
         builder.getDenseI64ArrayAttr({1}));
 
     Value constrainedSlice;
@@ -2113,48 +2184,31 @@ Value impulse::constrainPosition(OpBuilder &builder, Location loc,
   if (slices.size() == 1) {
     result1D = slices[0];
   } else {
-    auto resultType1D = RankedTensorType::get({positionSize}, elemType);
+    auto resultType1D = RankedTensorType::get({outSize}, elemType);
     result1D = arith::ConstantOp::create(
         builder, loc, resultType1D,
         DenseElementsAttr::get(resultType1D,
                                builder.getFloatAttr(elemType, 0.0)));
 
     auto i64ScalarType = RankedTensorType::get({}, builder.getI64Type());
-    auto elemType1DSlice = RankedTensorType::get({1}, elemType);
-    auto elemType0D = RankedTensorType::get({}, elemType);
     int64_t offset = 0;
     for (size_t i = 0; i < slices.size(); ++i) {
       auto sliceType = cast<RankedTensorType>(slices[i].getType());
       int64_t sliceSize = sliceType.getShape()[0];
 
-      for (int64_t j = 0; j < sliceSize; ++j) {
-        auto elemIdx = arith::ConstantOp::create(
-            builder, loc, i64ScalarType,
-            DenseElementsAttr::get(i64ScalarType,
-                                   builder.getI64IntegerAttr(j)));
-        auto resultIdx = arith::ConstantOp::create(
-            builder, loc, i64ScalarType,
-            DenseElementsAttr::get(i64ScalarType,
-                                   builder.getI64IntegerAttr(offset + j)));
-
-        auto elemSliced = impulse::DynamicSliceOp::create(
-            builder, loc, elemType1DSlice, slices[i], ValueRange{elemIdx},
-            builder.getDenseI64ArrayAttr({1}));
-        auto elem =
-            impulse::ReshapeOp::create(builder, loc, elemType0D, elemSliced);
-
-        auto resultSliced =
-            impulse::ReshapeOp::create(builder, loc, elemType1DSlice, elem);
-        result1D = impulse::DynamicUpdateSliceOp::create(
-            builder, loc, resultType1D, result1D, resultSliced,
-            ValueRange{resultIdx});
-      }
+      auto resultIdx = arith::ConstantOp::create(
+          builder, loc, i64ScalarType,
+          DenseElementsAttr::get(i64ScalarType,
+                                 builder.getI64IntegerAttr(offset)));
+      result1D = impulse::DynamicUpdateSliceOp::create(
+          builder, loc, resultType1D, result1D, slices[i],
+          ValueRange{resultIdx});
 
       offset += sliceSize;
     }
   }
 
-  auto resultType2D = RankedTensorType::get({1, positionSize}, elemType);
+  auto resultType2D = RankedTensorType::get({1, outSize}, elemType);
   return impulse::ReshapeOp::create(builder, loc, resultType2D, result1D);
 }
 
@@ -2181,11 +2235,12 @@ Value impulse::computeTotalJacobianCorrection(OpBuilder &builder, Location loc,
     if (!info.support || info.support.getKind() == impulse::SupportKind::REAL)
       continue;
 
-    auto sliceType = RankedTensorType::get({info.size}, elemType);
+    auto sliceType = RankedTensorType::get({info.unconstrainedSize}, elemType);
     auto slice = impulse::SliceOp::create(
         builder, loc, sliceType, unconstrained1D,
-        builder.getDenseI64ArrayAttr({info.offset}),
-        builder.getDenseI64ArrayAttr({info.offset + info.size}),
+        builder.getDenseI64ArrayAttr({info.unconstrainedOffset}),
+        builder.getDenseI64ArrayAttr(
+            {info.unconstrainedOffset + info.unconstrainedSize}),
         builder.getDenseI64ArrayAttr({1}));
     auto jacobian =
         transforms::logAbsDetJacobian(builder, loc, slice, info.support);

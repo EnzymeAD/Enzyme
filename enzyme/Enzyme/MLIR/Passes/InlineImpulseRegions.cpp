@@ -1,0 +1,490 @@
+//===- InlineImpulseRegions.cpp - Inline impulse.infer into region form --===//
+//
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+
+#include "Dialect/Impulse/Impulse.h"
+#include "Dialect/Ops.h"
+#include "Interfaces/DistBuilder.h"
+#include "Passes/Passes.h"
+
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/Math/IR/Math.h"
+#include "mlir/Interfaces/FunctionInterfaces.h"
+#include "mlir/Transforms/GreedyPatternRewriteDriver.h"
+
+using namespace mlir;
+
+namespace mlir {
+namespace enzyme {
+#define GEN_PASS_DEF_INLINEINFERINTOREGIONPASS
+#include "Passes/Passes.h.inc"
+} // namespace enzyme
+} // namespace mlir
+
+namespace {
+
+static bool fnBodyHasSamples(FunctionOpInterface fn) {
+  return fn.getFunctionBody()
+      .walk([](impulse::SampleOp) { return WalkResult::interrupt(); })
+      .wasInterrupted();
+}
+
+/// Returns false when the model shape is unsupported in region form.
+static bool collectReachableAddresses(Operation *root, FunctionOpInterface fn,
+                                      ArrayRef<Attribute> prefix,
+                                      SymbolTableCollection &symbolTable,
+                                      SmallVectorImpl<Attribute> &addresses,
+                                      bool allowBranchSites = false,
+                                      bool *hasBranchSites = nullptr) {
+  Region &body = fn.getFunctionBody();
+  if (!llvm::hasSingleElement(body))
+    return false;
+  Block &entry = body.front();
+
+  bool unsupportedNesting = false;
+  bool branchSites = false;
+  fn.walk([&](impulse::SampleOp sampleOp) {
+    if (sampleOp->getBlock() == &entry)
+      return;
+    branchSites = true;
+    if (!allowBranchSites || !prefix.empty()) {
+      unsupportedNesting = true;
+      return;
+    }
+    for (Operation *p = sampleOp->getParentOp(); p != fn.getOperation();
+         p = p->getParentOp())
+      if (!isa<impulse::IfOp>(p))
+        unsupportedNesting = true;
+  });
+  if (unsupportedNesting)
+    return false;
+  if (hasBranchSites)
+    *hasBranchSites |= branchSites;
+
+  SmallVector<impulse::SampleOp> sites;
+  fn.walk<WalkOrder::PreOrder>(
+      [&](impulse::SampleOp sampleOp) { sites.push_back(sampleOp); });
+  for (impulse::SampleOp sampleOp : sites) {
+    bool nested = sampleOp->getBlock() != &entry;
+    auto symbol = sampleOp.getSymbolAttr();
+    if (!symbol || sampleOp.getNumResults() < 2)
+      return false;
+
+    SmallVector<Attribute> address(prefix.begin(), prefix.end());
+    address.push_back(symbol);
+
+    if (sampleOp.getDistAttr()) {
+      // Dist sites may carry no `fn` symbol.
+      addresses.push_back(ArrayAttr::get(root->getContext(), address));
+      continue;
+    }
+
+    auto callee = dyn_cast_or_null<FunctionOpInterface>(
+        symbolTable.lookupNearestSymbolFrom(root, sampleOp.getFnAttr()));
+    if (!callee || callee.getFunctionBody().empty() ||
+        !llvm::hasSingleElement(callee.getFunctionBody()))
+      return false;
+
+    if (sampleOp.getLogpdfAttr()) {
+      auto logpdfFn = dyn_cast_or_null<FunctionOpInterface>(
+          symbolTable.lookupNearestSymbolFrom(root, sampleOp.getLogpdfAttr()));
+      if (!logpdfFn || logpdfFn.getFunctionBody().empty() ||
+          !llvm::hasSingleElement(logpdfFn.getFunctionBody()))
+        return false;
+      if (fnBodyHasSamples(callee))
+        return false;
+      unsigned numOutputs = sampleOp.getNumResults() - 1;
+      unsigned numParams =
+          sampleOp.getInputs().empty() ? 0 : sampleOp.getInputs().size() - 1;
+      if (logpdfFn.getNumArguments() != numOutputs + numParams)
+        return false;
+      addresses.push_back(ArrayAttr::get(root->getContext(), address));
+    } else {
+      if (nested || !fnBodyHasSamples(callee))
+        return false;
+      if (!collectReachableAddresses(root, callee, address, symbolTable,
+                                     addresses))
+        return false;
+    }
+  }
+  return true;
+}
+
+static void inlineFunctionIntoRegion(OpBuilder &builder, FunctionOpInterface fn,
+                                     Region &targetRegion) {
+  OpBuilder::InsertionGuard insertionGuard(builder);
+  Block *block = builder.createBlock(&targetRegion);
+  Block &fnEntry = fn.getFunctionBody().front();
+
+  for (auto arg : fnEntry.getArguments())
+    block->addArgument(arg.getType(), arg.getLoc());
+
+  builder.setInsertionPointToStart(block);
+
+  IRMapping fnMapper;
+  for (auto [fnArg, blockArg] :
+       llvm::zip(fnEntry.getArguments(), block->getArguments()))
+    fnMapper.map(fnArg, blockArg);
+
+  for (Operation &op : fnEntry.getOperations()) {
+    if (op.hasTrait<OpTrait::ReturnLike>()) {
+      SmallVector<Value> yieldOperands;
+      for (Value operand : op.getOperands())
+        yieldOperands.push_back(fnMapper.lookupOrDefault(operand));
+      impulse::YieldOp::create(builder, op.getLoc(), yieldOperands);
+      continue;
+    }
+    builder.clone(op, fnMapper);
+  }
+}
+
+static void emitDistSamplerIntoRegion(OpBuilder &builder,
+                                      impulse::SampleOp sampleOp,
+                                      impulse::DistAttr dist, Region &region) {
+  OpBuilder::InsertionGuard guard(builder);
+  Block *block = builder.createBlock(&region);
+  for (Value input : sampleOp.getInputs())
+    block->addArgument(input.getType(), input.getLoc());
+  builder.setInsertionPointToStart(block);
+
+  Value rng = block->getArgument(0);
+  SmallVector<Value> distArgs(std::next(block->args_begin()),
+                              block->args_end());
+  auto sampleType = cast<RankedTensorType>(sampleOp.getResult(1).getType());
+  SmallVector<Value> out = impulse::emitDistSampler(
+      builder, sampleOp.getLoc(), dist, rng, distArgs, sampleType);
+  impulse::YieldOp::create(builder, sampleOp.getLoc(), out);
+}
+
+static void emitDistLogpdfIntoRegion(OpBuilder &builder,
+                                     impulse::SampleOp sampleOp,
+                                     impulse::DistAttr dist, Region &region) {
+  OpBuilder::InsertionGuard guard(builder);
+  Block *block = builder.createBlock(&region);
+  auto sampleType = cast<RankedTensorType>(sampleOp.getResult(1).getType());
+  block->addArgument(sampleType, sampleOp.getLoc());
+  for (Value input : llvm::drop_begin(sampleOp.getInputs()))
+    block->addArgument(input.getType(), input.getLoc());
+  builder.setInsertionPointToStart(block);
+
+  Value observed = block->getArgument(0);
+  SmallVector<Value> distArgs(std::next(block->args_begin()),
+                              block->args_end());
+  Value lp = impulse::emitDistLogpdf(builder, sampleOp.getLoc(), dist, observed,
+                                     distArgs);
+  impulse::YieldOp::create(builder, sampleOp.getLoc(), lp);
+}
+
+static void convertSampleToSampleRegion(OpBuilder &builder,
+                                        impulse::SampleOp sampleOp,
+                                        IRMapping &mapper,
+                                        SymbolTableCollection &symbolTable,
+                                        ArrayAttr addressPrefix = ArrayAttr()) {
+  Location loc = sampleOp.getLoc();
+  MLIRContext *ctx = sampleOp.getContext();
+
+  SmallVector<Value> mappedInputs;
+  for (Value input : sampleOp.getInputs())
+    mappedInputs.push_back(mapper.lookupOrDefault(input));
+
+  SmallVector<Attribute> address;
+  if (addressPrefix)
+    address.assign(addressPrefix.begin(), addressPrefix.end());
+  address.push_back(sampleOp.getSymbolAttr());
+
+  impulse::DistAttr dist = sampleOp.getDistAttr();
+  impulse::SupportAttr support = sampleOp.getSupportAttr();
+  if (dist && !support)
+    support = impulse::deriveSupportFromDist(ctx, dist);
+
+  auto sampleRegionOp = impulse::SampleRegionOp::create(
+      builder, loc, sampleOp.getResultTypes(), mappedInputs,
+      sampleOp.getFnAttr(), sampleOp.getLogpdfAttr(),
+      ArrayAttr::get(ctx, address), support, dist, sampleOp.getNameAttr());
+
+  if (dist) {
+    emitDistLogpdfIntoRegion(builder, sampleOp, dist,
+                             sampleRegionOp.getLogpdf());
+    if (impulse::distSamplerEmittable(dist)) {
+      emitDistSamplerIntoRegion(builder, sampleOp, dist,
+                                sampleRegionOp.getSampling());
+    } else {
+      auto samplerFn = dyn_cast_or_null<FunctionOpInterface>(
+          symbolTable.lookupNearestSymbolFrom(sampleOp, sampleOp.getFnAttr()));
+      if (samplerFn && !samplerFn.getFunctionBody().empty())
+        inlineFunctionIntoRegion(builder, samplerFn,
+                                 sampleRegionOp.getSampling());
+    }
+  } else {
+    auto samplerFn = dyn_cast_or_null<FunctionOpInterface>(
+        symbolTable.lookupNearestSymbolFrom(sampleOp, sampleOp.getFnAttr()));
+    if (samplerFn && !samplerFn.getFunctionBody().empty())
+      inlineFunctionIntoRegion(builder, samplerFn,
+                               sampleRegionOp.getSampling());
+
+    if (sampleOp.getLogpdfAttr()) {
+      auto logpdfFn = dyn_cast_or_null<FunctionOpInterface>(
+          symbolTable.lookupNearestSymbolFrom(sampleOp,
+                                              sampleOp.getLogpdfAttr()));
+      if (logpdfFn && !logpdfFn.getFunctionBody().empty())
+        inlineFunctionIntoRegion(builder, logpdfFn, sampleRegionOp.getLogpdf());
+    }
+  }
+
+  for (auto [oldResult, newResult] :
+       llvm::zip(sampleOp.getResults(), sampleRegionOp.getResults()))
+    mapper.map(oldResult, newResult);
+}
+
+static bool dissolveSubmodelSites(impulse::InferRegionOp regionOp,
+                                  SymbolTableCollection &symbolTable) {
+  if (regionOp.getSampling().empty())
+    return false;
+  Block &samplerEntry = regionOp.getSampling().front();
+
+  SmallVector<impulse::SampleRegionOp> submodels;
+  for (Operation &op : samplerEntry) {
+    auto site = dyn_cast<impulse::SampleRegionOp>(&op);
+    if (!site)
+      continue;
+    if (site.getLogpdf().empty() && !site.getLogpdfFnAttr() &&
+        !site.getSampling().empty() && site.getAddressAttr())
+      submodels.push_back(site);
+  }
+
+  for (impulse::SampleRegionOp site : submodels) {
+    ArrayAttr prefix = site.getAddressAttr();
+    Block &body = site.getSampling().front();
+
+    OpBuilder builder(site);
+    IRMapping mapper;
+    for (auto [arg, input] : llvm::zip(body.getArguments(), site.getInputs()))
+      mapper.map(arg, input);
+
+    for (Operation &op : body.without_terminator()) {
+      if (auto innerSample = dyn_cast<impulse::SampleOp>(&op)) {
+        convertSampleToSampleRegion(builder, innerSample, mapper, symbolTable,
+                                    prefix);
+        continue;
+      }
+      builder.clone(op, mapper);
+    }
+
+    auto *yield = body.getTerminator();
+    for (auto [result, operand] :
+         llvm::zip(site.getResults(), yield->getOperands()))
+      result.replaceAllUsesWith(mapper.lookupOrDefault(operand));
+
+    site.erase();
+  }
+
+  return !submodels.empty();
+}
+
+struct InlineInferOp : public OpRewritePattern<impulse::InferOp> {
+  using OpRewritePattern<impulse::InferOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(impulse::InferOp inferOp,
+                                PatternRewriter &rewriter) const override {
+    if (inferOp.getLogpdfFnAttr())
+      return failure();
+    if (!inferOp.getOriginalTrace())
+      return failure();
+    if (!inferOp.getHmcConfig().has_value() &&
+        !inferOp.getNutsConfig().has_value() &&
+        !inferOp.getViConfig().has_value() &&
+        !inferOp.getMhConfig().has_value() &&
+        !inferOp.getGibbsConfig().has_value())
+      return failure();
+    // Constrained MH needs regenerate's observation refresh; keep it flat.
+    if (inferOp.getMhConfig().has_value() && inferOp.getConstraint())
+      return failure();
+    // Only these region lowerings score sites inside `impulse.if` arms.
+    bool allowBranchSites = inferOp.getHmcConfig().has_value() ||
+                            inferOp.getNutsConfig().has_value() ||
+                            inferOp.getGibbsConfig().has_value();
+    auto fnAttr = inferOp.getFnAttr();
+    if (!fnAttr)
+      return failure();
+    ArrayAttr selection = inferOp.getSelectionAttr();
+    ArrayAttr allAddresses = inferOp.getAllAddressesAttr();
+    if (!selection || selection.empty() || !allAddresses ||
+        allAddresses.empty())
+      return failure();
+
+    SymbolTableCollection symbolTable;
+    auto fn = dyn_cast_or_null<FunctionOpInterface>(
+        symbolTable.lookupNearestSymbolFrom(inferOp, fnAttr));
+    if (!fn || fn.getFunctionBody().empty())
+      return failure();
+
+    SmallVector<Attribute> reachable;
+    bool hasBranchSites = false;
+    if (!collectReachableAddresses(inferOp, fn, {}, symbolTable, reachable,
+                                   allowBranchSites, &hasBranchSites))
+      return failure();
+    // Selected sites become logpdf-region position args, so must be top-level.
+    if (hasBranchSites) {
+      DenseSet<Attribute> topLevel;
+      for (Operation &op : fn.getFunctionBody().front())
+        if (auto s = dyn_cast<impulse::SampleOp>(&op))
+          if (auto sym = s.getSymbolAttr())
+            topLevel.insert(ArrayAttr::get(op.getContext(), {sym}));
+      for (Attribute addr : selection)
+        if (!topLevel.contains(addr))
+          return failure();
+    }
+    DenseSet<Attribute> reachableSet(reachable.begin(), reachable.end());
+    DenseSet<Attribute> allSet(allAddresses.begin(), allAddresses.end());
+    for (Attribute addr : selection)
+      if (!reachableSet.contains(addr))
+        return failure();
+    for (Attribute addr : allAddresses)
+      if (!reachableSet.contains(addr))
+        return failure();
+    for (Attribute addr : reachable)
+      if (!allSet.contains(addr))
+        return failure();
+
+    OperationState state(inferOp.getLoc(),
+                         impulse::InferRegionOp::getOperationName());
+    // infer_region mirrors infer's operands and attributes one-to-one.
+    state.addOperands(inferOp->getOperands());
+    state.addTypes(inferOp->getResultTypes());
+    for (NamedAttribute attr : inferOp->getAttrs())
+      state.addAttribute(attr.getName(), attr.getValue());
+    state.addRegion();
+    state.addRegion();
+    auto regionOp = cast<impulse::InferRegionOp>(rewriter.create(state));
+
+    Block &fnEntry = fn.getFunctionBody().front();
+    Block *bodyBlock = rewriter.createBlock(&regionOp.getSampling());
+    for (auto arg : fnEntry.getArguments())
+      bodyBlock->addArgument(arg.getType(), arg.getLoc());
+
+    rewriter.setInsertionPointToStart(bodyBlock);
+
+    IRMapping mapper;
+    for (auto [fnArg, blockArg] :
+         llvm::zip(fnEntry.getArguments(), bodyBlock->getArguments()))
+      mapper.map(fnArg, blockArg);
+
+    for (Operation &op : fnEntry.getOperations()) {
+      if (op.hasTrait<OpTrait::ReturnLike>()) {
+        SmallVector<Value> yieldOperands;
+        for (Value operand : op.getOperands())
+          yieldOperands.push_back(mapper.lookupOrDefault(operand));
+        impulse::YieldOp::create(rewriter, op.getLoc(), yieldOperands);
+        continue;
+      }
+      if (auto sampleOp = dyn_cast<impulse::SampleOp>(&op)) {
+        convertSampleToSampleRegion(rewriter, sampleOp, mapper, symbolTable);
+        continue;
+      }
+      Operation *cloned = rewriter.clone(op, mapper);
+      if (hasBranchSites && cloned->getNumRegions() != 0) {
+        SmallVector<impulse::SampleOp> nestedSites;
+        cloned->walk([&](impulse::SampleOp nestedSite) {
+          nestedSites.push_back(nestedSite);
+        });
+        for (impulse::SampleOp nestedSite : nestedSites) {
+          OpBuilder::InsertionGuard guard(rewriter);
+          rewriter.setInsertionPoint(nestedSite);
+          IRMapping nestedMapper;
+          convertSampleToSampleRegion(rewriter, nestedSite, nestedMapper,
+                                      symbolTable);
+          SmallVector<Value> replacements;
+          for (Value result : nestedSite.getResults())
+            replacements.push_back(nestedMapper.lookup(result));
+          rewriter.replaceOp(nestedSite, replacements);
+        }
+      }
+    }
+
+    rewriter.replaceOp(inferOp, regionOp.getResults());
+    return success();
+  }
+};
+
+struct InlineLogpdfInferOp : public OpRewritePattern<impulse::InferOp> {
+  using OpRewritePattern<impulse::InferOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(impulse::InferOp inferOp,
+                                PatternRewriter &rewriter) const override {
+    auto logpdfFnAttr = inferOp.getLogpdfFnAttr();
+    if (!logpdfFnAttr)
+      return failure();
+    if (!inferOp.getHmcConfig().has_value() &&
+        !inferOp.getNutsConfig().has_value())
+      return failure();
+    auto initialPos = inferOp.getInitPosition();
+    if (!initialPos)
+      return failure();
+    auto initialPosType = dyn_cast<RankedTensorType>(initialPos.getType());
+    if (!initialPosType || !initialPosType.hasStaticShape())
+      return failure();
+
+    SymbolTableCollection symbolTable;
+    auto logpdfFn = dyn_cast_or_null<FunctionOpInterface>(
+        symbolTable.lookupNearestSymbolFrom(inferOp, logpdfFnAttr));
+    if (!logpdfFn || logpdfFn.getFunctionBody().empty() ||
+        !llvm::hasSingleElement(logpdfFn.getFunctionBody()))
+      return failure();
+    // logpdf_fn takes (position, inputs[1:]...): the position replaces the rng.
+    if (logpdfFn.getNumArguments() != inferOp.getInputs().size())
+      return failure();
+
+    OperationState state(inferOp.getLoc(),
+                         impulse::InferRegionOp::getOperationName());
+    // infer_region mirrors infer's operands and attributes one-to-one.
+    state.addOperands(inferOp->getOperands());
+    state.addTypes(inferOp->getResultTypes());
+    for (NamedAttribute attr : inferOp->getAttrs())
+      state.addAttribute(attr.getName(), attr.getValue());
+    state.addRegion();
+    state.addRegion();
+    auto regionOp = cast<impulse::InferRegionOp>(rewriter.create(state));
+
+    inlineFunctionIntoRegion(rewriter, logpdfFn, regionOp.getLogpdf());
+
+    Block &logpdfBlock = regionOp.getLogpdf().front();
+    auto inputs = inferOp.getInputs();
+    for (int64_t i = logpdfBlock.getNumArguments() - 1; i >= 1; --i) {
+      logpdfBlock.getArgument(i).replaceAllUsesWith(inputs[i]);
+      logpdfBlock.eraseArgument(i);
+    }
+
+    regionOp.setNumPositionArgsAttr(rewriter.getI64IntegerAttr(1));
+    regionOp.setPositionSizeAttr(
+        rewriter.getI64IntegerAttr(initialPosType.getNumElements()));
+
+    // The sampler region stays empty: the density is the user logpdf.
+    rewriter.replaceOp(inferOp, regionOp.getResults());
+    return success();
+  }
+};
+
+struct InlineInferIntoRegion
+    : public enzyme::impl::InlineInferIntoRegionPassBase<
+          InlineInferIntoRegion> {
+  void runOnOperation() override {
+    RewritePatternSet patterns(&getContext());
+    patterns.add<InlineInferOp, InlineLogpdfInferOp>(&getContext());
+
+    GreedyRewriteConfig config;
+    (void)applyPatternsGreedily(getOperation(), std::move(patterns), config);
+
+    SymbolTableCollection symbolTable;
+    getOperation()->walk([&](impulse::InferRegionOp regionOp) {
+      while (dissolveSubmodelSites(regionOp, symbolTable)) {
+      }
+    });
+  }
+};
+
+} // namespace

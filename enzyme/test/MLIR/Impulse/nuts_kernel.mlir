@@ -12,11 +12,11 @@ module {
   func.func @nuts(%rng : tensor<2xui64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> (tensor<1x1xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>) {
     %init_trace = arith.constant dense<[[0.0]]> : tensor<1x1xf64>
     %step_size = arith.constant dense<0.1> : tensor<f64>
-    %res:9 = impulse.infer @test(%rng, %mean, %stddev) given %init_trace
-      step_size = %step_size
+    %res:4 = impulse.infer @test(%rng, %mean, %stddev) given %init_trace
+      init_step_size = %step_size
       <{ nuts_config = #impulse.nuts_config<max_tree_depth = 3, max_delta_energy = 1000.0, adapt_step_size = false, adapt_mass_matrix = false>,
         name = "nuts", selection = [[#impulse.symbol<1>]], all_addresses = [[#impulse.symbol<1>]], num_warmup = 0, num_samples = 1 }>
-      : (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<1x1xf64>, tensor<f64>) -> (tensor<1x1xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<f64>, tensor<1x1xf64>)
+      : (tensor<2xui64>, tensor<f64>, tensor<f64>, tensor<1x1xf64>, tensor<f64>) -> (tensor<1x1xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>)
     return %res#0, %res#1, %res#2, %res#3 : tensor<1x1xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>
   }
 }
@@ -38,8 +38,8 @@ module {
 // CHECK-DAG: %[[MAX_DE:.+]] = arith.constant dense<1.000000e+03> : tensor<f64>
 //
 // --- RNG splits ---
-// CHECK: impulse.randomSplit
-// CHECK: impulse.randomSplit
+// CHECK: impulse.random_split
+// CHECK: impulse.random_split
 //
 // --- Initial gradient via autodiff ---
 // CHECK: enzyme.autodiff_region(%{{.+}}, %[[ONE]]) {
@@ -59,7 +59,7 @@ module {
 // CHECK: impulse.random {{.*}} <rng_distribution = NORMAL> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<1x1xf64>)
 //
 // --- Kinetic energy ---
-// CHECK: impulse.dot {{.*}} lhs_contracting_dimensions = [0, 1]
+// CHECK: impulse.dot {{.*}}lhs_contracting_dimensions = [0, 1]
 //
 // ============================================================
 // Main NUTS tree building loop (outer while)
@@ -76,7 +76,7 @@ module {
 // --- Direction sampling ---
 // CHECK: impulse.random {{.*}} <rng_distribution = UNIFORM>
 // CHECK: arith.cmpf olt, {{.*}} : tensor<f64>
-// CHECK: impulse.randomSplit {{.*}} : (tensor<2xui64>) -> (tensor<2xui64>, tensor<2xui64>)
+// CHECK: impulse.random_split {{.*}} : (tensor<2xui64>) -> (tensor<2xui64>, tensor<2xui64>)
 //
 // --- Subtree size: 2^depth ---
 // CHECK: arith.shli {{.*}}, %{{.+}} : tensor<i64>
@@ -106,7 +106,7 @@ module {
 // CHECK: arith.subf {{.*}} : tensor<1x1xf64>
 //
 // --- Kinetic energy ---
-// CHECK: impulse.dot {{.*}} lhs_contracting_dimensions = [0, 1]
+// CHECK: impulse.dot {{.*}}lhs_contracting_dimensions = [0, 1]
 //
 // --- Delta energy and divergence check ---
 // CHECK: arith.subf {{.*}} : tensor<f64>
@@ -117,7 +117,16 @@ module {
 // CHECK: impulse.if
 // CHECK: impulse.yield
 // CHECK: }, {
-// CHECK: impulse.log_add_exp
+// CHECK: %[[LAE_MAX:.+]] = arith.maximumf %[[W:.+]], %[[SUBW:.+]] : tensor<f64>
+// CHECK-NEXT: %[[LAE_DELTA:.+]] = arith.subf %[[W]], %[[SUBW]] : tensor<f64>
+// CHECK-NEXT: %[[LAE_NAN:.+]] = arith.cmpf une, %[[LAE_DELTA]], %[[LAE_DELTA]] : tensor<f64>
+// CHECK-NEXT: %[[LAE_SUM:.+]] = arith.addf %[[W]], %[[SUBW]] : tensor<f64>
+// CHECK-NEXT: %[[LAE_ABS:.+]] = math.absf %[[LAE_DELTA]] : tensor<f64>
+// CHECK-NEXT: %[[LAE_NEG:.+]] = arith.negf %[[LAE_ABS]] : tensor<f64>
+// CHECK-NEXT: %[[LAE_EXP:.+]] = math.exp %[[LAE_NEG]] : tensor<f64>
+// CHECK-NEXT: %[[LAE_LOG1P:.+]] = math.log1p %[[LAE_EXP]] : tensor<f64>
+// CHECK-NEXT: %[[LAE_FINITE:.+]] = arith.addf %[[LAE_MAX]], %[[LAE_LOG1P]] : tensor<f64>
+// CHECK-NEXT: %{{.+}} = arith.select %[[LAE_NAN]], %[[LAE_SUM]], %[[LAE_FINITE]] : tensor<i1>, tensor<f64>
 // CHECK: impulse.logistic
 // CHECK: impulse.random
 // CHECK: impulse.select
@@ -125,7 +134,7 @@ module {
 // CHECK: })
 //
 // --- Checkpoint updates ---
-// CHECK: impulse.popcount
+// CHECK: math.ctpop %{{.+}} : tensor<i64>
 // CHECK: impulse.dynamic_update_slice {{.*}} : (tensor<3x1xf64>, tensor<1x1xf64>, tensor<i64>, tensor<i64>) -> tensor<3x1xf64>
 //
 // --- Iterative turning check loop ---
@@ -134,7 +143,7 @@ module {
 // CHECK: } body {
 // CHECK: impulse.dynamic_slice {{.*}} <slice_sizes = [1, 1]>
 // --- Dynamic termination criterion ---
-// CHECK: impulse.dot {{.*}} lhs_contracting_dimensions = [0, 1]
+// CHECK: impulse.dot {{.*}}lhs_contracting_dimensions = [0, 1]
 // CHECK: arith.cmpf ole, {{.*}} : tensor<f64>
 // CHECK: arith.ori {{.*}} : tensor<i1>
 // CHECK: impulse.yield
@@ -152,7 +161,7 @@ module {
 // CHECK: impulse.select {{.*}} : (tensor<i1>, tensor<1x1xf64>, tensor<1x1xf64>)
 //
 // --- Biased transition: exp, min ---
-// CHECK: impulse.log_add_exp
+// CHECK: math.log1p %{{.+}} : tensor<f64>
 // CHECK: math.exp
 // CHECK: arith.minimumf {{.*}}, %[[ONE]]
 //
@@ -167,7 +176,7 @@ module {
 // CHECK: arith.addf {{.*}} : tensor<1x1xf64>
 // CHECK: arith.mulf {{.*}} : tensor<1x1xf64>
 // CHECK: arith.subf {{.*}} : tensor<1x1xf64>
-// CHECK: impulse.dot {{.*}} lhs_contracting_dimensions = [0, 1]
+// CHECK: impulse.dot {{.*}}lhs_contracting_dimensions = [0, 1]
 // CHECK: arith.cmpf ole, {{.*}} : tensor<f64>
 // CHECK: arith.ori {{.*}} : tensor<i1>
 //

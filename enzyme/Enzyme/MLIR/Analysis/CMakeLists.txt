@@ -5,10 +5,15 @@ add_mlir_library(
   DataFlowAliasAnalysis.cpp
   DataFlowActivityAnalysis.cpp
   DataFlowLattice.cpp
+  SampleDependenceAnalysis.cpp
   DEPENDS
   MLIRAutoDiffTypeInterfaceIncGen
   MLIRAutoDiffOpInterfaceIncGen
   MLIREnzymeEnumsIncGen
+  MLIRImpulseOpsIncGen
+  MLIRImpulseEnumsIncGen
+  MLIRImpulseAttributesIncGen
   LINK_LIBS
   PUBLIC
-  MLIRIR)
+  MLIRIR
+  MLIRImpulse)

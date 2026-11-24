@@ -18,6 +18,7 @@ add_mlir_dialect_library(
   EnzymeWrapPass.cpp
   FlattenEnzymeCaches.cpp
   InlineEnzymeRegions.cpp
+  InlineImpulseRegions.cpp
   HoistEnzymeRegions.cpp
   HoistLoopAllocations.cpp
   LowerLLVMExtPass.cpp
@@ -32,6 +33,7 @@ add_mlir_dialect_library(
   RaiseLLVMExtPass.cpp
   RemovalUtils.cpp
   RemoveUnusedEnzymeOps.cpp
+  SampleInvariantCodeMotion.cpp
   SimplifyMemrefCache.cpp
   SinkCheckpointViewsPass.cpp
   Utils.cpp
@@ -58,11 +60,15 @@ add_mlir_dialect_library(
   MLIRMathToLLVM
   MLIRMemRefDialect
   MLIRNVVMDialect
+  MLIRParser
   MLIRPass
+  MLIRPDLDialect
+  MLIRPDLInterpDialect
   MLIREnzymeAnalysis
   MLIRSideEffectInterfaces
   MLIRControlFlowInterfaces
   MLIRSCFToControlFlow
+  MLIRTransformDialect
   MLIRTransformUtils
   MLIREnzymeAutoDiffInterface
   MLIRImpulse)

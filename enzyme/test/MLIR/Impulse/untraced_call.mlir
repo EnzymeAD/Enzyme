@@ -11,7 +11,7 @@ module {
 
   func.func @main(%seed : tensor<2xui64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> (tensor<2xui64>, tensor<f64>) {
     // CHECK: %0:2 = call @test.call(%arg0, %arg1, %arg2) : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
-    %o:2 = impulse.untracedCall @test(%seed, %mean, %stddev) <{ name = "test" }> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+    %o:2 = impulse.untraced_call @test(%seed, %mean, %stddev) <{ name = "test" }> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
     return %o#0, %o#1 : tensor<2xui64>, tensor<f64>
   }
 }

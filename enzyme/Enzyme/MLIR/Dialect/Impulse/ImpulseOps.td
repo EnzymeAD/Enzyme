@@ -46,25 +46,41 @@ def SampleOp : Impulse_Op<"sample",
   let description = [{
   Sample from a distribution. By convention, the 0th operand in `inputs`
   or `outputs` is the initial RNG state (seed).
+
+  The sampler symbol `fn` is optional: a site that carries a `#impulse.dist`
+  attribute derives its sampler and logpdf from the shared distribution builder,
+  so it needs no traced `fn`/`logpdf` symbols and its result types are the ones
+  the frontend constructs directly from the distribution's shape. A site with a
+  traced sampler (the rejection-loop natives, generative sub-calls, or the
+  custom-logpdf escape hatch) carries `fn`; a custom-logpdf site additionally
+  carries `logpdf`. The verifier requires either `fn` or `dist` to be present.
+
+  With `fn` absent the pretty form is `impulse.sample(%inputs) ...`. The callee
+  is parsed by the `OptionalCallee` directive, which only consumes a `@symbol`,
+  so both spellings round-trip (the same holds for `impulse.infer` and
+  `impulse.infer_region` in custom-logpdf mode).
   }];
 
   let arguments = (ins
-    FlatSymbolRefAttr:$fn,
+    OptionalAttr<FlatSymbolRefAttr>:$fn,
     Variadic<AnyType>:$inputs,
     OptionalAttr<FlatSymbolRefAttr>:$logpdf,
     OptionalAttr<SymbolAttr>:$symbol,
     OptionalAttr<SupportAttr>:$support,
+    OptionalAttr<DistAttr>:$dist,
     DefaultValuedStrAttr<StrAttr, "">:$name
   );
 
   let results = (outs Variadic<AnyType>:$outputs);
 
   let assemblyFormat = [{
-    $fn `(` $inputs `)` prop-dict attr-dict `:` functional-type($inputs, results)
+    `` custom<OptionalCallee>($fn) `(` $inputs `)` prop-dict attr-dict `:` functional-type($inputs, results)
   }];
+
+  let hasVerifier = 1;
 }
 
-def UntracedCallOp : Impulse_Op<"untracedCall"> {
+def UntracedCallOp : Impulse_Op<"untraced_call"> {
   let summary = "Call a probabilistic function without tracing";
   let description = [{
   Call a probabilistic function without tracing. By convention, the 0th operand in `inputs`
@@ -148,7 +164,8 @@ def GenerateOp : Impulse_Op<"generate", [DeclareOpInterfaceMethods<SymbolUserOpI
   }];
 }
 
-def RegenerateOp : Impulse_Op<"regenerate", [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
+def RegenerateOp : Impulse_Op<"regenerate",
+    [DeclareOpInterfaceMethods<SymbolUserOpInterface>, AttrSizedOperandSegments]> {
   let summary = "Regenerate selected addresses in a trace";
   let description = [{
     Regenerates selected addresses while keeping others fixed.
@@ -156,9 +173,29 @@ def RegenerateOp : Impulse_Op<"regenerate", [DeclareOpInterfaceMethods<SymbolUse
 
     Takes explicit old_trace and returns new trace with weight.
 
+    An optional `constraint` tensor (with `constrained_addresses` describing its
+    layout) supplies observed values for constrained sample sites. Constrained
+    sites are always scored/written from the constraint value when their branch
+    is taken, rather than reused from the old trace slot. This is what keeps MH
+    correct when a proposed value flips which `impulse.if` branch executes: a
+    site that was previously not taken (its trace slot is stale) is refreshed
+    from the constraint instead of the stale slot.
+
+    The trace TYPE selects the weight semantics. A bare trace
+    (tensor<1 x position_size x f64>) yields the full joint log probability.
+    A score-tail trace (width = position_size + one memoized score scalar per
+    site) yields the accept-ratio DELTA sum_dirty(logp_new - stored_score): a
+    density term is dirty iff its site is regenerated or its parameters are
+    dataflow-reachable from a regenerated site's value; clean terms cancel in
+    the Metropolis--Hastings ratio and are never emitted, and old scores are
+    read from the tail instead of recomputed. The caller maintains the carried
+    weight as `w + delta` on accept, and the returned trace carries refreshed
+    scores.
+
     Returns: (new_trace, weight, retvals...)
-    - new_trace: tensor<1 x position_size x f64> - flattened samples
-    - weight: tensor<f64> - accumulated log probability
+    - new_trace: same type as the given trace - flattened samples
+      (plus refreshed site scores for score-tail traces)
+    - weight: tensor<f64> - full joint or delta, per the trace type
     - retvals: original function return values
   }];
 
@@ -166,8 +203,10 @@ def RegenerateOp : Impulse_Op<"regenerate", [DeclareOpInterfaceMethods<SymbolUse
     FlatSymbolRefAttr:$fn,
     Variadic<AnyType>:$inputs,
     AnyRankedTensor:$original_trace,
+    Optional<AnyRankedTensor>:$constraint,
     AddressArrayAttr:$selection,
     AddressArrayAttr:$regenerate_addresses,
+    OptionalAttr<AddressArrayAttr>:$constrained_addresses,
     DefaultValuedStrAttr<StrAttr, "">:$name
   );
 
@@ -178,15 +217,19 @@ def RegenerateOp : Impulse_Op<"regenerate", [DeclareOpInterfaceMethods<SymbolUse
   );
 
   let assemblyFormat = [{
-    $fn `(` $inputs `)` `given` $original_trace prop-dict attr-dict `:` functional-type(operands, results)
+    $fn `(` $inputs `)` `given` $original_trace (`constrained_by` $constraint^)? prop-dict attr-dict `:` functional-type(operands, results)
   }];
 }
 
-def MHOp : Impulse_Op<"mh", [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
+def MHOp : Impulse_Op<"mh",
+    [DeclareOpInterfaceMethods<SymbolUserOpInterface>, AttrSizedOperandSegments]> {
   let summary = "Metropolis-Hastings step for probabilistic inference";
   let description = [{
     Performs one MH step: regenerates selected addresses and accepts/rejects
     based on weight ratio.
+
+    An optional `constraint` tensor (with `constrained_addresses`) supplies
+    observed values, forwarded verbatim to the internal `regenerate`.
   }];
 
   let arguments = (ins
@@ -194,8 +237,10 @@ def MHOp : Impulse_Op<"mh", [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> 
     AnyRankedTensor:$original_trace,
     AnyRankedTensor:$original_weight,
     Variadic<AnyType>:$inputs,
+    Optional<AnyRankedTensor>:$constraint,
     AddressArrayAttr:$selection,
     AddressArrayAttr:$regenerate_addresses,
+    OptionalAttr<AddressArrayAttr>:$constrained_addresses,
     DefaultValuedStrAttr<StrAttr, "">:$name
   );
 
@@ -207,42 +252,27 @@ def MHOp : Impulse_Op<"mh", [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> 
   );
 
   let assemblyFormat = [{
-    $fn `(` $inputs `)` `given` $original_trace `weight` $original_weight prop-dict attr-dict `:` functional-type(operands, results)
+    $fn `(` $inputs `)` `given` $original_trace `weight` $original_weight (`constrained_by` $constraint^)? prop-dict attr-dict `:` functional-type(operands, results)
   }];
 }
 
-def InferOp : Impulse_Op<"infer", [DeclareOpInterfaceMethods<SymbolUserOpInterface>, AttrSizedOperandSegments]> {
-  let summary = "MCMC inference for probabilistic programs";
-  let description = [{
-    Runs MCMC inference on selected addresses.
-
-    Two modes of operation:
-    1. Trace-based mode: `fn` and `original_trace` are provided. The model
-       function with `impulse.sample` ops defines the density.
-    2. Custom logpdf mode: `logpdf_fn` and `initial_position` are provided.
-       The logpdf function maps position -> scalar log-density directly.
-
-    The `selection` attribute determines which addresses to sample via HMC/NUTS.
-    All sample addresses are included in the trace tensor for consistency.
-
-    Returns: (trace, diagnostics, log_densities, rng, final_position, final_gradient,
-              final_potential_energy, final_step_size, final_inverse_mass_matrix)
-    - trace: tensor<num_samples x position_size x f64>
-    - diagnostics: tensor<num_samples x 2 x i1> - placeholder for future expansion
-    - log_densities: tensor<num_samples x f64> - log densities of samples
-    - rng: updated RNG state
-    - final_position: tensor<1 x position_size x f64> - position after last sample
-    - final_gradient: tensor<1 x position_size x f64> - gradient at final position
-    - final_potential_energy: tensor<f64> - potential energy at final position
-    - final_step_size: tensor<f64> - adapted step size (after warmup)
-    - final_inverse_mass_matrix: tensor - adapted inverse mass matrix (after warmup)
-  }];
-
-  let arguments = (ins
+// The `init_*` operands are read only on a cold start (empty `state_in`).
+class Impulse_InferSignatureArgs {
+  dag args = (ins
     OptionalAttr<FlatSymbolRefAttr>:$fn,
     Variadic<AnyType>:$inputs,
-    Variadic<AnyRankedTensor>:$adaptation_state_in,
+    Variadic<AnyRankedTensor>:$state_in,
     Optional<AnyRankedTensor>:$original_trace,
+
+    // MH and Gibbs only; packed in `constrained_addresses` order.
+    Optional<AnyRankedTensor>:$constraint,
+
+    Optional<AnyRankedTensor>:$init_inverse_mass_matrix,
+    Optional<AnyRankedTensor>:$init_step_size,
+    Optional<AnyRankedTensor>:$init_position,
+    // VI guide scale in constrained (positive) space, not softplus space.
+    Optional<AnyRankedTensor>:$init_scale,
+
     AddressArrayAttr:$selection,
     AddressArrayAttr:$all_addresses,
 
@@ -250,53 +280,170 @@ def InferOp : Impulse_Op<"infer", [DeclareOpInterfaceMethods<SymbolUserOpInterfa
     DefaultValuedAttr<I64Attr, "1">:$num_samples,
     DefaultValuedAttr<I64Attr, "1">:$thinning,
 
+    // Values > 1 add a leading chain dim to trace, diagnostics and state_out.
+    DefaultValuedAttr<I64Attr, "1">:$num_chains,
+
     OptionalAttr<I64Attr>:$total_warmup,
 
-    // Algorithm-specific MCMC parameters
-    Optional<AnyRankedTensor>:$inverse_mass_matrix,
-    Optional<AnyRankedTensor>:$step_size,
-
-    // Algorithm-specific configurations
     OptionalAttr<HMCConfigAttr>:$hmc_config,
     OptionalAttr<NUTSConfigAttr>:$nuts_config,
+    OptionalAttr<VIConfigAttr>:$vi_config,
+    OptionalAttr<MHConfigAttr>:$mh_config,
+    OptionalAttr<GibbsConfigAttr>:$gibbs_config,
 
-    // Custom logpdf mode
+    OptionalAttr<AddressArrayAttr>:$constrained_addresses,
+
     OptionalAttr<FlatSymbolRefAttr>:$logpdf_fn,
-    Optional<AnyRankedTensor>:$initial_position,
 
-    Optional<AnyRankedTensor>:$initial_gradient,
-    Optional<AnyRankedTensor>:$initial_potential_energy,
-
-    Optional<AnyRankedTensor>:$warmup_offset,
+    OptionalAttr<StrArrayAttr>:$state_schema,
 
     OptionalAttr<DictionaryAttr>:$autodiff_attrs,
     DefaultValuedStrAttr<StrAttr, "">:$name
   );
+}
 
-  let results = (outs AnyRankedTensor:$trace, AnyRankedTensor:$diagnostics,
-      AnyRankedTensor:$log_densities, AnyType:$output_rng_state,
-      AnyRankedTensor:$final_position, AnyRankedTensor:$final_gradient,
-      AnyRankedTensor:$final_potential_energy, AnyRankedTensor:$final_step_size,
-      AnyRankedTensor:$final_inverse_mass_matrix,
+// `diagnostics` columns are [accepted, diverging].
+class Impulse_InferSignatureResults {
+  dag outputs = (outs
+    AnyRankedTensor:$trace,
+    AnyRankedTensor:$diagnostics,
+    AnyRankedTensor:$log_densities,
+    AnyType:$output_rng_state,
+    Variadic<AnyRankedTensor>:$state_out
+  );
+}
 
-      Variadic<AnyRankedTensor>:$adaptation_state_out);
+def InferOp : Impulse_Op<"infer",
+    [DeclareOpInterfaceMethods<SymbolUserOpInterface>, AttrSizedOperandSegments]>,
+    Impulse_InferSignatureArgs, Impulse_InferSignatureResults {
+  let summary = "MCMC inference for probabilistic programs";
+  let description = [{
+    Runs MCMC inference on selected addresses.
+
+    Two modes of operation:
+    1. Trace-based mode: `fn` and `original_trace` are provided. The model
+       function with `impulse.sample` ops defines the density.
+    2. Custom logpdf mode: `logpdf_fn` and `init_position` are provided.
+       The logpdf function maps position -> scalar log-density directly.
+
+    The `selection` attribute determines which addresses to sample via HMC/NUTS.
+    All sample addresses are included in the trace tensor for consistency.
+
+    Resumable algorithm state (adapted step size, inverse mass matrix, dual
+    averaging / Welford accumulators, warmup progress, and the final
+    position/gradient/potential energy) is carried opaquely as a bundle:
+    `state_in` warm-starts a run (empty = cold start), `state_out` returns it,
+    and `state_schema` names each slot. `trace`, `diagnostics`,
+    `log_densities`, and `output_rng_state` are the only universal results.
+  }];
+
+  let arguments = args;
+  let results = outputs;
 
   let assemblyFormat = [{
-    ($fn^)?
+    `` custom<OptionalCallee>($fn)
     `(` $inputs `)`
     (`given` $original_trace^)?
-    (`inverse_mass_matrix` `=` $inverse_mass_matrix^)?
-    (`step_size` `=` $step_size^)?
+    (`constrained_by` $constraint^)?
+    (`init_inverse_mass_matrix` `=` $init_inverse_mass_matrix^)?
+    (`init_step_size` `=` $init_step_size^)?
     (`logpdf_fn` `=` $logpdf_fn^)?
-    (`initial_position` `=` $initial_position^)?
-    (`initial_gradient` `=` $initial_gradient^)?
-    (`initial_potential_energy` `=` $initial_potential_energy^)?
-    (`warmup_offset` `=` $warmup_offset^)?
-    (`adaptation_state_in` `=` $adaptation_state_in^)?
+    (`init_position` `=` $init_position^)?
+    (`init_scale` `=` $init_scale^)?
+    (`state` `=` `[` $state_in^ `]`)?
     prop-dict attr-dict `:` functional-type(operands, results)
   }];
 
   let hasVerifier = 1;
+}
+
+//===----------------------------------------------------------------------===//
+// Region-form ops
+//===----------------------------------------------------------------------===//
+
+def SampleRegionOp : Impulse_Op<"sample_region", [AutomaticAllocationScope]> {
+  let summary = "Sample from a distribution with inlined sampler and logpdf regions";
+  let description = [{
+    Region-form of `impulse.sample`: the sampler and logpdf function bodies are
+    inlined as nested regions, enabling sample-invariant code motion (SICM) to
+    analyze across sample sites. The `logpdf` region is cleared once its body has
+    been merged into the enclosing `infer_region`'s joint logpdf.
+
+    The `address` attribute is the site's full address as an array of symbols;
+    submodel dissolution prepends the enclosing site's address, so entries of
+    the `infer_region`'s `selection`/`all_addresses` match by attribute equality.
+  }];
+
+  let arguments = (ins
+    Variadic<AnyType>:$inputs,
+    OptionalAttr<FlatSymbolRefAttr>:$fn,
+    OptionalAttr<FlatSymbolRefAttr>:$logpdf_fn,
+    OptionalAttr<AddressAttr>:$address,
+    OptionalAttr<SupportAttr>:$support,
+    OptionalAttr<DistAttr>:$dist,
+    DefaultValuedStrAttr<StrAttr, "">:$name
+  );
+
+  let results = (outs Variadic<AnyType>:$outputs);
+
+  let regions = (region AnyRegion:$sampling, AnyRegion:$logpdf);
+
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    `(` $inputs `)` `sampling` $sampling `logpdf` $logpdf prop-dict attr-dict
+    `:` functional-type($inputs, $outputs)
+  }];
+}
+
+def InferRegionOp : Impulse_Op<"infer_region",
+    [AutomaticAllocationScope, AttrSizedOperandSegments]>,
+    Impulse_InferSignatureArgs, Impulse_InferSignatureResults {
+  let summary = "MCMC inference region with sampler and joint logpdf";
+  let description = [{
+    Region-form of `impulse.infer`, produced by `inline-infer-regions` and
+    consumed directly by `expand-impulse`:
+
+    - `sampling`: the model computation (with `sample_region` ops), the target of
+      sampling-region SICM and the source for proposal-based algorithms.
+    - `logpdf`: the joint logpdf, constructed by the `sicm` pass (after
+      sampling-region SICM, so it is born optimized). Its block arguments are
+      the position values, one per non-RNG sample result of each selected
+      address in `selection` order; everything else it references is captured
+      from the enclosing scope and is sample-invariant by construction
+      (hoisted invariants, model inputs, and pinned trace values of unselected
+      sites). SICM runs a second time on this region; `expand-impulse` then
+      clones it as the potential-energy body inside the materialized
+      HMC/NUTS loop.
+
+    Mirrors `impulse.infer`'s operands/results/attributes (created by a
+    wholesale attribute copy) plus the two regions and the
+    `num_position_args`/`position_size` bookkeeping for the joint logpdf.
+  }];
+
+  let arguments = !con(args, (ins
+    DefaultValuedAttr<I64Attr, "0">:$num_position_args,
+    DefaultValuedAttr<I64Attr, "0">:$position_size
+  ));
+
+  let results = outputs;
+
+  let regions = (region AnyRegion:$sampling, AnyRegion:$logpdf);
+
+  let assemblyFormat = [{
+    `` custom<OptionalCallee>($fn)
+    `(` $inputs `)`
+    (`given` $original_trace^)?
+    (`constrained_by` $constraint^)?
+    (`init_inverse_mass_matrix` `=` $init_inverse_mass_matrix^)?
+    (`init_step_size` `=` $init_step_size^)?
+    (`logpdf_fn` `=` $logpdf_fn^)?
+    (`init_position` `=` $init_position^)?
+    (`init_scale` `=` $init_scale^)?
+    (`state` `=` `[` $state_in^ `]`)?
+    `sampling` $sampling `logpdf` $logpdf
+    prop-dict attr-dict `:` functional-type(operands, results)
+  }];
 }
 
 //===----------------------------------------------------------------------===//
@@ -306,23 +453,32 @@ def InferOp : Impulse_Op<"infer", [DeclareOpInterfaceMethods<SymbolUserOpInterfa
 def RandomOp : Impulse_Op<"random"> {
   let summary = "Generate random numbers using specified distribution";
   let description = [{
-  Generates random numbers using the rng_distribution algorithm and produces
-  a result tensor.
+  Draws a result tensor of random numbers from `rng_state` and returns the
+  advanced RNG state alongside the samples. Uniform bits are produced by a
+  counter-based bit generator keyed by `rng_state`; the parametric distributions
+  below are constructed deterministically from those bits, so the same input
+  state reproduces the same samples.
 
-  If rng_distribution = UNIFORM, then the random numbers are generated following
-  the uniform distribution over the interval [a, b). If a >= b, the behavior is
-  undefined.
+  If rng_distribution = UNIFORM, samples are drawn from the uniform distribution
+  over [a, b). A base draw in [0, 1) is formed from the raw bits (assembling the
+  mantissa of a float in [1, 2) and subtracting 1) and affine-mapped to
+  [a, b). If a >= b, the behavior is undefined.
 
-  If rng_distribution = NORMAL, then the random numbers are generated following
-  the normal distribution with mean = a and standard deviation = b. If b < 0,
-  the behavior is undefined.
+  If rng_distribution = NORMAL, samples follow the normal distribution with
+  mean = a and standard deviation = b, formed from a uniform draw u in [0, 1)
+  via the probit `sqrt(2) * erfinv(2u - 1)`, then scaled by b and shifted by a.
+  If b < 0, the behavior is undefined.
 
-  If rng_distribution = MULTINORMAL, then the random numbers are generated
-  following the multivariate normal distribution with mean = a (scalar or vector)
-  and covariance matrix = b. The parameter b should be a positive definite matrix.
+  If rng_distribution = MULTINORMAL, samples follow the multivariate normal with
+  mean = a (scalar or vector) and covariance matrix = b: a standard-normal vector
+  is drawn as above and mapped through the Cholesky factor of b, then shifted by
+  a. The parameter b must be positive definite.
 
   By convention, the 0th operand in inputs is the initial RNG state and the
   0th operand in results is the updated RNG state.
+
+  The bit generator is chosen by the lowering: two lowerings may draw different
+  samples from the same `rng_state`.
   }];
 
   let arguments = (ins
@@ -339,10 +495,13 @@ def RandomOp : Impulse_Op<"random"> {
   }];
 }
 
-def RandomSplitOp : Impulse_Op<"randomSplit"> {
+def RandomSplitOp : Impulse_Op<"random_split"> {
   let summary = "Split RNG state into multiple independent states";
   let description = [{
-    Splits an RNG state into multiple independent RNG states.
+    Derives N independent RNG states (N = number of results) from a single input
+    `rng_state` by hashing it with the Threefry2x32 counter-based PRF (five
+    rounds), matching JAX's `random.split`. Each output state is statistically
+    independent and deterministically reproducible from the input state.
     Reference: https://github.com/jax-ml/jax/blob/c25e095fcec9678a4ce5f723afce0c6a3c48a5e7/jax/_src/random.py#L281-L294
   }];
 
@@ -388,8 +547,10 @@ def ForOp : Impulse_Op<"for", [AutomaticAllocationScope]> {
 def WhileOp : Impulse_Op<"while", [AutomaticAllocationScope]> {
   let summary = "While loop with condition";
   let description = [{
-    A while loop operation that continues iterating as long as the condition
-    evaluates to true. Intended to be lowered to `stablehlo.while`.
+    Iterates while the condition holds. Both regions take the current values
+    as block arguments: `conditionRegion` yields a rank-0 boolean tensor, and
+    `bodyRegion` yields the values of the next iteration. The results are the
+    values for which the condition first evaluates to false.
   }];
 
   let arguments = (ins Variadic<AnyType>:$initArgs);
@@ -427,7 +588,7 @@ def IfOp : Impulse_Op<"if", [AutomaticAllocationScope, RecursiveMemoryEffects]> 
 }
 
 def YieldOp : Impulse_Op<"yield", [Pure, ReturnLike, Terminator,
-    ParentOneOf<["ForOp", "WhileOp", "IfOp"]>]> {
+    ParentOneOf<["ForOp", "WhileOp", "IfOp", "InferRegionOp", "SampleRegionOp"]>]> {
   let summary = "Yield values at the end of a loop or if op";
   let arguments = (ins Variadic<AnyType>:$operands);
   let assemblyFormat = [{
@@ -440,16 +601,19 @@ def YieldOp : Impulse_Op<"yield", [Pure, ReturnLike, Terminator,
 //===----------------------------------------------------------------------===//
 
 def DotOp : Impulse_Op<"dot", [Pure]> {
-  let summary = "Computes a general dot product operation";
+  let summary = "Tensor contraction";
   let description = [{
-    Computes a general dot product operation. To be lowered to `stablehlo.dot_general`.
+    Tensor contraction of `lhs` and `rhs`: sums the elementwise products over
+    the paired `lhs_contracting_dimensions`/`rhs_contracting_dimensions`, which
+    must have equal size in each pair. The result shape is the remaining `lhs`
+    dimensions followed by the remaining `rhs` dimensions, each in order. With
+    no contracting dimensions the result is the outer product. A dimension
+    index may appear at most once in the list of an operand.
   }];
 
   let arguments = (ins
     AnyRankedTensor:$lhs,
     AnyRankedTensor:$rhs,
-    DenseI64ArrayAttr:$lhs_batching_dimensions,
-    DenseI64ArrayAttr:$rhs_batching_dimensions,
     DenseI64ArrayAttr:$lhs_contracting_dimensions,
     DenseI64ArrayAttr:$rhs_contracting_dimensions
   );
@@ -463,8 +627,13 @@ def DotOp : Impulse_Op<"dot", [Pure]> {
 def CholeskyOp : Impulse_Op<"cholesky", [Pure]> {
   let summary = "Compute Cholesky decomposition of a symmetric positive definite matrix";
   let description = [{
-    Computes the Cholesky decomposition of a symmetric positive definite matrix A.
-    Returns L such that A = L @ L^T (if lower=true) or A = U^T @ U (if lower=false).
+    Computes the Cholesky factorization of the symmetric positive-definite
+    matrix in the trailing two dimensions of `input` (any leading dimensions are
+    treated as a batch). If `lower` is true, returns the lower-triangular L with
+    A = L @ L^T; if false, returns the upper-triangular U with A = U^T @ U. The
+    strictly-opposite triangle of the result is zero. The input must be symmetric
+    positive definite; the result is otherwise unspecified. Result shape equals
+    the input shape.
   }];
 
   let arguments = (ins
@@ -481,10 +650,14 @@ def CholeskyOp : Impulse_Op<"cholesky", [Pure]> {
 def TriangularSolveOp : Impulse_Op<"triangular_solve", [Pure]> {
   let summary = "Solve a triangular linear system";
   let description = [{
-    Solves a system of linear equations with a triangular coefficient matrix.
-    If left_side=true, solves op(A) @ X = B for X.
-    If left_side=false, solves X @ op(A) = B for X.
-    op(A) is determined by transpose_a: NO_TRANSPOSE, TRANSPOSE, or ADJOINT.
+    Solves a linear system whose coefficient matrix `a` is triangular, returning
+    X with the shape of `b`. Only the triangle of `a` selected by `lower` is
+    read (lower-triangular if `lower` is true, else upper); when `unit_diagonal`
+    is true the diagonal of `a` is taken to be all ones and its stored diagonal
+    is ignored. `op(a)` is `a`, `a^T`, or `a^H` according to `transpose_a`
+    (NO_TRANSPOSE, TRANSPOSE, ADJOINT). If `left_side` is true, solves
+    `op(a) @ X = b`; if false, solves `X @ op(a) = b`. `a` operates on the
+    trailing two dimensions; leading dimensions are batched.
   }];
 
   let arguments = (ins
@@ -509,9 +682,14 @@ def TriangularSolveOp : Impulse_Op<"triangular_solve", [Pure]> {
 def SelectOp : Impulse_Op<"select", [Pure]> {
   let summary = "Exteneded select operation";
   let description = [{
-    Extended select operation that supports:
-    - `tensor<i1>` conditions with differently-sized operands
-    - standard cases supported by `arith.select`
+    Elementwise selection between `true_value` and `false_value`: each result
+    element is the corresponding `true_value` element where `condition` is true,
+    otherwise the `false_value` element. As an extension over `arith.select`, a
+    rank-0 `tensor<i1>` `condition` selects between the two operands as whole
+    tensors, so the operands may have a shape that differs from a per-element
+    condition. When `condition` matches the operand shape, selection is per
+    element. `true_value` and `false_value` share the result's shape and element
+    type.
   }];
 
   let arguments = (ins
@@ -529,6 +707,12 @@ def SelectOp : Impulse_Op<"select", [Pure]> {
 
 def ReshapeOp : Impulse_Op<"reshape", [Pure]> {
   let summary = "Reshape a tensor to a new static shape";
+  let description = [{
+    Reinterprets `input` as a tensor of the result type's static shape,
+    preserving the linear (row-major, last-dimension-fastest) order of elements.
+    The result shape is fully static and its total element count must equal that
+    of `input`; no elements are added, dropped, or reordered.
+  }];
   let arguments = (ins AnyRankedTensor:$input);
   let results = (outs AnyRankedTensor:$result);
   let assemblyFormat = [{
@@ -539,7 +723,13 @@ def ReshapeOp : Impulse_Op<"reshape", [Pure]> {
 def SliceOp : Impulse_Op<"slice", [Pure]> {
   let summary = "Extract a static slice from a tensor";
   let description = [{
-    Extract a static slice from a tensor.
+    Extracts a statically-shaped sub-tensor of `operand`. In each dimension `d`
+    it takes the elements at indices `start_indices[d] + k*strides[d]` for
+    `k = 0, 1, ...` while the index stays below `limit_indices[d]`, yielding
+    `ceil((limit_indices[d] - start_indices[d]) / strides[d])` elements. All
+    three index arrays are static and have one entry per operand dimension; the
+    result shape follows from them and must be in bounds
+    (`0 <= start <= limit <= dim_size`, `strides >= 1`).
   }];
 
   let arguments = (ins
@@ -558,7 +748,12 @@ def SliceOp : Impulse_Op<"slice", [Pure]> {
 def DynamicSliceOp : Impulse_Op<"dynamic_slice", [Pure]> {
   let summary = "Extract a slice from a tensor at dynamic start indices";
   let description = [{
-    Extract a slice from a tensor at dynamic start indices.
+    Extracts a sub-tensor of static shape `slice_sizes` from `operand`, starting
+    at the runtime `start_indices` (one scalar index tensor per operand
+    dimension). Before use, each start index is clamped into
+    `[0, operand_dim - slice_sizes[d]]` so the whole slice stays in bounds, so
+    out-of-range indices shift the window to the nearest fully-in-bounds position
+    rather than reading out of bounds. The result shape is `slice_sizes`.
   }];
 
   let arguments = (ins
@@ -576,7 +771,12 @@ def DynamicSliceOp : Impulse_Op<"dynamic_slice", [Pure]> {
 def DynamicUpdateSliceOp : Impulse_Op<"dynamic_update_slice", [Pure]> {
   let summary = "Update a slice in a tensor at dynamic start indices";
   let description = [{
-    Update a slice in a tensor at dynamic start indices.
+    Produces a copy of `operand` with `update` written in starting at the runtime
+    `start_indices` (one scalar index tensor per operand dimension). Before use,
+    each start index is clamped into `[0, operand_dim - update_dim[d]]` so the
+    entire `update` lands in bounds, so out-of-range indices shift the write
+    window to the nearest fully-in-bounds position rather than writing out of
+    bounds. The result has the shape of `operand`.
   }];
 
   let arguments = (ins
@@ -595,24 +795,11 @@ def DynamicUpdateSliceOp : Impulse_Op<"dynamic_update_slice", [Pure]> {
 // Math ops
 //===----------------------------------------------------------------------===//
 
-def LogAddExpOp : Impulse_Op<"log_add_exp", [Pure]> {
-  let summary = "Computes log(exp(x) + exp(y))";
-  let description = [{
-    Computes log(exp(x) + exp(y)).
-  }];
-
-  let arguments = (ins AnyRankedTensor:$lhs, AnyRankedTensor:$rhs);
-  let results = (outs AnyRankedTensor:$result);
-
-  let assemblyFormat = [{
-    $lhs `,` $rhs attr-dict `:` functional-type(operands, results)
-  }];
-}
-
 def LogisticOp : Impulse_Op<"logistic", [Pure]> {
   let summary = "Computes logistic (sigmoid) function: 1 / (1 + exp(-x))";
   let description = [{
-    Computes the logistic (sigmoid) function: 1 / (1 + exp(-x)).
+    Elementwise logistic (sigmoid) function `1 / (1 + exp(-x))` over `operand`.
+    Result and operand share shape and element type.
   }];
 
   let arguments = (ins AnyRankedTensor:$operand);
@@ -623,10 +810,11 @@ def LogisticOp : Impulse_Op<"logistic", [Pure]> {
   }];
 }
 
-def PopcountOp : Impulse_Op<"popcount", [Pure, SameOperandsAndResultElementType, SameOperandsAndResultShape]> {
-  let summary = "Computes population count";
+def LgammaOp : Impulse_Op<"lgamma", [Pure, SameOperandsAndResultElementType, SameOperandsAndResultShape]> {
+  let summary = "Computes the log of the absolute value of the Gamma function";
   let description = [{
-    Returns the number of 1-bits elementwise.
+    Elementwise log|Gamma(x)| over `operand`. Result and operand share shape
+    and element type.
   }];
 
   let arguments = (ins AnyRankedTensor:$operand);

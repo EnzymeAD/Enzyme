@@ -82,6 +82,78 @@ def ExpandImpulsePass : Pass<"expand-impulse"> {
   ];
 }
 
+def InlineInferIntoRegionPass : Pass<"inline-infer-regions"> {
+  let summary = "Inline impulse.infer ops into impulse.infer_region ops.";
+  let description = [{
+    Converts trace-based `impulse.infer @fn(...)` into `impulse.infer_region`
+    with the model body inlined into the sampling region, each `impulse.sample`
+    converted to an `impulse.sample_region` (sampler and logpdf function bodies
+    inlined as sub-regions), and sub-model sample sites recursively dissolved
+    (their addresses prefixed with the enclosing site's address). Only models
+    the region pipeline fully supports are converted; anything else is left as
+    a flat `impulse.infer` for the regular expand-impulse lowering.
+
+    The logpdf region is NOT built here: the `sicm` pass constructs it after
+    sampling-region SICM, so it is born optimized.
+  }];
+  let dependentDialects = [
+    "arith::ArithDialect",
+    "math::MathDialect",
+    "enzyme::EnzymeDialect",
+    "impulse::ImpulseDialect",
+  ];
+}
+
+
+def SICMPass : Pass<"sicm"> {
+  let summary = "Sample-invariant code motion";
+  let description = [{
+    For each impulse.infer_region, iterates to fixpoint:
+    1. Apply the rewrite rules that split an expensive sample-dependent op
+       into a cheap sample-dependent part and an expensive invariant part.
+    2. Hoist sample-invariant operations out of the region.
+    The sampling region goes first. The logpdf region is then built from the
+    (already optimized) sampling region, so it is born optimized, and gets
+    the same two steps.
+
+    The pass has no rules of its own and names no tensor dialect. A dialect
+    contributes its rules through a SICMRuleSetInterface; with none loaded
+    the pass builds the logpdf region and hoists. With the `schedule` option
+    the rules of step 1 are instead the patterns of the descriptors listed in
+    the `transform.apply_patterns` ops of the entry-point sequence of a
+    transform script.
+
+    Each round starts from a fresh sample-dependence analysis; within the
+    rewrite step it is updated incrementally on every IR change (a new value
+    gets the join of the values it uses, and a value that becomes
+    sample-dependent makes its users so), never lowered, and step 2
+    recomputes it.
+  }];
+  let dependentDialects = [
+    "impulse::ImpulseDialect",
+  ];
+  let options = [
+    Option<"maxIterations", "max-iterations", "int64_t", "10",
+           "Maximum rewrite+hoist iterations per region">,
+    ListOption<"ruleOptions", "rule-options", "std::string",
+               "Options of the rule sets, each as key=value">,
+    Option<"schedule", "schedule", "std::string", "\"\"",
+           "Transform script (file path) that lists the rewrite rules: "
+           "every rewrite step applies the patterns of the descriptors in "
+           "the transform.apply_patterns ops of its schedule-entry-point "
+           "sequence. Empty: the rules of every loaded rule set.">,
+    Option<"scheduleEntryPoint", "schedule-entry-point", "std::string",
+           "\"__transform_main\"",
+           "Named sequence of the schedule script that lists the rules.">,
+    Option<"verifyIncrementalAnalysis", "verify-incremental-analysis", "bool",
+           "false",
+           "Debug: after every IR change of a rewrite step, compare the "
+           "incrementally updated sample-dependence analyses with a fresh "
+           "analysis of the IR, and fail if one misses a sample-dependent "
+           "value. Prints a summary per round to stderr.">,
+  ];
+}
+
 def BatchPass : Pass<"enzyme-batch"> {
   let summary = "Batch Passes";
   let dependentDialects = [

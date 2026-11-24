@@ -10,7 +10,7 @@ module {
   }
 
   func.func @logpdf_2d(%x : tensor<2xf64>) -> tensor<f64> {
-    %sum_sq = impulse.dot %x, %x <{lhs_batching_dimensions = array<i64>, rhs_batching_dimensions = array<i64>, lhs_contracting_dimensions = array<i64: 0>, rhs_contracting_dimensions = array<i64: 0>}> : (tensor<2xf64>, tensor<2xf64>) -> tensor<f64>
+    %sum_sq = impulse.dot %x, %x <{lhs_contracting_dimensions = array<i64: 0>, rhs_contracting_dimensions = array<i64: 0>}> : (tensor<2xf64>, tensor<2xf64>) -> tensor<f64>
     %neg_half = arith.constant dense<-5.000000e-01> : tensor<f64>
     %result = arith.mulf %neg_half, %sum_sq : tensor<f64>
     return %result : tensor<f64>
@@ -27,7 +27,8 @@ module {
       all_addresses = [],
       num_warmup = 1,
       num_samples = 1,
-      operand_segment_sizes = array<i32: 1, 0, 0, 0, 1, 1, 0, 0, 0>
+      state_schema = ["position", "gradient", "potential_energy", "step_size", "inverse_mass_matrix"],
+      operand_segment_sizes = array<i32: 1, 0, 0, 0, 0, 1, 1, 0>
     } : (tensor<2xui64>, tensor<f64>, tensor<1x1xf64>) -> (tensor<1x1xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<f64>, tensor<1x1xf64>)
     return %res#0, %res#8 : tensor<1x1xf64>, tensor<1x1xf64>
   }
@@ -43,7 +44,8 @@ module {
       all_addresses = [],
       num_warmup = 0,
       num_samples = 1,
-      operand_segment_sizes = array<i32: 1, 0, 0, 0, 1, 1, 0, 0, 0>
+      state_schema = ["position", "gradient", "potential_energy", "step_size", "inverse_mass_matrix"],
+      operand_segment_sizes = array<i32: 1, 0, 0, 0, 0, 1, 1, 0>
     } : (tensor<2xui64>, tensor<f64>, tensor<1x2xf64>) -> (tensor<1x2xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>, tensor<1x2xf64>, tensor<1x2xf64>, tensor<f64>, tensor<f64>, tensor<1x2xf64>)
     return %res#0 : tensor<1x2xf64>
   }

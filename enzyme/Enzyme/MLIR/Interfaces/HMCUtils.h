@@ -26,15 +26,20 @@ namespace mlir {
 namespace impulse {
 
 struct SupportInfo {
+  // `offset`, `traceOffset` and `size` are in constrained coordinates.
   int64_t offset;
   int64_t traceOffset;
   int64_t size;
+  int64_t unconstrainedOffset;
+  int64_t unconstrainedSize;
   impulse::SupportAttr support;
 
   SupportInfo(int64_t offset, int64_t traceOffset, int64_t size,
+              int64_t unconstrainedOffset, int64_t unconstrainedSize,
               impulse::SupportAttr support)
-      : offset(offset), traceOffset(traceOffset), size(size), support(support) {
-  }
+      : offset(offset), traceOffset(traceOffset), size(size),
+        unconstrainedOffset(unconstrainedOffset),
+        unconstrainedSize(unconstrainedSize), support(support) {}
 };
 
 struct IntegrationResult {
@@ -108,10 +113,15 @@ struct HMCContext {
   Value massMatrixSqrt;
   Value stepSize;
   Value trajectoryLength;
+  // 0 derives the step count from trajectoryLength.
+  int64_t numSteps = 0;
   int64_t positionSize;
   SmallVector<SupportInfo> supports;
   FlatSymbolRefAttr logpdfFn;
   DictionaryAttr autodiffAttrs;
+
+  /// Block arguments take constrained position slices in `selection` order.
+  Region *logpdfRegion = nullptr;
 
   HMCContext(FlatSymbolRefAttr fn, ArrayRef<Value> fnInputs,
              ArrayRef<Type> fnResultTypes, Value originalTrace,
@@ -138,6 +148,8 @@ struct HMCContext {
         autodiffAttrs(autodiffAttrs) {}
 
   bool hasCustomLogpdf() const { return logpdfFn != nullptr; }
+
+  bool hasLogpdfRegion() const { return logpdfRegion != nullptr; }
 
   int64_t getFullTraceSize() const {
     auto traceType = cast<RankedTensorType>(originalTrace.getType());

@@ -7,6 +7,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "Dialect/Impulse/Impulse.h"
+#include "Interfaces/DistBuilder.h"
+#include "Passes/InferStateLayout.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Builders.h"
@@ -14,16 +16,36 @@
 using namespace mlir;
 using namespace mlir::impulse;
 
+static LogicalResult verifyDistSupport(Operation *op, DistAttr dist,
+                                       SupportAttr support) {
+  // Only parameterless bases: the site's dist operands belong to the chain.
+  if (dist && dist.getTransforms() && !dist.getTransforms().empty() &&
+      dist.getBase() != DistBaseKind::STD_NORMAL &&
+      dist.getBase() != DistBaseKind::STD_UNIFORM)
+    return op->emitOpError("a transform chain is only supported on the "
+                           "STD_NORMAL and STD_UNIFORM bases");
+  if (!dist || !support)
+    return success();
+  SupportAttr derived = deriveSupportFromDist(op->getContext(), dist);
+  if (derived.getKind() != support.getKind())
+    return op->emitOpError(
+        "explicit support contradicts the support derived from its dist "
+        "attribute");
+  return success();
+}
+
 //===----------------------------------------------------------------------===//
 // SampleOp
 //===----------------------------------------------------------------------===//
 
 LogicalResult SampleOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
-  auto global =
-      symbolTable.lookupNearestSymbolFrom<func::FuncOp>(*this, getFnAttr());
-  if (!global)
-    return emitOpError("'")
-           << getFn() << "' does not reference a valid global funcOp";
+  if (getFnAttr()) {
+    auto global =
+        symbolTable.lookupNearestSymbolFrom<func::FuncOp>(*this, getFnAttr());
+    if (!global)
+      return emitOpError("'")
+             << getFn().value() << "' does not reference a valid global funcOp";
+  }
 
   if (getLogpdfAttr()) {
     auto global = symbolTable.lookupNearestSymbolFrom<func::FuncOp>(
@@ -35,6 +57,28 @@ LogicalResult SampleOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   }
 
   return success();
+}
+
+LogicalResult SampleOp::verify() {
+  if (!getFnAttr() && !getDistAttr())
+    return emitOpError(
+        "requires either a sampler symbol `fn` or a `dist` attribute");
+  if (DistAttr dist = getDistAttr()) {
+    SmallVector<Type> distArgTypes;
+    for (unsigned i = 1; i < getInputs().size(); ++i)
+      distArgTypes.push_back(getInputs()[i].getType());
+    RankedTensorType derived = deriveSampleValueType(dist, distArgTypes);
+    if (derived && getNumResults() >= 2 && getResult(1).getType() != derived)
+      return emitOpError("distribution sample value type ")
+             << getResult(1).getType()
+             << " disagrees with the type derived from the dist attribute "
+             << derived;
+  }
+  return verifyDistSupport(*this, getDistAttr(), getSupportAttr());
+}
+
+LogicalResult SampleRegionOp::verify() {
+  return verifyDistSupport(*this, getDistAttr(), getSupportAttr());
 }
 
 //===----------------------------------------------------------------------===//
@@ -121,11 +165,25 @@ LogicalResult InferOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 LogicalResult InferOp::verify() {
   bool hasHMC = getHmcConfig().has_value();
   bool hasNUTS = getNutsConfig().has_value();
+  bool hasVI = getViConfig().has_value();
+  bool hasMH = getMhConfig().has_value();
+  bool hasGibbs = getGibbsConfig().has_value();
 
-  if (hasHMC + hasNUTS != 1) {
-    return emitOpError(
-        "Exactly one of hmc_config or nuts_config must be specified");
+  if (hasHMC + hasNUTS + hasVI + hasMH + hasGibbs != 1) {
+    return emitOpError("exactly one of hmc_config, nuts_config, vi_config, "
+                       "mh_config, or gibbs_config must be specified");
   }
+
+  if ((getConstraint() || getConstrainedAddressesAttr()) && !hasMH && !hasGibbs)
+    return emitOpError("`constraint`/`constrained_addresses` are only valid "
+                       "with mh_config or gibbs_config");
+
+  int64_t numChains = getNumChains();
+  if (numChains < 1)
+    return emitOpError("`num_chains` must be >= 1");
+  if (numChains > 1 && !hasHMC && !hasNUTS)
+    return emitOpError("`num_chains` > 1 requires a sampling config "
+                       "(hmc_config or nuts_config)");
 
   if (!getFnAttr() && !getLogpdfFnAttr()) {
     return emitOpError("one of `fn` or `logpdf_fn` must be specified");
@@ -135,21 +193,124 @@ LogicalResult InferOp::verify() {
     return emitOpError("specifying both `fn` and `logpdf_fn` is unsupported");
   }
 
-  if (getLogpdfFnAttr() && !getInitialPosition()) {
+  if (getLogpdfFnAttr() && !getInitPosition()) {
     return emitOpError(
-        "custom logpdf mode requires `initial_position` to be provided");
+        "custom logpdf mode requires `init_position` to be provided");
   }
 
-  constexpr unsigned kAdaptationStateSize = 9;
-  unsigned numIn = getAdaptationStateIn().size();
-  if (numIn != 0 && numIn != kAdaptationStateSize) {
-    return emitOpError("`adaptation_state_in` must have either 0 or ")
-           << kAdaptationStateSize << " operands, got " << numIn;
+  unsigned numStateOut = getStateOut().size();
+  ArrayAttr schema = getStateSchemaAttr();
+  if (numStateOut != 0) {
+    if (!schema)
+      return emitOpError(
+          "`state_schema` is required when `state_out` is non-empty");
+    if (schema.size() != numStateOut)
+      return emitOpError("`state_schema` size (")
+             << schema.size() << ") must match `state_out` size ("
+             << numStateOut << ")";
+  } else if (schema && schema.size() != 0) {
+    return emitOpError(
+        "`state_schema` must be empty when `state_out` is empty");
   }
-  unsigned numOut = getAdaptationStateOut().size();
-  if (numOut != 0 && numOut != kAdaptationStateSize) {
-    return emitOpError("`adaptation_state_out` must have either 0 or ")
-           << kAdaptationStateSize << " results, got " << numOut;
+
+  unsigned numStateIn = getStateIn().size();
+  if (numStateIn != 0 && numStateIn != numStateOut) {
+    return emitOpError("`state_in` must be empty or match `state_out` size (")
+           << numStateOut << "), got " << numStateIn;
+  }
+
+  if (numStateOut != 0) {
+    SmallVector<impulse::StateSlot> expected;
+    if (hasMH || hasGibbs) {
+      auto wType = dyn_cast<RankedTensorType>(getStateOut()[0].getType());
+      if (!wType || wType.getRank() != 0)
+        return emitOpError("MH `weight` state slot must be a scalar tensor");
+      expected = impulse::buildMHStateSchema(wType.getElementType());
+      if (expected.size() != numStateOut)
+        return emitOpError("`state_schema` size (")
+               << numStateOut << ") does not match the canonical MH layout ("
+               << expected.size() << ")";
+    } else if (hasVI) {
+      auto locIdx = impulse::slotIndex(schema, "loc");
+      if (!locIdx)
+        return emitOpError("VI `state_schema` must contain a `loc` slot");
+      auto locType =
+          dyn_cast<RankedTensorType>(getStateOut()[*locIdx].getType());
+      if (!locType || locType.getRank() != 2)
+        return emitOpError("VI `loc` state slot must be a rank-2 `1xd` tensor");
+      int64_t positionSize = locType.getShape().back();
+      impulse::VIGuide guide;
+      switch (getViConfig()->getGuideKind().getValue()) {
+      case impulse::GuideKind::AUTO_NORMAL:
+        guide = impulse::VIGuide::AutoNormal;
+        break;
+      case impulse::GuideKind::AUTO_DELTA:
+        guide = impulse::VIGuide::AutoDelta;
+        break;
+      case impulse::GuideKind::AUTO_MULTIVARIATE_NORMAL:
+        guide = impulse::VIGuide::AutoMVN;
+        break;
+      default:
+        return emitOpError("VI `state_schema` is unsupported for this guide "
+                           "kind");
+      }
+      expected = impulse::buildVIStateSchema(guide, positionSize,
+                                             locType.getElementType());
+      if (expected.size() != numStateOut)
+        return emitOpError("`state_schema` size (")
+               << numStateOut << ") does not match the canonical VI layout ("
+               << expected.size() << ")";
+    } else {
+      auto posIdx = impulse::slotIndex(schema, "position");
+      auto immIdx = impulse::slotIndex(schema, "inverse_mass_matrix");
+      if (!posIdx || !immIdx)
+        return emitOpError("`state_schema` must contain `position` and "
+                           "`inverse_mass_matrix` slots");
+      auto posType =
+          dyn_cast<RankedTensorType>(getStateOut()[*posIdx].getType());
+      auto immType =
+          dyn_cast<RankedTensorType>(getStateOut()[*immIdx].getType());
+      int64_t expectedPosRank = numChains > 1 ? 3 : 2;
+      if (!posType || posType.getRank() != expectedPosRank || !immType)
+        return emitOpError("`position`/`inverse_mass_matrix` state slots must "
+                           "be ranked tensors of the expected rank");
+      if (numChains > 1 && posType.getShape()[0] != numChains)
+        return emitOpError("chain-major `position` slot leading dim (")
+               << posType.getShape()[0] << ") must equal num_chains ("
+               << numChains << ")";
+      int64_t positionSize = posType.getShape().back();
+      RankedTensorType singleImmType =
+          numChains > 1 ? RankedTensorType::get(immType.getShape().drop_front(),
+                                                immType.getElementType())
+                        : immType;
+
+      bool adaptive = impulse::slotIndex(schema, "window_idx").has_value();
+      // output_rng_state stays a single chain's key when num_chains > 1.
+      auto rngType = dyn_cast<RankedTensorType>(getOutputRngState().getType());
+      expected = impulse::buildStateSchema(adaptive, positionSize,
+                                           posType.getElementType(),
+                                           singleImmType, numChains, rngType);
+      if (expected.size() != numStateOut)
+        return emitOpError("`state_schema` size (")
+               << numStateOut << ") does not match the canonical "
+               << (adaptive ? "adaptive" : "plain") << " layout ("
+               << expected.size() << ")";
+    }
+    for (unsigned i = 0; i < numStateOut; ++i) {
+      StringRef name = cast<StringAttr>(schema[i]).getValue();
+      if (name != expected[i].name)
+        return emitOpError("`state_schema` slot ")
+               << i << " is '" << name << "', expected '" << expected[i].name
+               << "'";
+      if (getStateOut()[i].getType() != expected[i].type)
+        return emitOpError("`state_out` slot '")
+               << name << "' has type " << getStateOut()[i].getType()
+               << ", expected " << expected[i].type;
+      if (numStateIn != 0 && getStateIn()[i].getType() != expected[i].type)
+        return emitOpError("`state_in` slot '")
+               << name << "' has type " << getStateIn()[i].getType()
+               << ", expected " << expected[i].type;
+    }
   }
 
   return success();

@@ -23,13 +23,13 @@ namespace mlir {
 namespace enzyme {
 namespace transforms {
 
-/// Get the unconstrained size given a constrained size and support kind.
+/// Unconstrained size for `support`; SIMPLEX maps m*K to m*(K-1).
 int64_t getUnconstrainedSize(int64_t constrainedSize,
-                             impulse::SupportKind kind);
+                             impulse::SupportAttr support);
 
-/// Get the constrained size given an unconstrained size and support kind.
+/// Inverse of `getUnconstrainedSize`.
 int64_t getConstrainedSize(int64_t unconstrainedSize,
-                           impulse::SupportKind kind);
+                           impulse::SupportAttr support);
 
 /// Transform from constrained to unconstrained space.
 Value unconstrain(OpBuilder &builder, Location loc, Value constrained,

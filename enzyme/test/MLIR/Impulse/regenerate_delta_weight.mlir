@@ -1,0 +1,69 @@
+// RUN: %eopt --expand-impulse %s | FileCheck %s
+
+// The score-tail trace type alone selects delta semantics: clean terms cancel.
+
+module {
+  func.func private @normal(%rng : tensor<2xui64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+  func.func private @logpdf(%x : tensor<f64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> tensor<f64>
+
+  func.func @model(%rng : tensor<2xui64>, %c : tensor<f64>) -> (tensor<2xui64>, tensor<f64>) {
+    %a:2 = impulse.sample @normal(%rng, %c, %c) <{ logpdf = @logpdf, symbol = #impulse.symbol<1> }> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+    %b:2 = impulse.sample @normal(%a#0, %c, %c) <{ logpdf = @logpdf, symbol = #impulse.symbol<2> }> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+    %m3 = arith.addf %a#1, %c : tensor<f64>
+    %s3:2 = impulse.sample @normal(%b#0, %m3, %c) <{ logpdf = @logpdf, symbol = #impulse.symbol<3> }> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+    %m4 = arith.mulf %b#1, %c : tensor<f64>
+    %s4:2 = impulse.sample @normal(%s3#0, %m4, %c) <{ logpdf = @logpdf, symbol = #impulse.symbol<4> }> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+    return %s4#0, %s4#1 : tensor<2xui64>, tensor<f64>
+  }
+
+  func.func @test(%rng : tensor<2xui64>, %c : tensor<f64>) -> (tensor<1x8xf64>, tensor<f64>) {
+    %prev = arith.constant dense<[[0.1, 0.2, 0.3, 0.4, -1.1, -1.2, -1.3, -1.4]]> : tensor<1x8xf64>
+    %res:4 = impulse.regenerate @model(%rng, %c) given %prev
+        <{ selection = [[#impulse.symbol<1>], [#impulse.symbol<2>], [#impulse.symbol<3>], [#impulse.symbol<4>]],
+          regenerate_addresses = [[#impulse.symbol<2>]] }>
+        : (tensor<2xui64>, tensor<f64>, tensor<1x8xf64>) -> (tensor<1x8xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>)
+    return %res#0, %res#1 : tensor<1x8xf64>, tensor<f64>
+  }
+}
+
+// CHECK-LABEL: func.func @model.regenerate
+// CHECK-SAME:      (%[[TRACE:.+]]: tensor<1x8xf64>, %[[RNG:.+]]: tensor<2xui64>, %[[C:.+]]: tensor<f64>) -> (tensor<1x8xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>)
+// CHECK-DAG:     %[[C7:.+]] = arith.constant dense<7> : tensor<i64>
+// CHECK-DAG:     %[[C6:.+]] = arith.constant dense<6> : tensor<i64>
+// CHECK-DAG:     %[[C5:.+]] = arith.constant dense<5> : tensor<i64>
+// CHECK-DAG:     %[[C4:.+]] = arith.constant dense<4> : tensor<i64>
+// CHECK-DAG:     %[[ZFULL:.+]] = arith.constant dense<0.000000e+00> : tensor<1x8xf64>
+// CHECK-DAG:     %[[C1:.+]] = arith.constant dense<1> : tensor<i64>
+// CHECK-DAG:     %[[C0:.+]] = arith.constant dense<0> : tensor<i64>
+// CHECK-DAG:     %[[ZERO:.+]] = arith.constant dense<0.000000e+00> : tensor<f64>
+// CHECK:         %[[VALS:.+]] = impulse.slice %[[TRACE]] <start_indices = [0, 0], limit_indices = [1, 4]
+// CHECK-NEXT:    %[[SC1SL:.+]] = impulse.slice %[[TRACE]] <start_indices = [0, 4], limit_indices = [1, 5]
+// CHECK-NEXT:    %[[SC1:.+]] = impulse.reshape %[[SC1SL]] : (tensor<1x1xf64>) -> tensor<f64>
+// CHECK-NEXT:    %[[DRAW:.+]]:2 = call @normal(%[[RNG]], %[[C]], %[[C]])
+// CHECK-NEXT:    %[[SC2SL:.+]] = impulse.slice %[[TRACE]] <start_indices = [0, 5], limit_indices = [1, 6]
+// CHECK-NEXT:    %[[SC2:.+]] = impulse.reshape %[[SC2SL]] : (tensor<1x1xf64>) -> tensor<f64>
+// CHECK-NEXT:    %[[LP2N:.+]] = call @logpdf(%[[DRAW]]#1, %[[C]], %[[C]])
+// CHECK-NEXT:    %[[D2:.+]] = arith.subf %[[LP2N]], %[[SC2]] : tensor<f64>
+// CHECK-NEXT:    %[[W2:.+]] = arith.addf %[[D2]], %[[ZERO]] : tensor<f64>
+// CHECK-NEXT:    %[[DRAWW:.+]] = impulse.reshape %[[DRAW]]#1 : (tensor<f64>) -> tensor<1x1xf64>
+// CHECK-NEXT:    %[[VALS2:.+]] = impulse.dynamic_update_slice %[[VALS]], %[[DRAWW]], %[[C0]], %[[C1]]
+// CHECK-NEXT:    %[[SC3SL:.+]] = impulse.slice %[[TRACE]] <start_indices = [0, 6], limit_indices = [1, 7]
+// CHECK-NEXT:    %[[SC3:.+]] = impulse.reshape %[[SC3SL]] : (tensor<1x1xf64>) -> tensor<f64>
+// CHECK-NEXT:    %[[M4N:.+]] = arith.mulf %[[DRAW]]#1, %[[C]] : tensor<f64>
+// CHECK-NEXT:    %[[S4SL:.+]] = impulse.slice %[[TRACE]] <start_indices = [0, 3], limit_indices = [1, 4]
+// CHECK-NEXT:    %[[S4:.+]] = impulse.reshape %[[S4SL]] : (tensor<1x1xf64>) -> tensor<f64>
+// CHECK-NEXT:    %[[SC4SL:.+]] = impulse.slice %[[TRACE]] <start_indices = [0, 7], limit_indices = [1, 8]
+// CHECK-NEXT:    %[[SC4:.+]] = impulse.reshape %[[SC4SL]] : (tensor<1x1xf64>) -> tensor<f64>
+// CHECK-NEXT:    %[[LP4N:.+]] = call @logpdf(%[[S4]], %[[M4N]], %[[C]])
+// CHECK-NEXT:    %[[D4:.+]] = arith.subf %[[LP4N]], %[[SC4]] : tensor<f64>
+// CHECK-NEXT:    %[[DELTA:.+]] = arith.addf %[[W2]], %[[D4]] : tensor<f64>
+// CHECK-NEXT:    %[[A0:.+]] = impulse.dynamic_update_slice %[[ZFULL]], %[[VALS2]], %[[C0]], %[[C0]]
+// CHECK-NEXT:    %[[SC1W:.+]] = impulse.reshape %[[SC1]] : (tensor<f64>) -> tensor<1x1xf64>
+// CHECK-NEXT:    %[[A1:.+]] = impulse.dynamic_update_slice %[[A0]], %[[SC1W]], %[[C0]], %[[C4]]
+// CHECK-NEXT:    %[[LP2W:.+]] = impulse.reshape %[[LP2N]] : (tensor<f64>) -> tensor<1x1xf64>
+// CHECK-NEXT:    %[[A2:.+]] = impulse.dynamic_update_slice %[[A1]], %[[LP2W]], %[[C0]], %[[C5]]
+// CHECK-NEXT:    %[[SC3W:.+]] = impulse.reshape %[[SC3]] : (tensor<f64>) -> tensor<1x1xf64>
+// CHECK-NEXT:    %[[A3:.+]] = impulse.dynamic_update_slice %[[A2]], %[[SC3W]], %[[C0]], %[[C6]]
+// CHECK-NEXT:    %[[LP4W:.+]] = impulse.reshape %[[LP4N]] : (tensor<f64>) -> tensor<1x1xf64>
+// CHECK-NEXT:    %[[A4:.+]] = impulse.dynamic_update_slice %[[A3]], %[[LP4W]], %[[C0]], %[[C7]]
+// CHECK-NEXT:    return %[[A4]], %[[DELTA]], %[[DRAW]]#0, %[[S4]] : tensor<1x8xf64>, tensor<f64>, tensor<2xui64>, tensor<f64>
