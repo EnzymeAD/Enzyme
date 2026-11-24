@@ -2912,7 +2912,8 @@ void TypeAnalyzer::visitSelectInst(SelectInst &I) {
 }
 
 void TypeAnalyzer::visitExtractElementInst(ExtractElementInst &I) {
-  updateAnalysis(I.getIndexOperand(), BaseType::Integer, &I);
+  updateAnalysis(I.getIndexOperand(), TypeTree(BaseType::Integer).Only(-1, &I),
+                 &I);
 
   auto &dl = fntypeinfo.Function->getParent()->getDataLayout();
   VectorType *vecType = cast<VectorType>(I.getVectorOperand()->getType());
@@ -2937,8 +2938,12 @@ void TypeAnalyzer::visitExtractElementInst(ExtractElementInst &I) {
     if (direction & DOWN) {
       const TypeTree &vecAnalysis = getAnalysis(I.getVectorOperand());
       // TODO merge of anythings (see selectinst)
-      TypeTree res = vecAnalysis.Lookup(size, dl);
-      updateAnalysis(&I, res.Only(-1, &I), &I);
+      TypeTree res = vecAnalysis.ShiftIndices(dl, 0, size, /*addOffset*/ 0);
+      for (size_t i = 1, e = vecType->getElementCount().getKnownMinValue();
+           i < e; ++i)
+        res &= vecAnalysis.ShiftIndices(dl, (i * bitsize) / 8, size,
+                                        /*addOffset*/ 0);
+      updateAnalysis(&I, res, &I);
     }
     if (direction & UP) {
       // propagated upward to unknown location, no analysis
