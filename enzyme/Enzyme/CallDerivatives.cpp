@@ -2886,9 +2886,12 @@ bool AdjointGenerator::handleKnownCallDerivatives(
 
     // void _FortranAAssign(Descriptor &to, const Descriptor &from,
     //                      const char *sourceFile, int sourceLine)
-    // is LLVM flang's assignment between descriptors; its derivative is the
-    // same assignment applied to the shadow descriptors.
-    if (funcName == "_FortranAAssign" && call.arg_size() == 4) {
+    // is LLVM flang's assignment between descriptors, and AssignSimple its
+    // variant for intrinsic types. The forward-mode derivative is the same
+    // assignment applied to the shadow descriptors.
+    if ((funcName == "_FortranAAssign" ||
+         funcName == "_FortranAAssignSimple") &&
+        call.arg_size() == 4) {
       if (Mode == DerivativeMode::ForwardMode ||
           Mode == DerivativeMode::ForwardModeError) {
         if (!gutils->isConstantInstruction(&call)) {
@@ -2912,6 +2915,219 @@ bool AdjointGenerator::handleKnownCallDerivatives(
           eraseIfUnused(call);
           return true;
         }
+      }
+
+      // The reverse pass adds the adjoint of `to` to that of `from` and
+      // zeroes it. Assignment to an allocatable may (re)allocate `to`: the
+      // augmented forward pass then gives the shadow of `to` new, zeroed
+      // memory of the same shape, and the reverse pass frees it and
+      // restores the shadow descriptor.
+      if (Mode == DerivativeMode::ReverseModePrimal ||
+          Mode == DerivativeMode::ReverseModeGradient ||
+          Mode == DerivativeMode::ReverseModeCombined) {
+        Value *origTo = call.getArgOperand(0);
+        Value *origFrom = call.getArgOperand(1);
+        // Nothing flows from an inactive `to`.
+        if (gutils->isConstantValue(origTo)) {
+          if (Mode == DerivativeMode::ReverseModeGradient)
+            eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+          return true;
+        }
+        bool fromActive = !gutils->isConstantValue(origFrom);
+        auto &M = *gutils->newFunc->getParent();
+        Type *I8PtrTy = getInt8PtrTy(call.getContext());
+        unsigned width = gutils->getWidth();
+        // Per lane: the shadow descriptor of `to`, the saved shadows of `to`
+        // and `from` (or null), and the saved shadow descriptor of `to`
+        // from before a reallocation (or null). The descriptors may be
+        // temporaries or change by the reverse pass.
+        Type *TapeTy = ArrayType::get(I8PtrTy, 4 * width);
+        IRBuilder<> BuilderA(newCall->getNextNode());
+        Value *tape;
+        if (Mode == DerivativeMode::ReverseModeGradient) {
+          tape = BuilderA.CreatePHI(TapeTy, 0);
+        } else {
+          Function *realloc = getOrInsertFlangShadowAssignRealloc(M);
+          Function *save = getOrInsertFlangShadowSave(M);
+          Value *to = BuilderA.CreatePointerCast(
+              gutils->getNewFromOriginal(origTo), I8PtrTy);
+          Value *from = BuilderA.CreatePointerCast(
+              gutils->getNewFromOriginal(origFrom), I8PtrTy);
+          // `to` from before the assignment, to tell whether it allocated.
+          Value *before = BuilderZ.CreateCall(
+              getOrInsertFlangDescriptorSave(M),
+              {BuilderZ.CreatePointerCast(gutils->getNewFromOriginal(origTo),
+                                          I8PtrTy)});
+          Value *file = BuilderA.CreatePointerCast(
+              gutils->getNewFromOriginal(call.getArgOperand(2)), I8PtrTy);
+          Value *line = gutils->getNewFromOriginal(call.getArgOperand(3));
+          Value *shadowTo = gutils->invertPointerM(origTo, BuilderA);
+          Value *shadowFrom =
+              fromActive ? gutils->invertPointerM(origFrom, BuilderA) : nullptr;
+          auto lane = [&](Value *v, unsigned w) {
+            if (width > 1)
+              v = gutils->extractMeta(BuilderA, v, w);
+            return BuilderA.CreatePointerCast(v, I8PtrTy);
+          };
+          tape = UndefValue::get(TapeTy);
+          for (unsigned w = 0; w < width; ++w) {
+            Value *sTo = lane(shadowTo, w);
+            Value *old =
+                BuilderA.CreateCall(realloc, {sTo, to, before, file, line});
+            Value *dTo = BuilderA.CreateCall(save, {sTo, to});
+            Value *dFrom =
+                fromActive
+                    ? (Value *)BuilderA.CreateCall(save,
+                                                   {lane(shadowFrom, w), from})
+                    : ConstantPointerNull::get(cast<PointerType>(I8PtrTy));
+            tape = BuilderA.CreateInsertValue(tape, sTo, 4 * w);
+            tape = BuilderA.CreateInsertValue(tape, dTo, 4 * w + 1);
+            tape = BuilderA.CreateInsertValue(tape, dFrom, 4 * w + 2);
+            tape = BuilderA.CreateInsertValue(tape, old, 4 * w + 3);
+          }
+          BuilderA.CreateCall(
+              M.getOrInsertFunction("free", BuilderA.getVoidTy(), I8PtrTy),
+              {before});
+          if (auto I = dyn_cast<Instruction>(tape))
+            gutils->TapesToPreventRecomputation.insert(I);
+        }
+        tape = gutils->cacheForReverse(
+            BuilderA, tape, getIndex(&call, CacheType::Tape, BuilderA));
+
+        if (Mode == DerivativeMode::ReverseModeGradient ||
+            Mode == DerivativeMode::ReverseModeCombined) {
+          IRBuilder<> Builder2(&call);
+          getReverseBuilder(Builder2);
+          tape = lookup(tape, Builder2);
+          Value *file = Builder2.CreatePointerCast(
+              lookup(gutils->getNewFromOriginal(call.getArgOperand(2)),
+                     Builder2),
+              I8PtrTy);
+          Value *line = lookup(
+              gutils->getNewFromOriginal(call.getArgOperand(3)), Builder2);
+          Function *reverse = getOrInsertFlangAssignReverse(M);
+          for (unsigned w = 0; w < width; ++w) {
+            SmallVector<Value *, 6> args;
+            for (unsigned i = 0; i < 4; ++i)
+              args.push_back(Builder2.CreateExtractValue(tape, 4 * w + i));
+            args.push_back(file);
+            args.push_back(line);
+            auto dcall = Builder2.CreateCall(reverse, args);
+            dcall->setDebugLoc(gutils->getNewFromOriginal(call.getDebugLoc()));
+          }
+        }
+        if (Mode == DerivativeMode::ReverseModeGradient)
+          eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+        return true;
+      }
+    }
+
+    // float _FortranASumReal4(const Descriptor &x, const char *source,
+    //                         int line, int dim, const Descriptor *mask)
+    // (and SumReal8, returning double) is LLVM flang's SUM of all elements
+    // of a REAL array where `mask` (if not null) is true. Its derivative is
+    // the SUM of the shadow, and its adjoint is added to every element of
+    // the shadow that the mask selects.
+    if ((funcName == "_FortranASumReal4" || funcName == "_FortranASumReal8") &&
+        call.arg_size() == 5 &&
+        !gutils->isConstantValue(call.getArgOperand(0))) {
+      Value *origX = call.getArgOperand(0);
+      if (Mode == DerivativeMode::ForwardMode ||
+          Mode == DerivativeMode::ForwardModeError) {
+        if (gutils->isConstantValue(&call)) {
+          eraseIfUnused(call);
+          return true;
+        }
+        IRBuilder<> Builder2(&call);
+        getForwardBuilder(Builder2);
+        SmallVector<Value *, 5> args;
+        for (auto &arg : call.args())
+          args.push_back(gutils->getNewFromOriginal(arg));
+        Value *shadowX = gutils->invertPointerM(origX, Builder2);
+        auto rule = [&](Value *sX) {
+          args[0] = sX;
+          auto dcall =
+              Builder2.CreateCall(called->getFunctionType(), called, args);
+          dcall->setDebugLoc(gutils->getNewFromOriginal(call.getDebugLoc()));
+          return dcall;
+        };
+        setDiffe(&call, applyChainRule(call.getType(), Builder2, rule, shadowX),
+                 Builder2);
+        eraseIfUnused(call);
+        return true;
+      }
+
+      if (Mode == DerivativeMode::ReverseModePrimal ||
+          Mode == DerivativeMode::ReverseModeGradient ||
+          Mode == DerivativeMode::ReverseModeCombined) {
+        // An inactive result has no adjoint to give to x.
+        if (gutils->isConstantValue(&call)) {
+          if (Mode == DerivativeMode::ReverseModeGradient)
+            eraseIfUnused(call);
+          return true;
+        }
+        auto &M = *gutils->newFunc->getParent();
+        Type *I8PtrTy = getInt8PtrTy(call.getContext());
+        unsigned width = gutils->getWidth();
+        // Per lane the saved shadow of x, then the saved mask (or null):
+        // the descriptors and the mask may be temporaries that are gone by
+        // the reverse pass.
+        Type *TapeTy = ArrayType::get(I8PtrTy, width + 1);
+        Value *tape;
+        if (Mode == DerivativeMode::ReverseModeGradient) {
+          tape = BuilderZ.CreatePHI(TapeTy, 0);
+        } else {
+          Function *save = getOrInsertFlangShadowSave(M);
+          Value *x = BuilderZ.CreatePointerCast(
+              gutils->getNewFromOriginal(origX), I8PtrTy);
+          Value *shadowX = gutils->invertPointerM(origX, BuilderZ);
+          tape = UndefValue::get(TapeTy);
+          for (unsigned w = 0; w < width; ++w) {
+            Value *sX =
+                width > 1 ? gutils->extractMeta(BuilderZ, shadowX, w) : shadowX;
+            tape = BuilderZ.CreateInsertValue(
+                tape,
+                BuilderZ.CreateCall(
+                    save, {BuilderZ.CreatePointerCast(sX, I8PtrTy), x}),
+                w);
+          }
+          Value *bits = BuilderZ.CreateCall(
+              getOrInsertFlangMaskSave(M),
+              {BuilderZ.CreatePointerCast(
+                   gutils->getNewFromOriginal(call.getArgOperand(4)), I8PtrTy),
+               x});
+          tape = BuilderZ.CreateInsertValue(tape, bits, width);
+          if (auto I = dyn_cast<Instruction>(tape))
+            gutils->TapesToPreventRecomputation.insert(I);
+        }
+        tape = gutils->cacheForReverse(
+            BuilderZ, tape, getIndex(&call, CacheType::Tape, BuilderZ));
+
+        if (Mode == DerivativeMode::ReverseModeGradient ||
+            Mode == DerivativeMode::ReverseModeCombined) {
+          IRBuilder<> Builder2(&call);
+          getReverseBuilder(Builder2);
+          tape = lookup(tape, Builder2);
+          Value *bits = Builder2.CreateExtractValue(tape, width);
+          Function *reverse = getOrInsertFlangSumReverse(M, call.getType());
+          Value *dret = diffe(&call, Builder2);
+          for (unsigned w = 0; w < width; ++w) {
+            Value *d =
+                width > 1 ? gutils->extractMeta(Builder2, dret, w) : dret;
+            auto dcall = Builder2.CreateCall(
+                reverse, {Builder2.CreateExtractValue(tape, w), bits, d});
+            dcall->setDebugLoc(gutils->getNewFromOriginal(call.getDebugLoc()));
+          }
+          setDiffe(&call,
+                   Constant::getNullValue(gutils->getShadowType(call.getType())),
+                   Builder2);
+          Builder2.CreateCall(
+              M.getOrInsertFunction("free", Builder2.getVoidTy(), I8PtrTy),
+              {bits});
+        }
+        if (Mode == DerivativeMode::ReverseModeGradient)
+          eraseIfUnused(call);
+        return true;
       }
     }
 
