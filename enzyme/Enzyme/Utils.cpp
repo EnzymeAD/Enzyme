@@ -23,6 +23,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "Utils.h"
+#include "CApi.h"
 #include "GradientUtils.h"
 #include "TypeAnalysis/TypeAnalysis.h"
 
