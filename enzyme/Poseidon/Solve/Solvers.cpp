@@ -140,6 +140,29 @@ static void writeBudgetsFile(const Options &O, const CostScale &scale,
                  << toString(std::move(E)) << '\n';
 }
 
+// A frontier of one point either is the code as written, which no
+// combination of candidates is cheaper or more accurate than, or is one
+// solution that is no costlier and no less accurate than every other
+// combination, the code as written included.
+static void noteSinglePointFrontier(const SolutionMap &frontier,
+                                    size_t numCandidates) {
+  if (numCandidates == 0)
+    return;
+  const SmallVector<SolutionStep> &only = frontier.begin()->second;
+  if (only.empty())
+    llvm::errs() << "[poseidon] NOTE: none of the " << numCandidates
+                 << " candidate(s), alone or combined, is cheaper or more "
+                    "accurate than the code as written, which is the only "
+                    "frontier point.\n";
+  else
+    llvm::errs() << "[poseidon] NOTE: the only frontier point is a solution "
+                    "of "
+                 << only.size() << " step(s) from the " << numCandidates
+                 << " candidate(s); it is no costlier and no less accurate "
+                    "than the code as written and every other "
+                    "combination.\n";
+}
+
 SmallVector<SolutionStep>
 accuracyDPSolver(Session &S, Function &F, FunctionFPState &st,
                  ArrayRef<SiteUnit *> units, double errorTol, double accScale,
@@ -226,12 +249,7 @@ accuracyDPSolver(Session &S, Function &F, FunctionFPState &st,
     size_t totalCands = 0;
     for (const SiteUnit *unit : units)
       totalCands += unit->numCandidates();
-    if (totalCands > 0)
-      llvm::errs() << "[poseidon] NOTE: " << totalCands
-                   << " candidate(s) synthesized but NONE lands on the Pareto "
-                      "frontier (all dominated by the baseline under this "
-                      "device's cost model); the no-op solution is genuinely "
-                      "optimal here.\n";
+    noteSinglePointFrontier(costToSolutionMap, totalCands);
   }
 
   double totalCandidateCompositions = 1.0;
@@ -388,12 +406,7 @@ jointAccuracyDPSolver(Session &S, ArrayRef<FunctionFPState *> states,
     for (auto *st : states)
       for (const SiteUnit *unit : st->units)
         totalCands += unit->numCandidates();
-    if (totalCands > 0)
-      llvm::errs() << "[poseidon] NOTE: " << totalCands
-                   << " candidate(s) synthesized but NONE lands on the Pareto "
-                      "frontier (all dominated by the baseline under this "
-                      "device's cost model); the no-op solution is genuinely "
-                      "optimal here.\n";
+    noteSinglePointFrontier(costToSolutionMap, totalCands);
   }
 
   double minAccCost = std::numeric_limits<double>::infinity();
