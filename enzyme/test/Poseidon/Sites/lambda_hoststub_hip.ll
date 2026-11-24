@@ -70,24 +70,25 @@
 ; USE-NEXT: %[[LDCL:[0-9]+]] = load ptr, ptr %[[LDCS]], align 8
 ; USE-NEXT: %[[LDCF:[0-9]+]] = getelementptr inbounds i8, ptr %[[LDCL]], i64 72{{$}}
 ; USE-NEXT: %[[LDC:[0-9]+]] = load i32, ptr %[[LDCF]], align 4
-; The two operands of each equality are loaded in either order.
-; USE-DAG: %[[X0F:[0-9]+]] = getelementptr inbounds i8, ptr %[[X0L:[0-9]+]], i64 4{{$}}
-; USE-DAG: %[[X0L]] = load ptr, ptr %[[X0S:[0-9]+]], align 8
-; USE-DAG: %[[X0S]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 1|i64 8}}{{$}}
-; USE-DAG: %[[X0:[0-9]+]] = load i32, ptr %[[X0F]], align 4
-; USE-DAG: %[[Y0F:[0-9]+]] = getelementptr inbounds i8, ptr %[[Y0L:[0-9]+]], i64 24{{$}}
-; USE-DAG: %[[Y0L]] = load ptr, ptr %[[Y0S:[0-9]+]], align 8
-; USE-DAG: %[[Y0S]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 1|i64 8}}{{$}}
-; USE-DAG: %[[Y0:[0-9]+]] = load i32, ptr %[[Y0F]], align 4
+; Each equality loads its two operands in the order the descriptor names
+; them, whichever compiler built the plugin.
+; USE-NEXT: %[[X0S:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 1|i64 8}}{{$}}
+; USE-NEXT: %[[X0L:[0-9]+]] = load ptr, ptr %[[X0S]], align 8
+; USE-NEXT: %[[X0F:[0-9]+]] = getelementptr inbounds i8, ptr %[[X0L]], i64 4{{$}}
+; USE-NEXT: %[[X0:[0-9]+]] = load i32, ptr %[[X0F]], align 4
+; USE-NEXT: %[[Y0S:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 1|i64 8}}{{$}}
+; USE-NEXT: %[[Y0L:[0-9]+]] = load ptr, ptr %[[Y0S]], align 8
+; USE-NEXT: %[[Y0F:[0-9]+]] = getelementptr inbounds i8, ptr %[[Y0L]], i64 24{{$}}
+; USE-NEXT: %[[Y0:[0-9]+]] = load i32, ptr %[[Y0F]], align 4
 ; USE-NEXT: %[[EQ0:[0-9]+]] = icmp eq i32 %[[X0]], %[[Y0]]
-; USE-DAG: %[[X1F:[0-9]+]] = getelementptr inbounds i8, ptr %[[X1L:[0-9]+]], i64 4{{$}}
-; USE-DAG: %[[X1L]] = load ptr, ptr %[[X1S:[0-9]+]], align 8
-; USE-DAG: %[[X1S]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 1|i64 8}}{{$}}
-; USE-DAG: %[[X1:[0-9]+]] = load i32, ptr %[[X1F]], align 4
-; USE-DAG: %[[Y1F:[0-9]+]] = getelementptr inbounds i8, ptr %[[Y1L:[0-9]+]], i64 48{{$}}
-; USE-DAG: %[[Y1L]] = load ptr, ptr %[[Y1S:[0-9]+]], align 8
-; USE-DAG: %[[Y1S]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 1|i64 8}}{{$}}
-; USE-DAG: %[[Y1:[0-9]+]] = load i32, ptr %[[Y1F]], align 4
+; USE-NEXT: %[[X1S:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 1|i64 8}}{{$}}
+; USE-NEXT: %[[X1L:[0-9]+]] = load ptr, ptr %[[X1S]], align 8
+; USE-NEXT: %[[X1F:[0-9]+]] = getelementptr inbounds i8, ptr %[[X1L]], i64 4{{$}}
+; USE-NEXT: %[[X1:[0-9]+]] = load i32, ptr %[[X1F]], align 4
+; USE-NEXT: %[[Y1S:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 1|i64 8}}{{$}}
+; USE-NEXT: %[[Y1L:[0-9]+]] = load ptr, ptr %[[Y1S]], align 8
+; USE-NEXT: %[[Y1F:[0-9]+]] = getelementptr inbounds i8, ptr %[[Y1L]], i64 48{{$}}
+; USE-NEXT: %[[Y1:[0-9]+]] = load i32, ptr %[[Y1F]], align 4
 ; USE-NEXT: %[[EQ1:[0-9]+]] = icmp eq i32 %[[X1]], %[[Y1]]
 ; USE-NEXT: %[[OK:[0-9]+]] = and i1 %[[EQ0]], %[[EQ1]]
 ; USE-NEXT: br i1 %[[OK]], label %[[DISPATCH:[0-9]+]], label %[[LAUNCH:[0-9]+]]

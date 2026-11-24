@@ -958,7 +958,9 @@ static bool dispatchFromLaunchArgs(Module &M, Function &F, const LaunchDesc &d,
   }
   Value *holds = nullptr;
   for (const auto &[x, y] : d.assumedEqual) {
-    Value *eq = B.CreateICmpEQ(value(x, i32), value(y, i32));
+    Value *lhs = value(x, i32);
+    Value *rhs = value(y, i32);
+    Value *eq = B.CreateICmpEQ(lhs, rhs);
     holds = holds ? B.CreateAnd(holds, eq) : eq;
   }
 
