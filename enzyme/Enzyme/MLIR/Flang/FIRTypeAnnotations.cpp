@@ -806,7 +806,10 @@ struct FIRTypeAnnotationsPass
               !fn.getArgAttr(i, enzyme::EnzymeDialect::getTypeTreeAttrName()))
             fn.setArgAttr(i, enzyme::EnzymeDialect::getTypeTreeAttrName(), t);
         }
-        if (fty.getNumResults() == 1) {
+        // A result that flang's abstract-result conversion turns into an
+        // argument (descriptor, array, derived type, CHARACTER) is gone by
+        // the time of the LLVM translation, so it gets no result type here.
+        if (fty.getNumResults() == 1 && !fir::hasAbstractResult(fty)) {
           if (enzyme::TypeTreeAttr t = procArgType(fty.getResult(0), dl))
             fn->setAttr(enzyme::EnzymeDialect::getRetTypeTreesAttrName(),
                         ArrayAttr::get(ctx, {t}));
