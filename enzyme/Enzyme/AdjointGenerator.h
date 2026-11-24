@@ -2216,9 +2216,18 @@ public:
           cast<VectorType>(SVI.getOperand(0)->getType())->getElementCount();
       assert(!count.isScalable());
       size_t l1 = count.getKnownMinValue();
-      uint64_t instidx = 0;
 
-      for (size_t idx : SVI.getShuffleMask()) {
+      for (auto en : llvm::enumerate(SVI.getShuffleMask())) {
+        size_t instidx = en.index();
+        int maskidx = en.value();
+        // A poison or undef mask lane reads no operand element.
+#if LLVM_VERSION_MAJOR > 16
+        if (maskidx == PoisonMaskElem)
+#else
+        if (maskidx == UndefMaskElem)
+#endif
+          continue;
+        size_t idx = maskidx;
         auto opnum = (idx < l1) ? 0 : 1;
         auto opidx = (idx < l1) ? idx : (idx - l1);
 
@@ -2250,7 +2259,6 @@ public:
             }
           }
         }
-        ++instidx;
       }
       setDiffe(&SVI,
                Constant::getNullValue(gutils->getShadowType(SVI.getType())),
