@@ -7005,7 +7005,8 @@ void EnzymeLogic::replaceLocalGlobalShadows(GlobalVariable *Global,
   if (Found == LocalGlobalShadows.end())
     return;
   for (LocalGlobalShadow &Local : Found->second) {
-    assert(Local.Lane < Shadows.size());
+    assert(Local.Lane < Shadows.size() &&
+           "a local shadow lane has no shadow global");
     // The shadow global accumulates derivatives across functions and calls,
     // so it must not be zeroed where the local shadow was.
     if (auto *Init =
