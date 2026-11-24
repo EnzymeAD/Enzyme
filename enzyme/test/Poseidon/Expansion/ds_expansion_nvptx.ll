@@ -73,10 +73,11 @@ attributes #5 = { convergent nounwind "uniform-work-group-size" }
 ; CHECK: All FP64(0%) + Expansion2(100%)
 ; CHECK: Applying solution for CS: All FP64(0%) + Expansion2(100%)
 ; CHECK-LABEL: define {{.*}} @preprocess_fms_body(
+; CHECK-SAME: ptr {{[^,]*}}%[[XARG:[0-9]+]], ptr {{[^,]*}}%[[YARG:[0-9]+]], ptr {{[^,]*}}%[[OARG:[0-9]+]])
 ; CHECK: %[[IDX:[0-9]+]] = zext i32 %{{[0-9]+}} to i64
-; CHECK-NEXT: %[[XP:[0-9]+]] = getelementptr {{.*}}ptr %0, i64 %[[IDX]]
+; CHECK-NEXT: %[[XP:[0-9]+]] = getelementptr {{.*}}ptr %[[XARG]], i64 %[[IDX]]
 ; CHECK-NEXT: %[[X:[0-9]+]] = load double, ptr %[[XP]], align 8
-; CHECK-NEXT: %[[YP:[0-9]+]] = getelementptr {{.*}}ptr %1, i64 %[[IDX]]
+; CHECK-NEXT: %[[YP:[0-9]+]] = getelementptr {{.*}}ptr %[[YARG]], i64 %[[IDX]]
 ; CHECK-NEXT: %[[Y:[0-9]+]] = load double, ptr %[[YP]], align 8
 ; CHECK-NEXT: %[[XHI:ds.hi[0-9]*]] = fptrunc double %[[X]] to float
 ; CHECK-NEXT: %[[XHIB:ds.hib[0-9]*]] = fpext float %[[XHI]] to double
@@ -171,7 +172,7 @@ attributes #5 = { convergent nounwind "uniform-work-group-size" }
 ; CHECK-NEXT: %[[HI64:ds.hi64[0-9]*]] = fpext float %[[FS5]] to double
 ; CHECK-NEXT: %[[LO64:ds.lo64[0-9]*]] = fpext float %[[FE5]] to double
 ; CHECK-NEXT: %[[J:ds.f64[0-9]*]] = fadd double %[[HI64]], %[[LO64]], !poseidon.ds.join
-; CHECK-NEXT: %[[OP:[0-9]+]] = getelementptr {{.*}}ptr %2, i64 %[[IDX]]
+; CHECK-NEXT: %[[OP:[0-9]+]] = getelementptr {{.*}}ptr %[[OARG]], i64 %[[IDX]]
 ; CHECK-NEXT: store double %[[J]], ptr %[[OP]], align 8
 ; CHECK-NEXT: ret void
 

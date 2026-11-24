@@ -28,6 +28,7 @@
 ; CHECK-NEXT: tcec n=3 wmma m16n16k16 f16/f32: {{.*}}cost=-3.801088e+06
 ; CHECK: Applying solution for matmul[0] -> tcec n=3 wmma m16n16k16 f16/f32 (#2)
 ; CHECK-LABEL: define {{.*}} @preprocess_matmul_body(
+; CHECK-SAME: ptr {{[^,]*}}[[AARG:%[0-9]+]], ptr {{[^,]*}}[[BARG:%[0-9]+]], ptr {{[^,]*}}[[OARG:%[0-9]+]])
 ; CHECK: br i1 %{{[0-9]+}}, label %[[FILL:[^,]+]], label
 ; CHECK: {{^}}[[FILL]]:
 ; CHECK-DAG: [[B2P:%[0-9]+]] = getelementptr {{.*}}@__poseidon_ozaki_preprocess_matmul_body_b2_f16_16x16 to ptr), i64 [[OFF:%[0-9]+]]
@@ -36,8 +37,8 @@
 ; CHECK-DAG: [[A2P:%[0-9]+]] = getelementptr {{.*}}@__poseidon_ozaki_preprocess_matmul_body_a2_f16_16x16 to ptr), i64 [[OFF]]
 ; CHECK-DAG: [[A1P:%[0-9]+]] = getelementptr {{.*}}@__poseidon_ozaki_preprocess_matmul_body_a1_f16_16x16 to ptr), i64 [[OFF]]
 ; CHECK-DAG: [[A0P:%[0-9]+]] = getelementptr {{.*}}@__poseidon_ozaki_preprocess_matmul_body_a0_f16_16x16 to ptr), i64 [[OFF]]
-; CHECK-DAG: [[BSRC:%[0-9]+]] = getelementptr {{.*}}ptr %1, i64 [[OFF8:%[0-9]+]]
-; CHECK-DAG: [[ASRC:%[0-9]+]] = getelementptr {{.*}}ptr %0, i64 [[OFF8]]
+; CHECK-DAG: [[BSRC:%[0-9]+]] = getelementptr {{.*}}ptr [[BARG]], i64 [[OFF8:%[0-9]+]]
+; CHECK-DAG: [[ASRC:%[0-9]+]] = getelementptr {{.*}}ptr [[AARG]], i64 [[OFF8]]
 ; CHECK: [[A:%[0-9]+]] = load double, ptr [[ASRC]], align 8
 ; CHECK-NEXT: [[AF:%[0-9]+]] = fptrunc double [[A]] to float
 ; CHECK-NEXT: [[AH0:%[0-9]+]] = fptrunc float [[AF]] to half
@@ -108,7 +109,7 @@
 ; CHECK-NEXT: [[E2S:%[0-9]+]] = fmul float [[E2]], {{f0x34800000|0x3E90000000000000}}
 ; CHECK-NEXT: [[S2:%[0-9]+]] = fadd float [[S1]], [[E2S]]
 ; CHECK-NEXT: [[R:%[0-9]+]] = fpext float [[S2]] to double
-; CHECK-NEXT: [[OP:%[0-9]+]] = getelementptr {{.*}}ptr %2, i64 [[EI]]
+; CHECK-NEXT: [[OP:%[0-9]+]] = getelementptr {{.*}}ptr [[OARG]], i64 [[EI]]
 ; CHECK-NEXT: store double [[R]], ptr [[OP]], align 8
 ; CHECK-NEXT: ret void
 
