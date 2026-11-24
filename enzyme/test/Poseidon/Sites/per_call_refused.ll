@@ -12,8 +12,8 @@
 ; In device code the copy made for the call is reached through an invoke.
 ; The opt of LLVM 21 and 22 exits at its first error, so the compile with
 ; several refused calls runs through clang, which reports every error of a
-; compile; it reports the refusals left in the module as written twice, as
-; the module as written is compiled again.
+; compile once, although it lowers these calls at the start of the pipeline
+; and again before the optimizer.
 
 ; INVOKE: error: <unknown>:0:0: in function k void (ptr): Poseidon: vol at call 0 in k is reached through an invoke, so this call cannot be a Poseidon site
 
@@ -34,17 +34,15 @@ define double @sq(double %x) {
 
 ; ERR: error: <unknown>:0:0: in function indirect double (ptr, double): Poseidon: __poseidon_optimize needs a function name and a call of it
 ; OFF: warning: <unknown>:0:0: in function indirect double (ptr, double): Poseidon: __poseidon_optimize needs a function name and a call of it; the call runs as written
-; Without a profile action a call of a named function with its own signature
-; calls the function, and the others keep the identity.
+; Without a profile action every such call goes through no identity: it calls
+; what the identity was given.
 ; OFFIR-LABEL: define double @indirect(ptr %fp, double %x)
-; OFFIR-NEXT: %h = call ptr @__poseidon_site(ptr %fp)
-; OFFIR-NEXT: %r = call double %h(double %x)
+; OFFIR-NEXT: %r = call double %fp(double %x)
 ; OFFIR-NEXT: ret double %r
 ; OFFIR-LABEL: define double @refused(double %x)
 ; OFFIR-NEXT: %r0 = call double (double, ...) @variadic(double %x)
 ; OFFIR-NEXT: %r1 = call double @elsewhere(double %r0)
-; OFFIR-NEXT: %h2 = call ptr @__poseidon_site(ptr @sq)
-; OFFIR-NEXT: %r2 = call double %h2(float 1.000000e+00)
+; OFFIR-NEXT: %r2 = call double @sq(float 1.000000e+00)
 ; OFFIR-NEXT: %s = fadd double %r1, %r2
 ; OFFIR-NEXT: ret double %s
 define double @indirect(ptr %fp, double %x) {
@@ -56,9 +54,7 @@ define double @indirect(ptr %fp, double %x) {
 ; ERR: error: <unknown>:0:0: in function refused double (double): Poseidon: variadic is variadic, so this call cannot be a Poseidon site
 ; ERR: error: <unknown>:0:0: in function refused double (double): Poseidon: elsewhere has no body in this translation unit, so this call cannot be a Poseidon site
 ; ERR: error: <unknown>:0:0: in function refused double (double): Poseidon: sq is called with another signature, so this call cannot be a Poseidon site
-; ERR: error: <unknown>:0:0: in function indirect double (ptr, double): Poseidon: __poseidon_optimize needs a function name and a call of it
-; ERR: error: <unknown>:0:0: in function refused double (double): Poseidon: sq is called with another signature, so this call cannot be a Poseidon site
-; ERR: 6 errors generated.
+; ERR: 4 errors generated.
 ; OFF: warning: <unknown>:0:0: in function refused double (double): Poseidon: variadic is variadic, so this call is not a Poseidon site. The call runs as written.
 ; OFF: warning: <unknown>:0:0: in function refused double (double): Poseidon: elsewhere has no body in this translation unit, so this call is not a Poseidon site. The call runs as written.
 ; OFF: warning: <unknown>:0:0: in function refused double (double): Poseidon: sq is called with another signature, so this call is not a Poseidon site. The call runs as written.

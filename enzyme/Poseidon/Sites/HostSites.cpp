@@ -471,13 +471,11 @@ bool lowerPerCallSites(const Options &O, Module &M) {
     unsigned k = ordinal[callerKey]++;
     auto *fn = dyn_cast<Function>(H->getArgOperand(0)->stripPointerCasts());
     CallBase *call = callThrough(H);
-    // Whatever the outcome, the call stops going through the helper, so a
-    // later run of the pass does not see it again.
-    auto asWritten = [&](CallBase *site) {
-      if (site && fn && site->getFunctionType() == fn->getFunctionType())
-        site->setCalledOperand(fn);
-      if (H->use_empty())
-        H->eraseFromParent();
+    // Whatever the outcome, the call stops going through the helper, which
+    // returns its argument, so a later run of the pass does not see it again.
+    auto asWritten = [&] {
+      H->replaceAllUsesWith(H->getArgOperand(0));
+      H->eraseFromParent();
     };
     if (!fn || !call || !H->hasOneUse()) {
       if (active)
@@ -485,18 +483,18 @@ bool lowerPerCallSites(const Options &O, Module &M) {
       else
         warn(H, "__poseidon_optimize needs a function name and a call of it; "
                 "the call runs as written");
-      asWritten(call);
+      asWritten();
       continue;
     }
     const std::string name = displayName(*fn);
     std::optional<double> tau = identityTarget(H, call, name);
     if (!tau || !readArgumentList(call, *fn, Identity::Plain)) {
-      asWritten(call);
+      asWritten();
       continue;
     }
     if (annotated.count(fn)) {
       reportAnnotated(call, name);
-      asWritten(call);
+      asWritten();
       continue;
     }
     std::string why = fn->isDeclaration()
@@ -515,7 +513,7 @@ bool lowerPerCallSites(const Options &O, Module &M) {
                  "-poseidon-profile-generate or -poseidon-profile-use=<dir>. "
                  "The call runs as written.");
     if (!why.empty() || !active) {
-      asWritten(call);
+      asWritten();
       continue;
     }
 
