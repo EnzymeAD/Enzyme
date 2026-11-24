@@ -40,6 +40,7 @@
 
 #include "Dialect/Dialect.h"
 #include "Dialect/Ops.h"
+#include "Interfaces/MTypeTree.h"
 #include "Target/EnzymeToLLVMIRTranslation.h"
 
 #include "flang/Optimizer/Dialect/FIRDialect.h"
@@ -70,61 +71,18 @@ using namespace mlir;
 // Type trees
 //===----------------------------------------------------------------------===//
 
-namespace {
-// A concrete type of Enzyme's type trees: Integer, Pointer, Anything, or a
-// floating-point type.
-struct Scalar {
-  enzyme::TypeTreeKind kind;
-  Type floatType;
+using enzyme::MConcreteType;
+using enzyme::MTypeTree;
 
-  static Scalar integer() { return {enzyme::TypeTreeKind::Integer, {}}; }
-  static Scalar pointer() { return {enzyme::TypeTreeKind::Pointer, {}}; }
-  static Scalar floating(FloatType ty) {
-    return {enzyme::TypeTreeKind::Float, ty};
-  }
-
-  bool operator==(const Scalar &other) const {
-    return kind == other.kind && floatType == other.floatType;
-  }
-  bool operator!=(const Scalar &other) const { return !(*this == other); }
-};
-} // namespace
-
-// A type tree under construction: the concrete type at each offset path.
-using TypePaths = std::map<std::vector<int>, Scalar>;
-
-/// Builds the node of the paths in [begin, end), which share their first
-/// `depth` offsets: its type is that of the path of exactly `depth` offsets, if
-/// any, and its subtrees group the longer paths by their next offset.
-static enzyme::TypeTreeAttr buildTypeTree(MLIRContext *context,
-                                          TypePaths::const_iterator begin,
-                                          TypePaths::const_iterator end,
-                                          size_t depth) {
-  enzyme::TypeTreeKind kind = enzyme::TypeTreeKind::Unknown;
-  Type floatType;
-  // The map orders a path before its extensions.
-  if (begin != end && begin->first.size() == depth) {
-    kind = begin->second.kind;
-    floatType = begin->second.floatType;
-    ++begin;
-  }
-  SmallVector<int64_t> offsets;
-  SmallVector<enzyme::TypeTreeAttr> subtrees;
-  while (begin != end) {
-    int offset = begin->first[depth];
-    auto groupEnd = std::find_if(begin, end, [&](const auto &entry) {
-      return entry.first[depth] != offset;
-    });
-    offsets.push_back(offset);
-    subtrees.push_back(buildTypeTree(context, begin, groupEnd, depth + 1));
-    begin = groupEnd;
-  }
-  return enzyme::TypeTreeAttr::get(context, kind, floatType, offsets, subtrees);
+/// The type tree of a pointer to data of type tree `pointee`.
+static MTypeTree pointerTo(MTypeTree pointee) {
+  pointee.insert({}, BaseType::Pointer);
+  return pointee.Only(-1, nullptr);
 }
 
-static enzyme::TypeTreeAttr buildTypeTree(MLIRContext *context,
-                                          const TypePaths &tree) {
-  return buildTypeTree(context, tree.begin(), tree.end(), /*depth=*/0);
+/// The type tree of `type` at every offset.
+static MTypeTree everywhere(MConcreteType type) {
+  return MTypeTree(type).Only(-1, nullptr);
 }
 
 //===----------------------------------------------------------------------===//
@@ -215,7 +173,7 @@ FlangEnzymeDialect::FlangEnzymeDialect(MLIRContext *ctx)
 
 // The concrete type and size in bytes of a scalar Fortran type, if it has
 // one. The size is the distance between two array elements.
-static std::optional<std::pair<Scalar, int64_t>>
+static std::optional<std::pair<MConcreteType, int64_t>>
 scalarType(Type ty, const DataLayout &dl) {
   // REAL(2), REAL(3), REAL(4), REAL(8) and REAL(16). REAL(10) (x87 extended
   // precision) is left alone: its 10 bytes are padded to a size that depends
@@ -223,18 +181,20 @@ scalarType(Type ty, const DataLayout &dl) {
   if (auto ft = dyn_cast<FloatType>(ty)) {
     if (!(ft.isF16() || ft.isBF16() || ft.isF32() || ft.isF64() || ft.isF128()))
       return std::nullopt;
-    return std::make_pair(Scalar::floating(ft), (int64_t)ft.getWidth() / 8);
+    return std::make_pair(MConcreteType(ft), (int64_t)ft.getWidth() / 8);
   }
   // INTEGER of any kind is an iN of the kind's bytes. Enzyme's Integer has
   // no width: it says that the bytes it covers are not a floating-point
   // value or a pointer, so the width is only the size.
   if (auto it = dyn_cast<IntegerType>(ty))
-    return std::make_pair(Scalar::integer(), (int64_t)it.getWidth() / 8);
+    return std::make_pair(MConcreteType(BaseType::Integer),
+                          (int64_t)it.getWidth() / 8);
   // Enzyme's TypeTree has no boolean type: its concrete types are Integer,
   // Float, Pointer and Anything. A LOGICAL is stored as an integer of its
   // kind's bytes, and as such it is Integer.
   if (auto lt = dyn_cast<fir::LogicalType>(ty))
-    return std::make_pair(Scalar::integer(), (int64_t)lt.getFKind());
+    return std::make_pair(MConcreteType(BaseType::Integer),
+                          (int64_t)lt.getFKind());
   return std::nullopt;
 }
 
@@ -266,10 +226,10 @@ static std::optional<int64_t> sizeOf(Type ty, const DataLayout &dl) {
 /// The one scalar type of all of a value of type `ty`, if it has one: of a
 /// scalar, of an array of scalars, Integer for CHARACTER data. COMPLEX has
 /// one too (both parts are the same).
-static std::optional<Scalar> uniformType(Type ty, const DataLayout &dl) {
+static std::optional<MConcreteType> uniformType(Type ty, const DataLayout &dl) {
   ty = fir::unwrapSequenceType(ty);
   if (isa<fir::CharacterType>(ty))
-    return Scalar::integer();
+    return MConcreteType(BaseType::Integer);
   if (auto ct = dyn_cast<mlir::ComplexType>(ty))
     ty = ct.getElementType();
   if (auto sc = scalarType(ty, dl))
@@ -280,13 +240,14 @@ static std::optional<Scalar> uniformType(Type ty, const DataLayout &dl) {
 /// Add the scalar types of a value of type `ty` at `offset` to `layout`.
 /// Arrays are expanded element by element up to `budget` entries.
 static bool addLayout(Type ty, int64_t offset, const DataLayout &dl,
-                      std::map<int64_t, Scalar> &layout, int64_t &budget) {
+                      std::map<int64_t, MConcreteType> &layout,
+                      int64_t &budget) {
   if (auto ct = dyn_cast<mlir::ComplexType>(ty)) {
     auto part = scalarType(ct.getElementType(), dl);
     if (!part)
       return false;
-    layout[offset] = part->first;
-    layout[offset + part->second] = part->first;
+    layout.insert_or_assign(offset, part->first);
+    layout.insert_or_assign(offset + part->second, part->first);
     budget -= 2;
     return budget >= 0;
   }
@@ -296,7 +257,7 @@ static bool addLayout(Type ty, int64_t offset, const DataLayout &dl,
       return false;
     int64_t n = ch.getLen() * ch.getFKind();
     for (int64_t i = 0; i < n; i += ch.getFKind())
-      layout[offset + i] = Scalar::integer();
+      layout.insert_or_assign(offset + i, MConcreteType(BaseType::Integer));
     budget -= n;
     return budget >= 0;
   }
@@ -319,7 +280,7 @@ static bool addLayout(Type ty, int64_t offset, const DataLayout &dl,
   auto s = scalarType(ty, dl);
   if (!s)
     return false;
-  layout[offset] = s->first;
+  layout.insert_or_assign(offset, s->first);
   return --budget >= 0;
 }
 
@@ -339,13 +300,13 @@ static fir::GlobalOp getStorageGlobal(Value v, SymbolTable &symbols) {
 
 /// The concrete type of the data of a FIR entity type: the element type of an
 /// array, box, or address; Integer for character and logical data.
-static std::optional<Scalar> dataType(Type ty, const DataLayout &dl) {
+static std::optional<MConcreteType> dataType(Type ty, const DataLayout &dl) {
   ty = fir::unwrapPassByRefType(fir::unwrapRefType(ty));
   if (auto box = dyn_cast<fir::BaseBoxType>(ty))
     ty = box.getEleTy();
   ty = fir::unwrapSequenceType(fir::unwrapRefType(ty));
   if (isa<fir::CharacterType>(ty))
-    return Scalar::integer();
+    return MConcreteType(BaseType::Integer);
   if (auto ct = dyn_cast<mlir::ComplexType>(ty))
     ty = ct.getElementType();
   if (auto s = scalarType(ty, dl))
@@ -378,39 +339,34 @@ static enzyme::TypeTreeAttr pointerArgType(Type ty, const DataLayout &dl,
                                            bool descriptorData = true) {
   MLIRContext *ctx = ty.getContext();
   Type pointee = fir::unwrapRefType(ty);
-  TypePaths tree{{{-1}, Scalar::pointer()}};
   if (auto box = dyn_cast<fir::BaseBoxType>(pointee)) {
-    tree[{-1, kDescBaseAddr}] = Scalar::pointer();
+    MTypeTree desc;
+    desc.insert({kDescBaseAddr}, BaseType::Pointer);
     if (auto data = dataType(box, dl); data && descriptorData)
-      tree[{-1, kDescBaseAddr, -1}] = *data;
+      desc.insert({kDescBaseAddr, -1}, *data);
     for (int off : {kDescElemLen, kDescVersion, kDescRank, kDescType,
                     kDescAttribute, kDescExtra})
-      tree[{-1, off}] = Scalar::integer();
+      desc.insert({off}, BaseType::Integer);
     // The dims, if the rank is known.
     if (auto seq =
             dyn_cast<fir::SequenceType>(fir::unwrapRefType(box.getEleTy())))
       if (!seq.hasUnknownShape())
         for (unsigned i = 0; i < kDescDimFields * seq.getDimension(); ++i)
-          tree[{-1, (int)(kDescDims + kDescDimFieldSize * i)}] =
-              Scalar::integer();
-    return buildTypeTree(ctx, tree);
+          desc.insert({(int)(kDescDims + kDescDimFieldSize * i)},
+                      BaseType::Integer);
+    return enzyme::getTypeTreeAttr(ctx, pointerTo(desc));
   }
   if (!fir::isa_ref_type(ty))
     return {};
-  if (auto data = dataType(pointee, dl)) {
-    tree[{-1, -1}] = *data;
-    return buildTypeTree(ctx, tree);
-  }
+  if (auto data = dataType(pointee, dl))
+    return enzyme::getTypeTreeAttr(ctx, pointerTo(everywhere(*data)));
   return {};
 }
 
-// The FIR type a call operand had before flang converted it for the call
-// (e.g. !fir.box<!fir.array<?xf32>> before !fir.box<none>).
-// Enzyme's type analysis drops offsets beyond -enzyme-max-type-offset
-// (default 500), and then takes the types it keeps for the whole block (e.g.
-// a REAL*8 array followed by a REAL*4 one all for REAL*8). Larger blocks
-// stay unannotated.
-static constexpr int64_t kMaxTypeOffset = 500;
+/// Enzyme's type analysis drops offsets beyond -enzyme-max-type-offset, and
+/// then takes the types it keeps for the whole block (e.g. a REAL*8 array
+/// followed by a REAL*4 one all for REAL*8). Larger blocks stay unannotated.
+static int64_t maxTypeOffset() { return TypeTreeTraits<Type>::maxOffset(); }
 
 // How many scalars the pointee of a scalar dummy argument may be laid out
 // as (a COMPLEX is two). Larger pointees (derived types are not laid out at
@@ -431,25 +387,22 @@ static llvm::cl::opt<bool> annotateUnbounded(
                    "known (unsound if the actual argument is a component or "
                    "storage associated)"));
 
-/// Type the data of `bytes` bytes (if known) of scalars `t` of `eleSize`
-/// bytes, under `path`, of something that may be part of a larger object.
-static void addBoundedData(TypePaths &tree, std::vector<int> path,
-                           const Scalar &t, int64_t eleSize,
-                           std::optional<int64_t> bytes, bool unbounded) {
-  if (unbounded) {
-    path.push_back(-1);
-    tree[path] = t;
-    return;
-  }
-  if (!bytes || *bytes > kMaxTypeOffset || eleSize <= 0)
-    return;
-  for (int64_t off = 0; off < *bytes; off += eleSize) {
-    auto p = path;
-    p.push_back((int)off);
-    tree[p] = t;
-  }
+/// The type tree of `bytes` bytes (if known) of scalars `t` of `eleSize` bytes,
+/// of something that may be part of a larger object.
+static MTypeTree boundedData(const MConcreteType &t, int64_t eleSize,
+                             std::optional<int64_t> bytes, bool unbounded) {
+  if (unbounded)
+    return everywhere(t);
+  MTypeTree tree;
+  if (!bytes || *bytes > maxTypeOffset() || eleSize <= 0)
+    return tree;
+  for (int64_t off = 0; off < *bytes; off += eleSize)
+    tree.insert({(int)off}, t);
+  return tree;
 }
 
+/// The FIR type a call operand had before flang converted it for the call
+/// (e.g. !fir.box<!fir.array<?xf32>> before !fir.box<none>).
 static Type originalType(Value v) {
   while (auto cvt = v.getDefiningOp<fir::ConvertOp>())
     v = cvt.getValue();
@@ -526,7 +479,7 @@ static enzyme::TypeTreeAttr procArgType(Type ty, const DataLayout &dl) {
     if (auto ct = dyn_cast<mlir::ComplexType>(ty))
       ty = ct.getElementType();
     if (auto sc = scalarType(ty, dl))
-      return buildTypeTree(ctx, {{{-1}, sc->first}});
+      return enzyme::getTypeTreeAttr(ctx, everywhere(sc->first));
     return {};
   }
   Type pointee = fir::unwrapRefType(ty);
@@ -545,11 +498,10 @@ static enzyme::TypeTreeAttr procArgType(Type ty, const DataLayout &dl) {
   }
   if (!fir::isa_ref_type(ty))
     return {};
-  TypePaths tree{{{-1}, Scalar::pointer()}};
   // An array or CHARACTER dummy: its actual may be part of a larger object.
   if (isa<fir::SequenceType, fir::CharacterType>(pointee)) {
     Type ele = fir::unwrapSequenceType(pointee);
-    std::optional<Scalar> t = uniformType(ele, dl);
+    std::optional<MConcreteType> t = uniformType(ele, dl);
     if (!t)
       return {};
     int64_t eleSize = 1;
@@ -558,17 +510,18 @@ static enzyme::TypeTreeAttr procArgType(Type ty, const DataLayout &dl) {
         ele = ct.getElementType();
       eleSize = scalarType(ele, dl)->second;
     }
-    addBoundedData(tree, {-1}, *t, eleSize, sizeOf(pointee, dl),
-                   annotateUnbounded);
-    return buildTypeTree(ctx, tree);
+    return enzyme::getTypeTreeAttr(
+        ctx, pointerTo(boundedData(*t, eleSize, sizeOf(pointee, dl),
+                                   annotateUnbounded)));
   }
-  std::map<int64_t, Scalar> layout;
+  std::map<int64_t, MConcreteType> layout;
   int64_t budget = kMaxTypeOffsetForArgs;
   if (!addLayout(pointee, 0, dl, layout, budget))
     return {};
+  MTypeTree data;
   for (auto &[off, t] : layout)
-    tree[{-1, (int)off}] = t;
-  return buildTypeTree(ctx, tree);
+    data.insert({(int)off}, t);
+  return enzyme::getTypeTreeAttr(ctx, pointerTo(data));
 }
 
 // How many layout entries one COMMON block may get; a block of large arrays
@@ -589,25 +542,26 @@ static std::optional<std::pair<enzyme::TypeTreeAttr, int64_t>>
 localType(Type ty, const DataLayout &dl) {
   MLIRContext *ctx = ty.getContext();
   Type ele = fir::unwrapSequenceType(ty);
-  std::optional<Scalar> t = uniformType(ele, dl);
+  std::optional<MConcreteType> t = uniformType(ele, dl);
   if (!t)
     return std::nullopt;
   std::optional<int64_t> size = sizeOf(ty, dl);
-  TypePaths tree{{{-1}, Scalar::pointer()}};
   if (isa<fir::CharacterType>(ele) || !annotateLocalNumbers) {
     if (!isa<fir::CharacterType>(ele))
       return std::nullopt;
-    tree[{-1, -1}] = Scalar::integer();
-    return std::make_pair(buildTypeTree(ctx, tree), size ? *size : -1);
+    return std::make_pair(
+        enzyme::getTypeTreeAttr(
+            ctx, pointerTo(everywhere(MConcreteType(BaseType::Integer)))),
+        size ? *size : -1);
   }
   if (auto ct = dyn_cast<mlir::ComplexType>(ele))
     ele = ct.getElementType();
   int64_t eleSize = scalarType(ele, dl)->second;
-  if (size && *size <= kMaxTypeOffset)
-    addBoundedData(tree, {-1}, *t, eleSize, size, /*unbounded=*/false);
-  else
-    tree[{-1, -1}] = *t; // a whole object: nothing follows
-  return std::make_pair(buildTypeTree(ctx, tree), size ? *size : -1);
+  MTypeTree data = size && *size <= maxTypeOffset()
+                       ? boundedData(*t, eleSize, size, /*unbounded=*/false)
+                       : everywhere(*t); // a whole object: nothing follows
+  return std::make_pair(enzyme::getTypeTreeAttr(ctx, pointerTo(data)),
+                        size ? *size : -1);
 }
 
 static llvm::cl::opt<bool> annotateProcArgs(
@@ -664,11 +618,11 @@ struct FIRTypeAnnotationsPass
     // size, if all of its members have the same scalar type (e.g. a block
     // of CHARACTER data, Integer bytes), as that type at every offset.
     struct Layout {
-      std::map<int64_t, Scalar> types;
+      std::map<int64_t, MConcreteType> types;
       // The one scalar type of all members, if they have one (e.g. Integer
       // for CHARACTER members): a block of it can be annotated whatever its
       // size, as that type at every offset.
-      std::optional<Scalar> uniform;
+      std::optional<MConcreteType> uniform;
       bool mixed = false;
       // [begin, end) of the bytes the declares lay out
       std::map<int64_t, int64_t> covered;
@@ -685,7 +639,7 @@ struct FIRTypeAnnotationsPass
       if (!global)
         return;
       Layout &layout = layouts[global];
-      std::map<int64_t, Scalar> member;
+      std::map<int64_t, MConcreteType> member;
       int64_t budget = kLayoutBudget;
       Type ty = fir::unwrapRefType(decl->getResult(0).getType());
       int64_t offset = decl.getStorageOffset();
@@ -696,7 +650,7 @@ struct FIRTypeAnnotationsPass
       }
       int64_t &end = layout.covered[offset];
       end = std::max(end, offset + *size);
-      std::optional<Scalar> uniform = uniformType(ty, dl);
+      std::optional<MConcreteType> uniform = uniformType(ty, dl);
       if (!uniform || (layout.uniform && *layout.uniform != *uniform))
         layout.mixed = true;
       else
@@ -708,7 +662,7 @@ struct FIRTypeAnnotationsPass
         return;
       }
       for (auto &[off, t] : member) {
-        auto [it, inserted] = layout.types.insert({off, t});
+        auto [it, inserted] = layout.types.try_emplace(off, t);
         if (!inserted && it->second != t) {
           layout.unknown = true;
           return;
@@ -728,18 +682,18 @@ struct FIRTypeAnnotationsPass
         continue;
       if (!layout.mixed && layout.uniform) {
         op->setAttr(enzyme::EnzymeDialect::getTypeTreeAttrName(),
-                    buildTypeTree(ctx, {{{-1}, Scalar::pointer()},
-                                        {{-1, -1}, *layout.uniform}}));
+                    enzyme::getTypeTreeAttr(
+                        ctx, pointerTo(everywhere(*layout.uniform))));
         continue;
       }
-      if (layout.unknown || *globalSize > kMaxTypeOffset)
+      if (layout.unknown || *globalSize > maxTypeOffset())
         continue;
-      TypePaths tree{{{-1}, Scalar::pointer()}};
+      MTypeTree data;
       for (auto &[off, t] : layout.types)
-        tree[{-1, (int)off}] = t;
-      if (tree.size() > 1)
+        data.insert({(int)off}, t);
+      if (data.isKnown())
         op->setAttr(enzyme::EnzymeDialect::getTypeTreeAttrName(),
-                    buildTypeTree(ctx, tree));
+                    enzyme::getTypeTreeAttr(ctx, pointerTo(data)));
     }
 
     // Calls to the flang runtime: the types of their pointer arguments (data,
@@ -798,10 +752,10 @@ struct FIRTypeAnnotationsPass
           if (!isa<fir::BoxCharType>(ty))
             t = procArgType(ty, dl);
           else if (annotateUnbounded)
-            t = buildTypeTree(ctx, {{{-1}, Scalar::pointer()},
-                                    {{-1, -1}, Scalar::integer()}});
+            t = enzyme::getTypeTreeAttr(
+                ctx, pointerTo(everywhere(MConcreteType(BaseType::Integer))));
           else
-            t = buildTypeTree(ctx, {{{-1}, Scalar::pointer()}});
+            t = enzyme::getTypeTreeAttr(ctx, pointerTo(MTypeTree()));
           if (t &&
               !fn.getArgAttr(i, enzyme::EnzymeDialect::getTypeTreeAttrName()))
             fn.setArgAttr(i, enzyme::EnzymeDialect::getTypeTreeAttrName(), t);
@@ -865,9 +819,10 @@ struct FIRTypeAnnotationsPass
     for (fir::GlobalOp global : module.getOps<fir::GlobalOp>())
       if (annotateLiterals && isa<fir::CharacterType>(global.getType()) &&
           !global->hasAttr(enzyme::EnzymeDialect::getTypeTreeAttrName()))
-        global->setAttr(enzyme::EnzymeDialect::getTypeTreeAttrName(),
-                        buildTypeTree(ctx, {{{-1}, Scalar::pointer()},
-                                            {{-1, -1}, Scalar::integer()}}));
+        global->setAttr(
+            enzyme::EnzymeDialect::getTypeTreeAttrName(),
+            enzyme::getTypeTreeAttr(
+                ctx, pointerTo(everywhere(MConcreteType(BaseType::Integer)))));
   }
 };
 } // namespace
