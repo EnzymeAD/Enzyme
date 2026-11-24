@@ -2919,9 +2919,9 @@ bool AdjointGenerator::handleKnownCallDerivatives(
 
       // The reverse pass adds the adjoint of `to` to that of `from` and
       // zeroes it. Assignment to an allocatable may (re)allocate `to`: the
-      // augmented forward pass then gives the shadow of `to` new, zeroed
-      // memory of the same shape, and the reverse pass frees it and
-      // restores the shadow descriptor.
+      // augmented forward pass then runs the same assignment on the shadows,
+      // with the old shadow data detached, and zeroes the new memory. The
+      // reverse pass frees it and restores the shadow descriptor.
       if (Mode == DerivativeMode::ReverseModePrimal ||
           Mode == DerivativeMode::ReverseModeGradient ||
           Mode == DerivativeMode::ReverseModeCombined) {
@@ -2947,8 +2947,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
         if (Mode == DerivativeMode::ReverseModeGradient) {
           tape = BuilderA.CreatePHI(TapeTy, 0);
         } else {
-          Function *realloc = getOrInsertFlangShadowAssignRealloc(M);
-          Function *save = getOrInsertFlangShadowSave(M);
+          Function *realloc = getOrInsertFlangShadowAssignRealloc(M, called);
+          Function *save = getOrInsertFlangDescriptorSave(M);
           Value *to = BuilderA.CreatePointerCast(
               gutils->getNewFromOriginal(origTo), I8PtrTy);
           Value *from = BuilderA.CreatePointerCast(
@@ -2972,13 +2972,13 @@ bool AdjointGenerator::handleKnownCallDerivatives(
           tape = UndefValue::get(TapeTy);
           for (unsigned w = 0; w < width; ++w) {
             Value *sTo = lane(shadowTo, w);
-            Value *old =
-                BuilderA.CreateCall(realloc, {sTo, to, before, file, line});
-            Value *dTo = BuilderA.CreateCall(save, {sTo, to});
+            Value *sFrom = fromActive ? lane(shadowFrom, w) : from;
+            Value *old = BuilderA.CreateCall(
+                realloc, {sTo, sFrom, to, before, file, line});
+            Value *dTo = BuilderA.CreateCall(save, {sTo});
             Value *dFrom =
                 fromActive
-                    ? (Value *)BuilderA.CreateCall(save,
-                                                   {lane(shadowFrom, w), from})
+                    ? (Value *)BuilderA.CreateCall(save, {sFrom})
                     : ConstantPointerNull::get(cast<PointerType>(I8PtrTy));
             tape = BuilderA.CreateInsertValue(tape, sTo, 4 * w);
             tape = BuilderA.CreateInsertValue(tape, dTo, 4 * w + 1);
@@ -3077,7 +3077,7 @@ bool AdjointGenerator::handleKnownCallDerivatives(
         if (Mode == DerivativeMode::ReverseModeGradient) {
           tape = BuilderZ.CreatePHI(TapeTy, 0);
         } else {
-          Function *save = getOrInsertFlangShadowSave(M);
+          Function *save = getOrInsertFlangDescriptorSave(M);
           Value *x = BuilderZ.CreatePointerCast(
               gutils->getNewFromOriginal(origX), I8PtrTy);
           Value *shadowX = gutils->invertPointerM(origX, BuilderZ);
@@ -3087,8 +3087,8 @@ bool AdjointGenerator::handleKnownCallDerivatives(
                 width > 1 ? gutils->extractMeta(BuilderZ, shadowX, w) : shadowX;
             tape = BuilderZ.CreateInsertValue(
                 tape,
-                BuilderZ.CreateCall(
-                    save, {BuilderZ.CreatePointerCast(sX, I8PtrTy), x}),
+                BuilderZ.CreateCall(save,
+                                    {BuilderZ.CreatePointerCast(sX, I8PtrTy)}),
                 w);
           }
           Value *bits = BuilderZ.CreateCall(

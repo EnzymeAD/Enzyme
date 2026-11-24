@@ -115,25 +115,22 @@ getFlangShadowReplay(llvm::StringRef name) {
 /// a descriptor (without addendum).
 llvm::Function *getOrInsertFlangDescriptorSave(llvm::Module &M);
 
-/// i8 *__enzyme_flang_shadow_save(i8 *shadow, i8 *primal) returns a
-/// malloc'ed copy of the descriptor \p primal with the data address of
-/// \p shadow. The other fields of a shadow descriptor need not be valid.
-llvm::Function *getOrInsertFlangShadowSave(llvm::Module &M);
-
-/// i8 *__enzyme_flang_shadow_realloc(i8 *shadow, i8 *to, i8 *before,
-///                                   i8 *file, i32 line)
-/// runs after an assignment to `to`, given a saved copy \p before of `to`
-/// from before it. If the assignment (re)allocated `to`, or the shadow is
-/// unallocated, it gives the shadow new, zeroed memory of the shape of `to`
-/// and returns a saved copy of the old shadow descriptor, whose data it
-/// leaves allocated. Returns null otherwise.
-llvm::Function *getOrInsertFlangShadowAssignRealloc(llvm::Module &M);
+/// i8 *__enzyme_flang_shadow_realloc_<Assign>(i8 *shadow, i8 *from, i8 *to,
+///                                            i8 *before, i8 *file, i32 line)
+/// runs after the assignment \p Assign of `from` to `to`, given a saved copy
+/// \p before of `to` from before it. If the assignment (re)allocated `to`,
+/// or the shadow is unallocated, it runs \p Assign on the shadow of `to`
+/// (with its data detached) and \p from, the shadow of `from` or `from`
+/// itself, zeroes the memory that this allocates, and returns a saved copy
+/// of the old shadow descriptor. Returns null otherwise.
+llvm::Function *getOrInsertFlangShadowAssignRealloc(llvm::Module &M,
+                                                    llvm::Function *Assign);
 
 /// void __enzyme_flang_assign_reverse(i8 *shadow, i8 *dto, i8 *dfrom,
 ///                                    i8 *old, i8 *file, i32 line)
 /// is the reverse pass of `to = from`: it adds the adjoint of the elements
 /// of dto to those of dfrom (if not null) and zeroes it. dto and dfrom are
-/// from __enzyme_flang_shadow_save, and it frees them. If \p old is not null,
+/// saved shadow descriptors, and it frees them. If \p old is not null,
 /// it then frees the data of dto and restores \p shadow from \p old.
 llvm::Function *getOrInsertFlangAssignReverse(llvm::Module &M);
 
@@ -143,8 +140,7 @@ llvm::Function *getOrInsertFlangAssignReverse(llvm::Module &M);
 llvm::Function *getOrInsertFlangMaskSave(llvm::Module &M);
 
 /// void __enzyme_flang_sum_reverse_<FPTy>(i8 *darray, i8 *bits, FPTy dret)
-/// adds \p dret to each element of \p darray (from
-/// __enzyme_flang_shadow_save)
+/// adds \p dret to each element of \p darray (a saved shadow descriptor)
 /// where \p bits (from __enzyme_flang_mask_save, or null for all elements)
 /// is set, and frees \p darray.
 llvm::Function *getOrInsertFlangSumReverse(llvm::Module &M, llvm::Type *FPTy);

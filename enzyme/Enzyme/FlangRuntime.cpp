@@ -316,39 +316,24 @@ Function *getOrInsertFlangDescriptorSave(Module &M) {
   return F;
 }
 
-Function *getOrInsertFlangShadowSave(Module &M) {
+Function *getOrInsertFlangShadowAssignRealloc(Module &M, Function *Assign) {
   DescriptorLayout L(M);
   bool NeedsBody;
   Function *F = getOrInsertHelper(
-      M, "__enzyme_flang_shadow_save",
-      FunctionType::get(L.I8PtrTy, {L.I8PtrTy, L.I8PtrTy}, false), NeedsBody);
-  if (!NeedsBody)
-    return F;
-  IRBuilder<> B(BasicBlock::Create(L.C, "entry", F));
-  Value *Copy = B.CreateCall(getOrInsertFlangDescriptorSave(M), {F->getArg(1)});
-  B.CreateStore(L.base(B, F->getArg(0)),
-                B.CreatePointerCast(Copy, getUnqual(L.I8PtrTy)));
-  B.CreateRet(Copy);
-  return F;
-}
-
-Function *getOrInsertFlangShadowAssignRealloc(Module &M) {
-  DescriptorLayout L(M);
-  bool NeedsBody;
-  Function *F =
-      getOrInsertHelper(M, "__enzyme_flang_shadow_realloc",
-                        FunctionType::get(L.I8PtrTy,
-                                          {L.I8PtrTy, L.I8PtrTy, L.I8PtrTy,
-                                           L.I8PtrTy, Type::getInt32Ty(L.C)},
-                                          false),
-                        NeedsBody);
+      M, ("__enzyme_flang_shadow_realloc_" + Assign->getName()).str(),
+      FunctionType::get(L.I8PtrTy,
+                        {L.I8PtrTy, L.I8PtrTy, L.I8PtrTy, L.I8PtrTy, L.I8PtrTy,
+                         Type::getInt32Ty(L.C)},
+                        false),
+      NeedsBody);
   if (!NeedsBody)
     return F;
   Value *Shadow = F->getArg(0);
-  Value *Primal = F->getArg(1);
-  Value *Before = F->getArg(2);
-  Value *File = F->getArg(3);
-  Value *Line = F->getArg(4);
+  Value *From = F->getArg(1);
+  Value *Primal = F->getArg(2);
+  Value *Before = F->getArg(3);
+  Value *File = F->getArg(4);
+  Value *Line = F->getArg(5);
 
   // The assignment (re)allocated `to` if its data moved or its shape
   // changed.
@@ -384,30 +369,24 @@ Function *getOrInsertFlangShadowAssignRealloc(Module &M) {
                  "derived type is not supported",
                  File, Line);
 
-  // Give the shadow new, zeroed memory with the shape of `to`. The old
-  // shadow data stays allocated: the reverse pass of earlier code may still
-  // need its adjoint.
+  // Run the same assignment on the shadow, as the forward mode does, with
+  // the old shadow data detached first: the runtime then allocates new
+  // memory of the shape of `from` and does not free the old data, which the
+  // reverse pass of earlier code may still need. Then zero the new memory.
   B.SetInsertPoint(Alloc);
   Value *Old = B.CreateCall(getOrInsertFlangDescriptorSave(M), {Shadow});
-  Value *Bytes = B.CreateMul(B.CreateCall(getOrInsertElementCount(M), {Primal}),
-                             L.elemLen(B, Primal));
-  // malloc(0) may return null, which would read as unallocated.
-  Value *Data = B.CreateCall(
-      getMalloc(M), {B.CreateAdd(Bytes, ConstantInt::get(L.IndexTy, 1))});
-  B.CreateMemSet(Data, B.getInt8(0), Bytes, MaybeAlign());
-  B.CreateMemCpy(Shadow, MaybeAlign(), Primal, MaybeAlign(),
-                 L.size(B, L.rank(B, Primal)));
-  B.CreateStore(Data, B.CreatePointerCast(Shadow, getUnqual(L.I8PtrTy)));
+  B.CreateStore(ConstantPointerNull::get(L.I8PtrTy),
+                B.CreatePointerCast(Shadow, getUnqual(L.I8PtrTy)));
+  B.CreateCall(
+      M.getOrInsertFunction(Assign->getName(), Assign->getFunctionType()),
+      {Shadow, From, File, Line});
+  Value *Bytes = B.CreateMul(B.CreateCall(getOrInsertElementCount(M), {Shadow}),
+                             L.elemLen(B, Shadow));
+  B.CreateMemSet(L.base(B, Shadow), B.getInt8(0), Bytes, MaybeAlign());
   B.CreateRet(Old);
   return F;
 }
 
-/// void __enzyme_flang_assign_reverse_<To>_<From>(i8 *dto, i8 *dfrom,
-///     i64 n, i64 ncomp_to, i64 ncomp_from)
-/// moves the adjoint of the \p n elements of dto (\p ncomp_to components of
-/// type \p ToTy each) into those of dfrom (\p ncomp_from of type \p FromTy),
-/// if dfrom is not null, and zeroes it. The adjoint goes through a
-/// temporary, since dto and dfrom may overlap.
 static Function *getOrInsertAssignReverseKernel(Module &M, Type *ToTy,
                                                 Type *FromTy) {
   DescriptorLayout L(M);
