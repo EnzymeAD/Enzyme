@@ -25,8 +25,10 @@ fixes the order.
 An "emitter" is a call that inserts an op: `X::create(...)`,
 `builder.create<X>(...)`, `rewriter.replaceOpWithNewOp<X>(...)`, or a call to
 a function or lambda in this tree whose own body does one of those (helpers
-such as `makeI64Constant`). Lambda *literals* passed as arguments do not
-count -- their body runs inside the callee, after argument evaluation.
+such as `makeI64Constant`), or a lambda whose body calls such a helper (a
+local `auto load = [&](...) { return loadField(B, ...); }`). Lambda
+*literals* passed as arguments do not count -- their body runs inside the
+callee, after argument evaluation.
 
 The second check is the same problem from a different source: iterating a
 container that orders by pointer or hash value rather than by insertion.
@@ -249,6 +251,30 @@ def collect_helpers(src, emitter_re=None):
         if body_end > 0 and EMITTER_RE.search(src[open_idx:body_end]):
             names.add(name)
     return names
+
+
+def forwarding_lambdas(src, helper_re):
+    """Names of lambdas in `src` whose body calls a helper in `helper_re`.
+
+    Only lambdas are followed: following functions as well marks lookups
+    that call a helper which emits on only some of its paths.
+    """
+    names = set()
+    for m in LAMBDA_ASSIGN_RE.finditer(src):
+        open_idx = src.index("{", m.end() - 1)
+        close = match_brace(src, open_idx)
+        if close > 0 and helper_re.search(src[open_idx:close]):
+            names.add(m.group(1))
+    return names
+
+
+def helper_call_re(helpers):
+    """A call of any of `helpers`, or None when there is none."""
+    if not helpers:
+        return None
+    return re.compile(
+        r"(?<![\w.>])(?:" + "|".join(sorted(map(re.escape, helpers))) + r")\s*\("
+    )
 
 
 def iter_sources(roots):
@@ -492,13 +518,17 @@ def main():
         )
         helpers |= collect_helpers(stripped[path])
     helpers -= KEYWORDS
-    helper_re = (
-        re.compile(
-            r"(?<![\w.>])(?:" + "|".join(sorted(map(re.escape, helpers))) + r")\s*\("
-        )
-        if helpers
-        else None
-    )
+    helper_re = helper_call_re(helpers)
+    # A lambda that forwards to a lambda that forwards is found a round later.
+    while helper_re:
+        forwards = set()
+        for src in stripped.values():
+            forwards |= forwarding_lambdas(src, helper_re)
+        forwards -= helpers | KEYWORDS
+        if not forwards:
+            break
+        helpers |= forwards
+        helper_re = helper_call_re(helpers)
 
     errors, warnings = 0, 0
 
