@@ -84,6 +84,10 @@ StringMap<std::function<bool(IRBuilder<> &, CallInst *, GradientUtils &,
                              Value *&, Value *&)>>
     customFwdCallHandlers;
 
+StringMap<std::function<bool(IRBuilder<> &, CallInst *, GradientUtils &,
+                             Value *&, Value *&, Value *)>>
+    customFwdSplitCallHandlers;
+
 extern "C" {
 llvm::cl::opt<bool>
     EnzymeNewCache("enzyme-new-cache", cl::init(true), cl::Hidden,
