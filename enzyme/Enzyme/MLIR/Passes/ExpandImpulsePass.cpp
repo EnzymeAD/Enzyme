@@ -252,6 +252,51 @@ static LogicalResult verifySelectedSupports(impulse::InferRegionOp regionOp) {
   return failure(result.wasInterrupted());
 }
 
+/// The selected addresses in `all_addresses` order if
+/// `positionDeclarationOrder`, else in `selection` order, each mapped through
+/// `key`; an address that `key` maps to null is skipped.
+static SmallVector<Attribute>
+orderSelected(ArrayAttr selection, ArrayAttr allAddresses,
+              bool positionDeclarationOrder,
+              function_ref<Attribute(Attribute)> key) {
+  SmallVector<Attribute> ordered;
+  if (!positionDeclarationOrder) {
+    for (Attribute address : selection)
+      if (Attribute selected = key(address))
+        ordered.push_back(selected);
+    return ordered;
+  }
+  llvm::SmallDenseSet<Attribute, 4> selected;
+  for (Attribute address : selection)
+    if (Attribute keyed = key(address))
+      selected.insert(keyed);
+  for (Attribute address : allAddresses) {
+    Attribute keyed = key(address);
+    if (keyed && selected.contains(keyed))
+      ordered.push_back(keyed);
+  }
+  return ordered;
+}
+
+/// Appends to `supports` a site of `size` constrained values on `support` at
+/// trace column `traceOffset`, placed in the position after the sites already
+/// in `supports`.
+static void appendSupport(SmallVectorImpl<impulse::SupportInfo> &supports,
+                          int64_t traceOffset, int64_t size,
+                          impulse::SupportAttr support) {
+  int64_t constrainedOffset = 0;
+  int64_t unconstrainedOffset = 0;
+  if (!supports.empty()) {
+    const impulse::SupportInfo &last = supports.back();
+    constrainedOffset = last.constrainedOffset + last.constrainedSize;
+    unconstrainedOffset = last.unconstrainedOffset + last.unconstrainedSize;
+  }
+  int64_t unconstrainedSize =
+      support ? support.getUnconstrainedSize(size) : size;
+  supports.emplace_back(constrainedOffset, traceOffset, size,
+                        unconstrainedOffset, unconstrainedSize, support);
+}
+
 /// Support info for the top-level addresses in `selection`. Positions follow
 /// `all_addresses` order when `positionDeclarationOrder` is set, else
 /// `selection` order.
@@ -261,49 +306,20 @@ collectSupportInfoForSelection(Operation *op, FunctionOpInterface fn,
                                SymbolTableCollection &symbolTable,
                                bool positionDeclarationOrder) {
   auto sampleMap = buildSampleOpMap(fn);
+  auto topLevelSymbol = [](Attribute address) -> Attribute {
+    auto path = cast<ArrayAttr>(address);
+    return path.size() == 1 ? path[0] : Attribute();
+  };
   SmallVector<impulse::SupportInfo> supports;
-  int64_t currentPositionOffset = 0;
-  int64_t currentUnconstrainedOffset = 0;
-
-  SmallVector<Attribute> orderedSelected;
-  if (positionDeclarationOrder) {
-    llvm::SmallDenseSet<Attribute, 4> selectedTopLevel;
-    for (auto addr : selection) {
-      auto address = cast<ArrayAttr>(addr);
-      if (address.empty() || address.size() != 1)
-        continue;
-      selectedTopLevel.insert(address[0]);
-    }
-    for (auto addr : allAddresses) {
-      auto address = cast<ArrayAttr>(addr);
-      if (address.empty() || address.size() != 1)
-        continue;
-      if (!selectedTopLevel.contains(address[0]))
-        continue;
-      orderedSelected.push_back(address[0]);
-    }
-  } else {
-    for (auto addr : selection) {
-      auto address = cast<ArrayAttr>(addr);
-      if (address.empty() || address.size() != 1)
-        continue;
-      orderedSelected.push_back(address[0]);
-    }
-  }
-
-  for (Attribute targetSymbol : orderedSelected) {
+  for (Attribute targetSymbol : orderSelected(
+           selection, allAddresses, positionDeclarationOrder, topLevelSymbol)) {
     auto sampleOp = findSampleBySymbol(sampleMap, targetSymbol);
     if (!sampleOp)
       continue;
 
-    auto supportAttr = sampleOp.getSupportAttr();
-
     int64_t sampleSize = computeSampleElementCount(op, sampleOp);
     if (sampleSize < 0)
       continue;
-
-    int64_t unconstrainedSize =
-        supportAttr ? supportAttr.getUnconstrainedSize(sampleSize) : sampleSize;
 
     int64_t traceOffset = computeOffsetForSampleInSelection(
         op, fn, allAddresses, targetSymbol, symbolTable);
@@ -313,13 +329,8 @@ collectSupportInfoForSelection(Operation *op, FunctionOpInterface fn,
       return {};
     }
 
-    supports.emplace_back(currentPositionOffset, traceOffset, sampleSize,
-                          currentUnconstrainedOffset, unconstrainedSize,
-                          supportAttr);
-    currentPositionOffset += sampleSize;
-    currentUnconstrainedOffset += unconstrainedSize;
+    appendSupport(supports, traceOffset, sampleSize, sampleOp.getSupportAttr());
   }
-
   return supports;
 }
 
@@ -368,94 +379,56 @@ getRegionTraceLayout(impulse::InferRegionOp regionOp, bool topLevelOnly) {
   return layout;
 }
 
-/// Position offsets follow `selection`, trace offsets `all_addresses`.
-static SmallVector<impulse::SupportInfo>
-collectSupportInfoForRegion(impulse::InferRegionOp regionOp) {
-  ArrayAttr selection = regionOp.getSelectionAttr();
-  if (!selection || !regionOp.getAllAddressesAttr() ||
-      regionOp.getSampling().empty())
-    return {};
-  // Branch-local sites also hold trace columns, so walk the whole sampler.
-  FailureOr<RegionTraceLayout> layout =
-      getRegionTraceLayout(regionOp, /*topLevelOnly=*/false);
-  if (failed(layout))
-    return {};
-
-  SmallVector<impulse::SupportInfo> supports;
-  int64_t positionOffset = 0;
-  int64_t unconstrainedOffset = 0;
-  for (Attribute addr : selection) {
-    impulse::SampleRegionOp site = layout->siteByAddress.lookup(addr);
-    if (!site || !layout->columnOf.count(addr))
-      return {};
-    int64_t constrainedSize = sampleRegionSize(site);
-    impulse::SupportAttr support = site.getSupportAttr();
-    int64_t unconstrainedSize =
-        support ? support.getUnconstrainedSize(constrainedSize)
-                : constrainedSize;
-    supports.emplace_back(positionOffset, layout->columnOf.lookup(addr),
-                          constrainedSize, unconstrainedOffset,
-                          unconstrainedSize, site.getSupportAttr());
-    positionOffset += constrainedSize;
-    unconstrainedOffset += unconstrainedSize;
-  }
-  return supports;
-}
-
 namespace {
-/// VI positions in `all_addresses` (declaration) order, so per-site draws
-/// consume the RNG in program order; `argOffsets` are in `selection` order.
-struct RegionVILayout {
+/// The position layout of the selected sites of a region-form infer op.
+struct RegionPositionLayout {
   SmallVector<impulse::SupportInfo> supports;
+  /// Position column of each value of the selected sites, in `selection`
+  /// order.
   SmallVector<int64_t> argOffsets;
-  int64_t positionSize = 0;
 };
 } // namespace
 
-/// Fills `out` with the VI position layout of `regionOp`. Returns false when
-/// an address in `selection` or `all_addresses` has no site in the sampler.
-static bool collectRegionVILayout(impulse::InferRegionOp regionOp,
-                                  RegionVILayout &out) {
+/// Lays out the selected sites of `regionOp` in `all_addresses` order if
+/// `positionDeclarationOrder`, else in `selection` order; trace offsets follow
+/// `all_addresses`. Fails when an address has no site in the sampler.
+static FailureOr<RegionPositionLayout>
+collectRegionLayout(impulse::InferRegionOp regionOp,
+                    bool positionDeclarationOrder) {
   ArrayAttr selection = regionOp.getSelectionAttr();
   ArrayAttr allAddresses = regionOp.getAllAddressesAttr();
   if (!selection || !allAddresses || regionOp.getSampling().empty())
-    return false;
-  FailureOr<RegionTraceLayout> layout =
+    return failure();
+  // Branch-local sites also hold trace columns, so walk the whole sampler.
+  FailureOr<RegionTraceLayout> trace =
       getRegionTraceLayout(regionOp, /*topLevelOnly=*/false);
-  if (failed(layout))
-    return false;
+  if (failed(trace))
+    return failure();
 
-  DenseSet<Attribute> selectedSet(selection.begin(), selection.end());
-  DenseMap<Attribute, int64_t> declPositionOffset;
-  int64_t positionOffset = 0, unconstrainedOffset = 0;
-  for (Attribute addr : allAddresses) {
-    if (!selectedSet.contains(addr))
-      continue;
-    impulse::SampleRegionOp site = layout->siteByAddress.lookup(addr);
-    int64_t siteSize = sampleRegionSize(site);
-    impulse::SupportAttr support = site.getSupportAttr();
-    int64_t unconstrainedSize =
-        support ? support.getUnconstrainedSize(siteSize) : siteSize;
-    out.supports.emplace_back(positionOffset, layout->columnOf.lookup(addr),
-                              siteSize, unconstrainedOffset, unconstrainedSize,
-                              site.getSupportAttr());
-    declPositionOffset[addr] = positionOffset;
-    positionOffset += siteSize;
-    unconstrainedOffset += unconstrainedSize;
+  RegionPositionLayout layout;
+  DenseMap<Attribute, int64_t> positionColumn;
+  for (Attribute address :
+       orderSelected(selection, allAddresses, positionDeclarationOrder,
+                     [](Attribute address) { return address; })) {
+    impulse::SampleRegionOp site = trace->siteByAddress.lookup(address);
+    if (!site || !trace->columnOf.count(address))
+      return failure();
+    appendSupport(layout.supports, trace->columnOf.lookup(address),
+                  sampleRegionSize(site), site.getSupportAttr());
+    positionColumn[address] = layout.supports.back().constrainedOffset;
   }
-  out.positionSize = positionOffset;
 
-  for (Attribute addr : selection) {
-    impulse::SampleRegionOp site = layout->siteByAddress.lookup(addr);
+  for (Attribute address : selection) {
+    impulse::SampleRegionOp site = trace->siteByAddress.lookup(address);
     if (!site)
-      return false;
-    int64_t within = 0;
+      return failure();
+    int64_t column = positionColumn.lookup(address);
     for (Value result : llvm::drop_begin(site->getResults())) {
-      out.argOffsets.push_back(declPositionOffset[addr] + within);
-      within += cast<RankedTensorType>(result.getType()).getNumElements();
+      layout.argOffsets.push_back(column);
+      column += cast<RankedTensorType>(result.getType()).getNumElements();
     }
   }
-  return true;
+  return layout;
 }
 
 namespace {
@@ -3229,7 +3202,10 @@ struct ExpandImpulsePass
       } else if constexpr (isRegionForm) {
         if (failed(verifySelectedSupports(mcmcOp)))
           return failure();
-        model.supports = collectSupportInfoForRegion(mcmcOp);
+        FailureOr<RegionPositionLayout> layout =
+            collectRegionLayout(mcmcOp, /*positionDeclarationOrder=*/false);
+        if (succeeded(layout))
+          model.supports = std::move(layout->supports);
         if (model.supports.empty()) {
           mcmcOp.emitError("Impulse: failed to collect per-site support info "
                            "from the infer_region sampler");
@@ -3321,15 +3297,18 @@ struct ExpandImpulsePass
         }
         if (failed(verifySelectedSupports(op)))
           return failure();
-        RegionVILayout regionLayout;
-        if (!collectRegionVILayout(op, regionLayout)) {
+        // Per-site draws consume the RNG in program order, so the position
+        // follows `all_addresses`.
+        FailureOr<RegionPositionLayout> layout =
+            collectRegionLayout(op, /*positionDeclarationOrder=*/true);
+        if (failed(layout)) {
           op.emitError("Impulse VI: failed to derive position layout from the "
                        "infer_region sampler");
           return failure();
         }
-        model.supports = std::move(regionLayout.supports);
-        model.logpdfArgOffsets = std::move(regionLayout.argOffsets);
-        model.positionSize = regionLayout.positionSize;
+        model.supports = std::move(layout->supports);
+        model.logpdfArgOffsets = std::move(layout->argOffsets);
+        model.positionSize = model.getConstrainedPositionSize();
         if (model.positionSize <= 0)
           return failure();
       } else if (hasLogpdfFn) {
