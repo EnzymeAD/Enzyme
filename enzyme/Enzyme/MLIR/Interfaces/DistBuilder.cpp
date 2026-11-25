@@ -209,78 +209,285 @@ static Value emitIndicatorMatrix(OpBuilder &builder, Location loc,
                                    DenseElementsAttr::get(type, values));
 }
 
-static Value emitXformForward(OpBuilder &b, Location loc, XformAttr xform,
-                              Value z, ValueRange distArgs,
-                              RankedTensorType sampleType) {
+namespace {
+// m contiguous simplex blocks of eventSize constrained (n = eventSize - 1
+// free) entries.
+struct SimplexDims {
+  int64_t eventSize;
+  int64_t n;
+  int64_t m;
+};
+} // namespace
+
+static Value matConst(OpBuilder &builder, Location loc, RankedTensorType ty,
+                      ArrayRef<double> rowVals) {
+  auto elemType = ty.getElementType();
+  int64_t m = ty.getShape()[0], ncol = ty.getShape()[1];
+  SmallVector<APFloat> vals;
+  vals.reserve(m * ncol);
+  for (int64_t r = 0; r < m; ++r)
+    for (int64_t c = 0; c < ncol; ++c)
+      vals.push_back(cast<FloatAttr>(builder.getFloatAttr(elemType, rowVals[c]))
+                         .getValue());
+  return arith::ConstantOp::create(builder, loc, ty,
+                                   DenseElementsAttr::get(ty, vals));
+}
+
+/// The n x n matrix of ones above the diagonal, and on it unless `strict`.
+static Value triOnes(OpBuilder &builder, Location loc, int64_t n, bool strict,
+                     Type elemType) {
+  return emitIndicatorMatrix(
+      builder, loc, RankedTensorType::get({n, n}, elemType),
+      [&](int64_t i, int64_t j) { return strict ? i < j : i <= j; });
+}
+
+static Value prefixSum(OpBuilder &builder, Location loc, Value mat, Value tri) {
+  return impulse::DotOp::create(builder, loc, mat.getType(), mat, tri,
+                                builder.getDenseI64ArrayAttr({1}),
+                                builder.getDenseI64ArrayAttr({0}));
+}
+
+static Value shiftMat(OpBuilder &builder, Location loc, const SimplexDims &d,
+                      Type elemType) {
+  SmallVector<double> rowVals(d.n);
+  for (int64_t c = 0; c < d.n; ++c)
+    rowVals[c] = std::log((double)(d.n - c));
+  return matConst(builder, loc, RankedTensorType::get({d.m, d.n}, elemType),
+                  rowVals);
+}
+
+static Value constrainSimplex(OpBuilder &builder, Location loc,
+                              Value unconstrained, const SimplexDims &d) {
+  auto elemType =
+      cast<RankedTensorType>(unconstrained.getType()).getElementType();
+  auto xMatType = RankedTensorType::get({d.m, d.n}, elemType);
+  auto yBufType = RankedTensorType::get({d.m, d.eventSize}, elemType);
+  auto colType = RankedTensorType::get({d.m, 1}, elemType);
+
+  Value xmat =
+      impulse::ReshapeOp::create(builder, loc, xMatType, unconstrained);
+  Value xsh = arith::SubFOp::create(builder, loc, xmat,
+                                    shiftMat(builder, loc, d, elemType));
+  Value z = impulse::LogisticOp::create(builder, loc, xMatType, xsh);
+  Value negXsh = arith::NegFOp::create(builder, loc, xsh);
+  Value log1mZ = impulse::emitLogSigmoid(builder, loc, negXsh);
+
+  Value logPexcl =
+      prefixSum(builder, loc, log1mZ,
+                triOnes(builder, loc, d.n, /*strict=*/true, elemType));
+  Value pExcl = math::ExpOp::create(builder, loc, logPexcl);
+  Value ybody = arith::MulFOp::create(builder, loc, z, pExcl);
+
+  auto onesCol = emitSplatConstant(
+      builder, loc, RankedTensorType::get({d.n, 1}, elemType), 1.0);
+  Value total = impulse::DotOp::create(builder, loc, colType, log1mZ, onesCol,
+                                       builder.getDenseI64ArrayAttr({1}),
+                                       builder.getDenseI64ArrayAttr({0}));
+  Value remainder = math::ExpOp::create(builder, loc, total);
+
+  auto idx = [&](int64_t v) { return emitI64ScalarConstant(builder, loc, v); };
+  Value ybuf = emitSplatConstant(builder, loc, yBufType, 0.0);
+  ybuf = impulse::DynamicUpdateSliceOp::create(
+      builder, loc, yBufType, ybuf, ybody, ValueRange{idx(0), idx(0)});
+  ybuf = impulse::DynamicUpdateSliceOp::create(
+      builder, loc, yBufType, ybuf, remainder,
+      ValueRange{idx(0), idx(d.eventSize - 1)});
+
+  return impulse::ReshapeOp::create(
+      builder, loc, RankedTensorType::get({d.m * d.eventSize}, elemType), ybuf);
+}
+
+static Value unconstrainSimplex(OpBuilder &builder, Location loc,
+                                Value constrained, const SimplexDims &d) {
+  auto elemType =
+      cast<RankedTensorType>(constrained.getType()).getElementType();
+  auto yMatType = RankedTensorType::get({d.m, d.eventSize}, elemType);
+  auto xMatType = RankedTensorType::get({d.m, d.n}, elemType);
+
+  Value ymat = impulse::ReshapeOp::create(builder, loc, yMatType, constrained);
+  Value ycrop = impulse::SliceOp::create(
+      builder, loc, xMatType, ymat, builder.getDenseI64ArrayAttr({0, 0}),
+      builder.getDenseI64ArrayAttr({d.m, d.n}),
+      builder.getDenseI64ArrayAttr({1, 1}));
+
+  Value cumIncl =
+      prefixSum(builder, loc, ycrop,
+                triOnes(builder, loc, d.n, /*strict=*/false, elemType));
+  Value z1m = arith::SubFOp::create(
+      builder, loc, emitSplatConstant(builder, loc, xMatType, 1.0), cumIncl);
+  Value ratio = arith::DivFOp::create(builder, loc, ycrop, z1m);
+  Value logRatio = math::LogOp::create(builder, loc, ratio);
+  Value x = arith::AddFOp::create(builder, loc, logRatio,
+                                  shiftMat(builder, loc, d, elemType));
+
+  return impulse::ReshapeOp::create(
+      builder, loc, RankedTensorType::get({d.m * d.n}, elemType), x);
+}
+
+static Value logDetSimplex(OpBuilder &builder, Location loc,
+                           Value unconstrained, const SimplexDims &d) {
+  auto elemType =
+      cast<RankedTensorType>(unconstrained.getType()).getElementType();
+  auto xMatType = RankedTensorType::get({d.m, d.n}, elemType);
+
+  Value xmat =
+      impulse::ReshapeOp::create(builder, loc, xMatType, unconstrained);
+  Value xsh = arith::SubFOp::create(builder, loc, xmat,
+                                    shiftMat(builder, loc, d, elemType));
+  Value logZ = impulse::emitLogSigmoid(builder, loc, xsh);
+  Value negXsh = arith::NegFOp::create(builder, loc, xsh);
+  Value log1mZ = impulse::emitLogSigmoid(builder, loc, negXsh);
+  Value logPexcl =
+      prefixSum(builder, loc, log1mZ,
+                triOnes(builder, loc, d.n, /*strict=*/true, elemType));
+  Value term = arith::AddFOp::create(builder, loc, logZ, log1mZ);
+  term = arith::AddFOp::create(builder, loc, term, logPexcl);
+
+  auto flatType = RankedTensorType::get({d.m * d.n}, elemType);
+  Value flat = impulse::ReshapeOp::create(builder, loc, flatType, term);
+  Value ones = emitSplatConstant(builder, loc, flatType, 1.0);
+  auto scalarType = RankedTensorType::get({}, elemType);
+  return impulse::DotOp::create(builder, loc, scalarType, flat, ones,
+                                builder.getDenseI64ArrayAttr({0}),
+                                builder.getDenseI64ArrayAttr({0}));
+}
+
+static SimplexDims simplexDimsFromConstrained(SupportAttr support,
+                                              int64_t constrainedSize) {
+  int64_t eventSize = support.getEventSize().getInt();
+  return {eventSize, eventSize - 1, constrainedSize / eventSize};
+}
+
+static SimplexDims simplexDimsFromUnconstrained(SupportAttr support,
+                                                int64_t unconstrainedSize) {
+  int64_t eventSize = support.getEventSize().getInt();
+  return {eventSize, eventSize - 1, unconstrainedSize / (eventSize - 1)};
+}
+
+/// Applies the forward map of `xform` to `z`. AFFINE reads its loc and scale
+/// from `distArgs`, the bounded kinds read their bounds from `support`.
+static Value emitXformForward(OpBuilder &builder, Location loc, XformAttr xform,
+                              SupportAttr support, ValueRange distArgs,
+                              Value z) {
+  auto zType = cast<RankedTensorType>(z.getType());
   switch (xform.getKind()) {
   case XformKind::IDENTITY:
     return z;
   case XformKind::EXP:
-    return math::ExpOp::create(b, loc, z);
-  case XformKind::SIGMOID:
-    return impulse::LogisticOp::create(b, loc, z.getType(), z);
+    return math::ExpOp::create(builder, loc, z);
   case XformKind::SOFTPLUS:
-    return impulse::emitSoftplus(b, loc, z);
+    return emitSoftplus(builder, loc, z);
+  case XformKind::SIGMOID:
+    return impulse::LogisticOp::create(builder, loc, zType, z);
   case XformKind::AFFINE: {
-    Value locB = broadcastToSample(b, loc, distArgs[0], sampleType);
-    Value scaleB = broadcastToSample(b, loc, distArgs[1], sampleType);
-    Value scaled = arith::MulFOp::create(b, loc, scaleB, z);
-    return arith::AddFOp::create(b, loc, locB, scaled);
+    Value locB = broadcastToSample(builder, loc, distArgs[0], zType);
+    Value scaleB = broadcastToSample(builder, loc, distArgs[1], zType);
+    Value scaled = arith::MulFOp::create(builder, loc, scaleB, z);
+    return arith::AddFOp::create(builder, loc, locB, scaled);
   }
-  case XformKind::COMPOSE: {
-    Value val = z;
-    if (ArrayAttr components = xform.getComponents())
-      for (Attribute a : components)
-        val = emitXformForward(b, loc, cast<XformAttr>(a), val, distArgs,
-                               sampleType);
-    return val;
+  case XformKind::INTERVAL: {
+    double lower = support.getLowerBound().getValueAsDouble();
+    double upper = support.getUpperBound().getValueAsDouble();
+    Value lowerConst = emitSplatConstant(builder, loc, zType, lower);
+    Value scaleConst = emitSplatConstant(builder, loc, zType, upper - lower);
+    auto sigmoid = impulse::LogisticOp::create(builder, loc, zType, z);
+    auto scaled = arith::MulFOp::create(builder, loc, scaleConst, sigmoid);
+    return arith::AddFOp::create(builder, loc, lowerConst, scaled);
   }
-  case XformKind::INTERVAL:
-  case XformKind::GREATER_THAN:
-  case XformKind::LESS_THAN:
+  case XformKind::GREATER_THAN: {
+    double lower = support.getLowerBound().getValueAsDouble();
+    Value lowerConst = emitSplatConstant(builder, loc, zType, lower);
+    auto expZ = math::ExpOp::create(builder, loc, z);
+    return arith::AddFOp::create(builder, loc, lowerConst, expZ);
+  }
+  case XformKind::LESS_THAN: {
+    double upper = support.getUpperBound().getValueAsDouble();
+    Value upperConst = emitSplatConstant(builder, loc, zType, upper);
+    auto expZ = math::ExpOp::create(builder, loc, z);
+    return arith::SubFOp::create(builder, loc, upperConst, expZ);
+  }
   case XformKind::STICK_BREAKING:
+    return constrainSimplex(
+        builder, loc, z,
+        simplexDimsFromUnconstrained(support, zType.getNumElements()));
+  case XformKind::COMPOSE:
+    if (ArrayAttr components = xform.getComponents())
+      for (Attribute component : components)
+        z = emitXformForward(builder, loc, cast<XformAttr>(component), support,
+                             distArgs, z);
+    return z;
   case XformKind::SCALED_UNIT_LOWER_CHOLESKY:
-    // Not used in distribution chains; see emitBijectorForward.
+    // Not elementwise; emitScaledUnitLowerCholesky builds it.
     return z;
   }
   llvm_unreachable("unknown XformKind");
 }
 
-static Value emitXformInverse(OpBuilder &b, Location loc, XformAttr xform,
-                              Value y, ValueRange distArgs,
-                              RankedTensorType sampleType) {
+/// Applies the inverse map of `xform` to `y`, reading the same operands as
+/// emitXformForward.
+static Value emitXformInverse(OpBuilder &builder, Location loc, XformAttr xform,
+                              SupportAttr support, ValueRange distArgs,
+                              Value y) {
+  auto yType = cast<RankedTensorType>(y.getType());
   switch (xform.getKind()) {
   case XformKind::IDENTITY:
     return y;
   case XformKind::EXP:
-    return math::LogOp::create(b, loc, y);
-  case XformKind::SIGMOID:
-    return impulse::emitLogit(b, loc, y);
+    return math::LogOp::create(builder, loc, y);
   case XformKind::SOFTPLUS:
-    return impulse::emitSoftplusInv(b, loc, y);
+    return emitSoftplusInv(builder, loc, y);
+  case XformKind::SIGMOID:
+    return emitLogit(builder, loc, y);
   case XformKind::AFFINE: {
-    Value locB = broadcastToSample(b, loc, distArgs[0], sampleType);
-    Value scaleB = broadcastToSample(b, loc, distArgs[1], sampleType);
-    Value centered = arith::SubFOp::create(b, loc, y, locB);
-    return arith::DivFOp::create(b, loc, centered, scaleB);
+    Value locB = broadcastToSample(builder, loc, distArgs[0], yType);
+    Value scaleB = broadcastToSample(builder, loc, distArgs[1], yType);
+    Value centered = arith::SubFOp::create(builder, loc, y, locB);
+    return arith::DivFOp::create(builder, loc, centered, scaleB);
   }
-  case XformKind::COMPOSE: {
-    Value val = y;
-    if (ArrayAttr components = xform.getComponents()) {
-      for (int64_t i = components.size() - 1; i >= 0; --i)
-        val = emitXformInverse(b, loc, cast<XformAttr>(components[i]), val,
-                               distArgs, sampleType);
-    }
-    return val;
+  case XformKind::INTERVAL: {
+    double lower = support.getLowerBound().getValueAsDouble();
+    double upper = support.getUpperBound().getValueAsDouble();
+    Value lowerConst = emitSplatConstant(builder, loc, yType, lower);
+    Value scaleConst = emitSplatConstant(builder, loc, yType, upper - lower);
+    auto shifted = arith::SubFOp::create(builder, loc, y, lowerConst);
+    auto normalized = arith::DivFOp::create(builder, loc, shifted, scaleConst);
+    return emitLogit(builder, loc, normalized);
   }
-  case XformKind::INTERVAL:
-  case XformKind::GREATER_THAN:
-  case XformKind::LESS_THAN:
+  case XformKind::GREATER_THAN: {
+    double lower = support.getLowerBound().getValueAsDouble();
+    Value lowerConst = emitSplatConstant(builder, loc, yType, lower);
+    auto shifted = arith::SubFOp::create(builder, loc, y, lowerConst);
+    return math::LogOp::create(builder, loc, shifted);
+  }
+  case XformKind::LESS_THAN: {
+    double upper = support.getUpperBound().getValueAsDouble();
+    Value upperConst = emitSplatConstant(builder, loc, yType, upper);
+    auto shifted = arith::SubFOp::create(builder, loc, upperConst, y);
+    return math::LogOp::create(builder, loc, shifted);
+  }
   case XformKind::STICK_BREAKING:
+    return unconstrainSimplex(
+        builder, loc, y,
+        simplexDimsFromConstrained(support, yType.getNumElements()));
+  case XformKind::COMPOSE:
+    if (ArrayAttr components = xform.getComponents())
+      for (Attribute component : llvm::reverse(components.getValue()))
+        y = emitXformInverse(builder, loc, cast<XformAttr>(component), support,
+                             distArgs, y);
+    return y;
   case XformKind::SCALED_UNIT_LOWER_CHOLESKY:
     return y;
   }
   llvm_unreachable("unknown XformKind");
+}
+
+/// Elementwise log of the sigmoid derivative, log sigmoid(z) + log sigmoid(-z).
+static Value emitLogSigmoidDerivative(OpBuilder &builder, Location loc,
+                                      Value z) {
+  Value logSigZ = emitLogSigmoid(builder, loc, z);
+  Value negZ = arith::NegFOp::create(builder, loc, z);
+  Value logSigNegZ = emitLogSigmoid(builder, loc, negZ);
+  return arith::AddFOp::create(builder, loc, logSigZ, logSigNegZ);
 }
 
 /// Evaluated at the forward map's input, summed over the event.
@@ -293,13 +500,9 @@ static Value emitXformLogAbsDetJac(OpBuilder &b, Location loc, XformAttr xform,
     return scalarConst(b, loc, elemType, 0.0);
   case XformKind::EXP:
     return reduceSumToScalar(b, loc, forwardInput);
-  case XformKind::SIGMOID: {
-    Value logSigZ = impulse::emitLogSigmoid(b, loc, forwardInput);
-    Value negZ = arith::NegFOp::create(b, loc, forwardInput);
-    Value logSigNegZ = impulse::emitLogSigmoid(b, loc, negZ);
-    Value logProduct = arith::AddFOp::create(b, loc, logSigZ, logSigNegZ);
-    return reduceSumToScalar(b, loc, logProduct);
-  }
+  case XformKind::SIGMOID:
+    return reduceSumToScalar(b, loc,
+                             emitLogSigmoidDerivative(b, loc, forwardInput));
   case XformKind::SOFTPLUS: {
     Value logSigZ = impulse::emitLogSigmoid(b, loc, forwardInput);
     return reduceSumToScalar(b, loc, logSigZ);
@@ -747,8 +950,8 @@ SmallVector<Value> impulse::emitDistSampler(OpBuilder &b, Location loc,
   // belong to the chain.
   if (ArrayAttr transforms = dist.getTransforms())
     for (Attribute a : transforms)
-      val = emitXformForward(b, loc, cast<XformAttr>(a), val, distArgs,
-                             sampleType);
+      val = emitXformForward(b, loc, cast<XformAttr>(a), SupportAttr(),
+                             distArgs, val);
   return {rng, val};
 }
 
@@ -770,7 +973,7 @@ Value impulse::emitDistLogpdf(OpBuilder &b, Location loc, DistAttr dist,
   if (ArrayAttr transforms = dist.getTransforms()) {
     for (int64_t i = transforms.size() - 1; i >= 0; --i) {
       auto xform = cast<XformAttr>(transforms[i]);
-      Value inv = emitXformInverse(b, loc, xform, val, distArgs, sampleType);
+      Value inv = emitXformInverse(b, loc, xform, SupportAttr(), distArgs, val);
       Value ld =
           emitXformLogAbsDetJac(b, loc, xform, inv, distArgs, sampleType);
       logdetTotal = arith::AddFOp::create(b, loc, logdetTotal, ld);
@@ -800,161 +1003,6 @@ Value impulse::emitLogSigmoid(OpBuilder &builder, Location loc, Value x) {
       emitSplatConstant(builder, loc, cast<RankedTensorType>(x.getType()), 0.0);
   auto softplusNegX = impulse::emitLogAddExp(builder, loc, negX, zeroConst);
   return arith::NegFOp::create(builder, loc, softplusNegX);
-}
-
-namespace {
-// m contiguous simplex blocks of eventSize constrained (n = eventSize - 1
-// free) entries.
-struct SimplexDims {
-  int64_t eventSize;
-  int64_t n;
-  int64_t m;
-};
-} // namespace
-
-static Value matConst(OpBuilder &builder, Location loc, RankedTensorType ty,
-                      ArrayRef<double> rowVals) {
-  auto elemType = ty.getElementType();
-  int64_t m = ty.getShape()[0], ncol = ty.getShape()[1];
-  SmallVector<APFloat> vals;
-  vals.reserve(m * ncol);
-  for (int64_t r = 0; r < m; ++r)
-    for (int64_t c = 0; c < ncol; ++c)
-      vals.push_back(cast<FloatAttr>(builder.getFloatAttr(elemType, rowVals[c]))
-                         .getValue());
-  return arith::ConstantOp::create(builder, loc, ty,
-                                   DenseElementsAttr::get(ty, vals));
-}
-
-/// The n x n matrix of ones above the diagonal, and on it unless `strict`.
-static Value triOnes(OpBuilder &builder, Location loc, int64_t n, bool strict,
-                     Type elemType) {
-  return emitIndicatorMatrix(
-      builder, loc, RankedTensorType::get({n, n}, elemType),
-      [&](int64_t i, int64_t j) { return strict ? i < j : i <= j; });
-}
-
-static Value prefixSum(OpBuilder &builder, Location loc, Value mat, Value tri) {
-  return impulse::DotOp::create(builder, loc, mat.getType(), mat, tri,
-                                builder.getDenseI64ArrayAttr({1}),
-                                builder.getDenseI64ArrayAttr({0}));
-}
-
-static Value shiftMat(OpBuilder &builder, Location loc, const SimplexDims &d,
-                      Type elemType) {
-  SmallVector<double> rowVals(d.n);
-  for (int64_t c = 0; c < d.n; ++c)
-    rowVals[c] = std::log((double)(d.n - c));
-  return matConst(builder, loc, RankedTensorType::get({d.m, d.n}, elemType),
-                  rowVals);
-}
-
-static Value constrainSimplex(OpBuilder &builder, Location loc,
-                              Value unconstrained, const SimplexDims &d) {
-  auto elemType =
-      cast<RankedTensorType>(unconstrained.getType()).getElementType();
-  auto xMatType = RankedTensorType::get({d.m, d.n}, elemType);
-  auto yBufType = RankedTensorType::get({d.m, d.eventSize}, elemType);
-  auto colType = RankedTensorType::get({d.m, 1}, elemType);
-
-  Value xmat =
-      impulse::ReshapeOp::create(builder, loc, xMatType, unconstrained);
-  Value xsh = arith::SubFOp::create(builder, loc, xmat,
-                                    shiftMat(builder, loc, d, elemType));
-  Value z = impulse::LogisticOp::create(builder, loc, xMatType, xsh);
-  Value negXsh = arith::NegFOp::create(builder, loc, xsh);
-  Value log1mZ = impulse::emitLogSigmoid(builder, loc, negXsh);
-
-  Value logPexcl =
-      prefixSum(builder, loc, log1mZ,
-                triOnes(builder, loc, d.n, /*strict=*/true, elemType));
-  Value pExcl = math::ExpOp::create(builder, loc, logPexcl);
-  Value ybody = arith::MulFOp::create(builder, loc, z, pExcl);
-
-  auto onesCol = emitSplatConstant(
-      builder, loc, RankedTensorType::get({d.n, 1}, elemType), 1.0);
-  Value total = impulse::DotOp::create(builder, loc, colType, log1mZ, onesCol,
-                                       builder.getDenseI64ArrayAttr({1}),
-                                       builder.getDenseI64ArrayAttr({0}));
-  Value remainder = math::ExpOp::create(builder, loc, total);
-
-  auto idx = [&](int64_t v) { return emitI64ScalarConstant(builder, loc, v); };
-  Value ybuf = emitSplatConstant(builder, loc, yBufType, 0.0);
-  ybuf = impulse::DynamicUpdateSliceOp::create(
-      builder, loc, yBufType, ybuf, ybody, ValueRange{idx(0), idx(0)});
-  ybuf = impulse::DynamicUpdateSliceOp::create(
-      builder, loc, yBufType, ybuf, remainder,
-      ValueRange{idx(0), idx(d.eventSize - 1)});
-
-  return impulse::ReshapeOp::create(
-      builder, loc, RankedTensorType::get({d.m * d.eventSize}, elemType), ybuf);
-}
-
-static Value unconstrainSimplex(OpBuilder &builder, Location loc,
-                                Value constrained, const SimplexDims &d) {
-  auto elemType =
-      cast<RankedTensorType>(constrained.getType()).getElementType();
-  auto yMatType = RankedTensorType::get({d.m, d.eventSize}, elemType);
-  auto xMatType = RankedTensorType::get({d.m, d.n}, elemType);
-
-  Value ymat = impulse::ReshapeOp::create(builder, loc, yMatType, constrained);
-  Value ycrop = impulse::SliceOp::create(
-      builder, loc, xMatType, ymat, builder.getDenseI64ArrayAttr({0, 0}),
-      builder.getDenseI64ArrayAttr({d.m, d.n}),
-      builder.getDenseI64ArrayAttr({1, 1}));
-
-  Value cumIncl =
-      prefixSum(builder, loc, ycrop,
-                triOnes(builder, loc, d.n, /*strict=*/false, elemType));
-  Value z1m = arith::SubFOp::create(
-      builder, loc, emitSplatConstant(builder, loc, xMatType, 1.0), cumIncl);
-  Value ratio = arith::DivFOp::create(builder, loc, ycrop, z1m);
-  Value logRatio = math::LogOp::create(builder, loc, ratio);
-  Value x = arith::AddFOp::create(builder, loc, logRatio,
-                                  shiftMat(builder, loc, d, elemType));
-
-  return impulse::ReshapeOp::create(
-      builder, loc, RankedTensorType::get({d.m * d.n}, elemType), x);
-}
-
-static Value logDetSimplex(OpBuilder &builder, Location loc,
-                           Value unconstrained, const SimplexDims &d) {
-  auto elemType =
-      cast<RankedTensorType>(unconstrained.getType()).getElementType();
-  auto xMatType = RankedTensorType::get({d.m, d.n}, elemType);
-
-  Value xmat =
-      impulse::ReshapeOp::create(builder, loc, xMatType, unconstrained);
-  Value xsh = arith::SubFOp::create(builder, loc, xmat,
-                                    shiftMat(builder, loc, d, elemType));
-  Value logZ = impulse::emitLogSigmoid(builder, loc, xsh);
-  Value negXsh = arith::NegFOp::create(builder, loc, xsh);
-  Value log1mZ = impulse::emitLogSigmoid(builder, loc, negXsh);
-  Value logPexcl =
-      prefixSum(builder, loc, log1mZ,
-                triOnes(builder, loc, d.n, /*strict=*/true, elemType));
-  Value term = arith::AddFOp::create(builder, loc, logZ, log1mZ);
-  term = arith::AddFOp::create(builder, loc, term, logPexcl);
-
-  auto flatType = RankedTensorType::get({d.m * d.n}, elemType);
-  Value flat = impulse::ReshapeOp::create(builder, loc, flatType, term);
-  Value ones = emitSplatConstant(builder, loc, flatType, 1.0);
-  auto scalarType = RankedTensorType::get({}, elemType);
-  return impulse::DotOp::create(builder, loc, scalarType, flat, ones,
-                                builder.getDenseI64ArrayAttr({0}),
-                                builder.getDenseI64ArrayAttr({0}));
-}
-
-static SimplexDims simplexDimsFromConstrained(SupportAttr support,
-                                              int64_t constrainedSize) {
-  int64_t eventSize = support.getEventSize().getInt();
-  return {eventSize, eventSize - 1, constrainedSize / eventSize};
-}
-
-static SimplexDims simplexDimsFromUnconstrained(SupportAttr support,
-                                                int64_t unconstrainedSize) {
-  int64_t eventSize = support.getEventSize().getInt();
-  return {eventSize, eventSize - 1, unconstrainedSize / (eventSize - 1)};
 }
 
 int64_t impulse::bijectorForwardSize(int64_t unconstrainedSize,
@@ -987,112 +1035,14 @@ bool impulse::isConstantJacobian(XformKind kind) {
 
 Value impulse::emitBijectorForward(OpBuilder &builder, Location loc,
                                    XformAttr xform, SupportAttr support,
-                                   Value unconstrained) {
-  auto zType = cast<RankedTensorType>(unconstrained.getType());
-
-  switch (xform.getKind()) {
-  case XformKind::IDENTITY:
-    return unconstrained;
-  case XformKind::EXP:
-    return math::ExpOp::create(builder, loc, unconstrained);
-  case XformKind::SOFTPLUS:
-    return impulse::emitSoftplus(builder, loc, unconstrained);
-  case XformKind::SIGMOID:
-    return impulse::LogisticOp::create(builder, loc, unconstrained.getType(),
-                                       unconstrained);
-  case XformKind::INTERVAL: {
-    double lower = support.getLowerBound().getValueAsDouble();
-    double upper = support.getUpperBound().getValueAsDouble();
-    Value lowerConst = emitSplatConstant(builder, loc, zType, lower);
-    Value scaleConst = emitSplatConstant(builder, loc, zType, upper - lower);
-    auto sigmoid = impulse::LogisticOp::create(
-        builder, loc, unconstrained.getType(), unconstrained);
-    auto scaled = arith::MulFOp::create(builder, loc, scaleConst, sigmoid);
-    return arith::AddFOp::create(builder, loc, lowerConst, scaled);
-  }
-  case XformKind::GREATER_THAN: {
-    double lower = support.getLowerBound().getValueAsDouble();
-    Value lowerConst = emitSplatConstant(builder, loc, zType, lower);
-    auto expZ = math::ExpOp::create(builder, loc, unconstrained);
-    return arith::AddFOp::create(builder, loc, lowerConst, expZ);
-  }
-  case XformKind::LESS_THAN: {
-    double upper = support.getUpperBound().getValueAsDouble();
-    Value upperConst = emitSplatConstant(builder, loc, zType, upper);
-    auto expZ = math::ExpOp::create(builder, loc, unconstrained);
-    return arith::SubFOp::create(builder, loc, upperConst, expZ);
-  }
-  case XformKind::STICK_BREAKING:
-    return constrainSimplex(
-        builder, loc, unconstrained,
-        simplexDimsFromUnconstrained(support, zType.getNumElements()));
-  case XformKind::COMPOSE: {
-    Value v = unconstrained;
-    if (ArrayAttr comps = xform.getComponents())
-      for (Attribute a : comps)
-        v = emitBijectorForward(builder, loc, cast<XformAttr>(a), support, v);
-    return v;
-  }
-  case XformKind::AFFINE:
-  case XformKind::SCALED_UNIT_LOWER_CHOLESKY:
-    // Not produced by bijectorFor.
-    return unconstrained;
-  }
-  llvm_unreachable("unknown XformKind");
+                                   Value z) {
+  return emitXformForward(builder, loc, xform, support, /*distArgs=*/{}, z);
 }
 
 Value impulse::emitBijectorInverse(OpBuilder &builder, Location loc,
                                    XformAttr xform, SupportAttr support,
-                                   Value constrained) {
-  auto xType = cast<RankedTensorType>(constrained.getType());
-
-  switch (xform.getKind()) {
-  case XformKind::IDENTITY:
-    return constrained;
-  case XformKind::EXP:
-    return math::LogOp::create(builder, loc, constrained);
-  case XformKind::SOFTPLUS:
-    return impulse::emitSoftplusInv(builder, loc, constrained);
-  case XformKind::SIGMOID:
-    return impulse::emitLogit(builder, loc, constrained);
-  case XformKind::INTERVAL: {
-    double lower = support.getLowerBound().getValueAsDouble();
-    double upper = support.getUpperBound().getValueAsDouble();
-    Value lowerConst = emitSplatConstant(builder, loc, xType, lower);
-    Value scaleConst = emitSplatConstant(builder, loc, xType, upper - lower);
-    auto shifted = arith::SubFOp::create(builder, loc, constrained, lowerConst);
-    auto normalized = arith::DivFOp::create(builder, loc, shifted, scaleConst);
-    return impulse::emitLogit(builder, loc, normalized);
-  }
-  case XformKind::GREATER_THAN: {
-    double lower = support.getLowerBound().getValueAsDouble();
-    Value lowerConst = emitSplatConstant(builder, loc, xType, lower);
-    auto shifted = arith::SubFOp::create(builder, loc, constrained, lowerConst);
-    return math::LogOp::create(builder, loc, shifted);
-  }
-  case XformKind::LESS_THAN: {
-    double upper = support.getUpperBound().getValueAsDouble();
-    Value upperConst = emitSplatConstant(builder, loc, xType, upper);
-    auto shifted = arith::SubFOp::create(builder, loc, upperConst, constrained);
-    return math::LogOp::create(builder, loc, shifted);
-  }
-  case XformKind::STICK_BREAKING:
-    return unconstrainSimplex(
-        builder, loc, constrained,
-        simplexDimsFromConstrained(support, xType.getNumElements()));
-  case XformKind::COMPOSE: {
-    Value v = constrained;
-    if (ArrayAttr comps = xform.getComponents())
-      for (int64_t i = comps.size() - 1; i >= 0; --i)
-        v = emitBijectorInverse(builder, loc, cast<XformAttr>(comps[i]),
-                                support, v);
-    return v;
-  }
-  case XformKind::AFFINE:
-  case XformKind::SCALED_UNIT_LOWER_CHOLESKY:
-    return constrained;
-  }
-  llvm_unreachable("unknown XformKind");
+                                   Value y) {
+  return emitXformInverse(builder, loc, xform, support, /*distArgs=*/{}, y);
 }
 
 Value impulse::emitBijectorLogAbsDetJac(OpBuilder &builder, Location loc,
@@ -1121,21 +1071,13 @@ Value impulse::emitBijectorLogAbsDetJac(OpBuilder &builder, Location loc,
     Value logSigZ = impulse::emitLogSigmoid(builder, loc, unconstrained);
     return sumToScalar(logSigZ);
   }
-  case XformKind::SIGMOID: {
-    auto logSigZ = impulse::emitLogSigmoid(builder, loc, unconstrained);
-    auto negZ = arith::NegFOp::create(builder, loc, unconstrained);
-    auto logSigNegZ = impulse::emitLogSigmoid(builder, loc, negZ);
-    auto logProduct = arith::AddFOp::create(builder, loc, logSigZ, logSigNegZ);
-    return sumToScalar(logProduct);
-  }
+  case XformKind::SIGMOID:
+    return sumToScalar(emitLogSigmoidDerivative(builder, loc, unconstrained));
   case XformKind::INTERVAL: {
     double scale = support.getUpperBound().getValueAsDouble() -
                    support.getLowerBound().getValueAsDouble();
-    auto logSigZ = impulse::emitLogSigmoid(builder, loc, unconstrained);
-    auto negZ = arith::NegFOp::create(builder, loc, unconstrained);
-    auto logSigNegZ = impulse::emitLogSigmoid(builder, loc, negZ);
-    auto logProduct = arith::AddFOp::create(builder, loc, logSigZ, logSigNegZ);
-    auto sumLogProduct = sumToScalar(logProduct);
+    Value sumLogProduct =
+        sumToScalar(emitLogSigmoidDerivative(builder, loc, unconstrained));
 
     int64_t n = zType.getNumElements();
     double logScaleTerm = n * std::log(scale);
