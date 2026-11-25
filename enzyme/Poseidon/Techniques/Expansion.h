@@ -15,63 +15,19 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/Instructions.h"
 #include "llvm/IR/Value.h"
 
 namespace poseidon {
 
-class Session;
 struct Options;
 
-struct DSValue {
-  llvm::Value *hi;
-  llvm::Value *lo;
-};
-
-// The limbs the last two-component applyExpansion produced, and those every
-// wider one produced since resetExpLimbs.
-struct ExpansionState {
-  llvm::SmallVector<llvm::Value *, 32> LastExpansionLimbs;
-  llvm::SmallVector<llvm::Value *, 32> LastExpLimbs;
-};
-
-DSValue emitDSAdd(llvm::IRBuilder<> &B, DSValue x, DSValue y);
-DSValue emitDSSub(llvm::IRBuilder<> &B, DSValue x, DSValue y);
-DSValue emitDSMul(llvm::IRBuilder<> &B, DSValue x, DSValue y);
-// x * y + z, for llvm.fma and llvm.fmuladd.
-DSValue emitDSFMA(llvm::IRBuilder<> &B, DSValue x, DSValue y, DSValue z);
-DSValue emitDSDiv(llvm::IRBuilder<> &B, DSValue x, DSValue y);
-DSValue emitDSSqrt(llvm::IRBuilder<> &B, DSValue x);
-DSValue emitDSNeg(llvm::IRBuilder<> &B, DSValue x);
-DSValue emitF64ToDS(llvm::IRBuilder<> &B, llvm::Value *f64val);
-
-// The libm function a call to `name` computes, without the f or l suffix of
-// its float and long double variants: "fmax" for fmaxf and for __nv_fmax.
-llvm::StringRef libmBaseName(llvm::StringRef name);
-
-// Boundary converters: components are always F32, the source/target type may
-// be F32 or F64.
-DSValue emitToDS(llvm::IRBuilder<> &B, llvm::Value *fpval);
-llvm::Value *emitDSToFP(llvm::IRBuilder<> &B, DSValue ds, llvm::Type *targetTy);
-
-// Materialize `instsToChange` as a two-component expansion and erase them,
-// with the FP64 PHIs the expansion carries as pairs. `restoredValues`, if
-// given, receives each erased value whose users now read another, with that
-// value.
-void applyExpansion(
-    Session &S, llvm::ArrayRef<llvm::Instruction *> instsToChange,
-    const llvm::SmallPtrSetImpl<llvm::Instruction *> &allChanged,
-    llvm::DenseMap<llvm::Value *, llvm::Value *> *restoredValues = nullptr);
-
-// Wider FP32 expansions (n = 3, 4), parallel to the two-component DSValue path
-// and sharing TwoSum and the two-product with it. The component sequences
-// reproduce the QxW triple/quad-word routines used by mX_real's Sloppy tier,
-// followed by mX_real's Normalize<Regular>, so a materialized expansion matches
-// mX_real's code operation for operation.
-
-// An n-component FP32 expansion. x[0] is the most significant limb; the value
-// is the unevaluated sum of the limbs. Every emitter below returns a value
-// whose limbs are normalized (|x[i+1]| <= ulp(x[i])/2), except the square root
-// of an operand with a zero leading limb, which is the operand.
+// An n-component FP32 expansion, n = 2, 3, 4. x[0] is the most significant
+// limb; the value is the unevaluated sum of the limbs. Every emitter below
+// returns a value whose limbs are normalized (|x[i+1]| <= ulp(x[i])/2), except
+// the square root of an operand with a zero leading limb, which is the operand.
+// The emitters emit the routines of Core/ExpansionRoutines.h, operation for
+// operation.
 struct ExpansionValue {
   llvm::SmallVector<llvm::Value *, 4> x;
   unsigned n() const { return x.size(); }
@@ -83,12 +39,21 @@ ExpansionValue emitExpansionSub(llvm::IRBuilder<> &B, const ExpansionValue &a,
                                 const ExpansionValue &b);
 ExpansionValue emitExpansionMul(llvm::IRBuilder<> &B, const ExpansionValue &a,
                                 const ExpansionValue &b);
-// a * a, for a product whose two operands are one value.
+// a * a: the square routine for n >= 3, the product for n = 2.
 ExpansionValue emitExpansionSqr(llvm::IRBuilder<> &B, const ExpansionValue &a);
 ExpansionValue emitExpansionDiv(llvm::IRBuilder<> &B, const ExpansionValue &a,
                                 const ExpansionValue &b);
 ExpansionValue emitExpansionSqrt(llvm::IRBuilder<> &B, const ExpansionValue &a);
 ExpansionValue emitExpansionNeg(llvm::IRBuilder<> &B, const ExpansionValue &a);
+// a * b + c, for llvm.fma and llvm.fmuladd: the fused routine for n = 2, the
+// product and then the sum for n >= 3.
+ExpansionValue emitExpansionFMA(llvm::IRBuilder<> &B, const ExpansionValue &a,
+                                const ExpansionValue &b,
+                                const ExpansionValue &c);
+// a * a + c, for a fused multiply-add whose two factors are one value.
+ExpansionValue emitExpansionFMASqr(llvm::IRBuilder<> &B,
+                                   const ExpansionValue &a,
+                                   const ExpansionValue &c);
 
 // Boundary converters. Components are always F32; the surrounding program's
 // type may be F32 or F64.
@@ -97,29 +62,43 @@ ExpansionValue emitToExpansion(llvm::IRBuilder<> &B, llvm::Value *fpval,
 llvm::Value *emitExpansionToFP(llvm::IRBuilder<> &B, const ExpansionValue &v,
                                llvm::Type *targetTy);
 
-// Materialize as an n-component expansion (n >= 3), as the two-component
-// applyExpansion does, without the staging narrowing.
+// The libm function a call to `name` computes, without the f or l suffix of
+// its float and long double variants: "fmax" for fmaxf and for __nv_fmax.
+llvm::StringRef libmBaseName(llvm::StringRef name);
+
+// Materialize `instsToChange` as an n-component expansion and erase them, with
+// the FP64 PHIs the expansion carries. `restoredValues`, if given, receives
+// each erased value whose users now read another, with that value; `limbs`, if
+// given, receives the limbs of each converted instruction, in order.
 void applyExpansion(
-    Session &S, unsigned n, llvm::ArrayRef<llvm::Instruction *> instsToChange,
+    unsigned n, llvm::ArrayRef<llvm::Instruction *> instsToChange,
     const llvm::SmallPtrSetImpl<llvm::Instruction *> &allChanged,
-    llvm::DenseMap<llvm::Value *, llvm::Value *> *restoredValues = nullptr);
+    llvm::DenseMap<llvm::Value *, llvm::Value *> *restoredValues = nullptr,
+    llvm::SmallVectorImpl<llvm::Value *> *limbs = nullptr);
+
+// The Dekker split of an FP64 value into FP32 limbs, as emitToExpansion emits
+// it for a pair:
+//   hi = fptrunc V ; hib = fpext hi ; los = fsub V, hib ; lo = fptrunc los
+// where hib and los are read by the split alone.
+struct DekkerSplit {
+  llvm::FPTruncInst *hi, *lo;
+  llvm::FPExtInst *hib;
+  llvm::BinaryOperator *los;
+  // Makes the readers of hi and lo read hiV and loV, and erases the split.
+  void replaceWith(llvm::Value *hiV, llvm::Value *loV);
+};
+
+// The Dekker splits that read V, one per FP32 rounding of V, into `splits`;
+// false if there is none or V has another reader, other than an fcmp when
+// `allowFCmp`.
+bool matchDekkerSplits(llvm::Value *V, bool allowFCmp,
+                       llvm::SmallVectorImpl<DekkerSplit> &splits);
 
 // Cancel the join/split roundtrip a df64 conversion leaves on an expansion
 // restore; `foldedLimbs` collects the limbs the fold exposed.
 bool foldDSPairRoundtrip(llvm::Function &F,
                          llvm::SmallVectorImpl<llvm::Value *> *foldedLimbs,
                          bool print);
-
-// Moves the limbs the last two-component applyExpansion produced into `out`.
-void takeLastExpansionLimbs(Session &S,
-                            llvm::SmallVectorImpl<llvm::Value *> &out);
-
-// Moves the limbs the wider applyExpansions produced since resetExpLimbs into
-// `out`; kept apart from takeLastExpansionLimbs because one candidate can apply
-// both kinds of change.
-void takeLastExpLimbs(Session &S, llvm::SmallVectorImpl<llvm::Value *> &out);
-// Start a fresh limb record; one candidate may apply several expansion changes.
-void resetExpLimbs(Session &S);
 
 // Whether expansion candidates may be proposed for F: false when this LLVM
 // does not round F's floating-point operations as written.

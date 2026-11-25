@@ -461,10 +461,7 @@ static bool materializeFPSolution(Session &S, Function &F, FunctionFPState &st,
   }
 
   if (changed)
-    applyStagingNarrowing(S, F, /*announce=*/true,
-                          O.Materialization.NarrowParamStaging ? ParamArm::Both
-                                                               : ParamArm::None,
-                          &F);
+    applyStagingNarrowing(S, F, /*announce=*/true, ParamArm::Both, F);
   if (changed && demoteFPCastPHIs(F)) {
     if (O.Diagnostics.Print)
       llvm::errs() << "[poseidon] demoted fpcast-sandwiched FP64 PHIs in "

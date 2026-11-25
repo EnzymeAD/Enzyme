@@ -9,6 +9,8 @@
 ; RUN: %{opt} -poseidon-cache=%t/arrays -poseidon-herbie-arrays 2>&1 | FileCheck --check-prefix=ARRAY %s
 ; RUN: env FAKE_HERBIE_ARRAY=timeout %{opt} -poseidon-cache=%t/fallback -poseidon-herbie-arrays 2>&1 | FileCheck --check-prefix=FALLBACK %s
 ; RUN: %{opt} -poseidon-cache=%t/off -poseidon-herbie-arrays=false 2>&1 | FileCheck --check-prefix=OFF %s
+; RUN: not %{opt} -poseidon-cache=%t/grouping -poseidon-herbie-arrays -poseidon-herbie-array-grouping=Inputs 2>&1 \
+; RUN:   | FileCheck --check-prefix=GROUPING %s
 
 ; Both outputs read sqrt(x*x + y*y) - x. With -poseidon-herbie-arrays the
 ; subgraph goes to Herbie as one array core per precision, the shared subterm
@@ -73,3 +75,6 @@ attributes #0 = { "target-cpu"="x86-64" }
 ; OFF: fake-herbie: {{.*}} --num-enodes 8000
 ; OFF-NEXT: (FPCore (v0 v1) {{.*}} :name "0" (- (sqrt (+ (* v0 v0) (* v1 v1))) v0))
 ; OFF-NOT: (array
+
+; The grouping is spelled exactly; any other spelling is refused.
+; GROUPING: Poseidon: -poseidon-herbie-array-grouping=Inputs is not 'inputs' or 'executions'

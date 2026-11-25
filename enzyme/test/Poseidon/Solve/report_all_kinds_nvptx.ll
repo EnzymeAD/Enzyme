@@ -88,7 +88,6 @@
 ; JSON-NEXT: "herbie_accuracy": 0.65625,
 ; JSON-NEXT: "herbie_cost": 0.5,
 ; JSON-NEXT: "initial_herbie_accuracy": 0.6875,
-; JSON-NEXT: "initial_herbie_cost": 1,
 ; JSON-NEXT: "original_expr": "(+ (- (sqrt (+ v0 1)) (sqrt v0)) (+ (+ (+ (sinh v1) (asinh v1)) (tan v1)) (asin v1)))",
 ; JSON-NEXT: "rewritten_expr": "(+.f64 (-.f64 (sqrt.f64 (+.f64 v0 #s(literal 1 binary64))) (sqrt.f64 v0)) (binary32->binary64 (+.f32 (+.f32 (+.f32 (sinh.f32 (binary64->binary32 v1)) (asinh.f32 (binary64->binary32 v1))) (tan.f32 (binary64->binary32 v1))) (asin.f32 (binary64->binary32 v1)))))",
 ; JSON-NEXT: "source_locations": [],

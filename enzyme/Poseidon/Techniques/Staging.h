@@ -27,22 +27,23 @@ class Session;
 // parameter, which the narrowing of addrspace(3) globals does not see: each
 // Dekker split of a staged load becomes a pair load and each store stores the
 // pair. `Proxy` is the function the site arguments were recorded against: F at
-// materialization, the site function when pricing a clone.
+// materialization, the site function when pricing a clone. `announce` prints
+// each narrowed buffer under -poseidon-print.
 bool narrowSharedStagingParamDS(Session &S, llvm::Function &F,
-                                llvm::Function *Proxy = nullptr);
+                                llvm::Function &Proxy, bool announce);
 
-// Which parameter transforms applyStagingNarrowing runs. Each declines a
-// buffer whose readers it does not fit, so the materializer runs Both; a
-// pricing clone runs one, because narrowing an expansion's operand buffer to
-// one float zeroes its `lo` limb and prices the expansion as free.
-enum class ParamArm { None, Both, FP32, DS };
+// Which parameter transforms applyStagingNarrowing runs under
+// -poseidon-narrow-param-staging. Each declines a buffer whose readers it does
+// not fit, so the materializer runs Both; a pricing clone runs one, because
+// narrowing an expansion's operand buffer to one float zeroes its `lo` limb
+// and prices the expansion as free.
+enum class ParamArm { Both, FP32, DS };
 
 // The arms in the order every site must apply them: the FP32 narrowing, the
 // parameter arms `param` selects, then the df64 narrowing. `announce` prints
 // the per-arm line the solve log carries. True if any arm changed F.
 bool applyStagingNarrowing(Session &S, llvm::Function &F, bool announce,
-                           ParamArm param = ParamArm::None,
-                           llvm::Function *paramProxy = nullptr);
+                           ParamArm param, llvm::Function &paramProxy);
 
 } // namespace poseidon
 #endif // POSEIDON_STAGING_H

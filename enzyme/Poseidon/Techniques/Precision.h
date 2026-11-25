@@ -29,19 +29,17 @@
 
 #include <cstdint>
 #include <limits>
+#include <map>
 #include <memory>
 #include <set>
 #include <string>
+#include <tuple>
 #include <unordered_map>
 
 namespace poseidon {
 
-class FPNode;
-class FPLLValue;
-struct Subgraph;
 class PrecisionUnit;
 class RewriteUnit;
-struct Options;
 class Session;
 struct FunctionProfileHeader;
 
@@ -60,20 +58,15 @@ struct PTCandidate {
                        const std::string &desc)
       : changes(std::move(changes)), desc(desc) {}
 
+  // Materializes the changes on `subgraph`, or, given `VMap`, on its clone.
+  // `limbs`, if given, receives the limbs of the two-component change and then
+  // those of the wider ones.
   void apply(Session &S, Subgraph &subgraph,
-             llvm::ValueToValueMapTy *VMap = nullptr, FPGraph *graph = nullptr);
+             llvm::ValueToValueMapTy *VMap = nullptr, FPGraph *graph = nullptr,
+             llvm::SmallVectorImpl<llvm::Value *> *limbs = nullptr);
 };
 
 bool demoteFPCastPHIs(llvm::Function &F);
-
-// The cost of `pt` per execution of `subgraph`, or why it cannot be computed.
-llvm::Expected<double> getCompCost(Session &S, Subgraph &subgraph,
-                                   PTCandidate &pt);
-
-void setUnifiedAccuracyCost(
-    const Options &O, PrecisionUnit &CS,
-    std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-    std::unordered_map<std::string, llvm::Value *> &symbolToValueMap);
 
 // The precision candidates of `subgraph`, appended to `CSs` unpriced: two- and
 // three-tier assignments of its operations by profiled sensitivity, over the
@@ -84,34 +77,25 @@ void proposePrecisionCandidates(
     const FunctionProfileHeader &profileHeader, bool expansionSafe,
     llvm::SmallVectorImpl<PrecisionUnit> &CSs);
 
-class PrecisionUnit : public SiteUnit {
+class PrecisionUnit : public SubgraphUnit<PTCandidate> {
 public:
-  Subgraph *subgraph;
-  double initialAccCost = std::numeric_limits<double>::quiet_NaN();
-  double initialCompCost = std::numeric_limits<double>::quiet_NaN();
-  uint64_t executions = 0;
   llvm::MapVector<FPNode *, double> perOutputInitialAccCost;
-  llvm::SmallVector<PTCandidate, 8> candidates;
-  // Why the subgraph could not be priced; empty when it was.
-  std::string unpricedReason;
-  llvm::SmallVector<std::pair<std::string, std::string>, 1> dropped;
 
   using RewriteUnitSet = std::set<RewriteUnit *>;
   struct RepriceKey {
     size_t candidateIndex;
     RewriteUnitSet RewriteUnits;
-    bool operator==(const RepriceKey &other) const;
+    bool operator<(const RepriceKey &other) const {
+      return std::tie(candidateIndex, RewriteUnits) <
+             std::tie(other.candidateIndex, other.RewriteUnits);
+    }
   };
 
-  struct RepriceKeyHash {
-    std::size_t operator()(const RepriceKey &key) const;
-  };
-
-  std::unordered_map<RepriceKey, double, RepriceKeyHash> compCostDeltaCache;
-  std::unordered_map<RepriceKey, double, RepriceKeyHash> accCostDeltaCache;
+  std::map<RepriceKey, double> compCostDeltaCache;
+  std::map<RepriceKey, double> accCostDeltaCache;
 
   explicit PrecisionUnit(CostModelState &CM, Subgraph &subgraph)
-      : SiteUnit(UnitKind::PT), subgraph(&subgraph) {
+      : SubgraphUnit(UnitKind::PT, subgraph) {
     initialCompCost =
         getCompCost(CM,
                     llvm::SmallVector<llvm::Value *>(subgraph.outputs.begin(),
@@ -119,27 +103,17 @@ public:
                     subgraph.inputs, &subgraph.opExec, subgraph.execNormalizer);
   }
 
-  void apply(Session &S, size_t candidateIndex);
   double getCompCostDelta(size_t candidateIndex);
-  double getAccCostDelta(size_t candidateIndex);
-  double getAdjustedCompCostDelta(Session &S, size_t candidateIndex,
-                                  llvm::ArrayRef<SolutionStep> steps);
   // Memoizes the cost delta of each (candidate, steps) request.
   void priceRequests(
       Session &S,
       llvm::ArrayRef<std::pair<size_t, llvm::ArrayRef<SolutionStep>>> requests);
   RepriceKey repriceKey(size_t candidateIndex,
                         llvm::ArrayRef<SolutionStep> steps) const;
-  double getAdjustedAccCostDelta(
-      size_t candidateIndex, llvm::ArrayRef<SolutionStep> steps,
-      std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>>
-          &valueToNodeMap,
-      std::unordered_map<std::string, llvm::Value *> &symbolToValueMap);
 
   static bool classof(const OptimizationUnit *U) {
     return U->kind() == unsigned(UnitKind::PT);
   }
-  size_t numCandidates() const override { return candidates.size(); }
   double costDelta(size_t i, llvm::ArrayRef<SolutionStep> prior) override;
   double errorDelta(size_t i, llvm::ArrayRef<SolutionStep> prior) override;
   // Priced over the outputs the algebraic units of its subgraph leave.
@@ -148,11 +122,9 @@ public:
   void priceAhead(llvm::ArrayRef<llvm::ArrayRef<SolutionStep>> priors) override;
   bool consumesFootprint() const override { return false; }
   bool pricedAgainst(const OptimizationUnit &earlier) const override;
-  const llvm::SetVector<llvm::Instruction *> *footprint() const override;
   std::string candidateName(size_t i) const override {
     return candidates[i].desc;
   }
-  size_t ordinalOf(size_t i) const override { return candidates[i].ordinal; }
   std::string choiceText(size_t i) const override;
   llvm::json::Object stepJSON(size_t i) override;
   void writeReportStep(llvm::raw_ostream &OS, size_t i,
@@ -162,10 +134,6 @@ public:
   void scaleErrors(double factor) override;
   void printPriced(llvm::raw_ostream &OS) override;
   std::string keyHeader() const override { return "CS"; }
-  llvm::ArrayRef<std::pair<std::string, std::string>>
-  droppedCandidates() const override {
-    return dropped;
-  }
   std::string selectionText(size_t i) const override {
     return candidates[i].desc;
   }

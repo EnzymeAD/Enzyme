@@ -63,11 +63,6 @@ static constexpr size_t kMaxRejectedRemarks = 3;
 static constexpr size_t kRemarkExprChars = 160;
 static constexpr size_t kMaxListedOps = 6;
 
-static void putLoc(json::Object &o, StringRef key, const SourceLoc &L) {
-  if (L.valid())
-    o[key] = locJSON(L);
-}
-
 static void putNum(json::Object &o, StringRef key, double v) {
   if (std::isfinite(v))
     o[key] = v;
@@ -632,7 +627,7 @@ void Explainer::addCOAlternatives(Unit &U, const Subgraph &sg) {
       for (unsigned k = 0; k < sg.outputs.size(); ++k)
         if (sg.outputs[k] == root)
           outs.push_back(k);
-    std::string rdt = dtypeOfType(CO.oldOutput->getType());
+    std::string rdt = dtypeOfType(CO.roots.front()->getType());
     std::optional<int64_t> base;
     if (std::isfinite(CO.initialCompCost))
       base = scale.toDPCost(CO.initialCompCost * (double)CO.executions);
@@ -642,7 +637,7 @@ void Explainer::addCOAlternatives(Unit &U, const Subgraph &sg) {
       A.precision = CO.herbiePrecision;
       A.fpcore = expr;
       A.outputs = outs;
-      A.at = cast<Instruction>(CO.oldOutput);
+      A.at = cast<Instruction>(CO.roots.front());
       A.baseAcc = CO.initialAccCost;
       A.baseCost = base;
       SmallVector<std::pair<std::string, std::string>, 2> specs;
@@ -700,7 +695,7 @@ void Explainer::addCOAlternatives(Unit &U, const Subgraph &sg) {
       A.index = j;
       fill(A, cand.expr);
       if (cand.CompCost != std::numeric_limits<double>::max())
-        A.costDelta = scale.toDPCost(CO.getCompCostDelta(Sess.CostModel, j));
+        A.costDelta = scale.toDPCost(CO.getCompCostDelta(j));
       double acc = CO.getAccCostDelta(j);
       if (std::isfinite(acc)) {
         A.accDelta = acc;
@@ -1113,7 +1108,7 @@ void Explainer::buildSubgraph(size_t s) {
     putLoc(out, "loc", locOf(O));
     out["type"] = typeName(O->getType());
     for (const RewriteUnit &CO : st.COs)
-      if (CO.subgraph == &sg && !CO.isArray() && CO.oldOutput == O) {
+      if (CO.subgraph == &sg && !CO.isArray() && CO.roots.front() == O) {
         out["fpcore"] = CO.expr;
         break;
       }

@@ -509,6 +509,16 @@ Options readOptions() {
   H.HerbieArrays = HerbieArrays;
   H.HerbieArrayWeights = HerbieArrayWeights;
   H.HerbieArrayGrouping = HerbieArrayGrouping;
+  if (!is_contained({"inputs", "executions"}, H.HerbieArrayGrouping))
+    report_fatal_error(Twine("Poseidon: -poseidon-herbie-array-grouping=") +
+                           H.HerbieArrayGrouping +
+                           " is not 'inputs' or 'executions'.",
+                       /*gen_crash_diag=*/false);
+  if (!is_contained({"sensitivity", "gradient", "none"}, H.HerbieArrayWeights))
+    report_fatal_error(Twine("Poseidon: -poseidon-herbie-array-weights=") +
+                           H.HerbieArrayWeights +
+                           " is not 'sensitivity', 'gradient' or 'none'.",
+                       /*gen_crash_diag=*/false);
 
   O.Matmul.OzakiHostDispatch = OzakiHostDispatch;
   O.Matmul.InKernelCalibration = InKernelCalibration;

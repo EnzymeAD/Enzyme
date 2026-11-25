@@ -21,7 +21,6 @@
 #include "Core/Options.h"
 #include "Sites/LaunchDescriptors.h"
 #include "Solve/Pins.h"
-#include "Techniques/Expansion.h"
 #include "Techniques/Matmul/Matmul.h"
 
 #include "llvm/ADT/SmallVector.h"
@@ -93,8 +92,6 @@ public:
   std::map<std::string, ProfileHeader> ProfileHeaders;
 
   MatmulState Matmul;
-
-  ExpansionState Expansion;
 };
 
 // The session of each module an analysis manager is asked about. Registered

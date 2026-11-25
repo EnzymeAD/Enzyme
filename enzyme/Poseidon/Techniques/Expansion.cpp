@@ -8,9 +8,8 @@
 
 #include "Expansion.h"
 #include "Core/ExpansionRoutines.h"
+#include "Core/Options.h"
 #include "IR/Utils.h"
-#include "Pass/Session.h"
-#include "Staging.h"
 #include "Targets/DeviceMath.h"
 #include "Targets/Target.h"
 
@@ -32,9 +31,13 @@ using namespace llvm;
 
 namespace poseidon {
 
-static Type *f32Ty(IRBuilder<> &B) { return B.getFloatTy(); }
-
 namespace {
+
+// The two components of a two-component expansion, the routines' pair.
+struct DSValue {
+  Value *hi;
+  Value *lo;
+};
 
 // The arithmetic the routines of Core/ExpansionRoutines.h are emitted with.
 struct IRArith {
@@ -95,54 +98,193 @@ struct IRArith {
 };
 
 using Routines = ExpansionRoutines<IRArith>;
+using PairOp1 = DSValue (Routines::*)(DSValue);
+using PairOp2 = DSValue (Routines::*)(DSValue, DSValue);
+using WideOp1 = void (Routines::*)(unsigned, Value *const *, Value **);
+using WideOp2 = void (Routines::*)(unsigned, Value *const *, Value *const *,
+                                   Value **);
 
 } // namespace
 
 static Routines routines(IRBuilder<> &B) { return Routines(IRArith{B}); }
 
-DSValue emitDSAdd(IRBuilder<> &B, DSValue x, DSValue y) {
-  return routines(B).dsAdd(x, y);
+// Only the component counts whose routines are transcribed exist.
+static void checkComponents(unsigned n) {
+  if (n < 2 || n > 4)
+    report_fatal_error("Poseidon expansion emitter: only 2-, 3- and "
+                       "4-component FP32 expansions are implemented. Refusing "
+                       "to fabricate an unimplemented component count.");
 }
 
-DSValue emitDSSub(IRBuilder<> &B, DSValue x, DSValue y) {
-  return routines(B).dsSub(x, y);
+static DSValue pairOf(const ExpansionValue &v) {
+  assert(v.n() == 2 && "a pair is a two-component expansion");
+  return {v.x[0], v.x[1]};
 }
 
-DSValue emitDSMul(IRBuilder<> &B, DSValue x, DSValue y) {
-  return routines(B).dsMul(x, y);
+static ExpansionValue expansionOf(DSValue p) {
+  ExpansionValue r;
+  r.x.assign({p.hi, p.lo});
+  return r;
 }
 
-DSValue emitDSFMA(IRBuilder<> &B, DSValue x, DSValue y, DSValue z) {
-  return routines(B).dsFma(x, y, z);
+static ExpansionValue emitUnary(IRBuilder<> &B, const ExpansionValue &a,
+                                PairOp1 pairOp, WideOp1 wideOp) {
+  Routines R = routines(B);
+  if (a.n() == 2)
+    return expansionOf((R.*pairOp)(pairOf(a)));
+  ExpansionValue r;
+  r.x.resize(a.n());
+  (R.*wideOp)(a.n(), a.x.data(), r.x.data());
+  return r;
 }
 
-DSValue emitDSDiv(IRBuilder<> &B, DSValue x, DSValue y) {
-  return routines(B).dsDiv(x, y);
+static ExpansionValue emitBinary(IRBuilder<> &B, const ExpansionValue &a,
+                                 const ExpansionValue &b, PairOp2 pairOp,
+                                 WideOp2 wideOp) {
+  assert(a.n() == b.n() && "expansion operands must agree on component count");
+  Routines R = routines(B);
+  if (a.n() == 2)
+    return expansionOf((R.*pairOp)(pairOf(a), pairOf(b)));
+  ExpansionValue r;
+  r.x.resize(a.n());
+  (R.*wideOp)(a.n(), a.x.data(), b.x.data(), r.x.data());
+  return r;
 }
 
-DSValue emitDSSqrt(IRBuilder<> &B, DSValue x) { return routines(B).dsSqrt(x); }
-
-DSValue emitDSNeg(IRBuilder<> &B, DSValue x) { return routines(B).dsNeg(x); }
-
-DSValue emitF64ToDS(IRBuilder<> &B, Value *f64val) {
-  assert(f64val->getType()->isDoubleTy() && "emitF64ToDS: input must be f64");
-  return routines(B).dsFromF64(f64val);
+ExpansionValue emitExpansionAdd(IRBuilder<> &B, const ExpansionValue &a,
+                                const ExpansionValue &b) {
+  return emitBinary(B, a, b, &Routines::dsAdd, &Routines::expansionAdd);
 }
 
-// The f64 value of a normalized pair, tagged for foldDSPairRoundtrip.
-static Value *emitDSToF64(IRBuilder<> &B, DSValue ds) {
-  Value *joined = routines(B).dsToF64(ds);
+ExpansionValue emitExpansionSub(IRBuilder<> &B, const ExpansionValue &a,
+                                const ExpansionValue &b) {
+  return emitBinary(B, a, b, &Routines::dsSub, &Routines::expansionSub);
+}
+
+ExpansionValue emitExpansionMul(IRBuilder<> &B, const ExpansionValue &a,
+                                const ExpansionValue &b) {
+  return emitBinary(B, a, b, &Routines::dsMul, &Routines::expansionMul);
+}
+
+ExpansionValue emitExpansionSqr(IRBuilder<> &B, const ExpansionValue &a) {
+  if (a.n() == 2)
+    return emitExpansionMul(B, a, a);
+  ExpansionValue r;
+  r.x.resize(a.n());
+  routines(B).expansionSqr(a.n(), a.x.data(), r.x.data());
+  return r;
+}
+
+ExpansionValue emitExpansionDiv(IRBuilder<> &B, const ExpansionValue &a,
+                                const ExpansionValue &b) {
+  return emitBinary(B, a, b, &Routines::dsDiv, &Routines::expansionDiv);
+}
+
+ExpansionValue emitExpansionSqrt(IRBuilder<> &B, const ExpansionValue &a) {
+  return emitUnary(B, a, &Routines::dsSqrt, &Routines::expansionSqrt);
+}
+
+ExpansionValue emitExpansionNeg(IRBuilder<> &B, const ExpansionValue &a) {
+  return emitUnary(B, a, &Routines::dsNeg, &Routines::expansionNeg);
+}
+
+ExpansionValue emitExpansionFMA(IRBuilder<> &B, const ExpansionValue &a,
+                                const ExpansionValue &b,
+                                const ExpansionValue &c) {
+  if (a.n() == 2)
+    return expansionOf(routines(B).dsFma(pairOf(a), pairOf(b), pairOf(c)));
+  ExpansionValue product = emitExpansionMul(B, a, b);
+  return emitExpansionAdd(B, product, c);
+}
+
+ExpansionValue emitExpansionFMASqr(IRBuilder<> &B, const ExpansionValue &a,
+                                   const ExpansionValue &c) {
+  if (a.n() == 2)
+    return emitExpansionFMA(B, a, a, c);
+  ExpansionValue square = emitExpansionSqr(B, a);
+  return emitExpansionAdd(B, square, c);
+}
+
+ExpansionValue emitToExpansion(IRBuilder<> &B, Value *fpval, unsigned n) {
+  checkComponents(n);
+  const bool f32 = fpval->getType()->isFloatTy();
+  assert((f32 || fpval->getType()->isDoubleTy()) &&
+         "emitToExpansion: only f32/f64 sources");
+  Routines R = routines(B);
+  if (n == 2)
+    return expansionOf(f32 ? R.dsFromF32(fpval) : R.dsFromF64(fpval));
+  ExpansionValue r;
+  r.x.resize(n);
+  if (f32)
+    R.expansionFromF32(n, fpval, r.x.data());
+  else
+    R.expansionFromF64(n, fpval, r.x.data());
+  return r;
+}
+
+Value *emitExpansionToFP(IRBuilder<> &B, const ExpansionValue &v,
+                         Type *targetTy) {
+  Routines R = routines(B);
+  if (targetTy->isFloatTy())
+    return v.n() == 2 ? R.dsToF32(pairOf(v))
+                      : R.expansionToF32(v.n(), v.x.data());
+  assert(targetTy->isDoubleTy() && "emitExpansionToFP: only f32/f64 targets");
+  if (v.n() != 2)
+    return R.expansionToF64(v.n(), v.x.data());
+  Value *joined = R.dsToF64(pairOf(v));
   // Tag the restore so foldDSPairRoundtrip can recover {hi,lo} exactly: every
-  // DS value here is normalized, so a Dekker split of this restore returns the
+  // pair here is normalized, so a Dekker split of this restore returns the
   // same two limbs. Only tagged values are folded.
   if (auto *I = dyn_cast<Instruction>(joined))
     I->setMetadata("poseidon.ds.join", MDNode::get(I->getContext(), {}));
   return joined;
 }
 
+void DekkerSplit::replaceWith(Value *hiV, Value *loV) {
+  hi->replaceAllUsesWith(hiV);
+  lo->replaceAllUsesWith(loV);
+  lo->eraseFromParent();
+  los->eraseFromParent();
+  hib->eraseFromParent();
+  hi->eraseFromParent();
+}
+
+bool matchDekkerSplits(Value *V, bool allowFCmp,
+                       SmallVectorImpl<DekkerSplit> &splits) {
+  splits.clear();
+  SmallVector<FPTruncInst *, 4> his;
+  SmallVector<BinaryOperator *, 4> loss;
+  for (User *U : V->users()) {
+    auto *FT = dyn_cast<FPTruncInst>(U);
+    auto *BO = dyn_cast<BinaryOperator>(U);
+    if (FT && FT->getType()->isFloatTy())
+      his.push_back(FT);
+    else if (BO && BO->getOpcode() == Instruction::FSub &&
+             BO->getOperand(0) == V && BO->getType()->isDoubleTy())
+      loss.push_back(BO);
+    else if (!allowFCmp || !isa<FCmpInst>(U))
+      return false;
+  }
+  if (his.empty() || his.size() != loss.size())
+    return false;
+  SmallPtrSet<FPTruncInst *, 4> paired;
+  for (BinaryOperator *los : loss) {
+    auto *hib = dyn_cast<FPExtInst>(los->getOperand(1));
+    if (!hib || !hib->hasOneUse() || !los->hasOneUse())
+      return false;
+    auto *hi = dyn_cast<FPTruncInst>(hib->getOperand(0));
+    auto *lo = dyn_cast<FPTruncInst>(*los->user_begin());
+    if (!hi || !is_contained(his, hi) || !paired.insert(hi).second || !lo ||
+        !lo->getType()->isFloatTy())
+      return false;
+    splits.push_back({hi, lo, hib, los});
+  }
+  return true;
+}
+
 // Exact for a normalized pair, bit for bit, so only joins tagged by
-// emitDSToF64 are folded. InstCombine does not fold the pair because the split
-// reads the join twice.
+// emitExpansionToFP are folded. InstCombine does not fold the pair because the
+// split reads the join twice.
 bool foldDSPairRoundtrip(Function &F, SmallVectorImpl<Value *> *foldedLimbs,
                          bool print) {
   SmallVector<Instruction *, 32> joins;
@@ -160,47 +302,12 @@ bool foldDSPairRoundtrip(Function &F, SmallVectorImpl<Value *> *foldedLimbs,
     Value *hiLimb = ehi->getOperand(0), *loLimb = elo->getOperand(0);
     if (!hiLimb->getType()->isFloatTy() || !loLimb->getType()->isFloatTy())
       continue;
-
-    // Users of J must be exactly the Dekker split:
-    //   hiT = fptrunc J ; los = fsub J, (fpext hiT) ; loT = fptrunc los
-    FPTruncInst *hiT = nullptr, *loT = nullptr;
-    BinaryOperator *los = nullptr;
-    bool shapeOk = true;
-    for (User *U : J->users()) {
-      if (auto *FT = dyn_cast<FPTruncInst>(U)) {
-        if (hiT || !FT->getType()->isFloatTy()) {
-          shapeOk = false;
-          break;
-        }
-        hiT = FT;
-      } else if (auto *BO = dyn_cast<BinaryOperator>(U)) {
-        if (los || BO->getOpcode() != Instruction::FSub ||
-            !BO->getType()->isDoubleTy()) {
-          shapeOk = false;
-          break;
-        }
-        los = BO;
-      } else {
-        shapeOk = false;
-        break;
-      }
-    }
-    if (!shapeOk || !hiT || !los || los->getOperand(0) != J)
-      continue;
-    auto *hib = dyn_cast<FPExtInst>(los->getOperand(1));
-    if (!hib || hib->getOperand(0) != hiT || !hib->hasOneUse() ||
-        !los->hasOneUse())
-      continue;
-    loT = dyn_cast<FPTruncInst>(*los->user_begin());
-    if (!loT || !loT->getType()->isFloatTy())
+    SmallVector<DekkerSplit, 1> splits;
+    if (!matchDekkerSplits(J, /*allowFCmp=*/false, splits) ||
+        splits.size() != 1)
       continue;
 
-    loT->replaceAllUsesWith(loLimb);
-    loT->eraseFromParent();
-    los->eraseFromParent();
-    hib->eraseFromParent();
-    hiT->replaceAllUsesWith(hiLimb);
-    hiT->eraseFromParent();
+    splits.front().replaceWith(hiLimb, loLimb);
     if (foldedLimbs) {
       foldedLimbs->push_back(hiLimb);
       foldedLimbs->push_back(loLimb);
@@ -220,108 +327,6 @@ bool foldDSPairRoundtrip(Function &F, SmallVectorImpl<Value *> *foldedLimbs,
            "boundary in "
         << F.getName() << '\n';
   return changed;
-}
-
-// F32 source: exact in the hi slot, lo = 0.
-static DSValue emitF32ToDS(IRBuilder<> &B, Value *f32val) {
-  assert(f32val->getType()->isFloatTy() && "emitF32ToDS: input must be f32");
-  return routines(B).dsFromF32(f32val);
-}
-
-// F32 target: sum the halves; as accurate as F32 allows.
-static Value *emitDSToF32(IRBuilder<> &B, DSValue ds) {
-  return routines(B).dsToF32(ds);
-}
-
-DSValue emitToDS(IRBuilder<> &B, Value *fpval) {
-  Type *T = fpval->getType();
-  if (T->isFloatTy())
-    return emitF32ToDS(B, fpval);
-  if (T->isDoubleTy())
-    return emitF64ToDS(B, fpval);
-  llvm_unreachable("emitToDS: only f32 and f64 sources are supported");
-}
-
-Value *emitDSToFP(IRBuilder<> &B, DSValue ds, Type *targetTy) {
-  if (targetTy->isFloatTy())
-    return emitDSToF32(B, ds);
-  if (targetTy->isDoubleTy())
-    return emitDSToF64(B, ds);
-  llvm_unreachable("emitDSToFP: only f32 and f64 targets are supported");
-}
-
-static DSValue splitConstantFP(IRBuilder<> &B, ConstantFP *CFP) {
-  double val = CFP->getValueAPF().convertToDouble();
-  float hi = (float)val;
-  float lo = (float)(val - (double)hi);
-  DSValue ds;
-  ds.hi = ConstantFP::get(f32Ty(B), hi);
-  ds.lo = ConstantFP::get(f32Ty(B), lo);
-  return ds;
-}
-
-// Loop-carried phi incomings are deferred: the accumulator phi and the
-// accumulation feeding it are mutually dependent, and resolving the back edge
-// eagerly would collapse the phi to a single double.
-namespace {
-struct DeferredDSPhiIn {
-  PHINode *hiPhi, *loPhi;
-  Value *incoming;
-  BasicBlock *block;
-};
-} // namespace
-using DeferredDSPhiIns = SmallVector<DeferredDSPhiIn, 16>;
-// In insertion order: the restores of the replaced values are emitted by
-// iterating it, and several can share one insertion point.
-using DSMap = MapVector<Value *, DSValue>;
-
-static DSValue getOrSplitOperand(IRBuilder<> &B, Value *op, DSMap &dsMap,
-                                 SmallVectorImpl<DeferredDSPhiIn> &deferred);
-
-// Any scalar f32/f64 value has a DS representation (materialized op, split
-// constant, carried phi, or boundary emitToDS).
-static bool hasDSRepresentation(Value *op) {
-  Type *T = op->getType();
-  return T->isFloatTy() || T->isDoubleTy();
-}
-
-static DSValue getOrSplitOperand(IRBuilder<> &B, Value *op, DSMap &dsMap,
-                                 SmallVectorImpl<DeferredDSPhiIn> &deferred) {
-  if (auto it = dsMap.find(op); it != dsMap.end())
-    return it->second;
-
-  if (auto *CFP = dyn_cast<ConstantFP>(op))
-    return splitConstantFP(B, CFP);
-
-  if (auto *phi = dyn_cast<PHINode>(op);
-      phi && (phi->getType()->isFloatTy() || phi->getType()->isDoubleTy())) {
-    if (all_of(phi->incoming_values(), hasDSRepresentation)) {
-      IRBuilder<> phiB(phi);
-      unsigned nIn = phi->getNumIncomingValues();
-      auto *hiPhi = phiB.CreatePHI(f32Ty(B), nIn, "ds.phi.hi");
-      auto *loPhi = phiB.CreatePHI(f32Ty(B), nIn, "ds.phi.lo");
-      DSValue result{hiPhi, loPhi};
-      dsMap[op] = result;
-      for (unsigned i = 0; i < nIn; ++i) {
-        Value *in = phi->getIncomingValue(i);
-        BasicBlock *inBB = phi->getIncomingBlock(i);
-        if (auto jt = dsMap.find(in); jt != dsMap.end()) {
-          hiPhi->addIncoming(jt->second.hi, inBB);
-          loPhi->addIncoming(jt->second.lo, inBB);
-        } else if (auto *CFP = dyn_cast<ConstantFP>(in)) {
-          DSValue inDS = splitConstantFP(B, CFP);
-          hiPhi->addIncoming(inDS.hi, inBB);
-          loPhi->addIncoming(inDS.lo, inBB);
-        } else {
-          // Not materialized yet: a loop back edge.
-          deferred.push_back({hiPhi, loPhi, in, inBB});
-        }
-      }
-      return result;
-    }
-  }
-
-  return emitToDS(B, op);
 }
 
 StringRef libmBaseName(StringRef name) {
@@ -351,291 +356,23 @@ static StringRef mathNameOf(const Function &callee) {
   return libmBaseName(callee.getName());
 }
 
-static DSValue
-emitDSForInstruction(IRBuilder<> &B, Instruction *I, DSMap &dsMap,
-                     SmallVectorImpl<DeferredDSPhiIn> &deferred) {
-  unsigned opcode = I->getOpcode();
-
-  if (auto *BO = dyn_cast<BinaryOperator>(I)) {
-    DSValue lhs = getOrSplitOperand(B, BO->getOperand(0), dsMap, deferred);
-    DSValue rhs = getOrSplitOperand(B, BO->getOperand(1), dsMap, deferred);
-
-    switch (opcode) {
-    case Instruction::FAdd:
-      return emitDSAdd(B, lhs, rhs);
-    case Instruction::FSub:
-      return emitDSSub(B, lhs, rhs);
-    case Instruction::FMul:
-      return emitDSMul(B, lhs, rhs);
-    case Instruction::FDiv:
-      return emitDSDiv(B, lhs, rhs);
-    default:
-      break;
-    }
-  }
-
-  if (auto *UO = dyn_cast<UnaryOperator>(I)) {
-    if (opcode == Instruction::FNeg) {
-      DSValue x = getOrSplitOperand(B, UO->getOperand(0), dsMap, deferred);
-      return emitDSNeg(B, x);
-    }
-  }
-
-  if (auto *CI = dyn_cast<CallInst>(I)) {
-    Function *callee = CI->getCalledFunction();
-    if (!callee)
-      return {nullptr, nullptr};
-
-    StringRef mathName = mathNameOf(*callee);
-
-    if (mathName == "sqrt") {
-      DSValue x = getOrSplitOperand(B, CI->getArgOperand(0), dsMap, deferred);
-      return emitDSSqrt(B, x);
-    }
-    if (mathName == "fmuladd" || mathName == "fma") {
-      DSValue a = getOrSplitOperand(B, CI->getArgOperand(0), dsMap, deferred);
-      DSValue b = getOrSplitOperand(B, CI->getArgOperand(1), dsMap, deferred);
-      DSValue c = getOrSplitOperand(B, CI->getArgOperand(2), dsMap, deferred);
-      return emitDSFMA(B, a, b, c);
-    }
-  }
-
-  return {nullptr, nullptr};
-}
-
-void takeLastExpansionLimbs(Session &S, SmallVectorImpl<Value *> &out) {
-  out.append(S.Expansion.LastExpansionLimbs.begin(),
-             S.Expansion.LastExpansionLimbs.end());
-  S.Expansion.LastExpansionLimbs.clear();
-}
-
-void applyExpansion(Session &S, ArrayRef<Instruction *> instsToChange,
-                    const SmallPtrSetImpl<Instruction *> &allChanged,
-                    DenseMap<Value *, Value *> *restoredValues) {
-  DSMap dsMap;
-  DeferredDSPhiIns deferred;
-  S.Expansion.LastExpansionLimbs.clear();
-  // Captured before the erase loop below invalidates instsToChange.
-  Function *parentF =
-      instsToChange.empty() ? nullptr : instsToChange[0]->getFunction();
-
-  // The emitted operations carry no fast-math flags, whatever the replaced
-  // instruction had: an error-free transformation is exact only when every
-  // operation is rounded as written.
-  for (Instruction *I : instsToChange) {
-    IRBuilder<> B(I);
-    DSValue ds = emitDSForInstruction(B, I, dsMap, deferred);
-    if (!ds.hi) {
-      errs() << "[poseidon] expansion: unsupported instruction, skipping: "
-             << *I << '\n';
-      continue;
-    }
-
-    dsMap[I] = ds;
-    S.Expansion.LastExpansionLimbs.push_back(ds.hi);
-    if (ds.lo)
-      S.Expansion.LastExpansionLimbs.push_back(ds.lo);
-  }
-
-  // Resolve deferred back-edge phi incomings now the subgraph is in dsMap;
-  // iterative, since resolving one incoming may carry a nested phi.
-  while (!deferred.empty()) {
-    DeferredDSPhiIn d = deferred.pop_back_val();
-    IRBuilder<> predB(d.block->getTerminator());
-    DSValue inDS = getOrSplitOperand(predB, d.incoming, dsMap, deferred);
-    d.hiPhi->addIncoming(inDS.hi, d.block);
-    d.loPhi->addIncoming(inDS.lo, d.block);
-  }
-
-  for (auto &[val, ds] : dsMap) {
-    auto *I = dyn_cast<Instruction>(val);
-    if (!I || !allChanged.count(I))
-      continue;
-    SmallVector<Use *, 4> externalUses;
-    for (Use &U : I->uses()) {
-      auto *userI = dyn_cast<Instruction>(U.getUser());
-      if (!userI || !dsMap.count(userI) || !allChanged.count(userI))
-        externalUses.push_back(&U);
-    }
-
-    if (!externalUses.empty()) {
-      BasicBlock::iterator restorePos =
-          isa<PHINode>(I) ? I->getParent()->getFirstNonPHIIt()
-                          : std::next(BasicBlock::iterator(I));
-      IRBuilder<> RestoreB = builderAt(I->getParent(), restorePos);
-      Value *restored = emitDSToFP(RestoreB, ds, I->getType());
-      assert(restored->getType() == I->getType() &&
-             "unexpected restored value type");
-      for (Use *U : externalUses)
-        U->set(restored);
-      if (restoredValues)
-        (*restoredValues)[I] = restored;
-    }
-  }
-
-  for (auto it = instsToChange.rbegin(); it != instsToChange.rend(); ++it) {
-    Instruction *I = *it;
-    if (!dsMap.count(I))
-      continue;
-    if (!I->use_empty()) {
-      if (restoredValues && restoredValues->count(I))
-        I->replaceAllUsesWith((*restoredValues)[I]);
-      else {
-        errs()
-            << "[poseidon] expansion: replacing with undef (remaining uses): "
-            << *I << '\n';
-        for (auto &U : I->uses())
-          errs() << "  used by: " << *U.getUser() << '\n';
-        I->replaceAllUsesWith(UndefValue::get(I->getType()));
-      }
-    }
-    I->eraseFromParent();
-  }
-
-  // The FP64 accumulator PHIs carried as df64 pairs survive the erase above,
-  // and restoring them per use would collapse the pair every iteration, so
-  // each is replaced by one restore of its carried pair.
-  SmallVector<PHINode *, 8> carriedPhis;
-  for (auto &[val, ds] : dsMap)
-    if (auto *phi = dyn_cast<PHINode>(val))
-      if (ds.hi && phi->getType()->isDoubleTy())
-        carriedPhis.push_back(phi);
-  for (PHINode *phi : carriedPhis) {
-    IRBuilder<> RB =
-        builderAt(phi->getParent(), phi->getParent()->getFirstNonPHIIt());
-    Value *restored = emitDSToFP(RB, dsMap[phi], phi->getType());
-    phi->replaceAllUsesWith(restored);
-    if (restoredValues)
-      (*restoredValues)[phi] = restored;
-  }
-  for (PHINode *phi : carriedPhis)
-    phi->eraseFromParent();
-
-  // The parameter narrowing preserves values only once every load of the
-  // buffer is a Dekker split, so it is tried after each unit and declines
-  // until then. It runs here so that foldDSPairRoundtrip sees the join/split
-  // pair it cancels. A pricing clone is not a registered site, and the
-  // narrowing declines on it.
-  if (S.Opts.Materialization.NarrowParamStaging && parentF &&
-      narrowSharedStagingParamDS(S, *parentF, parentF))
-    foldDSPairRoundtrip(*parentF, /*foldedLimbs=*/nullptr,
-                        S.Opts.Diagnostics.Print);
-}
-
-// Wider FP32 expansions (n = 3, 4): the QxW routines of
-// Core/ExpansionRoutines.h. A fused multiply-add is materialized as
-// multiply-then-add, as in the reference.
-
-// Only the component counts whose QxW routines are transcribed exist.
-static void expansionCheckN(unsigned n) {
-  if (n != 3 && n != 4)
-    report_fatal_error(
-        "Poseidon expansion emitter: only 3- and 4-component FP32 expansions "
-        "are implemented (2 components has its own DSValue path). Refusing to "
-        "fabricate an unimplemented component count.");
-}
-
-ExpansionValue emitExpansionNeg(IRBuilder<> &B, const ExpansionValue &a) {
-  ExpansionValue r;
-  r.x.resize(a.n());
-  routines(B).expansionNeg(a.n(), a.x.data(), r.x.data());
-  return r;
-}
-
-ExpansionValue emitExpansionAdd(IRBuilder<> &B, const ExpansionValue &a,
-                                const ExpansionValue &b) {
-  assert(a.n() == b.n() && "expansion operands must agree on component count");
-  expansionCheckN(a.n());
-  ExpansionValue r;
-  r.x.resize(a.n());
-  routines(B).expansionAdd(a.n(), a.x.data(), b.x.data(), r.x.data());
-  return r;
-}
-
-ExpansionValue emitExpansionSub(IRBuilder<> &B, const ExpansionValue &a,
-                                const ExpansionValue &b) {
-  assert(a.n() == b.n() && "expansion operands must agree on component count");
-  expansionCheckN(a.n());
-  ExpansionValue r;
-  r.x.resize(a.n());
-  routines(B).expansionSub(a.n(), a.x.data(), b.x.data(), r.x.data());
-  return r;
-}
-
-ExpansionValue emitExpansionMul(IRBuilder<> &B, const ExpansionValue &a,
-                                const ExpansionValue &b) {
-  assert(a.n() == b.n() && "expansion operands must agree on component count");
-  expansionCheckN(a.n());
-  ExpansionValue r;
-  r.x.resize(a.n());
-  routines(B).expansionMul(a.n(), a.x.data(), b.x.data(), r.x.data());
-  return r;
-}
-
-ExpansionValue emitExpansionSqr(IRBuilder<> &B, const ExpansionValue &a) {
-  expansionCheckN(a.n());
-  ExpansionValue r;
-  r.x.resize(a.n());
-  routines(B).expansionSqr(a.n(), a.x.data(), r.x.data());
-  return r;
-}
-
-ExpansionValue emitExpansionDiv(IRBuilder<> &B, const ExpansionValue &a,
-                                const ExpansionValue &b) {
-  assert(a.n() == b.n() && "expansion operands must agree on component count");
-  expansionCheckN(a.n());
-  ExpansionValue r;
-  r.x.resize(a.n());
-  routines(B).expansionDiv(a.n(), a.x.data(), b.x.data(), r.x.data());
-  return r;
-}
-
-ExpansionValue emitExpansionSqrt(IRBuilder<> &B, const ExpansionValue &a) {
-  expansionCheckN(a.n());
-  ExpansionValue r;
-  r.x.resize(a.n());
-  routines(B).expansionSqrt(a.n(), a.x.data(), r.x.data());
-  return r;
-}
-
-ExpansionValue emitToExpansion(IRBuilder<> &B, Value *fpval, unsigned n) {
-  expansionCheckN(n);
-  ExpansionValue r;
-  r.x.resize(n);
-  if (fpval->getType()->isFloatTy()) {
-    routines(B).expansionFromF32(n, fpval, r.x.data());
-    return r;
-  }
-  assert(fpval->getType()->isDoubleTy() &&
-         "emitToExpansion: only f32/f64 sources");
-  routines(B).expansionFromF64(n, fpval, r.x.data());
-  return r;
-}
-
-Value *emitExpansionToFP(IRBuilder<> &B, const ExpansionValue &v,
-                         Type *targetTy) {
-  expansionCheckN(v.n());
-  if (targetTy->isFloatTy())
-    return routines(B).expansionToF32(v.n(), v.x.data());
-  assert(targetTy->isDoubleTy() && "emitExpansionToFP: only f32/f64 targets");
-  return routines(B).expansionToF64(v.n(), v.x.data());
-}
-
-// The materializer for n >= 3.
-
+// Loop-carried phi incomings are deferred: the accumulator phi and the
+// accumulation feeding it are mutually dependent, and resolving the back edge
+// eagerly would collapse the phi to a single double.
 namespace {
-struct DeferredExpansionPhiIn {
+struct DeferredPhiIn {
   SmallVector<PHINode *, 4> phis;
   Value *incoming;
   BasicBlock *block;
 };
 } // namespace
-using DeferredExpansionPhiIns = SmallVector<DeferredExpansionPhiIn, 16>;
-// In insertion order, as DSMap.
+// In insertion order: the restores of the replaced values are emitted by
+// iterating it, and several can share one insertion point.
 using ExpansionMap = MapVector<Value *, ExpansionValue>;
 
-static ExpansionValue splitConstantFPExpansion(IRBuilder<> &B, ConstantFP *CFP,
-                                               unsigned n) {
+// The greedy split of a constant into n FP32 limbs.
+static ExpansionValue splitConstantFP(IRBuilder<> &B, ConstantFP *CFP,
+                                      unsigned n) {
   double val = CFP->getValueAPF().convertToDouble();
   ExpansionValue r;
   double rem = val;
@@ -647,25 +384,40 @@ static ExpansionValue splitConstantFPExpansion(IRBuilder<> &B, ConstantFP *CFP,
   return r;
 }
 
+// Any scalar f32/f64 value has an expansion (materialized op, split constant,
+// carried phi, or boundary emitToExpansion).
+static bool hasExpansion(Value *op) {
+  Type *T = op->getType();
+  return T->isFloatTy() || T->isDoubleTy();
+}
+
+// The name of limb c of a carried phi, after the routines' instructions: ds.*
+// for a pair, mfx.* for a wider expansion.
+static const char *limbPhiName(unsigned n, unsigned c) {
+  if (n == 2)
+    return c == 0 ? "ds.phi.hi" : "ds.phi.lo";
+  return "mfx.phi";
+}
+
 static ExpansionValue
-getOrSplitOperandExpansion(IRBuilder<> &B, Value *op, unsigned n,
-                           ExpansionMap &expansionMap,
-                           SmallVectorImpl<DeferredExpansionPhiIn> &deferred) {
+getOrSplitOperand(IRBuilder<> &B, Value *op, unsigned n,
+                  ExpansionMap &expansionMap,
+                  SmallVectorImpl<DeferredPhiIn> &deferred) {
   if (auto it = expansionMap.find(op); it != expansionMap.end())
     return it->second;
 
   if (auto *CFP = dyn_cast<ConstantFP>(op))
-    return splitConstantFPExpansion(B, CFP, n);
+    return splitConstantFP(B, CFP, n);
 
   if (auto *phi = dyn_cast<PHINode>(op);
       phi && (phi->getType()->isFloatTy() || phi->getType()->isDoubleTy())) {
-    if (all_of(phi->incoming_values(), hasDSRepresentation)) {
+    if (all_of(phi->incoming_values(), hasExpansion)) {
       IRBuilder<> phiB(phi);
       unsigned nIn = phi->getNumIncomingValues();
       ExpansionValue result;
       SmallVector<PHINode *, 4> phis;
       for (unsigned c = 0; c < n; ++c) {
-        auto *p = phiB.CreatePHI(B.getFloatTy(), nIn, "mfx.phi");
+        auto *p = phiB.CreatePHI(B.getFloatTy(), nIn, limbPhiName(n, c));
         phis.push_back(p);
         result.x.push_back(p);
       }
@@ -677,10 +429,11 @@ getOrSplitOperandExpansion(IRBuilder<> &B, Value *op, unsigned n,
           for (unsigned c = 0; c < n; ++c)
             phis[c]->addIncoming(jt->second.x[c], inBB);
         } else if (auto *CFP = dyn_cast<ConstantFP>(in)) {
-          ExpansionValue inExpansion = splitConstantFPExpansion(B, CFP, n);
+          ExpansionValue inExpansion = splitConstantFP(B, CFP, n);
           for (unsigned c = 0; c < n; ++c)
             phis[c]->addIncoming(inExpansion.x[c], inBB);
         } else {
+          // Not materialized yet: a loop back edge.
           deferred.push_back({phis, in, inBB});
         }
       }
@@ -691,20 +444,24 @@ getOrSplitOperandExpansion(IRBuilder<> &B, Value *op, unsigned n,
   return emitToExpansion(B, op, n);
 }
 
+// I as an n-component expansion, or none for an operation without a routine.
+// A wider expansion converts an operand repeated in I once and squares a
+// product of it; a pair converts each read and multiplies.
 static ExpansionValue
 emitExpansionForInstruction(IRBuilder<> &B, Instruction *I, unsigned n,
                             ExpansionMap &expansionMap,
-                            SmallVectorImpl<DeferredExpansionPhiIn> &deferred) {
+                            SmallVectorImpl<DeferredPhiIn> &deferred) {
+  auto operand = [&](Value *op) {
+    return getOrSplitOperand(B, op, n, expansionMap, deferred);
+  };
+  const bool shareRepeated = n != 2;
   unsigned opcode = I->getOpcode();
 
   if (auto *BO = dyn_cast<BinaryOperator>(I)) {
-    const bool sameOperand = BO->getOperand(0) == BO->getOperand(1);
-    ExpansionValue lhs = getOrSplitOperandExpansion(B, BO->getOperand(0), n,
-                                                    expansionMap, deferred);
-    ExpansionValue rhs =
-        sameOperand ? lhs
-                    : getOrSplitOperandExpansion(B, BO->getOperand(1), n,
-                                                 expansionMap, deferred);
+    const bool sameOperand =
+        shareRepeated && BO->getOperand(0) == BO->getOperand(1);
+    ExpansionValue lhs = operand(BO->getOperand(0));
+    ExpansionValue rhs = sameOperand ? lhs : operand(BO->getOperand(1));
     switch (opcode) {
     case Instruction::FAdd:
       return emitExpansionAdd(B, lhs, rhs);
@@ -720,11 +477,10 @@ emitExpansionForInstruction(IRBuilder<> &B, Instruction *I, unsigned n,
     }
   }
 
-  if (auto *UO = dyn_cast<UnaryOperator>(I))
-    if (opcode == Instruction::FNeg)
-      return emitExpansionNeg(
-          B, getOrSplitOperandExpansion(B, UO->getOperand(0), n, expansionMap,
-                                        deferred));
+  if (isa<UnaryOperator>(I) && opcode == Instruction::FNeg) {
+    ExpansionValue x = operand(I->getOperand(0));
+    return emitExpansionNeg(B, x);
+  }
 
   if (auto *CI = dyn_cast<CallInst>(I)) {
     Function *callee = CI->getCalledFunction();
@@ -733,68 +489,61 @@ emitExpansionForInstruction(IRBuilder<> &B, Instruction *I, unsigned n,
 
     StringRef mathName = mathNameOf(*callee);
 
-    if (mathName == "sqrt")
-      return emitExpansionSqrt(
-          B, getOrSplitOperandExpansion(B, CI->getArgOperand(0), n,
-                                        expansionMap, deferred));
+    if (mathName == "sqrt") {
+      ExpansionValue x = operand(CI->getArgOperand(0));
+      return emitExpansionSqrt(B, x);
+    }
     if (mathName == "fmuladd" || mathName == "fma") {
-      const bool sameFactor = CI->getArgOperand(0) == CI->getArgOperand(1);
-      ExpansionValue a = getOrSplitOperandExpansion(B, CI->getArgOperand(0), n,
-                                                    expansionMap, deferred);
-      ExpansionValue b =
-          sameFactor ? a
-                     : getOrSplitOperandExpansion(B, CI->getArgOperand(1), n,
-                                                  expansionMap, deferred);
-      ExpansionValue c = getOrSplitOperandExpansion(B, CI->getArgOperand(2), n,
-                                                    expansionMap, deferred);
-      return emitExpansionAdd(
-          B, sameFactor ? emitExpansionSqr(B, a) : emitExpansionMul(B, a, b),
-          c);
+      const bool sameFactor =
+          shareRepeated && CI->getArgOperand(0) == CI->getArgOperand(1);
+      ExpansionValue a = operand(CI->getArgOperand(0));
+      ExpansionValue b = sameFactor ? a : operand(CI->getArgOperand(1));
+      ExpansionValue c = operand(CI->getArgOperand(2));
+      return sameFactor ? emitExpansionFMASqr(B, a, c)
+                        : emitExpansionFMA(B, a, b, c);
     }
   }
 
   return ExpansionValue{};
 }
 
-void takeLastExpLimbs(Session &S, SmallVectorImpl<Value *> &out) {
-  out.append(S.Expansion.LastExpLimbs.begin(), S.Expansion.LastExpLimbs.end());
-  S.Expansion.LastExpLimbs.clear();
-}
-void resetExpLimbs(Session &S) { S.Expansion.LastExpLimbs.clear(); }
-
-void applyExpansion(Session &S, unsigned n,
-                    ArrayRef<Instruction *> instsToChange,
+void applyExpansion(unsigned n, ArrayRef<Instruction *> instsToChange,
                     const SmallPtrSetImpl<Instruction *> &allChanged,
-                    DenseMap<Value *, Value *> *restoredValues) {
-  expansionCheckN(n);
+                    DenseMap<Value *, Value *> *restoredValues,
+                    SmallVectorImpl<Value *> *limbs) {
+  checkComponents(n);
   ExpansionMap expansionMap;
-  DeferredExpansionPhiIns deferred;
+  SmallVector<DeferredPhiIn, 16> deferred;
 
-  // No fast-math flags on the emitted operations, as in the two-component arm.
+  // The emitted operations carry no fast-math flags, whatever the replaced
+  // instruction had: an error-free transformation is exact only when every
+  // operation is rounded as written.
   for (Instruction *I : instsToChange) {
     IRBuilder<> B(I);
-    ExpansionValue mf =
+    ExpansionValue v =
         emitExpansionForInstruction(B, I, n, expansionMap, deferred);
-    if (mf.x.empty()) {
-      errs() << "Expansion(" << n
-             << "): unsupported instruction, skipping: " << *I << '\n';
+    if (v.x.empty()) {
+      errs() << "[poseidon] expansion: unsupported instruction, skipping: "
+             << *I << '\n';
       continue;
     }
-    expansionMap[I] = mf;
-    for (Value *v : mf.x)
-      S.Expansion.LastExpLimbs.push_back(v);
+    expansionMap[I] = v;
+    if (limbs)
+      limbs->append(v.x.begin(), v.x.end());
   }
 
+  // Resolve deferred back-edge phi incomings now the subgraph is in the map;
+  // iterative, since resolving one incoming may carry a nested phi.
   while (!deferred.empty()) {
-    DeferredExpansionPhiIn d = deferred.pop_back_val();
+    DeferredPhiIn d = deferred.pop_back_val();
     IRBuilder<> predB(d.block->getTerminator());
-    ExpansionValue inExpansion = getOrSplitOperandExpansion(
-        predB, d.incoming, n, expansionMap, deferred);
+    ExpansionValue inExpansion =
+        getOrSplitOperand(predB, d.incoming, n, expansionMap, deferred);
     for (unsigned c = 0; c < n; ++c)
       d.phis[c]->addIncoming(inExpansion.x[c], d.block);
   }
 
-  for (auto &[val, mf] : expansionMap) {
+  for (auto &[val, v] : expansionMap) {
     auto *I = dyn_cast<Instruction>(val);
     if (!I || !allChanged.count(I))
       continue;
@@ -809,7 +558,7 @@ void applyExpansion(Session &S, unsigned n,
           isa<PHINode>(I) ? I->getParent()->getFirstNonPHIIt()
                           : std::next(BasicBlock::iterator(I));
       IRBuilder<> RestoreB = builderAt(I->getParent(), restorePos);
-      Value *restored = emitExpansionToFP(RestoreB, mf, I->getType());
+      Value *restored = emitExpansionToFP(RestoreB, v, I->getType());
       assert(restored->getType() == I->getType() &&
              "unexpected restored value type");
       for (Use *U : externalUses)
@@ -824,23 +573,21 @@ void applyExpansion(Session &S, unsigned n,
     if (!expansionMap.count(I))
       continue;
     if (!I->use_empty()) {
-      if (restoredValues && restoredValues->count(I))
-        I->replaceAllUsesWith((*restoredValues)[I]);
-      else {
-        errs() << "Expansion(" << n
-               << "): replacing with undef (remaining uses): " << *I << '\n';
-        I->replaceAllUsesWith(UndefValue::get(I->getType()));
-      }
+      assert(restoredValues && restoredValues->count(I) &&
+             "every reader of an expanded instruction is expanded or reads "
+             "its restore");
+      I->replaceAllUsesWith((*restoredValues)[I]);
     }
     I->eraseFromParent();
   }
 
-  // As in the two-component path, each carried FP64 accumulator PHI is
-  // replaced by one restore.
+  // The FP64 accumulator PHIs carried as expansions survive the erase above,
+  // and restoring them per use would collapse the expansion every iteration,
+  // so each is replaced by one restore of its carried limbs.
   SmallVector<PHINode *, 8> carriedPhis;
-  for (auto &[val, mf] : expansionMap)
+  for (auto &[val, v] : expansionMap)
     if (auto *phi = dyn_cast<PHINode>(val))
-      if (!mf.x.empty() && phi->getType()->isDoubleTy())
+      if (!v.x.empty() && phi->getType()->isDoubleTy())
         carriedPhis.push_back(phi);
   for (PHINode *phi : carriedPhis) {
     IRBuilder<> RB =

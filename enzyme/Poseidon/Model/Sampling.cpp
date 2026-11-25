@@ -326,6 +326,19 @@ ArrayRef<SubgraphSamples::Point> SubgraphSamples::points() {
 
 // The exact and the as-written value of `node` at `point`, and the error of
 // the latter, into entry `i` of `R`.
+std::optional<double> SubgraphSamples::Reference::meanError() const {
+  double sum = 0.0;
+  unsigned count = 0;
+  for (double e : error)
+    if (!std::isnan(e)) {
+      sum += e;
+      ++count;
+    }
+  if (count == 0)
+    return std::nullopt;
+  return sum / count;
+}
+
 static void evaluateReference(FPNode *node, const SubgraphSamples::Point &point,
                               SubgraphSamples::Reference &R, size_t i) {
   SmallVector<double, 1> results;

@@ -23,6 +23,7 @@
 
 #include <deque>
 #include <memory>
+#include <optional>
 #include <unordered_map>
 
 namespace poseidon {
@@ -69,6 +70,8 @@ public:
   // its value as written, and the error of the latter.
   struct Reference {
     llvm::SmallVector<double, 4> gold, value, error;
+    // The mean of the errors that are not NaN; none when every one is.
+    std::optional<double> meanError() const;
   };
 
   SubgraphSamples(

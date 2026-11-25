@@ -49,6 +49,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -70,51 +71,28 @@ static void changePrecision(Instruction *I, PrecisionChange &change,
   Type *newType = getLLVMFPType(change.newType, I->getContext());
   Value *newI = nullptr;
 
+  // An operand in the new precision: its changed value, or a cast of it.
+  auto convert = [&](Value *operand) -> Value * {
+    if (Value *changed = oldToNew.lookup(operand))
+      return changed;
+    if (operand->getType()->isIntegerTy())
+      return operand;
+    if (isa<Constant>(operand))
+      return Builder.CreateFPCast(operand, newType, "poseidon.const.fpcast");
+    assert((isa<Argument>(operand) || isa<Instruction>(operand)) &&
+           "an operand is a constant, an argument or an instruction");
+    return Builder.CreateFPCast(operand, newType, "poseidon.fpcast");
+  };
+
   if (isa<UnaryOperator>(I) || isa<BinaryOperator>(I)) {
     SmallVector<Value *, 2> newOps;
-    for (auto &operand : I->operands()) {
-      Value *newOp = nullptr;
-      if (oldToNew.count(operand)) {
-        newOp = oldToNew[operand];
-      } else if (operand->getType()->isIntegerTy()) {
-        newOp = operand;
-      } else {
-        IRBuilder<> OpBuilder(I);
-        OpBuilder.setFastMathFlags(I->getFastMathFlags());
-        if (isa<Constant>(operand)) {
-          newOp =
-              OpBuilder.CreateFPCast(operand, newType, "poseidon.const.fpcast");
-        } else if (isa<Argument>(operand) || isa<Instruction>(operand)) {
-          newOp = OpBuilder.CreateFPCast(operand, newType, "poseidon.fpcast");
-        } else {
-          llvm_unreachable("Unsupported operand type");
-        }
-      }
-      newOps.push_back(newOp);
-    }
+    for (Value *operand : I->operands())
+      newOps.push_back(convert(operand));
     newI = Builder.CreateNAryOp(I->getOpcode(), newOps);
   } else if (auto *CI = dyn_cast<CallInst>(I)) {
     SmallVector<Value *, 4> newArgs;
-    for (auto &arg : CI->args()) {
-      Value *newArg = nullptr;
-      if (oldToNew.count(arg)) {
-        newArg = oldToNew[arg];
-      } else if (arg->getType()->isIntegerTy()) {
-        newArg = arg;
-      } else {
-        IRBuilder<> ArgBuilder(I);
-        ArgBuilder.setFastMathFlags(I->getFastMathFlags());
-        if (isa<Constant>(arg)) {
-          newArg =
-              ArgBuilder.CreateFPCast(arg, newType, "poseidon.const.fpcast");
-        } else if (isa<Argument>(arg) || isa<Instruction>(arg)) {
-          newArg = ArgBuilder.CreateFPCast(arg, newType, "poseidon.fpcast");
-        } else {
-          llvm_unreachable("Unsupported argument type");
-        }
-      }
-      newArgs.push_back(newArg);
-    }
+    for (Value *arg : CI->args())
+      newArgs.push_back(convert(arg));
     auto *calledFunc = CI->getCalledFunction();
     if (calledFunc && calledFunc->isIntrinsic()) {
       Intrinsic::ID intrinsicID = calledFunc->getIntrinsicID();
@@ -223,10 +201,9 @@ static void changePrecision(Instruction *I, PrecisionChange &change,
 // values and change outputs in VMap to new casted outputs. Otherwise `graph`,
 // if passed, learns of each erased operation whose users read a new value.
 void PTCandidate::apply(Session &S, Subgraph &subgraph, ValueToValueMapTy *VMap,
-                        FPGraph *graph) {
+                        FPGraph *graph, SmallVectorImpl<Value *> *limbs) {
   SetVector<Instruction *> operations;
-  DenseMap<Value *, Value *>
-      clonedToOriginal; // Maps cloned outputs to old outputs
+  DenseMap<Value *, Value *> clonedToOriginal;
   if (VMap) {
     for (auto *I : subgraph.operations) {
       assert(VMap->count(I) && "the clone maps every operation");
@@ -241,10 +218,7 @@ void PTCandidate::apply(Session &S, Subgraph &subgraph, ValueToValueMapTy *VMap,
     operations = subgraph.operations;
   }
 
-  // One limb record per candidate: the loop below may apply several expansion
-  // changes, and the cost walk is rooted on every limb they produce.
-  resetExpLimbs(S);
-
+  SmallVector<Value *, 32> pairLimbs, widerLimbs;
   for (auto &change : changes) {
     MapVector<Value *, Value *> oldToNew;
 
@@ -280,11 +254,20 @@ void PTCandidate::apply(Session &S, Subgraph &subgraph, ValueToValueMapTy *VMap,
       SmallPtrSet<Instruction *, 8> allChangedSet(instsToChange.begin(),
                                                   instsToChange.end());
       DenseMap<Value *, Value *> restoredValues;
-      if (nComp == 2)
-        applyExpansion(S, instsToChangeSorted, allChangedSet, &restoredValues);
-      else
-        applyExpansion(S, nComp, instsToChangeSorted, allChangedSet,
-                       &restoredValues);
+      Function *F = instsToChangeSorted.empty()
+                        ? nullptr
+                        : instsToChangeSorted.front()->getFunction();
+      applyExpansion(nComp, instsToChangeSorted, allChangedSet, &restoredValues,
+                     nComp == 2 ? &pairLimbs : &widerLimbs);
+      // The parameter narrowing preserves values only once every load of the
+      // buffer is a Dekker split, so it is tried after each pair change and
+      // declines until then. It runs here so that foldDSPairRoundtrip sees the
+      // join/split pair it cancels. A pricing clone is not a registered site,
+      // and the narrowing declines on it.
+      if (nComp == 2 && F && S.Opts.Materialization.NarrowParamStaging &&
+          narrowSharedStagingParamDS(S, *F, *F, /*announce=*/!VMap))
+        foldDSPairRoundtrip(*F, /*foldedLimbs=*/nullptr,
+                            S.Opts.Diagnostics.Print);
       if (VMap) {
         for (auto &[oldClonedI, restoredV] : restoredValues) {
           if (clonedToOriginal.count(oldClonedI)) {
@@ -360,6 +343,10 @@ void PTCandidate::apply(Session &S, Subgraph &subgraph, ValueToValueMapTy *VMap,
       if (!VMap)
         subgraph.operations.remove(cast<Instruction>(oldV));
     }
+  }
+  if (limbs) {
+    limbs->append(pairLimbs.begin(), pairLimbs.end());
+    limbs->append(widerLimbs.begin(), widerLimbs.end());
   }
 }
 
@@ -465,12 +452,11 @@ bool demoteFPCastPHIs(llvm::Function &F) {
   return true;
 }
 
-void setUnifiedAccuracyCost(
+static void setUnifiedAccuracyCost(
     const Options &O, PrecisionUnit &CS,
-    std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-    std::unordered_map<std::string, Value *> &symbolToValueMap) {
-  ArrayRef<SubgraphSamples::Point> sampledPoints =
-      samplesOf(O, *CS.subgraph, valueToNodeMap).points();
+    std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap) {
+  SubgraphSamples &samples = samplesOf(O, *CS.subgraph, valueToNodeMap);
+  ArrayRef<SubgraphSamples::Point> sampledPoints = samples.points();
 
   // No usable sample means the subgraph cannot be priced: drop its candidates
   // and keep the original body.
@@ -487,67 +473,33 @@ void setUnifiedAccuracyCost(
     return;
   }
 
-  MapVector<FPNode *, SmallVector<double, 4>> goldVals;
-  for (auto *output : CS.subgraph->outputs) {
-    auto *node = valueToNodeMap[output].get();
-    goldVals[node].resize(O.Model.NumSamples);
-    CS.perOutputInitialAccCost[node] = 0.;
-  }
-
   SmallVector<FPNode *, 4> outputs;
-  for (auto *output : CS.subgraph->outputs)
-    outputs.push_back(valueToNodeMap[output].get());
-
-  struct RunningAccArith {
-    double sum = 0.0;
-    unsigned count = 0;
-  };
-  std::unordered_map<FPNode *, RunningAccArith> runAcc;
-  for (auto *node : outputs)
-    runAcc[node] = RunningAccArith();
-
-  // Every point is evaluated on its own; the sums run in point order.
-  SmallVector<SmallVector<double, 8>, 0> exact(sampledPoints.size()),
-      asWritten(sampledPoints.size());
-  forEachBlock(O.Model.Threads, sampledPoints.size(), 8,
-               [&](size_t begin, size_t end) {
-                 for (size_t i = begin; i < end; ++i) {
-                   getMPFRValues(outputs, sampledPoints[i], exact[i], 53);
-                   getFPValues(outputs, sampledPoints[i], asWritten[i]);
-                 }
-               });
-  for (size_t i = 0; i < sampledPoints.size(); ++i) {
-    for (const auto &[node, result] : zip(outputs, exact[i]))
-      goldVals[node][i] = result;
-
-    for (const auto &[node, result] : zip(outputs, asWritten[i])) {
-      double goldVal = goldVals[node][i];
-      double error = sampleError(goldVal, result);
-      if (!std::isnan(error)) {
-        runAcc[node].sum += error;
-        ++runAcc[node].count;
-      }
-    }
+  SmallVector<const SubgraphSamples::Reference *, 4> refs;
+  SmallVector<std::optional<double>, 4> origErrors;
+  for (auto *output : CS.subgraph->outputs) {
+    FPNode *node = valueToNodeMap[output].get();
+    outputs.push_back(node);
+    CS.perOutputInitialAccCost[node] = 0.;
+    refs.push_back(&samples.reference(node));
+    origErrors.push_back(refs.back()->meanError());
   }
-  if (llvm::any_of(outputs,
-                   [&](FPNode *node) { return runAcc[node].count == 0; })) {
+  if (!llvm::all_of(origErrors, [](auto e) { return e.has_value(); })) {
     unpriceable("every sample of the original expression scored NaN");
     return;
   }
   CS.initialAccCost = 0.0;
-  for (auto *node : outputs) {
-    auto &ra = runAcc[node];
-    double red = ra.sum / ra.count;
-    CS.perOutputInitialAccCost[node] = red * std::fabs(node->grad);
+  for (auto [node, origError] : zip(outputs, origErrors)) {
+    CS.perOutputInitialAccCost[node] = *origError * std::fabs(node->grad);
     CS.initialAccCost += CS.perOutputInitialAccCost[node];
   }
   assert(!std::isnan(CS.initialAccCost) &&
          "the subgraph as written has an accuracy cost");
 
   // Each candidate is scored on its own, concurrently.
-  SmallVector<const SmallVector<double, 4> *, 4> goldOf;
-  for (auto *node : outputs)
-    goldOf.push_back(&goldVals.find(node)->second);
+  struct RunningAccArith {
+    double sum = 0.0;
+    unsigned count = 0;
+  };
   struct Scored {
     bool discard = false;
     std::unordered_map<FPNode *, RunningAccArith> candAcc;
@@ -563,7 +515,7 @@ void setUnifiedAccuracyCost(
     for (size_t i = 0; i < sampledPoints.size(); ++i) {
       getFPValues(outputs, sampledPoints[i], results, candidate.changes);
       for (size_t j = 0; j < outputs.size(); ++j) {
-        double goldVal = (*goldOf[j])[i];
+        double goldVal = refs[j]->gold[i];
         double result = results[j];
         if (std::isfinite(goldVal) && !std::isfinite(result)) {
           out.discard = true;
@@ -661,19 +613,14 @@ CandidateClone::CandidateClone(Session &S, Subgraph &subgraph,
 
   // The clone gets the materializer's carried-PHI elimination, so the df64
   // restore is not billed per iteration; the walk is re-rooted below on the
-  // limbs applyExpansion records.
+  // limbs the expansion changes produce.
   SmallVector<Value *, 32> expansionLimbs;
-  bool ptHasExpansion = false;
-  for (auto &ch : pt.changes)
-    if (expansionComponents(ch.newType))
-      ptHasExpansion = true;
-  pt.apply(S, subgraph, &VMap);
-  if (ptHasExpansion) {
-    // A tier pair can apply an expansion change and a double-single change,
-    // each recording its own roots.
-    takeLastExpansionLimbs(S, expansionLimbs);
-    takeLastExpLimbs(S, expansionLimbs);
+  bool ptHasExpansion = false, wantsDS = false;
+  for (auto &ch : pt.changes) {
+    ptHasExpansion |= expansionComponents(ch.newType) != 0;
+    wantsDS |= ch.newType == PrecisionChangeType::Expansion2;
   }
+  pt.apply(S, subgraph, &VMap, /*graph=*/nullptr, &expansionLimbs);
   // An Expansion2 change that converts nothing (unsupported instructions)
   // leaves no limbs, and the untouched FP64 outputs are still the right roots.
   const bool expansionMaterialized = !expansionLimbs.empty();
@@ -682,21 +629,12 @@ CandidateClone::CandidateClone(Session &S, Subgraph &subgraph,
   // the materializer emits. FClone has no call sites, so F, whose arguments are
   // FClone's, supplies the parameter-to-global mapping. A df64 candidate wants
   // the pair layout and any other the halved one, so one parameter arm runs.
-  const bool wantsDS = [&] {
-    for (auto &ch : pt.changes)
-      if (ch.newType == PrecisionChangeType::Expansion2)
-        return true;
-    return false;
-  }();
-  const ParamArm paramArm = !O.Materialization.NarrowParamStaging
-                                ? ParamArm::None
-                            : wantsDS ? ParamArm::DS
-                                      : ParamArm::FP32;
+  const ParamArm paramArm = wantsDS ? ParamArm::DS : ParamArm::FP32;
   // The df64 narrowing turns a staged load's split, some of whose halves are
   // limbs, into a pair load: the limbs follow it through handles.
   SmallVector<WeakTrackingVH, 32> limbHandles(expansionLimbs.begin(),
                                               expansionLimbs.end());
-  applyStagingNarrowing(S, *FClone, /*announce=*/false, paramArm, F);
+  applyStagingNarrowing(S, *FClone, /*announce=*/false, paramArm, *F);
   expansionLimbs.clear();
   for (Value *L : limbHandles)
     if (L)
@@ -943,7 +881,9 @@ double CandidateClone::cost(Session &S, const Subgraph &subgraph,
   return cost;
 }
 
-Expected<double> getCompCost(Session &S, Subgraph &subgraph, PTCandidate &pt) {
+// The cost of `pt` per execution of `subgraph`, or why it cannot be computed.
+static Expected<double> priceCandidate(Session &S, Subgraph &subgraph,
+                                       PTCandidate &pt) {
   CandidateClone clone(S, subgraph, subgraph.outputs.getArrayRef(), pt);
   if (!clone.unpriceable().empty())
     return createStringError(clone.unpriceable());
@@ -1006,9 +946,10 @@ static const TierTriple kCanonicalTriples[] = {
      PrecisionChangeType::BF16},
 };
 
+// `hwScalar` is the target's scalar types; null off the GPU.
 static bool precAllowed(const Options &O, PrecisionChangeType t, bool gpuMode,
                         bool expansionSafe,
-                        const std::unordered_set<std::string> &hwScalar) {
+                        const std::unordered_set<std::string> *hwScalar) {
   if (unsigned nComp = expansionComponents(t)) {
     if (!gpuMode || !expansionSafe)
       return false;
@@ -1017,9 +958,9 @@ static bool precAllowed(const Options &O, PrecisionChangeType t, bool gpuMode,
     if (nComp > O.Candidates.ExpansionComponents)
       return false;
   }
-  if (t == PrecisionChangeType::FP16 && (!gpuMode || !hwScalar.count("half")))
+  if (t == PrecisionChangeType::FP16 && (!gpuMode || !hwScalar->count("half")))
     return false;
-  if (t == PrecisionChangeType::BF16 && (!gpuMode || !hwScalar.count("bf16")))
+  if (t == PrecisionChangeType::BF16 && (!gpuMode || !hwScalar->count("bf16")))
     return false;
   return true;
 }
@@ -1027,18 +968,10 @@ static bool precAllowed(const Options &O, PrecisionChangeType t, bool gpuMode,
 // Whether every tier of a tier pair or triple is allowed.
 static bool tiersAllowed(const Options &O, ArrayRef<PrecisionChangeType> tiers,
                          bool gpuMode, bool expansionSafe,
-                         const std::unordered_set<std::string> &hwScalar) {
+                         const std::unordered_set<std::string> *hwScalar) {
   return all_of(tiers, [&](PrecisionChangeType t) {
     return precAllowed(O, t, gpuMode, expansionSafe, hwScalar);
   });
-}
-
-static std::string fmtPrecPct(PrecisionChangeType t, int pct) {
-  std::string s = getPrecisionChangeTypeString(t).str();
-  s += "(";
-  s += std::to_string(pct);
-  s += "%)";
-  return s;
 }
 
 // The tiers of a candidate with the percentage of the operations each takes,
@@ -1049,7 +982,8 @@ fmtTiers(ArrayRef<std::pair<PrecisionChangeType, int>> tierPcts) {
   for (const auto &[t, pct] : tierPcts) {
     if (!s.empty())
       s += " + ";
-    s += fmtPrecPct(t, pct);
+    s += getPrecisionChangeTypeString(t).str() + "(" + std::to_string(pct) +
+         "%)";
   }
   return s;
 }
@@ -1145,9 +1079,8 @@ void proposePrecisionCandidates(
   llvm::stable_sort(sortedAllOps, bySens);
 
   const bool gpuMode = Target::of(F).isDevice();
-  static const std::unordered_set<std::string> kEmptyScalars;
-  const std::unordered_set<std::string> &hwScalar =
-      gpuMode ? getScalarTypes(S.CostModel, F) : kEmptyScalars;
+  const std::unordered_set<std::string> *hwScalar =
+      gpuMode ? &getScalarTypes(S.CostModel, F) : nullptr;
   PrecisionChangeType curr =
       getPrecisionChangeType(subgraph.outputs[0]->getType());
 
@@ -1167,6 +1100,19 @@ void proposePrecisionCandidates(
         CS.candidates.push_back(std::move(cand));
       };
 
+  // The description of a candidate of `label` (All or Funcs) with `tiers`,
+  // announced under -poseidon-print.
+  auto describe = [&](StringRef label, StringRef kind, const std::string &tiers,
+                      size_t N) {
+    if (O.Diagnostics.Print)
+      llvm::errs() << "Created " << label << " " << kind
+                   << " PT candidate: " << tiers << " (N=" << N << ")\n";
+    std::string desc = label.str();
+    if (!desc.empty())
+      desc += " ";
+    return desc + tiers;
+  };
+
   auto sweepTwoTier = [&](TierPair tp, ArrayRef<FPLLValue *> sortedAsc,
                           StringRef label) {
     const size_t N = sortedAsc.size();
@@ -1181,16 +1127,8 @@ void proposePrecisionCandidates(
       SetVector<FPLLValue *> hiOps(sortedAsc.end() - k, sortedAsc.end());
       SetVector<FPLLValue *> loOps(sortedAsc.begin(), sortedAsc.end() - k);
 
-      const std::string tiers = fmtTiers({{tp.hi, pct}, {tp.lo, 100 - pct}});
-      if (O.Diagnostics.Print) {
-        llvm::errs() << "Created " << label
-                     << " two-tier PT candidate: " << tiers << " (N=" << N
-                     << ")\n";
-      }
-      std::string desc = label.str();
-      if (!desc.empty())
-        desc += " ";
-      desc += tiers;
+      std::string desc = describe(
+          label, "two-tier", fmtTiers({{tp.hi, pct}, {tp.lo, 100 - pct}}), N);
 
       SmallVector<std::pair<PrecisionChangeType, SetVector<FPLLValue *>>, 2>
           assignment;
@@ -1217,18 +1155,11 @@ void proposePrecisionCandidates(
                                       sortedAsc.end() - k0);
         SetVector<FPLLValue *> loOps(sortedAsc.begin(), sortedAsc.end() - k1);
 
-        const std::string tiers = fmtTiers({{tr.hi, pctHi},
-                                            {tr.mid, pctHiMid - pctHi},
-                                            {tr.lo, 100 - pctHiMid}});
-        if (O.Diagnostics.Print) {
-          llvm::errs() << "Created " << label
-                       << " three-tier PT candidate: " << tiers << " (N=" << N
-                       << ")\n";
-        }
-        std::string desc = label.str();
-        if (!desc.empty())
-          desc += " ";
-        desc += tiers;
+        std::string desc = describe(label, "three-tier",
+                                    fmtTiers({{tr.hi, pctHi},
+                                              {tr.mid, pctHiMid - pctHi},
+                                              {tr.lo, 100 - pctHiMid}}),
+                                    N);
 
         SmallVector<std::pair<PrecisionChangeType, SetVector<FPLLValue *>>, 3>
             assignment;
@@ -1278,42 +1209,9 @@ void proposePrecisionCandidates(
   CSs.push_back(std::move(CS));
 }
 
-bool PrecisionUnit::RepriceKey::operator==(const RepriceKey &other) const {
-  return candidateIndex == other.candidateIndex &&
-         RewriteUnits == other.RewriteUnits;
-}
-
-std::size_t
-PrecisionUnit::RepriceKeyHash::operator()(const RepriceKey &key) const {
-  std::size_t seed = std::hash<size_t>{}(key.candidateIndex);
-  for (const auto *ao : key.RewriteUnits) {
-    seed ^= std::hash<const RewriteUnit *>{}(ao) + 0x9e3779b9 + (seed << 6) +
-            (seed >> 2);
-  }
-  return seed;
-}
-
-void PrecisionUnit::apply(Session &S, size_t candidateIndex) {
-  if (candidateIndex >= candidates.size()) {
-    llvm_unreachable("Invalid candidate index");
-  }
-
-  // An operation this change erases may be an input of another subgraph whose
-  // rewrite a later step materializes: the rewrite reads the value the
-  // operation's users now read, as the units were priced.
-  candidates[candidateIndex].apply(S, *subgraph, nullptr, &graph());
-}
-
-// Lower is better
 double PrecisionUnit::getCompCostDelta(size_t candidateIndex) {
-  // TODO: adjust this based on erased instructions
   return (candidates[candidateIndex].CompCost - initialCompCost) *
          (double)executions;
-}
-
-// Lower is better
-double PrecisionUnit::getAccCostDelta(size_t candidateIndex) {
-  return candidates[candidateIndex].accuracyCost - initialAccCost;
 }
 
 PrecisionUnit::RepriceKey
@@ -1347,7 +1245,7 @@ void PrecisionUnit::priceRequests(
   };
   SmallVector<Group, 0> groups;
   std::map<std::pair<size_t, std::vector<const Instruction *>>, size_t> groupOf;
-  std::unordered_set<RepriceKey, RepriceKeyHash> requested;
+  std::set<RepriceKey> requested;
   DenseMap<const Instruction *, size_t> outputIndex;
   for (auto [i, output] : enumerate(subgraph->outputs))
     outputIndex[output] = i;
@@ -1430,13 +1328,6 @@ void PrecisionUnit::priceRequests(
   }
 }
 
-double PrecisionUnit::getAdjustedCompCostDelta(Session &S,
-                                               size_t candidateIndex,
-                                               ArrayRef<SolutionStep> steps) {
-  priceRequests(S, {{candidateIndex, steps}});
-  return compCostDeltaCache.at(repriceKey(candidateIndex, steps));
-}
-
 void PrecisionUnit::priceAhead(ArrayRef<ArrayRef<SolutionStep>> priors) {
   SmallVector<std::pair<size_t, ArrayRef<SolutionStep>>, 0> requests;
   for (ArrayRef<SolutionStep> steps : priors)
@@ -1445,10 +1336,14 @@ void PrecisionUnit::priceAhead(ArrayRef<ArrayRef<SolutionStep>> priors) {
   priceRequests(session(), requests);
 }
 
-double PrecisionUnit::getAdjustedAccCostDelta(
-    size_t candidateIndex, ArrayRef<SolutionStep> steps,
-    std::unordered_map<Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-    std::unordered_map<std::string, Value *> &symbolToValueMap) {
+double PrecisionUnit::costDelta(size_t i, ArrayRef<SolutionStep> prior) {
+  priceRequests(session(), {{i, prior}});
+  return compCostDeltaCache.at(repriceKey(i, prior));
+}
+
+double PrecisionUnit::errorDelta(size_t candidateIndex,
+                                 ArrayRef<SolutionStep> steps) {
+  auto &valueToNodeMap = graph().valueToNodeMap;
   RepriceKey key = repriceKey(candidateIndex, steps);
 
   auto cacheIt = accCostDeltaCache.find(key);
@@ -1492,27 +1387,30 @@ double PrecisionUnit::getAdjustedAccCostDelta(
   return adjustedAccCostDelta;
 }
 
-double PrecisionUnit::costDelta(size_t i, ArrayRef<SolutionStep> prior) {
-  return getAdjustedCompCostDelta(session(), i, prior);
-}
-
-double PrecisionUnit::errorDelta(size_t i, ArrayRef<SolutionStep> prior) {
-  return getAdjustedAccCostDelta(i, prior, graph().valueToNodeMap,
-                                 graph().symbolToValueMap);
-}
-
 bool PrecisionUnit::pricedAgainst(const OptimizationUnit &earlier) const {
   const auto *co = dyn_cast<RewriteUnit>(&earlier);
   return co && co->subgraph == subgraph;
 }
 
-const SetVector<Instruction *> *PrecisionUnit::footprint() const {
-  return subgraph ? &subgraph->operations : nullptr;
-}
-
 std::string PrecisionUnit::choiceText(size_t i) const {
   const PTCandidate &cand = candidates[i];
   return "CS: " + cand.desc + " (#" + std::to_string(cand.ordinal) + ")";
+}
+
+// The instructions `changes` convert, with where they are and what they were:
+// the "source_locations" and "affected_instructions" of a report entry.
+static void putChangedInsts(json::Object &o,
+                            ArrayRef<PrecisionChange> changes) {
+  SmallVector<Instruction *, 16> insts;
+  for (const auto &change : changes)
+    for (auto *node : change.nodes)
+      if (auto *I = dyn_cast<Instruction>(node->value))
+        insts.push_back(I);
+  o["source_locations"] = getSourceLocationsJSON(insts);
+  json::Array affectedIR;
+  for (auto *I : insts)
+    affectedIR.push_back(getValueStr(I));
+  o["affected_instructions"] = std::move(affectedIR);
 }
 
 json::Object PrecisionUnit::stepJSON(size_t i) {
@@ -1528,17 +1426,7 @@ json::Object PrecisionUnit::stepJSON(size_t i) {
     changeObj["from"] = getPrecisionChangeTypeString(change.oldType);
     changeObj["to"] = getPrecisionChangeTypeString(change.newType);
     changeObj["num_operations"] = static_cast<int64_t>(change.nodes.size());
-
-    SmallVector<Instruction *, 8> insts;
-    json::Array nodeIR;
-    for (auto *node : change.nodes) {
-      if (auto *I = dyn_cast<Instruction>(node->value)) {
-        insts.push_back(I);
-        nodeIR.push_back(getValueStr(I));
-      }
-    }
-    changeObj["source_locations"] = getSourceLocationsJSON(insts);
-    changeObj["affected_instructions"] = std::move(nodeIR);
+    putChangedInsts(changeObj, change);
     changes.push_back(std::move(changeObj));
   }
   stepObj["changes"] = std::move(changes);
@@ -1552,24 +1440,28 @@ void PrecisionUnit::writeReportStep(raw_ostream &OS, size_t i, StringRef pad) {
     OS << pad << "  " << getPrecisionChangeTypeString(change.oldType) << " -> "
        << getPrecisionChangeTypeString(change.newType) << " for "
        << change.nodes.size() << " operations\n";
-    SmallSet<std::string, 4> seen;
-    for (auto *node : change.nodes) {
-      if (auto *I = dyn_cast<Instruction>(node->value)) {
-        auto loc = getSourceLocationStr(I);
-        if (!loc.empty() && seen.insert(loc).second)
-          OS << pad << "    Source: " << loc << '\n';
-      }
-    }
+    SmallVector<Instruction *, 8> insts;
+    for (auto *node : change.nodes)
+      if (auto *I = dyn_cast<Instruction>(node->value))
+        insts.push_back(I);
+    for (Instruction *I : atDistinctLocations(insts))
+      OS << pad << "    Source: " << getSourceLocationStr(I) << '\n';
   }
 }
 
-void PrecisionUnit::materialize(size_t i) { apply(session(), i); }
+void PrecisionUnit::materialize(size_t i) {
+  assert(i < candidates.size() && "the solver names one of the candidates");
+  // An operation this change erases may be an input of another subgraph whose
+  // rewrite a later step materializes: the rewrite reads the value the
+  // operation's users now read, as the units were priced.
+  candidates[i].apply(session(), *subgraph, nullptr, &graph());
+}
 
 void PrecisionUnit::price() {
   SmallVector<PTCandidate, 8> priced;
   std::string firstWhy;
   for (PTCandidate &c : candidates) {
-    Expected<double> cost = getCompCost(session(), *subgraph, c);
+    Expected<double> cost = priceCandidate(session(), *subgraph, c);
     if (cost) {
       c.CompCost = *cost;
       priced.push_back(std::move(c));
@@ -1589,8 +1481,7 @@ void PrecisionUnit::price() {
                  << " precision candidate(s) dropped, first because "
                  << firstWhy << '\n';
   candidates = std::move(priced);
-  setUnifiedAccuracyCost(session().Opts, *this, graph().valueToNodeMap,
-                         graph().symbolToValueMap);
+  setUnifiedAccuracyCost(session().Opts, *this, graph().valueToNodeMap);
 }
 
 void PrecisionUnit::scaleErrors(double factor) {
@@ -1660,37 +1551,10 @@ void PrecisionUnit::addCuratedRewrites(json::Array &rewrites) {
     if (std::isnan(accDelta))
       continue;
 
-    // Emitted even though dominated: an all-dominated frontier must leave a
-    // record of why each candidate lost.
-    std::string category = "dominated";
-    double efficiency = 0.0;
-    if (std::optional<Tradeoff> tradeoff =
-            classifyTradeoff(compDelta, accDelta)) {
-      category = tradeoff->category.str();
-      efficiency = tradeoff->efficiency;
-    }
-
-    json::Object rw;
-    rw["id"] = candidateId(ci);
+    json::Object rw = curatedRewrite(*this, ci, compDelta, accDelta);
     rw["type"] = "precision_change";
     rw["description"] = pt.desc;
-    rw["category"] = category;
-    rw["efficiency"] = jsonFloat(efficiency);
-    rw["computation_cost_delta"] = compDelta;
-    rw["accuracy_cost_delta"] = jsonFloat(accDelta);
-
-    SmallVector<Instruction *, 16> ptInsts;
-    for (const auto &change : pt.changes) {
-      for (auto *node : change.nodes) {
-        if (auto *I = dyn_cast<Instruction>(node->value))
-          ptInsts.push_back(I);
-      }
-    }
-    rw["source_locations"] = getSourceLocationsJSON(ptInsts);
-    json::Array affectedIR;
-    for (auto *I : ptInsts)
-      affectedIR.push_back(getValueStr(I));
-    rw["affected_instructions"] = std::move(affectedIR);
+    putChangedInsts(rw, pt.changes);
 
     rewrites.push_back(std::move(rw));
   }

@@ -92,6 +92,7 @@ set(POSEIDON_SRC
     Techniques/Matmul/InKernelRaise.cpp
     Profile/Instrument.cpp
     Sites/LaunchDescriptors.cpp
+    Sites/LaunchStubs.cpp
     Solve/Optimize.cpp
     Sites/SiteIdentity.cpp
     Techniques/Precision.cpp

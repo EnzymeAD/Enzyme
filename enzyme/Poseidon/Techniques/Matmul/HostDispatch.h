@@ -16,11 +16,9 @@
 #ifndef POSEIDON_HOST_DISPATCH_H
 #define POSEIDON_HOST_DISPATCH_H
 
-#include "IR/Utils.h"
 #include "Matmul.h"
 
 #include "llvm/ADT/ArrayRef.h"
-#include "llvm/IR/PassManager.h"
 
 namespace llvm {
 class Function;
@@ -48,19 +46,9 @@ void addPendingGemmDispatch(Session &S, const llvm::Function *body,
                             llvm::ArrayRef<llvm::Value *> primalArgs);
 void flushPendingGemmDispatches(Session &S);
 
-// Rewrite the launch in each launch stub that a profile generation descriptor
-// in M's manifest matches into a call of __poseidon_launch_profiled, which
-// allocates, zeroes and seeds the shadow buffers the profiling kernel takes and
-// launches it. Host module only.
-bool rewriteProfileStubBodies(const Options &O, llvm::Module &M);
-
-// Rewrites, on the host module and before inlining, each __device_stub__
-// launch stub that a descriptor in the module's manifest matches.
-class HostStubPass : public PassParent<HostStubPass> {
-public:
-  llvm::PreservedAnalyses run(llvm::Module &M,
-                              llvm::ModuleAnalysisManager &MAM);
-};
+// Rewrite the launch in each launch stub that a host dispatch descriptor in M's
+// manifest matches into a call of the GEMM runtime. Host module only.
+bool rewriteGemmStubBodies(const Options &O, llvm::Module &M);
 
 } // namespace poseidon
 #endif // POSEIDON_HOST_DISPATCH_H

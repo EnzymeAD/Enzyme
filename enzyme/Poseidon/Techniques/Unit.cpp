@@ -103,6 +103,18 @@ std::optional<Tradeoff> classifyTradeoff(double compDelta, double accDelta) {
   return std::nullopt;
 }
 
+json::Object curatedRewrite(const SiteUnit &U, size_t i, double compDelta,
+                            double accDelta) {
+  std::optional<Tradeoff> tradeoff = classifyTradeoff(compDelta, accDelta);
+  json::Object rw;
+  rw["id"] = U.candidateId(i);
+  rw["category"] = tradeoff ? tradeoff->category : StringRef("dominated");
+  rw["efficiency"] = jsonFloat(tradeoff ? tradeoff->efficiency : 0.0);
+  rw["computation_cost_delta"] = compDelta;
+  rw["accuracy_cost_delta"] = jsonFloat(accDelta);
+  return rw;
+}
+
 SourceLoc locOf(const DebugLoc &DL) {
   if (!DL)
     return {};
@@ -123,11 +135,15 @@ json::Object locJSON(const SourceLoc &L) {
   return o;
 }
 
-json::Object getSourceLocationJSON(Value *V) {
+void putLoc(json::Object &o, StringRef key, const SourceLoc &L) {
+  if (L.valid())
+    o[key] = locJSON(L);
+}
+
+void putLoc(json::Object &o, StringRef key, Value *V) {
   if (auto *I = dyn_cast<Instruction>(V))
     if (I->getDebugLoc())
-      return locJSON(locOf(I->getDebugLoc()));
-  return json::Object();
+      o[key] = locJSON(locOf(I->getDebugLoc()));
 }
 
 std::string getSourceLocationStr(Value *V) {
@@ -147,15 +163,22 @@ std::string getValueStr(Value *V) {
   return str;
 }
 
-json::Array getSourceLocationsJSON(ArrayRef<Instruction *> insts) {
-  json::Array locs;
+SmallVector<Instruction *, 4>
+atDistinctLocations(ArrayRef<Instruction *> insts) {
+  SmallVector<Instruction *, 4> firsts;
   SmallSet<std::string, 4> seen;
   for (auto *I : insts) {
-    auto locStr = getSourceLocationStr(I);
-    if (!locStr.empty() && seen.insert(locStr).second) {
-      locs.push_back(getSourceLocationJSON(I));
-    }
+    std::string loc = getSourceLocationStr(I);
+    if (!loc.empty() && seen.insert(loc).second)
+      firsts.push_back(I);
   }
+  return firsts;
+}
+
+json::Array getSourceLocationsJSON(ArrayRef<Instruction *> insts) {
+  json::Array locs;
+  for (Instruction *I : atDistinctLocations(insts))
+    locs.push_back(locJSON(locOf(I->getDebugLoc())));
   return locs;
 }
 

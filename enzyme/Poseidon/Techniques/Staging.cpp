@@ -49,36 +49,6 @@ static SmallVector<Value *, 4> collectSharedCasts(GlobalVariable &G,
   return casts;
 }
 
-// `load double %L` consumed exactly by emitF64ToDS:
-//   hi = fptrunc(L); los = fsub double(L, fpext(hi)); lo = fptrunc(los)
-static bool matchDekkerSplit(LoadInst *L, FPTruncInst *&hiT, FPTruncInst *&loT,
-                             FPExtInst *&hib, BinaryOperator *&los) {
-  hiT = loT = nullptr;
-  hib = nullptr;
-  los = nullptr;
-  for (User *U : L->users()) {
-    if (auto *FT = dyn_cast<FPTruncInst>(U)) {
-      if (!FT->getType()->isFloatTy() || hiT)
-        return false;
-      hiT = FT;
-    } else if (auto *BO = dyn_cast<BinaryOperator>(U)) {
-      if (BO->getOpcode() != Instruction::FSub ||
-          !BO->getType()->isDoubleTy() || los)
-        return false;
-      los = BO;
-    } else if (!isa<FCmpInst>(U)) {
-      return false;
-    }
-  }
-  if (!hiT || !los || los->getOperand(0) != L)
-    return false;
-  hib = dyn_cast<FPExtInst>(los->getOperand(1));
-  if (!hib || hib->getOperand(0) != hiT || !los->hasOneUse())
-    return false;
-  loT = dyn_cast<FPTruncInst>(*los->user_begin());
-  return loT && loT->getType()->isFloatTy();
-}
-
 // Stores `val` at `p` as the {hi, lo} float pair of the df64 layout: hi at
 // +0, lo at +4.
 static void emitSplitStore(IRBuilder<> &B, Value *val, Value *p) {
@@ -90,17 +60,63 @@ static void emitSplitStore(IRBuilder<> &B, Value *val, Value *p) {
                        Align(4));
 }
 
-// Narrow addrspace(3) staging buffers whose FP64 values are only ever consumed
-// at FP32: stride K -> K/2, `load float` + fpext, fptrunc at the stores. Fires
-// only when every consumer of a staged load rounds to FP32 (fptrunc or fcmp),
-// which keeps the transform value-preserving.
-static bool narrowSharedStaging(const Options &O, llvm::Function &F) {
-  using namespace llvm;
+// The staged load L as a load of the float at its narrowed slot, extended back.
+static void narrowLoadToF32(LoadInst *L) {
+  IRBuilder<> B(L);
+  Value *nl = B.CreateAlignedLoad(B.getFloatTy(), L->getPointerOperand(),
+                                  Align(4), L->getName());
+  Value *back = B.CreateFPExt(nl, B.getDoubleTy());
+  L->replaceAllUsesWith(back);
+  L->eraseFromParent();
+}
+
+// The staging store S as a store of the float its value rounds to.
+static void narrowStoreToF32(StoreInst *S) {
+  IRBuilder<> B(S);
+  Value *vf = B.CreateFPTrunc(S->getValueOperand(), B.getFloatTy());
+  B.CreateAlignedStore(vf, S->getPointerOperand(), Align(4));
+  S->eraseFromParent();
+}
+
+// The staged load L, read by Dekker splits and fcmps, as the load of the pair
+// its slot holds: each split reads the pair, an fcmp the exact hi + lo.
+static void narrowLoadToPair(LoadInst *L, MutableArrayRef<DekkerSplit> splits) {
+  IRBuilder<> B(L);
+  Value *p = L->getPointerOperand();
+  Value *nhi = B.CreateAlignedLoad(B.getFloatTy(), p, Align(4));
+  Value *loPtr = B.CreateGEP(B.getInt8Ty(), p, B.getInt64(4));
+  Value *nlo = B.CreateAlignedLoad(B.getFloatTy(), loPtr, Align(4));
+  for (DekkerSplit &d : splits)
+    d.replaceWith(nhi, nlo);
+  if (!L->use_empty()) {
+    Value *hi64 = B.CreateFPExt(nhi, B.getDoubleTy());
+    Value *lo64 = B.CreateFPExt(nlo, B.getDoubleTy());
+    L->replaceAllUsesWith(B.CreateFAdd(hi64, lo64));
+  }
+  L->eraseFromParent();
+}
+
+// The staging store S as the store of its value's {hi, lo} pair.
+static void narrowStoreToPair(StoreInst *S) {
+  IRBuilder<> B(S);
+  emitSplitStore(B, S->getValueOperand(), S->getPointerOperand());
+  S->eraseFromParent();
+}
+
+// Narrow addrspace(3) staging buffers F reaches through the global. To FP32
+// (stride K -> K/2, `load float` + fpext, fptrunc at the stores) when every
+// reader of a staged load rounds it to FP32 (fptrunc or fcmp), which keeps the
+// transform value-preserving. To df64 (the layout kept, the {hi, lo} pair
+// stored once at the staging store, hi at +0 and lo at +4 of the 8-byte slot,
+// each Dekker split turned into a pair load) when every staged load is read by
+// one Dekker split.
+static bool narrowGlobalStaging(const Options &O, Function &F, bool ds,
+                                bool announce) {
   Module *M = F.getParent();
-  LLVMContext &Ctx = M->getContext();
-  Type *DoubleTy = Type::getDoubleTy(Ctx);
-  Type *FloatTy = Type::getFloatTy(Ctx);
-  Type *I8Ty = Type::getInt8Ty(Ctx);
+  Type *DoubleTy = Type::getDoubleTy(M->getContext());
+  Type *I8Ty = Type::getInt8Ty(M->getContext());
+  // The FP32 narrowing runs first on the same buffers, so only it traces them.
+  const bool trace = O.Diagnostics.Print && !ds;
   bool anyChange = false;
 
   const Target &target = Target::of(*M);
@@ -116,7 +132,7 @@ static bool narrowSharedStaging(const Options &O, llvm::Function &F) {
     SmallVector<GetElementPtrInst *, 32> compGEPs;
     SmallVector<LoadInst *, 64> loads;
     SmallVector<StoreInst *, 16> stores;
-    SmallVector<MemCpyInst *, 8> memcpyStores;
+    SmallVector<MemCpyInst *, 8> memcpys;
     int strideK = 0;
     bool bail = false;
 
@@ -131,7 +147,7 @@ static bool narrowSharedStaging(const Options &O, llvm::Function &F) {
         }
         auto *AT = dyn_cast<ArrayType>(GEP->getSourceElementType());
         if (!AT || !AT->getElementType()->isIntegerTy(8) ||
-            (AT->getNumElements() % 2) != 0) {
+            (AT->getNumElements() % (ds ? 8 : 2)) != 0) {
           bail = true;
           continue;
         }
@@ -142,7 +158,7 @@ static bool narrowSharedStaging(const Options &O, llvm::Function &F) {
         elemGEPs.push_back(GEP);
       }
     }
-    if (O.Diagnostics.Print)
+    if (trace)
       llvm::errs() << "[narrow] G=@" << G.getName() << " casts=" << casts.size()
                    << " elemGEPs=" << elemGEPs.size() << " strideK=" << strideK
                    << " bail=" << bail << '\n';
@@ -156,27 +172,37 @@ static bool narrowSharedStaging(const Options &O, llvm::Function &F) {
       for (User *U : P->users()) {
         if (auto *L = dyn_cast<LoadInst>(U)) {
           if (L->getType() != DoubleTy || L->getPointerOperand() != P) {
-            if (O.Diagnostics.Print)
+            if (trace)
               llvm::errs() << "[narrow] bail: load " << *L << '\n';
             bail = true;
             break;
           }
-          // Value-preserving only if every consumer rounds to FP32; fcmp
-          // guards are tolerated.
-          for (User *LU : L->users()) {
-            if (auto *FT = dyn_cast<FPTruncInst>(LU))
-              if (FT->getType()->isFloatTy())
+          if (ds) {
+            SmallVector<DekkerSplit, 1> splits;
+            if (!matchDekkerSplits(L, /*allowFCmp=*/true, splits) ||
+                splits.size() != 1) {
+              bail = true;
+              break;
+            }
+          } else {
+            // Value-preserving only if every reader rounds to FP32; fcmp
+            // guards are tolerated.
+            for (User *LU : L->users()) {
+              if (auto *FT = dyn_cast<FPTruncInst>(LU))
+                if (FT->getType()->isFloatTy())
+                  continue;
+              if (isa<FCmpInst>(LU))
                 continue;
-            if (isa<FCmpInst>(LU))
-              continue;
-            if (O.Diagnostics.Print)
-              llvm::errs() << "[narrow] bail: FP64 consumer of staged load: "
-                           << *LU << '\n';
-            bail = true;
-            break;
+              if (trace)
+                llvm::errs()
+                    << "[narrow] bail: FP64 consumer of staged load: " << *LU
+                    << '\n';
+              bail = true;
+              break;
+            }
+            if (bail)
+              break;
           }
-          if (bail)
-            break;
           loads.push_back(L);
         } else if (auto *S = dyn_cast<StoreInst>(U)) {
           if (S->getValueOperand()->getType() != DoubleTy ||
@@ -189,7 +215,7 @@ static bool narrowSharedStaging(const Options &O, llvm::Function &F) {
           if (!CG->getSourceElementType()->isIntegerTy(8) ||
               CG->getNumIndices() != 1 ||
               !isa<ConstantInt>(CG->getOperand(1))) {
-            if (O.Diagnostics.Print)
+            if (trace)
               llvm::errs() << "[narrow] bail: comp GEP " << *CG << '\n';
             bail = true;
             break;
@@ -203,14 +229,14 @@ static bool narrowSharedStaging(const Options &O, llvm::Function &F) {
           auto *Len = dyn_cast<ConstantInt>(MC->getLength());
           if (MC->getArgOperand(0) != P || !Len ||
               Len->getZExtValue() != (uint64_t)strideK || (strideK % 8) != 0) {
-            if (O.Diagnostics.Print)
+            if (trace)
               llvm::errs() << "[narrow] bail: memcpy " << *MC << '\n';
             bail = true;
             break;
           }
-          memcpyStores.push_back(MC);
+          memcpys.push_back(MC);
         } else {
-          if (O.Diagnostics.Print)
+          if (trace)
             llvm::errs() << "[narrow] bail: unexpected user of staging ptr: "
                          << *U << '\n';
           bail = true;
@@ -218,215 +244,87 @@ static bool narrowSharedStaging(const Options &O, llvm::Function &F) {
         }
       }
     }
-    if (O.Diagnostics.Print)
+    if (trace)
       llvm::errs() << "[narrow]   loads=" << loads.size()
                    << " stores=" << stores.size()
                    << " compGEPs=" << compGEPs.size() << " bail=" << bail
                    << '\n';
-    if (bail || (loads.empty() && stores.empty() && memcpyStores.empty()))
-      continue;
-
-    for (auto *EG : elemGEPs) {
-      IRBuilder<> B(EG);
-      SmallVector<Value *, 2> idx(EG->idx_begin(), EG->idx_end());
-      Value *ng = B.CreateGEP(ArrayType::get(I8Ty, strideK / 2),
-                              EG->getPointerOperand(), idx, EG->getName(),
-                              EG->isInBounds());
-      EG->replaceAllUsesWith(ng);
-    }
-    for (auto *CG : compGEPs) {
-      IRBuilder<> B(CG);
-      int64_t off = cast<ConstantInt>(CG->getOperand(1))->getSExtValue();
-      Value *no =
-          B.CreateGEP(I8Ty, CG->getPointerOperand(), B.getInt64(off / 2),
-                      CG->getName(), CG->isInBounds());
-      CG->replaceAllUsesWith(no);
-    }
-    for (auto *L : loads) {
-      IRBuilder<> B(L);
-      Value *nl = B.CreateAlignedLoad(FloatTy, L->getPointerOperand(), Align(4),
-                                      L->getName());
-      Value *back =
-          B.CreateFPExt(nl, DoubleTy); // O3 folds fptrunc(fpext(x))->x
-      L->replaceAllUsesWith(back);
-      L->eraseFromParent();
-    }
-    for (auto *S : stores) {
-      IRBuilder<> B(S);
-      Value *vf = B.CreateFPTrunc(S->getValueOperand(), FloatTy);
-      B.CreateAlignedStore(vf, S->getPointerOperand(), Align(4));
-      S->eraseFromParent();
-    }
-    for (auto *MC : memcpyStores) {
-      IRBuilder<> B(MC);
-      Value *dst = MC->getArgOperand(0);
-      Value *src = MC->getArgOperand(1);
-      int n = strideK / 8;
-      for (int k = 0; k < n; ++k) {
-        Value *sp = k ? B.CreateGEP(I8Ty, src, B.getInt64(8 * k)) : src;
-        Value *d = B.CreateAlignedLoad(DoubleTy, sp, Align(8));
-        Value *f = B.CreateFPTrunc(d, FloatTy);
-        Value *dp = k ? B.CreateGEP(I8Ty, dst, B.getInt64(4 * k)) : dst;
-        B.CreateAlignedStore(f, dp, Align(4));
-      }
-      MC->eraseFromParent();
-    }
-    for (auto *CG : compGEPs)
-      if (CG->use_empty())
-        CG->eraseFromParent();
-    for (auto *EG : elemGEPs)
-      if (EG->use_empty())
-        EG->eraseFromParent();
-    anyChange = true;
-    llvm::errs() << "[poseidon] narrowed shared staging buffer @" << G.getName()
-                 << " (" << loads.size() << " loads, " << stores.size()
-                 << " stores, stride " << strideK << "->" << strideK / 2
-                 << ")\n";
-  }
-  return anyChange;
-}
-
-// The df64 counterpart: when every staged load is consumed by an emitF64ToDS
-// Dekker split, store the {hi,lo} pair once at the staging store (hi@+0, lo@+4
-// in the same 8-byte slot) and turn each split into a pair load.
-static bool narrowSharedStagingDS(const Options &O, llvm::Function &F) {
-  using namespace llvm;
-  Module *M = F.getParent();
-  LLVMContext &Ctx = M->getContext();
-  Type *DoubleTy = Type::getDoubleTy(Ctx);
-  Type *FloatTy = Type::getFloatTy(Ctx);
-  Type *I8Ty = Type::getInt8Ty(Ctx);
-
-  bool anyChange = false;
-  const Target &target = Target::of(*M);
-  for (GlobalVariable &G : M->globals()) {
-    if (!target.isShared(G))
-      continue;
-    SmallVector<Value *, 4> casts = collectSharedCasts(G, F);
-    if (casts.empty())
-      continue;
-
-    SmallVector<GetElementPtrInst *, 8> elemGEPs;
-    int strideK = 0;
-    bool bail = false;
-    for (Value *C : casts)
-      for (User *U : C->users()) {
-        auto *GEP = dyn_cast<GetElementPtrInst>(U);
-        if (!GEP || GEP->getFunction() != &F) {
-          if (auto *I = dyn_cast<Instruction>(U))
-            if (I->getFunction() == &F)
-              bail = true;
-          continue;
-        }
-        auto *AT = dyn_cast<ArrayType>(GEP->getSourceElementType());
-        if (!AT || !AT->getElementType()->isIntegerTy(8) ||
-            (AT->getNumElements() % 8) != 0) {
-          bail = true;
-          continue;
-        }
-        if (strideK == 0)
-          strideK = (int)AT->getNumElements();
-        else if (strideK != (int)AT->getNumElements())
-          bail = true;
-        elemGEPs.push_back(GEP);
-      }
-    if (bail || elemGEPs.empty())
-      continue;
-
-    SmallVector<LoadInst *, 64> loads;
-    SmallVector<StoreInst *, 16> stores;
-    SmallVector<MemCpyInst *, 8> memcpys;
-    SmallVector<Value *, 16> work(elemGEPs.begin(), elemGEPs.end());
-    SmallPtrSet<Value *, 32> seen(work.begin(), work.end());
-    while (!work.empty() && !bail) {
-      Value *P = work.pop_back_val();
-      for (User *U : P->users()) {
-        if (auto *L = dyn_cast<LoadInst>(U)) {
-          FPTruncInst *hiT, *loT;
-          FPExtInst *hib;
-          BinaryOperator *los;
-          if (L->getType() != DoubleTy || L->getPointerOperand() != P ||
-              !matchDekkerSplit(L, hiT, loT, hib, los)) {
-            bail = true;
-            break;
-          }
-          loads.push_back(L);
-        } else if (auto *S = dyn_cast<StoreInst>(U)) {
-          if (S->getValueOperand()->getType() != DoubleTy ||
-              S->getPointerOperand() != P) {
-            bail = true;
-            break;
-          }
-          stores.push_back(S);
-        } else if (auto *CG = dyn_cast<GetElementPtrInst>(U)) {
-          if (!CG->getSourceElementType()->isIntegerTy(8) ||
-              CG->getNumIndices() != 1 ||
-              !isa<ConstantInt>(CG->getOperand(1))) {
-            bail = true;
-            break;
-          }
-          if (seen.insert(CG).second)
-            work.push_back(CG);
-        } else if (auto *MC = dyn_cast<MemCpyInst>(U)) {
-          auto *Len = dyn_cast<ConstantInt>(MC->getLength());
-          if (MC->getArgOperand(0) != P || !Len ||
-              Len->getZExtValue() != (uint64_t)strideK || (strideK % 8) != 0) {
-            bail = true;
-            break;
-          }
-          memcpys.push_back(MC);
-        } else {
-          bail = true;
-          break;
-        }
-      }
-    }
     if (bail || (loads.empty() && stores.empty() && memcpys.empty()))
       continue;
 
+    if (!ds) {
+      for (auto *EG : elemGEPs) {
+        IRBuilder<> B(EG);
+        SmallVector<Value *, 2> idx(EG->idx_begin(), EG->idx_end());
+        Value *ng = B.CreateGEP(ArrayType::get(I8Ty, strideK / 2),
+                                EG->getPointerOperand(), idx, EG->getName(),
+                                EG->isInBounds());
+        EG->replaceAllUsesWith(ng);
+      }
+      for (auto *CG : compGEPs) {
+        IRBuilder<> B(CG);
+        int64_t off = cast<ConstantInt>(CG->getOperand(1))->getSExtValue();
+        Value *no =
+            B.CreateGEP(I8Ty, CG->getPointerOperand(), B.getInt64(off / 2),
+                        CG->getName(), CG->isInBounds());
+        CG->replaceAllUsesWith(no);
+      }
+    }
     for (auto *L : loads) {
-      IRBuilder<> B(L);
-      Value *p = L->getPointerOperand();
-      Value *nhi = B.CreateAlignedLoad(FloatTy, p, Align(4));
-      Value *nlo = B.CreateAlignedLoad(
-          FloatTy, B.CreateGEP(I8Ty, p, B.getInt64(4)), Align(4));
-      FPTruncInst *hiT, *loT;
-      FPExtInst *hib;
-      BinaryOperator *los;
-      matchDekkerSplit(L, hiT, loT, hib, los); // guaranteed by the gate above
-      hiT->replaceAllUsesWith(nhi);
-      loT->replaceAllUsesWith(nlo);
-      loT->eraseFromParent();
-      los->eraseFromParent();
-      hib->eraseFromParent();
-      hiT->eraseFromParent();
-      // A tolerated fcmp guard reads fpext(nhi) in place of the double, which
-      // it orders the same for realistic values.
-      if (!L->use_empty())
-        L->replaceAllUsesWith(B.CreateFPExt(nhi, DoubleTy));
-      L->eraseFromParent();
+      if (!ds) {
+        narrowLoadToF32(L);
+        continue;
+      }
+      SmallVector<DekkerSplit, 1> splits;
+      matchDekkerSplits(L, /*allowFCmp=*/true, splits);
+      narrowLoadToPair(L, splits);
     }
     for (auto *S : stores) {
-      IRBuilder<> B(S);
-      emitSplitStore(B, S->getValueOperand(), S->getPointerOperand());
-      S->eraseFromParent();
+      if (ds)
+        narrowStoreToPair(S);
+      else
+        narrowStoreToF32(S);
     }
+    // Each slot of the tile is loaded as a double and stored narrowed.
     for (auto *MC : memcpys) {
       IRBuilder<> B(MC);
       Value *dst = MC->getArgOperand(0), *src = MC->getArgOperand(1);
       for (int k = 0; k < strideK / 8; ++k) {
         Value *sp = k ? B.CreateGEP(I8Ty, src, B.getInt64(8 * k)) : src;
-        Value *dp = k ? B.CreateGEP(I8Ty, dst, B.getInt64(8 * k)) : dst;
-        emitSplitStore(B, B.CreateAlignedLoad(DoubleTy, sp, Align(8)), dp);
+        if (ds) {
+          Value *dp = k ? B.CreateGEP(I8Ty, dst, B.getInt64(8 * k)) : dst;
+          Value *d = B.CreateAlignedLoad(DoubleTy, sp, Align(8));
+          emitSplitStore(B, d, dp);
+          continue;
+        }
+        Value *d = B.CreateAlignedLoad(DoubleTy, sp, Align(8));
+        Value *f = B.CreateFPTrunc(d, B.getFloatTy());
+        Value *dp = k ? B.CreateGEP(I8Ty, dst, B.getInt64(4 * k)) : dst;
+        B.CreateAlignedStore(f, dp, Align(4));
       }
       MC->eraseFromParent();
     }
+    if (!ds) {
+      for (auto *CG : compGEPs)
+        if (CG->use_empty())
+          CG->eraseFromParent();
+      for (auto *EG : elemGEPs)
+        if (EG->use_empty())
+          EG->eraseFromParent();
+    }
     anyChange = true;
-    if (O.Diagnostics.Print)
+    if (!announce || !O.Diagnostics.Print)
+      continue;
+    if (ds)
       llvm::errs() << "[poseidon] narrowed shared staging (df64) @"
                    << G.getName() << " (" << loads.size() << " loads, "
                    << stores.size() << " stores, " << memcpys.size()
                    << " memcpys)\n";
+    else
+      llvm::errs() << "[poseidon] narrowed shared staging buffer @"
+                   << G.getName() << " (" << loads.size() << " loads, "
+                   << stores.size() << " stores, stride " << strideK << "->"
+                   << strideK / 2 << ")\n";
   }
   return anyChange;
 }
@@ -449,47 +347,7 @@ struct ParamStagedAccess {
   SmallVector<unsigned, 2> argIdx;
 };
 
-struct DekkerSplit {
-  FPTruncInst *hiT, *loT;
-  FPExtInst *hib;
-  BinaryOperator *los;
-};
-
 } // namespace
-
-// A staged load the expansion split once per use it converted, as for a value
-// read more than once: every reader belongs to one of the splits, or is a
-// tolerated fcmp.
-static bool matchDekkerSplits(LoadInst *L, SmallVectorImpl<DekkerSplit> &out) {
-  SmallVector<FPTruncInst *, 4> his;
-  SmallVector<BinaryOperator *, 4> loss;
-  for (User *U : L->users()) {
-    auto *FT = dyn_cast<FPTruncInst>(U);
-    auto *BO = dyn_cast<BinaryOperator>(U);
-    if (FT && FT->getType()->isFloatTy())
-      his.push_back(FT);
-    else if (BO && BO->getOpcode() == Instruction::FSub &&
-             BO->getOperand(0) == L && BO->getType()->isDoubleTy())
-      loss.push_back(BO);
-    else if (!isa<FCmpInst>(U))
-      return false;
-  }
-  if (his.empty() || his.size() != loss.size())
-    return false;
-  SmallPtrSet<FPTruncInst *, 4> paired;
-  for (BinaryOperator *los : loss) {
-    auto *hib = dyn_cast<FPExtInst>(los->getOperand(1));
-    if (!hib || !hib->hasOneUse() || !los->hasOneUse())
-      return false;
-    auto *hiT = dyn_cast<FPTruncInst>(hib->getOperand(0));
-    auto *loT = dyn_cast<FPTruncInst>(*los->user_begin());
-    if (!hiT || !llvm::is_contained(his, hiT) || !paired.insert(hiT).second ||
-        !loT || !loT->getType()->isFloatTy())
-      return false;
-    out.push_back({hiT, loT, hib, los});
-  }
-  return true;
-}
 
 static bool walkStaged(const Options &O, Function &F, ArrayRef<Value *> roots,
                        bool dsMode, ParamStagedAccess &out);
@@ -662,15 +520,16 @@ static bool walkStaged(const Options &O, Function &F, ArrayRef<Value *> roots,
             llvm::errs() << "[narrow-param] bail: load " << *L << '\n';
           return false;
         }
-        FPTruncInst *hiT, *loT;
-        FPExtInst *hib;
-        BinaryOperator *los;
-        bool isSplit = matchDekkerSplit(L, hiT, loT, hib, los);
+        // A load the expansion converted once per use it read the value at
+        // has one split per use; only the multiview narrowing takes more
+        // than one.
         SmallVector<DekkerSplit, 2> splits;
+        const bool split = matchDekkerSplits(L, /*allowFCmp=*/true, splits);
+        const bool isSplit = split && splits.size() == 1;
         if (dsMode) {
           // DS wants Dekker splits; anything else is a foreign reader.
-          if (!isSplit && !(O.Materialization.NarrowMultiviewStaging &&
-                            matchDekkerSplits(L, splits))) {
+          if (!isSplit &&
+              !(O.Materialization.NarrowMultiviewStaging && split)) {
             if (O.Diagnostics.Print)
               llvm::errs() << "[narrow-param] bail: non-split reader of "
                               "staged load: "
@@ -745,17 +604,14 @@ static bool collectStaged(Session &S, Function &F, Function *Proxy,
   return true;
 }
 
-// The FP32 narrowing of a buffer that reaches F as a pointer parameter; see
-// narrowSharedStagingParamDS.
-static bool narrowSharedStagingParam(Session &S, llvm::Function &F,
-                                     llvm::Function *Proxy) {
-  if (!Proxy)
-    Proxy = &F;
+// The narrowing of buffers that reach F as a pointer parameter, to FP32 or to
+// df64 pairs; see narrowSharedStagingParamDS.
+static bool narrowParamStaging(Session &S, Function &F, Function &Proxy,
+                               bool ds, bool announce) {
+  const Options &O = S.Opts;
   Module *M = F.getParent();
-  LLVMContext &Ctx = M->getContext();
-  Type *DoubleTy = Type::getDoubleTy(Ctx);
-  Type *FloatTy = Type::getFloatTy(Ctx);
-  Type *I8Ty = Type::getInt8Ty(Ctx);
+  Type *FloatTy = Type::getFloatTy(M->getContext());
+  Type *I8Ty = Type::getInt8Ty(M->getContext());
   bool anyChange = false;
 
   const Target &target = Target::of(*M);
@@ -763,162 +619,96 @@ static bool narrowSharedStagingParam(Session &S, llvm::Function &F,
     if (!target.isShared(G))
       continue;
     ParamStagedAccess acc;
-    if (!collectStaged(S, F, Proxy, G, /*dsMode=*/false, acc))
+    if (!collectStaged(S, F, &Proxy, G, ds, acc))
       continue;
 
-    SmallVector<Instruction *, 48> deadGEPs;
-    for (GetElementPtrInst *GEP : acc.order) {
-      IRBuilder<> B(GEP);
-      SmallVector<Value *, 2> idx(GEP->idx_begin(), GEP->idx_end());
-      Value *ng = nullptr;
-      if (acc.arrSet.contains(GEP)) {
-        auto *AT = cast<ArrayType>(GEP->getSourceElementType());
-        ng = B.CreateGEP(ArrayType::get(I8Ty, AT->getNumElements() / 2),
-                         GEP->getPointerOperand(), idx, GEP->getName(),
-                         GEP->isInBounds());
-      } else if (acc.byteSet.contains(GEP)) {
-        Value *off = GEP->getOperand(1);
-        Value *half =
-            isa<ConstantInt>(off)
-                ? (Value *)B.getInt64(cast<ConstantInt>(off)->getSExtValue() /
-                                      2)
-                : B.CreateLShr(off, ConstantInt::get(off->getType(), 1), "",
-                               /*isExact=*/true);
-        ng = B.CreateGEP(I8Ty, GEP->getPointerOperand(), half, GEP->getName(),
-                         GEP->isInBounds());
-      } else {
-        ng = B.CreateGEP(FloatTy, GEP->getPointerOperand(), idx, GEP->getName(),
-                         GEP->isInBounds());
+    if (ds) {
+      // A double slot holds the pair, so the GEPs stay as they are; only the
+      // accesses move.
+      for (auto *L : acc.loads) {
+        SmallVector<DekkerSplit, 2> splits;
+        matchDekkerSplits(L, /*allowFCmp=*/true, splits);
+        narrowLoadToPair(L, splits);
       }
-      GEP->replaceAllUsesWith(ng);
-      deadGEPs.push_back(GEP);
+      for (auto *St : acc.stores)
+        narrowStoreToPair(St);
+    } else {
+      SmallVector<Instruction *, 48> deadGEPs;
+      for (GetElementPtrInst *GEP : acc.order) {
+        IRBuilder<> B(GEP);
+        SmallVector<Value *, 2> idx(GEP->idx_begin(), GEP->idx_end());
+        Value *ng = nullptr;
+        if (acc.arrSet.contains(GEP)) {
+          auto *AT = cast<ArrayType>(GEP->getSourceElementType());
+          ng = B.CreateGEP(ArrayType::get(I8Ty, AT->getNumElements() / 2),
+                           GEP->getPointerOperand(), idx, GEP->getName(),
+                           GEP->isInBounds());
+        } else if (acc.byteSet.contains(GEP)) {
+          Value *off = GEP->getOperand(1);
+          Value *half =
+              isa<ConstantInt>(off)
+                  ? (Value *)B.getInt64(cast<ConstantInt>(off)->getSExtValue() /
+                                        2)
+                  : B.CreateLShr(off, ConstantInt::get(off->getType(), 1), "",
+                                 /*isExact=*/true);
+          ng = B.CreateGEP(I8Ty, GEP->getPointerOperand(), half, GEP->getName(),
+                           GEP->isInBounds());
+        } else {
+          ng = B.CreateGEP(FloatTy, GEP->getPointerOperand(), idx,
+                           GEP->getName(), GEP->isInBounds());
+        }
+        GEP->replaceAllUsesWith(ng);
+        deadGEPs.push_back(GEP);
+      }
+      for (auto *L : acc.loads)
+        narrowLoadToF32(L);
+      for (auto *St : acc.stores)
+        narrowStoreToF32(St);
+      for (auto *I : llvm::reverse(deadGEPs))
+        if (I->use_empty())
+          I->eraseFromParent();
     }
-    for (auto *L : acc.loads) {
-      IRBuilder<> B(L);
-      Value *nl = B.CreateAlignedLoad(FloatTy, L->getPointerOperand(), Align(4),
-                                      L->getName());
-      Value *back = B.CreateFPExt(nl, DoubleTy); // O3 folds fptrunc(fpext(x))
-      L->replaceAllUsesWith(back);
-      L->eraseFromParent();
-    }
-    for (auto *S : acc.stores) {
-      IRBuilder<> B(S);
-      Value *vf = B.CreateFPTrunc(S->getValueOperand(), FloatTy);
-      B.CreateAlignedStore(vf, S->getPointerOperand(), Align(4));
-      S->eraseFromParent();
-    }
-    for (auto *I : llvm::reverse(deadGEPs))
-      if (I->use_empty())
-        I->eraseFromParent();
 
     anyChange = true;
-    llvm::errs() << "[poseidon] narrowed "
-                 << (acc.argIdx.empty() ? "multiview" : "param-staged")
-                 << " shared buffer @" << G.getName() << " to fp32 ("
-                 << acc.loads.size() << " loads, " << acc.stores.size()
-                 << " stores)\n";
+    if (announce && O.Diagnostics.Print)
+      llvm::errs() << "[poseidon] narrowed "
+                   << (acc.argIdx.empty() ? "multiview" : "param-staged")
+                   << " shared buffer @" << G.getName() << " to "
+                   << (ds ? "df64" : "fp32") << " (" << acc.loads.size()
+                   << " loads, " << acc.stores.size() << " stores)\n";
   }
   return anyChange;
 }
 
-bool narrowSharedStagingParamDS(Session &S, llvm::Function &F,
-                                llvm::Function *Proxy) {
-  const Options &O = S.Opts;
-  if (!Proxy)
-    Proxy = &F;
-  Module *M = F.getParent();
-  LLVMContext &Ctx = M->getContext();
-  Type *DoubleTy = Type::getDoubleTy(Ctx);
-  Type *FloatTy = Type::getFloatTy(Ctx);
-  Type *I8Ty = Type::getInt8Ty(Ctx);
-  bool anyChange = false;
-
-  const Target &target = Target::of(*M);
-  for (GlobalVariable &G : M->globals()) {
-    if (!target.isShared(G))
-      continue;
-    ParamStagedAccess acc;
-    if (!collectStaged(S, F, Proxy, G, /*dsMode=*/true, acc))
-      continue;
-
-    // Layout size is unchanged (a double slot holds two floats), so the GEPs
-    // are left exactly as they are; only the accesses move.
-    for (auto *L : acc.loads) {
-      IRBuilder<> B(L);
-      Value *p = L->getPointerOperand();
-      Value *nhi = B.CreateAlignedLoad(FloatTy, p, Align(4));
-      Value *nlo = B.CreateAlignedLoad(
-          FloatTy, B.CreateGEP(I8Ty, p, B.getInt64(4)), Align(4));
-      FPTruncInst *hiT, *loT;
-      FPExtInst *hib;
-      BinaryOperator *los;
-      SmallVector<DekkerSplit, 2> splits;
-      if (matchDekkerSplit(L, hiT, loT, hib, los)) {
-        hiT->replaceAllUsesWith(nhi);
-        loT->replaceAllUsesWith(nlo);
-        loT->eraseFromParent();
-        los->eraseFromParent();
-        hib->eraseFromParent();
-        hiT->eraseFromParent();
-      } else if (O.Materialization.NarrowMultiviewStaging &&
-                 matchDekkerSplits(L, splits)) {
-        for (DekkerSplit &d : splits) {
-          d.hiT->replaceAllUsesWith(nhi);
-          d.loT->replaceAllUsesWith(nlo);
-          d.loT->eraseFromParent();
-          d.los->eraseFromParent();
-          d.hib->eraseFromParent();
-          d.hiT->eraseFromParent();
-        }
-      }
-      // A remaining reader (a tolerated fcmp guard) gets the exact
-      // reconstruction hi+lo.
-      if (!L->use_empty()) {
-        Value *hi64 = B.CreateFPExt(nhi, DoubleTy);
-        Value *lo64 = B.CreateFPExt(nlo, DoubleTy);
-        L->replaceAllUsesWith(B.CreateFAdd(hi64, lo64));
-      }
-      L->eraseFromParent();
-    }
-    for (auto *S : acc.stores) {
-      IRBuilder<> B(S);
-      emitSplitStore(B, S->getValueOperand(), S->getPointerOperand());
-      S->eraseFromParent();
-    }
-
-    anyChange = true;
-    llvm::errs() << "[poseidon] narrowed "
-                 << (acc.argIdx.empty() ? "multiview" : "param-staged")
-                 << " shared buffer @" << G.getName() << " to df64 ("
-                 << acc.loads.size() << " loads, " << acc.stores.size()
-                 << " stores)\n";
-  }
-  return anyChange;
+bool narrowSharedStagingParamDS(Session &S, Function &F, Function &Proxy,
+                                bool announce) {
+  return narrowParamStaging(S, F, Proxy, /*ds=*/true, announce);
 }
 
 bool applyStagingNarrowing(Session &S, Function &F, bool announce,
-                           ParamArm param, Function *paramProxy) {
+                           ParamArm param, Function &paramProxy) {
   const Options &O = S.Opts;
-  bool changed = narrowSharedStaging(O, F);
+  bool changed = narrowGlobalStaging(O, F, /*ds=*/false, announce);
   if (changed && announce && O.Diagnostics.Print)
     llvm::errs() << "[poseidon] applied shared-staging narrowing in "
                  << F.getName() << '\n';
-  Function *proxy = paramProxy ? paramProxy : &F;
-  if (param == ParamArm::Both || param == ParamArm::FP32)
-    if (narrowSharedStagingParam(S, F, proxy)) {
+  if (O.Materialization.NarrowParamStaging) {
+    if (param != ParamArm::DS &&
+        narrowParamStaging(S, F, paramProxy, /*ds=*/false, announce)) {
       changed = true;
       if (announce && O.Diagnostics.Print)
         llvm::errs() << "[poseidon] applied param-staged shared narrowing in "
                      << F.getName() << '\n';
     }
-  if (param == ParamArm::Both || param == ParamArm::DS)
-    if (narrowSharedStagingParamDS(S, F, proxy)) {
+    if (param != ParamArm::FP32 &&
+        narrowParamStaging(S, F, paramProxy, /*ds=*/true, announce)) {
       changed = true;
       if (announce && O.Diagnostics.Print)
         llvm::errs() << "[poseidon] applied param-staged df64 narrowing in "
                      << F.getName() << '\n';
     }
-  if (narrowSharedStagingDS(O, F)) {
+  }
+  if (narrowGlobalStaging(O, F, /*ds=*/true, announce)) {
     changed = true;
     if (announce && O.Diagnostics.Print)
       llvm::errs() << "[poseidon] applied shared-staging df64 narrowing in "

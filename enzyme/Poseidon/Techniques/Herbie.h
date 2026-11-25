@@ -16,7 +16,6 @@
 
 #include "Core/CacheKey.h"
 #include "Model/CostModel.h"
-#include "Model/FPCore.h"
 #include "Model/FPNode.h"
 #include "Unit.h"
 
@@ -77,51 +76,37 @@ struct BoundaryCastFreq {
   double output = 1.0;
 };
 
-class RewriteUnit : public SiteUnit {
+class RewriteUnit : public SubgraphUnit<RewriteCandidate> {
 public:
-  Subgraph *subgraph;
-  llvm::Value *oldOutput;
   std::string expr;
   double grad = std::numeric_limits<double>::quiet_NaN();
-  uint64_t executions = 0;
-  double initialAccCost = std::numeric_limits<double>::quiet_NaN();
-  double initialCompCost = std::numeric_limits<double>::quiet_NaN();
-  double initialHerbieCost = std::numeric_limits<double>::quiet_NaN();
   double initialHerbieAccuracy = std::numeric_limits<double>::quiet_NaN();
-  llvm::SmallVector<RewriteCandidate> candidates;
   llvm::SetVector<llvm::Instruction *> erasableInsts;
-  // The outputs one candidate replaces, in array element order: the single
-  // oldOutput for a per-output core, all of them for an array core.
+  // The outputs one candidate replaces, in array element order: the one
+  // output of a per-output core, all of them for an array core.
   llvm::SmallVector<llvm::Value *, 1> roots;
   llvm::SmallVector<double, 1> rootGrads;
   bool herbieAnswered = false;
   std::string herbiePrecision;
   std::string herbieStatus;
   double herbieBits = std::numeric_limits<double>::quiet_NaN();
-  std::string unpricedReason;
-  llvm::SmallVector<std::pair<std::string, std::string>, 1> dropped;
 
-  explicit RewriteUnit(CostModelState &CM, Subgraph &subgraph,
-                       llvm::Value *oldOutput, std::string expr, double grad,
-                       uint64_t executions)
-      : SiteUnit(UnitKind::R), subgraph(&subgraph), oldOutput(oldOutput),
-        expr(expr), grad(grad), executions(executions), roots({oldOutput}),
-        rootGrads({grad}) {
-    initialCompCost = getCompCost(CM, {oldOutput}, subgraph.inputs);
-    findErasableInstructions();
-  }
-
+  // The unit of `outputs` with their gradients `grads`; its gradient is that
+  // of a single output, and the sum of magnitudes of an array's.
   explicit RewriteUnit(CostModelState &CM, Subgraph &subgraph,
                        llvm::ArrayRef<llvm::Value *> outputs,
                        llvm::ArrayRef<double> grads, std::string expr,
                        uint64_t executions)
-      : SiteUnit(UnitKind::R), subgraph(&subgraph), oldOutput(outputs.front()),
-        expr(expr), executions(executions),
+      : SubgraphUnit(UnitKind::R, subgraph), expr(expr),
         roots(outputs.begin(), outputs.end()),
         rootGrads(grads.begin(), grads.end()) {
-    grad = 0.0;
-    for (double g : grads)
-      grad += std::fabs(g);
+    this->executions = executions;
+    grad = grads.front();
+    if (grads.size() > 1) {
+      grad = 0.0;
+      for (double g : grads)
+        grad += std::fabs(g);
+    }
     initialCompCost = getCompCost(
         CM, llvm::SmallVector<llvm::Value *>(outputs.begin(), outputs.end()),
         subgraph.inputs);
@@ -130,13 +115,7 @@ public:
 
   bool isArray() const { return roots.size() > 1; }
 
-  void apply(size_t candidateIndex,
-             std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>>
-                 &valueToNodeMap,
-             std::unordered_map<std::string, llvm::Value *> &symbolToValueMap,
-             bool print);
-  double getCompCostDelta(CostModelState &CM, size_t candidateIndex);
-  double getAccCostDelta(size_t candidateIndex);
+  double getCompCostDelta(size_t candidateIndex);
   BoundaryCastFreq boundaryCastFreq(
       const llvm::LoopInfo &LI,
       const std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>>
@@ -145,35 +124,27 @@ public:
   static bool classof(const OptimizationUnit *U) {
     return U->kind() == unsigned(UnitKind::R);
   }
-  size_t numCandidates() const override { return candidates.size(); }
   double costDelta(size_t i, llvm::ArrayRef<SolutionStep> prior) override;
   double errorDelta(size_t i, llvm::ArrayRef<SolutionStep> prior) override;
   bool consumesFootprint() const override { return false; }
   // The searches of one output, and any two cores with the same outputs, are
   // admitted and priced alike by every later unit.
   bool sameRewriteTargetAs(const OptimizationUnit &earlier) const override;
-  const llvm::SetVector<llvm::Instruction *> *footprint() const override;
   llvm::ArrayRef<llvm::Value *> rewrittenOutputs() const override {
     return roots;
   }
   std::string candidateName(size_t i) const override {
     return candidates[i].expr;
   }
-  size_t ordinalOf(size_t i) const override { return candidates[i].ordinal; }
   std::string choiceText(size_t i) const override;
   llvm::json::Object stepJSON(size_t i) override;
   void writeReportStep(llvm::raw_ostream &OS, size_t i,
                        llvm::StringRef pad) override;
   void materialize(size_t i) override;
   void price() override;
-  void scaleErrors(double factor) override;
   void printPriced(llvm::raw_ostream &OS) override;
   std::string keyHeader() const override {
     return "CO " + herbiePrecision + " " + expr;
-  }
-  llvm::ArrayRef<std::pair<std::string, std::string>>
-  droppedCandidates() const override {
-    return dropped;
   }
   std::string selectionText(size_t i) const override {
     return expr + " -> " + candidates[i].expr;
@@ -194,23 +165,6 @@ void addHerbieKeyParts(Session &S, const llvm::Function &F, CacheKey &key);
 // Prints how many Herbie answers the compile ran fresh and read from the
 // cache.
 void reportHerbieAnswers(Session &S);
-
-void setUnifiedAccuracyCost(
-    const Options &O, RewriteUnit &CO,
-    std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-    std::unordered_map<std::string, llvm::Value *> &symbolToValueMap);
-
-// The cost of the Herbie expression `expr` that replaces `Site`, priced in a
-// scratch function of its module simplified by `PB`'s pipeline; a missing
-// cost-model row is an error at `Site`.
-double getCompCost(
-    CostModelState &CM, llvm::PassBuilder &PB, const std::string &expr,
-    llvm::Instruction &Site,
-    std::unordered_map<llvm::Value *, std::shared_ptr<FPNode>> &valueToNodeMap,
-    std::unordered_map<std::string, llvm::Value *> &symbolToValueMap,
-    const llvm::FastMathFlags &FMF,
-    const llvm::SetVector<llvm::Value *> *subgraphInputs = nullptr,
-    const BoundaryCastFreq *Boundary = nullptr);
 
 // Herbie's rewrites of the outputs of `subgraph`, the site's subgraph number
 // `subgraphCounter`, appended to `COs` unpriced. Its inputs are named from

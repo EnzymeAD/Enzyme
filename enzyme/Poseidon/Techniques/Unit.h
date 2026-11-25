@@ -17,14 +17,18 @@
 #define POSEIDON_TECHNIQUES_UNIT_H
 
 #include "Core/Solver.h"
+#include "Model/FPNode.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SetVector.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/JSON.h"
 
 #include <cassert>
 #include <cstddef>
+#include <cstdint>
+#include <limits>
 #include <optional>
 #include <string>
 #include <utility>
@@ -164,6 +168,45 @@ private:
   size_t boundIndex = 0;
 };
 
+// A unit whose candidates rewrite the operations of one FP subgraph, each
+// priced against the subgraph as written. `Candidate` has an accuracyCost and
+// an ordinal.
+template <typename Candidate> class SubgraphUnit : public SiteUnit {
+public:
+  Subgraph *subgraph;
+  double initialAccCost = std::numeric_limits<double>::quiet_NaN();
+  // Per execution, in cost-model units.
+  double initialCompCost = std::numeric_limits<double>::quiet_NaN();
+  uint64_t executions = 0;
+  llvm::SmallVector<Candidate> candidates;
+  // Why the subgraph could not be priced; empty when it was.
+  std::string unpricedReason;
+  llvm::SmallVector<std::pair<std::string, std::string>, 1> dropped;
+
+  double getAccCostDelta(size_t i) const {
+    return candidates[i].accuracyCost - initialAccCost;
+  }
+
+  size_t numCandidates() const override { return candidates.size(); }
+  size_t ordinalOf(size_t i) const override { return candidates[i].ordinal; }
+  llvm::ArrayRef<std::pair<std::string, std::string>>
+  droppedCandidates() const override {
+    return dropped;
+  }
+  const llvm::SetVector<llvm::Instruction *> *footprint() const override {
+    return subgraph ? &subgraph->operations : nullptr;
+  }
+  void scaleErrors(double factor) override {
+    initialAccCost *= factor;
+    for (Candidate &c : candidates)
+      c.accuracyCost *= factor;
+  }
+
+protected:
+  SubgraphUnit(UnitKind kind, Subgraph &subgraph)
+      : SiteUnit(kind), subgraph(&subgraph) {}
+};
+
 // For the reports: a number, or null when it is not finite.
 llvm::json::Value jsonFloat(double v);
 // A candidate's entry of the curated rewrites, from its cost and accuracy
@@ -174,6 +217,12 @@ struct Tradeoff {
   double efficiency;
 };
 std::optional<Tradeoff> classifyTradeoff(double compDelta, double accDelta);
+// The entry of candidate i of U in the curated rewrites, with its cost and
+// accuracy deltas: its id, deltas, category and efficiency. A candidate both
+// slower and less accurate is "dominated", so that a frontier of dominated
+// candidates still records why each lost.
+llvm::json::Object curatedRewrite(const SiteUnit &U, size_t i, double compDelta,
+                                  double accDelta);
 // A source position; line 0 when there is none.
 struct SourceLoc {
   std::string file;
@@ -185,12 +234,18 @@ SourceLoc locOf(const llvm::DebugLoc &DL);
 SourceLoc locOf(const llvm::Value *V);
 // A position as the reports write it: "file", "line" and "col".
 llvm::json::Object locJSON(const SourceLoc &L);
-// An instruction's source location: file, line and column; empty without one.
-llvm::json::Object getSourceLocationJSON(llvm::Value *V);
+// Sets o[key] to the position L, unless L is no position.
+void putLoc(llvm::json::Object &o, llvm::StringRef key, const SourceLoc &L);
+// Sets o[key] to the source location of the instruction V, unless it has none.
+void putLoc(llvm::json::Object &o, llvm::StringRef key, llvm::Value *V);
 // An instruction's source location as file:line:col; empty without one.
 std::string getSourceLocationStr(llvm::Value *V);
 // A value as the IR prints it.
 std::string getValueStr(llvm::Value *V);
+// The first of `insts` at each source location, in their order; none without
+// a location.
+llvm::SmallVector<llvm::Instruction *, 4>
+atDistinctLocations(llvm::ArrayRef<llvm::Instruction *> insts);
 // The distinct source locations of `insts`, in their order.
 llvm::json::Array
 getSourceLocationsJSON(llvm::ArrayRef<llvm::Instruction *> insts);

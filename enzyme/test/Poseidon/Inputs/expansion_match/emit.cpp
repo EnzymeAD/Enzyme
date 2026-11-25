@@ -26,7 +26,6 @@
 #include "Model/Evaluators.h"
 #include "Model/FPCore.h"
 #include "Model/FPNode.h"
-#include "Pass/Session.h"
 #include "Techniques/Expansion.h"
 #include "Techniques/Precision.h"
 
@@ -94,55 +93,31 @@ void emitRaw(Module &M, unsigned n, StringRef op) {
   SmallVector<SmallVector<Value *, 4>, 3> in;
   for (unsigned i = 0; i < arity(op); ++i)
     in.push_back(load(B, F->getArg(i), n));
-  if (n == 2) {
-    auto ds = [&](unsigned i) { return DSValue{in[i][0], in[i][1]}; };
-    DSValue r{};
-    if (op == "add")
-      r = emitDSAdd(B, ds(0), ds(1));
-    else if (op == "sub")
-      r = emitDSSub(B, ds(0), ds(1));
-    else if (op == "mul")
-      r = emitDSMul(B, ds(0), ds(1));
-    else if (op == "sqr")
-      r = emitDSMul(B, ds(0), ds(0));
-    else if (op == "div")
-      r = emitDSDiv(B, ds(0), ds(1));
-    else if (op == "sqrt")
-      r = emitDSSqrt(B, ds(0));
-    else if (op == "neg")
-      r = emitDSNeg(B, ds(0));
-    else if (op == "fma")
-      r = emitDSFMA(B, ds(0), ds(1), ds(2));
-    else
-      r = emitDSFMA(B, ds(0), ds(0), ds(1));
-    store(B, F->getArg(arity(op)), {r.hi, r.lo});
-  } else {
-    auto ev = [&](unsigned i) {
-      ExpansionValue e;
-      e.x.append(in[i].begin(), in[i].end());
-      return e;
-    };
-    ExpansionValue r;
-    if (op == "add")
-      r = emitExpansionAdd(B, ev(0), ev(1));
-    else if (op == "sub")
-      r = emitExpansionSub(B, ev(0), ev(1));
-    else if (op == "mul")
-      r = emitExpansionMul(B, ev(0), ev(1));
-    else if (op == "sqr")
-      r = emitExpansionSqr(B, ev(0));
-    else if (op == "div")
-      r = emitExpansionDiv(B, ev(0), ev(1));
-    else if (op == "sqrt")
-      r = emitExpansionSqrt(B, ev(0));
-    else if (op == "neg")
-      r = emitExpansionNeg(B, ev(0));
-    else if (op == "fma")
-      r = emitExpansionAdd(B, emitExpansionMul(B, ev(0), ev(1)), ev(2));
-    else
-      r = emitExpansionAdd(B, emitExpansionSqr(B, ev(0)), ev(1));
-    store(B, F->getArg(arity(op)), r.x);
-  }
+  auto ev = [&](unsigned i) {
+    ExpansionValue e;
+    e.x.append(in[i].begin(), in[i].end());
+    return e;
+  };
+  ExpansionValue r;
+  if (op == "add")
+    r = emitExpansionAdd(B, ev(0), ev(1));
+  else if (op == "sub")
+    r = emitExpansionSub(B, ev(0), ev(1));
+  else if (op == "mul")
+    r = emitExpansionMul(B, ev(0), ev(1));
+  else if (op == "sqr")
+    r = emitExpansionSqr(B, ev(0));
+  else if (op == "div")
+    r = emitExpansionDiv(B, ev(0), ev(1));
+  else if (op == "sqrt")
+    r = emitExpansionSqrt(B, ev(0));
+  else if (op == "neg")
+    r = emitExpansionNeg(B, ev(0));
+  else if (op == "fma")
+    r = emitExpansionFMA(B, ev(0), ev(1), ev(2));
+  else
+    r = emitExpansionFMASqr(B, ev(0), ev(1));
+  store(B, F->getArg(arity(op)), r.x);
   B.CreateRetVoid();
 }
 
@@ -153,12 +128,7 @@ void emitConversions(Module &M, unsigned n) {
     Function *F = makeFunction(M, "p" + Twine(n) + "_from_f64",
                                Type::getVoidTy(C), {Type::getDoubleTy(C), P});
     IRBuilder<> B(&F->getEntryBlock());
-    if (n == 2) {
-      DSValue d = emitF64ToDS(B, F->getArg(0));
-      store(B, F->getArg(1), {d.hi, d.lo});
-    } else {
-      store(B, F->getArg(1), emitToExpansion(B, F->getArg(0), n).x);
-    }
+    store(B, F->getArg(1), emitToExpansion(B, F->getArg(0), n).x);
     B.CreateRetVoid();
   }
   for (Type *T : {Type::getDoubleTy(C), Type::getFloatTy(C)}) {
@@ -168,8 +138,7 @@ void emitConversions(Module &M, unsigned n) {
     auto l = load(B, F->getArg(0), n);
     ExpansionValue e;
     e.x.append(l.begin(), l.end());
-    B.CreateRet(n == 2 ? emitDSToFP(B, DSValue{l[0], l[1]}, T)
-                       : emitExpansionToFP(B, e, T));
+    B.CreateRet(emitExpansionToFP(B, e, T));
   }
 }
 
@@ -453,19 +422,16 @@ void modelApplied(std::vector<AppFn> &fns) {
 }
 
 // Materializes `ops` as one n-component expansion change.
-void expand(Session &S, unsigned n, ArrayRef<Instruction *> ops) {
+void expand(unsigned n, ArrayRef<Instruction *> ops) {
   SmallPtrSet<Instruction *, 16> all(ops.begin(), ops.end());
   DenseMap<Value *, Value *> restored;
-  if (n == 2)
-    applyExpansion(S, ops, all, &restored);
-  else
-    applyExpansion(S, n, ops, all, &restored);
+  applyExpansion(n, ops, all, &restored);
 }
 
-void materialize(Session &S, std::vector<AppFn> &fns) {
+void materialize(std::vector<AppFn> &fns) {
   for (AppFn &a : fns)
     for (auto &ch : a.changes)
-      expand(S, a.n, ch);
+      expand(a.n, ch);
 }
 
 struct EmitRaw : PassParent<EmitRaw> {
@@ -476,19 +442,18 @@ struct EmitRaw : PassParent<EmitRaw> {
 };
 
 struct EmitModel : PassParent<EmitModel> {
-  PreservedAnalyses run(Module &M, ModuleAnalysisManager &MAM) {
+  PreservedAnalyses run(Module &M, ModuleAnalysisManager &) {
     emitAllRaw(M);
     modelRaw();
     std::vector<AppFn> fns = emitApplied(M);
     modelApplied(fns);
-    materialize(sessionOf(M, MAM), fns);
+    materialize(fns);
     return PreservedAnalyses::none();
   }
 };
 
 struct ApplyExpansion : PassParent<ApplyExpansion> {
-  PreservedAnalyses run(Module &M, ModuleAnalysisManager &MAM) {
-    Session &S = sessionOf(M, MAM);
+  PreservedAnalyses run(Module &M, ModuleAnalysisManager &) {
     for (Function &F : M) {
       StringRef name = F.getName();
       if (F.isDeclaration() || !name.starts_with("ex") || name.size() < 4 ||
@@ -498,7 +463,7 @@ struct ApplyExpansion : PassParent<ApplyExpansion> {
       for (Instruction &I : instructions(F))
         if (I.getType()->isDoubleTy())
           ops.push_back(&I);
-      expand(S, name[2] - '0', ops);
+      expand(name[2] - '0', ops);
     }
     return PreservedAnalyses::none();
   }

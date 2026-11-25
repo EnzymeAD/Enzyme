@@ -25,8 +25,8 @@ struct ExpansionLimbs {
   static ExpansionLimbs of(const float *limbs, unsigned n);
 };
 
-// The boundary conversions (emitToDS / emitToExpansion and emitDSToFP /
-// emitExpansionToFP), by the type of the value converted.
+// The boundary conversions (emitToExpansion and emitExpansionToFP), by the
+// type of the value converted.
 ExpansionLimbs expansionFromF64(double v, unsigned n);
 ExpansionLimbs expansionFromF32(float v, unsigned n);
 double expansionToF64(const ExpansionLimbs &a);

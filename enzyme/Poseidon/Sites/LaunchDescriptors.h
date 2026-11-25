@@ -21,6 +21,7 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/ADT/Twine.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Support/Error.h"
@@ -104,6 +105,59 @@ void writeLaunchManifest(Session &S, const llvm::Module &M);
 void readDescriptors(
     const Options &O, const llvm::Module &M, LaunchKind kind,
     llvm::function_ref<llvm::Error(llvm::ArrayRef<llvm::StringRef>)> parse);
+
+// The tokens of a descriptor after the kernel name, read in order. The first
+// token that is missing or does not parse stops the reading: every later read
+// gives a default value, and takeError says what was wrong.
+class DescriptorCursor {
+public:
+  explicit DescriptorCursor(llvm::ArrayRef<llvm::StringRef> toks)
+      : toks(toks) {}
+
+  bool ok() const { return why.empty(); }
+  bool atEnd() const { return !ok() || at == toks.size(); }
+  // Takes the next token when it is `keyword`.
+  bool consume(llvm::StringRef keyword) {
+    if (atEnd() || toks[at] != keyword)
+      return false;
+    ++at;
+    return true;
+  }
+  template <typename T> T integer(llvm::StringRef what) {
+    T value{};
+    if (llvm::StringRef tok = next(what); ok() && tok.getAsInteger(10, value))
+      fail("its " + what + " '" + tok + "' is not an integer of its range");
+    return value;
+  }
+  double real(llvm::StringRef what) {
+    double value = 0.0;
+    if (llvm::StringRef tok = next(what); ok() && tok.getAsDouble(value))
+      fail("its " + what + " '" + tok + "' is not a number");
+    return value;
+  }
+  void fail(const llvm::Twine &reason) {
+    if (ok())
+      why = reason.str();
+  }
+  llvm::Error takeError() {
+    if (ok() && at != toks.size())
+      fail("it has the unexpected token '" + toks[at] + "'");
+    return ok() ? llvm::Error::success()
+                : llvm::createStringError(llvm::inconvertibleErrorCode(), why);
+  }
+
+private:
+  llvm::StringRef next(llvm::StringRef what) {
+    if (!atEnd())
+      return toks[at++];
+    fail("it ends before its " + what);
+    return llvm::StringRef();
+  }
+
+  llvm::ArrayRef<llvm::StringRef> toks;
+  size_t at = 1;
+  std::string why;
+};
 
 // Hands `use` the profile name and header of every profiled kernel in the
 // manifest of host module M. A unit without a manifest has none; one that

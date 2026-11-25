@@ -20,11 +20,11 @@
 #include "Sites/HostSites.h"
 #include "Sites/KernelSites.h"
 #include "Sites/LaunchDescriptors.h"
+#include "Sites/LaunchStubs.h"
 #include "Sites/Markers.h"
 #include "Targets/DeviceMath.h"
 #include "Targets/OffloadRuntime.h"
 #include "Targets/Target.h"
-#include "Techniques/Matmul/HostDispatch.h"
 #include "Twin.h"
 
 #include "llvm/ADT/ArrayRef.h"
