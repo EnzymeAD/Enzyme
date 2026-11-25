@@ -329,6 +329,8 @@ struct RegionVILayout {
 };
 } // namespace
 
+/// Fills `out` with the VI position layout of `regionOp`. Returns false when
+/// an address in `selection` or `all_addresses` has no site in the sampler.
 static bool collectRegionVILayout(impulse::InferRegionOp regionOp,
                                   RegionVILayout &out) {
   ArrayAttr selection = regionOp.getSelectionAttr();
@@ -496,7 +498,7 @@ struct ChainResult {
 /// Operands and position layout that the HMC, NUTS and VI lowerings read from
 /// an inference op.
 struct InferModel {
-  /// Null in custom-logpdf mode, where `logpdfFn` is set instead.
+  /// The traced model and the custom log-density; at most one is set.
   FlatSymbolRefAttr fn;
   FlatSymbolRefAttr logpdfFn;
   SmallVector<Value> fnInputs;
