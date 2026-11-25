@@ -62,6 +62,29 @@
       __VA_ARGS__)
 #endif
 
+/// The forms above lower to a marker call the plugin also accepts as written,
+/// declared by the program and defined by nothing:
+///
+///   __poseidon_fp_optimize(fn, entry...)
+///
+/// It makes the call of fn its arguments describe a site and is replaced by
+/// that call. Each parameter of fn is given by one entry, in order:
+///
+///   enzyme_const x      x, constant to the derivative
+///   enzyme_out x        a floating-point x whose derivative is taken
+///   enzyme_dup p dp     a pointer p and the shadow dp that holds its adjoint
+///   poseidon_shadow p   a pointer p whose shadow the profiler makes
+///
+/// and anywhere among them, once,
+///
+///   poseidon_tau t      the site's relative accuracy target, a constant
+///
+/// The markers are int globals of those names, passed as with Enzyme, whose
+/// other argument markers (enzyme_primal_return, ...) are read as Enzyme reads
+/// them. A scalar may go without a marker; a pointer may not, as whether its
+/// shadow follows it is what the marker says. The name __enzyme_fp_optimize
+/// is the same marker.
+
 // The identity keeps its plain name in C and C++ alike, never throws, and is
 // callable from device code.
 #ifdef __cplusplus
