@@ -437,15 +437,6 @@ bool foldDeviceSiteCallees(const Options &O, Module &M) {
   return changed;
 }
 
-bool hasHeaderSite(Module &M) {
-  return !annotatedFunctions(M).empty() ||
-         any_of(std::initializer_list<StringRef>{kPlainIdentity,
-                                                 kPlainIdentityTau,
-                                                 kExplicitIdentity,
-                                                 kExplicitIdentityTau},
-                [&](StringRef name) { return M.getFunction(name); });
-}
-
 void reportAnnotatedCall(CallBase *call, StringRef name) {
   fail(call, name + " carries POSEIDON_OPTIMIZE, so every call of it is "
                     "already a site; remove this __poseidon_optimize or the "

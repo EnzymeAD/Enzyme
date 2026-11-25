@@ -76,6 +76,15 @@ void recordDescriptor(Session &S, LaunchKind kind, llvm::StringRef wrapperName,
 void recordProfileHeader(Session &S, llvm::StringRef wrapperName,
                          llvm::StringRef profileName, llvm::StringRef header);
 
+// Records, for the host half, the functions device module M profiles and the
+// probes the largest of them holds.
+void recordProfileTable(Session &S, unsigned functions, unsigned slots);
+
+// What the device half of host module M recorded with recordProfileTable;
+// none when it profiles nothing.
+std::pair<unsigned, unsigned> readProfileTable(const Options &O,
+                                               const llvm::Module &M);
+
 // Replaces the manifest of device module M by the descriptors recorded since
 // the last write and prints their messages, all in order of kernel name; with
 // none recorded, removes it, since no manifest means nothing to rewrite. A

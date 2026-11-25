@@ -70,6 +70,10 @@ llvm::StringRef withoutExternalizedPostfix(llvm::StringRef name);
 // shared memory size and the stream.
 bool isPopCallConfiguration(llvm::StringRef name);
 bool isLaunchKernel(llvm::StringRef name);
+// The configuration pop of a CUDA or HIP stub, or null.
+llvm::CallInst *findPopConfig(llvm::Function &F);
+// The launch a CUDA or HIP stub ends in, or null.
+llvm::CallInst *findLaunchCall(llvm::Function &F);
 // The pop of the runtime `M` declares one of, CUDA's otherwise.
 llvm::FunctionCallee popCallConfiguration(llvm::Module &M);
 llvm::Value *poppedGrid(llvm::CallBase &pop);

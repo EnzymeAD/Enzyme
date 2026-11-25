@@ -207,7 +207,7 @@ void *valloc(size_t bytes) {
 
 namespace {
 struct HostShadowOps {
-  static void *allocZeroed(size_t bytes, const char *site) {
+  static void *allocZeroed(size_t bytes, const char *site, void *) {
     void *p = calloc(bytes ? bytes : 1, 1);
     if (!p) {
       fprintf(stderr,
@@ -220,7 +220,7 @@ struct HostShadowOps {
   }
   static void free(void *p) { ::free(p); }
   static void freeAtExit(void *p) { ::free(p); }
-  template <typename T> static void fillOnes(T *p, size_t n) {
+  template <typename T> static void fillOnes(T *p, size_t n, void *) {
     for (size_t i = 0; i < n; ++i)
       p[i] = T(1);
   }

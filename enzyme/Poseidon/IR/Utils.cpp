@@ -147,6 +147,14 @@ std::string exactDouble(double v) {
   return s;
 }
 
+bool callsFunctionNamed(const Function &F, StringRef name) {
+  return any_of(instructions(F), [&](const Instruction &I) {
+    auto *CI = dyn_cast<CallInst>(&I);
+    const Function *callee = CI ? CI->getCalledFunction() : nullptr;
+    return callee && callee->getName() == name;
+  });
+}
+
 std::string displayName(const Function &F) {
   return demangle(F.getName().str());
 }

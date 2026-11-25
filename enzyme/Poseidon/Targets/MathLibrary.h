@@ -151,8 +151,8 @@ std::string getLibmFunctionForPrecision(llvm::StringRef funcName,
 // generation or use.
 bool keepDeviceMath(llvm::Module &M);
 
-// A device module with a site from poseidon/poseidon.h under a profile action
-// is an error unless it was compiled with POSEIDON_DEVICE_MATH.
+// A device module with a site under a profile action is an error unless it
+// includes poseidon/poseidon.h under POSEIDON_DEVICE_MATH.
 void requireDeviceMathMacro(llvm::Module &M);
 
 // In any other device module before the inliner, and in a kept one once its

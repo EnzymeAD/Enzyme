@@ -9,13 +9,18 @@
 // RUN: sort -n -c %t/idx
 // RUN: FileCheck --check-prefix=NOPROBE --allow-empty %s < %t/gen.err
 // RUN: %poseidon_clangxx -O2 -poseidon-profile-use=%t/prof -poseidon-tau=1e-6 -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-enable-herbie=0 -poseidon-cache=%t/c -c %s -o %t/use.o 2>&1 | FileCheck --check-prefix=USE --implicit-check-not=warning %s
+// RUN: %poseidon_clangxx -poseidon-profile-use=%t/prof %t/use.o -o %t/use
+// RUN: mkdir %t/deployed && cd %t/deployed && %t/use
+// RUN: ls -A %t/deployed | count 0
 
 // The profiling runtime writes a profile for every site it instrumented, run or
 // not: one the run never executed gets its header and a line saying so, and
 // profile use leaves it as written with a note. A site that never ran is no
 // site for the condition-number probe, which needs two. The records of a site
 // that ran are in slot order, whatever order the run first reached them in:
-// the profile's bytes are part of the key of the site's cached DP table.
+// the profile's bytes are part of the key of the site's cached DP table. The
+// optimized program links the runtime for its poseidon_metric call and writes
+// no profile.
 
 #include "poseidon/poseidon.h"
 #include <cmath>

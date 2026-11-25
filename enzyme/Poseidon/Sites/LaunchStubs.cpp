@@ -8,6 +8,7 @@
 
 #include "LaunchStubs.h"
 #include "Annotations.h"
+#include "IR/Utils.h"
 #include "LaunchDescriptors.h"
 #include "Pass/Session.h"
 #include "Profile/Instrument.h"
@@ -32,28 +33,6 @@
 using namespace llvm;
 
 namespace poseidon {
-
-// The configuration pop of a CUDA or HIP stub: a <<<grid, block>>> site pushes
-// its launch geometry and the stub pops it, so the pop's dim3 out-parameters
-// are where a launch-derived extent is read.
-CallInst *findPopConfig(Function &F) {
-  for (Instruction &I : instructions(F))
-    if (auto *CI = dyn_cast<CallInst>(&I))
-      if (const Function *cal = CI->getCalledFunction())
-        if (isPopCallConfiguration(cal->getName()) && CI->arg_size() >= 2)
-          return CI;
-  return nullptr;
-}
-
-// The launch a CUDA or HIP stub ends in.
-CallInst *findLaunchCall(Function &F) {
-  for (Instruction &I : instructions(F))
-    if (auto *CI = dyn_cast<CallInst>(&I))
-      if (const Function *cal = CI->getCalledFunction())
-        if (isLaunchKernel(cal->getName()) && CI->arg_size() >= 4)
-          return CI;
-  return nullptr;
-}
 
 namespace {
 struct ProfDesc {
@@ -142,11 +121,7 @@ bool rewriteProfileStubBodies(const Options &O, Module &M) {
     const ProfDesc &d = dIt->second;
     // The pass reaches the host module through more than one extension point;
     // a stub that already calls the helper must not be rewritten again.
-    if (llvm::any_of(instructions(F), [](Instruction &I) {
-          auto *CI = dyn_cast<CallInst>(&I);
-          const Function *cal = CI ? CI->getCalledFunction() : nullptr;
-          return cal && cal->getName() == "__poseidon_launch_profiled";
-        }))
+    if (callsFunctionNamed(F, "__poseidon_launch_profiled"))
       continue;
     // The launch's own argument array and configuration: what the stub's
     // parameters look like depends on the host ABI (an aggregate argument

@@ -28,4 +28,4 @@ POSEIDON_OPTIMIZE __global__ void waved(double *o, const double *a, int n) {
 
 // DEFINED: {{^}}[poseidon] pin: _Z5wavedPdPKdi:PT0=All FP64(0%) + FP32(100%){{$}}
 
-// UNDEFINED: error: Poseidon: this device compilation has Poseidon sites from poseidon/poseidon.h and was compiled without POSEIDON_DEVICE_MATH, under which the header keeps the libdevice functions a rewrite or a site's derivative calls; define it (-DPOSEIDON_DEVICE_MATH), as poseidon-clang and the Poseidon CMake targets do{{$}}
+// UNDEFINED: error: Poseidon: this device compilation has Poseidon sites and does not include poseidon/poseidon.h under POSEIDON_DEVICE_MATH, under which the header keeps the libdevice functions a rewrite or a site's derivative calls; include the header and define the macro (-DPOSEIDON_DEVICE_MATH), as poseidon-clang and the Poseidon CMake targets do{{$}}

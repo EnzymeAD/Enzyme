@@ -21,6 +21,8 @@
 // three modes, and the kernel's FP32 fused multiply-adds are the expansion's
 // own 15 (three per fmuladd): nothing of the expansion is fused further.
 
+#include "poseidon/poseidon.h"
+
 #define DEVICE __attribute__((device))
 template <typename R, typename... T> DEVICE R __poseidon_fp_optimize(void *, T...);
 DEVICE int enzyme_const;

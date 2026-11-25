@@ -215,7 +215,27 @@ static void putOnApplicationScale(Session &S, Function &F,
   }
 
   double factor = 1.0;
-  if (profileHeader.hasKappa) {
+  // A condition number the profiling runs did not resolve (the metric moved
+  // within their noise, or not at all) is no measurement, and scaling the
+  // site's errors by it would let any rewrite through. The site is solved
+  // against its own target, as a site of a run without a metric is.
+  const bool unresolved =
+      profileHeader.hasKappa && (profileHeader.kappaMark == "below-noise" ||
+                                 !(profileHeader.kappa > 0.0));
+  if (unresolved)
+    diagnose(F, F.getSubprogram(),
+             Twine("the profiling runs did not resolve the condition "
+                   "number of ") +
+                 F.getName() +
+                 " against the declared metric from their "
+                 "noise (Kappa = " +
+                 shortDouble(profileHeader.kappa) + ", " +
+                 profileHeader.kappaMark +
+                 "); the site is solved against its own target. Probe it "
+                 "with larger perturbations (POSEIDON_PROBE_LADDER) to "
+                 "measure it.",
+             DS_Warning);
+  if (profileHeader.hasKappa && !unresolved) {
     double sumSens = siteSumSens;
     if (sumSens == 0.0)
       reportUserError(F, F.getSubprogram(),

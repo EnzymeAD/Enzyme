@@ -5,7 +5,8 @@
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv \
 ; DEFINE:   -poseidon-cost-budget=-1e-9 -poseidon-print -S
 ; RUN: rm -rf %t && mkdir %t
-; RUN: mkdir -p %t/nokappa %t/diverged && cp %S/../Inputs/site_kappa/*.fpprofile %t/nokappa/ && cp %S/../Inputs/site_kappa/*.fpprofile %t/diverged/
+; RUN: mkdir -p %t/nokappa %t/diverged %t/noise && cp %S/../Inputs/site_kappa/*.fpprofile %t/nokappa/ && cp %S/../Inputs/site_kappa/*.fpprofile %t/diverged/ && cp %S/../Inputs/site_kappa/*.fpprofile %t/noise/
+; RUN: sed -i -e "s/^Kappa = .*/Kappa = 0/" -e "s/^KappaMark = ok/KappaMark = below-noise/" %t/noise/preprocess_matmul_body.fpprofile %t/noise/preprocess_fms_body.fpprofile
 ; RUN: sed -i "/^Kappa/d" %t/nokappa/preprocess_matmul_body.fpprofile %t/nokappa/preprocess_fms_body.fpprofile
 ; RUN: sed -i "s/^KappaMark = ok/KappaMark = diverged/" %t/diverged/preprocess_matmul_body.fpprofile
 ; RUN: %{opt} -poseidon-profile-use=%S/../Inputs/site_kappa -poseidon-enable-pt=true -poseidon-enable-multifloat=true -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false -poseidon-cache=%t/c1 2>&1 \
@@ -13,6 +14,9 @@
 ; RUN: %{opt} -poseidon-profile-use=%t/nokappa -poseidon-enable-pt=true -poseidon-enable-multifloat=true -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false -poseidon-cache=%t/c2 2>&1 \
 ; RUN:   | FileCheck --check-prefix=PLAIN %s
 ; RUN: %{opt} -poseidon-profile-use=%t/diverged -poseidon-enable-pt=false -poseidon-cache=%t/c3 2>&1 | FileCheck --check-prefix=DIVERGED %s
+; RUN: %{opt} -poseidon-profile-use=%t/noise -poseidon-enable-pt=true -poseidon-enable-multifloat=true -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false -poseidon-cache=%t/c4 > %t/noise.log 2>&1
+; RUN: FileCheck --check-prefix=PLAIN %s < %t/noise.log
+; RUN: FileCheck --check-prefix=NOISE %s < %t/noise.log
 
 ; {{[^ -~]+}} stands for the Greek capital delta the log prints.
 ; KAPPA: [poseidon] site preprocess_fms_body: kappa=1.000000e-03 (ok) sumsens=1.187943e+04 factor=8.417909e-08
@@ -41,6 +45,12 @@
 ; PLAIN-NEXT: wmma m16n16k16 f16/f32: {{[^ -~]+}}cost=-3.932160e+06 {{[^ -~]+}}accCost=1.633821e+03
 ; PLAIN-NEXT: tcec n=2 wmma m16n16k16 f16/f32: {{[^ -~]+}}cost=-3.866624e+06 {{[^ -~]+}}accCost=1.460363e+00
 ; PLAIN-NEXT: tcec n=3 wmma m16n16k16 f16/f32: {{[^ -~]+}}cost=-3.801088e+06 {{[^ -~]+}}accCost=1.245725e+00
+
+; A condition number the probe could not tell from the noise of the runs
+; would scale every error to zero; the site is solved as one without a
+; condition number instead, with a warning.
+; NOISE: warning: {{.*}}the profiling runs did not resolve the condition number of preprocess_fms_body against the declared metric from their noise (Kappa = 0, below-noise); the site is solved against its own target.
+; NOISE: warning: {{.*}}condition number of preprocess_matmul_body
 
 ; A site whose probe run diverged carries no measured kappa; its candidates are
 ; priced at 1e30, the order of the exponent penalty, so a joint budget is spent

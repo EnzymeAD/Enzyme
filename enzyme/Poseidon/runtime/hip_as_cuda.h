@@ -23,6 +23,7 @@
 #define cudaDeviceGetAttribute hipDeviceGetAttribute
 #define cudaDeviceGetLimit hipDeviceGetLimit
 #define cudaDeviceProp hipDeviceProp_t
+#define cudaDeviceReset hipDeviceReset
 #define cudaDeviceSetLimit hipDeviceSetLimit
 #define cudaDeviceSynchronize hipDeviceSynchronize
 #define cudaError_t hipError_t
@@ -34,6 +35,7 @@
 #define cudaEventSynchronize hipEventSynchronize
 #define cudaEvent_t hipEvent_t
 #define cudaFree hipFree
+#define cudaGetDevice hipGetDevice
 #define cudaGetDeviceProperties hipGetDeviceProperties
 #define cudaGetErrorString hipGetErrorString
 #define cudaGetLastError hipGetLastError

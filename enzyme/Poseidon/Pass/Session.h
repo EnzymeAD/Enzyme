@@ -95,6 +95,9 @@ public:
   // profile generation.
   std::map<std::string, Recorded> RecordedLaunches[2];
   std::map<std::string, ProfileHeader> ProfileHeaders;
+  // What the device profiler's tables must hold for this device module: the
+  // functions it profiles and the probes of the largest.
+  unsigned ProfiledFunctions = 0, ProfiledSlots = 0;
 
   MatmulState Matmul;
 };

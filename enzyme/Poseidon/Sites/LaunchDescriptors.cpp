@@ -43,6 +43,7 @@ static constexpr LaunchKind kKinds[] = {LaunchKind::HostDispatch,
                                         LaunchKind::Profiling};
 
 static constexpr StringLiteral kProfileHeaders = "profile headers";
+static constexpr StringLiteral kProfileTable = "profile table";
 
 static StringRef kindName(LaunchKind kind) {
   return kind == LaunchKind::HostDispatch ? "host dispatch"
@@ -108,6 +109,31 @@ void recordProfileHeader(Session &S, StringRef wrapperName,
   S.ProfileHeaders[wrapperName.str()] = {profileName.str(), header.str()};
 }
 
+void recordProfileTable(Session &S, unsigned functions, unsigned slots) {
+  S.ProfiledFunctions = functions;
+  S.ProfiledSlots = slots;
+}
+
+std::pair<unsigned, unsigned> readProfileTable(const Options &O,
+                                               const Module &M) {
+  Manifest m = manifestOf(O, M);
+  CacheEntryRead read = readCacheEntry(m.path, m.key);
+  const json::Object *value = read.value ? read.value->getAsObject() : nullptr;
+  const json::Object *table = value ? value->getObject(kProfileTable) : nullptr;
+  if (!table)
+    return {0, 0};
+  std::optional<int64_t> functions = table->getInteger("functions");
+  std::optional<int64_t> slots = table->getInteger("slots");
+  if (!functions || !slots || *functions < 0 || *slots < 0 ||
+      *functions > UINT32_MAX || *slots > UINT32_MAX)
+    reportUserError(M.getContext(),
+                    "the launch manifest " + m.path +
+                        " holds a profile table entry that is not two counts; "
+                        "remove the -poseidon-cache directory and compile the "
+                        "unit again");
+  return {(unsigned)*functions, (unsigned)*slots};
+}
+
 void writeLaunchManifest(Session &S, const Module &M) {
   const Options &O = S.Opts;
   Manifest m = manifestOf(O, M);
@@ -122,8 +148,9 @@ void writeLaunchManifest(Session &S, const Module &M) {
                         ". The manifest is kept in the -poseidon-cache "
                         "directory, which has to be writable.");
   };
-  if (llvm::all_of(
-          kKinds, [&](LaunchKind kind) { return recorded(S, kind).empty(); })) {
+  if (!S.ProfiledFunctions && llvm::all_of(kKinds, [&](LaunchKind kind) {
+        return recorded(S, kind).empty();
+      })) {
     if (sys::fs::exists(m.path))
       if (std::error_code EC = sys::fs::remove(m.path))
         fail("remove", EC.message());
@@ -145,6 +172,9 @@ void writeLaunchManifest(Session &S, const Module &M) {
           json::Object{{"profile", h.profileName}, {"header", h.header}};
     value[kProfileHeaders] = std::move(headers);
   }
+  if (S.ProfiledFunctions)
+    value[kProfileTable] = json::Object{{"functions", S.ProfiledFunctions},
+                                        {"slots", S.ProfiledSlots}};
   if (std::error_code EC = sys::fs::create_directories(O.Herbie.Cache))
     fail("write", EC.message());
   if (Error E = writeCacheEntry(m.path, m.key, std::move(value)))
@@ -155,6 +185,7 @@ void writeLaunchManifest(Session &S, const Module &M) {
     recorded(S, kind).clear();
   }
   S.ProfileHeaders.clear();
+  S.ProfiledFunctions = S.ProfiledSlots = 0;
 }
 
 void readDescriptors(const Options &O, const Module &M, LaunchKind kind,

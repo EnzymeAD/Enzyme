@@ -19,6 +19,7 @@
 #include "llvm/IR/Function.h"
 #include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/InstIterator.h"
 #include "llvm/IR/InstrTypes.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Module.h"
@@ -116,6 +117,24 @@ bool isPopCallConfiguration(StringRef name) {
 bool isLaunchKernel(StringRef name) {
   return name == "cudaLaunchKernel" || name == "cudaLaunchKernel_ptsz" ||
          name == "hipLaunchKernel" || name == "hipLaunchKernel_spt";
+}
+
+CallInst *findPopConfig(Function &F) {
+  for (Instruction &I : instructions(F))
+    if (auto *CI = dyn_cast<CallInst>(&I))
+      if (const Function *cal = CI->getCalledFunction())
+        if (isPopCallConfiguration(cal->getName()) && CI->arg_size() >= 2)
+          return CI;
+  return nullptr;
+}
+
+CallInst *findLaunchCall(Function &F) {
+  for (Instruction &I : instructions(F))
+    if (auto *CI = dyn_cast<CallInst>(&I))
+      if (const Function *cal = CI->getCalledFunction())
+        if (isLaunchKernel(cal->getName()) && CI->arg_size() >= 4)
+          return CI;
+  return nullptr;
 }
 
 FunctionCallee popCallConfiguration(Module &M) {

@@ -1,6 +1,6 @@
 // REQUIRES: enzyme, nvptx-device-profiler
 // RUN: rm -rf %t && mkdir %t
-// RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O2 -Xclang -disable-llvm-passes -S -emit-llvm -I%poseidon_profile_inc %s -o %t/dev.ll
+// RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O2 -Xclang -disable-llvm-passes -S -emit-llvm -I%poseidon_profile_inc -DPOSEIDON_DEVICE_MATH %s -o %t/dev.ll
 // RUN: (env TMPDIR=%t %clang --target=nvptx64-nvidia-cuda -march=%gpu_arch -O2 -flto -x ir %t/dev.ll %loadClangPoseidonEnzyme -S -emit-llvm -o /dev/null 2>&1; echo "exit status $?") | FileCheck --check-prefix=DEFERRED --implicit-check-not=error: --implicit-check-not=REPRODUCER --implicit-check-not="exit code" %s
 // RUN: (env TMPDIR=%t %clang --target=nvptx64-nvidia-cuda -march=%gpu_arch -O2 -flto -x ir %t/dev.ll %loadClangPoseidonEnzyme -mllvm -poseidon-profile-use=%S/../Inputs/other_sites -mllvm -poseidon-cache=%t/use -S -emit-llvm -o /dev/null 2>&1; echo "exit status $?") | FileCheck --check-prefix=DEFERRED --implicit-check-not=error: --implicit-check-not=REPRODUCER --implicit-check-not="exit code" %s
 // RUN: (env TMPDIR=%t %clang --target=nvptx64-nvidia-cuda -march=%gpu_arch -O2 -flto=thin -x ir %t/dev.ll %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/gen -S -emit-llvm -o /dev/null 2>&1; echo "exit status $?") | FileCheck --check-prefix=DEFERRED --implicit-check-not=error: --implicit-check-not=REPRODUCER --implicit-check-not="exit code" %s

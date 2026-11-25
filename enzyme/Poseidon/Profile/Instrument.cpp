@@ -9,7 +9,9 @@
 #include "Instrument.h"
 
 #include "IR/Utils.h"
+#include "Pass/Session.h"
 #include "Sites/Canonicalize.h"
+#include "Sites/LaunchDescriptors.h"
 #include "Targets/OffloadRuntime.h"
 #include "Targets/Target.h"
 #include "runtime/fpprofiler/FPProfilerCUDA.h"
@@ -101,16 +103,6 @@ static FunctionType *logGradientType(LLVMContext &C) {
 static FunctionType *perturbType(Type *FpTy) {
   return FunctionType::get(FpTy, {Type::getInt32Ty(FpTy->getContext()), FpTy},
                            false);
-}
-
-// Whether `F` already calls the function named `name`.
-static bool callsFunctionNamed(Function &F, StringRef name) {
-  for (Instruction &I : instructions(F))
-    if (auto *CI = dyn_cast<CallInst>(&I))
-      if (Function *callee = CI->getCalledFunction();
-          callee && callee->getName() == name)
-        return true;
-  return false;
 }
 
 namespace {
@@ -329,8 +321,8 @@ bool registerProfileStatic(Module &M, StringRef name, StringRef text) {
   return true;
 }
 
-bool registerDeviceProfileTable(Module &M, bool profileGenerate) {
-  if (!profileGenerate || Target::of(M).isDevice() ||
+bool registerDeviceProfileTable(const Options &O, Module &M) {
+  if (!O.Profiling.ProfileGenerate || Target::of(M).isDevice() ||
       M.getNamedGlobal(POSEIDON_CUDA_PROFILE_TABLE))
     return false;
   std::optional<VariableRegistration> registration = variableRegistration(M);
@@ -354,9 +346,12 @@ bool registerDeviceProfileTable(Module &M, bool profileGenerate) {
       "__poseidon_profile_register_module_table", &M);
   ctor->addFnAttr(Attribute::NoUnwind);
   IRBuilder<> B(BasicBlock::Create(C, "entry", ctor));
-  B.CreateCall(M.getOrInsertFunction("__poseidon_profile_register_module",
-                                     FunctionType::get(VoidTy, {PtrTy}, false)),
-               {shadow});
+  auto [functions, slots] = readProfileTable(O, M);
+  B.CreateCall(M.getOrInsertFunction(
+                   "__poseidon_profile_register_module",
+                   FunctionType::get(
+                       VoidTy, {PtrTy, B.getInt32Ty(), B.getInt32Ty()}, false)),
+               {shadow, B.getInt32(functions), B.getInt32(slots)});
   B.CreateRetVoid();
   // After the CUDA module constructor, so that a unit loaded once the profiler
   // runs is registered with the CUDA runtime before it is bound.
@@ -453,6 +448,39 @@ void requireSharedMemoryLimit(Module &M) {
     diagnose(*K, K->getSubprogram(), msg, DS_Error);
   reportUserError(*refused.back().first, refused.back().first->getSubprogram(),
                   refused.back().second);
+}
+
+void recordProfileTableSize(Session &S, Module &M) {
+  const Target &T = Target::of(M);
+  if (!T.isDevice())
+    return;
+  const ProbeABI &P = T.probes();
+  SmallPtrSet<const GlobalVariable *, 8> functions;
+  uint64_t slots = 0;
+  for (Function &F : M)
+    for (Instruction &I : instructions(F)) {
+      auto *CI = dyn_cast<CallInst>(&I);
+      const Function *callee = CI ? CI->getCalledFunction() : nullptr;
+      if (!callee || !is_contained({P.LogValue, P.LogGradient, P.BlockDims,
+                                    P.PublishStatic},
+                                   callee->getName()))
+        continue;
+      auto *name =
+          dyn_cast<GlobalVariable>(CI->getArgOperand(0)->stripPointerCasts());
+      if (!name)
+        report_fatal_error("Poseidon: a device profiler probe names its "
+                           "function through a value that is not a global");
+      functions.insert(name);
+      if (callee->getName() != P.LogValue && callee->getName() != P.LogGradient)
+        continue;
+      auto *idx = dyn_cast<ConstantInt>(CI->getArgOperand(1));
+      if (!idx)
+        report_fatal_error("Poseidon: a device profiler probe has a slot "
+                           "index that is not a constant");
+      slots = std::max(slots, idx->getZExtValue() + 1);
+    }
+  if (!functions.empty())
+    recordProfileTable(S, functions.size(), slots);
 }
 
 // The user's function a probe call serves. Profile generation calls the

@@ -66,7 +66,7 @@ POSEIDON_OPTIMIZE __global__ void sum(const double *x, double *y) {
 // DEV-DAG: define internal void @poseidonProfileBlockDimsCUDA(
 // DEV-DAG: define internal void @poseidonProfileStaticCUDA(
 // DEV-DAG: define amdgpu_kernel void @_Z5scalePdd(
-// DEV-DAG: define internal {{.*}}@__ockl_printf_append_args({{.*}}) {{.*}}#[[OCKL:[0-9]+]] {{.*}}{
+// DEV-DAG: define internal {{.*}}@__ockl_printf_append_string_n({{.*}}) {{.*}}#[[OCKL:[0-9]+]] {{.*}}{
 // DEV: attributes #[[OCKL]] = {
 // DEV-NOT: "target-features"
 // DEV-SAME: }
@@ -92,7 +92,7 @@ POSEIDON_OPTIMIZE __global__ void sum(const double *x, double *y) {
 // HOST: call void @__hipRegisterVar(ptr %[[H]], ptr @__poseidon_profile_table, ptr @[[NAME]], ptr @[[NAME]], i32 0, i64 [[N]], i32 1, i32 0)
 // HOST-NEXT: ret void
 // HOST: define internal void @__poseidon_profile_register_module_table()
-// HOST-NEXT: call void @__poseidon_profile_register_module(ptr @__poseidon_profile_table)
+// HOST-NEXT: call void @__poseidon_profile_register_module(ptr @__poseidon_profile_table, i32 1, i32 1)
 // HOST-NEXT: ret void
 
 // HIP's offload kind is 4 (CUDA's 2).
@@ -101,7 +101,7 @@ POSEIDON_OPTIMIZE __global__ void sum(const double *x, double *y) {
 // RDC-NEXT: @.offloading.entry.__poseidon_profile_table = weak {{.*}}constant %struct.__tgt_offload_entry { i64 0, i16 1, i16 4, i32 16, ptr @__poseidon_profile_table, ptr @[[ENTRY]], i64 [[N]], i64 0, ptr null }, section "llvm_offload_entries"
 // RDC: @llvm.global_ctors = appending global [2 x { i32, ptr, ptr }] [{ i32, ptr, ptr } { i32 65535, ptr @__poseidon_profile_register_module_table, ptr null }, { i32, ptr, ptr } { i32 0, ptr @poseidon_register_static_preprocess__Z5scalePdd_poseidon_body, ptr null }]
 // RDC: define internal void @__poseidon_profile_register_module_table()
-// RDC-NEXT: call void @__poseidon_profile_register_module(ptr @__poseidon_profile_table)
+// RDC-NEXT: call void @__poseidon_profile_register_module(ptr @__poseidon_profile_table, i32 1, i32 1)
 // RDC-NEXT: ret void
 
 // PLAIN-NOT: __poseidon_profile

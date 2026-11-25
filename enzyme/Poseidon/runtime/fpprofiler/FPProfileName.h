@@ -35,6 +35,7 @@
 #include "poseidon/poseidon.h"
 
 #include <cerrno>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -183,6 +184,91 @@ inline void profileMkdirP(const std::string &dir) {
           path.size() - path.find_last_of('/') - 1, funcName);
   fflush(stderr);
   _exit(1);
+}
+
+// Writes `text` to `path` whole or not at all: through a file of this
+// process that replaces `path` by rename, so that processes writing the same
+// profile concurrently (the ranks of an MPI job) leave one of their files, not
+// an interleaving of several. A file that cannot be written stops the run.
+inline void profileWriteFile(const std::string &path, const std::string &text,
+                             const char *what) {
+  const std::string tmp = path + "." + std::to_string(getpid()) + ".tmp";
+  errno = 0;
+  FILE *f = fopen(tmp.c_str(), "w");
+  if (!f)
+    profileOpenFatal(tmp, what);
+  const bool written = fwrite(text.data(), 1, text.size(), f) == text.size();
+  if (fclose(f) != 0 || !written || rename(tmp.c_str(), path.c_str()) != 0)
+    profileOpenFatal(path, what);
+}
+
+// The environment variable `name` as a strict decimal integer; `dflt` when it
+// is unset or empty. Anything else stops the run, naming the variable.
+[[noreturn]] inline void profileBadEnv(const char *name, const char *value,
+                                       const char *expected) {
+  fflush(stdout);
+  fprintf(stderr, "Poseidon FPProfiler: %s='%s' is not %s.\n", name, value,
+          expected);
+  fflush(stderr);
+  _exit(1);
+}
+
+inline long long profileEnvInteger(const char *name, long long dflt) {
+  const char *v = getenv(name);
+  if (!v || !*v)
+    return dflt;
+  char *end = nullptr;
+  errno = 0;
+  long long parsed = strtoll(v, &end, 10);
+  if (end == v || *end != '\0' || errno == ERANGE)
+    profileBadEnv(name, v, "an integer");
+  return parsed;
+}
+
+inline unsigned long long profileEnvPositive(const char *name,
+                                             unsigned long long dflt) {
+  long long parsed = profileEnvInteger(name, (long long)dflt);
+  if (parsed <= 0)
+    profileBadEnv(name, getenv(name), "a positive integer");
+  return (unsigned long long)parsed;
+}
+
+// A positive finite number.
+inline bool profileParsePositive(const char *text, const char *stop,
+                                 double &out) {
+  char *end = nullptr;
+  out = strtod(text, &end);
+  return end == stop && end != text && out > 0.0 && out < HUGE_VAL;
+}
+
+inline double profileEnvPositiveReal(const char *name, double dflt) {
+  const char *v = getenv(name);
+  if (!v || !*v)
+    return dflt;
+  double out;
+  if (!profileParsePositive(v, v + strlen(v), out))
+    profileBadEnv(name, v, "a positive finite number");
+  return out;
+}
+
+// A comma-separated list of positive finite numbers.
+inline std::vector<double> profileEnvPositiveList(const char *name,
+                                                  std::vector<double> dflt) {
+  const char *v = getenv(name);
+  if (!v || !*v)
+    return dflt;
+  std::vector<double> out;
+  for (const char *p = v;;) {
+    const char *comma = strchr(p, ',');
+    const char *stop = comma ? comma : p + strlen(p);
+    double x;
+    if (!profileParsePositive(p, stop, x))
+      profileBadEnv(name, v, "a comma-separated list of positive numbers");
+    out.push_back(x);
+    if (!comma)
+      return out;
+    p = comma + 1;
+  }
 }
 
 } // namespace poseidon

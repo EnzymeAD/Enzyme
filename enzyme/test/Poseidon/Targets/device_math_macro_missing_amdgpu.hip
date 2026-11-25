@@ -13,6 +13,6 @@ POSEIDON_OPTIMIZE __attribute__((global)) void wave(double *o, const double *a) 
   o[0] = a[0] * a[0] + a[1];
 }
 
-// CHECK: error: Poseidon: this device compilation has Poseidon sites from poseidon/poseidon.h and was compiled without POSEIDON_DEVICE_MATH, under which the header keeps the ocml functions a rewrite or a site's derivative calls; define it (-DPOSEIDON_DEVICE_MATH), as poseidon-clang and the Poseidon CMake targets do{{$}}
+// CHECK: error: Poseidon: this device compilation has Poseidon sites and does not include poseidon/poseidon.h under POSEIDON_DEVICE_MATH, under which the header keeps the ocml functions a rewrite or a site's derivative calls; include the header and define the macro (-DPOSEIDON_DEVICE_MATH), as poseidon-clang and the Poseidon CMake targets do{{$}}
 // DEFINED-NOT: POSEIDON_DEVICE_MATH
 // INACTIVE-NOT: POSEIDON_DEVICE_MATH

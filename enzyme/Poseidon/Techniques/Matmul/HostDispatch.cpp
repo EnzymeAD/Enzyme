@@ -17,7 +17,6 @@
 #include "Pass/Session.h"
 #include "Sites/Annotations.h"
 #include "Sites/LaunchDescriptors.h"
-#include "Sites/LaunchStubs.h"
 #include "Sites/SiteIdentity.h"
 #include "Targets/OffloadRuntime.h"
 #include "Targets/Target.h"

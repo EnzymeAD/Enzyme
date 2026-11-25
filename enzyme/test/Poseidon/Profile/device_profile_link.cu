@@ -62,7 +62,7 @@ __global__ void scale(double *x, double a) { x[0] = a * x[0] + 1.0; }
 // HOST: call void @__cudaRegisterVar(ptr %[[H]], ptr @__poseidon_profile_table, ptr @[[NAME]], ptr @[[NAME]], i32 0, i64 [[N]], i32 1, i32 0)
 // HOST-NEXT: ret void
 // HOST: define internal void @__poseidon_profile_register_module_table()
-// HOST-NEXT: call void @__poseidon_profile_register_module(ptr @__poseidon_profile_table)
+// HOST-NEXT: call void @__poseidon_profile_register_module(ptr @__poseidon_profile_table, i32 1, i32 1)
 // HOST-NEXT: ret void
 
 // RDC: @__poseidon_profile_table = internal global [[[N:[0-9]+]] x i8] zeroinitializer, align 8
@@ -70,7 +70,7 @@ __global__ void scale(double *x, double a) { x[0] = a * x[0] + 1.0; }
 // RDC-NEXT: @.offloading.entry.__poseidon_profile_table = weak {{.*}}constant %struct.__tgt_offload_entry { i64 0, i16 1, i16 2, i32 16, ptr @__poseidon_profile_table, ptr @[[ENTRY]], i64 [[N]], i64 0, ptr null }, section "llvm_offload_entries"
 // RDC: @llvm.global_ctors = appending global [2 x { i32, ptr, ptr }] [{ i32, ptr, ptr } { i32 65535, ptr @__poseidon_profile_register_module_table, ptr null }, { i32, ptr, ptr } { i32 0, ptr @poseidon_register_static_preprocess__Z5scalePdd_poseidon_body, ptr null }]
 // RDC: define internal void @__poseidon_profile_register_module_table()
-// RDC-NEXT: call void @__poseidon_profile_register_module(ptr @__poseidon_profile_table)
+// RDC-NEXT: call void @__poseidon_profile_register_module(ptr @__poseidon_profile_table, i32 1, i32 1)
 // RDC-NEXT: ret void
 
 // PLAIN-NOT: __poseidon_profile

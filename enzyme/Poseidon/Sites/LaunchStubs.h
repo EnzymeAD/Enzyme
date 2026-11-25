@@ -20,19 +20,12 @@
 #include "llvm/IR/PassManager.h"
 
 namespace llvm {
-class CallInst;
-class Function;
 class Module;
 } // namespace llvm
 
 namespace poseidon {
 
 struct Options;
-
-// The configuration pop of a CUDA or HIP stub, or null.
-llvm::CallInst *findPopConfig(llvm::Function &F);
-// The launch a CUDA or HIP stub ends in, or null.
-llvm::CallInst *findLaunchCall(llvm::Function &F);
 
 // Rewrite the launch in each launch stub that a profile generation descriptor
 // in M's manifest matches into a call of __poseidon_launch_profiled, which

@@ -375,14 +375,14 @@ struct HostSitePass : PassParent<HostSitePass> {
     bool changed = false;
     if (Target::of(M).isDevice()) {
       const bool active = O.Profiling.profileAction() && hasSite(O, M);
-      if (active && hasHeaderSite(M))
+      if (active)
         requireDeviceMathMacro(M);
       changed = active ? keepDeviceMath(M) : releaseDeviceMath(M);
     }
     changed |= lowerPerCallSites(O, M);
     changed |= propagateDeviceSites(O, M);
     changed |= outlineHostSites(O, M);
-    changed |= registerDeviceProfileTable(M, O.Profiling.ProfileGenerate);
+    changed |= registerDeviceProfileTable(O, M);
     if (!O.Profiling.profileAction())
       changed |= leaveSitesAsWritten(S, M);
     return changed ? PreservedAnalyses::none() : PreservedAnalyses::all();
@@ -446,6 +446,8 @@ struct FinalizePass : PassParent<FinalizePass> {
     // Written after every site is processed and every check that can stop the
     // compile has passed, so a host half never reads the manifest of a device
     // half that failed.
+    if (O.Profiling.ProfileGenerate)
+      recordProfileTableSize(S, M);
     if (T.isDevice() && !S.IsTwin && handsOverLaunches(O))
       writeLaunchManifest(S, M);
     releaseDeviceMath(M);

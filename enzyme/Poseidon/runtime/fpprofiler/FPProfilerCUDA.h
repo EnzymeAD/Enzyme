@@ -27,11 +27,6 @@
 #endif
 #endif
 
-// Per-function slot count: bounds the static count of profiled instructions
-// of one site, not the dynamic execution count. Overflow aborts in
-// poseidonLogValueCUDA; POSEIDON_PROFILE_MAX_SLOTS overrides it.
-#define POSEIDON_DEFAULT_MAX_SLOTS 4096
-#define POSEIDON_DEFAULT_MAX_FUNCS 512
 // Device heap for the reverse passes' caches; POSEIDON_PROFILE_HEAP_MB.
 #define POSEIDON_DEFAULT_HEAP_MB 4096
 #define POSEIDON_MAX_OPERANDS 8
@@ -87,6 +82,22 @@ POSEIDON_HD inline double orderedUint64ToDoubleMin(uint64_t stored) {
   return orderedUint64ToDouble(~stored);
 }
 
+// `v` computed at the relative precision `eps`: the condition-number probe's
+// perturbation of a probed site's values, on the host and the device alike.
+// The sign is a hash of the value's bits: a uniform (1+eps) factor commutes
+// through linear operations and cancellations ((1+eps)x - (1+eps)y =
+// (1+eps)(x-y)), hiding exactly the cancellation amplification the probe must
+// expose, while a deterministic +/-eps keyed on the value's bits models
+// independent per-operation rounding and stays reproducible across runs.
+POSEIDON_HD inline double poseidonPerturbed(double v, double eps) {
+  uint64_t b;
+  memcpy(&b, &v, sizeof(b));
+  b ^= b >> 33;
+  b *= 0xff51afd7ed558ccdULL;
+  b ^= b >> 33;
+  return v * (1.0 + ((b & 1ULL) ? eps : -eps));
+}
+
 struct GPUProfileSlot {
   uint64_t minRes;
   uint64_t maxRes;
@@ -112,16 +123,15 @@ struct PoseidonCUDAProfileTable {
   // Each profiled function gets its own slot block and output file. A probe's
   // funcName is a distinct device-global string constant, so its pointer is a
   // race-free key (atomicCAS on the 64-bit pointer). Slot block =
-  // slots[funcIdx*slotCount + idx]. The capacity is POSEIDON_PROFILE_MAX_FUNCS;
-  // overflow aborts in poseidonRegisterIdx rather than fold one function's
-  // atomics into another's slot block.
+  // slots[funcIdx*slotCount + idx]. The capacity is the number of functions
+  // the registered modules profile; overflow aborts in poseidonRegisterIdx
+  // rather than fold one function's atomics into another's slot block.
   int maxFuncs;
   const char **funcReg; // [maxFuncs]
   char *funcNames;      // [maxFuncs][POSEIDON_FUNCNAME_MAXLEN]
-  // Per-function launch geometry: gridDim is captured in the value logger,
-  // blockDim and the launch/CTA count in poseidonProfileBlockDimsCUDA. They are
-  // per function because clones of one function run under different block
-  // shapes. 0 = unknown.
+  // Per-function launch geometry and block count, recorded by
+  // poseidonProfileBlockDimsCUDA once per block. They are per function because
+  // clones of one function run under different block shapes. 0 = unknown.
   uint32_t *gridDimByFunc;               // [maxFuncs][3]
   uint32_t *blockDimByFunc;              // [maxFuncs][3]
   unsigned long long *launchCountByFunc; // [maxFuncs]

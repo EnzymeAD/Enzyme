@@ -28,11 +28,12 @@ namespace poseidon {
 // the buffer, so every site and call that passes a pointer into it must see
 // the same shadow at the same offset. A shadow starts zeroed and accumulates
 // for the rest of the run: a per-call reseed would report a different gradient
-// for a site that reads its own output. Memory is Ops':
-//   void *allocZeroed(size_t bytes, const char *site);
+// for a site that reads its own output. Memory is Ops', each operation ordered
+// on `stream`, an opaque handle of the launch that takes the shadow:
+//   void *allocZeroed(size_t bytes, const char *site, void *stream);
 //   void free(void *p);         // a shadow being replaced
 //   void freeAtExit(void *p);
-//   void fillOnes<T>(T *p, size_t n);
+//   void fillOnes<T>(T *p, size_t n, void *stream);
 template <class Ops> class ShadowTable {
 public:
   // The table of the process, never destroyed: its buffers are freed at exit
@@ -53,17 +54,17 @@ public:
   // so the first site that writes a buffer consumes its adjoint and leaves
   // zero behind for the sites that write it later.
   void *shadowOf(uintptr_t base, size_t bytes, int site, int width,
-                 const char *siteName) {
+                 const char *siteName, void *stream = nullptr) {
     Shadow &sb = shadows[base];
     if (!sb.p || sb.bytes != bytes) {
       if (sb.p)
         Ops::free(sb.p);
-      sb.p = Ops::allocZeroed(bytes, siteName);
+      sb.p = Ops::allocZeroed(bytes, siteName, stream);
       sb.bytes = bytes;
       sb.seeded.clear();
     }
     if (width && sb.seeded.insert(site).second)
-      seed(sb.p, bytes, width);
+      seed(sb.p, bytes, width, stream);
     return sb.p;
   }
 
@@ -74,11 +75,11 @@ private:
     std::set<int> seeded;
   };
 
-  static void seed(void *p, size_t bytes, int width) {
+  static void seed(void *p, size_t bytes, int width, void *stream) {
     if (width == 8)
-      Ops::fillOnes((double *)p, bytes / sizeof(double));
+      Ops::fillOnes((double *)p, bytes / sizeof(double), stream);
     else if (width == 4)
-      Ops::fillOnes((float *)p, bytes / sizeof(float));
+      Ops::fillOnes((float *)p, bytes / sizeof(float), stream);
     else {
       fprintf(stderr,
               "Poseidon FPProfiler: no seed rule for a %d-byte output "

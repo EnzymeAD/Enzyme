@@ -61,8 +61,8 @@ const Target &hostTarget() {
 const ProbeABI &hostProbes() {
   static const ProbeABI P{"poseidonLogValue",
                           "poseidonLogGrad",
-                          /*PerturbF64=*/"",
-                          /*PerturbF32=*/"",
+                          "poseidonProbePerturb",
+                          "poseidonProbePerturbf",
                           /*BlockDims=*/"",
                           /*PublishStatic=*/"",
                           "poseidonRegisterProfileStatic",

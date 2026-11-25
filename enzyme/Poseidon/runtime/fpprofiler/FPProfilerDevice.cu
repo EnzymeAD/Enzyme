@@ -42,7 +42,7 @@ __device__ __attribute__((noinline)) bool poseidonFirstFatal() {
 // statistics.
 __device__ __attribute__((noinline)) int
 poseidonRegisterIdx(const char **reg, char *names, int cap, const char *fn,
-                    const char *which, const char *envVar) {
+                    const char *which) {
   if (!reg) {
     if (poseidonFirstFatal())
       printf("Poseidon FPProfiler: the profiler table of the device module "
@@ -97,18 +97,19 @@ poseidonRegisterIdx(const char **reg, char *names, int cap, const char *fn,
     }
   }
   if (poseidonFirstFatal())
-    printf("Poseidon FPProfiler: %s function registry is FULL (%d entries) "
-           "while registering '%s'. Raise %s. Aborting rather than folding "
-           "this function's statistics into another function's slots.\n",
-           which, cap, fn, envVar);
+    printf("Poseidon FPProfiler: %s function registry is FULL (%d entries, "
+           "the functions the registered device modules profile) while "
+           "registering '%s', whose module registered fewer. Aborting rather "
+           "than folding this function's statistics into another function's "
+           "slots.\n",
+           which, cap, fn);
   __trap();
   return -1;
 }
 
 __device__ inline int poseidonFuncIdx(const char *fn) {
   const PoseidonCUDAProfileTable &T = __poseidon_profile_table;
-  return poseidonRegisterIdx(T.funcReg, T.funcNames, T.maxFuncs, fn, "value",
-                             "POSEIDON_PROFILE_MAX_FUNCS");
+  return poseidonRegisterIdx(T.funcReg, T.funcNames, T.maxFuncs, fn, "value");
 }
 
 // The slot of probe idx of the function funcName, whose registry index goes to
@@ -117,10 +118,11 @@ __device__ inline GPUProfileSlot *poseidonSlot(const char *funcName, size_t idx,
                                                int &fi) {
   const PoseidonCUDAProfileTable &T = __poseidon_profile_table;
   if (T.funcReg && idx >= T.slotCount) {
-    printf("Poseidon FPProfiler: probe idx %llu >= "
-           "POSEIDON_PROFILE_MAX_SLOTS=%llu. "
-           "Consider increasing POSEIDON_PROFILE_MAX_SLOTS.\n",
-           (unsigned long long)idx, (unsigned long long)T.slotCount);
+    if (poseidonFirstFatal())
+      printf("Poseidon FPProfiler: probe %llu of '%s' is past the %llu "
+             "probes the registered device modules declared.\n",
+             (unsigned long long)idx, funcName,
+             (unsigned long long)T.slotCount);
     __trap();
   }
   fi = poseidonFuncIdx(funcName);
@@ -164,16 +166,7 @@ poseidonProbePerturbCUDA(int site, double v) {
   double eps = __poseidon_profile_table.probeEps;
   if (eps == 0.0 || site != __poseidon_profile_table.probeSite)
     return v;
-  // Value-dependent sign (bit hash): a uniform (1+eps) factor commutes through
-  // linear operations and cancellations ((1+eps)x - (1+eps)y = (1+eps)(x-y)),
-  // hiding exactly the cancellation amplification the probe must expose. A
-  // deterministic +/-eps keyed on the value's bits models independent
-  // per-operation rounding while staying reproducible across runs.
-  unsigned long long b = __double_as_longlong(v);
-  b ^= b >> 33;
-  b *= 0xff51afd7ed558ccdULL;
-  b ^= b >> 33;
-  return v * (1.0 + ((b & 1ULL) ? eps : -eps));
+  return poseidonPerturbed(v, eps);
 }
 
 extern "C" __device__ __attribute__((noinline)) float
@@ -217,6 +210,9 @@ poseidonProfileBlockDimsCUDA(const char *funcName) {
     atomicMax(&T.blockDimByFunc[(size_t)fi * 3 + 1], blockDim.y);
     atomicMax(&T.blockDimByFunc[(size_t)fi * 3 + 2], blockDim.z);
     atomicAdd(&T.launchCountByFunc[fi], 1ULL);
+    atomicMax(&T.gridDimByFunc[(size_t)fi * 3 + 0], gridDim.x);
+    atomicMax(&T.gridDimByFunc[(size_t)fi * 3 + 1], gridDim.y);
+    atomicMax(&T.gridDimByFunc[(size_t)fi * 3 + 2], gridDim.z);
   }
 }
 
@@ -259,11 +255,6 @@ poseidonLogValueCUDA(const char *funcName, size_t idx, double res,
     return;
   int fi;
   GPUProfileSlot *slot = poseidonSlot(funcName, idx, fi);
-
-  // Idempotent: gridDim is fixed per launch.
-  atomicMax(&T.gridDimByFunc[(size_t)fi * 3 + 0], gridDim.x);
-  atomicMax(&T.gridDimByFunc[(size_t)fi * 3 + 1], gridDim.y);
-  atomicMax(&T.gridDimByFunc[(size_t)fi * 3 + 2], gridDim.z);
 
   atomicMinDouble(&slot->minRes, res);
   atomicMaxDouble(&slot->maxRes, res);

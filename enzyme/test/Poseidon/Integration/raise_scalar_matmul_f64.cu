@@ -10,13 +10,13 @@
 // RUN: rm -rf %t && mkdir %t
 // RUN: %clang -x cuda --cuda-gpu-arch=%gpu_arch -fcuda-rdc -O2 \
 // RUN:     %loadClangPoseidonEnzyme -mllvm --poseidon-profile-generate -mllvm -poseidon-cache=%t/cg \
-// RUN:     -I%poseidon_profile_inc %s -x none %poseidon_profile_cuda_lib %poseidon_profile_lib \
+// RUN:     -I%poseidon_profile_inc -DPOSEIDON_DEVICE_MATH %s -x none %poseidon_profile_cuda_lib %poseidon_profile_lib \
 // RUN:     -L%cuda_lib_dir -lcudart -lstdc++ -lm -o %t/exe
 // RUN: env POSEIDON_PROFILE_DIR=%t/profiles %t/exe | FileCheck --check-prefix=PRIMAL %s
 // RUN: FileCheck --check-prefix=PROF %s < %t/profiles/preprocess_scalar_matmul_body_f64.fpprofile
 //
 // RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -O2 \
-// RUN:     -S -emit-llvm %s -o %t/dev.ll
+// RUN:     -I%poseidon_profile_inc -DPOSEIDON_DEVICE_MATH -S -emit-llvm %s -o %t/dev.ll
 // RUN: %opt %t/dev.ll %loadPoseidon \
 // RUN:     -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" \
 // RUN:     -poseidon-profile-use=%t/profiles \
@@ -31,6 +31,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cuda_runtime.h>
+
+#include "poseidon/poseidon.h"
 
 template <typename R, typename... T>
 __device__ R __poseidon_fp_optimize(void *, T...);

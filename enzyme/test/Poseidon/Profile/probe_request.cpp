@@ -8,14 +8,17 @@
 // RUN: FileCheck --check-prefix=UNMEASURED %s < %t/plain/preprocess__Z5gaussPKdPdi_poseidon_body.fpprofile
 // RUN: FileCheck --check-prefix=UNMEASURED %s < %t/plain/preprocess__Z4wavePKdPdi_poseidon_body.fpprofile
 
-// RUN: env POSEIDON_PROBE=1 POSEIDON_PROBE_LADDER=1e-6 POSEIDON_PROFILE_DIR=%t/env %t/gen %t/env.runs > /dev/null 2> %t/env.err
-// RUN: FileCheck --check-prefix=FOUR %s < %t/env.runs
-// RUN: FileCheck --check-prefix=MEASURE %s < %t/env.err
+// RUN: env POSEIDON_PROBE=1 POSEIDON_PROBE_LADDER=1e-6,1e-5 POSEIDON_PROFILE_DIR=%t/env %t/gen %t/env.runs > /dev/null 2> %t/env.err
+// RUN: FileCheck --check-prefix=SIX %s < %t/env.runs
+// RUN: FileCheck --check-prefix=MEASURE -DRUNS=5 %s < %t/env.err
 // RUN: FileCheck --check-prefix=MEASURED %s < %t/env/preprocess__Z5gaussPKdPdi_poseidon_body.fpprofile
+// RUN: FileCheck --check-prefix=MEASURED %s < %t/env/preprocess__Z4wavePKdPdi_poseidon_body.fpprofile
+// RUN: ls -A %t/env | FileCheck --check-prefix=FILES %s
+// RUN: not env POSEIDON_PROBE=1 POSEIDON_PROBE_LADDER=1e-6,x POSEIDON_PROFILE_DIR=%t/badladder %t/gen %t/badladder.runs 2>&1 | FileCheck --check-prefix=LADDER %s
 
 // RUN: env POSEIDON_PROBE_LADDER=1e-6 POSEIDON_PROFILE_DIR=%t/tool %poseidon_probe -- %t/gen %t/tool.runs > /dev/null 2> %t/tool.err
 // RUN: FileCheck --check-prefix=FOUR %s < %t/tool.runs
-// RUN: FileCheck --check-prefix=MEASURE %s < %t/tool.err
+// RUN: FileCheck --check-prefix=MEASURE -DRUNS=3 %s < %t/tool.err
 // RUN: FileCheck --check-prefix=MEASURED %s < %t/tool/preprocess__Z4wavePKdPdi_poseidon_body.fpprofile
 // RUN: not %poseidon_probe 2>&1 | FileCheck --check-prefix=USAGE %s
 
@@ -39,9 +42,10 @@
 // use stops on them; POSEIDON_PROBE=0 declines, and profile use then solves
 // each site against its own target. The program counts its own runs. A run of
 // the measurement writes the metric and no profile.
-// The host target has no perturbation hook, so what a measurement finds here
-// is not checked, only that it ran. The metric's name holds a space, which
-// the measurement runs have to read back.
+// Both sites move the metric well above the noise of its runs, so each gets a
+// nonzero condition number. The metric's name holds a space, which the
+// measurement runs have to read back, and is longer than a string keeps
+// inline, so that the exit handler reads it from memory it still owns.
 
 #include "poseidon/poseidon.h"
 #include <cmath>
@@ -69,7 +73,7 @@ int main(int argc, char **argv) {
     x[i] = -2.0 + 4.0 * i / (n - 1);
   gauss(x.data(), y.data(), n);
   wave(x.data(), z.data(), n);
-  poseidon_metric("y sum", y[n / 3] + z[n / 3]);
+  poseidon_metric("sum of y and z at a third", y[n / 3] + z[n / 3]);
   printf("%.17g\n", y[n / 3] + z[n / 3]);
 }
 
@@ -79,10 +83,13 @@ int main(int argc, char **argv) {
 // FOUR-COUNT-4: run
 // FOUR-NOT: run
 
-// NOTICE: [probe] metric "y sum" was declared but its condition numbers at 2 sites were not measured, and profile use needs them (POSEIDON_PROBE=0 on this run solves each site against its own target instead); measuring takes 3 more runs of this program: poseidon-probe -- {{.*}}/gen {{.*}}/plain.runs
+// SIX-COUNT-6: run
+// SIX-NOT: run
+
+// NOTICE: [probe] metric "sum of y and z at a third" was declared but its condition numbers at 2 sites were not measured, and profile use needs them (POSEIDON_PROBE=0 on this run solves each site against its own target instead); measuring takes 3 more runs of this program: poseidon-probe -- {{.*}}/gen {{.*}}/plain.runs
 // NOTICE-NOT: [probe]
 
-// DECLINED: [probe] metric "y sum" was declared and its condition numbers at 2 sites are not measured (POSEIDON_PROBE=0): each site is solved against its own target
+// DECLINED: [probe] metric "sum of y and z at a third" was declared and its condition numbers at 2 sites are not measured (POSEIDON_PROBE=0): each site is solved against its own target
 // DECLINED-NOT: [probe]
 
 // NOKAPPA: SiteId = [[ID]]
@@ -101,22 +108,32 @@ int main(int argc, char **argv) {
 // UNMEASURED-NOT: Kappa
 
 // MEASURE-NOT: [probe]
-// MEASURE: [probe] measuring the condition numbers of metric "y sum" at 2 sites: 3 more runs of this program (run it without POSEIDON_PROBE=1 to skip)
+// MEASURE: [probe] measuring the condition numbers of metric "sum of y and z at a third" at 2 sites: [[RUNS]] more runs of this program (run it without POSEIDON_PROBE=1 to skip)
 // MEASURE-NEXT: [probe] baseline run 2 -> noise floor
 // MEASURE-NOT: not measured
 // MEASURE: [probe] profile run: {{[0-9.]+}} s
-// MEASURE-NEXT: [probe] condition-number measurement: 3 runs, {{[0-9.]+}} s
+// MEASURE-NEXT: [probe] condition-number measurement: [[RUNS]] runs, {{[0-9.]+}} s
 
 // CHILD-NOT: fpprofile
 // CHILD: metric.txt
 // CHILD-NOT: fpprofile
 
-// MEASURED: Kappa =
-// MEASURED-NOT: unmeasured
+// MEASURED: Kappa = {{[1-9]|0\.0*[1-9]}}
+// MEASURED-NEXT: KappaMark = {{ok|nonlinear}}
+
+// Every profile is written whole through a file renamed over it, and the
+// measurement rewrites them the same way.
+// FILES-NOT: tmp
+// FILES: metric.txt
+// FILES-NEXT: preprocess__Z4wavePKdPdi_poseidon_body.fpprofile
+// FILES-NEXT: preprocess__Z5gaussPKdPdi_poseidon_body.fpprofile
+// FILES-NOT: tmp
+
+// LADDER: Poseidon FPProfiler: POSEIDON_PROBE_LADDER='1e-6,x' is not a comma-separated list of positive numbers.
 
 // USAGE: usage: poseidon-probe -- <program> [args...]
 
-// USE: probe_request.cpp:[[#@LINE-68]]:1: error: Poseidon: the profiling run declared a quantity of interest with poseidon_metric and did not measure the condition number of preprocess__Z5gaussPKdPdi_poseidon_body against it ({{.*}}/plain/preprocess__Z5gaussPKdPdi_poseidon_body.fpprofile). Run the profiling build again as 'poseidon-probe -- <program> [args...]', the command the profiling run printed, to measure it, or with POSEIDON_PROBE=0 in its environment to solve each site against its own target.
+// USE: probe_request.cpp:[[#@LINE-81]]:1: error: Poseidon: the profiling run declared a quantity of interest with poseidon_metric and did not measure the condition number of preprocess__Z5gaussPKdPdi_poseidon_body against it ({{.*}}/plain/preprocess__Z5gaussPKdPdi_poseidon_body.fpprofile). Run the profiling build again as 'poseidon-probe -- <program> [args...]', the command the profiling run printed, to measure it, or with POSEIDON_PROBE=0 in its environment to solve each site against its own target.
 // USE-NEXT: POSEIDON_OPTIMIZE void gauss(const double *x, double *y, int n) {
 
 // USAGE: That takes 1 + <sites> x

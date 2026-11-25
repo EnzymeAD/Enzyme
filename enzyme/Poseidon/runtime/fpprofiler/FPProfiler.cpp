@@ -7,6 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "FPProfileName.h"
+#include "FPProfilerCUDA.h"
 #include "poseidon/poseidon.h"
 
 #include <algorithm>
@@ -26,6 +27,7 @@
 #include <memory>
 #include <mutex>
 #include <set>
+#include <sstream>
 #include <string>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -86,18 +88,20 @@ public:
 
 using namespace poseidon;
 
-// Compile-time static data of each site, registered before main. A
-// function-local static: a namespace-scope map could be constructed after the
-// constructor that registers into it runs.
+// Compile-time static data of each site, registered before main. Built on
+// first use, as a namespace-scope map could be constructed after the
+// constructor that registers into it runs, and never destroyed, as the exit
+// handler that reads it can run after a destructor registered later.
 static std::unordered_map<std::string, std::string> &staticHeaders() {
-  static std::unordered_map<std::string, std::string> m;
-  return m;
+  static auto *m = new std::unordered_map<std::string, std::string>();
+  return *m;
 }
 
-// The declared quantity of interest, latest value wins.
+// The declared quantity of interest, latest value wins. Never destroyed: it is
+// first set in main, after the exit handler that reads it was registered.
 static std::string &metricName() {
-  static std::string n;
-  return n;
+  static auto *n = new std::string();
+  return *n;
 }
 static double g_metricValue = 0.0;
 static bool g_metricSet = false;
@@ -105,6 +109,11 @@ static bool g_metricSet = false;
 // A run of the condition-number measurement: its parent reads back only the
 // metric, so it records and writes nothing else.
 static bool g_metricOnly = false;
+
+// The site the condition-number probe perturbs in this run and by how much;
+// eps 0 perturbs nothing.
+static int g_probeSite = -1;
+static double g_probeEps = 0.0;
 
 // When the runtime was registered, before main: the start of the profile run.
 static std::chrono::steady_clock::time_point g_runtimeStart;
@@ -148,15 +157,8 @@ public:
   }
 
   void write() const {
-    std::string outputPath = getOutputPath();
-
     profileMkdirP(dir);
-
-    errno = 0;
-    std::ofstream out(outputPath);
-    if (!out.is_open())
-      profileOpenFatal(outputPath, functionName.c_str());
-
+    std::ostringstream out;
     auto hdr = staticHeaders().find(functionName);
     if (hdr != staticHeaders().end())
       out << hdr->second;
@@ -169,7 +171,7 @@ public:
       writeProfileRecord(out, slot, info);
 
     out << "\n";
-    out.close();
+    profileWriteFile(getOutputPath(), out.str(), functionName.c_str());
     writtenThisRun().insert(profileFileName(functionName));
   }
 };
@@ -203,20 +205,10 @@ static void writeMetric() {
     return;
   const std::string dir = FPProfiler::outputDir();
   profileMkdirP(dir);
-  const std::string path = dir + "/metric.txt";
-  std::ofstream out(path);
-  if (!out.is_open()) {
-    std::cerr << "Poseidon FPProfiler: could not open " << path
-              << " for writing; the declared quantity of interest is LOST and "
-                 "the condition-number probe would score every site as "
-                 "unresponsive. Aborting."
-              << std::endl;
-    std::abort();
-  }
   char buf[64];
   std::snprintf(buf, sizeof(buf), "%.17g", g_metricValue);
-  out << metricName() << " " << buf << "\n";
-  out.close();
+  profileWriteFile(dir + "/metric.txt", metricName() + " " + buf + "\n",
+                   "the declared quantity of interest");
 }
 
 // ---------------------------------------------------------------------------
@@ -230,12 +222,6 @@ static void writeMetric() {
 // child has POSEIDON_PROBE=child, never re-executes and records nothing but the
 // metric.
 // ---------------------------------------------------------------------------
-
-// The children re-run the same GPU workload while this process is still inside
-// its exit handlers, and on a shared device the memory this one still holds is
-// what makes a child fail to allocate. Weak, so a profile-generation build with
-// no CUDA in it still links.
-extern "C" int cudaDeviceReset() __attribute__((weak));
 
 static std::vector<std::string> &probeArgv() {
   static std::vector<std::string> a;
@@ -414,9 +400,10 @@ static void probeReplaceKappa(const std::string &path,
       break;
   }
   kept.insert(kept.begin() + at, hdr.begin(), hdr.end());
-  std::ofstream out(path);
+  std::string text;
   for (const std::string &l : kept)
-    out << l << "\n";
+    text += l + "\n";
+  profileWriteFile(path, text, "the condition number");
 }
 
 static void probeWriteKappa(const std::string &path, double kappa,
@@ -442,7 +429,7 @@ static void poseidonProbeDriver() {
       std::chrono::steady_clock::now() - g_runtimeStart;
   // A run the driver started, or one armed by hand, is a measurement.
   const char *request = getenv("POSEIDON_PROBE");
-  if (getenv("POSEIDON_PROBE_SITE") || profileIsProbeChild())
+  if (g_probeSite >= 0 || profileIsProbeChild())
     return;
   if (!g_metricSet)
     return;
@@ -485,18 +472,8 @@ static void poseidonProbeDriver() {
   if (sites.size() < 2)
     return;
 
-  std::vector<double> ladder{1e-8, 1e-6, 1e-4};
-  if (const char *l = getenv("POSEIDON_PROBE_LADDER")) {
-    ladder.clear();
-    for (const char *p = l; *p;) {
-      char *end = nullptr;
-      double v = strtod(p, &end);
-      if (end == p)
-        break;
-      ladder.push_back(v);
-      p = (*end == ',') ? end + 1 : end;
-    }
-  }
+  const std::vector<double> ladder =
+      profileEnvPositiveList("POSEIDON_PROBE_LADDER", {1e-8, 1e-6, 1e-4});
   const size_t runs = 1 + sites.size() * ladder.size();
 
   if (request && !strcmp(request, "0")) {
@@ -545,9 +522,6 @@ static void poseidonProbeDriver() {
               << std::endl;
     return;
   }
-  if (cudaDeviceReset)
-    (void)cudaDeviceReset();
-
   const double m0 = g_metricValue;
   auto childEnv = [&](const std::string &dir) {
     return std::vector<std::string>{"POSEIDON_PROBE=child",
@@ -672,8 +646,18 @@ static void writeAllProfiles() {
   writeMetric();
 }
 
+// Whether this program was built for profile generation: a site registered
+// here, or the device profiler wrote a profile. A profile-use build links this
+// runtime for poseidon_metric and has none.
+static bool profilesSites() {
+  return !staticHeaders().empty() || !profilerRegistry.empty() ||
+         !writtenElsewhere().empty();
+}
+
 static void writeAllProfilesAtExit() {
   std::lock_guard<std::mutex> lock(registryMutex);
+  if (!g_metricOnly && !profilesSites())
+    return;
   writeAllProfiles();
   profilerRegistry.clear();
   poseidonProbeDriver();
@@ -682,6 +666,9 @@ static void writeAllProfilesAtExit() {
 static int RegisterFPProfileRuntime() {
   g_runtimeStart = std::chrono::steady_clock::now();
   g_metricOnly = profileIsProbeChild();
+  g_probeSite = (int)profileEnvInteger("POSEIDON_PROBE_SITE", -1);
+  if (g_probeSite >= 0)
+    g_probeEps = profileEnvPositiveReal("POSEIDON_PROBE_EPS", 1e-6);
   FPProfiler::setOutputDir(profileDirectory());
 
   captureProbeArgv();
@@ -710,6 +697,28 @@ void poseidonRegisterProfileStatic(const char *funcName, const char *text) {
     return;
   std::lock_guard<std::mutex> lock(registryMutex);
   staticHeaders()[funcName] = text;
+}
+
+// Whether this run, at exit, measures the condition numbers by running the
+// program again; the device profiler then releases the device for those runs.
+bool poseidonProbeWillMeasure() {
+  const char *request = getenv("POSEIDON_PROBE");
+  std::lock_guard<std::mutex> lock(registryMutex);
+  return !g_metricOnly && g_metricSet && g_probeSite < 0 && request &&
+         !strcmp(request, "1") && profilesSites();
+}
+
+// The condition-number probe's perturbation of a value of the host site
+// `site` (FPProfilerCUDA.h poseidonPerturbed); the identity unless this run
+// probes that site.
+double poseidonProbePerturb(int site, double v) {
+  return site == g_probeSite && g_probeEps != 0.0
+             ? poseidonPerturbed(v, g_probeEps)
+             : v;
+}
+
+float poseidonProbePerturbf(int site, float v) {
+  return (float)poseidonProbePerturb(site, (double)v);
 }
 
 void poseidonProfileWritten(const char *funcName) {

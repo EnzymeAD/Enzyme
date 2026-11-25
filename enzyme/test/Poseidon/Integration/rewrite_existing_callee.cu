@@ -21,6 +21,8 @@
 #include <cstdio>
 #include <cuda_runtime.h>
 
+#include "poseidon/poseidon.h"
+
 __global__ void waved(double *o, const double *a, int n) {
   int i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i < n) {
@@ -62,7 +64,7 @@ int main() {
 
 // PRIMAL: WAVED-PASS
 
-// The rewritten body narrows x once and calls the module's fastcc __nv_expf on
+// The rewritten body narrows x once and calls the module's __nv_expf on
 // its negation.
 // SOLVE: [poseidon] Optimizing [[BODY:preprocess__Z5wavedPdPKdi_poseidon_body]] with relative error tolerance: 1.000000e-03
 // SOLVE: Applying solution for CS: All FP64(0%) + FP32(100%) (#0)
@@ -70,5 +72,5 @@ int main() {
 // SOLVE: define internal void @[[BODY]](
 // SOLVE: [[XF:%[0-9]+]] = fptrunc double %{{[0-9]+}} to float
 // SOLVE-NEXT: [[NEG:%[0-9]+]] = fneg float [[XF]]
-// SOLVE-NEXT: {{%[0-9]+}} = {{(tail )?}}call fastcc float @__nv_expf(float [[NEG]])
+// SOLVE-NEXT: {{%[0-9]+}} = {{(tail )?}}call float @__nv_expf(float [[NEG]])
 // SOLVE: [poseidon] {{.*}}rewrite_existing_callee.cu: 1 function(s) a rewrite reached; every other function as written

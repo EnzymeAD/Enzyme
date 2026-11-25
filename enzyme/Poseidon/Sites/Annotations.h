@@ -81,10 +81,6 @@ bool foldDeviceSiteCallees(const Options &O, llvm::Module &M);
 // An error at `call`, a __poseidon_optimize of the annotated function `name`.
 void reportAnnotatedCall(llvm::CallBase *call, llvm::StringRef name);
 
-// Whether `M` has a site made with poseidon/poseidon.h: an annotated function,
-// or a call through one of its identities.
-bool hasHeaderSite(llvm::Module &M);
-
 // Warns once per module about every annotated kernel of a compile without a
 // profile action.
 void warnSitesWithoutProfile(Session &S, llvm::Module &M);

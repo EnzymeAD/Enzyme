@@ -36,6 +36,8 @@
 #include <cstdlib>
 #include <cuda_runtime.h>
 
+#include "poseidon/poseidon.h"
+
 template <typename R, typename... T>
 __device__ R __poseidon_fp_optimize(void *, T...);
 __device__ int enzyme_const;

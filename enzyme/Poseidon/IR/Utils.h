@@ -83,6 +83,8 @@ std::string shortDouble(double v);
 std::string exactDouble(double v);
 // The demangled name of `F`.
 std::string displayName(const llvm::Function &F);
+// Whether `F` calls the function named `name` directly.
+bool callsFunctionNamed(const llvm::Function &F, llvm::StringRef name);
 // Appends `insts` to `instsSorted` with each after those of `insts` it uses,
 // in `insts`' order where that leaves a choice.
 void topoSort(const llvm::SetVector<llvm::Instruction *> &insts,

@@ -68,5 +68,5 @@ int main() { return 0; }
 // REG: call void @__cudaRegisterVar(ptr %[[H]], ptr @__poseidon_profile_table, ptr @[[NAME]], ptr @[[NAME]], i32 0, i64 [[N]], i32 1, i32 0)
 // REG-NEXT: ret void
 // REG-LABEL: define internal void @__poseidon_profile_register_module_table()
-// REG-NEXT: call void @__poseidon_profile_register_module(ptr @__poseidon_profile_table)
+// REG-NEXT: call void @__poseidon_profile_register_module(ptr @__poseidon_profile_table, i32 0, i32 0)
 // REG-NEXT: ret void

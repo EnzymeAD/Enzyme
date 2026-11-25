@@ -82,7 +82,7 @@ int main() {
 // BIND: define internal void @__hip_module_ctor()
 // BIND: call void @__hipRegisterVar(ptr %{{[0-9]+}}, ptr {{.*}}@__poseidon_profile_table, ptr {{.*}}[[NAME]], ptr {{.*}}[[NAME]], i32 0, i64 [[SIZE]], i32 1, i32 0)
 // BIND: define internal void @__poseidon_profile_register_module_table()
-// BIND-NEXT: call void @__poseidon_profile_register_module(ptr {{.*}}@__poseidon_profile_table)
+// BIND-NEXT: call void @__poseidon_profile_register_module(ptr {{.*}}@__poseidon_profile_table, i32 0, i32 0)
 
 // DEV: per_call_host_half_amdgpu.hip:[[@LINE-50]]:{{[0-9]+}}: warning: Poseidon: area(double) is a device function no kernel of this translation unit calls; on the device, POSEIDON_OPTIMIZE marks a kernel or a function a kernel calls. Emitting the original computation.
 // DEV: [poseidon-profgen] vol(double const*, double*) at call 0 in qpoint(double const*): 2 shadow object(s), output(s) 1
