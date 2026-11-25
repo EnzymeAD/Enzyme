@@ -359,42 +359,28 @@ static GradientResult emitPotentialGradient(OpBuilder &builder, Location loc,
                                             Value autodiffPosition,
                                             Value gradSeed, Value rng,
                                             const HMCContext &ctx) {
-  RankedTensorType positionType = ctx.getPositionType();
   bool useSymbol = usesLogpdfSymbol(ctx);
-  RankedTensorType autodiffType =
-      useSymbol ? RankedTensorType::get({ctx.positionSize}, ctx.elementType)
-                : positionType;
+  ValueAndGradient potential = emitGradientRegion(
+      builder, loc, autodiffPosition, gradSeed, rng, ctx.autodiffAttrs,
+      [&](ValueRange args, Value &bodyRng) -> Value {
+        Value qArg = args.front();
+        if (useSymbol) {
+          Value logDensity = emitLogpdfFnInAutodiff(builder, loc, qArg, ctx);
+          // TODO(#2695): handle hybrid case
+          return arith::NegFOp::create(builder, loc, logDensity);
+        }
+        // `supports` is empty in logpdf mode; that logpdf has its own
+        // Jacobians.
+        Value qConstrained =
+            constrainPosition(builder, loc, qArg, ctx.supports);
+        return emitPotential(builder, loc, qArg, qConstrained, bodyRng, ctx);
+      });
 
-  auto autodiffOp = enzyme::AutoDiffRegionOp::create(
-      builder, loc, TypeRange{ctx.getScalarType(), rng.getType(), autodiffType},
-      ValueRange{autodiffPosition, gradSeed},
-      buildGradientRegionAttrs(builder, /*numActiveArgs=*/1,
-                               ctx.autodiffAttrs));
-
-  Block *autodiffBlock = builder.createBlock(&autodiffOp.getBody());
-  Value qArg = autodiffBlock->addArgument(autodiffType, loc);
-  builder.setInsertionPointToStart(autodiffBlock);
-
-  if (useSymbol) {
-    Value logDensity = emitLogpdfFnInAutodiff(builder, loc, qArg, ctx);
-    Value potentialEnergy = arith::NegFOp::create(builder, loc, logDensity);
-    // TODO(#2695): handle hybrid case
-    enzyme::YieldOp::create(builder, loc, {potentialEnergy, rng});
-  } else {
-    // `supports` is empty in logpdf mode; that logpdf has its own Jacobians.
-    Value qConstrained = constrainPosition(builder, loc, qArg, ctx.supports);
-    Value rngOut = rng;
-    Value potentialEnergy =
-        emitPotential(builder, loc, qArg, qConstrained, rngOut, ctx);
-    enzyme::YieldOp::create(builder, loc, {potentialEnergy, rngOut});
-  }
-
-  builder.setInsertionPointAfter(autodiffOp);
-
-  Value grad = autodiffOp.getResult(2);
+  Value grad = potential.grads.front();
   if (useSymbol)
-    grad = impulse::ReshapeOp::create(builder, loc, positionType, grad);
-  return {autodiffOp.getResult(0), grad, autodiffOp.getResult(1)};
+    grad =
+        impulse::ReshapeOp::create(builder, loc, ctx.getPositionType(), grad);
+  return {potential.value, grad, rng};
 }
 
 GradientResult impulse::computePotentialAndGradient(OpBuilder &builder,

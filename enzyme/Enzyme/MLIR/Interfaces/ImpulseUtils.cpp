@@ -220,3 +220,29 @@ impulse::buildGradientRegionAttrs(Builder &builder, unsigned numActiveArgs,
     llvm::append_range(attrs, extra);
   return attrs;
 }
+
+ValueAndGradient impulse::emitGradientRegion(
+    OpBuilder &builder, Location loc, ValueRange args, Value seed, Value &rng,
+    DictionaryAttr extraAttrs,
+    function_ref<Value(ValueRange regionArgs, Value &rng)> body) {
+  SmallVector<Value> inputs(args);
+  inputs.push_back(seed);
+  SmallVector<Type> resultTypes{seed.getType(), rng.getType()};
+  llvm::append_range(resultTypes, args.getTypes());
+  auto regionOp = enzyme::AutoDiffRegionOp::create(
+      builder, loc, resultTypes, inputs,
+      buildGradientRegionAttrs(builder, args.size(), extraAttrs));
+
+  Block *block = builder.createBlock(&regionOp.getBody());
+  for (Value arg : args)
+    block->addArgument(arg.getType(), loc);
+  builder.setInsertionPointToStart(block);
+  Value bodyRng = rng;
+  Value value = body(block->getArguments(), bodyRng);
+  enzyme::YieldOp::create(builder, loc, ValueRange{value, bodyRng});
+  builder.setInsertionPointAfter(regionOp);
+
+  rng = regionOp.getResult(1);
+  return {regionOp.getResult(0),
+          llvm::to_vector_of<Value>(regionOp.getResults().drop_front(2))};
+}

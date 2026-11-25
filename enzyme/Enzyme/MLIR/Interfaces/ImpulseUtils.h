@@ -90,6 +90,23 @@ SmallVector<NamedAttribute> buildGradientRegionAttrs(Builder &builder,
                                                      unsigned numActiveArgs,
                                                      DictionaryAttr extra);
 
+/// A scalar and its gradient with respect to each argument of the region that
+/// computed it.
+struct ValueAndGradient {
+  Value value;
+  SmallVector<Value> grads;
+};
+
+/// Emits an `enzyme.autodiff_region` over `args`, seeded with the rank-0
+/// `seed`, whose body `body` builds from the region arguments the scalar to
+/// differentiate, drawing from the RNG state it is given. Advances `rng` to
+/// the RNG state the body leaves and returns the scalar and its gradients.
+/// The attributes of the region are those of buildGradientRegionAttrs.
+ValueAndGradient
+emitGradientRegion(OpBuilder &builder, Location loc, ValueRange args,
+                   Value seed, Value &rng, DictionaryAttr extraAttrs,
+                   function_ref<Value(ValueRange regionArgs, Value &rng)> body);
+
 } // namespace impulse
 } // namespace mlir
 

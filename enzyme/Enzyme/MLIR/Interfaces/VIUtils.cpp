@@ -101,18 +101,6 @@ static Value emitGaussianLogQ(OpBuilder &builder, Location loc,
 }
 
 namespace {
-/// The ELBO of one particle and the model's rng state after scoring it.
-struct ParticleELBO {
-  Value elbo;
-  Value rng;
-};
-
-/// An ELBO estimate and its gradient with respect to each guide parameter.
-struct ELBOGradient {
-  Value elbo;
-  SmallVector<Value> grads;
-};
-
 /// A guide parameter and its two optimizer state slots. An update rule that
 /// keeps fewer slots passes the unused ones through.
 struct ParamState {
@@ -131,45 +119,12 @@ struct SVILoopResult {
 };
 } // namespace
 
-/// Emits an autodiff region that differentiates, with respect to `params`, the
-/// ELBO that `emitELBO` builds inside the region from the region arguments
-/// standing for `params`.
-static ELBOGradient
-emitELBOGradient(OpBuilder &builder, Location loc, ValueRange params,
-                 Type rngType, const VIContext &ctx,
-                 function_ref<ParticleELBO(ValueRange paramArgs)> emitELBO) {
-  RankedTensorType scalarType = ctx.getScalarType();
-  Value gradSeed = emitSplatConstant(builder, loc, scalarType, 1.0);
-  SmallVector<Value> adInputs = llvm::to_vector(params);
-  adInputs.push_back(gradSeed);
-  SmallVector<Type> resultTypes{scalarType, rngType};
-  llvm::append_range(resultTypes, params.getTypes());
-  auto adOp = enzyme::AutoDiffRegionOp::create(
-      builder, loc, resultTypes, adInputs,
-      buildGradientRegionAttrs(builder, params.size(), ctx.autodiffAttrs));
-
-  Block *adBlock = builder.createBlock(&adOp.getBody());
-  for (Value param : params)
-    adBlock->addArgument(param.getType(), loc);
-  {
-    OpBuilder::InsertionGuard guard(builder);
-    builder.setInsertionPointToStart(adBlock);
-    ParticleELBO particle = emitELBO(adBlock->getArguments());
-    enzyme::YieldOp::create(builder, loc,
-                            ValueRange{particle.elbo, particle.rng});
-  }
-  builder.setInsertionPointAfter(adOp);
-
-  return {adOp.getResult(0),
-          llvm::to_vector_of<Value>(adOp.getResults().drop_front(2))};
-}
-
 /// One ELBO particle for a mean-field normal guide. `params` are the location
 /// and the unconstrained scale, whose softplus is the standard deviation; the
 /// sample is constrained and its log-Jacobian enters log q.
-static ELBOGradient emitAutoNormalParticle(OpBuilder &builder, Location loc,
-                                           ValueRange params, Value pkey,
-                                           const VIContext &ctx) {
+static ValueAndGradient emitAutoNormalParticle(OpBuilder &builder, Location loc,
+                                               ValueRange params, Value pkey,
+                                               const VIContext &ctx) {
   Type rngType = pkey.getType();
   auto positionType = ctx.getPositionType();
   auto scalarType = ctx.getScalarType();
@@ -210,9 +165,11 @@ static ELBOGradient emitAutoNormalParticle(OpBuilder &builder, Location loc,
   eps = conditionalDump(builder, loc, eps, "VI: eps (combined per-site)",
                         ctx.debugDump);
 
-  return emitELBOGradient(
-      builder, loc, params, rngType, ctx,
-      [&](ValueRange paramArgs) -> ParticleELBO {
+  Value gradSeed = emitSplatConstant(builder, loc, scalarType, 1.0);
+  Value modelRng = modelSeed;
+  return emitGradientRegion(
+      builder, loc, params, gradSeed, modelRng, ctx.autodiffAttrs,
+      [&](ValueRange paramArgs, Value &rng) -> Value {
         Value locArg = paramArgs[0];
         Value scaleArg = paramArgs[1];
 
@@ -247,47 +204,43 @@ static ELBOGradient emitAutoNormalParticle(OpBuilder &builder, Location loc,
         logQ = conditionalDump(builder, loc, logQ,
                                "VI: logQ=logQUnc-jacCorrection", ctx.debugDump);
 
-        Value modelRng = modelSeed;
-        Value logP =
-            emitModelLogDensity(builder, loc, zConstrained, modelRng, ctx);
+        Value logP = emitModelLogDensity(builder, loc, zConstrained, rng, ctx);
         logP = conditionalDump(builder, loc, logP, "VI: logP", ctx.debugDump);
 
         Value elbo = arith::SubFOp::create(builder, loc, logP, logQ);
-        elbo = conditionalDump(builder, loc, elbo, "VI: elbo=logP-logQ",
+        return conditionalDump(builder, loc, elbo, "VI: elbo=logP-logQ",
                                ctx.debugDump);
-        return {elbo, modelRng};
       });
 }
 
 /// One ELBO particle for a point-mass guide at `params[0]`: the model
 /// log-density at the constrained location, with no log q or Jacobian term.
 /// `pkey` is still split into a model and an unused guide seed.
-static ELBOGradient emitAutoDeltaParticle(OpBuilder &builder, Location loc,
-                                          ValueRange params, Value pkey,
-                                          const VIContext &ctx) {
+static ValueAndGradient emitAutoDeltaParticle(OpBuilder &builder, Location loc,
+                                              ValueRange params, Value pkey,
+                                              const VIContext &ctx) {
   Type rngType = pkey.getType();
 
   auto seedSplit = impulse::RandomSplitOp::create(
       builder, loc, TypeRange{rngType, rngType}, pkey);
-  Value modelSeed = seedSplit.getResult(0);
+  Value modelRng = seedSplit.getResult(0);
 
-  return emitELBOGradient(builder, loc, params, rngType, ctx,
-                          [&](ValueRange paramArgs) -> ParticleELBO {
-                            Value zConstrained = constrainPosition(
-                                builder, loc, paramArgs[0], ctx.supports);
-                            Value modelRng = modelSeed;
-                            Value logP = emitModelLogDensity(
-                                builder, loc, zConstrained, modelRng, ctx);
-                            return {logP, modelRng};
-                          });
+  Value gradSeed = emitSplatConstant(builder, loc, ctx.getScalarType(), 1.0);
+  return emitGradientRegion(
+      builder, loc, params, gradSeed, modelRng, ctx.autodiffAttrs,
+      [&](ValueRange paramArgs, Value &rng) -> Value {
+        Value zConstrained =
+            constrainPosition(builder, loc, paramArgs[0], ctx.supports);
+        return emitModelLogDensity(builder, loc, zConstrained, rng, ctx);
+      });
 }
 
 /// One ELBO particle for a full-rank normal guide. `params` are the location
 /// and the flat unconstrained scale_tril, which emitScaledUnitLowerCholesky
 /// maps to the lower Cholesky factor.
-static ELBOGradient emitAutoMVNParticle(OpBuilder &builder, Location loc,
-                                        ValueRange params, Value pkey,
-                                        const VIContext &ctx) {
+static ValueAndGradient emitAutoMVNParticle(OpBuilder &builder, Location loc,
+                                            ValueRange params, Value pkey,
+                                            const VIContext &ctx) {
   Type rngType = pkey.getType();
   auto positionType = ctx.getPositionType();
   auto scalarType = ctx.getScalarType();
@@ -313,9 +266,11 @@ static ELBOGradient emitAutoMVNParticle(OpBuilder &builder, Location loc,
                                         impulse::RngDistribution::NORMAL));
   Value eps = randOp.getResult();
 
-  return emitELBOGradient(
-      builder, loc, params, rngType, ctx,
-      [&](ValueRange paramArgs) -> ParticleELBO {
+  Value gradSeed = emitSplatConstant(builder, loc, scalarType, 1.0);
+  Value modelRng = modelSeed;
+  return emitGradientRegion(
+      builder, loc, params, gradSeed, modelRng, ctx.autodiffAttrs,
+      [&](ValueRange paramArgs, Value &rng) -> Value {
         impulse::ScaledUnitLowerCholeskyResult chol =
             impulse::emitScaledUnitLowerCholesky(builder, loc, paramArgs[1], d,
                                                  elemType);
@@ -329,27 +284,24 @@ static ELBOGradient emitAutoMVNParticle(OpBuilder &builder, Location loc,
 
         Value logQ = emitGaussianLogQ(builder, loc, chol.sumLogDiag, eps, ctx);
 
-        Value modelRng = modelSeed;
-        Value logP = emitModelLogDensity(builder, loc, z, modelRng, ctx);
-
-        Value elbo = arith::SubFOp::create(builder, loc, logP, logQ);
-        return {elbo, modelRng};
+        Value logP = emitModelLogDensity(builder, loc, z, rng, ctx);
+        return arith::SubFOp::create(builder, loc, logP, logQ);
       });
 }
 
 /// Signature shared by the per-guide particle emitters: one ELBO estimate and
 /// its gradient for the guide parameters `params` and particle key `pkey`.
-using ParticleEmitter = function_ref<ELBOGradient(
+using ParticleEmitter = function_ref<ValueAndGradient(
     OpBuilder &builder, Location loc, ValueRange params, Value pkey,
     const VIContext &ctx)>;
 
 /// Averages the ELBO and gradients of `ctx.numParticles` particles. A single
 /// particle uses `rngStep` as its key; more particles split it into one key
 /// each.
-static ELBOGradient averageParticles(OpBuilder &builder, Location loc,
-                                     ValueRange params, Value rngStep,
-                                     const VIContext &ctx,
-                                     ParticleEmitter emitParticle) {
+static ValueAndGradient averageParticles(OpBuilder &builder, Location loc,
+                                         ValueRange params, Value rngStep,
+                                         const VIContext &ctx,
+                                         ParticleEmitter emitParticle) {
   int64_t numParticles = ctx.numParticles;
   if (numParticles == 1)
     return emitParticle(builder, loc, params, rngStep, ctx);
@@ -365,8 +317,8 @@ static ELBOGradient averageParticles(OpBuilder &builder, Location loc,
         builder, loc, cast<RankedTensorType>(param.getType()), 0.0));
 
   for (Value pkey : keys.getResults()) {
-    ELBOGradient particle = emitParticle(builder, loc, params, pkey, ctx);
-    elboSum = arith::AddFOp::create(builder, loc, elboSum, particle.elbo);
+    ValueAndGradient particle = emitParticle(builder, loc, params, pkey, ctx);
+    elboSum = arith::AddFOp::create(builder, loc, elboSum, particle.value);
     for (auto [sum, grad] : llvm::zip_equal(gradSums, particle.grads))
       sum = arith::AddFOp::create(builder, loc, sum, grad);
   }
@@ -379,8 +331,8 @@ static ELBOGradient averageParticles(OpBuilder &builder, Location loc,
     if (!countSplats.contains(type))
       countSplats[type] = emitBroadcastScalar(builder, loc, count, type);
   }
-  ELBOGradient mean;
-  mean.elbo = arith::DivFOp::create(builder, loc, elboSum, count);
+  ValueAndGradient mean;
+  mean.value = arith::DivFOp::create(builder, loc, elboSum, count);
   for (auto [param, sum] : llvm::zip_equal(params, gradSums))
     mean.grads.push_back(arith::DivFOp::create(
         builder, loc, sum, countSplats.lookup(param.getType())));
@@ -674,7 +626,7 @@ static SVILoopResult emitSVILoop(OpBuilder &builder, Location loc,
     Value rngNext = updateSplit.getResult(0);
     Value rngStep = updateSplit.getResult(1);
 
-    ELBOGradient estimate =
+    ValueAndGradient estimate =
         averageParticles(builder, loc, params, rngStep, ctx, emitParticle);
 
     Value step = arith::AddIOp::create(builder, loc, iter, initStepCount);
@@ -691,7 +643,7 @@ static SVILoopResult emitSVILoop(OpBuilder &builder, Location loc,
     // state; its ELBO is still recorded and the key still advances.
     if (ctx.stableUpdate) {
       Value isFinite = computeIsFiniteForStableUpdate(
-          builder, loc, estimate.elbo, estimate.grads);
+          builder, loc, estimate.value, estimate.grads);
       auto keepIfFinite = [&](Value next, Value prev) -> Value {
         return impulse::SelectOp::create(builder, loc, prev.getType(), isFinite,
                                          next, prev);
@@ -712,12 +664,12 @@ static SVILoopResult emitSVILoop(OpBuilder &builder, Location loc,
         ValueRange{iter, c0i});
 
     Value elbo1d = impulse::ReshapeOp::create(
-        builder, loc, RankedTensorType::get({1}, elemType), estimate.elbo);
+        builder, loc, RankedTensorType::get({1}, elemType), estimate.value);
     Value elboBufNew = impulse::DynamicUpdateSliceOp::create(
         builder, loc, elboBufType, elboBufIter, elbo1d, ValueRange{iter});
 
     SmallVector<Value> yielded(newParams);
-    yielded.append({rngNext, traceBufNew, elboBufNew, estimate.elbo});
+    yielded.append({rngNext, traceBufNew, elboBufNew, estimate.value});
     llvm::append_range(yielded, newSlots);
     impulse::YieldOp::create(builder, loc, yielded);
   }
