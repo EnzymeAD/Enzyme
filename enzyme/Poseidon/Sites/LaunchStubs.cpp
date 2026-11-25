@@ -182,8 +182,9 @@ static bool registerProfiledKernels(const Options &O, Module &M) {
 
 llvm::PreservedAnalyses HostStubPass::run(llvm::Module &M,
                                           llvm::ModuleAnalysisManager &MAM) {
-  const Options &O = sessionOf(M, MAM).Opts;
-  if (Target::of(M).isDevice() || !handsOverLaunches(O))
+  Session &S = sessionOf(M, MAM);
+  const Options &O = S.Opts;
+  if (S.Stopped || Target::of(M).isDevice() || !handsOverLaunches(O))
     return llvm::PreservedAnalyses::all();
   // Profile generation: every launch of an annotated kernel goes through the
   // runtime helper that supplies its shadow buffers. Host dispatch

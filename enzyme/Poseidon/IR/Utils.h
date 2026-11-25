@@ -28,6 +28,7 @@
 #include "llvm/IR/PassManager.h"
 #include "llvm/IR/Type.h"
 #include "llvm/Passes/OptimizationLevel.h"
+#include "llvm/Support/Error.h"
 
 #include "Enzyme/PassUtils.h"
 
@@ -113,6 +114,39 @@ void simplifyFunction(llvm::Function &F, llvm::OptimizationLevel Level);
 // "Poseidon: ".
 void diagnose(const llvm::Function &F, const llvm::DiagnosticLocation &Loc,
               const llvm::Twine &Message, llvm::DiagnosticSeverity Severity);
+
+// A mistake in what the compile was given: where it is and what it is. A
+// function that finds one returns it as an Error up to the pass entry, which
+// reports it with reportUserErrors; the compile then fails through the
+// diagnostic handler's error count.
+class UserError : public llvm::ErrorInfo<UserError> {
+public:
+  static char ID;
+  // At `Loc` in `F`; a mistake no site is concerned in has no function.
+  UserError(const llvm::Function *F, llvm::DiagnosticLocation Loc,
+            std::string Message)
+      : F(F), Loc(Loc), Message(std::move(Message)) {}
+  void log(llvm::raw_ostream &OS) const override { OS << Message; }
+  std::error_code convertToErrorCode() const override {
+    return llvm::inconvertibleErrorCode();
+  }
+
+  const llvm::Function *F;
+  llvm::DiagnosticLocation Loc;
+  std::string Message;
+};
+
+llvm::Error userError(const llvm::Function &F,
+                      const llvm::DiagnosticLocation &Loc,
+                      const llvm::Twine &Message);
+llvm::Error userError(const llvm::Instruction &I, const llvm::Twine &Message);
+// A mistake no site is concerned in: a flag value, a plugin or a file of the
+// whole compile.
+llvm::Error userError(const llvm::Twine &Message);
+
+// Reports each error `E` holds as an error diagnostic in `Ctx`: a user error at
+// its location, any other as a mistake of the whole compile.
+void reportUserErrors(llvm::LLVMContext &Ctx, llvm::Error E);
 
 // A mistake in what the compile was given that leaves nothing to compile with:
 // an error diagnostic at `Loc` in `F`, then the compile ends with exit status 1

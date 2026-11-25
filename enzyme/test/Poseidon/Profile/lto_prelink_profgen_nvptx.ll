@@ -16,6 +16,7 @@
 ; the one of annotated_kernel_nvptx.ll.
 
 ; DEFERRED: {{^}}error: Poseidon: profile generation emitted a derivative request that nothing lowered. This is an LTO pre-link compile, where Enzyme leaves derivative requests to the post-link run unless -enzyme-lto-prelink is given; pass -mllvm -enzyme-lto-prelink=1 (for HIP as -Xclang -mllvm -Xclang -enzyme-lto-prelink=1).{{$}}
+; DEFERRED-NEXT: {{^}}1 error generated.{{$}}
 ; DEFERRED-NEXT: exit status 1
 
 ; The kernel calls the derivative with each pointer's shadow next to it, and the

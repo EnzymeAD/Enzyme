@@ -31,6 +31,7 @@
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/IR/Constants.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Module.h"
@@ -47,6 +48,7 @@
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/IPO/AlwaysInliner.h"
 #include "llvm/Transforms/Utils/Cloning.h"
+#include "llvm/Transforms/Utils/Local.h"
 
 #include <memory>
 #include <string>
@@ -118,13 +120,49 @@ static bool hasSite(const Options &O, Module &M) {
   return false;
 }
 
-static void requirePluginOrder(const Options &O, Module &M) {
+static Error requirePluginOrder(const Options &O, Module &M) {
   if (!hasSite(O, M) || !enzymeAlreadyRan(M))
-    return;
-  reportUserError(M.getContext(),
-                  "Enzyme's pass has already run on this module. The plugins "
-                  "must be given in the order -fpass-plugin=<Poseidon>.so "
-                  "-fpass-plugin=<ClangEnzyme>.so.");
+    return Error::success();
+  return userError("Enzyme's pass has already run on this module. The plugins "
+                   "must be given in the order -fpass-plugin=<Poseidon>.so "
+                   "-fpass-plugin=<ClangEnzyme>.so.");
+}
+
+// Erases what a stopped compile leaves no pass to lower: the markers and the
+// derivative requests Poseidon emits, whose metadata operands and parameters
+// the verifier accepts only until they are lowered. A call's result reads as
+// poison.
+static void eraseUnloweredCalls(Module &M) {
+  SmallVector<Function *, 4> callees;
+  for (Function &F : M)
+    if (F.isDeclaration() && (F.getName().starts_with(kAutodiffRequest) ||
+                              isMarkerCall(F.getName())))
+      callees.push_back(&F);
+  for (Function *F : callees) {
+    SmallVector<CallBase *, 8> calls;
+    for (User *U : F->users())
+      if (auto *CB = dyn_cast<CallBase>(U))
+        calls.push_back(CB);
+    for (CallBase *CB : calls) {
+      if (auto *II = dyn_cast<InvokeInst>(CB))
+        CB = changeToCall(II);
+      CB->replaceAllUsesWith(PoisonValue::get(CB->getType()));
+      CB->eraseFromParent();
+    }
+    if (F->use_empty())
+      F->eraseFromParent();
+  }
+}
+
+// The end of a pass a user error stopped: the error is reported, the module is
+// left valid for the passes after this one, and the session's later passes
+// leave it as it is. The pass may have changed the module before the error,
+// so no analysis is kept.
+static PreservedAnalyses stopOnError(Session &S, Module &M, Error E) {
+  reportUserErrors(M.getContext(), std::move(E));
+  eraseUnloweredCalls(M);
+  S.Stopped = true;
+  return PreservedAnalyses::none();
 }
 
 static void runAlwaysInliner(Module &M, ModuleAnalysisManager &MAM) {
@@ -141,8 +179,11 @@ namespace {
 struct OptimizePass : PassParent<OptimizePass> {
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &MAM) {
     Session &S = sessionOf(M, MAM);
+    if (S.Stopped)
+      return PreservedAnalyses::all();
     const Options &O = S.Opts;
-    requirePluginOrder(O, M);
+    if (Error E = requirePluginOrder(O, M))
+      return stopOnError(S, M, std::move(E));
 
     bool changed = lowerPerCallSites(O, S.Sites, M);
     if (O.Profiling.profileAction())
@@ -262,18 +303,16 @@ struct LatePass : PassParent<LatePass> {
   // Runs Enzyme once more, by its registered pipeline name, to lower the
   // reverse-mode request profile generation emits for a deferred clone; nothing
   // later in the pipeline would.
-  void runEnzyme(Module &M, LocalAnalysisManagers &AMs) {
+  Error runEnzyme(Module &M, LocalAnalysisManagers &AMs) {
     ModulePassManager MPM;
-    if (Error E = PB->parsePassPipeline(MPM, "enzyme")) {
-      std::string msg = toString(std::move(E));
-      reportUserError(M.getContext(),
-                      Twine("a deferred site needs a second Enzyme run and the "
-                            "Enzyme pass pipeline is not registered (") +
-                          msg +
-                          "). Add -fpass-plugin=<ClangEnzyme>.so after the "
-                          "Poseidon plugin.");
-    }
+    if (Error E = PB->parsePassPipeline(MPM, "enzyme"))
+      return userError(Twine("a deferred site needs a second Enzyme run and "
+                             "the Enzyme pass pipeline is not registered (") +
+                       toString(std::move(E)) +
+                       "). Add -fpass-plugin=<ClangEnzyme>.so after the "
+                       "Poseidon plugin.");
     MPM.run(M, AMs.MAM);
+    return Error::success();
   }
 
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &MAM) {
@@ -282,6 +321,8 @@ struct LatePass : PassParent<LatePass> {
       return PreservedAnalyses::all();
 
     Session &S = sessionOf(M, MAM);
+    if (S.Stopped)
+      return PreservedAnalyses::all();
     const Options &O = S.Opts;
     LocalAnalysisManagers AMs(*PB, S);
 
@@ -300,11 +341,13 @@ struct LatePass : PassParent<LatePass> {
     // undefined __enzyme_* symbol.
     for (Function *B : bodies)
       if (callsEnzymeRequest(*B))
-        reportUserError(*B, B->getSubprogram(),
-                        Twine("the marked body ") + B->getName() +
-                            " still holds an __enzyme_* request that nothing "
-                            "lowered. " +
-                            unloweredRequestReason(PhaseKnown, Phase, Level));
+        return stopOnError(
+            S, M,
+            userError(*B, B->getSubprogram(),
+                      Twine("the marked body ") + B->getName() +
+                          " still holds an __enzyme_* request that nothing "
+                          "lowered. " +
+                          unloweredRequestReason(PhaseKnown, Phase, Level)));
     // The canonical form of a deferred site is taken here, in both phases, so
     // that the slots the profile was numbered against are the ones the solve
     // sees.
@@ -352,7 +395,8 @@ struct LatePass : PassParent<LatePass> {
     runAlwaysInliner(M, AMs.MAM);
 
     if (instrumented) {
-      runEnzyme(M, AMs);
+      if (Error E = runEnzyme(M, AMs))
+        return stopOnError(S, M, std::move(E));
       runAlwaysInliner(M, AMs.MAM);
     }
 
@@ -374,6 +418,8 @@ struct LatePass : PassParent<LatePass> {
 struct HostSitePass : PassParent<HostSitePass> {
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &MAM) {
     Session &S = sessionOf(M, MAM);
+    if (S.Stopped)
+      return PreservedAnalyses::all();
     const Options &O = S.Opts;
     bool changed = false;
     if (Target::of(M).isDevice()) {
@@ -407,7 +453,7 @@ struct TwinSnapshotPass : PassParent<TwinSnapshotPass> {
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &MAM) {
     Session &S = sessionOf(M, MAM);
     const Options &O = S.Opts;
-    if (S.IsTwin || isOffloadHostHalf(M) || !hasSite(O, M))
+    if (S.Stopped || S.IsTwin || isOffloadHostHalf(M) || !hasSite(O, M))
       return PreservedAnalyses::all();
     if (O.Profiling.usesProfile() && !O.Profiling.generatesProfile() &&
         !O.Solver.JointDP)
@@ -431,14 +477,17 @@ struct FinalizePass : PassParent<FinalizePass> {
 
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &MAM) {
     Session &S = sessionOf(M, MAM);
+    if (S.Stopped)
+      return PreservedAnalyses::all();
     const Options &O = S.Opts;
     for (Function &F : M)
       if (F.isDeclaration() && !F.use_empty() &&
           F.getName().starts_with(kAutodiffRequest))
-        reportUserError(M.getContext(),
-                        Twine("profile generation emitted a derivative "
-                              "request that nothing lowered. ") +
-                            unloweredRequestReason(PhaseKnown, Phase, Level));
+        return stopOnError(
+            S, M,
+            userError(Twine("profile generation emitted a derivative request "
+                            "that nothing lowered. ") +
+                      unloweredRequestReason(PhaseKnown, Phase, Level)));
     const Target &T = Target::of(M);
     finalizeModule(S, M);
     // An annotation takes the address of the function it names, and a profiled
@@ -488,7 +537,10 @@ struct IfSitePass : PassParent<IfSitePass> {
       : Prefix(std::move(Prefix)), Pipeline(std::move(Pipeline)) {}
 
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &MAM) {
-    const Options &O = sessionOf(M, MAM).Opts;
+    Session &S = sessionOf(M, MAM);
+    if (S.Stopped)
+      return PreservedAnalyses::all();
+    const Options &O = S.Opts;
     if (!hasSite(O, M))
       return O.Profiling.generatesProfile() &&
                      injectHostProfilerInit(M, O.Diagnostics.Print)

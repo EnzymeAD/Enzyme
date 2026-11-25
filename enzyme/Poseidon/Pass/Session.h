@@ -57,6 +57,9 @@ public:
   // The session of the module as written, which FinalizePass compiles as a
   // build without a profile: it is not snapshotted and hands no launch over.
   const bool IsTwin;
+  // A user error ended Poseidon's work on the module: every later Poseidon
+  // pass of the compile leaves it as it is.
+  bool Stopped = false;
 
   // The canonical clones of the module's site bodies.
   llvm::SmallVector<llvm::WeakVH, 4> SiteClones;

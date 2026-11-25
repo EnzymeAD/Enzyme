@@ -49,6 +49,37 @@ void diagnose(const Function &F, const DiagnosticLocation &Loc,
   exit(1);
 }
 
+char UserError::ID = 0;
+
+Error userError(const Function &F, const DiagnosticLocation &Loc,
+                const Twine &Message) {
+  return make_error<UserError>(&F, Loc, Message.str());
+}
+
+Error userError(const Instruction &I, const Twine &Message) {
+  return userError(*I.getFunction(), I.getDebugLoc(), Message);
+}
+
+Error userError(const Twine &Message) {
+  return make_error<UserError>(nullptr, DiagnosticLocation(), Message.str());
+}
+
+void reportUserErrors(LLVMContext &Ctx, Error E) {
+  handleAllErrors(
+      std::move(E),
+      [&](const UserError &U) {
+        if (U.F)
+          diagnose(*U.F, U.Loc, U.Message, DS_Error);
+        else
+          Ctx.diagnose(
+              DiagnosticInfoGeneric("Poseidon: " + U.Message, DS_Error));
+      },
+      [&](const ErrorInfoBase &Other) {
+        Ctx.diagnose(
+            DiagnosticInfoGeneric("Poseidon: " + Other.message(), DS_Error));
+      });
+}
+
 void reportUserError(const Function &F, const DiagnosticLocation &Loc,
                      const Twine &Message) {
   diagnose(F, Loc, Message, DS_Error);
