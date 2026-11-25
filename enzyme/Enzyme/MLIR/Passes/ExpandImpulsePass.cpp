@@ -1688,6 +1688,160 @@ static LogicalResult processImpulseBlock(Block &block,
   return success();
 }
 
+/// Which per-site yields (terminator operands 1..) depend on `seeds`.
+static SmallVector<bool> taintedSiteYields(Block &lpBlock, ValueRange seeds) {
+  DenseSet<Value> tainted(seeds.begin(), seeds.end());
+  auto isTainted = [&](Value v) { return tainted.contains(v); };
+  for (Operation &o : lpBlock.without_terminator()) {
+    bool uses = llvm::any_of(o.getOperands(), isTainted);
+    if (!uses && o.getNumRegions() != 0)
+      uses = o.walk([&](Operation *inner) {
+                return llvm::any_of(inner->getOperands(), isTainted)
+                           ? WalkResult::interrupt()
+                           : WalkResult::advance();
+              }).wasInterrupted();
+    if (uses)
+      tainted.insert(o.result_begin(), o.result_end());
+  }
+  Operation *term = lpBlock.getTerminator();
+  SmallVector<bool> dirty;
+  for (Value v : llvm::drop_begin(term->getOperands()))
+    dirty.push_back(isTainted(v));
+  return dirty;
+}
+
+namespace {
+/// Bit k: depends on selected site k. An `impulse.if` result depends on its
+/// predicate only when its two yielded values differ.
+struct GibbsSiteDependence {
+  unsigned numSites;
+  DenseMap<Value, llvm::BitVector> sites;
+
+  explicit GibbsSiteDependence(unsigned numSites) : numSites(numSites) {}
+
+  llvm::BitVector get(Value v) const {
+    auto it = sites.find(v);
+    return it == sites.end() ? llvm::BitVector(numSites) : it->second;
+  }
+  void seed(Value v, unsigned k) {
+    llvm::BitVector s(numSites);
+    s.set(k);
+    sites[v] = s;
+  }
+  void seed(Value v, const llvm::BitVector &s) {
+    if (s.any())
+      sites[v] = s;
+  }
+  void run(Block &block) {
+    for (Operation &op : block.without_terminator())
+      visit(op);
+  }
+  void visit(Operation &op) {
+    // Sample sites are seeded (selected) or fixed by the trace (unselected).
+    if (isa<impulse::SampleRegionOp>(op))
+      return;
+    if (auto ifOp = dyn_cast<impulse::IfOp>(op)) {
+      llvm::BitVector pred = get(ifOp.getPredicate());
+      Block &tb = ifOp.getTrueBranch().front();
+      Block &fb = ifOp.getFalseBranch().front();
+      run(tb);
+      run(fb);
+      Operation *ty = tb.getTerminator(), *fy = fb.getTerminator();
+      for (auto [i, r] : llvm::enumerate(ifOp.getResults())) {
+        Value a = ty->getOperand(i), b = fy->getOperand(i);
+        llvm::BitVector s = get(a);
+        s |= get(b);
+        if (a != b)
+          s |= pred;
+        if (s.any())
+          sites[r] = s;
+      }
+      return;
+    }
+    llvm::BitVector s(numSites);
+    for (Value v : op.getOperands())
+      s |= get(v);
+    if (op.getNumRegions() != 0) {
+      SetVector<Value> captured;
+      getUsedValuesDefinedAbove(op.getRegions(), captured);
+      for (Value v : captured)
+        s |= get(v);
+    }
+    if (s.any())
+      for (Value r : op.getResults())
+        sites[r] = s;
+  }
+};
+} // namespace
+
+/// Returns whether an address in `addresses` starts with the symbol of
+/// `sampleOp`.
+static bool addressInList(impulse::SampleOp sampleOp, ArrayAttr addresses) {
+  for (auto addr : addresses) {
+    auto address = cast<ArrayAttr>(addr);
+    if (!address.empty() && address[0] == sampleOp.getSymbolAttr())
+      return true;
+  }
+  return false;
+}
+
+/// Sample ops block taint: an unregenerated site's value comes from the trace.
+/// An op with regions is tainted if anything nested uses a tainted value.
+static DenseSet<Value> computeRegenerateTaint(FunctionOpInterface fn,
+                                              ArrayAttr regenerateAddresses) {
+  DenseSet<Value> tainted;
+  auto isTainted = [&](Value v) { return tainted.contains(v); };
+  auto usesTainted = [&](Operation *op) {
+    if (llvm::any_of(op->getOperands(), isTainted))
+      return true;
+    if (op->getNumRegions() == 0)
+      return false;
+    return op
+        ->walk([&](Operation *inner) {
+          return llvm::any_of(inner->getOperands(), isTainted)
+                     ? WalkResult::interrupt()
+                     : WalkResult::advance();
+        })
+        .wasInterrupted();
+  };
+  bool changed = true;
+  while (changed) {
+    changed = false;
+    auto taint = [&](auto values) {
+      for (Value v : values)
+        changed |= tainted.insert(v).second;
+    };
+    fn.getFunctionBody().walk([&](Operation *op) {
+      if (auto sampleOp = dyn_cast<impulse::SampleOp>(op)) {
+        if (addressInList(sampleOp, regenerateAddresses))
+          taint(llvm::drop_begin(op->getResults()));
+        return;
+      }
+      if (!usesTainted(op))
+        return;
+      taint(op->getResults());
+      for (Region &region : op->getRegions())
+        for (Block &block : region)
+          taint(block.getArguments());
+    });
+  }
+  return tainted;
+}
+
+/// Each site must execute exactly once: one score-tail column per site.
+static bool deltaWeightFeasible(FunctionOpInterface fn) {
+  bool feasible = true;
+  fn.getFunctionBody().walk([&](Operation *op) {
+    if (isa<impulse::IfOp>(op))
+      feasible = false;
+    if (auto s = dyn_cast<impulse::SampleOp>(op))
+      if ((!s.getDistAttr() && !s.getLogpdfAttr()) ||
+          s->getParentOp() != fn.getOperation())
+        feasible = false;
+  });
+  return feasible;
+}
+
 namespace {
 
 struct ExpandImpulsePass
@@ -2386,90 +2540,6 @@ struct ExpandImpulsePass
         viCtx.logpdfArgSlices = regionLayout.argSlices;
 
       return VI::lowerVI(rewriter, op, viCtx, debugDump);
-    }
-  };
-
-  // Which per-site yields (terminator operands 1..) depend on `seeds`.
-  static SmallVector<bool> taintedSiteYields(Block &lpBlock, ValueRange seeds) {
-    DenseSet<Value> tainted(seeds.begin(), seeds.end());
-    auto isTainted = [&](Value v) { return tainted.contains(v); };
-    for (Operation &o : lpBlock.without_terminator()) {
-      bool uses = llvm::any_of(o.getOperands(), isTainted);
-      if (!uses && o.getNumRegions() != 0)
-        uses = o.walk([&](Operation *inner) {
-                  return llvm::any_of(inner->getOperands(), isTainted)
-                             ? WalkResult::interrupt()
-                             : WalkResult::advance();
-                }).wasInterrupted();
-      if (uses)
-        tainted.insert(o.result_begin(), o.result_end());
-    }
-    Operation *term = lpBlock.getTerminator();
-    SmallVector<bool> dirty;
-    for (Value v : llvm::drop_begin(term->getOperands()))
-      dirty.push_back(isTainted(v));
-    return dirty;
-  }
-
-  // Bit k: depends on selected site k. An `impulse.if` result depends on its
-  // predicate only when its two yielded values differ.
-  struct GibbsSiteDependence {
-    unsigned numSites;
-    DenseMap<Value, llvm::BitVector> sites;
-
-    explicit GibbsSiteDependence(unsigned numSites) : numSites(numSites) {}
-
-    llvm::BitVector get(Value v) const {
-      auto it = sites.find(v);
-      return it == sites.end() ? llvm::BitVector(numSites) : it->second;
-    }
-    void seed(Value v, unsigned k) {
-      llvm::BitVector s(numSites);
-      s.set(k);
-      sites[v] = s;
-    }
-    void seed(Value v, const llvm::BitVector &s) {
-      if (s.any())
-        sites[v] = s;
-    }
-    void run(Block &block) {
-      for (Operation &op : block.without_terminator())
-        visit(op);
-    }
-    void visit(Operation &op) {
-      // Sample sites are seeded (selected) or fixed by the trace (unselected).
-      if (isa<impulse::SampleRegionOp>(op))
-        return;
-      if (auto ifOp = dyn_cast<impulse::IfOp>(op)) {
-        llvm::BitVector pred = get(ifOp.getPredicate());
-        Block &tb = ifOp.getTrueBranch().front();
-        Block &fb = ifOp.getFalseBranch().front();
-        run(tb);
-        run(fb);
-        Operation *ty = tb.getTerminator(), *fy = fb.getTerminator();
-        for (auto [i, r] : llvm::enumerate(ifOp.getResults())) {
-          Value a = ty->getOperand(i), b = fy->getOperand(i);
-          llvm::BitVector s = get(a);
-          s |= get(b);
-          if (a != b)
-            s |= pred;
-          if (s.any())
-            sites[r] = s;
-        }
-        return;
-      }
-      llvm::BitVector s(numSites);
-      for (Value v : op.getOperands())
-        s |= get(v);
-      if (op.getNumRegions() != 0) {
-        SetVector<Value> captured;
-        getUsedValuesDefinedAbove(op.getRegions(), captured);
-        for (Value v : captured)
-          s |= get(v);
-      }
-      if (s.any())
-        for (Value r : op.getResults())
-          sites[r] = s;
     }
   };
 
@@ -4674,72 +4744,6 @@ struct ExpandImpulsePass
 
   // Delta weight: sum over dirty terms (regenerated or dependent on one) of
   // logp_new - logp_old; clean terms cancel in the MH ratio.
-
-  static bool addressInList(impulse::SampleOp sampleOp, ArrayAttr addresses) {
-    for (auto addr : addresses) {
-      auto address = cast<ArrayAttr>(addr);
-      if (!address.empty() && address[0] == sampleOp.getSymbolAttr())
-        return true;
-    }
-    return false;
-  }
-
-  // Sample ops block taint: an unregenerated site's value comes from the trace.
-  // An op with regions is tainted if anything nested uses a tainted value.
-  static DenseSet<Value> computeRegenerateTaint(FunctionOpInterface fn,
-                                                ArrayAttr regenerateAddresses) {
-    DenseSet<Value> tainted;
-    auto isTainted = [&](Value v) { return tainted.contains(v); };
-    auto usesTainted = [&](Operation *op) {
-      if (llvm::any_of(op->getOperands(), isTainted))
-        return true;
-      if (op->getNumRegions() == 0)
-        return false;
-      return op
-          ->walk([&](Operation *inner) {
-            return llvm::any_of(inner->getOperands(), isTainted)
-                       ? WalkResult::interrupt()
-                       : WalkResult::advance();
-          })
-          .wasInterrupted();
-    };
-    bool changed = true;
-    while (changed) {
-      changed = false;
-      auto taint = [&](auto values) {
-        for (Value v : values)
-          changed |= tainted.insert(v).second;
-      };
-      fn.getFunctionBody().walk([&](Operation *op) {
-        if (auto sampleOp = dyn_cast<impulse::SampleOp>(op)) {
-          if (addressInList(sampleOp, regenerateAddresses))
-            taint(llvm::drop_begin(op->getResults()));
-          return;
-        }
-        if (!usesTainted(op))
-          return;
-        taint(op->getResults());
-        for (Region &region : op->getRegions())
-          for (Block &block : region)
-            taint(block.getArguments());
-      });
-    }
-    return tainted;
-  }
-
-  // Each site must execute exactly once: one score-tail column per site.
-  static bool deltaWeightFeasible(FunctionOpInterface fn) {
-    bool feasible = true;
-    fn.getFunctionBody().walk([&](Operation *op) {
-      if (isa<impulse::IfOp>(op))
-        feasible = false;
-      if (auto s = dyn_cast<impulse::SampleOp>(op))
-        if ((!s.getDistAttr() && !s.getLogpdfAttr()) ||
-            s->getParentOp() != fn.getOperation())
-          feasible = false;
-    });
-    return feasible;
-  }
 
   struct LowerRegeneratePattern
       : public mlir::OpRewritePattern<impulse::RegenerateOp> {
