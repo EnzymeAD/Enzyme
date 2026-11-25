@@ -1,4 +1,4 @@
-//===- ExpandImpulsePass.cpp - Expand Impulse region ops ----------------===//
+//===- ExpandImpulsePass.cpp - Lower the Impulse inference ops ------------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -6,9 +6,10 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file implements a pass that expands high-level Impulse region ops
-// (simulate, generate, regenerate, mcmc, mh, untraced_call) into lower-level
-// Impulse ops (sample, random, etc.) plus arith/math/cf.
+// This file implements the expand-impulse pass, which lowers the Impulse
+// inference ops (simulate, generate, regenerate, untraced_call, mh, and infer
+// and infer_region with an HMC, NUTS, VI, MH or Gibbs configuration) into
+// calls, arith and math ops and lower-level Impulse ops.
 //===----------------------------------------------------------------------===//
 
 #include "Dialect/Impulse/Impulse.h"
@@ -1428,7 +1429,10 @@ static ArrayAttr buildSubSelection(OpBuilder &builder, ArrayAttr selection,
 }
 
 namespace {
-// `offset` advances over both `impulse.if` branches: disjoint trace columns.
+/// The trace, weight and Hastings correction carried from one sample site to
+/// the next while a function body is lowered. `offset` is the next trace
+/// column; it advances over both `impulse.if` branches, which take disjoint
+/// columns.
 struct BranchCarry {
   Value currTrace;
   Value weight;
@@ -1446,6 +1450,7 @@ static constexpr llvm::StringLiteral kMHHastingsAttr = "impulse.mh_hastings";
 static constexpr llvm::StringLiteral kMHSiteScoresAttr =
     "impulse.mh_site_scores";
 
+/// Returns the element of `tensor` at `index` as a rank-0 tensor.
 static Value scalarAt(OpBuilder &b, Location loc, Value tensor,
                       ArrayRef<int64_t> index) {
   auto type = cast<RankedTensorType>(tensor.getType());
@@ -1460,6 +1465,8 @@ static Value scalarAt(OpBuilder &b, Location loc, Value tensor,
       b, loc, RankedTensorType::get({}, type.getElementType()), slice);
 }
 
+/// Lowers the sample sites of `block` in program order with `processSample`,
+/// including those nested in the regions of its ops.
 static LogicalResult processImpulseBlock(Block &block,
                                          PatternRewriter &rewriter,
                                          BranchCarry &carry,
@@ -1774,6 +1781,8 @@ static Value appendScoreTail(OpBuilder &builder, Location loc, Value values,
   return trace;
 }
 
+/// Packs `weight` and the Hastings correction `corr` into the weight vector
+/// of a Hastings regenerate.
 static Value packHastingsWeight(OpBuilder &b, Location loc, Value weight,
                                 Value corr) {
   auto vecType = RankedTensorType::get({2}, b.getF64Type());
@@ -1790,12 +1799,14 @@ static Value packHastingsWeight(OpBuilder &b, Location loc, Value weight,
   return acc;
 }
 
+/// Splits the weight vector of a Hastings regenerate into the weight and the
+/// Hastings correction.
 static std::pair<Value, Value> unpackHastingsWeight(OpBuilder &b, Location loc,
                                                     Value packed) {
   return {scalarAt(b, loc, packed, {0}), scalarAt(b, loc, packed, {1})};
 }
 
-// Per-window DUS, not select(acc, P, T): untouched columns stay T's for LICM.
+/// Half-open [start, end) column ranges of a trace.
 using ColumnWindows = SmallVector<std::pair<int64_t, int64_t>>;
 
 /// Merges half-open [start, end) windows.
@@ -1813,6 +1824,9 @@ static ColumnWindows mergeColumnWindows(ColumnWindows windows) {
   return merged;
 }
 
+/// Selects `proposed` over `trace` where `accepted`, window by window, so the
+/// columns outside `windows` keep the values of `trace` and stay
+/// loop-invariant.
 static Value writeBackMHWindows(OpBuilder &b, Location loc, Value trace,
                                 Value proposed, Value accepted,
                                 ArrayRef<std::pair<int64_t, int64_t>> windows) {
@@ -1836,7 +1850,10 @@ static Value writeBackMHWindows(OpBuilder &b, Location loc, Value trace,
   return out;
 }
 
-/// Bare traces also change at branch sites (liveness flips) and sub-calls.
+/// Returns the columns of a `width`-wide trace laid out by `layout` that an MH
+/// move regenerating `regenerateAddresses` can change: those of the
+/// regenerated sites and of the score tail, and on a trace without score tail
+/// also those of sites in branches (their liveness can flip) and sub-calls.
 static ColumnWindows mhChangedColumnsFlat(Operation *op, FunctionOpInterface fn,
                                           ArrayAttr layout,
                                           ArrayAttr regenerateAddresses,
@@ -1993,7 +2010,8 @@ static bool usesAnyOf(Operation *op, const DenseSet<Value> &values) {
       .wasInterrupted();
 }
 
-/// Which per-site yields (terminator operands 1..) depend on `seeds`.
+/// Returns, for each per-site yield of `lpBlock` (terminator operands 1..),
+/// whether it depends on `seeds`.
 static SmallVector<bool> taintedSiteYields(Block &lpBlock, ValueRange seeds) {
   DenseSet<Value> tainted(seeds.begin(), seeds.end());
   for (Operation &op : lpBlock.without_terminator())
@@ -2006,8 +2024,9 @@ static SmallVector<bool> taintedSiteYields(Block &lpBlock, ValueRange seeds) {
 }
 
 namespace {
-/// Bit k: depends on selected site k. An `impulse.if` result depends on its
-/// predicate only when its two yielded values differ.
+/// Maps values to the selected sites they depend on, as bit vectors over
+/// `numSites`. An `impulse.if` result depends on its predicate only when its
+/// two yielded values differ.
 struct SiteDependence {
   unsigned numSites;
   DenseMap<Value, llvm::BitVector> sites;
@@ -2098,8 +2117,10 @@ static LogicalResult verifyTopLevelAddress(impulse::SampleOp sampleOp,
   return success();
 }
 
-/// Sample ops block taint: an unregenerated site's value comes from the trace.
-/// An op with regions is tainted if anything nested uses a tainted value.
+/// Returns the values in `fn` that regenerating `regenerateAddresses` can
+/// change. Taint stops at a site that is not regenerated, whose value comes
+/// from the trace; an op with regions is tainted when anything nested in it
+/// reads a tainted value.
 static DenseSet<Value> computeRegenerateTaint(FunctionOpInterface fn,
                                               ArrayAttr regenerateAddresses) {
   DenseSet<Value> tainted;
@@ -2127,7 +2148,9 @@ static DenseSet<Value> computeRegenerateTaint(FunctionOpInterface fn,
   return tainted;
 }
 
-/// Each site must execute exactly once: one score-tail column per site.
+/// Returns whether every site of `fn` runs exactly once, as a score tail with
+/// one column per site requires: no `impulse.if`, and only top-level
+/// distribution sites.
 static bool deltaWeightFeasible(FunctionOpInterface fn) {
   bool feasible = true;
   fn.getFunctionBody().walk([&](Operation *op) {
@@ -2283,7 +2306,8 @@ proposeRegionMove(OpBuilder &b, Location loc, impulse::InferRegionOp op,
     for (auto [j, isDirty] : llvm::enumerate(dirty))
       if (isDirty)
         dirtyIdx.push_back(j);
-    // log alpha is the other dirty terms, so XLA does not recompute draws.
+    // Selected sites' own terms cancel against the proposal density, so log
+    // alpha is the sum of the remaining dirty terms.
     bool splitRatio = withLogRatio && selectedOrdinals.size() >= 2 &&
                       traceType.getShape()[1] > positionSize;
     llvm::SmallDenseSet<int64_t> own(selectedOrdinals.begin(),
@@ -2312,7 +2336,7 @@ proposeRegionMove(OpBuilder &b, Location loc, impulse::InferRegionOp op,
     newWeight = sum;
   }
 
-  // Only dirty scores: XLA:CPU copies the accept chain into every element.
+  // Only dirty score columns can change; write back just those.
   if (delta) {
     for (auto [j, isDirty] : llvm::enumerate(dirty))
       if (isDirty)
@@ -3095,7 +3119,6 @@ struct ExpandImpulsePass
                                       currentOffset)))
             return failure();
         } else {
-          // B. Generative function: recursively simulate the nested function
           if (scoreTailSize > 0) {
             sampleOp.emitError("Impulse: score-tail traces do not support "
                                "nested generative sites");
@@ -3125,7 +3148,6 @@ struct ExpandImpulsePass
               return failure();
             }
 
-            // Build result types: (trace, weight, original_returns...)
             auto subTraceType = RankedTensorType::get({1, subPositionSize},
                                                       rewriter.getF64Type());
             auto scalarTy = RankedTensorType::get({}, rewriter.getF64Type());
@@ -3161,7 +3183,6 @@ struct ExpandImpulsePass
           }
         }
 
-        // D. Replace uses of the original sample op with the new values.
         rewriter.replaceAllUsesWith(sampleOp->getResults(), sampledValues);
 
         toErase.push_back(sampleOp);
@@ -3179,7 +3200,6 @@ struct ExpandImpulsePass
         return failure();
       }
 
-      // E. Rewrite the return to return (trace, weight, <original returns>...)
       NewF.walk([&](func::ReturnOp retOp) {
         OpBuilder::InsertionGuard guard(rewriter);
         rewriter.setInsertionPoint(retOp);
@@ -3614,9 +3634,9 @@ struct ExpandImpulsePass
     }
   };
 
-  // Enumerative Gibbs over scalar BERNOULLI sites: new = u < logistic(s1 - s0).
-  // The batched sweep is sound only when each per-site yield depends on at
-  // most one selected site and no site's parameters depend on another.
+  /// Enumerative Gibbs over scalar BERNOULLI sites: new = u < logistic(s1 -
+  /// s0). The batched sweep is sound only when each per-site yield depends on
+  /// at most one selected site and no site's parameters depend on another.
   struct LowerGibbsRegionPattern
       : public mlir::OpRewritePattern<impulse::InferRegionOp> {
     using mlir::OpRewritePattern<impulse::InferRegionOp>::OpRewritePattern;
@@ -3748,7 +3768,8 @@ struct ExpandImpulsePass
         return updateColumns(b, loc, trace, flat, col);
       };
 
-      // For later regions (e.g. HMC) that pin these sites from the trace.
+      // Readers of the trace take constrained branch-local sites from it, so
+      // it holds their observed values.
       auto writeObserved = [&](OpBuilder &b, Value trace) -> Value {
         Value constraint = op.getConstraint();
         for (auto [col, off, n] : observedBranchCols) {
@@ -4034,7 +4055,6 @@ struct ExpandImpulsePass
       auto traceType = oldTrace.getType();
       auto rngStateType = inputs[0].getType();
 
-      // 1. Create regenerate op with the same function and selection
       auto nameAttr = mhOp.getNameAttr();
       if (!nameAttr)
         nameAttr = rewriter.getStringAttr("");
@@ -4192,7 +4212,6 @@ struct ExpandImpulsePass
                                       currentTraceOffset)))
             return failure();
         } else {
-          // B. Generative function: recursively generate the nested function
           if (scoreTailSize > 0) {
             sampleOp.emitError("Impulse: score-tail traces do not support "
                                "nested generative sites");
@@ -4248,7 +4267,6 @@ struct ExpandImpulsePass
                   f64Const(rewriter, sampleOp.getLoc(), subConstraintType, 0.0);
             }
 
-            // Build result types: (trace, weight, original_returns...)
             auto subTraceType = RankedTensorType::get({1, subPositionSize},
                                                       rewriter.getF64Type());
             auto scalarTy = RankedTensorType::get({}, rewriter.getF64Type());
@@ -4298,7 +4316,6 @@ struct ExpandImpulsePass
         return failure();
       }
 
-      // Rewrite the return to return (trace, weight, <original returns>...)
       NewF.walk([&](func::ReturnOp retOp) {
         OpBuilder::InsertionGuard guard(rewriter);
         rewriter.setInsertionPoint(retOp);
@@ -4332,9 +4349,6 @@ struct ExpandImpulsePass
       return success();
     }
   };
-
-  // Delta weight: sum over dirty terms (regenerated or dependent on one) of
-  // logp_new - logp_old; clean terms cancel in the MH ratio.
 
   struct LowerRegeneratePattern
       : public mlir::OpRewritePattern<impulse::RegenerateOp> {
@@ -4397,7 +4411,10 @@ struct ExpandImpulsePass
       Value prevTrace = NewF.getArgument(0);
       Value constraint = hasConstraint ? NewF.getArgument(1) : Value();
 
-      // Taint is computed up front; fresh draws are added as they are created.
+      // On a score-tail trace the weight is the sum over dirty terms
+      // (regenerated or dependent on one) of new minus old log density; clean
+      // terms cancel in the MH ratio. Taint is computed up front; fresh draws
+      // are added as they are created.
       bool deltaMode = scoreTailSize > 0;
       DenseSet<Value> tainted;
       if (deltaMode) {
@@ -4645,7 +4662,6 @@ struct ExpandImpulsePass
                                       /*write=*/!deltaMode || isSelected)))
             return failure();
         } else {
-          // B. Generative function: recursively regenerate the nested function
           auto genFn =
               cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
                   sampleOp, sampleOp.getFnAttr()));
@@ -4735,7 +4751,6 @@ struct ExpandImpulsePass
               }
             }
 
-            // Build result types: (new_trace, weight, original_returns...)
             auto scalarTy = RankedTensorType::get({}, rewriter.getF64Type());
             SmallVector<Type> regenResultTypes;
             regenResultTypes.push_back(subTraceType);
