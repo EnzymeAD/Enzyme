@@ -41,6 +41,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <utility>
 
 using namespace llvm;
 
@@ -647,6 +648,13 @@ static void proposeLibrarySplit(const Product &P, const LibrarySite &L,
   MatmulUnit::Option opt = libraryOption(
       SchemeVariant::tcec(FPKind::F16, FPKind::F32, 2), 16, 16, 16);
   if (!kHaveTcecDispatch) {
+    if (P.S.Opts.Diagnostics.Print &&
+        !std::exchange(P.S.Matmul.ReportedNoTcecRuntime, true))
+      llvm::errs() << "[poseidon] WARNING: matmul[" << P.m.id << "] " << P.m.M
+                   << 'x' << P.m.N << 'x' << P.m.K
+                   << ": TCEC dispatch NOT PROPOSED -- this build has no TCEC "
+                      "runtime; configure it with "
+                      "-DPOSEIDON_CUMPSGEMM_ROOT=<cuMpSGEMM checkout>.\n";
     cm.dropped.push_back(
         {matmulOptionLabel(opt),
          "this compiler was built without cuMpSGEMM, on which the "

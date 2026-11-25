@@ -5,7 +5,7 @@
 ; DEFINE:   -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma \
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_tcec.csv -S -o /dev/null
 ; RUN: rm -rf %t && mkdir %t
-; RUN: %{opt} -poseidon-tau=1e-6 -poseidon-print -poseidon-cache=%t/tau 2>&1 | FileCheck --check-prefix=TAU %s
+; RUN: %{opt} -poseidon-tau=1e-6 -poseidon-print -poseidon-cache=%t/tau 2>&1 | FileCheck --check-prefix=TAU --implicit-check-not="TCEC dispatch NOT PROPOSED" %s
 ; RUN: cat %t/tau/matmulacc_*.json | FileCheck --check-prefix=KEY %s
 ; RUN: %{opt} -poseidon-cost-budget=0 -poseidon-cache=%t/budget
 ; RUN: cat %t/budget/dp_*.json | FileCheck --check-prefix=KEY %s

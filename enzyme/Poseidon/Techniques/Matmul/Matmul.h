@@ -313,6 +313,8 @@ struct MatmulState {
   std::optional<llvm::SmallVector<WmmaTarget, 16>> AvailableWmmaTargets;
   // The cost-model rows a missing-row warning has named.
   llvm::StringSet<> ReportedRows;
+  // Whether -poseidon-print has said that this build has no TCEC runtime.
+  bool ReportedNoTcecRuntime = false;
 };
 
 class MatmulUnit : public SiteUnit {

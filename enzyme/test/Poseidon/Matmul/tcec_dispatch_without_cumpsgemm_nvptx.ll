@@ -7,8 +7,11 @@
 ; A compiler built without cuMpSGEMM has no error-corrected GEMM dispatch. The
 ; product of Inputs/stale_cache/matmul_device.ll is not offered it although the
 ; cost model prices it, the DP table says so in its key, and a pin that names
-; it says how to build a compiler that has it.
+; it says how to build a compiler that has it. -poseidon-print names the
+; missing runtime.
 
+; PRICED: [poseidon] WARNING: matmul[0] {{[0-9]+x[0-9]+x[0-9]+}}: TCEC dispatch NOT PROPOSED -- this build has no TCEC runtime; configure it with -DPOSEIDON_CUMPSGEMM_ROOT=<cuMpSGEMM checkout>.{{$}}
+; PRICED-NOT: TCEC dispatch NOT PROPOSED
 ; PRICED: #9 ozaki-ii nm=14 wmma m16n16k16 s8/s32
 ; PRICED-NEXT: #10 direct-dispatch cublas f16/f32
 ; KEY: "TCEC backend": "none",
