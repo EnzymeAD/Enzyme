@@ -25,22 +25,17 @@ int64_t transforms::getUnconstrainedSize(int64_t constrainedSize,
 
 Value transforms::unconstrain(OpBuilder &builder, Location loc,
                               Value constrained, impulse::SupportAttr support) {
-  return impulse::emitBijectorInverse(
-      builder, loc, impulse::bijectorFor(builder.getContext(), support),
-      support, constrained);
+  return impulse::emitBijectorInverse(builder, loc, support, constrained);
 }
 
 Value transforms::constrain(OpBuilder &builder, Location loc,
                             Value unconstrained, impulse::SupportAttr support) {
-  return impulse::emitBijectorForward(
-      builder, loc, impulse::bijectorFor(builder.getContext(), support),
-      support, unconstrained);
+  return impulse::emitBijectorForward(builder, loc, support, unconstrained);
 }
 
 Value transforms::logAbsDetJacobian(OpBuilder &builder, Location loc,
                                     Value unconstrained,
                                     impulse::SupportAttr support) {
-  return impulse::emitBijectorLogAbsDetJac(
-      builder, loc, impulse::bijectorFor(builder.getContext(), support),
-      support, unconstrained);
+  return impulse::emitBijectorLogAbsDetJac(builder, loc, support,
+                                           unconstrained);
 }

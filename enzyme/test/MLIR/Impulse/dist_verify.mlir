@@ -64,3 +64,23 @@ module {
     return %o#0, %o#1 : tensor<2xui64>, tensor<f64>
   }
 }
+
+// -----
+
+// Accepted: STD_NORMAL + SIGMOID derives UNIT_INTERVAL, STD_NORMAL + SOFTPLUS
+// derives POSITIVE.
+module {
+  func.func @f(%r: tensor<2xui64>) -> (tensor<2xui64>, tensor<f64>) {
+    %p:2 = impulse.sample(%r) <{
+      symbol = #impulse.symbol<1>,
+      support = #impulse.support<UNIT_INTERVAL>,
+      dist = #impulse.dist<STD_NORMAL, [#impulse.xform<SIGMOID>]>
+    }> : (tensor<2xui64>) -> (tensor<2xui64>, tensor<f64>)
+    %s:2 = impulse.sample(%p#0) <{
+      symbol = #impulse.symbol<2>,
+      support = #impulse.support<POSITIVE>,
+      dist = #impulse.dist<STD_NORMAL, [#impulse.xform<SOFTPLUS>]>
+    }> : (tensor<2xui64>) -> (tensor<2xui64>, tensor<f64>)
+    return %s#0, %s#1 : tensor<2xui64>, tensor<f64>
+  }
+}

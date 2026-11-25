@@ -33,36 +33,6 @@ bool impulse::distSamplerEmittable(DistAttr dist) {
   }
 }
 
-XformAttr impulse::bijectorFor(MLIRContext *ctx, SupportAttr support) {
-  XformKind kind = XformKind::IDENTITY;
-  if (support) {
-    switch (support.getKind()) {
-    case SupportKind::REAL:
-      kind = XformKind::IDENTITY;
-      break;
-    case SupportKind::POSITIVE:
-      kind = XformKind::EXP;
-      break;
-    case SupportKind::UNIT_INTERVAL:
-      kind = XformKind::SIGMOID;
-      break;
-    case SupportKind::INTERVAL:
-      kind = XformKind::INTERVAL;
-      break;
-    case SupportKind::GREATER_THAN:
-      kind = XformKind::GREATER_THAN;
-      break;
-    case SupportKind::LESS_THAN:
-      kind = XformKind::LESS_THAN;
-      break;
-    case SupportKind::SIMPLEX:
-      kind = XformKind::STICK_BREAKING;
-      break;
-    }
-  }
-  return XformAttr::get(ctx, kind, /*components=*/ArrayAttr());
-}
-
 /// Elementwise log(x / (1 - x)).
 static Value emitLogit(OpBuilder &builder, Location loc, Value x) {
   auto xType = cast<RankedTensorType>(x.getType());
@@ -316,10 +286,9 @@ static SimplexDims simplexDimsFromUnconstrained(SupportAttr support,
 }
 
 /// Applies the forward map of `xform` to `z`. AFFINE reads its loc and scale
-/// from `distArgs`, the bounded kinds read their bounds from `support`.
+/// from `distArgs`.
 static Value emitXformForward(OpBuilder &builder, Location loc, XformAttr xform,
-                              SupportAttr support, ValueRange distArgs,
-                              Value z) {
+                              ValueRange distArgs, Value z) {
   auto zType = cast<RankedTensorType>(z.getType());
   switch (xform.getKind()) {
   case XformKind::IDENTITY:
@@ -336,40 +305,6 @@ static Value emitXformForward(OpBuilder &builder, Location loc, XformAttr xform,
     Value scaled = arith::MulFOp::create(builder, loc, scaleB, z);
     return arith::AddFOp::create(builder, loc, locB, scaled);
   }
-  case XformKind::INTERVAL: {
-    double lower = support.getLowerBound().getValueAsDouble();
-    double upper = support.getUpperBound().getValueAsDouble();
-    Value lowerConst = emitSplatConstant(builder, loc, zType, lower);
-    Value scaleConst = emitSplatConstant(builder, loc, zType, upper - lower);
-    auto sigmoid = impulse::LogisticOp::create(builder, loc, zType, z);
-    auto scaled = arith::MulFOp::create(builder, loc, scaleConst, sigmoid);
-    return arith::AddFOp::create(builder, loc, lowerConst, scaled);
-  }
-  case XformKind::GREATER_THAN: {
-    double lower = support.getLowerBound().getValueAsDouble();
-    Value lowerConst = emitSplatConstant(builder, loc, zType, lower);
-    auto expZ = math::ExpOp::create(builder, loc, z);
-    return arith::AddFOp::create(builder, loc, lowerConst, expZ);
-  }
-  case XformKind::LESS_THAN: {
-    double upper = support.getUpperBound().getValueAsDouble();
-    Value upperConst = emitSplatConstant(builder, loc, zType, upper);
-    auto expZ = math::ExpOp::create(builder, loc, z);
-    return arith::SubFOp::create(builder, loc, upperConst, expZ);
-  }
-  case XformKind::STICK_BREAKING:
-    return constrainSimplex(
-        builder, loc, z,
-        simplexDimsFromUnconstrained(support, zType.getNumElements()));
-  case XformKind::COMPOSE:
-    if (ArrayAttr components = xform.getComponents())
-      for (Attribute component : components)
-        z = emitXformForward(builder, loc, cast<XformAttr>(component), support,
-                             distArgs, z);
-    return z;
-  case XformKind::SCALED_UNIT_LOWER_CHOLESKY:
-    // Not elementwise; emitScaledUnitLowerCholesky builds it.
-    return z;
   }
   llvm_unreachable("unknown XformKind");
 }
@@ -377,8 +312,7 @@ static Value emitXformForward(OpBuilder &builder, Location loc, XformAttr xform,
 /// Applies the inverse map of `xform` to `y`, reading the same operands as
 /// emitXformForward.
 static Value emitXformInverse(OpBuilder &builder, Location loc, XformAttr xform,
-                              SupportAttr support, ValueRange distArgs,
-                              Value y) {
+                              ValueRange distArgs, Value y) {
   auto yType = cast<RankedTensorType>(y.getType());
   switch (xform.getKind()) {
   case XformKind::IDENTITY:
@@ -395,7 +329,64 @@ static Value emitXformInverse(OpBuilder &builder, Location loc, XformAttr xform,
     Value centered = arith::SubFOp::create(builder, loc, y, locB);
     return arith::DivFOp::create(builder, loc, centered, scaleB);
   }
-  case XformKind::INTERVAL: {
+  }
+  llvm_unreachable("unknown XformKind");
+}
+
+Value impulse::emitBijectorForward(OpBuilder &builder, Location loc,
+                                   SupportAttr support, Value z) {
+  if (!support)
+    return z;
+  auto zType = cast<RankedTensorType>(z.getType());
+  switch (support.getKind()) {
+  case SupportKind::REAL:
+    return z;
+  case SupportKind::POSITIVE:
+    return math::ExpOp::create(builder, loc, z);
+  case SupportKind::UNIT_INTERVAL:
+    return impulse::LogisticOp::create(builder, loc, zType, z);
+  case SupportKind::INTERVAL: {
+    double lower = support.getLowerBound().getValueAsDouble();
+    double upper = support.getUpperBound().getValueAsDouble();
+    Value lowerConst = emitSplatConstant(builder, loc, zType, lower);
+    Value scaleConst = emitSplatConstant(builder, loc, zType, upper - lower);
+    auto sigmoid = impulse::LogisticOp::create(builder, loc, zType, z);
+    auto scaled = arith::MulFOp::create(builder, loc, scaleConst, sigmoid);
+    return arith::AddFOp::create(builder, loc, lowerConst, scaled);
+  }
+  case SupportKind::GREATER_THAN: {
+    double lower = support.getLowerBound().getValueAsDouble();
+    Value lowerConst = emitSplatConstant(builder, loc, zType, lower);
+    auto expZ = math::ExpOp::create(builder, loc, z);
+    return arith::AddFOp::create(builder, loc, lowerConst, expZ);
+  }
+  case SupportKind::LESS_THAN: {
+    double upper = support.getUpperBound().getValueAsDouble();
+    Value upperConst = emitSplatConstant(builder, loc, zType, upper);
+    auto expZ = math::ExpOp::create(builder, loc, z);
+    return arith::SubFOp::create(builder, loc, upperConst, expZ);
+  }
+  case SupportKind::SIMPLEX:
+    return constrainSimplex(
+        builder, loc, z,
+        simplexDimsFromUnconstrained(support, zType.getNumElements()));
+  }
+  llvm_unreachable("unknown SupportKind");
+}
+
+Value impulse::emitBijectorInverse(OpBuilder &builder, Location loc,
+                                   SupportAttr support, Value y) {
+  if (!support)
+    return y;
+  auto yType = cast<RankedTensorType>(y.getType());
+  switch (support.getKind()) {
+  case SupportKind::REAL:
+    return y;
+  case SupportKind::POSITIVE:
+    return math::LogOp::create(builder, loc, y);
+  case SupportKind::UNIT_INTERVAL:
+    return emitLogit(builder, loc, y);
+  case SupportKind::INTERVAL: {
     double lower = support.getLowerBound().getValueAsDouble();
     double upper = support.getUpperBound().getValueAsDouble();
     Value lowerConst = emitSplatConstant(builder, loc, yType, lower);
@@ -404,32 +395,24 @@ static Value emitXformInverse(OpBuilder &builder, Location loc, XformAttr xform,
     auto normalized = arith::DivFOp::create(builder, loc, shifted, scaleConst);
     return emitLogit(builder, loc, normalized);
   }
-  case XformKind::GREATER_THAN: {
+  case SupportKind::GREATER_THAN: {
     double lower = support.getLowerBound().getValueAsDouble();
     Value lowerConst = emitSplatConstant(builder, loc, yType, lower);
     auto shifted = arith::SubFOp::create(builder, loc, y, lowerConst);
     return math::LogOp::create(builder, loc, shifted);
   }
-  case XformKind::LESS_THAN: {
+  case SupportKind::LESS_THAN: {
     double upper = support.getUpperBound().getValueAsDouble();
     Value upperConst = emitSplatConstant(builder, loc, yType, upper);
     auto shifted = arith::SubFOp::create(builder, loc, upperConst, y);
     return math::LogOp::create(builder, loc, shifted);
   }
-  case XformKind::STICK_BREAKING:
+  case SupportKind::SIMPLEX:
     return unconstrainSimplex(
         builder, loc, y,
         simplexDimsFromConstrained(support, yType.getNumElements()));
-  case XformKind::COMPOSE:
-    if (ArrayAttr components = xform.getComponents())
-      for (Attribute component : llvm::reverse(components.getValue()))
-        y = emitXformInverse(builder, loc, cast<XformAttr>(component), support,
-                             distArgs, y);
-    return y;
-  case XformKind::SCALED_UNIT_LOWER_CHOLESKY:
-    return y;
   }
-  llvm_unreachable("unknown XformKind");
+  llvm_unreachable("unknown SupportKind");
 }
 
 /// Elementwise log of the sigmoid derivative, log sigmoid(z) + log sigmoid(-z).
@@ -466,52 +449,30 @@ static Value emitXformLogAbsDetJac(OpBuilder &builder, Location loc,
     Value logScale = math::LogOp::create(builder, loc, scaleB);
     return reduceSumToScalar(builder, loc, logScale);
   }
-  case XformKind::COMPOSE:
-  case XformKind::INTERVAL:
-  case XformKind::GREATER_THAN:
-  case XformKind::LESS_THAN:
-  case XformKind::STICK_BREAKING:
-  case XformKind::SCALED_UNIT_LOWER_CHOLESKY:
-    // Not used in distribution chains, which are flat.
-    return scalarConst(builder, loc, elemType, 0.0);
   }
   llvm_unreachable("unknown XformKind");
 }
 
-Value impulse::emitBijectorForward(OpBuilder &builder, Location loc,
-                                   XformAttr xform, SupportAttr support,
-                                   Value z) {
-  return emitXformForward(builder, loc, xform, support, /*distArgs=*/{}, z);
-}
-
-Value impulse::emitBijectorInverse(OpBuilder &builder, Location loc,
-                                   XformAttr xform, SupportAttr support,
-                                   Value y) {
-  return emitXformInverse(builder, loc, xform, support, /*distArgs=*/{}, y);
-}
-
 Value impulse::emitBijectorLogAbsDetJac(OpBuilder &builder, Location loc,
-                                        XformAttr xform, SupportAttr support,
+                                        SupportAttr support,
                                         Value unconstrained) {
   auto zType = cast<RankedTensorType>(unconstrained.getType());
   auto elemType = zType.getElementType();
   auto scalarType = RankedTensorType::get({}, elemType);
 
-  switch (xform.getKind()) {
-  case XformKind::IDENTITY:
+  if (!support)
     return emitSplatConstant(builder, loc, scalarType, 0.0);
-  case XformKind::EXP:
-  case XformKind::GREATER_THAN:
-  case XformKind::LESS_THAN:
+  switch (support.getKind()) {
+  case SupportKind::REAL:
+    return emitSplatConstant(builder, loc, scalarType, 0.0);
+  case SupportKind::POSITIVE:
+  case SupportKind::GREATER_THAN:
+  case SupportKind::LESS_THAN:
     return sumVector(builder, loc, unconstrained);
-  case XformKind::SOFTPLUS: {
-    Value logSigZ = emitLogSigmoid(builder, loc, unconstrained);
-    return sumVector(builder, loc, logSigZ);
-  }
-  case XformKind::SIGMOID:
+  case SupportKind::UNIT_INTERVAL:
     return sumVector(builder, loc,
                      emitLogSigmoidDerivative(builder, loc, unconstrained));
-  case XformKind::INTERVAL: {
+  case SupportKind::INTERVAL: {
     double scale = support.getUpperBound().getValueAsDouble() -
                    support.getLowerBound().getValueAsDouble();
     Value sumLogProduct = sumVector(
@@ -523,27 +484,12 @@ Value impulse::emitBijectorLogAbsDetJac(OpBuilder &builder, Location loc,
         emitSplatConstant(builder, loc, scalarType, logScaleTerm);
     return arith::AddFOp::create(builder, loc, sumLogProduct, logScaleConst);
   }
-  case XformKind::STICK_BREAKING:
+  case SupportKind::SIMPLEX:
     return logDetSimplex(
         builder, loc, unconstrained,
         simplexDimsFromUnconstrained(support, zType.getNumElements()));
-  case XformKind::COMPOSE: {
-    Value total = emitSplatConstant(builder, loc, scalarType, 0.0);
-    Value z = unconstrained;
-    if (ArrayAttr comps = xform.getComponents())
-      for (Attribute a : comps) {
-        auto comp = cast<XformAttr>(a);
-        Value ld = emitBijectorLogAbsDetJac(builder, loc, comp, support, z);
-        total = arith::AddFOp::create(builder, loc, total, ld);
-        z = emitBijectorForward(builder, loc, comp, support, z);
-      }
-    return total;
   }
-  case XformKind::AFFINE:
-  case XformKind::SCALED_UNIT_LOWER_CHOLESKY:
-    return emitSplatConstant(builder, loc, scalarType, 0.0);
-  }
-  llvm_unreachable("unknown XformKind");
+  llvm_unreachable("unknown SupportKind");
 }
 
 impulse::ScaledUnitLowerCholeskyResult
@@ -751,8 +697,7 @@ SmallVector<Value> impulse::emitDistSampler(OpBuilder &builder, Location loc,
   // belong to the chain.
   if (ArrayAttr transforms = dist.getTransforms())
     for (Attribute a : transforms)
-      val = emitXformForward(builder, loc, cast<XformAttr>(a), SupportAttr(),
-                             distArgs, val);
+      val = emitXformForward(builder, loc, cast<XformAttr>(a), distArgs, val);
   return {rng, val};
 }
 
@@ -1085,8 +1030,7 @@ Value impulse::emitDistLogpdf(OpBuilder &builder, Location loc, DistAttr dist,
   if (ArrayAttr transforms = dist.getTransforms()) {
     for (int64_t i = transforms.size() - 1; i >= 0; --i) {
       auto xform = cast<XformAttr>(transforms[i]);
-      Value inv =
-          emitXformInverse(builder, loc, xform, SupportAttr(), distArgs, val);
+      Value inv = emitXformInverse(builder, loc, xform, distArgs, val);
       Value ld =
           emitXformLogAbsDetJac(builder, loc, xform, inv, distArgs, sampleType);
       logdetTotal = arith::AddFOp::create(builder, loc, logdetTotal, ld);

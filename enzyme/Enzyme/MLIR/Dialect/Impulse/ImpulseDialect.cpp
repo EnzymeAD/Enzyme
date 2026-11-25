@@ -92,23 +92,6 @@ static SupportKind applyXformToSupport(XformAttr xform, SupportKind in) {
     return SupportKind::POSITIVE;
   case XformKind::SIGMOID:
     return SupportKind::UNIT_INTERVAL;
-  case XformKind::INTERVAL:
-    return SupportKind::INTERVAL;
-  case XformKind::GREATER_THAN:
-    return SupportKind::GREATER_THAN;
-  case XformKind::LESS_THAN:
-    return SupportKind::LESS_THAN;
-  case XformKind::STICK_BREAKING:
-    return SupportKind::SIMPLEX;
-  case XformKind::SCALED_UNIT_LOWER_CHOLESKY:
-    return SupportKind::REAL;
-  case XformKind::COMPOSE: {
-    SupportKind kind = in;
-    if (ArrayAttr components = xform.getComponents())
-      for (Attribute a : components)
-        kind = applyXformToSupport(cast<XformAttr>(a), kind);
-    return kind;
-  }
   }
   llvm_unreachable("unknown XformKind");
 }

@@ -49,19 +49,13 @@ def SupportKind : I32EnumAttr<"SupportKind",
 }
 
 def XformKind : I32EnumAttr<"XformKind",
-    "Bijector applied to a base distribution or constraint",
+    "Bijection of a distribution transform chain",
     [
       I32EnumAttrCase<"IDENTITY", 0>,
       I32EnumAttrCase<"EXP", 1>,
       I32EnumAttrCase<"AFFINE", 2>,
-      I32EnumAttrCase<"COMPOSE", 3>,
-      I32EnumAttrCase<"SIGMOID", 4>,
-      I32EnumAttrCase<"INTERVAL", 5>,
-      I32EnumAttrCase<"GREATER_THAN", 6>,
-      I32EnumAttrCase<"LESS_THAN", 7>,
-      I32EnumAttrCase<"STICK_BREAKING", 8>,
-      I32EnumAttrCase<"SOFTPLUS", 9>,
-      I32EnumAttrCase<"SCALED_UNIT_LOWER_CHOLESKY", 10>,
+      I32EnumAttrCase<"SIGMOID", 3>,
+      I32EnumAttrCase<"SOFTPLUS", 4>,
     ]> {
   let genSpecializedAttr = 0;
   let cppNamespace = "::mlir::impulse";

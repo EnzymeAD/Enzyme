@@ -1,8 +1,8 @@
 //===- DistBuilder.h - Emit distribution sampler/logpdf IR ----*- C++ -*-===//
 //
-// Builds the sampler, the log density and the unconstraining bijection of an
-// `#impulse.dist` attribute out of impulse, enzyme.broadcast, arith and math
-// ops.
+// Builds the sampler and the log density of an `#impulse.dist` attribute and
+// the bijection that unconstrains a support out of impulse, enzyme.broadcast,
+// arith and math ops.
 //
 //===----------------------------------------------------------------------===//
 
@@ -18,19 +18,16 @@
 namespace mlir {
 namespace impulse {
 
-/// The bijection from unconstrained space onto `support`, IDENTITY when
-/// `support` is null.
-XformAttr bijectorFor(MLIRContext *ctx, SupportAttr support);
-
-/// forward: unconstrained z -> constrained y.
-Value emitBijectorForward(OpBuilder &builder, Location loc, XformAttr xform,
-                          SupportAttr support, Value z);
-/// inverse: constrained y -> unconstrained z.
-Value emitBijectorInverse(OpBuilder &builder, Location loc, XformAttr xform,
-                          SupportAttr support, Value y);
+/// Maps unconstrained `z` onto `support`; the identity when `support` is
+/// null.
+Value emitBijectorForward(OpBuilder &builder, Location loc, SupportAttr support,
+                          Value z);
+/// Maps `y` in `support` back to unconstrained space.
+Value emitBijectorInverse(OpBuilder &builder, Location loc, SupportAttr support,
+                          Value y);
 /// log|det d(forward)/dz| summed over the event, evaluated at unconstrained z.
 Value emitBijectorLogAbsDetJac(OpBuilder &builder, Location loc,
-                               XformAttr xform, SupportAttr support, Value z);
+                               SupportAttr support, Value z);
 
 /// Elementwise log1p(exp(x)).
 Value emitSoftplus(OpBuilder &builder, Location loc, Value x);

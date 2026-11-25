@@ -25,23 +25,15 @@ def RngDistributionAttr : EnumAttr<Impulse_Dialect, RngDistribution, "rng_distri
 def TransposeAttr : EnumAttr<Impulse_Dialect, Transpose, "transpose">;
 
 def XformAttr : Impulse_Attr<"Xform", "xform"> {
-  let summary = "A bijection (transform) in the shared bijector library";
+  let summary = "A bijection of a distribution transform chain";
   let description = [{
-    One bijector: `forward` maps base/unconstrained space to the observed
-    /constrained space, `inverse` maps back, and the change of variables adds
-    `logabsdetjac`. AFFINE reads its loc/scale from the sample site's operands
-    (positional, after the RNG operand); it carries no static parameters. A
-    COMPOSE carries a `components` array applied inner-to-outer (component 0 is
-    applied first). The constraint bijectors SIGMOID, INTERVAL, GREATER_THAN,
-    LESS_THAN, and STICK_BREAKING read their bound / event-size parameters from
-    the site's SupportAttr; SOFTPLUS and SCALED_UNIT_LOWER_CHOLESKY are the VI
-    guide transforms.
+    One bijection y = f(x) of the `transforms` of a `#impulse.dist`:
+    IDENTITY x; EXP exp(x); AFFINE loc + scale * x, with loc and scale the
+    first two parameters of the site; SIGMOID 1 / (1 + exp(-x)); SOFTPLUS
+    log(1 + exp(x)).
   }];
-  let parameters = (ins
-    "XformKind":$kind,
-    OptionalParameter<"ArrayAttr">:$components
-  );
-  let assemblyFormat = "`<` $kind (`,` $components^)? `>`";
+  let parameters = (ins "XformKind":$kind);
+  let assemblyFormat = "`<` $kind `>`";
 }
 
 def DistAttr : Impulse_Attr<"Dist", "dist"> {
