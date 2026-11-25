@@ -45,10 +45,86 @@ static bool isHoistableArmOp(Operation &op) {
          name == "impulse.slice" || name == "impulse.reshape";
 }
 
-/// Returns the density total of `block`, or null when it holds no site.
-static Value cloneDensityBlock(Block &block, OpBuilder &builder, IRMapping &map,
-                               SmallVectorImpl<Value> &contributions,
-                               Location loc) {
+/// Clones `block` through `map` with every site replaced by its density, and
+/// appends the per-site densities to `contributions`. Returns the density
+/// total of `block`, or null when it holds no site.
+static Value cloneDensityBlock(OpBuilder &builder, Location loc, Block &block,
+                               IRMapping &map,
+                               SmallVectorImpl<Value> &contributions);
+
+/// Rebuilds `ifOp`, whose arms hold sites, with one extra result per site
+/// (zero in the arm without that site) and the arm total last. Appends the
+/// per-site results to `contributions` and returns the total.
+static Value rebuildSiteIf(OpBuilder &builder, Location loc, IfOp ifOp,
+                           IRMapping &map,
+                           SmallVectorImpl<Value> &contributions) {
+  SmallVector<SampleRegionOp> trueSites, falseSites;
+  collectSitesInOrder(ifOp.getTrueBranch(), trueSites);
+  collectSitesInOrder(ifOp.getFalseBranch(), falseSites);
+  SmallVector<Type> types(ifOp.getResultTypes().begin(),
+                          ifOp.getResultTypes().end());
+  unsigned numOriginal = types.size();
+  Type totalType;
+  for (auto list : {&trueSites, &falseSites})
+    for (SampleRegionOp site : *list) {
+      Type t =
+          site.getLogpdf().front().getTerminator()->getOperand(0).getType();
+      types.push_back(t);
+      totalType = t;
+    }
+  types.push_back(totalType);
+  for (Region *arm : {&ifOp.getTrueBranch(), &ifOp.getFalseBranch()})
+    for (Operation &armOp : arm->front().without_terminator()) {
+      if (!isHoistableArmOp(armOp))
+        continue;
+      bool outside = llvm::all_of(armOp.getOperands(), [&](Value v) {
+        Operation *def = v.getDefiningOp();
+        bool inArm = def ? arm->isAncestor(def->getParentRegion())
+                         : arm->isAncestor(v.getParentRegion());
+        return !inArm || map.contains(v);
+      });
+      if (outside)
+        builder.clone(armOp, map);
+    }
+  auto newIf = IfOp::create(builder, loc, types,
+                            map.lookupOrDefault(ifOp.getPredicate()));
+  auto zeroOf = [&](OpBuilder &b, Type t) {
+    return emitSplatConstant(b, loc, cast<RankedTensorType>(t), 0.0);
+  };
+  auto buildArm = [&](Region &src, Region &dst, bool isTrue) {
+    Block *armBlock = new Block();
+    dst.push_back(armBlock);
+    OpBuilder armBuilder(armBlock, armBlock->end());
+    SmallVector<Value> armContributions;
+    Block &srcBlock = src.front();
+    Value armTotal =
+        cloneDensityBlock(armBuilder, loc, srcBlock, map, armContributions);
+    SmallVector<Value> yields;
+    for (Value v : srcBlock.getTerminator()->getOperands())
+      yields.push_back(map.lookupOrDefault(v));
+    unsigned k = 0;
+    for (size_t i = 0, e = trueSites.size(); i < e; ++i)
+      yields.push_back(isTrue ? armContributions[k++]
+                              : zeroOf(armBuilder, types[yields.size()]));
+    for (size_t i = 0, e = falseSites.size(); i < e; ++i)
+      yields.push_back(!isTrue ? armContributions[k++]
+                               : zeroOf(armBuilder, types[yields.size()]));
+    yields.push_back(armTotal ? armTotal : zeroOf(armBuilder, totalType));
+    YieldOp::create(armBuilder, loc, yields);
+  };
+  buildArm(ifOp.getTrueBranch(), newIf.getTrueBranch(), /*isTrue=*/true);
+  buildArm(ifOp.getFalseBranch(), newIf.getFalseBranch(), /*isTrue=*/false);
+  for (unsigned i = 0; i < numOriginal; ++i)
+    map.map(ifOp.getResult(i), newIf.getResult(i));
+  unsigned numSites = trueSites.size() + falseSites.size();
+  for (unsigned i = 0; i < numSites; ++i)
+    contributions.push_back(newIf.getResult(numOriginal + i));
+  return newIf.getResult(numOriginal + numSites);
+}
+
+static Value cloneDensityBlock(OpBuilder &builder, Location loc, Block &block,
+                               IRMapping &map,
+                               SmallVectorImpl<Value> &contributions) {
   Value total;
   auto addToTotal = [&](Value c) {
     total = total ? Value(arith::AddFOp::create(builder, loc, total, c)) : c;
@@ -85,68 +161,7 @@ static Value cloneDensityBlock(Block &block, OpBuilder &builder, IRMapping &map,
       builder.clone(op, map);
       continue;
     }
-    SmallVector<SampleRegionOp> trueSites, falseSites;
-    collectSitesInOrder(ifOp.getTrueBranch(), trueSites);
-    collectSitesInOrder(ifOp.getFalseBranch(), falseSites);
-    SmallVector<Type> types(ifOp.getResultTypes().begin(),
-                            ifOp.getResultTypes().end());
-    unsigned numOriginal = types.size();
-    Type totalType;
-    for (auto list : {&trueSites, &falseSites})
-      for (SampleRegionOp site : *list) {
-        Type t =
-            site.getLogpdf().front().getTerminator()->getOperand(0).getType();
-        types.push_back(t);
-        totalType = t;
-      }
-    types.push_back(totalType);
-    for (Region *arm : {&ifOp.getTrueBranch(), &ifOp.getFalseBranch()})
-      for (Operation &armOp : arm->front().without_terminator()) {
-        if (!isHoistableArmOp(armOp))
-          continue;
-        bool outside = llvm::all_of(armOp.getOperands(), [&](Value v) {
-          Operation *def = v.getDefiningOp();
-          bool inArm = def ? arm->isAncestor(def->getParentRegion())
-                           : arm->isAncestor(v.getParentRegion());
-          return !inArm || map.contains(v);
-        });
-        if (outside)
-          builder.clone(armOp, map);
-      }
-    auto newIf = IfOp::create(builder, loc, types,
-                              map.lookupOrDefault(ifOp.getPredicate()));
-    auto zeroOf = [&](OpBuilder &b, Type t) {
-      return emitSplatConstant(b, loc, cast<RankedTensorType>(t), 0.0);
-    };
-    auto buildArm = [&](Region &src, Region &dst, bool isTrue) {
-      Block *armBlock = new Block();
-      dst.push_back(armBlock);
-      OpBuilder armBuilder(armBlock, armBlock->end());
-      SmallVector<Value> armContributions;
-      Block &srcBlock = src.front();
-      Value armTotal =
-          cloneDensityBlock(srcBlock, armBuilder, map, armContributions, loc);
-      SmallVector<Value> yields;
-      for (Value v : srcBlock.getTerminator()->getOperands())
-        yields.push_back(map.lookupOrDefault(v));
-      unsigned k = 0;
-      for (size_t i = 0, e = trueSites.size(); i < e; ++i)
-        yields.push_back(isTrue ? armContributions[k++]
-                                : zeroOf(armBuilder, types[yields.size()]));
-      for (size_t i = 0, e = falseSites.size(); i < e; ++i)
-        yields.push_back(!isTrue ? armContributions[k++]
-                                 : zeroOf(armBuilder, types[yields.size()]));
-      yields.push_back(armTotal ? armTotal : zeroOf(armBuilder, totalType));
-      YieldOp::create(armBuilder, loc, yields);
-    };
-    buildArm(ifOp.getTrueBranch(), newIf.getTrueBranch(), /*isTrue=*/true);
-    buildArm(ifOp.getFalseBranch(), newIf.getFalseBranch(), /*isTrue=*/false);
-    for (unsigned i = 0; i < numOriginal; ++i)
-      map.map(ifOp.getResult(i), newIf.getResult(i));
-    unsigned numSites = trueSites.size() + falseSites.size();
-    for (unsigned i = 0; i < numSites; ++i)
-      contributions.push_back(newIf.getResult(numOriginal + i));
-    addToTotal(newIf.getResult(numOriginal + numSites));
+    addToTotal(rebuildSiteIf(builder, loc, ifOp, map, contributions));
   }
   return total;
 }
@@ -305,7 +320,7 @@ bool impulse::constructLogpdfRegion(InferRegionOp regionOp) {
   OpBuilder builder(lpBlock, lpBlock->end());
   SmallVector<Value> contributions;
   Value total =
-      cloneDensityBlock(samplerEntry, builder, map, contributions, loc);
+      cloneDensityBlock(builder, loc, samplerEntry, map, contributions);
 
   // Yields the joint density, then per-site terms in score-tail order.
   SmallVector<Value> yields{total};
@@ -313,22 +328,12 @@ bool impulse::constructLogpdfRegion(InferRegionOp regionOp) {
   YieldOp::create(builder, loc, yields);
 
   // random/random_split are effect-free in a density though not marked Pure.
-  bool sweptAny = true;
-  while (sweptAny) {
-    sweptAny = false;
-    SmallVector<Operation *> deadOps;
-    for (Operation &op : *lpBlock) {
-      if (&op == lpBlock->getTerminator())
-        continue;
-      if (op.use_empty() &&
-          (isMemoryEffectFree(&op) || isa<RandomOp, RandomSplitOp>(op)))
-        deadOps.push_back(&op);
-    }
-    for (Operation *op : llvm::reverse(deadOps)) {
-      op->erase();
-      sweptAny = true;
-    }
-  }
+  // Users follow their operands, so one reverse pass erases every dead chain.
+  Operation *terminator = lpBlock->getTerminator();
+  for (Operation &op : llvm::make_early_inc_range(llvm::reverse(*lpBlock)))
+    if (&op != terminator && op.use_empty() &&
+        (isMemoryEffectFree(&op) || isa<RandomOp, RandomSplitOp>(op)))
+      op.erase();
 
   regionOp.setNumPositionArgsAttr(builder.getI64IntegerAttr(numPositionArgs));
   regionOp.setPositionSizeAttr(builder.getI64IntegerAttr(positionSize));
