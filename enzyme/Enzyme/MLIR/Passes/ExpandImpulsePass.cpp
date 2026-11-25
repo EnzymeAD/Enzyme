@@ -436,6 +436,66 @@ struct AdaptationState {
             WelfordState::fromValues(values.slice(5, 3)), values[8]};
   }
 };
+
+/// What one HMC/NUTS chain carries from one transition to the next.
+struct ChainState {
+  Value q;
+  Value grad;
+  Value potentialEnergy;
+  Value rng;
+};
+
+/// Values carried by the HMC/NUTS warmup loop. `welford` is carried only
+/// while the mass matrix is adapted.
+struct WarmupCarry {
+  ChainState chain;
+  Value stepSize;
+  Value invMass;
+  Value massMatrixSqrt;
+  DualAveragingState dualAveraging;
+  std::optional<WelfordState> welford;
+  Value windowIdx;
+
+  SmallVector<Value> toValues() const {
+    SmallVector<Value> values = {chain.q,  chain.grad, chain.potentialEnergy,
+                                 chain.rng, stepSize,  invMass,
+                                 massMatrixSqrt};
+    llvm::append_range(values, dualAveraging.toValues());
+    if (welford)
+      llvm::append_range(values, welford->toValues());
+    values.push_back(windowIdx);
+    return values;
+  }
+  /// The position, gradient, potential energy and step size are typed by
+  /// `positionType` and `scalarType`, the window index by `tensor<i64>`.
+  SmallVector<Type> getTypes(RankedTensorType positionType,
+                             RankedTensorType scalarType) const {
+    SmallVector<Type> types = {positionType,         positionType,
+                               scalarType,           chain.rng.getType(),
+                               scalarType,           invMass.getType(),
+                               massMatrixSqrt.getType()};
+    llvm::append_range(types, dualAveraging.getTypes());
+    if (welford)
+      llvm::append_range(types, welford->getTypes());
+    types.push_back(RankedTensorType::get(
+        {}, IntegerType::get(positionType.getContext(), 64)));
+    return types;
+  }
+  static WarmupCarry fromValues(ValueRange range, bool hasWelford) {
+    SmallVector<Value> values = llvm::to_vector(range);
+    WarmupCarry carry;
+    carry.chain = {values[0], values[1], values[2], values[3]};
+    carry.stepSize = values[4];
+    carry.invMass = values[5];
+    carry.massMatrixSqrt = values[6];
+    carry.dualAveraging =
+        DualAveragingState::fromValues(ArrayRef<Value>(values).slice(7, 5));
+    if (hasWelford)
+      carry.welford = WelfordState::fromValues(ArrayRef<Value>(values).slice(12, 3));
+    carry.windowIdx = values.back();
+    return carry;
+  }
+};
 } // namespace
 
 static ArrayAttr buildSubSelection(OpBuilder &builder, ArrayAttr selection,
@@ -1629,45 +1689,24 @@ struct ExpandImpulsePass
               "MCMC: initial step size before warmup", debugDump);
           AdaptationState adaptation =
               loadOrInitAdaptation(initialStepSize, adaptMassMatrix);
-          const DualAveragingState &daState = adaptation.dualAveraging;
-          const WelfordState &welfordState = adaptation.welford;
-          Value windowIdx = adaptation.windowIdx;
           WelfordConfig welfordConfig;
           welfordConfig.diagonal = diagonal;
 
-          SmallVector<Type> warmupLoopTypes = {positionType,
-                                               positionType,
-                                               scalarType,
-                                               currentRng.getType(),
-                                               scalarType,
-                                               adaptedInvMass.getType(),
-                                               adaptedMassMatrixSqrt.getType()};
-          for (Type t : daState.getTypes())
-            warmupLoopTypes.push_back(t);
-          if (adaptMassMatrix) {
-            for (Type t : welfordState.getTypes())
-              warmupLoopTypes.push_back(t);
-          }
-          warmupLoopTypes.push_back(i64TensorType);
-
-          SmallVector<Value> warmupInitArgs = {currentQ,
-                                               currentGrad,
-                                               currentU,
-                                               currentRng,
-                                               initialStepSize,
-                                               adaptedInvMass,
-                                               adaptedMassMatrixSqrt};
-          for (Value v : daState.toValues())
-            warmupInitArgs.push_back(v);
-          if (adaptMassMatrix) {
-            for (Value v : welfordState.toValues())
-              warmupInitArgs.push_back(v);
-          }
-          warmupInitArgs.push_back(windowIdx);
+          WarmupCarry init;
+          init.chain = {currentQ, currentGrad, currentU, currentRng};
+          init.stepSize = initialStepSize;
+          init.invMass = adaptedInvMass;
+          init.massMatrixSqrt = adaptedMassMatrixSqrt;
+          init.dualAveraging = adaptation.dualAveraging;
+          if (adaptMassMatrix)
+            init.welford = adaptation.welford;
+          init.windowIdx = adaptation.windowIdx;
+          SmallVector<Type> warmupLoopTypes =
+              init.getTypes(positionType, scalarType);
 
           auto warmupLoop =
               impulse::ForOp::create(rewriter, loc, warmupLoopTypes, c0,
-                                     numWarmupConst, c1, warmupInitArgs);
+                                     numWarmupConst, c1, init.toValues());
 
           Block *warmupBody = rewriter.createBlock(&warmupLoop.getRegion());
           warmupBody->addArgument(i64TensorType, loc);
@@ -1681,34 +1720,13 @@ struct ExpandImpulsePass
           if (Value warmupOffset = chainStateInSlot(state_slot::kWarmupOffset))
             iterTGlobal =
                 arith::AddIOp::create(rewriter, loc, warmupOffset, iterT);
-          Value qLoop = warmupBody->getArgument(1);
-          Value gradLoop = warmupBody->getArgument(2);
-          Value uLoop = warmupBody->getArgument(3);
-          Value rngLoop = warmupBody->getArgument(4);
-          Value stepSizeLoop = warmupBody->getArgument(5);
-          Value invMassLoop = warmupBody->getArgument(6);
-          Value massMatrixSqrtLoop = warmupBody->getArgument(7);
-
-          SmallVector<Value> daStateLoopValues;
-          for (int i = 0; i < 5; ++i)
-            daStateLoopValues.push_back(warmupBody->getArgument(8 + i));
-          auto daStateLoop = DualAveragingState::fromValues(daStateLoopValues);
-
-          WelfordState welfordStateLoop;
-          Value windowIdxLoop;
-          if (adaptMassMatrix) {
-            SmallVector<Value> welfordStateLoopValues;
-            for (int i = 0; i < 3; ++i)
-              welfordStateLoopValues.push_back(warmupBody->getArgument(13 + i));
-            welfordStateLoop = WelfordState::fromValues(welfordStateLoopValues);
-            windowIdxLoop = warmupBody->getArgument(16);
-          } else {
-            windowIdxLoop = warmupBody->getArgument(13);
-          }
+          WarmupCarry carry = WarmupCarry::fromValues(
+              warmupBody->getArguments().drop_front(), adaptMassMatrix);
 
           auto sample = runSampleStepWithInvMass(
-              rewriter, loc, qLoop, gradLoop, uLoop, rngLoop, stepSizeLoop,
-              invMassLoop, massMatrixSqrtLoop);
+              rewriter, loc, carry.chain.q, carry.chain.grad,
+              carry.chain.potentialEnergy, carry.chain.rng, carry.stepSize,
+              carry.invMass, carry.massMatrixSqrt);
 
           DualAveragingConfig daConfig;
           DualAveragingState updatedDaState;
@@ -1716,16 +1734,17 @@ struct ExpandImpulsePass
           Value finalStepSizeFromDA;
 
           if (adaptStepSize) {
-            updatedDaState = updateDualAveraging(rewriter, loc, daStateLoop,
-                                                 sample.accept_prob, daConfig);
+            updatedDaState =
+                updateDualAveraging(rewriter, loc, carry.dualAveraging,
+                                    sample.accept_prob, daConfig);
             currentStepSizeFromDA =
                 getStepSizeFromDualAveraging(rewriter, loc, updatedDaState);
             finalStepSizeFromDA = getStepSizeFromDualAveraging(
                 rewriter, loc, updatedDaState, true);
           } else {
-            updatedDaState = daStateLoop;
-            currentStepSizeFromDA = stepSizeLoop;
-            finalStepSizeFromDA = stepSizeLoop;
+            updatedDaState = carry.dualAveraging;
+            currentStepSizeFromDA = carry.stepSize;
+            finalStepSizeFromDA = carry.stepSize;
           }
 
           auto isLastIter =
@@ -1755,10 +1774,10 @@ struct ExpandImpulsePass
               rewriter, loc, adaptedStepSizeInLoop, maxConst);
 
           auto windowIdxGtZero = arith::CmpIOp::create(
-              rewriter, loc, arith::CmpIPredicate::sgt, windowIdxLoop, c0);
+              rewriter, loc, arith::CmpIPredicate::sgt, carry.windowIdx, c0);
           auto windowIdxLtLast =
               arith::CmpIOp::create(rewriter, loc, arith::CmpIPredicate::slt,
-                                    windowIdxLoop, numWindowsMinusOne);
+                                    carry.windowIdx, numWindowsMinusOne);
           auto isMiddleWindow = arith::AndIOp::create(
               rewriter, loc, windowIdxGtZero, windowIdxLtLast);
 
@@ -1767,18 +1786,19 @@ struct ExpandImpulsePass
             auto sampleType1D = RankedTensorType::get({positionSize}, elemType);
             Value sample1D = impulse::ReshapeOp::create(rewriter, loc,
                                                         sampleType1D, sample.q);
-            WelfordState updatedWelfordAfterSample = updateWelford(
-                rewriter, loc, welfordStateLoop, sample1D, welfordConfig);
+            const WelfordState &welford = *carry.welford;
+            WelfordState updatedWelfordAfterSample =
+                updateWelford(rewriter, loc, welford, sample1D, welfordConfig);
 
             conditionalWelford.mean = impulse::SelectOp::create(
-                rewriter, loc, welfordStateLoop.mean.getType(), isMiddleWindow,
-                updatedWelfordAfterSample.mean, welfordStateLoop.mean);
+                rewriter, loc, welford.mean.getType(), isMiddleWindow,
+                updatedWelfordAfterSample.mean, welford.mean);
             conditionalWelford.m2 = impulse::SelectOp::create(
-                rewriter, loc, welfordStateLoop.m2.getType(), isMiddleWindow,
-                updatedWelfordAfterSample.m2, welfordStateLoop.m2);
+                rewriter, loc, welford.m2.getType(), isMiddleWindow,
+                updatedWelfordAfterSample.m2, welford.m2);
             conditionalWelford.n = impulse::SelectOp::create(
-                rewriter, loc, welfordStateLoop.n.getType(), isMiddleWindow,
-                updatedWelfordAfterSample.n, welfordStateLoop.n);
+                rewriter, loc, welford.n.getType(), isMiddleWindow,
+                updatedWelfordAfterSample.n, welford.n);
           }
 
           Value atWindowEnd = arith::ConstantOp::create(
@@ -1788,7 +1808,7 @@ struct ExpandImpulsePass
 
           for (int64_t w = 0; w < numWindows; ++w) {
             auto windowIdxIsW = arith::CmpIOp::create(
-                rewriter, loc, arith::CmpIPredicate::eq, windowIdxLoop,
+                rewriter, loc, arith::CmpIPredicate::eq, carry.windowIdx,
                 arith::ConstantOp::create(
                     rewriter, loc, i64TensorType,
                     DenseElementsAttr::get(i64TensorType,
@@ -1803,138 +1823,87 @@ struct ExpandImpulsePass
           }
 
           Value newWindowIdx =
-              arith::AddIOp::create(rewriter, loc, windowIdxLoop, c1);
+              arith::AddIOp::create(rewriter, loc, carry.windowIdx, c1);
           Value windowIdxAfterIncrement = impulse::SelectOp::create(
               rewriter, loc, i64TensorType, atWindowEnd, newWindowIdx,
-              windowIdxLoop);
+              carry.windowIdx);
 
           auto atMiddleWindowEnd =
               arith::AndIOp::create(rewriter, loc, atWindowEnd, isMiddleWindow);
 
-          Value finalInvMass;
-          Value finalMassMatrixSqrt;
-          WelfordState finalWelfordState;
-          Value finalStepSizeValue;
-          DualAveragingState finalDaState;
+          WarmupCarry next;
+          next.chain = {sample.q, sample.grad, sample.U, sample.rng};
+          next.stepSize = adaptedStepSizeInLoop;
+          next.invMass = carry.invMass;
+          next.massMatrixSqrt = carry.massMatrixSqrt;
+          next.dualAveraging = updatedDaState;
+          if (adaptMassMatrix)
+            next.welford = conditionalWelford;
+          next.windowIdx = windowIdxAfterIncrement;
 
-          SmallVector<Type> ifResultTypes;
-          ifResultTypes.push_back(invMassLoop.getType());
-          ifResultTypes.push_back(massMatrixSqrtLoop.getType());
+          auto windowEndValues = [](const WarmupCarry &c) {
+            SmallVector<Value> values = {c.invMass, c.massMatrixSqrt};
+            if (c.welford)
+              llvm::append_range(values, c.welford->toValues());
+            llvm::append_range(values, c.dualAveraging.toValues());
+            return values;
+          };
+          SmallVector<Value> keptValues = windowEndValues(next);
+          auto ifOp = impulse::IfOp::create(
+              rewriter, loc, ValueRange(keptValues).getTypes(),
+              atMiddleWindowEnd);
+
+          rewriter.setInsertionPointToStart(
+              rewriter.createBlock(&ifOp.getTrueBranch()));
+          WarmupCarry restarted = next;
           if (adaptMassMatrix) {
-            ifResultTypes.push_back(conditionalWelford.mean.getType());
-            ifResultTypes.push_back(conditionalWelford.m2.getType());
-            ifResultTypes.push_back(conditionalWelford.n.getType());
+            Value newInvMass = finalizeWelford(rewriter, loc,
+                                               conditionalWelford, welfordConfig);
+            Value newMassMatrixSqrt =
+                computeMassMatrixSqrt(rewriter, loc, newInvMass, positionType);
+            // finalizeWelford returns rank-1 diagonals; match the carried type.
+            if (newInvMass.getType() != carry.invMass.getType())
+              newInvMass = impulse::ReshapeOp::create(
+                  rewriter, loc, carry.invMass.getType(), newInvMass);
+            if (newMassMatrixSqrt.getType() != carry.massMatrixSqrt.getType())
+              newMassMatrixSqrt = impulse::ReshapeOp::create(
+                  rewriter, loc, carry.massMatrixSqrt.getType(),
+                  newMassMatrixSqrt);
+            restarted.invMass = newInvMass;
+            restarted.massMatrixSqrt = newMassMatrixSqrt;
+            restarted.welford =
+                initWelford(rewriter, loc, positionSize, diagonal);
           }
-          for (Type t : updatedDaState.getTypes())
-            ifResultTypes.push_back(t);
+          if (adaptStepSize)
+            restarted.dualAveraging =
+                initDualAveraging(rewriter, loc, adaptedStepSizeInLoop);
+          impulse::YieldOp::create(rewriter, loc, windowEndValues(restarted));
 
-          auto ifOp = impulse::IfOp::create(rewriter, loc, ifResultTypes,
-                                            atMiddleWindowEnd);
-
-          {
-            Block *trueBranch = rewriter.createBlock(&ifOp.getTrueBranch());
-            rewriter.setInsertionPointToStart(trueBranch);
-
-            SmallVector<Value> trueYieldValues;
-
-            if (adaptMassMatrix) {
-              Value newInvMass = finalizeWelford(
-                  rewriter, loc, conditionalWelford, welfordConfig);
-              Value newMassMatrixSqrt = computeMassMatrixSqrt(
-                  rewriter, loc, newInvMass, positionType);
-              // finalizeWelford returns rank-1 diagonals; match the carried
-              // type.
-              if (newInvMass.getType() != invMassLoop.getType())
-                newInvMass = impulse::ReshapeOp::create(
-                    rewriter, loc, invMassLoop.getType(), newInvMass);
-              if (newMassMatrixSqrt.getType() != massMatrixSqrtLoop.getType())
-                newMassMatrixSqrt = impulse::ReshapeOp::create(
-                    rewriter, loc, massMatrixSqrtLoop.getType(),
-                    newMassMatrixSqrt);
-              auto reinitWelford =
-                  initWelford(rewriter, loc, positionSize, diagonal);
-
-              trueYieldValues.push_back(newInvMass);
-              trueYieldValues.push_back(newMassMatrixSqrt);
-              trueYieldValues.push_back(reinitWelford.mean);
-              trueYieldValues.push_back(reinitWelford.m2);
-              trueYieldValues.push_back(reinitWelford.n);
-            } else {
-              trueYieldValues.push_back(invMassLoop);
-              trueYieldValues.push_back(massMatrixSqrtLoop);
-            }
-
-            if (adaptStepSize) {
-              auto reinitDaState =
-                  initDualAveraging(rewriter, loc, adaptedStepSizeInLoop);
-              for (auto v : reinitDaState.toValues())
-                trueYieldValues.push_back(v);
-            } else {
-              for (auto v : updatedDaState.toValues())
-                trueYieldValues.push_back(v);
-            }
-
-            impulse::YieldOp::create(rewriter, loc, trueYieldValues);
-          }
-
-          {
-            Block *falseBranch = rewriter.createBlock(&ifOp.getFalseBranch());
-            rewriter.setInsertionPointToStart(falseBranch);
-
-            SmallVector<Value> falseYieldValues;
-            falseYieldValues.push_back(invMassLoop);
-            falseYieldValues.push_back(massMatrixSqrtLoop);
-            if (adaptMassMatrix) {
-              falseYieldValues.push_back(conditionalWelford.mean);
-              falseYieldValues.push_back(conditionalWelford.m2);
-              falseYieldValues.push_back(conditionalWelford.n);
-            }
-            for (auto v : updatedDaState.toValues())
-              falseYieldValues.push_back(v);
-
-            impulse::YieldOp::create(rewriter, loc, falseYieldValues);
-          }
+          rewriter.setInsertionPointToStart(
+              rewriter.createBlock(&ifOp.getFalseBranch()));
+          impulse::YieldOp::create(rewriter, loc, keptValues);
 
           rewriter.setInsertionPointAfter(ifOp);
-
-          size_t resultIdx = 0;
-          finalInvMass = ifOp.getResult(resultIdx++);
-          finalMassMatrixSqrt = ifOp.getResult(resultIdx++);
-          if (adaptMassMatrix) {
-            finalWelfordState.mean = ifOp.getResult(resultIdx++);
-            finalWelfordState.m2 = ifOp.getResult(resultIdx++);
-            finalWelfordState.n = ifOp.getResult(resultIdx++);
-          }
-          finalDaState.log_step_size = ifOp.getResult(resultIdx++);
-          finalDaState.log_step_size_avg = ifOp.getResult(resultIdx++);
-          finalDaState.gradient_avg = ifOp.getResult(resultIdx++);
-          finalDaState.step_count = ifOp.getResult(resultIdx++);
-          finalDaState.prox_center = ifOp.getResult(resultIdx++);
-
-          finalStepSizeValue = adaptedStepSizeInLoop;
-
-          SmallVector<Value> warmupYieldValues = {
-              sample.q,           sample.grad,  sample.U,           sample.rng,
-              finalStepSizeValue, finalInvMass, finalMassMatrixSqrt};
-          for (Value v : finalDaState.toValues())
-            warmupYieldValues.push_back(v);
-          if (adaptMassMatrix) {
-            for (Value v : finalWelfordState.toValues())
-              warmupYieldValues.push_back(v);
-          }
-          warmupYieldValues.push_back(windowIdxAfterIncrement);
-
-          impulse::YieldOp::create(rewriter, loc, warmupYieldValues);
+          SmallVector<Value> windowEnd = llvm::to_vector_of<Value>(ifOp.getResults());
+          next.invMass = windowEnd[0];
+          next.massMatrixSqrt = windowEnd[1];
+          if (adaptMassMatrix)
+            next.welford =
+                WelfordState::fromValues(ArrayRef<Value>(windowEnd).slice(2, 3));
+          next.dualAveraging = DualAveragingState::fromValues(
+              ArrayRef<Value>(windowEnd).take_back(5));
+          impulse::YieldOp::create(rewriter, loc, next.toValues());
 
           rewriter.setInsertionPointAfter(warmupLoop);
-
-          currentQ = warmupLoop.getResult(0);
-          currentGrad = warmupLoop.getResult(1);
-          currentU = warmupLoop.getResult(2);
-          currentRng = warmupLoop.getResult(3);
-          adaptedStepSize = warmupLoop.getResult(4);
-          adaptedInvMass = warmupLoop.getResult(5);
-          adaptedMassMatrixSqrt = warmupLoop.getResult(6);
+          WarmupCarry result =
+              WarmupCarry::fromValues(warmupLoop.getResults(), adaptMassMatrix);
+          currentQ = result.chain.q;
+          currentGrad = result.chain.grad;
+          currentU = result.chain.potentialEnergy;
+          currentRng = result.chain.rng;
+          adaptedStepSize = result.stepSize;
+          adaptedInvMass = result.invMass;
+          adaptedMassMatrixSqrt = result.massMatrixSqrt;
 
           adaptedStepSize = conditionalDump(
               rewriter, loc, adaptedStepSize,
@@ -1945,25 +1914,13 @@ struct ExpandImpulsePass
                 "MCMC: adapted inverse mass matrix after warmup", debugDump);
           }
 
-          if (exposeAdaptation) {
-            AdaptationState finalState;
-            finalState.dualAveraging = DualAveragingState::fromValues(
-                {warmupLoop.getResult(7), warmupLoop.getResult(8),
-                 warmupLoop.getResult(9), warmupLoop.getResult(10),
-                 warmupLoop.getResult(11)});
-            if (adaptMassMatrix) {
-              finalState.welford =
-                  WelfordState::fromValues({warmupLoop.getResult(12),
-                                            warmupLoop.getResult(13),
-                                            warmupLoop.getResult(14)});
-              finalState.windowIdx = warmupLoop.getResult(15);
-            } else {
-              finalState.welford =
-                  initWelford(rewriter, loc, positionSize, diagonal);
-              finalState.windowIdx = warmupLoop.getResult(12);
-            }
-            finalAdaptation = finalState;
-          }
+          if (exposeAdaptation)
+            finalAdaptation = AdaptationState{
+                result.dualAveraging,
+                adaptMassMatrix
+                    ? *result.welford
+                    : initWelford(rewriter, loc, positionSize, diagonal),
+                result.windowIdx};
         }
 
         if (exposeAdaptation && !finalAdaptation)
