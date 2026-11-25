@@ -1518,7 +1518,7 @@ ScratchFunction::ScratchFunction(Module &M, const std::string &expr,
     SmallVector<Value *, 4> elements = emitSharedElements(
         G, parsedNode->operands,
         [&](size_t) -> IRBuilder<> & { return builder; }, &VMap, nullptr);
-    Value *Agg = UndefValue::get(FuncRetType);
+    Value *Agg = PoisonValue::get(FuncRetType);
     for (auto [i, V] : enumerate(elements)) {
       if (V->getType() != ReturnType)
         V = builder.CreateFPCast(V, ReturnType);
@@ -1750,7 +1750,7 @@ void RewriteUnit::materialize(size_t candidateIndex) {
 
   for (Instruction *I : erasableInsts) {
     if (!I->use_empty())
-      I->replaceAllUsesWith(UndefValue::get(I->getType()));
+      I->replaceAllUsesWith(PoisonValue::get(I->getType()));
     I->eraseFromParent();
     subgraph->operations.remove(I);
     cast<FPLLValue>(valueToNodeMap[I])->value = nullptr;

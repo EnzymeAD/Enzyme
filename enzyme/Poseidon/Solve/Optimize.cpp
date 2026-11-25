@@ -465,7 +465,7 @@ static bool materializeFPSolution(Session &S, Function &F, FunctionFPState &st,
         continue;
       for (auto *I : subgraph.operations) {
         if (!I->use_empty()) {
-          I->replaceAllUsesWith(UndefValue::get(I->getType()));
+          I->replaceAllUsesWith(PoisonValue::get(I->getType()));
         }
         I->eraseFromParent();
       }

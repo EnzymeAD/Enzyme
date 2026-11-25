@@ -314,7 +314,7 @@ void ChangeTarget::changeFormat(PrecisionChange &change,
                   }) &&
            "PT: Unexpected external user of a changed instruction");
     if (!oldI->use_empty())
-      oldI->replaceAllUsesWith(UndefValue::get(oldI->getType()));
+      oldI->replaceAllUsesWith(PoisonValue::get(oldI->getType()));
     oldI->eraseFromParent();
     if (!VMap)
       subgraph.operations.remove(oldI);
@@ -353,6 +353,8 @@ static Value *floatExtSource(Value *V) {
 
 // V as a float constant, if it is one exactly.
 static Constant *floatConstant(Value *V) {
+  if (isa<PoisonValue>(V))
+    return PoisonValue::get(Type::getFloatTy(V->getContext()));
   if (isa<UndefValue>(V))
     return UndefValue::get(Type::getFloatTy(V->getContext()));
   auto *CFP = dyn_cast<ConstantFP>(V);

@@ -321,7 +321,7 @@ static void removeRedundantIVs(BasicBlock *Header, PHINode *CanonicalIV,
     IRBuilder<> B(PN);
     PHINode *Tmp = B.CreatePHI(PN->getType(), 0);
     for (auto *Pred : predecessors(Header))
-      Tmp->addIncoming(UndefValue::get(Tmp->getType()), Pred);
+      Tmp->addIncoming(PoisonValue::get(Tmp->getType()), Pred);
     PN->replaceAllUsesWith(Tmp);
     PN->eraseFromParent();
 
