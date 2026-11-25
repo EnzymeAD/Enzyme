@@ -171,9 +171,7 @@ static Value reduceSumToScalar(OpBuilder &b, Location loc, Value v) {
   auto vt = cast<RankedTensorType>(v.getType());
   Type elemType = vt.getElementType();
   auto scalarType = RankedTensorType::get({}, elemType);
-  int64_t n = 1;
-  for (int64_t d : vt.getShape())
-    n *= d;
+  int64_t n = vt.getNumElements();
   if (n == 1)
     return impulse::ReshapeOp::create(b, loc, scalarType, v);
 
@@ -236,7 +234,7 @@ static Value emitXformForward(OpBuilder &b, Location loc, XformAttr xform,
     // Not used in distribution chains; see emitBijectorForward.
     return z;
   }
-  return z;
+  llvm_unreachable("unknown XformKind");
 }
 
 static Value emitXformInverse(OpBuilder &b, Location loc, XformAttr xform,
@@ -273,7 +271,7 @@ static Value emitXformInverse(OpBuilder &b, Location loc, XformAttr xform,
   case XformKind::SCALED_UNIT_LOWER_CHOLESKY:
     return y;
   }
-  return y;
+  llvm_unreachable("unknown XformKind");
 }
 
 /// Evaluated at the forward map's input, summed over the event.
@@ -314,7 +312,7 @@ static Value emitXformLogAbsDetJac(OpBuilder &b, Location loc, XformAttr xform,
   case XformKind::SCALED_UNIT_LOWER_CHOLESKY:
     return scalarConst(b, loc, elemType, 0.0);
   }
-  return scalarConst(b, loc, elemType, 0.0);
+  llvm_unreachable("unknown XformKind");
 }
 
 static Value emitUnitUniformLogpdf(OpBuilder &b, Location loc, Value z,
@@ -457,9 +455,7 @@ static Value emitNativeSampler(OpBuilder &b, Location loc, DistBaseKind base,
     // mu + U^T z with the upper Cholesky factor U of Sigma = U^T U.
     Value mu = distArgs[0];
     Value sigma = distArgs[1];
-    int64_t n = 1;
-    for (int64_t d : sampleType.getShape())
-      n *= d;
+    int64_t n = sampleType.getNumElements();
     Type elemType = sampleType.getElementType();
     Value zero = scalarConst(b, loc, elemType, 0.0);
     Value one = scalarConst(b, loc, elemType, 1.0);
@@ -503,10 +499,7 @@ static std::pair<Value, Value>
 emitStudentTParamTerms(OpBuilder &b, Location loc, Value dfArg, Value scaleArg,
                        RankedTensorType sampleType) {
   auto numel = [](Value v) {
-    int64_t n = 1;
-    for (int64_t d : cast<RankedTensorType>(v.getType()).getShape())
-      n *= d;
-    return n;
+    return cast<RankedTensorType>(v.getType()).getNumElements();
   };
   Type elemType = sampleType.getElementType();
   bool scalar = numel(dfArg) == 1 && numel(scaleArg) == 1;
@@ -671,10 +664,7 @@ static LogpdfSplit emitNativeLogpdfSplit(OpBuilder &b, Location loc,
     // The event is the last axis; only lgamma(sum_K alpha) is summed per block.
     int64_t eventSize =
         sampleType.getShape().empty() ? 1 : sampleType.getShape().back();
-    int64_t total = 1;
-    for (int64_t dsz : sampleType.getShape())
-      total *= dsz;
-    int64_t numBlocks = (eventSize == 0) ? 0 : total / eventSize;
+    int64_t numBlocks = sampleType.getNumElements() / eventSize;
     auto twoDType = RankedTensorType::get({numBlocks, eventSize}, elemType);
     Value alpha = bcast(distArgs[0]);
     Value alpha2d = impulse::ReshapeOp::create(b, loc, twoDType, alpha);
@@ -699,9 +689,7 @@ static LogpdfSplit emitNativeLogpdfSplit(OpBuilder &b, Location loc,
     // |U^-T diff|^2 with one triangular solve, where Sigma = U^T U.
     Value mu = distArgs[0];
     Value sigma = distArgs[1];
-    int64_t n = 1;
-    for (int64_t dsz : sampleType.getShape())
-      n *= dsz;
+    int64_t n = sampleType.getNumElements();
     auto matType = cast<RankedTensorType>(sigma.getType());
     auto vecType = RankedTensorType::get({n}, elemType);
     auto colType = RankedTensorType::get({n, 1}, elemType);
@@ -1140,7 +1128,7 @@ Value impulse::emitBijectorForward(OpBuilder &builder, Location loc,
     // Not produced by bijectorFor.
     return unconstrained;
   }
-  return unconstrained;
+  llvm_unreachable("unknown XformKind");
 }
 
 Value impulse::emitBijectorInverse(OpBuilder &builder, Location loc,
@@ -1204,7 +1192,7 @@ Value impulse::emitBijectorInverse(OpBuilder &builder, Location loc,
   case XformKind::SCALED_UNIT_LOWER_CHOLESKY:
     return constrained;
   }
-  return constrained;
+  llvm_unreachable("unknown XformKind");
 }
 
 Value impulse::emitBijectorLogAbsDetJac(OpBuilder &builder, Location loc,
@@ -1288,9 +1276,7 @@ Value impulse::emitBijectorLogAbsDetJac(OpBuilder &builder, Location loc,
         DenseElementsAttr::get(scalarType,
                                builder.getFloatAttr(elemType, 0.0)));
   }
-  return arith::ConstantOp::create(
-      builder, loc, scalarType,
-      DenseElementsAttr::get(scalarType, builder.getFloatAttr(elemType, 0.0)));
+  llvm_unreachable("unknown XformKind");
 }
 
 Value impulse::emitSoftplus(OpBuilder &builder, Location loc, Value x) {
