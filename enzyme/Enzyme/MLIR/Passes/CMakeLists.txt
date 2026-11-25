@@ -12,6 +12,8 @@ add_mlir_dialect_library(
   EnzymeMLIRPass.cpp
   EnzymeActivityOpt.cpp
   ExpandImpulsePass.cpp
+  ExpandImpulseHMCVI.cpp
+  ExpandImpulseMHGibbs.cpp
   EnzymeBatchPass.cpp
   EnzymeBatchDiffPass.cpp
   EnzymeBatchToTensorPass.cpp
