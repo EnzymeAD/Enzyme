@@ -14,8 +14,14 @@
 namespace mlir {
 namespace impulse {
 
-/// Builds the logpdf region from the sampler; false leaves the op unchanged.
-bool constructLogpdfRegion(InferRegionOp regionOp);
+/// Builds the logpdf region of `regionOp` from its sampler; false leaves the
+/// op unchanged. An op in a branch that holds sample sites moves above the
+/// branch when its operands come from outside the branch, it has results but
+/// no regions or memory effects, and it is an `arith.constant`,
+/// `impulse.slice` or `impulse.reshape` or `isHoistableFromBranch` holds.
+bool constructLogpdfRegion(
+    InferRegionOp regionOp,
+    function_ref<bool(Operation *)> isHoistableFromBranch);
 
 } // namespace impulse
 } // namespace mlir

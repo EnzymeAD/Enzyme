@@ -329,7 +329,11 @@ struct SICMPass : public enzyme::impl::SICMPassBase<SICMPass> {
       if (!regionOp.getSampling().empty())
         runSICMOnRegion(regionOp, AnalysisTarget::Sampling);
 
-      constructLogpdfRegion(regionOp);
+      constructLogpdfRegion(regionOp, [&](Operation *op) {
+        return llvm::any_of(ruleSets, [&](const SICMRuleSetInterface *ruleSet) {
+          return ruleSet->isHoistableFromBranch(op);
+        });
+      });
 
       if (!regionOp.getLogpdf().empty())
         runSICMOnRegion(regionOp, AnalysisTarget::Logpdf);

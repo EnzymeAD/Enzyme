@@ -32,32 +32,33 @@ static bool holdsSites(Operation *op) {
       .wasInterrupted();
 }
 
-/// Ops with linear adjoints only, so hoisting them out of an arm is sound.
-static bool isHoistableArmOp(Operation &op) {
+/// Whether `op` may move out of a branch arm that holds sites; see
+/// constructLogpdfRegion.
+static bool
+isHoistableArmOp(Operation &op,
+                 function_ref<bool(Operation *)> isHoistableFromBranch) {
   if (op.getNumRegions() != 0 || op.getNumResults() == 0 ||
       !isMemoryEffectFree(&op))
     return false;
-  StringRef name = op.getName().getStringRef();
-  return name == "stablehlo.slice" || name == "stablehlo.reshape" ||
-         name == "stablehlo.broadcast_in_dim" ||
-         name == "stablehlo.transpose" || name == "stablehlo.convert" ||
-         name == "stablehlo.constant" || name == "arith.constant" ||
-         name == "impulse.slice" || name == "impulse.reshape";
+  return isa<arith::ConstantOp, SliceOp, ReshapeOp>(op) ||
+         isHoistableFromBranch(&op);
 }
 
 /// Clones `block` through `map` with every site replaced by its density, and
 /// appends the per-site densities to `contributions`. Returns the density
 /// total of `block`, or null when it holds no site.
-static Value cloneDensityBlock(OpBuilder &builder, Location loc, Block &block,
-                               IRMapping &map,
-                               SmallVectorImpl<Value> &contributions);
+static Value
+cloneDensityBlock(OpBuilder &builder, Location loc, Block &block,
+                  IRMapping &map, SmallVectorImpl<Value> &contributions,
+                  function_ref<bool(Operation *)> isHoistableFromBranch);
 
 /// Rebuilds `ifOp`, whose arms hold sites, with one extra result per site
 /// (zero in the arm without that site) and the arm total last. Appends the
 /// per-site results to `contributions` and returns the total.
-static Value rebuildSiteIf(OpBuilder &builder, Location loc, IfOp ifOp,
-                           IRMapping &map,
-                           SmallVectorImpl<Value> &contributions) {
+static Value
+rebuildSiteIf(OpBuilder &builder, Location loc, IfOp ifOp, IRMapping &map,
+              SmallVectorImpl<Value> &contributions,
+              function_ref<bool(Operation *)> isHoistableFromBranch) {
   SmallVector<SampleRegionOp> trueSites, falseSites;
   collectSitesInOrder(ifOp.getTrueBranch(), trueSites);
   collectSitesInOrder(ifOp.getFalseBranch(), falseSites);
@@ -75,7 +76,7 @@ static Value rebuildSiteIf(OpBuilder &builder, Location loc, IfOp ifOp,
   types.push_back(totalType);
   for (Region *arm : {&ifOp.getTrueBranch(), &ifOp.getFalseBranch()})
     for (Operation &armOp : arm->front().without_terminator()) {
-      if (!isHoistableArmOp(armOp))
+      if (!isHoistableArmOp(armOp, isHoistableFromBranch))
         continue;
       bool outside = llvm::all_of(armOp.getOperands(), [&](Value v) {
         Operation *def = v.getDefiningOp();
@@ -97,8 +98,8 @@ static Value rebuildSiteIf(OpBuilder &builder, Location loc, IfOp ifOp,
     OpBuilder armBuilder(armBlock, armBlock->end());
     SmallVector<Value> armContributions;
     Block &srcBlock = src.front();
-    Value armTotal =
-        cloneDensityBlock(armBuilder, loc, srcBlock, map, armContributions);
+    Value armTotal = cloneDensityBlock(armBuilder, loc, srcBlock, map,
+                                       armContributions, isHoistableFromBranch);
     SmallVector<Value> yields;
     for (Value v : srcBlock.getTerminator()->getOperands())
       yields.push_back(map.lookupOrDefault(v));
@@ -122,9 +123,10 @@ static Value rebuildSiteIf(OpBuilder &builder, Location loc, IfOp ifOp,
   return newIf.getResult(numOriginal + numSites);
 }
 
-static Value cloneDensityBlock(OpBuilder &builder, Location loc, Block &block,
-                               IRMapping &map,
-                               SmallVectorImpl<Value> &contributions) {
+static Value
+cloneDensityBlock(OpBuilder &builder, Location loc, Block &block,
+                  IRMapping &map, SmallVectorImpl<Value> &contributions,
+                  function_ref<bool(Operation *)> isHoistableFromBranch) {
   Value total;
   auto addToTotal = [&](Value c) {
     total = total ? Value(arith::AddFOp::create(builder, loc, total, c)) : c;
@@ -158,12 +160,15 @@ static Value cloneDensityBlock(OpBuilder &builder, Location loc, Block &block,
       builder.clone(op, map);
       continue;
     }
-    addToTotal(rebuildSiteIf(builder, loc, ifOp, map, contributions));
+    addToTotal(rebuildSiteIf(builder, loc, ifOp, map, contributions,
+                             isHoistableFromBranch));
   }
   return total;
 }
 
-bool impulse::constructLogpdfRegion(InferRegionOp regionOp) {
+bool impulse::constructLogpdfRegion(
+    InferRegionOp regionOp,
+    function_ref<bool(Operation *)> isHoistableFromBranch) {
   if (!regionOp.getLogpdf().empty())
     return false;
   Region &samplerRegion = regionOp.getSampling();
@@ -316,8 +321,8 @@ bool impulse::constructLogpdfRegion(InferRegionOp regionOp) {
 
   OpBuilder builder(lpBlock, lpBlock->end());
   SmallVector<Value> contributions;
-  Value total =
-      cloneDensityBlock(builder, loc, samplerEntry, map, contributions);
+  Value total = cloneDensityBlock(builder, loc, samplerEntry, map,
+                                  contributions, isHoistableFromBranch);
 
   // Yields the joint density, then per-site terms in score-tail order.
   SmallVector<Value> yields{total};

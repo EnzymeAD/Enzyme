@@ -22,7 +22,8 @@ namespace impulse {
 /// The `rule-options` of a `sicm` run, as key and value.
 using SICMRuleOptions = llvm::StringMap<std::string>;
 
-/// The rewrite rules a dialect contributes to the `sicm` pass.
+/// The rewrite rules a dialect contributes to the `sicm` pass, and the ops
+/// the pass may move out of a branch of a density.
 class SICMRuleSetInterface
     : public DialectInterface::Base<SICMRuleSetInterface> {
 public:
@@ -45,6 +46,14 @@ public:
   /// Called once per run, after every region.
   virtual void finalize(Operation *root, const SICMRuleOptions &options) const {
   }
+
+  /// True if `op`, which has results but no regions or memory effects, may
+  /// move out of a branch of a density and run whether or not the branch is
+  /// taken. That requires `op` to be a constant or a linear function of its
+  /// operands, such as an op that moves or converts elements: its derivative
+  /// does not depend on the operand values, so the branch not taken adds
+  /// exactly zero to the gradient of the density.
+  virtual bool isHoistableFromBranch(Operation *op) const { return false; }
 };
 
 } // namespace impulse
