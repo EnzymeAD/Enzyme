@@ -1644,18 +1644,21 @@ static ValueRange siteParams(impulse::SampleOp site) {
   return inputs.empty() ? inputs : inputs.drop_front();
 }
 
-/// Draws fresh values for `site`: inline from its distribution when that
-/// sampler can be emitted, else by calling its `fn`. Returns replacements for
-/// all results of `site`, the rng first.
+/// Draws fresh values for `site`: inline from its distribution when that has a
+/// loop-free sampler, else by calling its `fn`. Returns replacements for all
+/// results of `site`, the rng first.
 static SmallVector<Value> emitSiteDraw(OpBuilder &builder,
                                        SymbolTableCollection &symbolTable,
                                        impulse::SampleOp site) {
   Location loc = site.getLoc();
   if (impulse::DistAttr dist = site.getDistAttr();
-      dist && impulse::distSamplerEmittable(dist))
-    return impulse::emitDistSampler(
-        builder, loc, dist, site.getInputs().front(), siteParams(site),
+      dist && dist.hasLoopFreeSampler()) {
+    Value rng = site.getInputs().front();
+    Value sample = impulse::emitDistSampler(
+        builder, loc, dist, rng, siteParams(site),
         cast<RankedTensorType>(site.getResult(1).getType()));
+    return {rng, sample};
+  }
   auto fn = symbolTable.lookupNearestSymbolFrom<FunctionOpInterface>(
       site, site.getFnAttr());
   auto call = func::CallOp::create(builder, loc, fn.getName(),
@@ -4732,7 +4735,7 @@ struct ExpandImpulsePass
             sampledValues = std::move(*read);
           } else {
             if (impulse::DistAttr dist = sampleOp.getDistAttr();
-                dist && !impulse::distSamplerEmittable(dist))
+                dist && !dist.hasLoopFreeSampler())
               return sampleOp.emitError(
                   "Impulse: distribution sampler is not "
                   "emittable; the site must be constrained");

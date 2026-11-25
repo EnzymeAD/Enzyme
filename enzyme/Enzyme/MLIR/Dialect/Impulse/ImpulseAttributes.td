@@ -72,6 +72,10 @@ def DistAttr : Impulse_Attr<"Dist", "dist"> {
     /// The support of `base` mapped through each transform, without bounds
     /// or an event size.
     SupportAttr getSupport() const;
+    /// Whether a sample is a fixed function of one uniform or normal draw, so
+    /// that its sampler needs no loop. The other bases are sampled by
+    /// rejection, with a number of draws that depends on the values drawn.
+    bool hasLoopFreeSampler() const;
     /// The type of a sample when the parameter types `paramTypes` fix it,
     /// else null.
     RankedTensorType getSampleType(TypeRange paramTypes) const;

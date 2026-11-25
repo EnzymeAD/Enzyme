@@ -190,9 +190,9 @@ static void emitDistSamplerIntoRegion(OpBuilder &builder,
   SmallVector<Value> distArgs(std::next(block->args_begin()),
                               block->args_end());
   auto sampleType = cast<RankedTensorType>(sampleOp.getResult(1).getType());
-  SmallVector<Value> out = impulse::emitDistSampler(
-      builder, sampleOp.getLoc(), dist, rng, distArgs, sampleType);
-  impulse::YieldOp::create(builder, sampleOp.getLoc(), out);
+  Value sample = impulse::emitDistSampler(builder, sampleOp.getLoc(), dist, rng,
+                                          distArgs, sampleType);
+  impulse::YieldOp::create(builder, sampleOp.getLoc(), ValueRange{rng, sample});
 }
 
 /// Fills `region` with a block that takes a value of `sampleOp` followed by
@@ -257,7 +257,7 @@ static void convertSampleToSampleRegion(OpBuilder &builder,
   if (dist)
     emitDistLogpdfIntoRegion(builder, sampleOp, dist,
                              sampleRegionOp.getLogpdf());
-  if (dist && impulse::distSamplerEmittable(dist))
+  if (dist && dist.hasLoopFreeSampler())
     emitDistSamplerIntoRegion(builder, sampleOp, dist,
                               sampleRegionOp.getSampling());
   else

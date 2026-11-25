@@ -19,7 +19,6 @@
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Value.h"
-#include "llvm/ADT/SmallVector.h"
 
 namespace mlir {
 namespace impulse {
@@ -36,15 +35,11 @@ Value emitUnconstrain(OpBuilder &builder, Location loc, SupportAttr support,
 Value emitConstrainLogAbsDetJacobian(OpBuilder &builder, Location loc,
                                      SupportAttr support, Value unconstrained);
 
-/// False for rejection-loop samplers, whose RNG stream cannot be replayed.
-bool distSamplerEmittable(DistAttr dist);
-
-/// Draws a `sampleType` sample of `dist` with parameters `distArgs` from
-/// `rng`. Returns the advanced RNG state, then the sample.
-SmallVector<Value> emitDistSampler(OpBuilder &builder, Location loc,
-                                   DistAttr dist, Value rng,
-                                   ValueRange distArgs,
-                                   RankedTensorType sampleType);
+/// Draws a `sampleType` sample of `dist` with parameters `distArgs` and
+/// advances `rng`. `dist` must have a loop-free sampler.
+Value emitDistSampler(OpBuilder &builder, Location loc, DistAttr dist,
+                      Value &rng, ValueRange distArgs,
+                      RankedTensorType sampleType);
 
 /// Returns the log density of `observed` under `dist` with parameters
 /// `distArgs`, summed to a rank-0 tensor.

@@ -139,6 +139,28 @@ SupportAttr DistAttr::getSupport() const {
                           /*upper=*/FloatAttr(), /*event_size=*/IntegerAttr());
 }
 
+bool DistAttr::hasLoopFreeSampler() const {
+  switch (getBase()) {
+  case DistBaseKind::STD_NORMAL:
+  case DistBaseKind::STD_UNIFORM:
+  case DistBaseKind::EXPONENTIAL:
+  case DistBaseKind::BERNOULLI:
+  case DistBaseKind::DISCRETE_UNIFORM:
+  case DistBaseKind::HALF_NORMAL:
+  case DistBaseKind::HALF_CAUCHY:
+  case DistBaseKind::MULTIVARIATE_NORMAL:
+  case DistBaseKind::GUMBEL:
+    return true;
+  case DistBaseKind::GAMMA:
+  case DistBaseKind::STUDENT_T:
+  case DistBaseKind::HALF_STUDENT_T:
+  case DistBaseKind::POISSON:
+  case DistBaseKind::DIRICHLET:
+    return false;
+  }
+  llvm_unreachable("unknown DistBaseKind");
+}
+
 int64_t SupportAttr::getUnconstrainedSize(int64_t constrainedSize) const {
   if (getKind() != SupportKind::SIMPLEX)
     return constrainedSize;

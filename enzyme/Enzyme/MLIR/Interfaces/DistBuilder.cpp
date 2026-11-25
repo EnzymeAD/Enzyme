@@ -25,19 +25,6 @@
 using namespace mlir;
 using namespace mlir::impulse;
 
-bool impulse::distSamplerEmittable(DistAttr dist) {
-  switch (dist.getBase()) {
-  case DistBaseKind::GAMMA:
-  case DistBaseKind::STUDENT_T:
-  case DistBaseKind::HALF_STUDENT_T:
-  case DistBaseKind::POISSON:
-  case DistBaseKind::DIRICHLET:
-    return false;
-  default:
-    return true;
-  }
-}
-
 /// Elementwise log(x / (1 - x)).
 static Value emitLogit(OpBuilder &builder, Location loc, Value x) {
   auto xType = cast<RankedTensorType>(x.getType());
@@ -574,10 +561,9 @@ static Value emitBaseSampler(OpBuilder &builder, Location loc,
   llvm_unreachable("unknown DistBaseKind");
 }
 
-SmallVector<Value> impulse::emitDistSampler(OpBuilder &builder, Location loc,
-                                            DistAttr dist, Value rng,
-                                            ValueRange distArgs,
-                                            RankedTensorType sampleType) {
+Value impulse::emitDistSampler(OpBuilder &builder, Location loc, DistAttr dist,
+                               Value &rng, ValueRange distArgs,
+                               RankedTensorType sampleType) {
   Value val =
       emitBaseSampler(builder, loc, dist.getBase(), rng, distArgs, sampleType);
   // The verifier allows chains only on parameterless bases, so the distArgs
@@ -585,7 +571,7 @@ SmallVector<Value> impulse::emitDistSampler(OpBuilder &builder, Location loc,
   if (ArrayAttr transforms = dist.getTransforms())
     for (Attribute a : transforms)
       val = emitXformForward(builder, loc, cast<XformAttr>(a), distArgs, val);
-  return {rng, val};
+  return val;
 }
 
 /// Log density of `z` under the uniform distribution on [0, 1], summed over the
