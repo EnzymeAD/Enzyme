@@ -14,7 +14,9 @@
 #include "Profile/ProfileRead.h"
 #include "Sites/LaunchDescriptors.h"
 #include "Techniques/Unit.h"
+#include "runtime/ozaki/OzakiII.h"
 
+#include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
@@ -28,7 +30,9 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace llvm {
@@ -42,28 +46,6 @@ namespace poseidon {
 
 struct Options;
 class Session;
-
-// The percentile of the sampled relative errors a matrix product is scored at.
-constexpr double kDefaultConfidence = 0.95;
-
-struct CellStat {
-  double min = 0.0;
-  double max = 0.0;
-  uint64_t count = 0;
-  double minMag = 0.0; // smallest nonzero |value| observed (0 = unknown)
-};
-
-struct GradCellStat {
-  double sumGrad = 0.0;
-};
-
-struct MatmulProfile {
-  std::vector<CellStat> a;         // size M*K
-  std::vector<CellStat> b;         // size K*N
-  std::vector<GradCellStat> gradD; // size M*N
-
-  uint64_t totalCalls = 0;
-};
 
 enum class TidAxis : uint8_t {
   Unknown,
@@ -96,11 +78,12 @@ struct ScalarLoopHandle {
   llvm::SmallPtrSet<llvm::BasicBlock *, 4> blocks;
   llvm::Instruction *fma = nullptr;
   llvm::Instruction *fmul = nullptr;
-  llvm::Value *aBase = nullptr;
-  llvm::Value *bBase = nullptr;
+  // The pointer operands of the A and B loads.
+  llvm::Value *aPtr = nullptr;
+  llvm::Value *bPtr = nullptr;
 
   // Per-thread addresses of A and B at the first iteration, including the
-  // blockIdx * blockDim term that `aBase + tid * ld` leaves out.
+  // blockIdx * blockDim term.
   const llvm::SCEV *aStartSCEV = nullptr;
   const llvm::SCEV *bStartSCEV = nullptr;
   llvm::ScalarEvolution *SE = nullptr;
@@ -131,8 +114,6 @@ struct ScalarLoopHandle {
   int64_t bStrideByte = 0;
   int64_t aLeadingDimByte = 0;
   int64_t bLeadingDimByte = 0;
-
-  unsigned tripCount = 0;
 };
 
 // One GEMM dimension (extent or leading dimension) as a monomial over launch
@@ -183,7 +164,7 @@ struct RuntimeGemmHandle {
   // the operand's reduction index (A, B) or row index (C) is the contiguous
   // one.
   bool aColMajor = false, bColMajor = true, cColMajor = true;
-  double alpha = 1.0, beta = 0.0;
+  double beta = 0.0;
 
   // Profile-scale extents, reconstructed from the profile header's launch
   // geometry and the profiled execution counts.
@@ -191,7 +172,6 @@ struct RuntimeGemmHandle {
   // Per-CTA tile of the product, the size the accuracy model simulates.
   unsigned tileM = 0, tileN = 0;
   uint64_t profMacs = 0; // total profiled MACs over all members
-  uint64_t profEpilogue = 0;
   unsigned launches = 0; // kernel launches observed during profiling
   unsigned ctaPerLaunch = 0;
 };
@@ -209,12 +189,10 @@ struct AbstractMatmul {
   // at one scale. 0 = unavailable, and the compile-time trip count K is used.
   unsigned globalK = 0;
 
-  FPKind aType = FPKind::Invalid, bType = FPKind::Invalid;
-  FPKind accType = FPKind::Invalid;
-  FPKind dType = FPKind::Invalid;
+  // The type of A, B, the accumulator and the result.
+  FPKind elemType = FPKind::Invalid;
 
   enum class Origin {
-    Invalid,
     ScalarLoopReduction,
     // A dense GEMM whose M / Ncols / K and leading dimensions are runtime
     // expressions over the kernel's arguments, contracted across one or more
@@ -222,7 +200,7 @@ struct AbstractMatmul {
     // raise needs compile-time tile extents.
     HostGemmLoopNest,
   };
-  Origin origin = Origin::Invalid;
+  Origin origin = Origin::ScalarLoopReduction;
 
   ScalarLoopHandle scalarLoop;
   std::shared_ptr<RuntimeGemmHandle> hostGemm;
@@ -231,19 +209,104 @@ struct AbstractMatmul {
   llvm::Value *outputValue = nullptr;
 };
 
-MatmulProfile loadProfile(const AbstractMatmul &m,
-                          const ProfileMap &scalarProfile);
-
 // Recognize dense GEMMs written as thread-parallel reduction nests with runtime
 // dimensions (Origin::HostGemmLoopNest) among the loops no matmul in `out`
 // already claims. Appends only matmuls whose whole descriptor (extents,
-// leading dimensions, layouts, alpha/beta and the profile-scale shape) could
+// leading dimensions, layouts, beta and the profile-scale shape) could
 // be reconstructed; every other nest is skipped with a printed reason.
 void findHostGemmLoopNests(const Options &O, llvm::Function &F,
                            llvm::ScalarEvolution &SE, llvm::LoopInfo &LI,
                            const FunctionProfileHeader &profileHeader,
                            const ProfileMap &prof,
                            llvm::SmallVectorImpl<AbstractMatmul> &out);
+
+// Recognize the constant-trip reduction loops of F that compute a matrix
+// product (Origin::ScalarLoopReduction), with the per-CTA extents and the
+// launch geometry from `profileHeader`.
+void findScalarLoopMatmuls(const Options &O, llvm::Function &F,
+                           llvm::ScalarEvolution &SE, llvm::LoopInfo &LI,
+                           const FunctionProfileHeader &profileHeader,
+                           llvm::SmallVectorImpl<AbstractMatmul> &out);
+
+// Profile generation only: the reduction trip counts (profile-scale) of the
+// scalar-loop matmuls of one profiled clone, as (fma probe index, trip) pairs
+// for the clone's profile header, so the profile-use compile sees the shape
+// at one scale. Must run on the clone without probes, which break the
+// reduction shape.
+void collectScalarLoopReductionTrips(
+    const Options &O, llvm::Function &F,
+    llvm::SmallVectorImpl<std::pair<size_t, unsigned>> &out);
+
+// The host-dispatch descriptor of a GEMM in an optimized body. Operand roles
+// and runtime-dimension factors name parameters of the body until the
+// descriptor is written, and launch arguments of the wrapper kernel after.
+struct GemmBodyNote {
+  int cParam = -1, aParam = -1, bParam = -1;
+  // Byte offsets of the three operand pointers inside their parameter, when
+  // the parameter is a by-value aggregate; -1 when it is the pointer itself.
+  int64_t cOffset = -1, aOffset = -1, bOffset = -1;
+  unsigned N = 0; // square dim (== gK); square fast path
+  // descriptorScheme and descriptorModulusField of the selected variant.
+  DispatchScheme scheme = DispatchScheme::OzakiII;
+  unsigned numModuli = kOzakiIIMaxModuli;
+  bool standalone = false; // body is a pure GEMM (only the C store)
+  bool valid = false;
+  // General GEMM geometry, gM x gNcols x gK with per-operand leading dims (in
+  // elements) and layouts; a square row-major NN GEMM takes the square entry,
+  // anything else the _ex entry.
+  unsigned gM = 0, gNcols = 0, gK = 0;
+  unsigned lda = 0, ldb = 0, ldc = 0; // leading dims, in elements
+  bool aColMajor = false, bColMajor = false, cColMajor = false;
+
+  // Deploy extents recovered from the launch geometry: a dimension that does
+  // not track matrix order has no sound rescale from a surrogate profile. With
+  // `launchCrop` set, gM/gNcols hold the deploy extents from the constants
+  // gating the C store, and cropMAxis/cropNAxis name the thread axis each index
+  // runs along so the host stub takes extent = min(crop, gridDim * blockDim).
+  bool launchCrop = false;
+  int cropMAxis = -1, cropNAxis = -1; // 0/1/2 = thread axis x/y/z
+
+  // Runtime geometry (Origin::HostGemmLoopNest): with `runtimeDims` set the
+  // host stub evaluates each dimension from the launch arguments (RuntimeDim),
+  // so a build profiled at one problem size runs at another; the six integers
+  // above are then the profile-scale values. `beta` = 1 accumulates into C. A
+  // descriptor without these tokens reads back as false / 0.0.
+  using RtDim = RuntimeDim;
+  bool runtimeDims = false;
+  RtDim rM, rNcols, rK, rlda, rldb, rldc;
+  double beta = 0.0;
+  // Launch values the recognition assumed equal (RuntimeGemmHandle); the stub
+  // dispatches only when every pair agrees and launches the kernel otherwise.
+  llvm::SmallVector<std::pair<LaunchRef, LaunchRef>, 2> assumedEqual;
+};
+
+struct PendingGemm {
+  std::string wrapperName;
+  std::vector<int> paramToArg; // body-param index -> wrapper launch-arg index
+};
+
+struct WmmaTarget {
+  unsigned M, N, K;
+  FPKind inputPrec;
+  FPKind accPrec;
+};
+
+// What the matrix-product pipeline records over a compile.
+struct MatmulState {
+  // The GEMM note of each optimized body clone, keyed by the clone.
+  NoteMap<GemmBodyNote> GemmBodies;
+  // In the order the sites were split, so that of two sites of one wrapper the
+  // same one is recorded last in every compile.
+  llvm::MapVector<const llvm::Function *, PendingGemm> PendingGemms;
+
+  // The tensor-core shapes the cost model prices, and the warnings already
+  // given.
+  std::optional<llvm::SmallVector<WmmaTarget, 16>> AvailableWmmaTargets;
+  std::set<const void *> WarnedRectangularRows;
+  std::set<const void *> WarnedSquareNativeRows;
+  std::set<std::string> ReportedDirectRows;
+  std::set<std::string> ReportedInKernelRows;
+};
 
 class MatmulUnit : public SiteUnit {
 public:
@@ -269,7 +332,6 @@ public:
 
   AbstractMatmul *matmul = nullptr;
   double initialCompCost = -1.0; // per-MAC cost of the baseline (naive) matmul
-  double initialAccCost = 0.0;
   // Profiled total MAC count; deploy-size profiles exceed 2^32.
   uint64_t executions = 0;
   llvm::SmallVector<Option, 8> candidates;
@@ -280,7 +342,7 @@ public:
     return (candidates[idx].compCost - initialCompCost) * (double)executions;
   }
   double getAccCostDelta(size_t idx) const {
-    return candidates[idx].accuracyCost - initialAccCost;
+    return candidates[idx].accuracyCost;
   }
 
   void apply(Session &S, size_t candidateIndex);
@@ -320,40 +382,20 @@ public:
 
 std::string matmulOptionLabel(const MatmulUnit::Option &opt);
 
-// Static shared-memory preconditions for the in-kernel raises: a module whose
-// kernel exceeds Target::maxStaticSharedBytes is rejected whole, so a
-// candidate whose scratch does not fit is not proposed.
-//
-// Bytes of shared globals already live alongside a raise placed in `F`: the
-// max over the kernels that call F, or the module-wide sum when no enclosing
-// kernel is found.
-uint64_t enclosingKernelSharedBytes(llvm::Function &F);
-
-// Bytes of new static shared scratch an in-kernel raise of `opt` allocates
-// (0 for a library call); must match, allocation for allocation, what the
-// Direct and Split materializers create. `breakdown` receives the term list
-// for the refusal.
-uint64_t inKernelRaiseSharedBytes(llvm::Module &M,
-                                  const MatmulUnit::Option &opt,
-                                  std::string *breakdown);
-
-// `confidence`: the fraction of the sampled inputs each candidate's
-// `domainError` bounds.
 // `sampleLogBits`: 0 samples operands uniformly over the profiled [min, max];
 // B > 0 log-uniformly in magnitude over [maxMag * 2^-B, maxMag].
 void generateMatmulCandidates(Session &S,
                               llvm::ArrayRef<AbstractMatmul> matmuls,
                               const ProfileMap &scalarProfile,
-                              double confidence, unsigned sampleLogBits,
+                              unsigned sampleLogBits,
                               llvm::SmallVectorImpl<MatmulUnit> &out);
 
 // Per matmul, pick the cheapest candidate whose estimated relative domain error
 // is <= `budget` and that beats the F64 baseline; scalar subgraphs are left at
-// baseline in this mode. `confidence` is the level those errors were computed
-// at; the selector only reports it, since it is already in the numbers.
+// baseline in this mode.
 llvm::SmallVector<SolutionStep>
 errorBudgetSelector(const Options &O, llvm::SmallVectorImpl<MatmulUnit> &CMs,
-                    double budget, double confidence);
+                    double budget);
 
 } // namespace poseidon
 #endif // POSEIDON_MATMUL_H

@@ -16,6 +16,7 @@
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/Passes/PassBuilder.h"
@@ -23,6 +24,7 @@
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/Signals.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Transforms/Utils/ScalarEvolutionExpander.h"
 
 #include <mpfr.h>
 
@@ -98,6 +100,14 @@ void simplifyFunction(Function &F, OptimizationLevel Level) {
   PassBuilder PB;
 #endif
   simplifyFunction(F, PB, Level);
+}
+
+SCEVExpander makeSCEVExpander(ScalarEvolution &SE, const char *name) {
+#if LLVM_VERSION_MAJOR >= 22 && !defined(ENZYME_LLVM22_PRERELEASE)
+  return SCEVExpander(SE, name);
+#else
+  return SCEVExpander(SE, SE.getDataLayout(), name);
+#endif
 }
 
 double stringToDouble(const std::string &str) {

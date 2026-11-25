@@ -231,9 +231,10 @@ static void requireCostBudget(const SolverOptions &O, const CallBase &CI) {
 // parameters take.
 static void writeGemmDescriptorOf(Session &S, CallBase *CI, Function *body,
                                   ArrayRef<Value *> primalArgs) {
-  GemmBodyNote ozNote;
-  if (S.Opts.Matmul.OzakiHostDispatch && getGemmBody(S, body, ozNote))
-    writeGemmDescriptor(S, *CI->getFunction(), primalArgs, ozNote);
+  if (!S.Opts.Matmul.OzakiHostDispatch)
+    return;
+  if (std::optional<GemmBodyNote> note = S.Matmul.GemmBodies.get(body))
+    writeGemmDescriptor(S, *CI->getFunction(), primalArgs, *note);
 }
 
 static void optimizeSiteBody(Session &S, CallBase *CI, Function *F,

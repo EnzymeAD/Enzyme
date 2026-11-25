@@ -16,7 +16,7 @@
 ; --cuda-gpu-arch=sm_120).
 
 ; CHECK: [poseidon] Found 1 AbstractMatmul(s) for preprocess_matmul_body
-; CHECK-NEXT: Matmul[0]: 16x16x16 a=f64 b=f64 acc=f64 d=f64 origin=ScalarLoopReduction
+; CHECK-NEXT: Matmul[0]: 16x16x16 type=f64 origin=ScalarLoopReduction
 ; CHECK: matmul[0] pricing: baseline/MAC=5.120000e+02 executions=8192
 ; CHECK-NEXT: {{#}}0 wmma m16n16k16 f16/f32 compCost/MAC=3.200000e+01 rel=6.250000e-02
 ; CHECK-NEXT: {{#}}1 tcec n=2 wmma m16n16k16 f16/f32 compCost/MAC=4.000000e+01 rel=7.812500e-02

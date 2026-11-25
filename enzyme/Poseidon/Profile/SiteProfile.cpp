@@ -19,7 +19,7 @@
 #include "Sites/Markers.h"
 #include "Sites/SiteIdentity.h"
 #include "Targets/Target.h"
-#include "Techniques/Matmul/RaiseWMMA.h"
+#include "Techniques/Matmul/Matmul.h"
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"

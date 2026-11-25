@@ -12,6 +12,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "Solvers.h"
+#include "IR/Utils.h"
 #include "Optimize.h"
 #include "Pass/Session.h"
 #include "Report.h"

@@ -135,6 +135,10 @@ struct LaunchRef {
   }
 };
 
+// `r` as a diagnostic names it: `prefix` and the parameter index, then
+// "[+<offset>]" for a field.
+std::string launchRefString(const LaunchRef &r, llvm::StringRef prefix);
+
 // Marks a parameter of an outlined kernel body that carries the kernel's
 // by-value aggregate argument: the body reads the kernel's own copy, so the
 // parameter is no longer byval, and only this says its fields are launch

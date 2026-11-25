@@ -7,6 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "SiteTable.h"
+#include "IR/Utils.h"
 #include "Model/CostModel.h"
 #include "Optimize.h"
 #include "Pass/Session.h"

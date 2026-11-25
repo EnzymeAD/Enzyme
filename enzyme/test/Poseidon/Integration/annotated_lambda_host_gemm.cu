@@ -205,7 +205,7 @@ int main(int argc, char **argv) {
 // CHECK-NEXT: [poseidon] profile header for [[BODY]]: MaxBlockDims=(1,64,1) LaunchCount=192
 // CHECK-NEXT: [hostgemm] [[BODY]]: 3 candidate reduction loop(s)
 // CHECK-NEXT: [hostgemm] [[BODY]]: recognized GEMM from 3 reduction loop(s)
-// CHECK-NEXT: [hostgemm]   C = alpha*A^T*B + beta*C  alpha=1.000000e+00 beta=1.000000e+00
+// CHECK-NEXT: [hostgemm]   C = A^T*B + beta*C  beta=1.000000e+00
 // CHECK-NEXT: [hostgemm]   M=arg1[+0]  Ncols=arg0  K=3*arg1[+4]
 // CHECK-NEXT: [hostgemm]   lda=arg1[+56]*arg1[+60]  ldb=arg1[+24]*arg1[+28]*arg1[+32]  ldc=arg1[+88]*arg1[+92]
 // CHECK-NEXT: [hostgemm]   aColMajor=0 bColMajor=1 cColMajor=1  C=param1[+80] A=param1[+48] B=param1[+16]
@@ -213,7 +213,7 @@ int main(int argc, char **argv) {
 // CHECK-NEXT: [hostgemm]   dense only if param1[+4] == param1[+56] (checked at the launch)
 // CHECK-NEXT: [hostgemm]   profile shape M=192 Ncols=192 K=192 (per-CTA tile 192x1, launches=1 CTAs/launch=192 MACs=7077888)
 // CHECK-NEXT: [poseidon] Found 1 AbstractMatmul(s) for [[BODY]]
-// CHECK-NEXT: Matmul[0]: 192x1x192 a=f64 b=f64 acc=f64 d=f64 origin=HostGemmLoopNest
+// CHECK-NEXT: Matmul[0]: 192x1x192 type=f64 origin=HostGemmLoopNest
 // CHECK: Poseidon error-budget: matmul -> ozaki-ii nm=12 wmma m16n16k16 s8/s32 (domain err {{[0-9.]+e-[0-9]+}} <= 1.000000e-12 at confidence 9.500000e-01)
 // CHECK: Applying solution for matmul[0] -> ozaki-ii nm=12 wmma m16n16k16 s8/s32 (#4)
 // CHECK: [poseidon] pin: [[KERNEL:_ZL10CuKernel2DIZ6reduceiiiiPdS0_S0_iEUliE_EviT_]]:M0=ozaki-ii nm=12 wmma m16n16k16 s8/s32{{$}}

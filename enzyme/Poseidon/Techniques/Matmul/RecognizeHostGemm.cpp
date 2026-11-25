@@ -39,6 +39,7 @@
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/Function.h"
+#include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Support/raw_ostream.h"
@@ -63,9 +64,7 @@ std::string runtimeDimString(const RuntimeDim &d) {
   for (const LaunchRef &f : d.factors) {
     if (&f != &d.factors.front())
       s += "*";
-    s += "arg" + std::to_string(f.param);
-    if (f.isField())
-      s += "[+" + std::to_string(f.offset) + "]";
+    s += launchRefString(f, "arg");
   }
   if (d.add)
     s += (d.add > 0 ? "+" : "") + std::to_string(d.add);
@@ -206,13 +205,6 @@ static bool rgDivideByAtom(const RgPoly &p, unsigned atom, RgPoly &q,
 // coef*(tid.k + ntid.k*j), and the two coefficients can be checked against
 // each other instead of assuming the loop runs once.
 // ---------------------------------------------------------------------------
-static std::string rgRefString(const LaunchRef &r) {
-  std::string s = std::to_string(r.param);
-  if (r.isField())
-    s += "[+" + std::to_string(r.offset) + "]";
-  return s;
-}
-
 // A parameter of the optimized body, or a field of a by-value aggregate
 // parameter: a value the host can read at the launch.
 static LaunchRef rgLaunchValue(const Value *v) {
@@ -836,7 +828,6 @@ static bool rgAnalyzeChain(Function &F, ScalarEvolution &SE, DominatorTree &DT,
   }
 
   // Flattening: member r starts exactly r * trip elements after member 0.
-  H.assumedEqual.clear();
   for (unsigned r = 1; r < R; ++r) {
     RgPoly along0, along1;
     if (!rgDivExact(rgSub(op0Poly[r], op0Poly[0]), (int64_t)r * step0[0],
@@ -857,8 +848,6 @@ static bool rgAnalyzeChain(Function &F, ScalarEvolution &SE, DominatorTree &DT,
     why = "an operand address is not affine in the recognized index sources";
     return false;
   }
-  if (!chain.back().fma)
-    return false;
 
   // Consumer: the (accumulating) store of the final accumulator.
   Instruction *last = chain.back().fma;
@@ -1085,7 +1074,6 @@ static bool rgAnalyzeChain(Function &F, ScalarEvolution &SE, DominatorTree &DT,
   }
   H.cStore = cStore;
   H.epilogue = epilogue;
-  H.alpha = 1.0;
   for (const RgMember &m : chain) {
     H.fmas.push_back(m.fma);
     H.fmuls.push_back(m.fmul);
@@ -1144,12 +1132,12 @@ static bool rgAnalyzeChain(Function &F, ScalarEvolution &SE, DominatorTree &DT,
             "is the only exact source for the row extent";
       return false;
     }
-    H.profEpilogue = it->second.exec;
-    if (H.profEpilogue % H.launches) {
+    const uint64_t profEpilogue = it->second.exec;
+    if (profEpilogue % H.launches) {
       why = "profiled epilogue count is not a whole number of launches";
       return false;
     }
-    rowsTimesCols = H.profEpilogue / H.launches;
+    rowsTimesCols = profEpilogue / H.launches;
   } else {
     // beta == 0: no epilogue to count, so K must be a compile-time trip count.
     int64_t tripConst = 0;
@@ -1256,20 +1244,10 @@ static bool rgMatchReductionPhi(const Options &O, Loop *L, PHINode &phi,
                                 RgMember &out) {
   if (!phi.getType()->isFloatingPointTy())
     return false;
-  Value *be = phi.getIncomingValueForBlock(latch);
-  if (!be)
-    RG_REJECT("no backedge value");
-  std::optional<FMAMatch> fm = matchFMA(be);
-  if (!fm || fm->acc != &phi)
-    RG_REJECT("backedge value is not an accumulating fma");
-  if (!isClosedFmaPhiCycle(L, fm->fma, &phi))
-    RG_REJECT("fma/phi cycle is not closed");
-  auto *aL = dyn_cast<LoadInst>(fm->a);
-  auto *bL = dyn_cast<LoadInst>(fm->b);
-  if (!aL || !bL)
-    RG_REJECT("an fma multiplicand is not a load");
-  if (aL->getType() != phi.getType() || bL->getType() != phi.getType())
-    RG_REJECT("mixed-precision operands");
+  StringRef why;
+  std::optional<ReductionCycle> rc = matchReductionCycle(L, phi, latch, &why);
+  if (!rc)
+    RG_REJECT(why);
   const SCEV *btc = SE.getBackedgeTakenCount(L);
   if (isa<SCEVCouldNotCompute>(btc))
     RG_REJECT("backedge-taken count is not computable");
@@ -1278,12 +1256,12 @@ static bool rgMatchReductionPhi(const Options &O, Loop *L, PHINode &phi,
     RG_REJECT("loop has no unique preheader");
   out.L = L;
   out.phi = &phi;
-  out.fma = fm->fma;
-  out.fmul = fm->fmul;
-  out.aLoad = aL;
-  out.bLoad = bL;
-  out.aAddr = SE.getSCEV(aL->getPointerOperand());
-  out.bAddr = SE.getSCEV(bL->getPointerOperand());
+  out.fma = rc->fma;
+  out.fmul = rc->fmul;
+  out.aLoad = rc->aLoad;
+  out.bLoad = rc->bLoad;
+  out.aAddr = SE.getSCEV(rc->aLoad->getPointerOperand());
+  out.bAddr = SE.getSCEV(rc->bLoad->getPointerOperand());
   out.trip = SE.getAddExpr(btc, SE.getOne(btc->getType()));
   out.init = phi.getIncomingValueForBlock(pre);
   return out.init != nullptr;
@@ -1295,8 +1273,7 @@ void findHostGemmLoopNests(const Options &O, Function &F, ScalarEvolution &SE,
                            const FunctionProfileHeader &profileHeader,
                            const ProfileMap &prof,
                            SmallVectorImpl<AbstractMatmul> &out) {
-  if (!Target::of(F).isDevice())
-    return;
+  assert(Target::of(F).isDevice() && "a runtime-shape GEMM is device code");
   if (profileHeader.launchCount == 0) {
     if (O.Diagnostics.Print)
       llvm::errs() << "[hostgemm] " << F.getName()
@@ -1312,27 +1289,27 @@ void findHostGemmLoopNests(const Options &O, Function &F, ScalarEvolution &SE,
         am.scalarLoop.fma)
       claimed.insert(am.scalarLoop.fma);
 
+  // A library dispatch replaces the whole launch, so the body may store into
+  // its arguments only the product.
+  unsigned argStores = 0;
+  for (Instruction &I : instructions(F))
+    if (auto *St = dyn_cast<StoreInst>(&I))
+      if (tracePointerRoot(St->getPointerOperand()).param >= 0)
+        ++argStores;
+
   DominatorTree DT(F);
 
   SmallVector<RgMember, 8> members;
-  {
-    SmallVector<Loop *, 8> wl(LI.begin(), LI.end());
-    while (!wl.empty()) {
-      Loop *L = wl.pop_back_val();
-      for (Loop *S : L->getSubLoops())
-        wl.push_back(S);
-      if (!L->getSubLoops().empty())
-        continue;
-      BasicBlock *latch = L->getLoopLatch();
-      if (!latch)
-        continue;
-      for (PHINode &phi : L->getHeader()->phis()) {
-        RgMember m;
-        if (rgMatchReductionPhi(O, L, phi, SE, latch, m))
-          members.push_back(m);
-      }
+  forEachInnermostLoop(LI, [&](Loop *L) {
+    BasicBlock *latch = L->getLoopLatch();
+    if (!latch)
+      return;
+    for (PHINode &phi : L->getHeader()->phis()) {
+      RgMember m;
+      if (rgMatchReductionPhi(O, L, phi, SE, latch, m))
+        members.push_back(m);
     }
-  }
+  });
   if (O.Diagnostics.Print)
     llvm::errs() << "[hostgemm] " << F.getName() << ": " << members.size()
                  << " candidate reduction loop(s)\n";
@@ -1414,7 +1391,15 @@ void findHostGemmLoopNests(const Options &O, Function &F, ScalarEvolution &SE,
 
     RuntimeGemmHandle H;
     std::string why;
-    if (!rgAnalyzeChain(F, SE, DT, profileHeader, prof, chain, H, why)) {
+    bool dispatchable =
+        rgAnalyzeChain(F, SE, DT, profileHeader, prof, chain, H, why);
+    if (dispatchable && argStores != 1) {
+      why = "the body performs " + std::to_string(argStores) +
+            " argument-rooted stores, and only a pure GEMM body can be "
+            "replaced by a library dispatch";
+      dispatchable = false;
+    }
+    if (!dispatchable) {
       if (O.Diagnostics.Print)
         llvm::errs() << "[hostgemm] " << F.getName() << ": reduction chain of "
                      << chain.size()
@@ -1435,7 +1420,7 @@ void findHostGemmLoopNests(const Options &O, Function &F, ScalarEvolution &SE,
     am.globalK = H.profK;
     am.gridCTAs = H.ctaPerLaunch;
     FPKind k = fpKindFromType(chain[0].aLoad->getType());
-    am.aType = am.bType = am.accType = am.dType = k;
+    am.elemType = k;
     am.origin = AbstractMatmul::Origin::HostGemmLoopNest;
     am.hostGemm = std::make_shared<RuntimeGemmHandle>(std::move(H));
     am.outputValue = chain.back().fma;
@@ -1450,8 +1435,7 @@ void findHostGemmLoopNests(const Options &O, Function &F, ScalarEvolution &SE,
       const RuntimeGemmHandle &g = *am.hostGemm;
       llvm::errs() << "[hostgemm] " << F.getName() << ": recognized GEMM from "
                    << chain.size() << " reduction loop(s)\n"
-                   << "[hostgemm]   C = alpha*A^T*B + beta*C  alpha=" << g.alpha
-                   << " beta=" << g.beta << '\n'
+                   << "[hostgemm]   C = A^T*B + beta*C  beta=" << g.beta << '\n'
                    << "[hostgemm]   M=" << runtimeDimString(g.M)
                    << "  Ncols=" << runtimeDimString(g.Ncols)
                    << "  K=" << runtimeDimString(g.K) << '\n'
@@ -1460,12 +1444,14 @@ void findHostGemmLoopNests(const Options &O, Function &F, ScalarEvolution &SE,
                    << "  ldc=" << runtimeDimString(g.ldc) << '\n'
                    << "[hostgemm]   aColMajor=" << (g.aColMajor ? 1 : 0)
                    << " bColMajor=" << (g.bColMajor ? 1 : 0)
-                   << " cColMajor=" << (g.cColMajor ? 1 : 0) << "  C=param"
-                   << rgRefString(g.cRef) << " A=param" << rgRefString(g.aRef)
-                   << " B=param" << rgRefString(g.bRef) << '\n';
+                   << " cColMajor=" << (g.cColMajor ? 1 : 0)
+                   << "  C=" << launchRefString(g.cRef, "param")
+                   << " A=" << launchRefString(g.aRef, "param")
+                   << " B=" << launchRefString(g.bRef, "param") << '\n';
       for (const auto &[x, y] : g.assumedEqual)
-        llvm::errs() << "[hostgemm]   dense only if param" << rgRefString(x)
-                     << " == param" << rgRefString(y)
+        llvm::errs() << "[hostgemm]   dense only if "
+                     << launchRefString(x, "param")
+                     << " == " << launchRefString(y, "param")
                      << " (checked at the launch)\n";
       llvm::errs() << "[hostgemm]   profile shape M=" << g.profM
                    << " Ncols=" << g.profN << " K=" << g.profK

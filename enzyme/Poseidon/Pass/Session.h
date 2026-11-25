@@ -22,7 +22,7 @@
 #include "Sites/LaunchDescriptors.h"
 #include "Solve/Pins.h"
 #include "Techniques/Expansion.h"
-#include "Techniques/Matmul/MatmulInternal.h"
+#include "Techniques/Matmul/Matmul.h"
 
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/IR/DebugLoc.h"

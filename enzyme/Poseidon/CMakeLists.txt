@@ -110,11 +110,7 @@ set(POSEIDON_SRC
     IR/Utils.cpp
     Techniques/Matmul/WmmaUtils.cpp
     Techniques/Matmul/MatmulAccuracy.cpp
-    Techniques/Matmul/MatmulAccuracyMemo.cpp
-    Techniques/Matmul/MatmulApply.cpp
     Techniques/Matmul/MatmulCandidates.cpp
-    Techniques/Matmul/MatmulPricing.cpp
-    Techniques/Matmul/MatmulProfile.cpp
     Techniques/Matmul/MatmulSimulation.cpp
     Techniques/Matmul/RecognizeHostGemm.cpp)
 

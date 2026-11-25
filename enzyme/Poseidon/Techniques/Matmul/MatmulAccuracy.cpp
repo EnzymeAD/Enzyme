@@ -6,24 +6,31 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// Matmul accuracy model: profile-driven sampling and the arithmetic of each
-// candidate on the samples. Storing and finding the numbers it returns is
-// MatmulAccuracyMemo's.
+// Matmul accuracy model: the operand statistics of a product from its scalar
+// profile records, profile-driven sampling, the arithmetic of each candidate
+// on the samples, and the memo of the numbers it returns.
 //
 //===----------------------------------------------------------------------===//
 
+#include "Core/CacheKey.h"
 #include "Core/Parallel.h"
 #include "Core/UniformReal.h"
-#include "MatmulAccuracyMemo.h"
+#include "IR/Utils.h"
 #include "MatmulInternal.h"
 #include "MatmulSimulation.h"
 #include "Pass/Session.h"
+#include "Sites/Annotations.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/Support/Error.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Format.h"
+#include "llvm/Support/JSON.h"
+#include "llvm/Support/Path.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
@@ -39,6 +46,113 @@
 using namespace llvm;
 
 namespace poseidon {
+
+static std::optional<MatmulProfile>
+loadProfileRaise(const AbstractMatmul &m, const ProfileMap &profile) {
+  const ScalarLoopHandle *h = &m.scalarLoop;
+  size_t fmaIdx = readProfIdxMetadata(h->fma);
+  auto fmaIt = profile.find(fmaIdx);
+  if (fmaIt == profile.end() || fmaIt->second.exec == 0)
+    return std::nullopt;
+  const ProfileInfo &fmaInfo = fmaIt->second;
+
+  const ProfileInfo *abInfo = &fmaInfo;
+  size_t abIdx = fmaIdx;
+  if (h->fmul) {
+    size_t fmulIdx = readProfIdxMetadata(h->fmul);
+    auto it = profile.find(fmulIdx);
+    if (it == profile.end())
+      report_fatal_error("no scalar profile record for fmul instIdx " +
+                         Twine(fmulIdx));
+    abInfo = &it->second;
+    abIdx = fmulIdx;
+  }
+  if (abInfo->minOperands.size() < 2)
+    reportUserError(*(h->fmul ? h->fmul : h->fma),
+                    "the profile records " +
+                        Twine((unsigned)abInfo->minOperands.size()) +
+                        " operand range(s) of instruction " + Twine(abIdx) +
+                        ", the multiply of a matrix product, which has two; "
+                        "re-run profile generation.");
+
+  MatmulProfile out;
+  out.a = {abInfo->minOperands[0], abInfo->maxOperands[0], abInfo->exec,
+           abInfo->minMagOperands[0]};
+  out.b = {abInfo->minOperands[1], abInfo->maxOperands[1], abInfo->exec,
+           abInfo->minMagOperands[1]};
+  out.gradSum = fmaInfo.sumGrad;
+  out.totalCalls = fmaInfo.exec;
+  return out;
+}
+
+// Origin::HostGemmLoopNest: the contraction is spread over R fma sites (the
+// unrolled outer contraction level), so the operand ranges are the union over
+// the members and the execution counts their sum.
+static std::optional<MatmulProfile>
+loadProfileHostGemm(const AbstractMatmul &m, const ProfileMap &profile) {
+  const RuntimeGemmHandle &h = *m.hostGemm;
+  for (Instruction *fma : h.fmas) {
+    auto it = profile.find(readProfIdxMetadata(fma));
+    if (it == profile.end() || it->second.exec == 0)
+      return std::nullopt;
+  }
+  double aMin = std::numeric_limits<double>::max();
+  double aMax = std::numeric_limits<double>::lowest();
+  double bMin = aMin, bMax = aMax;
+  double aMinMag = 0.0, bMinMag = 0.0;
+  double sumGrad = 0.0;
+  uint64_t exec = 0;
+  for (unsigned r = 0; r < h.fmas.size(); ++r) {
+    Instruction *ab = h.fmuls[r] ? h.fmuls[r] : h.fmas[r];
+    size_t abIdx = readProfIdxMetadata(ab);
+    auto abIt = profile.find(abIdx);
+    if (abIt == profile.end())
+      report_fatal_error("no scalar profile record for host-GEMM member " +
+                         Twine(r) + " (instIdx " + Twine(abIdx) + ")");
+    const ProfileInfo &ai = abIt->second;
+    if (ai.minOperands.size() < 2)
+      reportUserError(
+          *ab, "the profile records " + Twine((unsigned)ai.minOperands.size()) +
+                   " operand range(s) of instruction " + Twine(abIdx) +
+                   ", the multiply of a matrix product, which "
+                   "has two; re-run profile generation.");
+    auto fIt = profile.find(readProfIdxMetadata(h.fmas[r]));
+    // Operand 0 of the fma is whichever load the source wrote first; the A/B
+    // roles were settled by the address analysis, so map through it.
+    bool aIsOp0 = (h.aLoads[r] == ab->getOperand(0));
+    unsigned ao = aIsOp0 ? 0 : 1, bo = aIsOp0 ? 1 : 0;
+    aMin = std::min(aMin, ai.minOperands[ao]);
+    aMax = std::max(aMax, ai.maxOperands[ao]);
+    bMin = std::min(bMin, ai.minOperands[bo]);
+    bMax = std::max(bMax, ai.maxOperands[bo]);
+    if (ai.minMagOperands[ao] > 0.0)
+      aMinMag = aMinMag > 0.0 ? std::min(aMinMag, ai.minMagOperands[ao])
+                              : ai.minMagOperands[ao];
+    if (ai.minMagOperands[bo] > 0.0)
+      bMinMag = bMinMag > 0.0 ? std::min(bMinMag, ai.minMagOperands[bo])
+                              : ai.minMagOperands[bo];
+    sumGrad += fIt->second.sumGrad;
+    exec += fIt->second.exec;
+  }
+
+  MatmulProfile out;
+  out.a = {aMin, aMax, exec, aMinMag};
+  out.b = {bMin, bMax, exec, bMinMag};
+  out.gradSum = sumGrad;
+  out.totalCalls = exec;
+  return out;
+}
+
+std::optional<MatmulProfile> loadProfile(const AbstractMatmul &m,
+                                         const ProfileMap &scalarProfile) {
+  switch (m.origin) {
+  case AbstractMatmul::Origin::ScalarLoopReduction:
+    return loadProfileRaise(m, scalarProfile);
+  case AbstractMatmul::Origin::HostGemmLoopNest:
+    return loadProfileHostGemm(m, scalarProfile);
+  }
+  llvm_unreachable("unknown AbstractMatmul origin");
+}
 
 namespace {
 // How one operand cell is drawn, fixed by its profile before the first draw.
@@ -137,22 +251,19 @@ static unsigned sampleCount(const Options &O) {
   return std::max<unsigned>(8u, std::min<unsigned>(O.Model.NumSamples, 256u));
 }
 
-static void checkProfileShape(const AbstractMatmul &m,
-                              const MatmulProfile &prof, StringRef model) {
-  if (prof.a.size() != (size_t)m.M * m.K ||
-      prof.b.size() != (size_t)m.K * m.N ||
-      prof.gradD.size() != (size_t)m.M * m.N)
-    report_fatal_error(model + ": unexpected profile cell-vector shape");
-}
-
-static StringRef modelName(const MatmulAccuracyQuery &q) {
+// The query as diagnostics name it, e.g. "matmul in=f16 acc=f32".
+static std::string describe(const MatmulAccuracyQuery &q) {
   switch (q.model) {
-  case MatmulAccuracyQuery::Model::Rounded:
-    return "getMatmulAccuracyCost";
+  case MatmulAccuracyQuery::Model::Rounded: {
+    std::string s = "matmul in=" + std::string(fpKindName(q.inputPrec));
+    if (q.inputMantBits)
+      s += "(" + std::to_string(q.inputMantBits) + "b)";
+    return s + " acc=" + fpKindName(q.accPrec);
+  }
   case MatmulAccuracyQuery::Model::TcecLibrary:
-    return "getTcecLibraryAccuracyCost";
+    return "tcec library";
   case MatmulAccuracyQuery::Model::OzakiII:
-    return "getOzakiIIAccuracyCost";
+    return "ozakiII nm=" + std::to_string(q.moduli);
   }
   llvm_unreachable("unknown MatmulAccuracyQuery::Model");
 }
@@ -171,7 +282,7 @@ static bool operator==(const MatmulAccuracyQuery &a,
                        const MatmulAccuracyQuery &b) {
   auto fields = [](const MatmulAccuracyQuery &q) {
     return std::make_tuple(q.model, q.inputPrec, q.accPrec, q.exponentPrec,
-                           q.orderTileK, q.inputMantBits, q.mode, q.moduli);
+                           q.orderTileK, q.inputMantBits, q.moduli);
   };
   return fields(a) == fields(b);
 }
@@ -257,14 +368,12 @@ public:
                   const MatmulProfile &prof, unsigned sampleLogBits,
                   unsigned numSamples, ArrayRef<MatmulAccuracyQuery> parts)
       : m(m), prof(prof), parts(parts), numSamples(numSamples),
+        aCell(cellSampler(prof.a, sampleLogBits)),
+        bCell(cellSampler(prof.b, sampleLogBits)),
         err(parts.size() * numSamples), den(numSamples) {
-    cells.reserve(prof.a.size() + prof.b.size());
-    unsigned long long draws = 0;
-    for (const std::vector<CellStat> *v : {&prof.a, &prof.b})
-      for (const CellStat &c : *v) {
-        cells.push_back(cellSampler(c, sampleLogBits));
-        draws += cells.back().draws();
-      }
+    const unsigned long long draws =
+        (unsigned long long)m.M * m.K * aCell.draws() +
+        (unsigned long long)m.K * m.N * bCell.draws();
     std::mt19937_64 rng(O.Model.RandomSeed);
     streams.reserve(numSamples);
     for (unsigned s = 0; s < numSamples; ++s) {
@@ -276,7 +385,7 @@ public:
   }
 
   // The error of parts[j], reduced over the samples in their order.
-  SampledError error(size_t j, double confidence) const {
+  SampledError error(size_t j) const {
     SampledError result;
     double sumSampleErr = 0.0;
     unsigned finiteSamples = 0;
@@ -295,10 +404,10 @@ public:
         relSamples.push_back(sampleErr / sampleDen);
     }
     if (finiteSamples == 0)
-      report_fatal_error(modelName(parts[j]) +
+      report_fatal_error(Twine(describe(parts[j])) +
                          ": unexpected all-non-finite samples");
     result.accuracyCost = sumSampleErr / finiteSamples;
-    result.domainError = percentile(relSamples, confidence);
+    result.domainError = percentile(relSamples, kDefaultConfidence);
     return result;
   }
 
@@ -313,9 +422,9 @@ private:
     std::mt19937_64 rng = streams[s];
     std::vector<double> A(mk), B(kn), gold(mn), cand(mn), Ar, Br;
     for (size_t i = 0; i < mk; ++i)
-      A[i] = cells[i].sample(rng);
+      A[i] = aCell.sample(rng);
     for (size_t i = 0; i < kn; ++i)
-      B[i] = cells[mk + i].sample(rng);
+      B[i] = bCell.sample(rng);
     for (unsigned mi = 0; mi < m.M; ++mi)
       for (unsigned ni = 0; ni < m.N; ++ni) {
         double accD = 0.0;
@@ -325,7 +434,7 @@ private:
       }
     double sampleDen = 0.0;
     for (size_t i = 0; i < mn; ++i)
-      sampleDen += std::fabs(prof.gradD[i].sumGrad) * std::fabs(gold[i]);
+      sampleDen += std::fabs(prof.gradSum) * std::fabs(gold[i]);
     den[s] = sampleDen;
 
     for (size_t j = 0; j < parts.size(); ++j) {
@@ -351,8 +460,7 @@ private:
       }
       double sampleErr = 0.0;
       for (size_t i = 0; i < mn; ++i)
-        sampleErr +=
-            std::fabs(prof.gradD[i].sumGrad) * std::fabs(gold[i] - cand[i]);
+        sampleErr += std::fabs(prof.gradSum) * std::fabs(gold[i] - cand[i]);
       err[j * numSamples + s] = sampleErr;
     }
   }
@@ -361,51 +469,155 @@ private:
   const MatmulProfile &prof;
   ArrayRef<MatmulAccuracyQuery> parts;
   const unsigned numSamples;
-  std::vector<CellSampler> cells;
+  // Every element of an operand is drawn the same way.
+  const CellSampler aCell, bCell;
   std::vector<std::mt19937_64> streams;
   std::vector<double> err, den;
 };
 } // namespace
 
-static MatmulAccuracyMemo memoOf(const Options &O, const AbstractMatmul &m,
-                                 const MatmulProfile &prof, double confidence,
-                                 unsigned sampleLogBits, unsigned numSamples,
-                                 const MatmulAccuracyQuery &q) {
+namespace {
+// The memo entry of one evaluation of the matrix accuracy model. A result is a
+// deterministic function of the model's inputs, so it is kept in
+// -poseidon-cache, one entry file per key. The key holds the model's inputs
+// and the compiler that computed it, never its results: hosts differ in the
+// last digits of a result for equal inputs. An entry is filed under every part
+// but the compiler, so one computed by another build is found and reported.
+class Memo {
+public:
+  Memo(const Options &O, const AbstractMatmul &m, const MatmulProfile &prof,
+       unsigned sampleLogBits, unsigned numSamples,
+       const MatmulAccuracyQuery &q);
+
+  // The stored result; false when the model has to compute it.
+  bool lookup(const Options &O, double &accuracyCost,
+              double &domainError) const;
+  void store(const Options &O, double accuracyCost, double domainError) const;
+  // The entry's file in -poseidon-cache: two memos of one file hold one
+  // result.
+  const std::string &file() const { return path; }
+
+private:
+  CacheKey key;
+  std::string path;
+};
+} // namespace
+
+template <typename T> static void appendBytes(std::string &bytes, T v) {
+  bytes.append(reinterpret_cast<const char *>(&v), sizeof(v));
+}
+
+Memo::Memo(const Options &O, const AbstractMatmul &m, const MatmulProfile &prof,
+           unsigned sampleLogBits, unsigned numSamples,
+           const MatmulAccuracyQuery &q) {
   switch (q.model) {
   case MatmulAccuracyQuery::Model::Rounded:
-    return MatmulAccuracyMemo::matmul(
-        O, m, prof, confidence, sampleLogBits, numSamples, q.inputPrec,
-        q.accPrec, q.exponentPrec, q.orderTileK, q.inputMantBits);
+    key.add("model", "rounded");
+    key.add("input format", fpKindName(q.inputPrec));
+    key.add("accumulator format", fpKindName(q.accPrec));
+    key.add("exponent format", fpKindName(q.exponentPrec));
+    key.add("orderTileK", std::to_string(q.orderTileK));
+    key.add("inputMantBits", std::to_string(q.inputMantBits));
+    break;
   case MatmulAccuracyQuery::Model::TcecLibrary:
-    return MatmulAccuracyMemo::tcecLibrary(O, m, prof, confidence,
-                                           sampleLogBits, numSamples);
+    key.add("model", "TCEC library");
+    // The library whose product the model simulates.
+    key.add("TCEC backend", "cuMpSGEMM");
+    break;
   case MatmulAccuracyQuery::Model::OzakiII:
-    return MatmulAccuracyMemo::ozakiII(O, m, prof, confidence, sampleLogBits,
-                                       numSamples, q.moduli);
+    key.add("model", "Ozaki-II");
+    key.add("moduli", std::to_string(q.moduli));
+    break;
   }
-  llvm_unreachable("unknown MatmulAccuracyQuery::Model");
+  key.add("M", std::to_string(m.M));
+  key.add("N", std::to_string(m.N));
+  key.add("K", std::to_string(m.K));
+  std::string operands;
+  for (const CellStat *c : {&prof.a, &prof.b}) {
+    appendBytes(operands, c->min);
+    appendBytes(operands, c->max);
+    appendBytes(operands, c->count);
+    appendBytes(operands, c->minMag);
+  }
+  key.addContent("operand statistics", operands);
+  key.add("gradient sum", exactDouble(prof.gradSum));
+  key.add("samples", std::to_string(numSamples));
+  key.add("seed", std::to_string(O.Model.RandomSeed));
+  key.add("sampling log bits", std::to_string(sampleLogBits));
+  key.add("exponent penalty", exactDouble(O.Model.ExponentPenalty));
+  key.add("confidence", exactDouble(kDefaultConfidence));
+  SmallString<256> p(O.Herbie.Cache);
+  sys::path::append(p, "matmulacc_" + key.digest() + ".json");
+  path = p.str().str();
+  key.addCompiler();
+}
+
+void Memo::store(const Options &O, double accuracyCost,
+                 double domainError) const {
+  if (O.Herbie.Cache.empty())
+    return;
+  (void)sys::fs::create_directories(O.Herbie.Cache, true);
+  // As text: a domain error can be infinite, which JSON cannot hold.
+  json::Object value;
+  value["accuracy cost"] = exactDouble(accuracyCost);
+  value["domain error"] = exactDouble(domainError);
+  if (Error E = writeCacheEntry(path, key, std::move(value)))
+    llvm::errs() << "[poseidon] could not write the accuracy memo " << path
+                 << ": " << toString(std::move(E)) << '\n';
+}
+
+static bool parseAccNumber(const json::Object &value, StringRef name,
+                           double &out) {
+  std::optional<StringRef> text = value.getString(name);
+  return text && !text->getAsDouble(out);
+}
+
+bool Memo::lookup(const Options &O, double &accuracyCost,
+                  double &domainError) const {
+  if (O.Herbie.Cache.empty())
+    return false;
+  CacheEntryRead read = readCacheEntry(path, key);
+  if (read.value) {
+    const json::Object *value = read.value->getAsObject();
+    if (value && parseAccNumber(*value, "accuracy cost", accuracyCost) &&
+        parseAccNumber(*value, "domain error", domainError))
+      return true;
+    read.unreadable = "its value does not parse";
+  }
+  if (!read.unreadable.empty())
+    llvm::errs() << "[poseidon] accuracy memo " << path << " is unreadable ("
+                 << read.unreadable << "); recomputing it.\n";
+  else if (!read.differs.empty())
+    llvm::errs() << "[poseidon] accuracy memo " << path
+                 << (read.differs == "format"
+                         ? " was written in another cache format"
+                         : " was computed for a different " + read.differs)
+                 << "; recomputing it.\n";
+  return false;
 }
 
 // A query's result from the error of its sampled part. Per sample, the error
 // is the gradient-weighted absolute error summed over the outputs; the
 // accuracy cost is its mean over the samples where it is finite, and the
-// domain error (call-site budget) the `confidence` percentile of its ratio to
-// the weighted result, which cancels the size/exec scaling of the bare sum.
+// domain error (call-site budget) the kDefaultConfidence percentile of its
+// ratio to the weighted result, which cancels the size/exec scaling of the bare
+// sum.
 static MatmulAccuracy finish(const Options &O, const MatmulProfile &prof,
-                             double confidence, const MatmulAccuracyQuery &q,
+                             const MatmulAccuracyQuery &q,
                              const SampledError &e) {
   MatmulAccuracy r{e.accuracyCost, e.domainError};
+  auto printDomainError = [&] {
+    if (O.Diagnostics.Print)
+      llvm::errs() << "DOMERR " << describe(q) << ' '
+                   << percentileLabel(kDefaultConfidence)
+                   << "_relErr=" << r.domainError
+                   << " (sumcost=" << r.accuracyCost << ")\n";
+  };
   bool outOfRange = e.nonFinite;
   switch (q.model) {
   case MatmulAccuracyQuery::Model::Rounded: {
-    if (O.Diagnostics.Print) {
-      llvm::errs() << "DOMERR matmul in=" << fpKindName(q.inputPrec);
-      if (q.inputMantBits)
-        llvm::errs() << "(" << q.inputMantBits << "b)";
-      llvm::errs() << " acc=" << fpKindName(q.accPrec) << " "
-                   << percentileLabel(confidence) << "_relErr=" << r.domainError
-                   << " (sumcost=" << r.accuracyCost << ")\n";
-    }
+    // Before the exponent-range charge below.
+    printDomainError();
     // Exponent-range adequacy: the absolute error above is blind to a format
     // that flushes the smallest operands to zero, so if the exponent format
     // cannot represent the smallest nonzero operand magnitude the profiler
@@ -415,17 +627,10 @@ static MatmulAccuracy finish(const Options &O, const MatmulProfile &prof,
     FPKind expK =
         (q.exponentPrec == FPKind::Invalid) ? q.inputPrec : q.exponentPrec;
     double minSub = minSubnormalForKind(expK);
-    if (minSub > 0.0) {
-      double opMinMag = 0.0;
-      for (const auto &c : prof.a)
-        if (c.minMag > 0.0 && (opMinMag == 0.0 || c.minMag < opMinMag))
-          opMinMag = c.minMag;
-      for (const auto &c : prof.b)
-        if (c.minMag > 0.0 && (opMinMag == 0.0 || c.minMag < opMinMag))
-          opMinMag = c.minMag;
-      if (opMinMag > 0.0 && opMinMag < minSub)
-        outOfRange = true;
-    }
+    if (minSub > 0.0)
+      for (const CellStat *c : {&prof.a, &prof.b})
+        if (c->minMag > 0.0 && c->minMag < minSub)
+          outOfRange = true;
     break;
   }
   case MatmulAccuracyQuery::Model::TcecLibrary:
@@ -438,42 +643,26 @@ static MatmulAccuracy finish(const Options &O, const MatmulProfile &prof,
     r.accuracyCost += O.Model.ExponentPenalty;
     r.domainError = std::numeric_limits<double>::infinity();
   }
-  if (O.Diagnostics.Print) {
-    if (q.model == MatmulAccuracyQuery::Model::TcecLibrary)
-      llvm::errs() << "DOMERR tcec library " << percentileLabel(confidence)
-                   << "_relErr=" << r.domainError
-                   << " (sumcost=" << r.accuracyCost << ")\n";
-    else if (q.model == MatmulAccuracyQuery::Model::OzakiII)
-      llvm::errs() << "DOMERR ozakiII nm=" << q.moduli << " "
-                   << percentileLabel(confidence) << "_relErr=" << r.domainError
-                   << " (sumcost=" << r.accuracyCost << ")\n";
-  }
+  if (q.model != MatmulAccuracyQuery::Model::Rounded)
+    printDomainError();
   return r;
 }
 
 void evaluateMatmulAccuracy(Session &S, const AbstractMatmul &m,
-                            const MatmulProfile &prof, double confidence,
-                            unsigned sampleLogBits,
+                            const MatmulProfile &prof, unsigned sampleLogBits,
                             ArrayRef<MatmulAccuracyQuery> queries,
                             MutableArrayRef<MatmulAccuracy> results) {
   assert(queries.size() == results.size() && "one result per query");
   const Options &O = S.Opts;
   const unsigned numSamples = sampleCount(O);
-  for (const MatmulAccuracyQuery &q : queries) {
-    checkProfileShape(m, prof, modelName(q));
-    if (q.model == MatmulAccuracyQuery::Model::TcecLibrary && q.mode != 1)
-      report_fatal_error("the matrix accuracy model simulates "
-                         "__poseidon_tcec_dgemm in mode 1 (FP16TCEC) only");
-  }
 
   // Looked up in query order; a query whose entry an earlier query of this
   // product computes takes that result, as it would have read it back.
-  std::vector<MatmulAccuracyMemo> memos;
+  std::vector<Memo> memos;
   SmallVector<std::optional<size_t>> sameEntryAs(queries.size());
   SmallVector<size_t> computed;
   for (size_t i = 0; i < queries.size(); ++i) {
-    memos.push_back(
-        memoOf(O, m, prof, confidence, sampleLogBits, numSamples, queries[i]));
+    memos.emplace_back(O, m, prof, sampleLogBits, numSamples, queries[i]);
     if (!O.Herbie.Cache.empty())
       for (size_t c : computed)
         if (memos[c].file() == memos[i].file()) {
@@ -501,8 +690,7 @@ void evaluateMatmulAccuracy(Session &S, const AbstractMatmul &m,
   const SampledProducts products(O, m, prof, sampleLogBits, numSamples, parts);
   for (size_t c = 0; c < computed.size(); ++c) {
     const size_t i = computed[c];
-    results[i] = finish(O, prof, confidence, queries[i],
-                        products.error(partOf[c], confidence));
+    results[i] = finish(O, prof, queries[i], products.error(partOf[c]));
     memos[i].store(O, results[i].accuracyCost, results[i].domainError);
   }
   for (size_t i = 0; i < queries.size(); ++i)

@@ -22,6 +22,6 @@
 // PRIMAL: MATMUL-PASS
 
 // CHECK: [poseidon] Found 1 AbstractMatmul(s) for preprocess_scalar_matmul_body_f64
-// CHECK-NEXT: Matmul[0]: 8x8x8 a=f64 b=f64 acc=f64 d=f64 origin=ScalarLoopReduction
+// CHECK-NEXT: Matmul[0]: 8x8x8 type=f64 origin=ScalarLoopReduction
 // CHECK-NOT: Matmul[1]:
 // CHECK: Applying solution for matmul[0] -> wmma m16n16k16 f16/f16

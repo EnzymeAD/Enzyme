@@ -317,6 +317,13 @@ static bool onlyRead(const Argument &A) {
   return true;
 }
 
+std::string launchRefString(const LaunchRef &r, StringRef prefix) {
+  std::string s = (prefix + Twine(r.param)).str();
+  if (r.isField())
+    s += "[+" + std::to_string(r.offset) + "]";
+  return s;
+}
+
 LaunchRef launchFieldOf(const Value *v) {
   if (auto *L = dyn_cast<LoadInst>(v)) {
     if (!L->isSimple())

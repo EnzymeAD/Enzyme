@@ -21,7 +21,6 @@
 #include "Techniques/Herbie.h"
 #include "Techniques/Matmul/HostDispatch.h"
 #include "Techniques/Matmul/Matmul.h"
-#include "Techniques/Matmul/RaiseWMMA.h"
 #include "Techniques/Precision.h"
 #include "Techniques/Staging.h"
 
@@ -164,10 +163,7 @@ static void recognizeMatrixProducts(Session &S, Function &F,
     for (const auto &m : abstractMatmuls) {
       llvm::errs() << "  Matmul[" << m.id << "]: " << dimStr(m.M) << 'x'
                    << dimStr(m.N) << 'x' << dimStr(m.K)
-                   << " a=" << fpKindName(m.aType)
-                   << " b=" << fpKindName(m.bType)
-                   << " acc=" << fpKindName(m.accType)
-                   << " d=" << fpKindName(m.dType) << " origin="
+                   << " type=" << fpKindName(m.elemType) << " origin="
                    << (m.origin == AbstractMatmul::Origin::HostGemmLoopNest
                            ? "HostGemmLoopNest"
                            : "ScalarLoopReduction")
@@ -382,8 +378,8 @@ static bool collectFPCandidates(Session &S, Function &F, double errorTol,
       expansionsRoundedAsWritten(O, F, !st.subgraphs.empty());
   proposeSubgraphCandidates(S, F, profile.header, expansionSafe, st);
 
-  generateMatmulCandidates(S, st.abstractMatmuls, profile.map,
-                           kDefaultConfidence, st.sampleLogBits, st.CMs);
+  generateMatmulCandidates(S, st.abstractMatmuls, profile.map, st.sampleLogBits,
+                           st.CMs);
   st.sealUnits(S);
 
   priceUnlessCached(S, st, profile.path);
@@ -541,7 +537,7 @@ bool fpOptimize(Session &S, Function &F, double errorTol) {
     // The target is a relative error, which is what errorBudgetSelector
     // compares a matrix product against. The elementwise units are solved by
     // the normalized DP under the same number.
-    steps = errorBudgetSelector(O, st.CMs, target, kDefaultConfidence);
+    steps = errorBudgetSelector(O, st.CMs, target);
     if (!st.COs.empty() || !st.CSs.empty()) {
       SmallVector<SolutionStep> elem =
           accuracyDPSolver(S, F, st, solvedUnits(st, /*target=*/true), target,

@@ -125,7 +125,7 @@ int main(void) {
 // CHECK-NEXT: [poseidon] profile header for [[BODY]]: MaxBlockDims=(8,8,1) LaunchCount=1
 // CHECK-NEXT: [hostgemm] [[BODY]]: 1 candidate reduction loop(s)
 // CHECK-NEXT: [poseidon] Found 1 AbstractMatmul(s) for preprocess_scalar_matmul_body_f64
-// CHECK-NEXT: Matmul[0]: 8x8x8 a=f64 b=f64 acc=f64 d=f64 origin=ScalarLoopReduction
+// CHECK-NEXT: Matmul[0]: 8x8x8 type=f64 origin=ScalarLoopReduction
 // CHECK-NOT: Matmul[1]:
 // CHECK: Starting accuracy DP solver with cost budget: 0.000000e+00 of the site's profiled cost
 // CHECK: Applying solution for matmul[0] -> wmma m16n16k16 f16/f16 (#0)

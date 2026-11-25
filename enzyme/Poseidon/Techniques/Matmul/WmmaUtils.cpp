@@ -6,7 +6,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "WmmaUtils.h"
+#include "MatmulInternal.h"
 #include "Targets/NVPTXTensorCore.h"
 #include "Targets/Target.h"
 
@@ -78,7 +78,8 @@ GlobalVariable *getOrCreateSharedScratch(Module *M, const Twine &name,
   return gv;
 }
 
-Value *emitTidIntrinsic(IRBuilder<> &B, Module *M, TidAxis axis) {
+// The tid intrinsic for the given axis; aborts on Unknown / Other.
+static Value *emitTidIntrinsic(IRBuilder<> &B, Module *M, TidAxis axis) {
   std::optional<unsigned> a = tidAxisIndex(axis);
   if (!a)
     report_fatal_error("emitTidIntrinsic: axis not resolved (Unknown/Other)");

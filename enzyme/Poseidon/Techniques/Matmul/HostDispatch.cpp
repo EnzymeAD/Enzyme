@@ -13,7 +13,7 @@
 
 #include "HostDispatch.h"
 #include "IR/Utils.h"
-#include "Matmul.h"
+#include "MatmulInternal.h"
 #include "Pass/Session.h"
 #include "Profile/Instrument.h"
 #include "Sites/Annotations.h"
@@ -196,9 +196,8 @@ static bool recoverGuardExtents(const Options &O, Function &F,
       if (!collectIndexBounds(branchCondition(BI), /*holds=*/i == 0, bound)) {
         if (O.Diagnostics.Print)
           llvm::errs() << "[ozaki-host-dispatch] " << F.getName()
-                       << ": a condition gating the GEMM store is not a thread-"
-                          "index bound, so the written extent is not a "
-                          "rectangle this dispatch can reproduce\n";
+                       << ": a condition gating the GEMM store is not a "
+                          "thread-index bound\n";
         return false;
       }
     }
@@ -247,8 +246,8 @@ bool computeGemmBodyNote(const Options &O, Function &F, const AbstractMatmul &m,
   else
     return false;
 
-  LaunchRef aRoot = tracePointerRoot(m.scalarLoop.aBase);
-  LaunchRef bRoot = tracePointerRoot(m.scalarLoop.bBase);
+  LaunchRef aRoot = tracePointerRoot(m.scalarLoop.aPtr);
+  LaunchRef bRoot = tracePointerRoot(m.scalarLoop.bPtr);
   note.aParam = aRoot.param;
   note.aOffset = aRoot.offset;
   note.bParam = bRoot.param;
@@ -323,13 +322,8 @@ bool computeGemmBodyNote(const Options &O, Function &F, const AbstractMatmul &m,
         recovered = true;
         llvm::errs() << "[ozaki-host-dispatch] recovered deploy geometry for "
                      << F.getName() << ": M=" << cropM << " Ncols=" << cropN
-                     << " K=" << K << " (profile M/N/K = " << m.globalM << '/'
-                     << m.globalN << '/' << m.globalK
-                     << " does not track matrix order; extents taken from the "
-                        "kernel's own index guard on thread axes "
-                     << axM << '/' << axN
-                     << " and bounded again by the launch geometry at the "
-                        "dispatch)\n";
+                     << " K=" << K << " from the index guard on thread axes "
+                     << axM << '/' << axN << '\n';
       }
     }
     if (scaled && !recovered &&
@@ -342,14 +336,7 @@ bool computeGemmBodyNote(const Options &O, Function &F, const AbstractMatmul &m,
           << ": non-square geometry under a changed deploy scale (profile "
              "M/N/K = "
           << m.globalM << '/' << m.globalN << '/' << m.globalK
-          << ", deploy K = " << K
-          << "). A dimension that does not track matrix order cannot be "
-             "rescaled by K/globalK, and its true deploy extent is not "
-             "statically known here, so no value would be correct. The "
-             "host-dispatch candidate is WITHDRAWN for this site; the solver "
-             "will choose among the remaining in-kernel candidates, which may "
-             "be MATERIALLY LESS ACCURATE than the withdrawn one. Re-check the "
-             "selected scheme for this site before trusting the result.\n";
+          << ", deploy K = " << K << ")\n";
       if (O.Model.StrictMode)
         reportUserError(
             F, F.getSubprogram(),
@@ -370,7 +357,7 @@ bool computeGemmBodyNote(const Options &O, Function &F, const AbstractMatmul &m,
     note.gM = m.globalM ? m.globalM : (unsigned)K;
     note.gNcols = m.globalN ? m.globalN : (unsigned)K;
   }
-  note.aColMajor = (h.aStrideByte != 8); // always false here (A K-contiguous)
+  note.aColMajor = false;
   note.bColMajor = bColMajor;
   note.cColMajor = bColMajor; // heuristic: output matches B's major order
   note.lda = h.aLeadingDimByte ? (unsigned)(h.aLeadingDimByte / 8) : note.gK;
@@ -381,7 +368,11 @@ bool computeGemmBodyNote(const Options &O, Function &F, const AbstractMatmul &m,
   return true;
 }
 
-void fissionGemmForDispatch(Function &F, const AbstractMatmul &m) {
+// Replaces the GEMM result where the epilogue consumes it with a load from the
+// output buffer that the prepended host dispatch fills, so the reduction loop
+// dies. F stores a value that reaches the product to an argument, as it does
+// when computeGemmBodyNote gave it a valid note that is not standalone.
+static void fissionGemmForDispatch(Function &F, const AbstractMatmul &m) {
   StoreInst *cStore = productStore(F, m);
   assert(cStore &&
          "a body with a fused note stores the product to an argument");
@@ -392,7 +383,8 @@ void fissionGemmForDispatch(Function &F, const AbstractMatmul &m) {
   Value *resultVal = cStore->getValueOperand();
   Value *outAddr = cStore->getPointerOperand();
   IRBuilder<> B(cStore);
-  LoadInst *loaded = B.CreateLoad(resultVal->getType(), outAddr, "ozdisp.gemm");
+  LoadInst *loaded =
+      B.CreateLoad(resultVal->getType(), outAddr, "dispatch.gemm");
   SmallVector<Use *, 8> repl;
   for (Use &U : resultVal->uses()) {
     User *user = U.getUser();
@@ -410,22 +402,66 @@ void fissionGemmForDispatch(Function &F, const AbstractMatmul &m) {
          << " (epilogue reads dispatched output; reduction loop will DCE)\n";
 }
 
-void noteGemmBody(Session &S, const Function *body, const GemmBodyNote &n) {
-  S.Matmul.GemmBodies.note(body, n);
-}
-bool getGemmBody(const Session &S, const Function *body, GemmBodyNote &out) {
-  std::optional<GemmBodyNote> note = S.Matmul.GemmBodies.get(body);
-  if (!note)
-    return false;
-  out = *note;
-  return true;
+static GemmBodyNote runtimeShapeNote(const AbstractMatmul &m) {
+  const RuntimeGemmHandle &g = *m.hostGemm;
+  GemmBodyNote note;
+  note.cParam = g.cRef.param;
+  note.aParam = g.aRef.param;
+  note.bParam = g.bRef.param;
+  note.cOffset = g.cRef.offset;
+  note.aOffset = g.aRef.offset;
+  note.bOffset = g.bRef.offset;
+  note.assumedEqual = g.assumedEqual;
+  note.standalone = true;
+  note.valid = true;
+  note.runtimeDims = true;
+  note.beta = g.beta;
+  // Profile-scale constants, written only as the descriptor's fallback: the
+  // host rewrite evaluates the runtime forms below instead.
+  note.N = m.globalK;
+  note.gM = m.globalM;
+  note.gNcols = m.globalN;
+  note.gK = m.globalK;
+  note.lda = (unsigned)(g.lda.isConst() ? g.lda.add : m.globalK);
+  note.ldb = (unsigned)(g.ldb.isConst() ? g.ldb.add : m.globalK);
+  note.ldc = (unsigned)(g.ldc.isConst() ? g.ldc.add : m.globalM);
+  note.aColMajor = g.aColMajor;
+  note.bColMajor = g.bColMajor;
+  note.cColMajor = g.cColMajor;
+  note.rM = g.M;
+  note.rNcols = g.Ncols;
+  note.rK = g.K;
+  note.rlda = g.lda;
+  note.rldb = g.ldb;
+  note.rldc = g.ldc;
+  return note;
 }
 
-static std::string launchArgString(int arg, int64_t offset) {
-  std::string s = "arg" + std::to_string(arg);
-  if (offset >= 0)
-    s += "[+" + std::to_string(offset) + "]";
-  return s;
+void applyLibraryCall(Session &S, const AbstractMatmul &m,
+                      const SchemeVariant &v) {
+  assert(S.Opts.Matmul.OzakiHostDispatch &&
+         "library calls are proposed only under -poseidon-ozaki-host-dispatch");
+  Function *F = nullptr;
+  GemmBodyNote note;
+  switch (m.origin) {
+  case AbstractMatmul::Origin::HostGemmLoopNest:
+    F = m.hostGemm->cStore->getFunction();
+    note = runtimeShapeNote(m);
+    break;
+  case AbstractMatmul::Origin::ScalarLoopReduction: {
+    F = m.scalarLoop.fma->getFunction();
+    bool built = computeGemmBodyNote(S.Opts, *F, m, note);
+    assert(built && note.valid &&
+           "a library call is proposed only for a body with a GEMM note");
+    (void)built;
+    break;
+  }
+  }
+  note.scheme = descriptorScheme(v);
+  note.numModuli = descriptorModulusField(v);
+  S.Matmul.GemmBodies.note(F, note);
+  if (!note.standalone)
+    fissionGemmForDispatch(*F, m);
 }
 
 static void emitDescriptor(Session &S, StringRef wrapperName, int cArg,
@@ -437,17 +473,15 @@ static void emitDescriptor(Session &S, StringRef wrapperName, int cArg,
   std::string message;
   raw_string_ostream msg(message);
   msg << "[ozaki-host-dispatch] wrote descriptor for " << wrapperName
-      << ": C=" << launchArgString(cArg, n.cOffset)
-      << " A=" << launchArgString(aArg, n.aOffset)
-      << " B=" << launchArgString(bArg, n.bOffset) << ' ' << n.gM << 'x'
-      << n.gNcols << 'x' << n.gK << " nm=" << n.numModuli
+      << ": C=" << launchRefString({cArg, n.cOffset}, "arg")
+      << " A=" << launchRefString({aArg, n.aOffset}, "arg")
+      << " B=" << launchRefString({bArg, n.bOffset}, "arg") << ' ' << n.gM
+      << 'x' << n.gNcols << 'x' << n.gK << " nm=" << n.numModuli
       << (n.standalone ? " (standalone)" : " (fused)");
   for (const auto &[x, y] : n.assumedEqual)
-    msg << ", if " << launchArgString(x.param, x.offset)
-        << " == " << launchArgString(y.param, y.offset);
+    msg << ", if " << launchRefString(x, "arg")
+        << " == " << launchRefString(y, "arg");
   msg << '\n';
-  // cArg aArg bArg N standalone numModuli gM gNcols gK lda ldb ldc aCol bCol
-  // cCol scheme, then the keyword-tagged blocks.
   recordDescriptor(
       S, LaunchKind::HostDispatch, wrapperName,
       [&](raw_ostream &os) {
@@ -459,7 +493,6 @@ static void emitDescriptor(Session &S, StringRef wrapperName, int cArg,
            << (n.scheme == DispatchScheme::Tcec     ? 1
                : n.scheme == DispatchScheme::Direct ? 2
                                                     : 0);
-        // Optional trailing runtime-geometry block (tokens 17..36).
         if (n.runtimeDims && plainDims) {
           os << " 1";
           for (const GemmBodyNote::RtDim *x : dims)
@@ -498,10 +531,16 @@ static void emitDescriptor(Session &S, StringRef wrapperName, int cArg,
 }
 
 // Shared descriptor emit for the per-site path and the deferred joint-dp
-// flush: map C/A/B via `mapParam`, skipping (with a message) if any fails.
+// flush: map C/A/B through `paramToArg` (body parameter to wrapper launch
+// argument, -1 when there is none), skipping (with a message) if any fails.
 static void emitMappedDescriptor(Session &S, StringRef wrapperName,
                                  const GemmBodyNote &n,
-                                 function_ref<int(int)> mapParam) {
+                                 ArrayRef<int> paramToArg) {
+  auto mapParam = [&](int bp) -> int {
+    if (bp < 0 || (size_t)bp >= paramToArg.size())
+      return -1;
+    return paramToArg[bp];
+  };
   int cArg = mapParam(n.cParam);
   int aArg = mapParam(n.aParam);
   int bArg = mapParam(n.bParam);
@@ -539,39 +578,31 @@ static void emitMappedDescriptor(Session &S, StringRef wrapperName,
   emitDescriptor(S, wrapperName, cArg, aArg, bArg, mapped);
 }
 
+static std::vector<int> launchArgsOf(ArrayRef<Value *> primalArgs) {
+  std::vector<int> paramToArg(primalArgs.size());
+  for (size_t i = 0; i < primalArgs.size(); ++i)
+    paramToArg[i] = traceToArgIndex(primalArgs[i]);
+  return paramToArg;
+}
+
 void writeGemmDescriptor(Session &S, Function &wrapper,
                          ArrayRef<Value *> primalArgs, const GemmBodyNote &n) {
   if (!n.valid)
     return;
-  emitMappedDescriptor(S, wrapper.getName(), n, [&](int bp) -> int {
-    if (bp < 0 || (size_t)bp >= primalArgs.size())
-      return -1;
-    return traceToArgIndex(primalArgs[bp]);
-  });
+  emitMappedDescriptor(S, wrapper.getName(), n, launchArgsOf(primalArgs));
 }
 
 void addPendingGemmDispatch(Session &S, const Function *body, Function &wrapper,
                             ArrayRef<Value *> primalArgs) {
-  PendingGemm pg;
-  pg.wrapperName = wrapper.getName().str();
-  pg.paramToArg.resize(primalArgs.size());
-  for (size_t i = 0; i < primalArgs.size(); ++i)
-    pg.paramToArg[i] = traceToArgIndex(primalArgs[i]);
-  S.Matmul.PendingGemms[body] = std::move(pg);
+  S.Matmul.PendingGemms[body] = {wrapper.getName().str(),
+                                 launchArgsOf(primalArgs)};
 }
 
 void flushPendingGemmDispatches(Session &S) {
-  for (auto &kv : S.Matmul.PendingGemms) {
-    GemmBodyNote n;
-    if (!getGemmBody(S, kv.first, n))
-      continue; // this site was not materialized as a host dispatch
-    const PendingGemm &pg = kv.second;
-    emitMappedDescriptor(S, pg.wrapperName, n, [&](int bp) -> int {
-      if (bp < 0 || (size_t)bp >= pg.paramToArg.size())
-        return -1;
-      return pg.paramToArg[bp];
-    });
-  }
+  for (auto &[body, pg] : S.Matmul.PendingGemms)
+    // A site not materialized as a host dispatch has no note.
+    if (std::optional<GemmBodyNote> n = S.Matmul.GemmBodies.get(body))
+      emitMappedDescriptor(S, pg.wrapperName, *n, pg.paramToArg);
   S.Matmul.PendingGemms.clear();
 }
 
@@ -604,29 +635,24 @@ static const char *dispatchSym(DispatchScheme s, bool square) {
   return square ? "__poseidon_ozaki_dgemm" : "__poseidon_ozaki_dgemm_ex";
 }
 
-static FunctionCallee getOzakiDgemm(Module &M, DispatchScheme scheme) {
+static FunctionCallee getDispatchCallee(Module &M, DispatchScheme scheme,
+                                        bool square) {
   LLVMContext &C = M.getContext();
   Type *ptr = PointerType::get(C, 0);
   Type *i32 = Type::getInt32Ty(C);
   Type *dbl = Type::getDoubleTy(C);
-  // void(C,A,B,N,lda,ldb,ldc,transA,transB,alpha,beta,stream,num_moduli)
-  Type *params[] = {ptr, ptr, ptr, i32, i32, i32, i32,
-                    i32, i32, dbl, dbl, ptr, i32};
-  FunctionType *FT = FunctionType::get(Type::getVoidTy(C), params, false);
-  return M.getOrInsertFunction(dispatchSym(scheme, /*square=*/true), FT);
-}
-
-static FunctionCallee getOzakiDgemmEx(Module &M, DispatchScheme scheme) {
-  LLVMContext &C = M.getContext();
-  Type *ptr = PointerType::get(C, 0);
-  Type *i32 = Type::getInt32Ty(C);
-  Type *dbl = Type::getDoubleTy(C);
+  // void(C,A,B, N,lda,ldb,ldc, transA,transB, alpha,beta, stream, num_moduli)
+  Type *squareParams[] = {ptr, ptr, ptr, i32, i32, i32, i32,
+                          i32, i32, dbl, dbl, ptr, i32};
   // void(C,A,B, M,Ncols,K, lda,ldb,ldc, aColMajor,bColMajor,cColMajor,
   //      alpha,beta, stream, num_moduli)
-  Type *params[] = {ptr, ptr, ptr, i32, i32, i32, i32, i32,
-                    i32, i32, i32, i32, dbl, dbl, ptr, i32};
-  FunctionType *FT = FunctionType::get(Type::getVoidTy(C), params, false);
-  return M.getOrInsertFunction(dispatchSym(scheme, /*square=*/false), FT);
+  Type *exParams[] = {ptr, ptr, ptr, i32, i32, i32, i32, i32,
+                      i32, i32, i32, i32, dbl, dbl, ptr, i32};
+  FunctionType *FT = FunctionType::get(Type::getVoidTy(C),
+                                       square ? ArrayRef<Type *>(squareParams)
+                                              : ArrayRef<Type *>(exParams),
+                                       false);
+  return M.getOrInsertFunction(dispatchSym(scheme, square), FT);
 }
 
 namespace {
@@ -683,9 +709,8 @@ private:
 };
 } // namespace
 
-static bool
-readOzDispatchDescriptors(const Options &O, Module &M,
-                          std::map<std::string, LaunchDesc> &descs) {
+static bool readDispatchDescriptors(const Options &O, Module &M,
+                                    std::map<std::string, LaunchDesc> &descs) {
   readDescriptors(
       O, M, LaunchKind::HostDispatch, [&](ArrayRef<StringRef> toks) -> Error {
         DescriptorCursor Cursor(toks);
@@ -806,12 +831,12 @@ static void emitPopConfig(IRBuilder<> &B, Module &M, Value *&gridOut,
   Type *i64 = Type::getInt64Ty(C);
   Type *ptr = PointerType::get(C, 0);
   Type *dim3Ty = ArrayType::get(i32, 3);
-  auto *grid = B.CreateAlloca(dim3Ty, nullptr, "ozdisp.grid");
-  auto *block = B.CreateAlloca(dim3Ty, nullptr, "ozdisp.block");
+  auto *grid = B.CreateAlloca(dim3Ty, nullptr, "dispatch.grid");
+  auto *block = B.CreateAlloca(dim3Ty, nullptr, "dispatch.block");
   grid->setAlignment(Align(8));
   block->setAlignment(Align(8));
-  auto *shmem = B.CreateAlloca(i64, nullptr, "ozdisp.shmem");
-  auto *stream = B.CreateAlloca(ptr, nullptr, "ozdisp.stream");
+  auto *shmem = B.CreateAlloca(i64, nullptr, "dispatch.shmem");
+  auto *stream = B.CreateAlloca(ptr, nullptr, "dispatch.stream");
   B.CreateCall(popCallConfiguration(M), {grid, block, shmem, stream});
   gridOut = grid;
   blockOut = block;
@@ -873,16 +898,13 @@ static bool dispatchFromLaunchArgs(Module &M, Function &F, const LaunchDesc &d,
   // without the dispatch, so it can neither fall back nor be skipped.
   if (!d.standalone &&
       (!launch || (d.launchCrop && !pop) || !d.assumedEqual.empty()))
-    report_fatal_error(
-        Twine("Poseidon: the fused host-dispatched GEMM of ") + F.getName() +
-        " reads its operands from the stub's launch and cannot fall back to "
-        "it, and this stub has no launch to read them from or a condition to "
-        "check first; the kernel was already fissioned device-side, so there "
-        "is no correct code to emit here.");
+    report_fatal_error(Twine("Poseidon: the stub ") + F.getName() +
+                       " of a fused host-dispatched GEMM has no launch to "
+                       "read the operands from, or a condition to check "
+                       "first, and its kernel was fissioned device-side");
   if (!launch || (d.launchCrop && !pop)) {
     errs() << "[ozaki-host-dispatch] " << F.getName()
-           << ": the dispatch reads the kernel's arguments from its launch, "
-              "and this stub has no launch to read them from; launching the "
+           << ": no launch to read the kernel's arguments from; launching the "
               "kernel as written\n";
     return false;
   }
@@ -985,12 +1007,12 @@ static bool dispatchFromLaunchArgs(Module &M, Function &F, const LaunchDesc &d,
   errs() << "[ozaki-host-dispatch] "
          << (d.standalone ? "replaced" : "prepended") << " the launch in stub "
          << F.getName() << " with " << dispatchSym(d.scheme, squareRM)
-         << " (C=" << launchArgString(d.cParam, d.cOffset)
-         << " A=" << launchArgString(d.aParam, d.aOffset)
-         << " B=" << launchArgString(d.bParam, d.bOffset) << ')';
+         << " (C=" << launchRefString({d.cParam, d.cOffset}, "arg")
+         << " A=" << launchRefString({d.aParam, d.aOffset}, "arg")
+         << " B=" << launchRefString({d.bParam, d.bOffset}, "arg") << ')';
   for (const auto &[x, y] : d.assumedEqual)
-    errs() << ", if " << launchArgString(x.param, x.offset)
-           << " == " << launchArgString(y.param, y.offset);
+    errs() << ", if " << launchRefString(x, "arg")
+           << " == " << launchRefString(y, "arg");
   errs() << '\n';
   return true;
 }
@@ -999,9 +1021,9 @@ static bool dispatchFromLaunchArgs(Module &M, Function &F, const LaunchDesc &d,
 // standalone function whose parameters are the kernel's launch args. Standalone
 // descriptors replace the whole body with the dispatch call; fused bodies get
 // the dispatch prepended and keep the (device-side fissioned) launch.
-bool rewriteGemmStubBodies(const Options &O, Module &M) {
+static bool rewriteGemmStubBodies(const Options &O, Module &M) {
   std::map<std::string, LaunchDesc> descs;
-  if (!readOzDispatchDescriptors(O, M, descs))
+  if (!readDispatchDescriptors(O, M, descs))
     return false;
 
   LLVMContext &C = M.getContext();
@@ -1020,11 +1042,9 @@ bool rewriteGemmStubBodies(const Options &O, Module &M) {
       continue;
     const LaunchDesc &d = dIt->second;
     if (d.readsFields()) {
-      changed |= dispatchFromLaunchArgs(M, F, d,
-                                        takesSquareEntry(d)
-                                            ? getOzakiDgemm(M, d.scheme)
-                                            : getOzakiDgemmEx(M, d.scheme),
-                                        takesSquareEntry(d));
+      changed |= dispatchFromLaunchArgs(
+          M, F, d, getDispatchCallee(M, d.scheme, takesSquareEntry(d)),
+          takesSquareEntry(d));
       continue;
     }
     unsigned need = (unsigned)std::max({d.cParam, d.aParam, d.bParam});
@@ -1077,8 +1097,7 @@ bool rewriteGemmStubBodies(const Options &O, Module &M) {
 
     bool squareRM = takesSquareEntry(d);
     // Resolved per descriptor: the scheme is a per-site solver decision.
-    FunctionCallee callee =
-        squareRM ? getOzakiDgemm(M, d.scheme) : getOzakiDgemmEx(M, d.scheme);
+    FunctionCallee callee = getDispatchCallee(M, d.scheme, squareRM);
     // Runtime dimensions are materialized as `mul*arg + add` right before the
     // dispatch call, so a build profiled at one problem size deploys at
     // another.

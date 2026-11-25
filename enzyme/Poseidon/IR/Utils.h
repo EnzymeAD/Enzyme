@@ -33,6 +33,8 @@
 
 namespace llvm {
 class PassBuilder;
+class SCEVExpander;
+class ScalarEvolution;
 } // namespace llvm
 
 namespace poseidon {
@@ -43,6 +45,11 @@ using PassParent = llvm::RequiredPassInfoMixin<DerivedT>;
 #else
 template <typename DerivedT> using PassParent = llvm::PassInfoMixin<DerivedT>;
 #endif
+
+// A SCEVExpander that names the values it emits `name`; LLVM 22 dropped the
+// DataLayout argument of its constructor.
+llvm::SCEVExpander makeSCEVExpander(llvm::ScalarEvolution &SE,
+                                    const char *name);
 
 // LLVM 24 split BranchInst into CondBrInst and UncondBrInst.
 inline bool isConditionalBranch(const llvm::Value *V) {

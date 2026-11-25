@@ -6,14 +6,12 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "RaiseWMMA.h"
 #include "Core/Options.h"
 #include "IR/Utils.h"
 #include "MatmulInternal.h"
 #include "Model/FPFormat.h"
 #include "Targets/NVPTXTensorCore.h"
 #include "Targets/Target.h"
-#include "WmmaUtils.h"
 
 #include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/SmallVector.h"
@@ -53,7 +51,17 @@ using namespace llvm;
 
 namespace poseidon {
 
-std::optional<FMAMatch> matchFMA(Value *V) {
+namespace {
+// A multiply-add: llvm.fma / llvm.fmuladd (`fmul` null), or a contractable
+// fadd of a contractable fmul; `acc` is the addend.
+struct FMAMatch {
+  Instruction *fma;
+  Instruction *fmul;
+  Value *a, *b, *acc;
+};
+} // namespace
+
+static std::optional<FMAMatch> matchFMA(Value *V) {
   auto *I = dyn_cast<Instruction>(V);
   if (!I)
     return std::nullopt;
@@ -92,8 +100,46 @@ static bool hasOnlyInLoopUser(const Loop *L, Value *v, Instruction *expected) {
   return true;
 }
 
-bool isClosedFmaPhiCycle(const Loop *L, Instruction *fma, PHINode *phi) {
+static bool isClosedFmaPhiCycle(const Loop *L, Instruction *fma, PHINode *phi) {
   return hasOnlyInLoopUser(L, fma, phi) && hasOnlyInLoopUser(L, phi, fma);
+}
+
+std::optional<ReductionCycle> matchReductionCycle(const Loop *L, PHINode &phi,
+                                                  BasicBlock *latch,
+                                                  StringRef *why) {
+  auto fail = [&](StringRef reason) -> std::optional<ReductionCycle> {
+    if (why)
+      *why = reason;
+    return std::nullopt;
+  };
+  Value *backedgeVal = phi.getIncomingValueForBlock(latch);
+  if (!backedgeVal)
+    return fail("no backedge value");
+  std::optional<FMAMatch> fm = matchFMA(backedgeVal);
+  if (!fm || fm->acc != &phi)
+    return fail("backedge value is not an accumulating fma");
+  // Otherwise a per-iteration partial sum is live and the loop is not a pure
+  // reduction.
+  if (!isClosedFmaPhiCycle(L, fm->fma, &phi))
+    return fail("fma/phi cycle is not closed");
+  auto *aLoad = dyn_cast<LoadInst>(fm->a);
+  auto *bLoad = dyn_cast<LoadInst>(fm->b);
+  if (!aLoad || !bLoad)
+    return fail("an fma multiplicand is not a load");
+  if (aLoad->getType() != phi.getType() || bLoad->getType() != phi.getType())
+    return fail("mixed-precision operands");
+  return ReductionCycle{fm->fma, fm->fmul, aLoad, bLoad};
+}
+
+void forEachInnermostLoop(LoopInfo &LI, function_ref<void(Loop *)> fn) {
+  SmallVector<Loop *, 8> worklist(LI.begin(), LI.end());
+  while (!worklist.empty()) {
+    Loop *L = worklist.pop_back_val();
+    if (L->getSubLoops().empty())
+      fn(L);
+    else
+      append_range(worklist, L->getSubLoops());
+  }
 }
 
 static int64_t outerGEPElementSize(const DataLayout &DL, Value *ptr) {
@@ -117,15 +163,6 @@ static int64_t extractLeadingDimByte(const DataLayout &DL, LoadInst *load,
       (int64_t)DL.getTypeAllocSize(load->getType()).getFixedValue();
   int64_t outer = outerGEPElementSize(DL, load->getPointerOperand());
   return (outer > scalarBytes) ? outer : fallbackByte;
-}
-
-static Value *gepRootBase(Value *ptr) {
-  // TODO: interleaving
-  while (auto *gep = dyn_cast<GEPOperator>(ptr))
-    ptr = gep->getPointerOperand();
-  while (auto *asc = dyn_cast<AddrSpaceCastOperator>(ptr))
-    ptr = asc->getPointerOperand();
-  return ptr;
 }
 
 struct TidLinearCoefs {
@@ -163,22 +200,6 @@ static void extractTidCoefficients(const SCEV *S, int64_t mult,
   out.coef[g.Axis] += mult;
 }
 
-static TidAxis classifyTidAxis(const SCEV *S) {
-  TidLinearCoefs coefs;
-  extractTidCoefficients(S, 1, coefs);
-  unsigned n =
-      (coefs.coef[0] != 0) + (coefs.coef[1] != 0) + (coefs.coef[2] != 0);
-  if (n != 1)
-    return TidAxis::Other;
-  if (coefs.coef[0] != 0)
-    return TidAxis::TidX;
-  if (coefs.coef[1] != 0)
-    return TidAxis::TidY;
-  if (coefs.coef[2] != 0)
-    return TidAxis::TidZ;
-  llvm_unreachable("classifyTidAxis: n == 1 but all coefs are zero");
-}
-
 // Fused-index classification: also accepts a matrix index built from exactly
 // two thread axes, byteOffset = unit * tid[fast] + unit * mult * tid[slow]
 // (sum-factorized FEM contractions). Returns the fast axis and, on a fused
@@ -195,13 +216,13 @@ static TidAxis classifyTidIndex(const SCEV *S, TidAxis &slow, unsigned &mult,
   unsigned n =
       (coefs.coef[0] != 0) + (coefs.coef[1] != 0) + (coefs.coef[2] != 0);
   static const TidAxis kAxis[3] = {TidAxis::TidX, TidAxis::TidY, TidAxis::TidZ};
-  if (n <= 1) {
+  if (n == 1) {
     // Single axis: still report the per-index byte step, which is the operand's
     // leading dimension.
-    for (int i = 0; i < 3; ++i)
-      if (coefs.coef[i] != 0 && coefs.coef[i] > 0)
-        unitByte = coefs.coef[i];
-    return classifyTidAxis(S);
+    int i = coefs.coef[0] ? 0 : coefs.coef[1] ? 1 : 2;
+    if (coefs.coef[i] > 0)
+      unitByte = coefs.coef[i];
+    return kAxis[i];
   }
   if (n != 2)
     return TidAxis::Other;
@@ -240,28 +261,11 @@ static bool tryAnalyzeReductionPhi(Loop *L, PHINode &phi, ScalarEvolution &SE,
   FPKind srcPrec = fpKindFromType(phiTy);
   if (srcPrec == FPKind::Invalid)
     return false;
-
-  Value *backedgeVal = phi.getIncomingValueForBlock(latch);
-  if (!backedgeVal)
+  std::optional<ReductionCycle> rc = matchReductionCycle(L, phi, latch);
+  if (!rc)
     return false;
-  std::optional<FMAMatch> fm = matchFMA(backedgeVal);
-  if (!fm || fm->acc != &phi)
-    return false;
-
-  // The fma/phi pair must form a closed in-loop cycle; otherwise the
-  // per-iteration intermediate is live and the chain can't collapse to a
-  // single wmma tile.
-  if (!isClosedFmaPhiCycle(L, fm->fma, &phi))
-    return false;
-
-  LoadInst *aLoad = dyn_cast<LoadInst>(fm->a);
-  LoadInst *bLoad = dyn_cast<LoadInst>(fm->b);
-  if (!aLoad || !bLoad)
-    return false;
-
-  // TODO: handle mixed precision
-  if (aLoad->getType() != phiTy || bLoad->getType() != phiTy)
-    return false;
+  LoadInst *aLoad = rc->aLoad;
+  LoadInst *bLoad = rc->bLoad;
 
   const SCEV *aAddr = SE.getSCEV(aLoad->getPointerOperand());
   const SCEV *bAddr = SE.getSCEV(bLoad->getPointerOperand());
@@ -282,7 +286,7 @@ static bool tryAnalyzeReductionPhi(Loop *L, PHINode &phi, ScalarEvolution &SE,
   int64_t srcByteSize = (int64_t)DL.getTypeAllocSize(phiTy).getFixedValue();
   if (aStrideByte != srcByteSize)
     return false;
-  // matmul B invariant (TODO incomplete)
+  // matmul B invariant
   if (bStrideByte <= 0 || bStrideByte % srcByteSize != 0)
     return false;
 
@@ -339,10 +343,10 @@ static bool tryAnalyzeReductionPhi(Loop *L, PHINode &phi, ScalarEvolution &SE,
   outHandle.blocks.clear();
   for (BasicBlock *BB : L->blocks())
     outHandle.blocks.insert(BB);
-  outHandle.fma = fm->fma;
-  outHandle.fmul = fm->fmul;
-  outHandle.aBase = gepRootBase(aLoad->getPointerOperand());
-  outHandle.bBase = gepRootBase(bLoad->getPointerOperand());
+  outHandle.fma = rc->fma;
+  outHandle.fmul = rc->fmul;
+  outHandle.aPtr = aLoad->getPointerOperand();
+  outHandle.bPtr = bLoad->getPointerOperand();
   outHandle.aStartSCEV = aRec->getStart();
   outHandle.bStartSCEV = bRec->getStart();
   outHandle.SE = &SE;
@@ -358,7 +362,6 @@ static bool tryAnalyzeReductionPhi(Loop *L, PHINode &phi, ScalarEvolution &SE,
   outHandle.bStrideByte = bStrideByte;
   outHandle.aLeadingDimByte = aLdByte;
   outHandle.bLeadingDimByte = bLdByte;
-  outHandle.tripCount = trip;
   eltKind = srcPrec;
   return true;
 }
@@ -403,16 +406,7 @@ static void forEachScalarLoopReduction(
     const Options &O, Function &F, ScalarEvolution &SE, LoopInfo &LI,
     function_ref<void(Loop *, ScalarLoopHandle &, FPKind, unsigned)> cb) {
   const DataLayout &DL = F.getParent()->getDataLayout();
-  SmallVector<Loop *, 8> worklist;
-  for (Loop *L : LI)
-    worklist.push_back(L);
-  while (!worklist.empty()) {
-    Loop *L = worklist.pop_back_val();
-    for (Loop *Sub : L->getSubLoops())
-      worklist.push_back(Sub);
-    if (!L->getSubLoops().empty())
-      continue;
-
+  forEachInnermostLoop(LI, [&](Loop *L) {
     // Loop-level preconditions once; then each header phi is tested
     // independently so loops with several reductions yield one matmul each.
     BasicBlock *header = L->getHeader();
@@ -422,7 +416,7 @@ static void forEachScalarLoopReduction(
         llvm::errs() << "[raise-wmma] reject loop @ "
                      << header->getParent()->getName()
                      << ": no unique latch (multi-latch / irreducible)\n";
-      continue;
+      return;
     }
     unsigned trip = SE.getSmallConstantMaxTripCount(L);
     if (trip == 0) {
@@ -430,7 +424,7 @@ static void forEachScalarLoopReduction(
         llvm::errs() << "[raise-wmma] reject loop in "
                      << header->getParent()->getName()
                      << ": trip count is not a known constant\n";
-      continue;
+      return;
     }
 
     for (PHINode &phi : header->phis()) {
@@ -440,7 +434,7 @@ static void forEachScalarLoopReduction(
         continue;
       cb(L, h, eltKind, trip);
     }
-  }
+  });
 }
 
 void collectScalarLoopReductionTrips(
@@ -496,7 +490,7 @@ void findScalarLoopMatmuls(const Options &O, Function &F, ScalarEvolution &SE,
 
   forEachScalarLoopReduction(
       O, F, SE, LI,
-      [&](Loop *L, ScalarLoopHandle &h, FPKind eltKind, unsigned) {
+      [&](Loop *L, ScalarLoopHandle &h, FPKind eltKind, unsigned trip) {
         unsigned profM = extentForIndex(O, profileHeader.maxBlockDim,
                                         h.aRowAxis, h.aRowSlowAxis,
                                         h.aRowFuseMult, "A-row", F.getName());
@@ -523,7 +517,7 @@ void findScalarLoopMatmuls(const Options &O, Function &F, ScalarEvolution &SE,
         am.id = nextId++;
         am.M = profM;
         am.N = profN;
-        am.K = h.tripCount;
+        am.K = trip;
         // gridDim x blockDim along the row/col axes is the full GEMM output,
         // the product of gridDim the CTA count; 0 when the profile has no
         // grid dimensions.
@@ -546,10 +540,7 @@ void findScalarLoopMatmuls(const Options &O, Function &F, ScalarEvolution &SE,
                    gz = profileHeader.maxGridDim[2];
           am.gridCTAs = gx ? gx * (gy ? gy : 1u) * (gz ? gz : 1u) : 0u;
         }
-        am.aType = eltKind; // TODO: handle mixed precision
-        am.bType = eltKind;
-        am.accType = eltKind;
-        am.dType = eltKind;
+        am.elemType = eltKind;
         am.origin = AbstractMatmul::Origin::ScalarLoopReduction;
         am.scalarLoop = h;
         am.outputValue = h.fma;
@@ -563,49 +554,36 @@ void findScalarLoopMatmuls(const Options &O, Function &F, ScalarEvolution &SE,
         }
         for (BasicBlock *BB : L->blocks())
           for (Instruction &I : *BB)
-            am.footprint.insert(&I); // TODO: ponder over this
+            am.footprint.insert(&I);
 
         out.push_back(std::move(am));
       });
 }
 
-namespace {
-class ScalarLoopRaiseMaterializer {
-public:
-  ScalarLoopRaiseMaterializer(const AbstractMatmul &m,
-                              const MatmulUnit::Option &t)
-      : m(m), t(t) {}
-  void run();
-
-private:
-  const AbstractMatmul &m;
-  const MatmulUnit::Option &t;
-};
-} // namespace
-
-void ScalarLoopRaiseMaterializer::run() {
+void materializeScalarLoopRaise(const AbstractMatmul &m,
+                                const MatmulUnit::Option &t) {
   if (t.realization != Realization::InKernel ||
       t.variant.scheme != Scheme::Direct)
     report_fatal_error(
-        "ScalarLoopRaiseMaterializer: only the in-kernel direct scheme is "
+        "materializeScalarLoopRaise: only the in-kernel direct scheme is "
         "realized here");
   if (t.tileM == 0 || t.tileN == 0 || t.tileK == 0 || t.mChain == 0 ||
       t.nChain == 0 || t.kChain == 0)
-    report_fatal_error("ScalarLoopRaiseMaterializer: zero tile/chain dim");
+    report_fatal_error("materializeScalarLoopRaise: zero tile/chain dim");
   if (t.mChain * t.tileM != m.M + t.padM ||
       t.nChain * t.tileN != m.N + t.padN || t.kChain * t.tileK != m.K + t.padK)
     report_fatal_error(
-        "ScalarLoopRaiseMaterializer: chain*tile doesn't match source+padding");
+        "materializeScalarLoopRaise: chain*tile doesn't match source+padding");
 
   const ScalarLoopHandle &h = m.scalarLoop;
   BasicBlock *preheader = h.preheader;
   BasicBlock *exitBB = h.exitBB;
   if (!preheader)
     report_fatal_error(
-        "ScalarLoopRaiseMaterializer: loop has no unique preheader");
+        "materializeScalarLoopRaise: loop has no unique preheader");
   if (!exitBB)
     report_fatal_error(
-        "ScalarLoopRaiseMaterializer: loop has no unique exit block");
+        "materializeScalarLoopRaise: loop has no unique exit block");
 
   Function *F = preheader->getParent();
   Module *mod = F->getParent();
@@ -614,8 +592,8 @@ void ScalarLoopRaiseMaterializer::run() {
   Type *i32Ty = Type::getInt32Ty(ctx);
   PointerType *genPtrTy = PointerType::get(ctx, /*addrspace=*/0);
 
-  Type *srcInputTy = llvmTypeForFPKind(ctx, m.aType);
-  Type *srcAccTy = llvmTypeForFPKind(ctx, m.accType);
+  Type *srcInputTy = llvmTypeForFPKind(ctx, m.elemType);
+  Type *srcAccTy = llvmTypeForFPKind(ctx, m.elemType);
   Type *tgtInputTy = llvmTypeForFPKind(ctx, t.variant.operand);
   Type *tgtAccTy = llvmTypeForFPKind(ctx, t.variant.accumulator);
   int64_t srcInputByte =
@@ -628,13 +606,13 @@ void ScalarLoopRaiseMaterializer::run() {
   // means K-contiguous (col-major), otherwise K-strided (row-major).
   // Classifying by contiguity handles arbitrary global leading dims.
   if (h.bStrideByte % srcInputByte != 0)
-    report_fatal_error("ScalarLoopRaiseMaterializer: B reduction-axis stride " +
+    report_fatal_error("materializeScalarLoopRaise: B reduction-axis stride " +
                        Twine(h.bStrideByte) +
                        " is not a multiple of the element size " +
                        Twine(srcInputByte));
   bool bRowMajor = (h.bStrideByte != srcInputByte);
 
-  const bool needAccCvt = (m.accType != t.variant.accumulator);
+  const bool needAccCvt = (m.elemType != t.variant.accumulator);
   const unsigned mPad = t.mChain * t.tileM;
   const unsigned nPad = t.nChain * t.tileN;
   // A and B always route through scratch, which also handles a K-strided B;
@@ -650,7 +628,7 @@ void ScalarLoopRaiseMaterializer::run() {
     break;
   default:
     report_fatal_error(
-        "ScalarLoopRaiseMaterializer: unsupported input precision");
+        "materializeScalarLoopRaise: unsupported input precision");
   }
 
   const nvptx::Wmma wmma = nvptx::declareWmma(mod, t.tileM, t.tileN, t.tileK,
@@ -676,7 +654,7 @@ void ScalarLoopRaiseMaterializer::run() {
   unsigned dFragSize = fragSize(dFragRetTy);
   unsigned cFragSize = mmaFTy->getNumParams() - aFragSize - bFragSize;
   if (cFragSize != dFragSize)
-    report_fatal_error("ScalarLoopRaiseMaterializer: mma C/D fragment shapes "
+    report_fatal_error("materializeScalarLoopRaise: mma C/D fragment shapes "
                        "differ; chained accumulation requires C precision == "
                        "D precision");
   Type *cFragElemTy = mmaFTy->getParamType(aFragSize + bFragSize);
@@ -710,29 +688,16 @@ void ScalarLoopRaiseMaterializer::run() {
 
   const nvptx::Barrier barrier = nvptx::declareBarrier(mod);
 
-  // Generic views of the source bases. Nothing reads them, since the fill
-  // addresses through the expanded per-thread starts, but they are emitted.
-  if (h.aBase->getType() != genPtrTy)
-    B.CreateAddrSpaceCast(h.aBase, genPtrTy);
-  if (h.bBase->getType() != genPtrTy)
-    B.CreateAddrSpaceCast(h.bBase, genPtrTy);
-
   Type *i64Ty = Type::getInt64Ty(ctx);
 
   int64_t bKStrideByte = bRowMajor ? h.bStrideByte : srcInputByte;
 
-  // TODO: clamp the cvt writes to (rowTid < M && colTid < N) for blocks larger
-  // than M x N; for now we assume runtime block dims match the profile.
   Value *aBlockBase = nullptr, *bBlockBase = nullptr;
   {
     if (!h.aStartSCEV || !h.bStartSCEV || !h.SE)
-      report_fatal_error("ScalarLoopRaiseMaterializer: missing aStartSCEV / "
+      report_fatal_error("materializeScalarLoopRaise: missing aStartSCEV / "
                          "bStartSCEV / SE; analyzer didn't populate them");
-#if LLVM_VERSION_MAJOR >= 22 && !defined(ENZYME_LLVM22_PRERELEASE)
-    SCEVExpander sex(*h.SE, "poseidon.raise");
-#else
-    SCEVExpander sex(*h.SE, h.SE->getDataLayout(), "poseidon.raise");
-#endif
+    SCEVExpander sex = makeSCEVExpander(*h.SE, "poseidon.raise");
 
     Value *rowTid =
         emitTidIndex(B, mod, h.aRowAxis, h.aRowSlowAxis, h.aRowFuseMult);
@@ -752,7 +717,7 @@ void ScalarLoopRaiseMaterializer::run() {
     if (h.aRowSlowAxis != TidAxis::Unknown &&
         h.aRowFuseUnitByte != h.aLeadingDimByte)
       report_fatal_error(
-          "ScalarLoopRaiseMaterializer: fused A-row unit stride " +
+          "materializeScalarLoopRaise: fused A-row unit stride " +
           Twine(h.aRowFuseUnitByte) + " != A leading dim " +
           Twine(h.aLeadingDimByte));
     Value *aRowThreadOff =
@@ -763,7 +728,7 @@ void ScalarLoopRaiseMaterializer::run() {
     if (h.bColSlowAxis != TidAxis::Unknown &&
         h.bColFuseUnitByte != bColThreadStrideByte)
       report_fatal_error(
-          "ScalarLoopRaiseMaterializer: fused B-col unit stride " +
+          "materializeScalarLoopRaise: fused B-col unit stride " +
           Twine(h.bColFuseUnitByte) + " != B column stride " +
           Twine(bColThreadStrideByte));
     Value *bColThreadOff =
@@ -829,8 +794,8 @@ void ScalarLoopRaiseMaterializer::run() {
   Value *cond = hdrB.CreateICmpULT(kOuterPhi, kLoopBound);
   hdrB.CreateCondBr(cond, loopBodyBB, afterLoopBB);
 
-  // Pre-install a placeholder branch back to the header so the fill helpers'
-  // splitBasicBlock has a terminator to anchor; it migrates to the latch BB.
+  // The fill helpers split the block at a terminator; this branch ends in the
+  // latch.
   IRBuilder<> bodyB(loopBodyBB);
   Instruction *placeholderBr = bodyB.CreateBr(loopHdrBB);
   bodyB.SetInsertPoint(placeholderBr);
@@ -995,8 +960,6 @@ void ScalarLoopRaiseMaterializer::run() {
   // Barrier after the wmma reads so the next iter's fill doesn't race them.
   bodyB.CreateCall(barrier.Fn, barrier.Args);
 
-  // Latch: k_next = k_outer + tileK. The placeholder branch is already the BB's
-  // terminator; the latch is whatever BB it migrated into.
   Value *kNext =
       bodyB.CreateAdd(kOuterPhi, ConstantInt::get(i32Ty, (int32_t)t.tileK));
   BasicBlock *latchBB = placeholderBr->getParent();
@@ -1059,8 +1022,8 @@ void ScalarLoopRaiseMaterializer::run() {
   auto insertIt = exitBB->getFirstNonPHIIt();
   IRBuilder<> RB = builderAt(exitBB, insertIt);
 
-  // TODO: clamp readback to (tid_row < M && tid_col < N) for blocks larger than
-  // the M x N output tile. The dScratch row stride is N_pad.
+  // The block is the profiled M x N one: the readback is not clamped to the
+  // output tile. The dScratch row stride is nPad.
   Value *rowTid =
       emitTidIndex(RB, mod, h.aRowAxis, h.aRowSlowAxis, h.aRowFuseMult);
   Value *colTid =
@@ -1098,14 +1061,7 @@ void ScalarLoopRaiseMaterializer::run() {
   }
   for (PHINode *phi : phisToErase)
     phi->eraseFromParent();
-  // TODO: delete the now-dead reduction loop. Its body remains as dead code;
-  // downstream DCE may clean it up but we don't drive that here (would need
-  // DT/LI/SE plumbed through).
-}
-
-void materializeScalarLoopRaise(const AbstractMatmul &m,
-                                const MatmulUnit::Option &opt) {
-  ScalarLoopRaiseMaterializer(m, opt).run();
+  // The reduction loop is left to dead-code elimination.
 }
 
 } // namespace poseidon

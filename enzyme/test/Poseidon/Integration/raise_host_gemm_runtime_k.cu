@@ -148,13 +148,13 @@ int main(void) {
 // CHECK-NEXT: [poseidon] profile header for [[BODY]]: MaxBlockDims=(3,3,1) LaunchCount=2
 // CHECK-NEXT: [hostgemm] [[BODY]]: 3 candidate reduction loop(s)
 // CHECK-NEXT: [hostgemm] [[BODY]]: recognized GEMM from 3 reduction loop(s)
-// CHECK-NEXT: [hostgemm]   C = alpha*A^T*B + beta*C  alpha=1.000000e+00 beta=1.000000e+00
+// CHECK-NEXT: [hostgemm]   C = A^T*B + beta*C  beta=1.000000e+00
 // CHECK-NEXT: [hostgemm]   M=arg2  Ncols=3*arg1  K=3*arg0{{$}}
 // CHECK-NEXT: [hostgemm]   lda=3*arg0  ldb=3*arg0  ldc=arg2{{$}}
 // CHECK-NEXT: [hostgemm]   aColMajor=0 bColMajor=1 cColMajor=1  C=param5 A=param4 B=param3{{$}}
 // CHECK-NEXT: [hostgemm]   profile shape M=3 Ncols=6 K=12 (per-CTA tile 3x3, launches=1 CTAs/launch=2 MACs=216)
 // CHECK-NEXT: [poseidon] Found 1 AbstractMatmul(s) for [[BODY]]
-// CHECK-NEXT: Matmul[0]: 3x3x12 a=f64 b=f64 acc=f64 d=f64 origin=HostGemmLoopNest
+// CHECK-NEXT: Matmul[0]: 3x3x12 type=f64 origin=HostGemmLoopNest
 // CHECK: Starting accuracy DP solver with cost budget: 0.000000e+00 of the site's profiled cost
 // CHECK: Applying solution for matmul[0] -> native-dgemm cublas f64/f64 (#10)
 // CHECK: [poseidon] pin: rt_gemm_body:M0=native-dgemm cublas f64/f64{{$}}

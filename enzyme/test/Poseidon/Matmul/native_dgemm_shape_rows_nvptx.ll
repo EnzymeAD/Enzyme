@@ -43,7 +43,7 @@
 ; native_dgemm_runtime_cols_nvptx.cu covers a product with a run-time column
 ; count.
 
-; WARN: [poseidon] WARNING: matmul[0] 16x16x16: the native DGEMM runs at 128x16x16 (padWaste=6.400000e+01), but the cost model has no measured 'ozaki_dispatch_rect_rel,dgemm_m128n16k16' row, so it is priced from the SQUARE 'ozaki_dispatch_rel,dgemm' row, a rate a DGEMM of this shape need not reach. Measure the row (poseidon-calibrate --ozaki-rect 128x16x16) before trusting a pick at this site.
+; WARN: [poseidon] WARNING: matmul[0] 16x16x16: the native DGEMM runs at 128x16x16 (padWaste=6.400000e+01) with no measured 'ozaki_dispatch_rect_rel,dgemm_m128n16k16' row, so it is priced from the square 'ozaki_dispatch_rel,dgemm' row (poseidon-calibrate --ozaki-rect 128x16x16 measures it).
 ; SQ: native-dgemm cublas f64/f64  compCost/MAC=2.560000e+02  rel=5.000000e-01
 ; LOW: native-dgemm cublas f64/f64  compCost/MAC=2.560000e+01  rel=5.000000e-02
 ; HIGH: native-dgemm cublas f64/f64  compCost/MAC=1.024000e+02  rel=2.000000e-01
