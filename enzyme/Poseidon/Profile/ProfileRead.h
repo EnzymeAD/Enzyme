@@ -16,7 +16,6 @@
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
-#include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringRef.h"
 
 #include <cmath>
@@ -96,23 +95,12 @@ void parseProfileFile(const std::string &profilePath, const llvm::Function &F,
                       ProfileMap &profileMap,
                       FunctionProfileHeader *header = nullptr);
 
-// The static header of every instrumented site names the profile format in a
-// line `ProfileFormat = <n>`; a profile without it is format 1. From format 2
-// the profiling runtime writes a profile for a site it never executed.
-inline constexpr llvm::StringLiteral kProfileFormatKey = "ProfileFormat";
-inline constexpr unsigned kProfileFormat = 2;
-
 // Whether `profilePath` is the profile the profiling runtime writes for a site
 // it instrumented and never executed: the site's header, an `Executed = 0`
 // line, and no records. Reads no further than the header. A profile that says
 // both is an error at the site `F`.
 bool isNeverExecutedProfile(const std::string &profilePath,
                             const llvm::Function &F);
-
-// Whether a profile in `dir` names its format, so that a site the profiled run
-// never executed would have left a file there. Reads headers only, once per
-// directory: `known` holds the answers given.
-bool profileDirNamesFormat(llvm::StringMap<bool> &known, llvm::StringRef dir);
 
 // An error at the site `F` unless the profile's slot indices were numbered
 // against the canonical form `canonicalHash` names.

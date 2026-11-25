@@ -18,7 +18,6 @@
 #include "llvm/Support/FileUtilities.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/MemoryBuffer.h"
-#include "llvm/Support/Path.h"
 #include "llvm/Support/Program.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/xxhash.h"
@@ -88,58 +87,6 @@ void addHerbieKeyParts(CacheKey &Key, const HerbieRunOptions &Opts,
                        HerbieBinaryDigests &Digests) {
   Key.add("Herbie binary", herbieBinaryDigest(Opts.Program, Digests));
   Key.add("Herbie platform", Opts.Platform.Name + " " + Opts.Platform.Digest);
-}
-
-// Which answer a cache directory holds for a question, whichever Herbie gave
-// it.
-static std::string questionRecordPath(StringRef Dir, StringRef PlatformName,
-                                      const CacheKey &Question) {
-  SmallString<256> Path(Dir);
-  sys::path::append(Path, "cachedHerbieQuestion_" + PlatformName + "_" +
-                              Question.digest() + ".json");
-  return Path.str().str();
-}
-
-namespace {
-struct RecordedAnswer {
-  std::string Binary;
-  std::string Path;
-  std::string Contents;
-};
-} // namespace
-
-static std::optional<RecordedAnswer> recordedAnswer(StringRef Dir,
-                                                    StringRef PlatformName,
-                                                    const CacheKey &Question,
-                                                    StringRef Label) {
-  std::string Path = questionRecordPath(Dir, PlatformName, Question);
-  CacheEntryRead Read = readCacheEntry(Path, Question);
-  std::string Why = Read.unreadable;
-  if (Read.value) {
-    const json::Object *Value = Read.value->getAsObject();
-    std::optional<StringRef> Binary =
-        Value ? Value->getString("Herbie binary") : std::nullopt;
-    std::optional<StringRef> Answer =
-        Value ? Value->getString("answer") : std::nullopt;
-    SmallString<256> AnswerPath(Dir);
-    if (Answer)
-      sys::path::append(AnswerPath, *Answer);
-    auto Buf = MemoryBuffer::getFile(AnswerPath);
-    if (Binary && Answer && Buf)
-      return RecordedAnswer{Binary->str(), AnswerPath.str().str(),
-                            (*Buf)->getBuffer().str()};
-    Why = !Binary || !Answer
-              ? "its value does not parse"
-              : "it names " + AnswerPath.str().str() + ", which cannot be read";
-  } else if (!Read.differs.empty()) {
-    Why = Read.differs == "format"
-              ? "it was written in another cache format"
-              : "it was recorded for a different " + Read.differs;
-  }
-  if (!Why.empty())
-    llvm::errs() << "[poseidon] Herbie " << Label << ": not replaying " << Path
-                 << " (" << Why << ")\n";
-  return std::nullopt;
 }
 
 // Writes `contents` to the cache file `path`, creating the cache directory.
@@ -257,25 +204,6 @@ Expected<HerbieRunResult> runHerbie(const std::vector<std::string> &Cores,
       return Run;
     }
   }
-
-  // The same key without the binary: what was asked, whichever Herbie answers.
-  CacheKey question;
-  question.add("Herbie platform", Platform.Name + " " + Platform.Digest);
-  question.add("Herbie arguments", join(herbieSearchArgs(Opts), " "));
-  question.addContent("cores", joinedCores);
-  if (!Opts.ImportDir.empty())
-    if (std::optional<RecordedAnswer> answer =
-            recordedAnswer(Opts.ImportDir, Platform.Name, question, Label)) {
-      content = answer->Contents;
-      llvm::errs() << "[poseidon] Herbie " << Label
-                   << ": replayed the answer of the Herbie with digest "
-                   << answer->Binary << " from " << answer->Path
-                   << " (-poseidon-import-herbie-answers)\n";
-      llvm::errs() << "Herbie output: " << content << '\n';
-      Run.Result = Outcome::Ok;
-      Run.From = HerbieRunResult::Origin::Imported;
-      return Run;
-    }
 
   if (!Opts.CacheDir.empty()) {
     // A recorded timeout is a result too: without it every re-solve pays the
@@ -490,15 +418,6 @@ Expected<HerbieRunResult> runHerbie(const std::vector<std::string> &Cores,
       return std::move(E);
     llvm::errs() << "Saved Herbie output to cache file " << cacheFilePath
                  << '\n';
-    json::Object record;
-    record["Herbie binary"] = herbieBinaryDigest(Program, Digests);
-    record["answer"] = sys::path::filename(cacheFilePath);
-    std::string recordPath =
-        questionRecordPath(Opts.CacheDir, Platform.Name, question);
-    if (Error E = writeCacheEntry(recordPath, question, std::move(record)))
-      return createStringError(inconvertibleErrorCode(),
-                               "cannot write the Herbie cache file " +
-                                   toString(std::move(E)));
     // A stale timeout marker under this key is left in place: the read path
     // consults it only when the output file is absent.
   }

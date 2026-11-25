@@ -482,7 +482,7 @@ void evaluateMatmulAccuracy(Session &S, const AbstractMatmul &m,
         }
     if (sameEntryAs[i])
       continue;
-    if (memos[i].lookup(S, results[i].accuracyCost, results[i].domainError))
+    if (memos[i].lookup(O, results[i].accuracyCost, results[i].domainError))
       continue;
     computed.push_back(i);
   }

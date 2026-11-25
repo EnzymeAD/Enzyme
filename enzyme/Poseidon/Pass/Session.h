@@ -25,7 +25,6 @@
 #include "Techniques/Matmul/MatmulInternal.h"
 
 #include "llvm/ADT/SmallVector.h"
-#include "llvm/ADT/StringMap.h"
 #include "llvm/IR/DebugLoc.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/PassManager.h"
@@ -86,10 +85,6 @@ public:
   CostModelState CostModel;
 
   HerbieRunState Herbie;
-
-  // Whether each profile directory's profiles name their format, by
-  // directory.
-  llvm::StringMap<bool> ProfileDirFormats;
 
   // By kernel name, so that the manifest and its messages come out in one
   // order whatever order the sites were solved in; host dispatch first, then

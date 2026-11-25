@@ -6,7 +6,6 @@
 // RUN: not %clang -x c++ -std=c++17 -O1 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/other_sites "-DBAD=-1e-7" %s -o /dev/null 2>&1 | FileCheck --check-prefix=NEG %s
 // RUN: not %clang -x c++ -std=c++17 -O1 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/other_sites "-DBAD=__builtin_inf()" %s -o /dev/null 2>&1 | FileCheck --check-prefix=INF %s
 // RUN: not %clang -x c++ -std=c++17 -O1 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/other_sites -DTWO %s -o /dev/null 2>&1 | FileCheck --check-prefix=TWO %s
-// RUN: not %clang -x c++ -std=c++17 -O1 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/other_sites -DSTRING %s -o /dev/null 2>&1 | FileCheck --check-prefix=STRING %s
 
 // POSEIDON_OPTIMIZE_TAU(t) takes a literal, a macro or a constant expression:
 // the annotation carries the value itself, so whatever names it reaches the
@@ -38,9 +37,6 @@ POSEIDON_OPTIMIZE_TAU(BAD) double bad(const double *x) { return x[0] * x[0]; }
 #ifdef TWO
 __attribute__((annotate("poseidon", 1e-7, 2.0))) double two(const double *x) { return x[0] * x[0]; }
 #endif
-#ifdef STRING
-__attribute__((annotate("poseidon;tau=1e-7"))) double old(const double *x) { return x[0] * x[0]; }
-#endif
 
 // PLAIN: @llvm.global.annotations
 // PLAIN: define {{.*}}double @_Z3litPKd(
@@ -56,4 +52,3 @@ __attribute__((annotate("poseidon;tau=1e-7"))) double old(const double *x) { ret
 // NEG: error: {{.*}}Poseidon: bad(double const*) carries the accuracy target -1e-07, which is not a positive finite number
 // INF: error: {{.*}}Poseidon: bad(double const*) carries the accuracy target inf, which is not a positive finite number
 // TWO: error: {{.*}}Poseidon: two(double const*) carries a Poseidon annotation whose arguments are not one accuracy target
-// STRING: error: {{.*}}Poseidon: old(double const*) carries the annotation "poseidon;tau=1e-7"; an accuracy target is written POSEIDON_OPTIMIZE_TAU(t)

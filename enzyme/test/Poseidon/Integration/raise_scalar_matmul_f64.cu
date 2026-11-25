@@ -113,7 +113,6 @@ int main(void) {
 // PROF-NEXT: SiteId = 0
 // PROF-NEXT: RedTrip = 0 8
 // PROF-NEXT: CanonicalHash = fea337c617ef94c9
-// PROF-NEXT: ProfileFormat = 2
 // PROF-NEXT: {{^0$}}
 // PROF: SumGrad = 0.00000000000000000e+00
 // PROF-NEXT: SumAbsGrad = 0.00000000000000000e+00

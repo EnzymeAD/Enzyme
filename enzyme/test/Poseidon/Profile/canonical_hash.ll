@@ -1,6 +1,5 @@
 ; RUN: %if enzyme %{ %opt < %s %loadPoseidonEnzyme -passes="poseidon,enzyme,poseidon-finalize" -enzyme-preopt=false -poseidon-profile-generate -S | FileCheck %s --check-prefix=GEN %}
 ; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/fma_opt_profiles -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache= -S 2>&1 | FileCheck %s --check-prefix=MATCH --implicit-check-not=error: --implicit-check-not=CanonicalHash
-; RUN: not %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/canonical_hash_missing -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache= -S 2>&1 | FileCheck %s --check-prefix=NOFIELD
 ; RUN: sed '/^define double @tester/,/^}/s|%mul = fmul fast double %add, %z|%extra = fmul fast double %add, %add\n  %mul = fmul fast double %extra, %z|' %s > %t.drift.ll
 ; RUN: not %opt < %t.drift.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/fma_opt_profiles -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache= -S 2>&1 | FileCheck %s --check-prefix=DRIFT
 
@@ -28,7 +27,7 @@ attributes #0 = { "target-cpu"="x86-64" }
 ; The header the profile-gen compile registers for the site at startup carries,
 ; behind the site id, the digest the fixture holds.
 ; GEN: @poseidon_site_preprocess_tester = private unnamed_addr constant [18 x i8] c"preprocess_tester\00"
-; GEN: @fpprofile_static_preprocess_tester = private unnamed_addr constant [63 x i8] c"SiteId = 0\0ACanonicalHash = f9f2bd660c90d989\0AProfileFormat = 2\0A\00"
+; GEN: @fpprofile_static_preprocess_tester = private unnamed_addr constant [45 x i8] c"SiteId = 0\0ACanonicalHash = f9f2bd660c90d989\0A\00"
 ; GEN: @llvm.global_ctors = appending global [1 x { i32, ptr, ptr }] [{ i32, ptr, ptr } { i32 0, ptr @poseidon_register_static_preprocess_tester, ptr null }]
 ; GEN-LABEL: define internal void @poseidon_register_static_preprocess_tester()
 ; GEN-NEXT: entry:
@@ -37,15 +36,11 @@ attributes #0 = { "target-cpu"="x86-64" }
 
 ; A body that still produces the digest is solved from the profile: S is the
 ; largest result the fixture records, and the site calls the body it kept.
-; MATCH-NOT: has no CanonicalHash field
 ; MATCH-NOT: recorded against a different canonical form
 ; MATCH: [poseidon] preprocess_tester: tau=5.000000e-01 S=1.500000e+02 A0=0.000000e+00 selected cost=0.000000e+00 accCost=0.000000e+00 rel=0.000000e+00
 ; MATCH-LABEL: define double @test_opt(
 ; MATCH-NEXT: entry:
 ; MATCH-NEXT: [[R:%.*]] = call double @tester(double %x, double %y, double %z)
 ; MATCH-NEXT: ret double [[R]]
-
-; NOFIELD: error: <unknown>:0:0: in function preprocess_tester {{.*}}: Poseidon: {{.*}}canonical_hash_missing/preprocess_tester.fpprofile has no CanonicalHash field, so its slot indices cannot be checked against the canonical form of preprocess_tester; re-run profile generation.
-; NOFIELD-NOT: is not verified against the profile
 
 ; DRIFT: error: <unknown>:0:0: in function preprocess_tester {{.*}}: Poseidon: the profile of preprocess_tester was recorded against a different canonical form (profile CanonicalHash f9f2bd660c90d989, this compile {{[0-9a-f]+}}). Its slot indices do not name the same instructions; re-run profile generation.

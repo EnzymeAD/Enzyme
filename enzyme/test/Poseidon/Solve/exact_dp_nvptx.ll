@@ -4,8 +4,7 @@
 
 ; The exact solve (-poseidon-early-prune=false) against the frontier pruned
 ; after each unit, on the modules in Inputs/exact_dp. Each pruned solve here
-; drops a point the exact one keeps. A matrix product's scalar-loop recognizer
-; needs scev-trunc-iv-nowrap.
+; drops a point the exact one keeps.
 
 ; one_output.ll: the binary64 and binary32 Herbie searches of one output are two
 ; units, and only one rewrite of the output can be taken. The binary64 rewrite
@@ -85,11 +84,11 @@
 ; drops the empty strategy, the rewrite refuses the overlapping raise, and no
 ; raise reaches the frontier; the exact solve finds all three. A budget below
 ; every frontier point selects nothing, so only the solve runs.
-; RUN: %if scev-trunc-iv-nowrap %{ mkdir %t/refusal %}
-; RUN: %if scev-trunc-iv-nowrap %{ env FAKE_HERBIE_DIR=%S/../Inputs/exact_dp/refusal_herbie %opt %S/../Inputs/exact_dp/refusal.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/exact_dp/refusal -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/exact_dp/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cost-budget=-1 -poseidon-print -S -o /dev/null -poseidon-cache=%t/refusal/prune 2>&1 | FileCheck --check-prefix=REFUSAL-PRUNE %s %}
-; RUN: %if scev-trunc-iv-nowrap %{ FileCheck --check-prefix=REFUSAL-PRUNE-BUDGETS %s < %t/refusal/prune/budgets.txt %}
-; RUN: %if scev-trunc-iv-nowrap %{ env FAKE_HERBIE_DIR=%S/../Inputs/exact_dp/refusal_herbie %opt %S/../Inputs/exact_dp/refusal.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/exact_dp/refusal -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/exact_dp/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cost-budget=-1 -poseidon-print -S -o /dev/null -poseidon-cache=%t/refusal/exact -poseidon-early-prune=false 2>&1 | FileCheck --check-prefix=REFUSAL-EXACT %s %}
-; RUN: %if scev-trunc-iv-nowrap %{ FileCheck --check-prefix=REFUSAL-EXACT-BUDGETS %s < %t/refusal/exact/budgets.txt %}
+; RUN: mkdir %t/refusal
+; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/exact_dp/refusal_herbie %opt %S/../Inputs/exact_dp/refusal.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/exact_dp/refusal -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/exact_dp/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cost-budget=-1 -poseidon-print -S -o /dev/null -poseidon-cache=%t/refusal/prune 2>&1 | FileCheck --check-prefix=REFUSAL-PRUNE %s
+; RUN: FileCheck --check-prefix=REFUSAL-PRUNE-BUDGETS %s < %t/refusal/prune/budgets.txt
+; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/exact_dp/refusal_herbie %opt %S/../Inputs/exact_dp/refusal.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/exact_dp/refusal -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/exact_dp/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cost-budget=-1 -poseidon-print -S -o /dev/null -poseidon-cache=%t/refusal/exact -poseidon-early-prune=false 2>&1 | FileCheck --check-prefix=REFUSAL-EXACT %s
+; RUN: FileCheck --check-prefix=REFUSAL-EXACT-BUDGETS %s < %t/refusal/exact/budgets.txt
 
 ; {{[^ -~]+}} stands for the Greek capital delta the log prints.
 ; REFUSAL-PRUNE: Matmul[0] candidates
@@ -112,11 +111,11 @@
 ; frontier, {u, m}, are missing. IR and profile are written by hand, the math
 ; functions as the libdevice calls the pass recognizes. A budget below every
 ; frontier point selects nothing, so only the solve runs.
-; RUN: %if scev-trunc-iv-nowrap %{ mkdir %t/reprice %}
-; RUN: %if scev-trunc-iv-nowrap %{ env FAKE_HERBIE_DIR=%S/../Inputs/exact_dp/reprice_herbie %opt %S/../Inputs/exact_dp/reprice.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/exact_dp/reprice -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/exact_dp/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-pt=true -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cost-budget=-1 -poseidon-print -S -o /dev/null -poseidon-cache=%t/reprice/prune 2>&1 | FileCheck --check-prefix=REPRICE-PRUNE %s %}
-; RUN: %if scev-trunc-iv-nowrap %{ FileCheck --check-prefix=REPRICE-PRUNE-BUDGETS %s < %t/reprice/prune/budgets.txt %}
-; RUN: %if scev-trunc-iv-nowrap %{ env FAKE_HERBIE_DIR=%S/../Inputs/exact_dp/reprice_herbie %opt %S/../Inputs/exact_dp/reprice.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/exact_dp/reprice -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/exact_dp/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-pt=true -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cost-budget=-1 -poseidon-print -S -o /dev/null -poseidon-cache=%t/reprice/exact -poseidon-early-prune=false 2>&1 | FileCheck --check-prefix=REPRICE-EXACT %s %}
-; RUN: %if scev-trunc-iv-nowrap %{ FileCheck --check-prefix=REPRICE-EXACT-BUDGETS %s < %t/reprice/exact/budgets.txt %}
+; RUN: mkdir %t/reprice
+; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/exact_dp/reprice_herbie %opt %S/../Inputs/exact_dp/reprice.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/exact_dp/reprice -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/exact_dp/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-pt=true -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cost-budget=-1 -poseidon-print -S -o /dev/null -poseidon-cache=%t/reprice/prune 2>&1 | FileCheck --check-prefix=REPRICE-PRUNE %s
+; RUN: FileCheck --check-prefix=REPRICE-PRUNE-BUDGETS %s < %t/reprice/prune/budgets.txt
+; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/exact_dp/reprice_herbie %opt %S/../Inputs/exact_dp/reprice.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/exact_dp/reprice -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/exact_dp/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-pt=true -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cost-budget=-1 -poseidon-print -S -o /dev/null -poseidon-cache=%t/reprice/exact -poseidon-early-prune=false 2>&1 | FileCheck --check-prefix=REPRICE-EXACT %s
+; RUN: FileCheck --check-prefix=REPRICE-EXACT-BUDGETS %s < %t/reprice/exact/budgets.txt
 
 ; REPRICE-PRUNE: DP table contains 17 entries.
 ; REPRICE-PRUNE-BUDGETS-NOT: -0.95376420454545452
@@ -130,11 +129,11 @@
 ; pruning after e keeps no strategy without it and refuses d; the exact solve
 ; (-poseidon-early-prune=false) keeps d's options. The budget is below every
 ; frontier point, so only the solve runs.
-; RUN: %if scev-trunc-iv-nowrap %{ mkdir %t/two_matmuls %}
-; RUN: %if scev-trunc-iv-nowrap %{ %opt %S/../Inputs/exact_dp/two_matmuls.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/exact_dp/two_matmuls -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv -poseidon-cost-budget=-1 -poseidon-print -S -o /dev/null -poseidon-cache=%t/two_matmuls/prune 2>&1 | FileCheck --check-prefix=TWO-PRUNE %s %}
-; RUN: %if scev-trunc-iv-nowrap %{ FileCheck --check-prefix=TWO-PRUNE-TABLE %s < %t/two_matmuls/prune/table.json %}
-; RUN: %if scev-trunc-iv-nowrap %{ %opt %S/../Inputs/exact_dp/two_matmuls.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/exact_dp/two_matmuls -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv -poseidon-cost-budget=-1 -poseidon-print -S -o /dev/null -poseidon-cache=%t/two_matmuls/exact -poseidon-early-prune=false 2>&1 | FileCheck --check-prefix=TWO-EXACT %s %}
-; RUN: %if scev-trunc-iv-nowrap %{ FileCheck --check-prefix=TWO-EXACT-TABLE %s < %t/two_matmuls/exact/table.json %}
+; RUN: mkdir %t/two_matmuls
+; RUN: %opt %S/../Inputs/exact_dp/two_matmuls.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/exact_dp/two_matmuls -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv -poseidon-cost-budget=-1 -poseidon-print -S -o /dev/null -poseidon-cache=%t/two_matmuls/prune 2>&1 | FileCheck --check-prefix=TWO-PRUNE %s
+; RUN: FileCheck --check-prefix=TWO-PRUNE-TABLE %s < %t/two_matmuls/prune/table.json
+; RUN: %opt %S/../Inputs/exact_dp/two_matmuls.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/exact_dp/two_matmuls -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv -poseidon-cost-budget=-1 -poseidon-print -S -o /dev/null -poseidon-cache=%t/two_matmuls/exact -poseidon-early-prune=false 2>&1 | FileCheck --check-prefix=TWO-EXACT %s
+; RUN: FileCheck --check-prefix=TWO-EXACT-TABLE %s < %t/two_matmuls/exact/table.json
 
 ; TWO-PRUNE: DP table contains 9 entries.
 ; TWO-PRUNE-TABLE: "-4261412864": 1633.8211240338183{{[0-9]*}}

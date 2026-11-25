@@ -68,9 +68,6 @@ struct HerbieRunOptions {
 
   // The directory of cached results; empty for none.
   std::string CacheDir;
-  // A directory whose answers are replayed whichever Herbie gave them, for a
-  // search CacheDir has no answer of this binary to; empty for none.
-  std::string ImportDir;
   // Print the command line and the platform.
   bool Print = false;
 };
@@ -89,7 +86,7 @@ struct HerbieRunState {
   bool PlatformResolved = false;
   HerbieBinaryDigests HerbieDigests;
   // The answers searches took, by origin, since they were last reported.
-  unsigned Cached = 0, Imported = 0, Fresh = 0;
+  unsigned Cached = 0, Fresh = 0;
 };
 
 // The parts of a cache key that say which Herbie searched: its binary and the
@@ -113,7 +110,7 @@ struct HerbieRunResult {
   };
   Outcome Result = Outcome::Failed;
   // Where an Ok result came from.
-  enum class Origin { Cache, Imported, Fresh };
+  enum class Origin { Cache, Fresh };
   Origin From = Origin::Fresh;
   std::string ResultsJson;
   std::string Crash;
@@ -121,10 +118,9 @@ struct HerbieRunResult {
 };
 
 // Runs Herbie on `Cores`, each a complete (FPCore ...), through the cache:
-// the answer this binary gave, else the answer ImportDir records for the
-// same question, else a run, whose answer is cached with a record of the
-// question. `Label` names the cores in diagnostics, e.g. "subgraph 0 of foo".
-// A cache that cannot be written is an error that names the path.
+// the answer this binary gave, else a run, whose answer is cached. `Label`
+// names the cores in diagnostics, e.g. "subgraph 0 of foo". A cache that cannot
+// be written is an error that names the path.
 llvm::Expected<HerbieRunResult> runHerbie(const std::vector<std::string> &Cores,
                                           const HerbieRunOptions &Opts,
                                           llvm::StringRef Label,

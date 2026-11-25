@@ -1,4 +1,3 @@
-; REQUIRES: scev-trunc-iv-nowrap
 ; DEFINE: %{reprice} = env FAKE_HERBIE_DIR=%S/../Inputs/exact_dp/reprice_herbie \
 ; DEFINE:   %opt %S/../Inputs/exact_dp/reprice.ll %loadPoseidon -passes=poseidon \
 ; DEFINE:   -poseidon-profile-use=%S/../Inputs/exact_dp/reprice -poseidon-enable-herbie=true \

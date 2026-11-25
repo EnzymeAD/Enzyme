@@ -1,4 +1,4 @@
-; REQUIRES: scev-trunc-iv-nowrap, tcec-cumpsgemm
+; REQUIRES: tcec-cumpsgemm
 ; DEFINE: %{opt} = %opt %S/../Inputs/stale_cache/matmul_device.ll %loadPoseidon \
 ; DEFINE:   -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" \
 ; DEFINE:   -poseidon-profile-use=%S/../Inputs/fp16_range/matmul_tiny \

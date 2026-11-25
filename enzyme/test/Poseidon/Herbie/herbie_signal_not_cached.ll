@@ -41,4 +41,4 @@ attributes #0 = { "target-cpu"="x86-64" }
 ; RETRY: Saved Herbie output to cache file {{.*}}cachedHerbieOutput_default_[[KEY]].txt{{$}}
 ; RETRY-NEXT: [poseidon] Herbie subgraph 0 of preprocess_tester: completed in {{[0-9.e+-]+}} s, a fresh answer of the Herbie with digest {{[0-9A-F]+}}{{$}}
 ; RETRY: Applying solution for (- (sqrt (+ (* v0 v0) (* v1 v1))) v0) --(1)-> (/.f64 (*.f64 v1 v1) (+.f64 (sqrt.f64 (+.f64 (*.f64 v0 v0) (*.f64 v1 v1))) v0)){{$}}
-; RETRY: [poseidon] Herbie answers: 1 fresh, 0 from the cache, 0 replayed
+; RETRY: [poseidon] Herbie answers: 1 fresh, 0 from the cache{{$}}

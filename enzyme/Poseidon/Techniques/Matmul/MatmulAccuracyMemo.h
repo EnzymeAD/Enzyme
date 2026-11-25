@@ -28,7 +28,6 @@ namespace poseidon {
 struct AbstractMatmul;
 struct MatmulProfile;
 struct Options;
-class Session;
 
 // The memo entry of one evaluation of a matrix accuracy model.
 class MatmulAccuracyMemo {
@@ -51,9 +50,9 @@ public:
               const MatmulProfile &prof, double confidence,
               unsigned sampleLogBits, unsigned numSamples);
 
-  // The stored result, or one imported by -poseidon-import-accuracy-memo;
-  // false when the model has to compute it.
-  bool lookup(Session &S, double &accuracyCost, double &domainError) const;
+  // The stored result; false when the model has to compute it.
+  bool lookup(const Options &O, double &accuracyCost,
+              double &domainError) const;
   void store(const Options &O, double accuracyCost, double domainError) const;
   // The entry's file in -poseidon-cache: two memos of one file hold one
   // result.
@@ -62,7 +61,6 @@ public:
 private:
   CacheKey key;
   std::string path;
-  std::string legacyName;
 };
 
 } // namespace poseidon

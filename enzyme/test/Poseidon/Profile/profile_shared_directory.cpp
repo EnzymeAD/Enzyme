@@ -60,7 +60,6 @@ int main() {
 
 // MEASURED: SiteId = {{[0-9]+}}
 // MEASURED: Kappa =
-// MEASURED: ProfileFormat = 2
 // MEASURED-NOT: Executed
 // MEASURED: MinRes =
 
@@ -70,6 +69,6 @@ int main() {
 // NOKAPPA: MinRes =
 
 // NEVER: SiteId = {{[0-9]+}}
-// NEVER: ProfileFormat = 2
+// NEVER: CanonicalHash = {{[0-9a-f]+}}
 // NEVER-NEXT: Executed = 0
 // NEVER-NOT: {{.}}

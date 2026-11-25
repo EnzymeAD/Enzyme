@@ -49,14 +49,12 @@ constexpr double kDefaultConfidence = 0.95;
 struct CellStat {
   double min = 0.0;
   double max = 0.0;
-  double sumValue = 0.0;
   uint64_t count = 0;
   double minMag = 0.0; // smallest nonzero |value| observed (0 = unknown)
 };
 
 struct GradCellStat {
   double sumGrad = 0.0;
-  uint64_t count = 0;
 };
 
 struct MatmulProfile {

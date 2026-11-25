@@ -191,8 +191,8 @@ private:
 // `F` is the site a mistake in the platform is reported at.
 void addHerbieKeyParts(Session &S, const llvm::Function &F, CacheKey &key);
 
-// Prints how many Herbie answers the compile ran fresh, read from the cache
-// and replayed from -poseidon-import-herbie-answers.
+// Prints how many Herbie answers the compile ran fresh and read from the
+// cache.
 void reportHerbieAnswers(Session &S);
 
 void setUnifiedAccuracyCost(

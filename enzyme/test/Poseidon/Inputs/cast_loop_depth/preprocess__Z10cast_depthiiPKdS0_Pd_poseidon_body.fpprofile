@@ -3,7 +3,6 @@ MaxGridDims = 1 1 1
 LaunchCount = 1
 SiteId = 0
 CanonicalHash = 1134d78ee7a367b7
-ProfileFormat = 2
 0
 	MinRes = 2.50000000000000000e-01
 	MaxRes = 2.66255999999999993e-01

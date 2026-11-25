@@ -18,7 +18,6 @@
 #include "Targets/Target.h"
 
 #include "llvm/ADT/SmallString.h"
-#include "llvm/ADT/StringMap.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/InstIterator.h"
@@ -27,7 +26,6 @@
 #include "llvm/IR/Metadata.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Support/ErrorHandling.h"
-#include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -37,7 +35,6 @@
 #include <cstdlib>
 #include <fstream>
 #include <regex>
-#include <system_error>
 #include <unordered_map>
 
 using namespace llvm;
@@ -375,48 +372,19 @@ bool isNeverExecutedProfile(const std::string &profilePath, const Function &F) {
   return marked;
 }
 
-bool profileDirNamesFormat(StringMap<bool> &known, StringRef dir) {
-  auto [it, inserted] = known.try_emplace(dir, false);
-  if (!inserted)
-    return it->second;
-  std::error_code EC;
-  for (sys::fs::directory_iterator entry(dir, EC), end; !EC && entry != end;
-       entry.increment(EC)) {
-    if (sys::path::extension(entry->path()) != ".fpprofile")
-      continue;
-    std::ifstream file(entry->path());
-    std::string line;
-    while (std::getline(file, line)) {
-      StringRef rest = StringRef(line).trim();
-      if (!rest.empty() &&
-          rest.find_first_not_of("0123456789") == StringRef::npos)
-        break;
-      if (rest.consume_front(kProfileFormatKey) &&
-          rest.ltrim().starts_with("="))
-        return it->second = true;
-    }
-  }
-  return false;
-}
-
 void requireCanonicalHash(const FunctionProfileHeader &header,
                           StringRef canonicalHash, StringRef profilePath,
                           const Function &F) {
-  if (header.canonicalHash.empty())
-    reportUserError(F, F.getSubprogram(),
-                    Twine(profilePath) +
-                        " has no CanonicalHash field, so its slot indices "
-                        "cannot be checked against the canonical form of " +
-                        F.getName() + "; re-run profile generation.");
   if (header.canonicalHash != canonicalHash)
-    reportUserError(F, F.getSubprogram(),
-                    Twine("the profile of ") + F.getName() +
-                        " was recorded against a different canonical form "
-                        "(profile CanonicalHash " +
-                        header.canonicalHash + ", this compile " +
-                        canonicalHash +
-                        "). Its slot indices do not name the same "
-                        "instructions; re-run profile generation.");
+    reportUserError(
+        F, F.getSubprogram(),
+        Twine("the profile of ") + F.getName() +
+            " was recorded against a different canonical form "
+            "(profile CanonicalHash " +
+            (header.canonicalHash.empty() ? "none" : header.canonicalHash) +
+            ", this compile " + canonicalHash +
+            "). Its slot indices do not name the same "
+            "instructions; re-run profile generation.");
 }
 
 void requireMeasuredKappa(const FunctionProfileHeader &header,

@@ -79,7 +79,6 @@ static Function *instrumentedClone(Session &S, Function &F, unsigned siteId,
     for (const auto &kv : trips)
       os << "RedTrip = " << kv.first << ' ' << kv.second << '\n';
     os << "CanonicalHash = " << canonicalFormHash(*clone) << '\n';
-    os << kProfileFormatKey << " = " << kProfileFormat << '\n';
   }
   emitProfileStaticData(*clone, staticData);
   if (staticOut)

@@ -86,7 +86,7 @@ POSEIDON_OPTIMIZE __attribute__((device)) double unused(double x) { return x * x
 // DESC-NEXT: ],
 // DESC-NEXT: "profile headers": {
 // DESC-NEXT: "_ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_": {
-// DESC-NEXT: "header": "SiteId = 0\nCanonicalHash = {{[0-9a-f]+}}\nProfileFormat = 2\n",
+// DESC-NEXT: "header": "SiteId = 0\nCanonicalHash = {{[0-9a-f]+}}\n",
 // DESC-NEXT: "profile": "preprocess__ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT__poseidon_body"
 
 // The kernel gains the three shadows, in the order of the pointers they

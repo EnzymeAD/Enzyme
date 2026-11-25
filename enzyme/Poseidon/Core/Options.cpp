@@ -116,8 +116,6 @@ void HerbieOptions::appendSolveInputs(SmallVectorImpl<FlagValue> &out) const {
 void HerbieOptions::appendOtherValues(SmallVectorImpl<FlagValue> &out) const {
   add(out, "poseidon-cache", Cache);
   add(out, "poseidon-unit", Unit);
-  add(out, "poseidon-import-accuracy-memo", ImportAccuracyMemo);
-  add(out, "poseidon-import-herbie-answers", ImportHerbieAnswers);
   add(out, "poseidon-herbie-num-threads", HerbieNumThreads);
   add(out, "poseidon-herbie-timeout", HerbieTimeout);
   add(out, "poseidon-herbie-subgraph-timeout", HerbieSubgraphTimeout);

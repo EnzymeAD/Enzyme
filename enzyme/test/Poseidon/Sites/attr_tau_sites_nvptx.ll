@@ -128,8 +128,8 @@ attributes #5 = { convergent nounwind "uniform-work-group-size" }
 ; ERR: [poseidon] preprocess_fms_tight_poseidon_body: tau=1.000000e-12 {{.*}} rel=7.011882e-16
 ; ERR: Applying solution for CS: All FP64(0%) + Expansion2(100%)
 ; ERR: [poseidon] pin: fms_tight:PT0=All FP64(0%) + Expansion2(100%)
-; ERR: warning: <unknown>:0:0: in function fms_bare void (ptr, ptr, ptr): Poseidon: no profile at {{.*}}preprocess_fms_bare_poseidon_body.fpprofile: the profile directory was written before the profiling runtime recorded sites that never ran, so this site may simply not have run (or the profiled program did not contain it); leaving the site unchanged
-; ERR: [poseidon] fms_bare_poseidon_body: the profile directory was written before the profiling runtime recorded sites that never ran, so this site may simply not have run (or the profiled program did not contain it) (no profile at {{.*}}preprocess_fms_bare_poseidon_body.fpprofile); left unchanged
+; ERR: warning: <unknown>:0:0: in function fms_bare void (ptr, ptr, ptr): Poseidon: no profile at {{.*}}preprocess_fms_bare_poseidon_body.fpprofile: the profiled program did not contain this site (it was annotated after the profiling run, is in a translation unit the profiled program did not link, or was renamed); leaving the site unchanged
+; ERR: [poseidon] fms_bare_poseidon_body: the profiled program did not contain this site (no profile at {{.*}}preprocess_fms_bare_poseidon_body.fpprofile); left unchanged
 ; ERR-NOT: Applying solution
 
 ; The loose site runs the body in FP32 between one narrowing of each input and

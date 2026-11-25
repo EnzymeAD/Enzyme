@@ -32,4 +32,4 @@ attributes #0 = { "target-cpu"="x86-64" }
 ; CHECK: [poseidon] Finished optimizing preprocess_tester
 ; CHECK: define double @preprocess_tester(double %x)
 ; CHECK: ret double
-; CHECK: [poseidon] Herbie answers: 1 fresh, 0 from the cache, 0 replayed
+; CHECK: [poseidon] Herbie answers: 1 fresh, 0 from the cache{{$}}

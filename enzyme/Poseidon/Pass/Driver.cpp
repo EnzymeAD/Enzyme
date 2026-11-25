@@ -114,9 +114,6 @@ namespace {
 struct Unprofiled {
   bool neverExecuted;
   std::string path;
-  // Absent from a directory whose profiles name no format: the run that wrote
-  // it left no file for a site it never executed.
-  bool mayNotHaveRun = false;
 };
 } // namespace
 
@@ -130,8 +127,7 @@ static std::optional<Unprofiled> unprofiledSite(Session &S, CallBase *CI,
     if (!sys::fs::exists(path)) {
       requireProfileDirectory(CI, dir, flag);
       if (!absent)
-        absent = Unprofiled{false, path.str().str(),
-                            !profileDirNamesFormat(S.ProfileDirFormats, dir)};
+        absent = Unprofiled{false, path.str().str()};
     } else if (isNeverExecutedProfile(path.str().str(), clone)) {
       ProfileMap records;
       FunctionProfileHeader header;
@@ -157,34 +153,12 @@ static void reportUnprofiled(Session &S, CallBase *CI, const Function &body,
     explainUnprofiled(S, clone, cause);
     return;
   }
-  // Strict mode leaves a site unchanged only for a cause that says the site
-  // did not run.
-  if (site.mayNotHaveRun && S.Opts.Model.StrictMode) {
-    fail(CI, Twine("no profile of ") + body.getName() + " at " + site.path +
-                 ": the profile directory was written before the profiling "
-                 "runtime recorded sites that never ran, so it cannot tell "
-                 "whether this site did not run or the profiled program did "
-                 "not contain it, and -poseidon-strict-mode does not leave a "
-                 "site unchanged; generate the profile again with this "
-                 "Poseidon");
-    return;
-  }
-  if (site.mayNotHaveRun) {
-    const char *cause =
-        "the profile directory was written before the profiling runtime "
-        "recorded sites that never ran, so this site may simply not have run "
-        "(or the profiled program did not contain it)";
-    warn(CI, Twine("no profile at ") + site.path + ": " + cause +
-                 "; leaving the site unchanged");
-    llvm::errs() << "[poseidon] " << body.getName() << ": " << cause
-                 << " (no profile at " << site.path << "); left unchanged\n";
-    explainUnprofiled(S, clone, cause);
-    return;
-  }
   const char *cause =
       "the profiled program did not contain this site (it was annotated "
       "after the profiling run, is in a translation unit the profiled "
       "program did not link, or was renamed)";
+  // Strict mode leaves a site unchanged only for a cause that says the site
+  // did not run.
   if (S.Opts.Model.StrictMode) {
     fail(CI, Twine("no profile of ") + body.getName() + " at " + site.path +
                  ": " + cause +

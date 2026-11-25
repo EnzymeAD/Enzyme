@@ -173,7 +173,6 @@ int main(int argc, char **argv) {
 // PROF-NEXT: LaunchCount = 192
 // PROF-NEXT: SiteId = 0
 // PROF-NEXT: CanonicalHash = ec8a91ad004ef65f
-// PROF-NEXT: ProfileFormat = 2
 // PROF-NEXT: {{^0$}}
 // PROF: SumGrad = 2.35929600000000000e+06
 // PROF-NEXT: SumAbsGrad = 2.35929600000000000e+06

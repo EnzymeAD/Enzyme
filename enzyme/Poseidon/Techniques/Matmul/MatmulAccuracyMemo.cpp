@@ -8,23 +8,19 @@
 
 #include "MatmulAccuracyMemo.h"
 
+#include "Core/Options.h"
 #include "Matmul.h"
-#include "Pass/Session.h"
 #include "Sites/Annotations.h"
 
 #include "llvm/ADT/SmallString.h"
-#include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/JSON.h"
-#include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/raw_ostream.h"
 
-#include <cstring>
 #include <optional>
 #include <string>
-#include <system_error>
 #include <vector>
 
 using namespace llvm;
@@ -71,46 +67,6 @@ static std::string entryPath(const Options &O, const CacheKey &key) {
   return p.str().str();
 }
 
-// The file name of an entry -poseidon-import-accuracy-memo reads: a hash of
-// the model's inputs alone.
-namespace {
-struct LegacyAccHash {
-  uint64_t h = 1469598103934665603ULL;
-  void mix(uint64_t v) { h ^= v + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2); }
-  void mixD(double d) {
-    uint64_t b;
-    std::memcpy(&b, &d, sizeof(b));
-    mix(b);
-  }
-  LegacyAccHash(const Options &O, const AbstractMatmul &m,
-                const MatmulProfile &prof, unsigned sampleLogBits) {
-    mix(m.M);
-    mix(m.N);
-    mix(m.K);
-    for (const std::vector<CellStat> *cells : {&prof.a, &prof.b}) {
-      mix(cells->size());
-      for (const auto &c : *cells) {
-        mixD(c.min);
-        mixD(c.max);
-        mixD(c.sumValue);
-        mix(c.count);
-        mixD(c.minMag);
-      }
-    }
-    mix(prof.gradD.size());
-    for (const auto &g : prof.gradD) {
-      mixD(g.sumGrad);
-      mix(g.count);
-    }
-    mix(O.Model.NumSamples);
-    mix((uint64_t)O.Model.RandomSeed);
-    mix((uint64_t)sampleLogBits);
-    mix(1); // constant in every imported entry's hash
-  }
-  std::string name() const { return "matmulacc_" + utohexstr(h) + ".txt"; }
-};
-} // namespace
-
 MatmulAccuracyMemo MatmulAccuracyMemo::matmul(
     const Options &O, const AbstractMatmul &m, const MatmulProfile &prof,
     double confidence, unsigned sampleLogBits, unsigned numSamples,
@@ -126,25 +82,9 @@ MatmulAccuracyMemo MatmulAccuracyMemo::matmul(
   addModelInputs(O, memo.key, m, prof, confidence, sampleLogBits, numSamples);
   memo.path = entryPath(O, memo.key);
   memo.key.addCompiler();
-  if (!O.Herbie.ImportAccuracyMemo.empty()) {
-    LegacyAccHash legacy(O, m, prof, sampleLogBits);
-    legacy.mix(0x6d6dULL);
-    legacy.mix((uint64_t)inputPrec);
-    legacy.mix((uint64_t)accPrec);
-    legacy.mix((uint64_t)exponentPrec);
-    legacy.mixD(O.Model.ExponentPenalty);
-    if (confidence != kDefaultConfidence)
-      legacy.mixD(confidence);
-    if (orderTileK)
-      legacy.mix(0x746b00ULL | orderTileK);
-    if (inputMantBits)
-      legacy.mix(0x6d6200ULL | inputMantBits);
-    memo.legacyName = legacy.name();
-  }
   return memo;
 }
 
-// No imported entry holds a result of these two models.
 MatmulAccuracyMemo
 MatmulAccuracyMemo::ozakiII(const Options &O, const AbstractMatmul &m,
                             const MatmulProfile &prof, double confidence,
@@ -193,31 +133,8 @@ static bool parseAccNumber(const json::Object &value, StringRef name,
   return text && !text->getAsDouble(out);
 }
 
-// Entries without a key (matmulacc_*.txt) are read only when imported; say
-// once that a cache holds them, so they are not recomputed without a word.
-static void noteLegacyEntries(Session &S) {
-  const Options &O = S.Opts;
-  if (S.Matmul.LegacyMemoEntriesNoted)
-    return;
-  S.Matmul.LegacyMemoEntriesNoted = true;
-  std::error_code EC;
-  for (sys::fs::directory_iterator it(O.Herbie.Cache, EC), end;
-       it != end && !EC; it.increment(EC)) {
-    StringRef name = sys::path::filename(it->path());
-    if (name.starts_with("matmulacc_") && name.ends_with(".txt")) {
-      llvm::errs() << "[poseidon] " << O.Herbie.Cache
-                   << " holds matrix accuracy results stored before the memo "
-                      "kept their keys (matmulacc_*.txt), which are not read; "
-                      "computing them again. -poseidon-import-accuracy-memo="
-                   << O.Herbie.Cache << " takes them over instead.\n";
-      return;
-    }
-  }
-}
-
-bool MatmulAccuracyMemo::lookup(Session &S, double &accuracyCost,
+bool MatmulAccuracyMemo::lookup(const Options &O, double &accuracyCost,
                                 double &domainError) const {
-  const Options &O = S.Opts;
   if (O.Herbie.Cache.empty())
     return false;
   CacheEntryRead read = readCacheEntry(path, key);
@@ -237,28 +154,7 @@ bool MatmulAccuracyMemo::lookup(Session &S, double &accuracyCost,
                          ? " was written in another cache format"
                          : " was computed for a different " + read.differs)
                  << "; recomputing it.\n";
-
-  if (O.Herbie.ImportAccuracyMemo.empty()) {
-    noteLegacyEntries(S);
-    return false;
-  }
-  if (legacyName.empty())
-    return false;
-  SmallString<256> legacy(O.Herbie.ImportAccuracyMemo);
-  sys::path::append(legacy, legacyName);
-  auto buf = MemoryBuffer::getFile(legacy);
-  if (!buf)
-    return false;
-  auto [accS, domS] = (*buf)->getBuffer().trim().split(' ');
-  double a, d;
-  if (accS.getAsDouble(a) || domS.getAsDouble(d))
-    return false;
-  accuracyCost = a;
-  domainError = d;
-  store(O, accuracyCost, domainError);
-  llvm::errs() << "[poseidon] imported accuracy memo " << legacy << " as "
-               << path << '\n';
-  return true;
+  return false;
 }
 
 } // namespace poseidon

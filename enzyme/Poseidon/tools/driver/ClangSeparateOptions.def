@@ -8,7 +8,7 @@
 //
 // The options of clang's driver whose value can be the next argv entry: the
 // Separate and JoinedOrSeparate options that the clang driver accepts in
-// Options.td of LLVM 19 to 24. CLANG_SEPARATE_OPTION_IN(name, first, last)
+// Options.td of LLVM 21 to 24. CLANG_SEPARATE_OPTION_IN(name, first, last)
 // takes one from LLVM first to last (0: to the latest) only.
 // Written by clang_separate_options.py generate <llvm-tblgen> <llvm-project>...
 //
@@ -75,7 +75,7 @@ CLANG_SEPARATE_OPTION("-Xarch_device")
 CLANG_SEPARATE_OPTION("-Xarch_host")
 CLANG_SEPARATE_OPTION("-Xassembler")
 CLANG_SEPARATE_OPTION("-Xclang")
-CLANG_SEPARATE_OPTION_IN("-Xclangas", 21, 0)
+CLANG_SEPARATE_OPTION("-Xclangas")
 CLANG_SEPARATE_OPTION("-Xcuda-fatbinary")
 CLANG_SEPARATE_OPTION("-Xcuda-ptxas")
 CLANG_SEPARATE_OPTION("-Xlinker")
@@ -92,13 +92,10 @@ CLANG_SEPARATE_OPTION("-alias_list")
 CLANG_SEPARATE_OPTION("-allowable_client")
 CLANG_SEPARATE_OPTION("-arch")
 CLANG_SEPARATE_OPTION("-arch_only")
-CLANG_SEPARATE_OPTION_IN("-arcmt-migrate-report-output", 19, 20)
 CLANG_SEPARATE_OPTION("-b")
 CLANG_SEPARATE_OPTION("-bundle_loader")
-CLANG_SEPARATE_OPTION_IN("-ccc-arcmt-migrate", 19, 20)
 CLANG_SEPARATE_OPTION("-ccc-gcc-name")
 CLANG_SEPARATE_OPTION("-ccc-install-dir")
-CLANG_SEPARATE_OPTION_IN("-ccc-objcmt-migrate", 19, 20)
 CLANG_SEPARATE_OPTION("-client_name")
 CLANG_SEPARATE_OPTION("-compatibility_version")
 CLANG_SEPARATE_OPTION("-current_version")

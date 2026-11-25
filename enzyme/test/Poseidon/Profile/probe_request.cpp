@@ -87,7 +87,6 @@ int main(int argc, char **argv) {
 
 // NOKAPPA: SiteId = [[ID]]
 // NOKAPPA-NEXT: CanonicalHash = {{[0-9a-f]+}}
-// NOKAPPA-NEXT: ProfileFormat = 2
 // NOKAPPA-NOT: Kappa
 
 // Each site is solved at the compile's target, with no condition number.
@@ -99,7 +98,6 @@ int main(int argc, char **argv) {
 
 // UNMEASURED: CanonicalHash =
 // UNMEASURED-NEXT: KappaMark = unmeasured
-// UNMEASURED-NEXT: ProfileFormat = 2
 // UNMEASURED-NOT: Kappa
 
 // MEASURE-NOT: [probe]
@@ -118,5 +116,5 @@ int main(int argc, char **argv) {
 
 // USAGE: usage: poseidon-probe -- <program> [args...]
 
-// USE: probe_request.cpp:[[#@LINE-70]]:1: error: Poseidon: the profiling run declared a quantity of interest with poseidon_metric and did not measure the condition number of preprocess__Z5gaussPKdPdi_poseidon_body against it ({{.*}}/plain/preprocess__Z5gaussPKdPdi_poseidon_body.fpprofile). Run the profiling build again as 'poseidon-probe -- <program> [args...]', the command the profiling run printed, to measure it, or with POSEIDON_PROBE=0 in its environment to solve each site against its own target.
+// USE: probe_request.cpp:[[#@LINE-68]]:1: error: Poseidon: the profiling run declared a quantity of interest with poseidon_metric and did not measure the condition number of preprocess__Z5gaussPKdPdi_poseidon_body against it ({{.*}}/plain/preprocess__Z5gaussPKdPdi_poseidon_body.fpprofile). Run the profiling build again as 'poseidon-probe -- <program> [args...]', the command the profiling run printed, to measure it, or with POSEIDON_PROBE=0 in its environment to solve each site against its own target.
 // USE-NEXT: POSEIDON_OPTIMIZE void gauss(const double *x, double *y, int n) {

@@ -118,7 +118,6 @@ static HerbieRunOptions herbieRunOptions(Session &S, const Function &F) {
   Opts.Processes = O.Herbie.HerbieProcesses;
   Opts.SubgraphTimeout = O.Herbie.HerbieSubgraphTimeout;
   Opts.CacheDir = O.Herbie.Cache;
-  Opts.ImportDir = O.Herbie.ImportHerbieAnswers;
   Opts.Print = O.Diagnostics.Print;
   return Opts;
 }
@@ -298,10 +297,8 @@ static bool improveViaHerbie(Session &S,
                    ? ", and this Poseidon was built without Herbie"
                    : ", and the Herbie at " + Opts.Program + " cannot run (" +
                          Runs.back().Failure + ")") +
-              ". Point -poseidon-herbie-binary at a Herbie, replay the "
-              "answers another Herbie gave with "
-              "-poseidon-import-herbie-answers, or turn algebraic rewriting "
-              "off with -poseidon-enable-herbie=0.");
+              ". Point -poseidon-herbie-binary at a Herbie, or turn algebraic "
+              "rewriting off with -poseidon-enable-herbie=0.");
     if (Runs.back().Result == HerbieRunResult::Outcome::Crashed &&
         O.Model.StrictMode)
       reportUserError(F, F.getSubprogram(),
@@ -317,10 +314,6 @@ static bool improveViaHerbie(Session &S,
     case HerbieRunResult::Origin::Cache:
       Origin = "the cached answer";
       Taken = &S.Herbie.Cached;
-      break;
-    case HerbieRunResult::Origin::Imported:
-      Origin = "the replayed answer";
-      Taken = &S.Herbie.Imported;
       break;
     case HerbieRunResult::Origin::Fresh:
       Origin = "Herbie's answer";
@@ -432,14 +425,11 @@ static bool improveViaHerbie(Session &S,
 
 void reportHerbieAnswers(Session &S) {
   HerbieRunState &H = S.Herbie;
-  if (!H.Cached && !H.Imported && !H.Fresh)
+  if (!H.Cached && !H.Fresh)
     return;
   llvm::errs() << "[poseidon] Herbie answers: " << H.Fresh << " fresh, "
-               << H.Cached << " from the cache, " << H.Imported << " replayed";
-  if (!S.Opts.Herbie.ImportHerbieAnswers.empty())
-    llvm::errs() << " from " << S.Opts.Herbie.ImportHerbieAnswers;
-  llvm::errs() << '\n';
-  H.Cached = H.Imported = H.Fresh = 0;
+               << H.Cached << " from the cache\n";
+  H.Cached = H.Fresh = 0;
 }
 
 static std::string getPrecondition(

@@ -33,11 +33,6 @@ config.environment['XDG_CACHE_HOME'] = os.path.join(config.test_exec_root,
                                                     'xdg-cache')
 
 config.available_features.add('poseidon')
-# Before LLVM 21, SCEV does not carry no-wrap through the trunc of the i64
-# canonical IV, so B's address in an i32-indexed reduction is no add-recurrence
-# and the scalar-loop matmul recognizer finds nothing.
-if int(config.llvm_ver) >= 21:
-    config.available_features.add('scev-trunc-iv-nowrap')
 # Up to LLVM 23 the code generator of a -ffp-contract=fast unit fuses
 # floating-point operations that carry no 'contract' flag as well.
 if int(config.llvm_ver) < 24:

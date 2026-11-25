@@ -111,8 +111,6 @@ struct ModelOptions {
 struct HerbieOptions {
   std::string Cache = "./.poseidon";
   std::string Unit;
-  std::string ImportAccuracyMemo;
-  std::string ImportHerbieAnswers;
   int HerbieNumThreads = 8;
   int HerbieTimeout = 9999;
   int HerbieNumPts = 1024;
@@ -175,9 +173,9 @@ FlagValues solveFlagValues(const Options &O);
 // What a solved table does not depend on: what is profiled or which sites are
 // solved, what is chosen from a solved table, a path whose contents the key
 // holds instead (profiles, cost model, Herbie binary and platform), where
-// results computed earlier are kept or imported from or handed to the host
-// half, a solve that never reads a table (joint, manual), how long Herbie may
-// run and on how many workers, and output.
+// results computed earlier are kept or handed to the host half, a solve that
+// never reads a table (joint, manual), how long Herbie may run and on how many
+// workers, and output.
 FlagValues notSolveInputs(const Options &O);
 // Both, in that order.
 FlagValues allFlagValues(const Options &O);

@@ -1,4 +1,3 @@
-; REQUIRES: scev-trunc-iv-nowrap
 ; DEFINE: %{dev} = %S/../Inputs/stale_cache/matmul_device.ll
 ; DEFINE: %{pass} = %loadPoseidon -passes="poseidon,poseidon-finalize"
 ; DEFINE: %{flags} = -poseidon-profile-use=%S/../Inputs/raise_tcec \

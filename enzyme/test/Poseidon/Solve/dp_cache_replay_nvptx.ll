@@ -30,26 +30,26 @@
 ; the solve's. The same for Inputs/exact_dp/two_matmuls.ll, two products on one
 ; loop. The poseidon pass runs alone: the precision change calls libdevice float
 ; functions this hand-written module does not define, which poseidon-finalize
-; refuses. The scalar-loop matmul recognizer needs scev-trunc-iv-nowrap.
-; RUN: %if scev-trunc-iv-nowrap %{ mkdir %t/kinds %}
-; RUN: %if scev-trunc-iv-nowrap %{ %{reprice} -poseidon-cache=%t/kinds/reprice -o %t/kinds/solve.ll > %t/kinds/solve.log 2>&1 %}
-; RUN: %if scev-trunc-iv-nowrap %{ %{reprice} -poseidon-cache=%t/kinds/reprice -o %t/kinds/replay.ll > %t/kinds/replay.log 2>&1 %}
-; RUN: %if scev-trunc-iv-nowrap %{ FileCheck --check-prefix=KINDS-SOLVE %s < %t/kinds/solve.log %}
-; RUN: %if scev-trunc-iv-nowrap %{ FileCheck --check-prefix=KINDS-REPLAY %s < %t/kinds/replay.log %}
-; RUN: %if scev-trunc-iv-nowrap %{ sed -n '/^\*\*\* DP Table/,/^\*\*\* End of DP Table/p' %t/kinds/solve.log > %t/kinds/solve.table %}
-; RUN: %if scev-trunc-iv-nowrap %{ sed -n '/^\*\*\* DP Table/,/^\*\*\* End of DP Table/p' %t/kinds/replay.log > %t/kinds/replay.table %}
-; RUN: %if scev-trunc-iv-nowrap %{ diff %t/kinds/solve.table %t/kinds/replay.table %}
-; RUN: %if scev-trunc-iv-nowrap %{ diff %t/kinds/solve.ll %t/kinds/replay.ll %}
-; RUN: %if scev-trunc-iv-nowrap %{ grep -B3 '"itemType": "CO"' %t/kinds/reprice/table.json | FileCheck --check-prefix=KINDS-TABLE-CO %s %}
-; RUN: %if scev-trunc-iv-nowrap %{ grep -B3 '"itemType": "CS"' %t/kinds/reprice/table.json | FileCheck --check-prefix=KINDS-TABLE-CS %s %}
-; RUN: %if scev-trunc-iv-nowrap %{ grep -B2 '"itemType": "CM"' %t/kinds/reprice/table.json | FileCheck --check-prefix=KINDS-TABLE-CM --implicit-check-not=candidateKey %s %}
-; RUN: %if scev-trunc-iv-nowrap %{ %{two} -poseidon-cache=%t/kinds/two -o %t/kinds/two_solve.ll > %t/kinds/two_solve.log 2>&1 %}
-; RUN: %if scev-trunc-iv-nowrap %{ %{two} -poseidon-cache=%t/kinds/two -o %t/kinds/two_replay.ll > %t/kinds/two_replay.log 2>&1 %}
-; RUN: %if scev-trunc-iv-nowrap %{ FileCheck --check-prefix=KINDS-TWO %s < %t/kinds/two_replay.log %}
-; RUN: %if scev-trunc-iv-nowrap %{ sed -n '/^\*\*\* DP Table/,/^\*\*\* End of DP Table/p' %t/kinds/two_solve.log > %t/kinds/two_solve.table %}
-; RUN: %if scev-trunc-iv-nowrap %{ sed -n '/^\*\*\* DP Table/,/^\*\*\* End of DP Table/p' %t/kinds/two_replay.log > %t/kinds/two_replay.table %}
-; RUN: %if scev-trunc-iv-nowrap %{ diff %t/kinds/two_solve.table %t/kinds/two_replay.table %}
-; RUN: %if scev-trunc-iv-nowrap %{ diff %t/kinds/two_solve.ll %t/kinds/two_replay.ll %}
+; refuses.
+; RUN: mkdir %t/kinds
+; RUN: %{reprice} -poseidon-cache=%t/kinds/reprice -o %t/kinds/solve.ll > %t/kinds/solve.log 2>&1
+; RUN: %{reprice} -poseidon-cache=%t/kinds/reprice -o %t/kinds/replay.ll > %t/kinds/replay.log 2>&1
+; RUN: FileCheck --check-prefix=KINDS-SOLVE %s < %t/kinds/solve.log
+; RUN: FileCheck --check-prefix=KINDS-REPLAY %s < %t/kinds/replay.log
+; RUN: sed -n '/^\*\*\* DP Table/,/^\*\*\* End of DP Table/p' %t/kinds/solve.log > %t/kinds/solve.table
+; RUN: sed -n '/^\*\*\* DP Table/,/^\*\*\* End of DP Table/p' %t/kinds/replay.log > %t/kinds/replay.table
+; RUN: diff %t/kinds/solve.table %t/kinds/replay.table
+; RUN: diff %t/kinds/solve.ll %t/kinds/replay.ll
+; RUN: grep -B3 '"itemType": "CO"' %t/kinds/reprice/table.json | FileCheck --check-prefix=KINDS-TABLE-CO %s
+; RUN: grep -B3 '"itemType": "CS"' %t/kinds/reprice/table.json | FileCheck --check-prefix=KINDS-TABLE-CS %s
+; RUN: grep -B2 '"itemType": "CM"' %t/kinds/reprice/table.json | FileCheck --check-prefix=KINDS-TABLE-CM --implicit-check-not=candidateKey %s
+; RUN: %{two} -poseidon-cache=%t/kinds/two -o %t/kinds/two_solve.ll > %t/kinds/two_solve.log 2>&1
+; RUN: %{two} -poseidon-cache=%t/kinds/two -o %t/kinds/two_replay.ll > %t/kinds/two_replay.log 2>&1
+; RUN: FileCheck --check-prefix=KINDS-TWO %s < %t/kinds/two_replay.log
+; RUN: sed -n '/^\*\*\* DP Table/,/^\*\*\* End of DP Table/p' %t/kinds/two_solve.log > %t/kinds/two_solve.table
+; RUN: sed -n '/^\*\*\* DP Table/,/^\*\*\* End of DP Table/p' %t/kinds/two_replay.log > %t/kinds/two_replay.table
+; RUN: diff %t/kinds/two_solve.table %t/kinds/two_replay.table
+; RUN: diff %t/kinds/two_solve.ll %t/kinds/two_replay.ll
 
 ; KINDS-SOLVE: Solving the DP for preprocess_matmul_body.
 ; KINDS-SOLVE: DP table for preprocess_matmul_body cached to file.

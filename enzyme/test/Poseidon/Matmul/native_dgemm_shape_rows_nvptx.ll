@@ -1,4 +1,3 @@
-; REQUIRES: scev-trunc-iv-nowrap
 ; DEFINE: %{opt} = %opt %S/../Inputs/stale_cache/matmul_device.ll %loadPoseidon \
 ; DEFINE:   -passes="poseidon,poseidon-finalize" -poseidon-enable-herbie=false \
 ; DEFINE:   -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-tau=1e-14 -S \

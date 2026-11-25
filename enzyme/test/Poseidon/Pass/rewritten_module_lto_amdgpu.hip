@@ -66,8 +66,8 @@ POSEIDON_OPTIMIZE __global__ void unprofiled(const double *x, double *y,
 
 // SOLVE: [poseidon] site site(double const*, double*, int): accuracy target 1e-06
 // SOLVE: [poseidon] pin: _Z4sitePKdPdi:PT0=All FP64(0%) + FP32(100%)
-// SOLVE: rewritten_module_lto_amdgpu.hip:[[@LINE-9]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/Inputs/rewritten_lto_hip/preprocess__Z10unprofiledPKdPdi_poseidon_body.fpprofile: the profile directory was written before the profiling runtime recorded sites that never ran, so this site may simply not have run (or the profiled program did not contain it); leaving the site unchanged
-// SOLVE: [poseidon] _Z10unprofiledPKdPdi_poseidon_body: the profile directory was written before the profiling runtime recorded sites that never ran, so this site may simply not have run (or the profiled program did not contain it) (no profile at {{.*}}/Inputs/rewritten_lto_hip/preprocess__Z10unprofiledPKdPdi_poseidon_body.fpprofile); left unchanged
+// SOLVE: rewritten_module_lto_amdgpu.hip:[[@LINE-9]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/Inputs/rewritten_lto_hip/preprocess__Z10unprofiledPKdPdi_poseidon_body.fpprofile: the profiled program did not contain this site (it was annotated after the profiling run, is in a translation unit the profiled program did not link, or was renamed); leaving the site unchanged
+// SOLVE: [poseidon] _Z10unprofiledPKdPdi_poseidon_body: the profiled program did not contain this site (no profile at {{.*}}/Inputs/rewritten_lto_hip/preprocess__Z10unprofiledPKdPdi_poseidon_body.fpprofile); left unchanged
 // SOLVE-NEXT: [poseidon] {{.*}}rewritten_module_lto_amdgpu.hip: 1 function(s) a rewrite reached; every other function as written
 
 // REFUSED: [poseidon] site site(double const*, double*, int): accuracy target 1e-18
@@ -75,8 +75,8 @@ POSEIDON_OPTIMIZE __global__ void unprofiled(const double *x, double *y,
 // REFUSED: [poseidon] pin: {{$}}
 // REFUSED: rewritten_module_lto_amdgpu.hip:[[@LINE-30]]:{{[0-9]+}}: warning: Poseidon: Poseidon returned false (no change) for preprocess__Z4sitePKdPdi_poseidon_body
 // REFUSED: [poseidon] no rewrite applied for preprocess__Z4sitePKdPdi_poseidon_body; calling original body _Z4sitePKdPdi_poseidon_body (bit-transparent no-op)
-// REFUSED-NEXT: rewritten_module_lto_amdgpu.hip:[[@LINE-18]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/Inputs/rewritten_lto_hip/preprocess__Z10unprofiledPKdPdi_poseidon_body.fpprofile: the profile directory was written before the profiling runtime recorded sites that never ran, so this site may simply not have run (or the profiled program did not contain it); leaving the site unchanged
-// REFUSED: [poseidon] _Z10unprofiledPKdPdi_poseidon_body: the profile directory was written before the profiling runtime recorded sites that never ran, so this site may simply not have run (or the profiled program did not contain it) (no profile at {{.*}}/Inputs/rewritten_lto_hip/preprocess__Z10unprofiledPKdPdi_poseidon_body.fpprofile); left unchanged
+// REFUSED-NEXT: rewritten_module_lto_amdgpu.hip:[[@LINE-18]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/Inputs/rewritten_lto_hip/preprocess__Z10unprofiledPKdPdi_poseidon_body.fpprofile: the profiled program did not contain this site (it was annotated after the profiling run, is in a translation unit the profiled program did not link, or was renamed); leaving the site unchanged
+// REFUSED: [poseidon] _Z10unprofiledPKdPdi_poseidon_body: the profiled program did not contain this site (no profile at {{.*}}/Inputs/rewritten_lto_hip/preprocess__Z10unprofiledPKdPdi_poseidon_body.fpprofile); left unchanged
 // REFUSED-NEXT: [poseidon] every site of {{.*}}rewritten_module_lto_amdgpu.hip was left alone; emitting the module as written
 
 // FNS: NAME <_Z4sitePKdPdi>:

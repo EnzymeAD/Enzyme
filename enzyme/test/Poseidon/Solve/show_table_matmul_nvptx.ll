@@ -1,4 +1,3 @@
-; REQUIRES: scev-trunc-iv-nowrap
 ; RUN: rm -rf %t
 ; RUN: %opt %S/../Inputs/stale_cache/matmul_device.ll %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-profile-use=%S/../Inputs/raise_tcec -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv -poseidon-cost-budget=0 -poseidon-print -poseidon-show-table -poseidon-cache=%t -S -o /dev/null 2>&1 | FileCheck %s
 

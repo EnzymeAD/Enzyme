@@ -1,4 +1,3 @@
-; REQUIRES: scev-trunc-iv-nowrap
 ; RUN: rm -rf %t && mkdir %t
 ; RUN: %opt %s %loadPoseidon -passes=poseidon,poseidon-finalize \
 ; RUN:   -poseidon-profile-use=%S/../Inputs/ozaki_dispatch_fused \

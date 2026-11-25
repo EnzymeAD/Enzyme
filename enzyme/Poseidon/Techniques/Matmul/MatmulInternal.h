@@ -81,7 +81,6 @@ struct MatmulState {
   std::set<const void *> WarnedSquareNativeRows;
   std::set<std::string> ReportedDirectRows;
   std::set<std::string> ReportedInKernelRows;
-  bool LegacyMemoEntriesNoted = false;
 };
 bool inKernelRaiseFits(const Options &O, llvm::Function *F,
                        const AbstractMatmul &m, const MatmulUnit::Option &opt,

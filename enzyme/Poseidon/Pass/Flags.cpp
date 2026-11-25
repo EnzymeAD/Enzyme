@@ -269,23 +269,6 @@ cl::opt<std::string> Unit(
              "compiled; the host half takes the launch descriptors the device "
              "half of the same source and unit wrote (poseidon-clang passes "
              "one to both halves of each compile)"));
-cl::opt<std::string> ImportAccuracyMemo(
-    "poseidon-import-accuracy-memo",
-    cl::init(kDefaults.Herbie.ImportAccuracyMemo), cl::Hidden,
-    cl::value_desc("directory"),
-    cl::desc("Directory of matmulacc_<hash>.txt matrix accuracy results "
-             "written before the memo stored its key; a result missing from "
-             "the cache is taken from there when the file of the same inputs "
-             "exists, and stored in the cache under its key"));
-cl::opt<std::string> ImportHerbieAnswers(
-    "poseidon-import-herbie-answers",
-    cl::init(kDefaults.Herbie.ImportHerbieAnswers), cl::Hidden,
-    cl::value_desc("directory"),
-    cl::desc("Cache directory whose Herbie answers are replayed whichever "
-             "Herbie binary gave them: a search the cache holds no answer of "
-             "this binary to takes the one recorded there for the same cores, "
-             "platform and search options, and runs Herbie only when there is "
-             "none. A replayed answer is not cached as this binary's"));
 cl::opt<int> HerbieNumThreads("poseidon-herbie-num-threads",
                               cl::init(kDefaults.Herbie.HerbieNumThreads),
                               cl::Hidden,
@@ -349,7 +332,7 @@ cl::opt<std::string> HerbiePlatform(
     cl::Hidden,
     cl::desc("Explicit Herbie platform: a path (contains '/' or ends in "
              ".rkt) to a generated platform file, or a name compiled into the "
-             "Herbie binary (e.g. cuda-sm120)."));
+             "Herbie binary."));
 // One (array ...) core per precision for a subgraph's outputs, with the
 // subterms they share let*-bound: Herbie searches them jointly and the rewrite
 // is priced as one unit, so work the outputs share is costed and erased once.
@@ -508,8 +491,6 @@ Options readOptions() {
   HerbieOptions &H = O.Herbie;
   H.Cache = Cache;
   H.Unit = Unit;
-  H.ImportAccuracyMemo = ImportAccuracyMemo;
-  H.ImportHerbieAnswers = ImportHerbieAnswers;
   H.HerbieNumThreads = HerbieNumThreads;
   H.HerbieTimeout = HerbieTimeout;
   H.HerbieNumPts = HerbieNumPts;

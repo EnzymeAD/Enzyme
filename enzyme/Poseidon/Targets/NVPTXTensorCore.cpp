@@ -9,7 +9,6 @@
 #include "NVPTXTensorCore.h"
 
 #include "llvm/ADT/Twine.h"
-#include "llvm/Config/llvm-config.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Function.h"
@@ -49,13 +48,9 @@ Value *emitBlockDim(IRBuilderBase &B, Module *M, unsigned axis) {
 }
 
 Barrier declareBarrier(Module *M) {
-#if LLVM_VERSION_MAJOR > 20
   return {Intrinsic::getOrInsertDeclaration(
               M, Intrinsic::nvvm_barrier_cta_sync_aligned_all),
           {ConstantInt::get(Type::getInt32Ty(M->getContext()), 0)}};
-#else
-  return {Intrinsic::getOrInsertDeclaration(M, Intrinsic::nvvm_barrier0), {}};
-#endif
 }
 
 Value *emitRoundToTF32(IRBuilderBase &B, Module *M, Value *x) {

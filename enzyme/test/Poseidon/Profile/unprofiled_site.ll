@@ -1,10 +1,8 @@
 ; DEFINE: %{opt} = %opt %loadPoseidon -passes="poseidon,poseidon-finalize" \
 ; DEFINE:   -poseidon-enable-herbie=false -poseidon-enable-pt=false \
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache= -S
-; RUN: rm -rf %t && mkdir -p %t/empty %t/metric_only %t/mixed
+; RUN: rm -rf %t && mkdir -p %t/empty %t/metric_only
 ; RUN: echo "qoi 1" > %t/metric_only/metric.txt
-; RUN: cp %S/../Inputs/other_sites/preprocess_other_poseidon_body.fpprofile %t/mixed/
-; RUN: cp %S/../Inputs/other_sites_format1/preprocess_other_poseidon_body.fpprofile %t/mixed/preprocess_older_poseidon_body.fpprofile
 ; RUN: sed '/^define double @tester/,/^}/s|%mul = fmul fast double %add, %z|%extra = fmul fast double %add, %add\n  %mul = fmul fast double %extra, %z|' %s > %t/drift.ll
 ;
 ; RUN: %{opt} < %s -poseidon-profile-use=%S/../Inputs/never_executed -pass-remarks-missed=poseidon -o %t/never.ll 2> %t/never.err
@@ -22,12 +20,6 @@
 ; RUN: FileCheck --check-prefix=LEFT %s < %t/absent.ll
 ; RUN: not %{opt} < %s -poseidon-profile-use=%S/../Inputs/other_sites -poseidon-strict-mode -o /dev/null 2>&1 \
 ; RUN:   | FileCheck --check-prefix=STRICT %s
-; RUN: not %{opt} < %s -poseidon-profile-use=%t/mixed -poseidon-strict-mode -o /dev/null 2>&1 | FileCheck --check-prefix=MIXED %s
-;
-; RUN: %{opt} < %s -poseidon-profile-use=%S/../Inputs/other_sites_format1 -pass-remarks-missed=poseidon -o %t/format1.ll 2>&1 | FileCheck --check-prefix=FORMAT1 %s
-; RUN: FileCheck --check-prefix=LEFT %s < %t/format1.ll
-; RUN: not %{opt} < %s -poseidon-profile-use=%S/../Inputs/other_sites_format1 -poseidon-strict-mode -o /dev/null 2>&1 \
-; RUN:   | FileCheck --check-prefix=FORMAT1-STRICT %s
 ;
 ; RUN: %{opt} < %s -poseidon-profile-use=%S/../Inputs/fma_opt_profiles -poseidon-output-profiles=%S/../Inputs/never_executed -o %t/out_never.ll 2>&1 \
 ; RUN:   | FileCheck --check-prefix=OUT-NEVER --implicit-check-not=warning --implicit-check-not=Warning %s
@@ -41,25 +33,14 @@
 ; RUN: FileCheck --check-prefix=LEFT %s < %t/out_absent.ll
 ; RUN: not %{opt} < %s -poseidon-profile-use=%S/../Inputs/fma_opt_profiles -poseidon-output-profiles=%S/../Inputs/other_sites -poseidon-strict-mode -o /dev/null 2>&1 \
 ; RUN:   | FileCheck --check-prefix=OUT-STRICT %s
-; RUN: %{opt} < %s -poseidon-profile-use=%S/../Inputs/fma_opt_profiles -poseidon-output-profiles=%S/../Inputs/other_sites_format1 -o %t/out_format1.ll 2>&1 \
-; RUN:   | FileCheck --check-prefix=OUT-FORMAT1 %s
-; RUN: FileCheck --check-prefix=LEFT %s < %t/out_format1.ll
-; RUN: not %{opt} < %s -poseidon-profile-use=%S/../Inputs/fma_opt_profiles -poseidon-output-profiles=%S/../Inputs/other_sites_format1 -poseidon-strict-mode -o /dev/null 2>&1 \
-; RUN:   | FileCheck --check-prefix=OUT-FORMAT1-STRICT %s
 
 ; Why a site has no profile to solve from decides what profile use does. A
 ; site the profiling run instrumented and never executed has a profile that
 ; holds its header only, and is left as written with a note. A site the
 ; profiled program did not contain has no profile in a directory that holds
 ; others, and is left as written with a warning, or refused under strict mode.
-; In a directory none of whose profiles names its format (ProfileFormat), an
-; absent site may simply not have run: it is left as written with a warning
-; that says so, and refused under strict mode, which leaves a site unchanged
-; only when its profile says it did not run. In a directory where any profile
-; names its format, an absent site is one the profiled program did not
-; contain. A directory that holds no
-; profile is refused. Every -poseidon-output-profiles directory is read by the
-; same rules.
+; A directory that holds no profile is refused. Every -poseidon-output-profiles
+; directory is read by the same rules.
 
 define double @tester(double %x, double %y, double %z) #0 {
 entry:
@@ -105,20 +86,9 @@ attributes #0 = { "target-cpu"="x86-64" }
 
 ; STRICT: error: <unknown>:0:0: in function test_opt {{.*}}: Poseidon: no profile of tester at {{.*}}other_sites/preprocess_tester.fpprofile: the profiled program did not contain this site (it was annotated after the profiling run, is in a translation unit the profiled program did not link, or was renamed), and -poseidon-strict-mode does not leave a site unchanged
 
-; FORMAT1: warning: <unknown>:0:0: in function test_opt {{.*}}: Poseidon: no profile at {{.*}}other_sites_format1/preprocess_tester.fpprofile: the profile directory was written before the profiling runtime recorded sites that never ran, so this site may simply not have run (or the profiled program did not contain it); leaving the site unchanged
-; FORMAT1: [poseidon] tester: the profile directory was written before the profiling runtime recorded sites that never ran, so this site may simply not have run (or the profiled program did not contain it) (no profile at {{.*}}other_sites_format1/preprocess_tester.fpprofile); left unchanged
-; FORMAT1: remark: <unknown>:0:0: Poseidon left the site unchanged: the profile directory was written before the profiling runtime recorded sites that never ran, so this site may simply not have run (or the profiled program did not contain it)
-
-; FORMAT1-STRICT: error: <unknown>:0:0: in function test_opt {{.*}}: Poseidon: no profile of tester at {{.*}}other_sites_format1/preprocess_tester.fpprofile: the profile directory was written before the profiling runtime recorded sites that never ran, so it cannot tell whether this site did not run or the profiled program did not contain it, and -poseidon-strict-mode does not leave a site unchanged; generate the profile again with this Poseidon
-
-; MIXED: error: <unknown>:0:0: in function test_opt {{.*}}: Poseidon: no profile of tester at {{.*}}/mixed/preprocess_tester.fpprofile: the profiled program did not contain this site (it was annotated after the profiling run, is in a translation unit the profiled program did not link, or was renamed), and -poseidon-strict-mode does not leave a site unchanged
-
 ; OUT-NEVER: [poseidon] tester: the profiling run instrumented this site and never executed it ({{.*}}never_executed/preprocess_tester.fpprofile); left unchanged
 ; OUT-NODIR: error: <unknown>:0:0: in function test_opt {{.*}}: Poseidon: the profile directory {{.*}}/missing (-poseidon-output-profiles) does not exist; no profiling run wrote into it. Run the program built with -poseidon-profile-generate first, or pass the directory it wrote
 ; OUT-EMPTY: error: <unknown>:0:0: in function test_opt {{.*}}: Poseidon: the profile directory {{.*}}/empty (-poseidon-output-profiles) holds no .fpprofile file; no profiling run wrote into it. Run the program built with -poseidon-profile-generate first, or pass the directory it wrote
 ; OUT-ABSENT: warning: <unknown>:0:0: in function test_opt {{.*}}: Poseidon: no profile at {{.*}}other_sites/preprocess_tester.fpprofile: the profiled program did not contain this site (it was annotated after the profiling run, is in a translation unit the profiled program did not link, or was renamed); leaving the site unchanged
 ; OUT-ABSENT: [poseidon] tester: the profiled program did not contain this site (no profile at {{.*}}other_sites/preprocess_tester.fpprofile); left unchanged
 ; OUT-STRICT: error: <unknown>:0:0: in function test_opt {{.*}}: Poseidon: no profile of tester at {{.*}}other_sites/preprocess_tester.fpprofile: the profiled program did not contain this site (it was annotated after the profiling run, is in a translation unit the profiled program did not link, or was renamed), and -poseidon-strict-mode does not leave a site unchanged
-; OUT-FORMAT1: warning: <unknown>:0:0: in function test_opt {{.*}}: Poseidon: no profile at {{.*}}other_sites_format1/preprocess_tester.fpprofile: the profile directory was written before the profiling runtime recorded sites that never ran, so this site may simply not have run (or the profiled program did not contain it); leaving the site unchanged
-; OUT-FORMAT1: [poseidon] tester: the profile directory was written before the profiling runtime recorded sites that never ran, so this site may simply not have run (or the profiled program did not contain it) (no profile at {{.*}}other_sites_format1/preprocess_tester.fpprofile); left unchanged
-; OUT-FORMAT1-STRICT: error: <unknown>:0:0: in function test_opt {{.*}}: Poseidon: no profile of tester at {{.*}}other_sites_format1/preprocess_tester.fpprofile: the profile directory was written before the profiling runtime recorded sites that never ran, so it cannot tell whether this site did not run or the profiled program did not contain it, and -poseidon-strict-mode does not leave a site unchanged; generate the profile again with this Poseidon

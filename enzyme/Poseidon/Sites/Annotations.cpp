@@ -157,16 +157,8 @@ MapVector<Function *, std::optional<double>> annotatedFunctions(Module &M) {
     auto *fn = dyn_cast<Function>(entry->getOperand(0)->stripPointerCasts());
     if (!fn || fn->isDeclaration())
       continue;
-    StringRef str = *text;
-    if (str != kAnnotation) {
-      if (str.starts_with("poseidon;"))
-        diagnoseSite(*fn,
-                     displayName(*fn) + " carries the annotation \"" + str +
-                         "\"; an accuracy target is written "
-                         "POSEIDON_OPTIMIZE_TAU(t)",
-                     DS_Error);
+    if (*text != kAnnotation)
       continue;
-    }
     std::optional<double> tau;
     Constant *args =
         entry->getNumOperands() > 4 ? entry->getOperand(4) : nullptr;

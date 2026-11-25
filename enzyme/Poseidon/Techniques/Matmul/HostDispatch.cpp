@@ -658,7 +658,6 @@ public:
       fail("its " + what + " '" + tok + "' is not a number");
     return value;
   }
-  StringRef peek() const { return atEnd() ? StringRef() : toks[at]; }
   void fail(const Twine &reason) {
     if (ok())
       why = reason.str();
@@ -726,7 +725,7 @@ readOzDispatchDescriptors(const Options &O, Module &M,
         GemmBodyNote::RtDim *dd[6] = {&d.rM,   &d.rNcols, &d.rK,
                                       &d.rlda, &d.rldb,   &d.rldc};
         // Positional runtime-geometry block: flag + 6 x (param mul add), then
-        // beta, which a descriptor followed by a keyword block may lack.
+        // beta.
         if (Cursor.consume("1")) {
           for (GemmBodyNote::RtDim *x : dd) {
             int param = Cursor.integer<int>("runtime dimension argument");
@@ -735,9 +734,7 @@ readOzDispatchDescriptors(const Options &O, Module &M,
             x->mul = Cursor.integer<int64_t>("runtime dimension factor");
             x->add = Cursor.integer<int64_t>("runtime dimension term");
           }
-          if (!Cursor.atEnd() &&
-              !is_contained({"rd", "pf", "eq", "lc"}, Cursor.peek()))
-            d.beta = Cursor.real("beta");
+          d.beta = Cursor.real("beta");
           d.runtimeDims = true;
         }
         // Keyword blocks of fields and products, and of the launch geometry

@@ -14,7 +14,6 @@
 #include "llvm/Support/ErrorHandling.h"
 
 #include <algorithm>
-#include <cmath>
 #include <limits>
 #include <vector>
 
@@ -62,19 +61,15 @@ static MatmulProfile loadProfileRaise(const AbstractMatmul &m,
 
   double aMin = abInfo->minOperands[0];
   double aMax = abInfo->maxOperands[0];
-  double aMag = std::max(std::fabs(aMin), std::fabs(aMax));
   double aMinMag = abInfo->minMagOperands[0];
-  out.a.assign(mkCells, CellStat{aMin, aMax, aMag * (double)abInfo->exec,
-                                 abInfo->exec, aMinMag});
+  out.a.assign(mkCells, CellStat{aMin, aMax, abInfo->exec, aMinMag});
 
   double bMin = abInfo->minOperands[1];
   double bMax = abInfo->maxOperands[1];
-  double bMag = std::max(std::fabs(bMin), std::fabs(bMax));
   double bMinMag = abInfo->minMagOperands[1];
-  out.b.assign(knCells, CellStat{bMin, bMax, bMag * (double)abInfo->exec,
-                                 abInfo->exec, bMinMag});
+  out.b.assign(knCells, CellStat{bMin, bMax, abInfo->exec, bMinMag});
 
-  out.gradD.assign(mnCells, GradCellStat{fmaInfo.sumGrad, fmaInfo.exec});
+  out.gradD.assign(mnCells, GradCellStat{fmaInfo.sumGrad});
 
   out.totalCalls = fmaInfo.exec;
   return out;
@@ -131,13 +126,9 @@ static MatmulProfile loadProfileHostGemm(const AbstractMatmul &m,
   }
 
   MatmulProfile out;
-  double aMag = std::max(std::fabs(aMin), std::fabs(aMax));
-  double bMag = std::max(std::fabs(bMin), std::fabs(bMax));
-  out.a.assign((size_t)m.M * m.K,
-               CellStat{aMin, aMax, aMag * (double)exec, exec, aMinMag});
-  out.b.assign((size_t)m.K * m.N,
-               CellStat{bMin, bMax, bMag * (double)exec, exec, bMinMag});
-  out.gradD.assign((size_t)m.M * m.N, GradCellStat{sumGrad, exec});
+  out.a.assign((size_t)m.M * m.K, CellStat{aMin, aMax, exec, aMinMag});
+  out.b.assign((size_t)m.K * m.N, CellStat{bMin, bMax, exec, bMinMag});
+  out.gradD.assign((size_t)m.M * m.N, GradCellStat{sumGrad});
   out.totalCalls = exec;
   return out;
 }
