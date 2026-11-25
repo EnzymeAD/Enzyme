@@ -145,10 +145,7 @@ SmallVector<XformAttr> impulse::bijectorFor(MLIRContext *ctx,
 }
 
 static Value scalarConst(OpBuilder &b, Location loc, Type elemType, double v) {
-  auto scalarType = RankedTensorType::get({}, elemType);
-  return arith::ConstantOp::create(
-      b, loc, scalarType,
-      DenseElementsAttr::get(scalarType, b.getFloatAttr(elemType, v)));
+  return emitSplatConstant(b, loc, RankedTensorType::get({}, elemType), v);
 }
 
 /// `v` must hold one element unless it already has `sampleType`.
@@ -162,9 +159,7 @@ static Value broadcastToSample(OpBuilder &b, Location loc, Value v,
   if (vt.getRank() != 0)
     scalar = impulse::ReshapeOp::create(b, loc,
                                         RankedTensorType::get({}, elemType), v);
-  return enzyme::BroadcastOp::create(
-      b, loc, sampleType, scalar,
-      b.getDenseI64ArrayAttr(sampleType.getShape()));
+  return emitBroadcastScalar(b, loc, scalar, sampleType);
 }
 
 static Value reduceSumToScalar(OpBuilder &b, Location loc, Value v) {
@@ -179,9 +174,7 @@ static Value reduceSumToScalar(OpBuilder &b, Location loc, Value v) {
   Value flat = v;
   if (vt.getRank() != 1 || vt.getShape()[0] != n)
     flat = impulse::ReshapeOp::create(b, loc, flatType, v);
-  auto ones = arith::ConstantOp::create(
-      b, loc, flatType,
-      DenseElementsAttr::get(flatType, b.getFloatAttr(elemType, 1.0)));
+  Value ones = emitSplatConstant(b, loc, flatType, 1.0);
   return impulse::DotOp::create(b, loc, scalarType, flat, ones,
                                 b.getDenseI64ArrayAttr({0}),
                                 b.getDenseI64ArrayAttr({0}));
@@ -192,9 +185,7 @@ static Value reduceLastAxis(OpBuilder &b, Location loc, Value v,
   Type elemType = cast<RankedTensorType>(v.getType()).getElementType();
   auto vecType = RankedTensorType::get({numRows}, elemType);
   auto onesType = RankedTensorType::get({numCols}, elemType);
-  auto ones = arith::ConstantOp::create(
-      b, loc, onesType,
-      DenseElementsAttr::get(onesType, b.getFloatAttr(elemType, 1.0)));
+  Value ones = emitSplatConstant(b, loc, onesType, 1.0);
   return impulse::DotOp::create(b, loc, vecType, v, ones,
                                 b.getDenseI64ArrayAttr({1}),
                                 b.getDenseI64ArrayAttr({0}));
@@ -348,17 +339,8 @@ static Value emitBaseLogpdf(OpBuilder &b, Location loc, Value z,
   return reduceSumToScalar(b, loc, kernel);
 }
 
-static Value splatSample(OpBuilder &b, Location loc,
-                         RankedTensorType sampleType, double v) {
-  return arith::ConstantOp::create(
-      b, loc, sampleType,
-      DenseElementsAttr::get(sampleType,
-                             b.getFloatAttr(sampleType.getElementType(), v)));
-}
-
-/// Draws `sampleType` values uniform on [0, 1) and advances `rng`.
-static Value emitUniformDraw(OpBuilder &b, Location loc, Value &rng,
-                             RankedTensorType sampleType) {
+Value impulse::emitUniformDraw(OpBuilder &b, Location loc, Value &rng,
+                               RankedTensorType sampleType) {
   Type elemType = sampleType.getElementType();
   Value zero = scalarConst(b, loc, elemType, 0.0);
   Value one = scalarConst(b, loc, elemType, 1.0);
@@ -396,18 +378,18 @@ static Value emitNativeSampler(OpBuilder &b, Location loc, DistBaseKind base,
     Value logits = bcast(distArgs[0]);
     Value negLogits = arith::NegFOp::create(b, loc, logits);
     Value e = math::ExpOp::create(b, loc, negLogits);
-    Value one = splatSample(b, loc, sampleType, 1.0);
+    Value one = emitSplatConstant(b, loc, sampleType, 1.0);
     Value denom = arith::AddFOp::create(b, loc, one, e);
     Value p = arith::DivFOp::create(b, loc, one, denom);
     Value lt = arith::CmpFOp::create(b, loc, arith::CmpFPredicate::OLT, u, p);
-    Value zero = splatSample(b, loc, sampleType, 0.0);
+    Value zero = emitSplatConstant(b, loc, sampleType, 0.0);
     return arith::SelectOp::create(b, loc, lt, one, zero);
   }
   case DistBaseKind::DISCRETE_UNIFORM: {
     Value u = emitUniformDraw(b, loc, rng, sampleType);
     Value low = bcast(distArgs[0]);
     Value high = bcast(distArgs[1]);
-    Value one = splatSample(b, loc, sampleType, 1.0);
+    Value one = emitSplatConstant(b, loc, sampleType, 1.0);
     Value n = arith::AddFOp::create(
         b, loc, arith::SubFOp::create(b, loc, high, low), one);
     Value scaled = arith::MulFOp::create(b, loc, u, n);
@@ -431,12 +413,12 @@ static Value emitNativeSampler(OpBuilder &b, Location loc, DistBaseKind base,
     Value u = emitUniformDraw(b, loc, rng, sampleType);
     // Moves u off 0, the pole of tan(pi * (u - 0.5)).
     double epsF64 = std::numeric_limits<double>::epsilon();
-    Value oneMinusEps = splatSample(b, loc, sampleType, 1.0 - epsF64);
-    Value epsV = splatSample(b, loc, sampleType, epsF64);
+    Value oneMinusEps = emitSplatConstant(b, loc, sampleType, 1.0 - epsF64);
+    Value epsV = emitSplatConstant(b, loc, sampleType, epsF64);
     Value uc = arith::AddFOp::create(
         b, loc, arith::MulFOp::create(b, loc, u, oneMinusEps), epsV);
-    Value half = splatSample(b, loc, sampleType, 0.5);
-    Value piV = splatSample(b, loc, sampleType, M_PI);
+    Value half = emitSplatConstant(b, loc, sampleType, 0.5);
+    Value piV = emitSplatConstant(b, loc, sampleType, M_PI);
     Value arg = arith::MulFOp::create(b, loc, piV,
                                       arith::SubFOp::create(b, loc, uc, half));
     Value t = math::TanOp::create(b, loc, arg);
@@ -506,7 +488,7 @@ emitStudentTParamTerms(OpBuilder &b, Location loc, Value dfArg, Value scaleArg,
       scalar ? toScalar(dfArg) : broadcastToSample(b, loc, dfArg, sampleType);
   Value scale = scalar ? toScalar(scaleArg)
                        : broadcastToSample(b, loc, scaleArg, sampleType);
-  auto c = [&](double v) { return splatSample(b, loc, ty, v); };
+  auto c = [&](double v) { return emitSplatConstant(b, loc, ty, v); };
   Value half = c(0.5);
   Value logScale = math::LogOp::create(b, loc, scale);
   Value halfLogDf =
@@ -536,7 +518,9 @@ static Value emitNativeLogpdf(OpBuilder &b, Location loc, DistBaseKind base,
   auto bcast = [&](Value v) {
     return broadcastToSample(b, loc, v, sampleType);
   };
-  auto splat = [&](double v) { return splatSample(b, loc, sampleType, v); };
+  auto splat = [&](double v) {
+    return emitSplatConstant(b, loc, sampleType, v);
+  };
   auto reduce = [&](Value v) { return reduceSumToScalar(b, loc, v); };
   auto zeroScalar = [&]() { return scalarConst(b, loc, elemType, 0.0); };
   auto add = [&](Value lhs, Value rhs) -> Value {
@@ -669,9 +653,7 @@ static Value emitNativeLogpdf(OpBuilder &b, Location loc, DistBaseKind base,
     Value alpha = bcast(distArgs[0]);
     Value alpha2d = impulse::ReshapeOp::create(b, loc, twoDType, alpha);
     Value x2d = impulse::ReshapeOp::create(b, loc, twoDType, observed);
-    Value one2d = arith::ConstantOp::create(
-        b, loc, twoDType,
-        DenseElementsAttr::get(twoDType, b.getFloatAttr(elemType, 1.0)));
+    Value one2d = emitSplatConstant(b, loc, twoDType, 1.0);
     Value am1 = arith::SubFOp::create(b, loc, alpha2d, one2d);
     Value logx = math::LogOp::create(b, loc, x2d);
     Value kernel = arith::MulFOp::create(b, loc, logx, am1);
@@ -718,9 +700,7 @@ static Value emitNativeLogpdf(OpBuilder &b, Location loc, DistBaseKind base,
     Value identity = arith::ConstantOp::create(
         b, loc, matType, DenseElementsAttr::get(matType, ident));
     Value upperCholMasked = arith::MulFOp::create(b, loc, upperChol, identity);
-    auto onesN = arith::ConstantOp::create(
-        b, loc, vecType,
-        DenseElementsAttr::get(vecType, b.getFloatAttr(elemType, 1.0)));
+    Value onesN = emitSplatConstant(b, loc, vecType, 1.0);
     Value diagU = impulse::DotOp::create(b, loc, vecType, upperCholMasked,
                                          onesN, b.getDenseI64ArrayAttr({0}),
                                          b.getDenseI64ArrayAttr({0}));
@@ -820,41 +800,18 @@ Value impulse::emitDistLogpdf(OpBuilder &b, Location loc, DistAttr dist,
 
 Value impulse::emitLogit(OpBuilder &builder, Location loc, Value x) {
   auto xType = cast<RankedTensorType>(x.getType());
-  auto elemType = xType.getElementType();
-
-  auto oneConst = arith::ConstantOp::create(
-      builder, loc, xType,
-      DenseElementsAttr::get(xType, builder.getFloatAttr(elemType, 1.0)));
+  Value oneConst = emitSplatConstant(builder, loc, xType, 1.0);
   auto oneMinusX = arith::SubFOp::create(builder, loc, oneConst, x);
   auto logX = math::LogOp::create(builder, loc, x);
   auto logOneMinusX = math::LogOp::create(builder, loc, oneMinusX);
   return arith::SubFOp::create(builder, loc, logX, logOneMinusX);
 }
 
-Value impulse::emitLogAddExp(OpBuilder &builder, Location loc, Value lhs,
-                             Value rhs) {
-  auto amax = arith::MaximumFOp::create(builder, loc, lhs, rhs);
-  auto delta = arith::SubFOp::create(builder, loc, lhs, rhs);
-  auto isNaN = arith::CmpFOp::create(builder, loc, arith::CmpFPredicate::UNE,
-                                     delta, delta);
-  auto nanResult = arith::AddFOp::create(builder, loc, lhs, rhs);
-  auto absDelta = math::AbsFOp::create(builder, loc, delta);
-  auto negAbsDelta = arith::NegFOp::create(builder, loc, absDelta);
-  auto expNegAbsDelta = math::ExpOp::create(builder, loc, negAbsDelta);
-  auto log1pResult = math::Log1pOp::create(builder, loc, expNegAbsDelta);
-  auto normalResult = arith::AddFOp::create(builder, loc, amax, log1pResult);
-  return arith::SelectOp::create(builder, loc, isNaN, nanResult, normalResult);
-}
-
 Value impulse::emitLogSigmoid(OpBuilder &builder, Location loc, Value x) {
-  auto xType = cast<RankedTensorType>(x.getType());
-  auto elemType = xType.getElementType();
-
   // -log_add_exp(-x, 0), stable for large |x|.
   auto negX = arith::NegFOp::create(builder, loc, x);
-  auto zeroConst = arith::ConstantOp::create(
-      builder, loc, xType,
-      DenseElementsAttr::get(xType, builder.getFloatAttr(elemType, 0.0)));
+  Value zeroConst =
+      emitSplatConstant(builder, loc, cast<RankedTensorType>(x.getType()), 0.0);
   auto softplusNegX = impulse::emitLogAddExp(builder, loc, negX, zeroConst);
   return arith::NegFOp::create(builder, loc, softplusNegX);
 }
@@ -868,13 +825,6 @@ struct SimplexDims {
   int64_t m;
 };
 } // namespace
-
-static Value splatTensorConst(OpBuilder &builder, Location loc,
-                              RankedTensorType ty, double v) {
-  return arith::ConstantOp::create(
-      builder, loc, ty,
-      DenseElementsAttr::get(ty, builder.getFloatAttr(ty.getElementType(), v)));
-}
 
 static Value matConst(OpBuilder &builder, Location loc, RankedTensorType ty,
                       ArrayRef<double> rowVals) {
@@ -943,20 +893,15 @@ static Value constrainSimplex(OpBuilder &builder, Location loc,
   Value pExcl = math::ExpOp::create(builder, loc, logPexcl);
   Value ybody = arith::MulFOp::create(builder, loc, z, pExcl);
 
-  auto onesCol = splatTensorConst(
+  auto onesCol = emitSplatConstant(
       builder, loc, RankedTensorType::get({d.n, 1}, elemType), 1.0);
   Value total = impulse::DotOp::create(builder, loc, colType, log1mZ, onesCol,
                                        builder.getDenseI64ArrayAttr({1}),
                                        builder.getDenseI64ArrayAttr({0}));
   Value remainder = math::ExpOp::create(builder, loc, total);
 
-  auto i64Scalar = RankedTensorType::get({}, builder.getI64Type());
-  auto idx = [&](int64_t v) {
-    return arith::ConstantOp::create(
-        builder, loc, i64Scalar,
-        DenseElementsAttr::get(i64Scalar, builder.getI64IntegerAttr(v)));
-  };
-  Value ybuf = splatTensorConst(builder, loc, yBufType, 0.0);
+  auto idx = [&](int64_t v) { return emitI64ScalarConstant(builder, loc, v); };
+  Value ybuf = emitSplatConstant(builder, loc, yBufType, 0.0);
   ybuf = impulse::DynamicUpdateSliceOp::create(
       builder, loc, yBufType, ybuf, ybody, ValueRange{idx(0), idx(0)});
   ybuf = impulse::DynamicUpdateSliceOp::create(
@@ -984,7 +929,7 @@ static Value unconstrainSimplex(OpBuilder &builder, Location loc,
       prefixSum(builder, loc, ycrop,
                 triOnes(builder, loc, d.n, /*strict=*/false, elemType));
   Value z1m = arith::SubFOp::create(
-      builder, loc, splatTensorConst(builder, loc, xMatType, 1.0), cumIncl);
+      builder, loc, emitSplatConstant(builder, loc, xMatType, 1.0), cumIncl);
   Value ratio = arith::DivFOp::create(builder, loc, ycrop, z1m);
   Value logRatio = math::LogOp::create(builder, loc, ratio);
   Value x = arith::AddFOp::create(builder, loc, logRatio,
@@ -1015,7 +960,7 @@ static Value logDetSimplex(OpBuilder &builder, Location loc,
 
   auto flatType = RankedTensorType::get({d.m * d.n}, elemType);
   Value flat = impulse::ReshapeOp::create(builder, loc, flatType, term);
-  Value ones = splatTensorConst(builder, loc, flatType, 1.0);
+  Value ones = emitSplatConstant(builder, loc, flatType, 1.0);
   auto scalarType = RankedTensorType::get({}, elemType);
   return impulse::DotOp::create(builder, loc, scalarType, flat, ones,
                                 builder.getDenseI64ArrayAttr({0}),
@@ -1066,7 +1011,6 @@ Value impulse::emitBijectorForward(OpBuilder &builder, Location loc,
                                    XformAttr xform, SupportAttr support,
                                    Value unconstrained) {
   auto zType = cast<RankedTensorType>(unconstrained.getType());
-  auto elemType = zType.getElementType();
 
   switch (xform.getKind()) {
   case XformKind::IDENTITY:
@@ -1081,13 +1025,8 @@ Value impulse::emitBijectorForward(OpBuilder &builder, Location loc,
   case XformKind::INTERVAL: {
     double lower = support.getLowerBound().getValueAsDouble();
     double upper = support.getUpperBound().getValueAsDouble();
-    auto lowerConst = arith::ConstantOp::create(
-        builder, loc, zType,
-        DenseElementsAttr::get(zType, builder.getFloatAttr(elemType, lower)));
-    auto scaleConst = arith::ConstantOp::create(
-        builder, loc, zType,
-        DenseElementsAttr::get(zType,
-                               builder.getFloatAttr(elemType, upper - lower)));
+    Value lowerConst = emitSplatConstant(builder, loc, zType, lower);
+    Value scaleConst = emitSplatConstant(builder, loc, zType, upper - lower);
     auto sigmoid = impulse::LogisticOp::create(
         builder, loc, unconstrained.getType(), unconstrained);
     auto scaled = arith::MulFOp::create(builder, loc, scaleConst, sigmoid);
@@ -1095,17 +1034,13 @@ Value impulse::emitBijectorForward(OpBuilder &builder, Location loc,
   }
   case XformKind::GREATER_THAN: {
     double lower = support.getLowerBound().getValueAsDouble();
-    auto lowerConst = arith::ConstantOp::create(
-        builder, loc, zType,
-        DenseElementsAttr::get(zType, builder.getFloatAttr(elemType, lower)));
+    Value lowerConst = emitSplatConstant(builder, loc, zType, lower);
     auto expZ = math::ExpOp::create(builder, loc, unconstrained);
     return arith::AddFOp::create(builder, loc, lowerConst, expZ);
   }
   case XformKind::LESS_THAN: {
     double upper = support.getUpperBound().getValueAsDouble();
-    auto upperConst = arith::ConstantOp::create(
-        builder, loc, zType,
-        DenseElementsAttr::get(zType, builder.getFloatAttr(elemType, upper)));
+    Value upperConst = emitSplatConstant(builder, loc, zType, upper);
     auto expZ = math::ExpOp::create(builder, loc, unconstrained);
     return arith::SubFOp::create(builder, loc, upperConst, expZ);
   }
@@ -1132,7 +1067,6 @@ Value impulse::emitBijectorInverse(OpBuilder &builder, Location loc,
                                    XformAttr xform, SupportAttr support,
                                    Value constrained) {
   auto xType = cast<RankedTensorType>(constrained.getType());
-  auto elemType = xType.getElementType();
 
   switch (xform.getKind()) {
   case XformKind::IDENTITY:
@@ -1146,30 +1080,21 @@ Value impulse::emitBijectorInverse(OpBuilder &builder, Location loc,
   case XformKind::INTERVAL: {
     double lower = support.getLowerBound().getValueAsDouble();
     double upper = support.getUpperBound().getValueAsDouble();
-    auto lowerConst = arith::ConstantOp::create(
-        builder, loc, xType,
-        DenseElementsAttr::get(xType, builder.getFloatAttr(elemType, lower)));
-    auto scaleConst = arith::ConstantOp::create(
-        builder, loc, xType,
-        DenseElementsAttr::get(xType,
-                               builder.getFloatAttr(elemType, upper - lower)));
+    Value lowerConst = emitSplatConstant(builder, loc, xType, lower);
+    Value scaleConst = emitSplatConstant(builder, loc, xType, upper - lower);
     auto shifted = arith::SubFOp::create(builder, loc, constrained, lowerConst);
     auto normalized = arith::DivFOp::create(builder, loc, shifted, scaleConst);
     return impulse::emitLogit(builder, loc, normalized);
   }
   case XformKind::GREATER_THAN: {
     double lower = support.getLowerBound().getValueAsDouble();
-    auto lowerConst = arith::ConstantOp::create(
-        builder, loc, xType,
-        DenseElementsAttr::get(xType, builder.getFloatAttr(elemType, lower)));
+    Value lowerConst = emitSplatConstant(builder, loc, xType, lower);
     auto shifted = arith::SubFOp::create(builder, loc, constrained, lowerConst);
     return math::LogOp::create(builder, loc, shifted);
   }
   case XformKind::LESS_THAN: {
     double upper = support.getUpperBound().getValueAsDouble();
-    auto upperConst = arith::ConstantOp::create(
-        builder, loc, xType,
-        DenseElementsAttr::get(xType, builder.getFloatAttr(elemType, upper)));
+    Value upperConst = emitSplatConstant(builder, loc, xType, upper);
     auto shifted = arith::SubFOp::create(builder, loc, upperConst, constrained);
     return math::LogOp::create(builder, loc, shifted);
   }
@@ -1200,10 +1125,8 @@ Value impulse::emitBijectorLogAbsDetJac(OpBuilder &builder, Location loc,
   auto scalarType = RankedTensorType::get({}, elemType);
 
   auto sumToScalar = [&](Value v) -> Value {
-    auto vt = cast<RankedTensorType>(v.getType());
-    auto ones = arith::ConstantOp::create(
-        builder, loc, vt,
-        DenseElementsAttr::get(vt, builder.getFloatAttr(elemType, 1.0)));
+    Value ones = emitSplatConstant(builder, loc,
+                                   cast<RankedTensorType>(v.getType()), 1.0);
     return impulse::DotOp::create(builder, loc, scalarType, v, ones,
                                   builder.getDenseI64ArrayAttr({0}),
                                   builder.getDenseI64ArrayAttr({0}));
@@ -1211,10 +1134,7 @@ Value impulse::emitBijectorLogAbsDetJac(OpBuilder &builder, Location loc,
 
   switch (xform.getKind()) {
   case XformKind::IDENTITY:
-    return arith::ConstantOp::create(
-        builder, loc, scalarType,
-        DenseElementsAttr::get(scalarType,
-                               builder.getFloatAttr(elemType, 0.0)));
+    return emitSplatConstant(builder, loc, scalarType, 0.0);
   case XformKind::EXP:
   case XformKind::GREATER_THAN:
   case XformKind::LESS_THAN:
@@ -1241,10 +1161,8 @@ Value impulse::emitBijectorLogAbsDetJac(OpBuilder &builder, Location loc,
 
     int64_t n = zType.getNumElements();
     double logScaleTerm = n * std::log(scale);
-    auto logScaleConst = arith::ConstantOp::create(
-        builder, loc, scalarType,
-        DenseElementsAttr::get(scalarType,
-                               builder.getFloatAttr(elemType, logScaleTerm)));
+    Value logScaleConst =
+        emitSplatConstant(builder, loc, scalarType, logScaleTerm);
     return arith::AddFOp::create(builder, loc, sumLogProduct, logScaleConst);
   }
   case XformKind::STICK_BREAKING:
@@ -1252,10 +1170,7 @@ Value impulse::emitBijectorLogAbsDetJac(OpBuilder &builder, Location loc,
         builder, loc, unconstrained,
         simplexDimsFromUnconstrained(support, zType.getNumElements()));
   case XformKind::COMPOSE: {
-    Value total = arith::ConstantOp::create(
-        builder, loc, scalarType,
-        DenseElementsAttr::get(scalarType,
-                               builder.getFloatAttr(elemType, 0.0)));
+    Value total = emitSplatConstant(builder, loc, scalarType, 0.0);
     Value z = unconstrained;
     if (ArrayAttr comps = xform.getComponents())
       for (Attribute a : comps) {
@@ -1268,10 +1183,7 @@ Value impulse::emitBijectorLogAbsDetJac(OpBuilder &builder, Location loc,
   }
   case XformKind::AFFINE:
   case XformKind::SCALED_UNIT_LOWER_CHOLESKY:
-    return arith::ConstantOp::create(
-        builder, loc, scalarType,
-        DenseElementsAttr::get(scalarType,
-                               builder.getFloatAttr(elemType, 0.0)));
+    return emitSplatConstant(builder, loc, scalarType, 0.0);
   }
   llvm_unreachable("unknown XformKind");
 }
@@ -1282,12 +1194,9 @@ Value impulse::emitSoftplus(OpBuilder &builder, Location loc, Value x) {
 }
 
 Value impulse::emitSoftplusInv(OpBuilder &builder, Location loc, Value x) {
-  auto xType = cast<RankedTensorType>(x.getType());
-  auto elemType = xType.getElementType();
   Value expX = math::ExpOp::create(builder, loc, x);
-  Value one = arith::ConstantOp::create(
-      builder, loc, xType,
-      DenseElementsAttr::get(xType, builder.getFloatAttr(elemType, 1.0)));
+  Value one =
+      emitSplatConstant(builder, loc, cast<RankedTensorType>(x.getType()), 1.0);
   Value expXMinus1 = arith::SubFOp::create(builder, loc, expX, one);
   return math::LogOp::create(builder, loc, expXMinus1);
 }
@@ -1300,7 +1209,6 @@ impulse::emitScaledUnitLowerCholesky(OpBuilder &builder, Location loc,
   auto diagTy = RankedTensorType::get({d}, elemType);
   auto matTy = RankedTensorType::get({d, d}, elemType);
   auto scalarTy = RankedTensorType::get({}, elemType);
-  auto i64T = RankedTensorType::get({}, builder.getI64Type());
 
   Value offDiag, diagPre;
   if (nOff > 0) {
@@ -1317,16 +1225,12 @@ impulse::emitScaledUnitLowerCholesky(OpBuilder &builder, Location loc,
   Value diag = impulse::emitSoftplus(builder, loc, diagPre);
 
   Value logDiag = math::LogOp::create(builder, loc, diag);
-  Value onesD = arith::ConstantOp::create(
-      builder, loc, diagTy,
-      DenseElementsAttr::get(diagTy, builder.getFloatAttr(elemType, 1.0)));
+  Value onesD = emitSplatConstant(builder, loc, diagTy, 1.0);
   Value sumLogDiag = impulse::DotOp::create(
       builder, loc, scalarTy, logDiag, onesD, builder.getDenseI64ArrayAttr({0}),
       builder.getDenseI64ArrayAttr({0}));
 
-  Value scaleTril = arith::ConstantOp::create(
-      builder, loc, matTy,
-      DenseElementsAttr::get(matTy, builder.getFloatAttr(elemType, 0.0)));
+  Value scaleTril = emitSplatConstant(builder, loc, matTy, 0.0);
 
   auto sliceScalar = [&](Value vec, int64_t k) -> Value {
     auto oneTy = RankedTensorType::get({1}, elemType);
@@ -1340,11 +1244,6 @@ impulse::emitScaledUnitLowerCholesky(OpBuilder &builder, Location loc,
     auto t11 = RankedTensorType::get({1, 1}, elemType);
     return impulse::ReshapeOp::create(builder, loc, t11, scalar);
   };
-  auto i64Const = [&](int64_t v) -> Value {
-    return arith::ConstantOp::create(
-        builder, loc, i64T,
-        DenseElementsAttr::get(i64T, builder.getI64IntegerAttr(v)));
-  };
 
   int64_t k = 0;
   for (int64_t i = 0; i < d; ++i) {
@@ -1355,13 +1254,15 @@ impulse::emitScaledUnitLowerCholesky(OpBuilder &builder, Location loc,
       Value entry11 = reshapeTo11(entry);
       scaleTril = impulse::DynamicUpdateSliceOp::create(
           builder, loc, matTy, scaleTril, entry11,
-          ValueRange{i64Const(i), i64Const(j)});
+          ValueRange{emitI64ScalarConstant(builder, loc, i),
+                     emitI64ScalarConstant(builder, loc, j)});
       ++k;
     }
     Value diagElem11 = reshapeTo11(diagElem);
     scaleTril = impulse::DynamicUpdateSliceOp::create(
         builder, loc, matTy, scaleTril, diagElem11,
-        ValueRange{i64Const(i), i64Const(i)});
+        ValueRange{emitI64ScalarConstant(builder, loc, i),
+                   emitI64ScalarConstant(builder, loc, i)});
   }
 
   return {scaleTril, sumLogDiag};

@@ -1,5 +1,4 @@
-//===- ImpulseUtils.h - Utilities for Impulse dialect passes -----* C++
-//-*-===//
+//===- ImpulseUtils.h - Utilities for Impulse dialect passes ----*- C++ -*-===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -10,13 +9,10 @@
 #ifndef ENZYME_MLIR_INTERFACES_IMPULSE_UTILS_H
 #define ENZYME_MLIR_INTERFACES_IMPULSE_UTILS_H
 
+#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
+#include "mlir/IR/Builders.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
-
-#include "CloneFunction.h"
-#include "EnzymeLogic.h"
-
-#include <functional>
 
 namespace mlir {
 namespace impulse {
@@ -49,6 +45,20 @@ public:
                                        int64_t positionSize = -1,
                                        int64_t constraintSize = -1);
 };
+
+/// Creates a constant of `type` with every element equal to `value`.
+Value emitSplatConstant(OpBuilder &builder, Location loc, RankedTensorType type,
+                        double value);
+
+/// Creates a rank-0 `i64` tensor constant.
+Value emitI64ScalarConstant(OpBuilder &builder, Location loc, int64_t value);
+
+/// Broadcasts the rank-0 tensor `scalar` to `type`.
+Value emitBroadcastScalar(OpBuilder &builder, Location loc, Value scalar,
+                          RankedTensorType type);
+
+/// log(exp(lhs) + exp(rhs)), or lhs + rhs where lhs - rhs is NaN.
+Value emitLogAddExp(OpBuilder &builder, Location loc, Value lhs, Value rhs);
 
 } // namespace impulse
 } // namespace mlir

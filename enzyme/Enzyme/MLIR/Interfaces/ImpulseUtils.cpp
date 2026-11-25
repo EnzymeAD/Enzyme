@@ -8,6 +8,8 @@
 
 #include "Interfaces/ImpulseUtils.h"
 #include "Dialect/Ops.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
@@ -114,4 +116,42 @@ ImpulseUtils *ImpulseUtils::CreateFromClone(FunctionOpInterface toeval,
     entry.insertArgument(index, type, toeval.getLoc());
 
   return new ImpulseUtils(NewF, toeval, originalToNew, mode);
+}
+
+Value impulse::emitSplatConstant(OpBuilder &builder, Location loc,
+                                 RankedTensorType type, double value) {
+  return arith::ConstantOp::create(
+      builder, loc, type,
+      DenseElementsAttr::get(
+          type, builder.getFloatAttr(type.getElementType(), value)));
+}
+
+Value impulse::emitI64ScalarConstant(OpBuilder &builder, Location loc,
+                                     int64_t value) {
+  auto type = RankedTensorType::get({}, builder.getI64Type());
+  return arith::ConstantOp::create(
+      builder, loc, type,
+      DenseElementsAttr::get(type, builder.getI64IntegerAttr(value)));
+}
+
+Value impulse::emitBroadcastScalar(OpBuilder &builder, Location loc,
+                                   Value scalar, RankedTensorType type) {
+  return enzyme::BroadcastOp::create(
+      builder, loc, type, scalar,
+      builder.getDenseI64ArrayAttr(type.getShape()));
+}
+
+Value impulse::emitLogAddExp(OpBuilder &builder, Location loc, Value lhs,
+                             Value rhs) {
+  auto amax = arith::MaximumFOp::create(builder, loc, lhs, rhs);
+  auto delta = arith::SubFOp::create(builder, loc, lhs, rhs);
+  auto isNaN = arith::CmpFOp::create(builder, loc, arith::CmpFPredicate::UNE,
+                                     delta, delta);
+  auto nanResult = arith::AddFOp::create(builder, loc, lhs, rhs);
+  auto absDelta = math::AbsFOp::create(builder, loc, delta);
+  auto negAbsDelta = arith::NegFOp::create(builder, loc, absDelta);
+  auto expNegAbsDelta = math::ExpOp::create(builder, loc, negAbsDelta);
+  auto log1pResult = math::Log1pOp::create(builder, loc, expNegAbsDelta);
+  auto normalResult = arith::AddFOp::create(builder, loc, amax, log1pResult);
+  return arith::SelectOp::create(builder, loc, isNaN, nanResult, normalResult);
 }

@@ -7,6 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "Interfaces/ImpulseRegionUtils.h"
+#include "Interfaces/ImpulseUtils.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/IRMapping.h"
@@ -114,12 +115,8 @@ static Value cloneDensityBlock(Block &block, OpBuilder &builder, IRMapping &map,
       }
     auto newIf = IfOp::create(builder, loc, types,
                               map.lookupOrDefault(ifOp.getPredicate()));
-    auto zeroOf = [&](OpBuilder &b, Type t) -> Value {
-      return arith::ConstantOp::create(
-          b, loc, t,
-          DenseElementsAttr::get(
-              cast<ShapedType>(t),
-              b.getFloatAttr(cast<ShapedType>(t).getElementType(), 0.0)));
+    auto zeroOf = [&](OpBuilder &b, Type t) {
+      return emitSplatConstant(b, loc, cast<RankedTensorType>(t), 0.0);
     };
     auto buildArm = [&](Region &src, Region &dst, bool isTrue) {
       Block *armBlock = new Block();

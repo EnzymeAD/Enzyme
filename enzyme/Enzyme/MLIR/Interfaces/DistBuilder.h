@@ -10,6 +10,7 @@
 #define ENZYME_MLIR_INTERFACES_DIST_BUILDER_H
 
 #include "Dialect/Impulse/Impulse.h"
+#include "Interfaces/ImpulseUtils.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Value.h"
@@ -42,9 +43,6 @@ int64_t bijectorInverseSize(int64_t constrainedSize, SupportAttr support);
 
 bool isConstantJacobian(XformKind kind);
 
-/// log(exp(lhs) + exp(rhs)), or lhs + rhs where lhs - rhs is NaN.
-Value emitLogAddExp(OpBuilder &builder, Location loc, Value lhs, Value rhs);
-
 Value emitLogit(OpBuilder &builder, Location loc, Value x);
 Value emitLogSigmoid(OpBuilder &builder, Location loc, Value x);
 
@@ -62,6 +60,10 @@ struct ScaledUnitLowerCholeskyResult {
 ScaledUnitLowerCholeskyResult
 emitScaledUnitLowerCholesky(OpBuilder &builder, Location loc, Value xFlat,
                             int64_t d, Type elemType);
+
+/// Draws `sampleType` values uniform on [0, 1) and advances `rng`.
+Value emitUniformDraw(OpBuilder &builder, Location loc, Value &rng,
+                      RankedTensorType sampleType);
 
 /// False for rejection-loop samplers, whose RNG stream cannot be replayed.
 bool distSamplerEmittable(DistAttr dist);
