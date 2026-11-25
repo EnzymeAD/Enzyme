@@ -64,4 +64,4 @@ void reduce(int np, int ldq, int ne, int nd, double *Q, double *Gp, double *y,
             });
 }
 
-// CHECK: [poseidon] [[BODY:preprocess__ZL11HipKernel2D[^ ]+_poseidon_body]]: reduction chain of 3 loop(s) is not a dispatchable runtime-shape GEMM: the output store is gated by a condition that is not a bound of the product's indices
+// CHECK: [poseidon] [[BODY:preprocess__ZL11HipKernel2D[^ ]+_poseidon_body]]: reduction chain of 3 loop(s) is not a dispatchable runtime-shape product: the output store is gated by a condition that is not a bound of the product's indices

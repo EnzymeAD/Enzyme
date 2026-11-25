@@ -75,6 +75,20 @@ void forEachInnermostLoop(llvm::LoopInfo &LI,
 // caller values recorded for it; null when they name no kernel.
 const llvm::CallBase *siteCallOf(const Session &S, const llvm::Function &F);
 
+// The store a library call takes the place of: the first in F into an
+// argument whose value is the product `m` computes. The call writes the
+// product where it stores, and a fused body reads it back there for the stores
+// and other uses that follow. Null if F has none.
+llvm::StoreInst *productStore(llvm::Function &F, const AbstractMatmul &m);
+
+// The library-call descriptor of the constant-shape product `m` of F, its
+// extents those of the profile at the reduction length of the compile; none,
+// with the reason printed, when the body's guards, operands or scale leave a
+// dimension unknown.
+std::optional<GemmBodyNote> constantShapeLibraryNote(const Options &O,
+                                                     llvm::Function &F,
+                                                     const AbstractMatmul &m);
+
 // The library-call descriptor of `m`, its operands and dimensions naming
 // parameters of the site's body; none, with the reason printed, when no
 // library call can take the place of the product.

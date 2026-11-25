@@ -8,9 +8,8 @@
 //
 // A matrix-product candidate is a scheme, the arithmetic it computes, realized
 // either in the kernel or as a host library call. This header holds what
-// follows from the scheme alone, for both realizations: its parameters, the
-// values a library call's launch descriptor stores for it, and the fragments
-// of its label.
+// follows from the scheme alone: its parameters, the values a library call's
+// launch descriptor stores for it, and the fragments of its label.
 //
 //===----------------------------------------------------------------------===//
 

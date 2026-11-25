@@ -90,7 +90,7 @@ loadProfileRaise(const AbstractMatmul &m, const ProfileMap &profile) {
 // unrolled outer contraction level), so the operand ranges are the union over
 // the members and the execution counts their sum.
 static std::optional<MatmulProfile>
-loadProfileHostGemm(const AbstractMatmul &m, const ProfileMap &profile) {
+loadRuntimeShapeProfile(const AbstractMatmul &m, const ProfileMap &profile) {
   const RuntimeGemmHandle &h = *m.hostGemm;
   for (Instruction *fma : h.fmas) {
     auto it = profile.find(requireSlot(fma));
@@ -108,8 +108,9 @@ loadProfileHostGemm(const AbstractMatmul &m, const ProfileMap &profile) {
     size_t abIdx = requireSlot(ab);
     auto abIt = profile.find(abIdx);
     if (abIt == profile.end())
-      report_fatal_error("no scalar profile record for host-GEMM member " +
-                         Twine(r) + " (instIdx " + Twine(abIdx) + ")");
+      report_fatal_error(
+          "no scalar profile record for runtime-shape product member " +
+          Twine(r) + " (instIdx " + Twine(abIdx) + ")");
     const ProfileInfo &ai = abIt->second;
     if (ai.minOperands.size() < 2)
       reportUserError(
@@ -150,7 +151,7 @@ std::optional<MatmulProfile> loadProfile(const AbstractMatmul &m,
   case AbstractMatmul::Origin::ScalarLoopReduction:
     return loadProfileRaise(m, scalarProfile);
   case AbstractMatmul::Origin::HostGemmLoopNest:
-    return loadProfileHostGemm(m, scalarProfile);
+    return loadRuntimeShapeProfile(m, scalarProfile);
   }
   llvm_unreachable("unknown AbstractMatmul origin");
 }

@@ -881,8 +881,8 @@ void MatmulUnit::apply(Session &S, size_t candidateIndex) {
   }
   switch (matmul->origin) {
   case AbstractMatmul::Origin::HostGemmLoopNest:
-    report_fatal_error("a runtime-shape host GEMM was selected with a "
-                       "scheme that has no host-dispatch realization");
+    report_fatal_error("a runtime-shape product was selected with a scheme "
+                       "that has no library-call realization");
   case AbstractMatmul::Origin::ScalarLoopReduction:
     break;
   }

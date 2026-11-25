@@ -6,8 +6,7 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// See HostDispatch.h. Suppressed during profile-gen and when no profile
-// is given.
+// See HostDispatch.h.
 //
 //===----------------------------------------------------------------------===//
 
@@ -26,346 +25,46 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/SmallVector.h"
-#include "llvm/Analysis/ScalarEvolution.h"
-#include "llvm/Analysis/ScalarEvolutionExpressions.h"
 #include "llvm/IR/Argument.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DerivedTypes.h"
-#include "llvm/IR/Dominators.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Module.h"
-#include "llvm/IR/PassManager.h"
-#include "llvm/IR/PatternMatch.h"
-#include "llvm/Support/MathExtras.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 
-#include <array>
 #include <map>
 #include <optional>
 #include <string>
 
 using namespace llvm;
-using namespace llvm::PatternMatch;
 
 namespace poseidon {
 
-// Strip LCSSA / single-value phis and casts from a stored value, testing
-// whether it is `target`.
-static bool valueReaches(const Value *v, const Value *target) {
-  for (int guard = 0; v && guard < 16; ++guard) {
-    if (v == target)
-      return true;
-    if (auto *P = dyn_cast<PHINode>(v)) {
-      const Value *same = nullptr;
-      bool ok = true;
-      for (const Value *in : P->incoming_values()) {
-        if (in == P)
-          continue;
-        if (!same)
-          same = in;
-        else if (same != in) {
-          ok = false;
-          break;
-        }
-      }
-      if (ok && same) {
-        v = same;
-        continue;
-      }
-      return false;
-    }
-    if (auto *C = dyn_cast<CastInst>(v)) {
-      v = C->getOperand(0);
-      continue;
-    }
-    return false;
+std::string runtimeDimString(const RuntimeDim &d) {
+  if (d.isConst())
+    return std::to_string(d.add);
+  std::string s;
+  if (d.mul != 1)
+    s += std::to_string(d.mul) + "*";
+  for (const LaunchRef &f : d.factors) {
+    if (&f != &d.factors.front())
+      s += "*";
+    s += launchRefString(f, "arg");
   }
-  return false;
-}
-
-// The exclusive upper bound that the conditions gating the C store (outside the
-// reduction loop) put on the global thread index of each axis, 0 for an axis
-// they leave unbounded; none when one of them is not such a bound.
-static std::optional<ThreadIndexBounds>
-storeGuardBounds(Function &F, const AbstractMatmul &m,
-                 const StoreInst *cStore) {
-  DominatorTree DT(F);
-  const BasicBlock *SB = cStore->getParent();
-  ThreadIndexBounds bound;
-  for (BasicBlock &BB : F) {
-    if (m.scalarLoop.blocks.count(&BB))
-      continue;
-    Instruction *T = BB.getTerminator();
-    if (T->getNumSuccessors() < 2)
-      continue;
-    for (unsigned i = 0, e = T->getNumSuccessors(); i < e; ++i) {
-      // The edge query rejects a duplicated edge on its own, so a two-way
-      // branch to one block dominates nothing and contributes no fact.
-      if (!DT.dominates(BasicBlockEdge(&BB, T->getSuccessor(i)), SB))
-        continue;
-      Value *Cond = nullptr;
-      if (!match(T, m_Br(m_Value(Cond), m_BasicBlock(), m_BasicBlock())) ||
-          !collectThreadIndexBounds(Cond, /*holds=*/i == 0, bound))
-        return std::nullopt;
-    }
-  }
-  return bound;
-}
-
-// Whether `addr` is its base pointer when every thread and block index is 0.
-static bool startsAtBase(ScalarEvolution &SE, const SCEV *addr) {
-  const SCEV *offset = SE.getMinusSCEV(addr, SE.getPointerBase(addr));
-  struct LaunchIndices {
-    ScalarEvolution &SE;
-    ValueToSCEVMapTy atZero;
-    bool follow(const SCEV *S) {
-      if (const auto *U = dyn_cast<SCEVUnknown>(S)) {
-        LaunchValue kind = launchGeometryOf(U->getValue()).Kind;
-        if (kind == LaunchValue::ThreadIndex || kind == LaunchValue::BlockIndex)
-          atZero[U->getValue()] = SE.getZero(U->getType());
-      }
-      return true;
-    }
-    bool isDone() const { return false; }
-  } indices{SE, {}};
-  visitAll(offset, indices);
-  return SCEVParameterRewriter::rewrite(offset, SE, indices.atZero)->isZero();
-}
-
-// The store the host dispatch takes the place of: the first in F into an
-// argument whose value is the product m computes. The dispatch writes the
-// product where it stores, and fissionGemmForDispatch reads it back there for
-// the stores and other uses that follow. Null if F has none.
-static StoreInst *productStore(Function &F, const AbstractMatmul &m) {
-  for (Instruction &I : instructions(F))
-    if (auto *S = dyn_cast<StoreInst>(&I);
-        S && tracePointerRoot(S->getPointerOperand()).param >= 0 &&
-        valueReaches(S->getValueOperand(), m.outputValue))
-      return S;
-  return nullptr;
-}
-
-static bool computeGemmBodyNote(const Options &O, Function &F,
-                                const AbstractMatmul &m, GemmBodyNote &note) {
-  note = GemmBodyNote{};
-  if (m.origin != AbstractMatmul::Origin::ScalarLoopReduction)
-    return false;
-  auto refuse = [&](const Twine &why) {
-    if (O.Diagnostics.Print)
-      llvm::errs() << "[poseidon] " << F.getName() << ": " << why << '\n';
-    return false;
-  };
-
-  // The raiser reports m.M/m.N as the per-block tile and m.K as the K-loop
-  // trip, which for a full-reduction square GEMM is the global dim, so the
-  // dispatch dimension is m.K. Require FP64, A contiguous along K, and B either
-  // row-major K-strided by N or col-major (K-contiguous).
-  const ScalarLoopHandle &h = m.scalarLoop;
-  int64_t K = (int64_t)m.K;
-  if (m.K == ~0u || K <= 0)
-    return refuse("the reduction length is not known");
-  if (h.aStrideByte != 8)
-    return refuse("A is not a row-major matrix of doubles");
-  bool bColMajor;
-  if (h.bStrideByte == 8)
-    bColMajor = true;
-  else if (h.bStrideByte == K * 8)
-    bColMajor = false;
-  else
-    return refuse("B steps by " + Twine(h.bStrideByte) +
-                  " bytes along the reduction, neither one double nor a row "
-                  "of " +
-                  Twine(K));
-  std::optional<unsigned> axM = tidAxisIndex(h.aRow.fast);
-  std::optional<unsigned> axN = tidAxisIndex(h.bCol.fast);
-  if (!axM || !axN || *axM == *axN)
-    return refuse("the product's rows and columns do not run along two thread "
-                  "axes");
-
-  LaunchRef aRoot = tracePointerRoot(m.scalarLoop.aPtr);
-  LaunchRef bRoot = tracePointerRoot(m.scalarLoop.bPtr);
-  note.aParam = aRoot.param;
-  note.aOffset = aRoot.offset;
-  note.bParam = bRoot.param;
-  note.bOffset = bRoot.offset;
-  if (note.aParam < 0 || note.bParam < 0)
-    return refuse("an operand is not read through a pointer parameter");
-
-  // The body is standalone iff it has exactly one argument-rooted store.
-  int storeCount = 0;
-  StoreInst *lastArgStore = nullptr;
-  for (Instruction &I : instructions(F))
-    if (auto *S = dyn_cast<StoreInst>(&I);
-        S && tracePointerRoot(S->getPointerOperand()).param >= 0) {
-      storeCount++;
-      lastArgStore = S;
-    }
-  StoreInst *cStore = productStore(F, m);
-  // A fused body's stored value reaches the matmul result only through the
-  // loop's lcssa accumulator, which valueReaches may miss; with exactly one
-  // argument-rooted store, that store is the C store.
-  if (!cStore && storeCount == 1)
-    cStore = lastArgStore;
-  if (!cStore)
-    return refuse("no store of the product into a pointer parameter");
-  LaunchRef cRoot = tracePointerRoot(cStore->getPointerOperand());
-  note.cParam = cRoot.param;
-  note.cOffset = cRoot.offset;
-  if (note.cParam < 0)
-    return refuse("the product is not stored through a pointer parameter");
-
-  // Host dispatch supports only a pure GEMM body: a self-overwriting library
-  // dispatch cannot represent a fused epilogue that may read its own output, so
-  // the stored value (modulo lcssa) must be an instruction inside the loop.
-  {
-    const Value *sv = cStore->getValueOperand();
-    while (const auto *phi = dyn_cast<PHINode>(sv)) {
-      if (phi->getNumIncomingValues() != 1)
-        break;
-      sv = phi->getIncomingValue(0);
-    }
-    const auto *svI = dyn_cast<Instruction>(sv);
-    if (!svI || !m.scalarLoop.blocks.count(svI->getParent()))
-      return refuse("the value stored to C is not the product alone but an "
-                    "expression of it computed after the loop");
-  }
-
-  std::optional<ThreadIndexBounds> guard = storeGuardBounds(F, m, cStore);
-  if (!guard)
-    return refuse("a condition gating the GEMM store is not a thread-index "
-                  "bound");
-
-  // Every dim must be deploy scale: K is, but globalM/globalN are
-  // profile-scale and are rescaled by K/globalK. Leading dims come from the
-  // handle (bytes to elements).
-  unsigned gM = 0, gNcols = 0;
-  if (m.globalM && m.globalN && m.globalK) {
-    // The K/globalK rescale is only sound for a dimension that tracks matrix
-    // order (one equal to globalK at profile scale); rescaling a
-    // runtime-dependent dimension fabricates a deploy extent and the runtime
-    // then reads past the operand. When such a dimension meets a changed
-    // scale, no static value is correct.
-    const bool scaled = (uint64_t)K != (uint64_t)m.globalK;
-    bool recovered = false;
-    if (scaled && (m.globalM != m.globalK || m.globalN != m.globalK)) {
-      // Before refusing, recover the true deploy extents from the kernel's own
-      // index guard: exact, already at deploy scale, and intersected with the
-      // launch geometry by the host stub, min(crop, gridDim * blockDim).
-      if (guard->ub[*axM] && guard->ub[*axN]) {
-        gM = (unsigned)guard->ub[*axM];
-        gNcols = (unsigned)guard->ub[*axN];
-        note.launchCrop = true;
-        note.cropMAxis = (int)*axM;
-        note.cropNAxis = (int)*axN;
-        recovered = true;
-        if (O.Diagnostics.Print)
-          llvm::errs() << "[poseidon] recovered the deploy geometry of "
-                       << F.getName() << ": M=" << gM << " Ncols=" << gNcols
-                       << " K=" << K << " from the index guard on thread axes "
-                       << *axM << '/' << *axN << '\n';
-      }
-    }
-    if (scaled && !recovered &&
-        (m.globalM != m.globalK || m.globalN != m.globalK)) {
-      // A warning: the solver then picks among in-kernel candidates that may
-      // be materially less accurate.
-      diagnose(F, F.getSubprogram(),
-               "no library call for " + F.getName() +
-                   ": a non-square product at a changed deploy scale (profile "
-                   "M/N/K = " +
-                   Twine(m.globalM) + "/" + Twine(m.globalN) + "/" +
-                   Twine(m.globalK) + ", deploy K = " + Twine(K) +
-                   ") has no recoverable geometry; profile at the deploy shape",
-               DS_Warning);
-      if (O.Model.StrictMode)
-        reportUserError(
-            F, F.getSubprogram(),
-            "strict mode: the host-dispatch geometry of " + F.getName() +
-                " is unrecoverable for a non-square GEMM at a changed deploy "
-                "scale, so its candidate set would be reduced; profile at the "
-                "deploy shape, or leave out -poseidon-strict-mode.");
-      note.valid = false;
-      return false;
-    }
-    if (!recovered) {
-      gM = (unsigned)((uint64_t)m.globalM * (uint64_t)K / (uint64_t)m.globalK);
-      gNcols =
-          (unsigned)((uint64_t)m.globalN * (uint64_t)K / (uint64_t)m.globalK);
-    }
-  } else {
-    if (!m.globalM || !m.globalN)
-      return refuse("the profile does not give the extent of the product's "
-                    "rows and columns");
-    gM = m.globalM;
-    gNcols = m.globalN;
-  }
-  if (!note.launchCrop) {
-    if (guard->ub[*axM] && guard->ub[*axM] < gM)
-      return refuse("the GEMM store is gated by row < " +
-                    Twine(guard->ub[*axM]) + ", which drops rows of the " +
-                    Twine(gM) + " x " + Twine(gNcols) +
-                    " product the library call writes");
-    if (guard->ub[*axN] && guard->ub[*axN] < gNcols)
-      return refuse("the GEMM store is gated by column < " +
-                    Twine(guard->ub[*axN]) + ", which drops columns of the " +
-                    Twine(gM) + " x " + Twine(gNcols) +
-                    " product the library call writes");
-  }
-
-  // The call takes each operand from the start of its pointer parameter.
-  const SCEV *cAddr = h.SE->getSCEV(cStore->getPointerOperand());
-  if (!startsAtBase(*h.SE, h.aStartSCEV) ||
-      !startsAtBase(*h.SE, h.bStartSCEV) || !startsAtBase(*h.SE, cAddr))
-    return refuse("an operand of the product does not start where its "
-                  "pointer parameter points");
-
-  // C's layout and leading dimension from the byte step of its store address
-  // along the row and column thread axes: one element along the column axis is
-  // row-major, along the row axis column-major.
-  const std::array<int64_t, 3> cStep = threadIndexCoefficients(cAddr);
-  const unsigned axOther = 3 - *axM - *axN;
-  constexpr int64_t elemBytes = 8;
-  int64_t ldc = 0;
-  if (cStep[axOther] == 0 && cStep[*axN] == elemBytes &&
-      cStep[*axM] % elemBytes == 0 && cStep[*axM] / elemBytes >= gNcols) {
-    note.cColMajor = false;
-    ldc = cStep[*axM] / elemBytes;
-  } else if (cStep[axOther] == 0 && cStep[*axM] == elemBytes &&
-             cStep[*axN] % elemBytes == 0 && cStep[*axN] / elemBytes >= gM) {
-    note.cColMajor = true;
-    ldc = cStep[*axN] / elemBytes;
-  } else {
-    return refuse("the product's store address is not a row-major or "
-                  "column-major element of C");
-  }
-  note.aColMajor = false;
-  note.bColMajor = bColMajor;
-  note.dims[DimM] = RuntimeDim::constant(gM);
-  note.dims[DimNcols] = RuntimeDim::constant(gNcols);
-  note.dims[DimK] = RuntimeDim::constant(K);
-  note.dims[DimLda] =
-      RuntimeDim::constant(h.aLeadingDimByte ? h.aLeadingDimByte / 8 : K);
-  note.dims[DimLdb] =
-      RuntimeDim::constant(h.bLeadingDimByte ? h.bLeadingDimByte / 8 : K);
-  note.dims[DimLdc] = RuntimeDim::constant(ldc);
-  if (llvm::any_of(note.dims,
-                   [](const RuntimeDim &d) { return d.add > kMaxDimConstant; }))
-    return refuse("a dimension of the product is out of the range of the "
-                  "dispatch's int dimensions");
-  note.standalone = (storeCount == 1);
-  note.valid = true;
-  return true;
+  if (d.add)
+    s += (d.add > 0 ? "+" : "") + std::to_string(d.add);
+  return s;
 }
 
 // Replaces the GEMM result where the epilogue consumes it with a load from the
 // output buffer that the prepended host dispatch fills, so the reduction loop
 // dies. F stores a value that reaches the product to an argument, as it does
-// when computeGemmBodyNote gave it a valid note that is not standalone.
+// when its constant-shape note is not standalone.
 static void fissionGemmForDispatch(const Options &O, Function &F,
                                    const AbstractMatmul &m) {
   StoreInst *cStore = productStore(F, m);
@@ -397,31 +96,6 @@ static void fissionGemmForDispatch(const Options &O, Function &F,
     errs() << "[poseidon] fissioned the product in " << F.getName()
            << ": the epilogue reads the library call's output and the "
               "reduction loop is left to dead-code elimination\n";
-}
-
-static GemmBodyNote runtimeShapeNote(const AbstractMatmul &m) {
-  const RuntimeGemmHandle &g = *m.hostGemm;
-  GemmBodyNote note;
-  note.cParam = g.cRef.param;
-  note.aParam = g.aRef.param;
-  note.bParam = g.bRef.param;
-  note.cOffset = g.cRef.offset;
-  note.aOffset = g.aRef.offset;
-  note.bOffset = g.bRef.offset;
-  note.assumedEqual = g.assumedEqual;
-  note.standalone = true;
-  note.valid = true;
-  note.beta = g.beta;
-  note.aColMajor = g.aColMajor;
-  note.bColMajor = g.bColMajor;
-  note.cColMajor = g.cColMajor;
-  note.dims[DimM] = g.M;
-  note.dims[DimNcols] = g.Ncols;
-  note.dims[DimK] = g.K;
-  note.dims[DimLda] = g.lda;
-  note.dims[DimLdb] = g.ldb;
-  note.dims[DimLdc] = g.ldc;
-  return note;
 }
 
 // The launch argument each caller value is, -1 for one that is not: the host
@@ -477,18 +151,19 @@ const CallBase *siteCallOf(const Session &S, const Function &F) {
 
 std::optional<GemmBodyNote> libraryCallNote(const Session &S,
                                             const AbstractMatmul &m) {
-  Function *F = nullptr;
+  Function *F = const_cast<Function *>(anchorOf(m).getFunction());
   GemmBodyNote note;
   switch (m.origin) {
   case AbstractMatmul::Origin::HostGemmLoopNest:
-    F = m.hostGemm->cStore->getFunction();
-    note = runtimeShapeNote(m);
+    note = m.hostGemm->library;
     break;
-  case AbstractMatmul::Origin::ScalarLoopReduction:
-    F = m.scalarLoop.fma->getFunction();
-    if (!computeGemmBodyNote(S.Opts, *F, m, note))
+  case AbstractMatmul::Origin::ScalarLoopReduction: {
+    std::optional<GemmBodyNote> n = constantShapeLibraryNote(S.Opts, *F, m);
+    if (!n)
       return std::nullopt;
+    note = *n;
     break;
+  }
   }
   auto refuse = [&](const Twine &why) -> std::optional<GemmBodyNote> {
     if (S.Opts.Diagnostics.Print)

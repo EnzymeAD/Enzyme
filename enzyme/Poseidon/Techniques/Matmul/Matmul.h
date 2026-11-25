@@ -157,6 +157,53 @@ struct RuntimeDim {
 
 std::string runtimeDimString(const RuntimeDim &d);
 
+// The dimensions of a GEMM, in the order the dispatch entries take them.
+enum GemmDim : unsigned { DimM, DimNcols, DimK, DimLda, DimLdb, DimLdc };
+constexpr unsigned kNumGemmDims = 6;
+
+// What a host-dispatch descriptor holds: launch values per dimension, assumed
+// equalities, and the magnitude of a dimension's constants and of its value,
+// an int of the dispatch entries.
+constexpr unsigned kMaxDimFactors = 8;
+constexpr unsigned kMaxAssumedEqual = 16;
+constexpr int64_t kMaxDimConstant = INT32_MAX;
+
+// The host-dispatch descriptor of a GEMM in an optimized body. Operand roles
+// and runtime-dimension factors name parameters of the body until the
+// descriptor is written, and launch arguments of the wrapper kernel after.
+struct GemmBodyNote {
+  int cParam = -1, aParam = -1, bParam = -1;
+  // Byte offsets of the three operand pointers inside their parameter, when
+  // the parameter is a by-value aggregate; -1 when it is the pointer itself.
+  int64_t cOffset = -1, aOffset = -1, bOffset = -1;
+  // The selected variant's scheme, which names the host runtime entry, and
+  // its descriptorModulusField.
+  Scheme scheme = Scheme::OzakiII;
+  unsigned numModuli = kOzakiIIMaxModuli;
+  bool standalone = false; // body is a pure GEMM (only the C store)
+  bool valid = false;
+  // M x Ncols x K and the leading dimensions (in elements) at deploy scale,
+  // indexed by GemmDim. The host stub evaluates a dimension with factors from
+  // the launch arguments, so a build profiled at one problem size runs at
+  // another.
+  RuntimeDim dims[kNumGemmDims];
+  bool aColMajor = false, bColMajor = false, cColMajor = false;
+  // 1 accumulates into C.
+  double beta = 0.0;
+
+  // Deploy extents recovered from the launch geometry: a dimension that does
+  // not track matrix order has no sound rescale from a surrogate profile. With
+  // `launchCrop` set, dims[DimM] and dims[DimNcols] are the constants gating
+  // the C store, and cropMAxis/cropNAxis name the thread axis each index runs
+  // along so the host stub takes extent = min(crop, gridDim * blockDim).
+  bool launchCrop = false;
+  int cropMAxis = -1, cropNAxis = -1; // 0/1/2 = thread axis x/y/z
+
+  // Launch values the runtime-shape recognition assumed equal; the stub
+  // dispatches only when every pair agrees and launches the kernel otherwise.
+  llvm::SmallVector<std::pair<LaunchRef, LaunchRef>, 2> assumedEqual;
+};
+
 // A dense GEMM recognized from a thread-parallel reduction nest, whose extents
 // and leading dimensions are runtime expressions.
 struct RuntimeGemmHandle {
@@ -172,28 +219,8 @@ struct RuntimeGemmHandle {
   llvm::Instruction *epilogue = nullptr;
   llvm::StoreInst *cStore = nullptr;
 
-  LaunchRef aRef, bRef, cRef;
-
-  RuntimeDim M, Ncols, K, lda, ldb, ldc;
-  // Launch values the dense reading of the nest takes to be equal, with no way
-  // to prove it here, e.g. a captured tensor's extent and the loop bound next
-  // to it. The dispatch checks each pair at the launch and runs the kernel as
-  // written when one fails.
-  llvm::SmallVector<std::pair<LaunchRef, LaunchRef>, 2> assumedEqual;
-  // Layout in the convention __poseidon_ozaki_dgemm takes: "colMajor" means
-  // the operand's reduction index (A, B) or row index (C) is the contiguous
-  // one.
-  bool aColMajor = false, bColMajor = true, cColMajor = true;
-  double beta = 0.0;
-
-  // Profile-scale extents, reconstructed from the profile header's launch
-  // geometry and the profiled execution counts.
-  unsigned profM = 0, profN = 0, profK = 0;
-  // Per-CTA tile of the product, the size the accuracy model simulates.
-  unsigned tileM = 0, tileN = 0;
-  uint64_t profMacs = 0; // total profiled MACs over all members
-  unsigned launches = 0; // kernel launches observed during profiling
-  unsigned ctaPerLaunch = 0;
+  // The library-call descriptor, every field derived from the nest.
+  GemmBodyNote library;
 };
 
 struct AbstractMatmul {
@@ -256,53 +283,6 @@ void findScalarLoopMatmuls(const Options &O, llvm::Function &F,
 void collectScalarLoopReductionTrips(
     const Options &O, llvm::Function &F,
     llvm::SmallVectorImpl<std::pair<size_t, unsigned>> &out);
-
-// The dimensions of a GEMM, in the order the dispatch entries take them.
-enum GemmDim : unsigned { DimM, DimNcols, DimK, DimLda, DimLdb, DimLdc };
-constexpr unsigned kNumGemmDims = 6;
-
-// What a host-dispatch descriptor holds: launch values per dimension, assumed
-// equalities, and the magnitude of a dimension's constants and of its value,
-// an int of the dispatch entries.
-constexpr unsigned kMaxDimFactors = 8;
-constexpr unsigned kMaxAssumedEqual = 16;
-constexpr int64_t kMaxDimConstant = INT32_MAX;
-
-// The host-dispatch descriptor of a GEMM in an optimized body. Operand roles
-// and runtime-dimension factors name parameters of the body until the
-// descriptor is written, and launch arguments of the wrapper kernel after.
-struct GemmBodyNote {
-  int cParam = -1, aParam = -1, bParam = -1;
-  // Byte offsets of the three operand pointers inside their parameter, when
-  // the parameter is a by-value aggregate; -1 when it is the pointer itself.
-  int64_t cOffset = -1, aOffset = -1, bOffset = -1;
-  // The selected variant's scheme, which names the host runtime entry, and
-  // its descriptorModulusField.
-  Scheme scheme = Scheme::OzakiII;
-  unsigned numModuli = kOzakiIIMaxModuli;
-  bool standalone = false; // body is a pure GEMM (only the C store)
-  bool valid = false;
-  // M x Ncols x K and the leading dimensions (in elements) at deploy scale,
-  // indexed by GemmDim. The host stub evaluates a dimension with factors from
-  // the launch arguments, so a build profiled at one problem size runs at
-  // another.
-  RuntimeDim dims[kNumGemmDims];
-  bool aColMajor = false, bColMajor = false, cColMajor = false;
-  // 1 accumulates into C.
-  double beta = 0.0;
-
-  // Deploy extents recovered from the launch geometry: a dimension that does
-  // not track matrix order has no sound rescale from a surrogate profile. With
-  // `launchCrop` set, dims[DimM] and dims[DimNcols] are the constants gating
-  // the C store, and cropMAxis/cropNAxis name the thread axis each index runs
-  // along so the host stub takes extent = min(crop, gridDim * blockDim).
-  bool launchCrop = false;
-  int cropMAxis = -1, cropNAxis = -1; // 0/1/2 = thread axis x/y/z
-
-  // Launch values the recognition assumed equal (RuntimeGemmHandle); the stub
-  // dispatches only when every pair agrees and launches the kernel otherwise.
-  llvm::SmallVector<std::pair<LaunchRef, LaunchRef>, 2> assumedEqual;
-};
 
 struct PendingGemm {
   std::string wrapperName;

@@ -7,7 +7,7 @@
 // RUN: mkdir -p %t/field && cp %S/../Inputs/host_gemm_hip/_ZL11HipKernel2DIZ6reduceiiiiPdS0_S0_iEUliE_EviT_~7202e5615af3fda3.fpprofile %t/field/_ZL10CuKernel2DIZ6reduceiiisPdS0_S0_iEUliE_EviT_~5a6b68e8950a81c1.fpprofile
 // RUN: %{compile} -DNT=int -DDT=short -mllvm -poseidon-profile-use=%t/field -mllvm -poseidon-cache=%t/cfield %s -o /dev/null 2>&1 | FileCheck --check-prefix=FIELD --implicit-check-not='wrote descriptor' --implicit-check-not='host-dispatch' %s
 
-// The runtime-shape GEMM of native_dgemm_runtime_cols_nvptx.cu with a 16-bit
+// The runtime-shape product of native_dgemm_runtime_cols_nvptx.cu with a 16-bit
 // dimension: the column count as a kernel parameter, or the row count as a
 // field of the lambda. The host stub reads each dimension from the launch as
 // a 32-bit integer, so recognition refuses the product and no dispatch is
@@ -66,7 +66,7 @@ void reduce(int np, int ldq, int ne, DT nd, double *Q, double *Gp, double *y,
   (void)k;
 }
 
-// PARAM: [poseidon] [[BODY:preprocess__ZL10CuKernel2DIZ6reduceiiiiPdS0_S0_iEUliE_EvsT__poseidon_body]]: reduction chain of 3 loop(s) is not a dispatchable runtime-shape GEMM: a GEMM dimension depends on param0, an i16, but the host reads each launch value as an i32{{$}}
+// PARAM: [poseidon] [[BODY:preprocess__ZL10CuKernel2DIZ6reduceiiiiPdS0_S0_iEUliE_EvsT__poseidon_body]]: reduction chain of 3 loop(s) is not a dispatchable runtime-shape product: a GEMM dimension depends on param0, an i16, but the host reads each launch value as an i32{{$}}
 // PARAM: [poseidon] no rewrite applied for [[BODY]];
-// FIELD: [poseidon] [[BODY:preprocess__ZL10CuKernel2DIZ6reduceiiisPdS0_S0_iEUliE_EviT__poseidon_body]]: reduction chain of 3 loop(s) is not a dispatchable runtime-shape GEMM: a GEMM dimension depends on param1[+0], an i16, but the host reads each launch value as an i32{{$}}
+// FIELD: [poseidon] [[BODY:preprocess__ZL10CuKernel2DIZ6reduceiiisPdS0_S0_iEUliE_EviT__poseidon_body]]: reduction chain of 3 loop(s) is not a dispatchable runtime-shape product: a GEMM dimension depends on param1[+0], an i16, but the host reads each launch value as an i32{{$}}
 // FIELD: [poseidon] no rewrite applied for [[BODY]];
