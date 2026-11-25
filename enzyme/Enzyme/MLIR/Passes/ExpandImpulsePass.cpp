@@ -689,7 +689,6 @@ private:
   RankedTensorType positionType;
   RankedTensorType scalarType;
   RankedTensorType i64TensorType;
-  RankedTensorType i1TensorType;
 };
 } // namespace
 
@@ -806,7 +805,6 @@ MCMCChainEmitter::MCMCChainEmitter(OpBuilder &builder, OpT op, InferModel model,
   positionType = RankedTensorType::get({1, this->model.positionSize}, elemType);
   scalarType = RankedTensorType::get({}, elemType);
   i64TensorType = RankedTensorType::get({}, builder.getI64Type());
-  i1TensorType = RankedTensorType::get({}, builder.getI1Type());
 
   auto f64TensorType = RankedTensorType::get({}, builder.getF64Type());
   if (isHMC) {
@@ -1168,9 +1166,7 @@ WarmupCarry MCMCChainEmitter::emitWarmupStep(const WarmupCarry &carry,
         updatedWelfordAfterSample.n, welford.n);
   }
 
-  Value atWindowEnd = arith::ConstantOp::create(
-      builder, loc, i1TensorType,
-      DenseElementsAttr::get(i1TensorType, builder.getBoolAttr(false)));
+  Value atWindowEnd = emitI1ScalarConstant(builder, loc, false);
 
   for (auto [window, windowEnd] : llvm::enumerate(schedule.windowEnds)) {
     auto inWindow = arith::CmpIOp::create(

@@ -126,6 +126,14 @@ Value impulse::emitI64ScalarConstant(OpBuilder &builder, Location loc,
       DenseElementsAttr::get(type, builder.getI64IntegerAttr(value)));
 }
 
+Value impulse::emitI1ScalarConstant(OpBuilder &builder, Location loc,
+                                    bool value) {
+  auto type = RankedTensorType::get({}, builder.getI1Type());
+  return arith::ConstantOp::create(
+      builder, loc, type,
+      DenseElementsAttr::get(type, builder.getBoolAttr(value)));
+}
+
 Value impulse::emitBroadcastScalar(OpBuilder &builder, Location loc,
                                    Value scalar, RankedTensorType type) {
   return enzyme::BroadcastOp::create(

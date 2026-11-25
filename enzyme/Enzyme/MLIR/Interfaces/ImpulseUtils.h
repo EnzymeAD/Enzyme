@@ -52,6 +52,9 @@ Value emitSplatConstant(OpBuilder &builder, Location loc, RankedTensorType type,
 /// Creates a rank-0 `i64` tensor constant.
 Value emitI64ScalarConstant(OpBuilder &builder, Location loc, int64_t value);
 
+/// Creates a rank-0 `i1` tensor constant.
+Value emitI1ScalarConstant(OpBuilder &builder, Location loc, bool value);
+
 /// Broadcasts the rank-0 tensor `scalar` to `type`.
 Value emitBroadcastScalar(OpBuilder &builder, Location loc, Value scalar,
                           RankedTensorType type);

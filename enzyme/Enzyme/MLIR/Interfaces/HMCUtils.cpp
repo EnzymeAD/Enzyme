@@ -141,9 +141,7 @@ Value impulse::computeKineticEnergy(OpBuilder &builder, Location loc,
   auto elemType = positionType.getElementType();
   auto scalarType = RankedTensorType::get({}, elemType);
 
-  auto halfConst = arith::ConstantOp::create(
-      builder, loc, scalarType,
-      DenseElementsAttr::get(scalarType, builder.getFloatAttr(elemType, 0.5)));
+  Value halfConst = emitSplatConstant(builder, loc, scalarType, 0.5);
 
   // v = M^-1 @ p
   auto v =
@@ -166,15 +164,11 @@ Value impulse::computeMassMatrixSqrt(OpBuilder &builder, Location loc,
   }
 
   auto invMassType = cast<RankedTensorType>(invMass.getType());
-  auto elemType = invMassType.getElementType();
 
   if (isDiagonalMass(invMassType)) {
     // Diagonal: mass_matrix_sqrt = 1/sqrt(invMass)
     auto sqrtInvMass = math::SqrtOp::create(builder, loc, invMass);
-    auto onesVector = arith::ConstantOp::create(
-        builder, loc, invMassType,
-        DenseElementsAttr::get(invMassType,
-                               builder.getFloatAttr(elemType, 1.0)));
+    Value onesVector = emitSplatConstant(builder, loc, invMassType, 1.0);
     return arith::DivFOp::create(builder, loc, onesVector, sqrtInvMass);
   } else {
     // Dense: mass_matrix_sqrt = M^{1/2}
@@ -206,12 +200,8 @@ Value impulse::sampleMomentum(OpBuilder &builder, Location loc, Value rng,
   auto elemType = positionType.getElementType();
   auto scalarType = RankedTensorType::get({}, elemType);
 
-  auto zeroConst = arith::ConstantOp::create(
-      builder, loc, scalarType,
-      DenseElementsAttr::get(scalarType, builder.getFloatAttr(elemType, 0.0)));
-  auto oneConst = arith::ConstantOp::create(
-      builder, loc, scalarType,
-      DenseElementsAttr::get(scalarType, builder.getFloatAttr(elemType, 1.0)));
+  Value zeroConst = emitSplatConstant(builder, loc, scalarType, 0.0);
+  Value oneConst = emitSplatConstant(builder, loc, scalarType, 1.0);
 
   rng = conditionalDump(builder, loc, rng, "sampleMomentum: input rng state",
                         debugDump);
@@ -247,30 +237,21 @@ Value impulse::sampleMomentum(OpBuilder &builder, Location loc, Value rng,
 Value impulse::scatterPositionToTrace(OpBuilder &builder, Location loc,
                                       Value position2d, Value fullTrace,
                                       const ModelContext &ctx) {
-  auto elemType =
-      cast<RankedTensorType>(ctx.stepSize.getType()).getElementType();
+  Type elemType = ctx.getElementType();
   auto traceType = RankedTensorType::get({1, ctx.getFullTraceSize()}, elemType);
-  auto i64TensorType = RankedTensorType::get({}, builder.getI64Type());
-  auto c0 = arith::ConstantOp::create(
-      builder, loc, i64TensorType,
-      DenseElementsAttr::get(i64TensorType, builder.getI64IntegerAttr(0)));
+  Value c0 = emitI64ScalarConstant(builder, loc, 0);
 
   Value result = fullTrace;
   for (const auto &info : ctx.supports) {
     auto sliceType = RankedTensorType::get({1, info.constrainedSize}, elemType);
-    auto posOffset = arith::ConstantOp::create(
-        builder, loc, i64TensorType,
-        DenseElementsAttr::get(
-            i64TensorType, builder.getI64IntegerAttr(info.constrainedOffset)));
+    Value posOffset =
+        emitI64ScalarConstant(builder, loc, info.constrainedOffset);
     SmallVector<Value> extractIndices{c0, posOffset};
     auto slice = impulse::DynamicSliceOp::create(
         builder, loc, sliceType, position2d, extractIndices,
         builder.getDenseI64ArrayAttr({1, info.constrainedSize}));
 
-    auto traceOffset = arith::ConstantOp::create(
-        builder, loc, i64TensorType,
-        DenseElementsAttr::get(i64TensorType,
-                               builder.getI64IntegerAttr(info.traceOffset)));
+    Value traceOffset = emitI64ScalarConstant(builder, loc, info.traceOffset);
     SmallVector<Value> updateIndices{c0, traceOffset};
     result = impulse::DynamicUpdateSliceOp::create(
         builder, loc, traceType, result, slice, updateIndices);
@@ -280,38 +261,26 @@ Value impulse::scatterPositionToTrace(OpBuilder &builder, Location loc,
 
 static Value gatherPositionFromTrace(OpBuilder &builder, Location loc,
                                      Value fullTrace, const HMCContext &ctx) {
-  auto elemType =
-      cast<RankedTensorType>(ctx.stepSize.getType()).getElementType();
+  Type elemType = ctx.getElementType();
   // Constrained width, which differs from positionSize for SIMPLEX.
   int64_t constrainedSize = 0;
   for (const auto &info : ctx.supports)
     constrainedSize += info.constrainedSize;
   auto positionType2d = RankedTensorType::get({1, constrainedSize}, elemType);
-  auto i64TensorType = RankedTensorType::get({}, builder.getI64Type());
-  auto c0 = arith::ConstantOp::create(
-      builder, loc, i64TensorType,
-      DenseElementsAttr::get(i64TensorType, builder.getI64IntegerAttr(0)));
+  Value c0 = emitI64ScalarConstant(builder, loc, 0);
 
-  auto zeroConst = arith::ConstantOp::create(
-      builder, loc, positionType2d,
-      DenseElementsAttr::get(positionType2d,
-                             builder.getFloatAttr(elemType, 0.0)));
+  Value zeroConst = emitSplatConstant(builder, loc, positionType2d, 0.0);
   Value result = zeroConst;
   for (const auto &info : ctx.supports) {
     auto sliceType = RankedTensorType::get({1, info.constrainedSize}, elemType);
-    auto traceOffset = arith::ConstantOp::create(
-        builder, loc, i64TensorType,
-        DenseElementsAttr::get(i64TensorType,
-                               builder.getI64IntegerAttr(info.traceOffset)));
+    Value traceOffset = emitI64ScalarConstant(builder, loc, info.traceOffset);
     SmallVector<Value> extractIndices{c0, traceOffset};
     auto slice = impulse::DynamicSliceOp::create(
         builder, loc, sliceType, fullTrace, extractIndices,
         builder.getDenseI64ArrayAttr({1, info.constrainedSize}));
 
-    auto posOffset = arith::ConstantOp::create(
-        builder, loc, i64TensorType,
-        DenseElementsAttr::get(
-            i64TensorType, builder.getI64IntegerAttr(info.constrainedOffset)));
+    Value posOffset =
+        emitI64ScalarConstant(builder, loc, info.constrainedOffset);
     SmallVector<Value> updateIndices{c0, posOffset};
     result = impulse::DynamicUpdateSliceOp::create(
         builder, loc, positionType2d, result, slice, updateIndices);
@@ -483,25 +452,19 @@ IntegrationResult impulse::computeIntegrationStep(OpBuilder &builder,
                                                   const HMCContext &ctx) {
   auto positionType = ctx.getPositionType();
   auto scalarType = ctx.getScalarType();
-  auto elemType = ctx.getElementType();
 
   auto negStepSize = arith::NegFOp::create(builder, loc, ctx.stepSize);
   Value signedStepSize = impulse::SelectOp::create(
       builder, loc, scalarType, direction, ctx.stepSize, negStepSize);
 
-  auto halfConst = arith::ConstantOp::create(
-      builder, loc, scalarType,
-      DenseElementsAttr::get(scalarType, builder.getFloatAttr(elemType, 0.5)));
+  Value halfConst = emitSplatConstant(builder, loc, scalarType, 0.5);
 
-  ArrayRef<int64_t> shape = positionType.getShape();
-  auto stepSizeBroadcast =
-      BroadcastOp::create(builder, loc, positionType, signedStepSize,
-                          builder.getDenseI64ArrayAttr(shape));
+  Value stepSizeBroadcast =
+      emitBroadcastScalar(builder, loc, signedStepSize, positionType);
   auto halfStep =
       arith::MulFOp::create(builder, loc, halfConst, signedStepSize);
-  auto halfStepBroadcast =
-      BroadcastOp::create(builder, loc, positionType, halfStep,
-                          builder.getDenseI64ArrayAttr(shape));
+  Value halfStepBroadcast =
+      emitBroadcastScalar(builder, loc, halfStep, positionType);
 
   // 1. Half step momentum: p_half = p - 0.5 * eps * grad
   auto deltaP1 =
@@ -529,14 +492,9 @@ Value impulse::checkTurning(OpBuilder &builder, Location loc, Value pLeft,
                             Value pRight, Value pSum, const NUTSContext &ctx) {
   auto positionType = ctx.getPositionType();
   auto scalarType = ctx.getScalarType();
-  auto elemType = ctx.getElementType();
 
-  auto zeroConst = arith::ConstantOp::create(
-      builder, loc, scalarType,
-      DenseElementsAttr::get(scalarType, builder.getFloatAttr(elemType, 0.0)));
-  auto halfConst = arith::ConstantOp::create(
-      builder, loc, scalarType,
-      DenseElementsAttr::get(scalarType, builder.getFloatAttr(elemType, 0.5)));
+  Value zeroConst = emitSplatConstant(builder, loc, scalarType, 0.0);
+  Value halfConst = emitSplatConstant(builder, loc, scalarType, 0.5);
 
   Value vLeft =
       applyInverseMassMatrix(builder, loc, ctx.invMass, pLeft, positionType);
@@ -544,9 +502,8 @@ Value impulse::checkTurning(OpBuilder &builder, Location loc, Value pLeft,
       applyInverseMassMatrix(builder, loc, ctx.invMass, pRight, positionType);
 
   // p_sum_centered = p_sum - (p_left + p_right) / 2
-  auto halfBroadcast = BroadcastOp::create(
-      builder, loc, positionType, halfConst,
-      builder.getDenseI64ArrayAttr(positionType.getShape()));
+  Value halfBroadcast =
+      emitBroadcastScalar(builder, loc, halfConst, positionType);
 
   auto pLeftPlusPRight = arith::AddFOp::create(builder, loc, pLeft, pRight);
   auto halfSum =
@@ -584,14 +541,9 @@ Value impulse::computeBiasedTransitionProb(OpBuilder &builder, Location loc,
                                            Value currentWeight, Value newWeight,
                                            Value turning, Value diverging) {
   auto resultType = cast<RankedTensorType>(currentWeight.getType());
-  auto elemType = resultType.getElementType();
 
-  auto zeroConst = arith::ConstantOp::create(
-      builder, loc, resultType,
-      DenseElementsAttr::get(resultType, builder.getFloatAttr(elemType, 0.0)));
-  auto oneConst = arith::ConstantOp::create(
-      builder, loc, resultType,
-      DenseElementsAttr::get(resultType, builder.getFloatAttr(elemType, 1.0)));
+  Value zeroConst = emitSplatConstant(builder, loc, resultType, 0.0);
+  Value oneConst = emitSplatConstant(builder, loc, resultType, 1.0);
 
   Value weightDiff =
       arith::SubFOp::create(builder, loc, newWeight, currentWeight);
@@ -611,15 +563,9 @@ NUTSTreeState impulse::combineTrees(OpBuilder &builder, Location loc,
                                     const NUTSContext &ctx) {
   auto positionType = ctx.getPositionType();
   auto scalarType = ctx.getScalarType();
-  auto elemType = ctx.getElementType();
-  auto i64TensorType = RankedTensorType::get({}, builder.getI64Type());
 
-  auto zeroConst = arith::ConstantOp::create(
-      builder, loc, scalarType,
-      DenseElementsAttr::get(scalarType, builder.getFloatAttr(elemType, 0.0)));
-  auto oneConst = arith::ConstantOp::create(
-      builder, loc, scalarType,
-      DenseElementsAttr::get(scalarType, builder.getFloatAttr(elemType, 1.0)));
+  Value zeroConst = emitSplatConstant(builder, loc, scalarType, 0.0);
+  Value oneConst = emitSplatConstant(builder, loc, scalarType, 1.0);
 
   auto qLeft = impulse::SelectOp::create(builder, loc, positionType, direction,
                                          tree.q_left, subTree.q_left);
@@ -671,9 +617,7 @@ NUTSTreeState impulse::combineTrees(OpBuilder &builder, Location loc,
   auto HProposal = impulse::SelectOp::create(
       builder, loc, scalarType, acceptNew, subTree.H_proposal, tree.H_proposal);
 
-  auto oneI64 = arith::ConstantOp::create(
-      builder, loc, i64TensorType,
-      DenseElementsAttr::get(i64TensorType, builder.getI64IntegerAttr(1)));
+  Value oneI64 = emitI64ScalarConstant(builder, loc, 1);
   auto combinedDepth = arith::AddIOp::create(builder, loc, tree.depth, oneI64);
 
   Value combinedTurning;
@@ -801,9 +745,7 @@ MCMCKernelResult impulse::SampleHMC(OpBuilder &builder, Location loc, Value q,
                                     const HMCContext &ctx) {
   auto positionType = ctx.getPositionType();
   auto scalarType = ctx.getScalarType();
-  auto elemType = ctx.getElementType();
   auto i64TensorType = RankedTensorType::get({}, builder.getI64Type());
-  auto i1TensorType = RankedTensorType::get({}, builder.getI1Type());
 
   Value numSteps, adjustedStepSize;
   if (ctx.numSteps > 0) {
@@ -824,16 +766,10 @@ MCMCKernelResult impulse::SampleHMC(OpBuilder &builder, Location loc, Value q,
   auto [rngNext, rngTransition, p0, initialHamiltonian] =
       startTransition(builder, loc, U, rng, ctx);
 
-  auto direction = arith::ConstantOp::create(
-      builder, loc, i1TensorType,
-      DenseElementsAttr::get(i1TensorType, builder.getBoolAttr(true)));
+  Value direction = emitI1ScalarConstant(builder, loc, true);
 
-  auto c0 = arith::ConstantOp::create(
-      builder, loc, i64TensorType,
-      DenseElementsAttr::get(i64TensorType, builder.getI64IntegerAttr(0)));
-  auto c1 = arith::ConstantOp::create(
-      builder, loc, i64TensorType,
-      DenseElementsAttr::get(i64TensorType, builder.getI64IntegerAttr(1)));
+  Value c0 = emitI64ScalarConstant(builder, loc, 0);
+  Value c1 = emitI64ScalarConstant(builder, loc, 1);
 
   SmallVector<Type> loopResultTypes = {positionType, positionType, positionType,
                                        scalarType, rngTransition.getType()};
@@ -870,12 +806,8 @@ MCMCKernelResult impulse::SampleHMC(OpBuilder &builder, Location loc, Value q,
       computeKineticEnergy(builder, loc, pProposal, ctx.invMass, positionType);
   auto H1 = arith::AddFOp::create(builder, loc, UProposal, K1);
 
-  auto zeroConst = arith::ConstantOp::create(
-      builder, loc, scalarType,
-      DenseElementsAttr::get(scalarType, builder.getFloatAttr(elemType, 0.0)));
-  auto oneConst = arith::ConstantOp::create(
-      builder, loc, scalarType,
-      DenseElementsAttr::get(scalarType, builder.getFloatAttr(elemType, 1.0)));
+  Value zeroConst = emitSplatConstant(builder, loc, scalarType, 0.0);
+  Value oneConst = emitSplatConstant(builder, loc, scalarType, 1.0);
 
   auto dH = arith::SubFOp::create(builder, loc, initialHamiltonian, H1);
   auto expDH = math::ExpOp::create(builder, loc, dH);
@@ -892,9 +824,7 @@ MCMCKernelResult impulse::SampleHMC(OpBuilder &builder, Location loc, Value q,
       builder, loc, arith::CmpFPredicate::OLT, randUniform, accProb);
 
   // HMC does not detect divergent trajectories.
-  auto falseConst = arith::ConstantOp::create(
-      builder, loc, i1TensorType,
-      DenseElementsAttr::get(i1TensorType, builder.getBoolAttr(false)));
+  Value falseConst = emitI1ScalarConstant(builder, loc, false);
 
   auto qFinal = impulse::SelectOp::create(builder, loc, positionType,
                                           acceptedTensor, qProposal, q);
@@ -911,24 +841,15 @@ MCMCKernelResult impulse::SampleNUTS(OpBuilder &builder, Location loc, Value q,
                                      Value grad, Value U, Value rng,
                                      const NUTSContext &ctx) {
   auto scalarType = ctx.getScalarType();
-  auto elemType = ctx.getElementType();
-  auto i64TensorType = RankedTensorType::get({}, builder.getI64Type());
-  auto i1TensorType = RankedTensorType::get({}, builder.getI1Type());
 
   auto [rngNext, rngTree, p0, initialHamiltonian] =
       startTransition(builder, loc, U, rng, ctx);
 
   auto iterCtx = ctx.withH0(initialHamiltonian);
 
-  auto zeroI64 = arith::ConstantOp::create(
-      builder, loc, i64TensorType,
-      DenseElementsAttr::get(i64TensorType, builder.getI64IntegerAttr(0)));
-  auto falseConst = arith::ConstantOp::create(
-      builder, loc, i1TensorType,
-      DenseElementsAttr::get(i1TensorType, builder.getBoolAttr(false)));
-  auto zeroConst = arith::ConstantOp::create(
-      builder, loc, scalarType,
-      DenseElementsAttr::get(scalarType, builder.getFloatAttr(elemType, 0.0)));
+  Value zeroI64 = emitI64ScalarConstant(builder, loc, 0);
+  Value falseConst = emitI1ScalarConstant(builder, loc, false);
+  Value zeroConst = emitSplatConstant(builder, loc, scalarType, 0.0);
 
   NUTSTreeState initialTree = {.q_left = q,
                                .p_left = p0,
@@ -952,13 +873,9 @@ MCMCKernelResult impulse::SampleNUTS(OpBuilder &builder, Location loc, Value q,
   auto finalTree = buildTree(builder, loc, initialTree, iterCtx);
 
   // The tree itself selects the proposal, so the transition always accepts.
-  auto trueConst = arith::ConstantOp::create(
-      builder, loc, i1TensorType,
-      DenseElementsAttr::get(i1TensorType, builder.getBoolAttr(true)));
+  Value trueConst = emitI1ScalarConstant(builder, loc, true);
 
-  auto oneI64 = arith::ConstantOp::create(
-      builder, loc, i64TensorType,
-      DenseElementsAttr::get(i64TensorType, builder.getI64IntegerAttr(1)));
+  Value oneI64 = emitI64ScalarConstant(builder, loc, 1);
   auto numProposalsClamped =
       arith::MaxSIOp::create(builder, loc, finalTree.num_proposals, oneI64);
   auto numProposalsFloat =
@@ -980,22 +897,11 @@ NUTSTreeState impulse::buildBaseTree(OpBuilder &builder, Location loc,
                                      Value direction, const NUTSContext &ctx) {
   auto positionType = ctx.getPositionType();
   auto scalarType = ctx.getScalarType();
-  auto elemType = ctx.getElementType();
-  auto i64TensorType = RankedTensorType::get({}, builder.getI64Type());
-  auto i1TensorType = RankedTensorType::get({}, builder.getI1Type());
 
-  auto oneConst = arith::ConstantOp::create(
-      builder, loc, scalarType,
-      DenseElementsAttr::get(scalarType, builder.getFloatAttr(elemType, 1.0)));
-  auto zeroI64 = arith::ConstantOp::create(
-      builder, loc, i64TensorType,
-      DenseElementsAttr::get(i64TensorType, builder.getI64IntegerAttr(0)));
-  auto oneI64 = arith::ConstantOp::create(
-      builder, loc, i64TensorType,
-      DenseElementsAttr::get(i64TensorType, builder.getI64IntegerAttr(1)));
-  auto falseConst = arith::ConstantOp::create(
-      builder, loc, i1TensorType,
-      DenseElementsAttr::get(i1TensorType, builder.getBoolAttr(false)));
+  Value oneConst = emitSplatConstant(builder, loc, scalarType, 1.0);
+  Value zeroI64 = emitI64ScalarConstant(builder, loc, 0);
+  Value oneI64 = emitI64ScalarConstant(builder, loc, 1);
+  Value falseConst = emitI1ScalarConstant(builder, loc, false);
 
   IntegrationResult leap =
       computeIntegrationStep(builder, loc, leaf, rng, direction, ctx);
@@ -1014,11 +920,8 @@ NUTSTreeState impulse::buildBaseTree(OpBuilder &builder, Location loc,
   // NaN check
   auto isNan = arith::CmpFOp::create(builder, loc, arith::CmpFPredicate::UNE,
                                      deltaH, deltaH);
-  auto infConst = arith::ConstantOp::create(
-      builder, loc, scalarType,
-      DenseElementsAttr::get(
-          scalarType, builder.getFloatAttr(
-                          elemType, std::numeric_limits<double>::infinity())));
+  Value infConst = emitSplatConstant(builder, loc, scalarType,
+                                     std::numeric_limits<double>::infinity());
   deltaH = arith::SelectOp::create(builder, loc, scalarType, isNan, infConst,
                                    deltaH);
 
@@ -1074,15 +977,9 @@ SubtreeBuildResult impulse::buildIterativeSubtree(
   auto i1TensorType = RankedTensorType::get({}, builder.getI1Type());
   auto i64TensorType = RankedTensorType::get({}, builder.getI64Type());
   auto pCkptsType = cast<RankedTensorType>(pCkpts.getType());
-  auto trueConst = arith::ConstantOp::create(
-      builder, loc, i1TensorType,
-      DenseElementsAttr::get(i1TensorType, builder.getBoolAttr(true)));
-  auto oneI64 = arith::ConstantOp::create(
-      builder, loc, i64TensorType,
-      DenseElementsAttr::get(i64TensorType, builder.getI64IntegerAttr(1)));
-  auto zeroI64 = arith::ConstantOp::create(
-      builder, loc, i64TensorType,
-      DenseElementsAttr::get(i64TensorType, builder.getI64IntegerAttr(0)));
+  Value trueConst = emitI1ScalarConstant(builder, loc, true);
+  Value oneI64 = emitI64ScalarConstant(builder, loc, 1);
+  Value zeroI64 = emitI64ScalarConstant(builder, loc, 0);
 
   // 2 ^ (initialTree.depth)
   auto maxNumProposals =
@@ -1243,29 +1140,15 @@ SubtreeBuildResult impulse::doubleTree(OpBuilder &builder, Location loc,
 NUTSTreeState impulse::buildTree(OpBuilder &builder, Location loc,
                                  const NUTSTreeState &initialTree,
                                  const NUTSContext &ctx) {
-  auto elemType =
-      cast<RankedTensorType>(ctx.stepSize.getType()).getElementType();
-  auto F64TensorType = RankedTensorType::get({}, elemType);
-  auto i64TensorType = RankedTensorType::get({}, builder.getI64Type());
-  auto i1TensorType = RankedTensorType::get({}, builder.getI1Type());
+  Type elemType = ctx.getElementType();
+  RankedTensorType scalarType = ctx.getScalarType();
 
-  auto trueConst = arith::ConstantOp::create(
-      builder, loc, i1TensorType,
-      DenseElementsAttr::get(i1TensorType, builder.getBoolAttr(true)));
-  auto halfConst = arith::ConstantOp::create(
-      builder, loc, F64TensorType,
-      DenseElementsAttr::get(F64TensorType, builder.getF64FloatAttr(0.5)));
-  auto zeroConst = arith::ConstantOp::create(
-      builder, loc, F64TensorType,
-      DenseElementsAttr::get(F64TensorType, builder.getF64FloatAttr(0.0)));
-  auto oneConst = arith::ConstantOp::create(
-      builder, loc, F64TensorType,
-      DenseElementsAttr::get(F64TensorType, builder.getF64FloatAttr(1.0)));
+  Value trueConst = emitI1ScalarConstant(builder, loc, true);
+  Value halfConst = emitSplatConstant(builder, loc, scalarType, 0.5);
+  Value zeroConst = emitSplatConstant(builder, loc, scalarType, 0.0);
+  Value oneConst = emitSplatConstant(builder, loc, scalarType, 1.0);
 
-  auto maxTreeDepth = arith::ConstantOp::create(
-      builder, loc, i64TensorType,
-      DenseElementsAttr::get(i64TensorType,
-                             builder.getI64IntegerAttr(ctx.maxTreeDepth)));
+  Value maxTreeDepth = emitI64ScalarConstant(builder, loc, ctx.maxTreeDepth);
 
   auto checkpointType =
       RankedTensorType::get({ctx.maxTreeDepth, ctx.positionSize}, elemType);
@@ -1312,9 +1195,7 @@ NUTSTreeState impulse::buildTree(OpBuilder &builder, Location loc,
   NUTSTreeState bodyTree = NUTSTreeState::fromValues(bodyArgs);
 
   // Create fresh checkpoint tensors
-  auto zeroCkpts = arith::ConstantOp::create(
-      builder, loc, checkpointType,
-      DenseElementsAttr::get(checkpointType, builder.getF64FloatAttr(0.0)));
+  Value zeroCkpts = emitSplatConstant(builder, loc, checkpointType, 0.0);
   Value bodyPCkpts = zeroCkpts;
   Value bodyPSumCkpts = zeroCkpts;
 
@@ -1328,8 +1209,8 @@ NUTSTreeState impulse::buildTree(OpBuilder &builder, Location loc,
   auto rngDbl = rngSplit3.getResult(2);
 
   auto directionRandom = impulse::RandomOp::create(
-      builder, loc, TypeRange{rngDir.getType(), F64TensorType}, rngDir,
-      zeroConst, oneConst,
+      builder, loc, TypeRange{rngDir.getType(), scalarType}, rngDir, zeroConst,
+      oneConst,
       impulse::RngDistributionAttr::get(builder.getContext(),
                                         impulse::RngDistribution::UNIFORM));
   auto direction =
@@ -1356,11 +1237,8 @@ NUTSTreeState impulse::buildTree(OpBuilder &builder, Location loc,
 std::pair<Value, Value> impulse::leafIdxToCheckpointIdxs(OpBuilder &builder,
                                                          Location loc,
                                                          Value leafIdx) {
-  auto i64TensorType = cast<RankedTensorType>(leafIdx.getType());
 
-  auto oneConst = arith::ConstantOp::create(
-      builder, loc, i64TensorType,
-      DenseElementsAttr::get(i64TensorType, builder.getI64IntegerAttr(1)));
+  Value oneConst = emitI64ScalarConstant(builder, loc, 1);
 
   // idx_max = popcount(leafIdx >> 1)
   auto shiftedIdx = arith::ShRUIOp::create(builder, loc, leafIdx, oneConst);
@@ -1369,9 +1247,7 @@ std::pair<Value, Value> impulse::leafIdxToCheckpointIdxs(OpBuilder &builder,
   // num_subtrees = popcount((~leafIdx & (leafIdx + 1)) - 1)
   auto leafIdxPlusOne = arith::AddIOp::create(builder, loc, leafIdx, oneConst);
 
-  auto minusOneConst = arith::ConstantOp::create(
-      builder, loc, i64TensorType,
-      DenseElementsAttr::get(i64TensorType, builder.getI64IntegerAttr(-1)));
+  Value minusOneConst = emitI64ScalarConstant(builder, loc, -1);
   auto notLeafIdx = arith::XOrIOp::create(builder, loc, leafIdx, minusOneConst);
 
   Value andResult =
@@ -1396,12 +1272,8 @@ Value impulse::checkIterativeTurning(OpBuilder &builder, Location loc, Value p,
   auto i64TensorType = RankedTensorType::get({}, builder.getI64Type());
   auto i1TensorType = RankedTensorType::get({}, builder.getI1Type());
 
-  auto falseConst = arith::ConstantOp::create(
-      builder, loc, i1TensorType,
-      DenseElementsAttr::get(i1TensorType, builder.getBoolAttr(false)));
-  auto oneI64 = arith::ConstantOp::create(
-      builder, loc, i64TensorType,
-      DenseElementsAttr::get(i64TensorType, builder.getI64IntegerAttr(1)));
+  Value falseConst = emitI1ScalarConstant(builder, loc, false);
+  Value oneI64 = emitI64ScalarConstant(builder, loc, 1);
 
   // Iterate from `idx_max` down to `idx_min`, check turning at each checkpoint
   SmallVector<Type> whileTypes = {i64TensorType, i1TensorType};
@@ -1419,9 +1291,7 @@ Value impulse::checkIterativeTurning(OpBuilder &builder, Location loc, Value p,
 
   auto iGeMin = arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::sge,
                                       iCond, idxMin);
-  auto trueConst = arith::ConstantOp::create(
-      builder, loc, i1TensorType,
-      DenseElementsAttr::get(i1TensorType, builder.getBoolAttr(true)));
+  Value trueConst = emitI1ScalarConstant(builder, loc, true);
   auto notTurning = arith::XOrIOp::create(builder, loc, turningCond, trueConst);
   auto continueLoop = arith::AndIOp::create(builder, loc, iGeMin, notTurning);
 
@@ -1433,9 +1303,7 @@ Value impulse::checkIterativeTurning(OpBuilder &builder, Location loc, Value p,
   builder.setInsertionPointToStart(bodyBlock);
   Value iBody = bodyBlock->getArgument(0);
 
-  auto zeroI64 = arith::ConstantOp::create(
-      builder, loc, i64TensorType,
-      DenseElementsAttr::get(i64TensorType, builder.getI64IntegerAttr(0)));
+  Value zeroI64 = emitI64ScalarConstant(builder, loc, 0);
   Value pLeft = impulse::DynamicSliceOp::create(
       builder, loc, positionType, pCkpts, ValueRange{iBody, zeroI64},
       builder.getDenseI64ArrayAttr({1, ctx.positionSize}));
@@ -1462,13 +1330,8 @@ std::pair<Value, Value> impulse::updateCheckpoints(OpBuilder &builder,
                                                    Value ckptIdxMax, Value p,
                                                    Value pSum, Value pCkpts,
                                                    Value pSumCkpts) {
-  auto i64TensorType = RankedTensorType::get({}, builder.getI64Type());
-  auto oneI64 = arith::ConstantOp::create(
-      builder, loc, i64TensorType,
-      DenseElementsAttr::get(i64TensorType, builder.getI64IntegerAttr(1)));
-  auto zeroI64 = arith::ConstantOp::create(
-      builder, loc, i64TensorType,
-      DenseElementsAttr::get(i64TensorType, builder.getI64IntegerAttr(0)));
+  Value oneI64 = emitI64ScalarConstant(builder, loc, 1);
+  Value zeroI64 = emitI64ScalarConstant(builder, loc, 0);
 
   Value leafIdxBit0 = arith::AndIOp::create(builder, loc, leafIdx, oneI64);
   Value isEven = arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::eq,
@@ -1513,31 +1376,21 @@ DualAveragingState impulse::initDualAveraging(OpBuilder &builder, Location loc,
   auto stepSizeType = cast<RankedTensorType>(stepSize.getType());
   auto elemType = stepSizeType.getElementType();
   auto scalarType = RankedTensorType::get({}, elemType);
-  auto i64TensorType = RankedTensorType::get({}, builder.getI64Type());
 
   Value proxCenter;
   if (logOfProduct) {
-    auto tenConst = arith::ConstantOp::create(
-        builder, loc, scalarType,
-        DenseElementsAttr::get(scalarType,
-                               builder.getFloatAttr(elemType, 10.0)));
+    Value tenConst = emitSplatConstant(builder, loc, scalarType, 10.0);
     Value scaled = arith::MulFOp::create(builder, loc, tenConst, stepSize);
     proxCenter = math::LogOp::create(builder, loc, scaled);
   } else {
-    auto log10Const = arith::ConstantOp::create(
-        builder, loc, scalarType,
-        DenseElementsAttr::get(scalarType,
-                               builder.getFloatAttr(elemType, std::log(10.0))));
+    Value log10Const =
+        emitSplatConstant(builder, loc, scalarType, std::log(10.0));
     Value logStepSize = math::LogOp::create(builder, loc, stepSize);
     proxCenter = arith::AddFOp::create(builder, loc, log10Const, logStepSize);
   }
 
-  auto zeroConst = arith::ConstantOp::create(
-      builder, loc, scalarType,
-      DenseElementsAttr::get(scalarType, builder.getFloatAttr(elemType, 0.0)));
-  auto zeroI64 = arith::ConstantOp::create(
-      builder, loc, i64TensorType,
-      DenseElementsAttr::get(i64TensorType, builder.getI64IntegerAttr(0)));
+  Value zeroConst = emitSplatConstant(builder, loc, scalarType, 0.0);
+  Value zeroI64 = emitI64ScalarConstant(builder, loc, 0);
 
   return {
       .log_step_size = zeroConst,
@@ -1561,36 +1414,25 @@ impulse::updateDualAveraging(OpBuilder &builder, Location loc,
   auto acceptProbType = cast<RankedTensorType>(acceptProb.getType());
   auto elemType = acceptProbType.getElementType();
   auto scalarType = RankedTensorType::get({}, elemType);
-  auto i64TensorType = RankedTensorType::get({}, builder.getI64Type());
 
   // t = t + 1
-  auto oneI64 = arith::ConstantOp::create(
-      builder, loc, i64TensorType,
-      DenseElementsAttr::get(i64TensorType, builder.getI64IntegerAttr(1)));
+  Value oneI64 = emitI64ScalarConstant(builder, loc, 1);
   Value tNew = arith::AddIOp::create(builder, loc, state.step_count, oneI64);
   Value tFloat = arith::SIToFPOp::create(builder, loc, scalarType, tNew);
 
   // t0
-  auto t0Const = arith::ConstantOp::create(
-      builder, loc, scalarType,
-      DenseElementsAttr::get(scalarType,
-                             builder.getFloatAttr(elemType, config.t0)));
+  Value t0Const = emitSplatConstant(builder, loc, scalarType, config.t0);
 
   // g = target_accept_prob - accept_prob
-  auto targetConst = arith::ConstantOp::create(
-      builder, loc, scalarType,
-      DenseElementsAttr::get(
-          scalarType,
-          builder.getFloatAttr(elemType, config.target_accept_prob)));
+  Value targetConst =
+      emitSplatConstant(builder, loc, scalarType, config.target_accept_prob);
   Value g = arith::SubFOp::create(builder, loc, targetConst, acceptProb);
 
   // t_plus_t0 = t + t0
   Value tPlusT0 = arith::AddFOp::create(builder, loc, tFloat, t0Const);
 
   // weight = 1 / (t + t0)
-  auto oneConst = arith::ConstantOp::create(
-      builder, loc, scalarType,
-      DenseElementsAttr::get(scalarType, builder.getFloatAttr(elemType, 1.0)));
+  Value oneConst = emitSplatConstant(builder, loc, scalarType, 1.0);
   Value weight = arith::DivFOp::create(builder, loc, oneConst, tPlusT0);
 
   // decay = 1 - weight = 1 - 1/(t + t0)
@@ -1605,10 +1447,7 @@ impulse::updateDualAveraging(OpBuilder &builder, Location loc,
 
   // x_t = prox_center - sqrt(t) / gamma * g_avg
   Value sqrtT = math::SqrtOp::create(builder, loc, tFloat);
-  auto gammaConst = arith::ConstantOp::create(
-      builder, loc, scalarType,
-      DenseElementsAttr::get(scalarType,
-                             builder.getFloatAttr(elemType, config.gamma)));
+  Value gammaConst = emitSplatConstant(builder, loc, scalarType, config.gamma);
   Value sqrtTOverGamma = arith::DivFOp::create(builder, loc, sqrtT, gammaConst);
   Value adjustment =
       arith::MulFOp::create(builder, loc, sqrtTOverGamma, gAvgNew);
@@ -1616,10 +1455,8 @@ impulse::updateDualAveraging(OpBuilder &builder, Location loc,
       arith::SubFOp::create(builder, loc, state.prox_center, adjustment);
 
   // weight_t = t^(-kappa)
-  auto negKappaConst = arith::ConstantOp::create(
-      builder, loc, scalarType,
-      DenseElementsAttr::get(scalarType,
-                             builder.getFloatAttr(elemType, -config.kappa)));
+  Value negKappaConst =
+      emitSplatConstant(builder, loc, scalarType, -config.kappa);
   Value weightT = math::PowFOp::create(builder, loc, tFloat, negKappaConst);
 
   // x_avg = (1 - weight_t) * x_avg + weight_t * x_t
@@ -1651,30 +1488,21 @@ Value impulse::getStepSizeFromDualAveraging(OpBuilder &builder, Location loc,
 WelfordState impulse::initWelford(OpBuilder &builder, Location loc,
                                   int64_t positionSize, bool diagonal) {
   auto elemType = builder.getF64Type();
-  auto i64TensorType = RankedTensorType::get({}, builder.getI64Type());
   auto meanType = RankedTensorType::get({positionSize}, elemType);
 
-  Value mean = arith::ConstantOp::create(
-      builder, loc, meanType,
-      DenseElementsAttr::get(meanType, builder.getFloatAttr(elemType, 0.0)));
+  Value mean = emitSplatConstant(builder, loc, meanType, 0.0);
 
   // Diagonal -> tensor<positionSize>
   // Dense -> tensor<positionSize x positionSize>
   Value m2;
   if (diagonal) {
-    m2 = arith::ConstantOp::create(
-        builder, loc, meanType,
-        DenseElementsAttr::get(meanType, builder.getFloatAttr(elemType, 0.0)));
+    m2 = emitSplatConstant(builder, loc, meanType, 0.0);
   } else {
     auto m2Type = RankedTensorType::get({positionSize, positionSize}, elemType);
-    m2 = arith::ConstantOp::create(
-        builder, loc, m2Type,
-        DenseElementsAttr::get(m2Type, builder.getFloatAttr(elemType, 0.0)));
+    m2 = emitSplatConstant(builder, loc, m2Type, 0.0);
   }
 
-  Value n = arith::ConstantOp::create(
-      builder, loc, i64TensorType,
-      DenseElementsAttr::get(i64TensorType, builder.getI64IntegerAttr(0)));
+  Value n = emitI64ScalarConstant(builder, loc, 0);
 
   return {mean, m2, n};
 }
@@ -1692,18 +1520,14 @@ WelfordState impulse::updateWelford(OpBuilder &builder, Location loc,
 
   auto sampleType = cast<RankedTensorType>(sample.getType());
   auto elemType = sampleType.getElementType();
-  auto i64TensorType = RankedTensorType::get({}, builder.getI64Type());
 
-  auto oneI64 = arith::ConstantOp::create(
-      builder, loc, i64TensorType,
-      DenseElementsAttr::get(i64TensorType, builder.getI64IntegerAttr(1)));
+  Value oneI64 = emitI64ScalarConstant(builder, loc, 1);
   Value nNew = arith::AddIOp::create(builder, loc, state.n, oneI64);
 
   auto scalarType = RankedTensorType::get({}, elemType);
   Value nFloat = arith::SIToFPOp::create(builder, loc, scalarType, nNew);
 
-  Value nBroadcast = BroadcastOp::create(builder, loc, sampleType, nFloat,
-                                         sampleType.getShape());
+  Value nBroadcast = emitBroadcastScalar(builder, loc, nFloat, sampleType);
 
   Value deltaPre = arith::SubFOp::create(builder, loc, sample, state.mean);
 
@@ -1737,17 +1561,13 @@ Value impulse::finalizeWelford(OpBuilder &builder, Location loc,
   auto m2Type = cast<RankedTensorType>(state.m2.getType());
   auto elemType = m2Type.getElementType();
   auto scalarType = RankedTensorType::get({}, elemType);
-  auto i64TensorType = RankedTensorType::get({}, builder.getI64Type());
 
-  auto oneI64 = arith::ConstantOp::create(
-      builder, loc, i64TensorType,
-      DenseElementsAttr::get(i64TensorType, builder.getI64IntegerAttr(1)));
+  Value oneI64 = emitI64ScalarConstant(builder, loc, 1);
   Value nMinus1 = arith::SubIOp::create(builder, loc, state.n, oneI64);
   Value nMinus1Float =
       arith::SIToFPOp::create(builder, loc, scalarType, nMinus1);
 
-  Value nMinus1Bcast = BroadcastOp::create(builder, loc, m2Type, nMinus1Float,
-                                           m2Type.getShape());
+  Value nMinus1Bcast = emitBroadcastScalar(builder, loc, nMinus1Float, m2Type);
 
   Value cov = arith::DivFOp::create(builder, loc, state.m2, nMinus1Bcast);
 
@@ -1759,32 +1579,26 @@ Value impulse::finalizeWelford(OpBuilder &builder, Location loc,
   if (config.regularize) {
     Value nFloat = arith::SIToFPOp::create(builder, loc, scalarType, state.n);
 
-    auto fiveConst = arith::ConstantOp::create(
-        builder, loc, scalarType,
-        DenseElementsAttr::get(scalarType,
-                               builder.getFloatAttr(elemType, 5.0)));
+    Value fiveConst = emitSplatConstant(builder, loc, scalarType, 5.0);
     Value nPlusFive = arith::AddFOp::create(builder, loc, nFloat, fiveConst);
 
     Value scale = arith::DivFOp::create(builder, loc, nFloat, nPlusFive);
-    Value scaleBcast =
-        BroadcastOp::create(builder, loc, m2Type, scale, m2Type.getShape());
+    Value scaleBcast = emitBroadcastScalar(builder, loc, scale, m2Type);
     Value scaledCov = arith::MulFOp::create(builder, loc, scaleBcast, cov);
 
-    auto shrinkageBaseConst = arith::ConstantOp::create(
-        builder, loc, scalarType,
-        DenseElementsAttr::get(scalarType,
-                               builder.getFloatAttr(elemType, 1e-3 * 5.0)));
+    Value shrinkageBaseConst =
+        emitSplatConstant(builder, loc, scalarType, 1e-3 * 5.0);
     Value shrinkage =
         arith::DivFOp::create(builder, loc, shrinkageBaseConst, nPlusFive);
 
     if (config.diagonal) {
-      Value shrinkageBcast = BroadcastOp::create(builder, loc, m2Type,
-                                                 shrinkage, m2Type.getShape());
+      Value shrinkageBcast =
+          emitBroadcastScalar(builder, loc, shrinkage, m2Type);
       cov = arith::AddFOp::create(builder, loc, scaledCov, shrinkageBcast);
     } else {
       Value identity = createIdentityMatrix(builder, loc, m2Type);
-      Value shrinkageBcast = BroadcastOp::create(builder, loc, m2Type,
-                                                 shrinkage, m2Type.getShape());
+      Value shrinkageBcast =
+          emitBroadcastScalar(builder, loc, shrinkage, m2Type);
       Value shrinkageI =
           arith::MulFOp::create(builder, loc, shrinkageBcast, identity);
       cov = arith::AddFOp::create(builder, loc, scaledCov, shrinkageI);
@@ -1891,10 +1705,7 @@ static Value transformPosition(OpBuilder &builder, Location loc, Value position,
   Value result1D = slices.front();
   if (slices.size() > 1) {
     auto resultType1D = RankedTensorType::get({outSize}, elemType);
-    result1D = arith::ConstantOp::create(
-        builder, loc, resultType1D,
-        DenseElementsAttr::get(resultType1D,
-                               builder.getFloatAttr(elemType, 0.0)));
+    result1D = emitSplatConstant(builder, loc, resultType1D, 0.0);
 
     // The slices tile [0, outSize) exactly, so the zero init is never read.
     int64_t offset = 0;
@@ -1931,9 +1742,7 @@ Value impulse::computeTotalJacobianCorrection(OpBuilder &builder, Location loc,
   auto elemType = inputType.getElementType();
   auto scalarType = RankedTensorType::get({}, elemType);
 
-  Value total = arith::ConstantOp::create(
-      builder, loc, scalarType,
-      DenseElementsAttr::get(scalarType, builder.getFloatAttr(elemType, 0.0)));
+  Value total = emitSplatConstant(builder, loc, scalarType, 0.0);
 
   if (supports.empty())
     return total;
