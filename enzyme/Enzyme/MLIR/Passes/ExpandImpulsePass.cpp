@@ -213,6 +213,97 @@ computeOffsetForSampleInSelection(Operation *op, FunctionOpInterface fn,
   return -1;
 }
 
+namespace {
+/// Where the sites of a model at a list of addresses sit on a trace that lays
+/// out their values one after another, in list order.
+struct FlatTraceLayout {
+  /// The columns of the site at one address.
+  struct Entry {
+    ArrayAttr address;
+    int64_t column;
+    int64_t size;
+  };
+  /// The sample sites of the model, nested ones included, by symbol.
+  SampleOpMap siteBySymbol;
+  /// One entry per address, in list order.
+  SmallVector<Entry> entries;
+  /// Columns taken by all the addresses.
+  int64_t positionSize = 0;
+  /// First column of the first address that starts with each symbol.
+  DenseMap<Attribute, int64_t> columnOf;
+  /// Columns taken by the addresses that continue past each symbol.
+  DenseMap<Attribute, int64_t> nestedSizeOf;
+
+  /// Returns the first column of the first address that starts with
+  /// `symbol`, or -1 when no address does.
+  int64_t firstColumn(Attribute symbol) const {
+    auto it = columnOf.find(symbol);
+    return it == columnOf.end() ? -1 : it->second;
+  }
+};
+} // namespace
+
+/// Returns the number of trace columns the site at `address` takes, looking
+/// the first symbol up in `sites` and each later one in the generative
+/// function of the site before it. Fails after emitting on `op` when a symbol
+/// has no site, the address continues past a site with a `logpdf_fn` or into
+/// an empty function, or a value of the site is not a statically shaped
+/// tensor.
+static FailureOr<int64_t> getAddressSize(Operation *op,
+                                         const SampleOpMap &sites,
+                                         ArrayAttr address,
+                                         SymbolTableCollection &symbolTable) {
+  SampleOpMap nestedSites;
+  const SampleOpMap *scope = &sites;
+  for (auto [depth, symbol] : llvm::enumerate(address.getValue())) {
+    impulse::SampleOp site = scope->lookup(symbol);
+    if (!site)
+      return op->emitError(
+          "Could not find sample with symbol in address chain");
+    if (depth + 1 == address.size()) {
+      int64_t size = computeSampleElementCount(op, site);
+      if (size < 0)
+        return failure();
+      return size;
+    }
+    if (site.getLogpdfFnAttr())
+      return op->emitError(
+          "Cannot select nested address in distribution function");
+    auto genFn = symbolTable.lookupNearestSymbolFrom<FunctionOpInterface>(
+        site, site.getFnAttr());
+    if (genFn.getFunctionBody().empty())
+      return op->emitError(
+          "Cannot find generative function for nested address");
+    nestedSites = buildSampleOpMap(genFn);
+    scope = &nestedSites;
+  }
+  llvm_unreachable("an empty address has no site");
+}
+
+/// Lays out the sites of `fn` at `addresses` on a trace, in that order. Fails
+/// after emitting on `op` when an address is empty or `getAddressSize` fails.
+static FailureOr<FlatTraceLayout>
+getFlatTraceLayout(Operation *op, FunctionOpInterface fn, ArrayAttr addresses,
+                   SymbolTableCollection &symbolTable) {
+  FlatTraceLayout layout;
+  layout.siteBySymbol = buildSampleOpMap(fn);
+  for (Attribute attr : addresses) {
+    auto address = cast<ArrayAttr>(attr);
+    if (address.empty())
+      return op->emitError("Empty address in selection");
+    FailureOr<int64_t> size =
+        getAddressSize(op, layout.siteBySymbol, address, symbolTable);
+    if (failed(size))
+      return failure();
+    layout.entries.push_back({address, layout.positionSize, *size});
+    layout.columnOf.try_emplace(address[0], layout.positionSize);
+    if (address.size() > 1)
+      layout.nestedSizeOf[address[0]] += *size;
+    layout.positionSize += *size;
+  }
+  return layout;
+}
+
 /// Fails after emitting on `op` when `support`, the support of the site at
 /// `address`, lacks a bound or the event size that unconstraining reads.
 static LogicalResult verifyUnconstrainable(Operation *op, Attribute address,
@@ -1824,36 +1915,25 @@ static Value writeBackMHWindows(OpBuilder &b, Location loc, Value trace,
 /// move regenerating `regenerateAddresses` can change: those of the
 /// regenerated sites and of the score tail, and on a trace without score tail
 /// also those of sites in branches (their liveness can flip) and sub-calls.
-static ColumnWindows mhChangedColumnsFlat(Operation *op, FunctionOpInterface fn,
-                                          ArrayAttr layout,
+static ColumnWindows mhChangedColumnsFlat(const FlatTraceLayout &layout,
                                           ArrayAttr regenerateAddresses,
-                                          int64_t width,
-                                          SymbolTableCollection &symbolTable) {
-  auto sampleMap = buildSampleOpMap(fn);
-  int64_t positionSize =
-      computePositionSizeForSelection(op, fn, layout, symbolTable);
-  auto inList = [](ArrayAttr list, ArrayAttr address) {
-    return list && llvm::is_contained(list.getValue(), address);
-  };
+                                          int64_t width) {
   ColumnWindows windows;
-  int64_t offset = 0;
-  for (Attribute a : layout) {
-    auto address = cast<ArrayAttr>(a);
-    int64_t size = computePositionSizeForSelection(
-        op, fn, ArrayAttr::get(op->getContext(), {address}), symbolTable);
-    impulse::SampleOp site = findSampleBySymbol(sampleMap, address[0]);
-    bool isDist = site && (site.getDistAttr() || site.getLogpdfFnAttr());
-    bool changed = inList(regenerateAddresses, address);
+  for (const FlatTraceLayout::Entry &entry : layout.entries) {
+    impulse::SampleOp site = layout.siteBySymbol.lookup(entry.address[0]);
+    bool changed =
+        regenerateAddresses &&
+        llvm::is_contained(regenerateAddresses.getValue(), entry.address);
     // Constrained sites outside branches read the old trace (readsConstraint).
-    if (!changed && width == positionSize)
-      changed = !isDist || address.size() > 1 ||
+    if (!changed && width == layout.positionSize)
+      changed = (!site.getDistAttr() && !site.getLogpdfFnAttr()) ||
+                entry.address.size() > 1 ||
                 site->getParentOfType<impulse::IfOp>();
     if (changed)
-      windows.push_back({offset, offset + size});
-    offset += size;
+      windows.push_back({entry.column, entry.column + entry.size});
   }
-  if (width > positionSize)
-    windows.push_back({positionSize, width});
+  if (width > layout.positionSize)
+    windows.push_back({layout.positionSize, width});
   return mergeColumnWindows(windows);
 }
 
@@ -3060,8 +3140,11 @@ struct ExpandImpulsePass
       FunctionOpInterface fn = *model;
 
       ArrayAttr allAddresses = op.getAllAddressesAttr();
-      int64_t positionSize =
-          computePositionSizeForSelection(op, fn, allAddresses, symbolTable);
+      FailureOr<FlatTraceLayout> layout =
+          getFlatTraceLayout(op, fn, allAddresses, symbolTable);
+      if (failed(layout))
+        return failure();
+      int64_t positionSize = layout->positionSize;
       if (positionSize <= 0) {
         op.emitError("Impulse: failed to compute position size for simulate");
         return failure();
@@ -3132,8 +3215,8 @@ struct ExpandImpulsePass
           if (subAllAddresses.empty()) {
             sampledValues = emitSiteDraw(rewriter, symbolTable, sampleOp);
           } else {
-            int64_t subPositionSize = computePositionSizeForSelection(
-                sampleOp, genFn, subAllAddresses, symbolTable);
+            int64_t subPositionSize =
+                layout->nestedSizeOf.lookup(sampleOp.getSymbolAttr());
             if (subPositionSize <= 0) {
               sampleOp.emitError(
                   "Impulse: failed to compute sub-position size");
@@ -3158,14 +3241,7 @@ struct ExpandImpulsePass
             branch.weight = arith::AddFOp::create(rewriter, sampleOp.getLoc(),
                                                   branch.weight, subWeight);
 
-            int64_t mergeOffset = computeOffsetForSampleInSelection(
-                sampleOp, fn, allAddresses, sampleOp.getSymbolAttr(),
-                symbolTable);
-            if (mergeOffset < 0) {
-              sampleOp.emitError("Impulse: failed to compute merge offset");
-              return failure();
-            }
-
+            int64_t mergeOffset = layout->firstColumn(sampleOp.getSymbolAttr());
             branch.trace = updateColumns(rewriter, sampleOp.getLoc(),
                                          branch.trace, subTrace, mergeOffset);
             branch.offset =
@@ -3495,6 +3571,8 @@ struct ExpandImpulsePass
 
       int64_t fullPositionSize = 0;
       RegionTraceLayout layout;
+      // The region form fills this in during the proposal.
+      ColumnWindows changedColumns;
       if constexpr (isRegionForm) {
         FailureOr<RegionTraceLayout> regionLayout =
             getRegionTraceLayout(op, /*topLevelOnly=*/true);
@@ -3509,17 +3587,15 @@ struct ExpandImpulsePass
                              .template getOps<impulse::SampleRegionOp>())
           fullPositionSize += sampleRegionSize(site);
       } else {
-        fullPositionSize =
-            computePositionSizeForSelection(op, fn, allAddresses, symbolTable);
+        FailureOr<FlatTraceLayout> flatLayout =
+            getFlatTraceLayout(op, fn, allAddresses, symbolTable);
+        if (failed(flatLayout))
+          return failure();
+        fullPositionSize = flatLayout->positionSize;
+        changedColumns = mhChangedColumnsFlat(*flatLayout, selection,
+                                              traceType.getShape()[1]);
       }
       bool hasScoreTail = traceType.getShape()[1] > fullPositionSize;
-
-      // The region form fills this in during the proposal.
-      ColumnWindows changedColumns;
-      if constexpr (!isRegionForm)
-        changedColumns =
-            mhChangedColumnsFlat(op, fn, allAddresses, selection,
-                                 traceType.getShape()[1], symbolTable);
 
       // Carries the trace, the weight, the key and whether the step accepted.
       auto oneStep = [&](ValueRange carried) -> SmallVector<Value> {
@@ -3924,27 +4000,22 @@ struct ExpandImpulsePass
 
       auto selection = mhOp.getSelectionAttr();
 
+      FailureOr<FlatTraceLayout> layout =
+          getFlatTraceLayout(mhOp, fn, allAddresses, symbolTable);
+      if (failed(layout))
+        return failure();
       // On a score-tail trace, regenerate returns the dirty-term weight delta.
-      int64_t fullPositionSize =
-          computePositionSizeForSelection(mhOp, fn, allAddresses, symbolTable);
-      bool hasScoreTail =
-          cast<RankedTensorType>(traceType).getShape()[1] > fullPositionSize;
+      int64_t width = cast<RankedTensorType>(traceType).getShape()[1];
+      bool hasScoreTail = width > layout->positionSize;
 
       MHProposal proposal =
           proposeFlatMove(rewriter, loc, mhOp, mhOp.getInputs(), oldTrace,
                           nameAttr, fn.getResultTypes());
-
-      MHDecision decision =
-          emitMHDecision(rewriter, loc, oldWeight, proposal, hasScoreTail);
-      Value newTrace = writeBackMHWindows(
-          rewriter, loc, oldTrace, proposal.trace, decision.accepted,
-          mhChangedColumnsFlat(mhOp, fn, allAddresses, selection,
-                               cast<RankedTensorType>(traceType).getShape()[1],
-                               symbolTable));
-      Value newWeight = arith::SelectOp::create(
-          rewriter, loc, decision.accepted, decision.acceptWeight, oldWeight);
-      rewriter.replaceOp(
-          mhOp, {newTrace, newWeight, decision.accepted, decision.rng});
+      MHStep step =
+          emitMHStep(rewriter, loc, oldTrace, oldWeight, proposal, hasScoreTail,
+                     mhChangedColumnsFlat(*layout, selection, width));
+      rewriter.replaceOp(mhOp,
+                         {step.trace, step.weight, step.accepted, step.rng});
       return success();
     }
   };
@@ -3967,8 +4038,11 @@ struct ExpandImpulsePass
       FunctionOpInterface fn = *model;
 
       ArrayAttr allAddresses = op.getAllAddressesAttr();
-      int64_t positionSize =
-          computePositionSizeForSelection(op, fn, allAddresses, symbolTable);
+      FailureOr<FlatTraceLayout> layout =
+          getFlatTraceLayout(op, fn, allAddresses, symbolTable);
+      if (failed(layout))
+        return failure();
+      int64_t positionSize = layout->positionSize;
       if (positionSize <= 0) {
         op.emitError("Impulse: failed to compute position size for generate");
         return failure();
@@ -4073,8 +4147,8 @@ struct ExpandImpulsePass
           if (subAllAddresses.empty()) {
             sampledValues = emitSiteDraw(rewriter, symbolTable, sampleOp);
           } else {
-            int64_t subPositionSize = computePositionSizeForSelection(
-                sampleOp, genFn, subAllAddresses, symbolTable);
+            Attribute symbol = sampleOp.getSymbolAttr();
+            int64_t subPositionSize = layout->nestedSizeOf.lookup(symbol);
             int64_t subConstraintSize = computePositionSizeForSelection(
                 sampleOp, genFn, subConstrainedAddrs, symbolTable);
             if (subPositionSize <= 0 || subConstraintSize < 0) {
@@ -4089,9 +4163,8 @@ struct ExpandImpulsePass
 
             if (subConstraintSize > 0) {
               int64_t subConstraintOffset = computeOffsetForSampleInSelection(
-                  sampleOp, fn, op.getConstrainedAddressesAttr(),
-                  sampleOp.getSymbolAttr(), symbolTable);
-
+                  sampleOp, fn, op.getConstrainedAddressesAttr(), symbol,
+                  symbolTable);
               subConstraint = emitColumnSlice(rewriter, sampleOp.getLoc(),
                                               subConstraintType, constraint,
                                               subConstraintOffset);
@@ -4120,10 +4193,7 @@ struct ExpandImpulsePass
             branch.weight = arith::AddFOp::create(rewriter, sampleOp.getLoc(),
                                                   branch.weight, subWeight);
 
-            int64_t mergeOffset = computeOffsetForSampleInSelection(
-                sampleOp, fn, allAddresses, sampleOp.getSymbolAttr(),
-                symbolTable);
-
+            int64_t mergeOffset = layout->firstColumn(symbol);
             branch.trace = updateColumns(rewriter, sampleOp.getLoc(),
                                          branch.trace, subTrace, mergeOffset);
             branch.offset =
@@ -4202,8 +4272,11 @@ struct ExpandImpulsePass
       FunctionOpInterface fn = *model;
 
       ArrayAttr allAddresses = op.getAllAddressesAttr();
-      int64_t positionSize =
-          computePositionSizeForSelection(op, fn, allAddresses, symbolTable);
+      FailureOr<FlatTraceLayout> layout =
+          getFlatTraceLayout(op, fn, allAddresses, symbolTable);
+      if (failed(layout))
+        return failure();
+      int64_t positionSize = layout->positionSize;
       if (positionSize <= 0) {
         op.emitError("Impulse: failed to compute position size for regenerate");
         return failure();
@@ -4211,6 +4284,7 @@ struct ExpandImpulsePass
 
       ArrayAttr constrainedAddresses = op.getConstrainedAddressesAttr();
       bool hasConstraint = static_cast<bool>(op.getConstraint());
+
       // Operand width, not the packed size, as in generate.
       int64_t constraintSize =
           hasConstraint ? cast<RankedTensorType>(op.getConstraint().getType())
@@ -4381,8 +4455,7 @@ struct ExpandImpulsePass
           if (failed(verifyTopLevelAddress(sampleOp, selection, "selected")))
             return failure();
           bool isSelected = addressInList(sampleOp, selection);
-          int64_t sampleOffset = computeOffsetForSampleInSelection(
-              op, fn, allAddresses, sampleOp.getSymbolAttr(), symbolTable);
+          int64_t sampleOffset = layout->firstColumn(sampleOp.getSymbolAttr());
 
           int64_t flipIdx = flipLatentIndex(sampleOp, isSelected);
           Value oldLive;
@@ -4514,21 +4587,15 @@ struct ExpandImpulsePass
           if (subAllAddresses.empty()) {
             sampledValues = emitSiteDraw(rewriter, symbolTable, sampleOp);
           } else {
-            int64_t subPositionSize = computePositionSizeForSelection(
-                sampleOp, genFn, subAllAddresses, symbolTable);
+            Attribute symbol = sampleOp.getSymbolAttr();
+            int64_t subPositionSize = layout->nestedSizeOf.lookup(symbol);
             if (subPositionSize <= 0) {
               sampleOp.emitError(
                   "Impulse: failed to compute sub-position size");
               return failure();
             }
 
-            int64_t mergeOffset = computeOffsetForSampleInSelection(
-                sampleOp, fn, allAddresses, sampleOp.getSymbolAttr(),
-                symbolTable);
-            if (mergeOffset < 0) {
-              sampleOp.emitError("Impulse: failed to compute merge offset");
-              return failure();
-            }
+            int64_t mergeOffset = layout->firstColumn(symbol);
 
             auto subTraceType = RankedTensorType::get({1, subPositionSize},
                                                       rewriter.getF64Type());
@@ -4543,8 +4610,7 @@ struct ExpandImpulsePass
               int64_t subConstraintSize = computePositionSizeForSelection(
                   sampleOp, genFn, subConstrainedAddrs, symbolTable);
               int64_t subConstraintOffset = computeOffsetForSampleInSelection(
-                  sampleOp, fn, constrainedAddresses, sampleOp.getSymbolAttr(),
-                  symbolTable);
+                  sampleOp, fn, constrainedAddresses, symbol, symbolTable);
               if (subConstraintSize > 0 && subConstraintOffset >= 0) {
                 auto subConstraintType = RankedTensorType::get(
                     {1, subConstraintSize}, rewriter.getF64Type());
