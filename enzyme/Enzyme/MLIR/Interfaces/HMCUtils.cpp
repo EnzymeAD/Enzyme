@@ -449,40 +449,42 @@ static std::pair<Value, Value> emitPotential(OpBuilder &builder, Location loc,
   return {potentialEnergy, rng};
 }
 
-GradientResult impulse::computePotentialAndGradient(OpBuilder &builder,
-                                                    Location loc,
-                                                    Value position, Value rng,
-                                                    const HMCContext &ctx) {
-  auto positionType = ctx.getPositionType();
-  auto scalarType = ctx.getScalarType();
-  auto elemType = ctx.getElementType();
+/// Whether the potential calls the logpdf symbol, which takes the position
+/// flattened to `tensor<N>`.
+static bool usesLogpdfSymbol(const HMCContext &ctx) {
+  return ctx.hasCustomLogpdf() && !ctx.hasLogpdfRegion();
+}
 
-  auto gradSeed = arith::ConstantOp::create(
-      builder, loc, scalarType,
-      DenseElementsAttr::get(scalarType, builder.getFloatAttr(elemType, 1.0)));
+/// Reshapes a `1xN` position to the `tensor<N>` argument of the logpdf symbol.
+static Value flattenPosition(OpBuilder &builder, Location loc, Value position,
+                             const HMCContext &ctx) {
+  auto flatType =
+      RankedTensorType::get({ctx.positionSize}, ctx.getElementType());
+  return impulse::ReshapeOp::create(builder, loc, flatType, position);
+}
 
-  bool useSymbol = ctx.hasCustomLogpdf() && !ctx.hasLogpdfRegion();
-  auto flatType = RankedTensorType::get({ctx.positionSize}, elemType);
-  Value autodiffPosition = position;
-  auto autodiffPositionType = positionType;
-  auto autodiffGradType = positionType;
-  if (useSymbol) {
-    autodiffPosition =
-        impulse::ReshapeOp::create(builder, loc, flatType, position);
-    autodiffPositionType = flatType;
-    autodiffGradType = flatType;
-  }
+/// Emits the gradient region of the potential at `autodiffPosition`, which is
+/// flat when the potential calls the logpdf symbol, seeded with `gradSeed`.
+/// The returned gradient has the position type.
+static GradientResult emitPotentialGradient(OpBuilder &builder, Location loc,
+                                            Value autodiffPosition,
+                                            Value gradSeed, Value rng,
+                                            const HMCContext &ctx) {
+  RankedTensorType positionType = ctx.getPositionType();
+  bool useSymbol = usesLogpdfSymbol(ctx);
+  RankedTensorType autodiffType =
+      useSymbol
+          ? RankedTensorType::get({ctx.positionSize}, ctx.getElementType())
+          : positionType;
 
-  SmallVector<Value> autodiffInputs{autodiffPosition, gradSeed};
   auto autodiffOp = enzyme::AutoDiffRegionOp::create(
-      builder, loc, TypeRange{scalarType, rng.getType(), autodiffGradType},
-      autodiffInputs, gradientRegionAttrs(builder, ctx.autodiffAttrs));
+      builder, loc, TypeRange{ctx.getScalarType(), rng.getType(), autodiffType},
+      ValueRange{autodiffPosition, gradSeed},
+      gradientRegionAttrs(builder, ctx.autodiffAttrs));
 
   Block *autodiffBlock = builder.createBlock(&autodiffOp.getBody());
-  autodiffBlock->addArgument(autodiffPositionType, loc);
-
+  Value qArg = autodiffBlock->addArgument(autodiffType, loc);
   builder.setInsertionPointToStart(autodiffBlock);
-  Value qArg = autodiffBlock->getArgument(0);
 
   if (useSymbol) {
     Value logDensity = emitLogpdfFnInAutodiff(builder, loc, qArg, ctx);
@@ -500,15 +502,25 @@ GradientResult impulse::computePotentialAndGradient(OpBuilder &builder,
   builder.setInsertionPointAfter(autodiffOp);
 
   Value grad = autodiffOp.getResult(2);
-  if (useSymbol) {
+  if (useSymbol)
     grad = impulse::ReshapeOp::create(builder, loc, positionType, grad);
-  }
+  return {autodiffOp.getResult(0), grad, autodiffOp.getResult(1)};
+}
 
-  return {
-      autodiffOp.getResult(0), // U
-      grad,                    // grad
-      autodiffOp.getResult(1)  // rng
-  };
+GradientResult impulse::computePotentialAndGradient(OpBuilder &builder,
+                                                    Location loc,
+                                                    Value position, Value rng,
+                                                    const HMCContext &ctx) {
+  RankedTensorType scalarType = ctx.getScalarType();
+  auto gradSeed = arith::ConstantOp::create(
+      builder, loc, scalarType,
+      DenseElementsAttr::get(scalarType,
+                             builder.getFloatAttr(ctx.getElementType(), 1.0)));
+  Value autodiffPosition = usesLogpdfSymbol(ctx)
+                               ? flattenPosition(builder, loc, position, ctx)
+                               : position;
+  return emitPotentialGradient(builder, loc, autodiffPosition, gradSeed, rng,
+                               ctx);
 }
 
 IntegrationResult impulse::computeIntegrationStep(OpBuilder &builder,
@@ -753,9 +765,7 @@ NUTSTreeState impulse::combineTrees(OpBuilder &builder, Location loc,
 InitialHMCState impulse::InitHMC(OpBuilder &builder, Location loc, Value rng,
                                  const HMCContext &ctx, Value initialPosition,
                                  bool debugDump) {
-  auto positionType = ctx.getPositionType();
-  auto scalarType = ctx.getScalarType();
-  auto elemType = ctx.getElementType();
+  RankedTensorType scalarType = ctx.getScalarType();
 
   auto initSplit = impulse::RandomSplitOp::create(
       builder, loc, TypeRange{rng.getType(), rng.getType()}, rng);
@@ -767,15 +777,11 @@ InitialHMCState impulse::InitHMC(OpBuilder &builder, Location loc, Value rng,
 
   Value q0;
   Value U0;
-
-  bool useSymbol = ctx.hasCustomLogpdf() && !ctx.hasLogpdfRegion();
+  bool useSymbol = usesLogpdfSymbol(ctx);
   if (useSymbol) {
     q0 = initialPosition;
-    auto flatType = RankedTensorType::get({ctx.positionSize}, elemType);
-    auto q0Flat = impulse::ReshapeOp::create(builder, loc, flatType, q0);
-    SmallVector<Value> callArgs;
-    callArgs.push_back(q0Flat);
-    callArgs.append(ctx.fnInputs.begin(), ctx.fnInputs.end());
+    SmallVector<Value> callArgs{flattenPosition(builder, loc, q0, ctx)};
+    llvm::append_range(callArgs, ctx.fnInputs);
     auto callOp = func::CallOp::create(builder, loc, ctx.logpdfFn,
                                        TypeRange{scalarType}, callArgs);
     U0 = arith::NegFOp::create(builder, loc, callOp.getResult(0));
@@ -793,52 +799,15 @@ InitialHMCState impulse::InitHMC(OpBuilder &builder, Location loc, Value rng,
              .first;
   }
 
-  auto flatType = RankedTensorType::get({ctx.positionSize}, elemType);
-  Value autodiffQ0 = q0;
-  auto autodiffQ0Type = positionType;
-  auto autodiffGradType = positionType;
-  if (useSymbol) {
-    autodiffQ0 = impulse::ReshapeOp::create(builder, loc, flatType, q0);
-    autodiffQ0Type = flatType;
-    autodiffGradType = flatType;
-  }
-
-  auto gradSeedInit = arith::ConstantOp::create(
+  Value autodiffQ0 = useSymbol ? flattenPosition(builder, loc, q0, ctx) : q0;
+  auto gradSeed = arith::ConstantOp::create(
       builder, loc, scalarType,
-      DenseElementsAttr::get(scalarType, builder.getFloatAttr(elemType, 1.0)));
-  SmallVector<Value> autodiffInputs{autodiffQ0, gradSeedInit};
-  auto autodiffInit = enzyme::AutoDiffRegionOp::create(
-      builder, loc,
-      TypeRange{scalarType, rngForAutodiff.getType(), autodiffGradType},
-      autodiffInputs, gradientRegionAttrs(builder, ctx.autodiffAttrs));
+      DenseElementsAttr::get(scalarType,
+                             builder.getFloatAttr(ctx.getElementType(), 1.0)));
+  GradientResult gradient = emitPotentialGradient(
+      builder, loc, autodiffQ0, gradSeed, rngForAutodiff, ctx);
 
-  Block *autodiffInitBlock = builder.createBlock(&autodiffInit.getBody());
-  autodiffInitBlock->addArgument(autodiffQ0Type, loc);
-
-  builder.setInsertionPointToStart(autodiffInitBlock);
-  auto q0Arg = autodiffInitBlock->getArgument(0);
-
-  if (useSymbol) {
-    Value logDensityInit = emitLogpdfFnInAutodiff(builder, loc, q0Arg, ctx);
-    auto potentialEnergyInit =
-        arith::NegFOp::create(builder, loc, logDensityInit);
-    enzyme::YieldOp::create(builder, loc,
-                            {potentialEnergyInit, rngForAutodiff});
-  } else {
-    Value q0ArgConstrained =
-        constrainPosition(builder, loc, q0Arg, ctx.supports);
-    auto [potentialEnergyInit, rngOut] = emitPotential(
-        builder, loc, q0Arg, q0ArgConstrained, rngForAutodiff, ctx);
-    enzyme::YieldOp::create(builder, loc, {potentialEnergyInit, rngOut});
-  }
-  builder.setInsertionPointAfter(autodiffInit);
-
-  Value grad0 = autodiffInit.getResult(2);
-  if (useSymbol) {
-    grad0 = impulse::ReshapeOp::create(builder, loc, positionType, grad0);
-  }
-
-  return {q0, U0, grad0, rngForSampleKernel};
+  return {q0, U0, gradient.grad, rngForSampleKernel};
 }
 
 namespace {
