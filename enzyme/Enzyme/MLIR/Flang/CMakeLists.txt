@@ -18,8 +18,9 @@ target_include_directories(
 # so that their MLIR dependencies resolve from the host.
 target_link_libraries(
   FlangEnzymeMLIR-${LLVM_VERSION_MAJOR}
-  PRIVATE $<TARGET_FILE:MLIREnzymeToLLVMIRTranslation>
-          $<TARGET_FILE:MLIREnzymeAutoDiffInterface> $<TARGET_FILE:MLIREnzyme>)
+  PRIVATE
+    $<TARGET_FILE:MLIREnzymeToLLVMIRTranslation>
+    $<TARGET_FILE:MLIREnzymeAutoDiffInterface> $<TARGET_FILE:MLIREnzyme>)
 target_link_options(
   FlangEnzymeMLIR-${LLVM_VERSION_MAJOR}
   PRIVATE -Wl,--allow-shlib-undefined)
