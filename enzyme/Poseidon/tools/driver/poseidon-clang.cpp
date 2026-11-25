@@ -53,9 +53,11 @@ namespace clang_options = clang::driver::options;
 using clang::driver::getDriverOptTable;
 #endif
 
+#include <fcntl.h>
 #include <optional>
 #include <string>
 #include <system_error>
+#include <unistd.h>
 
 using namespace llvm;
 
@@ -186,10 +188,37 @@ struct Invocation {
 };
 } // namespace
 
+namespace {
+/// Sends this process's stdout and stderr to the null device while it lives.
+class Silence {
+  int Out = dup(STDOUT_FILENO), Err = dup(STDERR_FILENO);
+
+public:
+  Silence() {
+    outs().flush();
+    int Null = open("/dev/null", O_WRONLY);
+    if (Null >= 0) {
+      dup2(Null, STDOUT_FILENO);
+      dup2(Null, STDERR_FILENO);
+      close(Null);
+    }
+  }
+  ~Silence() {
+    outs().flush();
+    for (auto [Saved, Stream] :
+         {std::pair(Out, STDOUT_FILENO), std::pair(Err, STDERR_FILENO)}) {
+      if (Saved < 0)
+        continue;
+      dup2(Saved, Stream);
+      close(Saved);
+    }
+  }
+};
+} // namespace
+
 /// Reads `Argv` the way clang's driver would, from the compilation it builds
 /// without running a job. A command line clang rejects reads as one with no
 /// input: clang reports it when the driver runs it.
-
 static Invocation analyze(StringRef Clang, ArrayRef<const char *> Argv) {
   using namespace clang::driver;
   clang::DiagnosticOptions DiagOpts;
@@ -199,7 +228,13 @@ static Invocation analyze(StringRef Clang, ArrayRef<const char *> Argv) {
   Driver D(Clang, sys::getDefaultTargetTriple(), Diags);
   // A missing input is clang's to report when it runs.
   D.setCheckInputsExist(false);
-  std::unique_ptr<Compilation> C(D.BuildCompilation(Argv));
+  // Building a compilation prints what -###, -v, --version, -print-* and the
+  // like ask for, which clang prints again when it runs.
+  std::unique_ptr<Compilation> C;
+  {
+    Silence Quiet;
+    C.reset(D.BuildCompilation(Argv));
+  }
   Invocation I;
   if (!C)
     return I;

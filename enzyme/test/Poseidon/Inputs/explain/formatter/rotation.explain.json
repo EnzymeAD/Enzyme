@@ -128,6 +128,7 @@
         },
         {
           "executions": 1000,
+          "float_call": "fmaf",
           "loc": {
             "col": 36,
             "file": "explain_formatter_rotation.cpp",
@@ -139,6 +140,7 @@
         },
         {
           "executions": 1000,
+          "float_call": "fmaf",
           "loc": {
             "col": 44,
             "file": "explain_formatter_rotation.cpp",
@@ -150,6 +152,7 @@
         },
         {
           "executions": 1000,
+          "float_call": "sqrtf",
           "loc": {
             "col": 20,
             "file": "explain_formatter_rotation.cpp",
@@ -172,6 +175,7 @@
         },
         {
           "executions": 1000,
+          "float_call": "sinf",
           "loc": {
             "col": 16,
             "file": "explain_formatter_rotation.cpp",
@@ -194,6 +198,7 @@
         },
         {
           "executions": 1000,
+          "float_call": "cosf",
           "loc": {
             "col": 16,
             "file": "explain_formatter_rotation.cpp",

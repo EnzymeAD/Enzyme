@@ -102,6 +102,12 @@
 // RUN:     -poseidon-profile-use -x hip --offload-arch=gfx942 -nogpuinc \
 // RUN:     -nogpulib -### %s -o %t.o 2>&1 \
 // RUN:   | FileCheck --check-prefix=ROCMPATH %s
+// What clang prints for -###, -v, --version and -print-* comes once.
+// RUN: %poseidon_clang -### -c %s -o %t.o 2>&1 | grep -c 'clang version' \
+// RUN:   | FileCheck --check-prefix=ONCE %s
+// RUN: %poseidon_clang --version | grep -c 'clang version' \
+// RUN:   | FileCheck --check-prefix=ONCE %s
+// RUN: %poseidon_clang -print-resource-dir | count 1
 
 int main(void) { return 0; }
 
@@ -211,3 +217,5 @@ int main(void) { return 0; }
 // CLINKCXX: clang {{.*}}-lposeidon_profile {{.*}}-lc++ -lm{{ ?$}}
 
 // OBJCUDA: clang++ {{.*}}.link.o -### -o {{[^ ]+}} -L{{[^ ]+}}/lib64 -Wl,--push-state,--as-needed -lcudart -Wl,--pop-state -L{{[^ ]+}} -lposeidon_profile -lposeidon_rt -Wl,--push-state,--as-needed -lcublas -Wl,--pop-state
+
+// ONCE: {{^}}1{{$}}

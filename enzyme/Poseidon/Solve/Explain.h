@@ -10,6 +10,58 @@
 // from the solver's own data after it has chosen and before anything is
 // materialized. Output only: nothing here feeds back into a decision.
 //
+// <func>.explain.json, schema "poseidon-explain/2", keys in snake_case; a key
+// whose value is unknown or not finite is left out:
+//   schema     "poseidon-explain/2"
+//   function   name (demangled), symbol, ir (the IR function solved), site (the
+//              call: file, line, col), loc (the definition); for a solved site
+//              also canonical_hash (of the form the profile was recorded
+//              against) and profile (the profile file read)
+//   target     tau and tau_from ("site" or "flag") under an accuracy target,
+//              else budget (the -poseidon-cost-budget share); for a solved site
+//              also cost_model, selector ("dp", "joint", "error-budget",
+//              "manual"), from_cache (the DP table was read from the cache),
+//              sites (the IR functions of a joint solve)
+//   scale      (solved sites) accuracy_scale S and baseline_accuracy_cost A0:
+//              an accuracy cost a is the modelled relative error (A0 + a) / S;
+//              profiled_cost, the cost-model units the profiled run spent, a
+//              cost share is a fraction of; kappa, kappa_mark and kappa_factor
+//              when the profiling run measured a condition number
+//   result     status: "rewritten", "as_written" (solved, nothing applied),
+//              "no_solution" (no frontier point meets the target or the
+//              budget), "nothing_to_optimize", "no_fp_operation", "unprofiled"
+//              (no profile of the site), "never_executed" (the profiling run
+//              never ran it), "below_cost_share" (under
+//              -poseidon-min-cost-share); reason: why, for every status but
+//              "rewritten"; profile: the file looked at, for "unprofiled" and
+//              "never_executed"; for a solved site also: applied (the ids
+//              applied), steps (each step the solve chose, in order: id,
+//              choice, the text of its "Applying solution for" line, and
+//              applied, false for a step an earlier one made moot), pin (the
+//              -poseidon-apply-rewrites value that applies them again),
+//              selected (the frontier point selected: cost, the share it adds,
+//              accuracy_cost, modelled_rel_error), best_achievable_rel_error
+//              (for "no_solution" under a target), cost_before, cost_after,
+//              modelled_rel_error_as_written, modelled_rel_error
+//   subgraphs  (solved sites) each optimization unit: id (S<i> an FP
+//              subgraph, M<i> a matrix product), kind ("subgraph", "matmul"),
+//              loc, shape, cost, executions, ops (each with opcode, type, loc,
+//              executions, sensitivity, gradient, min, max, and for a call of
+//              a math function float_call, the C function of its float form),
+//              inputs, outputs, original, herbie, left_as_written, and
+//              alternatives: each candidate with id, kind ("algebraic",
+//              "precision", "expansion", "matmul"), summary (for a product,
+//              the realization the solve names it by), precision, outputs,
+//              fpcore, c, approx, approx_note, changes (each with from, to
+//              and the indices of its ops), cost_delta, modelled_error,
+//              modelled_domain_error (of a product: under the "error-budget"
+//              selector the applied one is the cheapest whose domain error is
+//              at most tau), herbie_error_bits, status ("applied", "pareto",
+//              "rejected") and reason
+//   pareto     (solved sites) the frontier in cost order: budget (the
+//              -poseidon-cost-budget that selects the point; none for a point
+//              no budget selects), cost, modelled_rel_error, applied, selected
+//
 //===----------------------------------------------------------------------===//
 
 #ifndef POSEIDON_EXPLAIN_H

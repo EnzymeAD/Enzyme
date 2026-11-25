@@ -121,6 +121,7 @@
       "ops": [
         {
           "executions": 1024,
+          "float_call": "cosf",
           "loc": {
             "col": 21,
             "file": "explain_formatter.cpp",

@@ -100,7 +100,8 @@ repeated compile does not search again.
 `-poseidon-explain=<dir>` writes `<function>.explain.json` for every site: what
 its solve changed, considered and rejected, at source locations.
 `poseidon-explain <dir>` prints it as a report, and with `--format source` or
-`diff` as the source with the applied rewrites in it. `-Rpass=poseidon`
+`diff` as the source with the applied rewrites in it, placed through the AST of
+the clang `poseidon-clang++` runs (`--clang` names another). `-Rpass=poseidon`
 reports the decisions as compiler remarks.
 
 `poseidon-clang -poseidon-help` lists the common flags, and

@@ -14,6 +14,7 @@
 #include "Pass/Session.h"
 #include "Sites/SiteIdentity.h"
 #include "Solvers.h"
+#include "Targets/MathLibrary.h"
 #include "Techniques/Herbie.h"
 #include "Techniques/Matmul/Matmul.h"
 #include "Techniques/Precision.h"
@@ -1086,6 +1087,8 @@ void Explainer::buildSubgraph(size_t s) {
     FPNode *N = nodeOf(&I);
     if (N)
       op["opcode"] = N->op;
+    if (N && hasFloatSuffixInC(N->op))
+      op["float_call"] = N->op + "f";
     op["type"] = typeName(I.getType());
     putLoc(op, "loc", locOf(&I));
     if (N) {
@@ -1290,8 +1293,7 @@ void Explainer::build() {
     buildMatmul(m);
 }
 
-// The explanation of a solved site; the schema is the one `poseidon-explain
-// --help` documents, versioned by kSchema.
+// The explanation of a solved site, in the schema Explain.h documents.
 json::Object Explainer::toJSON() {
   json::Object root;
   root["schema"] = kSchema;

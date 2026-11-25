@@ -1,0 +1,201 @@
+{
+  "function": {
+    "ir": "preprocess__Z6kernelPKdPdi",
+    "loc": {
+      "col": 0,
+      "file": "explain_formatter.cpp",
+      "line": 13
+    },
+    "name": "kernel(double const*, double*, int)",
+    "site": {
+      "col": 3,
+      "file": "explain_formatter.cpp",
+      "line": 26
+    },
+    "symbol": "_Z6kernelPKdPdi"
+  },
+  "pareto": [
+    {
+      "applied": [
+        "R0_1"
+      ],
+      "budget": -1.0,
+      "cost": 0,
+      "modelled_rel_error": 1.1607706226323944e-16,
+      "selected": true
+    },
+    {
+      "applied": [
+        "R0_0"
+      ],
+      "budget": -0.9656455768680218,
+      "cost": 0.03435442313197824,
+      "modelled_rel_error": 2.1273352908378104e-25
+    }
+  ],
+  "result": {
+    "applied": [
+      "R0_1"
+    ],
+    "cost_after": 0,
+    "cost_before": 1.0,
+    "modelled_rel_error": 1.1607706226323944e-16,
+    "modelled_rel_error_as_written": 2.770306794452491e-10,
+    "status": "rewritten"
+  },
+  "schema": "poseidon-explain/2",
+  "subgraphs": [
+    {
+      "alternatives": [
+        {
+          "approx_note": "series approximation of (1.0 - cos(x[i])) / (x[i] * x[i])",
+          "c": "fma(-0.041666666666666664, x[i] * x[i], 0.5)",
+          "cost_delta": -0.9656455768680218,
+          "fpcore": "#s(approx (/ (- 1 (cos v0)) (* v0 v0)) (fma.f64 #s(literal -1/24 binary64) (*.f64 v0 v0) #s(literal 1/2 binary64)))",
+          "id": "R0_0",
+          "kind": "algebraic",
+          "modelled_error": 2.1273352908378104e-25,
+          "outputs": [
+            0
+          ],
+          "precision": "binary64",
+          "reason": "on the Pareto frontier; -poseidon-apply-rewrites=R0_0 applies it",
+          "status": "pareto",
+          "summary": "Herbie rewrite searched at binary64, series approximation"
+        },
+        {
+          "approx_note": "series approximation of (1.0 - cos(x[i])) / (x[i] * x[i])",
+          "c": "0.5",
+          "cost_delta": -1.0,
+          "fpcore": "#s(approx (/ (- 1 (cos v0)) (* v0 v0)) #s(literal 1/2 binary64))",
+          "id": "R0_1",
+          "kind": "algebraic",
+          "modelled_error": 1.1607706226323944e-16,
+          "outputs": [
+            0
+          ],
+          "precision": "binary64",
+          "reason": "part of the cheapest solution that meets the target",
+          "status": "applied",
+          "summary": "Herbie rewrite searched at binary64, series approximation"
+        },
+        {
+          "approx_note": "series approximation of (1.0 - cos(x[i])) / (x[i] * x[i])",
+          "c": "(double)0.5f",
+          "cost_delta": -1.0,
+          "fpcore": "#s(approx (/ (- 1 (cos v0)) (* v0 v0)) #s(literal 1/2 binary32))",
+          "id": "R1_0",
+          "kind": "algebraic",
+          "modelled_error": 1.1607706226323944e-16,
+          "outputs": [
+            0
+          ],
+          "precision": "binary32",
+          "reason": "the selected R0_1 rewrites the same output",
+          "status": "rejected",
+          "summary": "Herbie rewrite searched at binary32, series approximation"
+        }
+      ],
+      "cost": 1.0,
+      "executions": 1024,
+      "id": "S0",
+      "inputs": [
+        {
+          "loc": {
+            "col": 36,
+            "file": "explain_formatter.cpp",
+            "line": 15
+          },
+          "max": 0.0001,
+          "min": 1e-08,
+          "name": "x[i]",
+          "var": "v0"
+        }
+      ],
+      "kind": "subgraph",
+      "loc": {
+        "col": 43,
+        "file": "explain_formatter.cpp",
+        "line": 15
+      },
+      "ops": [
+        {
+          "executions": 1024,
+          "float_call": "cosf",
+          "loc": {
+            "col": 27,
+            "file": "explain_formatter.cpp",
+            "line": 15
+          },
+          "max": 1,
+          "min": 0.999999995,
+          "opcode": "cos"
+        },
+        {
+          "executions": 1024,
+          "loc": {
+            "col": 25,
+            "file": "explain_formatter.cpp",
+            "line": 15
+          },
+          "max": 4.999999969612645e-09,
+          "min": 0,
+          "opcode": "-"
+        },
+        {
+          "executions": 1024,
+          "loc": {
+            "col": 51,
+            "file": "explain_formatter.cpp",
+            "line": 15
+          },
+          "max": 1e-08,
+          "min": 1.0000000000000001e-16,
+          "opcode": "*"
+        },
+        {
+          "executions": 1024,
+          "loc": {
+            "col": 43,
+            "file": "explain_formatter.cpp",
+            "line": 15
+          },
+          "max": 0.9965277771349845,
+          "min": 0,
+          "opcode": "/"
+        }
+      ],
+      "original": {
+        "c": "(1.0 - cos(x[i])) / (x[i] * x[i])",
+        "fpcore": "(/ (- 1 (cos v0)) (* v0 v0))"
+      },
+      "outputs": [
+        {
+          "c": "(1.0 - cos(x[i])) / (x[i] * x[i])",
+          "fpcore": "(/ (- 1 (cos v0)) (* v0 v0))",
+          "inputs": [
+            0
+          ],
+          "loc": {
+            "col": 43,
+            "file": "explain_formatter.cpp",
+            "line": 15
+          },
+          "name": "out[i]",
+          "ops": [
+            0,
+            1,
+            2,
+            3
+          ]
+        }
+      ]
+    }
+  ],
+  "target": {
+    "cost_model": "cm_x86-64_explorer.csv",
+    "selector": "dp",
+    "tau": 1e-06,
+    "tau_from": "flag"
+  }
+}
