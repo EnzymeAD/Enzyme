@@ -17,10 +17,11 @@
 // profile (Kappa and KappaMark).
 //
 // The profiling run is the program's: it gets this process's standard streams,
-// and its exit status is this tool's. It lists the sites to measure in the
-// file POSEIDON_KAPPA_SITES names; a run of the measurement has
-// POSEIDON_KAPPA=child and POSEIDON_KAPPA_SITE / POSEIDON_KAPPA_EPS, and
-// writes its metric alone (FPProfiler.cpp).
+// and its exit status is this tool's, unless the measurement fails, which
+// exits 1. The scratch directories are removed on every exit. The profiling
+// run lists the sites to measure in the file POSEIDON_KAPPA_SITES names; a run
+// of the measurement has POSEIDON_KAPPA=child and POSEIDON_KAPPA_SITE /
+// POSEIDON_KAPPA_EPS, and writes its metric alone (FPProfiler.cpp).
 //
 //===----------------------------------------------------------------------===//
 
@@ -32,9 +33,10 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <dirent.h>
 #include <fcntl.h>
 #include <fstream>
+#include <ftw.h>
+#include <iostream>
 #include <limits>
 #include <map>
 #include <string>
@@ -133,15 +135,24 @@ std::map<int, std::string> readSites(const std::string &path) {
   return sites;
 }
 
-void removeDir(const std::string &dir) {
-  if (DIR *d = opendir(dir.c_str())) {
-    while (struct dirent *e = readdir(d))
-      if (strcmp(e->d_name, ".") && strcmp(e->d_name, ".."))
-        unlink((dir + "/" + e->d_name).c_str());
-    closedir(d);
+// A scratch directory, removed with everything in it when it goes out of
+// scope, as llvm::FileRemover removes a file.
+class ScratchDir {
+public:
+  explicit ScratchDir(std::string path) : path(std::move(path)) {}
+  ScratchDir(const ScratchDir &) = delete;
+  ScratchDir &operator=(const ScratchDir &) = delete;
+  ~ScratchDir() { nftw(path.c_str(), removeEntry, 16, FTW_DEPTH | FTW_PHYS); }
+  const std::string &get() const { return path; }
+
+private:
+  static int removeEntry(const char *entry, const struct stat *, int,
+                         struct FTW *) {
+    std::remove(entry);
+    return 0;
   }
-  rmdir(dir.c_str());
-}
+  std::string path;
+};
 
 struct Step {
   double eps;
@@ -244,8 +255,8 @@ void writeKappa(const std::string &path, double kappa,
 }
 
 // The condition numbers of the metric m0 named `metric` at `sites`, written
-// into their profiles; the scratch directories go under `tmp`. False if the
-// unperturbed run failed, whose directory then stays for its log.
+// into their profiles; the scratch directories go under `tmp`. False, with the
+// output of the run on stderr, if the second unperturbed run failed.
 bool measure(const std::string &tmp, const std::map<int, std::string> &sites,
              const std::vector<double> &ladder, const std::string &metric,
              double m0) {
@@ -253,12 +264,14 @@ bool measure(const std::string &tmp, const std::map<int, std::string> &sites,
   profileMkdirP(base2);
   fprintf(stderr, "[poseidon] baseline run 2 -> noise floor\n");
   double m2 = 0.0;
-  if (runProgram(childEnv(base2), base2 + "/run.log") != 0 ||
-      !readMetric(base2, m2)) {
+  const int rc = runProgram(childEnv(base2), base2 + "/run.log");
+  if (rc != 0 || !readMetric(base2, m2)) {
     fprintf(stderr,
-            "[poseidon] the second baseline run failed (see %s/run.log); not "
-            "measuring condition numbers\n",
-            base2.c_str());
+            "poseidon-kappa: error: the second unperturbed run (exit %d) wrote "
+            "no metric; its output follows\n",
+            rc);
+    if (std::ifstream log(base2 + "/run.log"); log)
+      std::cerr << log.rdbuf();
     return false;
   }
   const double noise = std::fabs(m2 - m0);
@@ -288,10 +301,6 @@ bool measure(const std::string &tmp, const std::map<int, std::string> &sites,
     fprintf(stderr, "[poseidon] %-5d %-16.6e %-13s %s\n", site, kappa,
             mark.c_str(), path.c_str());
   }
-  removeDir(base2);
-  for (const auto &kv : sites)
-    for (double eps : ladder)
-      removeDir(runDir(tmp, kv.first, eps));
   return true;
 }
 
@@ -324,7 +333,8 @@ int main(int argc, char **argv) {
             tmpl.c_str(), strerror(errno));
     return 1;
   }
-  const std::string tmp = tmpl;
+  const ScratchDir scratch(tmpl);
+  const std::string &tmp = scratch.get();
   const std::string siteList = tmp + "/sites";
 
   const auto profileStart = std::chrono::steady_clock::now();
@@ -334,14 +344,11 @@ int main(int argc, char **argv) {
   // A program that failed, declared no metric or executed fewer than two
   // sites has nothing to measure.
   const std::map<int, std::string> sites = readSites(siteList);
-  unlink(siteList.c_str());
   double m0 = 0.0;
   std::string metric;
   if (status != 0 || sites.size() < 2 ||
-      !readMetric(profileDirectory(), m0, &metric)) {
-    rmdir(tmp.c_str());
+      !readMetric(profileDirectory(), m0, &metric))
     return status;
-  }
 
   const size_t runs = 1 + sites.size() * ladder.size();
   fprintf(stderr,
@@ -351,12 +358,11 @@ int main(int argc, char **argv) {
           metric.c_str(), sites.size(), runs);
   const auto measureStart = std::chrono::steady_clock::now();
   if (!measure(tmp, sites, ladder, metric, m0))
-    return 0;
+    return 1;
   const std::chrono::duration<double> measured =
       std::chrono::steady_clock::now() - measureStart;
   fprintf(stderr, "[poseidon] profile run: %.2f s\n", profileRun.count());
   fprintf(stderr, "[poseidon] condition-number measurement: %zu runs, %.2f s\n",
           runs, measured.count());
-  rmdir(tmp.c_str());
   return 0;
 }

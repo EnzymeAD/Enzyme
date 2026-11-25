@@ -17,11 +17,17 @@
 // RUN: not env POSEIDON_KAPPA_LADDER=1e-6,x POSEIDON_PROFILE_DIR=%t/badladder %poseidon_kappa -- %t/gen %t/badladder.runs 2>&1 | FileCheck --check-prefix=LADDER %s
 // RUN: not ls %t/badladder.runs
 
-// RUN: env POSEIDON_KAPPA_LADDER=1e-6 POSEIDON_PROFILE_DIR=%t/tool %poseidon_kappa -- %t/gen %t/tool.runs > /dev/null 2> %t/tool.err
+// RUN: mkdir %t/scratch
+// RUN: env TMPDIR=%t/scratch POSEIDON_KAPPA_LADDER=1e-6 POSEIDON_PROFILE_DIR=%t/tool %poseidon_kappa -- %t/gen %t/tool.runs > /dev/null 2> %t/tool.err
+// RUN: ls -A %t/scratch | count 0
 // RUN: FileCheck --check-prefix=FOUR %s < %t/tool.runs
 // RUN: FileCheck --check-prefix=MEASURE -DRUNS=3 %s < %t/tool.err
 // RUN: FileCheck --check-prefix=MEASURED %s < %t/tool/_Z4wavePKdPdi.fpprofile
 // RUN: not %poseidon_kappa 2>&1 | FileCheck --check-prefix=USAGE %s
+// RUN: printf '#!/bin/sh\n[ "$POSEIDON_KAPPA" = child ] && echo "no second run" && exit 3\nexec %t/gen "$@"\n' > %t/once.sh && chmod +x %t/once.sh
+// RUN: not env TMPDIR=%t/scratch POSEIDON_KAPPA_LADDER=1e-6 POSEIDON_PROFILE_DIR=%t/failed %poseidon_kappa -- %t/once.sh %t/failed.runs > /dev/null 2> %t/failed.err
+// RUN: FileCheck --check-prefix=FAILED %s < %t/failed.err
+// RUN: ls -A %t/scratch | count 0
 
 // RUN: env POSEIDON_KAPPA=child POSEIDON_PROFILE_DIR=%t/child %t/gen %t/child.runs > /dev/null
 // RUN: ls %t/child | FileCheck --check-prefix=CHILD %s
@@ -43,7 +49,8 @@
 // and profile use then solves each site against its own target. The program
 // counts its own runs. A run of the measurement writes the metric and no
 // profile. A ladder that does not parse stops poseidon-kappa before the
-// program runs.
+// program runs. A measurement whose runs fail is an error, and either way
+// poseidon-kappa leaves no scratch directory behind.
 // Both sites move the metric well above the noise of its runs, so each gets a
 // nonzero condition number. The metric's name holds a space, which the
 // measurement runs have to read back, and is longer than a string keeps
@@ -133,7 +140,11 @@ int main(int argc, char **argv) {
 
 // USAGE: usage: poseidon-kappa -- <program> [args...]
 
-// USE: kappa_request.cpp:[[#@LINE-79]]:1: error: Poseidon: the profiling run declared a quantity of interest with poseidon_metric and did not measure the condition number of preprocess__Z5gaussPKdPdi_poseidon_body against it ({{.*}}/plain/_Z5gaussPKdPdi.fpprofile). Run the profiling build again as 'poseidon-kappa -- <program> [args...]', the command the profiling run printed, to measure it, or with POSEIDON_KAPPA=0 in its environment to solve each site against its own target.
+// FAILED: [poseidon] baseline run 2 -> noise floor
+// FAILED-NEXT: poseidon-kappa: error: the second unperturbed run (exit 3) wrote no metric; its output follows
+// FAILED-NEXT: no second run
+
+// USE: kappa_request.cpp:[[#@LINE-83]]:1: error: Poseidon: the profiling run declared a quantity of interest with poseidon_metric and did not measure the condition number of preprocess__Z5gaussPKdPdi_poseidon_body against it ({{.*}}/plain/_Z5gaussPKdPdi.fpprofile). Run the profiling build again as 'poseidon-kappa -- <program> [args...]', the command the profiling run printed, to measure it, or with POSEIDON_KAPPA=0 in its environment to solve each site against its own target.
 // USE-NEXT: POSEIDON_OPTIMIZE void gauss(const double *x, double *y, int n) {
 
 // USAGE: That takes 1 + <sites> x
