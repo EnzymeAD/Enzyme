@@ -1883,6 +1883,14 @@ struct MHProposal {
   Value logRatio;
 };
 
+/// The MH accept test of a proposal: whether it is accepted, the weight it
+/// carries when accepted, and the rng after the uniform draw.
+struct MHDecision {
+  Value accepted;
+  Value acceptWeight;
+  Value rng;
+};
+
 /// The trace, weight and rng after one MH step, and whether it accepted.
 struct MHStep {
   Value trace;
@@ -1892,13 +1900,12 @@ struct MHStep {
 };
 } // namespace
 
-/// Accepts `proposal` over the current `trace` and `weight` when a uniform
-/// draw from the proposal's rng falls below exp(log alpha). Only the
-/// `changedColumns` of the trace are selected.
-static MHStep
-emitMHAccept(OpBuilder &builder, Location loc, Value trace, Value weight,
-             Type rngType, const MHProposal &proposal, bool deltaWeight,
-             ArrayRef<std::pair<int64_t, int64_t>> changedColumns) {
+/// Emits the MH accept test of `proposal` against the current `weight`: the
+/// proposal is accepted when the log of a uniform draw from its rng falls
+/// below log alpha.
+static MHDecision emitMHDecision(OpBuilder &builder, Location loc, Value weight,
+                                 Type rngType, const MHProposal &proposal,
+                                 bool deltaWeight) {
   auto weightType = cast<RankedTensorType>(weight.getType());
   Value jointRatio =
       deltaWeight ? proposal.weight
@@ -1922,11 +1929,7 @@ emitMHAccept(OpBuilder &builder, Location loc, Value trace, Value weight,
   Value logRand = math::LogOp::create(builder, loc, draw.getResult());
   Value accepted = arith::CmpFOp::create(
       builder, loc, arith::CmpFPredicate::OLT, logRand, logAlpha);
-  Value newTrace = writeBackMHWindows(builder, loc, trace, proposal.trace,
-                                      accepted, changedColumns);
-  Value newWeight =
-      arith::SelectOp::create(builder, loc, accepted, acceptWeight, weight);
-  return {newTrace, newWeight, draw.getOutputRngState(), accepted};
+  return {accepted, acceptWeight, draw.getOutputRngState()};
 }
 
 /// Returns the number of trace columns the values of `site` take.
@@ -2952,8 +2955,13 @@ struct ExpandImpulsePass
                    proposal.rng) =
               proposeFlat(b, loc, op, fn, fnResultTypes, trace, rng, selection,
                           allAddresses);
-        return emitMHAccept(b, loc, trace, weight, rngType, proposal,
-                            deltaWeight, changedColumns);
+        MHDecision decision =
+            emitMHDecision(b, loc, weight, rngType, proposal, deltaWeight);
+        Value newTrace = writeBackMHWindows(b, loc, trace, proposal.trace,
+                                            decision.accepted, changedColumns);
+        Value newWeight = arith::SelectOp::create(
+            b, loc, decision.accepted, decision.acceptWeight, weight);
+        return {newTrace, newWeight, decision.rng, decision.accepted};
       };
 
       int64_t numSamples = op.getNumSamples();
@@ -4078,13 +4086,17 @@ struct ExpandImpulsePass
           unpackHastingsWeight(rewriter, loc, regenerateOp.getWeight());
       proposal.rng = regenerateOp.getOutputs()[0];
 
-      MHStep step = emitMHAccept(
-          rewriter, loc, oldTrace, oldWeight, rngStateType, proposal, delta,
+      MHDecision decision = emitMHDecision(rewriter, loc, oldWeight,
+                                           rngStateType, proposal, delta);
+      Value newTrace = writeBackMHWindows(
+          rewriter, loc, oldTrace, proposal.trace, decision.accepted,
           mhChangedColumnsFlat(mhOp, fn, selection, regenerateAddresses,
                                cast<RankedTensorType>(traceType).getShape()[1],
                                symbolTable));
-      rewriter.replaceOp(mhOp,
-                         {step.trace, step.weight, step.accepted, step.rng});
+      Value newWeight = arith::SelectOp::create(
+          rewriter, loc, decision.accepted, decision.acceptWeight, oldWeight);
+      rewriter.replaceOp(
+          mhOp, {newTrace, newWeight, decision.accepted, decision.rng});
       return success();
     }
   };
