@@ -365,7 +365,7 @@ static const StringSet<> KnownInactiveFunctions = {
     "MPI_Get_processor_name",
     "MPI_Finalize",
     "MPI_Test",
-    "MPI_Probe", // double check potential syncronization
+    "MPI_Probe", // double check potential synchronization
     "MPI_Barrier",
     "MPI_Abort",
     "MPI_Get_count",
@@ -1801,7 +1801,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
       // If our origin is a load of a known inactive (say inactive argument), we
       // are also inactive
       if (auto PN = dyn_cast<PHINode>(TmpOrig)) {
-        // Not taking fast path incase phi is recursive.
+        // Not taking fast path in case phi is recursive.
         Value *active = nullptr;
         for (auto &V : PN->incoming_values()) {
           if (!UpHypothesis->isConstantValue(TR, V.get())) {
@@ -2360,7 +2360,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
 
       // TODO this aliasing information is too conservative, the question
       // isn't merely aliasing but whether there is a path for THIS value to
-      // eventually be loaded by it not simply because there isnt aliasing
+      // eventually be loaded by it not simply because there isn't aliasing
 
       // If we haven't already shown a potentially active load
       // check if this loads the given value and is active
@@ -2661,7 +2661,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
       // investigate more]
       ActiveMemory |= ActiveDown;
 
-      // If we go to an active return and only load it, however, that doesnt
+      // If we go to an active return and only load it, however, that doesn't
       // transfer derivatives and we can say this memory is inactive
 
       if (EnzymePrintActivity)
