@@ -431,6 +431,16 @@ static void noteSinglePointFrontier(const SolutionMap &frontier,
                     "combination.\n";
 }
 
+SmallVector<OptimizationUnit *>
+solveOrder(const Options &O, ArrayRef<ArrayRef<SiteUnit *>> units) {
+  SmallVector<SmallVector<OptimizationUnit *>, 4> siteUnits;
+  for (ArrayRef<SiteUnit *> site : units)
+    siteUnits.emplace_back(site.begin(), site.end());
+  SmallVector<ArrayRef<OptimizationUnit *>, 4> sites(siteUnits.begin(),
+                                                     siteUnits.end());
+  return O.Solver.EarlyPrune ? prunedOrder(sites) : exactOrder(sites);
+}
+
 SmallVector<SolutionStep> solveSites(Session &S,
                                      ArrayRef<FunctionFPState *> sites,
                                      ArrayRef<ArrayRef<SiteUnit *>> units,
@@ -486,21 +496,15 @@ SmallVector<SolutionStep> solveSites(Session &S,
     costToAccuracyMap[0] = 0;
     costToSolutionMap[0] = {};
 
-    SmallVector<SmallVector<OptimizationUnit *>, 4> siteUnits;
-    for (ArrayRef<SiteUnit *> site : units)
-      siteUnits.emplace_back(site.begin(), site.end());
-    SmallVector<ArrayRef<OptimizationUnit *>, 4> order(siteUnits.begin(),
-                                                       siteUnits.end());
-    if (!O.Solver.EarlyPrune) {
-      solveExact(exactOrder(order), scale, costToAccuracyMap,
+    // Each prune also compares partial solutions a later unit treats
+    // differently (a CS is priced against the COs chosen on its subgraph), so
+    // the pruned frontier can miss points the exact solve finds.
+    if (!O.Solver.EarlyPrune)
+      solveExact(solveOrder(O, units), scale, costToAccuracyMap,
                  costToSolutionMap);
-    } else {
-      // Each prune also compares partial solutions a later unit treats
-      // differently (a CS is priced against the COs chosen on its subgraph),
-      // so the frontier can miss points the exact solve finds.
-      solvePruned(prunedOrder(order), scale, costToAccuracyMap,
+    else
+      solvePruned(solveOrder(O, units), scale, costToAccuracyMap,
                   costToSolutionMap, /*progress=*/print);
-    }
 
     if (table)
       writeSiteTable(O, *table, names, costToAccuracyMap, costToSolutionMap,

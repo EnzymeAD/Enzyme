@@ -11,6 +11,7 @@
 #include "Optimize.h"
 #include "Pass/Session.h"
 #include "Sites/SiteIdentity.h"
+#include "Solvers.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
@@ -254,6 +255,13 @@ SmallVector<SolutionStep> parseManualRewrites(Session &S, FunctionFPState &st) {
                  << unit->selectionText(pos) << '\n';
     steps.emplace_back(unit, pos);
   }
+  // The steps apply in the order a solve would return them, so a pin builds
+  // the program the solve that printed it built.
+  const SmallVector<OptimizationUnit *> order =
+      solveOrder(S.Opts, ArrayRef<SiteUnit *>(st.units));
+  llvm::stable_sort(steps, [&](const SolutionStep &a, const SolutionStep &b) {
+    return find(order, a.unit) < find(order, b.unit);
+  });
   return steps;
 }
 

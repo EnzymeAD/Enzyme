@@ -14,7 +14,8 @@
 ; A site with algebraic, precision and product units
 ; (Inputs/exact_dp/reprice.ll): one value pins a unit of each kind, by ordinal
 ; and again by the names the pin line prints, which applies the same steps; and
-; the errors of each kind. PT1's subgraph holds the product's reduction FMA,
+; the errors of each kind. The steps apply in the order of the pruned solve
+; (algebraic, product, precision), not the order of the items. PT1's subgraph holds the product's reduction FMA,
 ; which M0's raise replaces, so the two are never taken together. The poseidon
 ; pass runs alone: the precision change calls libdevice float functions the
 ; module does not define, which poseidon-finalize refuses.
@@ -36,23 +37,38 @@
 ; RUN: not %{reprice} -poseidon-cache=%t/kinds/overlap -poseidon-apply-rewrites='PT1_0,M0_2' -S -o /dev/null 2>&1 | FileCheck --check-prefix=KINDS-OVERLAP %s
 ; RUN: not %{reprice} -poseidon-cache=%t/kinds/name_m -poseidon-apply-rewrites='M0=nothing' -S -o /dev/null 2>&1 | FileCheck --check-prefix=KINDS-NAME-M %s
 
+; A pin builds the module of the solve that printed it, whatever the order of
+; its items: the exact solve at the cheapest point changes the precision of PT0
+; and raises M0, and its pin given with the items reversed applies them in that
+; order again.
+; RUN: %{reprice} -poseidon-cache=%t/kinds/solve -poseidon-early-prune=false -poseidon-cost-budget=-0.952 -S -o %t/kinds/solve.ll 2>&1 | tee %t/kinds/solve.log | FileCheck --check-prefix=KINDS-SOLVE %s
+; RUN: %{reprice} -poseidon-cache=%t/kinds/repin -poseidon-early-prune=false "-poseidon-apply-rewrites=$(sed -n 's/^\[poseidon\] pin: //p' %t/kinds/solve.log | awk -F, '{ for (i = NF; i > 1; --i) printf "%%s,", $i; print $1 }')" -S -o %t/kinds/repin.ll 2>&1 | FileCheck --check-prefix=KINDS-REPIN %s
+; RUN: diff %t/kinds/solve.ll %t/kinds/repin.ll
+
 ; KINDS-ORD: [poseidon] Selecting R0_1: (+ (- (sqrt (+ v0 1)) (sqrt v0)) (+ (+ (+ (sinh v1) (asinh v1)) (tan v1)) (asin v1))) -> (+.f64 (-.f64 (sqrt.f64 (+.f64 v0 #s(literal 1 binary64))) (sqrt.f64 v0)) (binary32->binary64 (+.f32 (+.f32 (+.f32 (sinh.f32 (binary64->binary32 v1)) (asinh.f32 (binary64->binary32 v1))) (tan.f32 (binary64->binary32 v1))) (asin.f32 (binary64->binary32 v1))))){{$}}
 ; KINDS-ORD-NEXT: [poseidon] Selecting PT0_0: All FP64(0%) + FP32(100%)
 ; KINDS-ORD-NEXT: [poseidon] Selecting M0_2: matmul[0] -> tcec n=3 wmma m16n16k16 f16/f32
 ; KINDS-ORD: Applying solution for (+ (- (sqrt (+ v0 1)) (sqrt v0)) (+ (+ (+ (sinh v1) (asinh v1)) (tan v1)) (asin v1))) --(1)-> (+.f64 (-.f64 (sqrt.f64 (+.f64 v0 #s(literal 1 binary64))) (sqrt.f64 v0)) (binary32->binary64 (+.f32 (+.f32 (+.f32 (sinh.f32 (binary64->binary32 v1)) (asinh.f32 (binary64->binary32 v1))) (tan.f32 (binary64->binary32 v1))) (asin.f32 (binary64->binary32 v1))))){{$}}
-; KINDS-ORD-NEXT: Applying solution for CS: All FP64(0%) + FP32(100%) (#0)
 ; KINDS-ORD-NEXT: Applying solution for matmul[0] -> tcec n=3 wmma m16n16k16 f16/f32 (#2)
-; KINDS-ORD: [poseidon] pin: matmul_body:R0=(+.f64 (-.f64 (sqrt.f64 (+.f64 v0 #s(literal 1 binary64))) (sqrt.f64 v0)) (binary32->binary64 (+.f32 (+.f32 (+.f32 (sinh.f32 (binary64->binary32 v1)) (asinh.f32 (binary64->binary32 v1))) (tan.f32 (binary64->binary32 v1))) (asin.f32 (binary64->binary32 v1))))),matmul_body:PT0=All FP64(0%) + FP32(100%),matmul_body:M0=tcec n=3 wmma m16n16k16 f16/f32{{$}}
+; KINDS-ORD-NEXT: Applying solution for CS: All FP64(0%) + FP32(100%) (#0)
+; KINDS-ORD: [poseidon] pin: matmul_body:R0=(+.f64 (-.f64 (sqrt.f64 (+.f64 v0 #s(literal 1 binary64))) (sqrt.f64 v0)) (binary32->binary64 (+.f32 (+.f32 (+.f32 (sinh.f32 (binary64->binary32 v1)) (asinh.f32 (binary64->binary32 v1))) (tan.f32 (binary64->binary32 v1))) (asin.f32 (binary64->binary32 v1))))),matmul_body:M0=tcec n=3 wmma m16n16k16 f16/f32,matmul_body:PT0=All FP64(0%) + FP32(100%){{$}}
 ; KINDS-EXPLAIN: "result": {
 ; KINDS-EXPLAIN-NEXT: "applied": [
 ; KINDS-EXPLAIN-NEXT: "R0_1",
-; KINDS-EXPLAIN-NEXT: "PT0_0",
-; KINDS-EXPLAIN-NEXT: "M0_2"
+; KINDS-EXPLAIN-NEXT: "M0_2",
+; KINDS-EXPLAIN-NEXT: "PT0_0"
 ; KINDS-EXPLAIN-NEXT: ]
 ; KINDS-EXPLAIN: "selector": "manual"
 ; KINDS-NAME: [poseidon] Selecting matmul_body:R0=(+.f64 (-.f64 (sqrt.f64 (+.f64 v0 #s(literal 1 binary64))) (sqrt.f64 v0)) (binary32->binary64 (+.f32 (+.f32 (+.f32 (sinh.f32 (binary64->binary32 v1)) (asinh.f32 (binary64->binary32 v1))) (tan.f32 (binary64->binary32 v1))) (asin.f32 (binary64->binary32 v1))))): (+ (- (sqrt (+ v0 1)) (sqrt v0)) (+ (+ (+ (sinh v1) (asinh v1)) (tan v1)) (asin v1))) -> (+.f64 (-.f64 (sqrt.f64 (+.f64 v0 #s(literal 1 binary64))) (sqrt.f64 v0)) (binary32->binary64 (+.f32 (+.f32 (+.f32 (sinh.f32 (binary64->binary32 v1)) (asinh.f32 (binary64->binary32 v1))) (tan.f32 (binary64->binary32 v1))) (asin.f32 (binary64->binary32 v1))))){{$}}
-; KINDS-NAME-NEXT: [poseidon] Selecting matmul_body:PT0=All FP64(0%) + FP32(100%): All FP64(0%) + FP32(100%)
 ; KINDS-NAME-NEXT: [poseidon] Selecting matmul_body:M0=tcec n=3 wmma m16n16k16 f16/f32: matmul[0] -> tcec n=3 wmma m16n16k16 f16/f32
+; KINDS-NAME-NEXT: [poseidon] Selecting matmul_body:PT0=All FP64(0%) + FP32(100%): All FP64(0%) + FP32(100%)
+; KINDS-SOLVE: Applying solution for CS: All FP64(0%) + FP32(100%) (#0)
+; KINDS-SOLVE-NEXT: Applying solution for matmul[0] -> wmma m16n16k16 f16/f32 (#0)
+; KINDS-SOLVE: [poseidon] pin: matmul_body:PT0=All FP64(0%) + FP32(100%),matmul_body:M0=wmma m16n16k16 f16/f32{{$}}
+; KINDS-REPIN: [poseidon] Selecting matmul_body:M0=wmma m16n16k16 f16/f32:
+; KINDS-REPIN-NEXT: [poseidon] Selecting matmul_body:PT0=All FP64(0%) + FP32(100%):
+; KINDS-REPIN: Applying solution for CS: All FP64(0%) + FP32(100%) (#0)
+; KINDS-REPIN-NEXT: Applying solution for matmul[0] -> wmma m16n16k16 f16/f32 (#0)
 ; KINDS-RANGE-R: error: {{.*}}Poseidon: -poseidon-apply-rewrites item 'R9_0': CO index 9 out of range (4 COs)
 ; KINDS-RANGE-PT: error: {{.*}}Poseidon: -poseidon-apply-rewrites item 'PT9_0': CS index 9 out of range (2 CSs)
 ; KINDS-RANGE-M: error: {{.*}}Poseidon: -poseidon-apply-rewrites item 'M9_0': CM index 9 out of range (1 CMs)

@@ -60,7 +60,8 @@ struct PinState {
   std::set<std::string> printed;
 };
 
-// The steps the items of -poseidon-apply-rewrites name at the site of `st`.
+// The steps the items of -poseidon-apply-rewrites name at the site of `st`, in
+// the order a solve of the site returns its steps.
 llvm::SmallVector<SolutionStep> parseManualRewrites(Session &S,
                                                     FunctionFPState &st);
 

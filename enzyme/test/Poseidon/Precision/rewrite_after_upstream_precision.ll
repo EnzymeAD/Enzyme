@@ -1,7 +1,7 @@
 ; RUN: rm -rf %t && mkdir %t
 ; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/rewrite_after_upstream_precision %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/chain_split -poseidon-min-uses-split=3 -poseidon-min-ops-split=4 -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/exact_dp/fake-herbie.sh -poseidon-enable-pt=true -poseidon-cost-model=%cost_models/cm_cpu_native.csv "-poseidon-apply-rewrites=PT0=All FP64(0%%) + FP32(100%%),R4=(fma.f64 v2 v1 (+.f64 v2 v0))" -poseidon-cache=%t/pt-first -S -o %t/pt-first.ll 2>&1 | FileCheck --check-prefix=APPLY %s
 ; RUN: FileCheck --check-prefix=IR %s < %t/pt-first.ll
-; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/rewrite_after_upstream_precision %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/chain_split -poseidon-min-uses-split=3 -poseidon-min-ops-split=4 -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/exact_dp/fake-herbie.sh -poseidon-enable-pt=true -poseidon-cost-model=%cost_models/cm_cpu_native.csv "-poseidon-apply-rewrites=R4=(fma.f64 v2 v1 (+.f64 v2 v0)),PT0=All FP64(0%%) + FP32(100%%)" -poseidon-cache=%t/rewrite-first -S -o %t/rewrite-first.ll
+; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/rewrite_after_upstream_precision %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/chain_split -poseidon-min-uses-split=3 -poseidon-min-ops-split=4 -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/exact_dp/fake-herbie.sh -poseidon-enable-pt=true -poseidon-cost-model=%cost_models/cm_cpu_native.csv "-poseidon-apply-rewrites=R4=(fma.f64 v2 v1 (+.f64 v2 v0)),PT0=All FP64(0%%) + FP32(100%%)" -poseidon-cache=%t/rewrite-first -S -o %t/rewrite-first.ll 2>&1 | FileCheck --check-prefix=APPLY %s
 ; RUN: diff %t/pt-first.ll %t/rewrite-first.ll
 
 ; A precision change of one FP subgraph and a rewrite of the subgraph it feeds.
@@ -10,7 +10,8 @@
 ; output %r1 = %t * %x + (%t + %y), Herbie's answer canned in
 ; Inputs/rewrite_after_upstream_precision). PT0 moves %t to binary32, its users
 ; reading %t extended back to binary64; the rewrite reads that same value as v2.
-; Applied in either order, the two steps emit one program.
+; The steps apply in the solve's order, the rewrite first, whatever the order
+; of the items.
 
 define void @tester(double %x, double %y, ptr %o1, ptr %o2) #0 {
 entry:
@@ -38,8 +39,8 @@ declare void @__poseidon_fp_optimize(ptr, ...)
 
 attributes #0 = { "target-cpu"="x86-64" }
 
-; APPLY: Applying solution for CS: All FP64(0%) + FP32(100%)
-; APPLY-NEXT: Applying solution for (+ (* v2 v1) (+ v2 v0)) --(0)-> (fma.f64 v2 v1 (+.f64 v2 v0))
+; APPLY: Applying solution for (+ (* v2 v1) (+ v2 v0)) --(0)-> (fma.f64 v2 v1 (+.f64 v2 v0))
+; APPLY-NEXT: Applying solution for CS: All FP64(0%) + FP32(100%)
 
 ; IR-LABEL: define void @preprocess_tester(
 ; IR: %[[T:[0-9]+]] = fsub float

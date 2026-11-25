@@ -1,14 +1,11 @@
 ; RUN: rm -rf %t && mkdir %t
 ; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/rewrite_after_carried_expansion %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/rewrite_after_carried_expansion -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/exact_dp/fake-herbie.sh -poseidon-enable-pt=true -poseidon-enable-multifloat=true -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv "-poseidon-apply-rewrites=PT0=All FP64(0%%) + Expansion2(100%%),R2=(-.f64 (*.f64 v1 v1) (*.f64 v2 v2))" -poseidon-cache=%t/expansion-first -S -o %t/expansion-first.ll 2>&1 | FileCheck --check-prefix=APPLY %s
 ; RUN: FileCheck --check-prefix=IR %s < %t/expansion-first.ll
-; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/rewrite_after_carried_expansion %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/rewrite_after_carried_expansion -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/exact_dp/fake-herbie.sh -poseidon-enable-pt=true -poseidon-enable-multifloat=true -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv "-poseidon-apply-rewrites=R2=(-.f64 (*.f64 v1 v1) (*.f64 v2 v2)),PT0=All FP64(0%%) + Expansion2(100%%)" -poseidon-cache=%t/rewrite-first -S -o %t/rewrite-first.ll 2>&1 | FileCheck --check-prefix=APPLY2 %s
-; RUN: FileCheck --check-prefix=IR %s < %t/rewrite-first.ll
+; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/rewrite_after_carried_expansion %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/rewrite_after_carried_expansion -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/exact_dp/fake-herbie.sh -poseidon-enable-pt=true -poseidon-enable-multifloat=true -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv "-poseidon-apply-rewrites=R2=(-.f64 (*.f64 v1 v1) (*.f64 v2 v2)),PT0=All FP64(0%%) + Expansion2(100%%)" -poseidon-cache=%t/rewrite-first -S -o %t/rewrite-first.ll 2>&1 | FileCheck --check-prefix=APPLY %s
+; RUN: diff %t/expansion-first.ll %t/rewrite-first.ll
 
-; APPLY: Applying solution for CS: All FP64(0%) + Expansion2(100%) (#3)
-; APPLY-NEXT: Applying solution for (* (- v1 v2) (+ v2 v1)) --(0)-> (-.f64 (*.f64 v1 v1) (*.f64 v2 v2))
-
-; APPLY2: Applying solution for (* (- v1 v2) (+ v2 v1)) --(0)-> (-.f64 (*.f64 v1 v1) (*.f64 v2 v2))
-; APPLY2-NEXT: Applying solution for CS: All FP64(0%) + Expansion2(100%) (#3)
+; APPLY: Applying solution for (* (- v1 v2) (+ v2 v1)) --(0)-> (-.f64 (*.f64 v1 v1) (*.f64 v2 v2))
+; APPLY-NEXT: Applying solution for CS: All FP64(0%) + Expansion2(100%) (#3)
 
 ; IR-LABEL: define dso_local void @preprocess_carried_body(
 ; IR-SAME: ptr {{.*}}%0, double noundef %[[V2:[0-9]+]], ptr {{.*}}%[[OUT:[0-9]+]])
@@ -40,7 +37,8 @@
 ; subgraph {%14 %15 %16} that stores (acc - y) * (y + acc) (R2, Herbie's answer
 ; canned next to the profile). PT0 carries %13 as two float PHIs, its users
 ; reading the pair joined back to binary64; the rewrite reads that same value as
-; v1. Applied in either order, the two steps emit one program up to value names.
+; v1. The steps apply in the solve's order, the rewrite first, whatever the
+; order of the items.
 ; The module: clang -x cuda --cuda-device-only --cuda-gpu-arch=sm_120 -O2
 ; -ffp-contract=on -S -emit-llvm carried.cu, with carried.cu
 ;   template <typename R, typename... T>

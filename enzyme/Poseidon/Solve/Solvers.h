@@ -73,6 +73,12 @@ std::unique_ptr<SiteTable> lookupSiteTable(Session &S,
                                            llvm::ArrayRef<SiteUnit *> units,
                                            llvm::StringRef profilePath);
 
+// The order the DP takes `units[i]`, units of the i-th site, in, which is the
+// order of the steps of every solution: exactOrder, or prunedOrder under
+// -poseidon-early-prune.
+llvm::SmallVector<OptimizationUnit *>
+solveOrder(const Options &O, llvm::ArrayRef<llvm::ArrayRef<SiteUnit *>> units);
+
 // Solves `units[i]`, units of the site `sites[i]`, in one DP and selects a
 // frontier point: under `tau` > 0 the one the target picks, else the most
 // accurate one within -poseidon-cost-budget. `tau` is measured against the
