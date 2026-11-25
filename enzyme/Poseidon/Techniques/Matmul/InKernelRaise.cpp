@@ -91,19 +91,16 @@ static Value *emitTidIntrinsic(IRBuilder<> &B, Module *M, TidAxis axis) {
   return nvptx::emitThreadIndex(B, M, *a);
 }
 
-// A (possibly fused) matrix row/column index: tid[fast] when slow is Unknown,
-// otherwise tid[fast] + mult * tid[slow], where `mult` is the extent of the
-// fast axis.
-static Value *emitTidIndex(IRBuilder<> &B, Module *M, TidAxis fast,
-                           TidAxis slow, unsigned mult) {
-  Value *fastV = emitTidIntrinsic(B, M, fast);
-  if (slow == TidAxis::Unknown)
+// The thread's value of a matrix index.
+static Value *emitTidIndex(IRBuilder<> &B, Module *M, const MatrixIndex &idx) {
+  Value *fastV = emitTidIntrinsic(B, M, idx.fast);
+  if (!idx.fused())
     return fastV;
-  if (mult == 0)
-    report_fatal_error("emitTidIndex: fused index with a zero multiplier");
-  Value *slowV = emitTidIntrinsic(B, M, slow);
+  assert(idx.fuseMult && "a fused index has the fast axis's extent");
+  Value *slowV = emitTidIntrinsic(B, M, idx.slow);
   Type *i32Ty = Type::getInt32Ty(B.getContext());
-  Value *slowOff = B.CreateMul(slowV, ConstantInt::get(i32Ty, (int32_t)mult));
+  Value *slowOff =
+      B.CreateMul(slowV, ConstantInt::get(i32Ty, (int32_t)idx.fuseMult));
   return B.CreateAdd(fastV, slowOff, "wmma.fused_idx");
 }
 
@@ -342,284 +339,270 @@ static BasicBlock *emitBlockShapeGuard(BasicBlock &preheader,
   return raiseBB;
 }
 
-void materializeInKernelRaise(const AbstractMatmul &m,
-                              const MatmulUnit::Option &t) {
-  const SchemeVariant &v = t.variant;
-  if (t.realization != Realization::InKernel ||
-      (v.scheme != Scheme::Direct && v.scheme != Scheme::Tcec))
-    report_fatal_error("materializeInKernelRaise: only the in-kernel direct "
-                       "and split schemes are realized here");
-  const bool split = v.scheme == Scheme::Tcec;
+namespace {
+// What every step of one in-kernel raise reads.
+struct RaiseContext {
+  const AbstractMatmul &m;
+  const MatmulUnit::Option &t;
+  const ScalarLoopHandle &h;
+  InKernelLayout L;
+  Function *F;
+  LLVMContext &ctx;
+  Module *mod;
+  bool split;
   // Operand slices, and accumulator groups: one each in the direct scheme.
-  const unsigned N = split ? sliceCount(v) : 1;
-  const FPKind operand = v.operand;
-  if (split) {
-    if (N < 2 || N > 8)
-      report_fatal_error("materializeInKernelRaise: the slice count must be "
-                         "in [2, 8] (got " +
-                         Twine(N) + ")");
-    if (operand != FPKind::F16 && operand != FPKind::BF16 &&
-        operand != FPKind::TF32)
-      report_fatal_error("materializeInKernelRaise: input slice must be F16, "
-                         "BF16, or TF32 (got " +
-                         Twine(fpKindName(operand)) + ")");
-    if (v.accumulator != FPKind::F32)
-      report_fatal_error(
-          "materializeInKernelRaise: accumulator must be F32 (got " +
-          Twine(fpKindName(v.accumulator)) + ")");
-  } else if (operand != FPKind::F16 && operand != FPKind::BF16 &&
-             operand != FPKind::TF32 && operand != FPKind::F64) {
-    report_fatal_error("materializeInKernelRaise: unsupported input precision");
-  }
-  const InKernelLayout L = inKernelLayout(m, t);
-
-  const ScalarLoopHandle &h = m.scalarLoop;
-  BasicBlock *preheader = h.preheader;
-  BasicBlock *exitBB = h.exitBB;
-  assert(preheader && exitBB &&
-         "recognition admits only loops with a preheader and one exit block");
-  assert(h.inKernelRaisable &&
-         "an in-kernel raise is proposed only where it can take the loop's "
-         "place");
-
-  Function *F = preheader->getParent();
-  Module *mod = F->getParent();
-
-  // The raise is laid out for the profiled block shape, so it runs only in a
-  // block of that shape; a launch of another shape runs the loop as written.
-  BasicBlock *loopHeader = preheader->getSingleSuccessor();
-  BasicBlock *loopLatch = exitBB->getSinglePredecessor();
-  assert(loopHeader && loopLatch &&
-         "recognition admits only a loop whose exit is entered from its latch");
-  preheader = emitBlockShapeGuard(*preheader, *loopHeader, h);
-  LLVMContext &ctx = mod->getContext();
-  const DataLayout &DL = mod->getDataLayout();
-  Type *i8Ty = Type::getInt8Ty(ctx);
-  Type *i32Ty = Type::getInt32Ty(ctx);
-  Type *i64Ty = Type::getInt64Ty(ctx);
-  Type *f32Ty = Type::getFloatTy(ctx);
-  PointerType *genPtrTy = getInt8PtrTy(ctx);
-
+  unsigned N;
+  Type *i8Ty, *i32Ty, *i64Ty, *f32Ty;
+  PointerType *genPtrTy;
   // The scratch element type matches the wmma fragment's element view; TF32
   // wmma loads bit-cast F32 storage into i32 fragments, so F32 is stored after
   // explicit rounding to TF32.
-  Type *srcTy = llvmTypeForFPKind(ctx, m.elemType);
-  Type *opTy = llvmTypeForFPKind(ctx, operand);
-  Type *accTy = llvmTypeForFPKind(ctx, v.accumulator);
-  int64_t srcByte = (int64_t)DL.getTypeAllocSize(srcTy).getFixedValue();
-  int64_t opByte = (int64_t)DL.getTypeAllocSize(opTy).getFixedValue();
-  int64_t accByte = (int64_t)DL.getTypeAllocSize(accTy).getFixedValue();
-
+  Type *srcTy, *opTy, *accTy;
+  int64_t srcByte, opByte, accByte;
   // B layout from the captured reduction-axis stride: a one-element K stride
   // means K-contiguous (col-major), otherwise K-strided (row-major). B always
   // routes through scratch, so this only sets the fill's read strides.
-  if (h.bStrideByte % srcByte != 0)
+  bool bRowMajor;
+  nvptx::Wmma wmma;
+  unsigned aFragSize, bFragSize, cFragSize;
+  Type *cFragElemTy;
+  // Warp-gate the mma chain when there is a single output tile per block, and
+  // always when the block's thread count is not a multiple of 32: its last
+  // warp is partially populated, and warp-collective wmma ops in a partial
+  // warp are undefined (the ungated chain corrupts the shared output tile).
+  bool useWarpGate;
+  // Value names: the split scheme's start with "ozaki", the direct scheme's
+  // with "wmma".
+  StringRef tag;
+  // The generic pointers to each slice's A, B and D scratch.
+  SmallVector<Value *, 8> aGen, bGen, dGen;
+
+  std::string accName(unsigned k) const {
+    return split ? ("cAcc" + Twine(k)).str() : std::string("cFrag");
+  }
+  unsigned accPhisPerGroup() const { return L.mTiles * L.nTiles * cFragSize; }
+  // The scratch tiles are tight-packed at (mPad x tileK) / (tileK x nPad).
+  int64_t aScratchRowByte() const { return (int64_t)t.tileK * opByte; }
+};
+
+// The K-streamed loop the raise runs in: its header PHIs, the block after it,
+// and the block-uniform thread index the fills and the warp gate use.
+struct KStreamLoop {
+  BasicBlock *afterLoopBB;
+  PHINode *kOuterPhi;
+  // Per accumulator group, one PHI per (mt, nt, fragment element).
+  SmallVector<SmallVector<PHINode *, 16>, 8> accPhis;
+  // The back edge; the body is emitted in front of it.
+  Instruction *latchBr;
+  Value *tlin;
+};
+} // namespace
+
+static unsigned fragSize(Type *T) {
+  if (auto *ST = dyn_cast<StructType>(T))
+    return ST->getNumElements();
+  return 1;
+}
+
+static RaiseContext makeRaiseContext(const AbstractMatmul &m,
+                                     const MatmulUnit::Option &t, Function *F) {
+  const SchemeVariant &v = t.variant;
+  Module *mod = F->getParent();
+  LLVMContext &ctx = mod->getContext();
+  const DataLayout &DL = mod->getDataLayout();
+  RaiseContext C{m, t, m.scalarLoop, inKernelLayout(m, t), F, ctx};
+  C.split = v.scheme == Scheme::Tcec;
+  C.N = C.split ? sliceCount(v) : 1;
+  C.mod = mod;
+  C.i8Ty = Type::getInt8Ty(ctx);
+  C.i32Ty = Type::getInt32Ty(ctx);
+  C.i64Ty = Type::getInt64Ty(ctx);
+  C.f32Ty = Type::getFloatTy(ctx);
+  C.genPtrTy = getInt8PtrTy(ctx);
+  C.srcTy = llvmTypeForFPKind(ctx, m.elemType);
+  C.opTy = llvmTypeForFPKind(ctx, v.operand);
+  C.accTy = llvmTypeForFPKind(ctx, v.accumulator);
+  C.tag = C.split ? "ozaki" : "wmma";
+  C.srcByte = (int64_t)DL.getTypeAllocSize(C.srcTy).getFixedValue();
+  C.opByte = (int64_t)DL.getTypeAllocSize(C.opTy).getFixedValue();
+  C.accByte = (int64_t)DL.getTypeAllocSize(C.accTy).getFixedValue();
+  const ScalarLoopHandle &h = C.h;
+  if (h.bStrideByte % C.srcByte != 0)
     report_fatal_error("materializeInKernelRaise: B reduction-axis stride " +
                        Twine(h.bStrideByte) +
                        " is not a multiple of the element size " +
-                       Twine(srcByte));
-  const bool bRowMajor = (h.bStrideByte != srcByte);
+                       Twine(C.srcByte));
+  C.bRowMajor = h.bStrideByte != C.srcByte;
 
-  // Padded extents (chain * tile); the A/B scratch K-dim is one tileK chunk
-  // (K-streamed), the output scratch is the full mPad x nPad.
-  const unsigned mPad = L.mPad;
-  const unsigned nPad = L.nPad;
+  C.wmma = nvptx::declareWmma(mod, t.tileM, t.tileN, t.tileK,
+                              fpKindName(v.operand), fpKindName(v.accumulator),
+                              /*bRowMajor=*/true);
+  FunctionType *mmaFTy = C.wmma.Mma->getFunctionType();
+  C.aFragSize = fragSize(C.wmma.LoadA->getFunctionType()->getReturnType());
+  C.bFragSize = fragSize(C.wmma.LoadB->getFunctionType()->getReturnType());
+  C.cFragSize = mmaFTy->getNumParams() - C.aFragSize - C.bFragSize;
+  assert(C.cFragSize == fragSize(mmaFTy->getReturnType()) &&
+         "chained accumulation needs the C and D fragments of one shape");
+  C.cFragElemTy = mmaFTy->getParamType(C.aFragSize + C.bFragSize);
 
-  const nvptx::Wmma wmma =
-      nvptx::declareWmma(mod, t.tileM, t.tileN, t.tileK, fpKindName(operand),
-                         fpKindName(v.accumulator), /*bRowMajor=*/true);
-  FunctionType *mmaFTy = wmma.Mma->getFunctionType();
-  auto fragSize = [](Type *T) -> unsigned {
-    if (auto *ST = dyn_cast<StructType>(T))
-      return ST->getNumElements();
-    return 1;
-  };
-  unsigned aFragSize = fragSize(wmma.LoadA->getFunctionType()->getReturnType());
-  unsigned bFragSize = fragSize(wmma.LoadB->getFunctionType()->getReturnType());
-  unsigned dFragSize = fragSize(mmaFTy->getReturnType());
-  unsigned cFragSize = mmaFTy->getNumParams() - aFragSize - bFragSize;
-  if (cFragSize != dFragSize)
-    report_fatal_error("materializeInKernelRaise: mma C/D fragment shapes "
-                       "differ; chained accumulation requires C precision == "
-                       "D precision");
-  Type *cFragElemTy = mmaFTy->getParamType(aFragSize + bFragSize);
+  const bool partialWarpBlock =
+      h.blockThreads != 0 && h.blockThreads % nvptx::kWarpSize != 0;
+  C.useWarpGate = C.L.mTiles * C.L.nTiles == 1 || partialWarpBlock;
+  return C;
+}
 
-  // Value names: the split scheme's start with "ozaki", the direct scheme's
-  // with "wmma".
-  const StringRef tag = split ? "ozaki" : "wmma";
-  auto accName = [&](unsigned k) {
-    return split ? ("cAcc" + Twine(k)).str() : std::string("cFrag");
-  };
-
-  // Scratch per slice k: A (mPad x tileK) and B (tileK x nPad) of the operand
-  // format, and the output (mPad x nPad) of the accumulator format; the
-  // K-streamed sizing keeps shared memory bounded regardless of K. Keyed by
-  // (function, op, slice, format, extents) and not by matmul id, so raises in
-  // one function that need an identically shaped buffer share one (per-raise
-  // buffers would exceed the 48 KB static cap). Safe because the raised
-  // regions are sequential and bracketed by block barriers; the extents in
-  // the key prevent reuse at another size.
+// The per-slice A (mPad x tileK) and B (tileK x nPad) scratch of the operand
+// format and D (mPad x nPad) of the accumulator format; the K-streamed sizing
+// keeps shared memory bounded regardless of K. Keyed by (function, op, slice,
+// format, extents) and not by matmul id, so raises in one function that need
+// an identically shaped buffer share one (per-raise buffers would exceed the
+// 48 KB static cap). Safe because the raised regions are sequential and
+// bracketed by block barriers; the extents in the key prevent reuse at another
+// size.
+static void createScratch(const RaiseContext &C,
+                          SmallVectorImpl<GlobalVariable *> &a,
+                          SmallVectorImpl<GlobalVariable *> &b,
+                          SmallVectorImpl<GlobalVariable *> &d) {
+  const SchemeVariant &v = C.t.variant;
   auto scratchName = [&](StringRef op, unsigned k, StringRef prec,
                          uint64_t rows, uint64_t cols) -> std::string {
-    std::string slice = split ? std::to_string(k) : std::string();
-    return ("__poseidon_" + Twine(split ? "ozaki" : "raise") + "_" +
-            F->getName() + "_" + op + slice + "_" + prec + "_" + Twine(rows) +
+    std::string slice = C.split ? std::to_string(k) : std::string();
+    return ("__poseidon_" + Twine(C.split ? "ozaki" : "raise") + "_" +
+            C.F->getName() + "_" + op + slice + "_" + prec + "_" + Twine(rows) +
             "x" + Twine(cols))
         .str();
   };
-  SmallVector<GlobalVariable *, 8> aScratch(N), bScratch(N), dScratch(N);
-  for (unsigned k = 0; k < N; ++k) {
-    aScratch[k] = getOrCreateSharedScratch(
-        mod, scratchName("a", k, fpKindName(operand), mPad, t.tileK), opTy,
-        L.aElts());
-    bScratch[k] = getOrCreateSharedScratch(
-        mod, scratchName("b", k, fpKindName(operand), t.tileK, nPad), opTy,
-        L.bElts());
-    dScratch[k] = getOrCreateSharedScratch(
-        mod, scratchName("d", k, fpKindName(v.accumulator), mPad, nPad), accTy,
-        L.dElts());
+  for (unsigned k = 0; k < C.N; ++k) {
+    a.push_back(getOrCreateSharedScratch(
+        C.mod, scratchName("a", k, fpKindName(v.operand), C.L.mPad, C.t.tileK),
+        C.opTy, C.L.aElts()));
+    b.push_back(getOrCreateSharedScratch(
+        C.mod, scratchName("b", k, fpKindName(v.operand), C.t.tileK, C.L.nPad),
+        C.opTy, C.L.bElts()));
+    d.push_back(getOrCreateSharedScratch(
+        C.mod,
+        scratchName("d", k, fpKindName(v.accumulator), C.L.mPad, C.L.nPad),
+        C.accTy, C.L.dElts()));
   }
+}
 
-  IRBuilder<> B(preheader->getTerminator());
-  const nvptx::Barrier barrier = nvptx::declareBarrier(mod);
-
-  if (!h.aStartSCEV || !h.bStartSCEV || !h.SE)
-    report_fatal_error("materializeInKernelRaise: missing aStartSCEV / "
-                       "bStartSCEV / SE; analyzer didn't populate them");
+// Per-block source bases of A and B: the per-thread iteration-0 start less the
+// threadIdx contribution of the (possibly fused) index the recognizer matched,
+// so the cooperative fill sees one base across the block.
+static std::pair<Value *, Value *> emitBlockBases(const RaiseContext &C,
+                                                  IRBuilder<> &B) {
+  const ScalarLoopHandle &h = C.h;
+  assert(h.aStartSCEV && h.bStartSCEV && h.SE &&
+         "recognition records both operands' start");
   SCEVExpander sex = makeSCEVExpander(*h.SE, "poseidon.raise");
-
-  // Per-block source bases: the per-thread iteration-0 start less the
-  // threadIdx contribution of the (possibly fused) index the recognizer
-  // matched, so the cooperative fill sees one base across the block.
-  Value *rowTid =
-      emitTidIndex(B, mod, h.aRowAxis, h.aRowSlowAxis, h.aRowFuseMult);
-  Value *colTid =
-      emitTidIndex(B, mod, h.bColAxis, h.bColSlowAxis, h.bColFuseMult);
-  Value *rowTidI64 = B.CreateZExt(rowTid, i64Ty);
-  Value *colTidI64 = B.CreateZExt(colTid, i64Ty);
-  Value *aPerThreadStart =
-      sex.expandCodeFor(h.aStartSCEV, genPtrTy, preheader->getTerminator());
-  Value *bPerThreadStart =
-      sex.expandCodeFor(h.bStartSCEV, genPtrTy, preheader->getTerminator());
-  // A fused index must step the operand by exactly the stride the block-base
-  // back-out assumes; the recognizer already checked this, so a mismatch
-  // means the two derivations disagree. Abort rather than emit a wrong
-  // address.
-  if (h.aRowSlowAxis != TidAxis::Unknown &&
-      h.aRowFuseUnitByte != h.aLeadingDimByte)
-    report_fatal_error("materializeInKernelRaise: fused A-row unit stride " +
-                       Twine(h.aRowFuseUnitByte) + " != A leading dim " +
-                       Twine(h.aLeadingDimByte));
+  Instruction *at = &*B.GetInsertPoint();
+  Value *rowTid = emitTidIndex(B, C.mod, h.aRow);
+  Value *colTid = emitTidIndex(B, C.mod, h.bCol);
+  Value *rowTidI64 = B.CreateZExt(rowTid, C.i64Ty);
+  Value *colTidI64 = B.CreateZExt(colTid, C.i64Ty);
+  Value *aPerThreadStart = sex.expandCodeFor(h.aStartSCEV, C.genPtrTy, at);
+  Value *bPerThreadStart = sex.expandCodeFor(h.bStartSCEV, C.genPtrTy, at);
   Value *aRowThreadOff =
-      B.CreateMul(rowTidI64, ConstantInt::get(i64Ty, h.aLeadingDimByte));
+      B.CreateMul(rowTidI64, ConstantInt::get(C.i64Ty, h.aLeadingDimByte));
   Value *aRowThreadBack = B.CreateNeg(aRowThreadOff);
-  Value *aBlockBase = B.CreateGEP(i8Ty, aPerThreadStart, aRowThreadBack);
-  int64_t bColThreadStrideByte = bRowMajor ? srcByte : h.bLeadingDimByte;
-  if (h.bColSlowAxis != TidAxis::Unknown &&
-      h.bColFuseUnitByte != bColThreadStrideByte)
-    report_fatal_error("materializeInKernelRaise: fused B-col unit stride " +
-                       Twine(h.bColFuseUnitByte) + " != B column stride " +
-                       Twine(bColThreadStrideByte));
+  Value *aBlockBase = B.CreateGEP(C.i8Ty, aPerThreadStart, aRowThreadBack);
+  // The recognizer admits a fused index only when it steps the operand by
+  // these strides.
+  int64_t bColThreadStrideByte = C.bRowMajor ? C.srcByte : h.bLeadingDimByte;
   Value *bColThreadOff =
-      B.CreateMul(colTidI64, ConstantInt::get(i64Ty, bColThreadStrideByte));
+      B.CreateMul(colTidI64, ConstantInt::get(C.i64Ty, bColThreadStrideByte));
   Value *bColThreadBack = B.CreateNeg(bColThreadOff);
-  Value *bBlockBase = B.CreateGEP(i8Ty, bPerThreadStart, bColThreadBack);
+  Value *bBlockBase = B.CreateGEP(C.i8Ty, bPerThreadStart, bColThreadBack);
+  return {aBlockBase, bBlockBase};
+}
 
-  int64_t bSrcKStepByte = bRowMajor ? h.bStrideByte : srcByte;
-  int64_t bSrcNStrideByte = bRowMajor ? srcByte : h.bLeadingDimByte;
-
-  // The scratch tiles are tight-packed at (mPad x tileK) / (tileK x nPad).
-  int64_t aScratchRowByte = (int64_t)t.tileK * opByte;
-  int64_t bScratchKStepByte = (int64_t)nPad * opByte;
-  Value *ldaV = ConstantInt::get(i32Ty, (int64_t)t.tileK);
-  Value *ldbV = ConstantInt::get(i32Ty, (int64_t)nPad);
-  Value *ldcV = ConstantInt::get(i32Ty, (int64_t)nPad);
-
-  SmallVector<Value *, 8> aGen(N), bGen(N), dGen(N);
-  for (unsigned k = 0; k < N; ++k) {
-    aGen[k] = B.CreateAddrSpaceCast(aScratch[k], genPtrTy);
-    bGen[k] = B.CreateAddrSpaceCast(bScratch[k], genPtrTy);
-    dGen[k] = B.CreateAddrSpaceCast(dScratch[k], genPtrTy);
-  }
-
-  // K-streaming outer loop: per k_outer, refill the A/B scratch with the next
-  // K-tile chunk, barrier, run the mma chain of every (mt, nt) output tile
-  // with the accumulators carried in PHIs, barrier; after the loop the
-  // accumulators are stored to the output scratch.
+// The K-streaming loop around the mma chain: per k_outer, refill the A/B
+// scratch with the next K-tile chunk and barrier. The accumulators are carried
+// in header PHIs. Leaves `bodyB` after the fills' barrier.
+static KStreamLoop emitKStreamLoop(const RaiseContext &C, IRBuilder<> &B,
+                                   IRBuilder<> &bodyB, Value *aBlockBase,
+                                   Value *bBlockBase,
+                                   const nvptx::Barrier &barrier) {
+  const AbstractMatmul &m = C.m;
+  const ScalarLoopHandle &h = C.h;
+  const unsigned tileK = C.t.tileK;
+  KStreamLoop K;
   BasicBlock *preheaderBB = B.GetInsertBlock();
-  Instruction *postLoopInst = preheader->getTerminator();
-  BasicBlock *afterLoopBB = preheaderBB->splitBasicBlock(
-      postLoopInst->getIterator(), tag + "_kstream.after");
+  Instruction *postLoopInst = &*B.GetInsertPoint();
+  K.afterLoopBB = preheaderBB->splitBasicBlock(postLoopInst->getIterator(),
+                                               C.tag + "_kstream.after");
   preheaderBB->getTerminator()->eraseFromParent();
   BasicBlock *loopHdrBB =
-      BasicBlock::Create(ctx, tag + "_kstream.hdr", F, afterLoopBB);
+      BasicBlock::Create(C.ctx, C.tag + "_kstream.hdr", C.F, K.afterLoopBB);
   BasicBlock *loopBodyBB =
-      BasicBlock::Create(ctx, tag + "_kstream.body", F, afterLoopBB);
+      BasicBlock::Create(C.ctx, C.tag + "_kstream.body", C.F, K.afterLoopBB);
   IRBuilder<>(preheaderBB).CreateBr(loopHdrBB);
 
   // Header PHIs: k_outer plus one PHI per (group, mt, nt, fragment element).
   IRBuilder<> hdrB(loopHdrBB);
-  PHINode *kOuterPhi = hdrB.CreatePHI(i32Ty, 2, "k_outer");
-  kOuterPhi->addIncoming(ConstantInt::get(i32Ty, 0), preheaderBB);
-  Constant *cZeroElt = Constant::getNullValue(cFragElemTy);
-  const unsigned numPhisPerGroup = L.mTiles * L.nTiles * cFragSize;
-  SmallVector<SmallVector<PHINode *, 16>, 8> accPhis(N);
-  for (unsigned k = 0; k < N; ++k) {
-    accPhis[k].resize(numPhisPerGroup);
-    for (unsigned i = 0; i < numPhisPerGroup; ++i) {
-      accPhis[k][i] = hdrB.CreatePHI(cFragElemTy, 2, accName(k));
-      accPhis[k][i]->addIncoming(cZeroElt, preheaderBB);
+  K.kOuterPhi = hdrB.CreatePHI(C.i32Ty, 2, "k_outer");
+  K.kOuterPhi->addIncoming(ConstantInt::get(C.i32Ty, 0), preheaderBB);
+  Constant *cZeroElt = Constant::getNullValue(C.cFragElemTy);
+  K.accPhis.resize(C.N);
+  for (unsigned k = 0; k < C.N; ++k) {
+    K.accPhis[k].resize(C.accPhisPerGroup());
+    for (PHINode *&phi : K.accPhis[k]) {
+      phi = hdrB.CreatePHI(C.cFragElemTy, 2, C.accName(k));
+      phi->addIncoming(cZeroElt, preheaderBB);
     }
   }
-  Value *kLoopBound = ConstantInt::get(i32Ty, (int32_t)L.kPad);
-  Value *kCond = hdrB.CreateICmpULT(kOuterPhi, kLoopBound);
-  hdrB.CreateCondBr(kCond, loopBodyBB, afterLoopBB);
+  Value *kLoopBound = ConstantInt::get(C.i32Ty, (int32_t)C.L.kPad);
+  Value *kCond = hdrB.CreateICmpULT(K.kOuterPhi, kLoopBound);
+  hdrB.CreateCondBr(kCond, loopBodyBB, K.afterLoopBB);
 
   // The fills split the block at a terminator; this branch ends in the latch.
-  IRBuilder<> bodyB(loopBodyBB);
-  Instruction *placeholderBr = bodyB.CreateBr(loopHdrBB);
-  bodyB.SetInsertPoint(placeholderBr);
-  Value *kOuter64 = bodyB.CreateZExt(kOuterPhi, i64Ty);
+  bodyB.SetInsertPoint(loopBodyBB);
+  K.latchBr = bodyB.CreateBr(loopHdrBB);
+  bodyB.SetInsertPoint(K.latchBr);
+  Value *kOuter64 = bodyB.CreateZExt(K.kOuterPhi, C.i64Ty);
 
-  auto [tlin, bsz] = emitThreadLinAndBlockSize(bodyB, mod, h.is2DBlock);
+  auto [tlin, bsz] = emitThreadLinAndBlockSize(bodyB, C.mod, h.is2DBlock);
+  K.tlin = tlin;
+  const int64_t bSrcKStepByte = C.bRowMajor ? h.bStrideByte : C.srcByte;
+  const int64_t bSrcNStrideByte = C.bRowMajor ? C.srcByte : h.bLeadingDimByte;
   Value *aKOff =
-      bodyB.CreateMul(kOuter64, ConstantInt::get(i64Ty, h.aStrideByte));
-  Value *aSrcForIter = bodyB.CreateGEP(i8Ty, aBlockBase, aKOff);
+      bodyB.CreateMul(kOuter64, ConstantInt::get(C.i64Ty, h.aStrideByte));
+  Value *aSrcForIter = bodyB.CreateGEP(C.i8Ty, aBlockBase, aKOff);
   Value *bKOff =
-      bodyB.CreateMul(kOuter64, ConstantInt::get(i64Ty, bSrcKStepByte));
-  Value *bSrcForIter = bodyB.CreateGEP(i8Ty, bBlockBase, bKOff);
+      bodyB.CreateMul(kOuter64, ConstantInt::get(C.i64Ty, bSrcKStepByte));
+  Value *bSrcForIter = bodyB.CreateGEP(C.i8Ty, bBlockBase, bKOff);
 
   // Valid source extents. K-streaming makes the last K-tile short whenever
   // K is padded, so the valid K count is the runtime min(tileK, K - k_outer).
-  Value *validK = ConstantInt::get(i32Ty, (int32_t)t.tileK);
-  if (L.kPad > m.K) {
+  Value *validK = ConstantInt::get(C.i32Ty, (int32_t)tileK);
+  if (C.L.kPad > m.K) {
     Value *kLeft =
-        bodyB.CreateSub(ConstantInt::get(i32Ty, (int32_t)m.K), kOuterPhi);
+        bodyB.CreateSub(ConstantInt::get(C.i32Ty, (int32_t)m.K), K.kOuterPhi);
     validK = bodyB.CreateBinaryIntrinsic(
-        Intrinsic::umin, kLeft, ConstantInt::get(i32Ty, (int32_t)t.tileK));
+        Intrinsic::umin, kLeft, ConstantInt::get(C.i32Ty, (int32_t)tileK));
   }
-  Value *validM = ConstantInt::get(i32Ty, (int32_t)m.M);
-  Value *validN = ConstantInt::get(i32Ty, (int32_t)m.N);
+  Value *validM = ConstantInt::get(C.i32Ty, (int32_t)m.M);
+  Value *validN = ConstantInt::get(C.i32Ty, (int32_t)m.N);
 
   // The fills cover the padded tile and write an exact zero outside the real
   // extent: guard-masking the mma instead would be wrong, since the fragments
   // are warp-collective, and an uninitialized pad feeds 0 * Inf = NaN into
   // real outputs. Without padding the direct fill checks no extent.
-  const bool padded = L.padded(m);
-  const bool rangeChecked = padded || split;
+  const bool rangeChecked = C.L.padded(m) || C.split;
   const std::string fillName =
-      (tag + (rangeChecked ? "_pfill" : "_cfill")).str();
+      (C.tag + (rangeChecked ? "_pfill" : "_cfill")).str();
+  const FPKind operand = C.t.variant.operand;
   auto payload = [&](IRBuilder<> &PB, Value *x) -> SmallVector<Value *, 8> {
-    if (split) {
-      Value *xF32 = emitFPCast(PB, x, f32Ty);
-      return emitNwayVeltkampSplit(PB, mod, xF32, N, operand);
+    if (C.split) {
+      Value *xF32 = emitFPCast(PB, x, C.f32Ty);
+      return emitNwayVeltkampSplit(PB, C.mod, xF32, C.N, operand);
     }
-    Value *cvt = emitFPCast(PB, x, opTy);
+    Value *cvt = emitFPCast(PB, x, C.opTy);
     // wmma.load.a/b.tf32 reads the float bit pattern as it is and the MMA
     // truncates the low 13 mantissa bits, which biases the result one way, so
     // the fill rounds to nearest first.
     if (operand == FPKind::TF32)
-      cvt = nvptx::emitRoundToTF32(PB, mod, cvt);
+      cvt = nvptx::emitRoundToTF32(PB, C.mod, cvt);
     return {cvt};
   };
   // The block is the profiled M x N one, so a fill of at most M * N elements
@@ -628,99 +611,114 @@ void materializeInKernelRaise(const AbstractMatmul &m,
   TileFill aFill{aSrcForIter,
                  h.aLeadingDimByte,
                  h.aStrideByte,
-                 aGen,
-                 aScratchRowByte,
-                 opByte,
-                 mPad,
-                 t.tileK,
+                 C.aGen,
+                 C.aScratchRowByte(),
+                 C.opByte,
+                 C.L.mPad,
+                 tileK,
                  rangeChecked ? validM : nullptr,
                  rangeChecked ? validK : nullptr};
   TileFill bFill{bSrcForIter,
                  bSrcKStepByte,
                  bSrcNStrideByte,
-                 bGen,
-                 bScratchKStepByte,
-                 opByte,
-                 t.tileK,
-                 nPad,
+                 C.bGen,
+                 (int64_t)C.L.nPad * C.opByte,
+                 C.opByte,
+                 tileK,
+                 C.L.nPad,
                  rangeChecked ? validK : nullptr,
                  rangeChecked ? validN : nullptr};
   for (const TileFill *fill : {&aFill, &bFill})
-    emitTileFill(bodyB, fillName, *fill, srcTy, opTy, tlin, bsz,
+    emitTileFill(bodyB, fillName, *fill, C.srcTy, C.opTy, tlin, bsz,
                  fill->rows * fill->cols <= blockArea, payload);
   bodyB.CreateCall(barrier.Fn, barrier.Args);
+  return K;
+}
 
-  // Warp-gate the mma chain when there is a single output tile per block, and
-  // always when the block's thread count is not a multiple of 32: its last
-  // warp is partially populated, and warp-collective wmma ops in a partial
-  // warp are undefined (the ungated chain corrupts the shared output tile).
-  const bool partialWarpBlock =
-      (h.blockThreads != 0) && (h.blockThreads % nvptx::kWarpSize != 0);
-  const bool useWarpGate = (L.mTiles * L.nTiles == 1) || partialWarpBlock;
-  auto emitIsWarp0 = [&](IRBuilder<> &GB, Value *lin) {
-    Value *warpId = GB.CreateLShr(
-        lin, ConstantInt::get(i32Ty, nvptx::kLog2WarpSize), "warp_id");
-    return GB.CreateICmpEQ(warpId, ConstantInt::get(i32Ty, 0), "is_warp0");
-  };
+static Value *emitIsWarp0(const RaiseContext &C, IRBuilder<> &GB, Value *lin) {
+  Value *warpId = GB.CreateLShr(
+      lin, ConstantInt::get(C.i32Ty, nvptx::kLog2WarpSize), "warp_id");
+  return GB.CreateICmpEQ(warpId, ConstantInt::get(C.i32Ty, 0), "is_warp0");
+}
+
+// Splits `B`'s block at its insertion point into a branch on warp 0 to a new
+// block, where `B` is left, and the merge block, which it returns.
+static BasicBlock *openWarpGate(const RaiseContext &C, IRBuilder<> &B,
+                                Value *lin, const Twine &name) {
+  Value *isWarp0 = emitIsWarp0(C, B, lin);
+  BasicBlock *pre = B.GetInsertBlock();
+  BasicBlock *merge =
+      pre->splitBasicBlock(B.GetInsertPoint(), C.tag + name + ".merge");
+  pre->getTerminator()->eraseFromParent();
+  BasicBlock *doBB =
+      BasicBlock::Create(C.ctx, C.tag + name + ".do", C.F, merge);
+  IRBuilder<>(pre).CreateCondBr(isWarp0, doBB, merge);
+  B.SetInsertPoint(doBB);
+  return merge;
+}
+
+// The mma chain of every (mt, nt) output tile of one K-tile, warp-gated when
+// C.useWarpGate, then the barrier that keeps the next fill off the tiles the
+// chain reads, and the back edge.
+static void emitMmaChain(const RaiseContext &C, IRBuilder<> &bodyB,
+                         KStreamLoop &K, const nvptx::Barrier &barrier) {
+  const unsigned N = C.N, cFragSize = C.cFragSize;
+  const unsigned numPhisPerGroup = C.accPhisPerGroup();
   BasicBlock *gatePreBB = nullptr;
   BasicBlock *gateMergeBB = nullptr;
-  if (useWarpGate) {
-    Value *isWarp0 = emitIsWarp0(bodyB, tlin);
+  if (C.useWarpGate) {
     gatePreBB = bodyB.GetInsertBlock();
-    Instruction *splitPt = &*bodyB.GetInsertPoint();
-    gateMergeBB =
-        gatePreBB->splitBasicBlock(splitPt->getIterator(), tag + "_gate.merge");
-    gatePreBB->getTerminator()->eraseFromParent();
-    BasicBlock *gateDoBB =
-        BasicBlock::Create(ctx, tag + "_gate.do", F, gateMergeBB);
-    IRBuilder<>(gatePreBB).CreateCondBr(isWarp0, gateDoBB, gateMergeBB);
-    bodyB.SetInsertPoint(gateDoBB);
+    gateMergeBB = openWarpGate(C, bodyB, K.tlin, "_gate");
   }
 
+  Value *ldaV = ConstantInt::get(C.i32Ty, (int64_t)C.t.tileK);
+  Value *ldbV = ConstantInt::get(C.i32Ty, (int64_t)C.L.nPad);
   auto callMma = [&](Value *aTile, Value *bTile,
                      ArrayRef<Value *> cIn) -> Value * {
-    Value *aFragV = bodyB.CreateCall(wmma.LoadA, {aTile, ldaV});
-    Value *bFragV = bodyB.CreateCall(wmma.LoadB, {bTile, ldbV});
+    Value *aFragV = bodyB.CreateCall(C.wmma.LoadA, {aTile, ldaV});
+    Value *bFragV = bodyB.CreateCall(C.wmma.LoadB, {bTile, ldbV});
     SmallVector<Value *, 32> args;
-    args.reserve(aFragSize + bFragSize + cFragSize);
-    for (unsigned i = 0; i < aFragSize; ++i)
-      args.push_back(aFragSize == 1 ? aFragV
-                                    : bodyB.CreateExtractValue(aFragV, i));
-    for (unsigned i = 0; i < bFragSize; ++i)
-      args.push_back(bFragSize == 1 ? bFragV
-                                    : bodyB.CreateExtractValue(bFragV, i));
+    args.reserve(C.aFragSize + C.bFragSize + cFragSize);
+    for (unsigned i = 0; i < C.aFragSize; ++i)
+      args.push_back(C.aFragSize == 1 ? aFragV
+                                      : bodyB.CreateExtractValue(aFragV, i));
+    for (unsigned i = 0; i < C.bFragSize; ++i)
+      args.push_back(C.bFragSize == 1 ? bFragV
+                                      : bodyB.CreateExtractValue(bFragV, i));
     for (unsigned i = 0; i < cFragSize; ++i)
       args.push_back(cIn[i]);
-    return bodyB.CreateCall(wmma.Mma, args);
+    return bodyB.CreateCall(C.wmma.Mma, args);
   };
   auto fragElement = [&](Value *frag, unsigned e) {
     return cFragSize == 1 ? frag : bodyB.CreateExtractValue(frag, e);
   };
 
+  Constant *cZeroElt = Constant::getNullValue(C.cFragElemTy);
   SmallVector<SmallVector<Value *, 16>, 8> accLoop(N);
   for (unsigned k = 0; k < N; ++k)
     accLoop[k].resize(numPhisPerGroup);
-  for (unsigned mt = 0; mt < L.mTiles; ++mt) {
-    for (unsigned nt = 0; nt < L.nTiles; ++nt) {
+  for (unsigned mt = 0; mt < C.L.mTiles; ++mt) {
+    for (unsigned nt = 0; nt < C.L.nTiles; ++nt) {
       // Scratch is refilled at offset 0 per iteration, so the wmma loads read
       // from the scratch base with no K offset.
       SmallVector<Value *, 8> aRowBases(N), bColBases(N);
       for (unsigned k = 0; k < N; ++k) {
         aRowBases[k] = bodyB.CreatePtrAdd(
-            aGen[k],
-            ConstantInt::get(i64Ty, (int64_t)mt * t.tileM * aScratchRowByte));
+            C.aGen[k], ConstantInt::get(C.i64Ty, (int64_t)mt * C.t.tileM *
+                                                     C.aScratchRowByte()));
         bColBases[k] = bodyB.CreatePtrAdd(
-            bGen[k], ConstantInt::get(i64Ty, (int64_t)nt * t.tileN * opByte));
+            C.bGen[k],
+            ConstantInt::get(C.i64Ty, (int64_t)nt * C.t.tileN * C.opByte));
       }
-      unsigned phiBase = (mt * L.nTiles + nt) * cFragSize;
+      unsigned phiBase = (mt * C.L.nTiles + nt) * cFragSize;
       SmallVector<SmallVector<Value *, 16>, 8> cur(N);
       for (unsigned k = 0; k < N; ++k) {
         cur[k].resize(cFragSize);
         for (unsigned i = 0; i < cFragSize; ++i)
-          cur[k][i] = accPhis[k][phiBase + i];
+          cur[k][i] = K.accPhis[k][phiBase + i];
       }
 
-      if (split) {
+      if (C.split) {
         // For each (i, j) with i + j < N accumulate a[i]*b[j] into group
         // c[i+j]; products with i + j >= N are below the captured resolution.
         // The dominant c[0] uses fresh acc + add rather than a chained mma:
@@ -757,16 +755,17 @@ void materializeInKernelRaise(const AbstractMatmul &m,
 
   // Close the warp gate: merge the mma results (warp 0) with the unchanged
   // accumulators (other warps) so the back edge uses the merged values.
-  if (useWarpGate) {
+  if (C.useWarpGate) {
     BasicBlock *gateEndBB = bodyB.GetInsertBlock();
     bodyB.CreateBr(gateMergeBB);
     IRBuilder<> mergeB =
         builderAt(gateMergeBB, gateMergeBB->getFirstInsertionPt());
     for (unsigned k = 0; k < N; ++k) {
       for (unsigned i = 0; i < numPhisPerGroup; ++i) {
-        PHINode *p = mergeB.CreatePHI(cFragElemTy, 2, accName(k) + ".merge");
+        PHINode *p =
+            mergeB.CreatePHI(C.cFragElemTy, 2, C.accName(k) + ".merge");
         p->addIncoming(accLoop[k][i], gateEndBB);
-        p->addIncoming(accPhis[k][i], gatePreBB);
+        p->addIncoming(K.accPhis[k][i], gatePreBB);
         accLoop[k][i] = p;
       }
     }
@@ -777,88 +776,91 @@ void materializeInKernelRaise(const AbstractMatmul &m,
   // them.
   bodyB.CreateCall(barrier.Fn, barrier.Args);
 
-  Value *kNext =
-      bodyB.CreateAdd(kOuterPhi, ConstantInt::get(i32Ty, (int32_t)t.tileK));
-  BasicBlock *latchBB = placeholderBr->getParent();
-  kOuterPhi->addIncoming(kNext, latchBB);
+  Value *kNext = bodyB.CreateAdd(K.kOuterPhi,
+                                 ConstantInt::get(C.i32Ty, (int32_t)C.t.tileK));
+  BasicBlock *latchBB = K.latchBr->getParent();
+  K.kOuterPhi->addIncoming(kNext, latchBB);
   for (unsigned k = 0; k < N; ++k)
     for (unsigned i = 0; i < numPhisPerGroup; ++i)
-      accPhis[k][i]->addIncoming(accLoop[k][i], latchBB);
+      K.accPhis[k][i]->addIncoming(accLoop[k][i], latchBB);
+}
 
-  // Store the final accumulators to the output scratch, warp-gated too: only
-  // warp 0's PHIs hold the result, and the barrier after makes the store
-  // visible to the readback in exitBB.
+// After the loop: stores the final accumulators to the output scratch,
+// warp-gated too since only warp 0's PHIs hold the result, then a barrier,
+// then this thread's cell read back as sum_k d[k] / SCALE^k. The block is the
+// profiled M x N one, so the cell is not clamped to the output tile, and the
+// output scratch's row stride is nPad. Returns the readback and the block it
+// ends in, which still branches back to the loop.
+static std::pair<Value *, BasicBlock *>
+emitStoreAndReadback(const RaiseContext &C, const KStreamLoop &K,
+                     const nvptx::Barrier &barrier) {
+  const ScalarLoopHandle &h = C.h;
+  const unsigned cFragSize = C.cFragSize;
   // NOLINTNEXTLINE(enzyme-first-non-phi): ahead of the debug records
-  BasicBlock::iterator afterAt = afterLoopBB->getFirstNonPHIIt();
-  IRBuilder<> afterB = builderAt(afterLoopBB, afterAt);
+  BasicBlock::iterator afterAt = K.afterLoopBB->getFirstNonPHIIt();
+  IRBuilder<> afterB = builderAt(K.afterLoopBB, afterAt);
   BasicBlock *storeMergeBB = nullptr;
-  if (useWarpGate) {
+  if (C.useWarpGate) {
     Value *afterTlin =
-        emitThreadLinAndBlockSize(afterB, mod, h.is2DBlock).first;
-    Value *afterIsWarp0 = emitIsWarp0(afterB, afterTlin);
-    Instruction *splitPt = &*afterB.GetInsertPoint();
-    BasicBlock *curr = afterB.GetInsertBlock();
-    storeMergeBB = curr->splitBasicBlock(splitPt->getIterator(),
-                                         tag + "_store_gate.merge");
-    curr->getTerminator()->eraseFromParent();
-    BasicBlock *storeDoBB =
-        BasicBlock::Create(ctx, tag + "_store_gate.do", F, storeMergeBB);
-    IRBuilder<>(curr).CreateCondBr(afterIsWarp0, storeDoBB, storeMergeBB);
-    afterB.SetInsertPoint(storeDoBB);
+        emitThreadLinAndBlockSize(afterB, C.mod, h.is2DBlock).first;
+    storeMergeBB = openWarpGate(C, afterB, afterTlin, "_store_gate");
   }
-  for (unsigned mt = 0; mt < L.mTiles; ++mt) {
-    for (unsigned nt = 0; nt < L.nTiles; ++nt) {
-      Value *dTileByte =
-          ConstantInt::get(i64Ty, ((int64_t)mt * t.tileM * (int64_t)nPad +
-                                   (int64_t)nt * t.tileN) *
-                                      accByte);
-      unsigned phiBase = (mt * L.nTiles + nt) * cFragSize;
-      for (unsigned k = 0; k < N; ++k) {
-        Value *dTilePtr = afterB.CreatePtrAdd(dGen[k], dTileByte);
+  Value *ldcV = ConstantInt::get(C.i32Ty, (int64_t)C.L.nPad);
+  for (unsigned mt = 0; mt < C.L.mTiles; ++mt) {
+    for (unsigned nt = 0; nt < C.L.nTiles; ++nt) {
+      Value *dTileByte = ConstantInt::get(
+          C.i64Ty, ((int64_t)mt * C.t.tileM * (int64_t)C.L.nPad +
+                    (int64_t)nt * C.t.tileN) *
+                       C.accByte);
+      unsigned phiBase = (mt * C.L.nTiles + nt) * cFragSize;
+      for (unsigned k = 0; k < C.N; ++k) {
+        Value *dTilePtr = afterB.CreatePtrAdd(C.dGen[k], dTileByte);
         SmallVector<Value *, 16> args;
         args.reserve(2 + cFragSize);
         args.push_back(dTilePtr);
         for (unsigned i = 0; i < cFragSize; ++i)
-          args.push_back(accPhis[k][phiBase + i]);
+          args.push_back(K.accPhis[k][phiBase + i]);
         args.push_back(ldcV);
-        afterB.CreateCall(wmma.StoreD, args);
+        afterB.CreateCall(C.wmma.StoreD, args);
       }
     }
   }
-  if (useWarpGate) {
+  if (C.useWarpGate) {
     afterB.CreateBr(storeMergeBB);
     setInsertPoint(afterB, storeMergeBB, storeMergeBB->getFirstInsertionPt());
   }
   afterB.CreateCall(barrier.Fn, barrier.Args);
 
-  // Readback of this thread's cell, sum_k d[k] / SCALE^k: the block is the
-  // profiled M x N one, so it is not clamped to the output tile, and the
-  // output scratch's row stride is nPad. It ends the raise, which then leaves
-  // to the exit block past the loop.
   IRBuilder<> &RB = afterB;
-  Value *rRow =
-      emitTidIndex(RB, mod, h.aRowAxis, h.aRowSlowAxis, h.aRowFuseMult);
-  Value *rCol =
-      emitTidIndex(RB, mod, h.bColAxis, h.bColSlowAxis, h.bColFuseMult);
-  Value *rRowOff = RB.CreateMul(rRow, ConstantInt::get(i32Ty, nPad));
+  Value *rRow = emitTidIndex(RB, C.mod, h.aRow);
+  Value *rCol = emitTidIndex(RB, C.mod, h.bCol);
+  Value *rRowOff = RB.CreateMul(rRow, ConstantInt::get(C.i32Ty, C.L.nPad));
   Value *rCellIdx = RB.CreateAdd(rRowOff, rCol);
   Value *sum = nullptr;
   double scalePowK = 1.0;
-  for (unsigned k = 0; k < N; ++k) {
-    Value *cell = RB.CreateGEP(accTy, dGen[k], rCellIdx);
-    LoadInst *raw = RB.CreateLoad(accTy, cell);
-    raw->setAlignment(Align(accByte));
+  for (unsigned k = 0; k < C.N; ++k) {
+    Value *cell = RB.CreateGEP(C.accTy, C.dGen[k], rCellIdx);
+    LoadInst *raw = RB.CreateLoad(C.accTy, cell);
+    raw->setAlignment(Align(C.accByte));
     if (k == 0) {
       sum = raw;
     } else {
-      Value *term = RB.CreateFDiv(raw, ConstantFP::get(accTy, scalePowK));
+      Value *term = RB.CreateFDiv(raw, ConstantFP::get(C.accTy, scalePowK));
       sum = RB.CreateFAdd(sum, term);
     }
-    if (k + 1 < N)
-      scalePowK *= veltkampScale(operand);
+    if (k + 1 < C.N)
+      scalePowK *= veltkampScale(C.t.variant.operand);
   }
-  Value *readback = emitFPCast(RB, sum, srcTy);
-  BasicBlock *raiseEnd = RB.GetInsertBlock();
+  Value *readback = emitFPCast(RB, sum, C.srcTy);
+  return {readback, RB.GetInsertBlock()};
+}
+
+// Ends the raise in `raiseEnd` with a branch to the loop's exit block, where
+// every use of the reduction's result outside the loop takes the readback on
+// that edge and the loop's value on the edge from `loopLatch`.
+static void replaceLoopResult(const ScalarLoopHandle &h, BasicBlock *loopLatch,
+                              BasicBlock *raiseEnd, Value *readback) {
+  BasicBlock *exitBB = h.exitBB;
   Instruction *toLoop = raiseEnd->getTerminator();
   IRBuilder<>(toLoop).CreateBr(exitBB);
   toLoop->eraseFromParent();
@@ -890,6 +892,54 @@ void materializeInKernelRaise(const AbstractMatmul &m,
                           : phi.getIncomingValueForBlock(loopLatch),
                       raiseEnd);
   // The reduction loop is left to dead-code elimination.
+}
+
+void materializeInKernelRaise(const AbstractMatmul &m,
+                              const MatmulUnit::Option &t) {
+  const SchemeVariant &v = t.variant;
+  assert(t.realization == Realization::InKernel &&
+         (v.scheme == Scheme::Direct || v.scheme == Scheme::Tcec) &&
+         "only the in-kernel direct and split schemes are realized here");
+  assert((v.scheme != Scheme::Tcec ||
+          (v.accumulator == FPKind::F32 && v.operand != FPKind::F64)) &&
+         "a split scheme slices into a 16- or 19-bit format and accumulates "
+         "in F32");
+  const ScalarLoopHandle &h = m.scalarLoop;
+  BasicBlock *preheader = h.preheader;
+  BasicBlock *exitBB = h.exitBB;
+  assert(preheader && exitBB &&
+         "recognition admits only loops with a preheader and one exit block");
+  assert(h.inKernelRaisable &&
+         "an in-kernel raise is proposed only where it can take the loop's "
+         "place");
+
+  // The raise is laid out for the profiled block shape, so it runs only in a
+  // block of that shape; a launch of another shape runs the loop as written.
+  BasicBlock *loopHeader = preheader->getSingleSuccessor();
+  BasicBlock *loopLatch = exitBB->getSinglePredecessor();
+  assert(loopHeader && loopLatch &&
+         "recognition admits only a loop whose exit is entered from its latch");
+  preheader = emitBlockShapeGuard(*preheader, *loopHeader, h);
+
+  RaiseContext C = makeRaiseContext(m, t, preheader->getParent());
+  SmallVector<GlobalVariable *, 8> aScratch, bScratch, dScratch;
+  createScratch(C, aScratch, bScratch, dScratch);
+
+  IRBuilder<> B(preheader->getTerminator());
+  const nvptx::Barrier barrier = nvptx::declareBarrier(C.mod);
+  auto [aBlockBase, bBlockBase] = emitBlockBases(C, B);
+  for (unsigned k = 0; k < C.N; ++k) {
+    C.aGen.push_back(B.CreateAddrSpaceCast(aScratch[k], C.genPtrTy));
+    C.bGen.push_back(B.CreateAddrSpaceCast(bScratch[k], C.genPtrTy));
+    C.dGen.push_back(B.CreateAddrSpaceCast(dScratch[k], C.genPtrTy));
+  }
+
+  // Placed in the K loop's body by emitKStreamLoop.
+  IRBuilder<> bodyB(preheader);
+  KStreamLoop K = emitKStreamLoop(C, B, bodyB, aBlockBase, bBlockBase, barrier);
+  emitMmaChain(C, bodyB, K, barrier);
+  auto [readback, raiseEnd] = emitStoreAndReadback(C, K, barrier);
+  replaceLoopResult(h, loopLatch, raiseEnd, readback);
 }
 
 } // namespace poseidon

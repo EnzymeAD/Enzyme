@@ -272,8 +272,8 @@ static bool computeGemmBodyNote(const Options &O, Function &F,
     bColMajor = false;
   else
     return false;
-  std::optional<unsigned> axM = tidAxisIndex(h.aRowAxis);
-  std::optional<unsigned> axN = tidAxisIndex(h.bColAxis);
+  std::optional<unsigned> axM = tidAxisIndex(h.aRow.fast);
+  std::optional<unsigned> axN = tidAxisIndex(h.bCol.fast);
   if (!axM || !axN || *axM == *axN)
     return refuse("the product's rows and columns do not run along two thread "
                   "axes");

@@ -231,68 +231,63 @@ std::array<int64_t, 3> threadIndexCoefficients(const SCEV *S) {
   return coef;
 }
 
-// Fused-index classification: also accepts a matrix index built from exactly
-// two thread axes, byteOffset = unit * tid[fast] + unit * mult * tid[slow]
-// (sum-factorized FEM contractions). Returns the fast axis and, on a fused
-// match, sets `slow`, `mult` and `unitByte`; rejects three axes, a
-// non-divisible ratio, or equal coefficients.
-static TidAxis classifyTidIndex(const SCEV *S, TidAxis &slow, unsigned &mult,
-                                int64_t &unitByte) {
-  slow = TidAxis::Unknown;
-  mult = 0;
+// The matrix index whose threads' byte offsets are `S`: one thread axis, or
+// exactly two, byteOffset = unit * tid[fast] + unit * mult * tid[slow]
+// (sum-factorized FEM contractions). Sets `unitByte` to the byte step of one
+// unit of the index (0 when it is not positive). An index of no axis, three
+// axes, a non-divisible ratio or equal coefficients has fast axis Other.
+static MatrixIndex classifyTidIndex(const SCEV *S, int64_t &unitByte) {
   unitByte = 0;
-
+  MatrixIndex idx;
   std::array<int64_t, 3> coef = threadIndexCoefficients(S);
   unsigned n = (coef[0] != 0) + (coef[1] != 0) + (coef[2] != 0);
   static const TidAxis kAxis[3] = {TidAxis::TidX, TidAxis::TidY, TidAxis::TidZ};
   if (n == 1) {
-    // Single axis: still report the per-index byte step, which is the operand's
-    // leading dimension.
     int i = coef[0] ? 0 : coef[1] ? 1 : 2;
     if (coef[i] > 0)
       unitByte = coef[i];
-    return kAxis[i];
+    idx.fast = kAxis[i];
+    return idx;
   }
+  idx.fast = TidAxis::Other;
   if (n != 2)
-    return TidAxis::Other;
+    return idx;
 
   int lo = -1, hi = -1;
   for (int i = 0; i < 3; ++i) {
     if (coef[i] == 0)
       continue;
     if (coef[i] < 0)
-      return TidAxis::Other; // negative index coefficient: not a tensor index
+      return idx; // negative index coefficient: not a tensor index
     if (lo < 0 || coef[i] < coef[lo])
       lo = i;
     if (hi < 0 || coef[i] > coef[hi])
       hi = i;
   }
   if (lo < 0 || hi < 0 || lo == hi)
-    return TidAxis::Other; // equal coefficients: extents are not separable
+    return idx; // equal coefficients: extents are not separable
   if (coef[hi] % coef[lo] != 0)
-    return TidAxis::Other;
+    return idx;
 
-  slow = kAxis[hi];
-  mult = (unsigned)(coef[hi] / coef[lo]);
+  idx.fast = kAxis[lo];
+  idx.slow = kAxis[hi];
+  idx.fuseMult = (unsigned)(coef[hi] / coef[lo]);
   unitByte = coef[lo];
-  return kAxis[lo];
+  return idx;
 }
 
-// Extract a matmul handle from one header phi of an innermost loop; true if
-// the phi+FMA chain is matmul-shaped (A K-stride, B K-stride, tid-axis
-// invariants), false silently otherwise.
-static bool tryAnalyzeReductionPhi(Loop *L, PHINode &phi, ScalarEvolution &SE,
-                                   const DataLayout &DL, unsigned trip,
-                                   BasicBlock *latch,
-                                   ScalarLoopHandle &outHandle,
-                                   FPKind &eltKind) {
+// The matmul handle of one header phi of an innermost loop whose phi+FMA chain
+// is matmul-shaped (A K-stride, B K-stride, tid-axis invariants); none,
+// silently, otherwise.
+static std::optional<ScalarLoopHandle>
+tryAnalyzeReductionPhi(Loop *L, PHINode &phi, ScalarEvolution &SE,
+                       const DataLayout &DL, unsigned trip, BasicBlock *latch) {
   Type *phiTy = phi.getType();
-  FPKind srcPrec = fpKindFromType(phiTy);
-  if (srcPrec == FPKind::Invalid)
-    return false;
+  if (fpKindFromType(phiTy) == FPKind::Invalid)
+    return std::nullopt;
   std::optional<ReductionCycle> rc = matchReductionCycle(L, phi, latch);
   if (!rc)
-    return false;
+    return std::nullopt;
   LoadInst *aLoad = rc->aLoad;
   LoadInst *bLoad = rc->bLoad;
 
@@ -301,48 +296,39 @@ static bool tryAnalyzeReductionPhi(Loop *L, PHINode &phi, ScalarEvolution &SE,
   auto *aRec = dyn_cast<SCEVAddRecExpr>(aAddr);
   auto *bRec = dyn_cast<SCEVAddRecExpr>(bAddr);
   if (!aRec || !bRec)
-    return false;
+    return std::nullopt;
   if (aRec->getLoop() != L || bRec->getLoop() != L)
-    return false;
+    return std::nullopt;
   auto *aStepC = dyn_cast<SCEVConstant>(aRec->getStepRecurrence(SE));
   auto *bStepC = dyn_cast<SCEVConstant>(bRec->getStepRecurrence(SE));
   if (!aStepC || !bStepC)
-    return false;
+    return std::nullopt;
   int64_t aStrideByte = aStepC->getAPInt().getSExtValue();
   int64_t bStrideByte = bStepC->getAPInt().getSExtValue();
 
   // matmul A invariant
   int64_t srcByteSize = (int64_t)DL.getTypeAllocSize(phiTy).getFixedValue();
   if (aStrideByte != srcByteSize)
-    return false;
+    return std::nullopt;
   // matmul B invariant
   if (bStrideByte <= 0 || bStrideByte % srcByteSize != 0)
-    return false;
+    return std::nullopt;
 
-  TidAxis aRowSlow = TidAxis::Unknown, bColSlow = TidAxis::Unknown;
-  unsigned aRowMult = 0, bColMult = 0;
   int64_t aRowUnit = 0, bColUnit = 0;
-  TidAxis aRowAxis =
-      classifyTidIndex(aRec->getStart(), aRowSlow, aRowMult, aRowUnit);
-  TidAxis bColAxis =
-      classifyTidIndex(bRec->getStart(), bColSlow, bColMult, bColUnit);
-  auto axisOk = [](TidAxis a) {
-    return a == TidAxis::TidX || a == TidAxis::TidY || a == TidAxis::TidZ;
-  };
-  if (!axisOk(aRowAxis) || !axisOk(bColAxis))
-    return false;
+  MatrixIndex aRow = classifyTidIndex(aRec->getStart(), aRowUnit);
+  MatrixIndex bCol = classifyTidIndex(bRec->getStart(), bColUnit);
+  if (!tidAxisIndex(aRow.fast) || !tidAxisIndex(bCol.fast))
+    return std::nullopt;
   // Axis disjointness is required only once a fused index is involved: sharing
   // a thread axis between the two matrix indices makes the fused numbering
   // ambiguous.
-  if (aRowSlow != TidAxis::Unknown || bColSlow != TidAxis::Unknown) {
-    if (aRowAxis == bColAxis)
-      return false;
-    if (aRowSlow != TidAxis::Unknown &&
-        (!axisOk(aRowSlow) || aRowSlow == bColAxis || aRowSlow == bColSlow))
-      return false;
-    if (bColSlow != TidAxis::Unknown &&
-        (!axisOk(bColSlow) || bColSlow == aRowAxis))
-      return false;
+  if (aRow.fused() || bCol.fused()) {
+    if (aRow.fast == bCol.fast)
+      return std::nullopt;
+    if (aRow.fused() && (aRow.slow == bCol.fast || aRow.slow == bCol.slow))
+      return std::nullopt;
+    if (bCol.fused() && bCol.slow == aRow.fast)
+      return std::nullopt;
   }
 
   // Leading dimensions: prefer the byte step SCEV reports per unit of the
@@ -356,43 +342,35 @@ static bool tryAnalyzeReductionPhi(Loop *L, PHINode &phi, ScalarEvolution &SE,
   // A fused index steps the operand by `unitByte` per unit of the fused index;
   // that must be the stride the single-axis path uses, or the block-base
   // back-out (start - idx*stride) lands off the tile.
-  if (aRowSlow != TidAxis::Unknown && aRowUnit != aLdByte)
-    return false;
+  if (aRow.fused() && aRowUnit != aLdByte)
+    return std::nullopt;
   // B's per-column step is the element size when B is K-strided (row-major)
   // and its leading dimension when B is K-contiguous (col-major).
   bool bIsRowMajor = (bStrideByte != srcByteSize);
   if (!bIsRowMajor && bColUnit > 0)
     bLdByte = bColUnit;
-  if (bColSlow != TidAxis::Unknown &&
-      bColUnit != (bIsRowMajor ? srcByteSize : bLdByte))
-    return false;
+  if (bCol.fused() && bColUnit != (bIsRowMajor ? srcByteSize : bLdByte))
+    return std::nullopt;
 
-  outHandle.preheader = L->getLoopPreheader();
-  outHandle.exitBB = L->getExitBlock();
-  outHandle.blocks.clear();
+  ScalarLoopHandle h;
+  h.preheader = L->getLoopPreheader();
+  h.exitBB = L->getExitBlock();
   for (BasicBlock *BB : L->blocks())
-    outHandle.blocks.insert(BB);
-  outHandle.fma = rc->fma;
-  outHandle.fmul = rc->fmul;
-  outHandle.aPtr = aLoad->getPointerOperand();
-  outHandle.bPtr = bLoad->getPointerOperand();
-  outHandle.aStartSCEV = aRec->getStart();
-  outHandle.bStartSCEV = bRec->getStart();
-  outHandle.SE = &SE;
-  outHandle.aRowAxis = aRowAxis;
-  outHandle.bColAxis = bColAxis;
-  outHandle.aRowSlowAxis = aRowSlow;
-  outHandle.bColSlowAxis = bColSlow;
-  outHandle.aRowFuseMult = aRowMult;
-  outHandle.bColFuseMult = bColMult;
-  outHandle.aRowFuseUnitByte = aRowUnit;
-  outHandle.bColFuseUnitByte = bColUnit;
-  outHandle.aStrideByte = aStrideByte;
-  outHandle.bStrideByte = bStrideByte;
-  outHandle.aLeadingDimByte = aLdByte;
-  outHandle.bLeadingDimByte = bLdByte;
-  eltKind = srcPrec;
-  return true;
+    h.blocks.insert(BB);
+  h.fma = rc->fma;
+  h.fmul = rc->fmul;
+  h.aPtr = aLoad->getPointerOperand();
+  h.bPtr = bLoad->getPointerOperand();
+  h.aStartSCEV = aRec->getStart();
+  h.bStartSCEV = bRec->getStart();
+  h.SE = &SE;
+  h.aRow = aRow;
+  h.bCol = bCol;
+  h.aStrideByte = aStrideByte;
+  h.bStrideByte = bStrideByte;
+  h.aLeadingDimByte = aLdByte;
+  h.bLeadingDimByte = bLdByte;
+  return h;
 }
 
 static unsigned dimForAxis(const uint32_t (&dims)[3], TidAxis axis) {
@@ -407,18 +385,18 @@ static unsigned dimForAxis(const uint32_t (&dims)[3], TidAxis axis) {
 // block's threads; return 0 (unknown) in that case so the caller skips the
 // site.
 static unsigned extentForIndex(const Options &O, const uint32_t (&dims)[3],
-                               TidAxis fast, TidAxis slow, unsigned mult,
-                               StringRef what, StringRef fname) {
-  unsigned fastDim = dimForAxis(dims, fast);
-  if (slow == TidAxis::Unknown)
+                               const MatrixIndex &idx, StringRef what,
+                               StringRef fname) {
+  unsigned fastDim = dimForAxis(dims, idx.fast);
+  if (!idx.fused())
     return fastDim;
-  unsigned slowDim = dimForAxis(dims, slow);
+  unsigned slowDim = dimForAxis(dims, idx.slow);
   if (fastDim == 0 || slowDim == 0)
     return 0;
-  if (mult != fastDim) {
+  if (idx.fuseMult != fastDim) {
     if (O.Diagnostics.Print)
       llvm::errs() << "[raise-wmma] " << fname << ": fused " << what
-                   << " index multiplier " << mult
+                   << " index multiplier " << idx.fuseMult
                    << " does not match the profiled block extent " << fastDim
                    << " of its fast thread axis; the fused index is not a "
                       "dense numbering of the block's threads. Skipping "
@@ -452,9 +430,9 @@ static void forEachScalarLoopReduction(
     StringRef shape = reductionLoopShapeRefusal(*L);
     unsigned trip = SE.getSmallConstantTripCount(L);
     for (PHINode &phi : L->getHeader()->phis()) {
-      ScalarLoopHandle h;
-      FPKind eltKind = FPKind::Invalid;
-      if (!tryAnalyzeReductionPhi(L, phi, SE, DL, trip, latch, h, eltKind))
+      std::optional<ScalarLoopHandle> h =
+          tryAnalyzeReductionPhi(L, phi, SE, DL, trip, latch);
+      if (!h)
         continue;
       if (!shape.empty()) {
         reject(shape);
@@ -469,7 +447,7 @@ static void forEachScalarLoopReduction(
         reject("the accumulator does not start at +0.0");
         continue;
       }
-      cb(L, h, eltKind, trip);
+      cb(L, *h, fpKindFromType(phi.getType()), trip);
     }
   });
 }
@@ -529,12 +507,10 @@ void findScalarLoopMatmuls(const Options &O, Function &F, ScalarEvolution &SE,
   forEachScalarLoopReduction(
       O, F, SE, LI,
       [&](Loop *L, ScalarLoopHandle &h, FPKind eltKind, unsigned trip) {
-        unsigned profM = extentForIndex(O, profileHeader.maxBlockDim,
-                                        h.aRowAxis, h.aRowSlowAxis,
-                                        h.aRowFuseMult, "A-row", F.getName());
-        unsigned profN = extentForIndex(O, profileHeader.maxBlockDim,
-                                        h.bColAxis, h.bColSlowAxis,
-                                        h.bColFuseMult, "B-col", F.getName());
+        unsigned profM = extentForIndex(O, profileHeader.maxBlockDim, h.aRow,
+                                        "A-row", F.getName());
+        unsigned profN = extentForIndex(O, profileHeader.maxBlockDim, h.bCol,
+                                        "B-col", F.getName());
         if (profM == 0 || profN == 0) {
           if (O.Diagnostics.Print)
             llvm::errs() << "[raise-wmma] " << F.getName()
@@ -585,16 +561,15 @@ void findScalarLoopMatmuls(const Options &O, Function &F, ScalarEvolution &SE,
         // the product of gridDim the CTA count; 0 when the profile has no
         // grid dimensions.
         {
-          unsigned gM = dimForAxis(profileHeader.maxGridDim, h.aRowAxis);
-          unsigned gN = dimForAxis(profileHeader.maxGridDim, h.bColAxis);
+          unsigned gM = dimForAxis(profileHeader.maxGridDim, h.aRow.fast);
+          unsigned gN = dimForAxis(profileHeader.maxGridDim, h.bCol.fast);
           am.globalM = gM * profM;
           am.globalN = gN * profN;
           // A fused index lives entirely inside the CTA, so a grid axis sharing
           // its fast thread axis is a batch dimension, not an extension of this
           // index; report the global shape as unknown (0) rather than fabricate
           // one.
-          if (h.aRowSlowAxis != TidAxis::Unknown ||
-              h.bColSlowAxis != TidAxis::Unknown) {
+          if (h.aRow.fused() || h.bCol.fused()) {
             am.globalM = 0;
             am.globalN = 0;
           }

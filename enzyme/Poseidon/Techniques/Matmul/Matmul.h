@@ -57,6 +57,16 @@ enum class TidAxis : uint8_t {
   Other,
 };
 
+// A matrix row or column index of the thread: tid[fast], or, fused from two
+// thread axes, tid[fast] + fuseMult * tid[slow], where fuseMult is the extent
+// of the fast axis.
+struct MatrixIndex {
+  TidAxis fast = TidAxis::Unknown;
+  TidAxis slow = TidAxis::Unknown;
+  unsigned fuseMult = 0;
+  bool fused() const { return slow != TidAxis::Unknown; }
+};
+
 // The index (0, 1, 2) of a thread axis; none for Unknown and Other.
 inline std::optional<unsigned> tidAxisIndex(TidAxis a) {
   switch (a) {
@@ -99,19 +109,8 @@ struct ScalarLoopHandle {
   // The block shape the profile recorded, which the raise is laid out for.
   uint32_t profiledBlock[3] = {0, 0, 0};
 
-  TidAxis aRowAxis = TidAxis::Unknown;
-  TidAxis bColAxis = TidAxis::Unknown;
-
-  // A matrix index may be fused from two thread axes,
-  // idx = tid[fastAxis] + fuseMult * tid[slowAxis]; `*SlowAxis == Unknown`
-  // means not fused. `*FuseUnitByte` is the byte stride of one step of the
-  // fused index.
-  TidAxis aRowSlowAxis = TidAxis::Unknown;
-  TidAxis bColSlowAxis = TidAxis::Unknown;
-  unsigned aRowFuseMult = 0;
-  unsigned bColFuseMult = 0;
-  int64_t aRowFuseUnitByte = 0;
-  int64_t bColFuseUnitByte = 0;
+  // The thread index of A's row and of B's column.
+  MatrixIndex aRow, bCol;
 
   // Threads per CTA from the profile header (0 = unknown). A block whose size
   // is not a multiple of 32 has a partial last warp, in which the
