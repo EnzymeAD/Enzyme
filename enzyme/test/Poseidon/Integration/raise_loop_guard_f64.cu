@@ -19,7 +19,6 @@
 // RUN:     -mllvm -poseidon-profile-use=%t/profiles -mllvm -poseidon-cache=%t/c \
 // RUN:     -mllvm -poseidon-raise-wmma -mllvm -poseidon-ozaki-host-dispatch=false \
 // RUN:     -mllvm -poseidon-enable-herbie=false -mllvm -poseidon-enable-pt=false \
-// RUN:     -mllvm -poseidon-tau=1e-2 \
 // RUN:     -mllvm -poseidon-cost-model=%gpu_cost_model -mllvm -poseidon-print \
 // RUN:     -I%poseidon_profile_inc %s -L%cuda_lib_dir -lcudart -o %t/opt.exe 2>&1 | FileCheck --check-prefix=RAISE %s
 // RUN: %t/opt.exe | FileCheck --check-prefix=RAISED %s
@@ -44,11 +43,13 @@ guard_body(const double *A, const double *B, double *C) {
   int col = blockIdx.x * blockDim.x + threadIdx.x;
   if (row >= ROWS || col >= COLS)
     return;
+  const double *arow = A + (size_t)row * K;
+  const double *bcol = B + col;
   double acc = 0.0;
 #pragma unroll 1
   for (int k = 0; k < K; ++k)
-    acc += A[row * K + k] * B[k * COLS + col];
-  C[row * COLS + col] = acc;
+    acc += arow[k] * bcol[(size_t)k * COLS];
+  C[(size_t)row * COLS + col] = acc;
 }
 
 __global__ void guard_exact_kernel(const double *A, const double *B,

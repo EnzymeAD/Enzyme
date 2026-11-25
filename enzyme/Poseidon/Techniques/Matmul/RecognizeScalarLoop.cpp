@@ -44,6 +44,7 @@
 #include <array>
 #include <map>
 #include <optional>
+#include <string>
 
 using namespace llvm;
 
@@ -374,11 +375,13 @@ static MatrixIndex classifyTidIndex(const SCEV *S, int64_t &unitByte) {
 }
 
 // The matmul handle of one header phi of an innermost loop whose phi+FMA chain
-// is matmul-shaped (A K-stride, B K-stride, tid-axis invariants); none,
-// silently, otherwise.
+// is matmul-shaped (A K-stride, B K-stride, tid-axis invariants). None
+// otherwise; `why` says why when the phi is a multiply-add reduction, and
+// stays empty when it is not one.
 static std::optional<ScalarLoopHandle>
 tryAnalyzeReductionPhi(Loop *L, PHINode &phi, ScalarEvolution &SE,
-                       const DataLayout &DL, unsigned trip, BasicBlock *latch) {
+                       const DataLayout &DL, unsigned trip, BasicBlock *latch,
+                       std::string &why) {
   Type *phiTy = phi.getType();
   if (fpKindFromType(phiTy) == FPKind::Invalid)
     return std::nullopt;
@@ -392,40 +395,43 @@ tryAnalyzeReductionPhi(Loop *L, PHINode &phi, ScalarEvolution &SE,
   const SCEV *bAddr = SE.getSCEV(bLoad->getPointerOperand());
   auto *aRec = dyn_cast<SCEVAddRecExpr>(aAddr);
   auto *bRec = dyn_cast<SCEVAddRecExpr>(bAddr);
-  if (!aRec || !bRec)
+  auto refuse = [&](const Twine &reason) -> std::optional<ScalarLoopHandle> {
+    why = reason.str();
     return std::nullopt;
-  if (aRec->getLoop() != L || bRec->getLoop() != L)
-    return std::nullopt;
+  };
+  if (!aRec || !bRec || aRec->getLoop() != L || bRec->getLoop() != L)
+    return refuse("an operand's address is not an affine function of the "
+                  "loop's counter");
   auto *aStepC = dyn_cast<SCEVConstant>(aRec->getStepRecurrence(SE));
   auto *bStepC = dyn_cast<SCEVConstant>(bRec->getStepRecurrence(SE));
   if (!aStepC || !bStepC)
-    return std::nullopt;
+    return refuse("an operand's address does not step by a constant");
   int64_t aStrideByte = aStepC->getAPInt().getSExtValue();
   int64_t bStrideByte = bStepC->getAPInt().getSExtValue();
 
   // matmul A invariant
   int64_t srcByteSize = (int64_t)DL.getTypeAllocSize(phiTy).getFixedValue();
   if (aStrideByte != srcByteSize)
-    return std::nullopt;
+    return refuse("A does not step by one element along the reduction");
   // matmul B invariant
   if (bStrideByte <= 0 || bStrideByte % srcByteSize != 0)
-    return std::nullopt;
+    return refuse("B does not step by whole elements along the reduction");
 
   int64_t aRowUnit = 0, bColUnit = 0;
   MatrixIndex aRow = classifyTidIndex(aRec->getStart(), aRowUnit);
   MatrixIndex bCol = classifyTidIndex(bRec->getStart(), bColUnit);
   if (!tidAxisIndex(aRow.fast) || !tidAxisIndex(bCol.fast))
-    return std::nullopt;
+    return refuse("A's row or B's column is not a thread index of one axis, "
+                  "or of two");
   // Axis disjointness is required only once a fused index is involved: sharing
   // a thread axis between the two matrix indices makes the fused numbering
   // ambiguous.
   if (aRow.fused() || bCol.fused()) {
-    if (aRow.fast == bCol.fast)
-      return std::nullopt;
-    if (aRow.fused() && (aRow.slow == bCol.fast || aRow.slow == bCol.slow))
-      return std::nullopt;
-    if (bCol.fused() && bCol.slow == aRow.fast)
-      return std::nullopt;
+    if (aRow.fast == bCol.fast ||
+        (aRow.fused() && (aRow.slow == bCol.fast || aRow.slow == bCol.slow)) ||
+        (bCol.fused() && bCol.slow == aRow.fast))
+      return refuse("a fused index shares a thread axis with the other "
+                    "index");
   }
 
   // Leading dimensions: prefer the byte step SCEV reports per unit of the
@@ -440,14 +446,16 @@ tryAnalyzeReductionPhi(Loop *L, PHINode &phi, ScalarEvolution &SE,
   // that must be the stride the single-axis path uses, or the block-base
   // back-out (start - idx*stride) lands off the tile.
   if (aRow.fused() && aRowUnit != aLdByte)
-    return std::nullopt;
+    return refuse("A's fused row index does not step by A's leading "
+                  "dimension");
   // B's per-column step is the element size when B is K-strided (row-major)
   // and its leading dimension when B is K-contiguous (col-major).
   bool bIsRowMajor = (bStrideByte != srcByteSize);
   if (!bIsRowMajor && bColUnit > 0)
     bLdByte = bColUnit;
   if (bCol.fused() && bColUnit != (bIsRowMajor ? srcByteSize : bLdByte))
-    return std::nullopt;
+    return refuse("B's fused column index does not step by B's column "
+                  "stride");
 
   ScalarLoopHandle h;
   h.preheader = L->getLoopPreheader();
@@ -527,10 +535,14 @@ static void forEachScalarLoopReduction(
     StringRef shape = reductionLoopShapeRefusal(*L);
     unsigned trip = SE.getSmallConstantTripCount(L);
     for (PHINode &phi : L->getHeader()->phis()) {
+      std::string why;
       std::optional<ScalarLoopHandle> h =
-          tryAnalyzeReductionPhi(L, phi, SE, DL, trip, latch);
-      if (!h)
+          tryAnalyzeReductionPhi(L, phi, SE, DL, trip, latch, why);
+      if (!h) {
+        if (!why.empty())
+          reject(why);
         continue;
+      }
       if (!shape.empty()) {
         reject(shape);
         continue;

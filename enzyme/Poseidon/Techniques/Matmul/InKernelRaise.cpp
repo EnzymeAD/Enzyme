@@ -104,30 +104,26 @@ static Value *emitTidIndex(IRBuilder<> &B, Module *M, const MatrixIndex &idx) {
   return B.CreateAdd(fastV, slowOff, "wmma.fused_idx");
 }
 
-// (linearizedThreadId, blockSize) from tid.{x,y,z} and ntid.{x,y,z}.
-// `is2DBlock` skips the tid.z / ntid.z reads; only set it when the block's z
-// dim is statically 1.
+// (linearizedThreadId, blockSize) of a block of the shape `block`, which is
+// the launch's wherever the raise runs: its extents are constants, so the
+// raise's index arithmetic does not depend on what the compiler can prove
+// about the launch from the guard. `is2DBlock` skips the tid.z read; only set
+// it when the block's z extent is 1.
 static std::pair<Value *, Value *>
-emitThreadLinAndBlockSize(IRBuilder<> &B, Module *M, bool is2DBlock) {
+emitThreadLinAndBlockSize(IRBuilder<> &B, Module *M, const uint32_t (&block)[3],
+                          bool is2DBlock) {
+  Type *i32Ty = B.getInt32Ty();
   Value *tx = nvptx::emitThreadIndex(B, M, 0);
   Value *ty = nvptx::emitThreadIndex(B, M, 1);
-  Value *nx = nvptx::emitBlockDim(B, M, 0);
-  Value *ny = nvptx::emitBlockDim(B, M, 1);
-  if (is2DBlock) {
-    Value *row = B.CreateMul(ty, nx);
-    Value *tlin = B.CreateAdd(row, tx);
-    Value *bsz = B.CreateMul(nx, ny);
-    return {tlin, bsz};
+  Value *nx = ConstantInt::get(i32Ty, block[0]);
+  Value *bsz = ConstantInt::get(i32Ty, block[0] * block[1] * block[2]);
+  Value *planeRow = ty;
+  if (!is2DBlock) {
+    Value *tz = nvptx::emitThreadIndex(B, M, 2);
+    planeRow =
+        B.CreateAdd(B.CreateMul(tz, ConstantInt::get(i32Ty, block[1])), ty);
   }
-  Value *tz = nvptx::emitThreadIndex(B, M, 2);
-  Value *nz = nvptx::emitBlockDim(B, M, 2);
-  Value *plane = B.CreateMul(tz, ny);
-  Value *planeRow = B.CreateAdd(plane, ty);
-  Value *row = B.CreateMul(planeRow, nx);
-  Value *tlin = B.CreateAdd(row, tx);
-  Value *area = B.CreateMul(nx, ny);
-  Value *bsz = B.CreateMul(area, nz);
-  return {tlin, bsz};
+  return {B.CreateAdd(B.CreateMul(planeRow, nx), tx), bsz};
 }
 
 static double veltkampScale(FPKind slice) {
@@ -331,19 +327,20 @@ static BasicBlock *emitRaiseGuard(BasicBlock &preheader, BasicBlock &loopHeader,
         ConstantInt::get(GB.getInt32Ty(), h.profiledBlock[axis]));
     raise = raise ? GB.CreateAnd(raise, eq) : eq;
   }
-  // The block's last global thread index on the axis, computed without wrap,
-  // is below the bound: (blockIdx + 1) * blockDim <= ub.
+  // Every thread of the block passes the guard on the axis: its last global
+  // index is below the bound, (blockIdx + 1) * blockDim <= ub. The block has
+  // the profiled shape wherever the raise runs, so this is
+  // blockIdx < ub / blockDim with that shape's extent, one compare that
+  // cannot wrap.
   for (unsigned axis = 0; axis < 3; ++axis) {
     const uint64_t ub = h.loopGuard.ub[axis];
     if (!ub)
       continue;
-    Type *i64Ty = GB.getInt64Ty();
-    Value *block = GB.CreateZExt(nvptx::emitBlockIndex(GB, mod, axis), i64Ty);
-    Value *dim = GB.CreateZExt(nvptx::emitBlockDim(GB, mod, axis), i64Ty);
-    Value *end = GB.CreateMul(GB.CreateAdd(block, ConstantInt::get(i64Ty, 1)),
-                              dim, "raise.end");
-    Value *inside =
-        GB.CreateICmpULE(end, ConstantInt::get(i64Ty, ub), "raise.inside");
+    assert(h.profiledBlock[axis] && "a profiled block has every extent");
+    const uint64_t blocks = ub / h.profiledBlock[axis];
+    Value *inside = GB.CreateICmpULT(nvptx::emitBlockIndex(GB, mod, axis),
+                                     ConstantInt::get(GB.getInt32Ty(), blocks),
+                                     "raise.inside");
     raise = GB.CreateAnd(raise, inside);
   }
   BasicBlock *raiseBB =
@@ -576,7 +573,8 @@ static KStreamLoop emitKStreamLoop(const RaiseContext &C, IRBuilder<> &B,
   bodyB.SetInsertPoint(K.latchBr);
   Value *kOuter64 = bodyB.CreateZExt(K.kOuterPhi, C.i64Ty);
 
-  auto [tlin, bsz] = emitThreadLinAndBlockSize(bodyB, C.mod, h.is2DBlock);
+  auto [tlin, bsz] =
+      emitThreadLinAndBlockSize(bodyB, C.mod, h.profiledBlock, h.is2DBlock);
   K.tlin = tlin;
   const int64_t bSrcKStepByte = C.bRowMajor ? h.bStrideByte : C.srcByte;
   const int64_t bSrcNStrideByte = C.bRowMajor ? C.srcByte : h.bLeadingDimByte;
@@ -817,7 +815,8 @@ emitStoreAndReadback(const RaiseContext &C, const KStreamLoop &K,
   BasicBlock *storeMergeBB = nullptr;
   if (C.useWarpGate) {
     Value *afterTlin =
-        emitThreadLinAndBlockSize(afterB, C.mod, h.is2DBlock).first;
+        emitThreadLinAndBlockSize(afterB, C.mod, h.profiledBlock, h.is2DBlock)
+            .first;
     storeMergeBB = openWarpGate(C, afterB, afterTlin, "_store_gate");
   }
   Value *ldcV = ConstantInt::get(C.i32Ty, (int64_t)C.L.nPad);

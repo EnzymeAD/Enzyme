@@ -12,9 +12,9 @@
 ; blockIdx.y * blockDim.y + threadIdx.y and col = blockIdx.x * blockDim.x +
 ; threadIdx.x, and runs its reduction loop only for the threads that pass a
 ; guard on them. A block raises only when every one of its threads passes the
-; guard, (blockIdx + 1) * blockDim <= bound on each bounded axis, besides having
-; the profiled 16 x 16 x 1 shape; any other block runs the guard and the loop
-; as written, and both paths store the product. The guard forms:
+; guard, blockIdx < bound / 16 on each bounded axis, besides having the
+; profiled 16 x 16 x 1 shape; any other block runs the guard and the loop as
+; written, and both paths store the product. The guard forms:
 ;   or_body:   if (row >= 48 || col >= 32) return;   (an or of two compares)
 ;   one_body:  if (row < 48) { ... }                 (a single bound)
 ;   and_body:  if (row < 48 && col < 32) { ... }     (an and of two compares)
@@ -39,16 +39,10 @@
 ; IR-NEXT: [[NZ:%[0-9]+]] = tail call i32 @llvm.nvvm.read.ptx.sreg.ntid.z()
 ; IR-NEXT: [[SZ:%[0-9]+]] = icmp eq i32 [[NZ]], 1
 ; IR-NEXT: [[SHAPE:%[0-9]+]] = and i1 [[SZ]], [[SXY]]
-; IR-NEXT: [[NX:%[0-9]+]] = zext nneg i32 %nx to i64
-; IR-NEXT: [[BX1:%.+]] = add nuw nsw i32 %bx, 1
-; IR-NEXT: [[BX1W:%[0-9]+]] = zext nneg i32 [[BX1]] to i64
-; IR-NEXT: %raise.end = mul nuw nsw i64 [[BX1W]], [[NX]]
-; IR-NEXT: %raise.inside = icmp samesign ult i64 %raise.end, 33
-; IR-NEXT: [[X:%[0-9]+]] = and i1 [[SHAPE]], %raise.inside
-; IR-NEXT: [[BY1:%.+]] = add nuw nsw i32 %by, 1
-; IR-NEXT: [[ENDY:%.+]] = mul nuw nsw i32 [[BY1]], %ny
-; IR-NEXT: %raise.inside2 = icmp samesign ult i32 [[ENDY]], 49
-; IR-NEXT: [[XY:%[0-9]+]] = and i1 %raise.inside2, [[X]]
+; IR-NEXT: %raise.inside = icmp samesign ult i32 %bx, 2
+; IR-NEXT: [[X:%[0-9]+]] = and i1 %raise.inside, [[SHAPE]]
+; IR-NEXT: %raise.inside1 = icmp samesign ult i32 %by, 3
+; IR-NEXT: [[XY:%[0-9]+]] = and i1 %raise.inside1, [[X]]
 ; IR-NEXT: br i1 [[XY]], label %raise.entry, label %loop.preheader
 ; IR: {{^}}exit:
 ; IR-NEXT: %raise.result = phi double [ %{{[0-9]+}}, %ozaki_store_gate.merge ], [ %fma.15, %loop.preheader ]
@@ -62,29 +56,40 @@
 ; IR-NEXT: [[NZ:%[0-9]+]] = tail call i32 @llvm.nvvm.read.ptx.sreg.ntid.z()
 ; IR-NEXT: [[SZ:%[0-9]+]] = icmp eq i32 [[NZ]], 1
 ; IR-NEXT: [[SHAPE:%[0-9]+]] = and i1 [[SZ]], [[SXY]]
-; IR-NEXT: [[BY1:%.+]] = add nuw nsw i32 %by, 1
-; IR-NEXT: [[ENDY:%.+]] = mul nuw nsw i32 [[BY1]], %ny
-; IR-NEXT: %raise.inside = icmp samesign ult i32 [[ENDY]], 49
-; IR-NEXT: [[Y:%[0-9]+]] = and i1 [[SHAPE]], %raise.inside
+; IR-NEXT: %raise.inside = icmp samesign ult i32 %by, 3
+; IR-NEXT: [[Y:%[0-9]+]] = and i1 %raise.inside, [[SHAPE]]
 ; IR-NEXT: br i1 [[Y]], label %raise.entry, label %loop.preheader
 ; IR: %raise.result = phi double
 
 ; IR-LABEL: define {{.*}} @preprocess_and_body(
 ; IR: %in = and i1 %r.in, %c.in
 ; IR-NEXT: br i1 %in, label %body, label %out
-; IR: %raise.inside = icmp samesign ult i64 %raise.end, 33
-; IR: %raise.inside2 = icmp samesign ult i32 %{{.+}}, 49
-; IR-NEXT: [[XY:%[0-9]+]] = and i1 %raise.inside2, %{{[0-9]+}}
+; IR: [[SX:%[0-9]+]] = icmp eq i32 %nx, 16
+; IR-NEXT: [[SY:%[0-9]+]] = icmp eq i32 %ny, 16
+; IR-NEXT: [[SXY:%[0-9]+]] = and i1 [[SX]], [[SY]]
+; IR-NEXT: [[NZ:%[0-9]+]] = tail call i32 @llvm.nvvm.read.ptx.sreg.ntid.z()
+; IR-NEXT: [[SZ:%[0-9]+]] = icmp eq i32 [[NZ]], 1
+; IR-NEXT: [[SHAPE:%[0-9]+]] = and i1 [[SZ]], [[SXY]]
+; IR-NEXT: %raise.inside = icmp samesign ult i32 %bx, 2
+; IR-NEXT: [[X:%[0-9]+]] = and i1 %raise.inside, [[SHAPE]]
+; IR-NEXT: %raise.inside1 = icmp samesign ult i32 %by, 3
+; IR-NEXT: [[XY:%[0-9]+]] = and i1 %raise.inside1, [[X]]
 ; IR-NEXT: br i1 [[XY]], label %raise.entry, label %loop.preheader
 ; IR: %raise.result = phi double
 
 ; IR-LABEL: define {{.*}} @preprocess_fold_body(
 ; IR: %in = icmp ult i32 %rc, 64
 ; IR-NEXT: br i1 %in, label %body, label %out
-; IR: %raise.inside = icmp samesign ult i64 %raise.end, 65
-; IR: %raise.inside2 = icmp samesign ult i32 %{{.+}}, 65
-; IR-NEXT: [[XY:%[0-9]+]] = and i1 %raise.inside2, %{{[0-9]+}}
-; IR-NEXT: br i1 [[XY]], label %raise.entry, label %loop.preheader
+; IR: [[SX:%[0-9]+]] = icmp eq i32 %nx, 16
+; IR-NEXT: [[SY:%[0-9]+]] = icmp eq i32 %ny, 16
+; IR-NEXT: [[SXY:%[0-9]+]] = and i1 [[SX]], [[SY]]
+; IR-NEXT: [[NZ:%[0-9]+]] = tail call i32 @llvm.nvvm.read.ptx.sreg.ntid.z()
+; IR-NEXT: [[SZ:%[0-9]+]] = icmp eq i32 [[NZ]], 1
+; IR-NEXT: [[SHAPE:%[0-9]+]] = and i1 [[SZ]], [[SXY]]
+; IR-NEXT: [[BXY:%[0-9]+]] = or i32 %by, %bx
+; IR-NEXT: [[IN:%[0-9]+]] = icmp samesign ult i32 [[BXY]], 4
+; IR-NEXT: [[RAISE:%[0-9]+]] = and i1 [[IN]], [[SHAPE]]
+; IR-NEXT: br i1 [[RAISE]], label %raise.entry, label %loop.preheader
 ; IR: %raise.result = phi double
 
 source_filename = "loop_guard.cu"
