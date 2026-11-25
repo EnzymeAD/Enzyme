@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Part of the Enzyme Project, under the Apache License v2.0 with LLVM
+# Exceptions. See https://llvm.org/LICENSE.txt for license information.
+# SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 """Measure the host CPU cost model Poseidon prices CPU candidates from.
 
 The rows are of float and double, the formats a precision change offers a

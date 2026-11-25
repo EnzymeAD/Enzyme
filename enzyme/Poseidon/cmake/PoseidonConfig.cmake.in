@@ -3,7 +3,7 @@
 # find_package(Poseidon) configuration: the plugin, runtimes and tools as
 # Poseidon:: targets; per-action interface targets Poseidon::Plain,
 # ::ProfileGenerate, ::ProfileUse and Poseidon::EnzymeOptions; and the
-# POSEIDON_* variables below. Usage: https://prontolab.github.io/numerics/
+# POSEIDON_* variables below. Usage: the CMake section of README.md.
 
 include(CMakeFindDependencyMacro)
 set(POSEIDON_HAS_CUDA @POSEIDON_HAS_CUDA@)

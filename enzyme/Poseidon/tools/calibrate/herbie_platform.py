@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
+# Part of the Enzyme Project, under the Apache License v2.0 with LLVM
+# Exceptions. See https://llvm.org/LICENSE.txt for license information.
 # SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
-# SPDX-License-Identifier: MIT
 #
 # The declarations this script writes are a subset of Herbie's
 # src/platforms/c.rkt (https://github.com/herbie-fp/herbie, commit 73ba1fe),
 # MIT License, unchanged except that the costs and the set of operations are
 # the cost model's and the file is a (module ...) form rather than a #lang
 # module. Herbie is distributed under the following license.
+# SPDX-License-Identifier: MIT
 #
 #   Copyright (c) 2015-2024 Herbie Project
 #   Modified work Copyright 2016 Google Inc.

@@ -1,10 +1,8 @@
 //===- ExpansionRoutines.h - FP32 expansion arithmetic, written once ------===//
 //
-// Part of the Poseidon Project, under the Apache License v2.0 with LLVM
+// Part of the Enzyme Project, under the Apache License v2.0 with LLVM
 // Exceptions. See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
-// SPDX-License-Identifier: MIT
-// SPDX-License-Identifier: BSD-2-Clause
 //
 // Portions of this file are under other licenses, whose terms follow:
 // - twoSum, dsFastTwoSum, twoProd, dsAdd, dsSub, dsNeg, dsMul and dsSqrt are a
@@ -20,6 +18,7 @@
 // The remaining routines are Poseidon's own.
 //
 // MultiFloats.jl is distributed under the following license.
+// SPDX-License-Identifier: MIT
 //
 //   MIT License
 //
@@ -45,6 +44,7 @@
 //   USE OR OTHER DEALINGS IN THE SOFTWARE.
 //
 // mX_real is distributed under the following license.
+// SPDX-License-Identifier: BSD-2-Clause
 //
 //   BSD 2-Clause License
 //

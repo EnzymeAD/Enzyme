@@ -10,8 +10,6 @@ differentiating the probes. It optimizes host code in C and C++ and GPU code
 in CUDA and HIP; what each target has is listed under
 [How it works](#how-it-works).
 
-Project website: <https://prontolab.github.io/numerics/>
-
 ## Build
 
 Poseidon needs LLVM 21 or newer, built with clang, and MPFR and GMP. Its
@@ -58,8 +56,9 @@ double r = __poseidon_optimize(energy, x, n); /* this call alone */
 
 A site is a function marked `POSEIDON_OPTIMIZE` (a host or device function, a
 kernel or a lambda), or one call made through `__poseidon_optimize`. The
-`_TAU` forms give a site an accuracy target of its own. `-poseidon-kernels=<regex>`
-makes every matching kernel a site without a change to the source.
+`_TAU` forms give a site an accuracy target of its own.
+`-poseidon-kernels=<regex>` makes every matching kernel a site without a
+change to the source.
 
 ### 2. Measure the device
 
@@ -168,11 +167,11 @@ handled once Enzyme has lowered that request. Under profile generation Enzyme
 then runs once more, by its pipeline name, to lower the derivative request the
 instrumented site emits; in both compiles the function simplification pipeline
 runs again over the kernels that carried the site's marker, which kept its
-arguments in memory until then. The finalizing pass then checks that no derivative request
-is left, links the device profiler, writes the launch manifest, and builds the
-output from the module as written. An LTO link runs the same passes at the
-full-LTO extension points. For `opt`, the pipeline names are `poseidon`,
-`poseidon-deferred-sites` and `poseidon-finalize`.
+arguments in memory until then. The finalizing pass then checks that no
+derivative request is left, links the device profiler, writes the launch
+manifest, and builds the output from the module as written. An LTO link runs
+the same passes at the full-LTO extension points. For `opt`, the pipeline names
+are `poseidon`, `poseidon-deferred-sites` and `poseidon-finalize`.
 
 The module as written is a copy of the module taken at PipelineStart in a
 profile-use compile with a site. The canonical prefix, the outlined site bodies
@@ -274,11 +273,6 @@ implementation named.
 | Ozaki-II GEMM runtime | `runtime/gemm/OzakiII.cu`, `runtime/gemm/Schemes.h` | K. Ozaki, Y. Uchino, T. Imamura, [arXiv:2504.08009](https://arxiv.org/abs/2504.08009); fast-mode scaling as in GEMMul8 v3.1.1, which attributes it to S. Kawakami, D. Takahashi, [arXiv:2606.29129](https://arxiv.org/abs/2606.29129) | [GEMMul8](https://github.com/RIKEN-RCCS/GEMMul8) v3.1.1 (MIT): its constants and residue method, computed from their definitions, so that results agree bit for bit |
 | Host simulation of the GEMM runtimes | `Techniques/Matmul/Simulation.cpp` | The Ozaki-II runtime above; TCEC, H. Ootomo, R. Yokota, IJHPCA 36(4), 2022 | GEMMul8 v3.1.1, cuMpSGEMM (MIT): their arithmetic, modeled |
 | In-kernel split scheme | `Techniques/Matmul/RealizeInKernel.cpp` | The two-slice split of S. Markidis et al. (IPDPSW 2018), with the residual scaled as Ootomo and Yokota scale it, generalized to N slices | none |
-
-The tests that take the shape of MFEM's kernels (`mfem::forall`,
-`DeviceTensor`, partial-assembly applies) are written for these tests; what
-they share with MFEM's code is the three-statement body of its launch
-wrappers (`CuKernel1D`, `CuKernel2D`).
 
 ### Dependencies
 
