@@ -26,8 +26,8 @@
 ; CHECK-DAG: [ozaki-host-dispatch] wrote descriptor for _Z12bound_kernelPKdS0_PdS1_: C=arg2 A=arg0 B=arg1 16x16x16 nm=12 (standalone)
 ; CHECK-DAG: [ozaki-host-dispatch] wrote descriptor for _Z11wrap_kernelPKdS0_PdS1_: C=arg2 A=arg0 B=arg1 16x16x16 nm=12 (standalone)
 
-; DESC-DAG: "_Z12bound_kernelPKdS0_PdS1_ 2 0 1 1 12 0 0 0 0 rd 0 1 16 0 1 16 0 1 16 0 1 16 0 1 16 0 1 16 0.000000e+00"
-; DESC-DAG: "_Z11wrap_kernelPKdS0_PdS1_ 2 0 1 1 12 0 0 0 0 rd 0 1 16 0 1 16 0 1 16 0 1 16 0 1 16 0 1 16 0.000000e+00"
+; DESC-DAG: "_Z12bound_kernelPKdS0_PdS1_ 2 0 1 1 12 0 0 0 2 rd 0 1 16 0 1 16 0 1 16 0 1 16 0 1 16 0 1 16 0.000000e+00"
+; DESC-DAG: "_Z11wrap_kernelPKdS0_PdS1_ 2 0 1 1 12 0 0 0 2 rd 0 1 16 0 1 16 0 1 16 0 1 16 0 1 16 0 1 16 0.000000e+00"
 
 source_filename = "guard.cu"
 target datalayout = "e-p6:32:32-i64:64-i128:128-i256:256-v16:16-v32:32-n16:32:64"

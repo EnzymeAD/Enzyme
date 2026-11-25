@@ -34,10 +34,10 @@ enum class Scheme {
   // Each operand split into `slices` slices of the operand format whose cross
   // products are accumulated apart and recombined: tensor-core error
   // correction (TCEC).
-  Split,
+  Tcec,
   // Operands scaled to integers and multiplied as INT8 residues modulo
   // `moduli` moduli, recombined by the CRT (Ozaki scheme II).
-  Modular,
+  OzakiII,
   // The FP64 product.
   Native,
 };
@@ -54,18 +54,18 @@ struct SchemeVariant {
   Scheme scheme = Scheme::Direct;
   FPKind operand = FPKind::Invalid;
   FPKind accumulator = FPKind::Invalid;
-  unsigned slices = 0; // Split
-  unsigned moduli = 0; // Modular
+  unsigned slices = 0; // Tcec
+  unsigned moduli = 0; // OzakiII
 
   static constexpr SchemeVariant direct(FPKind operand, FPKind accumulator) {
     return {Scheme::Direct, operand, accumulator, 0, 0};
   }
-  static constexpr SchemeVariant split(FPKind operand, FPKind accumulator,
-                                       unsigned slices) {
-    return {Scheme::Split, operand, accumulator, slices, 0};
+  static constexpr SchemeVariant tcec(FPKind operand, FPKind accumulator,
+                                      unsigned slices) {
+    return {Scheme::Tcec, operand, accumulator, slices, 0};
   }
-  static constexpr SchemeVariant modular(unsigned moduli) {
-    return {Scheme::Modular, FPKind::S8, FPKind::S32, 0, moduli};
+  static constexpr SchemeVariant ozakiII(unsigned moduli) {
+    return {Scheme::OzakiII, FPKind::S8, FPKind::S32, 0, moduli};
   }
   static constexpr SchemeVariant native() {
     return {Scheme::Native, FPKind::F64, FPKind::F64, 0, 0};
@@ -73,13 +73,13 @@ struct SchemeVariant {
 };
 
 inline unsigned sliceCount(const SchemeVariant &v) {
-  if (v.scheme != Scheme::Split)
+  if (v.scheme != Scheme::Tcec)
     llvm::report_fatal_error("sliceCount: not a split scheme");
   return v.slices;
 }
 
 inline unsigned modulusCount(const SchemeVariant &v) {
-  if (v.scheme != Scheme::Modular)
+  if (v.scheme != Scheme::OzakiII)
     llvm::report_fatal_error("modulusCount: not a modular scheme");
   return v.moduli;
 }
@@ -127,7 +127,7 @@ inline constexpr bool kHaveTcecDispatch = false;
 // __poseidon_tcec_dgemm's compute mode: cuMpSGEMM's FP16TCEC is a two-slice
 // FP16 split with an FP32 accumulator.
 inline PoseidonTcecMode splitLibraryComputeMode(const SchemeVariant &v) {
-  if (v.scheme == Scheme::Split && v.operand == FPKind::F16 &&
+  if (v.scheme == Scheme::Tcec && v.operand == FPKind::F16 &&
       v.accumulator == FPKind::F32 && v.slices == 2)
     return kTcecFp16Tcec;
   llvm::report_fatal_error(
@@ -156,41 +156,16 @@ inline PoseidonDirectMode directLibraryOperandFormat(const SchemeVariant &v) {
       "no __poseidon_direct_dgemm operand format realizes this product");
 }
 
-// The host runtime a library call goes to (runtime/GemmDispatch.h):
-//   OzakiII -> __poseidon_ozaki_dgemm: INT8 residue/CRT, accuracy set by
-//              num_moduli;
-//   Tcec    -> __poseidon_tcec_dgemm: FP16 tensor cores + error correction,
-//              F32-class;
-//   Direct  -> __poseidon_direct_dgemm: one rounding of each operand to
-//              FP16/BF16/TF32/FP32, FP32 accumulator;
-//   Native  -> __poseidon_native_dgemm: the library's DGEMM.
-enum class DispatchScheme { OzakiII, Tcec, Direct, Native };
-
-// The scheme a launch descriptor names for a library call of `v`.
-inline DispatchScheme descriptorScheme(const SchemeVariant &v) {
-  switch (v.scheme) {
-  case Scheme::Modular:
-    return DispatchScheme::OzakiII;
-  case Scheme::Native:
-    return DispatchScheme::Native;
-  case Scheme::Split:
-    return DispatchScheme::Tcec;
-  case Scheme::Direct:
-    return DispatchScheme::Direct;
-  }
-  llvm_unreachable("unknown Scheme");
-}
-
 // The launch descriptor's num_moduli field for a library call of `v`, the last
 // argument of its entry point: the modulus count, the TCEC compute mode, or
 // the direct operand format. The native entry has none, and the field is 0.
 inline unsigned descriptorModulusField(const SchemeVariant &v) {
   switch (v.scheme) {
-  case Scheme::Modular:
+  case Scheme::OzakiII:
     return modulusCount(v);
   case Scheme::Native:
     return 0;
-  case Scheme::Split:
+  case Scheme::Tcec:
     return splitLibraryComputeMode(v);
   case Scheme::Direct:
     return directLibraryOperandFormat(v);
@@ -208,9 +183,9 @@ inline const char *schemeTag(const SchemeVariant &v) {
   switch (v.scheme) {
   case Scheme::Direct:
     return "direct";
-  case Scheme::Split:
+  case Scheme::Tcec:
     return "tcec";
-  case Scheme::Modular:
+  case Scheme::OzakiII:
     return "ozaki-ii";
   case Scheme::Native:
     return "native-dgemm";
@@ -220,9 +195,9 @@ inline const char *schemeTag(const SchemeVariant &v) {
 
 inline std::string schemeParameter(const SchemeVariant &v) {
   switch (v.scheme) {
-  case Scheme::Split:
+  case Scheme::Tcec:
     return "n=" + std::to_string(sliceCount(v));
-  case Scheme::Modular:
+  case Scheme::OzakiII:
     return "nm=" + std::to_string(modulusCount(v));
   case Scheme::Direct:
   case Scheme::Native:

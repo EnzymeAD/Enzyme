@@ -35,7 +35,7 @@
 ; TAU12: Applying solution for matmul[0] -> ozaki-ii nm=12 wmma m16n16k16 s8/s32 (#7)
 ; TAU12: [ozaki-host-dispatch] wrote descriptor for _Z13matmul_kernelPKdS0_PdS1_: C=arg2 A=arg0 B=arg1 16x16x16 nm=12 (standalone)
 
-; DESC12: _Z13matmul_kernelPKdS0_PdS1_ 2 0 1 1 12 0 0 0 0 rd 0 1 16 0 1 16 0 1 16 0 1 16 0 1 16 0 1 16 0.000000e+00
+; DESC12: _Z13matmul_kernelPKdS0_PdS1_ 2 0 1 1 12 0 0 0 2 rd 0 1 16 0 1 16 0 1 16 0 1 16 0 1 16 0 1 16 0.000000e+00
 
 ; HOST12: [ozaki-host-dispatch] replaced the launch in stub _Z28__device_stub__matmul_kernelPKdS0_PdS1_ with __poseidon_ozaki_dgemm (C=arg2 A=arg0 B=arg1){{$}}
 ; HOST12-LABEL: define {{.*}} @_Z28__device_stub__matmul_kernelPKdS0_PdS1_(
@@ -92,7 +92,7 @@
 ; of cm_sm_120_synthetic_dispatch.csv. The cheapest candidate whose modelled
 ; domain error clears tau wins, so the Ozaki-II moduli count rises as tau
 ; tightens. The device compile writes the dispatch descriptor into the unit's
-; manifest (tenth field 0 = Ozaki-II, sixth field = nm), and the host compile
+; manifest (tenth field 2 = Ozaki-II, sixth field = nm), and the host compile
 ; of the kernel's launch stub (Inputs/ozaki_dispatch/ozaki_stub_host.ll, clang
 ; -x cuda --cuda-host-only -O0 -S -emit-llvm of
 ;   __global__ void matmul_kernel(const double *A, const double *B, double *D,

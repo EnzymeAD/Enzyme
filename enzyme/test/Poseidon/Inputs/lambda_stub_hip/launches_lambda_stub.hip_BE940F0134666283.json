@@ -6,7 +6,7 @@
   },
   "value": {
     "host dispatch": [
-      "_ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_ 1 1 1 1 13 0 1 1 0 rd 1 1 0 1 0 1 0 -1 1 0 1 1 4 3 0 1 1 48 1 0 1 1 24 1 0 1 1 72 1 0 1.000000e+00 pf 64 40 16 eq 2 1 4 1 24 1 4 1 48"
+      "_ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_ 1 1 1 1 13 0 1 1 2 rd 1 1 0 1 0 1 0 -1 1 0 1 1 4 3 0 1 1 48 1 0 1 1 24 1 0 1 1 72 1 0 1.000000e+00 pf 64 40 16 eq 2 1 4 1 24 1 4 1 48"
     ],
     "profile generation": [
       "_ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_.intern.0123abcd 0 2 3 1 1 1 0 0 8 off 16 40 64"

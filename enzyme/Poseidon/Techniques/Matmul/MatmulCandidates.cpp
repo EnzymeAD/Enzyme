@@ -63,20 +63,20 @@ std::string matmulOptionLabel(const MatmulUnit::Option &opt) {
     switch (v.scheme) {
     case Scheme::Direct:
       return wmma + " " + formats;
-    case Scheme::Split:
+    case Scheme::Tcec:
       return std::string(schemeTag(v)) + " " + schemeParameter(v) + " " + wmma +
              " " + formats;
-    case Scheme::Modular:
+    case Scheme::OzakiII:
     case Scheme::Native:
       break;
     }
     break;
   case Realization::LibraryCall:
     switch (v.scheme) {
-    case Scheme::Modular:
+    case Scheme::OzakiII:
       return std::string(schemeTag(v)) + " " + schemeParameter(v) + " " + wmma +
              " " + formats;
-    case Scheme::Split:
+    case Scheme::Tcec:
       return std::string(schemeTag(v)) + "-dispatch " + wmma + " " + formats;
     case Scheme::Direct:
       return std::string(schemeTag(v)) + "-dispatch cublas " + formats;
@@ -99,10 +99,10 @@ static std::string inKernelCostClass(const SchemeVariant &v) {
   switch (v.scheme) {
   case Scheme::Direct:
     return schemeFormats(v, '_');
-  case Scheme::Split:
+  case Scheme::Tcec:
     return std::string(schemeTag(v)) + "_n" + std::to_string(sliceCount(v)) +
            "_" + schemeFormats(v, '_');
-  case Scheme::Modular:
+  case Scheme::OzakiII:
   case Scheme::Native:
     break;
   }
@@ -305,7 +305,7 @@ static uint64_t inKernelRaiseSharedBytes(Module &M,
                        .str();
     return d + a + b;
   }
-  case Scheme::Split: {
+  case Scheme::Tcec: {
     // Mirrors the Split materializer: N slice buffers per side plus N F32
     // output tiles, all live at once.
     uint64_t slice = bytesOf(v.operand); // sliceScratchTy: f16/bf16 2, tf32 4
@@ -321,7 +321,7 @@ static uint64_t inKernelRaiseSharedBytes(Module &M,
               .str();
     return n * per;
   }
-  case Scheme::Modular:
+  case Scheme::OzakiII:
   case Scheme::Native:
     break;
   }
@@ -379,7 +379,7 @@ static MatmulAccuracyQuery accuracyQuery(const AbstractMatmul &m,
     if (v.operand == m.elemType && v.accumulator == m.elemType)
       q.orderTileK = opt.tileK;
     return q;
-  case Scheme::Split:
+  case Scheme::Tcec:
     if (opt.realization == Realization::LibraryCall) {
       q.model = MatmulAccuracyQuery::Model::TcecLibrary;
       return q;
@@ -389,7 +389,7 @@ static MatmulAccuracyQuery accuracyQuery(const AbstractMatmul &m,
     q.exponentPrec = v.operand;
     q.inputMantBits = splitCapturedBits(v);
     return q;
-  case Scheme::Modular:
+  case Scheme::OzakiII:
     q.model = MatmulAccuracyQuery::Model::OzakiII;
     q.moduli = modulusCount(v);
     return q;
@@ -464,9 +464,9 @@ static std::string inKernelDescription(const SchemeVariant &v, unsigned tileM,
   switch (v.scheme) {
   case Scheme::Direct:
     return "in-kernel Direct raise " + tile;
-  case Scheme::Split:
+  case Scheme::Tcec:
     return "in-kernel TCEC " + schemeParameter(v) + " " + tile;
-  case Scheme::Modular:
+  case Scheme::OzakiII:
   case Scheme::Native:
     break;
   }
@@ -522,13 +522,13 @@ struct InKernelSplitVariant {
   SchemeVariant variant;
 };
 static constexpr InKernelSplitVariant kInKernelSplitVariants[] = {
-    {16, 16, 16, SchemeVariant::split(FPKind::F16, FPKind::F32, 2)},
-    {16, 16, 16, SchemeVariant::split(FPKind::F16, FPKind::F32, 3)},
-    {16, 16, 16, SchemeVariant::split(FPKind::F16, FPKind::F32, 5)},
-    {16, 16, 16, SchemeVariant::split(FPKind::BF16, FPKind::F32, 2)},
-    {16, 16, 8, SchemeVariant::split(FPKind::TF32, FPKind::F32, 2)},
-    {16, 16, 8, SchemeVariant::split(FPKind::TF32, FPKind::F32, 3)},
-    {16, 16, 8, SchemeVariant::split(FPKind::TF32, FPKind::F32, 5)},
+    {16, 16, 16, SchemeVariant::tcec(FPKind::F16, FPKind::F32, 2)},
+    {16, 16, 16, SchemeVariant::tcec(FPKind::F16, FPKind::F32, 3)},
+    {16, 16, 16, SchemeVariant::tcec(FPKind::F16, FPKind::F32, 5)},
+    {16, 16, 16, SchemeVariant::tcec(FPKind::BF16, FPKind::F32, 2)},
+    {16, 16, 8, SchemeVariant::tcec(FPKind::TF32, FPKind::F32, 2)},
+    {16, 16, 8, SchemeVariant::tcec(FPKind::TF32, FPKind::F32, 3)},
+    {16, 16, 8, SchemeVariant::tcec(FPKind::TF32, FPKind::F32, 5)},
     // Integer slices (s8) are intentionally not proposed: in-kernel they have
     // the same structural slowdown as an in-kernel modular product, and the
     // modular library calls cover their range.
@@ -630,7 +630,7 @@ static void proposeLibraryModular(const Product &P, const LibrarySite &L,
       "m" + std::to_string(L.shapeM) + "k" + std::to_string(L.shapeK);
   std::string missing;
   for (unsigned nm : kOzIIModuliCounts) {
-    const SchemeVariant v = SchemeVariant::modular(nm);
+    const SchemeVariant v = SchemeVariant::ozakiII(nm);
     const std::string family =
         square ? "ozaki_dispatch_rel" : "ozaki_dispatch_rect_rel";
     const std::string key =
@@ -681,7 +681,7 @@ static void proposeLibrarySplit(const Product &P, const LibrarySite &L,
   if (!L.dispatchable)
     return;
   MatmulUnit::Option opt = libraryOption(
-      SchemeVariant::split(FPKind::F16, FPKind::F32, 2), 16, 16, 16);
+      SchemeVariant::tcec(FPKind::F16, FPKind::F32, 2), 16, 16, 16);
   if (!kHaveTcecDispatch) {
     cm.dropped.push_back(
         {matmulOptionLabel(opt),
@@ -851,7 +851,7 @@ void generateMatmulCandidates(Session &S, ArrayRef<AbstractMatmul> matmuls,
 
     // The candidate index is the position in this sequence.
     if (m.origin == AbstractMatmul::Origin::ScalarLoopReduction &&
-        m.scalarLoop.reachedByWholeBlock && siteReachedByWholeBlock(S, m)) {
+        m.scalarLoop.inKernelRaisable && siteReachedByWholeBlock(S, m)) {
       const InKernelSite K = inKernelSite(S, m);
       proposeInKernelDirect(P, K, cm);
       proposeInKernelSplit(P, K, cm);
@@ -919,7 +919,7 @@ void MatmulUnit::apply(Session &S, size_t candidateIndex) {
   }
   switch (opt.variant.scheme) {
   case Scheme::Direct:
-  case Scheme::Split: {
+  case Scheme::Tcec: {
     materializeInKernelRaise(*matmul, opt);
     // Each raise was proposed against the shared memory its kernel used
     // before any raise; raises of one kernel that do not share their scratch
@@ -939,7 +939,7 @@ void MatmulUnit::apply(Session &S, size_t candidateIndex) {
                           "-poseidon-apply-rewrites.");
     return;
   }
-  case Scheme::Modular:
+  case Scheme::OzakiII:
   case Scheme::Native:
     break;
   }

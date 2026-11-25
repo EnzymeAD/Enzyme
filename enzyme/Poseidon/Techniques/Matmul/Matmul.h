@@ -91,9 +91,12 @@ struct ScalarLoopHandle {
 
   // Set only when the profile header shows blockDim.z == 1.
   bool is2DBlock = false;
-  // Whether every thread of the block runs the preheader, where the in-kernel
-  // raise synchronizes the block, exactly once.
-  bool reachedByWholeBlock = false;
+  // Whether the in-kernel raise can take the place of the loop: every thread
+  // of the block runs the preheader, where it synchronizes the block, exactly
+  // once, and the loop's exit takes only the product from it.
+  bool inKernelRaisable = false;
+  // The block shape the profile recorded, which the raise is laid out for.
+  uint32_t profiledBlock[3] = {0, 0, 0};
 
   TidAxis aRowAxis = TidAxis::Unknown;
   TidAxis bColAxis = TidAxis::Unknown;
@@ -258,8 +261,9 @@ struct GemmBodyNote {
   // Byte offsets of the three operand pointers inside their parameter, when
   // the parameter is a by-value aggregate; -1 when it is the pointer itself.
   int64_t cOffset = -1, aOffset = -1, bOffset = -1;
-  // descriptorScheme and descriptorModulusField of the selected variant.
-  DispatchScheme scheme = DispatchScheme::OzakiII;
+  // The selected variant's scheme, which names the host runtime entry, and
+  // its descriptorModulusField.
+  Scheme scheme = Scheme::OzakiII;
   unsigned numModuli = kOzakiIIMaxModuli;
   bool standalone = false; // body is a pure GEMM (only the C store)
   bool valid = false;

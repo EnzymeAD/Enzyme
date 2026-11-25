@@ -1,7 +1,7 @@
 ; DEFINE: %{clang} = %clang -O0 -x ir -mllvm -poseidon-cache=%t -mllvm -poseidon-unit=fixture -S -emit-llvm -o /dev/null %loadClangPoseidon
 ; RUN: rm -rf %t && mkdir -p %t
 ; RUN: cp %S/../Inputs/hoststub_cache/launches_*.json %S/../Inputs/lambda_stub/launches_*.json %t/
-; RUN: sed -i 's/ 0 0 0 2 rd [^"]*"/ 0 0 0"/' %t/launches_hoststub.cu_*.json
+; RUN: sed -i 's/ 0 0 0 0 rd [^"]*"/ 0 0 0"/' %t/launches_hoststub.cu_*.json
 ; RUN: not %{clang} %s -mllvm -poseidon-profile-use=%S/../Inputs/hoststub_cache 2>&1 | FileCheck --check-prefix=SHORT -DCACHE=%t %s
 ; RUN: cp %S/../Inputs/hoststub_cache/launches_*.json %t/
 ; RUN: sed -i 's/2 0 1 1 3 0 0 0 1 rd/2 0 1 1 99 0 0 0 1 rd/' %t/launches_hoststub.cu_*.json

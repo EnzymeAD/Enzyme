@@ -49,7 +49,7 @@
 ; WRITE-FULL-NEXT: },
 ; WRITE-FULL-NEXT: "value": {
 ; WRITE-FULL-NEXT: "host dispatch": [
-; WRITE-FULL-NEXT: "_Z13matmul_kernelPKdS0_PdS1_ 2 0 1 1 12 0 0 0 0 rd 0 1 16 0 1 16 0 1 16 0 1 16 0 1 16 0 1 16 0.000000e+00"
+; WRITE-FULL-NEXT: "_Z13matmul_kernelPKdS0_PdS1_ 2 0 1 1 12 0 0 0 2 rd 0 1 16 0 1 16 0 1 16 0 1 16 0 1 16 0 1 16 0.000000e+00"
 ; WRITE-FULL-NEXT: ],
 ; WRITE-FULL-NEXT: "profile generation": []
 
@@ -163,8 +163,8 @@
 ; ORDER-JOINT-NEXT: [ozaki-host-dispatch] wrote descriptor for _Z13matmul_kernelPKdS0_PdS1_: C=arg2 A=arg0 B=arg1 16x16x16 nm=13 (standalone)
 
 ; ORDER-MANIFEST:      "host dispatch": [
-; ORDER-MANIFEST-NEXT:   "_Z12alpha_kernelPKdS0_PdS1_ 2 1 0 1 [[NMA]] 0 0 0 0 rd 0 1 16 0 1 16 0 1 16 0 1 16 0 1 16 0 1 16 0.000000e+00",
-; ORDER-MANIFEST-NEXT:   "_Z13matmul_kernelPKdS0_PdS1_ 2 0 1 1 [[NMM]] 0 0 0 0 rd 0 1 16 0 1 16 0 1 16 0 1 16 0 1 16 0 1 16 0.000000e+00"
+; ORDER-MANIFEST-NEXT:   "_Z12alpha_kernelPKdS0_PdS1_ 2 1 0 1 [[NMA]] 0 0 0 2 rd 0 1 16 0 1 16 0 1 16 0 1 16 0 1 16 0 1 16 0.000000e+00",
+; ORDER-MANIFEST-NEXT:   "_Z13matmul_kernelPKdS0_PdS1_ 2 0 1 1 [[NMM]] 0 0 0 2 rd 0 1 16 0 1 16 0 1 16 0 1 16 0 1 16 0 1 16 0.000000e+00"
 ; ORDER-MANIFEST-NEXT: ],
 ; ORDER-MANIFEST-NEXT: "profile generation": []
 

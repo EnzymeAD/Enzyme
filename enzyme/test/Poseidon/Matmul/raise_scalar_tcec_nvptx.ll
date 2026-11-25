@@ -7,7 +7,7 @@
 ; RUN: rm -rf %t && mkdir %t
 ; RUN: %{opt} %s -poseidon-cache=%t/c -poseidon-cost-budget=-1e-9 > %t/out 2>&1
 ; RUN: FileCheck %s < %t/out
-; RUN: FileCheck --check-prefix=CLEAN %s < %t/out
+; RUN: FileCheck --check-prefix=GUARD %s < %t/out
 
 ; A scalar FMA reduction loop is raised in-kernel: the direct and TCEC classes
 ; are priced from the fixture's wmma_inkernel_rel rows, and the most accurate
@@ -50,6 +50,7 @@
 ; CHECK: Applying solution for matmul[0] -> tcec n=3 wmma m16n16k16 f16/f32 (#2)
 ; CHECK-LABEL: define {{.*}} @preprocess_matmul_body(
 ; CHECK-SAME: ptr {{[^,]*}}[[AARG:%[0-9]+]], ptr {{[^,]*}}[[BARG:%[0-9]+]], ptr {{[^,]*}}[[OARG:%[0-9]+]])
+; CHECK: {{^}}raise.entry:
 ; CHECK: br i1 %{{[0-9]+}}, label %[[FILL:[^,]+]], label
 ; CHECK: {{^}}[[FILL]]:
 ; CHECK-DAG: [[B2P:%[0-9]+]] = getelementptr {{.*}}@__poseidon_ozaki_preprocess_matmul_body_b2_f16_16x16 to ptr), i64 [[OFF:%[0-9]+]]
@@ -120,13 +121,27 @@
 ; CHECK-NEXT: [[E2S:%[0-9]+]] = fmul float [[E2]], {{f0x34800000|0x3E90000000000000}}
 ; CHECK-NEXT: [[S2:%[0-9]+]] = fadd float [[S1]], [[E2S]]
 ; CHECK-NEXT: [[R:%[0-9]+]] = fpext float [[S2]] to double
-; CHECK-NEXT: [[OP:%[0-9]+]] = getelementptr {{.*}}ptr [[OARG]], i64 [[EI]]
-; CHECK-NEXT: store double [[R]], ptr [[OP]], align 8
-; CHECK-NEXT: ret void
+; CHECK-NEXT: br label %[[EXIT:.+]]{{$}}
 
-; CLEAN-LABEL: define {{.*}} @preprocess_matmul_body(
-; CLEAN-NOT: call double @llvm.fmuladd.f64
-; CLEAN: ret void
+; The raise runs in a block of the profiled 16 x 16 x 1 shape; one of another
+; shape runs the loop as written, and both paths store the product.
+; GUARD-LABEL: define {{.*}} @preprocess_matmul_body(
+; GUARD: [[NX:%[0-9]+]] = tail call i32 @llvm.nvvm.read.ptx.sreg.ntid.x()
+; GUARD-NEXT: [[X:%[0-9]+]] = icmp eq i32 [[NX]], 16
+; GUARD-NEXT: [[NY:%[0-9]+]] = tail call i32 @llvm.nvvm.read.ptx.sreg.ntid.y()
+; GUARD-NEXT: [[Y:%[0-9]+]] = icmp eq i32 [[NY]], 16
+; GUARD-NEXT: [[XY:%[0-9]+]] = and i1 [[X]], [[Y]]
+; GUARD-NEXT: [[NZ:%[0-9]+]] = tail call i32 @llvm.nvvm.read.ptx.sreg.ntid.z()
+; GUARD-NEXT: [[Z:%[0-9]+]] = icmp eq i32 [[NZ]], 1
+; GUARD-NEXT: [[SAME:%[0-9]+]] = and i1 [[Z]], [[XY]]
+; GUARD-NEXT: br i1 [[SAME]], label %raise.entry, label %[[LOOP:.+]]{{$}}
+; GUARD: {{^}}[[LOOP]]:
+; GUARD: tail call double @llvm.fmuladd.f64(
+; GUARD: br label %[[EXIT:.+]]{{$}}
+; GUARD: {{^}}[[EXIT]]:
+; GUARD: [[RES:%.+]] = phi double [ %{{[0-9]+}}, %[[LOOP]] ], [ %{{[0-9]+}}, %ozaki_store_gate.merge ]
+; GUARD: store double [[RES]], ptr %{{[0-9]+}}, align 8
+; GUARD-NEXT: ret void
 
 ; ModuleID = 'tcec_matmul.cu'
 source_filename = "tcec_matmul.cu"

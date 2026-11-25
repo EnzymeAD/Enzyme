@@ -317,14 +317,38 @@ static void emitTileFill(
   B.SetInsertPoint(&*afterBB->getFirstInsertionPt());
 }
 
+// Branches from `preheader` to a new block, which it returns, when the block
+// shape of the launch is the profiled one and to `loopHeader` otherwise. The
+// branch is uniform across the block.
+static BasicBlock *emitBlockShapeGuard(BasicBlock &preheader,
+                                       BasicBlock &loopHeader,
+                                       const ScalarLoopHandle &h) {
+  Function *F = preheader.getParent();
+  Module *mod = F->getParent();
+  IRBuilder<> GB(preheader.getTerminator());
+  Value *sameShape = nullptr;
+  for (unsigned axis = 0; axis < 3; ++axis) {
+    Value *eq = GB.CreateICmpEQ(
+        nvptx::emitBlockDim(GB, mod, axis),
+        ConstantInt::get(GB.getInt32Ty(), h.profiledBlock[axis]));
+    sameShape = sameShape ? GB.CreateAnd(sameShape, eq) : eq;
+  }
+  BasicBlock *raiseBB =
+      BasicBlock::Create(mod->getContext(), "raise.entry", F, &loopHeader);
+  IRBuilder<>(raiseBB).CreateBr(&loopHeader);
+  GB.CreateCondBr(sameShape, raiseBB, &loopHeader);
+  preheader.getTerminator()->eraseFromParent();
+  return raiseBB;
+}
+
 void materializeInKernelRaise(const AbstractMatmul &m,
                               const MatmulUnit::Option &t) {
   const SchemeVariant &v = t.variant;
   if (t.realization != Realization::InKernel ||
-      (v.scheme != Scheme::Direct && v.scheme != Scheme::Split))
+      (v.scheme != Scheme::Direct && v.scheme != Scheme::Tcec))
     report_fatal_error("materializeInKernelRaise: only the in-kernel direct "
                        "and split schemes are realized here");
-  const bool split = v.scheme == Scheme::Split;
+  const bool split = v.scheme == Scheme::Tcec;
   // Operand slices, and accumulator groups: one each in the direct scheme.
   const unsigned N = split ? sliceCount(v) : 1;
   const FPKind operand = v.operand;
@@ -359,11 +383,20 @@ void materializeInKernelRaise(const AbstractMatmul &m,
   BasicBlock *exitBB = h.exitBB;
   assert(preheader && exitBB &&
          "recognition admits only loops with a preheader and one exit block");
-  assert(h.reachedByWholeBlock &&
-         "an in-kernel raise is proposed only where the whole block runs it");
+  assert(h.inKernelRaisable &&
+         "an in-kernel raise is proposed only where it can take the loop's "
+         "place");
 
   Function *F = preheader->getParent();
   Module *mod = F->getParent();
+
+  // The raise is laid out for the profiled block shape, so it runs only in a
+  // block of that shape; a launch of another shape runs the loop as written.
+  BasicBlock *loopHeader = preheader->getSingleSuccessor();
+  BasicBlock *loopLatch = exitBB->getSinglePredecessor();
+  assert(loopHeader && loopLatch &&
+         "recognition admits only a loop whose exit is entered from its latch");
+  preheader = emitBlockShapeGuard(*preheader, *loopHeader, h);
   LLVMContext &ctx = mod->getContext();
   const DataLayout &DL = mod->getDataLayout();
   Type *i8Ty = Type::getInt8Ty(ctx);
@@ -803,8 +836,9 @@ void materializeInKernelRaise(const AbstractMatmul &m,
 
   // Readback of this thread's cell, sum_k d[k] / SCALE^k: the block is the
   // profiled M x N one, so it is not clamped to the output tile, and the
-  // output scratch's row stride is nPad.
-  IRBuilder<> RB = builderAt(exitBB, exitBB->getFirstNonPHIIt());
+  // output scratch's row stride is nPad. It ends the raise, which then leaves
+  // to the exit block past the loop.
+  IRBuilder<> &RB = afterB;
   Value *rRow =
       emitTidIndex(RB, mod, h.aRowAxis, h.aRowSlowAxis, h.aRowFuseMult);
   Value *rCol =
@@ -827,7 +861,12 @@ void materializeInKernelRaise(const AbstractMatmul &m,
       scalePowK *= veltkampScale(operand);
   }
   Value *readback = emitFPCast(RB, sum, srcTy);
+  BasicBlock *raiseEnd = RB.GetInsertBlock();
+  Instruction *toLoop = raiseEnd->getTerminator();
+  IRBuilder<>(toLoop).CreateBr(exitBB);
+  toLoop->eraseFromParent();
 
+  PHINode *merged = nullptr;
   SmallVector<Use *, 8> usesToRewrite;
   for (Use &U : h.fma->uses()) {
     auto *userI = dyn_cast<Instruction>(U.getUser());
@@ -835,23 +874,24 @@ void materializeInKernelRaise(const AbstractMatmul &m,
       continue;
     usesToRewrite.push_back(&U);
   }
-  SmallVector<PHINode *, 4> phisToErase;
   for (Use *U : usesToRewrite) {
     auto *userI = cast<Instruction>(U->getUser());
-    if (auto *phi = dyn_cast<PHINode>(userI)) {
-      // LCSSA-style phi in the exit block: setting its incoming value to
-      // readback (defined inside exitBB) would violate dominance, so collapse
-      // the phi instead.
-      if (phi->getParent() == exitBB) {
-        phi->replaceAllUsesWith(readback);
-        phisToErase.push_back(phi);
-        continue;
-      }
+    if (auto *phi = dyn_cast<PHINode>(userI); phi && phi->getParent() == exitBB)
+      continue;
+    if (!merged) {
+      merged =
+          PHINode::Create(h.fma->getType(), 2, "raise.result", exitBB->begin());
+      merged->addIncoming(h.fma, loopLatch);
+      merged->addIncoming(readback, raiseEnd);
     }
-    U->set(readback);
+    U->set(merged);
   }
-  for (PHINode *phi : phisToErase)
-    phi->eraseFromParent();
+  for (PHINode &phi : exitBB->phis())
+    if (&phi != merged)
+      phi.addIncoming(phi.getIncomingValueForBlock(loopLatch) == h.fma
+                          ? readback
+                          : phi.getIncomingValueForBlock(loopLatch),
+                      raiseEnd);
   // The reduction loop is left to dead-code elimination.
 }
 

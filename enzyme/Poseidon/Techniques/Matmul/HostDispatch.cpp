@@ -616,7 +616,7 @@ void applyLibraryCall(Session &S, const AbstractMatmul &m, GemmBodyNote note,
   assert(S.Opts.Matmul.OzakiHostDispatch &&
          "library calls are proposed only under -poseidon-ozaki-host-dispatch");
   Function *F = const_cast<Function *>(anchorOf(m).getFunction());
-  note.scheme = descriptorScheme(v);
+  note.scheme = v.scheme;
   note.numModuli = descriptorModulusField(v);
   // One descriptor per body: the host replaces or precedes its kernel's launch
   // with one library call, and the solve chooses for the body's products
@@ -744,30 +744,30 @@ struct LaunchDesc : GemmBodyNote {
 } // namespace
 
 // The entry points of runtime/GemmDispatch.h.
-static const char *dispatchSym(DispatchScheme s) {
+static const char *dispatchSym(Scheme s) {
   switch (s) {
-  case DispatchScheme::OzakiII:
+  case Scheme::OzakiII:
     return "__poseidon_ozaki_dgemm";
-  case DispatchScheme::Tcec:
+  case Scheme::Tcec:
     return "__poseidon_tcec_dgemm";
-  case DispatchScheme::Direct:
+  case Scheme::Direct:
     return "__poseidon_direct_dgemm";
-  case DispatchScheme::Native:
+  case Scheme::Native:
     return "__poseidon_native_dgemm";
   }
-  llvm_unreachable("unknown DispatchScheme");
+  llvm_unreachable("unknown Scheme");
 }
 
 // void(C,A,B, M,Ncols,K, lda,ldb,ldc, aColMajor,bColMajor,cColMajor,
 //      alpha,beta, stream[, the descriptor's num_moduli field])
-static FunctionCallee getDispatchCallee(Module &M, DispatchScheme scheme) {
+static FunctionCallee getDispatchCallee(Module &M, Scheme scheme) {
   LLVMContext &C = M.getContext();
   Type *ptr = PointerType::get(C, 0);
   Type *i32 = Type::getInt32Ty(C);
   Type *dbl = Type::getDoubleTy(C);
   SmallVector<Type *, 16> params = {ptr, ptr, ptr, i32, i32, i32, i32, i32,
                                     i32, i32, i32, i32, dbl, dbl, ptr};
-  if (scheme != DispatchScheme::Native)
+  if (scheme != Scheme::Native)
     params.push_back(i32);
   return M.getOrInsertFunction(
       dispatchSym(scheme),
@@ -793,10 +793,10 @@ static bool readDispatchDescriptors(const Options &O, Module &M,
         d.bColMajor = Cursor.integer<int>("B layout") != 0;
         d.cColMajor = Cursor.integer<int>("C layout") != 0;
         unsigned scheme = Cursor.integer<unsigned>("scheme");
-        if (scheme > (unsigned)DispatchScheme::Native)
+        if (scheme > (unsigned)Scheme::Native)
           Cursor.fail("its scheme " + Twine(scheme) + " is above " +
-                      Twine((unsigned)DispatchScheme::Native));
-        d.scheme = (DispatchScheme)scheme;
+                      Twine((unsigned)Scheme::Native));
+        d.scheme = (Scheme)scheme;
         // Keyword blocks (see emitDescriptor), of which rd is required.
         bool haveDims = false;
         while (!Cursor.atEnd()) {
@@ -974,7 +974,7 @@ static bool rewriteStub(Module &M, Function &F, const LaunchDesc &d) {
       one,
       beta,
       stream};
-  if (d.scheme != DispatchScheme::Native)
+  if (d.scheme != Scheme::Native)
     args.push_back(I32(d.numModuli));
   Value *holds = nullptr;
   for (const auto &[x, y] : d.assumedEqual) {

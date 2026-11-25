@@ -13,15 +13,15 @@
 using namespace llvm;
 using namespace poseidon;
 
-static const char *name(DispatchScheme s) {
+static const char *name(Scheme s) {
   switch (s) {
-  case DispatchScheme::OzakiII:
+  case Scheme::OzakiII:
     return "OzakiII";
-  case DispatchScheme::Tcec:
+  case Scheme::Tcec:
     return "Tcec";
-  case DispatchScheme::Direct:
+  case Scheme::Direct:
     return "Direct";
-  case DispatchScheme::Native:
+  case Scheme::Native:
     return "Native";
   }
   return "?";
@@ -29,9 +29,8 @@ static const char *name(DispatchScheme s) {
 
 static void library(const SchemeVariant &v) {
   outs() << "library " << schemeTag(v) << " [" << schemeParameter(v) << "] "
-         << schemeFormats(v, '/') << ": descriptor "
-         << name(descriptorScheme(v)) << " " << descriptorModulusField(v)
-         << "\n";
+         << schemeFormats(v, '/') << ": descriptor " << name(v.scheme) << " "
+         << descriptorModulusField(v) << "\n";
 }
 
 static void split(const SchemeVariant &v) {
@@ -41,17 +40,17 @@ static void split(const SchemeVariant &v) {
 
 int main() {
   for (unsigned nm : kOzIIModuliCounts)
-    library(SchemeVariant::modular(nm));
+    library(SchemeVariant::ozakiII(nm));
   library(SchemeVariant::native());
-  library(SchemeVariant::split(FPKind::F16, FPKind::F32, 2));
+  library(SchemeVariant::tcec(FPKind::F16, FPKind::F32, 2));
   for (FPKind k : {FPKind::F16, FPKind::BF16, FPKind::TF32, FPKind::F32})
     library(SchemeVariant::direct(k, FPKind::F32));
 
   for (unsigned n : {2u, 3u, 5u})
-    split(SchemeVariant::split(FPKind::F16, FPKind::F32, n));
-  split(SchemeVariant::split(FPKind::BF16, FPKind::F32, 2));
+    split(SchemeVariant::tcec(FPKind::F16, FPKind::F32, n));
+  split(SchemeVariant::tcec(FPKind::BF16, FPKind::F32, 2));
   for (unsigned n : {2u, 3u, 5u})
-    split(SchemeVariant::split(FPKind::TF32, FPKind::F32, n));
+    split(SchemeVariant::tcec(FPKind::TF32, FPKind::F32, n));
   return 0;
 }
 

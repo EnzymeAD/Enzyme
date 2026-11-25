@@ -13,6 +13,7 @@
 #include "Sites/Canonicalize.h"
 #include "Targets/Target.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
@@ -544,6 +545,8 @@ void findScalarLoopMatmuls(const Options &O, Function &F, ScalarEvolution &SE,
 
         // Profile-confirmed 2D block: the materializer skips tid.z / ntid.z.
         h.is2DBlock = (profileHeader.maxBlockDim[2] == 1);
+        for (unsigned a = 0; a < 3; ++a)
+          h.profiledBlock[a] = profileHeader.maxBlockDim[a];
         // Threads per CTA: the materializer needs it to tell whether the last
         // warp is partially populated (wmma is undefined there).
         h.blockThreads = profileHeader.maxBlockDim[0] *
@@ -553,12 +556,25 @@ void findScalarLoopMatmuls(const Options &O, Function &F, ScalarEvolution &SE,
         // calls in the preheader, so every thread of the block that runs F
         // has to execute it exactly once: it does when the preheader
         // post-dominates the entry and lies in no loop.
-        h.reachedByWholeBlock = !LI.getLoopFor(h.preheader) &&
+        const bool wholeBlock = !LI.getLoopFor(h.preheader) &&
                                 PDT.dominates(h.preheader, &F.getEntryBlock());
-        if (!h.reachedByWholeBlock && O.Diagnostics.Print)
+        if (!wholeBlock && O.Diagnostics.Print)
           llvm::errs() << "[raise-wmma] " << F.getName()
                        << ": not every thread of the block reaches the "
                           "reduction loop once, so it has no in-kernel raise\n";
+        // A launch of another block shape than the profiled one runs the
+        // loop, so the raise joins the loop's exit, which has to take nothing
+        // from the loop but the product.
+        const bool exitTakesProduct =
+            h.exitBB->getSinglePredecessor() == L->getLoopLatch() &&
+            llvm::all_of(h.exitBB->phis(), [&](PHINode &phi) {
+              return phi.getIncomingValue(0) == h.fma;
+            });
+        if (wholeBlock && !exitTakesProduct && O.Diagnostics.Print)
+          llvm::errs() << "[raise-wmma] " << F.getName()
+                       << ": the reduction loop's exit takes more from it than "
+                          "the product, so it has no in-kernel raise\n";
+        h.inKernelRaisable = wholeBlock && exitTakesProduct;
 
         AbstractMatmul am;
         am.id = nextId++;
