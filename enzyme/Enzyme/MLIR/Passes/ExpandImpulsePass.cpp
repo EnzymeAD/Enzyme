@@ -4535,47 +4535,20 @@ struct ExpandImpulsePass
         rewriter.setInsertionPoint(sampleOp);
 
         SmallVector<Value> sampledValues;
-
-        if (auto dist = sampleOp.getDistAttr()) {
+        if (sampleOp.getDistAttr() || sampleOp.getLogpdfAttr()) {
           Location loc = sampleOp.getLoc();
-          Value rng = sampleOp.getInputs().front();
-          SmallVector<Value> distArgs(std::next(sampleOp.getInputs().begin()),
-                                      sampleOp.getInputs().end());
-          auto distSampleType =
-              cast<RankedTensorType>(sampleOp.getResult(1).getType());
-
-          FailureOr<bool> selected = findTopLevelAddress(
-              sampleOp, CI.getRegenerateAddressesAttr(), "selected");
+          FailureOr<bool> selected =
+              findTopLevelAddress(sampleOp, regenAddrs, "selected");
           if (failed(selected))
             return failure();
           bool isSelected = *selected;
           int64_t sampleOffset = computeOffsetForSampleInSelection(
               CI, fn, selection, sampleOp.getSymbolAttr(), symbolTable);
 
-          sampledValues.resize(sampleOp.getNumResults());
-          auto drawFresh = [&]() {
-            SmallVector<Value> drawn(sampleOp.getNumResults());
-            if (!impulse::distSamplerEmittable(dist)) {
-              auto distFn =
-                  cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
-                      sampleOp, sampleOp.getFnAttr()));
-              auto distCall = func::CallOp::create(
-                  rewriter, loc, distFn.getName(), distFn.getResultTypes(),
-                  sampleOp.getInputs());
-              for (unsigned i = 0; i < distCall.getNumResults(); ++i)
-                drawn[i] = distCall.getResult(i);
-            } else {
-              auto sv = impulse::emitDistSampler(rewriter, loc, dist, rng,
-                                                 distArgs, distSampleType);
-              for (unsigned i = 0; i < sv.size(); ++i)
-                drawn[i] = sv[i];
-            }
-            return drawn;
-          };
           int64_t flipIdx = flipLatentIndex(sampleOp, isSelected);
           Value oldLive;
           if (isSelected) {
-            sampledValues = drawFresh();
+            sampledValues = emitSiteDraw(rewriter, symbolTable, sampleOp);
           } else {
             bool isConstrained = false;
             if (readsConstraint(sampleOp)) {
@@ -4585,22 +4558,21 @@ struct ExpandImpulsePass
                 return failure();
               isConstrained = *constrained;
             }
-            int64_t constrainedOffset =
+            int64_t readOffset =
                 isConstrained ? computeOffsetForSampleInSelection(
                                     CI, fn, constrainedAddresses,
                                     sampleOp.getSymbolAttr(), symbolTable)
-                              : -1;
-            Value source = isConstrained ? constraint : prevTrace;
-            int64_t extractOffset =
-                isConstrained ? constrainedOffset : sampleOffset;
-            FailureOr<SmallVector<Value>> read =
-                readSiteValues(rewriter, sampleOp, source, extractOffset);
+                              : sampleOffset;
+            FailureOr<SmallVector<Value>> read = readSiteValues(
+                rewriter, sampleOp, isConstrained ? constraint : prevTrace,
+                readOffset);
             if (failed(read))
               return failure();
             sampledValues = std::move(*read);
             if (flipIdx >= 0) {
               oldLive = oldLiveAt(loc, flipIdx);
-              SmallVector<Value> drawn = drawFresh();
+              SmallVector<Value> drawn =
+                  emitSiteDraw(rewriter, symbolTable, sampleOp);
               for (unsigned i = 1; i < sampledValues.size(); ++i)
                 sampledValues[i] = impulse::SelectOp::create(
                     rewriter, loc, sampledValues[i].getType(), oldLive,
@@ -4608,21 +4580,19 @@ struct ExpandImpulsePass
               sampledValues[0] = drawn[0];
             }
           }
+          ArrayRef<Value> values = ArrayRef<Value>(sampledValues).drop_front();
           if (hastings && !deltaMode && (isSelected || flipIdx >= 0))
-            for (unsigned i = 1; i < sampledValues.size(); ++i)
-              hTaint.insert(sampledValues[i]);
+            hTaint.insert(values.begin(), values.end());
+          if (failed(verifySiteLogpdf(symbolTable, sampleOp, values.size())))
+            return failure();
 
-          bool termDirty = isSelected;
-          if (deltaMode && !termDirty)
-            for (Value arg : distArgs)
-              if (tainted.contains(arg)) {
-                termDirty = true;
-                break;
-              }
-
+          bool termDirty =
+              isSelected ||
+              (deltaMode && llvm::any_of(siteParams(sampleOp), [&](Value v) {
+                 return tainted.contains(v);
+               }));
           if (deltaMode && isSelected)
-            for (unsigned i = 1; i < sampledValues.size(); ++i)
-              tainted.insert(sampledValues[i]);
+            tainted.insert(values.begin(), values.end());
 
           Value oldScore;
           if (scoreTailSize > 0)
@@ -4631,15 +4601,13 @@ struct ExpandImpulsePass
 
           if (scoring) {
             auto it = siteIndex.find(sampleOp.getSymbolAttr());
-            if (it != siteIndex.end()) {
-              Value logpdf = impulse::emitDistLogpdf(
-                  rewriter, loc, dist, sampledValues[1], distArgs);
-              weightAccumulator =
-                  recordSiteScore(loc, weightAccumulator, it->second, logpdf);
-            }
+            if (it != siteIndex.end())
+              weightAccumulator = recordSiteScore(
+                  loc, weightAccumulator, it->second,
+                  emitSiteLogpdf(rewriter, symbolTable, sampleOp, values));
           } else if (!deltaMode || termDirty) {
-            Value logpdf = impulse::emitDistLogpdf(rewriter, loc, dist,
-                                                   sampledValues[1], distArgs);
+            Value logpdf =
+                emitSiteLogpdf(rewriter, symbolTable, sampleOp, values);
             Value contribution =
                 deltaMode
                     ? arith::SubFOp::create(rewriter, loc, logpdf, oldScore)
@@ -4655,13 +4623,13 @@ struct ExpandImpulsePass
                                                   contribution);
               if (!deltaMode && !siteIndex.count(sampleOp.getSymbolAttr())) {
                 // Parameters unchanged by the move: score the old value inline.
-                SmallVector<Value> oldVals = sliceTraceValues(
-                    rewriter, loc, prevTrace, sampleOffset,
-                    TypeRange(sampleOp->getResultTypes()).drop_front());
-                Value oldLp = impulse::emitDistLogpdf(rewriter, loc, dist,
-                                                      oldVals[0], distArgs);
-                branch.corr =
-                    arith::SubFOp::create(rewriter, loc, branch.corr, oldLp);
+                Value oldLogpdf = emitSiteLogpdf(
+                    rewriter, symbolTable, sampleOp,
+                    sliceTraceValues(
+                        rewriter, loc, prevTrace, sampleOffset,
+                        TypeRange(sampleOp->getResultTypes()).drop_front()));
+                branch.corr = arith::SubFOp::create(rewriter, loc, branch.corr,
+                                                    oldLogpdf);
               }
             } else if (flipIdx >= 0) {
               // Kept: old density, cancelled via oldInfo; fresh: new density.
@@ -4677,185 +4645,9 @@ struct ExpandImpulsePass
           ++siteOrdinal;
 
           if (addressInList(sampleOp, selection) &&
-              failed(
-                  appendSiteValues(rewriter, sampleOp,
-                                   ArrayRef<Value>(sampledValues).drop_front(),
-                                   currTrace, currentTraceOffset,
-                                   /*write=*/!deltaMode || isSelected)))
-            return failure();
-
-          rewriter.replaceAllUsesWith(sampleOp->getResults(), sampledValues);
-          toErase.push_back(sampleOp);
-          return success();
-        }
-
-        bool isDistribution = static_cast<bool>(sampleOp.getLogpdfAttr());
-
-        if (isDistribution) {
-          // A1. Distribution function: call the distribution function.
-          FailureOr<bool> selected = findTopLevelAddress(
-              sampleOp, CI.getRegenerateAddressesAttr(), "selected");
-          if (failed(selected))
-            return failure();
-          bool isSelected = *selected;
-
-          int64_t sampleOffset = computeOffsetForSampleInSelection(
-              CI, fn, selection, sampleOp.getSymbolAttr(), symbolTable);
-
-          if (isSelected) {
-            // A2. Regenerate: call the distribution function.
-            auto distFn =
-                cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
-                    sampleOp, sampleOp.getFnAttr()));
-
-            auto distCall = func::CallOp::create(
-                rewriter, sampleOp.getLoc(), distFn.getName(),
-                distFn.getResultTypes(), sampleOp.getInputs());
-
-            sampledValues.append(distCall.getResults().begin(),
-                                 distCall.getResults().end());
-          } else {
-            bool isConstrained = false;
-            if (readsConstraint(sampleOp)) {
-              FailureOr<bool> constrained = findTopLevelAddress(
-                  sampleOp, constrainedAddresses, "constrained");
-              if (failed(constrained))
-                return failure();
-              isConstrained = *constrained;
-            }
-            int64_t constrainedOffset =
-                isConstrained ? computeOffsetForSampleInSelection(
-                                    CI, fn, constrainedAddresses,
-                                    sampleOp.getSymbolAttr(), symbolTable)
-                              : -1;
-
-            Value source = isConstrained ? constraint : prevTrace;
-            int64_t extractOffset =
-                isConstrained ? constrainedOffset : sampleOffset;
-            sampledValues.resize(sampleOp.getNumResults());
-            FailureOr<SmallVector<Value>> read =
-                readSiteValues(rewriter, sampleOp, source, extractOffset);
-            if (failed(read))
-              return failure();
-            sampledValues = std::move(*read);
-          }
-
-          int64_t flipIdx = flipLatentIndex(sampleOp, isSelected);
-          Value oldLive;
-          if (flipIdx >= 0) {
-            oldLive = oldLiveAt(sampleOp.getLoc(), flipIdx);
-            auto distFn =
-                cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
-                    sampleOp, sampleOp.getFnAttr()));
-            auto distCall = func::CallOp::create(
-                rewriter, sampleOp.getLoc(), distFn.getName(),
-                distFn.getResultTypes(), sampleOp.getInputs());
-            for (unsigned i = 1; i < sampledValues.size(); ++i)
-              sampledValues[i] = impulse::SelectOp::create(
-                  rewriter, sampleOp.getLoc(), sampledValues[i].getType(),
-                  oldLive, sampledValues[i], distCall.getResult(i));
-            sampledValues[0] = distCall.getResult(0);
-          }
-          if (hastings && !deltaMode && (isSelected || flipIdx >= 0))
-            for (unsigned i = 1; i < sampledValues.size(); ++i)
-              hTaint.insert(sampledValues[i]);
-
-          auto logpdfFn =
-              cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
-                  sampleOp, sampleOp.getLogpdfAttr()));
-
-          SmallVector<Value> logpdfOperands;
-          for (unsigned i = 1; i < sampledValues.size(); ++i) {
-            logpdfOperands.push_back(sampledValues[i]);
-          }
-          for (unsigned i = 1; i < sampleOp.getNumOperands(); ++i) {
-            logpdfOperands.push_back(sampleOp.getOperand(i));
-          }
-
-          if (logpdfOperands.size() != logpdfFn.getNumArguments()) {
-            sampleOp.emitError("Impulse: failed to construct logpdf call; "
-                               "logpdf function has wrong number of arguments");
-            return failure();
-          }
-
-          bool termDirty = isSelected;
-          if (deltaMode && !termDirty)
-            for (unsigned i = 1; i < sampleOp.getNumOperands(); ++i)
-              if (tainted.contains(sampleOp.getOperand(i))) {
-                termDirty = true;
-                break;
-              }
-
-          if (deltaMode && isSelected)
-            for (unsigned i = 1; i < sampledValues.size(); ++i)
-              tainted.insert(sampledValues[i]);
-
-          Value oldScore;
-          if (scoreTailSize > 0)
-            oldScore = scalarAt(rewriter, sampleOp.getLoc(), prevTrace,
-                                {0, positionSize + siteOrdinal});
-
-          if (scoring) {
-            auto it = siteIndex.find(sampleOp.getSymbolAttr());
-            if (it != siteIndex.end()) {
-              auto logpdf = func::CallOp::create(
-                  rewriter, sampleOp.getLoc(), logpdfFn.getName(),
-                  logpdfFn.getResultTypes(), logpdfOperands);
-              weightAccumulator =
-                  recordSiteScore(sampleOp.getLoc(), weightAccumulator,
-                                  it->second, logpdf.getResult(0));
-            }
-          } else if (!deltaMode || termDirty) {
-            auto logpdf = func::CallOp::create(
-                rewriter, sampleOp.getLoc(), logpdfFn.getName(),
-                logpdfFn.getResultTypes(), logpdfOperands);
-            Value contribution = logpdf.getResult(0);
-            if (deltaMode) {
-              contribution = arith::SubFOp::create(rewriter, sampleOp.getLoc(),
-                                                   contribution, oldScore);
-            }
-            weightAccumulator = arith::AddFOp::create(
-                rewriter, sampleOp.getLoc(), weightAccumulator, contribution);
-            if (scoreTailSize > 0)
-              siteScores.push_back(logpdf.getResult(0));
-            if (hastings && isSelected) {
-              // A prior draw's proposal density cancels its own term.
-              branch.corr = arith::AddFOp::create(rewriter, sampleOp.getLoc(),
-                                                  branch.corr, contribution);
-              if (!deltaMode && !siteIndex.count(sampleOp.getSymbolAttr())) {
-                // Parameters unchanged by the move: score the old value inline.
-                SmallVector<Value> oldOperands = sliceTraceValues(
-                    rewriter, sampleOp.getLoc(), prevTrace, sampleOffset,
-                    TypeRange(sampleOp->getResultTypes()).drop_front());
-                for (unsigned i = 1; i < sampleOp.getNumOperands(); ++i)
-                  oldOperands.push_back(sampleOp.getOperand(i));
-                auto oldLp = func::CallOp::create(
-                    rewriter, sampleOp.getLoc(), logpdfFn.getName(),
-                    logpdfFn.getResultTypes(), oldOperands);
-                branch.corr =
-                    arith::SubFOp::create(rewriter, sampleOp.getLoc(),
-                                          branch.corr, oldLp.getResult(0));
-              }
-            } else if (flipIdx >= 0) {
-              // Kept: old density, cancelled via oldInfo; fresh: new density.
-              Value term = arith::SelectOp::create(
-                  rewriter, sampleOp.getLoc(), oldLive,
-                  scalarAt(rewriter, sampleOp.getLoc(), oldInfo, {1, flipIdx}),
-                  contribution);
-              branch.corr = arith::AddFOp::create(rewriter, sampleOp.getLoc(),
-                                                  branch.corr, term);
-            }
-          } else {
-            siteScores.push_back(oldScore);
-          }
-          ++siteOrdinal;
-
-          if (addressInList(sampleOp, selection) &&
-              failed(
-                  appendSiteValues(rewriter, sampleOp,
-                                   ArrayRef<Value>(sampledValues).drop_front(),
-                                   currTrace, currentTraceOffset,
-                                   /*write=*/!deltaMode || isSelected)))
+              failed(appendSiteValues(rewriter, sampleOp, values, currTrace,
+                                      currentTraceOffset,
+                                      /*write=*/!deltaMode || isSelected)))
             return failure();
         } else {
           // B. Generative function: recursively regenerate the nested function
@@ -4882,11 +4674,7 @@ struct ExpandImpulsePass
                   : ArrayAttr();
 
           if (subSelection.empty()) {
-            auto genCall = func::CallOp::create(
-                rewriter, sampleOp.getLoc(), genFn.getName(),
-                genFn.getResultTypes(), sampleOp.getInputs());
-            sampledValues.append(genCall.getResults().begin(),
-                                 genCall.getResults().end());
+            sampledValues = emitSiteDraw(rewriter, symbolTable, sampleOp);
           } else {
             int64_t subPositionSize = computePositionSizeForSelection(
                 sampleOp, genFn, subSelection, symbolTable);
