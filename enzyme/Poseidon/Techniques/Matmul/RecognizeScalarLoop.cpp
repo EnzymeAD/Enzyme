@@ -747,6 +747,26 @@ StoreInst *productStore(Function &F, const AbstractMatmul &m) {
   return nullptr;
 }
 
+std::optional<OutputExtents>
+constantOutputExtents(const AbstractMatmul &m, const ThreadIndexBounds &guard,
+                      unsigned axM, unsigned axN) {
+  if (!m.globalM || !m.globalN)
+    return std::nullopt;
+  const uint64_t K = m.K, profileK = m.globalK;
+  if (!profileK)
+    return OutputExtents{m.globalM, m.globalN, false};
+  // Rescaling by K / globalK is sound only for an extent that tracks matrix
+  // order (equal to globalK at profile scale): rescaling any other fabricates
+  // an extent, and a library call would read past its operand.
+  if (K == profileK || (m.globalM == profileK && m.globalN == profileK))
+    return OutputExtents{(unsigned)(m.globalM * K / profileK),
+                         (unsigned)(m.globalN * K / profileK), false};
+  if (guard.ub[axM] && guard.ub[axN])
+    return OutputExtents{(unsigned)guard.ub[axM], (unsigned)guard.ub[axN],
+                         true};
+  return std::nullopt;
+}
+
 Expected<std::optional<GemmBodyNote>>
 constantShapeLibraryNote(const Options &O, Function &F,
                          const AbstractMatmul &m) {
@@ -838,68 +858,45 @@ constantShapeLibraryNote(const Options &O, Function &F,
     return refuse("a condition gating the GEMM store is not a thread-index "
                   "bound");
 
-  // Every dim must be deploy scale: K is, but globalM/globalN are
-  // profile-scale and are rescaled by K/globalK. Leading dims come from the
-  // handle (bytes to elements).
-  unsigned gM = 0, gNcols = 0;
-  if (m.globalM && m.globalN && m.globalK) {
-    // The K/globalK rescale is only sound for a dimension that tracks matrix
-    // order (one equal to globalK at profile scale); rescaling a
-    // runtime-dependent dimension fabricates a deploy extent and the runtime
-    // then reads past the operand. When such a dimension meets a changed
-    // scale, no static value is correct.
-    const bool scaled = (uint64_t)K != (uint64_t)m.globalK;
-    bool recovered = false;
-    if (scaled && (m.globalM != m.globalK || m.globalN != m.globalK)) {
-      // Before refusing, recover the true deploy extents from the kernel's own
-      // index guard: exact, already at deploy scale, and intersected with the
-      // launch geometry by the host stub, min(crop, gridDim * blockDim).
-      if (guard->ub[*axM] && guard->ub[*axN]) {
-        gM = (unsigned)guard->ub[*axM];
-        gNcols = (unsigned)guard->ub[*axN];
-        note.launchCrop = true;
-        note.cropMAxis = (int)*axM;
-        note.cropNAxis = (int)*axN;
-        recovered = true;
-        if (O.Diagnostics.Print)
-          llvm::errs() << "[poseidon] recovered the deploy geometry of "
-                       << F.getName() << ": M=" << gM << " Ncols=" << gNcols
-                       << " K=" << K << " from the index guard on thread axes "
-                       << *axM << '/' << *axN << '\n';
-      }
-    }
-    if (scaled && !recovered &&
-        (m.globalM != m.globalK || m.globalN != m.globalK)) {
-      // A warning: the solver then picks among in-kernel candidates that may
-      // be materially less accurate.
-      diagnose(F, F.getSubprogram(),
-               "no library call for " + F.getName() +
-                   ": a non-square product at a changed deploy scale (profile "
-                   "M/N/K = " +
-                   Twine(m.globalM) + "/" + Twine(m.globalN) + "/" +
-                   Twine(m.globalK) + ", deploy K = " + Twine(K) +
-                   ") has no recoverable geometry; profile at the deploy shape",
-               DS_Warning);
-      if (O.Model.StrictMode)
-        return userError(
-            F, F.getSubprogram(),
-            "strict mode: the host-dispatch geometry of " + F.getName() +
-                " is unrecoverable for a non-square GEMM at a changed deploy "
-                "scale, so its candidate set would be reduced; profile at the "
-                "deploy shape, or leave out -poseidon-strict-mode.");
-      return std::nullopt;
-    }
-    if (!recovered) {
-      gM = (unsigned)((uint64_t)m.globalM * (uint64_t)K / (uint64_t)m.globalK);
-      gNcols =
-          (unsigned)((uint64_t)m.globalN * (uint64_t)K / (uint64_t)m.globalK);
-    }
-  } else {
-    if (!m.globalM || !m.globalN)
-      return refuse("the profile does not give the extent of the product's "
-                    "rows and columns");
-    gM = m.globalM;
-    gNcols = m.globalN;
+  // Every dim must be deploy scale. Leading dims come from the handle (bytes
+  // to elements).
+  if (!m.globalM || !m.globalN)
+    return refuse("the profile does not give the extent of the product's "
+                  "rows and columns");
+  std::optional<OutputExtents> extents =
+      constantOutputExtents(m, *guard, *axM, *axN);
+  if (!extents) {
+    // A warning: the solver then picks among in-kernel candidates that may
+    // be materially less accurate.
+    diagnose(F, F.getSubprogram(),
+             "no library call for " + F.getName() +
+                 ": a non-square product at a changed deploy scale (profile "
+                 "M/N/K = " +
+                 Twine(m.globalM) + "/" + Twine(m.globalN) + "/" +
+                 Twine(m.globalK) + ", deploy K = " + Twine(K) +
+                 ") has no recoverable geometry; profile at the deploy shape",
+             DS_Warning);
+    if (O.Model.StrictMode)
+      return userError(
+          F, F.getSubprogram(),
+          "strict mode: the host-dispatch geometry of " + F.getName() +
+              " is unrecoverable for a non-square GEMM at a changed deploy "
+              "scale, so its candidate set would be reduced; profile at the "
+              "deploy shape, or leave out -poseidon-strict-mode.");
+    return std::nullopt;
+  }
+  const unsigned gM = extents->M, gNcols = extents->Ncols;
+  if (extents->fromGuard) {
+    // The host stub intersects the guard with the launch geometry,
+    // min(crop, gridDim * blockDim).
+    note.launchCrop = true;
+    note.cropMAxis = (int)*axM;
+    note.cropNAxis = (int)*axN;
+    if (O.Diagnostics.Print)
+      llvm::errs() << "[poseidon] recovered the deploy geometry of "
+                   << F.getName() << ": M=" << gM << " Ncols=" << gNcols
+                   << " K=" << K << " from the index guard on thread axes "
+                   << *axM << '/' << *axN << '\n';
   }
   if (!note.launchCrop) {
     if (guard->ub[*axM] && guard->ub[*axM] < gM)

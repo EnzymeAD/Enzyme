@@ -53,8 +53,8 @@
 ; native_dgemm_runtime_cols_nvptx.cu covers a product with a run-time column
 ; count.
 
-; OZEST: Poseidon: matrix product 0, 16x16x16: ozaki-ii host dispatch at nm=8, 9, 10, 11, 12, 13, 14 is priced as the square product it embeds in (the square row times 64.00): this device's cost model carries no measured 'ozaki_dispatch_rect_rel,nm<nm>_m128n16k16' row; poseidon-calibrate --gpu <id> --ozaki-rect 128x16x16 measures it
-; WARN: Poseidon: matrix product 0, 16x16x16: native-dgemm host dispatch at 128x16x16 is priced from the square 'ozaki_dispatch_rel,dgemm' row: this device's cost model carries no measured 'ozaki_dispatch_rect_rel,dgemm_m128n16k16' row; poseidon-calibrate --gpu <id> --ozaki-rect 128x16x16 measures it
+; OZEST: Poseidon: matrix product 0, 16x16x16: ozaki-ii host dispatch at nm=8, 9, 10, 11, 12, 13, 14 is priced as the square product it embeds in (the square row times 64.00): this device's cost model carries no measured 'ozaki_dispatch_rect_rel,nm<nm>_m128n16k16' row; poseidon-calibrate --gpu <id> --product 128x16x16 measures it
+; WARN: Poseidon: matrix product 0, 16x16x16: native-dgemm host dispatch at 128x16x16 is priced from the square 'ozaki_dispatch_rel,dgemm' row: this device's cost model carries no measured 'ozaki_dispatch_rect_rel,dgemm_m128n16k16' row; poseidon-calibrate --gpu <id> --product 128x16x16 measures it
 ; SQ: native-dgemm cublas f64/f64  compCost/MAC=2.560000e+02  rel=5.000000e-01
 ; LOW: native-dgemm cublas f64/f64  compCost/MAC=2.560000e+01  rel=5.000000e-02
 ; HIGH: native-dgemm cublas f64/f64  compCost/MAC=1.024000e+02  rel=2.000000e-01

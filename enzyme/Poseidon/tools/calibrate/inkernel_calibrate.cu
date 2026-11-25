@@ -12,10 +12,12 @@
 // on the same kernel at the same shape. poseidon-calibrate compiles this file
 // once per candidate class through the plugin with -poseidon-apply-rewrites and
 // times the result, so what is measured is the code a real solve emits. The
-// GEMM is a naive dense one (row-major A, K-strided B, one thread per output
+// GEMM is a naive dense one (A contiguous along K, one thread per output
 // element, 16x16 blocks, `#pragma unroll 1` over the reduction), and without
 // the plugin the annotation is inert, so the same kernel is the scalar-FP64
-// denominator.
+// denominator. The product is C = A * B, C of CAL_M x CAL_N, K = CAL_K
+// (each 2048 by default); B is strided along K (row-major), or with
+// -DCAL_B_COL_MAJOR=1 contiguous along K (column-major).
 //
 // Run:  ./bin [reps=5]        ("time_ms = <ms>" on stdout)
 //       ./bin --profiling     (a launch of the site, for a profile run)
@@ -30,11 +32,18 @@
 
 #include "poseidon/poseidon.h"
 
+#ifndef CAL_M
+#define CAL_M 2048
+#endif
 #ifndef CAL_N
 #define CAL_N 2048
 #endif
-#define N CAL_N
-#define NN ((size_t)N * N)
+#ifndef CAL_K
+#define CAL_K 2048
+#endif
+#ifndef CAL_B_COL_MAJOR
+#define CAL_B_COL_MAJOR 0
+#endif
 
 #define CK(x)                                                                  \
   do {                                                                         \
@@ -46,25 +55,28 @@
     }                                                                          \
   } while (0)
 
-/// The GEMM site, by the name poseidon-calibrate finds its profile under. The
-/// profile is recorded at a small -DCAL_N, since reverse-mode AD of a K=N
-/// reduction does not survive at the timed size, and decides only which
-/// candidates exist, never what they measure.
+/// The GEMM site. Its profile is recorded at small extents, since
+/// reverse-mode AD of a long reduction does not survive at the timed size, and
+/// decides only which candidates exist, never what they measure.
 POSEIDON_OPTIMIZE __global__ void matmul_opt(double *C, const double *A,
                                              const double *B) {
   int row = blockIdx.x * blockDim.x + threadIdx.x;
   int col = blockIdx.y * blockDim.y + threadIdx.y;
-  if (row >= N || col >= N)
+  if (row >= CAL_M || col >= CAL_N)
     return;
-  const double *arow = A + (size_t)row * N;
+  const double *arow = A + (size_t)row * CAL_K;
   double val = 0.0;
 #pragma unroll 1
-  for (int k = 0; k < N; ++k)
-    val += arow[k] * B[(size_t)k * N + col];
-  C[(size_t)row * N + col] = val;
+  for (int k = 0; k < CAL_K; ++k)
+#if CAL_B_COL_MAJOR
+    val += arow[k] * B[(size_t)col * CAL_K + k];
+#else
+    val += arow[k] * B[(size_t)k * CAL_N + col];
+#endif
+  C[(size_t)row * CAL_N + col] = val;
 }
 
-static dim3 GG((N + 15) / 16, (N + 15) / 16), GB(16, 16);
+static dim3 GG((CAL_M + 15) / 16, (CAL_N + 15) / 16), GB(16, 16);
 
 int main(int argc, char **argv) {
   bool profiling = false;
@@ -82,19 +94,21 @@ int main(int argc, char **argv) {
     }
   }
 
+  const size_t aElts = (size_t)CAL_M * CAL_K, bElts = (size_t)CAL_K * CAL_N,
+               cElts = (size_t)CAL_M * CAL_N;
   double *A, *B, *C;
-  CK(cudaMalloc(&A, NN * 8));
-  CK(cudaMalloc(&B, NN * 8));
-  CK(cudaMalloc(&C, NN * 8));
+  CK(cudaMalloc(&A, aElts * 8));
+  CK(cudaMalloc(&B, bElts * 8));
+  CK(cudaMalloc(&C, cElts * 8));
 
-  double *h = (double *)malloc(NN * 8);
+  double *h = (double *)malloc((aElts > bElts ? aElts : bElts) * 8);
   srand(1);
-  for (size_t i = 0; i < NN; ++i)
+  for (size_t i = 0; i < aElts; ++i)
     h[i] = ((double)rand() / RAND_MAX) * 2.0 - 1.0;
-  CK(cudaMemcpy(A, h, NN * 8, cudaMemcpyHostToDevice));
-  for (size_t i = 0; i < NN; ++i)
+  CK(cudaMemcpy(A, h, aElts * 8, cudaMemcpyHostToDevice));
+  for (size_t i = 0; i < bElts; ++i)
     h[i] = ((double)rand() / RAND_MAX) * 2.0 - 1.0;
-  CK(cudaMemcpy(B, h, NN * 8, cudaMemcpyHostToDevice));
+  CK(cudaMemcpy(B, h, bElts * 8, cudaMemcpyHostToDevice));
   free(h);
   CK(cudaDeviceSynchronize());
 
@@ -103,7 +117,7 @@ int main(int argc, char **argv) {
   CK(cudaDeviceSynchronize());
   CK(cudaGetLastError());
   if (profiling) {
-    printf("profiling run done (N=%d)\n", N);
+    printf("profiling run done (%dx%dx%d)\n", CAL_M, CAL_N, CAL_K);
     return 0;
   }
 
@@ -121,14 +135,14 @@ int main(int argc, char **argv) {
 
   // Checksum so a silently-wrong raise is visible in the log; the rel is a
   // time, and accuracy is the accuracy model's job.
-  double *hc = (double *)malloc(NN * 8);
-  CK(cudaMemcpy(hc, C, NN * 8, cudaMemcpyDeviceToHost));
+  double *hc = (double *)malloc(cElts * 8);
+  CK(cudaMemcpy(hc, C, cElts * 8, cudaMemcpyDeviceToHost));
   double s = 0.0;
-  for (size_t i = 0; i < NN; i += 4099)
+  for (size_t i = 0; i < cElts; i += 4099)
     s += hc[i];
   free(hc);
 
-  printf("N = %d\nreps = %d\nchecksum = %.10e\ntime_ms = %.6f\n", N, reps, s,
-         ms / reps);
+  printf("shape = %dx%dx%d\nreps = %d\nchecksum = %.10e\ntime_ms = %.6f\n",
+         CAL_M, CAL_N, CAL_K, reps, s, ms / reps);
   return 0;
 }

@@ -152,21 +152,101 @@ static Error reportEstimatedRow(Session &S, const AbstractMatmul &m,
   return reportRow(S, m, what, row, measure, "is priced " + how);
 }
 
-// The command that measures a device's cost model; a rectangular host
-// dispatch's rows also take --ozaki-rect.
+// The measured rows a matrix-product candidate is priced from, each the
+// candidate's wall clock over the scalar FP64 loop's, and the shape each is
+// read at:
+//   wmma_inkernel_rel,<class>_m<M>n<N>k<K>_<layout>
+//       An in-kernel raise of a product whose extents are constants of the
+//       compile (inKernelShape), measured at them with B's layout along K:
+//       bcolmajor contiguous, browmajor strided.
+//   wmma_inkernel_rel,<class>
+//       An in-kernel raise of a product whose output extents are run-time
+//       values, and the estimate of a missing row of the form above. Measured
+//       on a square product at the calibration's --n (2048 by default), B
+//       strided along K, whose launch saturates the device; a product with
+//       few output columns or with B contiguous along K does not run at the
+//       rate it gives.
+//   ozaki_dispatch_rect_rel,nm<k>_m<M>n<N>k<K> and ,dgemm_m<M>n<N>k<K>
+//       A library call of constant extents (LibrarySite::runShape), measured
+//       at them.
+//   ozaki_dispatch_rect_rel,nm<k>_m<M>k<K>
+//       (M, K) of LibrarySite::profileShape, for a library call whose extents
+//       are run-time values; measured at many columns.
+//   ozaki_dispatch_rel,nm<k> and ,dgemm
+//       A square, read as they are, and for a square runShape. The estimate of
+//       a missing rectangular Ozaki-II row multiplies the square row by the
+//       padding of profileShape (squarePaddingRatio), that of a missing
+//       native DGEMM row is the square row.
+//   tcec_dispatch_rel,fp16tcec and direct_dispatch_rel,<class>
+//       Every shape.
+// The command that measures a device's cost model; the rows of the extents of
+// one product also take --product MxNxK[:layout], and the (M, K) rows
+// --ozaki-rect MxK.
 constexpr StringLiteral kCalibrate = "poseidon-calibrate --gpu <id>";
 
-// Price one in-kernel raise from its measured wmma_inkernel_rel row. A price
-// composed from per-MMA rows would omit the cooperative fill, the
+// Layouts of B along the reduction, as the exact in-kernel rows name them.
+constexpr StringLiteral kBColMajor = "bcolmajor", kBRowMajor = "browmajor";
+
+namespace {
+// The extents an in-kernel raise runs at and the layout of its B, which key
+// its exact rows.
+struct InKernelShape {
+  unsigned M, N, K;
+  StringRef layout;
+  // "m<M>n<N>k<K>_<layout>".
+  std::string key() const {
+    return ("m" + Twine(M) + "n" + Twine(N) + "k" + Twine(K) + "_" + layout)
+        .str();
+  }
+  // The --product argument that measures its rows.
+  std::string product() const {
+    return (Twine(M) + "x" + Twine(N) + "x" + Twine(K) + ":" + layout).str();
+  }
+};
+} // namespace
+
+// The shape of the scalar-loop product `m` at the reduction length of the
+// compile, its output extents as constantOutputExtents gives them from the
+// guards before the loop; none when they are run-time values.
+static std::optional<InKernelShape> inKernelShape(const AbstractMatmul &m) {
+  const ScalarLoopHandle &h = m.scalarLoop;
+  std::optional<unsigned> axM = tidAxisIndex(h.aRow.fast),
+                          axN = tidAxisIndex(h.bCol.fast);
+  if (!axM || !axN || *axM == *axN)
+    return std::nullopt;
+  std::optional<OutputExtents> out =
+      constantOutputExtents(m, h.loopGuard, *axM, *axN);
+  if (!out)
+    return std::nullopt;
+  // A steps by one element along the reduction.
+  const StringRef layout =
+      h.bStrideByte == h.aStrideByte ? kBColMajor : kBRowMajor;
+  return InKernelShape{out->M, out->Ncols, m.K, layout};
+}
+
+// Price one in-kernel raise of class `cls` from its measured row: the row of
+// `shape` when the product has one, the class row otherwise. A missing row of
+// `shape` is estimated by the class row, and `cls` added to `estimated`. A
+// price composed from per-MMA rows would omit the cooperative fill, the
 // shared-memory staging and the accumulator traffic.
-static Expected<std::optional<double>>
-priceInKernelRaiseFromMeasuredRow(Session &S, const AbstractMatmul &m,
-                                  const std::string &cls, double baselinePerMac,
-                                  StringRef what) {
+static Expected<std::optional<double>> priceInKernelRaiseFromMeasuredRow(
+    Session &S, const AbstractMatmul &m, const std::string &cls,
+    const std::optional<InKernelShape> &shape, double baselinePerMac,
+    StringRef what, SmallVectorImpl<std::string> &estimated) {
   const Options &O = S.Opts;
+  if (shape) {
+    double rel =
+        lookupCost(S.CostModel, "wmma_inkernel_rel", cls + "_" + shape->key())
+            .value_or(-1.0);
+    if (rel > 0.0)
+      return std::optional<double>(baselinePerMac * rel);
+  }
   double rel = lookupCost(S.CostModel, "wmma_inkernel_rel", cls).value_or(-1.0);
-  if (rel > 0.0)
+  if (rel > 0.0) {
+    if (shape)
+      estimated.push_back(cls);
     return std::optional<double>(baselinePerMac * rel);
+  }
 
   if (O.Matmul.InKernelCalibration) {
     if (O.Solver.ApplyRewrites.empty())
@@ -432,14 +512,15 @@ static Expected<bool> wmmaTileAvailable(Session &S, const AbstractMatmul &m,
 // In-kernel realization. Only a constant-trip product has one: the raise needs
 // compile-time tile extents. It allocates addrspace(3) scratch in the body, so
 // the enclosing kernel's static shared budget is a precondition, and it is
-// priced from the measured wmma_inkernel_rel row of its class, with no shape
-// ratio on top.
+// priced from the measured wmma_inkernel_rel row of its class at its shape,
+// with no shape ratio on top.
 //===----------------------------------------------------------------------===//
 
 namespace {
 struct InKernelSite {
   Function *raiseF = nullptr;
   uint64_t existingShmem = 0;
+  std::optional<InKernelShape> shape;
 };
 } // namespace
 
@@ -470,6 +551,7 @@ static InKernelSite inKernelSite(const Session &S, const AbstractMatmul &m) {
   InKernelSite K;
   K.raiseF = m.scalarLoop.fma->getFunction();
   K.existingShmem = enclosingKernelSharedBytes(S, *K.raiseF);
+  K.shape = inKernelShape(m);
   return K;
 }
 
@@ -491,7 +573,8 @@ static std::string inKernelDescription(const SchemeVariant &v, unsigned tileM,
 
 static Error proposeInKernel(const Product &P, const InKernelSite &K,
                              const SchemeVariant &v, unsigned tileM,
-                             unsigned tileN, unsigned tileK, MatmulUnit &cm) {
+                             unsigned tileN, unsigned tileK, MatmulUnit &cm,
+                             SmallVectorImpl<std::string> &estimated) {
   const AbstractMatmul &m = P.m;
   MatmulUnit::Option opt;
   opt.tileM = tileM;
@@ -505,9 +588,9 @@ static Error proposeInKernel(const Product &P, const InKernelSite &K,
   // shared cap is rejected by ptxas for the whole module.
   if (!inKernelRaiseFits(P.S.Opts, *K.raiseF, m, opt, K.existingShmem, what))
     return Error::success();
-  // An uncalibrated class is refused, not estimated.
+  // A class without a row is refused, not estimated.
   Expected<std::optional<double>> cost = priceInKernelRaiseFromMeasuredRow(
-      P.S, m, inKernelCostClass(v), P.baselinePerMac, what);
+      P.S, m, inKernelCostClass(v), K.shape, P.baselinePerMac, what, estimated);
   if (!cost)
     return cost.takeError();
   if (!*cost)
@@ -518,7 +601,8 @@ static Error proposeInKernel(const Product &P, const InKernelSite &K,
 }
 
 static Error proposeInKernelDirect(const Product &P, const InKernelSite &K,
-                                   MatmulUnit &cm) {
+                                   MatmulUnit &cm,
+                                   SmallVectorImpl<std::string> &estimated) {
   Expected<const SmallVector<WmmaTarget, 16> *> targets =
       getAvailableWmmaTargets(P.S, P.m);
   if (!targets)
@@ -526,7 +610,7 @@ static Error proposeInKernelDirect(const Product &P, const InKernelSite &K,
   for (const WmmaTarget &t : **targets)
     if (Error E =
             proposeInKernel(P, K, SchemeVariant::direct(t.inputPrec, t.accPrec),
-                            t.M, t.N, t.K, cm))
+                            t.M, t.N, t.K, cm, estimated))
       return E;
   return Error::success();
 }
@@ -554,7 +638,8 @@ static constexpr InKernelSplitVariant kInKernelSplitVariants[] = {
 };
 
 static Error proposeInKernelSplit(const Product &P, const InKernelSite &K,
-                                  MatmulUnit &cm) {
+                                  MatmulUnit &cm,
+                                  SmallVectorImpl<std::string> &estimated) {
   for (const InKernelSplitVariant &s : kInKernelSplitVariants) {
     Expected<bool> available =
         wmmaTileAvailable(P.S, P.m, s.tileM, s.tileN, s.tileK,
@@ -567,11 +652,29 @@ static Error proposeInKernelSplit(const Product &P, const InKernelSite &K,
     // outside the valid extent, so padding is numerically inert. The one
     // precondition is the static shared cap (N slice buffers per side plus N
     // F32 tiles live at once), a capability limit rather than a price.
-    if (Error E =
-            proposeInKernel(P, K, s.variant, s.tileM, s.tileN, s.tileK, cm))
+    if (Error E = proposeInKernel(P, K, s.variant, s.tileM, s.tileN, s.tileK,
+                                  cm, estimated))
       return E;
   }
   return Error::success();
+}
+
+// Every in-kernel class, with one warning for the classes whose row at the
+// product's shape is estimated by the class row.
+static Error proposeInKernelRaises(const Product &P, const InKernelSite &K,
+                                   MatmulUnit &cm) {
+  SmallVector<std::string, 16> estimated;
+  if (Error E = proposeInKernelDirect(P, K, cm, estimated))
+    return E;
+  if (Error E = proposeInKernelSplit(P, K, cm, estimated))
+    return E;
+  if (estimated.empty())
+    return Error::success();
+  return reportEstimatedRow(
+      P.S, P.m, "in-kernel raise as " + join(estimated, ", "),
+      "wmma_inkernel_rel,<class>_" + K.shape->key(),
+      std::string(kCalibrate) + " --product " + K.shape->product(),
+      "from the row of its class");
 }
 
 //===----------------------------------------------------------------------===//
@@ -589,18 +692,8 @@ struct LibrarySite {
   std::optional<GemmBodyNote> note;
   bool dispatchable = false;
   // The M x Ncols x K the call runs at, when all three are constants of this
-  // compile (a scalar-loop product's descriptor). The shape each library row
-  // is read at:
-  //   ozaki_dispatch_rect_rel,nm<k>_m<M>n<N>k<K>  runShape: the rows are
-  //       measured at the extents of the call, which are those it runs at.
-  //   ozaki_dispatch_rect_rel,nm<k>_m<M>k<K>      (M, K) of `profileShape`,
-  //       for a product whose extents are run-time values; measured at many
-  //       columns.
-  //   ozaki_dispatch_rect_rel,dgemm_m<M>n<N>k<K>  runShape.
-  //   ozaki_dispatch_rel,nm<k> and ,dgemm         a square, read as they are;
-  //       the estimate of a missing rectangular Ozaki-II row multiplies the
-  //       square row by the padding of `profileShape` (squarePaddingRatio).
-  // A square runShape reads the square rows.
+  // compile (a scalar-loop product's descriptor). The rows each shape reads
+  // are listed above kCalibrate.
   std::optional<std::array<unsigned, 3>> runShape;
   // The extents at profile scale: the profiled global extents of the product.
   std::array<unsigned, 3> profileShape = {0, 0, 0};
@@ -718,10 +811,11 @@ static Error proposeLibraryModular(const Product &P, const LibrarySite &L,
   // One row name for all the moduli of the shape.
   const std::string rows =
       family + ",nm<nm>" + (square ? std::string() : "_" + shapeKey);
-  const std::string measure =
-      square ? std::string(kCalibrate)
-             : std::string(kCalibrate) + " --ozaki-rect " + shapeM + "x" +
-                   (L.runShape ? shapeN + "x" : std::string()) + shapeK;
+  std::string measure(kCalibrate);
+  if (L.runShape && !square)
+    measure += " --product " + shapeM + "x" + shapeN + "x" + shapeK;
+  else if (!square)
+    measure += " --ozaki-rect " + shapeM + "x" + shapeK;
   if (!estimated.empty())
     if (Error E = reportEstimatedRow(
             P.S, m, "ozaki-ii host dispatch at nm=" + estimated, rows, measure,
@@ -854,7 +948,7 @@ static Error proposeLibraryNative(const Product &P, const LibrarySite &L,
     if (Error E = reportEstimatedRow(
             P.S, m, "native-dgemm host dispatch at " + shape,
             "ozaki_dispatch_rect_rel," + rectKey,
-            std::string(kCalibrate) + " --ozaki-rect " + shape,
+            std::string(kCalibrate) + " --product " + shape,
             "from the square 'ozaki_dispatch_rel,dgemm' row"))
       return E;
   MatmulUnit::Option opt = libraryOption(SchemeVariant::native(), 16, 16, 16);
@@ -925,10 +1019,7 @@ Error generateMatmulCandidates(Session &S, ArrayRef<AbstractMatmul> matmuls,
     // The candidate index is the position in this sequence.
     if (m.origin == AbstractMatmul::Origin::ScalarLoopReduction &&
         m.scalarLoop.inKernelRaisable && siteReachedByWholeBlock(S, m)) {
-      const InKernelSite K = inKernelSite(S, m);
-      if (Error E = proposeInKernelDirect(P, K, cm))
-        return E;
-      if (Error E = proposeInKernelSplit(P, K, cm))
+      if (Error E = proposeInKernelRaises(P, inKernelSite(S, m), cm))
         return E;
     }
     if (S.Opts.Matmul.OzakiHostDispatch) {

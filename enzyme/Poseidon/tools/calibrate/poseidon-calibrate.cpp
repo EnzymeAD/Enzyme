@@ -64,11 +64,6 @@ static cl::opt<std::string>
          cl::desc("Comma-separated subset of "
                   "microbm,ozaki,ozaki-rect,tcec,direct,inkernel,"
                   "herbie-platform"));
-static cl::opt<std::string> ProfileDir(
-    "profile", cl::init(""), cl::value_desc("dir"),
-    cl::desc("Profile directory of the in-kernel harness, "
-             "inkernel_calibrate.cu, from which the in-kernel arm learns its "
-             "candidates (required by that arm)"));
 static cl::opt<std::string>
     Python("python", cl::init(POSEIDON_CALIBRATE_PYTHON),
            cl::value_desc("path"),
@@ -88,18 +83,24 @@ static cl::opt<std::string>
            cl::value_desc("path"),
            cl::desc("Herbie binary the generated platform must load into "
                     "(default: the one this build was configured with)"));
+static cl::opt<std::string> Product(
+    "product", cl::init(""), cl::value_desc("MxNxK[:layout],..."),
+    cl::desc("Matrix products of constant extents, M x N output and K "
+             "reduction, whose rows the ozaki-rect arm (Ozaki-II and native "
+             "DGEMM) and, given the layout of B along K (browmajor strided, "
+             "bcolmajor contiguous), the inkernel arm measure at exactly "
+             "those extents. A compile's warning names the products whose "
+             "rows it lacks"));
 static cl::opt<std::string> OzakiRect(
-    "ozaki-rect", cl::init(""), cl::value_desc("MxK|MxNxK,..."),
-    cl::desc("Shapes of host GEMMs the ozaki-rect arm measures: MxNxK the "
-             "Ozaki-II and native DGEMM rows of a call with exactly those "
-             "extents (a product of constant extents); MxK the Ozaki-II rows "
-             "of an M x K operand at many columns (a product whose column "
-             "count is a run-time extent). The shapes are the ones the calls "
-             "run at, which a compile's missing-row warning names"));
+    "ozaki-rect", cl::init(""), cl::value_desc("MxK,..."),
+    cl::desc("(M, K) of host GEMMs whose column count is a run-time extent, "
+             "whose Ozaki-II rows the ozaki-rect arm measures at many "
+             "columns. A compile's warning names the shapes whose rows it "
+             "lacks"));
 static cl::opt<unsigned>
     RefN("n", cl::init(2048), cl::value_desc("N"),
          cl::desc("Square reference shape the dispatch arms and "
-                  "the in-kernel arm are timed at"));
+                  "the in-kernel class rows are timed at"));
 static cl::opt<unsigned>
     Reps("reps", cl::init(30), cl::value_desc("count"),
          cl::desc("Timed repetitions of each dispatch and in-kernel "
@@ -641,50 +642,97 @@ static void armDispatch(StringRef Csv, const Device &D, StringRef Arm,
                      utostr(Reps)}));
 }
 
-/// Measures the rows of the --ozaki-rect shapes: MxK the Ozaki-II rows of
-/// (M, K), MxNxK the Ozaki-II and native DGEMM rows of a call of those
-/// extents. Rows of other shapes are kept.
+/// The extents `Shape` spells as `Count` positive integers joined by 'x'.
+static std::optional<SmallVector<unsigned, 3>> extentsOf(StringRef Shape,
+                                                         unsigned Count) {
+  SmallVector<StringRef, 3> Dims;
+  Shape.split(Dims, 'x');
+  if (Dims.size() != Count)
+    return std::nullopt;
+  SmallVector<unsigned, 3> Extents;
+  for (StringRef Dim : Dims) {
+    unsigned Extent;
+    if (Dim.getAsInteger(10, Extent) || !Extent)
+      return std::nullopt;
+    Extents.push_back(Extent);
+  }
+  return Extents;
+}
+
+namespace {
+/// A matrix product --product names.
+struct ProductShape {
+  unsigned M, N, K;
+  /// The layout of B along K its in-kernel rows are measured at, one of
+  /// BLayouts; empty when they are not measured.
+  std::string Layout;
+  /// "MxNxK".
+  std::string extents() const { return formatv("{0}x{1}x{2}", M, N, K); }
+  /// "m<M>n<N>k<K>", as row keys spell the extents.
+  std::string key() const { return formatv("m{0}n{1}k{2}", M, N, K); }
+};
+} // namespace
+
+/// The layouts of B along K, strided and contiguous, as the in-kernel rows of
+/// a product name them.
+static constexpr StringLiteral BLayouts[] = {"browmajor", "bcolmajor"};
+
+/// The products --product names.
+static SmallVector<ProductShape, 4> products() {
+  SmallVector<StringRef, 4> Items;
+  StringRef(Product).split(Items, ',', -1, false);
+  SmallVector<ProductShape, 4> Out;
+  for (StringRef Item : Items) {
+    auto [Shape, Layout] = Item.trim().split(':');
+    std::optional<SmallVector<unsigned, 3>> E = extentsOf(Shape, 3);
+    if (!E || (Item.contains(':') && !llvm::is_contained(BLayouts, Layout)))
+      fail("--product: '" + Item +
+           "' is not a product MxNxK or MxNxK:<layout>, <layout> browmajor or "
+           "bcolmajor");
+    Out.push_back({(*E)[0], (*E)[1], (*E)[2], Layout.str()});
+  }
+  return Out;
+}
+
+/// Measures the Ozaki-II and native DGEMM rows of the --product extents and
+/// the Ozaki-II rows of the --ozaki-rect (M, K). Rows of other shapes are
+/// kept.
 static void armOzakiRect(StringRef Csv, const Device &D) {
-  if (OzakiRect.empty()) {
-    outs() << "[calibrate] ozaki-rect: no --ozaki-rect shapes, nothing to "
-              "measure\n";
+  // Each shape as the dispatch calibrator takes it, and the key of its rows.
+  SmallVector<std::pair<std::string, std::string>, 8> Shapes;
+  for (const ProductShape &P : products())
+    Shapes.push_back({P.extents(), P.key()});
+  SmallVector<StringRef, 4> Items;
+  StringRef(OzakiRect).split(Items, ',', -1, false);
+  for (StringRef Item : Items) {
+    std::optional<SmallVector<unsigned, 3>> E = extentsOf(Item.trim(), 2);
+    if (!E)
+      fail("--ozaki-rect: '" + Item +
+           "' is not a shape MxK; the rows of a product of constant extents "
+           "are measured with --product MxNxK");
+    Shapes.push_back({formatv("{0}x{1}", (*E)[0], (*E)[1]).str(),
+                      formatv("m{0}k{1}", (*E)[0], (*E)[1]).str()});
+  }
+  if (Shapes.empty()) {
+    outs() << "[calibrate] ozaki-rect: no --product or --ozaki-rect shapes, "
+              "nothing to measure\n";
     return;
   }
   std::string Content = readFile(Csv);
-  SmallVector<StringRef, 4> Shapes;
-  StringRef(OzakiRect).split(Shapes, ',', -1, false);
   SmallVector<std::string, 8> Argv = {tool(D, "poseidon-dispatch-calibrate"),
                                       "ozaki", utostr(RefN), utostr(Reps)};
-  SmallVector<std::string, 4> Keys;
-  for (StringRef Shape : Shapes) {
-    SmallVector<StringRef, 3> Dims;
-    Shape.trim().split(Dims, 'x');
-    SmallVector<std::string, 3> Extents;
-    for (StringRef Dim : Dims) {
-      unsigned Extent;
-      if (Dim.getAsInteger(10, Extent) || !Extent)
-        break;
-      Extents.push_back(utostr(Extent));
-    }
-    if (Extents.size() != Dims.size() ||
-        (Extents.size() != 2 && Extents.size() != 3))
-      fail("--ozaki-rect: '" + Shape + "' is not a shape MxK or MxNxK");
-    std::string Arg = Extents[0] + "x" + Extents[1],
-                Key = "_m" + Extents[0] + "k" + Extents[1] + ",";
+  const size_t Fixed = Argv.size();
+  for (const auto &[Arg, Key] : Shapes) {
     // A shape counts as measured when its first Ozaki-II row is in the model.
-    if (Extents.size() == 3) {
-      Arg += "x" + Extents[2];
-      Key = "_m" + Extents[0] + "n" + Extents[1] + "k" + Extents[2] + ",";
-    }
-    Key = "nm" + utostr(kOzIIModuliCounts[0]) + Key;
-    if (!Force && StringRef(Content).contains(Key)) {
-      outs() << "  = " << Shape << " already measured\n";
+    if (!Force && StringRef(Content).contains(
+                      "nm" + utostr(kOzIIModuliCounts[0]) + "_" + Key + ",")) {
+      outs() << "  = " << Arg << " already measured\n";
       continue;
     }
-    Argv.push_back(Arg);
-    Keys.push_back(Key);
+    if (!llvm::is_contained(Argv, Arg))
+      Argv.push_back(Arg);
   }
-  if (Keys.empty())
+  if (Argv.size() == Fixed)
     return;
   outs() << "[calibrate] measuring ozaki-rect host dispatch\n";
   SmallVector<StringRef, 8> Args(Argv.begin(), Argv.end());
@@ -728,7 +776,8 @@ static std::map<std::string, std::string> inKernelClasses(StringRef Log) {
   Regex Tcec(
       "^tcec n=([0-9]+) wmma m[0-9]+n[0-9]+k[0-9]+ ([a-z0-9]+)/([a-z0-9]+)$");
   std::map<std::string, std::string> Classes;
-  for (StringRef Line : llvm::split(readFile(Log), '\n')) {
+  const std::string Text = readFile(Log);
+  for (StringRef Line : llvm::split(Text, '\n')) {
     SmallVector<StringRef, 3> Match;
     if (!Candidate.match(Line, &Match))
       continue;
@@ -744,61 +793,66 @@ static std::map<std::string, std::string> inKernelClasses(StringRef Log) {
   return Classes;
 }
 
-/// Measures each in-kernel class the pass proposes for the harness kernel by
-/// compiling the kernel with that class applied and timing it. A class that
-/// does not build or run is reported and left absent.
-static void armInKernel(const std::string &Csv, const Device &D) {
-  if (D.Hip) {
-    outs() << "[calibrate] inkernel: tensor-core raises inside a kernel are "
-              "NVPTX-only; their rows stay absent\n";
-    return;
-  }
-  std::string Content = readFile(Csv);
+/// The largest extent the in-kernel harness is profiled at: reverse-mode AD of
+/// a long reduction does not survive at the timed size, and the profile
+/// decides only which candidates exist, never what they measure.
+constexpr unsigned kProfileExtent = 128;
+
+/// Measures the in-kernel rows of the harness at `M` x `N` x `K`, B
+/// column-major when `BColMajor`, each row keyed by its class and `Suffix`,
+/// into `Rows`: the harness is profiled at small extents, the classes the pass
+/// proposes from that profile are listed, and the scalar-FP64 loop and each
+/// class applied are timed. A class that does not build or run is reported
+/// and left absent.
+static void measureInKernel(const std::string &Csv, const Device &D,
+                            StringRef Content, StringRef Work, unsigned M,
+                            unsigned N, unsigned K, bool BColMajor,
+                            StringRef Suffix, std::string &Rows) {
   std::string Src = shipped("tools/calibrate/inkernel_calibrate.cu");
   if (!sys::fs::exists(Src))
     fail("the in-kernel harness source is missing: " + Src);
-
-  if (ProfileDir.empty()) {
-    if (Only.empty()) {
-      outs() << "[calibrate] inkernel: not measured; it needs --profile <dir> "
-                "(see --help)\n";
-      return;
-    }
-    fail("the in-kernel arm needs --profile <dir>: the profile of a GEMM "
-         "site written by -poseidon-profile-generate");
-  }
-  SmallString<256> KernelProf(ProfileDir);
-  sys::path::append(
-      KernelProf, "preprocess__Z10matmul_optPdPKdS1__poseidon_body.fpprofile");
-  if (!sys::fs::exists(KernelProf))
-    fail("the in-kernel arm needs " + Twine(sys::path::filename(KernelProf)) +
-         ": build tools/calibrate/inkernel_calibrate.cu at a small -DCAL_N "
-         "with -poseidon-profile-generate, run it with --profiling, and pass "
-         "its profile directory as --profile <dir>");
-
-  SmallString<256> WorkBuf;
-  if (std::error_code EC =
-          sys::fs::createUniqueDirectory("poseidon-inkernel", WorkBuf))
-    fail("cannot create " + WorkBuf + ": " + EC.message());
-  std::string Work(WorkBuf);
-  outs() << "[calibrate] in-kernel workdir " << Work << '\n';
+  const std::string Shape = formatv("{0}x{1}x{2}", M, N, K);
+  const std::string Dir =
+      (Work + "/" + (Suffix.empty() ? "class" : Suffix.drop_front())).str();
+  if (std::error_code EC = sys::fs::create_directories(Dir))
+    fail("cannot create " + Dir + ": " + EC.message());
+  outs() << "[calibrate] in-kernel raises at " << Shape << ", B "
+         << (BColMajor ? "contiguous" : "strided") << " along K\n";
 
   std::string Clang = sibling("poseidon-clang++");
-  std::string Arch = "--cuda-gpu-arch=" + D.Arch;
-  std::string CalN = "-DCAL_N=" + utostr(RefN);
-  std::string ProfUse = "-poseidon-profile-use=" + ProfileDir;
-  std::string CostModel = "-poseidon-cost-model=" + Csv;
-  std::string Cache = "-poseidon-cache=" + Work + "/cache";
-  std::string BaseExe = Work + "/base.exe";
-  std::string BaseLog = Work + "/build_base.log";
-  std::string EnumLog = Work + "/enumerate.log";
+  auto defines = [&](unsigned EM, unsigned EN, unsigned EK) {
+    return SmallVector<std::string, 16>{
+        "-DCAL_M=" + utostr(EM), "-DCAL_N=" + utostr(EN),
+        "-DCAL_K=" + utostr(EK), "-DCAL_B_COL_MAJOR=" + utostr(BColMajor)};
+  };
+  SmallVector<std::string, 16> Timed = defines(M, N, K);
+  auto build = [&](ArrayRef<std::string> Flags, StringRef Exe, StringRef Log) {
+    SmallVector<std::string, 32> Argv = {Clang,  "-x",
+                                         "cuda", "--cuda-gpu-arch=" + D.Arch,
+                                         "-O3",  "-Wno-unknown-cuda-version"};
+    Argv.append(Flags.begin(), Flags.end());
+    Argv.append({Src, "-o", Exe.str()});
+    SmallVector<StringRef, 32> Args(Argv.begin(), Argv.end());
+    return run(Args, Log, Log);
+  };
+
+  // The profile, at small extents with B in the same layout.
+  std::string ProfDir = Dir + "/profile", ProfExe = Dir + "/profile.exe",
+              ProfLog = Dir + "/profile.log";
+  SmallVector<std::string, 16> ProfFlags =
+      defines(std::min(M, kProfileExtent), std::min(N, kProfileExtent),
+              std::min(K, kProfileExtent));
+  ProfFlags.push_back("-poseidon-profile-generate=" + ProfDir);
+  if (build(ProfFlags, ProfExe, ProfLog))
+    fail("the profiling build of the in-kernel harness failed; see " + ProfLog);
+  if (run({ProfExe, "--profiling"}, ProfLog, ProfLog))
+    fail("the profiling run of the in-kernel harness failed; see " + ProfLog);
 
   // The scalar-FP64 baseline: the denominator every rel row shares. Compiled
   // by the same driver, with no action asked of the pass, so the only
   // difference from a candidate is the rewrite.
-  if (run({Clang, "-x", "cuda", Arch, "-O3", "-Wno-unknown-cuda-version", CalN,
-           Src, "-o", BaseExe},
-          BaseLog, BaseLog))
+  std::string BaseExe = Dir + "/base.exe", BaseLog = Dir + "/build_base.log";
+  if (build(Timed, BaseExe, BaseLog))
     fail("the scalar-FP64 baseline did not build; see " + BaseLog);
   std::optional<double> BaseMs = timeOf(BaseExe);
   if (!BaseMs)
@@ -809,26 +863,18 @@ static void armInKernel(const std::string &Csv, const Device &D) {
   // One compile prints the candidate table; -poseidon-apply-rewrites is
   // mandatory under -poseidon-inkernel-calibration, so a placeholder price can
   // never reach a DP solve.
-  SmallVector<std::string, 32> Common = {Clang,
-                                         "-x",
-                                         "cuda",
-                                         Arch,
-                                         "-O3",
-                                         "-Wno-unknown-cuda-version",
-                                         CalN,
-                                         ProfUse,
-                                         Cache,
-                                         CostModel,
-                                         "-poseidon-enable-herbie=0",
-                                         "-poseidon-enable-pt=0",
-                                         "-poseidon-raise-wmma",
-                                         "-poseidon-print",
-                                         "-poseidon-inkernel-calibration"};
+  SmallVector<std::string, 16> Common = Timed;
+  Common.append({"-poseidon-profile-use=" + ProfDir,
+                 "-poseidon-cache=" + Dir + "/cache",
+                 "-poseidon-cost-model=" + Csv, "-poseidon-enable-herbie=0",
+                 "-poseidon-enable-pt=0", "-poseidon-raise-wmma",
+                 "-poseidon-print", "-poseidon-inkernel-calibration"});
   auto compile = [&](StringRef Apply, StringRef Exe, StringRef Log) {
-    SmallVector<StringRef, 32> Argv(Common.begin(), Common.end());
-    Argv.append({Apply, Src, "-o", Exe});
-    return run(Argv, Log, Log);
+    SmallVector<std::string, 16> Flags = Common;
+    Flags.push_back(Apply.str());
+    return build(Flags, Exe, Log);
   };
+  std::string EnumLog = Dir + "/enumerate.log";
   compile("-poseidon-apply-rewrites=M0_0", "/dev/null", EnumLog);
   std::map<std::string, std::string> Classes = inKernelClasses(EnumLog);
   if (Classes.empty())
@@ -836,15 +882,14 @@ static void armInKernel(const std::string &Csv, const Device &D) {
   outs() << "[calibrate] " << Classes.size()
          << " in-kernel class(es) proposed\n";
 
-  std::string Rows;
   for (const auto &[Class, Index] : Classes) {
-    if (!Force &&
-        StringRef(Content).contains("wmma_inkernel_rel," + Class + ",")) {
-      outs() << "  = " << Class << " already calibrated\n";
+    const std::string Row = "wmma_inkernel_rel," + Class + Suffix.str();
+    if (!Force && StringRef(Content).contains(Row + ",")) {
+      outs() << "  = " << Class << Suffix << " already calibrated\n";
       continue;
     }
-    std::string Exe = Work + "/cand_" + Class + ".exe";
-    std::string Log = Work + "/build_" + Class + ".log";
+    std::string Exe = Dir + "/cand_" + Class + ".exe";
+    std::string Log = Dir + "/build_" + Class + ".log";
     if (compile("-poseidon-apply-rewrites=M0_" + Index, Exe, Log)) {
       outs() << "  ! " << Class << " did not build; left uncalibrated (" << Log
              << ")\n";
@@ -855,10 +900,37 @@ static void armInKernel(const std::string &Csv, const Device &D) {
       outs() << "  ! " << Class << " did not run; left uncalibrated\n";
       continue;
     }
-    Rows += "wmma_inkernel_rel," + Class + "," + decimal(*Ms / *BaseMs) + "\n";
-    outs() << "  + " << Class << ' ' << formatv("{0:F4}", *Ms) << " ms  rel "
-           << decimal(*Ms / *BaseMs) << '\n';
+    Rows += Row + "," + decimal(*Ms / *BaseMs) + "\n";
+    outs() << "  + " << Class << Suffix << ' ' << formatv("{0:F4}", *Ms)
+           << " ms  rel " << decimal(*Ms / *BaseMs) << '\n';
   }
+}
+
+/// Measures the in-kernel rows: of each class on the square harness at --n,
+/// B strided along K, and of each --product that names a layout at its
+/// extents and layout.
+static void armInKernel(const std::string &Csv, const Device &D) {
+  if (D.Hip) {
+    outs() << "[calibrate] inkernel: tensor-core raises inside a kernel are "
+              "NVPTX-only; their rows stay absent\n";
+    return;
+  }
+  std::string Content = readFile(Csv);
+  SmallString<256> WorkBuf;
+  if (std::error_code EC =
+          sys::fs::createUniqueDirectory("poseidon-inkernel", WorkBuf))
+    fail("cannot create " + WorkBuf + ": " + EC.message());
+  std::string Work(WorkBuf);
+  outs() << "[calibrate] in-kernel workdir " << Work << '\n';
+
+  std::string Rows;
+  measureInKernel(Csv, D, Content, Work, RefN, RefN, RefN,
+                  /*BColMajor=*/false, "", Rows);
+  for (const ProductShape &P : products())
+    if (!P.Layout.empty())
+      measureInKernel(Csv, D, Content, Work, P.M, P.N, P.K,
+                      P.Layout == BLayouts[1], "_" + P.key() + "_" + P.Layout,
+                      Rows);
   if (Rows.empty()) {
     outs() << "[calibrate] in-kernel: nothing new to write\n";
     return;
@@ -947,10 +1019,12 @@ int main(int argc, char **argv) {
       "  herbie-platform  no rows: the Herbie platform <csv>.herbie.rkt\n"
       "  ozaki            ozaki_dispatch_rel,nm<8..14> and ,dgemm\n"
       "  ozaki-rect       ozaki_dispatch_rect_rel,nm<k>_m<M>n<N>k<K> and\n"
-      "                   ,dgemm_m<M>n<N>k<K> (MxNxK), ,nm<k>_m<M>k<K> (MxK)\n"
+      "                   ,dgemm_m<M>n<N>k<K> (--product),\n"
+      "                   ,nm<k>_m<M>k<K> (--ozaki-rect)\n"
       "  tcec             tcec_dispatch_rel,fp16tcec\n"
       "  direct           direct_dispatch_rel,<in>_<acc>\n"
-      "  inkernel         wmma_inkernel_rel,<class>\n"
+      "  inkernel         wmma_inkernel_rel,<class> and\n"
+      "                   ,<class>_m<M>n<N>k<K>_<layout> (--product)\n"
       "A host has the first two arms only.\n");
   ToolDir = std::string(sys::path::parent_path(
       sys::fs::getMainExecutable(argv[0], (void *)(intptr_t)main)));
@@ -967,6 +1041,8 @@ int main(int argc, char **argv) {
     fail("--cpu measures this host and --gpu a GPU; pass one of them");
   if (Cpu.getNumOccurrences() && Cpu.empty())
     fail("--cpu needs a target-cpu: native, or a name -march= takes");
+  // A malformed product is reported before any arm runs.
+  products();
 
   // The platform arm reads a CSV and writes a file beside it. Asking for it
   // alone, against a named CSV, therefore needs no device present: that is how

@@ -1,8 +1,9 @@
 // poseidon-calibrate's ozaki-rect arm: one ozaki_dispatch_rect_rel row per
-// modulus count and (M, K) shape, and per modulus count plus the native DGEMM
-// row of an MxNxK shape, measured into an existing model. A shape the model already has is not
-// measured again, --force measures it again, and the rows of the shapes a run
-// does not name are kept, as is every other row.
+// modulus count and --ozaki-rect (M, K) shape, and per modulus count plus the
+// native DGEMM row of a --product MxNxK, measured into an existing model. A
+// shape the model already has is not measured again, --force measures it
+// again, and the rows of the shapes a run does not name are kept, as is every
+// other row.
 //
 // REQUIRES: cuda-runtime
 // RUN: rm -rf %t && mkdir %t
@@ -10,7 +11,7 @@
 // RUN: %poseidon_calibrate --out %t/cm.csv --only ozaki-rect --ozaki-rect 125x648,216x1029 --n 512 --reps 3 | FileCheck --check-prefix=FIRST %s
 // RUN: %poseidon_calibrate --out %t/cm.csv --only ozaki-rect --ozaki-rect 125x648 --n 512 --reps 3 | FileCheck --check-prefix=AGAIN %s
 // RUN: %poseidon_calibrate --out %t/cm.csv --only ozaki-rect --ozaki-rect 216x1029 --n 512 --reps 3 --force | FileCheck --check-prefix=FORCE %s
-// RUN: %poseidon_calibrate --out %t/cm.csv --only ozaki-rect --ozaki-rect 125x16x648,64x16x512 --n 512 --reps 3 | FileCheck --check-prefix=FULL %s
+// RUN: %poseidon_calibrate --out %t/cm.csv --only ozaki-rect --product 125x16x648,64x16x512 --n 512 --reps 3 | FileCheck --check-prefix=FULL %s
 // RUN: grep -c '^ozaki_dispatch_rect_rel,nm[0-9]*_m125k648,' %t/cm.csv | FileCheck --check-prefix=SEVEN %s
 // RUN: grep -c '^ozaki_dispatch_rect_rel,nm[0-9]*_m216k1029,' %t/cm.csv | FileCheck --check-prefix=SEVEN %s
 // RUN: grep -c '^ozaki_dispatch_rect_rel,nm[0-9]*_m125n16k648,' %t/cm.csv | FileCheck --check-prefix=SEVEN %s
@@ -19,6 +20,7 @@
 // RUN: grep -v '^ozaki_dispatch_rect_rel,' %t/cm.csv > %t/rest.csv
 // RUN: diff %gpu_cost_model %t/rest.csv
 // RUN: not %poseidon_calibrate --out %t/cm.csv --only ozaki-rect --ozaki-rect 12x 2>&1 | FileCheck --check-prefix=BAD %s
+// RUN: not %poseidon_calibrate --out %t/cm.csv --only ozaki-rect --ozaki-rect 125x16x648 2>&1 | FileCheck --check-prefix=BAD %s
 
 // FIRST: [calibrate] measuring ozaki-rect host dispatch
 // FIRST: ozaki_dispatch_rect_rel,nm8_m125k648,
@@ -42,4 +44,4 @@
 
 // TWO: 2
 
-// BAD: --ozaki-rect: '12x' is not a shape MxK or MxNxK
+// BAD: --ozaki-rect: '{{12x|125x16x648}}' is not a shape MxK; the rows of a product of constant extents are measured with --product MxNxK

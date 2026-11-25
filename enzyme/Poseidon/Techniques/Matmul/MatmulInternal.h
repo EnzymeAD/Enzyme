@@ -85,6 +85,23 @@ const llvm::CallBase *siteCallOf(const Session &S, const llvm::Function &F);
 /// and other uses that follow. Null if F has none.
 llvm::StoreInst *productStore(llvm::Function &F, const AbstractMatmul &m);
 
+/// The extents of the output of a constant-trip product at the reduction length
+/// of the compile, in elements.
+struct OutputExtents {
+  unsigned M, Ncols;
+  /// Whether they were read from the thread-index guard rather than the
+  /// profile.
+  bool fromGuard;
+};
+/// The output extents of the constant-trip product `m` at its reduction length
+/// m.K: the profiled ones, scaled by m.K / globalK when the profile ran at
+/// another reduction length and both equalled it there; else the bounds `guard`
+/// puts on the thread axes `axM` of its rows and `axN` of its columns. None
+/// when neither gives them.
+std::optional<OutputExtents>
+constantOutputExtents(const AbstractMatmul &m, const ThreadIndexBounds &guard,
+                      unsigned axM, unsigned axN);
+
 /// The library-call descriptor of the constant-shape product `m` of F, its
 /// extents those of the profile at the reduction length of the compile; none,
 /// with the reason printed, when the body's guards, operands or scale leave a
