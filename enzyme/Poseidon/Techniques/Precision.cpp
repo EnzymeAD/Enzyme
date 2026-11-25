@@ -493,46 +493,25 @@ scoreCandidate(const PTCandidate &candidate, ArrayRef<FPNode *> outputs,
 // subgraph as written.
 static void priceAccuracy(const Options &O, PrecisionUnit &CS, FPGraph &G) {
   SubgraphSamples &samples = samplesOf(O, *CS.subgraph, G);
-  Expected<ArrayRef<SubgraphSamples::Point>> drawn = samples.points();
-
-  auto unpriceable = [&](StringRef why) {
-    CS.unpricedReason = why.str();
-    if (O.Diagnostics.Print)
-      llvm::errs() << "[poseidon] subgraph cannot be priced (" << why
-                   << "); discarding its " << CS.candidates.size()
-                   << " precision candidate(s) and keeping the original "
-                      "body.\n";
-    CS.candidates.clear();
-    CS.initialAccCost = 0.0;
-  };
-  if (!drawn) {
-    unpriceable(toString(drawn.takeError()));
-    return;
-  }
-  ArrayRef<SubgraphSamples::Point> sampledPoints = *drawn;
-
   SmallVector<FPNode *, 4> outputs;
-  SmallVector<const SubgraphSamples::Reference *, 4> refs;
-  SmallVector<std::optional<double>, 4> origErrors;
+  SmallVector<const FPNode *, 4> nodes;
+  SmallVector<double, 4> grads;
   for (Instruction *output : CS.subgraph->outputs) {
     FPNode *node = G.valueToNodeMap[output];
     outputs.push_back(node);
-    CS.perOutputInitialAccCost[node] = 0.;
-    refs.push_back(&samples.reference(node));
-    origErrors.push_back(refs.back()->meanError());
+    nodes.push_back(node);
+    grads.push_back(node->grad);
   }
-  if (!all_of(origErrors,
-              [](std::optional<double> e) { return e.has_value(); })) {
-    unpriceable("every sample of the original expression scored NaN");
+  std::optional<BaselineAccuracy> baseline =
+      CS.priceBaseline(samples, nodes, grads, O.Diagnostics.Print);
+  if (!baseline)
     return;
+  ArrayRef<SubgraphSamples::Point> sampledPoints = baseline->points;
+  SmallVector<const SubgraphSamples::Reference *, 4> refs;
+  for (auto [node, out] : zip(outputs, baseline->outputs)) {
+    CS.perOutputInitialAccCost[node] = out.error * std::fabs(out.grad);
+    refs.push_back(out.ref);
   }
-  CS.initialAccCost = 0.0;
-  for (auto [node, origError] : zip(outputs, origErrors)) {
-    CS.perOutputInitialAccCost[node] = *origError * std::fabs(node->grad);
-    CS.initialAccCost += CS.perOutputInitialAccCost[node];
-  }
-  assert(!std::isnan(CS.initialAccCost) &&
-         "the subgraph as written has an accuracy cost");
 
   SmallVector<CandidateErrors, 0> scored(CS.candidates.size());
   forEachIndex(O.Model.Threads, CS.candidates.size(), [&](size_t c) {

@@ -1262,15 +1262,6 @@ public:
   void price();
 
 private:
-  // An output, its values at the samples, its mean error there and its
-  // gradient.
-  struct RootSamples {
-    const FPNode *node;
-    const SubgraphSamples::Reference *ref;
-    double origCost;
-    double grad;
-  };
-
   // One candidate's elements, priced against their outputs.
   struct CandidatePricing {
     FPNode *parsed;
@@ -1281,11 +1272,6 @@ private:
     std::optional<size_t> strayElement;
   };
 
-  // Drops the candidates and keeps the original body: no usable sample means
-  // the output cannot be priced.
-  void unpriceable(StringRef why);
-  // The outputs as written; false when they cannot be priced.
-  bool priceBaseline();
   // `candidate` parsed into elements, each set up to be priced.
   CandidatePricing prepare(const RewriteCandidate &candidate) const;
   // Whether `candidate`, priced as `P`, is kept, with its accuracy cost set;
@@ -1296,52 +1282,13 @@ private:
   RewriteUnit &CO;
   FPGraph &G;
   SubgraphSamples &samples;
-  SmallVector<RootSamples, 1> rootSamples;
+  SmallVector<BaselineAccuracy::Output, 1> rootSamples;
   // The values each output's original expression reads: an element is
   // spliced in at its own output, so it may read only those.
   SmallVector<SmallPtrSet<Value *, 8>, 1> rootInputs;
 };
 
 } // namespace
-
-void RewriteAccuracy::unpriceable(StringRef why) {
-  CO.unpricedReason = why.str();
-  if (O.Diagnostics.Print)
-    llvm::errs() << "[poseidon] subgraph output cannot be priced (" << why
-                 << "); discarding its " << CO.candidates.size()
-                 << " rewrite candidate(s) and keeping the original body\n";
-  CO.candidates.clear();
-  CO.initialAccCost = 0.0;
-}
-
-bool RewriteAccuracy::priceBaseline() {
-  double initialAccCost = 0.0;
-  for (auto [root, grad] : zip(CO.roots, CO.rootGrads)) {
-    const FPNode *node = G.valueToNodeMap[root];
-    const SubgraphSamples::Reference &ref = samples.reference(node);
-    std::optional<double> origCost = ref.meanError();
-    if (!origCost) {
-      unpriceable("every sample of the original expression scored NaN");
-      return false;
-    }
-    rootSamples.push_back({node, &ref, *origCost, grad});
-    initialAccCost += rootSamples.back().origCost * std::fabs(grad);
-  }
-  CO.initialAccCost = initialAccCost;
-  if (!std::isfinite(CO.initialAccCost)) {
-    // A non-finite baseline makes every candidate delta nan and the DP would
-    // silently fall back to the no-op; drop the candidates and say so instead.
-    if (O.Diagnostics.Print)
-      for (const RootSamples &R : rootSamples)
-        llvm::errs() << "[poseidon] output baseline accuracy cost "
-                     << R.origCost << ", gradient " << R.grad << '\n';
-    unpriceable("the baseline accuracy cost is not finite; the site's profile "
-                "is degenerate (a zero or null-space output shadow gives a "
-                "gradient that cannot weight anything)");
-    return false;
-  }
-  return true;
-}
 
 RewriteAccuracy::CandidatePricing
 RewriteAccuracy::prepare(const RewriteCandidate &candidate) const {
@@ -1366,7 +1313,7 @@ RewriteAccuracy::prepare(const RewriteCandidate &candidate) const {
     E.node = element;
     E.orig = rootSamples[k].node;
     E.ref = rootSamples[k].ref;
-    E.origCost = rootSamples[k].origCost;
+    E.origCost = rootSamples[k].error;
     E.exprForLog = &candidate.expr;
     if (O.Model.MinArmSamples > 0) {
       SmallPtrSet<const FPNode *, 32> seenIfs;
@@ -1403,7 +1350,7 @@ bool RewriteAccuracy::keep(RewriteCandidate &candidate, CandidatePricing &P) {
     total += E.cost * grad;
     if (CO.isArray() && O.Diagnostics.Print)
       perElement +=
-          formatv(" {0:e}/{1:e}", E.cost * grad, rootSamples[k].origCost * grad)
+          formatv(" {0:e}/{1:e}", E.cost * grad, rootSamples[k].error * grad)
               .str();
   }
   if (P.strayElement) {
@@ -1427,14 +1374,15 @@ bool RewriteAccuracy::keep(RewriteCandidate &candidate, CandidatePricing &P) {
 }
 
 void RewriteAccuracy::price() {
-  Expected<ArrayRef<SubgraphSamples::Point>> drawn = samples.points();
-  if (!drawn) {
-    unpriceable(toString(drawn.takeError()));
+  SmallVector<const FPNode *, 1> nodes;
+  for (Value *root : CO.roots)
+    nodes.push_back(G.valueToNodeMap[root]);
+  std::optional<BaselineAccuracy> baseline =
+      CO.priceBaseline(samples, nodes, CO.rootGrads, O.Diagnostics.Print);
+  if (!baseline)
     return;
-  }
-  ArrayRef<SubgraphSamples::Point> sampledPoints = *drawn;
-  if (!priceBaseline())
-    return;
+  ArrayRef<SubgraphSamples::Point> sampledPoints = baseline->points;
+  rootSamples = std::move(baseline->outputs);
   for (Value *root : CO.roots) {
     SmallPtrSet<const FPNode *, 32> seen;
     SmallPtrSet<Value *, 8> used;

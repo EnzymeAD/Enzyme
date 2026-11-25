@@ -83,12 +83,12 @@ declare void @__poseidon_fp_optimize(ptr, ...)
 
 attributes #0 = { "target-cpu"="x86-64" }
 
-; BUDGET: [poseidon] subgraph cannot be priced (the profiled range [2.000000e+00, INF] of the subgraph input double %x is not an interval of finite values); discarding its 2 precision candidate(s) and keeping the original body.
+; BUDGET: [poseidon] subgraph cannot be priced (the profiled range [2.000000e+00, INF] of the subgraph input double %x is not an interval of finite values); discarding its 2 precision change candidate(s) and keeping the original body{{$}}
 ; BUDGET: [poseidon] No solution found within the computation cost budget
 ; BUDGET-NEXT: remark: <unknown>:0:0: Poseidon left site tester as written: no frontier point is within the cost budget -0.3{{$}}
 ; BUDGET-NEXT: remark: <unknown>:0:0: Poseidon left (? + ?) * ? as written: its candidates could not be priced: the profiled range [2.000000e+00, INF] of the subgraph input double %x is not an interval of finite values and the algebraic search is disabled
 ; BUDGET: [poseidon] no rewrite applied for preprocess_tester; calling original body {{[^ ]+}} (bit-transparent no-op){{$}}
-; BUDGET: [poseidon] subgraph cannot be priced (every sample of the original expression scored NaN); discarding its 4 precision candidate(s) and keeping the original body.
+; BUDGET: [poseidon] subgraph cannot be priced (every sample of the original expression scored NaN); discarding its 4 precision change candidate(s) and keeping the original body{{$}}
 ; BUDGET: [poseidon] No solution found within the computation cost budget
 ; BUDGET-NEXT: remark: <unknown>:0:0: Poseidon left site tester_nan as written: no frontier point is within the cost budget -0.3{{$}}
 ; BUDGET-NEXT: remark: <unknown>:0:0: Poseidon left sqrt(? * ?) + ? as written: its candidates could not be priced: every sample of the original expression scored NaN and the algebraic search is disabled

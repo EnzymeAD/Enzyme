@@ -18,12 +18,15 @@
 
 #include "Core/Solver.h"
 #include "Model/FPNode.h"
+#include "Model/Sampling.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/Support/Error.h"
 #include "llvm/Support/JSON.h"
+#include "llvm/Support/raw_ostream.h"
 
 #include <cassert>
 #include <cstddef>
@@ -154,6 +157,29 @@ private:
   size_t boundIndex = 0;
 };
 
+// A subgraph's outputs as written, priced on its samples.
+struct BaselineAccuracy {
+  struct Output {
+    const FPNode *node;
+    // The output's values at the points.
+    const SubgraphSamples::Reference *ref;
+    // Its mean error there.
+    double error;
+    double grad;
+  };
+  llvm::ArrayRef<SubgraphSamples::Point> points;
+  llvm::SmallVector<Output, 4> outputs;
+  // The outputs' errors weighted by |gradient|, summed.
+  double cost = 0.0;
+};
+
+// The baseline of the outputs `nodes`, of gradients `grads`, on `samples`; an
+// error saying why the subgraph cannot be priced when there are no points,
+// every sample of an output scores NaN, or the weighted sum is not finite.
+llvm::Expected<BaselineAccuracy>
+baselineAccuracy(SubgraphSamples &samples, llvm::ArrayRef<const FPNode *> nodes,
+                 llvm::ArrayRef<double> grads, bool print);
+
 // A unit whose candidates rewrite the operations of one FP subgraph, each
 // priced against the subgraph as written. `Candidate` has an accuracyCost and
 // an ordinal.
@@ -186,6 +212,29 @@ public:
     initialAccCost *= factor;
     for (Candidate &c : candidates)
       c.accuracyCost *= factor;
+  }
+
+  // The baseline of the outputs `nodes`, of gradients `grads`, with
+  // initialAccCost set to its cost; none when the subgraph cannot be priced,
+  // which drops every candidate and keeps the subgraph as written.
+  std::optional<BaselineAccuracy>
+  priceBaseline(SubgraphSamples &samples, llvm::ArrayRef<const FPNode *> nodes,
+                llvm::ArrayRef<double> grads, bool print) {
+    llvm::Expected<BaselineAccuracy> B =
+        baselineAccuracy(samples, nodes, grads, print);
+    if (B) {
+      initialAccCost = B->cost;
+      return std::move(*B);
+    }
+    unpricedReason = llvm::toString(B.takeError());
+    if (print)
+      llvm::errs() << "[poseidon] subgraph cannot be priced (" << unpricedReason
+                   << "); discarding its " << candidates.size() << ' '
+                   << info().noun
+                   << " candidate(s) and keeping the original body\n";
+    candidates.clear();
+    initialAccCost = 0.0;
+    return std::nullopt;
   }
 
 protected:
