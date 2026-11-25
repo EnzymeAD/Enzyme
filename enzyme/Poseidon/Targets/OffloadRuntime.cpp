@@ -161,6 +161,16 @@ Value *launchSharedBytes(CallBase &launch) {
 Value *launchStream(CallBase &launch) {
   return launch.getArgOperand(launch.arg_size() - 1);
 }
+Value *launchStreamHandle(IRBuilderBase &B, CallBase &launch) {
+  Value *stream = launchStream(launch);
+  const Function *F = launch.getCalledFunction();
+  if (!F || (F->getName() != "cudaLaunchKernel_ptsz" &&
+             F->getName() != "hipLaunchKernel_spt"))
+    return stream;
+  auto *ptr = cast<PointerType>(stream->getType());
+  Value *perThread = ConstantExpr::getIntToPtr(B.getInt64(2), ptr);
+  return B.CreateSelect(B.CreateIsNull(stream), perThread, stream);
+}
 
 std::optional<VariableRegistration> variableRegistration(Module &M) {
   const bool hip = M.getFunction("__hip_register_globals");

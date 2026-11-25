@@ -29,13 +29,16 @@
 #define cudaError_t hipError_t
 #define cudaErrorMemoryAllocation hipErrorOutOfMemory
 #define cudaEventCreate hipEventCreate
+#define cudaEventCreateWithFlags hipEventCreateWithFlags
 #define cudaEventDestroy hipEventDestroy
+#define cudaEventDisableTiming hipEventDisableTiming
 #define cudaEventElapsedTime hipEventElapsedTime
 #define cudaEventRecord hipEventRecord
 #define cudaEventSynchronize hipEventSynchronize
 #define cudaEvent_t hipEvent_t
 #define cudaFree hipFree
 #define cudaGetDevice hipGetDevice
+#define cudaGetDeviceCount hipGetDeviceCount
 #define cudaGetDeviceProperties hipGetDeviceProperties
 #define cudaGetErrorString hipGetErrorString
 #define cudaGetLastError hipGetLastError
@@ -49,7 +52,12 @@
 #define cudaMemcpyToSymbol hipMemcpyToSymbol
 #define cudaMemset hipMemset
 #define cudaMemsetAsync hipMemsetAsync
+#define cudaSetDevice hipSetDevice
+#define cudaStreamCreateWithFlags hipStreamCreateWithFlags
+#define cudaStreamDestroy hipStreamDestroy
+#define cudaStreamNonBlocking hipStreamNonBlocking
 #define cudaStreamSynchronize hipStreamSynchronize
+#define cudaStreamWaitEvent hipStreamWaitEvent
 #define cudaStream_t hipStream_t
 #define cudaSuccess hipSuccess
 

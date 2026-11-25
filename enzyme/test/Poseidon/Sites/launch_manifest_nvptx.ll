@@ -113,6 +113,8 @@
 ; UNIT-DISPATCH: [ozaki-host-dispatch] replaced the launch in stub _Z28__device_stub__matmul_kernelPKdS0_PdS1_ with __poseidon_ozaki_dgemm (C=arg2 A=arg0 B=arg1){{$}}
 ; UNIT-DISPATCH-LABEL: define {{.*}} @_Z28__device_stub__matmul_kernelPKdS0_PdS1_(
 ; UNIT-DISPATCH: %[[ARGS:[0-9]+]] = alloca ptr, i64 4
+; UNIT-DISPATCH: call i32 @__cudaPopCallConfiguration(ptr %{{[0-9]+}}, ptr %{{[0-9]+}}, ptr %{{[0-9]+}}, ptr %[[STREAMP:[0-9]+]])
+; UNIT-DISPATCH: %[[STREAM:[0-9]+]] = load ptr, ptr %[[STREAMP]], align 8
 ; UNIT-DISPATCH: %[[CS:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 2|i64 16}}{{$}}
 ; UNIT-DISPATCH-NEXT: %[[CL:[0-9]+]] = load ptr, ptr %[[CS]], align 8
 ; UNIT-DISPATCH-NEXT: %[[C:[0-9]+]] = load ptr, ptr %[[CL]], align 8
@@ -122,7 +124,7 @@
 ; UNIT-DISPATCH-NEXT: %[[BS:[0-9]+]] = getelementptr inbounds {{ptr|i8}}, ptr %[[ARGS]], {{i32 1|i64 8}}{{$}}
 ; UNIT-DISPATCH-NEXT: %[[BL:[0-9]+]] = load ptr, ptr %[[BS]], align 8
 ; UNIT-DISPATCH-NEXT: %[[B:[0-9]+]] = load ptr, ptr %[[BL]], align 8
-; UNIT-DISPATCH-NEXT: call void @__poseidon_ozaki_dgemm(ptr %[[C]], ptr %[[A]], ptr %[[B]], i32 16, i32 16, i32 16, i32 16, i32 16, i32 16, i32 0, i32 0, i32 0, double 1.000000e+00, double 0.000000e+00, ptr null, i32 12)
+; UNIT-DISPATCH-NEXT: call void @__poseidon_ozaki_dgemm(ptr %[[C]], ptr %[[A]], ptr %[[B]], i32 16, i32 16, i32 16, i32 16, i32 16, i32 16, i32 0, i32 0, i32 0, double 1.000000e+00, double 0.000000e+00, ptr %[[STREAM]], i32 12)
 ; UNIT-DISPATCH-NEXT: br label
 ; UNIT-DISPATCH-NOT: call {{.*}}@cudaLaunchKernel(
 

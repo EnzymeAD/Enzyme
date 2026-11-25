@@ -16,8 +16,22 @@
 //           native DGEMM (mode 0 here) is held to gamma_K in FP64. On cuBLAS,
 //           the FP32 mode (mode 4) is also held to bit exactness against
 //           cublasSgemm of the operands narrowed to FP32 with the FP64 alpha
-//           and beta applied after, for a general call and a square row-major
-//           one, and differs from TF32 (mode 3).
+//           and beta applied after, for a general call and square row-major
+//           ones, and differs from TF32 (mode 3). The TF32 mode is held to bit
+//           exactness against cublasGemmEx with CUBLAS_COMPUTE_32F_FAST_TF32 of
+//           the operands rounded to TF32 as the in-kernel raise rounds them
+//           (cvt.rna.tf32.f32), and the run reports which rounding the
+//           library itself gives FP32 operands and whether its TF32 product
+//           differs from its FP32 one on the same operands. The square
+//           1100^3 product has every extent above 1024: a cuMpSGEMM linked
+//           ahead of cuBLAS takes over cublasSgemm and cublasGemmEx and,
+//           with CUMPSGEMM_COMPUTE_MODE unset, stops the program there.
+//   empty:  every entry with K == 0 gives C = beta * C (beta = 0 writes zeros
+//           over NaN), touching nothing outside the M x Ncols view, and with
+//           M == 0 touches nothing.
+//   streams: Ozaki-II and direct calls interleaved on two non-blocking
+//           streams return the bits each returns alone.
+//   negative: a negative extent stops the program with a message.
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -232,10 +246,27 @@ double inputRoundoff(int mode) {
 }
 
 #ifndef __HIP__
-__global__ void narrow(float *dst, const double *src, size_t n) {
+enum Tf32Rounding { kNoTf32, kTf32Nearest, kTf32NearestEven, kTf32Truncate };
+
+// FP64 -> FP32, then to TF32 by `tf32`: to nearest with ties away from zero
+// (cvt.rna.tf32.f32), to nearest with ties to even, or by dropping the low 13
+// significand bits.
+__global__ void narrow(float *dst, const double *src, size_t n, int tf32) {
   size_t i = blockIdx.x * (size_t)blockDim.x + threadIdx.x;
-  if (i < n)
-    dst[i] = (float)src[i];
+  if (i >= n)
+    return;
+  float f = (float)src[i];
+  if (tf32 == kTf32Nearest) {
+    unsigned b;
+    asm("cvt.rna.tf32.f32 %0, %1;" : "=r"(b) : "f"(f));
+    f = __uint_as_float(b);
+  } else if (tf32 == kTf32NearestEven && isfinite(f)) {
+    const unsigned b = __float_as_uint(f);
+    f = __uint_as_float((b + 0xfffu + ((b >> 13) & 1u)) & 0xffffe000u);
+  } else if (tf32 == kTf32Truncate) {
+    f = __uint_as_float(__float_as_uint(f) & 0xffffe000u);
+  }
+  dst[i] = f;
 }
 
 __global__ void widen(double *C, const float *src, size_t n, double alpha,
@@ -246,9 +277,12 @@ __global__ void widen(double *C, const float *src, size_t n, double alpha,
 }
 
 // cublasSgemm of row-major operands narrowed to FP32, in the operand order a
-// row-major C needs ((A@B)^T = B^T@A^T), then the FP64 alpha and beta.
+// row-major C needs ((A@B)^T = B^T@A^T), then the FP64 alpha and beta. With
+// `fastTf32`, cublasGemmEx with CUBLAS_COMPUTE_32F_FAST_TF32 of the operands
+// narrowed with `tf32`.
 void sgemmReference(double *C, const double *A, const double *B, int M,
-                    int Ncols, int K, double alpha, double beta) {
+                    int Ncols, int K, double alpha, double beta,
+                    bool fastTf32 = false, int tf32 = kNoTf32) {
   static cublasHandle_t h = nullptr;
   if (!h)
     CB(cublasCreate(&h));
@@ -256,11 +290,17 @@ void sgemmReference(double *C, const double *A, const double *B, int M,
   CK(cudaMalloc(&Af, (size_t)M * K * sizeof(float)));
   CK(cudaMalloc(&Bf, (size_t)K * Ncols * sizeof(float)));
   CK(cudaMalloc(&Cf, (size_t)M * Ncols * sizeof(float)));
-  narrow<<<((size_t)M * K + 255) / 256, 256>>>(Af, A, (size_t)M * K);
-  narrow<<<((size_t)K * Ncols + 255) / 256, 256>>>(Bf, B, (size_t)K * Ncols);
+  narrow<<<((size_t)M * K + 255) / 256, 256>>>(Af, A, (size_t)M * K, tf32);
+  narrow<<<((size_t)K * Ncols + 255) / 256, 256>>>(Bf, B, (size_t)K * Ncols,
+                                                   tf32);
   const float one = 1.0f, zero = 0.0f;
-  CB(cublasSgemm(h, CUBLAS_OP_N, CUBLAS_OP_N, Ncols, M, K, &one, Bf, Ncols, Af,
-                 K, &zero, Cf, Ncols));
+  if (fastTf32)
+    CB(cublasGemmEx(h, CUBLAS_OP_N, CUBLAS_OP_N, Ncols, M, K, &one, Bf,
+                    CUDA_R_32F, Ncols, Af, CUDA_R_32F, K, &zero, Cf, CUDA_R_32F,
+                    Ncols, CUBLAS_COMPUTE_32F_FAST_TF32, CUBLAS_GEMM_DEFAULT));
+  else
+    CB(cublasSgemm(h, CUBLAS_OP_N, CUBLAS_OP_N, Ncols, M, K, &one, Bf, Ncols,
+                   Af, K, &zero, Cf, Ncols));
   widen<<<((size_t)M * Ncols + 255) / 256, 256>>>(C, Cf, (size_t)M * Ncols,
                                                   alpha, beta);
   CK(cudaDeviceSynchronize());
@@ -278,7 +318,7 @@ std::vector<double> filled(size_t n, unsigned seed) {
 }
 
 // Mode 4 on row-major operands, a general call with alpha 2.5 and beta 0.5
-// and a square one, against sgemmReference bit for bit, and the square one
+// and square ones, against sgemmReference bit for bit, and the square ones
 // against mode 3.
 int sgemm() {
   struct {
@@ -287,7 +327,8 @@ int sgemm() {
     int M, Ncols, K;
     double alpha, beta;
   } const cases[] = {{"ex97x64x129", false, 97, 64, 129, 2.5, 0.5},
-                     {"square128", true, 128, 128, 128, 1.0, 0.0}};
+                     {"square128", true, 128, 128, 128, 1.0, 0.0},
+                     {"square1100", true, 1100, 1100, 1100, 1.0, 0.0}};
   int failed = 0;
   unsigned seed = 1;
   for (const auto &c : cases) {
@@ -327,6 +368,40 @@ int sgemm() {
       printf("sgemm %s mode=4 vs mode=3 %s\n", c.name,
              same ? "SAME" : "DIFFERENT");
       failed |= same;
+      // Mode 3 against the library's TF32 product of operands rounded as the
+      // raise rounds them, and the library's own rounding of FP32 operands.
+      std::vector<double> rna(C0.size()), rne(C0.size()), raw(C0.size()),
+          cut(C0.size()), simt(C0.size());
+      auto tf32Product = [&](std::vector<double> &host, bool tf32Core,
+                             int rounding) {
+        CK(cudaMemcpy(dR, C0.data(), C0.size() * 8, cudaMemcpyHostToDevice));
+        sgemmReference(dR, dA, dB, c.M, c.M, c.M, c.alpha, c.beta, tf32Core,
+                       rounding);
+        CK(cudaMemcpy(host.data(), dR, host.size() * 8,
+                      cudaMemcpyDeviceToHost));
+      };
+      tf32Product(rna, true, kTf32Nearest);
+      tf32Product(raw, true, kNoTf32);
+      tf32Product(rne, true, kTf32NearestEven);
+      tf32Product(cut, true, kTf32Truncate);
+      tf32Product(simt, false, kTf32Nearest);
+      auto equal = [](const std::vector<double> &x,
+                      const std::vector<double> &y) {
+        return !std::memcmp(x.data(), y.data(), x.size() * 8);
+      };
+      const bool exact3 = equal(ref, rna);
+      printf("sgemm %s mode=3 %s\n", c.name, exact3 ? "BITEXACT" : "MISMATCH");
+      failed |= !exact3;
+      const bool away = equal(raw, rna), even = equal(raw, rne);
+      printf("cublas %s FAST_TF32 on FP32 operands: %s\n", c.name,
+             away && even      ? "rounds to nearest (no tie decided)"
+             : away            ? "rounds to nearest, ties away"
+             : even            ? "rounds to nearest, ties to even"
+             : equal(raw, cut) ? "truncates"
+                               : "neither");
+      printf("cublas %s FAST_TF32 vs FP32 product of the same TF32 operands: "
+             "%s\n",
+             c.name, equal(rna, simt) ? "SAME" : "DIFFERENT");
     }
     CK(cudaFree(dA));
     CK(cudaFree(dB));
@@ -373,11 +448,131 @@ int direct() {
   return failed;
 }
 
+// K == 0 with beta 0 (over NaN), 1 and 0.5, and M == 0, for every entry this
+// build has, on a column-major 37 x 29 view of a 40-row buffer.
+int empty() {
+  const int M = 37, Ncols = 29, ldc = 40;
+  const size_t n = (size_t)ldc * Ncols;
+  std::vector<double> C0(n);
+  for (size_t i = 0; i < n; ++i)
+    C0[i] = std::ldexp(uniform() - 0.5, (int)(i % 7));
+  double *dC;
+  CK(cudaMalloc(&dC, n * 8));
+  struct Entry {
+    const char *name;
+    int mode;
+  };
+  const Entry entries[] = {{"native", -1}, {"ozaki", 8},
+                           {"direct", 1},  {"direct", 2},
+#ifndef __HIP__
+                           {"direct", 3},
+#endif
+                           {"direct", 4}};
+  auto call = [&](const Entry &e, int m, int k, double beta) {
+    // A and B are never read: their extents are empty.
+    if (e.mode < 0)
+      __poseidon_native_dgemm(dC, nullptr, nullptr, m, Ncols, k, 1, 1, ldc, 1,
+                              1, 1, 1.0, beta, nullptr);
+    else if (!strcmp(e.name, "ozaki"))
+      __poseidon_ozaki_dgemm(dC, nullptr, nullptr, m, Ncols, k, 1, 1, ldc, 1, 1,
+                             1, 1.0, beta, nullptr, e.mode);
+    else
+      __poseidon_direct_dgemm(dC, nullptr, nullptr, m, Ncols, k, 1, 1, ldc, 1,
+                              1, 1, 1.0, beta, nullptr, e.mode);
+    CK(cudaDeviceSynchronize());
+  };
+  int failed = 0;
+  for (const Entry &e : entries)
+    for (double beta : {0.0, 1.0, 0.5}) {
+      std::vector<double> in = C0, out(n);
+      if (beta == 0.0)
+        for (int c = 0; c < Ncols; ++c)
+          for (int r = 0; r < M; ++r)
+            in[(size_t)c * ldc + r] = NAN;
+      CK(cudaMemcpy(dC, in.data(), n * 8, cudaMemcpyHostToDevice));
+      call(e, M, 0, beta);
+      CK(cudaMemcpy(out.data(), dC, n * 8, cudaMemcpyDeviceToHost));
+      bool ok = true;
+      for (int c = 0; c < Ncols; ++c)
+        for (int r = 0; r < ldc; ++r) {
+          const size_t i = (size_t)c * ldc + r;
+          const double want =
+              r < M ? (beta == 0.0 ? 0.0 : beta * in[i]) : in[i];
+          ok &= !std::memcmp(&out[i], &want, 8);
+        }
+      printf("empty %s mode=%d K=0 beta=%g %s\n", e.name, e.mode, beta,
+             ok ? "ok" : "WRONG");
+      failed |= !ok;
+    }
+  for (const Entry &e : entries) {
+    std::vector<double> out(n);
+    CK(cudaMemcpy(dC, C0.data(), n * 8, cudaMemcpyHostToDevice));
+    call(e, 0, 5, 0.0);
+    CK(cudaMemcpy(out.data(), dC, n * 8, cudaMemcpyDeviceToHost));
+    const bool ok = !std::memcmp(out.data(), C0.data(), n * 8);
+    printf("empty %s mode=%d M=0 %s\n", e.name, e.mode, ok ? "ok" : "WRONG");
+    failed |= !ok;
+  }
+  CK(cudaFree(dC));
+  return failed;
+}
+
+// Ozaki-II nm = 10 on shapes 0 and 2, and direct FP16 on shape 1, issued in
+// turn on two non-blocking streams that share each runtime's scratch.
+int streams() {
+  Problem p0(kShapes[0]), p1(kShapes[1]), p2(kShapes[2]);
+  auto direct1 = [&](cudaStream_t st) {
+    __poseidon_direct_dgemm(p1.dC, p1.dA, p1.dB, p1.s.M, p1.s.Ncols, p1.s.K,
+                            p1.lda, p1.ldb, p1.ldc, p1.s.aColMajor,
+                            p1.s.bColMajor, p1.s.cColMajor, 1.0, 0.0, st, 1);
+  };
+  auto ozaki10 = [](Problem &p, cudaStream_t st) {
+    __poseidon_ozaki_dgemm(p.dC, p.dA, p.dB, p.s.M, p.s.Ncols, p.s.K, p.lda,
+                           p.ldb, p.ldc, p.s.aColMajor, p.s.bColMajor,
+                           p.s.cColMajor, 1.0, p.s.beta, st, 10);
+  };
+  // Alone first: shape 1's direct result (beta = 0 here) is the reference.
+  direct1(nullptr);
+  CK(cudaDeviceSynchronize());
+  std::vector<double> alone(p1.C0.size());
+  CK(cudaMemcpy(alone.data(), p1.dC, alone.size() * 8, cudaMemcpyDeviceToHost));
+
+  cudaStream_t s1, s2;
+  CK(cudaStreamCreateWithFlags(&s1, cudaStreamNonBlocking));
+  CK(cudaStreamCreateWithFlags(&s2, cudaStreamNonBlocking));
+  for (int rep = 0; rep < 8; ++rep) {
+    ozaki10(rep % 2 ? p2 : p0, s1);
+    ozaki10(rep % 2 ? p0 : p2, s2);
+    direct1(rep % 2 ? s1 : s2);
+  }
+  CK(cudaStreamSynchronize(s1));
+  CK(cudaStreamSynchronize(s2));
+  int failed = 0;
+  std::vector<double> out;
+  for (auto [p, want] : {std::pair<Problem *, uint64_t>{&p0, kOzaki[1].bits},
+                         std::pair<Problem *, uint64_t>{&p2, kOzaki[6].bits}}) {
+    p->error(out);
+    const bool ok = digest(out) == want;
+    printf("streams ozaki %s nm=10 %s\n", p->s.name,
+           ok ? "BITS-MATCH" : "BITS-DIFFER");
+    failed |= !ok;
+  }
+  p1.error(out);
+  const bool ok = !std::memcmp(out.data(), alone.data(), out.size() * 8);
+  printf("streams direct %s mode=1 %s\n", p1.s.name,
+         ok ? "BITS-MATCH" : "BITS-DIFFER");
+  failed |= !ok;
+  CK(cudaStreamDestroy(s1));
+  CK(cudaStreamDestroy(s2));
+  return failed;
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
   if (argc < 2) {
-    printf("usage: %s ozaki|ozaki-record|direct\n", argv[0]);
+    printf("usage: %s ozaki|ozaki-record|direct|empty|streams|negative\n",
+           argv[0]);
     return 2;
   }
   int failed = 0;
@@ -387,6 +582,13 @@ int main(int argc, char **argv) {
     failed = ozaki(true);
   else if (!strcmp(argv[1], "direct"))
     failed = direct();
+  else if (!strcmp(argv[1], "empty"))
+    failed = empty();
+  else if (!strcmp(argv[1], "streams"))
+    failed = streams();
+  else if (!strcmp(argv[1], "negative"))
+    __poseidon_ozaki_dgemm(nullptr, nullptr, nullptr, 16, 16, -1, 16, 16, 16, 0,
+                           0, 0, 1.0, 0.0, nullptr, 10);
   else
     return 2;
   printf(failed ? "FAIL\n" : "PASS\n");
@@ -406,6 +608,47 @@ int main(int argc, char **argv) {
 // SGEMM: sgemm ex97x64x129 mode=4 BITEXACT
 // SGEMM-NEXT: sgemm square128 mode=4 BITEXACT
 // SGEMM-NEXT: sgemm square128 mode=4 vs mode=3 DIFFERENT
+// SGEMM-NEXT: sgemm square128 mode=3 BITEXACT
+// SGEMM-NEXT: cublas square128 FAST_TF32 on FP32 operands: {{.*}}
+// SGEMM-NEXT: cublas square128 FAST_TF32 vs FP32 product of the same TF32 operands: {{SAME|DIFFERENT}}
+// SGEMM-NEXT: sgemm square1100 mode=4 BITEXACT
+// SGEMM-NEXT: sgemm square1100 mode=4 vs mode=3 DIFFERENT
+// SGEMM-NEXT: sgemm square1100 mode=3 BITEXACT
+// SGEMM-NEXT: cublas square1100 FAST_TF32 on FP32 operands: {{.*}}
+// SGEMM-NEXT: cublas square1100 FAST_TF32 vs FP32 product of the same TF32 operands: {{SAME|DIFFERENT}}
 
 // DIRECT-COUNT-12: direct {{.*}} ok
 // DIRECT-NEXT: PASS
+
+// EMPTY: empty native mode=-1 K=0 beta=0 ok
+// EMPTY-NEXT: empty native mode=-1 K=0 beta=1 ok
+// EMPTY-NEXT: empty native mode=-1 K=0 beta=0.5 ok
+// EMPTY-NEXT: empty ozaki mode=8 K=0 beta=0 ok
+// EMPTY-NEXT: empty ozaki mode=8 K=0 beta=1 ok
+// EMPTY-NEXT: empty ozaki mode=8 K=0 beta=0.5 ok
+// EMPTY-NEXT: empty direct mode=1 K=0 beta=0 ok
+// EMPTY-NEXT: empty direct mode=1 K=0 beta=1 ok
+// EMPTY-NEXT: empty direct mode=1 K=0 beta=0.5 ok
+// EMPTY-NEXT: empty direct mode=2 K=0 beta=0 ok
+// EMPTY-NEXT: empty direct mode=2 K=0 beta=1 ok
+// EMPTY-NEXT: empty direct mode=2 K=0 beta=0.5 ok
+// EMPTY-CUDA-NEXT: empty direct mode=3 K=0 beta=0 ok
+// EMPTY-CUDA-NEXT: empty direct mode=3 K=0 beta=1 ok
+// EMPTY-CUDA-NEXT: empty direct mode=3 K=0 beta=0.5 ok
+// EMPTY-NEXT: empty direct mode=4 K=0 beta=0 ok
+// EMPTY-NEXT: empty direct mode=4 K=0 beta=1 ok
+// EMPTY-NEXT: empty direct mode=4 K=0 beta=0.5 ok
+// EMPTY-NEXT: empty native mode=-1 M=0 ok
+// EMPTY-NEXT: empty ozaki mode=8 M=0 ok
+// EMPTY-NEXT: empty direct mode=1 M=0 ok
+// EMPTY-NEXT: empty direct mode=2 M=0 ok
+// EMPTY-CUDA-NEXT: empty direct mode=3 M=0 ok
+// EMPTY-NEXT: empty direct mode=4 M=0 ok
+// EMPTY-NEXT: PASS
+
+// STREAMS: streams ozaki square256 nm=10 BITS-MATCH
+// STREAMS-NEXT: streams ozaki pad300 nm=10 BITS-MATCH
+// STREAMS-NEXT: streams direct rect343x192x1536 mode=1 BITS-MATCH
+// STREAMS-NEXT: PASS
+
+// NEGATIVE: Poseidon GEMM runtime: __poseidon_ozaki_dgemm with M = 16, Ncols = 16, K = -1: an extent is negative

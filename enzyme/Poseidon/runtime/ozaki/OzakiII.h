@@ -295,8 +295,8 @@ enum PoseidonTcecMode : int {
 };
 
 // The last argument of __poseidon_direct_dgemm: the format each FP64 operand
-// is rounded to once, all with an FP32 accumulator. kDirectFp32 is SGEMM
-// rather than a tensor-core product.
+// is rounded to (TF32 through FP32), all with an FP32 accumulator.
+// kDirectFp32 is SGEMM rather than a tensor-core product.
 enum PoseidonDirectMode : int {
   kDirectFp16 = 1,
   kDirectBf16 = 2,

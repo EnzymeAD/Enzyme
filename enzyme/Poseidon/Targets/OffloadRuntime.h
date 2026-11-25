@@ -82,6 +82,10 @@ llvm::Value *launchedKernel(llvm::CallBase &launch);
 llvm::Value *launchArguments(llvm::CallBase &launch);
 llvm::Value *launchSharedBytes(llvm::CallBase &launch);
 llvm::Value *launchStream(llvm::CallBase &launch);
+// The stream the launch's work is ordered on, as a handle a library takes in
+// any compilation: a per-thread-stream launch's null stream is its thread's
+// default stream, which both runtimes name (cudaStream_t)2.
+llvm::Value *launchStreamHandle(llvm::IRBuilderBase &B, llvm::CallBase &launch);
 
 // How the host half registers a device variable with its runtime: without
 // relocatable device code the unit registers its kernels and device variables

@@ -36,7 +36,6 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
-#include <cuda_runtime.h>
 #include <random>
 #include <vector>
 

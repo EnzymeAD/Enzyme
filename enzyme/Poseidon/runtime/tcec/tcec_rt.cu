@@ -7,11 +7,10 @@
 //===----------------------------------------------------------------------===//
 //
 // Tensor-core error correction (TCEC), the F32-accuracy-class sibling of
-// ozaki_rt.cu. The
-// product is cuMpSGEMM's, the published implementation of the scheme
-// (Ootomo and Yokota): its error correction accumulates outside the tensor
-// cores with round-to-nearest, which a GEMM library accumulating inside them
-// does not reproduce. It is built only with POSEIDON_TCEC_USE_CUMPSGEMM.
+// ozaki_rt.cu. The product is cuMpSGEMM's, the published implementation of the
+// scheme (Ootomo and Yokota): its error correction accumulates outside the
+// tensor cores with round-to-nearest, which a GEMM library accumulating inside
+// them does not reproduce. It is built only with POSEIDON_TCEC_USE_CUMPSGEMM.
 //
 // The operands are narrowed to FP32 for the library, which runs with
 // alpha=1,beta=0 into scratch; the FP64 alpha/beta are applied in the widen
@@ -30,16 +29,8 @@
 
 namespace {
 
-cuMpSGEMM_handle_t ptc_cumps() {
-  static cuMpSGEMM_handle_t h = [] {
-    cuMpSGEMM_handle_t created;
-    POSEIDON_GEMM_CB(cuMpSGEMM_create(&created));
-    return created;
-  }();
-  return h;
-}
-
-struct PtcScratch {
+struct PtcDevice : PoseidonDevice {
+  cuMpSGEMM_handle_t cumps = nullptr;
   size_t capA = 0, capB = 0, capC = 0; // bytes
   void *A = nullptr, *B = nullptr, *C = nullptr;
   // Exponents of the power-of-two scales: [0] of A, [1] of B, [2] of the
@@ -47,7 +38,6 @@ struct PtcScratch {
   int *scaleExp = nullptr;
   unsigned long long *absmax = nullptr; // [0]=max|A| bits, [1]=max|B| bits
 };
-PtcScratch g;
 
 // FP16 spans only ~4 decades, so an FP32 operand outside that window splits
 // into Inf/NaN limbs. One power-of-two scale per operand suffices (exact in
@@ -129,8 +119,9 @@ __global__ void ptc_scales(const unsigned long long *absmax, int *scaleExp) {
 __global__ void ptc_narrow(float *__restrict__ dst,
                            const double *__restrict__ src, int rows, int cols,
                            int ld, int colMajor,
-                           const int *__restrict__ scaleExp, int which) {
-  int r = blockIdx.y * blockDim.y + threadIdx.y;
+                           const int *__restrict__ scaleExp, int which,
+                           unsigned y0) {
+  int r = (blockIdx.y + y0) * blockDim.y + threadIdx.y;
   int c = blockIdx.x * blockDim.x + threadIdx.x;
   if (r >= rows || c >= cols)
     return;
@@ -145,8 +136,8 @@ __global__ void ptc_narrow(float *__restrict__ dst,
 __global__ void ptc_widen(double *__restrict__ C, const float *__restrict__ src,
                           int rows, int cols, int ldc, int cColMajor,
                           double alpha, double beta,
-                          const int *__restrict__ scaleExp) {
-  int r = blockIdx.y * blockDim.y + threadIdx.y;
+                          const int *__restrict__ scaleExp, unsigned y0) {
+  int r = (blockIdx.y + y0) * blockDim.y + threadIdx.y;
   int c = blockIdx.x * blockDim.x + threadIdx.x;
   if (r >= rows || c >= cols)
     return;
@@ -177,13 +168,13 @@ cuMpSGEMM_compute_mode_t ptc_mode(int mode) {
 
 // Narrow -> cuMpSGEMM (alpha=1,beta=0) -> widen.
 // Operands are packed column-major, so the library call is a plain NN GEMM.
-void ptc_run(double *C, const double *A, const double *B, int M, int Ncols,
-             int K, int lda, int ldb, int ldc, int aColMajor, int bColMajor,
-             int cColMajor, double alpha, double beta, cudaStream_t stream,
-             cuMpSGEMM_compute_mode_t mode) {
-  poseidonReserve(&g.A, &g.capA, (size_t)M * K * sizeof(float));
-  poseidonReserve(&g.B, &g.capB, (size_t)K * Ncols * sizeof(float));
-  poseidonReserve(&g.C, &g.capC, (size_t)M * Ncols * sizeof(float));
+void ptc_run(PtcDevice &g, double *C, const double *A, const double *B, int M,
+             int Ncols, int K, int lda, int ldb, int ldc, int aColMajor,
+             int bColMajor, int cColMajor, double alpha, double beta,
+             cudaStream_t stream, cuMpSGEMM_compute_mode_t mode) {
+  poseidonReserve(g, &g.A, &g.capA, (size_t)M * K * sizeof(float));
+  poseidonReserve(g, &g.B, &g.capB, (size_t)K * Ncols * sizeof(float));
+  poseidonReserve(g, &g.C, &g.capC, (size_t)M * Ncols * sizeof(float));
   if (!g.scaleExp) {
     POSEIDON_GEMM_CK(cudaMalloc(&g.scaleExp, 3 * sizeof(int)));
     POSEIDON_GEMM_CK(cudaMalloc(&g.absmax, 2 * sizeof(unsigned long long)));
@@ -199,20 +190,28 @@ void ptc_run(double *C, const double *A, const double *B, int M, int Ncols,
   ptc_scales<<<1, 1, 0, stream>>>(g.absmax, g.scaleExp);
 
   float *nA = (float *)g.A, *nB = (float *)g.B, *nC = (float *)g.C;
-  ptc_narrow<<<dim3((K + 15) / 16, (M + 15) / 16), b, 0, stream>>>(
-      nA, A, M, K, lda, aColMajor, g.scaleExp, 0);
-  ptc_narrow<<<dim3((Ncols + 15) / 16, (K + 15) / 16), b, 0, stream>>>(
-      nB, B, K, Ncols, ldb, bColMajor, g.scaleExp, 1);
+  poseidonForGridY((M + 15) / 16, [&](unsigned y0, unsigned n) {
+    ptc_narrow<<<dim3((K + 15) / 16, n), b, 0, stream>>>(
+        nA, A, M, K, lda, aColMajor, g.scaleExp, 0, y0);
+  });
+  poseidonForGridY((K + 15) / 16, [&](unsigned y0, unsigned n) {
+    ptc_narrow<<<dim3((Ncols + 15) / 16, n), b, 0, stream>>>(
+        nB, B, K, Ncols, ldb, bColMajor, g.scaleExp, 1, y0);
+  });
 
   const float one = 1.0f, zero = 0.0f;
-  cuMpSGEMM_handle_t h = ptc_cumps();
+  if (!g.cumps)
+    POSEIDON_GEMM_CB(cuMpSGEMM_create(&g.cumps));
+  cuMpSGEMM_handle_t h = g.cumps;
   POSEIDON_GEMM_CB(cuMpSGEMM_set_stream(h, stream));
   POSEIDON_GEMM_CB(cumpsgemm::gemm<float>(
       h, CUBLAS_OP_N, CUBLAS_OP_N, (uint64_t)M, (uint64_t)Ncols, (uint64_t)K,
       &one, nA, (uint64_t)M, nB, (uint64_t)K, &zero, nC, (uint64_t)M, mode));
 
-  ptc_widen<<<dim3((Ncols + 15) / 16, (M + 15) / 16), b, 0, stream>>>(
-      C, nC, M, Ncols, ldc, cColMajor, alpha, beta, g.scaleExp);
+  poseidonForGridY((M + 15) / 16, [&](unsigned y0, unsigned n) {
+    ptc_widen<<<dim3((Ncols + 15) / 16, n), b, 0, stream>>>(
+        C, nC, M, Ncols, ldc, cColMajor, alpha, beta, g.scaleExp, y0);
+  });
 }
 
 } // namespace
@@ -226,9 +225,15 @@ extern "C" void __poseidon_tcec_dgemm(double *C, const double *A,
                                       double alpha, double beta,
                                       cudaStream_t stream, int mode) {
   const cuMpSGEMM_compute_mode_t computeMode = ptc_mode(mode);
-  if (M <= 0 || Ncols <= 0 || K <= 0)
+  if (!poseidonGemmExtents("__poseidon_tcec_dgemm", M, Ncols, K)) {
+    if (M > 0 && Ncols > 0)
+      poseidonGemmEmptyK(C, M, Ncols, ldc, cColMajor, beta, stream);
     return;
-  ptc_run(C, A, B, M, Ncols, K, lda, ldb, ldc, aColMajor, bColMajor, cColMajor,
-          alpha, beta, stream, computeMode);
+  }
+  {
+    PoseidonGemmCall<PtcDevice> call(stream, /*scratch=*/true);
+    ptc_run(call.dev, C, A, B, M, Ncols, K, lda, ldb, ldc, aColMajor, bColMajor,
+            cColMajor, alpha, beta, stream, computeMode);
+  }
   POSEIDON_GEMM_CK(cudaGetLastError());
 }

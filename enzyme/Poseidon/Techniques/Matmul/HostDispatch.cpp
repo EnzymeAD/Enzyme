@@ -20,6 +20,7 @@
 #include "Sites/SiteIdentity.h"
 #include "Targets/OffloadRuntime.h"
 #include "Targets/Target.h"
+#include "runtime/GemmDispatch.inc"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
@@ -743,36 +744,68 @@ struct LaunchDesc : GemmBodyNote {
 };
 } // namespace
 
-// The entry points of runtime/GemmDispatch.h.
+// The entry points of runtime/GemmDispatch.inc.
 static const char *dispatchSym(Scheme s) {
   switch (s) {
-  case Scheme::OzakiII:
-    return "__poseidon_ozaki_dgemm";
-  case Scheme::Tcec:
-    return "__poseidon_tcec_dgemm";
-  case Scheme::Direct:
-    return "__poseidon_direct_dgemm";
-  case Scheme::Native:
-    return "__poseidon_native_dgemm";
+#define POSEIDON_GEMM_ENTRY(Entry, Symbol)                                     \
+  case Scheme::Entry:                                                          \
+    return #Symbol;
+#define POSEIDON_GEMM_ENTRY_MODE(Entry, Symbol, Mode)                          \
+  POSEIDON_GEMM_ENTRY(Entry, Symbol)
+#include "runtime/GemmDispatch.inc"
   }
   llvm_unreachable("unknown Scheme");
 }
 
-// void(C,A,B, M,Ncols,K, lda,ldb,ldc, aColMajor,bColMajor,cColMajor,
-//      alpha,beta, stream[, the descriptor's num_moduli field])
+// Whether the entry takes a last Mode parameter, the descriptor's modulus
+// field.
+static bool dispatchHasMode(Scheme s) {
+  switch (s) {
+#define POSEIDON_GEMM_ENTRY(Entry, Symbol)                                     \
+  case Scheme::Entry:                                                          \
+    return false;
+#define POSEIDON_GEMM_ENTRY_MODE(Entry, Symbol, Mode)                          \
+  case Scheme::Entry:                                                          \
+    return true;
+#include "runtime/GemmDispatch.inc"
+  }
+  llvm_unreachable("unknown Scheme");
+}
+
 static FunctionCallee getDispatchCallee(Module &M, Scheme scheme) {
   LLVMContext &C = M.getContext();
-  Type *ptr = PointerType::get(C, 0);
-  Type *i32 = Type::getInt32Ty(C);
-  Type *dbl = Type::getDoubleTy(C);
-  SmallVector<Type *, 16> params = {ptr, ptr, ptr, i32, i32, i32, i32, i32,
-                                    i32, i32, i32, i32, dbl, dbl, ptr};
-  if (scheme != Scheme::Native)
-    params.push_back(i32);
+  Type *Ptr = PointerType::get(C, 0);
+  Type *I32 = Type::getInt32Ty(C);
+  Type *Double = Type::getDoubleTy(C);
+#define POSEIDON_GEMM_TYPE(CType, IRType, Name) IRType,
+  SmallVector<Type *, 16> params = {
+      POSEIDON_GEMM_PARAMS(POSEIDON_GEMM_TYPE, POSEIDON_GEMM_TYPE)};
+#undef POSEIDON_GEMM_TYPE
+  if (dispatchHasMode(scheme))
+    params.push_back(I32);
   return M.getOrInsertFunction(
       dispatchSym(scheme),
       FunctionType::get(Type::getVoidTy(C), params, false));
 }
+
+namespace {
+// The arguments of an entry by the names of GemmDispatch.inc, which values()
+// puts in its order: a parameter the table renames does not compile here.
+struct DispatchArgs {
+#define POSEIDON_GEMM_FIELD(CType, IRType, Name) Value *Name = nullptr;
+  POSEIDON_GEMM_PARAMS(POSEIDON_GEMM_FIELD, POSEIDON_GEMM_FIELD)
+#undef POSEIDON_GEMM_FIELD
+
+  SmallVector<Value *, 16> values() const {
+#define POSEIDON_GEMM_VALUE(CType, IRType, Name) Name,
+    SmallVector<Value *, 16> v = {
+        POSEIDON_GEMM_PARAMS(POSEIDON_GEMM_VALUE, POSEIDON_GEMM_VALUE)};
+#undef POSEIDON_GEMM_VALUE
+    assert(!is_contained(v, nullptr) && "a dispatch argument is not set");
+    return v;
+  }
+};
+} // namespace
 
 static bool readDispatchDescriptors(const Options &O, Module &M,
                                     std::map<std::string, LaunchDesc> &descs) {
@@ -954,27 +987,25 @@ static bool rewriteStub(Module &M, Function &F, const LaunchDesc &d) {
   Value *Cp = value({d.cParam, d.cOffset}, ptr);
   Value *Ap = value({d.aParam, d.aOffset}, ptr);
   Value *Bp = value({d.bParam, d.bOffset}, ptr);
-  Value *beta = ConstantFP::get(dbl, d.beta);
-  Value *one = ConstantFP::get(dbl, 1.0);
-  Value *stream = ConstantPointerNull::get(cast<PointerType>(ptr));
-  SmallVector<Value *, 16> args = {
-      Cp,
-      Ap,
-      Bp,
-      d.launchCrop ? cropDim(d.cropMAxis, d.dims[DimM]) : dim(d.dims[DimM]),
-      d.launchCrop ? cropDim(d.cropNAxis, d.dims[DimNcols])
-                   : dim(d.dims[DimNcols]),
-      dim(d.dims[DimK]),
-      dim(d.dims[DimLda]),
-      dim(d.dims[DimLdb]),
-      dim(d.dims[DimLdc]),
-      I32(d.aColMajor ? 1 : 0),
-      I32(d.bColMajor ? 1 : 0),
-      I32(d.cColMajor ? 1 : 0),
-      one,
-      beta,
-      stream};
-  if (d.scheme != Scheme::Native)
+  DispatchArgs a;
+  a.C = Cp;
+  a.A = Ap;
+  a.B = Bp;
+  a.M = d.launchCrop ? cropDim(d.cropMAxis, d.dims[DimM]) : dim(d.dims[DimM]);
+  a.Ncols = d.launchCrop ? cropDim(d.cropNAxis, d.dims[DimNcols])
+                         : dim(d.dims[DimNcols]);
+  a.K = dim(d.dims[DimK]);
+  a.lda = dim(d.dims[DimLda]);
+  a.ldb = dim(d.dims[DimLdb]);
+  a.ldc = dim(d.dims[DimLdc]);
+  a.aColMajor = I32(d.aColMajor ? 1 : 0);
+  a.bColMajor = I32(d.bColMajor ? 1 : 0);
+  a.cColMajor = I32(d.cColMajor ? 1 : 0);
+  a.alpha = ConstantFP::get(dbl, 1.0);
+  a.beta = ConstantFP::get(dbl, d.beta);
+  a.stream = launchStreamHandle(B, *launch);
+  SmallVector<Value *, 16> args = a.values();
+  if (dispatchHasMode(d.scheme))
     args.push_back(I32(d.numModuli));
   Value *holds = nullptr;
   for (const auto &[x, y] : d.assumedEqual) {

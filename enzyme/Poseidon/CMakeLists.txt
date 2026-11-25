@@ -440,6 +440,7 @@ if(POSEIDON_ROCM_PATH)
   set(POSEIDON_HIP_RUNTIME_HEADERS
       ${CMAKE_CURRENT_SOURCE_DIR}/runtime/hip_as_cuda.h
       ${CMAKE_CURRENT_SOURCE_DIR}/runtime/GemmDispatch.h
+      ${CMAKE_CURRENT_SOURCE_DIR}/runtime/GemmDispatch.inc
       ${CMAKE_CURRENT_SOURCE_DIR}/runtime/GemmRuntime.h
       ${CMAKE_CURRENT_SOURCE_DIR}/runtime/fpprofiler/FPProfilerCUDA.h
       ${CMAKE_CURRENT_SOURCE_DIR}/runtime/fpprofiler/FPProfileName.h

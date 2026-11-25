@@ -6,12 +6,13 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// The entry points the pass replaces a matrix product's launch with. Each
-// computes C = alpha * (A @ B) + beta * C for A (M x K), B (K x Ncols) and
-// C (M x Ncols) in device memory, each operand column-major (X[c * ld + r])
+// The entry points of GemmDispatch.inc. Each computes
+// C = alpha * (A @ B) + beta * C for A (M x K), B (K x Ncols) and C (M x Ncols)
+// in memory of the current device, each operand column-major (X[c * ld + r])
 // when its ColMajor flag is set and row-major (X[r * ld + c]) otherwise, on
-// `stream` (null for the default stream). An empty extent leaves C as it is.
-// An error stops the program.
+// `stream`, from any host thread. With K == 0 it computes C = beta * C, with
+// M == 0 or Ncols == 0 nothing. A negative extent, or any error, stops the
+// program.
 //
 //===----------------------------------------------------------------------===//
 
@@ -24,37 +25,19 @@
 #include <cuda_runtime.h>
 #endif
 
+#define POSEIDON_GEMM_DECL(CType, IRType, Name) CType Name,
+#define POSEIDON_GEMM_DECL_LAST(CType, IRType, Name) CType Name
+#define POSEIDON_GEMM_ENTRY(Scheme, Symbol)                                    \
+  void Symbol(                                                                 \
+      POSEIDON_GEMM_PARAMS(POSEIDON_GEMM_DECL, POSEIDON_GEMM_DECL_LAST));
+#define POSEIDON_GEMM_ENTRY_MODE(Scheme, Symbol, Mode)                         \
+  void Symbol(                                                                 \
+      POSEIDON_GEMM_PARAMS(POSEIDON_GEMM_DECL, POSEIDON_GEMM_DECL_LAST),       \
+      int Mode);
 extern "C" {
-
-// The FP64 product of the GEMM library (cuBLAS or hipBLAS).
-void __poseidon_native_dgemm(double *C, const double *A, const double *B, int M,
-                             int Ncols, int K, int lda, int ldb, int ldc,
-                             int aColMajor, int bColMajor, int cColMajor,
-                             double alpha, double beta, cudaStream_t stream);
-
-// Ozaki scheme II with num_moduli moduli, kOzakiIIMinModuli to
-// kOzakiIIMaxModuli (OzakiII.h); K below kOzakiIIMaxK.
-void __poseidon_ozaki_dgemm(double *C, const double *A, const double *B, int M,
-                            int Ncols, int K, int lda, int ldb, int ldc,
-                            int aColMajor, int bColMajor, int cColMajor,
-                            double alpha, double beta, cudaStream_t stream,
-                            int num_moduli);
-
-// Tensor-core error correction on cuMpSGEMM in a PoseidonTcecMode (OzakiII.h).
-// Only a build with cuMpSGEMM defines it.
-void __poseidon_tcec_dgemm(double *C, const double *A, const double *B, int M,
-                           int Ncols, int K, int lda, int ldb, int ldc,
-                           int aColMajor, int bColMajor, int cColMajor,
-                           double alpha, double beta, cudaStream_t stream,
-                           int mode);
-
-// Each operand rounded once to the PoseidonDirectMode's format (OzakiII.h).
-void __poseidon_direct_dgemm(double *C, const double *A, const double *B, int M,
-                             int Ncols, int K, int lda, int ldb, int ldc,
-                             int aColMajor, int bColMajor, int cColMajor,
-                             double alpha, double beta, cudaStream_t stream,
-                             int mode);
-
-} // extern "C"
+#include "GemmDispatch.inc"
+}
+#undef POSEIDON_GEMM_DECL
+#undef POSEIDON_GEMM_DECL_LAST
 
 #endif // POSEIDON_GEMM_DISPATCH_H

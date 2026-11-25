@@ -1,6 +1,8 @@
 ; RUN: rm -rf %t && mkdir -p %t && cp %S/../Inputs/lambda_stub_hip/launches_*.json %t/
 ; RUN: %clang -O0 -x ir %s %loadClangPoseidon -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t -mllvm -poseidon-print -mllvm -poseidon-unit=fixture -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=GEN --implicit-check-not='call {{.*}}@hipLaunchKernel(' %s
 ; RUN: %clang -O0 -x ir %s %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/lambda_stub_hip -mllvm -poseidon-cache=%t -mllvm -poseidon-unit=fixture -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=USE --implicit-check-not='call {{.*}}@hipLaunchKernel(' --implicit-check-not='call void @__poseidon_ozaki_dgemm' %s
+; RUN: sed 's/@hipLaunchKernel(/@hipLaunchKernel_spt(/' %s > %t/spt.ll
+; RUN: %clang -O0 -x ir %t/spt.ll %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/lambda_stub_hip -mllvm -poseidon-cache=%t -mllvm -poseidon-unit=fixture -S -emit-llvm -o - 2>&1 | FileCheck --check-prefix=SPT %s
 ; lambda_hoststub.ll for the HIP stub of the same kernel (its source, with
 ; hip/hip_runtime.h, through clang -x hip --offload-arch=gfx942
 ; --cuda-host-only -O0 -S -emit-llvm): HIP pops the configuration with
@@ -110,13 +112,22 @@
 ; USE-NEXT: %[[OK:[0-9]+]] = and i1 %[[EQ]], %[[R6]]
 ; USE-NEXT: br i1 %[[OK]], label %[[DISPATCH:[0-9]+]], label %[[LAUNCH:[0-9]+]]
 ; USE: [[DISPATCH]]:
-; USE-NEXT: call void @__poseidon_ozaki_dgemm(ptr %[[C]], ptr %[[A]], ptr %[[B]], i32 %[[M]], i32 %[[N]], i32 %[[K]], i32 %[[LDA]], i32 %[[LDB]], i32 %[[LDC]], i32 0, i32 1, i32 1, double 1.000000e+00, double 1.000000e+00, ptr null, i32 13)
+; USE-NEXT: call void @__poseidon_ozaki_dgemm(ptr %[[C]], ptr %[[A]], ptr %[[B]], i32 %[[M]], i32 %[[N]], i32 %[[K]], i32 %[[LDA]], i32 %[[LDB]], i32 %[[LDC]], i32 0, i32 1, i32 1, double 1.000000e+00, double 1.000000e+00, ptr %[[STREAM]], i32 13)
 ; USE-NEXT: br label %[[JOIN:[0-9]+]]
 ; USE: [[LAUNCH]]:
 ; USE-NEXT: %{{[0-9]+}} = call noundef i32 @hipLaunchKernel(ptr noundef @_ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_, {{.*}}, ptr noundef %[[ARGS]], i64 noundef %[[SHMEM]], ptr noundef %[[STREAM]])
 ; USE-NEXT: br label %[[JOIN]]
 ; USE: [[JOIN]]:
 ; USE: ret void
+
+; A per-thread-stream launch's null stream is its thread's default stream,
+; (hipStream_t)2 to a library compiled without per-thread streams.
+; SPT: call i32 @__hipPopCallConfiguration(ptr %{{[0-9]+}}, ptr %{{[0-9]+}}, ptr %{{[0-9]+}}, ptr %[[STREAMP:[0-9]+]])
+; SPT: %[[STREAM:[0-9]+]] = load ptr, ptr %[[STREAMP]], align 8
+; SPT: %[[ISNULL:[0-9]+]] = icmp eq ptr %[[STREAM]], null
+; SPT-NEXT: %[[HANDLE:[0-9]+]] = select i1 %[[ISNULL]], ptr inttoptr (i64 2 to ptr), ptr %[[STREAM]]
+; SPT: call void @__poseidon_ozaki_dgemm({{.*}}, ptr %[[HANDLE]], i32 13)
+; SPT: call noundef i32 @hipLaunchKernel_spt({{.*}}, ptr noundef %[[STREAM]])
 
 ; ModuleID = 'lambda_stub.hip'
 source_filename = "lambda_stub.hip"

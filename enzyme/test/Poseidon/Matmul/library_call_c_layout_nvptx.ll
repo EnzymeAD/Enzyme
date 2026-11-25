@@ -33,8 +33,12 @@
 ; DESC-DAG: "_Z13matmul_kernelPKdS0_PdS1_ 2 0 1 1 12 0 1 0 2 rd 0 1 16 0 1 16 0 1 16 0 1 16 0 1 16 0 1 16 0.000000e+00"
 ; DESC-DAG: "_Z13matmul_kernccPKdS0_PdS1_ 2 0 1 1 12 0 0 1 2 rd 0 1 16 0 1 16 0 1 16 0 1 16 0 1 16 0 1 16 0.000000e+00"
 
-; HOST-NT: call void @__poseidon_ozaki_dgemm(ptr %{{.+}}, ptr %{{.+}}, ptr %{{.+}}, i32 16, i32 16, i32 16, i32 16, i32 16, i32 16, i32 0, i32 1, i32 0, double 1.000000e+00, double 0.000000e+00, ptr null, i32 12)
-; HOST-NN: call void @__poseidon_ozaki_dgemm(ptr %{{.+}}, ptr %{{.+}}, ptr %{{.+}}, i32 16, i32 16, i32 16, i32 16, i32 16, i32 16, i32 0, i32 0, i32 1, double 1.000000e+00, double 0.000000e+00, ptr null, i32 12)
+; HOST-NT: call i32 @__cudaPopCallConfiguration(ptr %{{[0-9]+}}, ptr %{{[0-9]+}}, ptr %{{[0-9]+}}, ptr %[[STREAMP:[0-9]+]])
+; HOST-NT: %[[STREAM:[0-9]+]] = load ptr, ptr %[[STREAMP]], align 8
+; HOST-NT: call void @__poseidon_ozaki_dgemm(ptr %{{.+}}, ptr %{{.+}}, ptr %{{.+}}, i32 16, i32 16, i32 16, i32 16, i32 16, i32 16, i32 0, i32 1, i32 0, double 1.000000e+00, double 0.000000e+00, ptr %[[STREAM]], i32 12)
+; HOST-NN: call i32 @__cudaPopCallConfiguration(ptr %{{[0-9]+}}, ptr %{{[0-9]+}}, ptr %{{[0-9]+}}, ptr %[[STREAMP:[0-9]+]])
+; HOST-NN: %[[STREAM:[0-9]+]] = load ptr, ptr %[[STREAMP]], align 8
+; HOST-NN: call void @__poseidon_ozaki_dgemm(ptr %{{.+}}, ptr %{{.+}}, ptr %{{.+}}, i32 16, i32 16, i32 16, i32 16, i32 16, i32 16, i32 0, i32 0, i32 1, double 1.000000e+00, double 0.000000e+00, ptr %[[STREAM]], i32 12)
 
 source_filename = "layout.cu"
 target datalayout = "e-p6:32:32-i64:64-i128:128-i256:256-v16:16-v32:32-n16:32:64"

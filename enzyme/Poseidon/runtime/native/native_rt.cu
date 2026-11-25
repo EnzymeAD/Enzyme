@@ -18,10 +18,13 @@ extern "C" void __poseidon_native_dgemm(double *C, const double *A,
                                         int aColMajor, int bColMajor,
                                         int cColMajor, double alpha,
                                         double beta, cudaStream_t stream) {
-  if (M <= 0 || Ncols <= 0 || K <= 0)
+  if (!poseidonGemmExtents("__poseidon_native_dgemm", M, Ncols, K)) {
+    if (M > 0 && Ncols > 0)
+      poseidonGemmEmptyK(C, M, Ncols, ldc, cColMajor, beta, stream);
     return;
-  cublasHandle_t h = poseidonCublas();
-  POSEIDON_GEMM_CB(cublasSetStream(h, stream));
+  }
+  PoseidonGemmCall<PoseidonDevice> call(stream, /*scratch=*/false);
+  cublasHandle_t h = call.blas();
   if (cColMajor)
     POSEIDON_GEMM_CB(cublasDgemm(h, aColMajor ? CUBLAS_OP_N : CUBLAS_OP_T,
                                  bColMajor ? CUBLAS_OP_N : CUBLAS_OP_T, M,
