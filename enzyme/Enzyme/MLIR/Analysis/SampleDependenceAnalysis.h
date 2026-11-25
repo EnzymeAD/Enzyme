@@ -90,10 +90,6 @@ private:
   void propagateRaised();
 };
 
-/// Moves the sample-invariant ops of the `target` region of `regionOp` above
-/// `regionOp`. Returns true if it moved any.
-bool hoistSampleInvariantOps(InferRegionOp regionOp, AnalysisTarget target);
-
 /// One analysis per (infer_region, target), shared by everything that queries
 /// sample dependence while the cache is active.
 class SampleDependenceCache {

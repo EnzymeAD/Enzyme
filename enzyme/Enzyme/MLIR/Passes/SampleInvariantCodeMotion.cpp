@@ -10,6 +10,7 @@
 #include "Dialect/Impulse/Impulse.h"
 #include "Interfaces/ImpulseRegionUtils.h"
 #include "Interfaces/SICMRuleSetInterface.h"
+#include "Interfaces/Utils.h"
 #include "Passes/Passes.h"
 
 #include "mlir/Dialect/PDL/IR/PDL.h"
@@ -17,12 +18,15 @@
 #include "mlir/Dialect/Transform/IR/TransformDialect.h"
 #include "mlir/Dialect/Transform/IR/TransformOps.h"
 #include "mlir/Dialect/Transform/Interfaces/TransformInterfaces.h"
+#include "mlir/IR/Dominance.h"
+#include "mlir/IR/IRMapping.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Parser/Parser.h"
 #include "mlir/Rewrite/FrozenRewritePatternSet.h"
 #include "mlir/Transforms/FoldUtils.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
+#include "mlir/Transforms/RegionUtils.h"
 
 #include <optional>
 
@@ -35,6 +39,148 @@ namespace enzyme {
 #include "Passes/Passes.h.inc"
 } // namespace enzyme
 } // namespace mlir
+
+/// True if every value of `values` is available above `regionOp`: it is
+/// defined there, or is a block argument that `regionToOuter` maps, or a
+/// result of an op of `toHoist`.
+static bool checkOperandDominance(const IRMapping &regionToOuter,
+                                  DominanceInfo &domInfo,
+                                  InferRegionOp regionOp,
+                                  const SetVector<Operation *> &toHoist,
+                                  ValueRange values) {
+  for (Value value : values) {
+    if (domInfo.properlyDominates(value, regionOp))
+      continue;
+    if (isa<BlockArgument>(value)) {
+      if (regionToOuter.contains(value))
+        continue;
+      return false;
+    }
+    if (Operation *defOp = value.getDefiningOp()) {
+      if (toHoist.contains(defOp))
+        continue;
+    }
+    return false;
+  }
+  return true;
+}
+
+/// True if an effect of `opEffects` and one of `stationaryEffects`, at least
+/// one of them a write, may access the same memory.
+static bool
+hasMemoryConflict(ArrayRef<MemoryEffects::EffectInstance> opEffects,
+                  ArrayRef<MemoryEffects::EffectInstance> stationaryEffects) {
+  for (const MemoryEffects::EffectInstance &stationaryEffect :
+       stationaryEffects) {
+    for (const MemoryEffects::EffectInstance &opEffect : opEffects) {
+      bool isConflict =
+          (isa<MemoryEffects::Write>(stationaryEffect.getEffect()) &&
+           isa<MemoryEffects::Read>(opEffect.getEffect())) ||
+          (isa<MemoryEffects::Read>(stationaryEffect.getEffect()) &&
+           isa<MemoryEffects::Write>(opEffect.getEffect())) ||
+          (isa<MemoryEffects::Write>(stationaryEffect.getEffect()) &&
+           isa<MemoryEffects::Write>(opEffect.getEffect()));
+      if (isConflict) {
+        MemoryEffects::EffectInstance stationaryEffectCopy = stationaryEffect;
+        MemoryEffects::EffectInstance opEffectCopy = opEffect;
+        if (enzyme::oputils::mayAlias(opEffectCopy, stationaryEffectCopy))
+          return true;
+      }
+    }
+  }
+  return false;
+}
+
+/// True if `op` is not a sample site or a terminator and neither it nor its
+/// operands are sample-dependent.
+static bool isHoistCandidate(const SampleDependenceAnalysis &analysis,
+                             Operation *op) {
+  if (isa<SampleRegionOp>(op) || op->hasTrait<OpTrait::IsTerminator>() ||
+      analysis.isSampleDependent(op))
+    return false;
+  return llvm::none_of(op->getOperands(), [&](Value operand) {
+    return analysis.isSampleDependent(operand);
+  });
+}
+
+/// Moves above the infer_region of `analysis` every op of the target region
+/// that is a hoist candidate, uses only values available above the
+/// infer_region, is in a block that runs whenever the region runs, and has
+/// no memory conflict with an op that stays. Returns true if it moved any.
+static bool hoistSampleInvariantOps(SampleDependenceAnalysis &analysis) {
+  Region &region = analysis.getTargetRegion();
+  if (region.empty())
+    return false;
+
+  InferRegionOp regionOp = analysis.getRegionOp();
+  DominanceInfo domInfo(regionOp);
+  PostDominanceInfo postDomInfo(regionOp);
+
+  IRMapping regionToOuter;
+  if (analysis.getTarget() == AnalysisTarget::Sampling)
+    for (auto [blockArg, input] :
+         llvm::zip(region.front().getArguments(), regionOp.getInputs()))
+      regionToOuter.map(blockArg, input);
+
+  SetVector<Operation *> toHoist;
+  SmallVector<MemoryEffects::EffectInstance> stationaryEffects;
+
+  for (Block &block : region) {
+    if (!postDomInfo.postDominates(&block, &region.front()))
+      continue;
+
+    for (Operation &op : block.without_terminator()) {
+      bool canHoist = isHoistCandidate(analysis, &op);
+
+      SmallVector<MemoryEffects::EffectInstance> opEffects;
+      if (!enzyme::oputils::collectOpEffects(&op, opEffects))
+        canHoist = false;
+
+      if (canHoist)
+        canHoist = checkOperandDominance(regionToOuter, domInfo, regionOp,
+                                         toHoist, op.getOperands());
+
+      if (canHoist && op.getNumRegions() > 0) {
+        SetVector<Value> nestedValues;
+        getUsedValuesDefinedAbove(op.getRegions(), nestedValues);
+        canHoist = checkOperandDominance(regionToOuter, domInfo, regionOp,
+                                         toHoist, nestedValues.getArrayRef());
+      }
+
+      if (canHoist)
+        canHoist = !hasMemoryConflict(opEffects, stationaryEffects);
+
+      if (!canHoist) {
+        stationaryEffects.append(opEffects.begin(), opEffects.end());
+        continue;
+      }
+
+      for (OpOperand &operand : op.getOpOperands())
+        operand.assign(regionToOuter.lookupOrDefault(operand.get()));
+      for (Region &nestedRegion : op.getRegions()) {
+        SetVector<Value> nestedValues;
+        getUsedValuesDefinedAbove(nestedRegion, nestedValues);
+        for (Value value : nestedValues)
+          if (regionToOuter.contains(value))
+            replaceAllUsesInRegionWith(value, regionToOuter.lookup(value),
+                                       nestedRegion);
+      }
+      toHoist.insert(&op);
+    }
+  }
+
+  SmallVector<Operation *> sortedToHoist(toHoist.begin(), toHoist.end());
+  llvm::sort(sortedToHoist, [&domInfo](Operation *a, Operation *b) {
+    if (a->getBlock() == b->getBlock())
+      return a->isBeforeInBlock(b);
+    return domInfo.dominates(a->getBlock(), b->getBlock());
+  });
+
+  for (Operation *op : sortedToHoist)
+    op->moveBefore(regionOp);
+
+  return !sortedToHoist.empty();
+}
 
 namespace {
 
@@ -277,7 +423,8 @@ struct SICMPass : public enzyme::impl::SICMPassBase<SICMPass> {
         });
       }
 
-      anyChanged |= hoistSampleInvariantOps(regionOp, target);
+      SampleDependenceAnalysis hoistAnalysis(regionOp, target);
+      anyChanged |= hoistSampleInvariantOps(hoistAnalysis);
 
       if (!anyChanged)
         break;
