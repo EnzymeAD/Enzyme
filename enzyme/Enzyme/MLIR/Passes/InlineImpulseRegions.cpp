@@ -91,9 +91,10 @@ static bool collectReachableAddresses(Operation *root, FunctionOpInterface fn,
         !llvm::hasSingleElement(callee.getFunctionBody()))
       return false;
 
-    if (sampleOp.getLogpdfAttr()) {
+    if (sampleOp.getLogpdfFnAttr()) {
       auto logpdfFn = dyn_cast_or_null<FunctionOpInterface>(
-          symbolTable.lookupNearestSymbolFrom(root, sampleOp.getLogpdfAttr()));
+          symbolTable.lookupNearestSymbolFrom(root,
+                                              sampleOp.getLogpdfFnAttr()));
       if (!logpdfFn || logpdfFn.getFunctionBody().empty() ||
           !llvm::hasSingleElement(logpdfFn.getFunctionBody()))
         return false;
@@ -212,7 +213,7 @@ static void convertSampleToSampleRegion(OpBuilder &builder,
 
   auto sampleRegionOp = impulse::SampleRegionOp::create(
       builder, loc, sampleOp.getResultTypes(), mappedInputs,
-      sampleOp.getFnAttr(), sampleOp.getLogpdfAttr(),
+      sampleOp.getFnAttr(), sampleOp.getLogpdfFnAttr(),
       ArrayAttr::get(ctx, address), support, dist, sampleOp.getNameAttr());
 
   auto inlineCallee = [&](SymbolRefAttr callee, Region &region) {
@@ -229,8 +230,8 @@ static void convertSampleToSampleRegion(OpBuilder &builder,
                               sampleRegionOp.getSampling());
   else
     inlineCallee(sampleOp.getFnAttr(), sampleRegionOp.getSampling());
-  if (!dist && sampleOp.getLogpdfAttr())
-    inlineCallee(sampleOp.getLogpdfAttr(), sampleRegionOp.getLogpdf());
+  if (!dist && sampleOp.getLogpdfFnAttr())
+    inlineCallee(sampleOp.getLogpdfFnAttr(), sampleRegionOp.getLogpdf());
 
   for (auto [oldResult, newResult] :
        llvm::zip(sampleOp.getResults(), sampleRegionOp.getResults()))

@@ -5,8 +5,8 @@ module {
   func.func private @logpdf(%x : tensor<f64>, %rate : tensor<f64>) -> tensor<f64>
 
   func.func @test(%rng : tensor<2xui64>, %rate : tensor<f64>) -> (tensor<2xui64>, tensor<f64>) {
-    %s:2 = impulse.sample @exponential(%rng, %rate) <{ logpdf = @logpdf, symbol = #impulse.symbol<1>, name="s", support = #impulse.support<POSITIVE> }> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
-    %t:2 = impulse.sample @exponential(%s#0, %rate) <{ logpdf = @logpdf, symbol = #impulse.symbol<2>, name="t", support = #impulse.support<POSITIVE> }> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+    %s:2 = impulse.sample @exponential(%rng, %rate) <{ logpdf_fn = @logpdf, symbol = #impulse.symbol<1>, name="s", support = #impulse.support<POSITIVE> }> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+    %t:2 = impulse.sample @exponential(%s#0, %rate) <{ logpdf_fn = @logpdf, symbol = #impulse.symbol<2>, name="t", support = #impulse.support<POSITIVE> }> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
     return %t#0, %t#1 : tensor<2xui64>, tensor<f64>
   }
 

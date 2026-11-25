@@ -7,13 +7,13 @@ module {
   func.func private @logpdf(%x : tensor<f64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> tensor<f64>
 
   func.func @model(%rng : tensor<2xui64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> (tensor<2xui64>, tensor<f64>) {
-    %z:2 = impulse.sample @normal(%rng, %mean, %stddev) <{ logpdf = @logpdf, symbol = #impulse.symbol<1>, name = "z" }> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+    %z:2 = impulse.sample @normal(%rng, %mean, %stddev) <{ logpdf_fn = @logpdf, symbol = #impulse.symbol<1>, name = "z" }> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
     %pred = arith.cmpf ogt, %z#1, %mean : tensor<f64>
     %if:2 = impulse.if (%pred) ({
-      %a:2 = impulse.sample @normal(%z#0, %mean, %stddev) <{ logpdf = @logpdf, symbol = #impulse.symbol<2>, name = "a" }> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+      %a:2 = impulse.sample @normal(%z#0, %mean, %stddev) <{ logpdf_fn = @logpdf, symbol = #impulse.symbol<2>, name = "a" }> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
       impulse.yield %a#0, %a#1 : tensor<2xui64>, tensor<f64>
     }, {
-      %b:2 = impulse.sample @normal(%z#0, %mean, %stddev) <{ logpdf = @logpdf, symbol = #impulse.symbol<3>, name = "b" }> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+      %b:2 = impulse.sample @normal(%z#0, %mean, %stddev) <{ logpdf_fn = @logpdf, symbol = #impulse.symbol<3>, name = "b" }> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
       impulse.yield %b#0, %b#1 : tensor<2xui64>, tensor<f64>
     }) : (tensor<i1>) -> (tensor<2xui64>, tensor<f64>)
     return %if#0, %if#1 : tensor<2xui64>, tensor<f64>

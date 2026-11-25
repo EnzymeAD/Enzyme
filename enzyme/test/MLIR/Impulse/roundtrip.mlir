@@ -5,11 +5,11 @@ module {
   func.func private @logpdf(%x : tensor<f64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> tensor<f64>
 
   // CHECK:   func.func @sample(%[[SEED:.+]]: tensor<2xui64>, %[[MEAN:.+]]: tensor<f64>, %[[STDDEV:.+]]: tensor<f64>) -> (tensor<2xui64>, tensor<f64>) {
-  // CHECK-NEXT:    %[[RES:.+]]:2 = impulse.sample @normal(%[[SEED]], %[[MEAN]], %[[STDDEV]]) <logpdf = @logpdf, symbol = <3>, name = "r"> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+  // CHECK-NEXT:    %[[RES:.+]]:2 = impulse.sample @normal(%[[SEED]], %[[MEAN]], %[[STDDEV]]) <logpdf_fn = @logpdf, symbol = <3>, name = "r"> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
   // CHECK-NEXT:    return %[[RES]]#0, %[[RES]]#1 : tensor<2xui64>, tensor<f64>
   // CHECK-NEXT:   }
   func.func @sample(%seed : tensor<2xui64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> (tensor<2xui64>, tensor<f64>) {
-    %r:2 = impulse.sample @normal(%seed, %mean, %stddev) <{ logpdf = @logpdf, name="r", symbol = #impulse.symbol<3> }> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+    %r:2 = impulse.sample @normal(%seed, %mean, %stddev) <{ logpdf_fn = @logpdf, name="r", symbol = #impulse.symbol<3> }> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
     return %r#0, %r#1 : tensor<2xui64>, tensor<f64>
   }
 

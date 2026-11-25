@@ -9,8 +9,8 @@ module {
   func.func private @exp_logpdf(%x : tensor<f64>, %rate : tensor<f64>) -> tensor<f64>
 
   func.func @test(%rng : tensor<2xui64>, %mean : tensor<f64>, %stddev : tensor<f64>, %rate : tensor<f64>) -> (tensor<2xui64>, tensor<f64>, tensor<f64>) {
-    %m:2 = impulse.sample @normal(%rng, %mean, %stddev) <{ logpdf = @normal_logpdf, symbol = #impulse.symbol<1>, name="m", support = #impulse.support<REAL> }> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
-    %s:2 = impulse.sample @exponential(%m#0, %rate) <{ logpdf = @exp_logpdf, symbol = #impulse.symbol<2>, name="s", support = #impulse.support<POSITIVE> }> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+    %m:2 = impulse.sample @normal(%rng, %mean, %stddev) <{ logpdf_fn = @normal_logpdf, symbol = #impulse.symbol<1>, name="m", support = #impulse.support<REAL> }> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+    %s:2 = impulse.sample @exponential(%m#0, %rate) <{ logpdf_fn = @exp_logpdf, symbol = #impulse.symbol<2>, name="s", support = #impulse.support<POSITIVE> }> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
     return %s#0, %m#1, %s#1 : tensor<2xui64>, tensor<f64>, tensor<f64>
   }
 

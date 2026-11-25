@@ -8,10 +8,10 @@ module {
 
   func.func @model(%rng : tensor<2xui64>, %pred : tensor<i1>, %l1 : tensor<f64>, %l2 : tensor<f64>) -> (tensor<2xui64>, tensor<f64>) {
     %if:2 = impulse.if (%pred) ({
-      %e:2 = impulse.sample @pois(%rng, %l1) <{ logpdf = @poislp, symbol = #impulse.symbol<1> }> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+      %e:2 = impulse.sample @pois(%rng, %l1) <{ logpdf_fn = @poislp, symbol = #impulse.symbol<1> }> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
       impulse.yield %e#0, %e#1 : tensor<2xui64>, tensor<f64>
     }, {
-      %l:2 = impulse.sample @pois(%rng, %l2) <{ logpdf = @poislp, symbol = #impulse.symbol<2> }> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+      %l:2 = impulse.sample @pois(%rng, %l2) <{ logpdf_fn = @poislp, symbol = #impulse.symbol<2> }> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
       impulse.yield %l#0, %l#1 : tensor<2xui64>, tensor<f64>
     }) : (tensor<i1>) -> (tensor<2xui64>, tensor<f64>)
     return %if#0, %if#1 : tensor<2xui64>, tensor<f64>

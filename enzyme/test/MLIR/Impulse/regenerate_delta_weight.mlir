@@ -7,12 +7,12 @@ module {
   func.func private @logpdf(%x : tensor<f64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> tensor<f64>
 
   func.func @model(%rng : tensor<2xui64>, %c : tensor<f64>) -> (tensor<2xui64>, tensor<f64>) {
-    %a:2 = impulse.sample @normal(%rng, %c, %c) <{ logpdf = @logpdf, symbol = #impulse.symbol<1> }> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
-    %b:2 = impulse.sample @normal(%a#0, %c, %c) <{ logpdf = @logpdf, symbol = #impulse.symbol<2> }> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+    %a:2 = impulse.sample @normal(%rng, %c, %c) <{ logpdf_fn = @logpdf, symbol = #impulse.symbol<1> }> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+    %b:2 = impulse.sample @normal(%a#0, %c, %c) <{ logpdf_fn = @logpdf, symbol = #impulse.symbol<2> }> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
     %m3 = arith.addf %a#1, %c : tensor<f64>
-    %s3:2 = impulse.sample @normal(%b#0, %m3, %c) <{ logpdf = @logpdf, symbol = #impulse.symbol<3> }> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+    %s3:2 = impulse.sample @normal(%b#0, %m3, %c) <{ logpdf_fn = @logpdf, symbol = #impulse.symbol<3> }> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
     %m4 = arith.mulf %b#1, %c : tensor<f64>
-    %s4:2 = impulse.sample @normal(%s3#0, %m4, %c) <{ logpdf = @logpdf, symbol = #impulse.symbol<4> }> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+    %s4:2 = impulse.sample @normal(%s3#0, %m4, %c) <{ logpdf_fn = @logpdf, symbol = #impulse.symbol<4> }> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
     return %s4#0, %s4#1 : tensor<2xui64>, tensor<f64>
   }
 

@@ -34,10 +34,10 @@ def SampleOp : Impulse_Op<"sample",
 
     With `dist`, the distribution is `dist`, and `fn`, when present, is a
     sampler for it with the signature of this op. Without `dist`, `fn` is
-    required. If `logpdf` is present, `fn` is the sampler and `logpdf` its log
-    density: a function of the sampled values followed by the parameters that
-    returns a scalar. If not, `fn` is a model that this site runs, and the
-    sites of `fn` are nested under the address of this site.
+    required. If `logpdf_fn` is present, `fn` is the sampler and `logpdf_fn`
+    its log density: a function of the sampled values followed by the
+    parameters that returns a scalar. If not, `fn` is a model that this site
+    runs, and the sites of `fn` are nested under the address of this site.
 
     `symbol` names the site within its model. `support`, when present, is the
     support of the sampled values; with `dist`, it must be of the same kind as
@@ -47,7 +47,7 @@ def SampleOp : Impulse_Op<"sample",
   let arguments = (ins
     OptionalAttr<FlatSymbolRefAttr>:$fn,
     Variadic<AnyType>:$inputs,
-    OptionalAttr<FlatSymbolRefAttr>:$logpdf,
+    OptionalAttr<FlatSymbolRefAttr>:$logpdf_fn,
     OptionalAttr<SymbolAttr>:$symbol,
     OptionalAttr<SupportAttr>:$support,
     OptionalAttr<DistAttr>:$dist,
@@ -361,8 +361,8 @@ def SampleRegionOp : Impulse_Op<"sample_region", [AutomaticAllocationScope]> {
 
     `address` is the full address of the site, as listed in the `selection`
     and `all_addresses` of the enclosing `impulse.infer_region`. `fn`,
-    `support`, `dist` and `name` mean what they mean on `impulse.sample`, and
-    `logpdf_fn` what `logpdf` means there.
+    `logpdf_fn`, `support`, `dist` and `name` mean what they mean on
+    `impulse.sample`.
   }];
 
   let arguments = (ins

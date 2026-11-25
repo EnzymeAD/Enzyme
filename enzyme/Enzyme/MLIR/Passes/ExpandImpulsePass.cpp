@@ -115,7 +115,7 @@ static bool computePositionSizeForAddress(Operation *op,
     return false;
 
   if (address.size() > 1) {
-    if (sampleOp.getLogpdfAttr()) {
+    if (sampleOp.getLogpdfFnAttr()) {
       op->emitError("Cannot select nested address in distribution function");
       return false;
     }
@@ -1662,16 +1662,16 @@ static SmallVector<Value> emitSiteDraw(OpBuilder &builder,
   return SmallVector<Value>(call.getResults());
 }
 
-/// Checks that the `logpdf` function of `site`, if it has one, takes the
+/// Checks that the `logpdf_fn` function of `site`, if it has one, takes the
 /// `numValues` values of the site followed by its parameters. `call` names
 /// the call in the diagnostic.
 static LogicalResult verifySiteLogpdf(SymbolTableCollection &symbolTable,
                                       impulse::SampleOp site, size_t numValues,
                                       StringRef call = "logpdf call") {
-  if (!site.getLogpdfAttr())
+  if (!site.getLogpdfFnAttr())
     return success();
   auto logpdfFn = cast<FunctionOpInterface>(
-      symbolTable.lookupNearestSymbolFrom(site, site.getLogpdfAttr()));
+      symbolTable.lookupNearestSymbolFrom(site, site.getLogpdfFnAttr()));
   if (numValues + siteParams(site).size() == logpdfFn.getNumArguments())
     return success();
   return site.emitError("Impulse: failed to construct ")
@@ -1679,7 +1679,7 @@ static LogicalResult verifySiteLogpdf(SymbolTableCollection &symbolTable,
 }
 
 /// Emits the log density of `values` (the site's results after the rng) under
-/// `site`: from its distribution, or by calling its `logpdf` function on the
+/// `site`: from its distribution, or by calling its `logpdf_fn` function on the
 /// values followed by the site's parameters.
 static Value emitSiteLogpdf(OpBuilder &builder,
                             SymbolTableCollection &symbolTable,
@@ -1689,7 +1689,7 @@ static Value emitSiteLogpdf(OpBuilder &builder,
     return impulse::emitDistLogpdf(builder, loc, dist, values.front(),
                                    siteParams(site));
   auto logpdfFn = cast<FunctionOpInterface>(
-      symbolTable.lookupNearestSymbolFrom(site, site.getLogpdfAttr()));
+      symbolTable.lookupNearestSymbolFrom(site, site.getLogpdfFnAttr()));
   SmallVector<Value> operands(values);
   llvm::append_range(operands, siteParams(site));
   return func::CallOp::create(builder, loc, logpdfFn.getName(),
@@ -1859,7 +1859,7 @@ static ColumnWindows mhChangedColumnsFlat(Operation *op, FunctionOpInterface fn,
     int64_t size = computePositionSizeForSelection(
         op, fn, ArrayAttr::get(op->getContext(), {address}), symbolTable);
     impulse::SampleOp site = findSampleBySymbol(sampleMap, address[0]);
-    bool isDist = site && (site.getDistAttr() || site.getLogpdfAttr());
+    bool isDist = site && (site.getDistAttr() || site.getLogpdfFnAttr());
     bool changed = inList(regenerateAddresses, address);
     // Constrained sites outside branches read the old trace (readsConstraint).
     if (!changed && bare)
@@ -2095,7 +2095,7 @@ static bool deltaWeightFeasible(FunctionOpInterface fn) {
     if (isa<impulse::IfOp>(op))
       feasible = false;
     if (auto s = dyn_cast<impulse::SampleOp>(op))
-      if ((!s.getDistAttr() && !s.getLogpdfAttr()) ||
+      if ((!s.getDistAttr() && !s.getLogpdfFnAttr()) ||
           s->getParentOp() != fn.getOperation())
         feasible = false;
   });
@@ -3005,8 +3005,8 @@ struct ExpandImpulsePass
         CI.emitError(
             "Impulse: calling `simulate` on an empty function; if this "
             "is a distribution function, its sample op should have a "
-            "logpdf attribute to avoid recursive `simulate` calls which is "
-            "intended for generative functions");
+            "`logpdf_fn` attribute to avoid recursive `simulate` calls "
+            "which is intended for generative functions");
         return failure();
       }
 
@@ -3049,7 +3049,7 @@ struct ExpandImpulsePass
         rewriter.setInsertionPoint(sampleOp);
 
         SmallVector<Value> sampledValues;
-        if (sampleOp.getDistAttr() || sampleOp.getLogpdfAttr()) {
+        if (sampleOp.getDistAttr() || sampleOp.getLogpdfFnAttr()) {
           sampledValues = emitSiteDraw(rewriter, symbolTable, sampleOp);
           ArrayRef<Value> values = ArrayRef<Value>(sampledValues).drop_front();
           if (failed(verifySiteLogpdf(symbolTable, sampleOp, values.size())))
@@ -3077,7 +3077,7 @@ struct ExpandImpulsePass
           if (genFn.getFunctionBody().empty()) {
             sampleOp.emitError(
                 "Impulse: generative function body is empty; "
-                "if this is a distribution, add a logpdf attribute");
+                "if this is a distribution, add a `logpdf_fn` attribute");
             return failure();
           }
 
@@ -4041,8 +4041,8 @@ struct ExpandImpulsePass
         CI.emitError(
             "Impulse: calling `generate` on an empty function; if this "
             "is a distribution function, its sample op should have a "
-            "logpdf attribute to avoid recursive `generate` calls which is "
-            "intended for generative functions");
+            "`logpdf_fn` attribute to avoid recursive `generate` calls "
+            "which is intended for generative functions");
         return failure();
       }
 
@@ -4091,7 +4091,7 @@ struct ExpandImpulsePass
         rewriter.setInsertionPoint(sampleOp);
 
         SmallVector<Value> sampledValues;
-        if (sampleOp.getDistAttr() || sampleOp.getLogpdfAttr()) {
+        if (sampleOp.getDistAttr() || sampleOp.getLogpdfFnAttr()) {
           if (failed(verifyTopLevelAddress(
                   sampleOp, CI.getConstrainedAddressesAttr(), "constrained")))
             return failure();
@@ -4144,7 +4144,7 @@ struct ExpandImpulsePass
           if (genFn.getFunctionBody().empty()) {
             sampleOp.emitError(
                 "Impulse: generative function body is empty; "
-                "if this is a distribution, add a logpdf attribute");
+                "if this is a distribution, add a `logpdf_fn` attribute");
             return failure();
           }
 
@@ -4284,8 +4284,8 @@ struct ExpandImpulsePass
         CI.emitError(
             "Impulse: calling `regenerate` on an empty function; if this "
             "is a distribution function, its sample op should have a "
-            "logpdf attribute to avoid recursive `regenerate` calls which is "
-            "intended for generative functions");
+            "`logpdf_fn` attribute to avoid recursive `regenerate` calls "
+            "which is intended for generative functions");
         return failure();
       }
 
@@ -4391,7 +4391,7 @@ struct ExpandImpulsePass
         hastingsTaint = computeRegenerateTaint(NewF, selection);
         SmallVector<Attribute> oldInfoAddrs;
         NewF.getFunctionBody().walk([&](impulse::SampleOp s) {
-          if (!s.getDistAttr() && !s.getLogpdfAttr())
+          if (!s.getDistAttr() && !s.getLogpdfFnAttr())
             return;
           bool needsOld;
           if (addressInList(s, selection))
@@ -4475,7 +4475,7 @@ struct ExpandImpulsePass
         rewriter.setInsertionPoint(sampleOp);
 
         SmallVector<Value> sampledValues;
-        if (sampleOp.getDistAttr() || sampleOp.getLogpdfAttr()) {
+        if (sampleOp.getDistAttr() || sampleOp.getLogpdfFnAttr()) {
           Location loc = sampleOp.getLoc();
           if (failed(verifyTopLevelAddress(sampleOp, selection, "selected")))
             return failure();
@@ -4594,7 +4594,7 @@ struct ExpandImpulsePass
           if (genFn.getFunctionBody().empty()) {
             sampleOp.emitError(
                 "Impulse: generative function body is empty; "
-                "if this is a distribution, add a logpdf attribute");
+                "if this is a distribution, add a `logpdf_fn` attribute");
             return failure();
           }
 

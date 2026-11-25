@@ -9,9 +9,9 @@ module {
   func.func private @vlogpdf(%x : tensor<3xf64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> tensor<f64>
 
   func.func @test(%rng : tensor<2xui64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> (tensor<2xui64>, tensor<f64>) {
-    %s:2 = impulse.sample @normal(%rng, %mean, %stddev) <{ logpdf = @logpdf, symbol = #impulse.symbol<1>, name="s" }> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
-    %y:2 = impulse.sample @vnormal(%s#0, %s#1, %stddev) <{ logpdf = @vlogpdf, symbol = #impulse.symbol<2>, name="y" }> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<3xf64>)
-    %t:2 = impulse.sample @normal(%y#0, %mean, %stddev) <{ logpdf = @logpdf, symbol = #impulse.symbol<3>, name="t" }> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+    %s:2 = impulse.sample @normal(%rng, %mean, %stddev) <{ logpdf_fn = @logpdf, symbol = #impulse.symbol<1>, name="s" }> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+    %y:2 = impulse.sample @vnormal(%s#0, %s#1, %stddev) <{ logpdf_fn = @vlogpdf, symbol = #impulse.symbol<2>, name="y" }> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<3xf64>)
+    %t:2 = impulse.sample @normal(%y#0, %mean, %stddev) <{ logpdf_fn = @logpdf, symbol = #impulse.symbol<3>, name="t" }> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
     return %t#0, %t#1 : tensor<2xui64>, tensor<f64>
   }
 

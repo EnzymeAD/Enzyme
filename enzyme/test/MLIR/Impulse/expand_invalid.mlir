@@ -18,7 +18,7 @@ func.func private @sampler(tensor<2xui64>) -> (tensor<2xui64>, tensor<f64>)
 func.func private @logpdf(tensor<f64>) -> tensor<f64>
 
 func.func @shifted(%rng : tensor<2xui64>) -> (tensor<2xui64>, tensor<f64>) {
-  %x:2 = impulse.sample @sampler(%rng) <{logpdf = @logpdf, symbol = #impulse.symbol<1>, support = #impulse.support<GREATER_THAN>}> : (tensor<2xui64>) -> (tensor<2xui64>, tensor<f64>)
+  %x:2 = impulse.sample @sampler(%rng) <{logpdf_fn = @logpdf, symbol = #impulse.symbol<1>, support = #impulse.support<GREATER_THAN>}> : (tensor<2xui64>) -> (tensor<2xui64>, tensor<f64>)
   return %x#0, %x#1 : tensor<2xui64>, tensor<f64>
 }
 
@@ -35,7 +35,7 @@ func.func private @sampler(tensor<2xui64>) -> (tensor<2xui64>, tensor<f64>)
 func.func private @logpdf(tensor<f64>) -> tensor<f64>
 
 func.func @inner(%rng : tensor<2xui64>) -> (tensor<2xui64>, tensor<f64>) {
-  %x:2 = impulse.sample @sampler(%rng) <{logpdf = @logpdf, symbol = #impulse.symbol<2>}> : (tensor<2xui64>) -> (tensor<2xui64>, tensor<f64>)
+  %x:2 = impulse.sample @sampler(%rng) <{logpdf_fn = @logpdf, symbol = #impulse.symbol<2>}> : (tensor<2xui64>) -> (tensor<2xui64>, tensor<f64>)
   return %x#0, %x#1 : tensor<2xui64>, tensor<f64>
 }
 

@@ -7,8 +7,8 @@ module {
   func.func private @logpdf(%x : tensor<f64>, %mean : tensor<f64>, %stddev : tensor<f64>) -> tensor<f64>
 
   func.func @model(%rng : tensor<2xui64>, %c : tensor<f64>, %idx : index, %pred : i1) -> (tensor<2xui64>, tensor<f64>) {
-    %a:2 = impulse.sample @normal(%rng, %c, %c) <{ logpdf = @logpdf, symbol = #impulse.symbol<1>, name = "a" }> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
-    %b:2 = impulse.sample @normal(%a#0, %c, %c) <{ logpdf = @logpdf, symbol = #impulse.symbol<2>, name = "b" }> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+    %a:2 = impulse.sample @normal(%rng, %c, %c) <{ logpdf_fn = @logpdf, symbol = #impulse.symbol<1>, name = "a" }> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+    %b:2 = impulse.sample @normal(%a#0, %c, %c) <{ logpdf_fn = @logpdf, symbol = #impulse.symbol<2>, name = "b" }> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
     %mu = scf.index_switch %idx -> tensor<f64>
     case 1 {
       %m1 = arith.mulf %a#1, %c : tensor<f64>
@@ -17,14 +17,14 @@ module {
     default {
       scf.yield %b#1 : tensor<f64>
     }
-    %y:2 = impulse.sample @normal(%b#0, %mu, %c) <{ logpdf = @logpdf, symbol = #impulse.symbol<3>, name = "y" }> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+    %y:2 = impulse.sample @normal(%b#0, %mu, %c) <{ logpdf_fn = @logpdf, symbol = #impulse.symbol<3>, name = "y" }> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
     %nu = scf.if %pred -> (tensor<f64>) {
       %n1 = arith.addf %b#1, %c : tensor<f64>
       scf.yield %n1 : tensor<f64>
     } else {
       scf.yield %c : tensor<f64>
     }
-    %z:2 = impulse.sample @normal(%y#0, %nu, %c) <{ logpdf = @logpdf, symbol = #impulse.symbol<4>, name = "z" }> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+    %z:2 = impulse.sample @normal(%y#0, %nu, %c) <{ logpdf_fn = @logpdf, symbol = #impulse.symbol<4>, name = "z" }> : (tensor<2xui64>, tensor<f64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
     return %z#0, %z#1 : tensor<2xui64>, tensor<f64>
   }
 

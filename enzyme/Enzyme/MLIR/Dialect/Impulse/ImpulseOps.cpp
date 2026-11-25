@@ -60,7 +60,8 @@ static LogicalResult verifyCallee(Operation *op,
 LogicalResult SampleOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   if (failed(verifyCallee(*this, symbolTable, getFnAttr(), getFnAttrName())))
     return failure();
-  return verifyCallee(*this, symbolTable, getLogpdfAttr(), getLogpdfAttrName());
+  return verifyCallee(*this, symbolTable, getLogpdfFnAttr(),
+                      getLogpdfFnAttrName());
 }
 
 LogicalResult GenerateOp::verifySymbolUses(SymbolTableCollection &symbolTable) {

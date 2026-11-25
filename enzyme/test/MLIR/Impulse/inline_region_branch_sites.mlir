@@ -11,15 +11,15 @@ module {
   }
 
   func.func @model(%rng : tensor<2xui64>, %m : tensor<f64>, %logit : tensor<f64>) -> (tensor<2xui64>, tensor<f64>) {
-    %a:2 = impulse.sample @draw(%rng, %m) <{logpdf = @lp, symbol = #impulse.symbol<1>, name = "a"}> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+    %a:2 = impulse.sample @draw(%rng, %m) <{logpdf_fn = @lp, symbol = #impulse.symbol<1>, name = "a"}> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
     %z:2 = impulse.sample(%a#0, %logit) <{dist = #impulse.dist<BERNOULLI>, symbol = #impulse.symbol<2>, name = "z"}> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
     %half = arith.constant dense<5.000000e-01> : tensor<f64>
     %p = arith.cmpf ogt, %z#1, %half : tensor<f64>
     %if:2 = impulse.if (%p) ({
-      %yo:2 = impulse.sample @draw(%z#0, %m) <{logpdf = @lp, symbol = #impulse.symbol<3>, name = "yo"}> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+      %yo:2 = impulse.sample @draw(%z#0, %m) <{logpdf_fn = @lp, symbol = #impulse.symbol<3>, name = "yo"}> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
       impulse.yield %yo#0, %yo#1 : tensor<2xui64>, tensor<f64>
     }, {
-      %yi:2 = impulse.sample @draw(%z#0, %a#1) <{logpdf = @lp, symbol = #impulse.symbol<4>, name = "yi"}> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
+      %yi:2 = impulse.sample @draw(%z#0, %a#1) <{logpdf_fn = @lp, symbol = #impulse.symbol<4>, name = "yi"}> : (tensor<2xui64>, tensor<f64>) -> (tensor<2xui64>, tensor<f64>)
       impulse.yield %yi#0, %yi#1 : tensor<2xui64>, tensor<f64>
     }) : (tensor<i1>) -> (tensor<2xui64>, tensor<f64>)
     return %if#0, %if#1 : tensor<2xui64>, tensor<f64>
