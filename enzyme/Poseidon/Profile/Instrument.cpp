@@ -263,7 +263,7 @@ size_t instrumentForProfiling(Function &clone, unsigned siteId,
       else if (origOp->getType()->isIntegerTy())
         operandValue = B.CreateSIToFP(origOp, DoubleTy);
       else
-        report_fatal_error("Unsupported operand type");
+        llvm_unreachable("isOptimizable admits only FP and integer operands");
       Value *ptr = B.CreateGEP(operandArrayType, operandArray,
                                {ConstantInt::get(Int32Ty, 0),
                                 ConstantInt::get(Int32Ty, operand.index())});

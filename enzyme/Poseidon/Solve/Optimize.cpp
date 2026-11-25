@@ -336,6 +336,42 @@ void FunctionFPState::sealUnits(Session &S) {
   }
 }
 
+// The cost change of each candidate of `units` that pricing priced, against
+// the site's own axis: an error at the site for one the axis cannot hold. A
+// joint solve's axis is no finer, its profiled cost being at least the site's.
+static Error requireCostsOnAxis(FunctionFPState &st,
+                                ArrayRef<SiteUnit *> units) {
+  if (st.profiledCost == 0.0)
+    return Error::success();
+  const CostScale scale(st.profiledCost);
+  for (SiteUnit *unit : units)
+    for (size_t i = 0; i < unit->numCandidates(); ++i) {
+      double delta;
+      if (auto *CO = dyn_cast<RewriteUnit>(unit)) {
+        if (CO->candidates[i].CompCost == std::numeric_limits<double>::max())
+          continue;
+        delta = CO->getCompCostDelta(i);
+      } else if (auto *CS = dyn_cast<PrecisionUnit>(unit)) {
+        if (CS->candidates[i].CompCost == std::numeric_limits<double>::max())
+          continue;
+        delta = CS->getCompCostDelta(i);
+      } else {
+        delta = cast<MatmulUnit>(unit)->getCompCostDelta(i);
+      }
+      if (scale.toDPCost(delta))
+        continue;
+      std::string Text;
+      raw_string_ostream(Text) << delta;
+      return userError(*st.F, st.F->getSubprogram(),
+                       unit->choiceText(i) + " changes the cost of " +
+                           st.F->getName() + " by " + Text +
+                           ", which does not fit the DP's cost axis; a "
+                           "cost-model row prices it beyond 2^30 times the "
+                           "profiled cost");
+    }
+  return Error::success();
+}
+
 // Prices the collected candidates, unless the site's DP table is read back
 // from the cache: the table already holds every price its solve used.
 static Error priceUnlessCached(Session &S, FunctionFPState &st,
@@ -355,7 +391,14 @@ static Error priceUnlessCached(Session &S, FunctionFPState &st,
     if (st.table->hit)
       return Error::success();
   }
-  return priceCandidates(st);
+  if (Error E = priceCandidates(st))
+    return E;
+  // A manual solve runs no DP; under an accuracy target the matrix products
+  // of a site solved alone go to errorBudgetSelector instead.
+  if (!O.Solver.ApplyRewrites.empty())
+    return Error::success();
+  const bool target = st.errTol > 0.0 || O.Solver.Tau > 0.0;
+  return requireCostsOnAxis(st, solvedUnits(st, target && !O.Solver.JointDP));
 }
 
 // Collects the candidates of the site F into `st` and prices them unless its

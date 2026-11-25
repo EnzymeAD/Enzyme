@@ -161,35 +161,6 @@ private:
   size_t boundIndex = 0;
 };
 
-// An error met where it cannot be returned, kept until it can be; the first
-// of several is kept.
-class DeferredError {
-public:
-  DeferredError() = default;
-  DeferredError(DeferredError &&) = default;
-  DeferredError &operator=(DeferredError &&) = default;
-  ~DeferredError() {
-    if (E)
-      llvm::consumeError(std::move(*E));
-  }
-  void set(llvm::Error New) {
-    if (E)
-      llvm::consumeError(std::move(New));
-    else
-      E = std::move(New);
-  }
-  llvm::Error take() {
-    if (!E)
-      return llvm::Error::success();
-    llvm::Error Out = std::move(*E);
-    E.reset();
-    return Out;
-  }
-
-private:
-  std::optional<llvm::Error> E;
-};
-
 // A subgraph's outputs as written, priced on its samples.
 struct BaselineAccuracy {
   struct Output {

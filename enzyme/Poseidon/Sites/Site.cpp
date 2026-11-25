@@ -17,8 +17,9 @@
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Module.h"
-#include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/Regex.h"
+
+#include <cassert>
 
 using namespace llvm;
 
@@ -85,11 +86,9 @@ static void collectHostBodies(Module &M, SmallVectorImpl<Site> &out) {
     std::optional<double> tau;
     StringRef value = F.getFnAttribute(kHostBody).getValueAsString();
     if (!value.empty()) {
-      double parsed;
-      if (value.getAsDouble(parsed))
-        report_fatal_error("Poseidon: the body " + F.getName() +
-                           " carries the accuracy target '" + value +
-                           "', which is not a number");
+      double parsed = 0.0;
+      [[maybe_unused]] const bool failed = value.getAsDouble(parsed);
+      assert(!failed && "the pass writes a body's accuracy target as a number");
       tau = parsed;
     }
     out.push_back({Site::Form::HostBody, &F, nullptr, tau});

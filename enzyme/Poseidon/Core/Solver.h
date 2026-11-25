@@ -21,10 +21,12 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/Support/Error.h"
 
 #include <cstddef>
 #include <cstdint>
 #include <map>
+#include <optional>
 
 namespace poseidon {
 
@@ -37,6 +39,35 @@ struct SolutionStep {
 
   SolutionStep(OptimizationUnit *unit, size_t candidateIndex)
       : unit(unit), candidateIndex(candidateIndex) {}
+};
+
+// An error met where it cannot be returned, kept until it can be; the first
+// of several is kept.
+class DeferredError {
+public:
+  DeferredError() = default;
+  DeferredError(DeferredError &&) = default;
+  DeferredError &operator=(DeferredError &&) = default;
+  ~DeferredError() {
+    if (E)
+      llvm::consumeError(std::move(*E));
+  }
+  void set(llvm::Error New) {
+    if (E)
+      llvm::consumeError(std::move(New));
+    else
+      E = std::move(New);
+  }
+  llvm::Error take() {
+    if (!E)
+      return llvm::Error::success();
+    llvm::Error Out = std::move(*E);
+    E.reset();
+    return Out;
+  }
+
+private:
+  std::optional<llvm::Error> E;
 };
 
 // A cost on the DP's axis. The axis is integral so that a strategy reached
@@ -55,11 +86,12 @@ public:
   // cost-model units.
   explicit CostScale(double profiledCost);
 
-  // A cost change in cost-model units over the profiled run, on the axis;
-  // aborts when the axis cannot hold it.
-  DPCost toDPCost(double delta) const;
+  // A cost change in cost-model units over the profiled run, on the axis; none
+  // when the axis cannot hold it.
+  std::optional<DPCost> toDPCost(double delta) const;
   // The share of the profiled cost `cost` stands for, and the cost a share
-  // stands for: fromShare(share(c)) == c.
+  // stands for: fromShare(share(c)) == c. A share is a -poseidon-cost-budget,
+  // which the flag check bounds by 2^30, or the share of a cost on the axis.
   double share(DPCost cost) const;
   DPCost fromShare(double share) const;
 
@@ -156,17 +188,21 @@ prunedOrder(llvm::ArrayRef<llvm::ArrayRef<OptimizationUnit *>> sites);
 // For both solvers below, `cost` and `sol` hold the empty strategy on entry, at
 // cost 0 and error 0.
 
+// Both return an error when a cost change the search reprices, or a sum of
+// changes, leaves the DP's axis: the search keeps it until it ends, and drops
+// the strategies it concerns.
+
 // The frontier of every footprint-compatible strategy over `units`, taken in
 // that order. With `progress`, a line after each unit and a closing summary.
-void solveExact(llvm::ArrayRef<OptimizationUnit *> units,
-                const CostScale &scale, CostMap &cost, SolutionMap &sol,
-                bool progress);
+llvm::Error solveExact(llvm::ArrayRef<OptimizationUnit *> units,
+                       const CostScale &scale, CostMap &cost, SolutionMap &sol,
+                       bool progress);
 
 // The frontier pruned after each unit of `units`, taken in that order. With
 // `progress`, a line after each unit counts the units of its kind done.
-void solvePruned(llvm::ArrayRef<OptimizationUnit *> units,
-                 const CostScale &scale, CostMap &cost, SolutionMap &sol,
-                 bool progress);
+llvm::Error solvePruned(llvm::ArrayRef<OptimizationUnit *> units,
+                        const CostScale &scale, CostMap &cost, SolutionMap &sol,
+                        bool progress);
 
 } // namespace poseidon
 #endif // POSEIDON_CORE_SOLVER_H

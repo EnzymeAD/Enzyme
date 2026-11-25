@@ -593,9 +593,12 @@ class Explainer {
 
   void markSteps();
   Error buildSubgraph(size_t s);
-  void buildMatmul(size_t m);
-  void addCOAlternatives(Unit &U, const Subgraph &sg);
-  void addCSAlternatives(Unit &U, const Subgraph &sg);
+  Error buildMatmul(size_t m);
+  Error addCOAlternatives(Unit &U, const Subgraph &sg);
+  Error addCSAlternatives(Unit &U, const Subgraph &sg);
+  // `cost` on the solve's axis; an error at the site when the axis cannot hold
+  // it.
+  Expected<int64_t> onAxis(double cost) const;
   void judge(Unit &U);
   std::string leftReason(const Unit &U, const Subgraph *sg);
   std::optional<int64_t> appliedDelta() const;
@@ -637,7 +640,19 @@ void Explainer::markSteps() {
   }
 }
 
-void Explainer::addCOAlternatives(Unit &U, const Subgraph &sg) {
+Expected<int64_t> Explainer::onAxis(double cost) const {
+  if (std::optional<DPCost> c = scale.toDPCost(cost))
+    return *c;
+  std::string Text;
+  raw_string_ostream(Text) << cost;
+  return userError(F, F.getSubprogram(),
+                   "a cost of " + Twine(Text) +
+                       " does not fit the DP's cost axis; a cost-model row "
+                       "prices a candidate beyond 2^30 times the profiled "
+                       "cost");
+}
+
+Error Explainer::addCOAlternatives(Unit &U, const Subgraph &sg) {
   CRendering how = rendering(sg);
   for (size_t i = 0; i < st.COs.size(); ++i) {
     RewriteUnit &CO = st.COs[i];
@@ -663,8 +678,12 @@ void Explainer::addCOAlternatives(Unit &U, const Subgraph &sg) {
           outs.push_back(k);
     std::string rdt = dtypeOfType(CO.roots.front()->getType());
     std::optional<int64_t> base;
-    if (std::isfinite(CO.initialCompCost))
-      base = scale.toDPCost(CO.initialCompCost * (double)CO.executions);
+    if (std::isfinite(CO.initialCompCost)) {
+      Expected<int64_t> c = onAxis(CO.initialCompCost * (double)CO.executions);
+      if (!c)
+        return c.takeError();
+      base = *c;
+    }
 
     auto fill = [&](Alt &A, const std::string &expr) {
       A.kind = "algebraic";
@@ -726,8 +745,12 @@ void Explainer::addCOAlternatives(Unit &U, const Subgraph &sg) {
       A.item = &CO;
       A.index = j;
       fill(A, cand.expr);
-      if (cand.CompCost != std::numeric_limits<double>::max())
-        A.costDelta = scale.toDPCost(CO.getCompCostDelta(j));
+      if (cand.CompCost != std::numeric_limits<double>::max()) {
+        Expected<int64_t> c = onAxis(CO.getCompCostDelta(j));
+        if (!c)
+          return c.takeError();
+        A.costDelta = *c;
+      }
       double acc = CO.getAccCostDelta(j);
       if (std::isfinite(acc)) {
         A.accDelta = acc;
@@ -752,9 +775,10 @@ void Explainer::addCOAlternatives(Unit &U, const Subgraph &sg) {
       U.alts.push_back(std::move(A));
     }
   }
+  return Error::success();
 }
 
-void Explainer::addCSAlternatives(Unit &U, const Subgraph &sg) {
+Error Explainer::addCSAlternatives(Unit &U, const Subgraph &sg) {
   CRendering how = rendering(sg);
   DenseMap<const FPNode *, unsigned> opIndex;
   unsigned k = 0;
@@ -844,8 +868,12 @@ void Explainer::addCSAlternatives(Unit &U, const Subgraph &sg) {
       for (unsigned o = 0; o < sg.outputs.size(); ++o)
         A.outputs.push_back(o);
       std::optional<int64_t> cost;
-      if (cand.CompCost != std::numeric_limits<double>::max())
-        cost = scale.toDPCost(CS.getCompCostDelta(j));
+      if (cand.CompCost != std::numeric_limits<double>::max()) {
+        Expected<int64_t> c = onAxis(CS.getCompCostDelta(j));
+        if (!c)
+          return c.takeError();
+        cost = *c;
+      }
       double acc = CS.getAccCostDelta(j);
       PrecisionUnit::RewriteUnitSet cos;
       for (const auto &[item, idx] : applied)
@@ -855,9 +883,13 @@ void Explainer::addCSAlternatives(Unit &U, const Subgraph &sg) {
       if (applied.count({&CS, j}) && !cos.empty()) {
         PrecisionUnit::RepriceKey key{j, cos};
         auto c = CS.compCostDeltaCache.find(key);
-        cost = c == CS.compCostDeltaCache.end()
-                   ? std::nullopt
-                   : std::optional<int64_t>(scale.toDPCost(c->second));
+        cost = std::nullopt;
+        if (c != CS.compCostDeltaCache.end()) {
+          Expected<int64_t> repriced = onAxis(c->second);
+          if (!repriced)
+            return repriced.takeError();
+          cost = *repriced;
+        }
         auto a = CS.accCostDeltaCache.find(key);
         acc = a == CS.accCostDeltaCache.end()
                   ? std::numeric_limits<double>::quiet_NaN()
@@ -883,6 +915,7 @@ void Explainer::addCSAlternatives(Unit &U, const Subgraph &sg) {
       U.alts.push_back(std::move(A));
     }
   }
+  return Error::success();
 }
 
 void Explainer::judge(Unit &U) {
@@ -1194,19 +1227,25 @@ Error Explainer::buildSubgraph(size_t s) {
     Expected<double> base = compCost(Sess.CostModel, outs, sg.inputs);
     if (!base)
       return base.takeError();
-    if (FPNode *N = nodeOf(sg.outputs[0]))
-      U.baseCost = scale.toDPCost(*base * (double)N->executions);
+    if (FPNode *N = nodeOf(sg.outputs[0])) {
+      Expected<int64_t> c = onAxis(*base * (double)N->executions);
+      if (!c)
+        return c.takeError();
+      U.baseCost = *c;
+    }
   }
 
-  addCOAlternatives(U, sg);
-  addCSAlternatives(U, sg);
+  if (Error E = addCOAlternatives(U, sg))
+    return E;
+  if (Error E = addCSAlternatives(U, sg))
+    return E;
   judge(U);
   U.left = leftReason(U, &sg);
   units.push_back(std::move(U));
   return Error::success();
 }
 
-void Explainer::buildMatmul(size_t m) {
+Error Explainer::buildMatmul(size_t m) {
   MatmulUnit &CM = st.CMs[m];
   Unit U;
   U.id = formatv("M{0}", m).str();
@@ -1226,8 +1265,12 @@ void Explainer::buildMatmul(size_t m) {
   }
   U.loc = locOf(U.root);
   U.executions = CM.executions;
-  if (CM.initialCompCost >= 0.0)
-    U.baseCost = scale.toDPCost(CM.initialCompCost * (double)CM.executions);
+  if (CM.initialCompCost >= 0.0) {
+    Expected<int64_t> c = onAxis(CM.initialCompCost * (double)CM.executions);
+    if (!c)
+      return c.takeError();
+    U.baseCost = *c;
+  }
   for (size_t j = 0; j < CM.candidates.size(); ++j) {
     const MatmulUnit::Option &o = CM.candidates[j];
     Alt A;
@@ -1237,7 +1280,10 @@ void Explainer::buildMatmul(size_t m) {
     A.item = &CM;
     A.index = j;
     A.at = U.root;
-    A.costDelta = scale.toDPCost(CM.getCompCostDelta(j));
+    Expected<int64_t> c = onAxis(CM.getCompCostDelta(j));
+    if (!c)
+      return c.takeError();
+    A.costDelta = *c;
     double acc = CM.getAccCostDelta(j);
     if (std::isfinite(acc)) {
       A.accDelta = acc;
@@ -1252,6 +1298,7 @@ void Explainer::buildMatmul(size_t m) {
   judge(U);
   U.left = leftReason(U, nullptr);
   units.push_back(std::move(U));
+  return Error::success();
 }
 
 std::optional<int64_t> Explainer::appliedDelta() const {
@@ -1299,7 +1346,8 @@ Error Explainer::build() {
     if (Error E = buildSubgraph(s))
       return E;
   for (size_t m = 0; m < st.CMs.size(); ++m)
-    buildMatmul(m);
+    if (Error E = buildMatmul(m))
+      return E;
   return Error::success();
 }
 

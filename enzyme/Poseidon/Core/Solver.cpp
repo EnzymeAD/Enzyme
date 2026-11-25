@@ -14,13 +14,14 @@
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/Support/CheckedArithmetic.h"
-#include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/Error.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
 #include <cassert>
 #include <chrono>
 #include <cmath>
+#include <limits>
 #include <optional>
 #include <string>
 #include <utility>
@@ -32,19 +33,14 @@ namespace poseidon {
 
 OptimizationUnit::~OptimizationUnit() = default;
 
-// `value` in cost-model units on the axis 2^exponent scales them to.
-static DPCost onAxis(double value, int exponent, StringRef what) {
+// `value` in cost-model units on the axis 2^exponent scales them to; none
+// when the axis cannot hold it.
+static std::optional<DPCost> onAxis(double value, int exponent) {
   double q = std::ldexp(value, exponent);
   // 2^63 is the first double past the axis; every smaller magnitude rounds
   // into it.
-  if (!(std::fabs(q) < 0x1p63)) {
-    std::string Text;
-    raw_string_ostream(Text) << value;
-    reportFatalUsageError("Poseidon: " + Twine(what) + " " + Twine(Text) +
-                          " does not fit the DP's cost axis; a cost-model row "
-                          "prices a candidate beyond 2^30 times the profiled "
-                          "cost");
-  }
+  if (!(std::fabs(q) < 0x1p63))
+    return std::nullopt;
   return std::llround(q);
 }
 
@@ -59,13 +55,13 @@ CostScale::CostScale(double profiledCost) : ProfiledCost(profiledCost) {
     Exponent = kProfiledCostLog2 - std::ilogb(profiledCost);
 }
 
-DPCost CostScale::toDPCost(double delta) const {
+std::optional<DPCost> CostScale::toDPCost(double delta) const {
   // A solve the profile never reached costs nothing and saves nothing.
   if (delta == 0.0)
     return 0;
   assert(ProfiledCost != 0.0 &&
          "a cost change in a solve whose profiled run spent nothing");
-  return onAxis(delta, Exponent, "a cost change of");
+  return onAxis(delta, Exponent);
 }
 
 double CostScale::share(DPCost cost) const {
@@ -79,17 +75,49 @@ DPCost CostScale::fromShare(double share) const {
   if (ProfiledCost == 0.0)
     return (share > 0.0) - (share < 0.0);
   assert(std::isfinite(share) && "-poseidon-cost-budget is checked finite");
-  return onAxis(share * ProfiledCost, Exponent, "a budget of");
+  // The profiled cost lies below 2^33 on the axis and a share is at most 2^30,
+  // so only rounding at the axis's end leaves it; a budget there holds every
+  // cost the axis does.
+  return onAxis(share * ProfiledCost, Exponent)
+      .value_or(share > 0.0 ? std::numeric_limits<DPCost>::max()
+                            : std::numeric_limits<DPCost>::min());
 }
 
-// a + b on the DP's axis; aborts when the sum leaves it.
-static DPCost addDPCost(DPCost a, DPCost b) {
+static Error offAxis(double delta) {
+  std::string Text;
+  raw_string_ostream(Text) << delta;
+  return make_error<StringError>(
+      "a cost change of " + Text +
+          " does not fit the DP's cost axis; a cost-model row prices a "
+          "candidate beyond 2^30 times the profiled cost",
+      inconvertibleErrorCode());
+}
+
+// a + b on the DP's axis; none, with the error kept in `deferred`, when the
+// sum leaves it.
+static std::optional<DPCost> addDPCost(DPCost a, DPCost b,
+                                       DeferredError &deferred) {
   if (std::optional<DPCost> sum = checkedAdd(a, b))
-    return *sum;
-  reportFatalUsageError("Poseidon: the cost " + Twine(a) + " + " + Twine(b) +
-                        " leaves the DP's integer cost axis; a cost-model row "
-                        "prices a candidate beyond 2^30 times the profiled "
-                        "cost");
+    return sum;
+  deferred.set(make_error<StringError>(
+      "the cost " + Twine(a) + " + " + Twine(b) +
+          " leaves the DP's integer cost axis; a cost-model row prices a "
+          "candidate beyond 2^30 times the profiled cost",
+      inconvertibleErrorCode()));
+  return std::nullopt;
+}
+
+// Candidate i's cost change on the axis, with `prior` before it; none, with
+// the error kept in `deferred`, when the axis cannot hold it.
+static std::optional<DPCost> costOnAxis(const CostScale &scale,
+                                        OptimizationUnit &unit, size_t i,
+                                        ArrayRef<SolutionStep> prior,
+                                        DeferredError &deferred) {
+  const double delta = unit.costDelta(i, prior);
+  std::optional<DPCost> cost = scale.toDPCost(delta);
+  if (!cost)
+    deferred.set(offAxis(delta));
+  return cost;
 }
 
 // Whether `a` and `b` cannot be in one strategy: they rewrite one output, or
@@ -131,7 +159,7 @@ bool overlapsConsumed(const SolutionStep &step, ArrayRef<SolutionStep> chosen) {
 // that later units would have extended.
 static bool admit(ArrayRef<SolutionStep> prior, const OptimizationUnit &unit,
                   const CostScale &scale, SmallVectorImpl<SolutionStep> &kept,
-                  DPCost &cost, double &error) {
+                  DPCost &cost, double &error, DeferredError &deferred) {
   // Only one rewrite of an output can be materialized.
   for (const SolutionStep &p : prior)
     if (p.unit->rewritesSameOutputAs(unit))
@@ -147,8 +175,13 @@ static bool admit(ArrayRef<SolutionStep> prior, const OptimizationUnit &unit,
   for (const SolutionStep &p : prior) {
     if (p.unit->consumesFootprint() && p.unit->footprintOverlaps(unit)) {
       assert(p.unit->pricedAlone() && "a displaced step is charged back alone");
-      cost = addDPCost(
-          cost, -scale.toDPCost(p.unit->costDelta(p.candidateIndex, {})));
+      std::optional<DPCost> back =
+          costOnAxis(scale, *p.unit, p.candidateIndex, {}, deferred);
+      std::optional<DPCost> charged =
+          back ? addDPCost(cost, -*back, deferred) : std::nullopt;
+      if (!charged)
+        return false;
+      cost = *charged;
       error -= p.unit->errorDelta(p.candidateIndex, {});
       continue;
     }
@@ -158,7 +191,8 @@ static bool admit(ArrayRef<SolutionStep> prior, const OptimizationUnit &unit,
 }
 
 static void paretoIntegrate(const CostScale &scale, CostMap &cost,
-                            SolutionMap &sol, OptimizationUnit &unit) {
+                            SolutionMap &sol, OptimizationUnit &unit,
+                            DeferredError &deferred) {
   CostMap newCost = cost;
   SolutionMap newSol = sol;
   for (const auto &p : cost) {
@@ -166,14 +200,19 @@ static void paretoIntegrate(const CostScale &scale, CostMap &cost,
     double currAcc = p.second;
     const SmallVector<SolutionStep> &chosen = sol[p.first];
     SmallVector<SolutionStep> priorSteps;
-    if (!admit(chosen, unit, scale, priorSteps, curr, currAcc))
+    if (!admit(chosen, unit, scale, priorSteps, curr, currAcc, deferred))
       continue;
     for (size_t i = 0; i < unit.numCandidates(); ++i) {
-      DPCost cd = scale.toDPCost(unit.costDelta(i, priorSteps));
+      std::optional<DPCost> cd =
+          costOnAxis(scale, unit, i, priorSteps, deferred);
+      std::optional<DPCost> sum =
+          cd ? addDPCost(curr, *cd, deferred) : std::nullopt;
+      if (!sum)
+        continue;
       double ad = unit.errorDelta(i, priorSteps);
       // Compared against the post-displacement point, so a displacement that
       // gives back more than the candidate saves is dropped.
-      DPCost nc = addDPCost(curr, cd);
+      DPCost nc = *sum;
       if (nc >= p.first && currAcc + ad >= p.second)
         continue;
       double na = currAcc + ad;
@@ -276,7 +315,8 @@ public:
   using Bucket = std::map<DPCost, Entry>;
   using Table = std::map<Signature, Bucket>;
 
-  ExactDP(ArrayRef<OptimizationUnit *> units, const CostScale &scale);
+  ExactDP(ArrayRef<OptimizationUnit *> units, const CostScale &scale,
+          DeferredError &deferred);
   // The table after unit `k`, from the table before it.
   Table step(int k, const Table &table) const;
 
@@ -291,6 +331,7 @@ private:
 
   ArrayRef<OptimizationUnit *> units;
   const CostScale &scale;
+  DeferredError &deferred;
   // The last unit reading a canonical unit, -1 for none; the canonical unit of
   // each unit, the first with the same rewrite target.
   SmallVector<int> lastRead, canon;
@@ -323,9 +364,10 @@ static void pruneBucket(ExactDP::Bucket &b) {
   }
 }
 
-ExactDP::ExactDP(ArrayRef<OptimizationUnit *> units, const CostScale &scale)
-    : units(units), scale(scale), lastRead(units.size(), -1),
-      canon(units.size()) {
+ExactDP::ExactDP(ArrayRef<OptimizationUnit *> units, const CostScale &scale,
+                 DeferredError &deferred)
+    : units(units), scale(scale), deferred(deferred),
+      lastRead(units.size(), -1), canon(units.size()) {
   const int n = units.size();
   for (int u = 0; u < n; ++u) {
     unitIndex[units[u]] = u;
@@ -394,10 +436,10 @@ ExactDP::Table ExactDP::step(int k, const Table &table) const {
     if (!priced)
       continue;
     const auto &[sig, bucket] = entry;
-    SmallVector<DPCost> dc;
+    SmallVector<std::optional<DPCost>> dc;
     SmallVector<double> da;
     for (size_t i = 0; i < unit.numCandidates(); ++i) {
-      dc.push_back(scale.toDPCost(unit.costDelta(i, *priced)));
+      dc.push_back(costOnAxis(scale, unit, i, *priced, deferred));
       da.push_back(unit.errorDelta(i, *priced));
     }
     Signature taken = stillRead(sig, k);
@@ -411,8 +453,12 @@ ExactDP::Table ExactDP::step(int k, const Table &table) const {
       steps.assign(e.steps.begin(), e.steps.end());
       steps.push_back(SolutionStep(&unit, 0));
       for (size_t i = 0; i < unit.numCandidates(); ++i) {
+        std::optional<DPCost> sum =
+            dc[i] ? addDPCost(c, *dc[i], deferred) : std::nullopt;
+        if (!sum)
+          continue;
         steps.back().candidateIndex = i;
-        insertEntry(into, addDPCost(c, dc[i]), e.acc + da[i], steps);
+        insertEntry(into, *sum, e.acc + da[i], steps);
       }
     }
   }
@@ -421,10 +467,11 @@ ExactDP::Table ExactDP::step(int k, const Table &table) const {
   return next;
 }
 
-void solveExact(ArrayRef<OptimizationUnit *> units, const CostScale &scale,
-                CostMap &cost, SolutionMap &sol, bool progress) {
+Error solveExact(ArrayRef<OptimizationUnit *> units, const CostScale &scale,
+                 CostMap &cost, SolutionMap &sol, bool progress) {
   const int n = units.size();
-  ExactDP dp(units, scale);
+  DeferredError deferred;
+  ExactDP dp(units, scale, deferred);
   ExactDP::Table table;
   insertEntry(table[ExactDP::Signature()], cost.begin()->first,
               cost.begin()->second, sol.begin()->second);
@@ -458,21 +505,22 @@ void solveExact(ArrayRef<OptimizationUnit *> units, const CostScale &scale,
   const double secs =
       std::chrono::duration<double>(std::chrono::steady_clock::now() - start)
           .count();
-  if (!progress)
-    return;
-  llvm::errs() << "[poseidon] Exact DP: " << cost.size()
-               << " frontier points; peak " << peak << " entries in "
-               << peakSignatures << " signatures; " << pricings
-               << " precision changes priced; " << secs << " s\n";
+  if (progress)
+    llvm::errs() << "[poseidon] Exact DP: " << cost.size()
+                 << " frontier points; peak " << peak << " entries in "
+                 << peakSignatures << " signatures; " << pricings
+                 << " precision changes priced; " << secs << " s\n";
+  return deferred.take();
 }
 
-void solvePruned(ArrayRef<OptimizationUnit *> units, const CostScale &scale,
-                 CostMap &cost, SolutionMap &sol, bool progress) {
+Error solvePruned(ArrayRef<OptimizationUnit *> units, const CostScale &scale,
+                  CostMap &cost, SolutionMap &sol, bool progress) {
+  DeferredError deferred;
   StringMap<std::pair<size_t, size_t>> counts;
   for (const OptimizationUnit *unit : units)
     ++counts[unit->kindName()].second;
   for (OptimizationUnit *unit : units) {
-    paretoIntegrate(scale, cost, sol, *unit);
+    paretoIntegrate(scale, cost, sol, *unit, deferred);
     paretoPrune(cost, sol);
     if (!progress)
       continue;
@@ -482,6 +530,7 @@ void solvePruned(ArrayRef<OptimizationUnit *> units, const CostScale &scale,
                  << " unit(s); the DP table has " << cost.size()
                  << " point(s)\n";
   }
+  return deferred.take();
 }
 
 } // namespace poseidon

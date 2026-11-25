@@ -583,7 +583,7 @@ Function *canonicalize(Function &F) {
 
   if (verifyFunction(*NewF, &llvm::errs())) {
     llvm::errs() << *NewF << '\n';
-    report_fatal_error("Poseidon canonicalized function failed verification");
+    reportFatalInternalError("Poseidon: a canonical clone does not verify");
   }
   return NewF;
 }

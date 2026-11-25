@@ -502,12 +502,14 @@ solveSites(Session &S, ArrayRef<FunctionFPState *> sites,
     // Each prune also compares partial solutions a later unit treats
     // differently (a CS is priced against the COs chosen on its subgraph), so
     // the pruned frontier can miss points the exact solve finds.
-    if (!O.Solver.EarlyPrune)
-      solveExact(solveOrder(O, units), scale, costToAccuracyMap,
-                 costToSolutionMap, /*progress=*/print);
-    else
-      solvePruned(solveOrder(O, units), scale, costToAccuracyMap,
-                  costToSolutionMap, /*progress=*/print);
+    Error searched =
+        !O.Solver.EarlyPrune
+            ? solveExact(solveOrder(O, units), scale, costToAccuracyMap,
+                         costToSolutionMap, /*progress=*/print)
+            : solvePruned(solveOrder(O, units), scale, costToAccuracyMap,
+                          costToSolutionMap, /*progress=*/print);
+    if (searched)
+      return std::move(searched);
     for (ArrayRef<SiteUnit *> site : units)
       for (SiteUnit *unit : site)
         if (Error E = unit->takePricingError())

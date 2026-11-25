@@ -122,10 +122,11 @@ void diagnose(const llvm::Function &F, const llvm::DiagnosticLocation &Loc,
 // once through diagnoseUserErrors, leaves the module valid, and marks the
 // session stopped, so that the session's later passes leave the module as it
 // is. The compile fails through the diagnostic handler's error count, and the
-// process that loaded the plugin is never ended by the pass. The one error
-// held rather than returned is a DeferredError (Techniques/Unit.h): the DP's
-// repricing of a candidate runs inside the search, which cannot unwind, so the
-// first error it meets is kept and solveSites returns it after the search.
+// process that loaded the plugin is never ended by the pass. The one place an
+// error is held rather than returned is the DP's search, which cannot unwind:
+// a DeferredError (Core/Solver.h) keeps the first one it meets, a repricing
+// that fails or a cost that leaves the DP's axis, and solveSites returns it
+// after the search.
 class UserError : public llvm::ErrorInfo<UserError> {
 public:
   static char ID;

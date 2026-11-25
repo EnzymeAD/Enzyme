@@ -32,7 +32,10 @@
 ; RUN: (cat %cost_models/cm_cpu_native.csv; echo '# native_arch=x86-64') > %t/repeated.csv
 ; RUN: not %{opt} -passes="poseidon,poseidon-finalize" -poseidon-cost-model=%t/repeated.csv -poseidon-cache=%t/repeated 2>&1 \
 ; RUN:   | FileCheck --check-prefix=REPEATED -DLINE=$(wc -l < %t/repeated.csv) %s
-; The measured CSV is the only price source. A model whose native_arch matches the function's target-cpu is consumed as is (2 FP64 ops at 4 = 8); a model missing a required row, a model measured on another device, a model with no native_arch header, a model with a row twice, a line that is not a row, a row of no family Poseidon reads or with a price that is not a finite non-negative number, a header given twice, a scalar type that is no format, and no model at all each stop the compile with an error instead of substituting a price.
+; RUN: sed 's/^fadd,float,1$/fadd,float,1e12/' %cost_models/cm_cpu_native.csv > %t/axis.csv
+; RUN: not %{opt} -passes="poseidon,poseidon-finalize" -poseidon-cost-model=%t/axis.csv -poseidon-cache=%t/axis 2>&1 \
+; RUN:   | FileCheck --check-prefix=AXIS %s
+; The measured CSV is the only price source. A model whose native_arch matches the function's target-cpu is consumed as is (2 FP64 ops at 4 = 8); a model missing a required row, a model measured on another device, a model with no native_arch header, a model with a row twice, a line that is not a row, a row of no family Poseidon reads or with a price that is not a finite non-negative number, a header given twice, a scalar type that is no format, and no model at all each stop the compile with an error instead of substituting a price. So does a row that prices a candidate's cost change beyond what the DP's cost axis holds.
 
 define double @tester_a(double %x, double %y) #0 {
 entry:
@@ -87,3 +90,6 @@ attributes #0 = { "target-cpu"="x86-64" }
 
 ; REPEATED: error: {{.*}}Poseidon: cost model {{.*}}repeated.csv line [[LINE]] repeats the '# native_arch=' header{{$}}
 ; SHORT-NOT: [poseidon] Finished Optimization
+
+; AXIS: error: {{.*}}in function preprocess_tester_a {{.*}}: Poseidon: precision change All FP64(0%) + FP32(100%) (#0) changes the cost of preprocess_tester_a by 6.400000e+13, which does not fit the DP's cost axis; a cost-model row prices it beyond 2^30 times the profiled cost{{$}}
+; AXIS-NOT: [poseidon] Finished Optimization
