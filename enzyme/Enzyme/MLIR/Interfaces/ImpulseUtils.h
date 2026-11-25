@@ -113,6 +113,10 @@ SmallVector<Value> cloneBlockBody(OpBuilder &builder, Block &block,
 SmallVector<Value> cloneBlockBody(OpBuilder &builder, Block &block,
                                   ValueRange args);
 
+/// Creates the body block of `forOp`, whose arguments are the iteration index
+/// and the carried values, and moves the insertion point to its start.
+Block *createForBody(OpBuilder &builder, ForOp forOp);
+
 /// Returns `value` passed through an `enzyme.dump` labeled `label` when
 /// `debugDump` is set, else `value` itself.
 Value conditionalDump(OpBuilder &builder, Location loc, Value value,

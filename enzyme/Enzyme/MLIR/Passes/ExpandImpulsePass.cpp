@@ -1122,13 +1122,7 @@ MCMCChainEmitter::emitWarmup(const ChainPoint &start, Value stepSize,
       impulse::ForOp::create(builder, loc, warmupLoopTypes, schedule.zero,
                              numWarmupConst, schedule.one, init.toValues());
 
-  Block *warmupBody = builder.createBlock(&warmupLoop.getRegion());
-  warmupBody->addArgument(i64TensorType, loc);
-  for (Type type : warmupLoopTypes)
-    warmupBody->addArgument(type, loc);
-
-  builder.setInsertionPointToStart(warmupBody);
-
+  Block *warmupBody = createForBody(builder, warmupLoop);
   Value iteration = warmupBody->getArgument(0);
   if (Value warmupOffset =
           chainStateInSlot(state_slot::kWarmupOffset, chainIdx))
@@ -1348,12 +1342,7 @@ ChainResult MCMCChainEmitter::emitSampling(ChainPoint &state, Value stepSize,
       ValueRange{state.q, state.grad, state.potentialEnergy, state.rng,
                  samplesBuffer, diagnosticsBuffer, logDensityBuffer});
 
-  Block *loopBody = builder.createBlock(&forLoopOp.getRegion());
-  loopBody->addArgument(i64TensorType, loc);
-  for (Type type : loopResultTypes)
-    loopBody->addArgument(type, loc);
-
-  builder.setInsertionPointToStart(loopBody);
+  Block *loopBody = createForBody(builder, forLoopOp);
   Value iterIdx = loopBody->getArgument(0);
   ChainPoint chainLoop = {loopBody->getArgument(1), loopBody->getArgument(2),
                           loopBody->getArgument(3), loopBody->getArgument(4)};
@@ -2402,15 +2391,6 @@ static MHProposal proposeFlatMove(OpBuilder &b, Location loc, OpT op,
   auto [weight, correction] = unpackHastingsWeight(b, loc, regen.getWeight());
   return {regen.getNewTrace(), weight, correction, regen.getOutputs()[0],
           /*logRatio=*/Value()};
-}
-
-/// Creates the body block of `forOp`, whose arguments are the iteration index
-/// and the carried values, and moves the insertion point to its start.
-static Block *createForBody(OpBuilder &builder, impulse::ForOp forOp) {
-  SmallVector<Type> types{forOp.getLowerBound().getType()};
-  llvm::append_range(types, forOp.getResultTypes());
-  SmallVector<Location> locs(types.size(), forOp.getLoc());
-  return builder.createBlock(&forOp.getRegion(), {}, types, locs);
 }
 
 /// Emits `step` `count` times, each time on the values the previous step

@@ -247,6 +247,13 @@ SmallVector<Value> impulse::cloneBlockBody(OpBuilder &builder, Block &block,
   return cloneBlockBody(builder, block, mapping);
 }
 
+Block *impulse::createForBody(OpBuilder &builder, ForOp forOp) {
+  SmallVector<Type> types{forOp.getLowerBound().getType()};
+  llvm::append_range(types, forOp.getResultTypes());
+  SmallVector<Location> locs(types.size(), forOp.getLoc());
+  return builder.createBlock(&forOp.getRegion(), {}, types, locs);
+}
+
 Value impulse::conditionalDump(OpBuilder &builder, Location loc, Value value,
                                StringRef label, bool debugDump) {
   if (debugDump) {

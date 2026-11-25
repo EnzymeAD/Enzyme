@@ -892,12 +892,7 @@ MCMCKernelResult impulse::SampleHMC(OpBuilder &builder, Location loc,
                              ValueRange{start.q, p0, start.grad,
                                         start.potentialEnergy, rngTransition});
 
-  Block *loopBody = builder.createBlock(&forLoopOp.getRegion());
-  loopBody->addArgument(i64TensorType, loc);
-  for (Type type : loopResultTypes)
-    loopBody->addArgument(type, loc);
-
-  builder.setInsertionPointToStart(loopBody);
+  Block *loopBody = createForBody(builder, forLoopOp);
   auto qLoop = loopBody->getArgument(1);
   auto pLoop = loopBody->getArgument(2);
   auto gradLoop = loopBody->getArgument(3);

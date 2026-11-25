@@ -616,7 +616,6 @@ static SVILoopResult emitSVILoop(OpBuilder &builder, Location loc,
   auto traceBufType =
       RankedTensorType::get({ctx.numSteps, ctx.positionSize}, elemType);
   auto elboBufType = RankedTensorType::get({ctx.numSteps}, elemType);
-  auto i64Type = RankedTensorType::get({}, builder.getI64Type());
   size_t numParams = params0.size();
 
   Value c0i = emitI64ScalarConstant(builder, loc, 0);
@@ -650,10 +649,7 @@ static SVILoopResult emitSVILoop(OpBuilder &builder, Location loc,
 
   auto forOp =
       impulse::ForOp::create(builder, loc, iterTypes, c0i, cNi, c1i, iterArgs);
-  Block *body = builder.createBlock(&forOp.getRegion());
-  body->addArgument(i64Type, loc);
-  for (Type type : iterTypes)
-    body->addArgument(type, loc);
+  Block *body = createForBody(builder, forOp);
 
   Value iter = body->getArgument(0);
   ValueRange iterValues = body->getArguments().drop_front();
@@ -663,62 +659,57 @@ static SVILoopResult emitSVILoop(OpBuilder &builder, Location loc,
   Value elboBufIter = iterValues[numParams + kElboBuf];
   ValueRange slots = iterValues.drop_front(numParams + kNumFixed);
 
-  {
-    OpBuilder::InsertionGuard guard(builder);
-    builder.setInsertionPointToStart(body);
+  auto updateSplit = impulse::RandomSplitOp::create(
+      builder, loc, TypeRange{rng0.getType(), rng0.getType()}, rngIter);
+  Value rngNext = updateSplit.getResult(0);
+  Value rngStep = updateSplit.getResult(1);
 
-    auto updateSplit = impulse::RandomSplitOp::create(
-        builder, loc, TypeRange{rng0.getType(), rng0.getType()}, rngIter);
-    Value rngNext = updateSplit.getResult(0);
-    Value rngStep = updateSplit.getResult(1);
+  ValueAndGradient estimate =
+      averageParticles(builder, loc, params, rngStep, ctx, emitParticle);
 
-    ValueAndGradient estimate =
-        averageParticles(builder, loc, params, rngStep, ctx, emitParticle);
-
-    Value step = arith::AddIOp::create(builder, loc, iter, initStepCount);
-    SmallVector<Value> newParams, newSlots;
-    for (size_t i = 0; i < numParams; ++i) {
-      ParamState next =
-          applyOptimizer(builder, loc, ctx, step, params[i], estimate.grads[i],
-                         slots[2 * i], slots[2 * i + 1]);
-      newParams.push_back(next.param);
-      newSlots.append({next.m, next.v});
-    }
-
-    // A step that is not finite keeps the previous parameters and optimizer
-    // state; its ELBO is still recorded and the key still advances.
-    if (ctx.stableUpdate) {
-      Value isFinite = computeIsFiniteForStableUpdate(
-          builder, loc, estimate.value, estimate.grads);
-      auto keepIfFinite = [&](Value next, Value prev) -> Value {
-        return impulse::SelectOp::create(builder, loc, prev.getType(), isFinite,
-                                         next, prev);
-      };
-      for (auto [next, prev] : llvm::zip_equal(newParams, params))
-        next = keepIfFinite(next, prev);
-      for (auto [next, prev] : llvm::zip_equal(newSlots, slots))
-        next = keepIfFinite(next, prev);
-    }
-
-    Value recorded = newParams.front();
-    if (recordConstrained)
-      recorded = constrainPosition(builder, loc, recorded, ctx.supports);
-    Value recordedRow = impulse::ReshapeOp::create(
-        builder, loc, ctx.getPositionType(), recorded);
-    Value traceBufNew = impulse::DynamicUpdateSliceOp::create(
-        builder, loc, traceBufType, traceBufIter, recordedRow,
-        ValueRange{iter, c0i});
-
-    Value elbo1d = impulse::ReshapeOp::create(
-        builder, loc, RankedTensorType::get({1}, elemType), estimate.value);
-    Value elboBufNew = impulse::DynamicUpdateSliceOp::create(
-        builder, loc, elboBufType, elboBufIter, elbo1d, ValueRange{iter});
-
-    SmallVector<Value> yielded(newParams);
-    yielded.append({rngNext, traceBufNew, elboBufNew, estimate.value});
-    llvm::append_range(yielded, newSlots);
-    impulse::YieldOp::create(builder, loc, yielded);
+  Value step = arith::AddIOp::create(builder, loc, iter, initStepCount);
+  SmallVector<Value> newParams, newSlots;
+  for (size_t i = 0; i < numParams; ++i) {
+    ParamState next =
+        applyOptimizer(builder, loc, ctx, step, params[i], estimate.grads[i],
+                       slots[2 * i], slots[2 * i + 1]);
+    newParams.push_back(next.param);
+    newSlots.append({next.m, next.v});
   }
+
+  // A step that is not finite keeps the previous parameters and optimizer
+  // state; its ELBO is still recorded and the key still advances.
+  if (ctx.stableUpdate) {
+    Value isFinite = computeIsFiniteForStableUpdate(
+        builder, loc, estimate.value, estimate.grads);
+    auto keepIfFinite = [&](Value next, Value prev) -> Value {
+      return impulse::SelectOp::create(builder, loc, prev.getType(), isFinite,
+                                       next, prev);
+    };
+    for (auto [next, prev] : llvm::zip_equal(newParams, params))
+      next = keepIfFinite(next, prev);
+    for (auto [next, prev] : llvm::zip_equal(newSlots, slots))
+      next = keepIfFinite(next, prev);
+  }
+
+  Value recorded = newParams.front();
+  if (recordConstrained)
+    recorded = constrainPosition(builder, loc, recorded, ctx.supports);
+  Value recordedRow =
+      impulse::ReshapeOp::create(builder, loc, ctx.getPositionType(), recorded);
+  Value traceBufNew = impulse::DynamicUpdateSliceOp::create(
+      builder, loc, traceBufType, traceBufIter, recordedRow,
+      ValueRange{iter, c0i});
+
+  Value elbo1d = impulse::ReshapeOp::create(
+      builder, loc, RankedTensorType::get({1}, elemType), estimate.value);
+  Value elboBufNew = impulse::DynamicUpdateSliceOp::create(
+      builder, loc, elboBufType, elboBufIter, elbo1d, ValueRange{iter});
+
+  SmallVector<Value> yielded(newParams);
+  yielded.append({rngNext, traceBufNew, elboBufNew, estimate.value});
+  llvm::append_range(yielded, newSlots);
+  impulse::YieldOp::create(builder, loc, yielded);
 
   builder.setInsertionPointAfter(forOp);
 
