@@ -18,10 +18,11 @@
 // RUN: env POSEIDON_PROFILE_DIR=%t/prof0 %t/gen0 > %t/gen0.out
 // RUN: diff %t/stock.out %t/gen0.out
 // RUN: %poseidon_clangxx -O0 -poseidon-profile-use=%t/prof0 -poseidon-tau=1e-6 -poseidon-cost-model=%host_cost_model -poseidon-enable-rewrite=0 -poseidon-cache=%t/c0 %s %t/other.o -poseidon-print -o %t/use0 2>&1 | FileCheck --check-prefix=LEVEL %s
-// RUN: %poseidon_clangxx -O3 -poseidon-profile-generate -poseidon-cache=%t/c3 %s %t/other.o -o %t/gen3
+// RUN: %poseidon_clangxx -O3 -poseidon-profile-generate -poseidon-cache=%t/c3 %s %t/other.o -o %t/gen3 2>&1 | count 0
 // RUN: env POSEIDON_PROFILE_DIR=%t/prof3 %t/gen3 > %t/gen3.out
 // RUN: diff %t/stock.out %t/gen3.out
 // RUN: %poseidon_clangxx -O3 -poseidon-profile-use=%t/prof3 -poseidon-tau=1e-6 -poseidon-cost-model=%host_cost_model -poseidon-enable-rewrite=0 -poseidon-cache=%t/c3 %s %t/other.o -poseidon-print -o %t/use3 2>&1 | FileCheck --check-prefix=LEVEL %s
+// RUN: %poseidon_clangxx -O3 -poseidon-profile-use=%t/prof3 -poseidon-tau=1e-6 -poseidon-cost-model=%host_cost_model -poseidon-enable-rewrite=0 -poseidon-cache=%t/c3q %s %t/other.o -o %t/use3q 2>&1 | count 0
 
 // POSEIDON_OPTIMIZE on host functions: a free function called directly,
 // through a pointer and from another translation unit, a member function, a

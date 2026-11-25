@@ -7,7 +7,7 @@
 // RUN: %{clang} --offload-arch=%amdgpu_arch -S -emit-llvm -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c -mllvm -poseidon-compilation-id=ir -mllvm -poseidon-print -o %t/gen.ll 2>&1 \
 // RUN:   | FileCheck --check-prefix=GEN %s
 // RUN: FileCheck --check-prefix=GENIR %s < %t/gen.ll
-// RUN: %{clang} --offload-arch=%amdgpu_arch --no-gpu-bundle-output -c -Xclang -mllvm -Xclang -poseidon-profile-generate -Xclang -mllvm -Xclang -poseidon-cache=%t/c -Xclang -mllvm -Xclang -poseidon-compilation-id=object -o %t/gen.co
+// RUN: %{clang} --offload-arch=%amdgpu_arch --no-gpu-bundle-output -c -Xclang -mllvm -Xclang -poseidon-profile-generate -Xclang -mllvm -Xclang -poseidon-cache=%t/c -Xclang -mllvm -Xclang -poseidon-compilation-id=object -o %t/gen.co 2>&1 | count 0
 // RUN: llvm-readelf --dyn-syms %t/gen.co | FileCheck --check-prefix=CO %s
 
 // A site whose marked body is a forward-mode derivative request, in AMDGPU

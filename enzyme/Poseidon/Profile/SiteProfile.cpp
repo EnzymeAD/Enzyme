@@ -426,7 +426,8 @@ static void emitProfiledBody(Function &P, Function &K, Function &clone,
     // aggregate with each pointer replaced by its shadow.
     Value *sh = nullptr;
     if (first->offset < 0) {
-      sh = P.getArg(shadow++);
+      sh = B.CreatePointerBitCastOrAddrSpaceCast(P.getArg(shadow++),
+                                                 a->getType());
     } else if (Type *T = K.getArg(i)->hasByValAttr()
                              ? K.getParamByValType(i)
                              : K.getArg(i)->getParamByRefType()) {

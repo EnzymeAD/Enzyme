@@ -4,7 +4,7 @@
 ; RUN: rm -rf %t && mkdir %t
 ; RUN: sed 's/ozaki_stub\.cu/tcec_matmul.cu/g' %S/../Inputs/library_call/ozaki_stub_host.ll > %t/same.ll
 ; RUN: sed 's/ozaki_stub\.cu/other_matmul.cu/g' %S/../Inputs/library_call/ozaki_stub_host.ll > %t/other.ll
-; RUN: %opt %S/../Inputs/stale_cache/matmul_device.ll %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-profile-use=%S/../Inputs/matmul_site_profile -poseidon-enable-rewrite=false -poseidon-enable-precision=false -poseidon-enable-matmul -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv -poseidon-tau=1e-12 -poseidon-cache=%t/c -poseidon-compilation-id=u -S -o /dev/null 2>&1 | FileCheck --check-prefix=DEV %s
+; RUN: %opt %S/../Inputs/stale_cache/matmul_device.ll %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-profile-use=%S/../Inputs/matmul_site_profile -poseidon-enable-rewrite=false -poseidon-enable-precision=false -poseidon-enable-matmul -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv -poseidon-tau=1e-12 -poseidon-cache=%t/c -poseidon-compilation-id=u -S -o /dev/null
 ; RUN: %{clang} %t/same.ll -mllvm -poseidon-compilation-id=u -mllvm -poseidon-print 2>&1 | FileCheck --check-prefix=SAME %s
 ; RUN: %{clang} %t/other.ll -mllvm -poseidon-compilation-id=u 2>&1 | FileCheck --check-prefixes=OTHER,KEPT --implicit-check-not=__poseidon_ozakiii_dgemm --implicit-check-not='call {{.*}}@cudaLaunchKernel(' %s
 ; RUN: %{clang} %t/same.ll -mllvm -poseidon-compilation-id=v 2>&1 | FileCheck --check-prefixes=OTHERUNIT,KEPT --implicit-check-not=__poseidon_ozakiii_dgemm --implicit-check-not='call {{.*}}@cudaLaunchKernel(' %s
@@ -15,8 +15,6 @@
 ; the same mangled name, must not, and neither must the host compile of
 ; tcec_matmul.cu as unit v. The halves are compiled with different options, so
 ; every compile names its unit.
-
-; DEV: [poseidon] wrote descriptor for _Z13matmul_kernelPKdS0_PdS1_: C=arg2 A=arg0 B=arg1 16x16x16 nm=12 (standalone)
 
 ; SAME: [poseidon] replaced the launch in stub _Z28__device_stub__matmul_kernelPKdS0_PdS1_ with __poseidon_ozakiii_dgemm (C=arg2 A=arg0 B=arg1){{$}}
 ; SAME-LABEL: define {{.*}} @_Z28__device_stub__matmul_kernelPKdS0_PdS1_(

@@ -1,6 +1,6 @@
 // REQUIRES: enzyme, amdgpu-registered-target, rocm
 // RUN: rm -rf %t && mkdir -p %t/drv %t/drv-rdc
-// RUN: %poseidon_clangxx -x hip --offload-arch=%amdgpu_arch --rocm-path=%rocm_path -O2 -c -poseidon-profile-generate -poseidon-cache=%t/drv/c %s -o %t/drv/k.o
+// RUN: %poseidon_clangxx -x hip --offload-arch=%amdgpu_arch --rocm-path=%rocm_path -O2 -c -poseidon-profile-generate -poseidon-cache=%t/drv/c %s -o %t/drv/k.o 2>&1 | count 0
 // RUN: cd %t/drv && llvm-objdump --offloading k.o > /dev/null && llvm-readelf --dyn-syms k.o.*%amdgpu_arch | FileCheck --check-prefix=CO --implicit-check-not=__enzyme %s
 // RUN: %poseidon_clangxx -x hip --offload-arch=%amdgpu_arch --rocm-path=%rocm_path -fgpu-rdc -O2 -c -poseidon-profile-generate -poseidon-cache=%t/drv-rdc/c %s -o %t/drv-rdc/k.o
 // RUN: llvm-offload-binary %t/drv-rdc/k.o --image=file=%t/drv-rdc/dev.bc,arch=%amdgpu_arch

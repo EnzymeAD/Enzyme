@@ -256,9 +256,10 @@ static Expected<std::optional<double>> priceInKernelRaiseFromMeasuredRow(
                        "-poseidon-pin. Uncalibrated in-kernel "
                        "classes are proposed at a placeholder price under "
                        "that flag, and a DP solve must never see one.");
-    llvm::errs() << "[poseidon] calibration mode: " << what
-                 << " has no measured inkernel_rel," << cls
-                 << " row; proposing it at rel=1 to be timed\n";
+    if (O.Diagnostics.Print)
+      llvm::errs() << "[poseidon] calibration mode: " << what
+                   << " has no measured inkernel_rel," << cls
+                   << " row; proposing it at rel=1 to be timed\n";
     return std::optional<double>(baselinePerMac);
   }
   if (Error E = reportMissingRow(S, m, what, "inkernel_rel," + cls, kCalibrate))

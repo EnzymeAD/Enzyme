@@ -203,8 +203,9 @@ Error writeLaunchManifest(const Options &O, LaunchManifest &L,
   if (Error E = writeCacheEntry(m.path, m.key, std::move(value)))
     return cannot("write", toString(std::move(E)));
   for (LaunchKind kind : kKinds) {
-    for (const auto &[kernel, r] : recorded(L, kind))
-      errs() << r.message;
+    if (O.Diagnostics.Print)
+      for (const auto &[kernel, r] : recorded(L, kind))
+        errs() << r.message;
     recorded(L, kind).clear();
   }
   L.ProfileHeaders.clear();

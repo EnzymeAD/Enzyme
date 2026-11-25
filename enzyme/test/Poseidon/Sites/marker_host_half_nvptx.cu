@@ -3,7 +3,8 @@
 // DEFINE:   -I%poseidon_profile_inc %s
 // DEFINE: %{host} = %{clang} --cuda-host-only -mllvm -poseidon-compilation-id=u
 // RUN: rm -rf %t && mkdir %t
-// RUN: %{clang} --cuda-device-only --cuda-gpu-arch=%gpu_arch %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-compilation-id=u -mllvm -poseidon-cache=%t/c -o %t/dev.ll
+// RUN: %{clang} --cuda-device-only --cuda-gpu-arch=%gpu_arch %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-compilation-id=u -mllvm -poseidon-cache=%t/c -o %t/dev.ll 2>&1 \
+// RUN:   | FileCheck --allow-empty --check-prefix=QUIET %s
 // RUN: %{host} %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/c -o %t/gen.ll 2>&1 \
 // RUN:   | FileCheck --allow-empty --check-prefix=QUIET %s
 // RUN: FileCheck --check-prefixes=CALLS,STUB --implicit-check-not=__poseidon_fp_optimize --implicit-check-not=__enzyme_fp_optimize --implicit-check-not=__enzyme_autodiff %s < %t/gen.ll

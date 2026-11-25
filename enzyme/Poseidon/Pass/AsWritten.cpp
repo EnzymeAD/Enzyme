@@ -190,6 +190,12 @@ static bool takeRewritten(Module &T, ArrayRef<Function *> rewritten) {
   }
   if (refs.mismatch)
     return false;
+  // Cloning into another module adds llvm.dbg.cu even when no compile unit
+  // comes along. Bitcode with an empty one and no debug-info version is
+  // stripped of its debug info, with a warning, wherever it is read again.
+  if (NamedMDNode *units = T.getNamedMetadata("llvm.dbg.cu");
+      units && !units->getNumOperands())
+    T.eraseNamedMetadata(units);
 
   SmallVector<WeakVH, 16> maybeDead;
   for (auto [own, NF] : replaced) {

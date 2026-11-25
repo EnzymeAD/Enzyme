@@ -1,7 +1,9 @@
 // REQUIRES: amdgpu-registered-target, rocm
-// RUN: rm -rf %t && mkdir -p %t/fpc %t/use %t/refused %t/fpc.thin %t/use.thin
+// RUN: rm -rf %t && mkdir -p %t/fpc %t/use %t/refused %t/fpc.thin %t/use.thin %t/quiet
 // RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path -cuid=0 -O2 -ffp-contract=on -c -DNO_SITE %s -o %t/fpc/k.o
 // RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path -cuid=0 -O2 -ffp-contract=on -c -I%poseidon_profile_inc %loadClangPoseidon -Xclang -mllvm -Xclang -poseidon-profile-use=%S/Inputs/rewritten_lto_hip -Xclang -mllvm -Xclang -poseidon-cost-model=%cost_models/cm_gfx942_synthetic.csv -Xclang -mllvm -Xclang -poseidon-enable-rewrite=0 -Xclang -mllvm -Xclang -poseidon-cache=%t/c -Xclang -mllvm -Xclang -poseidon-print %s -o %t/use/k.o 2>&1 | FileCheck --check-prefix=SOLVE %s
+// RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path -cuid=0 -O2 -ffp-contract=on -c -DONE_SITE -I%poseidon_profile_inc %loadClangPoseidon -Xclang -mllvm -Xclang -poseidon-profile-use=%S/Inputs/rewritten_lto_hip -Xclang -mllvm -Xclang -poseidon-cost-model=%cost_models/cm_gfx942_synthetic.csv -Xclang -mllvm -Xclang -poseidon-enable-rewrite=0 -Xclang -mllvm -Xclang -poseidon-cache=%t/c.quiet %s -o %t/quiet/k.o 2>&1 | count 0
+// RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path -cuid=0 -O2 -ffp-contract=on -c -DONE_SITE -DSITE_TAU=1e-18 -I%poseidon_profile_inc %loadClangPoseidon -Xclang -mllvm -Xclang -poseidon-profile-use=%S/Inputs/rewritten_lto_hip -Xclang -mllvm -Xclang -poseidon-cost-model=%cost_models/cm_gfx942_synthetic.csv -Xclang -mllvm -Xclang -poseidon-enable-rewrite=0 -Xclang -mllvm -Xclang -poseidon-cache=%t/c.quiet.refused %s -o %t/quiet/refused.o 2>&1 | count 0
 // RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path -cuid=0 -O2 -ffp-contract=on -foffload-lto=thin -c -DNO_SITE %s -o %t/fpc.thin/k.o
 // RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path -cuid=0 -O2 -ffp-contract=on -foffload-lto=thin -c -I%poseidon_profile_inc %loadClangPoseidon -Xclang -mllvm -Xclang -poseidon-profile-use=%S/Inputs/rewritten_lto_hip -Xclang -mllvm -Xclang -poseidon-cost-model=%cost_models/cm_gfx942_synthetic.csv -Xclang -mllvm -Xclang -poseidon-enable-rewrite=0 -Xclang -mllvm -Xclang -poseidon-cache=%t/c.thin -Xclang -mllvm -Xclang -poseidon-print %s -o %t/use.thin/k.o 2>&1 | FileCheck --check-prefix=SOLVE %s
 // RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path -cuid=0 -O2 -ffp-contract=on -c -DSITE_TAU=1e-18 -I%poseidon_profile_inc %loadClangPoseidon -Xclang -mllvm -Xclang -poseidon-profile-use=%S/Inputs/rewritten_lto_hip -Xclang -mllvm -Xclang -poseidon-cost-model=%cost_models/cm_gfx942_synthetic.csv -Xclang -mllvm -Xclang -poseidon-enable-rewrite=0 -Xclang -mllvm -Xclang -poseidon-cache=%t/c.refused -Xclang -mllvm -Xclang -poseidon-print %s -o %t/refused/k.o 2>&1 | FileCheck --check-prefix=REFUSED %s
@@ -29,6 +31,9 @@
 // code object is the one as written. The profile of `site` is the one its CUDA
 // twin Integration/rewritten_module_as_written.cu records; no gfx942 cost model
 // is measured, so the compile prices from a synthetic one.
+// Without the unprofiled site the compile has nothing to warn about, and
+// both halves print nothing, whether the site is rewritten or no rewrite
+// meets its tolerance.
 
 #include <hip/hip_runtime.h>
 
@@ -57,21 +62,23 @@ __global__ void other(const double *x, double *y, int n) {
     y[i] = sqrt(x[i]) + y[i];
 }
 
+#ifndef ONE_SITE
 POSEIDON_OPTIMIZE __global__ void unprofiled(const double *x, double *y,
                                              int n) {
   int i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i < n)
     y[i] = sqrt(x[i]) * y[i];
 }
+#endif
 
 // SOLVE: [poseidon] site site(double const*, double*, int): accuracy target 1e-06
 // SOLVE: [poseidon] pin: _Z4sitePKdPdi:P0=All FP64(0%) + FP32(100%)
-// SOLVE: rewritten_module_lto_amdgpu.hip:[[@LINE-9]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/_Z10unprofiledPKdPdi.fpprofile:
+// SOLVE: rewritten_module_lto_amdgpu.hip:[[@LINE-10]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/_Z10unprofiledPKdPdi.fpprofile:
 // SOLVE: [poseidon] {{.*}}rewritten_module_lto_amdgpu.hip: 1 function(s) a rewrite reached; every other function as written
 
 // REFUSED: [poseidon] site site(double const*, double*, int): accuracy target 1e-18
 // REFUSED: [poseidon] pin: {{$}}
-// REFUSED: rewritten_module_lto_amdgpu.hip:[[@LINE-14]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/_Z10unprofiledPKdPdi.fpprofile:
+// REFUSED: rewritten_module_lto_amdgpu.hip:[[@LINE-15]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/_Z10unprofiledPKdPdi.fpprofile:
 // REFUSED: [poseidon] every site of {{.*}}rewritten_module_lto_amdgpu.hip was left alone; emitting the module as written
 
 // FNS: NAME <_Z4sitePKdPdi>:

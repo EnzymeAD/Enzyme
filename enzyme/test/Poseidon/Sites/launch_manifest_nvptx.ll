@@ -19,7 +19,7 @@
 ; generation, says nothing, keeps the launch and creates no cache.
 ; RUN: mkdir %t/write
 ; RUN: sed 's/ozaki_stub\.cu/tcec_matmul.cu/g' %S/../Inputs/library_call/ozaki_stub_host.ll > %t/write/host.ll
-; RUN: %opt %{dev} %{pass} -poseidon-enable-matmul %{flags} -poseidon-cache=%t/write/c -poseidon-compilation-id=u 2>&1 | FileCheck --check-prefix=WRITE-WROTE %s
+; RUN: %opt %{dev} %{pass} -poseidon-enable-matmul %{flags} -poseidon-cache=%t/write/c -poseidon-compilation-id=u
 ; RUN: ls %t/write/c | FileCheck --check-prefix=WRITE-FILES --implicit-check-not=launches_ %s
 ; RUN: cat %t/write/c/launches_*.json | FileCheck --check-prefix=WRITE-FULL %s
 ; RUN: %opt %{dev} %{pass} -poseidon-enable-matmul=false %{flags} -poseidon-cache=%t/write/c -poseidon-compilation-id=u -poseidon-print 2>&1 | FileCheck --check-prefix=WRITE-NONE %s
@@ -37,8 +37,6 @@
 ; RUN: count 0 < %t/write/gen.err
 ; RUN: FileCheck --check-prefix=LAUNCH --implicit-check-not=__poseidon --implicit-check-not='call {{.*}}@cudaLaunchKernel(' %s < %t/write/gen.ll
 ; RUN: not ls %t/write/none
-
-; WRITE-WROTE: [poseidon] wrote descriptor for _Z13matmul_kernelPKdS0_PdS1_: C=arg2 A=arg0 B=arg1 16x16x16 nm=12 (standalone)
 
 ; WRITE-FILES: {{^}}launches_tcec_matmul.cu_{{[0-9A-F]+}}.json{{$}}
 
@@ -130,15 +128,15 @@
 
 ; The two kernels of the module below dispatch the product of matmul_body,
 ; matmul_kernel first in the module and alpha_kernel, with A and B swapped,
-; second. Their descriptors are in the manifest, and their messages on stderr,
-; in order of kernel name, whichever site is solved first: in the per-site
-; solve, where alpha_kernel reuses the solve of matmul_kernel, and in the joint
-; solve, which records both after the joint materialization. A repeated
-; compile writes the same manifest and the same messages.
+; second. Their descriptors are in the manifest, and their -poseidon-print
+; messages on stderr, in order of kernel name, whichever site is solved first:
+; in the per-site solve, where alpha_kernel reuses the solve of matmul_kernel,
+; and in the joint solve, which records both after the joint materialization.
+; A repeated compile writes the same manifest and the same messages.
 ; RUN: mkdir %t/order
 ; RUN: %opt %s %{pass} -poseidon-enable-matmul %{flags} -poseidon-cache=%t/order/c -poseidon-compilation-id=u 2> %t/order/site1.err -poseidon-print
 ; RUN: cp %t/order/c/launches_tcec_matmul.cu_*.json %t/order/site1.json
-; RUN: %opt %s %{pass} -poseidon-enable-matmul %{flags} -poseidon-cache=%t/order/c -poseidon-compilation-id=u 2> %t/order/site2.err
+; RUN: %opt %s %{pass} -poseidon-enable-matmul %{flags} -poseidon-cache=%t/order/c -poseidon-compilation-id=u 2> %t/order/site2.err -poseidon-print
 ; RUN: FileCheck --check-prefix=ORDER-LOG %s < %t/order/site1.err
 ; RUN: FileCheck --check-prefix=ORDER-MANIFEST -DNMA=12 -DNMM=12 %s < %t/order/site1.json
 ; RUN: grep 'wrote descriptor' %t/order/site1.err > %t/order/site1.wrote
@@ -147,7 +145,7 @@
 ; RUN: cmp %t/order/site1.json %t/order/c/launches_tcec_matmul.cu_*.json
 ; RUN: %opt %s %{pass} -poseidon-enable-matmul %{flags} -poseidon-cache=%t/order/c -poseidon-compilation-id=u -poseidon-solve-jointly 2> %t/order/joint1.err -poseidon-print
 ; RUN: cp %t/order/c/launches_tcec_matmul.cu_*.json %t/order/joint1.json
-; RUN: %opt %s %{pass} -poseidon-enable-matmul %{flags} -poseidon-cache=%t/order/c -poseidon-compilation-id=u -poseidon-solve-jointly 2> %t/order/joint2.err
+; RUN: %opt %s %{pass} -poseidon-enable-matmul %{flags} -poseidon-cache=%t/order/c -poseidon-compilation-id=u -poseidon-solve-jointly 2> %t/order/joint2.err -poseidon-print
 ; RUN: FileCheck --check-prefix=ORDER-JOINT %s < %t/order/joint1.err
 ; RUN: FileCheck --check-prefix=ORDER-MANIFEST -DNMA=14 -DNMM=13 %s < %t/order/joint1.json
 ; RUN: grep 'wrote descriptor' %t/order/joint1.err > %t/order/joint1.wrote

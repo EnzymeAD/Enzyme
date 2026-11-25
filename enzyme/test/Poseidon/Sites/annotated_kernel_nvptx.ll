@@ -13,8 +13,10 @@
 ; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-kernels=fms.* %{use} -poseidon-cache=%t/regex -poseidon-cost-budget=-1e-9 -poseidon-print -S 2>&1 | FileCheck --check-prefix=REGEX %s
 ; RUN: %opt %s %loadPoseidon -passes="poseidon,always-inline,poseidon-finalize" -S 2> %t/noprofile.err | FileCheck --check-prefixes=NOPROFILE,FP64 %s
 ; RUN: FileCheck --check-prefix=NOPROFILE-WARN %s < %t/noprofile.err
-; RUN: %opt %s %loadPoseidon -passes="poseidon,always-inline,poseidon-finalize" %{use} -poseidon-cache=%t/noop -poseidon-cost-budget=0 -S | FileCheck --check-prefixes=NOOP,FP64 %s
-; RUN: %opt %s %loadPoseidon -passes="poseidon,always-inline,poseidon-finalize" %{use} -poseidon-cache=%t/inlined -poseidon-cost-budget=-1e-9 -S | FileCheck --check-prefix=INLINED %s
+; RUN: %opt %s %loadPoseidon -passes="poseidon,always-inline,poseidon-finalize" %{use} -poseidon-cache=%t/noop -poseidon-cost-budget=0 -S 2> %t/noop.err | FileCheck --check-prefixes=NOOP,FP64 %s
+; RUN: count 0 < %t/noop.err
+; RUN: %opt %s %loadPoseidon -passes="poseidon,always-inline,poseidon-finalize" %{use} -poseidon-cache=%t/inlined -poseidon-cost-budget=-1e-9 -S 2> %t/inlined.err | FileCheck --check-prefix=INLINED %s
+; RUN: count 0 < %t/inlined.err
 
 ; A kernel carrying POSEIDON_OPTIMIZE is a site whose annotated computation is
 ; its whole body: same code and same profile as expansion_two_components_nvptx.ll, with no

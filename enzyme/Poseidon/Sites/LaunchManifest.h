@@ -87,7 +87,8 @@ bool handsOverLaunches(const Options &O);
 
 /// Records "<wrapperName><payload>" as the `kind` descriptor of that kernel in
 /// place of one recorded before; `emitPayload` appends everything after the
-/// name. `message` is printed when the manifest is written.
+/// name. `message` is printed, under -poseidon-print, when the manifest is
+/// written.
 void recordDescriptor(LaunchManifest &L, LaunchKind kind,
                       llvm::StringRef wrapperName,
                       llvm::function_ref<void(llvm::raw_ostream &)> emitPayload,
@@ -109,9 +110,10 @@ llvm::Expected<std::pair<unsigned, unsigned>>
 readProfileTable(const Options &O, const llvm::Module &M);
 
 /// Replaces the manifest of device module M by the descriptors recorded since
-/// the last write and prints their messages, all in order of kernel name; with
-/// none recorded, removes it, since no manifest means nothing to rewrite. An
-/// error when the manifest cannot be written or removed.
+/// the last write and, under -poseidon-print, prints their messages, all in
+/// order of kernel name; with none recorded, removes it, since no manifest
+/// means nothing to rewrite. An error when the manifest cannot be written or
+/// removed.
 llvm::Error writeLaunchManifest(const Options &O, LaunchManifest &L,
                                 const llvm::Module &M);
 

@@ -5,7 +5,7 @@
 ; RUN:   -poseidon-cache=%t/cache -poseidon-enable-rewrite=false \
 ; RUN:   -poseidon-enable-precision=false -poseidon-enable-matmul -poseidon-tau=1e-12 \
 ; RUN:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv \
-; RUN:   -S -o %t/out.ll 2>&1 | FileCheck --check-prefix=LOG %s
+; RUN:   -S -o %t/out.ll
 ; RUN: cat %t/cache/launches_*.json | FileCheck --check-prefix=DESC %s
 ; RUN: FileCheck --input-file=%t/out.ll %s
 
@@ -13,7 +13,6 @@
 ; it where the body first stores it, and the fissioned body reads it back from
 ; there for the other store.
 
-; LOG: wrote descriptor for _Z9two_storePKdS0_PdS1_: C=arg2 A=arg0 B=arg1 16x16x16 nm=12 (fused)
 ; DESC: "_Z9two_storePKdS0_PdS1_ 2 0 1 0 12 0 0 0 2 rd 0 1 16 0 1 16 0 1 16 0 1 16 0 1 16 0 1 16 0.000000e+00"
 
 ; CHECK-LABEL: define {{.*}} @preprocess_two_store_body(
