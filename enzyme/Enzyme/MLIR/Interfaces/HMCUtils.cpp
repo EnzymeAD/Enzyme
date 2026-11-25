@@ -234,65 +234,51 @@ Value impulse::sampleMomentum(OpBuilder &builder, Location loc, Value rng,
   }
 }
 
-Value impulse::scatterPositionToTrace(OpBuilder &builder, Location loc,
-                                      Value position2d, Value fullTrace,
-                                      const ModelContext &ctx) {
-  Type elemType = ctx.getElementType();
-  auto traceType = RankedTensorType::get({1, ctx.getFullTraceSize()}, elemType);
-  Value c0 = emitI64ScalarConstant(builder, loc, 0);
-
-  Value result = fullTrace;
-  for (const auto &info : ctx.supports) {
+/// Copies the columns of every site in `supports` from row 0 of `src` into
+/// row 0 of `dst`, from position to trace columns if `toTrace`, else back.
+/// `zeroIndex` is a rank-0 `i64` zero.
+static Value copySiteColumns(OpBuilder &builder, Location loc, Value src,
+                             Value dst, Value zeroIndex,
+                             ArrayRef<SupportInfo> supports, bool toTrace) {
+  Type elemType = cast<RankedTensorType>(src.getType()).getElementType();
+  Value result = dst;
+  for (const SupportInfo &info : supports) {
+    int64_t srcColumn = toTrace ? info.constrainedOffset : info.traceOffset;
+    int64_t dstColumn = toTrace ? info.traceOffset : info.constrainedOffset;
     auto sliceType = RankedTensorType::get({1, info.constrainedSize}, elemType);
-    Value posOffset =
-        emitI64ScalarConstant(builder, loc, info.constrainedOffset);
-    SmallVector<Value> extractIndices{c0, posOffset};
-    auto slice = impulse::DynamicSliceOp::create(
-        builder, loc, sliceType, position2d, extractIndices,
+    Value srcIndex = emitI64ScalarConstant(builder, loc, srcColumn);
+    Value slice = impulse::DynamicSliceOp::create(
+        builder, loc, sliceType, src, ValueRange{zeroIndex, srcIndex},
         builder.getDenseI64ArrayAttr({1, info.constrainedSize}));
-
-    Value traceOffset = emitI64ScalarConstant(builder, loc, info.traceOffset);
-    SmallVector<Value> updateIndices{c0, traceOffset};
+    Value dstIndex = emitI64ScalarConstant(builder, loc, dstColumn);
     result = impulse::DynamicUpdateSliceOp::create(
-        builder, loc, traceType, result, slice, updateIndices);
+        builder, loc, dst.getType(), result, slice,
+        ValueRange{zeroIndex, dstIndex});
   }
   return result;
 }
 
 static Value gatherPositionFromTrace(OpBuilder &builder, Location loc,
                                      Value fullTrace, const HMCContext &ctx) {
-  Type elemType = ctx.getElementType();
   // Constrained width, which differs from positionSize for SIMPLEX.
   int64_t constrainedSize = 0;
   for (const auto &info : ctx.supports)
     constrainedSize += info.constrainedSize;
-  auto positionType2d = RankedTensorType::get({1, constrainedSize}, elemType);
-  Value c0 = emitI64ScalarConstant(builder, loc, 0);
-
-  Value zeroConst = emitSplatConstant(builder, loc, positionType2d, 0.0);
-  Value result = zeroConst;
-  for (const auto &info : ctx.supports) {
-    auto sliceType = RankedTensorType::get({1, info.constrainedSize}, elemType);
-    Value traceOffset = emitI64ScalarConstant(builder, loc, info.traceOffset);
-    SmallVector<Value> extractIndices{c0, traceOffset};
-    auto slice = impulse::DynamicSliceOp::create(
-        builder, loc, sliceType, fullTrace, extractIndices,
-        builder.getDenseI64ArrayAttr({1, info.constrainedSize}));
-
-    Value posOffset =
-        emitI64ScalarConstant(builder, loc, info.constrainedOffset);
-    SmallVector<Value> updateIndices{c0, posOffset};
-    result = impulse::DynamicUpdateSliceOp::create(
-        builder, loc, positionType2d, result, slice, updateIndices);
-  }
-  return result;
+  auto positionType2d =
+      RankedTensorType::get({1, constrainedSize}, ctx.getElementType());
+  Value zeroIndex = emitI64ScalarConstant(builder, loc, 0);
+  Value position = emitSplatConstant(builder, loc, positionType2d, 0.0);
+  return copySiteColumns(builder, loc, fullTrace, position, zeroIndex,
+                         ctx.supports, /*toTrace=*/false);
 }
 
 GenerateOp impulse::emitGenerateAt(OpBuilder &builder, Location loc,
                                    Value qConstrained, Value rng,
                                    const ModelContext &ctx) {
-  Value fullTrace = scatterPositionToTrace(builder, loc, qConstrained,
-                                           ctx.originalTrace, ctx);
+  Value zeroIndex = emitI64ScalarConstant(builder, loc, 0);
+  Value fullTrace =
+      copySiteColumns(builder, loc, qConstrained, ctx.originalTrace, zeroIndex,
+                      ctx.supports, /*toTrace=*/true);
   SmallVector<Value> inputs{rng};
   llvm::append_range(inputs, ctx.fnInputs);
   SmallVector<Type> resultTypes{

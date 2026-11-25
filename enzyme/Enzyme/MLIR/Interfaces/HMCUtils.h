@@ -292,11 +292,6 @@ Value sampleMomentum(OpBuilder &builder, Location loc, Value rng, Value invMass,
                      Value massMatrixSqrt, RankedTensorType positionType,
                      bool debugDump);
 
-/// Writes each site's slice of the `1xN` position `position2d` into its
-/// columns of `fullTrace`.
-Value scatterPositionToTrace(OpBuilder &builder, Location loc, Value position2d,
-                             Value fullTrace, const ModelContext &ctx);
-
 /// Writes `qConstrained` into the original trace and emits a generate op of
 /// the model on that trace.
 GenerateOp emitGenerateAt(OpBuilder &builder, Location loc, Value qConstrained,
