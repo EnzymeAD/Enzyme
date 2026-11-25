@@ -4144,687 +4144,680 @@ struct ExpandImpulsePass
         .insert<mlir::arith::ArithDialect, mlir::math::MathDialect,
                 mlir::enzyme::EnzymeDialect, mlir::impulse::ImpulseDialect>();
   }
+};
 
-  /// Lowers `impulse.untraced_call` to a call of a clone of the callee whose
-  /// sample sites draw fresh values.
-  struct LowerUntracedCallPattern
-      : public mlir::OpRewritePattern<impulse::UntracedCallOp> {
-    using mlir::OpRewritePattern<impulse::UntracedCallOp>::OpRewritePattern;
+/// Lowers `impulse.untraced_call` to a call of a clone of the callee whose
+/// sample sites draw fresh values.
+struct LowerUntracedCallPattern
+    : public mlir::OpRewritePattern<impulse::UntracedCallOp> {
+  using mlir::OpRewritePattern<impulse::UntracedCallOp>::OpRewritePattern;
 
-    LogicalResult matchAndRewrite(impulse::UntracedCallOp op,
-                                  PatternRewriter &rewriter) const override {
-      SymbolTableCollection symbolTable;
+  LogicalResult matchAndRewrite(impulse::UntracedCallOp op,
+                                PatternRewriter &rewriter) const override {
+    SymbolTableCollection symbolTable;
 
-      auto fn = symbolTable.lookupNearestSymbolFrom<FunctionOpInterface>(
-          op, op.getFnAttr());
+    auto fn = symbolTable.lookupNearestSymbolFrom<FunctionOpInterface>(
+        op, op.getFnAttr());
 
-      if (fn.getFunctionBody().empty()) {
-        op.emitError("Impulse: trying to call an empty function");
-        return failure();
-      }
-
-      FunctionOpInterface newFn = cloneForMode(fn, ImpulseMode::Call);
-
-      SmallVector<Operation *, 4> toErase;
-      newFn.walk([&](impulse::SampleOp sampleOp) {
-        OpBuilder::InsertionGuard guard(rewriter);
-        rewriter.setInsertionPoint(sampleOp);
-
-        rewriter.replaceAllUsesWith(
-            sampleOp->getResults(),
-            emitSiteDraw(rewriter, symbolTable, sampleOp));
-        toErase.push_back(sampleOp);
-      });
-
-      for (Operation *site : toErase)
-        rewriter.eraseOp(site);
-
-      rewriter.setInsertionPoint(op);
-      auto call =
-          func::CallOp::create(rewriter, op.getLoc(), newFn.getName(),
-                               newFn.getResultTypes(), op.getOperands());
-
-      rewriter.replaceOp(op, call.getResults());
-
-      return success();
-    }
-  };
-
-  /// Lowers `impulse.simulate` to a call of a clone of the model that draws
-  /// every site and also returns the trace of `all_addresses` and the joint log
-  /// density.
-  struct LowerSimulatePattern
-      : public mlir::OpRewritePattern<impulse::SimulateOp> {
-    using mlir::OpRewritePattern<impulse::SimulateOp>::OpRewritePattern;
-
-    LogicalResult matchAndRewrite(impulse::SimulateOp op,
-                                  PatternRewriter &rewriter) const override {
-      SymbolTableCollection symbolTable;
-      int64_t declaredWidth =
-          cast<RankedTensorType>(op.getTrace().getType()).getShape()[1];
-      FailureOr<TracedClone> clone =
-          beginTracedClone(op, op.getFnAttr(), op.getAllAddressesAttr(),
-                           declaredWidth, ImpulseMode::Simulate,
-                           /*constraintSize=*/-1, "simulate", symbolTable);
-      if (failed(clone))
-        return failure();
-
-      auto lowerSite = [&](impulse::SampleOp sampleOp,
-                           SiteCarry &carry) -> FailureOr<SmallVector<Value>> {
-        Location loc = sampleOp.getLoc();
-        if (sampleOp.getDistAttr() || sampleOp.getLogpdfFnAttr()) {
-          SmallVector<Value> sampledValues =
-              emitSiteDraw(rewriter, symbolTable, sampleOp);
-          if (failed(
-                  scoreAndTraceSite(rewriter, sampleOp,
-                                    ArrayRef<Value>(sampledValues).drop_front(),
-                                    *clone, carry, symbolTable)))
-            return failure();
-          return sampledValues;
-        }
-
-        FailureOr<NestedSite> nested =
-            resolveNestedSite(rewriter, sampleOp, *clone, symbolTable);
-        if (failed(nested))
-          return failure();
-        if (nested->subAllAddresses.empty())
-          return emitSiteDraw(rewriter, symbolTable, sampleOp);
-        if (nested->subPositionSize <= 0)
-          return sampleOp.emitError(
-              "Impulse: failed to compute sub-position size");
-        auto nestedSimulate = impulse::SimulateOp::create(
-            rewriter, loc, nested->getResultTypes(clone->zeroWeight.getType()),
-            sampleOp.getFnAttr(), sampleOp.getInputs(),
-            nested->subAllAddresses);
-        carry.weight = arith::AddFOp::create(rewriter, loc, carry.weight,
-                                             nestedSimulate.getWeight());
-        mergeNestedTrace(rewriter, loc, *nested, nestedSimulate.getTrace(),
-                         carry);
-        return SmallVector<Value>(nestedSimulate.getOutputs());
-      };
-
-      return finishTracedClone(
-          rewriter, op, *clone, lowerSite,
-          [&](Location) { return clone->carry.weight; }, op.getInputs());
-    }
-  };
-
-  /// Lowers an `impulse.infer` or `impulse.infer_region` with an HMC or NUTS
-  /// config to its chains.
-  template <typename MCMCOpT>
-  struct LowerMCMCPattern : public mlir::OpRewritePattern<MCMCOpT> {
-    static constexpr bool isRegionForm =
-        std::is_same_v<MCMCOpT, impulse::InferRegionOp>;
-
-    bool debugDump;
-
-    LowerMCMCPattern(MLIRContext *context, bool debugDump,
-                     PatternBenefit benefit = 1)
-        : mlir::OpRewritePattern<MCMCOpT>(context, benefit),
-          debugDump(debugDump) {}
-
-    /// Reads the model of an HMC/NUTS op. Reports a match failure for other
-    /// inference configs and emits an error for a malformed op.
-    FailureOr<ModelContext> resolveModel(MCMCOpT mcmcOp,
-                                         PatternRewriter &rewriter) const {
-      SymbolTableCollection symbolTable;
-
-      bool hasLogpdfFn = static_cast<bool>(mcmcOp.getLogpdfFnAttr());
-
-      if constexpr (isRegionForm) {
-        if (mcmcOp.getLogpdf().empty()) {
-          mcmcOp.emitError("Impulse: infer_region requires a constructed "
-                           "logpdf region (run sicm first)");
-          return failure();
-        }
-        if (!hasLogpdfFn && mcmcOp.getSampling().empty()) {
-          mcmcOp.emitError("Impulse: model-mode infer_region requires a "
-                           "sampler region");
-          return failure();
-        }
-      } else if (!hasLogpdfFn) {
-        auto fnAttr = mcmcOp.getFnAttr();
-        if (!fnAttr) {
-          mcmcOp.emitError("Impulse: either fn or logpdf_fn must be provided");
-          return failure();
-        }
-        auto fn = cast<FunctionOpInterface>(
-            symbolTable.lookupNearestSymbolFrom(mcmcOp, fnAttr));
-        if (fn.getFunctionBody().empty()) {
-          mcmcOp.emitError("Impulse: calling `infer` on an empty function");
-          return failure();
-        }
-      }
-
-      // Other configs fall through to their own patterns; do not error here.
-      if (!mcmcOp.getHmcConfig() && !mcmcOp.getNutsConfig())
-        return rewriter.notifyMatchFailure(
-            mcmcOp, "no hmc_config/nuts_config; not an HMC/NUTS op");
-
-      if (!mcmcOp.getInitStepSize()) {
-        mcmcOp.emitError("Impulse: MCMC requires init_step_size parameter");
-        return failure();
-      }
-
-      if (mcmcOp.getInputs().empty()) {
-        mcmcOp.emitError("Impulse: MCMC requires at least rng_state input");
-        return failure();
-      }
-
-      ModelContext model = readInferModel(mcmcOp, debugDump);
-      if constexpr (isRegionForm) {
-        // The logpdf region takes the position values in their order.
-        int64_t column = 0;
-        for (BlockArgument arg : mcmcOp.getLogpdf().front().getArguments()) {
-          model.logpdfArgOffsets.push_back(column);
-          column += cast<RankedTensorType>(arg.getType()).getNumElements();
-        }
-      }
-      auto unconstrainedSizeOf = [](ArrayRef<impulse::SupportInfo> supports) {
-        int64_t size = 0;
-        for (const impulse::SupportInfo &info : supports)
-          size += info.unconstrainedSize;
-        return size;
-      };
-
-      if (hasLogpdfFn) {
-        auto initPosType =
-            cast<RankedTensorType>(mcmcOp.getInitPosition().getType());
-        // `init_position` is `1xN` or chain-major `Cx1xN`; N is per chain.
-        model.positionSize =
-            initPosType.getNumElements() / mcmcOp.getNumChains();
-      } else if constexpr (isRegionForm) {
-        if (failed(verifySelectedSupports(mcmcOp)))
-          return failure();
-        FailureOr<RegionPositionLayout> layout =
-            collectRegionLayout(mcmcOp, /*positionDeclarationOrder=*/false);
-        if (succeeded(layout))
-          model.supports = std::move(layout->supports);
-        if (model.supports.empty()) {
-          mcmcOp.emitError("Impulse: failed to collect per-site support info "
-                           "from the infer_region sampler");
-          return failure();
-        }
-        model.positionSize = unconstrainedSizeOf(model.supports);
-        if (model.positionSize <= 0)
-          return failure();
-      } else {
-        for (Attribute address : mcmcOp.getSelectionAttr()) {
-          if (cast<ArrayAttr>(address).size() > 1) {
-            mcmcOp.emitError("Impulse: HMC and NUTS on a model take only "
-                             "top-level addresses in `selection`, not ")
-                << address;
-            return failure();
-          }
-        }
-        if (failed(resolveFlatModel(mcmcOp, /*positionDeclarationOrder=*/false,
-                                    symbolTable, model)))
-          return failure();
-        model.positionSize = unconstrainedSizeOf(model.supports);
-      }
-      return model;
-    }
-
-    LogicalResult matchAndRewrite(MCMCOpT mcmcOp,
-                                  PatternRewriter &rewriter) const override {
-      FailureOr<ModelContext> model = resolveModel(mcmcOp, rewriter);
-      if (failed(model))
-        return failure();
-
-      MCMCChainEmitter emitter(rewriter, mcmcOp, std::move(*model));
-      SmallVector<ChainResult> chains =
-          emitter.emitChains(mcmcOp.getInputs().front());
-      if (chains.size() == 1) {
-        rewriter.replaceOp(mcmcOp, chains.front().toValues());
-        return success();
-      }
-      ArrayAttr schema = mcmcOp.getStateSchemaAttr();
-      rewriter.replaceOp(mcmcOp,
-                         stackChainResults(rewriter, mcmcOp.getLoc(), chains,
-                                           schema && !schema.empty()));
-      return success();
-    }
-  };
-
-  /// Lowers an `impulse.infer` or `impulse.infer_region` with a VI config to
-  /// an SVI loop whose learning rate is the `init_step_size` operand.
-  template <typename OpT>
-  struct LowerVIPattern : public mlir::OpRewritePattern<OpT> {
-    static constexpr bool isRegionForm =
-        std::is_same_v<OpT, impulse::InferRegionOp>;
-
-    bool debugDump;
-
-    LowerVIPattern(MLIRContext *context, bool debugDump,
-                   PatternBenefit benefit = 1)
-        : mlir::OpRewritePattern<OpT>(context, benefit), debugDump(debugDump) {}
-
-    LogicalResult matchAndRewrite(OpT op,
-                                  PatternRewriter &rewriter) const override {
-      if (!op.getViConfig().has_value())
-        return rewriter.notifyMatchFailure(op, "no vi_config; not a VI op");
-
-      SymbolTableCollection symbolTable;
-      bool hasLogpdfFn = static_cast<bool>(op.getLogpdfFnAttr());
-
-      if (!op.getInitStepSize()) {
-        op.emitError("Impulse VI: requires init_step_size (learning rate)");
-        return failure();
-      }
-
-      if (op.getInputs().empty()) {
-        op.emitError("Impulse VI: requires at least rng_state input");
-        return failure();
-      }
-
-      ModelContext model = readInferModel(op, debugDump);
-      if constexpr (isRegionForm) {
-        if (hasLogpdfFn) {
-          op.emitError("Impulse VI: custom-logpdf mode is not supported in "
-                       "region form");
-          return failure();
-        }
-        if (op.getLogpdf().empty()) {
-          op.emitError("Impulse VI: infer_region requires a constructed logpdf "
-                       "region (run sicm first)");
-          return failure();
-        }
-        if (failed(verifySelectedSupports(op)))
-          return failure();
-        // Per-site draws consume the RNG in program order, so the position
-        // follows `all_addresses`.
-        FailureOr<RegionPositionLayout> layout =
-            collectRegionLayout(op, /*positionDeclarationOrder=*/true);
-        if (failed(layout)) {
-          op.emitError("Impulse VI: failed to derive position layout from the "
-                       "infer_region sampler");
-          return failure();
-        }
-        model.supports = std::move(layout->supports);
-        model.logpdfArgOffsets = std::move(layout->argOffsets);
-        model.positionSize = model.getConstrainedPositionSize();
-        if (model.positionSize <= 0)
-          return failure();
-      } else if (hasLogpdfFn) {
-        model.positionSize =
-            cast<RankedTensorType>(op.getInitPosition().getType())
-                .getNumElements();
-      } else {
-        FailureOr<int64_t> numValues = resolveFlatModel(
-            op, /*positionDeclarationOrder=*/true, symbolTable, model);
-        if (failed(numValues))
-          return failure();
-        model.positionSize = *numValues;
-      }
-
-      return lowerVI(rewriter, op, std::move(model));
-    }
-  };
-
-  /// Lowers an MH `impulse.infer` or `impulse.infer_region` to `num_samples`
-  /// MH steps, each a proposal for the `selection` and an accept test.
-  template <typename OpT>
-  struct LowerMHInferPattern : public mlir::OpRewritePattern<OpT> {
-    static constexpr bool isRegionForm =
-        std::is_same_v<OpT, impulse::InferRegionOp>;
-    using mlir::OpRewritePattern<OpT>::OpRewritePattern;
-
-    LogicalResult matchAndRewrite(OpT op,
-                                  PatternRewriter &rewriter) const override {
-      if (!op.getMhConfig().has_value())
-        return rewriter.notifyMatchFailure(op, "no mh_config; not an MH op");
-
-      Location loc = op.getLoc();
-      auto inputs = op.getInputs();
-      if (inputs.empty()) {
-        op.emitError("Impulse MH: requires at least the rng_state input");
-        return failure();
-      }
-      if (op.getStateIn().size() != 1) {
-        op.emitError("Impulse MH: expects a single `weight` state_in slot");
-        return failure();
-      }
-      if constexpr (isRegionForm) {
-        if (op.getSampling().empty() || op.getLogpdf().empty()) {
-          op.emitError("Impulse MH: infer_region requires sampler and "
-                       "constructed logpdf regions (run sicm first)");
-          return failure();
-        }
-        unsigned numSites = 0;
-        for (Operation &o : op.getSampling().front())
-          numSites += isa<impulse::SampleRegionOp>(&o);
-        if (op.getLogpdf().front().getTerminator()->getNumOperands() !=
-            1 + numSites) {
-          op.emitError("Impulse MH: infer_region logpdf region must yield the "
-                       "joint density followed by one density per site");
-          return failure();
-        }
-      }
-
-      Value initTrace = op.getOriginalTrace();
-      Value initWeight = op.getStateIn()[0];
-      Value initRng = inputs[0];
-      auto traceType = cast<RankedTensorType>(initTrace.getType());
-
-      ArrayAttr selection = op.getSelectionAttr();
-      ArrayAttr allAddresses = op.getAllAddressesAttr();
-
-      SymbolTableCollection symbolTable;
-      FunctionOpInterface fn;
-      if constexpr (!isRegionForm) {
-        fn = symbolTable.lookupNearestSymbolFrom<FunctionOpInterface>(
-            op, op.getFnAttr());
-        if (!fn || fn.getFunctionBody().empty()) {
-          op.emitError("Impulse MH: `fn` must reference a non-empty funcOp");
-          return failure();
-        }
-      }
-
-      int64_t fullPositionSize = 0;
-      RegionTraceLayout layout;
-      ColumnWindows flatChangedColumns;
-      if constexpr (isRegionForm) {
-        FailureOr<RegionTraceLayout> regionLayout =
-            getRegionTraceLayout(op, /*topLevelOnly=*/true);
-        if (failed(regionLayout)) {
-          op.emitError("Impulse MH: all_addresses entry without a top-level "
-                       "site");
-          return failure();
-        }
-        layout = std::move(*regionLayout);
-        for (auto site : op.getSampling()
-                             .front()
-                             .template getOps<impulse::SampleRegionOp>())
-          fullPositionSize += sampleRegionSize(site);
-      } else {
-        FailureOr<FlatTraceLayout> flatLayout =
-            getFlatTraceLayout(op, fn, allAddresses, symbolTable);
-        if (failed(flatLayout))
-          return failure();
-        fullPositionSize = flatLayout->positionSize;
-        flatChangedColumns = mhChangedColumnsFlat(*flatLayout, selection,
-                                                  traceType.getShape()[1]);
-      }
-      bool hasScoreTail = traceType.getShape()[1] > fullPositionSize;
-
-      // Carries the trace, the weight, the key and whether the step accepted.
-      auto oneStep = [&](ValueRange carried) -> SmallVector<Value> {
-        Value trace = carried[0], rng = carried[2];
-        MHProposal proposal;
-        if constexpr (isRegionForm) {
-          proposal = proposeRegionMove(rewriter, loc, op, layout, trace, rng,
-                                       hasScoreTail, /*withLogRatio=*/true);
-        } else {
-          SmallVector<Value> inputs(op.getInputs());
-          inputs[0] = rng;
-          proposal =
-              proposeFlatMove(rewriter, loc, op, inputs, trace,
-                              rewriter.getStringAttr(""), fn.getResultTypes());
-          proposal.changed = flatChangedColumns;
-        }
-        MHStep step = emitMHStep(rewriter, loc, trace, carried[1], proposal,
-                                 hasScoreTail);
-        return {step.trace, step.weight, step.rng, step.accepted};
-      };
-      SmallVector<Value> out = emitRepeated(
-          rewriter, loc, op.getNumSamples(), {initTrace, initWeight, initRng},
-          [&]() -> SmallVector<Value> {
-            Value notAccepted = emitI1ScalarConstant(rewriter, loc, false);
-            return {initTrace, initWeight, initRng, notAccepted};
-          },
-          oneStep);
-
-      // MH reports no per-sample log density; `log_densities` is zero.
-      Value outLogDensities = arith::ConstantOp::create(
-          rewriter, loc, rewriter.getZeroAttr(op.getLogDensities().getType()));
-      rewriter.replaceOp(op, {out[0], out[3], outLogDensities, out[2], out[1]});
-      return success();
-    }
-  };
-
-  /// Lowers a Gibbs `impulse.infer_region` to `num_samples` sweeps of a
-  /// `GibbsSweepEmitter`.
-  struct LowerGibbsRegionPattern
-      : public mlir::OpRewritePattern<impulse::InferRegionOp> {
-    using mlir::OpRewritePattern<impulse::InferRegionOp>::OpRewritePattern;
-
-    LogicalResult matchAndRewrite(impulse::InferRegionOp op,
-                                  PatternRewriter &rewriter) const override {
-      if (!op.getGibbsConfig().has_value())
-        return rewriter.notifyMatchFailure(op, "no gibbs_config");
-      FailureOr<GibbsSweepEmitter> emitter = GibbsSweepEmitter::analyze(op);
-      if (failed(emitter))
-        return failure();
-      Location loc = op.getLoc();
-      SmallVector<Value> out = emitRepeated(
-          rewriter, loc, op.getNumSamples(),
-          {op.getOriginalTrace(), op.getStateIn()[0], op.getInputs()[0]},
-          /*loopInit=*/nullptr, [&](ValueRange carried) {
-            GibbsState state = emitter->emitSweep(
-                rewriter, {carried[0], carried[1], carried[2]});
-            return SmallVector<Value>{state.trace, state.weight, state.rng};
-          });
-
-      // Gibbs always accepts; `log_densities` is a zero placeholder.
-      auto diagType = cast<ShapedType>(op.getDiagnostics().getType());
-      Value diagnostics = arith::ConstantOp::create(
-          rewriter, loc, diagType,
-          DenseElementsAttr::get(diagType, rewriter.getBoolAttr(true)));
-      Value logDensities = arith::ConstantOp::create(
-          rewriter, loc, rewriter.getZeroAttr(op.getLogDensities().getType()));
-      rewriter.replaceOp(op,
-                         {out[0], diagnostics, logDensities, out[2], out[1]});
-      return success();
-    }
-  };
-
-  /// Rejects a Gibbs `impulse.infer`: only the region form has a lowering.
-  struct RejectFlatGibbsPattern
-      : public mlir::OpRewritePattern<impulse::InferOp> {
-    using mlir::OpRewritePattern<impulse::InferOp>::OpRewritePattern;
-    LogicalResult matchAndRewrite(impulse::InferOp op,
-                                  PatternRewriter &rewriter) const override {
-      if (!op.getGibbsConfig().has_value())
-        return failure();
-      op.emitError("Impulse Gibbs: requires the region pipeline "
-                   "(inline-infer-regions, sicm); this model was not admitted "
-                   "to region form");
+    if (fn.getFunctionBody().empty()) {
+      op.emitError("Impulse: trying to call an empty function");
       return failure();
     }
-  };
 
-  /// Lowers `impulse.mh` to a Hastings `impulse.regenerate` of the selection
-  /// and an accept test.
-  struct LowerMHPattern : public mlir::OpRewritePattern<impulse::MHOp> {
-    using mlir::OpRewritePattern<impulse::MHOp>::OpRewritePattern;
+    FunctionOpInterface newFn = cloneForMode(fn, ImpulseMode::Call);
 
-    LogicalResult matchAndRewrite(impulse::MHOp mhOp,
-                                  PatternRewriter &rewriter) const override {
-      SymbolTableCollection symbolTable;
-      FailureOr<FunctionOpInterface> fn =
-          lookupModelBody(mhOp, mhOp.getFnAttr(), "mh", symbolTable);
-      if (failed(fn))
+    SmallVector<Operation *, 4> toErase;
+    newFn.walk([&](impulse::SampleOp sampleOp) {
+      OpBuilder::InsertionGuard guard(rewriter);
+      rewriter.setInsertionPoint(sampleOp);
+
+      rewriter.replaceAllUsesWith(
+          sampleOp->getResults(),
+          emitSiteDraw(rewriter, symbolTable, sampleOp));
+      toErase.push_back(sampleOp);
+    });
+
+    for (Operation *site : toErase)
+      rewriter.eraseOp(site);
+
+    rewriter.setInsertionPoint(op);
+    auto call = func::CallOp::create(rewriter, op.getLoc(), newFn.getName(),
+                                     newFn.getResultTypes(), op.getOperands());
+
+    rewriter.replaceOp(op, call.getResults());
+
+    return success();
+  }
+};
+
+/// Lowers `impulse.simulate` to a call of a clone of the model that draws
+/// every site and also returns the trace of `all_addresses` and the joint log
+/// density.
+struct LowerSimulatePattern
+    : public mlir::OpRewritePattern<impulse::SimulateOp> {
+  using mlir::OpRewritePattern<impulse::SimulateOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(impulse::SimulateOp op,
+                                PatternRewriter &rewriter) const override {
+    SymbolTableCollection symbolTable;
+    int64_t declaredWidth =
+        cast<RankedTensorType>(op.getTrace().getType()).getShape()[1];
+    FailureOr<TracedClone> clone =
+        beginTracedClone(op, op.getFnAttr(), op.getAllAddressesAttr(),
+                         declaredWidth, ImpulseMode::Simulate,
+                         /*constraintSize=*/-1, "simulate", symbolTable);
+    if (failed(clone))
+      return failure();
+
+    auto lowerSite = [&](impulse::SampleOp sampleOp,
+                         SiteCarry &carry) -> FailureOr<SmallVector<Value>> {
+      Location loc = sampleOp.getLoc();
+      if (sampleOp.getDistAttr() || sampleOp.getLogpdfFnAttr()) {
+        SmallVector<Value> sampledValues =
+            emitSiteDraw(rewriter, symbolTable, sampleOp);
+        if (failed(scoreAndTraceSite(
+                rewriter, sampleOp, ArrayRef<Value>(sampledValues).drop_front(),
+                *clone, carry, symbolTable)))
+          return failure();
+        return sampledValues;
+      }
+
+      FailureOr<NestedSite> nested =
+          resolveNestedSite(rewriter, sampleOp, *clone, symbolTable);
+      if (failed(nested))
         return failure();
+      if (nested->subAllAddresses.empty())
+        return emitSiteDraw(rewriter, symbolTable, sampleOp);
+      if (nested->subPositionSize <= 0)
+        return sampleOp.emitError(
+            "Impulse: failed to compute sub-position size");
+      auto nestedSimulate = impulse::SimulateOp::create(
+          rewriter, loc, nested->getResultTypes(clone->zeroWeight.getType()),
+          sampleOp.getFnAttr(), sampleOp.getInputs(), nested->subAllAddresses);
+      carry.weight = arith::AddFOp::create(rewriter, loc, carry.weight,
+                                           nestedSimulate.getWeight());
+      mergeNestedTrace(rewriter, loc, *nested, nestedSimulate.getTrace(),
+                       carry);
+      return SmallVector<Value>(nestedSimulate.getOutputs());
+    };
 
-      auto loc = mhOp.getLoc();
+    return finishTracedClone(
+        rewriter, op, *clone, lowerSite,
+        [&](Location) { return clone->carry.weight; }, op.getInputs());
+  }
+};
 
-      Value oldTrace = mhOp.getOriginalTrace();
-      Value oldWeight = mhOp.getOriginalWeight();
-      auto allAddresses = mhOp.getAllAddressesAttr();
+/// Lowers an `impulse.infer` or `impulse.infer_region` with an HMC or NUTS
+/// config to its chains.
+template <typename MCMCOpT>
+struct LowerMCMCPattern : public mlir::OpRewritePattern<MCMCOpT> {
+  static constexpr bool isRegionForm =
+      std::is_same_v<MCMCOpT, impulse::InferRegionOp>;
 
-      auto traceType = oldTrace.getType();
+  bool debugDump;
 
-      auto nameAttr = mhOp.getNameAttr();
-      if (!nameAttr)
-        nameAttr = rewriter.getStringAttr("");
+  LowerMCMCPattern(MLIRContext *context, bool debugDump,
+                   PatternBenefit benefit = 1)
+      : mlir::OpRewritePattern<MCMCOpT>(context, benefit),
+        debugDump(debugDump) {}
 
-      auto selection = mhOp.getSelectionAttr();
+  /// Reads the model of an HMC/NUTS op. Reports a match failure for other
+  /// inference configs and emits an error for a malformed op.
+  FailureOr<ModelContext> resolveModel(MCMCOpT mcmcOp,
+                                       PatternRewriter &rewriter) const {
+    SymbolTableCollection symbolTable;
 
-      FailureOr<FlatTraceLayout> layout =
-          getFlatTraceLayout(mhOp, *fn, allAddresses, symbolTable);
-      if (failed(layout))
+    bool hasLogpdfFn = static_cast<bool>(mcmcOp.getLogpdfFnAttr());
+
+    if constexpr (isRegionForm) {
+      if (mcmcOp.getLogpdf().empty()) {
+        mcmcOp.emitError("Impulse: infer_region requires a constructed "
+                         "logpdf region (run sicm first)");
         return failure();
-      // On a score-tail trace, regenerate returns the dirty-term weight delta.
-      int64_t width = cast<RankedTensorType>(traceType).getShape()[1];
-      bool hasScoreTail = width > layout->positionSize;
+      }
+      if (!hasLogpdfFn && mcmcOp.getSampling().empty()) {
+        mcmcOp.emitError("Impulse: model-mode infer_region requires a "
+                         "sampler region");
+        return failure();
+      }
+    } else if (!hasLogpdfFn) {
+      auto fnAttr = mcmcOp.getFnAttr();
+      if (!fnAttr) {
+        mcmcOp.emitError("Impulse: either fn or logpdf_fn must be provided");
+        return failure();
+      }
+      auto fn = cast<FunctionOpInterface>(
+          symbolTable.lookupNearestSymbolFrom(mcmcOp, fnAttr));
+      if (fn.getFunctionBody().empty()) {
+        mcmcOp.emitError("Impulse: calling `infer` on an empty function");
+        return failure();
+      }
+    }
 
-      MHProposal proposal =
-          proposeFlatMove(rewriter, loc, mhOp, mhOp.getInputs(), oldTrace,
-                          nameAttr, fn->getResultTypes());
-      proposal.changed = mhChangedColumnsFlat(*layout, selection, width);
-      MHStep step = emitMHStep(rewriter, loc, oldTrace, oldWeight, proposal,
-                               hasScoreTail);
-      rewriter.replaceOp(mhOp,
-                         {step.trace, step.weight, step.accepted, step.rng});
+    // Other configs fall through to their own patterns; do not error here.
+    if (!mcmcOp.getHmcConfig() && !mcmcOp.getNutsConfig())
+      return rewriter.notifyMatchFailure(
+          mcmcOp, "no hmc_config/nuts_config; not an HMC/NUTS op");
+
+    if (!mcmcOp.getInitStepSize()) {
+      mcmcOp.emitError("Impulse: MCMC requires init_step_size parameter");
+      return failure();
+    }
+
+    if (mcmcOp.getInputs().empty()) {
+      mcmcOp.emitError("Impulse: MCMC requires at least rng_state input");
+      return failure();
+    }
+
+    ModelContext model = readInferModel(mcmcOp, debugDump);
+    if constexpr (isRegionForm) {
+      // The logpdf region takes the position values in their order.
+      int64_t column = 0;
+      for (BlockArgument arg : mcmcOp.getLogpdf().front().getArguments()) {
+        model.logpdfArgOffsets.push_back(column);
+        column += cast<RankedTensorType>(arg.getType()).getNumElements();
+      }
+    }
+    auto unconstrainedSizeOf = [](ArrayRef<impulse::SupportInfo> supports) {
+      int64_t size = 0;
+      for (const impulse::SupportInfo &info : supports)
+        size += info.unconstrainedSize;
+      return size;
+    };
+
+    if (hasLogpdfFn) {
+      auto initPosType =
+          cast<RankedTensorType>(mcmcOp.getInitPosition().getType());
+      // `init_position` is `1xN` or chain-major `Cx1xN`; N is per chain.
+      model.positionSize = initPosType.getNumElements() / mcmcOp.getNumChains();
+    } else if constexpr (isRegionForm) {
+      if (failed(verifySelectedSupports(mcmcOp)))
+        return failure();
+      FailureOr<RegionPositionLayout> layout =
+          collectRegionLayout(mcmcOp, /*positionDeclarationOrder=*/false);
+      if (succeeded(layout))
+        model.supports = std::move(layout->supports);
+      if (model.supports.empty()) {
+        mcmcOp.emitError("Impulse: failed to collect per-site support info "
+                         "from the infer_region sampler");
+        return failure();
+      }
+      model.positionSize = unconstrainedSizeOf(model.supports);
+      if (model.positionSize <= 0)
+        return failure();
+    } else {
+      for (Attribute address : mcmcOp.getSelectionAttr()) {
+        if (cast<ArrayAttr>(address).size() > 1) {
+          mcmcOp.emitError("Impulse: HMC and NUTS on a model take only "
+                           "top-level addresses in `selection`, not ")
+              << address;
+          return failure();
+        }
+      }
+      if (failed(resolveFlatModel(mcmcOp, /*positionDeclarationOrder=*/false,
+                                  symbolTable, model)))
+        return failure();
+      model.positionSize = unconstrainedSizeOf(model.supports);
+    }
+    return model;
+  }
+
+  LogicalResult matchAndRewrite(MCMCOpT mcmcOp,
+                                PatternRewriter &rewriter) const override {
+    FailureOr<ModelContext> model = resolveModel(mcmcOp, rewriter);
+    if (failed(model))
+      return failure();
+
+    MCMCChainEmitter emitter(rewriter, mcmcOp, std::move(*model));
+    SmallVector<ChainResult> chains =
+        emitter.emitChains(mcmcOp.getInputs().front());
+    if (chains.size() == 1) {
+      rewriter.replaceOp(mcmcOp, chains.front().toValues());
       return success();
     }
-  };
+    ArrayAttr schema = mcmcOp.getStateSchemaAttr();
+    rewriter.replaceOp(mcmcOp,
+                       stackChainResults(rewriter, mcmcOp.getLoc(), chains,
+                                         schema && !schema.empty()));
+    return success();
+  }
+};
 
-  /// Lowers `impulse.generate` to a call of a clone of the model that reads the
-  /// constrained sites from the constraint, draws the others and also returns
-  /// the trace of `all_addresses` and the joint log density.
-  struct LowerGeneratePattern
-      : public mlir::OpRewritePattern<impulse::GenerateOp> {
-    using mlir::OpRewritePattern<impulse::GenerateOp>::OpRewritePattern;
+/// Lowers an `impulse.infer` or `impulse.infer_region` with a VI config to
+/// an SVI loop whose learning rate is the `init_step_size` operand.
+template <typename OpT>
+struct LowerVIPattern : public mlir::OpRewritePattern<OpT> {
+  static constexpr bool isRegionForm =
+      std::is_same_v<OpT, impulse::InferRegionOp>;
 
-    LogicalResult matchAndRewrite(impulse::GenerateOp op,
-                                  PatternRewriter &rewriter) const override {
-      SymbolTableCollection symbolTable;
-      // Operand width, not the packed size: extra columns are simply ignored.
-      int64_t constraintSize =
-          cast<RankedTensorType>(op.getConstraint().getType()).getShape()[1];
-      int64_t declaredWidth =
-          cast<RankedTensorType>(op.getTrace().getType()).getShape()[1];
-      FailureOr<TracedClone> clone = beginTracedClone(
-          op, op.getFnAttr(), op.getAllAddressesAttr(), declaredWidth,
-          ImpulseMode::Generate, constraintSize, "generate", symbolTable);
-      if (failed(clone))
+  bool debugDump;
+
+  LowerVIPattern(MLIRContext *context, bool debugDump,
+                 PatternBenefit benefit = 1)
+      : mlir::OpRewritePattern<OpT>(context, benefit), debugDump(debugDump) {}
+
+  LogicalResult matchAndRewrite(OpT op,
+                                PatternRewriter &rewriter) const override {
+    if (!op.getViConfig().has_value())
+      return rewriter.notifyMatchFailure(op, "no vi_config; not a VI op");
+
+    SymbolTableCollection symbolTable;
+    bool hasLogpdfFn = static_cast<bool>(op.getLogpdfFnAttr());
+
+    if (!op.getInitStepSize()) {
+      op.emitError("Impulse VI: requires init_step_size (learning rate)");
+      return failure();
+    }
+
+    if (op.getInputs().empty()) {
+      op.emitError("Impulse VI: requires at least rng_state input");
+      return failure();
+    }
+
+    ModelContext model = readInferModel(op, debugDump);
+    if constexpr (isRegionForm) {
+      if (hasLogpdfFn) {
+        op.emitError("Impulse VI: custom-logpdf mode is not supported in "
+                     "region form");
         return failure();
-      ArrayAttr constrainedAddresses = op.getConstrainedAddressesAttr();
-      Value constraint = clone->newFn.getArgument(0);
+      }
+      if (op.getLogpdf().empty()) {
+        op.emitError("Impulse VI: infer_region requires a constructed logpdf "
+                     "region (run sicm first)");
+        return failure();
+      }
+      if (failed(verifySelectedSupports(op)))
+        return failure();
+      // Per-site draws consume the RNG in program order, so the position
+      // follows `all_addresses`.
+      FailureOr<RegionPositionLayout> layout =
+          collectRegionLayout(op, /*positionDeclarationOrder=*/true);
+      if (failed(layout)) {
+        op.emitError("Impulse VI: failed to derive position layout from the "
+                     "infer_region sampler");
+        return failure();
+      }
+      model.supports = std::move(layout->supports);
+      model.logpdfArgOffsets = std::move(layout->argOffsets);
+      model.positionSize = model.getConstrainedPositionSize();
+      if (model.positionSize <= 0)
+        return failure();
+    } else if (hasLogpdfFn) {
+      model.positionSize =
+          cast<RankedTensorType>(op.getInitPosition().getType())
+              .getNumElements();
+    } else {
+      FailureOr<int64_t> numValues = resolveFlatModel(
+          op, /*positionDeclarationOrder=*/true, symbolTable, model);
+      if (failed(numValues))
+        return failure();
+      model.positionSize = *numValues;
+    }
 
-      auto lowerSite = [&](impulse::SampleOp sampleOp,
-                           SiteCarry &carry) -> FailureOr<SmallVector<Value>> {
-        Location loc = sampleOp.getLoc();
-        if (sampleOp.getDistAttr() || sampleOp.getLogpdfFnAttr()) {
-          if (failed(verifyTopLevelAddress(sampleOp, constrainedAddresses,
-                                           "constrained")))
-            return failure();
-          bool isConstrained = addressInList(sampleOp, constrainedAddresses);
-          SmallVector<Value> sampledValues;
-          if (isConstrained) {
-            int64_t constrainedOffset = computeOffsetForSampleInSelection(
-                op, clone->fn, constrainedAddresses, sampleOp.getSymbolAttr(),
-                symbolTable);
-            FailureOr<SmallVector<Value>> read = readSiteValues(
-                rewriter, sampleOp, constraint, constrainedOffset);
-            if (failed(read))
-              return failure();
-            sampledValues = std::move(*read);
-          } else {
-            if (impulse::DistAttr dist = sampleOp.getDistAttr();
-                dist && !dist.hasLoopFreeSampler())
-              return sampleOp.emitError(
-                  "Impulse: distribution sampler is not "
-                  "emittable; the site must be constrained");
-            sampledValues = emitSiteDraw(rewriter, symbolTable, sampleOp);
-          }
-          if (failed(scoreAndTraceSite(
-                  rewriter, sampleOp,
-                  ArrayRef<Value>(sampledValues).drop_front(), *clone, carry,
-                  symbolTable,
-                  isConstrained ? "logpdf call for constrained sample"
-                                : "logpdf call")))
-            return failure();
-          return sampledValues;
-        }
+    return lowerVI(rewriter, op, std::move(model));
+  }
+};
 
-        FailureOr<NestedSite> nested =
-            resolveNestedSite(rewriter, sampleOp, *clone, symbolTable);
-        if (failed(nested))
+/// Lowers an MH `impulse.infer` or `impulse.infer_region` to `num_samples`
+/// MH steps, each a proposal for the `selection` and an accept test.
+template <typename OpT>
+struct LowerMHInferPattern : public mlir::OpRewritePattern<OpT> {
+  static constexpr bool isRegionForm =
+      std::is_same_v<OpT, impulse::InferRegionOp>;
+  using mlir::OpRewritePattern<OpT>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(OpT op,
+                                PatternRewriter &rewriter) const override {
+    if (!op.getMhConfig().has_value())
+      return rewriter.notifyMatchFailure(op, "no mh_config; not an MH op");
+
+    Location loc = op.getLoc();
+    auto inputs = op.getInputs();
+    if (inputs.empty()) {
+      op.emitError("Impulse MH: requires at least the rng_state input");
+      return failure();
+    }
+    if (op.getStateIn().size() != 1) {
+      op.emitError("Impulse MH: expects a single `weight` state_in slot");
+      return failure();
+    }
+    if constexpr (isRegionForm) {
+      if (op.getSampling().empty() || op.getLogpdf().empty()) {
+        op.emitError("Impulse MH: infer_region requires sampler and "
+                     "constructed logpdf regions (run sicm first)");
+        return failure();
+      }
+      unsigned numSites = 0;
+      for (Operation &o : op.getSampling().front())
+        numSites += isa<impulse::SampleRegionOp>(&o);
+      if (op.getLogpdf().front().getTerminator()->getNumOperands() !=
+          1 + numSites) {
+        op.emitError("Impulse MH: infer_region logpdf region must yield the "
+                     "joint density followed by one density per site");
+        return failure();
+      }
+    }
+
+    Value initTrace = op.getOriginalTrace();
+    Value initWeight = op.getStateIn()[0];
+    Value initRng = inputs[0];
+    auto traceType = cast<RankedTensorType>(initTrace.getType());
+
+    ArrayAttr selection = op.getSelectionAttr();
+    ArrayAttr allAddresses = op.getAllAddressesAttr();
+
+    SymbolTableCollection symbolTable;
+    FunctionOpInterface fn;
+    if constexpr (!isRegionForm) {
+      fn = symbolTable.lookupNearestSymbolFrom<FunctionOpInterface>(
+          op, op.getFnAttr());
+      if (!fn || fn.getFunctionBody().empty()) {
+        op.emitError("Impulse MH: `fn` must reference a non-empty funcOp");
+        return failure();
+      }
+    }
+
+    int64_t fullPositionSize = 0;
+    RegionTraceLayout layout;
+    ColumnWindows flatChangedColumns;
+    if constexpr (isRegionForm) {
+      FailureOr<RegionTraceLayout> regionLayout =
+          getRegionTraceLayout(op, /*topLevelOnly=*/true);
+      if (failed(regionLayout)) {
+        op.emitError("Impulse MH: all_addresses entry without a top-level "
+                     "site");
+        return failure();
+      }
+      layout = std::move(*regionLayout);
+      for (auto site :
+           op.getSampling().front().template getOps<impulse::SampleRegionOp>())
+        fullPositionSize += sampleRegionSize(site);
+    } else {
+      FailureOr<FlatTraceLayout> flatLayout =
+          getFlatTraceLayout(op, fn, allAddresses, symbolTable);
+      if (failed(flatLayout))
+        return failure();
+      fullPositionSize = flatLayout->positionSize;
+      flatChangedColumns =
+          mhChangedColumnsFlat(*flatLayout, selection, traceType.getShape()[1]);
+    }
+    bool hasScoreTail = traceType.getShape()[1] > fullPositionSize;
+
+    // Carries the trace, the weight, the key and whether the step accepted.
+    auto oneStep = [&](ValueRange carried) -> SmallVector<Value> {
+      Value trace = carried[0], rng = carried[2];
+      MHProposal proposal;
+      if constexpr (isRegionForm) {
+        proposal = proposeRegionMove(rewriter, loc, op, layout, trace, rng,
+                                     hasScoreTail, /*withLogRatio=*/true);
+      } else {
+        SmallVector<Value> inputs(op.getInputs());
+        inputs[0] = rng;
+        proposal =
+            proposeFlatMove(rewriter, loc, op, inputs, trace,
+                            rewriter.getStringAttr(""), fn.getResultTypes());
+        proposal.changed = flatChangedColumns;
+      }
+      MHStep step =
+          emitMHStep(rewriter, loc, trace, carried[1], proposal, hasScoreTail);
+      return {step.trace, step.weight, step.rng, step.accepted};
+    };
+    SmallVector<Value> out = emitRepeated(
+        rewriter, loc, op.getNumSamples(), {initTrace, initWeight, initRng},
+        [&]() -> SmallVector<Value> {
+          Value notAccepted = emitI1ScalarConstant(rewriter, loc, false);
+          return {initTrace, initWeight, initRng, notAccepted};
+        },
+        oneStep);
+
+    // MH reports no per-sample log density; `log_densities` is zero.
+    Value outLogDensities = arith::ConstantOp::create(
+        rewriter, loc, rewriter.getZeroAttr(op.getLogDensities().getType()));
+    rewriter.replaceOp(op, {out[0], out[3], outLogDensities, out[2], out[1]});
+    return success();
+  }
+};
+
+/// Lowers a Gibbs `impulse.infer_region` to `num_samples` sweeps of a
+/// `GibbsSweepEmitter`.
+struct LowerGibbsRegionPattern
+    : public mlir::OpRewritePattern<impulse::InferRegionOp> {
+  using mlir::OpRewritePattern<impulse::InferRegionOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(impulse::InferRegionOp op,
+                                PatternRewriter &rewriter) const override {
+    if (!op.getGibbsConfig().has_value())
+      return rewriter.notifyMatchFailure(op, "no gibbs_config");
+    FailureOr<GibbsSweepEmitter> emitter = GibbsSweepEmitter::analyze(op);
+    if (failed(emitter))
+      return failure();
+    Location loc = op.getLoc();
+    SmallVector<Value> out = emitRepeated(
+        rewriter, loc, op.getNumSamples(),
+        {op.getOriginalTrace(), op.getStateIn()[0], op.getInputs()[0]},
+        /*loopInit=*/nullptr, [&](ValueRange carried) {
+          GibbsState state = emitter->emitSweep(
+              rewriter, {carried[0], carried[1], carried[2]});
+          return SmallVector<Value>{state.trace, state.weight, state.rng};
+        });
+
+    // Gibbs always accepts; `log_densities` is a zero placeholder.
+    auto diagType = cast<ShapedType>(op.getDiagnostics().getType());
+    Value diagnostics = arith::ConstantOp::create(
+        rewriter, loc, diagType,
+        DenseElementsAttr::get(diagType, rewriter.getBoolAttr(true)));
+    Value logDensities = arith::ConstantOp::create(
+        rewriter, loc, rewriter.getZeroAttr(op.getLogDensities().getType()));
+    rewriter.replaceOp(op, {out[0], diagnostics, logDensities, out[2], out[1]});
+    return success();
+  }
+};
+
+/// Rejects a Gibbs `impulse.infer`: only the region form has a lowering.
+struct RejectFlatGibbsPattern
+    : public mlir::OpRewritePattern<impulse::InferOp> {
+  using mlir::OpRewritePattern<impulse::InferOp>::OpRewritePattern;
+  LogicalResult matchAndRewrite(impulse::InferOp op,
+                                PatternRewriter &rewriter) const override {
+    if (!op.getGibbsConfig().has_value())
+      return failure();
+    op.emitError("Impulse Gibbs: requires the region pipeline "
+                 "(inline-infer-regions, sicm); this model was not admitted "
+                 "to region form");
+    return failure();
+  }
+};
+
+/// Lowers `impulse.mh` to a Hastings `impulse.regenerate` of the selection
+/// and an accept test.
+struct LowerMHPattern : public mlir::OpRewritePattern<impulse::MHOp> {
+  using mlir::OpRewritePattern<impulse::MHOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(impulse::MHOp mhOp,
+                                PatternRewriter &rewriter) const override {
+    SymbolTableCollection symbolTable;
+    FailureOr<FunctionOpInterface> fn =
+        lookupModelBody(mhOp, mhOp.getFnAttr(), "mh", symbolTable);
+    if (failed(fn))
+      return failure();
+
+    Location loc = mhOp.getLoc();
+
+    Value oldTrace = mhOp.getOriginalTrace();
+    Value oldWeight = mhOp.getOriginalWeight();
+    auto allAddresses = mhOp.getAllAddressesAttr();
+
+    Type traceType = oldTrace.getType();
+
+    auto nameAttr = mhOp.getNameAttr();
+    if (!nameAttr)
+      nameAttr = rewriter.getStringAttr("");
+
+    auto selection = mhOp.getSelectionAttr();
+
+    FailureOr<FlatTraceLayout> layout =
+        getFlatTraceLayout(mhOp, *fn, allAddresses, symbolTable);
+    if (failed(layout))
+      return failure();
+    // On a score-tail trace, regenerate returns the dirty-term weight delta.
+    int64_t width = cast<RankedTensorType>(traceType).getShape()[1];
+    bool hasScoreTail = width > layout->positionSize;
+
+    MHProposal proposal =
+        proposeFlatMove(rewriter, loc, mhOp, mhOp.getInputs(), oldTrace,
+                        nameAttr, fn->getResultTypes());
+    proposal.changed = mhChangedColumnsFlat(*layout, selection, width);
+    MHStep step =
+        emitMHStep(rewriter, loc, oldTrace, oldWeight, proposal, hasScoreTail);
+    rewriter.replaceOp(mhOp,
+                       {step.trace, step.weight, step.accepted, step.rng});
+    return success();
+  }
+};
+
+/// Lowers `impulse.generate` to a call of a clone of the model that reads the
+/// constrained sites from the constraint, draws the others and also returns
+/// the trace of `all_addresses` and the joint log density.
+struct LowerGeneratePattern
+    : public mlir::OpRewritePattern<impulse::GenerateOp> {
+  using mlir::OpRewritePattern<impulse::GenerateOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(impulse::GenerateOp op,
+                                PatternRewriter &rewriter) const override {
+    SymbolTableCollection symbolTable;
+    // Operand width, not the packed size: extra columns are simply ignored.
+    int64_t constraintSize =
+        cast<RankedTensorType>(op.getConstraint().getType()).getShape()[1];
+    int64_t declaredWidth =
+        cast<RankedTensorType>(op.getTrace().getType()).getShape()[1];
+    FailureOr<TracedClone> clone = beginTracedClone(
+        op, op.getFnAttr(), op.getAllAddressesAttr(), declaredWidth,
+        ImpulseMode::Generate, constraintSize, "generate", symbolTable);
+    if (failed(clone))
+      return failure();
+    ArrayAttr constrainedAddresses = op.getConstrainedAddressesAttr();
+    Value constraint = clone->newFn.getArgument(0);
+
+    auto lowerSite = [&](impulse::SampleOp sampleOp,
+                         SiteCarry &carry) -> FailureOr<SmallVector<Value>> {
+      Location loc = sampleOp.getLoc();
+      if (sampleOp.getDistAttr() || sampleOp.getLogpdfFnAttr()) {
+        if (failed(verifyTopLevelAddress(sampleOp, constrainedAddresses,
+                                         "constrained")))
           return failure();
-        if (nested->subAllAddresses.empty())
-          return emitSiteDraw(rewriter, symbolTable, sampleOp);
-        Attribute symbol = sampleOp.getSymbolAttr();
-        ArrayAttr subConstrainedAddrs =
-            buildSubSelection(rewriter, constrainedAddresses, symbol);
-        int64_t subConstraintSize = computePositionSizeForSelection(
-            sampleOp, nested->genFn, subConstrainedAddrs, symbolTable);
-        if (nested->subPositionSize <= 0 || subConstraintSize < 0)
-          return sampleOp.emitError("Impulse: failed to compute sub-position "
-                                    "or sub-constraint size");
-
-        auto subConstraintType = RankedTensorType::get({1, subConstraintSize},
-                                                       rewriter.getF64Type());
-        Value subConstraint;
-        if (subConstraintSize > 0) {
-          int64_t subConstraintOffset = computeOffsetForSampleInSelection(
-              sampleOp, clone->fn, constrainedAddresses, symbol, symbolTable);
-          subConstraint = emitColumnSlice(rewriter, loc, subConstraintType,
-                                          constraint, subConstraintOffset);
+        bool isConstrained = addressInList(sampleOp, constrainedAddresses);
+        SmallVector<Value> sampledValues;
+        if (isConstrained) {
+          int64_t constrainedOffset = computeOffsetForSampleInSelection(
+              op, clone->fn, constrainedAddresses, sampleOp.getSymbolAttr(),
+              symbolTable);
+          FailureOr<SmallVector<Value>> read =
+              readSiteValues(rewriter, sampleOp, constraint, constrainedOffset);
+          if (failed(read))
+            return failure();
+          sampledValues = std::move(*read);
         } else {
-          subConstraint =
-              emitSplatConstant(rewriter, loc, subConstraintType, 0.0);
+          if (impulse::DistAttr dist = sampleOp.getDistAttr();
+              dist && !dist.hasLoopFreeSampler())
+            return sampleOp.emitError(
+                "Impulse: distribution sampler is not "
+                "emittable; the site must be constrained");
+          sampledValues = emitSiteDraw(rewriter, symbolTable, sampleOp);
         }
-        auto nestedGenerate = impulse::GenerateOp::create(
-            rewriter, loc, nested->getResultTypes(clone->zeroWeight.getType()),
-            sampleOp.getFnAttr(), sampleOp.getInputs(), subConstraint,
-            nested->subAllAddresses, subConstrainedAddrs);
-        carry.weight = arith::AddFOp::create(rewriter, loc, carry.weight,
-                                             nestedGenerate.getWeight());
-        mergeNestedTrace(rewriter, loc, *nested, nestedGenerate.getTrace(),
-                         carry);
-        return SmallVector<Value>(nestedGenerate.getOutputs());
-      };
+        if (failed(scoreAndTraceSite(
+                rewriter, sampleOp, ArrayRef<Value>(sampledValues).drop_front(),
+                *clone, carry, symbolTable,
+                isConstrained ? "logpdf call for constrained sample"
+                              : "logpdf call")))
+          return failure();
+        return sampledValues;
+      }
 
-      SmallVector<Value> callOperands{op.getConstraint()};
-      llvm::append_range(callOperands, op.getInputs());
-      return finishTracedClone(
-          rewriter, op, *clone, lowerSite,
-          [&](Location) { return clone->carry.weight; }, callOperands);
-    }
-  };
-
-  /// Lowers `impulse.regenerate` to a call of a clone of the model that redraws
-  /// the selected sites, reads the others from the old trace and also returns
-  /// the new trace and the weight that `RegenerateLowering` describes.
-  struct LowerRegeneratePattern
-      : public mlir::OpRewritePattern<impulse::RegenerateOp> {
-    using mlir::OpRewritePattern<impulse::RegenerateOp>::OpRewritePattern;
-
-    LogicalResult matchAndRewrite(impulse::RegenerateOp op,
-                                  PatternRewriter &rewriter) const override {
-      SymbolTableCollection symbolTable;
-      bool hasConstraint = static_cast<bool>(op.getConstraint());
-      // Operand width, not the packed size, as in generate.
-      int64_t constraintSize =
-          hasConstraint ? cast<RankedTensorType>(op.getConstraint().getType())
-                              .getShape()[1]
-                        : -1;
-      int64_t declaredWidth =
-          cast<RankedTensorType>(op.getNewTrace().getType()).getShape()[1];
-      FailureOr<TracedClone> clone = beginTracedClone(
-          op, op.getFnAttr(), op.getAllAddressesAttr(), declaredWidth,
-          ImpulseMode::Regenerate, constraintSize, "regenerate", symbolTable);
-      if (failed(clone))
+      FailureOr<NestedSite> nested =
+          resolveNestedSite(rewriter, sampleOp, *clone, symbolTable);
+      if (failed(nested))
         return failure();
-      RegenerateLowering lowering(rewriter, op, *clone, symbolTable);
-      if (failed(lowering.prepare()))
-        return failure();
+      if (nested->subAllAddresses.empty())
+        return emitSiteDraw(rewriter, symbolTable, sampleOp);
+      Attribute symbol = sampleOp.getSymbolAttr();
+      ArrayAttr subConstrainedAddrs =
+          buildSubSelection(rewriter, constrainedAddresses, symbol);
+      int64_t subConstraintSize = computePositionSizeForSelection(
+          sampleOp, nested->genFn, subConstrainedAddrs, symbolTable);
+      if (nested->subPositionSize <= 0 || subConstraintSize < 0)
+        return sampleOp.emitError("Impulse: failed to compute sub-position "
+                                  "or sub-constraint size");
 
-      SmallVector<Value> callOperands{op.getOriginalTrace()};
-      if (hasConstraint)
-        callOperands.push_back(op.getConstraint());
-      llvm::append_range(callOperands, op.getInputs());
-      return finishTracedClone(
-          rewriter, op, *clone,
-          [&](impulse::SampleOp site, SiteCarry &carry) {
-            return lowering.lowerSite(site, carry);
-          },
-          [&](Location loc) { return lowering.emitWeightOut(loc); },
-          callOperands);
-    }
-  };
+      auto subConstraintType =
+          RankedTensorType::get({1, subConstraintSize}, rewriter.getF64Type());
+      Value subConstraint;
+      if (subConstraintSize > 0) {
+        int64_t subConstraintOffset = computeOffsetForSampleInSelection(
+            sampleOp, clone->fn, constrainedAddresses, symbol, symbolTable);
+        subConstraint = emitColumnSlice(rewriter, loc, subConstraintType,
+                                        constraint, subConstraintOffset);
+      } else {
+        subConstraint =
+            emitSplatConstant(rewriter, loc, subConstraintType, 0.0);
+      }
+      auto nestedGenerate = impulse::GenerateOp::create(
+          rewriter, loc, nested->getResultTypes(clone->zeroWeight.getType()),
+          sampleOp.getFnAttr(), sampleOp.getInputs(), subConstraint,
+          nested->subAllAddresses, subConstrainedAddrs);
+      carry.weight = arith::AddFOp::create(rewriter, loc, carry.weight,
+                                           nestedGenerate.getWeight());
+      mergeNestedTrace(rewriter, loc, *nested, nestedGenerate.getTrace(),
+                       carry);
+      return SmallVector<Value>(nestedGenerate.getOutputs());
+    };
+
+    SmallVector<Value> callOperands{op.getConstraint()};
+    llvm::append_range(callOperands, op.getInputs());
+    return finishTracedClone(
+        rewriter, op, *clone, lowerSite,
+        [&](Location) { return clone->carry.weight; }, callOperands);
+  }
+};
+
+/// Lowers `impulse.regenerate` to a call of a clone of the model that redraws
+/// the selected sites, reads the others from the old trace and also returns
+/// the new trace and the weight that `RegenerateLowering` describes.
+struct LowerRegeneratePattern
+    : public mlir::OpRewritePattern<impulse::RegenerateOp> {
+  using mlir::OpRewritePattern<impulse::RegenerateOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(impulse::RegenerateOp op,
+                                PatternRewriter &rewriter) const override {
+    SymbolTableCollection symbolTable;
+    bool hasConstraint = static_cast<bool>(op.getConstraint());
+    // Operand width, not the packed size, as in generate.
+    int64_t constraintSize =
+        hasConstraint
+            ? cast<RankedTensorType>(op.getConstraint().getType()).getShape()[1]
+            : -1;
+    int64_t declaredWidth =
+        cast<RankedTensorType>(op.getNewTrace().getType()).getShape()[1];
+    FailureOr<TracedClone> clone = beginTracedClone(
+        op, op.getFnAttr(), op.getAllAddressesAttr(), declaredWidth,
+        ImpulseMode::Regenerate, constraintSize, "regenerate", symbolTable);
+    if (failed(clone))
+      return failure();
+    RegenerateLowering lowering(rewriter, op, *clone, symbolTable);
+    if (failed(lowering.prepare()))
+      return failure();
+
+    SmallVector<Value> callOperands{op.getOriginalTrace()};
+    if (hasConstraint)
+      callOperands.push_back(op.getConstraint());
+    llvm::append_range(callOperands, op.getInputs());
+    return finishTracedClone(
+        rewriter, op, *clone,
+        [&](impulse::SampleOp site, SiteCarry &carry) {
+          return lowering.lowerSite(site, carry);
+        },
+        [&](Location loc) { return lowering.emitWeightOut(loc); },
+        callOperands);
+  }
 };
 
 } // end anonymous namespace
