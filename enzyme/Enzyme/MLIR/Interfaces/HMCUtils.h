@@ -120,6 +120,8 @@ struct ModelContext {
   SmallVector<SupportInfo> supports;
   FlatSymbolRefAttr logpdfFn;
   DictionaryAttr autodiffAttrs;
+  /// Whether the lowering dumps intermediate values for debugging.
+  bool debugDump = false;
 
   /// When set, the log density is cloned from this region, whose block
   /// arguments take slices of the constrained position, instead of evaluated
@@ -284,13 +286,11 @@ Value computeKineticEnergy(OpBuilder &builder, Location loc, Value momentum,
 Value computeMassMatrixSqrt(OpBuilder &builder, Location loc, Value invMass,
                             RankedTensorType positionType);
 
-/// Samples momentum from `N(0, M)` where M is the mass matrix.
-/// Returns `(momentum, updated_rng_state)`.
-std::pair<Value, Value> sampleMomentum(OpBuilder &builder, Location loc,
-                                       Value rng, Value invMass,
-                                       Value massMatrixSqrt,
-                                       RankedTensorType positionType,
-                                       bool debugDump = false);
+/// Samples momentum from `N(0, M)` where M is the mass matrix, drawing from
+/// `rng`.
+Value sampleMomentum(OpBuilder &builder, Location loc, Value rng, Value invMass,
+                     Value massMatrixSqrt, RankedTensorType positionType,
+                     bool debugDump);
 
 /// Writes each site's slice of the `1xN` position `position2d` into its
 /// columns of `fullTrace`.
@@ -360,18 +360,17 @@ NUTSTreeState combineTrees(OpBuilder &builder, Location loc,
 /// key for the first transition. The position is `initialPosition` with a
 /// custom log density, else read from the trace and unconstrained.
 InitialHMCState InitHMC(OpBuilder &builder, Location loc, Value rng,
-                        const HMCContext &ctx, Value initialPosition = Value(),
-                        bool debugDump = false);
+                        const HMCContext &ctx, Value initialPosition = Value());
 
 /// Single HMC iteration: momentum sampling + leapfrog + MH accept/reject
 MCMCKernelResult SampleHMC(OpBuilder &builder, Location loc, Value q,
                            Value grad, Value U, Value rng,
-                           const HMCContext &ctx, bool debugDump = false);
+                           const HMCContext &ctx);
 
 /// Single NUTS iteration: momentum sampling + tree building
 MCMCKernelResult SampleNUTS(OpBuilder &builder, Location loc, Value q,
                             Value grad, Value U, Value rng,
-                            const NUTSContext &ctx, bool debugDump = false);
+                            const NUTSContext &ctx);
 
 /// Builds a base tree (leaf node) by taking one leapfrog step.
 NUTSTreeState buildBaseTree(OpBuilder &builder, Location loc,
@@ -388,19 +387,18 @@ SubtreeBuildResult buildIterativeSubtree(OpBuilder &builder, Location loc,
                                          const NUTSTreeState &initialTree,
                                          Value direction, Value pCkpts,
                                          Value pSumCkpts,
-                                         const NUTSContext &ctx,
-                                         bool debugDump = false);
+                                         const NUTSContext &ctx);
 
 /// Tree doubling by building a subtree of same depth and combining.
 SubtreeBuildResult doubleTree(OpBuilder &builder, Location loc,
                               const NUTSTreeState &tree, Value direction,
                               Value pCkpts, Value pSumCkpts,
-                              const NUTSContext &ctx, bool debugDump = false);
+                              const NUTSContext &ctx);
 
 /// Main NUTS tree building loop.
 NUTSTreeState buildTree(OpBuilder &builder, Location loc,
                         const NUTSTreeState &initialTree,
-                        const NUTSContext &ctx, bool debugDump = false);
+                        const NUTSContext &ctx);
 
 /// Computes checkpoint indices from leaf index for iterative turning check.
 std::pair<Value, Value> leafIdxToCheckpointIdxs(OpBuilder &builder,
@@ -409,16 +407,13 @@ std::pair<Value, Value> leafIdxToCheckpointIdxs(OpBuilder &builder,
 /// Checkpoint-based iterative turning check.
 Value checkIterativeTurning(OpBuilder &builder, Location loc, Value p,
                             Value pSum, Value pCkpts, Value pSumCkpts,
-                            Value idxMin, Value idxMax, const NUTSContext &ctx,
-                            bool debugDump = false);
+                            Value idxMin, Value idxMax, const NUTSContext &ctx);
 
 /// Update checkpoint arrays at even leaf indices.
 std::pair<Value, Value> updateCheckpoints(OpBuilder &builder, Location loc,
                                           Value leafIdx, Value ckptIdxMax,
                                           Value p, Value pSum, Value pCkpts,
-                                          Value pSumCkpts,
-                                          const NUTSContext &ctx,
-                                          bool debugDump = false);
+                                          Value pSumCkpts);
 
 // TODO: Proper customization
 struct DualAveragingConfig {

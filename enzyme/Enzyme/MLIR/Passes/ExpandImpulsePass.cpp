@@ -963,6 +963,7 @@ HMCContext MCMCChainEmitter::makeHMCContext(Value invMass, Value massMatrixSqrt,
                        model.positionSize, model.supports, model.autodiffAttrs);
   ctx.numSteps = numSteps;
   ctx.logpdfRegion = model.logpdfRegion;
+  ctx.debugDump = debugDump;
   return ctx;
 }
 
@@ -981,6 +982,7 @@ NUTSContext MCMCChainEmitter::makeNUTSContext(Value invMass,
                         model.positionSize, model.supports, potentialEnergy,
                         maxDeltaEnergy, maxTreeDepth, model.autodiffAttrs);
   ctx.logpdfRegion = model.logpdfRegion;
+  ctx.debugDump = debugDump;
   return ctx;
 }
 
@@ -988,13 +990,13 @@ MCMCKernelResult MCMCChainEmitter::runKernel(const ChainState &state,
                                              Value stepSize, Value invMass,
                                              Value massMatrixSqrt) {
   if (isHMC)
-    return SampleHMC(
-        builder, loc, state.q, state.grad, state.potentialEnergy, state.rng,
-        makeHMCContext(invMass, massMatrixSqrt, stepSize), debugDump);
-  return SampleNUTS(
-      builder, loc, state.q, state.grad, state.potentialEnergy, state.rng,
-      makeNUTSContext(invMass, massMatrixSqrt, stepSize, state.potentialEnergy),
-      debugDump);
+    return SampleHMC(builder, loc, state.q, state.grad, state.potentialEnergy,
+                     state.rng,
+                     makeHMCContext(invMass, massMatrixSqrt, stepSize));
+  return SampleNUTS(builder, loc, state.q, state.grad, state.potentialEnergy,
+                    state.rng,
+                    makeNUTSContext(invMass, massMatrixSqrt, stepSize,
+                                    state.potentialEnergy));
 }
 
 ChainState MCMCChainEmitter::initChainState(Value rng, int64_t chainIdx,
@@ -1014,8 +1016,7 @@ ChainState MCMCChainEmitter::initChainState(Value rng, int64_t chainIdx,
     if (numChains > 1)
       chainInitPosition = sliceChain(chainInitPosition, chainIdx);
   }
-  InitialHMCState init =
-      InitHMC(builder, loc, rng, ctx, chainInitPosition, debugDump);
+  InitialHMCState init = InitHMC(builder, loc, rng, ctx, chainInitPosition);
   return {init.q0, init.grad0, init.U0, init.rng};
 }
 

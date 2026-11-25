@@ -200,10 +200,9 @@ Value impulse::computeMassMatrixSqrt(OpBuilder &builder, Location loc,
   }
 }
 
-std::pair<Value, Value>
-impulse::sampleMomentum(OpBuilder &builder, Location loc, Value rng,
-                        Value invMass, Value massMatrixSqrt,
-                        RankedTensorType positionType, bool debugDump) {
+Value impulse::sampleMomentum(OpBuilder &builder, Location loc, Value rng,
+                              Value invMass, Value massMatrixSqrt,
+                              RankedTensorType positionType, bool debugDump) {
   auto elemType = positionType.getElementType();
   auto scalarType = RankedTensorType::get({}, elemType);
 
@@ -224,11 +223,10 @@ impulse::sampleMomentum(OpBuilder &builder, Location loc, Value rng,
       impulse::RngDistributionAttr::get(builder.getContext(),
                                         impulse::RngDistribution::NORMAL));
 
-  auto rngOut = randomOp.getOutputRngState();
   auto eps = randomOp.getResult();
 
   if (!massMatrixSqrt) {
-    return {eps, rngOut};
+    return eps;
   }
 
   auto massMatrixSqrtType = cast<RankedTensorType>(massMatrixSqrt.getType());
@@ -237,14 +235,12 @@ impulse::sampleMomentum(OpBuilder &builder, Location loc, Value rng,
     // Diagonal: p = massMatrixSqrt * eps (element-wise)
     auto diagSqrt =
         impulse::ReshapeOp::create(builder, loc, positionType, massMatrixSqrt);
-    auto p = arith::MulFOp::create(builder, loc, diagSqrt, eps);
-    return {p, rngOut};
+    return arith::MulFOp::create(builder, loc, diagSqrt, eps);
   } else {
     // Dense: p = massMatrixSqrt @ eps
-    auto p = impulse::DotOp::create(
+    return impulse::DotOp::create(
         builder, loc, positionType, eps, massMatrixSqrt,
         builder.getDenseI64ArrayAttr({1}), builder.getDenseI64ArrayAttr({1}));
-    return {p, rngOut};
   }
 }
 
@@ -720,8 +716,7 @@ NUTSTreeState impulse::combineTrees(OpBuilder &builder, Location loc,
 }
 
 InitialHMCState impulse::InitHMC(OpBuilder &builder, Location loc, Value rng,
-                                 const HMCContext &ctx, Value initialPosition,
-                                 bool debugDump) {
+                                 const HMCContext &ctx, Value initialPosition) {
   RankedTensorType scalarType = ctx.getScalarType();
 
   auto initSplit = impulse::RandomSplitOp::create(
@@ -779,7 +774,7 @@ struct TransitionStart {
 /// trajectory of this one.
 static TransitionStart startTransition(OpBuilder &builder, Location loc,
                                        Value potentialEnergy, Value rng,
-                                       const HMCContext &ctx, bool debugDump) {
+                                       const HMCContext &ctx) {
   RankedTensorType positionType = ctx.getPositionType();
   auto split = impulse::RandomSplitOp::create(
       builder, loc, TypeRange{rng.getType(), rng.getType(), rng.getType()},
@@ -791,9 +786,9 @@ static TransitionStart startTransition(OpBuilder &builder, Location loc,
         builder, loc, TypeRange{rng.getType(), rng.getType()}, rngMomentum);
     rngMomentum = momentumSplit.getResult(0);
   }
-  Value momentum = sampleMomentum(builder, loc, rngMomentum, ctx.invMass,
-                                  ctx.massMatrixSqrt, positionType, debugDump)
-                       .first;
+  Value momentum =
+      sampleMomentum(builder, loc, rngMomentum, ctx.invMass, ctx.massMatrixSqrt,
+                     positionType, ctx.debugDump);
   Value kineticEnergy =
       computeKineticEnergy(builder, loc, momentum, ctx.invMass, positionType);
   Value hamiltonian =
@@ -803,7 +798,7 @@ static TransitionStart startTransition(OpBuilder &builder, Location loc,
 
 MCMCKernelResult impulse::SampleHMC(OpBuilder &builder, Location loc, Value q,
                                     Value grad, Value U, Value rng,
-                                    const HMCContext &ctx, bool debugDump) {
+                                    const HMCContext &ctx) {
   auto positionType = ctx.getPositionType();
   auto scalarType = ctx.getScalarType();
   auto elemType = ctx.getElementType();
@@ -827,7 +822,7 @@ MCMCKernelResult impulse::SampleHMC(OpBuilder &builder, Location loc, Value q,
   auto adjustedCtx = ctx.withStepSize(adjustedStepSize);
 
   auto [rngNext, rngTransition, p0, initialHamiltonian] =
-      startTransition(builder, loc, U, rng, ctx, debugDump);
+      startTransition(builder, loc, U, rng, ctx);
 
   auto direction = arith::ConstantOp::create(
       builder, loc, i1TensorType,
@@ -914,14 +909,14 @@ MCMCKernelResult impulse::SampleHMC(OpBuilder &builder, Location loc, Value q,
 
 MCMCKernelResult impulse::SampleNUTS(OpBuilder &builder, Location loc, Value q,
                                      Value grad, Value U, Value rng,
-                                     const NUTSContext &ctx, bool debugDump) {
+                                     const NUTSContext &ctx) {
   auto scalarType = ctx.getScalarType();
   auto elemType = ctx.getElementType();
   auto i64TensorType = RankedTensorType::get({}, builder.getI64Type());
   auto i1TensorType = RankedTensorType::get({}, builder.getI1Type());
 
   auto [rngNext, rngTree, p0, initialHamiltonian] =
-      startTransition(builder, loc, U, rng, ctx, debugDump);
+      startTransition(builder, loc, U, rng, ctx);
 
   auto iterCtx = ctx.withH0(initialHamiltonian);
 
@@ -954,7 +949,7 @@ MCMCKernelResult impulse::SampleNUTS(OpBuilder &builder, Location loc, Value q,
                                .p_sum = p0,
                                .rng = rngTree};
 
-  auto finalTree = buildTree(builder, loc, initialTree, iterCtx, debugDump);
+  auto finalTree = buildTree(builder, loc, initialTree, iterCtx);
 
   // The tree itself selects the proposal, so the transition always accepts.
   auto trueConst = arith::ConstantOp::create(
@@ -1073,11 +1068,9 @@ IntegratorState impulse::getLeafFromTree(OpBuilder &builder, Location loc,
   return {leafQ, leafP, leafGrad};
 }
 
-SubtreeBuildResult
-impulse::buildIterativeSubtree(OpBuilder &builder, Location loc,
-                               const NUTSTreeState &initialTree,
-                               Value direction, Value pCkpts, Value pSumCkpts,
-                               const NUTSContext &ctx, bool debugDump) {
+SubtreeBuildResult impulse::buildIterativeSubtree(
+    OpBuilder &builder, Location loc, const NUTSTreeState &initialTree,
+    Value direction, Value pCkpts, Value pSumCkpts, const NUTSContext &ctx) {
   auto i1TensorType = RankedTensorType::get({}, builder.getI1Type());
   auto i64TensorType = RankedTensorType::get({}, builder.getI64Type());
   auto pCkptsType = cast<RankedTensorType>(pCkpts.getType());
@@ -1189,12 +1182,12 @@ impulse::buildIterativeSubtree(OpBuilder &builder, Location loc,
   // Update and check iterative turning
   auto [ckptIdxMin, ckptIdxMax] =
       leafIdxToCheckpointIdxs(builder, loc, bodyLeafIdx);
-  auto [updatedPCkpts, updatedPSumCkpts] = updateCheckpoints(
-      builder, loc, bodyLeafIdx, ckptIdxMax, newLeaf.p_right, updatedTree.p_sum,
-      bodyPCkpts, bodyPSumCkpts, ctx, debugDump);
+  auto [updatedPCkpts, updatedPSumCkpts] =
+      updateCheckpoints(builder, loc, bodyLeafIdx, ckptIdxMax, newLeaf.p_right,
+                        updatedTree.p_sum, bodyPCkpts, bodyPSumCkpts);
   auto iterativeTurning = checkIterativeTurning(
       builder, loc, newLeaf.p_right, updatedTree.p_sum, updatedPCkpts,
-      updatedPSumCkpts, ckptIdxMin, ckptIdxMax, ctx, debugDump);
+      updatedPSumCkpts, ckptIdxMin, ckptIdxMax, ctx);
 
   updatedTree.turning =
       impulse::SelectOp::create(builder, loc, i1TensorType, isFirstLeaf,
@@ -1226,8 +1219,8 @@ impulse::buildIterativeSubtree(OpBuilder &builder, Location loc,
 SubtreeBuildResult impulse::doubleTree(OpBuilder &builder, Location loc,
                                        const NUTSTreeState &tree,
                                        Value direction, Value pCkpts,
-                                       Value pSumCkpts, const NUTSContext &ctx,
-                                       bool debugDump) {
+                                       Value pSumCkpts,
+                                       const NUTSContext &ctx) {
   auto rngSplit2 = impulse::RandomSplitOp::create(
       builder, loc, TypeRange{tree.rng.getType(), tree.rng.getType()},
       tree.rng);
@@ -1236,8 +1229,8 @@ SubtreeBuildResult impulse::doubleTree(OpBuilder &builder, Location loc,
 
   NUTSTreeState subTreeInit = tree;
   subTreeInit.rng = rngSubtree;
-  auto subtreeResult = buildIterativeSubtree(
-      builder, loc, subTreeInit, direction, pCkpts, pSumCkpts, ctx, debugDump);
+  auto subtreeResult = buildIterativeSubtree(builder, loc, subTreeInit,
+                                             direction, pCkpts, pSumCkpts, ctx);
 
   // Tree combine using *biased* transition kernel
   NUTSTreeState combinedTree =
@@ -1249,7 +1242,7 @@ SubtreeBuildResult impulse::doubleTree(OpBuilder &builder, Location loc,
 
 NUTSTreeState impulse::buildTree(OpBuilder &builder, Location loc,
                                  const NUTSTreeState &initialTree,
-                                 const NUTSContext &ctx, bool debugDump) {
+                                 const NUTSContext &ctx) {
   auto elemType =
       cast<RankedTensorType>(ctx.stepSize.getType()).getElementType();
   auto F64TensorType = RankedTensorType::get({}, elemType);
@@ -1347,7 +1340,7 @@ NUTSTreeState impulse::buildTree(OpBuilder &builder, Location loc,
   NUTSTreeState treeToDouble = bodyTree;
   treeToDouble.rng = rngDbl;
   auto doubleResult = doubleTree(builder, loc, treeToDouble, direction,
-                                 bodyPCkpts, bodyPSumCkpts, ctx, debugDump);
+                                 bodyPCkpts, bodyPSumCkpts, ctx);
 
   NUTSTreeState treeToYield = doubleResult.tree;
   treeToYield.rng = rngNext;
@@ -1398,7 +1391,7 @@ std::pair<Value, Value> impulse::leafIdxToCheckpointIdxs(OpBuilder &builder,
 Value impulse::checkIterativeTurning(OpBuilder &builder, Location loc, Value p,
                                      Value pSum, Value pCkpts, Value pSumCkpts,
                                      Value idxMin, Value idxMax,
-                                     const NUTSContext &ctx, bool debugDump) {
+                                     const NUTSContext &ctx) {
   auto positionType = ctx.getPositionType();
   auto i64TensorType = RankedTensorType::get({}, builder.getI64Type());
   auto i1TensorType = RankedTensorType::get({}, builder.getI1Type());
@@ -1464,11 +1457,11 @@ Value impulse::checkIterativeTurning(OpBuilder &builder, Location loc, Value p,
   return whileOp.getResult(1);
 }
 
-std::pair<Value, Value>
-impulse::updateCheckpoints(OpBuilder &builder, Location loc, Value leafIdx,
-                           Value ckptIdxMax, Value p, Value pSum, Value pCkpts,
-                           Value pSumCkpts, const NUTSContext &ctx,
-                           bool debugDump) {
+std::pair<Value, Value> impulse::updateCheckpoints(OpBuilder &builder,
+                                                   Location loc, Value leafIdx,
+                                                   Value ckptIdxMax, Value p,
+                                                   Value pSum, Value pCkpts,
+                                                   Value pSumCkpts) {
   auto i64TensorType = RankedTensorType::get({}, builder.getI64Type());
   auto oneI64 = arith::ConstantOp::create(
       builder, loc, i64TensorType,

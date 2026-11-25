@@ -41,7 +41,6 @@ struct VIContext : public ModelContext {
   double rmspropEps = 1.0e-8;
   // Skip steps whose ELBO or gradient is not finite; the key still advances.
   bool stableUpdate = false;
-  bool debugDump = false;
 
   // Block argument k of `logpdfRegion` binds to the (offset, size) slice
   // logpdfArgSlices[k] of the position.
