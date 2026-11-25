@@ -4154,164 +4154,44 @@ struct ExpandImpulsePass
         rewriter.setInsertionPoint(sampleOp);
 
         SmallVector<Value> sampledValues;
-
-        if (auto dist = sampleOp.getDistAttr()) {
-          Location loc = sampleOp.getLoc();
-          Value rng = sampleOp.getInputs().front();
-          SmallVector<Value> distArgs(std::next(sampleOp.getInputs().begin()),
-                                      sampleOp.getInputs().end());
-          auto distSampleType =
-              cast<RankedTensorType>(sampleOp.getResult(1).getType());
-
+        if (sampleOp.getDistAttr() || sampleOp.getLogpdfAttr()) {
           FailureOr<bool> constrained = findTopLevelAddress(
               sampleOp, CI.getConstrainedAddressesAttr(), "constrained");
           if (failed(constrained))
             return failure();
-          bool isConstrained = *constrained;
-          int64_t constrainedOffset =
-              isConstrained ? computeOffsetForSampleInSelection(
-                                  CI, fn, CI.getConstrainedAddressesAttr(),
-                                  sampleOp.getSymbolAttr(), symbolTable)
-                            : -1;
-
-          sampledValues.resize(sampleOp.getNumResults());
-          if (isConstrained) {
+          if (*constrained) {
+            int64_t constrainedOffset = computeOffsetForSampleInSelection(
+                CI, fn, CI.getConstrainedAddressesAttr(),
+                sampleOp.getSymbolAttr(), symbolTable);
             FailureOr<SmallVector<Value>> read = readSiteValues(
                 rewriter, sampleOp, constraint, constrainedOffset);
             if (failed(read))
               return failure();
             sampledValues = std::move(*read);
           } else {
-            if (!impulse::distSamplerEmittable(dist)) {
+            if (impulse::DistAttr dist = sampleOp.getDistAttr();
+                dist && !impulse::distSamplerEmittable(dist)) {
               sampleOp.emitError("Impulse: distribution sampler is not "
                                  "emittable; the site must be constrained");
               return failure();
             }
-            auto sv = impulse::emitDistSampler(rewriter, loc, dist, rng,
-                                               distArgs, distSampleType);
-            for (unsigned i = 0; i < sv.size(); ++i)
-              sampledValues[i] = sv[i];
+            sampledValues = emitSiteDraw(rewriter, symbolTable, sampleOp);
           }
-
-          Value logpdf = impulse::emitDistLogpdf(rewriter, loc, dist,
-                                                 sampledValues[1], distArgs);
-          weightAccumulator =
-              arith::AddFOp::create(rewriter, loc, weightAccumulator, logpdf);
+          ArrayRef<Value> values = ArrayRef<Value>(sampledValues).drop_front();
+          if (failed(verifySiteLogpdf(symbolTable, sampleOp, values.size(),
+                                      *constrained
+                                          ? "logpdf call for constrained sample"
+                                          : "logpdf call")))
+            return failure();
+          Value logpdf =
+              emitSiteLogpdf(rewriter, symbolTable, sampleOp, values);
+          weightAccumulator = arith::AddFOp::create(rewriter, sampleOp.getLoc(),
+                                                    weightAccumulator, logpdf);
           if (scoreTailSize > 0)
             siteScores.push_back(logpdf);
-
           if (addressInList(sampleOp, selection) &&
-              failed(
-                  appendSiteValues(rewriter, sampleOp,
-                                   ArrayRef<Value>(sampledValues).drop_front(),
-                                   currTrace, currentTraceOffset)))
-            return failure();
-
-          rewriter.replaceAllUsesWith(sampleOp->getResults(), sampledValues);
-          toErase.push_back(sampleOp);
-          return success();
-        }
-
-        bool isDistribution = static_cast<bool>(sampleOp.getLogpdfAttr());
-
-        if (isDistribution) {
-          // A1. Distribution function: call the distribution function.
-          FailureOr<bool> constrained = findTopLevelAddress(
-              sampleOp, CI.getConstrainedAddressesAttr(), "constrained");
-          if (failed(constrained))
-            return failure();
-          bool isConstrained = *constrained;
-          int64_t constrainedOffset =
-              isConstrained ? computeOffsetForSampleInSelection(
-                                  CI, fn, CI.getConstrainedAddressesAttr(),
-                                  sampleOp.getSymbolAttr(), symbolTable)
-                            : -1;
-
-          if (isConstrained) {
-            // Extract sampled values from constraint tensor
-            sampledValues.resize(sampleOp.getNumResults());
-            FailureOr<SmallVector<Value>> read = readSiteValues(
-                rewriter, sampleOp, constraint, constrainedOffset);
-            if (failed(read))
-              return failure();
-            sampledValues = std::move(*read);
-
-            // Compute weight via logpdf using constrained values.
-            auto logpdfFn =
-                cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
-                    sampleOp, sampleOp.getLogpdfAttr()));
-
-            // logpdf operands: (<non-RNG outputs>..., <non-RNG inputs>...)
-            SmallVector<Value> logpdfOperands;
-            for (unsigned i = 1; i < sampledValues.size(); ++i) {
-              logpdfOperands.push_back(sampledValues[i]);
-            }
-            for (unsigned i = 1; i < sampleOp.getNumOperands(); ++i) {
-              logpdfOperands.push_back(sampleOp.getOperand(i));
-            }
-
-            if (logpdfOperands.size() != logpdfFn.getNumArguments()) {
-              sampleOp.emitError(
-                  "Impulse: failed to construct logpdf call for constrained "
-                  "sample; logpdf function has wrong number of arguments");
-              return failure();
-            }
-
-            auto logpdf = func::CallOp::create(
-                rewriter, sampleOp.getLoc(), logpdfFn.getName(),
-                logpdfFn.getResultTypes(), logpdfOperands);
-            weightAccumulator =
-                arith::AddFOp::create(rewriter, sampleOp.getLoc(),
-                                      weightAccumulator, logpdf.getResult(0));
-            if (scoreTailSize > 0)
-              siteScores.push_back(logpdf.getResult(0));
-          } else {
-            // Unconstrained: call the distribution function
-            auto distFn =
-                cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
-                    sampleOp, sampleOp.getFnAttr()));
-
-            auto distCall = func::CallOp::create(
-                rewriter, sampleOp.getLoc(), distFn.getName(),
-                distFn.getResultTypes(), sampleOp.getInputs());
-
-            sampledValues.append(distCall.getResults().begin(),
-                                 distCall.getResults().end());
-
-            auto logpdfFn =
-                cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
-                    sampleOp, sampleOp.getLogpdfAttr()));
-
-            SmallVector<Value> logpdfOperands;
-            for (unsigned i = 1; i < sampledValues.size(); ++i) {
-              logpdfOperands.push_back(sampledValues[i]);
-            }
-            for (unsigned i = 1; i < sampleOp.getNumOperands(); ++i) {
-              logpdfOperands.push_back(sampleOp.getOperand(i));
-            }
-
-            if (logpdfOperands.size() != logpdfFn.getNumArguments()) {
-              sampleOp.emitError(
-                  "Impulse: failed to construct logpdf call; "
-                  "logpdf function has wrong number of arguments");
-              return failure();
-            }
-
-            auto logpdf = func::CallOp::create(
-                rewriter, sampleOp.getLoc(), logpdfFn.getName(),
-                logpdfFn.getResultTypes(), logpdfOperands);
-            weightAccumulator =
-                arith::AddFOp::create(rewriter, sampleOp.getLoc(),
-                                      weightAccumulator, logpdf.getResult(0));
-            if (scoreTailSize > 0)
-              siteScores.push_back(logpdf.getResult(0));
-          }
-
-          if (addressInList(sampleOp, selection) &&
-              failed(
-                  appendSiteValues(rewriter, sampleOp,
-                                   ArrayRef<Value>(sampledValues).drop_front(),
-                                   currTrace, currentTraceOffset)))
+              failed(appendSiteValues(rewriter, sampleOp, values, currTrace,
+                                      currentTraceOffset)))
             return failure();
         } else {
           // B. Generative function: recursively generate the nested function
@@ -4338,13 +4218,7 @@ struct ExpandImpulsePass
                                 sampleOp.getSymbolAttr());
 
           if (subSelection.empty()) {
-            // No samples from this generative function are in the selection
-            // Just call the function directly
-            auto genCall = func::CallOp::create(
-                rewriter, sampleOp.getLoc(), genFn.getName(),
-                genFn.getResultTypes(), sampleOp.getInputs());
-            sampledValues.append(genCall.getResults().begin(),
-                                 genCall.getResults().end());
+            sampledValues = emitSiteDraw(rewriter, symbolTable, sampleOp);
           } else {
             int64_t subPositionSize = computePositionSizeForSelection(
                 sampleOp, genFn, subSelection, symbolTable);
