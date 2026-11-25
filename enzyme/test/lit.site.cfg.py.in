@@ -72,6 +72,8 @@ if len("@ENZYME_BINARY_DIR@") == 0:
 config.substitutions.append(('%etranslate', etranslate))
 if os.path.exists(etranslate):
   config.available_features.add('enzymemlir-translate')
+etypetreetest = config.enzyme_obj_root + "/test/MLIR/Interfaces/enzymemlir-type-tree-test"
+config.substitutions.append(('%etypetreetest', etypetreetest))
 
 # flang -fc1 has no search path for the intrinsic modules when they live in the
 # driver's resource directory, so pass the driver's. A flang that rejects

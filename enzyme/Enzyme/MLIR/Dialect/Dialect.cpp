@@ -16,6 +16,7 @@
 #include "mlir/Interfaces/CallInterfaces.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
 #include "mlir/Transforms/InliningUtils.h"
+#include "llvm/ADT/StringSwitch.h"
 #include "llvm/ADT/TypeSwitch.h"
 
 #include "Dialect/EnzymeEnums.cpp.inc"
@@ -145,22 +146,19 @@ void enzyme::detail::sortTypeTreeSubtrees(
 // Type trees
 //===----------------------------------------------------------------------===//
 
-LogicalResult
-enzyme::TypeTreeAttr::verify(function_ref<InFlightDiagnostic()> emitError,
-                             TypeTreeKind kind, Type floatType,
-                             ArrayRef<int64_t> offsets,
-                             ArrayRef<TypeTreeAttr> subtrees) {
+LogicalResult enzyme::TypeTreeAttr::verify(
+    function_ref<InFlightDiagnostic()> emitError, BaseType kind, Type floatType,
+    ArrayRef<int64_t> offsets, ArrayRef<TypeTreeAttr> subtrees) {
   assert(offsets.size() == subtrees.size() && "expected an offset per subtree");
   assert(llvm::is_sorted(offsets) &&
          "expected the builder or parser to sort the subtrees");
-  if ((kind == TypeTreeKind::Float) != isa_and_nonnull<FloatType>(floatType))
+  if ((kind == BaseType::Float) != isa_and_nonnull<FloatType>(floatType))
     return emitError() << "a type tree node has a floating-point type "
                           "exactly if it is a float";
   for (auto [offset, subtree] : llvm::zip(offsets, subtrees)) {
     if (offset < -1)
       return emitError() << "type tree offset " << offset << " is below -1";
-    if (subtree.getKind() == TypeTreeKind::Unknown &&
-        subtree.getSubtrees().empty())
+    if (subtree.getKind() == BaseType::Unknown && subtree.getSubtrees().empty())
       return emitError() << "type tree is empty at offset " << offset;
   }
   const int64_t *duplicate = std::adjacent_find(offsets.begin(), offsets.end());
@@ -170,22 +168,41 @@ enzyme::TypeTreeAttr::verify(function_ref<InFlightDiagnostic()> emitError,
   return success();
 }
 
+/// The keyword of a type tree node of type `kind`, which is not a float.
+static StringRef getTypeTreeKeyword(BaseType kind) {
+  switch (kind) {
+  case BaseType::Integer:
+    return "integer";
+  case BaseType::Pointer:
+    return "pointer";
+  case BaseType::Anything:
+    return "anything";
+  case BaseType::Float:
+  case BaseType::Unknown:
+    break;
+  }
+  llvm_unreachable("only integer, pointer and anything have a keyword");
+}
+
 /// Parse a type tree node `[<type>] [{<offset>: <node>, ...}]`, where <type>
 /// is integer, pointer, anything, or a floating-point type.
 static enzyme::TypeTreeAttr parseTypeTreeNode(AsmParser &parser) {
   SMLoc loc = parser.getCurrentLocation();
-  TypeTreeKind kind = TypeTreeKind::Unknown;
+  BaseType kind = BaseType::Unknown;
   Type floatType;
   StringRef keyword;
   if (succeeded(parser.parseOptionalKeyword(
           &keyword, {"integer", "pointer", "anything"}))) {
-    kind = *symbolizeTypeTreeKind(keyword);
+    kind = llvm::StringSwitch<BaseType>(keyword)
+               .Case("integer", BaseType::Integer)
+               .Case("pointer", BaseType::Pointer)
+               .Case("anything", BaseType::Anything);
   } else {
     OptionalParseResult result = parser.parseOptionalType(floatType);
     if (result.has_value()) {
       if (failed(*result))
         return {};
-      kind = TypeTreeKind::Float;
+      kind = BaseType::Float;
     }
   }
   SmallVector<int64_t> offsets;
@@ -210,13 +227,13 @@ static enzyme::TypeTreeAttr parseTypeTreeNode(AsmParser &parser) {
 
 /// Print a type tree node in the syntax that parseTypeTreeNode reads.
 static void printTypeTreeNode(AsmPrinter &printer, enzyme::TypeTreeAttr node) {
-  if (node.getKind() == TypeTreeKind::Float)
+  if (node.getKind() == BaseType::Float)
     printer << node.getFloatType();
-  else if (node.getKind() != TypeTreeKind::Unknown)
-    printer << stringifyTypeTreeKind(node.getKind());
+  else if (node.getKind() != BaseType::Unknown)
+    printer << getTypeTreeKeyword(node.getKind());
   if (node.getSubtrees().empty())
     return;
-  if (node.getKind() != TypeTreeKind::Unknown)
+  if (node.getKind() != BaseType::Unknown)
     printer << ' ';
   printer << '{';
   llvm::interleaveComma(llvm::zip(node.getOffsets(), node.getSubtrees()),
