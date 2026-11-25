@@ -31,36 +31,6 @@ static void printOptionalCallee(OpAsmPrinter &printer, Operation *,
 #define GET_OP_CLASSES
 #include "Dialect/Impulse/ImpulseOps.cpp.inc"
 
-/// Parses the optional `, [transforms]` and `, event_dim = k` that follow the
-/// base of a DistAttr.
-static ParseResult parseDistTail(AsmParser &parser, ArrayAttr &transforms,
-                                 int64_t &eventDim) {
-  transforms = {};
-  eventDim = 0;
-  if (failed(parser.parseOptionalComma()))
-    return success();
-  if (failed(parser.parseOptionalKeyword("event_dim"))) {
-    if (parser.parseAttribute(transforms))
-      return failure();
-    if (failed(parser.parseOptionalComma()))
-      return success();
-    if (parser.parseKeyword("event_dim"))
-      return failure();
-  }
-  return failure(parser.parseEqual() || parser.parseInteger(eventDim));
-}
-
-/// Prints what parseDistTail reads.
-static void printDistTail(AsmPrinter &printer, ArrayAttr transforms,
-                          int64_t eventDim) {
-  if (transforms) {
-    printer << ", ";
-    printer.printStrippedAttrOrType(transforms);
-  }
-  if (eventDim != 0)
-    printer << ", event_dim = " << eventDim;
-}
-
 #define GET_ATTRDEF_CLASSES
 #include "Dialect/Impulse/ImpulseAttributes.cpp.inc"
 

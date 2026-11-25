@@ -56,16 +56,13 @@ def DistAttr : Impulse_Attr<"Dist", "dist"> {
     The value of an MVN site has the type of its mean.
 
     The support of the distribution is the support of `base` mapped through
-    each bijection. `event_dim` (default 0) is the rank of one event; it does
-    not change the distribution.
+    each bijection.
   }];
   let parameters = (ins
     "DistBaseKind":$base,
-    OptionalParameter<"ArrayAttr">:$transforms,
-    DefaultValuedParameter<"int64_t", "0">:$event_dim
+    OptionalParameter<"ArrayAttr">:$transforms
   );
-  // Comma-led optional groups cannot parse `<base, event_dim = k>`.
-  let assemblyFormat = "`<` $base `` custom<DistTail>($transforms, $event_dim) `>`";
+  let assemblyFormat = "`<` $base (`,` $transforms^)? `>`";
   let extraClassDeclaration = [{
     /// The support of `base` mapped through each transform, without bounds
     /// or an event size.

@@ -4,8 +4,8 @@
 
 module {
   // CHECK-LABEL: func.func @configs
-  // CHECK-SAME: dist_event = #impulse.dist<STD_NORMAL, event_dim = 1>
-  // CHECK-SAME: dist_full = #impulse.dist<STD_NORMAL, [#impulse.xform<AFFINE>, #impulse.xform<EXP>], event_dim = 1>
+  // CHECK-SAME: dist_event = #impulse.dist<STD_NORMAL>
+  // CHECK-SAME: dist_full = #impulse.dist<STD_NORMAL, [#impulse.xform<AFFINE>, #impulse.xform<EXP>]>
   // CHECK-SAME: dist_xform = #impulse.dist<STD_NORMAL, [#impulse.xform<AFFINE>]>
   // CHECK-SAME: hmc = #impulse.hmc_config<trajectory_length = 1.000000e+00 : f64, adapt_mass_matrix = false>
   // CHECK-SAME: nuts_default_depth = #impulse.nuts_config<max_delta_energy = 1.000000e+03 : f64, adapt_step_size = false>
@@ -20,8 +20,8 @@ module {
     hmc = #impulse.hmc_config<trajectory_length = 1.0 : f64, adapt_mass_matrix = false>,
     nuts_default_depth = #impulse.nuts_config<max_delta_energy = 1000.0 : f64, adapt_step_size = false>,
     nuts_depth_only = #impulse.nuts_config<max_tree_depth = 5, adapt_mass_matrix = false>,
-    dist_event = #impulse.dist<STD_NORMAL, event_dim = 1>,
-    dist_full = #impulse.dist<STD_NORMAL, [#impulse.xform<AFFINE>, #impulse.xform<EXP>], event_dim = 1>,
+    dist_event = #impulse.dist<STD_NORMAL>,
+    dist_full = #impulse.dist<STD_NORMAL, [#impulse.xform<AFFINE>, #impulse.xform<EXP>]>,
     dist_xform = #impulse.dist<STD_NORMAL, [#impulse.xform<AFFINE>]>
   } {
     return
