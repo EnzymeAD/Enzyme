@@ -373,6 +373,8 @@ struct SICMPass : public enzyme::impl::SICMPassBase<SICMPass> {
   transform::NamedSequenceOp scheduleEntry;
   SmallVector<const SICMRuleSetInterface *> ruleSets;
   SICMRuleOptions options;
+  /// The rules of every rewrite step of a run, built at the first step.
+  std::optional<FrozenRewritePatternSet> rules;
 
   void getDependentDialects(DialectRegistry &registry) const override {
     SICMPassBase::getDependentDialects(registry);
@@ -425,10 +427,13 @@ struct SICMPass : public enzyme::impl::SICMPassBase<SICMPass> {
     for (int64_t iter = 0; iter < maxIterations; ++iter) {
       bool anyChanged = false;
 
-      RewritePatternSet patterns(getOperation()->getContext());
-      if (failed(populateRules(patterns))) {
-        signalPassFailure();
-        return;
+      if (!rules) {
+        RewritePatternSet patterns(getOperation()->getContext());
+        if (failed(populateRules(patterns))) {
+          signalPassFailure();
+          return;
+        }
+        rules.emplace(std::move(patterns));
       }
       SampleDependenceCache analysisCache;
       std::optional<IncrementalAnalysisVerifier> verifier;
@@ -444,7 +449,7 @@ struct SICMPass : public enzyme::impl::SICMPassBase<SICMPass> {
         region.walk([&](Operation *op) { regionOps.push_back(op); });
       bool patternChanged = false;
       if (!regionOps.empty())
-        (void)applyOpPatternsGreedily(regionOps, std::move(patterns), config,
+        (void)applyOpPatternsGreedily(regionOps, *rules, config,
                                       &patternChanged);
       anyChanged |= patternChanged;
       if (verifier &&
@@ -498,6 +503,7 @@ struct SICMPass : public enzyme::impl::SICMPassBase<SICMPass> {
   }
 
   void runOnOperation() override {
+    rules.reset();
     ruleSets.clear();
     for (Dialect *dialect : getContext().getLoadedDialects())
       if (auto *ruleSet =
