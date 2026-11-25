@@ -23,7 +23,6 @@
 #include "Passes/Passes.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
-#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/IR/Builders.h"
@@ -54,16 +53,6 @@ namespace enzyme {
 } // namespace enzyme
 } // namespace mlir
 
-static int64_t computeTensorElementCount(RankedTensorType tensorType) {
-  int64_t elemCount = 1;
-  for (auto dim : tensorType.getShape()) {
-    if (dim == ShapedType::kDynamic)
-      return -1;
-    elemCount *= dim;
-  }
-  return elemCount;
-}
-
 using SampleOpMap = DenseMap<Attribute, impulse::SampleOp>;
 
 static SampleOpMap buildSampleOpMap(FunctionOpInterface fn) {
@@ -91,12 +80,11 @@ static int64_t computeSampleElementCount(Operation *op,
       op->emitError("Expected ranked tensor type for sample result");
       return -1;
     }
-    int64_t elemCount = computeTensorElementCount(tensorType);
-    if (elemCount < 0) {
+    if (!tensorType.hasStaticShape()) {
       op->emitError("Dynamic tensor dimensions not supported");
       return -1;
     }
-    totalCount += elemCount;
+    totalCount += tensorType.getNumElements();
   }
   return totalCount;
 }
@@ -121,7 +109,7 @@ static bool computePositionSizeForAddress(Operation *op,
 
     auto genFn = cast<FunctionOpInterface>(
         symbolTable.lookupNearestSymbolFrom(sampleOp, sampleOp.getFnAttr()));
-    if (!genFn || genFn.getFunctionBody().empty()) {
+    if (genFn.getFunctionBody().empty()) {
       op->emitError("Cannot find generative function for nested address");
       return false;
     }
@@ -338,7 +326,7 @@ collectSupportInfoForSelection(Operation *op, FunctionOpInterface fn,
 static int64_t sampleRegionSize(impulse::SampleRegionOp site) {
   int64_t size = 0;
   for (Value result : llvm::drop_begin(site->getResults()))
-    size += computeTensorElementCount(cast<RankedTensorType>(result.getType()));
+    size += cast<RankedTensorType>(result.getType()).getNumElements();
   return size;
 }
 
@@ -1552,8 +1540,8 @@ static Value updateColumns(OpBuilder &builder, Location loc, Value tensor,
 static Value writeTraceColumns(OpBuilder &builder, Location loc, Value trace,
                                Value value, int64_t column) {
   auto valueType = cast<RankedTensorType>(value.getType());
-  auto rowType = RankedTensorType::get(
-      {1, computeTensorElementCount(valueType)}, valueType.getElementType());
+  auto rowType = RankedTensorType::get({1, valueType.getNumElements()},
+                                       valueType.getElementType());
   Value row = impulse::ReshapeOp::create(builder, loc, rowType, value);
   return updateColumns(builder, loc, trace, row, column);
 }
@@ -1566,13 +1554,12 @@ static LogicalResult appendSiteValues(OpBuilder &builder,
                                       ArrayRef<Value> values, Value &trace,
                                       int64_t &offset, bool write = true) {
   for (Value value : values) {
-    int64_t numElements =
-        computeTensorElementCount(cast<RankedTensorType>(value.getType()));
-    if (numElements < 0)
+    auto type = cast<RankedTensorType>(value.getType());
+    if (!type.hasStaticShape())
       return site.emitError("Impulse: dynamic tensor dimensions not supported");
     if (write)
       trace = writeTraceColumns(builder, site.getLoc(), trace, value, offset);
-    offset += numElements;
+    offset += type.getNumElements();
   }
   return success();
 }
@@ -1640,7 +1627,7 @@ static Value emitSiteLogpdf(OpBuilder &builder,
 /// Reads a value of `type` from row 0 of `trace`, starting at column `column`.
 static Value sliceTraceValue(OpBuilder &builder, Location loc, Value trace,
                              int64_t column, RankedTensorType type) {
-  int64_t numElements = computeTensorElementCount(type);
+  int64_t numElements = type.getNumElements();
   auto rowType = RankedTensorType::get({1, numElements}, type.getElementType());
   Value row = impulse::SliceOp::create(
       builder, loc, rowType, trace, builder.getDenseI64ArrayAttr({0, column}),
@@ -1658,7 +1645,7 @@ static SmallVector<Value> sliceTraceValues(OpBuilder &builder, Location loc,
   for (Type type : types) {
     auto tensorType = cast<RankedTensorType>(type);
     values.push_back(sliceTraceValue(builder, loc, trace, offset, tensorType));
-    offset += computeTensorElementCount(tensorType);
+    offset += tensorType.getNumElements();
   }
   return values;
 }
@@ -1673,14 +1660,13 @@ static FailureOr<SmallVector<Value>> readSiteValues(OpBuilder &builder,
   SmallVector<Value> values{site.getInputs().front()};
   for (Value result : llvm::drop_begin(site->getResults())) {
     auto type = cast<RankedTensorType>(result.getType());
-    int64_t numElements = computeTensorElementCount(type);
-    if (numElements < 0) {
+    if (!type.hasStaticShape()) {
       site.emitError("Impulse: dynamic tensor dimensions not supported");
       return failure();
     }
     values.push_back(
         sliceTraceValue(builder, site.getLoc(), source, offset, type));
-    offset += numElements;
+    offset += type.getNumElements();
   }
   return values;
 }
@@ -2129,8 +2115,7 @@ proposeRegionMove(OpBuilder &b, Location loc, impulse::InferRegionOp op,
         map.map(site.getResult(k), v);
         values.push_back(v);
         newTrace = writeTraceColumns(b, loc, newTrace, v, column);
-        column +=
-            computeTensorElementCount(cast<RankedTensorType>(v.getType()));
+        column += cast<RankedTensorType>(v.getType()).getNumElements();
       }
       proposedSelected[addr] = values;
     } else {
@@ -2881,7 +2866,6 @@ struct ExpandImpulsePass
 
     registry
         .insert<mlir::arith::ArithDialect, mlir::math::MathDialect,
-                mlir::complex::ComplexDialect, mlir::cf::ControlFlowDialect,
                 mlir::enzyme::EnzymeDialect, mlir::impulse::ImpulseDialect>();
   }
 
@@ -4713,10 +4697,7 @@ void ExpandImpulsePass::runOnOperation() {
                LowerMHInferPattern<impulse::InferRegionOp>>(&getContext());
   patterns.add<LowerGibbsRegionPattern, RejectFlatGibbsPattern>(&getContext());
 
-  mlir::GreedyRewriteConfig config;
-
-  if (failed(
-          applyPatternsGreedily(getOperation(), std::move(patterns), config))) {
+  if (failed(applyPatternsGreedily(getOperation(), std::move(patterns)))) {
     signalPassFailure();
     return;
   }

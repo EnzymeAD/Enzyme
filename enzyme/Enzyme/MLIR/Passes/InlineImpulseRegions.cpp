@@ -451,8 +451,7 @@ struct InlineInferIntoRegionPass
     RewritePatternSet patterns(&getContext());
     patterns.add<InlineInferOp, InlineLogpdfInferOp>(&getContext());
 
-    GreedyRewriteConfig config;
-    (void)applyPatternsGreedily(getOperation(), std::move(patterns), config);
+    (void)applyPatternsGreedily(getOperation(), std::move(patterns));
 
     SymbolTableCollection symbolTable;
     getOperation()->walk([&](impulse::InferRegionOp regionOp) {
