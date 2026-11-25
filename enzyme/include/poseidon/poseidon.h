@@ -39,18 +39,18 @@
 // written; else the explicit one, which nothing defines, and the call has fn's
 // return type and the arguments as given.
 #if defined(__cplusplus) && defined(__clang__)
-#define __POSEIDON_CALLEE(fn, ...)                                             \
-  decltype(__poseidon_callee_of(0, fn __VA_OPT__(, ) __VA_ARGS__))
+#define POSEIDON_DETAIL_CALLEE(fn, ...)                                        \
+  decltype(::poseidon::detail::calleeOf(0, fn __VA_OPT__(, ) __VA_ARGS__))
 #define __poseidon_optimize(fn, ...)                                           \
   __builtin_choose_expr(                                                       \
-      __POSEIDON_CALLEE(fn, __VA_ARGS__)::__is_explicit,                       \
-      ((typename __POSEIDON_CALLEE(                                            \
-          fn, __VA_ARGS__)::__type)__poseidon_site_explicit((void *)(fn))),    \
+      POSEIDON_DETAIL_CALLEE(fn, __VA_ARGS__)::IsExplicit,                     \
+      ((typename POSEIDON_DETAIL_CALLEE(                                       \
+          fn, __VA_ARGS__)::Type)__poseidon_site_explicit((void *)(fn))),      \
       ((__typeof__(fn) *)__poseidon_site((void *)(fn))))(__VA_ARGS__)
 #define __poseidon_optimize_tau(t, fn, ...)                                    \
   __builtin_choose_expr(                                                       \
-      __POSEIDON_CALLEE(fn, __VA_ARGS__)::__is_explicit,                       \
-      ((typename __POSEIDON_CALLEE(fn, __VA_ARGS__)::__type)                   \
+      POSEIDON_DETAIL_CALLEE(fn, __VA_ARGS__)::IsExplicit,                     \
+      ((typename POSEIDON_DETAIL_CALLEE(fn, __VA_ARGS__)::Type)                \
            __poseidon_site_explicit_tau((void *)(fn), (double)(t))),           \
       ((__typeof__(fn) *)__poseidon_site_tau((void *)(fn), (double)(t))))(     \
       __VA_ARGS__)
@@ -112,19 +112,20 @@ __poseidon_site_explicit_tau(void *, double);
 // through, by overload resolution in an unevaluated operand: the first
 // overload is the better match whenever fn takes the arguments as written.
 extern "C++" {
-template <typename _Tp, bool _Explicit> struct __poseidon_callee {
-  typedef _Tp __type;
-  static const bool __is_explicit = _Explicit;
+namespace poseidon {
+namespace detail {
+template <typename T, bool Explicit> struct Callee {
+  typedef T Type;
+  static const bool IsExplicit = Explicit;
 };
-template <typename _Fn, typename... _Args>
-POSEIDON_SITE_TARGETS auto __poseidon_callee_of(int, _Fn *__fn,
-                                                _Args &&...__args)
-    -> decltype((void)__fn(static_cast<_Args &&>(__args)...),
-                __poseidon_callee<_Fn *, false>());
-template <typename _Ret, typename... _Params, typename... _Args>
-POSEIDON_SITE_TARGETS auto __poseidon_callee_of(long, _Ret (*)(_Params...),
-                                                _Args...)
-    -> __poseidon_callee<_Ret (*)(_Args...), true>;
+template <typename Fn, typename... Args>
+POSEIDON_SITE_TARGETS auto calleeOf(int, Fn *fn, Args &&...args)
+    -> decltype((void)fn(static_cast<Args &&>(args)...), Callee<Fn *, false>());
+template <typename Ret, typename... Params, typename... Args>
+POSEIDON_SITE_TARGETS auto calleeOf(long, Ret (*)(Params...), Args...)
+    -> Callee<Ret (*)(Args...), true>;
+} // namespace detail
+} // namespace poseidon
 }
 #endif
 

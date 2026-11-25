@@ -1,5 +1,5 @@
-// The stage-3 reduce of MFEM's elasticity apply, profiled with the launch MFEM
-// makes (one 343-thread block per element) and nothing in the application
+// A per-element dense product reduce written as a forall_2D body, profiled
+// with one 343-thread block per element and nothing in the application
 // prepared for the profile. The reverse pass caches the products' operands in
 // the device heap, far more than CUDA's default 8 MiB; the profiler sizes the
 // heap before the first kernel runs.

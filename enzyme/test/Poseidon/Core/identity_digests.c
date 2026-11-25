@@ -1,16 +1,16 @@
-// RUN: rm -rf %t && mkdir -p %t/pass/Solve %t/pass/runtime/fpprofiler %t/pass/tools/driver
-// RUN: cp %S/../../../Poseidon/Solve/Solvers.cpp %t/pass/Solve/
-// RUN: cp %S/../../../Poseidon/runtime/fpprofiler/FPProfiler.cpp %t/pass/runtime/fpprofiler/
-// RUN: cp %S/../../../Poseidon/tools/driver/poseidon-clang.cpp %t/pass/tools/driver/
+// RUN: rm -rf %t && mkdir -p %t/pass/Solve %t/pass/runtime/profiler %t/pass/tools/driver
+// RUN: echo 'int solve();' > %t/pass/Solve/Solve.cpp
+// RUN: echo 'int profile();' > %t/pass/runtime/profiler/Profiler.cpp
+// RUN: echo 'int main();' > %t/pass/tools/driver/driver.cpp
 // RUN: %cmake -DPASS_DIR=%t/pass -DOUT=%t/before.h -P %S/../../../Poseidon/cmake/BuildIdentity.cmake
 // RUN: FileCheck %s < %t/before.h
-// RUN: echo '// changed' >> %t/pass/Solve/Solvers.cpp
+// RUN: echo '// changed' >> %t/pass/Solve/Solve.cpp
 // RUN: %cmake -DPASS_DIR=%t/pass -DOUT=%t/pass.h -P %S/../../../Poseidon/cmake/BuildIdentity.cmake
 // RUN: not diff %t/before.h %t/pass.h
-// RUN: echo '// changed' >> %t/pass/runtime/fpprofiler/FPProfiler.cpp
+// RUN: echo '// changed' >> %t/pass/runtime/profiler/Profiler.cpp
 // RUN: %cmake -DPASS_DIR=%t/pass -DOUT=%t/runtime.h -P %S/../../../Poseidon/cmake/BuildIdentity.cmake
 // RUN: not diff %t/pass.h %t/runtime.h
-// RUN: echo '// changed' >> %t/pass/tools/driver/poseidon-clang.cpp
+// RUN: echo '// changed' >> %t/pass/tools/driver/driver.cpp
 // RUN: %cmake -DPASS_DIR=%t/pass -DOUT=%t/tool.h -P %S/../../../Poseidon/cmake/BuildIdentity.cmake
 // RUN: not diff %t/runtime.h %t/tool.h
 // RUN: touch %t/pass/Solve/Added.h
@@ -19,7 +19,7 @@
 // RUN: rm %t/pass/Solve/Added.h
 // RUN: %cmake -DPASS_DIR=%t/pass -DOUT=%t/removed.h -P %S/../../../Poseidon/cmake/BuildIdentity.cmake
 // RUN: diff %t/tool.h %t/removed.h
-// RUN: cp %S/../../../Poseidon/runtime/fpprofiler/FPProfilerCUDA.cu %t/pass/runtime/fpprofiler/
+// RUN: echo '__global__ void k();' > %t/pass/runtime/profiler/Profiler.cu
 // RUN: %cmake -DPASS_DIR=%t/pass -DOUT=%t/other.h -P %S/../../../Poseidon/cmake/BuildIdentity.cmake
 // RUN: diff %t/tool.h %t/other.h
 

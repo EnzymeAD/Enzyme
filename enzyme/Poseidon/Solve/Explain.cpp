@@ -435,7 +435,7 @@ static std::string siteSymbolOf(const Session &S, const Function &F) {
 }
 
 // The schema identifier of every explanation; see Explainer::toJSON.
-static constexpr StringLiteral kSchema = "poseidon-explain/2";
+static constexpr StringLiteral kSchema = "poseidon-explain/1";
 
 // The names of the site whose clone is F, or whose body is F when no clone was
 // made, where it is called and where it is written.

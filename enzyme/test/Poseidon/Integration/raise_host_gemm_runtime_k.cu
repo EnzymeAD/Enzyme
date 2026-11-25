@@ -1,6 +1,6 @@
 // A dense GEMM written the way a finite-element partial-assembly reduce writes
-// it: runtime M / Ncols / K, the row index behind a strided
-// MFEM_FOREACH_THREAD loop, the column index a thread axis fused with the CTA
+// it: runtime M / Ncols / K, the row index behind a loop strided by a
+// thread axis, the column index a thread axis fused with the CTA
 // index, the contraction split across an unrolled outer level, and an
 // accumulating epilogue. findScalarLoopMatmuls rejects it (no constant trip);
 // findHostGemmLoopNests must recognize it and report every dimension

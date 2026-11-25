@@ -4,7 +4,7 @@
 // RUN: %clang -x c++ -O1 -S -emit-llvm -I%poseidon_profile_inc %s -o %t/plain.ll
 // RUN: sed 's/ "poseidon-not-a-site"//' %t/gen.ll | diff %t/plain.ll -
 
-// An mfem::forall body compiled for the host only: the annotation on the lambda
+// A forall body compiled for the host only: the annotation on the lambda
 // marks the GPU kernels that call it, and a host build has none. The lambda's
 // closure is no allocation the profiler could shadow, so the body is left as
 // written rather than made a host site: the module is the one a compile without

@@ -7,10 +7,10 @@
 // RUN: not %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/wrapper -DNOT_A_WRAPPER %s -o /dev/null 2>&1 | FileCheck --check-prefix=WRAPPER %s
 // RUN: not %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/other_sites -DNOT_A_WRAPPER %s -o /dev/null 2>&1 | FileCheck --check-prefix=WRAPPER %s
 
-// POSEIDON_OPTIMIZE on the lambda an mfem::forall body is written as makes
-// every kernel that calls it a site, with the lambda's target. The lambda
-// reaches the kernel as one by-value aggregate of DeviceTensors (MFEM's
-// layout: capacity, data, sizes), so each data pointer is a field of the
+// POSEIDON_OPTIMIZE on the lambda a forall body is written as makes every
+// kernel that calls it a site, with the lambda's target. The lambda reaches the
+// kernel as one by-value aggregate of DeviceTensors (each laid out as capacity,
+// data, sizes), so each data pointer is a field of the
 // kernel's parameter: profile generation shadows each of them and seeds the
 // one written.
 

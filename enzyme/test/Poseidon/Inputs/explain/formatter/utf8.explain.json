@@ -43,7 +43,7 @@
     "modelled_rel_error_as_written": 2.770306794452491e-10,
     "status": "rewritten"
   },
-  "schema": "poseidon-explain/2",
+  "schema": "poseidon-explain/1",
   "subgraphs": [
     {
       "alternatives": [

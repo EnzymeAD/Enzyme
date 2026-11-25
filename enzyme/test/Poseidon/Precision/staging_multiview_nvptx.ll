@@ -42,7 +42,7 @@
 ;     y[e * 16 + ty * 4 + tx] += w;
 ;   }
 ; via clang -x cuda --cuda-device-only --cuda-gpu-arch=sm_120 -O2
-; -ffp-contract=on -S -emit-llvm, the shape of MFEM's SmemPADiffusionApply3D.
+; -ffp-contract=on -S -emit-llvm, two contractions staged in shared memory.
 ; The profile: the same source through poseidon-clang++
 ; -poseidon-profile-generate, launched as multiview<<<8, dim3(4, 4)>>> on
 ; x[i] = 1.0 + 0.01 * i and b[i] = 0.5 + 0.03 * i.

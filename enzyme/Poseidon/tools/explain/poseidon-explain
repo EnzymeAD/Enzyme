@@ -11,7 +11,7 @@ import shutil
 import subprocess
 import sys
 
-SCHEMA_ID = "poseidon-explain/2"
+SCHEMA_ID = "poseidon-explain/1"
 
 STATUS_ORDER = {"applied": 0, "pareto": 1, "rejected": 2}
 

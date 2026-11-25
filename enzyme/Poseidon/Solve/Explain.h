@@ -10,9 +10,9 @@
 // from the solver's own data after it has chosen and before anything is
 // materialized. Output only: nothing here feeds back into a decision.
 //
-// <func>.explain.json, schema "poseidon-explain/2", keys in snake_case; a key
+// <func>.explain.json, schema "poseidon-explain/1", keys in snake_case; a key
 // whose value is unknown or not finite is left out:
-//   schema     "poseidon-explain/2"
+//   schema     "poseidon-explain/1"
 //   function   name (demangled), symbol, ir (the IR function solved), site (the
 //              call: file, line, col), loc (the definition); for a solved site
 //              also canonical_hash (of the form the profile was recorded

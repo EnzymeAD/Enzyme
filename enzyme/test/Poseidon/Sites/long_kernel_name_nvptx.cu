@@ -6,7 +6,7 @@
 
 // The launch descriptor the device compile leaves for the host compile is a
 // line of the manifest of the unit, a file named after the source. The mangled
-// name of a kernel instantiated with a lambda (an MFEM forall body) can be
+// name of a kernel instantiated with a lambda (a forall body) can be
 // longer than a file name may be; the manifest keeps the full name, where the
 // host compile reads it.
 

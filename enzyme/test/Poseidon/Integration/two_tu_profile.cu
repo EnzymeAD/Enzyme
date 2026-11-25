@@ -51,7 +51,7 @@
 // A program of two CUDA translation units and a main, compiled one unit at a
 // time without relocatable device code, and linked as objects or with the
 // units in a static library, records the profile the same program records as
-// one unit: an annotated kernel in each unit, an annotated mfem::forall-shaped
+// one unit: an annotated kernel in each unit, an annotated forall-shaped
 // lambda in each, and a device call site in an inline function both units
 // run. Each unit's device module has its own copy of that site; its record is
 // both copies', 2 x 2048 executions from each of two kernels.

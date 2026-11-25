@@ -26,8 +26,8 @@ A compile passes the platform that sits next to the CSV it prices from
     poseidon-calibrate --gpu 0                 # writes ~/.cache/poseidon/cm_<arch>_<gpu>.csv
     poseidon-calibrate --gpu 0 --out <dir>     # or somewhere else
     poseidon-calibrate --gpu 0 --check         # is the resolved model this device's?
-    poseidon-calibrate --gpu 0 --ozaki-rect 343x1536   # plus the rectangular rows of an M x Ncols x K GEMM
-    poseidon-calibrate --gpu 0 --ozaki-rect 112x112x2048  # the native DGEMM row of an M x Ncols x K call
+    poseidon-calibrate --gpu 0 --ozaki-rect MxK      # plus the rectangular rows of an M x Ncols x K GEMM
+    poseidon-calibrate --gpu 0 --ozaki-rect MxNxK    # the native DGEMM row of an M x Ncols x K call
     poseidon-calibrate --cpu native            # this host, for a compile with -march=native
     poseidon-calibrate --cpu x86-64            # this host, for a compile with -march=x86-64, the default on x86-64
     poseidon-calibrate --cpu x86-64 --check

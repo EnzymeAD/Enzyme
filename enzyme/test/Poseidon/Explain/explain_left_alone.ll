@@ -17,7 +17,7 @@
 ; JSON-NEXT: "reason": "the site holds no floating-point operation the pass rewrites",
 ; JSON-NEXT: "status": "no_fp_operation"
 ; JSON-NEXT: },
-; JSON-NEXT: "schema": "poseidon-explain/2",
+; JSON-NEXT: "schema": "poseidon-explain/1",
 ; JSON-NEXT: "target": {
 ; JSON-NEXT: "tau": 0.5,
 ; JSON-NEXT: "tau_from": "site"

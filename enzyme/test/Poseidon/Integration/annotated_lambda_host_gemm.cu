@@ -1,6 +1,6 @@
-// An mfem::forall_2D body carrying POSEIDON_OPTIMIZE_TAU, end to end through
-// poseidon-clang++: the stage-3 reduce of MFEM's elasticity apply over
-// DeviceTensor captures, which reach the kernel as one by-value lambda. Profile
+// A forall_2D body carrying POSEIDON_OPTIMIZE_TAU, end to end through
+// poseidon-clang++: a per-element dense product reduce over DeviceTensor
+// captures, which reach the kernel as one by-value lambda. Profile
 // generation shadows the three data pointers inside the lambda and seeds the
 // one written; the solve recognizes the product with its extents read from the
 // lambda's fields, and the stub dispatches it from the launch's arguments.

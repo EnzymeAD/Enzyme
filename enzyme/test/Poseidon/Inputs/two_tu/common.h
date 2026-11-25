@@ -34,7 +34,7 @@ __device__ inline float vol_at(const float *g, float D1, int i) {
   return out;
 }
 
-// mfem::forall's shape: one kernel template, instantiated in every translation
+// A forall: one kernel template, instantiated in every translation
 // unit with the by-value lambda it runs.
 template <typename BODY>
 __global__ static void CuKernel1D(const int N, BODY body) {

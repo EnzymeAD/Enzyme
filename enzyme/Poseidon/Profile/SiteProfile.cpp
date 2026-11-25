@@ -217,8 +217,8 @@ static unsigned fpStoreWidth(Type *T) {
 /// Every store and atomicrmw of `clone`: each object the pointer it writes
 /// through may point into and the width of the floating-point scalar it writes
 /// (fpStoreWidth). The pointer may choose between objects, or between an object
-/// and null: a view that holds null when it is empty (MFEM's DeviceTensor)
-/// writes into the object it was made from.
+/// and null: a view that holds null when it is empty writes into the object it
+/// was made from.
 static void
 forEachWrite(Function &clone,
              function_ref<void(const Value *obj, unsigned width)> mark) {

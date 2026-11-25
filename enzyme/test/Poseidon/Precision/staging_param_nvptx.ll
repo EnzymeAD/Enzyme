@@ -84,7 +84,7 @@
 ;                                  D, dD);
 ;   }
 ; via clang -x cuda --cuda-device-only --cuda-gpu-arch=sm_120 -O2
-; -ffp-contract=on -S -emit-llvm, the shape of MFEM's partial-assembly
+; -ffp-contract=on -S -emit-llvm, the shape of a partial-assembly
 ; diffusion apply. The profile: the same source compiled with
 ; -poseidon-profile-generate and launched twice as
 ; staged_kernel<<<1, dim3(16, 16)>>> on A[i] = 1.0 + 0.001 * i and

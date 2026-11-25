@@ -3,10 +3,10 @@
 // RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -nocudainc -nocudalib -O2 -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/cache -mllvm -poseidon-print %s -o %t/gen.ll 2>&1 | FileCheck --check-prefix=GEN %s
 // RUN: cat %t/cache/launches_*.json | FileCheck --check-prefix=DESC %s
 
-// A view that holds null when its extent is empty (MFEM's DeviceTensor) and is
-// made inside the site writes through a select between the pointer it was
-// made from and null. The pointer is still the site's output and its shadow
-// takes the seed: unseeded, every gradient of the reverse pass is zero.
+// A view that holds null when its extent is empty and is made inside the site
+// writes through a select between the pointer it was made from and null. The
+// pointer is still the site's output and its shadow takes the seed: unseeded,
+// every gradient of the reverse pass is zero.
 
 #include "poseidon/poseidon.h"
 

@@ -5,9 +5,9 @@
 ; record per BODY (profileSite shares one instrumented clone between a body's
 ; markers), while the solve clones the body once per call and LLVM uniques the
 ; second clone's name, so keying the profile on the clone would leave the
-; second site with no profile and silently at its original precision. dFEM puts
-; one integrator's marker into every registered kernel specialization, so this
-; is the normal case there, not a corner one.
+; second site with no profile and silently at its original precision. A marker
+; in a template body instantiated for several kernels takes this shape, so it
+; is the normal case, not a corner one.
 
 define double @tester(double %x, double %y, double %z) #0 {
 entry:

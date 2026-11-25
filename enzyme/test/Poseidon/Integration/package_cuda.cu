@@ -9,7 +9,7 @@
 // RUN: %cmake --build %t/use 2>&1 | FileCheck --check-prefix=USE %s
 // RUN: %t/use/app | FileCheck --check-prefix=STATUS %s
 
-// MFEM's shape through the CMake package: a static library of two CUDA units
+// Through the CMake package: a static library of two CUDA units
 // built without relocatable device code against Poseidon::ProfileGenerate,
 // linked into an application, profiles every site of both units; the build
 // against Poseidon::ProfileUse reads that profile back.
