@@ -136,11 +136,26 @@ int main(void) {
 // CHECK-NEXT: call void @[[BODY]](ptr [[A]], ptr [[B]], ptr [[D]])
 // CHECK-NEXT: ret void
 
-// The raised body: one warp loads the A and B tiles, multiplies them, and
-// stores the product tile; every thread widens its element of it into D. A and
-// B reach their tiles narrowed to f16.
+// The raised body runs the raise in the profiled 8x8 block and the loop as
+// written in any other. In the raise one warp loads the A and B tiles,
+// multiplies them, and stores the product tile; every thread widens its element
+// of it into D. A and B reach their tiles narrowed to f16.
 // CHECK-LABEL: define dso_local void @preprocess_scalar_matmul_body_f64(
 // CHECK-SAME: ptr {{[^,]*}}[[PA:%[0-9]+]], ptr {{[^,]*}}[[PB:%[0-9]+]], ptr {{[^,]*}}[[PD:%[0-9]+]])
+// CHECK: [[NX:%[0-9]+]] = tail call i32 @llvm.nvvm.read.ptx.sreg.ntid.x()
+// CHECK-NEXT: [[X:%[0-9]+]] = icmp eq i32 [[NX]], 8
+// CHECK-NEXT: [[NY:%[0-9]+]] = tail call i32 @llvm.nvvm.read.ptx.sreg.ntid.y()
+// CHECK-NEXT: [[Y:%[0-9]+]] = icmp eq i32 [[NY]], 8
+// CHECK-NEXT: [[XY:%[0-9]+]] = and i1 [[X]], [[Y]]
+// CHECK-NEXT: [[NZ:%[0-9]+]] = tail call i32 @llvm.nvvm.read.ptx.sreg.ntid.z()
+// CHECK-NEXT: [[Z:%[0-9]+]] = icmp eq i32 [[NZ]], 1
+// CHECK-NEXT: [[SAME:%[0-9]+]] = and i1 [[Z]], [[XY]]
+// CHECK-NEXT: br i1 [[SAME]], label %raise.entry, label %{{.+}}
+// CHECK: [[RES:%.+]] = phi double [ [[SUM:%[0-9]+]], %{{[^ ]+}} ], [ [[DD:%[0-9]+]], %wmma_store_gate.merge ]
+// CHECK: [[OP:%[0-9]+]] = getelementptr {{.*}}ptr [[PD]], i64 {{%[0-9]+}}
+// CHECK-NEXT: store double [[RES]], ptr [[OP]]
+// CHECK-NEXT: ret void
+// CHECK: {{^}}raise.entry:
 // CHECK: [[FA:%[0-9]+]] = {{.*}}call {{.*}} @llvm.nvvm.wmma.m16n16k16.load.a.row.stride.f16.p0(ptr addrspacecast (ptr addrspace(3) [[TA:@__poseidon_raise_preprocess_scalar_matmul_body_f64_a_f16_16x16]] to ptr), i32 16)
 // CHECK-NEXT: [[FB:%[0-9]+]] = {{.*}}call {{.*}} @llvm.nvvm.wmma.m16n16k16.load.b.row.stride.f16.p0(ptr addrspacecast (ptr addrspace(3) [[TB:@__poseidon_raise_preprocess_scalar_matmul_body_f64_b_f16_16x16]] to ptr), i32 16)
 // CHECK-NEXT: [[A0:%[0-9]+]] = extractvalue {{.*}} [[FA]], 0
@@ -151,13 +166,14 @@ int main(void) {
 // CHECK: call void @llvm.nvvm.wmma.m16n16k16.store.d.row.stride.f16.p0(ptr addrspacecast (ptr addrspace(3) [[TD:@__poseidon_raise_preprocess_scalar_matmul_body_f64_d_f16_16x16]] to ptr), <2 x half> [[M0]], {{.*}}, i32 16)
 // CHECK: [[DP:%[0-9]+]] = getelementptr {{.*}}ptr addrspacecast (ptr addrspace(3) [[TD]] to ptr), i64 {{%[0-9]+}}
 // CHECK-NEXT: [[DH:%[0-9]+]] = load half, ptr [[DP]]
-// CHECK-NEXT: [[DD:%[0-9]+]] = fpext half [[DH]] to double
-// CHECK: [[OP:%[0-9]+]] = getelementptr {{.*}}ptr [[PD]], i64 {{%[0-9]+}}
-// CHECK-NEXT: store double [[DD]], ptr [[OP]]
-// CHECK-NEXT: ret void
+// CHECK-NEXT: [[DD]] = fpext half [[DH]] to double
+// CHECK: [[SUM]] = tail call contract double @llvm.fmuladd.f64(
 // CHECK: {{^}$}}
 
+// The loop's multiply-add is the only floating-point arithmetic left.
 // NOFP-LABEL: ; ModuleID =
 // NOFP-LABEL: define dso_local void @preprocess_scalar_matmul_body_f64(
+// NOFP-NOT: {{fadd|fsub|fmul|fma|fdiv}}
+// NOFP: tail call contract double @llvm.fmuladd.f64(
 // NOFP-NOT: {{fadd|fsub|fmul|fma|fdiv}}
 // NOFP: {{^}$}}
