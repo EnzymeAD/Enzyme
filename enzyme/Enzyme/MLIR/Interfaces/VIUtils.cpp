@@ -107,30 +107,26 @@ static Value computeIsFiniteForStableUpdate(OpBuilder &builder, Location loc,
   return isFinite;
 }
 
-/// log N(loc + scale * eps; loc, scale), constant included as in NumPyro.
-static Value computeAutoNormalLogQ(OpBuilder &builder, Location loc,
-                                   Value scale, Value eps,
-                                   const VIContext &ctx) {
+/// Log-density of `loc + L @ eps` under N(loc, L L^T), where `sumLogScale` is
+/// the sum of the logs of L's diagonal and `eps` the standard normal draw.
+static Value emitGaussianLogQ(OpBuilder &builder, Location loc,
+                              Value sumLogScale, Value eps,
+                              const VIContext &ctx) {
   auto positionType = ctx.getPositionType();
   auto scalarType = ctx.getScalarType();
-
-  Value logScale = math::LogOp::create(builder, loc, scale);
-  Value sumLogScale = sumVector1xD(builder, loc, logScale, positionType);
 
   Value epsSq = arith::MulFOp::create(builder, loc, eps, eps);
   Value sumEpsSq = sumVector1xD(builder, loc, epsSq, positionType);
   Value halfSumEpsSq = arith::MulFOp::create(
       builder, loc, sumEpsSq, scalarConst(builder, loc, scalarType, 0.5));
+  Value log2piTerm = scalarConst(builder, loc, scalarType,
+                                 static_cast<double>(ctx.positionSize) *
+                                     (0.5 * std::log(2.0 * M_PI)));
 
-  double log2piHalf = 0.5 * 1.8378770664093453; // = 0.5 * log(2*pi)
-  Value log2piTerm =
-      scalarConst(builder, loc, scalarType,
-                  static_cast<double>(ctx.positionSize) * log2piHalf);
-
-  Value neg1 = arith::NegFOp::create(builder, loc, sumLogScale);
-  Value neg2 = arith::SubFOp::create(builder, loc, neg1, halfSumEpsSq);
-  Value logQ = arith::SubFOp::create(builder, loc, neg2, log2piTerm);
-  return logQ;
+  Value negSumLogScale = arith::NegFOp::create(builder, loc, sumLogScale);
+  Value logQPart =
+      arith::SubFOp::create(builder, loc, negSumLogScale, halfSumEpsSq);
+  return arith::SubFOp::create(builder, loc, logQPart, log2piTerm);
 }
 
 namespace {
@@ -351,7 +347,10 @@ emitSingleParticleELBO(OpBuilder &builder, Location loc, Value locParam,
     zConstrained = conditionalDump(builder, loc, zConstrained,
                                    "VI: zConstrained", ctx.debugDump);
 
-    Value logQUnc = computeAutoNormalLogQ(builder, loc, scaleDumped, eps, ctx);
+    Value logScale = math::LogOp::create(builder, loc, scaleDumped);
+    Value sumLogScale =
+        sumVector1xD(builder, loc, logScale, ctx.getPositionType());
+    Value logQUnc = emitGaussianLogQ(builder, loc, sumLogScale, eps, ctx);
     logQUnc =
         conditionalDump(builder, loc, logQUnc, "VI: logQUnc", ctx.debugDump);
     Value jacCorrection =
@@ -523,17 +522,7 @@ emitSingleParticleMVNELBO(OpBuilder &builder, Location loc, Value locParam,
         builder.getDenseI64ArrayAttr({1}), builder.getDenseI64ArrayAttr({1}));
     Value z = arith::AddFOp::create(builder, loc, locArg, scaledEps);
 
-    Value epsSq = arith::MulFOp::create(builder, loc, eps, eps);
-    Value sumEpsSq = sumVector1xD(builder, loc, epsSq, positionType);
-    Value halfSumEpsSq = arith::MulFOp::create(
-        builder, loc, sumEpsSq, scalarConst(builder, loc, scalarType, 0.5));
-    double log2piHalf = 0.5 * 1.8378770664093453;
-    Value log2piTerm = scalarConst(builder, loc, scalarType,
-                                   static_cast<double>(d) * log2piHalf);
-    Value negSumLogDiag = arith::NegFOp::create(builder, loc, sumLogDiag);
-    Value logQPart =
-        arith::SubFOp::create(builder, loc, negSumLogDiag, halfSumEpsSq);
-    Value logQ = arith::SubFOp::create(builder, loc, logQPart, log2piTerm);
+    Value logQ = emitGaussianLogQ(builder, loc, sumLogDiag, eps, ctx);
 
     LogPResult lp = callModelGenerate(builder, loc, z, modelSeed, ctx);
 
