@@ -32,6 +32,7 @@
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O3 -poseidon-profile-generate -poseidon-cache=%t/k -DVARIANT=2 -c %S/../Inputs/two_tu/clash.cu -o %t/k2.o
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O3 -poseidon-profile-generate -poseidon-cache=%t/k -c %S/../Inputs/two_tu/clash_main.cu -o %t/kmain.o
 // RUN: %poseidon_clangxx -poseidon-profile-generate %t/k1.o %t/k2.o %t/kmain.o -L%cuda_lib_dir -lcudart -o %t/clash
+// RUN: mkdir %t/p.clash
 // RUN: not env POSEIDON_PROFILE_DIR=%t/p.clash %t/clash > %t/clash.out 2> %t/clash.err
 // RUN: FileCheck --check-prefix=STATUS %s < %t/clash.out
 // RUN: FileCheck --check-prefix=CLASH %s < %t/clash.err
