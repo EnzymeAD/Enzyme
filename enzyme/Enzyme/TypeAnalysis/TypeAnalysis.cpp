@@ -2739,14 +2739,7 @@ void TypeAnalyzer::visitZExtInst(ZExtInst &I) {
     updateAnalysis(&I, Result, &I);
   }
   if (direction & UP) {
-    // The result is wider than the operand, and only its low bytes are the
-    // operand's.
-    auto &DL = fntypeinfo.Function->getParent()->getDataLayout();
-    size_t inSize = (DL.getTypeSizeInBits(I.getOperand(0)->getType()) + 7) / 8;
-    updateAnalysis(
-        I.getOperand(0),
-        getAnalysis(&I).ShiftIndices(DL, /*off*/ 0, inSize, /*addOffset*/ 0),
-        &I);
+    updateAnalysis(I.getOperand(0), getAnalysis(&I), &I);
   }
 }
 
