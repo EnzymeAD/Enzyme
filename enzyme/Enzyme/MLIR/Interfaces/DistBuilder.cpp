@@ -622,10 +622,14 @@ static Value emitBaseSampler(OpBuilder &builder, Location loc,
     Value scaled = arith::MulFOp::create(builder, loc, bcast(distArgs[1]), g);
     return arith::AddFOp::create(builder, loc, bcast(distArgs[0]), scaled);
   }
-  default:
-    llvm::report_fatal_error(
-        "emitBaseSampler: sampler not emittable for this base");
+  case DistBaseKind::GAMMA:
+  case DistBaseKind::STUDENT_T:
+  case DistBaseKind::HALF_STUDENT_T:
+  case DistBaseKind::POISSON:
+  case DistBaseKind::DIRICHLET:
+    llvm_unreachable("a rejection-loop sampler is never emitted");
   }
+  llvm_unreachable("unknown DistBaseKind");
 }
 
 SmallVector<Value> impulse::emitDistSampler(OpBuilder &builder, Location loc,
@@ -947,9 +951,10 @@ static Value emitBaseLogpdf(OpBuilder &builder, Location loc, DistBaseKind base,
     Value unnormed = reduce(kernel);
     return add(unnormed, reduce(lognorm));
   }
-  default:
-    llvm::report_fatal_error("emitBaseLogpdf: unsupported base");
+  case DistBaseKind::STD_NORMAL:
+    llvm_unreachable("STD_NORMAL is scored through its transform chain");
   }
+  llvm_unreachable("unknown DistBaseKind");
 }
 
 Value impulse::emitDistLogpdf(OpBuilder &builder, Location loc, DistAttr dist,
