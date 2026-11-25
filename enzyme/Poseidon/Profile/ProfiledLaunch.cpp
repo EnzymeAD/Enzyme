@@ -95,7 +95,7 @@ static Constant *profIntArray(Module &M, const Twine &nameT,
   return GV;
 }
 
-bool rewriteProfileStubBodies(const Options &O, Module &M) {
+Expected<bool> rewriteProfileStubBodies(const Options &O, Module &M) {
   std::map<std::string, ProfDesc> descs;
   if (!readProfDescriptors(O, M, descs))
     return false;
@@ -111,6 +111,7 @@ bool rewriteProfileStubBodies(const Options &O, Module &M) {
           {ptr, i32, ptr, ptr, i64, ptr, i32, ptr, i32, ptr, ptr, ptr}, false));
 
   bool changed = false;
+  Error errors = Error::success();
   for (Function &F : M) {
     if (F.isDeclaration() || !F.getReturnType()->isVoidTy())
       continue;
@@ -132,14 +133,15 @@ bool rewriteProfileStubBodies(const Options &O, Module &M) {
     // Launched as written, the profiled kernel would read shadows nobody
     // passed it.
     if (!launch || !pop) {
-      diagnoseSite(F,
-                   "the launch stub " + F.getName() +
-                       " does not end in __cuda/__hipPopCallConfiguration "
-                       "and cuda/hipLaunchKernel, so the profiling run cannot "
-                       "pass its kernel the shadows it is profiled with. "
-                       "Compile against the CUDA or ROCm headers, which "
-                       "declare that launch API.",
-                   DS_Error);
+      errors = joinErrors(
+          std::move(errors),
+          userError(F, F.getSubprogram(),
+                    "the launch stub " + F.getName() +
+                        " does not end in __cuda/__hipPopCallConfiguration "
+                        "and cuda/hipLaunchKernel, so the profiling run "
+                        "cannot pass its kernel the shadows it is profiled "
+                        "with. Compile against the CUDA or ROCm headers, "
+                        "which declare that launch API."));
       continue;
     }
 
@@ -164,6 +166,8 @@ bool rewriteProfileStubBodies(const Options &O, Module &M) {
              << " shadow buffer(s)\n";
     changed = true;
   }
+  if (errors)
+    return std::move(errors);
   return changed;
 }
 

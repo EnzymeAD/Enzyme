@@ -14,6 +14,8 @@
 #ifndef POSEIDON_PROFILE_PROFILED_LAUNCH_H
 #define POSEIDON_PROFILE_PROFILED_LAUNCH_H
 
+#include "llvm/Support/Error.h"
+
 namespace llvm {
 class Module;
 } // namespace llvm
@@ -25,8 +27,10 @@ struct Options;
 /// Rewrite the launch in each launch stub that a profile generation descriptor
 /// in M's manifest matches into a call of __poseidon_launch_profiled, which
 /// allocates, zeroes and seeds the shadow buffers the profiling kernel takes
-/// and launches it. Host module only.
-bool rewriteProfileStubBodies(const Options &O, llvm::Module &M);
+/// and launches it. Host module only. An error at a matched stub that does
+/// not launch through the CUDA or HIP launch API.
+llvm::Expected<bool> rewriteProfileStubBodies(const Options &O,
+                                              llvm::Module &M);
 
 /// Registers the header of every kernel the device half profiled with the
 /// host profiler, as a host site's is: the device profiler writes a kernel's

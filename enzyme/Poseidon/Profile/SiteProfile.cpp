@@ -91,8 +91,8 @@ static Function *instrumentedClone(Session &S, Function &F, unsigned siteId,
   return clone;
 }
 
-static CallInst *withShadows(CallInst *CI, Function &clone,
-                             const MarkerArgs &marker, bool print);
+static Expected<CallInst *> withShadows(CallInst *CI, Function &clone,
+                                        const MarkerArgs &marker, bool print);
 
 /// The reverse-mode request over `args`, whose first is the instrumented clone,
 /// of type `FT`, or taking exactly `args` and returning `ret` when FT is null.
@@ -115,9 +115,9 @@ static CallInst *emitAutodiffRequest(IRBuilder<> &B, Type *ret,
 /// request over the instrumented clone: the custom derivative on each probe is
 /// what puts the gradient record inside the reverse pass, so the host's AD
 /// needs no profiling mode of its own.
-static bool profileMarker(Session &S, CallInst *CI,
-                          DenseMap<Function *, Function *> &clones,
-                          unsigned &nextSiteId) {
+static Expected<bool> profileMarker(Session &S, CallInst *CI,
+                                    DenseMap<Function *, Function *> &clones,
+                                    unsigned &nextSiteId) {
   Function *F = markerTarget(CI);
   if (!F)
     return false;
@@ -138,8 +138,12 @@ static bool profileMarker(Session &S, CallInst *CI,
     }
   }
   if (!marker->madeShadows.empty()) {
-    CI = withShadows(CI, *clone, *marker, S.Opts.Diagnostics.Print);
-    if (!CI || !(marker = parseMarker(CI, F)))
+    Expected<CallInst *> shadowed =
+        withShadows(CI, *clone, *marker, S.Opts.Diagnostics.Print);
+    if (!shadowed)
+      return shadowed.takeError();
+    CI = *shadowed;
+    if (!(marker = parseMarker(CI, F)))
       return false;
   }
 
@@ -496,7 +500,8 @@ static void recordProfiledLaunch(Session &S, StringRef kernelName,
 /// derivative request over the instrumented clone. The host half of the same
 /// compilation reads the descriptor recorded here and fills those shadows in at
 /// every launch.
-static bool profileKernel(Session &S, Function &K, unsigned &nextSiteId) {
+static Expected<bool> profileKernel(Session &S, Function &K,
+                                    unsigned &nextSiteId) {
   Function *body = nullptr;
   CallInst *call = outlineKernelBody(S.Sites, K, body);
   if (!call)
@@ -1003,11 +1008,11 @@ struct Reach {
 
 /// Sorts each pointer `marker` marks into `plan`: one the call needs no
 /// shadow for, one into a local object of the caller, or one into the
-/// constant range the call reaches through it. False, with an error, if a
-/// pointer is none of these.
-static bool planShadows(CallInst *CI, Function &clone, const MarkerArgs &marker,
-                        ArrayRef<unsigned> seedWidth, StringRef site,
-                        ShadowPlan &plan) {
+/// constant range the call reaches through it. An error if a pointer is none
+/// of these.
+static Error planShadows(CallInst *CI, Function &clone,
+                         const MarkerArgs &marker, ArrayRef<unsigned> seedWidth,
+                         StringRef site, ShadowPlan &plan) {
   SmallVector<bool, 8> holdsPointers;
   collectPointerHolders(clone, holdsPointers);
   Function &caller = *CI->getFunction();
@@ -1026,8 +1031,9 @@ static bool planShadows(CallInst *CI, Function &clone, const MarkerArgs &marker,
       continue;
     }
     Expected<PointerExtent> ext = accessedExtent(*clone.getArg(S.param));
-    if (!ext) {
-      fail(CI, site +
+    if (!ext)
+      return userError(
+          *CI, site +
                    " no longer reaches a constant range of memory through "
                    "argument " +
                    Twine(S.param + 1) + " (a pointer the call " +
@@ -1035,8 +1041,6 @@ static bool planShadows(CallInst *CI, Function &clone, const MarkerArgs &marker,
                    "), so it cannot be a Poseidon site. Copy the argument "
                    "into a local object, or pass its shadow in the call: "
                    "enzyme_dup before the pointer and the shadow after it.");
-      return false;
-    }
     if (!ext->accessed()) {
       plan.constant.insert(S.activity);
       continue;
@@ -1073,7 +1077,7 @@ static bool planShadows(CallInst *CI, Function &clone, const MarkerArgs &marker,
     }
     plan.regionOf[S.arg] = {k, at};
   }
-  return true;
+  return Error::success();
 }
 
 /// The memory each shadow of `plan` stands for.
@@ -1090,17 +1094,16 @@ static SmallVector<Reach, 8> reachesOf(const ShadowPlan &plan,
 }
 
 /// The type a shadow of `width`-byte output elements is seeded as: null for
-/// no output; none, with an error at `CI`, for a width without a rule.
-static std::optional<Type *> seedTypeOf(CallInst *CI, unsigned width) {
+/// no output; an error at `CI` for a width without a rule.
+static Expected<Type *> seedTypeOf(CallInst *CI, unsigned width) {
   LLVMContext &C = CI->getContext();
   if (width == 8)
     return Type::getDoubleTy(C);
   if (width == 4)
     return Type::getFloatTy(C);
-  if (width) {
-    fail(CI, "no seed rule for a " + Twine(width) + "-byte output element");
-    return std::nullopt;
-  }
+  if (width)
+    return userError(*CI, "no seed rule for a " + Twine(width) +
+                              "-byte output element");
   return nullptr;
 }
 
@@ -1117,28 +1120,32 @@ static void seedOnes(CallInst *CI, Value *at, Type *T, uint64_t n) {
 }
 
 /// Makes the shadows of `plan` before `CI`, zero and seeded where the call
-/// writes; false, with an error, for an output element without a seed rule.
-static bool emitShadows(CallInst *CI, ShadowPlan &plan) {
+/// writes; an error, before any change, for an output element without a seed
+/// rule.
+static Error emitShadows(CallInst *CI, ShadowPlan &plan) {
+  for (auto &[obj, entry] : plan.objects)
+    if (Error E = seedTypeOf(CI, entry.second).takeError())
+      return E;
+  for (const Region &R : plan.regions)
+    if (Error E = seedTypeOf(CI, R.width).takeError())
+      return E;
+
   const DataLayout &DL = CI->getModule()->getDataLayout();
   for (auto &[obj, entry] : plan.objects) {
     auto &[shadow, width] = entry;
-    std::optional<Type *> T = seedTypeOf(CI, width);
-    if (!T)
-      return false;
+    Type *T = cantFail(seedTypeOf(CI, width));
     shadow = shadowObject(obj);
     uint64_t bytes = objectBytes(obj, DL);
     IRBuilder<> B(CI);
     B.CreateMemSet(shadow, B.getInt8(0), bytes, shadow->getAlign());
-    if (*T)
-      seedOnes(CI, shadow, *T, bytes / width);
+    if (T)
+      seedOnes(CI, shadow, T, bytes / width);
   }
 
   Function &caller = *CI->getFunction();
   IRBuilder<> entry(&*caller.getEntryBlock().getFirstInsertionPt());
   for (Region &R : plan.regions) {
-    std::optional<Type *> T = seedTypeOf(CI, R.width);
-    if (!T)
-      return false;
+    Type *T = cantFail(seedTypeOf(CI, R.width));
     const int64_t align = R.align;
     R.start = ((R.lo - R.alignedAt) % align + align) % align;
     const uint64_t bytes = R.start + (R.hi - R.lo);
@@ -1148,14 +1155,14 @@ static bool emitShadows(CallInst *CI, ShadowPlan &plan) {
     R.shadow->setAlignment(Align(align));
     IRBuilder<> B(CI);
     B.CreateMemSet(R.shadow, B.getInt8(0), bytes, Align(align));
-    if (*T)
+    if (T)
       for (auto [lo, hi] : R.writes)
         seedOnes(CI,
                  B.CreateConstInBoundsGEP1_64(B.getInt8Ty(), R.shadow,
                                               R.start + (lo - R.lo)),
-                 *T, (hi - lo) / R.width);
+                 T, (hi - lo) / R.width);
   }
-  return true;
+  return Error::success();
 }
 
 /// A shadow made from an extent is an object of its own, which stands for the
@@ -1254,15 +1261,15 @@ static void printShadows(StringRef site, const MarkerArgs &marker,
   errs() << '\n';
 }
 
-static CallInst *withShadows(CallInst *CI, Function &clone,
-                             const MarkerArgs &marker, bool print) {
+static Expected<CallInst *> withShadows(CallInst *CI, Function &clone,
+                                        const MarkerArgs &marker, bool print) {
   SmallVector<unsigned, 8> seedWidth;
   collectOutputParams(clone, seedWidth);
   const std::string site = perCallSiteName(markerTargetOrNull(CI)->getName());
 
   ShadowPlan plan;
-  if (!planShadows(CI, clone, marker, seedWidth, site, plan))
-    return nullptr;
+  if (Error E = planShadows(CI, clone, marker, seedWidth, site, plan))
+    return std::move(E);
   SmallVector<Reach, 8> reaches =
       reachesOf(plan, CI->getModule()->getDataLayout());
   // An object the program does not read after the call is no output of it.
@@ -1271,8 +1278,8 @@ static CallInst *withShadows(CallInst *CI, Function &clone,
       entry.second = 0;
       plan.unread.insert(obj);
     }
-  if (!emitShadows(CI, plan))
-    return nullptr;
+  if (Error E = emitShadows(CI, plan))
+    return std::move(E);
   emitOverlapChecks(CI, reaches, site);
   CallInst *NC = emitShadowedCall(CI, marker, plan);
   if (print)
@@ -1280,9 +1287,9 @@ static CallInst *withShadows(CallInst *CI, Function &clone,
   return NC;
 }
 
-bool profileSite(Session &S, const Site &site,
-                 DenseMap<Function *, Function *> &clones,
-                 unsigned &nextSiteId) {
+Expected<bool> profileSite(Session &S, const Site &site,
+                           DenseMap<Function *, Function *> &clones,
+                           unsigned &nextSiteId) {
   switch (site.form) {
   case Site::Form::Marker:
     return profileMarker(S, site.marker, clones, nextSiteId);

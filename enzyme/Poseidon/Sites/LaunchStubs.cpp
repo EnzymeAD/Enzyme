@@ -29,7 +29,10 @@ llvm::PreservedAnalyses HostStubPass::run(llvm::Module &M,
   // original kernel and do not link the runtime.
   bool changed = false;
   if (O.Profiling.generatesProfile()) {
-    changed |= rewriteProfileStubBodies(O, M);
+    Expected<bool> rewritten = rewriteProfileStubBodies(O, M);
+    if (!rewritten)
+      return stopOnError(S, M, rewritten.takeError());
+    changed = *rewritten;
     changed |= registerProfiledKernels(O, M);
   } else {
     changed = rewriteGemmStubBodies(O, M);

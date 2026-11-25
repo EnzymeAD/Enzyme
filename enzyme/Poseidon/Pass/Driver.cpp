@@ -532,15 +532,20 @@ Expected<bool> prepareModule(Session &S, Module &M) {
       // its marker stays where it is.
       if (deferSite(S.Opts, site.marker))
         continue;
-      profileSite(S, site, clones, nextSiteId);
+      if (Error E = profileSite(S, site, clones, nextSiteId).takeError())
+        return std::move(E);
       anySite = true;
       break;
     case Site::Form::HostBody:
       anyHostBody = true;
       [[fallthrough]];
-    case Site::Form::Kernel:
-      anySite |= profileSite(S, site, clones, nextSiteId);
+    case Site::Form::Kernel: {
+      Expected<bool> profiled = profileSite(S, site, clones, nextSiteId);
+      if (!profiled)
+        return profiled.takeError();
+      anySite |= *profiled;
       break;
+    }
     }
   }
   if (anyHostBody) {

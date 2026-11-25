@@ -380,10 +380,10 @@ static void collectShared(const Target &T, const Value *V,
   }
 }
 
-void requireSharedMemoryLimit(Module &M) {
+Error requireSharedMemoryLimit(Module &M) {
   const Target &T = Target::of(M);
   if (!T.isDevice())
-    return;
+    return Error::success();
   const DataLayout &DL = M.getDataLayout();
   // Enzyme names the shadow of a global in the global's enzyme_shadow
   // metadata.
@@ -394,7 +394,7 @@ void requireSharedMemoryLimit(Module &M) {
               mdconst::dyn_extract_or_null<GlobalVariable>(MD->getOperand(0)))
         primalOf[S] = &G;
   const uint64_t limit = T.maxStaticSharedBytes();
-  SmallVector<std::pair<const Function *, std::string>, 2> refused;
+  Error refused = Error::success();
   for (const Function &K : M) {
     if (K.isDeclaration() || !T.isKernel(K))
       continue;
@@ -448,14 +448,10 @@ void requireSharedMemoryLimit(Module &M) {
        << (others.empty() ? "none" : others)
        << ". Profile the kernel with smaller shared buffers, or the kernels "
           "whose shadows it reaches in another translation unit.";
-    refused.emplace_back(&K, std::move(msg));
+    refused =
+        joinErrors(std::move(refused), userError(K, K.getSubprogram(), msg));
   }
-  if (refused.empty())
-    return;
-  for (auto &[K, msg] : drop_end(refused))
-    diagnose(*K, K->getSubprogram(), msg, DS_Error);
-  reportUserError(*refused.back().first, refused.back().first->getSubprogram(),
-                  refused.back().second);
+  return refused;
 }
 
 void recordProfileTableSize(LaunchManifest &L, Module &M) {
@@ -512,15 +508,14 @@ static const Function &userFunctionOf(const Function &F) {
 
 /// A probe compiled for a processor the device profiler cannot serve: an error
 /// at the user's function.
-[[noreturn]] static void refuseProbe(const Target &target,
-                                     const Function &caller) {
+static Error refuseProbe(const Target &target, const Function &caller) {
   const Function &F = userFunctionOf(caller);
-  reportUserError(F, F.getSubprogram(), *target.profilerMismatch(F));
+  return userError(F, F.getSubprogram(), *target.profilerMismatch(F));
 }
 
-/// Stops at every probe call of `M`, whose target this build carries no
-/// device profiler for.
-static void refuseUnservedProbes(const Target &target, Module &M) {
+/// An error at the first probe call of `M`, whose target this build carries
+/// no device profiler for.
+static Error refuseUnservedProbes(const Target &target, Module &M) {
   const ProbeABI &P = target.probes();
   const StringRef probes[] = {
       P.LogValue,  P.LogGradient,   P.PerturbF64,          P.PerturbF32,
@@ -530,12 +525,13 @@ static void refuseUnservedProbes(const Target &target, Module &M) {
       if (const auto *call = dyn_cast<CallBase>(&I))
         if (const Function *callee = call->getCalledFunction();
             callee && is_contained(probes, callee->getName()))
-          refuseProbe(target, F);
+          return refuseProbe(target, F);
+  return Error::success();
 }
 
 /// The device profiler `bitcode`, checked to define the table the host
 /// runtime writes and to serve every probe `M` calls.
-static std::unique_ptr<Module>
+static Expected<std::unique_ptr<Module>>
 loadDeviceProfiler(const Target &target, StringRef bitcode, Module &M) {
   Expected<std::unique_ptr<Module>> parsed = parseBitcodeFile(
       MemoryBufferRef(bitcode, "FPProfilerDevice.bc"), M.getContext());
@@ -560,9 +556,9 @@ loadDeviceProfiler(const Target &target, StringRef bitcode, Module &M) {
     for (const User *U : probe->users())
       if (const auto *call = dyn_cast<CallBase>(U))
         if (target.profilerMismatch(*call->getFunction()))
-          refuseProbe(target, *call->getFunction());
+          return refuseProbe(target, *call->getFunction());
   }
-  return std::move(*parsed);
+  return parsed;
 }
 
 /// Gives the profiler library `L` the target and layout of `M`, and drops what
@@ -598,7 +594,7 @@ static SmallVector<std::string, 16> definedOnlyBy(Module &L, Module &M) {
   return linked;
 }
 
-bool linkDeviceProfiler(Module &M, bool profileGenerate) {
+Expected<bool> linkDeviceProfiler(Module &M, bool profileGenerate) {
   const Target &target = Target::of(M);
   if (!profileGenerate || !target.isDevice())
     return false;
@@ -609,10 +605,15 @@ bool linkDeviceProfiler(Module &M, bool profileGenerate) {
   // the program would fail only at its link.
   StringRef bitcode = target.profilerBitcode();
   if (bitcode.empty()) {
-    refuseUnservedProbes(target, M);
+    if (Error E = refuseUnservedProbes(target, M))
+      return std::move(E);
     return false;
   }
-  std::unique_ptr<Module> L = loadDeviceProfiler(target, bitcode, M);
+  Expected<std::unique_ptr<Module>> loaded =
+      loadDeviceProfiler(target, bitcode, M);
+  if (!loaded)
+    return loaded.takeError();
+  std::unique_ptr<Module> L = std::move(*loaded);
   GlobalVariable *libTable = L->getNamedGlobal(POSEIDON_CUDA_PROFILE_TABLE);
   // Code generation follows the GPU the module is compiled for, and the
   // module keeps its own flags, taking only what its probes reach.

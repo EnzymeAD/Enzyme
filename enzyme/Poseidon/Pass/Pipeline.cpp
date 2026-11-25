@@ -372,8 +372,12 @@ struct LatePass : PassParent<LatePass> {
     if (O.Profiling.generatesProfile()) {
       DenseMap<Function *, Function *> clones;
       unsigned nextSiteId = getNextSiteId(M);
-      for (const Site &site : markers)
-        instrumented |= profileSite(S, site, clones, nextSiteId);
+      for (const Site &site : markers) {
+        Expected<bool> profiled = profileSite(S, site, clones, nextSiteId);
+        if (!profiled)
+          return stopOnError(S, M, profiled.takeError());
+        instrumented |= *profiled;
+      }
       setNextSiteId(M, nextSiteId);
       if (instrumented)
         injectBlockDimProbes(M, O.Diagnostics.Print);
@@ -509,9 +513,12 @@ struct FinalizePass : PassParent<FinalizePass> {
     // kernel may make an unknown call.
     if (O.Profiling.generatesProfile() && T.allocatesAddressTakenShared())
       dropSiteAnnotations(M);
-    linkDeviceProfiler(M, O.Profiling.generatesProfile());
+    if (Error E =
+            linkDeviceProfiler(M, O.Profiling.generatesProfile()).takeError())
+      return stopOnError(S, M, std::move(E));
     if (O.Profiling.generatesProfile())
-      requireSharedMemoryLimit(M);
+      if (Error E = requireSharedMemoryLimit(M))
+        return stopOnError(S, M, std::move(E));
     if (Error E = requireDeviceCallees(M, O.Profiling.generatesProfile()))
       return stopOnError(S, M, std::move(E));
     // Written after every site is processed and every check that can stop the

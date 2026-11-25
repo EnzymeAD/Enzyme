@@ -15,6 +15,7 @@
 #define POSEIDON_SITE_PROFILE_H
 
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/Support/Error.h"
 
 namespace llvm {
 class CallInst;
@@ -29,11 +30,13 @@ class Session;
 struct Site;
 
 /// Instruments the site and makes the call that reaches it a derivative
-/// request; whether it did. Markers of one body share `clones`' instrumented
-/// clone, and the clones made take their ids from `nextSiteId`.
-bool profileSite(Session &S, const Site &site,
-                 llvm::DenseMap<llvm::Function *, llvm::Function *> &clones,
-                 unsigned &nextSiteId);
+/// request; whether it did, or the mistake that keeps the site from being
+/// profiled. Markers of one body share `clones`' instrumented clone, and the
+/// clones made take their ids from `nextSiteId`.
+llvm::Expected<bool>
+profileSite(Session &S, const Site &site,
+            llvm::DenseMap<llvm::Function *, llvm::Function *> &clones,
+            unsigned &nextSiteId);
 /// Registers with the host profiler, around each call that passes a stack
 /// object, that object's extent, so that a site reached through it can size
 /// its shadow.
