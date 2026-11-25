@@ -86,12 +86,12 @@ loadProfileRaise(const AbstractMatmul &m, const ProfileMap &profile) {
                          "re-run profile generation.");
 
   MatmulProfile out;
-  out.a = {abInfo->minOperands[0], abInfo->maxOperands[0], abInfo->exec,
+  out.a = {abInfo->minOperands[0], abInfo->maxOperands[0],
            abInfo->minMagOperands[0]};
-  out.b = {abInfo->minOperands[1], abInfo->maxOperands[1], abInfo->exec,
+  out.b = {abInfo->minOperands[1], abInfo->maxOperands[1],
            abInfo->minMagOperands[1]};
   out.gradSum = fmaInfo.sumGrad;
-  out.totalCalls = fmaInfo.exec;
+  out.macs = fmaInfo.exec;
   return out;
 }
 
@@ -147,10 +147,10 @@ loadRuntimeShapeProfile(const AbstractMatmul &m, const ProfileMap &profile) {
   }
 
   MatmulProfile out;
-  out.a = {aMin, aMax, exec, aMinMag};
-  out.b = {bMin, bMax, exec, bMinMag};
+  out.a = {aMin, aMax, aMinMag};
+  out.b = {bMin, bMax, bMinMag};
   out.gradSum = sumGrad;
-  out.totalCalls = exec;
+  out.macs = exec;
   return out;
 }
 
@@ -206,7 +206,6 @@ struct CellSampler {
 } // namespace
 
 static CellSampler cellSampler(const CellStat &c, unsigned sampleLogBits) {
-  assert(c.count != 0 && "loadProfile returns only an executed product");
   assert(c.min <= c.max && "sampleCell: corrupted profile (min > max)");
   CellSampler s;
   if (c.min == c.max) {
@@ -551,7 +550,6 @@ Memo::Memo(const Options &O, const AbstractMatmul &m, const MatmulProfile &prof,
   for (const CellStat *c : {&prof.a, &prof.b}) {
     appendBytes(operands, c->min);
     appendBytes(operands, c->max);
-    appendBytes(operands, c->count);
     appendBytes(operands, c->minMag);
   }
   key.addContent("operand statistics", operands);

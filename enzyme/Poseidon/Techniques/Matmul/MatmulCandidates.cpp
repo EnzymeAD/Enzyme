@@ -286,7 +286,7 @@ getAvailableWmmaTargets(Session &S, const AbstractMatmul &m) {
     for (const WmmaTarget &t : kExpectedWmmaTargets) {
       std::string opcode = "wmma_mma_" + mmaShapeSuffix(t.M, t.N, t.K);
       std::string prec =
-          std::string(fpKindName(t.inputPrec)) + "_" + fpKindName(t.accPrec);
+          std::string(fpKindName(t.operand)) + "_" + fpKindName(t.accumulator);
       if (model.find({opcode, prec}) != model.end())
         result.push_back(t);
       else if (Error E = reportMissingRow(S, m,
@@ -503,8 +503,8 @@ static Expected<bool> wmmaTileAvailable(Session &S, const AbstractMatmul &m,
   if (!targets)
     return targets.takeError();
   return llvm::any_of(**targets, [&](const WmmaTarget &wt) {
-    return wt.M == M && wt.N == N && wt.K == K && wt.inputPrec == operand &&
-           wt.accPrec == accumulator;
+    return wt.M == M && wt.N == N && wt.K == K && wt.operand == operand &&
+           wt.accumulator == accumulator;
   });
 }
 
@@ -608,9 +608,9 @@ static Error proposeInKernelDirect(const Product &P, const InKernelSite &K,
   if (!targets)
     return targets.takeError();
   for (const WmmaTarget &t : **targets)
-    if (Error E =
-            proposeInKernel(P, K, SchemeVariant::direct(t.inputPrec, t.accPrec),
-                            t.M, t.N, t.K, cm, estimated))
+    if (Error E = proposeInKernel(
+            P, K, SchemeVariant::direct(t.operand, t.accumulator), t.M, t.N,
+            t.K, cm, estimated))
       return E;
   return Error::success();
 }
@@ -978,7 +978,7 @@ Error generateMatmulCandidates(Session &S, ArrayRef<AbstractMatmul> matmuls,
 
     MatmulUnit cm;
     cm.matmul = const_cast<AbstractMatmul *>(&m);
-    cm.executions = prof->totalCalls;
+    cm.executions = prof->macs;
 
     double baselinePerMac = 0.0;
     switch (m.origin) {

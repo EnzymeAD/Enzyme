@@ -458,7 +458,7 @@ static RaiseContext makeRaiseContext(const AbstractMatmul &m,
   C.cFragElemTy = mmaFTy->getParamType(C.aFragSize + C.bFragSize);
 
   const bool partialWarpBlock =
-      h.blockThreads != 0 && h.blockThreads % nvptx::kWarpSize != 0;
+      h.blockThreads() != 0 && h.blockThreads() % nvptx::kWarpSize != 0;
   C.useWarpGate = C.L.mTiles * C.L.nTiles == 1 || partialWarpBlock;
   return C;
 }
@@ -574,7 +574,7 @@ static KStreamLoop emitKStreamLoop(const RaiseContext &C, IRBuilder<> &B,
   Value *kOuter64 = bodyB.CreateZExt(K.kOuterPhi, C.i64Ty);
 
   auto [tlin, bsz] =
-      emitThreadLinAndBlockSize(bodyB, C.mod, h.profiledBlock, h.is2DBlock);
+      emitThreadLinAndBlockSize(bodyB, C.mod, h.profiledBlock, h.is2DBlock());
   K.tlin = tlin;
   const int64_t bSrcKStepByte = C.bRowMajor ? h.bStrideByte : C.srcByte;
   const int64_t bSrcNStrideByte = C.bRowMajor ? C.srcByte : h.bLeadingDimByte;
@@ -815,7 +815,7 @@ emitStoreAndReadback(const RaiseContext &C, const KStreamLoop &K,
   BasicBlock *storeMergeBB = nullptr;
   if (C.useWarpGate) {
     Value *afterTlin =
-        emitThreadLinAndBlockSize(afterB, C.mod, h.profiledBlock, h.is2DBlock)
+        emitThreadLinAndBlockSize(afterB, C.mod, h.profiledBlock, h.is2DBlock())
             .first;
     storeMergeBB = openWarpGate(C, afterB, afterTlin, "_store_gate");
   }

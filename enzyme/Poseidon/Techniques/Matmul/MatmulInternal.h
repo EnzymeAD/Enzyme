@@ -235,9 +235,6 @@ struct CellStat {
   double min = 0.0;
   /// The largest value the profile saw.
   double max = 0.0;
-  /// How often the profile saw the operand read: the executions of the
-  /// product's multiply.
-  uint64_t count = 0;
   double minMag = 0.0; // smallest nonzero |value| observed (0 = unknown)
 };
 
@@ -252,7 +249,7 @@ struct MatmulProfile {
   /// The product's MACs over the profiling run, at profile scale: the
   /// executions of its multiply-adds, summed over the members of a
   /// runtime-shape product.
-  uint64_t totalCalls = 0;
+  uint64_t macs = 0;
 };
 
 /// None when the profiling run never executed the product. A multiply of an

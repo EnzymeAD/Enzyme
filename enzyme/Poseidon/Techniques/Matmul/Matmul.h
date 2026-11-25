@@ -135,8 +135,6 @@ struct ScalarLoopHandle {
   /// function is optimized.
   llvm::ScalarEvolution *SE = nullptr;
 
-  /// Whether the profiled block has blockDim.z == 1.
-  bool is2DBlock = false;
   /// Whether the in-kernel raise can take the place of the loop: every thread
   /// of the block runs the preheader, where it synchronizes the block, exactly
   /// once, and the loop's exit takes only the product from it.
@@ -153,7 +151,11 @@ struct ScalarLoopHandle {
   /// Threads per CTA in the profiled block (0 = unknown). A block whose size
   /// is not a multiple of 32 has a partial last warp, in which the
   /// warp-collective wmma ops are undefined.
-  unsigned blockThreads = 0;
+  unsigned blockThreads() const {
+    return profiledBlock[0] * profiledBlock[1] * profiledBlock[2];
+  }
+  /// Whether the profiled block has blockDim.z == 1.
+  bool is2DBlock() const { return profiledBlock[2] == 1; }
 
   /// A's byte step per reduction iteration: one element.
   int64_t aStrideByte = 0;
@@ -372,9 +374,9 @@ struct WmmaTarget {
   /// The tile extents in elements.
   unsigned M, N, K;
   /// The operand format.
-  FPKind inputPrec;
+  FPKind operand;
   /// The accumulator format.
-  FPKind accPrec;
+  FPKind accumulator;
 };
 
 /// What the matrix-product pipeline records over a compile.
