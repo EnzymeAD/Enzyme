@@ -9,7 +9,8 @@
 ! RUN: %flang_enzyme -module-dir %t.mod -O0 -emit-llvm %s -o - | FileCheck %s --check-prefix=RT
 
 ! COMMON blocks: the type at each member offset, if the declarations lay out
-! all of the block and agree.
+! all of the block and agree. All CHECK lines here are CHECK-DAG, so each
+! block's lines can sit next to the subroutine that declares it.
 !
 ! /state/ is a REAL*8 and an INTEGER:
 ! CHECK-DAG: @state_ = {{.*}}global [12 x i8] {{.*}}!enzyme_type ![[STATE:[0-9]+]]
@@ -18,21 +19,9 @@
 ! CHECK-DAG: ![[DBL]] = !{!"Float@double"}
 ! CHECK-DAG: ![[INT]] = !{!"Integer"}
 !
-! /mixed/ is REAL at offset 0 in one subroutine and INTEGER in the other: it
-! stays unknown.
+! /mixed/ is REAL at offset 0 here and INTEGER in other_view: it stays
+! unknown.
 ! CHECK-DAG: @mixed_ = {{.*}}global [8 x i8] zeroinitializer, align 4{{$}}
-!
-! /bufs/ is larger than the offsets Enzyme's type analysis keeps (500 bytes):
-! it stays unknown, else Enzyme would take REAL*8, the type it keeps for the
-! first 500 bytes, for all of the block.
-! CHECK-DAG: @bufs_ = {{.*}}global [196608 x i8] zeroinitializer, align 8{{$}}
-!
-! A block of a single scalar type is that type at every offset, whatever its
-! size: here REAL*8 arrays, and CHARACTER data (Integer bytes, /names/ below,
-! with the literals).
-! CHECK-DAG: @fields_ = {{.*}}global [16000 x i8] {{.*}}!enzyme_type ![[FIELDS:[0-9]+]]
-! CHECK-DAG: ![[FIELDS]] = !{!"Unknown", i32 -1, ![[FIELDSP:[0-9]+]]}
-! CHECK-DAG: ![[FIELDSP]] = !{!"Pointer", i32 -1, ![[DBL]]}
 ! allow(procedure-not-in-module)
 subroutine uses_common(x)
   use, intrinsic :: iso_fortran_env, only: real64
@@ -51,6 +40,10 @@ subroutine uses_common(x)
   s = 2.0
 end subroutine uses_common
 
+! /bufs/ is larger than the offsets Enzyme's type analysis keeps (500 bytes):
+! it stays unknown, else Enzyme would take REAL*8, the type it keeps for the
+! first 500 bytes, for all of the block.
+! CHECK-DAG: @bufs_ = {{.*}}global [196608 x i8] zeroinitializer, align 8{{$}}
 ! allow(procedure-not-in-module)
 subroutine buffers()
   use, intrinsic :: iso_fortran_env, only: real32, real64
@@ -63,6 +56,12 @@ subroutine buffers()
   b4(1) = 1.0
 end subroutine buffers
 
+! A block of a single scalar type is that type at every offset, whatever its
+! size: here REAL*8 arrays, and CHARACTER data (Integer bytes, /names/ below,
+! with the literals).
+! CHECK-DAG: @fields_ = {{.*}}global [16000 x i8] {{.*}}!enzyme_type ![[FIELDS:[0-9]+]]
+! CHECK-DAG: ![[FIELDS]] = !{!"Unknown", i32 -1, ![[FIELDSP:[0-9]+]]}
+! CHECK-DAG: ![[FIELDSP]] = !{!"Pointer", i32 -1, ![[DBL]]}
 ! allow(procedure-not-in-module)
 subroutine uniform_blocks()
   use, intrinsic :: iso_fortran_env, only: real64
@@ -86,6 +85,27 @@ subroutine other_view()
   common /mixed/ i, s
   i = 2
 end subroutine other_view
+
+! EQUIVALENCE groups are laid out like COMMON blocks: x and y are REAL*8
+! throughout, so their storage is REAL*8 at every offset; p and q are REAL*8
+! and INTEGER*8 at offset 0, so theirs stays unknown.
+! O0-DAG: @_QFequivalencedEx = {{.*}}global [16 x i8] {{.*}}!enzyme_type ![[FIELDS]]{{$}}
+! O0-DAG: @_QFequivalencedEp = {{.*}}global [8 x i8] zeroinitializer, align {{[0-9]+}}{{$}}
+! allow(procedure-not-in-module)
+subroutine equivalenced()
+  use, intrinsic :: iso_fortran_env, only: int64, real64
+  implicit none
+  real(real64), save :: x(2), y, p
+  integer(int64), save :: q
+  ! allow(equivalence-statement)
+  equivalence (x(2), y)
+  ! allow(equivalence-statement)
+  equivalence (p, q)
+  x(1) = 1
+  y = 2
+  p = 3
+  print *, x, q
+end subroutine equivalenced
 
 ! Character literals are character data.
 ! CHECK-DAG: @_QQcl{{.*}} = {{.*}}constant [{{[0-9]+}} x i8] {{.*}}!enzyme_type ![[CHARS:[0-9]+]]

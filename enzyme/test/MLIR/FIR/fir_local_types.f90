@@ -32,7 +32,7 @@ subroutine locs(n, x)
   logical :: flag
   complex(real64) :: z
   character(len=12) :: name
-  external :: fill, use
+  external :: fill, consume
   call fill(cnt)
   k = ishft(cnt, 2)
   acc = 0
@@ -45,7 +45,7 @@ subroutine locs(n, x)
   flag = acc > 0
   z = acc
   name = "x"
-  call use(buf, big, auto, flag, z, name, k)
+  call consume(buf, big, auto, flag, z, name, k)
 end subroutine locs
 
 ! CHECK-DAG: ![[Z]] = !{!"Unknown", i32 -1, ![[ZP:[0-9]+]]}

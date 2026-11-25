@@ -49,6 +49,8 @@ contains
 ! CHECK-SAME: ptr noalias "enzyme_type"="{[-1]:Pointer}" %4,
 ! CHECK-SAME: ptr noalias "enzyme_type"="{[-1]:Pointer, [-1,0]:Float@double, [-1,8]:Float@double}" %5,
 ! CHECK-SAME: i64 %6)
+! UNB-LABEL: define void @_QMfir_arg_typesPscalars(
+! UNB-SAME: ptr noalias "enzyme_type"="{[-1]:Pointer, [-1,-1]:Integer}" %4,
   subroutine scalars(x8, x4, i, l, c, z)
     real(real64), intent(out) :: x8
     real(real32), intent(in) :: x4
@@ -101,8 +103,6 @@ contains
 ! CHECK-SAME: "enzyme_type"="{[-1]:Pointer}" %1,
 ! CHECK-SAME: "enzyme_type"="{[-1]:Pointer}" %2,
 ! CHECK-SAME: "enzyme_type"="{[-1]:Pointer, [-1,0]:Float@float, [-1,4]:Float@float, {{.*}}, [-1,116]:Float@float}" %3)
-! UNB-LABEL: define void @_QMfir_arg_typesPscalars(
-! UNB-SAME: ptr noalias "enzyme_type"="{[-1]:Pointer, [-1,-1]:Integer}" %4,
 ! UNB-LABEL: define void @_QMfir_arg_typesParrays(
 ! UNB-SAME: "enzyme_type"="{[-1]:Pointer, [-1,-1]:Float@double}" %1,
 ! UNB-SAME: "enzyme_type"="{[-1]:Pointer, [-1,-1]:Float@double}" %2,
