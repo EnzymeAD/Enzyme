@@ -18,7 +18,6 @@
 
 namespace mlir {
 namespace impulse {
-namespace VI {
 
 /// Replaces the VI inference `op` with an SVI loop over `model`, configured by
 /// the op's `vi_config`, that starts from the op's `state_in` when it has one.
@@ -27,7 +26,6 @@ namespace VI {
 template <typename OpT>
 LogicalResult lowerVI(PatternRewriter &rewriter, OpT op, ModelContext model);
 
-} // namespace VI
 } // namespace impulse
 } // namespace mlir
 

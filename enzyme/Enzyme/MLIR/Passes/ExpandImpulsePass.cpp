@@ -3344,7 +3344,7 @@ struct ExpandImpulsePass
         model.positionSize = *numValues;
       }
 
-      return VI::lowerVI(rewriter, op, std::move(model));
+      return lowerVI(rewriter, op, std::move(model));
     }
   };
 

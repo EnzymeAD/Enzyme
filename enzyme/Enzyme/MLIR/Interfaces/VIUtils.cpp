@@ -28,7 +28,6 @@
 using namespace mlir;
 using namespace mlir::enzyme;
 using namespace mlir::impulse;
-using namespace mlir::impulse::VI;
 
 namespace {
 /// The model and configuration of one VI inference op.
@@ -644,8 +643,9 @@ static SVILoopResult emitSVILoop(OpBuilder &builder, Location loc,
   if (!initStepCount)
     initStepCount = emitI64ScalarConstant(builder, loc, 0);
 
-  // Iteration arguments: params, rng, trace, ELBO trace, last ELBO, then the
-  // (m, v) slots of each param.
+  // Iteration arguments: the params, then these, then the (m, v) slots of each
+  // param.
+  enum : unsigned { kRng, kTraceBuf, kElboBuf, kLastElbo, kNumFixed };
   SmallVector<Value> iterArgs;
   for (const ParamState &p : params0)
     iterArgs.push_back(p.param);
@@ -667,10 +667,10 @@ static SVILoopResult emitSVILoop(OpBuilder &builder, Location loc,
   Value iter = body->getArgument(0);
   ValueRange iterValues = body->getArguments().drop_front();
   ValueRange params = iterValues.take_front(numParams);
-  Value rngIter = iterValues[numParams];
-  Value traceBufIter = iterValues[numParams + 1];
-  Value elboBufIter = iterValues[numParams + 2];
-  ValueRange slots = iterValues.drop_front(numParams + 4);
+  Value rngIter = iterValues[numParams + kRng];
+  Value traceBufIter = iterValues[numParams + kTraceBuf];
+  Value elboBufIter = iterValues[numParams + kElboBuf];
+  ValueRange slots = iterValues.drop_front(numParams + kNumFixed);
 
   {
     OpBuilder::InsertionGuard guard(builder);
@@ -733,16 +733,95 @@ static SVILoopResult emitSVILoop(OpBuilder &builder, Location loc,
 
   Value numStepsI64 = emitI64ScalarConstant(builder, loc, ctx.numSteps);
   SVILoopResult result;
-  result.traceBuf = forOp.getResult(numParams + 1);
-  result.elboBuf = forOp.getResult(numParams + 2);
-  result.rng = forOp.getResult(numParams);
+  result.traceBuf = forOp.getResult(numParams + kTraceBuf);
+  result.elboBuf = forOp.getResult(numParams + kElboBuf);
+  result.rng = forOp.getResult(numParams + kRng);
   for (size_t i = 0; i < numParams; ++i)
-    result.params.push_back({forOp.getResult(i),
-                             forOp.getResult(numParams + 4 + 2 * i),
-                             forOp.getResult(numParams + 5 + 2 * i)});
+    result.params.push_back(
+        {forOp.getResult(i), forOp.getResult(numParams + kNumFixed + 2 * i),
+         forOp.getResult(numParams + kNumFixed + 2 * i + 1)});
   result.stepCount =
       arith::AddIOp::create(builder, loc, initStepCount, numStepsI64);
   return result;
+}
+
+/// Draws the initial guide location site by site, uniform in
+/// [-initRadius, initRadius], each site from its own key split off `seed`.
+static Value emitInitialLocation(OpBuilder &builder, Location loc, Value seed,
+                                 const VIContext &ctx) {
+  Type rngType = seed.getType();
+  Type elemType = ctx.elementType;
+  RankedTensorType positionType = ctx.getPositionType();
+  RankedTensorType scalarType = ctx.getScalarType();
+  Value c0i64 = emitI64ScalarConstant(builder, loc, 0);
+  Value negRadius =
+      emitSplatConstant(builder, loc, scalarType, -ctx.initRadius);
+  Value posRadius = emitSplatConstant(builder, loc, scalarType, ctx.initRadius);
+  auto uniformAttr = impulse::RngDistributionAttr::get(
+      builder.getContext(), impulse::RngDistribution::UNIFORM);
+
+  Value location = emitSplatConstant(builder, loc, positionType, 0.0);
+  auto preSplit = impulse::RandomSplitOp::create(
+      builder, loc, TypeRange{rngType, rngType}, seed);
+  Value chain = preSplit.getResult(1);
+  for (const auto &info : ctx.supports) {
+    auto siteSplit = impulse::RandomSplitOp::create(
+        builder, loc, TypeRange{rngType, rngType}, chain);
+    chain = siteSplit.getResult(0);
+    Value siteKey = siteSplit.getResult(1);
+
+    auto siteFlatType = RankedTensorType::get({info.constrainedSize}, elemType);
+    auto draw = impulse::RandomOp::create(
+        builder, loc, TypeRange{rngType, siteFlatType}, siteKey, negRadius,
+        posRadius, uniformAttr);
+    Value initDraw = draw.getResult();
+
+    auto sliceType = RankedTensorType::get({1, info.constrainedSize}, elemType);
+    Value initDraw2D =
+        impulse::ReshapeOp::create(builder, loc, sliceType, initDraw);
+    Value offsetIdx =
+        emitI64ScalarConstant(builder, loc, info.constrainedOffset);
+    location = impulse::DynamicUpdateSliceOp::create(
+        builder, loc, positionType, location, initDraw2D,
+        ValueRange{c0i64, offsetIdx});
+  }
+  return location;
+}
+
+/// The initial unconstrained scale of an AUTO_NORMAL guide: the inverse
+/// softplus of `initScale` when it is set, else of `ctx.initScale`.
+static Value emitInitialScale(OpBuilder &builder, Location loc, Value initScale,
+                              const VIContext &ctx) {
+  RankedTensorType positionType = ctx.getPositionType();
+  if (!initScale)
+    return emitSplatConstant(builder, loc, positionType,
+                             std::log(std::expm1(ctx.initScale)));
+  if (initScale.getType() != positionType)
+    initScale =
+        impulse::ReshapeOp::create(builder, loc, positionType, initScale);
+  return impulse::emitSoftplusInv(builder, loc, initScale);
+}
+
+/// The initial flat unconstrained scale_tril of an AUTO_MULTIVARIATE_NORMAL
+/// guide, which emitScaledUnitLowerCholesky maps to `ctx.initScale` times the
+/// identity: zero off-diagonal entries and the inverse softplus of
+/// `ctx.initScale` on the diagonal.
+static Value emitInitialScaleTril(OpBuilder &builder, Location loc,
+                                  const VIContext &ctx) {
+  Type elemType = ctx.elementType;
+  int64_t d = ctx.positionSize;
+  int64_t flatSize = d * (d + 1) / 2;
+  int64_t nOff = d * (d - 1) / 2;
+  auto flatType = RankedTensorType::get({flatSize}, elemType);
+  double initU = std::log(std::expm1(ctx.initScale));
+  SmallVector<Attribute> vals;
+  vals.reserve(flatSize);
+  for (int64_t i = 0; i < nOff; ++i)
+    vals.push_back(builder.getFloatAttr(elemType, 0.0));
+  for (int64_t i = 0; i < d; ++i)
+    vals.push_back(builder.getFloatAttr(elemType, initU));
+  return arith::ConstantOp::create(builder, loc, flatType,
+                                   DenseElementsAttr::get(flatType, vals));
 }
 
 /// Configures VI over `model` from the `vi_config`, `num_samples` and
@@ -776,8 +855,8 @@ static VIContext makeVIContext(OpT op, ModelContext model) {
 }
 
 template <typename OpT>
-LogicalResult mlir::impulse::VI::lowerVI(PatternRewriter &rewriter, OpT op,
-                                         ModelContext model) {
+LogicalResult mlir::impulse::lowerVI(PatternRewriter &rewriter, OpT op,
+                                     ModelContext model) {
   Location loc = op.getLoc();
   VIContext ctx = makeVIContext(op, std::move(model));
 
@@ -828,115 +907,38 @@ LogicalResult mlir::impulse::VI::lowerVI(PatternRewriter &rewriter, OpT op,
           impulse::ReshapeOp::create(rewriter, loc, positionType, initPosition);
     }
   } else {
-    // Each site starts uniform in [-initRadius, initRadius], from its own key.
-    RankedTensorType scalarType = ctx.getScalarType();
-    Value c0i64 = emitI64ScalarConstant(rewriter, loc, 0);
-    Value negRadius =
-        emitSplatConstant(rewriter, loc, scalarType, -ctx.initRadius);
-    Value posRadius =
-        emitSplatConstant(rewriter, loc, scalarType, ctx.initRadius);
-    auto uniformAttr = impulse::RngDistributionAttr::get(
-        rewriter.getContext(), impulse::RngDistribution::UNIFORM);
-
-    loc0 = emitSplatConstant(rewriter, loc, positionType, 0.0);
-    auto preSplit = impulse::RandomSplitOp::create(
-        rewriter, loc, TypeRange{rngType, rngType}, guideInitSeed);
-    Value chain = preSplit.getResult(1);
-    for (const auto &info : ctx.supports) {
-      auto siteSplit = impulse::RandomSplitOp::create(
-          rewriter, loc, TypeRange{rngType, rngType}, chain);
-      chain = siteSplit.getResult(0);
-      Value siteKey = siteSplit.getResult(1);
-
-      auto siteFlatType =
-          RankedTensorType::get({info.constrainedSize}, elemType);
-      auto draw = impulse::RandomOp::create(
-          rewriter, loc, TypeRange{rngType, siteFlatType}, siteKey, negRadius,
-          posRadius, uniformAttr);
-      Value initDraw = draw.getResult();
-
-      auto sliceType =
-          RankedTensorType::get({1, info.constrainedSize}, elemType);
-      Value initDraw2D =
-          impulse::ReshapeOp::create(rewriter, loc, sliceType, initDraw);
-      Value offsetIdx =
-          emitI64ScalarConstant(rewriter, loc, info.constrainedOffset);
-      loc0 = impulse::DynamicUpdateSliceOp::create(
-          rewriter, loc, positionType, loc0, initDraw2D,
-          ValueRange{c0i64, offsetIdx});
-    }
+    loc0 = emitInitialLocation(rewriter, loc, guideInitSeed, ctx);
   }
 
-  ParamState locState{loc0, slotIn(state_slot::kOptMLoc),
-                      slotIn(state_slot::kOptVLoc)};
-  Value initStepCount = slotIn(state_slot::kOptStepCount);
-  SVILoopResult loopRes;
-  if (ctx.guideKind == impulse::GuideKind::AUTO_DELTA) {
-    loopRes = emitSVILoop(rewriter, loc, {locState}, rng0, initStepCount, ctx,
-                          emitAutoDeltaParticle, /*recordConstrained=*/true);
-  } else if (ctx.guideKind == impulse::GuideKind::AUTO_NORMAL) {
-    Value scale0;
-    if (isResume) {
-      scale0 = slotIn(state_slot::kScaleUnconstrained);
-    } else if (Value initScale = op.getInitScale()) {
-      if (initScale.getType() != positionType)
-        initScale =
-            impulse::ReshapeOp::create(rewriter, loc, positionType, initScale);
-      scale0 = impulse::emitSoftplusInv(rewriter, loc, initScale);
-    } else {
-      double initScaleU = std::log(std::expm1(ctx.initScale));
-      scale0 = emitSplatConstant(rewriter, loc, positionType, initScaleU);
-    }
-    ParamState scaleState{scale0, slotIn(state_slot::kOptMScale),
-                          slotIn(state_slot::kOptVScale)};
-    loopRes = emitSVILoop(rewriter, loc, {locState, scaleState}, rng0,
-                          initStepCount, ctx, emitAutoNormalParticle,
-                          /*recordConstrained=*/false);
-  } else {
-    // scale_tril = init_scale * I: zero off-diagonals, softplus_inv diagonal.
-    int64_t d = ctx.positionSize;
-    int64_t flatSize = d * (d + 1) / 2;
-    int64_t nOff = d * (d - 1) / 2;
-    auto flatType = RankedTensorType::get({flatSize}, elemType);
-    Value xScaleTril0;
-    if (isResume) {
-      xScaleTril0 = slotIn(state_slot::kScaleTrilUnconstrained);
-    } else {
-      double initU = std::log(std::expm1(ctx.initScale));
-      SmallVector<Attribute> vals;
-      vals.reserve(flatSize);
-      for (int64_t i = 0; i < nOff; ++i)
-        vals.push_back(rewriter.getFloatAttr(elemType, 0.0));
-      for (int64_t i = 0; i < d; ++i)
-        vals.push_back(rewriter.getFloatAttr(elemType, initU));
-      xScaleTril0 = arith::ConstantOp::create(
-          rewriter, loc, flatType, DenseElementsAttr::get(flatType, vals));
-    }
-    ParamState scaleTrilState{xScaleTril0, slotIn(state_slot::kOptMScaleTril),
-                              slotIn(state_slot::kOptVScaleTril)};
-    loopRes = emitSVILoop(rewriter, loc, {locState, scaleTrilState}, rng0,
-                          initStepCount, ctx, emitAutoMVNParticle,
-                          /*recordConstrained=*/false);
+  SmallVector<ParamState> params0 = {
+      {loc0, slotIn(state_slot::kOptMLoc), slotIn(state_slot::kOptVLoc)}};
+  ParticleEmitter emitParticle;
+  switch (ctx.guideKind) {
+  case GuideKind::AUTO_DELTA:
+    emitParticle = emitAutoDeltaParticle;
+    break;
+  case GuideKind::AUTO_NORMAL: {
+    Value scale0 =
+        isResume ? slotIn(state_slot::kScaleUnconstrained)
+                 : emitInitialScale(rewriter, loc, op.getInitScale(), ctx);
+    params0.push_back({scale0, slotIn(state_slot::kOptMScale),
+                       slotIn(state_slot::kOptVScale)});
+    emitParticle = emitAutoNormalParticle;
+    break;
   }
-
-  auto slotValue = [&](StringRef name) -> Value {
-    if (name == state_slot::kLoc)
-      return loopRes.params[0].param;
-    if (name == state_slot::kScaleUnconstrained ||
-        name == state_slot::kScaleTrilUnconstrained)
-      return loopRes.params[1].param;
-    if (name == state_slot::kOptMLoc)
-      return loopRes.params[0].m;
-    if (name == state_slot::kOptVLoc)
-      return loopRes.params[0].v;
-    if (name == state_slot::kOptMScale || name == state_slot::kOptMScaleTril)
-      return loopRes.params[1].m;
-    if (name == state_slot::kOptVScale || name == state_slot::kOptVScaleTril)
-      return loopRes.params[1].v;
-    if (name == state_slot::kOptStepCount)
-      return loopRes.stepCount;
-    llvm_unreachable("unknown VI state slot");
-  };
+  case GuideKind::AUTO_MULTIVARIATE_NORMAL: {
+    Value scaleTril0 = isResume ? slotIn(state_slot::kScaleTrilUnconstrained)
+                                : emitInitialScaleTril(rewriter, loc, ctx);
+    params0.push_back({scaleTril0, slotIn(state_slot::kOptMScaleTril),
+                       slotIn(state_slot::kOptVScaleTril)});
+    emitParticle = emitAutoMVNParticle;
+    break;
+  }
+  }
+  SVILoopResult loopRes =
+      emitSVILoop(rewriter, loc, params0, rng0,
+                  slotIn(state_slot::kOptStepCount), ctx, emitParticle,
+                  /*recordConstrained=*/ctx.guideKind == GuideKind::AUTO_DELTA);
 
   SmallVector<Value> results;
   results.push_back(loopRes.traceBuf);
@@ -947,16 +949,23 @@ LogicalResult mlir::impulse::VI::lowerVI(PatternRewriter &rewriter, OpT op,
           cast<ShapedType>(op.getLogDensities().getType()),
           rewriter.getFloatAttr(elemType, 0.0)))); // log_densities (unused)
   results.push_back(loopRes.rng);
-  for (const impulse::StateSlot &slot :
-       impulse::buildVIStateSchema(ctx.guideKind, ctx.positionSize, elemType))
-    results.push_back(slotValue(slot.name));
+  // The state slots in the canonical VI order, which the op verifier
+  // enforces: the guide parameters, the optimizer state of each, then the
+  // step count.
+  for (const ParamState &param : loopRes.params)
+    results.push_back(param.param);
+  for (const ParamState &param : loopRes.params)
+    results.append({param.m, param.v});
+  results.push_back(loopRes.stepCount);
+  assert(results.size() == op->getNumResults() &&
+         "VI state slots do not match the op results");
 
   rewriter.replaceOp(op, results);
   return success();
 }
 
 template LogicalResult
-mlir::impulse::VI::lowerVI<impulse::InferOp>(PatternRewriter &,
-                                             impulse::InferOp, ModelContext);
-template LogicalResult mlir::impulse::VI::lowerVI<impulse::InferRegionOp>(
+mlir::impulse::lowerVI<impulse::InferOp>(PatternRewriter &, impulse::InferOp,
+                                         ModelContext);
+template LogicalResult mlir::impulse::lowerVI<impulse::InferRegionOp>(
     PatternRewriter &, impulse::InferRegionOp, ModelContext);
