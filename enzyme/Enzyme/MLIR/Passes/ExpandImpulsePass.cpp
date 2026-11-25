@@ -2176,7 +2176,8 @@ static bool deltaWeightFeasible(FunctionOpInterface fn) {
 static MHProposal
 proposeRegionMove(OpBuilder &b, Location loc, impulse::InferRegionOp op,
                   const RegionTraceLayout &layout, Value trace, Value rng,
-                  bool delta, bool withLogRatio, ColumnWindows &changedColumns,
+                  bool delta, bool withLogRatio,
+                  SmallVectorImpl<std::pair<int64_t, int64_t>> &changedColumns,
                   const DenseMap<Operation *, Value> *drawOverride = nullptr) {
   changedColumns.clear();
   ArrayAttr selection = op.getSelectionAttr();
