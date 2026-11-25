@@ -186,7 +186,7 @@ static void writeGemmDescriptorOf(Session &S, CallBase *CI, Function *body,
   if (!S.Opts.Matmul.OzakiHostDispatch)
     return;
   if (auto note = S.Matmul.GemmBodies.find(body);
-      note != S.Matmul.GemmBodies.end() && note->second.valid)
+      note != S.Matmul.GemmBodies.end())
     writeGemmDescriptor(S, *CI->getFunction(), primalArgs, note->second);
 }
 

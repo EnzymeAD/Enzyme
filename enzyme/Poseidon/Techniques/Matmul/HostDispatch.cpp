@@ -309,8 +309,6 @@ static void emitMappedDescriptor(Session &S, Function &wrapper,
 
 void writeGemmDescriptor(Session &S, Function &wrapper,
                          ArrayRef<Value *> primalArgs, const GemmBodyNote &n) {
-  if (!n.valid)
-    return;
   emitMappedDescriptor(S, wrapper, n, launchArgsOf(primalArgs));
 }
 
@@ -323,8 +321,7 @@ void addPendingGemmDispatch(Session &S, const Function *body, Function &wrapper,
 void flushPendingGemmDispatches(Session &S) {
   for (auto &[body, pg] : S.Matmul.PendingGemms)
     // A site not materialized as a host dispatch has no note.
-    if (auto n = S.Matmul.GemmBodies.find(body);
-        n != S.Matmul.GemmBodies.end() && n->second.valid)
+    if (auto n = S.Matmul.GemmBodies.find(body); n != S.Matmul.GemmBodies.end())
       emitMappedDescriptor(S, *body->getParent()->getFunction(pg.wrapperName),
                            n->second, pg.paramToArg);
   S.Matmul.PendingGemms.clear();

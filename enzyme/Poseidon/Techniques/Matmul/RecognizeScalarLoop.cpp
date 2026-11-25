@@ -952,7 +952,6 @@ constantShapeLibraryNote(const Options &O, Function &F,
     return refuse("a dimension of the product is out of the range of the "
                   "dispatch's int dimensions");
   note.standalone = (storeCount == 1);
-  note.valid = true;
   return note;
 }
 

@@ -229,9 +229,6 @@ struct GemmBodyNote {
   /// default means nothing until a library call is applied.
   unsigned numModuli = kOzakiIIMaxModuli;
   bool standalone = false; // body is a pure GEMM (only the C store)
-  /// Whether the recognizer derived every field; a note that is not valid is
-  /// never written.
-  bool valid = false;
   /// M x Ncols x K and the leading dimensions (in elements) at deploy scale,
   /// indexed by GemmDim. The host stub evaluates a dimension with factors from
   /// the launch arguments, so a build profiled at one problem size runs at

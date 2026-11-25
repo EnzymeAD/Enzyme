@@ -1403,7 +1403,6 @@ static Expected<RecognizedChain> analyzeChain(Function &F, ScalarEvolution &SE,
   // A recognized nest is the whole body: the caller refuses a body that
   // stores anything else into its arguments.
   note.standalone = true;
-  note.valid = true;
   H.cStore = store->store;
   H.epilogue = store->epilogue;
   for (const ChainMember &m : chain) {
