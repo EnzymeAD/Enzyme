@@ -102,9 +102,9 @@ static CallInst *emitAutodiffRequest(IRBuilder<> &B, Type *ret,
       argTys.push_back(a->getType());
     FT = FunctionType::get(ret, argTys, false);
   }
-  Function *autodiff = Function::Create(FT, GlobalValue::ExternalLinkage,
-                                        "__enzyme_autodiff_poseidon",
-                                        B.GetInsertBlock()->getModule());
+  Function *autodiff =
+      Function::Create(FT, GlobalValue::ExternalLinkage, kAutodiffRequest,
+                       B.GetInsertBlock()->getModule());
   return B.CreateCall(FT, autodiff, args);
 }
 

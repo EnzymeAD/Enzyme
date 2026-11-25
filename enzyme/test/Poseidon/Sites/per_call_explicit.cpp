@@ -133,14 +133,12 @@ int main() {
 // USE-DAG: [poseidon] pin: _Z6energyPKdi:PT0=All FP64(0%) + FP32(100%)
 // USE-DAG: [poseidon] preprocess__Z4dampPKdd: the site's own accuracy target 1.000000e-12 overrides -poseidon-tau=1.000000e-06
 // USE-DAG: per_call_explicit.cpp:[[@LINE-72]]:{{[0-9]+}}: warning: Poseidon: Poseidon returned false (no change) for preprocess__Z4dampPKdd
-// USE-DAG: [poseidon] no rewrite applied for preprocess__Z4dampPKdd; calling original body _Z4dampPKdd (bit-transparent no-op)
 // USE-DAG: [poseidon] preprocess__Z5scalePKdPdi.poseidon.main.0: tau=1.000000e-06
 // USE-DAG: [poseidon] pin: _Z5scalePKdPdi.poseidon.main.0:PT0=All FP64(0%) + FP32(100%)
 // USE-DAG: [poseidon] preprocess__Z2sqdd: tau=1.000000e-06
 // USE-DAG: [poseidon] pin: _Z2sqdd:PT0=All FP64(0%) + FP32(100%)
 // USE-DAG: [poseidon] preprocess__Z5shiftPKdPdi.poseidon.main.1: the site's own accuracy target 1.000000e-09 overrides -poseidon-tau=1.000000e-06
-// USE-DAG: per_call_explicit.cpp:[[@LINE-79]]:{{[0-9]+}}: warning: Poseidon: Poseidon returned false (no change) for preprocess__Z5shiftPKdPdi.poseidon.main.1
-// USE-DAG: [poseidon] no rewrite applied for preprocess__Z5shiftPKdPdi.poseidon.main.1; calling original body _Z5shiftPKdPdi.poseidon.main.1 (bit-transparent no-op)
+// USE-DAG: per_call_explicit.cpp:[[@LINE-78]]:{{[0-9]+}}: warning: Poseidon: Poseidon returned false (no change) for preprocess__Z5shiftPKdPdi.poseidon.main.1
 // USE-DAG: [poseidon] preprocess__Z5shiftPKdPdi.poseidon.main.2: the site's own accuracy target 1.000000e-08 overrides -poseidon-tau=1.000000e-06
 // USE-DAG: [poseidon] pin: _Z5shiftPKdPdi.poseidon.main.2:PT0=Funcs FP64(50%) + FP32(50%)
 // USE: 2 warnings generated.

@@ -16,8 +16,6 @@
 #ifndef POSEIDON_HERBIERUN_H
 #define POSEIDON_HERBIERUN_H
 
-#include "CacheKey.h"
-
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Error.h"
 
@@ -88,11 +86,6 @@ struct HerbieRunState {
   // The answers searches took, by origin, since they were last reported.
   unsigned Cached = 0, Fresh = 0;
 };
-
-// The parts of a cache key that say which Herbie searched: its binary and the
-// platform it ranks candidates by.
-void addHerbieKeyParts(CacheKey &Key, const HerbieRunOptions &Opts,
-                       HerbieBinaryDigests &Digests);
 
 struct HerbieRunResult {
   enum class Outcome {

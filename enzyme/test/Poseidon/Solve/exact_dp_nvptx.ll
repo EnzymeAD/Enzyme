@@ -19,16 +19,16 @@
 ; RUN: cp %cost_models/cm_sm_120_synthetic.herbie.rkt %t/one_output/cm_sm_120_fma.herbie.rkt
 ; RUN: cp %S/../Inputs/fma_opt_cache/cachedHerbieOutput_default_958ABA9C1BC0AE00.txt %t/one_output/prune/cachedHerbieOutput_cuda-sm120_45B4DF20BF2EFFF8.txt
 ; RUN: cp %t/one_output/prune/cachedHerbieOutput_cuda-sm120_45B4DF20BF2EFFF8.txt %t/one_output/exact/
-; RUN: %opt < %S/../Inputs/exact_dp/one_output.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/fma_opt_profiles %{fma} -poseidon-cost-model=%t/one_output/cm_sm_120_fma.csv -poseidon-cost-budget=-0.7 -poseidon-cache=%t/one_output/prune -o /dev/null 2>&1 | FileCheck --check-prefix=ONE-PRUNE %s
-; RUN: FileCheck --check-prefix=ONE-PRUNE-BUDGETS %s < %t/one_output/prune/budgets.txt
-; RUN: %opt < %S/../Inputs/exact_dp/one_output.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/fma_opt_profiles %{fma} -poseidon-cost-model=%t/one_output/cm_sm_120_fma.csv -poseidon-cost-budget=-0.7 -poseidon-cache=%t/one_output/exact -poseidon-early-prune=false -o /dev/null 2>&1 | FileCheck --check-prefix=ONE-EXACT %s
-; RUN: FileCheck --check-prefix=ONE-EXACT-BUDGETS %s < %t/one_output/exact/budgets.txt
-; The mode is part of the table's key: neither mode replays a table the other
-; solved, and each replays its own.
+; RUN: %opt < %S/../Inputs/exact_dp/one_output.ll %loadPoseidon -poseidon-print -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/fma_opt_profiles %{fma} -poseidon-cost-model=%t/one_output/cm_sm_120_fma.csv -poseidon-cost-budget=-0.7 -poseidon-cache=%t/one_output/prune -poseidon-explain=%t/one_output/prune/ex -o /dev/null 2>&1 | FileCheck --check-prefix=ONE-PRUNE %s
+; RUN: %poseidon_explain %t/one_output/prune/ex --format budgets | FileCheck --check-prefix=ONE-PRUNE-BUDGETS %s
+; RUN: %opt < %S/../Inputs/exact_dp/one_output.ll %loadPoseidon -poseidon-print -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/fma_opt_profiles %{fma} -poseidon-cost-model=%t/one_output/cm_sm_120_fma.csv -poseidon-cost-budget=-0.7 -poseidon-cache=%t/one_output/exact -poseidon-explain=%t/one_output/exact/ex -poseidon-early-prune=false -o /dev/null 2>&1 | FileCheck --check-prefix=ONE-EXACT %s
+; RUN: %poseidon_explain %t/one_output/exact/ex --format budgets | FileCheck --check-prefix=ONE-EXACT-BUDGETS %s
+; The mode is part of the table's key: each mode solves into an entry of its
+; own, and each replays its own.
 ; RUN: cp -r %t/one_output/prune %t/one_output/reuse
-; RUN: %opt < %S/../Inputs/exact_dp/one_output.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/fma_opt_profiles %{fma} -poseidon-cost-model=%t/one_output/cm_sm_120_fma.csv -poseidon-cost-budget=-0.7 -poseidon-cache=%t/one_output/reuse -poseidon-early-prune=false -o /dev/null 2>&1 | FileCheck --check-prefix=ONE-TO-EXACT %s
-; RUN: %opt < %S/../Inputs/exact_dp/one_output.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/fma_opt_profiles %{fma} -poseidon-cost-model=%t/one_output/cm_sm_120_fma.csv -poseidon-cost-budget=-0.7 -poseidon-cache=%t/one_output/reuse -o /dev/null 2>&1 | FileCheck --check-prefix=ONE-TO-PRUNE %s
-; RUN: %opt < %S/../Inputs/exact_dp/one_output.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/fma_opt_profiles %{fma} -poseidon-cost-model=%t/one_output/cm_sm_120_fma.csv -poseidon-cost-budget=-0.7 -poseidon-cache=%t/one_output/exact -poseidon-early-prune=false -o /dev/null 2>&1 | FileCheck --check-prefix=ONE-REPLAY %s
+; RUN: %opt < %S/../Inputs/exact_dp/one_output.ll %loadPoseidon -poseidon-print -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/fma_opt_profiles %{fma} -poseidon-cost-model=%t/one_output/cm_sm_120_fma.csv -poseidon-cost-budget=-0.7 -poseidon-cache=%t/one_output/reuse -poseidon-early-prune=false -o /dev/null 2>&1 | FileCheck --check-prefix=ONE-TO-EXACT %s
+; RUN: %opt < %S/../Inputs/exact_dp/one_output.ll %loadPoseidon -poseidon-print -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/fma_opt_profiles %{fma} -poseidon-cost-model=%t/one_output/cm_sm_120_fma.csv -poseidon-cost-budget=-0.7 -poseidon-cache=%t/one_output/reuse -o /dev/null 2>&1 | FileCheck --check-prefix=ONE-TO-PRUNE %s
+; RUN: %opt < %S/../Inputs/exact_dp/one_output.ll %loadPoseidon -poseidon-print -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/fma_opt_profiles %{fma} -poseidon-cost-model=%t/one_output/cm_sm_120_fma.csv -poseidon-cost-budget=-0.7 -poseidon-cache=%t/one_output/exact -poseidon-early-prune=false -o /dev/null 2>&1 | FileCheck --check-prefix=ONE-REPLAY %s
 
 ; ONE-PRUNE: Using cached Herbie output
 ; ONE-PRUNE: DP table contains 1 entries.
@@ -43,9 +43,11 @@
 ; ONE-EXACT: Applying solution for (* (+ v0 v1) v2) --(0)-> (fma.f32 v1 v2 (*.f32 v2 v0))
 ; ONE-EXACT: [poseidon] pin: tester:R1=(fma.f32 v1 v2 (*.f32 v2 v0))
 ; ONE-EXACT-BUDGETS: {{^}}-0.748046875,-0.05859375{{$}}
-; ONE-TO-EXACT: DP cache entry for preprocess_tester was solved for a different -poseidon-early-prune; re-solving.
+; ONE-TO-EXACT-NOT: DP cache entry
+; ONE-TO-EXACT: Solving the DP for preprocess_tester.
 ; ONE-TO-EXACT: DP table contains 2 entries.
-; ONE-TO-PRUNE: DP cache entry for preprocess_tester was solved for a different -poseidon-early-prune; re-solving.
+; ONE-TO-PRUNE-NOT: DP cache entry
+; ONE-TO-PRUNE: Cache entry for preprocess_tester found. Loaded DP tables from cache.
 ; ONE-TO-PRUNE: DP table contains 1 entries.
 ; ONE-REPLAY: Cache entry for preprocess_tester found. Loaded DP tables from cache.
 ; ONE-REPLAY: DP table contains 2 entries.
@@ -64,19 +66,21 @@
 ; RUN: cp %cost_models/cm_sm_120_synthetic.herbie.rkt %t/joint/cm_sm_120_fma.herbie.rkt
 ; RUN: cp %S/../Inputs/fma_opt_cache/cachedHerbieOutput_default_958ABA9C1BC0AE00.txt %t/joint/prune/cachedHerbieOutput_cuda-sm120_45B4DF20BF2EFFF8.txt
 ; RUN: cp %t/joint/prune/cachedHerbieOutput_cuda-sm120_45B4DF20BF2EFFF8.txt %t/joint/exact/
-; RUN: %opt < %S/../Inputs/exact_dp/joint.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-print -poseidon-profile-use=%t/joint/prof %{fma} -poseidon-cost-model=%t/joint/cm_sm_120_fma.csv -poseidon-joint-dp -poseidon-cost-budget=-0.7 -poseidon-cache=%t/joint/prune -o /dev/null 2>&1 | FileCheck --check-prefix=JOINT-PRUNE %s
-; RUN: FileCheck --check-prefix=JOINT-PRUNE-BUDGETS %s < %t/joint/prune/budgets.txt
-; RUN: %opt < %S/../Inputs/exact_dp/joint.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%t/joint/prof %{fma} -poseidon-cost-model=%t/joint/cm_sm_120_fma.csv -poseidon-joint-dp -poseidon-cost-budget=-0.7 -poseidon-cache=%t/joint/exact -poseidon-early-prune=false -o /dev/null 2>&1 | FileCheck --check-prefix=JOINT-EXACT %s
-; RUN: FileCheck --check-prefix=JOINT-EXACT-BUDGETS %s < %t/joint/exact/budgets.txt
+; RUN: %opt < %S/../Inputs/exact_dp/joint.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-print -poseidon-profile-use=%t/joint/prof %{fma} -poseidon-cost-model=%t/joint/cm_sm_120_fma.csv -poseidon-joint-dp -poseidon-cost-budget=-0.7 -poseidon-cache=%t/joint/prune -poseidon-explain=%t/joint/prune/ex -o /dev/null 2>&1 | FileCheck --check-prefix=JOINT-PRUNE %s
+; RUN: %poseidon_explain %t/joint/prune/ex --format budgets | FileCheck --check-prefix=JOINT-PRUNE-BUDGETS %s
+; RUN: %opt < %S/../Inputs/exact_dp/joint.ll %loadPoseidon -poseidon-print -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%t/joint/prof %{fma} -poseidon-cost-model=%t/joint/cm_sm_120_fma.csv -poseidon-joint-dp -poseidon-cost-budget=-0.7 -poseidon-cache=%t/joint/exact -poseidon-explain=%t/joint/exact/ex -poseidon-early-prune=false -o /dev/null 2>&1 | FileCheck --check-prefix=JOINT-EXACT %s
+; RUN: %poseidon_explain %t/joint/exact/ex --format budgets | FileCheck --check-prefix=JOINT-EXACT-BUDGETS %s
 
-; JOINT-PRUNE: JOINT DP table contains 1 entries
-; JOINT-PRUNE: JOINT: no solution within the computation cost budget!
+; JOINT-PRUNE: DP table contains 1 entries.
+; JOINT-PRUNE: No solution found within the computation cost budget!
 ; JOINT-PRUNE: [poseidon] no rewrite applied for preprocess_tester_a; wrapper call restored to original body tester_a (bit-transparent no-op)
 ; JOINT-PRUNE: [poseidon] no rewrite applied for preprocess_tester_b; wrapper call restored to original body tester_b (bit-transparent no-op)
 ; JOINT-PRUNE-BUDGETS: {{^}}-0.05859375{{$}}
 ; JOINT-EXACT: Exact DP: 3 frontier points; peak 4 entries in 2 signatures; 0 precision changes priced; {{.*}} s
-; JOINT-EXACT: JOINT DP table contains 3 entries; cost range [-7.480469e-01, -5.859375e-02]
-; JOINT-EXACT: JOINT: minimum accuracy cost within budget: 1.534292e-04; computation cost used: -7.480469e-01
+; JOINT-EXACT: Critical computation cost range: [-7.480469e-01, -5.859375e-02]
+; JOINT-EXACT-NEXT: DP table contains 3 entries.
+; JOINT-EXACT: Minimum accuracy cost within budget: 1.534292e-04
+; JOINT-EXACT-NEXT: Computation cost budget used: -7.480469e-01
 ; JOINT-EXACT-COUNT-2: Applying solution for (* (+ v0 v1) v2) --(0)-> (fma.f32 v1 v2 (*.f32 v2 v0))
 ; JOINT-EXACT-BUDGETS: {{^}}-0.748046875,-0.4033203125,-0.05859375{{$}}
 
@@ -87,10 +91,10 @@
 ; raise reaches the frontier; the exact solve finds all three. A budget below
 ; every frontier point selects nothing, so only the solve runs.
 ; RUN: mkdir %t/refusal
-; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/exact_dp/refusal_herbie %opt %S/../Inputs/exact_dp/refusal.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/exact_dp/refusal -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/exact_dp/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cost-budget=-1 -poseidon-print -S -o /dev/null -poseidon-cache=%t/refusal/prune 2>&1 | FileCheck --check-prefix=REFUSAL-PRUNE %s
-; RUN: FileCheck --check-prefix=REFUSAL-PRUNE-BUDGETS %s < %t/refusal/prune/budgets.txt
-; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/exact_dp/refusal_herbie %opt %S/../Inputs/exact_dp/refusal.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/exact_dp/refusal -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/exact_dp/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cost-budget=-1 -poseidon-print -S -o /dev/null -poseidon-cache=%t/refusal/exact -poseidon-early-prune=false 2>&1 | FileCheck --check-prefix=REFUSAL-EXACT %s
-; RUN: FileCheck --check-prefix=REFUSAL-EXACT-BUDGETS %s < %t/refusal/exact/budgets.txt
+; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/exact_dp/refusal_herbie %opt %S/../Inputs/exact_dp/refusal.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/exact_dp/refusal -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/exact_dp/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cost-budget=-1 -poseidon-print -S -o /dev/null -poseidon-cache=%t/refusal/prune -poseidon-explain=%t/refusal/prune/ex 2>&1 | FileCheck --check-prefix=REFUSAL-PRUNE %s
+; RUN: %poseidon_explain %t/refusal/prune/ex --format budgets | FileCheck --check-prefix=REFUSAL-PRUNE-BUDGETS %s
+; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/exact_dp/refusal_herbie %opt %S/../Inputs/exact_dp/refusal.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/exact_dp/refusal -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/exact_dp/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cost-budget=-1 -poseidon-print -S -o /dev/null -poseidon-cache=%t/refusal/exact -poseidon-explain=%t/refusal/exact/ex -poseidon-early-prune=false 2>&1 | FileCheck --check-prefix=REFUSAL-EXACT %s
+; RUN: %poseidon_explain %t/refusal/exact/ex --format budgets | FileCheck --check-prefix=REFUSAL-EXACT-BUDGETS %s
 
 ; {{[^ -~]+}} stands for the Greek capital delta the log prints.
 ; REFUSAL-PRUNE: Matmul[0] candidates
@@ -114,10 +118,10 @@
 ; functions as the libdevice calls the pass recognizes. A budget below every
 ; frontier point selects nothing, so only the solve runs.
 ; RUN: mkdir %t/reprice
-; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/exact_dp/reprice_herbie %opt %S/../Inputs/exact_dp/reprice.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/exact_dp/reprice -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/exact_dp/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-pt=true -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cost-budget=-1 -poseidon-print -S -o /dev/null -poseidon-cache=%t/reprice/prune 2>&1 | FileCheck --check-prefix=REPRICE-PRUNE %s
-; RUN: FileCheck --check-prefix=REPRICE-PRUNE-BUDGETS %s < %t/reprice/prune/budgets.txt
-; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/exact_dp/reprice_herbie %opt %S/../Inputs/exact_dp/reprice.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/exact_dp/reprice -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/exact_dp/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-pt=true -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cost-budget=-1 -poseidon-print -S -o /dev/null -poseidon-cache=%t/reprice/exact -poseidon-early-prune=false 2>&1 | FileCheck --check-prefix=REPRICE-EXACT %s
-; RUN: FileCheck --check-prefix=REPRICE-EXACT-BUDGETS %s < %t/reprice/exact/budgets.txt
+; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/exact_dp/reprice_herbie %opt %S/../Inputs/exact_dp/reprice.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/exact_dp/reprice -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/exact_dp/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-pt=true -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cost-budget=-1 -poseidon-print -S -o /dev/null -poseidon-cache=%t/reprice/prune -poseidon-explain=%t/reprice/prune/ex 2>&1 | FileCheck --check-prefix=REPRICE-PRUNE %s
+; RUN: %poseidon_explain %t/reprice/prune/ex --format budgets | FileCheck --check-prefix=REPRICE-PRUNE-BUDGETS %s
+; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/exact_dp/reprice_herbie %opt %S/../Inputs/exact_dp/reprice.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/exact_dp/reprice -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/exact_dp/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-pt=true -poseidon-raise-wmma -poseidon-ozaki-host-dispatch=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cost-budget=-1 -poseidon-print -S -o /dev/null -poseidon-cache=%t/reprice/exact -poseidon-explain=%t/reprice/exact/ex -poseidon-early-prune=false 2>&1 | FileCheck --check-prefix=REPRICE-EXACT %s
+; RUN: %poseidon_explain %t/reprice/exact/ex --format budgets | FileCheck --check-prefix=REPRICE-EXACT-BUDGETS %s
 
 ; REPRICE-PRUNE: DP table contains 17 entries.
 ; REPRICE-PRUNE-BUDGETS-NOT: -0.95376420454545452
@@ -133,14 +137,16 @@
 ; frontier point, so only the solve runs.
 ; RUN: mkdir %t/two_matmuls
 ; RUN: %opt %S/../Inputs/exact_dp/two_matmuls.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/exact_dp/two_matmuls -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv -poseidon-cost-budget=-1 -poseidon-print -S -o /dev/null -poseidon-cache=%t/two_matmuls/prune 2>&1 | FileCheck --check-prefix=TWO-PRUNE %s
-; RUN: FileCheck --check-prefix=TWO-PRUNE-TABLE %s < %t/two_matmuls/prune/table.json
+; RUN: cat %t/two_matmuls/prune/dp_*.json | FileCheck --check-prefix=TWO-PRUNE-TABLE %s
 ; RUN: %opt %S/../Inputs/exact_dp/two_matmuls.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/exact_dp/two_matmuls -poseidon-enable-herbie=false -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv -poseidon-cost-budget=-1 -poseidon-print -S -o /dev/null -poseidon-cache=%t/two_matmuls/exact -poseidon-early-prune=false 2>&1 | FileCheck --check-prefix=TWO-EXACT %s
-; RUN: FileCheck --check-prefix=TWO-EXACT-TABLE %s < %t/two_matmuls/exact/table.json
+; RUN: cat %t/two_matmuls/exact/dp_*.json | FileCheck --check-prefix=TWO-EXACT-TABLE %s
 
 ; TWO-PRUNE: DP table contains 9 entries.
-; TWO-PRUNE-TABLE: "-4261412864": 1633.8211240338183{{[0-9]*}}
-; TWO-PRUNE-TABLE-NOT: "itemIndex": 1
+; TWO-PRUNE-TABLE: "accuracy_cost": 1633.8211240338183{{[0-9]*}},
+; TWO-PRUNE-TABLE-NEXT: "cost": -4261412864,
+; TWO-PRUNE-TABLE-NOT: "index": 1
 ; TWO-EXACT: Exact DP: 9 frontier points
 ; TWO-EXACT: DP table contains 9 entries.
-; TWO-EXACT-TABLE: "-4261412864": 163.38211240338188{{[0-9]*}}
-; TWO-EXACT-TABLE: "itemIndex": 1
+; TWO-EXACT-TABLE: "accuracy_cost": 163.38211240338188{{[0-9]*}},
+; TWO-EXACT-TABLE-NEXT: "cost": -4261412864,
+; TWO-EXACT-TABLE: "index": 1

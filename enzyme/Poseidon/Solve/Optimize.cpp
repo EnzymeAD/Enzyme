@@ -15,7 +15,6 @@
 #include "Sites/Canonicalize.h"
 #include "Sites/SiteIdentity.h"
 #include "Solvers.h"
-#include "Subgraphs.h"
 #include "Targets/Target.h"
 #include "Techniques/Expansion.h"
 #include "Techniques/Herbie.h"
@@ -43,7 +42,6 @@
 #include "llvm/IR/Module.h"
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Support/Casting.h"
-#include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -58,16 +56,12 @@ using namespace llvm;
 
 namespace poseidon {
 
-namespace {
-
-// What collectFPCandidates reads from the site's profile.
-struct SiteProfileData {
-  std::string path;
-  ProfileMap map;
-  FunctionProfileHeader header;
-};
-
-} // namespace
+std::string siteProfilePath(const Session &S, const Function &clone,
+                            StringRef dir) {
+  SmallString<128> path(dir);
+  sys::path::append(path, siteProfileFile(S, clone));
+  return path.str().str();
+}
 
 // Reads the site's profile, checked against the canonical form its slots were
 // numbered against.
@@ -75,16 +69,6 @@ static void readSiteProfile(Session &S, Function &F, SiteProfileData &P) {
   const Options &O = S.Opts;
   assert(!O.Profiling.ProfileUse.empty() &&
          "a site is optimized only under profile use");
-  SmallString<128> profilePathBuf(O.Profiling.ProfileUse);
-  llvm::sys::path::append(profilePathBuf, siteProfileFile(S, F));
-  P.path = profilePathBuf.str().str();
-  const std::string &profilePath = P.path;
-
-  if (!O.Herbie.Cache.empty()) {
-    if (auto EC = llvm::sys::fs::create_directories(O.Herbie.Cache, true))
-      llvm::errs() << "Warning: Could not create cache directory: "
-                   << EC.message() << '\n';
-  }
 
   // Names the site by what it computes, not by the kernel it was cut from: the
   // profile is only readable against the canonical form it was numbered
@@ -94,9 +78,13 @@ static void readSiteProfile(Session &S, Function &F, SiteProfileData &P) {
     llvm::errs() << "[poseidon] canonical form hash of " << F.getName()
                  << " is " << canonicalHash << '\n';
 
+  P.path = siteProfilePath(S, F, O.Profiling.ProfileUse);
+  P.canonicalHash = canonicalHash;
+  parseProfileFile(P.path, F, P.map, P.header);
+  requireCanonicalHash(P.header, canonicalHash, P.path, F);
   auto &profileMap = P.map;
   auto &profileHeader = P.header;
-  parseProfileFile(profilePath, F, profileMap, profileHeader);
+  const std::string &profilePath = P.path;
   if (profileMap.empty()) {
     llvm::errs() << "Warning: No profile data found in " << profilePath << '\n';
   }
@@ -107,7 +95,6 @@ static void readSiteProfile(Session &S, Function &F, SiteProfileData &P) {
   // Before anything reads a gradient: the floor is written back into the
   // profile records so that every reader sees one weight.
   applySensitivityFloor(profileMap, F.getName(), O.Diagnostics.Print);
-  requireCanonicalHash(profileHeader, canonicalHash, profilePath, F);
   // Per-output accounting weighs each output on its own scale and takes no
   // condition number.
   if (O.Profiling.OutputProfiles.empty())
@@ -169,11 +156,6 @@ static void recognizeMatrixProducts(Session &S, Function &F,
                            ? "HostGemmLoopNest"
                            : "ScalarLoopReduction")
                    << '\n';
-      if (m.origin == AbstractMatmul::Origin::HostGemmLoopNest)
-        llvm::errs() << "    (profile-scale shape; runtime descriptor printed "
-                        "by the [hostgemm] recognizer above)\n";
-      else
-        llvm::errs() << "    (profile dump skipped for ScalarLoopReduction)\n";
     }
   }
 }
@@ -199,9 +181,7 @@ proposeSubgraphCandidates(Session &S, Function &F,
     if (O.Candidates.EnablePT)
       proposePrecisionCandidates(S, F, subgraph, st.valueToNodeMap,
                                  profileHeader, expansionSafe, st.CSs);
-    llvm::errs() << "##### Finished synthesizing candidates for "
-                 << ++subgraphCounter << " of " << subgraphs.size()
-                 << " subgraphs! #####\n";
+    ++subgraphCounter;
   }
 }
 
@@ -247,6 +227,8 @@ static void putOnApplicationScale(Session &S, Function &F,
     factor = profileHeader.kappaMark == "diverged"
                  ? 1e30
                  : profileHeader.kappa / sumSens;
+    st.kappa = profileHeader.kappa;
+    st.kappaMark = profileHeader.kappaMark;
     llvm::errs() << "[poseidon] site " << F.getName()
                  << ": kappa=" << profileHeader.kappa << " ("
                  << profileHeader.kappaMark << ") sumsens=" << sumSens
@@ -256,6 +238,7 @@ static void putOnApplicationScale(Session &S, Function &F,
   // is compared against has to be scaled the same way; with a kappa this
   // reduces to kappa itself, without one to the site's total sensitivity.
   st.accScale = factor * siteSumSens;
+  st.scaleFactor = factor;
   if (factor != 1.0)
     for (SiteUnit *unit : st.units)
       unit->scaleErrors(factor);
@@ -330,9 +313,8 @@ static void priceUnlessCached(Session &S, FunctionFPState &st,
       O.Solver.ApplyRewrites.empty()) {
     const bool target = st.errTol > 0.0 || O.Solver.Tau > 0.0;
     const SmallVector<SiteUnit *> units = solvedUnits(st, target);
-    st.table = std::make_unique<SiteTable>();
-    st.table->key = solveKey(S, st, units, profilePath);
-    if (readSiteTable(O, st.F->getName(), *st.table, units))
+    st.table = lookupSiteTable(S, st, units, profilePath);
+    if (st.table->hit)
       return;
   }
   priceCandidates(st);
@@ -345,14 +327,15 @@ static bool collectFPCandidates(Session &S, Function &F, double errorTol,
   const Options &O = S.Opts;
   st.F = &F;
   st.errTol = errorTol;
-  st.sampleLogBits = sampleLogBits;
 
   const Target &T = Target::of(F);
-  if (T.isDevice())
+  if (T.isDevice() && O.Diagnostics.Print)
     llvm::errs() << "[poseidon] GPU mode active for " << F.getName() << '\n';
 
   SiteProfileData profile;
   readSiteProfile(S, F, profile);
+  st.profilePath = profile.path;
+  st.canonicalHash = profile.canonicalHash;
   recognizeMatrixProducts(S, F, profile, st);
 
   // Nothing above prices: a compile for a device no model has been measured
@@ -369,17 +352,14 @@ static bool collectFPCandidates(Session &S, Function &F, double errorTol,
   attachProfile(O, profile.map, st.valueToNodeMap, st.subgraphs);
   shapeSubgraphs(O, F, st.subgraphs);
 
-  if (st.subgraphs.empty() && st.abstractMatmuls.empty()) {
-    if (O.Diagnostics.Print)
-      llvm::errs() << "No subgraphs or matmuls found\n";
+  if (st.subgraphs.empty() && st.abstractMatmuls.empty())
     return false;
-  }
 
   const bool expansionSafe =
       expansionsRoundedAsWritten(O, F, !st.subgraphs.empty());
   proposeSubgraphCandidates(S, F, profile.header, expansionSafe, st);
 
-  generateMatmulCandidates(S, st.abstractMatmuls, profile.map, st.sampleLogBits,
+  generateMatmulCandidates(S, st.abstractMatmuls, profile.map, sampleLogBits,
                            st.CMs);
   st.sealUnits(S);
 
@@ -398,34 +378,47 @@ static bool collectFPCandidates(Session &S, Function &F, double errorTol,
   return true;
 }
 
-// `applied` receives the steps materialized, in order.
-static bool applySolution(ArrayRef<SolutionStep> steps,
-                          SmallVectorImpl<SolutionStep> &applied) {
-  if (steps.empty())
-    return false;
-  llvm::errs() << "\n!!! Applying solution (" << steps.size()
-               << " step(s)) "
-                  "... !!!\n";
-  // The binary64 and binary32 searches of one output are separate items, and
-  // the first rewrite erases the output the second would replace.
+SmallVector<SolutionStep> stepsToApply(ArrayRef<SolutionStep> steps) {
+  SmallVector<SolutionStep> applied;
   SmallPtrSet<Value *, 8> rewrittenOutputs;
-  for (const auto &step : steps) {
+  for (const SolutionStep &step : steps) {
+    ArrayRef<Value *> outputs = unitOf(step).rewrittenOutputs();
+    if (llvm::any_of(outputs,
+                     [&](Value *V) { return rewrittenOutputs.contains(V); }))
+      continue;
+    rewrittenOutputs.insert(outputs.begin(), outputs.end());
+    applied.push_back(step);
+  }
+  return applied;
+}
+
+// Materializes the steps of `steps` that stepsToApply keeps, which it
+// returns.
+static SmallVector<SolutionStep> applySolution(const Options &O,
+                                               ArrayRef<SolutionStep> steps) {
+  SmallVector<SolutionStep> applied = stepsToApply(steps);
+  if (steps.empty())
+    return applied;
+  if (O.Diagnostics.Print)
+    llvm::errs() << "\n!!! Applying solution (" << steps.size()
+                 << " step(s)) ... !!!\n";
+  const SolutionStep *next = applied.begin();
+  for (const SolutionStep &step : steps) {
     SiteUnit &unit = unitOf(step);
     llvm::errs() << "Applying solution for "
                  << unit.choiceText(step.candidateIndex) << '\n';
-    ArrayRef<Value *> outputs = unit.rewrittenOutputs();
-    if (llvm::any_of(outputs,
-                     [&](Value *V) { return rewrittenOutputs.contains(V); })) {
+    if (next == applied.end() || next->unit != step.unit ||
+        next->candidateIndex != step.candidateIndex) {
       llvm::errs() << "[poseidon] output already rewritten by an "
                       "earlier step; skipping this one\n";
       continue;
     }
-    rewrittenOutputs.insert(outputs.begin(), outputs.end());
+    ++next;
     unit.materialize(step.candidateIndex);
-    applied.push_back(step);
   }
-  llvm::errs() << "!!! Solution applied !!!\n\n";
-  return true;
+  if (O.Diagnostics.Print)
+    llvm::errs() << "!!! Solution applied !!!\n\n";
+  return applied;
 }
 
 // Applies `steps` to F and cleans F up; true when a step was applied.
@@ -433,41 +426,31 @@ static bool materializeFPSolution(Session &S, Function &F, FunctionFPState &st,
                                   ArrayRef<SolutionStep> steps) {
   const Options &O = S.Opts;
   auto &subgraphs = st.subgraphs;
-  SmallVector<SolutionStep> applied;
-  bool changed = applySolution(steps, applied);
+  SmallVector<SolutionStep> applied = applySolution(O, steps);
+  const bool changed = !steps.empty();
   printPin(S, st, applied);
 
-  llvm::errs() << "[poseidon] Finished optimizing " << F.getName() << '\n';
+  if (O.Diagnostics.Print)
+    llvm::errs() << "[poseidon] Finished optimizing " << F.getName() << '\n';
 
   if (changed) {
     for (auto &subgraph : subgraphs) {
-      if (subgraph.outputs_rewritten != subgraph.outputs.size()) {
-        if (O.Diagnostics.Print)
-          llvm::errs() << "Skip erasing a subgraph: only rewrote "
-                       << subgraph.outputs_rewritten << " of "
-                       << subgraph.outputs.size() << " outputs\n";
-        continue; // Intermediate operations cannot be erased safely
-      }
+      // Intermediate operations cannot be erased safely.
+      if (subgraph.outputs_rewritten != subgraph.outputs.size())
+        continue;
       for (auto *I : subgraph.operations) {
-        if (O.Diagnostics.Print)
-          llvm::errs() << "Erasing: " << *I << '\n';
         if (!I->use_empty()) {
           I->replaceAllUsesWith(UndefValue::get(I->getType()));
         }
         I->eraseFromParent();
       }
     }
-
-    llvm::errs() << "[poseidon] Finished cleaning up " << F.getName() << '\n';
   }
 
   if (changed)
     applyStagingNarrowing(S, F, /*announce=*/true, ParamArm::Both, F);
-  if (changed && demoteFPCastPHIs(F)) {
-    if (O.Diagnostics.Print)
-      llvm::errs() << "[poseidon] demoted fpcast-sandwiched FP64 PHIs in "
-                   << F.getName() << '\n';
-  }
+  if (changed)
+    demoteFPCastPHIs(F);
 
   // The emitted site is cleaned up without the target, which versions a loop
   // on a loop-invariant condition: that keeps a comparison of an operand left
@@ -512,7 +495,7 @@ bool fpOptimize(Session &S, Function &F, double errorTol) {
   const StringSet<> declared = declaredFunctions(*F.getParent());
   FunctionFPState st;
   if (!collectFPCandidates(S, F, errorTol, sampleLogBits, st)) {
-    explainNothingToOptimize(S, F);
+    explainNothingToOptimize(S, F, target, errorTol > 0.0);
     return false;
   }
 
@@ -527,6 +510,7 @@ bool fpOptimize(Session &S, Function &F, double errorTol) {
   record.profiledCost = st.profiledCost;
   record.tau = target;
   record.siteTarget = errorTol > 0.0;
+  FunctionFPState *site = &st;
   SmallVector<SolutionStep> steps;
   if (!O.Solver.ApplyRewrites.empty()) {
     steps = parseManualRewrites(S, st);
@@ -537,9 +521,11 @@ bool fpOptimize(Session &S, Function &F, double errorTol) {
     // the normalized DP under the same number.
     steps = errorBudgetSelector(O, st.CMs, target);
     if (!st.COs.empty() || !st.CSs.empty()) {
+      const SmallVector<SiteUnit *> elemUnits =
+          solvedUnits(st, /*target=*/true);
       SmallVector<SolutionStep> elem =
-          accuracyDPSolver(S, F, st, solvedUnits(st, /*target=*/true), target,
-                           st.accScale, rec, st.table.get());
+          solveSites(S, site, ArrayRef<SiteUnit *>(elemUnits), target,
+                     /*joint=*/false, rec);
       for (const SolutionStep &e : elem) {
         // The two selectors run independently, so the DP's footprint rule is
         // applied between their results here, loudly: dropping a priced
@@ -557,8 +543,8 @@ bool fpOptimize(Session &S, Function &F, double errorTol) {
     }
     record.selector = "error-budget";
   } else {
-    steps = accuracyDPSolver(S, F, st, st.units, target, st.accScale, rec,
-                             st.table.get());
+    steps = solveSites(S, site, ArrayRef<SiteUnit *>(st.units), target,
+                       /*joint=*/false, rec);
   }
   if (rec)
     explainSolve(S, F, st, steps, record);
@@ -566,7 +552,7 @@ bool fpOptimize(Session &S, Function &F, double errorTol) {
   return materializeFPSolution(S, F, st, steps);
 }
 
-bool solveJointly(Session &S, Module &M, FunctionAnalysisManager &FAM) {
+bool solveJointly(Session &S, Module &M) {
   const Options &O = S.Opts;
   SmallVector<Function *, 4> marked;
   for (Function &F : M)
@@ -575,8 +561,9 @@ bool solveJointly(Session &S, Module &M, FunctionAnalysisManager &FAM) {
   if (marked.empty())
     return false;
 
-  llvm::errs() << "Poseidon JOINT: collecting candidates from " << marked.size()
-               << " marked function(s)\n";
+  if (O.Diagnostics.Print)
+    llvm::errs() << "Poseidon JOINT: collecting candidates from "
+                 << marked.size() << " marked function(s)\n";
 
   // One shared budget is spent against one target, so every site in the
   // solve has to mean the same one: its own if it carries one, else
@@ -623,8 +610,10 @@ bool solveJointly(Session &S, Module &M, FunctionAnalysisManager &FAM) {
     if (collectFPCandidates(S, *F, errTol, O.Model.SampleLogBits, *st)) {
       states.push_back(std::move(st));
     } else {
-      llvm::errs() << "Poseidon JOINT: nothing to optimize in " << F->getName()
-                   << '\n';
+      if (O.Diagnostics.Print)
+        llvm::errs() << "Poseidon JOINT: nothing to optimize in "
+                     << F->getName() << '\n';
+      explainNothingToOptimize(S, *F, errTol, allFromSite);
       redirectNoopSite(S, F);
     }
   }
@@ -632,16 +621,22 @@ bool solveJointly(Session &S, Module &M, FunctionAnalysisManager &FAM) {
     return false;
 
   SmallVector<FunctionFPState *, 4> raw;
-  for (auto &s : states)
+  SmallVector<ArrayRef<SiteUnit *>, 4> units;
+  for (auto &s : states) {
     raw.push_back(s.get());
+    units.push_back(s->units);
+  }
 
   SolveRecord record;
   const bool explain = llvm::any_of(
       raw, [&](FunctionFPState *st) { return explainWanted(O, *st->F); });
   record.tau = jointErrTol;
   record.siteTarget = allFromSite;
-  for (FunctionFPState *st : raw)
+  for (FunctionFPState *st : raw) {
     record.profiledCost += st->profiledCost;
+    record.accScale += st->accScale;
+    record.sites.push_back(st->F->getName().str());
+  }
   SmallVector<SolutionStep> steps;
   if (!O.Solver.ApplyRewrites.empty()) {
     for (auto *st : raw) {
@@ -650,8 +645,8 @@ bool solveJointly(Session &S, Module &M, FunctionAnalysisManager &FAM) {
     }
     record.selector = "manual";
   } else {
-    steps =
-        jointAccuracyDPSolver(S, raw, jointErrTol, explain ? &record : nullptr);
+    steps = solveSites(S, raw, units, jointErrTol, /*joint=*/true,
+                       explain ? &record : nullptr);
   }
 
   std::unordered_map<FunctionFPState *, SmallVector<SolutionStep>> perState;

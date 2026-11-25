@@ -33,7 +33,6 @@ int main() {
 }
 
 // RUN: %poseidon_explain %S/../Inputs/explain/formatter/rotation.explain.json --format source --source %s --clang %clang | FileCheck --check-prefix=SOURCE %s
-// RUN: %poseidon_explain %S/../Inputs/explain/formatter/rotation.explain.json --format remarks | FileCheck --check-prefix=REMARKS %s
 // RUN: %poseidon_explain %S/../Inputs/explain/formatter/rotation.explain.json --format report | FileCheck --check-prefix=REPORT %s
 
 // The applied candidate moves the two library calls of one FP subgraph to
@@ -43,9 +42,6 @@ int main() {
 // SOURCE-NEXT: {{^}}    double s = (double)sinf((float)(0.5 * angle)) / angle;  // Poseidon: sin in float [PT0_10]{{$}}
 // SOURCE-NEXT: {{^}}    q[4 * i] = (double)cosf((float)(0.5 * angle));  // Poseidon: cos in float [PT0_10]{{$}}
 // SOURCE-NEXT: {{^}}    q[4 * i + 1] = s * x;{{$}}
-
-// REMARKS: explain_formatter_rotation.cpp:32:3: note: Poseidon site rotation: accuracy target tau = 1e-06; modelled error as written 1e-17, after 1.3e-08; applied PT0_10; cost 1 -> 0.255869
-// REMARKS-NEXT: explain_formatter_rotation.cpp:13:16: note: Poseidon: Funcs FP64(0%) + FP32(100%): sin (13:16) and cos (14:16) in float (2 of 11 operations); modelled error 1.3e-08 [PT0_10]
 
 // REPORT: explain_formatter_rotation.cpp:15:22  S0: x * (sin(sqrt(z * z + (x * x + y * y)) * 0.5) / sqrt(z * z + (x * x + y * y)))
 // REPORT-NEXT: output 1 (explain_formatter_rotation.cpp:16:22): y * (sin(sqrt(z * z + (x * x + y * y)) * 0.5) / sqrt(z * z + (x * x + y * y)))

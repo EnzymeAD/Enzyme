@@ -6,28 +6,33 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// The DP over the units of one site or of several sites, and the selection
-// of a frontier point by budget or accuracy target.
+// The DP over the units of one site or of several sites, the selection of a
+// frontier point by budget or accuracy target, and the cache of a site's
+// solved table: a later compile with the same key binds the table to its own
+// candidates instead of pricing and solving again.
 //
 //===----------------------------------------------------------------------===//
 
 #ifndef POSEIDON_SOLVERS_H
 #define POSEIDON_SOLVERS_H
 
+#include "Core/CacheKey.h"
 #include "Core/Solver.h"
-#include "Techniques/Herbie.h"
-#include "Techniques/Precision.h"
+#include "Techniques/Unit.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
-#include "llvm/IR/Function.h"
+#include "llvm/ADT/StringRef.h"
 
 #include <limits>
+#include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace poseidon {
 
+struct FunctionFPState;
 struct Options;
 class Session;
 
@@ -43,29 +48,42 @@ struct SolveRecord {
   double profiledCost = 0.0;
   double tau = 0.0;
   bool siteTarget = false;
+  // The sites of a joint solve.
+  std::vector<std::string> sites;
   std::optional<int64_t> selected;
 };
 
-struct FunctionFPState;
-struct SiteTable;
+// A site's DP table in the cache: the key of what it is solved from, the file
+// the entry under that key is kept in and, when the cache holds it, the table
+// bound to this compile's candidates.
+struct SiteTable {
+  std::string path;
+  CacheKey key;
+  bool hit = false;
+  CostMap costToAccuracyMap;
+  SolutionMap costToSolutionMap;
+  std::optional<double> baseline;
+};
 
-double baselineAccCost(llvm::ArrayRef<RewriteUnit> COs,
-                       llvm::ArrayRef<PrecisionUnit> CSs,
-                       unsigned *unpricedOut = nullptr);
+// The cache entry of the DP table of the site `st` over `units`, read from
+// the cache when it holds one; an entry that is unreadable or was solved by
+// another compiler is reported and missed.
+std::unique_ptr<SiteTable> lookupSiteTable(Session &S,
+                                           const FunctionFPState &st,
+                                           llvm::ArrayRef<SiteUnit *> units,
+                                           llvm::StringRef profilePath);
 
-// Solves `units`, units of the site `st`, in one DP. `accScale` is what
-// `errorTol` is measured against: the site's total profiled sensitivity times
-// the factor that put the accuracy costs on the application's scale, so that
-// an accuracy cost divided by it is a per-operation relative rounding level.
+// Solves `units[i]`, units of the site `sites[i]`, in one DP and selects a
+// frontier point: under `tau` > 0 the one the target picks, else the most
+// accurate one within -poseidon-cost-budget. `tau` is measured against the
+// sites' accScale, so that an accuracy cost divided by it is a per-operation
+// relative rounding level. A single site's table is read from or written to
+// the cache when the site has one. `joint` marks a solve of the sites of
+// -poseidon-joint-dp, however many.
 llvm::SmallVector<SolutionStep>
-accuracyDPSolver(Session &S, llvm::Function &F, FunctionFPState &st,
-                 llvm::ArrayRef<SiteUnit *> units, double errorTol = 0.0,
-                 double accScale = 0.0, SolveRecord *record = nullptr,
-                 SiteTable *table = nullptr);
-
-llvm::SmallVector<SolutionStep>
-jointAccuracyDPSolver(Session &S, llvm::ArrayRef<FunctionFPState *> states,
-                      double errorTol, SolveRecord *record = nullptr);
+solveSites(Session &S, llvm::ArrayRef<FunctionFPState *> sites,
+           llvm::ArrayRef<llvm::ArrayRef<SiteUnit *>> units, double tau,
+           bool joint, SolveRecord *record);
 
 // Whether a budget or an accuracy target can select a frontier point of this
 // accuracy cost. A point whose cost is not finite or carries the exponent

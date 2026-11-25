@@ -11,7 +11,6 @@
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
-#include "llvm/IR/PassManager.h"
 
 namespace llvm {
 class CallBase;
@@ -23,8 +22,8 @@ namespace poseidon {
 
 class Session;
 
-// Profile-use: lower every marker collected from one function into a call of
-// the optimized body.
+// Profile use: lower each of `markers` into a call of the optimized body,
+// appending the calls made to `calls`.
 bool lowerMarkers(Session &S, llvm::ArrayRef<llvm::CallInst *> markers,
                   llvm::SmallVectorImpl<llvm::CallBase *> &calls);
 
@@ -37,10 +36,6 @@ bool prepareModule(Session &S, llvm::Module &M);
 // names with -poseidon-kernels): each such kernel becomes a wrapper around its
 // own body, and that body is solved and rewritten like a marked one.
 bool optimizeAnnotatedSites(Session &S, llvm::Module &M);
-
-// -poseidon-joint-dp: solve every deferred site under one shared budget.
-bool solveDeferredSites(Session &S, llvm::Module &M,
-                        llvm::FunctionAnalysisManager &FAM);
 
 // Drop the canonicalized clones nothing calls any more. Runs once per module,
 // after every site is lowered and inlined.

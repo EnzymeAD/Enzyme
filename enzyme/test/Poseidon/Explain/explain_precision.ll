@@ -10,7 +10,7 @@
 ; RUN: %python -c "print('tester' + 'x' * 250)" > %t/long.name
 ; RUN: sed "s/@tester\b/@$(cat %t/long.name)/" %s > %t/long.ll
 ; RUN: mkdir -p %t/long.prof && cp %S/../Inputs/explain/precision/preprocess_tester.fpprofile %t/long.prof/$(%python -c "print('preprocess_tester' + 'x' * 143 + '~91b7951de3c44a27')").fpprofile
-; RUN: %{opt} < %t/long.ll -poseidon-profile-use=%t/long.prof -poseidon-cache=%t/c -poseidon-tau=1e-6 -poseidon-report-path=%t/long 2>&1 \
+; RUN: %{opt} < %t/long.ll -poseidon-profile-use=%t/long.prof -poseidon-cache=%t/c -poseidon-tau=1e-6 -poseidon-report-path=%t/long -poseidon-print 2>&1 \
 ; RUN:   | FileCheck --check-prefix=LONG --implicit-check-not="Error writing" %s
 ; RUN: ls %t/long | FileCheck --check-prefix=LONGFILES %s
 ; RUN: cat %t/long/*.explain.json | FileCheck --check-prefix=LONGJSON -DNAME=$(cat %t/long.name) %s
@@ -66,14 +66,12 @@
 
 ; KEPT: remark: wave.c:4:41: Poseidon left exp(x[i] * (x[i] * -0.5)) * cos(x[i] * 4.0) as written: every alternative's modelled error is above the target 1e-12 (best: PT0_5, 1.1e-09){{$}}
 ; KEPT-NEXT: remark: wave.c:4:26: Poseidon rejected the precision change PT0_5 to exp(x[i] * (double)((float)x[i] * -0.5f)) * cos(x[i] * 4.0): modelled error 1.1e-09 is above the target 1e-12 (cost change -0.03125){{$}}
-; KEPT: [poseidon] no rewrite applied for preprocess_tester; calling original body tester (bit-transparent no-op)
+; KEPT: warning: {{.*}}Poseidon returned false (no change) for preprocess_tester{{$}}
 
 ; LONG: Poseidon explanation written to {{.*}}/long/preprocess_tester{{x{143}~}}91b7951de3c44a27.explain.json{{$}}
 
-; LONGFILES-DAG: {{^}}preprocess_tester{{x{143}~}}91b7951de3c44a27.explain.json{{$}}
-; LONGFILES-DAG: {{^}}preprocess_tester{{x{143}~}}91b7951de3c44a27.json{{$}}
-; LONGFILES-DAG: {{^}}preprocess_tester{{x{143}~}}91b7951de3c44a27_rewrites.json{{$}}
-; LONGFILES-DAG: {{^}}preprocess_tester{{x{143}~}}91b7951de3c44a27.txt{{$}}
+; LONGFILES: {{^}}preprocess_tester{{x{143}~}}91b7951de3c44a27.explain.json{{$}}
+; LONGFILES-NOT: {{.}}
 
 ; LONGJSON: "ir": "preprocess_[[NAME]]",
 ; LONGJSON: "name": "[[NAME]]",

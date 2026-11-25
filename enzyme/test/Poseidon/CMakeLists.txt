@@ -72,7 +72,8 @@ set(POSEIDON_TEST_PROGRAM_DIR ${CMAKE_CURRENT_BINARY_DIR}/bin)
 function(poseidon_configure_test_program name)
   target_include_directories(
     ${name}
-    PRIVATE ${POSEIDON_SOURCE_DIR} ${ENZYME_SOURCE_DIR}/include)
+    PRIVATE
+      ${POSEIDON_SOURCE_DIR} ${ENZYME_SOURCE_DIR} ${ENZYME_SOURCE_DIR}/include)
   target_compile_options(${name} PRIVATE ${POSEIDON_TEST_PROGRAM_OPTIONS})
   set_target_properties(
     ${name}

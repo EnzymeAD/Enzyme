@@ -54,7 +54,7 @@
 ; WRITE-FULL-NEXT: "profile generation": []
 
 ; WRITE-NONE-NOT: wrote descriptor
-; WRITE-NONE: [poseidon] no rewrite applied for preprocess_matmul_body; calling original body matmul_body (bit-transparent no-op){{$}}
+; WRITE-NONE: warning: {{.*}}Poseidon returned false (no change) for preprocess_matmul_body{{$}}
 ; WRITE-NONE-NOT: wrote descriptor
 
 ; WRITE-AFTER-NOT: launches_
@@ -158,7 +158,7 @@
 ; ORDER-LOG: [ozaki-host-dispatch] wrote descriptor for _Z12alpha_kernelPKdS0_PdS1_: C=arg2 A=arg1 B=arg0 16x16x16 nm=12 (standalone)
 ; ORDER-LOG-NEXT: [ozaki-host-dispatch] wrote descriptor for _Z13matmul_kernelPKdS0_PdS1_: C=arg2 A=arg0 B=arg1 16x16x16 nm=12 (standalone)
 
-; ORDER-JOINT: JOINT: minimum accuracy cost within budget: {{[-+.e0-9]+}}; computation cost used: {{[-+.e0-9]+}}{{$}}
+; ORDER-JOINT: {{^}}[poseidon] {{.+}}: tau=1.000000e-12 S={{[^ ]+}} A0={{[^ ]+}} selected cost={{[^ ]+}} accCost={{[^ ]+}} rel={{[^ ]+}}{{$}}
 ; ORDER-JOINT: [ozaki-host-dispatch] wrote descriptor for _Z12alpha_kernelPKdS0_PdS1_: C=arg2 A=arg1 B=arg0 16x16x16 nm=14 (standalone)
 ; ORDER-JOINT-NEXT: [ozaki-host-dispatch] wrote descriptor for _Z13matmul_kernelPKdS0_PdS1_: C=arg2 A=arg0 B=arg1 16x16x16 nm=13 (standalone)
 
@@ -188,7 +188,7 @@
 ; UNWRITABLE-PROFILE: error: Poseidon: cannot write the launch manifest [[CACHE]]/launches_tcec_matmul.cu_{{[0-9A-F]+}}.json: Not a directory. The manifest is kept in the -poseidon-cache directory, which has to be writable.{{$}}
 ; UNWRITABLE-PROFILE-NOT: [poseidon-profgen] _Z13matmul_kernelPKdS0_PdS1_: site
 
-; UNWRITABLE-NONE: [poseidon] no rewrite applied for preprocess_matmul_body; calling original body matmul_body (bit-transparent no-op){{$}}
+; UNWRITABLE-NONE: warning: {{.*}}Poseidon returned false (no change) for preprocess_matmul_body{{$}}
 ; UNWRITABLE-NONE-NOT: launch manifest
 
 source_filename = "tcec_matmul.cu"

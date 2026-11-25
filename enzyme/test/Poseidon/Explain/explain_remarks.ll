@@ -24,7 +24,7 @@
 ; JSON-NEXT: "applied": [
 ; JSON-NEXT: "R0_1"
 ; JSON: "cost_after": 0,
-; JSON: "schema": "poseidon-explain/1",
+; JSON: "schema": "poseidon-explain/2",
 ; JSON: "subgraphs": [
 ; JSON: "id": "R0_0",
 ; JSON: "approx": true,

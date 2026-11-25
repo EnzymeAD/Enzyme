@@ -75,11 +75,11 @@ static ApplyItem parseApplyItem(StringRef text, const Function &site) {
 // reported.
 static std::vector<ApplyItem> &applyItems(Session &S, const Function &site) {
   PinState &P = S.Pins;
-  if (P.spec != S.Opts.Solver.ApplyRewrites) {
-    P.spec = S.Opts.Solver.ApplyRewrites;
-    P.items.clear();
+  if (!P.parsed) {
+    P.parsed = true;
     SmallVector<StringRef> texts;
-    StringRef(P.spec).split(texts, ',', /*MaxSplit=*/-1, /*KeepEmpty=*/false);
+    StringRef(S.Opts.Solver.ApplyRewrites)
+        .split(texts, ',', /*MaxSplit=*/-1, /*KeepEmpty=*/false);
     for (StringRef text : texts)
       P.items.push_back(parseApplyItem(text.trim(), site));
   }
@@ -257,8 +257,8 @@ SmallVector<SolutionStep> parseManualRewrites(Session &S, FunctionFPState &st) {
   return steps;
 }
 
-void printPin(Session &S, const FunctionFPState &st,
-              ArrayRef<SolutionStep> applied) {
+std::string pinValue(const Session &S, const FunctionFPState &st,
+                     ArrayRef<SolutionStep> applied) {
   const std::string key = siteKey(S, *st.F);
   std::string value;
   for (const SolutionStep &step : applied) {
@@ -270,6 +270,12 @@ void printPin(Session &S, const FunctionFPState &st,
       value += ",";
     value += key + ":" + item;
   }
+  return value;
+}
+
+void printPin(Session &S, const FunctionFPState &st,
+              ArrayRef<SolutionStep> applied) {
+  const std::string value = pinValue(S, st, applied);
   if (!value.empty() && !S.Pins.printed.insert(value).second)
     return;
   llvm::errs() << "[poseidon] pin: " << value << '\n';

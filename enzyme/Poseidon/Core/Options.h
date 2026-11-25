@@ -6,8 +6,8 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// One field per -poseidon-* flag, grouped as Pass/Flags.cpp declares the
-// flags. A field's initializer is its flag's default, so a default-constructed
+// One field per -poseidon-* flag of Options.def, in the struct of the flag's
+// group. A field's initializer is its flag's default, so a default-constructed
 // Options is a compile given no flag.
 //
 //===----------------------------------------------------------------------===//
@@ -22,137 +22,113 @@
 #include <utility>
 #include <vector>
 
+namespace llvm {
+class LLVMContext;
+} // namespace llvm
+
 namespace poseidon {
 
-// Option values by flag name, the name without its leading dash.
-using FlagValue = std::pair<llvm::StringRef, std::string>;
-using FlagValues = llvm::SmallVector<FlagValue>;
+// The type of an option's field and how its flag is parsed.
+enum class OptionKind {
+  Bool,
+  Unsigned,
+  Int,
+  // A double; an empty value reads as NaN, which validateOptions refuses.
+  Number,
+  String,
+  // Comma-separated, in the order given.
+  StringList,
+  UnsignedList,
+  // A path that may be given without a value.
+  Directory,
+};
 
-// Each group appends the name and value of every option a DP table depends on
-// (appendSolveInputs) and of every other option (appendOtherValues).
+// Whether -help lists an option's flag or only -help-hidden does.
+enum class OptionRole { User, Hidden };
+
+// Whether a DP table depends on an option.
+enum class OptionKey { SolveInput, Other };
+
+template <OptionKind K> struct OptionField;
+template <> struct OptionField<OptionKind::Bool> {
+  using type = bool;
+};
+template <> struct OptionField<OptionKind::Unsigned> {
+  using type = unsigned;
+};
+template <> struct OptionField<OptionKind::Int> {
+  using type = int;
+};
+template <> struct OptionField<OptionKind::Number> {
+  using type = double;
+};
+template <> struct OptionField<OptionKind::String> {
+  using type = std::string;
+};
+template <> struct OptionField<OptionKind::StringList> {
+  using type = std::vector<std::string>;
+};
+template <> struct OptionField<OptionKind::UnsignedList> {
+  using type = std::vector<unsigned>;
+};
+template <> struct OptionField<OptionKind::Directory> {
+  using type = std::string;
+};
+template <OptionKind K> using OptionValue = typename OptionField<K>::type;
+
+#define POSEIDON_FIELD(Field, Kind, Default, ...)                              \
+  OptionValue<OptionKind::Kind> Field = Default;
+
 struct ProfilingOptions {
-  bool ProfileGenerate = false;
-  // The directory a solve reads its profiles from; empty when no
-  // -poseidon-profile-use was given. Given without a directory, the one a
-  // profiling run writes by default.
-  std::string ProfileUse;
-  std::vector<std::string> OutputProfiles;
-  std::string Kernels;
-  double MinCostShare = 0.01;
-  bool LooseCoverage = false;
+#define POSEIDON_PROFILING_OPTION POSEIDON_FIELD
+#include "Options.def"
 
   // The compile solves from profiles.
   bool usesProfile() const { return !ProfileUse.empty(); }
   // Whether this compile generates or uses a profile: anything else leaves
   // every site as written.
   bool profileAction() const { return ProfileGenerate || usesProfile(); }
-
-  void appendSolveInputs(llvm::SmallVectorImpl<FlagValue> &out) const;
-  void appendOtherValues(llvm::SmallVectorImpl<FlagValue> &out) const;
 };
 
 struct CandidateOptions {
-  bool EnableHerbie = true;
-  bool EnablePT = true;
-  bool EnableMultifloat = true;
-  unsigned ExpansionComponents = 2;
-  bool EnableThreeTier = true;
-  int TwoTierStep = 10;
-  bool RaiseWMMA = true;
-  unsigned MaxExprLength = 10000;
-  unsigned MinUsesSplit = 99;
-  unsigned MinOpsSplit = 99;
-  bool ReductionSubgraphs = false;
-  bool MergeSharedStaging = false;
-  std::vector<std::string> SplitCalls;
-
-  void appendSolveInputs(llvm::SmallVectorImpl<FlagValue> &out) const;
-  // ReductionSubgraphs and MergeSharedStaging, which the DP key lists after
-  // the matrix options.
-  void appendLaterSolveInputs(llvm::SmallVectorImpl<FlagValue> &out) const;
+#define POSEIDON_CANDIDATE_OPTION POSEIDON_FIELD
+#include "Options.def"
 };
 
 struct SolverOptions {
-  // The share of the solve's profiled cost a solution may add; a negative
-  // share is one it has to save.
-  double CostBudget = 0.0;
-  double Tau = 0.0;
-  bool TauCheapest = true;
-  bool EarlyPrune = true;
-  bool JointDP = false;
-  std::string ApplyRewrites;
-
-  void appendSolveInputs(llvm::SmallVectorImpl<FlagValue> &out) const;
-  void appendOtherValues(llvm::SmallVectorImpl<FlagValue> &out) const;
+#define POSEIDON_SOLVER_OPTION POSEIDON_FIELD
+#include "Options.def"
 };
 
 // The cost and accuracy model.
 struct ModelOptions {
-  std::string CostModel;
-  unsigned NumSamples = 1024;
-  unsigned RandomSeed = 239778888;
-  unsigned SampleLogBits = 0;
-  bool StrictMode = false;
-  unsigned MinArmSamples = 32;
-  unsigned ArmSearchFactor = 64;
-  double MaxBrokenShare = 0.01;
-  double ExponentPenalty = 1e30;
-  bool FreqWeightedPricing = false;
-  unsigned Threads = 1;
-
-  void appendSolveInputs(llvm::SmallVectorImpl<FlagValue> &out) const;
-  // FreqWeightedPricing, which the DP key lists after the matrix options.
-  void appendLaterSolveInputs(llvm::SmallVectorImpl<FlagValue> &out) const;
-  void appendOtherValues(llvm::SmallVectorImpl<FlagValue> &out) const;
+#define POSEIDON_MODEL_OPTION POSEIDON_FIELD
+#include "Options.def"
 };
 
 // Herbie and the result cache.
 struct HerbieOptions {
-  std::string Cache = "./.poseidon";
-  std::string Unit;
-  int HerbieNumThreads = 8;
-  int HerbieTimeout = 9999;
-  int HerbieNumPts = 1024;
-  int HerbieNumIters = 6;
-  int HerbieNumEnodes = 8000;
-  // Ascending, each once; empty passes Herbie no term count.
-  std::vector<unsigned> HerbieNumTaylorTerms;
-  unsigned HerbieSubgraphTimeout = 1800;
-  unsigned HerbieProcesses = 0;
-  unsigned HerbiePreFloorBits = 0;
-  std::string HerbieBinary;
-  std::string HerbiePlatform;
-  bool HerbieArrays = true;
-  std::string HerbieArrayWeights = "sensitivity";
-  std::string HerbieArrayGrouping = "inputs";
-
-  void appendSolveInputs(llvm::SmallVectorImpl<FlagValue> &out) const;
-  void appendOtherValues(llvm::SmallVectorImpl<FlagValue> &out) const;
+#define POSEIDON_HERBIE_OPTION POSEIDON_FIELD
+#include "Options.def"
 };
 
 // Matrix raising and host dispatch.
 struct MatmulOptions {
-  bool OzakiHostDispatch = true;
-  bool InKernelCalibration = false;
-
-  void appendSolveInputs(llvm::SmallVectorImpl<FlagValue> &out) const;
+#define POSEIDON_MATMUL_OPTION POSEIDON_FIELD
+#include "Options.def"
 };
 
 struct MaterializationOptions {
-  bool NarrowParamStaging = false;
-  bool NarrowMultiviewStaging = false;
-
-  void appendSolveInputs(llvm::SmallVectorImpl<FlagValue> &out) const;
+#define POSEIDON_MATERIALIZATION_OPTION POSEIDON_FIELD
+#include "Options.def"
 };
 
 struct DiagnosticOptions {
-  bool Print = false;
-  bool ShowTable = false;
-  std::string ReportPath;
-  std::string Explain;
-
-  void appendOtherValues(llvm::SmallVectorImpl<FlagValue> &out) const;
+#define POSEIDON_DIAGNOSTIC_OPTION POSEIDON_FIELD
+#include "Options.def"
 };
+
+#undef POSEIDON_FIELD
 
 struct Options {
   ProfilingOptions Profiling;
@@ -164,6 +140,18 @@ struct Options {
   MaterializationOptions Materialization;
   DiagnosticOptions Diagnostics;
 };
+
+// The options of this compile, read from the -poseidon-* flags. Defined with
+// the flags in Pass/Flags.cpp.
+Options readOptions();
+
+// Refuses, as an error of the compile, a number flag a solve reads that was
+// given no number. A compile that uses no profile reads none.
+void validateOptions(const Options &O, llvm::LLVMContext &Ctx);
+
+// Option values by flag name, the name without its leading dash.
+using FlagValue = std::pair<llvm::StringRef, std::string>;
+using FlagValues = llvm::SmallVector<FlagValue>;
 
 // The name and value of every option a DP table depends on, that is every
 // option that changes the candidate set or its pricing, in the order the DP

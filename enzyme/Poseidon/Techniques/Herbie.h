@@ -14,7 +14,6 @@
 #ifndef POSEIDON_HERBIE_H
 #define POSEIDON_HERBIE_H
 
-#include "Core/CacheKey.h"
 #include "Model/CostModel.h"
 #include "Model/FPNode.h"
 #include "Unit.h"
@@ -137,9 +136,6 @@ public:
     return candidates[i].expr;
   }
   std::string choiceText(size_t i) const override;
-  llvm::json::Object stepJSON(size_t i) override;
-  void writeReportStep(llvm::raw_ostream &OS, size_t i,
-                       llvm::StringRef pad) override;
   void materialize(size_t i) override;
   void price() override;
   void printPriced(llvm::raw_ostream &OS) override;
@@ -149,18 +145,10 @@ public:
   std::string selectionText(size_t i) const override {
     return expr + " -> " + candidates[i].expr;
   }
-  void addReportSummary(llvm::json::Array &summary) override;
-  void writeReportSummary(llvm::raw_ostream &OS) override;
-  void addCuratedRewrites(llvm::json::Array &rewrites) override;
 
 private:
   void findErasableInstructions();
 };
-
-// The parts of a cache key that say which Herbie searched: its binary and the
-// platform it ranks candidates by.
-// `F` is the site a mistake in the platform is reported at.
-void addHerbieKeyParts(Session &S, const llvm::Function &F, CacheKey &key);
 
 // Prints how many Herbie answers the compile ran fresh and read from the
 // cache.

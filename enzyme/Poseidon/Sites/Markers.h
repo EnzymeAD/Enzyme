@@ -38,6 +38,10 @@ struct Options;
 // names, __poseidon_fp_optimize and __enzyme_fp_optimize.
 bool isMarkerCall(llvm::StringRef calleeName);
 
+// The reverse-mode request profile generation makes of a site, which Enzyme
+// lowers; LLVM uniques a second declaration's name with a suffix.
+constexpr llvm::StringLiteral kAutodiffRequest = "__enzyme_autodiff_poseidon";
+
 void warn(llvm::CallBase *CI, const llvm::Twine &message);
 void fail(llvm::CallBase *CI, const llvm::Twine &message);
 llvm::Function *calleeOf(llvm::CallInst *CI);

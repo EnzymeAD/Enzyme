@@ -20,7 +20,7 @@
 ; ENABLED-NOT: [poseidon] Herbie subgraph 0 of preprocess_tester: 2 FPCore(s) in
 ; ENABLED: error: {{.*}}preprocess_tester{{.*}}: Poseidon: no Herbie answer for subgraph 0 of preprocess_tester is cached in {{.*}}/c/cachedHerbieOutput_default_{{[0-9A-F]+}}.txt, and there is no Herbie at {{.*}}/no-herbie to compute it. Compute the answer on a machine with Herbie and copy its -poseidon-cache directory here, or turn algebraic rewriting off with -poseidon-enable-herbie=0.{{$}}
 
-; DISABLED: Solving the DP for preprocess_tester.
+; DISABLED: [poseidon] pin:
 
 ; A Herbie that exits with a nonzero status is not a crash. When it wrote a
 ; usable results.json, the compile says so once and uses and caches the
@@ -42,7 +42,7 @@
 ; as written; under -poseidon-strict-mode the crash is fatal. Neither compile
 ; caches anything, so the next compile runs Herbie again.
 ; RUN: printf '#!/bin/sh\n[ -z "$FAKE_HERBIE_SIGNAL" ] || kill -KILL $$\nexec %S/../Inputs/fake-herbie.sh "$@"\n' > %t/signal.sh && chmod +x %t/signal.sh
-; RUN: env FAKE_HERBIE_SIGNAL=1 FAKE_HERBIE_DIR=%S/../Inputs/dp_cache_keys %{opt} -poseidon-enable-herbie=true -poseidon-herbie-binary=%t/signal.sh -poseidon-herbie-processes=1 -poseidon-cache=%t/sig 2>&1 | FileCheck --check-prefix=SIGNAL --implicit-check-not="KILLED after" --implicit-check-not="Saved Herbie output" %s
+; RUN: env FAKE_HERBIE_SIGNAL=1 FAKE_HERBIE_DIR=%S/../Inputs/dp_cache_keys %{opt} -poseidon-enable-herbie=true -poseidon-herbie-binary=%t/signal.sh -poseidon-herbie-processes=1 -poseidon-cache=%t/sig -poseidon-print 2>&1 | FileCheck --check-prefix=SIGNAL --implicit-check-not="KILLED after" --implicit-check-not="Saved Herbie output" %s
 ; RUN: env FAKE_HERBIE_SIGNAL=1 FAKE_HERBIE_DIR=%S/../Inputs/dp_cache_keys not %{opt} -poseidon-enable-herbie=true -poseidon-herbie-binary=%t/signal.sh -poseidon-herbie-processes=1 -poseidon-cache=%t/sig -poseidon-strict-mode 2>&1 | FileCheck --check-prefix=STRICT %s
 ; RUN: ls %t/sig | FileCheck --allow-empty --check-prefix=FILES %s
 ; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/dp_cache_keys %{opt} -poseidon-enable-herbie=true -poseidon-herbie-binary=%t/signal.sh -poseidon-herbie-processes=1 -poseidon-cache=%t/sig 2>&1 | FileCheck --check-prefix=RETRY %s

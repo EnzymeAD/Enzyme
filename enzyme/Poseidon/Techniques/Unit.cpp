@@ -24,11 +24,9 @@ using namespace llvm;
 namespace poseidon {
 
 static constexpr UnitKindInfo kUnitKinds[] = {
-    {UnitKind::R, "CO", "R", "a rewrite", true, "candidate_outputs",
-     "Candidate outputs"},
-    {UnitKind::PT, "CS", "PT", "a PT", true, "candidate_subgraphs",
-     "Candidate subgraphs"},
-    {UnitKind::M, "CM", "M", "a rewrite", false, "", ""},
+    {UnitKind::R, "CO", "R", "a rewrite", true},
+    {UnitKind::PT, "CS", "PT", "a PT", true},
+    {UnitKind::M, "CM", "M", "a rewrite", false},
 };
 
 ArrayRef<UnitKindInfo> unitKinds() { return kUnitKinds; }
@@ -85,36 +83,6 @@ std::optional<size_t> SiteUnit::positionOfOrdinal(size_t ordinal) const {
   return std::nullopt;
 }
 
-json::Value jsonFloat(double v) {
-  if (std::isfinite(v))
-    return json::Value(v);
-  return json::Value(nullptr);
-}
-
-std::optional<Tradeoff> classifyTradeoff(double compDelta, double accDelta) {
-  if (compDelta <= 0 && accDelta <= 0)
-    return Tradeoff{"free_win", std::abs(accDelta) + std::abs(compDelta)};
-  if (compDelta <= 0 && accDelta > 0)
-    return Tradeoff{"speed_for_accuracy", (accDelta > 1e-30)
-                                              ? std::abs(compDelta) / accDelta
-                                              : std::abs(compDelta)};
-  if (compDelta > 0 && accDelta <= 0)
-    return Tradeoff{"accuracy_for_speed", std::abs(accDelta) / compDelta};
-  return std::nullopt;
-}
-
-json::Object curatedRewrite(const SiteUnit &U, size_t i, double compDelta,
-                            double accDelta) {
-  std::optional<Tradeoff> tradeoff = classifyTradeoff(compDelta, accDelta);
-  json::Object rw;
-  rw["id"] = U.candidateId(i);
-  rw["category"] = tradeoff ? tradeoff->category : StringRef("dominated");
-  rw["efficiency"] = jsonFloat(tradeoff ? tradeoff->efficiency : 0.0);
-  rw["computation_cost_delta"] = compDelta;
-  rw["accuracy_cost_delta"] = jsonFloat(accDelta);
-  return rw;
-}
-
 SourceLoc locOf(const DebugLoc &DL) {
   if (!DL)
     return {};
@@ -161,25 +129,6 @@ std::string getValueStr(Value *V) {
   raw_string_ostream OS(str);
   V->print(OS);
   return str;
-}
-
-SmallVector<Instruction *, 4>
-atDistinctLocations(ArrayRef<Instruction *> insts) {
-  SmallVector<Instruction *, 4> firsts;
-  SmallSet<std::string, 4> seen;
-  for (auto *I : insts) {
-    std::string loc = getSourceLocationStr(I);
-    if (!loc.empty() && seen.insert(loc).second)
-      firsts.push_back(I);
-  }
-  return firsts;
-}
-
-json::Array getSourceLocationsJSON(ArrayRef<Instruction *> insts) {
-  json::Array locs;
-  for (Instruction *I : atDistinctLocations(insts))
-    locs.push_back(locJSON(locOf(I->getDebugLoc())));
-  return locs;
 }
 
 } // namespace poseidon

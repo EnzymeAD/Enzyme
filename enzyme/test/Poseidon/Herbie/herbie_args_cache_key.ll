@@ -2,7 +2,7 @@
 ; DEFINE:   -poseidon-profile-use=%S/../Inputs/regime_split/profiles \
 ; DEFINE:   -poseidon-enable-herbie=true -poseidon-enable-pt=false \
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cost-budget=1e9 \
-; DEFINE:   -poseidon-cache=%t/c -S -o /dev/null
+; DEFINE:   -poseidon-cache=%t/c -poseidon-print -S -o /dev/null
 ; RUN: rm -rf %t && mkdir %t
 ; RUN: printf '#!/bin/sh\nexec %S/../Inputs/fake-herbie.sh "$@"\n' > %t/other-herbie.sh && chmod +x %t/other-herbie.sh
 ; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/dp_cache_keys %{opt} -poseidon-herbie-binary=%S/../Inputs/fake-herbie.sh 2>&1 \
@@ -15,12 +15,13 @@
 ; RUN:   | FileCheck --check-prefix=HIT %s
 ; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/dp_cache_keys %{opt} -poseidon-herbie-binary=%t/other-herbie.sh 2>&1 | FileCheck --check-prefix=BINARY %s
 
-; A Herbie result is cached under its cores, the binary, the search arguments
-; and the platform, and a DP table records them. Changing a search argument
-; searches again and re-solves; going back finds the first search's results,
-; but the table was last solved under the other argument, so it is solved
-; again. Herbie's timeouts and worker count decide no result, so changing them
-; reads both caches. Another Herbie binary searches again and re-solves.
+; A Herbie result is cached under its cores, the search arguments and the
+; platform, and records the binary that gave it. Changing a search argument
+; searches again and solves into another table; going back finds the first
+; search's results and the first table. Herbie's timeouts and worker count
+; decide no result, so changing them reads both caches. Another Herbie binary
+; searches again, and its answers, the same, read the table back: the table
+; depends on the answers, not on which Herbie gave them.
 
 ; FIRST: Saved Herbie output to cache file {{.*}}cachedHerbieOutput_default_{{[0-9A-F]+}}.txt
 ; FIRST-NOT: DP cache entry
@@ -28,11 +29,13 @@
 
 ; OTHER-NOT: Using cached Herbie output
 ; OTHER: Saved Herbie output to cache file
-; OTHER: [poseidon] DP cache entry for preprocess_tester was solved for a different -poseidon-herbie-num-iters; re-solving.
+; OTHER-NOT: DP cache entry
+; OTHER: Solving the DP for preprocess_tester.
 
 ; BACK-NOT: Saved Herbie output
 ; BACK: Using cached Herbie output from {{.*}}cachedHerbieOutput_default_{{[0-9A-F]+}}.txt
-; BACK: [poseidon] DP cache entry for preprocess_tester was solved for a different -poseidon-herbie-num-iters; re-solving.
+; BACK-NOT: DP cache entry
+; BACK: Cache entry for preprocess_tester found. Loaded DP tables from cache.
 
 ; HIT-NOT: Saved Herbie output
 ; HIT: Using cached Herbie output from
@@ -41,4 +44,5 @@
 
 ; BINARY-NOT: Using cached Herbie output
 ; BINARY: Saved Herbie output to cache file
-; BINARY: [poseidon] DP cache entry for preprocess_tester was solved for a different Herbie binary; re-solving.
+; BINARY-NOT: DP cache entry
+; BINARY: Cache entry for preprocess_tester found. Loaded DP tables from cache.

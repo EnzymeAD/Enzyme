@@ -6,10 +6,10 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "Subgraphs.h"
 #include "Core/Options.h"
 #include "IR/Utils.h"
 #include "Model/FPCore.h"
+#include "Optimize.h"
 #include "Sites/Canonicalize.h"
 #include "Targets/Target.h"
 #include "Techniques/Matmul/Matmul.h"
@@ -40,12 +40,11 @@ namespace poseidon {
 
 // The dtype of a node of type T, which an optimizable instruction and its
 // operands only ever have as float or double.
-static std::string nodeDtype(Type *T, const char *unexpected) {
-  if (T->isFloatTy())
-    return "f32";
-  if (T->isDoubleTy())
-    return "f64";
-  llvm_unreachable(unexpected);
+static std::string nodeDtype(Type *T) {
+  std::string dtype = dtypeOfType(T);
+  assert((dtype == "f32" || dtype == "f64") &&
+         "an optimizable instruction computes float or double");
+  return dtype;
 }
 
 // Whether the profiling run executed `I`, an optimizable instruction of the
@@ -102,7 +101,8 @@ void buildSubgraphs(
           am.scalarLoop.fma)
         reductionFMAs.insert(am.scalarLoop.fma);
 
-  llvm::errs() << "[poseidon] Starting Floodfill for " << F.getName() << '\n';
+  if (O.Diagnostics.Print)
+    llvm::errs() << "[poseidon] Starting Floodfill for " << F.getName() << '\n';
 
   for (auto &BB : F) {
     for (auto &I : BB) {
@@ -115,10 +115,8 @@ void buildSubgraphs(
         continue;
       }
 
-      std::string dtype = nodeDtype(
-          I.getType(), "Unexpected floating point type for instruction");
-      valueToNodeMap[&I] =
-          std::make_shared<FPLLValue>(&I, getHerbieOperator(I), dtype);
+      valueToNodeMap[&I] = std::make_shared<FPLLValue>(&I, getHerbieOperator(I),
+                                                       nodeDtype(I.getType()));
     }
   }
 
@@ -127,39 +125,22 @@ void buildSubgraphs(
       if (!isOptimizable(I))
         continue;
       auto node = valueToNodeMap[&I];
-      auto operands =
-          isa<CallInst>(I) ? cast<CallInst>(I).args() : I.operands();
-      for (auto &operand : operands) {
+      for (auto &operand : fpOperands(I)) {
         if (!valueToNodeMap.count(operand)) {
           if (auto Arg = dyn_cast<Argument>(operand)) {
-            std::string dtype = nodeDtype(
-                Arg->getType(), "Unexpected floating point type for argument");
-            valueToNodeMap[operand] =
-                std::make_shared<FPLLValue>(Arg, "__arg", dtype);
-            if (O.Diagnostics.Print)
-              llvm::errs() << "Registered FPNode for argument: " << *Arg
-                           << '\n';
+            valueToNodeMap[operand] = std::make_shared<FPLLValue>(
+                Arg, "__arg", nodeDtype(Arg->getType()));
           } else if (auto C = dyn_cast<ConstantFP>(operand)) {
             SmallString<10> value;
             C->getValueAPF().toString(value);
-            std::string dtype = nodeDtype(
-                C->getType(), "Unexpected floating point type for constant");
-            valueToNodeMap[operand] =
-                std::make_shared<FPConst>(value.c_str(), dtype);
-            if (O.Diagnostics.Print)
-              llvm::errs() << "Registered FPNode for " << dtype
-                           << " constant: " << value << '\n';
+            valueToNodeMap[operand] = std::make_shared<FPConst>(
+                value.c_str(), nodeDtype(C->getType()));
           } else if (auto CI = dyn_cast<ConstantInt>(operand)) {
             // e.g., powi intrinsic has a constant int as its exponent
             double exponent = static_cast<double>(CI->getSExtValue());
-            std::string dtype = "f64";
             std::string doubleStr = std::to_string(exponent);
             valueToNodeMap[operand] =
-                std::make_shared<FPConst>(doubleStr.c_str(), dtype);
-            if (O.Diagnostics.Print)
-              llvm::errs() << "Registered FPNode for " << dtype
-                           << " constant (casted from integer): " << doubleStr
-                           << '\n';
+                std::make_shared<FPConst>(doubleStr.c_str(), "f64");
           } else {
             llvm_unreachable("isOptimizable admits no other operand");
           }
@@ -175,20 +156,11 @@ void buildSubgraphs(
       if (!inSubgraph(I)) {
         if (isOptimizable(I))
           unexecuted.push_back(&I);
-        else if (O.Diagnostics.Print)
-          llvm::errs() << "Skipping non-isOptimizable instruction: " << I
-                       << '\n';
         continue;
       }
 
-      if (processed.contains(&I)) {
-        if (O.Diagnostics.Print)
-          llvm::errs() << "Skipping already seen instruction: " << I << '\n';
+      if (processed.contains(&I))
         continue;
-      }
-
-      if (O.Diagnostics.Print)
-        llvm::errs() << "Starting floodfill from: " << I << '\n';
 
       SmallVector<Value *, 8> todo;
       SetVector<Value *> input_seen;
@@ -201,78 +173,39 @@ void buildSubgraphs(
 
         auto I2 = cast<Instruction>(cur);
 
-        if (operation_seen.contains(I2)) {
-          if (O.Diagnostics.Print)
-            llvm::errs() << "Skipping already seen instruction: " << *I2
-                         << '\n';
+        if (operation_seen.contains(I2))
           continue;
-        }
 
         assert(!processed.contains(cur) &&
                "an operation is flood-filled into one subgraph only");
 
-        if (O.Diagnostics.Print)
-          llvm::errs() << "Insert to operation_seen and processed: " << *I2
-                       << '\n';
         operation_seen.insert(I2);
         processed.insert(cur);
 
-        auto operands =
-            isa<CallInst>(I2) ? cast<CallInst>(I2)->args() : I2->operands();
-
-        for (const auto &operand : operands) {
+        for (const auto &operand : fpOperands(*I2)) {
           if (!inSubgraph(*operand)) {
-            if (O.Diagnostics.Print)
-              llvm::errs() << "Non-isOptimizable input found: " << *operand
-                           << '\n';
-
             if (!isa<ConstantFP>(operand))
               input_seen.insert(operand);
           } else {
-            if (O.Diagnostics.Print)
-              llvm::errs() << "Adding operand to todo list: " << *operand
-                           << '\n';
             todo.push_back(operand);
           }
         }
 
         for (auto U : I2->users()) {
           if (auto I3 = dyn_cast<Instruction>(U)) {
-            if (!inSubgraph(*I3)) {
-              if (O.Diagnostics.Print)
-                llvm::errs() << "Output instruction found: " << *I2 << '\n';
+            if (!inSubgraph(*I3))
               output_seen.insert(I2);
-            } else {
-              if (O.Diagnostics.Print)
-                llvm::errs() << "Adding user to todo list: " << *I3 << '\n';
+            else
               todo.push_back(I3);
-            }
           }
         }
       }
 
       if (!operation_seen.empty()) {
-        if (O.Diagnostics.Print) {
+        if (O.Diagnostics.Print)
           llvm::errs() << "Found a subgraph with " << operation_seen.size()
                        << " operations and " << input_seen.size()
                        << " inputs and " << output_seen.size() << " outputs\n";
-
-          llvm::errs() << "Inputs:\n";
-
-          for (auto &input : input_seen) {
-            llvm::errs() << *input << '\n';
-          }
-
-          llvm::errs() << "Outputs:\n";
-          for (auto &output : output_seen) {
-            llvm::errs() << *output << '\n';
-          }
-
-          llvm::errs() << "Operations:\n";
-          for (auto &operation : operation_seen) {
-            llvm::errs() << *operation << '\n';
-          }
-        }
 
         if (operation_seen.size() == 1 &&
             !reductionFMAs.contains(*operation_seen.begin())) {
@@ -305,68 +238,40 @@ void attachProfile(
   for (auto &subgraph : subgraphs) {
     for (auto op : subgraph.operations) {
       size_t idx;
-      if (tryReadProfIdxMetadata(op, idx)) {
-        auto it = profileMap.find(idx);
+      if (!tryReadProfIdxMetadata(op, idx))
+        continue;
+      auto it = profileMap.find(idx);
+      if (it == profileMap.end())
+        // Under loose coverage buildSubgraphs left the operation out.
+        reportUserError(*op, "the profile does not cover this operation: "
+                             "the profiling run never executed it. "
+                             "Profile an input that runs it, or pass "
+                             "-poseidon-loose-coverage to leave it as "
+                             "written.");
+      const auto &profileInfo = it->second;
 
-        if (it != profileMap.end()) {
-          const auto &profileInfo = it->second;
+      auto node = valueToNodeMap[op];
+      node->sens = profileInfo.sumSens;
+      node->grad = profileInfo.sumGrad;
+      node->executions = profileInfo.exec;
+      node->updateBounds(profileInfo.minRes, profileInfo.maxRes);
 
-          auto node = valueToNodeMap[op];
-          node->sens = profileInfo.sumSens;
-          node->grad = profileInfo.sumGrad;
-          node->executions = profileInfo.exec;
-          node->updateBounds(profileInfo.minRes, profileInfo.maxRes);
-
-          if (O.Diagnostics.Print) {
-            llvm::errs() << "Range of " << *op << " is ["
-                         << node->getLowerBound() << ", "
-                         << node->getUpperBound() << "]\n";
-            llvm::errs() << "Sensitivity score of " << *op
-                         << " is: " << node->sens << '\n'
-                         << "Gradient sum of " << *op << " is: " << node->grad
-                         << '\n'
-                         << "Execution count of " << *op
-                         << " is: " << node->executions << '\n';
-          }
-
-          auto operands =
-              isa<CallInst>(op) ? cast<CallInst>(op)->args() : op->operands();
-
-          for (const auto &operand_ : enumerate(operands)) {
-            auto &operand = operand_.value();
-            auto i = operand_.index();
-
-            if (i >= profileInfo.minOperands.size()) {
-              if (isa<Constant>(operand))
-                continue;
-              std::string name;
-              raw_string_ostream(name) << *operand;
-              reportUserError(*op, "the profile gives this operation " +
-                                       Twine(profileInfo.minOperands.size()) +
-                                       " operand range(s), and its operand " +
-                                       Twine(i) + " (" +
-                                       StringRef(name).trim() +
-                                       ") has none: the profile was not "
-                                       "generated from this program. Re-run "
-                                       "profile generation.");
-            }
-            auto operandNode = valueToNodeMap[operand];
-            operandNode->updateBounds(profileInfo.minOperands[i],
-                                      profileInfo.maxOperands[i]);
-            if (O.Diagnostics.Print) {
-              llvm::errs() << "Range of " << *operand << " is ["
-                           << operandNode->getLowerBound() << ", "
-                           << operandNode->getUpperBound() << "]\n";
-            }
-          }
-        } else {
-          // Under loose coverage buildSubgraphs left the operation out.
-          reportUserError(*op, "the profile does not cover this operation: "
-                               "the profiling run never executed it. "
-                               "Profile an input that runs it, or pass "
-                               "-poseidon-loose-coverage to leave it as "
-                               "written.");
+      for (const auto &[i, operand] : enumerate(fpOperands(*op))) {
+        if (i >= profileInfo.minOperands.size()) {
+          if (isa<Constant>(operand))
+            continue;
+          std::string name;
+          raw_string_ostream(name) << *operand;
+          reportUserError(*op, "the profile gives this operation " +
+                                   Twine(profileInfo.minOperands.size()) +
+                                   " operand range(s), and its operand " +
+                                   Twine(i) + " (" + StringRef(name).trim() +
+                                   ") has none: the profile was not "
+                                   "generated from this program. Re-run "
+                                   "profile generation.");
         }
+        valueToNodeMap[operand]->updateBounds(profileInfo.minOperands[i],
+                                              profileInfo.maxOperands[i]);
       }
     }
   }
@@ -384,9 +289,7 @@ static SetVector<Instruction *> movedOperations(const Subgraph &subgraph,
 
   while (!worklist.empty()) {
     Instruction *current = worklist.pop_back_val();
-    auto operands = isa<CallInst>(current) ? cast<CallInst>(current)->args()
-                                           : current->operands();
-    for (auto &op : operands) {
+    for (auto &op : fpOperands(*current)) {
       if (subgraph.inputs.contains(op)) {
         continue;
       }
@@ -433,9 +336,7 @@ static SetVector<Instruction *> movedOperations(const Subgraph &subgraph,
 
     while (!keptWorklist.empty()) {
       Instruction *current = keptWorklist.pop_back_val();
-      auto operands = isa<CallInst>(current) ? cast<CallInst>(current)->args()
-                                             : current->operands();
-      for (auto &op : operands) {
+      for (auto &op : fpOperands(*current)) {
         if (subgraph.inputs.contains(op)) {
           continue;
         }
@@ -495,9 +396,7 @@ findReachedInputs(const SetVector<Instruction *> &operations) {
   SetVector<Value *> reachedInputs;
 
   for (auto *I : operations) {
-    auto operands =
-        isa<CallInst>(I) ? cast<CallInst>(I)->args() : I->operands();
-    for (auto &op : operands) {
+    for (auto &op : fpOperands(*I)) {
       if (auto *OpI = dyn_cast<Instruction>(op)) {
         if (operations.contains(OpI)) {
           continue;
@@ -680,28 +579,6 @@ static void splitSubgraphs(const Options &O,
              "a split moves only operations upstream of the bottleneck");
 
       if (isExpansionBottleneck(O, I, currentSubgraph)) {
-        if (O.Diagnostics.Print) {
-          llvm::errs() << "Bottleneck: " << *I << '\n';
-          llvm::errs() << "currentSubgraph.inputs ("
-                       << currentSubgraph.inputs.size() << "): ";
-          for (auto *input : currentSubgraph.inputs) {
-            llvm::errs() << '\t' << *input << '\n';
-          }
-          llvm::errs() << '\n';
-          llvm::errs() << "currentSubgraph.operations ("
-                       << currentSubgraph.operations.size() << "): ";
-          for (auto *op : currentSubgraph.operations) {
-            llvm::errs() << '\t' << *op << '\n';
-          }
-          llvm::errs() << '\n';
-          llvm::errs() << "currentSubgraph.outputs ("
-                       << currentSubgraph.outputs.size() << "): ";
-          for (auto *output : currentSubgraph.outputs) {
-            llvm::errs() << '\t' << *output << '\n';
-          }
-          llvm::errs() << '\n';
-        }
-
         Subgraph newSubgraph, remainingSubgraph;
         splitSubgraphAtBottleneck(currentSubgraph, I, newSubgraph,
                                   remainingSubgraph);
@@ -758,12 +635,9 @@ static void splitSubgraphs(const Options &O,
     }
   }
 
-  if (O.Diagnostics.Print) {
-    llvm::errs() << "=== Subgraph splitting complete ===\n";
-    llvm::errs() << "  Original subgraphs: " << subgraphs.size() << '\n';
+  if (O.Diagnostics.Print)
     llvm::errs() << "  Final subgraphs after splitting: "
                  << resultSubgraphs.size() << '\n';
-  }
 
   subgraphs = std::move(resultSubgraphs);
 }
@@ -778,45 +652,8 @@ void shapeSubgraphs(const Options &O, Function &F,
   }
 
   // After splitting, so that a merged unit is never split again.
-  if (O.Candidates.MergeSharedStaging) {
+  if (O.Candidates.MergeSharedStaging)
     mergeSharedStagingSubgraphs(O, subgraphs, F);
-    if (O.Diagnostics.Print)
-      llvm::errs() << "[poseidon] After staging-tier merge, have "
-                   << subgraphs.size() << " subgraphs in " << F.getName()
-                   << '\n';
-  }
-
-  if (O.Diagnostics.Print) {
-    llvm::errs() << "\n=== Function IR after Subgraph Splitting ===\n";
-
-    std::unordered_map<Instruction *, int> instToSubgraphIdx;
-    for (size_t idx = 0; idx < subgraphs.size(); ++idx) {
-      for (auto *inst : subgraphs[idx].operations) {
-        instToSubgraphIdx[inst] = idx;
-      }
-      for (auto *inst : subgraphs[idx].outputs) {
-        if (instToSubgraphIdx.find(inst) == instToSubgraphIdx.end()) {
-          instToSubgraphIdx[inst] = idx;
-        }
-      }
-    }
-
-    for (auto &BB : F) {
-      BB.printAsOperand(llvm::errs(), false);
-      llvm::errs() << ":\n";
-      for (auto &I : BB) {
-        llvm::errs() << "  ";
-        I.print(llvm::errs());
-
-        auto it = instToSubgraphIdx.find(&I);
-        if (it != instToSubgraphIdx.end()) {
-          llvm::errs() << " ; [SG" << it->second << ']';
-        }
-        llvm::errs() << '\n';
-      }
-    }
-    llvm::errs() << "=== End of Function IR ===\n\n";
-  }
 }
 
 } // namespace poseidon

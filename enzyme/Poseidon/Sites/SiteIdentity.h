@@ -68,6 +68,9 @@ std::string siteKey(const Session &S, const llvm::Function &clone);
 // the function a per-call copy was made of, and the unqualified name the
 // symbol demangles to.
 llvm::SmallVector<std::string, 2> siteAliases(llvm::StringRef key);
+// The symbol of the function a site was cut from: its key without the
+// suffixes of a per-call copy.
+llvm::StringRef siteSymbol(llvm::StringRef key);
 // Caller value of parameter i of a site clone, as recorded by
 // noteSiteArgs; null when unknown.
 llvm::Value *siteArg(const Session &S, const llvm::Function *clone, unsigned i);

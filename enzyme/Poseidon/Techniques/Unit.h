@@ -62,10 +62,6 @@ struct UnitKindInfo {
   // Pricing may drop candidates: a candidate's ordinal is not its position,
   // and a DP table step names its candidate by key as well as by position.
   bool pricingDrops;
-  // The summary of -poseidon-report-path this kind fills, and its title in
-  // the text report; empty for none.
-  llvm::StringLiteral reportSection;
-  llvm::StringLiteral reportTitle;
 };
 
 // The kinds, in the order the fixed formats list them.
@@ -133,11 +129,6 @@ public:
   virtual std::string selectionText(size_t i) const = 0;
   // Candidate i as the DP table print and the materialization log name it.
   virtual std::string choiceText(size_t i) const = 0;
-  // Candidate i as a step of a -poseidon-report-path report, in its JSON and
-  // in its text, each line led by `pad`.
-  virtual llvm::json::Object stepJSON(size_t i) = 0;
-  virtual void writeReportStep(llvm::raw_ostream &OS, size_t i,
-                               llvm::StringRef pad) = 0;
   // Rewrites the site's IR with candidate i.
   virtual void materialize(size_t i) = 0;
 
@@ -151,12 +142,6 @@ public:
   // The unit's line of the DP table key's candidate set; each candidate
   // follows on its own line as two spaces and its name.
   virtual std::string keyHeader() const = 0;
-
-  // For a kind with a report section: the unit's entry of the section, its
-  // block of the text report, and its entries of the curated rewrites.
-  virtual void addReportSummary(llvm::json::Array &summary) {}
-  virtual void writeReportSummary(llvm::raw_ostream &OS) {}
-  virtual void addCuratedRewrites(llvm::json::Array &rewrites) {}
 
 protected:
   explicit SiteUnit(UnitKind kind) : OptimizationUnit(unsigned(kind)) {}
@@ -207,22 +192,6 @@ protected:
       : SiteUnit(kind), subgraph(&subgraph) {}
 };
 
-// For the reports: a number, or null when it is not finite.
-llvm::json::Value jsonFloat(double v);
-// A candidate's entry of the curated rewrites, from its cost and accuracy
-// deltas (negative is faster, more accurate): its category and efficiency;
-// none when it is both slower and less accurate.
-struct Tradeoff {
-  llvm::StringLiteral category;
-  double efficiency;
-};
-std::optional<Tradeoff> classifyTradeoff(double compDelta, double accDelta);
-// The entry of candidate i of U in the curated rewrites, with its cost and
-// accuracy deltas: its id, deltas, category and efficiency. A candidate both
-// slower and less accurate is "dominated", so that a frontier of dominated
-// candidates still records why each lost.
-llvm::json::Object curatedRewrite(const SiteUnit &U, size_t i, double compDelta,
-                                  double accDelta);
 // A source position; line 0 when there is none.
 struct SourceLoc {
   std::string file;
@@ -242,13 +211,6 @@ void putLoc(llvm::json::Object &o, llvm::StringRef key, llvm::Value *V);
 std::string getSourceLocationStr(llvm::Value *V);
 // A value as the IR prints it.
 std::string getValueStr(llvm::Value *V);
-// The first of `insts` at each source location, in their order; none without
-// a location.
-llvm::SmallVector<llvm::Instruction *, 4>
-atDistinctLocations(llvm::ArrayRef<llvm::Instruction *> insts);
-// The distinct source locations of `insts`, in their order.
-llvm::json::Array
-getSourceLocationsJSON(llvm::ArrayRef<llvm::Instruction *> insts);
 
 } // namespace poseidon
 #endif // POSEIDON_TECHNIQUES_UNIT_H

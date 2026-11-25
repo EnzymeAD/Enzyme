@@ -6,10 +6,8 @@
 ; from each counts the rewrite's accuracy gain twice; only one is ever
 ; materialized, and the solution may name only one.
 
-; CHECK: !!! Applying solution (1 step(s)) ... !!!
-; CHECK-NEXT: Applying solution for (- (sqrt (+ (* v0 v0) (* v1 v1))) v0) --(0)-> (/.f64 (*.f64 v1 v1) (+.f64 (hypot.f64 v0 v1) v0)){{$}}
+; CHECK: Applying solution for (- (sqrt (+ (* v0 v0) (* v1 v1))) v0) --(0)-> (/.f64 (*.f64 v1 v1) (+.f64 (hypot.f64 v0 v1) v0)){{$}}
 ; CHECK-NOT: Applying solution for
-; CHECK: !!! Solution applied !!!
 ; CHECK: [poseidon] pin: tester:R0=(/.f64 (*.f64 v1 v1) (+.f64 (hypot.f64 v0 v1) v0)){{$}}
 ; CHECK: define double @test_opt(
 ; CHECK-NEXT: entry:

@@ -967,18 +967,6 @@ std::string MatmulUnit::choiceText(size_t i) const {
          matmulOptionLabel(candidates[i]) + " (#" + std::to_string(i) + ")";
 }
 
-json::Object MatmulUnit::stepJSON(size_t i) {
-  json::Object stepObj;
-  stepObj["type"] = "matmul_rewrite";
-  stepObj["candidate_index"] = static_cast<int64_t>(i);
-  stepObj["matmul_id"] = static_cast<int64_t>(matmul->id);
-  stepObj["target"] = matmulOptionLabel(candidates[i]);
-  stepObj["computation_cost_delta"] = getCompCostDelta(i);
-  stepObj["accuracy_cost_delta"] = jsonFloat(getAccCostDelta(i));
-  stepObj["executions"] = static_cast<int64_t>(executions);
-  return stepObj;
-}
-
 void MatmulUnit::scaleErrors(double factor) {
   for (auto &cand : candidates)
     cand.accuracyCost *= factor;
@@ -998,11 +986,6 @@ void MatmulUnit::printPriced(raw_ostream &OS) {
     OS << "  " << matmulOptionLabel(candidates[i])
        << ": Δcost=" << getCompCostDelta(i)
        << " ΔaccCost=" << getAccCostDelta(i) << '\n';
-}
-
-void MatmulUnit::writeReportStep(raw_ostream &OS, size_t i, StringRef pad) {
-  OS << pad << "[Matmul] matmul[" << matmul->id << "] -> "
-     << matmulOptionLabel(candidates[i]) << " (#" << i << ")\n";
 }
 
 // Dispatch and raise prices are measured wall-clock ratios that repeat to about

@@ -10,8 +10,9 @@
 ; RUN: rm -rf %t && mkdir %t %t/tmp %t/stale %t/prof
 ; RUN: cp %S/../Inputs/ds_expansion/preprocess_fms_body.fpprofile %t/prof/preprocess_hot_kernel_poseidon_body.fpprofile
 ; RUN: cp %S/../Inputs/min_cost_share/preprocess_cold_kernel_poseidon_body.fpprofile %t/prof/
-; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" %{use} -poseidon-cache=%t/filter -S 2>&1 \
-; RUN:   | FileCheck --implicit-check-not="Optimizing preprocess_cold_kernel_poseidon_body" %s
+; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" %{use} -poseidon-cache=%t/filter -poseidon-explain=%t/filter/ex -S 2>&1 \
+; RUN:   | tee %t/filter.log | FileCheck --implicit-check-not="Optimizing preprocess_cold_kernel_poseidon_body" %s
+; RUN: %python %S/../Inputs/explain/stderr_matches.py %t/filter.log %t/filter/ex | FileCheck --check-prefix=JSON %s
 ; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" %{use} -poseidon-min-cost-share=0 -poseidon-cache=%t/nofilter -S 2>&1 \
 ; RUN:   | FileCheck --check-prefix=NOFILTER %s
 ; RUN: cp %t/prof/*.fpprofile %t/stale/
@@ -27,6 +28,8 @@
 ; is 0.026% of the profiled FP cost of the two and is left unoptimized, with
 ; the computation it was found with. The second run, with the share set to 0,
 ; hands both to the optimizer.
+; JSON: cold_kernel_poseidon_body: below_cost_share; the site is 0.02{{[0-9]+}}% of the profiled FP cost of the kernels -poseidon-kernels named, below -poseidon-min-cost-share=0.01
+; JSON-NEXT: preprocess_hot_kernel_poseidon_body: {{[a-z_]+}}
 
 ; ModuleID = 'min_cost_share.cu'
 source_filename = "min_cost_share.cu"

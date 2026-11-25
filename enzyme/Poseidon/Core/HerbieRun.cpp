@@ -7,6 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "HerbieRun.h"
+#include "CacheKey.h"
 
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/SmallVector.h"
@@ -80,12 +81,6 @@ static bool takesTaylorTerms(StringRef Program) {
                       /*Env=*/std::nullopt, Redirects, /*SecondsToWait=*/60);
   auto Buf = MemoryBuffer::getFile(Help);
   return Buf && (*Buf)->getBuffer().contains("--num-taylor-terms");
-}
-
-void addHerbieKeyParts(CacheKey &Key, const HerbieRunOptions &Opts,
-                       HerbieBinaryDigests &Digests) {
-  Key.add("Herbie binary", herbieBinaryDigest(Opts.Program, Digests));
-  Key.add("Herbie platform", Opts.Platform.Name + " " + Opts.Platform.Digest);
 }
 
 // Writes the entry `value`, answered by the Herbie `answeredBy` names, to the

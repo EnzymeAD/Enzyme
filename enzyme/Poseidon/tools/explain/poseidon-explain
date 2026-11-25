@@ -11,6 +11,57 @@ import shutil
 import subprocess
 import sys
 
+SCHEMA_ID = "poseidon-explain/2"
+
+SCHEMA = """\
+The explanation of one site, <func>.explain.json (schema %s; keys
+in snake_case; a key whose value is unknown or not finite is left out):
+  schema     "%s"
+  function   name (demangled), symbol, ir (the IR function solved), site (the
+             call: file, line, col), loc (the definition); for a solved site
+             also canonical_hash (of the form the profile was recorded
+             against) and profile (the profile file read)
+  target     tau and tau_from ("site" or "flag") under an accuracy target, else
+             budget (the -poseidon-cost-budget share); for a solved site also
+             cost_model, selector ("dp", "joint", "error-budget", "manual"),
+             from_cache (the DP table was read from the cache), sites (the IR
+             functions of a joint solve)
+  scale      (solved sites) accuracy_scale S and baseline_accuracy_cost A0: an
+             accuracy cost a is the modelled relative error (A0 + a) / S;
+             profiled_cost, the cost-model units the profiled run spent, a cost
+             share is a fraction of; kappa, kappa_mark and kappa_factor when the
+             profiling run measured a condition number
+  result     status: "rewritten", "as_written" (solved, nothing applied),
+             "no_solution" (no frontier point meets the target or the budget),
+             "nothing_to_optimize", "no_fp_operation", "unprofiled" (no profile
+             of the site), "never_executed" (the profiling run never ran it),
+             "below_cost_share" (under -poseidon-min-cost-share);
+             reason: why, for every status but "rewritten";
+             profile: the file looked at, for "unprofiled" and "never_executed";
+             for a solved site also: applied (the ids applied), steps (each step
+             the solve chose, in order: id, choice, the text of its "Applying
+             solution for" line, and applied, false for a step an earlier one
+             made moot), pin (the -poseidon-apply-rewrites value that applies
+             them again), selected (the frontier point selected: cost, the share
+             it adds, accuracy_cost, modelled_rel_error), best_achievable_rel_error
+             (for "no_solution" under a target), cost_before, cost_after,
+             modelled_rel_error_as_written, modelled_rel_error
+  subgraphs  (solved sites) each optimization unit: id (S<i> an FP subgraph, M<i>
+             a matrix product), kind ("subgraph", "matmul"), loc, shape, cost,
+             executions, ops, inputs, outputs, original, herbie,
+             left_as_written, and alternatives: each candidate with id, kind
+             ("algebraic", "precision", "expansion", "matmul"), summary (for a
+             product, the realization the solve names it by), precision,
+             outputs, fpcore, c, approx, approx_note, changes, cost_delta,
+             modelled_error, modelled_domain_error (of a product: under the
+             "error-budget" selector the applied one is the cheapest whose
+             domain error is at most tau), herbie_error_bits, status
+             ("applied", "pareto", "rejected") and reason
+  pareto     (solved sites) the frontier in cost order: budget (the
+             -poseidon-cost-budget that selects the point; none for a point no
+             budget selects), cost, modelled_rel_error, applied, selected
+""" % (SCHEMA_ID, SCHEMA_ID)
+
 STATUS_ORDER = {"applied": 0, "pareto": 1, "rejected": 2}
 
 
@@ -23,13 +74,6 @@ def num(v, digits=2):
 # A cost is a share of what the profiled run spent in the site.
 def cost(v):
     return num(v, 6)
-
-
-def where(loc, file_name=None):
-    if not loc:
-        return "<unknown>"
-    f = file_name or loc.get("file", "")
-    return "%s:%d:%d" % (f, loc.get("line", 0), loc.get("col", 0))
 
 
 def short(loc):
@@ -53,8 +97,8 @@ def load(paths):
         for f in files:
             with open(f) as fh:
                 doc = json.load(fh)
-            if doc.get("schema") != "poseidon-explain/1":
-                sys.exit("poseidon-explain: %s is not a poseidon-explain/1 file" % f)
+            if doc.get("schema") != SCHEMA_ID:
+                sys.exit("poseidon-explain: %s is not a %s file" % (f, SCHEMA_ID))
             docs.append(doc)
     if not docs:
         sys.exit("poseidon-explain: no .explain.json found in %s" % " ".join(paths))
@@ -131,6 +175,11 @@ def report(doc, args, w):
     if fn.get("site"):
         w("  called at %s" % short(fn["site"]))
     t = doc.get("target", {})
+    if "selector" not in t:
+        w("  %s; %s: %s" % (target_words(doc), res.get("status", "?").replace("_", " "), res.get("reason", "")))
+        if res.get("profile"):
+            w("  profile: %s" % res["profile"])
+        return
     w("  %s; cost model %s; selector %s%s" % (target_words(doc), os.path.basename(t.get("cost_model", "")),
                                           t.get("selector", "?"), "; DP table from the cache" if t.get("from_cache") else ""))
     before, after = res.get("cost_before"), res.get("cost_after")
@@ -143,6 +192,8 @@ def report(doc, args, w):
     w("  with Poseidon: modelled error %s, cost %s%s; applied %s" % (
         num(res.get("modelled_rel_error")), cost(after), pct,
         ", ".join(applied) if applied else "nothing"))
+    if res.get("reason"):
+        w("  %s: %s" % (res.get("status", "?").replace("_", " "), res["reason"]))
 
     for unit in doc.get("subgraphs", []):
         w("")
@@ -205,55 +256,6 @@ def report(doc, args, w):
             w("  -poseidon-apply-rewrites=<ids> applies a point's rewrites directly.")
 
 
-def remarks(doc, args, w):
-    def note(loc, text):
-        w("%s: note: %s" % (where(loc, args.file_name), text))
-
-    fn = doc["function"]
-    res = doc.get("result", {})
-    applied = res.get("applied", [])
-    msg = "Poseidon site %s: %s; modelled error as written %s" % (
-        fn.get("name", "").split("(")[0], target_words(doc), num(res.get("modelled_rel_error_as_written")))
-    if applied:
-        msg += ", after %s; applied %s" % (num(res.get("modelled_rel_error")), ", ".join(applied))
-        if res.get("cost_before") is not None and res.get("cost_after") is not None:
-            msg += "; cost %s -> %s" % (cost(res["cost_before"]), cost(res["cost_after"]))
-    else:
-        msg += "; left as written"
-    note(fn.get("site") or fn.get("loc"), msg)
-    for unit in doc.get("subgraphs", []):
-        outs = outputs_c(unit)
-        orig = outs[0] if outs else "the %s matrix product" % unit.get("shape", "")
-        for a in unit.get("alternatives", []):
-            if a.get("status") != "applied":
-                continue
-            if a.get("kind") == "algebraic":
-                for k in a.get("outputs", [0]):
-                    c = a.get("c")
-                    now = c[a["outputs"].index(k)] if isinstance(c, list) else (c or a.get("fpcore", ""))
-                    o = unit.get("outputs", [{}])[k] if k < len(unit.get("outputs", [])) else {}
-                    text = "Poseidon rewrote %s as %s" % (clip(o.get("c", orig)), clip(now))
-                    if technique(unit, a):
-                        text += " (%s)" % technique(unit, a)
-                    if "modelled_error" in a:
-                        text += "; modelled error %s" % num(a["modelled_error"])
-                    note(o.get("loc") or unit.get("loc"), text + " [%s]" % a.get("id"))
-            else:
-                ops = unit.get("ops", [])
-                locs = [ops[i]["loc"] for ch in a.get("changes", []) for i in ch.get("ops", []) if i < len(ops) and ops[i].get("loc")]
-                text = "Poseidon: %s" % a.get("summary", "")
-                if "modelled_error" in a:
-                    text += "; modelled error %s" % num(a["modelled_error"])
-                note(min(locs, key=lambda l: (l["line"], l["col"])) if locs else unit.get("loc"), text + " [%s]" % a.get("id"))
-        if unit.get("left_as_written"):
-            note(unit.get("loc"), "Poseidon left %s as written: %s" % (clip(orig), unit["left_as_written"]))
-        rejected = sorted([a for a in unit.get("alternatives", []) if a.get("status") != "applied"], key=rank)
-        for a in rejected[:args.max_rejected]:
-            verb = "did not select" if a.get("status") == "pareto" else "rejected"
-            note(unit.get("loc"), "Poseidon %s %s %s: %s" % (verb, a.get("id", a.get("kind")), clip(alt_words(a)),
-                                                            a.get("reason", "")))
-
-
 def first_token_end(s):
     depth = 0
     for m, ch in enumerate(s):
@@ -279,6 +281,12 @@ def strip_types(expr):
         out.append(strip_types(inner[first_token_end(inner):].strip()))
         i = k
     return re.sub(r"\(([^\s()]+)\.f(32|64)\b", r"(\1", "".join(out))
+
+
+# The shares a -poseidon-cost-budget selects the frontier points by, printed
+# as the compiler prints a share it reads back exactly.
+def budgets(doc, args, w):
+    w(",".join("%.17g" % p["budget"] for p in doc.get("pareto", []) if "budget" in p))
 
 
 def fpcore(doc, args, w):
@@ -637,8 +645,7 @@ def rewritten_source(path, docs, args):
         seen.add(func)
         ast, err = run_clang(path, func, args)
         if ast is None:
-            if args.verbose:
-                sys.stderr.write("poseidon-explain: no AST for %s (%s); falling back to comments\n" % (func, err))
+            sys.stderr.write("poseidon-explain: no AST of %s (%s); its rewrites are shown as comments\n" % (func, err))
             continue
         nodes += ast.nodes
     ast = Ast(nodes) if nodes else None
@@ -693,32 +700,41 @@ def rewritten_source(path, docs, args):
     return path, src.text, "\n".join(result)
 
 
+FORMATS = {
+    "report": "what each site's solve changed, considered and rejected",
+    "source": "the source with the applied rewrites spliced in, through clang's AST",
+    "diff": "the same as a unified diff against the source",
+    "fpcore": "each subgraph and its algebraic alternatives as Herbie FPCores",
+    "budgets": "the -poseidon-cost-budget values that select the frontier points",
+}
+
+
 def main():
-    ap = argparse.ArgumentParser(prog="poseidon-explain", description=__doc__)
+    ap = argparse.ArgumentParser(
+        prog="poseidon-explain", description=__doc__, epilog=SCHEMA,
+        formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("paths", nargs="+", help="<func>.explain.json files or directories holding them")
-    ap.add_argument("--format", default="report", choices=["report", "source", "diff", "remarks", "fpcore", "json"])
+    ap.add_argument("--format", default="report", choices=list(FORMATS),
+                    help="; ".join("%s: %s" % kv for kv in FORMATS.items()))
     ap.add_argument("--source", help="the source file (default: the file the explanation names)")
-    ap.add_argument("--function", help="only the site whose name, symbol or IR name contains this")
-    ap.add_argument("--file-name", help="file name to print in remark lines")
+    ap.add_argument("--function", help="only the sites whose name, symbol or IR name contains this")
     ap.add_argument("--clang", help="clang used for the AST of --format source/diff")
     ap.add_argument("--clang-arg", action="append", help="extra argument for that clang (repeatable)")
     ap.add_argument("--max", type=int, default=8, help="alternatives listed per subgraph in the report")
-    ap.add_argument("--max-rejected", type=int, default=3, help="rejected alternatives per subgraph in remarks")
     ap.add_argument("--all", action="store_true", help="list every alternative")
-    ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
 
     docs = load(args.paths)
     if args.function:
         docs = [d for d in docs if any(args.function in d["function"].get(k, "") for k in ("name", "symbol", "ir"))]
+        if not docs:
+            sys.exit("poseidon-explain: no explanation in %s is of a site named like '%s'" % (
+                " ".join(args.paths), args.function))
     out = sys.stdout.write
 
     def w(line=""):
         out(line + "\n")
 
-    if args.format == "json":
-        w(json.dumps(docs[0] if len(docs) == 1 else docs, indent=2, sort_keys=True))
-        return
     if args.format in ("source", "diff"):
         groups = {}
         for doc in docs:
@@ -738,8 +754,8 @@ def main():
             if k:
                 w("")
             report(doc, args, w)
-        elif args.format == "remarks":
-            remarks(doc, args, w)
+        elif args.format == "budgets":
+            budgets(doc, args, w)
         else:
             fpcore(doc, args, w)
 

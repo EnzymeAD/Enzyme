@@ -27,12 +27,12 @@ int main() {
 }
 
 // RUN: %poseidon_explain %S/../Inputs/explain/formatter/cancellation.explain.json --format report | FileCheck --check-prefix=REPORT %s
-// RUN: %poseidon_explain %S/../Inputs/explain/formatter/cancellation.explain.json --format remarks --file-name '<source>' | FileCheck --check-prefix=REMARKS %s
 // RUN: %poseidon_explain %S/../Inputs/explain/formatter/cancellation.explain.json --format fpcore | FileCheck --check-prefix=FPCORE %s
-// RUN: %poseidon_explain %S/../Inputs/explain/formatter/cancellation.explain.json --format json | FileCheck --check-prefix=JSON %s
+// RUN: %poseidon_explain %S/../Inputs/explain/formatter/cancellation.explain.json --format budgets | FileCheck --check-prefix=BUDGETS %s
 // RUN: %poseidon_explain %S/../Inputs/explain/formatter/cancellation.explain.json --format source --source %s --clang %clang | FileCheck --check-prefix=SOURCE %s
 // RUN: %poseidon_explain %S/../Inputs/explain/formatter/cancellation.explain.json --format diff --source %s --clang %clang | FileCheck --check-prefix=DIFF %s
-// RUN: %poseidon_explain %S/../Inputs/explain/formatter/cancellation.explain.json --format source --source %s --clang /nonexistent/clang | FileCheck --check-prefix=NOAST %s
+// RUN: %poseidon_explain %S/../Inputs/explain/formatter/cancellation.explain.json --format source --source %s --clang /nonexistent/clang 2>&1 | FileCheck --check-prefix=NOAST %s
+// RUN: not %poseidon_explain %S/../Inputs/explain/formatter --function no_such_site 2>&1 | FileCheck --check-prefix=NOMATCH %s
 
 // REPORT: Poseidon site kernel(double const*, double*, int)  [_Z6kernelPKdPdi]
 // REPORT-NEXT: called at explain_formatter.cpp:26:3
@@ -51,11 +51,6 @@ int main() {
 // REPORT: * 0 1.2e-16 R0_1 -poseidon-tau=0 -poseidon-cost-budget=-1
 // REPORT-NEXT: 0.0343544 2.1e-25 R0_0 -poseidon-tau=0 -poseidon-cost-budget=-0.9656455768680218
 
-// REMARKS: <source>:26:3: note: Poseidon site kernel: accuracy target tau = 1e-06; modelled error as written 2.8e-10, after 1.2e-16; applied R0_1; cost 1 -> 0
-// REMARKS-NEXT: <source>:15:37: note: Poseidon rewrote (1.0 - cos(x[i])) / (x[i] * x[i]) as 0.5 (series approximation of (1.0 - cos(x[i])) / (x[i] * x[i]), valid on the profiled range x[i] in [1e-08, 0.0001]); modelled error 1.2e-16 [R0_1]
-// REMARKS-NEXT: <source>:15:37: note: Poseidon did not select R0_0 fma(-0.041666666666666664, x[i] * x[i], 0.5): on the Pareto frontier
-// REMARKS-NEXT: <source>:15:37: note: Poseidon rejected R1_0 (double)0.5f: the selected R0_1 rewrites the same output
-
 // FPCORE: (FPCore (v0) :name "S0 output 0 as written" :precision binary64 :pre (<= 1e-08 v0 0.0001)
 // FPCORE-NEXT: (/ (- 1 (cos v0)) (* v0 v0)))
 // FPCORE-NEXT: (FPCore (v0) :name "S0 R0_1 (applied)" :precision binary64 :pre (<= 1e-08 v0 0.0001)
@@ -63,7 +58,7 @@ int main() {
 // FPCORE-NEXT: (FPCore (v0) :name "S0 R0_0 (pareto)" :precision binary64 :pre (<= 1e-08 v0 0.0001)
 // FPCORE-NEXT: (fma -1/24 (* v0 v0) 1/2))
 
-// JSON: "schema": "poseidon-explain/1"
+// BUDGETS: {{^}}-1,-0.96564557686802177{{$}}
 
 // SOURCE: {{^}}    out[i] = 0.5;  // Poseidon: series approximation of (1.0 - cos(x[i])) / (x[i] * x[i]) [R0_1], modelled error 1.2e-16{{$}}
 
@@ -72,5 +67,8 @@ int main() {
 // DIFF: {{^}}-    out[i] = (1.0 - std::cos(x[i])) / (x[i] * x[i]);
 // DIFF-NEXT: {{^}}+    out[i] = 0.5;  // Poseidon
 
+// NOAST: poseidon-explain: no AST of kernel ({{.+}}); its rewrites are shown as comments
 // NOAST: {{^}}    // Poseidon: series approximation of (1.0 - cos(x[i])) / (x[i] * x[i]): (1.0 - cos(x[i])) / (x[i] * x[i]) -> 0.5 [R0_1], modelled error 1.2e-16
 // NOAST-NEXT: {{^}}    out[i] = (1.0 - std::cos(x[i])) / (x[i] * x[i]);
+
+// NOMATCH: poseidon-explain: no explanation in {{.*}}formatter is of a site named like 'no_such_site'

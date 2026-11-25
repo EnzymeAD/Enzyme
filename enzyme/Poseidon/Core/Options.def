@@ -1,0 +1,410 @@
+//===- Options.def - every -poseidon-* flag ---------------------*- C++ -*-===//
+//
+// Part of the Poseidon Project, under the Apache License v2.0 with LLVM
+// Exceptions. See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+//
+// One row per flag. A row of group G is POSEIDON_G_OPTION(Field, Kind,
+// Default, Spelling, Role, Key, ValueName, Description), which defaults to
+// POSEIDON_OPTION(G, Field, ...):
+//   Field        the member of the group's struct in Options
+//   Kind         an OptionKind: the field's type and how the flag is parsed
+//   Default      the field's value when the flag is not given
+//   Spelling     the flag's name
+//   Role         User: listed by -help; Hidden: listed by -help-hidden only
+//   Key          SolveInput: a DP table depends on it; Other: none does
+//   ValueName    the name -help gives the flag's value; "" for the default
+//   Description  the -help text
+// The DP key lists the SolveInput options in row order, and the Other options
+// follow them in row order where every option is listed.
+//
+//===----------------------------------------------------------------------===//
+
+#ifndef POSEIDON_OPTION
+#define POSEIDON_OPTION(Group, Field, Kind, Default, Spelling, Role, Key,      \
+                        ValueName, Description)
+#endif
+#ifndef POSEIDON_PROFILING_OPTION
+#define POSEIDON_PROFILING_OPTION(...) POSEIDON_OPTION(Profiling, __VA_ARGS__)
+#endif
+#ifndef POSEIDON_CANDIDATE_OPTION
+#define POSEIDON_CANDIDATE_OPTION(...) POSEIDON_OPTION(Candidates, __VA_ARGS__)
+#endif
+#ifndef POSEIDON_SOLVER_OPTION
+#define POSEIDON_SOLVER_OPTION(...) POSEIDON_OPTION(Solver, __VA_ARGS__)
+#endif
+#ifndef POSEIDON_MODEL_OPTION
+#define POSEIDON_MODEL_OPTION(...) POSEIDON_OPTION(Model, __VA_ARGS__)
+#endif
+#ifndef POSEIDON_HERBIE_OPTION
+#define POSEIDON_HERBIE_OPTION(...) POSEIDON_OPTION(Herbie, __VA_ARGS__)
+#endif
+#ifndef POSEIDON_MATMUL_OPTION
+#define POSEIDON_MATMUL_OPTION(...) POSEIDON_OPTION(Matmul, __VA_ARGS__)
+#endif
+#ifndef POSEIDON_MATERIALIZATION_OPTION
+#define POSEIDON_MATERIALIZATION_OPTION(...)                                   \
+  POSEIDON_OPTION(Materialization, __VA_ARGS__)
+#endif
+#ifndef POSEIDON_DIAGNOSTIC_OPTION
+#define POSEIDON_DIAGNOSTIC_OPTION(...)                                        \
+  POSEIDON_OPTION(Diagnostics, __VA_ARGS__)
+#endif
+
+// Profiling.
+POSEIDON_PROFILING_OPTION(ProfileGenerate, Bool, false,
+                          "poseidon-profile-generate", User, Other, "",
+                          "Build the program to write the FP profile of its "
+                          "sites when it runs")
+// Given without a directory, the one a profiling run writes by default.
+POSEIDON_PROFILING_OPTION(ProfileUse, Directory, "", "poseidon-profile-use",
+                          User, Other, "directory",
+                          "Optimize the sites from the FP profiles in this "
+                          "directory")
+POSEIDON_PROFILING_OPTION(
+    OutputProfiles, StringList, {}, "poseidon-output-profiles", Hidden, Other,
+    "dir,dir,...",
+    "Profile directories of the same site, each recorded with one output "
+    "seeded alone. Each output's error is then measured against that output's "
+    "own sensitivity, and an operation is weighted by the output it matters "
+    "most to, so no output can be traded away under a site-wide average")
+POSEIDON_PROFILING_OPTION(
+    Kernels, String, "", "poseidon-kernels", User, Other, "regex",
+    "Treat every kernel whose name matches this regular expression as an "
+    "optimization site, as if it carried POSEIDON_OPTIMIZE ('all' matches "
+    "every kernel; empty disables)")
+POSEIDON_PROFILING_OPTION(
+    MinCostShare, Number, 0.01, "poseidon-min-cost-share", Hidden, Other,
+    "fraction",
+    "Share of the profiled FP cost of all -poseidon-kernels sites a site must "
+    "reach to be optimized (0 disables); sites named by the attribute or the "
+    "marker are never filtered")
+POSEIDON_PROFILING_OPTION(LooseCoverage, Bool, false, "poseidon-loose-coverage",
+                          Hidden, SolveInput, "",
+                          "Allow unexecuted FP instructions in subgraph "
+                          "identification")
+
+// Candidate classes.
+POSEIDON_CANDIDATE_OPTION(EnableHerbie, Bool, true, "poseidon-enable-herbie",
+                          Hidden, SolveInput, "",
+                          "Use Herbie to rewrite floating-point expressions")
+POSEIDON_CANDIDATE_OPTION(EnablePT, Bool, true, "poseidon-enable-pt", Hidden,
+                          SolveInput, "",
+                          "Consider precision changes of floating-point "
+                          "expressions")
+POSEIDON_CANDIDATE_OPTION(EnableMultifloat, Bool, true,
+                          "poseidon-enable-multifloat", Hidden, SolveInput, "",
+                          "Allow floating-point expansion (double-single, "
+                          "2xFP32) precision candidates; =0 keeps "
+                          "FP32/FP16/BF16/FP64 only")
+POSEIDON_CANDIDATE_OPTION(
+    ExpansionComponents, Unsigned, 2, "poseidon-expansion-components", Hidden,
+    SolveInput, "",
+    "Widest FP32 floating-point expansion admitted as a precision candidate: "
+    "2 = double-single only (default), 3 = also triple-float, 4 = also "
+    "quad-float")
+POSEIDON_CANDIDATE_OPTION(EnableThreeTier, Bool, true,
+                          "poseidon-enable-three-tier", Hidden, SolveInput, "",
+                          "Emit three-tier precision-change candidates")
+POSEIDON_CANDIDATE_OPTION(TwoTierStep, Int, 10, "poseidon-two-tier-step",
+                          Hidden, SolveInput, "",
+                          "Percent step for two-tier split-point sweep")
+POSEIDON_CANDIDATE_OPTION(RaiseWMMA, Bool, true, "poseidon-raise-wmma", Hidden,
+                          SolveInput, "",
+                          "Detect scalar FMA-reduction loops as raise-to-WMMA "
+                          "Poseidon candidates")
+POSEIDON_CANDIDATE_OPTION(MaxExprLength, Unsigned, 10000,
+                          "poseidon-max-expr-length", Hidden, SolveInput, "",
+                          "The maximum length of an expression; abort if "
+                          "exceeded")
+POSEIDON_CANDIDATE_OPTION(MinUsesSplit, Unsigned, 99, "poseidon-min-uses-split",
+                          Hidden, SolveInput, "",
+                          "Minimum number of uses of bottleneck node to "
+                          "trigger split")
+POSEIDON_CANDIDATE_OPTION(MinOpsSplit, Unsigned, 99, "poseidon-min-ops-split",
+                          Hidden, SolveInput, "",
+                          "Minimum number of upstream operations of "
+                          "bottleneck node to trigger split")
+POSEIDON_CANDIDATE_OPTION(
+    SplitCalls, StringList, {}, "poseidon-split-calls", Hidden, SolveInput,
+    "op,op,...",
+    "Give every call to these operators (Herbie names, e.g. pow) its own FP "
+    "subgraph with the operations only it uses, whatever "
+    "-poseidon-min-uses-split/-poseidon-min-ops-split say")
+
+// Solver and budgets.
+POSEIDON_SOLVER_OPTION(
+    CostBudget, Number, 0.0, "poseidon-cost-budget", User, Other, "share",
+    "The share of a site's profiled cost a solution may add; a negative share, "
+    "down to -1, is one it has to save (0 = no slower than as written)")
+POSEIDON_SOLVER_OPTION(
+    Tau, Number, 0.0, "poseidon-tau", User, Other, "error",
+    "Relative accuracy target of every site that carries none (the dual of "
+    "-poseidon-cost-budget; 0 = disabled); a site is solved under it exactly "
+    "as under a target of its own")
+POSEIDON_SOLVER_OPTION(TauCheapest, Bool, true, "poseidon-tau-cheapest", Hidden,
+                       Other, "",
+                       "Site-level tau selects the cheapest frontier point "
+                       "whose accuracy cost clears tau instead of the most "
+                       "accurate one")
+POSEIDON_SOLVER_OPTION(
+    EarlyPrune, Bool, true, "poseidon-early-prune", Hidden, SolveInput, "",
+    "Drop dominated partial solutions after every solver unit. Off: solve "
+    "exactly, dropping a partial solution only for one that is cheaper and no "
+    "less accurate and that every later unit treats alike, so the frontier is "
+    "that of all footprint-compatible strategies, at the price of pricing each "
+    "precision change against every set of rewritten outputs on its subgraph")
+POSEIDON_SOLVER_OPTION(JointDP, Bool, false, "poseidon-joint-dp", Hidden, Other,
+                       "",
+                       "Solve all annotated sites in the module under one "
+                       "shared cost budget instead of an independent "
+                       "per-site solve")
+POSEIDON_SOLVER_OPTION(
+    ApplyRewrites, String, "", "poseidon-apply-rewrites", Hidden, Other, "",
+    "Comma-separated candidates to apply instead of a solve, each\n"
+    "[<site>:]<unit>_<ordinal> (R0_1, PT1_2, M0_3) or\n"
+    "[<site>:]<unit>=<name> (M0=native-dgemm cublas f64/f64),\n"
+    "<name> being the candidate's expression, precision\n"
+    "description or matrix-product label. <site> is the site's\n"
+    "symbol as the pin line gives it, or its unqualified name\n"
+    "when no other site of the module has it; an item without\n"
+    "one applies to every site. At most one candidate per unit.\n"
+    "Every solve prints the value that applies its choice\n"
+    "again as '[poseidon] pin: <value>'.")
+
+// Cost and accuracy model.
+POSEIDON_MODEL_OPTION(CostModel, String, "", "poseidon-cost-model", User, Other,
+                      "csv",
+                      "Cost model to price candidates from; without it the "
+                      "model for the module's target-cpu is looked up in the "
+                      "user cache")
+POSEIDON_MODEL_OPTION(NumSamples, Unsigned, 1024, "poseidon-num-samples",
+                      Hidden, SolveInput, "",
+                      "Number of sampled points for input hypercube; the "
+                      "matrix-product model takes it within [8, 256]")
+POSEIDON_MODEL_OPTION(RandomSeed, Unsigned, 239778888, "poseidon-random-seed",
+                      Hidden, SolveInput, "",
+                      "The random seed used in the Poseidon pass")
+POSEIDON_MODEL_OPTION(
+    SampleLogBits, Unsigned, 0, "poseidon-sample-log-bits", Hidden, SolveInput,
+    "",
+    "If >0, sample matmul accuracy inputs log-uniformly in magnitude over "
+    "[maxMag*2^-B, maxMag] (B = this value) instead of uniformly over "
+    "[min,max] (0 = uniform)")
+POSEIDON_MODEL_OPTION(StrictMode, Bool, false, "poseidon-strict-mode", Hidden,
+                      SolveInput, "",
+                      "Discard all candidates that produce NaN or inf outputs "
+                      "for any input point that originally produced finite "
+                      "outputs")
+POSEIDON_MODEL_OPTION(
+    MinArmSamples, Unsigned, 32, "poseidon-min-arm-samples", Hidden, SolveInput,
+    "",
+    "Every arm of a regime-split (if) rewrite must be priced on at least this "
+    "many samples that take it, drawn from the profiled box by rejection when "
+    "the base samples miss it; a rewrite with an arm that stays unsampled is "
+    "dropped (0 = off)")
+POSEIDON_MODEL_OPTION(ArmSearchFactor, Unsigned, 64,
+                      "poseidon-arm-search-factor", Hidden, SolveInput, "",
+                      "Rejection-sampling budget for an under-sampled "
+                      "regime-split arm, in multiples of "
+                      "-poseidon-num-samples")
+POSEIDON_MODEL_OPTION(
+    MaxBrokenShare, Number, 0.01, "poseidon-max-broken-share", Hidden,
+    SolveInput, "",
+    "Drop a Herbie candidate whose relative error reaches 1 (wrong sign or "
+    "magnitude) on more than this share of the samples the original gets "
+    "within 1; the gradient-weighted accuracy model is first order and cannot "
+    "price such a change (negative = off)")
+POSEIDON_MODEL_OPTION(
+    ExponentPenalty, Number, 1e30, "poseidon-exponent-penalty", Hidden,
+    SolveInput, "",
+    "Penalty added to a matmul candidate's accuracy cost when the candidate "
+    "input format flushes the smallest nonzero operand magnitude the profiler "
+    "observed to zero")
+POSEIDON_MODEL_OPTION(Threads, Unsigned, 1, "poseidon-threads", Hidden, Other,
+                      "",
+                      "Threads the accuracy model runs on (0 = all hardware "
+                      "threads); its results do not depend on it")
+
+// Herbie and the result cache.
+POSEIDON_HERBIE_OPTION(Cache, String, "./.poseidon", "poseidon-cache", User,
+                       Other, "directory",
+                       "Directory Poseidon keeps its Herbie results, DP tables "
+                       "and device-to-host launch descriptors in")
+POSEIDON_HERBIE_OPTION(
+    Unit, String, "", "poseidon-unit", Hidden, Other, "name",
+    "Name of the translation unit whose device and host halves are compiled; "
+    "the host half takes the launch descriptors the device half of the same "
+    "source and unit wrote (poseidon-clang passes one to both halves of each "
+    "compile)")
+POSEIDON_HERBIE_OPTION(HerbieNumThreads, Int, 8, "poseidon-herbie-num-threads",
+                       Hidden, Other, "", "Number of threads Herbie uses")
+POSEIDON_HERBIE_OPTION(HerbieTimeout, Int, 9999, "poseidon-herbie-timeout",
+                       Hidden, Other, "",
+                       "Herbie's timeout to use for each candidate "
+                       "expressions.")
+POSEIDON_HERBIE_OPTION(HerbieNumPts, Int, 1024, "poseidon-herbie-num-pts",
+                       Hidden, SolveInput, "",
+                       "Number of input points Herbie uses to evaluate "
+                       "candidate expressions.")
+POSEIDON_HERBIE_OPTION(HerbieNumIters, Int, 6, "poseidon-herbie-num-iters",
+                       Hidden, SolveInput, "",
+                       "Number of times Herbie attempts to improve accuracy.")
+POSEIDON_HERBIE_OPTION(HerbieNumEnodes, Int, 8000, "poseidon-herbie-num-enodes",
+                       Hidden, SolveInput, "",
+                       "Number of equivalence graph nodes to use when doing "
+                       "algebraic reasoning in Herbie.")
+// Each count is its own search because a longer cap can lose a shorter
+// series' answers. Read in ascending order, each once; empty passes Herbie no
+// term count.
+POSEIDON_HERBIE_OPTION(
+    HerbieNumTaylorTerms, UnsignedList, {}, "poseidon-herbie-num-taylor-terms",
+    Hidden, SolveInput, "n,n,...",
+    "Search every core once per term count, passing Herbie --num-taylor-terms "
+    "<n>, and take the union of the answers, the fewest terms first; each "
+    "search is cached on its own. Unset, Herbie keeps its own cap. Needs a "
+    "Herbie that takes the option")
+// Enforced twice: Herbie's own per-core --timeout is clamped to it so that a
+// timed-out core still writes results.json, and the wait for the process
+// backstops a Herbie that cannot exit.
+POSEIDON_HERBIE_OPTION(
+    HerbieSubgraphTimeout, Unsigned, 1800, "poseidon-herbie-subgraph-timeout",
+    Hidden, Other, "",
+    "Wall-clock seconds allowed for one FP subgraph's Herbie invocation (0 = "
+    "unbounded). Also clamps Herbie's own per-core --timeout.")
+// Herbie's worker places share one Racket heap, so a single process with many
+// workers spends most of its time in collection; separate processes do not.
+POSEIDON_HERBIE_OPTION(
+    HerbieProcesses, Unsigned, 0, "poseidon-herbie-processes", Hidden, Other,
+    "",
+    "Herbie processes one subgraph's FPCores are split across (0 = one per "
+    "-poseidon-herbie-num-threads worker, each with one worker; 1 = a single "
+    "process with all workers).")
+POSEIDON_HERBIE_OPTION(HerbiePreFloorBits, Unsigned, 0,
+                       "poseidon-herbie-pre-floor-bits", Hidden, SolveInput, "",
+                       "For a profiled range [lo, hi] with lo < 0 < hi, "
+                       "exclude |x| < max(-lo, hi) * 2^-K from the Herbie :pre "
+                       "(0 = off).")
+POSEIDON_HERBIE_OPTION(HerbieBinary, String, "", "poseidon-herbie-binary",
+                       Hidden, Other, "",
+                       "Path to the Herbie executable to invoke (empty = the "
+                       "binary configured at build time).")
+// Otherwise the platform is <csv>.herbie.rkt next to the resolved cost model.
+POSEIDON_HERBIE_OPTION(HerbiePlatform, String, "", "poseidon-herbie-platform",
+                       Hidden, Other, "",
+                       "Explicit Herbie platform: a path (contains '/' or ends "
+                       "in .rkt) to a generated platform file, or a name "
+                       "compiled into the Herbie binary.")
+// One (array ...) core per precision for a subgraph's outputs, with the
+// subterms they share let*-bound: Herbie searches them jointly and the rewrite
+// is priced as one unit, so work the outputs share is costed and erased once.
+POSEIDON_HERBIE_OPTION(HerbieArrays, Bool, true, "poseidon-herbie-arrays",
+                       Hidden, SolveInput, "",
+                       "Send a multi-output subgraph to Herbie as one array "
+                       "FPCore per precision; per-output cores are sent only "
+                       "for an array core that returns nothing.")
+POSEIDON_HERBIE_OPTION(HerbieArrayGrouping, String, "inputs",
+                       "poseidon-herbie-array-grouping", Hidden, SolveInput, "",
+                       "Which outputs share an array core: 'inputs' (same "
+                       "inputs and execution count) or 'executions' (same "
+                       "execution count).")
+POSEIDON_HERBIE_OPTION(
+    HerbieArrayWeights, String, "sensitivity", "poseidon-herbie-array-weights",
+    Hidden, SolveInput, "",
+    "How array elements are weighted (:herbie-weights): 'sensitivity' "
+    "(profiled sum of |gradient * value|), 'gradient' (|gradient| times the "
+    "mean magnitude of the profiled range, the weight of an ULP in the "
+    "accuracy model), or 'none'.")
+
+// Matmul raising and host dispatch.
+POSEIDON_MATMUL_OPTION(OzakiHostDispatch, Bool, true,
+                       "poseidon-ozaki-host-dispatch", Hidden, SolveInput, "",
+                       "Propose Ozaki-II as a host-dispatched GEMM library "
+                       "call, its only realization")
+// An uncalibrated class is proposed at a placeholder price so
+// poseidon-calibrate can materialize and time it; it requires
+// -poseidon-apply-rewrites so that no DP solve ever consumes the placeholder.
+POSEIDON_MATMUL_OPTION(InKernelCalibration, Bool, false,
+                       "poseidon-inkernel-calibration", Hidden, SolveInput, "",
+                       "Calibration harness only: propose in-kernel raise "
+                       "classes that carry no measured wmma_inkernel_rel row "
+                       "so they can be materialized and timed (requires "
+                       "-poseidon-apply-rewrites)")
+
+// Under -ffp-contract=on a contraction body is a single llvm.fmuladd, which the
+// triviality filter discards, so only a tensor-core raise could reach it. Off
+// by default: it adds elementwise candidates to every recognized reduction.
+POSEIDON_CANDIDATE_OPTION(ReductionSubgraphs, Bool, false,
+                          "poseidon-reduction-subgraphs", Hidden, SolveInput,
+                          "",
+                          "Admit a one-instruction subgraph when its single "
+                          "operation is the accumulating FMA of a recognized "
+                          "scalar reduction loop")
+// A staging buffer narrows only when every reader agrees on a tier, so units
+// that share one must be one unit for the per-unit tier to be the buffer's.
+POSEIDON_CANDIDATE_OPTION(
+    MergeSharedStaging, Bool, false, "poseidon-merge-shared-staging", Hidden,
+    SolveInput, "",
+    "Merge FP subgraphs that share a staging buffer (pointer argument or "
+    "addrspace(3) global) into one optimization unit, so the solver cannot "
+    "pick two storage tiers for one buffer")
+// A subgraph is billed at outputs[0]'s execution count, which over-bills the
+// once-per-thread code a reduction body feeds by the trip count; that is where
+// an expansion pays its FP64 boundary conversions.
+POSEIDON_MODEL_OPTION(FreqWeightedPricing, Bool, false,
+                      "poseidon-freq-weighted-pricing", Hidden, SolveInput, "",
+                      "Price each instruction of a frequency-heterogeneous FP "
+                      "subgraph at its own profiled execution count instead "
+                      "of the subgraph's")
+
+// Materialization.
+// The global-rooted narrowing only sees GEPs off the global's addrspacecast; a
+// kernel that hands its __shared__ scratch to the annotated body as `double *`
+// has every element GEP off the callee's pointer parameter instead.
+POSEIDON_MATERIALIZATION_OPTION(NarrowParamStaging, Bool, false,
+                                "poseidon-narrow-param-staging", Hidden,
+                                SolveInput, "",
+                                "Narrow addrspace(3) staging buffers that "
+                                "reach the annotated body as pointer "
+                                "parameters")
+// A shared-memory kernel that uses one __shared__ array through views of
+// different shapes and constant offsets has element GEPs of several strides,
+// which the global-rooted narrowing gives up on.
+POSEIDON_MATERIALIZATION_OPTION(NarrowMultiviewStaging, Bool, false,
+                                "poseidon-narrow-multiview-staging", Hidden,
+                                SolveInput, "",
+                                "With -poseidon-narrow-param-staging, also "
+                                "narrow addrspace(3) staging buffers the body "
+                                "accesses directly, through views of any "
+                                "shape")
+
+// Diagnostics.
+POSEIDON_DIAGNOSTIC_OPTION(Print, Bool, false, "poseidon-print", User, Other,
+                           "",
+                           "Print what the solve of each site considered and "
+                           "chose on stderr")
+POSEIDON_DIAGNOSTIC_OPTION(ShowTable, Bool, false, "poseidon-show-table",
+                           Hidden, Other, "",
+                           "Print the full DP table (highly verbose for large "
+                           "applications)")
+POSEIDON_DIAGNOSTIC_OPTION(ReportPath, String, "", "poseidon-report-path", User,
+                           Other, "directory",
+                           "Directory to write <func>.explain.json to when "
+                           "-poseidon-explain names none")
+POSEIDON_DIAGNOSTIC_OPTION(
+    Explain, String, "", "poseidon-explain", User, Other, "directory",
+    "Directory to write <func>.explain.json to: for every site, what its "
+    "solve changed, considered and rejected, or why it was left as written "
+    "(read with poseidon-explain)")
+
+#undef POSEIDON_OPTION
+#undef POSEIDON_PROFILING_OPTION
+#undef POSEIDON_CANDIDATE_OPTION
+#undef POSEIDON_SOLVER_OPTION
+#undef POSEIDON_MODEL_OPTION
+#undef POSEIDON_HERBIE_OPTION
+#undef POSEIDON_MATMUL_OPTION
+#undef POSEIDON_MATERIALIZATION_OPTION
+#undef POSEIDON_DIAGNOSTIC_OPTION

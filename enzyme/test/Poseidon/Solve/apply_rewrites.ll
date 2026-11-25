@@ -50,8 +50,8 @@
 
 ; The value a replay from the cached table prints applies what the replay
 ; applied.
-; RUN: %{regime} -poseidon-cache=%t/named/c -poseidon-cost-budget=1e9 -S -o /dev/null 2>&1 | FileCheck --check-prefix=NAMED-SOLVE %s
-; RUN: %{regime} -poseidon-cache=%t/named/c -poseidon-cost-budget=1e9 -S -o %t/named/replay.ll 2> %t/named/replay.err
+; RUN: %{regime} -poseidon-cache=%t/named/c -poseidon-cost-budget=1e9 -poseidon-print -S -o /dev/null 2>&1 | FileCheck --check-prefix=NAMED-SOLVE %s
+; RUN: %{regime} -poseidon-cache=%t/named/c -poseidon-cost-budget=1e9 -poseidon-print -S -o %t/named/replay.ll 2> %t/named/replay.err
 ; RUN: FileCheck --check-prefix=NAMED-REPLAY %s < %t/named/replay.err
 ; RUN: %{regime} -poseidon-cache=%t/named/c "-poseidon-apply-rewrites=$(sed -n 's/^\[poseidon\] pin: //p' %t/named/replay.err | paste -sd, -)" -S -o %t/named/pinned.ll 2> %t/named/pinned.err
 ; RUN: diff %t/named/replay.ll %t/named/pinned.ll
@@ -59,7 +59,7 @@
 ; RUN: grep -E '^Applying solution for|^\[poseidon\] pin: ' %t/named/pinned.err > %t/named/pinned.picks
 ; RUN: diff %t/named/replay.picks %t/named/pinned.picks
 
-; NAMED-SOLVE: DP table for preprocess_tester cached to file.
+; NAMED-SOLVE: DP table for preprocess_tester cached to
 ; NAMED-SOLVE: [poseidon] pin: tester:R0=(/.f64 (*.f64 v1 v1) (+.f64 (sqrt.f64 (+.f64 (*.f64 v0 v0) (*.f64 v1 v1))) v0)){{$}}
 
 ; NAMED-REPLAY: Cache entry for preprocess_tester found. Loaded DP tables from cache.

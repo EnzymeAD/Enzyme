@@ -375,9 +375,6 @@ public:
     return dropped;
   }
   std::string choiceText(size_t i) const override;
-  llvm::json::Object stepJSON(size_t i) override;
-  void writeReportStep(llvm::raw_ostream &OS, size_t i,
-                       llvm::StringRef pad) override;
   void materialize(size_t i) override { apply(session(), i); }
   void scaleErrors(double factor) override;
   void printPriced(llvm::raw_ostream &OS) override;

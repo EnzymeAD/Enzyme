@@ -24,10 +24,13 @@
 #include "Techniques/Matmul/Matmul.h"
 
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/Analysis/CGSCCPassManager.h"
+#include "llvm/Analysis/LoopAnalysisManager.h"
 #include "llvm/IR/DebugLoc.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/PassManager.h"
 #include "llvm/IR/ValueHandle.h"
+#include "llvm/Passes/PassBuilder.h"
 
 #include <map>
 #include <memory>
@@ -36,15 +39,13 @@
 #include <utility>
 #include <vector>
 
-namespace llvm {
-class PassBuilder;
-} // namespace llvm
-
 namespace poseidon {
 
 class Session {
 public:
-  Session(Options O, llvm::PassBuilder &PB, bool IsTwin = false);
+  Session(Options O, llvm::PassBuilder &PB, bool IsTwin = false)
+      : Opts(std::move(O)), PB(PB), IsTwin(IsTwin),
+        CostModel(Opts.Model.CostModel) {}
 
   const Options Opts;
   // The pass builder of the compile, which knows its target: what a rewrite
@@ -115,8 +116,9 @@ public:
     }
   };
 
-  SessionAnalysis(Options O, llvm::PassBuilder &PB);
-  explicit SessionAnalysis(Session &S);
+  SessionAnalysis(Options O, llvm::PassBuilder &PB)
+      : Opts(std::move(O)), PB(&PB) {}
+  explicit SessionAnalysis(Session &S) : Given(&S) {}
   Result run(llvm::Module &M, llvm::ModuleAnalysisManager &);
 
 private:
@@ -128,6 +130,26 @@ private:
 };
 
 Session &sessionOf(llvm::Module &M, llvm::ModuleAnalysisManager &MAM);
+
+// The analysis managers the plugin's nested pipelines run against. They are
+// registered through the surrounding pipeline's PassBuilder, so that another
+// plugin's pipeline names resolve, and kept local, so that nothing the outer
+// pipeline cached reaches a pass that runs out of order. The session of the
+// module is registered first, so that it is the one they hand out.
+struct LocalAnalysisManagers {
+  llvm::LoopAnalysisManager LAM;
+  llvm::FunctionAnalysisManager FAM;
+  llvm::CGSCCAnalysisManager CGAM;
+  llvm::ModuleAnalysisManager MAM;
+  LocalAnalysisManagers(llvm::PassBuilder &PB, Session &S) {
+    MAM.registerPass([&S] { return SessionAnalysis(S); });
+    PB.registerModuleAnalyses(MAM);
+    PB.registerCGSCCAnalyses(CGAM);
+    PB.registerFunctionAnalyses(FAM);
+    PB.registerLoopAnalyses(LAM);
+    PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
+  }
+};
 
 } // namespace poseidon
 #endif // POSEIDON_SESSION_H

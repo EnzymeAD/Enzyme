@@ -29,6 +29,8 @@
 #include "llvm/IR/Type.h"
 #include "llvm/Passes/OptimizationLevel.h"
 
+#include "Enzyme/PassUtils.h"
+
 #include <string>
 
 namespace llvm {
@@ -38,13 +40,6 @@ class ScalarEvolution;
 } // namespace llvm
 
 namespace poseidon {
-
-#if LLVM_VERSION_MAJOR >= 23
-template <typename DerivedT>
-using PassParent = llvm::RequiredPassInfoMixin<DerivedT>;
-#else
-template <typename DerivedT> using PassParent = llvm::PassInfoMixin<DerivedT>;
-#endif
 
 // A PassBuilder without a target machine; LLVM 24 gives it the context.
 llvm::PassBuilder makePassBuilder(llvm::LLVMContext &C);
@@ -72,6 +67,14 @@ inline void setInsertPoint(llvm::IRBuilderBase &B, llvm::BasicBlock *BB,
 #else
   B.SetInsertPoint(BB, IP);
 #endif
+}
+
+// The operands an FP instruction computes from: a call's arguments, without
+// its callee.
+inline auto fpOperands(llvm::Instruction &I) {
+  if (auto *CI = llvm::dyn_cast<llvm::CallInst>(&I))
+    return CI->args();
+  return I.operands();
 }
 
 double stringToDouble(const std::string &str);

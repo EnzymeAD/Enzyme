@@ -366,7 +366,7 @@ enum : int {
 
 static bool isFPDtype(StringRef d) { return formatOfDtype(d); }
 
-static StringRef cTypeName(StringRef d) {
+StringRef cTypeName(StringRef d) {
   const FPFormatInfo *F = formatOfDtype(d);
   return F ? StringRef(F->CType) : "double";
 }

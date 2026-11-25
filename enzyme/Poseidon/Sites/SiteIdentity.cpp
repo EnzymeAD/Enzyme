@@ -94,9 +94,11 @@ std::string siteKey(const Session &S, const Function &clone) {
   return siteKeyOfBody(origin ? *origin : clone);
 }
 
+StringRef siteSymbol(StringRef key) { return key.split(kPerCallInfix).first; }
+
 SmallVector<std::string, 2> siteAliases(StringRef key) {
   SmallVector<std::string, 2> aliases;
-  StringRef fn = key.split(kPerCallInfix).first;
+  StringRef fn = siteSymbol(key);
   if (fn != key)
     aliases.push_back(fn.str());
   if (std::optional<DemangledFunction> D = demangleFunction(fn))

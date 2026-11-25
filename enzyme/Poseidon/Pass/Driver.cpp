@@ -20,7 +20,6 @@
 #include "Sites/SiteIdentity.h"
 #include "Solve/Explain.h"
 #include "Solve/Optimize.h"
-#include "Solve/Solvers.h"
 #include "Techniques/Herbie.h"
 #include "Techniques/Matmul/HostDispatch.h"
 
@@ -41,10 +40,10 @@
 #include "llvm/IR/ValueHandle.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Format.h"
+#include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/raw_ostream.h"
 
-#include <cmath>
 #include <optional>
 #include <string>
 #include <system_error>
@@ -118,25 +117,23 @@ struct Unprofiled {
 
 static std::optional<Unprofiled> unprofiledSite(Session &S, CallBase *CI,
                                                 Function &clone) {
-  const std::string file = siteProfileFile(S, clone);
   std::optional<Unprofiled> absent, neverExecuted;
   auto read = [&](StringRef dir, StringRef flag) {
-    SmallString<128> path(dir);
-    sys::path::append(path, file);
+    const std::string path = siteProfilePath(S, clone, dir);
     if (!sys::fs::exists(path)) {
       requireProfileDirectory(CI, dir, flag);
       if (!absent)
-        absent = Unprofiled{false, path.str().str()};
+        absent = Unprofiled{false, path};
       return;
     }
     ProfileMap records;
     FunctionProfileHeader header;
-    parseProfileFile(path.str().str(), clone, records, header);
+    parseProfileFile(path, clone, records, header);
     if (header.executed)
       return;
     requireCanonicalHash(header, canonicalFormHash(clone), path, clone);
     if (!neverExecuted)
-      neverExecuted = Unprofiled{true, path.str().str()};
+      neverExecuted = Unprofiled{true, path};
   };
   read(S.Opts.Profiling.ProfileUse, "-poseidon-profile-use");
   for (const std::string &dir : S.Opts.Profiling.OutputProfiles)
@@ -144,14 +141,17 @@ static std::optional<Unprofiled> unprofiledSite(Session &S, CallBase *CI,
   return absent ? absent : neverExecuted;
 }
 
+// `tau` > 0 is the site's accuracy target, its own when `siteTarget`.
 static void reportUnprofiled(Session &S, CallBase *CI, const Function &body,
-                             Function &clone, const Unprofiled &site) {
+                             Function &clone, const Unprofiled &site,
+                             double tau, bool siteTarget) {
   if (site.neverExecuted) {
     const char *cause =
         "the profiling run instrumented this site and never executed it";
     llvm::errs() << "[poseidon] " << body.getName() << ": " << cause << " ("
                  << site.path << "); left unchanged\n";
-    explainUnprofiled(S, clone, cause);
+    explainUnprofiled(S, clone, tau, siteTarget, "never_executed", cause,
+                      site.path);
     return;
   }
   const char *cause =
@@ -172,64 +172,9 @@ static void reportUnprofiled(Session &S, CallBase *CI, const Function &body,
                << ": the profiled program did not contain this site (no "
                   "profile at "
                << site.path << "); left unchanged\n";
-  explainUnprofiled(S, clone, cause);
+  explainUnprofiled(S, clone, tau, siteTarget, "unprofiled", cause, site.path);
 }
 
-// A number flag holds NaN when it was given no number (Pass/Flags.cpp).
-[[noreturn]] static void reportNoNumber(const CallBase &CI, StringRef flag) {
-  reportUserError(CI, "-" + flag +
-                          " was given no number: its value is empty or nan. "
-                          "Write a number after '=', or leave the flag out "
-                          "for its default.");
-}
-
-// The number flags every solve reads; the budget is read only by a solve that
-// selects by it.
-static void requireNumbers(const Options &O, const CallBase &CI) {
-  const std::pair<StringRef, double> numbers[] = {
-      {"poseidon-tau", O.Solver.Tau},
-      {"poseidon-min-cost-share", O.Profiling.MinCostShare},
-      {"poseidon-max-broken-share", O.Model.MaxBrokenShare},
-      {"poseidon-exponent-penalty", O.Model.ExponentPenalty}};
-  for (const auto &[flag, value] : numbers)
-    if (std::isnan(value))
-      reportNoNumber(CI, flag);
-}
-
-// No solution saves more than the whole profiled cost, so a budget below -1 is
-// a mistake in the flag, not a solve that finds nothing. The DP's cost axis
-// puts the profiled cost below 2^33 of its units in 2^63, so it holds every
-// share up to 2^30.
-static void requireCostBudget(const SolverOptions &O, const CallBase &CI) {
-  if (std::isnan(O.CostBudget))
-    reportNoNumber(CI, "poseidon-cost-budget");
-  if (std::isfinite(O.CostBudget) && O.CostBudget > 0x1p30) {
-    const std::string value = exactDouble(O.CostBudget);
-    reportUserError(CI, "-poseidon-cost-budget=" + Twine(value) +
-                            " lets a solution add more than 2^30 times the "
-                            "profiled cost, which the DP's cost axis does not "
-                            "hold; give a share of at most 1073741824.");
-  }
-  if (std::isfinite(O.CostBudget) && O.CostBudget >= -1.0)
-    return;
-  const std::string value = exactDouble(O.CostBudget);
-  reportUserError(
-      CI, "-poseidon-cost-budget=" + Twine(value) +
-              (std::isfinite(O.CostBudget)
-                   ? " asks a solution to save more than the whole profiled "
-                     "cost"
-                   : " is not a finite number") +
-              ". It takes the share of a site's profiled cost a solution may "
-              "add, negative for one it has to save (-0.25 requires saving a "
-              "quarter), not a cost. A solve writes to budgets.txt in its "
-              "-poseidon-cache directory the share of each frontier point a "
-              "budget selects.");
-}
-
-// Profile use, shared by both annotation forms: `CI` is the call the site's
-// body is reached through (the marker call, or the wrapper kernel's call of its
-// own outlined body), `F` the body and `primalArgs` the caller values its
-// parameters take.
 static void writeGemmDescriptorOf(Session &S, CallBase *CI, Function *body,
                                   ArrayRef<Value *> primalArgs) {
   if (!S.Opts.Matmul.OzakiHostDispatch)
@@ -239,6 +184,10 @@ static void writeGemmDescriptorOf(Session &S, CallBase *CI, Function *body,
     writeGemmDescriptor(S, *CI->getFunction(), primalArgs, note->second);
 }
 
+// Profile use, shared by both annotation forms: `CI` is the call the site's
+// body is reached through (the marker call, or the wrapper kernel's call of its
+// own outlined body), `F` the body and `primalArgs` the caller values its
+// parameters take.
 static void optimizeSiteBody(Session &S, CallBase *CI, Function *F,
                              SmallVectorImpl<Value *> &primalArgs,
                              double errTol,
@@ -272,15 +221,19 @@ static void optimizeSiteBody(Session &S, CallBase *CI, Function *F,
     setSlotMetadata(*F);
     noteSiteOrigin(S, F, sourceBody);
     noteSiteArgs(S, F, primalArgs);
-    noteSiteCall(S, F, CI->getDebugLoc());
+    S.SiteCalls[F] = CI->getDebugLoc();
 
     // Profile generation recorded nothing for a site without an operation to
     // rewrite, so the absent profile says nothing about whether it ran.
+    const double tau = errTol > 0.0 ? errTol : (double)O.Solver.Tau;
     if (none_of(instructions(*F),
                 [](const Instruction &I) { return isOptimizable(I); })) {
       warn(CI, Twine(sourceBody->getName()) +
                    " holds no floating-point operation the pass rewrites; "
                    "leaving the site unchanged");
+      explainLeftAlone(S, *F, tau, errTol > 0.0, "no_fp_operation",
+                       "the site holds no floating-point operation the pass "
+                       "rewrites");
       markOutlineTransparent(sourceBody);
       emitSiteCall(CI, sourceBody, primalArgs, calls);
       return;
@@ -289,22 +242,15 @@ static void optimizeSiteBody(Session &S, CallBase *CI, Function *F,
     // A site with nothing to solve from still has to build and run, so it keeps
     // the original body rather than failing the compile.
     if (std::optional<Unprofiled> site = unprofiledSite(S, CI, *F)) {
-      reportUnprofiled(S, CI, *sourceBody, *F, *site);
+      reportUnprofiled(S, CI, *sourceBody, *F, *site, tau, errTol > 0.0);
       markOutlineTransparent(sourceBody);
       emitSiteCall(CI, sourceBody, primalArgs, calls);
       return;
     }
 
-    requireNumbers(O, *CI);
-    // Only a solve with no accuracy target selects by the budget.
-    if (errTol <= 0.0 && O.Solver.Tau <= 0.0 && O.Solver.ApplyRewrites.empty())
-      requireCostBudget(O.Solver, *CI);
-
-    if (O.Diagnostics.Print) {
+    if (O.Diagnostics.Print)
       llvm::errs() << "[poseidon] Optimizing " << F->getName()
-                   << " with relative error tolerance: "
-                   << (errTol > 0.0 ? errTol : (double)O.Solver.Tau) << '\n';
-    }
+                   << " with relative error tolerance: " << tau << '\n';
 
     if (O.Solver.JointDP) {
       F->addFnAttr(kJointErrTol, exactDouble(errTol));
@@ -326,9 +272,10 @@ static void optimizeSiteBody(Session &S, CallBase *CI, Function *F,
       // The canonical clone's lowering may differ from the original body's at
       // ulp level, so a site with no rewrite calls the original body.
       if (!optimized) {
-        llvm::errs() << "[poseidon] no rewrite applied for " << F->getName()
-                     << "; calling original body " << sourceBody->getName()
-                     << " (bit-transparent no-op)\n";
+        if (O.Diagnostics.Print)
+          llvm::errs() << "[poseidon] no rewrite applied for " << F->getName()
+                       << "; calling original body " << sourceBody->getName()
+                       << " (bit-transparent no-op)\n";
         F = sourceBody;
       }
       S.SolvedSites[key] = F;
@@ -409,15 +356,12 @@ static double profiledSiteCost(Session &S, Function &body) {
   // read off it too. The clone is erased before the site's own clone is made
   // under the same name.
   Function *clone = canonicalize(body);
+  setSlotMetadata(*clone);
   requireCanonicalHash(header, canonicalFormHash(*clone), profilePath, *clone);
   requireCostModel(S.CostModel, *clone);
-  size_t nextSlot = 0;
   double cost = profiledCost(S.CostModel, *clone, profileMap,
-                             [&](const Instruction &I, size_t &slot) {
-                               if (!isOptimizable(I))
-                                 return false;
-                               slot = nextSlot++;
-                               return true;
+                             [](const Instruction &I, size_t &slot) {
+                               return tryReadProfIdxMetadata(&I, slot);
                              });
   clone->eraseFromParent();
   return cost;
@@ -495,12 +439,21 @@ bool optimizeAnnotatedSites(Session &Sess, Module &M) {
   for (Site &S : outlined) {
     double share = regexTotal > 0.0 ? S.cost / regexTotal : 1.0;
     if (byRegex.count(S.kernel) && share < O.Profiling.MinCostShare) {
-      llvm::errs() << "[poseidon] " << S.kernel->getName() << " is "
-                   << format("%.4g", share * 100)
-                   << "% of the profiled FP cost of the kernels "
-                      "-poseidon-kernels named, below -poseidon-min-cost-share="
-                   << format("%g", (double)O.Profiling.MinCostShare)
+      const std::string below =
+          formatv("{0}% of the profiled FP cost of the kernels "
+                  "-poseidon-kernels named, below -poseidon-min-cost-share={1}",
+                  format("%.4g", share * 100),
+                  format("%g", (double)O.Profiling.MinCostShare))
+              .str();
+      llvm::errs() << "[poseidon] " << S.kernel->getName() << " is " << below
                    << "; left unoptimized\n";
+      auto target = siteTau.find(S.kernel);
+      const bool siteTarget = target != siteTau.end();
+      explainLeftAlone(Sess, *S.body,
+                       siteTarget ? target->second : O.Solver.Tau, siteTarget,
+                       "below_cost_share", "the site is " + below,
+                       /*profile=*/"",
+                       /*body=*/true);
       inlineKernelBody(S.call, S.body);
       continue;
     }
@@ -556,12 +509,6 @@ bool prepareModule(Session &S, Module &M) {
     injectBlockDimProbes(M, S.Opts.Diagnostics.Print);
   }
   return anySite;
-}
-
-bool solveDeferredSites(Session &S, Module &M, FunctionAnalysisManager &FAM) {
-  if (!S.Opts.Solver.JointDP)
-    return false;
-  return solveJointly(S, M, FAM);
 }
 
 // Gives each host wrapper without a subprogram the one most of its inlined

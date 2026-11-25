@@ -121,10 +121,6 @@ static HerbieRunOptions herbieRunOptions(Session &S, const Function &F) {
   return Opts;
 }
 
-void addHerbieKeyParts(Session &S, const Function &F, CacheKey &key) {
-  addHerbieKeyParts(key, herbieRunOptions(S, F), S.Herbie.HerbieDigests);
-}
-
 namespace {
 // A point of a core's cost-accuracy curve: [cost, error in bits].
 struct HerbiePoint {
@@ -1706,46 +1702,6 @@ std::string RewriteUnit::choiceText(size_t i) const {
   return expr + " --(" + std::to_string(cand.ordinal) + ")-> " + cand.expr;
 }
 
-json::Object RewriteUnit::stepJSON(size_t i) {
-  json::Object stepObj;
-  stepObj["type"] = "rewrite";
-  stepObj["original_expr"] = expr;
-  auto &cand = candidates[i];
-  stepObj["rewritten_expr"] = cand.expr;
-  stepObj["herbie_cost"] = jsonFloat(cand.herbieCost);
-  stepObj["herbie_accuracy"] = jsonFloat(cand.herbieAccuracy);
-  stepObj["initial_herbie_accuracy"] = jsonFloat(initialHerbieAccuracy);
-  stepObj["computation_cost_delta"] = getCompCostDelta(i);
-  stepObj["accuracy_cost_delta"] = jsonFloat(getAccCostDelta(i));
-  stepObj["gradient"] = jsonFloat(grad);
-  stepObj["executions"] = static_cast<int64_t>(executions);
-
-  // The outputs lead erasableInsts.
-  stepObj["source_locations"] =
-      getSourceLocationsJSON(erasableInsts.getArrayRef());
-  json::Array affectedIR;
-  for (auto *I : erasableInsts)
-    affectedIR.push_back(getValueStr(I));
-  stepObj["affected_instructions"] = std::move(affectedIR);
-  return stepObj;
-}
-
-void RewriteUnit::writeReportStep(raw_ostream &OS, size_t i, StringRef pad) {
-  auto &cand = candidates[i];
-  OS << pad << "[Rewrite] " << expr << "  -->  " << cand.expr << '\n';
-  if (!std::isnan(initialHerbieAccuracy) && !std::isnan(cand.herbieAccuracy))
-    OS << pad << "  Herbie accuracy: " << initialHerbieAccuracy << " -> "
-       << cand.herbieAccuracy << " bits\n";
-  OS << pad << "  Gradient: " << grad << ", Executions: " << executions << '\n';
-
-  // The outputs lead erasableInsts.
-  for (Instruction *I : atDistinctLocations(erasableInsts.getArrayRef()))
-    OS << pad << "  Source: " << getSourceLocationStr(I) << '\n';
-  OS << pad << "  Affected IR:\n";
-  for (auto *I : erasableInsts)
-    OS << pad << "    " << *I << '\n';
-}
-
 void RewriteUnit::price() {
   if (!herbieAnswered)
     return;
@@ -1786,59 +1742,6 @@ void RewriteUnit::printPriced(raw_ostream &OS) {
        << "\t\t" << candidate.expr << '\n';
   }
   OS << "################################\n\n";
-}
-
-void RewriteUnit::addReportSummary(json::Array &summary) {
-  json::Object co;
-  co["original_expr"] = expr;
-  co["num_candidates"] = static_cast<int64_t>(candidates.size());
-  co["gradient"] = jsonFloat(grad);
-  co["executions"] = static_cast<int64_t>(executions);
-  co["initial_accuracy_cost"] = jsonFloat(initialAccCost);
-  co["initial_computation_cost"] = initialCompCost;
-  putLoc(co, "source_location", roots.front());
-  summary.push_back(std::move(co));
-}
-
-void RewriteUnit::writeReportSummary(raw_ostream &textOut) {
-  textOut << "Expression #" << indexInKind() << ": " << expr << '\n';
-  textOut << "  Gradient: " << grad << ", Executions: " << executions << '\n';
-  if (auto *I = dyn_cast<Instruction>(roots.front())) {
-    auto loc = getSourceLocationStr(I);
-    if (!loc.empty())
-      textOut << "  Source: " << loc << '\n';
-  }
-  textOut << "  Candidates: " << candidates.size() << '\n';
-  for (size_t j = 0; j < candidates.size(); ++j) {
-    auto &cand = candidates[j];
-    textOut << "    [" << cand.ordinal << "] " << cand.expr;
-    if (!std::isnan(cand.herbieAccuracy))
-      textOut << "  (accuracy: " << cand.herbieAccuracy << " bits)";
-    textOut << '\n';
-  }
-}
-
-void RewriteUnit::addCuratedRewrites(json::Array &rewrites) {
-  for (size_t ci = 0; ci < candidates.size(); ++ci) {
-    auto &cand = candidates[ci];
-    double accDelta = getAccCostDelta(ci);
-    double compDelta = getCompCostDelta(ci);
-
-    if (std::isnan(accDelta))
-      continue;
-
-    json::Object rw = curatedRewrite(*this, ci, compDelta, accDelta);
-    rw["original_expr"] = expr;
-    rw["rewritten_expr"] = cand.expr;
-    rw["gradient"] = jsonFloat(grad);
-    rw["executions"] = static_cast<int64_t>(executions);
-    rw["herbie_accuracy"] = jsonFloat(cand.herbieAccuracy);
-    rw["initial_herbie_accuracy"] = jsonFloat(initialHerbieAccuracy);
-
-    putLoc(rw, "source_location", roots.front());
-
-    rewrites.push_back(std::move(rw));
-  }
 }
 
 } // namespace poseidon

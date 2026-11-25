@@ -1397,58 +1397,6 @@ std::string PrecisionUnit::choiceText(size_t i) const {
   return "CS: " + cand.desc + " (#" + std::to_string(cand.ordinal) + ")";
 }
 
-// The instructions `changes` convert, with where they are and what they were:
-// the "source_locations" and "affected_instructions" of a report entry.
-static void putChangedInsts(json::Object &o,
-                            ArrayRef<PrecisionChange> changes) {
-  SmallVector<Instruction *, 16> insts;
-  for (const auto &change : changes)
-    for (auto *node : change.nodes)
-      if (auto *I = dyn_cast<Instruction>(node->value))
-        insts.push_back(I);
-  o["source_locations"] = getSourceLocationsJSON(insts);
-  json::Array affectedIR;
-  for (auto *I : insts)
-    affectedIR.push_back(getValueStr(I));
-  o["affected_instructions"] = std::move(affectedIR);
-}
-
-json::Object PrecisionUnit::stepJSON(size_t i) {
-  auto &cand = candidates[i];
-  json::Object stepObj;
-  stepObj["type"] = "precision_change";
-  stepObj["description"] = cand.desc;
-  stepObj["candidate_index"] = static_cast<int64_t>(cand.ordinal);
-
-  json::Array changes;
-  for (const auto &change : cand.changes) {
-    json::Object changeObj;
-    changeObj["from"] = getPrecisionChangeTypeString(change.oldType);
-    changeObj["to"] = getPrecisionChangeTypeString(change.newType);
-    changeObj["num_operations"] = static_cast<int64_t>(change.nodes.size());
-    putChangedInsts(changeObj, change);
-    changes.push_back(std::move(changeObj));
-  }
-  stepObj["changes"] = std::move(changes);
-  return stepObj;
-}
-
-void PrecisionUnit::writeReportStep(raw_ostream &OS, size_t i, StringRef pad) {
-  auto &cand = candidates[i];
-  OS << pad << "[Precision] " << cand.desc << " (#" << cand.ordinal << ")\n";
-  for (const auto &change : cand.changes) {
-    OS << pad << "  " << getPrecisionChangeTypeString(change.oldType) << " -> "
-       << getPrecisionChangeTypeString(change.newType) << " for "
-       << change.nodes.size() << " operations\n";
-    SmallVector<Instruction *, 8> insts;
-    for (auto *node : change.nodes)
-      if (auto *I = dyn_cast<Instruction>(node->value))
-        insts.push_back(I);
-    for (Instruction *I : atDistinctLocations(insts))
-      OS << pad << "    Source: " << getSourceLocationStr(I) << '\n';
-  }
-}
-
 void PrecisionUnit::materialize(size_t i) {
   assert(i < candidates.size() && "the solver names one of the candidates");
   // An operation this change erases may be an input of another subgraph whose
@@ -1492,71 +1440,6 @@ void PrecisionUnit::scaleErrors(double factor) {
     cand.accuracyCost *= factor;
     for (auto &[node, cost] : cand.perOutputAccCost)
       cost *= factor;
-  }
-}
-
-// The candidates per unit a report lists, cheapest first.
-static constexpr size_t kMaxCandRows = 40;
-
-// The candidates' positions by cost change, cheapest first; equal changes keep
-// their positions' order.
-static SmallVector<size_t, 40> byCostDelta(PrecisionUnit &CS) {
-  SmallVector<size_t, 40> order(CS.candidates.size());
-  for (size_t ci = 0; ci < order.size(); ++ci)
-    order[ci] = ci;
-  llvm::stable_sort(order, [&](size_t a, size_t b) {
-    return CS.getCompCostDelta(a) < CS.getCompCostDelta(b);
-  });
-  return order;
-}
-
-void PrecisionUnit::addReportSummary(json::Array &summary) {
-  json::Object cs;
-  cs["num_candidates"] = static_cast<int64_t>(candidates.size());
-  cs["initial_accuracy_cost"] = jsonFloat(initialAccCost);
-  cs["initial_computation_cost"] = initialCompCost;
-  SmallVector<size_t, 40> order = byCostDelta(*this);
-  json::Array cands;
-  for (size_t k = 0; k < order.size() && k < kMaxCandRows; ++k) {
-    size_t ci = order[k];
-    json::Object c;
-    c["id"] = candidateId(ci);
-    c["description"] = candidates[ci].desc;
-    c["computation_cost_delta"] = getCompCostDelta(ci);
-    c["accuracy_cost_delta"] = jsonFloat(getAccCostDelta(ci));
-    cands.push_back(std::move(c));
-  }
-  cs["candidates"] = std::move(cands);
-  summary.push_back(std::move(cs));
-}
-
-void PrecisionUnit::writeReportSummary(raw_ostream &textOut) {
-  textOut << "Subgraph #" << indexInKind() << ": " << candidates.size()
-          << " candidates (Δcost, Δacc; sorted by Δcost)\n";
-  SmallVector<size_t, 40> order = byCostDelta(*this);
-  for (size_t k = 0; k < order.size() && k < kMaxCandRows; ++k) {
-    size_t ci = order[k];
-    textOut << "  [" << candidateId(ci) << "] " << candidates[ci].desc
-            << ": Δcost=" << getCompCostDelta(ci)
-            << " Δacc=" << format("%.6e", getAccCostDelta(ci)) << '\n';
-  }
-}
-
-void PrecisionUnit::addCuratedRewrites(json::Array &rewrites) {
-  for (size_t ci = 0; ci < candidates.size(); ++ci) {
-    auto &pt = candidates[ci];
-    double accDelta = getAccCostDelta(ci);
-    double compDelta = getCompCostDelta(ci);
-
-    if (std::isnan(accDelta))
-      continue;
-
-    json::Object rw = curatedRewrite(*this, ci, compDelta, accDelta);
-    rw["type"] = "precision_change";
-    rw["description"] = pt.desc;
-    putChangedInsts(rw, pt.changes);
-
-    rewrites.push_back(std::move(rw));
   }
 }
 

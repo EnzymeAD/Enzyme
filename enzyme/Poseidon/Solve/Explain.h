@@ -17,7 +17,6 @@
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/StringRef.h"
-#include "llvm/IR/DebugLoc.h"
 #include "llvm/IR/Function.h"
 
 namespace poseidon {
@@ -30,12 +29,24 @@ struct SolveRecord;
 
 bool explainWanted(const Options &O, const llvm::Function &F);
 
-void noteSiteCall(Session &S, const llvm::Function *body,
-                  const llvm::DebugLoc &loc);
+// The explanation of a site the pass leaves as written without solving it:
+// `status` is what kept it from the solve and `reason` says why. F is the
+// site's clone, or with `body` the site's body when no clone was made. `tau`
+// > 0 is the site's accuracy target, from the site when `siteTarget`.
+void explainLeftAlone(Session &S, llvm::Function &F, double tau,
+                      bool siteTarget, llvm::StringRef status,
+                      llvm::StringRef reason, llvm::StringRef profile = "",
+                      bool body = false);
 
-void explainNothingToOptimize(Session &S, llvm::Function &F);
+// A remark and the explanation of a site with nothing to optimize.
+void explainNothingToOptimize(Session &S, llvm::Function &F, double tau,
+                              bool siteTarget);
 
-void explainUnprofiled(Session &S, llvm::Function &F, llvm::StringRef cause);
+// A remark and the explanation of a site no profile has records of: `status`
+// is "unprofiled" or "never_executed", `profile` the file looked at.
+void explainUnprofiled(Session &S, llvm::Function &F, double tau,
+                       bool siteTarget, llvm::StringRef status,
+                       llvm::StringRef cause, llvm::StringRef profile);
 
 void explainSolve(Session &S, llvm::Function &F, FunctionFPState &st,
                   llvm::ArrayRef<SolutionStep> steps, const SolveRecord &rec);

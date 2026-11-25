@@ -42,15 +42,15 @@
 ; FRESH: Saved Herbie output to cache file
 
 ; NO-ALTERNATIVES: [poseidon] Herbie subgraph 0 of preprocess_tester: the cached answer is not a Herbie results file (expected [initial, best, alternatives] at tests[0].cost-accuracy, core "0"). No algebraic candidates for this subgraph from it.
-; NO-ALTERNATIVES: [poseidon] no rewrite applied for preprocess_tester
+; NO-ALTERNATIVES: warning: {{.*}}Poseidon returned false (no change) for preprocess_tester{{$}}
 ; NO-ALTERNATIVES-STRICT: error: {{.*}}Poseidon: strict mode: the cached answer for subgraph 0 of preprocess_tester is not a Herbie results file (expected [initial, best, alternatives] at tests[0].cost-accuracy, core "0"). Without -poseidon-strict-mode the subgraph is left as written.
 
 ; NO-BITS: [poseidon] Herbie subgraph 0 of preprocess_tester: the cached answer is not a Herbie results file (missing value at tests[0].bits, core "0"). No algebraic candidates for this subgraph from it.
-; NO-BITS: [poseidon] no rewrite applied for preprocess_tester
+; NO-BITS: warning: {{.*}}Poseidon returned false (no change) for preprocess_tester{{$}}
 ; NO-BITS-STRICT: error: {{.*}}Poseidon: strict mode: the cached answer for subgraph 0 of preprocess_tester is not a Herbie results file (missing value at tests[0].bits, core "0").
 
 ; NOT-OBJECT: [poseidon] Herbie subgraph 0 of preprocess_tester: the cached answer is not a Herbie results file (expected an object with a "tests" array at the top level). No algebraic candidates for this subgraph from it.
-; NOT-OBJECT: [poseidon] no rewrite applied for preprocess_tester
+; NOT-OBJECT: warning: {{.*}}Poseidon returned false (no change) for preprocess_tester{{$}}
 ; NOT-OBJECT-STRICT: error: {{.*}}Poseidon: strict mode: the cached answer for subgraph 0 of preprocess_tester is not a Herbie results file (expected an object with a "tests" array at the top level).
 
 ; UNKNOWN-CORE: [poseidon] Herbie subgraph 0 of preprocess_tester: the cached answer is not a Herbie results file (tests[0] names core "2", and the cores asked about are 0 to 1). No algebraic candidates for this subgraph from it.

@@ -53,6 +53,8 @@ llvm::Expected<std::shared_ptr<FPNode>> parseHerbieExpr(
     const llvm::SetVector<llvm::Value *> *subgraphInputs = nullptr);
 
 std::string dtypeOfType(llvm::Type *T);
+// The C type of an FP dtype; "double" for any other.
+llvm::StringRef cTypeName(llvm::StringRef dtype);
 
 struct CRendering {
   const llvm::SetVector<llvm::Value *> *inputs = nullptr;

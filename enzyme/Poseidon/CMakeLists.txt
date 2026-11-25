@@ -83,7 +83,6 @@ find_package(CUDAToolkit QUIET)
 include(Herbie)
 
 set(POSEIDON_SRC
-    Pass/Plugin.cpp
     Core/CacheKey.cpp
     Sites/Canonicalize.cpp
     Model/CostModel.cpp
@@ -105,7 +104,6 @@ set(POSEIDON_SRC
     Core/ExpansionModel.cpp
     Solve/Explain.cpp
     Pass/Flags.cpp
-    Pass/Session.cpp
     Core/FPKind.cpp
     Techniques/Herbie.cpp
     Model/FPCore.cpp
@@ -126,9 +124,7 @@ set(POSEIDON_SRC
     Profile/ProfileRead.cpp
     Model/Sampling.cpp
     Solve/Solvers.cpp
-    Solve/SiteTable.cpp
     Solve/Pins.cpp
-    Solve/Report.cpp
     Solve/Subgraphs.cpp
     Techniques/Staging.cpp
     Techniques/Unit.cpp

@@ -5,7 +5,8 @@
 ; RUN: echo "qoi 1" > %t/metric_only/metric.txt
 ; RUN: sed '/^define double @tester/,/^}/s|%mul = fmul fast double %add, %z|%extra = fmul fast double %add, %add\n  %mul = fmul fast double %extra, %z|' %s > %t/drift.ll
 ;
-; RUN: %{opt} < %s -poseidon-profile-use=%S/../Inputs/never_executed -pass-remarks-missed=poseidon -o %t/never.ll 2> %t/never.err
+; RUN: %{opt} < %s -poseidon-profile-use=%S/../Inputs/never_executed -pass-remarks-missed=poseidon -poseidon-explain=%t/never -o %t/never.ll 2> %t/never.err
+; RUN: %python %S/../Inputs/explain/stderr_matches.py %t/never.err %t/never | FileCheck --check-prefix=NEVER-JSON %s
 ; RUN: FileCheck --check-prefix=NEVER --implicit-check-not=warning --implicit-check-not=Warning %s < %t/never.err
 ; RUN: FileCheck --check-prefix=NEVER-REMARK %s < %t/never.err
 ; RUN: FileCheck --check-prefix=LEFT %s < %t/never.ll
@@ -15,7 +16,8 @@
 ; RUN: not %{opt} < %s -poseidon-profile-use=%t/empty -o /dev/null 2>&1 | FileCheck --check-prefix=EMPTY %s
 ; RUN: not %{opt} < %s -poseidon-profile-use=%t/metric_only -o /dev/null 2>&1 | FileCheck --check-prefix=METRIC %s
 ;
-; RUN: %{opt} < %s -poseidon-profile-use=%S/../Inputs/other_sites -pass-remarks-missed=poseidon -o %t/absent.ll 2>&1 | FileCheck --check-prefix=ABSENT %s
+; RUN: %{opt} < %s -poseidon-profile-use=%S/../Inputs/other_sites -pass-remarks-missed=poseidon -poseidon-explain=%t/absent -o %t/absent.ll 2>&1 | tee %t/absent.err | FileCheck --check-prefix=ABSENT %s
+; RUN: %python %S/../Inputs/explain/stderr_matches.py %t/absent.err %t/absent | FileCheck --check-prefix=ABSENT-JSON %s
 ; RUN: FileCheck --check-prefix=LEFT %s < %t/absent.ll
 ; RUN: not %{opt} < %s -poseidon-profile-use=%S/../Inputs/other_sites -poseidon-strict-mode -o /dev/null 2>&1 \
 ; RUN:   | FileCheck --check-prefix=STRICT %s
@@ -61,6 +63,7 @@ attributes #0 = { "target-cpu"="x86-64" }
 ; NEVER: [poseidon] tester: the profiling run instrumented this site and never executed it ({{.*}}never_executed/preprocess_tester.fpprofile); left unchanged
 ; NEVER-NOT: [poseidon]
 ; NEVER-REMARK: remark: <unknown>:0:0: Poseidon left the site unchanged: the profiling run instrumented this site and never executed it
+; NEVER-JSON: preprocess_tester: never_executed; the profiling run instrumented this site and never executed it{{$}}
 
 ; The site calls the body, which stays as written.
 ; LEFT-LABEL: define double @tester(
@@ -81,6 +84,7 @@ attributes #0 = { "target-cpu"="x86-64" }
 ; ABSENT: warning: <unknown>:0:0: in function test_opt {{.*}}: Poseidon: no profile at {{.*}}other_sites/preprocess_tester.fpprofile: the profiled program did not contain this site (it was annotated after the profiling run, is in a translation unit the profiled program did not link, or was renamed); leaving the site unchanged
 ; ABSENT: [poseidon] tester: the profiled program did not contain this site (no profile at {{.*}}other_sites/preprocess_tester.fpprofile); left unchanged
 ; ABSENT: remark: <unknown>:0:0: Poseidon left the site unchanged: the profiled program did not contain this site (it was annotated after the profiling run, is in a translation unit the profiled program did not link, or was renamed)
+; ABSENT-JSON: preprocess_tester: unprofiled; the profiled program did not contain this site
 
 ; STRICT: error: <unknown>:0:0: in function test_opt {{.*}}: Poseidon: no profile of tester at {{.*}}other_sites/preprocess_tester.fpprofile: the profiled program did not contain this site (it was annotated after the profiling run, is in a translation unit the profiled program did not link, or was renamed), and -poseidon-strict-mode does not leave a site unchanged
 

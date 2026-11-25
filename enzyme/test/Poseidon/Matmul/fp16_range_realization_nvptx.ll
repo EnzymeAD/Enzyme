@@ -8,8 +8,8 @@
 ; RUN: %{opt} -poseidon-tau=1e-6 -poseidon-print -poseidon-cache=%t/tau 2>&1 | FileCheck --check-prefix=TAU %s
 ; RUN: cat %t/tau/matmulacc_*.json | FileCheck --check-prefix=KEY %s
 ; RUN: %{opt} -poseidon-cost-budget=0 -poseidon-cache=%t/budget
-; RUN: FileCheck --check-prefix=KEY %s < %t/budget/table.json
-; RUN: sed -i 's/"TCEC backend": "[^"]*"/"TCEC backend": "another"/' %t/budget/table.json %t/budget/matmulacc_*.json
+; RUN: cat %t/budget/dp_*.json | FileCheck --check-prefix=KEY %s
+; RUN: sed -i 's/"TCEC backend": "[^"]*"/"TCEC backend": "another"/' %t/budget/dp_*.json %t/budget/matmulacc_*.json
 ; RUN: %{opt} -poseidon-cost-budget=0 -poseidon-cache=%t/budget 2>&1 | FileCheck --check-prefix=ANOTHER %s
 
 ; Operand A of the product of ozaki_dispatch_nvptx.ll is profiled at 1e-9

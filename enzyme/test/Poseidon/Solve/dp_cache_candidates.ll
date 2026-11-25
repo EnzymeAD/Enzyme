@@ -1,6 +1,7 @@
 ; DEFINE: %{herbie} = %loadPoseidon -passes="poseidon,poseidon-finalize" \
 ; DEFINE:   -poseidon-enable-herbie=true -poseidon-enable-pt=false \
-; DEFINE:   -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cost-budget=1e9
+; DEFINE:   -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cost-budget=1e9 \
+; DEFINE:   -poseidon-print
 ; DEFINE: %{keys} = env FAKE_HERBIE_DIR=%S/../Inputs/dp_cache_keys %opt < %S/../Inputs/regime_split/tester.ll %{herbie} \
 ; DEFINE:   -poseidon-herbie-binary=%S/../Inputs/fake-herbie.sh
 ; DEFINE: %{array} = %opt < %t/array.ll %{herbie} \
@@ -12,13 +13,14 @@
 ; A DP table read back from the cache applies the candidates its solve picked,
 ; and it is keyed on the candidates it was solved over.
 
-; With the same module and answer, the rewrite id the solve's _rewrites.json
-; gives the applied rewrite is the id both compiles' explain reports give it.
+; With the same module and answer, the rewrite id the solve's explanation
+; gives the applied rewrite is the one the explanation of the compile that
+; reads the table back gives it.
 ; RUN: mkdir %t/ids
 ; RUN: %{keys} -poseidon-profile-use=%S/../Inputs/regime_split/profiles -poseidon-cache=%t/ids/c -poseidon-report-path=%t/ids/solve -S -o /dev/null 2>&1 | FileCheck --check-prefix=IDS-SOLVE %s
 ; RUN: %{keys} -poseidon-profile-use=%S/../Inputs/regime_split/profiles -poseidon-cache=%t/ids/c -poseidon-report-path=%t/ids/hit -S -o /dev/null 2>&1 | FileCheck --check-prefix=IDS-HIT %s
-; RUN: FileCheck --check-prefix=IDS-REWRITES %s < %t/ids/solve/preprocess_tester_rewrites.json
-; RUN: sed -n 's/^ *"id": "\(R[0-9]*_[0-9]*\)",$/\1/p' %t/ids/solve/preprocess_tester_rewrites.json > %t/ids/solve.id
+; RUN: %python -c "import json, sys; print(*json.load(open(sys.argv[1]))['result']['applied'])" %t/ids/solve/preprocess_tester.explain.json > %t/ids/solve.id
+; RUN: FileCheck --check-prefix=IDS-ID %s < %t/ids/solve.id
 ; RUN: FileCheck --check-prefix=IDS-EXPLAIN -DID=$(cat %t/ids/solve.id) %s < %t/ids/solve/preprocess_tester.explain.json
 ; RUN: FileCheck --check-prefix=IDS-EXPLAIN -DID=$(cat %t/ids/solve.id) %s < %t/ids/hit/preprocess_tester.explain.json
 
@@ -26,9 +28,7 @@
 
 ; IDS-HIT: Loaded DP tables from cache
 
-; IDS-REWRITES: "id": "R{{[0-9]+}}_{{[0-9]+}}",
-; IDS-REWRITES: "rewritten_expr": "(/.f64 (*.f64 v1 v1) (+.f64 (sqrt.f64 (+.f64 (*.f64 v0 v0) (*.f64 v1 v1))) v0))"
-; IDS-REWRITES: "total_rewrites": 1
+; IDS-ID: {{^R[0-9]+_[0-9]+$}}
 
 ; IDS-EXPLAIN: "result": {
 ; IDS-EXPLAIN-NEXT: "applied": [
@@ -52,7 +52,7 @@
 ; SET-FIRST: Applying solution for (let* ((t1 (- (sqrt (+ (* v0 v0) (* v1 v1))) v0))) (array t1 (* t1 0.5)))
 
 ; SET-DRIFT: array core returned nothing
-; SET-DRIFT: [poseidon] DP cache entry for preprocess_tester was solved for a different candidate set; re-solving.
+; SET-DRIFT-NOT: DP cache entry
 ; SET-DRIFT: Solving the DP for preprocess_tester.
 ; SET-DRIFT-NOT: (array t1
 ; SET-DRIFT: Applying solution for (- (sqrt (+ (* v0 v0) (* v1 v1))) v0)

@@ -87,14 +87,14 @@ attributes #0 = { "target-cpu"="x86-64" }
 ; BUDGET-NEXT: [poseidon] subgraph cannot be priced (the profiled input box is empty or unbounded); discarding its 2 precision candidate(s) and keeping the original body.
 ; BUDGET: No solution found within the computation cost budget!
 ; BUDGET-NEXT: remark: <unknown>:0:0: Poseidon left (? + ?) * ? as written: its candidates could not be priced: the profiled input box is empty or unbounded and the algebraic search is disabled
-; BUDGET: [poseidon] no rewrite applied for preprocess_tester; calling original body tester (bit-transparent no-op)
+; BUDGET: warning: {{.*}}Poseidon returned false (no change) for preprocess_tester{{$}}
 ; BUDGET: [poseidon] subgraph cannot be priced (every sample of the original expression scored NaN); discarding its 4 precision candidate(s) and keeping the original body.
 ; BUDGET: No solution found within the computation cost budget!
 ; BUDGET-NEXT: remark: <unknown>:0:0: Poseidon left sqrt(? * ?) + ? as written: its candidates could not be priced: every sample of the original expression scored NaN and the algebraic search is disabled
-; BUDGET: [poseidon] no rewrite applied for preprocess_tester_nan; calling original body tester_nan (bit-transparent no-op)
+; BUDGET: warning: {{.*}}Poseidon returned false (no change) for preprocess_tester_nan{{$}}
 
 ; TAU: [poseidon] preprocess_tester: 1 subgraph output(s) carry no priced candidate, so the baseline below covers only the priced ones and the reported relative error is a lower bound.
-; TAU: [poseidon] no rewrite applied for preprocess_tester; calling original body tester (bit-transparent no-op)
+; TAU: warning: {{.*}}Poseidon returned false (no change) for preprocess_tester{{$}}
 ; TAU: [poseidon] preprocess_tester_nan: 1 subgraph output(s) carry no priced candidate, so the baseline below covers only the priced ones and the reported relative error is a lower bound.
 ; TAU-NEXT: error: <unknown>:0:0: in function preprocess_tester_nan void (double, double, ptr): Poseidon: site preprocess_tester_nan was given an accuracy tolerance but its profile carries a total sensitivity of 0.000000e+00, so no rewrite's modelled error can be expressed as a per-operation relative level; re-run profile generation for this site.
 

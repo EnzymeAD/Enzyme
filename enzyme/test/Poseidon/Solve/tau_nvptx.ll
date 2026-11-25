@@ -2,7 +2,7 @@
 ; DEFINE:   -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" \
 ; DEFINE:   -poseidon-profile-use=%t/prof -poseidon-enable-herbie=false \
 ; DEFINE:   -poseidon-enable-pt=true -poseidon-enable-multifloat=true -poseidon-two-tier-step=100 \
-; DEFINE:   -poseidon-enable-three-tier=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -S
+; DEFINE:   -poseidon-enable-three-tier=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-print -S
 ; RUN: rm -rf %t && mkdir -p %t/prof
 ; RUN: cp %S/../Inputs/ds_expansion/preprocess_fms_body.fpprofile %t/prof/preprocess_fms_kernel_poseidon_body.fpprofile
 
@@ -19,13 +19,16 @@
 ; RUN: mkdir %t/ladder
 ; RUN: sed "s/double 1.000000e-07/double 1.000000e-12/" %s > %t/ladder/mid.ll
 ; RUN: sed "s/double 1.000000e-07/double 1.000000e-18/" %s > %t/ladder/tight.ll
-; RUN: %opt %s %{opt} -poseidon-cache=%t/ladder/c 2>&1 | FileCheck --check-prefix=LADDER-LOOSE %s
+; RUN: %opt %s %{opt} -poseidon-cache=%t/ladder/c -poseidon-explain=%t/ladder/loose 2>&1 | tee %t/ladder/loose.log | FileCheck --check-prefix=LADDER-LOOSE %s
 ; RUN: %opt %t/ladder/mid.ll %{opt} -poseidon-cache=%t/ladder/c 2>&1 | FileCheck --check-prefixes=LADDER-MID,EXP2 --implicit-check-not="Solving the DP" %s
-; RUN: %opt %t/ladder/tight.ll %{opt} -poseidon-cache=%t/ladder/c 2>&1 | FileCheck --check-prefix=LADDER-TIGHT --implicit-check-not="Solving the DP" --implicit-check-not="!poseidon.ds.join" %s
+; RUN: %opt %t/ladder/tight.ll %{opt} -poseidon-cache=%t/ladder/c -poseidon-explain=%t/ladder/tight 2>&1 | tee %t/ladder/tight.log | FileCheck --check-prefix=LADDER-TIGHT --implicit-check-not="Solving the DP" --implicit-check-not="!poseidon.ds.join" %s
+; RUN: %python %S/../Inputs/explain/stderr_matches.py %t/ladder/loose.log %t/ladder/loose | FileCheck --check-prefix=LOOSE-JSON %s
+; RUN: %python %S/../Inputs/explain/stderr_matches.py %t/ladder/tight.log %t/ladder/tight | FileCheck --check-prefix=TIGHT-JSON %s
+; RUN: FileCheck --check-prefix=TIGHT-BEST %s < %t/ladder/tight/preprocess_fms_kernel_poseidon_body.explain.json
 
 ; LADDER-LOOSE: Per-operation relative error tolerance: 1.000000e-07
 ; LADDER-LOOSE-NEXT: Solving the DP for preprocess_fms_kernel_poseidon_body.
-; LADDER-LOOSE: DP table for preprocess_fms_kernel_poseidon_body cached to file.
+; LADDER-LOOSE: DP table for preprocess_fms_kernel_poseidon_body cached to
 ; LADDER-LOOSE: [poseidon] preprocess_fms_kernel_poseidon_body: tau=1.000000e-07 S=1.187943e+04 A0=2.571104e-13 selected cost=-9.223869e-01 accCost=1.697296e-04 rel=1.428768e-08
 ; LADDER-LOOSE: Applying solution for CS: All FP64(0%) + FP32(100%) (#0)
 ; LADDER-LOOSE: [poseidon] pin: fms_kernel:PT0=All FP64(0%) + FP32(100%)
@@ -39,11 +42,16 @@
 ; LADDER-MID: Applying solution for CS: All FP64(0%) + Expansion2(100%) (#2)
 ; LADDER-MID: [poseidon] pin: fms_kernel:PT0=All FP64(0%) + Expansion2(100%)
 
+; The explanation of each compile says what its decision lines say.
+; LOOSE-JSON: preprocess_fms_kernel_poseidon_body: rewritten{{$}}
+; TIGHT-JSON: preprocess_fms_kernel_poseidon_body: no_solution; no frontier point meets the accuracy target 1e-18{{$}}
+; TIGHT-BEST: "best_achievable_rel_error": 2.16433{{[0-9]+}}e-17,
+
 ; LADDER-TIGHT: Per-operation relative error tolerance: 1.000000e-18
 ; LADDER-TIGHT-NEXT: Cache entry for preprocess_fms_kernel_poseidon_body found. Loaded DP tables from cache.
 ; LADDER-TIGHT: No solution found that meets accuracy tolerance 1.000000e-18!
 ; LADDER-TIGHT-NEXT: Best achievable relative accuracy in DP table: 2.164332e-17
-; LADDER-TIGHT-NEXT: [poseidon] pin: {{$}}
+; LADDER-TIGHT: [poseidon] pin: {{$}}
 ; LADDER-TIGHT: warning: {{.*}}Poseidon: Poseidon returned false (no change) for preprocess_fms_kernel_poseidon_body
 ; LADDER-TIGHT: [poseidon] no rewrite applied for preprocess_fms_kernel_poseidon_body; calling original body fms_kernel_poseidon_body (bit-transparent no-op)
 ; LADDER-TIGHT-LABEL: define {{.*}} @fms_kernel(

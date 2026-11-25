@@ -7,6 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "Explain.h"
+#include "Core/CacheKey.h"
 #include "Model/CostModel.h"
 #include "Model/FPCore.h"
 #include "Optimize.h"
@@ -87,42 +88,15 @@ static std::string clip(const std::string &s, size_t n = kRemarkExprChars) {
   return s.substr(0, n) + "...";
 }
 
+// The C type of T, or T as the IR prints it when it is not a float type.
 static std::string typeName(Type *T) {
-  if (T->isFloatTy())
-    return "float";
-  if (T->isDoubleTy())
-    return "double";
-  if (T->isHalfTy())
-    return "_Float16";
-  if (T->isBFloatTy())
-    return "__bf16";
-  if (T->isX86_FP80Ty())
-    return "long double";
-  if (T->isFP128Ty())
-    return "__float128";
+  std::string dtype = dtypeOfType(T);
+  if (!dtype.empty())
+    return cTypeName(dtype).str();
   std::string s;
   raw_string_ostream os(s);
   T->print(os);
   return s;
-}
-
-static std::string dtypeOf(PrecisionChangeType t) {
-  switch (t) {
-  case PrecisionChangeType::BF16:
-    return "bf16";
-  case PrecisionChangeType::FP16:
-    return "f16";
-  case PrecisionChangeType::FP32:
-    return "f32";
-  case PrecisionChangeType::FP64:
-    return "f64";
-  case PrecisionChangeType::FP80:
-    return "f80";
-  case PrecisionChangeType::FP128:
-    return "f128";
-  default:
-    return "";
-  }
 }
 
 static std::string precisionWords(PrecisionChangeType t) {
@@ -455,11 +429,68 @@ static std::string exprWords(const Unit &U) {
       .str();
 }
 
-// The symbol of the function a site was cut from, without the suffixes the
-// site's clones carry.
-static std::string siteSymbol(const Session &S, const Function &F) {
-  const std::string key = siteKey(S, F);
-  return StringRef(key).split(kPerCallInfix).first.str();
+static std::string siteSymbolOf(const Session &S, const Function &F) {
+  return siteSymbol(siteKey(S, F)).str();
+}
+
+// The schema identifier of every explanation; see Explainer::toJSON.
+static constexpr StringLiteral kSchema = "poseidon-explain/2";
+
+// The names of the site whose clone is F, or whose body is F when no clone was
+// made, where it is called and where it is written.
+static json::Object functionJSON(const Session &S, const Function &F) {
+  json::Object fn;
+  const Function *origin = siteOriginOf(S, F);
+  std::string symbol = siteSymbolOf(S, F);
+  fn["name"] = llvm::demangle(symbol);
+  fn["symbol"] = symbol;
+  fn["ir"] = F.getName().str();
+  auto site = S.SiteCalls.find(&F);
+  if (site != S.SiteCalls.end())
+    putLoc(fn, "site", locOf(site->second));
+  const DISubprogram *SP = origin ? origin->getSubprogram() : F.getSubprogram();
+  if (SP)
+    putLoc(fn, "loc", SourceLoc{SP->getFilename().str(), SP->getLine(), 0});
+  return fn;
+}
+
+// The target a site is solved for: `tau` > 0, from the site or from
+// -poseidon-tau, or else the cost budget.
+static json::Object targetJSON(const Options &O, double tau, bool siteTarget) {
+  json::Object target;
+  if (tau > 0.0) {
+    target["tau"] = tau;
+    target["tau_from"] = siteTarget ? "site" : "flag";
+  } else {
+    target["budget"] = O.Solver.CostBudget;
+  }
+  return target;
+}
+
+// The directory of -poseidon-explain, else of -poseidon-report-path.
+static const std::string &explanationDir(const Options &O) {
+  const DiagnosticOptions &D = O.Diagnostics;
+  return !D.Explain.empty() ? D.Explain : D.ReportPath;
+}
+
+// Writes `doc`, the explanation of a site, as <stem>.explain.json into the
+// explanation directory.
+static void writeExplanation(const Session &S, StringRef stem,
+                             json::Object doc) {
+  const std::string &dir = explanationDir(S.Opts);
+  if (auto EC = sys::fs::create_directories(dir)) {
+    errs() << "Error creating explanation directory: " << EC.message() << '\n';
+    return;
+  }
+  SmallString<128> path(dir);
+  sys::path::append(path, stem + ".explain.json");
+  if (Error Err = writeFileAtomically(
+          path, formatv("{0:2}", json::Value(std::move(doc))).str() + "\n")) {
+    errs() << "Error writing explanation: " << toString(std::move(Err)) << '\n';
+    return;
+  }
+  if (S.Opts.Diagnostics.Print)
+    errs() << "Poseidon explanation written to " << path << '\n';
 }
 
 // Where a remark about a site points: its call, else the site's function.
@@ -479,6 +510,8 @@ class Explainer {
   ArrayRef<SolutionStep> steps;
   const SolveRecord &rec;
   ValueNamer namer;
+  // Copies: fpcoreToC may add to the maps it is given, and the explanation
+  // must leave the solve's own as they are.
   std::unordered_map<Value *, std::shared_ptr<FPNode>> nodes;
   std::unordered_map<std::string, Value *> symbols;
   std::set<std::pair<const SiteUnit *, size_t>> applied, skipped, onPareto,
@@ -579,17 +612,11 @@ public:
 } // namespace
 
 void Explainer::markSteps() {
-  SmallPtrSet<Value *, 8> rewritten;
-  for (const SolutionStep &step : steps) {
-    ArrayRef<Value *> outputs = unitOf(step).rewrittenOutputs();
-    if (llvm::any_of(outputs,
-                     [&](Value *r) { return rewritten.contains(r); })) {
-      skipped.insert(keyOf(step));
-      continue;
-    }
-    rewritten.insert(outputs.begin(), outputs.end());
+  for (const SolutionStep &step : stepsToApply(steps))
     applied.insert(keyOf(step));
-  }
+  for (const SolutionStep &step : steps)
+    if (!applied.count(keyOf(step)))
+      skipped.insert(keyOf(step));
   for (const auto &[cost, sol] : rec.solutions)
     for (const SolutionStep &step : sol) {
       onPareto.insert(keyOf(step));
@@ -763,9 +790,9 @@ void Explainer::addCSAlternatives(Unit &U, const Subgraph &sg) {
             w += formatv(" ({0}:{1})", L.line, L.col).str();
           names.push_back(w);
           A.changedOps.push_back(w);
-          std::string dt = dtypeOf(ch.newType);
-          if (!dt.empty())
-            dtypes[node] = dt;
+          if (!expansionComponents(ch.newType))
+            dtypes[node] =
+                dtypeOfType(getLLVMFPType(ch.newType, F.getContext()));
         }
         c["ops"] = std::move(idx);
         A.changes.push_back(std::move(c));
@@ -1056,8 +1083,7 @@ void Explainer::buildSubgraph(size_t s) {
       continue;
     opIdx[&I] = U.ops.size();
     json::Object op;
-    auto it = st.valueToNodeMap.find(&I);
-    FPNode *N = it == st.valueToNodeMap.end() ? nullptr : it->second.get();
+    FPNode *N = nodeOf(&I);
     if (N)
       op["opcode"] = N->op;
     op["type"] = typeName(I.getType());
@@ -1078,8 +1104,7 @@ void Explainer::buildSubgraph(size_t s) {
   for (Value *V : sg.inputs) {
     inIdx[V] = U.inputs.size();
     json::Object in;
-    auto it = st.valueToNodeMap.find(V);
-    FPNode *N = it == st.valueToNodeMap.end() ? nullptr : it->second.get();
+    FPNode *N = nodeOf(V);
     if (N && !N->symbol.empty())
       in["var"] = N->symbol;
     std::string name = namer.name(V);
@@ -1147,13 +1172,11 @@ void Explainer::buildSubgraph(size_t s) {
     if (!c.empty())
       out["c"] = c;
     U.outC.push_back(c);
-    auto it = st.valueToNodeMap.find(O);
-    if (it != st.valueToNodeMap.end() && it->second) {
-      U.executions = std::max(U.executions, it->second->executions);
-      if (std::isfinite(it->second->sens))
-        U.sensitivity = std::isfinite(U.sensitivity)
-                            ? U.sensitivity + it->second->sens
-                            : it->second->sens;
+    if (ON) {
+      U.executions = std::max(U.executions, ON->executions);
+      if (std::isfinite(ON->sens))
+        U.sensitivity =
+            std::isfinite(U.sensitivity) ? U.sensitivity + ON->sens : ON->sens;
     }
     U.outputs.push_back(std::move(out));
   }
@@ -1267,36 +1290,40 @@ void Explainer::build() {
     buildMatmul(m);
 }
 
+// The explanation of a solved site; the schema is the one `poseidon-explain
+// --help` documents, versioned by kSchema.
 json::Object Explainer::toJSON() {
   json::Object root;
-  root["schema"] = "poseidon-explain/1";
+  root["schema"] = kSchema;
 
-  json::Object fn;
-  const Function *origin = siteOriginOf(Sess, F);
-  std::string symbol = siteSymbol(Sess, F);
-  fn["name"] = llvm::demangle(symbol);
-  fn["symbol"] = symbol;
-  fn["ir"] = F.getName().str();
-  auto site = Sess.SiteCalls.find(&F);
-  if (site != Sess.SiteCalls.end())
-    putLoc(fn, "site", locOf(site->second));
-  const DISubprogram *SP = origin ? origin->getSubprogram() : F.getSubprogram();
-  if (SP)
-    putLoc(fn, "loc", SourceLoc{SP->getFilename().str(), SP->getLine(), 0});
+  json::Object fn = functionJSON(Sess, F);
+  fn["canonical_hash"] = st.canonicalHash;
+  fn["profile"] = st.profilePath;
   root["function"] = std::move(fn);
 
-  json::Object target;
-  if (tau > 0.0) {
-    target["tau"] = tau;
-    target["tau_from"] = rec.siteTarget ? "site" : "flag";
-  } else {
-    target["budget"] = Sess.Opts.Solver.CostBudget;
-  }
+  json::Object target = targetJSON(Sess.Opts, tau, rec.siteTarget);
   target["cost_model"] = costModelPath(Sess.CostModel);
   target["selector"] = rec.selector;
   if (rec.fromCache)
     target["from_cache"] = true;
+  if (!rec.sites.empty()) {
+    json::Array sites;
+    for (const std::string &name : rec.sites)
+      sites.push_back(name);
+    target["sites"] = std::move(sites);
+  }
   root["target"] = std::move(target);
+
+  json::Object scaleObj;
+  putNum(scaleObj, "accuracy_scale", rec.accScale);
+  putNum(scaleObj, "baseline_accuracy_cost", rec.baseline);
+  putNum(scaleObj, "profiled_cost", rec.profiledCost);
+  if (st.kappa) {
+    scaleObj["kappa"] = *st.kappa;
+    scaleObj["kappa_mark"] = st.kappaMark;
+    scaleObj["kappa_factor"] = st.scaleFactor;
+  }
+  root["scale"] = std::move(scaleObj);
 
   json::Object result;
   std::optional<int64_t> before = costBefore();
@@ -1316,10 +1343,57 @@ json::Object Explainer::toJSON() {
     putNum(result, "modelled_rel_error", relErr(acc));
   }
   json::Array appliedIds;
-  for (const SolutionStep &step : steps)
-    if (!skipped.count(keyOf(step)))
+  json::Array stepList;
+  for (const SolutionStep &step : steps) {
+    const bool done = !skipped.count(keyOf(step));
+    if (done)
       appliedIds.push_back(stepId(step));
+    stepList.push_back(
+        json::Object{{"id", stepId(step)},
+                     {"choice", unitOf(step).choiceText(step.candidateIndex)},
+                     {"applied", done}});
+  }
+  const bool rewritten = !appliedIds.empty();
   result["applied"] = std::move(appliedIds);
+  result["steps"] = std::move(stepList);
+  result["pin"] = pinValue(Sess, st, stepsToApply(steps));
+  if (rec.selected) {
+    json::Object selected;
+    selected["cost"] = scale.share(*rec.selected);
+    auto point = rec.table.find(*rec.selected);
+    if (point != rec.table.end()) {
+      putNum(selected, "accuracy_cost", point->second);
+      putNum(selected, "modelled_rel_error", relErr(point->second));
+    }
+    result["selected"] = std::move(selected);
+  }
+  if (rewritten) {
+    result["status"] = "rewritten";
+  } else if (!rec.table.empty() && !rec.selected) {
+    result["status"] = "no_solution";
+    if (tau > 0.0) {
+      result["reason"] =
+          "no frontier point meets the accuracy target " + num(tau);
+      double best = std::numeric_limits<double>::infinity();
+      for (const auto &[cost, acc] : rec.table)
+        best = std::min(best, acc);
+      putNum(result, "best_achievable_rel_error", relErr(best));
+    } else {
+      result["reason"] = "no frontier point is within the cost budget " +
+                         costStr(scale.fromShare(Sess.Opts.Solver.CostBudget));
+    }
+  } else {
+    result["status"] = "as_written";
+    if (rec.selector == "manual")
+      result["reason"] = "no -poseidon-apply-rewrites item names a candidate "
+                         "of this site";
+    else if (rec.selected)
+      result["reason"] = "the selected frontier point leaves the site as "
+                         "written";
+    else
+      result["reason"] = "no product candidate meets the target and is "
+                         "cheaper than as written";
+  }
   root["result"] = std::move(result);
 
   json::Array subgraphs;
@@ -1453,7 +1527,7 @@ json::Object Explainer::toJSON() {
 void Explainer::emitRemarks() {
   OptimizationRemarkEmitter ORE(&F);
   DiagnosticLocation siteLoc = siteLocation(Sess, F);
-  std::string siteName = llvm::demangle(siteSymbol(Sess, F));
+  std::string siteName = llvm::demangle(siteSymbolOf(Sess, F));
   if (auto paren = siteName.find('('); paren != std::string::npos)
     siteName = siteName.substr(0, paren);
 
@@ -1652,23 +1726,40 @@ bool explainWanted(const Options &O, const Function &F) {
          OptimizationRemarkEmitter::allowExtraAnalysis(F, kPass);
 }
 
-void noteSiteCall(Session &S, const Function *body, const DebugLoc &loc) {
-  S.SiteCalls[body] = loc;
+void explainLeftAlone(Session &S, Function &F, double tau, bool siteTarget,
+                      StringRef status, StringRef reason, StringRef profile,
+                      bool body) {
+  if (explanationDir(S.Opts).empty())
+    return;
+  json::Object result{{"status", status}, {"reason", reason}};
+  if (!profile.empty())
+    result["profile"] = profile;
+  writeExplanation(
+      S, body ? bodyProfileStem(F) : profileNameStem(F.getName().str()),
+      json::Object{{"schema", kSchema},
+                   {"function", functionJSON(S, F)},
+                   {"target", targetJSON(S.Opts, tau, siteTarget)},
+                   {"result", std::move(result)}});
 }
 
-void explainNothingToOptimize(Session &S, Function &F) {
+void explainNothingToOptimize(Session &S, Function &F, double tau,
+                              bool siteTarget) {
+  static constexpr StringLiteral reason =
+      "Poseidon found no floating-point subgraph of two or more operations "
+      "and no matrix product to optimize";
   OptimizationRemarkEmitter ORE(&F);
   ORE.emit([&]() {
     DiagnosticLocation loc = siteLocation(S, F);
     OptimizationRemarkMissed R(kPass, "NothingToOptimize", loc,
                                &F.getEntryBlock());
-    R << "Poseidon found no floating-point subgraph of two or more "
-         "operations and no matrix product to optimize";
+    R << reason;
     return R;
   });
+  explainLeftAlone(S, F, tau, siteTarget, "nothing_to_optimize", reason);
 }
 
-void explainUnprofiled(Session &S, Function &F, StringRef cause) {
+void explainUnprofiled(Session &S, Function &F, double tau, bool siteTarget,
+                       StringRef status, StringRef cause, StringRef profile) {
   OptimizationRemarkEmitter ORE(&F);
   ORE.emit([&]() {
     DiagnosticLocation loc = siteLocation(S, F);
@@ -1676,35 +1767,21 @@ void explainUnprofiled(Session &S, Function &F, StringRef cause) {
     R << "Poseidon left the site unchanged: " << ore::NV("Cause", cause);
     return R;
   });
+  explainLeftAlone(S, F, tau, siteTarget, status, cause, profile);
 }
 
 void explainSolve(Session &S, Function &F, FunctionFPState &st,
                   ArrayRef<SolutionStep> steps, const SolveRecord &rec) {
-  const DiagnosticOptions &D = S.Opts.Diagnostics;
   const bool remarks = OptimizationRemarkEmitter::allowExtraAnalysis(F, kPass);
-  const std::string dir = !D.Explain.empty() ? D.Explain : D.ReportPath;
-  if (!remarks && dir.empty())
+  const bool write = !explanationDir(S.Opts).empty();
+  if (!remarks && !write)
     return;
   Explainer E(S, F, st, steps, rec);
   E.build();
   if (remarks)
     E.emitRemarks();
-  if (dir.empty())
-    return;
-  if (auto EC = sys::fs::create_directories(dir)) {
-    errs() << "Error creating explanation directory: " << EC.message() << '\n';
-    return;
-  }
-  SmallString<128> path(dir);
-  sys::path::append(path, profileNameStem(F.getName().str()) + ".explain.json");
-  std::error_code EC;
-  raw_fd_ostream out(path, EC, sys::fs::OF_Text);
-  if (EC) {
-    errs() << "Error writing explanation: " << EC.message() << '\n';
-    return;
-  }
-  out << formatv("{0:2}", json::Value(E.toJSON())) << '\n';
-  errs() << "Poseidon explanation written to " << path << '\n';
+  if (write)
+    writeExplanation(S, profileNameStem(F.getName().str()), E.toJSON());
 }
 
 } // namespace poseidon

@@ -23,6 +23,7 @@
 #include "llvm/IR/Metadata.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/ValueHandle.h"
+#include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 
 #include <memory>
@@ -32,8 +33,12 @@ using namespace llvm;
 
 namespace poseidon {
 
-bool compileAsWritten(Module &twin, const Session &parent, PassBuilder &PB,
-                      OptimizationLevel Level, ThinOrFullLTOPhase Phase) {
+// Runs the default pipeline of `Phase` on `twin` as a build without a profile,
+// the diagnostics already given for the module's sites silenced. False if it
+// reported an error.
+static bool compileAsWritten(Module &twin, const Session &parent,
+                             PassBuilder &PB, OptimizationLevel Level,
+                             ThinOrFullLTOPhase Phase) {
   struct Quiet : DiagnosticHandler {
     bool failed = false;
     bool handleDiagnostics(const DiagnosticInfo &DI) override {
@@ -141,7 +146,10 @@ static void collectReferences(Function &F, SmallVectorImpl<WeakVH> &out) {
         collectReferences(op, out);
 }
 
-bool takeRewritten(Module &T, ArrayRef<Function *> rewritten) {
+// Into `T`, the module as written compiled, the functions in `rewritten`, each
+// in place of T's of the same name, with what they refer to. False if a
+// reference has no counterpart in T, which is then unusable.
+static bool takeRewritten(Module &T, ArrayRef<Function *> rewritten) {
   ValueToValueMapTy VMap;
   RewrittenReferences refs(T);
   SmallVector<std::pair<Function *, Function *>, 4> replaced;
@@ -210,7 +218,8 @@ bool takeRewritten(Module &T, ArrayRef<Function *> rewritten) {
   return true;
 }
 
-void adoptModule(Module &M, Module &from) {
+// The contents of `M` replaced by those of `from`, which is left empty.
+static void adoptModule(Module &M, Module &from) {
   M.dropAllReferences();
   for (GlobalValue &GV : make_early_inc_range(M.global_values()))
     GV.removeDeadConstantUsers();
@@ -256,6 +265,31 @@ void adoptModule(Module &M, Module &from) {
       own->addOperand(op);
   }
   M.setModuleInlineAsm(from.getModuleInlineAsm());
+}
+
+void replaceWithAsWritten(Module &M, std::unique_ptr<Module> twin,
+                          const Session &parent, PassBuilder &PB,
+                          OptimizationLevel Level, ThinOrFullLTOPhase Phase,
+                          ArrayRef<Function *> rewritten) {
+  if (!compileAsWritten(*twin, parent, PB, Level, Phase))
+    return;
+  if (!takeRewritten(*twin, rewritten)) {
+    llvm::errs() << "[poseidon] " << M.getName()
+                 << ": a rewritten function refers to what the module as "
+                    "written does not hold alike; emitting the rewritten "
+                    "module\n";
+    return;
+  }
+  adoptModule(M, *twin);
+  if (!parent.Opts.Diagnostics.Print)
+    return;
+  if (rewritten.empty())
+    llvm::errs() << "[poseidon] every site of " << M.getName()
+                 << " was left alone; emitting the module as written\n";
+  else
+    llvm::errs() << "[poseidon] " << M.getName() << ": " << rewritten.size()
+                 << " function(s) a rewrite reached; every other function as "
+                    "written\n";
 }
 
 } // namespace poseidon

@@ -40,9 +40,10 @@
     "cost_after": 0,
     "cost_before": 1.0,
     "modelled_rel_error": 1.1607706226323944e-16,
-    "modelled_rel_error_as_written": 2.770306794452491e-10
+    "modelled_rel_error_as_written": 2.770306794452491e-10,
+    "status": "rewritten"
   },
-  "schema": "poseidon-explain/1",
+  "schema": "poseidon-explain/2",
   "subgraphs": [
     {
       "alternatives": [

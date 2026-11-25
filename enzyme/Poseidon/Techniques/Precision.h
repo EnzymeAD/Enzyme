@@ -126,9 +126,6 @@ public:
     return candidates[i].desc;
   }
   std::string choiceText(size_t i) const override;
-  llvm::json::Object stepJSON(size_t i) override;
-  void writeReportStep(llvm::raw_ostream &OS, size_t i,
-                       llvm::StringRef pad) override;
   void materialize(size_t i) override;
   void price() override;
   void scaleErrors(double factor) override;
@@ -137,9 +134,6 @@ public:
   std::string selectionText(size_t i) const override {
     return candidates[i].desc;
   }
-  void addReportSummary(llvm::json::Array &summary) override;
-  void writeReportSummary(llvm::raw_ostream &OS) override;
-  void addCuratedRewrites(llvm::json::Array &rewrites) override;
 };
 
 } // namespace poseidon

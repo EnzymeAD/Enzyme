@@ -12,17 +12,19 @@
 ;     s += site_a(x, y) + site_b(x, y);
 ;   }
 
-; One budgets.txt lists the joint table's breakpoints, a budget of -0.4
-; rewrites both sites to FP32, a budget of -0.2 is spent on tester_b alone and
-; site_a is restored to its original body.
+; The explanation of each site lists the joint table's breakpoints, a budget
+; of -0.4 rewrites both sites to FP32, a budget of -0.2 is spent on tester_b
+; alone and site_a is restored to its original body.
 ; RUN: mkdir %t/sites
-; RUN: %opt %s %{passfn} %{prof} -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-joint-dp %{cm} -S -poseidon-cache=%t/sites/both -poseidon-cost-budget=-0.4 2>&1 | FileCheck --check-prefix=SITES-BOTH %s
-; RUN: FileCheck --check-prefix=SITES-BUDGETS %s < %t/sites/both/budgets.txt
-; RUN: %opt %s %{passfn} %{prof} -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-joint-dp -poseidon-print %{cm} -S -poseidon-cache=%t/sites/one -poseidon-cost-budget=-0.2 2>&1 | FileCheck --check-prefix=SITES-ONE %s
+; RUN: %opt %s %{passfn} %{prof} -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-joint-dp %{cm} -S -poseidon-cache=%t/sites/both -poseidon-explain=%t/sites/both/ex -poseidon-cost-budget=-0.4 -poseidon-print 2>&1 | FileCheck --check-prefix=SITES-BOTH %s
+; RUN: %poseidon_explain %t/sites/both/ex --format budgets | FileCheck --check-prefix=SITES-BUDGETS %s
+; RUN: %opt %s %{passfn} %{prof} -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-joint-dp %{cm} -S -poseidon-cache=%t/sites/one -poseidon-cost-budget=-0.2 -poseidon-print 2>&1 | FileCheck --check-prefix=SITES-ONE %s
 
 ; SITES-BOTH: Poseidon JOINT: collecting candidates from 2 marked function(s)
-; SITES-BOTH: JOINT DP table contains 4 entries; cost range [-4.500000e-01, 0.000000e+00]
-; SITES-BOTH: JOINT: minimum accuracy cost within budget: 1.154131e-04; computation cost used: -4.500000e-01
+; SITES-BOTH: Critical computation cost range: [-4.500000e-01, 0.000000e+00]
+; SITES-BOTH-NEXT: DP table contains 4 entries.
+; SITES-BOTH: Minimum accuracy cost within budget: 1.154131e-04
+; SITES-BOTH-NEXT: Computation cost budget used: -4.500000e-01
 ; SITES-BOTH: Applying solution for CS: All FP64(0%) + FP32(100%) (#0)
 ; SITES-BOTH: [poseidon] pin: tester_a:PT0=All FP64(0%) + FP32(100%)
 ; SITES-BOTH: [poseidon] Finished optimizing preprocess_tester_a
@@ -44,8 +46,10 @@
 
 ; SITES-BUDGETS: -0.45000000000000001,-0.29999999999999999,-0.050000000000000003,0
 
-; SITES-ONE: JOINT DP table contains 4 entries; cost range [-4.500000e-01, 0.000000e+00]
-; SITES-ONE: JOINT: minimum accuracy cost within budget: 2.184370e-06; computation cost used: -3.000000e-01
+; SITES-ONE: Critical computation cost range: [-4.500000e-01, 0.000000e+00]
+; SITES-ONE-NEXT: DP table contains 4 entries.
+; SITES-ONE: Minimum accuracy cost within budget: 2.184370e-06
+; SITES-ONE-NEXT: Computation cost budget used: -3.000000e-01
 ; SITES-ONE-NEXT: [poseidon] pin: {{$}}
 ; SITES-ONE: [poseidon] Finished optimizing preprocess_tester_a
 ; SITES-ONE: [poseidon] no rewrite applied for preprocess_tester_a; wrapper call restored to original body tester_a (bit-transparent no-op)
@@ -83,10 +87,10 @@
 ; RUN: %opt %s %loadPoseidon -passes=poseidon %{prof} -poseidon-enable-herbie=false -poseidon-enable-pt=false %{cm} -poseidon-cache= -poseidon-tau=0.5 -poseidon-cost-budget=nan -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-UNUSED --allow-empty %s
 
 ; SITES-STALE-NOT: Starting accuracy DP solver
-; SITES-STALE: error: {{.*}}Poseidon: -poseidon-cost-budget=-400 asks a solution to save more than the whole profiled cost. It takes the share of a site's profiled cost a solution may add, negative for one it has to save (-0.25 requires saving a quarter), not a cost. A solve writes to budgets.txt in its -poseidon-cache directory the share of each frontier point a budget selects.
+; SITES-STALE: error: {{.*}}Poseidon: -poseidon-cost-budget=-400 asks a solution to save more than the whole profiled cost. It takes the share of a site's profiled cost a solution may add, negative for one it has to save (-0.25 requires saving a quarter), not a cost. The frontier of a site's solve, with the budget that selects each point, is in the <site>.explain.json -poseidon-explain=<dir> writes.
 ; SITES-HUGE: error: {{.*}}Poseidon: -poseidon-cost-budget=1.0000000000000001e+300 lets a solution add more than 2^30 times the profiled cost, which the DP's cost axis does not hold; give a share of at most 1073741824.
 ; SITES-NONFINITE-NOT: Starting accuracy DP solver
-; SITES-NONFINITE: error: {{.*}}Poseidon: -poseidon-cost-budget=inf is not a finite number. It takes the share of a site's profiled cost a solution may add, negative for one it has to save (-0.25 requires saving a quarter), not a cost. A solve writes to budgets.txt in its -poseidon-cache directory the share of each frontier point a budget selects.
+; SITES-NONFINITE: error: {{.*}}Poseidon: -poseidon-cost-budget=inf is not a finite number. It takes the share of a site's profiled cost a solution may add, negative for one it has to save (-0.25 requires saving a quarter), not a cost. The frontier of a site's solve, with the budget that selects each point, is in the <site>.explain.json -poseidon-explain=<dir> writes.
 ; SITES-UNUSED-NOT: error:
 ; SITES-UNUSED-NOT: -poseidon-cost-budget
 
@@ -104,7 +108,9 @@
 ; RUN: sed 's/@tester_b, double %x, double %y)/@tester_b, double %x, double %y, metadata !"poseidon_tau", double 1.0e-02)/' %t/targets/a.ll > %t/targets/ab_same.ll
 ; RUN: not %opt %t/targets/a.ll %{pass} %{prof} -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-joint-dp %{cm} -poseidon-cache=%t/targets/c1 -S -o /dev/null 2>&1 | FileCheck --check-prefix=TARGETS-NONE %s
 ; RUN: not %opt %t/targets/ab_diff.ll %{pass} %{prof} -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-joint-dp %{cm} -poseidon-cache=%t/targets/c2 -S -o /dev/null 2>&1 | FileCheck --check-prefix=TARGETS-DIFF %s
-; RUN: %opt %t/targets/a.ll %{passfn} %{prof} -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-joint-dp %{cm} -poseidon-cache=%t/targets/c3 -poseidon-tau=1e-2 -S -o %t/targets/flag.out.ll 2> %t/targets/flag.err
+; RUN: %opt %t/targets/a.ll %{passfn} %{prof} -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-joint-dp %{cm} -poseidon-cache=%t/targets/c3 -poseidon-tau=1e-2 -poseidon-explain=%t/targets/ex -S -o %t/targets/flag.out.ll 2> %t/targets/flag.err
+; RUN: %python %S/../Inputs/explain/stderr_matches.py %t/targets/flag.err %t/targets/ex | FileCheck --check-prefix=TARGETS-JSON %s
+; RUN: FileCheck --check-prefix=TARGETS-SITES %s < %t/targets/ex/preprocess_tester_a.explain.json
 ; RUN: %opt %t/targets/ab_same.ll %{passfn} %{prof} -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-joint-dp %{cm} -poseidon-cache=%t/targets/c4 -S -o %t/targets/site.out.ll 2> %t/targets/site.err
 ; RUN: FileCheck --check-prefix=TARGETS-SOLVE %s < %t/targets/flag.err
 ; RUN: FileCheck --check-prefix=TARGETS-SOLVE %s < %t/targets/site.err
@@ -114,6 +120,12 @@
 
 ; TARGETS-NONE: error: {{.*}}Poseidon: the sites of one -poseidon-joint-dp solve have different accuracy targets: tester_a (1.000000e-02) tester_b (none); give them one target
 ; TARGETS-DIFF: error: {{.*}}Poseidon: the sites of one -poseidon-joint-dp solve have different accuracy targets: tester_a (1.000000e-02) tester_b (1.000000e-03); give them one target
+; TARGETS-JSON: preprocess_tester_a: rewritten
+; TARGETS-JSON-NEXT: preprocess_tester_b: rewritten
+; TARGETS-SITES: "selector": "joint",
+; TARGETS-SITES-NEXT: "sites": [
+; TARGETS-SITES-NEXT: "preprocess_tester_a",
+; TARGETS-SITES-NEXT: "preprocess_tester_b"
 ; TARGETS-SOLVE: [poseidon] preprocess_tester_a,preprocess_tester_b: tau=1.000000e-02 S=4.732407e+03 A0=1.003014e-13 selected cost=-4.500000e-01 accCost=1.154131e-04 rel=2.438782e-08
 
 define double @tester_a(double %x, double %y) #0 {

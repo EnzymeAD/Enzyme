@@ -51,7 +51,8 @@ struct ApplyItem {
 };
 
 struct PinState {
-  std::string spec;
+  // Whether `items` holds the items of the compile's -poseidon-apply-rewrites.
+  bool parsed = false;
   std::vector<ApplyItem> items;
   std::vector<std::string> sites;
   // Two sites cut from one body share a key; printing their pin twice would
@@ -68,8 +69,12 @@ llvm::SmallVector<SolutionStep> parseManualRewrites(Session &S,
 // sites answer to is an error.
 void noteSiteForPins(Session &S, const llvm::Function &body);
 
-// Prints the value of -poseidon-apply-rewrites that applies `applied` at the
-// site of `st` again.
+// The value of -poseidon-apply-rewrites that applies `applied` at the site of
+// `st` again.
+std::string pinValue(const Session &S, const FunctionFPState &st,
+                     llvm::ArrayRef<SolutionStep> applied);
+
+// Prints pinValue once per value.
 void printPin(Session &S, const FunctionFPState &st,
               llvm::ArrayRef<SolutionStep> applied);
 

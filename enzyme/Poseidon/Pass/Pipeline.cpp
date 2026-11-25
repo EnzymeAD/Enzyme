@@ -6,13 +6,9 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "Pipeline.h"
-
 #include "Driver.h"
-#include "Flags.h"
 #include "IR/Utils.h"
 #include "Profile/Instrument.h"
-#include "Profile/ProfileRead.h"
 #include "Profile/SiteProfile.h"
 #include "Session.h"
 #include "Sites/Annotations.h"
@@ -21,6 +17,7 @@
 #include "Sites/LaunchDescriptors.h"
 #include "Sites/LaunchStubs.h"
 #include "Sites/Markers.h"
+#include "Solve/Optimize.h"
 #include "Targets/MathLibrary.h"
 #include "Targets/OffloadRuntime.h"
 #include "Targets/Target.h"
@@ -38,6 +35,11 @@
 #include "llvm/IR/PassManager.h"
 #include "llvm/IR/ValueHandle.h"
 #include "llvm/Passes/PassBuilder.h"
+#if LLVM_VERSION_MAJOR >= 22 && !defined(ENZYME_LLVM22_PRERELEASE)
+#include "llvm/Plugins/PassPlugin.h"
+#else
+#include "llvm/Passes/PassPlugin.h"
+#endif
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/raw_ostream.h"
@@ -50,6 +52,25 @@
 using namespace llvm;
 
 namespace poseidon {
+
+AnalysisKey SessionAnalysis::Key;
+
+SessionAnalysis::Result SessionAnalysis::run(Module &M,
+                                             ModuleAnalysisManager &) {
+  Result R;
+  if (Given) {
+    R.S = Given;
+  } else {
+    validateOptions(*Opts, M.getContext());
+    R.Owned = std::make_unique<Session>(*Opts, *PB);
+    R.S = R.Owned.get();
+  }
+  return R;
+}
+
+Session &sessionOf(Module &M, ModuleAnalysisManager &MAM) {
+  return *MAM.getResult<SessionAnalysis>(M).S;
+}
 
 // Whether Enzyme has already run on M: Enzyme removes its prev_fixup marks
 // before its run ends, so enzyme_math functions without any prev_fixup, or an
@@ -129,24 +150,13 @@ struct OptimizePass : PassParent<OptimizePass> {
     changed |= optimizeAnnotatedSites(S, M);
 
     SmallVector<CallInst *, 4> markers;
+    collectMarkerCalls(M, markers);
+    erase_if(markers, [&](CallInst *CI) { return deferSite(O, CI); });
     SmallVector<CallBase *, 4> calls;
-    for (Function &F : M) {
-      if (F.empty())
-        continue;
-      markers.clear();
-      for (BasicBlock &BB : F)
-        for (Instruction &I : BB)
-          if (auto *CI = dyn_cast<CallInst>(&I))
-            if (Function *callee = calleeOf(CI))
-              if (isMarkerCall(callee->getName()) && !deferSite(O, CI))
-                markers.push_back(CI);
-      if (!markers.empty())
-        changed |= lowerMarkers(S, markers, calls);
-    }
+    changed |= lowerMarkers(S, markers, calls);
 
-    auto &FAM =
-        MAM.getResult<FunctionAnalysisManagerModuleProxy>(M).getManager();
-    changed |= solveDeferredSites(S, M, FAM);
+    if (O.Solver.JointDP)
+      changed |= solveJointly(S, M);
     return changed ? PreservedAnalyses::none() : PreservedAnalyses::all();
   }
   static bool isRequired() { return true; }
@@ -316,7 +326,8 @@ struct LatePass : PassParent<LatePass> {
     if (!markers.empty())
       lowerMarkers(S, markers, calls);
     SmallVector<WeakVH, 4> lowered(calls.begin(), calls.end());
-    solveDeferredSites(S, M, AMs.FAM);
+    if (O.Solver.JointDP)
+      solveJointly(S, M);
     // A site that kept its body calls the body as the pipeline left it rather
     // than its canonical form.
     for (WeakVH &handle : lowered)
@@ -417,7 +428,7 @@ struct FinalizePass : PassParent<FinalizePass> {
     const Options &O = S.Opts;
     for (Function &F : M)
       if (F.isDeclaration() && !F.use_empty() &&
-          F.getName().starts_with("__enzyme_autodiff_poseidon"))
+          F.getName().starts_with(kAutodiffRequest))
         reportUserError(M.getContext(),
                         Twine("profile generation emitted a derivative "
                               "request that nothing lowered. ") +
@@ -449,26 +460,10 @@ struct FinalizePass : PassParent<FinalizePass> {
     });
     for (Function *F : rewritten)
       inlineDeviceMath(*F);
-    if (std::unique_ptr<Module> Twin = std::move(S.AsWrittenTwin)) {
-      if (PB && compileAsWritten(*Twin, S, *PB, Level, Phase)) {
-        if (takeRewritten(*Twin, rewritten.getArrayRef())) {
-          adoptModule(M, *Twin);
-          if (O.Diagnostics.Print && rewritten.empty())
-            llvm::errs() << "[poseidon] every site of " << M.getName()
-                         << " was left alone; emitting the module as written\n";
-          else if (O.Diagnostics.Print)
-            llvm::errs() << "[poseidon] " << M.getName() << ": "
-                         << rewritten.size()
-                         << " function(s) a rewrite reached; every other "
-                            "function as written\n";
-        } else {
-          llvm::errs() << "[poseidon] " << M.getName()
-                       << ": a rewritten function refers to what the module "
-                          "as written does not hold alike; emitting the "
-                          "rewritten module\n";
-        }
-      }
-    }
+    if (std::unique_ptr<Module> Twin = std::move(S.AsWrittenTwin))
+      if (PB)
+        replaceWithAsWritten(M, std::move(Twin), S, *PB, Level, Phase,
+                             rewritten.getArrayRef());
     return PreservedAnalyses::none();
   }
   static bool isRequired() { return true; }
@@ -518,7 +513,7 @@ static void addCanonicalPrefix(ModulePassManager &MPM,
   MPM.addPass(createModuleToFunctionPassAdaptor(std::move(FPM)));
 }
 
-void registerPasses(PassBuilder &PB) {
+static void registerPasses(PassBuilder &PB) {
   // Every pass reads the options from the session of the module it runs on, so
   // the module compiled as written, whose session carries its own, runs the
   // same pipeline.
@@ -598,3 +593,9 @@ void registerPasses(PassBuilder &PB) {
 }
 
 } // namespace poseidon
+
+extern "C" ::llvm::PassPluginLibraryInfo LLVM_ATTRIBUTE_WEAK
+llvmGetPassPluginInfo() {
+  return {LLVM_PLUGIN_API_VERSION, "Poseidon", "v0.1",
+          [](llvm::PassBuilder &PB) { poseidon::registerPasses(PB); }};
+}

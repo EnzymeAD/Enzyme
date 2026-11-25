@@ -84,8 +84,6 @@ void reduce(int np, int ldq, int ne, int nd, double *Q, double *Gp, double *y,
 // CHECK-NEXT: [hostgemm]   profile shape M=192 Ncols=192 K=192 (per-CTA tile 192x1, launches=1 CTAs/launch=192 MACs=7077888)
 // CHECK-NEXT: [poseidon] Found 1 AbstractMatmul(s) for [[BODY]]
 // CHECK-NEXT: Matmul[0]: 192x1x192 type=f64 origin=HostGemmLoopNest
-// CHECK-NEXT: (profile-scale shape; runtime descriptor printed by the [hostgemm] recognizer above)
 // CHECK-NEXT: error: Poseidon: no cost model for target-cpu '[[ARCH]]' in {{.*}}/poseidon; measure the GPU with 'poseidon-calibrate --gpu <id>', or name a model with -poseidon-cost-model=<csv> or POSEIDON_COST_MODEL
 
-// FOREIGN: [poseidon] GPU mode active for [[BODY:preprocess__ZL11HipKernel2D[^ ]+_poseidon_body]]
-// FOREIGN-NEXT: error: Poseidon: cost model {{.*}}/cm_sm_120_synthetic.csv was measured on native_arch 'sm_120' but [[BODY]] compiles for target-cpu '[[ARCH]]'{{$}}
+// FOREIGN: error: Poseidon: cost model {{.*}}/cm_sm_120_synthetic.csv was measured on native_arch 'sm_120' but {{preprocess__ZL11HipKernel2D[^ ]+_poseidon_body}} compiles for target-cpu '[[ARCH]]'{{$}}
