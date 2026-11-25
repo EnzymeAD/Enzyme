@@ -1645,6 +1645,26 @@ static LogicalResult appendSiteValues(OpBuilder &builder,
   return success();
 }
 
+/// Draws fresh values for `site`: inline from its distribution when that
+/// sampler can be emitted, else by calling its `fn`. Returns replacements for
+/// all results of `site`, the rng first.
+static SmallVector<Value> emitSiteDraw(OpBuilder &builder,
+                                       SymbolTableCollection &symbolTable,
+                                       impulse::SampleOp site) {
+  Location loc = site.getLoc();
+  if (impulse::DistAttr dist = site.getDistAttr();
+      dist && impulse::distSamplerEmittable(dist))
+    return impulse::emitDistSampler(
+        builder, loc, dist, site.getInputs().front(),
+        site.getInputs().drop_front(),
+        cast<RankedTensorType>(site.getResult(1).getType()));
+  auto fn = cast<FunctionOpInterface>(
+      symbolTable.lookupNearestSymbolFrom(site, site.getFnAttr()));
+  auto call = func::CallOp::create(builder, loc, fn.getName(),
+                                   fn.getResultTypes(), site.getInputs());
+  return SmallVector<Value>(call.getResults());
+}
+
 /// Reads a value of `type` from row 0 of `trace`, starting at column `column`.
 static Value sliceTraceValue(OpBuilder &builder, Location loc, Value trace,
                              int64_t column, RankedTensorType type) {
@@ -2125,27 +2145,9 @@ struct ExpandImpulsePass
         OpBuilder::InsertionGuard guard(rewriter);
         rewriter.setInsertionPoint(sampleOp);
 
-        if (auto dist = sampleOp.getDistAttr();
-            dist && impulse::distSamplerEmittable(dist)) {
-          Value rng = sampleOp.getInputs().front();
-          SmallVector<Value> distArgs(std::next(sampleOp.getInputs().begin()),
-                                      sampleOp.getInputs().end());
-          auto sampleType =
-              cast<RankedTensorType>(sampleOp.getResult(1).getType());
-          SmallVector<Value> sampledValues = impulse::emitDistSampler(
-              rewriter, sampleOp.getLoc(), dist, rng, distArgs, sampleType);
-          rewriter.replaceAllUsesWith(sampleOp->getResults(), sampledValues);
-        } else {
-          auto distFn =
-              cast<FunctionOpInterface>(symbolTable.lookupNearestSymbolFrom(
-                  sampleOp, sampleOp.getFnAttr()));
-          auto distCall = func::CallOp::create(
-              rewriter, sampleOp.getLoc(), distFn.getName(),
-              distFn.getResultTypes(), sampleOp.getInputs());
-          rewriter.replaceAllUsesWith(sampleOp->getResults(),
-                                      distCall->getResults());
-        }
-
+        rewriter.replaceAllUsesWith(
+            sampleOp->getResults(),
+            emitSiteDraw(rewriter, symbolTable, sampleOp));
         toErase.push_back(sampleOp);
       });
 
