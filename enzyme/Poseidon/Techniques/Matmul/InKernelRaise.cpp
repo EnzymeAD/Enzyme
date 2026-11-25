@@ -371,13 +371,7 @@ void materializeInKernelRaise(const AbstractMatmul &m,
              operand != FPKind::TF32 && operand != FPKind::F64) {
     report_fatal_error("materializeInKernelRaise: unsupported input precision");
   }
-  if (t.tileM == 0 || t.tileN == 0 || t.tileK == 0 || t.mChain == 0 ||
-      t.nChain == 0 || t.kChain == 0)
-    report_fatal_error("materializeInKernelRaise: zero tile/chain dim");
-  if (t.mChain * t.tileM != m.M + t.padM ||
-      t.nChain * t.tileN != m.N + t.padN || t.kChain * t.tileK != m.K + t.padK)
-    report_fatal_error(
-        "materializeInKernelRaise: chain*tile doesn't match source+padding");
+  const InKernelLayout L = inKernelLayout(m, t);
 
   const ScalarLoopHandle &h = m.scalarLoop;
   BasicBlock *preheader = h.preheader;
@@ -428,8 +422,8 @@ void materializeInKernelRaise(const AbstractMatmul &m,
 
   // Padded extents (chain * tile); the A/B scratch K-dim is one tileK chunk
   // (K-streamed), the output scratch is the full mPad x nPad.
-  const unsigned mPad = t.mChain * t.tileM;
-  const unsigned nPad = t.nChain * t.tileN;
+  const unsigned mPad = L.mPad;
+  const unsigned nPad = L.nPad;
 
   const nvptx::Wmma wmma =
       nvptx::declareWmma(mod, t.tileM, t.tileN, t.tileK, fpKindName(operand),
@@ -477,13 +471,13 @@ void materializeInKernelRaise(const AbstractMatmul &m,
   for (unsigned k = 0; k < N; ++k) {
     aScratch[k] = getOrCreateSharedScratch(
         mod, scratchName("a", k, fpKindName(operand), mPad, t.tileK), opTy,
-        (uint64_t)mPad * t.tileK);
+        L.aElts());
     bScratch[k] = getOrCreateSharedScratch(
         mod, scratchName("b", k, fpKindName(operand), t.tileK, nPad), opTy,
-        (uint64_t)t.tileK * nPad);
+        L.bElts());
     dScratch[k] = getOrCreateSharedScratch(
         mod, scratchName("d", k, fpKindName(v.accumulator), mPad, nPad), accTy,
-        (uint64_t)mPad * nPad);
+        L.dElts());
   }
 
   IRBuilder<> B(preheader->getTerminator());
@@ -568,7 +562,7 @@ void materializeInKernelRaise(const AbstractMatmul &m,
   PHINode *kOuterPhi = hdrB.CreatePHI(i32Ty, 2, "k_outer");
   kOuterPhi->addIncoming(ConstantInt::get(i32Ty, 0), preheaderBB);
   Constant *cZeroElt = Constant::getNullValue(cFragElemTy);
-  const unsigned numPhisPerGroup = t.mChain * t.nChain * cFragSize;
+  const unsigned numPhisPerGroup = L.mTiles * L.nTiles * cFragSize;
   SmallVector<SmallVector<PHINode *, 16>, 8> accPhis(N);
   for (unsigned k = 0; k < N; ++k) {
     accPhis[k].resize(numPhisPerGroup);
@@ -577,7 +571,7 @@ void materializeInKernelRaise(const AbstractMatmul &m,
       accPhis[k][i]->addIncoming(cZeroElt, preheaderBB);
     }
   }
-  Value *kLoopBound = ConstantInt::get(i32Ty, (int32_t)(t.kChain * t.tileK));
+  Value *kLoopBound = ConstantInt::get(i32Ty, (int32_t)L.kPad);
   Value *kCond = hdrB.CreateICmpULT(kOuterPhi, kLoopBound);
   hdrB.CreateCondBr(kCond, loopBodyBB, afterLoopBB);
 
@@ -596,9 +590,9 @@ void materializeInKernelRaise(const AbstractMatmul &m,
   Value *bSrcForIter = bodyB.CreateGEP(i8Ty, bBlockBase, bKOff);
 
   // Valid source extents. K-streaming makes the last K-tile short whenever
-  // padK > 0, so the valid K count is the runtime min(tileK, K - k_outer).
+  // K is padded, so the valid K count is the runtime min(tileK, K - k_outer).
   Value *validK = ConstantInt::get(i32Ty, (int32_t)t.tileK);
-  if (t.padK > 0) {
+  if (L.kPad > m.K) {
     Value *kLeft =
         bodyB.CreateSub(ConstantInt::get(i32Ty, (int32_t)m.K), kOuterPhi);
     validK = bodyB.CreateBinaryIntrinsic(
@@ -611,7 +605,7 @@ void materializeInKernelRaise(const AbstractMatmul &m,
   // extent: guard-masking the mma instead would be wrong, since the fragments
   // are warp-collective, and an uninitialized pad feeds 0 * Inf = NaN into
   // real outputs. Without padding the direct fill checks no extent.
-  const bool padded = (t.padM > 0 || t.padN > 0 || t.padK > 0);
+  const bool padded = L.padded(m);
   const bool rangeChecked = padded || split;
   const std::string fillName =
       (tag + (rangeChecked ? "_pfill" : "_cfill")).str();
@@ -662,7 +656,7 @@ void materializeInKernelRaise(const AbstractMatmul &m,
   // warp are undefined (the ungated chain corrupts the shared output tile).
   const bool partialWarpBlock =
       (h.blockThreads != 0) && (h.blockThreads % nvptx::kWarpSize != 0);
-  const bool useWarpGate = (t.mChain * t.nChain == 1) || partialWarpBlock;
+  const bool useWarpGate = (L.mTiles * L.nTiles == 1) || partialWarpBlock;
   auto emitIsWarp0 = [&](IRBuilder<> &GB, Value *lin) {
     Value *warpId = GB.CreateLShr(
         lin, ConstantInt::get(i32Ty, nvptx::kLog2WarpSize), "warp_id");
@@ -706,8 +700,8 @@ void materializeInKernelRaise(const AbstractMatmul &m,
   SmallVector<SmallVector<Value *, 16>, 8> accLoop(N);
   for (unsigned k = 0; k < N; ++k)
     accLoop[k].resize(numPhisPerGroup);
-  for (unsigned mt = 0; mt < t.mChain; ++mt) {
-    for (unsigned nt = 0; nt < t.nChain; ++nt) {
+  for (unsigned mt = 0; mt < L.mTiles; ++mt) {
+    for (unsigned nt = 0; nt < L.nTiles; ++nt) {
       // Scratch is refilled at offset 0 per iteration, so the wmma loads read
       // from the scratch base with no K offset.
       SmallVector<Value *, 8> aRowBases(N), bColBases(N);
@@ -718,7 +712,7 @@ void materializeInKernelRaise(const AbstractMatmul &m,
         bColBases[k] = bodyB.CreatePtrAdd(
             bGen[k], ConstantInt::get(i64Ty, (int64_t)nt * t.tileN * opByte));
       }
-      unsigned phiBase = (mt * t.nChain + nt) * cFragSize;
+      unsigned phiBase = (mt * L.nTiles + nt) * cFragSize;
       SmallVector<SmallVector<Value *, 16>, 8> cur(N);
       for (unsigned k = 0; k < N; ++k) {
         cur[k].resize(cFragSize);
@@ -812,13 +806,13 @@ void materializeInKernelRaise(const AbstractMatmul &m,
     IRBuilder<>(curr).CreateCondBr(afterIsWarp0, storeDoBB, storeMergeBB);
     afterB.SetInsertPoint(storeDoBB);
   }
-  for (unsigned mt = 0; mt < t.mChain; ++mt) {
-    for (unsigned nt = 0; nt < t.nChain; ++nt) {
+  for (unsigned mt = 0; mt < L.mTiles; ++mt) {
+    for (unsigned nt = 0; nt < L.nTiles; ++nt) {
       Value *dTileByte =
           ConstantInt::get(i64Ty, ((int64_t)mt * t.tileM * (int64_t)nPad +
                                    (int64_t)nt * t.tileN) *
                                       accByte);
-      unsigned phiBase = (mt * t.nChain + nt) * cFragSize;
+      unsigned phiBase = (mt * L.nTiles + nt) * cFragSize;
       for (unsigned k = 0; k < N; ++k) {
         Value *dTilePtr = afterB.CreatePtrAdd(dGen[k], dTileByte);
         SmallVector<Value *, 16> args;

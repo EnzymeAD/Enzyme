@@ -16,8 +16,10 @@
 #include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/IR/Function.h"
+#include "llvm/Support/MathExtras.h"
 
 #include <array>
+#include <cassert>
 #include <cstdint>
 #include <optional>
 
@@ -82,6 +84,37 @@ std::optional<GemmBodyNote> libraryCallNote(const Session &S,
 // rewrites the launch from, fissioning a fused constant-trip body.
 void applyLibraryCall(Session &S, const AbstractMatmul &m, GemmBodyNote note,
                       const SchemeVariant &v);
+
+// The shared-memory layout of an in-kernel raise: each extent of the product
+// padded to whole tiles, and per slice (one for the direct scheme) an A tile of
+// mPad x tileK and a B tile of tileK x nPad in the operand format and a D tile
+// of mPad x nPad in the accumulator format, all live at once.
+struct InKernelLayout {
+  unsigned mTiles, nTiles, kTiles;
+  unsigned mPad, nPad, kPad;
+  unsigned tileK;
+  unsigned slices;
+  uint64_t aElts() const { return (uint64_t)mPad * tileK; }
+  uint64_t bElts() const { return (uint64_t)tileK * nPad; }
+  uint64_t dElts() const { return (uint64_t)mPad * nPad; }
+  bool padded(const AbstractMatmul &m) const {
+    return mPad != m.M || nPad != m.N || kPad != m.K;
+  }
+};
+inline InKernelLayout inKernelLayout(const AbstractMatmul &m,
+                                     const MatmulUnit::Option &opt) {
+  assert(opt.tileM && opt.tileN && opt.tileK && "an in-kernel tile is nonzero");
+  InKernelLayout L;
+  L.mTiles = llvm::divideCeil(m.M, opt.tileM);
+  L.nTiles = llvm::divideCeil(m.N, opt.tileN);
+  L.kTiles = llvm::divideCeil(m.K, opt.tileK);
+  L.mPad = L.mTiles * opt.tileM;
+  L.nPad = L.nTiles * opt.tileN;
+  L.kPad = L.kTiles * opt.tileK;
+  L.tileK = opt.tileK;
+  L.slices = opt.variant.scheme == Scheme::Tcec ? sliceCount(opt.variant) : 1;
+  return L;
+}
 
 // Emit the tensor-core code of the in-kernel direct or split scheme in place
 // of a scalar-loop matmul; aborts on any precondition violation.

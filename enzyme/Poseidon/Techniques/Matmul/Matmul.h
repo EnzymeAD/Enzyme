@@ -20,6 +20,7 @@
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringSet.h"
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Value.h"
@@ -311,10 +312,8 @@ struct MatmulState {
   // The tensor-core shapes the cost model prices, and the warnings already
   // given.
   std::optional<llvm::SmallVector<WmmaTarget, 16>> AvailableWmmaTargets;
-  std::set<std::string> ReportedNativeRectRows;
-  std::set<std::string> ReportedDirectRows;
-  std::set<std::string> ReportedOzakiRectRows;
-  std::set<std::string> ReportedInKernelRows;
+  // The cost-model rows a missing-row warning has named.
+  llvm::StringSet<> ReportedRows;
 };
 
 class MatmulUnit : public SiteUnit {
@@ -323,9 +322,6 @@ public:
     unsigned tileM = ~0u, tileN = ~0u, tileK = ~0u;
     SchemeVariant variant;
     Realization realization = Realization::InKernel;
-
-    unsigned mChain = ~0u, nChain = ~0u, kChain = ~0u;
-    unsigned padM = 0, padN = 0, padK = 0;
 
     // Per-MAC reciprocal-throughput cost in cost-model units; the solver puts
     // the change over the profiled MACs on its axis.
