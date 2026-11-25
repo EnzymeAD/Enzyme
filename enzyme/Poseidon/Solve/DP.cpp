@@ -8,6 +8,7 @@
 
 #include "DP.h"
 
+#include "llvm/ADT/BitVector.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
@@ -220,17 +221,41 @@ static void paretoIntegrate(const CostScale &scale, CostMap &cost,
   sol = std::move(newSol);
 }
 
-static void paretoPrune(CostMap &cost, SolutionMap &sol) {
+// Bit j is set when a strategy holding `steps` constrains later[j]: admit
+// refuses it (a step rewrites one of its outputs, or it consumes its footprint
+// and a step overlaps that footprint), or it is priced against a step.
+static BitVector constrainedLater(ArrayRef<SolutionStep> steps,
+                                  ArrayRef<OptimizationUnit *> later) {
+  BitVector refused(later.size());
+  for (size_t j = 0; j < later.size(); ++j) {
+    const OptimizationUnit &unit = *later[j];
+    refused[j] = any_of(steps, [&](const SolutionStep &s) {
+      return s.unit->rewritesSameOutputAs(unit) ||
+             (unit.consumesFootprint() && s.unit->footprintOverlaps(unit)) ||
+             unit.pricedAgainst(*s.unit);
+    });
+  }
+  return refused;
+}
+
+// Drops a point for another that is cheaper, no less accurate, and constrains
+// none of the units still to come, `later`, that the dropped point leaves
+// free: a point some later unit can extend, or prices as written, where the
+// cheaper one it refuses or reprices, is kept.
+static void paretoPrune(CostMap &cost, SolutionMap &sol,
+                        ArrayRef<OptimizationUnit *> later) {
+  DenseMap<DPCost, BitVector> constrained;
+  for (const auto &[c, steps] : sol)
+    constrained[c] = constrainedLater(steps, later);
   CostMap pruned;
   SolutionMap prunedSol;
-  for (const auto &l : cost) {
-    DPCost lc = l.first;
-    double la = l.second;
+  for (const auto &[lc, la] : cost) {
+    const BitVector &lConstrained = constrained[lc];
     bool dominated = false;
-    for (const auto &r : cost) {
-      DPCost rc = r.first;
-      double ra = r.second;
-      if (lc > rc && la >= ra) {
+    for (const auto &[rc, ra] : cost) {
+      if (rc >= lc)
+        break;
+      if (la >= ra && !constrained[rc].test(lConstrained)) {
         dominated = true;
         break;
       }
@@ -341,7 +366,7 @@ static void insertEntry(ExactDP::Bucket &b, DPCost c, double a,
   it->second.steps.assign(steps.begin(), steps.end());
 }
 
-// paretoPrune's rule: an entry goes when a cheaper one is no less accurate.
+// An entry goes when a cheaper one is no less accurate.
 static void pruneBucket(ExactDP::Bucket &b) {
   std::optional<double> best;
   for (auto it = b.begin(); it != b.end();) {
@@ -511,9 +536,10 @@ Error solvePruned(ArrayRef<OptimizationUnit *> units, const CostScale &scale,
   StringMap<std::pair<size_t, size_t>> counts;
   for (const OptimizationUnit *unit : units)
     ++counts[unit->kindName()].second;
-  for (OptimizationUnit *unit : units) {
+  for (size_t k = 0; k < units.size(); ++k) {
+    OptimizationUnit *unit = units[k];
     paretoIntegrate(scale, cost, sol, *unit, deferred);
-    paretoPrune(cost, sol);
+    paretoPrune(cost, sol, units.drop_front(k + 1));
     if (!progress)
       continue;
     auto &[done, total] = counts[unit->kindName()];

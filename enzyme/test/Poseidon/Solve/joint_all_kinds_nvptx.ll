@@ -1,12 +1,12 @@
 ; RUN: rm -rf %t && mkdir -p %t/prof
 ; RUN: cp %S/../Inputs/no_early_prune/reprice/matmul_body.fpprofile %t/prof/
 ; RUN: cp %S/../Inputs/no_early_prune/reprice/matmul_body.fpprofile %t/prof/matmul_body_b.fpprofile
-; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/no_early_prune/reprice_herbie %opt %s %loadPoseidon -passes=poseidon -poseidon-profile-use=%t/prof -poseidon-enable-rewrite=true -poseidon-herbie-binary=%S/../Inputs/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-precision=true -poseidon-enable-matmul -poseidon-matmul-library-calls=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-solve-jointly -poseidon-cost-budget=-0.61 -poseidon-print -poseidon-explain=%t/ex_prune -poseidon-cache=%t/prune -S -o %t/prune.ll 2>&1 | FileCheck --check-prefix=PRUNE %s
-; RUN: %poseidon_explain %t/ex_prune --format budgets | FileCheck --check-prefix=PRUNE-BUDGETS %s
-; RUN: cat %t/ex_prune/matmul_body.explain.json | FileCheck --check-prefix=PRUNE-EXPLAIN %s
-; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/no_early_prune/reprice_herbie %opt %s %loadPoseidon -passes=poseidon -poseidon-profile-use=%t/prof -poseidon-enable-rewrite=true -poseidon-herbie-binary=%S/../Inputs/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-precision=true -poseidon-enable-matmul -poseidon-matmul-library-calls=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-solve-jointly -poseidon-early-prune=false -poseidon-cost-budget=-0.952 -poseidon-print -poseidon-explain=%t/ex_exact -poseidon-cache=%t/exact -S -o %t/exact.ll 2>&1 | FileCheck --check-prefix=EXACT %s
-; RUN: %poseidon_explain %t/ex_exact --format budgets | FileCheck --check-prefix=EXACT-BUDGETS %s
-; RUN: cat %t/ex_exact/matmul_body_b.explain.json | FileCheck --check-prefix=EXACT-EXPLAIN %s
+; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/no_early_prune/reprice_herbie %opt %s %loadPoseidon -passes=poseidon -poseidon-profile-use=%t/prof -poseidon-enable-rewrite=true -poseidon-herbie-binary=%S/../Inputs/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-precision=true -poseidon-enable-matmul -poseidon-matmul-library-calls=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-solve-jointly -poseidon-cost-budget=-0.952 -poseidon-print -poseidon-explain=%t/ex_prune -poseidon-cache=%t/prune -S -o %t/prune.ll 2>&1 | FileCheck --check-prefixes=SOLVE,PRUNE %s
+; RUN: %poseidon_explain %t/ex_prune --format budgets | FileCheck --check-prefix=BUDGETS %s
+; RUN: cat %t/ex_prune/matmul_body.explain.json | FileCheck --check-prefixes=EXPLAIN,PRUNE-EXPLAIN %s
+; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/no_early_prune/reprice_herbie %opt %s %loadPoseidon -passes=poseidon -poseidon-profile-use=%t/prof -poseidon-enable-rewrite=true -poseidon-herbie-binary=%S/../Inputs/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-precision=true -poseidon-enable-matmul -poseidon-matmul-library-calls=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-solve-jointly -poseidon-early-prune=false -poseidon-cost-budget=-0.952 -poseidon-print -poseidon-explain=%t/ex_exact -poseidon-cache=%t/exact -S -o %t/exact.ll 2>&1 | FileCheck --check-prefixes=SOLVE,EXACT %s
+; RUN: %poseidon_explain %t/ex_exact --format budgets | FileCheck --check-prefix=BUDGETS %s
+; RUN: cat %t/ex_exact/matmul_body_b.explain.json | FileCheck --check-prefixes=EXPLAIN,EXACT-EXPLAIN %s
 ; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/no_early_prune/reprice_herbie %opt %s %loadPoseidon -passes=poseidon -poseidon-profile-use=%t/prof -poseidon-enable-rewrite=true -poseidon-herbie-binary=%S/../Inputs/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-precision=true -poseidon-enable-matmul -poseidon-matmul-library-calls=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-solve-jointly -poseidon-cache=%t/pins -poseidon-explain=%t/ex_pins -poseidon-pin='matmul_body:R0_1,matmul_body_b:M0_2,matmul_body:M0_0,matmul_body_b:P0_3' -S -poseidon-print -o %t/pins.ll 2>&1 | FileCheck --check-prefix=PINS %s
 
 ; A joint solve over two sites that each hold algebraic, precision and product
@@ -14,43 +14,28 @@
 ; The pruned solve takes every site's algebraic units, then every site's
 ; products, then every site's precision units; the exact solve takes each
 ; site's precision units after the algebraic units they are priced against,
-; and every product last. A budget at the cheapest point of each frontier
-; selects a raise in both sites; pins can name units of both sites and every
-; kind. The poseidon pass runs alone, as in dp_cache_replay_nvptx.ll.
+; and every product last. Both find one frontier, and a budget at its cheapest
+; point selects a raise in both sites; pins can name units of both sites and
+; every kind. The poseidon pass runs alone, as in dp_cache_replay_nvptx.ll.
 
-; PRUNE: [poseidon] joint solve: collecting candidates from 2 marked function(s)
-; PRUNE: Critical computation cost range: [-6.112571e-01, 1.454545e-01]
-; PRUNE-NEXT: DP table contains 34 entries.
-; PRUNE: Minimum accuracy cost within budget: 1.118681e+10
-; PRUNE-NEXT: Computation cost budget used: -6.112571e-01
-; PRUNE: Applying solution for (+ (- (sqrt (+ v0 1)) (sqrt v0)) (+ (+ (+ (sinh v1) (asinh v1)) (tan v1)) (asin v1))) --(1)->
-; PRUNE-NEXT: Applying solution for matmul[0] -> wmma m16n16k16 f16/f32 (#0)
-; PRUNE: [poseidon] pin: matmul_body:R0=
-; PRUNE: Applying solution for (+ (- (sqrt (+ v0 1)) (sqrt v0)) (+ (+ (+ (sinh v1) (asinh v1)) (tan v1)) (asin v1))) --(1)->
-; PRUNE-NEXT: Applying solution for matmul[0] -> wmma m16n16k16 f16/f32 (#0)
-; PRUNE: [poseidon] pin: matmul_body_b:R0=
-; PRUNE-BUDGETS: {{^}}-0.61125710227272723,-0.60898437500000002,-0.60671164772727271,-0.6044389204545455,-0.60216619318181819,-0.5233842329545455,-0.51544744318181823,-0.50978338068181817,-0.41834161931818181,-0.41040482954545454,-0.40474076704545453,-0.36979758522727274,-0.36573153409090908,-0.35779474431818181,-0.3521306818181818,-0.34985795454545454,-0.34419389204545453,-0.33852982954545452,-0.30790127840909093,-0.27295809659090908,-0.23801491477272727,-0.20307173295454545,-0.16926491477272726,-0.10786576704545454,-0.10220170454545455,-0.09653764204545455,-0.065909090909090903,-0.030965909090909093,0.0039772727272727269,0.038920454545454543,0.072727272727272724,0.13412642045454545,0.13979048295454546,0.14545454545454545{{$}}
-; PRUNE-EXPLAIN: "result": {
-; PRUNE-EXPLAIN-NEXT: "applied": [
-; PRUNE-EXPLAIN-NEXT: "R0_1",
-; PRUNE-EXPLAIN-NEXT: "M0_0"
-; PRUNE-EXPLAIN-NEXT: ]
-
+; SOLVE: [poseidon] joint solve: collecting candidates from 2 marked function(s)
+; PRUNE-NOT: Exact DP
 ; EXACT: [poseidon] Exact DP: 69 frontier points; peak 146 entries in 4 signatures; 234 precision changes priced;
-; EXACT: Critical computation cost range: [-9.537642e-01, 1.454545e-01]
-; EXACT-NEXT: DP table contains 69 entries.
-; EXACT: Applying solution for precision change All FP64(0%) + FP32(100%) (#0)
-; EXACT-NEXT: Applying solution for matmul[0] -> wmma m16n16k16 f16/f32 (#0)
-; EXACT: [poseidon] pin: matmul_body:P0=All FP64(0%) + FP32(100%),matmul_body:M0=wmma m16n16k16 f16/f32
-; EXACT: Applying solution for precision change All FP64(0%) + FP32(100%) (#0)
-; EXACT-NEXT: Applying solution for matmul[0] -> wmma m16n16k16 f16/f32 (#0)
-; EXACT: [poseidon] pin: matmul_body_b:P0=All FP64(0%) + FP32(100%),matmul_body_b:M0=wmma m16n16k16 f16/f32
-; EXACT-BUDGETS: {{^}}-0.95376420454545452,-0.95149147727272732,-0.94921875,-0.94694602272727268,-0.94467329545454548,-0.83963068181818179,-0.82872869318181819,-0.82645596590909087,-0.8185191761363636,-0.81285511363636365,-0.72141335227272729,-0.71347656250000002,-0.70823863636363638,-0.70030184659090911,-0.69463778409090904,-0.69236505681818183,-0.68670099431818177,-0.68103693181818181,-0.60319602272727268,-0.59525923295454541,-0.58959517045454546,-0.58732244318181814,-0.58165838068181819,-0.57599431818181823,-0.54105113636363633,-0.53698508522727273,-0.52904829545454546,-0.5233842329545455,-0.52111150568181819,-0.51544744318181823,-0.50978338068181817,-0.49815340909090911,-0.49021661931818183,-0.48455255681818182,-0.48227982954545456,-0.47661576704545455,-0.47095170454545454,-0.43600852272727275,-0.43194247159090909,-0.42400568181818182,-0.41834161931818181,-0.41606889204545455,-0.41040482954545454,-0.40474076704545453,-0.37411221590909088,-0.36573153409090908,-0.35779474431818181,-0.3521306818181818,-0.34985795454545454,-0.34419389204545453,-0.33852982954545452,-0.30790127840909093,-0.27727272727272728,-0.24232954545454546,-0.20738636363636365,-0.17244318181818183,-0.13863636363636364,-0.13750000000000001,-0.10786576704545454,-0.10220170454545455,-0.09653764204545455,-0.065909090909090903,-0.030965909090909093,0.0039772727272727269,0.038920454545454543,0.072727272727272724,0.13412642045454545,0.13979048295454546,0.14545454545454545{{$}}
-; EXACT-EXPLAIN: "result": {
-; EXACT-EXPLAIN-NEXT: "applied": [
+; SOLVE: Critical computation cost range: [-9.537642e-01, 1.454545e-01]
+; SOLVE-NEXT: DP table contains 69 entries.
+; SOLVE: Computation cost budget used: -9.537642e-01
+; PRUNE: [poseidon] pin: matmul_body:M0=wmma m16n16k16 f16/f32,matmul_body:P0=All FP64(0%) + FP32(100%){{$}}
+; PRUNE: [poseidon] pin: matmul_body_b:M0=wmma m16n16k16 f16/f32,matmul_body_b:P0=All FP64(0%) + FP32(100%){{$}}
+; EXACT: [poseidon] pin: matmul_body:P0=All FP64(0%) + FP32(100%),matmul_body:M0=wmma m16n16k16 f16/f32{{$}}
+; EXACT: [poseidon] pin: matmul_body_b:P0=All FP64(0%) + FP32(100%),matmul_body_b:M0=wmma m16n16k16 f16/f32{{$}}
+; BUDGETS: {{^}}-0.95376420454545452,-0.95149147727272732,-0.94921875,-0.94694602272727268,-0.94467329545454548,-0.83963068181818179,-0.82872869318181819,-0.82645596590909087,-0.8185191761363636,-0.81285511363636365,-0.72141335227272729,-0.71347656250000002,-0.70823863636363638,-0.70030184659090911,-0.69463778409090904,-0.69236505681818183,-0.68670099431818177,-0.68103693181818181,-0.60319602272727268,-0.59525923295454541,-0.58959517045454546,-0.58732244318181814,-0.58165838068181819,-0.57599431818181823,-0.54105113636363633,-0.53698508522727273,-0.52904829545454546,-0.5233842329545455,-0.52111150568181819,-0.51544744318181823,-0.50978338068181817,-0.49815340909090911,-0.49021661931818183,-0.48455255681818182,-0.48227982954545456,-0.47661576704545455,-0.47095170454545454,-0.43600852272727275,-0.43194247159090909,-0.42400568181818182,-0.41834161931818181,-0.41606889204545455,-0.41040482954545454,-0.40474076704545453,-0.37411221590909088,-0.36573153409090908,-0.35779474431818181,-0.3521306818181818,-0.34985795454545454,-0.34419389204545453,-0.33852982954545452,-0.30790127840909093,-0.27727272727272728,-0.24232954545454546,-0.20738636363636365,-0.17244318181818183,-0.13863636363636364,-0.13750000000000001,-0.10786576704545454,-0.10220170454545455,-0.09653764204545455,-0.065909090909090903,-0.030965909090909093,0.0039772727272727269,0.038920454545454543,0.072727272727272724,0.13412642045454545,0.13979048295454546,0.14545454545454545{{$}}
+; EXPLAIN: "result": {
+; EXPLAIN-NEXT: "applied": [
+; PRUNE-EXPLAIN-NEXT: "M0_0",
+; PRUNE-EXPLAIN-NEXT: "P0_0"
 ; EXACT-EXPLAIN-NEXT: "P0_0",
 ; EXACT-EXPLAIN-NEXT: "M0_0"
-; EXACT-EXPLAIN-NEXT: ]
+; EXPLAIN-NEXT: ]
 
 ; PINS: [poseidon] Selecting matmul_body:R0_1:
 ; PINS: [poseidon] Selecting matmul_body:M0_0: matmul[0] -> wmma m16n16k16 f16/f32

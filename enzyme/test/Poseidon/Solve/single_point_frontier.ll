@@ -9,10 +9,11 @@
 ; RUN: %opt < %S/../Inputs/no_early_prune/joint.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-print -poseidon-profile-use=%t/jprof -poseidon-enable-rewrite=true -poseidon-herbie-binary=/nonexistent/herbie -poseidon-enable-precision=false -poseidon-cost-model=%t/joint/cm_sm_120_fma.csv -poseidon-solve-jointly -poseidon-cache=%t/joint -S -o /dev/null 2>&1 | FileCheck --check-prefix=JOINT --implicit-check-not="only frontier point" %s
 
 ; A DP frontier of one point is either the code as written, which no
-; candidate improves on, or a solution that is no costlier and no less
-; accurate than the code as written: one rewrite of the same cost and
-; better accuracy (STEP), or two that are cheaper and more accurate in a
-; joint solve (JOINT). The note names which.
+; candidate improves on (NOOP), or a solution that is no costlier and no less
+; accurate than the code as written and every other combination: one rewrite
+; of the same cost and better accuracy (STEP). The note names which. A joint
+; frontier of several points, the two sites' binary64 rewrites with and
+; without their cheaper binary32 ones, has no note (JOINT).
 
 ; NOOP: Critical computation cost range: [0.000000e+00, 0.000000e+00]{{$}}
 ; NOOP-NEXT: DP table contains 1 entries.{{$}}
@@ -28,7 +29,6 @@
 ; STEP: Computation cost budget used: [[C]]{{$}}
 ; STEP: [poseidon] Applying 1 step(s){{$}}
 
-; JOINT: Critical computation cost range: [[[C:-[.e0-9-]+]], [[C]]]{{$}}
-; JOINT-NEXT: DP table contains 1 entries.{{$}}
-; JOINT-NEXT: [poseidon] the only frontier point is a solution of 2 step(s) from the 4 candidate(s); it is no costlier and no less accurate than the code as written and every other combination.{{$}}
-; JOINT: Computation cost budget used: [[C]]{{$}}
+; JOINT: Critical computation cost range: [-7.480469e-01, -5.859375e-02]{{$}}
+; JOINT-NEXT: DP table contains 3 entries.{{$}}
+; JOINT-NEXT: Total candidate compositions:

@@ -2,17 +2,17 @@
 ; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/no_early_prune/reprice_herbie %opt %S/../Inputs/no_early_prune/reprice.ll %loadPoseidon -passes=poseidon -poseidon-profile-use=%S/../Inputs/no_early_prune/reprice -poseidon-enable-rewrite=true -poseidon-herbie-binary=%S/../Inputs/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-precision=true -poseidon-enable-matmul -poseidon-matmul-library-calls=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-early-prune=false -poseidon-cost-budget=-0.9 -poseidon-print -poseidon-print-dp-table -poseidon-explain=%t/ex -poseidon-cache=%t/exact -S -o %t/exact.ll 2>&1 | FileCheck --check-prefix=TABLE %s
 ; RUN: %python -c "import json, sys; d = json.load(open(sys.argv[1])); print(len(d['pareto']), 'points;', *(u['id'] + ':' + str(len(u['alternatives'])) for u in d['subgraphs'])); [print(p['budget'], ','.join(p['applied'])) for p in d['pareto'][:2]]" %t/ex/matmul_body.explain.json | FileCheck --check-prefix=SUMMARY %s
 ; RUN: cat %t/ex/matmul_body.explain.json | FileCheck --check-prefix=EXPLAIN %s
-; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/no_early_prune/reprice_herbie %opt %S/../Inputs/no_early_prune/reprice.ll %loadPoseidon -passes=poseidon -poseidon-profile-use=%S/../Inputs/no_early_prune/reprice -poseidon-enable-rewrite=true -poseidon-herbie-binary=%S/../Inputs/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-precision=true -poseidon-enable-matmul -poseidon-matmul-library-calls=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-tau=1e-6 -poseidon-print -poseidon-cache=%t/tau -S -o %t/tau.ll 2>&1 | FileCheck --check-prefix=TAU %s
-; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/no_early_prune/reprice_herbie %opt %S/../Inputs/no_early_prune/reprice.ll %loadPoseidon -passes=poseidon -poseidon-profile-use=%S/../Inputs/no_early_prune/reprice -poseidon-enable-rewrite=true -poseidon-herbie-binary=%S/../Inputs/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-precision=true -poseidon-enable-matmul -poseidon-matmul-library-calls=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-tau=1e-6 -poseidon-print -poseidon-early-prune=false -poseidon-cache=%t/tau-exact -S -o /dev/null 2>&1 | FileCheck --check-prefix=TAU-EXACT %s
+; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/no_early_prune/reprice_herbie %opt %S/../Inputs/no_early_prune/reprice.ll %loadPoseidon -passes=poseidon -poseidon-profile-use=%S/../Inputs/no_early_prune/reprice -poseidon-enable-rewrite=true -poseidon-herbie-binary=%S/../Inputs/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-precision=true -poseidon-enable-matmul -poseidon-matmul-library-calls=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-tau=1e-6 -poseidon-print -poseidon-cache=%t/tau -S -o %t/tau.ll 2>&1 | FileCheck --check-prefixes=TAU,TAU-PRUNE %s
+; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/no_early_prune/reprice_herbie %opt %S/../Inputs/no_early_prune/reprice.ll %loadPoseidon -passes=poseidon -poseidon-profile-use=%S/../Inputs/no_early_prune/reprice -poseidon-enable-rewrite=true -poseidon-herbie-binary=%S/../Inputs/fake-herbie.sh -poseidon-herbie-processes=1 -poseidon-enable-precision=true -poseidon-enable-matmul -poseidon-matmul-library-calls=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-tau=1e-6 -poseidon-print -poseidon-early-prune=false -poseidon-cache=%t/tau-exact -S -o /dev/null 2>&1 | FileCheck --check-prefixes=TAU,TAU-EXACT %s
 
 ; The table print and the explanation of a site with algebraic, precision and
 ; product units (the module of Inputs/no_early_prune/reprice.ll, solved exactly; the
 ; budget selects a precision change and a raise). Under a target the product
 ; enters the DP with its domain error, 1.576106e-07, and a point's relative
-; error is the sum over its units. The pruned DP drops the raise for the
-; precision change of the product's epilogue, P1, which displaces it; the
-; exact DP selects the raise with P0, the cheaper point. The poseidon pass runs
-; alone.
+; error is the sum over its units. Both solves select the raise with the
+; precision change P0. The pruned one keeps the raise without the rewrite of
+; P0's subgraph, which is cheaper and more accurate but reprices P0. The
+; poseidon pass runs alone.
 
 ; TABLE: [poseidon] DP table:
 ; TABLE-NEXT: computation cost -9.537642e-01, accuracy cost 5.593938e+09, steps:
@@ -41,9 +41,6 @@
 ; EXPLAIN-NEXT: },
 ; EXPLAIN-NEXT: "id": "R0_1",
 
-; TAU: [poseidon] preprocess_matmul_body: tau=1.000000e-06 {{.*}} selected cost=-7.082386e-01 accCost=5.389077e+05 rel=1.923880e-11{{$}}
-; TAU: [poseidon] pin: matmul_body:P0=All FP64(0%) + FP32(100%),matmul_body:P1=All FP64(0%) + FP32(100%){{$}}
-; TAU-EXACT: [poseidon] preprocess_matmul_body: tau=1.000000e-06 {{.*}} selected cost=-9.492188e-01 accCost=4.438846e+09 rel=1.576295e-07{{$}}
-; TAU-EXACT: Applying solution for precision change All FP64(0%) + FP32(100%) (#0)
-; TAU-EXACT-NEXT: Applying solution for matmul[0] -> tcec n=2 wmma m16n16k16 f16/f32 (#1)
+; TAU: [poseidon] preprocess_matmul_body: tau=1.000000e-06 {{.*}} selected cost=-9.492188e-01 accCost=4.438846e+09 rel=1.576295e-07{{$}}
+; TAU-PRUNE: [poseidon] pin: matmul_body:M0=tcec n=2 wmma m16n16k16 f16/f32,matmul_body:P0=All FP64(0%) + FP32(100%){{$}}
 ; TAU-EXACT: [poseidon] pin: matmul_body:P0=All FP64(0%) + FP32(100%),matmul_body:M0=tcec n=2 wmma m16n16k16 f16/f32{{$}}

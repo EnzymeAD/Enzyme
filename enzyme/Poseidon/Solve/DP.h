@@ -210,8 +210,10 @@ llvm::Error solveExact(llvm::ArrayRef<OptimizationUnit *> units,
                        const CostScale &scale, CostMap &cost, SolutionMap &sol,
                        bool progress);
 
-/// The frontier pruned after each unit of `units`, taken in that order. With
-/// `progress`, a line after each unit counts the units of its kind done.
+/// The frontier pruned after each unit of `units`, taken in that order: a
+/// strategy is dropped for one that is cheaper, no less accurate and neither
+/// refuses nor reprices a later unit that it leaves free. With `progress`, a
+/// line after each unit counts the units of its kind done.
 llvm::Error solvePruned(llvm::ArrayRef<OptimizationUnit *> units,
                         const CostScale &scale, CostMap &cost, SolutionMap &sol,
                         bool progress);
