@@ -161,12 +161,12 @@ GLOBAL void k_refused(const double *x, double *y, int n) {
 // REFUSED-USE: {{^}}6 warnings and 4 errors generated when compiling for {{.+}}.{{$}}
 
 // USE-NOT: {{qf|body|lean}}({{.*}}) at call 0 in {{.*}} cannot be a Poseidon site
-// USE-DAG: per_call_extent_nvptx.cu:[[@LINE-131]]:13: warning: Poseidon: no profile at {{.*}}Inputs/other_sites/preprocess__Z2qfPKdPd.poseidon._Z7k_inoutPKdPdi.0.fpprofile:
-// USE-DAG: per_call_extent_nvptx.cu:[[@LINE-125]]:13: warning: Poseidon: no profile at {{.*}}Inputs/other_sites/preprocess__Z2qfPKdPd.poseidon._Z5k_outPKdPdi.0.fpprofile:
-// USE-DAG: per_call_extent_nvptx.cu:[[@LINE-115]]:13: warning: Poseidon: no profile at {{.*}}Inputs/other_sites/preprocess__Z2qfPKdPd.poseidon._Z9k_inplacePdi.0.fpprofile:
-// USE-DAG: per_call_extent_nvptx.cu:[[@LINE-106]]:13: warning: Poseidon: no profile at {{.*}}Inputs/other_sites/preprocess__Z2qfPKdPd.poseidon._Z8k_selectPKdPdi.0.fpprofile:
-// USE-DAG: per_call_extent_nvptx.cu:[[@LINE-91]]:39: warning: Poseidon: no profile at {{.*}}Inputs/other_sites/preprocess__Z4bodyPK5qfuncPKdPd.poseidon._Z7run_refRK5qfuncPdi.0.fpprofile:
-// USE-DAG: per_call_extent_nvptx.cu:[[@LINE-67]]:13: warning: Poseidon: no profile at {{.*}}Inputs/other_sites/preprocess__Z4leanPK4pairPd.poseidon._Z7k_alignPKdPd.0.fpprofile:
+// USE-DAG: per_call_extent_nvptx.cu:[[@LINE-131]]:13: warning: Poseidon: no profile at {{.*}}_Z2qfPKdPd.poseidon._Z7k_inoutPKdPdi.0.fpprofile:
+// USE-DAG: per_call_extent_nvptx.cu:[[@LINE-125]]:13: warning: Poseidon: no profile at {{.*}}_Z2qfPKdPd.poseidon._Z5k_outPKdPdi.0.fpprofile:
+// USE-DAG: per_call_extent_nvptx.cu:[[@LINE-115]]:13: warning: Poseidon: no profile at {{.*}}_Z2qfPKdPd.poseidon._Z9k_inplacePdi.0.fpprofile:
+// USE-DAG: per_call_extent_nvptx.cu:[[@LINE-106]]:13: warning: Poseidon: no profile at {{.*}}_Z2qfPKdPd.poseidon._Z8k_selectPKdPdi.0.fpprofile:
+// USE-DAG: per_call_extent_nvptx.cu:[[@LINE-91]]:39: warning: Poseidon: no profile at {{.*}}_Z4bodyPK5qfuncPKdPd.poseidon._Z7run_refRK5qfuncPdi.0.fpprofile:
+// USE-DAG: per_call_extent_nvptx.cu:[[@LINE-67]]:13: warning: Poseidon: no profile at {{.*}}_Z4leanPK4pairPd.poseidon._Z7k_alignPKdPd.0.fpprofile:
 // USE: {{^}}6 warnings generated when compiling for {{.+}}.{{$}}
 
 // Each overlap check names its call.

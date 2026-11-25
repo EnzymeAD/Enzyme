@@ -1,5 +1,5 @@
 ; RUN: rm -rf %t && mkdir -p %t/prof
-; RUN: %python %S/../Inputs/expression_depth_limit/chain.py %t/tester.ll %t/prof/preprocess_tester.fpprofile
+; RUN: %python %S/../Inputs/expression_depth_limit/chain.py %t/tester.ll %t/prof/tester.fpprofile
 ; RUN: cat %s %t/tester.ll | not %opt %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%t/prof -poseidon-enable-herbie=true -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cache=%t/c -S -o /dev/null 2>&1 | FileCheck %s
 
 ; An output deeper than the deepest expression the algebraic search is given

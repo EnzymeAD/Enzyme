@@ -115,13 +115,13 @@ int main() {
 // one site with one profile; the automatic calls with a pointer are per-call
 // sites, also with a target, and the automatic call with scalars alone
 // stays a marker site.
-// PROFILES: preprocess__Z2sqdd.fpprofile
-// PROFILES-NEXT: preprocess__Z4dampPKdd.fpprofile
-// PROFILES-NEXT: preprocess__Z4wavePKdPdi.fpprofile
-// PROFILES-NEXT: preprocess__Z5scalePKdPdi.poseidon.main.0.fpprofile
-// PROFILES-NEXT: preprocess__Z5shiftPKdPdi.poseidon.main.1.fpprofile
-// PROFILES-NEXT: preprocess__Z5shiftPKdPdi.poseidon.main.2.fpprofile
-// PROFILES-NEXT: preprocess__Z6energyPKdi.fpprofile
+// PROFILES: _Z2sqdd.fpprofile
+// PROFILES-NEXT: _Z4dampPKdd.fpprofile
+// PROFILES-NEXT: _Z4wavePKdPdi.fpprofile
+// PROFILES-NEXT: _Z5scalePKdPdi.poseidon.main.0.fpprofile
+// PROFILES-NEXT: _Z5shiftPKdPdi.poseidon.main.1.fpprofile
+// PROFILES-NEXT: _Z5shiftPKdPdi.poseidon.main.2.fpprofile
+// PROFILES-NEXT: _Z6energyPKdi.fpprofile
 
 // Each site is solved against its own target: wave, energy, scale, sq and the
 // second shift rewritten, damp and the first shift left as written, the two

@@ -40,8 +40,8 @@ POSEIDON_OPTIMIZE_TAU(1e-9) __attribute__((global)) void tight(double *x) {
 // TYPE: @llvm.global.annotations = appending addrspace(1) global [2 x { ptr addrspace(1), ptr addrspace(4), ptr addrspace(4), i32, ptr addrspace(1) }] [{ ptr addrspace(1), ptr addrspace(4), ptr addrspace(4), i32, ptr addrspace(1) } { ptr addrspace(1) addrspacecast (ptr @_Z5plainPd to ptr addrspace(1)), ptr addrspace(4) [[ANN]], ptr addrspace(4) [[FILE]], i32 [[@LINE-12]], ptr addrspace(1) [[NOARGS]] }, { ptr addrspace(1), ptr addrspace(4), ptr addrspace(4), i32, ptr addrspace(1) } { ptr addrspace(1) addrspacecast (ptr @_Z5tightPd to ptr addrspace(1)), ptr addrspace(4) [[ANN]], ptr addrspace(4) [[FILE]], i32 [[@LINE-8]], ptr addrspace(1) [[TAU]] }], section "llvm.metadata"
 
 // READ-NOT: plain(double*): accuracy target
-// READ: annotation_forms_amdgpu.hip:[[@LINE-15]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/Inputs/other_sites/preprocess__Z5plainPd_poseidon_body.fpprofile:
+// READ: annotation_forms_amdgpu.hip:[[@LINE-15]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/_Z5plainPd.fpprofile:
 // READ-NOT: plain(double*): accuracy target
 // READ: [poseidon] site tight(double*): accuracy target 1e-09
-// READ-NEXT: annotation_forms_amdgpu.hip:[[@LINE-14]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/Inputs/other_sites/preprocess__Z5tightPd_poseidon_body.fpprofile:
+// READ-NEXT: annotation_forms_amdgpu.hip:[[@LINE-14]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/_Z5tightPd.fpprofile:
 // READ: [poseidon] every site of {{.*}}annotation_forms_amdgpu.hip was left alone; emitting the module as written

@@ -1,5 +1,5 @@
 ; RUN: rm -rf %t && mkdir -p %t/prof
-; RUN: cp %S/../Inputs/raise_tcec/preprocess_matmul_body.fpprofile %t/prof/preprocess_staged_body.fpprofile
+; RUN: cp %S/../Inputs/raise_tcec/matmul_body.fpprofile %t/prof/staged_body.fpprofile
 ; RUN: %opt %s %loadPoseidon \
 ; RUN:   -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" \
 ; RUN:   -poseidon-profile-use=%t/prof -poseidon-cache=%t/c \

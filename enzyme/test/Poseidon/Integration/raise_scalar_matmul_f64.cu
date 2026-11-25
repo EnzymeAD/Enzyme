@@ -13,7 +13,7 @@
 // RUN:     -I%poseidon_profile_inc -DPOSEIDON_DEVICE_MATH %s -x none %poseidon_profile_cuda_lib %poseidon_profile_lib \
 // RUN:     -L%cuda_lib_dir -lcudart -lstdc++ -lm -o %t/exe
 // RUN: env POSEIDON_PROFILE_DIR=%t/profiles %t/exe | FileCheck --check-prefix=PRIMAL %s
-// RUN: FileCheck --check-prefix=PROF %s < %t/profiles/preprocess_scalar_matmul_body_f64.fpprofile
+// RUN: FileCheck --check-prefix=PROF %s < %t/profiles/scalar_matmul_body_f64.fpprofile
 //
 // RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -O2 \
 // RUN:     -I%poseidon_profile_inc -DPOSEIDON_DEVICE_MATH -S -emit-llvm %s -o %t/dev.ll

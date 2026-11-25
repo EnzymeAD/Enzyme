@@ -22,7 +22,7 @@
 ; RUN: mkdir %t/kinds
 ; RUN: %{reprice} -poseidon-cache=%t/kinds/ord -poseidon-explain=%t/kinds/ex -poseidon-apply-rewrites='R0_1,PT0_0,M0_2' -S -poseidon-print -o %t/kinds/ord.ll > %t/kinds/ord.log 2>&1
 ; RUN: FileCheck --check-prefix=KINDS-ORD %s < %t/kinds/ord.log
-; RUN: cat %t/kinds/ex/preprocess_matmul_body.explain.json | FileCheck --check-prefix=KINDS-EXPLAIN %s
+; RUN: cat %t/kinds/ex/matmul_body.explain.json | FileCheck --check-prefix=KINDS-EXPLAIN %s
 ; RUN: %{reprice} -poseidon-cache=%t/kinds/name "-poseidon-apply-rewrites=$(sed -n 's/^\[poseidon\] pin: //p' %t/kinds/ord.log)" -S -poseidon-print -o %t/kinds/name.ll 2>&1 | FileCheck --check-prefix=KINDS-NAME %s
 ; RUN: diff %t/kinds/ord.ll %t/kinds/name.ll
 ; RUN: not %{reprice} -poseidon-cache=%t/kinds/range_r -poseidon-apply-rewrites='R9_0' -S -o /dev/null 2>&1 | FileCheck --check-prefix=KINDS-RANGE-R %s

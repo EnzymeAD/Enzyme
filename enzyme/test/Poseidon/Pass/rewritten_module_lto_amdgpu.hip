@@ -66,12 +66,12 @@ POSEIDON_OPTIMIZE __global__ void unprofiled(const double *x, double *y,
 
 // SOLVE: [poseidon] site site(double const*, double*, int): accuracy target 1e-06
 // SOLVE: [poseidon] pin: _Z4sitePKdPdi:PT0=All FP64(0%) + FP32(100%)
-// SOLVE: rewritten_module_lto_amdgpu.hip:[[@LINE-9]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/Inputs/rewritten_lto_hip/preprocess__Z10unprofiledPKdPdi_poseidon_body.fpprofile:
+// SOLVE: rewritten_module_lto_amdgpu.hip:[[@LINE-9]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/_Z10unprofiledPKdPdi.fpprofile:
 // SOLVE: [poseidon] {{.*}}rewritten_module_lto_amdgpu.hip: 1 function(s) a rewrite reached; every other function as written
 
 // REFUSED: [poseidon] site site(double const*, double*, int): accuracy target 1e-18
 // REFUSED: [poseidon] pin: {{$}}
-// REFUSED: rewritten_module_lto_amdgpu.hip:[[@LINE-14]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/Inputs/rewritten_lto_hip/preprocess__Z10unprofiledPKdPdi_poseidon_body.fpprofile:
+// REFUSED: rewritten_module_lto_amdgpu.hip:[[@LINE-14]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/_Z10unprofiledPKdPdi.fpprofile:
 // REFUSED: [poseidon] every site of {{.*}}rewritten_module_lto_amdgpu.hip was left alone; emitting the module as written
 
 // FNS: NAME <_Z4sitePKdPdi>:

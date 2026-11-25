@@ -13,7 +13,7 @@
 // RUN: %clang -x hip --offload-arch=gfx942 --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -ffp-contract=on -S -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/other_sites %s -o %t/use.s
 // RUN: diff %t/as_written.s %t/use.s
 // RUN: %if enzyme %{ mkdir -p %t/prof %}
-// RUN: %if enzyme %{ sed -n 's/^@fpprofile_static_preprocess__Z4wavePdPKdi_poseidon_body = .*c"\(.*\)\\00".*/\1Executed = 0\\0A/p' %t/gen.ll | sed 's/\\0A/\n/g' > %t/prof/preprocess__Z4wavePdPKdi_poseidon_body.fpprofile %}
+// RUN: %if enzyme %{ sed -n 's/^@fpprofile_static_preprocess__Z4wavePdPKdi_poseidon_body = .*c"\(.*\)\\00".*/\1Executed = 0\\0A/p' %t/gen.ll | sed 's/\\0A/\n/g' > %t/prof/_Z4wavePdPKdi.fpprofile %}
 // RUN: %if enzyme %{ %clang -x hip --offload-arch=%amdgpu_arch --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -ffp-contract=on -S -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%t/prof -mllvm -poseidon-print %s -o %t/use.profiled.s 2>&1 | FileCheck --check-prefix=PROFILED %s %}
 // RUN: %if enzyme %{ %clang -x hip --offload-arch=%amdgpu_arch --rocm-path=%rocm_path --cuda-device-only -cuid=0 -O2 -ffp-contract=on -S -DAS_WRITTEN -DNO_SITE %s -o %t/as_written.arch.s %}
 // RUN: %if enzyme %{ diff %t/as_written.arch.s %t/use.profiled.s %}
@@ -84,5 +84,5 @@ POSEIDON_OPTIMIZE __global__ void wave(double *o, const double *a, int n) {
 // CALLS-NEXT: atomicrmw fadd ptr addrspace(1) %[[DXP]], double %{{[0-9]+}} monotonic
 // CALLS: {{^}}}
 
-// PROFILED: {{^}}[poseidon] _Z4wavePdPKdi_poseidon_body: the profiling run instrumented this site and never executed it ({{.*}}/prof/preprocess__Z4wavePdPKdi_poseidon_body.fpprofile); left unchanged{{$}}
+// PROFILED: {{^}}[poseidon] _Z4wavePdPKdi_poseidon_body: the profiling run instrumented this site and never executed it ({{.*}}/prof/_Z4wavePdPKdi.fpprofile); left unchanged{{$}}
 // PROFILED: {{^}}[poseidon] every site of {{.*}}device_math_amdgpu.hip was left alone; emitting the module as written{{$}}

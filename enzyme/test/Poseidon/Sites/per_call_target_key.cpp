@@ -39,10 +39,10 @@ int main() {
   printf("%g %g %g %g\n", p[0], p[1], p[2], p[3]);
 }
 
-// PROFILES: preprocess__Z8pressurePKdPd.poseidon._Z7viaCallITnDaL_Z3tauEEvPKdPd.0.fpprofile
-// PROFILES-NEXT: preprocess__Z8pressurePKdPd.poseidon._Z7viaCallITnDaL_Z3tauEEvPKdPd.1.fpprofile
-// PROFILES-NEXT: preprocess__Z8pressurePKdPd.poseidon._Z9viaMarkerITnDaL_Z3tauEEvPKdPd.0.fpprofile
-// PROFILES-NEXT: preprocess__Z8pressurePKdPd.poseidon._Z9viaMarkerITnDaL_Z3tauEEvPKdPd.1.fpprofile
+// PROFILES: _Z8pressurePKdPd.poseidon._Z7viaCallITnDaL_Z3tauEEvPKdPd.0.fpprofile
+// PROFILES-NEXT: _Z8pressurePKdPd.poseidon._Z7viaCallITnDaL_Z3tauEEvPKdPd.1.fpprofile
+// PROFILES-NEXT: _Z8pressurePKdPd.poseidon._Z9viaMarkerITnDaL_Z3tauEEvPKdPd.0.fpprofile
+// PROFILES-NEXT: _Z8pressurePKdPd.poseidon._Z9viaMarkerITnDaL_Z3tauEEvPKdPd.1.fpprofile
 
 // USE-DAG: preprocess__Z8pressurePKdPd.poseidon._Z7viaCallITnDaL_Z3tauEEvPKdPd.0: the site's own accuracy target 1.000000e-09 overrides
 // USE-DAG: preprocess__Z8pressurePKdPd.poseidon._Z7viaCallITnDaL_Z3tauEEvPKdPd.1: the site's own accuracy target 1.000000e-06 overrides

@@ -10,19 +10,19 @@
 ; RUN:   -poseidon-herbie-num-taylor-terms=4,2 -poseidon-cache=%t/c -poseidon-explain=%t/r24 2>&1 \
 ; RUN:   | FileCheck --check-prefix=SEARCH24 %s
 ; RUN: FileCheck --check-prefix=CALLS24 %s < %t/calls24.log
-; RUN: %{rewrites} %t/r24/preprocess_tester.explain.json | FileCheck --check-prefix=UNION24 %s
+; RUN: %{rewrites} %t/r24/tester.explain.json | FileCheck --check-prefix=UNION24 %s
 ; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/herbie_taylor_terms FAKE_HERBIE_LOG=%t/calls4.log %{opt} \
 ; RUN:   -poseidon-herbie-binary=%S/../Inputs/herbie_taylor_terms/fake-herbie.sh -poseidon-herbie-processes=1 \
 ; RUN:   -poseidon-herbie-num-taylor-terms=4 -poseidon-cache=%t/c -poseidon-explain=%t/r4 2>&1 \
 ; RUN:   | FileCheck --check-prefix=SEARCH4 %s
 ; RUN: FileCheck --allow-empty --check-prefix=NOCALL %s < %t/calls4.log
-; RUN: %{rewrites} %t/r4/preprocess_tester.explain.json | FileCheck --check-prefix=UNION4 %s
+; RUN: %{rewrites} %t/r4/tester.explain.json | FileCheck --check-prefix=UNION4 %s
 ; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/herbie_taylor_terms FAKE_HERBIE_LOG=%t/calls46.log %{opt} \
 ; RUN:   -poseidon-herbie-binary=%S/../Inputs/herbie_taylor_terms/fake-herbie.sh -poseidon-herbie-processes=1 \
 ; RUN:   -poseidon-herbie-num-taylor-terms=6,4 -poseidon-cache=%t/c -poseidon-explain=%t/r46 2>&1 \
 ; RUN:   | FileCheck --check-prefix=SEARCH46 %s
 ; RUN: FileCheck --check-prefix=CALLS46 %s < %t/calls46.log
-; RUN: %{rewrites} %t/r46/preprocess_tester.explain.json | FileCheck --check-prefix=UNION46 %s
+; RUN: %{rewrites} %t/r46/tester.explain.json | FileCheck --check-prefix=UNION46 %s
 ; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/dp_cache_keys %{opt} -poseidon-herbie-binary=%S/../Inputs/fake-herbie.sh \
 ; RUN:   -poseidon-cache=%t/unset 2>&1 | FileCheck --check-prefix=UNSET %s
 ; RUN: not %{opt} -poseidon-herbie-binary=%S/../Inputs/herbie_taylor_terms/no-option-herbie.sh -poseidon-herbie-processes=1 \

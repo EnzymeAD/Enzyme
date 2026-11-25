@@ -3,19 +3,19 @@
 // RUN: %poseidon_clangxx -O2 -poseidon-profile-generate -poseidon-cache=%t/c %s -o %t/a
 // RUN: %poseidon_clangxx -O2 -poseidon-profile-generate -poseidon-cache=%t/c -DPROGRAM_B %s -o %t/b
 // RUN: env POSEIDON_PROBE_LADDER=1e-6 POSEIDON_PROFILE_DIR=%t/prof %poseidon_probe -- %t/a > /dev/null
-// RUN: cp %t/prof/preprocess__Z1fPKdPdi_poseidon_body.fpprofile %t/f.a
+// RUN: cp %t/prof/_Z1fPKdPdi.fpprofile %t/f.a
 // RUN: env POSEIDON_PROBE_LADDER=1e-6 POSEIDON_PROFILE_DIR=%t/prof %poseidon_probe -- %t/b > /dev/null 2> %t/b.err
-// RUN: cmp %t/f.a %t/prof/preprocess__Z1fPKdPdi_poseidon_body.fpprofile
-// RUN: FileCheck --check-prefix=MEASURED %s < %t/prof/preprocess__Z1fPKdPdi_poseidon_body.fpprofile
-// RUN: FileCheck --check-prefix=MEASURED %s < %t/prof/preprocess__Z1gPKdPdi_poseidon_body.fpprofile
+// RUN: cmp %t/f.a %t/prof/_Z1fPKdPdi.fpprofile
+// RUN: FileCheck --check-prefix=MEASURED %s < %t/prof/_Z1fPKdPdi.fpprofile
+// RUN: FileCheck --check-prefix=MEASURED %s < %t/prof/_Z1gPKdPdi.fpprofile
 // RUN: FileCheck --check-prefix=PROBE %s < %t/b.err
 // RUN: env POSEIDON_PROBE=0 POSEIDON_PROFILE_DIR=%t/declined %t/a > /dev/null
 // RUN: env POSEIDON_PROBE_LADDER=1e-6 POSEIDON_PROFILE_DIR=%t/declined %poseidon_probe -- %t/b > /dev/null
-// RUN: FileCheck --check-prefix=NOKAPPA %s < %t/declined/preprocess__Z1fPKdPdi_poseidon_body.fpprofile
-// RUN: FileCheck --check-prefix=MEASURED %s < %t/declined/preprocess__Z1gPKdPdi_poseidon_body.fpprofile
+// RUN: FileCheck --check-prefix=NOKAPPA %s < %t/declined/_Z1fPKdPdi.fpprofile
+// RUN: FileCheck --check-prefix=MEASURED %s < %t/declined/_Z1gPKdPdi.fpprofile
 // RUN: env POSEIDON_PROFILE_DIR=%t/only %t/b > /dev/null
 // RUN: env POSEIDON_PROFILE_DIR=%t/only %t/b > /dev/null
-// RUN: FileCheck --check-prefix=NEVER %s < %t/only/preprocess__Z1fPKdPdi_poseidon_body.fpprofile
+// RUN: FileCheck --check-prefix=NEVER %s < %t/only/_Z1fPKdPdi.fpprofile
 
 // Two programs share the sites f, g and h and write one profile directory:
 // program a executes f and h, program b g and h. The run of b keeps the

@@ -3,16 +3,16 @@
 // RUN: %poseidon_clangxx -x cuda --cuda-gpu-arch=%gpu_arch -O2 -poseidon-profile-generate -poseidon-cache=%t/cg -poseidon-print %s -o %t/gen 2>&1 \
 // RUN:   | FileCheck --check-prefix=DEFER %s
 // RUN: env POSEIDON_PROFILE_DIR=%t/prof %t/gen | FileCheck --check-prefix=PRIMAL %s
-// RUN: FileCheck --check-prefix=PROFILE %s < %t/prof/preprocess_jvp_body.poseidon._Z8jvp_callPKdS0_PdS1_.0.fpprofile
+// RUN: FileCheck --check-prefix=PROFILE %s < %t/prof/jvp_body.poseidon._Z8jvp_callPKdS0_PdS1_.0.fpprofile
 //
 // The call form records what the explicit form with the shadows written by
 // hand records. The sums are accumulated by atomics and differ between any two
 // runs in their last digits, so they are compared to a relative 1e-12.
-// RUN: grep -v -e SiteId -e Sum %t/prof/preprocess_jvp_body.fpprofile > %t/explicit.prof
-// RUN: grep -v -e SiteId -e Sum %t/prof/preprocess_jvp_body.poseidon._Z8jvp_callPKdS0_PdS1_.0.fpprofile > %t/call.prof
+// RUN: grep -v -e SiteId -e Sum %t/prof/jvp_body.fpprofile > %t/explicit.prof
+// RUN: grep -v -e SiteId -e Sum %t/prof/jvp_body.poseidon._Z8jvp_callPKdS0_PdS1_.0.fpprofile > %t/call.prof
 // RUN: diff %t/explicit.prof %t/call.prof
-// RUN: grep Sum %t/prof/preprocess_jvp_body.fpprofile > %t/explicit.sums
-// RUN: grep Sum %t/prof/preprocess_jvp_body.poseidon._Z8jvp_callPKdS0_PdS1_.0.fpprofile > %t/call.sums
+// RUN: grep Sum %t/prof/jvp_body.fpprofile > %t/explicit.sums
+// RUN: grep Sum %t/prof/jvp_body.poseidon._Z8jvp_callPKdS0_PdS1_.0.fpprofile > %t/call.sums
 // RUN: paste %t/explicit.sums %t/call.sums \
 // RUN:   | awk '{ d = $3 - $6; if (d * d > 1e-24 * $3 * $3) bad = 1 } END { print bad ? "SUMS DIFFER" : "SUMS SAME" }' \
 // RUN:   | FileCheck --check-prefix=SUMS %s

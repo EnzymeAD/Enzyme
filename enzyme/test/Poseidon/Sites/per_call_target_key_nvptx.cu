@@ -65,14 +65,14 @@ __attribute__((global)) void k(double *x) {
   x[10] = pair<CA, CAT(CAT(1, CA), ul)>(x[10]);
 }
 
-// CHECK-DAG: warning: Poseidon: no profile at {{.*}}/preprocess__Z2sqd.poseidon._Z6scaledITnDaL_Z3tauELi1EEdd.0.fpprofile:
-// CHECK-DAG: warning: Poseidon: no profile at {{.*}}/preprocess__Z2sqd.poseidon._Z6scaledITnDaL_Z3tauELi2EEdd.0.fpprofile:
-// CHECK-DAG: warning: Poseidon: no profile at {{.*}}/preprocess__Z2sqd.poseidon._Z6scaledITnDaL_Z3tauELi2EEdd.1.fpprofile:
-// CHECK-DAG: warning: Poseidon: no profile at {{.*}}/preprocess__Z2sqd.poseidon._Z6taggedI9ToleranceIL_Z3tauEEEdd.0.fpprofile:
-// CHECK-DAG: warning: Poseidon: no profile at {{.*}}/preprocess__Z2sqd.poseidon._Z6scaledITnDaL_Z3tauELi3EEdd.0.fpprofile:
-// CHECK-DAG: warning: Poseidon: no profile at {{.*}}/preprocess__Z2sqd.poseidon._Z5codedIL_Z3tauELi1EEdd.0.fpprofile:
-// CHECK-DAG: warning: Poseidon: no profile at {{.*}}/preprocess__Z2sqd.poseidon._Z5codedIL_Z3tauELi2EEdd.0.fpprofile:
-// CHECK-DAG: warning: Poseidon: no profile at {{.*}}/preprocess__Z2sqd.poseidon._Z5codedIL_Z3tauELi2EEdd.1.fpprofile:
-// CHECK-DAG: warning: Poseidon: no profile at {{.*}}/preprocess__Z2sqd.poseidon._Z6taggedI4CodeIL_Z3tauEEEdd.0.fpprofile:
-// CHECK-DAG: warning: Poseidon: no profile at {{.*}}/preprocess__Z2sqd.poseidon._Z4wideIL_Z3tauEEdd.0.fpprofile:
-// CHECK-DAG: warning: Poseidon: no profile at {{.*}}/preprocess__Z2sqd.poseidon._Z4pairIL_Z3tauELm1{{[0-9]+}}EEdd.0.fpprofile:
+// CHECK-DAG: warning: Poseidon: no profile at {{.*}}/_Z2sqd.poseidon._Z6scaledITnDaL_Z3tauELi1EEdd.0.fpprofile:
+// CHECK-DAG: warning: Poseidon: no profile at {{.*}}/_Z2sqd.poseidon._Z6scaledITnDaL_Z3tauELi2EEdd.0.fpprofile:
+// CHECK-DAG: warning: Poseidon: no profile at {{.*}}/_Z2sqd.poseidon._Z6scaledITnDaL_Z3tauELi2EEdd.1.fpprofile:
+// CHECK-DAG: warning: Poseidon: no profile at {{.*}}/_Z2sqd.poseidon._Z6taggedI9ToleranceIL_Z3tauEEEdd.0.fpprofile:
+// CHECK-DAG: warning: Poseidon: no profile at {{.*}}/_Z2sqd.poseidon._Z6scaledITnDaL_Z3tauELi3EEdd.0.fpprofile:
+// CHECK-DAG: warning: Poseidon: no profile at {{.*}}/_Z2sqd.poseidon._Z5codedIL_Z3tauELi1EEdd.0.fpprofile:
+// CHECK-DAG: warning: Poseidon: no profile at {{.*}}/_Z2sqd.poseidon._Z5codedIL_Z3tauELi2EEdd.0.fpprofile:
+// CHECK-DAG: warning: Poseidon: no profile at {{.*}}/_Z2sqd.poseidon._Z5codedIL_Z3tauELi2EEdd.1.fpprofile:
+// CHECK-DAG: warning: Poseidon: no profile at {{.*}}/_Z2sqd.poseidon._Z6taggedI4CodeIL_Z3tauEEEdd.0.fpprofile:
+// CHECK-DAG: warning: Poseidon: no profile at {{.*}}/_Z2sqd.poseidon._Z4wideIL_Z3tauEEdd.0.fpprofile:
+// CHECK-DAG: warning: Poseidon: no profile at {{.*}}/_Z2sqd.poseidon._Z4pairIL_Z3tauELm1{{[0-9]+}}EEdd.0.fpprofile:

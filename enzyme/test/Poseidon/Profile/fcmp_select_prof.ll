@@ -113,14 +113,14 @@ entry:
 declare double @__poseidon_fp_optimize(...)
 
 ; CHECK: @POSEIDON_PROFILE_RUNTIME_VAR = external global i32
-; CHECK: @poseidon_site_preprocess_test_maxnum_zero = private unnamed_addr constant [28 x i8] c"preprocess_test_maxnum_zero\00", align 1
-; CHECK: @poseidon_site_preprocess_test_maxnum_zero_reversed = private unnamed_addr constant [37 x i8] c"preprocess_test_maxnum_zero_reversed\00", align 1
-; CHECK: @poseidon_site_preprocess_test_maxnum_general = private unnamed_addr constant [31 x i8] c"preprocess_test_maxnum_general\00", align 1
-; CHECK: @poseidon_site_preprocess_test_minnum_general = private unnamed_addr constant [31 x i8] c"preprocess_test_minnum_general\00", align 1
-; CHECK: @poseidon_site_preprocess_test_combined = private unnamed_addr constant [25 x i8] c"preprocess_test_combined\00", align 1
-; CHECK: @poseidon_site_preprocess_test_fadd = private unnamed_addr constant [21 x i8] c"preprocess_test_fadd\00", align 1
-; CHECK: @poseidon_site_preprocess_test_fma = private unnamed_addr constant [20 x i8] c"preprocess_test_fma\00", align 1
-; CHECK: @poseidon_site_preprocess_muldd = private unnamed_addr constant [17 x i8] c"preprocess_muldd\00", align 1
+; CHECK: @poseidon_site_preprocess_test_maxnum_zero = private unnamed_addr constant [17 x i8] c"test_maxnum_zero\00", align 1
+; CHECK: @poseidon_site_preprocess_test_maxnum_zero_reversed = private unnamed_addr constant [26 x i8] c"test_maxnum_zero_reversed\00", align 1
+; CHECK: @poseidon_site_preprocess_test_maxnum_general = private unnamed_addr constant [20 x i8] c"test_maxnum_general\00", align 1
+; CHECK: @poseidon_site_preprocess_test_minnum_general = private unnamed_addr constant [20 x i8] c"test_minnum_general\00", align 1
+; CHECK: @poseidon_site_preprocess_test_combined = private unnamed_addr constant [14 x i8] c"test_combined\00", align 1
+; CHECK: @poseidon_site_preprocess_test_fadd = private unnamed_addr constant [10 x i8] c"test_fadd\00", align 1
+; CHECK: @poseidon_site_preprocess_test_fma = private unnamed_addr constant [9 x i8] c"test_fma\00", align 1
+; CHECK: @poseidon_site_preprocess_muldd = private unnamed_addr constant [6 x i8] c"muldd\00", align 1
 
 ; One probe per profiled value, and its custom gradient carries that value's
 ; slot into the gradient record.

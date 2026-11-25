@@ -3,7 +3,7 @@
 // RUN: %poseidon_clangxx -O2 -poseidon-profile-generate -poseidon-cache=%t/c %s -o %t/gen
 // RUN: llvm-nm %t/gen | FileCheck %s
 // RUN: env POSEIDON_PROFILE_DIR=%t/prof %t/gen
-// RUN: ls %t/prof/preprocess__Z5scalePKdPdi.fpprofile
+// RUN: ls %t/prof/_Z5scalePKdPdi.fpprofile
 
 // A profiling build without a POSEIDON_OPTIMIZE function on the host links the
 // allocator the host sites need, but without the definition a host site emits

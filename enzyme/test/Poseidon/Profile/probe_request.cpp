@@ -5,22 +5,22 @@
 // RUN: env POSEIDON_PROBE_LADDER=1e-6 POSEIDON_PROFILE_DIR=%t/plain %t/gen %t/plain.runs > /dev/null 2> %t/plain.err
 // RUN: FileCheck --check-prefix=ONCE %s < %t/plain.runs
 // RUN: FileCheck --check-prefix=NOTICE %s < %t/plain.err
-// RUN: FileCheck --check-prefix=UNMEASURED %s < %t/plain/preprocess__Z5gaussPKdPdi_poseidon_body.fpprofile
-// RUN: FileCheck --check-prefix=UNMEASURED %s < %t/plain/preprocess__Z4wavePKdPdi_poseidon_body.fpprofile
+// RUN: FileCheck --check-prefix=UNMEASURED %s < %t/plain/_Z5gaussPKdPdi.fpprofile
+// RUN: FileCheck --check-prefix=UNMEASURED %s < %t/plain/_Z4wavePKdPdi.fpprofile
 
 // RUN: env POSEIDON_PROBE_LADDER=1e-6,1e-5 POSEIDON_PROFILE_DIR=%t/env %poseidon_probe -- %t/gen %t/env.runs > /dev/null 2> %t/env.err
 // RUN: FileCheck --check-prefix=SIX %s < %t/env.runs
 // RUN: FileCheck --check-prefix=MEASURE -DRUNS=5 %s < %t/env.err
-// RUN: FileCheck --check-prefix=MEASURED %s < %t/env/preprocess__Z5gaussPKdPdi_poseidon_body.fpprofile
-// RUN: FileCheck --check-prefix=MEASURED %s < %t/env/preprocess__Z4wavePKdPdi_poseidon_body.fpprofile
-// RUN: ls -A %t/env | FileCheck --check-prefix=FILES %s
+// RUN: FileCheck --check-prefix=MEASURED %s < %t/env/_Z5gaussPKdPdi.fpprofile
+// RUN: FileCheck --check-prefix=MEASURED %s < %t/env/_Z4wavePKdPdi.fpprofile
+// RUN: ls -A %t/env | FileCheck --check-prefix=FILES --implicit-check-not=tmp %s
 // RUN: not env POSEIDON_PROBE_LADDER=1e-6,x POSEIDON_PROFILE_DIR=%t/badladder %poseidon_probe -- %t/gen %t/badladder.runs 2>&1 | FileCheck --check-prefix=LADDER %s
 // RUN: not ls %t/badladder.runs
 
 // RUN: env POSEIDON_PROBE_LADDER=1e-6 POSEIDON_PROFILE_DIR=%t/tool %poseidon_probe -- %t/gen %t/tool.runs > /dev/null 2> %t/tool.err
 // RUN: FileCheck --check-prefix=FOUR %s < %t/tool.runs
 // RUN: FileCheck --check-prefix=MEASURE -DRUNS=3 %s < %t/tool.err
-// RUN: FileCheck --check-prefix=MEASURED %s < %t/tool/preprocess__Z4wavePKdPdi_poseidon_body.fpprofile
+// RUN: FileCheck --check-prefix=MEASURED %s < %t/tool/_Z4wavePKdPdi.fpprofile
 // RUN: not %poseidon_probe 2>&1 | FileCheck --check-prefix=USAGE %s
 
 // RUN: env POSEIDON_PROBE=child POSEIDON_PROFILE_DIR=%t/child %t/gen %t/child.runs > /dev/null
@@ -31,8 +31,8 @@
 // RUN: env POSEIDON_PROBE=0 POSEIDON_PROFILE_DIR=%t/declined %t/gen %t/declined.runs > /dev/null 2> %t/declined.err
 // RUN: FileCheck --check-prefix=ONCE %s < %t/declined.runs
 // RUN: FileCheck --check-prefix=DECLINED %s < %t/declined.err
-// RUN: FileCheck --check-prefix=NOKAPPA -DID=0 %s < %t/declined/preprocess__Z5gaussPKdPdi_poseidon_body.fpprofile
-// RUN: FileCheck --check-prefix=NOKAPPA -DID=1 %s < %t/declined/preprocess__Z4wavePKdPdi_poseidon_body.fpprofile
+// RUN: FileCheck --check-prefix=NOKAPPA -DID=0 %s < %t/declined/_Z5gaussPKdPdi.fpprofile
+// RUN: FileCheck --check-prefix=NOKAPPA -DID=1 %s < %t/declined/_Z4wavePKdPdi.fpprofile
 // RUN: %poseidon_clangxx -O2 -g -poseidon-profile-use=%t/declined -poseidon-tau=1e-6 -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-enable-herbie=0 -poseidon-cache=%t/c -c %s -poseidon-print -o %t/declined.o 2>&1 \
 // RUN:   | FileCheck --check-prefix=DECLINED-USE --implicit-check-not=error: %s
 
@@ -125,17 +125,15 @@ int main(int argc, char **argv) {
 
 // Every profile is written whole through a file renamed over it, and the
 // measurement rewrites them the same way.
-// FILES-NOT: tmp
-// FILES: metric.txt
-// FILES-NEXT: preprocess__Z4wavePKdPdi_poseidon_body.fpprofile
-// FILES-NEXT: preprocess__Z5gaussPKdPdi_poseidon_body.fpprofile
-// FILES-NOT: tmp
+// FILES-DAG: metric.txt
+// FILES-DAG: _Z4wavePKdPdi.fpprofile
+// FILES-DAG: _Z5gaussPKdPdi.fpprofile
 
 // LADDER: Poseidon FPProfiler: POSEIDON_PROBE_LADDER='1e-6,x' is not a comma-separated list of positive numbers.
 
 // USAGE: usage: poseidon-probe -- <program> [args...]
 
-// USE: probe_request.cpp:[[#@LINE-81]]:1: error: Poseidon: the profiling run declared a quantity of interest with poseidon_metric and did not measure the condition number of preprocess__Z5gaussPKdPdi_poseidon_body against it ({{.*}}/plain/preprocess__Z5gaussPKdPdi_poseidon_body.fpprofile). Run the profiling build again as 'poseidon-probe -- <program> [args...]', the command the profiling run printed, to measure it, or with POSEIDON_PROBE=0 in its environment to solve each site against its own target.
+// USE: probe_request.cpp:[[#@LINE-79]]:1: error: Poseidon: the profiling run declared a quantity of interest with poseidon_metric and did not measure the condition number of preprocess__Z5gaussPKdPdi_poseidon_body against it ({{.*}}/plain/_Z5gaussPKdPdi.fpprofile). Run the profiling build again as 'poseidon-probe -- <program> [args...]', the command the profiling run printed, to measure it, or with POSEIDON_PROBE=0 in its environment to solve each site against its own target.
 // USE-NEXT: POSEIDON_OPTIMIZE void gauss(const double *x, double *y, int n) {
 
 // USAGE: That takes 1 + <sites> x

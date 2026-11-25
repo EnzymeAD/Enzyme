@@ -89,7 +89,7 @@ void launch_site(const double *x, double *y, int n) {
 // takes and its gradient read from the output's shadow, and the profiler is
 // linked into the module. With -O2 the derivative is inlined into the kernel;
 // the package's compile, at -O0, calls it with the kernel's shadows.
-// DEV: @[[SITE:poseidon_site_preprocess__Z4sitePKdPdi_poseidon_body]] = private unnamed_addr addrspace(1) constant [39 x i8] c"preprocess__Z4sitePKdPdi_poseidon_body\00"
+// DEV: @[[SITE:poseidon_site_preprocess__Z4sitePKdPdi_poseidon_body]] = private unnamed_addr addrspace(1) constant [14 x i8] c"_Z4sitePKdPdi\00"
 // DEV: @__poseidon_profile_table = weak_odr protected addrspace(4) externally_initialized constant %struct.PoseidonCUDAProfileTable zeroinitializer,
 // DEV: define amdgpu_kernel void @_Z4sitePKdPdi(ptr addrspace(1) {{[^%]*}}%[[X:[0-9]+]], ptr addrspace(1) {{[^%]*}}%[[Y:[0-9]+]], i32 %[[N:[0-9]+]], ptr {{[^%]*}}%[[DX:[0-9]+]], ptr {{[^%]*}}%[[DY:[0-9]+]])
 // DRVDEV: %[[DYG:[0-9]+]] = addrspacecast ptr %[[DY]] to ptr addrspace(1)

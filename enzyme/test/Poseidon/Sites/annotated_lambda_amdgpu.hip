@@ -85,13 +85,13 @@ POSEIDON_OPTIMIZE __device__ double unused(double x) { return x * x; }
 // DESC-NEXT: "profile headers": {
 // DESC-NEXT: "_ZL11HipKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_": {
 // DESC-NEXT: "header": "SiteId = 0\nCanonicalHash = {{[0-9a-f]+}}\n",
-// DESC-NEXT: "profile": "preprocess__ZL11HipKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT__poseidon_body~5542affc7fb185a6"
+// DESC-NEXT: "profile": "_ZL11HipKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_~c65d15c695537921"
 
 // The kernel keeps its calling convention and gains the three shadows, in the
 // order of the pointers they shadow: the adjoints of Q and G accumulate into
 // the first two, and the one of y is read from the third, cleared, and logged
 // as the seed of both operations.
-// GENIR: @poseidon_site_preprocess__ZL11HipKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT__poseidon_body = private unnamed_addr addrspace(1) constant [90 x i8] c"preprocess__ZL11HipKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT__poseidon_body~5542affc7fb185a6\00"
+// GENIR: @poseidon_site_preprocess__ZL11HipKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT__poseidon_body = private unnamed_addr addrspace(1) constant [65 x i8] c"_ZL11HipKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_~c65d15c695537921\00"
 // GENIR: define {{.*}}amdgpu_kernel void @_ZL11HipKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_(i32 {{.*}}, ptr addrspace(4) {{.*}}byref(%class.anon){{.*}}, ptr {{.*}}[[DQ:%[0-9]+]], ptr {{.*}}[[DG:%[0-9]+]], ptr {{.*}}[[DY:%[0-9]+]])
 // GENIR-DAG: [[DQG:%[0-9]+]] = addrspacecast ptr [[DQ]] to ptr addrspace(1)
 // GENIR-DAG: [[DGG:%[0-9]+]] = addrspacecast ptr [[DG]] to ptr addrspace(1)
@@ -109,6 +109,6 @@ POSEIDON_OPTIMIZE __device__ double unused(double x) { return x * x; }
 // GENIR: {{^}}}
 
 // USE: [poseidon] site void HipKernel2D<reduce(int, int, int, double*, double*, double*)::'lambda'(int)>(int, reduce(int, int, int, double*, double*, double*)::'lambda'(int)): accuracy target 1e-09
-// USE-NEXT: annotated_lambda_amdgpu.hip:[[@LINE-83]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/Inputs/other_sites/preprocess__ZL11HipKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT__poseidon_body~5542affc7fb185a6.fpprofile:
+// USE-NEXT: annotated_lambda_amdgpu.hip:[[@LINE-83]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/_ZL11HipKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_~c65d15c695537921.fpprofile:
 // USE: [poseidon] every site of {{.*}}annotated_lambda_amdgpu.hip was left alone; emitting the module as written
 // USE-NEXT: 2 warnings generated when compiling for {{.*}}

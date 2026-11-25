@@ -6,9 +6,9 @@
 ; DEFINE:   -poseidon-cost-budget=-1e-9 -poseidon-print -S
 ; RUN: rm -rf %t && mkdir %t
 ; RUN: mkdir -p %t/nokappa %t/diverged %t/noise && cp %S/../Inputs/site_kappa/*.fpprofile %t/nokappa/ && cp %S/../Inputs/site_kappa/*.fpprofile %t/diverged/ && cp %S/../Inputs/site_kappa/*.fpprofile %t/noise/
-; RUN: sed -i -e "s/^Kappa = .*/Kappa = 0/" -e "s/^KappaMark = ok/KappaMark = below-noise/" %t/noise/preprocess_matmul_body.fpprofile %t/noise/preprocess_fms_body.fpprofile
-; RUN: sed -i "/^Kappa/d" %t/nokappa/preprocess_matmul_body.fpprofile %t/nokappa/preprocess_fms_body.fpprofile
-; RUN: sed -i "s/^KappaMark = ok/KappaMark = diverged/" %t/diverged/preprocess_matmul_body.fpprofile
+; RUN: sed -i -e "s/^Kappa = .*/Kappa = 0/" -e "s/^KappaMark = ok/KappaMark = below-noise/" %t/noise/matmul_body.fpprofile %t/noise/fms_body.fpprofile
+; RUN: sed -i "/^Kappa/d" %t/nokappa/matmul_body.fpprofile %t/nokappa/fms_body.fpprofile
+; RUN: sed -i "s/^KappaMark = ok/KappaMark = diverged/" %t/diverged/matmul_body.fpprofile
 ; RUN: %{opt} -poseidon-profile-use=%S/../Inputs/site_kappa -poseidon-enable-pt=true -poseidon-enable-multifloat=true -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false -poseidon-cache=%t/c1 2>&1 \
 ; RUN:   | FileCheck --check-prefix=KAPPA %s
 ; RUN: %{opt} -poseidon-profile-use=%t/nokappa -poseidon-enable-pt=true -poseidon-enable-multifloat=true -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false -poseidon-cache=%t/c2 2>&1 \

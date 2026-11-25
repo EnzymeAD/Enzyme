@@ -1,6 +1,6 @@
 ; RUN: rm -rf %t && mkdir -p %t/prof
-; RUN: cp %S/../Inputs/ds_expansion/preprocess_fms_body.fpprofile %t/prof/preprocess_fms_loose_poseidon_body.fpprofile
-; RUN: cp %S/../Inputs/ds_expansion/preprocess_fms_body.fpprofile %t/prof/preprocess_fms_tight_poseidon_body.fpprofile
+; RUN: cp %S/../Inputs/ds_expansion/fms_body.fpprofile %t/prof/fms_loose.fpprofile
+; RUN: cp %S/../Inputs/ds_expansion/fms_body.fpprofile %t/prof/fms_tight.fpprofile
 ; RUN: %opt %s %loadPoseidon -passes="poseidon,always-inline,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" -poseidon-profile-use=%t/prof -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-enable-multifloat=true -poseidon-two-tier-step=100 -poseidon-enable-three-tier=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cache=%t/cache -S -poseidon-print > %t/out.ll 2> %t/err.txt
 ; RUN: FileCheck --check-prefix=ERR %s < %t/err.txt
 ; RUN: FileCheck --check-prefix=IR %s < %t/out.ll
@@ -127,7 +127,7 @@ attributes #5 = { convergent nounwind "uniform-work-group-size" }
 ; ERR: [poseidon] preprocess_fms_tight_poseidon_body: tau=1.000000e-12 {{.*}} rel=7.011882e-16
 ; ERR: Applying solution for CS: All FP64(0%) + Expansion2(100%)
 ; ERR: [poseidon] pin: fms_tight:PT0=All FP64(0%) + Expansion2(100%)
-; ERR: warning: {{.*}}in function fms_bare {{.*}}Poseidon: no profile at {{.*}}/preprocess_fms_bare_poseidon_body.fpprofile:
+; ERR: warning: {{.*}}in function fms_bare {{.*}}Poseidon: no profile at {{.*}}/fms_bare.fpprofile:
 ; ERR-NOT: Applying solution
 
 ; The loose site runs the body in FP32 between one narrowing of each input and

@@ -189,8 +189,8 @@ __global__ void k_state(double *u) { u[0] = run(state{{u[0], u[1]}}); }
 // IR: ret double %[[R]]
 
 // USE-NOT: cannot be a Poseidon site
-// USE-DAG: per_call_by_value_amdgpu.hip:[[@LINE-145]]:39: warning: Poseidon: no profile at {{.*}}Inputs/other_sites/preprocess__Z4bodyI5qfuncEvPKT_PKdPd.poseidon._Z9call_siteI5qfuncEvRKT_PKdPd.0.fpprofile:
-// USE-DAG: per_call_by_value_amdgpu.hip:[[@LINE-133]]:17: warning: Poseidon: no profile at {{.*}}Inputs/other_sites/preprocess__Z4bodyI5qfuncEvPKT_PKdPd.poseidon._Z6k_data6data_ti.0.fpprofile:
-// USE-DAG: per_call_by_value_amdgpu.hip:[[@LINE-117]]:45: warning: Poseidon: no profile at {{.*}}Inputs/other_sites/preprocess__Z7advanceP5state.poseidon._Z3run5state.0.fpprofile:
+// USE-DAG: per_call_by_value_amdgpu.hip:[[@LINE-145]]:39: warning: Poseidon: no profile at {{.*}}_Z4bodyI5qfuncEvPKT_PKdPd.poseidon._Z9call_siteI5qfuncEvRKT_PKdPd.0.fpprofile:
+// USE-DAG: per_call_by_value_amdgpu.hip:[[@LINE-133]]:17: warning: Poseidon: no profile at {{.*}}_Z4bodyI5qfuncEvPKT_PKdPd.poseidon._Z6k_data6data_ti.0.fpprofile:
+// USE-DAG: per_call_by_value_amdgpu.hip:[[@LINE-117]]:45: warning: Poseidon: no profile at {{.*}}_Z7advanceP5state.poseidon._Z3run5state.0.fpprofile:
 // USE-NOT: cannot be a Poseidon site
 // USE: {{^}}3 warnings generated when compiling for {{.+}}.{{$}}

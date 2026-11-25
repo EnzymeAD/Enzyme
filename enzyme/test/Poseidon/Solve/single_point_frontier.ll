@@ -1,6 +1,6 @@
 ; RUN: rm -rf %t && mkdir -p %t/joint %t/jprof
-; RUN: cp %S/../Inputs/fma_opt_profiles/preprocess_tester.fpprofile %t/jprof/preprocess_tester_a.fpprofile
-; RUN: cp %S/../Inputs/fma_opt_profiles/preprocess_tester.fpprofile %t/jprof/preprocess_tester_b.fpprofile
+; RUN: cp %S/../Inputs/fma_opt_profiles/tester.fpprofile %t/jprof/tester_a.fpprofile
+; RUN: cp %S/../Inputs/fma_opt_profiles/tester.fpprofile %t/jprof/tester_b.fpprofile
 ; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/regime_split %opt < %S/../Inputs/regime_split/tester.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-print -poseidon-profile-use=%S/../Inputs/regime_split/profiles -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/fake-herbie.sh -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cost-budget=1e9 -poseidon-arm-search-factor=1024 -poseidon-cache=%t/noop -S -o /dev/null 2>&1 | FileCheck --check-prefix=NOOP --implicit-check-not="only frontier point" %s
 ; RUN: env FAKE_HERBIE_DIR=%S/../Inputs/one_rewrite_per_output %opt < %S/../Inputs/regime_split/tester.ll %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-print -poseidon-profile-use=%S/../Inputs/regime_split/profiles -poseidon-enable-herbie=true -poseidon-herbie-binary=%S/../Inputs/fake-herbie.sh -poseidon-enable-pt=false -poseidon-cost-model=%cost_models/cm_cpu_native.csv -poseidon-cost-budget=1e9 -poseidon-cache=%t/step -S -o /dev/null 2>&1 | FileCheck --check-prefix=STEP --implicit-check-not="only frontier point" %s
 ; RUN: sed 's/^fma,double,512$/fma,double,448/' %cost_models/cm_sm_120_synthetic.csv > %t/joint/cm_sm_120_fma.csv

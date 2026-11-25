@@ -34,10 +34,10 @@ int main() {
 
 // OUT: 2.523682 0.381643
 
-// FILES-COUNT-2: preprocess__ZL4stepPdi_poseidon_body~{{[0-9a-f]+}}.fpprofile
+// FILES-COUNT-2: _ZL4stepPdi~{{[0-9a-f]+}}.fpprofile
 // FILES-NOT: fpprofile
 
 // USE: [poseidon] Optimizing preprocess__ZL4stepPdi_poseidon_body with relative error tolerance: 1.000000e-06
 
-// EXPLAIN-COUNT-2: preprocess__ZL4stepPdi_poseidon_body~{{[0-9a-f]+}}.explain.json
+// EXPLAIN-COUNT-2: _ZL4stepPdi~{{[0-9a-f]+}}.explain.json
 // EXPLAIN-NOT: explain.json

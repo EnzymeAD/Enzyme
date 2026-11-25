@@ -91,8 +91,8 @@
 ; USE-NEXT: call void @scale(ptr @table, ptr %out)
 ; USE-NEXT: %d = call double @dot(ptr %buf, double 2.000000e+00, i32 4)
 ; USE-NEXT: ret double %d
-; USE-ERR: warning: <unknown>:0:0: in function scale void (ptr, ptr): Poseidon: no profile at {{.*}}/Inputs/other_sites/preprocess_scale_poseidon_body.fpprofile:
-; USE-ERR: warning: <unknown>:0:0: in function dot double (ptr, double, i32): Poseidon: no profile at {{.*}}/Inputs/other_sites/preprocess_dot_poseidon_body.fpprofile:
+; USE-ERR: warning: <unknown>:0:0: in function scale void (ptr, ptr): Poseidon: no profile at {{.*}}/scale.fpprofile:
+; USE-ERR: warning: <unknown>:0:0: in function dot double (ptr, double, i32): Poseidon: no profile at {{.*}}/dot.fpprofile:
 
 ; Without a profile action the module is the one written.
 ; OFF: define void @scale(ptr %x, ptr %out)

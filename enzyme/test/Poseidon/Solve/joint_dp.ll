@@ -110,7 +110,7 @@
 ; RUN: not %opt %t/targets/ab_diff.ll %{pass} %{prof} -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-joint-dp %{cm} -poseidon-cache=%t/targets/c2 -S -o /dev/null 2>&1 | FileCheck --check-prefix=TARGETS-DIFF %s
 ; RUN: %opt %t/targets/a.ll %{passfn} %{prof} -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-joint-dp %{cm} -poseidon-cache=%t/targets/c3 -poseidon-tau=1e-2 -poseidon-explain=%t/targets/ex -S -poseidon-print -o %t/targets/flag.out.ll 2> %t/targets/flag.err
 ; RUN: %python %S/../Inputs/explain/stderr_matches.py %t/targets/flag.err %t/targets/ex | FileCheck --check-prefix=TARGETS-JSON %s
-; RUN: FileCheck --check-prefix=TARGETS-SITES %s < %t/targets/ex/preprocess_tester_a.explain.json
+; RUN: FileCheck --check-prefix=TARGETS-SITES %s < %t/targets/ex/tester_a.explain.json
 ; RUN: %opt %t/targets/ab_same.ll %{passfn} %{prof} -poseidon-enable-herbie=false -poseidon-enable-pt=true -poseidon-joint-dp %{cm} -poseidon-cache=%t/targets/c4 -S -poseidon-print -o %t/targets/site.out.ll 2> %t/targets/site.err
 ; RUN: FileCheck --check-prefix=TARGETS-SOLVE %s < %t/targets/flag.err
 ; RUN: FileCheck --check-prefix=TARGETS-SOLVE %s < %t/targets/site.err

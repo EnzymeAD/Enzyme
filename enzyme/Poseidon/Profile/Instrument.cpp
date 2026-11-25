@@ -280,7 +280,7 @@ void emitProfileStaticData(Function &clone, StringRef profileName,
   Module &M = *clone.getParent();
   const ProbeABI &P = Target::of(M).probes();
   if (P.PublishStatic.empty()) {
-    registerProfileStatic(M, profileName, text);
+    registerProfileStatic(M, clone.getName(), profileName, text);
     return;
   }
   LLVMContext &Ctx = M.getContext();
@@ -303,19 +303,20 @@ void emitProfileStaticData(Function &clone, StringRef profileName,
 
 /// Registered before main, so a site whose body never runs still carries its
 /// static data into the dump.
-bool registerProfileStatic(Module &M, StringRef name, StringRef text) {
+bool registerProfileStatic(Module &M, StringRef key, StringRef profileName,
+                           StringRef text) {
   LLVMContext &Ctx = M.getContext();
   Type *VoidTy = Type::getVoidTy(Ctx);
   Type *PtrTy = getInt8PtrTy(Ctx);
 
-  Constant *namePtr = getProfileNamePointer(M, name, name);
+  Constant *namePtr = getProfileNamePointer(M, key, profileName);
   Constant *textPtr =
-      getStringPointer(M, ("fpprofile_static_" + name).str(), text);
+      getStringPointer(M, ("fpprofile_static_" + key).str(), text);
   FunctionType *FT = FunctionType::get(VoidTy, {PtrTy, PtrTy}, false);
 
   FunctionCallee reg =
       getProfilerHook(M, Target::of(M).probes().RegisterStatic, FT);
-  std::string ctorName = ("poseidon_register_static_" + name).str();
+  std::string ctorName = ("poseidon_register_static_" + key).str();
   if (M.getFunction(ctorName))
     return false;
   Function *ctor = Function::Create(FunctionType::get(VoidTy, {}, false),

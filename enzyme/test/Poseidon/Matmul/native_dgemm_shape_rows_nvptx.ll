@@ -3,7 +3,7 @@
 ; DEFINE:   -poseidon-enable-pt=false -poseidon-raise-wmma -poseidon-tau=1e-14 -S \
 ; DEFINE:   -o /dev/null
 ; RUN: rm -rf %t && mkdir -p %t/rect
-; RUN: sed 's/^MaxGridDims = 1 1 1$/MaxGridDims = 1 8 1/' %S/../Inputs/raise_tcec/preprocess_matmul_body.fpprofile > %t/rect/preprocess_matmul_body.fpprofile
+; RUN: sed 's/^MaxGridDims = 1 1 1$/MaxGridDims = 1 8 1/' %S/../Inputs/raise_tcec/matmul_body.fpprofile > %t/rect/matmul_body.fpprofile
 ; RUN: cp %cost_models/cm_sm_120_synthetic_dispatch.csv %t/oz.csv && echo 'ozaki_dispatch_rect_rel,nm14_m128k16,0.1' >> %t/oz.csv
 ; RUN: cp %t/oz.csv %t/low.csv && echo 'ozaki_dispatch_rect_rel,dgemm_m128n16k16,0.05' >> %t/low.csv
 ; RUN: cp %t/oz.csv %t/high.csv && echo 'ozaki_dispatch_rect_rel,dgemm_m128n16k16,0.2' >> %t/high.csv

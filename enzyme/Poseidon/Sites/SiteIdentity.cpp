@@ -111,8 +111,7 @@ std::string fileStem(StringRef name, StringRef identity) {
 }
 
 std::string bodyProfileStem(const Session &S, const Function &body) {
-  return fileStem((kCanonicalPrefix + body.getName()).str(),
-                  siteIdentity(S, body));
+  return fileStem(siteKeyOfBody(body), siteIdentity(S, body));
 }
 
 std::string bodyProfileFile(const Session &S, const Function &body) {
@@ -152,12 +151,23 @@ std::optional<DemangledFunction> demangleFunction(StringRef mangled) {
 static std::string siteProfileStem(const Session &S, const Function &clone) {
   if (const Function *origin = siteOriginOf(S, clone))
     return bodyProfileStem(S, *origin);
-  return profileNameStem(clone.getName().str());
+  StringRef key = clone.getName();
+  key.consume_front(kCanonicalPrefix);
+  key.consume_back(kBodySuffix);
+  return profileNameStem(key);
 }
 
 std::string siteFileStem(const Session &S, const Function &F) {
   const Function *origin = siteOriginOf(S, F);
-  return fileStem(F.getName(), siteIdentity(S, origin ? *origin : F));
+  if (!origin)
+    return fileStem(siteKeyOfBody(F), siteIdentity(S, F));
+  // A second clone of one body (another marker of it) is told apart by the
+  // suffix LLVM gave its name.
+  StringRef unique = F.getName();
+  unique.consume_front(kCanonicalPrefix);
+  unique.consume_front(origin->getName());
+  return fileStem(siteKeyOfBody(*origin) + unique.str(),
+                  siteIdentity(S, *origin));
 }
 
 std::string siteProfileFile(const Session &S, const Function &clone) {

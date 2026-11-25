@@ -171,8 +171,8 @@ GLOBAL void k_state(double *u) {
 // BODY: {{^}}}
 
 // USE-NOT: cannot be a Poseidon site
-// USE-DAG: per_call_by_value_nvptx.cu:[[@LINE-128]]:35: warning: Poseidon: no profile at {{.*}}Inputs/other_sites/preprocess__Z4bodyI5qfuncEvPKT_PKdPd.poseidon._Z9call_siteI5qfuncEvRKT_PKdPd.0.fpprofile:
-// USE-DAG: per_call_by_value_nvptx.cu:[[@LINE-115]]:13: warning: Poseidon: no profile at {{.*}}Inputs/other_sites/preprocess__Z4bodyI5qfuncEvPKT_PKdPd.poseidon._Z6k_grid6data_ti.0.fpprofile:
-// USE-DAG: per_call_by_value_nvptx.cu:[[@LINE-97]]:41: warning: Poseidon: no profile at {{.*}}Inputs/other_sites/preprocess__Z7advanceP5state.poseidon._Z3run5state.0.fpprofile:
+// USE-DAG: per_call_by_value_nvptx.cu:[[@LINE-128]]:35: warning: Poseidon: no profile at {{.*}}_Z4bodyI5qfuncEvPKT_PKdPd.poseidon._Z9call_siteI5qfuncEvRKT_PKdPd.0.fpprofile:
+// USE-DAG: per_call_by_value_nvptx.cu:[[@LINE-115]]:13: warning: Poseidon: no profile at {{.*}}_Z4bodyI5qfuncEvPKT_PKdPd.poseidon._Z6k_grid6data_ti.0.fpprofile:
+// USE-DAG: per_call_by_value_nvptx.cu:[[@LINE-97]]:41: warning: Poseidon: no profile at {{.*}}_Z7advanceP5state.poseidon._Z3run5state.0.fpprofile:
 // USE-NOT: cannot be a Poseidon site
 // USE: {{^}}3 warnings generated when compiling for {{.+}}.{{$}}

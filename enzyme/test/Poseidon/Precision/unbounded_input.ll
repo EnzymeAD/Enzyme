@@ -8,7 +8,7 @@
 ; RUN: FileCheck --check-prefix=IR --implicit-check-not=preprocess %s < %t/budget.ll
 ; RUN: not %{opt} -poseidon-tau=1e-3 -poseidon-cache=%t/tau -poseidon-print -o /dev/null 2>&1 | FileCheck --check-prefix=TAU %s
 ; RUN: mkdir %t/foreign && cp %S/../Inputs/unbounded_input/*.fpprofile %t/foreign/
-; RUN: sed -i -e '10s/NumOperands = 2/NumOperands = 0/' -e '11,12d' %t/foreign/preprocess_tester.fpprofile
+; RUN: sed -i -e '10s/NumOperands = 2/NumOperands = 0/' -e '11,12d' %t/foreign/tester.fpprofile
 ; RUN: not %{opt} -poseidon-profile-use=%t/foreign -poseidon-cost-budget=-0.3 -poseidon-cache=%t/foreign-cache -o /dev/null 2>&1 | FileCheck --check-prefix=FOREIGN %s
 
 ; A subgraph whose profiled input range holds no interval of finite values

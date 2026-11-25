@@ -8,15 +8,15 @@
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv \
 ; DEFINE:   -poseidon-cost-budget=-1e-9 -poseidon-print
 ; RUN: rm -rf %t && mkdir %t %t/tmp %t/stale %t/prof
-; RUN: cp %S/../Inputs/ds_expansion/preprocess_fms_body.fpprofile %t/prof/preprocess_hot_kernel_poseidon_body.fpprofile
-; RUN: cp %S/../Inputs/min_cost_share/preprocess_cold_kernel_poseidon_body.fpprofile %t/prof/
+; RUN: cp %S/../Inputs/ds_expansion/fms_body.fpprofile %t/prof/hot_kernel.fpprofile
+; RUN: cp %S/../Inputs/min_cost_share/cold_kernel.fpprofile %t/prof/
 ; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" %{use} -poseidon-cache=%t/filter -poseidon-explain=%t/filter/ex -S 2>&1 \
 ; RUN:   | tee %t/filter.log | FileCheck --implicit-check-not="Optimizing preprocess_cold_kernel_poseidon_body" %s
 ; RUN: %python %S/../Inputs/explain/stderr_matches.py %t/filter.log %t/filter/ex | FileCheck --check-prefix=JSON %s
 ; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" %{use} -poseidon-min-cost-share=0 -poseidon-cache=%t/nofilter -S 2>&1 \
 ; RUN:   | FileCheck --check-prefix=NOFILTER %s
 ; RUN: cp %t/prof/*.fpprofile %t/stale/
-; RUN: sed -i 's/^CanonicalHash = .*/CanonicalHash = 0123456789abcdef/' %t/stale/preprocess_cold_kernel_poseidon_body.fpprofile
+; RUN: sed -i 's/^CanonicalHash = .*/CanonicalHash = 0123456789abcdef/' %t/stale/cold_kernel.fpprofile
 ; RUN: not %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize" %{use} -poseidon-profile-use=%t/stale -poseidon-cache=%t/stale -S -o /dev/null 2>&1 \
 ; RUN:   | FileCheck --check-prefix=STALE %s
 ; RUN: not %opt %s %loadPoseidon -passes=poseidon "-poseidon-kernels=(" -poseidon-profile-use=%t/prof -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-cache= -S -o /dev/null 2>&1 | FileCheck --check-prefix=BADREGEX %s

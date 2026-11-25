@@ -6,7 +6,7 @@
 // DEFINE:   -mllvm -poseidon-cost-model=%gpu_cost_model %s
 // RUN: rm -rf %t && mkdir -p %t/prof
 // RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -O2 -ffp-contract=on -S -emit-llvm -I%poseidon_profile_inc %loadClangPoseidonEnzyme -mllvm -poseidon-profile-generate -mllvm -poseidon-cache=%t/gen %s -o %t/gen.ll
-// RUN: sed -n 's/^@fpprofile_static_preprocess__Z5wavedPdPKdi_poseidon_body = .*c"\(.*\)\\00".*/\1/p' %t/gen.ll | sed 's/\\0A/\n/g' | cat - %S/../Inputs/device_math_macro/records > %t/prof/preprocess__Z5wavedPdPKdi_poseidon_body.fpprofile
+// RUN: sed -n 's/^@fpprofile_static_preprocess__Z5wavedPdPKdi_poseidon_body = .*c"\(.*\)\\00".*/\1/p' %t/gen.ll | sed 's/\\0A/\n/g' | cat - %S/../Inputs/device_math_macro/records > %t/prof/_Z5wavedPdPKdi.fpprofile
 // RUN: %{use} -mllvm -poseidon-cache=%t/defined -mllvm -poseidon-print -o %t/defined.ptx 2>&1 | FileCheck --check-prefix=DEFINED %s
 // RUN: not %{use} -UPOSEIDON_DEVICE_MATH -mllvm -poseidon-cache=%t/undefined -o /dev/null 2>&1 | FileCheck --check-prefix=UNDEFINED %s
 

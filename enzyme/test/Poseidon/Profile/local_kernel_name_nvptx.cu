@@ -30,10 +30,10 @@ POSEIDON_OPTIMIZE __global__ void shared(double *x, int n) {
   x[n] = x[n] * 0.5 + x[n];
 }
 
-// CHECK-DAG: c"preprocess__ZL4stepPdi_poseidon_body~[[STEP:[0-9a-f]+]]\00"
-// CHECK-DAG: c"preprocess__ZN12_GLOBAL__N_15scaleEPdi_poseidon_body~[[SCALE:[0-9a-f]+]]\00"
-// CHECK-DAG: c"preprocess__Z6sharedPdi_poseidon_body\00"
+// CHECK-DAG: c"_ZL4stepPdi~[[STEP:[0-9a-f]+]]\00"
+// CHECK-DAG: c"_ZN12_GLOBAL__N_15scaleEPdi~[[SCALE:[0-9a-f]+]]\00"
+// CHECK-DAG: c"_Z6sharedPdi\00"
 // CHECK: target triple
-// CHECK-DAG: c"preprocess__ZL4stepPdi_poseidon_body~[[STEP]]\00"
-// CHECK-DAG: c"preprocess__ZN12_GLOBAL__N_15scaleEPdi_poseidon_body~[[SCALE]]\00"
-// CHECK-DAG: c"preprocess__Z6sharedPdi_poseidon_body\00"
+// CHECK-DAG: c"_ZL4stepPdi~[[STEP]]\00"
+// CHECK-DAG: c"_ZN12_GLOBAL__N_15scaleEPdi~[[SCALE]]\00"
+// CHECK-DAG: c"_Z6sharedPdi\00"

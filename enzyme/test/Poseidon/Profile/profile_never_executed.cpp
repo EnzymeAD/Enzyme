@@ -2,9 +2,9 @@
 // RUN: rm -rf %t && mkdir %t
 // RUN: %poseidon_clangxx -O2 -poseidon-profile-generate -poseidon-cache=%t/c %s -o %t/gen
 // RUN: env POSEIDON_PROFILE_DIR=%t/prof %t/gen > /dev/null 2> %t/gen.err
-// RUN: FileCheck --check-prefix=NEVER %s < %t/prof/preprocess__Z7skippedPKdPdi_poseidon_body.fpprofile
-// RUN: FileCheck --check-prefix=RAN %s < %t/prof/preprocess__Z3ranPKdPdi_poseidon_body.fpprofile
-// RUN: grep -E '^[0-9]+$' %t/prof/preprocess__Z3ranPKdPdi_poseidon_body.fpprofile > %t/idx
+// RUN: FileCheck --check-prefix=NEVER %s < %t/prof/_Z7skippedPKdPdi.fpprofile
+// RUN: FileCheck --check-prefix=RAN %s < %t/prof/_Z3ranPKdPdi.fpprofile
+// RUN: grep -E '^[0-9]+$' %t/prof/_Z3ranPKdPdi.fpprofile > %t/idx
 // RUN: FileCheck --check-prefix=ORDER %s < %t/idx
 // RUN: sort -n -c %t/idx
 // RUN: FileCheck --check-prefix=NOPROBE --allow-empty %s < %t/gen.err
@@ -65,5 +65,5 @@ int main(int argc, char **argv) {
 
 // NOPROBE-NOT: [probe]
 
-// USE-DAG: [poseidon] _Z7skippedPKdPdi_poseidon_body: the profiling run instrumented this site and never executed it ({{.*}}/prof/preprocess__Z7skippedPKdPdi_poseidon_body.fpprofile); left unchanged
+// USE-DAG: [poseidon] _Z7skippedPKdPdi_poseidon_body: the profiling run instrumented this site and never executed it ({{.*}}/prof/_Z7skippedPKdPdi.fpprofile); left unchanged
 // USE-DAG: preprocess__Z3ranPKdPdi_poseidon_body: tau=1.000000e-06

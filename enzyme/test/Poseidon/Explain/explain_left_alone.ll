@@ -1,6 +1,6 @@
 ; RUN: rm -rf %t && mkdir %t
 ; RUN: %opt < %s %loadPoseidon -passes="poseidon,poseidon-finalize" -poseidon-profile-use=%S/../Inputs/fma_opt_profiles -poseidon-explain=%t/ex -S -o /dev/null 2>&1 | FileCheck --check-prefix=WARN %s
-; RUN: FileCheck --check-prefix=JSON %s < %t/ex/preprocess_counter.explain.json
+; RUN: FileCheck --check-prefix=JSON %s < %t/ex/counter.explain.json
 ; RUN: %poseidon_explain %t/ex | FileCheck --check-prefix=REPORT %s
 
 ; A site the pass leaves as written before any solve has an explanation too,

@@ -4,7 +4,7 @@
 ; DEFINE:   -poseidon-enable-pt=true -poseidon-enable-multifloat=true -poseidon-two-tier-step=100 \
 ; DEFINE:   -poseidon-enable-three-tier=false -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv -poseidon-print -S
 ; RUN: rm -rf %t && mkdir -p %t/prof
-; RUN: cp %S/../Inputs/ds_expansion/preprocess_fms_body.fpprofile %t/prof/preprocess_fms_kernel_poseidon_body.fpprofile
+; RUN: cp %S/../Inputs/ds_expansion/fms_body.fpprofile %t/prof/fms_kernel.fpprofile
 
 ; The accuracy target of the site below, the kernel and profile of
 ; Sites/annotated_kernel_nvptx.ll.
@@ -24,7 +24,7 @@
 ; RUN: %opt %t/ladder/tight.ll %{opt} -poseidon-cache=%t/ladder/c -poseidon-explain=%t/ladder/tight 2>&1 | tee %t/ladder/tight.log | FileCheck --check-prefix=LADDER-TIGHT --implicit-check-not="Solving the DP" --implicit-check-not="!poseidon.ds.join" %s
 ; RUN: %python %S/../Inputs/explain/stderr_matches.py %t/ladder/loose.log %t/ladder/loose | FileCheck --check-prefix=LOOSE-JSON %s
 ; RUN: %python %S/../Inputs/explain/stderr_matches.py %t/ladder/tight.log %t/ladder/tight | FileCheck --check-prefix=TIGHT-JSON %s
-; RUN: FileCheck --check-prefix=TIGHT-BEST %s < %t/ladder/tight/preprocess_fms_kernel_poseidon_body.explain.json
+; RUN: FileCheck --check-prefix=TIGHT-BEST %s < %t/ladder/tight/fms_kernel.explain.json
 
 ; LADDER-LOOSE: Per-operation relative error tolerance: 1.000000e-07
 ; LADDER-LOOSE-NEXT: Solving the DP for preprocess_fms_kernel_poseidon_body.

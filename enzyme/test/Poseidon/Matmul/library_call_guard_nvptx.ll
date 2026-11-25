@@ -1,8 +1,8 @@
 ; RUN: rm -rf %t && mkdir -p %t/prof
-; RUN: cp %S/../Inputs/raise_tcec/preprocess_matmul_body.fpprofile %t/prof/preprocess_tri_body.fpprofile
-; RUN: cp %S/../Inputs/raise_tcec/preprocess_matmul_body.fpprofile %t/prof/preprocess_short_body.fpprofile
-; RUN: cp %S/../Inputs/raise_tcec/preprocess_matmul_body.fpprofile %t/prof/preprocess_bound_body.fpprofile
-; RUN: cp %S/../Inputs/raise_tcec/preprocess_matmul_body.fpprofile %t/prof/preprocess_wrap_body.fpprofile
+; RUN: cp %S/../Inputs/raise_tcec/matmul_body.fpprofile %t/prof/tri_body.fpprofile
+; RUN: cp %S/../Inputs/raise_tcec/matmul_body.fpprofile %t/prof/short_body.fpprofile
+; RUN: cp %S/../Inputs/raise_tcec/matmul_body.fpprofile %t/prof/bound_body.fpprofile
+; RUN: cp %S/../Inputs/raise_tcec/matmul_body.fpprofile %t/prof/wrap_body.fpprofile
 ; RUN: %opt %s %loadPoseidon \
 ; RUN:   -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" \
 ; RUN:   -poseidon-profile-use=%t/prof -poseidon-cache=%t/c \

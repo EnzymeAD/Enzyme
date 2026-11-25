@@ -66,10 +66,10 @@ void emitProfileStaticData(llvm::Function &clone, llvm::StringRef profileName,
                            llvm::StringRef text);
 
 /// Register `text` before main with the host profiler runtime as the header of
-/// the site whose profile is written under `name`. False if host module M
-/// already does.
-bool registerProfileStatic(llvm::Module &M, llvm::StringRef name,
-                           llvm::StringRef text);
+/// the site whose profile is written under `profileName`, through globals and a
+/// constructor named after `key`. False if host module M already does.
+bool registerProfileStatic(llvm::Module &M, llvm::StringRef key,
+                           llvm::StringRef profileName, llvm::StringRef text);
 
 /// Host module of a CUDA or HIP translation unit, before its registration is
 /// inlined: register the host shadow of the device module's profiler table

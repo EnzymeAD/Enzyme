@@ -3,7 +3,7 @@
 // RUN: %poseidon_clangxx -O2 -g -poseidon-profile-generate -poseidon-cache=%t/c -poseidon-print %s -o %t/gen 2>&1 | FileCheck --check-prefix=GEN %s
 // RUN: llvm-nm %t/gen | FileCheck --check-prefix=SYM %s
 // RUN: env POSEIDON_PROFILE_DIR=%t/prof %t/gen | FileCheck --check-prefix=OUT %s
-// RUN: FileCheck --check-prefix=PROF %s < %t/prof/preprocess__Z5scalePKdPdi_poseidon_body.fpprofile
+// RUN: FileCheck --check-prefix=PROF %s < %t/prof/_Z5scalePKdPdi.fpprofile
 // RUN: %poseidon_clangxx -O2 -g -poseidon-profile-generate -poseidon-cache=%t/c2 -DUNKNOWN %s -o %t/unknown
 // RUN: env POSEIDON_PROFILE_DIR=%t/prof2 not --crash %t/unknown 2>&1 | FileCheck --check-prefix=UNKNOWN %s
 

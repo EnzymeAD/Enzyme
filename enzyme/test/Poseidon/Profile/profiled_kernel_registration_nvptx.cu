@@ -49,17 +49,17 @@ POSEIDON_OPTIMIZE __global__ void norm2(const double *a, double *y) {
 // MANIFEST: "profile headers": {
 // MANIFEST-NEXT: "_Z5norm2PKdPd": {
 // MANIFEST-NEXT: "header": "SiteId = {{[0-9]+}}\nCanonicalHash = {{[0-9a-f]+}}\n",
-// MANIFEST-NEXT: "profile": "preprocess__Z5norm2PKdPd_poseidon_body"
+// MANIFEST-NEXT: "profile": "_Z5norm2PKdPd"
 // MANIFEST-NEXT: },
 // MANIFEST-NEXT: "_Z5scalePdd": {
 // MANIFEST-NEXT: "header": "SiteId = {{[0-9]+}}\nCanonicalHash = {{[0-9a-f]+}}\n",
-// MANIFEST-NEXT: "profile": "preprocess__Z5scalePdd_poseidon_body"
+// MANIFEST-NEXT: "profile": "_Z5scalePdd"
 
-// HOST: @llvm.global_ctors = {{.*}}{ i32 0, ptr @poseidon_register_static_preprocess__Z5norm2PKdPd_poseidon_body, ptr null }, { i32, ptr, ptr } { i32 0, ptr @poseidon_register_static_preprocess__Z5scalePdd_poseidon_body, ptr null }]
-// HOST-LABEL: define internal void @poseidon_register_static_preprocess__Z5norm2PKdPd_poseidon_body()
-// HOST-NEXT: call void @poseidonRegisterProfileStatic(ptr @poseidon_site_preprocess__Z5norm2PKdPd_poseidon_body, ptr @fpprofile_static_preprocess__Z5norm2PKdPd_poseidon_body)
-// HOST-LABEL: define internal void @poseidon_register_static_preprocess__Z5scalePdd_poseidon_body()
-// HOST-NEXT: call void @poseidonRegisterProfileStatic(ptr @poseidon_site_preprocess__Z5scalePdd_poseidon_body, ptr @fpprofile_static_preprocess__Z5scalePdd_poseidon_body)
+// HOST: @llvm.global_ctors = {{.*}}{ i32 0, ptr @poseidon_register_static__Z5norm2PKdPd, ptr null }, { i32, ptr, ptr } { i32 0, ptr @poseidon_register_static__Z5scalePdd, ptr null }]
+// HOST-LABEL: define internal void @poseidon_register_static__Z5norm2PKdPd()
+// HOST-NEXT: call void @poseidonRegisterProfileStatic(ptr @poseidon_site__Z5norm2PKdPd, ptr @fpprofile_static__Z5norm2PKdPd)
+// HOST-LABEL: define internal void @poseidon_register_static__Z5scalePdd()
+// HOST-NEXT: call void @poseidonRegisterProfileStatic(ptr @poseidon_site__Z5scalePdd, ptr @fpprofile_static__Z5scalePdd)
 
 // NONE: @__poseidon_profile_table
 

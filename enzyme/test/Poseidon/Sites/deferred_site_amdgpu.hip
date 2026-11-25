@@ -104,7 +104,7 @@ __global__ void jvp(const double *x, const double *dx, double *y, double *dy,
 
 // The kernel passes each local with its shadow (x's and dx's zeroed, y's and
 // dy's seeded 1.0) to the profiled tangent, which logs into the site's table.
-// GENIR: @poseidon_site_preprocess_jvp_body = private unnamed_addr addrspace(1) constant [20 x i8] c"preprocess_jvp_body\00"
+// GENIR: @poseidon_site_preprocess_jvp_body = private unnamed_addr addrspace(1) constant [9 x i8] c"jvp_body\00"
 // GENIR: define protected amdgpu_kernel void @_Z3jvpPKdS0_PdS1_i(ptr addrspace(1) {{.*}}[[X:%[0-9]+]], ptr addrspace(1) {{.*}}[[DX:%[0-9]+]], ptr addrspace(1) {{.*}}[[Y:%[0-9]+]], ptr addrspace(1) {{.*}}[[DY:%[0-9]+]], i32 {{.*}}[[N:%[0-9]+]])
 // GENIR-DAG: call void @diffepreprocess_jvp_body(ptr [[XP:%[0-9]+]], ptr [[XSP:%[0-9]+]], ptr [[DXP:%[0-9]+]], ptr [[DXSP:%[0-9]+]], ptr [[YP:%[0-9]+]], ptr [[YSP:%[0-9]+]], ptr [[DYP:%[0-9]+]], ptr [[DYSP:%[0-9]+]], i32 [[N]])
 // GENIR-DAG: [[XP]] = addrspacecast ptr addrspace(5) [[XA:%[0-9]+]] to ptr

@@ -48,7 +48,7 @@
 
 // OUT: wave 348.384
 
-// PROF: {{^}}preprocess__Z4wavePKdPdi_poseidon_body.fpprofile{{$}}
+// PROF: {{^}}_Z4wavePKdPdi.fpprofile{{$}}
 
 // USE: clang++ {{.*}}-Xclang -mllvm -Xclang -poseidon-profile-use={{[^ ]+}}/prof -Xclang -mllvm -Xclang -poseidon-tau=1e-6 -Xclang -mllvm -Xclang -poseidon-cost-model={{[^ ]+}}/cm_cpu_native.csv -Xclang -mllvm -Xclang -poseidon-enable-herbie=0 -Xclang -mllvm -Xclang -poseidon-print -fpass-plugin={{[^ ]+}}/Poseidon-{{[0-9]+}}.so {{(-Xclang -load -Xclang [^ ]+ )?}}-ffp-contract=on {{.*}}-c {{[^ ]+}}/host.cpp{{$}}
 // USE: [poseidon] preprocess__Z4wavePKdPdi_poseidon_body: tau=1.000000e-06 S=

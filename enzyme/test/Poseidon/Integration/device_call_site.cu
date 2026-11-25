@@ -8,12 +8,12 @@
 // the same profile: the same ranges, execution counts and gradients. The sums
 // are accumulated by atomics and differ between any two runs in their last
 // digits, so they are compared to a relative 1e-12.
-// RUN: grep -v -e SiteId -e Sum %t/prof/preprocess__Z9hooke_volRK4mat3fPf.fpprofile > %t/explicit.prof
-// RUN: grep -v -e SiteId -e Sum %t/prof/preprocess__Z9hooke_volRK4mat3fPf.poseidon._Z8vol_callPKffPfi.0.fpprofile > %t/call.prof
+// RUN: grep -v -e SiteId -e Sum %t/prof/_Z9hooke_volRK4mat3fPf.fpprofile > %t/explicit.prof
+// RUN: grep -v -e SiteId -e Sum %t/prof/_Z9hooke_volRK4mat3fPf.poseidon._Z8vol_callPKffPfi.0.fpprofile > %t/call.prof
 // RUN: diff %t/explicit.prof %t/call.prof
 // RUN: FileCheck --check-prefix=PROF %s < %t/call.prof
-// RUN: grep Sum %t/prof/preprocess__Z9hooke_volRK4mat3fPf.fpprofile > %t/explicit.sums
-// RUN: grep Sum %t/prof/preprocess__Z9hooke_volRK4mat3fPf.poseidon._Z8vol_callPKffPfi.0.fpprofile > %t/call.sums
+// RUN: grep Sum %t/prof/_Z9hooke_volRK4mat3fPf.fpprofile > %t/explicit.sums
+// RUN: grep Sum %t/prof/_Z9hooke_volRK4mat3fPf.poseidon._Z8vol_callPKffPfi.0.fpprofile > %t/call.sums
 // RUN: paste %t/explicit.sums %t/call.sums \
 // RUN:   | awk '{ d = $3 - $6; if (d * d > 1e-24 * $3 * $3) bad = 1 } END { print bad ? "SUMS DIFFER" : "SUMS SAME" }' \
 // RUN:   | FileCheck --check-prefix=SUMS %s

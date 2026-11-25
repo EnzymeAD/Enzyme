@@ -4,7 +4,7 @@
 ; DEFINE:   -poseidon-enable-three-tier=false \
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic.csv
 ; RUN: rm -rf %t && mkdir -p %t/prof
-; RUN: cp %S/../Inputs/ds_expansion/preprocess_fms_body.fpprofile %t/prof/preprocess_fms_kernel_poseidon_body.fpprofile
+; RUN: cp %S/../Inputs/ds_expansion/fms_body.fpprofile %t/prof/fms_kernel.fpprofile
 ; RUN: %opt %s %loadPoseidon -passes="poseidon,poseidon-finalize,function(mem2reg,instsimplify,simplifycfg)" %{use} -poseidon-cache=%t/attr -poseidon-cost-budget=-1e-9 -poseidon-print -S > %t/attr.out 2>&1
 ; RUN: FileCheck %s < %t/attr.out
 ; RUN: FileCheck --check-prefix=CLEAN %s < %t/attr.out

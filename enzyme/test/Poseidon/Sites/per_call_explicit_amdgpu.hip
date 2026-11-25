@@ -63,10 +63,10 @@ __global__ void k(const double *x, double *dx, double *y, double *dy, int n) {
 // Profile generation leaves no call of the identity anywhere in the module.
 // NOMARKER: target triple = "{{(amdgcn|amdgpu)[^"]*}}-amd-amdhsa"
 
-// GEN-DAG: @poseidon_site_preprocess__Z3sumPKdi = private unnamed_addr addrspace(1) constant [22 x i8] c"preprocess__Z3sumPKdi\00"
-// GEN-DAG: @poseidon_site_preprocess__Z5scalePKdPdi = private unnamed_addr addrspace(1) constant [26 x i8] c"preprocess__Z5scalePKdPdi\00"
-// GEN-DAG: @poseidon_site_preprocess__Z5norm2PKd = private unnamed_addr addrspace(1) constant [23 x i8] c"preprocess__Z5norm2PKd\00"
-// GEN-DAG: @poseidon_site_preprocess__Z6spreadPKd.poseidon._Z5thirdPKd.0 = private unnamed_addr addrspace(1) constant [47 x i8] c"preprocess__Z6spreadPKd.poseidon._Z5thirdPKd.0\00"
+// GEN-DAG: @poseidon_site_preprocess__Z3sumPKdi = private unnamed_addr addrspace(1) constant [11 x i8] c"_Z3sumPKdi\00"
+// GEN-DAG: @poseidon_site_preprocess__Z5scalePKdPdi = private unnamed_addr addrspace(1) constant [15 x i8] c"_Z5scalePKdPdi\00"
+// GEN-DAG: @poseidon_site_preprocess__Z5norm2PKd = private unnamed_addr addrspace(1) constant [12 x i8] c"_Z5norm2PKd\00"
+// GEN-DAG: @poseidon_site_preprocess__Z6spreadPKd.poseidon._Z5thirdPKd.0 = private unnamed_addr addrspace(1) constant [36 x i8] c"_Z6spreadPKd.poseidon._Z5thirdPKd.0\00"
 
 // Each site's adjoint reaches the shadow the call gives it: dx for sum and
 // norm2, dy for scale, and a zeroed local the pass makes for spread's x. The
@@ -93,11 +93,11 @@ __global__ void k(const double *x, double *dx, double *y, double *dy, int n) {
 // GEN: {{^}}}
 
 // USE: [poseidon] site spread(double const*) at its call in third(double const*): accuracy target 1e-07
-// USE-DAG: per_call_explicit_amdgpu.hip:[[@LINE-42]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/Inputs/other_sites/preprocess__Z3sumPKdi.fpprofile:
-// USE-DAG: per_call_explicit_amdgpu.hip:[[@LINE-43]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/Inputs/other_sites/preprocess__Z3sumPKdi.fpprofile:
-// USE-DAG: per_call_explicit_amdgpu.hip:[[@LINE-44]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/Inputs/other_sites/preprocess__Z5norm2PKd.fpprofile:
-// USE-DAG: per_call_explicit_amdgpu.hip:[[@LINE-45]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/Inputs/other_sites/preprocess__Z5scalePKdPdi.fpprofile:
-// USE-DAG: per_call_explicit_amdgpu.hip:[[@LINE-46]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/Inputs/other_sites/preprocess__Z6spreadPKd.poseidon._Z5thirdPKd.0.fpprofile:
+// USE-DAG: per_call_explicit_amdgpu.hip:[[@LINE-42]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/_Z3sumPKdi.fpprofile:
+// USE-DAG: per_call_explicit_amdgpu.hip:[[@LINE-43]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/_Z3sumPKdi.fpprofile:
+// USE-DAG: per_call_explicit_amdgpu.hip:[[@LINE-44]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/_Z5norm2PKd.fpprofile:
+// USE-DAG: per_call_explicit_amdgpu.hip:[[@LINE-45]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/_Z5scalePKdPdi.fpprofile:
+// USE-DAG: per_call_explicit_amdgpu.hip:[[@LINE-46]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/_Z6spreadPKd.poseidon._Z5thirdPKd.0.fpprofile:
 // USE: [poseidon] every site of {{.*}}per_call_explicit_amdgpu.hip was left alone; emitting the module as written
 // USE-NEXT: 5 warnings generated when compiling for {{.*}}
 

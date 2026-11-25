@@ -60,8 +60,8 @@
 ; sum of the two sites' own: both binary32 rewrites, one of each kind, or both
 ; binary64 ones.
 ; RUN: mkdir %t/joint %t/joint/prune %t/joint/exact %t/joint/prof
-; RUN: cp %S/../Inputs/fma_opt_profiles/preprocess_tester.fpprofile %t/joint/prof/preprocess_tester_a.fpprofile
-; RUN: cp %S/../Inputs/fma_opt_profiles/preprocess_tester.fpprofile %t/joint/prof/preprocess_tester_b.fpprofile
+; RUN: cp %S/../Inputs/fma_opt_profiles/tester.fpprofile %t/joint/prof/tester_a.fpprofile
+; RUN: cp %S/../Inputs/fma_opt_profiles/tester.fpprofile %t/joint/prof/tester_b.fpprofile
 ; RUN: sed 's/^fma,double,512$/fma,double,448/' %cost_models/cm_sm_120_synthetic.csv > %t/joint/cm_sm_120_fma.csv
 ; RUN: cp %cost_models/cm_sm_120_synthetic.herbie.rkt %t/joint/cm_sm_120_fma.herbie.rkt
 ; RUN: cp %S/../Inputs/fma_opt_cache/cachedHerbieOutput_default_958ABA9C1BC0AE00.txt %t/joint/prune/cachedHerbieOutput_cuda-sm120_45B4DF20BF2EFFF8.txt

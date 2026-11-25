@@ -32,7 +32,7 @@ int main() {
   printf("%.6f\n", y[40]);
 }
 
-// PROFILE: preprocess__Z4wavePKdPdi_poseidon_body.fpprofile
+// PROFILE: _Z4wavePKdPdi.fpprofile
 
 // USE: [poseidon] Optimizing preprocess__Z4wavePKdPdi_poseidon_body with relative error tolerance: 1.000000e-06
 

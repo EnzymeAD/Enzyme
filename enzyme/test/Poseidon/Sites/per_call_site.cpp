@@ -80,10 +80,10 @@ int main(int argc, char **argv) {
 // GEN: [poseidon-profgen] wave(double const*, double*, int) at call 2 in main: site 2, 2 shadow buffer(s), output(s) 1, 1 call(s)
 // GEN: [poseidon-profgen] wave(double const*, double*, int) at call 3 in main: site 3, 2 shadow buffer(s), output(s) 1, 1 call(s)
 
-// PROFILES: preprocess__Z2sqdd.poseidon.main.0.fpprofile
-// PROFILES-NEXT: preprocess__Z2sqdd.poseidon.main.1.fpprofile
-// PROFILES-NEXT: preprocess__Z4wavePKdPdi.poseidon.main.2.fpprofile
-// PROFILES-NEXT: preprocess__Z4wavePKdPdi.poseidon.main.3.fpprofile
+// PROFILES: _Z2sqdd.poseidon.main.0.fpprofile
+// PROFILES-NEXT: _Z2sqdd.poseidon.main.1.fpprofile
+// PROFILES-NEXT: _Z4wavePKdPdi.poseidon.main.2.fpprofile
+// PROFILES-NEXT: _Z4wavePKdPdi.poseidon.main.3.fpprofile
 
 // USE: [poseidon] preprocess__Z2sqdd.poseidon.main.0: tau=1.000000e-06
 // USE: Applying solution for CS: All FP64(0%) + FP32(100%)

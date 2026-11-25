@@ -70,10 +70,10 @@ int main(void) {
 }
 
 // SAME: 1 1 1 1
-// PROFILES: preprocess_damp.poseidon.main.1.fpprofile
-// PROFILES-NEXT: preprocess_scale.poseidon.main.0.fpprofile
-// PROFILES-NEXT: preprocess_sq.fpprofile
-// PROFILES-NEXT: preprocess_wave.fpprofile
+// PROFILES: damp.poseidon.main.1.fpprofile
+// PROFILES-NEXT: scale.poseidon.main.0.fpprofile
+// PROFILES-NEXT: sq.fpprofile
+// PROFILES-NEXT: wave.fpprofile
 // Each site is rewritten, and the rewritten calls differ from the functions run
 // as written.
 // USE-DAG: [poseidon] preprocess_wave: tau=1.000000e-06

@@ -101,13 +101,13 @@
 ; tester(double, int): the name is ambiguous and each symbol names its own
 ; site. With only one of them mangled, the name is that site's.
 ; RUN: sed -e 's/tester_a/_Z6testerdd/g' -e 's/tester_b/_Z6testerdi/g' %t/sites.ll > %t/sites/mangled/m.ll
-; RUN: cp %S/../Inputs/joint_profiles/preprocess_tester_a.fpprofile %t/sites/mangled/preprocess__Z6testerdd.fpprofile
-; RUN: cp %S/../Inputs/joint_profiles/preprocess_tester_b.fpprofile %t/sites/mangled/preprocess__Z6testerdi.fpprofile
+; RUN: cp %S/../Inputs/joint_profiles/tester_a.fpprofile %t/sites/mangled/_Z6testerdd.fpprofile
+; RUN: cp %S/../Inputs/joint_profiles/tester_b.fpprofile %t/sites/mangled/_Z6testerdi.fpprofile
 ; RUN: not %opt %t/sites/mangled/m.ll %{pass} -poseidon-profile-use=%t/sites/mangled %{pt} %{cm} -poseidon-cache=%t/sites/mangled/c "-poseidon-apply-rewrites=tester:PT0=All FP64(0%%) + FP32(100%%)" -S -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-AMBIGUOUS %s
 ; RUN: %opt %t/sites/mangled/m.ll %{pass} -poseidon-profile-use=%t/sites/mangled %{pt} %{cm} -poseidon-cache=%t/sites/mangled/c "-poseidon-apply-rewrites=_Z6testerdi:PT0=All FP64(70%%) + FP32(30%%)" -S -poseidon-print -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-SYMBOL %s
 ; RUN: sed -e 's/tester_a/_Z6testerdd/g' %t/sites.ll > %t/sites/onemangled/m.ll
-; RUN: cp %S/../Inputs/joint_profiles/preprocess_tester_a.fpprofile %t/sites/onemangled/preprocess__Z6testerdd.fpprofile
-; RUN: cp %S/../Inputs/joint_profiles/preprocess_tester_b.fpprofile %t/sites/onemangled/preprocess_tester_b.fpprofile
+; RUN: cp %S/../Inputs/joint_profiles/tester_a.fpprofile %t/sites/onemangled/_Z6testerdd.fpprofile
+; RUN: cp %S/../Inputs/joint_profiles/tester_b.fpprofile %t/sites/onemangled/tester_b.fpprofile
 ; RUN: %opt %t/sites/onemangled/m.ll %{pass} -poseidon-profile-use=%t/sites/onemangled %{pt} %{cm} -poseidon-cache=%t/sites/onemangled/c "-poseidon-apply-rewrites=tester:PT0=All FP64(50%%) + FP32(50%%)" -S -poseidon-print -o /dev/null 2>&1 | FileCheck --check-prefix=SITES-BASENAME %s
 
 ; SITES-AMBIGUOUS: error: {{.*}}Poseidon: -poseidon-apply-rewrites item 'tester:PT0=All FP64(0%) + FP32(100%)' names the site 'tester', which more than one site of this module answers to; give one of them by its symbol:

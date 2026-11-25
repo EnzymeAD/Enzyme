@@ -13,7 +13,7 @@
 // RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -O2 -ffp-contract=on -S -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%S/../Inputs/other_sites %s -o %t/use.ptx
 // RUN: diff %t/as_written.ptx %t/use.ptx
 // RUN: mkdir -p %t/prof
-// RUN: sed -n 's/^@fpprofile_static_preprocess__Z4wavePfPKfi_poseidon_body = .*c"\(.*\)\\00".*/\1Executed = 0\\0A/p' %t/gen.ll | sed 's/\\0A/\n/g' > %t/prof/preprocess__Z4wavePfPKfi_poseidon_body.fpprofile
+// RUN: sed -n 's/^@fpprofile_static_preprocess__Z4wavePfPKfi_poseidon_body = .*c"\(.*\)\\00".*/\1Executed = 0\\0A/p' %t/gen.ll | sed 's/\\0A/\n/g' > %t/prof/_Z4wavePfPKfi.fpprofile
 // RUN: %clang -x cuda --cuda-device-only --cuda-gpu-arch=%gpu_arch -O2 -ffp-contract=on -S -I%poseidon_profile_inc %loadClangPoseidon -mllvm -poseidon-profile-use=%t/prof -mllvm -poseidon-print %s -o %t/use.profiled.ptx 2>&1 | FileCheck --check-prefix=PROFILED %s
 // RUN: diff %t/as_written.ptx %t/use.profiled.ptx
 
@@ -84,5 +84,5 @@ POSEIDON_OPTIMIZE __global__ void wave(float *o, const float *a, int n) {
 // CALLS-NEXT: atomicrmw fadd ptr [[DXP]], float %{{[0-9]+}} monotonic
 // CALLS: {{^}}}
 
-// PROFILED: {{^}}[poseidon] _Z4wavePfPKfi_poseidon_body: the profiling run instrumented this site and never executed it ({{.*}}/prof/preprocess__Z4wavePfPKfi_poseidon_body.fpprofile); left unchanged{{$}}
+// PROFILED: {{^}}[poseidon] _Z4wavePfPKfi_poseidon_body: the profiling run instrumented this site and never executed it ({{.*}}/prof/_Z4wavePfPKfi.fpprofile); left unchanged{{$}}
 // PROFILED: {{^}}[poseidon] every site of {{.*}}device_math_plugins.cu was left alone; emitting the module as written{{$}}

@@ -70,11 +70,11 @@
 ; body, the function it calls): it solves again into an entry of its own. An
 ; unchanged compile reads the table back.
 ; RUN: mkdir %t/parts %t/parts/p
-; RUN: sed '0,/Exec = 64/s//Exec = 65/' %S/../Inputs/pow_term/profiles/preprocess_tester.fpprofile > %t/parts/p/preprocess_tester.fpprofile
+; RUN: sed '0,/Exec = 64/s//Exec = 65/' %S/../Inputs/pow_term/profiles/tester.fpprofile > %t/parts/p/tester.fpprofile
 ; RUN: sed 's/^fadd,float,1$/fadd,float,2/' %cost_models/cm_cpu_native.csv > %t/parts/cm.csv
 ; RUN: sed 's/fmul double %%p, 1.000000e-20/fmul double %%p, 2.000000e-20/' %s > %t/parts/const.ll
 ; RUN: sed 's/call double @scale_a(/call double @scale_b(/' %s > %t/parts/callee.ll
-; RUN: not cmp -s %S/../Inputs/pow_term/profiles/preprocess_tester.fpprofile %t/parts/p/preprocess_tester.fpprofile
+; RUN: not cmp -s %S/../Inputs/pow_term/profiles/tester.fpprofile %t/parts/p/tester.fpprofile
 ; RUN: not cmp -s %cost_models/cm_cpu_native.csv %t/parts/cm.csv
 ; RUN: not cmp -s %s %t/parts/const.ll
 ; RUN: not cmp -s %s %t/parts/callee.ll

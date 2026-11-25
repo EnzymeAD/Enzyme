@@ -8,9 +8,9 @@
 ; DEFINE:   -mllvm -poseidon-profile-use=%t/prof -mllvm -poseidon-cache=%t/c \
 ; DEFINE:   -mllvm -poseidon-unit=layout -S -emit-llvm -o -
 ; RUN: rm -rf %t && mkdir -p %t/prof
-; RUN: cp %S/../Inputs/raise_tcec/preprocess_matmul_body.fpprofile %t/prof/preprocess_nt_body.fpprofile
-; RUN: cp %S/../Inputs/raise_tcec/preprocess_matmul_body.fpprofile %t/prof/preprocess_nn_col_c_body.fpprofile
-; RUN: cp %S/../Inputs/raise_tcec/preprocess_matmul_body.fpprofile %t/prof/preprocess_fused_c_body.fpprofile
+; RUN: cp %S/../Inputs/raise_tcec/matmul_body.fpprofile %t/prof/nt_body.fpprofile
+; RUN: cp %S/../Inputs/raise_tcec/matmul_body.fpprofile %t/prof/nn_col_c_body.fpprofile
+; RUN: cp %S/../Inputs/raise_tcec/matmul_body.fpprofile %t/prof/fused_c_body.fpprofile
 ; RUN: %{opt} -poseidon-cache=%t/c -poseidon-unit=layout -poseidon-tau=1e-12 -o /dev/null 2>&1 | FileCheck %s
 ; RUN: cat %t/c/launches_*.json | FileCheck --check-prefix=DESC %s
 ; RUN: sed 's/ozaki_stub\.cu/layout.cu/g' %S/../Inputs/ozaki_dispatch/ozaki_stub_host.ll > %t/nt.ll

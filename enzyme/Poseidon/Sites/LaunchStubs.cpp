@@ -175,7 +175,7 @@ bool rewriteProfileStubBodies(const Options &O, Module &M) {
 static bool registerProfiledKernels(const Options &O, Module &M) {
   bool changed = false;
   readProfileHeaders(O, M, [&](StringRef profileName, StringRef header) {
-    changed |= registerProfileStatic(M, profileName, header);
+    changed |= registerProfileStatic(M, profileName, profileName, header);
   });
   return changed;
 }

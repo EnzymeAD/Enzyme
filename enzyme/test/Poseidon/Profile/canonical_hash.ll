@@ -26,7 +26,7 @@ attributes #0 = { "target-cpu"="x86-64" }
 
 ; The header the profile-gen compile registers for the site at startup carries,
 ; behind the site id, the digest the fixture holds.
-; GEN: @poseidon_site_preprocess_tester = private unnamed_addr constant [18 x i8] c"preprocess_tester\00"
+; GEN: @poseidon_site_preprocess_tester = private unnamed_addr constant [7 x i8] c"tester\00"
 ; GEN: @fpprofile_static_preprocess_tester = private unnamed_addr constant [45 x i8] c"SiteId = 0\0ACanonicalHash = f9f2bd660c90d989\0A\00"
 ; GEN: @llvm.global_ctors = appending global [1 x { i32, ptr, ptr }] [{ i32, ptr, ptr } { i32 0, ptr @poseidon_register_static_preprocess_tester, ptr null }]
 ; GEN-LABEL: define internal void @poseidon_register_static_preprocess_tester()

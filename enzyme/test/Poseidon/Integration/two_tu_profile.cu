@@ -12,7 +12,7 @@
 // RUN: env POSEIDON_PROFILE_DIR=%t/p.one %t/one | FileCheck --check-prefix=OUT %s
 // RUN: %python %S/../Inputs/two_tu/cmpprof.py --by-function --ignore SiteId --sum-tol 1e-12 %t/p.one %t/p.two | FileCheck --check-prefix=SAME %s
 // RUN: %python %S/../Inputs/two_tu/cmpprof.py --by-function --ignore SiteId --sum-tol 1e-12 %t/p.one %t/p.lib | FileCheck --check-prefix=SAME %s
-// RUN: cat %t/p.two/preprocess__Z9hooke_volRK4mat3fPf.poseidon._Z6vol_atPKffi.0.fpprofile | FileCheck --check-prefix=MERGED %s
+// RUN: cat %t/p.two/_Z9hooke_volRK4mat3fPf.poseidon._Z6vol_atPKffi.0.fpprofile | FileCheck --check-prefix=MERGED %s
 //
 // The same, with relocatable device code, against the one-unit program built
 // the same way.
@@ -67,10 +67,10 @@
 // MERGED: Exec = 8192
 
 // STATUS: status no error
-// CLASH: Poseidon FPProfiler: two different functions were profiled under the name 'preprocess__ZL4stepPdi_poseidon_body~{{[0-9a-f]+}}' in two device modules (CanonicalHash = {{[0-9a-f]+}}, CanonicalHash = {{[0-9a-f]+}}), and one profile file cannot hold both.
+// CLASH: Poseidon FPProfiler: two different functions were profiled under the name '_ZL4stepPdi~{{[0-9a-f]+}}' in two device modules (CanonicalHash = {{[0-9a-f]+}}, CanonicalHash = {{[0-9a-f]+}}), and one profile file cannot hold both.
 // NOSTEP-NOT: step
 
-// STEPS-COUNT-2: preprocess__ZL4stepPdi_poseidon_body~{{[0-9a-f]+}}.fpprofile
+// STEPS-COUNT-2: _ZL4stepPdi~{{[0-9a-f]+}}.fpprofile
 // STEPS-NOT: step
 
 // STEPUSE: [poseidon] Optimizing preprocess__ZL4stepPdi_poseidon_body with relative error tolerance

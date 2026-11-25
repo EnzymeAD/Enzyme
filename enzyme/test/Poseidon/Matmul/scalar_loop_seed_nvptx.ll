@@ -5,7 +5,7 @@
 ; DEFINE:   -poseidon-cost-model=%cost_models/cm_sm_120_synthetic_dispatch.csv \
 ; DEFINE:   -poseidon-print -S
 ; RUN: rm -rf %t && mkdir -p %t/prof
-; RUN: cp %S/../Inputs/raise_tcec/preprocess_matmul_body.fpprofile %t/prof/preprocess_seed_body.fpprofile
+; RUN: cp %S/../Inputs/raise_tcec/matmul_body.fpprofile %t/prof/seed_body.fpprofile
 ; RUN: %{opt} -poseidon-cache=%t/lib -poseidon-tau=1e-12 -o %t/lib.ll 2>&1 \
 ; RUN:   | FileCheck --implicit-check-not='Matmul[' --implicit-check-not='wrote descriptor' %s
 ; RUN: %{opt} -poseidon-cache=%t/raise -poseidon-tau=1e-6 -poseidon-ozaki-host-dispatch=false -o %t/raise.ll 2>&1 \
