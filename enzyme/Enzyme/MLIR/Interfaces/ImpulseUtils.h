@@ -9,7 +9,6 @@
 #ifndef ENZYME_MLIR_INTERFACES_IMPULSE_UTILS_H
 #define ENZYME_MLIR_INTERFACES_IMPULSE_UTILS_H
 
-#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"

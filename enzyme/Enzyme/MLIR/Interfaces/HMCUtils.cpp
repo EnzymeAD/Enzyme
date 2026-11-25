@@ -12,8 +12,8 @@
 
 #include "Dialect/Impulse/Impulse.h"
 #include "Dialect/Ops.h"
-#include "Interfaces/DistBuilder.h"
 #include "Interfaces/ImpulseUtils.h"
+#include "Interfaces/TransformUtils.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Math/IR/Math.h"

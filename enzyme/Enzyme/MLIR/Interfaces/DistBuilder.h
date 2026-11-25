@@ -10,7 +10,6 @@
 #define ENZYME_MLIR_INTERFACES_DIST_BUILDER_H
 
 #include "Dialect/Impulse/Impulse.h"
-#include "Interfaces/ImpulseUtils.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Value.h"

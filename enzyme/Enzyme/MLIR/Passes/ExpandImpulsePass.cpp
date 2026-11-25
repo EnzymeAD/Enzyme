@@ -18,10 +18,13 @@
 #include "Interfaces/DistBuilder.h"
 #include "Interfaces/HMCUtils.h"
 #include "Interfaces/ImpulseUtils.h"
+#include "Interfaces/TransformUtils.h"
 #include "Interfaces/VIUtils.h"
 #include "PassDetails.h"
 #include "Passes/Passes.h"
 
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/IR/Builders.h"

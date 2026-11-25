@@ -6,7 +6,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "Interfaces/DistBuilder.h"
-#include "Dialect/Ops.h"
+#include "Interfaces/ImpulseUtils.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Math/IR/Math.h"

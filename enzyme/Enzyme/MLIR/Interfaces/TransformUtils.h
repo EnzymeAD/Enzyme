@@ -12,9 +12,6 @@
 #define ENZYME_MLIR_INTERFACES_TRANSFORM_UTILS_H
 
 #include "Dialect/Impulse/Impulse.h"
-#include "Dialect/Ops.h"
-#include "mlir/Dialect/Arith/IR/Arith.h"
-#include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Value.h"

@@ -7,23 +7,14 @@
 //===----------------------------------------------------------------------===//
 
 #include "Interfaces/ImpulseUtils.h"
+#include "CloneFunction.h"
 #include "Dialect/Ops.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Math/IR/Math.h"
-#include "mlir/IR/Matchers.h"
+#include "mlir/IR/Builders.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
-
-// TODO: this shouldn't depend on specific dialects except Enzyme.
-#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
-
-#include "CloneFunction.h"
-#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"
-#include "mlir/IR/Builders.h"
-#include "mlir/IR/Dominance.h"
 #include "llvm/ADT/APFloat.h"
-#include "llvm/ADT/BreadthFirstIterator.h"
 
 using namespace mlir;
 using namespace mlir::impulse;
