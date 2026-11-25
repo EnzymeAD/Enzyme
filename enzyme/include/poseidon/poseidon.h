@@ -6,64 +6,8 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// How an application opts in, simplest first:
-//
-// 1. POSEIDON_OPTIMIZE on a function or a kernel, and -poseidon-tau=<t> on the
-//    optimizing compile. Every call of the function is the site: its whole
-//    body is profiled under -poseidon-profile-generate and rewritten under
-//    -poseidon-profile-use.
-// 2. POSEIDON_OPTIMIZE_TAU(t): the same, with that site's own target, which
-//    wins over -poseidon-tau. t may be a literal, a macro or a constant
-//    expression.
-// 3. __poseidon_optimize(fn, args...), or __poseidon_optimize_tau(t, fn,
-//    args...) with that call's own target: the call fn(args...), and only that
-//    call, is the site. It has its own profile, target and rewritten copy of
-//    fn, so two calls of one function can be rewritten differently; other
-//    calls of fn run it as written. fn names a function defined in the same
-//    translation unit, on the host or in device code; t is a compile-time
-//    constant. In device code a pointer the call passes points into a local
-//    object or a by-value aggregate of the caller, or the call reaches a
-//    constant range of memory through it. Without the plugin the call runs as
-//    written.
-//    The arguments may instead be an explicit list, as Enzyme takes them:
-//    enzyme_dup before a pointer and its shadow after it, enzyme_const before
-//    one that needs none. The caller then provides the shadows, for pointers
-//    the pass cannot size or a seed of its own, and the site is fn itself. A
-//    list is explicit when it holds an enzyme_* or poseidon_* name other than
-//    poseidon_tau. poseidon_tau, t among the arguments of either list gives
-//    the call's target; with fn's own arguments that is the call
-//    __poseidon_optimize_tau(t, fn, args...) with the arguments as given. In
-//    C++ compiled by clang the same macros take either list; in C an explicit
-//    list is a call of __poseidon_fp_optimize(void *, ...), which the program
-//    declares. Without the plugin a call fn does not take as written does
-//    not link.
-//    __poseidon_fp_optimize and __enzyme_fp_optimize are accepted as other
-//    names of this call.
-// 4. -poseidon-kernels=<regex>|all: GPU kernels opted in without editing their
-//    source; only those above -poseidon-min-cost-share of the profiled cost
-//    are optimized.
-// 5. poseidon_metric(name, value), once at the end of the profiling run: the
-//    quantity of interest the target refers to. The profiler runtime writes it
-//    to <profile dir>/metric.txt. Under `poseidon-probe -- <program> [args...]`
-//    (or POSEIDON_PROBE=1) the program runs itself again at exit to measure
-//    each site's condition number against it; without, it says what measuring
-//    would take, and profile use stops at the sites until they are measured.
-//    With POSEIDON_PROBE=0 nothing is measured and each site is solved against
-//    its own target. Optional.
-//
-// The target is the per-operation relative rounding level a site is allowed to
-// behave at, so 1e-16 is FP64, 6e-8 is FP32 and 1e-15 is a two-component
-// floating-point expansion. The solve takes the cheapest rewrite whose
-// modelled error stays under it, and refuses the site outright when no rewrite
-// (including leaving it alone) can reach it.
-//
-// Precedence for a site's accuracy target:
-//   its own (POSEIDON_OPTIMIZE_TAU, __poseidon_optimize_tau, or poseidon_tau
-//   among the call's arguments, given once) > -poseidon-tau > none
-// The target is the same number wherever it is written. A site with none is
-// solved against -poseidon-cost-budget instead, a share of the site's profiled
-// cost; at its default of 0 that is the most accurate rewrite costing no more
-// than the code as written, which may be the code as written.
+// What an application includes to use Poseidon: the annotations and calls that
+// mark the code it optimizes, and poseidon_metric.
 //
 //===----------------------------------------------------------------------===//
 

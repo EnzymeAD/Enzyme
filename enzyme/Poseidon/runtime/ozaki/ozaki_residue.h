@@ -17,8 +17,6 @@
 // bytes of any 64-bit magnitude give meets that bound for every modulus, which
 // a static_assert checks, so the residue is exact for every input.
 //
-// Runtime only: not a source of the pass (cmake/PassSources.cmake).
-//
 //===----------------------------------------------------------------------===//
 
 #ifndef POSEIDON_OZAKI_RESIDUE_H

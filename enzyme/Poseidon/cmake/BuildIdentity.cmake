@@ -1,12 +1,9 @@
-# Writes OUT, the header naming this build of the pass by the contents of its
-# sources in PASS_DIR (PassSources.cmake; BINARY_DIR, if given, is the build
-# directory to leave out).
+# Writes OUT, the header naming this build of Poseidon by a digest of every
+# *.cpp and *.h under PASS_DIR, so that a result cached by another build misses.
 
-include(${CMAKE_CURRENT_LIST_DIR}/PassSources.cmake)
-
-poseidon_pass_sources(_pass ${PASS_DIR} "${BINARY_DIR}")
+file(GLOB_RECURSE _files RELATIVE ${PASS_DIR} ${PASS_DIR}/*.cpp ${PASS_DIR}/*.h)
 set(_lines "")
-foreach(_file ${_pass})
+foreach(_file ${_files})
   file(SHA256 ${PASS_DIR}/${_file} _sha)
   string(APPEND _lines "${_file} ${_sha}\n")
 endforeach()

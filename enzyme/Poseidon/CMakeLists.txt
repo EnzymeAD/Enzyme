@@ -147,33 +147,33 @@ target_include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/runtime/fpprofiler)
 target_link_libraries(${POSEIDON_PLUGIN_TARGET} PRIVATE ${MPFR_LIB_PATH})
 
-# What a cached result was computed by: the pass's own sources. Hashed when
-# they change, not when the build is configured.
-include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/PassSources.cmake)
-poseidon_pass_sources(POSEIDON_PASS_FILES ${CMAKE_CURRENT_SOURCE_DIR}
-                      ${CMAKE_CURRENT_BINARY_DIR} CONFIGURE_DEPENDS)
-list(TRANSFORM POSEIDON_PASS_FILES PREPEND ${CMAKE_CURRENT_SOURCE_DIR}/)
+# What a cached result was computed by: Poseidon's sources. Hashed when they
+# change, not when the build is configured.
+file(
+  GLOB_RECURSE
+  POSEIDON_SOURCE_FILES
+  CONFIGURE_DEPENDS
+  ${CMAKE_CURRENT_SOURCE_DIR}/*.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/*.h)
 # A source removed or moved leaves no newer time stamp behind, so the list is a
 # dependency too; GENERATE rewrites it only when it changes.
-string(REPLACE ";" "\n" _poseidon_pass_list "${POSEIDON_PASS_FILES}")
+string(REPLACE ";" "\n" _poseidon_source_list "${POSEIDON_SOURCE_FILES}")
 file(
   GENERATE
-  OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/identity/PassSources.txt
-  CONTENT "${_poseidon_pass_list}\n")
+  OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/identity/Sources.txt
+  CONTENT "${_poseidon_source_list}\n")
 set(POSEIDON_BUILD_IDENTITY ${CMAKE_CURRENT_BINARY_DIR}/identity/BuildIdentity.h)
 add_custom_command(
   OUTPUT ${POSEIDON_BUILD_IDENTITY}
   COMMAND
     ${CMAKE_COMMAND}
     -DPASS_DIR=${CMAKE_CURRENT_SOURCE_DIR}
-    -DBINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}
     -DOUT=${POSEIDON_BUILD_IDENTITY}
     -P
     ${CMAKE_CURRENT_SOURCE_DIR}/cmake/BuildIdentity.cmake
   DEPENDS
-    ${POSEIDON_PASS_FILES} ${CMAKE_CURRENT_BINARY_DIR}/identity/PassSources.txt
+    ${POSEIDON_SOURCE_FILES} ${CMAKE_CURRENT_BINARY_DIR}/identity/Sources.txt
     ${CMAKE_CURRENT_SOURCE_DIR}/cmake/BuildIdentity.cmake
-    ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PassSources.cmake
   VERBATIM)
 add_custom_target(poseidon_build_identity DEPENDS ${POSEIDON_BUILD_IDENTITY})
 add_dependencies(${POSEIDON_PLUGIN_TARGET} poseidon_build_identity)
