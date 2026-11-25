@@ -72,11 +72,23 @@ LogicalResult MHOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   return verifyCallee(*this, symbolTable, getFnAttr(), getFnAttrName());
 }
 
-LogicalResult InferOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
-  if (failed(verifyCallee(*this, symbolTable, getFnAttr(), getFnAttrName())))
+/// Checks the callees of `impulse.infer` or `impulse.infer_region`.
+template <typename OpTy>
+static LogicalResult verifyInferCallees(OpTy op,
+                                        SymbolTableCollection &symbolTable) {
+  if (failed(verifyCallee(op, symbolTable, op.getFnAttr(), op.getFnAttrName())))
     return failure();
-  return verifyCallee(*this, symbolTable, getLogpdfFnAttr(),
-                      getLogpdfFnAttrName());
+  return verifyCallee(op, symbolTable, op.getLogpdfFnAttr(),
+                      op.getLogpdfFnAttrName());
+}
+
+LogicalResult InferOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  return verifyInferCallees(*this, symbolTable);
+}
+
+LogicalResult
+InferRegionOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  return verifyInferCallees(*this, symbolTable);
 }
 
 //===----------------------------------------------------------------------===//
@@ -120,7 +132,8 @@ struct CanonicalStateLayout {
 /// The canonical `state_schema` of `op`, which has a non-empty `state_out`
 /// and a `state_schema` of the same size. Fails after emitting when the slots
 /// the layout depends on are missing or ill-typed.
-static FailureOr<CanonicalStateLayout> getCanonicalStateLayout(InferOp op) {
+template <typename OpTy>
+static FailureOr<CanonicalStateLayout> getCanonicalStateLayout(OpTy op) {
   ArrayAttr schema = op.getStateSchemaAttr();
   if (op.getMhConfig() || op.getGibbsConfig()) {
     auto weightType = dyn_cast<RankedTensorType>(op.getStateOut()[0].getType());
@@ -181,90 +194,99 @@ static FailureOr<CanonicalStateLayout> getCanonicalStateLayout(InferOp op) {
       adaptive ? "adaptive" : "plain"};
 }
 
-LogicalResult InferOp::verify() {
-  bool hasHMC = getHmcConfig().has_value();
-  bool hasNUTS = getNutsConfig().has_value();
-  bool hasVI = getViConfig().has_value();
-  bool hasMH = getMhConfig().has_value();
-  bool hasGibbs = getGibbsConfig().has_value();
+/// Verifies the signature that `impulse.infer` and `impulse.infer_region`
+/// share.
+template <typename OpTy> static LogicalResult verifyInferSignature(OpTy op) {
+  bool hasHMC = op.getHmcConfig().has_value();
+  bool hasNUTS = op.getNutsConfig().has_value();
+  bool hasVI = op.getViConfig().has_value();
+  bool hasMH = op.getMhConfig().has_value();
+  bool hasGibbs = op.getGibbsConfig().has_value();
 
   if (hasHMC + hasNUTS + hasVI + hasMH + hasGibbs != 1) {
-    return emitOpError("exactly one of hmc_config, nuts_config, vi_config, "
-                       "mh_config, or gibbs_config must be specified");
+    return op.emitOpError("exactly one of hmc_config, nuts_config, vi_config, "
+                          "mh_config, or gibbs_config must be specified");
   }
 
-  if ((getConstraint() || getConstrainedAddressesAttr()) && !hasMH && !hasGibbs)
-    return emitOpError("`constraint`/`constrained_addresses` are only valid "
-                       "with mh_config or gibbs_config");
+  if ((op.getConstraint() || op.getConstrainedAddressesAttr()) && !hasMH &&
+      !hasGibbs)
+    return op.emitOpError("`constraint`/`constrained_addresses` are only valid "
+                          "with mh_config or gibbs_config");
 
-  int64_t numChains = getNumChains();
+  int64_t numChains = op.getNumChains();
   if (numChains < 1)
-    return emitOpError("`num_chains` must be >= 1");
+    return op.emitOpError("`num_chains` must be >= 1");
   if (numChains > 1 && !hasHMC && !hasNUTS)
-    return emitOpError("`num_chains` > 1 requires a sampling config "
-                       "(hmc_config or nuts_config)");
+    return op.emitOpError("`num_chains` > 1 requires a sampling config "
+                          "(hmc_config or nuts_config)");
 
-  if (!getFnAttr() && !getLogpdfFnAttr()) {
-    return emitOpError("one of `fn` or `logpdf_fn` must be specified");
+  if (!op.getFnAttr() && !op.getLogpdfFnAttr()) {
+    return op.emitOpError("one of `fn` or `logpdf_fn` must be specified");
   }
 
-  if (getFnAttr() && getLogpdfFnAttr()) {
-    return emitOpError("specifying both `fn` and `logpdf_fn` is unsupported");
+  if (op.getFnAttr() && op.getLogpdfFnAttr()) {
+    return op.emitOpError(
+        "specifying both `fn` and `logpdf_fn` is unsupported");
   }
 
-  if (getLogpdfFnAttr() && !getInitPosition()) {
-    return emitOpError(
+  if (op.getLogpdfFnAttr() && !op.getInitPosition()) {
+    return op.emitOpError(
         "custom logpdf mode requires `init_position` to be provided");
   }
 
-  unsigned numStateOut = getStateOut().size();
-  ArrayAttr schema = getStateSchemaAttr();
+  unsigned numStateOut = op.getStateOut().size();
+  ArrayAttr schema = op.getStateSchemaAttr();
   if (numStateOut != 0) {
     if (!schema)
-      return emitOpError(
+      return op.emitOpError(
           "`state_schema` is required when `state_out` is non-empty");
     if (schema.size() != numStateOut)
-      return emitOpError("`state_schema` size (")
+      return op.emitOpError("`state_schema` size (")
              << schema.size() << ") must match `state_out` size ("
              << numStateOut << ")";
   } else if (schema && schema.size() != 0) {
-    return emitOpError(
+    return op.emitOpError(
         "`state_schema` must be empty when `state_out` is empty");
   }
 
-  unsigned numStateIn = getStateIn().size();
+  unsigned numStateIn = op.getStateIn().size();
   if (numStateIn != 0 && numStateIn != numStateOut) {
-    return emitOpError("`state_in` must be empty or match `state_out` size (")
+    return op.emitOpError(
+               "`state_in` must be empty or match `state_out` size (")
            << numStateOut << "), got " << numStateIn;
   }
 
   if (numStateOut == 0)
     return success();
-  FailureOr<CanonicalStateLayout> layout = getCanonicalStateLayout(*this);
+  FailureOr<CanonicalStateLayout> layout = getCanonicalStateLayout(op);
   if (failed(layout))
     return failure();
   ArrayRef<StateSlot> expected = layout->slots;
   if (expected.size() != numStateOut)
-    return emitOpError("`state_schema` size (")
+    return op.emitOpError("`state_schema` size (")
            << numStateOut << ") does not match the canonical " << layout->name
            << " layout (" << expected.size() << ")";
   for (unsigned i = 0; i < numStateOut; ++i) {
     StringRef name = cast<StringAttr>(schema[i]).getValue();
     if (name != expected[i].name)
-      return emitOpError("`state_schema` slot ")
+      return op.emitOpError("`state_schema` slot ")
              << i << " is '" << name << "', expected '" << expected[i].name
              << "'";
-    if (getStateOut()[i].getType() != expected[i].type)
-      return emitOpError("`state_out` slot '")
-             << name << "' has type " << getStateOut()[i].getType()
+    if (op.getStateOut()[i].getType() != expected[i].type)
+      return op.emitOpError("`state_out` slot '")
+             << name << "' has type " << op.getStateOut()[i].getType()
              << ", expected " << expected[i].type;
-    if (numStateIn != 0 && getStateIn()[i].getType() != expected[i].type)
-      return emitOpError("`state_in` slot '")
-             << name << "' has type " << getStateIn()[i].getType()
+    if (numStateIn != 0 && op.getStateIn()[i].getType() != expected[i].type)
+      return op.emitOpError("`state_in` slot '")
+             << name << "' has type " << op.getStateIn()[i].getType()
              << ", expected " << expected[i].type;
   }
   return success();
 }
+
+LogicalResult InferOp::verify() { return verifyInferSignature(*this); }
+
+LogicalResult InferRegionOp::verify() { return verifyInferSignature(*this); }
 
 //===----------------------------------------------------------------------===//
 // IfOp

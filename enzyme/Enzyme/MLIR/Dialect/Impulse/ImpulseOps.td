@@ -389,7 +389,8 @@ def SampleRegionOp : Impulse_Op<"sample_region", [AutomaticAllocationScope]> {
 }
 
 def InferRegionOp : Impulse_Op<"infer_region",
-    [AutomaticAllocationScope, AttrSizedOperandSegments]>,
+    [DeclareOpInterfaceMethods<SymbolUserOpInterface>, AutomaticAllocationScope,
+     AttrSizedOperandSegments]>,
     Impulse_InferSignatureArgs, Impulse_InferSignatureResults {
   let summary = "Region form of impulse.infer";
   let description = [{
@@ -439,6 +440,8 @@ def InferRegionOp : Impulse_Op<"infer_region",
     `sampling` $sampling `logpdf` $logpdf
     prop-dict attr-dict `:` functional-type(operands, results)
   }];
+
+  let hasVerifier = 1;
 }
 
 //===----------------------------------------------------------------------===//

@@ -18,6 +18,7 @@
 // CHECK-NEXT: impulse.yield %[[LP]], %[[LP]] : tensor<f64>, tensor<f64>
 
 module {
+  func.func private @model(tensor<2xui64>, tensor<3x3xf64>) -> (tensor<2xui64>, tensor<3x3xf64>)
   func.func private @halfnormal_sampler(%rng : tensor<2xui64>, %std : tensor<f64>) -> (tensor<2xui64>, tensor<f64>) {
     %sample = math.absf %std : tensor<f64>
     return %rng, %sample : tensor<2xui64>, tensor<f64>
@@ -26,10 +27,10 @@ module {
     %neg = arith.negf %x : tensor<f64>
     return %neg : tensor<f64>
   }
-  func.func @gp(%rng : tensor<2xui64>, %X : tensor<3x3xf64>, %trace : tensor<1x1xf64>) -> (tensor<1x1xf64>, tensor<1xi1>, tensor<2xui64>) {
+  func.func @gp(%rng : tensor<2xui64>, %X : tensor<3x3xf64>, %trace : tensor<1x1xf64>) -> (tensor<1x1xf64>, tensor<1x2xi1>, tensor<2xui64>) {
     %step_size = arith.constant dense<0.1> : tensor<f64>
     %std = arith.constant dense<1.0> : tensor<f64>
-    %res:8 = impulse.infer_region @model(%rng, %X) given %trace init_step_size = %step_size sampling {
+    %res:4 = impulse.infer_region @model(%rng, %X) given %trace init_step_size = %step_size sampling {
     ^bb0(%arg_rng: tensor<2xui64>, %arg_X: tensor<3x3xf64>):
       %tau:2 = impulse.sample_region(%arg_rng, %std) sampling {
       ^bb0(%r: tensor<2xui64>, %s: tensor<f64>):
@@ -46,7 +47,7 @@ module {
       %L = impulse.cholesky %K <{lower = true}> : (tensor<3x3xf64>) -> tensor<3x3xf64>
       impulse.yield %tau#0, %L : tensor<2xui64>, tensor<3x3xf64>
     } logpdf {
-    } <{all_addresses = [[#impulse.symbol<1>]], hmc_config = #impulse.hmc_config<trajectory_length = 1.0>, selection = [[#impulse.symbol<1>]]}> : (tensor<2xui64>, tensor<3x3xf64>, tensor<1x1xf64>, tensor<f64>) -> (tensor<1x1xf64>, tensor<1xi1>, tensor<2xui64>, tensor<1x1xf64>, tensor<1x1xf64>, tensor<f64>, tensor<f64>, tensor<1x1xf64>)
-    return %res#0, %res#1, %res#2 : tensor<1x1xf64>, tensor<1xi1>, tensor<2xui64>
+    } <{all_addresses = [[#impulse.symbol<1>]], hmc_config = #impulse.hmc_config<trajectory_length = 1.0>, selection = [[#impulse.symbol<1>]]}> : (tensor<2xui64>, tensor<3x3xf64>, tensor<1x1xf64>, tensor<f64>) -> (tensor<1x1xf64>, tensor<1x2xi1>, tensor<1xf64>, tensor<2xui64>)
+    return %res#0, %res#1, %res#3 : tensor<1x1xf64>, tensor<1x2xi1>, tensor<2xui64>
   }
 }
