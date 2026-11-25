@@ -58,6 +58,17 @@ def DifferentiatePass : Pass<"enzyme"> {
 
 def ExpandImpulsePass : Pass<"expand-impulse"> {
   let summary = "Materialize Impulse ops to probabilistic programming algorithms";
+  let description = [{
+    Replaces `impulse.untraced_call`, `impulse.simulate`, `impulse.generate`,
+    `impulse.regenerate`, `impulse.mh`, `impulse.infer` and
+    `impulse.infer_region` with the computation they denote. A model that one
+    of these ops runs is cloned into a function in which every sample site is
+    replaced by the code that draws or reads its value and scores it, and an
+    inference op becomes the code of its algorithm, with gradients computed
+    by `enzyme.autodiff_region`. `impulse.infer` with `gibbs_config` must be
+    in region form. With `postpasses`, that pass pipeline then runs on the
+    result.
+  }];
   let dependentDialects = [
     "arith::ArithDialect",
     "complex::ComplexDialect",
@@ -77,7 +88,7 @@ def ExpandImpulsePass : Pass<"expand-impulse"> {
       /*CLI argument=*/"debug-dump",
       /*type=*/"bool",
       /*default=*/"false",
-      /*description=*/"Enable debug dump"
+      /*description=*/"Insert enzyme.dump ops that print intermediate values"
     >,
   ];
 }
@@ -85,16 +96,14 @@ def ExpandImpulsePass : Pass<"expand-impulse"> {
 def InlineInferIntoRegionPass : Pass<"inline-infer-regions"> {
   let summary = "Inline impulse.infer ops into impulse.infer_region ops.";
   let description = [{
-    Converts trace-based `impulse.infer @fn(...)` into `impulse.infer_region`
-    with the model body inlined into the sampling region, each `impulse.sample`
-    converted to an `impulse.sample_region` (sampler and logpdf function bodies
-    inlined as sub-regions), and sub-model sample sites recursively dissolved
-    (their addresses prefixed with the enclosing site's address). Only models
-    the region pipeline fully supports are converted; anything else is left as
-    a flat `impulse.infer` for the regular expand-impulse lowering.
-
-    The logpdf region is NOT built here: the `sicm` pass constructs it after
-    sampling-region SICM, so it is born optimized.
+    Converts `impulse.infer` into `impulse.infer_region`. With `fn`, the body
+    of `fn` becomes `sampling`, every `impulse.sample` becomes an
+    `impulse.sample_region` whose regions hold the sampler and the log density
+    of the site, the sites of a model that a site runs take the place of that
+    site under its address, and `logpdf` stays empty. With `logpdf_fn`, the
+    body of `logpdf_fn` becomes `logpdf` and `sampling` stays empty. An op
+    whose model or algorithm the region form does not support is left
+    unchanged.
   }];
   let dependentDialects = [
     "arith::ArithDialect",
@@ -104,30 +113,21 @@ def InlineInferIntoRegionPass : Pass<"inline-infer-regions"> {
   ];
 }
 
-
 def SICMPass : Pass<"sicm"> {
   let summary = "Sample-invariant code motion";
   let description = [{
-    For each impulse.infer_region, iterates to fixpoint:
-    1. Apply the rewrite rules that split an expensive sample-dependent op
-       into a cheap sample-dependent part and an expensive invariant part.
-    2. Hoist sample-invariant operations out of the region.
-    The sampling region goes first. The logpdf region is then built from the
-    (already optimized) sampling region, so it is born optimized, and gets
-    the same two steps.
-
-    The pass has no rules of its own and names no tensor dialect. A dialect
-    contributes its rules through a SICMRuleSetInterface; with none loaded
-    the pass builds the logpdf region and hoists. With the `schedule` option
-    the rules of step 1 are instead the patterns of the descriptors listed in
-    the `transform.apply_patterns` ops of the entry-point sequence of a
-    transform script.
-
-    Each round starts from a fresh sample-dependence analysis; within the
-    rewrite step it is updated incrementally on every IR change (a new value
-    gets the join of the values it uses, and a value that becomes
-    sample-dependent makes its users so), never lowered, and step 2
-    recomputes it.
+    For each `impulse.infer_region`, moves the computation that does not
+    depend on the sampled values above the op: first out of `sampling`, then
+    out of `logpdf`, which the pass builds from the optimized `sampling` when
+    it is empty. Each region gets up to `max-iterations` rounds, stopping
+    after a round that changes nothing, of (1) the rewrite rules, which split
+    a sample-dependent op into sample-dependent and sample-invariant parts,
+    and (2) hoisting the sample-invariant ops. The rules are those of every
+    loaded dialect that implements `SICMRuleSetInterface` or, with
+    `schedule`, the patterns of the `transform.apply_patterns` ops in the
+    `schedule-entry-point` sequence of a transform script. Each round also
+    moves every constant to the entry block of the closest enclosing region
+    that is isolated from above, merging equal constants.
   }];
   let dependentDialects = [
     "impulse::ImpulseDialect",

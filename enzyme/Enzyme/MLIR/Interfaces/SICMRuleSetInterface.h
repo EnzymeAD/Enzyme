@@ -22,9 +22,7 @@ namespace impulse {
 /// The `rule-options` of a `sicm` run, as key and value.
 using SICMRuleOptions = llvm::StringMap<std::string>;
 
-/// The rewrite rules a dialect contributes to the `sicm` pass. The pass names
-/// no tensor dialect: it applies the rules of every loaded dialect that
-/// registers this interface, then hoists.
+/// The rewrite rules a dialect contributes to the `sicm` pass.
 class SICMRuleSetInterface
     : public DialectInterface::Base<SICMRuleSetInterface> {
 public:
