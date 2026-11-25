@@ -5,7 +5,7 @@
 // The TCEC runtime's power-of-two operand scaling (runtime/ozaki/OzakiII.h),
 // run on the host over the whole exponent range.
 //
-// ldexp: ptc_ldexp(x, n) is x * 2^n rounded once, against the C library's
+// ldexp: tcecScale(x, n) is x * 2^n rounded once, against the C library's
 // ldexp, for finite, subnormal, zero, infinite and NaN x and every n the
 // runtime can form.
 //
@@ -70,7 +70,7 @@ int main() {
   for (double x : xs)
     for (int n = -3300; n <= 3300; ++n) {
       ++ldexpCases;
-      double got = ptc_ldexp(x, n), want = std::ldexp(x, n);
+      double got = tcecScale(x, n), want = std::ldexp(x, n);
       if (!sameBits(got, want) && ldexpBad++ < 5)
         printf("ldexp MISMATCH x=%a n=%d got=%a want=%a\n", x, n, got, want);
     }
@@ -81,8 +81,8 @@ int main() {
   long pairs = 0, representable = 0, exact = 0, rounded = 0, bad = 0;
   for (int eA = -1073; eA <= 1023; ++eA) {
     const double a = std::ldexp(1.5, eA);
-    const int na = ptc_scaleExponent(a);
-    const double aScaled = ptc_ldexp(a, na);
+    const int na = tcecScaleExponent(a);
+    const double aScaled = tcecScale(a, na);
     const float aNarrow = (float)aScaled;
     if ((double)aNarrow != aScaled || aNarrow < 0x1.0p9f ||
         aNarrow > 0x1.0p11f) {
@@ -92,10 +92,10 @@ int main() {
     }
     for (int eB = -1072; eB <= 1023; ++eB) {
       const double b = std::ldexp(1.25, eB);
-      const int nb = ptc_scaleExponent(b);
-      const float bNarrow = (float)ptc_ldexp(b, nb);
+      const int nb = tcecScaleExponent(b);
+      const float bNarrow = (float)tcecScale(b, nb);
       const double product = (double)aNarrow * (double)bNarrow;
-      const double got = ptc_ldexp(product, -(na + nb));
+      const double got = tcecScale(product, -(na + nb));
       const double want = std::ldexp(1.875, eA + eB);
       const int e = eA + eB;
       ++pairs;
@@ -129,13 +129,13 @@ int main() {
     const float sa = exp2f((float)(10 - ilogbf(ma)));
     if (!std::isfinite(sa))
       continue;
-    const int na = ptc_scaleExponent((double)ma);
+    const int na = tcecScaleExponent((double)ma);
     ++scaleCases;
     bool ok = na == 10 - ilogbf(ma);
     for (int k = 0; k < 16 && ok; ++k) {
       double x = (double)ma * ((double)(next() >> 11) * 0x1.0p-53);
       ok = sameBits((double)(float)(x * (double)sa),
-                    (double)(float)ptc_ldexp(x, na));
+                    (double)(float)tcecScale(x, na));
     }
     scaleBad += !ok;
     for (float mb : maxima) {
@@ -145,13 +145,13 @@ int main() {
       const float s2 = 1.f / (sa * sb);
       if (!(s2 > 0.f && std::isfinite(s2)))
         continue;
-      const int nb = ptc_scaleExponent((double)mb);
+      const int nb = tcecScaleExponent((double)mb);
       ++unscaleCases;
       bool same = true;
       for (int k = 0; k < 4 && same; ++k) {
         double v = (double)(float)std::ldexp((double)(next() >> 11) * 0x1.0p-53,
                                              (int)(next() % 64) - 20);
-        same = sameBits(v * (double)s2, ptc_ldexp(v, -(na + nb)));
+        same = sameBits(v * (double)s2, tcecScale(v, -(na + nb)));
       }
       unscaleBad += !same;
     }
@@ -161,8 +161,8 @@ int main() {
   failed |= scaleBad != 0 || unscaleBad != 0;
 
   // Operands with no finite nonzero maximum are left unscaled.
-  printf("unscaled: %d %d %d\n", ptc_scaleExponent(0.0),
-         ptc_scaleExponent(INFINITY), ptc_scaleExponent(NAN));
+  printf("unscaled: %d %d %d\n", tcecScaleExponent(0.0),
+         tcecScaleExponent(INFINITY), tcecScaleExponent(NAN));
 
   printf(failed ? "FAIL\n" : "PASS\n");
   return failed;

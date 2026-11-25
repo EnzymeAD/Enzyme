@@ -6,11 +6,11 @@
 //            doubling;
 //   sums:    the multiply-high reduction is s % p for every s < 2^24, which
 //            holds every byte-weight sum (< 2^20);
-//   int64:   poz_modI8 is the symmetric representative of a % p for every
-//            |a| < 2^24, every a = +-(2^b + d) with |d| <= 2 and 0 <= b < 63,
-//            the extremes, and 2^20 random 64-bit values;
-//   int32:   poz_modI32 likewise for every |a| < 2^24, the extremes and 2^20
-//            random 32-bit values.
+//   int64:   ozakiIIResidueI8 is the symmetric representative of a % p for
+//            every |a| < 2^24, every a = +-(2^b + d) with |d| <= 2 and
+//            0 <= b < 63, the extremes, and 2^20 random 64-bit values;
+//   int32:   ozakiIIResidueI32 likewise for every |a| < 2^24, the extremes and
+//            2^20 random 32-bit values.
 // The representatives are [-(p-1)/2, (p-1)/2] for odd p and [-128, 127] for
 // p = 256, which the CRT constants assume.
 //
@@ -53,7 +53,7 @@ int symmetric(int64_t a, int p) {
   return r;
 }
 
-bool weightsOk(const PozResidueModulus &m) {
+bool weightsOk(const OzakiIIModulus &m) {
   uint32_t w = 1;
   for (unsigned k = 0; k < 8; ++k) {
     const uint32_t word = k < 4 ? m.wlo : m.whi;
@@ -69,16 +69,16 @@ bool weightsOk(const PozResidueModulus &m) {
 int main() {
   std::mt19937_64 rng(0x6f7a616b69ull);
   for (unsigned i = 0; i < kOzakiIIMaxModuli; ++i) {
-    const PozResidueModulus m = pozResidueModulus(i);
+    const OzakiIIModulus m = ozakiIIModulus(i);
     const int p = (int)m.p;
     size_t sums = 0, i64 = 0, i32 = 0;
     for (uint32_t s = 0; s < (1u << 24); ++s)
-      sums += poz_modSum(s, m) != s % m.p;
+      sums += ozakiIIReduceByteSum(s, m) != s % m.p;
     auto check64 = [&](int64_t a) {
-      i64 += poz_modI8(a, m) != symmetric(a, p);
+      i64 += ozakiIIResidueI8(a, m) != symmetric(a, p);
     };
     auto check32 = [&](int32_t a) {
-      i32 += poz_modI32(a, m) != symmetric(a, p);
+      i32 += ozakiIIResidueI32(a, m) != symmetric(a, p);
     };
     for (int64_t a = -(1 << 24) + 1; a < (1 << 24); ++a) {
       check64(a);

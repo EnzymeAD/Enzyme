@@ -6,10 +6,10 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// The constants and the integer and scaling arithmetic of the GEMM dispatch
-// runtimes (ozaki_rt.cu, tcec_rt.cu, direct_rt.cu) that the compiler's pricing
-// and accuracy model must reproduce. Included by both, in host and device
-// code: keep it free of LLVM.
+// What the GEMM runtimes share with the compiler, whose pricing and accuracy
+// model reproduce them: per scheme, its constants, the arithmetic the model
+// simulates, and the values of its entry's Mode argument (GemmDispatch.inc).
+// Included by both, in host and device code: keep it free of LLVM.
 //
 //===----------------------------------------------------------------------===//
 
@@ -28,6 +28,10 @@
 #define POSEIDON_HD
 #endif
 #endif
+
+//===----------------------------------------------------------------------===//
+// Ozaki scheme II
+//===----------------------------------------------------------------------===//
 
 constexpr unsigned kOzakiIIMaxModuli = 14;
 
@@ -176,25 +180,25 @@ inline OzakiIIConstants ozakiIIConstants(unsigned nm) {
 
 // Modulus i with its byte weights: byte k of wlo is 2^(8k) mod p, byte k of
 // whi is 2^(32+8k) mod p (each below p <= 256), and m32 = floor(2^32/p) + 1.
-struct PozResidueModulus {
+struct OzakiIIModulus {
   uint32_t p, wlo, whi, m32;
 };
 
-POSEIDON_HD constexpr PozResidueModulus pozResidueModulus(unsigned i) {
+POSEIDON_HD constexpr OzakiIIModulus ozakiIIModulus(unsigned i) {
   const uint32_t p = (uint32_t)kOzakiIIModuli[i];
   uint32_t wlo = 0, whi = 0;
   for (unsigned k = 0; k < 4; ++k) {
     wlo |= (uint32_t)((1ull << (8 * k)) % p) << (8 * k);
     whi |= (uint32_t)((1ull << (32 + 8 * k)) % p) << (8 * k);
   }
-  return PozResidueModulus{p, wlo, whi, (uint32_t)((1ull << 32) / p + 1)};
+  return OzakiIIModulus{p, wlo, whi, (uint32_t)((1ull << 32) / p + 1)};
 }
 
 // Every modulus: the largest byte-weight sum of a 64-bit magnitude, s_max =
 // 255 * (sum of the eight weights), satisfies s_max * (p - 2^32 mod p) < 2^32.
-constexpr bool pozResiduesExact() {
+constexpr bool ozakiIIResiduesExact() {
   for (unsigned i = 0; i < kOzakiIIMaxModuli; ++i) {
-    const PozResidueModulus m = pozResidueModulus(i);
+    const OzakiIIModulus m = ozakiIIModulus(i);
     uint64_t sMax = 0;
     for (unsigned k = 0; k < 4; ++k)
       sMax += 255 * (((m.wlo >> (8 * k)) & 255) + ((m.whi >> (8 * k)) & 255));
@@ -203,11 +207,11 @@ constexpr bool pozResiduesExact() {
   }
   return true;
 }
-static_assert(pozResiduesExact(),
+static_assert(ozakiIIResiduesExact(),
               "the multiply-high reduction is not exact on every byte sum");
 
 // c + sum_k byte_k(a) * byte_k(w), bytes unsigned.
-POSEIDON_HD inline uint32_t poz_byteDot(uint32_t a, uint32_t w, uint32_t c) {
+POSEIDON_HD inline uint32_t ozakiIIByteDot(uint32_t a, uint32_t w, uint32_t c) {
 #ifdef __CUDA_ARCH__
   return __dp4a(a, w, c);
 #else
@@ -218,34 +222,36 @@ POSEIDON_HD inline uint32_t poz_byteDot(uint32_t a, uint32_t w, uint32_t c) {
 }
 
 // s mod p for a byte-weight sum s of m.
-POSEIDON_HD inline uint32_t poz_modSum(uint32_t s, PozResidueModulus m) {
+POSEIDON_HD inline uint32_t ozakiIIReduceByteSum(uint32_t s, OzakiIIModulus m) {
   return s - m.p * (uint32_t)(((uint64_t)s * m.m32) >> 32);
 }
 
 // The representative of r = |a| mod p for a of sign `neg`: [-(p-1)/2, (p-1)/2]
 // for odd p, [-128, 127] for p = 256 (the int8 wraparound of the published
 // scheme). The CRT constants assume these.
-POSEIDON_HD inline int poz_symmetric(uint32_t r, bool neg, uint32_t p) {
+POSEIDON_HD inline int ozakiIISymmetric(uint32_t r, bool neg, uint32_t p) {
   const uint32_t t = (neg && r != 0) ? p - r : r;
   return (int)t - (t > (p - 1) / 2 ? (int)p : 0);
 }
 
 // The residue of a scaled operand entry, an INT8 plane element.
-POSEIDON_HD inline int8_t poz_modI8(int64_t a, PozResidueModulus m) {
+POSEIDON_HD inline int8_t ozakiIIResidueI8(int64_t a, OzakiIIModulus m) {
   const uint64_t u = a < 0 ? 0 - (uint64_t)a : (uint64_t)a;
-  const uint32_t s = poz_byteDot((uint32_t)u, m.wlo,
-                                 poz_byteDot((uint32_t)(u >> 32), m.whi, 0));
-  return (int8_t)poz_symmetric(poz_modSum(s, m), a < 0, m.p);
+  const uint32_t s = ozakiIIByteDot(
+      (uint32_t)u, m.wlo, ozakiIIByteDot((uint32_t)(u >> 32), m.whi, 0));
+  return (int8_t)ozakiIISymmetric(ozakiIIReduceByteSum(s, m), a < 0, m.p);
 }
 
 // The residue of an INT32 product entry.
-POSEIDON_HD inline int poz_modI32(int32_t a, PozResidueModulus m) {
+POSEIDON_HD inline int ozakiIIResidueI32(int32_t a, OzakiIIModulus m) {
   const uint32_t u = a < 0 ? 0 - (uint32_t)a : (uint32_t)a;
-  return poz_symmetric(poz_modSum(poz_byteDot(u, m.wlo, 0), m), a < 0, m.p);
+  return ozakiIISymmetric(ozakiIIReduceByteSum(ozakiIIByteDot(u, m.wlo, 0), m),
+                          a < 0, m.p);
 }
 
-// The TCEC runtime's power-of-two operand scaling, carried as integer
-// exponents.
+//===----------------------------------------------------------------------===//
+// TCEC: the power-of-two operand scaling, carried as integer exponents
+//===----------------------------------------------------------------------===//
 
 // Exponent n of the scale 2^n that brings an operand whose largest magnitude is
 // m to [2^10, 2^11]: inside FP16's range with headroom for the high limb of the
@@ -253,7 +259,7 @@ POSEIDON_HD inline int poz_modI32(int32_t a, PozResidueModulus m) {
 // FP32, the operand the split sees, wherever that is finite and nonzero, and
 // from m itself beyond FP32's range. An operand that is zero, or holds an Inf
 // or NaN, is left unscaled.
-POSEIDON_HD inline int ptc_scaleExponent(double m) {
+POSEIDON_HD inline int tcecScaleExponent(double m) {
   float f = (float)m;
   if (f > 0.f && f <= FLT_MAX)
     return 10 - ilogbf(f);
@@ -263,7 +269,7 @@ POSEIDON_HD inline int ptc_scaleExponent(double m) {
 }
 
 // 2^n for n in [-1022, 1023].
-POSEIDON_HD inline double ptc_pow2(int n) {
+POSEIDON_HD inline double tcecPow2(int n) {
   uint64_t bits = (uint64_t)(n + 1023) << 52;
   double d;
   memcpy(&d, &bits, sizeof d);
@@ -273,17 +279,17 @@ POSEIDON_HD inline double ptc_pow2(int n) {
 // x * 2^n, rounded once, for any n. A factor beyond the normal range is applied
 // in parts; toward the subnormals each part leaves the intermediate 2^53 above
 // them, so only the last product can round.
-POSEIDON_HD inline double ptc_ldexp(double x, int n) {
+POSEIDON_HD inline double tcecScale(double x, int n) {
   for (int i = 0; i < 2 && n > 1023; ++i) {
-    x *= ptc_pow2(1023);
+    x *= tcecPow2(1023);
     n -= 1023;
   }
   for (int i = 0; i < 2 && n < -1022; ++i) {
-    x *= ptc_pow2(-1022 + 53);
+    x *= tcecPow2(-1022 + 53);
     n += 1022 - 53;
   }
   n = n > 1023 ? 1023 : n < -1022 ? -1022 : n;
-  return x * ptc_pow2(n);
+  return x * tcecPow2(n);
 }
 
 // The last argument of __poseidon_tcec_dgemm: cuMpSGEMM's compute mode.
@@ -293,6 +299,10 @@ enum PoseidonTcecMode : int {
   kTcecFp16Tc = 3,
   kTcecTf32Tc = 4,
 };
+
+//===----------------------------------------------------------------------===//
+// Direct
+//===----------------------------------------------------------------------===//
 
 // The last argument of __poseidon_direct_dgemm: the format each FP64 operand
 // is rounded to (TF32 through FP32), all with an FP32 accumulator.

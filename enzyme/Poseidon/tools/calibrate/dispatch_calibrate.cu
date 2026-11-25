@@ -23,6 +23,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "runtime/GemmRuntime.h"
 #include "runtime/ozaki/OzakiII.h"
 
 // The CUDA build defines it to whether cuMpSGEMM is linked.
@@ -30,25 +31,14 @@
 #define POSEIDON_TCEC 0
 #endif
 
-#include "runtime/GemmDispatch.h"
-
 #include <climits>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
-#define CK(x)                                                                  \
-  do {                                                                         \
-    cudaError_t e = (x);                                                       \
-    if (e) {                                                                   \
-      fprintf(stderr, "GPU runtime %s:%d %s\n", __FILE__, __LINE__,            \
-              cudaGetErrorString(e));                                          \
-      exit(1);                                                                 \
-    }                                                                          \
-  } while (0)
-
 /// The naive scalar-FP64 GEMM whose time is the denominator of every row.
-__global__ void ref_gemm(double *C, const double *A, const double *B, int N) {
+__global__ void referenceGemm(double *C, const double *A, const double *B,
+                              int N) {
   int row = blockIdx.x * blockDim.x + threadIdx.x;
   int col = blockIdx.y * blockDim.y + threadIdx.y;
   if (row >= N || col >= N)
@@ -59,148 +49,147 @@ __global__ void ref_gemm(double *C, const double *A, const double *B, int N) {
   C[(size_t)col * N + row] = s;
 }
 
-/// The reference shape, the timed repetitions, and the modulus count or mode
-/// the dispatch under test runs with. The square products are row-major with
-/// leading dimensions N, as the pass dispatches a square GEMM.
-static int N, Reps, Variant;
-static double *dA, *dB, *dC;
+namespace {
 
-/// One launch of each measured GEMM on the square operands.
-static void run_ref() {
-  dim3 b(16, 16), g((N + 15) / 16, (N + 15) / 16);
-  ref_gemm<<<g, b>>>(dC, dA, dB, N);
-}
-static void run_oz() {
-  __poseidon_ozaki_dgemm(dC, dA, dB, N, N, N, N, N, N, 0, 0, 0, 1.0, 0.0, 0,
-                         Variant);
-}
-static void run_native() {
-  __poseidon_native_dgemm(dC, dA, dB, N, N, N, N, N, N, 0, 0, 0, 1.0, 0.0, 0);
-}
-static void run_dr() {
-  __poseidon_direct_dgemm(dC, dA, dB, N, N, N, N, N, N, 0, 0, 0, 1.0, 0.0, 0,
-                          Variant);
-}
+/// One measured call of an entry: its operands, extents and layouts. A
+/// square product is row-major with leading dimensions N, as the pass
+/// dispatches a square GEMM.
+struct Gemm {
+  double *C;
+  const double *A, *B;
+  int M, Ncols, K, lda, ldb, ldc, aColMajor, bColMajor, cColMajor;
+  double beta;
+
+  static Gemm square(double *C, const double *A, const double *B, int N) {
+    return {C, A, B, N, N, N, N, N, N, 0, 0, 0, 0.0};
+  }
+  void native() const {
+    __poseidon_native_dgemm(C, A, B, M, Ncols, K, lda, ldb, ldc, aColMajor,
+                            bColMajor, cColMajor, 1.0, beta, nullptr);
+  }
+  void ozaki(int nm) const {
+    __poseidon_ozaki_dgemm(C, A, B, M, Ncols, K, lda, ldb, ldc, aColMajor,
+                           bColMajor, cColMajor, 1.0, beta, nullptr, nm);
+  }
+  void direct(int mode) const {
+    __poseidon_direct_dgemm(C, A, B, M, Ncols, K, lda, ldb, ldc, aColMajor,
+                            bColMajor, cColMajor, 1.0, beta, nullptr, mode);
+  }
 #if POSEIDON_TCEC
-static void run_tc() {
-  __poseidon_tcec_dgemm(dC, dA, dB, N, N, N, N, N, N, 0, 0, 0, 1.0, 0.0, 0,
-                        kTcecFp16Tcec);
-}
+  void tcec(int mode) const {
+    __poseidon_tcec_dgemm(C, A, B, M, Ncols, K, lda, ldb, ldc, aColMajor,
+                          bColMajor, cColMajor, 1.0, beta, nullptr, mode);
+  }
 #endif
+};
+
+/// The reference shape and the timed repetitions.
+int N, Reps;
+double *dA, *dB, *dC;
 
 /// The mean time in milliseconds of `reps` calls of `fn`, after one warm-up.
-static float timeit(void (*fn)(), int reps) {
+template <class Fn> float timeit(Fn fn, int reps) {
   cudaEvent_t a, b;
-  CK(cudaEventCreate(&a));
-  CK(cudaEventCreate(&b));
+  POSEIDON_GEMM_CK(cudaEventCreate(&a));
+  POSEIDON_GEMM_CK(cudaEventCreate(&b));
   fn();
-  CK(cudaDeviceSynchronize()); // warmup
-  CK(cudaEventRecord(a));
+  POSEIDON_GEMM_CK(cudaDeviceSynchronize());
+  POSEIDON_GEMM_CK(cudaEventRecord(a));
   for (int i = 0; i < reps; i++)
     fn();
-  CK(cudaEventRecord(b));
-  CK(cudaEventSynchronize(b));
+  POSEIDON_GEMM_CK(cudaEventRecord(b));
+  POSEIDON_GEMM_CK(cudaEventSynchronize(b));
   float ms;
-  CK(cudaEventElapsedTime(&ms, a, b));
-  CK(cudaEventDestroy(a));
-  CK(cudaEventDestroy(b));
+  POSEIDON_GEMM_CK(cudaEventElapsedTime(&ms, a, b));
+  POSEIDON_GEMM_CK(cudaEventDestroy(a));
+  POSEIDON_GEMM_CK(cudaEventDestroy(b));
   return ms / reps;
 }
 
 /// `n` device doubles drawn uniformly from [-1, 1].
-static double *rand_dev(size_t n) {
+double *randomDevice(size_t n) {
   double *h = (double *)malloc(n * 8), *d;
   for (size_t i = 0; i < n; i++)
     h[i] = ((double)rand() / RAND_MAX) * 2 - 1;
-  CK(cudaMalloc(&d, n * 8));
-  CK(cudaMemcpy(d, h, n * 8, cudaMemcpyHostToDevice));
+  POSEIDON_GEMM_CK(cudaMalloc(&d, n * 8));
+  POSEIDON_GEMM_CK(cudaMemcpy(d, h, n * 8, cudaMemcpyHostToDevice));
   free(h);
   return d;
 }
 
 /// The column count the Ozaki-II rows of an M x K operand A are measured at;
-/// their cost is linear in it, so they are keyed by (M, K) alone. The
-/// operands are laid out as the recognizer dispatches a reduction: A
-/// row-major M x K, B and C column-major, C accumulated.
-static const int kRectCols = 12288;
-static int RM, RN, RK;
-static double *rA, *rB, *rC;
+/// their cost is linear in it, so they are keyed by (M, K) alone.
+const int kRectCols = 12288;
 
-static void run_rect() {
-  __poseidon_ozaki_dgemm(rC, rA, rB, RM, RN, RK, /*lda=*/RK, /*ldb=*/RK,
-                         /*ldc=*/RM, /*aColMajor=*/0, /*bColMajor=*/1,
-                         /*cColMajor=*/1, 1.0, 1.0, 0, Variant);
-}
-static void run_rect_native() {
-  __poseidon_native_dgemm(rC, rA, rB, RM, RN, RK, /*lda=*/RK, /*ldb=*/RK,
-                          /*ldc=*/RM, /*aColMajor=*/0, /*bColMajor=*/1,
-                          /*cColMajor=*/1, 1.0, 1.0, 0);
-}
-
-/// Time per MAC of `fn` at `cols` columns.
-static double rect_per_mac(void (*fn)(), int cols) {
-  RN = cols;
-  rB = rand_dev((size_t)RK * cols);
-  CK(cudaMalloc(&rC, (size_t)RM * cols * 8));
-  CK(cudaMemset(rC, 0, (size_t)RM * cols * 8));
-  float t = timeit(fn, Reps);
-  CK(cudaFree(rB));
-  CK(cudaFree(rC));
-  return (double)t / ((double)RM * cols * RK);
+/// The time per MAC of `call` on a product with an M x K operand A and
+/// `cols` columns, its operands laid out as the recognizer dispatches a
+/// reduction: A row-major, B and C column-major, C accumulated.
+template <class Call>
+double rectPerMac(const double *A, int M, int K, int cols, Call call) {
+  double *B = randomDevice((size_t)K * cols), *C;
+  POSEIDON_GEMM_CK(cudaMalloc(&C, (size_t)M * cols * 8));
+  POSEIDON_GEMM_CK(cudaMemset(C, 0, (size_t)M * cols * 8));
+  const Gemm g{C,           A,         B,         M, cols, K,
+               /*lda=*/K,   /*ldb=*/K, /*ldc=*/M, 0, 1,    1,
+               /*beta=*/1.0};
+  float t = timeit([&] { call(g); }, Reps);
+  POSEIDON_GEMM_CK(cudaFree(B));
+  POSEIDON_GEMM_CK(cudaFree(C));
+  return (double)t / ((double)M * cols * K);
 }
 
 /// Prints the Ozaki-II rows of (M, K), one per modulus count.
-static void rect_rows(int M, int K, float t_ref) {
-  const double ref_per_mac = (double)t_ref / ((double)N * N * N);
-  RM = M;
-  RK = K;
-  rA = rand_dev((size_t)M * K);
+void rectRows(int M, int K, float tRef) {
+  const double refPerMac = (double)tRef / ((double)N * N * N);
+  double *A = randomDevice((size_t)M * K);
   for (unsigned nm : kOzIIModuliCounts) {
-    Variant = nm;
-    double rel = rect_per_mac(run_rect, kRectCols) / ref_per_mac;
+    double rel =
+        rectPerMac(A, M, K, kRectCols, [&](const Gemm &g) { g.ozaki(nm); }) /
+        refPerMac;
     fprintf(stderr,
             "[dispatch_calibrate] rect nm=%2u M=%d Ncols=%d K=%d  rel = %.6f\n",
             nm, M, kRectCols, K, rel);
     printf("ozaki_dispatch_rect_rel,nm%u_m%dk%d,%.6f\n", nm, M, K, rel);
   }
-  CK(cudaFree(rA));
+  POSEIDON_GEMM_CK(cudaFree(A));
 }
 
 /// Prints the native DGEMM row of a call of exactly these extents, which a
 /// DGEMM with few columns runs far below the square rate at.
-static void full_row(int M, int Ncols, int K, float t_ref) {
-  const double ref_per_mac = (double)t_ref / ((double)N * N * N);
-  RM = M;
-  RK = K;
-  rA = rand_dev((size_t)M * K);
-  double rel = rect_per_mac(run_rect_native, Ncols) / ref_per_mac;
+void fullRow(int M, int Ncols, int K, float tRef) {
+  const double refPerMac = (double)tRef / ((double)N * N * N);
+  double *A = randomDevice((size_t)M * K);
+  double rel =
+      rectPerMac(A, M, K, Ncols, [](const Gemm &g) { g.native(); }) / refPerMac;
   fprintf(stderr,
           "[dispatch_calibrate] rect dgemm M=%d Ncols=%d K=%d  rel = %.6f\n", M,
           Ncols, K, rel);
   printf("ozaki_dispatch_rect_rel,dgemm_m%dn%dk%d,%.6f\n", M, Ncols, K, rel);
-  CK(cudaFree(rA));
+  POSEIDON_GEMM_CK(cudaFree(A));
 }
 
-/// Prints the row `family`,`key` at the time of `fn` over `t_ref`.
-static void row(const char *family, const char *key, void (*fn)(),
-                float t_ref) {
-  float t = timeit(fn, Reps);
-  double rel = (double)t / (double)t_ref;
+/// Prints the row `family`,`key` at the time of `call` on the square product
+/// over `tRef`.
+template <class Call>
+void row(const char *family, const char *key, Call call, float tRef) {
+  const Gemm g = Gemm::square(dC, dA, dB, N);
+  float t = timeit([&] { call(g); }, Reps);
+  double rel = (double)t / (double)tRef;
   fprintf(stderr,
           "[dispatch_calibrate] %s,%s  dispatch = %.4f ms  rel = %.6f "
           "(%.2fx vs FP64)\n",
-          family, key, t, rel, t_ref / t);
+          family, key, t, rel, tRef / t);
   printf("%s,%s,%.6f\n", family, key, rel);
 }
 
 /// The ozaki family: the square rows, or those of the shapes in argv[4...].
-static int ozaki(int argc, char **argv, float t_ref) {
+int ozaki(int argc, char **argv, float tRef) {
   if (argc > 4) {
     for (int i = 4; i < argc; ++i) {
       int M = 0, Ncols = 0, K = 0, end = 0;
       if (sscanf(argv[i], "%dx%dx%d%n", &M, &Ncols, &K, &end) == 3 &&
           !argv[i][end] && M > 0 && Ncols > 0 && K > 0) {
-        full_row(M, Ncols, K, t_ref);
+        fullRow(M, Ncols, K, tRef);
         continue;
       }
       if (sscanf(argv[i], "%dx%d%n", &M, &K, &end) != 2 || argv[i][end] ||
@@ -210,7 +199,7 @@ static int ozaki(int argc, char **argv, float t_ref) {
                 argv[i]);
         return 1;
       }
-      rect_rows(M, K, t_ref);
+      rectRows(M, K, tRef);
     }
     return 0;
   }
@@ -218,18 +207,19 @@ static int ozaki(int argc, char **argv, float t_ref) {
   // in one session so the rows are mutually consistent.
   char key[16];
   for (unsigned nm : kOzIIModuliCounts) {
-    Variant = nm;
     snprintf(key, sizeof(key), "nm%u", nm);
-    row("ozaki_dispatch_rel", key, run_oz, t_ref);
+    row(
+        "ozaki_dispatch_rel", key, [&](const Gemm &g) { g.ozaki(nm); }, tRef);
   }
   // What the native DGEMM candidate runs; the warmup call amortizes the handle
   // creation.
-  row("ozaki_dispatch_rel", "dgemm", run_native, t_ref);
+  row(
+      "ozaki_dispatch_rel", "dgemm", [](const Gemm &g) { g.native(); }, tRef);
   return 0;
 }
 
 /// The direct family: one row per reduced-precision mode.
-static int direct(float t_ref) {
+int direct(float tRef) {
   // The modes of __poseidon_direct_dgemm, in the class spelling of the rows.
   static const struct {
     int Mode;
@@ -240,19 +230,21 @@ static int direct(float t_ref) {
                  {kDirectTf32, "tf32_f32"},
 #endif
                  {kDirectFp32, "f32_f32"}};
-  for (const auto &C : Classes) {
-    Variant = C.Mode;
-    row("direct_dispatch_rel", C.Class, run_dr, t_ref);
-  }
+  for (const auto &C : Classes)
+    row(
+        "direct_dispatch_rel", C.Class,
+        [&](const Gemm &g) { g.direct(C.Mode); }, tRef);
   return 0;
 }
 
 /// The positive integer `s` spells, or 0.
-static int positive(const char *s) {
+int positive(const char *s) {
   char *end;
   long v = strtol(s, &end, 10);
   return *s && !*end && v > 0 && v <= INT_MAX ? (int)v : 0;
 }
+
+} // namespace
 
 int main(int argc, char **argv) {
 #if POSEIDON_TCEC
@@ -275,20 +267,27 @@ int main(int argc, char **argv) {
   }
   size_t sz = (size_t)N * N;
   srand(1);
-  dA = rand_dev(sz);
-  dB = rand_dev(sz);
-  CK(cudaMalloc(&dC, sz * 8));
+  dA = randomDevice(sz);
+  dB = randomDevice(sz);
+  POSEIDON_GEMM_CK(cudaMalloc(&dC, sz * 8));
 
-  float t_ref = timeit(run_ref, Reps);
+  float tRef = timeit(
+      [] {
+        const dim3 b(16, 16), g((N + 15) / 16, (N + 15) / 16);
+        referenceGemm<<<g, b>>>(dC, dA, dB, N);
+      },
+      Reps);
   fprintf(stderr,
           "[dispatch_calibrate] N=%d reps=%d  scalar-FP64 ref = %.4f ms\n", N,
-          Reps, t_ref);
+          Reps, tRef);
   if (!strcmp(family, "ozaki"))
-    return ozaki(argc, argv, t_ref);
+    return ozaki(argc, argv, tRef);
   if (!strcmp(family, "direct"))
-    return direct(t_ref);
+    return direct(tRef);
 #if POSEIDON_TCEC
-  row("tcec_dispatch_rel", "fp16tcec", run_tc, t_ref);
+  row(
+      "tcec_dispatch_rel", "fp16tcec",
+      [](const Gemm &g) { g.tcec(kTcecFp16Tcec); }, tRef);
 #endif
   return 0;
 }

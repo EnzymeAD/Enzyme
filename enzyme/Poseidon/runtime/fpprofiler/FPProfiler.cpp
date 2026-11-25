@@ -20,7 +20,6 @@
 #include <dirent.h>
 #include <fcntl.h>
 #include <fstream>
-#include <iostream>
 #include <iterator>
 #include <limits>
 #include <map>
@@ -339,6 +338,9 @@ static int probeRun(const std::string &dir,
   return WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status);
 }
 
+// Two slopes within this factor of each other agree.
+constexpr double kProbeSlopeAgreement = 2.0;
+
 // A slope that holds across two neighbouring eps is a measured derivative; a
 // ladder with no such pair is marked nonlinear; an eps that diverges above a
 // clean one says where the site breaks without discarding the clean
@@ -360,7 +362,7 @@ static void probeDecide(const std::vector<ProbeRun> &ladder, double &kappa,
     double lo = std::fabs(ladder[i].kappa), hi = std::fabs(ladder[i + 1].kappa);
     if (lo > hi)
       std::swap(lo, hi);
-    if (hi == 0.0 || (lo > 0.0 && hi / lo <= 2.0)) {
+    if (hi == 0.0 || (lo > 0.0 && hi / lo <= kProbeSlopeAgreement)) {
       kappa = ladder[i].kappa;
       mark = "ok";
       return;
@@ -424,90 +426,149 @@ static void probeRemoveDir(const std::string &dir) {
   rmdir(dir.c_str());
 }
 
-static void poseidonProbeDriver() {
-  const std::chrono::duration<double> profileRun =
-      std::chrono::steady_clock::now() - g_runtimeStart;
-  // A run the driver started, or one armed by hand, is a measurement.
-  const char *request = getenv("POSEIDON_PROBE");
-  if (g_probeSite >= 0 || profileIsProbeChild())
-    return;
-  if (!g_metricSet)
-    return;
-
-  const std::string pdir = FPProfiler::outputDir();
+// The sites this run wrote and executed, by site id, with their profile paths:
+// a profile this run did not write is another program's, and a site this run
+// never executed cannot move the metric (perturbing it would cost a run of the
+// workload per ladder step).
+static std::map<int, std::string> probeSites(const std::string &pdir) {
   // The device profiler's profiles are this run's too.
   for (const std::string &name : writtenElsewhere())
     writtenThisRun().insert(profileFileName(name));
   std::map<int, std::string> sites;
-  if (DIR *d = opendir(pdir.c_str())) {
-    std::vector<std::string> names;
-    while (struct dirent *e = readdir(d))
-      names.push_back(e->d_name);
-    closedir(d);
-    std::sort(names.begin(), names.end());
-    for (const std::string &n : names) {
-      // A profile this run did not write is another program's: perturbing its
-      // site cannot move this run's metric.
-      if (!writtenThisRun().count(n))
-        continue;
-      // A site this run never executed cannot move the metric, and perturbing
-      // it would cost a run of the workload per ladder step.
-      std::ifstream in(pdir + "/" + n);
-      std::string line;
-      const std::string siteIdFormat =
-          std::string(" ") + kProfileKeySiteId + " = %d";
-      int id = -1;
-      bool executed = true;
-      while (std::getline(in, line)) {
-        if (!line.empty() &&
-            line.find_first_not_of("0123456789") == std::string::npos)
-          break;
-        executed &= line != kProfileNeverExecuted;
-        std::sscanf(line.c_str(), siteIdFormat.c_str(), &id);
-      }
-      if (id >= 0 && executed)
-        sites.emplace(id, pdir + "/" + n);
+  DIR *d = opendir(pdir.c_str());
+  if (!d)
+    return sites;
+  std::vector<std::string> names;
+  while (struct dirent *e = readdir(d))
+    names.push_back(e->d_name);
+  closedir(d);
+  std::sort(names.begin(), names.end());
+  const std::string siteIdFormat =
+      std::string(" ") + kProfileKeySiteId + " = %d";
+  for (const std::string &n : names) {
+    if (!writtenThisRun().count(n))
+      continue;
+    std::ifstream in(pdir + "/" + n);
+    std::string line;
+    int id = -1;
+    bool executed = true;
+    while (std::getline(in, line)) {
+      if (!line.empty() &&
+          line.find_first_not_of("0123456789") == std::string::npos)
+        break;
+      executed &= line != kProfileNeverExecuted;
+      std::sscanf(line.c_str(), siteIdFormat.c_str(), &id);
     }
+    if (id >= 0 && executed)
+      sites.emplace(id, pdir + "/" + n);
   }
-  if (sites.size() < 2)
-    return;
+  return sites;
+}
 
-  const std::vector<double> ladder =
-      profileEnvPositiveList("POSEIDON_PROBE_LADDER", {1e-8, 1e-6, 1e-4});
-  const size_t runs = 1 + sites.size() * ladder.size();
+// The scratch directory of the run of `site` at `eps` under `tmp`.
+static std::string probeRunDir(const char *tmp, int site, double eps) {
+  char dir[64];
+  std::snprintf(dir, sizeof(dir), "%s/site%d_eps%g", tmp, site, eps);
+  return dir;
+}
 
+static std::vector<std::string> probeChildEnv(const std::string &dir) {
+  return {"POSEIDON_PROBE=child", "POSEIDON_PROFILE_DIR=" + dir};
+}
+
+// A response this many times the noise floor is the site's, not noise.
+constexpr double kProbeAboveNoise = 4.0;
+
+// The ladder of runs of `site` at each eps, and whether any response rose
+// above the noise floor; the metric of the unperturbed run is m0.
+static std::vector<ProbeRun> probeSite(const char *tmp, int site,
+                                       const std::vector<double> &ladder,
+                                       double m0, double noise,
+                                       bool &responded) {
+  std::vector<ProbeRun> runs;
+  responded = false;
+  for (double eps : ladder) {
+    const std::string d = probeRunDir(tmp, site, eps);
+    profileMkdirP(d);
+    std::vector<std::string> env = probeChildEnv(d);
+    env.push_back("POSEIDON_PROBE_SITE=" + std::to_string(site));
+    char epsVar[64];
+    std::snprintf(epsVar, sizeof(epsVar), "POSEIDON_PROBE_EPS=%.17g", eps);
+    env.push_back(epsVar);
+    const int rc = probeRun(d, env);
+    double mk = 0.0;
+    if (rc != 0 || !probeReadMetric(d, mk) || !std::isfinite(mk)) {
+      fprintf(stderr, "    eps=%-8g DIVERGED (exit %d)\n", eps, rc);
+      runs.push_back({eps, 0.0, true});
+      continue;
+    }
+    const double resp = std::fabs(mk - m0);
+    const double kappa = m0 != 0.0 ? resp / (eps * std::fabs(m0)) : resp / eps;
+    const bool over = resp > kProbeAboveNoise * noise;
+    fprintf(stderr,
+            "    eps=%-8g metric=%-24.17g response=%-12.4e kappa=%-12.4e %s\n",
+            eps, mk, resp, kappa, over ? "above noise" : "within noise");
+    runs.push_back({eps, kappa, false});
+    responded |= over;
+  }
+  return runs;
+}
+
+// Whether this run goes on to measure the condition numbers of `sites`; a
+// run that does not says why and how, and leaves them marked unmeasured
+// unless POSEIDON_PROBE=0 declined them.
+static bool probeRequested(const char *request,
+                           const std::map<int, std::string> &sites,
+                           size_t runs) {
   if (request && !strcmp(request, "0")) {
     fprintf(stderr,
             "[probe] metric \"%s\" was declared and its condition numbers at "
             "%zu sites are not measured (POSEIDON_PROBE=0): each site is "
             "solved against its own target\n",
             metricName().c_str(), sites.size());
-    return;
+    return false;
   }
-
   // Until a measurement replaces it, so that profile use can tell a declared
   // metric left unmeasured from none.
   for (const auto &kv : sites)
     probeReplaceKappa(kv.second, {std::string(kProfileKeyKappaMark) + " = " +
                                   kProfileKappaUnmeasured});
-
   if (!request || strcmp(request, "1")) {
-    fprintf(
-        stderr,
-        "[probe] metric \"%s\" was declared but its condition numbers at %zu "
-        "sites were not measured, and profile use needs them "
-        "(POSEIDON_PROBE=0 on this run solves each site against its own "
-        "target instead); measuring takes %zu more runs of this program: "
-        "poseidon-probe -- %s\n",
-        metricName().c_str(), sites.size(), runs, probeCommand().c_str());
-    return;
+    fprintf(stderr,
+            "[probe] metric \"%s\" was declared but its condition numbers at "
+            "%zu sites were not measured, and profile use needs them "
+            "(POSEIDON_PROBE=0 on this run solves each site against its own "
+            "target instead); measuring takes %zu more runs of this program: "
+            "poseidon-probe -- %s\n",
+            metricName().c_str(), sites.size(), runs, probeCommand().c_str());
+    return false;
   }
   if (probeArgv().empty()) {
-    std::cerr << "[probe] cannot read this program's command line from "
-                 "/proc/self/cmdline; not measuring condition numbers"
-              << std::endl;
-    return;
+    fprintf(stderr, "[probe] cannot read this program's command line from "
+                    "/proc/self/cmdline; not measuring condition numbers\n");
+    return false;
   }
+  return true;
+}
+
+// At exit of a profiling run that declared a metric: the condition number of
+// the metric at each site this run executed, measured by running the program
+// again (probeRequested says when), written into the site's profile.
+static void poseidonProbeDriver() {
+  const std::chrono::duration<double> profileRun =
+      std::chrono::steady_clock::now() - g_runtimeStart;
+  // A run the driver started, or one armed by hand, is a measurement.
+  const char *request = getenv("POSEIDON_PROBE");
+  if (g_probeSite >= 0 || profileIsProbeChild() || !g_metricSet)
+    return;
+  const std::map<int, std::string> sites = probeSites(FPProfiler::outputDir());
+  if (sites.size() < 2)
+    return;
+  const std::vector<double> ladder =
+      profileEnvPositiveList("POSEIDON_PROBE_LADDER", {1e-8, 1e-6, 1e-4});
+  const size_t runs = 1 + sites.size() * ladder.size();
+  if (!probeRequested(request, sites, runs))
+    return;
   fprintf(
       stderr,
       "[probe] measuring the condition numbers of metric \"%s\" at %zu sites: "
@@ -518,25 +579,21 @@ static void poseidonProbeDriver() {
   char tmpl[] = "/tmp/poseidon_probe_XXXXXX";
   const char *tmp = mkdtemp(tmpl);
   if (!tmp) {
-    std::cerr << "[probe] cannot create a scratch directory; skipping"
-              << std::endl;
+    fprintf(stderr, "[probe] cannot create a scratch directory; skipping\n");
     return;
   }
   const double m0 = g_metricValue;
-  auto childEnv = [&](const std::string &dir) {
-    return std::vector<std::string>{"POSEIDON_PROBE=child",
-                                    "POSEIDON_PROFILE_DIR=" + dir};
-  };
-
   const auto measureStart = std::chrono::steady_clock::now();
   const std::string base2 = std::string(tmp) + "/baseline2";
   profileMkdirP(base2);
-  std::cerr << "[probe] baseline run 2 -> noise floor" << std::endl;
+  fprintf(stderr, "[probe] baseline run 2 -> noise floor\n");
   double m2 = 0.0;
-  int rc = probeRun(base2, childEnv(base2));
-  if (rc != 0 || !probeReadMetric(base2, m2)) {
-    std::cerr << "[probe] the second baseline run failed (see " << base2
-              << "/run.log); not measuring condition numbers" << std::endl;
+  if (probeRun(base2, probeChildEnv(base2)) != 0 ||
+      !probeReadMetric(base2, m2)) {
+    fprintf(stderr,
+            "[probe] the second baseline run failed (see %s/run.log); not "
+            "measuring condition numbers\n",
+            base2.c_str());
     return;
   }
   const double noise = std::fabs(m2 - m0);
@@ -544,56 +601,27 @@ static void poseidonProbeDriver() {
           metricName().c_str(), m0, m2, noise);
 
   std::map<int, std::pair<double, std::string>> result;
-  for (const auto &kv : sites) {
-    const int sid = kv.first;
-    fprintf(stderr, "[probe] site %d (%s)\n", sid, kv.second.c_str());
-    std::vector<ProbeRun> runs;
+  for (const auto &[site, path] : sites) {
+    fprintf(stderr, "[probe] site %d (%s)\n", site, path.c_str());
     bool responded = false;
-    for (double eps : ladder) {
-      char dbuf[64];
-      std::snprintf(dbuf, sizeof(dbuf), "%s/site%d_eps%g", tmp, sid, eps);
-      const std::string d = dbuf;
-      profileMkdirP(d);
-      auto env = childEnv(d);
-      env.push_back("POSEIDON_PROBE_SITE=" + std::to_string(sid));
-      char ebuf[64];
-      std::snprintf(ebuf, sizeof(ebuf), "POSEIDON_PROBE_EPS=%.17g", eps);
-      env.push_back(ebuf);
-      int crc = probeRun(d, env);
-      double mk = 0.0;
-      bool ok = crc == 0 && probeReadMetric(d, mk) && std::isfinite(mk);
-      if (!ok) {
-        fprintf(stderr, "    eps=%-8g DIVERGED (exit %d)\n", eps, crc);
-        runs.push_back({eps, 0.0, true});
-        continue;
-      }
-      double resp = std::fabs(mk - m0);
-      double kappa = m0 != 0.0 ? resp / (eps * std::fabs(m0)) : resp / eps;
-      bool over = resp > 4.0 * noise;
-      fprintf(
-          stderr,
-          "    eps=%-8g metric=%-24.17g response=%-12.4e kappa=%-12.4e %s\n",
-          eps, mk, resp, kappa, over ? "above noise" : "within noise");
-      runs.push_back({eps, kappa, false});
-      responded |= over;
-    }
+    const std::vector<ProbeRun> siteRuns =
+        probeSite(tmp, site, ladder, m0, noise, responded);
     double kappa = 0.0;
     std::string mark = "below-noise";
     bool hasDiverge = false;
     if (responded)
-      probeDecide(runs, kappa, mark, hasDiverge);
-    result[sid] = {kappa, mark};
+      probeDecide(siteRuns, kappa, mark, hasDiverge);
+    result[site] = {kappa, mark};
     fprintf(stderr, "    -> Kappa = %.6e  (%s)%s\n", kappa, mark.c_str(),
             hasDiverge ? "  diverges above" : "");
   }
 
-  std::cerr << "[probe] site  kappa            mark          profile"
-            << std::endl;
-  for (const auto &kv : sites) {
-    auto [kappa, mark] = result[kv.first];
-    probeWriteKappa(kv.second, kappa, mark);
-    fprintf(stderr, "[probe] %-5d %-16.6e %-13s %s\n", kv.first, kappa,
-            mark.c_str(), kv.second.c_str());
+  fprintf(stderr, "[probe] site  kappa            mark          profile\n");
+  for (const auto &[site, path] : sites) {
+    const auto &[kappa, mark] = result[site];
+    probeWriteKappa(path, kappa, mark);
+    fprintf(stderr, "[probe] %-5d %-16.6e %-13s %s\n", site, kappa,
+            mark.c_str(), path.c_str());
   }
   const std::chrono::duration<double> measured =
       std::chrono::steady_clock::now() - measureStart;
@@ -603,11 +631,8 @@ static void poseidonProbeDriver() {
 
   probeRemoveDir(base2);
   for (const auto &kv : sites)
-    for (double eps : ladder) {
-      char dbuf[64];
-      std::snprintf(dbuf, sizeof(dbuf), "%s/site%d_eps%g", tmp, kv.first, eps);
-      probeRemoveDir(dbuf);
-    }
+    for (double eps : ladder)
+      probeRemoveDir(probeRunDir(tmp, kv.first, eps));
   rmdir(tmp);
 }
 

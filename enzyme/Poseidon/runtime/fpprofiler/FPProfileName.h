@@ -36,6 +36,7 @@
 
 #include <cerrno>
 #include <cmath>
+#include <cstdarg>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -168,22 +169,50 @@ inline void profileMkdirP(const std::string &dir) {
   }
 }
 
+// The message after "Poseidon FPProfiler: ", on stderr after what the program
+// wrote to stdout.
+inline void profileReport(const char *format, va_list args) {
+  fflush(stdout);
+  fputs("Poseidon FPProfiler: ", stderr);
+  vfprintf(stderr, format, args);
+  fputc('\n', stderr);
+  fflush(stderr);
+}
+
+// A run whose profile would be wrong or lost stops with the message and exit
+// status 1, without running exit handlers: it may already be in one.
+[[noreturn]] __attribute__((format(printf, 1, 2))) inline void
+profileFail(const char *format, ...) {
+  va_list args;
+  va_start(args, format);
+  profileReport(format, args);
+  va_end(args);
+  _exit(1);
+}
+
+// A runtime call that fails while the program runs stops it with the message,
+// by abort.
+[[noreturn]] __attribute__((format(printf, 1, 2))) inline void
+profileAbort(const char *format, ...) {
+  va_list args;
+  va_start(args, format);
+  profileReport(format, args);
+  va_end(args);
+  abort();
+}
+
 // A profile that cannot be written is a profile the solve will not find, so
 // the run stops. Called with errno from the failed open.
 [[noreturn]] inline void profileOpenFatal(const std::string &path,
                                           const char *funcName) {
-  fflush(stdout);
-  fprintf(stderr,
-          "Poseidon FPProfiler: could not open profile file for writing:\n"
-          "  %s\n"
-          "  (%s; path component is %zu bytes)\n"
-          "  function: %s\n"
-          "The profile is LOST, and a solve run against this directory would "
-          "silently skip the site. Aborting.\n",
-          path.c_str(), strerror(errno),
-          path.size() - path.find_last_of('/') - 1, funcName);
-  fflush(stderr);
-  _exit(1);
+  profileFail("could not open profile file for writing:\n"
+              "  %s\n"
+              "  (%s; path component is %zu bytes)\n"
+              "  function: %s\n"
+              "The profile is LOST, and a solve run against this directory "
+              "would silently skip the site. Aborting.",
+              path.c_str(), strerror(errno),
+              path.size() - path.find_last_of('/') - 1, funcName);
 }
 
 // Writes `text` to `path` whole or not at all: through a file of this
@@ -206,11 +235,7 @@ inline void profileWriteFile(const std::string &path, const std::string &text,
 // is unset or empty. Anything else stops the run, naming the variable.
 [[noreturn]] inline void profileBadEnv(const char *name, const char *value,
                                        const char *expected) {
-  fflush(stdout);
-  fprintf(stderr, "Poseidon FPProfiler: %s='%s' is not %s.\n", name, value,
-          expected);
-  fflush(stderr);
-  _exit(1);
+  profileFail("%s='%s' is not %s.", name, value, expected);
 }
 
 inline long long profileEnvInteger(const char *name, long long dflt) {

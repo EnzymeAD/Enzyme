@@ -80,7 +80,7 @@ uint64_t digest(const std::vector<double> &v) {
   return h;
 }
 
-// poz_axpby with alpha = 1.
+// The runtime's axpby (ozaki_rt.cu) with alpha = 1.
 double axpby(double beta, double ab, double c) {
   return beta == 0.0 ? ab : std::fma(beta, c, ab);
 }

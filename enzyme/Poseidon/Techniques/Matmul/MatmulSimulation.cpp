@@ -64,8 +64,8 @@ static float mma(float acc, const float *a, const float *b, unsigned n) {
 
 namespace {
 // An operand as the runtime hands it to cuMpSGEMM, scaled by 2^scale
-// (ptc_absmax, ptc_scales) and narrowed to FP32 (ptc_narrow), and as
-// cuMpSGEMM's load_matrix_sync splits it: an FP16 high slice and the FP16
+// (maxMagnitudeKernel, scaleExponentsKernel) and narrowed to FP32 (pack), and
+// as cuMpSGEMM's load_matrix_sync splits it: an FP16 high slice and the FP16
 // residual times 2^11. Rows of A, columns of B, each K long.
 struct SplitOperand {
   int scale = 0;
@@ -76,13 +76,13 @@ struct SplitOperand {
     double maxAbs = 0.0;
     for (unsigned i = 0; i < vectors * K; ++i)
       maxAbs = std::max(maxAbs, std::fabs(X[i]));
-    scale = ptc_scaleExponent(maxAbs);
+    scale = tcecScaleExponent(maxAbs);
     hi.resize((size_t)vectors * K);
     lo.resize((size_t)vectors * K);
     for (unsigned r = 0; r < vectors; ++r)
       for (unsigned k = 0; k < K; ++k) {
         double x = columns ? X[(size_t)k * ld + r] : X[(size_t)r * ld + k];
-        float v = (float)ptc_ldexp(x, scale);
+        float v = (float)tcecScale(x, scale);
         float h = toHalf(v);
         hi[(size_t)r * K + k] = h;
         lo[(size_t)r * K + k] = toHalf((v - h) * 2048.f);
@@ -110,7 +110,7 @@ void simulateTcecDgemm(const double *A, const double *B, unsigned M, unsigned N,
         corr = mma(corr, ah + k, bl + k, n);
       }
       double v = (double)(main + corr / 2048.f);
-      C[(size_t)i * N + j] = ptc_ldexp(v, -(a.scale + b.scale));
+      C[(size_t)i * N + j] = tcecScale(v, -(a.scale + b.scale));
     }
 }
 
@@ -127,7 +127,7 @@ public:
 };
 } // namespace
 
-// poz_warpSumRU: lane 0's sum of 32 lanes, each step rounded upward.
+// warpSumUp: lane 0's sum of 32 lanes, each step rounded upward.
 static double warpSumUp(double *lane) {
   for (unsigned d = 16; d; d >>= 1)
     for (unsigned i = 0; i < d; ++i)
@@ -135,9 +135,9 @@ static double warpSumUp(double *lane) {
   return lane[0];
 }
 
-// ||vector r||_2^2 rounded upward in the runtime's order: poz_sftContig for a
-// contiguous vector, poz_sftStrided or poz_sumStridedPart and
-// poz_sftStridedReduce for a strided one.
+// ||vector r||_2^2 rounded upward in the runtime's order:
+// shiftsContiguousKernel for a contiguous vector, shiftsStridedKernel or
+// stridedPartialSumsKernel and shiftsStridedReduceKernel for a strided one.
 static double sumOfSquaresUp(const OzakiIIOperand &X, unsigned r, unsigned K) {
   RoundingScope up(FE_UPWARD);
   auto at = [&](unsigned k) {
@@ -158,7 +158,7 @@ static double sumOfSquaresUp(const OzakiIIOperand &X, unsigned r, unsigned K) {
     }
     return warpSumUp(warps);
   }
-  // poz_stridedTile: phase y of the 32 sums k = k0 + y, k0 + y + 32, ...
+  // stridedTileSum: phase y of the 32 sums k = k0 + y, k0 + y + 32, ...
   auto tile = [&](unsigned k0, unsigned k1) {
     for (unsigned y = 0; y < 32; ++y) {
       double s = 0.0;
@@ -183,7 +183,7 @@ static double sumOfSquaresUp(const OzakiIIOperand &X, unsigned r, unsigned K) {
   return warpSumUp(lane);
 }
 
-// poz_shiftOf: floor(log2P - log2(s)/2) with each rounding directed so that
+// shiftOf: floor(log2P - log2(s)/2) with each rounding directed so that
 // the shift can only come out smaller. The device's __log2f is an
 // approximation the 2^-23 allowance covers; the host's log2 stands in for it.
 static int shiftOf(double s, float log2P) {
@@ -211,17 +211,17 @@ static int shiftOf(double s, float log2P) {
   return (short)std::floor(d);
 }
 
-// poz_crtQuad on the residues of v: x accumulates the high parts of the CRT
+// crtQuad on the residues of v: x accumulates the high parts of the CRT
 // weights, y the low ones, and v = x + y - round(x/P) P is formed with P as a
-// double-double. The residues are the symmetric representatives poz_modI32
-// returns ([-128, 127] for 256), which depend on v alone, not on the INT8
-// operand residues whose products the runtime sums.
+// double-double. The residues are the symmetric representatives
+// ozakiIIResidueI32 returns ([-128, 127] for 256), which depend on v alone, not
+// on the INT8 operand residues whose products the runtime sums.
 static double crtRecombine(const OzakiIIConstants &c, __int128 v) {
   double x = 0.0, y = 0.0;
   const unsigned __int128 mag = v < 0 ? -(unsigned __int128)v : v;
   for (unsigned i = 0; i < c.nm; ++i) {
     const uint32_t p = (uint32_t)kOzakiIIModuli[i];
-    double d = (double)poz_symmetric((uint32_t)(mag % p), v < 0, p);
+    double d = (double)ozakiIISymmetric((uint32_t)(mag % p), v < 0, p);
     if (i == 0) {
       x = c.qhi[0] * d;
       y = c.qlo[0] * d;
@@ -237,7 +237,7 @@ static double crtRecombine(const OzakiIIConstants &c, __int128 v) {
 }
 
 namespace {
-// An operand's vectors as the runtime quantizes them (poz_quant): vector r is
+// An operand's vectors as the runtime quantizes them (quantize): vector r is
 // trunc(2^shift[r] x), exact, of magnitude at most 2^log2P < 2^55.
 struct QuantizedOperand {
   std::vector<int> shift;

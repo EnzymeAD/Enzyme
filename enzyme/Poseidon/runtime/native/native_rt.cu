@@ -5,33 +5,30 @@
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
+//
+// The library's FP64 product: one cublasDgemm (hipblasDgemm) in the
+// column-major form of the call.
+//
+//===----------------------------------------------------------------------===//
 
 #include "../GemmRuntime.h"
 
-// A row-major rows x cols matrix with row stride ld is the column-major
-// cols x rows transpose with the same ld, so every layout combination is one
-// cublasDgemm: for a row-major C, the column-major C^T = op(B) * op(A) with
-// the ops flipped.
+using namespace poseidon::gemm;
+
 extern "C" void __poseidon_native_dgemm(double *C, const double *A,
                                         const double *B, int M, int Ncols,
                                         int K, int lda, int ldb, int ldc,
                                         int aColMajor, int bColMajor,
                                         int cColMajor, double alpha,
                                         double beta, cudaStream_t stream) {
-  if (!poseidonGemmExtents("__poseidon_native_dgemm", M, Ncols, K)) {
-    if (M > 0 && Ncols > 0)
-      poseidonGemmEmptyK(C, M, Ncols, ldc, cColMajor, beta, stream);
-    return;
-  }
-  PoseidonGemmCall<PoseidonDevice> call(stream, /*scratch=*/false);
-  cublasHandle_t h = call.blas();
-  if (cColMajor)
-    POSEIDON_GEMM_CB(cublasDgemm(h, aColMajor ? CUBLAS_OP_N : CUBLAS_OP_T,
-                                 bColMajor ? CUBLAS_OP_N : CUBLAS_OP_T, M,
-                                 Ncols, K, &alpha, A, lda, B, ldb, &beta, C,
-                                 ldc));
-  else
-    POSEIDON_GEMM_CB(cublasDgemm(h, bColMajor ? CUBLAS_OP_T : CUBLAS_OP_N,
-                                 aColMajor ? CUBLAS_OP_T : CUBLAS_OP_N, Ncols,
-                                 M, K, &alpha, B, ldb, A, lda, &beta, C, ldc));
+  runEntry<Device>(
+      "__poseidon_native_dgemm", C, M, Ncols, K, ldc, cColMajor, beta, stream,
+      /*scratch=*/false, [&](Call<Device> &call) {
+        const ColumnMajorGemm g = columnMajorGemm(M, Ncols, A, lda, aColMajor,
+                                                  B, ldb, bColMajor, cColMajor);
+        POSEIDON_GEMM_CB(cublasDgemm(call.blas(), g.opA, g.opB, g.m, g.n, K,
+                                     &alpha, static_cast<const double *>(g.A),
+                                     g.lda, static_cast<const double *>(g.B),
+                                     g.ldb, &beta, C, ldc));
+      });
 }
