@@ -106,7 +106,7 @@ __attribute__((global)) void k(const double *x, double *dx, double *y,
 // GEN-DAG: [[DYI:%[0-9]+]] = getelementptr inbounds {{.*}}ptr [[DY]], i64 {{%[0-9]+}}
 // GEN-DAG: [[DYV:%[0-9]+]] = load double, ptr [[DYI]]
 // GEN-DAG: store double 0.000000e+00, ptr [[DYI]]
-// GEN-DAG: call {{.*}}void @fixgradient___poseidon_probe_preprocess__Z5scalePKdPdi_0(double {{%[0-9]+}}, double [[DYV]])
+// GEN-DAG: call void @poseidonLogGradCUDA(ptr addrspacecast (ptr addrspace(1) @poseidon_site_preprocess__Z5scalePKdPdi to ptr), i64 0, double {{%[0-9]+}}, double [[DYV]])
 // GEN-DAG: call void @llvm.memset.p0.i64(ptr {{.*}}[[SHA:%[0-9]+]], i8 0, i64 16, i1 false)
 // GEN-DAG: [[SHA]] = alloca [16 x i8]
 // GEN-DAG: call {{.*}}double @diffepreprocess__Z6spreadPKd.poseidon._Z5thirdPKd.0(ptr [[X]], ptr [[SHA]])

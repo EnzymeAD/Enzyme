@@ -116,8 +116,18 @@ struct ProbeBuilder {
   LLVMContext &Ctx;
   const ProbeABI &P;
   unsigned siteId;
-  StringRef cloneName;
+  const Function &clone;
   Constant *namePtr;
+
+  /// Compiles `F` for the processor and features `clone` is compiled for: a
+  /// function without them inlines into it only where the target's default
+  /// subtarget is compatible with the clone's, which on AMDGPU depends on the
+  /// processor.
+  void likeClone(Function &F) const {
+    for (StringRef kind : {"target-cpu", "target-features"})
+      if (clone.hasFnAttribute(kind))
+        F.addFnAttr(kind, clone.getFnAttribute(kind).getValueAsString());
+  }
 
   Type *doubleTy() const { return Type::getDoubleTy(Ctx); }
   Type *i64Ty() const { return Type::getInt64Ty(Ctx); }
@@ -131,12 +141,13 @@ struct ProbeBuilder {
   Function *probeFor(Type *FpTy, size_t idx) {
     bool isFloat = FpTy->isFloatTy();
     std::string base =
-        ("__poseidon_probe_" + cloneName + "_" + Twine(idx)).str();
+        ("__poseidon_probe_" + clone.getName() + "_" + Twine(idx)).str();
     FunctionType *unaryFT = FunctionType::get(FpTy, {FpTy}, false);
 
     Function *aug = Function::Create(unaryFT, GlobalValue::InternalLinkage,
                                      base + "_aug", &M);
     aug->addFnAttr(Attribute::NoUnwind);
+    likeClone(*aug);
     {
       IRBuilder<> B(BasicBlock::Create(Ctx, "entry", aug));
       Value *v = aug->getArg(0);
@@ -153,6 +164,7 @@ struct ProbeBuilder {
     Function *rev = Function::Create(revFT, GlobalValue::InternalLinkage,
                                      base + "_rev", &M);
     rev->addFnAttr(Attribute::NoUnwind);
+    likeClone(*rev);
     {
       IRBuilder<> B(BasicBlock::Create(Ctx, "entry", rev));
       Value *v = B.CreateFPExt(rev->getArg(0), doubleTy());
@@ -169,6 +181,7 @@ struct ProbeBuilder {
     probe->addFnAttr(Attribute::NoInline);
     probe->addFnAttr(Attribute::NoUnwind);
     probe->addFnAttr(Attribute::WillReturn);
+    likeClone(*probe);
     // Not readnone: an identity the optimizer may fold away takes the profile
     // with it. Not argmem either, so the probe does not alias the kernel's own
     // memory traffic.
@@ -222,7 +235,7 @@ size_t instrumentForProfiling(Function &clone, unsigned siteId,
                   Ctx,
                   P,
                   siteId,
-                  clone.getName(),
+                  clone,
                   getProfileNamePointer(M, clone.getName(), profileName)};
 
   FunctionCallee logValue = getProfilerHook(M, P.LogValue, logValueType(Ctx));

@@ -121,19 +121,12 @@ POSEIDON_OPTIMIZE __attribute__((device)) double unused(double x) { return x * x
 // GENIR-DAG: [[DYI:%[0-9]+]] = getelementptr inbounds {{.*}}ptr [[SY]], i64 {{%[0-9]+}}
 // GENIR-DAG: [[ADJ:%[0-9]+]] = load double, ptr [[DYI]]
 // GENIR-DAG: store double 0.000000e+00, ptr [[DYI]]
-// GENIR-DAG: [[G0:%[0-9]+]] = call fastcc double @fixgradient___poseidon_probe_preprocess__ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT__poseidon_body_0(double {{%[0-9]+}}, double [[ADJ]])
-// GENIR-DAG: atomicrmw fadd ptr [[DYI]], double [[G0]] monotonic
-// GENIR-DAG: [[G1IN:%[0-9]+]] = phi double [ [[G0]], %{{[0-9]+}} ]
-// GENIR-DAG: call fastcc double @fixgradient___poseidon_probe_preprocess__ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT__poseidon_body_1(double {{%[0-9]+}}, double [[G1IN]])
+// GENIR-DAG: call void @poseidonLogGradCUDA(ptr addrspacecast (ptr addrspace(1) @poseidon_site_preprocess__ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT__poseidon_body to ptr), i64 0, double {{%[0-9]+}}, double [[ADJ]])
+// GENIR-DAG: atomicrmw fadd ptr [[DYI]], double [[ADJ]] monotonic
+// GENIR-DAG: call void @poseidonLogGradCUDA(ptr addrspacecast (ptr addrspace(1) @poseidon_site_preprocess__ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT__poseidon_body to ptr), i64 1, double {{%[0-9]+}}, double [[ADJ]])
 // GENIR: {{^}}}
-// GENIR: define internal fastcc double @fixgradient___poseidon_probe_preprocess__ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT__poseidon_body_0(double [[V:%[0-9]+]], double [[A:%[0-9]+]])
-// GENIR-NEXT: call void @poseidonLogGradCUDA(ptr addrspacecast (ptr addrspace(1) @poseidon_site_preprocess__ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT__poseidon_body to ptr), i64 0, double [[V]], double [[A]])
-// GENIR-NEXT: ret double [[A]]
-// GENIR: define internal fastcc double @fixgradient___poseidon_probe_preprocess__ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT__poseidon_body_1(double [[V:%[0-9]+]], double [[A:%[0-9]+]])
-// GENIR-NEXT: call void @poseidonLogGradCUDA(ptr addrspacecast (ptr addrspace(1) @poseidon_site_preprocess__ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT__poseidon_body to ptr), i64 1, double [[V]], double [[A]])
-// GENIR-NEXT: ret double [[A]]
 
 // USE: [poseidon] site void CuKernel2D<reduce(int, int, int, double*, double*, double*)::'lambda'(int)>(int, reduce(int, int, int, double*, double*, double*)::'lambda'(int)): accuracy target 1e-09
-// USE-NEXT: annotated_lambda_nvptx.cu:[[@LINE-106]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/_ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_~620114d1d498cb14.fpprofile:
+// USE-NEXT: annotated_lambda_nvptx.cu:[[@LINE-99]]:{{[0-9]+}}: warning: Poseidon: no profile at {{.*}}/_ZL10CuKernel2DIZ6reduceiiiPdS0_S0_EUliE_EviT_~620114d1d498cb14.fpprofile:
 // USE: [poseidon] every site of {{.*}}annotated_lambda_nvptx.cu was left alone; emitting the module as written
 // USE-NEXT: 2 warnings generated when compiling for {{.*}}

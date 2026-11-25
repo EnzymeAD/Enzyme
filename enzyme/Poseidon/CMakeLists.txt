@@ -337,19 +337,19 @@ target_include_directories(
   ${POSEIDON_PLUGIN_TARGET}
   PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/identity)
 
-# The accuracy model emulates the emitted FP32 expansions and the GEMM
+# Every operation of the plugin is rounded as written, so that its accuracy
+# estimates, and the decisions made from them, are the same on every host: a
+# compiler fuses a multiply and an add where the host's base instruction set
+# has a fused multiply-add (AArch64) and not where it has none (x86-64). The
+# accuracy model also emulates the emitted FP32 expansions and the GEMM
 # runtimes bit for bit, and the sampler reproduces the standard library's
-# uniform reals bit for bit; each holds only if every operation is rounded as
-# written.
+# uniform reals bit for bit.
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
-  set_source_files_properties(
-    Core/ExpansionModel.cpp Core/UniformReal.cpp
-    PROPERTIES COMPILE_OPTIONS "-fno-fast-math;-ffp-contract=off")
+  target_compile_options(${POSEIDON_PLUGIN_TARGET} PRIVATE -fno-fast-math
+                                                           -ffp-contract=off)
   # The runtimes' directed roundings change the rounding mode.
-  set_source_files_properties(
-    Techniques/Matmul/MatmulSimulation.cpp
-    PROPERTIES
-      COMPILE_OPTIONS "-fno-fast-math;-ffp-contract=off;-frounding-math")
+  set_source_files_properties(Techniques/Matmul/MatmulSimulation.cpp
+                              PROPERTIES COMPILE_OPTIONS "-frounding-math")
 endif()
 
 install(
