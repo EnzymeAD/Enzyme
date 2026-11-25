@@ -421,15 +421,14 @@ struct SICMPass : public enzyme::impl::SICMPassBase<SICMPass> {
     return success();
   }
 
-  bool runSICMOnRegion(InferRegionOp regionOp, AnalysisTarget target) {
-    bool everChanged = false;
+  void runSICMOnRegion(InferRegionOp regionOp, AnalysisTarget target) {
     for (int64_t iter = 0; iter < maxIterations; ++iter) {
       bool anyChanged = false;
 
       RewritePatternSet patterns(getOperation()->getContext());
       if (failed(populateRules(patterns))) {
         signalPassFailure();
-        return everChanged;
+        return;
       }
       SampleDependenceCache analysisCache;
       std::optional<IncrementalAnalysisVerifier> verifier;
@@ -467,11 +466,9 @@ struct SICMPass : public enzyme::impl::SICMPassBase<SICMPass> {
 
       anyChanged |= hoistSampleInvariantOps(regionOp, target);
 
-      everChanged |= anyChanged;
       if (!anyChanged)
         break;
     }
-    return everChanged;
   }
 
   /// Fills `options` from `rule-options`. Fails after reporting every entry

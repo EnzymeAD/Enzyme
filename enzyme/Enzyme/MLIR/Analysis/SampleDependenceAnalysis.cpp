@@ -8,9 +8,6 @@
 using namespace mlir;
 using namespace mlir::impulse;
 
-SampleDependenceAnalysis::SampleDependenceAnalysis(InferRegionOp regionOp)
-    : SampleDependenceAnalysis(regionOp, AnalysisTarget::Sampling) {}
-
 SampleDependenceAnalysis::SampleDependenceAnalysis(InferRegionOp regionOp,
                                                    AnalysisTarget target)
     : regionOp(regionOp), target(target),
@@ -75,13 +72,6 @@ void SampleDependenceAnalysis::propagateDependence(Region &region) {
 }
 
 void SampleDependenceAnalysis::runSamplerAnalysis() {
-  if (regionOp.getLogpdfFnAttr()) {
-    Block &entry = regionOp.getSampling().front();
-    if (!entry.getArguments().empty()) {
-      markSampleDependent(entry.getArgument(0));
-    }
-  }
-
   DenseSet<Attribute> selectedAddresses;
   bool hasSelection = false;
   if (auto selection = regionOp.getSelectionAttr()) {
@@ -91,7 +81,6 @@ void SampleDependenceAnalysis::runSamplerAnalysis() {
   }
 
   regionOp.getSampling().walk([&](SampleRegionOp sampleOp) {
-    sampleOps.push_back(sampleOp);
     auto address = sampleOp.getAddressAttr();
     bool isSelected =
         !hasSelection || !address || selectedAddresses.contains(address);
@@ -133,30 +122,7 @@ bool SampleDependenceAnalysis::isSampleDependent(Operation *op) const {
 }
 
 bool SampleDependenceAnalysis::isInTargetRegion(Operation *op) {
-  Region *targetRegion;
-  if (target == AnalysisTarget::Logpdf)
-    targetRegion = &regionOp.getLogpdf();
-  else
-    targetRegion = &regionOp.getSampling();
-  return targetRegion->isAncestor(op->getParentRegion());
-}
-
-bool SampleDependenceAnalysis::canHoist(Operation *op) const {
-  if (isa<SampleRegionOp>(op))
-    return false;
-
-  if (op->hasTrait<OpTrait::IsTerminator>())
-    return false;
-
-  if (isSampleDependent(op))
-    return false;
-
-  for (Value operand : op->getOperands()) {
-    if (isSampleDependent(operand))
-      return false;
-  }
-
-  return true;
+  return getTargetRegion().isAncestor(op->getParentRegion());
 }
 
 bool SampleDependenceAnalysis::isSelectedSite(SampleRegionOp site) {
@@ -189,18 +155,12 @@ void SampleDependenceAnalysis::raiseUser(Operation *user) {
 
 void SampleDependenceAnalysis::updateOperation(Operation *op) {
   ++stats.opsVisited;
-  bool dependentSite = false;
-  if (auto site = dyn_cast<SampleRegionOp>(op)) {
-    if (target == AnalysisTarget::Sampling) {
-      if (!llvm::is_contained(sampleOps, site))
-        sampleOps.push_back(site);
-      if (isSelectedSite(site)) {
-        for (Value result : op->getResults())
-          raise(result);
-        dependentSite = true;
-      }
-    }
-  }
+  auto site = dyn_cast<SampleRegionOp>(op);
+  bool dependentSite =
+      site && target == AnalysisTarget::Sampling && isSelectedSite(site);
+  if (dependentSite)
+    for (Value result : op->getResults())
+      raise(result);
   if (dependentSite || llvm::any_of(op->getOperands(), [&](Value operand) {
         return isSampleDependent(operand);
       }))
@@ -253,8 +213,6 @@ void SampleDependenceAnalysis::notifyOperationReplaced(Operation *op,
 void SampleDependenceAnalysis::notifyOperationErased(Operation *op) {
   for (Value result : op->getResults())
     sampleDependentValues.erase(result);
-  if (auto site = dyn_cast<SampleRegionOp>(op))
-    llvm::erase(sampleOps, site);
 }
 
 void SampleDependenceAnalysis::notifyBlockInserted(Block *block) {
@@ -321,6 +279,18 @@ hasMemoryConflict(ArrayRef<MemoryEffects::EffectInstance> opEffects,
   return false;
 }
 
+/// True if `op` is not a sample site or a terminator and neither it nor its
+/// operands are sample-dependent.
+static bool isHoistCandidate(const SampleDependenceAnalysis &analysis,
+                             Operation *op) {
+  if (isa<SampleRegionOp>(op) || op->hasTrait<OpTrait::IsTerminator>() ||
+      analysis.isSampleDependent(op))
+    return false;
+  return llvm::none_of(op->getOperands(), [&](Value operand) {
+    return analysis.isSampleDependent(operand);
+  });
+}
+
 static bool hoistFromRegion(InferRegionOp regionOp,
                             SampleDependenceAnalysis &sampleAnalysis,
                             Region &region) {
@@ -335,13 +305,9 @@ static bool hoistFromRegion(InferRegionOp regionOp,
 
   if (sampleAnalysis.getTarget() == AnalysisTarget::Sampling) {
     auto inputs = regionOp.getInputs();
-    bool isLogpdfMode = static_cast<bool>(regionOp.getLogpdfFnAttr());
-    for (auto [idx, blockArg] : llvm::enumerate(entryBlock.getArguments())) {
-      if (isLogpdfMode && idx == 0)
-        continue;
+    for (auto [idx, blockArg] : llvm::enumerate(entryBlock.getArguments()))
       if (idx < inputs.size())
         regionToOuter.map(blockArg, inputs[idx]);
-    }
   }
 
   SetVector<Operation *> toHoist;
@@ -352,10 +318,7 @@ static bool hoistFromRegion(InferRegionOp regionOp,
       continue;
 
     for (Operation &op : blk.without_terminator()) {
-      bool canHoist = true;
-
-      if (!sampleAnalysis.canHoist(&op))
-        canHoist = false;
+      bool canHoist = isHoistCandidate(sampleAnalysis, &op);
 
       SmallVector<MemoryEffects::EffectInstance> opEffects;
       bool couldCollect = enzyme::oputils::collectOpEffects(&op, opEffects);
@@ -411,10 +374,6 @@ static bool hoistFromRegion(InferRegionOp regionOp,
   }
 
   return !sortedToHoist.empty();
-}
-
-bool impulse::hoistSampleInvariantOps(InferRegionOp regionOp) {
-  return hoistSampleInvariantOps(regionOp, AnalysisTarget::Sampling);
 }
 
 bool impulse::hoistSampleInvariantOps(InferRegionOp regionOp,

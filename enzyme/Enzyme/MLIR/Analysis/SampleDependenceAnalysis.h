@@ -19,15 +19,10 @@ enum class AnalysisTarget {
 
 class SampleDependenceAnalysis {
 public:
-  explicit SampleDependenceAnalysis(InferRegionOp regionOp);
-
   SampleDependenceAnalysis(InferRegionOp regionOp, AnalysisTarget target);
 
   bool isSampleDependent(Value value) const;
   bool isSampleDependent(Operation *op) const;
-  bool canHoist(Operation *op) const;
-
-  ArrayRef<SampleRegionOp> getSampleOps() const { return sampleOps; }
 
   InferRegionOp getRegionOp() const { return regionOp; }
   AnalysisTarget getTarget() const { return target; }
@@ -63,11 +58,10 @@ private:
   InferRegionOp regionOp;
   AnalysisTarget target;
   DenseSet<Value> sampleDependentValues;
-  SmallVector<SampleRegionOp> sampleOps;
 
   Attribute builtSelection;
   Attribute builtLogpdfFn;
-  int64_t builtNumPositionArgs = 0;
+  uint64_t builtNumPositionArgs = 0;
 
   SmallVector<Value> raisedWorklist;
   UpdateStats stats;
@@ -84,8 +78,8 @@ private:
   void propagateRaised();
 };
 
-bool hoistSampleInvariantOps(InferRegionOp regionOp);
-
+/// Moves the sample-invariant ops of the `target` region of `regionOp` above
+/// `regionOp`. Returns true if it moved any.
 bool hoistSampleInvariantOps(InferRegionOp regionOp, AnalysisTarget target);
 
 /// One analysis per (infer_region, target), shared by everything that queries
