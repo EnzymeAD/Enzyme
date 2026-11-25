@@ -342,6 +342,24 @@ static Value gatherPositionFromTrace(OpBuilder &builder, Location loc,
   return result;
 }
 
+/// Writes `qConstrained` into the original trace and emits a generate op of
+/// the model on that trace.
+static impulse::GenerateOp emitGenerateAt(OpBuilder &builder, Location loc,
+                                          Value qConstrained, Value rng,
+                                          const HMCContext &ctx) {
+  Value fullTrace = scatterPositionToTrace(builder, loc, qConstrained,
+                                           ctx.originalTrace, ctx);
+  SmallVector<Value> inputs{rng};
+  llvm::append_range(inputs, ctx.fnInputs);
+  SmallVector<Type> resultTypes{
+      RankedTensorType::get({1, ctx.getFullTraceSize()}, ctx.getElementType()),
+      ctx.getScalarType()};
+  llvm::append_range(resultTypes, ctx.fnResultTypes);
+  return impulse::GenerateOp::create(
+      builder, loc, resultTypes, ctx.fn, inputs, fullTrace, ctx.allAddresses,
+      ctx.allAddresses, builder.getStringAttr(""));
+}
+
 /// Values captured from above the `infer_region` op are sample-invariant.
 static Value cloneLogpdfRegionAt(OpBuilder &builder, Location loc,
                                  Value qConstrained, const HMCContext &ctx) {
@@ -460,26 +478,9 @@ GradientResult impulse::computePotentialAndGradient(OpBuilder &builder,
     // TODO(#2695): handle hybrid case
     enzyme::YieldOp::create(builder, loc, {potentialEnergy, rng});
   } else {
-    auto traceType =
-        RankedTensorType::get({1, ctx.getFullTraceSize()}, elemType);
-
     Value q_constrained = constrainPosition(builder, loc, qArg, ctx.supports);
-    Value fullTrace = scatterPositionToTrace(builder, loc, q_constrained,
-                                             ctx.originalTrace, ctx);
-
-    SmallVector<Value> generateInputs;
-    generateInputs.push_back(rng);
-    generateInputs.append(ctx.fnInputs.begin(), ctx.fnInputs.end());
-
-    SmallVector<Type> generateResultTypes;
-    generateResultTypes.push_back(traceType);
-    generateResultTypes.push_back(scalarType);
-    generateResultTypes.append(ctx.fnResultTypes.begin(),
-                               ctx.fnResultTypes.end());
-
-    auto generateOp = impulse::GenerateOp::create(
-        builder, loc, generateResultTypes, ctx.fn, generateInputs, fullTrace,
-        ctx.allAddresses, ctx.allAddresses, builder.getStringAttr(""));
+    impulse::GenerateOp generateOp =
+        emitGenerateAt(builder, loc, q_constrained, rng, ctx);
 
     Value negWeight =
         arith::NegFOp::create(builder, loc, generateOp.getWeight());
@@ -795,27 +796,9 @@ InitialHMCState impulse::InitHMC(OpBuilder &builder, Location loc, Value rng,
     if (ctx.hasLogpdfRegion()) {
       weight0 = cloneLogpdfRegionAt(builder, loc, q0_constrained, ctx);
     } else {
-      auto fullTraceType =
-          RankedTensorType::get({1, ctx.getFullTraceSize()}, elemType);
-      Value fullTraceInit = scatterPositionToTrace(builder, loc, q0_constrained,
-                                                   ctx.originalTrace, ctx);
-
-      SmallVector<Value> generateInputsInit;
-      generateInputsInit.push_back(rngForAutodiff);
-      generateInputsInit.append(ctx.fnInputs.begin(), ctx.fnInputs.end());
-
-      SmallVector<Type> generateResultTypesInit;
-      generateResultTypesInit.push_back(fullTraceType);
-      generateResultTypesInit.push_back(scalarType);
-      generateResultTypesInit.append(ctx.fnResultTypes.begin(),
-                                     ctx.fnResultTypes.end());
-
-      auto generateOpInit = impulse::GenerateOp::create(
-          builder, loc, generateResultTypesInit, ctx.fn, generateInputsInit,
-          fullTraceInit, ctx.allAddresses, ctx.allAddresses,
-          builder.getStringAttr(""));
-
-      weight0 = generateOpInit.getWeight();
+      weight0 =
+          emitGenerateAt(builder, loc, q0_constrained, rngForAutodiff, ctx)
+              .getWeight();
     }
     auto negWeight0 = arith::NegFOp::create(builder, loc, weight0);
     auto jacobian0 =
@@ -870,27 +853,10 @@ InitialHMCState impulse::InitHMC(OpBuilder &builder, Location loc, Value rng,
     enzyme::YieldOp::create(builder, loc,
                             {potentialEnergyInit, rngForAutodiff});
   } else {
-    auto fullTraceType =
-        RankedTensorType::get({1, ctx.getFullTraceSize()}, elemType);
     auto q0Arg_constrained =
         constrainPosition(builder, loc, q0Arg, ctx.supports);
-    Value fullTraceInner = scatterPositionToTrace(
-        builder, loc, q0Arg_constrained, ctx.originalTrace, ctx);
-
-    SmallVector<Value> generateInputsInner;
-    generateInputsInner.push_back(rngForAutodiff);
-    generateInputsInner.append(ctx.fnInputs.begin(), ctx.fnInputs.end());
-
-    SmallVector<Type> generateResultTypesInner;
-    generateResultTypesInner.push_back(fullTraceType);
-    generateResultTypesInner.push_back(scalarType);
-    generateResultTypesInner.append(ctx.fnResultTypes.begin(),
-                                    ctx.fnResultTypes.end());
-
-    auto generateOpInner = impulse::GenerateOp::create(
-        builder, loc, generateResultTypesInner, ctx.fn, generateInputsInner,
-        fullTraceInner, ctx.allAddresses, ctx.allAddresses,
-        builder.getStringAttr(""));
+    impulse::GenerateOp generateOpInner =
+        emitGenerateAt(builder, loc, q0Arg_constrained, rngForAutodiff, ctx);
 
     auto negWeightInit =
         arith::NegFOp::create(builder, loc, generateOpInner.getWeight());
