@@ -77,6 +77,10 @@ static cl::opt<unsigned> CpuIterations(
     "cpu-iterations", cl::Hidden, cl::value_desc("count"),
     cl::desc("Loop trips of each CPU microbenchmark run, in place of the "
              "count a trial run sizes"));
+static cl::opt<bool> CpuChainOnly(
+    "cpu-chain-only", cl::Hidden,
+    cl::desc("Time every CPU operation in the chain through itself, which the "
+             "microbenchmark refuses where the operation folds away"));
 static cl::opt<std::string>
     Herbie("herbie", cl::init(POSEIDON_CALIBRATE_HERBIE),
            cl::value_desc("path"),
@@ -457,6 +461,8 @@ static int measureHost(const Device &D, StringRef Part) {
     Argv.push_back("--iterations");
     Argv.push_back(Iterations);
   }
+  if (CpuChainOnly)
+    Argv.push_back("--chain-only");
   return run(Argv, Part);
 }
 

@@ -39,8 +39,25 @@ machine, whose features the measurement takes as well. The model is
 by `microbm_cpu.py`, which JIT-compiles each microbenchmark with llvmlite for
 that CPU and stops if llvmlite's LLVM does not know it. A trial run sizes each
 loop to run for a quarter of a second, and a row is the time of one operation
-in the unit of the GPU rows, clock cycles times two, so a model takes a few
-minutes and does not depend on the trip count. The script runs under
+less that of the same loop without it, in the unit of the GPU rows, clock
+cycles times two, so a model takes a few minutes and does not depend on the
+trip count. A host model holds rows of two kinds, which mean different things:
+
+- An arithmetic operation, comparison, conversion, fused multiply-add, square
+  root, minimum, maximum, rounding or sign operation, or `powi` row is the
+  operation's latency: a dependent chain through the operation, as the GPU
+  microbenchmark chains it, or, where the compiler would fold that chain, the
+  operation on fixed inputs that a restoring step makes depend on the
+  previous result.
+- A math-library row is the function's reciprocal throughput: independent
+  calls on fixed inputs. A dependent chain would price a call whose result
+  follows a predicted branch (an overflowing `exp`, a saturated `tanh`) at
+  nothing.
+
+The GPU rows are reciprocal throughputs throughout, so a GPU model and a host
+model are not comparable row for row. Before a loop is timed, the script
+checks its machine code for an instruction of every operation it times, and
+stops naming the row if the compiler has folded one away. The script runs under
 the Python 3 the build was configured with (`Python3_EXECUTABLE`) or the one
 `--python` names, which needs the `llvmlite` package. A host model holds the
 `float` and `double` per-op rows, the formats a precision change offers a host

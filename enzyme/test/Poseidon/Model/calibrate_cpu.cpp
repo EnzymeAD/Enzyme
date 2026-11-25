@@ -7,13 +7,17 @@
 // RUN: env POSEIDON_PROFILE_DIR=%t/prof %t/gen > /dev/null
 // RUN: env XDG_CACHE_HOME=%t/xdg %poseidon_clangxx -O2 -poseidon-profile-use=%t/prof -poseidon-enable-herbie=0 -poseidon-enable-pt=1 -poseidon-print -poseidon-cache=%t/c -c %s -o %t/use.o 2>&1 | FileCheck --check-prefix=USE %s
 // RUN: env XDG_CACHE_HOME=%t/xdg %poseidon_calibrate --cpu $(cat %t/cpu) --check | FileCheck --check-prefix=CHECK -DCPU=$(cat %t/cpu) %s
+// RUN: not %poseidon_calibrate --cpu $(cat %t/cpu) --cpu-iterations=1000 --cpu-chain-only --out %t/chain.csv 2>&1 | FileCheck --check-prefix=FOLD %s
+// RUN: test ! -e %t/chain.csv
 
 // poseidon-calibrate --cpu measures this host for the target-cpu a compile
 // without -march uses, at a token iteration count, and files the model in the
 // user cache, where that compile finds it by its target-cpu. The CSV carries
 // the headers and the arithmetic, comparison and conversion rows; the compile
 // reads every libm row of both formats when it decides which calls a
-// precision change may retype, so it stops if one is missing.
+// precision change may retype, so it stops if one is missing. Timed in the
+// chain through itself, fneg folds away (fneg of fneg is the value): the
+// microbenchmark finds no instruction of it in the loop and measures nothing.
 
 #include "poseidon/poseidon.h"
 #include <cmath>
@@ -71,3 +75,6 @@ int main(int argc, char **argv) {
 // CHECK-NEXT: native_arch [[CPU]]  ok
 // CHECK-NEXT: have        fmul  (per-op throughputs)
 // CHECK-NEXT: n/a         wmma_mma_m16n16k16  (tensor-core tile prices: none on a host)
+
+// FOLD: microbm_cpu.py: fneg,float cannot be measured on this target, its operation is not in the code: chain: the loop holds none of {{.+}} once per operation: {{.+}} 0 of 128
+// FOLD: poseidon-calibrate: the microbenchmark produced no usable cost model
